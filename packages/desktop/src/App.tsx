@@ -18,6 +18,7 @@ async function startSession(baseUrl: string, token: string): Promise<void> {
 
 export default function App() {
   const [phase, setPhase] = useState<'boot' | 'connect' | 'ready'>('boot');
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   useEffect(() => {
     const stored = sessionStore.load();
@@ -31,9 +32,12 @@ export default function App() {
   if (phase === 'connect') {
     return (
       <ConnectScreen
+        initialError={connectError}
         onConnected={(baseUrl, token) => {
           sessionStore.save({ baseUrl, token });
-          void startSession(baseUrl, token).then(() => setPhase('ready'));
+          void startSession(baseUrl, token)
+            .then(() => setPhase('ready'))
+            .catch(() => { sessionStore.clear(); setConnectError('Signed in, but starting the session failed. Please try again.'); setPhase('connect'); });
         }}
       />
     );

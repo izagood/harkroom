@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { ApiClient, ApiError } from '../lib/api';
 
-export function ConnectScreen({ onConnected }: { onConnected: (baseUrl: string, token: string) => void }) {
+export function ConnectScreen({ onConnected, initialError = null }: { onConnected: (baseUrl: string, token: string) => void; initialError?: string | null }) {
   const [baseUrl, setBaseUrl] = useState('http://localhost:3400');
   const [handle, setHandle] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
   const [bootstrapMode, setBootstrapMode] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError ?? null);
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {

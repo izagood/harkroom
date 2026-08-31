@@ -46,4 +46,11 @@ describe('ConnectScreen', () => {
     await waitFor(() => expect(onConnected).toHaveBeenCalledWith('http://localhost:3400', 'tok-b'));
     expect(calls[0]).toContain('/bootstrap');
   });
+
+  it('displays initialError if provided', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({ token: 'tok-9' }), { status: 200 })));
+    render(<ConnectScreen onConnected={vi.fn()} initialError="Signed in, but starting the session failed. Please try again." />);
+    expect(screen.getByText('Signed in, but starting the session failed. Please try again.')).toBeTruthy();
+  });
 });
