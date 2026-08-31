@@ -3,8 +3,8 @@ import { render, screen } from '@testing-library/react';
 import App from '../src/App';
 
 describe('App', () => {
-  it('renders', () => {
+  it('shows connect screen without a stored session', async () => {
     render(<App />);
-    expect(screen.getByText('murmur')).toBeTruthy();
+    expect(await screen.findByText('Server URL')).toBeTruthy();
   });
 });
