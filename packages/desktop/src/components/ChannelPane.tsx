@@ -30,8 +30,9 @@ export function ChannelPane() {
 
   const send = () => {
     const body = draft;
+    if (!body.trim()) return;
     setDraft('');
-    if (body.trim()) void getController().send(body);
+    void getController().send(body).catch(() => setDraft(body));
   };
 
   return (

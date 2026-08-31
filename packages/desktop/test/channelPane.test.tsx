@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { acc, chan, msg } from './helpers/fakeApi';
 
 const fakeController = () => {
-  const c = { send: vi.fn(), openThread: vi.fn() };
+  const c = { send: vi.fn(async () => undefined), openThread: vi.fn() };
   setController(c as unknown as Controller);
   return c;
 };
@@ -64,5 +64,26 @@ describe('ChannelPane', () => {
     render(<ChannelPane />);
     fireEvent.click(screen.getAllByRole('button', { name: 'Reply in thread' })[0]!);
     expect(c.openThread).toHaveBeenCalledWith('m1');
+  });
+
+  it('ignores whitespace-only input and keeps draft', () => {
+    const c = fakeController();
+    render(<ChannelPane />);
+    const box = screen.getByPlaceholderText('Message #general') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '   ' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(c.send).not.toHaveBeenCalled();
+    expect(box.value).toBe('   ');
+  });
+
+  it('restores draft when send fails', async () => {
+    const c = fakeController();
+    c.send.mockRejectedValueOnce(new Error('send failed'));
+    render(<ChannelPane />);
+    const box = screen.getByPlaceholderText('Message #general') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: 'hi there' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(c.send).toHaveBeenCalledWith('hi there');
+    await waitFor(() => expect(box.value).toBe('hi there'));
   });
 });
