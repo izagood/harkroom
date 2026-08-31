@@ -6,12 +6,16 @@ import { useAppStore } from './appStore';
 
 export class Controller {
   private ws: WsHandle | null = null;
+  private unreadFetchSeq = 0;
 
   constructor(
     public api: ApiClient,
     private makeWs: typeof connectWs = connectWs,
     private token: string | null = null,
   ) {}
+
+  // fire-and-forget 호출의 unhandled rejection 방지 — 실패는 조용히 무시(다음 이벤트/리컨실이 자연 복구).
+  private swallow(p: Promise<unknown>): void { void p.catch(() => {}); }
 
   async start(): Promise<void> {
     const store = useAppStore.getState();
@@ -25,7 +29,7 @@ export class Controller {
     });
     this.ws = this.makeWs(this.api.baseUrl, this.token ?? '', {
       onEvent: (e) => this.handleEvent(e),
-      onOpen: () => { useAppStore.getState().set({ connected: true }); void this.reconcile(); },
+      onOpen: () => { useAppStore.getState().set({ connected: true }); this.swallow(this.reconcile()); },
       onDown: () => useAppStore.getState().set({ connected: false }),
     });
   }
@@ -39,10 +43,10 @@ export class Controller {
         store.upsertMessages(e.message.channelId, [e.message]);
         break;
       case 'inbox.updated':
-        if (e.accountId === store.me?.id) void this.refreshUnread();
+        if (e.accountId === store.me?.id) this.swallow(this.refreshUnread());
         break;
       case 'lease.changed':
-        void this.api.leases().then((leases) => useAppStore.getState().set({ leases }));
+        this.swallow(this.api.leases().then((leases) => useAppStore.getState().set({ leases })));
         break;
       case 'presence.snapshot':
         store.set({ online: e.online });
@@ -67,8 +71,11 @@ export class Controller {
     useAppStore.getState().set({ leases: await this.api.leases() });
   }
 
+  // 단조 버전 가드 — 나중에 발행됐지만 먼저 도착한 응답만 반영되도록, stale 응답은 버린다.
   private async refreshUnread(): Promise<void> {
-    useAppStore.getState().set({ unread: await this.api.inboxUnread() });
+    const seq = ++this.unreadFetchSeq;
+    const entries = await this.api.inboxUnread();
+    if (seq === this.unreadFetchSeq) useAppStore.getState().set({ unread: entries });
   }
 
   async openChannel(channelId: string): Promise<void> {

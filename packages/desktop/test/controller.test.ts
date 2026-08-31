@@ -59,6 +59,34 @@ describe('Controller', () => {
     expect(useAppStore.getState().online).toEqual(['u2']);
   });
 
+  it('refreshUnread ignores a stale response that arrives after a newer one', async () => {
+    const entries2 = [{ id: 2, messageId: 'm2', reason: 'mention' as const, readAt: null, channelId: 'c1' }];
+    let resolveStale: ((v: typeof entries2) => void) | null = null;
+    let call = 0;
+    const api = fakeApi({
+      inboxUnread: vi.fn(() => {
+        call += 1;
+        if (call === 1) return Promise.resolve([]); // start()의 초기 로드
+        if (call === 2) return new Promise<typeof entries2>((resolve) => { resolveStale = resolve; }); // 먼저 발행, 나중에 도착
+        return Promise.resolve(entries2); // 나중에 발행, 먼저 도착
+      }),
+    });
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+
+    callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' }); // call #2 — 응답 지연
+    callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' }); // call #3 — 즉시 resolve
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(useAppStore.getState().unread).toEqual(entries2);
+
+    resolveStale!([{ id: 1, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c1' }]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(useAppStore.getState().unread).toEqual(entries2); // stale 응답이 최신 값을 덮지 않는다
+  });
+
   it('send posts to active channel with idempotency key', async () => {
     const api = fakeApi();
     const { makeWs } = fakeWsFactory();
