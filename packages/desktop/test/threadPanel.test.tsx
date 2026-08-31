@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
 import { ThreadPanel } from '../src/components/ThreadPanel';
@@ -54,5 +54,26 @@ describe('ThreadPanel', () => {
     expect(c.reply).toHaveBeenCalledWith('on it');
     fireEvent.click(screen.getByRole('button', { name: '×' }));
     expect(c.closeThread).toHaveBeenCalled();
+  });
+
+  it('ignores whitespace-only input and keeps draft', () => {
+    const c = fakeController();
+    render(<ThreadPanel />);
+    const box = screen.getByPlaceholderText('Reply…') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '   ' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(c.reply).not.toHaveBeenCalled();
+    expect(box.value).toBe('   ');
+  });
+
+  it('restores draft when reply fails', async () => {
+    const c = fakeController();
+    c.reply.mockRejectedValueOnce(new Error('reply failed'));
+    render(<ThreadPanel />);
+    const box = screen.getByPlaceholderText('Reply…') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: 'help me' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(c.reply).toHaveBeenCalledWith('help me');
+    await waitFor(() => expect(box.value).toBe('help me'));
   });
 });
