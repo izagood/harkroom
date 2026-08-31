@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: murmur
+      POSTGRES_PASSWORD: murmur
+      POSTGRES_DB: murmur
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  # avcs 서버는 별도 프로세스로 구동하고 AVCS_BASE_URL로 연결한다. 프로토콜 스펙 구현 서버가
+  # 공개되면 세 번째 서비스로 추가 예정.
+  server:
+    build:
+      context: .
+      dockerfile: packages/server/Dockerfile
+    environment:
+      DATABASE_URL: postgres://murmur:murmur@postgres:5432/murmur
+      AVCS_BASE_URL: ${AVCS_BASE_URL:-}
+    ports:
+      - "3400:3400"
+    depends_on:
+      - postgres
+volumes:
+  pgdata:
