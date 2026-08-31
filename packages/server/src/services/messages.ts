@@ -137,3 +137,13 @@ export async function markInboxRead(pool: Pool, accountId: string, ids: number[]
     [accountId, ids],
   );
 }
+
+export async function searchMessages(pool: Pool, query: string, limit = 50): Promise<MessageRow[]> {
+  const res = await pool.query(
+    `select ${COLS} from message
+     where search @@ websearch_to_tsquery('simple', $1) and deleted_at is null
+     order by seq desc limit $2`,
+    [query, Math.min(limit, 100)],
+  );
+  return res.rows;
+}

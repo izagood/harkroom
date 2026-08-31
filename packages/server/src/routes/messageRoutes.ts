@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { listInbox, listMessages, markInboxRead, postMessage } from '../services/messages.js';
+import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 
 export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.post('/channels/:id/messages', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -36,5 +36,10 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     const body = z.object({ ids: z.array(z.number().int()).min(1) }).parse(req.body);
     await markInboxRead(pool, req.account!.id, body.ids);
     return reply.code(204).send();
+  });
+
+  app.get('/search', { preHandler: app.requireAccount }, async (req) => {
+    const q = z.object({ q: z.string().min(1).max(256) }).parse(req.query);
+    return { messages: await searchMessages(pool, q.q) };
   });
 }
