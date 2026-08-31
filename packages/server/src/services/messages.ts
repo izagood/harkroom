@@ -123,9 +123,11 @@ export async function listInbox(
   pool: Pool, accountId: string, opts: { unreadOnly?: boolean },
 ): Promise<InboxEntry[]> {
   const res = await pool.query(
-    `select id::int as id, message_id as "messageId", reason, read_at as "readAt"
-     from inbox where account_id = $1 ${opts.unreadOnly ? 'and read_at is null' : ''}
-     order by id`,
+    `select i.id::int as id, i.message_id as "messageId", i.reason, i.read_at as "readAt",
+            m.channel_id as "channelId"
+     from inbox i join message m on m.id = i.message_id
+     where i.account_id = $1 ${opts.unreadOnly ? 'and i.read_at is null' : ''}
+     order by i.id`,
     [accountId],
   );
   return res.rows;
