@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
+import { LeasePanel } from './LeasePanel';
 
 function UnreadBadge({ channelId }: { channelId: string }) {
   const unread = useAppStore((s) => s.unread);
@@ -80,6 +81,7 @@ export function Sidebar({ onLogout }: { onLogout: () => void }) {
             ))
           )}
         </div>
+        <LeasePanel />
       </nav>
       <div className="flex items-center gap-2 border-t border-zinc-800 p-3 text-xs">
         <span className="font-medium">@{me?.handle}</span>
