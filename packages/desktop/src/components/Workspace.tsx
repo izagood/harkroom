@@ -1,5 +1,6 @@
 import { useAppStore } from '../state/appStore';
 import { Sidebar } from './Sidebar';
+import { ChannelPane } from './ChannelPane';
 
 export function Workspace({ onLogout }: { onLogout: () => void }) {
   const threadRootId = useAppStore((s) => s.threadRootId);
@@ -7,7 +8,7 @@ export function Workspace({ onLogout }: { onLogout: () => void }) {
   return (
     <div className="flex h-screen text-sm">
       <Sidebar onLogout={onLogout} />
-      <main className="flex-1" data-testid="channel-pane" />
+      <ChannelPane />
     </div>
   );
 }
