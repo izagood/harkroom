@@ -138,12 +138,20 @@ export async function markInboxRead(pool: Pool, accountId: string, ids: number[]
   );
 }
 
-export async function searchMessages(pool: Pool, query: string, limit = 50): Promise<MessageRow[]> {
+export async function searchMessages(
+  pool: Pool, requesterId: string, query: string, limit = 50,
+): Promise<MessageRow[]> {
   const res = await pool.query(
-    `select ${COLS} from message
-     where search @@ websearch_to_tsquery('simple', $1) and deleted_at is null
-     order by seq desc limit $2`,
-    [query, Math.min(limit, 100)],
+    `select m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
+       m.author_id as "authorId", m.body, m.kind, m.meta, m.created_at as "createdAt"
+     from message m
+     join channel c on c.id = m.channel_id
+     where m.search @@ websearch_to_tsquery('simple', $1) and m.deleted_at is null
+       and (c.kind = 'standard' or exists (
+         select 1 from channel_member cm where cm.channel_id = c.id and cm.account_id = $3
+       ))
+     order by m.seq desc limit $2`,
+    [query, Math.min(limit, 100), requesterId],
   );
   return res.rows;
 }

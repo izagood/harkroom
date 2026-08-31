@@ -176,23 +176,36 @@ export class ProjectionWorker {
     this.loop = (async () => {
       let backoffMs = 1_000;
       while (this.running) {
+        let hadFailure = false;
         try {
           const bound = await listBoundRepos(this.deps.pool);
+          // repo 단위 try/catch — 한 repo가 연속 실패해도 같은 사이클의 나머지 repo 처리를
+          // 막지 않는다(감사 ⑥). 백오프는 단순화를 위해 사이클 전체에 한 번만 적용한다.
           for (const { repo, channelId } of bound) {
-            const cur = await this.deps.pool.query(
-              `select last_log_index from projection_cursor where repo = $1`, [repo],
-            );
-            const since = cur.rowCount ? Number(cur.rows[0].last_log_index) : 0;
-            const changed = await this.deps.avcs.waitForChange(repo, since, pollMs);
-            this.connected = true;
-            if (changed) await this.runOnce(repo, channelId);
+            try {
+              const cur = await this.deps.pool.query(
+                `select last_log_index from projection_cursor where repo = $1`, [repo],
+              );
+              const since = cur.rowCount ? Number(cur.rows[0].last_log_index) : 0;
+              const changed = await this.deps.avcs.waitForChange(repo, since, pollMs);
+              this.connected = true;
+              if (changed) await this.runOnce(repo, channelId);
+            } catch {
+              this.connected = false;
+              hadFailure = true;
+            }
           }
           if (!bound.length) await new Promise((r) => setTimeout(r, pollMs));
-          backoffMs = 1_000;
         } catch {
+          // listBoundRepos 자체 실패(예: DB 다운) — 사이클 전체 실패로 취급.
           this.connected = false;
+          hadFailure = true;
+        }
+        if (hadFailure) {
           await new Promise((r) => setTimeout(r, backoffMs));
           backoffMs = Math.min(backoffMs * 2, 60_000);
+        } else {
+          backoffMs = 1_000;
         }
       }
     })();

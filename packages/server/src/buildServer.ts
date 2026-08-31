@@ -23,6 +23,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     reply.code(500).send({ error: { code: 'internal', message: err.message } });
   });
 
+  app.setNotFoundHandler((req, reply) => {
+    reply.code(404).send({ error: { code: 'not_found', message: `route not found: ${req.method} ${req.url}` } });
+  });
+
   app.get('/healthz', async () => ({
     ok: true,
     avcs: deps.getAvcsStatus?.() ?? { connected: false },

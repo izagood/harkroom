@@ -5,7 +5,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { AccountView } from '@murmur/shared';
 import { emitEvent, onEvent } from '../events.js';
-import { dmMemberIds, listChannels } from '../services/channels.js';
+import { assertChannelVisible, dmMemberIds, listChannels } from '../services/channels.js';
 import { listInbox, listMessages, postMessage, searchMessages } from '../services/messages.js';
 import { GUIDE } from './guide.js';
 
@@ -32,13 +32,17 @@ function buildMcpServer(pool: Pool, account: AccountView): McpServer {
       since: z.number().int().min(0).optional(),
       threadRootId: z.string().uuid().optional(),
     },
-  }, async ({ channelId, since, threadRootId }) =>
-    jsonResult({ messages: await listMessages(pool, channelId, { since, threadRootId: threadRootId ?? null }) }));
+  }, async ({ channelId, since, threadRootId }) => {
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    return jsonResult({ messages: await listMessages(pool, channelId, { since, threadRootId: threadRootId ?? null }) });
+  });
 
   server.registerTool('message.search', {
     description: '메시지 전문 검색',
     inputSchema: { query: z.string().min(1).max(256) },
-  }, async ({ query }) => jsonResult({ messages: await searchMessages(pool, query) }));
+  }, async ({ query }) => jsonResult({ messages: await searchMessages(pool, account.id, query) }));
 
   server.registerTool('message.post', {
     description: '채널 또는 스레드에 메시지 발화',
@@ -48,6 +52,9 @@ function buildMcpServer(pool: Pool, account: AccountView): McpServer {
       threadRootId: z.string().uuid().optional(),
     },
   }, async ({ channelId, body, threadRootId }) => {
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
     const { message, notified, replayed } = await postMessage(pool, {
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
     });
@@ -115,6 +122,18 @@ function buildMcpServer(pool: Pool, account: AccountView): McpServer {
       threadRootMessageId: z.string().uuid(),
     },
   }, async ({ repo, intentOid, threadRootMessageId }) => {
+    const msg = await pool.query(`select channel_id from message where id = $1`, [threadRootMessageId]);
+    if (!msg.rowCount) {
+      return jsonResult({ error: { code: 'invalid_thread', message: 'thread root message does not exist' } });
+    }
+    const boundChannel = await pool.query(
+      `select id from channel where repo = $1 and kind = 'standard'`, [repo],
+    );
+    if (!boundChannel.rowCount || boundChannel.rows[0].id !== msg.rows[0].channel_id) {
+      return jsonResult({
+        error: { code: 'invalid_thread', message: 'thread root message does not belong to a channel bound to this repo' },
+      });
+    }
     await pool.query(
       `insert into work_thread (repo, intent_oid, thread_root_message_id) values ($1, $2, $3)
        on conflict (repo, intent_oid) do update set thread_root_message_id = excluded.thread_root_message_id`,

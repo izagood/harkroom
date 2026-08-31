@@ -7,6 +7,12 @@ services:
       POSTGRES_DB: murmur
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U murmur -d murmur"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
   # avcs 서버는 별도 프로세스로 구동하고 AVCS_BASE_URL로 연결한다. 프로토콜 스펙 구현 서버가
   # 공개되면 세 번째 서비스로 추가 예정.
   server:
@@ -19,6 +25,8 @@ services:
     ports:
       - "3400:3400"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 volumes:
   pgdata:

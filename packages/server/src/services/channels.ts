@@ -62,3 +62,15 @@ export async function dmMemberIds(pool: Pool, channelId: string): Promise<string
   const res = await pool.query(`select account_id from channel_member where channel_id = $1`, [channelId]);
   return res.rows.map((r) => r.account_id);
 }
+
+// dm 채널은 멤버만 읽고 쓸 수 있다. standard 채널(또는 존재하지 않는 채널 id — 이후
+// 단계에서 별도로 실패한다)은 항상 visible로 취급한다.
+export async function assertChannelVisible(pool: Pool, channelId: string, accountId: string): Promise<boolean> {
+  const channel = await pool.query(`select kind from channel where id = $1`, [channelId]);
+  if (channel.rows[0]?.kind !== 'dm') return true;
+  const member = await pool.query(
+    `select 1 from channel_member where channel_id = $1 and account_id = $2`,
+    [channelId, accountId],
+  );
+  return Boolean(member.rowCount);
+}

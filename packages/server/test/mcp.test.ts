@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import type { Pool } from 'pg';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startTestDb } from './helpers/testDb.js';
@@ -8,6 +9,7 @@ import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
+let pool: Pool;
 let adminToken: string;
 let botPat: string;
 let channelId: string;
@@ -16,6 +18,7 @@ let mcpUrl: string;
 beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
+  pool = db.pool;
   app = await buildServer({ pool: db.pool });
   ({ token: adminToken } = await bootstrapAdmin(app));
   ({ pat: botPat } = await createAgent(app, adminToken, 'mcpbot'));
@@ -68,6 +71,38 @@ describe('mcp surface', () => {
       arguments: { repo: 'mcp-repo', intentOid: 'i-77', threadRootMessageId: posted.message.id },
     }));
     expect(linked).toEqual({ ok: true });
+    await client.close();
+  });
+
+  it('work.link rejects a thread root that belongs to a different channel (감사 ②)', async () => {
+    const otherCh = await app.inject({
+      method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: 'other-ch' },
+    });
+    const otherChannelId = otherCh.json().id;
+    const otherMsg = await app.inject({
+      method: 'POST', url: `/channels/${otherChannelId}/messages`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { body: 'root in a channel not bound to mcp-repo' },
+    });
+
+    const client = await mcpClient(botPat);
+    const mismatched = text(await client.callTool({
+      name: 'work.link',
+      arguments: { repo: 'mcp-repo', intentOid: 'i-wrong-channel', threadRootMessageId: otherMsg.json().id },
+    })) as { error?: { code: string } };
+    expect(mismatched.error?.code).toBe('invalid_thread');
+
+    const missing = text(await client.callTool({
+      name: 'work.link',
+      arguments: { repo: 'mcp-repo', intentOid: 'i-missing-root', threadRootMessageId: '00000000-0000-0000-0000-000000000000' },
+    })) as { error?: { code: string } };
+    expect(missing.error?.code).toBe('invalid_thread');
+
+    const wt = await pool.query(
+      `select 1 from work_thread where repo = 'mcp-repo' and intent_oid in ('i-wrong-channel', 'i-missing-root')`,
+    );
+    expect(wt.rowCount).toBe(0);
     await client.close();
   });
 

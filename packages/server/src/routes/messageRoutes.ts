@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { emitEvent } from '../events.js';
-import { dmMemberIds } from '../services/channels.js';
+import { assertChannelVisible, dmMemberIds } from '../services/channels.js';
 import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 
 export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
@@ -12,6 +12,9 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
       body: z.string().min(1).max(8000),
       threadRootId: z.string().uuid().optional(),
     }).parse(req.body);
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
     const idempotencyKey = (req.headers['idempotency-key'] as string | undefined) ?? null;
     const { message, notified, replayed } = await postMessage(pool, {
       channelId: id, authorId: req.account!.id, body: body.body,
@@ -27,12 +30,15 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     return reply.code(replayed ? 200 : 201).send(message);
   });
 
-  app.get('/channels/:id/messages', { preHandler: app.requireAccount }, async (req) => {
+  app.get('/channels/:id/messages', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const q = z.object({
       since: z.coerce.number().int().min(0).optional(),
       thread: z.string().uuid().optional(),
     }).parse(req.query);
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
     return { messages: await listMessages(pool, id, { since: q.since, threadRootId: q.thread ?? null }) };
   });
 
@@ -49,6 +55,6 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
 
   app.get('/search', { preHandler: app.requireAccount }, async (req) => {
     const q = z.object({ q: z.string().min(1).max(256) }).parse(req.query);
-    return { messages: await searchMessages(pool, q.q) };
+    return { messages: await searchMessages(pool, req.account!.id, q.q) };
   });
 }

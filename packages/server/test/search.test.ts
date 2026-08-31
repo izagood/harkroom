@@ -10,6 +10,7 @@ let app: FastifyInstance;
 let stop: () => Promise<void>;
 let pool: Pool;
 let adminToken: string;
+let adminId: string;
 let channelId: string;
 
 beforeAll(async () => {
@@ -17,7 +18,7 @@ beforeAll(async () => {
   stop = db.stop;
   pool = db.pool;
   app = await buildServer({ pool });
-  ({ token: adminToken } = await bootstrapAdmin(app));
+  ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
   const ch = await app.inject({
     method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
     payload: { name: 'general' },
@@ -45,8 +46,8 @@ describe('search', () => {
     expect(bodies).toEqual(['pipeline failed again', 'deploy pipeline is green']); // newest first, seq desc
 
     // Test 2: limit parameter works (before soft delete, when 2 messages match)
-    const allResults = await searchMessages(pool, 'pipeline');
-    const limitedResults = await searchMessages(pool, 'pipeline', 1);
+    const allResults = await searchMessages(pool, adminId, 'pipeline');
+    const limitedResults = await searchMessages(pool, adminId, 'pipeline', 1);
     expect(allResults).toHaveLength(2);
     expect(limitedResults).toHaveLength(1);
   });
