@@ -1,0 +1,93 @@
+import { useMemo, useState } from 'react';
+import { useAppStore } from '../state/appStore';
+import { getController } from '../state/controller';
+
+function UnreadBadge({ channelId }: { channelId: string }) {
+  const unread = useAppStore((s) => s.unread);
+  const count = unread.filter((e) => e.channelId === channelId && !e.readAt).length;
+  if (!count) return null;
+  return (
+    <span data-testid={`unread-${channelId}`}
+      className="ml-auto rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white">
+      {count}
+    </span>
+  );
+}
+
+export function Sidebar({ onLogout }: { onLogout: () => void }) {
+  const { me, accounts, channels, dms, online, connected, activeChannelId } = useAppStore();
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const dmPeers = useMemo(() =>
+    dms.map((dm) => {
+      const peers = dm.memberIds.filter((id) => id !== me?.id);
+      return {
+        id: dm.id,
+        label: peers.map((id) => accounts[id]?.handle ?? '…').join(', ') || 'just me',
+        online: peers.some((id) => online.includes(id)),
+      };
+    }), [dms, accounts, me, online]);
+
+  const others = Object.values(accounts).filter((a) => a.id !== me?.id);
+  const row = (active: boolean) =>
+    `flex w-full items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-zinc-700 ${active ? 'bg-zinc-700' : ''}`;
+
+  return (
+    <aside className="flex w-60 flex-col bg-zinc-900 text-zinc-200">
+      <div className="flex items-center gap-2 border-b border-zinc-800 p-3 font-bold">
+        murmur
+        <span className={`h-2 w-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}
+          title={connected ? 'connected' : 'disconnected'} />
+      </div>
+      <nav className="flex-1 space-y-4 overflow-y-auto p-2">
+        <div>
+          <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">Channels</div>
+          {channels.map((ch) => (
+            <button key={ch.id} className={row(ch.id === activeChannelId)}
+              onClick={() => void getController().openChannel(ch.id)}>
+              <span className="text-zinc-500">#</span>{ch.name}
+              {ch.repo && <span className="rounded bg-zinc-800 px-1 text-[10px] text-zinc-400">{ch.repo}</span>}
+              <UnreadBadge channelId={ch.id} />
+            </button>
+          ))}
+        </div>
+        <div>
+          <div className="flex items-center px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">
+            Direct messages
+            <button className="ml-auto rounded px-1 hover:bg-zinc-700" onClick={() => setPickerOpen((v) => !v)}>
+              + New
+            </button>
+          </div>
+          {pickerOpen ? (
+            <div className="mb-1 rounded border border-zinc-700 bg-zinc-800 p-1">
+              {others.map((a) => (
+                <button key={a.id} className={row(false)}
+                  onClick={() => { setPickerOpen(false); void getController().startDm(a.id); }}>
+                  {a.handle}
+                  <span className="text-[10px] text-zinc-500">{a.kind}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            dmPeers.map((dm) => (
+              <button key={dm.id} className={row(dm.id === activeChannelId)}
+                onClick={() => void getController().openChannel(dm.id)}>
+                <span data-testid={`presence-${dm.id}`} data-online={String(dm.online)}
+                  className={`h-2 w-2 rounded-full ${dm.online ? 'bg-green-500' : 'bg-zinc-600'}`} />
+                {dm.label}
+                <UnreadBadge channelId={dm.id} />
+              </button>
+            ))
+          )}
+        </div>
+      </nav>
+      <div className="flex items-center gap-2 border-t border-zinc-800 p-3 text-xs">
+        <span className="font-medium">@{me?.handle}</span>
+        <button className="ml-auto text-zinc-400 underline"
+          onClick={() => { getController().logout(); onLogout(); }}>
+          Sign out
+        </button>
+      </div>
+    </aside>
+  );
+}

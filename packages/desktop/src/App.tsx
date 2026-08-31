@@ -4,10 +4,7 @@ import { connectWs } from './lib/ws';
 import { sessionStore } from './lib/session';
 import { Controller, setController } from './state/controller';
 import { ConnectScreen } from './screens/ConnectScreen';
-
-function Workspace() {
-  return <div data-testid="workspace" />; // Task 7에서 교체
-}
+import { Workspace } from './components/Workspace';
 
 async function startSession(baseUrl: string, token: string): Promise<void> {
   const api = new ApiClient(baseUrl, token);
@@ -42,5 +39,5 @@ export default function App() {
       />
     );
   }
-  return <Workspace />;
+  return <Workspace onLogout={() => setPhase('connect')} />;
 }
