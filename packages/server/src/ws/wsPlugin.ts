@@ -1,6 +1,7 @@
 import websocket from '@fastify/websocket';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
+import type { WsServerEvent } from '@murmur/shared';
 import { hashToken } from '../auth/tokens.js';
 import { emitEvent, onEvent, type WorkspaceEvent } from '../events.js';
 
@@ -18,6 +19,8 @@ function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
       return e.audience === 'all' || e.audience.includes(accountId);
     case 'inbox.updated':
       return e.accountId === accountId;
+    case 'presence.changed':
+      return true;
     default:
       return true;
   }
@@ -25,6 +28,7 @@ function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
 
 export async function registerWs(app: FastifyInstance, pool: Pool): Promise<void> {
   await app.register(websocket);
+  const connections = new Map<string, number>(); // accountId → live socket count
 
   app.get('/ws', { websocket: true }, async (socket, req) => {
     // Registered before the auth await so a disconnect during resolveAccountId is observed even
@@ -42,11 +46,22 @@ export async function registerWs(app: FastifyInstance, pool: Pool): Promise<void
     const off = onEvent((e) => {
       if (visibleTo(e, accountId)) socket.send(JSON.stringify(e));
     });
-    emitEvent({ type: 'presence.changed', accountId, online: true });
+
+    const count = (connections.get(accountId) ?? 0) + 1;
+    connections.set(accountId, count);
+    if (count === 1) emitEvent({ type: 'presence.changed', accountId, online: true });
+    const snapshot: WsServerEvent = { type: 'presence.snapshot', online: [...connections.keys()] };
+    socket.send(JSON.stringify(snapshot));
 
     socket.on('close', () => {
       off();
-      emitEvent({ type: 'presence.changed', accountId, online: false });
+      const left = (connections.get(accountId) ?? 1) - 1;
+      if (left <= 0) {
+        connections.delete(accountId);
+        emitEvent({ type: 'presence.changed', accountId, online: false });
+      } else {
+        connections.set(accountId, left);
+      }
     });
   });
 }
