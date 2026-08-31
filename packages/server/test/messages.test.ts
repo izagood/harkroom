@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { listMessages } from '../src/services/messages.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
+let pool: Pool;
 let adminToken: string;
 let botPat: string;
 let channelId: string;
@@ -13,6 +16,7 @@ let channelId: string;
 beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
+  pool = db.pool;
   app = await buildServer({ pool: db.pool });
   const admin = await bootstrapAdmin(app);
   adminToken = admin.token;
@@ -75,6 +79,24 @@ describe('messages', () => {
     });
     const reasons = inbox.json().entries.map((e: { reason: string }) => e.reason);
     expect(reasons).toContain('thread_reply');
+  });
+
+  it('since=0 (initial load) returns the latest N messages, not the oldest', async () => {
+    const ch = await app.inject({
+      method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: 'latest-window' },
+    });
+    const chId = ch.json().id as string;
+    for (let i = 1; i <= 5; i += 1) {
+      await app.inject({
+        method: 'POST', url: `/channels/${chId}/messages`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { body: `m${i}` },
+      });
+    }
+    const latest = await listMessages(pool, chId, { limit: 2 });
+    expect(latest.map((m) => m.body)).toEqual(['m4', 'm5']);
+    expect(latest[0]!.seq).toBeLessThan(latest[1]!.seq);
   });
 
   it('inbox read marks entries', async () => {
