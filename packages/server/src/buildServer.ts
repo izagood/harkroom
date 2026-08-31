@@ -6,6 +6,7 @@ import { registerAccountRoutes } from './routes/accountRoutes.js';
 import { registerChannelRoutes } from './routes/channelRoutes.js';
 import { registerMessageRoutes } from './routes/messageRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
+import { registerMcp } from './mcp/mcpPlugin.js';
 
 export interface ServerDeps {
   pool: Pool;
@@ -38,6 +39,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerAccountRoutes(app, deps.pool);
   await registerChannelRoutes(app, deps.pool);
   await registerMessageRoutes(app, deps.pool);
+  await registerMcp(app, deps.pool);
 
   return app;
 }
