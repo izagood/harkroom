@@ -31,4 +31,24 @@ export interface InboxEntry {
   messageId: string;
   reason: 'mention' | 'thread_reply' | 'dm';
   readAt: string | null;
+  channelId: string;
 }
+
+export interface DmView {
+  id: string;
+  memberIds: string[];
+}
+
+export interface LeaseRow {
+  repo: string;
+  path: string;
+  actorKeyId: string;
+  expiresAt: string;
+}
+
+export type WsServerEvent =
+  | { type: 'message.created'; message: MessageRow; audience: 'all' | string[] }
+  | { type: 'inbox.updated'; accountId: string }
+  | { type: 'lease.changed'; repo: string }
+  | { type: 'presence.changed'; accountId: string; online: boolean }
+  | { type: 'presence.snapshot'; online: string[] };
