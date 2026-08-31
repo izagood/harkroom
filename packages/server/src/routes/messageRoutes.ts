@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
+import { emitEvent } from '../events.js';
+import { dmMemberIds } from '../services/channels.js';
 import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 
 export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
@@ -11,10 +13,17 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
       threadRootId: z.string().uuid().optional(),
     }).parse(req.body);
     const idempotencyKey = (req.headers['idempotency-key'] as string | undefined) ?? null;
-    const { message, replayed } = await postMessage(pool, {
+    const { message, notified, replayed } = await postMessage(pool, {
       channelId: id, authorId: req.account!.id, body: body.body,
       threadRootId: body.threadRootId ?? null, idempotencyKey,
     });
+    if (!replayed) {
+      const channel = await pool.query(`select kind from channel where id = $1`, [id]);
+      const audience: 'all' | string[] =
+        channel.rows[0]?.kind === 'dm' ? await dmMemberIds(pool, id) : 'all';
+      emitEvent({ type: 'message.created', message, audience });
+      for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+    }
     return reply.code(replayed ? 200 : 201).send(message);
   });
 
