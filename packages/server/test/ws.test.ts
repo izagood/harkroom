@@ -71,4 +71,28 @@ describe('websocket', () => {
       bot.events.some((e: any) => e.type === 'inbox.updated'));
     admin.close(); bot.close();
   });
+
+  it('sends presence.snapshot on connect and gates presence.changed by transition', async () => {
+    const a = collect(adminToken);
+    await a.ready;
+    await waitFor(() => a.events.some((e: any) => e.type === 'presence.snapshot'));
+    const snap = a.events.find((e: any) => e.type === 'presence.snapshot') as any;
+    expect(Array.isArray(snap.online)).toBe(true);
+
+    // 같은 계정 두 번째 연결 → 첫 소켓에 presence.changed(online:true)가 다시 오지 않는다
+    const before = a.events.filter((e: any) => e.type === 'presence.changed').length;
+    const a2 = collect(adminToken);
+    await a2.ready;
+    await waitFor(() => a2.events.some((e: any) => e.type === 'presence.snapshot'));
+    const after = a.events.filter((e: any) => e.type === 'presence.changed').length;
+    expect(after).toBe(before); // 전이 없음(이미 online)
+    a2.close();
+    await new Promise((r) => setTimeout(r, 100));
+    // 아직 첫 연결이 남아 있으므로 offline 전이도 없다
+    const after2 = a.events.filter(
+      (e: any) => e.type === 'presence.changed' && e.online === false,
+    ).length;
+    expect(after2).toBe(0);
+    a.close();
+  });
 });

@@ -5,7 +5,8 @@ export type WorkspaceEvent =
   | { type: 'message.created'; message: MessageRow; audience: 'all' | string[] }
   | { type: 'inbox.updated'; accountId: string }
   | { type: 'lease.changed'; repo: string }
-  | { type: 'presence.changed'; accountId: string; online: boolean };
+  | { type: 'presence.changed'; accountId: string; online: boolean }
+  | { type: 'presence.snapshot'; online: string[] };
 
 const bus = new EventEmitter();
 bus.setMaxListeners(1000);
