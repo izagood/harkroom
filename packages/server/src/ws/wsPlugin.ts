@@ -1,6 +1,7 @@
 import websocket from '@fastify/websocket';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
+import type { WsServerEvent } from '@murmur/shared';
 import { hashToken } from '../auth/tokens.js';
 import { emitEvent, onEvent, type WorkspaceEvent } from '../events.js';
 
@@ -18,8 +19,6 @@ function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
       return e.audience === 'all' || e.audience.includes(accountId);
     case 'inbox.updated':
       return e.accountId === accountId;
-    case 'presence.snapshot':
-      return true;
     case 'presence.changed':
       return true;
     default:
@@ -51,7 +50,8 @@ export async function registerWs(app: FastifyInstance, pool: Pool): Promise<void
     const count = (connections.get(accountId) ?? 0) + 1;
     connections.set(accountId, count);
     if (count === 1) emitEvent({ type: 'presence.changed', accountId, online: true });
-    socket.send(JSON.stringify({ type: 'presence.snapshot', online: [...connections.keys()] }));
+    const snapshot: WsServerEvent = { type: 'presence.snapshot', online: [...connections.keys()] };
+    socket.send(JSON.stringify(snapshot));
 
     socket.on('close', () => {
       off();
