@@ -4,6 +4,7 @@ import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
 import { registerChannelRoutes } from './routes/channelRoutes.js';
+import { registerMessageRoutes } from './routes/messageRoutes.js';
 
 export interface ServerDeps {
   pool: Pool;
@@ -34,6 +35,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerAuthRoutes(app, deps.pool);
   await registerAccountRoutes(app, deps.pool);
   await registerChannelRoutes(app, deps.pool);
+  await registerMessageRoutes(app, deps.pool);
 
   return app;
 }
