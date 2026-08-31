@@ -30,6 +30,17 @@ pnpm --filter @murmur/server dev
 
 설계 문서: [docs/design.md](docs/design.md)
 
+## Desktop app
+
+```sh
+pnpm --filter @murmur/desktop dev      # browser dev mode (Vite)
+pnpm --filter @murmur/desktop tauri dev    # native window (requires Rust toolchain)
+pnpm --filter @murmur/desktop tauri build  # distributable binary
+```
+
+On first launch, enter your server URL and sign in (or create the first
+admin account on a fresh server).
+
 ## License
 
 Apache-2.0
