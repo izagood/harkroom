@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import argon2 from 'argon2';
 import { z } from 'zod';
-import { newToken } from '../auth/tokens.js';
+import { newToken, hashToken } from '../auth/tokens.js';
 
 const SESSION_TTL_DAYS = 14;
 
@@ -46,4 +46,34 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
   });
 
   app.get('/auth/me', { preHandler: app.requireAccount }, async (req) => req.account);
+
+  app.post('/auth/register', async (req, reply) => {
+    const body = credentials.extend({ inviteToken: z.string() }).parse(req.body);
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      const inv = await client.query(
+        `select token_hash from invite where token_hash = $1 and used_by is null for update`,
+        [hashToken(body.inviteToken)],
+      );
+      if (!inv.rowCount) {
+        await client.query('rollback');
+        return reply.code(400).send({ error: { code: 'invalid_invite', message: 'invite invalid or used' } });
+      }
+      const pw = await argon2.hash(body.password);
+      const acc = await client.query(
+        `insert into account (handle, display_name, kind, password_hash)
+         values ($1, $2, 'human', $3) returning id`,
+        [body.handle, body.displayName, pw],
+      );
+      await client.query(`update invite set used_by = $1 where token_hash = $2`, [acc.rows[0].id, inv.rows[0].token_hash]);
+      await client.query('commit');
+      return reply.code(201).send({ id: acc.rows[0].id });
+    } catch (err) {
+      await client.query('rollback');
+      throw err;
+    } finally {
+      client.release();
+    }
+  });
 }

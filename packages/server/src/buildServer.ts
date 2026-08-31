@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
+import { registerAccountRoutes } from './routes/accountRoutes.js';
 
 export interface ServerDeps {
   pool: Pool;
@@ -30,6 +31,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   await registerAuth(app, deps.pool);
   await registerAuthRoutes(app, deps.pool);
+  await registerAccountRoutes(app, deps.pool);
 
   return app;
 }
