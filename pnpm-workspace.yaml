@@ -1,0 +1,8 @@
+packages:
+  - packages/*
+allowBuilds:
+  argon2: true
+  cpu-features: true
+  esbuild: true
+  protobufjs: true
+  ssh2: true
