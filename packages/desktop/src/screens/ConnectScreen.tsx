@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ApiClient, ApiError } from '../lib/api';
 
 export function ConnectScreen({ onConnected, initialError = null }: { onConnected: (baseUrl: string, token: string) => void; initialError?: string | null }) {
@@ -9,6 +9,10 @@ export function ConnectScreen({ onConnected, initialError = null }: { onConnecte
   const [bootstrapMode, setBootstrapMode] = useState(false);
   const [error, setError] = useState<string | null>(initialError ?? null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (initialError) setError(initialError);
+  }, [initialError]);
 
   const submit = async () => {
     setBusy(true);
