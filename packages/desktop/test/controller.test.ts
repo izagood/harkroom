@@ -9,8 +9,6 @@ describe('Controller', () => {
   it('start loads directory data and connects ws', async () => {
     const { makeWs, callbacks } = fakeWsFactory();
     const c = new Controller(fakeApi(), makeWs);
-    // 세션 토큰은 ApiClient 내부 상태 — start는 WS용 토큰을 인자로 받지 않고
-    // sessionStore를 읽지도 않는다. Controller 생성 시 토큰을 함께 받도록 구현하라.
     await c.start();
     const s = useAppStore.getState();
     expect(s.me?.handle).toBe('admin');

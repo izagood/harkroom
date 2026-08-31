@@ -110,11 +110,25 @@ export async function listMessages(
     );
     return res.rows;
   }
+  const since = opts.since ?? 0;
+  if (since > 0) {
+    const res = await pool.query(
+      `select ${COLS} from message
+       where channel_id = $1 and seq > $2 and deleted_at is null
+       order by seq limit $3`,
+      [channelId, since, limit],
+    );
+    return res.rows;
+  }
+  // since 미지정(0): 오래된 200개가 아니라 최신 N개를 반환한다 (반환 순서는 seq 오름차순 유지)
   const res = await pool.query(
-    `select ${COLS} from message
-     where channel_id = $1 and seq > $2 and deleted_at is null
-     order by seq limit $3`,
-    [channelId, opts.since ?? 0, limit],
+    `select * from (
+       select ${COLS} from message
+       where channel_id = $1 and deleted_at is null
+       order by seq desc limit $2
+     ) latest
+     order by seq`,
+    [channelId, limit],
   );
   return res.rows;
 }

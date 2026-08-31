@@ -1,4 +1,5 @@
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
+import cors from '@fastify/cors';
 import type { Pool } from 'pg';
 import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
@@ -26,6 +27,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   app.setNotFoundHandler((req, reply) => {
     reply.code(404).send({ error: { code: 'not_found', message: `route not found: ${req.method} ${req.url}` } });
+  });
+
+  await app.register(cors, {
+    origin: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    allowedHeaders: ['content-type', 'authorization', 'idempotency-key'],
   });
 
   app.get('/healthz', async () => ({
