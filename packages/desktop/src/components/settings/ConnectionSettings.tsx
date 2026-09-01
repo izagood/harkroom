@@ -1,10 +1,12 @@
-import { sessionStore } from '../../lib/session';
 import { useAppStore } from '../../state/appStore';
+import { getController } from '../../state/controller';
 import { ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
 
 export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
   const connected = useAppStore((s) => s.connected);
-  const baseUrl = sessionStore.load()?.baseUrl ?? '—';
+  // 보관된 값이 아니라 **지금 붙어 있는** 주소를 보여준다. 키체인 읽기가 비동기가 되면서
+  // 렌더 중에 읽을 수 없게 됐고, 어차피 사용자가 알고 싶은 것은 실제 연결 대상이다.
+  const baseUrl = getController().api.baseUrl || '—';
 
   return (
     <SettingsPage title="Connection" description="The murmur server this app talks to.">
