@@ -6,6 +6,7 @@ import { getController } from '../state/controller';
 export function MessageItem({ message, inThread = false }: { message: MessageRow; inThread?: boolean }) {
   const author = useAppStore((s) => s.accounts[message.authorId]);
   const isMine = useAppStore((s) => s.me?.id === message.authorId);
+  const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
   // 스토어는 스레드 답글까지 들고 있다(ChannelPane이 표시 단계에서 거를 뿐). 그래서 답글 수는
   // 서버 필드 없이 여기서 셀 수 있다. 한계: 히스토리 창 밖의 오래된 답글은 세지 않는다.
   const replyCount = useAppStore(
@@ -18,7 +19,11 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
   const avcsType = typeof message.meta.avcsType === 'string' ? message.meta.avcsType : null;
   const time = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   // system 메시지는 avcs 투영의 산물이라 사람이 고칠 수 없다 — 서버도 거절한다.
-  const canMutate = isMine && !isSystem;
+  const canEdit = isMine && !isSystem;
+  // 삭제는 작성자 또는 admin — 서버가 그렇게 허용한다. UI가 작성자만 내주면 잘못 올라간
+  // 비밀·스팸을 치울 경로가 admin 에게 없어, 서버가 열어 둔 조정 수단이 도달 불가가 된다.
+  // 수정은 admin 에게도 열지 않는다: 남의 발언을 고칠 수 있으면 기록이 증거가 못 된다.
+  const canDelete = (isMine || isAdmin) && !isSystem;
 
   const save = () => {
     const next = draft ?? '';
@@ -63,24 +68,24 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
       </div>
 
       <div className="flex shrink-0 items-start gap-1">
-        {canMutate && draft === null && (
-          <>
-            <button className={`${action} ${hoverOnly}`} onClick={() => setDraft(message.body)}>Edit</button>
-            {confirmingDelete ? (
-              // 삭제는 되돌릴 수 없으니 한 번 더 묻는다.
-              <>
-                <button
-                  className="rounded border border-red-300 bg-red-50 px-1.5 text-[11px] text-red-700"
-                  onClick={() => { setConfirmingDelete(false); void getController().deleteMessage(message.id); }}
-                >
-                  Really delete
-                </button>
-                <button className={action} onClick={() => setConfirmingDelete(false)}>Keep</button>
-              </>
-            ) : (
-              <button className={`${action} ${hoverOnly}`} onClick={() => setConfirmingDelete(true)}>Delete</button>
-            )}
-          </>
+        {canEdit && draft === null && (
+          <button className={`${action} ${hoverOnly}`} onClick={() => setDraft(message.body)}>Edit</button>
+        )}
+        {canDelete && draft === null && (
+          confirmingDelete ? (
+            // 삭제는 되돌릴 수 없으니 한 번 더 묻는다.
+            <>
+              <button
+                className="rounded border border-red-300 bg-red-50 px-1.5 text-[11px] text-red-700"
+                onClick={() => { setConfirmingDelete(false); void getController().deleteMessage(message.id); }}
+              >
+                Really delete
+              </button>
+              <button className={action} onClick={() => setConfirmingDelete(false)}>Keep</button>
+            </>
+          ) : (
+            <button className={`${action} ${hoverOnly}`} onClick={() => setConfirmingDelete(true)}>Delete</button>
+          )
         )}
 
         {!inThread && (
