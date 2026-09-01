@@ -113,3 +113,77 @@ describe('GET /metrics', () => {
     expect(text).not.toContain('route="/metrics"');
   });
 });
+
+// 2026-09-01 도그푸딩에서 실제로 난 실패: 사용자가 에이전트를 불렀는데 **러너 프로세스가 죽어**
+// 답이 없었다. 서버는 정상이고 기존 메트릭도 정상이었다 — 어디에도 신호가 없었다.
+// inbox 에 부름이 쌓이는 것만 보였으므로, 그 나이를 게이지로 노출해 침묵을 숫자로 만든다.
+// (투영이 조용히 멈춘 것을 커서 게이지로 보이게 한 것과 같은 종류다.)
+describe('에이전트 백로그 게이지', () => {
+  const oldestFor = (text: string, handle: string): number | null => {
+    const m = new RegExp(`murmur_agent_oldest_unread_seconds\\{handle="${handle}"\\} ([0-9.]+)`).exec(text);
+    return m ? Number(m[1]) : null;
+  };
+
+  it('emits nothing while every call has been handled', async () => {
+    const text = await scrape();
+
+    // 이 파일의 다른 테스트가 만든 에이전트에게는 미처리 부름이 없다.
+    expect(text).not.toContain('murmur_agent_oldest_unread_seconds{handle="metricsbot"}');
+  });
+
+  it('reports how long an agent has left a call unhandled', async () => {
+    const bot = await createAgent(app, adminToken, 'stalledbot');
+    const ch = await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'stalled' },
+    });
+    const msg = await app.inject({
+      method: 'POST', url: `/channels/${ch.json().id}/messages`, headers: auth(adminToken),
+      payload: { body: '@stalledbot 안녕?' },
+    });
+    // 나이를 결정적으로 재려면 시각을 밀어야 한다 — 5분 전에 불린 것으로 만든다.
+    await pool.query(
+      `update inbox set created_at = now() - interval '5 minutes'
+       where message_id = $1 and account_id = (select id from account where handle = 'stalledbot')`,
+      [msg.json().id],
+    );
+
+    const age = oldestFor(await scrape(), 'stalledbot');
+
+    expect(age).not.toBeNull();
+    expect(age!).toBeGreaterThanOrEqual(300);
+    expect(bot.pat).toBeTruthy();
+  });
+
+  it('drops the series once the agent handles the call', async () => {
+    const bot = await createAgent(app, adminToken, 'catchupbot');
+    const ch = await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'catchup' },
+    });
+    await app.inject({
+      method: 'POST', url: `/channels/${ch.json().id}/messages`, headers: auth(adminToken),
+      payload: { body: '@catchupbot ping' },
+    });
+    expect(oldestFor(await scrape(), 'catchupbot')).not.toBeNull();
+
+    const inbox = await app.inject({ method: 'GET', url: '/inbox', headers: auth(bot.pat) });
+    const ids = (inbox.json().entries as { id: number }[]).map((e) => e.id);
+    await app.inject({ method: 'POST', url: '/inbox/read', headers: auth(bot.pat), payload: { ids } });
+
+    expect(oldestFor(await scrape(), 'catchupbot')).toBeNull();
+  });
+
+  // 사람이 멘션을 늦게 읽는 것은 운영 장애가 아니다(자고 있을 수 있다). 여기에 사람을 섞으면
+  // 경보가 늘 울려서 경보가 신호를 잃는다.
+  it('leaves humans out — a person reading late is not an outage', async () => {
+    const ch = await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'human-mention' },
+    });
+    const bot = await createAgent(app, adminToken, 'callerbot');
+    await app.inject({
+      method: 'POST', url: `/channels/${ch.json().id}/messages`, headers: auth(bot.pat),
+      payload: { body: '@admin 봐주세요' },
+    });
+
+    expect(oldestFor(await scrape(), 'admin')).toBeNull();
+  });
+});
