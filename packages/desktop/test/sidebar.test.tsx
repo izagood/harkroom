@@ -35,7 +35,7 @@ afterEach(() => {
 describe('Sidebar', () => {
   it('lists channels with unread badge and opens on click', () => {
     const c = fakeController();
-    render(<Sidebar onLogout={vi.fn()} />);
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
     expect(screen.getByText('general')).toBeTruthy();
     expect(screen.getByTestId('unread-c2').textContent).toBe('1');
     fireEvent.click(screen.getByText('dev'));
@@ -44,7 +44,7 @@ describe('Sidebar', () => {
 
   it('shows dm with peer handle, presence dot, unread badge', () => {
     fakeController();
-    render(<Sidebar onLogout={vi.fn()} />);
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
     expect(screen.getByText('bot')).toBeTruthy();
     expect(screen.getByTestId('presence-d1').dataset.online).toBe('true');
     expect(screen.getByTestId('unread-d1').textContent).toBe('1');
@@ -52,9 +52,22 @@ describe('Sidebar', () => {
 
   it('starts a new dm from account picker', () => {
     const c = fakeController();
-    render(<Sidebar onLogout={vi.fn()} />);
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: '+ New' }));
     fireEvent.click(screen.getByRole('button', { name: /bot/ }));
     expect(c.startDm).toHaveBeenCalledWith('u2');
+  });
+
+  it('opens settings, and jumps straight to agents from the agents link', () => {
+    fakeController();
+    const onOpenSettings = vi.fn();
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={onOpenSettings} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    // 섹션을 지목하지 않고 연다 — 설정 화면이 기본 섹션을 고른다.
+    expect(onOpenSettings).toHaveBeenCalledWith();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Add or edit agents' }));
+    expect(onOpenSettings).toHaveBeenLastCalledWith('agents');
   });
 });
