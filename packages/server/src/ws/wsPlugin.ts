@@ -3,15 +3,6 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import type { WsServerEvent } from '@murmur/shared';
 
-
-
-
-
-
-
-
-
-
 import { emitEvent, onEvent, type WorkspaceEvent } from '../events.js';
 import { createTicketStore } from './tickets.js';
 import { findInvalidCredentials } from './credentials.js';
