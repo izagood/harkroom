@@ -34,6 +34,7 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   const [query, setQuery] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
   const [stickyByScope, setStickyByScope] = useState<Record<string, string[]>>({});
+  const [picking, setPicking] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   // 삽입 후 커서를 옮겨야 한다. React 는 value 만 되돌리므로 DOM 을 직접 만진다.
   const pendingCaret = useRef<number | null>(null);
@@ -60,8 +61,20 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     [stickyByScope, scopeKey, known],
   );
 
+  // @ 버튼으로 여는 목록. 첫 줄을 보내기 전에도 상대를 정해 둘 수 있어야 한다.
+  // 이미 고정된 상대는 뺀다 — 다시 골라도 달라지는 것이 없다.
+  const pickable = useMemo(
+    () => Object.values(accounts)
+      .filter((a) => a.id !== myId && !sticky.includes(a.handle.toLowerCase()))
+      .sort(rank)
+      .slice(0, MAX_SUGGESTIONS),
+    [accounts, myId, sticky],
+  );
+
+  // 두 목록은 한자리에 뜨고 키보드도 하나다 — 동시에 열리면 Enter 가 어디로 갈지 모른다.
+  const options = picking ? pickable : matches;
   // 후보가 없으면 목록은 없는 것과 같다 — Enter 를 붙잡아 두면 메시지를 못 보낸다.
-  const open = query !== null && matches.length > 0;
+  const open = options.length > 0 && (picking || query !== null);
 
   useLayoutEffect(() => {
     const caret = pendingCaret.current;
@@ -70,8 +83,16 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     ref.current.setSelectionRange(caret, caret);
   }, [draft]);
 
+  const closeLists = () => {
+    setQuery(null);
+    setPicking(false);
+    setActive(0);
+  };
+
   const recompute = (text: string, caret: number | null) => {
     setQuery(caret === null ? null : mentionQueryAt(text, caret));
+    // 글을 쓰기 시작하면 @ 버튼으로 연 목록은 자리를 비켜야 한다.
+    setPicking(false);
     setActive(0);
   };
 
@@ -82,6 +103,15 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     pendingCaret.current = next.caret;
     // 고른 뒤에는 닫는다 — 열린 채로 두면 다음 Enter 가 전송으로 가지 못한다.
     setQuery(null);
+    setActive(0);
+    ref.current?.focus();
+  };
+
+  /** 목록에서 하나 고른다. @ 버튼으로 연 목록은 초안을 건드리지 않고 곧바로 고정한다. */
+  const choose = (handle: string) => {
+    if (!picking) return pick(handle);
+    setStickyByScope((prev) => ({ ...prev, [scopeKey]: [...sticky, handle.toLowerCase()] }));
+    setPicking(false);
     setActive(0);
     ref.current?.focus();
   };
@@ -112,22 +142,22 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     if (open) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setActive((i) => (i + 1) % matches.length);
+        setActive((i) => (i + 1) % options.length);
         return;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setActive((i) => (i - 1 + matches.length) % matches.length);
+        setActive((i) => (i - 1 + options.length) % options.length);
         return;
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
-        pick(matches[active]!.handle);
+        choose(options[active]!.handle);
         return;
       }
       if (e.key === 'Escape') {
         e.preventDefault();
-        setQuery(null);
+        closeLists();
         return;
       }
     }
@@ -145,10 +175,10 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
         <ul
           id={listId}
           role="listbox"
-          aria-label="Mention suggestions"
+          aria-label={picking ? 'Mentions to keep' : 'Mention suggestions'}
           className="absolute bottom-full left-0 z-10 mb-1 max-h-64 w-72 overflow-y-auto rounded border border-zinc-300 bg-white py-1 shadow-lg"
         >
-          {matches.map((a, i) => (
+          {options.map((a, i) => (
             <li key={a.id}>
               <button
                 id={`${listId}-${i}`}
@@ -159,7 +189,7 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
                 // mousedown 을 막지 않으면 클릭 전에 textarea 가 blur 되어 커서 위치가 사라진다.
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseEnter={() => setActive(i)}
-                onClick={() => pick(a.handle)}
+                onClick={() => choose(a.handle)}
               >
                 <span className="font-medium">@{a.handle}</span>
                 {a.kind === 'agent' && (
@@ -216,6 +246,27 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
         }}
         onKeyDown={onKeyDown}
       />
+      <div className="mt-1 flex items-center gap-1">
+        <button
+          type="button"
+          aria-label="Add mention"
+          aria-pressed={picking}
+          className={`rounded px-2 py-0.5 text-sm text-zinc-600 hover:bg-zinc-100 ${
+            picking ? 'bg-zinc-200' : ''
+          }`}
+          // 누르는 동안 textarea 가 blur 되면 커서 자리가 사라진다.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            if (picking) return closeLists();
+            // 자동완성이 열려 있었다면 자리를 넘겨받는다 — 두 목록이 겹치면 안 된다.
+            setQuery(null);
+            setPicking(true);
+            setActive(0);
+          }}
+        >
+          @
+        </button>
+      </div>
     </div>
   );
 }
