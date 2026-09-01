@@ -8,6 +8,7 @@ import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 let app: FastifyInstance;
 let stop: () => Promise<void>;
 let adminToken: string;
+let adminId: string;
 let botPat: string;
 let channelId: string;
 let baseUrl: string;
@@ -16,7 +17,7 @@ beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
   app = await buildServer({ pool: db.pool });
-  ({ token: adminToken } = await bootstrapAdmin(app));
+  ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
   ({ pat: botPat } = await createAgent(app, adminToken, 'wsbot'));
   const ch = await app.inject({
     method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
@@ -85,20 +86,22 @@ describe('websocket', () => {
     const snap = a.events.find((e: any) => e.type === 'presence.snapshot') as any;
     expect(Array.isArray(snap.online)).toBe(true);
 
+    // presence.changed 는 전원에게 브로드캐스트된다(visibleTo 가 true 를 돌려준다) — 그래서
+    // 검사 대상 계정으로 범위를 좁히지 않으면 다른 테스트가 남긴 소켓의 정리가 이 창에 끼어든다.
+    const adminPresence = () =>
+      a.events.filter((e: any) => e.type === 'presence.changed' && e.accountId === adminId);
+
     // 같은 계정 두 번째 연결 → 첫 소켓에 presence.changed(online:true)가 다시 오지 않는다
-    const before = a.events.filter((e: any) => e.type === 'presence.changed').length;
+    const before = adminPresence().length;
     const a2 = collect(adminToken);
     await a2.ready;
     await waitFor(() => a2.events.some((e: any) => e.type === 'presence.snapshot'));
-    const after = a.events.filter((e: any) => e.type === 'presence.changed').length;
+    const after = adminPresence().length;
     expect(after).toBe(before); // 전이 없음(이미 online)
     a2.close();
     await new Promise((r) => setTimeout(r, 100));
     // 아직 첫 연결이 남아 있으므로 offline 전이도 없다
-    const after2 = a.events.filter(
-      (e: any) => e.type === 'presence.changed' && e.online === false,
-    ).length;
-    expect(after2).toBe(0);
+    expect(adminPresence().filter((e: any) => e.online === false)).toHaveLength(0);
     a.close();
   });
 });

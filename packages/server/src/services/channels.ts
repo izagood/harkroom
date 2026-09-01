@@ -13,6 +13,26 @@ export async function createChannel(
   return res.rows[0];
 }
 
+/** 지정된 필드만 갱신한다. `repo: null`은 "바인딩 해제"이고, 키 자체가 없으면 "손대지 않음"이다 —
+ *  둘을 구분하지 못하면 topic만 고치려다 avcs 바인딩이 조용히 끊긴다. */
+export async function updateChannel(
+  pool: Pool, id: string, patch: { topic?: string; repo?: string | null },
+): Promise<ChannelRow | null> {
+  const res = await pool.query(
+    `update channel set
+       topic = case when $2::bool then $3::text else topic end,
+       repo  = case when $4::bool then $5::text else repo  end
+     where id = $1 and kind = 'standard'
+     returning ${COLS}`,
+    [
+      id,
+      patch.topic !== undefined, patch.topic ?? null,
+      patch.repo !== undefined, patch.repo ?? null,
+    ],
+  );
+  return res.rowCount ? res.rows[0] : null;
+}
+
 export async function listChannels(pool: Pool): Promise<ChannelRow[]> {
   const res = await pool.query(`select ${COLS} from channel where kind = 'standard' order by name`);
   return res.rows;
