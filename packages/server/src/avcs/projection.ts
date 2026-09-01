@@ -19,7 +19,9 @@ export async function ensureSystemAccount(pool: Pool): Promise<string> {
 }
 
 async function actorLabel(client: PoolClient, keyId: string | null): Promise<string> {
-  if (!keyId) return '외부 작업자';
+  // 서명자가 없는 객체(checkpoint·release 등)와 모르는 키로 서명된 객체는 다르다.
+  // 둘 다 '외부 작업자'로 적으면 "서명이 없다"가 "외부에서 왔다"는 주장으로 바뀐다.
+  if (!keyId) return '작성자 미상';
   const res = await client.query(
     `select a.handle from account_key k join account a on a.id = k.account_id where k.key_id = $1`,
     [keyId],
@@ -46,7 +48,10 @@ export class ProjectionWorker {
     const before = await pool.query(`select last_log_index from projection_cursor where repo = $1`, [repo]);
     const since: number = before.rowCount ? Number(before.rows[0].last_log_index) : 0;
     const { entries, next } = await avcs.fetchSince(repo, since);
-    if (!entries.length) return 0;
+    // 투영할 게 없어도 커서는 전진해야 한다. avcs 로그에는 투영 대상이 아닌 객체(blob·session·
+    // view …)가 섞여 있고, 그것들만 담긴 배치에서 커서를 세워두면 waitForChange가 영원히
+    // "변경됨"을 돌려주며 백오프 없는 폴 루프가 된다. next === since면 진짜 새 게 없다.
+    if (!entries.length && next <= since) return 0;
 
     const client = await pool.connect();
     try {

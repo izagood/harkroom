@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
-import { startFakeAvcs } from './helpers/fakeAvcsServer.js';
-import { httpAvcsClient, type AvcsServerClient } from '../src/avcs/client.js';
+import { createFakeAvcs, type FakeAvcs } from './helpers/fakeAvcs.js';
+import type { AvcsServerClient } from '../src/avcs/client.js';
 import { ProjectionWorker, ensureSystemAccount } from '../src/avcs/projection.js';
 import { createChannel } from '../src/services/channels.js';
 
@@ -17,19 +17,19 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 
 
 let pool: Pool;
 let stop: () => Promise<void>;
-let fake: Awaited<ReturnType<typeof startFakeAvcs>>;
+let fake: FakeAvcs;
 let worker: ProjectionWorker;
 let channelId: string;
 const REPO = 'proj-repo';
 
 beforeAll(async () => {
   ({ pool, stop } = await startTestDb());
-  fake = await startFakeAvcs();
+  fake = createFakeAvcs();
   const systemAccountId = await ensureSystemAccount(pool);
-  worker = new ProjectionWorker({ pool, avcs: httpAvcsClient(fake.url), systemAccountId });
+  worker = new ProjectionWorker({ pool, avcs: fake.client, systemAccountId });
   channelId = (await createChannel(pool, { name: 'proj', repo: REPO })).id;
 });
-afterAll(async () => { await fake.close(); await stop(); });
+afterAll(async () => { await stop(); });
 
 const messages = async () =>
   (await pool.query(
@@ -55,6 +55,42 @@ describe('projection', () => {
 
     const wt = await pool.query(`select 1 from work_thread where repo = $1 and intent_oid = 'i1'`, [REPO]);
     expect(wt.rowCount).toBe(1);
+  });
+
+  // avcs 로그에는 투영하지 않는 객체(blob·session·view …)가 섞여 있다. 그것들만 담긴 배치에서
+  // 커서가 전진하지 않으면 waitForChange가 계속 "변경됨"을 돌려주며 백오프 없이 폴이 돌아간다.
+  it('advances the cursor for a batch that yields no projectable messages', async () => {
+    const repo = 'empty-batch-repo';
+    const channel = await createChannel(pool, { name: 'empty-batch', repo });
+    const silent: AvcsServerClient = {
+      waitForChange: async () => true,
+      fetchSince: async (_r, since) => ({ entries: [], next: since + 3 }),
+    };
+    const w = new ProjectionWorker({
+      pool, avcs: silent, systemAccountId: await ensureSystemAccount(pool),
+    });
+
+    await w.runOnce(repo, channel.id);
+
+    const cur = await pool.query(`select last_log_index from projection_cursor where repo = $1`, [repo]);
+    expect(Number(cur.rows[0]?.last_log_index)).toBe(3);
+  });
+
+  it('leaves the cursor alone when the log holds nothing new at all', async () => {
+    const repo = 'nothing-new-repo';
+    const channel = await createChannel(pool, { name: 'nothing-new', repo });
+    const idle: AvcsServerClient = {
+      waitForChange: async () => false,
+      fetchSince: async (_r, since) => ({ entries: [], next: since }),
+    };
+    const w = new ProjectionWorker({
+      pool, avcs: idle, systemAccountId: await ensureSystemAccount(pool),
+    });
+
+    await w.runOnce(repo, channel.id);
+
+    const cur = await pool.query(`select 1 from projection_cursor where repo = $1`, [repo]);
+    expect(cur.rowCount).toBe(0); // 쓸데없는 트랜잭션/행 생성 없음
   });
 
   it('is idempotent: rerun from cursor 0 does not duplicate', async () => {
@@ -103,6 +139,17 @@ describe('projection', () => {
     expect(rows).toHaveLength(5);
     expect(rows[4].body).toContain('@alice');
   });
+
+  // 서명자가 없는 객체(checkpoint 등)와 모르는 키로 서명된 객체는 다르다. 둘 다 '외부 작업자'로
+  // 뭉뚱그리면 "서명이 없다"는 사실이 "외부에서 왔다"는 주장으로 바뀐다.
+  it('labels an unsigned entry as having no actor, not as an external one', async () => {
+    fake.push(REPO, { oid: 'cp-unsigned', type: 'checkpoint', actorKeyId: null, intentOid: null, summary: '서명 없는 체크포인트' });
+    await worker.runOnce(REPO, channelId);
+    const rows = await messages();
+    const body = rows.at(-1)!.body as string;
+    expect(body).toContain('서명 없는 체크포인트');
+    expect(body).not.toContain('외부 작업자');
+  });
 });
 
 // 감사 ⑤·⑥: start() 루프 자체(runOnce 직접 호출이 아니라)의 복구·격리를 검증한다.
@@ -110,17 +157,17 @@ describe('projection', () => {
 describe('projection start() loop', () => {
   let pool2: Pool;
   let stop2: () => Promise<void>;
-  let fake2: Awaited<ReturnType<typeof startFakeAvcs>>;
+  let fake2: FakeAvcs;
   let systemAccountId2: string;
   let real: AvcsServerClient;
 
   beforeAll(async () => {
     ({ pool: pool2, stop: stop2 } = await startTestDb());
-    fake2 = await startFakeAvcs();
+    fake2 = createFakeAvcs();
     systemAccountId2 = await ensureSystemAccount(pool2);
-    real = httpAvcsClient(fake2.url);
+    real = fake2.client;
   });
-  afterAll(async () => { await fake2.close(); await stop2(); });
+  afterAll(async () => { await stop2(); });
 
   it('recovers status().connected after a transient avcs failure and catches up (감사 ⑤)', async () => {
     const repo = 'flaky-repo';

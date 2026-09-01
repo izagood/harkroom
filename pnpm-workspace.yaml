@@ -6,3 +6,6 @@ allowBuilds:
   esbuild: true
   protobufjs: true
   ssh2: true
+minimumReleaseAgeExclude:
+  - '@izagood/avcs@0.45.0'
+  - '@izagood/avcs-server@0.3.0'
