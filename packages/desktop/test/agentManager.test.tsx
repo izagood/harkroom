@@ -141,4 +141,30 @@ describe('AgentsSettings', () => {
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
     expect(c.updateAgent.mock.calls[0]![1]).toMatchObject({ model: null, effort: null });
   });
+
+  // mentionPermission 은 화면 앞에 사람이 없는 턴의 권한이다. 기본값은 auto — 설정을
+  // 건드린 적 없는 에이전트도 도구를 쓸 수 있어야 한다.
+  it('renders mention permission as auto by default and sends readonly when chosen', async () => {
+    const c = fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByText('rusalka'));
+
+    expect((screen.getByLabelText('Mention permission') as HTMLSelectElement).value).toBe('auto');
+
+    fireEvent.change(screen.getByLabelText('Mention permission'), { target: { value: 'readonly' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
+    expect(c.updateAgent.mock.calls[0]![1]).toMatchObject({ mentionPermission: 'readonly' });
+  });
+
+  // fromView 매핑에서 빠지기 쉬운 지점 — 이미 readonly 로 저장된 에이전트를 다시 열었을 때
+  // select 가 저장된 값을 보여줘야지 auto 로 되돌아가면 안 된다.
+  it('shows readonly when reopening an agent already set to readonly', async () => {
+    fakeController([agent('rusalka', { mentionPermission: 'readonly' })]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByText('rusalka'));
+
+    expect((screen.getByLabelText('Mention permission') as HTMLSelectElement).value).toBe('readonly');
+  });
 });
