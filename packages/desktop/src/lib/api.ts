@@ -64,6 +64,12 @@ export class ApiClient {
   async inboxUnread(): Promise<InboxEntry[]> {
     return (await this.req<{ entries: InboxEntry[] }>('GET', '/inbox?unread=1')).entries;
   }
+  /** WS 핸드셰이크용 단기 1회용 티켓. 연결 시도마다 새로 받는다. */
+  async wsTicket(): Promise<string> {
+    const res = await this.req<{ ticket: string }>('POST', '/ws-ticket');
+    return res.ticket;
+  }
+
   markRead(ids: number[]): Promise<void> { return this.req('POST', '/inbox/read', { ids }); }
   createDm(accountIds: string[]): Promise<ChannelRow> { return this.req('POST', '/dms', { accountIds }); }
 }
