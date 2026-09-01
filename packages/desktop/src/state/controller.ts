@@ -7,6 +7,8 @@ import { useAppStore } from './appStore';
 export class Controller {
   private ws: WsHandle | null = null;
   private unreadFetchSeq = 0;
+  /** 히스토리를 이미 통째로 받은 채널. 이 집합에 없으면 openChannel이 증분이 아니라 전체를 받는다. */
+  private loadedChannels = new Set<string>();
 
   constructor(
     public api: ApiClient,
@@ -41,6 +43,9 @@ export class Controller {
     switch (e.type) {
       case 'message.created':
         store.upsertMessages(e.message.channelId, [e.message]);
+        // 서버는 기동 시 투영용 system 계정을 만든다 — 그보다 먼저 부트스트랩한 클라이언트는
+        // 그 계정을 모르고, 작성자가 '…'로 표시된다. 디렉터리는 정적이 아니다.
+        if (!store.accounts[e.message.authorId]) this.swallow(this.refreshAccounts());
         break;
       case 'inbox.updated':
         if (e.accountId === store.me?.id) this.swallow(this.refreshUnread());
@@ -71,6 +76,18 @@ export class Controller {
     useAppStore.getState().set({ leases: await this.api.leases() });
   }
 
+  /** 미지의 작성자가 연달아 오면 요청이 폭주하므로, 진행 중인 조회 하나에 합류시킨다. */
+  private accountsInFlight: Promise<void> | null = null;
+  private refreshAccounts(): Promise<void> {
+    this.accountsInFlight ??= this.api
+      .accounts()
+      .then((accounts) => {
+        useAppStore.getState().set({ accounts: Object.fromEntries(accounts.map((a) => [a.id, a])) });
+      })
+      .finally(() => { this.accountsInFlight = null; });
+    return this.accountsInFlight;
+  }
+
   // 단조 버전 가드 — 나중에 발행됐지만 먼저 도착한 응답만 반영되도록, stale 응답은 버린다.
   private async refreshUnread(): Promise<void> {
     const seq = ++this.unreadFetchSeq;
@@ -81,8 +98,14 @@ export class Controller {
   async openChannel(channelId: string): Promise<void> {
     const store = useAppStore.getState();
     store.set({ activeChannelId: channelId, threadRootId: null });
-    const maxSeq = Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq));
-    const rows = await this.api.messages(channelId, { since: maxSeq });
+    // 투영된 system 메시지는 사용자가 그 채널을 보고 있지 않아도 WS로 들어와 maxSeq를 올린다.
+    // 그 상태에서 증분 조회를 하면 backlog 전체가 건너뛰어져 채널이 거의 비어 보인다 —
+    // 그래서 처음 여는 채널은 히스토리를 통째로 받는다(since=0 → 서버가 최신 N개를 준다).
+    const since = this.loadedChannels.has(channelId)
+      ? Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq))
+      : 0;
+    const rows = await this.api.messages(channelId, { since });
+    this.loadedChannels.add(channelId);
     useAppStore.getState().upsertMessages(channelId, rows);
     const ids = useAppStore.getState().unread
       .filter((e) => e.channelId === channelId && !e.readAt)

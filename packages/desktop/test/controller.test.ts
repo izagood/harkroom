@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useAppStore } from '../src/state/appStore';
 import { Controller } from '../src/state/controller';
-import { fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
+import { acc, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 beforeEach(() => useAppStore.getState().reset());
 
@@ -33,6 +33,80 @@ describe('Controller', () => {
     expect(s.activeChannelId).toBe('c1');
     expect(s.messages.c1).toHaveLength(2);
     expect((api.markRead as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toEqual([7]);
+  });
+
+  // 투영된 system 메시지는 사용자가 그 채널을 보고 있지 않아도 WS로 들어온다. 그때 maxSeq가
+  // 올라가 버리면, 채널을 처음 열 때의 증분 조회가 backlog 전체를 건너뛴다.
+  it('loads full history the first time a channel opens, even if live messages arrived first', async () => {
+    const history = [msg('m1', 'c1', 1, '오래된 대화'), msg('m2', 'c1', 2, '그 다음 대화')];
+    const api = fakeApi({ messages: vi.fn(async () => history) });
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+
+    // 채널을 열지 않은 상태에서 실시간 메시지가 먼저 도착한다 (투영 system 메시지가 그렇다).
+    callbacks.current!.onEvent({
+      type: 'message.created',
+      message: msg('m14', 'c1', 14, '투영된 intent'),
+      audience: 'all',
+    });
+
+    await c.openChannel('c1');
+
+    const since = (api.messages as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
+    expect(since).toMatchObject({ since: 0 });
+    expect(useAppStore.getState().messages.c1!.map((m) => m.id)).toEqual(['m1', 'm2', 'm14']);
+  });
+
+  it('reopening an already loaded channel fetches only what is new', async () => {
+    const api = fakeApi({ messages: vi.fn(async () => [msg('m1', 'c1', 5, 'first load')]) });
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+
+    await c.openChannel('c1');
+    await c.openChannel('c1');
+
+    const since = (api.messages as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
+    expect(since).toMatchObject({ since: 5 });
+  });
+
+  // 서버는 기동 시 투영용 system 계정을 만든다. 그보다 먼저 부트스트랩한 클라이언트는 그 계정을
+  // 모르므로, 작성자를 모르는 메시지가 오면 디렉터리를 다시 받아야 한다.
+  it('refetches the account directory when a message arrives from an unknown author', async () => {
+    const api = fakeApi();
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    (api.accounts as ReturnType<typeof vi.fn>).mockResolvedValue([
+      acc('u1', 'admin'), acc('u2', 'bot', 'agent'), acc('sys', 'murmur', 'agent'),
+    ]);
+
+    callbacks.current!.onEvent({
+      type: 'message.created',
+      message: msg('m20', 'c1', 20, '@jaebin intent: 무언가', 'sys', { kind: 'system' }),
+      audience: 'all',
+    });
+    await vi.waitFor(() => expect(useAppStore.getState().accounts.sys).toBeDefined());
+
+    expect(useAppStore.getState().accounts.sys!.handle).toBe('murmur');
+  });
+
+  it('does not refetch the directory for a message from a known author', async () => {
+    const api = fakeApi();
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    const before = (api.accounts as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    callbacks.current!.onEvent({
+      type: 'message.created',
+      message: msg('m21', 'c1', 21, '아는 사람', 'u2'),
+      audience: 'all',
+    });
+    await Promise.resolve();
+
+    expect((api.accounts as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(before);
   });
 
   it('ws message.created upserts without duplicates; reconcile refetches on reopen', async () => {
