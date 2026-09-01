@@ -9,6 +9,11 @@
 // 받고, stdout 이 tty 가 아니면 다르게 동작한다 — 파이프로는 이 중 아무것도 재현되지 않는다.
 // Phase 1 은 그 중계를 아직 안 하지만, 버퍼와 바이트 그대로 보존하는 규율은 그 소비자를
 // 위해 지금부터 지킨다.
+//
+// node-pty 는 1.1.0 이 아니라 1.2.0-beta.15 로 고정돼 있다(package.json, task-7 리포트 —
+// 1.1.0 은 macOS 프리빌드의 spawn-helper 실행 비트가 빠져 pnpm 설치 직후 즉시 깨진다,
+// microsoft/node-pty#850). **node-pty 가 #850 을 포함한 1.2.0 stable 을 내면 이 핀을
+// 내려라** — 그때 가서 다시 beta 를 쓸 이유가 없다.
 import pty from 'node-pty';
 import type { TurnPlan } from './turn.js';
 
@@ -25,6 +30,15 @@ const TAIL_CAP_BYTES = 2 * 1024;
 /**
  * 고정 용량 링 버퍼. capBytes 를 넘는 순간 앞(오래된 쪽)을 잘라 뒤(최신)를 남긴다 — "tail"
  * 이라는 이름이 실제로 끝을 가리키려면 잘라내는 방향이 이래야 한다.
+ *
+ * **절단은 바이트 단위이고, 일부러 UTF-8 문자 경계로 정렬하지 않는다.** 이 버퍼는 `ring`
+ * (Phase 2 가 그대로 xterm 으로 중계할 raw 바이트)과 내부 tail 버퍼 양쪽에 다 쓰인다.
+ * ring 쪽에서 문자 경계로 정렬하면 ANSI 이스케이프 시퀀스도 같은 규칙으로 잘려 화면이
+ * 깨진다 — 문자 하나가 깨지는 것보다 훨씬 나쁘다. 터미널 중계에서 청크 경계의 부분 문자는
+ * 정상이고, xterm 이 다음 청크와 이어붙여 알아서 완성한다. tail(사람이 읽는 로그,
+ * policy.ts::isCredentialFailure 입력) 쪽의 U+FFFD 잡음은 이 클래스가 아니라 `runPtyTurn`
+ * 이 tail 을 문자열로 뜨는 지점(`decodeTailText`)에서 따로 처리한다 — 소비자마다 정답이
+ * 달라서, 버퍼 자체에 규칙을 넣지 않고 소비자 쪽에 남겨 뒀다.
  */
 export class RingBuffer {
   private buf: Buffer = Buffer.alloc(0);
@@ -44,6 +58,22 @@ export class RingBuffer {
   }
 }
 
+/**
+ * tail 을 문자열로 뜰 때만 쓴다(ring 은 위 클래스 주석대로 raw 로 둔다). RingBuffer 가 자르는
+ * 지점은 UTF-8 문자 경계와 무관해서, 잘린 문자의 뒷조각만 버퍼 맨 앞에 남을 수 있다 —
+ * `Buffer#toString('utf8')` 은 그 조각을 U+FFFD 로 바꿔버려 "�라마" 같은 잡음이 로그에 낀다
+ * (실측: cap=8, 한글 5자). 잘린 조각은 정보가 아니라 잡음이므로 버린다: 앞쪽 continuation
+ * 바이트(`0b10xxxxxx`, UTF-8 문자 하나가 최대 4바이트=continuation 3개라 최대 3개까지만
+ * 있을 수 있다)를 건너뛰고 다음 문자 시작 지점부터 디코드한다.
+ */
+function decodeTailText(buf: Buffer): string {
+  let start = 0;
+  while (start < buf.length && start < 3 && ((buf.at(start) ?? 0) & 0xc0) === 0x80) {
+    start++;
+  }
+  return buf.subarray(start).toString('utf8');
+}
+
 export interface TurnResult {
   exitCode: number;
   timedOut: boolean;
@@ -56,6 +86,12 @@ export interface RunPtyTurnOptions {
   timeoutMs: number;
   /** Phase 2 가 onData 로 확장해 라이브 중계에 쓴다. 없어도 tail 계약에는 영향 없다. */
   ring?: RingBuffer;
+  /**
+   * SIGTERM → SIGKILL 유예(ms). 생략하면 프로덕션 기본값(SIGKILL_GRACE_MS, 5초)을 그대로
+   * 쓴다 — 테스트가 SIGKILL 승격 경로를 확인하려고 5초를 통째로 기다리지 않게 여는 구멍이지,
+   * 운영 판단을 호출자에게 넘기는 옵션이 아니다.
+   */
+  killGraceMs?: number;
 }
 
 /**
@@ -91,7 +127,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       if (killTimer) clearTimeout(killTimer);
       dataListener.dispose();
       exitListener.dispose();
-      resolve({ exitCode, timedOut, tail: tail.snapshot().toString('utf8') });
+      resolve({ exitCode, timedOut, tail: decodeTailText(tail.snapshot()) });
     });
 
     const dataListener = proc.onData((chunk) => {
@@ -107,7 +143,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       proc.kill('SIGTERM');
       killTimer = setTimeout(() => {
         proc.kill('SIGKILL');
-      }, SIGKILL_GRACE_MS);
+      }, opts.killGraceMs ?? SIGKILL_GRACE_MS);
     }, opts.timeoutMs);
   });
 }
