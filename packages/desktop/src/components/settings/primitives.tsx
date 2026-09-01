@@ -5,7 +5,7 @@ export function SettingsPage({ title, description, children }: {
   title: string; description?: string; children: ReactNode;
 }) {
   return (
-    <div className="mx-auto max-w-3xl px-10 py-10">
+    <div className="max-w-3xl px-10 py-10">
       <h2 className="text-2xl font-bold text-zinc-900">{title}</h2>
       <p className="mt-1 mb-8 text-zinc-500">{description ?? ''}</p>
       {children}
