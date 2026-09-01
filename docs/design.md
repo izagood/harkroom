@@ -262,6 +262,10 @@ intent(자발·외부 작업)만 투영 규칙대로 새 작업 스레드를 자
 ### 배포·운영
 
 - self-host: docker compose 3서비스(`server` + `postgres` + `avcs-server`).
+- **백업·복구 절차는 [`operations.md`](operations.md)**. 요지: 필수 대상은 `pgdata` 하나이고
+  (인메모리 상태는 재구성된다), 복구는 `server`를 멈춘 뒤 하고, **murmur만 되돌리는 것은
+  안전하지만**(투영이 멱등) **avcs를 murmur 커서보다 뒤로 되돌리면 그 사이 객체가 조용히
+  건너뛰어진다** — 그때는 커서를 함께 내린다. 두 성질 모두 `projection.test.ts`가 지킨다.
 - 데스크탑: Tauri 릴리스 바이너리.
 
 #### 업데이트 모델 — "업데이트해도 에이전트는 계속 일한다"
