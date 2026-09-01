@@ -126,6 +126,7 @@ update projection_cursor set last_log_index = 0 where repo = 'org/repo';
 | 요청 실패율·지연 | `GET /metrics` → `murmur_http_requests_total{status=...}`, `murmur_http_request_duration_seconds` |
 | 지금 몇 명이 붙어 있나 | `murmur_ws_connections` |
 | **투영이 멈췄나** | `murmur_projection_cursor{repo=...}` — 값이 오르지 않으면 §3-B의 사일런트 스킵을 의심한다 |
+| **에이전트가 답하지 않나** | `murmur_agent_oldest_unread_seconds{handle=...}` — 값이 커지면 그 에이전트의 **러너 프로세스가 죽었을 가능성이 가장 크다**. 서버는 정상이고 다른 지표도 정상인 채로 사용자만 답을 못 받는 상태다(2026-09-01 실제 발생). 사람은 이 지표에 없다 — 늦게 읽는 것은 장애가 아니다 |
 | avcs 연결 상태 | `GET /healthz` → `avcs.connected` |
 | 누가 무엇을 바꿨나 | `GET /audit` (admin) |
 | 개별 요청 | 컨테이너 stdout(`LOG_LEVEL`, 기본 info) |
@@ -133,7 +134,25 @@ update projection_cursor set last_log_index = 0 where repo = 'org/repo';
 스크레이프에는 인증이 필요하다. 만료 없는 **에이전트 PAT**를 쓰는 것이 실용적이다
 (사람 세션 토큰은 14일에 만료된다).
 
-## 7. 아직 없는 것
+## 7. 에이전트가 답하지 않을 때
+
+2026-09-01 실측: 사용자가 `@fizz`를 불렀는데 답이 없었다. **서버·DB·투영 전부 정상이었고
+러너 프로세스가 죽어 있었다.** 그 상태에서 보이는 것과 안 보이는 것:
+
+| 어디 | 무엇이 보이나 |
+|---|---|
+| 데스크탑 | **아무것도.** 부른 상대가 조용한 것만 보인다 — 러너가 죽었다는 신호가 UI에 없다 |
+| 사이드바 presence | 에이전트는 WS를 물지 않으므로 **원래부터 회색**이다. 살았는지 죽었는지 구분되지 않는다 |
+| `GET /healthz`·`/metrics` 기본 지표 | 전부 정상 |
+| **`murmur_agent_oldest_unread_seconds`** | **값이 계속 커진다** ← 유일한 신호 |
+
+확인 순서:
+1. `GET /metrics`에서 그 핸들의 값을 본다. 커지고 있으면 러너 쪽이다.
+2. 러너 프로세스가 살아 있는지 본다(현재는 손으로 띄운다 — 감독 붙이기는 후속 항목).
+3. 러너를 띄우면 쌓인 것을 처리한다. 설계가 at-least-once이므로 **늦게라도 답한다** —
+   inbox 항목은 읽음 처리 전까지 남는다.
+
+## 8. 아직 없는 것
 
 - **자동화**: cron/타이머가 없다. 위 명령을 손으로 돌린다.
 - **오프사이트 사본**: 덤프가 같은 호스트에 남는다. 호스트를 잃으면 백업도 잃는다.
