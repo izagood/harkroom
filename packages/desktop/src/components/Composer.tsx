@@ -10,6 +10,12 @@ import {
 /** 목록이 화면을 덮지 않을 만큼만 보여준다. 더 좁히는 것은 사용자가 글자를 더 치는 일이다. */
 const MAX_SUGGESTIONS = 8;
 
+/**
+ * '입력 중' 갱신 간격. 글자마다 소켓으로 보내면 한 문장에 수십 번 오간다. 서버의 만료
+ * 창(6초)보다 넉넉히 짧게만 갱신하면 한 번 놓쳐도 표시가 끊기지 않는다.
+ */
+const TYPING_THROTTLE_MS = 3_000;
+
 /** 에이전트를 먼저 세운다 — murmur 에서 @ 를 치는 주된 이유다. 그 안에서는 이름순. */
 function rank(a: AccountView, b: AccountView): number {
   if (a.kind !== b.kind) return a.kind === 'agent' ? -1 : 1;
@@ -46,6 +52,8 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   // 실패했을 때 본문까지 붙잡힌다.
   const [pending, setPending] = useState<AttachmentRow[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // 마지막으로 '입력 중'을 보낸 시각. 0 이면 지금 입력 중이 아니라는 뜻이다.
+  const lastTypingAt = useRef(0);
   // 삽입 후 커서를 옮겨야 한다. React 는 value 만 되돌리므로 DOM 을 직접 만진다.
   const pendingCaret = useRef<number | null>(null);
 
@@ -97,6 +105,28 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     setQuery(null);
     setPicking(false);
     setActive(0);
+  };
+
+  /**
+   * 입력 상태를 서버에 알린다. 초안이 비면 즉시 멈춤을 보낸다 — 만료를 기다리면 지운 뒤에도
+   * 몇 초 동안 '입력 중'으로 남는다.
+   */
+  const signalTyping = (text: string) => {
+    // 입력 중 표시는 없어도 대화가 되는 기능이다. 여기서 실패가 새면 onChange 가 죽고
+    // **글을 쓸 수 없게 된다** — 부가 기능이 본 기능을 막는 것은 어떤 경우에도 잘못이다.
+    try {
+      if (!text.trim()) {
+        if (lastTypingAt.current !== 0) {
+          lastTypingAt.current = 0;
+          getController().notifyTyping(false);
+        }
+        return;
+      }
+      const now = Date.now();
+      if (now - lastTypingAt.current < TYPING_THROTTLE_MS) return;
+      lastTypingAt.current = now;
+      getController().notifyTyping(true);
+    } catch { /* 표시가 안 되는 것이 입력을 막는 것보다 낫다 */ }
   };
 
   const recompute = (text: string, caret: number | null) => {
@@ -159,6 +189,9 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     setDraft('');
     setPending([]);
     setQuery(null);
+    // 보냈으면 입력이 끝났다. 만료를 기다리면 자기 메시지 아래에 '입력 중'이 남는다.
+    lastTypingAt.current = 0;
+    try { getController().notifyTyping(false); } catch { /* 위와 같은 이유 */ }
     // 이번에 부른 상대는 다음 줄부터 고정이다. 한 번 부른 뒤 매번 @ 를 다시 치게 하면
     // 사용자는 잊어버리고, 잊으면 에이전트는 깨어나지 않는다.
     setStickyByScope((prev) => ({ ...prev, [scopeKey]: keepMentioned(sticky, typed, known) }));
@@ -308,6 +341,7 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
         onChange={(e) => {
           setDraft(e.target.value);
           recompute(e.target.value, e.target.selectionStart);
+          signalTyping(e.target.value);
         }}
         // 커서만 움직여도 후보가 달라진다. 목록이 열린 동안의 화살표는 위에서 막으므로
         // 여기서 커서가 튀는 일은 없다.

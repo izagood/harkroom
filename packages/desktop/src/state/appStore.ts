@@ -9,6 +9,8 @@ export interface AppState {
   activeChannelId: string | null;
   threadRootId: string | null;
   messages: Record<string, MessageRow[]>;
+  /** channelId → 입력 중인 accountId 들. 서버가 상태 전체를 보내므로 덮어쓰기만 한다. */
+  typing: Record<string, string[]>;
   /** 채널별 '더 오래된 것이 남았는가'. */
   hasMore: Record<string, boolean>;
   unread: InboxEntry[];
@@ -31,7 +33,7 @@ export interface AppState {
 
 const initial = {
   me: null, accounts: {}, channels: [], dms: [], activeChannelId: null, threadRootId: null,
-  messages: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
+  messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], leases: [], connected: false,
 };
 

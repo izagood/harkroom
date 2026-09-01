@@ -50,7 +50,7 @@ export function fakeWsFactory() {
   const callbacks: { current: import('../../src/lib/ws').WsCallbacks | null } = { current: null };
   const makeWs = ((_url: string, _getTicket: import('../../src/lib/ws').TicketProvider, cb: import('../../src/lib/ws').WsCallbacks) => {
     callbacks.current = cb;
-    return { close: vi.fn() };
+    return { close: vi.fn(), send: vi.fn() };
   }) as typeof import('../../src/lib/ws').connectWs;
   return { makeWs, callbacks };
 }

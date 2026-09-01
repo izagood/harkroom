@@ -99,6 +99,17 @@ export class Controller {
         // 누른 사람이 처음 보는 계정이면 툴팁에 이름 대신 빈칸이 남는다.
         if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
         break;
+      case 'typing.changed': {
+        // 서버가 상태 전체를 보낸다 — 더하고 빼는 로직을 두면 두 곳에서 같은 맵을 갱신하게
+        // 되고, 그 두 곳이 갈라진다. 여기서는 덮어쓰기만 한다.
+        const next = { ...store.typing };
+        if (e.accountIds.length) next[e.channelId] = e.accountIds;
+        else delete next[e.channelId];
+        store.set({ typing: next });
+        // 처음 보는 계정이면 이름 대신 아무것도 못 그린다.
+        if (e.accountIds.some((id) => !store.accounts[id])) this.swallow(this.refreshAccounts());
+        break;
+      }
       case 'inbox.updated':
         if (e.accountId === store.me?.id) {
           this.swallow(this.refreshUnread().then(() => this.announceNewMentions()));
@@ -282,6 +293,18 @@ export class Controller {
     if (!activeChannelId || !threadRootId || (!body.trim() && !attachmentIds.length)) return;
     const m = await this.api.postMessage(activeChannelId, body, threadRootId, crypto.randomUUID(), attachmentIds);
     useAppStore.getState().upsertMessages(activeChannelId, [m]);
+  }
+
+  /**
+   * 입력 중임을 알린다. 소켓으로 보내는 유일한 방향이다(그 외는 서버 → 클라이언트 단방향).
+   * 소켓이 없으면 조용히 넘긴다 — 입력 중 표시는 없어도 대화가 되는 기능이다.
+   */
+  notifyTyping(on: boolean): void {
+    const { activeChannelId, threadRootId } = useAppStore.getState();
+    // 스레드에서 쓰는 것도 그 채널에서 입력 중이다 — 채널 단위로 보낸다.
+    void threadRootId;
+    if (!activeChannelId) return;
+    this.ws?.send({ type: on ? 'typing' : 'typing.stop', channelId: activeChannelId });
   }
 
   /** 파일을 고른 순간 올린다 — 전송 시점에 올리면 Enter 를 누르고 기다려야 한다. */
