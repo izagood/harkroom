@@ -49,6 +49,16 @@ export function mentionedHandles(body: string): string[] {
   return [...found];
 }
 
+/**
+ * 한 이모지에 누가 눌렀는지. `count`·`mine` 이 아니라 누른 사람 목록인 이유는 요청자에 따라
+ * 값이 달라지면 같은 페이로드를 여러 명에게 브로드캐스트할 수 없기 때문이다.
+ * count 는 `accountIds.length`, '내가 눌렀나' 는 `includes(me.id)` 로 클라이언트가 센다.
+ */
+export interface ReactionRow {
+  emoji: string;
+  accountIds: string[];
+}
+
 export interface MessageRow {
   id: string;
   seq: number;
@@ -61,6 +71,8 @@ export interface MessageRow {
   createdAt: string;
   /** 수정된 적이 없으면 null. */
   editedAt: string | null;
+  /** 아무도 안 눌렀으면 빈 배열. 필드가 없는 것과 구분해야 UI 가 분기할 필요가 없다. */
+  reactions: ReactionRow[];
 }
 
 export interface ChannelRow {
@@ -98,4 +110,7 @@ export type WsServerEvent =
   | { type: 'inbox.updated'; accountId: string }
   | { type: 'lease.changed'; repo: string }
   | { type: 'presence.changed'; accountId: string; online: boolean }
-  | { type: 'presence.snapshot'; online: string[] };
+  | { type: 'presence.snapshot'; online: string[] }
+  // 리액션은 델타로 보낸다 — 메시지 전체를 다시 실으면 한 번 누를 때마다 본문이 오간다.
+  | { type: 'reaction.added'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
+  | { type: 'reaction.removed'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] };

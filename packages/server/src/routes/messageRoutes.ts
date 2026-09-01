@@ -5,6 +5,7 @@ import { emitEvent } from '../events.js';
 import { assertChannelVisible, dmMemberIds } from '../services/channels.js';
 import { deleteMessage, editMessage, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { recordAudit } from '../audit.js';
+import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 
 export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.post('/channels/:id/messages', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -105,6 +106,54 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
       ? false
       : messages.length > 0 && (await hasOlderMessages(pool, id, messages[0]!.seq));
     return { messages, hasMore };
+  });
+
+  /** 리액션 경로의 공통 검증. 이모지 판정과 채널 접근을 두 핸들러가 똑같이 해야 한다. */
+  const reactionParams = z.object({
+    id: z.string().uuid(), messageId: z.string().uuid(), emoji: z.string().min(1).max(32),
+  });
+
+  app.put('/channels/:id/messages/:messageId/reactions/:emoji', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id, messageId, emoji } = reactionParams.parse(req.params);
+    if (!isEmoji(emoji)) {
+      // 임의 문자열을 받으면 리액션이 길이 제한도 검열도 없는 두 번째 본문 필드가 된다.
+      return reply.code(400).send({ error: { code: 'bad_request', message: 'a reaction must be a single emoji' } });
+    }
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+
+    const result = await addReaction(pool, { channelId: id, messageId, accountId: req.account!.id, emoji });
+    if (result === 'not_found') {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such message in this channel' } });
+    }
+    if (result === 'too_many') {
+      return reply.code(409).send({
+        code: 'too_many_reactions',
+        error: { code: 'too_many_reactions', message: `at most ${MAX_REACTIONS_PER_ACTOR} reactions per message` },
+      });
+    }
+    emitEvent({
+      type: 'reaction.added', channelId: id, messageId, emoji,
+      accountId: req.account!.id, audience: await audienceFor(id),
+    });
+    return reply.code(200).send({ emoji });
+  });
+
+  app.delete('/channels/:id/messages/:messageId/reactions/:emoji', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id, messageId, emoji } = reactionParams.parse(req.params);
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+
+    // 없는 것을 떼는 것도 성공이다 — 결과 상태가 같으니 재시도가 안전하다. 그래서 404 를 보지
+    // 않고, 메시지 존재 확인도 하지 않는다(존재를 확인해 주면 없는 메시지 탐색 경로가 된다).
+    await removeReaction(pool, { messageId, accountId: req.account!.id, emoji });
+    emitEvent({
+      type: 'reaction.removed', channelId: id, messageId, emoji,
+      accountId: req.account!.id, audience: await audienceFor(id),
+    });
+    return reply.code(204).send();
   });
 
   app.get('/inbox', { preHandler: app.requireAccount }, async (req) => {

@@ -3,6 +3,7 @@ import type { MessageRow } from '@murmur/shared';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { MessageBody } from './MessageBody';
+import { Reactions } from './Reactions';
 
 export function MessageItem({ message, inThread = false }: { message: MessageRow; inThread?: boolean }) {
   const author = useAppStore((s) => s.accounts[message.authorId]);
@@ -47,7 +48,10 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
         </div>
 
         {draft === null ? (
-          <MessageBody body={message.body} />
+          <>
+            <MessageBody body={message.body} />
+            <Reactions message={message} />
+          </>
         ) : (
           <div className="space-y-1">
             <textarea
