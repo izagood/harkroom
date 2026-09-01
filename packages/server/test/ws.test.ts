@@ -33,9 +33,15 @@ function collect(token: string): { events: unknown[]; ready: Promise<void>; clos
   const events: unknown[] = [];
   const ws = new WebSocket(`ws://${baseUrl}/ws?token=${token}`);
   ws.on('message', (data) => events.push(JSON.parse(String(data))));
+  // 'open'은 핸드셰이크가 끝났다는 뜻일 뿐, 서버가 이벤트 버스를 구독했다는 뜻이 아니다 —
+  // 그 사이에 토큰 조회(DB 왕복)가 있고, 버스는 fire-and-forget이라 그 창에 발행된 이벤트는
+  // 구독자가 없어 영구히 사라진다. presence.snapshot은 서버가 구독을 마친 뒤에만 보내므로
+  // 이것이 실제 준비 신호다. (제품에서는 클라이언트가 onOpen에서 REST 리컨실로 이 창을 메운다.)
   const ready = new Promise<void>((resolve, reject) => {
-    ws.on('open', () => resolve());
     ws.on('error', reject);
+    ws.on('message', (data) => {
+      if ((JSON.parse(String(data)) as { type?: string }).type === 'presence.snapshot') resolve();
+    });
   });
   return { events, ready, close: () => ws.close() };
 }
