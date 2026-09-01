@@ -49,7 +49,7 @@ describe('스레드 패널은 루트의 삭제를 따라간다', () => {
   it('closes the panel when the open thread root is deleted elsewhere', async () => {
     useAppStore.getState().reset();
     const { makeWs, callbacks } = fakeWsFactory();
-    const c = new Controller(fakeApi({ messages: vi.fn(async () => [msg('m1', 'c1', 1, 'root')]) }), makeWs);
+    const c = new Controller(fakeApi({ messages: vi.fn(async () => ({ messages: [msg('m1', 'c1', 1, 'root')], hasMore: false })) }), makeWs);
     await c.start();
     await c.openChannel('c1');
     await c.openThread('m1');
@@ -63,7 +63,7 @@ describe('스레드 패널은 루트의 삭제를 따라간다', () => {
   it('closes the panel when I delete the open thread root myself', async () => {
     useAppStore.getState().reset();
     const { makeWs } = fakeWsFactory();
-    const c = new Controller(fakeApi({ messages: vi.fn(async () => [msg('m1', 'c1', 1, 'root')]) }), makeWs);
+    const c = new Controller(fakeApi({ messages: vi.fn(async () => ({ messages: [msg('m1', 'c1', 1, 'root')], hasMore: false })) }), makeWs);
     await c.start();
     await c.openChannel('c1');
     await c.openThread('m1');
@@ -77,7 +77,9 @@ describe('스레드 패널은 루트의 삭제를 따라간다', () => {
     useAppStore.getState().reset();
     const { makeWs, callbacks } = fakeWsFactory();
     const c = new Controller(fakeApi({
-      messages: vi.fn(async () => [msg('m1', 'c1', 1, 'root'), msg('m2', 'c1', 2, 'other')]),
+      messages: vi.fn(async () => ({
+        messages: [msg('m1', 'c1', 1, 'root'), msg('m2', 'c1', 2, 'other')], hasMore: false,
+      })),
     }), makeWs);
     await c.start();
     await c.openChannel('c1');
