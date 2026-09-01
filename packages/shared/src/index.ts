@@ -59,6 +59,17 @@ export interface ReactionRow {
   accountIds: string[];
 }
 
+/**
+ * 클라이언트가 보는 첨부. `storageKey` 와 `uploaderId` 는 **일부러 없다** — 스토리지 키가
+ * 새어 나가면 그 자체가 접근 경로가 되고, 업로더는 메시지 작성자와 같으므로 중복이다.
+ */
+export interface AttachmentRow {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
 export interface MessageRow {
   id: string;
   seq: number;
@@ -73,6 +84,8 @@ export interface MessageRow {
   editedAt: string | null;
   /** 아무도 안 눌렀으면 빈 배열. 필드가 없는 것과 구분해야 UI 가 분기할 필요가 없다. */
   reactions: ReactionRow[];
+  /** 첨부가 없으면 빈 배열. 사용자가 고른 순서를 지킨다. */
+  attachments: AttachmentRow[];
 }
 
 export interface ChannelRow {
