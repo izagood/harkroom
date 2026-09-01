@@ -130,7 +130,7 @@ export function AgentsSettings() {
             <h2 className="text-base font-bold">{selected ? `Edit ${selected.handle}` : 'Add agent'}</h2>
           </header>
 
-          <div className="flex-1 space-y-4 overflow-y-auto p-5">
+          <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
             <label className={label}>
               Agent name
               <input
@@ -245,7 +245,7 @@ export function AgentsSettings() {
             )}
           </div>
 
-          <footer className="border-t border-zinc-200 px-5 py-3">
+          <footer className="w-full max-w-2xl border-t border-zinc-200 px-5 py-3">
             <button
               className="w-full rounded bg-indigo-600 py-2 font-medium text-white disabled:opacity-50"
               disabled={busy}
