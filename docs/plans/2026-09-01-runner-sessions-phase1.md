@@ -908,6 +908,21 @@ avcs repo 일 때만 성립하고 아니면 Task 4 폴백으로 그 자리에서
 - [ ] **Step 3: 실물 확인 (로컬)** — 로컬 스택 + 실제 harness 로 손으로 확인한다. 단위 테스트가
   구조적으로 볼 수 없는 것들이라 하나씩 눈으로 본다.
 
+  **준비 (실측한 이 워크트리 기준):**
+  - `docker-compose.override.yml` 이 이미 있고 postgres 를 **5433** 으로 연다(gitignore 대상,
+    Task 1 스파이크가 다른 워크트리의 5432 충돌을 피해 만든 것). 다른 워크트리가 3400/5432 를
+    쓰고 있을 수 있으니 서버도 충돌하지 않는 포트로 띄워라.
+  - `DATABASE_URL='postgres://murmur:murmur@localhost:5433/murmur' pnpm --filter @murmur/server dev`
+    — 이 저장소에 dotenv 가 없어 env 를 인라인으로 넘겨야 한다. 마이그레이션은 서버가 기동 시
+    스스로 돌린다.
+  - 러너는 `MURMUR_PAT=murp_… pnpm --filter @murmur/agent start`. 나머지는 기본값이 있다
+    (`MURMUR_URL`, `AGENT_TURN_TIMEOUT_MS`, `AGENT_STATE_DIR=~/.murmur-agent`).
+  - **기준 10 은 러너를 두 대 띄워야 한다** — 에이전트마다 PAT 가 다르고 상태 디렉터리도
+    `<stateDir>/<handle>/` 로 갈리므로, 같은 머신에서 두 프로세스를 동시에 돌리면 된다.
+    한 대만 띄우고 계정만 둘 만들면 이 기준은 확인되지 않는다.
+  - 확인이 끝나면 세션 상태(`~/.murmur-agent/`)와 만들어진 avcs workspace 를 정리할지
+    판단해라 — 남겨 두면 다음 수동 확인이 "첫 턴"이 아니게 된다.
+
   | 성공 기준 | 확인 방법 |
   |---|---|
   | 1. 스레드 기억 | 같은 스레드에 2회 멘션 — 두 번째가 첫 대화를 안다 |
