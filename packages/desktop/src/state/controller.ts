@@ -2,6 +2,7 @@ import type { WsServerEvent } from '@murmur/shared';
 import type { ApiClient } from '../lib/api';
 import { connectWs, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
+import { silentNotifier, type Notifier } from '../lib/notify';
 import { useAppStore } from './appStore';
 
 export class Controller {
@@ -9,11 +10,13 @@ export class Controller {
   private unreadFetchSeq = 0;
   /** 히스토리를 이미 통째로 받은 채널. 이 집합에 없으면 openChannel이 증분이 아니라 전체를 받는다. */
   private loadedChannels = new Set<string>();
+  /** 이미 알린 inbox 항목. 같은 항목을 두 번 알리면 알림이 쓸모없어진다. */
+  private announced = new Set<number>();
 
   constructor(
     public api: ApiClient,
     private makeWs: typeof connectWs = connectWs,
-
+    private notifier: Notifier = silentNotifier,
   ) {}
 
   // fire-and-forget 호출의 unhandled rejection 방지 — 실패는 조용히 무시(다음 이벤트/리컨실이 자연 복구).
@@ -29,6 +32,8 @@ export class Controller {
       me, channels, dms, leases, unread,
       accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
     });
+    // 앱을 열자마자 쌓여 있던 미읽음이 한꺼번에 터지면 알림이 소음이 된다.
+    for (const e of unread) this.announced.add(e.id);
     // 장기 토큰은 ApiClient 가 헤더로만 쓴다 — WS URL 에는 단기 티켓만 실린다.
     this.ws = this.makeWs(this.api.baseUrl, () => this.api.wsTicket(), {
       onEvent: (e) => this.handleEvent(e),
@@ -56,7 +61,9 @@ export class Controller {
         store.removeMessage(e.channelId, e.messageId);
         break;
       case 'inbox.updated':
-        if (e.accountId === store.me?.id) this.swallow(this.refreshUnread());
+        if (e.accountId === store.me?.id) {
+          this.swallow(this.refreshUnread().then(() => this.announceNewMentions()));
+        }
         break;
       case 'lease.changed':
         this.swallow(this.api.leases().then((leases) => useAppStore.getState().set({ leases })));
@@ -94,6 +101,38 @@ export class Controller {
       })
       .finally(() => { this.accountsInFlight = null; });
     return this.accountsInFlight;
+  }
+
+  /** 새로 들어온 미읽음을 OS 알림으로 알린다. 보고 있는 창에는 띄우지 않는다 — 배지가 그 일을 한다. */
+  private async announceNewMentions(): Promise<void> {
+    const { unread, me, channels, dms, accounts, messages } = useAppStore.getState();
+    if (document.hasFocus()) {
+      // 포커스 중에는 알리지 않되, 본 것으로 처리해 나중에 뒤늦게 터지지 않게 한다.
+      for (const e of unread) this.announced.add(e.id);
+      return;
+    }
+
+    const label = { mention: 'mentioned you in', thread_reply: 'replied in a thread in', dm: 'messaged you in' };
+    for (const e of unread) {
+      if (e.readAt || this.announced.has(e.id)) continue;
+      this.announced.add(e.id);
+
+      const row = (messages[e.channelId] ?? []).find((m) => m.id === e.messageId);
+      const author = row ? accounts[row.authorId]?.handle : null;
+      const channel = channels.find((c) => c.id === e.channelId);
+      const dm = dms.find((d) => d.id === e.channelId);
+      const where = channel
+        ? `#${channel.name}`
+        : dm
+          ? dm.memberIds.filter((id) => id !== me?.id).map((id) => accounts[id]?.handle ?? '…').join(', ')
+          : 'murmur';
+
+      await this.notifier.notify({
+        title: `${author ? `@${author} ` : ''}${label[e.reason]} ${where}`.trim(),
+        // 본문이 스토어에 없으면(창 밖으로 밀려난 채널 등) 이유만으로도 알림은 성립한다.
+        body: row?.body ?? `New ${e.reason.replace('_', ' ')}`,
+      });
+    }
   }
 
   // 단조 버전 가드 — 나중에 발행됐지만 먼저 도착한 응답만 반영되도록, stale 응답은 버린다.
