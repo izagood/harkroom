@@ -56,6 +56,37 @@ describe('messages', () => {
     expect(a.json().id).toBe(b.json().id);
   });
 
+  // 재생은 "같은 요청의 재시도"여야 한다. key만으로 되짚으면 남의 메시지를 되돌려주는
+  // 읽기 경로가 되고, 채널 격리(DM 멤버십 포함)를 우회한다.
+  it('does not replay another account message that used the same key', async () => {
+    const mine = await post(adminToken, '내 메시지', {}, { 'idempotency-key': 'shared-key' });
+
+    const theirs = await post(botPat, '에이전트 메시지', {}, { 'idempotency-key': 'shared-key' });
+
+    expect(theirs.statusCode).toBe(201);
+    expect(theirs.json().id).not.toBe(mine.json().id);
+    expect(theirs.json().body).toBe('에이전트 메시지');
+  });
+
+  it('does not replay a message the same author posted to a different channel', async () => {
+    const other = await app.inject({
+      method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: 'elsewhere' },
+    });
+    const otherId = other.json().id as string;
+    const there = await app.inject({
+      method: 'POST', url: `/channels/${otherId}/messages`,
+      headers: { authorization: `Bearer ${adminToken}`, 'idempotency-key': 'cross-channel' },
+      payload: { body: '저쪽 채널 메시지' },
+    });
+
+    const here = await post(adminToken, '이쪽 채널 메시지', {}, { 'idempotency-key': 'cross-channel' });
+
+    expect(here.statusCode).toBe(201);
+    expect(here.json().id).not.toBe(there.json().id);
+    expect(here.json().channelId).toBe(channelId);
+  });
+
   it('mention creates inbox entry for the mentioned agent', async () => {
     await post(adminToken, '@helper please summarize');
     const inbox = await app.inject({

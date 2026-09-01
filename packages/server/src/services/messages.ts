@@ -34,12 +34,15 @@ export async function postMessage(
     await client.query('begin');
 
     if (input.idempotencyKey) {
+      // key는 클라이언트가 고르는 값이라 전역 유일하지 않다. 재생은 같은 author가 같은 채널로
+      // 보낸 재시도일 때만이며, 그 범위를 벗어난 조회는 남의 메시지를 읽는 경로가 된다.
       const dup = await client.query(
-        `select m.id from idempotency_key k join message m on m.id = k.message_id where k.key = $1`,
-        [input.idempotencyKey],
+        `select message_id from idempotency_key
+         where key = $1 and author_id = $2 and channel_id = $3`,
+        [input.idempotencyKey, input.authorId, input.channelId],
       );
       if (dup.rowCount) {
-        const existing = await client.query(`select ${COLS} from message where id = $1`, [dup.rows[0].id]);
+        const existing = await client.query(`select ${COLS} from message where id = $1`, [dup.rows[0].message_id]);
         await client.query('commit');
         return { message: existing.rows[0], notified: [], replayed: true };
       }
@@ -54,7 +57,10 @@ export async function postMessage(
     const message: MessageRow = inserted.rows[0];
 
     if (input.idempotencyKey) {
-      await client.query(`insert into idempotency_key (key, message_id) values ($1, $2)`, [input.idempotencyKey, message.id]);
+      await client.query(
+        `insert into idempotency_key (key, message_id, author_id, channel_id) values ($1, $2, $3, $4)`,
+        [input.idempotencyKey, message.id, input.authorId, input.channelId],
+      );
     }
 
     const notified = new Set<string>();
