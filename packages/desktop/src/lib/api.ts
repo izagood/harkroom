@@ -1,4 +1,4 @@
-import type { AccountView, ChannelRow, DmView, InboxEntry, LeaseRow, MessageRow } from '@murmur/shared';
+import type { AgentConfig, AgentView, AccountView, ChannelRow, DmView, InboxEntry, LeaseRow, MessageRow } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -77,6 +77,23 @@ export class ApiClient {
 
   deleteMessage(channelId: string, messageId: string): Promise<void> {
     return this.req('DELETE', `/channels/${channelId}/messages/${messageId}`);
+  }
+
+  async listAgents(): Promise<AgentView[]> {
+    return (await this.req<{ agents: AgentView[] }>('GET', '/accounts/agents')).agents;
+  }
+
+  createAgent(input: { handle: string; displayName: string } & Partial<AgentConfig>): Promise<AgentView> {
+    return this.req('POST', '/accounts/agents', input);
+  }
+
+  /** PAT 는 서버가 해시만 보관하므로 생성 직후 한 번만 볼 수 있다. */
+  async mintPat(accountId: string, label: string): Promise<string> {
+    return (await this.req<{ token: string }>('POST', `/accounts/${accountId}/pats`, { label })).token;
+  }
+
+  updateAgent(id: string, patch: Partial<AgentConfig> & { displayName?: string }): Promise<AgentView> {
+    return this.req('PATCH', `/accounts/agents/${id}`, patch);
   }
 
   /** WS 핸드셰이크용 단기 1회용 티켓. 연결 시도마다 새로 받는다. */

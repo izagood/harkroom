@@ -15,7 +15,7 @@ function UnreadBadge({ channelId }: { channelId: string }) {
   );
 }
 
-export function Sidebar({ onLogout }: { onLogout: () => void }) {
+export function Sidebar({ onLogout, onManageAgents }: { onLogout: () => void; onManageAgents?: () => void }) {
   const { me, accounts, channels, dms, online, connected, activeChannelId } = useAppStore();
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -51,6 +51,11 @@ export function Sidebar({ onLogout }: { onLogout: () => void }) {
               <UnreadBadge channelId={ch.id} />
             </button>
           ))}
+        </div>
+        <div>
+          <button className={`${row(false)} text-zinc-400`} onClick={onManageAgents}>
+            + Add or edit agents
+          </button>
         </div>
         <div>
           <div className="flex items-center px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">
