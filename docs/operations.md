@@ -126,7 +126,7 @@ update projection_cursor set last_log_index = 0 where repo = 'org/repo';
 | 요청 실패율·지연 | `GET /metrics` → `murmur_http_requests_total{status=...}`, `murmur_http_request_duration_seconds` |
 | 지금 몇 명이 붙어 있나 | `murmur_ws_connections` |
 | **투영이 멈췄나** | `murmur_projection_cursor{repo=...}` — 값이 오르지 않으면 §3-B의 사일런트 스킵을 의심한다 |
-| **에이전트가 답하지 않나** | `murmur_agent_oldest_unread_seconds{handle=...}` — 값이 커지면 그 에이전트의 **러너 프로세스가 죽었을 가능성이 가장 크다**. 서버는 정상이고 다른 지표도 정상인 채로 사용자만 답을 못 받는 상태다(2026-09-01 실제 발생). 사람은 이 지표에 없다 — 늦게 읽는 것은 장애가 아니다 |
+| **에이전트가 답하지 않나** | `murmur_agent_oldest_unread_seconds{handle=...}` — 값이 커지면 그 에이전트의 **러너 프로세스가 죽었을 가능성이 가장 크다**. 서버는 정상이고 다른 지표도 정상인 채로 사용자만 답을 못 받는 상태다(2026-09-01 실제 발생). **답할 의무가 있는 계정만 센다** — 사람과, 정의(`agent_config`)가 없는 에이전트 계정은 없다(아래 §7) |
 | avcs 연결 상태 | `GET /healthz` → `avcs.connected` |
 | 누가 무엇을 바꿨나 | `GET /audit` (admin) |
 | 개별 요청 | 컨테이너 stdout(`LOG_LEVEL`, 기본 info) |
@@ -146,8 +146,24 @@ update projection_cursor set last_log_index = 0 where repo = 'org/repo';
 | `GET /healthz`·`/metrics` 기본 지표 | 전부 정상 |
 | **`murmur_agent_oldest_unread_seconds`** | **값이 계속 커진다** ← 유일한 신호 |
 
+### 지표에 없는 계정 — 그것이 의도다
+
+`kind='agent'` 라도 **정의(`agent_config` 행)가 없는 계정은 이 지표에 나오지 않는다.** 둘이 있다:
+
+- `murmur` — avcs 투영용 시스템 계정. 투영 워커가 만들고 러너가 없다.
+- 정의 없이 만들어진 계정(옛 테스트 계정 등) — 답할 러너가 없고 앞으로도 없다.
+
+사용자는 사이드바에 보이니 자연스럽게 부른다. 그 미처리를 지표에 넣으면 **영원히 쌓이며 절대
+내려오지 않는다** — 경보가 반복되고, 사람이 경보를 무시하게 되고, 그때 진짜 러너가 죽으면
+아무도 안 본다. 그래서 뺀다. **"부름이 처리되지 않는다"가 문제인 것은 답할 의무가 있는
+상대일 때뿐이다.**
+
+정의 없는 에이전트를 사용자가 계속 부른다면 지표가 아니라 그 계정을 정리하거나 정의를 붙이는
+것이 답이다(UI 의 Add/Edit agent).
+
 확인 순서:
 1. `GET /metrics`에서 그 핸들의 값을 본다. 커지고 있으면 러너 쪽이다.
+   **값이 아예 없으면** 그 계정에 정의가 없는 것이다(위 문단) — 러너 문제가 아니다.
 2. 러너 프로세스가 살아 있는지 본다(현재는 손으로 띄운다 — 감독 붙이기는 후속 항목).
 3. 러너를 띄우면 쌓인 것을 처리한다. 설계가 at-least-once이므로 **늦게라도 답한다** —
    inbox 항목은 읽음 처리 전까지 남는다.
