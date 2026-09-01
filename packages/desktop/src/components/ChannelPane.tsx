@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
+import { Composer } from './Composer';
 
 export function ChannelPane() {
   const { activeChannelId, channels, dms, accounts, me, messages, hasMore } = useAppStore();
-  const [draft, setDraft] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const channel = channels.find((c) => c.id === activeChannelId);
@@ -28,13 +28,6 @@ export function ChannelPane() {
   if (!activeChannelId) {
     return <main className="flex flex-1 items-center justify-center text-zinc-400">Pick a channel to start</main>;
   }
-
-  const send = () => {
-    const body = draft;
-    if (!body.trim()) return;
-    setDraft('');
-    void getController().send(body).catch(() => setDraft(body));
-  };
 
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-white">
@@ -59,15 +52,9 @@ export function ChannelPane() {
         <div ref={bottomRef} />
       </div>
       <div className="border-t border-zinc-200 p-3">
-        <textarea
-          className="w-full resize-none rounded border border-zinc-300 px-3 py-2"
-          rows={2}
+        <Composer
           placeholder={`Message ${composerTarget}`}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-          }}
+          onSend={(body) => getController().send(body)}
         />
       </div>
     </main>

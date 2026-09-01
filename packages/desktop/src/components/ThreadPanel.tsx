@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
+import { Composer } from './Composer';
 
 export function ThreadPanel() {
   const { activeChannelId, threadRootId, messages } = useAppStore();
-  const [draft, setDraft] = useState('');
 
   const thread = useMemo(() => {
     if (!activeChannelId || !threadRootId) return [];
@@ -15,13 +15,6 @@ export function ThreadPanel() {
   }, [messages, activeChannelId, threadRootId]);
 
   if (!threadRootId) return null;
-
-  const send = () => {
-    const body = draft;
-    if (!body.trim()) return;
-    setDraft('');
-    void getController().reply(body).catch(() => setDraft(body));
-  };
 
   return (
     <section className="flex w-96 flex-col border-l border-zinc-200 bg-white">
@@ -36,16 +29,7 @@ export function ThreadPanel() {
         {thread.map((m) => <MessageItem key={m.id} message={m} inThread />)}
       </div>
       <div className="border-t border-zinc-200 p-3">
-        <textarea
-          className="w-full resize-none rounded border border-zinc-300 px-3 py-2"
-          rows={2}
-          placeholder="Reply…"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-          }}
-        />
+        <Composer placeholder="Reply…" onSend={(body) => getController().reply(body)} />
       </div>
     </section>
   );
