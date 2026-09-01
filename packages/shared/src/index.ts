@@ -6,9 +6,17 @@ export interface AccountView {
   isAdmin: boolean;
 }
 
-/** murmur 가 실제로 실행할 수 있는 harness. 목록에만 있고 구현이 없는 것은 UI 에서 '지원 예정'이다. */
+/** murmur 가 스키마·설정 차원에서 아는 harness 이름 전체. 실제 실행 가능 여부는 `RUNNABLE_HARNESSES` 를 본다. */
 export const AGENT_HARNESSES = ['claude-code', 'codex', 'gemini'] as const;
 export type AgentHarness = (typeof AGENT_HARNESSES)[number];
+
+/**
+ * 지금 러너가 실제로 실행할 수 있는 harness. `AGENT_HARNESSES` 의 부분집합이다.
+ * 둘이 다른 이유: 타입은 스키마·설정이 아는 이름 전체이고, 이쪽은 코드가 따라온 범위다.
+ * UI 는 이 목록에 없는 것을 '지원 예정'으로 잠근다 — 없는 것을 있다고 표시하지 않는다
+ * (design.md §4).
+ */
+export const RUNNABLE_HARNESSES = ['claude-code'] as const satisfies readonly AgentHarness[];
 
 /** 멘션 턴(화면 앞에 사람이 없다)의 권한. 사람 인터랙티브 턴은 하네스가 직접 묻는다. */
 export const MENTION_PERMISSIONS = ['auto', 'readonly'] as const;

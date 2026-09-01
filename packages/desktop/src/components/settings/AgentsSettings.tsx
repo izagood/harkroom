@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { AGENT_HARNESSES, type AgentConfig, type AgentView } from '@murmur/shared';
+import { AGENT_HARNESSES, RUNNABLE_HARNESSES, type AgentConfig, type AgentView } from '@murmur/shared';
 import { getController } from '../../state/controller';
 
-/** murmur 가 아직 실행할 수 없는 harness. 없는 것은 사용자의 CLI 가 아니라 murmur 의 구현이므로
- *  '설치 안 됨'이 아니라 '지원 예정'이다. */
-const PLANNED = ['cursor', 'codex', 'goose', 'amp', 'devin'];
+/** AGENT_HARNESSES 에조차 없는 harness. 없는 것은 사용자의 CLI 가 아니라 murmur 의 구현이므로
+ *  '설치 안 됨'이 아니라 '지원 예정'이다. AGENT_HARNESSES 에는 있지만 아직 못 돌리는 것(RUNNABLE_HARNESSES
+ *  밖)은 아래 select 렌더링에서 따로 disabled 처리한다 — 여기 중복해서 적지 않는다. */
+const PLANNED = ['cursor', 'goose', 'amp', 'devin'];
 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
@@ -182,9 +183,11 @@ export function AgentsSettings() {
                 value={draft.harness}
                 onChange={(e) => setDraft({ ...draft, harness: e.target.value as AgentConfig['harness'] })}
               >
-                {AGENT_HARNESSES.map((h) => (
-                  <option key={h} value={h}>{h} (default)</option>
-                ))}
+                {AGENT_HARNESSES.map((h) =>
+                  (RUNNABLE_HARNESSES as readonly string[]).includes(h)
+                    ? <option key={h} value={h}>{h} (default)</option>
+                    : <option key={h} value={h} disabled>{h} (지원 예정)</option>,
+                )}
                 {PLANNED.map((h) => (
                   <option key={h} value={h} disabled>{h} (지원 예정)</option>
                 ))}
