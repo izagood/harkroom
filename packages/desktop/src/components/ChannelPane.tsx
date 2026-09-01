@@ -15,7 +15,8 @@ export function ChannelPane() {
     : dm
       ? dm.memberIds.filter((id) => id !== me?.id).map((id) => accounts[id]?.handle ?? '…').join(', ')
       : null;
-  const composerName = channel?.name ?? title ?? '';
+  // DM은 채널이 아니다 — '#'을 붙이면 존재하지 않는 채널 이름을 가리키게 된다.
+  const composerTarget = channel ? `#${channel.name}` : (title ?? '');
 
   const roots = useMemo(
     () => (activeChannelId ? (messages[activeChannelId] ?? []).filter((m) => m.threadRootId === null) : []),
@@ -50,7 +51,7 @@ export function ChannelPane() {
         <textarea
           className="w-full resize-none rounded border border-zinc-300 px-3 py-2"
           rows={2}
-          placeholder={`Message #${composerName}`}
+          placeholder={`Message ${composerTarget}`}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
