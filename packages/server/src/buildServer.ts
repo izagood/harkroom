@@ -13,6 +13,7 @@ import { registerMcp } from './mcp/mcpPlugin.js';
 import { Lifecycle } from './lifecycle.js';
 import { loggerConfig } from './logging.js';
 import { createRateLimiter, type RateLimitRule } from './rateLimit.js';
+import { createMetrics } from './metrics.js';
 
 /**
  * 인증 표면 기본 리밋.
@@ -95,6 +96,35 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return { ok: true };
   });
 
+  const metrics = createMetrics();
+  let socketCount: () => number = () => 0;
+  metrics.registerGauge('murmur_ws_connections', 'live websocket connections', () => socketCount());
+  // 투영 커서를 스크레이프 시점에 읽는다. #48 이 고정한 결함(avcs 를 커서 뒤로 되돌리면
+  // 조용히 건너뛴다)은 **관측되지 않기 때문에** 위험하다 — 채널에는 아무 일도 없어 보인다.
+  // 커서가 숫자로 보이면 그 침묵이 눈에 띈다.
+  metrics.registerLabeledGauge(
+    'murmur_projection_cursor', 'last projected avcs log index per repo', 'repo',
+    async () => {
+      const res = await deps.pool.query(`select repo, last_log_index from projection_cursor`);
+      return Object.fromEntries(
+        res.rows.map((r: { repo: string; last_log_index: string }) => [r.repo, Number(r.last_log_index)]),
+      );
+    },
+  );
+
+
+  // 요청 계측. **라우트 패턴**을 쓴다 — 구체 경로를 라벨로 넣으면 채널 id·메시지 id 마다
+  // 시계열이 하나씩 생겨 스크레이프가 곧 메모리 사고가 된다.
+  app.addHook('onResponse', async (req, reply) => {
+    const route = req.routeOptions?.url ?? 'unmatched';
+    // /metrics 가 자기 자신을 세면 스크레이프 주기가 곧 트래픽으로 보인다.
+    if (route === '/metrics') return;
+    metrics.observeRequest({
+      method: req.method, route, status: reply.statusCode,
+      durationMs: reply.elapsedTime,
+    });
+  });
+
   // 리밋은 인증(onRequest 훅)보다 앞에서 걸어야 한다 — 그래야 Argon2 검증에 도달하기 전에
   // 막히고, 응답이 계정 존재 여부를 드러내지 않는다.
   const limiter = createRateLimiter(deps.now);
@@ -116,6 +146,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   await registerAuth(app, deps.pool);
   await registerWs(app, deps.pool, {
+    onSocketCount: (read) => { socketCount = read; },
     allowedOrigins: deps.corsOrigins ?? null,
     revalidateMs: deps.wsRevalidateMs,
     heartbeatMs: deps.wsHeartbeatMs,
@@ -126,6 +157,16 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerMessageRoutes(app, deps.pool);
   await registerDirectoryRoutes(app, deps.pool);
   await registerAuditRoutes(app, deps.pool);
+
+  // **registerAuth 뒤에 등록해야 한다.** `app.requireAccount` 는 registerAuth 가 데코레이트하므로,
+  // 앞에서 등록하면 preHandler 가 undefined 로 박혀 인증 없이 열린다(테스트가 이걸 잡았다).
+  // 스크레이프에 인증을 요구하는 이유: 집계라도 워크스페이스 활동량을 드러낸다. admin 까지는
+  // 요구하지 않는다 — 스크레이퍼가 쓸 실용적 자격증명은 만료 없는 에이전트 PAT 이고, 사람
+  // 세션 토큰은 14일에 만료돼 스크레이퍼로 부적합하다.
+  app.get('/metrics', { preHandler: app.requireAccount }, async (_req, reply) => {
+    reply.header('content-type', 'text/plain; version=0.0.4; charset=utf-8');
+    return metrics.renderAsync();
+  });
   await registerMcp(app, deps.pool, lifecycle);
 
   return app;

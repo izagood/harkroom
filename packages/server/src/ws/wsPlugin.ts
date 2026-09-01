@@ -8,6 +8,10 @@ import type { WsServerEvent } from '@murmur/shared';
 
 
 
+
+
+
+
 import { emitEvent, onEvent, type WorkspaceEvent } from '../events.js';
 import { createTicketStore } from './tickets.js';
 import { findInvalidCredentials } from './credentials.js';
@@ -35,6 +39,11 @@ export interface WsOptions {
   revalidateMs?: number;
   /** ping/pong 주기. 이 주기 안에 pong 이 없으면 다음 주기에 끊는다. 기본 30초. */
   heartbeatMs?: number;
+  /**
+   * 살아 있는 소켓 수를 읽어갈 수 있게 수집기를 넘겨준다. ws 층이 관측 층을 import 하지
+   * 않도록 방향을 뒤집었다 — 여기서는 "세는 법"만 주고, 무엇을 하든 호출부가 정한다.
+   */
+  onSocketCount?: (read: () => number) => void;
 }
 
 export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptions = {}): Promise<void> {
@@ -75,6 +84,9 @@ export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptio
   // 으로 남았다. 사람은 그걸 "저 에이전트가 살아 있다"로 읽는다. 판정은 heartbeat.ts 가 하고
   // (직전 ping 에 pong 이 없으면 끊는다) 여기서는 주기만 돌린다. 끊으면 close 핸들러가 돌아
   // presence 가 정리된다.
+  // 소켓 수는 accountId 별 refcount 의 합이다(한 계정이 여러 탭을 열 수 있다).
+  opts.onSocketCount?.(() => [...connections.values()].reduce((a, b) => a + b, 0));
+
   const heartbeat = createHeartbeat();
   const beat = setInterval(() => heartbeat.tick(), opts.heartbeatMs ?? 30_000);
   beat.unref?.(); // 이 타이머가 프로세스 종료를 붙잡지 않게 한다
