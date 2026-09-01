@@ -586,7 +586,22 @@ describe('buildTurnCommand — gemini', () => {
   }): Promise<TurnResult>;
   ```
 
-- [ ] **Step 1: node-pty 설치** — `pnpm --filter @murmur/agent add node-pty` (네이티브 빌드 확인)
+- [ ] **Step 1: node-pty 설치** — `pnpm --filter @murmur/agent add node-pty`
+
+`node-pty@1.1.0` 의 install 스크립트는 `node scripts/prebuild.js || node-gyp rebuild` 다. 이
+머신(macOS arm64, Node 22, Python 3.12, Xcode)에는 폴백 툴체인이 다 있어 로컬 설치는 통과할
+것으로 본다. **위험은 로컬이 아니라 CI 다** — `.github/workflows` 는 `ubuntu-latest` + Node 22 라
+로컬(darwin-arm64)과 **다른 바이너리**가 필요하고, 프리빌드가 그 조합에 없으면 CI 의
+`pnpm install` 이 통째로 깨진다. 이 레포는 PR·main 푸시에 CI 게이트가 있으므로 로컬 초록이
+증거가 되지 않는다.
+
+그래서 이 단계는 설치로 끝내지 말고 **linux/x64 프리빌드 존재를 확인**해라
+(`npm view node-pty dist.tarball` 로 받아 열어 보거나, 설치 로그에서 prebuild 다운로드가
+성공했는지 vs `node-gyp rebuild` 로 떨어졌는지를 본다). 어느 쪽이든 리포트에 적어라.
+프리빌드가 없어 CI 가 `node-gyp` 를 타야 한다면 `ubuntu-latest` 에 build-essential/python 이
+있는지가 다음 질문이고, 없으면 워크플로에 설치 단계가 필요하다 — 그 판단은 Task 11 이
+전체 CI 를 돌릴 때가 아니라 **여기서** 내려야 한다. 여기서 놓치면 Phase 1 전체가 머지 직전에
+막힌다.
 
 - [ ] **Step 2: 가짜 하네스 작성** — `test/helpers/fake-harness.mjs`:
 
