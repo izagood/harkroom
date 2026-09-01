@@ -172,6 +172,11 @@ intent(자발·외부 작업)만 투영 규칙대로 새 작업 스레드를 자
 
 ### 에러 처리
 
+- **업데이트로 에이전트 세션이 끊기지 않는다**: 종료 신호(SIGTERM)를 받으면 소켓을 닫기
+  **전에** in-flight `inbox.poll`을 정상 타임아웃과 같은 모양(빈 결과 200)으로 마감하고
+  (`lifecycle.ts`), 그 응답들이 빠질 때까지 최대 2초 기다린 뒤 닫는다. `/mcp`는
+  `reply.hijack()`으로 raw 소켓을 가져가 Fastify `close()`의 in-flight 대기 대상에서
+  빠지므로, 이 drain이 없으면 종료가 곧 transport error 절단이었다.
 - **avcs 서버 다운 = 채팅은 무사**: 투영 워커만 지수 백오프 재접속, 복구 시
   커서부터 따라잡기(멱등성이 안전망). `/readyz`는 Postgres만 필수, avcs 연결은
   degraded로 표시.
@@ -197,6 +202,36 @@ intent(자발·외부 작업)만 투영 규칙대로 새 작업 스레드를 자
 
 - self-host: docker compose 3서비스(`server` + `postgres` + `avcs-server`).
 - 데스크탑: Tauri 릴리스 바이너리.
+
+#### 업데이트 모델 — "업데이트해도 에이전트는 계속 일한다"
+
+에이전트가 **외부 접속형**(§1)이라는 결정이 업데이트 내성의 근거다. 세 축이 서로 독립이다.
+
+| 업데이트 축 | 에이전트 세션 | 이유 |
+|---|---|---|
+| 데스크탑 앱 | 무관 | 에이전트는 앱 안에 살지 않는다. 앱은 사람용 클라이언트일 뿐 |
+| workspace-server | 끊기지 않음(재접속 필요) | MCP가 stateless + 상태가 전부 Postgres + 종료 시 drain |
+| avcs 서버 | 끊기지 않음 | 투영 워커만 백오프 재접속, 커서부터 따라잡기 |
+
+workspace-server 교체가 안전한 이유를 구체적으로:
+
+1. **복원할 서버측 세션 상태가 0이다.** `/mcp`는 `sessionIdGenerator: undefined`로
+   요청마다 `McpServer`를 새로 만들고 닫는다. 교체 후 에이전트가 복원할 세션 ID가 없다.
+2. **진실의 원천이 전부 Postgres다.** inbox·메시지 seq·`projection_cursor`·`active_lease`·
+   idempotency. 인메모리는 이벤트 버스와 presence 카운터뿐이고 둘 다 재연결로 재구성된다.
+3. **재시도가 중복 발화를 만들지 않는다.** idempotency key가 `(author, channel)` 범위로
+   DB에 남아, 교체를 가로지른 재시도도 같은 메시지를 재생 응답으로 돌려받는다.
+4. **종료가 절단이 아니다.** 위 drain. 종료 중 도착한 poll도 park 없이 즉시 빈 결과다.
+5. **재시도 책임은 계약으로 넘긴다.** 서버가 에이전트 런타임을 모르므로 재접속을 강제할 수
+   없다. MCP `workspace.guide`의 "poll 루프 계약"이 빈 결과·재시작·절단 세 경우를 모두
+   정상으로 규정하고 백오프 재시도를 지시한다.
+6. **롤링 업데이트에서 부팅이 충돌하지 않는다.** `runMigrations`는 advisory lock으로
+   직렬화된다. 잠금이 없으면 뒤늦게 뜬 인스턴스가 첫 DDL에서 죽었다(`create table if not
+   exists`조차 카탈로그 유니크 인덱스에서 경합한다).
+
+남은 한계(의도적): compose는 `server` 1개라 교체 창(수 초) 동안 REST는 거절된다 — 무중단이
+아니라 **끊겨도 이어진다**가 보장 범위다. 데스크탑은 WS 백오프 재연결 + `since=` 리컨실로,
+에이전트는 위 poll 계약으로 그 창을 건넌다.
 - **개발 자체가 첫 도그푸딩**: murmur를 avcs로 버전관리하고, 첫 워크스페이스
   인스턴스가 murmur 개발 워크스페이스가 된다.
 
@@ -230,3 +265,7 @@ murmur 개발 워크스페이스를 murmur 자신으로 운영할 수 있다:
 4. 읽기 전용 요청은 avcs 흔적 없이 채팅으로만 끝난다
 5. 사이드바 현황판에서 에이전트들의 lease 점유가 실시간으로 보인다
 6. avcs 서버를 재시작해도 채팅은 끊기지 않고, 투영은 커서부터 따라잡는다
+7. **workspace-server를 업데이트(프로세스 교체)해도 에이전트 세션은 중단되지 않는다** —
+   진행 중이던 `inbox.poll`은 빈 결과로 정상 마감되고, 교체된 인스턴스에서 같은 에이전트의
+   다음 poll이 그동안 쌓인 inbox를 그대로 받으며, 교체를 가로지른 재시도는 메시지를
+   중복 생성하지 않는다 (`packages/server/test/restart.test.ts`)

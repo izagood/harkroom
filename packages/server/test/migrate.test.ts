@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import type { Pool } from 'pg';
+import pg, { type Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 
 let pool: Pool;
+let uri: string;
 let stop: () => Promise<void>;
 
 beforeAll(async () => {
-  ({ pool, stop } = await startTestDb());
+  ({ pool, uri, stop } = await startTestDb());
 });
 afterAll(async () => stop());
 
@@ -42,5 +43,24 @@ describe('migrations', () => {
       );
     await insert();
     await expect(insert()).rejects.toThrow(/duplicate key/);
+  });
+
+  // 롤링 업데이트(구·신 인스턴스 동시 기동)에서 두 프로세스가 같은 빈 DB에 마이그레이션을
+  // 걸면, 잠금이 없으면 뒤늦은 쪽이 'relation already exists'로 부팅 중 죽는다.
+  it('lets two instances migrate the same fresh database concurrently', async () => {
+    const { runMigrations } = await import('../src/db/migrate.js');
+    await pool.query('create database concurrent_boot');
+    const target = new URL(uri);
+    target.pathname = '/concurrent_boot';
+    const a = new pg.Pool({ connectionString: target.toString() });
+    const b = new pg.Pool({ connectionString: target.toString() });
+    try {
+      await Promise.all([runMigrations(a), runMigrations(b)]);
+      const applied = await a.query('select name from schema_migrations order by name');
+      expect(applied.rows.map((r) => r.name)).toEqual(['001_init.sql', '002_idempotency_scope.sql']);
+    } finally {
+      await a.end();
+      await b.end();
+    }
   });
 });

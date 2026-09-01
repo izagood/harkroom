@@ -106,6 +106,17 @@ describe('mcp surface', () => {
     await client.close();
   });
 
+  // 에이전트 런타임은 murmur 밖에 있어서 서버가 재시도를 강제할 수 없다. 그래서 "재시작은
+  // 정상 이벤트이니 백오프로 다시 걸어라"는 계약을 guide가 문서로 들고 있어야 한다.
+  it('states the inbox.poll retry contract in workspace.guide', async () => {
+    const client = await mcpClient(botPat);
+    const { guide } = text(await client.callTool({ name: 'workspace.guide', arguments: {} })) as { guide: string };
+    expect(guide).toMatch(/빈 결과/);
+    expect(guide).toMatch(/재시도/);
+    expect(guide).toMatch(/재시작|업데이트/);
+    await client.close();
+  });
+
   it('inbox.poll returns mention created after the call (long-poll)', async () => {
     const client = await mcpClient(botPat);
     const pending = client.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 10_000 } });
