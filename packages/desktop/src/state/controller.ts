@@ -223,6 +223,25 @@ export class Controller {
     if (threadRootId === messageId) useAppStore.getState().set({ threadRootId: null });
   }
 
+  listAgents(): Promise<import('@murmur/shared').AgentView[]> {
+    return this.api.listAgents();
+  }
+
+  /** 생성과 PAT 발급을 함께 한다 — 러너를 띄우려면 둘 다 필요하고, PAT 는 지금만 볼 수 있다. */
+  async createAgent(
+    input: { handle: string; displayName: string } & Partial<import('@murmur/shared').AgentConfig>,
+  ): Promise<{ agent: import('@murmur/shared').AgentView; pat: string }> {
+    const agent = await this.api.createAgent(input);
+    const pat = await this.api.mintPat(agent.id, 'runner');
+    return { agent, pat };
+  }
+
+  updateAgent(
+    id: string, patch: Partial<import('@murmur/shared').AgentConfig> & { displayName?: string },
+  ): Promise<import('@murmur/shared').AgentView> {
+    return this.api.updateAgent(id, patch);
+  }
+
   async startDm(accountId: string): Promise<void> {
     const dm = await this.api.createDm([accountId]);
     useAppStore.getState().set({ dms: await this.api.dms() });
