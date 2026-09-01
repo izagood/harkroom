@@ -708,7 +708,9 @@ workspace 가 고유 디렉터리이므로 cwd 가 정확한 키다.
 def = murmur.definition()                     // 매 턴 — UI 수정 즉시 반영 (기존 성질 유지)
 thread = murmur.readThread(...)
 key = SessionStore.threadKey(channelId, anchor)
-rec = store.get(key) ?? { workspaceDir: await ensureWorkspace(...), sessionId: harness가 id 할당형이면 randomUUID(), harness: def.harness, lastFedSeq: 0 }
+rec = store.get(key)
+if (rec && rec.harness !== def.harness) rec = null   // harness 를 바꿨으면 세션을 버린다 (아래)
+rec ??= { workspaceDir: await ensureWorkspace(...), sessionId: harness가 id 할당형이면 randomUUID(), harness: def.harness, lastFedSeq: 0 }
 {prompt, fedSeq} = buildTurnPrompt(...)       // '' 이면 markRead 만 하고 끝
 turnStartSeq = max(thread seq)
 plan = buildTurnCommand({... def.mentionPermission ...})
@@ -719,6 +721,15 @@ if (result.exitCode === 0 && !hasOwnPostSince(after, me.id, turnStartSeq)) murmu
 store.put(key, {...rec, lastFedSeq: fedSeq})
 exitCode !== 0 || timedOut → throw (기존 attempts/MAX_ATTEMPTS 경로가 받는다)
 ```
+
+**harness 변경은 세션을 무효화한다.** spec §3 은 "지시문·모델은 매 턴 플래그로 주입되므로
+UI 수정이 자동 반영되고 무효화 장치가 필요 없다"고 했는데, harness 는 플래그가 아니라 **실행
+바이너리**라 그 논리가 적용되지 않는다 — claude 가 발급한 session-id 를 codex 에 넘기면
+resume 이 깨진다. `rec.harness !== def.harness` 면 `sessionId` 와 `lastFedSeq` 를 버리고 첫 턴으로
+다시 시작한다(workspace 디렉터리는 재사용한다 — 그 안의 작업 산출물은 harness 와 무관하다).
+그 스레드의 대화 기억 한 번을 잃지만, 이어 붙일 수 없는 세션을 이어 붙이려다 매 턴 실패하는
+것보다 낫다. **테스트로 고정할 것**: 같은 threadKey 에서 harness 를 바꾸면 다음 턴이
+`isFirstTurn: true` 로 조립되고 옛 sessionId 가 인자에 남지 않는다.
 
 세부 둘: ① `repoDir = def.workingDir ?? process.cwd()` — workspace 격리는 workingDir 가
 avcs repo 일 때만 성립하고 아니면 Task 4 폴백으로 그 자리에서 돈다. ② throw 하는 에러
