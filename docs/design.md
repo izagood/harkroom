@@ -129,7 +129,11 @@ intent(자발·외부 작업)만 투영 규칙대로 새 작업 스레드를 자
 
 - 쓰기는 전부 REST (`POST /channels/:id/messages`, idempotency-key 헤더). WS로 쓰지 않는다.
 - WebSocket(`/ws`)은 알림 전용 푸시: `message.created/updated/deleted`,
-  `inbox.updated`, `lease.changed`, `presence.changed`.
+  `inbox.updated`, `lease.changed`, `presence.changed`, `presence.snapshot`.
+- 수정·삭제 권한은 비대칭이다. **수정은 작성자 본인만** — 남의 말을 고치는 것은 되돌릴 수 없는
+  왜곡이라 admin 에게도 열지 않는다. **삭제는 작성자 또는 admin** — 원문을 왜곡하지 않고 가리는
+  일이라 운영에 필요하다. `kind='system'` 메시지는 avcs 투영의 산물이므로 사람이 고칠 수 없다.
+  삭제는 `deleted_at` 소프트 삭제이고 `listMessages` 가 걸러낸다.
 - 재연결 시 `GET .../messages?since=`로 리컨실. WS는 진실의 원천이 아니다.
 - presence: WS 연결 + 하트비트 기준 online/offline. 단일 워크스페이스라 구독
   스코핑 없이 브로드캐스트(MVP 규모 충분).

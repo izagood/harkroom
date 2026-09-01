@@ -16,6 +16,8 @@ export interface MessageRow {
   kind: 'user' | 'system';
   meta: Record<string, unknown>;
   createdAt: string;
+  /** 수정된 적이 없으면 null. */
+  editedAt: string | null;
 }
 
 export interface ChannelRow {
@@ -48,6 +50,8 @@ export interface LeaseRow {
 
 export type WsServerEvent =
   | { type: 'message.created'; message: MessageRow; audience: 'all' | string[] }
+  | { type: 'message.updated'; message: MessageRow; audience: 'all' | string[] }
+  | { type: 'message.deleted'; channelId: string; messageId: string; audience: 'all' | string[] }
   | { type: 'inbox.updated'; accountId: string }
   | { type: 'lease.changed'; repo: string }
   | { type: 'presence.changed'; accountId: string; online: boolean }

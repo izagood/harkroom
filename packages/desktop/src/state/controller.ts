@@ -48,6 +48,13 @@ export class Controller {
         // 그 계정을 모르고, 작성자가 '…'로 표시된다. 디렉터리는 정적이 아니다.
         if (!store.accounts[e.message.authorId]) this.swallow(this.refreshAccounts());
         break;
+      case 'message.updated':
+        // 같은 id 로 덮어쓰면 upsert 가 제자리 교체한다.
+        store.upsertMessages(e.message.channelId, [e.message]);
+        break;
+      case 'message.deleted':
+        store.removeMessage(e.channelId, e.messageId);
+        break;
       case 'inbox.updated':
         if (e.accountId === store.me?.id) this.swallow(this.refreshUnread());
         break;
@@ -139,6 +146,20 @@ export class Controller {
     if (!activeChannelId || !threadRootId || !body.trim()) return;
     const m = await this.api.postMessage(activeChannelId, body, threadRootId, crypto.randomUUID());
     useAppStore.getState().upsertMessages(activeChannelId, [m]);
+  }
+
+  async editMessage(messageId: string, body: string): Promise<void> {
+    const { activeChannelId } = useAppStore.getState();
+    if (!activeChannelId || !body.trim()) return;
+    const updated = await this.api.editMessage(activeChannelId, messageId, body);
+    useAppStore.getState().upsertMessages(activeChannelId, [updated]);
+  }
+
+  async deleteMessage(messageId: string): Promise<void> {
+    const { activeChannelId } = useAppStore.getState();
+    if (!activeChannelId) return;
+    await this.api.deleteMessage(activeChannelId, messageId);
+    useAppStore.getState().removeMessage(activeChannelId, messageId);
   }
 
   async startDm(accountId: string): Promise<void> {

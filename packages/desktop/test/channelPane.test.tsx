@@ -6,7 +6,12 @@ import { ChannelPane } from '../src/components/ChannelPane';
 import { acc, chan, msg } from './helpers/fakeApi';
 
 const fakeController = () => {
-  const c = { send: vi.fn(async () => undefined), openThread: vi.fn() };
+  const c = {
+    send: vi.fn(async () => undefined),
+    openThread: vi.fn(),
+    editMessage: vi.fn(async () => undefined),
+    deleteMessage: vi.fn(async () => undefined),
+  };
   setController(c as unknown as Controller);
   return c;
 };
@@ -35,6 +40,74 @@ afterEach(() => {
 });
 
 describe('ChannelPane', () => {
+  // 수정된 메시지는 원문과 구별돼야 한다 — 아니면 대화 기록이 조용히 바뀐다.
+  it('marks a message that was edited', () => {
+    fakeController();
+    useAppStore.getState().set({
+      messages: {
+        c1: [msg('m1', 'c1', 1, '고친 문장', 'u1', { editedAt: new Date().toISOString() })],
+      },
+    });
+    render(<ChannelPane />);
+    expect(screen.getByText('(edited)')).toBeTruthy();
+  });
+
+  it('leaves an untouched message unmarked', () => {
+    fakeController();
+    useAppStore.getState().set({ messages: { c1: [msg('m1', 'c1', 1, '원문', 'u1')] } });
+    render(<ChannelPane />);
+    expect(screen.queryByText('(edited)')).toBeNull();
+  });
+
+  // 남의 말을 고치거나 지우는 진입점이 보이면 안 된다 — 서버가 막지만 UI 도 약속을 지켜야 한다.
+  it('offers edit and delete only on your own message', () => {
+    fakeController();
+    useAppStore.getState().set({
+      messages: {
+        c1: [msg('m1', 'c1', 1, '내 문장', 'u1'), msg('m2', 'c1', 2, '남의 문장', 'u2')],
+      },
+    });
+    render(<ChannelPane />);
+    expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(1);
+  });
+
+  it('sends the rewritten body when an edit is confirmed', () => {
+    const c = fakeController();
+    useAppStore.getState().set({ messages: { c1: [msg('m1', 'c1', 1, '고치기 전', 'u1')] } });
+    render(<ChannelPane />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByDisplayValue('고치기 전'), { target: { value: '고친 뒤' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(c.editMessage).toHaveBeenCalledWith('m1', '고친 뒤');
+  });
+
+  it('abandons an edit on cancel', () => {
+    const c = fakeController();
+    useAppStore.getState().set({ messages: { c1: [msg('m1', 'c1', 1, '그대로', 'u1')] } });
+    render(<ChannelPane />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByDisplayValue('그대로'), { target: { value: '버릴 수정' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(c.editMessage).not.toHaveBeenCalled();
+    expect(screen.getByText('그대로')).toBeTruthy();
+  });
+
+  it('deletes on confirm', () => {
+    const c = fakeController();
+    useAppStore.getState().set({ messages: { c1: [msg('m1', 'c1', 1, '지울 문장', 'u1')] } });
+    render(<ChannelPane />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Really delete' }));
+
+    expect(c.deleteMessage).toHaveBeenCalledWith('m1');
+  });
+
   // 호버해야만 나타나는 버튼으로는 "이 메시지에 답글이 있다"를 알 수 없다. 답글이 달린 메시지는
   // 스레드를 열지 않고도 그 사실이 보여야 한다.
   it('shows a standing reply count on a message that has thread replies', () => {

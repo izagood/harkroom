@@ -120,6 +120,51 @@ describe('Controller', () => {
     expect(useAppStore.getState().messages.c1!.filter((x) => x.id === 'm9')).toHaveLength(1);
   });
 
+  it('applies message.updated in place', async () => {
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(fakeApi(), makeWs);
+    await c.start();
+    await c.openChannel('c1');
+    const original = msg('m5', 'c1', 5, '고치기 전');
+    callbacks.current!.onEvent({ type: 'message.created', message: original, audience: 'all' });
+
+    callbacks.current!.onEvent({
+      type: 'message.updated',
+      message: { ...original, body: '고친 뒤', editedAt: new Date().toISOString() },
+      audience: 'all',
+    });
+
+    const row = useAppStore.getState().messages.c1!.find((m) => m.id === 'm5')!;
+    expect(row.body).toBe('고친 뒤');
+    expect(row.editedAt).not.toBeNull();
+  });
+
+  it('drops a message on message.deleted', async () => {
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(fakeApi(), makeWs);
+    await c.start();
+    await c.openChannel('c1');
+    callbacks.current!.onEvent({ type: 'message.created', message: msg('m6', 'c1', 6, '지울 것'), audience: 'all' });
+
+    callbacks.current!.onEvent({ type: 'message.deleted', channelId: 'c1', messageId: 'm6', audience: 'all' });
+
+    expect(useAppStore.getState().messages.c1!.map((m) => m.id)).not.toContain('m6');
+  });
+
+  it('edit sends the new body and drops the message on delete', async () => {
+    const api = fakeApi();
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    await c.openChannel('c1');
+
+    await c.editMessage('m1', '새 본문');
+    await c.deleteMessage('m1');
+
+    expect((api.editMessage as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(['c1', 'm1', '새 본문']);
+    expect((api.deleteMessage as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(['c1', 'm1']);
+  });
+
   it('presence events update online list', async () => {
     const { makeWs, callbacks } = fakeWsFactory();
     const c = new Controller(fakeApi(), makeWs);

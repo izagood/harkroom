@@ -10,6 +10,8 @@ import { findInvalidCredentials } from './credentials.js';
 function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
   switch (e.type) {
     case 'message.created':
+    case 'message.updated':
+    case 'message.deleted':
       return e.audience === 'all' || e.audience.includes(accountId);
     case 'inbox.updated':
       return e.accountId === accountId;
