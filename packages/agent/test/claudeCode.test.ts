@@ -8,6 +8,7 @@ const cfg = {
   model: null,
   effort: null,
   workingDir: null,
+  mentionPermission: 'auto' as const,
 };
 
 describe('buildClaudeArgs', () => {

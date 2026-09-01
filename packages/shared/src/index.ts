@@ -7,8 +7,12 @@ export interface AccountView {
 }
 
 /** murmur 가 실제로 실행할 수 있는 harness. 목록에만 있고 구현이 없는 것은 UI 에서 '지원 예정'이다. */
-export const AGENT_HARNESSES = ['claude-code'] as const;
+export const AGENT_HARNESSES = ['claude-code', 'codex', 'gemini'] as const;
 export type AgentHarness = (typeof AGENT_HARNESSES)[number];
+
+/** 멘션 턴(화면 앞에 사람이 없다)의 권한. 사람 인터랙티브 턴은 하네스가 직접 묻는다. */
+export const MENTION_PERMISSIONS = ['auto', 'readonly'] as const;
+export type MentionPermission = (typeof MENTION_PERMISSIONS)[number];
 
 /** UI 에서 등록·수정하는 에이전트의 정의. null 은 'harness 기본값 사용'이다. */
 export interface AgentConfig {
@@ -17,9 +21,13 @@ export interface AgentConfig {
   model: string | null;
   effort: string | null;
   workingDir: string | null;
+  mentionPermission: MentionPermission;
 }
 
-export interface AgentView extends AccountView, AgentConfig {}
+export interface AgentView extends AccountView, AgentConfig {
+  /** 러너 소유자. null 이면 attach 표면이 아무에게도 안 뜬다. */
+  ownerAccountId: string | null;
+}
 
 /**
  * handle 문법. 계정 생성과 멘션 인식이 같은 것을 봐야 한다.

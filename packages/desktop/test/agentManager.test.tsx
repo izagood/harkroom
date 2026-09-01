@@ -8,7 +8,8 @@ import { acc } from './helpers/fakeApi';
 
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
-  instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null, ...extra,
+  instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
+  mentionPermission: 'auto', ownerAccountId: null, ...extra,
 });
 
 type CreateInput = { handle: string; displayName: string } & Partial<AgentConfig>;
