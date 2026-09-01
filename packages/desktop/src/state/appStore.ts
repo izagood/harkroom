@@ -9,6 +9,8 @@ export interface AppState {
   activeChannelId: string | null;
   threadRootId: string | null;
   messages: Record<string, MessageRow[]>;
+  /** 채널별 '더 오래된 것이 남았는가'. */
+  hasMore: Record<string, boolean>;
   unread: InboxEntry[];
   online: string[];
   leases: LeaseRow[];
@@ -21,7 +23,7 @@ export interface AppState {
 
 const initial = {
   me: null, accounts: {}, channels: [], dms: [], activeChannelId: null, threadRootId: null,
-  messages: {}, unread: [], online: [], leases: [], connected: false,
+  messages: {}, hasMore: {}, unread: [], online: [], leases: [], connected: false,
 };
 
 export const useAppStore = create<AppState>((set, get) => ({

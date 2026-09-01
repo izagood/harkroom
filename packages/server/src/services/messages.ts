@@ -103,6 +103,15 @@ export async function postMessage(
   }
 }
 
+/** 주어진 seq 보다 오래된 메시지가 남아 있는가. 클라이언트의 '더 불러오기' 표시에 쓴다. */
+export async function hasOlderMessages(pool: Pool, channelId: string, oldestSeq: number): Promise<boolean> {
+  const res = await pool.query(
+    `select 1 from message where channel_id = $1 and seq < $2 and deleted_at is null limit 1`,
+    [channelId, oldestSeq],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
 export type MutationRefusal = 'not_found' | 'forbidden';
 
 /** 수정은 작성자 본인만, user 메시지만. system 메시지는 avcs 투영의 산물이라 사람이 고칠 수 없다. */
@@ -143,7 +152,7 @@ export async function deleteMessage(
 
 export async function listMessages(
   pool: Pool, channelId: string,
-  opts: { since?: number; threadRootId?: string | null; limit?: number },
+  opts: { since?: number; before?: number; threadRootId?: string | null; limit?: number },
 ): Promise<MessageRow[]> {
   const limit = Math.min(opts.limit ?? 200, 500);
   if (opts.threadRootId) {
@@ -152,6 +161,20 @@ export async function listMessages(
        where channel_id = $1 and (id = $2 or thread_root_id = $2) and deleted_at is null
        order by seq limit $3`,
       [channelId, opts.threadRootId, limit],
+    );
+    return res.rows;
+  }
+  // 역방향 페이지: before 보다 오래된 것 중 '가장 최신 limit 개'를 잡아 오름차순으로 되돌린다.
+  // desc 로 잡지 않으면 채널 맨 앞부터 limit 개를 주게 되어 페이지가 이어지지 않는다.
+  if (opts.before !== undefined) {
+    const res = await pool.query(
+      `select * from (
+         select ${COLS} from message
+         where channel_id = $1 and seq < $2 and deleted_at is null
+         order by seq desc limit $3
+       ) older
+       order by seq`,
+      [channelId, opts.before, limit],
     );
     return res.rows;
   }

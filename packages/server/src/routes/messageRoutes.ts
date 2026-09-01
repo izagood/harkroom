@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { emitEvent } from '../events.js';
 import { assertChannelVisible, dmMemberIds } from '../services/channels.js';
-import { deleteMessage, editMessage, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
+import { deleteMessage, editMessage, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 
 export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.post('/channels/:id/messages', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -81,12 +81,24 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const q = z.object({
       since: z.coerce.number().int().min(0).optional(),
+      before: z.coerce.number().int().min(0).optional(),
+      limit: z.coerce.number().int().min(1).max(500).optional(),
       thread: z.string().uuid().optional(),
+    }).refine((v) => v.before === undefined || v.since === undefined, {
+      // 서로 반대 방향이다. 함께 오면 어느 쪽을 의도했는지 서버가 고를 수 없다.
+      message: 'before and since are opposite directions — send one',
     }).parse(req.query);
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
-    return { messages: await listMessages(pool, id, { since: q.since, threadRootId: q.thread ?? null }) };
+    const messages = await listMessages(pool, id, {
+      since: q.since, before: q.before, limit: q.limit, threadRootId: q.thread ?? null,
+    });
+    // 스레드 조회에는 '더 오래된 것'이라는 개념이 없다(루트 + 답글 전체가 한 묶음이다).
+    const hasMore = q.thread
+      ? false
+      : messages.length > 0 && (await hasOlderMessages(pool, id, messages[0]!.seq));
+    return { messages, hasMore };
   });
 
   app.get('/inbox', { preHandler: app.requireAccount }, async (req) => {
