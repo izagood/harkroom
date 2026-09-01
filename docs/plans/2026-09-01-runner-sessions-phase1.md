@@ -829,8 +829,26 @@ avcs repo 일 때만 성립하고 아니면 Task 4 폴백으로 그 자리에서
 - Modify: `docs/operations.md` §7 (러너 감독 — PATH 에 필요한 실행 파일이 `claude` 만이 아니라 `codex`·`gemini`·`avcs` 로 늘었다), `packages/agent/README.md` (세션·workspace·권한 모델 요약), `docs/roadmap.md` §5 ("harness 다양성" 항목을 실측 결과로 갱신)
 - Test: 없음 (문서)
 
-- [ ] **Step 1: 문서 3곳 갱신** — spec 을 근거 문서로 링크
-- [ ] **Step 2: 전체 검증** — `pnpm test` (모노레포 전체) + `pnpm -r typecheck` — 모두 초록 확인
+- [ ] **Step 1: 문서 4곳 갱신** — spec 을 근거 문서로 링크
+
+  네 번째는 **네이티브 의존성 안내**다(Task 7 이 도입). 저장소 루트 `README.md` 의 "개발"
+  절과 `packages/agent/README.md` 에 적는다 — murmur 는 셀프호스트로 배포되므로 사용자가
+  각자 설치하고, 그때 그대로 밟을 함정이 둘이다:
+  - `node-pty` 는 이 저장소의 **첫 네이티브 의존성**이다. 프리빌드가 있어 대개 컴파일이
+    필요 없지만(linux-x64/arm64, darwin), 그 밖의 플랫폼은 `node-gyp` 로 떨어지므로
+    빌드 도구가 필요하다.
+  - `pnpm-workspace.yaml` 의 `allowBuilds` 에 `node-pty` 가 있어야 한다. **없으면 pnpm 이
+    postinstall 을 조용히 건너뛰어** 프리빌드 존재 여부와 무관하게 `pty.node` 가 없고,
+    증상은 "설치는 성공했는데 러너가 뜨자마자 죽는다"로 나타난다. 저장소에 이미 들어
+    있으므로 클론한 사람은 겪지 않지만, 이 항목을 지우면 재현되므로 **왜 있는지**를 적는다.
+  - 버전이 `1.2.0-beta.15` 로 고정된 이유도 한 줄 남긴다(stable `1.1.0` 은 linux 프리빌드가
+    없고 macOS 프리빌드의 실행 비트가 빠져 있다 — microsoft/node-pty#850). 근거 없는 베타는
+    다음 사람이 무심코 올린다.
+- [ ] **Step 2: 전체 검증** — `pnpm test` (모노레포 전체) + `pnpm -r typecheck` — 모두 초록 확인.
+  **추가로 CI 를 실제로 한 번 통과시킨다** — 이 브랜치의 첫 네이티브 의존성이 `ubuntu-latest`
+  에서 프리빌드로 끝나는지는 로컬 초록이 증명하지 못한다(Task 7 이 프리빌드 존재까지는
+  확인했으나 CI 실물 통과는 미확인으로 남겼다). 실패하면 워크플로에 빌드 도구 설치가
+  필요한지 여기서 판정한다.
 - [ ] **Step 3: 실물 확인 (로컬)** — 로컬 스택 + 실제 claude 로 성공 기준 1·2·5·7 을 손으로: 같은 스레드 2회 멘션(기억), 러너 재시작 후 멘션(기억 유지), 발화 없는 지시문으로 NO_REPLY 확인, `ls /tmp | grep murmur-agent` 로 PAT 파일 부재
 - [ ] **Step 4: 커밋** — `docs: 러너 세션 코어 착지 — 운영·로드맵 반영`
 
