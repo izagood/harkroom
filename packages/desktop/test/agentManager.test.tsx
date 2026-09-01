@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import type { AgentConfig, AgentView } from '@murmur/shared';
 import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
-import { AgentManager } from '../src/components/AgentManager';
+import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { acc } from './helpers/fakeApi';
 
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
@@ -30,10 +30,10 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
-describe('AgentManager', () => {
+describe('AgentsSettings', () => {
   it('creates an agent from the name and instructions the operator typed', async () => {
     const c = fakeController();
-    render(<AgentManager onClose={() => {}} />);
+    render(<AgentsSettings />);
 
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
     fireEvent.change(screen.getByLabelText('Agent instructions'), {
@@ -50,7 +50,7 @@ describe('AgentManager', () => {
   // PAT 는 생성 직후 한 번만 보여줄 수 있다(서버가 해시만 보관한다). 놓치면 러너를 띄울 수 없다.
   it('shows the new PAT once so the operator can start the runner', async () => {
     fakeController();
-    render(<AgentManager onClose={() => {}} />);
+    render(<AgentsSettings />);
 
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
@@ -61,7 +61,7 @@ describe('AgentManager', () => {
 
   it('refuses to submit without a name', async () => {
     const c = fakeController();
-    render(<AgentManager onClose={() => {}} />);
+    render(<AgentsSettings />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
 
@@ -72,7 +72,7 @@ describe('AgentManager', () => {
   // 아니라 murmur 의 구현이므로 '지원 예정'이라고 적는다.
   it('offers only the harness murmur can actually run', async () => {
     fakeController();
-    render(<AgentManager onClose={() => {}} />);
+    render(<AgentsSettings />);
 
     const options = (await screen.findByLabelText('Agent harness')).querySelectorAll('option');
     const enabled = [...options].filter((o) => !(o as HTMLOptionElement).disabled);
@@ -84,14 +84,14 @@ describe('AgentManager', () => {
 
   it('lists the agents that already exist', async () => {
     fakeController([agent('rusalka', { instructions: '기존 지시문' })]);
-    render(<AgentManager onClose={() => {}} />);
+    render(<AgentsSettings />);
 
     expect(await screen.findByText('rusalka')).toBeTruthy();
   });
 
   it('loads an existing agent into the form for editing', async () => {
     fakeController([agent('rusalka', { instructions: '기존 지시문' })]);
-    render(<AgentManager onClose={() => {}} />);
+    render(<AgentsSettings />);
 
     fireEvent.click(await screen.findByText('rusalka'));
 
@@ -101,7 +101,7 @@ describe('AgentManager', () => {
   // 저장은 폼 전체를 보낸다 — 바뀐 필드만 보내면 'harness 기본값으로 되돌리기'를 표현할 수 없다.
   it('saves the whole definition when an edit is submitted', async () => {
     const c = fakeController([agent('rusalka', { instructions: '기존 지시문' })]);
-    render(<AgentManager onClose={() => {}} />);
+    render(<AgentsSettings />);
     fireEvent.click(await screen.findByText('rusalka'));
 
     fireEvent.change(screen.getByLabelText('Agent instructions'), { target: { value: '고친 지시문' } });
@@ -117,7 +117,7 @@ describe('AgentManager', () => {
   // 필드를 그냥 안 보내면 서버가 기존 값을 유지해 되돌리기가 되지 않는다.
   it('clears model and effort when the operator returns to harness defaults', async () => {
     const c = fakeController([agent('rusalka', { model: 'claude-opus-5', effort: 'high' })]);
-    render(<AgentManager onClose={() => {}} />);
+    render(<AgentsSettings />);
     fireEvent.click(await screen.findByText('rusalka'));
 
     fireEvent.click(screen.getByRole('button', { name: 'Use harness defaults' }));
