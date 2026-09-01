@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  에이전트 러너를 launchd 감독 하에 둔다. 러너가 죽으면 사용자는 "부른 상대가 답하지
+  않는다"만 보고, UI 에는 그 신호가 없다 (docs/operations.md §7).
+
+  쓰는 법:
+    sed -e 's|@HANDLE@|fizz|g' \
+        -e 's|@REPO@|/절대/경로/murmur|g' \
+        -e 's|@PAT@|murp_...|g' \
+        -e 's|@URL@|http://localhost:3400|g' \
+        ops/agent-runner.plist.template > ~/Library/LaunchAgents/dev.murmur.agent.fizz.plist
+    chmod 600 ~/Library/LaunchAgents/dev.murmur.agent.fizz.plist   # PAT 가 평문으로 담긴다
+    launchctl load ~/Library/LaunchAgents/dev.murmur.agent.fizz.plist
+
+  붙인 뒤 반드시 죽여서 확인한다 — 감독이 붙었다는 것과 동작한다는 것은 다른 사실이다:
+    kill -9 $(launchctl list | awk '$3=="dev.murmur.agent.fizz"{print $1}')
+    launchctl list | grep dev.murmur.agent    # PID 가 바뀌어야 한다
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dev.murmur.agent.@HANDLE@</string>
+
+  <!-- pnpm 을 거치지 않는다. pnpm 을 감독하면 러너가 죽어도 pnpm 이 남아
+       launchd 가 재시작하지 않는 경우가 생긴다. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>@REPO@/packages/agent/node_modules/.bin/tsx</string>
+    <string>src/main.ts</string>
+  </array>
+
+  <key>WorkingDirectory</key><string>@REPO@/packages/agent</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MURMUR_URL</key><string>@URL@</string>
+    <key>MURMUR_PAT</key><string>@PAT@</string>
+    <!-- launchd 는 로그인 셸의 PATH 를 물려받지 않는다. 이것이 없으면 러너는 살아 있는데
+         claude 를 못 찾아 답을 못 하는 조용한 실패가 된다. 실제 경로에 맞게 고친다. -->
+    <key>PATH</key><string>/Users/@USER@/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key><string>/Users/@USER@</string>
+  </dict>
+
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <!-- 즉시 재시작을 반복하면 CPU 를 태운다. -->
+  <key>ThrottleInterval</key><integer>10</integer>
+
+  <key>StandardOutPath</key><string>/tmp/murmur-runner/@HANDLE@.log</string>
+  <key>StandardErrorPath</key><string>/tmp/murmur-runner/@HANDLE@.err.log</string>
+</dict>
+</plist>
