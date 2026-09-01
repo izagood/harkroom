@@ -7,6 +7,7 @@ import { buildTurnCommand, writeMcpConfigOnce } from '../src/turn.js';
 const base = {
   systemPrompt: 'SYS', promptCtx: 'CTX', model: null, effort: null,
   mentionPermission: 'auto' as const, mcpConfigPath: '/mcp.json', pat: 'murp_x',
+  murmurUrl: 'http://localhost:3401/mcp',
 };
 
 describe('buildTurnCommand — claude', () => {
@@ -89,21 +90,23 @@ describe('buildTurnCommand — codex', () => {
     expect(p.args.join(' ')).not.toContain('CTX'); // promptCtx 는 mention 전용(브리프 인터페이스 주석)
   });
 
-  // buildTurnCommand 의 opts 에는 murmurUrl 이 없다 — 있는 값(mcpConfigPath, pat)만으로는
-  // codex 의 `-c mcp_servers.murmur.url=...` 을 채울 수 없다(claude 는 파일에 이미 구워
-  // 넣혀 있어 필요 없지만 codex 는 파일을 안 읽는다). 그래서 murmurUrl 을 선택 인자로 열어
-  // 뒀고, 없으면 murmur 등록을 조용히 틀리게 하느니 avcs 만 등록한다 — 정직한 기능 후퇴.
-  it('murmurUrl 을 안 주면 codex 는 avcs 만 등록하고 murmur 는 뺀다 — 조용히 틀린 URL 을 넣지 않는다', () => {
-    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
-    expect(p.args.join(' ')).toContain('mcp_servers.avcs.command');
-    expect(p.args.join(' ')).not.toContain('mcp_servers.murmur');
-  });
-
-  it('murmurUrl 을 주면 -c mcp_servers.murmur.url 과 bearer_token_env_var 가 붙는다 — PAT 값 자체는 여전히 안 붙는다', () => {
+  // 러너는 더 이상 하네스 출력을 파싱하지 않는다 — 에이전트가 답하는 유일한 경로가 murmur
+  // MCP 의 `message.post` 다(prompt.ts). murmur MCP 가 안 붙은 codex 턴은 에러 없이 그냥
+  // 돌다가 답을 못 하고, 러너는 "답 없이 턴을 끝냈습니다"만 남긴다 — 원인 단서가 없는 조용한
+  // 실패다. 그래서 murmurUrl 은 선택이 아니라 필수이고, codex 의 모든 턴에 반드시 붙는다.
+  it('codex 턴의 argv 에는 murmur MCP 등록이 항상 들어 있다 — PAT 값 자체는 여전히 안 붙는다', () => {
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, murmurUrl: 'http://localhost:3401/mcp' });
+    expect(p.args.join(' ')).toContain('mcp_servers.avcs.command');
     expect(p.args.join(' ')).toContain('mcp_servers.murmur.url="http://localhost:3401/mcp"');
     expect(p.args.join(' ')).toContain('mcp_servers.murmur.bearer_token_env_var="MURMUR_PAT"');
     expect(p.args.join(' ')).not.toContain('murp_x');
+  });
+
+  // murmurUrl 을 빈 문자열로 넘기면 타입 체크는 통과하지만(string), 그대로 두면
+  // `mcp_servers.murmur.url=""` 같은 값이 조용히 조립돼 위와 같은 조용한 실패로 이어진다 —
+  // 런타임에서도 막는다.
+  it('murmurUrl 이 빈 문자열이면 던진다 — 조용히 틀린 URL 을 조립하지 않는다', () => {
+    expect(() => buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, murmurUrl: '' })).toThrow();
   });
 });
 
