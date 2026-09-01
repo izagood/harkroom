@@ -196,8 +196,14 @@ where a.kind = 'agent';
 
 - **`pnpm`을 거치지 말고 `tsx`를 직접 부른다.** pnpm을 감독하면 러너가 죽어도 pnpm이
   남아 launchd가 재시작하지 않는 경우가 생긴다.
-- **`PATH`를 명시한다.** launchd는 로그인 셸의 PATH를 물려받지 않아 `claude`를 못 찾는다.
-  이것이 "러너는 살아 있는데 답을 못 하는" 조용한 실패의 흔한 원인이다.
+- **`PATH`를 명시한다.** launchd는 로그인 셸의 PATH를 물려받지 않는다. 예전에는 이 함정이
+  `claude` 하나였지만, 러너 재구축([`docs/specs/2026-09-01-runner-sessions-pty-design.md`](specs/2026-09-01-runner-sessions-pty-design.md))
+  이후로는 PATH에 있어야 하는 실행 파일이 **에이전트의 harness 선택에 따라 늘어난다** —
+  `codex`·`gemini`(harness 자체)뿐 아니라 `avcs`도 매 턴 필요하다(스레드별 workspace를
+  만드는 `avcs workspace project`, 그리고 turn 이 등록하는 avcs MCP 서버가 `avcs mcp`를
+  그대로 스폰한다). 이 중 하나라도 PATH에 없으면 "러너는 살아 있는데 답을 못 하는" 조용한
+  실패가 된다 — 여러 harness를 섞어 쓸수록 launchd 환경에 빠뜨리기 쉬운 이름이 늘어난다는
+  뜻이니, plist의 `PATH`에는 실제로 쓰는 harness 전부와 `avcs`가 있는 디렉터리를 넣는다.
 - **`chmod 600`.** PAT가 plist에 평문으로 담긴다.
 
 `KeepAlive`와 함께 `ThrottleInterval 10`을 둔다 — 즉시 재시작을 반복하면 CPU를 태운다.
