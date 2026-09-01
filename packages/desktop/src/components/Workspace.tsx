@@ -1,19 +1,19 @@
-import { useState } from 'react';
 import { useAppStore } from '../state/appStore';
-import { AgentManager } from './AgentManager';
 import { Sidebar } from './Sidebar';
 import { ChannelPane } from './ChannelPane';
 import { ThreadPanel } from './ThreadPanel';
+import type { SectionId } from './settings/sections';
 
-export function Workspace({ onLogout }: { onLogout: () => void }) {
+export function Workspace({ onLogout, onOpenSettings }: {
+  onLogout: () => void;
+  onOpenSettings: (section?: SectionId) => void;
+}) {
   const threadRootId = useAppStore((s) => s.threadRootId);
-  const [agentsOpen, setAgentsOpen] = useState(false);
   return (
     <div className="flex h-screen text-sm">
-      <Sidebar onLogout={onLogout} onManageAgents={() => setAgentsOpen(true)} />
+      <Sidebar onLogout={onLogout} onOpenSettings={onOpenSettings} />
       <ChannelPane />
       {threadRootId && <ThreadPanel />}
-      {agentsOpen && <AgentManager onClose={() => setAgentsOpen(false)} />}
     </div>
   );
 }
