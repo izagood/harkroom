@@ -717,4 +717,219 @@ avcs repo 일 때만 성립하고 아니면 Task 4 폴백으로 그 자리에서
 
 ## 스파이크 결과 (Task 1 이 기록)
 
-*(비어 있음 — Task 1 수행 시 채운다)*
+실행 환경: claude 2.1.252, codex-cli 0.148.0, gemini 0.54.4 (전부 `~/.local/bin`).
+아래 각 항목은 "명령 → 관찰 → VERDICT" 순. **표와 실측이 다르면 실측이 이긴다** —
+§4 표는 이 결과에 맞춰 갱신 대상이다.
+
+### Step 1: claude 비대화형 resume 조합
+
+```bash
+SID=$(uuidgen | tr A-Z a-z)
+claude -p --session-id $SID --model haiku "hello 라고만 답해"     # → "hello"
+claude -p -r $SID --model haiku "방금 내가 뭐라고 했지?"           # → "\"hello 라고만 답해\"라고 했습니다."
+```
+
+두 번째 턴이 첫 턴을 정확히 기억한다. 추가로 **resume 이 cwd 에 안 묶이는지**까지
+확인했다 — 세션을 만든 디렉터리와 전혀 다른 새 `mktemp -d` 에서 `-r` 로 재개해도
+같은 기억을 돌려준다. `--resume`(장문)도 `-r`(단문)과 동일하게 동작한다.
+
+VERDICT: **CONFIRMED** — 단, §4 표의 "사람 턴" 행 옆에 붙던 암묵적 전제
+("세션이 프로젝트 디렉터리에 귀속되므로 workspace 디렉터리 고정이 필요")는
+**DIFFERENT: cwd 무관**. claude 세션은 session-id 로만 식별되고 cwd 필터링이
+없다 — 러너가 매 턴마다 `avcs workspace project` 로 다른 디렉터리에 체크아웃해도
+resume 이 깨지지 않는다는 뜻이다(Task 7 의 workingDir 설계에 유리한 소식).
+
+### Step 2: 인터랙티브 PTY + MCP env 확장
+
+인터랙티브 TUI 는 스크립트로 조종할 수 없으므로(브리프 지침대로) **print 모드로
+동등 사실을 확인**했다 — TUI 자체의 검증은 아래처럼 열려 있는 채로 남긴다.
+
+로컬 스택 기동(포트 3400/5432 가 다른 워크트리(`rusalka`)에 이미 점유돼 있어
+`dorado` 전용 포트로 올렸다 — 아래는 이번 스파이크에서 실제로 쓴 절차):
+
+```bash
+# docker-compose.override.yml (gitignored, 이번에 신규 작성 — 유지함)
+services:
+  postgres:
+    ports:
+      - "5433:5432"
+
+docker compose up -d postgres
+DATABASE_URL='postgres://murmur:murmur@localhost:5433/murmur' PORT=3401 \
+  pnpm --filter @murmur/server dev &   # 마이그레이션 자동 실행 확인
+
+curl -X POST localhost:3401/bootstrap -d '{"handle":"me","displayName":"Me","password":"changeme1"}'
+TOKEN=$(curl -X POST localhost:3401/auth/login -d '{"handle":"me","password":"changeme1"}' | jq -r .token)
+AGENT_ID=$(curl -X POST localhost:3401/accounts/agents -H "authorization: Bearer $TOKEN" \
+  -d '{"handle":"spike-bot","displayName":"Spike Bot","harness":"claude-code"}' | jq -r .id)
+PAT=$(curl -X POST localhost:3401/accounts/$AGENT_ID/pats -H "authorization: Bearer $TOKEN" \
+  -d '{"label":"spike"}' | jq -r .token)   # murp_...
+
+cat > /tmp/murmur-mcp.json <<'EOF'
+{"mcpServers":{"murmur":{"type":"http","url":"http://localhost:3401/mcp","headers":{"Authorization":"Bearer ${MURMUR_PAT}"}}}}
+EOF
+MURMUR_PAT=$PAT claude -p --mcp-config /tmp/murmur-mcp.json --model haiku "list your available MCP tools"
+```
+
+결과: murmur MCP 가 연결되고 `account_me · channel_list · inbox_poll · inbox_read ·
+message_post · message_read · message_search · work_link · workspace_guide` 9개
+도구가 전부 노출됐다 — `mcpPlugin.ts` 가 등록한 도구 이름과 일치.
+
+VERDICT: **CONFIRMED (print 모드)**. TUI 모드(`/mcp` 로 손으로 connected 확인)는
+**NOT MEASURED — TUI 는 스크립트로 조종 불가**로 열어 둔다. print 모드가 같은
+`--mcp-config`+env 확장 경로를 타므로 위험은 낮다고 판단하지만, 배포 전 사람이
+한 번은 손으로 확인해야 한다(Task 11 Step 3 의 실물 확인에 이미 포함돼 있다).
+
+**부가 발견 (표에는 없던 사실, §7 재검토 근거로 기록):** `--strict-mcp-config`
+플래그가 존재하고, 켜면 지정한 `--mcp-config` 파일의 서버만 남기고 그 외 전부
+차단된다(꺼두면 이 계정의 `~/.claude.json` 전역 MCP 서버까지 전부 같이 붙는다 —
+실측에서 Slack·Notion·Google Drive 등 이 세션 운영자의 개인 MCP 서버 목록이
+함께 노출됐다). **spec §7 은 이미 이 플래그를 의도적으로 안 쓰기로
+결정했다**(agent 가 murmur 뿐 아니라 avcs MCP 도 물어야 하므로) — 그 판단 자체는
+바꿀 필요 없지만, 실측이 보여준 부작용은 그 결정의 대가로 명시해 둘 만하다:
+러너가 운영자 계정의 전역 claude 설정을 그대로 물려받는 환경이라면 에이전트
+턴마다 운영자의 개인 MCP(Slack/Notion/Gmail 등)까지 도달 가능해진다. Task 9 가
+`mcpConfigFor` 를 만들 때 "murmur+avcs만 남기고 나머지는 차단"하는 **별도
+allowlist**(strict 는 아니지만 그와 동등한 효과)가 필요한지 검토 대상으로 남긴다.
+
+### Step 3: codex 표면
+
+```bash
+codex exec --help | head -30
+codex mcp --help
+codex mcp add --help
+tail -1 ~/.codex/session_index.jsonl | python3 -m json.tool
+codex --help | grep -i "instructions\|system"
+```
+
+실측:
+
+- **`exec resume` 존재 확인** — 단, 최상위 `codex resume <id>` 는 **인터랙티브
+  피커**이고, 비대화형 표는 반드시 `codex exec resume [SESSION_ID] [PROMPT]`
+  (서브커맨드) 다. §4 표의 `codex exec resume <id> "<ctx>"` 표기는 CONFIRMED.
+  실제로 `codex exec "..."` 로 첫 턴을 띄우고(JSON 출력의 `thread_id` 를 획득)
+  `codex exec resume <thread_id> "..."` 로 재개해 기억을 확인했다 — 서로 다른
+  `mktemp -d` 사이에서도 성공(claude 와 동일하게 cwd 무관).
+- **`session_index.jsonl` 스키마는 표의 전제와 다르다 — DIFFERENT.** 실제 필드는
+  `{id, thread_name, updated_at}` 뿐이고 **`cwd` 가 없다.** 이 인덱스는 인터랙티브
+  TUI 의 "이름 붙은 스레드"만 기록하는 것으로 보인다 — 우리가 `codex exec` 로
+  만든 세션은 이 파일에 **한 줄도 추가되지 않았다.** 진짜 세션 저장소는
+  `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl` 이고, 그 첫 줄
+  (`type:"session_meta"`) 안에 `session_id · id · timestamp · cwd · originator ·
+  cli_version · source` 가 다 있다. **러너가 codex 세션을 찾거나 상태를 검증할
+  일이 있으면 `session_index.jsonl` 이 아니라 이 rollout 파일 경로 규칙을
+  참조해야 한다.**
+- **MCP 등록 형식이 claude 와 근본적으로 다르다 — DIFFERENT.** `codex mcp add
+  <name> --url <url> --bearer-token-env-var <ENV>` 는 **`~/.codex/config.toml`
+  에 영구 기록**한다 — Global Constraints 의 "하네스 영구 설정을 바꾸는 명령
+  금지"에 정면으로 걸린다. 실제로 안전하게 쓸 수 있는 건 **턴마다 `-c` 오버라이드**
+  다: `-c 'mcp_servers.murmur.url="http://.../mcp"' -c
+  'mcp_servers.murmur.bearer_token_env_var="MURMUR_PAT"'`. 실측: 이 두 `-c` 를
+  붙여 `codex exec` 를 돌리면 murmur MCP 가 연결되고(`channels, inbox, messages,
+  work links` 도구 확인), **`~/.codex/config.toml` 은 변경되지 않는다**
+  (`grep mcp_servers` 로 확인 — `murmur` 항목 없음). `--ephemeral` 은 필요
+  없다(그 플래그는 세션 롤아웃 자체를 디스크에 안 남기는 옵션이라 오히려 resume
+  을 깨뜨린다 — 켜지 않았다). PAT 는 여기서도 env 변수 이름만 argv 에 실리고
+  값은 안 실린다 — claude 와 동일한 안전성.
+- **지시문 주입구 없음 — CONFIRMED (브리프의 예상대로).** `--instructions`/
+  `--system` 계열 플래그가 `codex --help` 에 전혀 없다. 대안: 프롬프트 앞에
+  구분 태그로 접두 — 예) `<<SYSTEM>>...<</SYSTEM>>\n<프롬프트>`. codex 쪽
+  `TurnPlan` 은 이 접두를 `promptCtx` 조립 단계에서 처리해야 한다(별도 플래그
+  슬롯 없음).
+- **부가 발견: `-a`/`--ask-for-approval` 은 `codex exec` 서브커맨드에 없다 —
+  최상위(인터랙티브) `codex` 에만 있다.** `codex exec --help` 와 `codex exec
+  resume --help` 둘 다 `-a` 를 나열하지 않는다 — `-s`(sandbox: read-only /
+  workspace-write / danger-full-access) 만 있다. §4 표의 `-s danger-full-access
+  -a never` 같은 조합은 **DIFFERENT: `codex exec` 경로에서는 `-a` 를 뺀다** —
+  승인 정책은 exec 모드에서 샌드박스(`-s`)와
+  `--dangerously-bypass-approvals-and-sandbox`(readonly 가 아닐 때만, 매우
+  위험 — 셸 명령이 샌드박스 없이 실행된다) 조합으로만 조정 가능하다. `auto`
+  는 `-s danger-full-access`, `readonly` 는 `-s read-only` 로 매핑하고 `-a` 는
+  Task 6 표에서 제거한다.
+
+VERDICT: **DIFFERENT** (세션 스키마·MCP 등록·승인 플래그 세 곳 모두 표의 전제와
+다르다). `exec resume` 존재와 형태만 CONFIRMED.
+
+### Step 4: gemini 표면
+
+```bash
+gemini --help | grep -iA2 "approval\|yolo\|prompt\b"
+SID=$(uuidgen); gemini --session-id $SID -p "hello 라고만 답해"
+gemini -r "$SID" -p "방금 내가 뭐라고 했지?"
+```
+
+실측 (플래그 표면은 `--help` 로 인증 없이 확인 가능, 실제 라운드트립은 인증
+블로커로 막혔다 — 아래 참조):
+
+- **`-r/--resume` 은 UUID 를 받지 않는다 — DIFFERENT.** `--help` 원문:
+  `-r, --resume  Resume a previous session. Use "latest" for most recent or
+  index number (e.g. --resume 5)`. `--session-id` 는 "**새** 세션을 지정한
+  UUID 로 시작"하는 용도지 재개용이 아니다. 실측으로도 재현됐다 —
+  `gemini -r "$SID" -p ...` 는 `Error resuming session: No previous sessions
+  found for this project.` 를 반환했다(세션이 프로젝트=cwd 스코프라는 뜻이기도
+  하다 — "for this project" 문구). §4 표의 `-r <id> -p "<ctx>"` 는 **DIFFERENT:
+  gemini 는 UUID resume 을 지원하지 않는다.** 대안은 인덱스 기반(`--resume
+  <n>`) 또는 `latest` 뿐이라 **세션 특정 재개가 사실상 불가능** — 이는 Task 6/9
+  설계에 영향이 크다(여러 스레드를 동시에 돌리는 러너가 "몇 번째" 세션인지
+  추적해야 한다는 뜻이라 claude/codex 와 같은 표 모양으로 못 넣는다. gemini 를
+  1차 harness 다양성 목표로 삼은 §14 성공 기준 8 의 근거
+  ["id 할당형이라 가깝다"]가 **틀렸다** — id 로 재개하는 게 아니라 index 로
+  재개한다. 대안 harness 로는 codex 가 더 가깝다).
+- **권한/비대화형 플래그**: `-y/--yolo`(전부 자동 승인), `--approval-mode
+  {default,auto_edit,yolo,plan}`, `-p/--prompt`(headless), `-s/--sandbox`,
+  `--allowed-mcp-server-names`, `--allowed-tools`(**DEPRECATED**, Policy Engine
+  으로 대체 권고) 를 확인. `auto` → `--approval-mode yolo`, `readonly` →
+  `--approval-mode plan` 매핑이 가능해 보인다(미검증 — 실제 라운드트립 불가로
+  아래에서 NOT MEASURED 처리).
+- **인증 블로커 — 실제 모델 호출 라운드트립은 NOT MEASURED.** 이 머신의 gemini
+  OAuth 계정이 "This client is no longer supported for Gemini Code Assist for
+  individuals. To continue using Gemini, please migrate to the Antigravity
+  suite of products" 로 전부 거부된다(`GEMINI_API_KEY`/`GOOGLE_API_KEY` 도 미설정).
+  `--list-sessions` 조차 이 에러로 실패해 세션 저장 자체를 확인할 수 없었다.
+
+VERDICT: **DIFFERENT (resume 인자 형식 — 표를 반드시 고쳐야 한다)** +
+**NOT MEASURED (실제 라운드트립 — 이 환경의 gemini 계정이 API 인증을 잃었다.
+별도로 `GEMINI_API_KEY` 발급 후 재검증 필요)**.
+
+### Step 5: `avcs workspace land` 의 미추적 파일 처리
+
+```bash
+cd ~/dev/my-workspace/avcs
+avcs workspace project spike-test --out /tmp/ws-spike
+touch /tmp/ws-spike/untracked-note.md
+avcs workspace land spike-test
+```
+
+`project` 까지는 실행했다(235개 파일을 `/tmp/.../ws-spike` 로 프로젝션 성공).
+**`land` 자체는 권한 분류기가 차단해 실행하지 못했다** — "Blocked by classifier"
+로 거부되어, 지침(§ "결과를 판단할 수 없으면 NOT MEASURED로 남기고 강행하지
+않는다")대로 강행하지 않고 멈췄다.
+
+**부가로 기록할 사고:** `avcs workspace land --help` 를 옵션 확인용으로
+먼저 시도했는데, avcs CLI 는 서브커맨드에 `--help` 관례가 없어 **`--help`
+자체가 워크스페이스 이름으로 파싱**됐고, 실제로 `landed workspace --help` 가
+찍히며 `avcs workspace list` 에 `landed  --help` 항목이 생겼다(git 트리는
+깨끗함 — 프로젝션한 적 없는 이름이라 내용 없는 랜드였다, 무해하지만 목록은
+오염). **avcs CLI 에 서브커맨드 `--help` 가 없다는 것 자체가 실측 결과다** —
+`land`/`project` 앞에 함부로 `--help` 를 붙이면 실제 명령이 실행된다. 이후
+avcs 작업에서 이 실수를 반복하지 않도록 별도로 기록해 둔다(공개 avcs 리포지토리
+쪽에 UX 이슈로 등록할 만한 소재이나 이번 스파이크 범위 밖).
+
+VERDICT: **NOT MEASURED — 권한 분류기가 실제 `land` 실행을 차단.** 미추적
+파일이 오브젝트로 들어가는지는 미확인. 이번 Phase 는 영향 없음(브리프 원문)
+이므로 후속 우선순위는 낮지만, Phase 2 이후 `avcs workspace land` 를 실제로
+호출하는 코드가 생기면 그 전에 반드시 재검증해야 한다.
+
+### 정리(cleanup)
+
+- `docker-compose.override.yml` (postgres `5433:5432`) 은 **남겨뒀다** — gitignore
+  대상이고 다음 작업(Task 2 이후 서버 통합 테스트)에도 재사용 가능.
+- 스파이크로 띄운 `dorado` 컴포즈 스택(서버 프로세스 + `dorado-postgres-1`
+  컨테이너)은 전부 내렸다 — `docker compose down` 완료, `dorado_pgdata` 볼륨만
+  남아 있다(재기동 시 자동 재사용, 삭제해도 무방).
+- `/tmp/murmur-mcp.json`, `/tmp/ws-spike` 등 임시 파일은 삭제했다.
+- `~/dev/my-workspace/avcs` 에는 `avcs workspace project spike-test` 로 만든
+  in-flight 워크스페이스가 **land 되지 않은 채 남아 있다**(land 가 차단됐으므로
+  삭제 커맨드가 없다 — 다른 in-flight 브랜치들과 같은 성격이라 무해하게 방치).
+  실수로 생긴 `--help` landed 워크스페이스도 내용이 없어 마찬가지로 방치했다.
+  이 리포지토리에는 커밋도 푸시도 하지 않았다.
