@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { emitEvent } from '../events.js';
 import { assertChannelVisible, dmMemberIds } from '../services/channels.js';
 import { deleteMessage, editMessage, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
+import { recordAudit } from '../audit.js';
 
 export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.post('/channels/:id/messages', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -74,6 +75,11 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
       return reply.code(403).send({ error: { code: 'forbidden', message: 'only the author or an admin can delete' } });
     }
     emitEvent({ type: 'message.deleted', channelId: id, messageId, audience: await audienceFor(id) });
+    // 본문은 남기지 않는다 — 감사에 복사하면 삭제가 삭제가 아니다.
+    await recordAudit(pool, {
+      action: 'message.deleted', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: messageId, detail: { channelId: id },
+    }, req);
     return reply.code(204).send();
   });
 

@@ -7,6 +7,7 @@ import { registerAccountRoutes } from './routes/accountRoutes.js';
 import { registerChannelRoutes } from './routes/channelRoutes.js';
 import { registerMessageRoutes } from './routes/messageRoutes.js';
 import { registerDirectoryRoutes } from './routes/directoryRoutes.js';
+import { registerAuditRoutes } from './routes/auditRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
 import { Lifecycle } from './lifecycle.js';
@@ -124,6 +125,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerChannelRoutes(app, deps.pool);
   await registerMessageRoutes(app, deps.pool);
   await registerDirectoryRoutes(app, deps.pool);
+  await registerAuditRoutes(app, deps.pool);
   await registerMcp(app, deps.pool, lifecycle);
 
   return app;

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { createChannel, getOrCreateDm, listChannels, updateChannel } from '../services/channels.js';
+import { recordAudit } from '../audit.js';
 
 export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.post('/channels', { preHandler: app.requireAdmin }, async (req, reply) => {
@@ -25,6 +26,10 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
     if (!channel) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
     }
+    await recordAudit(pool, {
+      action: 'channel.updated', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { fields: Object.keys(patch) },
+    }, req);
     return channel;
   });
 
