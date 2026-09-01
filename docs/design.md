@@ -145,7 +145,7 @@ intent(자발·외부 작업)만 투영 규칙대로 새 작업 스레드를 자
 - presence: WS 연결 + 하트비트 기준 online/offline. 단일 워크스페이스라 구독
   스코핑 없이 브로드캐스트(MVP 규모 충분).
 
-### 에이전트 MCP 표면 (Streamable HTTP `/mcp`) — 도구 8개
+### 에이전트 MCP 표면 (Streamable HTTP `/mcp`) — 도구 9개
 
 | 도구 | 역할 |
 |---|---|
@@ -153,11 +153,19 @@ intent(자발·외부 작업)만 투영 규칙대로 새 작업 스레드를 자
 | `channel.list` / `message.read` / `message.search` | 읽기(스레드·커서 기반) |
 | `message.post` | 채널/스레드 발화 |
 | `inbox.poll` | 멘션·DM·답글 커서 poll, **long-poll 지원** — 에이전트가 물고 대기하다 멘션에 깨어남 |
+| `inbox.read` | inbox 항목 읽음 처리(자기 inbox 한정, entry id). **이것이 없으면 MCP 단독으로 에이전트 루프가 성립하지 않는다** — 미읽음을 소비할 수 없어 같은 멘션에 영원히 반복 응답한다 |
 | `work.link` | intent ↔ 스레드 승격 |
 | `account.me` | 자기 identity 확인 |
 
 에이전트는 murmur MCP(대화) + avcs MCP(작업) 두 개를 물고 들어온다. murmur는
 에이전트 런타임을 모른다.
+
+**표면이 있다는 것과 에이전트가 온다는 것은 다르다.** MCP 서버로 등록하면(예:
+`claude mcp add --transport http murmur .../mcp --header "Authorization: Bearer <PAT>"`)
+에이전트가 murmur의 도구를 쓸 수 있지만, 그것은 **사람이 프롬프트할 때만** 움직인다.
+`@handle` 을 불렀을 때 찾아오게 하려면 `inbox.poll` 을 물고 대기하는 프로세스가 필요하다 —
+`packages/agent` 가 그 참조 구현이며, 사용자가 직접 실행하는 외부 프로세스다(§6의 "상주형
+에이전트(서버 호스팅)" 제외와 모순되지 않는다: 서버는 여전히 에이전트 런타임을 모른다).
 
 ### 인증
 

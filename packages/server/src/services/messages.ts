@@ -215,11 +215,13 @@ export async function listInbox(
   return res.rows;
 }
 
-export async function markInboxRead(pool: Pool, accountId: string, ids: number[]): Promise<void> {
-  await pool.query(
+/** 읽음 처리된 항목 수를 돌려준다. account_id 스코프이므로 남의 entry id 는 아무 것도 지우지 않는다. */
+export async function markInboxRead(pool: Pool, accountId: string, ids: number[]): Promise<number> {
+  const res = await pool.query(
     `update inbox set read_at = now() where account_id = $1 and id = any($2) and read_at is null`,
     [accountId, ids],
   );
+  return res.rowCount ?? 0;
 }
 
 export async function searchMessages(

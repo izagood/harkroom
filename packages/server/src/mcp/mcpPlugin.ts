@@ -7,7 +7,7 @@ import type { AccountView } from '@murmur/shared';
 import { emitEvent, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, dmMemberIds, listChannels } from '../services/channels.js';
-import { listInbox, listMessages, postMessage, searchMessages } from '../services/messages.js';
+import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { GUIDE } from './guide.js';
 
 function jsonResult(value: unknown) {
@@ -125,6 +125,18 @@ function buildMcpServer(pool: Pool, account: AccountView, lifecycle: Lifecycle):
       offDrain();
       releasePoll();
     }
+  });
+
+  // inbox.poll 만 있으면 미읽음을 소비할 수 없어, MCP 로만 붙은 에이전트가 같은 멘션에 영원히
+  // 반복 응답한다. 루프가 성립하려면 읽음 처리도 같은 표면에 있어야 한다.
+  // messageId 가 아니라 inbox entry id 를 받는다 — entry 가 계정에 묶여 있고, 서비스가
+  // account_id 로 스코프를 걸어 남의 inbox 는 소비되지 않는다.
+  server.registerTool('inbox.read', {
+    description: 'inbox 항목을 읽음 처리(자기 inbox 한정). ids 는 inbox.poll 이 준 entry id',
+    inputSchema: { ids: z.array(z.number().int()).min(1).max(200) },
+  }, async ({ ids }) => {
+    const read = await markInboxRead(pool, account.id, ids);
+    return jsonResult({ read });
   });
 
   server.registerTool('work.link', {
