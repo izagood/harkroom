@@ -3,9 +3,10 @@
 // 세션은 상태일 뿐이다: avcs 워크스페이스 경로와 하니스 세션 id. 살아있는 프로세스가 아니라서
 // 러너가 죽거나 재배포되어도 다음 멘션이 같은 대화를 이어받을 수 있다.
 
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { AgentHarness } from '@murmur/shared';
+import { AGENT_HARNESSES, type AgentHarness } from '@murmur/shared';
 
 export interface SessionRecord {
   workspaceDir: string;
@@ -23,12 +24,34 @@ export interface SessionRecord {
   lastFedSeq: number;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+// 파싱은 통과하지만 우리가 아는 SessionRecord 모양이 아닌 값(배열, 문자열, 필드 누락·오타)이
+// 조용히 들어오면, 나중에 `.workspaceDir` 을 읽는 코드에서 터진다 — 그때는 원인이 여기라는
+// 단서가 하나도 안 남는다. 저장 전에 모양을 확인해서 여기서 걸러낸다.
+function isSessionRecord(value: unknown): value is SessionRecord {
+  if (!isPlainObject(value)) return false;
+  const { workspaceDir, sessionId, harness, lastFedSeq } = value;
+  return (
+    typeof workspaceDir === 'string' &&
+    (sessionId === null || typeof sessionId === 'string') &&
+    typeof harness === 'string' &&
+    (AGENT_HARNESSES as readonly string[]).includes(harness) &&
+    typeof lastFedSeq === 'number'
+  );
+}
+
 export class SessionStore {
   private readonly filePath: string;
   private sessions = new Map<string, SessionRecord>();
-  // put 이 겹쳐 들어오면(같은 프로세스에서 두 스레드가 동시에 답장) 먼저 시작한 쓰기가 늦게
-  // 끝나면서 나중 쓰기가 반영한 최신 맵을 옛 스냅샷으로 덮어쓸 수 있다. 쓰기를 이 큐로 한 줄로
-  // 세워 항상 "쓰는 시점의" 전체 맵을 파일에 반영하게 한다.
+  // 동시에 put 이 두 번 들어오면(한 프로세스가 여러 스레드에 동시에 답장) flush 도 두 번
+  // 겹칠 수 있다. tmp 경로가 고정이던 예전 버전은 먼저 끝난 rename 이 tmp 파일을 치워버려서
+  // 나중 rename 이 ENOENT 로 죽었다 — 그 충돌 자체는 flush 마다 유일한 tmp 이름을 써서
+  // 없앴다(원자성, flush 참고). 이 큐는 별개의 보장이다: flush 호출 순서를 직렬화한다.
+  // 원자성과 직렬성은 서로 다른 성질이고, 하나로 퉁쳐 두면 나중에 한쪽만 손보다 다른 쪽을
+  // 깨뜨리기 쉬우므로 둘을 분리해 각각 보장한다.
   private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(filePath: string) {
@@ -44,26 +67,59 @@ export class SessionStore {
     try {
       raw = await readFile(this.filePath, 'utf8');
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') {
+        // 첫 기동이라 파일이 아직 없다 — 정상 경로다. 매 기동마다 경고를 찍으면 사람이
+        // 경고 자체를 무시하는 버릇이 들어서, 진짜 문제가 났을 때도 눈에 안 띈다.
         this.sessions = new Map();
         return;
       }
-      throw err;
+      // ENOENT 가 아닌 에러(권한 등)까지 여기서 던지면, 이 모듈이 앉아 있는 러너 기동 경로가
+      // 통째로 막힌다 — 세션 하나를 잃는 것보다 훨씬 나쁘고, 원인도 "왜 러너가 안 뜨지"로만
+      // 보인다. 읽기 자체가 안 되면 빈 상태로 시작해서 러너는 뜨게 한다.
+      console.warn(`[sessions] ${this.filePath} 읽기 실패(${code ?? String(err)}) — 빈 상태로 시작한다`);
+      this.sessions = new Map();
+      return;
     }
 
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(raw) as Record<string, SessionRecord>;
-      this.sessions = new Map(Object.entries(parsed));
+      parsed = JSON.parse(raw);
     } catch {
-      // 깨진 파일 때문에 러너가 못 뜨면, 세션 하나를 잃는 것보다 훨씬 큰 손해다. 원본은
-      // 조사할 수 있게 옆으로 치워 두고, 빈 상태로 계속 진행한다.
-      const backupPath = `${this.filePath}.broken-${Date.now()}`;
-      await rename(this.filePath, backupPath).catch(() => {});
-      console.warn(
-        `[sessions] ${this.filePath} 파싱 실패 — 빈 상태로 시작한다 (원본은 ${backupPath} 에 보존)`,
-      );
-      this.sessions = new Map();
+      await this.quarantine('JSON 파싱 실패');
+      return;
     }
+
+    if (!isPlainObject(parsed)) {
+      // 유효한 JSON 이지만 세션 맵 모양이 아니다(배열, 문자열, 숫자 …). 이걸 그냥
+      // `Object.entries` 에 넘기면 조용히 쓰레기 키('0','1',…)로 채워진다 — 파싱 실패와
+      // 같은 손상으로 보고 같은 경로(백업 + 빈 상태)로 보낸다. 손상 경로가 둘로 갈리면
+      // 하나는 반드시 테스트되지 않는다.
+      await this.quarantine('최상위가 세션 맵(객체) 형태가 아니다');
+      return;
+    }
+
+    const sessions = new Map<string, SessionRecord>();
+    for (const [key, value] of Object.entries(parsed)) {
+      if (isSessionRecord(value)) {
+        sessions.set(key, value);
+      } else {
+        // 레코드 하나가 깨졌다고 나머지 스레드의 세션까지 다 버릴 이유는 없다 — 그 레코드만
+        // 버리고 나머지는 살린다. 대신 무엇을 버렸는지는 남긴다.
+        console.warn(`[sessions] ${this.filePath} 의 '${key}' 레코드가 SessionRecord 모양이 아니다 — 이 레코드만 버린다`);
+      }
+    }
+    this.sessions = sessions;
+  }
+
+  // 파일 자체가 손상됐을 때(파싱 실패 또는 세션 맵이 아닌 모양) 공통으로 타는 경로.
+  // 원본은 조사할 수 있게 옆으로 치워 두고, 빈 상태로 계속 진행한다 — 세션 전체를 잃는
+  // 것보다 러너가 못 뜨는 게 훨씬 큰 손해다.
+  private async quarantine(reason: string): Promise<void> {
+    const backupPath = `${this.filePath}.broken-${Date.now()}`;
+    await rename(this.filePath, backupPath).catch(() => {});
+    console.warn(`[sessions] ${this.filePath} 문제(${reason}) — 빈 상태로 시작한다 (원본은 ${backupPath} 에 보존)`);
+    this.sessions = new Map();
   }
 
   get(key: string): SessionRecord | undefined {
@@ -81,7 +137,10 @@ export class SessionStore {
 
   private async flush(): Promise<void> {
     await mkdir(dirname(this.filePath), { recursive: true });
-    const tmpPath = `${this.filePath}.tmp`;
+    // flush 마다 유일한 tmp 이름을 쓴다 — 쓰기 큐가 있어도, 원자성(각 flush 가 남의 tmp 를
+    // 밟지 않는 것)은 직렬성(호출 순서)과 별개로 보장해 둬야 나중에 큐 쪽만 손보다 이 부분을
+    // 깨뜨리는 일이 없다.
+    const tmpPath = `${this.filePath}.${randomUUID()}.tmp`;
     const body = JSON.stringify(Object.fromEntries(this.sessions), null, 2);
     // tmp 에 다 쓴 뒤 rename — 세션 id 자체는 비밀이 아니지만 굳이 넓게 열어 둘 이유도 없어
     // 0o600 으로 좁힌다. rename 은 원자적이라 쓰는 도중 프로세스가 죽어도 기존 파일은 온전하다.
