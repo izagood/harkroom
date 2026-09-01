@@ -164,9 +164,49 @@ update projection_cursor set last_log_index = 0 where repo = 'org/repo';
 확인 순서:
 1. `GET /metrics`에서 그 핸들의 값을 본다. 커지고 있으면 러너 쪽이다.
    **값이 아예 없으면** 그 계정에 정의가 없는 것이다(위 문단) — 러너 문제가 아니다.
-2. 러너 프로세스가 살아 있는지 본다(현재는 손으로 띄운다 — 감독 붙이기는 후속 항목).
-3. 러너를 띄우면 쌓인 것을 처리한다. 설계가 at-least-once이므로 **늦게라도 답한다** —
+2. 러너가 감독 하에 있는지 본다: `launchctl list | grep dev.murmur.agent`.
+   PID 자리가 `-`면 죽어 있고 재시작을 못 하는 상태다.
+3. 로그를 본다: `/tmp/murmur-runner/<handle>.log`(stdout), `.err.log`(stderr).
+4. 러너가 뜨면 쌓인 것을 처리한다. 설계가 at-least-once이므로 **늦게라도 답한다** —
    inbox 항목은 읽음 처리 전까지 남는다.
+
+### 답할 러너가 없는 계정 (지표에는 안 나온다)
+
+`kind='agent'`이지만 정의(harness)가 없는 계정이 있다 — `murmur`(avcs 투영용 시스템 계정)과
+과거 검증에 쓴 테스트 계정들. 사이드바에 DM으로 보이므로 사용자가 자연스럽게 부르지만
+답할 주체가 없다.
+
+**지표는 이들을 세지 않는다**(답할 의무가 있는 계정만 센다). 그래서 값이 아예 없다.
+그 자체가 신호다 — 사용자는 부른 상대가 조용한 것을 보는데 지표에는 아무것도 없다.
+확인:
+
+```sql
+select a.handle, c.harness
+from account a left join agent_config c on c.account_id = a.id
+where a.kind = 'agent';
+```
+
+`harness`가 비어 있으면 murmur가 실행할 수 없는 계정이다. 답은 지표를 고치는 것이 아니라
+그 계정을 정리하거나 정의를 붙이는 것이다(UI의 Add/Edit agent).
+
+## 7-1. 러너를 감독 하에 두기 (macOS)
+
+`~/Library/LaunchAgents/dev.murmur.agent.<handle>.plist`를 만들고
+`launchctl load <경로>`. 세 가지가 함정이다:
+
+- **`pnpm`을 거치지 말고 `tsx`를 직접 부른다.** pnpm을 감독하면 러너가 죽어도 pnpm이
+  남아 launchd가 재시작하지 않는 경우가 생긴다.
+- **`PATH`를 명시한다.** launchd는 로그인 셸의 PATH를 물려받지 않아 `claude`를 못 찾는다.
+  이것이 "러너는 살아 있는데 답을 못 하는" 조용한 실패의 흔한 원인이다.
+- **`chmod 600`.** PAT가 plist에 평문으로 담긴다.
+
+`KeepAlive`와 함께 `ThrottleInterval 10`을 둔다 — 즉시 재시작을 반복하면 CPU를 태운다.
+
+붙인 뒤 **반드시 죽여서 확인한다**: `kill -9 <PID>` → `launchctl list`의 PID가 바뀌고
+로그에 재접속이 찍히는지. 감독이 붙었다는 것과 감독이 동작한다는 것은 다른 사실이다.
+
+리눅스는 같은 내용의 systemd 유닛(`Restart=always`, `RestartSec=10`,
+`Environment=PATH=...`)으로 대체한다.
 
 ## 8. 아직 없는 것
 
