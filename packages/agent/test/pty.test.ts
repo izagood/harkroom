@@ -19,6 +19,9 @@ describe('runPtyTurn', () => {
     expect(r.exitCode).toBe(3);
   });
 
+  // 'hang' 은 SIGTERM 을 안 막아서 기본 처분(종료)으로 그냥 죽는다 — 즉 이 테스트는 SIGTERM
+  // 분기만 확인한다. SIGKILL 승격 분기는 SIGTERM 을 무시하는 별도 하네스('hang-ignore-sigterm')
+  // 로 아래에서 따로 확인한다(리뷰 지적 — 이 테스트만으로는 그 분기가 한 번도 안 탄다).
   it('타임아웃: SIGTERM → 안 죽으면 SIGKILL, timedOut 표시 (spec §4)', async () => {
     const r = await runPtyTurn(plan('hang'), { cwd: process.cwd(), timeoutMs: 500 });
     expect(r.timedOut).toBe(true);
@@ -68,6 +71,45 @@ describe('runPtyTurn', () => {
     expect(r.exitCode).toBe(0);
     expect(Date.now() - start).toBeLessThan(2_000);
   });
+
+  // 리뷰 Important 1 — UTF-8 절단은 ring 과 tail 에서 정답이 다르다. ring 은 Phase 2 가 그대로
+  // 중계할 raw 바이트라서 정렬하면 ANSI 이스케이프까지 같이 깨진다(부분 문자는 xterm 이
+  // 청크를 이어붙여 알아서 완성한다) — 그래서 ring 은 안 건드리고, 오히려 "정렬 안 한다"는
+  // 계약을 여기서 고정한다. tail 은 사람이 읽는 로그이자 isCredentialFailure 입력이라 잘린
+  // 선행 조각(U+FFFD)을 남기면 잡음이 낀다 — 그래서 tail 만 고친다.
+  it('ring 은 raw 바이트 그대로다 — UTF-8 경계로 정렬하지 않는다(cap=8, 한글 5자 재현)', async () => {
+    const ring = new RingBuffer(8);
+    await runPtyTurn(plan('korean'), { cwd: process.cwd(), timeoutMs: 10_000, ring });
+    // 문자 경계와 안 맞는 절단이라 utf8 디코드하면 선행 조각이 U+FFFD 로 남는다 — 이게
+    // "정렬하지 않는다"는 계약이 실제로 지켜지고 있다는 증거다(정렬했다면 안 나와야 한다).
+    expect(ring.snapshot().toString('utf8')).toContain('�');
+  });
+
+  it('tail(고정 2KB)이 잘려도 U+FFFD 로 시작하지 않는다 — 잘린 선행 조각은 버린다', async () => {
+    const r = await runPtyTurn(plan('korean-chatty'), { cwd: process.cwd(), timeoutMs: 10_000 });
+    expect(r.tail.length).toBeGreaterThan(0);
+    expect(r.tail).not.toContain('�');
+    // 조각을 버리고 다음 문자 시작부터 디코드했으니 온전한 '가' 만 남아야 한다.
+    expect(r.tail).toMatch(/^가+$/);
+  });
+
+  // 리뷰 Important 2 — 'hang' 픽스처는 SIGTERM 기본 처분으로 그냥 죽어서 SIGKILL 승격
+  // 분기를 한 번도 안 태운다. 이 테스트는 SIGTERM 을 무시하는 하네스로 그 분기를 실제로
+  // 태우고, exit 이 관측된 것에서 그치지 않고 kill(pid, 0) 이 ESRCH 를 던지는 것까지
+  // 확인한다 — 좀비는 부모가 거둬가기 전까지 프로세스 테이블에 남아 kill(pid, 0) 이
+  // 여전히 성공하므로, ESRCH 가 떠야 "죽었다"가 아니라 "실제로 거둬졌다"는 증거가 된다.
+  // killGraceMs 로 유예를 짧게 주입해 테스트가 프로덕션 기본값(5초)을 다 기다리지 않게 한다.
+  it('SIGTERM 을 무시하는 하네스: SIGKILL 로 승격되고 실제로 거둬진다 (spec §4)', async () => {
+    const ring = new RingBuffer(1024);
+    const r = await runPtyTurn(plan('hang-ignore-sigterm'), {
+      cwd: process.cwd(), timeoutMs: 200, killGraceMs: 200, ring,
+    });
+    expect(r.timedOut).toBe(true);
+    const match = ring.snapshot().toString().match(/pid=(\d+)/);
+    expect(match).not.toBeNull();
+    const pid = Number(match![1]);
+    expect(() => process.kill(pid, 0)).toThrow();
+  }, 2_000);
 });
 
 describe('RingBuffer', () => {
@@ -81,5 +123,25 @@ describe('RingBuffer', () => {
   it('빈 버퍼의 snapshot 은 빈 Buffer 다', () => {
     const ring = new RingBuffer(8);
     expect(ring.snapshot().length).toBe(0);
+  });
+
+  // 리뷰 Minor 1 — 브리프가 이름을 댄 경계 세 가지. 절단 코드(길이 비교 + subarray 오프셋)가
+  // 어긋나는 전형적인 자리라 각각 고정한다.
+  it('정확히 용량만큼 채우면 자르지 않는다', () => {
+    const ring = new RingBuffer(8);
+    ring.push(Buffer.from('abcdefgh'));
+    expect(ring.snapshot().toString()).toBe('abcdefgh');
+  });
+
+  it('용량보다 한 바이트 많으면 앞 한 바이트만 잘린다', () => {
+    const ring = new RingBuffer(8);
+    ring.push(Buffer.from('abcdefghi'));
+    expect(ring.snapshot().toString()).toBe('bcdefghi');
+  });
+
+  it('한 번의 push 자체가 용량보다 커도 그 한 번만으로 끝만 남는다', () => {
+    const ring = new RingBuffer(4);
+    ring.push(Buffer.from('abcdefghij'));
+    expect(ring.snapshot().toString()).toBe('ghij');
   });
 });
