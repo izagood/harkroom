@@ -6,6 +6,21 @@ export interface AccountView {
   isAdmin: boolean;
 }
 
+/** murmur 가 실제로 실행할 수 있는 harness. 목록에만 있고 구현이 없는 것은 UI 에서 '지원 예정'이다. */
+export const AGENT_HARNESSES = ['claude-code'] as const;
+export type AgentHarness = (typeof AGENT_HARNESSES)[number];
+
+/** UI 에서 등록·수정하는 에이전트의 정의. null 은 'harness 기본값 사용'이다. */
+export interface AgentConfig {
+  instructions: string;
+  harness: AgentHarness;
+  model: string | null;
+  effort: string | null;
+  workingDir: string | null;
+}
+
+export interface AgentView extends AccountView, AgentConfig {}
+
 export interface MessageRow {
   id: string;
   seq: number;

@@ -2,6 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { newToken } from '../auth/tokens.js';
+import { AGENT_HARNESSES } from '@murmur/shared';
+import { createAgentAccount, getAgent, listAgents, updateAgent } from '../services/agents.js';
 
 export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.post('/invites', { preHandler: app.requireAdmin }, async (req, reply) => {
@@ -10,16 +12,51 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     return reply.code(201).send({ token });
   });
 
+  // UI 로 등록·수정하는 '에이전트 정의'. 설정은 서버에 살아야 UI 수정이 러너에 반영된다.
+  const configFields = {
+    instructions: z.string().max(8000).optional(),
+    harness: z.enum(AGENT_HARNESSES).optional(),
+    model: z.string().max(64).nullable().optional(),
+    effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).nullable().optional(),
+    workingDir: z.string().max(512).nullable().optional(),
+  };
+
+  app.get('/accounts/agents', { preHandler: app.requireAdmin }, async () => ({
+    agents: await listAgents(pool),
+  }));
+
   app.post('/accounts/agents', { preHandler: app.requireAdmin }, async (req, reply) => {
     const body = z.object({
       handle: z.string().regex(/^[a-z0-9_-]{2,32}$/),
       displayName: z.string().min(1).max(64),
+      ...configFields,
     }).parse(req.body);
-    const res = await pool.query(
-      `insert into account (handle, display_name, kind) values ($1, $2, 'agent') returning id`,
-      [body.handle, body.displayName],
-    );
-    return reply.code(201).send({ id: res.rows[0].id });
+    return reply.code(201).send(await createAgentAccount(pool, body));
+  });
+
+  app.patch('/accounts/agents/:id', { preHandler: app.requireAdmin }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const patch = z.object({
+      displayName: z.string().min(1).max(64).optional(),
+      ...configFields,
+    }).parse(req.body);
+    const updated = await updateAgent(pool, id, patch);
+    if (!updated) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+    }
+    return updated;
+  });
+
+  // 러너가 자기 정의를 읽는 자리. 이것이 없으면 UI 수정이 도는 러너에 도달하지 않는다.
+  app.get('/agent/config', { preHandler: app.requireAccount }, async (req, reply) => {
+    if (req.account!.kind !== 'agent') {
+      return reply.code(403).send({ error: { code: 'agent_only', message: 'agents only' } });
+    }
+    const self = await getAgent(pool, req.account!.id);
+    if (!self) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+    }
+    return self;
   });
 
   app.post('/accounts/:id/pats', { preHandler: app.requireAdmin }, async (req, reply) => {

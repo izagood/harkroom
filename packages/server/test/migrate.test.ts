@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { readdir } from 'node:fs/promises';
 import pg, { type Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 
@@ -56,8 +57,14 @@ describe('migrations', () => {
     const b = new pg.Pool({ connectionString: target.toString() });
     try {
       await Promise.all([runMigrations(a), runMigrations(b)]);
+      // 목록을 하드코딩하면 마이그레이션을 추가할 때마다 이 테스트가 깨진다. 여기서 지켜야 할
+      // 것은 '무엇이 적용됐나'가 아니라 '디렉터리의 전부가 정확히 한 번씩 적용됐나'다.
+      const onDisk = (await readdir(new URL('../src/db/migrations/', import.meta.url)))
+        .filter((f) => f.endsWith('.sql')).sort();
       const applied = await a.query('select name from schema_migrations order by name');
-      expect(applied.rows.map((r) => r.name)).toEqual(['001_init.sql', '002_idempotency_scope.sql']);
+      expect(applied.rows.map((r) => r.name)).toEqual(onDisk);
+      const distinct = await a.query('select count(distinct name)::int as n from schema_migrations');
+      expect(distinct.rows[0].n).toBe(onDisk.length);
     } finally {
       await a.end();
       await b.end();
