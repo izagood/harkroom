@@ -731,6 +731,18 @@ resume 이 깨진다. `rec.harness !== def.harness` 면 `sessionId` 와 `lastFed
 것보다 낫다. **테스트로 고정할 것**: 같은 threadKey 에서 harness 를 바꾸면 다음 턴이
 `isFirstTurn: true` 로 조립되고 옛 sessionId 가 인자에 남지 않는다.
 
+앞 태스크가 이연한 두 건이 여기서 만난다. **둘 다 이 태스크에서 닫는다.**
+
+- **`ensureWorkspace` 의 존재 확인이 `access()` 라 파일/디렉터리를 구분하지 않는다**(Task 4 리뷰).
+  같은 경로에 일반 파일이 있으면(비정상 종료가 남긴 빈 파일 등) 디렉터리로 간주해 그대로
+  돌려주고, **그 경로를 cwd 로 쓰는 것이 바로 이 태스크다** — PTY spawn 이 ENOTDIR 로 죽거나
+  더 나쁘게는 엉뚱한 곳에서 돈다. `packages/agent/src/workspace.ts` 의 확인을
+  `stat().isDirectory()` 로 바꾸고, 경로가 존재하되 디렉터리가 아니면 던진다(그건 폴백 대상이
+  아니라 사람이 고쳐야 할 상태다). 테스트도 함께 추가한다.
+- **`buildTurnPrompt` 에 `channelId`·`threadRootId` 를 넘기는 것은 이 태스크의 책임이다**
+  (Task 5 수정 라운드). `main.ts` 가 이미 `mention.channelId` 와 `anchor` 를 들고 있으므로
+  그 값을 그대로 넘긴다 — 여기서 새로 계산하지 마라. 계산하는 순간 네 번째 진실 원천이 된다.
+
 세부 둘: ① `repoDir = def.workingDir ?? process.cwd()` — workspace 격리는 workingDir 가
 avcs repo 일 때만 성립하고 아니면 Task 4 폴백으로 그 자리에서 돈다. ② throw 하는 에러
 메시지에 `result.tail` 을 포함시킨다 — PTY 는 stderr 가 스트림에 섞이므로 이게 없으면
