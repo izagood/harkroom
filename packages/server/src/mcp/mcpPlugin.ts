@@ -56,9 +56,15 @@ function buildMcpServer(pool: Pool, account: AccountView, lifecycle: Lifecycle):
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
-    const { message, notified, replayed } = await postMessage(pool, {
+    const posted = await postMessage(pool, {
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
     });
+    // 에이전트는 첨부를 붙이지 않는다(도구에 그 입력이 없다). 그래도 합 타입이므로 확인해야
+    // 하고, 확인 자체가 나중에 도구가 첨부를 받게 될 때의 자리를 남겨 둔다.
+    if (posted.failure) {
+      return jsonResult({ error: { code: 'bad_attachment', message: 'attachments must be your own, unused uploads' } });
+    }
+    const { message, notified, replayed } = posted;
     if (!replayed) {
       const ch = await pool.query(`select kind from channel where id = $1`, [channelId]);
       const audience: 'all' | string[] = ch.rows[0]?.kind === 'dm' ? await dmMemberIds(pool, channelId) : 'all';

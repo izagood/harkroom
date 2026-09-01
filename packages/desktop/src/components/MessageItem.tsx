@@ -4,6 +4,7 @@ import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { MessageBody } from './MessageBody';
 import { Reactions } from './Reactions';
+import { Attachments } from './Attachments';
 
 export function MessageItem({ message, inThread = false }: { message: MessageRow; inThread?: boolean }) {
   const author = useAppStore((s) => s.accounts[message.authorId]);
@@ -49,7 +50,8 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
 
         {draft === null ? (
           <>
-            <MessageBody body={message.body} />
+            {message.body.trim() && <MessageBody body={message.body} />}
+            <Attachments attachments={message.attachments} />
             <Reactions message={message} />
           </>
         ) : (

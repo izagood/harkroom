@@ -1,4 +1,4 @@
-import type { WsServerEvent } from '@murmur/shared';
+import type { AttachmentRow, WsServerEvent } from '@murmur/shared';
 import type { ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
@@ -236,18 +236,46 @@ export class Controller {
 
   closeThread(): void { useAppStore.getState().set({ threadRootId: null }); }
 
-  async send(body: string): Promise<void> {
+  async send(body: string, attachmentIds: string[] = []): Promise<void> {
     const { activeChannelId } = useAppStore.getState();
-    if (!activeChannelId || !body.trim()) return;
-    const m = await this.api.postMessage(activeChannelId, body, undefined, crypto.randomUUID());
+    // 파일만 보내는 것은 자연스럽다 — 본문이 비었다고 막으면 첨부를 보낼 길이 없다.
+    if (!activeChannelId || (!body.trim() && !attachmentIds.length)) return;
+    const m = await this.api.postMessage(activeChannelId, body, undefined, crypto.randomUUID(), attachmentIds);
     useAppStore.getState().upsertMessages(activeChannelId, [m]);
   }
 
-  async reply(body: string): Promise<void> {
+  async reply(body: string, attachmentIds: string[] = []): Promise<void> {
     const { activeChannelId, threadRootId } = useAppStore.getState();
-    if (!activeChannelId || !threadRootId || !body.trim()) return;
-    const m = await this.api.postMessage(activeChannelId, body, threadRootId, crypto.randomUUID());
+    if (!activeChannelId || !threadRootId || (!body.trim() && !attachmentIds.length)) return;
+    const m = await this.api.postMessage(activeChannelId, body, threadRootId, crypto.randomUUID(), attachmentIds);
     useAppStore.getState().upsertMessages(activeChannelId, [m]);
+  }
+
+  /** 파일을 고른 순간 올린다 — 전송 시점에 올리면 Enter 를 누르고 기다려야 한다. */
+  upload(file: File): Promise<AttachmentRow> {
+    return this.api.upload(file);
+  }
+
+  fetchAttachment(id: string): Promise<Blob> {
+    return this.api.fetchAttachment(id);
+  }
+
+  /**
+   * 첨부를 사용자 디스크에 저장한다. objectURL + `download` 앵커를 쓴다 — 토큰을 URL 에
+   * 넣지 않으려면 바이트를 먼저 받아야 하고, 받은 다음에는 이것이 가장 단순한 저장 경로다.
+   */
+  async saveAttachment(attachment: AttachmentRow): Promise<void> {
+    const blob = await this.api.fetchAttachment(attachment.id);
+    const url = URL.createObjectURL(blob);
+    try {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = attachment.filename;
+      a.click();
+    } finally {
+      // 즉시 revoke 하면 브라우저가 저장을 시작하기 전에 사라질 수 있다.
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    }
   }
 
   /**
