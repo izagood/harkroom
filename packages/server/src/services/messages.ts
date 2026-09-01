@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import type { InboxEntry, MessageRow } from '@murmur/shared';
+import { mentionedHandles, type InboxEntry, type MessageRow } from '@murmur/shared';
 
 export interface PostMessageInput {
   channelId: string;
@@ -14,8 +14,6 @@ export interface PostMessageInput {
 const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
   author_id as "authorId", body, kind, meta, created_at as "createdAt",
   edited_at as "editedAt"`;
-
-const MENTION_RE = /@([a-z0-9_-]{2,32})/g;
 
 async function insertInbox(
   client: PoolClient, accountId: string, messageId: string, reason: InboxEntry['reason'], notified: Set<string>,
@@ -66,10 +64,13 @@ export async function postMessage(
 
     const notified = new Set<string>();
 
-    const handles = [...new Set([...input.body.matchAll(MENTION_RE)].map((m) => m[1]))];
+    // 멘션 규칙은 @murmur/shared 에 있다 — 데스크탑의 강조와 같은 것을 봐야 한다.
+    const handles = mentionedHandles(input.body);
     if (handles.length) {
+      // handle 은 소문자로 만들어지지만 사람은 @Fizz 라고 쓴다. 양쪽을 소문자로 맞춘다.
       const accounts = await client.query(
-        `select id from account where handle = any($1) and id <> $2`, [handles, input.authorId],
+        `select id from account where lower(handle) = any($1) and id <> $2`,
+        [handles, input.authorId],
       );
       for (const row of accounts.rows) await insertInbox(client, row.id, message.id, 'mention', notified);
     }
