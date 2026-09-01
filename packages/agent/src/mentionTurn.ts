@@ -8,6 +8,8 @@
 // codexSessions) 을 순서대로 부르고, 그 결과로 무엇을 저장·발화·실패 처리할지 판단한다.
 // 하네스 출력은 파싱하지 않는다 — 에이전트가 스스로 murmur MCP 로 답을 올린다(spec §4).
 import { randomUUID } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
 import { buildSystemPrompt, buildTurnPrompt, hasOwnPostSince, NO_REPLY_NOTICE } from './prompt.js';
@@ -15,7 +17,7 @@ import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, type TurnPlan } from './turn.js';
 import type { TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
-import { ensureWorkspace, type Exec } from './workspace.js';
+import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
 
 /** runMentionTurn 이 요구하는 murmur 표면. MurmurAgentClient 의 부분집합이라 실제 클래스를
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
@@ -51,6 +53,39 @@ export interface MentionTurnDeps {
   turnTimeoutMs: number;
   /** 테스트가 sinceMs 캡처 시점을 결정론적으로 만들기 위한 시계 주입. 생략하면 Date.now. */
   now?: () => number;
+}
+
+/**
+ * 새 워크스페이스를 확보한다. `def.workingDir` 이 null 인 것과 "명시적으로 지정됐다"는
+ * 서로 다른 사실이라 나눠서 다룬다(리뷰 지적) — 하나로 뭉개
+ * (`def.workingDir ?? process.cwd()`) `ensureWorkspace` 에 넘기면, 아무도 지정한 적 없는
+ * `process.cwd()`(러너 자신의 체크아웃)에서 avcs 워크스페이스를 시도하게 된다. 그건
+ * 누구도 요청하지 않은 동작이고 `mentionPermission: 'auto'`(bypassPermissions)와 겹치면
+ * 러너 자신의 코드가 대상이 되는 사고다.
+ *
+ * - `workingDir === null`(아무도 지정하지 않음) → avcs 를 아예 시도하지 않는다. 스레드
+ *   전용 디렉터리만 만들어 최소한의 격리를 유지한다(avcs 버전관리는 없다 — 격리 없음을
+ *   UI 에 드러내는 것은 별도 이슈).
+ * - `workingDir` 이 지정됨 → 지금처럼 `ensureWorkspace` 로 간다. 그 값이 avcs repo 가
+ *   아니면 `ensureWorkspace` 자신의 폴백이 지정된 그 디렉터리를 그대로 돌려준다 — 사용자가
+ *   그 파일들에서 일하라고 지정한 것이라 빈 디렉터리로 갈아치우면 설정이 장식이 된다.
+ */
+async function resolveWorkspaceDir(
+  deps: Pick<MentionTurnDeps, 'exec' | 'me' | 'workspaceBaseDir'>,
+  def: Pick<AgentView, 'workingDir'>,
+  threadKey: string,
+): Promise<string> {
+  if (def.workingDir === null) {
+    const dir = join(deps.workspaceBaseDir, workspaceName(deps.me.handle, threadKey));
+    await mkdir(dir, { recursive: true });
+    return dir;
+  }
+  return ensureWorkspace(deps.exec, {
+    handle: deps.me.handle,
+    threadKey,
+    baseDir: deps.workspaceBaseDir,
+    repoDir: def.workingDir,
+  });
 }
 
 export interface MentionTarget {
@@ -91,12 +126,7 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
   }
 
   if (!rec) {
-    const workspaceDir = await ensureWorkspace(deps.exec, {
-      handle: deps.me.handle,
-      threadKey: key,
-      baseDir: deps.workspaceBaseDir,
-      repoDir: def.workingDir ?? process.cwd(),
-    });
+    const workspaceDir = await resolveWorkspaceDir(deps, def, key);
     rec = {
       workspaceDir,
       sessionId: preassignsSessionId(def.harness) ? randomUUID() : null,
@@ -106,9 +136,16 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     };
   }
 
-  // isFirstTurn 은 turnsRun 에서만 유도한다 — lastFedSeq 는 "무엇을 봤는지"의 경계일 뿐
-  // "하네스를 실제로 돌렸는지"의 증거가 아니다(sessions.ts::SessionRecord.turnsRun 참고).
-  const isFirstTurn = rec.turnsRun === 0;
+  // isFirstTurn 은 원칙적으로 turnsRun 에서 유도한다 — lastFedSeq 는 "무엇을 봤는지"의
+  // 경계일 뿐 "하네스를 실제로 돌렸는지"의 증거가 아니다(sessions.ts::SessionRecord.turnsRun
+  // 참고). 다만 `sessionId === null` 도 같이 본다: codex 는 턴이 최소 한 번 돌았어도
+  // (turnsRun>=1) 그 턴이 끝난 뒤 세션 발견(findCodexSessionId)이 실패하면 sessionId 가
+  // 여전히 null 로 남는다(spec §8, "기능 후퇴이지 정지가 아니다"). 그때 turnsRun 만 보고
+  // isFirstTurn:false 로 조립하면 `assertValidSession` 이 "resume 인데 id 가 없다"로 던지고,
+  // turnsRun 은 그 실패로 줄지 않으니 이 스레드가 재시도 한도까지 영원히 실패한다(리뷰가
+  // 실물로 재현) — sessionId 가 없으면 이어받을 게 없으므로 무조건 첫 턴(exec, resume
+  // 아님)으로 다시 시작해야 그 후퇴가 실제로 "다음 턴에 새 세션"으로 이어진다.
+  const isFirstTurn = rec.turnsRun === 0 || rec.sessionId === null;
 
   const { prompt, fedSeq } = buildTurnPrompt({
     messages: thread,
@@ -162,8 +199,17 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
 
   if (def.harness === 'codex' && rec.sessionId === null) {
     // codex 는 세션 id 를 사전 할당할 수 없다 — 방금 끝난 턴이 만든 rollout 파일에서
-    // 사후 발견한다. 못 찾아도(null) 실패가 아니다 — 다음 턴이 새 세션으로 다시 시작한다.
-    rec = { ...rec, sessionId: await findCodexSessionId(undefined, { cwd: rec.workspaceDir, sinceMs }) };
+    // 사후 발견한다. 못 찾아도(null) 예외로 죽이지는 않는다 — 다음 턴이 새 세션으로 다시
+    // 시작한다(spec §8, isFirstTurn 계산이 sessionId===null 도 보므로 실제로 그렇게 된다).
+    // 그래도 원인 없이 반복되면 "왜 이 스레드는 매번 새로 시작하지"를 아무도 알 수 없으니
+    // 러너 로그에는 남긴다(spec §8 "+ 러너 로그 경고").
+    const discovered = await findCodexSessionId(undefined, { cwd: rec.workspaceDir, sinceMs });
+    if (discovered === null) {
+      console.warn(
+        `[mentionTurn] ${key}: codex 세션 발견 실패 (cwd=${rec.workspaceDir}, sinceMs=${sinceMs}) — 다음 턴은 새 세션으로 다시 시작한다`,
+      );
+    }
+    rec = { ...rec, sessionId: discovered };
   }
 
   // 세션 상태(디스크의 하네스 세션 파일)는 이 프로세스가 이 결과를 "성공"으로 보든
