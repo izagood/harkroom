@@ -77,8 +77,8 @@ export class Controller {
     const { activeChannelId, messages } = useAppStore.getState();
     if (activeChannelId) {
       const maxSeq = Math.max(0, ...(messages[activeChannelId] ?? []).map((m) => m.seq));
-      const rows = await this.api.messages(activeChannelId, { since: maxSeq });
-      useAppStore.getState().upsertMessages(activeChannelId, rows);
+      const page = await this.api.messages(activeChannelId, { since: maxSeq });
+      useAppStore.getState().upsertMessages(activeChannelId, page.messages);
     }
     await this.refreshUnread();
     useAppStore.getState().set({ leases: await this.api.leases() });
@@ -112,9 +112,12 @@ export class Controller {
     const since = this.loadedChannels.has(channelId)
       ? Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq))
       : 0;
-    const rows = await this.api.messages(channelId, { since });
+    const page = await this.api.messages(channelId, { since });
     this.loadedChannels.add(channelId);
-    useAppStore.getState().upsertMessages(channelId, rows);
+    useAppStore.getState().upsertMessages(channelId, page.messages);
+    useAppStore.getState().set({
+      hasMore: { ...useAppStore.getState().hasMore, [channelId]: page.hasMore },
+    });
     const ids = useAppStore.getState().unread
       .filter((e) => e.channelId === channelId && !e.readAt)
       .map((e) => e.id);
@@ -128,8 +131,23 @@ export class Controller {
     const channelId = useAppStore.getState().activeChannelId;
     if (!channelId) return;
     useAppStore.getState().set({ threadRootId: rootId });
-    const rows = await this.api.messages(channelId, { thread: rootId });
-    useAppStore.getState().upsertMessages(channelId, rows);
+    const page = await this.api.messages(channelId, { thread: rootId });
+    useAppStore.getState().upsertMessages(channelId, page.messages);
+  }
+
+  /** 상단에 도달했을 때 한 페이지 더 과거로. 남은 게 없으면 요청하지 않는다. */
+  async loadOlder(): Promise<void> {
+    const { activeChannelId, messages, hasMore } = useAppStore.getState();
+    if (!activeChannelId || !hasMore[activeChannelId]) return;
+    const rows = messages[activeChannelId] ?? [];
+    if (!rows.length) return;
+    const oldest = Math.min(...rows.map((m) => m.seq));
+
+    const page = await this.api.messages(activeChannelId, { before: oldest });
+    useAppStore.getState().upsertMessages(activeChannelId, page.messages);
+    useAppStore.getState().set({
+      hasMore: { ...useAppStore.getState().hasMore, [activeChannelId]: page.hasMore },
+    });
   }
 
   closeThread(): void { useAppStore.getState().set({ threadRootId: null }); }

@@ -50,12 +50,18 @@ export class ApiClient {
   async leases(): Promise<LeaseRow[]> {
     return (await this.req<{ leases: LeaseRow[] }>('GET', '/leases')).leases;
   }
-  async messages(channelId: string, opts?: { since?: number; thread?: string }): Promise<MessageRow[]> {
+  /** `hasMore` 는 '이 페이지보다 오래된 것이 남았는가'다 — 상단 추가 로드 표시에 쓴다. */
+  messages(
+    channelId: string,
+    opts?: { since?: number; before?: number; limit?: number; thread?: string },
+  ): Promise<{ messages: MessageRow[]; hasMore: boolean }> {
     const q = new URLSearchParams();
     if (opts?.since !== undefined) q.set('since', String(opts.since));
+    if (opts?.before !== undefined) q.set('before', String(opts.before));
+    if (opts?.limit !== undefined) q.set('limit', String(opts.limit));
     if (opts?.thread) q.set('thread', opts.thread);
     const qs = q.size ? `?${q.toString()}` : '';
-    return (await this.req<{ messages: MessageRow[] }>('GET', `/channels/${channelId}/messages${qs}`)).messages;
+    return this.req('GET', `/channels/${channelId}/messages${qs}`);
   }
   postMessage(channelId: string, body: string, threadRootId?: string, idempotencyKey?: string): Promise<MessageRow> {
     return this.req('POST', `/channels/${channelId}/messages`,

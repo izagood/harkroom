@@ -11,6 +11,7 @@ const fakeController = () => {
     openThread: vi.fn(),
     editMessage: vi.fn(async () => undefined),
     deleteMessage: vi.fn(async () => undefined),
+    loadOlder: vi.fn(async () => undefined),
   };
   setController(c as unknown as Controller);
   return c;
@@ -40,6 +41,24 @@ afterEach(() => {
 });
 
 describe('ChannelPane', () => {
+  // 최신 창 밖으로 밀려난 대화에 도달할 진입점. 남은 게 없으면 보이지 않아야 한다.
+  it('offers a way back into older history when more remains', () => {
+    const c = fakeController();
+    useAppStore.getState().set({ hasMore: { c1: true } });
+    render(<ChannelPane />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load older messages' }));
+
+    expect(c.loadOlder).toHaveBeenCalled();
+  });
+
+  it('hides the older-history entry point once nothing older remains', () => {
+    fakeController();
+    useAppStore.getState().set({ hasMore: { c1: false } });
+    render(<ChannelPane />);
+    expect(screen.queryByRole('button', { name: 'Load older messages' })).toBeNull();
+  });
+
   // 수정된 메시지는 원문과 구별돼야 한다 — 아니면 대화 기록이 조용히 바뀐다.
   it('marks a message that was edited', () => {
     fakeController();

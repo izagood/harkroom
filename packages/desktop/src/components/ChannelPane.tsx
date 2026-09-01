@@ -4,7 +4,7 @@ import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
 
 export function ChannelPane() {
-  const { activeChannelId, channels, dms, accounts, me, messages } = useAppStore();
+  const { activeChannelId, channels, dms, accounts, me, messages, hasMore } = useAppStore();
   const [draft, setDraft] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -44,6 +44,17 @@ export function ChannelPane() {
         {channel?.repo && <span className="rounded bg-zinc-100 px-1.5 text-[11px] text-zinc-600">{channel.repo}</span>}
       </header>
       <div className="flex-1 overflow-y-auto py-2">
+        {activeChannelId && hasMore[activeChannelId] && (
+          // 서버 히스토리 창(최신 N개) 밖으로 밀려난 대화로 돌아가는 유일한 경로다.
+          <div className="px-4 py-2 text-center">
+            <button
+              className="rounded border border-zinc-300 px-2 py-1 text-[11px] text-zinc-600"
+              onClick={() => void getController().loadOlder()}
+            >
+              Load older messages
+            </button>
+          </div>
+        )}
         {roots.map((m) => <MessageItem key={m.id} message={m} />)}
         <div ref={bottomRef} />
       </div>

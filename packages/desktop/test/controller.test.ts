@@ -20,7 +20,7 @@ describe('Controller', () => {
 
   it('openChannel fetches since maxSeq and marks channel inbox read', async () => {
     const api = fakeApi({
-      messages: vi.fn(async () => [msg('m1', 'c1', 1, 'a'), msg('m2', 'c1', 2, 'b')]),
+      messages: vi.fn(async () => ({ messages: [msg('m1', 'c1', 1, 'a'), msg('m2', 'c1', 2, 'b')], hasMore: false })),
       inboxUnread: vi.fn(async () => [
         { id: 7, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c1' },
       ]),
@@ -39,7 +39,7 @@ describe('Controller', () => {
   // 올라가 버리면, 채널을 처음 열 때의 증분 조회가 backlog 전체를 건너뛴다.
   it('loads full history the first time a channel opens, even if live messages arrived first', async () => {
     const history = [msg('m1', 'c1', 1, '오래된 대화'), msg('m2', 'c1', 2, '그 다음 대화')];
-    const api = fakeApi({ messages: vi.fn(async () => history) });
+    const api = fakeApi({ messages: vi.fn(async () => ({ messages: history, hasMore: false })) });
     const { makeWs, callbacks } = fakeWsFactory();
     const c = new Controller(api, makeWs);
     await c.start();
@@ -59,7 +59,7 @@ describe('Controller', () => {
   });
 
   it('reopening an already loaded channel fetches only what is new', async () => {
-    const api = fakeApi({ messages: vi.fn(async () => [msg('m1', 'c1', 5, 'first load')]) });
+    const api = fakeApi({ messages: vi.fn(async () => ({ messages: [msg('m1', 'c1', 5, 'first load')], hasMore: false })) });
     const { makeWs } = fakeWsFactory();
     const c = new Controller(api, makeWs);
     await c.start();
@@ -163,6 +163,43 @@ describe('Controller', () => {
 
     expect((api.editMessage as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(['c1', 'm1', '새 본문']);
     expect((api.deleteMessage as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(['c1', 'm1']);
+  });
+
+  // 최신 창 밖으로 밀려난 대화에 도달할 경로가 필요하다.
+  it('loads an older page from the oldest message it holds', async () => {
+    const api = fakeApi({
+      messages: vi.fn(async (_c: string, opts?: { before?: number }) =>
+        (opts?.before
+          ? { messages: [msg('m1', 'c1', 1, '더 오래된 것')], hasMore: false }
+          : { messages: [msg('m9', 'c1', 9, '최신')], hasMore: true }) as never),
+    });
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    await c.openChannel('c1');
+    expect(useAppStore.getState().hasMore.c1).toBe(true);
+
+    await c.loadOlder();
+
+    const call = (api.messages as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
+    expect(call[1]).toMatchObject({ before: 9 });
+    expect(useAppStore.getState().messages.c1!.map((m) => m.id)).toEqual(['m1', 'm9']);
+    expect(useAppStore.getState().hasMore.c1).toBe(false);
+  });
+
+  it('does not ask for an older page when none remain', async () => {
+    const api = fakeApi({
+      messages: vi.fn(async () => ({ messages: [msg('m1', 'c1', 1, '전부')], hasMore: false }) as never),
+    });
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    await c.openChannel('c1');
+    const before = (api.messages as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    await c.loadOlder();
+
+    expect((api.messages as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(before);
   });
 
   it('presence events update online list', async () => {
