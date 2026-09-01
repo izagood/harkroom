@@ -2,8 +2,10 @@ import websocket from '@fastify/websocket';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import type { WsServerEvent } from '@murmur/shared';
+
 import { emitEvent, onEvent, type WorkspaceEvent } from '../events.js';
 import { createTicketStore } from './tickets.js';
+import { findInvalidCredentials } from './credentials.js';
 
 function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
   switch (e.type) {
@@ -25,16 +27,6 @@ export interface WsOptions {
   revalidateMs?: number;
 }
 
-/** 이 자격증명이 아직 살아 있는가. 인증 훅과 같은 조건을 본다. */
-async function credentialLives(pool: Pool, hash: string): Promise<boolean> {
-  const s = await pool.query(
-    `select 1 from session where token_hash = $1 and expires_at > now()`, [hash]);
-  if (s.rowCount) return true;
-  const p = await pool.query(
-    `select 1 from pat where token_hash = $1 and revoked_at is null`, [hash]);
-  return (p.rowCount ?? 0) > 0;
-}
-
 export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptions = {}): Promise<void> {
   await app.register(websocket);
   const connections = new Map<string, number>(); // accountId → live socket count
@@ -49,10 +41,16 @@ export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptio
     !allowedOrigins || !origin || allowedOrigins.includes(origin);
 
   // 토큰을 연결 시점에만 검증하면, 만료 직전에 열린 소켓이 만료 후에도 이벤트를 계속 받는다.
+  // 판정은 살아 있는 해시 전체에 대해 **한 번의 질의**로 한다. 소켓마다 왕복하면 비용이
+  // N배인 것도 있지만, 더 나쁜 건 같은 자격증명의 소켓들이 서로 다른 순간에 판정돼
+  // "어떤 탭은 끊기고 어떤 탭은 사는" 상태가 생기는 것이다. 해시 집합 하나로 보면 운명이 같다.
   const sweep = setInterval(() => {
     void (async () => {
+      if (!live.size) return;
+      const invalid = await findInvalidCredentials(pool, [...new Set([...live].map((e) => e.credentialHash))]);
+      if (!invalid.size) return;
       for (const entry of [...live]) {
-        if (!(await credentialLives(pool, entry.credentialHash))) {
+        if (invalid.has(entry.credentialHash)) {
           live.delete(entry);
           entry.socket.close(4401, 'credential no longer valid');
         }
