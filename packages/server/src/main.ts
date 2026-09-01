@@ -31,6 +31,7 @@ const app = await buildServer({
   getAvcsStatus: () => worker?.status() ?? { connected: false },
   corsOrigins: config.corsOrigins,
   logLevel: config.logLevel,
+  trustProxy: config.trustProxy,
 });
 await app.listen({ port: config.port, host: '0.0.0.0' });
 console.log(`murmur server on :${config.port} (avcs: ${config.avcsBaseUrl ?? 'disabled'})`);

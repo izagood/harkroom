@@ -66,6 +66,17 @@ export interface ServerDeps {
   /** 리밋 판정용 시계(테스트 전용 seam). */
   now?: () => number;
   /**
+   * 앞단 리버스 프록시를 신뢰할지. **켜면 `X-Forwarded-For` 를 클라이언트 주소로 받아들인다.**
+   *
+   * 켜야 하는 이유: 프록시 뒤에서는 소켓 주소가 프록시 하나뿐이라 **모든 클라이언트가 레이트
+   * 리밋 버킷 하나를 공유하고**(서로를 밀어낸다) 감사 로그의 ip 가 전부 같은 값이 된다.
+   * compose 기본 배포가 지금 그 상태다 — 모든 요청이 Docker 브리지 게이트웨이로 보인다.
+   *
+   * 켜면 안 되는 이유: 프록시가 **없는데** 켜면 누구나 헤더를 위조해 리밋을 무한히 우회한다.
+   * 그래서 기본값은 끔이고, 실제로 앞단을 둔 배포에서만 켠다.
+   */
+  trustProxy?: boolean;
+  /**
    * 첨부 스토리지. 미지정이면 ATTACHMENT_ROOT·ATTACHMENT_MAX_BYTES(기본 25MB)를 쓴다.
    * S3 호환으로 바꿀 때는 storage/local.ts 만 갈아 끼우면 된다.
    */
@@ -77,6 +88,8 @@ const DEFAULT_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({
+    // 기본값 false 를 유지한다 — 프록시가 없는데 신뢰하면 헤더 위조로 리밋이 무의미해진다.
+    trustProxy: deps.trustProxy ?? false,
     logger: loggerConfig({
       level: deps.logLevel ?? process.env.LOG_LEVEL ?? 'info',
       stream: deps.logStream,
