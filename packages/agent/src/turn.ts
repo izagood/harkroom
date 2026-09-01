@@ -41,13 +41,18 @@ export interface BuildTurnCommandOptions {
   pat: string;
   /**
    * codex 의 `-c mcp_servers.murmur.url=...` 오버라이드에 필요한 실제 murmur URL. claude 는
-   * 이 값이 필요 없다 — `writeMcpConfigOnce` 가 이미 `mcpConfigPath` 파일 안에 실제 URL 을
+   * 이 값을 쓰지 않는다 — `writeMcpConfigOnce` 가 이미 `mcpConfigPath` 파일 안에 실제 URL 을
    * 구워 넣었고 claude 는 그 경로만 넘기면 된다. 반면 codex 는 그 파일을 읽지 않고 턴마다
-   * `-c` 로 값을 직접 준다(spec §4·§6 — `codex mcp add` 는 영구 기록이라 금지). 아직 이
-   * 값을 채워 넘기는 호출부가 없다면(선택 인자라 생략 가능) codex 는 murmur MCP 등록을
-   * 건너뛰고 avcs 만 등록한다 — 모르는 URL 을 조용히 잘못 채우느니 하나를 빼는 쪽이 낫다.
+   * `-c` 로 값을 직접 준다(spec §4·§6 — `codex mcp add` 는 영구 기록이라 금지).
+   *
+   * **필수다 — 선택 인자로 두지 않는다.** 러너는 더 이상 하네스 출력을 파싱하지 않으므로
+   * 에이전트가 답하는 유일한 경로가 murmur MCP 의 `message.post` 다(prompt.ts 의 시스템
+   * 프롬프트가 그렇게 지시한다). murmur MCP 없이 뜬 codex 턴은 에러 없이 그냥 돌다가 답을
+   * 못 하고, 러너는 "답 없이 턴을 끝냈습니다"만 남긴다 — 원인이 "MCP 가 안 붙었다"라는
+   * 단서가 어디에도 안 남는 조용한 실패다. 그래서 이 값을 생략해 조용히 넘어가는 경로 자체를
+   * 두지 않는다: 호출자가 안 채우면 여기서 타입 에러로, 넘겼는데 비어 있으면 즉시 예외로 죽는다.
    */
-  murmurUrl?: string;
+  murmurUrl: string;
 }
 
 /** 멘션 턴(화면 앞에 사람이 없다)의 권한 매핑. 인터랙티브 턴은 아예 플래그를 안 준다(spec §6). */
@@ -62,7 +67,7 @@ interface HarnessPreset {
   session(sessionId: string | null, isFirstTurn: boolean, mode: TurnMode): string[];
   /** mentionPermission → 멘션 턴 전용 권한 플래그. 인터랙티브에선 아예 쓰지 않는다. */
   permission: Record<MentionPermission, string[]>;
-  mcp(args: { mcpConfigPath: string; murmurUrl?: string }): string[];
+  mcp(args: { mcpConfigPath: string; murmurUrl: string }): string[];
   model(model: string | null): string[];
   effort(effort: string | null): string[];
   /**
@@ -131,26 +136,27 @@ const CODEX_PRESET: HarnessPreset = {
     auto: ['-s', 'workspace-write'],
     readonly: ['-s', 'read-only'],
   },
-  mcp: ({ murmurUrl }) => {
+  mcp: ({ murmurUrl }) => [
     // avcs 는 항상 등록한다(실측 shape: stdio, command 'avcs', args ['mcp'], env 없음).
-    const flags = ['-c', 'mcp_servers.avcs.command="avcs"', '-c', 'mcp_servers.avcs.args=["mcp"]'];
-    if (murmurUrl) {
-      // `bearer_token_env_var` 는 env 변수 "이름"만 담는다 — PAT 값 자체는 절대 argv 에
-      // 오르지 않는다(spec §7, task-1 실측: `-c mcp_servers.murmur.bearer_token_env_var=
-      // "MURMUR_PAT"`). 실값은 buildTurnCommand 가 돌려주는 env.MURMUR_PAT 로만 간다.
-      flags.push(
-        '-c', `mcp_servers.murmur.url="${murmurUrl}"`,
-        '-c', 'mcp_servers.murmur.bearer_token_env_var="MURMUR_PAT"',
-      );
-    }
-    return flags;
-  },
+    '-c', 'mcp_servers.avcs.command="avcs"',
+    '-c', 'mcp_servers.avcs.args=["mcp"]',
+    // murmur 도 항상 등록한다 — 이게 빠지면 에이전트가 답할 방법이 없다(위 murmurUrl 주석).
+    // `bearer_token_env_var` 는 env 변수 "이름"만 담는다 — PAT 값 자체는 절대 argv 에 오르지
+    // 않는다(spec §7, task-1 실측: `-c mcp_servers.murmur.bearer_token_env_var="MURMUR_PAT"`).
+    // 실값은 buildTurnCommand 가 돌려주는 env.MURMUR_PAT 로만 간다.
+    '-c', `mcp_servers.murmur.url="${murmurUrl}"`,
+    '-c', 'mcp_servers.murmur.bearer_token_env_var="MURMUR_PAT"',
+  ],
   model: (model) => (model ? ['--model', model] : []),
-  // codex 에 `--effort` 플래그는 없다 — spec §4 표에도 이 항목은 없다(측정 대상 밖).
-  // reasoning effort 는 codex 설정 키 `model_reasoning_effort` 로 알려져 있어, MCP 와 같은
-  // 턴별 `-c` 오버라이드 방식을 그대로 재사용한다. **미측정 — 실사용 전 재검증 필요**
-  // (task-6-report.md 에 명시). 틀렸을 때 비용은 크지 않다: 잘못된 `-c` 키는 codex 가
-  // 무시하거나 거절할 뿐 워크스페이스에 해를 끼치지 않는다.
+  // codex 에 `--effort` 플래그는 없다 — spec §4 표에도 이 항목은 없다(측정 대상 밖). 키
+  // `model_reasoning_effort` 자체는 **실재를 확인했다**: 이 머신의 실제
+  // `~/.codex/config.toml:2` 에 `model_reasoning_effort = "xhigh"` 가 그대로 들어있다(사용자가
+  // 직접 쓰던 키). 그래서 MCP 와 같은 턴별 `-c` 오버라이드로 그 키를 재사용한다.
+  // **절반만 확인됐다: 키는 실측, 값 집합은 미확인.** murmur 의 effort 값은
+  // `low|medium|high|xhigh|max` 다섯인데 codex 가 그 다섯을 다 받는지는 `xhigh` 하나만
+  // 실물로 봤을 뿐 나머지는 모른다. 값이 틀려도 조용하지 않다 — codex 가 알 수 없는 값이면
+  // 턴 시작 자체가 크게 실패하므로(무시된 채 다른 값으로 도는 조용한 오동작이 아니다) 이
+  // 미확인은 감수 가능하다고 판단했다.
   effort: (effort) => (effort ? ['-c', `model_reasoning_effort="${effort}"`] : []),
   prompt: (systemPrompt, promptCtx, mode) => {
     // codex 에는 `--append-system-prompt` 에 해당하는 플래그가 없다(실측) — 지시문은
@@ -199,6 +205,11 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     );
   }
   assertValidSession(opts);
+  if (!opts.murmurUrl) {
+    // 타입은 필수(string)로 강제하지만, 빈 문자열은 타입 체크를 통과하고도 같은 조용한
+    // 실패(murmur MCP 미등록 → 답 못 함 → "답 없이 턴을 끝냈습니다")로 이어진다 — 여기서 막는다.
+    throw new Error('buildTurnCommand: murmurUrl 이 비어 있다 — murmur MCP 없이는 에이전트가 답할 방법이 없다');
+  }
 
   const args: string[] = [
     ...preset.session(opts.sessionId, opts.isFirstTurn, opts.mode),
