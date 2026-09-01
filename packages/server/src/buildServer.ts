@@ -16,6 +16,10 @@ export interface ServerDeps {
   getAvcsStatus?: () => { connected: boolean };
   /** 종료 시 in-flight long-poll을 정상 마감시키는 창구. main이 SIGTERM에서 beginDrain을 부른다. */
   lifecycle?: Lifecycle;
+  /** null·미지정이면 모든 origin 을 반영한다. 목록이면 CORS 와 WS 핸드셰이크에 함께 적용된다. */
+  corsOrigins?: string[] | null;
+  /** 소켓 뒤 자격증명 재검증 주기. 기본 60초. */
+  wsRevalidateMs?: number;
 }
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
@@ -34,7 +38,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   await app.register(cors, {
-    origin: true,
+    // 인증은 Origin 이 아니라 Bearer 토큰이 한다. 목록은 브라우저 클라이언트를 좁히는 추가 방어이고,
+    // 미설정 시 반영(true)이 기본인 이유는 셀프호스트가 어떤 origin 으로 뜰지 서버가 모르기 때문이다.
+    origin: deps.corsOrigins ?? true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['content-type', 'authorization', 'idempotency-key'],
   });
@@ -50,7 +56,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   await registerAuth(app, deps.pool);
-  await registerWs(app, deps.pool);
+  await registerWs(app, deps.pool, {
+    allowedOrigins: deps.corsOrigins ?? null,
+    revalidateMs: deps.wsRevalidateMs,
+  });
   await registerAuthRoutes(app, deps.pool);
   await registerAccountRoutes(app, deps.pool);
   await registerChannelRoutes(app, deps.pool);
