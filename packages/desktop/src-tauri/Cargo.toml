@@ -9,6 +9,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-notification = "2.4.0"
+# OS 키체인. Tauri 에 공식 플러그인이 없어 이 크레이트를 명령으로 노출한다(src/main.rs).
+# apple-native / windows-native / linux-native-sync-persistent 로 각 OS 의 기본 저장소를 쓴다.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 
 [[bin]]
 name = "murmur-desktop"

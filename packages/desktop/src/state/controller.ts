@@ -70,7 +70,9 @@ export class Controller {
   /** 서버 호출 없이 로컬만 비운다. 이미 죽은 자격증명으로 로그아웃을 보내는 것은 무의미하다. */
   private clearLocal(): void {
     this.stop();
-    sessionStore.clear();
+    // 키체인 삭제는 비동기다. 로그아웃이 그것을 기다릴 이유는 없다 — 실패해도 다음 기동의
+    // load()가 다시 정리를 시도하고, 로컬 상태는 아래에서 즉시 비워진다.
+    this.swallow(sessionStore.clear());
     useAppStore.getState().reset();
   }
 

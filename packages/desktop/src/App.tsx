@@ -32,16 +32,20 @@ export default function App() {
   };
 
   useEffect(() => {
-    const stored = sessionStore.load();
-    if (!stored) { setPhase('connect'); return; }
-    void startSession(stored.baseUrl, stored.token, handleSessionLost)
-      .then(() => setPhase('ready'))
-      .catch(() => {
+    // 키체인 접근은 IPC 뒤라 비동기다(lib/session.ts). 부팅 화면이 그 사이를 덮는다.
+    void (async () => {
+      const stored = await sessionStore.load();
+      if (!stored) { setPhase('connect'); return; }
+      try {
+        await startSession(stored.baseUrl, stored.token, handleSessionLost);
+        setPhase('ready');
+      } catch {
         // 세션을 조용히 지우고 로그인 화면만 띄우면 사용자에겐 이유 없는 로그아웃이 된다.
-        sessionStore.clear();
+        await sessionStore.clear();
         setConnectError('Your saved session could not be resumed — it expired, or the server was unreachable. Please sign in again.');
         setPhase('connect');
-      });
+      }
+    })();
   }, []);
 
   if (phase === 'boot') return <div className="p-4 text-zinc-400">Connecting…</div>;
@@ -50,10 +54,14 @@ export default function App() {
       <ConnectScreen
         initialError={connectError}
         onConnected={(baseUrl, token) => {
-          sessionStore.save({ baseUrl, token });
+          void sessionStore.save({ baseUrl, token });
           void startSession(baseUrl, token, handleSessionLost)
             .then(() => setPhase('ready'))
-            .catch(() => { sessionStore.clear(); setConnectError('Signed in, but starting the session failed. Please try again.'); setPhase('connect'); });
+            .catch(() => {
+              void sessionStore.clear();
+              setConnectError('Signed in, but starting the session failed. Please try again.');
+              setPhase('connect');
+            });
         }}
       />
     );
