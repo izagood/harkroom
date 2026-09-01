@@ -761,7 +761,36 @@ resume 이 깨진다. `rec.harness !== def.harness` 면 `sessionId` 와 `lastFed
 것보다 낫다. **테스트로 고정할 것**: 같은 threadKey 에서 harness 를 바꾸면 다음 턴이
 `isFirstTurn: true` 로 조립되고 옛 sessionId 가 인자에 남지 않는다.
 
-**계획을 쓸 때 놓쳤던 것 둘을 먼저 적는다 — 배선 단계에서만 드러나는 것들이다.**
+**계획을 쓸 때 놓쳤던 것들을 먼저 적는다 — 배선 단계에서만 드러난다.** 아래는 부품 여덟 개가
+전부 만들어진 뒤 실제 시그니처와 조립 흐름을 한 줄씩 대조해 나온 것이다.
+
+- **`isFirstTurn` 을 `lastFedSeq === 0` 으로 유도하면 안 된다 — 실제 버그다.** 프롬프트가 비어
+  턴을 건너뛰는 경우가 있는데(§Task 5: 새 메시지가 전부 자기 발화), 그때도 `fedSeq` 는
+  전진하고 레코드는 저장된다. 그러면 **턴이 한 번도 안 돌았는데 `lastFedSeq > 0`** 인 상태가
+  생기고, 다음 턴이 `isFirstTurn: false` 로 조립돼 claude 에 `-r <uuid>` 를 넘긴다 — 그 uuid
+  로 만들어진 세션이 없으므로 하네스가 "No conversation found" 로 죽는다. 증상은 "그 스레드만
+  영원히 답을 못 한다"이고 원인은 두 단계 떨어져 있다.
+  `SessionRecord` 에 **턴이 실제로 돌았는지**를 나타내는 필드를 추가해라(예: `turnsRun: number`,
+  0 이면 첫 턴). `packages/agent/src/sessions.ts` 를 함께 고치고, 그 모듈의 기존 테스트가
+  깨지지 않게 하며, 새 필드에 대한 검증도 `isSessionRecord` 에 넣어라(그 파일은 이미 레코드
+  모양을 검사한다). **테스트로 고정할 것**: 프롬프트가 빈 턴을 한 번 건너뛴 뒤에도 다음 턴이
+  `isFirstTurn: true` 로 조립된다.
+
+- **`findCodexSessionId` 의 `sinceMs` 는 턴 시작 시각이다 — 끝난 뒤에 재면 안 된다.** 턴이
+  끝난 뒤 `Date.now()` 를 넘기면 방금 만들어진 rollout 파일이 그보다 오래돼 보여 `null` 이
+  나오고, codex 스레드가 매 턴 새 세션으로 시작한다(에러 없이). PTY 를 띄우기 **직전에**
+  시각을 잡아 두고 그 값을 넘겨라. 파일시스템 mtime 해상도를 감안해 약간의 여유(예: 2초)를
+  빼는 것도 검토해라 — 빠른 턴이 자기 세션을 놓치는 것이 반대 실수보다 아프다(cwd 가 이미
+  스레드마다 고유해서 남의 세션을 잘못 집을 위험은 낮다).
+
+- **`buildSystemPrompt` 가 조립 흐름에 아예 없다.** `buildTurnCommand` 의 `systemPrompt` 는
+  거기서 나온다 — `{handle, channelName, instructions, guide}` 를 받는다. `guide` 는 `main.ts`
+  가 기동 시 한 번 받아 두는 값이고(`murmur.guide()`), `channelName` 은 배치가 이미 만드는
+  채널 맵에서, `instructions` 는 매 턴 읽는 `def` 에서 온다. 매 턴 새로 조립해야 UI 지시문
+  수정이 다음 턴에 반영된다(spec §3).
+
+- **`writeMcpConfigOnce` 는 기동 시 한 번**, 그 반환 경로를 `buildTurnCommand` 의
+  `mcpConfigPath` 로 매 턴 넘긴다. `stateDir` 아래에 쓴다.
 
 - **`Exec` 구현체를 아무도 만들지 않는다.** `ensureWorkspace(exec, …)` 는 exec 를 주입받도록
   설계했고(그래서 테스트가 프로세스를 안 띄운다), 실제 구현은 "나중에 배선할 때"로 미뤄
