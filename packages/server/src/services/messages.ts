@@ -12,7 +12,8 @@ export interface PostMessageInput {
 }
 
 const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
-  author_id as "authorId", body, kind, meta, created_at as "createdAt"`;
+  author_id as "authorId", body, kind, meta, created_at as "createdAt",
+  edited_at as "editedAt"`;
 
 const MENTION_RE = /@([a-z0-9_-]{2,32})/g;
 
@@ -100,6 +101,44 @@ export async function postMessage(
   } finally {
     client.release();
   }
+}
+
+export type MutationRefusal = 'not_found' | 'forbidden';
+
+/** 수정은 작성자 본인만, user 메시지만. system 메시지는 avcs 투영의 산물이라 사람이 고칠 수 없다. */
+export async function editMessage(
+  pool: Pool, args: { channelId: string; messageId: string; actorId: string; body: string },
+): Promise<MessageRow | MutationRefusal> {
+  const found = await pool.query(
+    `select author_id, kind from message
+     where id = $1 and channel_id = $2 and deleted_at is null`,
+    [args.messageId, args.channelId],
+  );
+  if (!found.rowCount) return 'not_found';
+  const row = found.rows[0];
+  if (row.author_id !== args.actorId || row.kind !== 'user') return 'forbidden';
+
+  const updated = await pool.query(
+    `update message set body = $2, edited_at = now() where id = $1 returning ${COLS}`,
+    [args.messageId, args.body],
+  );
+  return updated.rows[0];
+}
+
+/** 삭제는 작성자 또는 admin. 수정과 달리 원문을 왜곡하지 않고 가리는 일이라 운영자에게 열어둔다. */
+export async function deleteMessage(
+  pool: Pool, args: { channelId: string; messageId: string; actorId: string; actorIsAdmin: boolean },
+): Promise<'deleted' | MutationRefusal> {
+  const found = await pool.query(
+    `select author_id from message
+     where id = $1 and channel_id = $2 and deleted_at is null`,
+    [args.messageId, args.channelId],
+  );
+  if (!found.rowCount) return 'not_found';
+  if (found.rows[0].author_id !== args.actorId && !args.actorIsAdmin) return 'forbidden';
+
+  await pool.query(`update message set deleted_at = now() where id = $1`, [args.messageId]);
+  return 'deleted';
 }
 
 export async function listMessages(

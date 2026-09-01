@@ -10,7 +10,7 @@ export const chan = (id: string, name: string, repo: string | null = null): Chan
 
 export const msg = (id: string, channelId: string, seq: number, body: string, authorId = 'u1',
   extra: Partial<MessageRow> = {}): MessageRow =>
-  ({ id, seq, channelId, threadRootId: null, authorId, body, kind: 'user', meta: {}, createdAt: new Date().toISOString(), ...extra });
+  ({ id, seq, channelId, threadRootId: null, authorId, body, kind: 'user', meta: {}, createdAt: new Date().toISOString(), editedAt: null, ...extra });
 
 export function fakeApi(overrides: Partial<Record<keyof ApiClient, unknown>> = {}): ApiClient {
   const base = {
@@ -27,6 +27,8 @@ export function fakeApi(overrides: Partial<Record<keyof ApiClient, unknown>> = {
     inboxUnread: vi.fn(async () => []),
     markRead: vi.fn(async () => undefined),
     wsTicket: vi.fn(async () => 'murt_fake'),
+    editMessage: vi.fn(async () => msg('m-edit', 'c1', 1, 'edited')),
+    deleteMessage: vi.fn(async () => undefined),
     createDm: vi.fn(),
     ...overrides,
   };
