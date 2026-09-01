@@ -1,6 +1,6 @@
 import type { WsServerEvent } from '@murmur/shared';
 import type { ApiClient } from '../lib/api';
-import { connectWs, type WsHandle } from '../lib/ws';
+import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type Notifier } from '../lib/notify';
 import { useAppStore } from './appStore';
@@ -17,6 +17,11 @@ export class Controller {
     public api: ApiClient,
     private makeWs: typeof connectWs = connectWs,
     private notifier: Notifier = silentNotifier,
+    /**
+     * 세션이 되돌릴 수 없이 죽었을 때 호출된다(자격증명 폐기·origin 거부).
+     * 컨트롤러는 화면을 모르므로 사유 문구만 위로 올리고, 무엇을 보여줄지는 App 이 정한다.
+     */
+    private onSessionLost: (message: string) => void = () => {},
   ) {}
 
   // fire-and-forget 호출의 unhandled rejection 방지 — 실패는 조용히 무시(다음 이벤트/리컨실이 자연 복구).
@@ -38,11 +43,34 @@ export class Controller {
     this.ws = this.makeWs(this.api.baseUrl, () => this.api.wsTicket(), {
       onEvent: (e) => this.handleEvent(e),
       onOpen: () => { useAppStore.getState().set({ connected: true }); this.swallow(this.reconcile()); },
-      onDown: () => useAppStore.getState().set({ connected: false }),
+      onDown: (reason) => this.handleDown(reason),
     });
   }
 
   stop(): void { this.ws?.close(); this.ws = null; }
+
+  /** 문구는 UI 문자열이라 영어다(저장소 관례). 사유별로 다른 이유: 사용자가 할 일이 다르다. */
+  private static readonly LOST_MESSAGE: Record<Exclude<WsDownReason, 'network'>, string> = {
+    credential: 'Your session is no longer valid — it expired, or it was signed out elsewhere. Please sign in again.',
+    origin: "The server rejected this app's origin. Ask the server administrator to allow it (CORS_ORIGINS).",
+  };
+
+  private handleDown(reason: WsDownReason): void {
+    useAppStore.getState().set({ connected: false });
+    // 네트워크 끊김은 기다리면 낫는다 — 세션을 건드리지 않는다. 잠깐 끊겼다고 로그아웃시키면 최악이다.
+    if (reason === 'network') return;
+    // 되돌릴 수 없는 사유다. 로컬 상태를 비우고 사유를 위로 올린다 — 안 그러면 사용자는
+    // 빨간 점과 영구 재연결만 본다(조용한 실패).
+    this.clearLocal();
+    this.onSessionLost(Controller.LOST_MESSAGE[reason]);
+  }
+
+  /** 서버 호출 없이 로컬만 비운다. 이미 죽은 자격증명으로 로그아웃을 보내는 것은 무의미하다. */
+  private clearLocal(): void {
+    this.stop();
+    sessionStore.clear();
+    useAppStore.getState().reset();
+  }
 
   private handleEvent(e: WsServerEvent): void {
     const store = useAppStore.getState();
@@ -253,9 +281,7 @@ export class Controller {
     // 멈추고, 실패해도 로컬은 반드시 비워야 한다 — 안 그러면 사용자가 로그인 상태에 갇힌다.
     // 남은 서버 세션은 TTL 만료와 소켓 재검증 sweep 이 정리한다.
     this.swallow(this.api.logout());
-    this.stop();
-    sessionStore.clear();
-    useAppStore.getState().reset();
+    this.clearLocal();
   }
 }
 

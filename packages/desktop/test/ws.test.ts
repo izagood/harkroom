@@ -5,10 +5,11 @@ class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((ev: { data: string }) => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((ev?: { code?: number }) => void) | null = null;
   closed = false;
   constructor(public url: string) { FakeWebSocket.instances.push(this); }
-  close() { this.closed = true; this.onclose?.(); }
+  /** 실제 CloseEvent 는 code 를 싣는다 — 서버가 4401(자격증명)·4403(origin)로 사유를 알린다. */
+  close(code?: number) { this.closed = true; this.onclose?.(code === undefined ? undefined : { code }); }
 }
 
 beforeEach(() => {
@@ -107,5 +108,91 @@ describe('connectWs', () => {
     await settle(50);
 
     expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+});
+
+// 자격증명이 죽은 것과 네트워크가 끊긴 것은 같은 상태가 아니다 — 네트워크는 돌아오지만
+// 폐기된 세션은 돌아오지 않는다. 구분하지 않으면 사용자는 빨간 점과 영구 재연결만 본다.
+describe('connectWs — 자격증명 실패는 재시도로 낫지 않는다', () => {
+  const settleReal = async (ms = 0) => { await new Promise((r) => setTimeout(r, ms)); };
+
+  it('reports a credential failure and stops retrying when the ticket is rejected', async () => {
+    let issued = 0;
+    const downs: string[] = [];
+    const handle = connectWs('http://x:3400', async () => {
+      issued += 1;
+      throw Object.assign(new Error('unauthorized'), { status: 401 });
+    }, { onEvent: () => {}, onOpen: () => {}, onDown: (reason) => downs.push(reason) });
+
+    await settleReal(1200);
+
+    expect(downs).toEqual(['credential']);
+    expect(issued).toBe(1); // 재시도하지 않는다
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    handle.close();
+  });
+
+  it('treats a 4401 close as a credential failure and does not reconnect', async () => {
+    let issued = 0;
+    const downs: string[] = [];
+    const handle = connectWs('http://x:3400', async () => `murt_${++issued}`, {
+      onEvent: () => {}, onOpen: () => {}, onDown: (reason) => downs.push(reason),
+    });
+    await settleReal();
+
+    FakeWebSocket.instances[0]!.close(4401);
+    await settleReal(1200);
+
+    expect(downs).toEqual(['credential']);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    handle.close();
+  });
+
+  it('reports an origin rejection separately and does not reconnect', async () => {
+    const downs: string[] = [];
+    const handle = connectWs('http://x:3400', async () => 'murt_a', {
+      onEvent: () => {}, onOpen: () => {}, onDown: (reason) => downs.push(reason),
+    });
+    await settleReal();
+
+    FakeWebSocket.instances[0]!.close(4403);
+    await settleReal(1200);
+
+    expect(downs).toEqual(['origin']);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    handle.close();
+  });
+
+  // 네트워크 끊김은 기다리면 낫는다 — 이 경로는 계속 재시도해야 한다.
+  it('keeps reconnecting on an ordinary close', async () => {
+    let issued = 0;
+    const downs: string[] = [];
+    const handle = connectWs('http://x:3400', async () => `murt_${++issued}`, {
+      onEvent: () => {}, onOpen: () => {}, onDown: (reason) => downs.push(reason),
+    });
+    await settleReal();
+
+    FakeWebSocket.instances[0]!.close(1006);
+    await settleReal(1200);
+
+    expect(downs).toEqual(['network']);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    handle.close();
+  });
+
+  // 티켓 발급이 네트워크 문제로 실패한 것은(status 없음) 재시도 대상이다.
+  it('retries when the ticket request fails without an auth status', async () => {
+    let issued = 0;
+    const downs: string[] = [];
+    const handle = connectWs('http://x:3400', async () => {
+      issued += 1;
+      throw new Error('network down');
+    }, { onEvent: () => {}, onOpen: () => {}, onDown: (reason) => downs.push(reason) });
+
+    await settleReal(1200);
+
+    expect(downs[0]).toBe('network');
+    expect(issued).toBeGreaterThan(1);
+    handle.close();
   });
 });

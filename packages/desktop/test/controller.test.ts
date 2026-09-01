@@ -271,4 +271,61 @@ describe('Controller', () => {
     expect(localStorage.getItem('murmur.session')).toBeNull();
     expect(useAppStore.getState().me).toBeNull();
   });
+
+  // 세션이 죽었는데 "연결 끊김"만 표시하면 사용자는 영구 재연결만 본다. 로컬 상태를 비우고
+  // 사유를 위로 올려 로그인 화면이 이유를 말할 수 있게 해야 한다.
+  it('clears the session and reports why when the credential is gone', async () => {
+    const lost: string[] = [];
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(fakeApi(), makeWs, undefined, (msg) => lost.push(msg));
+    await c.start();
+    localStorage.setItem('murmur.session', JSON.stringify({ baseUrl: 'http://x', token: 't' }));
+
+    callbacks.current!.onDown('credential');
+
+    expect(localStorage.getItem('murmur.session')).toBeNull();
+    expect(useAppStore.getState().me).toBeNull();
+    expect(lost).toHaveLength(1);
+    expect(lost[0]!.toLowerCase()).toContain('sign in');
+  });
+
+  it('reports an origin rejection with its own wording', async () => {
+    const lost: string[] = [];
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(fakeApi(), makeWs, undefined, (msg) => lost.push(msg));
+    await c.start();
+
+    callbacks.current!.onDown('origin');
+
+    expect(lost).toHaveLength(1);
+    expect(lost[0]!.toLowerCase()).toContain('origin');
+  });
+
+  // 네트워크 끊김은 세션을 건드리면 안 된다 — 잠깐 끊겼다고 로그아웃시키면 최악이다.
+  it('keeps the session on an ordinary disconnect', async () => {
+    const lost: string[] = [];
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(fakeApi(), makeWs, undefined, (msg) => lost.push(msg));
+    await c.start();
+    localStorage.setItem('murmur.session', JSON.stringify({ baseUrl: 'http://x', token: 't' }));
+
+    callbacks.current!.onDown('network');
+
+    expect(useAppStore.getState().connected).toBe(false);
+    expect(localStorage.getItem('murmur.session')).not.toBeNull();
+    expect(useAppStore.getState().me).not.toBeNull();
+    expect(lost).toEqual([]);
+  });
+
+  // 자격증명이 죽은 상태로 서버에 로그아웃을 보내는 것은 무의미하다(401 로 끝난다).
+  it('does not call the logout endpoint when the credential is already dead', async () => {
+    const api = fakeApi();
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(api, makeWs, undefined, () => {});
+    await c.start();
+
+    callbacks.current!.onDown('credential');
+
+    expect(api.logout).not.toHaveBeenCalled();
+  });
 });
