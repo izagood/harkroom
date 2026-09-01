@@ -23,6 +23,8 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     setToken: vi.fn(),
     login: vi.fn(), bootstrap: vi.fn(),
     me: vi.fn(async () => acc('u1', 'admin')),
+    // 베이스가 클라이언트 표면을 다 덮어야 한다 — 빠져 있으면 "호출되지 않았다" 를 단언할 수 없다.
+    logout: vi.fn(async () => undefined),
     accounts: vi.fn(async () => [acc('u1', 'admin'), acc('u2', 'bot', 'agent')]),
     channels: vi.fn(async () => [chan('c1', 'general')]),
     dms: vi.fn(async () => []),
