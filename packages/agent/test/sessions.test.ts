@@ -1,8 +1,16 @@
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { SessionStore } from '../src/sessions.js';
+
+// node:fs/promises 는 ESM 내장 모듈이라 export 를 직접 vi.spyOn 할 수 없다("module namespace
+// is not configurable"). readFile 만 vi.fn 으로 감싸 기본 동작은 실제 구현으로 통과시키고,
+// 권한 실패 테스트에서만 그 한 번을 mockRejectedValueOnce 로 대체한다.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, readFile: vi.fn(actual.readFile) };
+});
 
 describe('SessionStore', () => {
   const rec = { workspaceDir: '/w', sessionId: 'abc', harness: 'claude-code' as const, lastFedSeq: 7 };
@@ -36,10 +44,57 @@ describe('SessionStore', () => {
     expect(s.get('x/_root')).toBeUndefined();
   });
 
+  // load 는 러너 기동 경로에 있다 — ENOENT 가 아닌 에러(권한 등)를 그대로 던지면 러너가
+  // 아예 안 뜬다. 실제 권한 파일로 재현하면 root 로 도는 CI 에서는 권한이 무시돼 통과하지
+  // 않을 수 있어, readFile 자체를 스텁해 결정적으로 재현한다.
+  it('ENOENT 가 아닌 읽기 실패(권한 등)에도 load 는 죽지 않고 빈 상태가 된다', async () => {
+    const file = join(await mkdtemp(join(tmpdir(), 'sess-')), 'sessions.json');
+    vi.mocked(readFile).mockRejectedValueOnce(
+      Object.assign(new Error('permission denied'), { code: 'EACCES' }),
+    );
+
+    const s = new SessionStore(file);
+    await expect(s.load()).resolves.toBeUndefined();
+    expect(s.get('x/_root')).toBeUndefined();
+  });
+
+  // 유효한 JSON 이지만 세션 맵(객체) 모양이 아니면 Object.entries 가 예외 없이 통과해서
+  // 쓰레기 키('0','1',…)로 조용히 채워질 수 있다 — 파싱 실패와 같은 손상으로 보고 같은
+  // 경로(백업 + 빈 상태)로 보내야 한다.
+  it.each([['[1,2,3]'], ['"문자열"']])('비객체 JSON %s 은 빈 상태 + 백업으로 시작한다', async (json) => {
+    const file = join(await mkdtemp(join(tmpdir(), 'sess-')), 'sessions.json');
+    await (await import('node:fs/promises')).writeFile(file, json);
+
+    const s = new SessionStore(file);
+    await s.load();
+
+    expect(s.get('x/_root')).toBeUndefined();
+  });
+
+  // 레코드 하나만 모양이 깨졌다고 스레드 전체의 세션을 잃을 이유는 없다 — 그 레코드만
+  // 버리고 나머지는 살아남는다.
+  it('레코드 하나만 SessionRecord 모양이 아니면 그것만 버리고 나머지는 살아남는다', async () => {
+    const file = join(await mkdtemp(join(tmpdir(), 'sess-')), 'sessions.json');
+    await (await import('node:fs/promises')).writeFile(
+      file,
+      JSON.stringify({
+        'ch1/m9': rec,
+        'ch1/broken': { workspaceDir: '/w', harness: 'not-a-real-harness', lastFedSeq: 'seven' },
+      }),
+    );
+
+    const s = new SessionStore(file);
+    await s.load();
+
+    expect(s.get('ch1/m9')).toEqual(rec);
+    expect(s.get('ch1/broken')).toBeUndefined();
+  });
+
   // put 은 스레드마다 독립적으로 호출된다 — 한 프로세스 안에서 두 스레드가 동시에 답장하면
-  // put 두 번이 겹친다. 직렬화 없이 스냅샷을 각자 tmp 에 썼다가 rename 하면, 먼저 시작한
-  // 쓰기가 나중에 끝나면서 최신 상태를 옛 스냅샷으로 덮어써 한쪽 세션이 사라질 수 있다.
-  it('동시에 put 두 번이 들어와도 둘 다 남는다 — 느리게 끝난 쓰기가 최신 상태를 덮어쓰지 않는다', async () => {
+  // flush 도 두 번 겹친다. tmp 경로가 고정이었던 첫 구현은 먼저 끝난 rename 이 tmp 파일을
+  // 치워버려서 나중 rename 이 ENOENT 로 죽었다(스냅샷 역전이 아니라 파일 경합) — 유일한
+  // tmp 이름 + 쓰기 큐로 막는다.
+  it('동시에 put 두 번이 들어와도 죽지 않고 둘 다 남는다 — tmp 파일명 충돌로 인한 rename ENOENT 회귀', async () => {
     const file = join(await mkdtemp(join(tmpdir(), 'sess-')), 'sessions.json');
     const a = new SessionStore(file);
     await a.load();
