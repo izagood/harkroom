@@ -93,10 +93,40 @@ describe('projection', () => {
     expect(cur.rowCount).toBe(0); // 쓸데없는 트랜잭션/행 생성 없음
   });
 
+  // 복구 시나리오 A: murmur DB 를 더 오래된 스냅샷으로 되돌린 경우. 커서가 뒤로 가고 이미
+  // 투영된 구간을 다시 읽는데, (repo, oid) UNIQUE 로 중복이 생기지 않는다 — 이게 "murmur 를
+  // 되돌려도 안전하다"의 근거다. (아래 기존 테스트가 그 성질을 지킨다.)
   it('is idempotent: rerun from cursor 0 does not duplicate', async () => {
     await pool.query(`update projection_cursor set last_log_index = 0 where repo = $1`, [REPO]);
     await worker.runOnce(REPO, channelId);
     expect(await messages()).toHaveLength(2);
+  });
+
+  // 복구 시나리오 B(위험한 쪽): **avcs 서버**를 murmur 커서보다 오래된 상태로 되돌린 경우.
+  // 커서가 로그보다 앞서면 fetchSince 가 줄 게 없고, 커서는 후퇴하지 않는다 — 크래시는 없지만
+  // avcs 로그가 커서를 다시 넘어설 때까지 **그 사이 객체가 조용히 건너뛰어진다.** 복구 절차
+  // (docs/operations.md)가 "avcs 를 murmur 커서 뒤로 되돌리지 말라"고 말하는 근거를 고정한다.
+  it('stalls without crashing when the cursor is ahead of the avcs log', async () => {
+    const repo = 'avcs-rollback-repo';
+    const channel = await createChannel(pool, { name: 'avcs-rollback', repo });
+    const rolled = createFakeAvcs();
+    const w = new ProjectionWorker({
+      pool, avcs: rolled.client, systemAccountId: await ensureSystemAccount(pool),
+    });
+    rolled.push(repo, { oid: 'r1', type: 'intent', actorKeyId: 'k1', intentOid: 'r1', summary: 'before rollback' });
+    expect(await w.runOnce(repo, channel.id)).toBe(1);
+
+    // 커서를 로그보다 앞세운다 = avcs 가 더 오래된 상태로 복구된 상황
+    await pool.query(`update projection_cursor set last_log_index = 100 where repo = $1`, [repo]);
+    rolled.push(repo, { oid: 'r2', type: 'intent', actorKeyId: 'k1', intentOid: 'r2', summary: 'after rollback' });
+
+    expect(await w.runOnce(repo, channel.id)).toBe(0); // 조용히 건너뛴다
+    const cur = await pool.query(`select last_log_index from projection_cursor where repo = $1`, [repo]);
+    expect(Number(cur.rows[0].last_log_index)).toBe(100); // 커서는 후퇴하지 않는다
+    const rows = await pool.query(
+      `select body from message where channel_id = $1 order by seq`, [channel.id],
+    );
+    expect(rows.rows.map((r) => r.body).join(' ')).not.toContain('after rollback');
   });
 
   it('decision lands in the work thread; finalize lands at channel level', async () => {
