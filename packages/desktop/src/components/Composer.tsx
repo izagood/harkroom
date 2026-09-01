@@ -1,7 +1,9 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { AccountView } from '@murmur/shared';
 import { useAppStore } from '../state/appStore';
-import { mentionQueryAt, applyMention, type MentionQuery } from '../lib/mention';
+import {
+  mentionQueryAt, applyMention, withStickyMentions, keepMentioned, type MentionQuery,
+} from '../lib/mention';
 
 /** 목록이 화면을 덮지 않을 만큼만 보여준다. 더 좁히는 것은 사용자가 글자를 더 치는 일이다. */
 const MAX_SUGGESTIONS = 8;
@@ -18,14 +20,20 @@ interface Props {
   placeholder?: string;
   rows?: number;
   autoFocus?: boolean;
+  /**
+   * 고정 멘션을 담아 두는 대화의 이름. 채널을 옮기면 부르던 상대도 달라진다 —
+   * 앞 채널의 에이전트를 끌고 가면 엉뚱한 곳에서 깨어난다.
+   */
+  scopeKey?: string;
 }
 
-export function Composer({ onSend, placeholder, rows = 2, autoFocus }: Props) {
+export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = '' }: Props) {
   const accounts = useAppStore((s) => s.accounts);
   const myId = useAppStore((s) => s.me?.id);
   const [draft, setDraft] = useState('');
   const [query, setQuery] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
+  const [stickyByScope, setStickyByScope] = useState<Record<string, string[]>>({});
   const ref = useRef<HTMLTextAreaElement>(null);
   // 삽입 후 커서를 옮겨야 한다. React 는 value 만 되돌리므로 DOM 을 직접 만진다.
   const pendingCaret = useRef<number | null>(null);
@@ -38,6 +46,19 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus }: Props) {
       .sort(rank)
       .slice(0, MAX_SUGGESTIONS);
   }, [accounts, myId, query]);
+
+  const known = useMemo(
+    () => new Set(
+      Object.values(accounts).filter((a) => a.id !== myId).map((a) => a.handle.toLowerCase()),
+    ),
+    [accounts, myId],
+  );
+
+  // 계정이 사라지면 고정도 사라진다 — 없는 handle 을 붙이면 멘션이 아니라 그냥 글자다.
+  const sticky = useMemo(
+    () => (stickyByScope[scopeKey] ?? []).filter((h) => known.has(h)),
+    [stickyByScope, scopeKey, known],
+  );
 
   // 후보가 없으면 목록은 없는 것과 같다 — Enter 를 붙잡아 두면 메시지를 못 보낸다.
   const open = query !== null && matches.length > 0;
@@ -65,15 +86,25 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus }: Props) {
     ref.current?.focus();
   };
 
+  const drop = (handle: string) => {
+    setStickyByScope((prev) => ({ ...prev, [scopeKey]: sticky.filter((h) => h !== handle) }));
+    ref.current?.focus();
+  };
+
   const send = () => {
+    // 고정 멘션만으로는 보낼 것이 없다 — 빈 Enter 가 '@fizz' 하나만 던지면 사고다.
     if (!draft.trim()) return;
-    const body = draft;
+    const typed = draft;
+    const body = withStickyMentions(typed, sticky);
     setDraft('');
     setQuery(null);
+    // 이번에 부른 상대는 다음 줄부터 고정이다. 한 번 부른 뒤 매번 @ 를 다시 치게 하면
+    // 사용자는 잊어버리고, 잊으면 에이전트는 깨어나지 않는다.
+    setStickyByScope((prev) => ({ ...prev, [scopeKey]: keepMentioned(sticky, typed, known) }));
     // 초안을 먼저 비우는 이유는 응답을 기다리는 동안 다음 글을 쓸 수 있어야 하기 때문이다.
-    // 실패하면 되돌리되, 그 사이에 사용자가 새로 쓴 것을 덮지 않는다.
+    // 실패하면 사용자가 친 것만 되돌린다 — 접두사까지 남기면 다음 전송에서 두 번 붙는다.
     void Promise.resolve(onSend(body)).catch(() => {
-      setDraft((current) => (current ? current : body));
+      setDraft((current) => (current ? current : typed));
     });
   };
 
@@ -134,6 +165,30 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus }: Props) {
                 {a.kind === 'agent' && (
                   <span className="rounded bg-indigo-100 px-1 text-[10px] text-indigo-700">agent</span>
                 )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {sticky.length > 0 && (
+        <ul className="mb-1 flex flex-wrap items-center gap-1" aria-label="Kept mentions">
+          {sticky.map((h) => (
+            <li
+              key={h}
+              data-testid="sticky-mention"
+              data-handle={h}
+              className="flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-700"
+            >
+              <span>@{h}</span>
+              <button
+                type="button"
+                aria-label={`Remove @${h}`}
+                className="rounded px-0.5 text-zinc-500 hover:bg-zinc-200"
+                // 목록의 버튼과 같은 이유로 blur 를 막는다 — 지운 뒤에도 커서는 글 안에 있어야 한다.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => drop(h)}
+              >
+                ×
               </button>
             </li>
           ))}
