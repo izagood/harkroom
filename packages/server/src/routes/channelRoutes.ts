@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { createChannel, getOrCreateDm, listChannels, updateChannel } from '../services/channels.js';
+import { assertChannelVisible, createChannel, getOrCreateDm, listChannels, updateChannel } from '../services/channels.js';
+import { markChannelRead, readState } from '../services/readPositions.js';
 import { recordAudit } from '../audit.js';
 
 export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
@@ -36,6 +37,29 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
   app.get('/channels', { preHandler: app.requireAccount }, async () => ({
     channels: await listChannels(pool),
   }));
+
+  // 읽음 위치. 채널 스코프라 여기 둔다(messageRoutes 는 병렬 세션이 첨부파일로 만지는 중이다).
+  const channelParam = z.object({ id: z.string().uuid() });
+
+  app.put('/channels/:id/read', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = channelParam.parse(req.params);
+    const { seq } = z.object({ seq: z.coerce.number().int().min(0) }).parse(req.body);
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    await markChannelRead(pool, { accountId: req.account!.id, channelId: id, seq });
+    // 읽음은 내 상태다 — 다른 참여자에게 알리지 않는다. 같은 계정의 다른 기기 동기화는
+    // 후속 항목이다(이벤트 유니온은 병렬 세션과 공유하므로 필요할 때 한 번에 넣는다).
+    return reply.code(204).send();
+  });
+
+  app.get('/channels/:id/read', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = channelParam.parse(req.params);
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    return readState(pool, { accountId: req.account!.id, channelId: id });
+  });
 
   app.post('/dms', { preHandler: app.requireAccount }, async (req, reply) => {
     const body = z.object({ accountIds: z.array(z.string().uuid()).min(1).max(16) }).parse(req.body);
