@@ -7,7 +7,9 @@ export type WorkspaceEvent =
   | { type: 'message.deleted'; channelId: string; messageId: string; audience: 'all' | string[] }
   | { type: 'inbox.updated'; accountId: string }
   | { type: 'lease.changed'; repo: string }
-  | { type: 'presence.changed'; accountId: string; online: boolean };
+  | { type: 'presence.changed'; accountId: string; online: boolean }
+  | { type: 'reaction.added'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
+  | { type: 'reaction.removed'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] };
 
 const bus = new EventEmitter();
 bus.setMaxListeners(1000);

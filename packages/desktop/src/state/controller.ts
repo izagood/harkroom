@@ -90,6 +90,12 @@ export class Controller {
         // 루트가 사라진 스레드를 계속 열어 두면 답글만 남은 빈 패널에 갇힌다.
         if (store.threadRootId === e.messageId) store.set({ threadRootId: null });
         break;
+      case 'reaction.added':
+      case 'reaction.removed':
+        store.applyReaction(e.channelId, e.messageId, e.emoji, e.accountId, e.type === 'reaction.added');
+        // 누른 사람이 처음 보는 계정이면 툴팁에 이름 대신 빈칸이 남는다.
+        if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
+        break;
       case 'inbox.updated':
         if (e.accountId === store.me?.id) {
           this.swallow(this.refreshUnread().then(() => this.announceNewMentions()));
@@ -233,6 +239,19 @@ export class Controller {
     if (!activeChannelId || !threadRootId || !body.trim()) return;
     const m = await this.api.postMessage(activeChannelId, body, threadRootId, crypto.randomUUID());
     useAppStore.getState().upsertMessages(activeChannelId, [m]);
+  }
+
+  /**
+   * 리액션을 켜고 끈다. 서버가 받아들인 뒤에 화면을 갱신한다 — 미리 그려 두면 서버가 거절한
+   * 리액션(개수 상한·권한)이 새로고침에서 사라져 사용자가 무엇이 진짜인지 알 수 없다.
+   * 뒤이어 오는 소켓 이벤트는 같은 결과를 내므로(멱등) 두 번 반영되지 않는다.
+   */
+  async toggleReaction(channelId: string, messageId: string, emoji: string, on: boolean): Promise<void> {
+    const me = useAppStore.getState().me;
+    if (!me) return;
+    if (on) await this.api.addReaction(channelId, messageId, emoji);
+    else await this.api.removeReaction(channelId, messageId, emoji);
+    useAppStore.getState().applyReaction(channelId, messageId, emoji, me.id, on);
   }
 
   async editMessage(messageId: string, body: string): Promise<void> {

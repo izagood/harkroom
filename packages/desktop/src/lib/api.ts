@@ -102,6 +102,15 @@ export class ApiClient {
     return res.ticket;
   }
 
+  /** 이모지는 경로에 들어가므로 인코딩한다 — 그림문자는 URL 에 그대로 실을 수 없다. */
+  addReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
+    return this.req('PUT', `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`);
+  }
+
+  removeReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
+    return this.req('DELETE', `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`);
+  }
+
   markRead(ids: number[]): Promise<void> { return this.req('POST', '/inbox/read', { ids }); }
   createDm(accountIds: string[]): Promise<ChannelRow> { return this.req('POST', '/dms', { accountIds }); }
 }

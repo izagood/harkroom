@@ -11,9 +11,21 @@ export interface PostMessageInput {
   idempotencyKey?: string | null;
 }
 
+// 리액션을 COLS 에 넣는 이유: 메시지를 내주는 경로가 네 갈래(목록·POST·PATCH·idempotency
+// 재생)라 조회 뒤에 붙이는 방식은 언젠가 한 갈래를 빼먹고 그 응답에서만 리액션이 사라진다.
+// 여기 두면 message 를 읽는 모든 쿼리가 자동으로 맞다.
+const REACTIONS = `coalesce((
+  select json_agg(json_build_object('emoji', r.emoji, 'accountIds', r."accountIds") order by r."firstAt")
+  from (
+    select emoji, array_agg(account_id::text order by created_at) as "accountIds",
+           min(created_at) as "firstAt"
+    from message_reaction where message_id = message.id group by emoji
+  ) r
+), '[]'::json) as reactions`;
+
 const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
   author_id as "authorId", body, kind, meta, created_at as "createdAt",
-  edited_at as "editedAt"`;
+  edited_at as "editedAt", ${REACTIONS}`;
 
 async function insertInbox(
   client: PoolClient, accountId: string, messageId: string, reason: InboxEntry['reason'], notified: Set<string>,
