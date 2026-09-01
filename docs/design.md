@@ -214,6 +214,11 @@ intent(자발·외부 작업)만 투영 규칙대로 새 작업 스레드를 자
 - **avcs 서버 다운 = 채팅은 무사**: 투영 워커만 지수 백오프 재접속, 복구 시
   커서부터 따라잡기(멱등성이 안전망). `/readyz`는 Postgres만 필수, avcs 연결은
   degraded로 표시.
+- **관측**: 요청 로깅은 pino(Fastify 기본)이고 레벨은 `LOG_LEVEL`(기본 `info`)이다. 로그로
+  자격증명이 새지 않는 것이 이 층의 요구사항이다 — `authorization`·`cookie` 헤더는 redact하고,
+  URL 쿼리의 `ticket`·`token`·`idempotency-key` 값은 `REDACTED`로 치환한다(`logging.ts`).
+  WS 티켓은 URL에 실리므로(브라우저가 헤더를 못 붙인다) 이 치환이 없으면 "URL은 프록시 로그에
+  남는다"는 티켓 도입 이유가 우리 로그에서 그대로 재현된다. 요청 **바디는 로깅하지 않는다**.
 - REST 에러는 `{error: {code, message}}` 단일 규약. idempotency-key 중복은 기존
   결과 재반환.
 - MCP `inbox.poll` 타임아웃은 빈 결과 반환(에러 아님).

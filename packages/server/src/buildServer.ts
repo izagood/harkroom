@@ -10,6 +10,7 @@ import { registerDirectoryRoutes } from './routes/directoryRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
 import { Lifecycle } from './lifecycle.js';
+import { loggerConfig } from './logging.js';
 
 export interface ServerDeps {
   pool: Pool;
@@ -20,10 +21,19 @@ export interface ServerDeps {
   corsOrigins?: string[] | null;
   /** 소켓 뒤 자격증명 재검증 주기. 기본 60초. */
   wsRevalidateMs?: number;
+  /** 로그 레벨. 미지정이면 LOG_LEVEL, 그것도 없으면 info. */
+  logLevel?: string;
+  /** 로그 싱크 교체(테스트 전용 seam). 프로덕션은 stdout 이다. */
+  logStream?: import('node:stream').Writable;
 }
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
+  const app = Fastify({
+    logger: loggerConfig({
+      level: deps.logLevel ?? process.env.LOG_LEVEL ?? 'info',
+      stream: deps.logStream,
+    }),
+  });
   const lifecycle = deps.lifecycle ?? new Lifecycle();
 
   app.setErrorHandler((err: FastifyError, _req, reply) => {
