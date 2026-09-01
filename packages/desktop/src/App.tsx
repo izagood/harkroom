@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ApiClient } from './lib/api';
 import { connectWs } from './lib/ws';
+import { createNotifier } from './lib/notify';
 import { sessionStore } from './lib/session';
 import { Controller, setController } from './state/controller';
 import { ConnectScreen } from './screens/ConnectScreen';
@@ -8,7 +9,7 @@ import { Workspace } from './components/Workspace';
 
 async function startSession(baseUrl: string, token: string): Promise<void> {
   const api = new ApiClient(baseUrl, token);
-  const controller = new Controller(api, connectWs);
+  const controller = new Controller(api, connectWs, createNotifier());
   setController(controller);
   await controller.start();
 }
