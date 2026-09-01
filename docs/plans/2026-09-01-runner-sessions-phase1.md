@@ -739,6 +739,12 @@ resume 이 깨진다. `rec.harness !== def.harness` 면 `sessionId` 와 `lastFed
   더 나쁘게는 엉뚱한 곳에서 돈다. `packages/agent/src/workspace.ts` 의 확인을
   `stat().isDirectory()` 로 바꾸고, 경로가 존재하되 디렉터리가 아니면 던진다(그건 폴백 대상이
   아니라 사람이 고쳐야 할 상태다). 테스트도 함께 추가한다.
+- **안전 거부(refusal)가 조용히 사라지지 않는지 확인한다**(Task 5 리뷰). 옛 `reply.ts::extractReply`
+  는 `stop_reason === 'refusal'` 을 잡아 *"이 요청에는 답할 수 없었습니다(안전 거부: …)"* 를
+  채널에 남겼다. 새 구조에는 그 자리가 없다 — 러너가 응답을 파싱하지 않기 때문이다. 하네스가
+  거부하면 프로세스는 **정상 종료(exit 0)하고 발화가 없다**. 즉 `NO_REPLY_NOTICE` 경로가 이
+  경우를 덮는다. 그 사실을 테스트로 고정하고(거부를 흉내내는 가짜 하네스 = exit 0 + 발화 없음),
+  덮지 않는다면 사람 눈에는 에이전트가 조용히 죽은 것으로 보인다 — 옛 코드가 막던 바로 그것이다.
 - **`buildTurnPrompt` 에 `channelId`·`threadRootId` 를 넘기는 것은 이 태스크의 책임이다**
   (Task 5 수정 라운드). `main.ts` 가 이미 `mention.channelId` 와 `anchor` 를 들고 있으므로
   그 값을 그대로 넘긴다 — 여기서 새로 계산하지 마라. 계산하는 순간 네 번째 진실 원천이 된다.
