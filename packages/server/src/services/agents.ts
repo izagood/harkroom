@@ -4,7 +4,9 @@ import { AGENT_HARNESSES, type AgentConfig, type AgentHarness, type AgentView } 
 const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admin as "isAdmin",
   coalesce(c.instructions, '') as instructions,
   coalesce(c.harness, 'claude-code') as harness,
-  c.model, c.effort, c.working_dir as "workingDir"`;
+  c.model, c.effort, c.working_dir as "workingDir",
+  coalesce(c.mention_permission, 'auto') as "mentionPermission",
+  c.owner_account_id as "ownerAccountId"`;
 
 const FROM = `from account a left join agent_config c on c.account_id = a.id`;
 
@@ -24,19 +26,22 @@ export async function getAgent(pool: Pool, id: string): Promise<AgentView | null
 }
 
 async function upsertConfig(
-  client: PoolClient | Pool, accountId: string, patch: Partial<AgentConfig>,
+  client: PoolClient | Pool, accountId: string,
+  patch: Partial<AgentConfig> & { ownerAccountId?: string | null },
 ): Promise<void> {
   // 지정된 필드만 갱신한다. 키 부재는 '손대지 않음', null 은 'harness 기본값으로 되돌리기'다 —
   // 구분하지 못하면 지시문만 고치려다 모델 지정이 조용히 사라진다.
   await client.query(
-    `insert into agent_config (account_id, instructions, harness, model, effort, working_dir)
-     values ($1, coalesce($3, ''), coalesce($5, 'claude-code'), $6, $8, $10)
+    `insert into agent_config (account_id, instructions, harness, model, effort, working_dir, mention_permission, owner_account_id)
+     values ($1, coalesce($3, ''), coalesce($5, 'claude-code'), $6, $8, $10, coalesce($13, 'auto'), $15)
      on conflict (account_id) do update set
-       instructions = case when $2::bool then excluded.instructions else agent_config.instructions end,
-       harness      = case when $4::bool then excluded.harness      else agent_config.harness      end,
-       model        = case when $7::bool then excluded.model        else agent_config.model        end,
-       effort       = case when $9::bool then excluded.effort       else agent_config.effort       end,
-       working_dir  = case when $11::bool then excluded.working_dir else agent_config.working_dir  end,
+       instructions       = case when $2::bool  then excluded.instructions       else agent_config.instructions       end,
+       harness            = case when $4::bool  then excluded.harness            else agent_config.harness            end,
+       model              = case when $7::bool  then excluded.model              else agent_config.model              end,
+       effort             = case when $9::bool  then excluded.effort             else agent_config.effort             end,
+       working_dir        = case when $11::bool then excluded.working_dir        else agent_config.working_dir        end,
+       mention_permission = case when $12::bool then excluded.mention_permission else agent_config.mention_permission end,
+       owner_account_id   = case when $14::bool then excluded.owner_account_id   else agent_config.owner_account_id   end,
        updated_at = now()`,
     [
       accountId,
@@ -48,12 +53,14 @@ async function upsertConfig(
       patch.effort !== undefined,
       patch.workingDir ?? null,
       patch.workingDir !== undefined,
+      patch.mentionPermission !== undefined, patch.mentionPermission ?? null,
+      patch.ownerAccountId !== undefined, patch.ownerAccountId ?? null,
     ],
   );
 }
 
 export async function createAgentAccount(
-  pool: Pool, input: { handle: string; displayName: string } & Partial<AgentConfig>,
+  pool: Pool, input: { handle: string; displayName: string } & Partial<AgentConfig>, ownerId: string,
 ): Promise<AgentView> {
   const client = await pool.connect();
   try {
@@ -63,7 +70,7 @@ export async function createAgentAccount(
       [input.handle, input.displayName],
     );
     const id = created.rows[0].id as string;
-    await upsertConfig(client, id, input);
+    await upsertConfig(client, id, { ...input, ownerAccountId: ownerId });
     await client.query('commit');
     const view = await getAgent(pool, id);
     return view!;
