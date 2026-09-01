@@ -137,18 +137,33 @@ A 를 고른 실제 이유는 지연이 아니라 **경계**다. 서버는 관�
 | 사람 턴 (인터랙티브) | `-r <id>` | `codex resume <id>` | — |
 | 지시문 주입 | `--append-system-prompt` | 프롬프트 앞 접두 | — |
 | MCP 등록 | `--mcp-config <파일>` | 턴별 `-c mcp_servers.*` | — |
-| 권한: auto | `--permission-mode bypassPermissions` | `-s workspace-write` | — |
-| 권한: readonly | `--permission-mode plan` | `-s read-only` | — |
+| 권한: auto | `--permission-mode bypassPermissions` | `-c sandbox_mode="workspace-write"` | — |
+| 권한: readonly | `--permission-mode plan` | `-c sandbox_mode="read-only"` | — |
 
 세 칸이 초판과 다른 이유를 남긴다.
 
 - **codex 의 MCP 는 `codex mcp add` 가 아니다.** 그 명령은 `~/.codex/config.toml` 을
   **영구 변경**하는데, §6 이 금지한 "하네스 밖에 정책을 쌓는 행위"가 정확히 그것이다.
   턴별 `-c mcp_servers.*` 오버라이드가 같은 일을 하고 흔적을 남기지 않는다(실측 확인).
-- **`codex exec` 에는 `-a`/`--ask-for-approval` 이 없다.** sandbox(`-s`)뿐이다. 그래서
-  codex 의 권한은 sandbox 단독 매핑이고, `danger-full-access` 는 쓰지 않는다 — 멘션 턴은
-  사람이 보지 않는 턴이라 workspace 경계를 넘길 이유가 없고, 그 경계가 §3 의 avcs
-  workspace 격리와 정확히 겹친다.
+- **`codex exec` 에는 `-a`/`--ask-for-approval` 이 없다.** 권한은 sandbox 단독이고,
+  `danger-full-access` 는 쓰지 않는다 — 멘션 턴은 사람이 보지 않는 턴이라 workspace 경계를
+  넘길 이유가 없고, 그 경계가 §3 의 avcs workspace 격리와 정확히 겹친다.
+
+  **그런데 `-s` 플래그로는 안 된다.** 이 표의 첫 수정판은 `-s workspace-write` 로 적었는데,
+  리뷰가 실제 CLI 로 돌려 깨뜨렸다: `codex exec resume <id> -s workspace-write` →
+  `error: unexpected argument '-s' found`. `-s` 는 **비-resume `codex exec` 에만** 있고
+  `codex exec resume` 의 옵션 목록에는 없다(`-c`, `-m`, `--last`, `--all` 등뿐). 즉 이 표의
+  "새 세션" 행과 "권한" 행이 codex 에서는 **직교하지 않는다** — 첫 턴에 통하는 플래그가
+  resume 턴에서 파싱 오류를 낸다.
+
+  그래서 **두 턴 모두 `-c sandbox_mode="…"` 하나로 간다.** `sandbox_mode` 는 codex 자신의
+  마이그레이션 문서가 쓰는 실제 설정 키이고(`sandbox_mode = "workspace-write"`), `-c` 는
+  `codex exec` 와 `codex exec resume` 양쪽에 있다. 기전을 하나로 두면 직교하지 않는 조합이
+  애초에 생기지 않는다.
+
+  **남길 교훈**: 플래그가 부모 서브커맨드에 있다는 사실이 자식 서브커맨드에도 있다는 뜻이
+  아니다. 스파이크는 `codex exec --help` 만 보고 exec 계열 전체로 일반화했고, `codex exec
+  resume --help` 의 실제 목록은 자기 기록 안에 있었으나 결론에 반영되지 않았다.
 - **gemini 는 이번 범위에서 미지원이다.** `-r` 이 UUID 가 아니라 `"latest"` 또는 인덱스를
   받아 `--session-id` 와 짝을 이루지 못한다. 게다가 개발 머신의 gemini 계정이 API 접근을
   잃어 왕복 측정 자체가 불가였다. `AGENT_HARNESSES` 에는 남기되 `buildTurnCommand` 가
