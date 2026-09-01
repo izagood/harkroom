@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildTurnCommand, writeMcpConfigOnce } from '../src/turn.js';
+import { buildTurnCommand, preassignsSessionId, writeMcpConfigOnce } from '../src/turn.js';
 
 const base = {
   systemPrompt: 'SYS', promptCtx: 'CTX', model: null, effort: null,
@@ -164,6 +164,23 @@ describe('buildTurnCommand — 빈 문자열 인자 금지', () => {
   it('promptCtx 와 systemPrompt 가 둘 다 비어 있으면 그 자리를 아예 뺀다(codex)', () => {
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, systemPrompt: '', promptCtx: '' });
     expect(p.args).not.toContain('');
+  });
+});
+
+describe('preassignsSessionId', () => {
+  // main.ts::runMentionTurn 이 새 SessionRecord 를 만들 때 이 값으로 sessionId 를
+  // randomUUID() 로 채울지 null 로 둘지 정한다 — harness 이름 비교가 두 곳(여기·main.ts)에
+  // 갈리지 않게 이 표 하나로만 결정한다.
+  it('claude 는 러너가 미리 uuid 를 발급해야 한다', () => {
+    expect(preassignsSessionId('claude-code')).toBe(true);
+  });
+
+  it('codex 는 첫 턴을 돌기 전엔 세션 id 가 없다', () => {
+    expect(preassignsSessionId('codex')).toBe(false);
+  });
+
+  it('미지원 harness 는 명확히 던진다', () => {
+    expect(() => preassignsSessionId('gemini')).toThrow(/gemini/);
   });
 });
 

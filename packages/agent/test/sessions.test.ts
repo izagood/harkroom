@@ -13,7 +13,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 });
 
 describe('SessionStore', () => {
-  const rec = { workspaceDir: '/w', sessionId: 'abc', harness: 'claude-code' as const, lastFedSeq: 7 };
+  const rec = { workspaceDir: '/w', sessionId: 'abc', harness: 'claude-code' as const, lastFedSeq: 7, turnsRun: 3 };
 
   it('threadKey 는 채널 최상위를 _root 로 구분한다', () => {
     expect(SessionStore.threadKey('ch1', null)).toBe('ch1/_root');
@@ -69,6 +69,23 @@ describe('SessionStore', () => {
     await s.load();
 
     expect(s.get('x/_root')).toBeUndefined();
+  });
+
+  // turnsRun 이 없거나(구버전 파일) 숫자가 아니면 그 레코드만 버린다 — isFirstTurn 판단의
+  // 근거인 필드라 모양이 틀리면 다른 필드가 멀쩡해도 신뢰할 수 없다.
+  it('turnsRun 이 없는 레코드(구버전 파일)는 그것만 버리고 나머지는 살아남는다', async () => {
+    const file = join(await mkdtemp(join(tmpdir(), 'sess-')), 'sessions.json');
+    const legacy = { workspaceDir: '/w', sessionId: 'abc', harness: 'claude-code', lastFedSeq: 7 };
+    await (await import('node:fs/promises')).writeFile(
+      file,
+      JSON.stringify({ 'ch1/m9': rec, 'ch1/legacy': legacy }),
+    );
+
+    const s = new SessionStore(file);
+    await s.load();
+
+    expect(s.get('ch1/m9')).toEqual(rec);
+    expect(s.get('ch1/legacy')).toBeUndefined();
   });
 
   // 레코드 하나만 모양이 깨졌다고 스레드 전체의 세션을 잃을 이유는 없다 — 그 레코드만
