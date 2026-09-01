@@ -842,10 +842,22 @@ avcs repo 일 때만 성립하고 아니면 Task 4 폴백으로 그 자리에서
 
 **Files:**
 - Modify: `packages/desktop/src/components/settings/AgentsSettings.tsx` (draft 초기값 `:21`, fromView `:29`, configPatch `:69` 부근, 폼에 select 1개)
-- Test: 기존 AgentsSettings 테스트 파일에 케이스 추가
+- Test: `packages/desktop/test/agentManager.test.tsx` 에 케이스 추가
+  (계획 초안이 적은 "AgentsSettings 테스트 파일"은 실재하지 않는다 — 실제 경로는 이것이다)
 
 **Interfaces:**
 - Consumes: `AgentView.mentionPermission`, `MENTION_PERMISSIONS`(shared)
+
+**이 태스크는 처음 계획보다 작아졌다.** Task 2 의 수정 라운드에서 `RUNNABLE_HARNESSES` 가
+이미 도입됐고(`@murmur/shared`), harness select 가 그 목록 밖의 것을 disabled·'지원 예정'으로
+렌더하도록 고쳐졌으며 회귀 테스트도 붙었다. 그러니 여기서 harness 표시를 다시 손대지 마라 —
+남은 것은 **멘션 권한 스위치 하나**다.
+
+관련해서 Task 9 가 러너 쪽 codex 지원을 붙였으므로, `RUNNABLE_HARNESSES` 에 `'codex'` 를
+더할지 판단이 필요하다. **이 태스크에서는 더하지 마라** — 그 목록은 "러너가 실제로 돌릴 수
+있는가"를 뜻하고, codex 경로는 아직 실물 harness 로 한 번도 돌지 않았다(spec §10 의 '수용'
+층과 Task 11 의 실물 확인이 남아 있다). 목록을 먼저 열면 UI 가 검증되지 않은 것을 제공한다 —
+`design.md` §4 가 금지한 바로 그것이다. Task 11 이 실물로 확인한 뒤 한 줄 더하는 것이 순서다.
 
 - [ ] **Step 1: 실패하는 테스트** — "Mention permission select 가 auto 기본으로 렌더되고, readonly 선택이 updateAgent patch 에 실린다" (기존 harness select 테스트 패턴 복제)
 - [ ] **Step 2: 실패 확인** → **Step 3: 구현** — harness select 아래 같은 스타일로:
