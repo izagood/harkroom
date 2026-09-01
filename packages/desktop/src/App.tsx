@@ -3,9 +3,11 @@ import { ApiClient } from './lib/api';
 import { connectWs } from './lib/ws';
 import { createNotifier } from './lib/notify';
 import { sessionStore } from './lib/session';
-import { Controller, setController } from './state/controller';
+import { Controller, getController, setController } from './state/controller';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { Workspace } from './components/Workspace';
+import { SettingsScreen } from './screens/SettingsScreen';
+import type { SectionId } from './components/settings/sections';
 
 async function startSession(
   baseUrl: string, token: string, onSessionLost: (message: string) => void,
@@ -19,6 +21,8 @@ async function startSession(
 export default function App() {
   const [phase, setPhase] = useState<'boot' | 'connect' | 'ready'>('boot');
   const [connectError, setConnectError] = useState<string | null>(null);
+  // 설정은 세션 상태(phase)가 아니라 뷰다 — 그래서 별도 상태로 둔다.
+  const [settings, setSettings] = useState<{ section?: SectionId } | null>(null);
 
   // 세션이 실행 중에 죽는 경로(다른 기기에서 로그아웃·PAT 폐기·세션 만료)를 부팅 실패와 같은
   // 표면으로 보낸다. 이것이 없으면 사이드바 빨간 점과 영구 재연결만 보이고 이유를 알 수 없다.
@@ -54,5 +58,21 @@ export default function App() {
       />
     );
   }
-  return <Workspace onLogout={() => setPhase('connect')} />;
+  const signOut = () => { getController().logout(); setSettings(null); setPhase('connect'); };
+
+  if (settings) {
+    return (
+      <SettingsScreen
+        initialSection={settings.section}
+        onBack={() => setSettings(null)}
+        onSignOut={signOut}
+      />
+    );
+  }
+  return (
+    <Workspace
+      onLogout={() => setPhase('connect')}
+      onOpenSettings={(section) => setSettings({ section })}
+    />
+  );
 }

@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import type { InboxEntry, MessageRow } from '@murmur/shared';
+import { mentionedHandles, type InboxEntry, type MessageRow } from '@murmur/shared';
 
 export interface PostMessageInput {
   channelId: string;
@@ -11,11 +11,21 @@ export interface PostMessageInput {
   idempotencyKey?: string | null;
 }
 
+// 리액션을 COLS 에 넣는 이유: 메시지를 내주는 경로가 네 갈래(목록·POST·PATCH·idempotency
+// 재생)라 조회 뒤에 붙이는 방식은 언젠가 한 갈래를 빼먹고 그 응답에서만 리액션이 사라진다.
+// 여기 두면 message 를 읽는 모든 쿼리가 자동으로 맞다.
+const REACTIONS = `coalesce((
+  select json_agg(json_build_object('emoji', r.emoji, 'accountIds', r."accountIds") order by r."firstAt")
+  from (
+    select emoji, array_agg(account_id::text order by created_at) as "accountIds",
+           min(created_at) as "firstAt"
+    from message_reaction where message_id = message.id group by emoji
+  ) r
+), '[]'::json) as reactions`;
+
 const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
   author_id as "authorId", body, kind, meta, created_at as "createdAt",
-  edited_at as "editedAt"`;
-
-const MENTION_RE = /@([a-z0-9_-]{2,32})/g;
+  edited_at as "editedAt", ${REACTIONS}`;
 
 async function insertInbox(
   client: PoolClient, accountId: string, messageId: string, reason: InboxEntry['reason'], notified: Set<string>,
@@ -66,10 +76,13 @@ export async function postMessage(
 
     const notified = new Set<string>();
 
-    const handles = [...new Set([...input.body.matchAll(MENTION_RE)].map((m) => m[1]))];
+    // 멘션 규칙은 @murmur/shared 에 있다 — 데스크탑의 강조와 같은 것을 봐야 한다.
+    const handles = mentionedHandles(input.body);
     if (handles.length) {
+      // handle 은 소문자로 만들어지지만 사람은 @Fizz 라고 쓴다. 양쪽을 소문자로 맞춘다.
       const accounts = await client.query(
-        `select id from account where handle = any($1) and id <> $2`, [handles, input.authorId],
+        `select id from account where lower(handle) = any($1) and id <> $2`,
+        [handles, input.authorId],
       );
       for (const row of accounts.rows) await insertInbox(client, row.id, message.id, 'mention', notified);
     }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AGENT_HARNESSES, type AgentConfig, type AgentView } from '@murmur/shared';
-import { getController } from '../state/controller';
+import { getController } from '../../state/controller';
 
 /** murmur 가 아직 실행할 수 없는 harness. 없는 것은 사용자의 CLI 가 아니라 murmur 의 구현이므로
  *  '설치 안 됨'이 아니라 '지원 예정'이다. */
@@ -30,7 +30,7 @@ const draftOf = (a: AgentView): Draft => ({
   workingDir: a.workingDir ?? '',
 });
 
-export function AgentManager({ onClose }: { onClose: () => void }) {
+export function AgentsSettings() {
   const [agents, setAgents] = useState<AgentView[]>([]);
   const [selected, setSelected] = useState<AgentView | null>(null);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
@@ -103,8 +103,7 @@ export function AgentManager({ onClose }: { onClose: () => void }) {
   const label = 'block text-xs font-medium text-zinc-600';
 
   return (
-    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-6">
-      <div className="flex h-full max-h-[42rem] w-full max-w-4xl overflow-hidden rounded-lg bg-white shadow-xl">
+    <div className="flex h-full min-h-0 bg-white">
         <aside className="w-56 shrink-0 border-r border-zinc-200 p-3">
           <button
             className="mb-3 w-full rounded bg-zinc-900 px-3 py-2 text-left text-white"
@@ -129,12 +128,9 @@ export function AgentManager({ onClose }: { onClose: () => void }) {
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="flex items-center border-b border-zinc-200 px-5 py-3">
             <h2 className="text-base font-bold">{selected ? `Edit ${selected.handle}` : 'Add agent'}</h2>
-            <button className="ml-auto rounded px-2 text-zinc-500 hover:bg-zinc-100" onClick={onClose}>
-              ×
-            </button>
           </header>
 
-          <div className="flex-1 space-y-4 overflow-y-auto p-5">
+          <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
             <label className={label}>
               Agent name
               <input
@@ -249,7 +245,7 @@ export function AgentManager({ onClose }: { onClose: () => void }) {
             )}
           </div>
 
-          <footer className="border-t border-zinc-200 px-5 py-3">
+          <footer className="w-full max-w-2xl border-t border-zinc-200 px-5 py-3">
             <button
               className="w-full rounded bg-indigo-600 py-2 font-medium text-white disabled:opacity-50"
               disabled={busy}
@@ -259,7 +255,6 @@ export function AgentManager({ onClose }: { onClose: () => void }) {
             </button>
           </footer>
         </div>
-      </div>
     </div>
   );
 }

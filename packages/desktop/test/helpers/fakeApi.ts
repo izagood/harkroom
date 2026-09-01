@@ -10,7 +10,7 @@ export const chan = (id: string, name: string, repo: string | null = null): Chan
 
 export const msg = (id: string, channelId: string, seq: number, body: string, authorId = 'u1',
   extra: Partial<MessageRow> = {}): MessageRow =>
-  ({ id, seq, channelId, threadRootId: null, authorId, body, kind: 'user', meta: {}, createdAt: new Date().toISOString(), editedAt: null, ...extra });
+  ({ id, seq, channelId, threadRootId: null, authorId, body, kind: 'user', meta: {}, createdAt: new Date().toISOString(), editedAt: null, reactions: [], ...extra });
 
 // override 를 ApiClient 의 실제 시그니처로 받는다. 이전에는 값 타입이 `unknown` 이어서
 // 반환 형태가 어긋난 fake 를 tsc 가 통과시켰다 — 실제로 api.messages() 가 배열에서
@@ -36,6 +36,8 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     wsTicket: vi.fn(async () => 'murt_fake'),
     editMessage: vi.fn(async () => msg('m-edit', 'c1', 1, 'edited')),
     deleteMessage: vi.fn(async () => undefined),
+    addReaction: vi.fn(async () => undefined),
+    removeReaction: vi.fn(async () => undefined),
     createDm: vi.fn(),
     ...overrides,
   };

@@ -17,6 +17,7 @@ export interface AppState {
   connected: boolean;
   set(partial: Partial<AppState>): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
+  applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
   removeMessage(channelId: string, messageId: string): void;
   reset(): void;
 }
@@ -34,6 +35,30 @@ export const useAppStore = create<AppState>((set, get) => ({
     for (const r of rows) byId.set(r.id, r);
     const merged = [...byId.values()].sort((a, b) => a.seq - b.seq);
     set({ messages: { ...get().messages, [channelId]: merged } });
+  },
+  /**
+   * 리액션 델타를 적용한다. 같은 사람이 두 번 들어오지 않게 하는 것이 핵심이다 — 내가 누른
+   * 것은 로컬 갱신과 소켓 이벤트로 두 번 도착하고, 두 번 세면 1 이 2 로 보인다.
+   */
+  applyReaction: (channelId, messageId, emoji, accountId, on) => {
+    const rows = get().messages[channelId];
+    if (!rows) return;
+    const next = rows.map((m) => {
+      if (m.id !== messageId) return m;
+      const others = m.reactions.filter((r) => r.emoji !== emoji);
+      const hit = m.reactions.find((r) => r.emoji === emoji);
+      const ids = (hit?.accountIds ?? []).filter((id) => id !== accountId);
+      if (on) ids.push(accountId);
+      // 아무도 남지 않으면 칩을 지운다 — 0 이 적힌 칩은 UI 의 거짓말이다.
+      if (!ids.length) return { ...m, reactions: others };
+      // 이모지의 원래 자리를 지킨다. 뒤로 밀면 누를 때마다 칩이 춤춘다.
+      return {
+        ...m,
+        reactions: m.reactions.map((r) => (r.emoji === emoji ? { emoji, accountIds: ids } : r))
+          .concat(hit ? [] : [{ emoji, accountIds: ids }]),
+      };
+    });
+    set({ messages: { ...get().messages, [channelId]: next } });
   },
   removeMessage: (channelId, messageId) => {
     const rows = get().messages[channelId];
