@@ -37,6 +37,7 @@ export class ApiClient {
     return this.req('POST', '/bootstrap', { handle, displayName, password });
   }
   me(): Promise<AccountView> { return this.req('GET', '/auth/me'); }
+  logout(): Promise<void> { return this.req('POST', '/auth/logout'); }
   async accounts(): Promise<AccountView[]> {
     return (await this.req<{ accounts: AccountView[] }>('GET', '/accounts')).accounts;
   }

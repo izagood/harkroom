@@ -171,4 +171,21 @@ describe('Controller', () => {
     expect(call[1]).toBe('hello');
     expect(typeof call[3]).toBe('string'); // idempotency key
   });
+
+  // 지금까지 logout 은 로컬 토큰만 지웠고 서버 세션은 TTL(14일)을 그대로 살았다. 로그아웃은
+  // 서버에서도 폐기여야 한다 — 그리고 그 호출이 실패해도 로컬은 반드시 비워야 한다
+  // (실패로 로그인 상태에 갇히면 사용자가 나갈 방법이 없다).
+  it('revokes the server session on logout and clears local state even when that call fails', async () => {
+    const api = fakeApi({ logout: vi.fn(async () => { throw new Error('offline'); }) });
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    localStorage.setItem('murmur.session', JSON.stringify({ baseUrl: 'http://x', token: 't' }));
+
+    c.logout();
+    await vi.waitFor(() => expect(api.logout).toHaveBeenCalled());
+
+    expect(localStorage.getItem('murmur.session')).toBeNull();
+    expect(useAppStore.getState().me).toBeNull();
+  });
 });

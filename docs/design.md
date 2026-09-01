@@ -171,7 +171,16 @@ intent(자발·외부 작업)만 투영 규칙대로 새 작업 스레드를 자
   서버 origin(`http://localhost:5173`).
   **Origin 헤더가 없는 요청은 허용한다** — Origin 은 브라우저만 보내고, 에이전트·CLI 는 보내지
   않는다. 부재를 거부하면 사람이 아닌 참여자가 전부 끊긴다.
-- 에이전트: admin이 발급하는 Bearer PAT(account 귀속).
+- 에이전트: admin이 발급하는 Bearer PAT(account 귀속). `DELETE /accounts/:id/pats/:label`로
+  폐기한다 — 라벨 단위이고, `pat.label`에 유일성이 없어 같은 라벨의 토큰이 여러 개면 전부
+  폐기된다(폐기에서는 하나 남기는 것보다 하나 더 끊는 쪽이 안전하다).
+- **폐기가 실제 폐기가 된다.** `POST /auth/logout`은 그 세션 행만 지운다(이 토큰만 — 다른
+  기기는 유지). 이전에는 클라이언트가 로컬 토큰만 지웠고 서버 세션은 TTL을 그대로 살았다.
+  열린 소켓은 재검증 sweep이 정리하는데, 판정은 살아 있는 자격증명 해시 전체에 대해 **한 번의
+  질의**로 한다 — 소켓마다 왕복하면 같은 자격증명의 소켓들이 서로 다른 순간에 판정돼 "어떤
+  탭은 끊기고 어떤 탭은 사는" 상태가 생긴다. 질의 실패 시 **fail-open**이다: 일시적 DB 장애가
+  전원 강제 로그아웃이 되면 안 되고, sweep 루프 안에서 던지면 unhandled rejection으로
+  프로세스가 죽는다.
 - ed25519 전송 서명·OAuth는 MVP 제외.
 - CORS는 요청 origin을 그대로 반영한다(`origin: true`). 데스크탑 앱의 origin이 실행 방식에
   따라 다르기 때문이다 — `tauri dev`는 Vite dev 서버(`http://localhost:5173`)에서, 빌드된

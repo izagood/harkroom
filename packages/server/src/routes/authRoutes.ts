@@ -47,6 +47,14 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
 
   app.get('/auth/me', { preHandler: app.requireAccount }, async (req) => req.account);
 
+  // 로그아웃은 **이 토큰만** 끊는다. 한 기기에서 나가는 것이 모든 기기에서 쫓겨나는 것과
+  // 같으면 놀라움이 크다 — 전체 폐기가 필요하면 별도 표면이어야 한다. 지금까지는 클라이언트가
+  // 로컬 토큰만 지웠고 서버 세션은 TTL(14일)을 그대로 살았다.
+  app.post('/auth/logout', { preHandler: app.requireAccount }, async (req, reply) => {
+    await pool.query(`delete from session where token_hash = $1`, [req.credentialHash]);
+    return reply.code(204).send();
+  });
+
   app.post('/auth/register', async (req, reply) => {
     const body = credentials.extend({ inviteToken: z.string() }).parse(req.body);
     const client = await pool.connect();

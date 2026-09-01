@@ -14,6 +14,7 @@ class FakeWebSocket {
 beforeEach(() => {
   FakeWebSocket.instances = [];
   vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+
 });
 afterEach(() => { vi.unstubAllGlobals(); });
 
