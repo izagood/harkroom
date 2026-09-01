@@ -8,7 +8,7 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { AgentView, MessageRow } from '@murmur/shared';
 import { runMentionTurn, type MentionTurnDeps, type MentionTurnMurmur, type RunTurn } from '../src/mentionTurn.js';
 import { NO_REPLY_NOTICE } from '../src/prompt.js';
@@ -314,5 +314,48 @@ describe('runMentionTurn', () => {
     const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null));
     expect(rec).toBeDefined();
     expect(rec!.turnsRun).toBe(1);
+  });
+
+  // fix round 1 — 리뷰 Important: store.put 이 관측(readThread)·통보(post) 보다 뒤에 있으면,
+  // 하네스는 정상 종료했는데 그 둘 중 하나가 예외를 던졌을 때(예: murmur 네트워크 순간
+  // 끊김) 실제로 돌아간 턴이 디스크에 기록되지 않는다 — workspace 는 이미 만들어졌고
+  // claude 세션도 이미 생겼는데 turnsRun 이 0 인 채로 남아, 다음 재시도가 새 uuid 를
+  // 발급해 세션을 고아로 만들거나 이미 먹인 메시지를 다시 먹인다. 두 실패 지점(post,
+  // readThread) 을 각각 재현해 store.put 이 이미 끝나 있음을 고정한다.
+  describe('세션 상태는 관측·통보보다 먼저 저장된다 (fix round 1)', () => {
+    it('발화 확인 뒤 post 가 던져도 세션은 이미 저장돼 있다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 안녕');
+      const { deps } = await makeDeps(fake); // 기본 스크립트: exit 0, 발화 없음 → NO_REPLY 시도
+      vi.spyOn(fake, 'post').mockRejectedValueOnce(new Error('network blip'));
+
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null })).resolves.toBeUndefined();
+
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null));
+      expect(rec).toBeDefined();
+      expect(rec!.turnsRun).toBe(1);
+      expect(rec!.sessionId).not.toBeNull(); // 다음 턴이 이 sessionId 로 resume 할 수 있다
+    });
+
+    it('발화 확인용 readThread 가 던져도 세션은 이미 저장돼 있다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 안녕');
+      const { deps } = await makeDeps(fake);
+      const original = fake.readThread.bind(fake);
+      let calls = 0;
+      // 첫 호출(턴 시작 전 thread 조회)은 정상 통과시키고, 두 번째 호출(턴 뒤 발화 확인)만 던진다.
+      vi.spyOn(fake, 'readThread').mockImplementation((...args: Parameters<typeof original>) => {
+        calls += 1;
+        if (calls === 2) return Promise.reject(new Error('network blip'));
+        return original(...args);
+      });
+
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null })).resolves.toBeUndefined();
+
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null));
+      expect(rec).toBeDefined();
+      expect(rec!.turnsRun).toBe(1);
+      expect(rec!.sessionId).not.toBeNull();
+    });
   });
 });

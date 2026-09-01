@@ -166,19 +166,32 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     rec = { ...rec, sessionId: await findCodexSessionId(undefined, { cwd: rec.workspaceDir, sinceMs }) };
   }
 
-  const after = await deps.murmur.readThread(channelId, anchor);
-  if (result.exitCode === 0 && !hasOwnPostSince(after, deps.me.id, turnStartSeq)) {
-    // 하네스가 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다
-    // (쓸 말이 없었거나, 안전 거부(exit 0)이거나). 옛 reply.ts::extractReply 가 안전 거부를
-    // 사실로 남기던 자리를 이 경로가 대신한다: 침묵을 침묵으로 남기지 않는다.
-    await deps.murmur.post(channelId, NO_REPLY_NOTICE, anchor);
-  }
-
   // 세션 상태(디스크의 하네스 세션 파일)는 이 프로세스가 이 결과를 "성공"으로 보든
-  // "실패"로 보든 이미 실재한다 — 그래서 exitCode 를 따지기 전에 먼저 저장한다. 저장을
-  // 실패 분기 뒤로 미루면, 실패한 턴 다음 재시도가 존재하지 않는 세션을 다시 만들려 하거나
-  // (claude 중복 --session-id) 방금 생긴 codex 세션을 놓치고 매번 새로 시작한다.
+  // "실패"로 보든 이 시점에 이미 실재한다 — workspace 가 만들어졌고, claude 라면
+  // --session-id 로 세션이 생겼고, codex 라면 방금 rollout 파일이 쓰였다(바로 위에서
+  // 발견했다). 그래서 "실제로 일어난 일"을 아래 관측·통보보다 **먼저** 기록한다: 관측
+  // (readThread)이나 통보(post)가 여기서 던지면(예: murmur 로 가는 네트워크가 잠깐
+  // 끊김) — 이 저장이 그 뒤에 있었다면 실제로 돌아간 턴이 디스크에 기록되지 않고, 다음
+  // 재시도가 turnsRun===0 을 보고 첫 턴이라 새 uuid 를 발급하거나(claude 세션이 고아가
+  // 된다) 이미 먹인 메시지를 다시 먹인다(리뷰 지적).
   await deps.store.put(key, { ...rec, lastFedSeq: fedSeq, turnsRun: rec.turnsRun + 1 });
+
+  // 관측·통보는 best-effort 다 — 방금 저장한 상태를 좌우하지 않으므로 여기서 던진 예외로
+  // 턴 전체를 실패(재시도 대상)로 만들 이유가 없다. 조용히 삼키면 "왜 NO_REPLY_NOTICE 가
+  // 안 남았지"의 원인이 사라지므로 러너 로그에는 남긴다.
+  try {
+    const after = await deps.murmur.readThread(channelId, anchor);
+    if (result.exitCode === 0 && !hasOwnPostSince(after, deps.me.id, turnStartSeq)) {
+      // 하네스가 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다
+      // (쓸 말이 없었거나, 안전 거부(exit 0)이거나). 옛 reply.ts::extractReply 가 안전
+      // 거부를 사실로 남기던 자리를 이 경로가 대신한다: 침묵을 침묵으로 남기지 않는다.
+      await deps.murmur.post(channelId, NO_REPLY_NOTICE, anchor);
+    }
+  } catch (err) {
+    console.error(
+      `[mentionTurn] ${key}: 발화 확인/통보 실패(세션 상태는 이미 저장됐다) — ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   if (result.exitCode !== 0 || result.timedOut) {
     // tail 을 반드시 포함한다 — PTY 안에서는 stdout/stderr 가 한 스트림으로 섞여 나오므로
