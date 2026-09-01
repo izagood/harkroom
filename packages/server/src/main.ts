@@ -22,7 +22,10 @@ if (config.avcsBaseUrl) {
 
 const lifecycle = new Lifecycle();
 const app = await buildServer({
-  pool, lifecycle, getAvcsStatus: () => worker?.status() ?? { connected: false },
+  pool,
+  lifecycle,
+  getAvcsStatus: () => worker?.status() ?? { connected: false },
+  corsOrigins: config.corsOrigins,
 });
 await app.listen({ port: config.port, host: '0.0.0.0' });
 console.log(`murmur server on :${config.port} (avcs: ${config.avcsBaseUrl ?? 'disabled'})`);
