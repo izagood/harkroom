@@ -77,3 +77,23 @@ describe('ThreadPanel', () => {
     await waitFor(() => expect(box.value).toBe('help me'));
   });
 });
+
+describe('ThreadPanel sticky mentions', () => {
+  const chips = () =>
+    screen.queryAllByTestId('sticky-mention').map((el) => el.getAttribute('data-handle'));
+
+  // 스레드도 각자의 대화다 — 앞 스레드에서 부른 상대가 다음 스레드에 따라오면 안 된다.
+  it('does not carry the kept mentions into another thread', async () => {
+    fakeController();
+    render(<ThreadPanel />);
+    const box = screen.getByRole('textbox');
+    fireEvent.change(box, { target: { value: '@bot 봐줘', selectionStart: 8 } });
+    fireEvent.keyDown(box, { key: 'Escape' });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(chips()).toEqual(['bot']);
+
+    useAppStore.getState().set({ threadRootId: 'm3' });
+
+    await waitFor(() => expect(chips()).toEqual([]));
+  });
+});
