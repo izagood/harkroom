@@ -1,5 +1,15 @@
 import type { Pool, PoolClient } from 'pg';
 import { mentionedHandles, type InboxEntry, type MessageRow } from '@murmur/shared';
+import { attachToMessage, type AttachFailure } from './attachments.js';
+
+/**
+ * 게시 결과. 첨부 연결이 거절되면 메시지 자체가 만들어지지 않는다(트랜잭션 롤백) —
+ * 그래서 성공/실패가 배타적인 합 타입이다. 둘을 optional 필드로 섞으면 호출부가
+ * 실패를 확인하지 않고 `message` 를 만질 수 있다.
+ */
+export type PostMessageResult =
+  | { message: MessageRow; notified: string[]; replayed: boolean; failure?: undefined }
+  | { failure: AttachFailure; message?: undefined };
 
 export interface PostMessageInput {
   channelId: string;
@@ -9,6 +19,8 @@ export interface PostMessageInput {
   kind?: 'user' | 'system';
   meta?: Record<string, unknown>;
   idempotencyKey?: string | null;
+  /** 이 메시지에 붙일 업로드들. 같은 트랜잭션에서 연결한다 — 따로 하면 첨부 없는 메시지가 보인다. */
+  attachmentIds?: string[];
 }
 
 // 리액션을 COLS 에 넣는 이유: 메시지를 내주는 경로가 네 갈래(목록·POST·PATCH·idempotency
@@ -23,9 +35,19 @@ const REACTIONS = `coalesce((
   ) r
 ), '[]'::json) as reactions`;
 
+// 첨부도 리액션과 같은 이유로 COLS 에 있다 — 조회 뒤에 붙이면 네 갈래 중 하나를 빼먹는다.
+// storage_key 는 **의도적으로 빼 두었다**: 스토리지 키가 응답에 새면 그 자체가 접근 경로다.
+const ATTACHMENTS = `coalesce((
+  select json_agg(json_build_object(
+    'id', a.id, 'filename', a.filename,
+    'contentType', a.content_type, 'sizeBytes', a.size_bytes::int
+  ) order by a.attached_at, a.created_at)
+  from attachment a where a.message_id = message.id
+), '[]'::json) as attachments`;
+
 const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
   author_id as "authorId", body, kind, meta, created_at as "createdAt",
-  edited_at as "editedAt", ${REACTIONS}`;
+  edited_at as "editedAt", ${REACTIONS}, ${ATTACHMENTS}`;
 
 async function insertInbox(
   client: PoolClient, accountId: string, messageId: string, reason: InboxEntry['reason'], notified: Set<string>,
@@ -39,7 +61,7 @@ async function insertInbox(
 
 export async function postMessage(
   pool: Pool, input: PostMessageInput,
-): Promise<{ message: MessageRow; notified: string[]; replayed: boolean }> {
+): Promise<PostMessageResult> {
   const client = await pool.connect();
   try {
     await client.query('begin');
@@ -61,11 +83,25 @@ export async function postMessage(
 
     const inserted = await client.query(
       `insert into message (channel_id, thread_root_id, author_id, body, kind, meta)
-       values ($1, $2, $3, $4, $5, $6) returning ${COLS}`,
+       values ($1, $2, $3, $4, $5, $6) returning id`,
       [input.channelId, input.threadRootId ?? null, input.authorId, input.body,
        input.kind ?? 'user', JSON.stringify(input.meta ?? {})],
     );
-    const message: MessageRow = inserted.rows[0];
+    const messageId = inserted.rows[0].id as string;
+
+    // 첨부를 **같은 트랜잭션에서** 연결한다. 따로 하면 첨부 없는 메시지가 잠깐 보이고,
+    // 연결이 실패하면 본문만 남는다.
+    const failure = await attachToMessage(client, {
+      messageId, actorId: input.authorId, attachmentIds: input.attachmentIds ?? [],
+    });
+    if (failure) {
+      await client.query('rollback');
+      return { failure };
+    }
+
+    // 연결 뒤에 읽는다 — COLS 가 첨부를 함께 가져오므로 순서가 뒤바뀌면 빈 배열이 나간다.
+    const read = await client.query(`select ${COLS} from message where id = $1`, [messageId]);
+    const message: MessageRow = read.rows[0];
 
     if (input.idempotencyKey) {
       await client.query(

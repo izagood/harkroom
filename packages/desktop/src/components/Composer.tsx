@@ -1,6 +1,8 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { AccountView } from '@murmur/shared';
+import type { AccountView, AttachmentRow } from '@murmur/shared';
 import { useAppStore } from '../state/appStore';
+import { getController } from '../state/controller';
+import { formatSize } from './Attachments';
 import {
   mentionQueryAt, applyMention, withStickyMentions, keepMentioned, type MentionQuery,
 } from '../lib/mention';
@@ -15,8 +17,11 @@ function rank(a: AccountView, b: AccountView): number {
 }
 
 interface Props {
-  /** 실패를 reject 로 알리면 초안을 되돌린다 — 쓴 글이 조용히 사라지지 않게. */
-  onSend: (body: string) => void | Promise<unknown>;
+  /**
+   * 실패를 reject 로 알리면 초안을 되돌린다 — 쓴 글이 조용히 사라지지 않게.
+   * 두 번째 인자는 이미 업로드된 첨부의 id 들이다(업로드는 파일을 고른 순간 끝나 있다).
+   */
+  onSend: (body: string, attachmentIds: string[]) => void | Promise<unknown>;
   placeholder?: string;
   rows?: number;
   autoFocus?: boolean;
@@ -36,6 +41,11 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   const [stickyByScope, setStickyByScope] = useState<Record<string, string[]>>({});
   const [picking, setPicking] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  // 업로드는 파일을 고른 순간 끝난다. 전송 시점에 올리면 Enter 를 누르고 기다려야 하고,
+  // 실패했을 때 본문까지 붙잡힌다.
+  const [pending, setPending] = useState<AttachmentRow[]>([]);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   // 삽입 후 커서를 옮겨야 한다. React 는 value 만 되돌리므로 DOM 을 직접 만진다.
   const pendingCaret = useRef<number | null>(null);
 
@@ -121,20 +131,43 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     ref.current?.focus();
   };
 
+  const pickFiles = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setUploadError(null);
+    for (const file of Array.from(files)) {
+      try {
+        // 업로드는 파일을 고른 순간 끝난다. 전송 시점에 올리면 Enter 를 누르고 기다려야 하고,
+        // 실패했을 때 본문까지 붙잡힌다.
+        const row = await getController().upload(file);
+        setPending((cur) => [...cur, row]);
+      } catch {
+        // 조용히 사라지면 사용자는 파일이 갔다고 믿는다.
+        setUploadError(`${file.name} 을 올리지 못했다 (크기 제한을 넘었을 수 있다)`);
+      }
+    }
+    // 같은 파일을 다시 고를 수 있어야 한다 — value 를 비우지 않으면 change 가 안 난다.
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
   const send = () => {
     // 고정 멘션만으로는 보낼 것이 없다 — 빈 Enter 가 '@fizz' 하나만 던지면 사고다.
-    if (!draft.trim()) return;
+    // 다만 파일만 보내는 것은 자연스럽다.
+    if (!draft.trim() && !pending.length) return;
     const typed = draft;
     const body = withStickyMentions(typed, sticky);
+    const ids = pending.map((a) => a.id);
     setDraft('');
+    setPending([]);
     setQuery(null);
     // 이번에 부른 상대는 다음 줄부터 고정이다. 한 번 부른 뒤 매번 @ 를 다시 치게 하면
     // 사용자는 잊어버리고, 잊으면 에이전트는 깨어나지 않는다.
     setStickyByScope((prev) => ({ ...prev, [scopeKey]: keepMentioned(sticky, typed, known) }));
     // 초안을 먼저 비우는 이유는 응답을 기다리는 동안 다음 글을 쓸 수 있어야 하기 때문이다.
     // 실패하면 사용자가 친 것만 되돌린다 — 접두사까지 남기면 다음 전송에서 두 번 붙는다.
-    void Promise.resolve(onSend(body)).catch(() => {
+    void Promise.resolve(onSend(body, ids)).catch(() => {
       setDraft((current) => (current ? current : typed));
+      // 첨부도 되돌린다 — 파일은 이미 서버에 있으니 다시 올릴 필요가 없다.
+      setPending((current) => (current.length ? current : pending));
     });
   };
 
@@ -224,6 +257,44 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
           ))}
         </ul>
       )}
+      {uploadError && (
+        <p role="alert" className="mb-1 text-[11px] text-red-600">{uploadError}</p>
+      )}
+
+      {pending.length > 0 && (
+        <div className="mb-1 flex flex-wrap gap-1">
+          {pending.map((a) => (
+            <span
+              key={a.id}
+              className="inline-flex items-center gap-1 rounded border border-zinc-300 bg-zinc-50 px-1.5 text-[11px] text-zinc-700"
+            >
+              <span aria-hidden>📎</span>
+              {a.filename}
+              <span className="text-zinc-500">{formatSize(a.sizeBytes)}</span>
+              <button
+                aria-label={`Remove ${a.filename}`}
+                className="rounded px-0.5 text-zinc-400 hover:bg-zinc-200"
+                onClick={() => setPending((cur) => cur.filter((x) => x.id !== a.id))}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <label className="mb-1 inline-block cursor-pointer text-[11px] text-zinc-500 hover:text-zinc-800">
+        📎 첨부
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          aria-label="Attach a file"
+          className="hidden"
+          onChange={(e) => void pickFiles(e.target.files)}
+        />
+      </label>
+
       <textarea
         ref={ref}
         className="w-full resize-none rounded border border-zinc-300 px-3 py-2"

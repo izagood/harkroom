@@ -204,7 +204,7 @@ describe('ChannelPane', () => {
     const box = screen.getByPlaceholderText('Message #general') as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: 'hi there' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(c.send).toHaveBeenCalledWith('hi there');
+    expect(c.send).toHaveBeenCalledWith('hi there', []);
     expect(box.value).toBe('');
   });
 
@@ -233,7 +233,7 @@ describe('ChannelPane', () => {
     const box = screen.getByPlaceholderText('Message #general') as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: 'hi there' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(c.send).toHaveBeenCalledWith('hi there');
+    expect(c.send).toHaveBeenCalledWith('hi there', []);
     await waitFor(() => expect(box.value).toBe('hi there'));
   });
 });

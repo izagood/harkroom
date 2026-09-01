@@ -55,7 +55,7 @@ export function ChannelPane() {
         <Composer
           scopeKey={activeChannelId}
           placeholder={`Message ${composerTarget}`}
-          onSend={(body) => getController().send(body)}
+          onSend={(body, attachmentIds) => getController().send(body, attachmentIds)}
         />
       </div>
     </main>

@@ -32,7 +32,7 @@ export function ThreadPanel() {
         <Composer
           scopeKey={`thread:${threadRootId}`}
           placeholder="Reply…"
-          onSend={(body) => getController().reply(body)}
+          onSend={(body, attachmentIds) => getController().reply(body, attachmentIds)}
         />
       </div>
     </section>

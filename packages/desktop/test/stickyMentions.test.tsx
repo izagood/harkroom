@@ -54,7 +54,7 @@ describe('sticky mentions', () => {
 
     sendText('너가 작업하는 내용도 내가 볼 수 있어?');
 
-    expect(onSend).toHaveBeenLastCalledWith('@fizz 너가 작업하는 내용도 내가 볼 수 있어?');
+    expect(onSend).toHaveBeenLastCalledWith('@fizz 너가 작업하는 내용도 내가 볼 수 있어?', []);
   });
 
   // 여러 명을 불러도 전부 유지된다 — 한 명만 남기면 나머지는 조용히 대화에서 빠진다.
@@ -66,7 +66,7 @@ describe('sticky mentions', () => {
     sendText('다음 질문');
 
     expect(chips()).toEqual(['fizz', 'honey', 'pollen']);
-    expect(onSend).toHaveBeenLastCalledWith('@fizz @honey @pollen 다음 질문');
+    expect(onSend).toHaveBeenLastCalledWith('@fizz @honey @pollen 다음 질문', []);
   });
 
   // 고정된 상대를 손으로 또 부르면 본문에 두 번 나온다. 알림이 두 번 가지는 않지만
@@ -78,7 +78,7 @@ describe('sticky mentions', () => {
 
     sendText('@fizz 다시');
 
-    expect(onSend).toHaveBeenLastCalledWith('@fizz 다시');
+    expect(onSend).toHaveBeenLastCalledWith('@fizz 다시', []);
   });
 
   // 새로 부른 사람은 뒤에 붙되, 이미 고정된 사람의 순서는 흔들리지 않는다.
@@ -91,7 +91,7 @@ describe('sticky mentions', () => {
     sendText('셋째 줄');
 
     expect(chips()).toEqual(['fizz', 'honey']);
-    expect(onSend).toHaveBeenLastCalledWith('@fizz @honey 셋째 줄');
+    expect(onSend).toHaveBeenLastCalledWith('@fizz @honey 셋째 줄', []);
   });
 
   it('stops prefixing a handle whose chip is removed', () => {
@@ -103,7 +103,7 @@ describe('sticky mentions', () => {
     sendText('honey 에게만');
 
     expect(chips()).toEqual(['honey']);
-    expect(onSend).toHaveBeenLastCalledWith('@honey honey 에게만');
+    expect(onSend).toHaveBeenLastCalledWith('@honey honey 에게만', []);
   });
 
   // 채널을 옮기면 상대도 바뀐다. 앞 채널에서 부르던 에이전트를 다른 채널에 끌고 가면
@@ -158,7 +158,7 @@ describe('sticky mentions', () => {
     sendText('그 다음');
 
     expect(chips()).toEqual([]);
-    expect(onSend).toHaveBeenLastCalledWith('그 다음');
+    expect(onSend).toHaveBeenLastCalledWith('그 다음', []);
   });
 });
 
@@ -185,7 +185,7 @@ describe('adding a mention without sending', () => {
 
     sendText('첫 줄');
 
-    expect(onSend).toHaveBeenLastCalledWith('@fizz 첫 줄');
+    expect(onSend).toHaveBeenLastCalledWith('@fizz 첫 줄', []);
   });
 
   // 이미 고정된 상대를 또 고를 이유가 없다. 목록에 남겨 두면 두 번 고른 사용자가
@@ -217,7 +217,7 @@ describe('adding a mention without sending', () => {
     expect(screen.queryAllByRole('option')).toHaveLength(0);
     typeInto('보낸다');
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
-    expect(onSend).toHaveBeenCalledWith('@fizz 보낸다');
+    expect(onSend).toHaveBeenCalledWith('@fizz 보낸다', []);
   });
 
   it('closes on Escape', () => {

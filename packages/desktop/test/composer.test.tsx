@@ -89,7 +89,7 @@ describe('mention autocomplete', () => {
 
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
 
-    expect(onSend).toHaveBeenCalledWith('그냥 문장');
+    expect(onSend).toHaveBeenCalledWith('그냥 문장', []);
   });
 
   it('moves the highlight with the arrow keys', () => {
@@ -116,7 +116,7 @@ describe('mention autocomplete', () => {
     expect(screen.queryAllByRole('option')).toHaveLength(0);
 
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
-    expect(onSend).toHaveBeenCalledWith('@fi');
+    expect(onSend).toHaveBeenCalledWith('@fi', []);
   });
 
   it('closes the list after a pick so the next Enter sends', () => {
@@ -128,7 +128,7 @@ describe('mention autocomplete', () => {
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
 
-    expect(onSend).toHaveBeenCalledWith(`@${first} `);
+    expect(onSend).toHaveBeenCalledWith(`@${first} `, []);
   });
 
   it('clears the draft after sending', () => {
@@ -148,7 +148,7 @@ describe('mention autocomplete', () => {
 
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
 
-    expect(onSend).toHaveBeenCalledWith('@zzzz');
+    expect(onSend).toHaveBeenCalledWith('@zzzz', []);
   });
 
   // murmur 에서 @ 를 치는 주된 이유가 에이전트 호출이다. 사람이 먼저 오면 매번 화살표를

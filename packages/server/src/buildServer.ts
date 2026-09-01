@@ -1,11 +1,14 @@
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
+import fastifyMultipart from '@fastify/multipart';
 import type { Pool } from 'pg';
 import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
 import { registerChannelRoutes } from './routes/channelRoutes.js';
 import { registerMessageRoutes } from './routes/messageRoutes.js';
+import { registerAttachmentRoutes } from './routes/attachmentRoutes.js';
+import { createLocalStorage } from './storage/local.js';
 import { registerDirectoryRoutes } from './routes/directoryRoutes.js';
 import { registerAuditRoutes } from './routes/auditRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
@@ -56,7 +59,15 @@ export interface ServerDeps {
   rateLimits?: Partial<Record<'login' | 'signup' | 'ticket', RateLimitRule>>;
   /** 리밋 판정용 시계(테스트 전용 seam). */
   now?: () => number;
+  /**
+   * 첨부 스토리지. 미지정이면 ATTACHMENT_ROOT·ATTACHMENT_MAX_BYTES(기본 25MB)를 쓴다.
+   * S3 호환으로 바꿀 때는 storage/local.ts 만 갈아 끼우면 된다.
+   */
+  storage?: { root: string; maxBytes: number };
 }
+
+/** 25MB. 스크린샷·로그 파일에는 넉넉하고, 디스크가 조용히 차지 않을 만큼은 좁다. */
+const DEFAULT_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({
@@ -155,6 +166,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerAccountRoutes(app, deps.pool);
   await registerChannelRoutes(app, deps.pool);
   await registerMessageRoutes(app, deps.pool);
+  const storageOpts = deps.storage ?? {
+    root: process.env.ATTACHMENT_ROOT ?? './.attachments',
+    maxBytes: Number(process.env.ATTACHMENT_MAX_BYTES ?? DEFAULT_MAX_ATTACHMENT_BYTES),
+  };
+  // multipart 의 자체 제한도 같은 값으로 맞춘다 — 스토리지만 막으면 파서가 먼저 메모리를 쓴다.
+  await app.register(fastifyMultipart, { limits: { fileSize: storageOpts.maxBytes, files: 1 } });
+  await registerAttachmentRoutes(app, deps.pool, createLocalStorage(storageOpts));
   await registerDirectoryRoutes(app, deps.pool);
   await registerAuditRoutes(app, deps.pool);
 

@@ -4,7 +4,7 @@ import { buildReplyRequest, extractReply, BODY_LIMIT } from '../src/reply.js';
 
 const msg = (id: string, body: string, authorId: string, extra: Partial<MessageRow> = {}): MessageRow => ({
   id, seq: 1, channelId: 'c1', threadRootId: null, authorId, body,
-  kind: 'user', meta: {}, createdAt: '2026-09-01T00:00:00.000Z', editedAt: null, reactions: [], ...extra,
+  kind: 'user', meta: {}, createdAt: '2026-09-01T00:00:00.000Z', editedAt: null, reactions: [], attachments: [], ...extra,
 });
 
 const ctx = {
