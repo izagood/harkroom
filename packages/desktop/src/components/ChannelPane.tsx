@@ -3,6 +3,7 @@ import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
 import { Composer } from './Composer';
+import { TypingLine } from './TypingLine';
 
 export function ChannelPane() {
   const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq } = useAppStore();
@@ -73,6 +74,7 @@ export function ChannelPane() {
         ))}
         <div ref={bottomRef} />
       </div>
+      <TypingLine />
       <div className="border-t border-zinc-200 p-3">
         <Composer
           scopeKey={activeChannelId}

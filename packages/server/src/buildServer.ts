@@ -51,6 +51,8 @@ export interface ServerDeps {
   wsRevalidateMs?: number;
   /** WS ping/pong 주기(ms). 기본 30초. 테스트에서 짧게 준다. */
   wsHeartbeatMs?: number;
+  /** '입력 중' 상태의 수명(ms). 기본 6초. */
+  typingTtlMs?: number;
   /** 로그 레벨. 미지정이면 LOG_LEVEL, 그것도 없으면 info. */
   logLevel?: string;
   /** 로그 싱크 교체(테스트 전용 seam). 프로덕션은 stdout 이다. */
@@ -161,6 +163,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     allowedOrigins: deps.corsOrigins ?? null,
     revalidateMs: deps.wsRevalidateMs,
     heartbeatMs: deps.wsHeartbeatMs,
+    typingTtlMs: deps.typingTtlMs,
   });
   await registerAuthRoutes(app, deps.pool);
   await registerAccountRoutes(app, deps.pool);

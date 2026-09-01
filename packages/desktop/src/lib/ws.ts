@@ -13,7 +13,15 @@ export interface WsCallbacks {
   onDown(reason: WsDownReason): void;
 }
 
-export interface WsHandle { close(): void }
+export interface WsHandle {
+  close(): void;
+  /**
+   * 클라이언트 → 서버 메시지. 지금은 '입력 중'만 쓴다. 소켓이 아직 열리지 않았거나 재연결
+   * 중이면 **조용히 버린다** — 큐에 쌓아 두면 재연결 뒤에 오래된 '입력 중'이 도착해서
+   * 이미 멈춘 사람이 입력 중으로 보인다. 수명이 몇 초인 신호는 버리는 것이 맞다.
+   */
+  send(payload: unknown): void;
+}
 
 /** 연결 시도마다 새로 받아야 하는 단기 1회용 티켓. 재사용하면 서버가 거절한다. */
 export type TicketProvider = () => Promise<string>;
@@ -78,5 +86,8 @@ export function connectWs(baseUrl: string, getTicket: TicketProvider, cb: WsCall
 
   return {
     close() { closed = true; ws?.close(); },
+    send(payload) {
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+    },
   };
 }

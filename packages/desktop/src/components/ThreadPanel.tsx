@@ -3,6 +3,7 @@ import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
 import { Composer } from './Composer';
+import { TypingLine } from './TypingLine';
 
 export function ThreadPanel() {
   const { activeChannelId, threadRootId, messages } = useAppStore();
@@ -28,6 +29,7 @@ export function ThreadPanel() {
       <div className="flex-1 overflow-y-auto py-2">
         {thread.map((m) => <MessageItem key={m.id} message={m} inThread />)}
       </div>
+      <TypingLine />
       <div className="border-t border-zinc-200 p-3">
         <Composer
           scopeKey={`thread:${threadRootId}`}
