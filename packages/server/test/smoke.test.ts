@@ -2,9 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
-import { startFakeAvcs } from './helpers/fakeAvcsServer.js';
+import { createFakeAvcs, type FakeAvcs } from './helpers/fakeAvcs.js';
 import { buildServer } from '../src/buildServer.js';
-import { httpAvcsClient } from '../src/avcs/client.js';
 import { ProjectionWorker, ensureSystemAccount } from '../src/avcs/projection.js';
 import { listBoundRepos, dmMemberIds } from '../src/services/channels.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
@@ -12,18 +11,18 @@ import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 let app: FastifyInstance;
 let pool: Pool;
 let stop: () => Promise<void>;
-let fake: Awaited<ReturnType<typeof startFakeAvcs>>;
+let fake: FakeAvcs;
 let worker: ProjectionWorker;
 
 beforeAll(async () => {
   ({ pool, stop } = await startTestDb());
-  fake = await startFakeAvcs();
+  fake = createFakeAvcs();
   worker = new ProjectionWorker({
-    pool, avcs: httpAvcsClient(fake.url), systemAccountId: await ensureSystemAccount(pool),
+    pool, avcs: fake.client, systemAccountId: await ensureSystemAccount(pool),
   });
   app = await buildServer({ pool, getAvcsStatus: () => worker.status() });
 });
-afterAll(async () => { await app.close(); await fake.close(); await stop(); });
+afterAll(async () => { await app.close(); await stop(); });
 
 describe('smoke: mention → work → projection into linked thread', () => {
   it('runs the whole loop', async () => {

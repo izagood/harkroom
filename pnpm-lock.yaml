@@ -84,6 +84,12 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
+      '@izagood/avcs':
+        specifier: ^0.45.0
+        version: 0.45.0(zod@3.25.76)
+      '@izagood/avcs-server':
+        specifier: ^0.3.0
+        version: 0.3.0(@izagood/avcs@0.45.0(zod@3.25.76))
       '@testcontainers/postgresql':
         specifier: ^10.13.0
         version: 10.28.0
@@ -445,6 +451,18 @@ packages:
   '@isaacs/cliui@8.0.2':
     resolution: {integrity: sha512-O8jcjabXaleOG9DQ0+ARXWZBTfnP4WNAqzuiJK7ll44AmxGKv/J2M4TPjxjY3znBCfvBXFzucm1twdyFybFqEA==}
     engines: {node: '>=12'}
+
+  '@izagood/avcs-server@0.3.0':
+    resolution: {integrity: sha512-4cLSFSUw9IQhtNdsU0YU6bQTsZm37vbOQN7l6+S2+O7oEy0E4zc0kx40BCeTq4bc5J0b3fZTLoY7b56rw+nj8A==}
+    engines: {node: '>=22.6'}
+    hasBin: true
+    peerDependencies:
+      '@izagood/avcs': ^0.45.0
+
+  '@izagood/avcs@0.45.0':
+    resolution: {integrity: sha512-bk1VIWJ+QYJor8Ne2P0fOxtXZ4bbF8GGPzi0IEmNVniBMrrZ5dsNpP7EYcSg/xZBm/oCah46feVG3iqnknaeug==}
+    engines: {node: '>=22.6'}
+    hasBin: true
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -2818,6 +2836,18 @@ snapshots:
       strip-ansi-cjs: strip-ansi@6.0.1
       wrap-ansi: 8.1.0
       wrap-ansi-cjs: wrap-ansi@7.0.0
+
+  '@izagood/avcs-server@0.3.0(@izagood/avcs@0.45.0(zod@3.25.76))':
+    dependencies:
+      '@izagood/avcs': 0.45.0(zod@3.25.76)
+
+  '@izagood/avcs@0.45.0(zod@3.25.76)':
+    optionalDependencies:
+      '@modelcontextprotocol/sdk': 1.30.0(zod@3.25.76)
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - supports-color
+      - zod
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:

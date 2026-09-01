@@ -8,3 +8,6 @@ target/
 .env.*
 *.log
 .DS_Store
+
+# 로컬 개발용 compose 오버라이드
+docker-compose.override.yml
