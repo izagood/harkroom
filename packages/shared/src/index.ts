@@ -21,6 +21,44 @@ export interface AgentConfig {
 
 export interface AgentView extends AccountView, AgentConfig {}
 
+/**
+ * handle 문법. 계정 생성과 멘션 인식이 같은 것을 봐야 한다.
+ */
+export const HANDLE_PATTERN = '[a-zA-Z0-9_-]{2,32}';
+
+/**
+ * 본문 안의 멘션. 서버(알림 발송)와 데스크탑(강조)이 **반드시 같은 규칙**을 써야 한다 —
+ * 갈라지면 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(`me@x.com`),
+ * 강조된 것이 알림을 보내지 않는다(`@Fizz`).
+ *
+ * 선행 문자 조건이 핵심이다. `@` 앞이 문자·숫자면 멘션이 아니다 — 이메일 주소와 단어
+ * 중간의 `@` 를 걸러 낸다. handle 은 소문자로만 만들어지지만 사람은 `@Fizz` 라고 쓰므로
+ * 대소문자를 무시하고 찾고, 조회할 때 소문자로 맞춘다.
+ */
+export const MENTION_PATTERN = `(^|[^a-zA-Z0-9_-])@(${HANDLE_PATTERN})`;
+
+/**
+ * 본문에서 불린 handle 들. 소문자로 정규화해 중복을 없앤다(`@fizz` 와 `@Fizz` 는 한 사람).
+ * 패턴이 대문자를 이미 포함하므로 `i` 플래그는 필요하지 않다.
+ */
+export function mentionedHandles(body: string): string[] {
+  const found = new Set<string>();
+  for (const m of body.matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
+    if (m[2]) found.add(m[2].toLowerCase());
+  }
+  return [...found];
+}
+
+/**
+ * 한 이모지에 누가 눌렀는지. `count`·`mine` 이 아니라 누른 사람 목록인 이유는 요청자에 따라
+ * 값이 달라지면 같은 페이로드를 여러 명에게 브로드캐스트할 수 없기 때문이다.
+ * count 는 `accountIds.length`, '내가 눌렀나' 는 `includes(me.id)` 로 클라이언트가 센다.
+ */
+export interface ReactionRow {
+  emoji: string;
+  accountIds: string[];
+}
+
 export interface MessageRow {
   id: string;
   seq: number;
@@ -33,6 +71,8 @@ export interface MessageRow {
   createdAt: string;
   /** 수정된 적이 없으면 null. */
   editedAt: string | null;
+  /** 아무도 안 눌렀으면 빈 배열. 필드가 없는 것과 구분해야 UI 가 분기할 필요가 없다. */
+  reactions: ReactionRow[];
 }
 
 export interface ChannelRow {
@@ -70,4 +110,7 @@ export type WsServerEvent =
   | { type: 'inbox.updated'; accountId: string }
   | { type: 'lease.changed'; repo: string }
   | { type: 'presence.changed'; accountId: string; online: boolean }
-  | { type: 'presence.snapshot'; online: string[] };
+  | { type: 'presence.snapshot'; online: string[] }
+  // 리액션은 델타로 보낸다 — 메시지 전체를 다시 실으면 한 번 누를 때마다 본문이 오간다.
+  | { type: 'reaction.added'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
+  | { type: 'reaction.removed'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] };

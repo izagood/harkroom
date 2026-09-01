@@ -237,3 +237,41 @@ describe('ChannelPane', () => {
     await waitFor(() => expect(box.value).toBe('hi there'));
   });
 });
+
+describe('ChannelPane sticky mentions', () => {
+  const sendMention = () => {
+    const box = screen.getByRole('textbox');
+    fireEvent.change(box, { target: { value: '@bot 봐줘', selectionStart: 8 } });
+    fireEvent.keyDown(box, { key: 'Escape' });
+    fireEvent.keyDown(box, { key: 'Enter' });
+  };
+  const chips = () =>
+    screen.queryAllByTestId('sticky-mention').map((el) => el.getAttribute('data-handle'));
+
+  // 채널마다 부르는 상대가 다르다. 고정이 따라오면 #general 의 에이전트가 #random 에서
+  // 깨어난다.
+  it('does not carry the kept mentions into another channel', async () => {
+    fakeController();
+    useAppStore.getState().set({ channels: [chan('c1', 'general'), chan('c2', 'random')] });
+    render(<ChannelPane />);
+    sendMention();
+    expect(chips()).toEqual(['bot']);
+
+    useAppStore.getState().set({ activeChannelId: 'c2' });
+
+    await waitFor(() => expect(chips()).toEqual([]));
+  });
+
+  it('brings them back when the channel comes back', async () => {
+    fakeController();
+    useAppStore.getState().set({ channels: [chan('c1', 'general'), chan('c2', 'random')] });
+    render(<ChannelPane />);
+    sendMention();
+
+    useAppStore.getState().set({ activeChannelId: 'c2' });
+    await waitFor(() => expect(chips()).toEqual([]));
+    useAppStore.getState().set({ activeChannelId: 'c1' });
+
+    await waitFor(() => expect(chips()).toEqual(['bot']));
+  });
+});

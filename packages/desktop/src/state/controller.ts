@@ -4,6 +4,7 @@ import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type Notifier } from '../lib/notify';
 import { useAppStore } from './appStore';
+import { usePrefsStore } from './prefsStore';
 
 export class Controller {
   private ws: WsHandle | null = null;
@@ -90,6 +91,12 @@ export class Controller {
         // 루트가 사라진 스레드를 계속 열어 두면 답글만 남은 빈 패널에 갇힌다.
         if (store.threadRootId === e.messageId) store.set({ threadRootId: null });
         break;
+      case 'reaction.added':
+      case 'reaction.removed':
+        store.applyReaction(e.channelId, e.messageId, e.emoji, e.accountId, e.type === 'reaction.added');
+        // 누른 사람이 처음 보는 계정이면 툴팁에 이름 대신 빈칸이 남는다.
+        if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
+        break;
       case 'inbox.updated':
         if (e.accountId === store.me?.id) {
           this.swallow(this.refreshUnread().then(() => this.announceNewMentions()));
@@ -142,10 +149,16 @@ export class Controller {
       return;
     }
 
+    const prefs = usePrefsStore.getState().notifications;
     const label = { mention: 'mentioned you in', thread_reply: 'replied in a thread in', dm: 'messaged you in' };
+    const wanted = { mention: prefs.mention, thread_reply: prefs.threadReply, dm: prefs.dm };
+
     for (const e of unread) {
       if (e.readAt || this.announced.has(e.id)) continue;
+      // 끈 알림도 여기서 '지나간 것'으로 표시한다 — 아니면 사용자가 알림을 켜는 순간
+      // 그동안 쌓인 것이 한꺼번에 터진다. 포커스 분기와 같은 이유다.
       this.announced.add(e.id);
+      if (!prefs.enabled || !wanted[e.reason]) continue;
 
       const row = (messages[e.channelId] ?? []).find((m) => m.id === e.messageId);
       const author = row ? accounts[row.authorId]?.handle : null;
@@ -156,11 +169,13 @@ export class Controller {
         : dm
           ? dm.memberIds.filter((id) => id !== me?.id).map((id) => accounts[id]?.handle ?? '…').join(', ')
           : 'murmur';
+      // 본문이 스토어에 없으면(창 밖으로 밀려난 채널 등) 이유만으로도 알림은 성립한다.
+      const generic = `New ${e.reason.replace('_', ' ')}`;
 
       await this.notifier.notify({
         title: `${author ? `@${author} ` : ''}${label[e.reason]} ${where}`.trim(),
-        // 본문이 스토어에 없으면(창 밖으로 밀려난 채널 등) 이유만으로도 알림은 성립한다.
-        body: row?.body ?? `New ${e.reason.replace('_', ' ')}`,
+        // 미리보기를 끄면 제목(누가·어디서)은 남기고 대화 내용만 뺀다.
+        body: prefs.showPreview ? (row?.body ?? generic) : generic,
       });
     }
   }
@@ -233,6 +248,19 @@ export class Controller {
     if (!activeChannelId || !threadRootId || !body.trim()) return;
     const m = await this.api.postMessage(activeChannelId, body, threadRootId, crypto.randomUUID());
     useAppStore.getState().upsertMessages(activeChannelId, [m]);
+  }
+
+  /**
+   * 리액션을 켜고 끈다. 서버가 받아들인 뒤에 화면을 갱신한다 — 미리 그려 두면 서버가 거절한
+   * 리액션(개수 상한·권한)이 새로고침에서 사라져 사용자가 무엇이 진짜인지 알 수 없다.
+   * 뒤이어 오는 소켓 이벤트는 같은 결과를 내므로(멱등) 두 번 반영되지 않는다.
+   */
+  async toggleReaction(channelId: string, messageId: string, emoji: string, on: boolean): Promise<void> {
+    const me = useAppStore.getState().me;
+    if (!me) return;
+    if (on) await this.api.addReaction(channelId, messageId, emoji);
+    else await this.api.removeReaction(channelId, messageId, emoji);
+    useAppStore.getState().applyReaction(channelId, messageId, emoji, me.id, on);
   }
 
   async editMessage(messageId: string, body: string): Promise<void> {
