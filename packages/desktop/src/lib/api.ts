@@ -1,4 +1,4 @@
-import type { AgentConfig, AgentView, AccountView, ChannelRow, DmView, InboxEntry, LeaseRow, MessageRow } from '@murmur/shared';
+import type { AgentConfig, AgentView, AccountView, AttachmentRow, ChannelRow, DmView, InboxEntry, LeaseRow, MessageRow } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -70,9 +70,17 @@ export class ApiClient {
     const qs = q.size ? `?${q.toString()}` : '';
     return this.req('GET', `/channels/${channelId}/messages${qs}`);
   }
-  postMessage(channelId: string, body: string, threadRootId?: string, idempotencyKey?: string): Promise<MessageRow> {
+  postMessage(
+    channelId: string, body: string, threadRootId?: string, idempotencyKey?: string,
+    attachmentIds: string[] = [],
+  ): Promise<MessageRow> {
     return this.req('POST', `/channels/${channelId}/messages`,
-      { body, ...(threadRootId ? { threadRootId } : {}) },
+      {
+        body,
+        ...(threadRootId ? { threadRootId } : {}),
+        // 빈 배열은 보내지 않는다 — 첨부를 쓰지 않는 요청의 본문을 넓히지 않는다.
+        ...(attachmentIds.length ? { attachmentIds } : {}),
+      },
       idempotencyKey ? { 'idempotency-key': idempotencyKey } : undefined);
   }
   async inboxUnread(): Promise<InboxEntry[]> {
@@ -116,6 +124,38 @@ export class ApiClient {
 
   removeReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
     return this.req('DELETE', `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`);
+  }
+
+  /**
+   * 파일 하나를 올린다. `FormData` 를 쓰므로 Content-Type 을 직접 정하지 않는다 —
+   * boundary 는 브라우저가 만든다.
+   */
+  async upload(file: File): Promise<AttachmentRow> {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${this.baseUrl}/uploads`, {
+      method: 'POST',
+      headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new ApiError(res.status, body?.error?.code ?? 'upload_failed', body?.error?.message ?? `HTTP ${res.status}`);
+    }
+    return res.json() as Promise<AttachmentRow>;
+  }
+
+  /**
+   * 첨부 바이트를 받는다. **토큰을 URL 에 넣지 않는다** — 서버 로거가 URL 을 기록하므로
+   * 쿼리 파라미터로 넘기면 자격증명이 평문으로 로그에 남는다. `<img src>` 와 `<a href>` 는
+   * 헤더를 붙일 수 없으니, 호출부가 이 blob 으로 objectURL 을 만들어 쓴다.
+   */
+  async fetchAttachment(id: string): Promise<Blob> {
+    const res = await fetch(`${this.baseUrl}/attachments/${id}`, {
+      headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) throw new ApiError(res.status, 'attachment_failed', `HTTP ${res.status}`);
+    return res.blob();
   }
 
   markRead(ids: number[]): Promise<void> { return this.req('POST', '/inbox/read', { ids }); }

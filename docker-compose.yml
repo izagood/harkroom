@@ -22,6 +22,13 @@ services:
     environment:
       DATABASE_URL: postgres://murmur:murmur@postgres:5432/murmur
       AVCS_BASE_URL: ${AVCS_BASE_URL:-}
+      ATTACHMENT_ROOT: /var/lib/murmur/attachments
+      ATTACHMENT_MAX_BYTES: ${ATTACHMENT_MAX_BYTES:-26214400}
+    volumes:
+      # 첨부 파일. 백업은 **이 볼륨을 먼저** 뜬 다음 DB 를 떠야 한다 — 반대 순서면 행이
+      # 가리키는 파일이 백업에 없어 복구 후 '깨진 첨부'가 된다. 볼륨을 먼저 뜨면 그 사이
+      # 생긴 파일이 DB 에 없을 뿐이고(고아 파일) 그건 무해하다.
+      - attachments:/var/lib/murmur/attachments
     ports:
       - "3400:3400"
     depends_on:
@@ -30,3 +37,4 @@ services:
     restart: unless-stopped
 volumes:
   pgdata:
+  attachments:

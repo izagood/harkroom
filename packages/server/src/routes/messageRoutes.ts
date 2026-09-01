@@ -11,17 +11,30 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
   app.post('/channels/:id/messages', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({
-      body: z.string().min(1).max(8000),
+      // 첨부만 보내는 것은 자연스럽다 — 그때 본문은 빈 문자열이다.
+      body: z.string().max(8000),
       threadRootId: z.string().uuid().optional(),
+      attachmentIds: z.array(z.string().uuid()).max(10).optional(),
+    }).refine((v) => v.body.trim().length > 0 || (v.attachmentIds?.length ?? 0) > 0, {
+      message: 'a message needs a body or an attachment',
     }).parse(req.body);
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
     const idempotencyKey = (req.headers['idempotency-key'] as string | undefined) ?? null;
-    const { message, notified, replayed } = await postMessage(pool, {
+    const posted = await postMessage(pool, {
       channelId: id, authorId: req.account!.id, body: body.body,
       threadRootId: body.threadRootId ?? null, idempotencyKey,
+      attachmentIds: body.attachmentIds ?? [],
     });
+    if (posted.failure) {
+      // 세 사유를 400 하나로 합친다 — 어느 쪽인지 알려 주면 남의 업로드 id 의 존재 여부를
+      // 확인하는 신호가 된다(not_found 와 not_yours 가 구분되면 그렇다).
+      return reply.code(400).send({
+        error: { code: 'bad_attachment', message: 'attachments must be your own, unused uploads' },
+      });
+    }
+    const { message, notified, replayed } = posted;
     if (!replayed) {
       const channel = await pool.query(`select kind from channel where id = $1`, [id]);
       const audience: 'all' | string[] =
