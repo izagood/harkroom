@@ -11,7 +11,7 @@ murmur는 avcs, buzz는 Nostr다.
 
 ## 1. 실측 셋업 (재현 절차)
 
-로컬 맥, `~/dev/my-workspace/buzz`, `deploy/compose`.
+최초 실측은 로컬 맥에서, 이후 `jaebin-worker` VM으로 이전했다(§2.6). 아래 값은 최초 실측 기준이다.
 
 | 항목 | 값 |
 |---|---|
@@ -53,6 +53,27 @@ curl -fsS http://127.0.0.1:3200/_liveness   # -> ok
    허용하는 경로는 `/invite/<code>`와, `BUZZ_SERVE_GIT_WEB_GUI=true`일 때의 `/repos/**`뿐이다.
    `/`는 API 라우터가 선점해 NIP-11 JSON을 반환한다.
 
+6. **URL 이전은 가능하다 — 단 순서가 전부다.** `RELAY_URL`을 바꿔 옮길 때
+   릴레이를 먼저 띄우면 빈 커뮤니티가 새로 생겨버린다. 순서는 이렇다:
+
+   ```sh
+   # 1) 옛 호스트에서 덤프
+   docker exec <pg> pg_dump -U buzz -Fc buzz > buzz.dump
+   # 2) 새 호스트: postgres만 먼저 올리고 복원
+   docker compose up -d --wait postgres
+   docker exec -i <pg> psql -U buzz -d postgres -c 'create database buzz owner buzz'
+   docker exec -i <pg> pg_restore -U buzz -d buzz --no-owner < buzz.dump
+   # 3) host 갱신 — 릴레이 기동 전에
+   docker exec <pg> psql -U buzz -d buzz \
+     -c "update communities set host='new.example.com:3200'"
+   # 4) 이제 전체 기동
+   ./run.sh start
+   ```
+
+   부팅 로그의 `community=<uuid>`가 옛 UUID 그대로면 성공이다. 이 절차로 이벤트
+   117건·메시지 18건·멤버 2명을 UUID 유지한 채 옮겼다. 미디어·git 저장소가 있으면
+   MinIO 버킷과 git 볼륨도 같은 정비 창에서 함께 옮겨야 한다.
+
 ## 3. 정면 대조
 
 ### 3.1 코드 협업 층 — 임베딩 vs 관찰
@@ -92,15 +113,23 @@ murmur는 `/bootstrap`으로 만든 서버 계정이 원천이고 handle+Argon2 
   병렬 추가 금지"* 라고 경고한다. 이벤트 소싱을 신원 층까지 밀어붙인 비용이다.
   murmur의 멤버십은 테이블 행이라 이 제약이 없다.
 
-### 3.3 워크스페이스 정체성이 URL에 묶인다
+### 3.3 워크스페이스 조회가 URL에 묶인다
 
 부팅 로그가 명시한다: `Deployment community ensured host=127.0.0.1:3200 community=<uuid>`.
-**커뮤니티 UUID가 host 문자열에서 파생**되므로 `RELAY_URL`을 바꾸면 새 커뮤니티가 생기고
-기존 데이터와 끊긴다. 블로그도 이를 경고한다.
+블로그는 `RELAY_URL`을 바꾸면 새 커뮤니티가 생긴다고 경고한다 — 사실이지만, **이유는
+파생이 아니라 조회다.**
 
-murmur는 "서버 인스턴스 1개 = 워크스페이스 1개"일 뿐 URL은 정체성이 아니다 —
-데스크탑이 로그인 시 서버 URL을 자유롭게 받는다. 도메인 이전·포트 변경에 murmur가 강하다.
-이 이점은 현재 `design.md`에 명시돼 있지 않다.
+`communities` 테이블을 실제로 보면 `id uuid DEFAULT gen_random_uuid()`에 `host`의
+`lower()` 유니크 인덱스가 걸려 있고, 릴레이는 `ensure_configured_community(&host)`로
+**host를 열쇠 삼아 조회할 뿐 id를 host에서 계산하지 않는다.** 즉 URL 변경이 데이터를
+끊는 게 아니라, 새 host로는 기존 행이 안 잡혀 빈 커뮤니티가 하나 더 생기는 것이다.
+
+그래서 이전은 가능하다(§2.6). 다만 buzz가 문서화한 경로가 아니고 DB를 직접 만져야 한다.
+
+murmur는 "서버 인스턴스 1개 = 워크스페이스 1개"일 뿐 URL이 조회 열쇠가 아니다 —
+데스크탑이 로그인 시 서버 URL을 자유롭게 받는다. 이전 난이도에서 murmur가 유리하지만,
+buzz도 막힌 건 아니라는 점에서 **처음 이 문서가 적은 것보다 격차는 작다.**
+murmur의 이 이점은 현재 `design.md`에 명시돼 있지 않다.
 
 ### 3.4 온보딩과 에이전트
 
