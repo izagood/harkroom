@@ -5,7 +5,7 @@
 // 멘션에 영원히 반복 응답했다. `inbox.read` 를 추가해 닫았고, 그래서 여기 REST 호출이 없다.
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { AgentView, InboxEntry, MessageRow } from '@murmur/shared';
+import type { AccountView, AgentView, InboxEntry, MessageRow } from '@murmur/shared';
 
 export interface Me { id: string; handle: string }
 
@@ -70,6 +70,20 @@ export class MurmurAgentClient {
   async channels(): Promise<{ id: string; name: string }[]> {
     const res = await this.call<{ channels: { id: string; name: string }[] }>('channel.list');
     return res.channels;
+  }
+
+  /**
+   * 워크스페이스 전체 계정 목록 — main.ts 가 배치 단위로 한 번 받아 accountId→handle
+   * 맵을 채우는 데 쓴다(prompt.ts::buildTurnPrompt 가 handles 없는 작성자를 "알 수 없는
+   * 사용자"로 렌더한다). MCP 에는 이 표면이 없다 — definition() 과 같은 이유로 REST 다.
+   */
+  async accounts(): Promise<AccountView[]> {
+    const res = await fetch(`${this.baseUrl}/accounts`, {
+      headers: { authorization: `Bearer ${this.pat}` },
+    });
+    if (!res.ok) throw new Error(`accounts 실패: ${res.status}`);
+    const body = (await res.json()) as { accounts: AccountView[] };
+    return body.accounts;
   }
 
   /** timeoutMs 동안 park 한다. 새 항목이 없으면 빈 배치로 정상 반환된다. */

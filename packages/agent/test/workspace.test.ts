@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -56,6 +56,22 @@ describe('ensureWorkspace', () => {
 
     expect(calls).toHaveLength(0);
     expect(dir).toBe(existingDir);
+  });
+
+  // Task 4 리뷰 지적: access() 는 파일과 디렉터리를 구분하지 않는다 — 비정상 종료가 남긴
+  // 빈 파일 등을 디렉터리로 착각해 그 경로를 그대로 돌려주면, 그 값이 cwd 로 쓰이는 PTY
+  // spawn 이 ENOTDIR 로 죽거나 더 나쁘게 엉뚱한 곳에서 돈다. 이건 avcs repo 여부와 무관한
+  // 사람이 고쳐야 할 상태라 폴백하지 않고 던져야 한다.
+  it('워크스페이스 경로에 디렉터리가 아닌 파일이 있으면 폴백하지 않고 던진다', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'ws-'));
+    const name = workspaceName('forge', 'ch1/m9');
+    await writeFile(join(baseDir, name), '');
+
+    const exec: Exec = async () => ({ code: 0, stdout: '', stderr: '' });
+
+    await expect(
+      ensureWorkspace(exec, { handle: 'forge', threadKey: 'ch1/m9', baseDir, repoDir: '/repo' }),
+    ).rejects.toThrow(/디렉터리가 아닌 파일/);
   });
 
   it('avcs repo 가 아니면 격리 없이 repoDir 로 폴백한다 — 채팅 전용 에이전트가 죽으면 안 된다', async () => {

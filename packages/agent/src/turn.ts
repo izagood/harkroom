@@ -214,6 +214,19 @@ function assertValidSession(
   );
 }
 
+/**
+ * 새 SessionRecord 를 만들 때 sessionId 를 러너가 미리 발급해야 하는 harness 인가
+ * (main.ts::runMentionTurn). harness 이름을 main.ts 에서 직접 비교하면 이 표(PRESETS)와
+ * 진실 원천이 둘로 갈린다 — `allowsNullSessionOnFirstMention` 하나로 양쪽을 다 결정한다.
+ */
+export function preassignsSessionId(harness: AgentHarness): boolean {
+  const preset = PRESETS[harness];
+  if (preset === 'unsupported') {
+    throw new Error(`preassignsSessionId: harness '${harness}' 는 러너가 아직 지원하지 않는다`);
+  }
+  return !preset.allowsNullSessionOnFirstMention;
+}
+
 export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
   const preset = PRESETS[opts.harness];
   if (preset === 'unsupported') {

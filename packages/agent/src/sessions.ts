@@ -22,6 +22,20 @@ export interface SessionRecord {
    * 보게 되어, 협업이 서로 독백하는 꼴이 된다.
    */
   lastFedSeq: number;
+  /**
+   * 이 세션으로 실제로 하네스를 돌린 횟수. 0 이면 아직 한 번도 안 돌았다는 뜻이고, 이때만
+   * `buildTurnCommand` 의 `isFirstTurn` 이 true 여야 한다(main.ts::runMentionTurn).
+   *
+   * **`lastFedSeq === 0` 으로 유도하면 안 된다 — 별개의 사실이다.** `buildTurnPrompt` 가
+   * 프롬프트를 비워 턴 자체를 건너뛰는 경우(새 메시지가 전부 자기 발화)에도 `lastFedSeq`
+   * 는 전진한다 — 무엇을 "봤는지"의 경계이지 "하네스를 돌렸는지"의 증거가 아니다. 오늘의
+   * `buildTurnPrompt` 구현은 첫 턴에서는 자기 발화 필터를 걸지 않아(이 필드가 0 일 때
+   * 상응하는 lastFedSeq 도 항상 0) 이 둘이 실제로 어긋나는 사례를 만들어 내지는 못했지만,
+   * 그 사실은 이 모듈이 알 수 있는 게 아니라 prompt.ts 의 현재 구현에 우연히 기대는
+   * 불변식이다 — prompt.ts 가 나중에 바뀌면 조용히 깨질 수 있다. 그래서 "돌았는가"를
+   * 직접 세어 두는 쪽이 맞다: 유도된 값이 아니라 사실 자체를 저장한다.
+   */
+  turnsRun: number;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -33,13 +47,14 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 // 단서가 하나도 안 남는다. 저장 전에 모양을 확인해서 여기서 걸러낸다.
 function isSessionRecord(value: unknown): value is SessionRecord {
   if (!isPlainObject(value)) return false;
-  const { workspaceDir, sessionId, harness, lastFedSeq } = value;
+  const { workspaceDir, sessionId, harness, lastFedSeq, turnsRun } = value;
   return (
     typeof workspaceDir === 'string' &&
     (sessionId === null || typeof sessionId === 'string') &&
     typeof harness === 'string' &&
     (AGENT_HARNESSES as readonly string[]).includes(harness) &&
-    typeof lastFedSeq === 'number'
+    typeof lastFedSeq === 'number' &&
+    typeof turnsRun === 'number'
   );
 }
 

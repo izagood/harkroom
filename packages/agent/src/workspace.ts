@@ -6,7 +6,7 @@
 // 그대로 넘겨받아 격리가 조용히 사라진다.
 
 import { createHash } from 'node:crypto';
-import { access } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export type Exec = (
@@ -46,11 +46,25 @@ export async function ensureWorkspace(
   const name = workspaceName(opts.handle, opts.threadKey);
   const dir = join(opts.baseDir, name);
 
-  const alreadyExists = await access(dir).then(
-    () => true,
-    () => false,
-  );
-  if (alreadyExists) return dir;
+  // access() 는 존재 여부만 보고 파일과 디렉터리를 구분하지 않는다 — 그 경로에 일반 파일이
+  // 있으면(비정상 종료가 남긴 빈 파일 등) 디렉터리로 착각해 그대로 돌려주고, 그 값이 이후
+  // PTY spawn 의 cwd 로 쓰인다(main.ts). ENOTDIR 로 죽거나 더 나쁘게는 엉뚱한 곳에서 돈다 —
+  // stat 으로 실제 타입을 확인한다.
+  let existing: Awaited<ReturnType<typeof stat>> | null = null;
+  try {
+    existing = await stat(dir);
+  } catch {
+    existing = null;
+  }
+  if (existing) {
+    if (!existing.isDirectory()) {
+      // 이건 폴백 대상이 아니다 — avcs 가 아니라서 못 만든 게 아니라, 사람(또는 다른
+      // 프로세스)이 이 경로에 뭔가를 잘못 남겨 둔 상태다. 조용히 넘어가면 다음에 그 자리에
+      // cwd 로 들어가는 PTY 가 알 수 없는 이유로 죽는다 — 원인을 여기서 바로 알려준다.
+      throw new Error(`${dir} 에 디렉터리가 아닌 파일이 있다 — 사람이 정리해야 한다`);
+    }
+    return dir;
+  }
 
   const result = await exec('avcs', ['workspace', 'project', name, '--out', dir], { cwd: opts.repoDir });
   if (result.code === 0) return dir;
