@@ -12,6 +12,17 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AgentHarness, MentionPermission } from '@murmur/shared';
 
+/**
+ * `murmurUrl` 은 서버 베이스 URL(`http://localhost:3400`)이고, MCP 엔드포인트는 `/mcp` 다.
+ * claude(`writeMcpConfigOnce`)와 codex(`CODEX_PRESET.mcp`) 양쪽이 이 정규화를 거쳐야 한다 —
+ * 한쪽만 하고 다른 쪽을 murmurUrl 그대로 쓰면 그쪽 harness 는 베이스 URL 에 `POST /` 를
+ * 때려 `404 route not found` 로 MCP 연결 자체가 안 된다(실물 검증에서 codex 가 이렇게
+ * 실패했다 — 아래 CODEX_PRESET.mcp 참고).
+ */
+function mcpUrl(murmurUrl: string): string {
+  return `${murmurUrl.replace(/\/$/, '')}/mcp`;
+}
+
 export type TurnMode = 'mention' | 'interactive';
 
 export interface TurnPlan {
@@ -157,7 +168,21 @@ const CODEX_PRESET: HarnessPreset = {
     // `bearer_token_env_var` 는 env 변수 "이름"만 담는다 — PAT 값 자체는 절대 argv 에 오르지
     // 않는다(spec §7, task-1 실측: `-c mcp_servers.murmur.bearer_token_env_var="MURMUR_PAT"`).
     // 실값은 buildTurnCommand 가 돌려주는 env.MURMUR_PAT 로만 간다.
-    '-c', `mcp_servers.murmur.url="${murmurUrl}"`,
+    //
+    // **`/mcp` 를 붙여야 한다 — 실물 검증에서 드러난 회귀다.** `murmurUrl` 은 서버 베이스
+    // URL(`http://localhost:3400`)이지 MCP 엔드포인트가 아니다. claude 쪽은
+    // `writeMcpConfigOnce` 가 `${murmurUrl}/mcp` 로 정규화해서 파일에 굽는데, 여기는 그 정규화
+    // 없이 murmurUrl 을 그대로 썼다 — codex 가 `POST /`(베이스 URL)를 때려 서버가
+    // `404 route not found: POST /` 를 던지고, MCP 자체가 안 붙어 murmur 도구가 하나도 안
+    // 보였다. 실제 실패 증상은 조용했다: codex 는 exit 0 으로 끝났지만 message.post 를 못 불러
+    // "(답 없이 턴을 끝냈습니다)" 만 남았다 — 원인이 이 URL 하나였다는 단서가 로그 어디에도
+    // 없었다. 단위 테스트가 못 잡은 이유도 같은 패턴이다: `test/turn.test.ts` 의 fixture 가
+    // `murmurUrl: 'http://localhost:3401/mcp'` 로 **이미 `/mcp` 가 붙은 값을 직접 줘서** 이
+    // 함수가 값을 그대로 돌려주기만 해도 통과했다 — 프로덕션(main.ts→config.murmurUrl)이
+    // 실제로 주는 값(베이스 URL, `/mcp` 없음)과 다른 입력으로 검증한 것이다. `mcpUrl()` 로
+    // claude 와 정규화 지점을 하나로 합쳐, 다음에 엔드포인트 경로가 바뀌어도 한 곳만 고치면
+    // 되게 한다.
+    '-c', `mcp_servers.murmur.url="${mcpUrl(murmurUrl)}"`,
     '-c', 'mcp_servers.murmur.bearer_token_env_var="MURMUR_PAT"',
   ],
   model: (model) => (model ? ['--model', model] : []),
@@ -253,7 +278,37 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
 
   // PAT 는 절대 argv 에 올리지 않는다 — 자식 프로세스 env 로만 준다. `ps` 로 argv 는 다른
   // 사용자에게도 보이지만 env 는 보이지 않는다(spec §7, task-1 실측 확인).
-  return { command: preset.command, args, env: { MURMUR_PAT: opts.pat } };
+  return { command: preset.command, args, env: childEnv(opts.pat) };
+}
+
+/**
+ * PTY 자식에 넘길 env. 부모(러너) 전체를 물려주고 `MURMUR_PAT` 만 덮어쓴다.
+ *
+ * **실물 검증에서 발견된 회귀다.** `pty.spawn` 은 `env` 를 넘기면 부모 env 와 **병합하지
+ * 않고 그 값으로 완전히 대체한다**(node-pty `unixTerminal.js`: `opt.env = opt.env ||
+ * process.env` — 넘겼다 하면 그걸로 끝, 상속은 opt.env 를 아예 안 줬을 때뿐이다). 이 함수가
+ * 전에는 `{ MURMUR_PAT: opts.pat }` 하나만 돌려줬는데, 그 결과 자식은 `PATH`·`HOME` 이 통째로
+ * 없는 채로 떴다 — `claude`/`codex` 실행 파일을 못 찾거나(PATH), Keychain·`~/.codex/auth.json`
+ * 같은 로그인 자격증명을 못 읽어(HOME) 모든 실물 턴이 즉시 실패했다(`harness 종료 1`, 출력
+ * 없음). 단위 테스트는 이걸 못 잡았다 — `test/pty.test.ts` 가 가짜 plan 을 만들 때
+ * `{ ...process.env, FAKE_MODE }` 로 **직접 부모 env 를 펼쳐서** 이 함수를 우회했기 때문이다
+ * (그 우회 자체도 이번에 없앴다). 옛 `child_process.spawn('claude', args)` 시절엔 env 를
+ * 아예 안 넘겨 기본적으로 상속됐으므로 이 결함은 PTY 전환이 새로 만든 회귀다.
+ *
+ * 화이트리스트(PATH·HOME만)가 아니라 전체 상속인 이유: 하네스가 정확히 무엇을 읽는지 우리가
+ * 다 알 수 없다 — claude 는 Keychain, codex 는 `~/.codex/auth.json`, 둘 다 XDG_*·TMPDIR·
+ * 프록시·로케일 변수에 기댈 수 있다. 옛 동작(전체 상속)으로 되돌리는 것이 회귀 없는 복원이고,
+ * 좁히려면 각 하네스가 실제로 무엇을 쓰는지 먼저 측정해야 하는데 그건 이 결함 수정의 범위가
+ * 아니다. `process.env` 의 값 타입은 `string | undefined` 라 `TurnPlan.env`(`Record<string,
+ * string>`)에 맞추려면 undefined 를 걸러야 한다.
+ */
+function childEnv(pat: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) env[key] = value;
+  }
+  env.MURMUR_PAT = pat;
+  return env;
 }
 
 /**
@@ -272,7 +327,7 @@ export async function writeMcpConfigOnce(dir: string, murmurUrl: string): Promis
     mcpServers: {
       murmur: {
         type: 'http' as const,
-        url: `${murmurUrl.replace(/\/$/, '')}/mcp`,
+        url: mcpUrl(murmurUrl),
         headers: { Authorization: 'Bearer ${MURMUR_PAT}' },
       },
       avcs: { type: 'stdio' as const, command: 'avcs', args: ['mcp'] },

@@ -4,11 +4,32 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildTurnCommand, preassignsSessionId, writeMcpConfigOnce } from '../src/turn.js';
 
+// murmurUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
+// 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
+// `/mcp` 가 붙은 값을 fixture 로 썼는데, 그러면 CODEX_PRESET.mcp 가 `/mcp` 를 안 붙이는
+// 결함이 있어도(실물 검증에서 발견 — turn.ts::mcpUrl 참고) 값이 우연히 맞아떨어져 테스트가
+// 그 결함을 못 잡았다. 프로덕션이 실제로 주는 모양으로 고쳐야 이 종류의 결함을 다시 잡는다.
 const base = {
   systemPrompt: 'SYS', promptCtx: 'CTX', model: null, effort: null,
   mentionPermission: 'auto' as const, mcpConfigPath: '/mcp.json', pat: 'murp_x',
-  murmurUrl: 'http://localhost:3401/mcp',
+  murmurUrl: 'http://localhost:3401',
 };
+
+// 실물 검증에서 드러난 회귀 — pty.spawn 에 env 를 넘기면 node-pty 가 부모 env 와 **병합하지
+// 않고 대체**한다(unixTerminal.js: `opt.env = opt.env || process.env`). buildTurnCommand 가
+// `{ MURMUR_PAT }` 하나만 돌려주던 때는 이 값이 그대로 자식의 전체 env 가 되어 PATH·HOME 이
+// 사라지고 harness 를 못 찾거나 로그인 자격증명을 못 읽어 모든 실물 턴이 즉시 실패했다
+// (turn.ts::childEnv). 이 테스트는 그 반환값 자체(생성자 출력)를 겨눈다 — `p.env.MURMUR_PAT`
+// 만 보던 예전 단언들은 `{ MURMUR_PAT: 'x' }` 하나짜리 env 로도 통과했으므로 이 결함을 못
+// 잡았다.
+describe('buildTurnCommand — env 는 부모를 물려받는다 (실물 검증에서 드러난 회귀)', () => {
+  it('PATH·HOME 등 부모 env 를 물려주고 MURMUR_PAT 만 덮어쓴다', () => {
+    const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true });
+    expect(p.env.PATH).toBe(process.env.PATH);
+    if (process.env.HOME) expect(p.env.HOME).toBe(process.env.HOME);
+    expect(p.env.MURMUR_PAT).toBe('murp_x');
+  });
+});
 
 describe('buildTurnCommand — claude', () => {
   it('첫 멘션 턴: session-id 할당 + bypassPermissions + PAT 는 env 로만', () => {
@@ -111,11 +132,23 @@ describe('buildTurnCommand — codex', () => {
   // 돌다가 답을 못 하고, 러너는 "답 없이 턴을 끝냈습니다"만 남긴다 — 원인 단서가 없는 조용한
   // 실패다. 그래서 murmurUrl 은 선택이 아니라 필수이고, codex 의 모든 턴에 반드시 붙는다.
   it('codex 턴의 argv 에는 murmur MCP 등록이 항상 들어 있다 — PAT 값 자체는 여전히 안 붙는다', () => {
-    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, murmurUrl: 'http://localhost:3401/mcp' });
+    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, murmurUrl: 'http://localhost:3401' });
     expect(p.args.join(' ')).toContain('mcp_servers.avcs.command');
     expect(p.args.join(' ')).toContain('mcp_servers.murmur.url="http://localhost:3401/mcp"');
     expect(p.args.join(' ')).toContain('mcp_servers.murmur.bearer_token_env_var="MURMUR_PAT"');
     expect(p.args.join(' ')).not.toContain('murp_x');
+  });
+
+  // 실물 검증에서 드러난 회귀 — murmurUrl 은 서버 베이스 URL 이지 MCP 엔드포인트가 아닌데
+  // codex 쪽 조립이 `/mcp` 를 안 붙여, codex 가 `POST /`(베이스 URL)를 때려 서버의
+  // `404 route not found` 로 MCP 연결 자체가 안 됐다. 증상은 조용했다 — exit 0, message.post
+  // 못 부름, "(답 없이 턴을 끝냈습니다)"만 남았다. 위 테스트는 murmurUrl 에 이미 `/mcp` 가
+  // 붙은 값을 넘겨 이 결함을 가렸다 — 이 테스트는 **베이스 URL 만 주고** 조립된 값이 실제
+  // 엔드포인트(`/mcp`)와 같은지를 겨눈다.
+  it('murmurUrl 에 이미 트레일링 슬래시가 있어도 /mcp 가 정확히 한 번만 붙는다', () => {
+    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, murmurUrl: 'http://localhost:3401/' });
+    expect(p.args.join(' ')).toContain('mcp_servers.murmur.url="http://localhost:3401/mcp"');
+    expect(p.args.join(' ')).not.toContain('http://localhost:3401//mcp');
   });
 
   // murmurUrl 을 빈 문자열로 넘기면 타입 체크는 통과하지만(string), 그대로 두면
