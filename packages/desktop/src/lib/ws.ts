@@ -49,6 +49,7 @@ export function connectWs(baseUrl: string, getTicket: TicketProvider, cb: WsCall
     };
   };
 
+
   void open();
 
   return {

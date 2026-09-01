@@ -13,6 +13,7 @@ export class Controller {
   constructor(
     public api: ApiClient,
     private makeWs: typeof connectWs = connectWs,
+
   ) {}
 
   // fire-and-forget 호출의 unhandled rejection 방지 — 실패는 조용히 무시(다음 이벤트/리컨실이 자연 복구).
@@ -147,6 +148,10 @@ export class Controller {
   }
 
   logout(): void {
+    // 서버 세션 폐기를 먼저 **발사**하되 기다리지 않는다. 응답을 기다리면 오프라인일 때
+    // 로그아웃이 멈춰 버리고, 실패해도 로컬은 반드시 비워야 한다 — 안 그러면 사용자가
+    // 로그인 상태에 갇힌다. 남은 서버 세션은 만료(14일)와 소켓 재검증이 정리한다.
+    this.swallow(this.api.logout());
     this.stop();
     sessionStore.clear();
     useAppStore.getState().reset();

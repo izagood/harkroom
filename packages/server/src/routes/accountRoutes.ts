@@ -30,6 +30,17 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     return reply.code(201).send({ token });
   });
 
+  // 라벨 단위 폐기다. pat.label 에 유일성이 없으므로 같은 라벨의 토큰이 여러 개면 전부 폐기된다 —
+  // 폐기에서는 그 방향이 안전한 쪽이다(하나 남는 것보다 하나 더 끊는 것이 낫다).
+  app.delete('/accounts/:id/pats/:label', { preHandler: app.requireAdmin }, async (req) => {
+    const { id, label } = z.object({ id: z.string().uuid(), label: z.string().min(1).max(64) }).parse(req.params);
+    const res = await pool.query(
+      `update pat set revoked_at = now() where account_id = $1 and label = $2 and revoked_at is null`,
+      [id, label],
+    );
+    return { revoked: res.rowCount ?? 0 };
+  });
+
   app.put('/accounts/:id/keys', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     if (!req.account!.isAdmin && req.account!.id !== id) {

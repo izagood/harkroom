@@ -16,6 +16,8 @@ export interface ServerDeps {
   getAvcsStatus?: () => { connected: boolean };
   /** 종료 시 in-flight long-poll을 정상 마감시키는 창구. main이 SIGTERM에서 beginDrain을 부른다. */
   lifecycle?: Lifecycle;
+  /** 열린 WS 소켓의 자격증명 재검증 주기(ms). 테스트에서 짧게 준다. */
+  wsRevalidateMs?: number;
 }
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
@@ -50,7 +52,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   await registerAuth(app, deps.pool);
-  await registerWs(app, deps.pool);
+  await registerWs(app, deps.pool, { revalidateMs: deps.wsRevalidateMs });
   await registerAuthRoutes(app, deps.pool);
   await registerAccountRoutes(app, deps.pool);
   await registerChannelRoutes(app, deps.pool);

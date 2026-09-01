@@ -9,10 +9,16 @@
 // 재시작으로 티켓이 사라져도 클라이언트가 다시 받으면 그만이라 영속성이 필요 없다.
 import { newToken } from '../auth/tokens.js';
 
+export interface TicketHolder {
+  accountId: string;
+  /** 티켓을 발급받을 때 쓴 토큰의 해시. 소켓이 자기 자격증명을 재검증하는 근거다. */
+  tokenHash: string;
+}
+
 export interface TicketStore {
-  issue(accountId: string): string;
-  /** 계정 id, 또는 없거나·이미 쓰였거나·만료됐으면 null. */
-  consume(ticket: string): string | null;
+  issue(holder: TicketHolder): string;
+  /** 발급 주체, 또는 없거나·이미 쓰였거나·만료됐으면 null. */
+  consume(ticket: string): TicketHolder | null;
   size(): number;
 }
 
@@ -20,17 +26,17 @@ const DEFAULT_TTL_MS = 30_000;
 
 export function createTicketStore(opts: { ttlMs?: number } = {}): TicketStore {
   const ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
-  const live = new Map<string, { accountId: string; expiresAt: number }>();
+  const live = new Map<string, TicketHolder & { expiresAt: number }>();
 
   return {
-    issue(accountId) {
+    issue(holder) {
       // 받아만 두고 연결하지 않은 티켓은 아무도 지워주지 않는다 — 발급할 때 쓸어낸다.
       const now = Date.now();
       for (const [key, entry] of live) {
         if (entry.expiresAt <= now) live.delete(key);
       }
       const { token } = newToken('murt');
-      live.set(token, { accountId, expiresAt: now + ttlMs });
+      live.set(token, { ...holder, expiresAt: now + ttlMs });
       return token;
     },
 
@@ -38,7 +44,8 @@ export function createTicketStore(opts: { ttlMs?: number } = {}): TicketStore {
       const entry = live.get(ticket);
       if (!entry) return null;
       live.delete(ticket); // 1회용 — 만료 여부와 무관하게 소모한다
-      return entry.expiresAt > Date.now() ? entry.accountId : null;
+      if (entry.expiresAt <= Date.now()) return null;
+      return { accountId: entry.accountId, tokenHash: entry.tokenHash };
     },
 
     size() {
