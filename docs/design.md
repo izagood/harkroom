@@ -214,6 +214,11 @@ intent(자발·외부 작업)만 투영 규칙대로 새 작업 스레드를 자
 - **avcs 서버 다운 = 채팅은 무사**: 투영 워커만 지수 백오프 재접속, 복구 시
   커서부터 따라잡기(멱등성이 안전망). `/readyz`는 Postgres만 필수, avcs 연결은
   degraded로 표시.
+- **presence 는 하트비트를 따른다**: 서버가 30초(`wsHeartbeatMs`)마다 ping 을 보내고, 직전 ping 에
+  pong 이 없던 소켓을 끊는다(`ws/heartbeat.ts`). 케이블이 뽑히거나 피어가 wedge 되면 **close
+  이벤트가 오지 않아** 죽은 연결이 online 으로 남았고, 사람은 그걸 "저 에이전트가 살아 있다"로
+  읽는다. 한 번 놓친 pong 은 용서하고 연속 미응답만 끊는다 — 순간 지연으로 정상 연결을
+  흔들지 않기 위해서다. 정리는 close 핸들러가 하므로 presence 경로가 하나로 유지된다.
 - **관측**: 요청 로깅은 pino(Fastify 기본)이고 레벨은 `LOG_LEVEL`(기본 `info`)이다. 로그로
   자격증명이 새지 않는 것이 이 층의 요구사항이다 — `authorization`·`cookie` 헤더는 redact하고,
   URL 쿼리의 `ticket`·`token`·`idempotency-key` 값은 `REDACTED`로 치환한다(`logging.ts`).

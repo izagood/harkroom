@@ -4,10 +4,10 @@ import type { Pool } from 'pg';
 import type { WsServerEvent } from '@murmur/shared';
 
 
-
 import { emitEvent, onEvent, type WorkspaceEvent } from '../events.js';
 import { createTicketStore } from './tickets.js';
 import { findInvalidCredentials } from './credentials.js';
+import { createHeartbeat } from './heartbeat.js';
 
 function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
   switch (e.type) {
@@ -29,6 +29,8 @@ export interface WsOptions {
   allowedOrigins?: string[] | null;
   /** 소켓 뒤 자격증명 재검증 주기. */
   revalidateMs?: number;
+  /** ping/pong 주기. 이 주기 안에 pong 이 없으면 다음 주기에 끊는다. 기본 30초. */
+  heartbeatMs?: number;
 }
 
 export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptions = {}): Promise<void> {
@@ -64,6 +66,16 @@ export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptio
   // 테스트는 서버를 여럿 만든다 — 해제하지 않으면 이벤트 루프가 살아남아 러너가 끝나지 않는다.
   app.addHook('onClose', async () => { clearInterval(sweep); });
 
+  // 하트비트. design.md §4 는 presence 를 "WS 연결 + 하트비트 기준"이라고 적었지만 ping/pong 이
+  // 없어서, 케이블이 뽑히거나 피어가 wedge 되면 **close 이벤트가 오지 않아** 죽은 연결이 online
+  // 으로 남았다. 사람은 그걸 "저 에이전트가 살아 있다"로 읽는다. 판정은 heartbeat.ts 가 하고
+  // (직전 ping 에 pong 이 없으면 끊는다) 여기서는 주기만 돌린다. 끊으면 close 핸들러가 돌아
+  // presence 가 정리된다.
+  const heartbeat = createHeartbeat();
+  const beat = setInterval(() => heartbeat.tick(), opts.heartbeatMs ?? 30_000);
+  beat.unref?.(); // 이 타이머가 프로세스 종료를 붙잡지 않게 한다
+  app.addHook('onClose', async () => { clearInterval(beat); });
+
   // 브라우저의 WebSocket 생성자는 헤더를 붙일 수 없다. 그래서 자격증명은 URL 로 갈 수밖에
   // 없는데, URL 은 앞단 프록시 로그에 남는다 — 장기 토큰 대신 여기서 받은 단기 1회용
   // 티켓을 싣는다. 이 엔드포인트는 Authorization 헤더로 인증한다.
@@ -84,6 +96,9 @@ export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptio
 
     const entry = { socket, credentialHash };
     live.add(entry);
+    // 정상 ws 클라이언트는 ping 에 자동으로 pong 한다. 서버는 그 답을 기록만 한다.
+    heartbeat.track(socket);
+    socket.on('pong', () => heartbeat.pong(socket));
 
     const off = onEvent((e) => {
       if (visibleTo(e, accountId)) socket.send(JSON.stringify(e));
@@ -97,6 +112,7 @@ export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptio
 
     socket.on('close', () => {
       live.delete(entry);
+      heartbeat.untrack(socket);
       off();
       const left = (connections.get(accountId) ?? 1) - 1;
       if (left <= 0) {
