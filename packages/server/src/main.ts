@@ -1,13 +1,17 @@
-import pg from 'pg';
 import { loadConfig } from './config.js';
 import { runMigrations } from './db/migrate.js';
+import { createPool } from './db/pool.js';
 import { buildServer } from './buildServer.js';
 import { httpAvcsClient } from './avcs/client.js';
 import { ProjectionWorker, ensureSystemAccount } from './avcs/projection.js';
 import { Lifecycle } from './lifecycle.js';
 
 const config = loadConfig();
-const pool = new pg.Pool({ connectionString: config.databaseUrl });
+// 가드 없는 Pool 을 만들지 않는다 — pg 는 유휴 클라이언트 에러를 리스너 없으면 uncaught
+// exception 으로 던지고, Postgres 재시작이 곧 서버 사망이 된다(db/pool.ts 참조).
+const pool = createPool(config.databaseUrl, (err) => {
+  console.error('postgres pool error (idle client):', err.message);
+});
 await runMigrations(pool);
 
 let worker: ProjectionWorker | null = null;
