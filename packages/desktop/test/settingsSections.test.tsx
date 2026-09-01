@@ -4,7 +4,8 @@ import { useAppStore } from '../src/state/appStore';
 import { ProfileSettings } from '../src/components/settings/ProfileSettings';
 import { ConnectionSettings } from '../src/components/settings/ConnectionSettings';
 import { UpdatesSettings } from '../src/components/settings/UpdatesSettings';
-import { acc } from './helpers/fakeApi';
+import { setController, type Controller } from '../src/state/controller';
+import { acc, fakeApi } from './helpers/fakeApi';
 
 beforeEach(() => {
   localStorage.clear();
@@ -36,8 +37,13 @@ describe('ProfileSettings', () => {
 });
 
 describe('ConnectionSettings', () => {
+  // 주소는 보관된 값이 아니라 **지금 붙어 있는** 클라이언트에서 읽는다. 토큰 보관이 키체인으로
+  // 가면서 렌더 중 동기 읽기가 불가능해졌고, 어차피 사용자가 알고 싶은 것은 실제 연결 대상이다.
+  beforeEach(() => {
+    setController({ api: { ...fakeApi(), baseUrl: 'http://localhost:3400' } } as unknown as Controller);
+  });
+
   it('shows the server it is connected to and the live socket state', () => {
-    localStorage.setItem('murmur.session', JSON.stringify({ baseUrl: 'http://localhost:3400', token: 't' }));
     render(<ConnectionSettings onSignOut={vi.fn()} />);
     expect(screen.getByText('http://localhost:3400')).toBeTruthy();
     expect(screen.getByTestId('connection-state').textContent).toBe('Connected');
