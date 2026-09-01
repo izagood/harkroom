@@ -22,7 +22,8 @@ describe('Controller', () => {
     const api = fakeApi({
       messages: vi.fn(async () => ({ messages: [msg('m1', 'c1', 1, 'a'), msg('m2', 'c1', 2, 'b')], hasMore: false })),
       inboxUnread: vi.fn(async () => [
-        { id: 7, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c1' },
+        // as const 없이는 reason 이 string 으로 추론돼 InboxEntry 의 union 과 어긋난다.
+        { id: 7, messageId: 'm1', reason: 'mention' as const, readAt: null, channelId: 'c1' },
       ]),
     });
     const { makeWs } = fakeWsFactory();
