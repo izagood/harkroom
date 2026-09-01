@@ -4,11 +4,15 @@ import { z } from 'zod';
 import { newToken } from '../auth/tokens.js';
 import { AGENT_HARNESSES } from '@murmur/shared';
 import { createAgentAccount, getAgent, listAgents, updateAgent } from '../services/agents.js';
+import { recordAudit } from '../audit.js';
 
 export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.post('/invites', { preHandler: app.requireAdmin }, async (req, reply) => {
     const { token, hash } = newToken('muri');
     await pool.query(`insert into invite (token_hash, created_by) values ($1, $2)`, [hash, req.account!.id]);
+    await recordAudit(pool, {
+      action: 'invite.created', actorId: req.account!.id, actorHandle: req.account!.handle,
+    }, req);
     return reply.code(201).send({ token });
   });
 
@@ -31,7 +35,12 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
       displayName: z.string().min(1).max(64),
       ...configFields,
     }).parse(req.body);
-    return reply.code(201).send(await createAgentAccount(pool, body));
+    const created = await createAgentAccount(pool, body);
+    await recordAudit(pool, {
+      action: 'agent.created', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: created.id, detail: { handle: body.handle },
+    }, req);
+    return reply.code(201).send(created);
   });
 
   app.patch('/accounts/agents/:id', { preHandler: app.requireAdmin }, async (req, reply) => {
@@ -64,6 +73,12 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     const body = z.object({ label: z.string().min(1).max(64) }).parse(req.body);
     const { token, hash } = newToken('murp');
     await pool.query(`insert into pat (token_hash, account_id, label) values ($1, $2, $3)`, [hash, id, body.label]);
+    // pat 행은 토큰을 받은 에이전트만 가리킨다 — 누가 그 권한을 줬는지는 어디에도 없었다.
+    // 토큰도 해시도 남기지 않는다: 라벨과 대상만으로 추적에 충분하다.
+    await recordAudit(pool, {
+      action: 'pat.issued', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { label: body.label },
+    }, req);
     return reply.code(201).send({ token });
   });
 
@@ -75,7 +90,12 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
       `update pat set revoked_at = now() where account_id = $1 and label = $2 and revoked_at is null`,
       [id, label],
     );
-    return { revoked: res.rowCount ?? 0 };
+    const revoked = res.rowCount ?? 0;
+    await recordAudit(pool, {
+      action: 'pat.revoked', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { label, revoked },
+    }, req);
+    return { revoked };
   });
 
   app.put('/accounts/:id/keys', { preHandler: app.requireAccount }, async (req, reply) => {

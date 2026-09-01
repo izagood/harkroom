@@ -10,7 +10,7 @@
 
 | 상태 | 어디에 | 백업 대상인가 |
 |---|---|---|
-| 채팅·멤버십·inbox·투영 커서·idempotency·세션/PAT 해시 | Postgres 볼륨 `pgdata` | **필수.** 이것만 잃으면 워크스페이스가 사라진다 |
+| 채팅·멤버십·inbox·투영 커서·idempotency·세션/PAT 해시·**감사 추적** | Postgres 볼륨 `pgdata` | **필수.** 이것만 잃으면 워크스페이스가 사라진다 |
 | avcs 오브젝트(intent·operation·decision·lease) | **avcs 서버의 저장소** (별도 프로세스) | 필수지만 **murmur의 책임이 아니다.** murmur는 그 로그의 관찰자다(§3 참조) |
 | 첨부 파일 *(계획)* | 로컬 볼륨 `attachments` | 도입되면 필수. `pgdata`와 **함께** 떠야 한다(§4) |
 
@@ -87,8 +87,18 @@ docker compose start server        # 부팅 시 누락 마이그레이션이 적
 update projection_cursor set last_log_index = 0 where repo = 'org/repo';
 ```
 
+**avcs 데이터가 아예 사라진 경우도 같다.** 개발·도그푸딩에서 avcs 서버의 데이터 디렉터리가
+스크래치패드처럼 휘발성 위치에 있으면 정리 한 번으로 로그가 빈 상태가 되는데, murmur 커서는
+그대로 남아 있다 — 위와 같은 사일런트 스킵이다. 커서를 0으로 내리면 복구된다.
+
 원칙: **avcs와 murmur를 되돌릴 때는 avcs를 murmur보다 뒤로 두지 않는다.** 어쩔 수 없다면
 커서를 함께 내린다.
+
+### 3-C. 감사 추적은 복구되지만 되돌려지지 않는다
+
+`audit_log`는 `pgdata`에 있으므로 덤프에 포함된다. 다만 트리거가 `update`/`delete`를 막으므로
+**복구 후에 감사 행을 정리할 수 없다.** 보존 정책이 필요하면 트리거를 의도적으로 내리고
+지운 뒤 다시 세운다 — 그 의도성이 append-only 장치의 목적이다.
 
 ## 4. 첨부 볼륨의 순서 위험 (도입 시)
 

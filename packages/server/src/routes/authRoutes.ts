@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 import argon2 from 'argon2';
 import { z } from 'zod';
 import { newToken, hashToken } from '../auth/tokens.js';
+import { recordAudit } from '../audit.js';
 
 const SESSION_TTL_DAYS = 14;
 
@@ -25,6 +26,10 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
        values ($1, $2, 'human', true, $3) returning id`,
       [body.handle, body.displayName, hash],
     );
+    await recordAudit(pool, {
+      action: 'account.created', actorId: res.rows[0].id, actorHandle: body.handle,
+      target: res.rows[0].id, detail: { via: 'bootstrap', isAdmin: true },
+    }, req);
     return reply.code(201).send({ id: res.rows[0].id });
   });
 
@@ -34,6 +39,11 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
       `select id, password_hash from account where handle = $1 and kind = 'human'`, [body.handle]);
     const row = res.rows[0];
     if (!row?.password_hash || !(await argon2.verify(row.password_hash, body.password))) {
+      // 실패한 로그인이 안 남으면 브루트포스 흔적을 사후에 볼 수 없다. 레이트 리밋은 막기만 하고
+      // 기록하지 않는다. 존재하지 않는 handle 도 남긴다 — 계정 열거 시도 자체가 신호다.
+      await recordAudit(pool, {
+        action: 'login.failed', actorId: row?.id ?? null, actorHandle: body.handle,
+      }, req);
       return reply.code(401).send({ error: { code: 'invalid_credentials', message: 'wrong handle or password' } });
     }
     const { token, hash } = newToken('murs');
@@ -42,6 +52,9 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
        values ($1, $2, now() + interval '${SESSION_TTL_DAYS} days')`,
       [hash, row.id],
     );
+    await recordAudit(pool, {
+      action: 'login.succeeded', actorId: row.id, actorHandle: body.handle,
+    }, req);
     return { token };
   });
 
@@ -52,6 +65,9 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
   // 로컬 토큰만 지웠고 서버 세션은 TTL(14일)을 그대로 살았다.
   app.post('/auth/logout', { preHandler: app.requireAccount }, async (req, reply) => {
     await pool.query(`delete from session where token_hash = $1`, [req.credentialHash]);
+    await recordAudit(pool, {
+      action: 'logout', actorId: req.account!.id, actorHandle: req.account!.handle,
+    }, req);
     return reply.code(204).send();
   });
 
@@ -76,6 +92,10 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
       );
       await client.query(`update invite set used_by = $1 where token_hash = $2`, [acc.rows[0].id, inv.rows[0].token_hash]);
       await client.query('commit');
+      await recordAudit(pool, {
+        action: 'account.created', actorId: acc.rows[0].id, actorHandle: body.handle,
+        target: acc.rows[0].id, detail: { via: 'invite' },
+      }, req);
       return reply.code(201).send({ id: acc.rows[0].id });
     } catch (err) {
       await client.query('rollback');
