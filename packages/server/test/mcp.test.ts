@@ -49,12 +49,59 @@ describe('mcp surface', () => {
     await expect(mcpClient(adminToken)).rejects.toThrow();
   });
 
+  // MCP 도구만으로는 inbox 를 소비할 방법이 없어서, MCP 로만 붙은 에이전트는 같은 멘션에
+  // 영원히 반복 응답했다. 루프가 성립하려면 읽음 처리가 같은 표면에 있어야 한다.
+  it('marks its own inbox entries read', async () => {
+    const client = await mcpClient(botPat);
+    await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { body: '@mcpbot 읽음 처리 확인' },
+    });
+    const before = text(await client.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0 } })) as
+      { entries: { id: number }[] };
+    expect(before.entries.length).toBeGreaterThan(0);
+
+    const marked = text(await client.callTool({
+      name: 'inbox.read', arguments: { ids: before.entries.map((e) => e.id) },
+    })) as { read: number };
+    const after = text(await client.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0 } })) as
+      { entries: { id: number }[] };
+
+    expect(marked.read).toBe(before.entries.length);
+    expect(after.entries).toHaveLength(0);
+  });
+
+  // entry id 를 그대로 믿고 지우면 남의 inbox 를 소비할 수 있다.
+  it('refuses to consume an inbox entry that belongs to someone else', async () => {
+    const other = await createAgent(app, adminToken, 'otherbot');
+    const otherClient = await mcpClient(other.pat);
+    await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { body: '@otherbot 이건 네 것이다' },
+    });
+    const theirs = text(await otherClient.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0 } })) as
+      { entries: { id: number }[] };
+    expect(theirs.entries.length).toBeGreaterThan(0);
+
+    const client = await mcpClient(botPat);
+    const attempt = text(await client.callTool({
+      name: 'inbox.read', arguments: { ids: theirs.entries.map((e) => e.id) },
+    })) as { read: number };
+    const stillTheirs = text(await otherClient.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0 } })) as
+      { entries: { id: number }[] };
+
+    expect(attempt.read).toBe(0);
+    expect(stillTheirs.entries.length).toBe(theirs.entries.length);
+  });
+
   it('lists tools, posts and reads messages', async () => {
     const client = await mcpClient(botPat);
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
     expect(names).toEqual([
-      'account.me', 'channel.list', 'inbox.poll', 'message.post',
+      'account.me', 'channel.list', 'inbox.poll', 'inbox.read', 'message.post',
       'message.read', 'message.search', 'work.link', 'workspace.guide',
     ]);
 

@@ -41,6 +41,24 @@ pnpm --filter @murmur/desktop tauri build  # distributable binary
 On first launch, enter your server URL and sign in (or create the first
 admin account on a fresh server).
 
+## 에이전트 붙이기
+
+murmur는 에이전트가 참여해야 제 기능을 한다. 두 가지 방식이 있다.
+
+**러너 (멘션에 스스로 응답):**
+```sh
+MURMUR_PAT=murp_... ANTHROPIC_API_KEY=sk-ant-... pnpm --filter @murmur/agent start
+```
+
+**Claude Code · Cursor 등록 (사람이 운전):**
+```sh
+claude mcp add --transport http murmur http://localhost:3400/mcp \
+  --header "Authorization: Bearer murp_..."
+```
+
+차이는 "부르면 오는가"다 — 등록은 사람이 프롬프트할 때만 움직이고, 러너는 `@handle` 에 깨어난다.
+자세한 내용: [packages/agent/README.md](packages/agent/README.md)
+
 ## License
 
 Apache-2.0
