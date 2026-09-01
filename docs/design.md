@@ -151,9 +151,22 @@ intent(자발·외부 작업)만 투영 규칙대로 새 작업 스레드를 자
 ### 인증
 
 - 사람: first-run admin 생성 → 초대 링크 가입. handle + 비밀번호(Argon2), 세션은
-  불투명 토큰(데스크탑 앱이 OS 키체인 보관).
+  불투명 토큰. 데스크탑 앱은 이 토큰을 `TokenStore` 인터페이스 뒤에 두고 현재는
+  localStorage에 평문 보관한다 — Tauri 2에 공식 키체인 플러그인이 없어 MVP에서
+  내린 결정이며, 셀프호스트 개인 기기를 전제로 한다. OS 키체인 구현은 이 인터페이스만
+  갈아끼우면 되도록 격리해 두었다.
+- WS(`/ws`)는 토큰을 쿼리스트링으로 받는다. 브라우저 `WebSocket`이 헤더를 실을 수 없어서인데,
+  토큰이 접근 로그·프록시 로그에 남는다. 단기 1회용 티켓으로 바꾸는 것은 후속이다.
 - 에이전트: admin이 발급하는 Bearer PAT(account 귀속).
 - ed25519 전송 서명·OAuth는 MVP 제외.
+- CORS는 요청 origin을 그대로 반영한다(`origin: true`). 데스크탑 앱의 origin이 실행 방식에
+  따라 다르기 때문이다 — `tauri dev`는 Vite dev 서버(`http://localhost:5173`)에서, 빌드된
+  앱은 웹뷰 스킴(`tauri://localhost` 계열)에서 뜬다. 인증은 Origin이 아니라 Bearer 토큰이
+  담당하고, 셀프호스트 단일 워크스페이스를 전제로 한 결정이다. allowlist로 좁히려면 먼저
+  `tauri build` 산출물의 실제 Origin 헤더를 측정해야 한다 — 추측으로 목록을 짜면 배포본에서
+  REST가 전면 차단된다.
+- idempotency key는 `(author, channel)` 범위다. 전역 유일성을 가정하면 남의 key를 맞힌
+  요청이 그 메시지를 재생 응답으로 돌려받아, 채널 격리(DM 멤버십 포함)를 우회한다.
 
 ## 5. 에러 처리·테스트·배포
 
@@ -170,10 +183,14 @@ intent(자발·외부 작업)만 투영 규칙대로 새 작업 스레드를 자
 
 - Vitest, 프로젝트 test 스크립트 단일 진입.
 - server: Fastify inject + 실제 Postgres(compose test DB) 라우트 통합 테스트.
-- 투영 워커: **스펙 준수 fake avcs 서버** 상대로 커서 전진, `(repo,oid)` dedupe,
-  리플레이, 다운 후 복구 검증 — 반드시 스텁 서버 응답을 경유하고, 손으로 심은
-  DB 상태로 통과시키지 않는다.
-- 프로토콜 스펙 버전 핀. 스펙 구현 서버가 나오면 같은 테스트를 contract test로 승격.
+- avcs 어댑터(`avcs/client.ts`): **실제 `@izagood/avcs-server`를 in-process로 띄워**
+  검증한다. 아래 "contract test 승격"이 완료된 상태다 — fake 상대로 통과하는 테스트는
+  wire 드리프트를 잡지 못한다는 것을 실제로 겪었다(fake는 `204`/`{entries}`를 가정했고
+  실제 서버는 `200 {oids, cursor}`를 준다).
+- 투영 워커: `AvcsServerClient`를 **인메모리로 주입**해 transport와 분리한 뒤 커서 전진,
+  `(repo,oid)` dedupe, 리플레이, 다운 후 복구를 검증한다 — 손으로 심은 DB 상태로
+  통과시키지 않고 반드시 클라이언트 경계를 경유한다. wire는 위 어댑터 테스트가 전담한다.
+- 프로토콜 스펙 버전 핀은 어댑터 파일 상단에 둔다.
 - desktop: 컴포넌트 테스트(jsdom, matchMedia 스텁), E2E는 MVP 이후.
 
 ### 배포·운영
