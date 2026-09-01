@@ -35,6 +35,41 @@ export async function markChannelRead(
   );
 }
 
+export interface ChannelReadState extends ReadState {
+  channelId: string;
+}
+
+/**
+ * 내가 볼 수 있는 모든 채널의 읽음 상태. 사이드바 배지가 채널마다 요청하면 N+1 이 되고,
+ * 채널이 늘수록 앱을 열 때마다 그만큼 왕복한다.
+ *
+ * 가시성은 `listChannels`(standard 전부) + 내가 멤버인 dm 이다 — 여기서 그 경계를 흘리면
+ * 채널의 존재 자체가 새어 나간다.
+ *
+ * 아직 아무것도 읽지 않은 채널도 행을 준다(`lastReadSeq: 0`). 빠뜨리면 클라이언트가
+ * "0 이다"와 "모른다"를 구분할 수 없어 배지를 그릴지 말지 판단할 수 없다.
+ */
+export async function allReadStates(pool: Pool, accountId: string): Promise<ChannelReadState[]> {
+  const res = await pool.query(
+    `select
+       c.id as "channelId",
+       coalesce(r.last_read_seq, 0)::int as "lastReadSeq",
+       (select count(*) from message m
+         where m.channel_id = c.id
+           and m.deleted_at is null
+           and m.author_id <> $1
+           and m.seq > coalesce(r.last_read_seq, 0))::int as unread
+     from channel c
+     left join channel_read r on r.account_id = $1 and r.channel_id = c.id
+     where c.kind = 'standard'
+        or exists (select 1 from channel_member cm
+                    where cm.channel_id = c.id and cm.account_id = $1)
+     order by c.id`,
+    [accountId],
+  );
+  return res.rows;
+}
+
 export async function readState(
   pool: Pool, opts: { accountId: string; channelId: string },
 ): Promise<ReadState> {

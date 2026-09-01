@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { Fragment, useEffect, useMemo, useRef } from 'react';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
 import { Composer } from './Composer';
 
 export function ChannelPane() {
-  const { activeChannelId, channels, dms, accounts, me, messages, hasMore } = useAppStore();
+  const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq } = useAppStore();
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const channel = channels.find((c) => c.id === activeChannelId);
@@ -22,6 +22,17 @@ export function ChannelPane() {
     () => (activeChannelId ? (messages[activeChannelId] ?? []).filter((m) => m.threadRootId === null) : []),
     [messages, activeChannelId],
   );
+
+  /**
+   * 구분선을 그릴 메시지. **채널을 열 때 얼려 둔 위치**(`dividerSeq`)를 쓴다 — 라이브 읽음
+   * 상태를 쓰면 열자마자 읽음 처리가 돌아 선이 즉시 사라진다. 내가 쓴 메시지는 기준에서
+   * 빼는데, 자기 발화 위에 "안 읽음"이 뜨면 무의미하기 때문이다.
+   */
+  const dividerBeforeId = useMemo(() => {
+    if (!activeChannelId) return null;
+    const frozen = dividerSeq[activeChannelId] ?? 0;
+    return roots.find((m) => m.seq > frozen && m.authorId !== me?.id)?.id ?? null;
+  }, [roots, dividerSeq, activeChannelId, me?.id]);
 
   useEffect(() => { bottomRef.current?.scrollIntoView?.(); }, [roots.length]);
 
@@ -48,7 +59,18 @@ export function ChannelPane() {
             </button>
           </div>
         )}
-        {roots.map((m) => <MessageItem key={m.id} message={m} />)}
+        {roots.map((m) => (
+          <Fragment key={m.id}>
+            {m.id === dividerBeforeId && (
+              <div className="flex items-center gap-2 px-4 py-1" role="separator">
+                <span className="h-px flex-1 bg-red-300" />
+                <span className="text-[11px] font-medium text-red-500">New messages</span>
+                <span className="h-px flex-1 bg-red-300" />
+              </div>
+            )}
+            <MessageItem message={m} />
+          </Fragment>
+        ))}
         <div ref={bottomRef} />
       </div>
       <div className="border-t border-zinc-200 p-3">

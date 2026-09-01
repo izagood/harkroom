@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { assertChannelVisible, createChannel, getOrCreateDm, listChannels, updateChannel } from '../services/channels.js';
-import { markChannelRead, readState } from '../services/readPositions.js';
+import { allReadStates, markChannelRead, readState } from '../services/readPositions.js';
 import { recordAudit } from '../audit.js';
 
 export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
@@ -52,6 +52,11 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
     // 후속 항목이다(이벤트 유니온은 병렬 세션과 공유하므로 필요할 때 한 번에 넣는다).
     return reply.code(204).send();
   });
+
+  // 일괄 조회. 사이드바가 채널마다 묻지 않도록 한 번에 준다.
+  app.get('/reads', { preHandler: app.requireAccount }, async (req) => ({
+    reads: await allReadStates(pool, req.account!.id),
+  }));
 
   app.get('/channels/:id/read', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = channelParam.parse(req.params);
