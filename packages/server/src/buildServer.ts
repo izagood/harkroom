@@ -135,9 +135,16 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * 하려고 만들었다**: 사용자가 에이전트를 불렀는데 러너 프로세스가 죽어 답이 없었고, 서버·
    * 기존 메트릭은 전부 정상이었다. inbox 에 부름이 쌓이는 것만 사실이었으므로 그 나이를 낸다.
    *
-   * **사람은 뺀다.** 사람이 멘션을 늦게 읽는 것은 장애가 아니라 일상이다(자고 있을 수 있다).
-   * 섞으면 경보가 늘 울려서 경보가 신호를 잃는다. 미처리가 없는 계정은 시계열을 만들지 않는다 —
-   * 0 을 내면 "처리됐다"와 "부름이 없었다"가 같아진다.
+   * **답할 의무가 있는 계정만 센다.** 두 겹으로 좁힌다:
+   * - 사람을 뺀다. 사람이 멘션을 늦게 읽는 것은 장애가 아니라 일상이다(자고 있을 수 있다).
+   * - `kind='agent'` 라도 **정의(`agent_config`)가 없는 계정을 뺀다.** avcs 투영용 시스템 계정
+   *   (`murmur`)과 정의 없이 만들어진 계정에는 답할 러너가 없고 앞으로도 없다. 사용자는
+   *   사이드바에 보이니 자연스럽게 부르고, 그 미처리는 **영원히 쌓이며 절대 내려오지 않는다.**
+   *   경보가 몇 번 반복되면 사람이 경보를 무시하게 되고, 그때 진짜 러너가 죽으면 아무도 안 본다
+   *   (2026-09-01 실사용에서 드러났다).
+   *
+   * 미처리가 없는 계정은 시계열을 만들지 않는다 — 0 을 내면 "처리됐다"와 "부름이 없었다"가
+   * 같아진다.
    */
   metrics.registerLabeledGauge(
     'murmur_agent_oldest_unread_seconds',
@@ -149,6 +156,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
                 extract(epoch from (now() - min(i.created_at))) as seconds
          from inbox i
          join account a on a.id = i.account_id
+         -- 정의가 있는 에이전트만. join 이 곧 "murmur 가 실행할 수 있는 에이전트"의 정의다.
+         join agent_config ac on ac.account_id = a.id
          where i.read_at is null and a.kind = 'agent'
          group by a.handle`,
       );
