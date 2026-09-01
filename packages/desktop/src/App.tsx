@@ -22,7 +22,12 @@ export default function App() {
     if (!stored) { setPhase('connect'); return; }
     void startSession(stored.baseUrl, stored.token)
       .then(() => setPhase('ready'))
-      .catch(() => { sessionStore.clear(); setPhase('connect'); });
+      .catch(() => {
+        // 세션을 조용히 지우고 로그인 화면만 띄우면 사용자에겐 이유 없는 로그아웃이 된다.
+        sessionStore.clear();
+        setConnectError('Your saved session could not be resumed — it expired, or the server was unreachable. Please sign in again.');
+        setPhase('connect');
+      });
   }, []);
 
   if (phase === 'boot') return <div className="p-4 text-zinc-400">Connecting…</div>;

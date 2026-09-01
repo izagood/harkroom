@@ -5,12 +5,28 @@ import App from '../src/App';
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  localStorage.clear();
 });
 
 describe('App', () => {
   it('shows connect screen without a stored session', async () => {
     render(<App />);
     expect(await screen.findByText('Server URL')).toBeTruthy();
+  });
+
+  // 저장된 세션으로 부팅하다 실패하면 세션을 지우고 로그인 화면으로 떨어진다. 이유를 말하지
+  // 않으면 사용자에겐 "이유 없이 로그아웃됨"이 된다.
+  it('explains why it fell back to the connect screen when a stored session fails', async () => {
+    localStorage.setItem('murmur.session', JSON.stringify({ baseUrl: 'http://x', token: 'stale-token' }));
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({ error: { code: 'unauthorized', message: 'bad token' } }), { status: 401 }),
+    ));
+
+    render(<App />);
+
+    expect(await screen.findByText(/세션|session/i)).toBeTruthy();
+    expect(screen.getByText('Server URL')).toBeTruthy();
+    expect(localStorage.getItem('murmur.session')).toBeNull();
   });
 
   it('shows error message when session startup fails after login', async () => {
