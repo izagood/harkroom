@@ -717,7 +717,17 @@ avcs repo 일 때만 성립하고 아니면 Task 4 폴백으로 그 자리에서
 
 ## 스파이크 결과 (Task 1 이 기록)
 
-실행 환경: claude 2.1.252, codex-cli 0.148.0, gemini 0.54.4 (전부 `~/.local/bin`).
+실행 환경(전부 `~/.local/bin`, `--version` 실측 — 회차 1 리뷰 지적으로 재확인):
+
+```
+$ claude --version
+2.1.252 (Claude Code)
+$ codex --version
+codex-cli 0.148.0
+$ gemini --version
+0.54.4
+```
+
 아래 각 항목은 "명령 → 관찰 → VERDICT" 순. **표와 실측이 다르면 실측이 이긴다** —
 §4 표는 이 결과에 맞춰 갱신 대상이다.
 
@@ -782,9 +792,32 @@ VERDICT: **CONFIRMED (print 모드)**. TUI 모드(`/mcp` 로 손으로 connected
 
 **부가 발견 (표에는 없던 사실, §7 재검토 근거로 기록):** `--strict-mcp-config`
 플래그가 존재하고, 켜면 지정한 `--mcp-config` 파일의 서버만 남기고 그 외 전부
-차단된다(꺼두면 이 계정의 `~/.claude.json` 전역 MCP 서버까지 전부 같이 붙는다 —
-실측에서 Slack·Notion·Google Drive 등 이 세션 운영자의 개인 MCP 서버 목록이
-함께 노출됐다). **spec §7 은 이미 이 플래그를 의도적으로 안 쓰기로
+차단된다. 이 단언은 처음엔 strict **켠** 쪽 출력만 근거로 삼았다는 지적을 받아
+strict **끈** 쪽도 별도로 재현했다(murmur 서버는 이번엔 안 띄우고 PAT 도 가짜값 —
+"murmur 연결 성공"이 아니라 "다른 전역 서버가 같이 뜨는가"만 보는 것이 목적):
+
+```
+$ MURMUR_PAT='murp_fake' claude -p --mcp-config /tmp/murmur-mcp.json \
+    --model haiku "list the names of your available MCP tools, names only"
+## Available MCP Tools
+### AVCS (38 tools)
+mcp__avcs__avcs_approval_record, mcp__avcs__avcs_blame, ... (38개 전부)
+### AVCSHub (8 tools)
+mcp__avcshub__check_report, mcp__avcshub__issue_create, ...
+### Buddy (13 tools)
+mcp__buddy__buddy_dream, mcp__buddy__buddy_forget, ...
+### Slack (18 tools)
+mcp__claude_ai_Slack__slack_add_reaction, ...
+### Chrome DevTools (32 tools)
+mcp__plugin_chrome-devtools-mcp_chrome-devtools__click, ...
+### Requiring Authentication
+claude.ai Notion, claude.ai Gmail, claude.ai Google Drive, ...
+```
+
+즉 이 세션 운영자의 `~/.claude.json` 전역 MCP 서버(avcs·avcshub·buddy·Slack·
+Chrome DevTools, 그리고 미인증 Notion/Gmail/Google Drive 등)가 `--mcp-config`
+로 지정한 murmur 하나만 있을 때도 그대로 전부 딸려 나온다 — 예상대로였다,
+되돌릴 사실은 아니다. **spec §7 은 이미 이 플래그를 의도적으로 안 쓰기로
 결정했다**(agent 가 murmur 뿐 아니라 avcs MCP 도 물어야 하므로) — 그 판단 자체는
 바꿀 필요 없지만, 실측이 보여준 부작용은 그 결정의 대가로 명시해 둘 만하다:
 러너가 운영자 계정의 전역 claude 설정을 그대로 물려받는 환경이라면 에이전트
@@ -849,6 +882,61 @@ codex --help | grep -i "instructions\|system"
 
 VERDICT: **DIFFERENT** (세션 스키마·MCP 등록·승인 플래그 세 곳 모두 표의 전제와
 다르다). `exec resume` 존재와 형태만 CONFIRMED.
+
+**[Critical] 이 실측은 Task 8 을 그대로 무너뜨린다 — 이름을 걸고 적는다.**
+Task 8(§ 607–618)의 `findCodexSessionId(indexJsonl, {cwd, sinceMs})` 는
+`session_index.jsonl` 을 **cwd 로 매칭**해 codex 세션 id 를 찾는 설계다. 위
+실측 세 가지가 이 설계를 세 겹으로 무너뜨린다: (a) 그 파일의 실제 필드는
+`{id, thread_name, updated_at}` 로 애초에 `cwd` 가 없다, (b) `codex exec` 로 만든
+세션은 그 파일에 **한 줄도 안 들어간다** — cwd 가 있었어도 매칭할 대상 자체가
+없었다, (c) `codex exec --json` 은 stdout 첫 줄에서 곧바로
+`{"type":"thread.started","thread_id":"..."}` 를 내놓는다 — 애초에 파일을 뒤져
+id 를 "찾을" 필요가 없다. **Task 8 은 존재하지 않는 파일 스키마를 존재하지 않는
+레코드에서 찾는 함수를 짜고 있었다** — 그대로는 첫 테스트 픽스처부터 성립하지
+않는다.
+
+리뷰 요청대로 대안 A(rollout 파일 glob)가 성립하려면 그 파일에 `cwd` 가 있어야
+하므로, Step 3 에서 이미 만든 세션(재사용, 새로 안 만듦)의 최신 rollout 파일을
+다시 열어 키 이름만 확인했다(대화 내용은 옮기지 않는다):
+
+```bash
+$ ls -t ~/.codex/sessions/**/*.jsonl | head -1
+/Users/jaebin/.codex/sessions/2026/09/01/rollout-2026-09-01T23-00-31-01a05d45-....jsonl
+$ head -1 <그 파일> | python3 -c '...payload.keys()...'
+payload keys: ['session_id', 'id', 'timestamp', 'cwd', 'originator', 'cli_version',
+  'source', 'thread_source', 'model_provider', 'base_instructions', 'history_mode',
+  'context_window']
+cwd value: /private/var/folders/.../tmp.4PUsIQ02fm   # 그 turn 을 실행한 mktemp 디렉터리와 일치
+```
+
+**판정: A 가 가능하다** — `session_meta`(각 rollout 파일의 1번째 줄) 에 정확한
+이름의 `cwd` 필드가 있고 실제 실행 디렉터리와 일치한다. Task 8 은
+`findCodexSessionId(indexJsonl, ...)` 를 폐기하고 다음 모양으로 다시 설계해야
+한다:
+
+- **대안 A — rollout 파일 glob** (channel): `~/.codex/sessions/**/rollout-*.jsonl`
+  을 mtime 역순으로 훑어 각 파일 1번째 줄의 `session_meta.cwd` 가 일치하는 첫
+  파일을 찾고 `session_meta.session_id` 를 취한다. **장점**: PTY 를 평범하게
+  띄워 `codex exec`/`codex exec resume` 을 그대로 쓰므로 사람이 진행 중 턴에
+  attach 할 수 있다(spec §6 셋째 경우 "멘션 턴에 attach" 가 유지된다). **비용**:
+  디렉터리 통째로 glob+정렬해야 하고(세션이 많아지면 느려질 수 있다), rollout
+  파일 포맷은 codex 내부 구현이라 버전이 바뀌면 깨질 수 있는 비공개 계약이다.
+- **대안 B — `--json` stdout 파싱**: `codex exec --json` 의 첫 줄
+  `{"type":"thread.started","thread_id":...}` 를 그 자리에서 파싱해 id 를
+  얻는다. **장점**: 세션 id 가 사실상 공짜고 파일 스캔이 없다. **비용**: 그
+  턴의 화면이 사람이 읽는 터미널이 아니라 JSON 이벤트 스트림이 된다 — **사람이
+  붙어도 터미널이 아니다.** 이 프로젝트가 부록 A 에서 ACP 를 기각한 바로 그
+  이유("stdio 는 하나다 — 사람이 들어가 볼 터미널이 없다")가 codex 턴에서만
+  재현된다. `--json` 을 켠 채로는 spec §6 셋째 경우(멘션 턴에 attach)와 §14
+  성공 기준 3(소유자가 진행 중 턴의 실제 화면을 본다)이 codex 에서만 깨진다.
+
+**A 를 채택한다** — attach 요구가 spec 전체를 관통하는 핵심 성공 기준(§14-3)
+이라 B 로 그것을 codex 에서만 포기하는 비용이 더 크다. Task 8 의 함수 시그니처를
+`findCodexSessionId(indexJsonl, {cwd, sinceMs})` 에서
+`findCodexSessionId(sessionsDir, {cwd, sinceMs})` 로 바꾸고, "다른 cwd 1개,
+대상 cwd 1개" 픽스처는 `session_index.jsonl` 대신 임시 `sessions/**/rollout-*.jsonl`
+트리로 다시 짜야 한다 — 이것이 Task 6 뿐 아니라 **Task 8 도 이 스파이크 결과에
+맞춰 다시 써야 한다**는 뜻이다.
 
 ### Step 4: gemini 표면
 
