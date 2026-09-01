@@ -12,7 +12,12 @@ export const msg = (id: string, channelId: string, seq: number, body: string, au
   extra: Partial<MessageRow> = {}): MessageRow =>
   ({ id, seq, channelId, threadRootId: null, authorId, body, kind: 'user', meta: {}, createdAt: new Date().toISOString(), editedAt: null, ...extra });
 
-export function fakeApi(overrides: Partial<Record<keyof ApiClient, unknown>> = {}): ApiClient {
+// override 를 ApiClient 의 실제 시그니처로 받는다. 이전에는 값 타입이 `unknown` 이어서
+// 반환 형태가 어긋난 fake 를 tsc 가 통과시켰다 — 실제로 api.messages() 가 배열에서
+// {messages, hasMore} 로 바뀐 뒤 stale fake 가 그대로 컴파일돼 main 이 빨강이 됐다(#42).
+// 안전망은 CI 가 아니라 여기서 서야 한다: base 쪽 캐스트는 남지만, 각 테스트가 갈아끼우는
+// override 는 이제 타입이 검사된다.
+export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   const base = {
     baseUrl: 'http://x',
     setToken: vi.fn(),
