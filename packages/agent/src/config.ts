@@ -1,9 +1,7 @@
-export interface AgentConfig {
+/** 러너 자체의 설정. 모델·effort·지시문은 서버의 에이전트 정의에 있다(murmur UI 로 바꾼다). */
+export interface RunnerConfig {
   murmurUrl: string;
   murmurPat: string;
-  model: string;
-  /** 답변 깊이. 채팅 응답은 낮게 두는 편이 낫다 — 필요하면 올린다. */
-  effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   pollTimeoutMs: number;
 }
 
@@ -13,13 +11,12 @@ function required(env: NodeJS.ProcessEnv, key: string): string {
   return v;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
-  // ANTHROPIC_API_KEY 는 SDK 가 직접 읽는다(또는 `ant auth login` 프로필). 여기서 강제하지 않는다.
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
+  // 모델·effort 는 여기 없다 — 서버 정의에 있어야 UI 수정이 반영된다.
+  // claude-code harness 는 claude CLI 의 자격증명을 쓰므로 API 키도 필요 없다.
   return {
     murmurUrl: (env.MURMUR_URL ?? 'http://localhost:3400').replace(/\/$/, ''),
     murmurPat: required(env, 'MURMUR_PAT'),
-    model: env.AGENT_MODEL ?? 'claude-opus-5',
-    effort: (env.AGENT_EFFORT as AgentConfig['effort']) ?? 'medium',
     // 서버의 inbox.poll 상한은 25초다.
     pollTimeoutMs: Number(env.AGENT_POLL_TIMEOUT_MS ?? 25_000),
   };

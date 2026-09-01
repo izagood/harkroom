@@ -5,7 +5,7 @@
 // 멘션에 영원히 반복 응답했다. `inbox.read` 를 추가해 닫았고, 그래서 여기 REST 호출이 없다.
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { InboxEntry, MessageRow } from '@murmur/shared';
+import type { AgentView, InboxEntry, MessageRow } from '@murmur/shared';
 
 export interface Me { id: string; handle: string }
 
@@ -51,6 +51,15 @@ export class MurmurAgentClient {
 
   me(): Promise<Me> {
     return this.call<Me>('account.me');
+  }
+
+  /** 서버가 들고 있는 자기 정의(UI 로 수정된다). REST 다 — MCP 에는 이 도구가 없다. */
+  async definition(): Promise<AgentView> {
+    const res = await fetch(`${this.baseUrl}/agent/config`, {
+      headers: { authorization: `Bearer ${this.pat}` },
+    });
+    if (!res.ok) throw new Error(`agent/config 실패: ${res.status}`);
+    return (await res.json()) as AgentView;
   }
 
   async guide(): Promise<string> {

@@ -1,15 +1,18 @@
 // murmur 에이전트 러너. 멘션을 기다리다 깨어나 답한다.
 //
 // 실행: MURMUR_PAT=murp_... ANTHROPIC_API_KEY=sk-ant-... pnpm --filter @murmur/agent start
-import Anthropic from '@anthropic-ai/sdk';
+import { spawn } from 'node:child_process';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { loadConfig } from './config.js';
+import { buildClaudeArgs, mcpConfigFor, parseClaudeResult } from './harness/claudeCode.js';
 import { MurmurAgentClient } from './murmur.js';
 import { buildReplyRequest, extractReply } from './reply.js';
 import { exhausted, isCredentialFailure, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 
 const config = loadConfig();
 const murmur = new MurmurAgentClient(config.murmurUrl, config.murmurPat);
-const claude = new Anthropic();
 
 let running = true;
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
@@ -18,7 +21,31 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
 
 const me = await murmur.me();
 const guide = await murmur.guide();
-console.log(`@${me.handle} 로 붙었다 — ${config.murmurUrl} (model: ${config.model}, effort: ${config.effort})`);
+
+// MCP 설정 파일은 한 번만 쓴다 — PAT 가 담기므로 임시 디렉터리에 둔다.
+const mcpDir = await mkdtemp(join(tmpdir(), 'murmur-agent-'));
+const mcpConfigPath = join(mcpDir, 'mcp.json');
+await writeFile(mcpConfigPath, JSON.stringify(mcpConfigFor(config.murmurUrl, config.murmurPat)), { mode: 0o600 });
+
+console.log(`@${me.handle} 로 붙었다 — ${config.murmurUrl}`);
+console.log('정의는 서버에서 읽는다 (murmur UI 의 Add/Edit agent 로 바꾼다)');
+
+/** `claude -p` 를 띄우고 stdout 을 모은다. 프롬프트는 stdin 으로 넘긴다(인자 길이 제한 회피). */
+function runClaude(args: string[], prompt: string, cwd: string): Promise<{ stdout: string; code: number }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('claude', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => { stdout += String(d); });
+    child.stderr.on('data', (d) => { stderr += String(d); });
+    child.on('error', (err) => reject(new Error(`claude 를 실행할 수 없다: ${err.message}`)));
+    child.on('close', (code) => {
+      if (code !== 0 && !stdout) reject(new Error(`claude 종료 ${code}: ${stderr.slice(0, 300)}`));
+      else resolve({ stdout, code: code ?? 0 });
+    });
+    child.stdin.end(prompt);
+  });
+}
 
 /** 멘션 하나에 답한다. 실패는 이 함수 안에서 끝낸다 — 한 건이 루프를 죽이지 않는다. */
 async function answer(
@@ -40,16 +67,22 @@ async function answer(
     handles,
   });
 
-  const response = await claude.messages.create({
-    model: config.model,
-    max_tokens: 16000,
-    system: req.system,
-    messages: req.messages,
-    thinking: { type: 'adaptive' },
-    output_config: { effort: config.effort },
-  });
+  // 정의를 매 답변마다 읽는다 — UI 로 지시문을 바꾸면 다음 멘션부터 바로 반영된다.
+  const def = await murmur.definition();
+  const args = buildClaudeArgs({ ...def, handle: me.handle }, mcpConfigPath);
+  // reply.ts 가 만든 대화 맥락을 하나의 프롬프트로 넘긴다. 지시문은 --append-system-prompt 로 간다.
+  const prompt = [
+    req.system,
+    '',
+    '--- 대화 ---',
+    ...req.messages.map((m) => `[${m.role}] ${m.content}`),
+  ].join('\n');
 
-  const reply = extractReply(response as never);
+  const { stdout } = await runClaude(args, prompt, def.workingDir ?? process.cwd());
+  const result = parseClaudeResult(stdout);
+  if (!result.ok) throw new Error(result.reason);
+
+  const reply = extractReply({ content: [{ type: 'text', text: result.text }], stop_reason: 'end_turn' });
   if (!reply) {
     console.log(`  ${entry.messageId}: 쓸 말이 없어 넘긴다`);
     return;
@@ -86,8 +119,8 @@ while (running) {
       } catch (err) {
         // 자격증명 실패는 재시도로 낫지 않는다. 조용히 반복하면 "왜 답이 없지"의 원인이 묻힌다.
         if (isCredentialFailure(err)) {
-          console.error('\nAnthropic 자격증명을 해결할 수 없다. 러너를 멈춘다.');
-          console.error('  ANTHROPIC_API_KEY 를 설정하거나 `ant auth login` 으로 프로필을 만들어라.');
+          console.error('\nharness 의 자격증명을 해결할 수 없다. 러너를 멈춘다.');
+          console.error('  claude-code harness 는 claude CLI 의 로그인을 쓴다 — `claude` 를 한 번 실행해 로그인해라.');
           console.error(`  원문: ${err instanceof Error ? err.message : String(err)}`);
           process.exit(1);
         }

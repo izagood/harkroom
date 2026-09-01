@@ -1,7 +1,12 @@
 // 멘션 하나를 답변 요청으로 바꾸는 순수 로직. 네트워크도 SDK 클라이언트도 여기 없다 —
 // 그래서 이 부분만 테스트되고, 루프와 API 호출은 main.ts 가 조립한다.
-import type Anthropic from '@anthropic-ai/sdk';
 import type { MessageRow } from '@murmur/shared';
+
+/** harness 에 넘기는 대화 턴. SDK 타입을 끌어오지 않는다 — harness 가 SDK 를 쓸 필요가 없다. */
+export interface Turn {
+  role: 'user' | 'assistant';
+  content: string;
+}
 
 /** 서버의 메시지 본문 상한(`POST /channels/:id/messages` 의 zod `max(8000)`). 넘기면 발화가 실패한다. */
 export const BODY_LIMIT = 8000;
@@ -19,12 +24,12 @@ export interface ReplyContext {
 
 export interface ReplyRequest {
   system: string;
-  messages: Anthropic.MessageParam[];
+  messages: Turn[];
 }
 
 export function buildReplyRequest(ctx: ReplyContext): ReplyRequest {
   // 자기 발화는 assistant, 나머지는 handle 을 붙인 user 턴. 같은 역할이 연달아도 API 가 합쳐준다.
-  const turns: Anthropic.MessageParam[] = ctx.thread.map((m) =>
+  const turns: Turn[] = ctx.thread.map((m) =>
     m.authorId === ctx.me.id
       ? { role: 'assistant' as const, content: m.body }
       : { role: 'user' as const, content: `${ctx.handles[m.authorId] ?? '알 수 없는 사용자'}: ${m.body}` },
@@ -34,7 +39,7 @@ export function buildReplyRequest(ctx: ReplyContext): ReplyRequest {
   // 에이전트가 자기 말을 잊으므로, 턴에서만 빼고 시스템 맥락으로 옮긴다.
   const leadingOwn: string[] = [];
   while (turns.length && turns[0]!.role === 'assistant') {
-    leadingOwn.push(String(turns.shift()!.content));
+    leadingOwn.push(turns.shift()!.content);
   }
   if (!turns.length) {
     const who = ctx.handles[ctx.mention.authorId] ?? '알 수 없는 사용자';

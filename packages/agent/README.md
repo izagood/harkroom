@@ -8,27 +8,27 @@ Claude Code나 Cursor는 사람이 프롬프트할 때만 움직이기 때문이
 
 ## 실행
 
-```sh
-# 1) 에이전트 계정과 PAT (admin 토큰으로)
-curl -X POST localhost:3400/accounts/agents -H "authorization: Bearer $ADMIN" \
-  -H 'content-type: application/json' -d '{"handle":"rusalka","displayName":"Rusalka"}'
-curl -X POST localhost:3400/accounts/<id>/pats -H "authorization: Bearer $ADMIN" \
-  -H 'content-type: application/json' -d '{"label":"runner"}'
+1. **murmur 데스크탑 앱에서 에이전트를 만든다** — 사이드바의 `+ Add or edit agents`.
+   이름·지시문·harness를 넣으면 PAT가 한 번 표시된다.
+2. **러너를 띄운다:**
 
-# 2) 러너 기동
-MURMUR_PAT=murp_... ANTHROPIC_API_KEY=sk-ant-... pnpm --filter @murmur/agent start
+```sh
+MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
 ```
 
-이제 murmur에서 `@rusalka 이거 봐줘`라고 쓰면 답이 온다.
+이제 murmur에서 `@이름 이거 봐줘`라고 쓰면 답이 온다.
+
+**지시문·모델·effort·작업 디렉터리는 러너가 아니라 서버에 있다.** UI에서 바꾸면 러너를 재시작하지
+않아도 다음 답변부터 반영된다(러너가 답변마다 `GET /agent/config`를 읽는다). 환경변수에 두면
+UI가 바꿀 대상이 없어 장식이 된다.
 
 | 환경변수 | 기본값 | 뜻 |
 |---|---|---|
 | `MURMUR_PAT` | (필수) | 에이전트 PAT. 이 계정으로 발화한다 |
-| `ANTHROPIC_API_KEY` | (SDK가 읽음) | 없으면 `ant auth login` 프로필도 쓰인다 |
 | `MURMUR_URL` | `http://localhost:3400` | murmur 서버 |
-| `AGENT_MODEL` | `claude-opus-5` | |
-| `AGENT_EFFORT` | `medium` | `low`~`max`. 채팅 응답은 낮은 쪽이 낫다 |
 | `AGENT_POLL_TIMEOUT_MS` | `25000` | 서버의 `inbox.poll` 상한 |
+
+API 키는 필요 없다 — `claude-code` harness는 `claude` CLI의 로그인을 쓴다.
 
 ## Claude Code · Cursor에 붙이기 (러너와 별개)
 
@@ -59,10 +59,22 @@ MCP `inbox.poll`에만 있고 REST `/inbox`에는 없다. 이 러너를 만들�
 
 | 파일 | 역할 |
 |---|---|
-| `src/reply.ts` | 멘션 → 요청 변환, 응답 → 발화문 추출. **순수 로직이고 테스트 대상이다** |
+| `src/reply.ts` | 멘션 → 대화 맥락 구성, 응답 → 발화문 추출. **순수 로직이고 테스트 대상이다** |
+| `src/harness/claudeCode.ts` | `claude -p` 인자 조립·출력 파싱. **순수 로직** — 서브프로세스 없이 계약을 검증한다 |
+| `src/policy.ts` | 실패 정책(자격증명은 즉시 종료, 나머지는 백오프) |
 | `src/murmur.ts` | MCP 클라이언트 (`account.me` `workspace.guide` `channel.list` `message.read` `message.post` `inbox.poll` `inbox.read`) |
 | `src/config.ts` | 환경변수 |
 | `src/main.ts` | 루프 조립 |
 
-`reply.ts`가 순수한 덕분에 API 키 없이도 프롬프트 구성·역할 매핑·본문 절단·안전 거부 처리를
-검증할 수 있다. 모델 호출 한 줄만 키가 필요하다.
+## harness
+
+지금 실행 가능한 것은 `claude-code` 하나다. `claude -p --output-format json` 을 서브프로세스로
+띄우고, 그 에이전트의 PAT 로 murmur MCP 를 주입한다(`--mcp-config`) — 그래서 에이전트가
+**자기 이름으로** murmur 도구를 쓸 수 있고, 작업 디렉터리에서 파일·도구에 접근한다.
+
+지시문은 `--append-system-prompt` 로 간다. 사용자 턴에 섞으면 사람이 방금 한 말과 구별되지 않는다.
+`--output-format json` 을 쓰는 이유는 `is_error` 다 — 이것 없이는 실패 문구를 에이전트의
+답변으로 채널에 발화한다.
+
+Cursor·Codex 등은 UI 에서 '지원 예정'으로 비활성이다. 없는 것은 사용자의 CLI 가 아니라
+murmur 의 harness 구현이다.
