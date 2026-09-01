@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { InboxEntry } from '@murmur/shared';
 import { useAppStore } from '../src/state/appStore';
 import { Controller } from '../src/state/controller';
+import { usePrefsStore } from '../src/state/prefsStore';
+import { DEFAULT_PREFS } from '../src/lib/prefs';
 import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 const entry = (id: number, messageId: string, reason: InboxEntry['reason'] = 'mention'): InboxEntry =>
@@ -19,6 +21,7 @@ const setFocus = (focused: boolean) => {
 
 beforeEach(() => {
   useAppStore.getState().reset();
+  usePrefsStore.setState({ notifications: { ...DEFAULT_PREFS.notifications } });
   vi.restoreAllMocks();
 });
 
@@ -116,5 +119,61 @@ describe('mention notifications', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     expect(n.sent).toHaveLength(0);
+  });
+
+  // 끈 동안 도착한 것을 '이미 지나간 것'으로 표시하지 않으면, 사용자가 알림을 켜는 순간
+  // 그동안 쌓인 미읽음이 한꺼번에 터진다. 켜고 끄는 것이 폭탄의 뇌관이 되면 안 된다.
+  it('stays silent while off, and does not replay the backlog when switched on', async () => {
+    setFocus(false);
+    usePrefsStore.getState().setNotifications({ enabled: false });
+    const n = fakeNotifier();
+    const arriving = [entry(1, 'm1')];
+    const { callbacks } = await started(n, arriving);
+    useAppStore.getState().upsertMessages('c1', [msg('m1', 'c1', 1, 'while off', 'u2')]);
+
+    callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' });
+    // 조회 '호출 횟수'는 배리어가 못 된다 — 알림 판정은 refreshUnread().then(...) 안에서
+    // 그 뒤에 돈다. 스토어 반영을 기다린 뒤 매크로태스크로 한 번 넘겨 그 then 까지 비운다.
+    await vi.waitFor(() => expect(useAppStore.getState().unread).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(n.sent).toHaveLength(0);
+
+    usePrefsStore.getState().setNotifications({ enabled: true });
+    arriving.push(entry(2, 'm2'));
+    useAppStore.getState().upsertMessages('c1', [msg('m2', 'c1', 2, 'after', 'u2')]);
+    callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' });
+
+    await vi.waitFor(() => expect(n.sent).toHaveLength(1));
+    expect(n.sent[0]!.body).toBe('after');
+  });
+
+  it('honours per-reason toggles', async () => {
+    setFocus(false);
+    usePrefsStore.getState().setNotifications({ dm: false });
+    const n = fakeNotifier();
+    const { callbacks } = await started(n, [entry(1, 'm1', 'dm'), entry(2, 'm2', 'mention')]);
+    useAppStore.getState().upsertMessages('c1', [
+      msg('m1', 'c1', 1, 'dm body', 'u2'),
+      msg('m2', 'c1', 2, 'mention body', 'u2'),
+    ]);
+
+    callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' });
+    await vi.waitFor(() => expect(n.sent).toHaveLength(1));
+    expect(n.sent[0]!.body).toBe('mention body');
+  });
+
+  // 미리보기를 끄는 이유는 잠금화면에 대화 내용이 뜨는 것이다. 누가·어디서는 가릴 이유가 없다.
+  it('omits the message body when previews are off, keeping the title', async () => {
+    setFocus(false);
+    usePrefsStore.getState().setNotifications({ showPreview: false });
+    const n = fakeNotifier();
+    const { callbacks } = await started(n, [entry(1, 'm1')]);
+    useAppStore.getState().upsertMessages('c1', [msg('m1', 'c1', 1, 'secret text', 'u2')]);
+
+    callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' });
+    await vi.waitFor(() => expect(n.sent).toHaveLength(1));
+    expect(n.sent[0]!.body).toBe('New mention');
+    expect(n.sent[0]!.title).toContain('bot');
+    expect(n.sent[0]!.title).toContain('general');
   });
 });
