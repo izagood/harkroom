@@ -1,0 +1,147 @@
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import type { FastifyInstance } from 'fastify';
+import { startTestDb } from './helpers/testDb.js';
+import { buildServer } from '../src/buildServer.js';
+import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+
+let app: FastifyInstance;
+let stop: () => Promise<void>;
+let adminToken: string;
+
+beforeAll(async () => {
+  const db = await startTestDb();
+  stop = db.stop;
+  app = await buildServer({ pool: db.pool });
+  ({ token: adminToken } = await bootstrapAdmin(app));
+});
+afterAll(async () => { await app.close(); await stop(); });
+
+const admin = () => ({ authorization: `Bearer ${adminToken}` });
+
+const create = (payload: object) =>
+  app.inject({ method: 'POST', url: '/accounts/agents', headers: admin(), payload });
+
+const patch = (id: string, payload: object) =>
+  app.inject({ method: 'PATCH', url: `/accounts/agents/${id}`, headers: admin(), payload });
+
+const list = () => app.inject({ method: 'GET', url: '/accounts/agents', headers: admin() });
+
+describe('agent definition', () => {
+  it('creates an agent with instructions and a harness', async () => {
+    const res = await create({
+      handle: 'fizz', displayName: 'Fizz',
+      instructions: '느린 쿼리를 찾아 원인을 설명한다.',
+      harness: 'claude-code',
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toMatchObject({
+      handle: 'fizz',
+      instructions: '느린 쿼리를 찾아 원인을 설명한다.',
+      harness: 'claude-code',
+    });
+  });
+
+  // UI 로 만들 때 지시문을 아직 안 쓸 수 있다 — 생성이 막히면 안 된다.
+  it('creates an agent with no configuration at all', async () => {
+    const res = await create({ handle: 'bare', displayName: 'Bare' });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().harness).toBe('claude-code');
+    expect(res.json().instructions).toBe('');
+  });
+
+  it('refuses a harness murmur cannot run', async () => {
+    const res = await create({ handle: 'nope', displayName: 'Nope', harness: 'devin' });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('lists agents with their configuration', async () => {
+    await create({ handle: 'listed', displayName: 'Listed', instructions: '목록 확인용' });
+
+    const res = await list();
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().agents.some((a: { handle: string; instructions: string }) =>
+      a.handle === 'listed' && a.instructions === '목록 확인용')).toBe(true);
+  });
+
+  it('does not list humans among the agents', async () => {
+    const res = await list();
+
+    expect(res.json().agents.every((a: { kind: string }) => a.kind === 'agent')).toBe(true);
+  });
+});
+
+describe('editing an agent definition', () => {
+  it('rewrites instructions and keeps everything else', async () => {
+    const made = (await create({
+      handle: 'editme', displayName: 'EditMe', instructions: '처음 지시문', model: 'claude-opus-5',
+    })).json();
+
+    const res = await patch(made.id, { instructions: '고친 지시문' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      instructions: '고친 지시문', model: 'claude-opus-5', displayName: 'EditMe',
+    });
+  });
+
+  // 'harness 기본값 사용' 으로 되돌리는 조작이 UI 에 있다 — null 로 비울 수 있어야 한다.
+  it('clears a model override with an explicit null', async () => {
+    const made = (await create({ handle: 'clearme', displayName: 'ClearMe', model: 'claude-opus-5' })).json();
+
+    const res = await patch(made.id, { model: null });
+
+    expect(res.json().model).toBeNull();
+  });
+
+  it('refuses an edit from a non-admin', async () => {
+    const made = (await create({ handle: 'guarded', displayName: 'Guarded' })).json();
+    const { pat } = await createAgent(app, adminToken, 'intruder');
+
+    const res = await app.inject({
+      method: 'PATCH', url: `/accounts/agents/${made.id}`,
+      headers: { authorization: `Bearer ${pat}` }, payload: { instructions: '남의 정의를 고친다' },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('404s for an account that is not an agent', async () => {
+    const me = await app.inject({ method: 'GET', url: '/auth/me', headers: admin() });
+
+    const res = await patch(me.json().id, { instructions: '사람을 에이전트로 고친다' });
+
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+describe('an agent reading its own definition', () => {
+  // 러너가 자기 설정을 서버에서 읽어야 UI 수정이 반영된다. 환경변수로 두면 UI 가 장식이 된다.
+  it('serves the definition to the agent that owns it', async () => {
+    const made = (await create({
+      handle: 'selfread', displayName: 'SelfRead', instructions: '내 지시문', effort: 'high',
+    })).json();
+    const patRes = await app.inject({
+      method: 'POST', url: `/accounts/${made.id}/pats`, headers: admin(), payload: { label: 'runner' },
+    });
+
+    const res = await app.inject({
+      method: 'GET', url: '/agent/config',
+      headers: { authorization: `Bearer ${patRes.json().token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      handle: 'selfread', instructions: '내 지시문', effort: 'high', harness: 'claude-code',
+    });
+  });
+
+  it('refuses to serve a definition to a human account', async () => {
+    const res = await app.inject({ method: 'GET', url: '/agent/config', headers: admin() });
+
+    expect(res.statusCode).toBe(403);
+  });
+});
