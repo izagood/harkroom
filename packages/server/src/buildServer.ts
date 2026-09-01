@@ -21,6 +21,8 @@ export interface ServerDeps {
   corsOrigins?: string[] | null;
   /** 소켓 뒤 자격증명 재검증 주기. 기본 60초. */
   wsRevalidateMs?: number;
+  /** WS ping/pong 주기(ms). 기본 30초. 테스트에서 짧게 준다. */
+  wsHeartbeatMs?: number;
   /** 로그 레벨. 미지정이면 LOG_LEVEL, 그것도 없으면 info. */
   logLevel?: string;
   /** 로그 싱크 교체(테스트 전용 seam). 프로덕션은 stdout 이다. */
@@ -69,6 +71,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerWs(app, deps.pool, {
     allowedOrigins: deps.corsOrigins ?? null,
     revalidateMs: deps.wsRevalidateMs,
+    heartbeatMs: deps.wsHeartbeatMs,
   });
   await registerAuthRoutes(app, deps.pool);
   await registerAccountRoutes(app, deps.pool);
