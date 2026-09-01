@@ -11,6 +11,29 @@ import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
 import { Lifecycle } from './lifecycle.js';
 import { loggerConfig } from './logging.js';
+import { createRateLimiter, type RateLimitRule } from './rateLimit.js';
+
+/**
+ * 인증 표면 기본 리밋.
+ *
+ * `/auth/login` 이 가장 낮은 이유: Argon2 검증은 **의도적으로 비싼** 연산이라 무제한 요청이
+ * 브루트포스 벡터이면서 동시에 CPU 소진 벡터다. 계정 생성 표면(`/bootstrap`, `/auth/register`)은
+ * 초대 토큰이 있어도 시도 자체를 좁힌다. `/ws-ticket` 은 넉넉하다 — 재연결 폭풍은 정상 동작이고,
+ * 여기서 막으면 네트워크가 불안한 클라이언트가 영구히 못 붙는다.
+ */
+const DEFAULT_RATE_LIMITS: Record<'login' | 'signup' | 'ticket', RateLimitRule> = {
+  login: { windowMs: 5 * 60_000, max: 20 },
+  signup: { windowMs: 15 * 60_000, max: 10 },
+  ticket: { windowMs: 60_000, max: 120 },
+};
+
+/** 어떤 경로에 어떤 리밋을 적용하는가. 인증 표면만 좁힌다 — 발화·조회는 건드리지 않는다. */
+const LIMITED_ROUTES: { method: string; url: string; rule: keyof typeof DEFAULT_RATE_LIMITS }[] = [
+  { method: 'POST', url: '/auth/login', rule: 'login' },
+  { method: 'POST', url: '/auth/register', rule: 'signup' },
+  { method: 'POST', url: '/bootstrap', rule: 'signup' },
+  { method: 'POST', url: '/ws-ticket', rule: 'ticket' },
+];
 
 export interface ServerDeps {
   pool: Pool;
@@ -27,6 +50,10 @@ export interface ServerDeps {
   logLevel?: string;
   /** 로그 싱크 교체(테스트 전용 seam). 프로덕션은 stdout 이다. */
   logStream?: import('node:stream').Writable;
+  /** 인증 표면 리밋 재정의. 미지정이면 DEFAULT_RATE_LIMITS. */
+  rateLimits?: Partial<Record<'login' | 'signup' | 'ticket', RateLimitRule>>;
+  /** 리밋 판정용 시계(테스트 전용 seam). */
+  now?: () => number;
 }
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
@@ -65,6 +92,25 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get('/readyz', async (_req, reply) => {
     await deps.pool.query('select 1');
     return { ok: true };
+  });
+
+  // 리밋은 인증(onRequest 훅)보다 앞에서 걸어야 한다 — 그래야 Argon2 검증에 도달하기 전에
+  // 막히고, 응답이 계정 존재 여부를 드러내지 않는다.
+  const limiter = createRateLimiter(deps.now);
+  const rules = { ...DEFAULT_RATE_LIMITS, ...deps.rateLimits };
+  app.addHook('onRequest', async (req, reply) => {
+    const route = LIMITED_ROUTES.find(
+      (r) => r.method === req.method && req.url.split('?')[0] === r.url,
+    );
+    if (!route) return;
+    // req.ip 는 프록시 뒤에서는 프록시 주소다. 앞단을 두면 Fastify `trustProxy` 를 켜야
+    // 실제 클라이언트 주소로 계수된다 — 안 켜면 전체가 한 키를 공유해 서로를 밀어낸다.
+    const verdict = limiter.hit(`${route.rule}:${req.ip}`, rules[route.rule]);
+    if (verdict.allowed) return;
+    await reply
+      .code(429)
+      .header('retry-after', String(Math.ceil(verdict.retryAfterMs / 1000)))
+      .send({ error: { code: 'rate_limited', message: 'too many attempts, try again later' } });
   });
 
   await registerAuth(app, deps.pool);
