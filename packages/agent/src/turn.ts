@@ -65,6 +65,13 @@ interface HarnessPreset {
    * 보지 않고 그냥 호출만 한다(표 조회 자체가 분기다).
    */
   session(sessionId: string | null, isFirstTurn: boolean, mode: TurnMode): string[];
+  /**
+   * "세션 id 를 사전 할당할 수 없는가"는 harness 차이다 — 그래서 하드코드된 harness 이름
+   * 비교가 아니라 표의 필드로 둔다(`assertValidSession` 이 이 필드만 읽는다). claude 는
+   * false(러너가 첫 턴도 미리 uuid 를 발급), codex 는 true(첫 턴은 id 없이 시작해 종료 후
+   * 발견한다). 네 번째 harness 가 이 성질을 가지면 이 필드만 채우면 된다 — 함수를 안 고친다.
+   */
+  allowsNullSessionOnFirstMention: boolean;
   /** mentionPermission → 멘션 턴 전용 권한 플래그. 인터랙티브에선 아예 쓰지 않는다. */
   permission: Record<MentionPermission, string[]>;
   mcp(args: { mcpConfigPath: string; murmurUrl: string }): string[];
@@ -78,22 +85,18 @@ interface HarnessPreset {
   prompt(systemPrompt: string, promptCtx: string, mode: TurnMode): string[];
 }
 
-function requireSessionId(sessionId: string | null, harness: string): string {
-  if (sessionId === null) {
-    // assertValidSession 이 이미 이 조합을 걸러내야 정상이다 — 여기 도달했다면
-    // assertValidSession 쪽 결함이라는 뜻이라 원인이 뭉개지지 않게 harness 를 남긴다.
-    throw new Error(`buildTurnCommand: ${harness} 세션 id 가 없다(assertValidSession 이 걸렀어야 한다)`);
-  }
-  return sessionId;
-}
-
 const CLAUDE_PRESET: HarnessPreset = {
   command: 'claude',
   session(sessionId, isFirstTurn, mode) {
-    const id = requireSessionId(sessionId, 'claude');
+    // `buildTurnCommand` 가 이 함수를 부르기 전에 `assertValidSession` 이 이미 non-null 을
+    // 보장했다(claude 의 `allowsNullSessionOnFirstMention` 은 false) — 그 불변식을 여기서
+    // 다시 검사하지 않는다(같은 규칙을 두 곳에서 지키면 나중에 한쪽만 고치는 사고가 난다).
+    // 아래 캐스트는 순수하게 TypeScript 타입 좁히기다.
+    const id = sessionId as string;
     if (mode === 'interactive') return ['-r', id];
     return isFirstTurn ? ['-p', '--session-id', id] : ['-p', '-r', id];
   },
+  allowsNullSessionOnFirstMention: false,
   permission: {
     auto: ['--permission-mode', 'bypassPermissions'],
     readonly: ['--permission-mode', 'plan'],
@@ -117,8 +120,9 @@ const CODEX_PRESET: HarnessPreset = {
   session(sessionId, isFirstTurn, mode) {
     if (mode === 'interactive') {
       // 인터랙티브는 언제나 기존 세션을 이어받는다(spec §2 — PTY 가 존재하는 세 경우 중
-      // "사람이 [▶ 터미널]"은 항상 resume 이다). sessionId 가 없으면 이어받을 게 없다.
-      const id = requireSessionId(sessionId, 'codex');
+      // "사람이 [▶ 터미널]"은 항상 resume 이다). sessionId 가 없으면 이어받을 게 없다 —
+      // `assertValidSession` 이 이미 이 조합을 걸렀다(claude 쪽과 같은 이유로 재검사 안 함).
+      const id = sessionId as string;
       return ['resume', id];
     }
     if (sessionId === null) {
@@ -128,13 +132,22 @@ const CODEX_PRESET: HarnessPreset = {
     }
     return ['exec', 'resume', sessionId];
   },
+  allowsNullSessionOnFirstMention: true,
   // `-a`/`--ask-for-approval` 은 `codex exec`/`codex exec resume` 어디에도 없다(실측,
-  // task-1 스파이크) — sandbox(`-s`)만으로 권한을 조정한다. `danger-full-access` 는 어느
-  // 쪽에도 매핑하지 않는다: 멘션 턴은 사람이 안 보는 턴이라 workspace 경계를 넘길 이유가
-  // 없고, 그 경계가 avcs workspace 격리와 정확히 겹친다(spec §4).
+  // task-1 스파이크) — sandbox 만으로 권한을 조정한다. `danger-full-access` 는 어느 쪽에도
+  // 매핑하지 않는다: 멘션 턴은 사람이 안 보는 턴이라 workspace 경계를 넘길 이유가 없고,
+  // 그 경계가 avcs workspace 격리와 정확히 겹친다(spec §4).
+  //
+  // **`-s` 플래그가 아니라 `-c sandbox_mode="…"` 다.** 리뷰가 실물 CLI(`codex-cli 0.148.0`)로
+  // 깨뜨렸다: `codex exec resume <id> -s workspace-write` → `error: unexpected argument
+  // '-s' found`. `-s` 는 비-resume `codex exec` 에만 있고 `codex exec resume --help` 의
+  // 옵션 목록(`-c`, `-m`, `--last`, `--all` 등)에는 없다 — "새 세션" 행과 "권한" 행이 codex
+  // 에서는 직교하지 않았다(첫 턴에 통하는 플래그가 resume 에서 파싱 오류). `sandbox_mode` 는
+  // codex 자신의 마이그레이션 문서가 쓰는 실제 설정 키이고 `-c` 는 exec·resume 양쪽에 있어,
+  // 두 턴이 같은 기전 하나를 쓰면 이 비대칭이 애초에 생기지 않는다(spec §4, 수정 커밋 9a1c852).
   permission: {
-    auto: ['-s', 'workspace-write'],
-    readonly: ['-s', 'read-only'],
+    auto: ['-c', 'sandbox_mode="workspace-write"'],
+    readonly: ['-c', 'sandbox_mode="read-only"'],
   },
   mcp: ({ murmurUrl }) => [
     // avcs 는 항상 등록한다(실측 shape: stdio, command 'avcs', args ['mcp'], env 없음).
@@ -180,18 +193,23 @@ const PRESETS: Record<AgentHarness, HarnessPreset | 'unsupported'> = {
 };
 
 /**
- * sessionId 가 null 인 조합 중 유일하게 유효한 것은 "codex 의 첫 멘션 턴"뿐이다. 그 밖의
- * 조합(resume 인데 id 가 없다, claude 인데 id 가 없다, 인터랙티브인데 이어받을 게 없다)은
- * 호출자가 세션을 먼저 확보하지 않은 결함이다 — 조용히 삼켜 이상한 명령을 조립하느니
- * 여기서 크게 던진다(design.md 의 "없는 것을 있다고 표시하지 않는다"와 같은 결).
+ * sessionId 가 null 인 조합 중 유일하게 유효한 것은 "`allowsNullSessionOnFirstMention` 인
+ * harness 의 첫 멘션 턴"뿐이다. 그 밖의 조합(resume 인데 id 가 없다, claude 인데 id 가
+ * 없다, 인터랙티브인데 이어받을 게 없다)은 호출자가 세션을 먼저 확보하지 않은 결함이다 —
+ * 조용히 삼켜 이상한 명령을 조립하느니 여기서 크게 던진다(design.md 의 "없는 것을 있다고
+ * 표시하지 않는다"와 같은 결). harness 이름은 여기서 보지 않는다 — preset 의 표 필드만
+ * 읽는다(그래야 네 번째 harness 를 붙일 때 이 함수가 아니라 표만 고치면 된다).
  */
-function assertValidSession(opts: Pick<BuildTurnCommandOptions, 'harness' | 'mode' | 'sessionId' | 'isFirstTurn'>): void {
+function assertValidSession(
+  opts: Pick<BuildTurnCommandOptions, 'harness' | 'mode' | 'sessionId' | 'isFirstTurn'>,
+  preset: HarnessPreset,
+): void {
   if (opts.sessionId !== null) return;
-  const codexFirstMention = opts.harness === 'codex' && opts.mode === 'mention' && opts.isFirstTurn;
-  if (codexFirstMention) return;
+  const allowed = preset.allowsNullSessionOnFirstMention && opts.mode === 'mention' && opts.isFirstTurn;
+  if (allowed) return;
   throw new Error(
     `buildTurnCommand: sessionId 가 null 이다 (harness=${opts.harness}, mode=${opts.mode}, ` +
-      `isFirstTurn=${opts.isFirstTurn}) — codex 의 첫 멘션 턴 외에는 호출자가 세션 id 를 ` +
+      `isFirstTurn=${opts.isFirstTurn}) — 이 harness/모드 조합에서는 호출자가 세션 id 를 ` +
       '먼저 확보했어야 한다 (sessions.ts::SessionRecord 참고)',
   );
 }
@@ -204,7 +222,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
         'RUNNABLE_HARNESSES 에 없어야 정상이므로, 여기 도달했다면 상위 호출부의 결함이다',
     );
   }
-  assertValidSession(opts);
+  assertValidSession(opts, preset);
   if (!opts.murmurUrl) {
     // 타입은 필수(string)로 강제하지만, 빈 문자열은 타입 체크를 통과하고도 같은 조용한
     // 실패(murmur MCP 미등록 → 답 못 함 → "답 없이 턴을 끝냈습니다")로 이어진다 — 여기서 막는다.

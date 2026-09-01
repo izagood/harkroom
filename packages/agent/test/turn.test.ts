@@ -62,13 +62,29 @@ describe('buildTurnCommand — codex', () => {
     expect(p.args.slice(0, 3)).toEqual(['exec', 'resume', 'sid-9']);
   });
 
-  it('권한은 sandbox 단독이다 — codex exec 에 -a 는 없다 (실측)', () => {
+  // `-s workspace-write` 는 `codex exec resume <id>` 에서 실제로 죽는다(실물 CLI 재현:
+  // `error: unexpected argument '-s' found`) — `-s` 는 비-resume `codex exec` 에만 있다.
+  // 그래서 권한은 `-s` 가 아니라 `-c sandbox_mode="…"` 하나로, 첫 턴·resume 턴 양쪽에 쓴다.
+  it('권한은 -c sandbox_mode 다 — -s 는 어디에도 없다 (resume 에서 실제로 파싱 실패했다)', () => {
     const auto = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
-    expect(auto.args).toEqual(expect.arrayContaining(['-s', 'workspace-write']));
+    expect(auto.args.join(' ')).toContain('sandbox_mode="workspace-write"');
+    expect(auto.args).not.toContain('-s');
     expect(auto.args).not.toContain('-a');
     expect(auto.args).not.toContain('danger-full-access');
     const ro = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, mentionPermission: 'readonly' });
-    expect(ro.args).toEqual(expect.arrayContaining(['-s', 'read-only']));
+    expect(ro.args.join(' ')).toContain('sandbox_mode="read-only"');
+    expect(ro.args).not.toContain('-s');
+  });
+
+  // "새 세션" 행과 "권한" 행이 직교하지 않았던 것이 이번 결함의 정체다 — 첫 턴에 통하던
+  // 플래그가 resume 턴에서 파싱 오류를 냈다. 같은 기전을 쓰는지 직접 비교해 그 재발을 막는다.
+  it('첫 턴과 resume 턴이 같은 권한 기전(-c sandbox_mode)을 쓴다 — 직교하지 않는 조합 재발 방지', () => {
+    const firstTurn = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true });
+    const resumeTurn = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
+    expect(firstTurn.args.join(' ')).toContain('sandbox_mode="workspace-write"');
+    expect(resumeTurn.args.join(' ')).toContain('sandbox_mode="workspace-write"');
+    expect(firstTurn.args).not.toContain('-s');
+    expect(resumeTurn.args).not.toContain('-s');
   });
 
   it('MCP 는 턴별 -c 오버라이드다 — codex mcp add 는 config.toml 을 영구 변경한다 (spec §6)', () => {
@@ -78,15 +94,15 @@ describe('buildTurnCommand — codex', () => {
     expect(p.args.join(' ')).not.toContain('murp_'); // PAT 는 env 로만
   });
 
-  // 인터랙티브 턴은 화면 앞에 사람이 있다 — exec 서브커맨드도, sandbox 플래그도, 프롬프트
+  // 인터랙티브 턴은 화면 앞에 사람이 있다 — exec 서브커맨드도, sandbox 오버라이드도, 프롬프트
   // 위치인자도 없어야 한다(spec §4·§6). 이 조각들을 빠뜨리면 codex resume 이 비대화형처럼
-  // 동작하거나(-s 가 남아 승인 흐름이 안 뜸), 사람이 입력할 자리에 옛 프롬프트가 끼어든다.
+  // 동작하거나(sandbox_mode 가 남아 승인 흐름이 안 뜸), 사람이 입력할 자리에 옛 프롬프트가 끼어든다.
   it('인터랙티브 턴은 exec·sandbox·프롬프트 위치인자를 전부 생략한다 — 순수 resume', () => {
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'interactive', sessionId: 'sid-1', isFirstTurn: false });
     expect(p.args[0]).toBe('resume');
     expect(p.args[1]).toBe('sid-1');
     expect(p.args).not.toContain('exec');
-    expect(p.args).not.toContain('-s');
+    expect(p.args.join(' ')).not.toContain('sandbox_mode');
     expect(p.args.join(' ')).not.toContain('CTX'); // promptCtx 는 mention 전용(브리프 인터페이스 주석)
   });
 
