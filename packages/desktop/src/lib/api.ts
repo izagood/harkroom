@@ -38,6 +38,13 @@ export class ApiClient {
   }
   me(): Promise<AccountView> { return this.req('GET', '/auth/me'); }
   logout(): Promise<void> { return this.req('POST', '/auth/logout'); }
+  /** 채널 전체의 읽음 상태를 한 번에. 채널마다 묻지 않기 위한 표면이다. */
+  async reads(): Promise<{ channelId: string; lastReadSeq: number; unread: number }[]> {
+    return (await this.req<{ reads: { channelId: string; lastReadSeq: number; unread: number }[] }>('GET', '/reads')).reads;
+  }
+  markChannelRead(channelId: string, seq: number): Promise<void> {
+    return this.req('PUT', `/channels/${channelId}/read`, { seq });
+  }
   async accounts(): Promise<AccountView[]> {
     return (await this.req<{ accounts: AccountView[] }>('GET', '/accounts')).accounts;
   }

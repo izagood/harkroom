@@ -4,6 +4,22 @@ import { getController } from '../state/controller';
 import { LeasePanel } from './LeasePanel';
 import type { SectionId } from './settings/sections';
 
+/**
+ * 채널 미읽음 표시. **멘션 배지와 다른 신호다** — 멘션은 "당신을 불렀다"(빨간 숫자),
+ * 이것은 "새 대화가 있다"(작은 점). 여기에 숫자를 붙이면 두 뜻이 섞여 빨간 배지가 의미를
+ * 잃는다. 수치는 aria-label 로만 노출한다(스크린리더·테스트가 읽을 수 있게).
+ */
+function ChannelUnreadDot({ channelId, name }: { channelId: string; name: string }) {
+  const unread = useAppStore((s) => s.reads[channelId]?.unread ?? 0);
+  if (!unread) return null;
+  return (
+    <span
+      aria-label={`${unread} unread in ${name}`}
+      className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-400"
+    />
+  );
+}
+
 function UnreadBadge({ channelId }: { channelId: string }) {
   const unread = useAppStore((s) => s.unread);
   const count = unread.filter((e) => e.channelId === channelId && !e.readAt).length;
@@ -52,6 +68,7 @@ export function Sidebar({ onLogout, onOpenSettings }: {
               onClick={() => void getController().openChannel(ch.id)}>
               <span className="text-zinc-500">#</span>{ch.name}
               {ch.repo && <span className="rounded bg-zinc-800 px-1 text-[10px] text-zinc-400">{ch.repo}</span>}
+              <ChannelUnreadDot channelId={ch.id} name={ch.name ?? ''} />
               <UnreadBadge channelId={ch.id} />
             </button>
           ))}

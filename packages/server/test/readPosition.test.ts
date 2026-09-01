@@ -142,3 +142,54 @@ describe('채널 읽음 위치', () => {
     expect(res.statusCode).toBe(403);
   });
 });
+
+// 사이드바 배지는 채널 전체의 미읽음을 한 번에 알아야 한다. 채널마다 요청하면 N+1 이고,
+// 채널이 늘수록 앱을 열 때마다 그만큼 왕복한다.
+describe('읽음 위치 일괄 조회', () => {
+  it('returns one row per visible channel', async () => {
+    const second = await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'reads-two' },
+    });
+    const secondId = second.json().id as string;
+    await app.inject({
+      method: 'POST', url: `/channels/${secondId}/messages`, headers: auth(botPat), payload: { body: 'hi' },
+    });
+
+    const res = await app.inject({ method: 'GET', url: '/reads', headers: auth(adminToken) });
+
+    expect(res.statusCode).toBe(200);
+    const rows = res.json().reads as { channelId: string; lastReadSeq: number; unread: number }[];
+    const forSecond = rows.find((r) => r.channelId === secondId);
+    expect(forSecond).toBeTruthy();
+    expect(forSecond!.unread).toBeGreaterThan(0);
+    // 아직 아무것도 읽지 않은 채널도 행이 있어야 한다 — 없으면 클라이언트가 0 과 '모름'을 구분 못 한다.
+    expect(forSecond!.lastReadSeq).toBe(0);
+  });
+
+  // DM 은 멤버에게만 보인다. 일괄 조회가 그 경계를 무시하면 채널 존재 자체가 새어 나간다.
+  it('omits dm channels I am not a member of', async () => {
+    const a = await createAgent(app, adminToken, 'dmreadbot-a');
+    const b = await createAgent(app, adminToken, 'dmreadbot-b');
+    const dm = await app.inject({
+      method: 'POST', url: '/dms', headers: auth(a.pat), payload: { accountIds: [b.accountId] },
+    });
+    const dmId = dm.json().id as string;
+
+    const res = await app.inject({ method: 'GET', url: '/reads', headers: auth(botPat) });
+
+    const rows = res.json().reads as { channelId: string }[];
+    expect(rows.some((r) => r.channelId === dmId)).toBe(false);
+  });
+
+  it('reflects a mark-read immediately', async () => {
+    const seq = await post(botPat, 'bulk ack');
+    await markRead(adminToken, seq);
+
+    const res = await app.inject({ method: 'GET', url: '/reads', headers: auth(adminToken) });
+
+    const mine = (res.json().reads as { channelId: string; lastReadSeq: number; unread: number }[])
+      .find((r) => r.channelId === channelId);
+    expect(mine!.lastReadSeq).toBe(seq);
+    expect(mine!.unread).toBe(0);
+  });
+});

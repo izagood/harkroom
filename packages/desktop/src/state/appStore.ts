@@ -12,6 +12,13 @@ export interface AppState {
   /** 채널별 '더 오래된 것이 남았는가'. */
   hasMore: Record<string, boolean>;
   unread: InboxEntry[];
+  /** 채널별 읽음 상태(서버 진실). 사이드바 배지가 여기서 나온다. */
+  reads: Record<string, { lastReadSeq: number; unread: number }>;
+  /**
+   * 채널을 **열 때** 얼려 둔 읽음 위치. 구분선은 이 값으로 그린다 — 라이브 `reads` 를 쓰면
+   * 열자마자 읽음 처리가 돌아 구분선이 즉시 사라져 아무 쓸모가 없다.
+   */
+  dividerSeq: Record<string, number>;
   online: string[];
   leases: LeaseRow[];
   connected: boolean;
@@ -24,7 +31,8 @@ export interface AppState {
 
 const initial = {
   me: null, accounts: {}, channels: [], dms: [], activeChannelId: null, threadRootId: null,
-  messages: {}, hasMore: {}, unread: [], online: [], leases: [], connected: false,
+  messages: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
+  online: [], leases: [], connected: false,
 };
 
 export const useAppStore = create<AppState>((set, get) => ({

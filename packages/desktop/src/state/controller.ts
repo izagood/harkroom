@@ -30,13 +30,14 @@ export class Controller {
 
   async start(): Promise<void> {
     const store = useAppStore.getState();
-    const [me, accounts, channels, dms, leases, unread] = await Promise.all([
+    const [me, accounts, channels, dms, leases, unread, reads] = await Promise.all([
       this.api.me(), this.api.accounts(), this.api.channels(),
-      this.api.dms(), this.api.leases(), this.api.inboxUnread(),
+      this.api.dms(), this.api.leases(), this.api.inboxUnread(), this.api.reads(),
     ]);
     store.set({
       me, channels, dms, leases, unread,
       accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
+      reads: Object.fromEntries(reads.map((r) => [r.channelId, { lastReadSeq: r.lastReadSeq, unread: r.unread }])),
     });
     // 앱을 열자마자 쌓여 있던 미읽음이 한꺼번에 터지면 알림이 소음이 된다.
     for (const e of unread) this.announced.add(e.id);
@@ -78,6 +79,7 @@ export class Controller {
     switch (e.type) {
       case 'message.created':
         store.upsertMessages(e.message.channelId, [e.message]);
+        this.bumpUnread(e.message.channelId, e.message.authorId);
         // 서버는 기동 시 투영용 system 계정을 만든다 — 그보다 먼저 부트스트랩한 클라이언트는
         // 그 계정을 모르고, 작성자가 '…'로 표시된다. 디렉터리는 정적이 아니다.
         if (!store.accounts[e.message.authorId]) this.swallow(this.refreshAccounts());
@@ -115,6 +117,17 @@ export class Controller {
         break;
       }
     }
+  }
+
+  /**
+   * 배지를 올린다. 보고 있는 채널과 내가 쓴 것은 올리지 않는다 — 열려 있는 채널에 배지가
+   * 뜨면 배지가 "가봐야 할 곳"이라는 뜻을 잃고, 자기 발화에 배지가 뜨면 더 무의미하다.
+   */
+  private bumpUnread(channelId: string, authorId: string): void {
+    const store = useAppStore.getState();
+    if (channelId === store.activeChannelId || authorId === store.me?.id) return;
+    const cur = store.reads[channelId] ?? { lastReadSeq: 0, unread: 0 };
+    store.set({ reads: { ...store.reads, [channelId]: { ...cur, unread: cur.unread + 1 } } });
   }
 
   private async reconcile(): Promise<void> {
@@ -209,6 +222,26 @@ export class Controller {
       await this.api.markRead(ids);
       await this.refreshUnread();
     }
+    await this.settleReadPosition(channelId);
+  }
+
+  /**
+   * 채널을 열었을 때 (a) **그 순간의** 읽음 위치를 구분선용으로 얼려 두고 (b) 최신까지 읽음
+   * 처리한다. 순서가 중요하다 — 얼리기 전에 읽음 처리하면 구분선이 사라진다.
+   *
+   * 얼린 값은 그 채널을 다시 열 때까지 유지된다. 보고 있는 동안 새 메시지가 와도 구분선이
+   * 그 자리에 남는 것이 의도다("내가 열었을 때 어디까지 읽었는가"를 말하는 선이다).
+   */
+  private async settleReadPosition(channelId: string): Promise<void> {
+    const store = useAppStore.getState();
+    const frozen = store.reads[channelId]?.lastReadSeq ?? 0;
+    store.set({ dividerSeq: { ...store.dividerSeq, [channelId]: frozen } });
+
+    const newest = Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq));
+    if (newest <= frozen) return;
+    await this.api.markChannelRead(channelId, newest);
+    const after = useAppStore.getState();
+    after.set({ reads: { ...after.reads, [channelId]: { lastReadSeq: newest, unread: 0 } } });
   }
 
   async openThread(rootId: string): Promise<void> {
