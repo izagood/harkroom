@@ -5,6 +5,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { AccountView } from '@murmur/shared';
 import { emitEvent, onEvent } from '../events.js';
+import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, dmMemberIds, listChannels } from '../services/channels.js';
 import { listInbox, listMessages, postMessage, searchMessages } from '../services/messages.js';
 import { GUIDE } from './guide.js';
@@ -13,7 +14,7 @@ function jsonResult(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }] };
 }
 
-function buildMcpServer(pool: Pool, account: AccountView): McpServer {
+function buildMcpServer(pool: Pool, account: AccountView, lifecycle: Lifecycle): McpServer {
   const server = new McpServer({ name: 'murmur', version: '0.1.0' });
 
   server.registerTool('workspace.guide', { description: '워크스페이스 규칙(avcs 사용 경계 포함)' },
@@ -92,10 +93,20 @@ function buildMcpServer(pool: Pool, account: AccountView): McpServer {
         notify?.();
       }
     });
+    // 종료가 시작되면 park를 걷어낸다. 이 응답은 hijack된 raw 소켓이라 Fastify close()가
+    // 기다려 주지 않으므로, park를 유지하면 정상 타임아웃이 아니라 transport error로 절단된다.
+    // draining 중에 도착한 poll은 애초에 park하지 않는다 — 종료 중 서버가 25초를 붙잡는 것도
+    // 같은 절단이다. enterPoll은 그동안 종료가 이 응답을 기다리게 만든다.
+    let draining = false;
+    const offDrain = lifecycle.onDrain(() => {
+      draining = true;
+      notify?.();
+    });
+    const releasePoll = lifecycle.enterPoll();
     try {
       let result = await fetchUnread();
       let waited = false;
-      if (!result.entries.length && !woken && (timeoutMs ?? 0) > 0) {
+      if (!result.entries.length && !woken && !draining && (timeoutMs ?? 0) > 0) {
         await new Promise<void>((resolve) => {
           const timer = setTimeout(resolve, timeoutMs);
           notify = () => { clearTimeout(timer); resolve(); };
@@ -111,6 +122,8 @@ function buildMcpServer(pool: Pool, account: AccountView): McpServer {
       return jsonResult(result);
     } finally {
       off();
+      offDrain();
+      releasePoll();
     }
   });
 
@@ -145,13 +158,13 @@ function buildMcpServer(pool: Pool, account: AccountView): McpServer {
   return server;
 }
 
-export async function registerMcp(app: FastifyInstance, pool: Pool): Promise<void> {
+export async function registerMcp(app: FastifyInstance, pool: Pool, lifecycle: Lifecycle): Promise<void> {
   app.post('/mcp', async (req, reply) => {
     if (!req.account || req.account.kind !== 'agent') {
       return reply.code(req.account ? 403 : 401)
         .send({ error: { code: 'agent_only', message: 'MCP surface requires an agent PAT' } });
     }
-    const server = buildMcpServer(pool, req.account);
+    const server = buildMcpServer(pool, req.account, lifecycle);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     reply.hijack();
     reply.raw.on('close', () => {

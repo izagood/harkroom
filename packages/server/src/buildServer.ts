@@ -9,14 +9,18 @@ import { registerMessageRoutes } from './routes/messageRoutes.js';
 import { registerDirectoryRoutes } from './routes/directoryRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
+import { Lifecycle } from './lifecycle.js';
 
 export interface ServerDeps {
   pool: Pool;
   getAvcsStatus?: () => { connected: boolean };
+  /** 종료 시 in-flight long-poll을 정상 마감시키는 창구. main이 SIGTERM에서 beginDrain을 부른다. */
+  lifecycle?: Lifecycle;
 }
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
+  const lifecycle = deps.lifecycle ?? new Lifecycle();
 
   app.setErrorHandler((err: FastifyError, _req, reply) => {
     if (err.name === 'ZodError') {
@@ -52,7 +56,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerChannelRoutes(app, deps.pool);
   await registerMessageRoutes(app, deps.pool);
   await registerDirectoryRoutes(app, deps.pool);
-  await registerMcp(app, deps.pool);
+  await registerMcp(app, deps.pool, lifecycle);
 
   return app;
 }
