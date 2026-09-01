@@ -518,13 +518,50 @@ describe('buildTurnCommand — claude', () => {
   });
 });
 
-// codex·gemini 케이스는 Task 1 실측값으로 같은 구조의 테스트를 추가한다:
-// codex: 첫 턴 sessionId null 허용(발견 전), resume 는 ['exec','resume',<id>] 형(실측 확정), -s/-a 매핑
-// gemini: --session-id/-r + 실측된 비대화형·권한 플래그
+describe('buildTurnCommand — codex', () => {
+  it('첫 턴은 sessionId 없이도 조립된다 — codex 는 id 를 사전 할당할 수 없다', () => {
+    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true });
+    expect(p.command).toBe('codex');
+    expect(p.args[0]).toBe('exec');
+    expect(p.args).not.toContain('resume');
+  });
+
+  it('resume 턴은 exec resume <id>', () => {
+    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 'sid-9', isFirstTurn: false });
+    expect(p.args.slice(0, 3)).toEqual(['exec', 'resume', 'sid-9']);
+  });
+
+  it('권한은 sandbox 단독이다 — codex exec 에 -a 는 없다 (실측)', () => {
+    const auto = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
+    expect(auto.args).toEqual(expect.arrayContaining(['-s', 'workspace-write']));
+    expect(auto.args).not.toContain('-a');
+    expect(auto.args).not.toContain('danger-full-access');
+    const ro = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, mentionPermission: 'readonly' });
+    expect(ro.args).toEqual(expect.arrayContaining(['-s', 'read-only']));
+  });
+
+  it('MCP 는 턴별 -c 오버라이드다 — codex mcp add 는 config.toml 을 영구 변경한다 (spec §6)', () => {
+    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
+    expect(p.args.join(' ')).toContain('-c mcp_servers.');
+    expect(p.args).not.toContain('mcp');           // `codex mcp add` 경로로 새지 않는다
+    expect(p.args.join(' ')).not.toContain('murp_'); // PAT 는 env 로만
+  });
+});
+
+describe('buildTurnCommand — gemini', () => {
+  it('미지원을 명확한 에러로 거절한다 — -r 이 uuid 를 받지 않는다 (실측)', () => {
+    expect(() => buildTurnCommand({ ...base, harness: 'gemini', mode: 'mention', sessionId: 's', isFirstTurn: false }))
+      .toThrow(/gemini/);
+  });
+});
 ```
 
 - [ ] **Step 2: 실패 확인** → FAIL
-- [ ] **Step 3: 구현** — harness 별 분기가 아니라 **표 상수** (`PRESETS: Record<AgentHarness, …>`) 로 두고 buildTurnCommand 는 표를 조립만 한다. codex·gemini 값은 Task 1 결과로 채우고 테스트도 함께 추가.
+- [ ] **Step 3: 구현** — harness 별 분기가 아니라 **표 상수** (`PRESETS: Record<AgentHarness, …>`) 로 두고
+  buildTurnCommand 는 표를 조립만 한다. 값은 spec §4 의 확정 표를 그대로 옮긴다(그 표는 실측으로
+  확정됐다). gemini 는 표에 `unsupported` 로 두고 조립 시 거절한다 — `RUNNABLE_HARNESSES`(Task 2 에서
+  생김)에 없는 harness 가 여기 도달하면 그것이 곧 결함이므로, 던지는 에러 메시지에 harness 이름과
+  "러너가 아직 지원하지 않는다"를 함께 담는다.
 - [ ] **Step 4: 통과 확인**
 - [ ] **Step 5: 커밋** — `feat(agent): 하네스 플래그 표 — 어댑터가 아니라 표다`
 
