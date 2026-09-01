@@ -683,9 +683,24 @@ describe('RingBuffer', () => {
 `session_meta.cwd` 가 있다는 것을 실측으로 확인해 glob 으로 확정했다. 스레드마다 avcs
 workspace 가 고유 디렉터리이므로 cwd 가 정확한 키다.
 
-- [ ] **Step 1: 실패하는 테스트** — tmpdir 에 `a/rollout-1.jsonl`(다른 cwd)과
-  `b/rollout-2.jsonl`(대상 cwd) 두 개를 만들고 각 첫 줄에
-  `{"type":"session_meta","payload":{"id":"<uuid>","cwd":"<dir>"}}` 형태를 쓴다(정확한 키
+**실측한 rollout 첫 줄의 실제 모양**(개발 머신의 파일에서 직접 확인, 픽스처는 이걸 따른다):
+
+```jsonc
+{ "timestamp": "...", "ordinal": 0, "type": "session_meta",
+  "payload": { "session_id": "<uuid>", "id": "<uuid>", "cwd": "<절대경로>",
+               "originator": "...", "cli_version": "...", /* 그 외 다수 */ } }
+```
+
+세 가지가 계획 초안과 다르다. ① `payload` 에 **`id` 와 `session_id` 가 둘 다** 있다 —
+관측된 파일에서는 값이 같고 **파일명의 uuid 와 일치하는 쪽이 `id`** 다. `codex resume` 에
+넘길 값이므로 `id` 를 쓰되, 둘이 다른 파일을 만나면 어떻게 할지 정해 두어라(파일명과
+대조하는 것이 가장 확실한 판정 기준이다). ② 디렉터리가 **날짜 계층**이다
+(`sessions/2026/09/01/rollout-*.jsonl`) — 평면이 아니므로 재귀 순회가 필요하다.
+③ 파일명 자체가 `rollout-<타임스탬프>-<uuid>.jsonl` 이라 uuid 를 담고 있다.
+
+- [ ] **Step 1: 실패하는 테스트** — tmpdir 에 날짜 계층을 흉내 낸 두 경로(예:
+  `2026/09/01/rollout-…-A.jsonl` = 다른 cwd, `2026/09/02/rollout-…-B.jsonl` = 대상 cwd)를
+  만들고 각 첫 줄에 위 실측 모양을 쓴다(정확한 키
   경로는 계획 하단 "스파이크 결과" 절의 실측 기록을 따른다). 검증: 대상 cwd 의 id 만 잡힌다 /
   `sinceMs` 보다 오래된 파일은 무시된다 / 빈 디렉터리면 null / 깨진 첫 줄은 건너뛰고 다음
   파일로 간다(하나의 손상 파일이 발견 전체를 죽이지 않는다).
