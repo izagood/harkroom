@@ -161,3 +161,80 @@ describe('sticky mentions', () => {
     expect(onSend).toHaveBeenLastCalledWith('그 다음');
   });
 });
+
+describe('adding a mention without sending', () => {
+  const openPicker = () => fireEvent.click(screen.getByRole('button', { name: 'Add mention' }));
+
+  // 첫 줄을 보내기 전에도 상대를 정해 둘 수 있어야 한다. 지금은 한 번 불러 봐야만
+  // 고정되므로, 부를 상대를 아직 안 쓴 사용자는 @ 를 손으로 쳐야 한다.
+  it('keeps a handle chosen from the button, without touching the draft', () => {
+    render(<Composer onSend={vi.fn()} />);
+
+    openPicker();
+    fireEvent.click(screen.getByRole('option', { name: /fizz/ }));
+
+    expect(chips()).toEqual(['fizz']);
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('prefixes a mention added that way onto the next message', () => {
+    const onSend = vi.fn();
+    render(<Composer onSend={onSend} />);
+    openPicker();
+    fireEvent.click(screen.getByRole('option', { name: /fizz/ }));
+
+    sendText('첫 줄');
+
+    expect(onSend).toHaveBeenLastCalledWith('@fizz 첫 줄');
+  });
+
+  // 이미 고정된 상대를 또 고를 이유가 없다. 목록에 남겨 두면 두 번 고른 사용자가
+  // 무엇이 달라졌는지 알 수 없다.
+  it('leaves out handles that are already kept', () => {
+    render(<Composer onSend={vi.fn()} />);
+    sendText('@fizz 확인해봐');
+
+    openPicker();
+
+    expect(screen.queryByRole('option', { name: /fizz/ })).toBeNull();
+    expect(screen.getByRole('option', { name: /honey/ })).toBeTruthy();
+  });
+
+  it('does not offer the author themselves', () => {
+    render(<Composer onSend={vi.fn()} />);
+
+    openPicker();
+
+    expect(screen.queryByRole('option', { name: /me/ })).toBeNull();
+  });
+
+  it('closes after a choice so the next Enter sends', () => {
+    const onSend = vi.fn();
+    render(<Composer onSend={onSend} />);
+    openPicker();
+    fireEvent.click(screen.getByRole('option', { name: /fizz/ }));
+
+    expect(screen.queryAllByRole('option')).toHaveLength(0);
+    typeInto('보낸다');
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+    expect(onSend).toHaveBeenCalledWith('@fizz 보낸다');
+  });
+
+  it('closes on Escape', () => {
+    render(<Composer onSend={vi.fn()} />);
+    openPicker();
+
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape' });
+
+    expect(screen.queryAllByRole('option')).toHaveLength(0);
+  });
+
+  it('closes when the button is pressed again', () => {
+    render(<Composer onSend={vi.fn()} />);
+    openPicker();
+
+    openPicker();
+
+    expect(screen.queryAllByRole('option')).toHaveLength(0);
+  });
+});
