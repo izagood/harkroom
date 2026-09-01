@@ -54,6 +54,8 @@ export class Controller {
         break;
       case 'message.deleted':
         store.removeMessage(e.channelId, e.messageId);
+        // 루트가 사라진 스레드를 계속 열어 두면 답글만 남은 빈 패널에 갇힌다.
+        if (store.threadRootId === e.messageId) store.set({ threadRootId: null });
         break;
       case 'inbox.updated':
         if (e.accountId === store.me?.id) this.swallow(this.refreshUnread());
@@ -156,10 +158,12 @@ export class Controller {
   }
 
   async deleteMessage(messageId: string): Promise<void> {
-    const { activeChannelId } = useAppStore.getState();
+    const { activeChannelId, threadRootId } = useAppStore.getState();
     if (!activeChannelId) return;
     await this.api.deleteMessage(activeChannelId, messageId);
     useAppStore.getState().removeMessage(activeChannelId, messageId);
+    // 내가 지운 경우에도 같다. WS 이벤트를 기다리지 않고 즉시 닫는다.
+    if (threadRootId === messageId) useAppStore.getState().set({ threadRootId: null });
   }
 
   async startDm(accountId: string): Promise<void> {
