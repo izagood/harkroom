@@ -187,3 +187,52 @@ describe('에이전트 백로그 게이지', () => {
     expect(oldestFor(await scrape(), 'admin')).toBeNull();
   });
 });
+
+// 실사용에서 드러난 거짓 경보(2026-09-01, 병렬 세션 발견): `kind='agent'` 이지만 **러너가 없는**
+// 계정이 있다 — avcs 투영용 시스템 계정(`murmur`)과 정의 없이 만들어진 계정들이다. 사용자는
+// 사이드바에 보이니 자연스럽게 부르고, 그 미처리는 **영원히 쌓이며 절대 내려오지 않는다.**
+// 경보가 몇 번 반복되면 사람이 경보를 무시하게 되고, 그때 진짜 러너가 죽으면 아무도 안 본다.
+// 사람을 뺀 논리(늦게 읽는 것은 장애가 아니다)가 에이전트 안에 한 겹 더 있었다.
+describe('백로그 게이지는 답할 의무가 있는 에이전트만 센다', () => {
+  const seriesFor = (text: string, handle: string): boolean =>
+    text.includes(`murmur_agent_oldest_unread_seconds{handle="${handle}"}`);
+
+  const callInChannel = async (handle: string): Promise<void> => {
+    const ch = await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: `call-${handle}` },
+    });
+    await app.inject({
+      method: 'POST', url: `/channels/${ch.json().id}/messages`, headers: auth(adminToken),
+      payload: { body: `@${handle} 부른다` },
+    });
+  };
+
+  it('counts an agent that murmur can actually run', async () => {
+    await createAgent(app, adminToken, 'runnablebot');
+    await callInChannel('runnablebot');
+
+    expect(seriesFor(await scrape(), 'runnablebot')).toBe(true);
+  });
+
+  // 정의(agent_config)가 없는 계정은 답할 러너가 없고 앞으로도 없다. 그 미처리는 장애가 아니다.
+  it('leaves out an agent account that has no definition', async () => {
+    await pool.query(
+      `insert into account (handle, display_name, kind) values ('undefinedbot', 'undefinedbot', 'agent')`,
+    );
+    await callInChannel('undefinedbot');
+
+    const text = await scrape();
+    expect(seriesFor(text, 'undefinedbot')).toBe(false);
+    // 같은 스크레이프에서 정의된 에이전트는 여전히 보여야 한다 — 통째로 사라지면 안 된다.
+    expect(seriesFor(text, 'runnablebot')).toBe(true);
+  });
+
+  // avcs 투영용 시스템 계정. 투영 워커가 만들고 러너는 없다.
+  it('leaves out the avcs projection system account', async () => {
+    const { ensureSystemAccount } = await import('../src/avcs/projection.js');
+    await ensureSystemAccount(pool);
+    await callInChannel('murmur');
+
+    expect(seriesFor(await scrape(), 'murmur')).toBe(false);
+  });
+});
