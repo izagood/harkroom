@@ -26,10 +26,13 @@ import { createMetrics } from './metrics.js';
  * 초대 토큰이 있어도 시도 자체를 좁힌다. `/ws-ticket` 은 넉넉하다 — 재연결 폭풍은 정상 동작이고,
  * 여기서 막으면 네트워크가 불안한 클라이언트가 영구히 못 붙는다.
  */
-const DEFAULT_RATE_LIMITS: Record<'login' | 'signup' | 'ticket', RateLimitRule> = {
+const DEFAULT_RATE_LIMITS: Record<'login' | 'signup' | 'ticket' | 'upload', RateLimitRule> = {
   login: { windowMs: 5 * 60_000, max: 20 },
   signup: { windowMs: 15 * 60_000, max: 10 },
   ticket: { windowMs: 60_000, max: 120 },
+  // 첨부는 크기 제한(25MB)만으로 부족하다 — 그건 **한 번의** 업로드만 막고, 반복하면 디스크가
+  // 조용히 찬다. 분당 20건이면 사람의 정상 사용(스크린샷 몇 장)에는 걸리지 않는다.
+  upload: { windowMs: 60_000, max: 20 },
 };
 
 /** 어떤 경로에 어떤 리밋을 적용하는가. 인증 표면만 좁힌다 — 발화·조회는 건드리지 않는다. */
@@ -38,6 +41,7 @@ const LIMITED_ROUTES: { method: string; url: string; rule: keyof typeof DEFAULT_
   { method: 'POST', url: '/auth/register', rule: 'signup' },
   { method: 'POST', url: '/bootstrap', rule: 'signup' },
   { method: 'POST', url: '/ws-ticket', rule: 'ticket' },
+  { method: 'POST', url: '/uploads', rule: 'upload' },
 ];
 
 export interface ServerDeps {
@@ -58,7 +62,7 @@ export interface ServerDeps {
   /** 로그 싱크 교체(테스트 전용 seam). 프로덕션은 stdout 이다. */
   logStream?: import('node:stream').Writable;
   /** 인증 표면 리밋 재정의. 미지정이면 DEFAULT_RATE_LIMITS. */
-  rateLimits?: Partial<Record<'login' | 'signup' | 'ticket', RateLimitRule>>;
+  rateLimits?: Partial<Record<'login' | 'signup' | 'ticket' | 'upload', RateLimitRule>>;
   /** 리밋 판정용 시계(테스트 전용 seam). */
   now?: () => number;
   /**
@@ -125,6 +129,34 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     },
   );
 
+
+  /**
+   * 에이전트가 부름을 얼마나 오래 방치했는가(초). **2026-09-01 도그푸딩에서 난 실패를 보이게
+   * 하려고 만들었다**: 사용자가 에이전트를 불렀는데 러너 프로세스가 죽어 답이 없었고, 서버·
+   * 기존 메트릭은 전부 정상이었다. inbox 에 부름이 쌓이는 것만 사실이었으므로 그 나이를 낸다.
+   *
+   * **사람은 뺀다.** 사람이 멘션을 늦게 읽는 것은 장애가 아니라 일상이다(자고 있을 수 있다).
+   * 섞으면 경보가 늘 울려서 경보가 신호를 잃는다. 미처리가 없는 계정은 시계열을 만들지 않는다 —
+   * 0 을 내면 "처리됐다"와 "부름이 없었다"가 같아진다.
+   */
+  metrics.registerLabeledGauge(
+    'murmur_agent_oldest_unread_seconds',
+    'age of the oldest unhandled inbox entry per agent — a dead runner shows up here',
+    'handle',
+    async () => {
+      const res = await deps.pool.query(
+        `select a.handle,
+                extract(epoch from (now() - min(i.created_at))) as seconds
+         from inbox i
+         join account a on a.id = i.account_id
+         where i.read_at is null and a.kind = 'agent'
+         group by a.handle`,
+      );
+      return Object.fromEntries(
+        res.rows.map((r: { handle: string; seconds: string }) => [r.handle, Math.round(Number(r.seconds))]),
+      );
+    },
+  );
 
   // 요청 계측. **라우트 패턴**을 쓴다 — 구체 경로를 라벨로 넣으면 채널 id·메시지 id 마다
   // 시계열이 하나씩 생겨 스크레이프가 곧 메모리 사고가 된다.
