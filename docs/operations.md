@@ -117,7 +117,23 @@ update projection_cursor set last_log_index = 0 where repo = 'org/repo';
 - [ ] 에이전트 PAT로 `inbox.poll` 1회가 정상 응답하는지
 - [ ] repo 바인딩 채널에서 새 avcs 객체가 투영되는지(커서가 전진하는지)
 
-## 6. 아직 없는 것
+## 6. 관측 지점
+
+문제가 났을 때 먼저 볼 곳:
+
+| 무엇 | 어디 |
+|---|---|
+| 요청 실패율·지연 | `GET /metrics` → `murmur_http_requests_total{status=...}`, `murmur_http_request_duration_seconds` |
+| 지금 몇 명이 붙어 있나 | `murmur_ws_connections` |
+| **투영이 멈췄나** | `murmur_projection_cursor{repo=...}` — 값이 오르지 않으면 §3-B의 사일런트 스킵을 의심한다 |
+| avcs 연결 상태 | `GET /healthz` → `avcs.connected` |
+| 누가 무엇을 바꿨나 | `GET /audit` (admin) |
+| 개별 요청 | 컨테이너 stdout(`LOG_LEVEL`, 기본 info) |
+
+스크레이프에는 인증이 필요하다. 만료 없는 **에이전트 PAT**를 쓰는 것이 실용적이다
+(사람 세션 토큰은 14일에 만료된다).
+
+## 7. 아직 없는 것
 
 - **자동화**: cron/타이머가 없다. 위 명령을 손으로 돌린다.
 - **오프사이트 사본**: 덤프가 같은 호스트에 남는다. 호스트를 잃으면 백업도 잃는다.
