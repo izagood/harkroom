@@ -127,14 +127,35 @@ A 를 고른 실제 이유는 지연이 아니라 **경계**다. 서버는 관�
 
 어댑터가 아니라 **표**다. 러너는 하네스의 출력을 해석하지 않는다.
 
+아래 표는 **실측으로 확정됐다**(스파이크, 계획 문서의 "스파이크 결과" 절). 초판의
+추정값 네 곳이 틀렸고 여기에 반영돼 있다.
+
 | | claude | codex | gemini |
 |---|---|---|---|
-| 새 세션 | `--session-id <uuid>` | (첫 턴 후 id 발견) | `--session-id <uuid>` |
-| 멘션 턴 (비대화형) | `-p -r <id> "<ctx>"` | `codex exec resume <id> "<ctx>"`(§13 검증) | `-r <id> -p "<ctx>"`(§13 검증) |
-| 사람 턴 (인터랙티브) | `-r <id>` | `codex resume <id>` | `-r <id>` |
-| 지시문 주입 | `--append-system-prompt` | §13 검증 | §13 검증 |
-| 권한: auto | `--permission-mode bypassPermissions` | `-s danger-full-access -a never`(§13) | §13 검증 |
-| 권한: readonly | `--permission-mode plan` | `-s read-only -a never` | §13 검증 |
+| 새 세션 | `--session-id <uuid>` (우리가 발급) | 사전 할당 불가 — 첫 턴 후 발견 | 미지원 (아래) |
+| 멘션 턴 (비대화형) | `-p -r <id> "<ctx>"` | `codex exec resume <id> "<ctx>"` | — |
+| 사람 턴 (인터랙티브) | `-r <id>` | `codex resume <id>` | — |
+| 지시문 주입 | `--append-system-prompt` | 프롬프트 앞 접두 | — |
+| MCP 등록 | `--mcp-config <파일>` | 턴별 `-c mcp_servers.*` | — |
+| 권한: auto | `--permission-mode bypassPermissions` | `-s workspace-write` | — |
+| 권한: readonly | `--permission-mode plan` | `-s read-only` | — |
+
+세 칸이 초판과 다른 이유를 남긴다.
+
+- **codex 의 MCP 는 `codex mcp add` 가 아니다.** 그 명령은 `~/.codex/config.toml` 을
+  **영구 변경**하는데, §6 이 금지한 "하네스 밖에 정책을 쌓는 행위"가 정확히 그것이다.
+  턴별 `-c mcp_servers.*` 오버라이드가 같은 일을 하고 흔적을 남기지 않는다(실측 확인).
+- **`codex exec` 에는 `-a`/`--ask-for-approval` 이 없다.** sandbox(`-s`)뿐이다. 그래서
+  codex 의 권한은 sandbox 단독 매핑이고, `danger-full-access` 는 쓰지 않는다 — 멘션 턴은
+  사람이 보지 않는 턴이라 workspace 경계를 넘길 이유가 없고, 그 경계가 §3 의 avcs
+  workspace 격리와 정확히 겹친다.
+- **gemini 는 이번 범위에서 미지원이다.** `-r` 이 UUID 가 아니라 `"latest"` 또는 인덱스를
+  받아 `--session-id` 와 짝을 이루지 못한다. 게다가 개발 머신의 gemini 계정이 API 접근을
+  잃어 왕복 측정 자체가 불가였다. `AGENT_HARNESSES` 에는 남기되 `buildTurnCommand` 가
+  **명확한 미지원 에러로 거절**한다 — `design.md` §4 의 "없는 것을 있다고 표시하지 않는다".
+
+**MCP 설정은 `--strict-mcp-config` 와 함께 간다** (§7). 러너가 생성하는 설정에는
+murmur(http, `${MURMUR_PAT}`)와 avcs(stdio, `avcs mcp`) 둘만 들어간다.
 
 멘션 턴의 프롬프트 컨텍스트(`<ctx>`)는 기존 `reply.ts::buildReplyRequest` 산출물을
 문자열로 넘긴다 — 이 순수 로직은 그대로 산다. 단 세션이 맥락을 이미 가지므로
@@ -331,7 +352,12 @@ Phase 1 만으로 배포 가능하고 Phase 2 는 순수 추가라 롤백 반경
 5. 답 없이 끝난 턴이 스레드에 보인다 ("답 없이 턴을 끝냈습니다")
 6. `readonly` 에이전트의 쓰기 시도가 거부된다 (러너 로그로 확인)
 7. PAT 가 디스크에도 argv 에도 없다
-8. claude 외 harness 하나(gemini 우선 — id 할당형이라 가깝다)가 같은 멘션에 답한다 — 로드맵 §5 "harness 다양성"을 실측으로 닫는다
+8. claude 외 harness 하나 — **codex** — 가 같은 멘션에 답한다. 로드맵 §5 "harness
+   다양성"을 실측으로 닫는다. 초판은 gemini 를 골랐고 근거를 "id 할당형이라 claude 에
+   가깝다"로 적었는데, 그 근거는 `--session-id` 플래그의 존재에서 **추론한 것**이었고
+   실측이 뒤집었다(`-r` 이 그 id 를 받지 않는다). codex 를 고르는 근거는 모양이 가깝다는
+   것이 아니라 — codex 는 오히려 id 할당이 안 되는 쪽이다 — **resume 왕복이 실제로
+   도는 것을 확인한 유일한 비-claude harness** 라는 사실이다
 9. 다른 스레드는 서로의 맥락을 모른다 (workspace·세션 격리)
 10. **한 스레드에 에이전트 둘**이 각자 세션·workspace 로 동시에 답하고, 다음 턴에
     서로의 발화를 알고 있다 — `design.md` §8 성공 기준 1("에이전트 2개 이상")의

@@ -469,8 +469,14 @@ describe('buildSystemPrompt', () => {
     mcpConfigPath: string; pat: string;
   }): TurnPlan;
   function writeMcpConfigOnce(dir: string, murmurUrl: string): Promise<string>;
-  // ${MURMUR_PAT} 플레이스홀더 파일 — 비밀이 아니므로 지우지 않아도 된다 (spec §7)
+  // murmur(http, Authorization: Bearer ${MURMUR_PAT}) + avcs(stdio, command 'avcs', args ['mcp'])
+  // 둘만 담은 설정 파일. ${MURMUR_PAT} 는 플레이스홀더이므로 파일 자체는 비밀이 아니고
+  // 지우지 않아도 된다 (spec §7).
   ```
+
+`buildTurnCommand` 는 claude 에 **항상 `--strict-mcp-config` 를 함께 넘긴다**. 없으면
+하네스가 운영자의 전역 MCP 목록(실측: Slack·Gmail·Drive·avcshub·buddy)을 상속해,
+채널에서 에이전트를 부를 수 있는 사람이 운영자 개인 계정에 도달한다 (spec §7).
 
 - [ ] **Step 1: 실패하는 테스트**
 
@@ -608,13 +614,29 @@ describe('RingBuffer', () => {
 
 **Files:**
 - Create: `packages/agent/src/codexSessions.ts`
-- Test: `packages/agent/test/codexSessions.test.ts` (Task 1 실측 스키마의 실제 한 줄을 픽스처로)
+- Test: `packages/agent/test/codexSessions.test.ts` (rollout 파일 트리를 tmpdir 에 만들어 픽스처로)
 
 **Interfaces:**
-- Produces: `findCodexSessionId(indexJsonl: string, opts: { cwd: string; sinceMs: number }): string | null`
-  — jsonl 을 뒤에서 읽어 `cwd` 일치 + `sinceMs` 이후 첫 항목의 id. 없으면 null(기능 후퇴이지 정지가 아니다, spec §8)
+- Produces: `findCodexSessionId(sessionsDir: string, opts: { cwd: string; sinceMs: number }): Promise<string | null>`
+  — `<sessionsDir>/**/rollout-*.jsonl` 을 mtime 역순으로 훑어, 첫 줄의 `session_meta.cwd` 가
+  `cwd` 와 일치하고 mtime 이 `sinceMs` 이후인 파일의 세션 id 를 돌려준다. 없으면 null
+  (기능 후퇴이지 정지가 아니다, spec §8). 기본 `sessionsDir` 은 `~/.codex/sessions`.
 
-- [ ] **Step 1: 실패하는 테스트** — Task 1 이 기록한 실제 스키마 필드명으로 픽스처 2줄(다른 cwd 1, 대상 cwd 1)을 만들어 대상만 잡히는지 + 빈 파일이면 null 인지.
+**이 인터페이스는 스파이크가 초판을 무너뜨려 다시 쓴 것이다.** 초판은
+`findCodexSessionId(indexJsonl, …)` 로 `~/.codex/session_index.jsonl` 을 cwd 매칭하려 했는데,
+실측 결과 그 파일에는 **cwd 필드가 없고** `codex exec` 세션은 **거기 기록되지도 않는다**.
+대안이 둘이었다 — rollout 파일 glob 과 `codex exec --json` 의 stdout 파싱. 후자가 id 를
+공짜로 주지만 그 턴의 화면이 JSON 스트림이 되어 **codex 턴만 사람이 attach 할 수 없게**
+된다(spec 부록 A 가 ACP 를 기각한 이유가 한 harness 에서만 재현). rollout 파일에
+`session_meta.cwd` 가 있다는 것을 실측으로 확인해 glob 으로 확정했다. 스레드마다 avcs
+workspace 가 고유 디렉터리이므로 cwd 가 정확한 키다.
+
+- [ ] **Step 1: 실패하는 테스트** — tmpdir 에 `a/rollout-1.jsonl`(다른 cwd)과
+  `b/rollout-2.jsonl`(대상 cwd) 두 개를 만들고 각 첫 줄에
+  `{"type":"session_meta","payload":{"id":"<uuid>","cwd":"<dir>"}}` 형태를 쓴다(정확한 키
+  경로는 계획 하단 "스파이크 결과" 절의 실측 기록을 따른다). 검증: 대상 cwd 의 id 만 잡힌다 /
+  `sinceMs` 보다 오래된 파일은 무시된다 / 빈 디렉터리면 null / 깨진 첫 줄은 건너뛰고 다음
+  파일로 간다(하나의 손상 파일이 발견 전체를 죽이지 않는다).
 - [ ] **Step 2: 실패 확인** → **Step 3: 구현** → **Step 4: 통과** → **Step 5: 커밋** — `feat(agent): codex 세션 발견 — 사전 할당이 없는 하네스의 사후 추적`
 
 ---
@@ -817,13 +839,12 @@ claude.ai Notion, claude.ai Gmail, claude.ai Google Drive, ...
 즉 이 세션 운영자의 `~/.claude.json` 전역 MCP 서버(avcs·avcshub·buddy·Slack·
 Chrome DevTools, 그리고 미인증 Notion/Gmail/Google Drive 등)가 `--mcp-config`
 로 지정한 murmur 하나만 있을 때도 그대로 전부 딸려 나온다 — 예상대로였다,
-되돌릴 사실은 아니다. **spec §7 은 이미 이 플래그를 의도적으로 안 쓰기로
-결정했다**(agent 가 murmur 뿐 아니라 avcs MCP 도 물어야 하므로) — 그 판단 자체는
-바꿀 필요 없지만, 실측이 보여준 부작용은 그 결정의 대가로 명시해 둘 만하다:
-러너가 운영자 계정의 전역 claude 설정을 그대로 물려받는 환경이라면 에이전트
-턴마다 운영자의 개인 MCP(Slack/Notion/Gmail 등)까지 도달 가능해진다. Task 9 가
-`mcpConfigFor` 를 만들 때 "murmur+avcs만 남기고 나머지는 차단"하는 **별도
-allowlist**(strict 는 아니지만 그와 동등한 효과)가 필요한지 검토 대상으로 남긴다.
+**이 발견으로 spec §7 이 뒤집혔다(커밋 8a116fb) — 아래는 그 결과이지 열린 질문이 아니다.**
+초판 §7 은 "avcs MCP 도 물어야 하므로 strict 를 쓰지 않는다"고 적었는데 거짓 전제였다:
+설정 파일을 러너가 만들므로 avcs 를 그 안에 넣으면 된다(`avcs mcp`, stdio, env 없음 —
+실측 확인). 확정된 결정은 **`--strict-mcp-config` 를 쓰고 생성 설정에 murmur + avcs 둘만
+넣는다**이며, Task 6 의 `writeMcpConfigOnce` 와 Task 9 의 조립이 이것을 구현한다.
+검토 대상으로 남기지 않는다.
 
 ### Step 3: codex 표면
 
