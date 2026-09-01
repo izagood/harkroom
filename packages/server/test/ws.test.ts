@@ -30,9 +30,16 @@ beforeAll(async () => {
 });
 afterAll(async () => { await app.close(); await stop(); });
 
-function collect(token: string): { events: unknown[]; ready: Promise<void>; close(): void } {
+async function ticketFor(token: string): Promise<string> {
+  const res = await app.inject({
+    method: 'POST', url: '/ws-ticket', headers: { authorization: `Bearer ${token}` },
+  });
+  return res.json().ticket as string;
+}
+
+function collectWithTicket(ticket: string): { events: unknown[]; ready: Promise<void>; close(): void } {
   const events: unknown[] = [];
-  const ws = new WebSocket(`ws://${baseUrl}/ws?token=${token}`);
+  const ws = new WebSocket(`ws://${baseUrl}/ws?ticket=${ticket}`);
   ws.on('message', (data) => events.push(JSON.parse(String(data))));
   // 'open'은 핸드셰이크가 끝났다는 뜻일 뿐, 서버가 이벤트 버스를 구독했다는 뜻이 아니다 —
   // 그 사이에 토큰 조회(DB 왕복)가 있고, 버스는 fire-and-forget이라 그 창에 발행된 이벤트는
@@ -56,15 +63,43 @@ const waitFor = async (pred: () => boolean, ms = 5000) => {
 };
 
 describe('websocket', () => {
-  it('rejects bad token', async () => {
-    const ws = new WebSocket(`ws://${baseUrl}/ws?token=bogus`);
+  const collect = async (token: string) => collectWithTicket(await ticketFor(token));
+
+  it('rejects a fabricated ticket', async () => {
+    const ws = new WebSocket(`ws://${baseUrl}/ws?ticket=murt_bogus`);
     ws.on('error', () => {});
     await new Promise<void>((resolve) => ws.on('close', () => resolve()));
   });
 
+  // 장기 토큰이 URL 에 실리는 경로를 남겨두면 그 자체가 우회로다.
+  it('no longer accepts a long-lived token in the query string', async () => {
+    const ws = new WebSocket(`ws://${baseUrl}/ws?token=${adminToken}`);
+    ws.on('error', () => {});
+    const code = await new Promise<number>((resolve) => ws.on('close', (c) => resolve(c)));
+    expect(code).toBe(4401);
+  });
+
+  it('refuses to issue a ticket without credentials', async () => {
+    const res = await app.inject({ method: 'POST', url: '/ws-ticket' });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('refuses a ticket that was already spent', async () => {
+    const ticket = await ticketFor(adminToken);
+    const first = collectWithTicket(ticket);
+    await first.ready;
+
+    const second = new WebSocket(`ws://${baseUrl}/ws?ticket=${ticket}`);
+    second.on('error', () => {});
+    const code = await new Promise<number>((resolve) => second.on('close', (c) => resolve(c)));
+
+    expect(code).toBe(4401);
+    first.close();
+  });
+
   it('pushes message.created to all and inbox.updated to mentioned account', async () => {
-    const admin = collect(adminToken);
-    const bot = collect(botPat);
+    const admin = await collect(adminToken);
+    const bot = await collect(botPat);
     await admin.ready; await bot.ready;
 
     await app.inject({
@@ -80,7 +115,7 @@ describe('websocket', () => {
   });
 
   it('sends presence.snapshot on connect and gates presence.changed by transition', async () => {
-    const a = collect(adminToken);
+    const a = await collect(adminToken);
     await a.ready;
     await waitFor(() => a.events.some((e: any) => e.type === 'presence.snapshot'));
     const snap = a.events.find((e: any) => e.type === 'presence.snapshot') as any;
@@ -93,7 +128,7 @@ describe('websocket', () => {
 
     // 같은 계정 두 번째 연결 → 첫 소켓에 presence.changed(online:true)가 다시 오지 않는다
     const before = adminPresence().length;
-    const a2 = collect(adminToken);
+    const a2 = await collect(adminToken);
     await a2.ready;
     await waitFor(() => a2.events.some((e: any) => e.type === 'presence.snapshot'));
     const after = adminPresence().length;

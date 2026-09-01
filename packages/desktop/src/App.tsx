@@ -8,7 +8,7 @@ import { Workspace } from './components/Workspace';
 
 async function startSession(baseUrl: string, token: string): Promise<void> {
   const api = new ApiClient(baseUrl, token);
-  const controller = new Controller(api, connectWs, token);
+  const controller = new Controller(api, connectWs);
   setController(controller);
   await controller.start();
 }

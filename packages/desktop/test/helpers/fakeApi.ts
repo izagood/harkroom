@@ -26,6 +26,7 @@ export function fakeApi(overrides: Partial<Record<keyof ApiClient, unknown>> = {
     postMessage: vi.fn(async () => msg('m-post', 'c1', 99, 'sent')),
     inboxUnread: vi.fn(async () => []),
     markRead: vi.fn(async () => undefined),
+    wsTicket: vi.fn(async () => 'murt_fake'),
     createDm: vi.fn(),
     ...overrides,
   };
@@ -34,7 +35,7 @@ export function fakeApi(overrides: Partial<Record<keyof ApiClient, unknown>> = {
 
 export function fakeWsFactory() {
   const callbacks: { current: import('../../src/lib/ws').WsCallbacks | null } = { current: null };
-  const makeWs = ((_url: string, _token: string, cb: import('../../src/lib/ws').WsCallbacks) => {
+  const makeWs = ((_url: string, _getTicket: import('../../src/lib/ws').TicketProvider, cb: import('../../src/lib/ws').WsCallbacks) => {
     callbacks.current = cb;
     return { close: vi.fn() };
   }) as typeof import('../../src/lib/ws').connectWs;

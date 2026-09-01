@@ -13,7 +13,6 @@ export class Controller {
   constructor(
     public api: ApiClient,
     private makeWs: typeof connectWs = connectWs,
-    private token: string | null = null,
   ) {}
 
   // fire-and-forget 호출의 unhandled rejection 방지 — 실패는 조용히 무시(다음 이벤트/리컨실이 자연 복구).
@@ -29,7 +28,8 @@ export class Controller {
       me, channels, dms, leases, unread,
       accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
     });
-    this.ws = this.makeWs(this.api.baseUrl, this.token ?? '', {
+    // 장기 토큰은 ApiClient 가 헤더로만 쓴다 — WS URL 에는 단기 티켓만 실린다.
+    this.ws = this.makeWs(this.api.baseUrl, () => this.api.wsTicket(), {
       onEvent: (e) => this.handleEvent(e),
       onOpen: () => { useAppStore.getState().set({ connected: true }); this.swallow(this.reconcile()); },
       onDown: () => useAppStore.getState().set({ connected: false }),
