@@ -73,8 +73,15 @@ export function buildTurnPrompt(opts: {
   lastFedSeq: number;
   meId: string;
   handles: Record<string, string>;
+  /** 답을 올릴 채널·스레드. main.ts 가 멘션에서 이미 계산해 둔 값을 그대로 받는다(§4) —
+   * messages 배열에서 다시 유도하지 않는다. 유도 규칙은 "루트 메시지 자신의 threadRootId
+   * 는 null"이라는 데이터 구성에 기대는데, messages 가 루트 하나뿐이거나 채널 최상위
+   * 발화들뿐이면 "스레드 없음"과 구별이 안 된다 — 우연히 맞는 경우가 많다고 안전한 게
+   * 아니다. 호출자가 이미 알고 있는 값을 두 번째 진실 원천으로 다시 만들지 않는다. */
+  channelId: string;
+  threadRootId: string | null;
 }): { prompt: string; fedSeq: number } {
-  const { messages, lastFedSeq, meId, handles } = opts;
+  const { messages, lastFedSeq, meId, handles, channelId, threadRootId } = opts;
   const isFirstTurn = lastFedSeq === 0;
 
   const newMessages = messages.filter((m) => m.seq > lastFedSeq);
@@ -93,13 +100,9 @@ export function buildTurnPrompt(opts: {
     return { prompt: '', fedSeq };
   }
 
-  const channelId = newMessages[0]!.channelId; // 스레드 전체가 한 채널이라 아무 메시지에서나 뽑아도 같다.
-  // 스레드 anchor(threadRootId)는 대화 단위 자체의 속성이라 개별 메시지에서 뽑기 애매해
-  // 보이지만, 실제로는 안전하다: 스레드 안의 답글은 모두 root 의 id 를 threadRootId 로
-  // 갖고, root 자신만 null 이다(design.md §4). 그래서 null 아닌 값이 하나라도 있으면 그게
-  // anchor 이고, 전부 null 이면 채널 최상위 대화라는 뜻이다.
-  const threadRootId = messages.find((m) => m.threadRootId !== null)?.threadRootId ?? null;
-
+  // "null" 을 그대로 문자열로 흘리면 에이전트가 그걸 진짜 threadRootId 로 읽어
+  // message.post 에 넘길 위험이 있다 — 사람이 읽어도, 그리고 buildSystemPrompt 의 지시와도
+  // 맞물리게 "채널 최상위(없음)"으로 표현한다(§4 발화 경로).
   const head = [`channelId: ${channelId}`, `threadRootId: ${threadRootId ?? '채널 최상위(없음)'}`].join('\n');
   const lines = toShow.map((m) => renderLine(m, handles));
   const prompt = [head, '', ...lines].join('\n');
