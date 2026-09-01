@@ -18,8 +18,13 @@ import type { AgentHarness, MentionPermission } from '@murmur/shared';
  * 한쪽만 하고 다른 쪽을 murmurUrl 그대로 쓰면 그쪽 harness 는 베이스 URL 에 `POST /` 를
  * 때려 `404 route not found` 로 MCP 연결 자체가 안 된다(실물 검증에서 codex 가 이렇게
  * 실패했다 — 아래 CODEX_PRESET.mcp 참고).
+ *
+ * export 하는 이유: `murmur.ts::MurmurAgentClient` 도 같은 `/mcp` 엔드포인트에 붙는데, 그
+ * 파일이 이 정규화를 따로(`new URL(\`${baseUrl}/mcp\`)`) 다시 구현하면 값이 두 곳에서
+ * 유도되는 모양이 된다 — 그 자체가 이 함수를 만든 계기(claude/codex 사이 이중 구현)와
+ * 같은 종류의 결함이라 리뷰에서 지적됐다. 진실 원천을 여기 하나로 둔다.
  */
-function mcpUrl(murmurUrl: string): string {
+export function mcpUrl(murmurUrl: string): string {
   return `${murmurUrl.replace(/\/$/, '')}/mcp`;
 }
 

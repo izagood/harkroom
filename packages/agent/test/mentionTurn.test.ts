@@ -5,7 +5,7 @@
 // 일어나는 일이라 이 테스트(프로세스 경계 밖)에서 직접 재현할 수 없다 — 그래서 runTurn
 // 스텁이 하네스 대신 fakeMurmur.post 를 호출해 "턴 도중 에이전트가 답을 올렸다"를
 // 흉내낸다(task-9 브리프 시나리오 1 주석 그대로).
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -27,11 +27,14 @@ function msg(seq: number, authorId: string, body: string, threadRootId: string |
   };
 }
 
+// workingDir 은 기본으로 명시된 값('/repo')을 쓴다 — null(아무도 지정하지 않음)과
+// "avcs repo 를 지정했다"는 서로 다른 코드 경로를 타므로(mentionTurn.ts::resolveWorkspaceDir,
+// fix round 2), 그 구분 자체를 테스트하는 시나리오만 명시적으로 `workingDir: null` 을 준다.
 function defOf(overrides: Partial<AgentView> = {}): AgentView {
   return {
     id: ME.id, handle: ME.handle, displayName: 'forge', kind: 'agent', isAdmin: false,
     instructions: '친절하게 답한다', harness: 'claude-code', model: null, effort: null,
-    workingDir: null, mentionPermission: 'auto', ownerAccountId: 'human-1',
+    workingDir: '/repo', mentionPermission: 'auto', ownerAccountId: 'human-1',
     ...overrides,
   };
 }
@@ -78,6 +81,10 @@ async function makeDeps(fake: FakeMurmur, overrides: Partial<MentionTurnDeps> = 
 }> {
   const store = new SessionStore(join(await mkdtemp(join(tmpdir(), 'mention-turn-')), 'sessions.json'));
   await store.load();
+  // workingDir===null 경로(resolveWorkspaceDir)는 avcs 를 거치지 않고 실제 mkdir 을 한다
+  // (fix round 2) — exec 가 완전히 fake 인 avcs 경로와 달리 진짜 쓰기 가능한 디렉터리가
+  // 있어야 한다.
+  const workspaceBaseDir = await mkdtemp(join(tmpdir(), 'mention-turn-ws-'));
 
   const execCalls: string[][] = [];
   const exec: Exec = async (cmd, args) => {
@@ -105,7 +112,7 @@ async function makeDeps(fake: FakeMurmur, overrides: Partial<MentionTurnDeps> = 
     guide: '워크스페이스 규칙',
     channelName: 'general',
     handles: { [ME.id]: ME.handle },
-    workspaceBaseDir: '/fake/workspaces',
+    workspaceBaseDir,
     mcpConfigPath: '/fake/mcp.json',
     murmurUrl: 'http://localhost:3400',
     pat: 'murp_test',
@@ -356,6 +363,71 @@ describe('runMentionTurn', () => {
       expect(rec).toBeDefined();
       expect(rec!.turnsRun).toBe(1);
       expect(rec!.sessionId).not.toBeNull();
+    });
+  });
+
+  // fix round 2 — 리뷰 지적: isFirstTurn 을 turnsRun 하나로만 판단하면, codex 턴이 실제로
+  // 돌았는데(turnsRun>=1) 그 뒤 세션 발견(findCodexSessionId)이 실패해 sessionId 가 여전히
+  // null 인 경우를 못 잡는다. 그러면 다음 턴이 isFirstTurn:false + sessionId:null 로
+  // 조립되고 assertValidSession 이 던지는데, turnsRun 은 그 실패로 줄지 않으니 이 스레드가
+  // 재시도 한도까지 영원히 실패한다(리뷰가 실물로 재현). 테스트 환경엔 실제 rollout 파일이
+  // 없어 findCodexSessionId 가 항상 null 을 돌려주므로, 이 시나리오를 그대로 재현할 수 있다.
+  it('codex 세션 발견이 실패해도(turnsRun>=1, sessionId 여전히 null) 다음 턴은 isFirstTurn:true 로 다시 시작한다 — 영구 벽돌 방지', async () => {
+    const fake = new FakeMurmur(defOf({ harness: 'codex' }));
+    fake.seedFrom('human-1', '@forge 첫 질문');
+    const { deps, plans, runTurn } = await makeDeps(fake);
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '답변', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+    const rec1 = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
+    expect(rec1.turnsRun).toBe(1);
+    expect(rec1.sessionId).toBeNull(); // 테스트 cwd 와 일치하는 실제 rollout 파일이 없어 발견 실패
+
+    fake.seedFrom('human-1', '두 번째 질문');
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+    expect(plans).toHaveLength(2);
+    expect(plans[1]!.args[0]).toBe('exec'); // resume 이 아니다 — 이어받을 세션 id 가 없다
+    expect(plans[1]!.args).not.toContain('resume');
+  });
+
+  // fix round 2 — 리뷰 지적: `def.workingDir ?? process.cwd()` 가 "지정 안 함"과 "명시적으로
+  // 지정함"을 뭉갠다. 전자에서 러너 자신의 체크아웃으로 떨어지는 것은 누구도 요청한 적
+  // 없는 동작이라, workingDir===null 일 땐 avcs 를 아예 시도하지 않고 스레드 전용
+  // 디렉터리만 만든다.
+  describe('workingDir 이 지정되지 않았을 때', () => {
+    it('avcs 를 시도하지 않고 평범한 mkdir 로 스레드 전용 디렉터리를 실제로 만든다', async () => {
+      const fake = new FakeMurmur(defOf({ workingDir: null }));
+      fake.seedFrom('human-1', '@forge 안녕');
+      const { deps, execCalls } = await makeDeps(fake);
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      expect(execCalls).toHaveLength(0); // avcs 를 부르지 않았다
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null));
+      expect(rec).toBeDefined();
+      const info = await stat(rec!.workspaceDir); // mkdir 이 실제로 일어났는지 확인
+      expect(info.isDirectory()).toBe(true);
+    });
+
+    // 대조: workingDir 이 명시됐는데 avcs repo 가 아니면 지금처럼 그 디렉터리를 그대로
+    // 쓴다(폴백 유지) — 사용자가 그 파일들에서 일하라고 지정한 것이라 빈 디렉터리로
+    // 갈아치우면 설정이 장식이 된다.
+    it('workingDir 이 명시됐지만 avcs repo 가 아니면 지정된 디렉터리를 그대로 쓴다', async () => {
+      const fake = new FakeMurmur(defOf({ workingDir: '/some/explicit/repo' }));
+      fake.seedFrom('human-1', '@forge 안녕');
+      const notAvcsExec: Exec = async () => ({
+        code: 1, stdout: '', stderr: 'error: not an AVCS repo: /some/explicit/repo',
+      });
+      const { deps } = await makeDeps(fake, { exec: notAvcsExec });
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null));
+      expect(rec!.workspaceDir).toBe('/some/explicit/repo');
     });
   });
 });

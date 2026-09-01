@@ -37,9 +37,10 @@ MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
 API 키는 필요 없다 — 모든 harness가 사람의 로컬 로그인(claude: Keychain, codex: `~/.codex/auth.json`)을 쓴다.
 
 **에이전트를 여러 대 운영하려면 러너도 여러 프로세스다.** 러너 하나는 자기 PAT의 계정 하나로만
-붙는다 — 두 에이전트를 동시에 돌리려면 각자 다른 `MURMUR_PAT`와(상태가 섞이지 않도록) 다른
-`AGENT_STATE_DIR`로 `pnpm --filter @murmur/agent start`를 두 번 띄운다. 같은 머신에서 동시에
-떠도 서로의 세션·workspace가 이름에 handle이 들어가 겹치지 않는다(아래 "상태 디렉터리").
+붙는다 — 두 에이전트를 동시에 돌리려면 각자 다른 `MURMUR_PAT`로 `pnpm --filter @murmur/agent
+start`를 두 번 띄운다. `AGENT_STATE_DIR`은 **같아도 된다** — 상태 경로 전체가 `me.handle`로
+스코프되므로(아래 "상태 디렉터리") 같은 머신·같은 `AGENT_STATE_DIR`에서 동시에 떠도 서로의
+세션·workspace가 겹치지 않는다.
 
 ## Claude Code · Cursor에 붙이기 (러너와 별개)
 
@@ -64,7 +65,7 @@ MCP `inbox.poll`에만 있고 REST `/inbox`에는 없다. 이 러너를 만들�
 ## 세션 — 기억은 프로세스가 아니라 디스크에 있다
 
 옛 구조는 멘션마다 `claude -p`를 새로 띄우고 죽여, 같은 스레드의 두 번째 멘션이 첫 대화를
-몰랐다. 지금은 스레드마다 **세션**이 디스크(`<AGENT_STATE_DIR>/sessions.json`)에 남는다:
+몰랐다. 지금은 스레드마다 **세션**이 디스크(`<AGENT_STATE_DIR>/<handle>/sessions.json`)에 남는다:
 
 ```
 { workspaceDir, sessionId, harness, lastFedSeq, turnsRun }
@@ -89,7 +90,7 @@ MCP `inbox.poll`에만 있고 REST `/inbox`에는 없다. 이 러너를 만들�
 
 ## 상태 디렉터리
 
-`<AGENT_STATE_DIR>/`(기본 `~/.murmur-agent/`) 아래:
+`<AGENT_STATE_DIR>/<handle>/`(기본 `~/.murmur-agent/<handle>/`) 아래:
 
 ```
 sessions.json      # 스레드별 세션 (위)
@@ -97,12 +98,16 @@ mcp/mcp.json        # murmur + avcs만 담은 MCP 설정 — 기동 시 한 번 
 workspaces/         # avcs 워크스페이스들. murmur-<handle>-<threadKey 해시8자>
 ```
 
-`workspaces/` 이름에 handle이 들어가는 이유: 같은 스레드에 에이전트 둘이 멘션되면 스레드
-이름만으로는 둘째 에이전트의 `avcs workspace project`가 실패하거나, 최악의 경우 첫째
-에이전트의 디렉터리를 그대로 넘겨받아 격리가 조용히 사라진다. **러너를 여러 대 띄울 때
-`AGENT_STATE_DIR`을 반드시 서로 다르게 줘야 하는 이유도 같다** — `sessions.json`과
-`mcp/mcp.json`은 handle로 안 갈리므로, 상태 디렉터리를 공유하면 세션 파일 하나를 두 러너가
-동시에 쓰게 된다.
+전체 경로 자체가 handle로 스코프된다 — `sessions.json`·`mcp/mcp.json`·`workspaces/` 전부
+`<handle>/` 아래에 있다. 그래서 **같은 `AGENT_STATE_DIR`을 공유해도 러너 여러 대가 서로의
+상태를 건드리지 않는다**(위 "여러 대 운영" 참고) — handle이 다르면 애초에 다른 서브디렉터리다.
+`workspaces/` 안의 디렉터리 이름에도 handle이 들어가는 이유는 한 겹 더 있다: 같은 스레드에
+에이전트 둘이 멘션되면 스레드 이름만으로는 둘째 에이전트의 `avcs workspace project`가
+실패하거나, 최악의 경우 첫째 에이전트의 디렉터리를 그대로 넘겨받아 격리가 조용히 사라진다.
+
+(handle 스코프 이전 버전이 쓰던 `<AGENT_STATE_DIR>/sessions.json`이 남아 있으면 기동 시
+경고만 찍는다 — 여러 에이전트의 레코드가 섞여 있어 자동으로 옮기지 않는다. 고아
+워크스페이스·claude 세션은 직접 정리한다.)
 
 ## PTY로 실행한다
 

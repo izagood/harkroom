@@ -11,6 +11,7 @@
 // 쓰기 같은 부작용을 곧바로 일으키므로, 그 흐름을 여기 두면 테스트가 import 하는 순간
 // 진짜 서버에 붙으려 든다.
 import { execFile } from 'node:child_process';
+import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadConfig } from './config.js';
 import { MurmurAgentClient } from './murmur.js';
@@ -23,8 +24,6 @@ import { exhausted, isCredentialFailure, MAX_ATTEMPTS, nextBackoffMs } from './p
 
 const config = loadConfig();
 const murmur = new MurmurAgentClient(config.murmurUrl, config.murmurPat);
-const store = new SessionStore(join(config.stateDir, 'sessions.json'));
-await store.load();
 
 let running = true;
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
@@ -34,13 +33,37 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
 const me = await murmur.me();
 const guide = await murmur.guide();
 
-// MCP 설정 파일은 기동 시 한 번만 쓴다 — PAT 는 실값이 아니라 플레이스홀더로 들어가므로
-// 파일 자체는 비밀이 아니다(turn.ts::writeMcpConfigOnce). stateDir 아래 고정 경로에 둬서
-// 러너가 재시작돼도 같은 경로를 그대로 재사용한다.
-const mcpConfigPath = await writeMcpConfigOnce(join(config.stateDir, 'mcp'), config.murmurUrl);
+// spec §3: 상태는 handle 로 스코프한다 — `workspaceName` 은 이미 이름에 handle 을 넣어
+// 워크스페이스끼리는 안 겹치지만(다중 에이전트 격리), 세션 레코드·MCP 설정까지 handle 로
+// 나누지 않으면 격리가 절반만 된다: 기본 `AGENT_STATE_DIR` 로 러너 두 대를 띄우면 에이전트
+// B 가 A 의 sessions.json 레코드를 읽고, harness 가 같으면 A 의 세션 id 를 B 자신의(다른)
+// workspaceDir 에서 resume 하려 든다 — 다중 에이전트 협업(성공 기준 9·10)이 구조적으로
+// 깨진다.
+const agentStateDir = join(config.stateDir, me.handle);
 
-// avcs 워크스페이스들이 사는 상위 디렉터리. stateDir 아래에 둬서 세션 파일과 생애주기를 같이 한다.
-const workspaceBaseDir = join(config.stateDir, 'workspaces');
+// 레거시 경로(handle 스코프 이전, `<stateDir>/sessions.json`)에 파일이 남아 있으면 경고만
+// 남긴다 — **마이그레이션은 하지 않는다.** 그 파일은 정확히 이 결함이 만든 상태라 여러
+// 에이전트의 레코드가 handle 구분 없이 섞여 있고, 어느 레코드가 누구 것인지 파일 안에는
+// 근거가 없다. 옮기면 먼저 뜬 러너가 남의 레코드까지 접수해 결함을 데이터에 그대로 굳힌다 —
+// 대신 운영자가 고아 워크스페이스·claude 세션을 직접 정리하게 한다.
+const legacySessionsPath = join(config.stateDir, 'sessions.json');
+const hasLegacySessions = await access(legacySessionsPath).then(() => true, () => false);
+if (hasLegacySessions) {
+  console.warn(`[main] 레거시 세션 파일이 있다: ${legacySessionsPath}`);
+  console.warn('  handle 스코프 이전 버전이 남긴 것이라 여러 에이전트의 레코드가 섞여 있을 수 있다.');
+  console.warn('  자동으로 옮기지 않는다 — 고아 워크스페이스·claude 세션을 직접 확인하고 정리해라.');
+}
+
+const store = new SessionStore(join(agentStateDir, 'sessions.json'));
+await store.load();
+
+// MCP 설정 파일은 기동 시 한 번만 쓴다 — PAT 는 실값이 아니라 플레이스홀더로 들어가므로
+// 파일 자체는 비밀이 아니다(turn.ts::writeMcpConfigOnce). stateDir/handle 아래 고정 경로에
+// 둬서 러너가 재시작돼도 같은 경로를 그대로 재사용한다.
+const mcpConfigPath = await writeMcpConfigOnce(join(agentStateDir, 'mcp'), config.murmurUrl);
+
+// avcs 워크스페이스들이 사는 상위 디렉터리. stateDir/handle 아래에 둬서 세션 파일과 생애주기를 같이 한다.
+const workspaceBaseDir = join(agentStateDir, 'workspaces');
 
 /**
  * `node:child_process` 의 `execFile` 을 workspace.ts::Exec 계약으로 감싼 얇은 어댑터.

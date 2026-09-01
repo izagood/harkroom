@@ -6,6 +6,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { AccountView, AgentView, InboxEntry, MessageRow } from '@murmur/shared';
+import { mcpUrl } from './turn.js';
 
 export interface Me { id: string; handle: string }
 
@@ -22,7 +23,7 @@ export class MurmurAgentClient {
   private async connected(): Promise<Client> {
     if (this.mcp) return this.mcp;
     const client = new Client({ name: 'murmur-agent', version: '0.1.0' });
-    const transport = new StreamableHTTPClientTransport(new URL(`${this.baseUrl}/mcp`), {
+    const transport = new StreamableHTTPClientTransport(new URL(mcpUrl(this.baseUrl)), {
       requestInit: { headers: { authorization: `Bearer ${this.pat}` } },
     });
     await client.connect(transport);
