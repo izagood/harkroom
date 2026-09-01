@@ -128,6 +128,13 @@ intent(자발·외부 작업)만 투영 규칙대로 새 작업 스레드를 자
 ### 데스크탑 ↔ 서버: "REST로 쓰고, WS로 깨어나고, REST로 따라잡기"
 
 - 쓰기는 전부 REST (`POST /channels/:id/messages`, idempotency-key 헤더). WS로 쓰지 않는다.
+- 수정·삭제도 REST다. `PATCH /channels/:id/messages/:messageId`는 **작성자만**(admin도 예외가
+  아니다 — 남의 발언을 고칠 수 있으면 기록이 증거가 못 된다) 그리고 `kind=user`만 허용하고
+  `edited_at`을 스탬프한다. `DELETE`는 **작성자 또는 admin**(내용을 바꾸는 게 아니라 치우는
+  것이고, 잘못 올라간 비밀·스팸을 치울 사람이 있어야 한다)이며 `deleted_at` soft delete라
+  스레드 답글은 루트가 지워져도 남는다. `message.deleted`는 **본문을 싣지 않는다** — 지운
+  내용을 푸시하면 삭제가 삭제가 아니다. 수정으로 새로 생긴 `@멘션`은 inbox를 만들지 않는다
+  (수정이 알림 경로가 되면 조용히 사람을 부르는 수단이 된다).
 - WebSocket(`/ws`)은 알림 전용 푸시: `message.created/updated/deleted`,
   `inbox.updated`, `lease.changed`, `presence.changed`.
 - 재연결 시 `GET .../messages?since=`로 리컨실. WS는 진실의 원천이 아니다.

@@ -57,6 +57,12 @@ export class ApiClient {
     const qs = q.size ? `?${q.toString()}` : '';
     return (await this.req<{ messages: MessageRow[] }>('GET', `/channels/${channelId}/messages${qs}`)).messages;
   }
+  editMessage(channelId: string, messageId: string, body: string): Promise<MessageRow> {
+    return this.req('PATCH', `/channels/${channelId}/messages/${messageId}`, { body });
+  }
+  deleteMessage(channelId: string, messageId: string): Promise<void> {
+    return this.req('DELETE', `/channels/${channelId}/messages/${messageId}`);
+  }
   postMessage(channelId: string, body: string, threadRootId?: string, idempotencyKey?: string): Promise<MessageRow> {
     return this.req('POST', `/channels/${channelId}/messages`,
       { body, ...(threadRootId ? { threadRootId } : {}) },

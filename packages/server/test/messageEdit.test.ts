@@ -48,8 +48,8 @@ const listBodies = async (): Promise<string[]> => (await app.inject({
 })).json().messages.map((m: { body: string }) => m.body);
 
 /** 소켓을 열고 구독 완료까지 기다린 뒤, 도착한 이벤트를 모으는 배열을 돌려준다. */
-async function listen(): Promise<{ events: WsServerEvent[]; ws: WebSocket }> {
-  const ticket = (await app.inject({ method: 'POST', url: '/ws-ticket', headers: auth(adminToken) })).json().ticket;
+async function listenAs(token: string): Promise<{ events: WsServerEvent[]; ws: WebSocket }> {
+  const ticket = (await app.inject({ method: 'POST', url: '/ws-ticket', headers: auth(token) })).json().ticket;
   const ws = new WebSocket(`ws://${baseUrl}/ws?ticket=${ticket}`);
   const events: WsServerEvent[] = [];
   await new Promise<void>((resolve, reject) => {
@@ -62,6 +62,8 @@ async function listen(): Promise<{ events: WsServerEvent[]; ws: WebSocket }> {
   });
   return { events, ws };
 }
+
+const listen = (): Promise<{ events: WsServerEvent[]; ws: WebSocket }> => listenAs(adminToken);
 
 const waitFor = async (pred: () => boolean, ms = 4000): Promise<void> => {
   const start = Date.now();
@@ -198,5 +200,47 @@ describe('메시지 삭제', () => {
 
     expect(patch.statusCode).toBe(404);
     expect(del.statusCode).toBe(404);
+  });
+});
+
+// 수정·삭제 이벤트의 audience 스코핑. visibleTo 에서 이 두 case 를 빠뜨리면 default 로
+// 떨어져 DM 본문(수정)과 "누가 무엇을 지웠는지"(삭제)가 워크스페이스 전원에게 새어 나간다.
+describe('DM 수정·삭제 이벤트는 채널 밖으로 새지 않는다', () => {
+  it('withholds message.updated and message.deleted from a non-member', async () => {
+    const insider = await createAgent(app, adminToken, 'dm-insider');
+    const outsider = await createAgent(app, adminToken, 'dm-outsider');
+    const dm = await app.inject({
+      method: 'POST', url: '/dms', headers: auth(adminToken),
+      payload: { accountIds: [insider.accountId] },
+    });
+    const dmId = dm.json().id;
+    const secret = await app.inject({
+      method: 'POST', url: `/channels/${dmId}/messages`, headers: auth(adminToken),
+      payload: { body: 'dm secret before edit' },
+    });
+    const doomed = await app.inject({
+      method: 'POST', url: `/channels/${dmId}/messages`, headers: auth(adminToken),
+      payload: { body: 'dm secret to delete' },
+    });
+
+    const watcher = await listenAs(outsider.pat);
+    const member = await listenAs(insider.pat);
+
+    await app.inject({
+      method: 'PATCH', url: `/channels/${dmId}/messages/${secret.json().id}`,
+      headers: auth(adminToken), payload: { body: 'dm secret after edit' },
+    });
+    await app.inject({
+      method: 'DELETE', url: `/channels/${dmId}/messages/${doomed.json().id}`, headers: auth(adminToken),
+    });
+
+    // 멤버가 둘 다 받은 시점이면 비멤버에게도 갈 시간은 충분히 지났다.
+    await waitFor(() => member.events.some((e) => e.type === 'message.updated')
+      && member.events.some((e) => e.type === 'message.deleted'));
+    expect(watcher.events.filter((e) => e.type === 'message.updated' || e.type === 'message.deleted')).toEqual([]);
+    expect(JSON.stringify(watcher.events)).not.toContain('dm secret');
+
+    watcher.ws.close();
+    member.ws.close();
   });
 });

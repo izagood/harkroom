@@ -15,6 +15,7 @@ export interface AppState {
   connected: boolean;
   set(partial: Partial<AppState>): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
+  removeMessage(channelId: string, messageId: string): void;
   reset(): void;
 }
 
@@ -31,6 +32,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     for (const r of rows) byId.set(r.id, r);
     const merged = [...byId.values()].sort((a, b) => a.seq - b.seq);
     set({ messages: { ...get().messages, [channelId]: merged } });
+  },
+  removeMessage: (channelId, messageId) => {
+    const rows = get().messages[channelId];
+    if (!rows) return;
+    set({ messages: { ...get().messages, [channelId]: rows.filter((m) => m.id !== messageId) } });
   },
   reset: () => set({ ...initial }),
 }));

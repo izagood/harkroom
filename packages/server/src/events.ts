@@ -3,6 +3,8 @@ import type { MessageRow } from '@murmur/shared';
 
 export type WorkspaceEvent =
   | { type: 'message.created'; message: MessageRow; audience: 'all' | string[] }
+  | { type: 'message.updated'; message: MessageRow; audience: 'all' | string[] }
+  | { type: 'message.deleted'; channelId: string; messageId: string; audience: 'all' | string[] }
   | { type: 'inbox.updated'; accountId: string }
   | { type: 'lease.changed'; repo: string }
   | { type: 'presence.changed'; accountId: string; online: boolean };

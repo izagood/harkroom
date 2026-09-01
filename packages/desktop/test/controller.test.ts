@@ -188,4 +188,70 @@ describe('Controller', () => {
     expect(localStorage.getItem('murmur.session')).toBeNull();
     expect(useAppStore.getState().me).toBeNull();
   });
+
+  it('applies message.updated in place without duplicating the row', async () => {
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(fakeApi({ messages: vi.fn(async () => [msg('m1', 'c1', 1, 'before')]) }), makeWs);
+    await c.start();
+    await c.openChannel('c1');
+
+    callbacks.current!.onEvent({
+      type: 'message.updated',
+      message: { ...msg('m1', 'c1', 1, 'after'), editedAt: new Date().toISOString() },
+      audience: 'all',
+    });
+
+    const rows = useAppStore.getState().messages.c1!;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.body).toBe('after');
+    expect(rows[0]!.editedAt).toBeTruthy();
+  });
+
+  it('drops the row on message.deleted', async () => {
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(fakeApi({
+      messages: vi.fn(async () => [msg('m1', 'c1', 1, 'stays'), msg('m2', 'c1', 2, 'goes')]),
+    }), makeWs);
+    await c.start();
+    await c.openChannel('c1');
+
+    callbacks.current!.onEvent({ type: 'message.deleted', channelId: 'c1', messageId: 'm2', audience: 'all' });
+
+    expect(useAppStore.getState().messages.c1!.map((m) => m.id)).toEqual(['m1']);
+  });
+
+  // 삭제한 메시지의 스레드를 보고 있었다면 그 패널은 닫혀야 한다 — 루트가 사라진 스레드를
+  // 계속 열어 두면 빈 패널에 갇힌다.
+  it('closes the thread panel when its root message is deleted', async () => {
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(fakeApi({ messages: vi.fn(async () => [msg('m1', 'c1', 1, 'root')]) }), makeWs);
+    await c.start();
+    await c.openChannel('c1');
+    await c.openThread('m1');
+    expect(useAppStore.getState().threadRootId).toBe('m1');
+
+    callbacks.current!.onEvent({ type: 'message.deleted', channelId: 'c1', messageId: 'm1', audience: 'all' });
+
+    expect(useAppStore.getState().threadRootId).toBeNull();
+  });
+
+  it('edits and deletes through the api', async () => {
+    const api = fakeApi({
+      messages: vi.fn(async () => [msg('m1', 'c1', 1, 'before')]),
+      editMessage: vi.fn(async () => ({ ...msg('m1', 'c1', 1, 'after'), editedAt: 'now' })),
+      deleteMessage: vi.fn(async () => undefined),
+    });
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    await c.openChannel('c1');
+
+    await c.editMessage('m1', 'after');
+    expect(api.editMessage).toHaveBeenCalledWith('c1', 'm1', 'after');
+    expect(useAppStore.getState().messages.c1![0]!.body).toBe('after');
+
+    await c.deleteMessage('m1');
+    expect(api.deleteMessage).toHaveBeenCalledWith('c1', 'm1');
+    expect(useAppStore.getState().messages.c1).toEqual([]);
+  });
 });

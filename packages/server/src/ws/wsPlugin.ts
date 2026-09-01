@@ -10,7 +10,11 @@ import { findInvalidCredentials } from './credentials.js';
 
 function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
   switch (e.type) {
+    // 수정·삭제도 발화와 같은 스코핑을 탄다. 빠뜨리면 default 로 떨어져 DM 본문이
+    // 워크스페이스 전원에게 브로드캐스트된다.
     case 'message.created':
+    case 'message.updated':
+    case 'message.deleted':
       return e.audience === 'all' || e.audience.includes(accountId);
     case 'inbox.updated':
       return e.accountId === accountId;

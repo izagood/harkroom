@@ -48,6 +48,15 @@ export class Controller {
         // 그 계정을 모르고, 작성자가 '…'로 표시된다. 디렉터리는 정적이 아니다.
         if (!store.accounts[e.message.authorId]) this.swallow(this.refreshAccounts());
         break;
+      case 'message.updated':
+        // 같은 id 로 덮어쓰면 seq 정렬이 유지되므로 순서가 흔들리지 않는다.
+        store.upsertMessages(e.message.channelId, [e.message]);
+        break;
+      case 'message.deleted':
+        store.removeMessage(e.channelId, e.messageId);
+        // 보고 있던 스레드의 루트가 사라졌으면 패널을 닫는다 — 빈 패널에 갇히지 않게.
+        if (store.threadRootId === e.messageId) store.set({ threadRootId: null });
+        break;
       case 'inbox.updated':
         if (e.accountId === store.me?.id) this.swallow(this.refreshUnread());
         break;
@@ -139,6 +148,22 @@ export class Controller {
     if (!activeChannelId || !threadRootId || !body.trim()) return;
     const m = await this.api.postMessage(activeChannelId, body, threadRootId, crypto.randomUUID());
     useAppStore.getState().upsertMessages(activeChannelId, [m]);
+  }
+
+  /** 수정·삭제는 WS 이벤트도 오지만, 자기 조작의 결과는 응답으로 즉시 반영한다. */
+  async editMessage(messageId: string, body: string): Promise<void> {
+    const { activeChannelId } = useAppStore.getState();
+    if (!activeChannelId || !body.trim()) return;
+    const m = await this.api.editMessage(activeChannelId, messageId, body);
+    useAppStore.getState().upsertMessages(activeChannelId, [m]);
+  }
+
+  async deleteMessage(messageId: string): Promise<void> {
+    const { activeChannelId, threadRootId } = useAppStore.getState();
+    if (!activeChannelId) return;
+    await this.api.deleteMessage(activeChannelId, messageId);
+    useAppStore.getState().removeMessage(activeChannelId, messageId);
+    if (threadRootId === messageId) useAppStore.getState().set({ threadRootId: null });
   }
 
   async startDm(accountId: string): Promise<void> {

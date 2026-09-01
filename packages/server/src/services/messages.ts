@@ -12,7 +12,7 @@ export interface PostMessageInput {
 }
 
 const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
-  author_id as "authorId", body, kind, meta, created_at as "createdAt"`;
+  author_id as "authorId", body, kind, meta, created_at as "createdAt", edited_at as "editedAt"`;
 
 const MENTION_RE = /@([a-z0-9_-]{2,32})/g;
 
@@ -100,6 +100,52 @@ export async function postMessage(
   } finally {
     client.release();
   }
+}
+
+/** 수정/삭제 판정에 필요한 최소 정보. 없으면(또는 이미 삭제됐으면) null. */
+async function loadEditable(
+  pool: Pool, channelId: string, messageId: string,
+): Promise<{ authorId: string; kind: 'user' | 'system' } | null> {
+  const res = await pool.query(
+    `select author_id as "authorId", kind from message
+     where id = $1 and channel_id = $2 and deleted_at is null`,
+    [messageId, channelId],
+  );
+  return res.rowCount ? res.rows[0] : null;
+}
+
+export type EditOutcome =
+  | { ok: true; message: MessageRow }
+  | { ok: false; reason: 'not_found' | 'forbidden' };
+
+export async function editMessage(
+  pool: Pool, channelId: string, messageId: string, actorId: string, body: string,
+): Promise<EditOutcome> {
+  const target = await loadEditable(pool, channelId, messageId);
+  if (!target) return { ok: false, reason: 'not_found' };
+  // 수정은 작성자만. admin 도 예외가 아니다 — 남의 발언을 고칠 수 있으면 기록이 증거가 못 된다.
+  if (target.authorId !== actorId) return { ok: false, reason: 'forbidden' };
+  // system 메시지는 avcs 로그의 사본이다. 사람이 고치면 원본과 어긋난 거짓이 남는다.
+  if (target.kind === 'system') return { ok: false, reason: 'forbidden' };
+
+  const res = await pool.query(
+    `update message set body = $1, edited_at = now() where id = $2 returning ${COLS}`,
+    [body, messageId],
+  );
+  return { ok: true, message: res.rows[0] };
+}
+
+export async function deleteMessage(
+  pool: Pool, channelId: string, messageId: string, actor: { id: string; isAdmin: boolean },
+): Promise<{ ok: true } | { ok: false; reason: 'not_found' | 'forbidden' }> {
+  const target = await loadEditable(pool, channelId, messageId);
+  if (!target) return { ok: false, reason: 'not_found' };
+  // 삭제는 작성자 또는 admin. 수정과 달리 admin 을 허용하는 이유: 내용을 바꾸는 게 아니라
+  // 치우는 것이고, 잘못 올라간 비밀·스팸을 치울 사람이 워크스페이스에 있어야 한다.
+  if (target.authorId !== actor.id && !actor.isAdmin) return { ok: false, reason: 'forbidden' };
+
+  await pool.query(`update message set deleted_at = now() where id = $1`, [messageId]);
+  return { ok: true };
 }
 
 export async function listMessages(
