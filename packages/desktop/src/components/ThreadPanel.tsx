@@ -29,7 +29,11 @@ export function ThreadPanel() {
         {thread.map((m) => <MessageItem key={m.id} message={m} inThread />)}
       </div>
       <div className="border-t border-zinc-200 p-3">
-        <Composer placeholder="Reply…" onSend={(body) => getController().reply(body)} />
+        <Composer
+          scopeKey={`thread:${threadRootId}`}
+          placeholder="Reply…"
+          onSend={(body) => getController().reply(body)}
+        />
       </div>
     </section>
   );

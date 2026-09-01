@@ -1,4 +1,4 @@
-import { MENTION_PATTERN } from '@murmur/shared';
+import { MENTION_PATTERN, mentionedHandles } from '@murmur/shared';
 
 // 멘션 문법은 @murmur/shared 에 있다 — 서버의 알림 발송과 같은 규칙을 봐야 한다. 갈라지면
 // 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(me@x.com), 강조된
@@ -58,4 +58,22 @@ export function splitMentions(body: string, knownHandles: string[]): MessagePart
   }
   if (cursor < body.length) parts.push({ kind: 'text', text: body.slice(cursor) });
   return parts.length ? parts : [{ kind: 'text', text: body }];
+}
+
+/**
+ * 고정해 둔 상대를 본문 앞에 붙인다. 이미 본문이 부르고 있는 handle 은 건너뛴다 —
+ * 알림은 어차피 한 번이지만, `@fizz @fizz` 는 읽는 사람에게 잡음이다.
+ * 고정된 순서를 그대로 쓴다: 부른 순서가 바뀌면 사용자는 목록을 매번 다시 읽어야 한다.
+ */
+export function withStickyMentions(body: string, sticky: string[]): string {
+  const already = new Set(mentionedHandles(body));
+  const missing = sticky.filter((h) => !already.has(h.toLowerCase()));
+  return missing.length ? `${missing.map((h) => `@${h}`).join(' ')} ${body}` : body;
+}
+
+/** 방금 보낸 본문에서 새로 불린 상대를 뒤에 더한다. 이미 고정된 것의 순서는 흔들지 않는다. */
+export function keepMentioned(sticky: string[], body: string, known: Set<string>): string[] {
+  const kept = new Set(sticky);
+  const added = mentionedHandles(body).filter((h) => known.has(h) && !kept.has(h));
+  return added.length ? [...sticky, ...added] : sticky;
 }

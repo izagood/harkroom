@@ -53,6 +53,7 @@ export function ChannelPane() {
       </div>
       <div className="border-t border-zinc-200 p-3">
         <Composer
+          scopeKey={activeChannelId}
           placeholder={`Message ${composerTarget}`}
           onSend={(body) => getController().send(body)}
         />
