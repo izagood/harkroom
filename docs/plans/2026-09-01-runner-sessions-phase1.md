@@ -746,6 +746,24 @@ resume 이 깨진다. `rec.harness !== def.harness` 면 `sessionId` 와 `lastFed
 것보다 낫다. **테스트로 고정할 것**: 같은 threadKey 에서 harness 를 바꾸면 다음 턴이
 `isFirstTurn: true` 로 조립되고 옛 sessionId 가 인자에 남지 않는다.
 
+**계획을 쓸 때 놓쳤던 것 둘을 먼저 적는다 — 배선 단계에서만 드러나는 것들이다.**
+
+- **`Exec` 구현체를 아무도 만들지 않는다.** `ensureWorkspace(exec, …)` 는 exec 를 주입받도록
+  설계했고(그래서 테스트가 프로세스를 안 띄운다), 실제 구현은 "나중에 배선할 때"로 미뤄
+  두었는데 그 나중이 여기다. `node:child_process` 의 `execFile` 을 감싼 얇은 어댑터를
+  만들어라 — 시그니처는 `(cmd, args, {cwd}) => Promise<{code, stdout, stderr}>` 이고, 실패해도
+  reject 하지 말고 `code` 로 돌려줘야 한다(`ensureWorkspace` 가 stderr 를 보고 폴백을
+  판정하기 때문이다 — reject 하면 그 분기에 도달하지 못한다).
+
+- **`handles` 맵이 자기 자신 하나뿐이다.** `main.ts:108` 이
+  `{ [me.id]: me.handle }` 로만 만들어서, `buildTurnPrompt` 가 **동료 에이전트와 사람의 발화를
+  전부 "알 수 없는 사용자"로 렌더한다.** 이건 기존 코드의 한계를 그대로 물려받은 것인데, 새
+  구조에서는 훨씬 아프다 — 다중 에이전트 협업의 값이 "동료가 무엇을 했는지 안다"인데 누가
+  했는지가 안 보이면 반쪽이다(spec §3, 성공 기준 10). 서버에 `GET /accounts` 가 이미 있으므로
+  (`packages/server/src/routes/directoryRoutes.ts:5`) 배치 단위로 한 번 받아 맵을 채워라.
+  MCP 에는 이 도구가 없으니 REST 로 간다 — `murmur.definition()` 이 이미 REST 를 쓰는 것과
+  같은 방식이다. **테스트로 고정할 것**: 다른 계정이 쓴 메시지가 handle 로 렌더된다.
+
 앞 태스크가 이연한 두 건이 여기서 만난다. **둘 다 이 태스크에서 닫는다.**
 
 - **`ensureWorkspace` 의 존재 확인이 `access()` 라 파일/디렉터리를 구분하지 않는다**(Task 4 리뷰).
