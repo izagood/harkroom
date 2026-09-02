@@ -137,4 +137,15 @@ export class MurmurAgentClient {
     const res = await this.call<{ read: number }>('inbox.read', { ids });
     return res.read;
   }
+
+  /** 메시지에 리액션을 추가한다. inbox 가 at-least-once 라 같은 멘션이 두 번
+   * 처리될 수 있는데, 서버가 중복 추가를 에러로 만들지 않는다. */
+  async addReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
+    await this.call('message.react', { channelId, messageId, emoji });
+  }
+
+  /** 메시지에서 리액션을 제거한다. 없는 것을 제거해도 성공이다. */
+  async removeReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
+    await this.call('message.unreact', { channelId, messageId, emoji });
+  }
 }

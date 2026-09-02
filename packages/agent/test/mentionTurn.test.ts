@@ -19,6 +19,9 @@ import type { TurnResult } from '../src/pty.js';
 
 const ME = { id: 'agent-1', handle: 'forge' };
 const CHANNEL = 'c1';
+// 리액션 대상은 멘션 메시지 자체다(앵커가 아니다). 앵커와 다른 값을 쓰는 테스트가
+// 있어야 둘을 혼동한 회귀를 잡을 수 있으므로 별도 상수로 둔다.
+const MENTION = 'mention-msg';
 
 function msg(seq: number, authorId: string, body: string, threadRootId: string | null = null): MessageRow {
   return {
@@ -50,6 +53,8 @@ class FakeMurmur implements MentionTurnMurmur {
   /** 프로덕션 클라이언트(`murmur.ts::readThread`)의 기본값은 30 이다. 테스트는 창 밖으로
    *  밀려나는 상황을 작은 수로 만들기 위해 이 값을 낮춘다. */
   limit = 30;
+  /** 리액션 호출 기록 */
+  reactions: { channelId: string; messageId: string; emoji: string; action: 'add' | 'remove' }[] = [];
 
   constructor(def: AgentView) {
     this.def = def;
@@ -83,6 +88,26 @@ class FakeMurmur implements MentionTurnMurmur {
     return Promise.resolve(m.seq);
   }
 
+  /**
+   * 0보다 크면 addReaction 이 그만큼의 마이크로태스크 틱을 지난 **뒤에** 기록한다.
+   * 추가와 제거의 순서 역전을 관측하기 위한 장치다 — 호출 즉시 기록하면 실제 도착
+   * 순서를 볼 수 없다.
+   *
+   * 타이머가 아니라 틱을 쓰는 이유: 타이머는 실행 속도에 의존해 흔들리는데 마이크로
+   * 태스크 순서는 결정적이다.
+   */
+  addDelayTicks = 0;
+
+  async addReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
+    for (let i = 0; i < this.addDelayTicks; i += 1) await Promise.resolve();
+    this.reactions.push({ channelId, messageId, emoji, action: 'add' });
+  }
+
+  removeReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
+    this.reactions.push({ channelId, messageId, emoji, action: 'remove' });
+    return Promise.resolve();
+  }
+
   /** 사람/동료 에이전트의 메시지를 스레드에 심는다. seq 는 이 fake 가 채번한다. */
   seedFrom(authorId: string, body: string, threadRootId: string | null = null): MessageRow {
     this.seq += 1;
@@ -94,6 +119,7 @@ class FakeMurmur implements MentionTurnMurmur {
   /** 테스트용: 호출 기록 초기화 */
   clearCalls(): void {
     this.readThreadCalls = [];
+    this.reactions = [];
   }
 }
 
@@ -166,7 +192,7 @@ describe('runMentionTurn', () => {
       return { exitCode: 0, timedOut: false, tail: '' };
     };
 
-    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     expect(execCalls).toHaveLength(1);
     expect(execCalls[0]![0]).toBe('avcs');
@@ -192,7 +218,7 @@ describe('runMentionTurn', () => {
     fake.seedFrom('human-1', '@forge 뭐라도 답해줘');
     const { deps } = await makeDeps(fake); // 기본 스크립트: exit 0, 발화 없음
 
-    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     expect(fake.posts).toHaveLength(1);
     expect(fake.posts[0]!.body).toBe(NO_REPLY_NOTICE);
@@ -212,7 +238,7 @@ describe('runMentionTurn', () => {
       return { exitCode: 0, timedOut: false, tail: '' };
     };
 
-    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     // 채널에는 실제 답 두 개만 남고(세 번째 통보를 더하지 않는다), 경고는 러너 로그에만 남는다
     expect(fake.posts.filter((p) => p.body !== NO_REPLY_NOTICE)).toHaveLength(2);
@@ -234,7 +260,7 @@ describe('runMentionTurn', () => {
       return { exitCode: 1, timedOut: false, tail: '답은 올렸는데 그 뒤에 죽었다' };
     };
 
-    await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null })).rejects.toThrow();
+    await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })).rejects.toThrow();
 
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('한 턴에 발화가 2건'));
     warnSpy.mockRestore();
@@ -251,7 +277,7 @@ describe('runMentionTurn', () => {
       return { exitCode: 0, timedOut: false, tail: '' };
     };
 
-    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     expect(fake.posts).toHaveLength(1);
     expect(fake.posts[0]!.body).not.toBe(NO_REPLY_NOTICE);
@@ -269,11 +295,11 @@ describe('runMentionTurn', () => {
         return { exitCode: 0, timedOut: false, tail: '' };
       };
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
       const firstSessionId = deps.store.get(SessionStore.threadKey(CHANNEL, null))!.sessionId;
 
       fake.seedFrom('human-1', '두 번째 질문');
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       expect(execCalls).toHaveLength(1); // 두 번째 턴에서 avcs 를 다시 부르지 않았다
       expect(plans).toHaveLength(2);
@@ -295,9 +321,9 @@ describe('runMentionTurn', () => {
         return { exitCode: 0, timedOut: false, tail: '' };
       };
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
       fake.seedFrom('human-1', '두번째메시지고유문구');
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       const secondTurnArgs = plans[1]!.args.join(' ');
       expect(secondTurnArgs).toContain('두번째메시지고유문구');
@@ -316,13 +342,13 @@ describe('runMentionTurn', () => {
       return { exitCode: 0, timedOut: false, tail: '' };
     };
 
-    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
     const claudeSessionId = deps.store.get(SessionStore.threadKey(CHANNEL, null))!.sessionId;
     const workspaceDirAfterFirst = deps.store.get(SessionStore.threadKey(CHANNEL, null))!.workspaceDir;
 
     fake.def = defOf({ harness: 'codex' }); // UI 에서 harness 를 codex 로 바꿨다
     fake.seedFrom('human-1', '두 번째 질문');
-    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     // 워크스페이스는 재사용한다 — 그 안의 작업 산출물은 harness 와 무관하다. 그래서
     // ensureWorkspace(avcs 호출)가 다시 일어나지 않는다.
@@ -345,7 +371,7 @@ describe('runMentionTurn', () => {
     fake.seedFrom('human-1', '@forge 안녕');
     const { deps, plans } = await makeDeps(fake);
 
-    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     const argv = plans[0]!.args.join(' ');
     expect(argv).not.toContain('절대-argv에-없어야-하는-지시문');
@@ -367,7 +393,7 @@ describe('runMentionTurn', () => {
     fake.seedFrom('human-1', '@forge 안녕');
     const { deps, plans } = await makeDeps(fake);
 
-    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     const i = plans[0]!.args.indexOf('--append-system-prompt-file');
     const filePath = plans[0]!.args[i + 1]!;
@@ -384,7 +410,7 @@ describe('runMentionTurn', () => {
       const { deps, runTurn } = await makeDeps(fake);
       runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'some error' });
 
-      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null }))
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
         .rejects.toThrow();
 
       const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
@@ -400,7 +426,7 @@ describe('runMentionTurn', () => {
       const { deps, runTurn } = await makeDeps(fake);
       runTurn.script = async () => ({ exitCode: 0, timedOut: true, tail: 'timeout' });
 
-      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null }))
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
         .rejects.toThrow();
 
       const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
@@ -421,7 +447,7 @@ describe('runMentionTurn', () => {
         return { exitCode: 0, timedOut: true, tail: 'timeout' };
       };
 
-      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null }))
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
         .rejects.toThrow();
 
       const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
@@ -444,7 +470,7 @@ describe('runMentionTurn', () => {
         return original(...args);
       };
 
-      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null }))
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
         .rejects.toThrow(/harness 종료/);
 
       const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
@@ -467,13 +493,13 @@ describe('runMentionTurn', () => {
       };
 
       // 첫 턴: 실패
-      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null }))
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
         .rejects.toThrow();
       expect(plans).toHaveLength(1); // 첫 턴에서 하네스 실행됨
 
       // 재시도: 이전 턴이 실패했으면 turnsRun 이 0 이므로,
       // 델타가 비어있어도 하네스를 실행해야 함 (이게 #81 의 핵심 수정)
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
       expect(plans).toHaveLength(2); // 재시도에서도 하네스가 실행됨
     });
   });
@@ -493,7 +519,7 @@ describe('runMentionTurn', () => {
       return { exitCode: 0, timedOut: false, tail: '' };
     };
 
-    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
     const key = SessionStore.threadKey(CHANNEL, null);
     const afterFirst = deps.store.get(key)!;
     expect(afterFirst.turnsRun).toBe(1);
@@ -501,7 +527,7 @@ describe('runMentionTurn', () => {
     // 다음 폴에서 새 메시지가 자기 발화(예: 다른 프로세스가 같은 계정으로 후속 메모를
     // 남김)뿐이면 프롬프트가 비어 턴을 건너뛴다 — runTurn 이 아예 불리지 않아야 한다.
     fake.seedFrom(ME.id, '자기 후속 메모');
-    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
     expect(plans).toHaveLength(1); // 두 번째 호출은 runTurn 을 안 불렀다
 
     const afterSkip = deps.store.get(key)!;
@@ -510,7 +536,7 @@ describe('runMentionTurn', () => {
 
     // 세 번째: 사람이 진짜로 말을 걸면 resume 이 정상적으로(같은 sessionId, isFirstTurn=false) 조립된다.
     fake.seedFrom('human-1', '진짜 두 번째 질문');
-    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
     expect(plans).toHaveLength(2);
     expect(plans[1]!.args).toContain('-r');
     expect(plans[1]!.args).toContain(afterFirst.sessionId);
@@ -522,7 +548,7 @@ describe('runMentionTurn', () => {
     fake.seedFrom('human-1', '@forge 이 스레드 좀 봐줘');
     const { deps, plans } = await makeDeps(fake, { handles: { [ME.id]: ME.handle, 'human-1': 'jaebin' } });
 
-    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     const args = plans[0]!.args.join(' ');
     expect(args).toContain('jaebin: @forge 이 스레드 좀 봐줘');
@@ -534,7 +560,7 @@ describe('runMentionTurn', () => {
     fake.seedFrom('ghost-1', '@forge 나 누군지 모를걸');
     const { deps, plans } = await makeDeps(fake, { handles: { [ME.id]: ME.handle } });
 
-    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     expect(plans[0]!.args.join(' ')).toContain('알 수 없는 사용자');
   });
@@ -545,7 +571,7 @@ describe('runMentionTurn', () => {
     const { deps, runTurn } = await makeDeps(fake);
     runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'Could not resolve authentication method' });
 
-    await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null }))
+    await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
       .rejects.toThrow(/Could not resolve authentication method/);
 
     // 실패해도 세션 상태는 저장된다 — workspaceDir 과 sessionId 는 남는다.
@@ -572,7 +598,7 @@ describe('runMentionTurn', () => {
       const { deps } = await makeDeps(fake); // 기본 스크립트: exit 0, 발화 없음 → NO_REPLY 시도
       vi.spyOn(fake, 'post').mockRejectedValueOnce(new Error('network blip'));
 
-      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null })).resolves.toBeUndefined();
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })).resolves.toBeUndefined();
 
       const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null));
       expect(rec).toBeDefined();
@@ -593,7 +619,7 @@ describe('runMentionTurn', () => {
         return original(...args);
       });
 
-      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null })).resolves.toBeUndefined();
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })).resolves.toBeUndefined();
 
       const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null));
       expect(rec).toBeDefined();
@@ -617,13 +643,13 @@ describe('runMentionTurn', () => {
       return { exitCode: 0, timedOut: false, tail: '' };
     };
 
-    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
     const rec1 = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
     expect(rec1.turnsRun).toBe(1);
     expect(rec1.sessionId).toBeNull(); // 테스트 cwd 와 일치하는 실제 rollout 파일이 없어 발견 실패
 
     fake.seedFrom('human-1', '두 번째 질문');
-    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     expect(plans).toHaveLength(2);
     expect(plans[1]!.args[0]).toBe('exec'); // resume 이 아니다 — 이어받을 세션 id 가 없다
@@ -651,7 +677,7 @@ describe('runMentionTurn', () => {
       fake.seedFrom('human-1', '@forge 안녕');
       const { deps, execCalls } = await makeDeps(fake);
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       expect(execCalls).toHaveLength(0); // avcs 를 부르지 않았다
       const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null));
@@ -671,7 +697,7 @@ describe('runMentionTurn', () => {
       });
       const { deps } = await makeDeps(fake, { exec: notAvcsExec });
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null));
       expect(rec!.workspaceDir).toBe('/some/explicit/repo');
@@ -687,7 +713,7 @@ describe('runMentionTurn', () => {
       fake.seedFrom('human-1', '메시지3');
       const { deps } = await makeDeps(fake);
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       // 첫 턴: since=0 이면 서버가 최신 N 개를 반환하므로 전체가 보인다
       // ( 턴 시작 읽기 + 발화 확인 읽기 )
@@ -705,12 +731,12 @@ describe('runMentionTurn', () => {
       };
 
       // 첫 턴: 성공
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
       fake.clearCalls();
 
       // 두 번째 턴: lastFedSeq 가 0이 아니므로 since 로 그 값을 건다
       fake.seedFrom('human-1', '두 번째 질문');
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       expect(fake.readThreadCalls).toHaveLength(2); // 턴 시작 + 발화 확인
       // 턴 시작 읽기에서 lastFedSeq 가 since 로 전달된다
@@ -728,7 +754,7 @@ describe('runMentionTurn', () => {
       for (const b of ['옛1', '옛2', '최근1', '최근2', '최근3']) fake.seedFrom('human-1', b);
       const { deps, plans } = await makeDeps(fake);
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       const fed = plans.map((p) => p.args.join(' ')).join('\n');
       expect(fed).toContain('최근3');
@@ -749,15 +775,15 @@ describe('runMentionTurn', () => {
       const { deps, plans } = await makeDeps(fake);
 
       // 턴 1: 커서를 세운다.
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       // 그 사이에 창보다 많이 쌓인다.
       const burst = ['폭주1', '폭주2', '폭주3', '폭주4', '폭주5'];
       for (const b of burst) fake.seedFrom('human-1', b);
 
       // 사람이 더 쓰지 않아도, 아직 안 먹인 것이 남아 있으면 다음 턴들이 그것을 먹는다.
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       const fedText = plans.map((p) => p.args.join(' ')).join('\n');
       for (const b of burst) {
@@ -775,7 +801,7 @@ describe('runMentionTurn', () => {
       };
       fake.clearCalls();
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       // 발화 확인(readThread 2번째 호출)에서 turnStartSeq 가 since 로 전달된다
       expect(fake.readThreadCalls).toHaveLength(2); // 턴 시작 + 발화 확인
@@ -801,14 +827,14 @@ describe('runMentionTurn', () => {
       };
 
       // 첫 번째 멘션: messageId 를 threadRootId 로 넘긴다 (main.ts 의 계산 결과)
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: m1.id });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: m1.id, mentionId: m1.id });
 
       // 두 번째 멘션: 다른 messageId 를 threadRootId 로 넘긴다
       runTurn.script = async () => {
         await fake.post(CHANNEL, '답변2', m2.id);
         return { exitCode: 0, timedOut: false, tail: '' };
       };
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: m2.id });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: m2.id, mentionId: m2.id });
 
       // 두-mention 이 다른 키를 가져서 세션이 나뉜다
       const key1 = SessionStore.threadKey(CHANNEL, m1.id);
@@ -833,7 +859,7 @@ describe('runMentionTurn', () => {
         return { exitCode: 0, timedOut: false, tail: '' };
       };
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: mentionMsg.id });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: mentionMsg.id, mentionId: mentionMsg.id });
 
       // post 가 그 멘션 메시지 id 를 threadRootId 로 받아 스레드가 만들어진다
       expect(fake.posts).toHaveLength(1);
@@ -852,7 +878,7 @@ describe('runMentionTurn', () => {
         return { exitCode: 0, timedOut: false, tail: '' };
       };
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: rootMsg.id });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: rootMsg.id, mentionId: rootMsg.id });
 
       // threadRootId 가 그대로 유지된다
       const key = SessionStore.threadKey(CHANNEL, rootMsg.id);
@@ -871,7 +897,7 @@ describe('runMentionTurn', () => {
         return { exitCode: 0, timedOut: false, tail: '' };
       };
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: rootMsg.id });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: rootMsg.id, mentionId: rootMsg.id });
       const firstSessionId = deps.store.get(SessionStore.threadKey(CHANNEL, rootMsg.id))!.sessionId;
 
       // 두 번째 턴
@@ -880,7 +906,7 @@ describe('runMentionTurn', () => {
         await fake.post(CHANNEL, '두 번째 답', rootMsg.id);
         return { exitCode: 0, timedOut: false, tail: '' };
       };
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: rootMsg.id });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: rootMsg.id, mentionId: rootMsg.id });
 
       const rec = deps.store.get(SessionStore.threadKey(CHANNEL, rootMsg.id));
       expect(rec!.sessionId).toBe(firstSessionId);
@@ -908,7 +934,7 @@ describe('runMentionTurn', () => {
       const { deps, runTurn } = await makeDeps(fake, { ackThresholdMs: 0 });
       runTurn.script = slowTurn(async () => { await fake.post(CHANNEL, '결과', root.id); });
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: root.id });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: root.id, mentionId: root.id });
 
       const acks = fake.posts.filter((p) => p.body === ACK_NOTICE);
       expect(acks).toHaveLength(1);
@@ -925,7 +951,7 @@ describe('runMentionTurn', () => {
       // 턴은 정상 종료하지만 에이전트가 아무 말도 하지 않는다.
       runTurn.script = slowTurn(async () => { /* 발화 없음 */ });
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       expect(fake.posts.filter((p) => p.body === ACK_NOTICE)).toHaveLength(1);
       expect(fake.posts.filter((p) => p.body === NO_REPLY_NOTICE)).toHaveLength(1);
@@ -938,7 +964,7 @@ describe('runMentionTurn', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       runTurn.script = slowTurn(async () => { await fake.post(CHANNEL, '결과 하나', null); });
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       expect(fake.posts.filter((p) => p.body === NO_REPLY_NOTICE)).toHaveLength(0);
       expect(warnSpy).not.toHaveBeenCalled();
@@ -955,7 +981,7 @@ describe('runMentionTurn', () => {
         await fake.post(CHANNEL, '두 번째', null);
       });
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('한 턴에 발화가 2건'));
       warnSpy.mockRestore();
@@ -983,7 +1009,7 @@ describe('runMentionTurn', () => {
         return { exitCode: 0, timedOut: false, tail: '' };
       };
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       expect(fake.posts.filter((p) => p.body === ACK_NOTICE)).toHaveLength(1);
       // 본답이 없었으니 침묵으로 취급돼야 한다.
@@ -1002,7 +1028,7 @@ describe('runMentionTurn', () => {
       };
       runTurn.script = slowTurn(async () => { await original(CHANNEL, '결과', null); });
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       // 턴이 던지지 않았고 세션도 정상 저장됐다.
       const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
@@ -1018,7 +1044,7 @@ describe('runMentionTurn', () => {
       // ackThresholdMs 를 10초로 설정하고, 턴은 0ms 에 끝남
       const { deps, runTurn } = await makeDeps(fake, { ackThresholdMs: 10_000 });
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       // ack 은 없어야 한다 — NO_REPLY_NOTICE 만 있어야 한다
       const ackPosts = fake.posts.filter((p) => p.body === ACK_NOTICE);
@@ -1036,7 +1062,7 @@ describe('runMentionTurn', () => {
       const { deps } = await makeDeps(fake);
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining('턴 시작'),
@@ -1053,7 +1079,7 @@ describe('runMentionTurn', () => {
       const { deps } = await makeDeps(fake);
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining('턴 종료'),
@@ -1075,7 +1101,7 @@ describe('runMentionTurn', () => {
 
       runTurn.script = async () => ({ exitCode: 0, timedOut: true, tail: 'timeout' });
 
-      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null }))
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
         .rejects.toThrow();
 
       expect(logSpy).toHaveBeenCalledWith(
@@ -1083,6 +1109,162 @@ describe('runMentionTurn', () => {
       );
       logSpy.mockRestore();
     });
+  });
+});
+
+// 👀 💬 리액션 신호 회귀 테스트
+describe('리액션 신호 (👀 💬)', () => {
+  it('👀 가 runTurn 호출 전에 걸린다 (순서 검증)', async () => {
+    const fake = new FakeMurmur(defOf());
+    const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
+    mentionMsg.threadRootId = mentionMsg.id; // 채널 최상위 멘션을 스레드로 만든다
+    const { deps, runTurn } = await makeDeps(fake);
+
+    let turnCalled = false;
+    runTurn.script = async () => {
+      turnCalled = true;
+      // runTurn 이 불린 시점에 👀 가 이미 추가돼 있어야 한다
+      const eyesReaction = fake.reactions.find(
+        (r) => r.messageId === mentionMsg.id && r.emoji === '👀' && r.action === 'add',
+      );
+      expect(eyesReaction).toBeDefined();
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: mentionMsg.id, mentionId: mentionMsg.id });
+
+    expect(turnCalled).toBe(true);
+  });
+
+  // 스레드 안의 멘션에서 앵커는 **스레드 루트**이고 리액션 대상은 방금 온 멘션이다.
+  // 두 값이 같은 테스트만 있으면 앵커를 대상으로 쓰는 회귀가 통과해 버린다 — 실제로
+  // main.ts 가 mentionId 를 넘기지 않아 앵커가 대상이 되던 결함이 그렇게 숨어 있었다.
+  it('리액션 대상은 앵커가 아니라 멘션 메시지다', async () => {
+    const fake = new FakeMurmur(defOf());
+    const root = fake.seedFrom('human-1', '스레드 루트');
+    root.threadRootId = root.id;
+    const mentionMsg = fake.seedFrom('human-1', '@forge 이것 좀', root.id);
+    const { deps } = await makeDeps(fake);
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: root.id, mentionId: mentionMsg.id });
+
+    const targets = new Set(fake.reactions.map((r) => r.messageId));
+    expect(targets).toEqual(new Set([mentionMsg.id]));
+    expect(targets.has(root.id)).toBe(false);
+  });
+
+  // 턴이 아주 짧으면 제거가 추가를 앞질러 서버에 닿아 💬 가 영구히 남는다. 같은 파일의
+  // ackInFlight 가 이미 이 함정을 기록한다 — 리액션에서 같은 실수를 반복했다.
+  it('추가가 늦어도 제거가 추가를 앞지르지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
+    mentionMsg.threadRootId = mentionMsg.id;
+    const { deps, runTurn } = await makeDeps(fake);
+    // 턴은 즉시 끝난다 — 추가 왕복이 아직 진행 중인 상태에서 finally 에 들어간다.
+    runTurn.script = async () => ({ exitCode: 0, timedOut: false, tail: '' });
+    fake.addDelayTicks = 5;
+
+    await runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: mentionMsg.id, mentionId: mentionMsg.id,
+    });
+
+    const speaking = fake.reactions.filter((r) => r.emoji === '💬');
+    expect(speaking.map((r) => r.action)).toEqual(['add', 'remove']);
+  });
+
+  it('💬 가 턴 시작 시 걸리고 턴 종료 후 제거된다', async () => {
+    const fake = new FakeMurmur(defOf());
+    const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
+    mentionMsg.threadRootId = mentionMsg.id;
+    const { deps, runTurn } = await makeDeps(fake);
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: mentionMsg.id, mentionId: mentionMsg.id });
+
+    // 💬 가 add 되고 remove 된다
+    const speakingAdd = fake.reactions.filter(
+      (r) => r.messageId === mentionMsg.id && r.emoji === '💬' && r.action === 'add',
+    );
+    const speakingRemove = fake.reactions.filter(
+      (r) => r.messageId === mentionMsg.id && r.emoji === '💬' && r.action === 'remove',
+    );
+    expect(speakingAdd).toHaveLength(1);
+    expect(speakingRemove).toHaveLength(1);
+    // 추가 후 제거 순서
+    expect(fake.reactions.indexOf(speakingAdd[0]!)).toBeLessThan(fake.reactions.indexOf(speakingRemove[0]!));
+  });
+
+  it('runTurn 이 던져도 💬 가 제거된다', async () => {
+    const fake = new FakeMurmur(defOf());
+    const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
+    mentionMsg.threadRootId = mentionMsg.id;
+    const { deps, runTurn } = await makeDeps(fake);
+
+    runTurn.script = async () => {
+      throw new Error('하네스 실패');
+    };
+
+    await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: mentionMsg.id, mentionId: mentionMsg.id }))
+      .rejects.toThrow();
+
+    // 💬 가 제거됐는지 확인
+    const speakingRemove = fake.reactions.find(
+      (r) => r.messageId === mentionMsg.id && r.emoji === '💬' && r.action === 'remove',
+    );
+    expect(speakingRemove).toBeDefined();
+  });
+
+  it('runTurn 이 타임아웃이어도 💬 가 제거된다', async () => {
+    const fake = new FakeMurmur(defOf());
+    const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
+    mentionMsg.threadRootId = mentionMsg.id;
+    const { deps, runTurn } = await makeDeps(fake);
+
+    runTurn.script = async () => ({ exitCode: 0, timedOut: true, tail: 'timeout' });
+
+    await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: mentionMsg.id, mentionId: mentionMsg.id }))
+      .rejects.toThrow();
+
+    // 💬 가 제거됐는지 확인
+    const speakingRemove = fake.reactions.find(
+      (r) => r.messageId === mentionMsg.id && r.emoji === '💬' && r.action === 'remove',
+    );
+    expect(speakingRemove).toBeDefined();
+  });
+
+  it('리액션 호출이 실패해도 턴이 정상 완료된다', async () => {
+    const fake = new FakeMurmur(defOf());
+    const mention = fake.seedFrom('human-1', '@forge 질문');
+    mention.threadRootId = mention.id;
+    const { deps, runTurn } = await makeDeps(fake);
+
+    // 리액션을 실패하도록 조립
+    vi.spyOn(fake, 'addReaction').mockRejectedValueOnce(new Error('network error'));
+    vi.spyOn(fake, 'removeReaction').mockRejectedValueOnce(new Error('network error'));
+
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '답변', mention.id);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    // 에러 없이 완료되어야 함
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: mention.id, mentionId: mention.id });
+
+    // 발화는 정상적으로 되었는지 확인
+    const actualPosts = fake.posts.filter((p: { body: string }) => p.body !== NO_REPLY_NOTICE);
+    expect(actualPosts).toHaveLength(1);
+  });
+
+  it('리액션을 추가해도 post 호출 횟수가 늘지 않는다 (리액션 != 발화)', async () => {
+    const fake = new FakeMurmur(defOf());
+    const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
+    mentionMsg.threadRootId = mentionMsg.id;
+    const { deps } = await makeDeps(fake);
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: mentionMsg.id, mentionId: mentionMsg.id });
+
+    // 기본 runTurn.script 는 발화 없이 끝나므로 NO_REPLY_NOTICE 가 하나 있음
+    const noReplyCount = fake.posts.filter((p: { body: string }) => p.body === NO_REPLY_NOTICE).length;
+    expect(noReplyCount).toBe(1); // 기본 스크립트라 NO_REPLY_NOTICE 만 있음
   });
 });
 
