@@ -23,7 +23,7 @@ beforeAll(async () => {
   ({ pat: botPat } = await createAgent(app, adminToken, 'helper'));
   const ch = await app.inject({
     method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
-    payload: { name: 'general' },
+    payload: { name: 'chat' },
   });
   channelId = ch.json().id;
 });
