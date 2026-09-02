@@ -51,6 +51,9 @@ export class ApiClient {
   async channels(): Promise<ChannelRow[]> {
     return (await this.req<{ channels: ChannelRow[] }>('GET', '/channels')).channels;
   }
+  createChannel(input: { name: string; topic?: string; repo?: string }): Promise<ChannelRow> {
+    return this.req('POST', '/channels', input);
+  }
   async dms(): Promise<DmView[]> {
     return (await this.req<{ dms: DmView[] }>('GET', '/dms')).dms;
   }

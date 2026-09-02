@@ -3,6 +3,7 @@ import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { LeasePanel } from './LeasePanel';
 import type { SectionId } from './settings/sections';
+import { CHANNEL_NAME_PATTERN } from '@murmur/shared';
 
 /**
  * 채널 미읽음 표시. **멘션 배지와 다른 신호다** — 멘션은 "당신을 불렀다"(빨간 숫자),
@@ -38,6 +39,10 @@ export function Sidebar({ onLogout, onOpenSettings }: {
 }) {
   const { me, accounts, channels, dms, online, connected, activeChannelId } = useAppStore();
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [createChannelOpen, setCreateChannelOpen] = useState(false);
+  const [newChannelName, setNewChannelName] = useState('');
+  const [createError, setCreateError] = useState<string | null>(null);
+  const channelRegex = new RegExp(CHANNEL_NAME_PATTERN);
 
   const dmPeers = useMemo(() =>
     dms.map((dm) => {
@@ -72,6 +77,81 @@ export function Sidebar({ onLogout, onOpenSettings }: {
               <UnreadBadge channelId={ch.id} />
             </button>
           ))}
+          {me?.isAdmin && (
+            createChannelOpen ? (
+              <div className="mt-1 rounded border border-zinc-700 bg-zinc-800 p-1">
+                <input
+                  type="text"
+                  className="mb-1 w-full rounded bg-zinc-900 px-2 py-1 text-sm text-zinc-200 placeholder-zinc-500"
+                  placeholder="channel-name"
+                  value={newChannelName}
+                  onChange={(e) => { setNewChannelName(e.target.value); setCreateError(null); }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newChannelName) {
+                      void (async () => {
+                        if (!channelRegex.test(newChannelName)) {
+                          setCreateError('이름은 영문 소문자, 숫자, -, _ 만 가능 (1-48자)');
+                          return;
+                        }
+                        try {
+                          const ch = await getController().api.createChannel({ name: newChannelName });
+                          useAppStore.getState().set({
+                            channels: [...useAppStore.getState().channels, ch],
+                          });
+                          setCreateChannelOpen(false);
+                          setNewChannelName('');
+                          setCreateError(null);
+                          void getController().openChannel(ch.id);
+                        } catch (err) {
+                          setCreateError(err instanceof Error ? err.message : '채널 생성 실패');
+                        }
+                      })();
+                    }
+                    if (e.key === 'Escape') { setCreateChannelOpen(false); setNewChannelName(''); setCreateError(null); }
+                  }}
+                  autoFocus
+                />
+                {createError && <p className="mb-1 text-[10px] text-red-400">{createError}</p>}
+                <div className="flex gap-1">
+                  <button
+                    className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-500"
+                    onClick={() => {
+                      if (!channelRegex.test(newChannelName)) {
+                        setCreateError('이름은 영문 소문자, 숫자, -, _ 만 가능 (1-48자)');
+                        return;
+                      }
+                      void (async () => {
+                        try {
+                          const ch = await getController().api.createChannel({ name: newChannelName });
+                          useAppStore.getState().set({
+                            channels: [...useAppStore.getState().channels, ch],
+                          });
+                          setCreateChannelOpen(false);
+                          setNewChannelName('');
+                          setCreateError(null);
+                          void getController().openChannel(ch.id);
+                        } catch (err) {
+                          setCreateError(err instanceof Error ? err.message : '채널 생성 실패');
+                        }
+                      })();
+                    }}
+                  >
+                    만들기
+                  </button>
+                  <button
+                    className="rounded px-2 py-0.5 text-xs text-zinc-400 hover:bg-zinc-700"
+                    onClick={() => { setCreateChannelOpen(false); setNewChannelName(''); setCreateError(null); }}
+                  >
+                    취소
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button className={`${row(false)} text-zinc-400`} onClick={() => setCreateChannelOpen(true)}>
+                + Create channel
+              </button>
+            )
+          )}
         </div>
         <div>
           <button className={`${row(false)} text-zinc-400`} onClick={() => onOpenSettings('agents')}>

@@ -40,7 +40,12 @@ export interface AgentView extends AccountView, AgentConfig {
 /**
  * handle 문법. 계정 생성과 멘션 인식이 같은 것을 봐야 한다.
  */
-export const HANDLE_PATTERN = '[a-zA-Z0-9_-]{2,32}';
+export const HANDLE_PATTERN = '[a-z0-9_-]{2,32}';
+
+/**
+ * 채널 이름 문법. 서버와 클라이언트가 같은 것을 써야 한다.
+ */
+export const CHANNEL_NAME_PATTERN = '^[a-z0-9_-]{1,48}$';
 
 /**
  * 본문 안의 멘션. 서버(알림 발송)와 데스크탑(강조)이 **반드시 같은 규칙**을 써야 한다 —
