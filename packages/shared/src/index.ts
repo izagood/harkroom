@@ -57,6 +57,12 @@ export interface AgentView extends AccountView, AgentConfig {
   ownerAccountId: string | null;
 }
 
+export interface PatView {
+  label: string;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
 /**
  * handle 문법. 계정 생성과 멘션 인식이 같은 것을 봐야 한다.
  */

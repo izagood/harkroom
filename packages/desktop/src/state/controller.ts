@@ -392,6 +392,18 @@ export class Controller {
     return this.api.updateAgent(id, patch);
   }
 
+  listPats(accountId: string): Promise<import('@murmur/shared').PatView[]> {
+    return this.api.listPats(accountId);
+  }
+
+  revokePat(accountId: string, label: string): Promise<{ revoked: number }> {
+    return this.api.revokePat(accountId, label);
+  }
+
+  mintPat(accountId: string, label: string): Promise<string> {
+    return this.api.mintPat(accountId, label);
+  }
+
   /**
    * 채널을 만들고 목록에 반영한 뒤 그 채널을 연다 — `startDm` 과 같은 모양이다.
    * 컴포넌트가 `api` 를 직접 부르고 스토어를 손으로 갱신하면 그 절차가 화면마다 흩어지고,
