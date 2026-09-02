@@ -78,3 +78,135 @@ describe('bootstrap & login', () => {
     expect(noauth.statusCode).toBe(401);
   });
 });
+
+describe('password change', () => {
+  it('changes password and new password works for login', async () => {
+    const login = await app.inject({
+      method: 'POST', url: '/auth/login',
+      payload: { handle: 'jaebin', password: 'pw123456' },
+    });
+    expect(login.statusCode).toBe(200);
+    const { token } = login.json();
+
+    const change = await app.inject({
+      method: 'POST', url: '/auth/password',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { currentPassword: 'pw123456', newPassword: 'newpassword123' },
+    });
+    expect(change.statusCode).toBe(204);
+
+    const loginNew = await app.inject({
+      method: 'POST', url: '/auth/login',
+      payload: { handle: 'jaebin', password: 'newpassword123' },
+    });
+    expect(loginNew.statusCode).toBe(200);
+  });
+
+  it('old password does not work after change', async () => {
+    const loginOld = await app.inject({
+      method: 'POST', url: '/auth/login',
+      payload: { handle: 'jaebin', password: 'pw123456' },
+    });
+    expect(loginOld.statusCode).toBe(401);
+  });
+
+  it('rejects wrong current password', async () => {
+    const login = await app.inject({
+      method: 'POST', url: '/auth/login',
+      payload: { handle: 'jaebin', password: 'newpassword123' },
+    });
+    expect(login.statusCode).toBe(200);
+    const { token } = login.json();
+
+    const change = await app.inject({
+      method: 'POST', url: '/auth/password',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { currentPassword: 'wrong-password', newPassword: 'another123' },
+    });
+    expect(change.statusCode).toBe(401);
+    expect(change.json()).toMatchObject({ error: { code: 'invalid_credentials' } });
+  });
+
+  it('rejects unauthenticated request', async () => {
+    const change = await app.inject({
+      method: 'POST', url: '/auth/password',
+      payload: { currentPassword: 'pw123456', newPassword: 'new123456' },
+    });
+    expect(change.statusCode).toBe(401);
+  });
+
+  it('rejects new password that is too short', async () => {
+    const login = await app.inject({
+      method: 'POST', url: '/auth/login',
+      payload: { handle: 'jaebin', password: 'newpassword123' },
+    });
+    const { token } = login.json();
+
+    const change = await app.inject({
+      method: 'POST', url: '/auth/password',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { currentPassword: 'newpassword123', newPassword: 'short' },
+    });
+    expect(change.statusCode).toBe(400);
+  });
+
+  it('invalidates other sessions but keeps current session', async () => {
+    const login1 = await app.inject({
+      method: 'POST', url: '/auth/login',
+      payload: { handle: 'jaebin', password: 'newpassword123' },
+    });
+    const token1 = login1.json().token as string;
+
+    const login2 = await app.inject({
+      method: 'POST', url: '/auth/login',
+      payload: { handle: 'jaebin', password: 'newpassword123' },
+    });
+    const token2 = login2.json().token as string;
+
+    const change = await app.inject({
+      method: 'POST', url: '/auth/password',
+      headers: { authorization: `Bearer ${token1}` },
+      payload: { currentPassword: 'newpassword123', newPassword: 'finalpassword123' },
+    });
+    expect(change.statusCode).toBe(204);
+
+    const useToken1 = await app.inject({
+      method: 'GET', url: '/auth/me',
+      headers: { authorization: `Bearer ${token1}` },
+    });
+    expect(useToken1.statusCode).toBe(200);
+
+    const useToken2 = await app.inject({
+      method: 'GET', url: '/auth/me',
+      headers: { authorization: `Bearer ${token2}` },
+    });
+    expect(useToken2.statusCode).toBe(401);
+  });
+
+  it('records audit log without password or hash', async () => {
+    const login = await app.inject({
+      method: 'POST', url: '/auth/login',
+      payload: { handle: 'jaebin', password: 'finalpassword123' },
+    });
+    const { token } = login.json();
+
+    await app.inject({
+      method: 'POST', url: '/auth/password',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { currentPassword: 'finalpassword123', newPassword: 'lastpassword123' },
+    });
+
+    const audit = await app.inject({
+      method: 'GET', url: '/audit?limit=5',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(audit.statusCode).toBe(200);
+    const { entries } = audit.json() as { entries: Array<{ action: string; detail: Record<string, unknown> }> };
+    const passwordLog = entries.find(l => l.action === 'password.changed');
+    expect(passwordLog).toBeDefined();
+    const detail = passwordLog!.detail;
+    expect(detail).not.toHaveProperty('password');
+    expect(detail).not.toHaveProperty('password_hash');
+    expect(detail).toHaveProperty('otherSessionsInvalidated');
+  });
+});
