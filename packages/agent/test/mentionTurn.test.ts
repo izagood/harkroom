@@ -38,6 +38,7 @@ function defOf(overrides: Partial<AgentView> = {}): AgentView {
     id: ME.id, handle: ME.handle, displayName: 'forge', kind: 'agent', isAdmin: false,
     instructions: '친절하게 답한다', harness: 'claude-code', model: null, effort: null,
     workingDir: '/repo', mentionPermission: 'auto', ownerAccountId: 'human-1', disabled: false,
+    runnerVersion: null,
     ...overrides,
   };
 }

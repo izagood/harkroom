@@ -8,6 +8,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { AccountView, AgentView, InboxEntry, MessageRow } from '@murmur/shared';
 import { mcpUrl } from './turn.js';
 import { MURMUR_ERROR_SOURCE } from './policy.js';
+import { VERSION } from './version.js';
 
 export interface Me { id: string; handle: string }
 
@@ -40,7 +41,7 @@ export class MurmurAgentClient {
 
   private async connected(): Promise<Client> {
     if (this.mcp) return this.mcp;
-    const client = new Client({ name: 'murmur-agent', version: '0.1.0' });
+    const client = new Client({ name: 'murmur-agent', version: VERSION });
     const transport = new StreamableHTTPClientTransport(new URL(mcpUrl(this.baseUrl)), {
       requestInit: { headers: { authorization: `Bearer ${this.pat}` } },
     });
@@ -115,7 +116,7 @@ export class MurmurAgentClient {
 
   /** timeoutMs 동안 park 한다. 새 항목이 없으면 빈 배치로 정상 반환된다. */
   pollInbox(timeoutMs: number): Promise<InboxBatch> {
-    return this.call<InboxBatch>('inbox.poll', { timeoutMs });
+    return this.call<InboxBatch>('inbox.poll', { timeoutMs, version: VERSION });
   }
 
   async readThread(channelId: string, threadRootId: string | null, since?: number, limit = 30): Promise<MessageRow[]> {

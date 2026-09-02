@@ -7,9 +7,11 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   c.model, c.effort, c.working_dir as "workingDir",
   coalesce(c.mention_permission, 'auto') as "mentionPermission",
   c.owner_account_id as "ownerAccountId",
-  a.disabled_at is not null as disabled`;
+  a.disabled_at is not null as disabled,
+  v.version as "runnerVersion"`;
 
-const FROM = `from account a left join agent_config c on c.account_id = a.id`;
+const FROM = `from account a left join agent_config c on c.account_id = a.id
+  left join agent_runner_version v on v.account_id = a.id`;
 
 export function isHarness(value: unknown): value is AgentHarness {
   return typeof value === 'string' && (AGENT_HARNESSES as readonly string[]).includes(value);
