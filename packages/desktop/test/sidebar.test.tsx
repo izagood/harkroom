@@ -120,11 +120,137 @@ describe('Sidebar', () => {
     const onOpenSettings = vi.fn();
     render(<Sidebar onLogout={vi.fn()} onOpenSettings={onOpenSettings} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    fireEvent.click(screen.getByRole('button', { name: /@admin/ }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Settings' }));
     // 섹션을 지목하지 않고 연다 — 설정 화면이 기본 섹션을 고른다.
     expect(onOpenSettings).toHaveBeenCalledWith();
 
     fireEvent.click(screen.getByRole('button', { name: '+ Add or edit agents' }));
     expect(onOpenSettings).toHaveBeenLastCalledWith('agents');
+  });
+
+  describe('계정 메뉴', () => {
+    it('계정 행이 클릭 가능한 트리거다', () => {
+      fakeController();
+      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      const trigger = screen.getByRole('button', { name: /@admin/ });
+      expect(trigger.getAttribute('aria-haspopup')).toBe('true');
+      expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('계정 행을 클릭하면 메뉴가 열린다', () => {
+      fakeController();
+      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      const trigger = screen.getByRole('button', { name: /@admin/ });
+      fireEvent.click(trigger);
+
+      expect(trigger.getAttribute('aria-expanded')).toBe('true');
+      expect(screen.getByRole('menu')).toBeTruthy();
+    });
+
+    it('메뉴 안의 Settings 를 누르면 onOpenSettings 가 불린다', () => {
+      fakeController();
+      const onOpenSettings = vi.fn();
+      render(<Sidebar onLogout={vi.fn()} onOpenSettings={onOpenSettings} />);
+
+      const trigger = screen.getByRole('button', { name: /@admin/ });
+      fireEvent.click(trigger);
+
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Settings' }));
+      expect(onOpenSettings).toHaveBeenCalledWith();
+    });
+
+    it('메뉴 안의 Sign out 을 누르면 controller.logout 과 onLogout 이 불린다', () => {
+      const c = fakeController();
+      const onLogout = vi.fn();
+      render(<Sidebar onLogout={onLogout} onOpenSettings={vi.fn()} />);
+
+      const trigger = screen.getByRole('button', { name: /@admin/ });
+      fireEvent.click(trigger);
+
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+      expect(c.logout).toHaveBeenCalled();
+      expect(onLogout).toHaveBeenCalled();
+    });
+
+    it('Escape 로 닫히고 포커스가 트리거로 돌아온다', () => {
+      fakeController();
+      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      const trigger = screen.getByRole('button', { name: /@admin/ });
+      fireEvent.click(trigger);
+      expect(screen.getByRole('menu')).toBeTruthy();
+
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+      expect(screen.queryByRole('menu')).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+    });
+
+    it('바깥을 클릭하면 닫힌다', () => {
+      fakeController();
+      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      const trigger = screen.getByRole('button', { name: /@admin/ });
+      fireEvent.click(trigger);
+      expect(screen.getByRole('menu')).toBeTruthy();
+
+      fireEvent.mouseDown(document.body);
+      fireEvent.click(document.body);
+      expect(screen.queryByRole('menu')).toBeNull();
+    });
+
+    it('화살표 키로 항목 사이를 이동한다', async () => {
+      fakeController();
+      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      const trigger = screen.getByRole('button', { name: /@admin/ });
+      fireEvent.click(trigger);
+
+      const settings = screen.getByRole('menuitem', { name: 'Settings' });
+      const signout = screen.getByRole('menuitem', { name: 'Sign out' });
+
+      await waitFor(() => expect(document.activeElement).toBe(settings));
+      fireEvent.keyDown(settings, { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(signout);
+      fireEvent.keyDown(signout, { key: 'ArrowUp' });
+      expect(document.activeElement).toBe(settings);
+    });
+
+    it('메뉴가 닫혀 있을 때는 role="menu" 가 문서에 없다', () => {
+      fakeController();
+      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      expect(screen.queryByRole('menu')).toBeNull();
+    });
+
+    it('Enter 로 메뉴 항목을 실행한다', () => {
+      const c = fakeController();
+      const onLogout = vi.fn();
+      render(<Sidebar onLogout={onLogout} onOpenSettings={vi.fn()} />);
+
+      const trigger = screen.getByRole('button', { name: /@admin/ });
+      fireEvent.click(trigger);
+
+      const signout = screen.getByRole('menuitem', { name: 'Sign out' });
+      fireEvent.keyDown(signout, { key: 'Enter' });
+      expect(c.logout).toHaveBeenCalled();
+      expect(onLogout).toHaveBeenCalled();
+    });
+
+    it('Space 로 메뉴 항목을 실행한다', () => {
+      const c = fakeController();
+      const onLogout = vi.fn();
+      render(<Sidebar onLogout={onLogout} onOpenSettings={vi.fn()} />);
+
+      const trigger = screen.getByRole('button', { name: /@admin/ });
+      fireEvent.click(trigger);
+
+      const signout = screen.getByRole('menuitem', { name: 'Sign out' });
+      fireEvent.keyDown(signout, { key: ' ' });
+      expect(c.logout).toHaveBeenCalled();
+      expect(onLogout).toHaveBeenCalled();
+    });
   });
 });
