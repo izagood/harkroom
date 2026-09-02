@@ -206,4 +206,8 @@ export class ApiClient {
   updateChannelPref(channelId: string, patch: { muted?: boolean; starred?: boolean }): Promise<ChannelPrefRow> {
     return this.req('PATCH', `/channels/${channelId}/pref`, patch);
   }
+
+  async search(q: string): Promise<MessageRow[]> {
+    return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}`)).messages;
+  }
 }
