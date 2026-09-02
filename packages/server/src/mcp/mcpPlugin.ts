@@ -31,13 +31,14 @@ function buildMcpServer(pool: Pool, account: AccountView, lifecycle: Lifecycle):
     inputSchema: {
       channelId: z.string().uuid(),
       since: z.number().int().min(0).optional(),
+      limit: z.number().int().min(1).max(500).optional(),
       threadRootId: z.string().uuid().optional(),
     },
-  }, async ({ channelId, since, threadRootId }) => {
+  }, async ({ channelId, since, limit, threadRootId }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
-    return jsonResult({ messages: await listMessages(pool, channelId, { since, threadRootId: threadRootId ?? null }) });
+    return jsonResult({ messages: await listMessages(pool, channelId, { since, limit, threadRootId: threadRootId ?? null }) });
   });
 
   server.registerTool('message.search', {

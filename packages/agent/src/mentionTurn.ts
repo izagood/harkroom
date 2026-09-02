@@ -23,7 +23,7 @@ import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
 export interface MentionTurnMurmur {
   definition(): Promise<AgentView>;
-  readThread(channelId: string, threadRootId: string | null): Promise<MessageRow[]>;
+  readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
   post(channelId: string, body: string, threadRootId: string | null): Promise<void>;
 }
 
@@ -105,7 +105,6 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
 
   // 정의는 매 턴 새로 읽는다 — UI 로 지시문을 바꾸면 다음 턴부터 바로 반영된다(spec §3).
   const def = await deps.murmur.definition();
-  const thread = await deps.murmur.readThread(channelId, anchor);
   const key = SessionStore.threadKey(channelId, anchor);
 
   let rec = deps.store.get(key);
@@ -135,6 +134,11 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
       turnsRun: 0,
     };
   }
+
+  // #80: 이 턴에 새로 먹일 것만 정확히 읽기 위해 lastFedSeq 로 커서를 찍는다.
+  // 첫 턴(lastFedSeq=0)에서는 since=0 이라 서버가 최신 N 개를 반환하므로,
+  // buildTurnPrompt 가 전체 맥락을 보여주는 동작이 유지된다.
+  const thread = await deps.murmur.readThread(channelId, anchor, rec.lastFedSeq);
 
   // isFirstTurn 은 원칙적으로 turnsRun 에서 유도한다 — lastFedSeq 는 "무엇을 봤는지"의
   // 경계일 뿐 "하네스를 실제로 돌렸는지"의 증거가 아니다(sessions.ts::SessionRecord.turnsRun
@@ -229,7 +233,8 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     // "한 번 더 시도한다"가 "중복 발화"보다 회복 가능한 쪽이다.
     let answered = false;
     try {
-      const after = await deps.murmur.readThread(channelId, anchor);
+      // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
+      const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
       answered = hasOwnPostSince(after, deps.me.id, turnStartSeq);
     } catch (err) {
       console.error(
@@ -255,7 +260,8 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
   // 턴 전체를 실패(재시도 대상)로 만들 이유가 없다. 조용히 삼키면 "왜 NO_REPLY_NOTICE 가
   // 안 남았지"의 원인이 사라지므로 러너 로그에는 남긴다.
   try {
-    const after = await deps.murmur.readThread(channelId, anchor);
+    // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
+    const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
     if (!hasOwnPostSince(after, deps.me.id, turnStartSeq)) {
       // 여기는 정상 종료 경로뿐이다(실패는 위에서 던졌다). 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다
       // (쓸 말이 없었거나, 안전 거부(exit 0)이거나). 옛 reply.ts::extractReply 가 안전
