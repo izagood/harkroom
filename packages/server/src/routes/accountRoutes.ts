@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { newToken } from '../auth/tokens.js';
-import { AGENT_HARNESSES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@murmur/shared';
+import { MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@murmur/shared';
 import { createAgentAccount, getAgent, listAgents, updateAgent } from '../services/agents.js';
 import { recordAudit } from '../audit.js';
 
@@ -17,8 +17,11 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
   });
 
   // UI 로 등록·수정하는 '에이전트 정의'. 설정은 서버에 살아야 UI 수정이 러너에 반영된다.
-  // harness 검증은 RUNNABLE_HARNESSES 로 제한한다 — 이미 DB에 저장된 값(gemini 등)은
-  // 그대로 두고 읽지만, 새로 설정하는 것만 막는다(legacy 데이터 마이그레이션은 별도).
+  // harness 검증은 `AGENT_HARNESSES`(스키마가 아는 이름) 가 아니라 `RUNNABLE_HARNESSES`
+  // (러너가 실제로 돌릴 수 있는 것) 로 좁힌다 — 데스크탑 드롭다운은 이미 그렇게 잠그는데
+  // API 만 열려 있어서, admin 이 실행 불가능한 harness 를 저장할 수 있었다(#83).
+  // 이미 DB 에 그 값이 저장된 에이전트는 읽기·다른 필드 수정에 영향받지 않는다(harness 키를
+  // 안 보내면 `.optional()` 로 통과한다) — 새로 그 값으로 **바꾸는 것**만 막는다.
   const configFields = {
     instructions: z.string().max(8000).optional(),
     harness: z.enum(RUNNABLE_HARNESSES).optional(),

@@ -315,7 +315,10 @@ describe('writeMcpConfigOnce', () => {
 describe('assertHarnessContract', () => {
   // RUNNABLE_HARNESSES 에 unsupported 인 harness 가 있으면 기동 시점에서 실패한다.
   // 이 테스트는 주입된 목록으로 검사한다(프로덕션 상수를 오염시키지 않음).
-  it('supported harness 목록이면 통과한다', () => {
+  // codex 를 함께 넣어도 통과한다 — 이 검사가 보는 것은 "PRESETS 에 구현이 있는가"이고
+  // codex 는 구현돼 있다. RUNNABLE_HARNESSES 에 아직 없는 것은 별개의 판단(실물 resume
+  // 왕복 미확인, docs/roadmap.md §5)이지 구현 부재가 아니다.
+  it('PRESETS 에 구현이 있는 목록이면 통과한다', () => {
     expect(() => assertHarnessContract(['claude-code', 'codex'])).not.toThrow();
   });
 
