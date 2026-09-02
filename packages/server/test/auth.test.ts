@@ -17,6 +17,27 @@ afterAll(async () => {
 });
 
 describe('bootstrap & login', () => {
+  it('bootstraps first admin with a default channel', async () => {
+    const r = await app.inject({
+      method: 'POST', url: '/bootstrap',
+      payload: { handle: 'admin', displayName: 'Admin', password: 'pw123456' },
+    });
+    expect(r.statusCode).toBe(201);
+    const token = (await app.inject({
+      method: 'POST', url: '/auth/login',
+      payload: { handle: 'admin', password: 'pw123456' },
+    })).json().token as string;
+
+    const channels = await app.inject({
+      method: 'GET', url: '/channels',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(channels.statusCode).toBe(200);
+    expect(channels.json().channels).toHaveLength(1);
+    expect(channels.json().channels[0]).toMatchObject({ name: 'general', kind: 'standard' });
+    expect(channels.json().channels[0].name).toMatch(/^[a-z0-9_-]{1,48}$/);
+  });
+
   it('bootstraps first admin, then rejects a second bootstrap', async () => {
     const r1 = await app.inject({
       method: 'POST', url: '/bootstrap',

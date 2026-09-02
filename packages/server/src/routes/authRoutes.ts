@@ -4,6 +4,7 @@ import argon2 from 'argon2';
 import { z } from 'zod';
 import { newToken, hashToken } from '../auth/tokens.js';
 import { recordAudit } from '../audit.js';
+import { createChannel } from '../services/channels.js';
 
 const SESSION_TTL_DAYS = 14;
 
@@ -21,16 +22,32 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
     }
     const body = credentials.parse(req.body);
     const hash = await argon2.hash(body.password);
-    const res = await pool.query(
-      `insert into account (handle, display_name, kind, is_admin, password_hash)
-       values ($1, $2, 'human', true, $3) returning id`,
-      [body.handle, body.displayName, hash],
-    );
-    await recordAudit(pool, {
-      action: 'account.created', actorId: res.rows[0].id, actorHandle: body.handle,
-      target: res.rows[0].id, detail: { via: 'bootstrap', isAdmin: true },
-    }, req);
-    return reply.code(201).send({ id: res.rows[0].id });
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      const res = await client.query(
+        `insert into account (handle, display_name, kind, is_admin, password_hash)
+         values ($1, $2, 'human', true, $3) returning id`,
+        [body.handle, body.displayName, hash],
+      );
+      const accountId = res.rows[0].id;
+      await recordAudit(pool, {
+        action: 'account.created', actorId: accountId, actorHandle: body.handle,
+        target: accountId, detail: { via: 'bootstrap', isAdmin: true },
+      }, req);
+      const channel = await createChannel(pool, { name: 'general' });
+      await recordAudit(pool, {
+        action: 'channel.created', actorId: accountId, actorHandle: body.handle,
+        target: channel.id, detail: { via: 'bootstrap' },
+      }, req);
+      await client.query('commit');
+      return reply.code(201).send({ id: accountId });
+    } catch (err) {
+      await client.query('rollback');
+      throw err;
+    } finally {
+      client.release();
+    }
   });
 
   app.post('/auth/login', async (req, reply) => {
