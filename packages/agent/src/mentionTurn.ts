@@ -14,7 +14,7 @@ import type { AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
 import { buildSystemPrompt, buildTurnPrompt, hasOwnPostSince, NO_REPLY_NOTICE } from './prompt.js';
 import { SessionStore } from './sessions.js';
-import { buildTurnCommand, preassignsSessionId, type TurnPlan } from './turn.js';
+import { buildTurnCommand, preassignsSessionId, writeSystemPromptFile, type TurnPlan } from './turn.js';
 import type { TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
 import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
@@ -48,6 +48,12 @@ export interface MentionTurnDeps {
   workspaceBaseDir: string;
   /** writeMcpConfigOnce 가 기동 시 한 번 쓴 경로. 매 턴 그대로 재사용한다. */
   mcpConfigPath: string;
+  /**
+   * 러너의 상태 디렉터리(config.ts::stateDir). 지시문 파일을 여기 쓴다 —
+   * **에이전트의 워크스페이스 안에 두면 안 된다**: `mentionPermission: 'auto'`
+   * (bypassPermissions)인 에이전트가 자기 지시문을 읽고 고칠 수 있게 된다.
+   */
+  stateDir: string;
   murmurUrl: string;
   pat: string;
   turnTimeoutMs: number;
@@ -180,12 +186,19 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     guide: deps.guide,
   });
 
+  // 지시문은 argv 가 아니라 파일로 넘긴다(#92) — `ps` 로 다른 로컬 사용자에게 보이는 자리에
+  // 대화·지시문을 올리지 않는다. **매 턴 다시 쓴다**: UI 로 지시문을 바꾸면 다음 턴부터
+  // 반영돼야 하고(spec §3), channelName 이 프롬프트에 들어가므로 내용이 턴마다 다르다.
+  // 턴은 순차적으로 돈다(main.ts 의 for 루프가 await 한다) — 그래서 파일 하나로 충분하다.
+  const systemPromptFile = await writeSystemPromptFile(deps.stateDir, systemPrompt);
+
   const plan = buildTurnCommand({
     harness: def.harness,
     mode: 'mention',
     sessionId: rec.sessionId,
     isFirstTurn,
     systemPrompt,
+    systemPromptFile,
     promptCtx: prompt,
     model: def.model,
     effort: def.effort,
