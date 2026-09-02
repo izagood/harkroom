@@ -13,6 +13,7 @@ import { registerDirectoryRoutes } from './routes/directoryRoutes.js';
 import { registerAuditRoutes } from './routes/auditRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
+import { createAgentPresence } from './mcp/presence.js';
 import { Lifecycle } from './lifecycle.js';
 import { loggerConfig } from './logging.js';
 import { createRateLimiter, type RateLimitRule } from './rateLimit.js';
@@ -57,6 +58,8 @@ export interface ServerDeps {
   wsHeartbeatMs?: number;
   /** '입력 중' 상태의 수명(ms). 기본 6초. */
   typingTtlMs?: number;
+  /** 에이전트 online 상태의 수명(ms). 기본 30초. */
+  agentPresenceTtlMs?: number;
   /** 로그 레벨. 미지정이면 LOG_LEVEL, 그것도 없으면 info. */
   logLevel?: string;
   /** 로그 싱크 교체(테스트 전용 seam). 프로덕션은 stdout 이다. */
@@ -212,12 +215,23 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   await registerAuth(app, deps.pool);
+
+  // 에이전트 presence 레지스트리를 한 번 만들고 두 곳에 넘긴다.
+  // - registerWs: presence.snapshot 에 에이전트를 합집합으로 얹는다.
+  // - registerMcp: inbox.poll 에서 mark() 를 부른다.
+  const agentPresence = createAgentPresence({
+    ttlMs: deps.agentPresenceTtlMs ?? 30_000,
+    now: deps.now,
+  });
+  agentPresence.startSweep(app);
+
   await registerWs(app, deps.pool, {
     onSocketCount: (read) => { socketCount = read; },
     allowedOrigins: deps.corsOrigins ?? null,
     revalidateMs: deps.wsRevalidateMs,
     heartbeatMs: deps.wsHeartbeatMs,
     typingTtlMs: deps.typingTtlMs,
+    agentPresence,
   });
   await registerAuthRoutes(app, deps.pool);
   await registerAccountRoutes(app, deps.pool);
@@ -242,7 +256,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     reply.header('content-type', 'text/plain; version=0.0.4; charset=utf-8');
     return metrics.renderAsync();
   });
-  await registerMcp(app, deps.pool, lifecycle);
+  await registerMcp(app, deps.pool, lifecycle, agentPresence);
 
   return app;
 }

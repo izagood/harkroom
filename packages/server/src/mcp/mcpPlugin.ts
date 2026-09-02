@@ -10,12 +10,18 @@ import { assertChannelVisible, audienceFor, listChannels } from '../services/cha
 import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { GUIDE } from './guide.js';
+import type { AgentPresence } from './presence.js';
 
 function jsonResult(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }] };
 }
 
-function buildMcpServer(pool: Pool, account: AccountView, lifecycle: Lifecycle): McpServer {
+function buildMcpServer(
+  pool: Pool,
+  account: AccountView,
+  lifecycle: Lifecycle,
+  presence: AgentPresence,
+): McpServer {
   const server = new McpServer({ name: 'murmur', version: '0.1.0' });
 
   server.registerTool('workspace.guide', { description: '워크스페이스 규칙(avcs 사용 경계 포함)' },
@@ -133,6 +139,10 @@ function buildMcpServer(pool: Pool, account: AccountView, lifecycle: Lifecycle):
     description: '미읽음 inbox 조회. timeoutMs>0이면 새 항목이 올 때까지 long-poll',
     inputSchema: { timeoutMs: z.number().int().min(0).max(25_000).optional() },
   }, async ({ timeoutMs }) => {
+    // inbox.poll 은 에이전트의 유일한 주기 신호다. 폴이 오면 온라인으로 표시한다.
+    // presence 는 필수 인자다 — 옵셔널로 두면 배선이 끊겨도 컴파일이 통과하고
+    // presence 가 조용히 no-op 이 된다.
+    presence.mark(account.id);
     const fetchUnread = async () => {
       const entries = await listInbox(pool, account.id, { unreadOnly: true });
       if (!entries.length) return { entries, messages: [] };
@@ -231,13 +241,18 @@ function buildMcpServer(pool: Pool, account: AccountView, lifecycle: Lifecycle):
   return server;
 }
 
-export async function registerMcp(app: FastifyInstance, pool: Pool, lifecycle: Lifecycle): Promise<void> {
+export async function registerMcp(
+  app: FastifyInstance,
+  pool: Pool,
+  lifecycle: Lifecycle,
+  agentPresence: AgentPresence,
+): Promise<void> {
   app.post('/mcp', async (req, reply) => {
     if (!req.account || req.account.kind !== 'agent') {
       return reply.code(req.account ? 403 : 401)
         .send({ error: { code: 'agent_only', message: 'MCP surface requires an agent PAT' } });
     }
-    const server = buildMcpServer(pool, req.account, lifecycle);
+    const server = buildMcpServer(pool, req.account, lifecycle, agentPresence);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     reply.hijack();
     reply.raw.on('close', () => {
