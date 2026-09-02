@@ -114,7 +114,10 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     const messages = await listMessages(pool, id, {
       since: q.since, before: q.before, limit: q.limit, threadRootId: q.thread ?? null,
     });
-    // 스레드 조회에는 '더 오래된 것'이라는 개념이 없다(루트 + 답글 전체가 한 묶음이다).
+    // 스레드 조회는 '더 오래된 것'을 페이지로 돌려주는 경로가 없다 — before 분기가 스레드를
+    // 필터하지 않으므로 이 값을 true 로 올리면 클라이언트가 채널 전체를 거슬러 올라간다.
+    // 그래서 limit 을 넘는 긴 스레드는 최신 limit 개까지만 보인다(그 창이 오래된 쪽이 아니라
+    // 최신 쪽인 것이 이 커밋의 요지다). 스레드 역방향 페이지는 별도 과제다.
     const hasMore = q.thread
       ? false
       : messages.length > 0 && (await hasOlderMessages(pool, id, messages[0]!.seq));
