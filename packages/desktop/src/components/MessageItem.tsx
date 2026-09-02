@@ -80,7 +80,7 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
         )}
       </div>
 
-      <div className="flex shrink-0 items-start gap-1">
+      <div className="relative flex shrink-0 items-start gap-1">
         {!inThread && (
           <button
             // 답글이 달린 메시지는 호버 없이도 그 사실이 보여야 한다. 답글이 없을 때만 호버로
@@ -99,47 +99,49 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
             {replyCount > 0 ? `${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}` : 'Reply in thread'}
           </button>
         )}
+        {/* #121: 우상단 호버 툴바. #143: 기준을 **행이 아니라 답글 컨트롤**로 잡는다 —
+            둘 다 행의 `right` 에 앵커되면 같은 자리를 다투고, 호버 시 툴바가 답글 pill 을
+            덮어 스레드 진입이 막힌다. `right-full` 은 "내 우측 = 답글 컨트롤의 좌측"이라
+            pill 텍스트 폭(`Reply in thread` ↔ `3 replies`)이 변해도 비겹침이 유지된다.
+            흐름 밖에 남으므로 상시 여백을 예약하지도 않는다. 숨기는 방식은 반드시
+            opacity 다 — visibility:hidden 은 접근성 트리에서 요소를 지워 키보드 경로를
+            없앤다(Reactions.tsx 주석이 이미 그 비용을 기록한다). */}
+        {draft === null && (
+          <div role="group" aria-label="message toolbar" className={`absolute right-full top-0 mr-1 flex items-center gap-0.5 rounded border border-zinc-200 bg-white px-1 py-0.5 shadow-sm ${hoverOnly}`}>
+            <ReactionPicker message={message} />
+            {confirmingDelete ? (
+              // 삭제는 되돌릴 수 없으니 한 번 더 묻는다. 확인은 **메뉴 밖**에 둔다 — 메뉴 안에
+              // 두면 항목을 누르는 순간 메뉴가 닫히면서 확인 단계가 사라진다.
+              <>
+                <button
+                  className="rounded border border-red-300 bg-red-50 px-1.5 text-[11px] text-red-700"
+                  onClick={() => { setConfirmingDelete(false); void getController().deleteMessage(message.id); }}
+                >
+                  Really delete
+                </button>
+                <button
+                  className="rounded border border-zinc-300 px-1.5 text-[11px] text-zinc-600"
+                  onClick={() => setConfirmingDelete(false)}
+                >
+                  Keep
+                </button>
+              </>
+            ) : (
+              // 항목이 하나도 없으면 트리거를 만들지 않는다 — 열어도 비어 있는 메뉴는
+              // "할 수 있는 게 있다"는 거짓 신호다(design.md §4).
+              menuItems.length > 0 && (
+                <Menu
+                  renderTrigger={(props) => (
+                    <button {...props} className={iconBtn} aria-label="More actions">⋯</button>
+                  )}
+                  items={menuItems}
+                  placement="bottom"
+                />
+              )
+            )}
+          </div>
+        )}
       </div>
-
-      {/* #121: 메시지 우상단에 앵커된 호버 툴바. 상시 노출되는 것이 없으므로 절대 배치로
-          본문을 가리지 않는다(호버할 때만 나타난다). 숨기는 방식은 반드시 opacity 다 —
-          visibility:hidden 은 접근성 트리에서 요소를 지워 키보드 경로를 없앤다
-          (docs/roadmap.md §층1, Reactions.tsx 주석이 이미 그 비용을 기록한다). */}
-      {draft === null && (
-        <div role="group" aria-label="message toolbar" className={`absolute right-3 top-0 flex items-center gap-0.5 rounded border border-zinc-200 bg-white px-1 py-0.5 shadow-sm ${hoverOnly}`}>
-          <ReactionPicker message={message} />
-          {confirmingDelete ? (
-            // 삭제는 되돌릴 수 없으니 한 번 더 묻는다. 확인은 **메뉴 밖**에 둔다 — 메뉴 안에
-            // 두면 항목을 누르는 순간 메뉴가 닫히면서 확인 단계가 사라진다.
-            <>
-              <button
-                className="rounded border border-red-300 bg-red-50 px-1.5 text-[11px] text-red-700"
-                onClick={() => { setConfirmingDelete(false); void getController().deleteMessage(message.id); }}
-              >
-                Really delete
-              </button>
-              <button
-                className="rounded border border-zinc-300 px-1.5 text-[11px] text-zinc-600"
-                onClick={() => setConfirmingDelete(false)}
-              >
-                Keep
-              </button>
-            </>
-          ) : (
-            // 항목이 하나도 없으면 트리거를 만들지 않는다 — 열어도 비어 있는 메뉴는
-            // "할 수 있는 게 있다"는 거짓 신호다(design.md §4).
-            menuItems.length > 0 && (
-              <Menu
-                renderTrigger={(props) => (
-                  <button {...props} className={iconBtn} aria-label="More actions">⋯</button>
-                )}
-                items={menuItems}
-                placement="bottom"
-              />
-            )
-          )}
-        </div>
-      )}
     </div>
   );
 }
