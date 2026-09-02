@@ -114,6 +114,25 @@ export class MurmurAgentClient {
     return body.accounts;
   }
 
+  /**
+   * 이 계정의 메모리를 읽는다(#139). **`core` 본문과 `mem/*` slug 목록만** 가져온다 —
+   * `mem/*` 의 본문까지 주입하면 축적이 곧 컨텍스트 고갈이 된다(이슈가 그렇게 확정했다).
+   * 에이전트가 필요할 때 `memory.get` 으로 직접 가져간다.
+   *
+   * **던지는 것을 삼키지 않는다.** 호출자가 "저장소가 비었다"와 "조회가 실패했다"를
+   * 구분해야 하기 때문이다 — 여기서 빈 값으로 뭉개면 그 구분이 사라진다.
+   */
+  async readMemory(): Promise<{ core: string | null; slugs: string[] }> {
+    const listed = await this.call<{ slugs: string[] }>('memory.list');
+    const slugs = listed.slugs ?? [];
+    if (!slugs.includes('core')) return { core: null, slugs: slugs.filter((s) => s !== 'core') };
+    const got = await this.call<{ value?: string; error?: unknown }>('memory.get', { slug: 'core' });
+    return {
+      core: typeof got.value === 'string' ? got.value : null,
+      slugs: slugs.filter((s) => s !== 'core'),
+    };
+  }
+
   /** timeoutMs 동안 park 한다. 새 항목이 없으면 빈 배치로 정상 반환된다. */
   pollInbox(timeoutMs: number): Promise<InboxBatch> {
     return this.call<InboxBatch>('inbox.poll', { timeoutMs, version: VERSION });

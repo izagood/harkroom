@@ -26,13 +26,64 @@ export const MESSAGE_KIND_PROGRESS = 'progress';
  * 새로 뜨고 이 함수도 매번 다시 불리므로, UI 로 지시문(instructions)을 바꾸면 재시작 없이
  * 다음 턴부터 바로 반영된다(로드맵 §1의 기존 성질 — 세션 무효화 장치가 필요 없다).
  */
+/**
+ * 메모리 조회 결과(#139). **세 상태를 타입으로 강제한다.**
+ *
+ * `string` 이나 `string | null` 로 두면 "저장소가 비었다"와 "조회가 실패했다"가 같은
+ * 값이 되고, 그것이 이슈가 경고한 사고다 — **DB 장애를 "기억 없음" 으로 읽으면
+ * 에이전트가 진짜 기억을 새 프로필로 덮어쓴다.** 판별 가능한 값을 두면 호출부가
+ * `catch` 로 빈 값을 흘려보낼 수 없다.
+ */
+export type MemoryContext =
+  | { core: string | null; slugs: string[] }
+  | 'unavailable';
+
+/**
+ * 프롬프트에 넣기 전 이스케이프.
+ *
+ * 에이전트가 쓴 메모리를 **자기가 나중에 읽는다** — 저장된 프롬프트 인젝션 경로다.
+ * `<` 와 `&` 를 그대로 두면 메모리 내용이 아래 경계 마커를 위조할 수 있다.
+ * `&` 를 먼저 바꾼다(나중에 바꾸면 자신이 만든 `&lt;` 를 다시 망가뜨린다).
+ */
+export function escapeForPrompt(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+}
+
+/** 메모리 절을 만든다. 세 상태가 각각 다른 것을 낸다 — 아래 주석이 이유다. */
+function memorySection(memory: MemoryContext): string[] {
+  // 조회 자체가 실패했다. **아무것도 주입하지 않는다** — 온보딩 안내조차 넣으면
+  // 에이전트가 "나는 기억이 없다" 고 믿고 새로 쓴다. 러너 로그에는 호출부가 남긴다.
+  if (memory === 'unavailable') return [];
+
+  if (memory.core === null && memory.slugs.length === 0) {
+    // 조회는 성공했고 저장소가 비어 있다. 이건 사실이므로 안내해도 안전하다.
+    return [
+      '기억이 아직 없다. 이 워크스페이스에서 반복해서 쓸 사실(사람들의 역할, 저장소 규칙,',
+      '자주 하는 작업)이 생기면 murmur MCP 의 `memory.set` 으로 `core` 슬러그에 적어 둬라 —',
+      '다음 턴부터 여기에 실려 온다.',
+      '',
+    ];
+  }
+
+  const lines = ['<memory>'];
+  if (memory.core !== null) lines.push(escapeForPrompt(memory.core));
+  if (memory.slugs.length) {
+    lines.push('', '추가로 저장된 기억(본문은 필요할 때 `memory.get` 으로 가져온다):');
+    for (const slug of memory.slugs) lines.push(`- ${escapeForPrompt(slug)}`);
+  }
+  lines.push('</memory>', '');
+  return lines;
+}
+
 export function buildSystemPrompt(opts: {
   handle: string;
   channelName: string;
   instructions: string;
   guide: string;
+  /** #139: 세 상태를 구분한다. `MemoryContext` 주석 참고. */
+  memory: MemoryContext;
 }): string {
-  const { handle, channelName, instructions, guide } = opts;
+  const { handle, channelName, instructions, guide, memory } = opts;
   return [
     `너는 murmur 워크스페이스의 에이전트 @${handle} 이고, 지금 #${channelName} 에서 말한다.`,
     '',
@@ -42,6 +93,7 @@ export function buildSystemPrompt(opts: {
     '워크스페이스 규칙:',
     guide,
     '',
+    ...memorySection(memory),
     // 발화가 러너의 책임에서 에이전트의 자율로 넘어갔다(spec §4 발화 경로) — 어디에 쓸지를
     // 명시하지 않으면 턴이 조용히 끝나고, 러너는 그걸 프로세스 종료 후에나(hasOwnPostSince)
     // 알아챈다. 이 지시가 이 프롬프트에서 가장 중요한 한 줄이다.
