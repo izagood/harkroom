@@ -46,6 +46,11 @@ export function buildSystemPrompt(opts: {
     '대화 프롬프트 맨 위에 준다 — 그대로 넣어 호출한다(threadRootId 가 "채널 최상위(없음)"으로',
     '적혀 있으면 그 인자는 생략하고 channelId 만 넘긴다).',
     '',
+    // #90: 한 턴에서 여러 번 message.post 를 부르면 같은 스레드에 답이 여러 개 남는다.
+    // "한 번에 정리해서 올려라"는 실행 가능한 지시고, "절대 두 번 부르지 마라"는 금지형보다
+    // 모델에게 부드럽게 전달한다.
+    '답이 길면 한 번에 요약해서 올려라 — 여러 번 나눠 쓰지 마.',
+    '',
     `답변은 ${BODY_LIMIT}자를 넘길 수 없다(서버가 거절한다). 채팅이므로 짧고 구체적으로 쓴다.`,
     '모르는 것은 모른다고 말한다. 확인하지 않은 것을 확인한 것처럼 쓰지 않는다.',
   ].join('\n');
@@ -115,9 +120,20 @@ export function buildTurnPrompt(opts: {
 
 /**
  * 프로세스 종료 후 "답을 올렸나" 판정(spec §4 발화 경로). 턴 시작 seq(sinceSeq) 이후에
- * 자기 발화가 있어야 인정한다 — 시작 전에 이미 있던 자기 발화까지 세면, 아무것도 안 하고
- * 끝낸 턴도 "발화했다"로 잘못 판정된다.
+ * 자기 발화가 몇 개인지 세어서 반환한다. 0 이면 발화하지 않은 것이다.
+ *
+ * #90: 개수를 세는 함수와 판정 함수 중 어느 것이 진실 원천인지에 따라 호출부가
+ * 달라진다 — 개수 > 0 으로 판정하면 호출부가 "얼마나 중요한가"를 알 수 없고,
+ * 불리언만 반환하면 "두 번 이상"을 감지할 수 없다. 개수를 반환하고 호출부가
+ * > 0 과 > 1 로 각각 판정하게 열어 둔다.
+ */
+export function countOwnPostsSince(messages: MessageRow[], meId: string, sinceSeq: number): number {
+  return messages.filter((m) => m.authorId === meId && m.seq > sinceSeq).length;
+}
+
+/**
+ * #90 이전 코드와의 호환성 — 0 이면 false, 1 이상이면 true.
  */
 export function hasOwnPostSince(messages: MessageRow[], meId: string, sinceSeq: number): boolean {
-  return messages.some((m) => m.authorId === meId && m.seq > sinceSeq);
+  return countOwnPostsSince(messages, meId, sinceSeq) > 0;
 }

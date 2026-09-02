@@ -12,7 +12,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
-import { buildSystemPrompt, buildTurnPrompt, hasOwnPostSince, NO_REPLY_NOTICE } from './prompt.js';
+import { buildSystemPrompt, buildTurnPrompt, countOwnPostsSince, hasOwnPostSince, NO_REPLY_NOTICE } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, type TurnPlan } from './turn.js';
 import type { TurnResult } from './pty.js';
@@ -262,7 +262,15 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
   try {
     // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
     const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
-    if (!hasOwnPostSince(after, deps.me.id, turnStartSeq)) {
+    const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
+    if (postCount > 1) {
+      // #90: 한 턴에서 두 번 이상 발화 — 경고만 남기고channelId 로 통보하지는 않는다.
+      // 이미 채널에 답이 두 개인데 세 번째를 더하면 소음이다.
+      console.warn(
+        `[mentionTurn] ${key}: 한 턴에서 ${postCount}개의 발화가 남았다 — 중복 발화警`,
+      );
+    }
+    if (postCount === 0) {
       // 여기는 정상 종료 경로뿐이다(실패는 위에서 던졌다). 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다
       // (쓸 말이 없었거나, 안전 거부(exit 0)이거나). 옛 reply.ts::extractReply 가 안전
       // 거부를 사실로 남기던 자리를 이 경로가 대신한다: 침묵을 침묵으로 남기지 않는다.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, hasOwnPostSince } from '../src/prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, countOwnPostsSince, hasOwnPostSince } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -106,6 +106,15 @@ describe('hasOwnPostSince', () => {
   });
 });
 
+describe('countOwnPostsSince', () => {
+  it('턴 시작 이후 자기 발화 개수를 센다', () => {
+    const ms = [msg(5, 'a1', '옛 답'), msg(9, 'u1', '질문'), msg(10, 'a1', '첫 답'), msg(11, 'a1', '둘째 답')];
+    expect(countOwnPostsSince(ms, 'a1', 9)).toBe(2); // seq 10, 11
+    expect(countOwnPostsSince(ms, 'a1', 10)).toBe(1); // seq 11 only
+    expect(countOwnPostsSince(ms, 'a1', 11)).toBe(0);
+  });
+});
+
 describe('buildSystemPrompt', () => {
   it('지시문과 guide 를 싣고 8000자 규칙을 명시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '친절하게', guide: 'G규칙' });
@@ -120,5 +129,12 @@ describe('buildSystemPrompt', () => {
   it('message.post 로 스스로 발화하라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '' });
     expect(s).toContain('message.post');
+  });
+
+  // #90: 한 턴에서 여러 번 message.post 를 부르면 같은 스레드에 답이 여러 개 남는다.
+  // "한 번에 정리해서 올려라"는 실행 가능한 지시다.
+  it('한 턴에 한 번만 발화하라고 지시한다', () => {
+    const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '' });
+    expect(s).toContain('한 번에');
   });
 });
