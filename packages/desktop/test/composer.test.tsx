@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { useAppStore } from '../src/state/appStore';
 import { Composer } from '../src/components/Composer';
-import { acc } from './helpers/fakeApi';
+import { Controller, setController } from '../src/state/controller';
+import { acc, fakeApi } from './helpers/fakeApi';
 
 /** 지금 강조된 후보의 handle. 목록 정렬은 여기서 검증할 대상이 아니다. */
 const highlighted = () => {
@@ -28,8 +29,13 @@ beforeEach(() => {
       u2: acc('u2', 'rusalka'),
     },
   });
+  const c = new Controller(fakeApi());
+  setController(c);
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  setController(null as unknown as Controller);
+});
 
 describe('mention autocomplete', () => {
   it('offers matching agents once an @ is typed', () => {
@@ -186,5 +192,48 @@ describe('mention autocomplete', () => {
     typeInto('@me');
 
     expect(screen.queryAllByRole('option')).toHaveLength(0);
+  });
+
+  // 재현 테스트: 부트 후 서버에 새 계정이 생겼을 때, @ 를 쳐서 자동완성을 여는 것만으로
+  // 그 새 계정이 후보에 나타난다.
+  it('refreshes accounts when autocomplete opens', async () => {
+    const api = fakeApi({
+      accounts: vi.fn(async () => [
+        acc('u1', 'me'),
+        acc('a1', 'fizz', 'agent'),
+        acc('new', 'newagent', 'agent'), // 서버에 있지만 로컬에 없는 새 계정
+      ]),
+    });
+    const c = new Controller(api);
+    setController(c);
+    useAppStore.getState().set({
+      accounts: { u1: acc('u1', 'me'), a1: acc('a1', 'fizz', 'agent') },
+    });
+
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@new');
+
+    await waitFor(() => expect(useAppStore.getState().accounts.new).toBeDefined());
+    expect(screen.getByRole('option', { name: /newagent/ })).toBeTruthy();
+  });
+
+  // 가드 테스트: 자동완성을 짧은 간격으로 여러 번 열어도 디렉터리 요청이 한 번만 나간다.
+  it('does not refetch accounts rapidly when autocomplete opens repeatedly', async () => {
+    const api = fakeApi({
+      accounts: vi.fn(async () => [
+        acc('u1', 'me'),
+        acc('a1', 'fizz', 'agent'),
+      ]),
+    });
+    const c = new Controller(api);
+    setController(c);
+
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@fi');
+    typeInto('@fi');
+    typeInto('@fi');
+
+    await Promise.resolve();
+    expect(api.accounts).toHaveBeenCalledTimes(1);
   });
 });

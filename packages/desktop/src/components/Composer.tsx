@@ -130,7 +130,11 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   };
 
   const recompute = (text: string, caret: number | null) => {
-    setQuery(caret === null ? null : mentionQueryAt(text, caret));
+    const nextQuery = caret === null ? null : mentionQueryAt(text, caret);
+    if (query === null && nextQuery !== null) {
+      try { getController().refreshAccounts(); } catch { /* 自动完成은 캐시된 목록으로 계속 동작해야 한다 */ }
+    }
+    setQuery(nextQuery);
     // 글을 쓰기 시작하면 @ 버튼으로 연 목록은 자리를 비켜야 한다.
     setPicking(false);
     setActive(0);
