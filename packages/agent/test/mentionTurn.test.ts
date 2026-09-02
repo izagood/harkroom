@@ -192,6 +192,49 @@ describe('runMentionTurn', () => {
     expect(fake.posts[0]!.body).toBe(NO_REPLY_NOTICE);
   });
 
+  // #90: 한 턴에서 두 번 이상 발화하면 경고가 나지만 채널에는 통보하지 않는다.
+  it('한 턴에 두 번 이상 발화하면 경고가 나고, NO_REPLY_NOTICE 는 안 난다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 질문');
+    const { deps, runTurn } = await makeDeps(fake);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // 하네스가 두 번发帖하도록 조립 — FakeMurmur.post 가 호출될 때마다 실제发帖로 이어진다
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '첫 번째 답', null);
+      await fake.post(CHANNEL, '두 번째 답', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+    // 채널에는 실제帖子만 남고, 경고만_log에 남는다
+    expect(fake.posts.filter((p) => p.body !== NO_REPLY_NOTICE)).toHaveLength(2);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('한 턴에서'),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('한 턴에 한 번만 발화하면 경고 없고 NO_REPLY_NOTICE 도 안 난다(회귀)', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 질문');
+    const { deps, runTurn } = await makeDeps(fake);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '한 번만 답', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+    expect(fake.posts).toHaveLength(1);
+    expect(fake.posts[0]!.body).not.toBe(NO_REPLY_NOTICE);
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
   describe('같은 threadKey 두 번째 멘션', () => {
     it('ensureWorkspace 재호출 없음 + isFirstTurn=false 로 -r 조립', async () => {
       const fake = new FakeMurmur(defOf());
