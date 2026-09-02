@@ -2,8 +2,8 @@ import { vi } from 'vitest';
 import type { AccountView, ChannelRow, MessageRow } from '@murmur/shared';
 import type { ApiClient } from '../../src/lib/api';
 
-export const acc = (id: string, handle: string, kind: 'human' | 'agent' = 'human'): AccountView =>
-  ({ id, handle, displayName: handle, kind, isAdmin: false, disabled: false });
+export const acc = (id: string, handle: string, kind: 'human' | 'agent' = 'human', isAdmin = false): AccountView =>
+  ({ id, handle, displayName: handle, kind, isAdmin, disabled: false });
 
 export const chan = (id: string, name: string, repo: string | null = null): ChannelRow =>
   ({ id, name, topic: '', kind: 'standard', repo });
