@@ -11,6 +11,7 @@ import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } f
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { getMemory, listMemory, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, setMemory } from '../services/memory.js';
 import { GUIDE } from './guide.js';
+import { recordRunnerVersion } from '../services/runnerVersion.js';
 
 const MEMORY_SLUG_REGEX = /^core$|^mem\/[a-z0-9][a-z0-9_-]{0,63}((\/[a-z0-9][a-z0-9_-]{0,63})*)$/;
 
@@ -144,8 +145,13 @@ function buildMcpServer(
 
   server.registerTool('inbox.poll', {
     description: '미읽음 inbox 조회. timeoutMs>0이면 새 항목이 올 때까지 long-poll',
-    inputSchema: { timeoutMs: z.number().int().min(0).max(25_000).optional() },
-  }, async ({ timeoutMs }) => {
+    inputSchema: { timeoutMs: z.number().int().min(0).max(25_000).optional(), version: z.string().optional() },
+  }, async ({ timeoutMs, version }) => {
+    // 버전이 오면 기록한다 — 배포가 넣어 준 빌드 시점 값이다(#129). 값이 바뀔 때만
+    // 실제로 쓰이므로 이 핫 패스에 쓰기 비용이 없다(services/runnerVersion.ts 주석).
+    if (version) {
+      await recordRunnerVersion(pool, account.id, version);
+    }
     // inbox.poll 은 에이전트의 유일한 주기 신호다. 폴이 오면 온라인으로 표시한다.
     // presence 는 필수 인자다 — 옵셔널로 두면 배선이 끊겨도 컴파일이 통과하고
     // presence 가 조용히 no-op 이 된다.
