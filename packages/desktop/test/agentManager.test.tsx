@@ -71,7 +71,7 @@ describe('AgentsSettings', () => {
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
 
-    // … 가разу 뒤에 토큰 조각이 오는 패턴이 있으면 안 된다.
+    // "토큰 조각 + 말줄임표" 형태가 화면에 있으면 안 된다 — 복사하면 인증이 실패한다.
     const panel = await screen.findByText(/이 토큰은 지금만 보인다/);
     const panelContent = panel.parentElement?.textContent ?? '';
     expect(panelContent).not.toMatch(/murp_secre[A-Za-z0-9+/=]*…/);
@@ -85,7 +85,7 @@ describe('AgentsSettings', () => {
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
 
-    // MURMUR_PAT=murp_secret 가、丸ごと 들어있는 텍스트를 찾아야 한다.
+    // 명령 힌트에 토큰이 **잘리지 않은 채** 들어 있어야 복사해서 바로 쓸 수 있다.
     const panel = await screen.findByText(/이 토큰은 지금만 보인다/);
     const panelContent = panel.parentElement?.textContent ?? '';
     expect(panelContent).toMatch(/MURMUR_PAT=murp_secret/);
@@ -99,7 +99,11 @@ describe('AgentsSettings', () => {
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
 
-    expect(await screen.findByText(/러너.*달라|멘션.*답.*러너/i)).toBeTruthy();
+    // 문구를 느슨한 정규식으로 잡으면 관계없는 문장에 우연히 걸린다 — 이 안내가 반드시
+    // 말해야 하는 두 가지를 각각 확인한다: murmur 가 러너를 띄우지 않는다는 것과,
+    // 붙이기 전까지 답하지 않는다는 것.
+    expect(await screen.findByText(/murmur 는 러너를 띄우지 않는다/)).toBeTruthy();
+    expect(screen.getByText(/멘션에 답하지 않는다/)).toBeTruthy();
   });
 
   it('refuses to submit without a name', async () => {
