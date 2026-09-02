@@ -96,8 +96,8 @@ async function resolveWorkspaceDir(
 
 export interface MentionTarget {
   channelId: string;
-  /** 멘션이 있던 자리 — 스레드 안이면 그 루트, 채널 최상위면 null. main.ts 가 멘션
-   * 메시지에서 이미 계산해 둔 값을 그대로 받는다(브리프: "여기서 새로 계산하지 마라 —
+  /** 앵커 — 스레드 안이면 그 루트, 채널 최상위면 그-mention 메시지 id (#98).
+   * main.ts 가 이미 계산해 둔 값을 그대로 받는다(브리프: "여기서 새로 계산하지 마라 —
    * 계산하는 순간 네 번째 진실 원천이 된다"). */
   threadRootId: string | null;
 }
