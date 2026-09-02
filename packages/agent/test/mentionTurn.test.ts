@@ -280,7 +280,50 @@ describe('runMentionTurn', () => {
       expect(rec.turnsRun).toBe(0);
     });
 
-    it('실패 후 재시때 델타가 비어있어도 하네스가 다시 실행된다 (#81 핵심 재현)', async () => {
+    // 실패했어도 발화가 이미 있었다면 커서는 전진해야 한다 — 대표적으로 타임아웃이다
+    // (답을 올린 뒤 계속 일하다 SIGTERM 을 맞는다). 전진시키지 않으면 재시도가 같은
+    // 메시지를 다시 먹여 같은 질문에 두 번 답한다.
+    it('실패했어도 이미 발화했다면 lastFedSeq 는 전진한다 (중복 발화 방지)', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 안녕');
+      const { deps, runTurn } = await makeDeps(fake);
+      runTurn.script = async () => {
+        // 답은 올렸는데 그 뒤에 시간이 다 됐다.
+        await fake.post(CHANNEL, '답변은 올렸다', null);
+        return { exitCode: 0, timedOut: true, tail: 'timeout' };
+      };
+
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null }))
+        .rejects.toThrow();
+
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
+      expect(rec.lastFedSeq).toBeGreaterThan(0); // 발화가 있었으니 전진한다
+      expect(rec.turnsRun).toBe(0); // turnsRun 은 여전히 올리지 않는다
+    });
+
+    // 발화 확인 자체가 실패하면(murmur 네트워크 끊김) 전진시키지 않는다 —
+    // "한 번 더 시도한다"가 "중복 발화"보다 회복 가능한 쪽이다.
+    it('실패 턴의 발화 확인이 던지면 lastFedSeq 를 전진시키지 않는다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 안녕');
+      const { deps, runTurn } = await makeDeps(fake);
+      runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'boom' });
+      const original = deps.murmur.readThread.bind(deps.murmur);
+      let calls = 0;
+      deps.murmur.readThread = async (...args: Parameters<typeof original>) => {
+        calls += 1;
+        if (calls > 1) throw new Error('murmur 연결 끊김');
+        return original(...args);
+      };
+
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null }))
+        .rejects.toThrow(/harness 종료/);
+
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
+      expect(rec.lastFedSeq).toBe(0);
+    });
+
+    it('실패 후 재시도에서 델타가 비어있어도 하네스가 다시 실행된다 (#81 핵심 재현)', async () => {
       const fake = new FakeMurmur(defOf());
       fake.seedFrom('human-1', '첫 번째 질문');
       const { deps, plans, runTurn } = await makeDeps(fake);
