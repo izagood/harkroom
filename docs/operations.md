@@ -267,16 +267,18 @@ macOS·Windows 의 Docker Desktop 에서는 프록시 없이 실제 주소를 �
 **사전 조건**: `DATABASE_URL` 환경변수가 설정되어 있어야 한다.
 
 ```bash
-# 비밀번호는 argv 로 전달하지 않는다 — ps 로 보인다.
-# 환경변수로 전달한다.
-MORPH_PASSWORD=새비밀번호 tsx packages/server/scripts/reset-password <handle>
+# 비밀번호는 argv 로 전달하지 않는다 — `ps` 로 다른 로컬 사용자에게 보인다.
+# 셸 히스토리에도 남으니 필요하면 앞에 공백을 두거나 히스토리를 끄고 실행한다.
+MURMUR_NEW_PASSWORD=<새 비밀번호> DATABASE_URL=<...> \
+  pnpm --filter @murmur/server exec tsx scripts/reset-password.ts <handle>
 ```
 
 이 도구는 다음을 수행한다:
 
 - 해당 계정의 비밀번호를 새 값으로 변경
 - **모든 세션을 삭제** (잠긴 상황을 푸는 도구이므로 옛 세션이 살아 있으면 안 된다)
-- 감사 로그에 `password.changed` 행을 남김 (`via: operational_tool`)
+- 감사 로그에 `password.changed` 행을 남김 (`via: operational_tool`). **actor 는 비어 있다** —
+  이 도구를 누가 돌렸는지 서버는 알 수 없고, 모르는 것을 아는 척하지 않는다.
 
 **이메일 컬럼이 없는 이유**: 이 저장소는 사람 계정에 이메일 컬럼이 설계상 없다.
 그래서 비밀번호 재설정 링크를 이메일로 보내는 self-serve 복구는 불가능하다.
