@@ -138,9 +138,21 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
     }
   });
 
+  /**
+   * 로그인한 사람이 자기 비밀번호를 바꾼다(#110). 이전에는 계정 생성 시 한 번 쓰고 나면
+   * 바꿀 방법이 API 에도 UI 에도 없었다.
+   *
+   * **현재 비밀번호를 함께 받는다**: 세션 토큰만으로 바꾸게 하면 훔친 토큰이 곧 계정 탈취가
+   * 된다. 검증은 `POST /auth/login` 과 같은 `argon2.verify` 다.
+   *
+   * 잠겨서 로그인 자체가 안 되는 경우는 이 라우트로 풀 수 없다 — 풀 수 있으면 그게
+   * 취약점이다. 그 경로는 `packages/server/scripts/reset-password.ts`(운영자가 서버 호스트에서
+   * 직접 돌린다)이고 `docs/operations.md` §10 에 절차가 있다.
+   */
   app.post('/auth/password', { preHandler: app.requireAccount }, async (req, reply) => {
     const body = z.object({
       currentPassword: z.string(),
+      // 새 비밀번호 규칙은 계정 생성과 **같은 것**을 쓴다 — 여기서 다시 적으면 두 곳이 갈린다.
       newPassword: credentials.shape.password,
     }).parse(req.body);
 
@@ -164,6 +176,9 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
     const newHash = await argon2.hash(body.newPassword);
     await pool.query(`update account set password_hash = $1 where id = $2`, [newHash, account.id]);
 
+    // 다른 기기의 세션은 무효화하고 **현재 세션은 남긴다.** 비밀번호를 바꾸는 흔한 이유가
+    // "털린 것 같다"이므로 남은 세션을 끊는 것이 맞고, 지금 쓰고 있는 세션까지 끊으면
+    // 사용자가 방금 바꾼 비밀번호로 다시 로그인해야 한다(바꾸자마자 로그아웃되는 UX).
     await pool.query(`delete from session where account_id = $1 and token_hash != $2`, [account.id, req.credentialHash]);
 
     await recordAudit(pool, {
