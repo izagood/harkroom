@@ -10,7 +10,9 @@ export const chan = (id: string, name: string, repo: string | null = null): Chan
 
 export const msg = (id: string, channelId: string, seq: number, body: string, authorId = 'u1',
   extra: Partial<MessageRow> = {}): MessageRow =>
-  ({ id, seq, channelId, threadRootId: null, authorId, body, kind: 'user', meta: {}, createdAt: new Date().toISOString(), editedAt: null, reactions: [], attachments: [], ...extra });
+  // #161: 스레드 메타데이터는 **루트에만** 붙고 옵셔널이 아니라 명시적 null 이다 —
+  // fixture 도 그것을 적어야 한다. 루트 메시지를 만드는 테스트는 extra 로 덮어쓴다.
+  ({ id, seq, channelId, threadRootId: null, authorId, body, kind: 'user', meta: {}, createdAt: new Date().toISOString(), editedAt: null, reactions: [], attachments: [], replyCount: null, lastReplyAt: null, participantIds: null, ...extra });
 
 // override 를 ApiClient 의 실제 시그니처로 받는다. 이전에는 값 타입이 `unknown` 이어서
 // 반환 형태가 어긋난 fake 를 tsc 가 통과시켰다 — 실제로 api.messages() 가 배열에서

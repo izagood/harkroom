@@ -27,6 +27,9 @@ function msg(seq: number, authorId: string, body: string, threadRootId: string |
   return {
     id: `m${seq}`, seq, channelId: CHANNEL, threadRootId, authorId, body, kind: 'user', meta: {},
     createdAt: new Date(2026, 8, 1, 0, 0, seq).toISOString(), editedAt: null, reactions: [], attachments: [],
+    // #161: 스레드 메타데이터는 **루트에만** 붙는다. 러너는 이것을 읽지 않으므로 여기서는
+    // 항상 null 이다 — 옵셔널이 아니라 명시적 null 이라 fixture 도 그것을 적어야 한다.
+    replyCount: null, lastReplyAt: null, participantIds: null,
   };
 }
 

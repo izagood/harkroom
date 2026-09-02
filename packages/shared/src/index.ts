@@ -139,6 +139,12 @@ export interface MessageRow {
   reactions: ReactionRow[];
   /** 첨부가 없으면 빈 배열. 사용자가 고른 순서를 지킨다. */
   attachments: AttachmentRow[];
+  /** 스레드 루트에만 있음. 답글 수. */
+  replyCount: number | null;
+  /** 스레드 루트에만 있음. 마지막 답글 시각. */
+  lastReplyAt: string | null;
+  /** 스레드 루트에만 있음. 답글 작성자 목록 (중복 없음). */
+  participantIds: string[] | null;
 }
 
 export interface ChannelRow {

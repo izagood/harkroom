@@ -48,7 +48,26 @@ const ATTACHMENTS = `coalesce((
 
 const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
   author_id as "authorId", body, kind, meta, created_at as "createdAt",
-  edited_at as "editedAt", ${REACTIONS}, ${ATTACHMENTS}`;
+  edited_at as "editedAt", ${REACTIONS}, ${ATTACHMENTS},
+  null::int as "replyCount", null::text as "lastReplyAt", null::text[] as "participantIds"`;
+
+// 스레드 메타데이터: 루트 메시지에만 계산. LATERAL join으로 같은 쿼리에서 계산한다 (N+1 방지).
+// 진행 설명(kind='progress')도 답글 수에 포함한다. 사용자가 "답글 3개"를 보고 열었을 때
+// 진행 설명도 포함되어 있으면 그 수를 이해할 수 있다. 제외하면 개수가 안 맞는 것처럼 보여서 혼란스러운데.
+const THREAD_STATS = `LEFT JOIN LATERAL (
+  SELECT COUNT(*)::int as reply_count,
+    MAX(created_at)::text as last_reply_at,
+    COALESCE(ARRAY_AGG(DISTINCT author_id) FILTER (WHERE author_id IS NOT NULL), '{}'::uuid[]) as participant_ids
+  FROM message WHERE thread_root_id = m.id AND deleted_at IS NULL
+) thread_stats ON true`;
+
+// listMessages 에서 사용하는 컬럼: 루트면 메타데이터 있음, 답글이면 null.
+const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
+  m.author_id as "authorId", m.body, m.kind, m.meta, m.created_at as "createdAt",
+  m.edited_at as "editedAt", ${REACTIONS.replace(/message\./g, 'm.')}, ${ATTACHMENTS.replace(/message\./g, 'm.')},
+  case when m.thread_root_id is null then thread_stats.reply_count end as "replyCount",
+  case when m.thread_root_id is null then thread_stats.last_reply_at end as "lastReplyAt",
+  case when m.thread_root_id is null then thread_stats.participant_ids end as "participantIds"`;
 
 async function insertInbox(
   client: PoolClient, accountId: string, messageId: string, reason: InboxEntry['reason'], notified: Set<string>,
@@ -206,19 +225,23 @@ export async function listMessages(
 ): Promise<MessageRow[]> {
   const limit = Math.min(opts.limit ?? 200, 500);
   if (opts.threadRootId) {
+    // 스레드 조회에서는 루트를 항상 포함한다 — limit 와 관계없이.
     if (opts.since !== undefined && opts.since > 0) {
       const res = await pool.query(
-        `select ${COLS} from message
-         where channel_id = $1 and (id = $2 or thread_root_id = $2) and seq > $3 and deleted_at is null
-         order by seq limit $4`,
+        `select ${LIST_COLS} from message m ${THREAD_STATS}
+         where m.channel_id = $1 and (m.id = $2 or m.thread_root_id = $2) and m.seq > $3 and m.deleted_at is null
+         order by m.seq limit $4`,
         [channelId, opts.threadRootId, opts.since, limit],
       );
       return res.rows;
     }
     const res = await pool.query(
       `select * from (
-        select ${COLS} from message
-        where channel_id = $1 and (id = $2 or thread_root_id = $2) and deleted_at is null
+        select ${LIST_COLS} from message m ${THREAD_STATS}
+        where m.channel_id = $1 and m.id = $2 and m.deleted_at is null
+        union all
+        select ${LIST_COLS} from message m ${THREAD_STATS}
+        where m.channel_id = $1 and m.thread_root_id = $2 and m.deleted_at is null
         order by seq desc limit $3
       ) latest
       order by seq`,
@@ -231,9 +254,9 @@ export async function listMessages(
   if (opts.before !== undefined) {
     const res = await pool.query(
       `select * from (
-         select ${COLS} from message
-         where channel_id = $1 and seq < $2 and deleted_at is null
-         order by seq desc limit $3
+         select ${LIST_COLS} from message m ${THREAD_STATS}
+         where m.channel_id = $1 and m.seq < $2 and m.deleted_at is null
+         order by m.seq desc limit $3
        ) older
        order by seq`,
       [channelId, opts.before, limit],
@@ -243,9 +266,9 @@ export async function listMessages(
   const since = opts.since ?? 0;
   if (since > 0) {
     const res = await pool.query(
-      `select ${COLS} from message
-       where channel_id = $1 and seq > $2 and deleted_at is null
-       order by seq limit $3`,
+      `select ${LIST_COLS} from message m ${THREAD_STATS}
+       where m.channel_id = $1 and m.seq > $2 and m.deleted_at is null
+       order by m.seq limit $3`,
       [channelId, since, limit],
     );
     return res.rows;
@@ -253,9 +276,9 @@ export async function listMessages(
   // since 미지정(0): 오래된 200개가 아니라 최신 N개를 반환한다 (반환 순서는 seq 오름차순 유지)
   const res = await pool.query(
     `select * from (
-       select ${COLS} from message
-       where channel_id = $1 and deleted_at is null
-       order by seq desc limit $2
+       select ${LIST_COLS} from message m ${THREAD_STATS}
+       where m.channel_id = $1 and m.deleted_at is null
+       order by m.seq desc limit $2
      ) latest
      order by seq`,
     [channelId, limit],
@@ -291,7 +314,9 @@ export async function searchMessages(
 ): Promise<MessageRow[]> {
   const res = await pool.query(
     `select m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
-       m.author_id as "authorId", m.body, m.kind, m.meta, m.created_at as "createdAt"
+       m.author_id as "authorId", m.body, m.kind, m.meta, m.created_at as "createdAt",
+       m.edited_at as "editedAt", '[]'::json as reactions, '[]'::json as attachments,
+       null::int as "replyCount", null::text as "lastReplyAt", null::text[] as "participantIds"
      from message m
      join channel c on c.id = m.channel_id
      where m.search @@ websearch_to_tsquery('simple', $1) and m.deleted_at is null
