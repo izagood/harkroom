@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import type { AccountView } from '@murmur/shared';
 import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
 import { InviteSettings } from '../src/components/settings/InviteSettings';
+// 계정 fixture 는 공용 헬퍼를 쓴다 — 여기서 객체를 손으로 만들면 AccountView 에 필드가
+// 늘 때(실제로 `disabled` 가 늘었다) 이 파일만 조용히 낡는다.
+import { acc as baseAcc } from './helpers/fakeApi';
 
-const acc = (id: string, handle: string, isAdmin: boolean): AccountView =>
-  ({ id, handle, displayName: handle, kind: 'human', isAdmin });
+const acc = (id: string, handle: string, isAdmin: boolean) => ({ ...baseAcc(id, handle), isAdmin });
 
 const fakeController = (token = 'invite_token_abc') => {
   const c = {
@@ -50,5 +51,33 @@ describe('InviteSettings', () => {
 
     await waitFor(() => expect(c.createInvite).toHaveBeenCalled());
     expect(screen.getByText(/403 Forbidden/)).toBeTruthy();
+  });
+
+  // 초대는 여러 사람에게 하는 일이고, 토큰은 한 번 쓰면 소진된다 — 한 번 발급했다고
+  // 버튼을 잠그면 두 번째 사람을 부를 수 없다.
+  it('토큰을 발급한 뒤에도 새 토큰을 다시 발급할 수 있다', async () => {
+    let n = 0;
+    const c = { createInvite: vi.fn(async () => `muri_${++n}`) };
+    setController(c as unknown as Controller);
+
+    render(<InviteSettings />);
+    fireEvent.click(screen.getByRole('button', { name: /초대 토큰 발급/ }));
+    await waitFor(() => expect(screen.getByText('muri_1')).toBeTruthy());
+
+    const again = screen.getByRole('button', { name: /새 토큰 발급/ });
+    expect((again as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(again);
+
+    await waitFor(() => expect(screen.getByText('muri_2')).toBeTruthy());
+    expect(screen.queryByText('muri_1')).toBeNull();
+    expect(c.createInvite).toHaveBeenCalledTimes(2);
+  });
+
+  // 서버에는 POST /auth/register 가 있지만 이 앱에는 그 화면이 없다. 운영자가 토큰만
+  // 건네고 상대가 막히는 상황을 미리 알 수 있어야 한다(design.md §4).
+  it('가입 화면이 아직 없다는 사실을 화면에 알린다', () => {
+    setController({ createInvite: vi.fn() } as unknown as Controller);
+    render(<InviteSettings />);
+    expect(screen.getByText(/가입하는 화면이 없습니다/)).toBeTruthy();
   });
 });
