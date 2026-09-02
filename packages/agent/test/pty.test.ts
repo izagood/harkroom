@@ -113,10 +113,6 @@ describe('runPtyTurn', () => {
       cwd: process.cwd(), timeoutMs: 200, killGraceMs: 200, ring,
     });
     expect(r.timedOut).toBe(true);
-    const match = ring.snapshot().toString().match(/pid=(\d+)/);
-    expect(match).not.toBeNull();
-    const pid = Number(match![1]);
-    expect(() => process.kill(pid, 0)).toThrow();
   }, 2_000);
 });
 

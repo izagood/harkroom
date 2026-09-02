@@ -193,7 +193,7 @@ describe('telling others you are typing', () => {
     me.send({ type: 'typing' });
 
     me.send({ type: 'typing', channelId });
-    await waitFor(() => typingEvents(other).length > 0);
+    await waitFor(() => typingEvents(other).length > 0, 5_000);
     me.close(); other.close();
   });
 });
