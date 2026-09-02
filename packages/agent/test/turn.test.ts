@@ -1,8 +1,8 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { assertHarnessContract, buildTurnCommand, preassignsSessionId, writeMcpConfigOnce } from '../src/turn.js';
+import { assertHarnessContract, buildTurnCommand, preassignsSessionId, writeMcpConfigOnce, writeSystemPromptFile } from '../src/turn.js';
 
 // murmurUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
 // 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
@@ -13,6 +13,9 @@ const base = {
   systemPrompt: 'SYS', promptCtx: 'CTX', model: null, effort: null,
   mentionPermission: 'auto' as const, mcpConfigPath: '/mcp.json', pat: 'murp_x',
   murmurUrl: 'http://localhost:3401',
+  // 프로덕션(`mentionTurn.ts`)은 매 턴 `writeSystemPromptFile` 로 파일을 쓰고 그 경로를
+  // 반드시 넘긴다 — fixture 가 null 로 두면 프로덕션이 절대 타지 않는 경로를 검증하게 된다.
+  systemPromptFile: '/state/system-prompt.txt',
 };
 
 // 실물 검증에서 드러난 회귀 — pty.spawn 에 env 를 넘기면 node-pty 가 부모 env 와 **병합하지
@@ -32,13 +35,47 @@ describe('buildTurnCommand — env 는 부모를 물려받는다 (실물 검증�
 });
 
 describe('buildTurnCommand — claude', () => {
-  it('첫 멘션 턴: session-id 할당 + bypassPermissions + PAT 는 env 로만', () => {
-    const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true });
+  // 지시문이 argv 로 직접 전달되면 다른 로컬 사용자가 ps 로 볼 수 있다.
+  // --append-system-prompt-file 로 파일로 전달하고, 그 파일은 world-readable 이면 안 된다.
+  it('첫 멘션 턴: 지시문은 argv 에 직접 없고 파일로 전달된다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'sys-prompt-'));
+    const filePath = await writeSystemPromptFile(dir, 'SYS');
+    const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true, systemPromptFile: filePath });
     expect(p.command).toBe('claude');
-    expect(p.args).toEqual(expect.arrayContaining(['-p', '--session-id', 'uuid-1', '--permission-mode', 'bypassPermissions', '--mcp-config', '/mcp.json', '--append-system-prompt', 'SYS', 'CTX']));
+    expect(p.args).not.toContain('--append-system-prompt');
+    expect(p.args).not.toContain('SYS');
+    expect(p.args).toContain('--append-system-prompt-file');
+    expect(p.args).toContain(filePath);
     expect(p.args).not.toContain('-r');
     expect(p.env.MURMUR_PAT).toBe('murp_x');
-    expect(p.args.join(' ')).not.toContain('murp_x');   // argv 에 PAT 금지 (spec §7)
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('지시문 파일의 내용은 systemPrompt 와 같고 퍼미션은 0600 이다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'sys-prompt-'));
+    const filePath = await writeSystemPromptFile(dir, 'SYS');
+    const content = await readFile(filePath, 'utf8');
+    expect(content).toBe('SYS');
+    const stat = await import('node:fs/promises').then(m => m.stat(filePath));
+    expect(stat.mode & 0o777).toBe(0o600);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  // argv 폴백을 남기지 않는다 — `murmurUrl` 과 같은 처우다. 조용히 넘어가는 경로를 두면 그
+  // 경로가 결국 쓰이고, 여기서는 그게 곧 지시문이 `ps` 로 새는 것이다(#92).
+  it('지시문이 있는데 파일 경로가 없으면 조립 자체가 실패한다', () => {
+    expect(() => buildTurnCommand({
+      ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true,
+      systemPromptFile: null,
+    })).toThrow(/파일로만 받는다/);
+  });
+
+  // 지시문 본문이 argv 어디에도 없어야 한다 — 플래그만 확인하면 "파일도 넘기고 본문도
+  // 넘기는" 조합을 놓친다.
+  it('claude 멘션 argv 에 지시문 본문이 없다', () => {
+    const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true });
+    expect(p.args).not.toContain('SYS');
+    expect(p.args.join(' ')).not.toContain('SYS');
   });
 
   it('resume 멘션 턴: -r <id>, readonly 는 plan 모드', () => {
