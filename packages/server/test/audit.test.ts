@@ -144,6 +144,60 @@ describe('감사 추적 — 기록', () => {
     expect(dump).not.toContain(bot.pat);
     expect(dump).not.toContain('Bearer');
   });
+
+  // PATCH /accounts/agents/:id 에 감사 기록이 누락된 것이 이슈 #85 다.
+  // mentionPermission 변경은 에이전트의 파일 쓰기·명령 실행 권한을 바꾸는 중요한 작업이다.
+  it('records a mentionPermission change on agent', async () => {
+    const bot = await createAgent(app, adminToken, 'permbot');
+
+    const before = (await entries('agent.updated')).length;
+
+    await app.inject({
+      method: 'PATCH', url: `/accounts/agents/${bot.accountId}`,
+      headers: auth(adminToken),
+      payload: { mentionPermission: 'readonly' },
+    });
+
+    const rows = await entries('agent.updated');
+    expect(rows).toHaveLength(before + 1);
+    expect(rows[rows.length - 1]!.actorId).toBe(adminId);
+    expect(rows[rows.length - 1]!.target).toBe(bot.accountId);
+  });
+
+  // ownerAccountId 변경은 에이전트의 터미널 attach 권한을 바꾼다.
+  it('records an ownerAccountId change on agent', async () => {
+    const bot = await createAgent(app, adminToken, 'ownerbot');
+    const other = await createAgent(app, adminToken, 'otherbot');
+
+    const before = (await entries('agent.updated')).length;
+
+    await app.inject({
+      method: 'PATCH', url: `/accounts/agents/${bot.accountId}`,
+      headers: auth(adminToken),
+      payload: { ownerAccountId: other.accountId },
+    });
+
+    const rows = await entries('agent.updated');
+    expect(rows).toHaveLength(before + 1);
+    expect(rows[rows.length - 1]!.actorId).toBe(adminId);
+    expect(rows[rows.length - 1]!.target).toBe(bot.accountId);
+    expect(rows[rows.length - 1]!.detail).toHaveProperty('ownerAccountId');
+  });
+
+  // 존재하지 않는 에이전트에 대한 PATCH는 404를 반환하고 감사 기록은 남지 않는다.
+  it('does not record a 404 response', async () => {
+    const fakeId = '00000000-0000-0000-0000-000000000000';
+    const before = (await entries('agent.updated')).length;
+
+    const res = await app.inject({
+      method: 'PATCH', url: `/accounts/agents/${fakeId}`,
+      headers: auth(adminToken),
+      payload: { mentionPermission: 'readonly' },
+    });
+    expect(res.statusCode).toBe(404);
+
+    expect(await entries('agent.updated')).toHaveLength(before);
+  });
 });
 
 describe('감사 추적 — append-only', () => {
