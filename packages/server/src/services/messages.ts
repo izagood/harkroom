@@ -205,10 +205,22 @@ export async function listMessages(
 ): Promise<MessageRow[]> {
   const limit = Math.min(opts.limit ?? 200, 500);
   if (opts.threadRootId) {
+    if (opts.since !== undefined && opts.since > 0) {
+      const res = await pool.query(
+        `select ${COLS} from message
+         where channel_id = $1 and (id = $2 or thread_root_id = $2) and seq > $3 and deleted_at is null
+         order by seq limit $4`,
+        [channelId, opts.threadRootId, opts.since, limit],
+      );
+      return res.rows;
+    }
     const res = await pool.query(
-      `select ${COLS} from message
-       where channel_id = $1 and (id = $2 or thread_root_id = $2) and deleted_at is null
-       order by seq limit $3`,
+      `select * from (
+        select ${COLS} from message
+        where channel_id = $1 and (id = $2 or thread_root_id = $2) and deleted_at is null
+        order by seq desc limit $3
+      ) latest
+      order by seq`,
       [channelId, opts.threadRootId, limit],
     );
     return res.rows;

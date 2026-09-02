@@ -29,9 +29,9 @@ beforeAll(async () => {
 });
 afterAll(async () => { await app.close(); await stop(); });
 
-const post = (token: string, body: string, extra: object = {}, headers: object = {}) =>
+const post = (token: string, body: string, extra: object = {}, headers: object = {}, chId: string = channelId) =>
   app.inject({
-    method: 'POST', url: `/channels/${channelId}/messages`,
+    method: 'POST', url: `/channels/${chId}/messages`,
     headers: { authorization: `Bearer ${token}`, ...headers },
     payload: { body, ...extra },
   });
@@ -128,6 +128,42 @@ describe('messages', () => {
     const latest = await listMessages(pool, chId, { limit: 2 });
     expect(latest.map((m) => m.body)).toEqual(['m4', 'm5']);
     expect(latest[0]!.seq).toBeLessThan(latest[1]!.seq);
+  });
+
+  it('thread without since returns the latest N messages in ascending order', async () => {
+    const ch = await app.inject({
+      method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: 'thread-window' },
+    });
+    const chId = ch.json().id as string;
+    const root = await post(adminToken, 'root', {}, {}, chId);
+    const rootId = root.json().id as string;
+    for (let i = 1; i <= 10; i += 1) {
+      await post(adminToken, `reply${i}`, { threadRootId: rootId }, {}, chId);
+    }
+    const latest = await listMessages(pool, chId, { threadRootId: rootId, limit: 3 });
+    expect(latest.map((m) => m.body)).toEqual(['reply8', 'reply9', 'reply10']);
+    expect(latest[0]!.seq).toBeLessThan(latest[1]!.seq);
+    expect(latest[1]!.seq).toBeLessThan(latest[2]!.seq);
+  });
+
+  it('thread with since returns messages after the cursor', async () => {
+    const ch = await app.inject({
+      method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: 'thread-since' },
+    });
+    const chId = ch.json().id as string;
+    const root = await post(adminToken, 'root', {}, {}, chId);
+    const rootId = root.json().id as string;
+    for (let i = 1; i <= 10; i += 1) {
+      await post(adminToken, `reply${i}`, { threadRootId: rootId }, {}, chId);
+    }
+    const thread = await listMessages(pool, chId, { threadRootId: rootId });
+    const afterReply5 = thread.find((m) => m.body === 'reply5')!;
+    const since = afterReply5.seq;
+    const latest3 = await listMessages(pool, chId, { threadRootId: rootId, since, limit: 3 });
+    expect(latest3.map((m) => m.body)).toEqual(['reply6', 'reply7', 'reply8']);
+    expect(latest3[0]!.seq).toBeLessThan(latest3[1]!.seq);
   });
 
   it('inbox read marks entries', async () => {
