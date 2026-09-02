@@ -123,6 +123,7 @@ while (running) {
 
       const tried = (attempts.get(entry.id) ?? 0) + 1;
       attempts.set(entry.id, tried);
+      const anchor = mention.threadRootId ?? mention.id;
       try {
         const deps: MentionTurnDeps = {
           murmur, store, exec, runTurn: runPtyTurn, me, guide,
@@ -135,10 +136,11 @@ while (running) {
           murmurUrl: config.murmurUrl, pat: config.murmurPat,
           turnTimeoutMs: config.turnTimeoutMs,
         };
-        // 멘션이 있던 자리에 답한다 — 스레드 안이면 스레드에, 채널 최상위면 최상위에.
-        // main.ts 가 이미 아는 값을 그대로 넘긴다(prompt.ts 가 다시 계산하면 두 번째
-        // 진실 원천이 된다).
-        await runMentionTurn(deps, { channelId: mention.channelId, threadRootId: mention.threadRootId });
+        // #98: 채널 최상위-mention( threadRootId=null) 은 그-mention 메시지를 루트로 하는
+        // 스레드에 답한다 — 这样답이 채널 본문에 쌓이지 않고(가독성),-mention 마다别的
+        // session key 로 갈린다(세션 격리). 스레드 안의-mention 은 그대로 threadRootId 를
+        // 쓴다. prompt.ts 가 다시 계산하면 두 번째 진실 원천이 된다.
+        await runMentionTurn(deps, { channelId: mention.channelId, threadRootId: anchor });
         done.push(entry.id);
         attempts.delete(entry.id);
       } catch (err) {
@@ -162,9 +164,11 @@ while (running) {
         if (exhausted(tried)) {
           console.error(`  ${entry.messageId} 포기하고 읽음 처리한다`);
           // #82: MAX_ATTEMPTS 소진 시 채널에 통지한다. 통지 실패해도 읽음 처리는 계속한다
-          // (통지 실패로 러너가 멈추면 안 된다). 원래 멘션이 있던 자리(스레드면 그 스레드)에 쓴다.
+          // (통지 실패로 러너가 멈추면 안 된다). #98: 채널 최상위-mention 도 같은 앵커에
+          // 쓴다 — 안 그러면 답은 스레드로 가는데 실패 통지만 채널 최상위에 남아 부른 사람이
+          // 스레드를 보고 있는 동안 실패를 놓친다.
           try {
-            await murmur.post(mention.channelId, FAILURE_NOTICE, mention.threadRootId);
+            await murmur.post(mention.channelId, FAILURE_NOTICE, anchor);
           } catch (notifyErr) {
             console.error(`  ${entry.messageId} 실패 통지 발화 실패(읽음 처리 계속):`,
               notifyErr instanceof Error ? notifyErr.message : notifyErr);

@@ -73,6 +73,11 @@ export class SessionStore {
     this.filePath = filePath;
   }
 
+  /**
+   * 세션 키를 만든다. #98 이후로 threadRootId 가 null 인 경우는 main.ts 에서
+   * 이미 messageId 로 변환되므로 이 함수는 항상 non-null 값을 받는다 — _root 는
+   * 호환성을 위해 남겨두지만 실제로는 쓰이지 않는다.
+   */
   static threadKey(channelId: string, threadRootId: string | null): string {
     return `${channelId}/${threadRootId ?? '_root'}`;
   }
