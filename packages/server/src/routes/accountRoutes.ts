@@ -175,6 +175,14 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     return self;
   });
 
+  /**
+   * 그 계정의 PAT 라벨 목록. **토큰도 토큰 해시도 절대 주지 않는다** — 해시만 저장하므로
+   * 잃어버린 토큰은 설계상 복구 불가능하고, 그 사실이 이 화면의 존재 이유다(#93).
+   *
+   * 폐기된 것도 함께 준다: 운영자가 "이 라벨이 살아 있나"를 봐야 재발급을 판단할 수 있고,
+   * 폐기 시각 자체가 감사에 쓸모 있는 사실이다. 라벨은 살아 있는 토큰 안에서 유일하다
+   * (마이그레이션 010) — `DELETE .../pats/:label` 이 라벨로 폐기하기 때문이다.
+   */
   app.get('/accounts/:id/pats', { preHandler: app.requireAdmin }, async (req) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const res = await pool.query(
@@ -193,6 +201,17 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
   app.post('/accounts/:id/pats', { preHandler: app.requireAdmin }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({ label: z.string().min(1).max(64) }).parse(req.body);
+    // 라벨은 살아 있는 토큰 안에서 유일하다(마이그레이션 010) — 같은 라벨이 둘이면
+    // 라벨로 폐기하는 DELETE 가 둘 다 지워 UI 가 약속하는 것과 달라진다.
+    const live = await pool.query(
+      `select 1 from pat where account_id = $1 and label = $2 and revoked_at is null`,
+      [id, body.label],
+    );
+    if (live.rowCount) {
+      return reply.code(409).send({
+        error: { code: 'label_in_use', message: 'a live token already uses this label — revoke it first or pick another' },
+      });
+    }
     const { token, hash } = newToken('murp');
     await pool.query(`insert into pat (token_hash, account_id, label) values ($1, $2, $3)`, [hash, id, body.label]);
     // pat 행은 토큰을 받은 에이전트만 가리킨다 — 누가 그 권한을 줬는지는 어디에도 없었다.
