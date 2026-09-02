@@ -98,9 +98,47 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const patch = z.object({
       displayName: z.string().min(1).max(64).optional(),
+      disabled: z.boolean().optional(),
       ...configFields,
     }).parse(req.body);
     const before = await getAgent(pool, id);
+
+    // disabled 필드가 있으면 처리한다.
+    if (patch.disabled !== undefined) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        if (patch.disabled) {
+          // 비활성화: disabled_at 설정하고 모든 PAT 폐기
+          await client.query(`update account set disabled_at = now() where id = $1`, [id]);
+          const patRes = await client.query(
+            `update pat set revoked_at = now() where account_id = $1 and revoked_at is null returning label`,
+            [id],
+          );
+          const revokedLabels = patRes.rows.map((r) => r.label);
+          await client.query('commit');
+          await recordAudit(pool, {
+            action: 'agent.disabled', actorId: req.account!.id, actorHandle: req.account!.handle,
+            target: id, detail: { revokedPats: revokedLabels },
+          }, req);
+        } else {
+          // 활성화: disabled_at 만 되돌린다. PAT 는 해시만 저장해서 복구할 수 없다 —
+          // 운영자가 새로 발급해야 한다. 이 비대칭은 의도적이다.
+          await client.query(`update account set disabled_at = null where id = $1`, [id]);
+          await client.query('commit');
+          await recordAudit(pool, {
+            action: 'agent.enabled', actorId: req.account!.id, actorHandle: req.account!.handle,
+            target: id,
+          }, req);
+        }
+      } catch (err) {
+        await client.query('rollback');
+        throw err;
+      } finally {
+        client.release();
+      }
+    }
+
     const updated = await updateAgent(pool, id, patch);
     if (!updated) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });

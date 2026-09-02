@@ -47,6 +47,8 @@ export interface AgentConfig {
 export interface AgentView extends AccountView, AgentConfig {
   /** 러너 소유자. null 이면 attach 표면이 아무에게도 안 뜬다. */
   ownerAccountId: string | null;
+  /** 비활성화된 에이전트만 true. 재활성화하면 false 가 된다. */
+  disabled: boolean;
 }
 
 /**

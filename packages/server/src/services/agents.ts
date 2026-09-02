@@ -6,7 +6,8 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   coalesce(c.harness, 'claude-code') as harness,
   c.model, c.effort, c.working_dir as "workingDir",
   coalesce(c.mention_permission, 'auto') as "mentionPermission",
-  c.owner_account_id as "ownerAccountId"`;
+  c.owner_account_id as "ownerAccountId",
+  a.disabled_at is not null as disabled`;
 
 const FROM = `from account a left join agent_config c on c.account_id = a.id`;
 
