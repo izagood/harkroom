@@ -130,7 +130,20 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   };
 
   const recompute = (text: string, caret: number | null) => {
-    setQuery(caret === null ? null : mentionQueryAt(text, caret));
+    const nextQuery = caret === null ? null : mentionQueryAt(text, caret);
+    if (query === null && nextQuery !== null) {
+      // 자동완성이 열리는 순간에만 당겨온다 — 여는 동안 글자마다 부르지 않는다. 폭주 방지는
+      // 컨트롤러의 최소 간격 가드가 책임진다(controller.ts::refreshAccounts).
+      //
+      // `.catch` 가 반드시 필요하다: refreshAccounts 는 실패를 스스로 삼키지 않고 거부된
+      // 프로미스를 그대로 돌려준다(컨트롤러 내부 호출부가 전부 `swallow()` 로 감싸는 이유).
+      // try/catch 는 동기 예외(컨트롤러 미초기화)만 잡지 비동기 거부는 못 잡는다 — 그것만
+      // 두면 디렉터리 조회가 실패할 때마다 unhandled rejection 이 난다.
+      try {
+        void getController().refreshAccounts().catch(() => {});
+      } catch { /* 목록을 못 갱신해도 캐시된 후보로 자동완성은 계속 동작해야 한다 */ }
+    }
+    setQuery(nextQuery);
     // 글을 쓰기 시작하면 @ 버튼으로 연 목록은 자리를 비켜야 한다.
     setPicking(false);
     setActive(0);

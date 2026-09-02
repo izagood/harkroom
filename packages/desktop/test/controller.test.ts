@@ -328,4 +328,35 @@ describe('Controller', () => {
 
     expect(api.logout).not.toHaveBeenCalled();
   });
+
+  // 자동완성을 짧은 간격으로 여러 번 열어도 디렉터리 요청이 한 번만 나가게 한다.
+  // 최소 간격 가드는 5초다.
+  it('refreshAccounts throttles rapid calls within 5 seconds', async () => {
+    const accountsCalls = vi.fn(async () => [acc('u1', 'admin')]);
+    const api = fakeApi({ accounts: accountsCalls });
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    accountsCalls.mockClear();
+
+    await c.refreshAccounts();
+    await c.refreshAccounts();
+    await c.refreshAccounts();
+
+    expect(accountsCalls).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshAccounts with force: true bypasses throttle', async () => {
+    const accountsCalls = vi.fn(async () => [acc('u1', 'admin')]);
+    const api = fakeApi({ accounts: accountsCalls });
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    accountsCalls.mockClear();
+
+    await c.refreshAccounts();
+    await c.refreshAccounts({ force: true });
+
+    expect(accountsCalls).toHaveBeenCalledTimes(2);
+  });
 });
