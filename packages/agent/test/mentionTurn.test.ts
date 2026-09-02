@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentView, MessageRow } from '@murmur/shared';
-import { runMentionTurn, type MentionTurnDeps, type MentionTurnMurmur, type RunTurn } from '../src/mentionTurn.js';
+import { mentionAnchor, runMentionTurn, type MentionTurnDeps, type MentionTurnMurmur, type RunTurn } from '../src/mentionTurn.js';
 import { NO_REPLY_NOTICE } from '../src/prompt.js';
 import { SessionStore } from '../src/sessions.js';
 import type { Exec } from '../src/workspace.js';
@@ -783,5 +783,128 @@ describe('runMentionTurn', () => {
       expect(secondCall.since).toBeDefined();
       expect(secondCall.since).toBeGreaterThan(0);
     });
+  });
+
+  // #98 테스트: 채널 최상위 멘션의 앵커 변경
+  describe('채널 최상위 멘션 앵커 (#98 수정)', () => {
+    // 시나리오 1: 채널 최상위 멘션 두 건이 서로 다른 세션 키를 갖는다
+    // 수정 전: 같은 `_root` 로 뭉쳐 실패
+    // 수정 후: 각 멘션의 messageId 로 다른 키를 갖는다
+    it('채널 최상위 멘션 두 건이 서로 다른 세션 키를 갖는다', async () => {
+      const fake = new FakeMurmur(defOf());
+      const m1 = fake.seedFrom('human-1', '@forge 첫 번째 질문');
+      const m2 = fake.seedFrom('human-2', '@forge 두 번째 질문');
+      const { deps, runTurn } = await makeDeps(fake);
+      runTurn.script = async () => {
+        await fake.post(CHANNEL, '답변', m1.id);
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+
+      // 첫 번째 멘션: messageId 를 threadRootId 로 넘긴다 (main.ts 의 계산 결과)
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: m1.id });
+
+      // 두 번째 멘션: 다른 messageId 를 threadRootId 로 넘긴다
+      runTurn.script = async () => {
+        await fake.post(CHANNEL, '답변2', m2.id);
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: m2.id });
+
+      // 두-mention 이 다른 키를 가져서 세션이 나뉜다
+      const key1 = SessionStore.threadKey(CHANNEL, m1.id);
+      const key2 = SessionStore.threadKey(CHANNEL, m2.id);
+      expect(key1).not.toBe(key2);
+
+      const rec1 = deps.store.get(key1);
+      const rec2 = deps.store.get(key2);
+      expect(rec1).toBeDefined();
+      expect(rec2).toBeDefined();
+      expect(rec1!.sessionId).not.toBe(rec2!.sessionId);
+    });
+
+    // 시나리오 2: 채널 최상위 멘션의 답이 그 멘션을 루트로 하는 스레드
+    it('채널 최상위 멘션의 답이 멘션 messageId 를 루트로 하는 스레드로 간다', async () => {
+      const fake = new FakeMurmur(defOf());
+      const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
+      mentionMsg.threadRootId = mentionMsg.id;
+      const { deps, runTurn } = await makeDeps(fake);
+      runTurn.script = async () => {
+        await fake.post(CHANNEL, '안녕하세요!', mentionMsg.id);
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: mentionMsg.id });
+
+      // post 가 그 멘션 메시지 id 를 threadRootId 로 받아 스레드가 만들어진다
+      expect(fake.posts).toHaveLength(1);
+      expect(fake.posts[0]!.threadRootId).toBe(mentionMsg.id);
+    });
+
+    // 시나리오 3: 스레드 안의 멘션은 기존 대 로 그 스레드에 답한다 (회귀)
+    it('스레드 안의 멘션은 기존대로 그 스레드의 루트를 쓴다 (회귀)', async () => {
+      const fake = new FakeMurmur(defOf());
+      const rootMsg = fake.seedFrom('human-1', '첫 메시지');
+      rootMsg.threadRootId = rootMsg.id;
+      fake.seedFrom('human-1', '@forge 스레드 안 질문', rootMsg.id);
+      const { deps, runTurn } = await makeDeps(fake);
+      runTurn.script = async () => {
+        await fake.post(CHANNEL, '스레드 답변', rootMsg.id);
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: rootMsg.id });
+
+      // threadRootId 가 그대로 유지된다
+      const key = SessionStore.threadKey(CHANNEL, rootMsg.id);
+      expect(deps.store.get(key)).toBeDefined();
+      expect(fake.posts[0]!.threadRootId).toBe(rootMsg.id);
+    });
+
+    // 시나리오 4: 같은 스레드의 두 번째 멘션이 첫 턴의 세션을 이어받는다 (회귀)
+    it('같은 스레드의 두 번째 멘션이 첫 턴의 세션을 이어받는다 (회귀)', async () => {
+      const fake = new FakeMurmur(defOf());
+      const rootMsg = fake.seedFrom('human-1', '첫 질문');
+      rootMsg.threadRootId = rootMsg.id;
+      const { deps, runTurn } = await makeDeps(fake);
+      runTurn.script = async () => {
+        await fake.post(CHANNEL, '첫 답', rootMsg.id);
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: rootMsg.id });
+      const firstSessionId = deps.store.get(SessionStore.threadKey(CHANNEL, rootMsg.id))!.sessionId;
+
+      // 두 번째 턴
+      fake.seedFrom('human-1', '두 번째 질문', rootMsg.id);
+      runTurn.script = async () => {
+        await fake.post(CHANNEL, '두 번째 답', rootMsg.id);
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: rootMsg.id });
+
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, rootMsg.id));
+      expect(rec!.sessionId).toBe(firstSessionId);
+      expect(rec!.turnsRun).toBe(2);
+    });
+  });
+});
+
+// #98 의 본론은 "채널 최상위 멘션의 앵커를 무엇으로 삼는가"이고, 그 규칙은 순수 함수 하나가
+// 갖는다. 초판은 이 계산을 main.ts 에 인라인으로 뒀는데 main.ts 는 top-level 스크립트라
+// 테스트가 겨눌 수 없어서, 규칙을 되돌려도 이 파일의 테스트가 전부 초록이었다(확인했다).
+describe('mentionAnchor', () => {
+  it('스레드 안의 멘션은 그 스레드의 루트를 쓴다', () => {
+    expect(mentionAnchor({ id: 'msg-2', threadRootId: 'root-1' })).toBe('root-1');
+  });
+
+  it('채널 최상위 멘션은 그 멘션 메시지 자신을 쓴다 — _root 로 뭉치지 않는다', () => {
+    expect(mentionAnchor({ id: 'msg-9', threadRootId: null })).toBe('msg-9');
+  });
+
+  it('서로 다른 최상위 멘션은 서로 다른 앵커를 갖는다 (세션 격리의 근거)', () => {
+    const a = mentionAnchor({ id: 'msg-a', threadRootId: null });
+    const b = mentionAnchor({ id: 'msg-b', threadRootId: null });
+    expect(a).not.toBe(b);
+    expect(SessionStore.threadKey(CHANNEL, a)).not.toBe(SessionStore.threadKey(CHANNEL, b));
   });
 });

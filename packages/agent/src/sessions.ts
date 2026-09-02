@@ -73,6 +73,15 @@ export class SessionStore {
     this.filePath = filePath;
   }
 
+  /**
+   * 세션 키. #98 이후 채널 최상위 멘션은 `main.ts` 가 앵커를 그 멘션 메시지 id 로
+   * 바꿔 넘기므로, 프로덕션 경로에서 `threadRootId` 가 null 로 오는 일은 없다.
+   *
+   * `_root` 폴백을 남겨 두는 이유는 두 가지다: 이 함수가 순수하게 유지되고(호출자가
+   * null 을 주면 던지는 대신 결정적인 키를 준다), **이미 디스크에 있는 `_root` 레코드가
+   * 그 키로 남아 있다.** 그 레코드들은 이제 아무도 찾지 않는다 — 세션은 재생성 가능한
+   * 상태라 마이그레이션하지 않고 그대로 둔다(다음 멘션이 새 키로 새 세션을 만든다).
+   */
   static threadKey(channelId: string, threadRootId: string | null): string {
     return `${channelId}/${threadRootId ?? '_root'}`;
   }
