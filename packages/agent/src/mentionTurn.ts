@@ -12,7 +12,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
-import { buildSystemPrompt, buildTurnPrompt, countOwnPostsSince, hasOwnPostSince, NO_REPLY_NOTICE } from './prompt.js';
+import { buildSystemPrompt, buildTurnPrompt, countOwnPostsSince, hasOwnPostSince, ACK_NOTICE, NO_REPLY_NOTICE } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writeSystemPromptFile, type TurnPlan } from './turn.js';
 import type { TurnResult } from './pty.js';
@@ -24,7 +24,8 @@ import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
 export interface MentionTurnMurmur {
   definition(): Promise<AgentView>;
   readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
-  post(channelId: string, body: string, threadRootId: string | null): Promise<void>;
+  /** 발화 후 메시지의 seq 를 반환한다. */
+  post(channelId: string, body: string, threadRootId: string | null): Promise<number>;
 }
 
 /** 한 턴을 실제로 돌리는 함수. 프로덕션은 pty.ts::runPtyTurn 을 그대로 넘기고, 테스트는
@@ -57,6 +58,8 @@ export interface MentionTurnDeps {
   murmurUrl: string;
   pat: string;
   turnTimeoutMs: number;
+  /** 이 시간을 넘기면 아직 돌고 있는 턴에_ack_를 보낸다(#123). 기본값 10초. */
+  ackThresholdMs?: number;
   /** 테스트가 sinceMs 캡처 시점을 결정론적으로 만들기 위한 시계 주입. 생략하면 Date.now. */
   now?: () => number;
 }
@@ -246,11 +249,48 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     murmurUrl: deps.murmurUrl,
   });
 
+  // #126: 턴 시작 로그 (어느 채널·스레드·하네스·워크스페이스에서 PTY 를 띄우는가)
+  const turnStartMs = (deps.now ?? Date.now)();
+  console.log(
+    `[mentionTurn] ${key}: 턴 시작 (채널=${channelId}, 앵커=${anchor ?? 'null'}, 하네스=${def.harness}, 워크스페이스=${rec.workspaceDir})`,
+  );
+
+  // #123: 지연 ack — 턴이 일정 시간 안에 끝나면 아무것도 올리지 않고, 그 시간을 넘기면 ack 를 올린다.
+  // 짧은 턴에 매번 메시지를 더하면 소음이 된다 — 사용자가 불편해한 것은 긴 작업이다.
+  const ackThresholdMs = deps.ackThresholdMs ?? 10_000;
+  let ackSeq: number | undefined;
+  let ackTimer: NodeJS.Timeout | undefined;
+
+  const postAck = async (): Promise<void> => {
+    try {
+      ackSeq = await deps.murmur.post(channelId, ACK_NOTICE, anchor);
+    } catch (err) {
+      console.error(
+        `[mentionTurn] ${key}: ack 발화 실패(계속 진행) — ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
+
+  // ack 타이머를 설정하고 턴을 실행한다. 타이머가 먼저触发하면 ack 를 올린다.
+  // ack 발화는 best-effort — 실패해도 턴은 계속 진행된다(#123).
+  ackTimer = setTimeout(postAck, ackThresholdMs);
+
+  let result: TurnResult;
+  try {
+    result = await deps.runTurn(plan, { cwd: rec.workspaceDir, timeoutMs: deps.turnTimeoutMs });
+  } finally {
+    if (ackTimer) clearTimeout(ackTimer);
+  }
+
+  // #126: 턴 종료 로그 (경과 시간, exitCode, 발화 여부)
+  const elapsedMs = (deps.now ?? Date.now)() - turnStartMs;
+  const exitInfo = result.timedOut ? `timeout (${result.exitCode})` : String(result.exitCode);
+  console.log(`[mentionTurn] ${key}: 턴 종료 (경과=${elapsedMs}ms, exitCode=${exitInfo})`);
+
   // codex 세션 발견(findCodexSessionId)의 sinceMs 는 PTY 를 띄우기 **직전** 시각이어야 한다.
   // 턴이 끝난 뒤에 재면 방금 만들어진 rollout 파일이 그보다 오래돼 보여 발견이 조용히
   // 실패하고, codex 스레드가 매 턴 새 세션으로 시작한다(에러 없이) — 브리프가 짚은 함정.
-  const sinceMs = (deps.now ?? Date.now)();
-  const result = await deps.runTurn(plan, { cwd: rec.workspaceDir, timeoutMs: deps.turnTimeoutMs });
+  const sinceMs = turnStartMs;
 
   if (def.harness === 'codex' && rec.sessionId === null) {
     // codex 는 세션 id 를 사전 할당할 수 없다 — 방금 끝난 턴이 만든 rollout 파일에서
@@ -286,7 +326,8 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     try {
       // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
       const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
-      const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
+      // #123: ack 메시지는 세는에서 제외한다 — ack 만 있고 본답이 없으면 NO_REPLY_NOTICE 가 나가야 한다.
+      const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq, ackSeq !== undefined ? [ackSeq] : undefined);
       // 실패한 턴에서도 중복 발화는 일어난다(답을 두 번 올리고 나서 죽는다) — 성공 경로와
       // 같은 관측을 여기서도 한다. 안 하면 "실패했으니 안 보였다"가 되어 #90 의 관측이
       // 반쪽이 된다.
@@ -312,18 +353,19 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
   // 다시 먹인다(리뷰 지적).
   await deps.store.put(key, { ...rec, lastFedSeq: fedSeq, turnsRun: rec.turnsRun + 1 });
 
-  // 관측·통보는 best-effort 다 — 방금 저장한 상태를 좌우하지 않으므로 여기서 던진 예외로
+// 관측·통보는 best-effort 다 — 방금 저장한 상태를 좌우하지 않으므로 여기서 던진 예외로
   // 턴 전체를 실패(재시도 대상)로 만들 이유가 없다. 조용히 삼키면 "왜 NO_REPLY_NOTICE 가
   // 안 남았지"의 원인이 사라지므로 러너 로그에는 남긴다.
   try {
     // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
     const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
-    const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
+    // #123: ack 메시지는 세는에서 제외한다 — ack 만 있고 본답이 없으면 NO_REPLY_NOTICE 가 나가야 한다.
+    const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq, ackSeq !== undefined ? [ackSeq] : undefined);
     warnOnDuplicatePosts(key, postCount);
     if (postCount === 0) {
       // 여기는 정상 종료 경로뿐이다(실패는 위에서 던졌다). 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다
       // (쓸 말이 없었거나, 안전 거부(exit 0)이거나). 옛 reply.ts::extractReply 가 안전
-      // 거부를 사실로 남기던 자리를 이 경로가 대신한다: 침묵을 침묵으로 남기지 않는다.
+      // 거부를 사실으로 남기던 자리를 이 경로가 대신한다: 침묵을 침묵으로 남기지 않는다.
       await deps.murmur.post(channelId, NO_REPLY_NOTICE, anchor);
     }
   } catch (err) {

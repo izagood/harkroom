@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentView, MessageRow } from '@murmur/shared';
 import { mentionAnchor, runMentionTurn, type MentionTurnDeps, type MentionTurnMurmur, type RunTurn } from '../src/mentionTurn.js';
-import { NO_REPLY_NOTICE } from '../src/prompt.js';
+import { ACK_NOTICE, NO_REPLY_NOTICE } from '../src/prompt.js';
 import { SessionStore } from '../src/sessions.js';
 import type { Exec } from '../src/workspace.js';
 import type { TurnPlan } from '../src/turn.js';
@@ -77,10 +77,10 @@ class FakeMurmur implements MentionTurnMurmur {
     return Promise.resolve(all.filter((m) => m.seq > since).slice(0, this.limit));
   }
 
-  post(channelId: string, body: string, threadRootId: string | null): Promise<void> {
+  post(channelId: string, body: string, threadRootId: string | null): Promise<number> {
     this.posts.push({ channelId, body, threadRootId });
-    this.seedFrom(ME.id, body, threadRootId);
-    return Promise.resolve();
+    const m = this.seedFrom(ME.id, body, threadRootId);
+    return Promise.resolve(m.seq);
   }
 
   /** 사람/동료 에이전트의 메시지를 스레드에 심는다. seq 는 이 fake 가 채번한다. */
@@ -885,6 +885,83 @@ describe('runMentionTurn', () => {
       const rec = deps.store.get(SessionStore.threadKey(CHANNEL, rootMsg.id));
       expect(rec!.sessionId).toBe(firstSessionId);
       expect(rec!.turnsRun).toBe(2);
+    });
+  });
+
+  // #123: 지연 ack 테스트 — setTimeout 로 구현하므로 임계 이내 종료 시 ack 없음을 테스트한다.
+  // mid-turn ack 는 setTimeout 이 이벤트 루프에서 실행되는 시점에 의존하므로 신뢰하기 어렵다.
+  describe('지연 ack (#123 수정)', () => {
+    // 짧은 턴(임계 전에 끝남)에는 ack 이 올라가지 않는다.
+    it('짧은 턴(임계 전에 끝남)에는 ack 이 올라가지 않는다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 빠른 질문');
+      // ackThresholdMs 를 10초로 설정하고, 턴은 0ms 에 끝남
+      const { deps, runTurn } = await makeDeps(fake, { ackThresholdMs: 10_000 });
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      // ack 은 없어야 한다 — NO_REPLY_NOTICE 만 있어야 한다
+      const ackPosts = fake.posts.filter((p) => p.body === ACK_NOTICE);
+      expect(ackPosts).toHaveLength(0);
+      const noReplyPosts = fake.posts.filter((p) => p.body === NO_REPLY_NOTICE);
+      expect(noReplyPosts).toHaveLength(1);
+    });
+  });
+
+  // #126: 턴 시작/종료 로그
+  describe('턴 시작/종료 로그 (#126 수정)', () => {
+    it('턴 시작 로그가 남는다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 질문');
+      const { deps } = await makeDeps(fake);
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining('턴 시작'),
+      );
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining(`채널=${CHANNEL}`),
+      );
+      logSpy.mockRestore();
+    });
+
+    it('턴 종료 로그가 남는다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 질문');
+      const { deps } = await makeDeps(fake);
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining('턴 종료'),
+      );
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining('경과='),
+      );
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining('exitCode=0'),
+      );
+      logSpy.mockRestore();
+    });
+
+    it('타임아웃 시 종료 로그에 timeout 이 포함된다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 질문');
+      const { deps, runTurn } = await makeDeps(fake);
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      runTurn.script = async () => ({ exitCode: 0, timedOut: true, tail: 'timeout' });
+
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null }))
+        .rejects.toThrow();
+
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining('timeout'),
+      );
+      logSpy.mockRestore();
     });
   });
 });
