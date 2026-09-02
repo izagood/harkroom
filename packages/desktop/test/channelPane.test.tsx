@@ -87,8 +87,13 @@ describe('ChannelPane', () => {
       },
     });
     render(<ChannelPane />);
-    expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(1);
-    expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(1);
+    // #121: Edit·Delete 는 메시지 호버 툴바의 ⋯ 오버플로 메뉴 안으로 옮겨졌다. 트리거가
+    // 하나만 있어야 한다 — 남의 메시지에는 항목이 없어 트리거도 없다.
+    const triggers = screen.getAllByRole('button', { name: 'More actions' });
+    expect(triggers).toHaveLength(1);
+    fireEvent.click(triggers[0]!);
+    expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeTruthy();
   });
 
   it('sends the rewritten body when an edit is confirmed', () => {
@@ -96,7 +101,8 @@ describe('ChannelPane', () => {
     useAppStore.getState().set({ messages: { c1: [msg('m1', 'c1', 1, '고치기 전', 'u1')] } });
     render(<ChannelPane />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }));
     fireEvent.change(screen.getByDisplayValue('고치기 전'), { target: { value: '고친 뒤' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -108,7 +114,8 @@ describe('ChannelPane', () => {
     useAppStore.getState().set({ messages: { c1: [msg('m1', 'c1', 1, '그대로', 'u1')] } });
     render(<ChannelPane />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }));
     fireEvent.change(screen.getByDisplayValue('그대로'), { target: { value: '버릴 수정' } });
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
@@ -121,7 +128,9 @@ describe('ChannelPane', () => {
     useAppStore.getState().set({ messages: { c1: [msg('m1', 'c1', 1, '지울 문장', 'u1')] } });
     render(<ChannelPane />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    // 확인은 메뉴 밖에 남는다 — 메뉴 안에 두면 항목을 누르는 순간 닫히면서 확인이 사라진다.
     fireEvent.click(screen.getByRole('button', { name: 'Really delete' }));
 
     expect(c.deleteMessage).toHaveBeenCalledWith('m1');

@@ -9,8 +9,14 @@ import { getController } from '../state/controller';
  */
 const QUICK = ['👀', '💬', '👍', '🎉', '✅', '🔥', '🤔', '😄'];
 
-export function Reactions({ message }: { message: MessageRow }) {
-  const accounts = useAppStore((s) => s.accounts);
+/**
+ * 리액션을 **추가하는** 표면. `MessageItem` 의 호버 툴바가 이것을 쓴다(#121).
+ *
+ * 칩(`Reactions`)과 나눠 둔 이유: 추가 버튼이 툴바로 올라가면서 두 곳에 같은 것이 생기면
+ * 접근성 이름(`Add reaction`)이 중복돼 스크린리더와 테스트가 어느 것인지 가리지 못한다
+ * (초판이 그렇게 복사돼 리액션 테스트 4개가 깨졌다). QUICK 목록과 토글 규칙은 여기 하나다.
+ */
+export function ReactionPicker({ message }: { message: MessageRow }) {
   const myId = useAppStore((s) => s.me?.id ?? null);
   const [picking, setPicking] = useState(false);
 
@@ -20,7 +26,53 @@ export function Reactions({ message }: { message: MessageRow }) {
     void getController().toggleReaction(message.channelId, message.id, emoji, on).catch(() => {});
   };
 
+  if (picking) {
+    return (
+      <div className="flex items-center gap-0.5 rounded-full border border-zinc-300 bg-white px-1 shadow-sm">
+        {QUICK.map((e) => (
+          <button
+            key={e}
+            aria-label={e}
+            className="rounded px-1 hover:bg-zinc-100"
+            onClick={() => toggle(e, !message.reactions.find((r) => r.emoji === e)?.accountIds.includes(myId ?? ''))}
+          >
+            {e}
+          </button>
+        ))}
+        <button
+          aria-label="Close reaction picker"
+          className="rounded px-1 text-[11px] text-zinc-400 hover:bg-zinc-100"
+          onClick={() => setPicking(false)}
+        >
+          ×
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      aria-label="Add reaction"
+      className="rounded-full border border-zinc-200 px-1.5 text-[11px] text-zinc-500 hover:bg-zinc-100"
+      onClick={() => setPicking(true)}
+    >
+      ＋
+    </button>
+  );
+}
+
+/** 달린 리액션 칩. 추가는 `ReactionPicker`(툴바)가 맡는다 — 같은 것을 두 곳에 두지 않는다. */
+export function Reactions({ message }: { message: MessageRow }) {
+  const accounts = useAppStore((s) => s.accounts);
+  const myId = useAppStore((s) => s.me?.id ?? null);
+
+  const toggle = (emoji: string, on: boolean) => {
+    void getController().toggleReaction(message.channelId, message.id, emoji, on).catch(() => {});
+  };
+
   const nameOf = (id: string) => accounts[id]?.handle ?? '…';
+
+  if (!message.reactions.length) return null;
 
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1" data-testid="reactions">
@@ -42,40 +94,6 @@ export function Reactions({ message }: { message: MessageRow }) {
           </button>
         );
       })}
-
-      {picking ? (
-        <div className="flex items-center gap-0.5 rounded-full border border-zinc-300 bg-white px-1 shadow-sm">
-          {QUICK.map((e) => (
-            <button
-              key={e}
-              aria-label={e}
-              className="rounded px-1 hover:bg-zinc-100"
-              onClick={() => toggle(e, !message.reactions.find((r) => r.emoji === e)?.accountIds.includes(myId ?? ''))}
-            >
-              {e}
-            </button>
-          ))}
-          <button
-            aria-label="Close reaction picker"
-            className="rounded px-1 text-[11px] text-zinc-400 hover:bg-zinc-100"
-            onClick={() => setPicking(false)}
-          >
-            ×
-          </button>
-        </div>
-      ) : (
-        <button
-          aria-label="Add reaction"
-          // 리액션이 하나도 없을 때는 호버로만 드러낸다. opacity 로 숨기는 이유는
-          // visibility:hidden 이 접근성 트리에서 요소를 지워 키보드 경로를 없애기 때문이다.
-          className={`rounded-full border border-zinc-200 px-1.5 text-[11px] text-zinc-500 hover:bg-zinc-100 ${
-            message.reactions.length ? '' : 'opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100'
-          }`}
-          onClick={() => setPicking(true)}
-        >
-          ＋
-        </button>
-      )}
     </div>
   );
 }
