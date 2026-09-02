@@ -172,6 +172,23 @@ A 를 고른 실제 이유는 지연이 아니라 **경계**다. 서버는 관�
 **MCP 설정은 `--strict-mcp-config` 와 함께 간다** (§7). 러너가 생성하는 설정에는
 murmur(http, `${MURMUR_PAT}`)와 avcs(stdio, `avcs mcp`) 둘만 들어간다.
 
+#### 알려진 한계: argv 에 노출되는 정보
+
+에이전트 지시문과 스레드 델타(채팅 메시지 본문)가 argv 로 전달되면, 같은 머신의
+다른 사용자가 `ps aux` 로 그 내용을 볼 수 있다(spec §7 의 설계 원칙: env 는 보이지
+않지만 argv 는 보인다).
+
+- **claude 지시문**: `--append-system-prompt-file <path>` 로 파일을 전달한다.
+  파일 퍼미션 0600 으로 world-readable 이 아니다. 이 수정은 2026-09 이슈 #92.
+- **codex 지시문 + 델타**: PTY 안에서 stdin 파이프를 쓸 수 없으므로(pty는 터미널이다),
+  여전히 위치인자로 전달된다. `--ignore-user-config` 로 운영자 config.toml 은 무시되지만,
+  argv 자체의 내용은 노출된다.
+- **claude 델타**: `--append-system-prompt` 로 여전히 위치인자로 전달된다.
+
+이 비대칭은 PTY 가 stdin 파이프를 지원하지 않아서 생기는 구조적 한계다. 추후
+개선 방향은 PTY에 EOT를 보내는 방법 등이 연구 대상이다. 또한 길이가 긴 대화가
+계속되면 `ARG_MAX`(최대 인수 길이)를 초과해 스폰 자체가 실패할 수 있다.
+
 멘션 턴의 프롬프트 컨텍스트(`<ctx>`)는 기존 `reply.ts::buildReplyRequest` 산출물을
 문자열로 넘긴다 — 이 순수 로직은 그대로 산다. 단 세션이 맥락을 이미 가지므로
 **resume 턴에는 새 메시지들만** 넘긴다(전체 스레드 재전송은 첫 턴만).
