@@ -100,6 +100,23 @@ export interface MentionTarget {
  * 멘션 하나에 답한다. 던지면(예: 하네스 비정상 종료) 호출자(main.ts)의 attempts/backoff
  * 경로가 받는다 — 이 함수 자체는 재시도하지 않는다(policy.ts 는 그대로 둔다).
  */
+/**
+ * 한 턴에서 두 번 이상 발화한 것을 러너 로그에 남긴다.
+ *
+ * **채널에는 통보하지 않는다** — 이미 답이 두 개인데 세 번째 메시지를 더하면 소음이다.
+ * 러너가 호출 횟수를 세어 **막지는** 못한다: 그러려면 PTY 출력에서 tool-call 흔적을
+ * 파싱해야 하고, 그건 "러너는 하네스 출력을 해석하지 않는다"(pty.ts)와 정면으로 부딪친다.
+ * 그래서 예방은 시스템 프롬프트(prompt.ts)가 하고, 이 함수는 그것이 지켜졌는지를
+ * murmur 데이터로만 관측한다 — 설계 경계를 넘지 않는 유일한 관측 지점이다.
+ */
+function warnOnDuplicatePosts(key: string, postCount: number): void {
+  if (postCount <= 1) return;
+  console.warn(
+    `[mentionTurn] ${key}: 한 턴에 발화가 ${postCount}건이다 — 한 번만 발화해야 한다(#90). ` +
+      '시스템 프롬프트의 지시가 지켜지지 않았다.',
+  );
+}
+
 export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarget): Promise<void> {
   const { channelId, threadRootId: anchor } = target;
 
@@ -235,7 +252,12 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     try {
       // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
       const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
-      answered = hasOwnPostSince(after, deps.me.id, turnStartSeq);
+      const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
+      // 실패한 턴에서도 중복 발화는 일어난다(답을 두 번 올리고 나서 죽는다) — 성공 경로와
+      // 같은 관측을 여기서도 한다. 안 하면 "실패했으니 안 보였다"가 되어 #90 의 관측이
+      // 반쪽이 된다.
+      warnOnDuplicatePosts(key, postCount);
+      answered = postCount > 0;
     } catch (err) {
       console.error(
         `[mentionTurn] ${key}: 실패 턴의 발화 확인 실패(커서를 전진시키지 않고 재시도로 넘긴다) — ${err instanceof Error ? err.message : String(err)}`,
@@ -263,13 +285,7 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
     const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
     const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
-    if (postCount > 1) {
-      // #90: 한 턴에서 두 번 이상 발화 — 경고만 남기고channelId 로 통보하지는 않는다.
-      // 이미 채널에 답이 두 개인데 세 번째를 더하면 소음이다.
-      console.warn(
-        `[mentionTurn] ${key}: 한 턴에서 ${postCount}개의 발화가 남았다 — 중복 발화警`,
-      );
-    }
+    warnOnDuplicatePosts(key, postCount);
     if (postCount === 0) {
       // 여기는 정상 종료 경로뿐이다(실패는 위에서 던졌다). 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다
       // (쓸 말이 없었거나, 안전 거부(exit 0)이거나). 옛 reply.ts::extractReply 가 안전
