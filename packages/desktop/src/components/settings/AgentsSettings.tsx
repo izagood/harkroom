@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
-import { AGENT_HARNESSES, type AgentConfig, type AgentView } from '@murmur/shared';
+import {
+  AGENT_HARNESSES, RUNNABLE_HARNESSES, type AgentConfig, type AgentView, type MentionPermission,
+} from '@murmur/shared';
 import { getController } from '../../state/controller';
 
-/** murmur 가 아직 실행할 수 없는 harness. 없는 것은 사용자의 CLI 가 아니라 murmur 의 구현이므로
- *  '설치 안 됨'이 아니라 '지원 예정'이다. */
-const PLANNED = ['cursor', 'codex', 'goose', 'amp', 'devin'];
+/** AGENT_HARNESSES 에조차 없는 harness. 없는 것은 사용자의 CLI 가 아니라 murmur 의 구현이므로
+ *  '설치 안 됨'이 아니라 '지원 예정'이다. AGENT_HARNESSES 에는 있지만 아직 못 돌리는 것(RUNNABLE_HARNESSES
+ *  밖)은 아래 select 렌더링에서 따로 disabled 처리한다 — 여기 중복해서 적지 않는다. */
+const PLANNED = ['cursor', 'goose', 'amp', 'devin'];
 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
@@ -15,10 +18,12 @@ interface Draft {
   model: string;
   effort: string;
   workingDir: string;
+  mentionPermission: MentionPermission;
 }
 
 const emptyDraft = (): Draft => ({
   handle: '', instructions: '', harness: 'claude-code', model: '', effort: '', workingDir: '',
+  mentionPermission: 'auto',
 });
 
 const draftOf = (a: AgentView): Draft => ({
@@ -28,6 +33,7 @@ const draftOf = (a: AgentView): Draft => ({
   model: a.model ?? '',
   effort: a.effort ?? '',
   workingDir: a.workingDir ?? '',
+  mentionPermission: a.mentionPermission,
 });
 
 export function AgentsSettings() {
@@ -68,6 +74,7 @@ export function AgentsSettings() {
     model: customized && draft.model ? draft.model : null,
     effort: customized && draft.effort ? draft.effort : null,
     workingDir: draft.workingDir || null,
+    mentionPermission: draft.mentionPermission,
   });
 
   const submit = async () => {
@@ -182,13 +189,31 @@ export function AgentsSettings() {
                 value={draft.harness}
                 onChange={(e) => setDraft({ ...draft, harness: e.target.value as AgentConfig['harness'] })}
               >
-                {AGENT_HARNESSES.map((h) => (
-                  <option key={h} value={h}>{h} (default)</option>
-                ))}
+                {AGENT_HARNESSES.map((h) =>
+                  (RUNNABLE_HARNESSES as readonly string[]).includes(h)
+                    ? <option key={h} value={h}>{h} (default)</option>
+                    : <option key={h} value={h} disabled>{h} (지원 예정)</option>,
+                )}
                 {PLANNED.map((h) => (
                   <option key={h} value={h} disabled>{h} (지원 예정)</option>
                 ))}
               </select>
+            </label>
+
+            <label className={label}>
+              Mention permission
+              <select
+                className={field}
+                aria-label="Mention permission"
+                value={draft.mentionPermission}
+                onChange={(e) => setDraft({ ...draft, mentionPermission: e.target.value as MentionPermission })}
+              >
+                <option value="auto">auto — 멘션 턴에서 도구를 모두 허용</option>
+                <option value="readonly">readonly — 읽기만 (상담 전용)</option>
+              </select>
+              <span className="text-[11px] text-zinc-500">
+                사람이 터미널로 직접 조종할 때는 이 설정과 무관하게 하네스가 물어본다.
+              </span>
             </label>
 
             {customized && (

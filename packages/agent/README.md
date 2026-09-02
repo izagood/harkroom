@@ -6,6 +6,9 @@ murmur 에이전트 러너. 멘션을 기다리다 깨어나 답하는 **상주 
 (`/mcp`)만으로는 에이전트가 *호출될 수* 있을 뿐, `@handle`을 불렀을 때 *찾아오지* 않는다 —
 Claude Code나 Cursor는 사람이 프롬프트할 때만 움직이기 때문이다. 이 러너가 그 자리를 채운다.
 
+설계 근거는 [`docs/specs/2026-09-01-runner-sessions-pty-design.md`](../../docs/specs/2026-09-01-runner-sessions-pty-design.md)다.
+이 README는 그 결론을 요약할 뿐이다 — 왜 그렇게 정했는지는 spec을 본다.
+
 ## 실행
 
 1. **murmur 데스크탑 앱에서 에이전트를 만든다** — 사이드바의 `+ Add or edit agents`.
@@ -18,17 +21,26 @@ MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
 
 이제 murmur에서 `@이름 이거 봐줘`라고 쓰면 답이 온다.
 
-**지시문·모델·effort·작업 디렉터리는 러너가 아니라 서버에 있다.** UI에서 바꾸면 러너를 재시작하지
-않아도 다음 답변부터 반영된다(러너가 답변마다 `GET /agent/config`를 읽는다). 환경변수에 두면
-UI가 바꿀 대상이 없어 장식이 된다.
+**지시문·모델·effort·작업 디렉터리·권한은 러너가 아니라 서버에 있다.** UI에서 바꾸면 러너를
+재시작하지 않아도 다음 답변부터 반영된다 — 프로세스가 멘션마다 새로 뜨고 지시문을 매번
+`--append-system-prompt`로 재주입하기 때문이다(세션이 있다고 해서 이 성질이 사라지지 않는다,
+아래 "세션" 참고). 환경변수에 두면 UI가 바꿀 대상이 없어 장식이 된다.
 
 | 환경변수 | 기본값 | 뜻 |
 |---|---|---|
 | `MURMUR_PAT` | (필수) | 에이전트 PAT. 이 계정으로 발화한다 |
 | `MURMUR_URL` | `http://localhost:3400` | murmur 서버 |
 | `AGENT_POLL_TIMEOUT_MS` | `25000` | 서버의 `inbox.poll` 상한 |
+| `AGENT_TURN_TIMEOUT_MS` | `1800000`(30분) | 한 턴(PTY 실행)의 최대 대기 시간. 넘기면 SIGTERM → 5초 → SIGKILL |
+| `AGENT_STATE_DIR` | `~/.murmur-agent` | 세션 파일·MCP 설정·avcs 워크스페이스가 사는 곳 (아래 "상태 디렉터리") |
 
-API 키는 필요 없다 — `claude-code` harness는 `claude` CLI의 로그인을 쓴다.
+API 키는 필요 없다 — 모든 harness가 사람의 로컬 로그인(claude: Keychain, codex: `~/.codex/auth.json`)을 쓴다.
+
+**에이전트를 여러 대 운영하려면 러너도 여러 프로세스다.** 러너 하나는 자기 PAT의 계정 하나로만
+붙는다 — 두 에이전트를 동시에 돌리려면 각자 다른 `MURMUR_PAT`로 `pnpm --filter @murmur/agent
+start`를 두 번 띄운다. `AGENT_STATE_DIR`은 **같아도 된다** — 상태 경로 전체가 `me.handle`로
+스코프되므로(아래 "상태 디렉터리") 같은 머신·같은 `AGENT_STATE_DIR`에서 동시에 떠도 서로의
+세션·workspace가 겹치지 않는다.
 
 ## Claude Code · Cursor에 붙이기 (러너와 별개)
 
@@ -47,7 +59,131 @@ claude mcp add --transport http murmur http://localhost:3400/mcp \
 스펙(`docs/design.md` §4)이 지정한 에이전트 표면이 MCP다. 실질적 이유도 있다: inbox 롱폴이
 MCP `inbox.poll`에만 있고 REST `/inbox`에는 없다. 이 러너를 만들면서 MCP 표면에 구멍이
 드러났다 — 미읽음을 **소비**하는 도구가 없어 같은 멘션에 영원히 반복 응답했다. `inbox.read`를
-추가해 닫았고, 그래서 러너는 REST를 전혀 쓰지 않는다.
+추가해 닫았고, 그래서 러너는 REST를 대부분 쓰지 않는다(예외: `GET /agent/config`, `GET
+/accounts` — MCP에 없는 표면).
+
+## 세션 — 기억은 프로세스가 아니라 디스크에 있다
+
+옛 구조는 멘션마다 `claude -p`를 새로 띄우고 죽여, 같은 스레드의 두 번째 멘션이 첫 대화를
+몰랐다. 지금은 스레드마다 **세션**이 디스크(`<AGENT_STATE_DIR>/<handle>/sessions.json`)에 남는다:
+
+```
+{ workspaceDir, sessionId, harness, lastFedSeq, turnsRun }
+```
+
+- `workspaceDir` — 이 스레드×에이전트 전용 [avcs](https://www.npmjs.com/package/@izagood/avcs)
+  워크스페이스. git worktree가 아니라 avcs workspace인 이유: murmur의 코드 협업 기층 자체가
+  avcs이지 git이 아니다.
+- `sessionId` — harness 세션 id. claude는 러너가 UUID를 미리 발급해 `--session-id`로
+  넘기고, codex는 사전 할당이 안 돼 첫 턴이 끝난 뒤 rollout 파일에서 찾아 채운다
+  (`sessionId: null`은 "아직 첫 턴을 못 돌렸다"이지 고장이 아니다).
+- `lastFedSeq` — 이 세션에 마지막으로 먹인 스레드 메시지 seq. resume 턴은 이보다 큰
+  메시지만 새로 넘긴다 — 세션이 이미 아는 걸 다시 넘길 필요가 없어서다. **동료 에이전트의
+  발화는 이 경계를 그대로 넘어간다**(자기 발화만 걸러낸다) — 아니면 한 스레드에 에이전트가
+  둘일 때 서로 자기한테 온 멘션만 보는 독백이 된다.
+- `turnsRun` — 이 세션으로 하네스를 실제로 돌린 횟수. `isFirstTurn` 판정은 이 값에서만
+  유도한다(`lastFedSeq`는 "무엇을 봤는지"의 경계일 뿐 "돌았는지"의 증거가 아니다).
+
+프로세스보다 오래 사는 것은 이 상태뿐이다 — **러너가 죽어도 세션은 안 죽는다.** 재시작 후
+다음 멘션이 그대로 resume한다. 반대로 harness가 바뀌면(UI에서 에이전트 harness를 교체) 세션
+(대화 기억)만 버리고 workspace는 재사용한다 — 안에 쌓인 작업 산출물은 harness와 무관하다.
+
+## 상태 디렉터리
+
+`<AGENT_STATE_DIR>/<handle>/`(기본 `~/.murmur-agent/<handle>/`) 아래:
+
+```
+sessions.json      # 스레드별 세션 (위)
+mcp/mcp.json        # murmur + avcs만 담은 MCP 설정 — 기동 시 한 번 쓰고 재사용
+workspaces/         # avcs 워크스페이스들. murmur-<handle>-<threadKey 해시8자>
+```
+
+전체 경로 자체가 handle로 스코프된다 — `sessions.json`·`mcp/mcp.json`·`workspaces/` 전부
+`<handle>/` 아래에 있다. 그래서 **같은 `AGENT_STATE_DIR`을 공유해도 러너 여러 대가 서로의
+상태를 건드리지 않는다**(위 "여러 대 운영" 참고) — handle이 다르면 애초에 다른 서브디렉터리다.
+`workspaces/` 안의 디렉터리 이름에도 handle이 들어가는 이유는 한 겹 더 있다: 같은 스레드에
+에이전트 둘이 멘션되면 스레드 이름만으로는 둘째 에이전트의 `avcs workspace project`가
+실패하거나, 최악의 경우 첫째 에이전트의 디렉터리를 그대로 넘겨받아 격리가 조용히 사라진다.
+
+(handle 스코프 이전 버전이 쓰던 `<AGENT_STATE_DIR>/sessions.json`이 남아 있으면 기동 시
+경고만 찍는다 — 여러 에이전트의 레코드가 섞여 있어 자동으로 옮기지 않는다. 고아
+워크스페이스·claude 세션은 직접 정리한다.)
+
+## PTY로 실행한다
+
+`turn.ts`가 조립한 명령을 `pty.ts`가 [`node-pty`](https://www.npmjs.com/package/node-pty)로
+띄운다. `child_process`가 아니라 PTY인 이유는 지금 당장 필요해서가 아니라 다음 Phase(관찰·
+개입 — 진행 중인 턴에 사람이 실제 터미널로 들어가는 것)가 이 프로세스의 바이트를 그대로
+중계하기 때문이다. 코딩 에이전트 CLI는 TUI를 그리고 권한을 묻고 Ctrl+C를 받는다 — 파이프로는
+이 중 무엇도 재현되지 않는다. 러너는 이 프로세스의 출력을 해석하지 않는다 — **턴의 끝은
+하네스 출력이 아니라 프로세스 종료 그 자체다.**
+
+## 발화는 에이전트가 스스로 한다
+
+러너는 더 이상 하네스 stdout을 파싱해 대신 채팅에 올리지 않는다. 시스템 프롬프트가 에이전트
+에게 murmur MCP의 `message.post`를 스스로 호출하라고 지시하고(`prompt.ts`), 에이전트가 PTY
+안에서 그 도구를 부른다. 프로세스가 exit 0으로 끝났는데 턴 시작 이후 자기 발화가 없으면,
+러너가 에이전트 계정으로 스레드에 "(답 없이 턴을 끝냈습니다 — 프로세스는 정상 종료, 발화
+없음)"을 남긴다 — 침묵을 침묵으로 두지 않는다.
+
+## harness
+
+지금 러너가 **실제로 실행할 수 있는 harness**는 `@murmur/shared`의 `RUNNABLE_HARNESSES`가
+정의한다 — 스키마가 아는 것(`AGENT_HARNESSES`: `claude-code` · `codex` · `gemini`)과 다르다.
+어떤 harness가 이 목록에 들어가는 기준은 "실물 CLI로 첫 턴 + resume 왕복이 실제로 도는 것을
+확인했다"뿐이다(`docs/specs/2026-09-01-runner-sessions-pty-design.md` §4·§10 "수용" 층).
+지금 값은 목록 자체를 본다:
+
+```ts
+export const RUNNABLE_HARNESSES = [/* ... */] as const satisfies readonly AgentHarness[];
+```
+
+`turn.ts`의 `PRESETS`가 harness마다 다른 CLI 표면을 데이터로 접어 둔다(어댑터가 아니라 표) —
+세션 지정 플래그, 멘션 권한 매핑, MCP 등록 형식, 지시문 주입구가 harness마다 근본적으로
+다르다(claude는 플래그, codex는 서브커맨드+`-c` 오버라이드). 자세한 표와 각 칸이 왜 그
+모양인지는 spec §4에 있다 — 여기서 되풀이하지 않는다.
+
+UI에서 아직 못 고르는 harness는 '지원 예정'으로 비활성이다. 없는 것은 사용자의 CLI가 아니라
+murmur의 harness 구현이다.
+
+## 권한 — 턴 종류로 갈린다
+
+같은 세션이라도 화면 앞에 사람이 있는지로 답이 달라진다(spec §6):
+
+| 턴 | 화면 앞에 | 권한 |
+|---|---|---|
+| 멘션 (비대화형) | 없음 | `mention_permission`(에이전트 설정, `auto`\|`readonly`) → harness별 권한 플래그 |
+| 사람 인터랙티브 (Phase 2) | 있음 | 플래그를 아예 안 준다 — 하네스 기본(묻는다), 사람이 직접 답한다 |
+
+권한은 **매 턴 CLI 플래그로만** 준다 — `codex mcp add`처럼 하네스의 영구 설정 파일을 바꾸는
+명령은 쓰지 않는다. murmur 밖에 정책이 쌓이면 UI 스위치가 장식이 된다.
+
+## 자격증명
+
+- **모델 자격증명은 murmur를 통과하지 않는다.** 하네스가 사람의 로컬 로그인을 그대로 쓴다.
+- **PAT는 env로만 간다.** MCP 설정 파일에는 `${MURMUR_PAT}` 플레이스홀더만 있고(파일 자체는
+  비밀이 아니다), 실값은 PTY 자식 프로세스의 env로만 넘어간다 — argv에는 절대 오르지 않는다
+  (`ps`에는 다른 사용자에게도 argv가 보이지만 env는 안 보인다).
+- **`--strict-mcp-config`를 항상 쓴다**(claude). 없으면 하네스가 이 세션을 띄운 사람의
+  전역 MCP 목록 전체(Slack·Gmail·Drive 등)를 상속한다 — 채널에서 `@handle`을 부를 수 있는
+  사람이면 누구나 그 경로로 운영자 개인 계정에 도달한다. 러너가 생성하는 설정에는 murmur와
+  avcs 둘만 넣는다.
+
+## 구조
+
+| 파일 | 역할 |
+|---|---|
+| `src/main.ts` | poll 루프 조립. 접속·설정 파일 쓰기 등 top-level 부작용이 여기 있다 |
+| `src/mentionTurn.ts` | 멘션 하나를 세션 확보 → 프롬프트 조립 → 턴 실행 → 저장 → 발화 확인으로 엮는 조립 함수. **main.ts에서 분리한 이유는 테스트 가능성이다** — main.ts를 import하면 진짜 서버에 붙으려 든다 |
+| `src/sessions.ts` | 세션 상태를 디스크에 원자적으로 읽고 쓴다(손상 파일 격리, 쓰기 직렬화) |
+| `src/workspace.ts` | 스레드×에이전트당 avcs 워크스페이스를 확보한다 |
+| `src/turn.ts` | harness별 CLI 플래그 표(`PRESETS`) + `buildTurnCommand` 조립 + `writeMcpConfigOnce` |
+| `src/pty.ts` | `node-pty`로 한 턴을 실행하고 종료를 기다린다. 출력은 tail 2KB(자격증명 실패 판정용)만 해석하고 나머지는 불투명하게 다룬다 |
+| `src/codexSessions.ts` | codex 전용 — 첫 턴이 끝난 뒤 rollout 파일에서 세션 id를 사후 발견한다 |
+| `src/prompt.ts` | 스레드 델타 → 턴 프롬프트, 발화 판정(`hasOwnPostSince`). **순수 로직이고 테스트 대상이다** |
+| `src/policy.ts` | 실패 정책(자격증명은 즉시 종료, 나머지는 백오프) |
+| `src/murmur.ts` | MCP 클라이언트 + `GET /agent/config`·`GET /accounts`(MCP에 없는 표면) |
+| `src/config.ts` | 환경변수 |
 
 ## poll 루프 계약
 
@@ -55,26 +191,20 @@ MCP `inbox.poll`에만 있고 REST `/inbox`에는 없다. 이 러너를 만들�
 둘 다 정상이며 재접속 + 지수 백오프(최대 30초)로 대응한다. 답변 실패는 읽음 처리하지 않으므로
 다음 폴에서 다시 시도된다 — 한 건의 실패가 루프를 죽이지 않는다.
 
-## 구조
+## 네이티브 의존성 — node-pty
 
-| 파일 | 역할 |
-|---|---|
-| `src/reply.ts` | 멘션 → 대화 맥락 구성, 응답 → 발화문 추출. **순수 로직이고 테스트 대상이다** |
-| `src/harness/claudeCode.ts` | `claude -p` 인자 조립·출력 파싱. **순수 로직** — 서브프로세스 없이 계약을 검증한다 |
-| `src/policy.ts` | 실패 정책(자격증명은 즉시 종료, 나머지는 백오프) |
-| `src/murmur.ts` | MCP 클라이언트 (`account.me` `workspace.guide` `channel.list` `message.read` `message.post` `inbox.poll` `inbox.read`) |
-| `src/config.ts` | 환경변수 |
-| `src/main.ts` | 루프 조립 |
+`node-pty`는 이 저장소의 **첫 네이티브 의존성**이다. `linux-x64`·`linux-arm64`·`darwin`은
+프리빌드가 있어 대개 컴파일이 필요 없지만, 그 밖의 플랫폼은 `node-gyp`로 소스 빌드가
+떨어지므로 C++ 빌드 도구(Python, 컴파일러)가 있어야 한다.
 
-## harness
+두 가지 함정을 미리 적어 둔다 — murmur는 셀프호스트로 배포되므로 클론한 사람이 아니라
+설치하는 사람이 그대로 밟는다:
 
-지금 실행 가능한 것은 `claude-code` 하나다. `claude -p --output-format json` 을 서브프로세스로
-띄우고, 그 에이전트의 PAT 로 murmur MCP 를 주입한다(`--mcp-config`) — 그래서 에이전트가
-**자기 이름으로** murmur 도구를 쓸 수 있고, 작업 디렉터리에서 파일·도구에 접근한다.
-
-지시문은 `--append-system-prompt` 로 간다. 사용자 턴에 섞으면 사람이 방금 한 말과 구별되지 않는다.
-`--output-format json` 을 쓰는 이유는 `is_error` 다 — 이것 없이는 실패 문구를 에이전트의
-답변으로 채널에 발화한다.
-
-Cursor·Codex 등은 UI 에서 '지원 예정'으로 비활성이다. 없는 것은 사용자의 CLI 가 아니라
-murmur 의 harness 구현이다.
+- **`pnpm-workspace.yaml`의 `allowBuilds`에 `node-pty`가 있어야 한다.** 없으면 pnpm이
+  postinstall을 조용히 건너뛰어, 프리빌드가 있든 없든 `pty.node`가 아예 없다. 증상은
+  "설치는 성공했는데 러너가 뜨자마자 죽는다"로 나타난다. 이 저장소에는 이미 들어 있으므로
+  클론해서 쓰면 겪지 않지만, 지우면 그대로 재현된다.
+- **버전이 `1.2.0-beta.15`로 고정돼 있다.** stable `1.1.0`은 linux 프리빌드가 아예 없고
+  macOS 프리빌드는 `spawn-helper`의 실행 비트가 빠져 설치 직후 즉시 깨진다
+  (microsoft/node-pty#850). 이 버그를 포함한 `1.2.0` stable이 나오면 핀을 내린다 — 그때
+  가서 다시 beta를 쓸 이유가 없다.

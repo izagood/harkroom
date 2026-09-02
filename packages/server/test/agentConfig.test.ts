@@ -7,12 +7,13 @@ import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 let app: FastifyInstance;
 let stop: () => Promise<void>;
 let adminToken: string;
+let adminId: string;
 
 beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
   app = await buildServer({ pool: db.pool });
-  ({ token: adminToken } = await bootstrapAdmin(app));
+  ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
 });
 afterAll(async () => { await app.close(); await stop(); });
 
@@ -143,5 +144,41 @@ describe('an agent reading its own definition', () => {
     const res = await app.inject({ method: 'GET', url: '/agent/config', headers: admin() });
 
     expect(res.statusCode).toBe(403);
+  });
+});
+
+describe('멘션 턴 권한과 러너 소유자', () => {
+  it('에이전트 생성 시 mentionPermission 기본 auto, 생성자가 owner 가 된다', async () => {
+    const res = await create({ handle: 'permtest', displayName: 'P' });
+
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(body.mentionPermission).toBe('auto');
+    expect(body.ownerAccountId).toBe(adminId);
+  });
+
+  it('mentionPermission 은 auto|readonly 만 받는다', async () => {
+    const agent = (await create({ handle: 'permbad', displayName: 'PermBad' })).json();
+
+    const bad = await patch(agent.id, { mentionPermission: 'bypassAll' });
+    expect(bad.statusCode).toBe(400);
+
+    const ok = await patch(agent.id, { mentionPermission: 'readonly' });
+    expect(ok.json().mentionPermission).toBe('readonly');
+  });
+
+  it('GET /agent/config 가 mentionPermission 을 싣는다', async () => {
+    const agent = (await create({ handle: 'permread', displayName: 'PermRead' })).json();
+    const patRes = await app.inject({
+      method: 'POST', url: `/accounts/${agent.id}/pats`, headers: admin(), payload: { label: 'runner' },
+    });
+
+    const res = await app.inject({
+      method: 'GET', url: '/agent/config',
+      headers: { authorization: `Bearer ${patRes.json().token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().mentionPermission).toBe('auto');
   });
 });
