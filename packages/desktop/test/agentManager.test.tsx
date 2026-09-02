@@ -63,6 +63,49 @@ describe('AgentsSettings', () => {
     expect((await screen.findAllByText(/murp_secret/)).length).toBeGreaterThan(0);
   });
 
+  // … 가 토큰 조각 뒤에 붙은 형태는 복사하면 인증이 실패한다. 그런 문자열이 화면에 있으면 안 된다.
+  it('does not show broken token hint with ellipsis after partial token', async () => {
+    fakeController();
+    render(<AgentsSettings />);
+
+    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+
+    // "토큰 조각 + 말줄임표" 형태가 화면에 있으면 안 된다 — 복사하면 인증이 실패한다.
+    const panel = await screen.findByText(/이 토큰은 지금만 보인다/);
+    const panelContent = panel.parentElement?.textContent ?? '';
+    expect(panelContent).not.toMatch(/murp_secre[A-Za-z0-9+/=]*…/);
+  });
+
+  // 명령 힌트에 전체 토큰이 들어가 있어야 복사해서 바로 쓸 수 있다.
+  it('shows the full token in the command hint so it can be copy-pasted', async () => {
+    fakeController();
+    render(<AgentsSettings />);
+
+    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+
+    // 명령 힌트에 토큰이 **잘리지 않은 채** 들어 있어야 복사해서 바로 쓸 수 있다.
+    const panel = await screen.findByText(/이 토큰은 지금만 보인다/);
+    const panelContent = panel.parentElement?.textContent ?? '';
+    expect(panelContent).toMatch(/MURMUR_PAT=murp_secret/);
+  });
+
+  // 에이전트는 러너 프로세스가 붙어야 멘션에 답할 수 있다 — 그 사실을 알려주어야 한다.
+  it('shows a hint that runner is required for the agent to respond', async () => {
+    fakeController();
+    render(<AgentsSettings />);
+
+    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+
+    // 문구를 느슨한 정규식으로 잡으면 관계없는 문장에 우연히 걸린다 — 이 안내가 반드시
+    // 말해야 하는 두 가지를 각각 확인한다: murmur 가 러너를 띄우지 않는다는 것과,
+    // 붙이기 전까지 답하지 않는다는 것.
+    expect(await screen.findByText(/murmur 는 러너를 띄우지 않는다/)).toBeTruthy();
+    expect(screen.getByText(/멘션에 답하지 않는다/)).toBeTruthy();
+  });
+
   it('refuses to submit without a name', async () => {
     const c = fakeController();
     render(<AgentsSettings />);
@@ -244,7 +287,7 @@ describe('AgentsSettings', () => {
       const newPatBtn = await screen.findByRole('button', { name: '+ New PAT' });
       fireEvent.click(newPatBtn);
 
-      expect(await screen.findByText(/murp_new_token/)).toBeTruthy();
+      expect((await screen.findAllByText(/murp_new_token/)).length).toBeGreaterThan(0);
       expect(await screen.findByText(/이 토큰은 지금만 보인다/)).toBeTruthy();
     });
   });
