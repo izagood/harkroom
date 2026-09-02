@@ -45,6 +45,11 @@ class FakeMurmur implements MentionTurnMurmur {
   posts: { channelId: string; body: string; threadRootId: string | null }[] = [];
   private seq = 0;
   def: AgentView;
+  /** #80 테스트를 위해 readThread 호출 기록 */
+  readThreadCalls: { channelId: string; threadRootId: string | null; since?: number }[] = [];
+  /** 프로덕션 클라이언트(`murmur.ts::readThread`)의 기본값은 30 이다. 테스트는 창 밖으로
+   *  밀려나는 상황을 작은 수로 만들기 위해 이 값을 낮춘다. */
+  limit = 30;
 
   constructor(def: AgentView) {
     this.def = def;
@@ -54,8 +59,22 @@ class FakeMurmur implements MentionTurnMurmur {
     return Promise.resolve(this.def);
   }
 
-  readThread(channelId: string, threadRootId: string | null): Promise<MessageRow[]> {
-    return Promise.resolve(this.messages.filter((m) => m.channelId === channelId && m.threadRootId === threadRootId));
+  /**
+   * 서버 `listMessages` 의 계약을 그대로 흉내낸다 — **`limit` 까지 포함해서다.**
+   * `limit` 을 빼고 "since 만" 흉내내면 이 fake 는 프로덕션이 실제로 갖는 창(window)을
+   * 갖지 않게 되고, "창 밖으로 밀려난 구간이 커서 점프에 묻힌다"는 #80 의 결함 자체를
+   * 재현할 수 없다(그러면 회귀 테스트가 초록이어도 아무것도 증명하지 못한다).
+   *
+   * - `since > 0`  → `seq > since` 중 **가장 오래된** limit 개 (델타 경로, 오름차순)
+   * - `since` 없음/0 → **가장 최신** limit 개를 오름차순으로 (첫 턴 맥락 경로)
+   */
+  readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]> {
+    this.readThreadCalls.push({ channelId, threadRootId, since });
+    const all = this.messages.filter((m) => m.channelId === channelId && m.threadRootId === threadRootId);
+    if (since === undefined || since === 0) {
+      return Promise.resolve(all.slice(-this.limit));
+    }
+    return Promise.resolve(all.filter((m) => m.seq > since).slice(0, this.limit));
   }
 
   post(channelId: string, body: string, threadRootId: string | null): Promise<void> {
@@ -70,6 +89,11 @@ class FakeMurmur implements MentionTurnMurmur {
     const m = msg(this.seq, authorId, body, threadRootId);
     this.messages.push(m);
     return m;
+  }
+
+  /** 테스트용: 호출 기록 초기화 */
+  clearCalls(): void {
+    this.readThreadCalls = [];
   }
 }
 
@@ -532,7 +556,7 @@ describe('runMentionTurn', () => {
       expect(info.isDirectory()).toBe(true);
     });
 
-    // 대조: workingDir 이 명시됐는데 avcs repo 가 아니면 지금처럼 그 디렉터리를 그대로
+    // 대조: workingDir 이 명시됐지만 avcs repo 가 아니면 지금처럼 그 디렉터리를 그대로
     // 쓴다(폴백 유지) — 사용자가 그 파일들에서 일하라고 지정한 것이라 빈 디렉터리로
     // 갈아치우면 설정이 장식이 된다.
     it('workingDir 이 명시됐지만 avcs repo 가 아니면 지정된 디렉터리를 그대로 쓴다', async () => {
@@ -547,6 +571,113 @@ describe('runMentionTurn', () => {
 
       const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null));
       expect(rec!.workspaceDir).toBe('/some/explicit/repo');
+    });
+  });
+
+  // #80 테스트: since 커서 wiring
+  describe('readThread 에 since 가 실려 간다 (#80 수정)', () => {
+    it('첫 턴에서 since=0 으로 읽으면 전체 맥락이 반환된다(회귀 방지)', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '메시지1');
+      fake.seedFrom('human-1', '메시지2');
+      fake.seedFrom('human-1', '메시지3');
+      const { deps } = await makeDeps(fake);
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      // 첫 턴: since=0 이면 서버가 최신 N 개를 반환하므로 전체가 보인다
+      // ( 턴 시작 읽기 + 발화 확인 읽기 )
+      expect(fake.readThreadCalls).toHaveLength(2);
+      expect(fake.readThreadCalls[0]!.since).toBe(0); // 첫 번째: 턴 시작 since=0
+    });
+
+    it('재시도 턴에서 lastFedSeq 로 since 를 건다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '첫 질문');
+      const { deps, runTurn } = await makeDeps(fake);
+      runTurn.script = async () => {
+        await fake.post(CHANNEL, '첫 답', null);
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+
+      // 첫 턴: 성공
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      fake.clearCalls();
+
+      // 두 번째 턴: lastFedSeq 가 0이 아니므로 since 로 그 값을 건다
+      fake.seedFrom('human-1', '두 번째 질문');
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      expect(fake.readThreadCalls).toHaveLength(2); // 턴 시작 + 발화 확인
+      // 턴 시작 읽기에서 lastFedSeq 가 since 로 전달된다
+      expect(fake.readThreadCalls[0]!.since).toBeGreaterThan(0);
+    });
+
+    // 첫 턴은 창(window) 안의 최신 N 개만 본다 — 이건 결함이 아니라 설계다. 에이전트는
+    // 대화 도중에 합류하는 것이고, 그 앞은 그가 볼 필요가 없던 이력이다(`messages.ts` 의
+    // "since 미지정(0): 오래된 200개가 아니라 최신 N개를 반환한다" 주석과 같은 결).
+    // 이 테스트는 그 경계를 사실로 못 박는다 — 아래 회귀 테스트가 무엇을 보장하고
+    // 무엇을 보장하지 않는지가 여기서 갈린다.
+    it('첫 턴은 창 안의 최신 N 개만 본다 (그 앞은 이력으로 남는다)', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.limit = 3;
+      for (const b of ['옛1', '옛2', '최근1', '최근2', '최근3']) fake.seedFrom('human-1', b);
+      const { deps, plans } = await makeDeps(fake);
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      const fed = plans.map((p) => p.args.join(' ')).join('\n');
+      expect(fed).toContain('최근3');
+      expect(fed).not.toContain('옛1');
+      // 그리고 커서는 본 것 중 최대까지 전진한다 — 옛 것을 다시 새 것으로 들이밀지 않는다.
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
+      expect(rec.lastFedSeq).toBe(5);
+    });
+
+    // ⚠️ 이 태스크의 존재 이유인 테스트다. **커서가 생긴 뒤로는 유실이 없어야 한다.**
+    // desc(최신 N)로만 읽으면, 한 턴 사이에 창보다 많이 쌓였을 때 앞쪽 구간이 프롬프트에
+    // 없는데 커서만 최댓값으로 뛰어(`prompt.ts` 의 fedSeq = 받은 것 중 최대 seq) 그 구간이
+    // 영영 안 먹힌다. since 커서로 읽으면 창이 델타의 '앞쪽'을 잡으므로 건너뛰지 않는다.
+    it('커서가 생긴 뒤에는 창보다 많이 쌓여도 건너뛰는 메시지가 없다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.limit = 3;
+      fake.seedFrom('human-1', '첫 질문');
+      const { deps, plans } = await makeDeps(fake);
+
+      // 턴 1: 커서를 세운다.
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      // 그 사이에 창보다 많이 쌓인다.
+      const burst = ['폭주1', '폭주2', '폭주3', '폭주4', '폭주5'];
+      for (const b of burst) fake.seedFrom('human-1', b);
+
+      // 사람이 더 쓰지 않아도, 아직 안 먹인 것이 남아 있으면 다음 턴들이 그것을 먹는다.
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      const fedText = plans.map((p) => p.args.join(' ')).join('\n');
+      for (const b of burst) {
+        expect(fedText, `'${b}' 이 어느 턴에도 먹여지지 않았다 — 창 밖에서 유실됐다`).toContain(b);
+      }
+    });
+
+    it('발화 확인 읽기에서 turnStartSeq 로 since 를 건다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 안녕');
+      const { deps, runTurn } = await makeDeps(fake);
+      runTurn.script = async () => {
+        await fake.post(CHANNEL, '답변', null);
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+      fake.clearCalls();
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      // 발화 확인(readThread 2번째 호출)에서 turnStartSeq 가 since 로 전달된다
+      expect(fake.readThreadCalls).toHaveLength(2); // 턴 시작 + 발화 확인
+      const secondCall = fake.readThreadCalls[1]!;
+      expect(secondCall.since).toBeDefined();
+      expect(secondCall.since).toBeGreaterThan(0);
     });
   });
 });

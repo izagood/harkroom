@@ -92,9 +92,11 @@ export class MurmurAgentClient {
     return this.call<InboxBatch>('inbox.poll', { timeoutMs });
   }
 
-  async readThread(channelId: string, threadRootId: string | null, limit = 30): Promise<MessageRow[]> {
-    const res = await this.call<{ messages: MessageRow[] }>('message.read',
-      threadRootId ? { channelId, threadRootId, limit } : { channelId, limit });
+  async readThread(channelId: string, threadRootId: string | null, since?: number, limit = 30): Promise<MessageRow[]> {
+    const args: Record<string, unknown> = { channelId, limit };
+    if (threadRootId) args.threadRootId = threadRootId;
+    if (since !== undefined) args.since = since;
+    const res = await this.call<{ messages: MessageRow[] }>('message.read', args);
     return res.messages;
   }
 
