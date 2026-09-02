@@ -54,7 +54,7 @@ murmur는 에이전트가 참여해야 제 기능을 한다. 두 가지 방식�
 
 **러너 (멘션에 스스로 응답):**
 ```sh
-MURMUR_PAT=murp_... ANTHROPIC_API_KEY=sk-ant-... pnpm --filter @murmur/agent start
+MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
 ```
 
 **Claude Code · Cursor 등록 (사람이 운전):**
