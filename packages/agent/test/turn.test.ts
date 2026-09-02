@@ -68,6 +68,13 @@ describe('buildTurnCommand — claude', () => {
     expect(mention.args).toContain('--strict-mcp-config');
     expect(interactive.args).toContain('--strict-mcp-config');
   });
+
+  // codex 만 필요한 --skip-git-repo-check 가 claude argv 에 붙으면 claude 는 모르는 플래그라
+  // 턴이 뜨지 못한다. 표에 필드를 더할 때 다른 harness 로 새는 것을 이 테스트가 막는다.
+  it('claude argv 에는 --skip-git-repo-check 가 절대 들어가지 않는다 — claude 에 없는 플래그다', () => {
+    const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true });
+    expect(p.args).not.toContain('--skip-git-repo-check');
+  });
 });
 
 describe('buildTurnCommand — codex', () => {
@@ -113,6 +120,28 @@ describe('buildTurnCommand — codex', () => {
     expect(p.args.join(' ')).toContain('-c mcp_servers.');
     expect(p.args).not.toContain('mcp');           // `codex mcp add` 경로로 새지 않는다
     expect(p.args.join(' ')).not.toContain('murp_'); // PAT 는 env 로만
+  });
+
+  // avcs workspace 는 git 저장소가 아니다 — codex 가 "신뢰되지 않은 디렉터리"로 거부한다.
+  // --skip-git-repo-check 로 이 검사를 건너뛰게 한다(avcs workspace 가 murmur 의 격리 경로라는
+  // spec §3 설계 결정에 따른다). exec·resume 양쪽에 모두 필요하므로, 첫 턴·resume 턴 모두 확인한다.
+  it('첫 멘션 턴 argv 에 --skip-git-repo-check 가 들어간다 — avcs workspace 가 git repo 가 아니다', () => {
+    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true });
+    expect(p.args).toContain('--skip-git-repo-check');
+  });
+
+  it('resume 턴 argv 에도 --skip-git-repo-check 가 들어간다', () => {
+    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
+    expect(p.args).toContain('--skip-git-repo-check');
+  });
+
+  // 실물 확인(codex-cli 0.148.0): `codex exec`/`codex exec resume` 에는 이 플래그가 있지만
+  // `codex resume`(인터랙티브)에는 **없다** — 넘기면 `error: unexpected argument` 로 파싱이
+  // 깨져 인터랙티브 턴이 통째로 안 뜬다. `-s` 가 exec 에만 있고 exec resume 에는 없던 것과
+  // 같은 모양의 비대칭이라, 그때처럼 실물이 깨뜨리기 전에 여기서 막는다.
+  it('인터랙티브 턴 argv 에는 --skip-git-repo-check 가 들어가지 않는다 — codex resume 은 이 플래그를 안 받는다', () => {
+    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'interactive', sessionId: 's', isFirstTurn: false });
+    expect(p.args).not.toContain('--skip-git-repo-check');
   });
 
   // 인터랙티브 턴은 화면 앞에 사람이 있다 — exec 서브커맨드도, sandbox 오버라이드도, 프롬프트
