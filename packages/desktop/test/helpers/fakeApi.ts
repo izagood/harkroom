@@ -41,6 +41,8 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     addReaction: vi.fn(async () => undefined),
     removeReaction: vi.fn(async () => undefined),
     createDm: vi.fn(),
+    updateChannel: vi.fn(async (id: string, input: { topic?: string; repo?: string | null }) =>
+      chan(id, id, input.repo ?? null)),
     ...overrides,
   };
   return base as unknown as ApiClient;
