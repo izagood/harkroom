@@ -40,13 +40,6 @@ export function InviteSettings() {
         토큰은 발급 직후 한 번만 보이며 다시 볼 수 없습니다. 한 번 쓰면 소진됩니다.
       </p>
 
-      {/* 서버에는 초대 토큰으로 가입하는 경로(POST /auth/register)가 이미 있지만, 이 앱에는
-          그 화면이 아직 없다. 없는 것을 있다고 표시하지 않는다(design.md §4) — 운영자가
-          토큰만 건네고 상대가 막히는 상황을 미리 알 수 있어야 한다. */}
-      <p className="mb-4 rounded border border-zinc-300 bg-zinc-50 p-3 text-xs text-zinc-600">
-        아직 이 앱에는 초대 토큰으로 가입하는 화면이 없습니다. 토큰은 발급되지만, 받는 사람이
-        이 앱에서 곧바로 가입할 수는 없습니다.
-      </p>
 
       {token && (
         <div className="mb-4 rounded border border-amber-300 bg-amber-50 p-3">
