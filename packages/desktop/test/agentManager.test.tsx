@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import type { AgentConfig, AgentView } from '@murmur/shared';
+import type { AgentConfig, AgentView, PatView } from '@murmur/shared';
 import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
@@ -20,6 +20,9 @@ const fakeController = (agents: AgentView[] = []) => {
     listAgents: vi.fn(async (): Promise<AgentView[]> => agents),
     createAgent: vi.fn(async (_input: CreateInput) => ({ agent: agent('fizz'), pat: 'murp_secret' })),
     updateAgent: vi.fn(async (_id: string, _patch: PatchInput) => agent('fizz')),
+    listPats: vi.fn(async (): Promise<PatView[]> => []),
+    revokePat: vi.fn(async (): Promise<{ revoked: number }> => ({ revoked: 1 })),
+    mintPat: vi.fn(async (): Promise<string> => 'murp_new'),
   };
   setController(c as unknown as Controller);
   return c;
@@ -166,5 +169,83 @@ describe('AgentsSettings', () => {
     fireEvent.click(await screen.findByText('rusalka'));
 
     expect((screen.getByLabelText('Mention permission') as HTMLSelectElement).value).toBe('readonly');
+  });
+
+  describe('PAT management', () => {
+    const pats: PatView[] = [
+      { label: 'runner', createdAt: '2024-01-01T00:00:00Z', revokedAt: null },
+      { label: 'backup', createdAt: '2024-01-02T00:00:00Z', revokedAt: '2024-01-03T00:00:00Z' },
+    ];
+
+    it('shows PAT section when editing an agent and user is admin', async () => {
+      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+      const c = fakeController([agent('rusalka')]);
+      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
+      render(<AgentsSettings />);
+      fireEvent.click(await screen.findByText('rusalka'));
+
+      expect(await screen.findByText('PAT (Personal Access Token)')).toBeTruthy();
+    });
+
+    it('does not show PAT section when user is not admin', async () => {
+      useAppStore.getState().set({ me: acc('u1', 'user', 'human', false) });
+      fakeController([agent('rusalka')]);
+      render(<AgentsSettings />);
+      fireEvent.click(await screen.findByText('rusalka'));
+
+      expect(screen.queryByText('PAT (Personal Access Token)')).toBeNull();
+    });
+
+    it('lists PATs when editing an agent', async () => {
+      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+      const c = fakeController([agent('rusalka')]);
+      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
+      render(<AgentsSettings />);
+      fireEvent.click(await screen.findByText('rusalka'));
+
+      expect(await screen.findByText('runner')).toBeTruthy();
+      expect(await screen.findByText('backup')).toBeTruthy();
+    });
+
+    it('shows revoked PATs with indicator', async () => {
+      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+      const c = fakeController([agent('rusalka')]);
+      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
+      render(<AgentsSettings />);
+      fireEvent.click(await screen.findByText('rusalka'));
+
+      expect(await screen.findByText('(폐기됨)')).toBeTruthy();
+    });
+
+    it('calls revokePat when confirming revoke', async () => {
+      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+      const c = fakeController([agent('rusalka')]);
+      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
+      (c.revokePat as ReturnType<typeof vi.fn>).mockResolvedValue({ revoked: 1 });
+      render(<AgentsSettings />);
+      fireEvent.click(await screen.findByText('rusalka'));
+
+      const revokeBtn = await screen.findByText('Revoke');
+      fireEvent.click(revokeBtn);
+      const confirmBtn = await screen.findByText('Really revoke');
+      fireEvent.click(confirmBtn);
+
+      await waitFor(() => expect(c.revokePat).toHaveBeenCalledWith('id-rusalka', 'runner'));
+    });
+
+    it('shows newly minted PAT once', async () => {
+      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+      const c = fakeController([agent('rusalka')]);
+      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (c.mintPat as ReturnType<typeof vi.fn>).mockResolvedValue('murp_new_token');
+      render(<AgentsSettings />);
+      fireEvent.click(await screen.findByText('rusalka'));
+
+      const newPatBtn = await screen.findByRole('button', { name: '+ New PAT' });
+      fireEvent.click(newPatBtn);
+
+      expect(await screen.findByText(/murp_new_token/)).toBeTruthy();
+      expect(await screen.findByText(/이 토큰은 지금만 보인다/)).toBeTruthy();
+    });
   });
 });

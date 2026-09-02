@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { LeasePanel } from './LeasePanel';
+import { Menu } from './Menu';
 import type { SectionId } from './settings/sections';
 import { CHANNEL_NAME_PATTERN } from '@murmur/shared';
 
@@ -176,19 +177,21 @@ export function Sidebar({ onLogout, onOpenSettings }: {
         </div>
         <LeasePanel />
       </nav>
-      <div className="flex items-center gap-2 border-t border-zinc-800 p-3 text-xs">
-        <span className="font-medium">@{me?.handle}</span>
-        <button
-          className="ml-auto rounded px-1.5 py-0.5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
-          aria-label="Settings"
-          onClick={() => onOpenSettings()}
-        >
-          <span aria-hidden>⚙</span>
-        </button>
-        <button className="text-zinc-400 underline"
-          onClick={() => { getController().logout(); onLogout(); }}>
-          Sign out
-        </button>
+      <div className="relative flex items-center gap-2 border-t border-zinc-800 p-3 text-xs">
+        {/* 계정 행 자체가 진입점이다 — gear 아이콘이 아니라(#113). 트리거 요소는 소비자가
+            만들고 접근성 속성·ref 는 Menu 가 준다(그래야 #111 이 우클릭 트리거로 같은
+            프리미티브를 쓸 수 있다). */}
+        <Menu
+          renderTrigger={(props) => (
+            <button {...props} className="font-medium">
+              @{me?.handle}
+            </button>
+          )}
+          items={[
+            { label: 'Settings', onSelect: () => onOpenSettings() },
+            { label: 'Sign out', onSelect: () => { getController().logout(); onLogout(); } },
+          ]}
+        />
       </div>
     </aside>
   );
