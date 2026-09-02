@@ -1,4 +1,4 @@
-import type { AgentConfig, AgentView, AccountView, AttachmentRow, ChannelRow, DmView, InboxEntry, LeaseRow, MessageRow, PatView } from '@murmur/shared';
+import type { AgentConfig, AgentView, AccountView, AttachmentRow, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PatView } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -197,5 +197,13 @@ export class ApiClient {
   /** 초대 토큰을 발급한다 — admin 전용. 토큰은 생성 직후 한 번만 볼 수 있다. */
   createInvite(): Promise<string> {
     return (this.req<{ token: string }>('POST', '/invites')).then((r) => r.token);
+  }
+
+  async channelPrefs(): Promise<ChannelPrefRow[]> {
+    return (await this.req<{ prefs: ChannelPrefRow[] }>('GET', '/channels/prefs')).prefs;
+  }
+
+  updateChannelPref(channelId: string, patch: { muted?: boolean; starred?: boolean }): Promise<ChannelPrefRow> {
+    return this.req('PATCH', `/channels/${channelId}/pref`, patch);
   }
 }

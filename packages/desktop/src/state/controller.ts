@@ -1,4 +1,4 @@
-import type { AttachmentRow, ChannelRow, WsServerEvent } from '@murmur/shared';
+import type { AttachmentRow, ChannelRow, ChannelPrefRow, WsServerEvent } from '@murmur/shared';
 import type { ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
@@ -39,6 +39,12 @@ export class Controller {
       accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
       reads: Object.fromEntries(reads.map((r) => [r.channelId, { lastReadSeq: r.lastReadSeq, unread: r.unread }])),
     });
+    // 채널 선호는 **크리티컬 패스에서 뺀다.** 위 Promise.all 에 넣으면 이 엔드포인트가
+    // 없는 서버(구버전)에 붙었을 때 앱이 기동조차 못 한다. 선호는 UI 편의값이라 없으면
+    // 정렬이 이름순으로 남을 뿐이다 — `refreshAccounts` 가 같은 이유로 실패를 삼킨다.
+    this.swallow(this.api.channelPrefs().then((prefs) => {
+      useAppStore.getState().set({ channelPrefs: Object.fromEntries(prefs.map((p) => [p.channelId, p])) });
+    }));
     // 앱을 열자마자 쌓여 있던 미읽음이 한꺼번에 터지면 알림이 소음이 된다.
     for (const e of unread) this.announced.add(e.id);
     // 장기 토큰은 ApiClient 가 헤더로만 쓴다 — WS URL 에는 단기 티켓만 실린다.
@@ -430,6 +436,22 @@ export class Controller {
     const dm = await this.api.createDm([accountId]);
     useAppStore.getState().set({ dms: await this.api.dms() });
     await this.openChannel(dm.id);
+  }
+
+  async toggleChannelMute(channelId: string): Promise<void> {
+    const store = useAppStore.getState();
+    const current = store.channelPrefs[channelId];
+    const muted = !current?.mutedAt;
+    const updated = await this.api.updateChannelPref(channelId, { muted });
+    store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
+  }
+
+  async toggleChannelStar(channelId: string): Promise<void> {
+    const store = useAppStore.getState();
+    const current = store.channelPrefs[channelId];
+    const starred = !current?.starredAt;
+    const updated = await this.api.updateChannelPref(channelId, { starred });
+    store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
   }
 
   logout(): void {
