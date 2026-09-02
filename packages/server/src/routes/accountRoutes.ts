@@ -51,9 +51,26 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
       displayName: z.string().min(1).max(64).optional(),
       ...configFields,
     }).parse(req.body);
+    const before = await getAgent(pool, id);
     const updated = await updateAgent(pool, id, patch);
     if (!updated) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+    }
+    // 변경된 필드가 없으면 감사 기록을 남기지 않는다 — 불필요한 로그를 방지한다.
+    const changes: Record<string, { before: unknown; after: unknown }> = {};
+    if (before && patch.mentionPermission !== undefined && before.mentionPermission !== patch.mentionPermission) {
+      changes.mentionPermission = { before: before.mentionPermission, after: patch.mentionPermission };
+    }
+    if (before && patch.ownerAccountId !== undefined && before.ownerAccountId !== patch.ownerAccountId) {
+      changes.ownerAccountId = { before: before.ownerAccountId, after: patch.ownerAccountId };
+    }
+    // 다른 필드(instructions 등)는 감사 기록에 포함하지 않는다 — instructions는 자유 텍스트로
+    // 비밀이 될 수 있고, 다른 설정 변경은 권한과 직접 연관되지 않는다.
+    if (Object.keys(changes).length > 0) {
+      await recordAudit(pool, {
+        action: 'agent.updated', actorId: req.account!.id, actorHandle: req.account!.handle,
+        target: id, detail: changes,
+      }, req);
     }
     return updated;
   });
