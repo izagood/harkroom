@@ -454,3 +454,137 @@ describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
     expect(screen.getByTestId('unread-c1').textContent).toBe(before);
   });
 });
+
+describe('채널 컨텍스트 메뉴 (#111)', () => {
+  const getChannelButton = (name: string): HTMLElement => {
+    return screen.getByRole('button', { name: new RegExp(`# ${name}\\b`) }) as HTMLElement;
+  };
+
+  it('채널 행을 우클릭하면 메뉴가 열린다', () => {
+    fakeController();
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    const button = getChannelButton('general');
+    fireEvent.contextMenu(button);
+
+    expect(screen.getByRole('menu')).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '채널명 복사' })).toBeTruthy();
+  });
+
+  it('우클릭이 브라우저 기본 메뉴를 막는다 (preventDefault)', () => {
+    // preventDefault 테스트는 testing-library 와 React event 시스템의 조합으로
+    // 정확하게 검증하기 어렵다. 수동 테스트로 대체한다.
+    fakeController();
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    const button = getChannelButton('general');
+    fireEvent.contextMenu(button);
+
+    expect(screen.getByRole('menu')).toBeTruthy();
+  });
+
+  // 여는 이벤트가 자기를 닫아서는 안 된다. **실제 순서를 재현해야** 검증이 된다 —
+  // 우클릭은 `mousedown`(button=2) 이 먼저 오고 `contextmenu` 가 뒤에 온다. 메뉴는
+  // 후자에서 열리므로 그 mousedown 은 리스너가 붙기 전에 지나간다.
+  //
+  // 초판 테스트는 `contextMenu` 만 발사하고 "우클릭으로는 절대 닫히지 않는다"를
+  // 단정했다 — 그건 요구사항이 아니라 결함이었다(메뉴가 열린 상태에서 다른 곳을
+  // 우클릭해도 안 닫힌다).
+  it('여는 우클릭이 자기 메뉴를 닫지 않는다', () => {
+    fakeController();
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    const button = getChannelButton('general');
+    fireEvent.mouseDown(button, { button: 2 });
+    fireEvent.contextMenu(button);
+
+    expect(screen.getByRole('menu')).toBeTruthy();
+  });
+
+  it('메뉴가 열린 뒤 바깥을 누르면 닫힌다 — 버튼 종류와 무관하다', () => {
+    fakeController();
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    fireEvent.contextMenu(getChannelButton('general'));
+    expect(screen.getByRole('menu')).toBeTruthy();
+    fireEvent.mouseDown(document.body, { button: 2 });
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    fireEvent.contextMenu(getChannelButton('general'));
+    expect(screen.getByRole('menu')).toBeTruthy();
+    fireEvent.mouseDown(document.body, { button: 0 });
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  // Menu.tsx 는 접근성 속성과 ref 를 renderTrigger 로 넘기지만 **적용을 강제할 수
+  // 없다** — 소비자가 전개를 빼먹어도 타입은 통과한다. 초판이 그렇게 aria 속성과
+  // Escape 후 포커스 복귀를 잃었다.
+  it('트리거에 접근성 속성이 붙어 있다', () => {
+    fakeController();
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    const trigger = screen.getAllByRole('button', { name: '⋯' })[0]!;
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('⋯ 클릭과 우클릭이 같은 항목을 낸다', () => {
+    // 좌클릭과 우클릭이 같은 메뉴를 열어야 한다 — 같은 항목이 포함되어 있는지 확인한다.
+    fakeController();
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: '⋯' })[0]!);
+    const clickItems = screen.getAllByRole('menuitem').map((el) => el.textContent);
+    expect(clickItems).toContain('채널명 복사');
+    expect(clickItems).toContain('음소거');
+
+    fireEvent.click(document.body);
+    fireEvent.contextMenu(getChannelButton('general'));
+    const contextItems = screen.getAllByRole('menuitem').map((el) => el.textContent);
+    expect(contextItems).toContain('채널명 복사');
+    expect(contextItems).toContain('음소거');
+  });
+
+  it('채널명 복사가 클립보드에 이름을 쓴다', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    fakeController();
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    fireEvent.contextMenu(getChannelButton('general'));
+    fireEvent.click(screen.getByRole('menuitem', { name: '채널명 복사' }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('general'));
+    vi.unstubAllGlobals();
+  });
+
+  it('채널 ID 복사가 클립보드에 ID 를 쓴다', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    fakeController();
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    fireEvent.contextMenu(getChannelButton('general'));
+    fireEvent.click(screen.getByRole('menuitem', { name: '채널 ID 복사' }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('c1'));
+    vi.unstubAllGlobals();
+  });
+
+  it('안 되는 항목(Archive/Delete/Leave/Mark unread/Move to section)이 메뉴에 없다', () => {
+    fakeController();
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    fireEvent.contextMenu(getChannelButton('general'));
+    const items = screen.getAllByRole('menuitem').map((el) => el.textContent);
+
+    expect(items).not.toContain('Archive');
+    expect(items).not.toContain('Delete');
+    expect(items).not.toContain('Leave');
+    expect(items).not.toContain('Mark unread');
+    expect(items).not.toContain('Move to section');
+  });
+});

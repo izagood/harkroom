@@ -194,23 +194,53 @@ export function Sidebar({ onLogout, onOpenSettings }: {
     const pref = channelPrefs[ch.id];
     const isMuted = !!pref?.mutedAt;
     const isStarred = !!pref?.starredAt;
+
+    const copyChannelName = async () => {
+      try {
+        await navigator.clipboard.writeText(ch.name ?? '');
+      } catch (err) {
+        console.error('채널명 복사 실패:', err);
+      }
+    };
+    const copyChannelId = async () => {
+      try {
+        await navigator.clipboard.writeText(ch.id);
+      } catch (err) {
+        console.error('채널 ID 복사 실패:', err);
+      }
+    };
+
     const menuItems = [
       ...(me?.isAdmin ? [{ label: '채널 편집', onSelect: () => startEdit(ch) }] : []),
+      { label: '채널명 복사', onSelect: copyChannelName },
+      { label: '채널 ID 복사', onSelect: copyChannelId },
       { label: isMuted ? '음소거 해제' : '음소거', onSelect: () => void getController().toggleChannelMute(ch.id) },
       { label: isStarred ? '즐겨찾기 해제' : '즐겨찾기', onSelect: () => void getController().toggleChannelStar(ch.id) },
     ];
     return (
-      <div key={ch.id} className="relative flex items-center">
-        {ChannelButton}
+      <div key={ch.id} className="relative flex w-full items-center">
         <Menu
           renderTrigger={(props) => (
-            <button {...props} className="ml-auto rounded px-1 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300"
-              onClick={(e) => { e.stopPropagation(); props.onClick(); }}>
-              ⋯
-            </button>
+            <div
+              className="flex flex-1 items-center"
+              onContextMenu={(e) => { props.onContextMenu?.(e); }}
+            >
+              {ChannelButton}
+              {/* props 를 그대로 펼친다 — ref 와 aria-haspopup/aria-expanded 가 여기
+                  붙어야 한다. Menu.tsx 주석이 그 계약을 적어 뒀고, 빼먹어도 타입은
+                  통과한다(초판이 그렇게 접근성 속성과 포커스 복귀를 잃었다). */}
+              <button
+                {...props}
+                onClick={(e) => { e.stopPropagation(); props.onClick(); }}
+                className="ml-auto rounded px-1 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300"
+              >
+                ⋯
+              </button>
+            </div>
           )}
           items={menuItems}
           placement="bottom"
+          openOnContextMenu
         />
       </div>
     );
