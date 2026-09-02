@@ -154,7 +154,7 @@ describe('buildTurnCommand — codex', () => {
     expect(p.args).toContain('--ignore-user-config');
   });
 
-  it('resume 턴(argv) argv 에도 --ignore-user-config 가 들어간다', () => {
+  it('resume 턴 argv 에도 --ignore-user-config 가 들어간다', () => {
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
     expect(p.args).toContain('--ignore-user-config');
   });
