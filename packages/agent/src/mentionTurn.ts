@@ -212,14 +212,21 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     rec = { ...rec, sessionId: discovered };
   }
 
-  // 세션 상태(디스크의 하네스 세션 파일)는 이 프로세스가 이 결과를 "성공"으로 보든
-  // "실패"로 보든 이 시점에 이미 실재한다 — workspace 가 만들어졌고, claude 라면
-  // --session-id 로 세션이 생겼고, codex 라면 방금 rollout 파일이 쓰였다(바로 위에서
-  // 발견했다). 그래서 "실제로 일어난 일"을 아래 관측·통보보다 **먼저** 기록한다: 관측
-  // (readThread)이나 통보(post)가 여기서 던지면(예: murmur 로 가는 네트워크가 잠깐
-  // 끊김) — 이 저장이 그 뒤에 있었다면 실제로 돌아간 턴이 디스크에 기록되지 않고, 다음
-  // 재시도가 turnsRun===0 을 보고 첫 턴이라 새 uuid 를 발급하거나(claude 세션이 고아가
-  // 된다) 이미 먹인 메시지를 다시 먹인다(리뷰 지적).
+  // #81 수정: 실패한 턴에서는 lastFedSeq 와 turnsRun 을 전진하지 않는다.
+  // 전진하면 다음 턴이 델타가 비어있을 때 하네스를 안 돌리고 조용히 리턴한다 —
+  // MAX_ATTEMPTS 에 도달하지 못한 채 멘션이 끝난다.
+  // 대신 workspaceDir 과 발견된 sessionId(#81 권고) 는 저장한다 —前者는 이미
+  // 만들어졌고 後者是 프로세스 종료 후 디스크에 쓰여있으므로, 저장해도 재시도에
+  // 지장을 주지 않는다(같은 workspace 에서 새 세션을 시도하면 된다).
+  const failure = result.exitCode !== 0 || result.timedOut;
+  if (failure) {
+    await deps.store.put(key, { ...rec });
+    throw new Error(
+      `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
+    );
+  }
+
+  // 성공한 턴만 lastFedSeq 와 turnsRun 을 전진한다.
   await deps.store.put(key, { ...rec, lastFedSeq: fedSeq, turnsRun: rec.turnsRun + 1 });
 
   // 관측·통보는 best-effort 다 — 방금 저장한 상태를 좌우하지 않으므로 여기서 던진 예외로
@@ -227,7 +234,7 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
   // 안 남았지"의 원인이 사라지므로 러너 로그에는 남긴다.
   try {
     const after = await deps.murmur.readThread(channelId, anchor);
-    if (result.exitCode === 0 && !hasOwnPostSince(after, deps.me.id, turnStartSeq)) {
+    if (!hasOwnPostSince(after, deps.me.id, turnStartSeq)) {
       // 하네스가 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다
       // (쓸 말이 없었거나, 안전 거부(exit 0)이거나). 옛 reply.ts::extractReply 가 안전
       // 거부를 사실로 남기던 자리를 이 경로가 대신한다: 침묵을 침묵으로 남기지 않는다.
@@ -236,14 +243,6 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
   } catch (err) {
     console.error(
       `[mentionTurn] ${key}: 발화 확인/통보 실패(세션 상태는 이미 저장됐다) — ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-
-  if (result.exitCode !== 0 || result.timedOut) {
-    // tail 을 반드시 포함한다 — PTY 안에서는 stdout/stderr 가 한 스트림으로 섞여 나오므로
-    // policy.ts::isCredentialFailure 가 자격증명 실패를 판단할 근거가 이것뿐이다.
-    throw new Error(
-      `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
     );
   }
 }

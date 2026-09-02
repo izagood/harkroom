@@ -14,6 +14,9 @@ export const BODY_LIMIT = 8000;
 /** 답을 올리지 않고 프로세스가 끝났을 때 러너가 에이전트 계정으로 스레드에 남기는 문구(spec §4 발화 경로). */
 export const NO_REPLY_NOTICE = '(답 없이 턴을 끝냈습니다 — 프로세스는 정상 종료, 발화 없음)';
 
+/** MAX_ATTEMPTS 를 소진했을 때 채널에 남기는 통지문구(#82). */
+export const FAILURE_NOTICE = '(답변에 실패했습니다 — 운영자 확인이 필요합니다)';
+
 /**
  * 매 턴 `--append-system-prompt` 로 하네스에 주입되는 시스템 프롬프트. 프로세스가 턴마다
  * 새로 뜨고 이 함수도 매번 다시 불리므로, UI 로 지시문(instructions)을 바꾸면 재시작 없이
