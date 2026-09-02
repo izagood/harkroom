@@ -146,7 +146,13 @@ while (running) {
         // 멘션은 그대로 그 스레드의 루트를 쓴다.
         // 앵커를 여기서 한 번만 계산해 아래 실패 통지와 **같은 값**을 쓴다 — 같은 식을
         // 두 곳에 적으면 나중에 한쪽만 고치는 사고가 난다.
-        await runMentionTurn(deps, { channelId: mention.channelId, threadRootId: anchor });
+        // mentionId 는 앵커와 **다르다**: 스레드 안 멘션의 앵커는 스레드 루트이고,
+        // 리액션 대상은 방금 온 그 멘션이어야 한다.
+        await runMentionTurn(deps, {
+          channelId: mention.channelId,
+          threadRootId: anchor,
+          mentionId: mention.id,
+        });
         done.push(entry.id);
         attempts.delete(entry.id);
       } catch (err) {

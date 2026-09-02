@@ -26,6 +26,10 @@ export interface MentionTurnMurmur {
   readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
   /** 발화 후 메시지의 seq 를 반환한다. */
   post(channelId: string, body: string, threadRootId: string | null): Promise<number>;
+  /** 멘션이 왔음을 알리는 리액션(👀). 대상은 멘션 메시지 자체다. */
+  addReaction(channelId: string, messageId: string, emoji: string): Promise<void>;
+  /** 턴이 진행 중임을 알리는 리액션(💬). 턴 종료 후 반드시 제거한다. */
+  removeReaction(channelId: string, messageId: string, emoji: string): Promise<void>;
 }
 
 /** 한 턴을 실제로 돌리는 함수. 프로덕션은 pty.ts::runPtyTurn 을 그대로 넘기고, 테스트는
@@ -124,6 +128,15 @@ export interface MentionTarget {
    * main.ts 가 이미 계산해 둔 값을 그대로 받는다(브리프: "여기서 새로 계산하지 마라 —
    * 계산하는 순간 네 번째 진실 원천이 된다"). */
   threadRootId: string | null;
+  /**
+   * 멘션 메시지 자체의 id. **리액션 대상은 앵커가 아니라 이것이다** — 스레드 안의
+   * 멘션에서 앵커는 스레드 루트이고, 그것에 리액션하면 "듣기는 했나"에 답하는 대상이
+   * 방금 온 멘션이 아니라 남의 옛 메시지가 된다.
+   *
+   * 옵셔널이 아니다. 호출자는 항상 이 값을 알고 있고, 없을 때 앵커로 대체하면 위 오류가
+   * 조용히 들어온다.
+   */
+  mentionId: string;
 }
 
 /**
@@ -148,7 +161,19 @@ function warnOnDuplicatePosts(key: string, postCount: number): void {
 }
 
 export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarget): Promise<void> {
-  const { channelId, threadRootId: anchor } = target;
+  const { channelId, threadRootId: anchor, mentionId } = target;
+
+  // 👀 신호: 멘션을 집은 **즉시**. 함수 진입 직후에 있어야 하는 이유가 있다 — 아래의
+  // 워크스페이스 해석은 avcs workspace project 를 돌릴 수 있어 초 단위로 걸린다.
+  // 그 뒤에 붙이면 "듣기는 했나"에 답하지 못한다. 그것이 이 신호의 존재 이유다.
+  //
+  // best-effort 다. 리액션 실패로 턴을 멈추지 않되 조용히 삼키지도 않는다 — 삼키면
+  // "왜 신호가 없었지"의 원인이 사라진다.
+  void deps.murmur.addReaction(channelId, mentionId, '👀').catch((err: unknown) => {
+    console.error(
+      `[mentionTurn] ${channelId}/${mentionId}: 리액션(받았음) 실패(턴은 계속한다) — ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
 
   // 정의는 매 턴 새로 읽는다 — UI 로 지시문을 바꾸면 다음 턴부터 바로 반영된다(spec §3).
   const def = await deps.murmur.definition();
@@ -282,11 +307,32 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
 
   const ackTimer = setTimeout(postAck, ackThresholdMs);
 
+  // 💬 신호: 턴이 도는 중. 임계를 물려받지 않는다 — 위 지연 ack 의 임계는 "짧은 턴에
+  // 매번 메시지를 더하면 소음"이라는 근거였고 소음의 단위가 스레드 한 칸이었다.
+  // 리액션은 칸을 쓰지 않으므로 그 근거가 사라진다.
+  //
+  // **추가 프라미스를 붙잡아 둔다.** 턴이 아주 짧으면 아래 제거가 이 추가를 앞질러
+  // 서버에 닿아 💬 가 영구히 남는다 — 같은 파일의 ackInFlight 가 이미 이 함정을 기록한다.
+  const workingInFlight = deps.murmur.addReaction(channelId, mentionId, '💬').catch((err: unknown) => {
+    console.error(
+      `[mentionTurn] ${key}: 리액션(진행 중) 실패(턴은 계속한다) — ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
+
   let result: TurnResult;
   try {
     result = await deps.runTurn(plan, { cwd: rec.workspaceDir, timeoutMs: deps.turnTimeoutMs });
   } finally {
     clearTimeout(ackTimer);
+    // 💬 는 반드시 제거한다 — 타임아웃·예외로 끝나도 남으면 "영원히 작업 중"이라는
+    // 거짓 신호가 되고, 그것이 docs/design.md 4절 "없는 것을 있다고 표시하지 않는다" 다.
+    // 추가가 끝난 뒤에 제거한다(순서가 뒤집히면 💬 가 남는다).
+    await workingInFlight;
+    await deps.murmur.removeReaction(channelId, mentionId, '💬').catch((err: unknown) => {
+      console.error(
+        `[mentionTurn] ${key}: 리액션(진행 중) 제거 실패 — ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
   }
 
   // 타이머가 이미 터졌는데 발화가 아직 왕복 중이면 `ackSeq` 가 비어 있다 — 그 상태로 세면
