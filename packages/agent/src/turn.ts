@@ -88,7 +88,7 @@ interface HarnessPreset {
    * 발견한다). 네 번째 harness 가 이 성질을 가지면 이 필드만 채우면 된다 — 함수를 안 고친다.
    */
   allowsNullSessionOnFirstMention: boolean;
-  /** mentionPermission → 멘션 턴 전용 권한 플래그. 인터랙티브辖区内 안 쓴다. */
+  /** mentionPermission → 멘션 턴 전용 권한 플래그. 인터랙티브에선 아예 쓰지 않는다. */
   permission: Record<MentionPermission, string[]>;
   mcp(args: { mcpConfigPath: string; murmurUrl: string }): string[];
   model(model: string | null): string[];
@@ -100,12 +100,13 @@ interface HarnessPreset {
    */
   prompt(systemPrompt: string, promptCtx: string, mode: TurnMode): string[];
   /**
-   * 특정 harness 에서만 필요한 추가 인자. codex 만 필요한데, codex 가 avcs workspace
-   * (git 저장소가 아닌 격리 경로)에서 실행될 때 "신뢰되지 않은 디렉터리"로 거부하는 것을
-   * 막기 위해 `--skip-git-repo-check` 를 exec·resume 양쪽 모두에 붙인다. 다른 harness 에는
-   * 이 필드가 필요 없다 — CLAUDE_PRESET 은 빈 배열을 반환한다.
+   * 세션·권한·MCP 어디에도 안 붙는, 그 harness 라서 늘 필요한 인자. `mode` 를 받는 이유는
+   * codex 가 멘션 턴(`codex exec`)과 인터랙티브 턴(`codex resume`)에서 **서로 다른
+   * 서브커맨드**라 받는 플래그 집합이 다르기 때문이다 — 이 비대칭은 이 파일이 이미 한 번
+   * 실물로 깨져 본 자리다(`-s` 가 `codex exec` 에만 있고 `codex exec resume` 에는 없던 건,
+   * CODEX_PRESET.permission 주석 참고). mode 없이 항상 붙이면 그 사고를 반복한다.
    */
-  alwaysArgs(): string[];
+  alwaysArgs(mode: TurnMode): string[];
 }
 
 const CLAUDE_PRESET: HarnessPreset = {
@@ -136,7 +137,7 @@ const CLAUDE_PRESET: HarnessPreset = {
     if (mode === 'mention' && promptCtx) flags.push(promptCtx);
     return flags;
   },
-  // claude 에는 필요 없는 추가 인자 — codex 만 필요한 이유는 CODEX_PRESET 주석 참조.
+  // claude 는 멘션·인터랙티브 모두 같은 `claude` 커맨드라 모드별 차이가 없고, 붙일 것도 없다.
   alwaysArgs: () => [],
 };
 
@@ -210,12 +211,20 @@ const CODEX_PRESET: HarnessPreset = {
   // 턴 시작 자체가 크게 실패하므로(무시된 채 다른 값으로 도는 조용한 오동작이 아니다) 이
   // 미확인은 감수 가능하다고 판단했다.
   effort: (effort) => (effort ? ['-c', `model_reasoning_effort="${effort}"`] : []),
-  // avcs workspace 는 git 저장소가 아니다 — codex 가 현재 디렉터리가 "신뢰되지 않은 디렉터리"
+  // avcs workspace 는 git 저장소가 아니다 — codex 가 cwd 를 "신뢰되지 않은 디렉터리"
   // ("Not inside a trusted directory and --skip-git-repo-check was not specified.")로
-  // 거부하는 것을 막으려면 이 플래그가 필요하다. `avcs workspace project` 가 만드는 격리
-  // 경로가 바로 이 경우고, spec §3 에서 의도한 설계(avcs 기반 격리)다. exec·resume 양쪽
-  // 모두에 필요하므로 항상 포함한다.
-  alwaysArgs: () => ['--skip-git-repo-check'],
+  // 거부한다. `avcs workspace project` 가 만드는 격리 경로가 정확히 이 경우고, 그건 폴백이
+  // 아니라 spec §3 이 의도한 정상 경로다(기층이 git 이 아니라 avcs).
+  //
+  // **멘션 턴에만 붙인다.** 실물 확인(codex-cli 0.148.0):
+  //   codex exec --help        → --skip-git-repo-check 있음
+  //   codex exec resume --help → --skip-git-repo-check 있음
+  //   codex resume --help      → **없음**. 실제로 넘기면
+  //     `error: unexpected argument '--skip-git-repo-check' found` 로 파싱이 깨진다.
+  // 인터랙티브 턴은 `codex resume`(위 session() 참고)이라 이 플래그를 못 받는다 — 모드 구분
+  // 없이 항상 붙이면 인터랙티브 턴이 통째로 안 뜬다. 인터랙티브는 화면 앞에 사람이 있어
+  // codex 자신의 신뢰 프롬프트로 해결할 수 있으므로, 여기서 대신 처리하지 않는다.
+  alwaysArgs: (mode) => (mode === 'mention' ? ['--skip-git-repo-check'] : []),
   prompt: (systemPrompt, promptCtx, mode) => {
     // codex 에는 `--append-system-prompt` 에 해당하는 플래그가 없다(실측) — 지시문은
     // 프롬프트 앞에 접두하는 것으로만 전달한다. 인터랙티브 턴은 애초에 프롬프트 위치인자가
@@ -289,7 +298,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
 
   const args: string[] = [
     ...preset.session(opts.sessionId, opts.isFirstTurn, opts.mode),
-    ...preset.alwaysArgs(),
+    ...preset.alwaysArgs(opts.mode),
     ...(opts.mode === 'mention' ? preset.permission[opts.mentionPermission] : []),
     ...preset.mcp({ mcpConfigPath: opts.mcpConfigPath, murmurUrl: opts.murmurUrl }),
     ...preset.model(opts.model),
