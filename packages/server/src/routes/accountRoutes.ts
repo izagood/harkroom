@@ -175,6 +175,21 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     return self;
   });
 
+  app.get('/accounts/:id/pats', { preHandler: app.requireAdmin }, async (req) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const res = await pool.query(
+      `select label, created_at, revoked_at from pat where account_id = $1 order by created_at desc`,
+      [id],
+    );
+    return {
+      pats: res.rows.map((r) => ({
+        label: r.label,
+        createdAt: r.created_at,
+        revokedAt: r.revoked_at,
+      })),
+    };
+  });
+
   app.post('/accounts/:id/pats', { preHandler: app.requireAdmin }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({ label: z.string().min(1).max(64) }).parse(req.body);
