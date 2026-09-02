@@ -374,11 +374,11 @@ export function AgentsSettings() {
               // 서버가 해시만 보관하므로 지금 놓치면 다시 볼 수 없다.
               <div className="rounded border border-amber-300 bg-amber-50 p-3">
                 <div className="text-xs font-semibold text-amber-900">
-                  이 토큰은 지금만 보인다 — 러너를 띄울 때 쓴다
+                  이 토큰은 지금만 보인다 — 에이전트가 멘션에 답하려면 러너를 띄워야 한다
                 </div>
                 <code className="mt-1 block break-all rounded bg-white p-2 text-[11px]">{pat}</code>
                 <div className="mt-2 text-[11px] text-amber-900">
-                  MURMUR_PAT={pat.slice(0, 12)}… pnpm --filter @murmur/agent start
+                  MURMUR_PAT={pat} pnpm --filter @murmur/agent start
                 </div>
               </div>
             )}
