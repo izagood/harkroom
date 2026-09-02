@@ -99,3 +99,15 @@ export async function assertChannelVisible(pool: Pool, channelId: string, accoun
   );
   return Boolean(member.rowCount);
 }
+
+/**
+ * 이 채널의 이벤트를 누가 받아야 하는가. DM 은 멤버만, 그 외는 전원이다.
+ *
+ * 한 곳에 모으는 이유: 같은 계산이 REST 라우트(messageRoutes 의 지역 함수)와 MCP 플러그인
+ * (인라인)에 각각 있었다. 이벤트 수신자 판정이 두 표면에서 갈리면 한쪽만 고쳐서 DM 내용이
+ * 새거나(넓게 잡음) 실시간 갱신이 안 되는(좁게 잡음) 사고가 난다.
+ */
+export async function audienceFor(pool: Pool, channelId: string): Promise<'all' | string[]> {
+  const channel = await pool.query(`select kind from channel where id = $1`, [channelId]);
+  return channel.rows[0]?.kind === 'dm' ? await dmMemberIds(pool, channelId) : 'all';
+}

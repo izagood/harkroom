@@ -7,12 +7,30 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { AccountView, AgentView, InboxEntry, MessageRow } from '@murmur/shared';
 import { mcpUrl } from './turn.js';
+import { MURMUR_ERROR_SOURCE } from './policy.js';
 
 export interface Me { id: string; handle: string }
 
 export interface InboxBatch {
   entries: InboxEntry[];
   messages: MessageRow[];
+}
+
+/**
+ * 이 클라이언트가 던지는 에러에 출처와 HTTP status 를 붙인다.
+ *
+ * `policy.ts::isCredentialFailure` 는 `main.ts` 에서 턴 **전체**를 감싸는 catch 에 쓰이므로,
+ * 하네스 실패와 murmur 호출 실패가 같은 자리로 들어온다. 태그가 없으면 murmur PAT 만료를
+ * "claude CLI 로 로그인해라"로 안내하게 된다(#87).
+ *
+ * status 를 함께 싣는 이유: 태그만 있으면 판정이 다시 문구 매칭으로 내려간다. status 가
+ * 있으면 `isCredentialFailure` 가 401/403 만 보고 끝낸다.
+ */
+function murmurError(message: string, status?: number): Error {
+  const err = new Error(message) as Error & { source: string; status?: number };
+  err.source = MURMUR_ERROR_SOURCE;
+  if (status !== undefined) err.status = status;
+  return err;
 }
 
 export class MurmurAgentClient {
@@ -43,10 +61,14 @@ export class MurmurAgentClient {
     const res = await client.callTool({ name, arguments: args });
     const first = (res.content as { type: string; text?: string }[] | undefined)?.[0];
     if (!first || first.type !== 'text' || !first.text) {
-      throw new Error(`${name}: 텍스트 결과가 없다`);
+      throw murmurError(`${name}: 텍스트 결과가 없다`);
     }
     const parsed = JSON.parse(first.text) as T & { error?: { code: string; message: string } };
-    if (parsed.error) throw new Error(`${name}: ${parsed.error.code} ${parsed.error.message}`);
+    if (parsed.error) {
+      // MCP 도구 에러에는 HTTP status 가 없다 — code 로만 온다. 자격증명 문제라면
+      // 서버가 401/403 을 내는 fetch 경로(definition·accounts)에서 먼저 드러난다.
+      throw murmurError(`${name}: ${parsed.error.code} ${parsed.error.message}`);
+    }
     return parsed;
   }
 
@@ -59,7 +81,9 @@ export class MurmurAgentClient {
     const res = await fetch(`${this.baseUrl}/agent/config`, {
       headers: { authorization: `Bearer ${this.pat}` },
     });
-    if (!res.ok) throw new Error(`agent/config 실패: ${res.status}`);
+    if (!res.ok) {
+      throw murmurError(`agent/config 실패: ${res.status}`, res.status);
+    }
     return (await res.json()) as AgentView;
   }
 
@@ -82,7 +106,9 @@ export class MurmurAgentClient {
     const res = await fetch(`${this.baseUrl}/accounts`, {
       headers: { authorization: `Bearer ${this.pat}` },
     });
-    if (!res.ok) throw new Error(`accounts 실패: ${res.status}`);
+    if (!res.ok) {
+      throw murmurError(`accounts 실패: ${res.status}`, res.status);
+    }
     const body = (await res.json()) as { accounts: AccountView[] };
     return body.accounts;
   }
