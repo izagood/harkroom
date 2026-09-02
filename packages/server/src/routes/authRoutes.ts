@@ -137,4 +137,40 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
       client.release();
     }
   });
+
+  app.post('/auth/password', { preHandler: app.requireAccount }, async (req, reply) => {
+    const body = z.object({
+      currentPassword: z.string(),
+      newPassword: credentials.shape.password,
+    }).parse(req.body);
+
+    const account = req.account!;
+    if (account.kind !== 'human') {
+      return reply.code(400).send({ error: { code: 'invalid_account', message: 'password change is only for human accounts' } });
+    }
+
+    const res = await pool.query(
+      `select password_hash from account where id = $1`, [account.id]);
+    const row = res.rows[0];
+
+    if (!row?.password_hash || !(await argon2.verify(row.password_hash, body.currentPassword))) {
+      await recordAudit(pool, {
+        action: 'password.changed', actorId: account.id, actorHandle: account.handle,
+        detail: { success: false, reason: 'current_password_mismatch' },
+      }, req);
+      return reply.code(401).send({ error: { code: 'invalid_credentials', message: 'wrong current password' } });
+    }
+
+    const newHash = await argon2.hash(body.newPassword);
+    await pool.query(`update account set password_hash = $1 where id = $2`, [newHash, account.id]);
+
+    await pool.query(`delete from session where account_id = $1 and token_hash != $2`, [account.id, req.credentialHash]);
+
+    await recordAudit(pool, {
+      action: 'password.changed', actorId: account.id, actorHandle: account.handle,
+      detail: { otherSessionsInvalidated: true },
+    }, req);
+
+    return reply.code(204).send();
+  });
 }
