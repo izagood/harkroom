@@ -38,6 +38,28 @@ afterEach(() => {
 });
 
 describe('mention autocomplete', () => {
+  // 비활성화된 계정(#94)은 부를 수 없다 — 러너의 PAT 가 폐기됐으므로 불러도 답할 사람이 없다.
+  // 다만 디렉터리에서 **빼지는 않는다**: 같은 목록이 과거 메시지의 작성자 이름을 푸는 표라서
+  // 빼면 그 에이전트가 쓴 메시지가 작성자를 잃는다(shared 의 AccountView.disabled 주석).
+  // 그래서 후보에서 거르는 책임이 이쪽에 있고, 이 테스트가 그 경계를 지킨다.
+  it('비활성화된 계정은 멘션 후보에 나오지 않는다 (디렉터리에는 남아 있다)', () => {
+    useAppStore.getState().set({
+      accounts: {
+        u1: acc('u1', 'me'),
+        a1: acc('a1', 'fizz', 'agent'),
+        a2: { ...acc('a2', 'fizzbot', 'agent'), disabled: true },
+      },
+    });
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@fizz');
+
+    const options = screen.queryAllByRole('option').map((el) => el.textContent ?? '');
+    expect(options.some((t) => t.includes('fizz'))).toBe(true);
+    expect(options.some((t) => t.includes('fizzbot'))).toBe(false);
+    // 디렉터리 자체에는 남아 있어야 한다 — 이력 렌더링이 이 표를 본다.
+    expect(useAppStore.getState().accounts.a2).toBeDefined();
+  });
+
   it('offers matching agents once an @ is typed', () => {
     render(<Composer onSend={vi.fn()} />);
 

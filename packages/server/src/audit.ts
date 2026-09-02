@@ -10,7 +10,7 @@ import type { Pool } from 'pg';
  */
 export type AuditAction =
   | 'login.succeeded' | 'login.failed' | 'logout'
-  | 'account.created' | 'agent.created' | 'agent.updated' | 'invite.created'
+  | 'account.created' | 'agent.created' | 'agent.updated' | 'agent.disabled' | 'agent.enabled' | 'invite.created'
   | 'pat.issued' | 'pat.revoked'
   | 'channel.created' | 'channel.updated' | 'message.deleted';
 
