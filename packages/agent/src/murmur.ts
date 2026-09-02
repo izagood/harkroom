@@ -15,6 +15,12 @@ export interface InboxBatch {
   messages: MessageRow[];
 }
 
+/**
+ * Murmur 클라이언트 에러의 출처를 표시하는 태그.
+ * #87: policy.ts 가 murmur 클라이언트 실패와 하네스 실패를 구분할 수 있게 한다.
+ */
+export const MURMUR_ERROR_MARKER = 'murmur-client';
+
 export class MurmurAgentClient {
   private mcp: Client | null = null;
 
@@ -31,7 +37,7 @@ export class MurmurAgentClient {
     return client;
   }
 
-  /** 서버 재시작·절단 후 다음 호출이 새 세션을 열도록 버린다. */
+/** 서버 재시작·절단 후 다음 호출이 새 세션을 열도록 버린다. */
   reset(): void {
     const old = this.mcp;
     this.mcp = null;
@@ -43,10 +49,16 @@ export class MurmurAgentClient {
     const res = await client.callTool({ name, arguments: args });
     const first = (res.content as { type: string; text?: string }[] | undefined)?.[0];
     if (!first || first.type !== 'text' || !first.text) {
-      throw new Error(`${name}: 텍스트 결과가 없다`);
+      const err = new Error(`${name}: 텍스트 결과가 없다`);
+      (err as { source?: string }).source = MURMUR_ERROR_MARKER;
+      throw err;
     }
     const parsed = JSON.parse(first.text) as T & { error?: { code: string; message: string } };
-    if (parsed.error) throw new Error(`${name}: ${parsed.error.code} ${parsed.error.message}`);
+    if (parsed.error) {
+      const err = new Error(`${name}: ${parsed.error.code} ${parsed.error.message}`);
+      (err as { source?: string }).source = MURMUR_ERROR_MARKER;
+      throw err;
+    }
     return parsed;
   }
 
@@ -59,7 +71,11 @@ export class MurmurAgentClient {
     const res = await fetch(`${this.baseUrl}/agent/config`, {
       headers: { authorization: `Bearer ${this.pat}` },
     });
-    if (!res.ok) throw new Error(`agent/config 실패: ${res.status}`);
+    if (!res.ok) {
+      const err = new Error(`agent/config 실패: ${res.status}`);
+      (err as { source?: string }).source = MURMUR_ERROR_MARKER;
+      throw err;
+    }
     return (await res.json()) as AgentView;
   }
 
@@ -82,7 +98,11 @@ export class MurmurAgentClient {
     const res = await fetch(`${this.baseUrl}/accounts`, {
       headers: { authorization: `Bearer ${this.pat}` },
     });
-    if (!res.ok) throw new Error(`accounts 실패: ${res.status}`);
+    if (!res.ok) {
+      const err = new Error(`accounts 실패: ${res.status}`);
+      (err as { source?: string }).source = MURMUR_ERROR_MARKER;
+      throw err;
+    }
     const body = (await res.json()) as { accounts: AccountView[] };
     return body.accounts;
   }

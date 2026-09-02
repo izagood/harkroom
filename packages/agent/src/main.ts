@@ -139,9 +139,15 @@ while (running) {
         attempts.delete(entry.id);
       } catch (err) {
         // 자격증명 실패는 재시도로 낫지 않는다. 조용히 반복하면 "왜 답이 없지"의 원인이 묻힌다.
-        if (isCredentialFailure(err)) {
-          console.error('\nharness 의 자격증명을 해결할 수 없다. 러너를 멈춘다.');
-          console.error('  claude-code harness 는 claude CLI 의 로그인을 쓴다 — `claude` 를 한 번 실행해 로그인해라.');
+        const credType = isCredentialFailure(err);
+        if (credType !== 'other') {
+          console.error(`\n${credType === 'murmur-credential' ? 'Murmur' : 'Harness'} 자격증명을 해결할 수 없다. 러너를 멈춘다.`);
+          if (credType === 'murmur-credential') {
+            console.error('  Murmur API 의 PAT 가 만료·폐기됐는지 확인해라.');
+            console.error('  MURMUR_PAT 환경변수를 새 PAT 로 교체하고 러너를 재시작한다.');
+          } else {
+            console.error('  claude-code harness 는 claude CLI 의 로그인을 쓴다 — `claude` 를 한 번 실행해 로그인해라.');
+          }
           console.error(`  원문: ${err instanceof Error ? err.message : String(err)}`);
           process.exit(1);
         }
