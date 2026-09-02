@@ -34,6 +34,8 @@ export interface TurnPlan {
   command: string;
   args: string[];
   env: Record<string, string>;
+  /** stdin 리다이렉션용 파일 경로. null 이면 PTY stdin 을 그대로 쓴다(인터랙티브·resume). */
+  stdinFile: string | null;
 }
 
 export interface BuildTurnCommandOptions {
@@ -41,14 +43,14 @@ export interface BuildTurnCommandOptions {
   mode: TurnMode;
   /**
    * null 은 "아직 첫 턴을 못 돌렸다"다(sessions.ts 의 SessionRecord 와 같은 뜻). codex 의
-   * 첫 멘션 턴에서만 유효하다 — codex 는 세션 id 를 사전 할당할 수 없어 첫 턴 후에야 안다.
+   * 첫 멘션 턴에서만 유효한다 — codex 는 세션 id 를 사전 할당할 수 없어 첫 턴 후에야 안다.
    * claude 는 첫 턴도 러너가 미리 uuid 를 발급해 넘기므로 null 이 오면 호출자 결함이다.
    */
   sessionId: string | null;
   isFirstTurn: boolean;
   /** 매 턴 재주입되는 지시문(spec §3 — UI 수정이 세션 무효화 없이 다음 턴부터 반영되는 이유). */
   systemPrompt: string;
-  /** 멘션 모드 전용. 인터랙티브에선 쓰지 않는다 — 사람이 터미널에서 직접 입력한다. */
+  /** 멘션 모드 전용. 인터랙티브엔 쓰지 않는다 — 사람이 터미널에서 직접 입력한다. */
   promptCtx: string;
   model: string | null;
   effort: string | null;
@@ -57,6 +59,8 @@ export interface BuildTurnCommandOptions {
   pat: string;
   /** systemPrompt 를 파일로 전달할 때 그 경로. null 이면 argv 에 직접 전달(하위 호환). */
   systemPromptFile?: string | null;
+  /** stdin 리다이렉션용 파일 경로. null 이면 PTY stdin 을 그대로 쓴다(인터랙티브·resume). */
+  stdinFile?: string | null;
   /**
    * codex 의 `-c mcp_servers.murmur.url=...` 오버라이드에 필요한 실제 murmur URL. claude 는
    * 이 값을 쓰지 않는다 — `writeMcpConfigOnce` 가 이미 `mcpConfigPath` 파일 안에 실제 URL 을
@@ -140,8 +144,13 @@ const CLAUDE_PRESET: HarnessPreset = {
   // 지시문은 **파일로만** 넘긴다. 경로는 호출자가 미리 `writeSystemPromptFile()` 로 써 두고
   // 넘긴다(0600). argv 폴백을 남기지 않는 이유는 `murmurUrl` 과 같다 — 조용히 넘어가는 경로를
   // 두면 그 경로가 결국 쓰이고, 여기서는 그게 곧 대화 내용이 `ps` 로 새는 것이다(#92).
-  prompt: (systemPrompt, promptCtx, mode, systemPromptFile) => {
-    const flags: string[] = [];
+  //
+  // **대화 본문(promptCtx)도 stdin 파일로 이동한다(#117).** argv 에 있으면 같은 머신의 다른
+  // 로컬 사용자가 `ps -ef` 로 스레드 내용을 그대로 읽는다. 이 수정은 #92 에서 이미 확인한
+  // PTY + stdin 리다이렉션이 실제로 동작한다는 실측 결과에 기반한다(claude/codex 모두 exec
+  // 모드에서 stdin 에 TTY 를 요구하지 않음). systemPromptFile 과 stdin 파일은 별도로, 각각
+  // writeSystemPromptFile() 과 writePromptFile() 로 호출자가 써서 넘긴다.
+  prompt: (systemPrompt, _promptCtx, _mode, systemPromptFile) => {
     if (systemPrompt && !systemPromptFile) {
       throw new Error(
         'buildTurnCommand: claude 는 지시문을 파일로만 받는다 — systemPromptFile 이 비어 있다 ' +
@@ -149,9 +158,9 @@ const CLAUDE_PRESET: HarnessPreset = {
           '`ps` 로 다른 로컬 사용자에게 노출된다(#92, spec §7).',
       );
     }
+    const flags: string[] = [];
     if (systemPromptFile) flags.push('--append-system-prompt-file', systemPromptFile);
-    // 빈 문자열을 그대로 위치인자로 넘기면 일부 CLI 가 그걸 진짜 값으로 읽는다 — 있을 때만 싣는다.
-    if (mode === 'mention' && promptCtx) flags.push(promptCtx);
+    // promptCtx 는 argv 로 전달하지 않는다 — stdin 파일로 가므로(위 설명).
     return flags;
   },
   // claude 는 멘션·인터랙티브 모두 같은 `claude` 커맨드라 모드별 차이가 없고, 붙일 것도 없다.
@@ -255,16 +264,16 @@ const CODEX_PRESET: HarnessPreset = {
   // 인터랙티브 턴(codex resume) 은 이 플래그를 못 받으므로 이 한계가 그대로 노출된다 —
   // 사람이 화면 앞에 있는 턴이라 성격이 다르다.
   alwaysArgs: (mode) => (mode === 'mention' ? ['--skip-git-repo-check', '--ignore-user-config'] : []),
-  // codex 는 아직 파일에서 지시문을 읽는 수단이 없다(PTY 에서 stdin 파이프를 쓸 수 없음).
-  // systemPromptFile 은 받지만 무시하고 기존 위치인자로 전달한다.
-  prompt: (systemPrompt, promptCtx, mode, _systemPromptFile) => {
-    // codex 에는 `--append-system-prompt` 에 해당하는 플래그가 없다(실측) — 지시문은
-    // 프롬프트 앞에 접두하는 것으로만 전달한다. 인터랙티브 턴은 애초에 프롬프트 위치인자가
-    // 없다(사람이 직접 입력) — 그래서 codex 인터랙티브 턴은 지시문 재주입 수단이 없다는
-    // 것이 이 하네스의 실측 한계다(§3의 "매 턴 재주입" 보장이 codex 인터랙티브에는 못 미친다).
+  // codex 도 stdin 파일을 통해 프롬프트를 받는다(#117). 원래는 PTY stdin 리다이렉션이
+  // 불가능하다고 생각했으나 실측 결과 두 하네스 모두 exec/print 모드에서 stdin 에 TTY 를
+  // 요구하지 않음이 확인됐다. 그래서 argv 로 나가던 지시문+본문을 stdin 파일로 옮기고,
+  // systemPromptFile 은 무시한다(codex 가 읽는 수단이 없음 — 이것은 #92 수정 당시부터
+  // 같았고, 이 수정에서 바뀐 것은 argv 에 있는 프롬프트를 stdin 으로 옮긴 것뿐이다).
+  prompt: (_systemPrompt, _promptCtx, mode, _systemPromptFile) => {
+    // 인터랙티브 턴은 사람이 직접 입력하므로 프롬프트 위치인자가 없다.
     if (mode !== 'mention') return [];
-    const combined = [systemPrompt, promptCtx].filter((s) => s.length > 0).join('\n\n');
-    return combined ? [combined] : [];
+    // 프롬프트 내용은 stdin 파일로 가므로 argv 에는 nothing.
+    return [];
   },
 };
 
@@ -360,7 +369,8 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
 
   // PAT 는 절대 argv 에 올리지 않는다 — 자식 프로세스 env 로만 준다. `ps` 로 argv 는 다른
   // 사용자에게도 보이지만 env 는 보이지 않는다(spec §7, task-1 실측 확인).
-  return { command: preset.command, args, env: childEnv(opts.pat) };
+  // stdinFile 도 argv 에서 빼는 이유와 같다(#117). null 이면 PTY stdin 을 그대로 쓴다.
+  return { command: preset.command, args, env: childEnv(opts.pat), stdinFile: opts.stdinFile ?? null };
 }
 
 /**
@@ -437,6 +447,19 @@ export async function writeSystemPromptFile(dir: string, systemPrompt: string): 
   // 두 번째 턴부터는(파일이 이미 있다) 아무 일도 하지 않는다 — 그때는 chmod 가 지킨다.
   // 반대로 chmod 만 하면 첫 생성과 chmod 사이에 umask 퍼미션으로 존재하는 창이 생긴다.
   await writeFile(filePath, systemPrompt, { encoding: 'utf8', mode: 0o600 });
+  await chmod(filePath, 0o600);
+  return filePath;
+}
+
+/**
+ * stdin 리다이렉션용 프롬프트 파일을 쓴다. PTY 에서 stdin 파일 리다이렉션(`< 파일`)을
+ * 할 때 그 파일 내용을 다른 로컬 사용자가 `ps` 로 보면 안 되므로(#92), argv 와 같은
+ * 방식으로 0600 권한으로 보호한다. 파일 경로는 호출자가 이미 mkdir 로 디렉터리를 만들었다고
+ * 가정한다.
+ */
+export async function writePromptFile(dir: string, prompt: string): Promise<string> {
+  const filePath = join(dir, 'stdin-prompt.txt');
+  await writeFile(filePath, prompt, { encoding: 'utf8', mode: 0o600 });
   await chmod(filePath, 0o600);
   return filePath;
 }

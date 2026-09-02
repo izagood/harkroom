@@ -1,4 +1,5 @@
 import { writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 // PTY 계약 테스트용 가짜 하네스. 시나리오는 env FAKE_MODE 로 고른다 —
 // 인자 파싱을 흉내내지 않는다(그건 turn.ts 의 몫이고 여기선 프로세스 행동만 필요하다).
 const mode = process.env.FAKE_MODE ?? 'ok';
@@ -13,6 +14,13 @@ if (mode === 'silent')  { process.exit(7); }
 // 어긋날 수 있다는 것을 재현하는 데 쓴다(리뷰 지적: cap=8 에 이 문자열을 넣으면 "라마" 앞에
 // 잘린 조각이 남는다).
 if (mode === 'korean')  { process.stdout.write('가나다라마'); process.exit(0); }
+// #117 회귀 테스트: stdin 리다이렉션이 실제로 프롬프트를 전달하는지 확인한다.
+// fake-harness 가 stdin 을 읽어 그 내용을 출력하고 종료한다 — PTY tail 에서 확인한다.
+if (mode === 'stdin-echo') {
+  const data = readFileSync(0, 'utf8');
+  console.log(`stdin-received: ${data.trim()}`);
+  process.exit(0);
+}
 // tail 의 고정 2KB 캡을 실제로 넘기면서, 그 절단 지점이 항상 문자 경계와 어긋나게 만든다 —
 // 한글은 3바이트, 2048 은 3의 배수가 아니라서(2048 % 3 === 2) 총 바이트 수가 3의 배수인 한
 // "끝에서 2048바이트" 지점은 언제나 글자 중간이다.

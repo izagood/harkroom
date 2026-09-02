@@ -14,7 +14,7 @@ import type { AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
 import { buildSystemPrompt, buildTurnPrompt, countOwnPostsSince, hasOwnPostSince, ACK_NOTICE, NO_REPLY_NOTICE } from './prompt.js';
 import { SessionStore } from './sessions.js';
-import { buildTurnCommand, preassignsSessionId, writeSystemPromptFile, type TurnPlan } from './turn.js';
+import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
 import type { TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
 import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
@@ -258,6 +258,19 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
   // 턴은 순차적으로 돈다(main.ts 의 for 루프가 await 한다) — 그래서 파일 하나로 충분하다.
   const systemPromptFile = await writeSystemPromptFile(deps.stateDir, systemPrompt);
 
+  // #117: 대화 본문도 stdin 파일로 이동한다. argv 에 있으면 같은 머신의 다른 로컬 사용자가
+  // `ps -ef` 로 스레드 내용을 그대로 읽는다. codex 는 지시문까지 합쳐서 stdin 으로 가고,
+  // claude 는 지시문이 이미 systemPromptFile 로 별도로 가므로 여기선 promptCtx 만 stdin 으로 간다.
+  let stdinFile: string | null = null;
+  if (def.harness === 'codex') {
+    // codex: 지시문 + 본문 합쳐서 stdin 으로
+    const combined = [systemPrompt, prompt].filter((s) => s.length > 0).join('\n\n');
+    stdinFile = await writePromptFile(deps.stateDir, combined);
+  } else {
+    // claude: 본문만 stdin 으로 (지시문은 --append-system-prompt-file 로 별도 파일)
+    stdinFile = await writePromptFile(deps.stateDir, prompt);
+  }
+
   const plan = buildTurnCommand({
     harness: def.harness,
     mode: 'mention',
@@ -266,6 +279,7 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     systemPrompt,
     systemPromptFile,
     promptCtx: prompt,
+    stdinFile,
     model: def.model,
     effort: def.effort,
     mentionPermission: def.mentionPermission,
