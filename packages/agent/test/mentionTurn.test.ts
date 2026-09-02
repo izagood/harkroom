@@ -45,6 +45,8 @@ class FakeMurmur implements MentionTurnMurmur {
   posts: { channelId: string; body: string; threadRootId: string | null }[] = [];
   private seq = 0;
   def: AgentView;
+  /** #80 테스트를 위해 readThread 호출 기록 */
+  readThreadCalls: { channelId: string; threadRootId: string | null; since?: number }[] = [];
 
   constructor(def: AgentView) {
     this.def = def;
@@ -54,8 +56,16 @@ class FakeMurmur implements MentionTurnMurmur {
     return Promise.resolve(this.def);
   }
 
-  readThread(channelId: string, threadRootId: string | null): Promise<MessageRow[]> {
-    return Promise.resolve(this.messages.filter((m) => m.channelId === channelId && m.threadRootId === threadRootId));
+  readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]> {
+    // #80 테스트를 위해 호출 기록
+    this.readThreadCalls.push({ channelId, threadRootId, since });
+    // #80: since 가 있으면 그 값보다 큰 seq 의 메시지만 필터한다.
+    // 이 동작이 서버의 listMessages 와 같아야 테스트가 프로덕션을 정확히 흉내낸다.
+    const filtered = this.messages.filter((m) => m.channelId === channelId && m.threadRootId === threadRootId);
+    if (since === undefined || since === 0) {
+      return Promise.resolve(filtered); // since 미지정 또는 0: 전체 반환 (서버와 동일)
+    }
+    return Promise.resolve(filtered.filter((m) => m.seq > since));
   }
 
   post(channelId: string, body: string, threadRootId: string | null): Promise<void> {
@@ -70,6 +80,11 @@ class FakeMurmur implements MentionTurnMurmur {
     const m = msg(this.seq, authorId, body, threadRootId);
     this.messages.push(m);
     return m;
+  }
+
+  /** 테스트용: 호출 기록 초기화 */
+  clearCalls(): void {
+    this.readThreadCalls = [];
   }
 }
 
@@ -532,7 +547,7 @@ describe('runMentionTurn', () => {
       expect(info.isDirectory()).toBe(true);
     });
 
-    // 대조: workingDir 이 명시됐는데 avcs repo 가 아니면 지금처럼 그 디렉터리를 그대로
+    // 대조: workingDir 이 명시됐지만 avcs repo 가 아니면 지금처럼 그 디렉터리를 그대로
     // 쓴다(폴백 유지) — 사용자가 그 파일들에서 일하라고 지정한 것이라 빈 디렉터리로
     // 갈아치우면 설정이 장식이 된다.
     it('workingDir 이 명시됐지만 avcs repo 가 아니면 지정된 디렉터리를 그대로 쓴다', async () => {
@@ -547,6 +562,65 @@ describe('runMentionTurn', () => {
 
       const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null));
       expect(rec!.workspaceDir).toBe('/some/explicit/repo');
+    });
+  });
+
+  // #80 테스트: since 커서 wiring
+  describe('readThread 에 since 가 실려 간다 (#80 수정)', () => {
+    it('첫 턴에서 since=0 으로 읽으면 전체 맥락이 반환된다(회귀 방지)', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '메시지1');
+      fake.seedFrom('human-1', '메시지2');
+      fake.seedFrom('human-1', '메시지3');
+      const { deps } = await makeDeps(fake);
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      // 첫 턴: since=0 이면 서버가 최신 N 개를 반환하므로 전체가 보인다
+      // ( 턴 시작 읽기 + 발화 확인 읽기 )
+      expect(fake.readThreadCalls).toHaveLength(2);
+      expect(fake.readThreadCalls[0]!.since).toBe(0); // 첫 번째: 턴 시작 since=0
+    });
+
+    it('재시도 턴에서 lastFedSeq 로 since 를 건다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '첫 질문');
+      const { deps, runTurn } = await makeDeps(fake);
+      runTurn.script = async () => {
+        await fake.post(CHANNEL, '첫 답', null);
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+
+      // 첫 턴: 성공
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      fake.clearCalls();
+
+      // 두 번째 턴: lastFedSeq 가 0이 아니므로 since 로 그 값을 건다
+      fake.seedFrom('human-1', '두 번째 질문');
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      expect(fake.readThreadCalls).toHaveLength(2); // 턴 시작 + 발화 확인
+      // 턴 시작 읽기에서 lastFedSeq 가 since 로 전달된다
+      expect(fake.readThreadCalls[0]!.since).toBeGreaterThan(0);
+    });
+
+    it('발화 확인 읽기에서 turnStartSeq 로 since 를 건다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 안녕');
+      const { deps, runTurn } = await makeDeps(fake);
+      runTurn.script = async () => {
+        await fake.post(CHANNEL, '답변', null);
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+      fake.clearCalls();
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      // 발화 확인(readThread 2번째 호출)에서 turnStartSeq 가 since 로 전달된다
+      expect(fake.readThreadCalls).toHaveLength(2); // 턴 시작 + 발화 확인
+      const secondCall = fake.readThreadCalls[1]!;
+      expect(secondCall.since).toBeDefined();
+      expect(secondCall.since).toBeGreaterThan(0);
     });
   });
 });
