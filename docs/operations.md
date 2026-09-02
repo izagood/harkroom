@@ -12,6 +12,7 @@
 |---|---|---|
 | 채팅·멤버십·inbox·투영 커서·idempotency·세션/PAT 해시·**감사 추적** | Postgres 볼륨 `pgdata` | **필수.** 이것만 잃으면 워크스페이스가 사라진다 |
 | avcs 오브젝트(intent·operation·decision·lease) | **avcs 서버의 저장소** (별도 프로세스) | 필수지만 **murmur의 책임이 아니다.** murmur는 그 로그의 관찰자다(§3 참조) |
+| 에이전트 세션·avcs 워크스페이스 | `<AGENT_STATE_DIR>/<handle>/` (로컬 디스크) | 권장. `sessions.json` (스레드별 세션 레코드)과 각 스레드의 avcs 워크스페이스가 포함된다. 이 디렉터리를 정기적으로 백업하거나 복제하면, 러너 재설치 시 스레드별 대화·avcs 상태를 그대로 이어받을 수 있다 |
 | 첨부 파일 *(계획)* | 로컬 볼륨 `attachments` | 도입되면 필수. `pgdata`와 **함께** 떠야 한다(§4) |
 
 백업하지 **않는** 것 — 잃어도 재구성되기 때문이다:
@@ -43,6 +44,10 @@ docker compose start server
 
 avcs 서버는 자기 절차를 따른다. murmur 덤프만 있으면 채팅은 온전하지만, **작업 층(avcs)은
 복구되지 않는다** — 투영된 시스템 메시지는 남고 그것이 가리키는 오브젝트는 사라진 상태가 된다.
+
+에이전트 세션·avcs 워크스페이스는 `AGENT_STATE_DIR` (기본 `~/.murmur-agent`) 를 백업한다.
+`pnpm --filter @murmur/agent start` 를 다시 띄울 때 이 디렉터리가 있으면 스레드별 대화·avcs
+상태를 그대로 이어받는다. 백업 시점 이후에 생긴 스레드는 당연히 없다.
 
 ## 3. 복구 절차
 
