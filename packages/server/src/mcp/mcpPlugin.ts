@@ -8,6 +8,7 @@ import { emitEvent, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, dmMemberIds, listChannels } from '../services/channels.js';
 import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
+import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { GUIDE } from './guide.js';
 
 function jsonResult(value: unknown) {
@@ -73,6 +74,47 @@ function buildMcpServer(pool: Pool, account: AccountView, lifecycle: Lifecycle):
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
     return jsonResult({ message });
+  });
+
+  server.registerTool('message.react', {
+    description: '메시지에 리액션 추가',
+    inputSchema: {
+      channelId: z.string().uuid(),
+      messageId: z.string().uuid(),
+      emoji: z.string().min(1).max(32),
+    },
+  }, async ({ channelId, messageId, emoji }) => {
+    if (!isEmoji(emoji)) {
+      return jsonResult({ error: { code: 'bad_request', message: 'a reaction must be a single emoji' } });
+    }
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    const result = await addReaction(pool, { channelId, messageId, accountId: account.id, emoji });
+    if (result === 'not_found') {
+      return jsonResult({ error: { code: 'not_found', message: 'no such message in this channel' } });
+    }
+    if (result === 'too_many') {
+      return jsonResult({
+        error: { code: 'too_many_reactions', message: `at most ${MAX_REACTIONS_PER_ACTOR} reactions per message` },
+      });
+    }
+    return jsonResult({ emoji });
+  });
+
+  server.registerTool('message.unreact', {
+    description: '메시지에서 리액션 제거',
+    inputSchema: {
+      channelId: z.string().uuid(),
+      messageId: z.string().uuid(),
+      emoji: z.string().min(1).max(32),
+    },
+  }, async ({ channelId, messageId, emoji }) => {
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    await removeReaction(pool, { messageId, accountId: account.id, emoji });
+    return jsonResult({ ok: true });
   });
 
   server.registerTool('inbox.poll', {
