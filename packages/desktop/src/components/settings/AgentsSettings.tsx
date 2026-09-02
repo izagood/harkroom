@@ -20,11 +20,12 @@ interface Draft {
   effort: string;
   workingDir: string;
   mentionPermission: MentionPermission;
+  ownerAccountId: string | null;
 }
 
 const emptyDraft = (): Draft => ({
   handle: '', instructions: '', harness: 'claude-code', model: '', effort: '', workingDir: '',
-  mentionPermission: 'auto',
+  mentionPermission: 'auto', ownerAccountId: null,
 });
 
 const draftOf = (a: AgentView): Draft => ({
@@ -35,6 +36,7 @@ const draftOf = (a: AgentView): Draft => ({
   effort: a.effort ?? '',
   workingDir: a.workingDir ?? '',
   mentionPermission: a.mentionPermission,
+  ownerAccountId: a.ownerAccountId,
 });
 
 export function AgentsSettings() {
@@ -53,6 +55,8 @@ export function AgentsSettings() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
+  const accounts = useAppStore((s) => s.accounts);
+  const humanAccounts = Object.values(accounts).filter((a) => a.kind === 'human');
 
   const reload = () => {
     void getController().listAgents().then(setAgents).catch(() => setError('에이전트 목록을 받지 못했다'));
@@ -93,6 +97,7 @@ export function AgentsSettings() {
     effort: customized && draft.effort ? draft.effort : null,
     workingDir: draft.workingDir || null,
     mentionPermission: draft.mentionPermission,
+    ownerAccountId: draft.ownerAccountId,
   });
 
   const submit = async () => {
@@ -165,16 +170,25 @@ export function AgentsSettings() {
           </button>
           <div className="text-[11px] uppercase tracking-wide text-zinc-500">Agents</div>
           {agents.length === 0 && <div className="px-1 py-2 text-zinc-400">아직 없다</div>}
-          {agents.map((a) => (
-            <button
-              key={a.id}
-              className={`w-full rounded px-2 py-1.5 text-left ${selected?.id === a.id ? 'bg-zinc-100' : 'hover:bg-zinc-50'}`}
-              onClick={() => pick(a)}
-            >
-              {a.handle}
-              <span className="ml-1 text-[10px] text-zinc-400">{a.harness}</span>
-            </button>
-          ))}
+{agents.map((a) => {
+              const owner = a.ownerAccountId ? accounts[a.ownerAccountId]?.handle : null;
+              return (
+                <button
+                  key={a.id}
+                  className={`w-full rounded px-2 py-1.5 text-left ${selected?.id === a.id ? 'bg-zinc-100' : 'hover:bg-zinc-50'}`}
+                  onClick={() => pick(a)}
+                >
+                  {a.handle}
+                  <span className="ml-1 text-[10px] text-zinc-400">{a.harness}</span>
+                  {/* 세 경우다: 소유자가 없다 / 있고 디렉터리에 있다 / 있는데 디렉터리에
+                      없다. 마지막을 빈 칸으로 그리면 "없다"와 구분되지 않는다 —
+                      docs/design.md 4절이 금지하는 형태의 거울상이다. */}
+                  <span className={`ml-1 text-[10px] ${owner ? 'text-indigo-600' : 'text-zinc-400'}`}>
+                    {a.ownerAccountId === null ? '없음' : (owner ?? '알 수 없는 계정')}
+                  </span>
+                </button>
+              );
+            })}
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
@@ -298,6 +312,36 @@ export function AgentsSettings() {
                 onChange={(e) => setDraft({ ...draft, workingDir: e.target.value })}
               />
             </label>
+
+            {selected && isAdmin && (
+              <label className={label}>
+                소유자
+                <select
+                  className={field}
+                  aria-label="Owner"
+                  value={draft.ownerAccountId ?? ''}
+                  onChange={(e) => setDraft({ ...draft, ownerAccountId: e.target.value || null })}
+                >
+                  <option value="">없음 — attach 불가</option>
+                  {humanAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>{a.handle}</option>
+                  ))}
+                </select>
+                <span className="text-[11px] text-zinc-500">
+                  소유자만 이 에이전트에 attach 할 수 있다.
+                </span>
+              </label>
+            )}
+
+            {!isAdmin && selected && (
+              <div className="rounded border border-zinc-100 bg-zinc-50 p-3">
+                <div className="text-xs text-zinc-500">
+                  {draft.ownerAccountId
+                    ? `소유자: @${accounts[draft.ownerAccountId]?.handle ?? '?'}`
+                    : '소유자: 없음 — attach 불가'}
+                </div>
+              </div>
+            )}
 
             {selected && isAdmin && (
               <div className="rounded border border-zinc-200 p-3">
