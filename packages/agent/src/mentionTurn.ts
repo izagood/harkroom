@@ -94,10 +94,31 @@ async function resolveWorkspaceDir(
   });
 }
 
+/**
+ * 이 멘션에 답할 자리(앵커). 스레드 안의 멘션은 그 스레드의 루트를, **채널 최상위 멘션은
+ * 그 멘션 메시지 자신**을 쓴다(#98).
+ *
+ * 왜 최상위를 멘션 자신으로 바꾸는가: `threadRootId` 가 null 이면 세션 키가
+ * `${channelId}/_root` 로 뭉쳐(sessions.ts::threadKey) 한 채널의 **모든** 최상위 멘션이
+ * 하네스 세션 하나를 공유했다 — 서로 무관한 요청의 맥락이 섞인다. 멘션 자신을 루트로
+ * 삼으면 멘션마다 키가 갈리고, 덤으로 긴 답이 채널 본문이 아니라 스레드로 들어간다.
+ *
+ * **왜 `main.ts` 안의 식이 아니라 함수인가**: `main.ts` 는 top-level 스크립트라(import 하면
+ * 러너가 돈다) 테스트가 그 안의 식을 겨눌 수 없다. 실제로 초판은 이 계산을 main.ts 에
+ * 인라인으로 뒀고, 그 상태에서 규칙을 되돌려도 테스트 146개가 전부 초록이었다 — 이 태스크의
+ * 본론이 무보호였다. 규칙을 여기 두면 단위 테스트가 규칙 자체를 붙잡는다.
+ *
+ * 호출자는 턴과 실패 통지(main.ts 의 `FAILURE_NOTICE`)에 **같은 값**을 써야 한다 — 답은
+ * 스레드로 가는데 통지만 채널 최상위에 남으면 부른 사람이 실패를 놓친다.
+ */
+export function mentionAnchor(mention: { id: string; threadRootId: string | null }): string {
+  return mention.threadRootId ?? mention.id;
+}
+
 export interface MentionTarget {
   channelId: string;
-  /** 멘션이 있던 자리 — 스레드 안이면 그 루트, 채널 최상위면 null. main.ts 가 멘션
-   * 메시지에서 이미 계산해 둔 값을 그대로 받는다(브리프: "여기서 새로 계산하지 마라 —
+  /** 앵커 — 스레드 안이면 그 루트, 채널 최상위면 그 멘션 메시지 id 다(#98).
+   * main.ts 가 이미 계산해 둔 값을 그대로 받는다(브리프: "여기서 새로 계산하지 마라 —
    * 계산하는 순간 네 번째 진실 원천이 된다"). */
   threadRootId: string | null;
 }
