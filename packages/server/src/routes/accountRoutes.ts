@@ -27,6 +27,50 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     ownerAccountId: z.string().uuid().nullable().optional(),
   };
 
+  /**
+   * 감사에 남길 에이전트 설정 필드와, 값을 그대로 남겨도 되는지의 표.
+   * `if` 사슬로 두면 `configFields` 에 필드가 늘 때 이쪽에 더하는 것을 잊는다 — 표로 둬야
+   * 두 목록을 나란히 놓고 볼 수 있다.
+   *
+   * - `'value'`: 값 자체가 비밀이 아니므로 before/after 를 그대로 남긴다.
+   * - `'changed'`: 자유 텍스트라 원문을 감사 로그에 남기지 않는다. 바뀌었다는 사실만 남긴다.
+   *
+   * `model`·`effort`·`displayName` 은 빠져 있다 — 권한이나 도달 범위를 바꾸지 않는다.
+   * 나머지가 왜 권한 값인가:
+   * - `mentionPermission`: `readonly` vs `auto`(bypassPermissions). 무인 에이전트가 파일을
+   *   쓰고 명령을 실행할 수 있는지를 가른다(agent/turn.ts 의 `preset.permission[...]`).
+   * - `workingDir`: 그 권한이 **어느 코드베이스**에 적용되는지를 가른다. `auto` 와 겹치면
+   *   대상을 바꾸는 것만으로 다른 저장소를 쓰게 만들 수 있다(agent/mentionTurn.ts 의
+   *   `resolveWorkspaceDir` 주석이 같은 위험을 설명한다).
+   * - `ownerAccountId`: 누가 이 에이전트의 진행 중 턴에 터미널로 attach 할 수 있는지의 게이트.
+   * - `harness`: 어느 CLI 바이너리가 실제로 실행되는지.
+   * - `instructions`: 에이전트가 무엇을 하도록 지시받는지. 원문은 남기지 않는다.
+   */
+  const AUDITED_FIELDS = {
+    mentionPermission: 'value', workingDir: 'value', ownerAccountId: 'value',
+    harness: 'value', instructions: 'changed',
+  } as const;
+
+  type AuditedField = keyof typeof AUDITED_FIELDS;
+  type AgentSnapshot = Awaited<ReturnType<typeof getAgent>>;
+
+  /**
+   * `before` 가 null 이어도(=수정 직전에 사라진 경합) 감사 기록을 통째로 건너뛰지 않는다 —
+   * 기록이 없는 것보다 before 를 모른 채 남기는 편이 낫다.
+   */
+  function diffAudited(before: AgentSnapshot, after: NonNullable<AgentSnapshot>) {
+    const changes: Record<string, { before?: unknown; after?: unknown; changed?: true }> = {};
+    for (const key of Object.keys(AUDITED_FIELDS) as AuditedField[]) {
+      const prev = before ? before[key] : undefined;
+      const next = after[key];
+      if (before && prev === next) continue;
+      changes[key] = AUDITED_FIELDS[key] === 'changed'
+        ? { changed: true }
+        : { before: prev, after: next };
+    }
+    return changes;
+  }
+
   app.get('/accounts/agents', { preHandler: app.requireAdmin }, async () => ({
     agents: await listAgents(pool),
   }));
@@ -51,9 +95,19 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
       displayName: z.string().min(1).max(64).optional(),
       ...configFields,
     }).parse(req.body);
+    const before = await getAgent(pool, id);
     const updated = await updateAgent(pool, id, patch);
     if (!updated) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+    }
+    // 실제로 값이 바뀐 것만 남긴다 — 같은 값으로 다시 저장한 PATCH 까지 기록하면 감사 로그가
+    // "무엇이 바뀌었나"를 답하지 못하는 잡음이 된다.
+    const changes = diffAudited(before, updated);
+    if (Object.keys(changes).length > 0) {
+      await recordAudit(pool, {
+        action: 'agent.updated', actorId: req.account!.id, actorHandle: req.account!.handle,
+        target: id, detail: changes,
+      }, req);
     }
     return updated;
   });
