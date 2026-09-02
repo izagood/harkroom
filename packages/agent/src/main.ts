@@ -21,6 +21,7 @@ import { SessionStore } from './sessions.js';
 import { writeMcpConfigOnce } from './turn.js';
 import type { Exec } from './workspace.js';
 import { exhausted, isCredentialFailure, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
+import { FAILURE_NOTICE } from './prompt.js';
 
 const config = loadConfig();
 const murmur = new MurmurAgentClient(config.murmurUrl, config.murmurPat);
@@ -146,6 +147,14 @@ while (running) {
         // 한도까지 실패하면 읽음 처리해 흘려보낸다 — 안 그러면 이 항목이 큐를 막는다.
         if (exhausted(tried)) {
           console.error(`  ${entry.messageId} 포기하고 읽음 처리한다`);
+          // #82: MAX_ATTEMPTS 소진 시 채널에 통지한다. 통지 실패해도 읽음 처리는 계속한다
+          // (통지 실패로 러너가 멈추면 안 된다). 원래 멘션이 있던 자리(스레드면 그 스레드)에 쓴다.
+          try {
+            await murmur.post(mention.channelId, FAILURE_NOTICE, mention.threadRootId);
+          } catch (notifyErr) {
+            console.error(`  ${entry.messageId} 실패 통지 발화 실패(읽음 처리 계속):`,
+              notifyErr instanceof Error ? notifyErr.message : notifyErr);
+          }
           done.push(entry.id);
           attempts.delete(entry.id);
         }
