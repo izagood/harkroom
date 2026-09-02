@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { emitEvent } from '../events.js';
-import { assertChannelVisible, dmMemberIds } from '../services/channels.js';
+import { assertChannelVisible, audienceFor } from '../services/channels.js';
 import { deleteMessage, editMessage, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -36,20 +36,12 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     }
     const { message, notified, replayed } = posted;
     if (!replayed) {
-      const channel = await pool.query(`select kind from channel where id = $1`, [id]);
-      const audience: 'all' | string[] =
-        channel.rows[0]?.kind === 'dm' ? await dmMemberIds(pool, id) : 'all';
+      const audience = await audienceFor(pool, id);
       emitEvent({ type: 'message.created', message, audience });
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
     return reply.code(replayed ? 200 : 201).send(message);
   });
-
-  /** 채널 kind 에 따른 이벤트 수신자. DM 은 멤버에게만 간다. */
-  const audienceFor = async (channelId: string): Promise<'all' | string[]> => {
-    const channel = await pool.query(`select kind from channel where id = $1`, [channelId]);
-    return channel.rows[0]?.kind === 'dm' ? await dmMemberIds(pool, channelId) : 'all';
-  };
 
   app.patch('/channels/:id/messages/:messageId', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id, messageId } = z.object({
@@ -67,7 +59,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     if (result === 'forbidden') {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'only the author can edit a user message' } });
     }
-    emitEvent({ type: 'message.updated', message: result, audience: await audienceFor(id) });
+    emitEvent({ type: 'message.updated', message: result, audience: await audienceFor(pool, id) });
     return result;
   });
 
@@ -88,7 +80,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     if (result === 'forbidden') {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'only the author or an admin can delete' } });
     }
-    emitEvent({ type: 'message.deleted', channelId: id, messageId, audience: await audienceFor(id) });
+    emitEvent({ type: 'message.deleted', channelId: id, messageId, audience: await audienceFor(pool, id) });
     // 본문은 남기지 않는다 — 감사에 복사하면 삭제가 삭제가 아니다.
     await recordAudit(pool, {
       action: 'message.deleted', actorId: req.account!.id, actorHandle: req.account!.handle,
@@ -151,7 +143,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     }
     emitEvent({
       type: 'reaction.added', channelId: id, messageId, emoji,
-      accountId: req.account!.id, audience: await audienceFor(id),
+      accountId: req.account!.id, audience: await audienceFor(pool, id),
     });
     return reply.code(200).send({ emoji });
   });
@@ -167,7 +159,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     await removeReaction(pool, { messageId, accountId: req.account!.id, emoji });
     emitEvent({
       type: 'reaction.removed', channelId: id, messageId, emoji,
-      accountId: req.account!.id, audience: await audienceFor(id),
+      accountId: req.account!.id, audience: await audienceFor(pool, id),
     });
     return reply.code(204).send();
   });

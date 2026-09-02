@@ -1,4 +1,4 @@
-import type { AgentConfig, AgentView, AccountView, AttachmentRow, ChannelRow, DmView, InboxEntry, LeaseRow, MessageRow } from '@murmur/shared';
+import type { AgentConfig, AgentView, AccountView, AttachmentRow, ChannelRow, DmView, InboxEntry, LeaseRow, MessageRow, PatView } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -108,6 +108,15 @@ export class ApiClient {
   /** PAT 는 서버가 해시만 보관하므로 생성 직후 한 번만 볼 수 있다. */
   async mintPat(accountId: string, label: string): Promise<string> {
     return (await this.req<{ token: string }>('POST', `/accounts/${accountId}/pats`, { label })).token;
+  }
+
+  async listPats(accountId: string): Promise<PatView[]> {
+    const res = await this.req<{ pats: PatView[] }>('GET', `/accounts/${accountId}/pats`);
+    return res.pats;
+  }
+
+  async revokePat(accountId: string, label: string): Promise<{ revoked: number }> {
+    return this.req('DELETE', `/accounts/${accountId}/pats/${encodeURIComponent(label)}`);
   }
 
   updateAgent(id: string, patch: Partial<AgentConfig> & { displayName?: string }): Promise<AgentView> {
