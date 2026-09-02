@@ -289,6 +289,23 @@ describe('Controller', () => {
     expect(lost[0]!.toLowerCase()).toContain('sign in');
   });
 
+  // #164: App 은 이 accountId 로 **활성 커뮤니티인지**를 가른다. clearLocal() 이 스토어를
+  // reset 하므로 그 뒤에 me 를 읽으면 항상 빈 문자열이 되고, 활성 커뮤니티가 죽어도
+  // 화면이 바뀌지 않는다 — 순서가 계약이다.
+  it('세션 손실을 알릴 때 비어 있지 않은 accountId 를 넘긴다', async () => {
+    const got: { msg: string; accountId: string }[] = [];
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(fakeApi(), makeWs, undefined, (msg, accountId) => got.push({ msg, accountId }));
+    await c.start();
+    expect(useAppStore.getState().me?.id).toBeTruthy();
+
+    callbacks.current!.onDown('credential');
+
+    expect(got).toHaveLength(1);
+    expect(got[0]!.accountId).toBeTruthy();
+    expect(got[0]!.accountId).toBe('u1');
+  });
+
   it('reports an origin rejection with its own wording', async () => {
     const lost: string[] = [];
     const { makeWs, callbacks } = fakeWsFactory();

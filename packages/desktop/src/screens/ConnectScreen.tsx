@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { ApiClient, ApiError } from '../lib/api';
 
-export function ConnectScreen({ onConnected, initialError = null }: { onConnected: (baseUrl: string, token: string) => void; initialError?: string | null }) {
+export function ConnectScreen({ onConnected, initialError = null }: { onConnected: (baseUrl: string, token: string, accountId: string, handle: string) => void; initialError?: string | null }) {
   const [baseUrl, setBaseUrl] = useState('http://localhost:3400');
   const [handle, setHandle] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -34,7 +34,8 @@ export function ConnectScreen({ onConnected, initialError = null }: { onConnecte
       // 계정 생성 라우트는 둘 다 세션을 주지 않는다(`{ id }` 만) — 만든 자격증명으로 이어서
       // 로그인한다. 그래서 가입 성공이 곧 로그인 상태가 된다.
       const { token } = await api.login(handle, password);
-      onConnected(api.baseUrl, token);
+      const me = await api.me();
+      onConnected(api.baseUrl, token, me.id, me.handle);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not reach the server');
     } finally {
