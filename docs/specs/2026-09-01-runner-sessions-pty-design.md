@@ -364,6 +364,9 @@ ACP 안의 "`allow_always` 금지"에 해당하는 원칙의 번역: **하네스
 CLI 가 필요하므로 로컬 전용 태그로 두되, **§4 표를 고칠 때마다 반드시 돌린다.** 이 검사가
 없으면 표의 오류는 실사용 첫 턴에서야 드러난다.
 
+**구현:** `packages/agent/test/acceptance-cli.test.ts`. 실행: `pnpm --filter @murmur/agent test`.
+CLI 가 없으면 자동으로 건너뛰고 그 이유를 출력한다(로컬 전용 — CI 에서는 skip됨).
+
 ## 11. 구현 페이즈
 
 - **Phase 1 — 세션 코어**: §3 + §4 + §6 + §7. 멘션 응답이 새 구조로 완결.
