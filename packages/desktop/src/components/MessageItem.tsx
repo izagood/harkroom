@@ -1,10 +1,57 @@
-import { useState } from 'react';
+import { useState, useId } from 'react';
 import type { MessageRow } from '@murmur/shared';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { MessageBody } from './MessageBody';
 import { Reactions } from './Reactions';
 import { Attachments } from './Attachments';
+import { Menu } from './Menu';
+
+function ReactionsToolbar({ message }: { message: MessageRow }) {
+  const [picking, setPicking] = useState(false);
+  const myId = useAppStore((s) => s.me?.id ?? null);
+
+  const toggle = (emoji: string, on: boolean) => {
+    setPicking(false);
+    void getController().toggleReaction(message.channelId, message.id, emoji, on).catch(() => {});
+  };
+
+  const QUICK = ['👀', '💬', '👍', '🎉', '✅', '🔥', '🤔', '😄'];
+
+  if (picking) {
+    return (
+      <div className="flex items-center gap-0.5 rounded-full border border-zinc-300 bg-white px-1 shadow-sm">
+        {QUICK.map((e) => (
+          <button
+            key={e}
+            aria-label={e}
+            className="rounded px-1 hover:bg-zinc-100"
+            onClick={() => toggle(e, !message.reactions.find((r) => r.emoji === e)?.accountIds.includes(myId ?? ''))}
+          >
+            {e}
+          </button>
+        ))}
+        <button
+          aria-label="Close reaction picker"
+          className="rounded px-1 text-[11px] text-zinc-400 hover:bg-zinc-100"
+          onClick={() => setPicking(false)}
+        >
+          ×
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      aria-label="Add reaction"
+      className="rounded-full border border-zinc-200 px-1.5 text-[11px] text-zinc-500 hover:bg-zinc-100"
+      onClick={() => setPicking(true)}
+    >
+      ＋
+    </button>
+  );
+}
 
 export function MessageItem({ message, inThread = false }: { message: MessageRow; inThread?: boolean }) {
   const author = useAppStore((s) => s.accounts[message.authorId]);
@@ -34,11 +81,16 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
     if (next.trim() && next !== message.body) void getController().editMessage(message.id, next);
   };
 
-  const action = 'rounded border border-zinc-300 px-1.5 text-[11px] text-zinc-600';
   const hoverOnly = 'opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100';
+  const iconBtn = 'rounded p-1 text-zinc-500 hover:bg-zinc-100';
+
+  const menuItems = [
+    ...(canEdit ? [{ label: 'Edit', onSelect: () => setDraft(message.body) }] : []),
+    ...(canDelete && !confirmingDelete ? [{ label: 'Delete', onSelect: () => setConfirmingDelete(true) }] : []),
+  ];
 
   return (
-    <div className={`group flex gap-2 px-4 py-1.5 hover:bg-zinc-50 ${isSystem ? 'border-l-2 border-amber-400 bg-amber-50/50' : ''}`}>
+    <div className={`group relative flex gap-2 px-4 py-1.5 hover:bg-zinc-50 ${isSystem ? 'border-l-2 border-amber-400 bg-amber-50/50' : ''}`}>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="font-semibold">{author?.handle ?? '…'}</span>
@@ -67,48 +119,60 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
               }}
             />
             <div className="flex gap-1">
-              <button className={action} onClick={save}>Save</button>
-              <button className={action} onClick={() => setDraft(null)}>Cancel</button>
+              <button className="rounded border border-zinc-300 px-1.5 text-[11px] text-zinc-600" onClick={save}>Save</button>
+              <button className="rounded border border-zinc-300 px-1.5 text-[11px] text-zinc-600" onClick={() => setDraft(null)}>Cancel</button>
             </div>
           </div>
         )}
       </div>
 
-      <div className="flex shrink-0 items-start gap-1">
-        {canEdit && draft === null && (
-          <button className={`${action} ${hoverOnly}`} onClick={() => setDraft(message.body)}>Edit</button>
-        )}
-        {canDelete && draft === null && (
-          confirmingDelete ? (
-            // 삭제는 되돌릴 수 없으니 한 번 더 묻는다.
-            <>
-              <button
-                className="rounded border border-red-300 bg-red-50 px-1.5 text-[11px] text-red-700"
-                onClick={() => { setConfirmingDelete(false); void getController().deleteMessage(message.id); }}
-              >
-                Really delete
-              </button>
-              <button className={action} onClick={() => setConfirmingDelete(false)}>Keep</button>
-            </>
-          ) : (
-            <button className={`${action} ${hoverOnly}`} onClick={() => setConfirmingDelete(true)}>Delete</button>
-          )
-        )}
+      {!inThread && (
+        <button
+          className={`absolute right-4 top-1 self-start rounded border border-zinc-300 px-1.5 text-[11px] ${
+            replyCount > 0
+              ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+              : `border-zinc-300 text-zinc-600 ${hoverOnly}`
+          }`}
+          onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
+        >
+          {replyCount > 0 ? `${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}` : 'Reply in thread'}
+        </button>
+      )}
 
-        {!inThread && (
-          <button
-            // 답글이 달린 메시지는 호버 없이도 그 사실이 보여야 한다. 답글이 없을 때만 호버로
-            // 드러나되, visibility가 아니라 opacity로 숨긴다 — visibility:hidden은 접근성
-            // 트리에서 요소를 제거해 키보드·스크린리더가 스레드에 도달할 길을 없앤다.
-            className={`self-start ${action} ${
-              replyCount > 0 ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : hoverOnly
-            }`}
-            onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
-          >
-            {replyCount > 0 ? `${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}` : 'Reply in thread'}
-          </button>
-        )}
-      </div>
+      {draft === null && (
+        <div role="group" aria-label="message toolbar" className={`absolute right-4 top-6 flex items-center gap-0.5 ${hoverOnly}`}>
+          <ReactionsToolbar message={message} />
+          {!isSystem && (
+            confirmingDelete ? (
+              <>
+                <button
+                  className="rounded border border-red-300 bg-red-50 px-1.5 text-[11px] text-red-700"
+                  onClick={() => { setConfirmingDelete(false); void getController().deleteMessage(message.id); }}
+                >
+                  Really delete
+                </button>
+                <button className="rounded border border-zinc-300 px-1.5 text-[11px] text-zinc-600" onClick={() => setConfirmingDelete(false)}>
+                  Keep
+                </button>
+              </>
+            ) : (
+              <Menu
+                renderTrigger={(props) => (
+                  <button
+                    {...props}
+                    className={iconBtn}
+                    aria-label="More actions"
+                  >
+                    ⋯
+                  </button>
+                )}
+                items={menuItems}
+                placement="bottom"
+              />
+            )
+          )}
+        </div>
+      )}
     </div>
   );
 }
