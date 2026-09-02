@@ -9,7 +9,14 @@ import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, listChannels } from '../services/channels.js';
 import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
+import { getMemory, listMemory, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, setMemory } from '../services/memory.js';
 import { GUIDE } from './guide.js';
+
+const MEMORY_SLUG_REGEX = /^core$|^mem\/[a-z0-9][a-z0-9_-]{0,63}((\/[a-z0-9][a-z0-9_-]{0,63})*)$/;
+
+function isValidSlug(slug: string): boolean {
+  return slug.length > 0 && slug.length <= 255 && MEMORY_SLUG_REGEX.test(slug);
+}
 import type { AgentPresence } from './presence.js';
 
 function jsonResult(value: unknown) {
@@ -235,6 +242,48 @@ function buildMcpServer(
        on conflict (repo, intent_oid) do update set thread_root_message_id = excluded.thread_root_message_id`,
       [repo, intentOid, threadRootMessageId],
     );
+    return jsonResult({ ok: true });
+  });
+
+  // memory.list — slug만 돌려주고 값은 주지 않는다(값이 새면 목록 조회가 곧 전체 주입이 된다).
+  server.registerTool('memory.list', {
+    description: '에이전트 메모리 slug 목록(값은 포함 안 함)',
+  }, async () => {
+    const slugs = await listMemory(pool, account.id);
+    return jsonResult({ slugs });
+  });
+
+  server.registerTool('memory.get', {
+    description: '메모리 조회',
+    inputSchema: { slug: z.string().min(1) },
+  }, async ({ slug }) => {
+    if (!isValidSlug(slug)) {
+      return jsonResult({ error: { code: 'invalid_slug', message: 'invalid slug format' } });
+    }
+    const memory = await getMemory(pool, account.id, slug);
+    if (!memory) {
+      return jsonResult({ error: { code: 'not_found', message: 'memory not found' } });
+    }
+    return jsonResult({ slug: memory.slug, value: memory.value, updatedAt: memory.updatedAt.toISOString() });
+  });
+
+  // value 가 null 이면 삭제 — 키 부재가 아니라 명시적 null 이 삭제다.
+  // .nullable() 은 "값이 반드시 있고 null 일 수 있다"를 의미한다.
+  server.registerTool('memory.set', {
+    description: '메모리 저장 또는 삭제(value가 null이면 삭제)',
+    inputSchema: { slug: z.string().min(1), value: z.string().max(MAX_MEMORY_VALUE_LENGTH).nullable() },
+  }, async ({ slug, value }) => {
+    if (!isValidSlug(slug)) {
+      return jsonResult({ error: { code: 'invalid_slug', message: 'invalid slug format' } });
+    }
+    // 길이는 위 zod `.max()` 가 이미 거른다 — 여기서 또 재지 않는다.
+    // 삭제는 멱등이라 '없는 것을 지웠다'는 오류가 아니다(services/memory.ts 주석).
+    const result = await setMemory(pool, account.id, slug, value);
+    if (result === 'too_many') {
+      return jsonResult({
+        error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT} memories per account` },
+      });
+    }
     return jsonResult({ ok: true });
   });
 
