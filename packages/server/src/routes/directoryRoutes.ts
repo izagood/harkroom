@@ -4,8 +4,12 @@ import type { Pool } from 'pg';
 export async function registerDirectoryRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.get('/accounts', { preHandler: app.requireAccount }, async () => {
     const res = await pool.query(
-      `select id, handle, display_name as "displayName", kind, is_admin as "isAdmin"
-       from account where disabled_at is null order by handle`,
+      // 비활성 계정도 **준다.** 이 목록은 멘션 자동완성의 원천이면서 작성자 이름을 푸는
+      // 표이기도 하다 — 빼면 비활성화한 에이전트의 과거 메시지가 작성자를 잃는다.
+      // 자동완성 후보에서 빼는 것은 `disabled` 를 보는 화면의 몫이다.
+      `select id, handle, display_name as "displayName", kind, is_admin as "isAdmin",
+              disabled_at is not null as disabled
+       from account order by handle`,
     );
     return { accounts: res.rows };
   });
