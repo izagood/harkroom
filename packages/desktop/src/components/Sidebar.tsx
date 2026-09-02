@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { LeasePanel } from './LeasePanel';
+import { Menu } from './Menu';
 import type { SectionId } from './settings/sections';
 import { CHANNEL_NAME_PATTERN } from '@murmur/shared';
 
@@ -176,19 +177,14 @@ export function Sidebar({ onLogout, onOpenSettings }: {
         </div>
         <LeasePanel />
       </nav>
-      <div className="flex items-center gap-2 border-t border-zinc-800 p-3 text-xs">
-        <span className="font-medium">@{me?.handle}</span>
-        <button
-          className="ml-auto rounded px-1.5 py-0.5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
-          aria-label="Settings"
-          onClick={() => onOpenSettings()}
-        >
-          <span aria-hidden>⚙</span>
-        </button>
-        <button className="text-zinc-400 underline"
-          onClick={() => { getController().logout(); onLogout(); }}>
-          Sign out
-        </button>
+      <div className="relative flex items-center gap-2 border-t border-zinc-800 p-3 text-xs">
+        <Menu
+          trigger={`@${me?.handle}`}
+          items={[
+            { label: 'Settings', onSelect: () => onOpenSettings() },
+            { label: 'Sign out', onSelect: () => { getController().logout(); onLogout(); } },
+          ]}
+        />
       </div>
     </aside>
   );
