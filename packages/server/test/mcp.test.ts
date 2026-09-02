@@ -6,6 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { onEvent } from '../src/events.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -287,5 +288,33 @@ describe('mcp surface', () => {
     })) as { error?: { code: string } };
     expect(oneMore.error?.code).toBe('too_many_reactions');
     await client.close();
+  });
+});
+
+// REST 라우트는 리액션에 대해 WS 이벤트를 낸다 — MCP 도구가 그걸 빠뜨리면 리액션은 DB 에만
+// 남고 붙어 있는 데스크탑은 다시 조회할 때까지 못 본다. 에이전트가 👀 를 다는 목적이
+// "사람이 지금 본다"인데 그 목적이 사라진다(#99). 두 표면이 같은 규칙을 갖는다는 계약이다.
+describe('MCP 리액션이 실시간 이벤트를 낸다', () => {
+  it('message.react / message.unreact 가 reaction 이벤트를 낸다', async () => {
+    const client = await mcpClient(botPat);
+    const posted = text(await client.callTool({
+      name: 'message.post', arguments: { channelId, body: '리액션 이벤트 대상' },
+    })) as { message: { id: string } };
+    const messageId = posted.message.id;
+
+    const seen: { type: string; messageId?: string; emoji?: string }[] = [];
+    const stop = onEvent((e) => seen.push(e as { type: string; messageId?: string; emoji?: string }));
+    try {
+      await client.callTool({ name: 'message.react', arguments: { channelId, messageId, emoji: '👀' } });
+      await client.callTool({ name: 'message.unreact', arguments: { channelId, messageId, emoji: '👀' } });
+    } finally {
+      stop();
+      await client.close();
+    }
+
+    expect(seen).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'reaction.added', messageId, emoji: '👀' }),
+      expect.objectContaining({ type: 'reaction.removed', messageId, emoji: '👀' }),
+    ]));
   });
 });
