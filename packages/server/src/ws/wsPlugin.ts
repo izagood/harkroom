@@ -9,6 +9,7 @@ import { createTypingRegistry } from './typing.js';
 import { assertChannelVisible, dmMemberIds } from '../services/channels.js';
 import { findInvalidCredentials } from './credentials.js';
 import { createHeartbeat } from './heartbeat.js';
+import { getOnlineAgents } from '../mcp/presence.js';
 
 function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
   switch (e.type) {
@@ -170,7 +171,9 @@ export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptio
     const count = (connections.get(accountId) ?? 0) + 1;
     connections.set(accountId, count);
     if (count === 1) emitEvent({ type: 'presence.changed', accountId, online: true });
-    const snapshot: WsServerEvent = { type: 'presence.snapshot', online: [...connections.keys()] };
+    const onlineAgents = getOnlineAgents();
+    const online = [...new Set([...connections.keys(), ...onlineAgents])];
+    const snapshot: WsServerEvent = { type: 'presence.snapshot', online };
     socket.send(JSON.stringify(snapshot));
 
     socket.on('close', () => {

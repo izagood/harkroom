@@ -4,12 +4,13 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { AccountView } from '@murmur/shared';
-import { emitEvent, onEvent } from '../events.js';
+import { onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, listChannels } from '../services/channels.js';
 import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { GUIDE } from './guide.js';
+import { markAgentOnline, startPresenceSweep } from './presence.js';
 
 function jsonResult(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }] };
@@ -133,6 +134,7 @@ function buildMcpServer(pool: Pool, account: AccountView, lifecycle: Lifecycle):
     description: '미읽음 inbox 조회. timeoutMs>0이면 새 항목이 올 때까지 long-poll',
     inputSchema: { timeoutMs: z.number().int().min(0).max(25_000).optional() },
   }, async ({ timeoutMs }) => {
+    markAgentOnline(account.id);
     const fetchUnread = async () => {
       const entries = await listInbox(pool, account.id, { unreadOnly: true });
       if (!entries.length) return { entries, messages: [] };
@@ -232,6 +234,7 @@ function buildMcpServer(pool: Pool, account: AccountView, lifecycle: Lifecycle):
 }
 
 export async function registerMcp(app: FastifyInstance, pool: Pool, lifecycle: Lifecycle): Promise<void> {
+  startPresenceSweep(app);
   app.post('/mcp', async (req, reply) => {
     if (!req.account || req.account.kind !== 'agent') {
       return reply.code(req.account ? 403 : 401)
