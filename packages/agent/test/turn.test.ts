@@ -1,8 +1,8 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { assertHarnessContract, buildTurnCommand, preassignsSessionId, writeMcpConfigOnce } from '../src/turn.js';
+import { assertHarnessContract, buildTurnCommand, preassignsSessionId, writeMcpConfigOnce, writeSystemPromptFile } from '../src/turn.js';
 
 // murmurUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
 // 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
@@ -12,7 +12,7 @@ import { assertHarnessContract, buildTurnCommand, preassignsSessionId, writeMcpC
 const base = {
   systemPrompt: 'SYS', promptCtx: 'CTX', model: null, effort: null,
   mentionPermission: 'auto' as const, mcpConfigPath: '/mcp.json', pat: 'murp_x',
-  murmurUrl: 'http://localhost:3401',
+  murmurUrl: 'http://localhost:3401', systemPromptFile: null,
 };
 
 // 실물 검증에서 드러난 회귀 — pty.spawn 에 env 를 넘기면 node-pty 가 부모 env 와 **병합하지
@@ -32,13 +32,36 @@ describe('buildTurnCommand — env 는 부모를 물려받는다 (실물 검증�
 });
 
 describe('buildTurnCommand — claude', () => {
-  it('첫 멘션 턴: session-id 할당 + bypassPermissions + PAT 는 env 로만', () => {
-    const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true });
+  // 지시문이 argv 로 직접 전달되면 다른 로컬 사용자가 ps 로 볼 수 있다.
+  // --append-system-prompt-file 로 파일로 전달하고, 그 파일은 world-readable 이면 안 된다.
+  it('첫 멘션 턴: 지시문은 argv 에 직접 없고 파일로 전달된다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'sys-prompt-'));
+    const filePath = await writeSystemPromptFile(dir, 'SYS');
+    const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true, systemPromptFile: filePath });
     expect(p.command).toBe('claude');
-    expect(p.args).toEqual(expect.arrayContaining(['-p', '--session-id', 'uuid-1', '--permission-mode', 'bypassPermissions', '--mcp-config', '/mcp.json', '--append-system-prompt', 'SYS', 'CTX']));
+    expect(p.args).not.toContain('--append-system-prompt');
+    expect(p.args).not.toContain('SYS');
+    expect(p.args).toContain('--append-system-prompt-file');
+    expect(p.args).toContain(filePath);
     expect(p.args).not.toContain('-r');
     expect(p.env.MURMUR_PAT).toBe('murp_x');
-    expect(p.args.join(' ')).not.toContain('murp_x');   // argv 에 PAT 금지 (spec §7)
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('지시문 파일의 내용은 systemPrompt 와 같고 퍼미션은 0600 이다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'sys-prompt-'));
+    const filePath = await writeSystemPromptFile(dir, 'SYS');
+    const content = await readFile(filePath, 'utf8');
+    expect(content).toBe('SYS');
+    const stat = await import('node:fs/promises').then(m => m.stat(filePath));
+    expect(stat.mode & 0o777).toBe(0o600);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('systemPromptFile 이 없으면 기존 동작(직접 전달) — 아직 전환 중이라면', () => {
+    const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true, systemPromptFile: null });
+    expect(p.args).toContain('--append-system-prompt');
+    expect(p.args).toContain('SYS');
   });
 
   it('resume 멘션 턴: -r <id>, readonly 는 plan 모드', () => {
