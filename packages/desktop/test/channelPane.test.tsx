@@ -138,10 +138,18 @@ describe('ChannelPane', () => {
 
   // 호버해야만 나타나는 버튼으로는 "이 메시지에 답글이 있다"를 알 수 없다. 답글이 달린 메시지는
   // 스레드를 열지 않고도 그 사실이 보여야 한다.
+  // #161 2단계: 서버의 replyCount 를 쓴다 — 클라이언트 계산 대신 replyCount 필드를 준다.
   it('shows a standing reply count on a message that has thread replies', () => {
     fakeController();
+    useAppStore.getState().set({
+      messages: {
+        c1: [
+          msg('m1', 'c1', 1, 'hello world', 'u2', { replyCount: 1 }),
+          msg('m2', 'c1', 2, 'thread reply hidden', 'u1', { threadRootId: 'm1' }),
+        ],
+      },
+    });
     render(<ChannelPane />);
-    // m1 에는 m2 가 답글로 달려 있다 (beforeEach 픽스처).
     expect(screen.getByRole('button', { name: '1 reply' })).toBeTruthy();
   });
 
@@ -150,7 +158,7 @@ describe('ChannelPane', () => {
     useAppStore.getState().set({
       messages: {
         c1: [
-          msg('m1', 'c1', 1, 'root', 'u2'),
+          msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 }),
           msg('m2', 'c1', 2, 'reply one', 'u1', { threadRootId: 'm1' }),
           msg('m3', 'c1', 3, 'reply two', 'u1', { threadRootId: 'm1' }),
         ],
@@ -170,6 +178,14 @@ describe('ChannelPane', () => {
 
   it('opens the thread from the reply count', () => {
     const c = fakeController();
+    useAppStore.getState().set({
+      messages: {
+        c1: [
+          msg('m1', 'c1', 1, 'hello world', 'u2', { replyCount: 1 }),
+          msg('m2', 'c1', 2, 'thread reply hidden', 'u1', { threadRootId: 'm1' }),
+        ],
+      },
+    });
     render(<ChannelPane />);
     fireEvent.click(screen.getByRole('button', { name: '1 reply' }));
     expect(c.openThread).toHaveBeenCalledWith('m1');
@@ -219,8 +235,19 @@ describe('ChannelPane', () => {
 
   it('opens a thread from a message that has no replies yet', () => {
     const c = fakeController();
+    // #161 2단계: 서버의 replyCount 를 쓴다. m1 은 답글이 있어 replyCount: 1,
+    // m3 은 답글이 없어 replyCount: null 이라 "Reply in thread" 가 보인다.
+    useAppStore.getState().set({
+      messages: {
+        c1: [
+          msg('m1', 'c1', 1, 'hello world', 'u2', { replyCount: 1 }),
+          msg('m2', 'c1', 2, 'thread reply hidden', 'u1', { threadRootId: 'm1' }),
+          msg('m3', 'c1', 3, 'no replies yet', 'u2'),
+        ],
+      },
+    });
     render(<ChannelPane />);
-    // m1 은 답글이 있어 '1 reply' 로 바뀐다 — 여기서 보는 것은 답글 없는 m3 의 호버 진입점이다.
+    // m1 은 "1 reply" 로 보이고, m3 은 "Reply in thread" 로 보인다.
     fireEvent.click(screen.getAllByRole('button', { name: 'Reply in thread' })[0]!);
     expect(c.openThread).toHaveBeenCalledWith('m3');
   });

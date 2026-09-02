@@ -159,18 +159,19 @@ describe('overflow menu actions', () => {
 });
 
 describe('reply count visibility', () => {
-  it('shows reply count without hover when replies exist', () => {
+  // #161 2단계: 서버의 replyCount 를 쓴다 — 스토어에 답글을 넣지 않고 replyCount 만 준 루트가
+  // 그 수를 보여준다. 클라이언트 계산 제거를 지키는 선이다.
+  it('shows reply count from server without hover when replies exist', () => {
     const c = fakeController();
-    useAppStore.getState().set({ messages: { c1: withReplies(2) } });
-    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2')} />);
+    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
 
     expect(screen.getByRole('button', { name: '2 replies' })).toBeTruthy();
   });
 
-  it('shows Reply in thread on hover when no replies', () => {
+  // replyCount 가 null 이면(루트가 아니거나 답글 없는 루트) 답글 컨트롤이 안 나온다.
+  it('shows Reply in thread on hover when replyCount is null', () => {
     const c = fakeController();
-    useAppStore.getState().set({ messages: { c1: [msg('m1', 'c1', 1, 'root', 'u2')] } });
-    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2')} />);
+    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: null })} />);
 
     const message = screen.getByText('root').closest('.group')!;
     fireEvent.mouseEnter(message);
@@ -219,8 +220,7 @@ describe('#143 호버 툴바가 답글 컨트롤을 덮지 않는다', () => {
   // 되돌려도(예: 행 기준 `right-3` 복귀) 이 테스트가 빨개진다.
   it('툴바의 기준은 행이 아니라 답글 컨트롤 컨테이너다', () => {
     const c = fakeController();
-    useAppStore.getState().set({ messages: { c1: withReplies(2) } });
-    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2')} />);
+    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
 
     const toolbar = screen.getByRole('group', { name: 'message toolbar' });
     const replyBtn = screen.getByRole('button', { name: '2 replies' });

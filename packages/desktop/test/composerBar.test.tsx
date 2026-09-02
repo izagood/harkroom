@@ -87,7 +87,8 @@ describe('아이덴티티 컴포넌트가 유일한 경로다 (#146)', () => {
 
   it('메시지 작성자 옆에서도 같은 표시가 쓰인다', () => {
     render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'u2')} />);
-    expect(screen.getByText('에이전트')).toBeTruthy();
+    // #161 2단계: 거터에 하나, 작성자 옆에 하나 — 두 곳에서 에이전트 표시가 같이 써진다.
+    expect(screen.getAllByText('에이전트')).toHaveLength(2);
   });
 
   it('사람과 에이전트가 다르게 표시된다', () => {
@@ -95,13 +96,15 @@ describe('아이덴티티 컴포넌트가 유일한 경로다 (#146)', () => {
     expect(screen.queryByText('에이전트')).toBeNull();
     // 사람은 이니셜이 보이고 핸들이 숨은 텍스트로 남는다. 작성자 이름도 'me' 라
     // 중복되므로 이니셜(대문자 한 글자)로 아이덴티티를 특정한다.
-    expect(screen.getByText('M')).toBeTruthy();
+    // #161 2단계: 거터와 작성자 옆 두 곳에서 이니셜이 보인다.
+    expect(screen.getAllByText('M')).toHaveLength(2);
   });
 
   // "없다"와 "모른다"는 다르다. 디렉터리에 없는 계정을 빈 칸으로 그리면 "에이전트가
   // 아니다"로 읽힌다 — 초판이 null 을 반환했다.
   it('계정 디렉터리에 없으면 빈 칸이 아니라 명시적으로 표시한다', () => {
     render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'ghost')} />);
-    expect(screen.getByText('알 수 없는 계정')).toBeTruthy();
+    // #161 2단계: 거터와 작성자 옆 두 곳에서 "알 수 없는 계정"이 표시된다.
+    expect(screen.getAllByText('알 수 없는 계정')).toHaveLength(2);
   });
 });
