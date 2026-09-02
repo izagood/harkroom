@@ -6,7 +6,7 @@ import { z } from 'zod';
 import type { AccountView } from '@murmur/shared';
 import { emitEvent, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
-import { assertChannelVisible, dmMemberIds, listChannels } from '../services/channels.js';
+import { assertChannelVisible, audienceFor, listChannels } from '../services/channels.js';
 import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { GUIDE } from './guide.js';
@@ -68,8 +68,7 @@ function buildMcpServer(pool: Pool, account: AccountView, lifecycle: Lifecycle):
     }
     const { message, notified, replayed } = posted;
     if (!replayed) {
-      const ch = await pool.query(`select kind from channel where id = $1`, [channelId]);
-      const audience: 'all' | string[] = ch.rows[0]?.kind === 'dm' ? await dmMemberIds(pool, channelId) : 'all';
+      const audience = await audienceFor(pool, channelId);
       emitEvent({ type: 'message.created', message, audience });
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
@@ -99,6 +98,13 @@ function buildMcpServer(pool: Pool, account: AccountView, lifecycle: Lifecycle):
         error: { code: 'too_many_reactions', message: `at most ${MAX_REACTIONS_PER_ACTOR} reactions per message` },
       });
     }
+    // REST 라우트와 **똑같이** 이벤트를 낸다. 이게 없으면 리액션은 DB 에만 남고 붙어 있는
+    // 데스크탑은 다시 조회할 때까지 못 본다 — 에이전트가 👀 를 다는 목적이 "사람이 지금
+    // 본다"인데 그 목적이 사라진다(#99). 두 표면이 같은 규칙을 갖는다는 계약의 일부다.
+    emitEvent({
+      type: 'reaction.added', channelId, messageId, emoji,
+      accountId: account.id, audience: await audienceFor(pool, channelId),
+    });
     return jsonResult({ emoji });
   });
 
@@ -114,6 +120,12 @@ function buildMcpServer(pool: Pool, account: AccountView, lifecycle: Lifecycle):
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
     await removeReaction(pool, { messageId, accountId: account.id, emoji });
+    // 제거도 REST 와 같이 이벤트를 낸다 — 없는 것을 떼는 것도 성공이라(REST 주석 참고)
+    // 이벤트를 조건부로 내지 않는다. 결과 상태가 같으니 재시도가 안전해야 한다.
+    emitEvent({
+      type: 'reaction.removed', channelId, messageId, emoji,
+      accountId: account.id, audience: await audienceFor(pool, channelId),
+    });
     return jsonResult({ ok: true });
   });
 
