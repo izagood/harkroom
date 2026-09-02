@@ -12,6 +12,7 @@ export type AuditAction =
   | 'login.succeeded' | 'login.failed' | 'logout'
   | 'account.created' | 'agent.created' | 'agent.updated' | 'agent.disabled' | 'agent.enabled' | 'invite.created'
   | 'pat.issued' | 'pat.revoked'
+  | 'password.changed'
   | 'channel.created' | 'channel.updated' | 'message.deleted';
 
 export interface AuditEntry {

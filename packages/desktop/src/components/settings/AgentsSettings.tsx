@@ -374,12 +374,24 @@ export function AgentsSettings() {
               // 서버가 해시만 보관하므로 지금 놓치면 다시 볼 수 없다.
               <div className="rounded border border-amber-300 bg-amber-50 p-3">
                 <div className="text-xs font-semibold text-amber-900">
-                  이 토큰은 지금만 보인다 — 러너를 띄울 때 쓴다
+                  이 토큰은 지금만 보인다 — 서버가 해시만 보관하므로 다시 볼 수 없다
                 </div>
                 <code className="mt-1 block break-all rounded bg-white p-2 text-[11px]">{pat}</code>
-                <div className="mt-2 text-[11px] text-amber-900">
-                  MURMUR_PAT={pat.slice(0, 12)}… pnpm --filter @murmur/agent start
+                {/* #125: 이 명령의 토큰을 자르고 말줄임표를 붙여 두면, 그대로 복사해 실행했을 때
+                    인증이 실패한다 — "완성된 명령"처럼 보이는데 아니었다. 전체 토큰을 싣는다.
+                    바로 위 코드 블록에 이미 전체 토큰이 있으므로 중복 노출이 새 위험은 아니다. */}
+                <div className="mt-2 break-all font-mono text-[11px] text-amber-900">
+                  MURMUR_PAT={pat} pnpm --filter @murmur/agent start
                 </div>
+                {/* #125: 등록만으로는 아무 일도 일어나지 않는다. 실측으로 에이전트 6개 중 4개가
+                    러너를 가져본 적이 없고 그중 2개는 미읽음 멘션이 쌓인 채였다. 사용자의 기대는
+                    "UI 로 등록했으면 러너도 같이 떴어야 하는 것 아닌가"였다 — 그 기대를 바로잡는다.
+                    murmur 가 러너를 띄운다고 쓰지 않는다(그건 사실이 아니다, design.md §4). */}
+                <p className="mt-2 text-[11px] text-amber-900">
+                  murmur 는 러너를 띄우지 않는다. <strong>위 명령을 직접 실행해 러너를 붙이기
+                  전까지 이 에이전트는 멘션에 답하지 않는다</strong> — 멘션은 쌓이기만 한다.
+                  murmur 저장소를 체크아웃한 머신에서 실행한다.
+                </p>
               </div>
             )}
           </div>

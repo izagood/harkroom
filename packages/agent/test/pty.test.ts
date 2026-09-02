@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -108,16 +110,37 @@ describe('runPtyTurn', () => {
   // 여전히 성공하므로, ESRCH 가 떠야 "죽었다"가 아니라 "실제로 거둬졌다"는 증거가 된다.
   // killGraceMs 로 유예를 짧게 주입해 테스트가 프로덕션 기본값(5초)을 다 기다리지 않게 한다.
   it('SIGTERM 을 무시하는 하네스: SIGKILL 로 승격되고 실제로 거둬진다 (spec §4)', async () => {
-    const ring = new RingBuffer(1024);
-    const r = await runPtyTurn(plan('hang-ignore-sigterm'), {
-      cwd: process.cwd(), timeoutMs: 200, killGraceMs: 200, ring,
-    });
-    expect(r.timedOut).toBe(true);
-    const match = ring.snapshot().toString().match(/pid=(\d+)/);
-    expect(match).not.toBeNull();
-    const pid = Number(match![1]);
-    expect(() => process.kill(pid, 0)).toThrow();
-  }, 2_000);
+    // pid 는 ring 이 아니라 **파일**에서 읽는다. stdout 은 PTY 를 거치므로 SIGKILL 로 pty 가
+    // 닫히면 `pid=` 줄이 ring 에 도달하기 전에 유실될 수 있고, CI 부하에서 실제로 그렇게
+    // 실패했다(`expected null not to be null`). 그건 PID 재사용이 아니라 **출력 경쟁**이었다 —
+    // 그래서 단언을 지우는 게 아니라 pid 를 얻는 경로를 경쟁 없는 것으로 바꾼다.
+    const dir = await mkdtemp(join(tmpdir(), 'pty-pid-'));
+    const pidFile = join(dir, 'pid');
+    try {
+      const p = plan('hang-ignore-sigterm');
+      p.env.FAKE_PID_FILE = pidFile;
+      const r = await runPtyTurn(p, { cwd: process.cwd(), timeoutMs: 200, killGraceMs: 200 });
+      expect(r.timedOut).toBe(true);
+
+      const pid = Number(await readFile(pidFile, 'utf8'));
+      expect(Number.isInteger(pid)).toBe(true);
+
+      // 좀비는 부모가 거둬가기 전까지 프로세스 테이블에 남아 `kill(pid, 0)` 이 여전히
+      // 성공한다. ESRCH 가 떠야 "죽었다"가 아니라 **실제로 거둬졌다**는 증거다. 거두기는
+      // exit 관측 직후 몇 ms 안에 끝나지만, 부하에서 그 순간이 밀릴 수 있으므로 시간을
+      // 재는 대신 **그 사건이 오기를** 짧게 기다린다.
+      const reaped = async (): Promise<boolean> => {
+        try { process.kill(pid, 0); return false; } catch { return true; }
+      };
+      const until = Date.now() + 5_000;
+      while (!(await reaped())) {
+        if (Date.now() > until) throw new Error(`pid ${pid} 가 5초 안에 거둬지지 않았다`);
+        await new Promise((r2) => setTimeout(r2, 20));
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
 });
 
 describe('RingBuffer', () => {
