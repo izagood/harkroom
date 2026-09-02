@@ -6,9 +6,12 @@ import { Controller, setController } from '../src/state/controller';
 import { acc, fakeApi } from './helpers/fakeApi';
 
 /** 지금 강조된 후보의 handle. 목록 정렬은 여기서 검증할 대상이 아니다. */
+// 핸들은 **속성**에서 읽는다. textContent 에서 뽑으면 장식이 하나 늘 때마다 깨진다 —
+// 예전 헬퍼는 `.replace('agent','')` 로 장식을 지우고 있었고, 그 장식이 아이덴티티
+// 컴포넌트로 바뀌자 실제로 깨졌다.
 const highlighted = () => {
   const opt = screen.getAllByRole('option').find((o) => o.getAttribute('aria-selected') === 'true');
-  return opt!.textContent!.replace(/^@/, '').replace('agent', '');
+  return opt!.getAttribute('data-handle')!;
 };
 
 const typeInto = (value: string) => {
