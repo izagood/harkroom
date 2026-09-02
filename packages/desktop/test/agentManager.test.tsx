@@ -8,7 +8,8 @@ import { acc } from './helpers/fakeApi';
 
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
-  instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null, ...extra,
+  instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
+  mentionPermission: 'auto', ownerAccountId: null, ...extra,
 });
 
 type CreateInput = { handle: string; displayName: string } & Partial<AgentConfig>;
@@ -82,6 +83,20 @@ describe('AgentsSettings', () => {
     expect([...options].some((o) => o.textContent?.includes('지원 예정'))).toBe(true);
   });
 
+  // AGENT_HARNESSES(타입이 아는 이름)와 RUNNABLE_HARNESSES(러너가 실제로 돌릴 수 있는 부분집합)가
+  // 갈라질 수 있다 — codex 가 타입 목록에는 들어왔지만 아직 러너가 못 돌린다. 옵션 자체는 보이되
+  // disabled 여야 한다. 다음 harness 가 타입에 먼저 들어오고 UI 가 안 따라가는 재발을 막는 회귀 테스트.
+  it('shows a harness the type list knows but the runner cannot yet run — as a disabled option', async () => {
+    fakeController();
+    render(<AgentsSettings />);
+
+    const options = [...(await screen.findByLabelText('Agent harness')).querySelectorAll('option')];
+    const codex = options.find((o) => o.textContent?.includes('codex'));
+
+    expect(codex).toBeTruthy();
+    expect((codex as HTMLOptionElement).disabled).toBe(true);
+  });
+
   it('lists the agents that already exist', async () => {
     fakeController([agent('rusalka', { instructions: '기존 지시문' })]);
     render(<AgentsSettings />);
@@ -125,5 +140,31 @@ describe('AgentsSettings', () => {
 
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
     expect(c.updateAgent.mock.calls[0]![1]).toMatchObject({ model: null, effort: null });
+  });
+
+  // mentionPermission 은 화면 앞에 사람이 없는 턴의 권한이다. 기본값은 auto — 설정을
+  // 건드린 적 없는 에이전트도 도구를 쓸 수 있어야 한다.
+  it('renders mention permission as auto by default and sends readonly when chosen', async () => {
+    const c = fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByText('rusalka'));
+
+    expect((screen.getByLabelText('Mention permission') as HTMLSelectElement).value).toBe('auto');
+
+    fireEvent.change(screen.getByLabelText('Mention permission'), { target: { value: 'readonly' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
+    expect(c.updateAgent.mock.calls[0]![1]).toMatchObject({ mentionPermission: 'readonly' });
+  });
+
+  // fromView 매핑에서 빠지기 쉬운 지점 — 이미 readonly 로 저장된 에이전트를 다시 열었을 때
+  // select 가 저장된 값을 보여줘야지 auto 로 되돌아가면 안 된다.
+  it('shows readonly when reopening an agent already set to readonly', async () => {
+    fakeController([agent('rusalka', { mentionPermission: 'readonly' })]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByText('rusalka'));
+
+    expect((screen.getByLabelText('Mention permission') as HTMLSelectElement).value).toBe('readonly');
   });
 });

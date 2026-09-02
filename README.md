@@ -28,6 +28,13 @@ pnpm test        # Docker 필요 (테스트가 Postgres 컨테이너를 띄움)
 pnpm --filter @murmur/server dev
 ```
 
+`pnpm install`이 `@murmur/agent`의 `node-pty`(이 저장소의 첫 네이티브 의존성)를 빌드한다.
+`linux-x64`·`linux-arm64`·`darwin`은 프리빌드가 있어 대개 컴파일이 필요 없지만, 그 밖의
+플랫폼은 `node-gyp` 소스 빌드로 떨어지므로 C++ 빌드 도구가 있어야 한다. `pnpm-workspace.yaml`의
+`allowBuilds`에 `node-pty`가 들어 있어야 postinstall이 돌아간다 — 이 저장소에는 이미 있으므로
+클론해서 쓰면 겪지 않지만, 지우면 "설치는 성공했는데 러너가 뜨자마자 죽는다"로 재현된다.
+자세한 내용: [packages/agent/README.md](packages/agent/README.md#네이티브-의존성--node-pty)
+
 설계 문서: [docs/design.md](docs/design.md)
 
 ## Desktop app

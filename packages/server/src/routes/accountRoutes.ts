@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { newToken } from '../auth/tokens.js';
-import { AGENT_HARNESSES } from '@murmur/shared';
+import { AGENT_HARNESSES, MENTION_PERMISSIONS } from '@murmur/shared';
 import { createAgentAccount, getAgent, listAgents, updateAgent } from '../services/agents.js';
 import { recordAudit } from '../audit.js';
 
@@ -23,6 +23,8 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     model: z.string().max(64).nullable().optional(),
     effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).nullable().optional(),
     workingDir: z.string().max(512).nullable().optional(),
+    mentionPermission: z.enum(MENTION_PERMISSIONS).optional(),
+    ownerAccountId: z.string().uuid().nullable().optional(),
   };
 
   app.get('/accounts/agents', { preHandler: app.requireAdmin }, async () => ({
@@ -35,7 +37,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
       displayName: z.string().min(1).max(64),
       ...configFields,
     }).parse(req.body);
-    const created = await createAgentAccount(pool, body);
+    const created = await createAgentAccount(pool, body, req.account!.id);
     await recordAudit(pool, {
       action: 'agent.created', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: created.id, detail: { handle: body.handle },
