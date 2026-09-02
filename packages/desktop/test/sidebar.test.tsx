@@ -135,7 +135,8 @@ describe('Sidebar', () => {
       render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
       const trigger = screen.getByRole('button', { name: /@admin/ });
-      expect(trigger.getAttribute('aria-haspopup')).toBe('true');
+      // ARIA 1.1 의 값은 'menu' 다 — 'true' 는 레거시 별칭이라 어느 종류의 팝업인지 말하지 못한다.
+      expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
       expect(trigger.getAttribute('aria-expanded')).toBe('false');
     });
 
@@ -225,32 +226,22 @@ describe('Sidebar', () => {
       expect(screen.queryByRole('menu')).toBeNull();
     });
 
-    it('Enter 로 메뉴 항목을 실행한다', () => {
+    // 항목은 `<button>` 이라 Enter·Space 는 브라우저가 **click 으로** 바꿔 준다. 그래서
+    // 프리미티브에 Enter/Space keydown 핸들러를 따로 두지 않는다 — 두면 실제 브라우저에서
+    // keydown 핸들러와 native click 이 **둘 다** 돌아 onSelect 가 두 번 실행된다
+    // (Sign out 이 두 번 불리는 식). 그래서 활성화는 click 으로 검증한다.
+    it('항목을 활성화하면 그 동작이 실행되고 메뉴가 닫힌다', () => {
       const c = fakeController();
       const onLogout = vi.fn();
       render(<Sidebar onLogout={onLogout} onOpenSettings={vi.fn()} />);
 
-      const trigger = screen.getByRole('button', { name: /@admin/ });
-      fireEvent.click(trigger);
+      fireEvent.click(screen.getByRole('button', { name: /@admin/ }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }));
 
-      const signout = screen.getByRole('menuitem', { name: 'Sign out' });
-      fireEvent.keyDown(signout, { key: 'Enter' });
-      expect(c.logout).toHaveBeenCalled();
-      expect(onLogout).toHaveBeenCalled();
+      expect(c.logout).toHaveBeenCalledTimes(1);
+      expect(onLogout).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('menu')).toBeNull();
     });
 
-    it('Space 로 메뉴 항목을 실행한다', () => {
-      const c = fakeController();
-      const onLogout = vi.fn();
-      render(<Sidebar onLogout={onLogout} onOpenSettings={vi.fn()} />);
-
-      const trigger = screen.getByRole('button', { name: /@admin/ });
-      fireEvent.click(trigger);
-
-      const signout = screen.getByRole('menuitem', { name: 'Sign out' });
-      fireEvent.keyDown(signout, { key: ' ' });
-      expect(c.logout).toHaveBeenCalled();
-      expect(onLogout).toHaveBeenCalled();
-    });
   });
 });
