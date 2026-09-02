@@ -9,6 +9,7 @@ import { createTypingRegistry } from './typing.js';
 import { assertChannelVisible, dmMemberIds } from '../services/channels.js';
 import { findInvalidCredentials } from './credentials.js';
 import { createHeartbeat } from './heartbeat.js';
+import type { AgentPresence } from '../mcp/presence.js';
 
 function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
   switch (e.type) {
@@ -43,9 +44,14 @@ export interface WsOptions {
    * 유지되고, 탭이 죽으면 6초 안에 사라진다.
    */
   typingTtlMs?: number;
+  /**
+   * 에이전트 presence 레지스트리. presence.snapshot 에 에이전트를 합집합으로 얹는다.
+   * 옵셔널이 아니다 — 빠뜨리면 에이전트가 스냅샷에서 조용히 사라진다.
+   */
+  agentPresence: AgentPresence;
 }
 
-export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptions = {}): Promise<void> {
+export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptions): Promise<void> {
   await app.register(websocket);
   const connections = new Map<string, number>(); // accountId → live socket count
   const tickets = createTicketStore();
@@ -170,7 +176,12 @@ export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptio
     const count = (connections.get(accountId) ?? 0) + 1;
     connections.set(accountId, count);
     if (count === 1) emitEvent({ type: 'presence.changed', accountId, online: true });
-    const snapshot: WsServerEvent = { type: 'presence.snapshot', online: [...connections.keys()] };
+    // 에이전트 presence 와 사람 presence (소켓 카운트) 를 합집합으로 낸다.
+    // 사람 presence 를 건드리지 않고 에이전트만 얹으므로, 소켓이 닫혀도 에이전트는
+    // presence.snapshot 에서 사라지지 않는다 (에이전트의 TTL 이 따로 적용됨).
+    const onlineAgents = opts.agentPresence.online();
+    const online = [...new Set([...connections.keys(), ...onlineAgents])];
+    const snapshot: WsServerEvent = { type: 'presence.snapshot', online };
     socket.send(JSON.stringify(snapshot));
 
     socket.on('close', () => {
