@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import type { AccountView, AttachmentRow } from '@murmur/shared';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
@@ -56,6 +56,7 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   const lastTypingAt = useRef(0);
   // 삽입 후 커서를 옮겨야 한다. React 는 value 만 되돌리므로 DOM 을 직접 만진다.
   const pendingCaret = useRef<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const matches = useMemo(() => {
     if (!query) return [];
@@ -108,6 +109,44 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     setPicking(false);
     setActive(0);
   };
+
+  /**
+   * #142: 포커스가 컴포저 **밖**으로 나가면 목록을 닫는다.
+   *
+   * 그냥 blur 로 닫을 수 없는 이유가 있다 — 아래 세 컨트롤(후보 버튼, 멘션 칩의 ×,
+   * `@` 버튼)은 `onMouseDown` 에서 `preventDefault` 를 해서 **일부러 blur 를 막는다**
+   * (누르는 동안 textarea 가 blur 되면 커서 자리가 사라진다). 그래서 판정은 "blur 가
+   * 났나"가 아니라 **"포커스가 어디로 갔나"** 여야 한다.
+   *
+   * `relatedTarget` 이 `null` 인 경우도 닫는다. `related &&` 는 널 가드가 아니다 —
+   * 창이 포커스를 잃거나 포커스가 body 로 가면 `null` 이고, 그때도 포커스는 컴포저
+   * 밖이다.
+   */
+  const onContainerBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    const related = e.relatedTarget as Node | null;
+    if (related && containerRef.current?.contains(related)) return;
+    closeLists();
+  };
+
+  /**
+   * #142: 바깥 클릭으로도 닫는다. 위 blur 경로와 **중복이 아니다** — 포커스를 받지 않는
+   * 요소(스크롤 영역, 일반 div)를 클릭하면 포커스가 이동하지 않아 blur 가 아예 발생하지
+   * 않는다. 그 구멍을 이 경로가 덮는다. 둘 중 하나만 두면 목록이 남는 경우가 생긴다.
+   *
+   * `open` 일 때만 붙인다 — 닫혀 있을 때 document 리스너를 들고 있을 이유가 없다.
+   * `open` 은 자동완성(`query`)과 `@` 버튼 목록(`picking`) 둘 다를 덮는다.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (e: MouseEvent): void => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (containerRef.current?.contains(target)) return;
+      closeLists();
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [open]);
 
   /**
    * 입력 상태를 서버에 알린다. 초안이 비면 즉시 멈춤을 보낸다 — 만료를 기다리면 지운 뒤에도
@@ -251,7 +290,7 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   const listId = 'mention-suggestions';
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative" onBlur={onContainerBlur}>
       {open && (
         <ul
           id={listId}

@@ -283,3 +283,92 @@ describe('mention autocomplete', () => {
     expect(api.accounts).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('focus blur dismiss', () => {
+  // #142: 포커스가 컴포저 밖으로 나가면 목록이 닫힌다.
+  it('closes when focus moves outside the composer', () => {
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@fi');
+
+    expect(screen.queryAllByRole('option')).toHaveLength(2);
+
+    const container = screen.getByText('@fi').closest('.relative')!;
+    const outsideElement = document.createElement('button');
+    outsideElement.textContent = 'outside';
+    document.body.appendChild(outsideElement);
+    outsideElement.focus();
+
+    fireEvent.blur(container, { relatedTarget: outsideElement });
+
+    expect(screen.queryAllByRole('option')).toHaveLength(0);
+
+    outsideElement.remove();
+  });
+
+  // #142: relatedTarget 이 null 이라도 닫힌다 (창 포커스 상실 등)
+  it('closes when relatedTarget is null (window blur)', () => {
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@fi');
+
+    expect(screen.queryAllByRole('option')).toHaveLength(2);
+
+    const container = screen.getByText('@fi').closest('.relative')!;
+    fireEvent.blur(container, { relatedTarget: null });
+
+    expect(screen.queryAllByRole('option')).toHaveLength(0);
+  });
+
+  // #142: 포커스가 컴포저 안의 다른 컨트롤로 옮겨가면 닫히지 않는다.
+  it('does not close when focus moves to an internal control', () => {
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@fi');
+
+    expect(screen.queryAllByRole('option')).toHaveLength(2);
+
+    const container = screen.getByText('@fi').closest('.relative')!;
+    const optionButton = screen.getByRole('option', { name: /fizz/ });
+    fireEvent.blur(container, { relatedTarget: optionButton });
+
+    expect(screen.queryAllByRole('option')).toHaveLength(2);
+  });
+
+  // #142: 후보 클릭이 여전히 후보를 고른다 (회귀선)
+  it('still allows picking a candidate by clicking', () => {
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('이거 @fi');
+
+    fireEvent.click(screen.getByRole('option', { name: /fizz/ }));
+
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('이거 @fizz ');
+  });
+});
+
+describe('바깥 클릭 dismiss', () => {
+  // #142: blur 경로와 중복이 아니다 — 포커스를 받지 않는 요소를 클릭하면 포커스가
+  // 이동하지 않아 blur 가 발생하지 않는다. 그 구멍을 document mousedown 이 덮는다.
+  // 워커 산출물에 이 경로의 테스트가 없었다(구현은 있었다).
+  it('closes when a non-focusable area outside the composer is clicked', () => {
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@fi');
+
+    expect(screen.queryAllByRole('option')).toHaveLength(2);
+
+    // div 는 포커스를 받지 않으므로 blur 가 나지 않는다 — mousedown 만 발생한다.
+    const outside = document.createElement('div');
+    document.body.appendChild(outside);
+    fireEvent.mouseDown(outside);
+
+    expect(screen.queryAllByRole('option')).toHaveLength(0);
+    outside.remove();
+  });
+
+  it('keeps the list open when the click is inside the composer', () => {
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@fi');
+
+    const container = screen.getByText('@fi').closest('.relative')!;
+    fireEvent.mouseDown(container);
+
+    expect(screen.queryAllByRole('option')).toHaveLength(2);
+  });
+});
