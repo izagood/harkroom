@@ -1,0 +1,11 @@
+-- PAT 라벨을 살아 있는 토큰 안에서 유일하게 만든다(#93).
+--
+-- 왜 필요한가: `DELETE /accounts/:id/pats/:label` 은 **라벨로** 폐기한다
+-- (`where account_id = $1 and label = $2 and revoked_at is null`). 즉 API 는 이미 라벨을
+-- 살아 있는 토큰의 식별자로 취급하는데, 테이블에는 그 제약이 없었다(primary key 는
+-- token_hash 다). 그래서 같은 라벨로 두 번 발급하면 목록에 같은 이름이 두 줄 뜨고,
+-- 그중 하나를 폐기하려는 요청이 **둘 다** 폐기한다 — UI 가 약속하는 것과 다르다.
+--
+-- 부분 인덱스인 이유: 폐기된 라벨은 다시 쓸 수 있어야 한다. 토큰을 잃어 폐기한 뒤 같은
+-- 이름('runner')으로 새로 발급하는 것이 이 기능의 주 사용 흐름이다(#93 이 그 사고에서 나왔다).
+create unique index pat_live_label_unique on pat (account_id, label) where revoked_at is null;

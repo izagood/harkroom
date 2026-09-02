@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
-  AGENT_HARNESSES, RUNNABLE_HARNESSES, type AgentConfig, type AgentView, type MentionPermission,
+  AGENT_HARNESSES, RUNNABLE_HARNESSES, type AgentConfig, type AgentView, type MentionPermission, type PatView,
 } from '@murmur/shared';
 import { getController } from '../../state/controller';
+import { useAppStore } from '../../state/appStore';
 
 /** AGENT_HARNESSES 에조차 없는 harness. 없는 것은 사용자의 CLI 가 아니라 murmur 의 구현이므로
  *  '설치 안 됨'이 아니라 '지원 예정'이다. AGENT_HARNESSES 에는 있지만 아직 못 돌리는 것(RUNNABLE_HARNESSES
@@ -43,20 +44,35 @@ export function AgentsSettings() {
   // null 이면 'harness 기본값 사용'. 되돌릴 때 model·effort 를 명시적 null 로 비워야 한다.
   const [customized, setCustomized] = useState(false);
   const [pat, setPat] = useState<string | null>(null);
+  const [pats, setPats] = useState<PatView[]>([]);
+  const [revoking, setRevoking] = useState<string | null>(null);
+  // 라벨을 하드코딩하면 재발급이 막힌다 — 라벨은 살아 있는 토큰 안에서 유일하고
+  // (마이그레이션 010) 서버가 중복을 409 로 거절한다. 토큰을 잃어 폐기한 뒤 같은 이름으로
+  // 다시 발급하는 것이 주 사용 흐름이라, 사용자가 이름을 정할 수 있어야 한다.
+  const [newPatLabel, setNewPatLabel] = useState('runner');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
 
   const reload = () => {
     void getController().listAgents().then(setAgents).catch(() => setError('에이전트 목록을 받지 못했다'));
   };
   useEffect(reload, []);
 
+  const loadPats = (agentId: string) => {
+    if (!isAdmin) return;
+    void getController().listPats(agentId).then(setPats).catch(() => setPats([]));
+  };
+
   const pick = (a: AgentView) => {
     setSelected(a);
     setDraft(draftOf(a));
     setCustomized(a.model !== null || a.effort !== null);
     setPat(null);
+    setPats([]);
+    setRevoking(null);
     setError(null);
+    loadPats(a.id);
   };
 
   const startNew = () => {
@@ -64,6 +80,8 @@ export function AgentsSettings() {
     setDraft(emptyDraft());
     setCustomized(false);
     setPat(null);
+    setPats([]);
+    setRevoking(null);
     setError(null);
   };
 
@@ -103,6 +121,33 @@ export function AgentsSettings() {
       reload();
     } catch {
       setError('만들지 못했다 (이미 있는 이름일 수 있다)');
+    } finally { setBusy(false); }
+  };
+
+  const revokePat = async (label: string) => {
+    if (!selected) return;
+    setError(null);
+    try {
+      await getController().revokePat(selected.id, label);
+      loadPats(selected.id);
+    } catch {
+      setError('PAT 를 폐기하지 못했다');
+    }
+    setRevoking(null);
+  };
+
+  const mintNewPat = async () => {
+    if (!selected) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const token = await getController().mintPat(selected.id, newPatLabel.trim());
+      setPat(token);
+      loadPats(selected.id);
+    } catch (e) {
+      // 서버가 왜 거절했는지 그대로 보여야 한다 — 특히 '이 라벨은 이미 쓰인다'(409)는
+      // 사용자가 라벨만 바꾸면 해결되는 것이라, 뭉개면 막힌 것처럼 보인다.
+      setError(e instanceof Error ? e.message : 'PAT 를 새로 발급하지 못했다');
     } finally { setBusy(false); }
   };
 
@@ -253,6 +298,75 @@ export function AgentsSettings() {
                 onChange={(e) => setDraft({ ...draft, workingDir: e.target.value })}
               />
             </label>
+
+            {selected && isAdmin && (
+              <div className="rounded border border-zinc-200 p-3">
+                <div className="text-xs font-medium text-zinc-600">PAT (Personal Access Token)</div>
+                <div className="mt-2 space-y-2">
+                  {pats.length === 0 ? (
+                    <div className="text-[11px] text-zinc-400">PAT 가 없다</div>
+                  ) : (
+                    pats.map((p) => (
+                      <div key={`${p.label}:${p.createdAt}`} className="flex items-center justify-between rounded bg-zinc-50 px-2 py-1.5">
+                        <div className="text-xs">
+                          <span className="font-medium">{p.label}</span>
+                          {p.revokedAt && (
+                            <span className="ml-2 text-red-600">(폐기됨)</span>
+                          )}
+                          <span className="ml-2 text-zinc-400">
+                            {new Date(p.createdAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                        {!p.revokedAt && (
+                          revoking === p.label ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                className="rounded border border-red-300 bg-red-50 px-1.5 py-0.5 text-[11px] text-red-700"
+                                onClick={() => void revokePat(p.label)}
+                              >
+                               Really revoke
+                              </button>
+                              <button
+                                className="px-1.5 py-0.5 text-[11px] text-zinc-500"
+                                onClick={() => setRevoking(null)}
+                              >
+                               Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              className="text-[11px] text-red-600 hover:underline"
+                              onClick={() => setRevoking(p.label)}
+                            >
+                              Revoke
+                            </button>
+                          )
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    className="w-40 rounded border border-zinc-300 px-2 py-1 text-xs"
+                    aria-label="New PAT label"
+                    placeholder="runner"
+                    value={newPatLabel}
+                    onChange={(e) => setNewPatLabel(e.target.value)}
+                  />
+                  <button
+                    className="rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-200 disabled:opacity-50"
+                    disabled={busy || newPatLabel.trim() === ''}
+                    onClick={() => void mintNewPat()}
+                  >
+                    + New PAT
+                  </button>
+                </div>
+                <p className="mt-1 text-[11px] text-zinc-400">
+                  라벨은 살아 있는 토큰 안에서 유일합니다. 폐기하면 같은 라벨을 다시 쓸 수 있습니다.
+                </p>
+              </div>
+            )}
 
             {error && <p className="text-xs text-red-600">{error}</p>}
 
