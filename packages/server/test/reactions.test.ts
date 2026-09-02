@@ -17,7 +17,7 @@ beforeAll(async () => {
   ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
   const ch = await app.inject({
     method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
-    payload: { name: 'general' },
+    payload: { name: 'reacts' },
   });
   channelId = ch.json().id;
 });

@@ -1,10 +1,15 @@
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import type { ChannelRow } from '@murmur/shared';
 
 const COLS = `id, name, topic, kind, repo`;
 
+/**
+ * `pool` 이 `PoolClient` 도 받는 이유: 부트스트랩이 계정과 기본 채널을 한 트랜잭션에 묶는다
+ * (`authRoutes.ts`). 그 트랜잭션의 커넥션으로 불러야 begin/commit 이 실제로 이 INSERT 를
+ * 덮는다 — Pool 로 부르면 다른 커넥션의 별개 자동커밋이 된다.
+ */
 export async function createChannel(
-  pool: Pool, input: { name: string; topic?: string; repo?: string | null },
+  pool: Pool | PoolClient, input: { name: string; topic?: string; repo?: string | null },
 ): Promise<ChannelRow> {
   const res = await pool.query(
     `insert into channel (name, topic, kind, repo) values ($1, $2, 'standard', $3) returning ${COLS}`,

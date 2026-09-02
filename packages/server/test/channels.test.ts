@@ -27,9 +27,12 @@ describe('channels', () => {
     const list = await app.inject({
       method: 'GET', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
     });
-    expect(list.json().channels).toEqual([
+    // 목록이 이것 **하나뿐**이라고 단언하면 "부트스트랩 뒤에 채널이 0 개"라는 전제를 테스트가
+    // 붙잡게 된다. 이 테스트가 보려는 것은 "만든 채널이 목록에 뜬다"이고, 부트스트랩이
+    // 기본 채널을 시딩하는 것은 별개의 계약(auth.test.ts 가 본다)이다.
+    expect(list.json().channels).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'dev', kind: 'standard', repo: 'main-repo' }),
-    ]);
+    ]));
   });
 
   // repo 바인딩은 생성 시에만 지정할 수 있었다 — avcs 주소 규약이 바뀌자 기존 채널을 고칠

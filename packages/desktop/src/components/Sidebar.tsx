@@ -42,7 +42,31 @@ export function Sidebar({ onLogout, onOpenSettings }: {
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
-  const channelRegex = new RegExp(CHANNEL_NAME_PATTERN);
+
+  const closeCreate = (): void => {
+    setCreateChannelOpen(false);
+    setNewChannelName('');
+    setCreateError(null);
+  };
+
+  /**
+   * Enter 와 [만들기] 가 같은 일을 한다 — 두 핸들러에 같은 절차를 각각 적으면 한쪽만 고치는
+   * 사고가 난다. 이름 규칙은 `CHANNEL_NAME_PATTERN`(서버의 zod 가 쓰는 그 상수)로 미리 걸러
+   * 서버 왕복 없이 안내하되, 최종 판정은 여전히 서버다.
+   */
+  const submitNewChannel = async (): Promise<void> => {
+    if (!new RegExp(CHANNEL_NAME_PATTERN).test(newChannelName)) {
+      setCreateError('이름은 영문 소문자·숫자·`-`·`_` 만 쓸 수 있다 (1~48자)');
+      return;
+    }
+    try {
+      await getController().createChannel(newChannelName);
+      closeCreate();
+    } catch (err) {
+      // 실패를 조용히 삼키면 사용자는 눌렀는데 아무 일도 안 난 것으로 본다.
+      setCreateError(err instanceof Error ? err.message : '채널 생성에 실패했다');
+    }
+  };
 
   const dmPeers = useMemo(() =>
     dms.map((dm) => {
@@ -82,65 +106,28 @@ export function Sidebar({ onLogout, onOpenSettings }: {
               <div className="mt-1 rounded border border-zinc-700 bg-zinc-800 p-1">
                 <input
                   type="text"
+                  aria-label="New channel name"
                   className="mb-1 w-full rounded bg-zinc-900 px-2 py-1 text-sm text-zinc-200 placeholder-zinc-500"
                   placeholder="channel-name"
                   value={newChannelName}
                   onChange={(e) => { setNewChannelName(e.target.value); setCreateError(null); }}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && newChannelName) {
-                      void (async () => {
-                        if (!channelRegex.test(newChannelName)) {
-                          setCreateError('이름은 영문 소문자, 숫자, -, _ 만 가능 (1-48자)');
-                          return;
-                        }
-                        try {
-                          const ch = await getController().api.createChannel({ name: newChannelName });
-                          useAppStore.getState().set({
-                            channels: [...useAppStore.getState().channels, ch],
-                          });
-                          setCreateChannelOpen(false);
-                          setNewChannelName('');
-                          setCreateError(null);
-                          void getController().openChannel(ch.id);
-                        } catch (err) {
-                          setCreateError(err instanceof Error ? err.message : '채널 생성 실패');
-                        }
-                      })();
-                    }
-                    if (e.key === 'Escape') { setCreateChannelOpen(false); setNewChannelName(''); setCreateError(null); }
+                    if (e.key === 'Enter') void submitNewChannel();
+                    if (e.key === 'Escape') closeCreate();
                   }}
                   autoFocus
                 />
-                {createError && <p className="mb-1 text-[10px] text-red-400">{createError}</p>}
+                {createError && <p role="alert" className="mb-1 text-[10px] text-red-400">{createError}</p>}
                 <div className="flex gap-1">
                   <button
                     className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-500"
-                    onClick={() => {
-                      if (!channelRegex.test(newChannelName)) {
-                        setCreateError('이름은 영문 소문자, 숫자, -, _ 만 가능 (1-48자)');
-                        return;
-                      }
-                      void (async () => {
-                        try {
-                          const ch = await getController().api.createChannel({ name: newChannelName });
-                          useAppStore.getState().set({
-                            channels: [...useAppStore.getState().channels, ch],
-                          });
-                          setCreateChannelOpen(false);
-                          setNewChannelName('');
-                          setCreateError(null);
-                          void getController().openChannel(ch.id);
-                        } catch (err) {
-                          setCreateError(err instanceof Error ? err.message : '채널 생성 실패');
-                        }
-                      })();
-                    }}
+                    onClick={() => void submitNewChannel()}
                   >
                     만들기
                   </button>
                   <button
                     className="rounded px-2 py-0.5 text-xs text-zinc-400 hover:bg-zinc-700"
-                    onClick={() => { setCreateChannelOpen(false); setNewChannelName(''); setCreateError(null); }}
+                    onClick={closeCreate}
                   >
                     취소
                   </button>

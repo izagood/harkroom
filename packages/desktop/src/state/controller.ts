@@ -1,4 +1,4 @@
-import type { AttachmentRow, WsServerEvent } from '@murmur/shared';
+import type { AttachmentRow, ChannelRow, WsServerEvent } from '@murmur/shared';
 import type { ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
@@ -390,6 +390,18 @@ export class Controller {
     id: string, patch: Partial<import('@murmur/shared').AgentConfig> & { displayName?: string },
   ): Promise<import('@murmur/shared').AgentView> {
     return this.api.updateAgent(id, patch);
+  }
+
+  /**
+   * 채널을 만들고 목록에 반영한 뒤 그 채널을 연다 — `startDm` 과 같은 모양이다.
+   * 컴포넌트가 `api` 를 직접 부르고 스토어를 손으로 갱신하면 그 절차가 화면마다 흩어지고,
+   * 서버가 채운 필드(kind·topic 기본값)를 클라이언트가 추측하게 된다. 목록은 다시 받아온다.
+   */
+  async createChannel(name: string): Promise<ChannelRow> {
+    const created = await this.api.createChannel({ name });
+    useAppStore.getState().set({ channels: await this.api.channels() });
+    await this.openChannel(created.id);
+    return created;
   }
 
   async startDm(accountId: string): Promise<void> {
