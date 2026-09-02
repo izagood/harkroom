@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { useAppStore } from '../src/state/appStore';
 import { setController, Controller, type Controller as C } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
@@ -22,25 +22,28 @@ describe('삭제 권한이 UI에서 도달 가능해야 한다', () => {
     seed({ ...acc('u1', 'admin'), isAdmin: true });
     render(<MessageItem message={msg('m1', 'c1', 1, 'spam from a bot', 'u2')} />);
 
-    expect(screen.getByRole('button', { name: 'Delete' })).toBeTruthy();
+    // #121: Delete 는 ⋯ 오버플로 메뉴 안이다. admin 은 남의 메시지도 지울 수 있으므로
+    // 트리거가 있어야 하고, 그 안에 Delete 만 있어야 한다(수정은 admin 에게도 열지 않는다).
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeTruthy();
     // 수정은 admin 에게도 열리지 않는다 — 남의 발언을 고칠 수 있으면 기록이 증거가 못 된다.
-    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull();
   });
 
   it('offers neither on another account message when I am not an admin', () => {
     seed(acc('u1', 'admin'));
     render(<MessageItem message={msg('m1', 'c1', 1, 'not mine', 'u2')} />);
 
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    // 권한이 없으면 트리거 자체가 없다 — 빈 메뉴를 열지 않는다.
+    expect(screen.queryByRole('button', { name: 'More actions' })).toBeNull();
   });
 
   it('offers neither on a system message even to an admin', () => {
     seed({ ...acc('u1', 'admin'), isAdmin: true });
     render(<MessageItem message={msg('m1', 'c1', 1, 'projected', 'u2', { kind: 'system' })} />);
 
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    // 권한이 없으면 트리거 자체가 없다 — 빈 메뉴를 열지 않는다.
+    expect(screen.queryByRole('button', { name: 'More actions' })).toBeNull();
   });
 });
 

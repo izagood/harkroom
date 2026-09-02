@@ -97,16 +97,16 @@ describe('overflow menu permissions', () => {
     expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeTruthy();
   });
 
-  it('shows no Edit/Delete for non-admin on others message', () => {
-    const c = fakeController();
+  // 항목이 하나도 없으면 트리거를 아예 만들지 않는다 — 열어도 비어 있는 메뉴는
+  // "할 수 있는 게 있다"는 거짓 신호다(design.md §4).
+  it('권한이 없으면 ⋯ 트리거 자체가 없다 (빈 메뉴를 열지 않는다)', () => {
+    fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '남의 메시지', 'u2')} />);
 
     const toolbar = screen.getByRole('group', { name: 'message toolbar' });
-    fireEvent.mouseEnter(toolbar);
-    fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }));
-
-    expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull();
-    expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull();
+    expect(within(toolbar).queryByRole('button', { name: 'More actions' })).toBeNull();
+    // 리액션은 남의 메시지에도 달 수 있다.
+    expect(within(toolbar).getByRole('button', { name: 'Add reaction' })).toBeTruthy();
   });
 
   it('shows no Edit/Delete for system message', () => {
