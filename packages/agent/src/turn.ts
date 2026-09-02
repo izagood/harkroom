@@ -8,9 +8,9 @@
 // 옮긴 것이다 — 스파이크(task-1)가 실측으로 확정했고, 초판의 추정 네 곳을 여기서 뒤집는다:
 // codex 에 `-a` 가 없다(sandbox 단독), codex MCP 는 파일이 아니라 턴별 `-c` 오버라이드,
 // claude 는 `--strict-mcp-config` 를 항상 받는다, gemini 는 이번 범위에서 미지원.
-import { mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { AgentHarness, MentionPermission } from '@murmur/shared';
+import { RUNNABLE_HARNESSES, type AgentHarness, type MentionPermission } from '@murmur/shared';
 
 /**
  * `murmurUrl` 은 서버 베이스 URL(`http://localhost:3400`)이고, MCP 엔드포인트는 `/mcp` 다.
@@ -55,6 +55,8 @@ export interface BuildTurnCommandOptions {
   mentionPermission: MentionPermission;
   mcpConfigPath: string;
   pat: string;
+  /** systemPrompt 를 파일로 전달할 때 그 경로. null 이면 argv 에 직접 전달(하위 호환). */
+  systemPromptFile?: string | null;
   /**
    * codex 의 `-c mcp_servers.murmur.url=...` 오버라이드에 필요한 실제 murmur URL. claude 는
    * 이 값을 쓰지 않는다 — `writeMcpConfigOnce` 가 이미 `mcpConfigPath` 파일 안에 실제 URL 을
@@ -97,8 +99,12 @@ interface HarnessPreset {
    * 지시문 + 사용자 프롬프트 조립. claude 는 `--append-system-prompt` 플래그와 위치인자
    * 프롬프트가 분리돼 있지만, codex 는 지시문 주입 플래그 자체가 없어 프롬프트 앞에
    * 접두하는 방식뿐이다(실측, spec §4) — 그래서 반환 형태가 하네스마다 다르다.
+   *
+   * claude 는 지시문을 argv 로 직접 전달하면 다른 사용자에게 노출되므로 ( spec §7 ),
+   * systemPromptFile 이 있으면 `--append-system-prompt-file <path>` 로 파일을 전달한다.
+   * 파일 퍼미션 0600 으로 world-readable 이 아니다.
    */
-  prompt(systemPrompt: string, promptCtx: string, mode: TurnMode): string[];
+  prompt(systemPrompt: string, promptCtx: string, mode: TurnMode, systemPromptFile: string | null): string[];
   /**
    * 세션·권한·MCP 어디에도 안 붙는, 그 harness 라서 늘 필요한 인자. `mode` 를 받는 이유는
    * codex 가 멘션 턴(`codex exec`)과 인터랙티브 턴(`codex resume`)에서 **서로 다른
@@ -131,8 +137,19 @@ const CLAUDE_PRESET: HarnessPreset = {
   mcp: ({ mcpConfigPath }) => ['--mcp-config', mcpConfigPath, '--strict-mcp-config'],
   model: (model) => (model ? ['--model', model] : []),
   effort: (effort) => (effort ? ['--effort', effort] : []),
-  prompt: (systemPrompt, promptCtx, mode) => {
-    const flags = systemPrompt ? ['--append-system-prompt', systemPrompt] : [];
+  // 지시문은 **파일로만** 넘긴다. 경로는 호출자가 미리 `writeSystemPromptFile()` 로 써 두고
+  // 넘긴다(0600). argv 폴백을 남기지 않는 이유는 `murmurUrl` 과 같다 — 조용히 넘어가는 경로를
+  // 두면 그 경로가 결국 쓰이고, 여기서는 그게 곧 대화 내용이 `ps` 로 새는 것이다(#92).
+  prompt: (systemPrompt, promptCtx, mode, systemPromptFile) => {
+    const flags: string[] = [];
+    if (systemPrompt && !systemPromptFile) {
+      throw new Error(
+        'buildTurnCommand: claude 는 지시문을 파일로만 받는다 — systemPromptFile 이 비어 있다 ' +
+          '(turn.ts::writeSystemPromptFile 로 먼저 쓰고 그 경로를 넘겨라). argv 로 넘기면 ' +
+          '`ps` 로 다른 로컬 사용자에게 노출된다(#92, spec §7).',
+      );
+    }
+    if (systemPromptFile) flags.push('--append-system-prompt-file', systemPromptFile);
     // 빈 문자열을 그대로 위치인자로 넘기면 일부 CLI 가 그걸 진짜 값으로 읽는다 — 있을 때만 싣는다.
     if (mode === 'mention' && promptCtx) flags.push(promptCtx);
     return flags;
@@ -238,7 +255,9 @@ const CODEX_PRESET: HarnessPreset = {
   // 인터랙티브 턴(codex resume) 은 이 플래그를 못 받으므로 이 한계가 그대로 노출된다 —
   // 사람이 화면 앞에 있는 턴이라 성격이 다르다.
   alwaysArgs: (mode) => (mode === 'mention' ? ['--skip-git-repo-check', '--ignore-user-config'] : []),
-  prompt: (systemPrompt, promptCtx, mode) => {
+  // codex 는 아직 파일에서 지시문을 읽는 수단이 없다(PTY 에서 stdin 파이프를 쓸 수 없음).
+  // systemPromptFile 은 받지만 무시하고 기존 위치인자로 전달한다.
+  prompt: (systemPrompt, promptCtx, mode, _systemPromptFile) => {
     // codex 에는 `--append-system-prompt` 에 해당하는 플래그가 없다(실측) — 지시문은
     // 프롬프트 앞에 접두하는 것으로만 전달한다. 인터랙티브 턴은 애초에 프롬프트 위치인자가
     // 없다(사람이 직접 입력) — 그래서 codex 인터랙티브 턴은 지시문 재주입 수단이 없다는
@@ -294,6 +313,26 @@ export function preassignsSessionId(harness: AgentHarness): boolean {
   return !preset.allowsNullSessionOnFirstMention;
 }
 
+/**
+ * RUNNABLE_HARNESSES 계약 검사. main.ts 가 기동할 때 이 함수를 불러서,
+ * 설정된 실행 가능 목록의 모든 harness 가 실제로 구현돼 있는지 확인한다.
+ * 반대 방향(PRESETS 에 있지만 RUNNABLE 에 없는) 은 검사하지 않는다 —
+ * "구현은 됐지만 아직 열지 않았다"는 정당한 상태다.
+ *
+ * @param runnableHarnesses 검사할 harness 목록. 생략하면 shared 의 RUNNABLE_HARNESSES 를 쓴다.
+ */
+export function assertHarnessContract(runnableHarnesses?: readonly AgentHarness[]): void {
+  const harnesses = runnableHarnesses ?? RUNNABLE_HARNESSES;
+  for (const name of harnesses) {
+    if (PRESETS[name] === 'unsupported') {
+      throw new Error(
+        `harness 계약 불일치: RUNNABLE_HARNESSES 에 '${name}' 이(가) 있지만 PRESETS 에는 구현이 없다. ` +
+          '실행하려면 PRESETS 에 실제 구현을 추가하거나, RUNNABLE_HARNESSES 에서 제거해야 한다.',
+      );
+    }
+  }
+}
+
 export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
   const preset = PRESETS[opts.harness];
   if (preset === 'unsupported') {
@@ -316,7 +355,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     ...preset.mcp({ mcpConfigPath: opts.mcpConfigPath, murmurUrl: opts.murmurUrl }),
     ...preset.model(opts.model),
     ...preset.effort(opts.effort),
-    ...preset.prompt(opts.systemPrompt, opts.mode === 'mention' ? opts.promptCtx : '', opts.mode),
+    ...preset.prompt(opts.systemPrompt, opts.mode === 'mention' ? opts.promptCtx : '', opts.mode, opts.systemPromptFile ?? null),
   ];
 
   // PAT 는 절대 argv 에 올리지 않는다 — 자식 프로세스 env 로만 준다. `ps` 로 argv 는 다른
@@ -379,5 +418,25 @@ export async function writeMcpConfigOnce(dir: string, murmurUrl: string): Promis
   await mkdir(dir, { recursive: true });
   const filePath = join(dir, 'mcp.json');
   await writeFile(filePath, JSON.stringify(config, null, 2), 'utf8');
+  return filePath;
+}
+
+/**
+ * 에이전트 지시문을 파일에 쓴다. 이 파일은 claude 에 `--append-system-prompt-file` 로 전달된다.
+ *
+ * **매 턴 최신 값으로 쓴다** — writeMcpConfigOnce 와 달리 "once" 가 아니다.
+ * 이유는 spec §3: "매 턴 재주입"이 보장되어야 하기 때문이다.
+ * UI 로 지시문을 바꾸면 다음 턴에 반영돼야 하고, 그렇게 하려면 턴마다 다시 써야 한다.
+ *
+ * 퍼미션 0600 으로 유지되어 world-readable 이 아니다 — argv 에서 뺀 이유가 이거다.
+ * 지시문은 최대 8000자고, 파일 경로는 호출자가 이미 mkdir 로 디렉터리를 만들었다고 가정한다.
+ */
+export async function writeSystemPromptFile(dir: string, systemPrompt: string): Promise<string> {
+  const filePath = join(dir, 'system-prompt.txt');
+  // mode 와 chmod 를 **둘 다** 한다. `writeFile` 의 mode 는 파일을 새로 만들 때만 적용되므로
+  // 두 번째 턴부터는(파일이 이미 있다) 아무 일도 하지 않는다 — 그때는 chmod 가 지킨다.
+  // 반대로 chmod 만 하면 첫 생성과 chmod 사이에 umask 퍼미션으로 존재하는 창이 생긴다.
+  await writeFile(filePath, systemPrompt, { encoding: 'utf8', mode: 0o600 });
+  await chmod(filePath, 0o600);
   return filePath;
 }

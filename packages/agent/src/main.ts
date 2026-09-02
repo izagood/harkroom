@@ -18,13 +18,17 @@ import { MurmurAgentClient } from './murmur.js';
 import { runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
 import { runPtyTurn } from './pty.js';
 import { SessionStore } from './sessions.js';
-import { writeMcpConfigOnce } from './turn.js';
+import { assertHarnessContract, writeMcpConfigOnce } from './turn.js';
 import type { Exec } from './workspace.js';
 import { exhausted, isCredentialFailure, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 import { FAILURE_NOTICE } from './prompt.js';
 
 const config = loadConfig();
 const murmur = new MurmurAgentClient(config.murmurUrl, config.murmurPat);
+
+// RUNNABLE_HARNESSES 가 실제로 PRESETS 에 구현돼 있는지 기동 시점에 검사한다.
+// 불일치가 있으면 여기서 크게 실패한다 — 멘션마다 개별적으로 실패하는 대신.
+assertHarnessContract();
 
 let running = true;
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
@@ -124,6 +128,10 @@ while (running) {
           murmur, store, exec, runTurn: runPtyTurn, me, guide,
           channelName: byId.get(mention.channelId) ?? 'dm',
           handles, workspaceBaseDir, mcpConfigPath,
+          // 지시문 파일이 여기 쓰인다(#92) — 에이전트 워크스페이스가 아니라 러너의 상태
+          // 디렉터리다. 워크스페이스 안에 두면 bypassPermissions 에이전트가 자기 지시문을
+          // 고칠 수 있다.
+          stateDir: agentStateDir,
           murmurUrl: config.murmurUrl, pat: config.murmurPat,
           turnTimeoutMs: config.turnTimeoutMs,
         };
@@ -135,9 +143,15 @@ while (running) {
         attempts.delete(entry.id);
       } catch (err) {
         // 자격증명 실패는 재시도로 낫지 않는다. 조용히 반복하면 "왜 답이 없지"의 원인이 묻힌다.
-        if (isCredentialFailure(err)) {
-          console.error('\nharness 의 자격증명을 해결할 수 없다. 러너를 멈춘다.');
-          console.error('  claude-code harness 는 claude CLI 의 로그인을 쓴다 — `claude` 를 한 번 실행해 로그인해라.');
+        const credType = isCredentialFailure(err);
+        if (credType !== 'other') {
+          console.error(`\n${credType === 'murmur-credential' ? 'Murmur' : 'Harness'} 자격증명을 해결할 수 없다. 러너를 멈춘다.`);
+          if (credType === 'murmur-credential') {
+            console.error('  Murmur API 의 PAT 가 만료·폐기됐는지 확인해라.');
+            console.error('  MURMUR_PAT 환경변수를 새 PAT 로 교체하고 러너를 재시작한다.');
+          } else {
+            console.error('  claude-code harness 는 claude CLI 의 로그인을 쓴다 — `claude` 를 한 번 실행해 로그인해라.');
+          }
           console.error(`  원문: ${err instanceof Error ? err.message : String(err)}`);
           process.exit(1);
         }

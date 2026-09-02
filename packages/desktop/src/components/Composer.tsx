@@ -61,7 +61,9 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     if (!query) return [];
     const q = query.query.toLowerCase();
     return Object.values(accounts)
-      .filter((a) => a.id !== myId && a.handle.toLowerCase().startsWith(q))
+      // 비활성 계정은 부를 수 없다 — 디렉터리에는 남아 있다(과거 메시지의 작성자 이름을
+      // 풀어야 하므로). 후보에서 빼는 것이 이쪽 책임이다(shared 의 AccountView.disabled 주석).
+      .filter((a) => a.id !== myId && !a.disabled && a.handle.toLowerCase().startsWith(q))
       .sort(rank)
       .slice(0, MAX_SUGGESTIONS);
   }, [accounts, myId, query]);

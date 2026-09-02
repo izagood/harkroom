@@ -12,9 +12,9 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
-import { buildSystemPrompt, buildTurnPrompt, hasOwnPostSince, NO_REPLY_NOTICE } from './prompt.js';
+import { buildSystemPrompt, buildTurnPrompt, countOwnPostsSince, hasOwnPostSince, NO_REPLY_NOTICE } from './prompt.js';
 import { SessionStore } from './sessions.js';
-import { buildTurnCommand, preassignsSessionId, type TurnPlan } from './turn.js';
+import { buildTurnCommand, preassignsSessionId, writeSystemPromptFile, type TurnPlan } from './turn.js';
 import type { TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
 import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
@@ -23,7 +23,7 @@ import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
 export interface MentionTurnMurmur {
   definition(): Promise<AgentView>;
-  readThread(channelId: string, threadRootId: string | null): Promise<MessageRow[]>;
+  readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
   post(channelId: string, body: string, threadRootId: string | null): Promise<void>;
 }
 
@@ -48,6 +48,12 @@ export interface MentionTurnDeps {
   workspaceBaseDir: string;
   /** writeMcpConfigOnce 가 기동 시 한 번 쓴 경로. 매 턴 그대로 재사용한다. */
   mcpConfigPath: string;
+  /**
+   * 러너의 상태 디렉터리(config.ts::stateDir). 지시문 파일을 여기 쓴다 —
+   * **에이전트의 워크스페이스 안에 두면 안 된다**: `mentionPermission: 'auto'`
+   * (bypassPermissions)인 에이전트가 자기 지시문을 읽고 고칠 수 있게 된다.
+   */
+  stateDir: string;
   murmurUrl: string;
   pat: string;
   turnTimeoutMs: number;
@@ -100,12 +106,28 @@ export interface MentionTarget {
  * 멘션 하나에 답한다. 던지면(예: 하네스 비정상 종료) 호출자(main.ts)의 attempts/backoff
  * 경로가 받는다 — 이 함수 자체는 재시도하지 않는다(policy.ts 는 그대로 둔다).
  */
+/**
+ * 한 턴에서 두 번 이상 발화한 것을 러너 로그에 남긴다.
+ *
+ * **채널에는 통보하지 않는다** — 이미 답이 두 개인데 세 번째 메시지를 더하면 소음이다.
+ * 러너가 호출 횟수를 세어 **막지는** 못한다: 그러려면 PTY 출력에서 tool-call 흔적을
+ * 파싱해야 하고, 그건 "러너는 하네스 출력을 해석하지 않는다"(pty.ts)와 정면으로 부딪친다.
+ * 그래서 예방은 시스템 프롬프트(prompt.ts)가 하고, 이 함수는 그것이 지켜졌는지를
+ * murmur 데이터로만 관측한다 — 설계 경계를 넘지 않는 유일한 관측 지점이다.
+ */
+function warnOnDuplicatePosts(key: string, postCount: number): void {
+  if (postCount <= 1) return;
+  console.warn(
+    `[mentionTurn] ${key}: 한 턴에 발화가 ${postCount}건이다 — 한 번만 발화해야 한다(#90). ` +
+      '시스템 프롬프트의 지시가 지켜지지 않았다.',
+  );
+}
+
 export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarget): Promise<void> {
   const { channelId, threadRootId: anchor } = target;
 
   // 정의는 매 턴 새로 읽는다 — UI 로 지시문을 바꾸면 다음 턴부터 바로 반영된다(spec §3).
   const def = await deps.murmur.definition();
-  const thread = await deps.murmur.readThread(channelId, anchor);
   const key = SessionStore.threadKey(channelId, anchor);
 
   let rec = deps.store.get(key);
@@ -135,6 +157,11 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
       turnsRun: 0,
     };
   }
+
+  // #80: 이 턴에 새로 먹일 것만 정확히 읽기 위해 lastFedSeq 로 커서를 찍는다.
+  // 첫 턴(lastFedSeq=0)에서는 since=0 이라 서버가 최신 N 개를 반환하므로,
+  // buildTurnPrompt 가 전체 맥락을 보여주는 동작이 유지된다.
+  const thread = await deps.murmur.readThread(channelId, anchor, rec.lastFedSeq);
 
   // isFirstTurn 은 원칙적으로 turnsRun 에서 유도한다 — lastFedSeq 는 "무엇을 봤는지"의
   // 경계일 뿐 "하네스를 실제로 돌렸는지"의 증거가 아니다(sessions.ts::SessionRecord.turnsRun
@@ -176,12 +203,19 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     guide: deps.guide,
   });
 
+  // 지시문은 argv 가 아니라 파일로 넘긴다(#92) — `ps` 로 다른 로컬 사용자에게 보이는 자리에
+  // 대화·지시문을 올리지 않는다. **매 턴 다시 쓴다**: UI 로 지시문을 바꾸면 다음 턴부터
+  // 반영돼야 하고(spec §3), channelName 이 프롬프트에 들어가므로 내용이 턴마다 다르다.
+  // 턴은 순차적으로 돈다(main.ts 의 for 루프가 await 한다) — 그래서 파일 하나로 충분하다.
+  const systemPromptFile = await writeSystemPromptFile(deps.stateDir, systemPrompt);
+
   const plan = buildTurnCommand({
     harness: def.harness,
     mode: 'mention',
     sessionId: rec.sessionId,
     isFirstTurn,
     systemPrompt,
+    systemPromptFile,
     promptCtx: prompt,
     model: def.model,
     effort: def.effort,
@@ -229,8 +263,14 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     // "한 번 더 시도한다"가 "중복 발화"보다 회복 가능한 쪽이다.
     let answered = false;
     try {
-      const after = await deps.murmur.readThread(channelId, anchor);
-      answered = hasOwnPostSince(after, deps.me.id, turnStartSeq);
+      // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
+      const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
+      const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
+      // 실패한 턴에서도 중복 발화는 일어난다(답을 두 번 올리고 나서 죽는다) — 성공 경로와
+      // 같은 관측을 여기서도 한다. 안 하면 "실패했으니 안 보였다"가 되어 #90 의 관측이
+      // 반쪽이 된다.
+      warnOnDuplicatePosts(key, postCount);
+      answered = postCount > 0;
     } catch (err) {
       console.error(
         `[mentionTurn] ${key}: 실패 턴의 발화 확인 실패(커서를 전진시키지 않고 재시도로 넘긴다) — ${err instanceof Error ? err.message : String(err)}`,
@@ -255,8 +295,11 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
   // 턴 전체를 실패(재시도 대상)로 만들 이유가 없다. 조용히 삼키면 "왜 NO_REPLY_NOTICE 가
   // 안 남았지"의 원인이 사라지므로 러너 로그에는 남긴다.
   try {
-    const after = await deps.murmur.readThread(channelId, anchor);
-    if (!hasOwnPostSince(after, deps.me.id, turnStartSeq)) {
+    // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
+    const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
+    const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
+    warnOnDuplicatePosts(key, postCount);
+    if (postCount === 0) {
       // 여기는 정상 종료 경로뿐이다(실패는 위에서 던졌다). 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다
       // (쓸 말이 없었거나, 안전 거부(exit 0)이거나). 옛 reply.ts::extractReply 가 안전
       // 거부를 사실로 남기던 자리를 이 경로가 대신한다: 침묵을 침묵으로 남기지 않는다.
