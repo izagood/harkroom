@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
-import { bootstrapAdmin } from './helpers/fixtures.js';
+import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -98,5 +98,44 @@ describe('PAT management', () => {
     });
 
     expect(res.statusCode).toBe(403);
+  });
+
+  // 라벨은 살아 있는 토큰 안에서 유일하다(마이그레이션 010). 이 제약이 없으면 같은 라벨이
+  // 둘 생기고, `DELETE .../pats/:label` 이 라벨로 폐기하므로 "이 하나만" 이 **둘 다** 를
+  // 지운다 — UI 가 약속하는 것과 달라진다.
+  it('같은 라벨로 두 번 발급하면 409 로 거절한다', async () => {
+    const bot = await createAgent(app, adminToken, 'dupbot');
+    const first = await app.inject({
+      method: 'POST', url: `/accounts/${bot.accountId}/pats`,
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { label: 'runner' },
+    });
+    expect(first.statusCode).toBe(201);
+
+    const second = await app.inject({
+      method: 'POST', url: `/accounts/${bot.accountId}/pats`,
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { label: 'runner' },
+    });
+    expect(second.statusCode).toBe(409);
+    expect(second.json().error.code).toBe('label_in_use');
+  });
+
+  // 폐기한 라벨은 다시 쓸 수 있어야 한다 — 토큰을 잃어 폐기하고 같은 이름으로 재발급하는
+  // 것이 이 기능의 주 사용 흐름이다(#93 이 그 사고에서 나왔다).
+  it('폐기한 뒤에는 같은 라벨을 다시 쓸 수 있다', async () => {
+    const bot = await createAgent(app, adminToken, 'reusebot');
+    const auth = { authorization: `Bearer ${adminToken}` };
+    await app.inject({ method: 'POST', url: `/accounts/${bot.accountId}/pats`, headers: auth, payload: { label: 'runner' } });
+    await app.inject({ method: 'DELETE', url: `/accounts/${bot.accountId}/pats/runner`, headers: auth });
+
+    const again = await app.inject({
+      method: 'POST', url: `/accounts/${bot.accountId}/pats`, headers: auth, payload: { label: 'runner' },
+    });
+    expect(again.statusCode).toBe(201);
+
+    // 목록에는 폐기된 것과 살아 있는 것이 함께 보인다 — 운영자가 재발급을 판단할 근거다.
+    const list = await app.inject({ method: 'GET', url: `/accounts/${bot.accountId}/pats`, headers: auth });
+    const runners = list.json().pats.filter((p: { label: string }) => p.label === 'runner');
+    expect(runners).toHaveLength(2);
+    expect(runners.filter((p: { revokedAt: string | null }) => p.revokedAt === null)).toHaveLength(1);
   });
 });

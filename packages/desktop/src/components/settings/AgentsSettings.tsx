@@ -46,6 +46,10 @@ export function AgentsSettings() {
   const [pat, setPat] = useState<string | null>(null);
   const [pats, setPats] = useState<PatView[]>([]);
   const [revoking, setRevoking] = useState<string | null>(null);
+  // 라벨을 하드코딩하면 재발급이 막힌다 — 라벨은 살아 있는 토큰 안에서 유일하고
+  // (마이그레이션 010) 서버가 중복을 409 로 거절한다. 토큰을 잃어 폐기한 뒤 같은 이름으로
+  // 다시 발급하는 것이 주 사용 흐름이라, 사용자가 이름을 정할 수 있어야 한다.
+  const [newPatLabel, setNewPatLabel] = useState('runner');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
@@ -137,11 +141,13 @@ export function AgentsSettings() {
     setBusy(true);
     setError(null);
     try {
-      const token = await getController().mintPat(selected.id, 'runner');
+      const token = await getController().mintPat(selected.id, newPatLabel.trim());
       setPat(token);
       loadPats(selected.id);
-    } catch {
-      setError('PAT 를 새로 발급하지 못했다');
+    } catch (e) {
+      // 서버가 왜 거절했는지 그대로 보여야 한다 — 특히 '이 라벨은 이미 쓰인다'(409)는
+      // 사용자가 라벨만 바꾸면 해결되는 것이라, 뭉개면 막힌 것처럼 보인다.
+      setError(e instanceof Error ? e.message : 'PAT 를 새로 발급하지 못했다');
     } finally { setBusy(false); }
   };
 
@@ -301,7 +307,7 @@ export function AgentsSettings() {
                     <div className="text-[11px] text-zinc-400">PAT 가 없다</div>
                   ) : (
                     pats.map((p) => (
-                      <div key={p.label} className="flex items-center justify-between rounded bg-zinc-50 px-2 py-1.5">
+                      <div key={`${p.label}:${p.createdAt}`} className="flex items-center justify-between rounded bg-zinc-50 px-2 py-1.5">
                         <div className="text-xs">
                           <span className="font-medium">{p.label}</span>
                           {p.revokedAt && (
@@ -340,13 +346,25 @@ export function AgentsSettings() {
                     ))
                   )}
                 </div>
-                <button
-                  className="mt-2 rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-200 disabled:opacity-50"
-                  disabled={busy}
-                  onClick={() => void mintNewPat()}
-                >
-                  + New PAT
-                </button>
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    className="w-40 rounded border border-zinc-300 px-2 py-1 text-xs"
+                    aria-label="New PAT label"
+                    placeholder="runner"
+                    value={newPatLabel}
+                    onChange={(e) => setNewPatLabel(e.target.value)}
+                  />
+                  <button
+                    className="rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-200 disabled:opacity-50"
+                    disabled={busy || newPatLabel.trim() === ''}
+                    onClick={() => void mintNewPat()}
+                  >
+                    + New PAT
+                  </button>
+                </div>
+                <p className="mt-1 text-[11px] text-zinc-400">
+                  라벨은 살아 있는 토큰 안에서 유일합니다. 폐기하면 같은 라벨을 다시 쓸 수 있습니다.
+                </p>
               </div>
             )}
 
