@@ -156,7 +156,15 @@ export class Controller {
 
   /** 미지의 작성자가 연달아 오면 요청이 폭주하므로, 진행 중인 조회 하나에 합류시킨다. */
   private accountsInFlight: Promise<void> | null = null;
-  private refreshAccounts(): Promise<void> {
+  private lastAccountsRefresh = 0;
+  private static readonly ACCOUNTS_REFRESH_INTERVAL_MS = 5_000;
+
+  refreshAccounts(opts: { force?: boolean } = {}): Promise<void> {
+    const now = Date.now();
+    if (!opts.force && now - this.lastAccountsRefresh < Controller.ACCOUNTS_REFRESH_INTERVAL_MS) {
+      return Promise.resolve();
+    }
+    this.lastAccountsRefresh = now;
     this.accountsInFlight ??= this.api
       .accounts()
       .then((accounts) => {
