@@ -4,6 +4,7 @@ import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { MessageBody } from './MessageBody';
 import { ReactionPicker, Reactions } from './Reactions';
+import { Identity } from './Identity';
 import { Attachments } from './Attachments';
 import { Menu } from './Menu';
 
@@ -48,7 +49,7 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="font-semibold">{author?.handle ?? '…'}</span>
-          {author?.kind === 'agent' && <span className="rounded bg-indigo-100 px-1 text-[10px] text-indigo-700">agent</span>}
+          <Identity account={author} />
           {avcsType && <span className="rounded bg-amber-200 px-1 text-[10px] text-amber-900">{avcsType}</span>}
           <span className="text-[11px] text-zinc-400">{time}</span>
           {message.editedAt && <span className="text-[11px] text-zinc-400">(edited)</span>}
