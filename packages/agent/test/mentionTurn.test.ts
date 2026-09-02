@@ -888,9 +888,129 @@ describe('runMentionTurn', () => {
     });
   });
 
-  // #123: 지연 ack 테스트 — setTimeout 로 구현하므로 임계 이내 종료 시 ack 없음을 테스트한다.
-  // mid-turn ack 는 setTimeout 이 이벤트 루프에서 실행되는 시점에 의존하므로 신뢰하기 어렵다.
+  // #123: 지연 ack. 임계를 0 으로 주고 턴 스크립트가 잠깐 await 하면 타이머가 반드시 먼저
+  // 터지므로, "이벤트 루프 타이밍에 의존해서 신뢰할 수 없다"는 것은 사실이 아니다 —
+  // 이 절의 핵심(ack 만 있을 때 NO_REPLY_NOTICE 가 나가는가)이 바로 이 태스크의 회귀 방지선이다.
   describe('지연 ack (#123 수정)', () => {
+    /** 임계를 0 으로 두고 턴이 잠깐 걸리게 해서 ack 타이머가 반드시 먼저 터지게 한다. */
+    const slowTurn = (body: () => Promise<void>) => async () => {
+      await new Promise((r) => setTimeout(r, 30));
+      await body();
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    it('임계를 넘긴 턴에는 ack 이 정확히 한 번, 그 앵커에 올라간다', async () => {
+      const fake = new FakeMurmur(defOf());
+      // 스레드 안의 멘션으로 만든다 — FakeMurmur.readThread 는 `threadRootId === anchor` 인
+      // 것만 주므로(루트 자신은 포함하지 않는다) 멘션이 그 스레드 안에 있어야 델타가 생긴다.
+      const root = fake.seedFrom('human-1', '작업 스레드');
+      fake.seedFrom('human-1', '@forge 오래 걸리는 질문', root.id);
+      const { deps, runTurn } = await makeDeps(fake, { ackThresholdMs: 0 });
+      runTurn.script = slowTurn(async () => { await fake.post(CHANNEL, '결과', root.id); });
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: root.id });
+
+      const acks = fake.posts.filter((p) => p.body === ACK_NOTICE);
+      expect(acks).toHaveLength(1);
+      expect(acks[0]!.threadRootId).toBe(root.id);
+    });
+
+    // ⚠️ 이 절의 회귀 방지선. `hasOwnPostSince` 는 at-least-once 라, ack 을 세면 "ack 만 있고
+    // 본답이 없다"가 '발화했다'로 판정되어 NO_REPLY_NOTICE 가 억제된다 — ack 만 남고 결과가
+    // 영영 오지 않는다. 러너가 자기 ack 의 seq 를 빼야 이 경로가 살아 있다.
+    it('ack 만 있고 본답이 없으면 NO_REPLY_NOTICE 가 나간다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 질문');
+      const { deps, runTurn } = await makeDeps(fake, { ackThresholdMs: 0 });
+      // 턴은 정상 종료하지만 에이전트가 아무 말도 하지 않는다.
+      runTurn.script = slowTurn(async () => { /* 발화 없음 */ });
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      expect(fake.posts.filter((p) => p.body === ACK_NOTICE)).toHaveLength(1);
+      expect(fake.posts.filter((p) => p.body === NO_REPLY_NOTICE)).toHaveLength(1);
+    });
+
+    it('ack + 본답 1건이면 경고도 NO_REPLY_NOTICE 도 없다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 질문');
+      const { deps, runTurn } = await makeDeps(fake, { ackThresholdMs: 0 });
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      runTurn.script = slowTurn(async () => { await fake.post(CHANNEL, '결과 하나', null); });
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      expect(fake.posts.filter((p) => p.body === NO_REPLY_NOTICE)).toHaveLength(0);
+      expect(warnSpy).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+
+    it('ack + 본답 2건이면 중복 발화 경고가 난다 (#90 관측이 살아 있다)', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 질문');
+      const { deps, runTurn } = await makeDeps(fake, { ackThresholdMs: 0 });
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      runTurn.script = slowTurn(async () => {
+        await fake.post(CHANNEL, '첫 번째', null);
+        await fake.post(CHANNEL, '두 번째', null);
+      });
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('한 턴에 발화가 2건'));
+      warnSpy.mockRestore();
+    });
+
+    // 타이머가 터진 뒤 ack 발화가 **왕복 중**인데 턴이 먼저 끝나는 경우. 그때 `ackSeq` 가
+    // 아직 비어 있으면 ack 이 본답으로 세어져 NO_REPLY_NOTICE 가 억제된다 — ack 만 남고
+    // 결과가 영영 안 온다. 그래서 세기 전에 진행 중인 ack 을 기다려야 한다.
+    it('ack 발화가 왕복 중에 턴이 끝나도 ack 을 본답으로 세지 않는다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 질문');
+      const { deps, runTurn } = await makeDeps(fake, { ackThresholdMs: 0 });
+
+      // ack 은 메시지를 **먼저 스레드에 남기고** 응답만 늦는다 — 실제 네트워크 왕복의 모양이다.
+      // 그래야 "스레드에는 보이는데 seq 를 아직 모르는" 창이 열린다.
+      const original = fake.post.bind(fake);
+      fake.post = async (ch: string, body: string, root: string | null) => {
+        const seq = await original(ch, body, root);
+        if (body === ACK_NOTICE) await new Promise((r) => setTimeout(r, 80));
+        return seq;
+      };
+      // 턴은 ack 왕복보다 먼저 끝난다. 그리고 에이전트는 아무 말도 하지 않는다.
+      runTurn.script = async () => {
+        await new Promise((r) => setTimeout(r, 20));
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      expect(fake.posts.filter((p) => p.body === ACK_NOTICE)).toHaveLength(1);
+      // 본답이 없었으니 침묵으로 취급돼야 한다.
+      expect(fake.posts.filter((p) => p.body === NO_REPLY_NOTICE)).toHaveLength(1);
+    });
+
+    it('ack 발화가 실패해도 턴은 정상 진행된다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 질문');
+      const { deps, runTurn } = await makeDeps(fake, { ackThresholdMs: 0 });
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const original = fake.post.bind(fake);
+      fake.post = async (ch: string, body: string, root: string | null) => {
+        if (body === ACK_NOTICE) throw new Error('murmur 연결 끊김');
+        return original(ch, body, root);
+      };
+      runTurn.script = slowTurn(async () => { await original(CHANNEL, '결과', null); });
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+      // 턴이 던지지 않았고 세션도 정상 저장됐다.
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
+      expect(rec.turnsRun).toBe(1);
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('ack 발화 실패'));
+      errSpy.mockRestore();
+    });
+
     // 짧은 턴(임계 전에 끝남)에는 ack 이 올라가지 않는다.
     it('짧은 턴(임계 전에 끝남)에는 ack 이 올라가지 않는다', async () => {
       const fake = new FakeMurmur(defOf());

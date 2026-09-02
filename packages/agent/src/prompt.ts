@@ -14,7 +14,10 @@ export const BODY_LIMIT = 8000;
 /** 답을 올리지 않고 프로세스가 끝났을 때 러너가 에이전트 계정으로 스레드에 남기는 문구(spec §4 발화 경로). */
 export const NO_REPLY_NOTICE = '(답 없이 턴을 끝냈습니다 — 프로세스는 정상 종료, 발화 없음)';
 
-/** 긴 작업 중 턴이 아직 돌고 있을 때 러너가 먼저 올리는Ack 문구(#123). */
+/**
+ * 임계 시간을 넘겨도 턴이 아직 돌고 있을 때 **러너가** 올리는 진행 통지(#123).
+ * 에이전트가 올리는 것이 아니다 — 러너가 올려야 자기 seq 를 알아 발화 판정에서 뺄 수 있다.
+ */
 export const ACK_NOTICE = '(작업 진행 중 — 결과를 내고 있습니다)';
 
 /** MAX_ATTEMPTS 를 소진했을 때 채널에 남기는 통지문구(#82). */
@@ -133,8 +136,9 @@ export function buildTurnPrompt(opts: {
  * NO_REPLY_NOTICE 와 커서 전진 판단)와 "여러 번 발화했나"(> 1, 중복 발화 관측). 불리언만
  * 두면 후자를 알 수 없고, 두 함수가 각자 세면 규칙이 둘로 갈린다. 세는 곳은 여기 하나다.
  *
- * #123: ack 메시지는 세는)에서 제외한다 — 그래야 "ack 만 있고 본답이 없다"가 침묵으로
- * 취급되어 NO_REPLY_NOTICE 가 정상 발화하고, warnOnDuplicatePosts 도 정상 동작한다.
+ * #123: `excludeSeqs` 는 **러너가 직접 올린 메시지**(진행 통지)를 빼기 위한 것이다.
+ * 그래야 "ack 만 있고 본답이 없다"가 침묵으로 취급되어 NO_REPLY_NOTICE 가 정상 발화하고,
+ * warnOnDuplicatePosts 도 정상 동작을 위반으로 세지 않는다.
  */
 export function countOwnPostsSince(messages: MessageRow[], meId: string, sinceSeq: number, excludeSeqs?: number[]): number {
   return messages.filter((m) => m.authorId === meId && m.seq > sinceSeq && !(excludeSeqs?.includes(m.seq))).length;
