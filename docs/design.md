@@ -56,6 +56,7 @@
 ```
 murmur/
   packages/server     # Fastify: REST + WS + MCP + avcs 이벤트 투영
+  packages/agent      # 에이전트 런타임 (PTYa, MCP 클라이언트)
   packages/desktop    # Tauri 2 + React
   packages/shared     # 프로토콜 타입·스키마 (server/desktop 공유)
 ```
