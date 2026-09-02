@@ -18,6 +18,7 @@ import { MurmurAgentClient } from './murmur.js';
 import { mentionAnchor, runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
 import { runPtyTurn } from './pty.js';
 import { SessionStore } from './sessions.js';
+import { resolveAgentStateDir } from './stateDir.js';
 import { assertHarnessContract, writeMcpConfigOnce } from './turn.js';
 import type { Exec } from './workspace.js';
 import { exhausted, isCredentialFailure, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
@@ -39,18 +40,28 @@ const me = await murmur.me();
 const guide = await murmur.guide();
 
 // spec §3: 상태는 handle 로 스코프한다 — `workspaceName` 은 이미 이름에 handle 을 넣어
-// 워크스페이스끼리는 안 겹치지만(다중 에이전트 격리), 세션 레코드·MCP 설정까지 handle 로
-// 나누지 않으면 격리가 절반만 된다: 기본 `AGENT_STATE_DIR` 로 러너 두 대를 띄우면 에이전트
-// B 가 A 의 sessions.json 레코드를 읽고, harness 가 같으면 A 의 세션 id 를 B 자신의(다른)
+// 워크스페이스끼리는 안 겹치지만(다중 에이전트 격리), 세션 레코드·MCP 설정까지 나누지
+// 않으면 격리가 절반만 된다: 기본 `AGENT_STATE_DIR` 로 러너 두 대를 띄우면 에이전트 B 가
+// A 의 sessions.json 레코드를 읽고, harness 가 같으면 A 의 세션 id 를 B 자신의(다른)
 // workspaceDir 에서 resume 하려 든다 — 다중 에이전트 협업(성공 기준 9·10)이 구조적으로
 // 깨진다.
-const agentStateDir = join(config.stateDir, me.handle);
+//
+// #167: 그 격리가 **서버 축에서** 또 절반이었다. handle 만으로 나누면 서로 다른 서버의
+// 같은 handle 이 같은 디렉터리를 쓴다. 키에 계정 id 를 넣어 서버별로 갈린다 — 왜 URL 이
+// 아니라 id 인지는 stateDir.ts 주석에 있다.
+const { agentStateDir, legacyPath } = resolveAgentStateDir(config.stateDir, me.handle, me.id);
 
-// 레거시 경로(handle 스코프 이전, `<stateDir>/sessions.json`)에 파일이 남아 있으면 경고만
-// 남긴다 — **마이그레이션은 하지 않는다.** 그 파일은 정확히 이 결함이 만든 상태라 여러
-// 에이전트의 레코드가 handle 구분 없이 섞여 있고, 어느 레코드가 누구 것인지 파일 안에는
-// 근거가 없다. 옮기면 먼저 뜬 러너가 남의 레코드까지 접수해 결함을 데이터에 그대로 굳힌다 —
-// 대신 운영자가 고아 워크스페이스·claude 세션을 직접 정리하게 한다.
+// 서버별로 갈리기 전 경로가 남아 있으면 **경고만** 한다 — 자동으로 옮기지 않는다.
+// 코드는 그 디렉터리가 *어느 서버의* 이 handle 것인지 알 방법이 없다(아래 레거시
+// sessions.json 주석과 같은 논리다). 대신 운영자가 판단할 수 있게 명령을 그대로 준다.
+const hasLegacyPath = await access(legacyPath).then(() => true, () => false);
+if (hasLegacyPath) {
+  console.warn(`[main] 서버별로 갈리기 전 상태 디렉터리가 있다: ${legacyPath}`);
+  console.warn(`  이 디렉터리가 이 서버(${config.murmurUrl})의 @${me.handle} 것이 확실하면 옮겨라:`);
+  console.warn(`    mv ${legacyPath} ${agentStateDir}`);
+  console.warn('  확실하지 않으면 옮기지 마라 — 다른 커뮤니티의 세션을 접수한다.');
+}
+
 const legacySessionsPath = join(config.stateDir, 'sessions.json');
 const hasLegacySessions = await access(legacySessionsPath).then(() => true, () => false);
 if (hasLegacySessions) {
