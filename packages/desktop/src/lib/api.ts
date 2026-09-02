@@ -36,6 +36,16 @@ export class ApiClient {
   bootstrap(handle: string, displayName: string, password: string): Promise<{ id: string }> {
     return this.req('POST', '/bootstrap', { handle, displayName, password });
   }
+  /**
+   * 초대 토큰으로 가입한다(#120). `bootstrap` 과 다른 점: 부트스트랩은 "첫 사람"이고 사람
+   * 계정이 이미 있으면 409 로 막히지만, 이쪽은 admin 이 발급한 토큰을 쓴다.
+   *
+   * 세션을 돌려주지 않는다 — 서버가 `{ id }` 만 준다(`POST /auth/register`). 그래서 호출자가
+   * 곧바로 `login` 을 이어 불러야 한다(부트스트랩도 같은 모양이다).
+   */
+  register(handle: string, displayName: string, password: string, inviteToken: string): Promise<{ id: string }> {
+    return this.req('POST', '/auth/register', { handle, displayName, password, inviteToken });
+  }
   me(): Promise<AccountView> { return this.req('GET', '/auth/me'); }
   logout(): Promise<void> { return this.req('POST', '/auth/logout'); }
   /** 채널 전체의 읽음 상태를 한 번에. 채널마다 묻지 않기 위한 표면이다. */
