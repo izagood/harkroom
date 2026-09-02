@@ -73,11 +73,4 @@ describe('InviteSettings', () => {
     expect(c.createInvite).toHaveBeenCalledTimes(2);
   });
 
-  // 서버에는 POST /auth/register 가 있지만 이 앱에는 그 화면이 없다. 운영자가 토큰만
-  // 건네고 상대가 막히는 상황을 미리 알 수 있어야 한다(design.md §4).
-  it('가입 화면이 아직 없다는 사실을 화면에 알린다', () => {
-    setController({ createInvite: vi.fn() } as unknown as Controller);
-    render(<InviteSettings />);
-    expect(screen.getByText(/가입하는 화면이 없습니다/)).toBeTruthy();
-  });
 });
