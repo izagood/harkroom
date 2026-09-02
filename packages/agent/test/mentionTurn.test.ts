@@ -199,7 +199,7 @@ describe('runMentionTurn', () => {
     const { deps, runTurn } = await makeDeps(fake);
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    // 하네스가 두 번发帖하도록 조립 — FakeMurmur.post 가 호출될 때마다 실제发帖로 이어진다
+    // 하네스가 두 번 발화하도록 조립 — FakeMurmur.post 가 불릴 때마다 실제 메시지가 남는다
     runTurn.script = async () => {
       await fake.post(CHANNEL, '첫 번째 답', null);
       await fake.post(CHANNEL, '두 번째 답', null);
@@ -208,11 +208,29 @@ describe('runMentionTurn', () => {
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
 
-    // 채널에는 실제帖子만 남고, 경고만_log에 남는다
+    // 채널에는 실제 답 두 개만 남고(세 번째 통보를 더하지 않는다), 경고는 러너 로그에만 남는다
     expect(fake.posts.filter((p) => p.body !== NO_REPLY_NOTICE)).toHaveLength(2);
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('한 턴에서'),
-    );
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('한 턴에 발화가 2건'));
+    warnSpy.mockRestore();
+  });
+
+  // 실패한 턴에서도 중복 발화는 일어난다 — 답을 두 번 올리고 나서 죽는 경우다.
+  // 성공 경로만 관측하면 "실패했으니 안 보였다"가 되어 #90 의 관측이 반쪽이 된다.
+  it('실패한 턴에서도 두 번 발화하면 경고가 난다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 질문');
+    const { deps, runTurn } = await makeDeps(fake);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '첫 번째 답', null);
+      await fake.post(CHANNEL, '두 번째 답', null);
+      return { exitCode: 1, timedOut: false, tail: '답은 올렸는데 그 뒤에 죽었다' };
+    };
+
+    await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null })).rejects.toThrow();
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('한 턴에 발화가 2건'));
     warnSpy.mockRestore();
   });
 
