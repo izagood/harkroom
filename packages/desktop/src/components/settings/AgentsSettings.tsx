@@ -248,7 +248,7 @@ export function AgentsSettings() {
               <input
                 className={field}
                 aria-label="Working directory"
-                placeholder="/Users/me/some-repo — 비우면 러너의 실행 위치"
+                placeholder="/Users/me/some-repo — 비우면 스레드 전용 빈 디렉터리를 새로 만든다"
                 value={draft.workingDir}
                 onChange={(e) => setDraft({ ...draft, workingDir: e.target.value })}
               />
