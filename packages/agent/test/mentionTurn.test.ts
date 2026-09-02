@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentView, MessageRow } from '@murmur/shared';
-import { runMentionTurn, type MentionTurnDeps, type MentionTurnMurmur, type RunTurn } from '../src/mentionTurn.js';
+import { mentionAnchor, runMentionTurn, type MentionTurnDeps, type MentionTurnMurmur, type RunTurn } from '../src/mentionTurn.js';
 import { NO_REPLY_NOTICE } from '../src/prompt.js';
 import { SessionStore } from '../src/sessions.js';
 import type { Exec } from '../src/workspace.js';
@@ -835,13 +835,13 @@ describe('runMentionTurn', () => {
 
       await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: mentionMsg.id });
 
-      // post 가mentionMsg.id 를 threadRootId 로 받아 스레드가形成된다
+      // post 가 그 멘션 메시지 id 를 threadRootId 로 받아 스레드가 만들어진다
       expect(fake.posts).toHaveLength(1);
       expect(fake.posts[0]!.threadRootId).toBe(mentionMsg.id);
     });
 
     // 시나리오 3: 스레드 안의 멘션은 기존 대 로 그 스레드에 답한다 (회귀)
-    it('스레드 안의 멘션은 기존 대 로 threadRootId 를 그대로 쓴다 (회귀)', async () => {
+    it('스레드 안의 멘션은 기존대로 그 스레드의 루트를 쓴다 (회귀)', async () => {
       const fake = new FakeMurmur(defOf());
       const rootMsg = fake.seedFrom('human-1', '첫 메시지');
       rootMsg.threadRootId = rootMsg.id;
@@ -886,5 +886,25 @@ describe('runMentionTurn', () => {
       expect(rec!.sessionId).toBe(firstSessionId);
       expect(rec!.turnsRun).toBe(2);
     });
+  });
+});
+
+// #98 의 본론은 "채널 최상위 멘션의 앵커를 무엇으로 삼는가"이고, 그 규칙은 순수 함수 하나가
+// 갖는다. 초판은 이 계산을 main.ts 에 인라인으로 뒀는데 main.ts 는 top-level 스크립트라
+// 테스트가 겨눌 수 없어서, 규칙을 되돌려도 이 파일의 테스트가 전부 초록이었다(확인했다).
+describe('mentionAnchor', () => {
+  it('스레드 안의 멘션은 그 스레드의 루트를 쓴다', () => {
+    expect(mentionAnchor({ id: 'msg-2', threadRootId: 'root-1' })).toBe('root-1');
+  });
+
+  it('채널 최상위 멘션은 그 멘션 메시지 자신을 쓴다 — _root 로 뭉치지 않는다', () => {
+    expect(mentionAnchor({ id: 'msg-9', threadRootId: null })).toBe('msg-9');
+  });
+
+  it('서로 다른 최상위 멘션은 서로 다른 앵커를 갖는다 (세션 격리의 근거)', () => {
+    const a = mentionAnchor({ id: 'msg-a', threadRootId: null });
+    const b = mentionAnchor({ id: 'msg-b', threadRootId: null });
+    expect(a).not.toBe(b);
+    expect(SessionStore.threadKey(CHANNEL, a)).not.toBe(SessionStore.threadKey(CHANNEL, b));
   });
 });

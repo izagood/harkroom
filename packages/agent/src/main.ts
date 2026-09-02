@@ -15,7 +15,7 @@ import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadConfig } from './config.js';
 import { MurmurAgentClient } from './murmur.js';
-import { runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
+import { mentionAnchor, runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
 import { runPtyTurn } from './pty.js';
 import { SessionStore } from './sessions.js';
 import { assertHarnessContract, writeMcpConfigOnce } from './turn.js';
@@ -123,7 +123,11 @@ while (running) {
 
       const tried = (attempts.get(entry.id) ?? 0) + 1;
       attempts.set(entry.id, tried);
-      const anchor = mention.threadRootId ?? mention.id;
+      // 이 턴의 앵커 — 규칙은 mentionTurn.ts::mentionAnchor 하나가 갖는다(그 주석 참고).
+      // 여기서 한 번만 계산해 턴과 아래 실패 통지가 **같은 값**을 쓴다.
+      // `mention` 은 `batch.messages.find((m) => m.id === entry.messageId)` 이므로
+      // `mention.id` 는 멘션 **메시지** id 다(inbox 항목 id 인 `entry.id` 가 아니다).
+      const anchor = mentionAnchor(mention);
       try {
         const deps: MentionTurnDeps = {
           murmur, store, exec, runTurn: runPtyTurn, me, guide,
@@ -136,10 +140,12 @@ while (running) {
           murmurUrl: config.murmurUrl, pat: config.murmurPat,
           turnTimeoutMs: config.turnTimeoutMs,
         };
-        // #98: 채널 최상위-mention( threadRootId=null) 은 그-mention 메시지를 루트로 하는
-        // 스레드에 답한다 — 这样답이 채널 본문에 쌓이지 않고(가독성),-mention 마다别的
-        // session key 로 갈린다(세션 격리). 스레드 안의-mention 은 그대로 threadRootId 를
-        // 쓴다. prompt.ts 가 다시 계산하면 두 번째 진실 원천이 된다.
+        // #98: 채널 최상위 멘션(threadRootId 가 null)은 **그 멘션 메시지를 루트로 하는
+        // 스레드**에 답한다. 두 가지를 한 번에 얻는다: 긴 답이 채널 본문에 쌓이지 않고,
+        // 멘션마다 세션 키가 갈려 서로 무관한 요청의 맥락이 섞이지 않는다. 스레드 안의
+        // 멘션은 그대로 그 스레드의 루트를 쓴다.
+        // 앵커를 여기서 한 번만 계산해 아래 실패 통지와 **같은 값**을 쓴다 — 같은 식을
+        // 두 곳에 적으면 나중에 한쪽만 고치는 사고가 난다.
         await runMentionTurn(deps, { channelId: mention.channelId, threadRootId: anchor });
         done.push(entry.id);
         attempts.delete(entry.id);
@@ -164,9 +170,9 @@ while (running) {
         if (exhausted(tried)) {
           console.error(`  ${entry.messageId} 포기하고 읽음 처리한다`);
           // #82: MAX_ATTEMPTS 소진 시 채널에 통지한다. 통지 실패해도 읽음 처리는 계속한다
-          // (통지 실패로 러너가 멈추면 안 된다). #98: 채널 최상위-mention 도 같은 앵커에
-          // 쓴다 — 안 그러면 답은 스레드로 가는데 실패 통지만 채널 최상위에 남아 부른 사람이
-          // 스레드를 보고 있는 동안 실패를 놓친다.
+          // (통지 실패로 러너가 멈추면 안 된다). #98: 채널 최상위 멘션도 **같은 앵커**에
+          // 쓴다 — 안 그러면 답은 스레드로 가는데 실패 통지만 채널 최상위에 남아, 부른
+          // 사람이 스레드를 보고 있는 동안 실패를 놓친다(#82 가 닫은 구멍이 반쪽 열린다).
           try {
             await murmur.post(mention.channelId, FAILURE_NOTICE, anchor);
           } catch (notifyErr) {
