@@ -39,6 +39,9 @@ export class Controller {
       accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
       reads: Object.fromEntries(reads.map((r) => [r.channelId, { lastReadSeq: r.lastReadSeq, unread: r.unread }])),
     });
+    // 초안은 기기 로컬에 있으므로 서버 왕복이 없다 — 크리티컬 패스에 둬도 비용이 없다.
+    store.hydrateDrafts();
+
     // 채널 선호는 **크리티컬 패스에서 뺀다.** 위 Promise.all 에 넣으면 이 엔드포인트가
     // 없는 서버(구버전)에 붙었을 때 앱이 기동조차 못 한다. 선호는 UI 편의값이라 없으면
     // 정렬이 이름순으로 남을 뿐이다 — `refreshAccounts` 가 같은 이유로 실패를 삼킨다.
@@ -79,6 +82,10 @@ export class Controller {
     // 키체인 삭제는 비동기다. 로그아웃이 그것을 기다릴 이유는 없다 — 실패해도 다음 기동의
     // load()가 다시 정리를 시도하고, 로컬 상태는 아래에서 즉시 비워진다.
     this.swallow(sessionStore.clear());
+    // 초안은 사용자가 쓴 문장 전체다. 계정이 로그아웃된 뒤에도 디스크에 남으면
+    // #92(argv 노출)와 PAT 키체인 결정이 세운 기준과 어긋난다. 스토어 액션이
+    // 인메모리와 보관소를 함께 비운다 — 보관소만 지우면 스토어에 남는다.
+    useAppStore.getState().clearDrafts();
     useAppStore.getState().reset();
   }
 
