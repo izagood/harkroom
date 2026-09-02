@@ -18,7 +18,7 @@ beforeAll(async () => {
   ({ pat: fizzPat } = await createAgent(app, adminToken, 'fizz'));
   const ch = await app.inject({
     method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
-    payload: { name: 'general' },
+    payload: { name: 'mentions' },
   });
   channelId = ch.json().id;
 });

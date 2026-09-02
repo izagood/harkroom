@@ -3,12 +3,15 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { assertChannelVisible, createChannel, getOrCreateDm, listChannels, updateChannel } from '../services/channels.js';
 import { allReadStates, markChannelRead, readState } from '../services/readPositions.js';
+// 이름 규칙은 데스크탑의 채널 생성 입력(Sidebar.tsx)과 **같은 것**이어야 한다 — 그래서
+// 정규식을 여기 리터럴로 두지 않고 shared 의 상수를 쓴다.
+import { CHANNEL_NAME_PATTERN } from '@murmur/shared';
 import { recordAudit } from '../audit.js';
 
 export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.post('/channels', { preHandler: app.requireAdmin }, async (req, reply) => {
     const body = z.object({
-      name: z.string().regex(/^[a-z0-9_-]{1,48}$/),
+      name: z.string().regex(new RegExp(CHANNEL_NAME_PATTERN)),
       topic: z.string().max(256).optional(),
       repo: z.string().max(128).optional(),
     }).parse(req.body);

@@ -4,8 +4,16 @@ import argon2 from 'argon2';
 import { z } from 'zod';
 import { newToken, hashToken } from '../auth/tokens.js';
 import { recordAudit } from '../audit.js';
+import { createChannel } from '../services/channels.js';
 
 const SESSION_TTL_DAYS = 14;
+
+/**
+ * 부트스트랩이 시딩하는 기본 채널 이름. `POST /channels` 의 이름 규칙
+ * (`CHANNEL_NAME_PATTERN`)을 만족해야 한다 — 테스트가 그걸 확인한다.
+ * export 하는 이유: 테스트가 이 이름을 문자열로 다시 적으면 두 곳이 갈린다.
+ */
+export const DEFAULT_CHANNEL_NAME = 'general';
 
 const credentials = z.object({
   handle: z.string().regex(/^[a-z0-9_-]{2,32}$/),
@@ -21,16 +29,41 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
     }
     const body = credentials.parse(req.body);
     const hash = await argon2.hash(body.password);
-    const res = await pool.query(
-      `insert into account (handle, display_name, kind, is_admin, password_hash)
-       values ($1, $2, 'human', true, $3) returning id`,
-      [body.handle, body.displayName, hash],
-    );
+    // 계정과 기본 채널은 한 트랜잭션이어야 한다 — 채널 생성이 실패해 계정만 남으면, 다음
+    // 부트스트랩은 409(이미 부트스트랩됨)로 막히고 워크스페이스는 채널 0 개로 굳는다.
+    // 그래서 `createChannel` 을 **이 트랜잭션의 커넥션으로** 부른다. pool 로 부르면 다른
+    // 커넥션에서 도는 별개의 자동커밋이 되어, begin/commit 이 장식만 된다.
+    const client = await pool.connect();
+    let accountId: string;
+    let channelId: string;
+    try {
+      await client.query('begin');
+      const res = await client.query(
+        `insert into account (handle, display_name, kind, is_admin, password_hash)
+         values ($1, $2, 'human', true, $3) returning id`,
+        [body.handle, body.displayName, hash],
+      );
+      accountId = res.rows[0].id;
+      channelId = (await createChannel(client, { name: DEFAULT_CHANNEL_NAME })).id;
+      await client.query('commit');
+    } catch (err) {
+      await client.query('rollback');
+      throw err;
+    } finally {
+      client.release();
+    }
+    // 감사 기록은 **커밋 뒤에** 남긴다. 트랜잭션 안에서 pool 로 남기면 롤백돼도 로그는
+    // 남아 감사 추적이 거짓을 말하고, 트랜잭션 안의 커넥션으로 남기면 롤백과 함께 사라져
+    // "실패했다"는 사실조차 안 남는다. append-only 로그의 성격상 사실이 확정된 뒤가 맞다.
     await recordAudit(pool, {
-      action: 'account.created', actorId: res.rows[0].id, actorHandle: body.handle,
-      target: res.rows[0].id, detail: { via: 'bootstrap', isAdmin: true },
+      action: 'account.created', actorId: accountId, actorHandle: body.handle,
+      target: accountId, detail: { via: 'bootstrap', isAdmin: true },
     }, req);
-    return reply.code(201).send({ id: res.rows[0].id });
+    await recordAudit(pool, {
+      action: 'channel.created', actorId: accountId, actorHandle: body.handle,
+      target: channelId, detail: { via: 'bootstrap' },
+    }, req);
+    return reply.code(201).send({ id: accountId });
   });
 
   app.post('/auth/login', async (req, reply) => {

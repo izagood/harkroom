@@ -21,7 +21,7 @@ beforeAll(async () => {
   ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
   const ch = await app.inject({
     method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
-    payload: { name: 'general' },
+    payload: { name: 'archive' },
   });
   channelId = ch.json().id;
   for (const body of ['deploy pipeline is green', 'lunch anyone?', 'pipeline failed again']) {
