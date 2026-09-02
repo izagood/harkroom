@@ -14,6 +14,12 @@ export const BODY_LIMIT = 8000;
 /** 답을 올리지 않고 프로세스가 끝났을 때 러너가 에이전트 계정으로 스레드에 남기는 문구(spec §4 발화 경로). */
 export const NO_REPLY_NOTICE = '(답 없이 턴을 끝냈습니다 — 프로세스는 정상 종료, 발화 없음)';
 
+/**
+ * 임계 시간을 넘겨도 턴이 아직 돌고 있을 때 **러너가** 올리는 진행 통지(#123).
+ * 에이전트가 올리는 것이 아니다 — 러너가 올려야 자기 seq 를 알아 발화 판정에서 뺄 수 있다.
+ */
+export const ACK_NOTICE = '(작업 진행 중 — 결과를 내고 있습니다)';
+
 /** MAX_ATTEMPTS 를 소진했을 때 채널에 남기는 통지문구(#82). */
 export const FAILURE_NOTICE = '(답변에 실패했습니다 — 운영자 확인이 필요합니다)';
 
@@ -51,6 +57,9 @@ export function buildSystemPrompt(opts: {
     // 러너는 이걸 강제하지 못한다 — 하네스 출력을 파싱하지 않는다는 경계(pty.ts) 때문이다.
     // 그래서 이 문장이 유일한 예방이고, 위반은 턴 후 개수를 세어 러너 로그에 남긴다.
     '한 턴에 한 번만 발화한다 — 답이 길어도 나눠 올리지 않고 한 번에 정리해서 올린다.',
+    '',
+    // #123: 러너가 먼저 ack 를 보낼 수 있다. 에이전트는 여전히 결과를 한 번만 올리면 된다.
+    '긴 작업인 경우 러너가 먼저 "진행 중" 통지를 보낼 수 있다 — 그 경우에도 결과는 내가 한 번만 올리면 된다.',
     '',
     `답변은 ${BODY_LIMIT}자를 넘길 수 없다(서버가 거절한다). 채팅이므로 짧고 구체적으로 쓴다.`,
     '모르는 것은 모른다고 말한다. 확인하지 않은 것을 확인한 것처럼 쓰지 않는다.',
@@ -126,15 +135,19 @@ export function buildTurnPrompt(opts: {
  * 불리언이 아니라 개수인 이유(#90): 호출부가 두 가지를 물어야 한다 — "발화가 있었나"(> 0,
  * NO_REPLY_NOTICE 와 커서 전진 판단)와 "여러 번 발화했나"(> 1, 중복 발화 관측). 불리언만
  * 두면 후자를 알 수 없고, 두 함수가 각자 세면 규칙이 둘로 갈린다. 세는 곳은 여기 하나다.
+ *
+ * #123: `excludeSeqs` 는 **러너가 직접 올린 메시지**(진행 통지)를 빼기 위한 것이다.
+ * 그래야 "ack 만 있고 본답이 없다"가 침묵으로 취급되어 NO_REPLY_NOTICE 가 정상 발화하고,
+ * warnOnDuplicatePosts 도 정상 동작을 위반으로 세지 않는다.
  */
-export function countOwnPostsSince(messages: MessageRow[], meId: string, sinceSeq: number): number {
-  return messages.filter((m) => m.authorId === meId && m.seq > sinceSeq).length;
+export function countOwnPostsSince(messages: MessageRow[], meId: string, sinceSeq: number, excludeSeqs?: number[]): number {
+  return messages.filter((m) => m.authorId === meId && m.seq > sinceSeq && !(excludeSeqs?.includes(m.seq))).length;
 }
 
 /**
  * "이 턴에 발화가 있었나". `countOwnPostsSince` 위에 얹은 얇은 판정이다 — 세는 규칙이
  * 두 곳에 생기지 않게 한다. 실패 경로(커서를 전진시킬지 정하는 자리)가 이 불리언을 쓴다.
  */
-export function hasOwnPostSince(messages: MessageRow[], meId: string, sinceSeq: number): boolean {
-  return countOwnPostsSince(messages, meId, sinceSeq) > 0;
+export function hasOwnPostSince(messages: MessageRow[], meId: string, sinceSeq: number, excludeSeqs?: number[]): boolean {
+  return countOwnPostsSince(messages, meId, sinceSeq, excludeSeqs) > 0;
 }

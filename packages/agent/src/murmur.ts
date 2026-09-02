@@ -126,8 +126,9 @@ export class MurmurAgentClient {
     return res.messages;
   }
 
-  async post(channelId: string, body: string, threadRootId: string | null): Promise<void> {
-    await this.call('message.post', threadRootId ? { channelId, body, threadRootId } : { channelId, body });
+  async post(channelId: string, body: string, threadRootId: string | null): Promise<number> {
+    const res = await this.call<{ message: { seq: number } }>('message.post', threadRootId ? { channelId, body, threadRootId } : { channelId, body });
+    return res.message.seq;
   }
 
   /** inbox entry id 로 읽음 처리. 서버가 요청 계정으로 스코프를 걸어 남의 inbox 는 소비되지 않는다. */
