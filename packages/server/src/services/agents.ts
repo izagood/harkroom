@@ -95,3 +95,18 @@ export async function updateAgent(
   await upsertConfig(pool, id, patch);
   return getAgent(pool, id);
 }
+
+/**
+ * 그 계정의 살아 있는 PAT 를 전부 폐기하고 폐기한 label 을 돌려준다.
+ * `PoolClient` 도 받는 이유: 비활성화가 `disabled_at` 설정과 PAT 폐기를 한 트랜잭션에 묶는다
+ * (`accountRoutes.ts`). Pool 로 부르면 다른 커넥션의 별개 자동커밋이 되어 둘이 갈린다.
+ * 단일 label 폐기(`DELETE /accounts/:id/pats/:label`)와 조건절이 같아야 하므로 그 규칙을
+ * 여기 한 곳에 둔다.
+ */
+export async function revokeAllPats(db: Pool | PoolClient, accountId: string): Promise<string[]> {
+  const res = await db.query(
+    `update pat set revoked_at = now() where account_id = $1 and revoked_at is null returning label`,
+    [accountId],
+  );
+  return res.rows.map((r) => r.label as string);
+}
