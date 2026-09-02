@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs';
 // PTY 계약 테스트용 가짜 하네스. 시나리오는 env FAKE_MODE 로 고른다 —
 // 인자 파싱을 흉내내지 않는다(그건 turn.ts 의 몫이고 여기선 프로세스 행동만 필요하다).
 const mode = process.env.FAKE_MODE ?? 'ok';
@@ -21,6 +22,13 @@ if (mode === 'korean-chatty') { process.stdout.write('가'.repeat(1000)); proces
 // 타게 만든다. 자기 pid 를 먼저 찍어 두는 이유: 테스트가 이 pid 로 "진짜 거둬졌는지"
 // (kill(pid, 0) 이 ESRCH 를 던지는지)를 확인한다.
 if (mode === 'hang-ignore-sigterm') {
+  // pid 를 **파일로도** 남긴다. stdout 은 PTY 를 거치므로, SIGKILL 로 pty 가 닫히면 그 줄이
+  // ring 에 도달하기 전에 유실될 수 있다 — CI 부하에서 실제로 그렇게 실패했다
+  // (`expected null not to be null`: ring 에 pid= 가 없었다). 파일 쓰기는 프로세스가 죽어도
+  // 남으므로 테스트가 경쟁 없이 pid 를 얻는다.
+  if (process.env.FAKE_PID_FILE) {
+    writeFileSync(process.env.FAKE_PID_FILE, String(process.pid));
+  }
   console.log(`pid=${process.pid}`);
   process.on('SIGTERM', () => {});
   setInterval(() => {}, 1_000);

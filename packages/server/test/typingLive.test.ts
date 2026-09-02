@@ -80,7 +80,13 @@ async function connect(token: string): Promise<Collector> {
 const typingEvents = (c: Collector) =>
   c.events.filter((e): e is Extract<WsServerEvent, { type: 'typing.changed' }> => e.type === 'typing.changed');
 
-const waitFor = async (check: () => boolean, ms = 2000) => {
+/**
+ * 조건이 참이 되기를 폴링한다. 상한을 넉넉히 두는 것이 **통과하는 테스트를 느리게 하지
+ * 않는다** — 조건이 참이면 즉시 반환하므로 상한은 실패할 때만 소비된다. 2초는 한 머신에서
+ * 스위트 여러 개가 동시에 postgres 를 띄울 때 WS 왕복에 부족했다(#115) — 그 실패는
+ * 프로덕션 결함이 아니라 테스트의 시간 가정이었다.
+ */
+const waitFor = async (check: () => boolean, ms = 8000) => {
   const until = Date.now() + ms;
   while (Date.now() < until) {
     if (check()) return;
@@ -193,7 +199,7 @@ describe('telling others you are typing', () => {
     me.send({ type: 'typing' });
 
     me.send({ type: 'typing', channelId });
-    await waitFor(() => typingEvents(other).length > 0, 5_000);
+    await waitFor(() => typingEvents(other).length > 0);
     me.close(); other.close();
   });
 });
