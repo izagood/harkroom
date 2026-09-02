@@ -18,13 +18,17 @@ import { MurmurAgentClient } from './murmur.js';
 import { runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
 import { runPtyTurn } from './pty.js';
 import { SessionStore } from './sessions.js';
-import { writeMcpConfigOnce } from './turn.js';
+import { assertHarnessContract, writeMcpConfigOnce } from './turn.js';
 import type { Exec } from './workspace.js';
 import { exhausted, isCredentialFailure, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 import { FAILURE_NOTICE } from './prompt.js';
 
 const config = loadConfig();
 const murmur = new MurmurAgentClient(config.murmurUrl, config.murmurPat);
+
+// RUNNABLE_HARNESSES 가 실제로 PRESETS 에 구현돼 있는지 기동 시점에 검사한다.
+// 불일치가 있으면 여기서 크게 실패한다 — 멘션마다 개별적으로 실패하는 대신.
+assertHarnessContract();
 
 let running = true;
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
