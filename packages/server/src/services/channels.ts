@@ -111,3 +111,55 @@ export async function audienceFor(pool: Pool, channelId: string): Promise<'all' 
   const channel = await pool.query(`select kind from channel where id = $1`, [channelId]);
   return channel.rows[0]?.kind === 'dm' ? await dmMemberIds(pool, channelId) : 'all';
 }
+
+export interface ChannelPrefRow {
+  accountId: string;
+  channelId: string;
+  mutedAt: string | null;
+  starredAt: string | null;
+}
+
+export async function updateChannelPref(
+  pool: Pool, accountId: string, channelId: string, patch: { muted?: boolean; starred?: boolean },
+): Promise<ChannelPrefRow | null> {
+  const channel = await pool.query(`select id from channel where id = $1`, [channelId]);
+  if (!channel.rowCount) return null;
+
+  if (patch.muted !== undefined) {
+    await pool.query(
+      `insert into channel_pref (account_id, channel_id, muted_at)
+       values ($1, $2, $3)
+       on conflict (account_id, channel_id) do update set muted_at = $3`,
+      [accountId, channelId, patch.muted ? new Date() : null],
+    );
+  }
+  if (patch.starred !== undefined) {
+    await pool.query(
+      `insert into channel_pref (account_id, channel_id, starred_at)
+       values ($1, $2, $3)
+       on conflict (account_id, channel_id) do update set starred_at = $3`,
+      [accountId, channelId, patch.starred ? new Date() : null],
+    );
+  }
+  return getChannelPref(pool, accountId, channelId);
+}
+
+export async function getChannelPref(
+  pool: Pool, accountId: string, channelId: string,
+): Promise<ChannelPrefRow | null> {
+  const res = await pool.query(
+    `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt", starred_at as "starredAt"
+     from channel_pref where account_id = $1 and channel_id = $2`,
+    [accountId, channelId],
+  );
+  return res.rows[0] ?? null;
+}
+
+export async function listChannelPrefs(pool: Pool, accountId: string): Promise<ChannelPrefRow[]> {
+  const res = await pool.query(
+    `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt", starred_at as "starredAt"
+     from channel_pref where account_id = $1`,
+    [accountId],
+  );
+  return res.rows;
+}

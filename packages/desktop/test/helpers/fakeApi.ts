@@ -31,6 +31,7 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     channels: vi.fn(async () => [chan('c1', 'general')]),
     dms: vi.fn(async () => []),
     leases: vi.fn(async () => []),
+    channelPrefs: vi.fn(async () => []),
     messages: vi.fn(async () => ({ messages: [], hasMore: false })),
     postMessage: vi.fn(async () => msg('m-post', 'c1', 99, 'sent')),
     inboxUnread: vi.fn(async () => []),

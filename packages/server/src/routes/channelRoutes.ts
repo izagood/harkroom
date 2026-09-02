@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { assertChannelVisible, createChannel, getOrCreateDm, listChannels, updateChannel } from '../services/channels.js';
+import { assertChannelVisible, createChannel, getOrCreateDm, listChannels, updateChannel, updateChannelPref, listChannelPrefs } from '../services/channels.js';
 import { allReadStates, markChannelRead, readState } from '../services/readPositions.js';
 // 이름 규칙은 데스크탑의 채널 생성 입력(Sidebar.tsx)과 **같은 것**이어야 한다 — 그래서
 // 정규식을 여기 리터럴로 두지 않고 shared 의 상수를 쓴다.
@@ -73,5 +73,28 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
     const body = z.object({ accountIds: z.array(z.string().uuid()).min(1).max(16) }).parse(req.body);
     const channel = await getOrCreateDm(pool, [...body.accountIds, req.account!.id]);
     return reply.code(201).send(channel);
+  });
+
+  app.get('/channels/prefs', { preHandler: app.requireAccount }, async (req) => ({
+    prefs: await listChannelPrefs(pool, req.account!.id),
+  }));
+
+  const prefParam = z.object({ id: z.string().uuid() });
+  const prefBody = z.object({
+    muted: z.boolean().optional(),
+    starred: z.boolean().optional(),
+  }).strict();
+
+  app.patch('/channels/:id/pref', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = prefParam.parse(req.params);
+    const patch = prefBody.parse(req.body);
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    const pref = await updateChannelPref(pool, req.account!.id, id, patch);
+    if (!pref) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+    return pref;
   });
 }

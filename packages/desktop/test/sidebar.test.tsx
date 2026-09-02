@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
@@ -9,6 +9,7 @@ const fakeController = () => {
   const c = {
     openChannel: vi.fn(), startDm: vi.fn(), logout: vi.fn(),
     createChannel: vi.fn(), updateChannel: vi.fn(),
+    toggleChannelMute: vi.fn(), toggleChannelStar: vi.fn(),
   };
   setController(c as unknown as Controller);
   return c;
@@ -100,11 +101,28 @@ describe('Sidebar', () => {
       useAppStore.getState().set({ me: { ...acc('u1', 'admin'), isAdmin: true } });
     };
 
-    it('admin 이 아니면 편집 메뉴가 보이지 않는다', () => {
+    // #151/#152 로 비-admin 도 트리거를 갖는다(음소거·즐겨찾기는 계정별이다). 그래서
+    // "트리거가 없다"로는 더 이상 검사할 수 없다 — 의도는 **편집 항목이 없다**는 것이다.
+    it('admin 이 아니면 메뉴에 편집 항목이 없다', () => {
       fakeController();
       render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
-      expect(screen.queryByRole('button', { name: '⋯' })).toBeNull();
+
+      fireEvent.click(screen.getAllByRole('button', { name: '⋯' })[0]!);
+
+      expect(screen.queryByRole('menuitem', { name: '채널 편집' })).toBeNull();
+      // 계정별 항목은 비-admin 에게도 도달 가능해야 한다.
+      expect(screen.getByRole('menuitem', { name: '음소거' })).toBeTruthy();
+      expect(screen.getByRole('menuitem', { name: '즐겨찾기' })).toBeTruthy();
     });
+
+    // 채널 순서는 이제 클라이언트가 정한다(즐겨찾기 먼저, 그 안에서 이름순). 인덱스로
+    // 행을 고르면 정렬이 바뀔 때 **조용히 다른 채널을 집는다** — 실제로 그렇게 깨졌다.
+    const openMenuFor = (name: string): void => {
+      // `#` 과 이름이 별도 노드라 텍스트 매칭이 안 된다. 접근성 이름으로 찾되, 별도
+      // 노드가 **공백으로 결합**되므로(`"# dev main-repo 1"`) 그 공백을 포함해 맞춘다.
+      const row = screen.getByRole('button', { name: new RegExp(`# ${name}\\b`) }).closest('div')!;
+      fireEvent.click(within(row).getByRole('button', { name: '⋯' }));
+    };
 
     it('admin 이면 채널 행에 편집 메뉴 (…) 가 보인다', () => {
       fakeController();
@@ -119,8 +137,7 @@ describe('Sidebar', () => {
       asAdmin();
       render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
-      const menus = screen.getAllByRole('button', { name: '⋯' });
-      fireEvent.click(menus[0]!);
+      openMenuFor('general');
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
 
       expect(screen.getByText('#general 편집')).toBeTruthy();
@@ -134,8 +151,7 @@ describe('Sidebar', () => {
       asAdmin();
       render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
-      const menus = screen.getAllByRole('button', { name: '⋯' });
-      fireEvent.click(menus[0]!);
+      openMenuFor('general');
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
 
       fireEvent.change(screen.getByLabelText('Topic'), { target: { value: '일반 Talk' } });
@@ -151,8 +167,7 @@ describe('Sidebar', () => {
       useAppStore.getState().set({ channels: [chan('c1', 'c1', 'old-repo')] });
       render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
-      const menus = screen.getAllByRole('button', { name: '⋯' });
-      fireEvent.click(menus[0]!);
+      openMenuFor('c1');
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
 
       expect((screen.getByLabelText('Repository') as HTMLInputElement).value).toBe('old-repo');
@@ -171,8 +186,7 @@ describe('Sidebar', () => {
       useAppStore.getState().set({ channels: [chan('c1', 'c1', 'old-repo')] });
       render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
-      const menus = screen.getAllByRole('button', { name: '⋯' });
-      fireEvent.click(menus[0]!);
+      openMenuFor('c1');
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
 
       fireEvent.change(screen.getByLabelText('Repository'), { target: { value: 'new-repo' } });
@@ -187,8 +201,7 @@ describe('Sidebar', () => {
       asAdmin();
       render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
-      const menus = screen.getAllByRole('button', { name: '⋯' });
-      fireEvent.click(menus[0]!);
+      openMenuFor('general');
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
       fireEvent.click(screen.getByText('저장'));
 
@@ -201,8 +214,7 @@ describe('Sidebar', () => {
       asAdmin();
       render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
-      const menus = screen.getAllByRole('button', { name: '⋯' });
-      fireEvent.click(menus[0]!);
+      openMenuFor('general');
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
       fireEvent.change(screen.getByLabelText('Repository'), { target: { value: 'new-repo' } });
       fireEvent.click(screen.getByText('저장'));
@@ -364,5 +376,81 @@ describe('Sidebar', () => {
       expect(screen.queryByRole('menu')).toBeNull();
     });
 
+  });
+});
+
+describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
+  const pref = (channelId: string, o: { muted?: boolean; starred?: boolean }) => ({
+    accountId: 'u1', channelId,
+    mutedAt: o.muted ? '2026-09-03T00:00:00.000Z' : null,
+    starredAt: o.starred ? '2026-09-03T00:00:00.000Z' : null,
+  });
+
+  // star 를 저장만 하고 정렬을 안 건드리면 기능이 아무것도 하지 않는다(#152 본문).
+  it('즐겨찾기 채널이 목록 위로 올라가고 그 안에서 이름순이다', () => {
+    fakeController();
+    useAppStore.getState().set({
+      channels: [chan('c1', 'alpha'), chan('c2', 'beta'), chan('c3', 'zulu')],
+      channelPrefs: { c3: pref('c3', { starred: true }) },
+    });
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    // 행 텍스트에는 미읽음 배지 숫자가 섞여 들어온다 — 이름만 뽑지 말고 **상대 순서**를 본다.
+    const order = screen.getAllByRole('button')
+      .map((b) => b.textContent ?? '')
+      .filter((t) => t.startsWith('#'));
+    const at = (n: string) => order.findIndex((t) => t.startsWith(`#${n}`));
+    expect(at('zulu')).toBe(0);
+    expect(at('alpha')).toBeLessThan(at('beta'));
+  });
+
+  // 음소거·즐겨찾기는 **계정별**이라 비-admin 에게도 도달 가능해야 한다.
+  it('비-admin 도 음소거·즐겨찾기에 도달한다', () => {
+    const c = fakeController();
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: '⋯' })[0]!);
+    fireEvent.click(screen.getByRole('menuitem', { name: '음소거' }));
+
+    expect(c.toggleChannelMute).toHaveBeenCalled();
+  });
+
+  it('이미 음소거면 해제 항목이 보인다', () => {
+    fakeController();
+    useAppStore.getState().set({
+      channels: [chan('c1', 'general')],
+      channelPrefs: { c1: pref('c1', { muted: true }) },
+    });
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '⋯' }));
+
+    expect(screen.getByRole('menuitem', { name: '음소거 해제' })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: '음소거' })).toBeNull();
+  });
+
+  // #151 본문: "알림 층이 mute 를 어떻게 읽을지는 저장 모양을 정한 뒤의 후속" —
+  // 이 작업은 저장과 표시까지다. 배지 계산을 건드리면 범위 이탈이고, 이게 그 방지선이다.
+  it('음소거가 미읽음 배지 계산을 바꾸지 않는다', () => {
+    fakeController();
+    const seed = {
+      channels: [chan('c1', 'general')],
+      unread: [
+        { id: 1, channelId: 'c1', messageId: 'm1', readAt: null },
+        { id: 2, channelId: 'c1', messageId: 'm2', readAt: null },
+      ] as never,
+    };
+
+    useAppStore.getState().set({ ...seed, channelPrefs: {} });
+    const { unmount } = render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+    const before = screen.getByTestId('unread-c1').textContent;
+    unmount();
+
+    useAppStore.getState().set({ ...seed, channelPrefs: { c1: pref('c1', { muted: true }) } });
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    // 음소거해도 배지가 그대로다. 알림 층이 mute 를 읽는 것은 후속 작업이고, 이 선이
+    // 그 범위를 지킨다.
+    expect(screen.getByTestId('unread-c1').textContent).toBe(before);
   });
 });

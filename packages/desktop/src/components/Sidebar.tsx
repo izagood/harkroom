@@ -39,7 +39,7 @@ export function Sidebar({ onLogout, onOpenSettings }: {
   onLogout: () => void;
   onOpenSettings: (section?: SectionId) => void;
 }) {
-  const { me, accounts, channels, dms, online, connected, activeChannelId } = useAppStore();
+  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs } = useAppStore();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
@@ -130,6 +130,16 @@ export function Sidebar({ onLogout, onOpenSettings }: {
   const row = (active: boolean) =>
     `flex w-full items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-zinc-700 ${active ? 'bg-zinc-700' : ''}`;
 
+  const sortedChannels = useMemo(() => {
+    const withPref = channels.map((ch) => ({ channel: ch, pref: channelPrefs[ch.id] }));
+    const sorted = [...withPref].sort((a, b) => {
+      if (a.pref?.starredAt && !b.pref?.starredAt) return -1;
+      if (!a.pref?.starredAt && b.pref?.starredAt) return 1;
+      return (a.channel.name ?? '').localeCompare(b.channel.name ?? '');
+    });
+    return sorted.map((x) => x.channel);
+  }, [channels, channelPrefs]);
+
   const channelRow = (ch: ChannelRow) => {
     const isEditing = editingChannelId === ch.id;
     if (isEditing) {
@@ -181,7 +191,14 @@ export function Sidebar({ onLogout, onOpenSettings }: {
         <UnreadBadge channelId={ch.id} />
       </button>
     );
-    if (!me?.isAdmin) return ChannelButton;
+    const pref = channelPrefs[ch.id];
+    const isMuted = !!pref?.mutedAt;
+    const isStarred = !!pref?.starredAt;
+    const menuItems = [
+      ...(me?.isAdmin ? [{ label: '채널 편집', onSelect: () => startEdit(ch) }] : []),
+      { label: isMuted ? '음소거 해제' : '음소거', onSelect: () => void getController().toggleChannelMute(ch.id) },
+      { label: isStarred ? '즐겨찾기 해제' : '즐겨찾기', onSelect: () => void getController().toggleChannelStar(ch.id) },
+    ];
     return (
       <div key={ch.id} className="relative flex items-center">
         {ChannelButton}
@@ -192,9 +209,7 @@ export function Sidebar({ onLogout, onOpenSettings }: {
               ⋯
             </button>
           )}
-          items={[
-            { label: '채널 편집', onSelect: () => startEdit(ch) },
-          ]}
+          items={menuItems}
           placement="bottom"
         />
       </div>
@@ -211,7 +226,7 @@ export function Sidebar({ onLogout, onOpenSettings }: {
       <nav className="flex-1 space-y-4 overflow-y-auto p-2">
         <div>
           <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">Channels</div>
-          {channels.map(channelRow)}
+          {sortedChannels.map(channelRow)}
           {me?.isAdmin && (
             createChannelOpen ? (
               <div className="mt-1 rounded border border-zinc-700 bg-zinc-800 p-1">

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AccountView, ChannelRow, DmView, InboxEntry, LeaseRow, MessageRow } from '@murmur/shared';
+import type { AccountView, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow } from '@murmur/shared';
 
 export interface AppState {
   me: AccountView | null;
@@ -24,6 +24,8 @@ export interface AppState {
   online: string[];
   leases: LeaseRow[];
   connected: boolean;
+  /** 계정별 채널 음소거·즐겨찾기. channelId → preference */
+  channelPrefs: Record<string, ChannelPrefRow>;
   set(partial: Partial<AppState>): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
@@ -34,7 +36,7 @@ export interface AppState {
 const initial = {
   me: null, accounts: {}, channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
-  online: [], leases: [], connected: false,
+  online: [], leases: [], connected: false, channelPrefs: {},
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
