@@ -12,7 +12,10 @@ import { assertHarnessContract, buildTurnCommand, preassignsSessionId, writeMcpC
 const base = {
   systemPrompt: 'SYS', promptCtx: 'CTX', model: null, effort: null,
   mentionPermission: 'auto' as const, mcpConfigPath: '/mcp.json', pat: 'murp_x',
-  murmurUrl: 'http://localhost:3401', systemPromptFile: null,
+  murmurUrl: 'http://localhost:3401',
+  // 프로덕션(`mentionTurn.ts`)은 매 턴 `writeSystemPromptFile` 로 파일을 쓰고 그 경로를
+  // 반드시 넘긴다 — fixture 가 null 로 두면 프로덕션이 절대 타지 않는 경로를 검증하게 된다.
+  systemPromptFile: '/state/system-prompt.txt',
 };
 
 // 실물 검증에서 드러난 회귀 — pty.spawn 에 env 를 넘기면 node-pty 가 부모 env 와 **병합하지
@@ -58,10 +61,21 @@ describe('buildTurnCommand — claude', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('systemPromptFile 이 없으면 기존 동작(직접 전달) — 아직 전환 중이라면', () => {
-    const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true, systemPromptFile: null });
-    expect(p.args).toContain('--append-system-prompt');
-    expect(p.args).toContain('SYS');
+  // argv 폴백을 남기지 않는다 — `murmurUrl` 과 같은 처우다. 조용히 넘어가는 경로를 두면 그
+  // 경로가 결국 쓰이고, 여기서는 그게 곧 지시문이 `ps` 로 새는 것이다(#92).
+  it('지시문이 있는데 파일 경로가 없으면 조립 자체가 실패한다', () => {
+    expect(() => buildTurnCommand({
+      ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true,
+      systemPromptFile: null,
+    })).toThrow(/파일로만 받는다/);
+  });
+
+  // 지시문 본문이 argv 어디에도 없어야 한다 — 플래그만 확인하면 "파일도 넘기고 본문도
+  // 넘기는" 조합을 놓친다.
+  it('claude 멘션 argv 에 지시문 본문이 없다', () => {
+    const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true });
+    expect(p.args).not.toContain('SYS');
+    expect(p.args.join(' ')).not.toContain('SYS');
   });
 
   it('resume 멘션 턴: -r <id>, readonly 는 plan 모드', () => {

@@ -137,16 +137,19 @@ const CLAUDE_PRESET: HarnessPreset = {
   mcp: ({ mcpConfigPath }) => ['--mcp-config', mcpConfigPath, '--strict-mcp-config'],
   model: (model) => (model ? ['--model', model] : []),
   effort: (effort) => (effort ? ['--effort', effort] : []),
-  // systemPromptFile 이 있으면 파일에서 지시문을 읽는다 (argv 에 직접 전달하지 않음).
-  // 파일 경로는 호출자가 미리 writeSystemPromptFile() 로 써 두고 넘긴다.
-  // 파일이 world-readable 이면 의미가 없으므로, writeSystemPromptFile 에서 퍼미션 0600 으로 쓴다.
+  // 지시문은 **파일로만** 넘긴다. 경로는 호출자가 미리 `writeSystemPromptFile()` 로 써 두고
+  // 넘긴다(0600). argv 폴백을 남기지 않는 이유는 `murmurUrl` 과 같다 — 조용히 넘어가는 경로를
+  // 두면 그 경로가 결국 쓰이고, 여기서는 그게 곧 대화 내용이 `ps` 로 새는 것이다(#92).
   prompt: (systemPrompt, promptCtx, mode, systemPromptFile) => {
     const flags: string[] = [];
-    if (systemPromptFile) {
-      flags.push('--append-system-prompt-file', systemPromptFile);
-    } else if (systemPrompt) {
-      flags.push('--append-system-prompt', systemPrompt);
+    if (systemPrompt && !systemPromptFile) {
+      throw new Error(
+        'buildTurnCommand: claude 는 지시문을 파일로만 받는다 — systemPromptFile 이 비어 있다 ' +
+          '(turn.ts::writeSystemPromptFile 로 먼저 쓰고 그 경로를 넘겨라). argv 로 넘기면 ' +
+          '`ps` 로 다른 로컬 사용자에게 노출된다(#92, spec §7).',
+      );
     }
+    if (systemPromptFile) flags.push('--append-system-prompt-file', systemPromptFile);
     // 빈 문자열을 그대로 위치인자로 넘기면 일부 CLI 가 그걸 진짜 값으로 읽는다 — 있을 때만 싣는다.
     if (mode === 'mention' && promptCtx) flags.push(promptCtx);
     return flags;
@@ -430,7 +433,10 @@ export async function writeMcpConfigOnce(dir: string, murmurUrl: string): Promis
  */
 export async function writeSystemPromptFile(dir: string, systemPrompt: string): Promise<string> {
   const filePath = join(dir, 'system-prompt.txt');
-  await writeFile(filePath, systemPrompt, 'utf8');
+  // mode 와 chmod 를 **둘 다** 한다. `writeFile` 의 mode 는 파일을 새로 만들 때만 적용되므로
+  // 두 번째 턴부터는(파일이 이미 있다) 아무 일도 하지 않는다 — 그때는 chmod 가 지킨다.
+  // 반대로 chmod 만 하면 첫 생성과 chmod 사이에 umask 퍼미션으로 존재하는 창이 생긴다.
+  await writeFile(filePath, systemPrompt, { encoding: 'utf8', mode: 0o600 });
   await chmod(filePath, 0o600);
   return filePath;
 }

@@ -5,7 +5,7 @@
 // 일어나는 일이라 이 테스트(프로세스 경계 밖)에서 직접 재현할 수 없다 — 그래서 runTurn
 // 스텁이 하네스 대신 fakeMurmur.post 를 호출해 "턴 도중 에이전트가 답을 올렸다"를
 // 흉내낸다(task-9 브리프 시나리오 1 주석 그대로).
-import { mkdtemp, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -108,7 +108,12 @@ async function makeDeps(fake: FakeMurmur, overrides: Partial<MentionTurnDeps> = 
   // workingDir===null 경로(resolveWorkspaceDir)는 avcs 를 거치지 않고 실제 mkdir 을 한다
   // (fix round 2) — exec 가 완전히 fake 인 avcs 경로와 달리 진짜 쓰기 가능한 디렉터리가
   // 있어야 한다.
-  const workspaceBaseDir = await mkdtemp(join(tmpdir(), 'mention-turn-ws-'));
+  // 프로덕션의 배치를 그대로 흉내낸다(main.ts): stateDir 아래에 workspaces/ 가 있고,
+  // 지시문 파일은 stateDir 에 직접 놓인다 — 즉 워크스페이스의 **형제**다. stateDir 와
+  // workspaceBaseDir 를 같은 디렉터리로 두면 "워크스페이스 밖" 단언이 우연히 통과한다.
+  const stateDir = await mkdtemp(join(tmpdir(), 'mention-turn-state-'));
+  const workspaceBaseDir = join(stateDir, 'workspaces');
+  await mkdir(workspaceBaseDir, { recursive: true });
 
   const execCalls: string[][] = [];
   const exec: Exec = async (cmd, args) => {
@@ -138,6 +143,7 @@ async function makeDeps(fake: FakeMurmur, overrides: Partial<MentionTurnDeps> = 
     handles: { [ME.id]: ME.handle },
     workspaceBaseDir,
     mcpConfigPath: '/fake/mcp.json',
+    stateDir,
     murmurUrl: 'http://localhost:3400',
     pat: 'murp_test',
     turnTimeoutMs: 10_000,
@@ -269,6 +275,43 @@ describe('runMentionTurn', () => {
     expect(secondPlanArgs[0]).toBe('exec'); // codex 첫 턴 — resume 이 아니다
     expect(secondPlanArgs).not.toContain('resume');
     expect(secondPlanArgs.join(' ')).not.toContain(String(claudeSessionId));
+  });
+
+  // #92: 지시문이 argv 로 새지 않는지는 **프로덕션 경로**에서 봐야 한다. buildTurnCommand 만
+  // 단위 테스트하면 "파일을 쓰는 호출자가 아무도 없다"는 상태를 놓친다(실제로 그랬다).
+  it('지시문을 argv 가 아니라 파일로 넘긴다 (#92)', async () => {
+    const fake = new FakeMurmur(defOf({ instructions: '절대-argv에-없어야-하는-지시문' }));
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, plans } = await makeDeps(fake);
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+    const argv = plans[0]!.args.join(' ');
+    expect(argv).not.toContain('절대-argv에-없어야-하는-지시문');
+    expect(plans[0]!.args).toContain('--append-system-prompt-file');
+
+    // 그 경로의 파일에 지시문이 실제로 들어 있고, 퍼미션이 0600 이어야 한다 —
+    // argv 에서 빼면서 world-readable 파일에 두면 아무 의미가 없다.
+    const i = plans[0]!.args.indexOf('--append-system-prompt-file');
+    const filePath = plans[0]!.args[i + 1]!;
+    const { readFile, stat } = await import('node:fs/promises');
+    expect(await readFile(filePath, 'utf8')).toContain('절대-argv에-없어야-하는-지시문');
+    expect((await stat(filePath)).mode & 0o777).toBe(0o600);
+  });
+
+  // 지시문 파일은 러너의 상태 디렉터리에 있어야 한다 — 에이전트 워크스페이스 안에 두면
+  // mentionPermission:'auto'(bypassPermissions) 에이전트가 자기 지시문을 고칠 수 있다.
+  it('지시문 파일은 에이전트 워크스페이스 밖에 쓴다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, plans } = await makeDeps(fake);
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+
+    const i = plans[0]!.args.indexOf('--append-system-prompt-file');
+    const filePath = plans[0]!.args[i + 1]!;
+    const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
+    expect(filePath.startsWith(rec.workspaceDir)).toBe(false);
   });
 
   // #81 테스트: 실패한 턴에서 lastFedSeq 와 turnsRun 은 전진하지 않는다.
