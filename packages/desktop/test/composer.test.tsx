@@ -217,6 +217,30 @@ describe('mention autocomplete', () => {
     expect(screen.getByRole('option', { name: /newagent/ })).toBeTruthy();
   });
 
+  // refreshAccounts 는 실패를 스스로 삼키지 않고 거부된 프로미스를 그대로 돌려준다
+  // (컨트롤러 내부 호출부가 전부 swallow() 로 감싸는 이유). 여는 쪽이 `.catch` 없이 부르면
+  // 서버가 잠깐 끊길 때마다 unhandled rejection 이 난다 — 동기 try/catch 로는 못 잡는다.
+  it('디렉터리 갱신이 실패해도 unhandled rejection 없이 캐시된 목록으로 동작한다', async () => {
+    const api = fakeApi({ accounts: vi.fn(async () => { throw new Error('네트워크 끊김'); }) });
+    setController(new Controller(api));
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      render(<Composer onSend={vi.fn()} />);
+      typeInto('@fi');
+      // 거부가 마이크로태스크 큐를 빠져나가 unhandled 로 보고될 틈을 준다.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+
+    expect(unhandled).toEqual([]);
+    // 갱신이 실패해도 부트 때 받아 둔 후보는 그대로 보여야 한다.
+    expect(screen.getByRole('option', { name: /fizz/ })).toBeTruthy();
+  });
+
   // 가드 테스트: 자동완성을 짧은 간격으로 여러 번 열어도 디렉터리 요청이 한 번만 나간다.
   it('does not refetch accounts rapidly when autocomplete opens repeatedly', async () => {
     const api = fakeApi({
