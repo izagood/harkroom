@@ -182,3 +182,26 @@ describe('멘션 턴 권한과 러너 소유자', () => {
     expect(res.json().mentionPermission).toBe('auto');
   });
 });
+
+describe('harness 실행 가능 목록 검증', () => {
+  it('gemini 로 생성하려고 하면 거부된다 — RUNNABLE_HARNESSES 에 없으면 설정할 수 없다', async () => {
+    const res = await create({ handle: 'gem-agent', displayName: 'GemAgent', harness: 'gemini' });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('codex 로 생성할 수 있다 — RUNNABLE_HARNESSES 에 있다', async () => {
+    const res = await create({ handle: 'codex-agent', displayName: 'CodexAgent', harness: 'codex' });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().harness).toBe('codex');
+  });
+
+  it('기존 claude-code 에 다른 필드 수정은 되지만 harness 를 gemini 로 바꾸는 건 거부된다', async () => {
+    const agent = (await create({ handle: 'claude-agent', displayName: 'ClaudeAgent' })).json();
+
+    const otherFieldPatch = await patch(agent.id, { instructions: '수정된 지시문' });
+    expect(otherFieldPatch.statusCode).toBe(200);
+
+    const tryGemini = await patch(agent.id, { harness: 'gemini' });
+    expect(tryGemini.statusCode).toBe(400);
+  });
+});

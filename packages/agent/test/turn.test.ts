@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildTurnCommand, preassignsSessionId, writeMcpConfigOnce } from '../src/turn.js';
+import { assertHarnessContract, buildTurnCommand, preassignsSessionId, writeMcpConfigOnce } from '../src/turn.js';
 
 // murmurUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
 // 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
@@ -309,5 +309,23 @@ describe('writeMcpConfigOnce', () => {
     const second = await writeMcpConfigOnce(dir, 'http://localhost:3401');
     expect(second).toBe(first);
     expect(await readFile(first, 'utf8')).toBe(await readFile(second, 'utf8'));
+  });
+});
+
+describe('assertHarnessContract', () => {
+  // RUNNABLE_HARNESSES 에 unsupported 인 harness 가 있으면 기동 시점에서 실패한다.
+  // 이 테스트는 주입된 목록으로 검사한다(프로덕션 상수를 오염시키지 않음).
+  it('supported harness 목록이면 통과한다', () => {
+    expect(() => assertHarnessContract(['claude-code', 'codex'])).not.toThrow();
+  });
+
+  it('unsupported harness 가 있으면 던진다', () => {
+    expect(() => assertHarnessContract(['claude-code', 'gemini'])).toThrow(/계약 불일치/);
+    expect(() => assertHarnessContract(['gemini'])).toThrow(/계약 불일치/);
+  });
+
+  // 기본값(RUNNABLE_HARNESSES)으로도 통과해야 한다 — 이것이 회귀 방지선이다.
+  it('기본값(RUNNABLE_HARNESSES)으로도 통과한다', () => {
+    expect(() => assertHarnessContract()).not.toThrow();
   });
 });

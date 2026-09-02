@@ -10,7 +10,7 @@
 // claude 는 `--strict-mcp-config` 를 항상 받는다, gemini 는 이번 범위에서 미지원.
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { AgentHarness, MentionPermission } from '@murmur/shared';
+import { RUNNABLE_HARNESSES, type AgentHarness, type MentionPermission } from '@murmur/shared';
 
 /**
  * `murmurUrl` 은 서버 베이스 URL(`http://localhost:3400`)이고, MCP 엔드포인트는 `/mcp` 다.
@@ -292,6 +292,26 @@ export function preassignsSessionId(harness: AgentHarness): boolean {
     throw new Error(`preassignsSessionId: harness '${harness}' 는 러너가 아직 지원하지 않는다`);
   }
   return !preset.allowsNullSessionOnFirstMention;
+}
+
+/**
+ * RUNNABLE_HARNESSES 계약 검사. main.ts 가 기동할 때 이 함수를 불러서,
+ * 설정된 실행 가능 목록의 모든 harness 가 실제로 구현돼 있는지 확인한다.
+ * 반대 방향(PRESETS 에 있지만 RUNNABLE 에 없는) 은 검사하지 않는다 —
+ * "구현은 됐지만 아직 열지 않았다"는 정당한 상태다.
+ *
+ * @param runnableHarnesses 검사할 harness 목록. 생략하면 shared 의 RUNNABLE_HARNESSES 를 쓴다.
+ */
+export function assertHarnessContract(runnableHarnesses?: readonly AgentHarness[]): void {
+  const harnesses = runnableHarnesses ?? RUNNABLE_HARNESSES;
+  for (const name of harnesses) {
+    if (PRESETS[name] === 'unsupported') {
+      throw new Error(
+        `harness 계약 불일치: RUNNABLE_HARNESSES 에 '${name}' 이(가) 있지만 PRESETS 에는 구현이 없다. ` +
+          '실행하려면 PRESETS 에 실제 구현을 추가하거나, RUNNABLE_HARNESSES 에서 제거해야 한다.',
+      );
+    }
+  }
 }
 
 export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {

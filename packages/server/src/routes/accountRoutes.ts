@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { newToken } from '../auth/tokens.js';
-import { AGENT_HARNESSES, MENTION_PERMISSIONS } from '@murmur/shared';
+import { AGENT_HARNESSES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@murmur/shared';
 import { createAgentAccount, getAgent, listAgents, updateAgent } from '../services/agents.js';
 import { recordAudit } from '../audit.js';
 
@@ -17,9 +17,11 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
   });
 
   // UI 로 등록·수정하는 '에이전트 정의'. 설정은 서버에 살아야 UI 수정이 러너에 반영된다.
+  // harness 검증은 RUNNABLE_HARNESSES 로 제한한다 — 이미 DB에 저장된 값(gemini 등)은
+  // 그대로 두고 읽지만, 새로 설정하는 것만 막는다(legacy 데이터 마이그레이션은 별도).
   const configFields = {
     instructions: z.string().max(8000).optional(),
-    harness: z.enum(AGENT_HARNESSES).optional(),
+    harness: z.enum(RUNNABLE_HARNESSES).optional(),
     model: z.string().max(64).nullable().optional(),
     effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).nullable().optional(),
     workingDir: z.string().max(512).nullable().optional(),

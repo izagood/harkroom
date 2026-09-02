@@ -15,8 +15,13 @@ export type AgentHarness = (typeof AGENT_HARNESSES)[number];
  * 둘이 다른 이유: 타입은 스키마·설정이 아는 이름 전체이고, 이쪽은 코드가 따라온 범위다.
  * UI 는 이 목록에 없는 것을 '지원 예정'으로 잠근다 — 없는 것을 있다고 표시하지 않는다
  * (design.md §4).
+ *
+ * codex 추가(2026-09): #89(--skip-git-repo-check) 와 #86(--ignore-user-config) 로 멘션 턴이
+ * 열렸다. 하지만 인터랙티브 턴(codex resume) 은 아직 이 두 플래그를 받지 못하므로,
+ * 화면 앞의 사람이 직접 띄우는 인터랙티브에서는 여전히 한계가 있다. 멘션 턴만 된다.
+ * gemini 는 PRESETS.gemini === 'unsupported' 로 구현 자체가 안 돼 있다.
  */
-export const RUNNABLE_HARNESSES = ['claude-code'] as const satisfies readonly AgentHarness[];
+export const RUNNABLE_HARNESSES = ['claude-code', 'codex'] as const satisfies readonly AgentHarness[];
 
 /** 멘션 턴(화면 앞에 사람이 없다)의 권한. 사람 인터랙티브 턴은 하네스가 직접 묻는다. */
 export const MENTION_PERMISSIONS = ['auto', 'readonly'] as const;
