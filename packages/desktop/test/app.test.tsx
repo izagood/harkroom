@@ -30,16 +30,21 @@ describe('App', () => {
   });
 
   it('shows error message when session startup fails after login', async () => {
-    let callCount = 0;
+    let meCallCount = 0;
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      callCount++;
       const urlStr = String(url);
       // login succeeds
       if (urlStr.endsWith('/auth/login')) {
         return new Response(JSON.stringify({ token: 'tok-test' }), { status: 200 });
       }
-      // me() (first call in controller.start()) fails with 500
+      // me()는 두 번 불린다:
+      // 1) ConnectScreen에서 로그인 후 계정 정보를 가져올 때 (성공해야 함)
+      // 2) App.tsx에서 세션을 시작할 때 (여기서 500을 반환해 실패를 테스트)
       if (urlStr.endsWith('/auth/me')) {
+        meCallCount++;
+        if (meCallCount === 1) {
+          return new Response(JSON.stringify({ id: 'acct_test', handle: 'admin', displayName: 'Admin', kind: 'human', isAdmin: false, disabled: false }), { status: 200 });
+        }
         return new Response(JSON.stringify({ error: { code: 'server_error', message: 'Server error' } }), { status: 500 });
       }
       return new Response(JSON.stringify({}), { status: 200 });

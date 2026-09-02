@@ -9,29 +9,45 @@
  *
  * 한계를 분명히 적는다: **폴백 경로의 토큰은 평문이다.** 브라우저 개발에서는 그것을 받아들이고
  * (배포되는 표면이 아니다), 배포되는 데스크탑 앱에서는 키체인을 쓴다.
+ *
+ * ## 저장 구조 (#164)
+ *
+ * - 단일 세션(`murmur.session`)에서 N개 커뮤니티 지원(`murmur.sessions`)으로 변경.
+ * - 키: 커뮤니티 구분은 계정 id다. URL(baseUrl)이 아니다 — 같은 서버가 localhost와 LAN IP 등 여러 URL 로 닿을 수 있어 URL 로 키를 두면 같은 커뮤니티가 목록에 두 번 나타난다.
+ * - accountId는 서버 DB의 UUID라 어느 URL로 접근해도 동일하고, 다른 서버와는 다르다.
  */
-export interface StoredSession { baseUrl: string; token: string }
+export interface StoredCommunity {
+  accountId: string;
+  baseUrl: string;
+  token: string;
+  handle: string;
+}
 
-const KEY = 'murmur.session';
+export interface StoredSessions {
+  active: string | null;
+  communities: StoredCommunity[];
+}
+
+const KEY = 'murmur.sessions';
+const LEGACY_KEY = 'murmur.session';
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
-/** Tauri 안에서 도는가. v2 는 `__TAURI_INTERNALS__.invoke` 를 심는다. */
 function tauriInvoke(): Invoke | null {
   const internals = (globalThis as { __TAURI_INTERNALS__?: { invoke?: Invoke } }).__TAURI_INTERNALS__;
   return typeof internals?.invoke === 'function' ? internals.invoke : null;
 }
 
-const readPlain = (): StoredSession | null => {
+const readPlain = (): StoredSessions | null => {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as StoredSession;
-    return parsed.baseUrl && parsed.token ? parsed : null;
-  } catch { return null; } // 손상된 항목은 없는 것과 같이 취급한다
+    const parsed = JSON.parse(raw) as StoredSessions;
+    return parsed.communities && Array.isArray(parsed.communities) ? parsed : null;
+  } catch { return null; }
 };
 
-const writePlain = (s: StoredSession): void => {
+const writePlain = (s: StoredSessions): void => {
   try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { /* 저장 불가 환경 허용 */ }
 };
 
@@ -39,52 +55,91 @@ const clearPlain = (): void => {
   try { localStorage.removeItem(KEY); } catch { /* noop */ }
 };
 
-const parse = (raw: unknown): StoredSession | null => {
+const parse = (raw: unknown): StoredSessions | null => {
   if (typeof raw !== 'string' || !raw) return null;
   try {
-    const parsed = JSON.parse(raw) as StoredSession;
+    const parsed = JSON.parse(raw) as StoredSessions;
+    return parsed.communities && Array.isArray(parsed.communities) ? parsed : null;
+  } catch { return null; }
+};
+
+const readLegacyPlain = (): { baseUrl: string; token: string } | null => {
+  try {
+    const raw = localStorage.getItem(LEGACY_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { baseUrl: string; token: string };
     return parsed.baseUrl && parsed.token ? parsed : null;
   } catch { return null; }
 };
 
 export const sessionStore = {
-  async load(): Promise<StoredSession | null> {
+  async load(): Promise<StoredSessions | null> {
     const invoke = tauriInvoke();
-    if (!invoke) return readPlain();
+    if (!invoke) {
+      const newFormat = readPlain();
+      if (newFormat) return newFormat;
+      const legacy = readLegacyPlain();
+      if (!legacy) return null;
+      const migrated: StoredSessions = {
+        active: null,
+        communities: [{ accountId: '', baseUrl: legacy.baseUrl, token: legacy.token, handle: '' }],
+      };
+      writePlain(migrated);
+      localStorage.removeItem(LEGACY_KEY);
+      return migrated;
+    }
     try {
       const fromKeychain = parse(await invoke('secret_get', { key: KEY }));
       if (fromKeychain) return fromKeychain;
-      // 마이그레이션. 기존 사용자의 토큰은 localStorage 에 있다 — 이 경로가 없으면 이 버전을
-      // 배포하는 순간 전원이 로그아웃된다. 옮긴 뒤 **평문을 지운다**(옮기기만 하면 의미가 없다).
-      const legacy = readPlain();
+      const legacy = readLegacyPlain();
       if (!legacy) return null;
-      await invoke('secret_set', { key: KEY, value: JSON.stringify(legacy) });
-      clearPlain();
-      return legacy;
+      const migrated: StoredSessions = {
+        active: null,
+        communities: [{ accountId: '', baseUrl: legacy.baseUrl, token: legacy.token, handle: '' }],
+      };
+      await invoke('secret_set', { key: KEY, value: JSON.stringify(migrated) });
+      localStorage.removeItem(LEGACY_KEY);
+      return migrated;
     } catch {
-      // 키체인이 잠겨 있거나 사용자가 접근을 거부했다. 여기서 null 을 주면 로그아웃되므로,
-      // 평문 경로로 물러나 세션을 유지한다(아직 마이그레이션 전일 수도 있다).
       return readPlain();
     }
   },
 
-  async save(s: StoredSession): Promise<void> {
+  async save(s: StoredSessions): Promise<void> {
     const invoke = tauriInvoke();
     if (!invoke) { writePlain(s); return; }
     try {
       await invoke('secret_set', { key: KEY, value: JSON.stringify(s) });
-      clearPlain(); // 키체인에 넣었으면 평문 사본을 남기지 않는다
+      localStorage.removeItem(LEGACY_KEY);
     } catch {
-      // 저장 실패로 로그인 자체를 막지 않는다 — 이번 세션은 메모리로 돌고, 다음 기동에
-      // 다시 로그인하면 된다. 평문으로 쓰지 않는 이유: 키체인을 쓰겠다고 했으면 조용히
-      // 평문으로 내려가서는 안 된다(그게 더 나쁜 실패다).
     }
   },
 
+  /**
+   * **커뮤니티 하나만** 목록에서 뺀다(#164). 세션 하나가 죽었다고 나머지 커뮤니티의
+   * 토큰까지 지우면, 이 이슈가 고치려던 것("셋 중 하나가 죽었는데 전부 잃는다")의
+   * 데이터 버전이 된다.
+   *
+   * 지운 것이 활성이었으면 `active` 를 비운다 — 다음 기동이 첫 커뮤니티로 떨어진다.
+   */
+  async remove(accountId: string): Promise<void> {
+    const current = await this.load();
+    if (!current) return;
+    const communities = current.communities.filter((c) => c.accountId !== accountId);
+    if (!communities.length) return this.clear();
+    await this.save({
+      active: current.active === accountId ? null : current.active,
+      communities,
+    });
+  },
+
+  /** 전부 지운다 — 마지막 커뮤니티가 사라졌거나 사용자가 명시적으로 로그아웃했을 때다. */
   async clear(): Promise<void> {
-    clearPlain(); // 마이그레이션이 반쯤 된 상태도 있으므로 양쪽을 지운다
     const invoke = tauriInvoke();
-    if (!invoke) return;
-    try { await invoke('secret_delete', { key: KEY }); } catch { /* 지울 수 없으면 다음 기동에 다시 시도된다 */ }
+    if (!invoke) { clearPlain(); localStorage.removeItem(LEGACY_KEY); return; }
+    try {
+      await invoke('secret_delete', { key: KEY });
+      localStorage.removeItem(LEGACY_KEY);
+    } catch { /* 지울 수 없으면 다음 기동에 다시 시도된다 */ }
   },
 };

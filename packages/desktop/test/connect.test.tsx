@@ -9,14 +9,21 @@ afterEach(() => {
 
 describe('ConnectScreen', () => {
   it('logs in and reports baseUrl+token', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () =>
-      new Response(JSON.stringify({ token: 'tok-9' }), { status: 200 })));
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).endsWith('/auth/login')) {
+        return new Response(JSON.stringify({ token: 'tok-9' }), { status: 200 });
+      }
+      if (String(url).endsWith('/auth/me')) {
+        return new Response(JSON.stringify({ id: 'acct_123', handle: 'admin', displayName: 'Admin', kind: 'human', isAdmin: false, disabled: false }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
     const onConnected = vi.fn();
     render(<ConnectScreen onConnected={onConnected} />);
     fireEvent.change(screen.getByLabelText('Handle'), { target: { value: 'admin' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-    await waitFor(() => expect(onConnected).toHaveBeenCalledWith('http://localhost:3400', 'tok-9'));
+    await waitFor(() => expect(onConnected).toHaveBeenCalledWith('http://localhost:3400', 'tok-9', 'acct_123', 'admin'));
   });
 
   it('shows server error message on failure', async () => {
@@ -34,7 +41,11 @@ describe('ConnectScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       calls.push(String(url));
       if (String(url).endsWith('/bootstrap')) return new Response(JSON.stringify({ id: 'u1' }), { status: 201 });
-      return new Response(JSON.stringify({ token: 'tok-b' }), { status: 200 });
+      if (String(url).endsWith('/auth/login')) return new Response(JSON.stringify({ token: 'tok-b' }), { status: 200 });
+      if (String(url).endsWith('/auth/me')) {
+        return new Response(JSON.stringify({ id: 'acct_456', handle: 'admin', displayName: 'Admin', kind: 'human', isAdmin: true, disabled: false }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
     }));
     const onConnected = vi.fn();
     render(<ConnectScreen onConnected={onConnected} />);
@@ -43,7 +54,7 @@ describe('ConnectScreen', () => {
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Admin' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
-    await waitFor(() => expect(onConnected).toHaveBeenCalledWith('http://localhost:3400', 'tok-b'));
+    await waitFor(() => expect(onConnected).toHaveBeenCalledWith('http://localhost:3400', 'tok-b', 'acct_456', 'admin'));
     expect(calls[0]).toContain('/bootstrap');
   });
 
