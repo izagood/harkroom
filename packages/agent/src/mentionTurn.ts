@@ -212,14 +212,43 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     rec = { ...rec, sessionId: discovered };
   }
 
-  // 세션 상태(디스크의 하네스 세션 파일)는 이 프로세스가 이 결과를 "성공"으로 보든
-  // "실패"로 보든 이 시점에 이미 실재한다 — workspace 가 만들어졌고, claude 라면
-  // --session-id 로 세션이 생겼고, codex 라면 방금 rollout 파일이 쓰였다(바로 위에서
-  // 발견했다). 그래서 "실제로 일어난 일"을 아래 관측·통보보다 **먼저** 기록한다: 관측
-  // (readThread)이나 통보(post)가 여기서 던지면(예: murmur 로 가는 네트워크가 잠깐
-  // 끊김) — 이 저장이 그 뒤에 있었다면 실제로 돌아간 턴이 디스크에 기록되지 않고, 다음
-  // 재시도가 turnsRun===0 을 보고 첫 턴이라 새 uuid 를 발급하거나(claude 세션이 고아가
-  // 된다) 이미 먹인 메시지를 다시 먹인다(리뷰 지적).
+  if (result.exitCode !== 0 || result.timedOut) {
+    // #81: 실패한 턴은 turnsRun 을 올리지 않는다. claude 의 세션 uuid 는 러너가 발급만 했을
+    // 뿐 하네스에 등록됐다는 증거가 아니다 — 올리면 다음 턴이 isFirstTurn=false 로 판단해
+    // `-r`(resume)로 조립하고, 존재한 적 없는 세션을 이어받으려다 또 실패한다. 0 으로 둬야
+    // 같은 uuid 로 첫 턴(`--session-id`)을 다시 시도한다. workspaceDir 과 (codex 라면) 방금
+    // 발견한 sessionId 는 저장한다 — 둘 다 이 시점에 디스크에 이미 실재하는 사실이다.
+    //
+    // lastFedSeq 는 "이 턴에 발화가 있었나"로 정한다. 실패해도 발화는 이미 있었을 수 있고,
+    // 대표적인 경우가 타임아웃이다(답을 올린 뒤 계속 일하다 시간이 다 되어 SIGTERM 을
+    // 맞는다). 그때 커서를 되돌려 두면 재시도가 같은 메시지를 다시 먹여 **같은 질문에 두 번
+    // 답한다**(#90 과 같은 결의 중복 발화). `timedOut` 을 대리 신호로 쓰지 않는 이유는,
+    // 발화 여부가 진짜 신호이고 우리는 이미 그걸 관측할 수단(hasOwnPostSince)을 갖고 있어서다.
+    //
+    // 관측 자체가 실패하면(murmur 로 가는 네트워크가 잠깐 끊김) 전진시키지 않는다 —
+    // "한 번 더 시도한다"가 "중복 발화"보다 회복 가능한 쪽이다.
+    let answered = false;
+    try {
+      const after = await deps.murmur.readThread(channelId, anchor);
+      answered = hasOwnPostSince(after, deps.me.id, turnStartSeq);
+    } catch (err) {
+      console.error(
+        `[mentionTurn] ${key}: 실패 턴의 발화 확인 실패(커서를 전진시키지 않고 재시도로 넘긴다) — ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    await deps.store.put(key, answered ? { ...rec, lastFedSeq: fedSeq } : { ...rec });
+    // tail 을 반드시 포함한다 — PTY 안에서는 stdout/stderr 가 한 스트림으로 섞여 나오므로
+    // policy.ts::isCredentialFailure 가 자격증명 실패를 판단할 근거가 이것뿐이다.
+    throw new Error(
+      `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
+    );
+  }
+
+  // 여기 도달했다면 정상 종료다(위에서 실패를 이미 걸렀다). 성공한 턴만 turnsRun 을 올린다.
+  // 이 저장이 아래 관측·통보보다 **먼저**여야 한다: 관측(readThread)이나 통보(post)가 던지면
+  // — 저장이 그 뒤에 있었다면 실제로 돌아간 턴이 디스크에 기록되지 않고, 다음 재시도가
+  // turnsRun===0 을 보고 새 uuid 를 발급하거나(claude 세션이 고아가 된다) 이미 먹인 메시지를
+  // 다시 먹인다(리뷰 지적).
   await deps.store.put(key, { ...rec, lastFedSeq: fedSeq, turnsRun: rec.turnsRun + 1 });
 
   // 관측·통보는 best-effort 다 — 방금 저장한 상태를 좌우하지 않으므로 여기서 던진 예외로
@@ -227,8 +256,8 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
   // 안 남았지"의 원인이 사라지므로 러너 로그에는 남긴다.
   try {
     const after = await deps.murmur.readThread(channelId, anchor);
-    if (result.exitCode === 0 && !hasOwnPostSince(after, deps.me.id, turnStartSeq)) {
-      // 하네스가 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다
+    if (!hasOwnPostSince(after, deps.me.id, turnStartSeq)) {
+      // 여기는 정상 종료 경로뿐이다(실패는 위에서 던졌다). 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다
       // (쓸 말이 없었거나, 안전 거부(exit 0)이거나). 옛 reply.ts::extractReply 가 안전
       // 거부를 사실로 남기던 자리를 이 경로가 대신한다: 침묵을 침묵으로 남기지 않는다.
       await deps.murmur.post(channelId, NO_REPLY_NOTICE, anchor);
@@ -236,14 +265,6 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
   } catch (err) {
     console.error(
       `[mentionTurn] ${key}: 발화 확인/통보 실패(세션 상태는 이미 저장됐다) — ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-
-  if (result.exitCode !== 0 || result.timedOut) {
-    // tail 을 반드시 포함한다 — PTY 안에서는 stdout/stderr 가 한 스트림으로 섞여 나오므로
-    // policy.ts::isCredentialFailure 가 자격증명 실패를 판단할 근거가 이것뿐이다.
-    throw new Error(
-      `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
     );
   }
 }

@@ -247,6 +247,109 @@ describe('runMentionTurn', () => {
     expect(secondPlanArgs.join(' ')).not.toContain(String(claudeSessionId));
   });
 
+  // #81 테스트: 실패한 턴에서 lastFedSeq 와 turnsRun 은 전진하지 않는다.
+  // 재시도 시점이 델타가 비어있어도 하네스가 다시 떠야 하기 때문이다.
+  describe('실패한 턴의 상태 저장 (#81 수정)', () => {
+    it('실패 시 lastFedSeq 와 turnsRun 은 전진하지 않는다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 안녕');
+      const { deps, runTurn } = await makeDeps(fake);
+      runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'some error' });
+
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null }))
+        .rejects.toThrow();
+
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
+      expect(rec.lastFedSeq).toBe(0); // 전진하지 않음
+      expect(rec.turnsRun).toBe(0); // 전진하지 않음
+      expect(rec.workspaceDir).toBeDefined(); // workspaceDir 은 저장됨
+      expect(rec.sessionId).not.toBeNull(); // sessionId 는 저장됨
+    });
+
+    it('타임아웃 시 lastFedSeq 와 turnsRun 도 전진하지 않는다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 안녕');
+      const { deps, runTurn } = await makeDeps(fake);
+      runTurn.script = async () => ({ exitCode: 0, timedOut: true, tail: 'timeout' });
+
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null }))
+        .rejects.toThrow();
+
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
+      expect(rec.lastFedSeq).toBe(0);
+      expect(rec.turnsRun).toBe(0);
+    });
+
+    // 실패했어도 발화가 이미 있었다면 커서는 전진해야 한다 — 대표적으로 타임아웃이다
+    // (답을 올린 뒤 계속 일하다 SIGTERM 을 맞는다). 전진시키지 않으면 재시도가 같은
+    // 메시지를 다시 먹여 같은 질문에 두 번 답한다.
+    it('실패했어도 이미 발화했다면 lastFedSeq 는 전진한다 (중복 발화 방지)', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 안녕');
+      const { deps, runTurn } = await makeDeps(fake);
+      runTurn.script = async () => {
+        // 답은 올렸는데 그 뒤에 시간이 다 됐다.
+        await fake.post(CHANNEL, '답변은 올렸다', null);
+        return { exitCode: 0, timedOut: true, tail: 'timeout' };
+      };
+
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null }))
+        .rejects.toThrow();
+
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
+      expect(rec.lastFedSeq).toBeGreaterThan(0); // 발화가 있었으니 전진한다
+      expect(rec.turnsRun).toBe(0); // turnsRun 은 여전히 올리지 않는다
+    });
+
+    // 발화 확인 자체가 실패하면(murmur 네트워크 끊김) 전진시키지 않는다 —
+    // "한 번 더 시도한다"가 "중복 발화"보다 회복 가능한 쪽이다.
+    it('실패 턴의 발화 확인이 던지면 lastFedSeq 를 전진시키지 않는다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 안녕');
+      const { deps, runTurn } = await makeDeps(fake);
+      runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'boom' });
+      const original = deps.murmur.readThread.bind(deps.murmur);
+      let calls = 0;
+      deps.murmur.readThread = async (...args: Parameters<typeof original>) => {
+        calls += 1;
+        if (calls > 1) throw new Error('murmur 연결 끊김');
+        return original(...args);
+      };
+
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null }))
+        .rejects.toThrow(/harness 종료/);
+
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
+      expect(rec.lastFedSeq).toBe(0);
+    });
+
+    it('실패 후 재시도에서 델타가 비어있어도 하네스가 다시 실행된다 (#81 핵심 재현)', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '첫 번째 질문');
+      const { deps, plans, runTurn } = await makeDeps(fake);
+      let callCount = 0;
+      runTurn.script = async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return { exitCode: 1, timedOut: false, tail: 'error' };
+        }
+        // 두 번째 실행(재시도)부터는 성공 — 에이전트가 실제로 답변을 올림
+        await fake.post(CHANNEL, '재시도 답변', null);
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+
+      // 첫 턴: 실패
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null }))
+        .rejects.toThrow();
+      expect(plans).toHaveLength(1); // 첫 턴에서 하네스 실행됨
+
+      // 재시도: 이전 턴이 실패했으면 turnsRun 이 0 이므로,
+      // 델타가 비어있어도 하네스를 실행해야 함 (이게 #81 의 핵심 수정)
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null });
+      expect(plans).toHaveLength(2); // 재시도에서도 하네스가 실행됨
+    });
+  });
+
   // task-9 브리프 수정 항목 — 프롬프트가 빈 턴을 건너뛴 뒤에도 다음 턴은 정확히 재개된다.
   // (분석: 이 구현에서 "건너뛴 턴"은 오직 이미 최소 한 번 실제 턴이 돈 뒤에만 일어날 수
   // 있다 — buildTurnPrompt 는 진짜 첫 턴에는 자기 발화 필터를 안 걸어 toShow 가 절대
@@ -317,10 +420,15 @@ describe('runMentionTurn', () => {
     await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null }))
       .rejects.toThrow(/Could not resolve authentication method/);
 
-    // 실패했어도 세션 상태는 저장된다 — 재시도가 존재하지 않는 세션을 다시 만들려 들면 안 된다.
+    // 실패해도 세션 상태는 저장된다 — workspaceDir 과 sessionId 는 남는다.
+    // 하지만 #81 수정이 적용되어 lastFedSeq 와 turnsRun 은 전진하지 않는다
+    // (전진하면 재시도 시 델타가 비어있을 때 하네스를 안 돌리고 조용히 끝난다).
     const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null));
     expect(rec).toBeDefined();
-    expect(rec!.turnsRun).toBe(1);
+    expect(rec!.workspaceDir).toBeDefined();
+    expect(rec!.sessionId).not.toBeNull();
+    expect(rec!.turnsRun).toBe(0); // 전진하지 않음
+    expect(rec!.lastFedSeq).toBe(0); // 전진하지 않음
   });
 
   // fix round 1 — 리뷰 Important: store.put 이 관측(readThread)·통보(post) 보다 뒤에 있으면,
@@ -392,6 +500,17 @@ describe('runMentionTurn', () => {
     expect(plans).toHaveLength(2);
     expect(plans[1]!.args[0]).toBe('exec'); // resume 이 아니다 — 이어받을 세션 id 가 없다
     expect(plans[1]!.args).not.toContain('resume');
+  });
+
+  // #82 테스트: MAX_ATTEMPTS 소진 시 채널에 한 번만 통지한다.
+  // 이 테스트는 notice 가 있다는 것만 확인하고, 실제 발화는 main.ts 가 한다.
+  describe('실패 통지 (#82 수정)', () => {
+    it('FAILURE_NOTICE 상수가 정의되어 있다', async () => {
+      const { FAILURE_NOTICE } = await import('../src/prompt.js');
+      expect(FAILURE_NOTICE).toBeDefined();
+      expect(typeof FAILURE_NOTICE).toBe('string');
+      expect(FAILURE_NOTICE.length).toBeGreaterThan(0);
+    });
   });
 
   // fix round 2 — 리뷰 지적: `def.workingDir ?? process.cwd()` 가 "지정 안 함"과 "명시적으로
