@@ -12,7 +12,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
-import { buildSystemPrompt, buildTurnPrompt, countOwnPostsSince, hasOwnPostSince, ACK_NOTICE, NO_REPLY_NOTICE } from './prompt.js';
+import { buildSystemPrompt, buildTurnPrompt, countOwnPostsSince, hasOwnPostSince, NO_REPLY_NOTICE } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
 import type { TurnResult } from './pty.js';
@@ -26,6 +26,8 @@ export interface MentionTurnMurmur {
   readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
   /** 발화 후 메시지의 seq 를 반환한다. */
   post(channelId: string, body: string, threadRootId: string | null): Promise<number>;
+  /** #144: 긴 작업 시작 시 진행 설명 — 결과 발화로 세지 않는다. kind='progress'로 저장되어 message.read 응답에서 구분한다. */
+  progress(channelId: string, body: string, threadRootId: string | null): Promise<number>;
   /** 멘션이 왔음을 알리는 리액션(👀). 대상은 멘션 메시지 자체다. */
   addReaction(channelId: string, messageId: string, emoji: string): Promise<void>;
   /** 턴이 진행 중임을 알리는 리액션(💬). 턴 종료 후 반드시 제거한다. */
@@ -62,8 +64,6 @@ export interface MentionTurnDeps {
   murmurUrl: string;
   pat: string;
   turnTimeoutMs: number;
-  /** 이 시간을 넘겨도 턴이 돌고 있으면 '진행 중' 통지를 올린다(#123). 기본값 10초. */
-  ackThresholdMs?: number;
   /** 테스트가 sinceMs 캡처 시점을 결정론적으로 만들기 위한 시계 주입. 생략하면 Date.now. */
   now?: () => number;
 }
@@ -294,33 +294,6 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     `[mentionTurn] ${key}: 턴 시작 (채널=${channelId}, 앵커=${anchor ?? 'null'}, 하네스=${def.harness}, 워크스페이스=${rec.workspaceDir})`,
   );
 
-  // #123: 지연 ack — 턴이 임계 안에 끝나면 아무것도 올리지 않고, 넘기면 "진행 중"을 올린다.
-  // 짧은 턴에 매번 메시지를 더하면 그것도 소음이다 — 사용자가 불편해한 것은 **긴** 작업이다.
-  //
-  // **러너가 올린다**(에이전트에게 시키지 않는다). 프롬프트로 에이전트가 먼저 ack 하게 하면
-  // 세 가지가 깨진다: `'한 턴에 한 번만 발화한다'`(#90)와 부딪히고, `warnOnDuplicatePosts` 가
-  // 정상 동작을 위반으로 세고, 무엇보다 `hasOwnPostSince` 가 at-least-once 라 **ack 만 있고
-  // 본답이 없어도 NO_REPLY_NOTICE 가 억제된다**(ack 만 남고 결과가 영영 안 온다). 러너가
-  // 올리면 자기가 올린 seq 를 알기 때문에 발화 판정에서 그것만 빼면 셋 다 사라진다.
-  const ackThresholdMs = deps.ackThresholdMs ?? 10_000;
-  let ackSeq: number | undefined;
-  /** 발화 중인 ack. 턴이 임계 직후에 끝나면 이것이 아직 진행 중일 수 있다. */
-  let ackInFlight: Promise<void> | undefined;
-
-  const postAck = (): void => {
-    ackInFlight = deps.murmur.post(channelId, ACK_NOTICE, anchor)
-      .then((seq) => { ackSeq = seq; })
-      .catch((err: unknown) => {
-        // ack 은 best-effort 다 — 실패로 턴을 멈추지 않는다. 다만 조용히 삼키면 "왜 진행
-        // 통지가 없었지"의 원인이 사라지므로 러너 로그에는 남긴다.
-        console.error(
-          `[mentionTurn] ${key}: ack 발화 실패(턴은 계속한다) — ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
-  };
-
-  const ackTimer = setTimeout(postAck, ackThresholdMs);
-
   // 💬 신호: 턴이 도는 중. 임계를 물려받지 않는다 — 위 지연 ack 의 임계는 "짧은 턴에
   // 매번 메시지를 더하면 소음"이라는 근거였고 소음의 단위가 스레드 한 칸이었다.
   // 리액션은 칸을 쓰지 않으므로 그 근거가 사라진다.
@@ -337,7 +310,6 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
   try {
     result = await deps.runTurn(plan, { cwd: rec.workspaceDir, timeoutMs: deps.turnTimeoutMs });
   } finally {
-    clearTimeout(ackTimer);
     // 💬 는 반드시 제거한다 — 타임아웃·예외로 끝나도 남으면 "영원히 작업 중"이라는
     // 거짓 신호가 되고, 그것이 docs/design.md 4절 "없는 것을 있다고 표시하지 않는다" 다.
     // 추가가 끝난 뒤에 제거한다(순서가 뒤집히면 💬 가 남는다).
@@ -349,10 +321,8 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     });
   }
 
-  // 타이머가 이미 터졌는데 발화가 아직 왕복 중이면 `ackSeq` 가 비어 있다 — 그 상태로 세면
-  // ack 이 **본답으로** 세어져 NO_REPLY_NOTICE 가 억제되고 중복 경고가 오작동한다. 그래서
-  // 세기 전에 진행 중인 ack 을 기다린다(위에서 이미 catch 했으므로 여기서 던지지 않는다).
-  if (ackInFlight) await ackInFlight;
+  // #144: 에이전트가 직접 message.progress 로 진행 설명을 올리므로, 더 이상 ack seq 를 추적할 필요가 없다.
+  // progress 메시지는 kind='progress' 로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
 
   // #126: 턴 종료 로그 (경과 시간, exitCode, 발화 여부)
   const elapsedMs = (deps.now ?? Date.now)() - turnStartMs;
@@ -398,9 +368,10 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     try {
       // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
       const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
-      // #123: 러너가 올린 ack 은 세지 않는다 — 안 그러면 ack 만 있고 본답이 없는 턴이
-      // '발화했다'로 판정되어 NO_REPLY_NOTICE 가 억제된다.
-      const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq, ackSeq !== undefined ? [ackSeq] : undefined);
+      // #144: progress 메시지는 결과 발화로 세지 않는다 — 에이전트가 message.progress 로 올린
+      // 진행 설명은.kind='progress'로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
+      // 따라서 "progress 메시지만 있고 결과가 없는 턴"은 NO_REPLY_NOTICE 로 처리된다.
+      const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
       // 실패한 턴에서도 중복 발화는 일어난다(답을 두 번 올리고 나서 죽는다) — 성공 경로와
       // 같은 관측을 여기서도 한다. 안 하면 "실패했으니 안 보였다"가 되어 #90 의 관측이
       // 반쪽이 된다.
@@ -432,9 +403,10 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
   try {
     // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
     const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
-    // #123: 러너가 올린 ack 은 세지 않는다 — 안 그러면 ack 만 있고 본답이 없는 턴이
-    // '발화했다'로 판정되어 NO_REPLY_NOTICE 가 억제된다.
-    const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq, ackSeq !== undefined ? [ackSeq] : undefined);
+    // #144: progress 메시지는 결과 발화로 세지 않는다 — 에이전트가 message.progress 로 올린
+    // 진행 설명은.kind='progress'로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
+    // 따라서 "progress 메시지만 있고 결과가 없는 턴"은 NO_REPLY_NOTICE 로 처리된다.
+    const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
     warnOnDuplicatePosts(key, postCount);
     if (postCount === 0) {
       // 여기는 정상 종료 경로뿐이다(실패는 위에서 던졌다). 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다

@@ -89,6 +89,34 @@ function buildMcpServer(
     return jsonResult({ message });
   });
 
+  // #144: 진행 설명 메시지 — 결과 발화로 세지 않고, 사용자가 읽을 수 있어야 뜻이 있다.
+  // kind='progress'로 저장되어 message.read 응답에서 구분할 수 있다.
+  server.registerTool('message.progress', {
+    description: '긴 작업 시작 시 진행 설명 메시지(결과 발화로 세지 않음)',
+    inputSchema: {
+      channelId: z.string().uuid(),
+      body: z.string().min(1).max(8000),
+      threadRootId: z.string().uuid().optional(),
+    },
+  }, async ({ channelId, body, threadRootId }) => {
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    const posted = await postMessage(pool, {
+      channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, kind: 'progress',
+    });
+    if (posted.failure) {
+      return jsonResult({ error: { code: 'bad_attachment', message: 'attachments must be your own, unused uploads' } });
+    }
+    const { message, notified, replayed } = posted;
+    if (!replayed) {
+      const audience = await audienceFor(pool, channelId);
+      emitEvent({ type: 'message.created', message, audience });
+      for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+    }
+    return jsonResult({ message });
+  });
+
   server.registerTool('message.react', {
     description: '메시지에 리액션 추가',
     inputSchema: {

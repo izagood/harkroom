@@ -104,7 +104,7 @@ describe('mcp surface', () => {
     expect(names).toEqual([
       'account.me', 'channel.list', 'inbox.poll', 'inbox.read',
       'memory.get', 'memory.list', 'memory.set',
-      'message.post', 'message.react', 'message.read', 'message.search', 'message.unreact',
+      'message.post', 'message.progress', 'message.react', 'message.read', 'message.search', 'message.unreact',
       'work.link', 'workspace.guide',
     ]);
 

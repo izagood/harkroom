@@ -130,7 +130,7 @@ export interface MessageRow {
   threadRootId: string | null;
   authorId: string;
   body: string;
-  kind: 'user' | 'system';
+  kind: 'user' | 'system' | 'progress';
   meta: Record<string, unknown>;
   createdAt: string;
   /** 수정된 적이 없으면 null. */
