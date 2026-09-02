@@ -163,4 +163,8 @@ export class ApiClient {
 
   markRead(ids: number[]): Promise<void> { return this.req('POST', '/inbox/read', { ids }); }
   createDm(accountIds: string[]): Promise<ChannelRow> { return this.req('POST', '/dms', { accountIds }); }
+  /** 초대 토큰을 발급한다 — admin 전용. 토큰은 생성 직후 한 번만 볼 수 있다. */
+  createInvite(): Promise<string> {
+    return (this.req<{ token: string }>('POST', '/invites')).then((r) => r.token);
+  }
 }

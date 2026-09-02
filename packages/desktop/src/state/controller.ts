@@ -417,6 +417,11 @@ export class Controller {
     this.swallow(this.api.logout());
     this.clearLocal();
   }
+
+  /** 초대 토큰을 발급한다 — admin 전용. */
+  createInvite(): Promise<string> {
+    return this.api.createInvite();
+  }
 }
 
 let current: Controller | null = null;
