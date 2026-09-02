@@ -4,6 +4,14 @@ export interface AccountView {
   displayName: string;
   kind: 'human' | 'agent';
   isAdmin: boolean;
+  /**
+   * 비활성화된 계정. **디렉터리에서 빼지 않고 표시만 한다** — 이 목록은 멘션 자동완성의
+   * 원천이면서 동시에 **작성자 이름을 푸는 표**이기도 하다(`MessageItem` 이 `accounts[authorId]`
+   * 를 본다). 빼 버리면 그 에이전트의 과거 메시지가 작성자를 잃는다 — "이력은 건드리지
+   * 않는다"는 비활성화의 전제와 어긋난다. 자동완성 후보에서 빼는 것은 이 플래그를 보는
+   * 화면의 몫이다.
+   */
+  disabled: boolean;
 }
 
 /** murmur 가 스키마·설정 차원에서 아는 harness 이름 전체. 실제 실행 가능 여부는 `RUNNABLE_HARNESSES` 를 본다. */
@@ -15,6 +23,18 @@ export type AgentHarness = (typeof AGENT_HARNESSES)[number];
  * 둘이 다른 이유: 타입은 스키마·설정이 아는 이름 전체이고, 이쪽은 코드가 따라온 범위다.
  * UI 는 이 목록에 없는 것을 '지원 예정'으로 잠근다 — 없는 것을 있다고 표시하지 않는다
  * (design.md §4).
+ *
+ * **이 목록에 들어가는 기준은 하나다: 실물 CLI 로 첫 턴 + resume 왕복이 도는 것을 봤는가**
+ * (`packages/agent/README.md` harness 절, spec §10 "수용" 층).
+ *
+ * codex 가 아직 없는 이유(`docs/roadmap.md` §5, 2026-09-02 실측): 첫 턴은 murmur MCP 연결부터
+ * `message.post` 발화까지 실제로 완주했지만 **resume 턴은 완주를 확인하지 못했다.** 막은 것은
+ * murmur 쪽 결함이 아니라 그 개발 머신에 걸려 있던 개인 후크의 승인 게이트였고, 그것을
+ * 우회하는 유일한 수단(`codex exec --approve-for-me`)이 `codex exec resume` 에는 없다.
+ * 즉 기준의 절반만 닫혔다 — 그 후크가 없는 머신에서 resume 완주를 보면 추가한다.
+ * (#89 신뢰 디렉터리와 #86 전역 MCP 상속은 그 전에 닫아야 했던 별개의 선행 조건이고, 둘 다 닫혔다.)
+ *
+ * gemini 는 `PRESETS.gemini === 'unsupported'` 로 구현 자체가 없다.
  */
 export const RUNNABLE_HARNESSES = ['claude-code'] as const satisfies readonly AgentHarness[];
 

@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { newToken } from '../auth/tokens.js';
-import { AGENT_HARNESSES, MENTION_PERMISSIONS } from '@murmur/shared';
-import { createAgentAccount, getAgent, listAgents, updateAgent } from '../services/agents.js';
+import { MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@murmur/shared';
+import { createAgentAccount, getAgent, listAgents, revokeAllPats, updateAgent } from '../services/agents.js';
 import { recordAudit } from '../audit.js';
 
 export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
@@ -17,9 +17,14 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
   });
 
   // UI 로 등록·수정하는 '에이전트 정의'. 설정은 서버에 살아야 UI 수정이 러너에 반영된다.
+  // harness 검증은 `AGENT_HARNESSES`(스키마가 아는 이름) 가 아니라 `RUNNABLE_HARNESSES`
+  // (러너가 실제로 돌릴 수 있는 것) 로 좁힌다 — 데스크탑 드롭다운은 이미 그렇게 잠그는데
+  // API 만 열려 있어서, admin 이 실행 불가능한 harness 를 저장할 수 있었다(#83).
+  // 이미 DB 에 그 값이 저장된 에이전트는 읽기·다른 필드 수정에 영향받지 않는다(harness 키를
+  // 안 보내면 `.optional()` 로 통과한다) — 새로 그 값으로 **바꾸는 것**만 막는다.
   const configFields = {
     instructions: z.string().max(8000).optional(),
-    harness: z.enum(AGENT_HARNESSES).optional(),
+    harness: z.enum(RUNNABLE_HARNESSES).optional(),
     model: z.string().max(64).nullable().optional(),
     effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).nullable().optional(),
     workingDir: z.string().max(512).nullable().optional(),
@@ -93,9 +98,55 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const patch = z.object({
       displayName: z.string().min(1).max(64).optional(),
+      disabled: z.boolean().optional(),
       ...configFields,
     }).parse(req.body);
     const before = await getAgent(pool, id);
+    // 존재 확인을 **먼저** 한다. 없는 에이전트에 대해 비활성화를 처리하면 update 는 0 행이라
+    // 무해하지만 감사 로그에는 "비활성화했다"가 남는다 — 응답은 404 인데 기록은 남는 모양이다.
+    // (같은 이유로 설정 변경 감사도 404 에서는 남기지 않는다.)
+    if (!before) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+    }
+
+    let revokedLabels: string[] = [];
+    if (patch.disabled !== undefined && patch.disabled !== before.disabled) {
+      // 값이 실제로 바뀔 때만 처리한다 — 같은 값으로 다시 저장한 요청까지 기록하면 감사
+      // 로그가 "언제 껐나"를 답하지 못하는 잡음이 되고, 이미 꺼진 계정의 disabled_at 이
+      // 매번 now() 로 밀려 처음 껐던 시각을 잃는다.
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        if (patch.disabled) {
+          await client.query(`update account set disabled_at = now() where id = $1`, [id]);
+          // 러너가 멈추는 것은 PAT 가 죽어서다 — 401 을 받으면 policy.ts::isCredentialFailure
+          // 가 자격증명 실패로 판정해 러너를 세우고 운영자 안내를 낸다. PAT 를 안 죽이면
+          // 비활성화한 에이전트가 계속 폴링하며 답한다.
+          revokedLabels = await revokeAllPats(client, id);
+        } else {
+          // 되돌리는 것은 disabled_at 하나다. **PAT 는 되살리지 않는다** — 해시만 저장하므로
+          // 되살릴 방법이 없다. 운영자가 새로 발급해야 한다. 이 비대칭은 의도적이다.
+          await client.query(`update account set disabled_at = null where id = $1`, [id]);
+        }
+        await client.query('commit');
+      } catch (err) {
+        await client.query('rollback');
+        throw err;
+      } finally {
+        client.release();
+      }
+      // 감사 기록은 커밋 뒤에 남긴다 — 롤백된 일을 기록하면 감사 추적이 거짓을 말한다.
+      await recordAudit(pool, patch.disabled
+        ? {
+          action: 'agent.disabled', actorId: req.account!.id, actorHandle: req.account!.handle,
+          target: id, detail: { revokedPats: revokedLabels },
+        }
+        : {
+          action: 'agent.enabled', actorId: req.account!.id, actorHandle: req.account!.handle,
+          target: id, detail: { patsNotRestored: true },
+        }, req);
+    }
+
     const updated = await updateAgent(pool, id, patch);
     if (!updated) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
