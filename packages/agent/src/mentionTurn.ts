@@ -12,7 +12,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
-import { buildSystemPrompt, buildTurnPrompt, countOwnPostsSince, hasOwnPostSince, NO_REPLY_NOTICE } from './prompt.js';
+import { buildSystemPrompt, buildTurnPrompt, type MemoryContext, countOwnPostsSince, hasOwnPostSince, NO_REPLY_NOTICE } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
 import type { TurnResult } from './pty.js';
@@ -24,6 +24,8 @@ import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
 export interface MentionTurnMurmur {
   definition(): Promise<AgentView>;
   readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
+  /** #139: core 본문과 mem/* slug 목록. 실패는 **던진다** — 호출자가 구분해야 한다. */
+  readMemory(): Promise<{ core: string | null; slugs: string[] }>;
   /** 발화 후 메시지의 seq 를 반환한다. */
   post(channelId: string, body: string, threadRootId: string | null): Promise<number>;
   /** #144: 긴 작업 시작 시 진행 설명 — 결과 발화로 세지 않는다. kind='progress'로 저장되어 message.read 응답에서 구분한다. */
@@ -245,11 +247,28 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
   // 아무것도 안 하고 끝낸 턴도 "발화했다"로 잘못 판정된다.
   const turnStartSeq = thread.reduce((max, m) => Math.max(max, m.seq), 0);
 
+  // #139: 메모리는 **매 턴 다시 읽는다.** 지시문이 그렇듯(바로 아래 주석) 시스템
+  // 프롬프트가 매 턴 새로 쓰이므로, 캐시 없이도 메모리 수정이 다음 턴부터 반영된다 —
+  // 캐시를 넣으면 그 이점을 없애고 무효화 문제를 새로 만든다.
+  //
+  // **조회 실패와 빈 저장소를 구분한다.** 실패를 빈 값으로 삼키면 에이전트가 "나는
+  // 기억이 없다" 고 믿고 진짜 기억을 새 프로필로 덮어쓴다.
+  let memory: MemoryContext;
+  try {
+    memory = await deps.murmur.readMemory();
+  } catch (err: unknown) {
+    memory = 'unavailable';
+    console.error(
+      `[mentionTurn] ${key}: 메모리 조회 실패 — 이번 턴은 기억 없이 돈다(빈 저장소로 취급하지 않는다): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   const systemPrompt = buildSystemPrompt({
     handle: deps.me.handle,
     channelName: deps.channelName,
     instructions: def.instructions,
     guide: deps.guide,
+    memory,
   });
 
   // 지시문은 argv 가 아니라 파일로 넘긴다(#92) — `ps` 로 다른 로컬 사용자에게 보이는 자리에

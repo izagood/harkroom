@@ -110,6 +110,17 @@ class FakeMurmur implements MentionTurnMurmur {
    */
   addDelayTicks = 0;
 
+  /** #139: 기본은 "조회 성공, 저장소 비어 있음". 테스트가 필요하면 갈아끼운다. */
+  memory: { core: string | null; slugs: string[] } | Error = { core: null, slugs: [] };
+
+  memoryReads = 0;
+
+  readMemory(): Promise<{ core: string | null; slugs: string[] }> {
+    this.memoryReads += 1;
+    if (this.memory instanceof Error) return Promise.reject(this.memory);
+    return Promise.resolve(this.memory);
+  }
+
   async addReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
     for (let i = 0; i < this.addDelayTicks; i += 1) await Promise.resolve();
     this.reactions.push({ channelId, messageId, emoji, action: 'add' });
@@ -1278,5 +1289,46 @@ describe('mentionAnchor', () => {
     const b = mentionAnchor({ id: 'msg-b', threadRootId: null });
     expect(a).not.toBe(b);
     expect(SessionStore.threadKey(CHANNEL, a)).not.toBe(SessionStore.threadKey(CHANNEL, b));
+  });
+});
+
+describe('메모리 주입 (#139)', () => {
+  // 매 턴 다시 읽는다. 시스템 프롬프트가 매 턴 새로 쓰이므로 캐시 없이 다음 턴부터
+  // 반영된다 — 캐시를 넣으면 그 이점을 없애고 무효화 문제를 새로 만든다.
+  //
+  // 프롬프트 내용은 buildSystemPrompt 단위 테스트가 덮는다(#117 이후 지시문은 파일로
+  // 나가므로 plan.systemPrompt 로는 볼 수 없다). 여기서 지킬 것은 **읽는 횟수**다.
+  it('턴마다 메모리를 다시 읽는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
+    mentionMsg.threadRootId = mentionMsg.id;
+    const { deps } = await makeDeps(fake);
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: mentionMsg.id, mentionId: mentionMsg.id });
+    expect(fake.memoryReads).toBe(1);
+
+    // 스레드에 새 메시지가 있어야 두 번째 턴이 돈다 — 먹일 것이 없으면 조기 반환한다.
+    fake.seedFrom('human-1', '@forge 또', mentionMsg.id);
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: mentionMsg.id, mentionId: mentionMsg.id });
+    expect(fake.memoryReads).toBe(2);
+  });
+
+  // 조회가 실패해도 턴은 돈다 — 기억이 없다고 응답을 못 하게 만들면 장애가 침묵이 된다.
+  it('메모리 조회가 실패해도 턴이 정상 진행된다', async () => {
+    const fake = new FakeMurmur(defOf());
+    const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
+    mentionMsg.threadRootId = mentionMsg.id;
+    fake.memory = new Error('db down');
+    const { deps, runTurn } = await makeDeps(fake);
+    let ran = false;
+    runTurn.script = async () => {
+      ran = true;
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: mentionMsg.id, mentionId: mentionMsg.id });
+
+    expect(ran).toBe(true);
+    expect(fake.memoryReads).toBe(1);
   });
 });
