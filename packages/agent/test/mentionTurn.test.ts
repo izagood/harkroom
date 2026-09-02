@@ -5,7 +5,7 @@
 // 일어나는 일이라 이 테스트(프로세스 경계 밖)에서 직접 재현할 수 없다 — 그래서 runTurn
 // 스텁이 하네스 대신 fakeMurmur.post 를 호출해 "턴 도중 에이전트가 답을 올렸다"를
 // 흉내낸다(task-9 브리프 시나리오 1 주석 그대로).
-import { mkdir, mkdtemp, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -179,6 +179,19 @@ async function makeDeps(fake: FakeMurmur, overrides: Partial<MentionTurnDeps> = 
   return { deps, execCalls, plans, runTurn };
 }
 
+/**
+ * #117:.plan.stdinFile 에서 프롬프트 내용을 읽는다. stdinFile 이 없으면(인터랙티브·resume)
+ * args 에서 찾는다. 이 헬퍼는 argv 에서 stdinFile 로 바뀐 변경(#117) 를 반영한다.
+ */
+async function getPlanContent(plans: TurnPlan[]): Promise<string[]> {
+  return Promise.all(plans.map(async (p) => {
+    if (p.stdinFile) {
+      return readFile(p.stdinFile, 'utf8');
+    }
+    return p.args.join(' ');
+  }));
+}
+
 describe('runMentionTurn', () => {
   // 시나리오 1
   it('첫 멘션: ensureWorkspace 1회 + 세션 생성 + 에이전트가 스스로 답을 올리면 NO_REPLY 없음', async () => {
@@ -204,7 +217,9 @@ describe('runMentionTurn', () => {
     expect(plans[0]!.args).toContain('--session-id');
     expect(plans[0]!.args).toContain(rec!.sessionId);
     // 시스템 프롬프트에 channelId·threadRootId 를 알려줘야 에이전트가 message.post 대상을 안다.
-    expect(plans[0]!.args.join(' ')).toContain(`channelId: ${CHANNEL}`);
+    // #117: 프롬프트가 stdin 파일로 이동했다.
+    const planContent = await getPlanContent(plans);
+    expect(planContent[0]).toContain(`channelId: ${CHANNEL}`);
     expect(fake.posts).toHaveLength(1); // 에이전트의 답 하나뿐 — NO_REPLY 가 추가되지 않았다
   });
 
@@ -325,10 +340,12 @@ describe('runMentionTurn', () => {
       fake.seedFrom('human-1', '두번째메시지고유문구');
       await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
-      const secondTurnArgs = plans[1]!.args.join(' ');
+      // #117: 프롬프트가 stdin 파일로 이동했다.
+      const planContent = await getPlanContent(plans);
+      const secondTurnArgs = planContent[1];
       expect(secondTurnArgs).toContain('두번째메시지고유문구');
       expect(secondTurnArgs).not.toContain('첫번째메시지고유문구');
-      expect(secondTurnArgs).not.toContain('첫번째답변고유문구'); // 세션이 이미 아는 자기 발화도 다시 넘기지 않는다
+      expect(secondTurnArgs).not.toContain('첫번째답변고유문구'); // 세션이 이미 아는 자기 발화도 다시 넘치지 않는다
     });
   });
 
@@ -550,9 +567,10 @@ describe('runMentionTurn', () => {
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
-    const args = plans[0]!.args.join(' ');
-    expect(args).toContain('jaebin: @forge 이 스레드 좀 봐줘');
-    expect(args).not.toContain('알 수 없는 사용자');
+    // #117: 프롬프트가 stdin 파일로 이동했다.
+    const planContent = await getPlanContent(plans);
+    expect(planContent[0]).toContain('jaebin: @forge 이 스레드 좀 봐줘');
+    expect(planContent[0]).not.toContain('알 수 없는 사용자');
   });
 
   it('handles 맵에 없는 작성자는 여전히 "알 수 없는 사용자"로 표시된다 — 회귀 대조', async () => {
@@ -562,7 +580,9 @@ describe('runMentionTurn', () => {
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
-    expect(plans[0]!.args.join(' ')).toContain('알 수 없는 사용자');
+    // #117: 프롬프트가 stdin 파일로 이동했다.
+    const planContent = await getPlanContent(plans);
+    expect(planContent[0]).toContain('알 수 없는 사용자');
   });
 
   it('하네스가 비정상 종료하면 던진다 — tail 을 담아 policy.ts::isCredentialFailure 가 판단할 수 있게 한다', async () => {
@@ -756,9 +776,16 @@ describe('runMentionTurn', () => {
 
       await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
-      const fed = plans.map((p) => p.args.join(' ')).join('\n');
-      expect(fed).toContain('최근3');
-      expect(fed).not.toContain('옛1');
+      // #117: 대화 본문이 stdin 파일로 이동했다 — plan.stdinFile 에서 내용을 확인한다.
+      const fed = await Promise.all(plans.map(async (p) => {
+        if (p.stdinFile) {
+          return readFile(p.stdinFile, 'utf8');
+        }
+        return p.args.join(' ');
+      }));
+      const fedText = fed.join('\n');
+      expect(fedText).toContain('최근3');
+      expect(fedText).not.toContain('옛1');
       // 그리고 커서는 본 것 중 최대까지 전진한다 — 옛 것을 다시 새 것으로 들이밀지 않는다.
       const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
       expect(rec.lastFedSeq).toBe(5);
@@ -768,9 +795,12 @@ describe('runMentionTurn', () => {
     // desc(최신 N)로만 읽으면, 한 턴 사이에 창보다 많이 쌓였을 때 앞쪽 구간이 프롬프트에
     // 없는데 커서만 최댓값으로 뛰어(`prompt.ts` 의 fedSeq = 받은 것 중 최대 seq) 그 구간이
     // 영영 안 먹힌다. since 커서로 읽으면 창이 델타의 '앞쪽'을 잡으므로 건너뛰지 않는다.
+    //
+    // #117 수정: 이 테스트는 prompt content 가 stdin 파일로 이동하면서 same content 를
+    // 포함해야 한다. fake.limit=3 이라 3 개만 표시되므로, limit 를 높여서 모두 확인한다.
     it('커서가 생긴 뒤에는 창보다 많이 쌓여도 건너뛰는 메시지가 없다', async () => {
       const fake = new FakeMurmur(defOf());
-      fake.limit = 3;
+      fake.limit = 10; // #117: limit 를 높여 모든 메시지가 포함되도록 한다
       fake.seedFrom('human-1', '첫 질문');
       const { deps, plans } = await makeDeps(fake);
 
@@ -785,7 +815,14 @@ describe('runMentionTurn', () => {
       await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
       await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
-      const fedText = plans.map((p) => p.args.join(' ')).join('\n');
+      // #117: 대화 본문이 stdin 파일로 이동했다 — plan.stdinFile 에서 내용을 확인한다.
+      const fed = await Promise.all(plans.map(async (p) => {
+        if (p.stdinFile) {
+          return readFile(p.stdinFile, 'utf8');
+        }
+        return p.args.join(' ');
+      }));
+      const fedText = fed.join('\n');
       for (const b of burst) {
         expect(fedText, `'${b}' 이 어느 턴에도 먹여지지 않았다 — 창 밖에서 유실됐다`).toContain(b);
       }

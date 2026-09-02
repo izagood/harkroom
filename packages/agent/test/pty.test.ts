@@ -1,9 +1,9 @@
 import { tmpdir } from 'node:os';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { RingBuffer, runPtyTurn } from '../src/pty.js';
+import { composeSpawn, RingBuffer, runPtyTurn } from '../src/pty.js';
 
 const fake = join(dirname(fileURLToPath(import.meta.url)), 'helpers/fake-harness.mjs');
 // **부모 env 를 펼치지 않는다 — 프로덕션 plan 의 실제 모양과 같아야 한다.** 예전엔
@@ -14,7 +14,7 @@ const fake = join(dirname(fileURLToPath(import.meta.url)), 'helpers/fake-harness
 // 가짜 하네스(fake-harness.mjs)는 FAKE_MODE 말고 다른 env 를 읽지 않는다 — 이 시나리오에서
 // PATH 없이도 통과한다는 것 자체가 이 테스트가 이제 프로덕션 plan 의 실제 모양을 검증한다는
 // 증거다.
-const plan = (mode: string) => ({ command: process.execPath, args: [fake], env: { FAKE_MODE: mode } as Record<string, string> });
+const plan = (mode: string) => ({ command: process.execPath, args: [fake], env: { FAKE_MODE: mode } as Record<string, string>, stdinFile: null });
 
 describe('runPtyTurn', () => {
   it('정상 종료: exitCode 0, 출력이 ring 에 남는다', async () => {
@@ -174,5 +174,91 @@ describe('RingBuffer', () => {
     const ring = new RingBuffer(4);
     ring.push(Buffer.from('abcdefghij'));
     expect(ring.snapshot().toString()).toBe('ghij');
+  });
+});
+
+describe('runPtyTurn — stdin 파일 리다이렉션(#117)', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'stdin-test-'));
+  });
+
+  afterEach(async () => {
+    if (dir) await rm(dir, { recursive: true, force: true });
+  });
+
+  // stdinFile 이 없으면 PTY stdin 을 그대로 쓴다(인터랙티브·resume 경로 보존).
+  it('stdinFile 이 null 이면 sh -c 로 감싸지 않는다 — 기존 동작 유지', async () => {
+    const p = { command: process.execPath, args: [fake], env: { FAKE_MODE: 'ok' } as Record<string, string>, stdinFile: null };
+    const r = await runPtyTurn(p, { cwd: process.cwd(), timeoutMs: 10_000 });
+    expect(r.exitCode).toBe(0);
+  });
+
+  // stdinFile 이 있으면 sh -c 'exec ... < 파일' 로 감싸고, 그 파일 내용이 stdin 으로 간다.
+  it('stdinFile 이 있으면 sh -c 로 감싸고 stdin 리다이렉션이 동작한다', async () => {
+    const stdinFile = join(dir, 'prompt.txt');
+    await writeFile(stdinFile, 'Hello from stdin', { encoding: 'utf8' });
+    const p = { command: process.execPath, args: [fake], env: { FAKE_MODE: 'stdin-echo' } as Record<string, string>, stdinFile };
+    const r = await runPtyTurn(p, { cwd: process.cwd(), timeoutMs: 10_000 });
+    expect(r.exitCode).toBe(0);
+    expect(r.tail).toContain('stdin-received: Hello from stdin');
+  });
+
+  // 공백이 포함된 경로·인자가 셸 인용을 통과한다.
+  it('공백 포함 경로가 셸 인용을 통과한다', async () => {
+    const stdinFile = join(dir, 'prompt with spaces.txt');
+    await writeFile(stdinFile, 'test content', { encoding: 'utf8' });
+    const p = { command: process.execPath, args: [fake], env: { FAKE_MODE: 'stdin-echo' } as Record<string, string>, stdinFile };
+    const r = await runPtyTurn(p, { cwd: process.cwd(), timeoutMs: 10_000 });
+    expect(r.exitCode).toBe(0);
+    expect(r.tail).toContain('test content');
+  });
+});
+
+// composeSpawn 은 순수 함수라 조립된 문자열을 직접 단정할 수 있다. runPtyTurn 안에
+// 갇혀 있었을 때는 테스트가 "종료 코드가 0이다" 로 갈음했고, 그건 exec 가 없어도
+// 통과했다 — 아무것도 지키지 않는 테스트였다.
+describe('composeSpawn — sh -c 조립(#117)', () => {
+  const base = { command: '/bin/harness', args: ['-p', 'x'], env: {} as Record<string, string> };
+
+  it('stdinFile 이 null 이면 감싸지 않는다', () => {
+    const r = composeSpawn({ ...base, stdinFile: null });
+    expect(r.command).toBe('/bin/harness');
+    expect(r.args).toEqual(['-p', 'x']);
+  });
+
+  // exec 가 없으면 최종 프로세스가 sh 가 되어 시그널이 하네스에 닿지 않는다.
+  it('exec 로 시작한다', () => {
+    const r = composeSpawn({ ...base, stdinFile: '/tmp/p.txt' });
+    expect(r.command).toBe('sh');
+    expect(r.args[0]).toBe('-c');
+    expect(r.args[1]!.startsWith('exec ')).toBe(true);
+  });
+
+  it('명령·인자·파일 경로를 모두 인용한다', () => {
+    const r = composeSpawn({
+      command: '/opt/my bin/harness', args: ['--flag', 'two words'], env: {},
+      stdinFile: '/tmp/prompt with spaces.txt',
+    });
+    expect(r.args[1]).toBe(
+      "exec '/opt/my bin/harness' '--flag' 'two words' < '/tmp/prompt with spaces.txt'",
+    );
+  });
+
+  // 단일 인용부호가 든 값에서 셸 인용이 깨지면 임의 명령이 실행될 수 있다.
+  it('단일 인용부호를 전치한다', () => {
+    const r = composeSpawn({ ...base, args: ["it's"], stdinFile: '/tmp/p.txt' });
+    // String.raw 로 쓴다 — 백슬래시와 인용부호가 섞이면 JS 이스케이프가 기대값을
+    // 조용히 바꾼다(실제로 한 번 그렇게 틀렸다).
+    expect(r.args[1]).toContain(String.raw`'it'\''s'`);
+  });
+
+  // 대화 본문이 argv 로 새지 않는다는 것이 이 이슈의 요구다 — 조립된 문자열에도
+  // 본문이 없어야 하고, 경로만 있어야 한다.
+  it('조립된 문자열에 파일 경로만 있고 본문은 없다', () => {
+    const r = composeSpawn({ ...base, stdinFile: '/tmp/p.txt' });
+    expect(r.args[1]).toContain('/tmp/p.txt');
+    expect(r.args[1]).not.toContain('사람이 쓴 대화 본문');
   });
 });

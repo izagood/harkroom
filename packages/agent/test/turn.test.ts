@@ -2,7 +2,7 @@ import { chmod, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { assertHarnessContract, buildTurnCommand, preassignsSessionId, writeMcpConfigOnce, writeSystemPromptFile } from '../src/turn.js';
+import { assertHarnessContract, buildTurnCommand, preassignsSessionId, writeMcpConfigOnce, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 
 // murmurUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
 // 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
@@ -16,6 +16,8 @@ const base = {
   // 프로덕션(`mentionTurn.ts`)은 매 턴 `writeSystemPromptFile` 로 파일을 쓰고 그 경로를
   // 반드시 넘긴다 — fixture 가 null 로 두면 프로덕션이 절대 타지 않는 경로를 검증하게 된다.
   systemPromptFile: '/state/system-prompt.txt',
+  // stdinFile 도 필수 필드다 — 기본값은 null(인터랙티브·resume 경로).
+  stdinFile: null,
 };
 
 // 실물 검증에서 드러난 회귀 — pty.spawn 에 env 를 넘기면 node-pty 가 부모 env 와 **병합하지
@@ -367,5 +369,124 @@ describe('assertHarnessContract', () => {
   // 기본값(RUNNABLE_HARNESSES)으로도 통과해야 한다 — 이것이 회귀 방지선이다.
   it('기본값(RUNNABLE_HARNESSES)으로도 통과한다', () => {
     expect(() => assertHarnessContract()).not.toThrow();
+  });
+});
+
+describe('buildTurnCommand — stdin 파일로 대화 본문 이동(#117)', () => {
+  // stdinFile 이 있으면 plan.stdinFile 에 경로가 들어가고, argv 에는 아무것도 안 들어간다.
+  // 이 수정은 argv 에 있으면 같은 머신의 다른 로컬 사용자가 `ps -ef` 로 스레드 내용을
+  // 그대로 읽는 문제를 해결한다(#92, #117).
+  it('claude mention: plan.args 에 대화 본문(promptCtx) 문자열이 없다', () => {
+    const p = buildTurnCommand({
+      ...base,
+      harness: 'claude-code',
+      mode: 'mention',
+      sessionId: 'uuid-1',
+      isFirstTurn: true,
+      stdinFile: '/state/stdin-prompt.txt',
+    });
+    expect(p.args).not.toContain('CTX');
+    expect(p.args.join(' ')).not.toContain('CTX');
+  });
+
+  it('claude mention: plan.args 에 지시문 문자열이 없다', () => {
+    const p = buildTurnCommand({
+      ...base,
+      harness: 'claude-code',
+      mode: 'mention',
+      sessionId: 'uuid-1',
+      isFirstTurn: true,
+      stdinFile: '/state/stdin-prompt.txt',
+    });
+    expect(p.args).not.toContain('SYS');
+    expect(p.args.join(' ')).not.toContain('SYS');
+  });
+
+  it('claude mention: plan.stdinFile 에 경로가 들어간다', () => {
+    const p = buildTurnCommand({
+      ...base,
+      harness: 'claude-code',
+      mode: 'mention',
+      sessionId: 'uuid-1',
+      isFirstTurn: true,
+      stdinFile: '/state/stdin-prompt.txt',
+    });
+    expect(p.stdinFile).toBe('/state/stdin-prompt.txt');
+  });
+
+  it('claude mention: stdinFile 이 null 이면 plan.stdinFile 도 null', () => {
+    const p = buildTurnCommand({
+      ...base,
+      harness: 'claude-code',
+      mode: 'mention',
+      sessionId: 'uuid-1',
+      isFirstTurn: true,
+      stdinFile: null,
+    });
+    expect(p.stdinFile).toBe(null);
+  });
+
+  // codex 도 stdin 파일을 통해 프롬프트를 받는다 — 지시문+본문 합쳐서.
+  it('codex mention: plan.args 에 대화 본문·지시문 둘 다 없다', () => {
+    const p = buildTurnCommand({
+      ...base,
+      harness: 'codex',
+      mode: 'mention',
+      sessionId: 'uuid-1',
+      isFirstTurn: true,
+      stdinFile: '/state/stdin-prompt.txt',
+    });
+    expect(p.args).not.toContain('CTX');
+    expect(p.args).not.toContain('SYS');
+    expect(p.args.join(' ')).not.toContain('CTX');
+    expect(p.args.join(' ')).not.toContain('SYS');
+  });
+
+  it('codex mention: plan.stdinFile 에 경로가 들어간다', () => {
+    const p = buildTurnCommand({
+      ...base,
+      harness: 'codex',
+      mode: 'mention',
+      sessionId: 'uuid-1',
+      isFirstTurn: true,
+      stdinFile: '/state/stdin-prompt.txt',
+    });
+    expect(p.stdinFile).toBe('/state/stdin-prompt.txt');
+  });
+
+  // 인터랙티브 모드는 stdinFile 이 null 이어야 한다 — PTY stdin 을 그대로 써야 한다.
+  it('인터랙티브 턴: stdinFile 없이 plan.stdinFile 은 null 이다', () => {
+    const p = buildTurnCommand({
+      ...base,
+      harness: 'claude-code',
+      mode: 'interactive',
+      sessionId: 'uuid-1',
+      isFirstTurn: false,
+    });
+    expect(p.stdinFile).toBe(null);
+  });
+});
+
+describe('writePromptFile — 0600 권한', () => {
+  let dir: string;
+
+  afterEach(async () => {
+    if (dir) await rm(dir, { recursive: true, force: true });
+  });
+
+  it('stdin 용 프롬프트 파일 내용을 정확히 쓰고 퍼미션은 0600 이다', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'stdin-prompt-'));
+    const filePath = await writePromptFile(dir, 'Hello World');
+    const content = await readFile(filePath, 'utf8');
+    expect(content).toBe('Hello World');
+    const stat = await import('node:fs/promises').then(m => m.stat(filePath));
+    expect(stat.mode & 0o777).toBe(0o600);
+  });
+
+  it('빈 문자열도 파일로 쓴다', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'stdin-prompt-'));
+    const filePath = await writePromptFile(dir, '');
+    const content = await readFile(filePath, 'utf8');
+    expect(content).toBe('');
   });
 });
