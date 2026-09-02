@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AgentsSettings } from '../components/settings/AgentsSettings';
 import { ConnectionSettings } from '../components/settings/ConnectionSettings';
+import { InviteSettings } from '../components/settings/InviteSettings';
 import { NotificationSettings } from '../components/settings/NotificationSettings';
 import { ProfileSettings } from '../components/settings/ProfileSettings';
 import { UpdatesSettings } from '../components/settings/UpdatesSettings';
@@ -55,6 +56,7 @@ export function SettingsScreen({ initialSection = 'profile', onBack, onSignOut }
         {section === 'connection' && <ConnectionSettings onSignOut={onSignOut} />}
         {/* AgentsSettings 는 자체 2단 레이아웃이라 SettingsPage 여백을 쓰지 않는다. */}
         {section === 'agents' && <AgentsSettings />}
+        {section === 'invite' && <InviteSettings />}
         {section === 'updates' && <UpdatesSettings />}
       </main>
     </div>
