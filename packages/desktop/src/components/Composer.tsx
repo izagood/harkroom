@@ -41,7 +41,6 @@ interface Props {
 export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = '' }: Props) {
   const accounts = useAppStore((s) => s.accounts);
   const myId = useAppStore((s) => s.me?.id);
-  const [draft, setDraft] = useState('');
   const [query, setQuery] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
   const [stickyByScope, setStickyByScope] = useState<Record<string, string[]>>({});
@@ -57,6 +56,27 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   // 삽입 후 커서를 옮겨야 한다. React 는 value 만 되돌리므로 DOM 을 직접 만진다.
   const pendingCaret = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const prevScopeKey = useRef(scopeKey);
+
+  // 초안은 **스코프 키로 스토어에 산다.** 지역 state 로 두면 컴포넌트 인스턴스가 채널
+  // 전환에도 유지되기 때문에(ChannelPane 이 같은 자리에 렌더한다) A 에 쓴 글이 B 입력창에
+  // 남고 B 로 나간다 — 그게 #184 다. 스토어가 영속까지 책임진다.
+  const draft = useAppStore((s) => s.drafts[scopeKey] ?? '');
+  const setDraftLocal = (next: string | ((current: string) => string)): void => {
+    const store = useAppStore.getState();
+    const current = store.drafts[scopeKey] ?? '';
+    store.setDraft(scopeKey, typeof next === 'function' ? next(current) : next);
+  };
+
+  // #142 의 잔여 증상: 스코프가 바뀌면 자동완성 목록을 닫는다. 초안과 달리 **복원하지
+  // 않는다** — 채널을 옮긴 직후에 남의 후보 목록이 떠 있으면 안 된다.
+  useEffect(() => {
+    if (prevScopeKey.current === scopeKey) return;
+    prevScopeKey.current = scopeKey;
+    setQuery(null);
+    setPicking(false);
+    setActive(0);
+  }, [scopeKey]);
 
   const matches = useMemo(() => {
     if (!query) return [];
@@ -193,7 +213,7 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   const pick = (handle: string) => {
     if (!query) return;
     const next = applyMention(draft, query, handle);
-    setDraft(next.text);
+    setDraftLocal(next.text);
     pendingCaret.current = next.caret;
     // 고른 뒤에는 닫는다 — 열린 채로 두면 다음 Enter 가 전송으로 가지 못한다.
     setQuery(null);
@@ -240,7 +260,7 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     const typed = draft;
     const body = withStickyMentions(typed, sticky);
     const ids = pending.map((a) => a.id);
-    setDraft('');
+    setDraftLocal('');
     setPending([]);
     setQuery(null);
     // 보냈으면 입력이 끝났다. 만료를 기다리면 자기 메시지 아래에 '입력 중'이 남는다.
@@ -252,7 +272,7 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     // 초안을 먼저 비우는 이유는 응답을 기다리는 동안 다음 글을 쓸 수 있어야 하기 때문이다.
     // 실패하면 사용자가 친 것만 되돌린다 — 접두사까지 남기면 다음 전송에서 두 번 붙는다.
     void Promise.resolve(onSend(body, ids)).catch(() => {
-      setDraft((current) => (current ? current : typed));
+      setDraftLocal((current) => (current ? current : typed));
       // 첨부도 되돌린다 — 파일은 이미 서버에 있으니 다시 올릴 필요가 없다.
       setPending((current) => (current.length ? current : pending));
     });
@@ -393,7 +413,7 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
         aria-controls={open ? listId : undefined}
         aria-activedescendant={open ? `${listId}-${active}` : undefined}
         onChange={(e) => {
-          setDraft(e.target.value);
+          setDraftLocal(e.target.value);
           recompute(e.target.value, e.target.selectionStart);
           signalTyping(e.target.value);
         }}

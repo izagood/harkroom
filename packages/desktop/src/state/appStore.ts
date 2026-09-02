@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { draftsStorage } from '../lib/prefs';
 import type { AccountView, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow } from '@murmur/shared';
 
 export interface AppState {
@@ -26,17 +27,26 @@ export interface AppState {
   connected: boolean;
   /** 계정별 채널 음소거·즐겨찾기. channelId → preference */
   channelPrefs: Record<string, ChannelPrefRow>;
+  /**
+   * 스코프별 초안. 키는 scopeKey (channelId 또는 thread:<rootId>).
+   * 설정과 달리 사용자가 쓴 문장 전체이므로 로그아웃 시 반드시 삭제한다.
+   */
+  drafts: Record<string, string>;
   set(partial: Partial<AppState>): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
   removeMessage(channelId: string, messageId: string): void;
   reset(): void;
+  clearDrafts(): void;
+  setDraft(scopeKey: string, draft: string): void;
+  /** 기동 시 보관소에서 초안을 읽어 온다. */
+  hydrateDrafts(): void;
 }
 
 const initial = {
   me: null, accounts: {}, channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
-  online: [], leases: [], connected: false, channelPrefs: {},
+  online: [], leases: [], connected: false, channelPrefs: {}, drafts: {},
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -78,4 +88,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ messages: { ...get().messages, [channelId]: rows.filter((m) => m.id !== messageId) } });
   },
   reset: () => set({ ...initial }),
+  clearDrafts: () => { set({ drafts: {} }); draftsStorage.clear(); },
+  /**
+   * 스토어가 초안의 **단일 원천**이다. 영속도 여기서 한다 — 컴포저가 지역 state 와
+   * 보관소를 각각 들면 진실이 둘이 되고, 실제로 초판이 그랬다(스토어 쪽은 아무도
+   * 쓰지 않는 죽은 코드였고 로그아웃이 그쪽을 비우지 않았다).
+   *
+   * 맵이 이미 메모리에 있으므로 키 입력마다 보관소를 **읽지** 않는다. 초판은 매
+   * 글자마다 load() 로 JSON 을 파싱했다 — murmur 메시지는 길다는 것이 이 기능의
+   * 전제인데 그 전제와 정면으로 어긋난다.
+   */
+  setDraft: (scopeKey, draft) => {
+    const next = { ...get().drafts };
+    if (draft) next[scopeKey] = draft;
+    else delete next[scopeKey];
+    set({ drafts: next });
+    draftsStorage.save(next);
+  },
+  hydrateDrafts: () => set({ drafts: draftsStorage.load() }),
 }));
