@@ -46,6 +46,12 @@ export function buildSystemPrompt(opts: {
     '대화 프롬프트 맨 위에 준다 — 그대로 넣어 호출한다(threadRootId 가 "채널 최상위(없음)"으로',
     '적혀 있으면 그 인자는 생략하고 channelId 만 넘긴다).',
     '',
+    // #90: 한 턴에서 message.post 를 여러 번 부르면 같은 스레드에 답이 여러 개 남는다.
+    // 금지형("절대 두 번 부르지 마라")보다 "한 번에 정리한다"가 모델에게 실행 가능한 지시다.
+    // 러너는 이걸 강제하지 못한다 — 하네스 출력을 파싱하지 않는다는 경계(pty.ts) 때문이다.
+    // 그래서 이 문장이 유일한 예방이고, 위반은 턴 후 개수를 세어 러너 로그에 남긴다.
+    '한 턴에 한 번만 발화한다 — 답이 길어도 나눠 올리지 않고 한 번에 정리해서 올린다.',
+    '',
     `답변은 ${BODY_LIMIT}자를 넘길 수 없다(서버가 거절한다). 채팅이므로 짧고 구체적으로 쓴다.`,
     '모르는 것은 모른다고 말한다. 확인하지 않은 것을 확인한 것처럼 쓰지 않는다.',
   ].join('\n');
@@ -114,10 +120,21 @@ export function buildTurnPrompt(opts: {
 }
 
 /**
- * 프로세스 종료 후 "답을 올렸나" 판정(spec §4 발화 경로). 턴 시작 seq(sinceSeq) 이후에
- * 자기 발화가 있어야 인정한다 — 시작 전에 이미 있던 자기 발화까지 세면, 아무것도 안 하고
- * 끝낸 턴도 "발화했다"로 잘못 판정된다.
+ * 턴 시작 seq(sinceSeq) 이후 자기 발화가 몇 개인지 센다. 기준선을 turnStartSeq 로 두는
+ * 이유: 시작 전에 이미 있던 자기 발화까지 세면 아무것도 안 한 턴도 "발화했다"가 된다.
+ *
+ * 불리언이 아니라 개수인 이유(#90): 호출부가 두 가지를 물어야 한다 — "발화가 있었나"(> 0,
+ * NO_REPLY_NOTICE 와 커서 전진 판단)와 "여러 번 발화했나"(> 1, 중복 발화 관측). 불리언만
+ * 두면 후자를 알 수 없고, 두 함수가 각자 세면 규칙이 둘로 갈린다. 세는 곳은 여기 하나다.
+ */
+export function countOwnPostsSince(messages: MessageRow[], meId: string, sinceSeq: number): number {
+  return messages.filter((m) => m.authorId === meId && m.seq > sinceSeq).length;
+}
+
+/**
+ * "이 턴에 발화가 있었나". `countOwnPostsSince` 위에 얹은 얇은 판정이다 — 세는 규칙이
+ * 두 곳에 생기지 않게 한다. 실패 경로(커서를 전진시킬지 정하는 자리)가 이 불리언을 쓴다.
  */
 export function hasOwnPostSince(messages: MessageRow[], meId: string, sinceSeq: number): boolean {
-  return messages.some((m) => m.authorId === meId && m.seq > sinceSeq);
+  return countOwnPostsSince(messages, meId, sinceSeq) > 0;
 }
