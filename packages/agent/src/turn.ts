@@ -224,7 +224,20 @@ const CODEX_PRESET: HarnessPreset = {
   // 인터랙티브 턴은 `codex resume`(위 session() 참고)이라 이 플래그를 못 받는다 — 모드 구분
   // 없이 항상 붙이면 인터랙티브 턴이 통째로 안 뜬다. 인터랙티브는 화면 앞에 사람이 있어
   // codex 자신의 신뢰 프롬프트로 해결할 수 있으므로, 여기서 대신 처리하지 않는다.
-  alwaysArgs: (mode) => (mode === 'mention' ? ['--skip-git-repo-check'] : []),
+  //
+  // **--ignore-user-config**: claude 의 --strict-mcp-config 와 같은 목적으로 운영자
+  // ~/.codex/config.toml 의 MCP(Slack·Gmail·Drive 등)를 무시한다. 없으면 채널에서
+  // 멘션할 수 있는 사람이 운영자 개인 계정에 도달한다(spec §7).
+  //
+  // ⚠️ 이 플래그는 --strict-mcp-config 보다 **넓다.** --strict-mcp-config 는 MCP 목록만
+  // 무시하지만 --ignore-user-config 는 config.toml 전체를 무시한다 — 운영자가 거기 적어 둔
+  // 모델·프로바이더 설정도 함께 무시된다. 멘션 턴은 model·effort·sandbox·MCP 를 전부 -c 로
+  // 직접 넘기므로 정상 동작하지만, 커스텀 프로바이더를 config.toml 로만 설정한 운영자는
+  // 멘션 턴이 기본 프로바이더로 도는 것을 보게 된다. auth 는 영향받지 않는다(--help 명시).
+  //
+  // 인터랙티브 턴(codex resume) 은 이 플래그를 못 받으므로 이 한계가 그대로 노출된다 —
+  // 사람이 화면 앞에 있는 턴이라 성격이 다르다.
+  alwaysArgs: (mode) => (mode === 'mention' ? ['--skip-git-repo-check', '--ignore-user-config'] : []),
   prompt: (systemPrompt, promptCtx, mode) => {
     // codex 에는 `--append-system-prompt` 에 해당하는 플래그가 없다(실측) — 지시문은
     // 프롬프트 앞에 접두하는 것으로만 전달한다. 인터랙티브 턴은 애초에 프롬프트 위치인자가

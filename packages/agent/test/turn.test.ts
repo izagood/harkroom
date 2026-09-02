@@ -144,6 +144,33 @@ describe('buildTurnCommand — codex', () => {
     expect(p.args).not.toContain('--skip-git-repo-check');
   });
 
+  // --ignore-user-config 는 claude 의 --strict-mcp-config 와 같은 목적이다: 운영자의
+  // ~/.codex/config.toml 에 등록된 MCP(Slack·Gmail·Drive 등)를 무시한다. 없으면 채널에서
+  // 멘션할 수 있는 사람이 운영자 개인 계정에 도달한다. 이 플래그는 codex exec·exec resume 에만
+  // 있고 codex resume(인터랙티브)에는 **없다** — 그걸로 인해 인터랙티브 턴이 파싱 오류로
+  // 깨지는 것을 막는다.
+  it('첫 멘션 턴 argv 에 --ignore-user-config 가 들어간다 — 운영자 전역 MCP 무시', () => {
+    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true });
+    expect(p.args).toContain('--ignore-user-config');
+  });
+
+  it('resume 턴 argv 에도 --ignore-user-config 가 들어간다', () => {
+    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
+    expect(p.args).toContain('--ignore-user-config');
+  });
+
+  it('인터랙티브 턴 argv 에는 --ignore-user-config 가 들어가지 않는다 — codex resume 은 이 플래그를 안 받는다', () => {
+    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'interactive', sessionId: 's', isFirstTurn: false });
+    expect(p.args).not.toContain('--ignore-user-config');
+  });
+
+  // claude 는 자체 --strict-mcp-config 로 처리하므로 codex 용 --ignore-user-config 가
+  // claude argv 에 새면 안 된다 — 없는 플래그를 붙여 턴이 깨지는 것을 방지한다.
+  it('claude argv 에는 --ignore-user-config 가 절대 들어가지 않는다 — claude 는 다른 플래그다', () => {
+    const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 's', isFirstTurn: false });
+    expect(p.args).not.toContain('--ignore-user-config');
+  });
+
   // 인터랙티브 턴은 화면 앞에 사람이 있다 — exec 서브커맨드도, sandbox 오버라이드도, 프롬프트
   // 위치인자도 없어야 한다(spec §4·§6). 이 조각들을 빠뜨리면 codex resume 이 비대화형처럼
   // 동작하거나(sandbox_mode 가 남아 승인 흐름이 안 뜸), 사람이 입력할 자리에 옛 프롬프트가 끼어든다.
