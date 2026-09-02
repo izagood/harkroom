@@ -132,6 +132,13 @@ export class MurmurAgentClient {
     return res.message.seq;
   }
 
+  // #144: 진행 설명 메시지 — 결과 발화로 세지 않고, 사용자가 읽을 수 있어야 뜻이 있다.
+  // kind='progress'로 저장되어 message.read 응답에서 구분할 수 있다.
+  async progress(channelId: string, body: string, threadRootId: string | null): Promise<number> {
+    const res = await this.call<{ message: { seq: number } }>('message.progress', threadRootId ? { channelId, body, threadRootId } : { channelId, body });
+    return res.message.seq;
+  }
+
   /** inbox entry id 로 읽음 처리. 서버가 요청 계정으로 스코프를 걸어 남의 inbox 는 소비되지 않는다. */
   async markRead(ids: number[]): Promise<number> {
     if (!ids.length) return 0;

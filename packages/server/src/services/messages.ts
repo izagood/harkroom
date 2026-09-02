@@ -16,7 +16,8 @@ export interface PostMessageInput {
   authorId: string;
   body: string;
   threadRootId?: string | null;
-  kind?: 'user' | 'system';
+  /** #144: 'progress' 값은 진행 설명 메시지를 표시 — 결과 발화로 세지 않는다. */
+  kind?: 'user' | 'system' | 'progress';
   meta?: Record<string, unknown>;
   idempotencyKey?: string | null;
   /** 이 메시지에 붙일 업로드들. 같은 트랜잭션에서 연결한다 — 따로 하면 첨부 없는 메시지가 보인다. */
