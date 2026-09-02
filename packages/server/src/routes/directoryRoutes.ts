@@ -5,7 +5,7 @@ export async function registerDirectoryRoutes(app: FastifyInstance, pool: Pool):
   app.get('/accounts', { preHandler: app.requireAccount }, async () => {
     const res = await pool.query(
       `select id, handle, display_name as "displayName", kind, is_admin as "isAdmin"
-       from account order by handle`,
+       from account where disabled_at is null order by handle`,
     );
     return { accounts: res.rows };
   });

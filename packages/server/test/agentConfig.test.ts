@@ -214,3 +214,109 @@ describe('harness 실행 가능 목록 검증', () => {
     expect(tryGemini.statusCode).toBe(400);
   });
 });
+
+describe('에이전트 비활성화', () => {
+  it('비활성화하면 GET /accounts 에서 사라진다', async () => {
+    const made = (await create({ handle: 'disappear', displayName: 'Disappear' })).json();
+
+    const before = await app.inject({ method: 'GET', url: '/accounts', headers: admin() });
+    expect(before.json().accounts.some((a: { handle: string }) => a.handle === 'disappear')).toBe(true);
+
+    await patch(made.id, { disabled: true });
+
+    const after = await app.inject({ method: 'GET', url: '/accounts', headers: admin() });
+    expect(after.json().accounts.some((a: { handle: string }) => a.handle === 'disappear')).toBe(false);
+  });
+
+  it('비활성화해도 GET /accounts/agents 에는 남고 disabled 가 true 다', async () => {
+    const made = (await create({ handle: 'stay', displayName: 'Stay' })).json();
+
+    await patch(made.id, { disabled: true });
+
+    const res = await list();
+    const agent = res.json().agents.find((a: { handle: string }) => a.handle === 'stay');
+    expect(agent).toBeDefined();
+    expect(agent.disabled).toBe(true);
+  });
+
+  it('비활성화하면 그 계정의 PAT 가 더 이상 통하지 않는다', async () => {
+    const made = (await create({ handle: 'revoke', displayName: 'Revoke' })).json();
+    const patRes = await app.inject({
+      method: 'POST', url: `/accounts/${made.id}/pats`, headers: admin(), payload: { label: 'runner' },
+    });
+    const pat = patRes.json().token as string;
+
+    await patch(made.id, { disabled: true });
+
+    const config = await app.inject({
+      method: 'GET', url: '/agent/config',
+      headers: { authorization: `Bearer ${pat}` },
+    });
+    expect(config.statusCode).toBe(401);
+  });
+
+  it('다시 활성화하면 GET /accounts 에 돌아온다', async () => {
+    const made = (await create({ handle: 'reappear', displayName: 'Reappear' })).json();
+
+    await patch(made.id, { disabled: true });
+    const disabled = await app.inject({ method: 'GET', url: '/accounts', headers: admin() });
+    expect(disabled.json().accounts.some((a: { handle: string }) => a.handle === 'reappear')).toBe(false);
+
+    await patch(made.id, { disabled: false });
+    const enabled = await app.inject({ method: 'GET', url: '/accounts', headers: admin() });
+    expect(enabled.json().accounts.some((a: { handle: string }) => a.handle === 'reappear')).toBe(true);
+  });
+
+  it('비활성화·활성화가 감사 기록에 남는다', async () => {
+    const made = (await create({ handle: 'auditlog', displayName: 'AuditLog' })).json();
+
+    await patch(made.id, { disabled: true });
+    await patch(made.id, { disabled: false });
+
+    const audit = await app.inject({
+      method: 'GET', url: '/audit',
+      headers: admin(),
+    });
+    const actions = audit.json().entries.map((r: { action: string }) => r.action);
+    expect(actions).toContain('agent.disabled');
+    expect(actions).toContain('agent.enabled');
+  });
+
+  it('비활성화된 에이전트가 쓴 과거 메시지는 그대로 남는다', async () => {
+    const made = (await create({ handle: 'history', displayName: 'History' })).json();
+    const patRes = await app.inject({
+      method: 'POST', url: `/accounts/${made.id}/pats`, headers: admin(), payload: { label: 'runner' },
+    });
+    const pat = patRes.json().token as string;
+
+    const channel = await app.inject({
+      method: 'POST', url: '/channels', headers: admin(), payload: { name: 'test-history' },
+    });
+    const channelId = channel.json().id as string;
+
+    await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`,
+      headers: { authorization: `Bearer ${pat}` }, payload: { body: '과거 메시지' },
+    });
+
+    await patch(made.id, { disabled: true });
+
+    const messages = await app.inject({
+      method: 'GET', url: `/channels/${channelId}/messages`,
+      headers: admin(),
+    });
+    expect(messages.json().messages.some((m: { body: string }) => m.body === '과거 메시지')).toBe(true);
+  });
+
+  it('admin 이 아니면 비활성화 요청이 거부된다', async () => {
+    const made = (await create({ handle: 'forbidden', displayName: 'Forbidden' })).json();
+    const { pat } = await createAgent(app, adminToken, 'nonadmin');
+
+    const res = await app.inject({
+      method: 'PATCH', url: `/accounts/agents/${made.id}`,
+      headers: { authorization: `Bearer ${pat}` }, payload: { disabled: true },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+});
