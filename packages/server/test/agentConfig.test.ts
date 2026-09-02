@@ -182,3 +182,35 @@ describe('멘션 턴 권한과 러너 소유자', () => {
     expect(res.json().mentionPermission).toBe('auto');
   });
 });
+
+describe('harness 실행 가능 목록 검증', () => {
+  it('gemini 로 생성하려고 하면 거부된다 — RUNNABLE_HARNESSES 에 없으면 설정할 수 없다', async () => {
+    const res = await create({ handle: 'gem-agent', displayName: 'GemAgent', harness: 'gemini' });
+    expect(res.statusCode).toBe(400);
+  });
+
+  // codex 는 PRESETS 에 구현돼 있고 첫 턴도 실물로 완주했지만, 이 목록의 기준은
+  // "resume 왕복까지 실물로 도는 것을 본 것"이고 그건 아직 확인되지 않았다
+  // (docs/roadmap.md §5). 그래서 지금은 codex 도 거부된다 — 목록이 늘면 이 테스트가
+  // 빨개져서 함께 고쳐야 한다는 사실을 알려 준다.
+  it('codex 도 아직 거부된다 — 구현은 있지만 resume 왕복 실측이 남았다', async () => {
+    const res = await create({ handle: 'codex-agent', displayName: 'CodexAgent', harness: 'codex' });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('claude-code 는 받아들인다 — 유일한 실행 가능 harness 다', async () => {
+    const res = await create({ handle: 'cc-agent', displayName: 'CcAgent', harness: 'claude-code' });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().harness).toBe('claude-code');
+  });
+
+  it('기존 claude-code 에 다른 필드 수정은 되지만 harness 를 gemini 로 바꾸는 건 거부된다', async () => {
+    const agent = (await create({ handle: 'claude-agent', displayName: 'ClaudeAgent' })).json();
+
+    const otherFieldPatch = await patch(agent.id, { instructions: '수정된 지시문' });
+    expect(otherFieldPatch.statusCode).toBe(200);
+
+    const tryGemini = await patch(agent.id, { harness: 'gemini' });
+    expect(tryGemini.statusCode).toBe(400);
+  });
+});
