@@ -416,6 +416,16 @@ export class Controller {
     return created;
   }
 
+  /**
+   * 채널을 편집하고 목록을 갱신한다 — sidebar 가 `repo` 배지와 topic 을 직접 보여주므로
+   * 편집 결과를 반영하려면 목록을 다시 받아야 한다. `createChannel` 과 같은 이유다.
+   */
+  async updateChannel(id: string, input: { topic?: string; repo?: string | null }): Promise<ChannelRow> {
+    const updated = await this.api.updateChannel(id, input);
+    useAppStore.getState().set({ channels: await this.api.channels() });
+    return updated;
+  }
+
   async startDm(accountId: string): Promise<void> {
     const dm = await this.api.createDm([accountId]);
     useAppStore.getState().set({ dms: await this.api.dms() });

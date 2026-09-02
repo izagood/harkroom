@@ -6,7 +6,10 @@ import { Sidebar } from '../src/components/Sidebar';
 import { acc, chan } from './helpers/fakeApi';
 
 const fakeController = () => {
-  const c = { openChannel: vi.fn(), startDm: vi.fn(), logout: vi.fn(), createChannel: vi.fn() };
+  const c = {
+    openChannel: vi.fn(), startDm: vi.fn(), logout: vi.fn(),
+    createChannel: vi.fn(), updateChannel: vi.fn(),
+  };
   setController(c as unknown as Controller);
   return c;
 };
@@ -87,6 +90,124 @@ describe('Sidebar', () => {
 
       expect((await screen.findByRole('alert')).textContent).toContain('1~48자');
       expect(c.createChannel).not.toHaveBeenCalled();
+    });
+  });
+
+  // #97: 채널 편집(topic·repo 바인딩) 기능이 데스크탑에 없다.
+  // PATCH /channels/:id 로 topic 과 repo 바인딩을 수정할 수 있는데 UI 가 없다.
+  describe('채널 편집 (admin 전용)', () => {
+    const asAdmin = (): void => {
+      useAppStore.getState().set({ me: { ...acc('u1', 'admin'), isAdmin: true } });
+    };
+
+    it('admin 이 아니면 편집 메뉴가 보이지 않는다', () => {
+      fakeController();
+      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+      expect(screen.queryByRole('button', { name: '⋯' })).toBeNull();
+    });
+
+    it('admin 이면 채널 행에 편집 메뉴 (…) 가 보인다', () => {
+      fakeController();
+      asAdmin();
+      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+      const menus = screen.getAllByRole('button', { name: '⋯' });
+      expect(menus.length).toBe(2);
+    });
+
+    it('편집 메뉴를 누르면 폼이 열리고 현재 값이 채워진다', () => {
+      const c = fakeController();
+      asAdmin();
+      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      const menus = screen.getAllByRole('button', { name: '⋯' });
+      fireEvent.click(menus[0]!);
+      fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
+
+      expect(screen.getByText('#general 편집')).toBeTruthy();
+      expect((screen.getByLabelText('Topic') as HTMLInputElement).value).toBe('');
+      expect((screen.getByLabelText('Repository') as HTMLInputElement).value).toBe('');
+    });
+
+    it('topic 만 고치면 repo 키가 요청에 없다 — 바인딩이 조용히 끊기지 않는다', async () => {
+      const c = fakeController();
+      c.updateChannel.mockResolvedValue(chan('c1', 'c1', null));
+      asAdmin();
+      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      const menus = screen.getAllByRole('button', { name: '⋯' });
+      fireEvent.click(menus[0]!);
+      fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
+
+      fireEvent.change(screen.getByLabelText('Topic'), { target: { value: '일반 Talk' } });
+      fireEvent.click(screen.getByText('저장'));
+
+      await waitFor(() => expect(c.updateChannel).toHaveBeenCalledWith('c1', { topic: '일반 Talk' }));
+    });
+
+    it('repo 필드를 비우면 null 이 요청에 간다 (조용히 무시되지 않는다)', async () => {
+      const c = fakeController();
+      c.updateChannel.mockResolvedValue(chan('c1', 'c1', null));
+      asAdmin();
+      useAppStore.getState().set({ channels: [chan('c1', 'c1', 'old-repo')] });
+      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      const menus = screen.getAllByRole('button', { name: '⋯' });
+      fireEvent.click(menus[0]!);
+      fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
+
+      expect((screen.getByLabelText('Repository') as HTMLInputElement).value).toBe('old-repo');
+      fireEvent.change(screen.getByLabelText('Repository'), { target: { value: '' } });
+      fireEvent.click(screen.getByText('저장'));
+
+      // 필드를 비운 것은 해제 의사다. undefined 가 아니라 null 이어야 한다 —
+      // undefined 는 JSON 에서 사라져 조작이 조용히 무시된다.
+      await waitFor(() => expect(c.updateChannel).toHaveBeenCalledWith('c1', { repo: null }));
+    });
+
+    it('repo 를 새 값으로 바꾸면 그 값이 요청에 간다', async () => {
+      const c = fakeController();
+      c.updateChannel.mockResolvedValue(chan('c1', 'c1', 'new-repo'));
+      asAdmin();
+      useAppStore.getState().set({ channels: [chan('c1', 'c1', 'old-repo')] });
+      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      const menus = screen.getAllByRole('button', { name: '⋯' });
+      fireEvent.click(menus[0]!);
+      fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
+
+      fireEvent.change(screen.getByLabelText('Repository'), { target: { value: 'new-repo' } });
+      fireEvent.click(screen.getByText('저장'));
+
+      await waitFor(() => expect(c.updateChannel).toHaveBeenCalledWith('c1', { repo: 'new-repo' }));
+    });
+
+    it('실패하면 사용자에게 오류가 보인다', async () => {
+      const c = fakeController();
+      c.updateChannel.mockRejectedValue(new Error('권한이 없다'));
+      asAdmin();
+      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      const menus = screen.getAllByRole('button', { name: '⋯' });
+      fireEvent.click(menus[0]!);
+      fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
+      fireEvent.click(screen.getByText('저장'));
+
+      expect((await screen.findByRole('alert')).textContent).toContain('권한이 없다');
+    });
+
+    it('성공하면 폼이 닫힌다', async () => {
+      const c = fakeController();
+      c.updateChannel.mockResolvedValue(chan('c1', 'c1', 'new-repo'));
+      asAdmin();
+      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      const menus = screen.getAllByRole('button', { name: '⋯' });
+      fireEvent.click(menus[0]!);
+      fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
+      fireEvent.change(screen.getByLabelText('Repository'), { target: { value: 'new-repo' } });
+      fireEvent.click(screen.getByText('저장'));
+
+      await waitFor(() => expect(screen.queryByText('#general 편집')).toBeNull());
     });
   });
 
