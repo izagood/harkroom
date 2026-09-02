@@ -364,8 +364,23 @@ ACP 안의 "`allow_always` 금지"에 해당하는 원칙의 번역: **하네스
 CLI 가 필요하므로 로컬 전용 태그로 두되, **§4 표를 고칠 때마다 반드시 돌린다.** 이 검사가
 없으면 표의 오류는 실사용 첫 턴에서야 드러난다.
 
-**구현:** `packages/agent/test/acceptance-cli.test.ts`. 실행: `pnpm --filter @murmur/agent test`.
-CLI 가 없으면 자동으로 건너뛰고 그 이유를 출력한다(로컬 전용 — CI 에서는 skip됨).
+**구현:** `packages/agent/test/acceptance-cli.test.ts` — `pnpm --filter @murmur/agent test` 로
+함께 돌아간다. `plan.command` 가 PATH 에 없으면 건너뛰고 **왜 건너뛰는지 경고를 남긴다**
+(조용히 통과하면 이 층이 있다는 사실 자체가 잊힌다). CI·VM 에는 CLI 가 없어 항상 skip 이다 —
+§4 표를 고쳤다면 CLI 가 있는 개발 머신에서 반드시 한 번 돌려라.
+
+**어떻게 확인하는가:** 조립한 argv 를 그대로 **실행하지 않는다.** 실행하면 claude 는 모델을
+호출하고 codex 는 실제로 명령을 돌린다(`sandbox_mode=workspace-write`). 대신 그 서브커맨드의
+`--help` 가 열거하는 옵션과 argv 의 롱 플래그를 대조하고, 도움말에 없는 플래그만 값 없이
+붙여 파서를 세워 `unknown option` 인지 확인한다. `claude --append-system-prompt-file` 처럼
+**존재하지만 `--help` 에 안 나오는 숨은 플래그**가 있어서 대조만으로는 오탐이 난다.
+
+⚠️ 조립한 argv **뒤에 `--help` 를 붙이는** 방법은 쓸 수 없다(실측):
+`codex exec resume <uuid> --skip-git-repo-check --help` 는 도움말을 내고 통과하지만, `--help`
+없이 같은 인자를 주면 `unexpected argument` 로 죽는다 — `--help` 가 나머지 검증을 건너뛴다.
+
+이 층이 실제로 동작하는지는 #89 의 결함(`--skip-git-repo-check` 를 인터랙티브 턴에도 붙임)을
+되살려 확인했다 — 두 플래그를 정확히 지목하며 실패한다.
 
 ## 11. 구현 페이즈
 
