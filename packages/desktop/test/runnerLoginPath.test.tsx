@@ -16,8 +16,8 @@ const shell = vi.hoisted(() => ({ create: vi.fn(), execute: vi.fn() }));
 vi.mock('@tauri-apps/plugin-shell', () => ({ Command: { create: shell.create } }));
 
 import {
-  RunnerLauncher, RUNNER_COMMAND_MISSING, runnerCommandDir, tauriLoginPathReader,
-  validateRunnerCommand,
+  RunnerLauncher, RUNNER_COMMAND_MISSING, runnerCommandDir, SYSTEM_PATH_FALLBACK,
+  tauriLoginPathReader, validateRunnerCommand,
   type LaunchableAgent, type LoginPathReader, type RunnerProcess, type SpawnRequest,
   type StoredRunnerPat,
 } from '../src/lib/runnerLauncher';
@@ -138,7 +138,10 @@ describe('3. 조회가 실패하면 설정의 절대 경로를 쓴다', () => {
     const { spawner, launcher } = await start(fakeLoginPath(null), '/opt/homebrew/bin/pnpm');
 
     expect(spawner.spawns).toHaveLength(1);
-    expect(spawner.spawns[0]!.env.PATH).toBe('/opt/homebrew/bin');
+    // 디렉터리 **하나만** 남기지 않는다. 자식 PATH 는 앱의 것을 덮어쓰므로, `pnpm` 이
+    // 부르는 `node`·`git` 이 사라진 PATH 를 물려주면 러너가 뜬 직후 죽는다.
+    expect(spawner.spawns[0]!.env.PATH).toBe(`/opt/homebrew/bin:${SYSTEM_PATH_FALLBACK}`);
+    expect(spawner.spawns[0]!.env.PATH!.split(':')).toContain('/usr/bin');
     expect(launcher.getStates()[0]!.status).toBe('running');
   });
 
@@ -146,7 +149,9 @@ describe('3. 조회가 실패하면 설정의 절대 경로를 쓴다', () => {
     const { spawner } = await start(fakeLoginPath('/usr/bin'), '/opt/homebrew/bin/pnpm');
 
     // 로그인 셸의 나머지를 버리지 않는다: `pnpm` 은 `node` 를 PATH 에서 찾는다.
+    // 로그인 셸 값을 얻었으면 그것이 기본 목록을 대신한다 — 둘을 겹쳐 붙이지 않는다.
     expect(spawner.spawns[0]!.env.PATH).toBe('/opt/homebrew/bin:/usr/bin');
+    expect(spawner.spawns[0]!.env.PATH).not.toContain(SYSTEM_PATH_FALLBACK);
   });
 
   it('둘 다 없으면 **띄우지 않고** 기동 실패와 사유를 남긴다 — 조용히 시도하지 않는다', async () => {
