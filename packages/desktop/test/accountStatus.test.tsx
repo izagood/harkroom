@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, act } from '@testing-library/react';
 import { useAppStore } from '../src/state/appStore';
-import { setController, type Controller } from '../src/state/controller';
+import { Controller, setController } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
-import { acc, chan } from './helpers/fakeApi';
+import { acc, chan, fakeApi, fakeWsFactory } from './helpers/fakeApi';
 
 const fakeController = () => {
   const c = {
@@ -51,12 +51,28 @@ describe('사람이 정한 상태 (#186)', () => {
     expect(mark.textContent).toContain('긴 턴 도는 중');
   });
 
-  it('status.changed 를 받으면 화면이 갱신된다', () => {
-    fakeController();
+  it('status.changed 를 받으면 화면이 갱신된다', async () => {
+    // 소켓 이벤트부터 화면까지 **실제 경로**로 흘린다 — 스토어 액션만 직접 부르면
+    // 컨트롤러가 그 이벤트를 처리하는지는 아무도 확인하지 않는다.
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(fakeApi(), makeWs);
+    setController(c);
+    await c.start();
+    useAppStore.getState().set({
+      me: acc('u1', 'admin'),
+      accounts: { u1: acc('u1', 'admin'), u2: peer },
+      channels: [chan('c1', 'general')],
+      dms: [{ id: 'd1', memberIds: ['u1', 'u2'] }],
+      online: ['u2'],
+    });
     render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
     expect(screen.getByTestId('status-u2').getAttribute('data-status')).toBe('dnd');
 
-    act(() => { useAppStore.getState().applyStatus('u2', 'away', '회의 중'); });
+    act(() => {
+      callbacks.current!.onEvent({
+        type: 'status.changed', accountId: 'u2', status: 'away', statusText: '회의 중',
+      });
+    });
 
     const mark = screen.getByTestId('status-u2');
     expect(mark.getAttribute('data-status')).toBe('away');
