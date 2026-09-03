@@ -33,8 +33,16 @@ export type AuditAction =
   // #182: 공개 범위 전환. 이 한 번의 조작으로 채널 전체가 전원에게 열리거나 닫힌다 —
   // 'channel.updated' 에 묻어 두면 감사 조회에서 그 사건을 골라낼 수 없다.
   | 'channel.visibility.changed'
-  // #230: 사람 집합 생성·수정·삭제. admin 만 할 수 있는 조작이므로 기록이 남아야 한다.
-  | 'handle_group.created' | 'handle_group.updated' | 'handle_group.deleted';
+  // #230: 사람 집합의 생애주기. admin 만 할 수 있는 조작이므로 기록이 남아야 한다.
+  //
+  // 구성원 변경을 따로 두는 이유: 집합에서 실제로 사람을 부르는 것은 **명단**이다.
+  // 'handle_group.updated' 에 묻어 두면 "누가 언제 이 사람을 이 이름에 넣었나"를 감사
+  // 조회에서 골라낼 수 없다(#182 가 channel.visibility.changed 를 나눈 것과 같은 이유).
+  //
+  // detail 에는 handle 과 **개수**만 남긴다 — 계정 id 목록은 남기지 않는다. 집합에서
+  // 빼는 이유가 사람 사정일 수 있고, 감사 로그는 그것을 영구히 붙잡는 자리가 아니다.
+  | 'handle_group.created' | 'handle_group.updated' | 'handle_group.deleted'
+  | 'handle_group.members.added' | 'handle_group.members.removed';
 
 export interface AuditEntry {
   action: AuditAction;

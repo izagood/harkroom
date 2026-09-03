@@ -1,4 +1,4 @@
-import { CHANNEL_MENTION_HANDLE, GROUP_MENTION_HANDLE, MENTION_PATTERN, mentionedHandles } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, MENTION_PATTERN, mentionedHandles } from '@murmur/shared';
 
 // 멘션 문법은 @murmur/shared 에 있다 — 서버의 알림 발송과 같은 규칙을 봐야 한다. 갈라지면
 // 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(me@x.com), 강조된
