@@ -72,11 +72,14 @@ describe('#181 에이전트 소유자 공개', () => {
     }
   });
 
-  it('에이전트 상세는 계속 admin 전용이다', async () => {
+  it('에이전트 목록은 소유자에게만 열린다 — 소유자가 없으면 빈 배열이다 (#299)', async () => {
     const res = await app.inject({
       method: 'GET', url: '/accounts/agents', headers: auth(botPat),
     });
-    expect(res.statusCode).toBe(403);
+    // #299: 이전에는 admin 전용이었는데, 이제 인증된 사용자에게 열린다.
+    // bot 은 어떤 에이전트도 소유하지 않으므로 빈 배열이다(403 아님).
+    expect(res.statusCode).toBe(200);
+    expect(res.json().agents).toEqual([]);
   });
 
   it('소유자 계정이 사라지면 소유자는 null 로 돌아온다', async () => {

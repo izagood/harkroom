@@ -130,9 +130,17 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     return changes;
   }
 
-  app.get('/accounts/agents', { preHandler: app.requireAdmin }, async () => ({
-    agents: await listAgents(pool),
-  }));
+  /**
+   * 에이전트 목록. #299 에서 `requireAdmin` 에서 `requireAccount` 로 바꾸고,
+   * admin 은 전부, 비admin 은 자기 것만 필터한다. 필터는 SQL 에서 바로 적용한다(가져와서
+   * 걸러내면 남의 설정이 응답에 실렸다가 지워지는 모양이 된다).
+   * 소유한 것이 없으면 빈 배열이고 403 이 아니다 — "권한이 없다"가 아니라 "내 것이 없다"다.
+   */
+  app.get('/accounts/agents', { preHandler: app.requireAccount }, async (req) => {
+    const account = req.account!;
+    const ownerId = account.isAdmin ? null : account.id;
+    return { agents: await listAgents(pool, ownerId) };
+  });
 
   app.post('/accounts/agents', { preHandler: app.requireAdmin }, async (req, reply) => {
     const body = z.object({
