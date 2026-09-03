@@ -4,7 +4,7 @@ import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type Notifier } from '../lib/notify';
-import { RunnerLauncher, tauriSecretStore, tauriSpawner, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
+import { RunnerLauncher, tauriLoginPathReader, tauriSecretStore, tauriSpawner, type LoginPathReader, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
 import { useAppStore } from './appStore';
 import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
 import { usePrefsStore } from './prefsStore';
@@ -39,6 +39,8 @@ export class Controller {
     /** 테스트가 키체인·자식 프로세스를 목으로 바꿔 끼우는 자리(#250). */
     secrets: RunnerSecretStore = tauriSecretStore,
     spawner: RunnerSpawner = tauriSpawner,
+    /** 로그인 셸 `PATH` 조회(#305). 테스트가 조회 실패를 만들 수 있게 주입한다. */
+    loginPath: LoginPathReader = tauriLoginPathReader,
   ) {
     this.runnerLauncher = new RunnerLauncher(
       {
@@ -49,6 +51,7 @@ export class Controller {
       },
       secrets,
       spawner,
+      loginPath,
     );
     this.runnerLauncher.setOnStateChange((states) => {
       useAppStore.getState().set({
@@ -69,8 +72,9 @@ export class Controller {
     const agents = await this.api.listAgents();
     const agent = agents.find((a) => a.id === agentId);
     if (!agent) throw new Error('에이전트를 찾지 못했다 — 목록을 다시 읽어라');
+    const prefs = usePrefsStore.getState();
     await this.runnerLauncher.reissue({
-      agent, repoPath: usePrefsStore.getState().runnerRepoPath,
+      agent, repoPath: prefs.runnerRepoPath, runnerCommand: prefs.runnerCommand,
     });
   }
 
@@ -93,6 +97,7 @@ export class Controller {
       // `connected` 가 false 면 presence 는 '모른다'다 — 빈 배열이 '아무도 없다'가 아니다.
       liveAccountIds: store.connected ? new Set(store.online) : null,
       repoPath: prefs.runnerRepoPath,
+      runnerCommand: prefs.runnerCommand,
     });
   }
 
