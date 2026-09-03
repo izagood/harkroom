@@ -220,6 +220,16 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
             Reply in thread
           </button>
         )}
+        {/* #231: alsoInChannel 메시지는 채널에도 보이므로 스레드에서 왔을 때가 아니라
+            채널에서 볼 때 이 버튼이 필요하다. "View in thread" 로 표시한다. */}
+        {!inThread && message.alsoInChannel && message.threadRootId && (
+          <button
+            className="self-start rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[11px] text-indigo-700"
+            onClick={() => void getController().openThread(message.threadRootId!)}
+          >
+            View in thread
+          </button>
+        )}
         {/* #121: 우상단 호버 툴바. #143: 기준을 **행이 아니라 답글 컨트롤**로 잡는다 —
             둘 다 행의 `right` 에 앵커되면 같은 자리를 다투고, 호버 시 툴바가 답글 pill 을
             덮어 스레드 진입이 막힌다. `right-full` 은 "내 우측 = 답글 컨트롤의 좌측"이라

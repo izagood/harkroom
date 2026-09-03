@@ -15,6 +15,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
       body: z.string().max(8000),
       threadRootId: z.string().uuid().optional(),
       attachmentIds: z.array(z.string().uuid()).max(10).optional(),
+      alsoInChannel: z.boolean().optional(),
     }).refine((v) => v.body.trim().length > 0 || (v.attachmentIds?.length ?? 0) > 0, {
       message: 'a message needs a body or an attachment',
     }).parse(req.body);
@@ -31,7 +32,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     const posted = await postMessage(pool, {
       channelId: id, authorId: req.account!.id, body: body.body,
       threadRootId: body.threadRootId ?? null, idempotencyKey,
-      attachmentIds: body.attachmentIds ?? [],
+      attachmentIds: body.attachmentIds ?? [], alsoInChannel: body.alsoInChannel,
     });
     if (posted.failure) {
       // 세 사유를 400 하나로 합친다 — 어느 쪽인지 알려 주면 남의 업로드 id 의 존재 여부를
