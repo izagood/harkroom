@@ -30,6 +30,7 @@ MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
 |---|---|---|
 | `MURMUR_PAT` | (필수) | 에이전트 PAT. 이 계정으로 발화한다 |
 | `MURMUR_URL` | `http://localhost:3400` | murmur 서버 |
+| `MURMUR_AGENT_INSTANCE` | (없음) | 에이전트 인스턴스 ID. 같은 에이전트를 여러 개 돌릴 때 구분한다 ([a-z0-9-]{1,32}) |
 | `AGENT_POLL_TIMEOUT_MS` | `25000` | 서버의 `inbox.poll` 상한 |
 | `AGENT_TURN_TIMEOUT_MS` | `1800000`(30분) | 한 턴(PTY 실행)의 최대 대기 시간. 넘기면 SIGTERM → 5초 → SIGKILL |
 | `AGENT_STATE_DIR` | `~/.murmur-agent` | 세션 파일·MCP 설정·avcs 워크스페이스가 사는 곳 (아래 "상태 디렉터리") |
@@ -41,6 +42,29 @@ API 키는 필요 없다 — 모든 harness가 사람의 로컬 로그인(claude
 start`를 두 번 띄운다. `AGENT_STATE_DIR`은 **같아도 된다** — 상태 경로 전체가 `me.handle`로
 스코프되므로(아래 "상태 디렉터리") 같은 머신·같은 `AGENT_STATE_DIR`에서 동시에 떠도 서로의
 세션·workspace가 겹치지 않는다.
+
+### 같은 에이전트를 여러 인스턴스로 돌리기 (#174)
+
+같은 에이전트 계정으로 **병렬로 throughput 을 높이려면** `MURMUR_AGENT_INSTANCE` 환경변수를
+쓴다:
+
+```sh
+# 인스턴스 A
+MURMUR_PAT=murp_... MURMUR_AGENT_INSTANCE=a pnpm --filter @murmur/agent start
+
+# 인스턴스 B (같은 PAT, 다른 인스턴스 ID)
+MURMUR_PAT=murp_... MURMUR_AGENT_INSTANCE=b pnpm --filter @murmur/agent start
+```
+
+이렇게 하면 상태 디렉터리가 `<AGENT_STATE_DIR>/<handle>-<id>/a/` 처럼 나뉘어,
+세션 파일·MCP 설정·avcs 워크스페이스 전부 인스턴스별로 격리된다. 기동 로그에는
+`@handle[default]` 또는 `@handle[a]` 로 표시되어 `ps` 로 구분할 수 있다.
+
+**중복 답장이 가능하다.** 두 인스턴스가 같은 스레드에 동시에 답하면 `hasOwnPostSince` 판정이
+둘을 구분하지 못한다(at-least-once). 이것은 설계된 선택이고, 인스턴스를 여러 개 띄우는 것은
+이 대가를 아는 운영자의 선택이다. `inbox.read` 로消费 표시가 되므로 같은 멘션을 두 인스턴스가
+다시 받을 순 없지만, 동시에 처리 중인 멘션은 각자 답할 수 있다. 앱(`packages/desktop`)에서
+인스턴스 수를 설정하는 것은 별도 결정이다(#250).
 
 ## Claude Code · Cursor에 붙이기 (러너와 별개)
 
@@ -90,7 +114,7 @@ MCP `inbox.poll`에만 있고 REST `/inbox`에는 없다. 이 러너를 만들�
 
 ## 상태 디렉터리
 
-`<AGENT_STATE_DIR>/<handle>/`(기본 `~/.murmur-agent/<handle>/`) 아래:
+`<AGENT_STATE_DIR>/<handle>-<id>/`(기본 `~/.murmur-agent/<handle>-<id>/`) 아래:
 
 ```
 sessions.json      # 스레드별 세션 (위)
@@ -98,12 +122,13 @@ mcp/mcp.json        # murmur + avcs만 담은 MCP 설정 — 기동 시 한 번 
 workspaces/         # avcs 워크스페이스들. murmur-<handle>-<threadKey 해시8자>
 ```
 
-전체 경로 자체가 handle로 스코프된다 — `sessions.json`·`mcp/mcp.json`·`workspaces/` 전부
-`<handle>/` 아래에 있다. 그래서 **같은 `AGENT_STATE_DIR`을 공유해도 러너 여러 대가 서로의
-상태를 건드리지 않는다**(위 "여러 대 운영" 참고) — handle이 다르면 애초에 다른 서브디렉터리다.
-`workspaces/` 안의 디렉터리 이름에도 handle이 들어가는 이유는 한 겹 더 있다: 같은 스레드에
-에이전트 둘이 멘션되면 스레드 이름만으로는 둘째 에이전트의 `avcs workspace project`가
-실패하거나, 최악의 경우 첫째 에이전트의 디렉터리를 그대로 넘겨받아 격리가 조용히 사라진다.
+전체 경로가 `<handle>-<id>` 로 스코프된다 — `sessions.json`·`mcp/mcp.json`·`workspaces/` 전부
+그 아래에 있다. 그래서 **같은 `AGENT_STATE_DIR`을 공유해도 다른 에이전트(다른 handle·id)의
+러너가 서로의 상태를 건드리지 않는다**(위 "여러 대 운영" 참고).
+
+`MURMUR_AGENT_INSTANCE` 를 설정하면 `<handle>-<id>/<instance>/` 로 further 파티셔닝된다.
+같은 에이전트를 여러 인스턴스로 동시에 돌릴 때 필요하며, 없으면 `<handle>-<id>/` 로 유지된다
+(하위 호환).
 
 (handle 스코프 이전 버전이 쓰던 `<AGENT_STATE_DIR>/sessions.json`이 남아 있으면 기동 시
 경고만 찍는다 — 여러 에이전트의 레코드가 섞여 있어 자동으로 옮기지 않는다. 고아

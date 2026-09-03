@@ -1,6 +1,20 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+/** 인스턴스 ID 유효성 검사 (#174). 문자 집합 [a-z0-9-]{1,32}. */
+const INSTANCE_PATTERN = /^[a-z0-9-]{1,32}$/;
+
+function validateInstance(instance: string | undefined): string | undefined {
+  if (!instance) return undefined;
+  if (!INSTANCE_PATTERN.test(instance)) {
+    throw new Error(
+      `MURMUR_AGENT_INSTANCE 가 유효하지 않다: "${instance}". ` +
+      `문자 집합은 [a-z0-9-]{1,32} 이다.`,
+    );
+  }
+  return instance;
+}
+
 /** 러너 자체의 설정. 모델·effort·지시문은 서버의 에이전트 정의에 있다(murmur UI 로 바꾼다). */
 export interface RunnerConfig {
   murmurUrl: string;
@@ -11,6 +25,8 @@ export interface RunnerConfig {
   /** 세션 파일(sessions.json)·MCP 설정·avcs 워크스페이스가 사는 곳. 러너 재시작·재배포에도
    * 살아남아야 하는 것들이라 임시 디렉터리(mkdtemp)가 아니라 고정 경로를 쓴다. */
   stateDir: string;
+  /** 에이전트 인스턴스 ID. 같은 에이전트를 여러 개 돌릴 때 구분한다 (#174). */
+  agentInstance: string | undefined;
 }
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
@@ -30,5 +46,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
     // 코딩 에이전트 한 턴은 도구 호출을 여러 번 거칠 수 있다 — 30분을 기본값으로 둔다.
     turnTimeoutMs: Number(env.AGENT_TURN_TIMEOUT_MS ?? 30 * 60_000),
     stateDir: env.AGENT_STATE_DIR ?? join(homedir(), '.murmur-agent'),
+    agentInstance: validateInstance(env.MURMUR_AGENT_INSTANCE),
   };
 }

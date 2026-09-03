@@ -69,7 +69,17 @@ const guide = await murmur.guide();
 // #167: 그 격리가 **서버 축에서** 또 절반이었다. handle 만으로 나누면 서로 다른 서버의
 // 같은 handle 이 같은 디렉터리를 쓴다. 키에 계정 id 를 넣어 서버별로 갈린다 — 왜 URL 이
 // 아니라 id 인지는 stateDir.ts 주석에 있다.
-const { agentStateDir, legacyPath } = resolveAgentStateDir(config.stateDir, me.handle, me.id);
+//
+// #174: 같은 에이전트를 여러 인스턴스로 동시에 돌리기 위해 인스턴스 축을 하나 더한다.
+// MURMUR_AGENT_INSTANCE 가 없으면 기존 경로가 그대로(하위 호환). 있으면 마지막
+// 세그먼트로 붙는다. 세션 파일·MCP 설정·avcs 워크스페이스 전부 이 아래로 가서
+// 인스턴스별로 격리된다.
+const { agentStateDir, legacyPath } = resolveAgentStateDir(
+  config.stateDir,
+  me.handle,
+  me.id,
+  config.agentInstance,
+);
 
 // 서버별로 갈리기 전 경로가 남아 있으면 **경고만** 한다 — 자동으로 옮기지 않는다.
 // 코드는 그 디렉터리가 *어느 서버의* 이 handle 것인지 알 방법이 없다(아래 레거시
@@ -123,7 +133,8 @@ const exec: Exec = (cmd, args, opts) =>
     });
   });
 
-console.log(`@${me.handle} 로 붙었다 — ${config.murmurUrl}`);
+const instanceLabel = config.agentInstance ?? 'default';
+console.log(`@${me.handle}[${instanceLabel}] 로 붙었다 — ${config.murmurUrl}`);
 console.log('정의는 서버에서 읽는다 (murmur UI 의 Add/Edit agent 로 바꾼다)');
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
