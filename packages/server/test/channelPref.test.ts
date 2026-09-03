@@ -531,6 +531,14 @@ describe('섹션 이름 바꾸기 (#323)', () => {
     expect(inSection(await prefsOf(adminToken), 'Kept')).toHaveLength(1);
   });
 
+  it('공백이 든 섹션 이름도 URL 을 지나 그대로 도착한다', async () => {
+    // 이름이 경로 조각에 들어간다 — 인코딩이 어긋나면 "그런 섹션 없음"으로 조용히 지나간다.
+    await setPref(adminToken, channelId, 'My Work', 0);
+    const res = await rename('My Work', 'Our Work');
+    expect(res.statusCode).toBe(200);
+    expect(inSection(res.json().prefs as Pref[], 'Our Work').map((p) => p.channelId)).toEqual([channelId]);
+  });
+
   it('없는 섹션을 바꾸면 아무것도 바뀌지 않는다', async () => {
     await setPref(adminToken, channelId, 'Real', 0);
     const res = await rename('Ghost', 'Something');
