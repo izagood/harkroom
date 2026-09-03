@@ -5,11 +5,9 @@ import { z } from 'zod';
 import {
   addChannelMember, assertChannelVisible, channelListAudience, channelListLostAudience,
   channelPostGate, createChannel, deleteChannel,
-  getChannelDoc, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
+  getChannelDoc, getChannelRow, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
   updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs,
 } from '../services/channels.js';
-
-const COLS = `id, name, topic, kind, repo, archived_at as "archivedAt", visibility`;
 import { listPins, pinMessage, unpinMessage } from '../services/pins.js';
 import {
   listChannelAutoMentions, setChannelAutoMention, unsetChannelAutoMention,
@@ -195,10 +193,6 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     if (!account.rowCount) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
     }
-    const channelRes = await pool.query(
-      `select ${COLS} from channel where id = $1`,
-      [id],
-    );
     await addChannelMember(pool, id, accountId);
     await recordAudit(pool, {
       action: 'channel.member.added', actorId: req.account!.id, actorHandle: req.account!.handle,
@@ -213,11 +207,10 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
       audience: await channelListAudience(pool, id),
     });
     // 추가된 사람에게는 channel.created 를 보낸다 — 그 사람에게 목록에 새로 나타난 것이다.
-    emitEvent({
-      type: 'channel.created',
-      channel: channelRes.rows[0],
-      audience: [accountId],
-    });
+    // 행은 `getChannelRow` 로 읽는다: 컬럼 목록을 여기 베껴 쓰면 `createdAt` 같은 필드가 빠진
+    // `ChannelRow` 가 실려 나가고, 받는 화면의 "생성순" 정렬이 조용히 깨진다.
+    const channel = await getChannelRow(pool, id);
+    if (channel) emitEvent({ type: 'channel.created', channel, audience: [accountId] });
     return { members: await listChannelMembers(pool, id) };
   });
 
