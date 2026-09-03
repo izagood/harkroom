@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { HANDLE_PATTERN } from '@murmur/shared';
 import { recordAudit } from '../audit.js';
+import { emitEvent } from '../events.js';
 import {
   createHandleGroup, deleteHandleGroup, getHandleGroup, listHandleGroupMembers,
   listHandleGroups, updateHandleGroup, addHandleGroupMembers, removeHandleGroupMembers,
@@ -51,6 +52,9 @@ export async function registerHandleGroupRoutes(app: FastifyInstance, pool: Pool
       action: 'handle_group.created', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: created.id, detail: { handle: body.handle },
     }, req);
+    // 집합이 생겼다 — 후보 목록에 새 이름이 붙어야 한다(#300). 구성원 변경만 알리면
+    // 새 집합은 다음 새로고침까지 아무의 자동완성에도 나타나지 않는다.
+    emitEvent({ type: 'handle_group.changed', groupId: created.id, audience: 'all' });
     return reply.code(201).send(created);
   });
 
@@ -77,6 +81,8 @@ export async function registerHandleGroupRoutes(app: FastifyInstance, pool: Pool
       action: 'handle_group.updated', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: id, detail: { displayName: patch.displayName },
     }, req);
+    // 표시 이름이 바뀌었다 — 후보 목록의 라벨을 갱신한다(#300).
+    emitEvent({ type: 'handle_group.changed', groupId: id, audience: 'all' });
     return updated;
   });
 
@@ -90,6 +96,8 @@ export async function registerHandleGroupRoutes(app: FastifyInstance, pool: Pool
       action: 'handle_group.deleted', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: id,
     }, req);
+    // 집합이 사라졌다 — 후보 목록에서 빠져야 한다(#300).
+    emitEvent({ type: 'handle_group.changed', groupId: id, audience: 'all' });
     return reply.code(204).send();
   });
 
@@ -133,6 +141,8 @@ export async function registerHandleGroupRoutes(app: FastifyInstance, pool: Pool
       action: 'handle_group.members.added', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: id, detail: { handle: group.handle, requested: body.accountIds.length, inserted },
     }, req);
+    // 집합 구성원 변경을 로그인한 전원에게 알린다(#300).
+    emitEvent({ type: 'handle_group.changed', groupId: id, audience: 'all' });
     return { members: members.map((m) => m.accountId) };
   });
 
@@ -153,6 +163,8 @@ export async function registerHandleGroupRoutes(app: FastifyInstance, pool: Pool
       action: 'handle_group.members.removed', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: id, detail: { handle: group.handle, requested: body.accountIds.length, removed },
     }, req);
+    // 집합 구성원 변경을 로그인한 전원에게 알린다(#300).
+    emitEvent({ type: 'handle_group.changed', groupId: id, audience: 'all' });
     return { members: members.map((m) => m.accountId) };
   });
 }
