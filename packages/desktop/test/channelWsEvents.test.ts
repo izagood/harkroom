@@ -11,8 +11,8 @@ import { acc, accountsResult, chan, fakeApi, fakeWsFactory, grp } from './helper
  * 각자 옳게 반응하는가다: 그 채널을 보고 있던 사람은 화면이 비워지고 안내를 받아야 하고,
  * 다른 채널을 보고 있던 사람은 목록에서만 사라지고 보던 화면은 그대로여야 한다.
  *
- * 스토어는 모듈 하나짜리 싱글턴이라 두 클라이언트를 한 프로세스에 동시에 둘 수 없다.
- * 그래서 `reset()` 으로 갈라 두 대를 차례로 흉내 낸다.
+ * 이 테스트는 커뮤니티 하나(활성 스토어)에서 두 클라이언트를 차례로 흉내 낸다 — `reset()` 으로
+ * 가른다. 커뮤니티가 둘일 때 스토어가 정말 둘인지는 `communities.test.tsx` 가 본다(#166).
  */
 beforeEach(() => useAppStore.getState().reset());
 
