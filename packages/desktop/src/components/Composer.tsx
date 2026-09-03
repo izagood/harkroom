@@ -560,7 +560,13 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
               >
                 <span className="font-medium">@{item.handle}</span>
                 {item.kind === 'group' ? (
-                  <GroupBadge group={item.group} className="ml-1" />
+                  <>
+                    <GroupBadge group={item.group} className="ml-1" />
+                    {/* 집합에는 표시 이름을 함께 보인다 — `@release` 만으로는 그것이 무엇을
+                        묶은 것인지 알 수 없고, 부르기 직전이 그것을 확인하는 자리다. 계정에는
+                        붙이지 않는다: 사람·에이전트는 핸들이 곧 이름으로 통한다. */}
+                    <span className="ml-1 truncate text-[10px] text-zinc-500">{item.group.displayName}</span>
+                  </>
                 ) : (
                   <>
                     {/* 거터가 아니라 **핸들 옆** 자리다(#277) — 여기서 소유자를 지우면 "누구의
