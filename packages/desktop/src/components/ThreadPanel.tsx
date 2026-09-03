@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
@@ -7,6 +7,7 @@ import { TypingLine } from './TypingLine';
 
 export function ThreadPanel() {
   const { activeChannelId, threadRootId, messages } = useAppStore();
+  const [alsoInChannel, setAlsoInChannel] = useState(false);
 
   const thread = useMemo(() => {
     if (!activeChannelId || !threadRootId) return [];
@@ -31,10 +32,19 @@ export function ThreadPanel() {
       </div>
       <TypingLine />
       <div className="border-t border-zinc-200 p-3">
+        <label className="mb-2 flex items-center gap-2 text-sm text-zinc-600">
+          <input
+            type="checkbox"
+            checked={alsoInChannel}
+            onChange={(e) => setAlsoInChannel(e.target.checked)}
+            className="rounded border-zinc-300"
+          />
+          채널에도 올리기
+        </label>
         <Composer
           scopeKey={`thread:${threadRootId}`}
           placeholder="Reply…"
-          onSend={(body, attachmentIds) => getController().reply(body, attachmentIds)}
+          onSend={(body, attachmentIds) => getController().reply(body, attachmentIds, alsoInChannel)}
         />
       </div>
     </section>

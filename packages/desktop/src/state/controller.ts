@@ -371,10 +371,10 @@ export class Controller {
     useAppStore.getState().upsertMessages(activeChannelId, [m]);
   }
 
-  async reply(body: string, attachmentIds: string[] = []): Promise<void> {
+  async reply(body: string, attachmentIds: string[] = [], alsoInChannel = false): Promise<void> {
     const { activeChannelId, threadRootId } = useAppStore.getState();
     if (!activeChannelId || !threadRootId || (!body.trim() && !attachmentIds.length)) return;
-    const m = await this.api.postMessage(activeChannelId, body, threadRootId, crypto.randomUUID(), attachmentIds);
+    const m = await this.api.postMessage(activeChannelId, body, threadRootId, crypto.randomUUID(), attachmentIds, alsoInChannel);
     useAppStore.getState().upsertMessages(activeChannelId, [m]);
   }
 

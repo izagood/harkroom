@@ -270,6 +270,8 @@ export interface MessageRow {
   lastReplyAt: string | null;
   /** 스레드 루트에만 있음. 답글 작성자 목록 (중복 없음). */
   participantIds: string[] | null;
+  /** 스레드 답을 채널에도 함께 올린다(#231). threadRootId 가 없으면 이 값은 항상 false 다. */
+  alsoInChannel: boolean;
 }
 
 export interface ChannelRow {
