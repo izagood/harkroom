@@ -18,8 +18,16 @@ const entry = (id: number, messageId: string, channelId = 'c1',
   reason: InboxEntry['reason'] = 'mention'): InboxEntry =>
   ({ id, messageId, reason, readAt: null, channelId });
 
+// #224 이후 음소거는 `notifyLevel: 'none'` 이다. `mutedAt` 도 같이 두는 것은 서버가 기록으로
+// 계속 적기 때문이고, 판정은 `notifyLevel` 만 본다 — 여기 두 값을 나란히 둔 채로 초록이어야
+// "두 곳을 함께 읽지 않는다"가 확인된다.
 const pref = (channelId: string, muted: boolean): ChannelPrefRow =>
-  ({ accountId: 'u1', channelId, mutedAt: muted ? '2026-09-03T00:00:00.000Z' : null, starredAt: null });
+  ({
+    accountId: 'u1', channelId,
+    mutedAt: muted ? '2026-09-03T00:00:00.000Z' : null,
+    starredAt: null,
+    notifyLevel: muted ? 'none' : 'all',
+  });
 
 function fakeNotifier() {
   const sent: { title: string; body: string }[] = [];
@@ -124,9 +132,9 @@ describe('음소거된 채널의 미읽음 배지', () => {
   const renderSidebar = () => {
     setController({
       openChannel: vi.fn(), startDm: vi.fn(), logout: vi.fn(),
-      toggleChannelMute: vi.fn(), toggleChannelStar: vi.fn(),
+      setChannelNotifyLevel: vi.fn(), toggleChannelStar: vi.fn(),
     } as unknown as Controller);
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} onOpenDirectory={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} onOpenDirectory={vi.fn()} onOpenInbox={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
   };
 
   beforeEach(() => {

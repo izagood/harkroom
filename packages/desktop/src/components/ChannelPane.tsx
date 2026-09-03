@@ -4,12 +4,27 @@ import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
+import { ChannelFiles } from './ChannelFiles';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { dayLabel, localDayKey } from '../lib/day';
 
-export function ChannelPane() {
+interface ChannelPaneProps {
+  /**
+   * 검색 팔레트를 여는 요청. `scoped` 는 "지금 보는 대화로 좁혀서" 라는 뜻이다.
+   *
+   * 옵셔널인 이유는 이 컴포넌트를 홀로 띄우는 기존 테스트가 많아서다. 안 넘기면 버튼이
+   * 아무 일도 하지 않으므로 배선이 끊기면 조용히 죽은 버튼이 된다 —
+   * `test/searchEntryPoint.test.tsx` 가 Workspace 를 통째로 띄워 그 배선을 지킨다.
+   */
+  onOpenSearch?: (scoped: boolean) => void;
+}
+
+export function ChannelPane({ onOpenSearch }: ChannelPaneProps) {
   const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins } = useAppStore();
   const bottomRef = useRef<HTMLDivElement>(null);
+  // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
+  // 열림 상태도 채널 화면이 들고 있고, 채널이 바뀌면 `key` 로 패널이 다시 만들어진다.
+  const [filesOpen, setFilesOpen] = useState(false);
   /**
    * 고정 목록은 **접힌 채로 시작한다**(#218). 핀은 "필요할 때 찾아가는 자리"이지 늘 읽는
    * 것이 아니고, 펼친 채로 두면 핀이 몇 개만 쌓여도 대화가 화면 아래로 밀린다.
@@ -29,7 +44,7 @@ export function ChannelPane() {
   const composerTarget = channel ? `#${channel.name}` : (title ?? '');
 
   const roots = useMemo(
-    () => (activeChannelId ? (messages[activeChannelId] ?? []).filter((m) => m.threadRootId === null) : []),
+    () => (activeChannelId ? (messages[activeChannelId] ?? []).filter((m) => m.threadRootId === null || m.alsoInChannel) : []),
     [messages, activeChannelId],
   );
 
@@ -46,6 +61,10 @@ export function ChannelPane() {
 
   useEffect(() => { bottomRef.current?.scrollIntoView?.(); }, [roots.length]);
 
+  // 채널을 옮기면 파일 패널을 닫는다. 열린 채로 두면 방금 떠난 채널의 목록이 잠깐 남아
+  // 어느 채널의 파일인지 오해할 여지가 생긴다.
+  useEffect(() => { setFilesOpen(false); }, [activeChannelId]);
+
   if (!activeChannelId) {
     return <main className="flex flex-1 items-center justify-center text-zinc-400">Pick a channel to start</main>;
   }
@@ -54,12 +73,30 @@ export function ChannelPane() {
   const channelPins = pins[activeChannelId] ?? [];
 
   return (
+    <div className="flex min-w-0 flex-1">
     <main className="flex min-w-0 flex-1 flex-col bg-white">
       <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-2">
         <span className="font-bold">{title}</span>
         {channel?.topic && <span className="truncate text-xs text-zinc-500">{channel.topic}</span>}
         {channel?.repo && <span className="rounded bg-zinc-100 px-1.5 text-[11px] text-zinc-600">{channel.repo}</span>}
         {isArchived && <span className="rounded bg-zinc-200 px-1.5 text-[11px] text-zinc-600">보관됨</span>}
+        <button
+          className="ml-auto shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
+          onClick={() => setFilesOpen((v) => !v)}
+        >
+          파일
+        </button>
+        {/* 검색은 ⌘K 로도 열리지만 단축키만으로는 보이지 않는다(#258). 헤더 버튼은
+            **지금 보는 대화로 좁힌 채** 열고, ⌘K 는 전역으로 남는다 — 두 진입점이 서로
+            다른 뜻을 가지므로 title 에 그 차이를 적는다. DM 에도 같은 버튼이 나온다. */}
+        <button
+          className="shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
+          onClick={() => onOpenSearch?.(true)}
+          aria-label="이 채널에서 찾기"
+          title="이 채널에서 찾기 (⌘K 는 전체 검색)"
+        >
+          검색
+        </button>
       </header>
       {/* 고정된 메시지(#218). 핀이 하나도 없으면 아무것도 그리지 않는다 — 늘 있는 빈 줄은
           "여기에 뭔가 있다"는 거짓 신호이고, 헤더 아래 세로 공간을 그냥 먹는다. */}
@@ -156,10 +193,19 @@ export function ChannelPane() {
           <Composer
             scopeKey={activeChannelId}
             placeholder={`Message ${composerTarget}`}
-            onSend={(body, attachmentIds) => getController().send(body, attachmentIds)}
+            // 채널을 **지금 렌더된 것으로 붙여 준다**(#223). 보냄 취소 창이 도는 동안
+            // 채널을 옮겨도 이 클로저가 든 채널로 나간다 — 컨트롤러가 스토어를 다시 읽으면
+            // 옮긴 채널로 새어 나간다.
+            onSend={(body, attachmentIds) => getController().send(body, attachmentIds, activeChannelId)}
           />
         )}
       </div>
     </main>
+    {/* `activeChannelId` 는 위에서 이미 이른 반환으로 걸러졌다 — 여기서 또 보면
+        "널일 수도 있다" 는 거짓 신호가 남는다. */}
+    {filesOpen && (
+      <ChannelFiles key={activeChannelId} channelId={activeChannelId} onClose={() => setFilesOpen(false)} />
+    )}
+    </div>
   );
 }

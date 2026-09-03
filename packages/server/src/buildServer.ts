@@ -8,6 +8,7 @@ import { registerAccountRoutes } from './routes/accountRoutes.js';
 import { registerChannelRoutes } from './routes/channelRoutes.js';
 import { registerMessageRoutes } from './routes/messageRoutes.js';
 import { registerAttachmentRoutes } from './routes/attachmentRoutes.js';
+import { registerAvatarRoutes } from './routes/avatarRoutes.js';
 import { createLocalStorage } from './storage/local.js';
 import { registerDirectoryRoutes } from './routes/directoryRoutes.js';
 import { registerAuditRoutes } from './routes/auditRoutes.js';
@@ -243,9 +244,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const storage = createLocalStorage(storageOpts);
   // multipart 의 자체 제한도 같은 값으로 맞춘다 — 스토리지만 막으면 파서가 먼저 메모리를 쓴다.
   await app.register(fastifyMultipart, { limits: { fileSize: storageOpts.maxBytes, files: 1 } });
+  // #155: 채널 라우트가 storage 를 받는다 — 채널을 지울 때 그 안의 첨부 **파일**까지
+  // 지워야 하고, 그 경로를 아는 것이 storage 다. 그래서 등록 순서가 main 과 다르다:
+  // 채널·메시지 라우트가 createLocalStorage 뒤로 내려왔다.
   await registerChannelRoutes(app, deps.pool, storage);
   await registerMessageRoutes(app, deps.pool);
   await registerAttachmentRoutes(app, deps.pool, storage);
+  // 아바타는 같은 스토리지를 쓴다 — 파일 저장소를 하나로 유지하기 위해서다(avatarRoutes 주석).
+  await registerAvatarRoutes(app, deps.pool, storage);
   await registerDirectoryRoutes(app, deps.pool);
   await registerAuditRoutes(app, deps.pool);
   await registerSettingsRoutes(app, deps.pool);

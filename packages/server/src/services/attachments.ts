@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
+import type { ChannelFileRow } from '@murmur/shared';
 import { basename } from 'node:path';
 
 /** 서버 내부에서 쓰는 행. `storageKey` 는 여기까지만 산다. */
@@ -78,6 +79,64 @@ export async function attachToMessage(
     [args.messageId, args.attachmentIds],
   );
   return null;
+}
+
+/**
+ * 이 채널에 오간 첨부 한 페이지(#232). 최신 메시지부터다.
+ *
+ * **`message` 에서 시작해 `attachment` 로 들어간다.** 방향이 규칙이다: 이렇게 하면
+ * `message_channel_seq (channel_id, seq)` 를 역방향으로 훑으면서 `attachment_message_idx
+ * (message_id)` 로 들어가므로 채널 기준 인덱스를 새로 만들지 않아도 된다. 반대로
+ * `attachment` 부터 훑으면 채널 조건이 조인 뒤에 걸려 첨부 전체를 읽는다.
+ *
+ * `deleted_at is null` 은 빼면 안 된다. 삭제는 하드 삭제가 아니라 소프트 삭제이고
+ * (`findDownloadTarget` 도 같은 기준이다), 이 조건이 없으면 지운 메시지의 파일명이 목록에
+ * 그대로 남는다 — 그건 삭제가 삭제가 아닌 것이다.
+ *
+ * `limit` 이 세는 것은 **메시지 수다, 첨부 수가 아니다.** 커서가 seq 하나뿐이라 한 메시지의
+ * 첨부가 페이지 경계에서 쪼개지면 다음 페이지(`before = 그 seq`)가 남은 첨부를 건너뛴다 —
+ * 즉 행으로 자르면 파일이 조용히 사라진다. 메시지 단위로 자르면 그 구멍이 없고, 한 메시지의
+ * 첨부는 10개로 제한되므로(messageRoutes) 페이지 크기도 함께 묶인다.
+ */
+export async function listChannelFiles(
+  pool: Pool, channelId: string, opts: { before?: number; limit?: number } = {},
+): Promise<{ files: ChannelFileRow[]; hasMore: boolean }> {
+  const limit = opts.limit ?? 50;
+  const res = await pool.query(
+    `with page as (
+       select m.id, m.seq, m.author_id, m.created_at
+       from message m
+       where m.channel_id = $1
+         and m.deleted_at is null
+         and ($2::bigint is null or m.seq < $2)
+         and exists (select 1 from attachment a where a.message_id = m.id)
+       order by m.seq desc
+       limit $3
+     )
+     select a.id, a.filename, a.content_type as "contentType", a.size_bytes::int as "sizeBytes",
+            p.id as "messageId", p.seq::int as "messageSeq", p.author_id as "authorId",
+            p.created_at as "createdAt"
+     from page p join attachment a on a.message_id = p.id
+     -- 한 메시지 안의 순서는 메시지 목록(messages.ts 의 ATTACHMENTS)과 같은 기준이다.
+     -- 두 화면이 같은 첨부를 다른 순서로 보여 주면 어느 쪽이 맞는지 판단할 근거가 없다.
+     order by p.seq desc, a.attached_at, a.created_at, a.id`,
+    [channelId, opts.before ?? null, limit],
+  );
+  const files: ChannelFileRow[] = res.rows.map((row) => ({
+    id: row.id, filename: row.filename, contentType: row.contentType, sizeBytes: row.sizeBytes,
+    messageId: row.messageId, messageSeq: row.messageSeq, authorId: row.authorId,
+    createdAt: new Date(row.createdAt).toISOString(),
+  }));
+  // 'hasMore' 는 이 페이지보다 오래된 첨부가 남았는가다. 메시지 목록과 같은 뜻으로 쓴다.
+  const oldest = files.length ? files[files.length - 1]!.messageSeq : null;
+  const hasMore = oldest === null ? false : Boolean((await pool.query(
+    `select 1 from message m
+     where m.channel_id = $1 and m.deleted_at is null and m.seq < $2
+       and exists (select 1 from attachment a where a.message_id = m.id)
+     limit 1`,
+    [channelId, oldest],
+  )).rowCount);
+  return { files, hasMore };
 }
 
 export interface DownloadTarget {
