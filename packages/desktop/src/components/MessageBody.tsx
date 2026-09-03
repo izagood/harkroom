@@ -56,6 +56,13 @@ export function MessageBody({ body, messageId }: { body: string; messageId: stri
 
   const segments = useMemo(() => splitCode(body), [body]);
   const handles = useMemo(() => Object.values(accounts).map((a) => a.handle), [accounts]);
+  const accountsMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of Object.values(accounts)) {
+      map.set(a.id, a.handle);
+    }
+    return map;
+  }, [accounts]);
 
   /** 코드가 아닌 구간만 멘션·링크 조각으로 나눠 그린다. */
   const renderPart = (p: BodyPart, key: string) => {
@@ -132,7 +139,7 @@ export function MessageBody({ body, messageId }: { body: string; messageId: stri
           );
         }
         // 코드가 아닌 구간에만 기존 인식이 얹힌다.
-        return splitLinks(splitMentions(seg.text, handles)).map((p, j) => renderPart(p, `${i}-${j}`));
+        return splitLinks(splitMentions(seg.text, handles, accountsMap)).map((p, j) => renderPart(p, `${i}-${j}`));
       })}
     </div>
   );

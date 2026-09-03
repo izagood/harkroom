@@ -58,6 +58,80 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     return row;
   });
 
+  /**
+   * 사람이 자기 handle 을 바꾼다(#271). 에이전트는 400 — 러너 상태 디렉터리가 handle 스코프다.
+   * 유니크는 대소문자 무시, 충돌은 409. 감사 로그와 WS 이벤트를 보낸다.
+   */
+  app.patch('/accounts/me/handle', { preHandler: app.requireAccount }, async (req, reply) => {
+    const body = z.object({ handle: z.string().regex(/^[a-z0-9_-]{2,32}$/) }).parse(req.body);
+    const account = req.account!;
+
+    if (account.kind !== 'human') {
+      return reply.code(400).send({ error: { code: 'agent_handle_immutable', message: 'agent handle cannot be changed' } });
+    }
+
+    // 충돌 검사: 대소문자 무시
+    const existing = await pool.query(
+      `select id from account where lower(handle) = lower($1) and id != $2`,
+      [body.handle, account.id],
+    );
+    if (existing.rowCount) {
+      return reply.code(409).send({ error: { code: 'handle_taken', message: 'this handle is already taken' } });
+    }
+
+    const oldHandle = account.handle;
+    await pool.query(`update account set handle = $1 where id = $2`, [body.handle, account.id]);
+
+    await recordAudit(pool, {
+      action: 'account.handle.changed', actorId: account.id, actorHandle: body.handle,
+      detail: { from: oldHandle, to: body.handle },
+    }, req);
+
+    emitEvent({ type: 'account.handle_changed', accountId: account.id, newHandle: body.handle });
+
+    return { handle: body.handle };
+  });
+
+  /**
+   * Admin 이 다른 계정의 handle 을 바꾼다(#271). 같은 유니크·감사·WS 규칙.
+   */
+  app.patch('/accounts/:id/handle', { preHandler: app.requireAdmin }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({ handle: z.string().regex(/^[a-z0-9_-]{2,32}$/) }).parse(req.body);
+
+    // 대상 계정 조회
+    const target = await pool.query(`select handle, kind from account where id = $1`, [id]);
+    if (!target.rowCount) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
+    }
+    const targetRow = target.rows[0];
+
+    if (targetRow.kind !== 'human') {
+      return reply.code(400).send({ error: { code: 'agent_handle_immutable', message: 'agent handle cannot be changed' } });
+    }
+
+    // 충돌 검사
+    const existing = await pool.query(
+      `select id from account where lower(handle) = lower($1) and id != $2`,
+      [body.handle, id],
+    );
+    if (existing.rowCount) {
+      return reply.code(409).send({ error: { code: 'handle_taken', message: 'this handle is already taken' } });
+    }
+
+    const oldHandle = targetRow.handle;
+    await pool.query(`update account set handle = $1 where id = $2`, [body.handle, id]);
+
+    await recordAudit(pool, {
+      action: 'account.handle.changed', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { from: oldHandle, to: body.handle },
+    }, req);
+
+    emitEvent({ type: 'account.handle_changed', accountId: id, newHandle: body.handle });
+
+    return { handle: body.handle };
+  });
+
   app.post('/invites', { preHandler: app.requireAdmin }, async (req, reply) => {
     const { token, hash } = newToken('muri');
     await pool.query(`insert into invite (token_hash, created_by) values ($1, $2)`, [hash, req.account!.id]);

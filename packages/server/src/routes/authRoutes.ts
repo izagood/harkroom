@@ -16,6 +16,7 @@ const SESSION_TTL_DAYS = 14;
 export const DEFAULT_CHANNEL_NAME = 'general';
 
 const credentials = z.object({
+  loginId: z.string().regex(/^[a-zA-Z0-9_-]{2,32}$/),
   handle: z.string().regex(/^[a-z0-9_-]{2,32}$/),
   displayName: z.string().min(1).max(64),
   password: z.string().min(8).max(128),
@@ -39,9 +40,9 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
     try {
       await client.query('begin');
       const res = await client.query(
-        `insert into account (handle, display_name, kind, is_admin, password_hash)
-         values ($1, $2, 'human', true, $3) returning id`,
-        [body.handle, body.displayName, hash],
+        `insert into account (handle, login_id, display_name, kind, is_admin, password_hash)
+         values ($1, $2, $3, 'human', true, $4) returning id`,
+        [body.handle, body.loginId, body.displayName, hash],
       );
       accountId = res.rows[0].id;
       channelId = (await createChannel(client, { name: DEFAULT_CHANNEL_NAME })).id;
@@ -67,17 +68,17 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
   });
 
   app.post('/auth/login', async (req, reply) => {
-    const body = z.object({ handle: z.string(), password: z.string() }).parse(req.body);
+    const body = z.object({ loginId: z.string(), password: z.string() }).parse(req.body);
     const res = await pool.query(
-      `select id, password_hash from account where handle = $1 and kind = 'human'`, [body.handle]);
+      `select id, password_hash, handle from account where lower(login_id) = lower($1) and kind = 'human'`, [body.loginId]);
     const row = res.rows[0];
     if (!row?.password_hash || !(await argon2.verify(row.password_hash, body.password))) {
       // 실패한 로그인이 안 남으면 브루트포스 흔적을 사후에 볼 수 없다. 레이트 리밋은 막기만 하고
-      // 기록하지 않는다. 존재하지 않는 handle 도 남긴다 — 계정 열거 시도 자체가 신호다.
+      // 기록하지 않는다. 존재하지 않는 login_id 도 남긴다 — 계정 열거 시도 자체가 신호다.
       await recordAudit(pool, {
-        action: 'login.failed', actorId: row?.id ?? null, actorHandle: body.handle,
+        action: 'login.failed', actorId: row?.id ?? null, actorHandle: body.loginId,
       }, req);
-      return reply.code(401).send({ error: { code: 'invalid_credentials', message: 'wrong handle or password' } });
+      return reply.code(401).send({ error: { code: 'invalid_credentials', message: 'wrong login ID or password' } });
     }
     const { token, hash } = newToken('murs');
     await pool.query(
@@ -86,7 +87,7 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
       [hash, row.id],
     );
     await recordAudit(pool, {
-      action: 'login.succeeded', actorId: row.id, actorHandle: body.handle,
+      action: 'login.succeeded', actorId: row.id, actorHandle: body.loginId,
     }, req);
     return { token };
   });
@@ -119,9 +120,9 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
       }
       const pw = await argon2.hash(body.password);
       const acc = await client.query(
-        `insert into account (handle, display_name, kind, password_hash)
-         values ($1, $2, 'human', $3) returning id`,
-        [body.handle, body.displayName, pw],
+        `insert into account (handle, login_id, display_name, kind, password_hash)
+         values ($1, $2, $3, 'human', $4) returning id`,
+        [body.handle, body.loginId, body.displayName, pw],
       );
       await client.query(`update invite set used_by = $1 where token_hash = $2`, [acc.rows[0].id, inv.rows[0].token_hash]);
       await client.query('commit');
