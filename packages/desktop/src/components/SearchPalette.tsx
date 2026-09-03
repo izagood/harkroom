@@ -21,6 +21,14 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+  /**
+   * #221: 기본값은 전역이다. 좁히는 것은 사람이 명시적으로 하는 선택이라, 팔레트를 열
+   * 때마다 그 열기를 시작한 진입점이 정한 값(`initialScoped`)으로 돌아간다 — 앞서 손으로
+   * 켜 둔 토글이 다음 ⌘K 까지 따라오지 않는다(#258).
+   *
+   * 여기 `useState` 초기값은 **마운트 때 한 번만** 읽힌다. `Workspace` 는 이 컴포넌트를
+   * 계속 마운트해 둔 채 `open` 만 뒤집으므로, 실제로 값을 반영하는 곳은 아래 `open` 이펙트다.
+   */
   const [scoped, setScoped] = useState(initialScoped);
   const inputRef = useRef<HTMLInputElement>(null);
   const resultRefs = useRef<(HTMLLIElement | null)[]>([]);
@@ -97,6 +105,14 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       return;
     }
+    // 열릴 때마다 진입점이 정한 스코프를 적용한다. `useState` 초기값에만 맡기면 마운트
+    // 이후 첫 열기 한 번만 맞고, 그다음부터는 헤더 버튼이 좁히지 못한다.
+    //
+    // `initialScoped` 는 의도적으로 의존성에서 뺐다 — 팔레트가 이미 열려 있는 동안
+    // 부모가 이 값을 바꿔도 사람이 손으로 켠 토글을 덮어쓰지 않아야 한다. 열기 동작은
+    // 언제나 `initialScoped` 와 `open` 을 같은 이벤트에서 함께 바꾸므로, 이 이펙트가
+    // 도는 렌더에는 새 값이 이미 들어와 있다.
+    setScoped(initialScoped);
     inputRef.current?.focus();
   }, [open]);
 
