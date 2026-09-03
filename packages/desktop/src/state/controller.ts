@@ -4,6 +4,7 @@ import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type Notifier } from '../lib/notify';
 import { useAppStore } from './appStore';
+import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
 import { usePrefsStore } from './prefsStore';
 
 export class Controller {
@@ -663,6 +664,71 @@ export class Controller {
     const starred = !current?.starredAt;
     const updated = await this.api.updateChannelPref(channelId, { starred });
     store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
+  }
+
+  /**
+   * 훑기 목록을 만든다(#227) — `reads` 맵 기반의 **전체 미읽음** 모드다.
+   *
+   * `openChannel` 을 쓰지 않는 것이 핵심이다. 채널을 열면 `settleReadPosition` 이 최신까지
+   * 읽음 ack 를 보내므로, 열어서 보여 주는 훑기에는 '그냥 다음'이 존재할 수 없다 — 지나간 것이
+   * 전부 읽음이 된다. 그래서 훑기는 자기 조회로 내용을 들고 와 화면 안에서 보여 준다.
+   *
+   * 채널마다 한 번씩 조회한다. 서버가 채널별 '가장 오래된 미읽음의 시각'을 주지 않아
+   * **정렬 기준을 메시지에서만 얻을 수 있기 때문**이다(`seq` 는 채널마다 독립이라 채널을
+   * 가로질러 비교할 수 없다). 어차피 훑기는 그 내용을 보여 줘야 하므로 같은 조회가 정렬 기준과
+   * 화면 내용을 함께 준다. 채널 수가 커지면 `/reads` 에 시각을 실어 주는 쪽이 다음 수순이다.
+   *
+   * **실패를 삼키지 않는다.** 여기서 던지는 예외를 빈 목록으로 바꾸면 화면이 "다 봤다"고
+   * 말하게 되는데, 그것은 못 불러온 것을 다 읽었다고 하는 거짓말이다(docs/design.md §4).
+   */
+  async loadUnreadSweep(): Promise<SweepItem[]> {
+    const reads = await this.api.reads();
+    const store = useAppStore.getState();
+    // 조회한 김에 배지도 같은 값으로 맞춘다 — 훑기와 사이드바가 서로 다른 미읽음을 말하면
+    // 어느 쪽이 맞는지 사람이 판단할 수 없다.
+    store.set({ reads: Object.fromEntries(reads.map((r) => [r.channelId, { lastReadSeq: r.lastReadSeq, unread: r.unread }])) });
+    // 음소거된 채널은 뜨지 않는다(#229). 음소거는 "이 채널은 나를 부르지 마라"이고
+    // 훑기 목록에 오르는 것은 부름의 한 형태다 — 여기서 빠뜨리면 음소거의 뜻이 다시 무너진다.
+    const candidates = reads.filter((r) => r.unread > 0 && !store.channelPrefs[r.channelId]?.mutedAt);
+    const pages = await Promise.all(
+      // `lastReadSeq` 가 0(한 번도 안 읽음)이면 서버는 최신 한 페이지를 준다 — 그 채널의
+      // 정렬 기준은 '받아 온 것 중 가장 오래된 것'이 된다. 훑기가 보여 줄 수 있는 범위와
+      // 정렬 기준을 같은 것으로 두는 편이, 못 본 메시지를 기준으로 줄 세우는 것보다 정직하다.
+      candidates.map((r) => this.api.messages(r.channelId, { since: r.lastReadSeq })),
+    );
+    const after = useAppStore.getState();
+    const items: SweepItem[] = [];
+    candidates.forEach((r, i) => {
+      const page = pages[i];
+      if (!page) return;
+      // 내가 쓴 메시지는 미읽음이 아니다 — 서버의 미읽음 셈(`readPositions.ts`)과 같은 기준이다.
+      const unreadMessages = page.messages.filter((m) => m.seq > r.lastReadSeq && m.authorId !== after.me?.id);
+      const oldest = unreadMessages[0];
+      // 보여 줄 것이 없으면 항목을 만들지 않는다. 눌러도 아무것도 없는 항목은
+      // "여기 볼 것이 있다"는 거짓 신호다.
+      if (!oldest) return;
+      items.push({
+        channelId: r.channelId,
+        label: sweepLabel(after, r.channelId),
+        messages: unreadMessages,
+        oldestAt: oldest.createdAt,
+        newestSeq: Math.max(...page.messages.map((m) => m.seq)),
+      });
+    });
+    return sortSweepItems(items);
+  }
+
+  /**
+   * 이 채널을 `seq` 까지 읽음 처리한다(#227의 '읽음 처리하고 다음').
+   *
+   * `markChannelUnread` 의 반대편이고 `settleReadPosition` 과 같은 ack 를 쓴다 — 서버가
+   * 단조 전진(`readPositions.ts`: "되돌아가지 않고")을 지키므로 낙관적 갱신도 되돌리지 않는다.
+   */
+  async markChannelReadUpTo(channelId: string, seq: number): Promise<void> {
+    await this.api.markChannelRead(channelId, seq);
+    const store = useAppStore.getState();
+    const cur = store.reads[channelId] ?? { lastReadSeq: 0, unread: 0 };
+    store.set({ reads: { ...store.reads, [channelId]: { lastReadSeq: Math.max(cur.lastReadSeq, seq), unread: 0 } } });
   }
 
   /** 뒤로 탐색. 이력 스택에서 이전 항목으로 이동한다.
