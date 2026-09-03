@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import type { ChannelRow } from '@murmur/shared';
 
-const COLS = `id, name, topic, kind, repo`;
+const COLS = `id, name, topic, kind, repo, archived_at as "archivedAt"`;
 
 /**
  * `pool` 이 `PoolClient` 도 받는 이유: 부트스트랩이 계정과 기본 채널을 한 트랜잭션에 묶는다
@@ -19,20 +19,26 @@ export async function createChannel(
 }
 
 /** 지정된 필드만 갱신한다. `repo: null`은 "바인딩 해제"이고, 키 자체가 없으면 "손대지 않음"이다 —
- *  둘을 구분하지 못하면 topic만 고치려다 avcs 바인딩이 조용히 끊긴다. */
+ *  둘을 구분하지 못하면 topic만 고치려다 avcs 바인딩이 조용히 끊긴다.
+ * archived 는 archived_at 과 archived_by 를 함께 갱신한다 — archived_at = now() / null,
+ * archived_by = actorId / null. */
 export async function updateChannel(
-  pool: Pool, id: string, patch: { topic?: string; repo?: string | null },
+  pool: Pool, id: string, actorId: string, patch: { topic?: string; repo?: string | null; archived?: boolean },
 ): Promise<ChannelRow | null> {
+  const hasArchived = patch.archived !== undefined;
   const res = await pool.query(
     `update channel set
        topic = case when $2::bool then $3::text else topic end,
-       repo  = case when $4::bool then $5::text else repo  end
+       repo  = case when $4::bool then $5::text else repo  end,
+       archived_at = case when $6 is true then now() when $6 is false then null else archived_at end,
+       archived_by = case when $6 is true then $7::uuid when $6 is false then null else archived_by end
      where id = $1 and kind = 'standard'
      returning ${COLS}`,
     [
       id,
       patch.topic !== undefined, patch.topic ?? null,
       patch.repo !== undefined, patch.repo ?? null,
+      hasArchived ? patch.archived : null, patch.archived ? actorId : null,
     ],
   );
   return res.rowCount ? res.rows[0] : null;
@@ -162,4 +168,9 @@ export async function listChannelPrefs(pool: Pool, accountId: string): Promise<C
     [accountId],
   );
   return res.rows;
+}
+
+export async function isChannelArchived(pool: Pool, channelId: string): Promise<boolean> {
+  const res = await pool.query(`select archived_at is not null as archived from channel where id = $1`, [channelId]);
+  return res.rows[0]?.archived ?? false;
 }
