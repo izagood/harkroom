@@ -35,6 +35,30 @@ export async function getMemory(
   return res.rows[0] as MemoryEntry;
 }
 
+/**
+ * 사람이 보는 화면용 — slug 와 **값을 함께** 낸다(#139 3단계).
+ *
+ * `listMemory` 는 slug 만 준다. 그건 에이전트 주입 경로의 요구다(본문까지 주면 축적이
+ * 곧 컨텍스트 고갈이 된다). 사람이 보는 화면은 값을 봐야 하는데, slug 마다
+ * `getMemory` 를 부르면 N+1 이 된다 — 한 질의로 낸다.
+ */
+export async function listMemoryEntries(pool: Pool, accountId: string): Promise<MemoryEntry[]> {
+  const res = await pool.query(
+    `select slug, value, updated_at as "updatedAt" from agent_memory
+     where account_id = $1 order by slug`,
+    [accountId],
+  );
+  return res.rows as MemoryEntry[];
+}
+
+/** slug 하나를 지운다. 없는 것을 지워도 성공이다 — setMemory 의 멱등 규칙과 같다. */
+export async function deleteMemory(pool: Pool, accountId: string, slug: string): Promise<void> {
+  await pool.query(
+    `delete from agent_memory where account_id = $1 and slug = $2`,
+    [accountId, slug],
+  );
+}
+
 export async function setMemory(
   pool: Pool, accountId: string, slug: string, value: string | null,
 ): Promise<MemoryResult> {

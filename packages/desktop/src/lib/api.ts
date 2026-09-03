@@ -207,6 +207,17 @@ export class ApiClient {
     return this.req('PATCH', `/channels/${channelId}/pref`, patch);
   }
 
+  /** #139: 에이전트 메모리 조회. MCP 는 에이전트 전용이라 사람은 이 REST 를 쓴다. */
+  async agentMemory(agentId: string): Promise<{ slug: string; value: string; updatedAt: string }[]> {
+    return (await this.req<{ memories: { slug: string; value: string; updatedAt: string }[] }>(
+      'GET', `/accounts/agents/${agentId}/memory`,
+    )).memories;
+  }
+
+  deleteAgentMemory(agentId: string, slug: string): Promise<void> {
+    return this.req('DELETE', `/accounts/agents/${agentId}/memory/${encodeURIComponent(slug)}`);
+  }
+
   async search(q: string): Promise<MessageRow[]> {
     return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}`)).messages;
   }
