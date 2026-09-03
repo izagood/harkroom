@@ -1,7 +1,10 @@
 import type { Pool, PoolClient } from 'pg';
-import type { ChannelMemberRow, ChannelRow, NotifyLevel } from '@murmur/shared';
+import type { ChannelDoc, ChannelMemberRow, ChannelRow, NotifyLevel } from '@murmur/shared';
 
 const COLS = `id, name, topic, kind, repo, archived_at as "archivedAt", visibility`;
+
+/** `Pool` 과 `PoolClient` 가 함께 만족하는 최소 표면. 트랜잭션 안에서도 쓰라고 둔다. */
+type Queryable = Pick<Pool, 'query'>;
 
 /**
  * 채널 가시성 술어 — **이 저장소에서 가시성을 판정하는 유일한 정의다.**
@@ -119,11 +122,14 @@ export async function updateChannel(
  * 본다** — 읽기·쓰기 게이트(`assertChannelVisible`, `channelPostGate`)에는 이 예외가
  * 없다. `MessageItem.tsx` 가 "삭제는 admin 에게 열고 수정은 안 연다"고 한 것과 같은 결의
  * 절충이다: 조정 수단은 주되, 남의 대화 내용을 읽을 권한은 주지 않는다.
+ *
+ * admin 예외 자체는 `channelListVisibleSql` 이 갖는다 — 채널 목록 WS 이벤트(#284)의
+ * 수신자도 같은 술어를 봐야 하기 때문이다. 여기에 인라인으로 두면 두 벌이 된다.
  */
 export async function listChannels(pool: Pool, accountId: string, isAdmin = false): Promise<ChannelRow[]> {
   const res = await pool.query(
     `select ${COLS} from channel c
-     where c.kind = 'standard' and ($2::bool or ${channelVisibleSql('c', '$1')})
+     where c.kind = 'standard' and ${channelListVisibleSql('c', '$1', '$2::bool')}
      order by name`,
     [accountId, isAdmin],
   );
@@ -260,6 +266,64 @@ export async function audienceFor(pool: Pool, channelId: string): Promise<'all' 
   return channelMemberIds(pool, channelId);
 }
 
+/**
+ * **사이드바 목록에 이 채널이 보이는가** 를 계정 하나에 대해 묻는 SQL 술어.
+ *
+ * `channelVisibleSql` 과 다른 질문이다 — 목록에는 admin 예외가 있다(`listChannels` 의
+ * 주석: admin 은 목록에서는 보되 메시지는 못 본다). 그 예외를 여기 한 곳에 두고
+ * `listChannels` 와 아래 두 수신자 함수가 **같은 것을 참조**하게 한다. 복사하면
+ * "목록에 있는데 삭제됐다는 안내가 뜨는" 어긋남이 생긴다.
+ *
+ * @param channel 질의 안에서 `channel` 테이블을 가리키는 별칭
+ * @param accountParam 보는 사람의 계정 id 를 담은 식 (예: `'$1'`, `'a.id'`)
+ * @param isAdminExpr 보는 사람이 admin 인지를 담은 식 (예: `'$2::bool'`, `'a.is_admin'`)
+ */
+export function channelListVisibleSql(channel: string, accountParam: string, isAdminExpr: string): string {
+  return `((${channel}.kind = 'standard' and ${isAdminExpr})
+     or ${channelVisibleSql(channel, accountParam)})`;
+}
+
+/**
+ * 채널 **목록 변경** 이벤트(`channel.created` / `channel.updated`)의 수신자(#284).
+ *
+ * `audienceFor`(메시지·리액션용)와 나누는 이유: 목록 이벤트가 고쳐야 하는 화면은
+ * `listChannels` 가 그린 목록이고, 그 목록에는 admin 예외가 있다. `audienceFor` 를 쓰면
+ * private 채널의 이름이 바뀔 때 admin 의 목록만 낡은 이름으로 남는다. 새는 방향은 없다 —
+ * 페이로드(`ChannelRow`)는 admin 이 이미 `GET /channels` 로 보는 것과 같은 필드이고,
+ * 메시지 본문은 여기에 없다.
+ */
+export async function channelListAudience(pool: Pool, channelId: string): Promise<'all' | string[]> {
+  const channel = await pool.query(`select kind, visibility from channel where id = $1`, [channelId]);
+  const row = channel.rows[0] as { kind: string; visibility: string } | undefined;
+  // 존재하지 않는 채널 id 는 `audienceFor` 와 같이 'all' 이다.
+  if (!row) return 'all';
+  // public standard 는 전원이 목록에서 본다 — 계정을 훑을 필요가 없다.
+  if (row.kind === 'standard' && row.visibility === 'public') return 'all';
+  const res = await pool.query(
+    `select a.id from account a, channel c
+     where c.id = $1 and ${channelListVisibleSql('c', 'a.id', 'a.is_admin')}`,
+    [channelId],
+  );
+  return res.rows.map((r) => r.id);
+}
+
+/**
+ * 이 채널이 **목록에서 사라진** 계정들 — `channel.deleted` 의 수신자(#284).
+ *
+ * public→private 전환에서 필요하다: 비멤버에게 그 채널은 사라진 것이므로 삭제로 보인다.
+ * `audience: 'all'` 로 보내면 **멤버도** 받아서 활성 채널이 비워지고 "삭제됐다" 안내가
+ * 뜬다(멤버에게는 이름만 바뀐 사건인데). 그래서 여기서 위 술어를 **부정**해 목록에
+ * 남지 않은 계정만 고른다.
+ */
+export async function channelListLostAudience(pool: Pool, channelId: string): Promise<string[]> {
+  const res = await pool.query(
+    `select a.id from account a, channel c
+     where c.id = $1 and not ${channelListVisibleSql('c', 'a.id', 'a.is_admin')}`,
+    [channelId],
+  );
+  return res.rows.map((r) => r.id);
+}
+
 export interface ChannelPrefRow {
   accountId: string;
   channelId: string;
@@ -332,9 +396,15 @@ export async function listChannelPrefs(pool: Pool, accountId: string): Promise<C
  * 하고, 그 경로까지 닫으면 admin 에게 조정 수단이 없어진다.
  */
 export async function channelPostGate(
-  pool: Pool, channelId: string, accountId: string,
+  /**
+   * `Pool` 뿐 아니라 **트랜잭션 클라이언트**도 받는다(#222). 예약 발송 sweep 은 행을
+   * `for update skip locked` 로 잡은 트랜잭션 안에서 이 술어를 물어야 하는데, 그때
+   * `pool` 로 물으면 **커넥션을 하나 더** 잡는다 — 락을 쥔 채 풀을 기다리는 모양이라
+   * 풀이 마르면 그대로 교착이다. 쥐고 있는 클라이언트로 묻게 열어 둔다.
+   */
+  db: Queryable, channelId: string, accountId: string,
 ): Promise<'ok' | 'forbidden' | 'archived'> {
-  const res = await pool.query(
+  const res = await db.query(
     `select ${channelVisibleSql('c', '$2')} as visible,
             c.archived_at is not null as archived
      from channel c where c.id = $1`,
@@ -346,6 +416,66 @@ export async function channelPostGate(
   // (멤버십은 구독일 뿐이다), private 채널은 비멤버에게 403 이다 — admin 예외 없다.
   if (!row.visible) return 'forbidden';
   return row.archived ? 'archived' : 'ok';
+}
+
+/**
+ * 채널 문서 조회(#188). 아직 저장된 것이 없으면 **본문이 빈 문서**를 준다 — 404 가 아니다.
+ *
+ * "문서가 없다"와 "문서가 비어 있다"는 사람에게 같은 화면이므로, 채널을 만들 때마다 빈 행을
+ * 심어 두지 않고 읽는 쪽에서 그 모양으로 맞춘다. 다만 `updatedBy`·`updatedAt` 은
+ * **`null` 로 둔다** — 지금 시각과 보는 사람으로 채우면 아무도 쓴 적 없는 문서를 내가
+ * 방금 고친 것처럼 보여 주고, 그 가짜 시각이 `expectedUpdatedAt` 으로 돌아오면 낙관적
+ * 동시성 검사가 무엇과 비교하는지 알 수 없게 된다.
+ *
+ * 가시성은 여기서 보지 않는다 — 호출부(`channelRoutes`, `mcpPlugin`)가
+ * `assertChannelVisible`/`channelPostGate` 로 먼저 검사한다. 채널이 존재하지 않는 경우도
+ * 호출부가 404 로 답한다(`assertChannelVisible` 이 그렇게 쓰이도록 만들어져 있다).
+ */
+export async function getChannelDoc(pool: Pool, channelId: string): Promise<ChannelDoc> {
+  const res = await pool.query<ChannelDoc>(
+    `select d.channel_id as "channelId", d.body, d.updated_by as "updatedBy",
+            d.updated_at as "updatedAt"
+     from channel_doc d where d.channel_id = $1`,
+    [channelId],
+  );
+  const row = res.rows[0];
+  if (!row) return { channelId, body: '', updatedBy: null, updatedAt: null };
+  // pg 가 timestamptz 를 Date 로 준다. 계약(`ChannelDoc`)은 문자열이므로 여기서 맞춘다 —
+  // 클라이언트가 되돌려 보내는 `expectedUpdatedAt` 과 같은 값이어야 한다.
+  return { ...row, updatedAt: new Date(row.updatedAt!).toISOString() };
+}
+
+/**
+ * 채널 문서 저장(#188) — **낙관적 동시성은 한 문장 안에서 판정한다.**
+ *
+ * 읽고 나서 쓰면(select 로 `updated_at` 을 확인한 뒤 update) 두 요청이 같은 기대값으로
+ * 동시에 검사를 통과하고 둘 다 쓴다. 그러면 나중 것이 앞선 것을 조용히 덮어쓰는데, 그것이
+ * 바로 이 기능이 막으려던 사고다. 그래서 `on conflict ... do update ... where` 로 조건을
+ * **쓰기 문장 자체에** 붙인다. 조건이 틀리면 0 행이 돌아오고, 그때가 stale 이다.
+ *
+ * `expectedUpdatedAt` 이 `null` 인 것은 "검사하지 마라"가 아니라 **"아직 문서가 없다고
+ * 믿는다"**다. 옵셔널을 "검사 생략"으로 읽으면 필드를 빼기만 해도 낙관적 동시성이 사라진다 —
+ * 조용히 덮어쓰기를 막으려고 만든 장치가 필드 하나로 꺼지면 안 된다. 그래서 `null` 이면
+ * insert 만 성공하고, 이미 행이 있으면(`on conflict` 로 들어와 `updated_at = null` 비교가
+ * 거짓) stale 이다.
+ */
+export async function updateChannelDoc(
+  pool: Pool, channelId: string, actorId: string,
+  body: string, expectedUpdatedAt: Date | null,
+): Promise<{ ok: ChannelDoc } | { stale: ChannelDoc }> {
+  const res = await pool.query(
+    `insert into channel_doc (channel_id, body, updated_by, updated_at)
+     values ($1, $2, $3, now())
+     on conflict (channel_id) do update
+       set body = excluded.body, updated_by = excluded.updated_by, updated_at = now()
+       where channel_doc.updated_at = $4::timestamptz
+     returning channel_id`,
+    [channelId, body, actorId, expectedUpdatedAt],
+  );
+  // 0 행이면 행이 이미 있는데 기대값이 어긋난 것이다. 현재 본문을 함께 돌려줘야 사람이
+  // 무엇이 달라졌는지 보고 다시 편집할 수 있다 — 조용히 버리지도, 덮어쓰지도 않는다.
+  if (!res.rowCount) return { stale: await getChannelDoc(pool, channelId) };
+  return { ok: await getChannelDoc(pool, channelId) };
 }
 
 /**
@@ -361,9 +491,11 @@ export async function channelPostGate(
  *   - `channel_read`     (channel_id)                  명시적 삭제
  *   - `channel_member`   (channel_id)                  명시적 삭제
  *   - `channel_pref`     (channel_id, cascade)         명시적 삭제(cascade 에 기대지 않는다)
+ *   - `channel_doc`      (channel_id)                  명시적 삭제 — cascade 없음(#188)
  *   - `inbox`            (message_id)                  명시적 삭제 — cascade 없음
  *   - `idempotency_key`  (message_id, channel_id)      명시적 삭제 — cascade 없음
  *   - `work_thread`      (thread_root_message_id)      명시적 삭제 — cascade 없음
+ *   - `saved_message`    (message_id)                  명시적 삭제 — cascade 없음(#219)
  *   - `message_reaction` (message_id, cascade)         message 삭제로 함께 사라진다
  *   - `attachment`       (message_id, cascade)         message 삭제로 함께 사라진다
  *   - `message`          (channel_id, thread_root_id)  명시적 삭제
@@ -466,6 +598,14 @@ export async function deleteChannel(
        where thread_root_message_id in (select id from message where channel_id = $1)`,
       [channelId],
     );
+    // saved_message: message_id 참조, cascade 없음(#219). 채널이 사라지면 담아 둔 자리도
+    // 사라진다 — "삭제됨"으로 남기는 것은 **메시지** 삭제이고(#219 결정 3), 채널 삭제는
+    // 그 채널이 있었다는 사실 자체를 지우는 별개의 작업이다(#155).
+    await client.query(
+      `delete from saved_message
+       where message_id in (select id from message where channel_id = $1)`,
+      [channelId],
+    );
     // message_pin: channel_id·message_id 참조.
     await client.query(`delete from message_pin where channel_id = $1`, [channelId]);
     // channel_read: channel_id 참조.
@@ -474,6 +614,15 @@ export async function deleteChannel(
     await client.query(`delete from channel_member where channel_id = $1`, [channelId]);
     // channel_pref: channel_id 참조(cascade 지만 명시적으로 지운다 — 목록이 코드에 남아야 한다).
     await client.query(`delete from channel_pref where channel_id = $1`, [channelId]);
+    // channel_doc: channel_id 참조, cascade 없음(#188). 문서가 하나라도 있는 채널의 삭제가
+    // 여기 없으면 FK 위반으로 터진다 — `channelDelete.test.ts` 가 스키마를 다시 세어
+    // 이 목록의 누락을 잡아 줬다(#155 가 세운 그 자리가 실제로 작동했다).
+    await client.query(`delete from channel_doc where channel_id = $1`, [channelId]);
+    // scheduled_message: channel_id·thread_root_id·sent_message_id 참조, cascade 없음(#222).
+    // 아직 나가지 않은 예약도 함께 사라진다 — 채널이 없어졌으니 보낼 곳이 없고, 남겨 두면
+    // sweep 이 매번 없는 채널을 집어 든다. **message 보다 먼저** 지워야 한다:
+    // `sent_message_id` 가 이 채널의 메시지를 가리키기 때문이다.
+    await client.query(`delete from scheduled_message where channel_id = $1`, [channelId]);
     // message: channel_id 참조. attachment·message_reaction 은 cascade 로 함께 사라진다.
     // thread_root_id 자기 참조는 한 문장 안에서 부모·자식을 함께 지우므로 문제가 없다.
     await client.query(`delete from message where channel_id = $1`, [channelId]);
