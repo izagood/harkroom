@@ -8,7 +8,7 @@ alter table account add column login_id text;
 update account set login_id = handle where kind = 'human';
 
 -- login_id 는 대소문자 무시 유니크해야 한다 — Alice 와 alice 가 같은 로그인 이름이다.
--- 에이전트는 login_id 가 필요 없으(kind 가 'agent') 행만 유니크 제약의 대상이다.
+-- 에이전트는 login_id 가 필요 없다(kind = 'agent') — 사람 계정 행만 유니크 제약의 대상이다.
 create unique index account_login_id_unique on account ((lower(login_id))) where kind = 'human';
 
 -- 인간 계정은 반드시 login_id 가 있어야 한다. 에이전트는 null 이 정상이다.

@@ -184,8 +184,15 @@ export const CHANNEL_NAME_PATTERN = '^[a-z0-9_-]{1,48}$';
  * export 한다 — **복사가 아니라 재수출이다.**
  */
 export type CodeSegment =
-  /** 코드가 아닌 부분. 여기에만 멘션·링크 인식을 얹는다. */
-  | { kind: 'plain'; text: string }
+  /**
+   * 코드가 아닌 부분. 여기에만 멘션·링크 인식을 얹는다.
+   *
+   * `start` 는 이 조각이 **원문에서 시작한 위치**다(#271). 멘션 정규화가 코드 구간을
+   * 비껴가려면 평문의 원문 위치가 있어야 한다 — 없으면 정규화가 코드 판정 규칙을
+   * 자기 정규식으로 한 벌 더 갖게 되고, 그 둘이 갈라지면 코드 블록 안의 `@handle` 이
+   * 저장 시 멘션으로 바뀌어 알림까지 간다(#298 이 막은 바로 그 일이다).
+   */
+  | { kind: 'plain'; text: string; start: number }
   /** 백틱 하나로 감싼 것. */
   | { kind: 'inlineCode'; code: string }
   /** 백틱 세 개로 감싼 것. `lang` 은 **표시용일 뿐** — 문법 강조는 하지 않는다. */
@@ -207,14 +214,16 @@ const FENCE_LINE = /^[ \t]*```([^\n`]*)$/;
 const INLINE_CODE = /(?<!`)`([^`\n]+)`(?!`)/g;
 
 /** 코드가 아닌 구간을 인라인 코드로 한 번 더 나눈다. */
-function splitInline(text: string, out: CodeSegment[]): void {
+function splitInline(text: string, out: CodeSegment[], offset: number): void {
   let cursor = 0;
   for (const m of text.matchAll(INLINE_CODE)) {
-    if (m.index > cursor) out.push({ kind: 'plain', text: text.slice(cursor, m.index) });
+    if (m.index > cursor) {
+      out.push({ kind: 'plain', text: text.slice(cursor, m.index), start: offset + cursor });
+    }
     out.push({ kind: 'inlineCode', code: m[1]! });
     cursor = m.index + m[0].length;
   }
-  if (cursor < text.length) out.push({ kind: 'plain', text: text.slice(cursor) });
+  if (cursor < text.length) out.push({ kind: 'plain', text: text.slice(cursor), start: offset + cursor });
 }
 
 /**
@@ -230,9 +239,17 @@ export function splitCode(body: string): CodeSegment[] {
   let plainFrom = 0;
   let i = 0;
 
+  // 각 줄이 원문에서 시작하는 위치. `join('\n')` 이 되돌리는 것과 같은 오프셋이다 —
+  // 줄 하나마다 길이 + 개행 하나.
+  const lineStart: number[] = [];
+  {
+    let at = 0;
+    for (const line of lines) { lineStart.push(at); at += line.length + 1; }
+  }
+
   const flushPlain = (until: number) => {
     if (until <= plainFrom) return;
-    splitInline(lines.slice(plainFrom, until).join('\n'), out);
+    splitInline(lines.slice(plainFrom, until).join('\n'), out, lineStart[plainFrom]!);
   };
 
   while (i < lines.length) {
@@ -259,7 +276,7 @@ export function splitCode(body: string): CodeSegment[] {
   }
   flushPlain(lines.length);
 
-  return out.length ? out : [{ kind: 'plain', text: body }];
+  return out.length ? out : [{ kind: 'plain', text: body, start: 0 }];
 }
 
 /**
@@ -319,74 +336,79 @@ export function mentionedIds(body: string): string[] {
 }
 
 /**
- * 본문의 @handle (존재하는 계정만) 를 <@id> 로 정규화한다.
- * #230 그룹 멘션(@그룹) 은 이 함수에서 처리하지 않는다 — 호출부가 먼저 그룹 확장을 하고
- * 남은 @handle 을 정규화해야 한다. 그룹 토큰은 글자 그대로 둔다.
+ * 본문의 `@handle`(**존재하는 계정만**)을 `<@id>` 로 정규화한다(#271). 저장 전에 한 번 돈다.
  *
- * 존재하지 않는 handle 은 글자 그대로 남는다 — 오타를 멘션처럼 보이지 않게 한다.
+ * **코드 구간은 건드리지 않는다**(#298). 판정은 `splitCode` 하나가 하고 여기서는 그것이
+ * 내준 평문 조각의 원문 범위만 고쳐 쓴다 — 자기 정규식으로 코드를 다시 판정하면 규칙이
+ * 두 벌이 되고, 갈라지는 순간 코드 블록 안의 `@handle` 이 저장 시 멘션이 되어 알림까지
+ * 간다. `mentionedHandles` 가 같은 이유로 `stripCodeSpans` 를 지난다.
  *
- * @param body 입력 본문 (@handle 형식)
- * @param accountsMap handle(소문자) -> account ID 맵
- * @returns 정규화된 본문 (<@id> 형식)
+ * 계정 목록을 순회하지 않고 **본문을 한 번** 훑는다. 순회하면 비용이 워크스페이스의 계정
+ * 수에 비례하고, 그보다 나쁘게는 handle 을 정규식에 끼워 넣는 자리가 생긴다.
+ *
+ * #230 그룹 멘션(`@그룹`)은 여기서 처리하지 않는다 — 호출부가 먼저 그룹을 펼치고, 그룹
+ * 토큰은 `accountsMap` 에 없으므로 **글자 그대로** 남는다. 존재하지 않는 handle 이 그대로
+ * 남는 것도 같은 이유다(오타를 멘션처럼 보이지 않게 한다).
+ *
+ * @param body 사람이 입력한 본문(`@handle` 형식)
+ * @param accountsMap handle(소문자) -> 계정 id
  */
 export function normalizeMentions(body: string, accountsMap: Map<string, string>): string {
-  let result = body;
-  // 경계 검사를 정확히 하려면 MENTION_PATTERN 을 써야 한다.
-  // 하지만 단순 replaceAll 로는 경계 검사가 어려우므로 regexp_replace 를 쓴다.
-  // 각 handle 에 대해 순회하며 치환
-  for (const [handleLower, accountId] of accountsMap) {
-    // (?<![a-zA-Z0-9_-])@handle(?![a-zA-Z0-9_-]) 와 같은 부정 전방탐색/후방탐색
-    // 하지만 js 정규식에서는 부정 전방탐색이 잘 안 되므로 수동으로 한다.
-    const pattern = new RegExp(`(^|[^a-zA-Z0-9_-])@(${handleLower})(?![a-zA-Z0-9_-])`, 'gi');
-    result = result.replace(pattern, `$1<@${accountId}>`);
-  }
-  return result;
-}
-
-/**
- * 저장된 <@id> 토큰을 현재 handle 로 역정규화한다. MCP 에서 에이전트가 handle 로 생각하게
- * 하기 위해 쓴다 — 에이전트는 @handle 으로 입력하고, 그 입력은 normalize 를 탄다.
- *
- * @param body 정규화된 본문 (<@id> 형식)
- * @param accountsMap account ID -> handle 맵
- * @returns 역정규화된 본문 (@handle 형식)
- */
-export function denormalizeMentions(body: string, accountsMap: Map<string, string>): string {
-  let result = body;
-  for (const m of body.matchAll(new RegExp(MENTION_TOKEN_PATTERN, 'g'))) {
-    const id = m[1];
-    if (!id) continue;
-    const handle = accountsMap.get(id);
-    if (handle) {
-      result = result.replace(`<@${id}>`, `@${handle}`);
+  if (!accountsMap.size) return body;
+  const mention = new RegExp(MENTION_PATTERN, 'g');
+  // 뒤에서부터 고친다 — 앞에서 고치면 뒤 조각의 원문 오프셋이 밀린다.
+  const plains = splitCode(body).filter((s): s is { kind: 'plain'; text: string; start: number } => s.kind === 'plain');
+  let out = body;
+  for (const seg of [...plains].reverse()) {
+    const replaced = seg.text.replace(mention, (whole, lead: string, handle: string) => {
+      const id = accountsMap.get(handle.toLowerCase());
+      return id ? `${lead}<@${id}>` : whole;
+    });
+    if (replaced !== seg.text) {
+      out = out.slice(0, seg.start) + replaced + out.slice(seg.start + seg.text.length);
     }
   }
-  return result;
+  return out;
 }
 
 /**
- * <@id> 토큰을 현재 handle 로 렌더링한다. 데스크탑 화면 표시용이다.
- * 모르는 ID 는 "@알 수 없음" 으로 표시한다.
+ * 저장된 `<@id>` 를 현재 handle 로 되돌린다 — MCP 가 에이전트에게 줄 때 쓴다(#271).
+ * 에이전트는 handle 로 생각하고, 그 입력은 다시 `normalizeMentions` 를 탄다.
  *
- * @param body 정규화된 본문 (<@id> 형식)
- * @param accountsMap account ID -> handle 맵
- * @param unknownLabel 모르는 ID 를 대신할 라벨
- * @returns 화면용 본문 (@handle 형식)
+ * **모르는 id 는 그대로 둔다.** `@알 수 없음` 같은 표시 문구로 바꾸면 에이전트가 그것을
+ * 그대로 되받아 쓸 수 있고, 그때는 사람 이름처럼 생긴 문자열이 본문에 남는다. 화면(사람)
+ * 과 도구(에이전트)의 처리가 다른 이유가 이것이다.
+ *
+ * @param body 저장된 본문(`<@id>` 형식)
+ * @param idToHandle 계정 id -> 현재 handle
+ */
+export function denormalizeMentions(body: string, idToHandle: Map<string, string>): string {
+  return body.replace(new RegExp(MENTION_TOKEN_PATTERN, 'g'), (whole, id: string) => {
+    const handle = idToHandle.get(id);
+    return handle ? `@${handle}` : whole;
+  });
+}
+
+/**
+ * 저장된 `<@id>` 를 **화면에 그릴** 현재 handle 로 바꾼다(#271). 본문을 그리는 곳은
+ * 전부 이 함수를 지난다 — 두 벌이 되면 한쪽만 새 이름을 반영한다.
+ *
+ * 모르는 id 는 `@알 수 없음` 이다. 여기서는 `<@uuid>` 를 그대로 두는 것이 더 나쁘다 —
+ * 사람에게 그 문자열은 아무 뜻이 없고, 무엇이 잘못됐는지도 말해 주지 않는다.
+ *
+ * @param body 저장된 본문(`<@id>` 형식)
+ * @param idToHandle 계정 id -> 현재 handle
+ * @param unknownLabel 모르는 id 를 대신할 라벨
  */
 export function renderMentions(
   body: string,
-  accountsMap: Map<string, string>,
+  idToHandle: Map<string, string>,
   unknownLabel = '알 수 없음',
 ): string {
-  let result = body;
-  for (const m of body.matchAll(new RegExp(MENTION_TOKEN_PATTERN, 'g'))) {
-    const id = m[1];
-    if (!id) continue;
-    const handle = accountsMap.get(id);
-    const display = handle ? `@${handle}` : `@${unknownLabel}`;
-    result = result.replace(`<@${id}>`, display);
-  }
-  return result;
+  return body.replace(new RegExp(MENTION_TOKEN_PATTERN, 'g'), (_whole, id: string) => {
+    const handle = idToHandle.get(id);
+    return handle ? `@${handle}` : `@${unknownLabel}`;
+  });
 }
 
 /**
@@ -402,7 +424,7 @@ export function renderMentions(
  */
 export function stripCodeSpans(body: string): string {
   return splitCode(body)
-    .filter((seg): seg is { kind: 'plain'; text: string } => seg.kind === 'plain')
+    .filter((seg): seg is { kind: 'plain'; text: string; start: number } => seg.kind === 'plain')
     .map((seg) => seg.text)
     .join('\n');
 }

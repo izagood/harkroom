@@ -7,7 +7,7 @@ import { deleteMessage, editMessage, getMessageById, hasOlderMessages, listInbox
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
-import { normalizeMentions } from '@murmur/shared';
+import { normalizeSearchQuery } from '../services/mentions.js';
 
 export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.post('/channels/:id/messages', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -219,18 +219,13 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     if (q.channelId && !(await assertChannelVisible(pool, q.channelId, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
-    // 검색 쿼리의 @handle 도 <@id> 로 정규화한다(#271) — 이름을 바꾼 뒤 옛 검색이 안 맞으면 안 된다.
-    const accounts = await pool.query(`select id, lower(handle) as handle from account where disabled = false`);
-    const handleToId = new Map<string, string>();
-    for (const row of accounts.rows) {
-      handleToId.set(row.handle, row.id);
-    }
-    let normalizedQuery = q.q;
-    for (const [handle, id] of handleToId) {
-      const pattern = new RegExp(`(^|[^a-zA-Z0-9_-])@(${handle})(?![a-zA-Z0-9_-])`, 'gi');
-      normalizedQuery = normalizedQuery.replace(pattern, `$1<@${id}>`);
-    }
-    return { messages: await searchMessages(pool, req.account!.id, normalizedQuery, 50, q.channelId ?? null) };
+    // 검색어의 `@handle` 도 본문과 **같은 규칙**으로 `<@id>` 로 바꾼다(#271) — 저장된
+    // 정본이 `<@id>` 이므로, 바꾸지 않으면 이름을 바꾼 뒤 옛 메시지를 영영 못 찾는다.
+    return {
+      messages: await searchMessages(
+        pool, req.account!.id, await normalizeSearchQuery(pool, q.q), 50, q.channelId ?? null,
+      ),
+    };
   });
 
   // #219: 나중에 볼 메시지. 라우트 전부가 **요청자 자신의 행만** 다룬다 — 남의 큐를 가리키는

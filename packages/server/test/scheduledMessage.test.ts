@@ -13,12 +13,12 @@ async function createUser(app: FastifyInstance, adminToken: string, handle: stri
   const inviteToken = inv.json().token as string;
   const reg = await app.inject({
     method: 'POST', url: '/auth/register',
-    payload: { inviteToken, handle, displayName: handle, password: 'pw123456' },
+    payload: { inviteToken, handle, loginId: handle, displayName: handle, password: 'pw123456' },
   });
   const accountId = reg.json().id as string;
   const login = await app.inject({
     method: 'POST', url: '/auth/login',
-    payload: { handle, password: 'pw123456' },
+    payload: { loginId: handle, password: 'pw123456' },
   });
   return { token: login.json().token as string, accountId };
 }

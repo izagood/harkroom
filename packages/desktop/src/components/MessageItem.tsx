@@ -7,6 +7,7 @@ import { ReactionPicker, Reactions, InlineReactionButtons } from './Reactions';
 import { Identity, StatusMark } from './Identity';
 import { Attachments } from './Attachments';
 import { Menu } from './Menu';
+import { bodyAsHandles } from '../lib/mention';
 import type { SectionId } from './settings/sections';
 
 export function MessageItem({ message, inThread = false, onOpenDirectory, onOpenSettings }: {
@@ -96,15 +97,20 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   };
 
   /**
-   * 본문 복사(#179). 복사하는 것은 **원본 `body`** 다 — `MessageBody` 가 그린 형태가
-   * 아니다. 렌더 결과를 복사하면 멘션이 사람이 다시 붙여넣을 수 없는 모양으로 바뀌고,
-   * 원문으로 되돌릴 방법이 사라진다.
+   * 본문 복사(#179). 복사하는 것은 `MessageBody` 가 그린 형태가 아니다 — 링크·코드
+   * 렌더를 지나지 않은 본문이다.
+   *
+   * **다만 멘션은 `@handle` 로 되돌린다**(#271). 이 주석은 원래 "원본 `body` 를 그대로
+   * 복사한다"였고 근거는 "렌더 결과는 다시 붙여넣을 수 없다"였다. 정본이 `<@id>` 가 된
+   * 뒤로 그 전제가 뒤집혔다: 다시 붙여넣을 수 없는 쪽이 `<@0f3c…>` 이고, 붙여넣으면
+   * 서버가 그 사람을 다시 찾아 주는 쪽이 `@handle` 이다. 모르는 id 는 토큰으로 남으므로
+   * (`bodyAsHandles`) 원문으로 되돌릴 길도 사라지지 않는다.
    *
    * 실패 문구에 본문을 싣지 않는다 — 본문은 이미 화면에 그려져 있어 손으로 고를 수 있고,
    * 긴 메시지를 알림에 통째로 밀어 넣으면 알림이 화면을 덮는다.
    */
   const copyBody = () =>
-    copyToClipboard(message.body, 'Message copied.', 'Could not copy the message. Select it in the message and copy by hand.');
+    copyToClipboard(bodyAsHandles(message.body, accounts), 'Message copied.', 'Could not copy the message. Select it in the message and copy by hand.');
 
   const menuItems = [
     // 어떤 메시지든 가리킬 수 있다 — 남의 것도, system 메시지도 링크의 대상이다.
@@ -129,7 +135,9 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
     // 치울 길이 있어야 한다(서버의 DELETE 도 보관을 보지 않는다).
     ...(!pin && !isArchived ? [{ label: 'Pin', onSelect: () => { void getController().pinMessage(message.channelId, message.id); } }] : []),
     ...(canUnpin ? [{ label: 'Unpin', onSelect: () => { void getController().unpinMessage(message.channelId, message.id); } }] : []),
-    ...(canEdit ? [{ label: 'Edit', onSelect: () => setDraft(message.body) }] : []),
+    // #271: 수정창에는 `@handle` 을 채운다 — 저장된 정본은 `<@id>` 라, 그대로 넣으면
+    // 사람이 `<@0f3c…>` 를 고치게 된다. 저장할 때 서버가 다시 정규화한다.
+    ...(canEdit ? [{ label: 'Edit', onSelect: () => setDraft(bodyAsHandles(message.body, accounts)) }] : []),
     ...(canDelete && !confirmingDelete ? [{ label: 'Delete', onSelect: () => setConfirmingDelete(true) }] : []),
     // #219: 나중에 볼 것으로 담기. 담겨 있으면 문구가 해제로 바뀐다 — 같은 자리에 두 항목을
     // 나란히 두면 어느 것이 지금 상태인지 화면이 말하지 않는다.
