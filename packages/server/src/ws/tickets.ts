@@ -24,32 +24,69 @@ export interface TicketStore {
 
 const DEFAULT_TTL_MS = 30_000;
 
-export function createTicketStore(opts: { ttlMs?: number } = {}): TicketStore {
-  const ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
-  const live = new Map<string, TicketClaim & { expiresAt: number }>();
+/**
+ * 1회용·단기 토큰 저장소의 **기계장치만** 담은 코어. 무엇을 운반하는지는 호출자가 정한다.
+ *
+ * 빼낸 이유(#141): attach 티켓은 계정·자격증명 위에 **세션 id** 를 하나 더 운반해야
+ * 한다 — 어느 세션에 붙을 권한을 받았는지가 티켓에 박혀 있어야, WS 핸드셰이크가
+ * 쿼리 파라미터로 온 세션 id 를 믿지 않게 된다(믿으면 티켓 하나로 남의 세션에 붙는다).
+ * 그 저장소를 따로 만들면 TTL·1회용·쓸어내기가 두 벌이 되고, 한쪽만 고치는 사고가
+ * 인가에서 조용히 열리는 쪽으로 어긋난다. 그래서 운반물만 제네릭으로 열었다.
+ */
+function createOneShotStore<C>(ttlMs: number) {
+  const live = new Map<string, { claim: C; expiresAt: number }>();
 
   return {
-    issue(accountId, credentialHash) {
+    issue(claim: C): string {
       // 받아만 두고 연결하지 않은 티켓은 아무도 지워주지 않는다 — 발급할 때 쓸어낸다.
       const now = Date.now();
       for (const [key, entry] of live) {
         if (entry.expiresAt <= now) live.delete(key);
       }
       const { token } = newToken('murt');
-      live.set(token, { accountId, credentialHash, expiresAt: now + ttlMs });
+      live.set(token, { claim, expiresAt: now + ttlMs });
       return token;
     },
 
-    consume(ticket) {
+    consume(ticket: string): C | null {
       const entry = live.get(ticket);
       if (!entry) return null;
       live.delete(ticket); // 1회용 — 만료 여부와 무관하게 소모한다
       if (entry.expiresAt <= Date.now()) return null;
-      return { accountId: entry.accountId, credentialHash: entry.credentialHash };
+      return entry.claim;
     },
 
-    size() {
+    size(): number {
       return live.size;
     },
   };
+}
+
+export function createTicketStore(opts: { ttlMs?: number } = {}): TicketStore {
+  const core = createOneShotStore<TicketClaim>(opts.ttlMs ?? DEFAULT_TTL_MS);
+  return {
+    issue: (accountId, credentialHash) => core.issue({ accountId, credentialHash }),
+    consume: (ticket) => core.consume(ticket),
+    size: () => core.size(),
+  };
+}
+
+/**
+ * attach 티켓의 발급 내용(#141). `/ws` 티켓과 **다른 저장소**를 쓴다 — 한 저장소를
+ * 공유하면 `/ws` 티켓으로 `/agent-attach` 에 붙거나 그 반대가 되고, 그러면 attach
+ * 인가(소유자 판정)를 통과하지 않은 티켓이 세션 소켓을 연다.
+ */
+export interface AttachTicketClaim extends TicketClaim {
+  /** 이 티켓이 붙을 수 있는 **유일한** 세션. 핸드셰이크는 쿼리의 세션 id 를 믿지 않는다. */
+  sessionId: string;
+}
+
+export interface AttachTicketStore {
+  issue(claim: AttachTicketClaim): string;
+  consume(ticket: string): AttachTicketClaim | null;
+  size(): number;
+}
+
+export function createAttachTicketStore(opts: { ttlMs?: number } = {}): AttachTicketStore {
+  return createOneShotStore<AttachTicketClaim>(opts.ttlMs ?? DEFAULT_TTL_MS);
 }
