@@ -201,8 +201,21 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     return reply.code(204).send();
   });
 
-  app.get('/search', { preHandler: app.requireAccount }, async (req) => {
-    const q = z.object({ q: z.string().min(1).max(256) }).parse(req.query);
-    return { messages: await searchMessages(pool, req.account!.id, q.q) };
+  /**
+   * #221: `channelId` 가 오면 그 대화 안만 찾는다. 없으면 전과 똑같이 전역이다.
+   *
+   * 스코프를 준다고 가시성이 느슨해지지 않는다 — 볼 수 없는 채널을 스코프로 주면 403 이다.
+   * 술어만으로도 본문은 새지 않지만(빈 200 이 된다) 그러면 "못 보는 채널"과 "일치가 없는
+   * 채널"이 구분되지 않는다. 읽기 게이트를 다른 라우트와 **같은 함수**로 명시해 둔다.
+   */
+  app.get('/search', { preHandler: app.requireAccount }, async (req, reply) => {
+    const q = z.object({
+      q: z.string().min(1).max(256),
+      channelId: z.string().uuid().optional(),
+    }).parse(req.query);
+    if (q.channelId && !(await assertChannelVisible(pool, q.channelId, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    return { messages: await searchMessages(pool, req.account!.id, q.q, 50, q.channelId ?? null) };
   });
 }
