@@ -762,7 +762,13 @@ export type WsServerEvent =
   | { type: 'channel.updated'; channel: ChannelRow; audience: 'all' | string[] }
   | { type: 'channel.deleted'; channelId: string; audience: 'all' | string[] }
   // 담기/해제/상태 변경(#219). 본인의 소켓에만 온다.
-  | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string };
+  | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string }
+  /**
+   * 링크 미리보기가 준비됐다(#215). 가져오기는 비동기라 메시지가 먼저 뜨고 카드가 뒤에
+   * 온다 — 이 이벤트가 없으면 카드는 **다음에 그 메시지를 다시 그릴 때까지** 안 보인다.
+   * URL 만 보낸다: 카드 내용은 받는 쪽이 `GET /link-previews` 로 읽는다(캐시가 하나다).
+   */
+  | { type: 'link_preview.ready'; url: string; audience: 'all' | string[] };
 
 /**
  * ── Phase 2 attach: 러너 PTY ↔ 서버 ↔ 데스크탑 xterm 릴레이 (스펙 §5) ──
@@ -868,4 +874,111 @@ export interface AddTeamToChannelResult {
   added: string[];
   skipped: string[];
   alreadyMember: string[];
+}
+
+/**
+ * 링크 미리보기(#215) — 서버와 데스크탑이 **같은 함수**로 URL 을 집고 정규화한다.
+ *
+ * 두 곳에 각자 정규식을 두면 서버가 저장하는 키와 클라이언트가 조회하는 키가 갈라진다.
+ * 그러면 카드는 영원히 404 이고, 어느 쪽도 틀린 것처럼 보이지 않아 원인을 찾기 어렵다
+ * (이 브랜치의 초판이 정확히 그랬다: 서버는 `[^\s<>"']+`, 클라이언트는 `[^\s]+` 였고
+ * 클라이언트는 후행 문장부호를 떼지 않았다).
+ */
+
+/**
+ * URL 후보를 **넓게** 집는 패턴의 원본. `://` 를 요구하지 않는 것이 의도다 — 좁게 집으면
+ * `javascript:alert(1)` 이 애초에 후보가 되지 못해, 스킴 검사가 없어도 테스트가 초록이
+ * 된다. 방어선은 판정(`normalizePreviewUrl`·`classifyLink`) 한 곳에만 있어야 실재를
+ * 확인할 수 있다.
+ *
+ * 정규식 **객체**가 아니라 원본 문자열을 내보내는 이유: `/g` 정규식은 `lastIndex` 를
+ * 들고 있어서 모듈 간에 공유하면 호출 순서에 따라 결과가 달라진다.
+ */
+export const URL_CANDIDATE_SOURCE = '[a-zA-Z][a-zA-Z0-9+.-]*:[^\\s]+';
+
+/** 매번 새 `/g` 정규식을 만든다(공유 객체의 `lastIndex` 를 피한다). */
+export function urlCandidateRegex(): RegExp {
+  return new RegExp(URL_CANDIDATE_SOURCE, 'g');
+}
+
+/**
+ * 문장 끝에 붙어 온 문장부호는 URL 이 아니다 — `자세히는 https://a.io/b.` 의 마침표까지
+ * 링크에 넣으면 열리지 않는 주소가 된다. 짝이 맞는 괄호는 남긴다(위키 주소가 실제로 쓴다).
+ */
+export function trimTrailingPunctuation(token: string): string {
+  let end = token.length;
+  while (end > 0) {
+    const ch = token[end - 1]!;
+    if ('.,;:!?\'"'.includes(ch)) { end -= 1; continue; }
+    if (ch === ')' || ch === ']') {
+      const open = ch === ')' ? '(' : '[';
+      const slice = token.slice(0, end);
+      const balanced = slice.split(open).length <= slice.split(ch).length;
+      if (balanced) { end -= 1; continue; }
+    }
+    break;
+  }
+  return token.slice(0, end);
+}
+
+/**
+ * 미리보기 캐시의 **키**. 같은 페이지가 여러 키로 저장되면 같은 URL 을 여러 번 가져온다.
+ *
+ * - `http`/`https` 만. 다른 스킴은 미리보기 대상이 아니다(가져올 것이 없거나 위험하다).
+ * - **자격증명이 실린 URL(`user:pass@host`)은 거절한다.** 벗겨서 가져오는 길도 있지만,
+ *   그러면 사람이 본 링크와 **다른 자원**을 가져와 카드로 보여 주게 된다. 게다가
+ *   `user:pass@` 는 호스트 혼동 공격의 고전적 재료다 — 파서마다 무엇을 호스트로 보는지
+ *   갈린다. 가져오지 않는 쪽이 정직하다(카드가 안 뜨는 것은 사람이 바로 안다).
+ * - 후행 점(`example.com.`)을 뗀다. DNS 상 같은 이름인데 키가 갈라진다.
+ * - fragment 제거(서버가 받지 않는다), 기본 포트 제거·스킴/호스트 소문자는 `URL` 이 한다.
+ */
+export function normalizePreviewUrl(raw: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  if (url.username || url.password) return null;
+  url.hash = '';
+  // `URL` 은 IPv4 를 어떤 표기로 써도(`2130706433`, `0x7f000001`) 점 표기로 정규화하고,
+  // IDN 을 punycode 로 바꾼다 — 그 결과를 그대로 키로 쓴다.
+  const host = url.hostname.replace(/\.+$/, '');
+  if (!host) return null;
+  url.hostname = host;
+  return url.toString();
+}
+
+/**
+ * 미리보기 카드 하나(#215). `imageUrl` 은 **URL 만** 담는다 — 바이트를 프록시하지 않는다.
+ * v1 클라이언트는 이 값을 `<img>` 로 그리지 않는다(그리면 결정 1 이 무너진다).
+ */
+export interface LinkPreviewView {
+  url: string;
+  title: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  siteName: string | null;
+  status: 'ok' | 'failed' | 'blocked';
+  fetchedAt: string;
+}
+
+/**
+ * 본문에서 미리보기를 가져올 URL 을 집는다. 최대 `max` 개(기본 3) — 한 메시지가 링크
+ * 스무 개를 담으면 그만큼의 외부 요청이 서버에서 나간다.
+ */
+export function extractPreviewUrls(body: string, max = 3): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const m of body.matchAll(urlCandidateRegex())) {
+    const token = trimTrailingPunctuation(m[0]);
+    if (!token) continue;
+    const normalized = normalizePreviewUrl(token);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+    if (out.length >= max) break;
+  }
+  return out;
 }
