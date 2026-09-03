@@ -1,9 +1,20 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-/** 인스턴스 ID 유효성 검사 (#174). 문자 집합 [a-z0-9-]{1,32}. */
+/**
+ * 인스턴스 ID 문법(#174). 소문자·숫자·하이픈 1~32자.
+ *
+ * 이 값은 **경로 세그먼트가 된다**(stateDir.ts). 그래서 `..` 나 `/` 가 들어올 여지를
+ * 문법에서 끊는다 — 경로 조립부에 방어를 두면 도달 불가능한 분기가 되거나, 더 나쁘게는
+ * 운영자가 준 이름과 다른 디렉터리를 조용히 만들어 사람이 찾을 수 없게 된다.
+ */
 const INSTANCE_PATTERN = /^[a-z0-9-]{1,32}$/;
 
+/**
+ * **조용히 무시하지 않는다 — 기동을 실패시킨다.** 오타를 무시하면 인스턴스 B 라고 믿고
+ * 띄운 러너가 실제로는 기본 경로를 쓰면서 A 의 세션 파일을 밟는다. 그 사고는 화면에
+ * 아무 흔적을 남기지 않으므로, 유일하게 안전한 반응은 뜨지 않는 것이다.
+ */
 function validateInstance(instance: string | undefined): string | undefined {
   if (!instance) return undefined;
   if (!INSTANCE_PATTERN.test(instance)) {
@@ -13,6 +24,17 @@ function validateInstance(instance: string | undefined): string | undefined {
     );
   }
   return instance;
+}
+
+/**
+ * 기동 로그에 적는 러너 이름(#174). 운영자가 `ps` 로 어느 프로세스가 누구인지 알아야 한다.
+ *
+ * 인스턴스가 없어도 **`[default]` 를 적는다.** 없을 때 대괄호를 통째로 빼면 "인스턴스를
+ * 안 준 러너"와 "이 빌드가 인스턴스를 모르는 러너"가 로그에서 같아 보인다 — 운영자가
+ * 격리가 걸렸는지 확인할 방법이 사라진다.
+ */
+export function runnerLabel(handle: string, instance: string | undefined): string {
+  return `@${handle}[${instance ?? 'default'}]`;
 }
 
 /** 러너 자체의 설정. 모델·effort·지시문은 서버의 에이전트 정의에 있다(murmur UI 로 바꾼다). */
