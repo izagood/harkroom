@@ -8,6 +8,9 @@ import {
   listChannelPrefs,
 } from '../services/channels.js';
 import { listPins, pinMessage, unpinMessage } from '../services/pins.js';
+import {
+  listChannelAutoMentions, setChannelAutoMention, unsetChannelAutoMention,
+} from '../services/channelAutoMentions.js';
 import { allReadStates, markChannelRead, markChannelUnread, readState } from '../services/readPositions.js';
 // 이름 규칙은 데스크탑의 채널 생성 입력(Sidebar.tsx)과 **같은 것**이어야 한다 — 그래서
 // 정규식을 여기 리터럴로 두지 않고 shared 의 상수를 쓴다.
@@ -308,6 +311,79 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     await recordAudit(pool, {
       action: 'message.unpinned', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: id, detail: { messageId },
+    }, req);
+    return reply.code(204).send();
+  });
+
+  /**
+   * 자동 멘션 에이전트 목록(#173). **채널을 볼 수 있는 사람 누구나** — 작성창이 칩을 그려야
+   * 한다. 가시성 판정은 핀과 같이 `assertChannelVisible` 하나를 쓴다.
+   *
+   * 이 라우트들은 행만 다룬다. 접두는 데스크탑 작성창이 전송 직전에 본문에 넣고, 서버의
+   * 알림 판정은 그 본문을 평범한 멘션으로 읽는다 — 서버가 본문을 고치는 경로는 없다
+   * (`services/channelAutoMentions.ts` 머리 주석).
+   */
+  app.get('/channels/:id/auto-mentions', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = channelParam.parse(req.params);
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    return { autoMentions: await listChannelAutoMentions(pool, id) };
+  });
+
+  const autoMentionParam = z.object({ id: z.string().uuid(), agentId: z.string().uuid() });
+
+  /**
+   * 건다. **admin 전용** — 에이전트를 어디에 자동 투입할지는 `#253` 이 admin 에 남긴
+   * `mentionPermission` 과 같은 종류의 관리 행위다. 멱등이다: 이미 걸려 있으면 200 으로
+   * 같은 행을 돌려준다.
+   *
+   * 대상이 에이전트가 아니면 400 `not_an_agent` — 사람을 자동 멘션에 걸면 그 사람은 채널의
+   * 모든 글에 불린다. 비활성 에이전트는 400 `agent_disabled` — 깨어나지 못하는 상대를 매
+   * 메시지에 붙이면 본문마다 죽은 handle 이 남는다.
+   */
+  app.put('/channels/:id/auto-mentions/:agentId', { preHandler: app.requireAdmin }, async (req, reply) => {
+    const { id, agentId } = autoMentionParam.parse(req.params);
+    // 존재하지 않는 채널은 FK 위반으로 500 이 된다 — 잘못된 입력을 서버 오류로 답하면
+    // 호출부가 재시도할 대상인지 구분하지 못한다(멤버 초대와 같은 이유).
+    const exists = await pool.query(`select 1 from channel where id = $1`, [id]);
+    if (!exists.rowCount) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+    const result = await setChannelAutoMention(pool, { channelId: id, agentAccountId: agentId, createdBy: req.account!.id });
+    if (!result.ok) {
+      if (result.reason === 'not_found') {
+        return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
+      }
+      if (result.reason === 'not_an_agent') {
+        return reply.code(400).send({ error: { code: 'not_an_agent', message: 'only agents can be auto-mentioned' } });
+      }
+      return reply.code(400).send({ error: { code: 'agent_disabled', message: 'a disabled agent cannot be auto-mentioned' } });
+    }
+    // 본문은 남기지 않는다 — handle 만. 이 채널에서 오간 글은 감사가 붙잡을 자리가 아니다.
+    await recordAudit(pool, {
+      action: 'channel.auto_mention.set', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { handle: result.row.handle },
+    }, req);
+    return result.row;
+  });
+
+  /** 푼다. admin 전용. 없던 것을 풀면 404 — 조용히 204 를 주면 호출부는 있었다고 믿는다. */
+  app.delete('/channels/:id/auto-mentions/:agentId', { preHandler: app.requireAdmin }, async (req, reply) => {
+    const { id, agentId } = autoMentionParam.parse(req.params);
+    // handle 은 지우기 **전에** 읽는다 — 지운 뒤에는 조인할 행이 없다.
+    const before = await pool.query<{ handle: string }>(
+      `select a.handle from channel_auto_mention m join account a on a.id = m.agent_account_id
+        where m.channel_id = $1 and m.agent_account_id = $2`,
+      [id, agentId],
+    );
+    const removed = await unsetChannelAutoMention(pool, id, agentId);
+    if (!removed) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'that agent is not auto-mentioned here' } });
+    }
+    await recordAudit(pool, {
+      action: 'channel.auto_mention.unset', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { handle: before.rows[0]?.handle ?? null },
     }, req);
     return reply.code(204).send();
   });
