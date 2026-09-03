@@ -30,6 +30,9 @@ function useAttachmentUrl(id: string, enabled: boolean): { url: string | null; f
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     if (!enabled) return;
+    // id 가 바뀌면 실패 표시도 초기화한다 — 안 하면 한 번 실패한 자리가 다른 첨부를
+    // 그리면서 "불러오기 실패" 를 계속 달고 있다.
+    setFailed(false);
     let objectUrl: string | null = null;
     let alive = true;
     void getController().fetchAttachment(id).then((blob) => {
