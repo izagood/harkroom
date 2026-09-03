@@ -10,6 +10,7 @@ import { ThreadPanel } from './ThreadPanel';
 import { SearchPalette } from './SearchPalette';
 import { Sweep } from './Sweep';
 import { Directory } from './Directory';
+import { ChannelDirectory } from './ChannelDirectory';
 import { Inbox } from './Inbox';
 import { SavedMessages } from './SavedMessages';
 import type { SectionId } from './settings/sections';
@@ -26,6 +27,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
   const [searchInitialScoped, setSearchInitialScoped] = useState(false);
   const [sweepOpen, setSweepOpen] = useState(false);
   const [directoryOpen, setDirectoryOpen] = useState(false);
+  const [channelDirectoryOpen, setChannelDirectoryOpen] = useState(false);
   const [directoryAccountId, setDirectoryAccountId] = useState<string | null>(null);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
@@ -114,6 +116,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
         onLogout={onLogout}
         onOpenSettings={onOpenSettings}
         onOpenDirectory={() => handleOpenDirectory(null)}
+        onOpenChannelDirectory={() => setChannelDirectoryOpen(true)}
         onOpenInbox={() => setInboxOpen(true)}
         onOpenSaved={() => setSavedOpen(true)}
         collapsed={sidebarCollapsed}
@@ -193,6 +196,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} initialScoped={searchInitialScoped} />
       <Sweep open={sweepOpen} onClose={() => setSweepOpen(false)} />
       <Directory open={directoryOpen} onClose={() => { setDirectoryOpen(false); setDirectoryAccountId(null); }} accountId={directoryAccountId} />
+      <ChannelDirectory open={channelDirectoryOpen} onClose={() => setChannelDirectoryOpen(false)} />
       <Inbox open={inboxOpen} onClose={() => setInboxOpen(false)} />
       <SavedMessages open={savedOpen} onClose={() => setSavedOpen(false)} />
     </div>
