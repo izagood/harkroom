@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, AgentTeamRow, AgentTeamMemberRow, AddTeamToChannelResult } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -367,5 +367,37 @@ export class ApiClient {
   async search(q: string, channelId?: string | null): Promise<MessageRow[]> {
     const scope = channelId ? `&channelId=${encodeURIComponent(channelId)}` : '';
     return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
+  }
+
+  async teams(): Promise<AgentTeamRow[]> {
+    return (await this.req<{ teams: AgentTeamRow[] }>('GET', '/teams')).teams;
+  }
+
+  createTeam(name: string): Promise<AgentTeamRow> {
+    return this.req('POST', '/teams', { name });
+  }
+
+  updateTeam(id: string, name: string): Promise<AgentTeamRow> {
+    return this.req('PATCH', `/teams/${id}`, { name });
+  }
+
+  deleteTeam(id: string): Promise<void> {
+    return this.req('DELETE', `/teams/${id}`);
+  }
+
+  async team(id: string): Promise<{ team: AgentTeamRow; members: AgentTeamMemberRow[] }> {
+    return this.req('GET', `/teams/${id}`);
+  }
+
+  addTeamMember(teamId: string, accountId: string): Promise<{ members: AgentTeamMemberRow[] }> {
+    return this.req('PUT', `/teams/${teamId}/members/${accountId}`);
+  }
+
+  removeTeamMember(teamId: string, accountId: string): Promise<{ members: AgentTeamMemberRow[] }> {
+    return this.req('DELETE', `/teams/${teamId}/members/${accountId}`);
+  }
+
+  addTeamToChannel(channelId: string, teamId: string): Promise<AddTeamToChannelResult> {
+    return this.req('POST', `/channels/${channelId}/teams/${teamId}/add`);
   }
 }

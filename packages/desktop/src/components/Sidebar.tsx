@@ -80,6 +80,9 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
   const [membersChannelId, setMembersChannelId] = useState<string | null>(null);
   const [memberError, setMemberError] = useState<string | null>(null);
   const [inviteAccountId, setInviteAccountId] = useState('');
+  const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState('');
+  const [teamAddResult, setTeamAddResult] = useState<{ added: string[]; skipped: string[]; alreadyMember: string[] } | null>(null);
   // '마지막 멤버가 나간다'는 되돌릴 수 없는 조작이라 한 번 더 묻는다.
   const [leaveConfirmId, setLeaveConfirmId] = useState<string | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
@@ -144,6 +147,9 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
     setMemberError(null);
     setInviteAccountId('');
     setLeaveConfirmId(null);
+    setTeams([]);
+    setSelectedTeamId('');
+    setTeamAddResult(null);
   };
 
   /**
@@ -156,10 +162,33 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
     setMemberError(null);
     setInviteAccountId('');
     setLeaveConfirmId(null);
+    setTeams([]);
+    setSelectedTeamId('');
+    setTeamAddResult(null);
     try {
       await getController().loadChannelMembers(channelId);
+      // private 채널이면서 admin 이면 팀 목록도 불러온다.
+      const channel = channels.find((c) => c.id === channelId);
+      if (channel?.visibility === 'private' && me?.isAdmin) {
+        const t = await getController().listTeams();
+        setTeams(t);
+      }
     } catch (err) {
       setMemberError(err instanceof Error ? err.message : '멤버 목록을 받지 못했다');
+    }
+  };
+
+  const submitTeamAdd = async (channelId: string): Promise<void> => {
+    if (!selectedTeamId) return;
+    setTeamAddResult(null);
+    try {
+      const result = await getController().addTeamToChannel(channelId, selectedTeamId);
+      setTeamAddResult(result);
+      setSelectedTeamId('');
+      // 멤버 목록을 새로고침한다.
+      await getController().loadChannelMembers(channelId);
+    } catch (err) {
+      setMemberError(err instanceof Error ? err.message : '팀 추가에 실패했다');
     }
   };
 
@@ -448,6 +477,37 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
               >
                 초대
               </button>
+            </div>
+          )}
+          {/* 팀 추가: private 채널에서만, admin만 */}
+          {ch.visibility === 'private' && me?.isAdmin && teams.length > 0 && (
+            <div className="mb-1 space-y-1">
+              <div className="text-[10px] text-zinc-500">팀으로 추가</div>
+              <div className="flex items-center gap-1">
+                <select
+                  aria-label="추가할 팀"
+                  className="flex-1 rounded bg-zinc-900 px-1 py-0.5 text-xs text-zinc-200"
+                  value={selectedTeamId}
+                  onChange={(e) => { setSelectedTeamId(e.target.value); setTeamAddResult(null); }}
+                >
+                  <option value="">팀 선택…</option>
+                  {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+                <button
+                  className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-500 disabled:opacity-40"
+                  disabled={!selectedTeamId}
+                  onClick={() => void submitTeamAdd(ch.id)}
+                >
+                  추가
+                </button>
+              </div>
+              {teamAddResult && (
+                <div className="text-[10px] text-zinc-400">
+                  {teamAddResult.added.length > 0 && <span>추가: {teamAddResult.added.join(', ')}</span>}
+                  {teamAddResult.skipped.length > 0 && <span className="ml-1 text-amber-400">건너뜀: {teamAddResult.skipped.join(', ')}</span>}
+                  {teamAddResult.alreadyMember.length > 0 && <span className="ml-1">이미 있음: {teamAddResult.alreadyMember.join(', ')}</span>}
+                </div>
+              )}
             </div>
           )}
           <div className="flex gap-1">
