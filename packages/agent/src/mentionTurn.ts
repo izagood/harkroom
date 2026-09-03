@@ -8,8 +8,9 @@
 // codexSessions) 을 순서대로 부르고, 그 결과로 무엇을 저장·발화·실패 처리할지 판단한다.
 // 하네스 출력은 파싱하지 않는다 — 에이전트가 스스로 murmur MCP 로 답을 올린다(spec §4).
 import { randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import type { AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
 import { buildSystemPrompt, buildTurnPrompt, type MemoryContext, countOwnPostsSince, hasOwnPostSince, NO_REPLY_NOTICE } from './prompt.js';
@@ -26,6 +27,8 @@ export interface MentionTurnMurmur {
   readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
   /** #139: core 본문과 mem/* slug 목록. 실패는 **던진다** — 호출자가 구분해야 한다. */
   readMemory(): Promise<{ core: string | null; slugs: string[] }>;
+  /** #140: 승인된 스킬 목록. 실패하면 빈 배열 — 스킬은 "있으면 좋은 것"이다. */
+  listApprovedSkills(): Promise<{ slug: string; body: string }[]>;
   /** 발화 후 메시지의 seq 를 반환한다. */
   post(channelId: string, body: string, threadRootId: string | null): Promise<number>;
   /** #144: 긴 작업 시작 시 진행 설명 — 결과 발화로 세지 않는다. kind='progress'로 저장되어 message.read 응답에서 구분한다. */
@@ -179,6 +182,79 @@ function warnOnDuplicatePosts(key: string, postCount: number): void {
  * 요청을 본 시점(턴 시작 직후)과 그것에 따라 물러나는 시점(턴 종료 후)이 달라야 하고,
  * 반환값이 정확히 그 간격을 만든다.
  */
+/**
+ * #140: 승인된 스킬을 동기화한다.
+ *
+ * - `<stateDir>/skills/<slug>/SKILL.md` 에 스킬 내용을 쓴다.
+ * - 각 하네스의 skill 디렉터리로 심볼릭 링크를 건다.
+ * - 사라진 스킬(비활성·삭제)은 파일과 링크를 지운다.
+ * - 실패해도 턴은 진행한다 — 스킬은 "있으면 좋은 것"이다.
+ *
+ * @param stateDir 워크스페이스 밖의 러너 상태 디렉터리
+ * @param workspaceDir 에이전트 워크스페이스(심볼릭 링크 대상)
+ */
+async function syncSkills(stateDir: string, workspaceDir: string, listSkills: () => Promise<{ slug: string; body: string }[]>): Promise<void> {
+  const skillsDir = join(stateDir, 'skills');
+
+  try {
+    const skills = await listSkills();
+    const skillSlugs = new Set(skills.map((s) => s.slug));
+
+    // 현재 디렉터리에 있는 스킬 디렉터리 목록
+    let existingDirs: string[] = [];
+    try {
+      existingDirs = await readdir(skillsDir);
+    } catch { /* 디렉터리가 없으면 빈 배열 */ }
+
+    // 사라진 스킬(비활성·삭제) 처리: 디렉터리 삭제
+    for (const dir of existingDirs) {
+      if (!skillSlugs.has(dir)) {
+        try {
+          await rm(join(skillsDir, dir), { recursive: true, force: true });
+        } catch { /* 삭제 실패는 무시 — 다음 턴에 다시 시도 */ }
+      }
+    }
+
+    // 승인된 스킬 처리
+    for (const skill of skills) {
+      const skillPath = join(skillsDir, skill.slug);
+      const skillFile = join(skillPath, 'SKILL.md');
+
+      // 스킬 디렉터리와 파일 생성
+      try {
+        await mkdir(skillPath, { recursive: true });
+        await writeFile(skillFile, skill.body, 'utf8');
+      } catch { /* 파일 쓰기 실패는 무시 — 다음 턴에 다시 시도 */ }
+
+      // 심볼릭 링크: 각 하네스별 skill 디렉터리
+      // claude: .claude/skills/<slug>, codex: .codex/skills/<slug>
+      const harnessLinks: Record<string, string> = {
+        claude: join(workspaceDir, '.claude', 'skills', skill.slug),
+        codex: join(workspaceDir, '.codex', 'skills', skill.slug),
+      };
+
+      for (const [, linkPath] of Object.entries(harnessLinks)) {
+        try {
+          // 이미 링크가 있고 올바르면 스킵
+          const existing = await lstat(linkPath);
+          if (existing.isSymbolicLink()) {
+            const target = await readlink(linkPath);
+            if (target === skillFile) continue;
+          }
+          // 잘못된 링크이거나 파일이면 삭제 후 재생성
+          await rm(linkPath, { recursive: true, force: true });
+          await mkdir(join(linkPath, '..'), { recursive: true });
+          await symlink(skillFile, linkPath);
+        } catch { /* 링크 실패는 무시 — 다음 턴에 다시 시도 */ }
+      }
+    }
+  } catch (err) {
+    console.error(
+      `[mentionTurn] 스킬 동기화 실패(턴은 계속한다): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 export interface MentionTurnResult {
   /** 이 턴에 읽은 정의에 실려 온 종료 요청 시각. null 은 '요청 없음'. */
   stopRequestedAt: string | null;
@@ -300,6 +376,9 @@ export async function runMentionTurn(
   // 반영돼야 하고(spec §3), channelName 이 프롬프트에 들어가므로 내용이 턴마다 다르다.
   // 턴은 순차적으로 돈다(main.ts 의 for 루프가 await 한다) — 그래서 파일 하나로 충분하다.
   const systemPromptFile = await writeSystemPromptFile(deps.stateDir, systemPrompt);
+
+  // #140: 승인된 스킬 동기화 — 실패해도 턴은 진행한다(스킬은 "있으면 좋은 것")
+  syncSkills(deps.stateDir, rec.workspaceDir, deps.murmur.listApprovedSkills.bind(deps.murmur));
 
   // #117: 대화 본문도 stdin 파일로 이동한다. argv 에 있으면 같은 머신의 다른 로컬 사용자가
   // `ps -ef` 로 스레드 내용을 그대로 읽는다. codex 는 지시문까지 합쳐서 stdin 으로 가고,

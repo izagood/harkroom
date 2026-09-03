@@ -132,6 +132,10 @@ class FakeMurmur implements MentionTurnMurmur {
     return Promise.resolve(this.memory);
   }
 
+  listApprovedSkills(): Promise<{ slug: string; body: string }[]> {
+    return Promise.resolve([]);
+  }
+
   async addReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
     for (let i = 0; i < this.addDelayTicks; i += 1) await Promise.resolve();
     this.reactions.push({ channelId, messageId, emoji, action: 'add' });

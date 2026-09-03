@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import type { AccountStatus, MessageRow } from '@murmur/shared';
+import type { WorkspaceSkill } from './services/skills.js';
 
 export type WorkspaceEvent =
   | { type: 'message.created'; message: MessageRow; audience: 'all' | string[] }
@@ -14,7 +15,10 @@ export type WorkspaceEvent =
   | { type: 'avatar.changed'; accountId: string; avatarAttachmentId: string | null }
   | { type: 'reaction.added'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
   | { type: 'reaction.removed'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
-  | { type: 'typing.changed'; channelId: string; accountIds: string[]; audience: 'all' | string[] };
+  | { type: 'typing.changed'; channelId: string; accountIds: string[]; audience: 'all' | string[] }
+  | { type: 'skill.proposed'; skill: WorkspaceSkill; channelId: string }
+  | { type: 'skill.approved'; skill: WorkspaceSkill }
+  | { type: 'skill.disabled'; skill: WorkspaceSkill };
 
 const bus = new EventEmitter();
 bus.setMaxListeners(1000);
