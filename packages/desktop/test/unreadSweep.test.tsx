@@ -92,7 +92,9 @@ describe('미읽음 훑기', () => {
     // 때문에 #154 의 미읽음 표시로만 되돌릴 수 있게 된다 — 사람이 모르는 사이에 치르는 대가다.
     expect(api.markChannelRead).not.toHaveBeenCalled();
     expect(useAppStore.getState().reads['c1']).toEqual({ lastReadSeq: 0, unread: 1 });
-    expect(screen.getByText('#dev')).toBeTruthy();
+    // 클릭 직후 동기 조회는 CI 에서 흔들린다 — 다음 채널로의 전환은 상태 갱신을 거쳐
+    // 다시 그려지므로, 형제 테스트처럼 findByText 로 기다린다.
+    await screen.findByText('#dev');
   });
 
   it('음소거된 채널은 훑기 목록에 없다', async () => {
@@ -106,7 +108,8 @@ describe('미읽음 훑기', () => {
     expect(api.messages).not.toHaveBeenCalledWith('c2', expect.anything());
 
     fireEvent.click(screen.getByText('그냥 다음'));
-    expect(screen.getByText('다 봤다')).toBeTruthy();
+    // 같은 이유로 여기도 기다린다 — 회수 중 이 단언이 실제로 한 번 흔들렸다.
+    await screen.findByText('다 봤다');
     expect(screen.queryByText('#dev')).toBeNull();
   });
 
