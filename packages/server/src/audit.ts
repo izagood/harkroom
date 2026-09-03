@@ -25,7 +25,14 @@ export type AuditAction =
   // #218: 메시지 고정·해제. 채널 전역 상태를 바꾸는 조작이라 남는 기록이 있어야 한다.
   // detail 에는 messageId 만 남긴다 — 본문을 복사하면 그 메시지를 지워도 감사에 남는다
   // (같은 파일 위 message.deleted 와 agent.memory.deleted 가 같은 이유로 그렇다).
-  | 'message.pinned' | 'message.unpinned';
+  | 'message.pinned' | 'message.unpinned'
+  // #156: 채널 멤버십. 누가 누구를 private 채널에 들였고 누가 뺐는지는 접근 권한의 변경이라
+  // 기록이 남아야 한다. detail 에는 대상 계정 id 만 남긴다 — 채널의 topic 도, 그 채널에서
+  // 오간 메시지 본문도 넣지 않는다(같은 파일 위 규칙).
+  | 'channel.member.added' | 'channel.member.removed'
+  // #182: 공개 범위 전환. 이 한 번의 조작으로 채널 전체가 전원에게 열리거나 닫힌다 —
+  // 'channel.updated' 에 묻어 두면 감사 조회에서 그 사건을 골라낼 수 없다.
+  | 'channel.visibility.changed';
 
 export interface AuditEntry {
   action: AuditAction;
