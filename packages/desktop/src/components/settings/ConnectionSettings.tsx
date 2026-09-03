@@ -23,6 +23,8 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
   return (
     <SettingsPage title="Connection" description="The murmur server this app talks to.">
       <SettingsGroup>
+        {/* #165: 이 행은 계속 **활성 커뮤니티**를 보여 준다. 이 기기가 아는 서버 전부를
+            보는 자리는 Communities 다 — 여기서 목록을 또 그리면 같은 사실이 두 곳에 산다. */}
         <ReadonlyRow label="Server" value={baseUrl} />
         <ReadonlyRow
           label="Realtime connection"
@@ -109,11 +111,16 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
       </SettingsGroup>
 
       <SettingsGroup>
+        {/* #165: 예전 문구는 "Use a different server / Sign out to enter another server
+            address." 였다. (A) 아래서 그것은 **거짓 문장**이다 — 서버를 하나 더 붙이는
+            것이 지금 쓰는 것을 버리는 일이 아니다. 그 자리를 커뮤니티 목록을 가리키는
+            한 줄로 바꾸고, 로그아웃은 로그아웃이라고만 적는다. */}
         <div className="flex items-center gap-4 px-4 py-3">
           <span className="min-w-0 flex-1">
-            <span className="block font-medium text-fg">Use a different server</span>
+            <span className="block font-medium text-fg">Sign out of this community</span>
             <span className="mt-0.5 block text-fg-subtle">
-              Sign out to enter another server address.
+              To use another server, add it in Settings › Communities — the switcher appears at the
+              left of the sidebar once you are in more than one.
             </span>
           </span>
           <button
