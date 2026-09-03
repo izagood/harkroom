@@ -9,8 +9,10 @@ import { StatusMark } from './Identity';
 import { StatusPicker } from './StatusPicker';
 import { RunnerStatusDot } from './RunnerStatus';
 import type { SectionId } from './settings/sections';
-import type { AddTeamToChannelResult, AgentTeamRow, ChannelRow, NotifyLevel } from '@murmur/shared';
-import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, notifyLevelOf } from '@murmur/shared';
+import type {
+  AddTeamToChannelResult, AgentTeamRow, ChannelPrefRow, ChannelRow, NotifyLevel,
+} from '@murmur/shared';
+import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, notifyLevelOf, sortChannelsBySection } from '@murmur/shared';
 import { Logo } from './Logo';
 
 /** 메뉴에 그리는 이름. 값(`all`/`mentions`/`none`)은 저장·전송용이라 번역하지 않는다. */
@@ -417,19 +419,67 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
     }), [dms, accounts, me, online, channelPrefs]);
 
   const others = Object.values(accounts).filter((a) => a.id !== me?.id);
+
+  // "새 섹션…" 을 고른 채널과 입력 중인 이름(#157). `prompt()` 대신 인라인 입력이다.
+  const [sectionEditFor, setSectionEditFor] = useState<string | null>(null);
+  const [sectionDraft, setSectionDraft] = useState('');
+
   const row = (active: boolean) =>
     `flex w-full items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-surface-raised ${active ? 'bg-surface-raised' : ''}`;
 
-  const sortedChannels = useMemo(() => {
+  // 섹션으로 그룹화된 채널 목록을 구한다(#157).
+  // 정렬: 섹션(이름순, null 은 맨 아래) → 별표 → sortOrder → 이름.
+  const groupedChannels = useMemo(() => {
     const standardChannels = channels.filter((ch) => ch.kind === 'standard' && !ch.archivedAt);
-    const withPref = standardChannels.map((ch) => ({ channel: ch, pref: channelPrefs[ch.id] }));
-    const sorted = [...withPref].sort((a, b) => {
-      if (a.pref?.starredAt && !b.pref?.starredAt) return -1;
-      if (!a.pref?.starredAt && b.pref?.starredAt) return 1;
-      return (a.channel.name ?? '').localeCompare(b.channel.name ?? '');
-    });
-    return sorted.map((x) => x.channel);
+    const withPref = standardChannels.map((ch) => ({ channel: ch, pref: channelPrefs[ch.id] as ChannelPrefRow | null }));
+    const sorted = sortChannelsBySection(withPref);
+
+    // 섹션별로 그룹화한다.
+    const groups: { section: string | null; channels: typeof withPref }[] = [];
+    for (const item of sorted) {
+      const section = item.pref?.section ?? null;
+      const lastGroup = groups[groups.length - 1];
+      if (lastGroup && lastGroup.section === section) {
+        lastGroup.channels.push(item);
+      } else {
+        groups.push({ section, channels: [item] });
+      }
+    }
+    return groups;
   }, [channels, channelPrefs]);
+
+  /** 내가 이미 쓴 섹션 이름들(#157). 메뉴가 이것을 항목으로 세운다. */
+  const knownSections = useMemo(() => {
+    const names = new Set<string>();
+    for (const p of Object.values(channelPrefs)) {
+      if (p?.section) names.add(p.section);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [channelPrefs]);
+
+  /**
+   * "위로/아래로" 메뉴 항목(#157).
+   *
+   * 같은 섹션 안에서 **이웃과 자리를 바꾼다.** 맨 위/맨 아래에서는 항목을 아예 만들지
+   * 않는다 — 눌러도 아무 일이 없는 항목은 "할 수 있다"는 거짓 신호다(docs/design.md §4).
+   * 섹션이 없는 채널(맨 아래 묶음)도 순서를 매길 수 있다: 그 묶음도 한 화면의 한 줄이다.
+   */
+  const sectionMoveItems = (ch: ChannelRow) => {
+    const group = groupedChannels.find((g) => g.channels.some((i) => i.channel.id === ch.id));
+    if (!group || group.channels.length < 2) return [];
+    const idx = group.channels.findIndex((i) => i.channel.id === ch.id);
+    const ids = group.channels.map((i) => i.channel.id);
+    const swapTo = (target: number) => {
+      const next = [...ids];
+      const [moved] = next.splice(idx, 1);
+      next.splice(target, 0, moved!);
+      void getController().reorderChannels(next);
+    };
+    return [
+      ...(idx > 0 ? [{ label: '위로', onSelect: () => swapTo(idx - 1) }] : []),
+      ...(idx < ids.length - 1 ? [{ label: '아래로', onSelect: () => swapTo(idx + 1) }] : []),
+    ];
+  };
 
   const archivedChannels = useMemo(() => {
     return channels
@@ -814,9 +864,83 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
         onSelect: () => void getController().setChannelNotifyLevel(ch.id, level),
       })),
       { label: isStarred ? '즐겨찾기 해제' : '즐겨찾기', onSelect: () => void getController().toggleChannelStar(ch.id) },
+      /*
+       * 섹션 이동(#157). DM 은 섹션을 가질 수 없다 — kind 로 거르고, 서버도 400 을 준다.
+       *
+       * **이미 쓴 섹션을 항목으로 세운다.** 이름을 매번 다시 치게 하면 오타 하나로
+       * 같은 뜻의 섹션이 둘 생기고, 그 둘을 합칠 길은 이 화면에 없다.
+       * 새 이름은 사이드바 안 인라인 입력으로 받는다 — `prompt()` 는 창을 막고,
+       * Electron 에서 꺼져 있으면 아무 일도 일어나지 않는 죽은 항목이 된다.
+       */
+      ...(ch.kind === 'standard' ? [
+        ...knownSections
+          .filter((name) => name !== pref?.section)
+          .map((name) => ({
+            label: `섹션: ${name}`,
+            onSelect: () => void getController().setChannelSection(ch.id, name),
+          })),
+        {
+          label: '새 섹션…',
+          onSelect: () => { setSectionEditFor(ch.id); setSectionDraft(''); },
+        },
+        ...(pref?.section ? [
+          { label: '섹션에서 빼기', onSelect: () => void getController().setChannelSection(ch.id, null) },
+        ] : []),
+      ] : []),
+      /*
+       * 섹션 안 순서 조절(#157).
+       *
+       * **이웃과 자리를 바꾼다** — `sortOrder ± 1` 이 아니다. 그 방식은 아무것도 하지
+       * 않는다: 같은 섹션의 다른 채널들은 `sortOrder` 가 null 이라 비교 자체가 이름순으로
+       * 떨어지고, 눌러도 순서가 그대로다(실측). 자리를 바꾼 뒤 그 섹션 전체에 0..n-1 을
+       * 다시 매겨 순서를 명시로 만든다 — 절반만 값을 가지면 "안 매김"이 섞여 다음 클릭이
+       * 또 아무 일도 하지 않는다.
+       */
+      ...(ch.kind === 'standard' ? sectionMoveItems(ch) : []),
     ];
+    const submitSection = () => {
+      const name = sectionDraft.trim();
+      setSectionEditFor(null);
+      setSectionDraft('');
+      // 빈 값은 "섹션에서 빼기"와 같다 — 서버도 빈 문자열을 null 로 저장한다.
+      void getController().setChannelSection(ch.id, name === '' ? null : name);
+    };
     return (
-      <div key={ch.id} className="relative flex w-full items-center">
+      <div key={ch.id} className="relative w-full">
+      {sectionEditFor === ch.id && (
+        <div className="mb-1 rounded border border-border bg-surface-raised p-1">
+          <input
+            type="text"
+            autoFocus
+            aria-label="새 섹션 이름"
+            maxLength={40}
+            className="w-full rounded border border-border bg-field px-2 py-1 text-sm text-fg placeholder-fg-subtle"
+            placeholder="섹션 이름"
+            value={sectionDraft}
+            onChange={(e) => setSectionDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submitSection();
+              // 취소는 되돌리기다 — 아무것도 저장하지 않는다.
+              if (e.key === 'Escape') { setSectionEditFor(null); setSectionDraft(''); }
+            }}
+          />
+          <div className="mt-1 flex gap-1">
+            <button
+              className="rounded bg-accent px-2 py-0.5 text-xs text-fg-on-strong hover:bg-accent-hover"
+              onClick={submitSection}
+            >
+              옮기기
+            </button>
+            <button
+              className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
+              onClick={() => { setSectionEditFor(null); setSectionDraft(''); }}
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="relative flex w-full items-center">
         <Menu
           renderTrigger={(props) => (
             <div
@@ -840,6 +964,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
           placement="bottom"
           openOnContextMenu
         />
+      </div>
       </div>
     );
   };
@@ -924,7 +1049,20 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
               🔍
             </button>
           </div>
-          {sortedChannels.map(channelRow)}
+          {/* 섹션(#157)으로 묶어 그린다. 섹션 없는 것들은 맨 아래 무제목 묶음이다. */}
+          {groupedChannels.map((group) => (
+            <div key={group.section ?? 'other'}>
+              {group.section !== null && (
+                <div
+                  data-testid={`section-header-${group.section}`}
+                  className="px-2 py-1 text-xs font-medium text-fg-muted"
+                >
+                  {group.section}
+                </div>
+              )}
+              {group.channels.map((item) => channelRow(item.channel))}
+            </div>
+          ))}
           {me?.isAdmin && (
             createChannelOpen ? (
               <div className="mt-1 rounded border border-border bg-surface-raised p-1">
