@@ -122,7 +122,28 @@ update projection_cursor set last_log_index = 0 where repo = 'org/repo';
 - [ ] 에이전트 PAT로 `inbox.poll` 1회가 정상 응답하는지
 - [ ] repo 바인딩 채널에서 새 avcs 객체가 투영되는지(커서가 전진하는지)
 
-## 6. 관측 지점
+## 6. AVCS_BASE_URL — 투영 활성화
+
+murmur는 AVCS服务器的 투영을 통해 intent·operation·decision 등의 시스템 메시지를 가져온다.
+이 투영은 기본적으로 **비활성**이며, 다음 환경변수로 활성화한다:
+
+```bash
+AVCS_BASE_URL=https://your-avcs-server.example.com
+```
+
+`AVCS_BASE_URL`이 없으면:
+- 서버 기동 시 경고 로그가 찍힌다: `avcs projection is disabled — set AVCS_BASE_URL to enable`
+- `GET /projection/status`는 `state: "unconfigured"`를 반환한다
+- 사이드바 ACTIVE WORK 영역에 "투영이 설정되지 않았다 — AVCS_BASE_URL 로 켜세요"가 표시된다
+
+투영이 활성화된 후:
+- `GET /projection/status`의 `state`는 다음 중 하나다:
+  - `"ok"`: 폴링 중이고 에러 없음
+  - `"stalled"`: 마지막 폴링이 5분보다 오래됐거나 에러가 발생함
+- 사이드바에 "투영이 N분 전부터 멈춰 있다"와 에러 메시지가 표시된다
+- `GET /healthz`의 `avcs.connected`가 연결 상태를 나타낸다
+
+## 7. 관측 지점
 
 문제가 났을 때 먼저 볼 곳:
 
@@ -139,7 +160,7 @@ update projection_cursor set last_log_index = 0 where repo = 'org/repo';
 스크레이프에는 인증이 필요하다. 만료 없는 **에이전트 PAT**를 쓰는 것이 실용적이다
 (사람 세션 토큰은 14일에 만료된다).
 
-## 7. 에이전트가 답하지 않을 때
+## 8. 에이전트가 답하지 않을 때
 
 2026-09-01 실측: 사용자가 `@fizz`를 불렀는데 답이 없었다. **서버·DB·투영 전부 정상이었고
 러너 프로세스가 죽어 있었다.** 그 상태에서 보이는 것과 안 보이는 것:
@@ -194,7 +215,7 @@ where a.kind = 'agent';
 `harness`가 비어 있으면 murmur가 실행할 수 없는 계정이다. 답은 지표를 고치는 것이 아니라
 그 계정을 정리하거나 정의를 붙이는 것이다(UI의 Add/Edit agent).
 
-## 7-1. 러너를 감독 하에 두기 (macOS)
+## 8-1. 러너를 감독 하에 두기 (macOS)
 
 `~/Library/LaunchAgents/dev.murmur.agent.<handle>.plist`를 만들고
 `launchctl load <경로>`. 세 가지가 함정이다:
@@ -219,7 +240,7 @@ where a.kind = 'agent';
 리눅스는 같은 내용의 systemd 유닛(`Restart=always`, `RestartSec=10`,
 `Environment=PATH=...`)으로 대체한다.
 
-## 8. 클라이언트 주소가 보이지 않는다 (compose 기본 배포)
+## 9. 클라이언트 주소가 보이지 않는다 (compose 기본 배포)
 
 실측(2026-09-01): 감사 로그의 `ip` 가 전부 `192.168.65.1` 이었다 — **Docker 브리지 게이트웨이**다.
 컨테이너 안에서는 모든 요청이 그 주소로 보이므로 실제 클라이언트 주소가 없다. 그 결과 둘이 생긴다.
@@ -242,14 +263,14 @@ where a.kind = 'agent';
 macOS·Windows 의 Docker Desktop 에서는 프록시 없이 실제 주소를 보는 방법이 없다(포트 게시가
 주소를 다시 쓴다). Linux 에서는 `network_mode: host` 로 우회할 수 있지만 포트 격리를 잃는다.
 
-## 9. 아직 없는 것
+## 10. 아직 없는 것
 
 - **자동화**: cron/타이머가 없다. 위 명령을 손으로 돌린다.
 - **오프사이트 사본**: 덤프가 같은 호스트에 남는다. 호스트를 잃으면 백업도 잃는다.
 - **PITR**: WAL 아카이빙이 없다. 복구 지점은 마지막 덤프뿐이다.
 - **보존 정책**: 오래된 덤프를 지우는 규칙이 없다.
 
-## 10. 비밀번호 복구
+## 11. 비밀번호 복구
 
 비밀번호를 분실한 경우 두 가지 복구 경로가 있다.
 

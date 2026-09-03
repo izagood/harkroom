@@ -431,6 +431,29 @@ export interface LeaseRow {
   expiresAt: string;
 }
 
+/**
+ * avcs 투영 상태. #267
+ *
+ * - state: 'unconfigured' | 'stalled' | 'ok'
+ *   - unconfigured: avcsBaseUrl 이 null 인 경우
+ *   - stalled: configured 이지만 lastPolledAt 이 null 이거나 5분보다 오래됐거나 lastError 가 있는 경우
+ *   - ok: 그 외 (폴링 중이고 에러 없음)
+ *
+ * "커서가 안 움직이는 것"은 문제가 아니다 — 조용한 저장소도 안 움직인다.
+ * 신호는 "폴링이 돌고 있는가"다 — lastPolledAt 이 5분 이내면 폴링 중.
+ */
+export interface ProjectionStatus {
+  state: 'unconfigured' | 'stalled' | 'ok';
+  configured: boolean;
+  /** avcs 서버에 마지막으로 연결하려 시도한 결과. */
+  connected: boolean;
+  repo: string | null;
+  lastLogIndex: number;
+  lastPolledAt: number | null;
+  lastAdvancedAt: number | null;
+  lastError: string | null;
+}
+
 export type WsServerEvent =
   | { type: 'message.created'; message: MessageRow; audience: 'all' | string[] }
   | { type: 'message.updated'; message: MessageRow; audience: 'all' | string[] }
