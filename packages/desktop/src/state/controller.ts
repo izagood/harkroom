@@ -676,6 +676,45 @@ export class Controller {
     return this.api.mintPat(accountId, label);
   }
 
+  // #285: 핸들 집합 관리
+  listHandleGroups(): Promise<import('@murmur/shared').HandleGroupRow[]> {
+    return this.api.listHandleGroups();
+  }
+
+  async createHandleGroup(input: { handle: string; displayName: string }): Promise<import('@murmur/shared').HandleGroupRow> {
+    const group = await this.api.createHandleGroup(input);
+    const store = useAppStore.getState();
+    store.set({ groups: [...store.groups, group] });
+    return group;
+  }
+
+  async getHandleGroup(id: string): Promise<{ group: import('@murmur/shared').HandleGroupRow; members: string[] }> {
+    return this.api.getHandleGroup(id);
+  }
+
+  async updateHandleGroup(id: string, patch: { displayName: string }): Promise<import('@murmur/shared').HandleGroupRow> {
+    const updated = await this.api.updateHandleGroup(id, patch);
+    const store = useAppStore.getState();
+    store.set({ groups: store.groups.map((g) => g.id === id ? updated : g) });
+    return updated;
+  }
+
+  async deleteHandleGroup(id: string): Promise<void> {
+    await this.api.deleteHandleGroup(id);
+    const store = useAppStore.getState();
+    store.set({ groups: store.groups.filter((g) => g.id !== id) });
+  }
+
+  async addHandleGroupMembers(id: string, accountIds: string[]): Promise<string[]> {
+    const { members } = await this.api.addHandleGroupMembers(id, accountIds);
+    return members;
+  }
+
+  async removeHandleGroupMembers(id: string, accountIds: string[]): Promise<string[]> {
+    const { members } = await this.api.removeHandleGroupMembers(id, accountIds);
+    return members;
+  }
+
   /**
    * 채널을 만들고 목록에 반영한 뒤 그 채널을 연다 — `startDm` 과 같은 모양이다.
    * 컴포넌트가 `api` 를 직접 부르고 스토어를 손으로 갱신하면 그 절차가 화면마다 흩어지고,
