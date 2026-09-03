@@ -3,6 +3,7 @@ import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-li
 import type { MessageRow, ReactionRow } from '@murmur/shared';
 import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
+import { pickInline } from '../src/components/Reactions';
 import { MessageItem } from '../src/components/MessageItem';
 import { acc, msg } from './helpers/fakeApi';
 
@@ -131,7 +132,7 @@ describe('#145 인라인 이모지 버튼 토글과 눌린 상태', () => {
     render(<MessageItem message={withReactions([])} />);
 
     // 👍 버튼을 찾는다 (첫 번째 인라인 이모지)
-    const button = screen.getByRole('button', { name: '👍' });
+    const button = screen.getByRole('button', { name: 'React with 👍' });
     fireEvent.click(button);
 
     await waitFor(() =>
@@ -148,7 +149,7 @@ describe('#145 인라인 이모지 버튼 토글과 눌린 상태', () => {
     );
 
     const toolbar = screen.getByRole('group', { name: 'message toolbar' });
-    const button = within(toolbar).getByRole('button', { name: /^👍/ });
+    const button = within(toolbar).getByRole('button', { name: 'React with 👍' });
     expect(button.getAttribute('aria-pressed')).toBe('true');
   });
 
@@ -161,7 +162,7 @@ describe('#145 인라인 이모지 버튼 토글과 눌린 상태', () => {
     );
 
     const toolbar = screen.getByRole('group', { name: 'message toolbar' });
-    const button = within(toolbar).getByRole('button', { name: /^👍/ });
+    const button = within(toolbar).getByRole('button', { name: 'React with 👍' });
     expect(button.getAttribute('aria-pressed')).toBe('false');
   });
 
@@ -174,11 +175,32 @@ describe('#145 인라인 이모지 버튼 토글과 눌린 상태', () => {
     );
 
     // 👍 가 이미 있다. 내 버튼을 누르면 내가 추가한다.
-    const button = screen.getByRole('button', { name: '👍' });
+    const button = screen.getByRole('button', { name: 'React with 👍' });
     fireEvent.click(button);
 
     await waitFor(() =>
       expect(c.toggleReaction).toHaveBeenCalledWith('c1', 'm1', '👍', true)
     );
+  });
+});
+
+describe('#145 인라인 선정 규칙과 접근성 이름', () => {
+  // 인덱스로 자르면 QUICK 순서가 바뀌는 순간 상태 신호가 인라인으로 샌다.
+  it('순서가 바뀌어도 상태 신호 이모지는 인라인에 오지 않는다', () => {
+    expect(pickInline(['👀', '👍', '💬', '🎉', '✅', '🔥'])).toEqual(['👍', '🎉', '✅']);
+    expect(pickInline(['👍', '🎉', '✅', '👀', '💬'])).toEqual(['👍', '🎉', '✅']);
+  });
+
+  // 피커를 열면 두 표면의 이모지 버튼이 함께 존재한다. 이름이 같으면 스크린리더도
+  // 테스트도 어느 것인지 가리지 못한다 — 이 파일이 이미 한 번 겪은 사고다.
+  it('피커를 열어도 같은 접근 가능한 이름이 둘이 되지 않는다', () => {
+    fakeController();
+    render(<MessageItem message={withReactions([])} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add reaction' }));
+
+    const names = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'));
+    const dupes = names.filter((n, i) => n !== null && names.indexOf(n) !== i);
+    expect(dupes).toEqual([]);
   });
 });

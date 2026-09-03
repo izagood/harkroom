@@ -11,7 +11,23 @@ import { getController } from '../state/controller';
  * 사람이 그걸 흉내 내면 신호의 의미가 무너진다.
  */
 const QUICK = ['👀', '💬', '👍', '🎉', '✅', '🔥', '🤔', '😄'];
-const INLINE = QUICK.slice(2, 5);
+
+/**
+ * 에이전트가 상태 신호로 쓰는 이모지. 인라인 버튼에서 제외하는 근거가 이 목록이다.
+ * #144 를 보라 — 사람이 이것을 흉내 내면 신호의 의미가 무너진다.
+ */
+export const STATUS_SIGNAL_EMOJI = ['👀', '💬'];
+
+/**
+ * 인라인에 낼 3개를 **규칙으로** 고른다. 인덱스로 자르면(`QUICK.slice(2, 5)`) QUICK 의
+ * 순서가 바뀌는 순간 상태 신호 이모지가 조용히 인라인으로 새어 들어온다 — 바로 위
+ * 주석이 금지한 것이 그것이다. 규칙을 코드로 적으면 순서가 바뀌어도 성립한다.
+ */
+export function pickInline(quick: string[]): string[] {
+  return quick.filter((e) => !STATUS_SIGNAL_EMOJI.includes(e)).slice(0, 3);
+}
+
+const INLINE = pickInline(QUICK);
 
 /**
  * 리액션을 **추가하는** 표면. `MessageItem` 의 호버 툴바가 이것을 쓴다(#121).
@@ -85,7 +101,12 @@ export function InlineReactionButtons({ message }: { message: MessageRow }) {
         return (
           <button
             key={emoji}
-            aria-label={`${emoji}${mine ? ' (내가 누름)' : ''}`}
+            // 이름을 피커의 이모지 버튼(`aria-label={e}`)과 **구분**한다. 같으면 피커를 연
+            // 순간 같은 접근 가능한 이름이 둘이 되어 스크린리더와 테스트가 어느 것인지
+            // 가리지 못한다 — 이 파일 위쪽 주석이 기록한 그 사고다(테스트 4개가 깨졌다).
+            // 눌림 여부는 이름이 아니라 `aria-pressed` 가 전한다. 이름은 상태에 따라
+            // 바뀌지 않아야 포커스가 그 버튼에 머문 채로도 읽히는 이름이 흔들리지 않는다.
+            aria-label={`React with ${emoji}`}
             aria-pressed={mine}
             className={`rounded px-1 text-[11px] ${
               mine ? 'bg-indigo-50 text-indigo-800' : 'text-zinc-500 hover:bg-zinc-100'
