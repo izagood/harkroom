@@ -9,6 +9,7 @@ import { ThreadPanel } from './ThreadPanel';
 import { SearchPalette } from './SearchPalette';
 import { Sweep } from './Sweep';
 import { Directory } from './Directory';
+import { ChannelDirectory } from './ChannelDirectory';
 import { Inbox } from './Inbox';
 import type { SectionId } from './settings/sections';
 
@@ -22,6 +23,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
   const [searchOpen, setSearchOpen] = useState(false);
   const [sweepOpen, setSweepOpen] = useState(false);
   const [directoryOpen, setDirectoryOpen] = useState(false);
+  const [channelDirectoryOpen, setChannelDirectoryOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sidebarStorage.loadCollapsed());
 
@@ -89,6 +91,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
         onLogout={onLogout}
         onOpenSettings={onOpenSettings}
         onOpenDirectory={() => setDirectoryOpen(true)}
+        onOpenChannelDirectory={() => setChannelDirectoryOpen(true)}
         onOpenInbox={() => setInboxOpen(true)}
         collapsed={sidebarCollapsed}
         onToggleCollapse={handleToggleSidebar}
@@ -145,6 +148,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
       <Sweep open={sweepOpen} onClose={() => setSweepOpen(false)} />
       <Directory open={directoryOpen} onClose={() => setDirectoryOpen(false)} />
+      <ChannelDirectory open={channelDirectoryOpen} onClose={() => setChannelDirectoryOpen(false)} />
       <Inbox open={inboxOpen} onClose={() => setInboxOpen(false)} />
     </div>
   );

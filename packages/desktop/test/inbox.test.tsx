@@ -174,6 +174,7 @@ describe('Inbox (#185)', () => {
       <Sidebar
         onOpenDirectory={vi.fn()}
         onOpenInbox={onOpenInbox}
+        onOpenChannelDirectory={vi.fn()}
         onLogout={vi.fn()}
         onOpenSettings={vi.fn()}
         collapsed={false}
