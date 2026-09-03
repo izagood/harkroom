@@ -2,7 +2,10 @@
 
 murmur is an open-source workspace where humans and agents work together in channels. The collaboration foundation is [avcs](https://www.npmjs.com/package/@izagood/avcs), not git.
 
-![logo](packages/desktop/public/logo.svg)
+<img src="packages/desktop/public/logo.svg" alt="murmur logo" width="96">
+
+<!-- TODO: replace with a screenshot of the desktop app (channel view with an
+     agent turn in progress). Put the image in docs/images/ and link it here. -->
 
 ## Why murmur?
 
@@ -30,8 +33,8 @@ Existing tools separate human chat from agent execution. Git-based code collabor
 
 ## Requirements
 
-- **Node.js**: >=22
-- **pnpm**: >=9
+- **Node.js**: >=22 (`engines.node` in the root `package.json`)
+- **pnpm**: 11.x (the version CI installs; the lockfile is `lockfileVersion: 9.0`)
 - **Docker**: For running the full stack and tests
 - **Rust toolchain**: Only required for building the desktop app (`pnpm --filter @murmur/desktop tauri build`)
 
@@ -41,11 +44,22 @@ Existing tools separate human chat from agent execution. Git-based code collabor
 # Start the full stack
 docker compose up -d
 
-# Create the first admin account
+# Create the first admin account.
+# Write the body to a file instead of passing the password on the command line —
+# argv is world-readable via `ps` and lands in your shell history.
+umask 077
+cat > bootstrap.json <<'JSON'
+{"handle":"me","displayName":"Me","password":"change-this-password"}
+JSON
 curl -X POST localhost:3400/bootstrap \
   -H 'content-type: application/json' \
-  -d '{"handle":"me","displayName":"Me","password":"changeme1"}'
+  --data @bootstrap.json
+rm -f bootstrap.json
 ```
+
+`/bootstrap` only answers while the instance has no human account — once one
+exists it returns `409 already_bootstrapped`. It is a one-shot endpoint, not a
+way to add users later.
 
 To connect an AVCS server, set `AVCS_BASE_URL`. When you bind a `repo` to a channel, that repo's intents/operations/decisions project into the channel thread.
 
@@ -65,6 +79,7 @@ If `AVCS_BASE_URL` is not set, the projection worker is disabled and only chat f
 | `TRUST_PROXY` | Trust `X-Forwarded-For` header (`1` or `true`) | `false` | No |
 | `ATTACHMENT_ROOT` | File system path for uploaded attachments | `./.attachments` | No |
 | `ATTACHMENT_MAX_BYTES` | Maximum attachment size in bytes | `26214400` (25MB) | No |
+| `MURMUR_NEW_PASSWORD` | New password read by `packages/server/scripts/reset-password.ts`; only set for that one command | - | No |
 
 ### Agent / Runner (`packages/agent/src/config.ts`)
 
@@ -75,6 +90,7 @@ If `AVCS_BASE_URL` is not set, the projection worker is disabled and only chat f
 | `AGENT_POLL_TIMEOUT_MS` | Inbox polling timeout | `25000` (25s) | No |
 | `AGENT_TURN_TIMEOUT_MS` | Maximum wait for one turn (PTY execution) | `1800000` (30min) | No |
 | `AGENT_STATE_DIR` | Directory for sessions.json, MCP config, AVCS workspace | `~/.murmur-agent` | No |
+| `AGENT_VERSION` | Runner version string reported to the server (`packages/agent/src/version.ts`); normally injected by the build | `unknown` | No |
 
 ### Desktop
 
@@ -110,7 +126,8 @@ pnpm --filter @murmur/server dev
 
 `pnpm install` builds `@murmur/agent`'s `node-pty` (this repository's first native dependency). Prebuilt binaries exist for `linux-x64`, `linux-arm64`, and `darwin`, so most platforms don't need compilation. Other platforms require C++ build tools for `node-gyp` source builds. The `allowBuilds` in `pnpm-workspace.yaml` must include `node-pty` for postinstall to run — this repository already has it, so you won't encounter this issue unless removed.
 
-See [packages/agent/README.md](packages/agent/README.md#native-dependencies--node-pty) for details.
+See [packages/agent/README.md](packages/agent/README.md#네이티브-의존성--node-pty) for details
+(that document, like everything under `docs/`, is in Korean).
 
 ## Desktop App
 
