@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
@@ -334,9 +334,47 @@ describe('channel pref', () => {
   });
 });
 
+/**
+ * 섹션 이름 바꾸기(#323).
+ *
+ * 이름 규칙과 재부여는 **만드는 경로(#157)와 같은 함수**를 쓴다 — 여기서는 그 사실을
+ * 규칙을 다시 적어 확인하지 않고, 두 경로에 같은 입력을 넣어 **답이 같은지**로 확인한다.
+ * 규칙을 테스트 안에 복제하면 두 경로가 갈라진 날 테스트만 초록으로 남는다.
+ */
 describe('섹션 이름 바꾸기 (#323)', () => {
   let channelId2: string;
   let channelId3: string;
+
+  type Pref = { channelId: string; section: string | null; sortOrder: number | null };
+
+  const setPref = async (token: string, id: string, section: string | null, sortOrder: number | null) => {
+    const res = await app.inject({
+      method: 'PATCH', url: `/channels/${id}/pref`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { section, sortOrder },
+    });
+    expect(res.statusCode).toBe(200);
+    return res;
+  };
+
+  const rename = (oldName: string, newName: string | null, token = adminToken) => app.inject({
+    method: 'PATCH', url: `/channels/sections/${encodeURIComponent(oldName)}`,
+    headers: { authorization: `Bearer ${token}` },
+    payload: { name: newName },
+  });
+
+  const prefsOf = async (token: string): Promise<Pref[]> => {
+    const res = await app.inject({
+      method: 'GET', url: '/channels/prefs', headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    return res.json().prefs as Pref[];
+  };
+
+  /** 한 계정의 한 섹션을 `sortOrder` 순 채널 목록으로 뽑는다. 순서가 곧 요구다. */
+  const inSection = (prefs: Pref[], section: string | null): Pref[] =>
+    prefs.filter((p) => p.section === section)
+      .sort((a, b) => (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER));
 
   beforeAll(async () => {
     const c2 = await app.inject({
@@ -349,109 +387,157 @@ describe('섹션 이름 바꾸기 (#323)', () => {
       payload: { name: 'channel-3' },
     });
     channelId3 = c3.json().id as string;
+  });
 
-    await app.inject({
-      method: 'PATCH', url: `/channels/${channelId}/pref`,
-      headers: { authorization: `Bearer ${adminToken}` },
-      payload: { section: 'OldSection', sortOrder: 0 },
-    });
-    await app.inject({
-      method: 'PATCH', url: `/channels/${channelId2}/pref`,
-      headers: { authorization: `Bearer ${adminToken}` },
-      payload: { section: 'OldSection', sortOrder: 1 },
-    });
-    await app.inject({
-      method: 'PATCH', url: `/channels/${channelId3}/pref`,
-      headers: { authorization: `Bearer ${adminToken}` },
-      payload: { section: 'ExistingSection', sortOrder: 0 },
-    });
+  /**
+   * 테스트마다 세 채널을 **두 계정 모두** 놓고 시작한다. 앞 테스트가 남긴 상태에 기대면
+   * 순서를 바꾸는 것만으로 초록이 깨지고, 무엇보다 "남의 선호"가 비어 있는 채로 지나간다.
+   */
+  beforeEach(async () => {
+    for (const id of [channelId, channelId2, channelId3]) {
+      await setPref(adminToken, id, null, null);
+      await setPref(otherToken, id, null, null);
+    }
   });
 
   it('1. 이름을 바꾸면 그 섹션의 채널 전부가 따라간다', async () => {
-    const res = await app.inject({
-      method: 'PATCH', url: '/channels/sections/OldSection',
-      headers: { authorization: `Bearer ${adminToken}` },
-      payload: { name: 'NewSection' },
-    });
+    await setPref(adminToken, channelId, 'OldSection', 0);
+    await setPref(adminToken, channelId2, 'OldSection', 1);
+    await setPref(adminToken, channelId3, null, null);
+
+    const res = await rename('OldSection', 'NewSection');
     expect(res.statusCode).toBe(200);
-    const prefs = res.json().prefs as { channelId: string; section: string | null }[];
 
-    const oldSectionPrefs = prefs.filter((p) => p.section === 'OldSection');
-    expect(oldSectionPrefs).toHaveLength(0);
+    // 응답이 곧 새로고침된 목록이다 — 다시 GET 해서 확인할 필요가 없어야 한다.
+    const prefs = res.json().prefs as Pref[];
+    expect(inSection(prefs, 'OldSection')).toHaveLength(0);
+    // 한 채널만 옮기고 끝내면 여기가 1이 된다.
+    expect(inSection(prefs, 'NewSection').map((p) => p.channelId)).toEqual([channelId, channelId2]);
 
-    const newSectionPrefs = prefs.filter((p) => p.section === 'NewSection');
-    expect(newSectionPrefs).toHaveLength(2);
+    // 저장까지 갔는지 따로 본다. 응답만 만들고 커밋하지 않아도 위 단언은 통과한다.
+    expect(inSection(await prefsOf(adminToken), 'NewSection').map((p) => p.channelId))
+      .toEqual([channelId, channelId2]);
   });
 
-  it('2. 남의 선호는 안 바뀐다', async () => {
-    const prefsBefore = await app.inject({
-      method: 'GET', url: '/channels/prefs',
-      headers: { authorization: `Bearer ${otherToken}` },
-    });
-    const otherPrefs = prefsBefore.json().prefs as { section: string | null }[];
+  it('2. 남의 선호는 안 바뀐다 — 같은 이름을 쓰는 다른 계정이 있어도', async () => {
+    // 같은 이름의 섹션을 **남도 쓰고 있어야** `account_id` 필터가 시험된다.
+    // 남에게 그 섹션이 없으면 필터를 통째로 빼도 이 테스트는 초록이다.
+    await setPref(adminToken, channelId, 'Shared', 0);
+    await setPref(adminToken, channelId2, 'Shared', 1);
+    await setPref(otherToken, channelId, 'Shared', 7);
+    await setPref(otherToken, channelId3, 'Shared', 8);
 
-    await app.inject({
-      method: 'PATCH', url: '/channels/sections/ExistingSection',
+    const before = await prefsOf(otherToken);
+
+    const res = await rename('Shared', 'AdminOnly');
+    expect(res.statusCode).toBe(200);
+
+    // 요청자는 바뀐다.
+    expect(inSection(res.json().prefs as Pref[], 'AdminOnly').map((p) => p.channelId))
+      .toEqual([channelId, channelId2]);
+
+    // 남은 섹션 이름도 순서도 그대로다.
+    const after = await prefsOf(otherToken);
+    expect(inSection(after, 'Shared').map((p) => [p.channelId, p.sortOrder]))
+      .toEqual([[channelId, 7], [channelId3, 8]]);
+    expect(inSection(after, 'AdminOnly')).toHaveLength(0);
+    expect(after).toEqual(before);
+  });
+
+  it('3. 길이 규칙이 생성과 같다 — 41자는 400, 40자는 200', async () => {
+    await setPref(adminToken, channelId, 'Work', 0);
+
+    const long = 'A'.repeat(41);
+    const tooLong = await rename('Work', long);
+    expect(tooLong.statusCode).toBe(400);
+
+    // 만드는 경로도 같은 답을 낸다. 두 경로가 갈라지면 여기서 갈린다.
+    const createTooLong = await app.inject({
+      method: 'PATCH', url: `/channels/${channelId}/pref`,
       headers: { authorization: `Bearer ${adminToken}` },
-      payload: { name: 'MergedSection' },
+      payload: { section: long },
     });
+    expect(createTooLong.statusCode).toBe(tooLong.statusCode);
 
-    const prefsAfter = await app.inject({
-      method: 'GET', url: '/channels/prefs',
-      headers: { authorization: `Bearer ${otherToken}` },
-    });
-    const otherPrefsAfter = prefsAfter.json().prefs as { section: string | null }[];
-
-    expect(otherPrefs).toEqual(otherPrefsAfter);
+    const ok = await rename('Work', 'A'.repeat(40));
+    expect(ok.statusCode).toBe(200);
+    expect(inSection(ok.json().prefs as Pref[], 'A'.repeat(40))).toHaveLength(1);
   });
 
-  it('3. 길이·공백 규칙이 생성과 같다 — 41자 400', async () => {
-    const longName = 'A'.repeat(41);
+  it('3b. 공백 규칙이 생성과 같다 — 앞뒤 공백은 떼고, 공백뿐이면 null', async () => {
+    // 만드는 경로의 답을 먼저 받아 둔다. 규칙을 여기 다시 적지 않는 것이 요점이다.
+    const created = await setPref(adminToken, channelId2, '  Spaced  ', null);
+    const createdSection = (created.json() as Pref).section;
+
+    await setPref(adminToken, channelId, 'Work', 0);
+    const renamed = await rename('Work', '  Spaced  ');
+    expect(renamed.statusCode).toBe(200);
+    const mine = (renamed.json().prefs as Pref[]).find((p) => p.channelId === channelId)!;
+    expect(mine.section).toBe(createdSection);
+
+    // 공백뿐인 이름은 양쪽 다 null(섹션 없음)이다.
+    const blankCreated = await setPref(adminToken, channelId3, '   ', null);
+    expect((blankCreated.json() as Pref).section).toBeNull();
+    const blankRenamed = await rename(createdSection!, '   ');
+    expect(blankRenamed.statusCode).toBe(200);
+    expect(inSection(blankRenamed.json().prefs as Pref[], createdSection)).toHaveLength(0);
+  });
+
+  it('4. 이미 있는 이름으로 바꾸면 합쳐지고 sortOrder 가 0..n-1 로 재부여된다', async () => {
+    // 두 섹션의 sortOrder 가 겹치게 둔다 — 재부여를 빼면 그대로 중복이 남는다.
+    await setPref(adminToken, channelId, 'A', 0);
+    await setPref(adminToken, channelId2, 'A', 1);
+    await setPref(adminToken, channelId3, 'B', 0);
+    // 남도 같은 이름을 쓴다 — 합치기 경로의 `account_id` 필터까지 함께 지킨다.
+    await setPref(otherToken, channelId, 'A', 3);
+    await setPref(otherToken, channelId3, 'B', 4);
+
+    const res = await rename('A', 'B');
+    expect(res.statusCode).toBe(200);
+
+    const merged = inSection(res.json().prefs as Pref[], 'B');
+    // 받는 쪽(B)이 앞, 합쳐지는 쪽(A)이 뒤다.
+    expect(merged.map((p) => p.channelId)).toEqual([channelId3, channelId, channelId2]);
+    expect(merged.map((p) => p.sortOrder)).toEqual([0, 1, 2]);
+    expect(new Set(merged.map((p) => p.sortOrder)).size).toBe(3);
+    expect(inSection(res.json().prefs as Pref[], 'A')).toHaveLength(0);
+
+    // 남의 A·B 는 이름도 순서도 그대로다.
+    const other = await prefsOf(otherToken);
+    expect(inSection(other, 'A').map((p) => [p.channelId, p.sortOrder])).toEqual([[channelId, 3]]);
+    expect(inSection(other, 'B').map((p) => [p.channelId, p.sortOrder])).toEqual([[channelId3, 4]]);
+  });
+
+  it('빈 이름으로 바꾸면 그 섹션의 채널이 전부 null(섹션 없음)이 된다', async () => {
+    await setPref(adminToken, channelId, 'Doomed', 0);
+    await setPref(adminToken, channelId2, 'Doomed', 1);
+
+    const res = await rename('Doomed', '');
+    expect(res.statusCode).toBe(200);
+    const prefs = res.json().prefs as Pref[];
+    expect(inSection(prefs, 'Doomed')).toHaveLength(0);
+    expect(inSection(prefs, null).map((p) => p.channelId)).toContain(channelId);
+    expect(inSection(prefs, null).map((p) => p.channelId)).toContain(channelId2);
+  });
+
+  it('`name` 을 아예 안 보내면 400 이다 — 빈 본문이 조용히 섹션을 지우지 않는다', async () => {
+    await setPref(adminToken, channelId, 'Kept', 0);
     const res = await app.inject({
-      method: 'PATCH', url: '/channels/sections/OldSection',
+      method: 'PATCH', url: '/channels/sections/Kept',
       headers: { authorization: `Bearer ${adminToken}` },
-      payload: { name: longName },
+      payload: {},
     });
     expect(res.statusCode).toBe(400);
+    expect(inSection(await prefsOf(adminToken), 'Kept')).toHaveLength(1);
   });
 
-  it('4. 이미 있는 이름으로 바꾸면 합쳐지고 sort_order 가 0..n-1 중복 없이 재부여된다', async () => {
-    await app.inject({
-      method: 'PATCH', url: `/channels/${channelId3}/pref`,
-      headers: { authorization: `Bearer ${adminToken}` },
-      payload: { section: 'TargetSection' },
-    });
-
-    const res = await app.inject({
-      method: 'PATCH', url: '/channels/sections/NewSection',
-      headers: { authorization: `Bearer ${adminToken}` },
-      payload: { name: 'TargetSection' },
-    });
+  it('없는 섹션을 바꾸면 아무것도 바뀌지 않는다', async () => {
+    await setPref(adminToken, channelId, 'Real', 0);
+    const res = await rename('Ghost', 'Something');
     expect(res.statusCode).toBe(200);
-
-    const prefs = res.json().prefs as { channelId: string; section: string | null; sortOrder: number | null }[];
-    const targetPrefs = prefs.filter((p) => p.section === 'TargetSection').sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-
-    expect(targetPrefs).toHaveLength(3);
-    expect(targetPrefs[0]!.sortOrder).toBe(0);
-    expect(targetPrefs[1]!.sortOrder).toBe(1);
-    expect(targetPrefs[2]!.sortOrder).toBe(2);
-
-    const sortOrders = targetPrefs.map((p) => p.sortOrder);
-    const uniqueSortOrders = new Set(sortOrders);
-    expect(uniqueSortOrders.size).toBe(3);
-  });
-
-  it('빈 이름으로 바꾸면 null(섹션 없음)이 된다', async () => {
-    const res = await app.inject({
-      method: 'PATCH', url: '/channels/sections/TargetSection',
-      headers: { authorization: `Bearer ${adminToken}` },
-      payload: { name: '' },
-    });
-    expect(res.statusCode).toBe(200);
-    const prefs = res.json().prefs as { section: string | null }[];
-    const targetPrefs = prefs.filter((p) => p.section === null);
-    expect(targetPrefs.length).toBeGreaterThan(0);
+    const prefs = res.json().prefs as Pref[];
+    expect(inSection(prefs, 'Something')).toHaveLength(0);
+    expect(inSection(prefs, 'Real').map((p) => p.channelId)).toEqual([channelId]);
   });
 });
 });
