@@ -1692,3 +1692,125 @@ describe('MurmurAgentClient.listApprovedSkills(#140)', () => {
     }
   });
 });
+
+/**
+ * #141 Phase 2 — 턴을 attach 가능한 세션으로 감싼다. 여기서 지키는 것은 두 가지다:
+ *
+ * 1. **attach 는 그 턴의 권한을 바꾸지 않는다**(스펙 §6, 요구 7). 지금은 읽기만 하므로
+ *    자연히 성립하지만, 그것이 *우연히* 성립하는 상태를 회귀선으로 고정한다 — 나중에
+ *    입력을 열 때(별도 후속) 이 선이 빨개지는 것이 그 작업의 시작점이어야 한다.
+ * 2. 릴레이가 있어도 없어도 턴은 같은 plan 으로 돈다 — 관찰이 답의 모양을 바꾸면 안 된다.
+ */
+describe('#141 릴레이 세션 (Phase 2 attach)', () => {
+  /** 릴레이 스텁. 열린 세션과 받은 바이트를 기록만 한다. */
+  function fakeRelay() {
+    const opened: { agentAccountId: string; channelId: string; threadRootId: string | null; harness: string }[] = [];
+    const bytes: Buffer[] = [];
+    let closed = 0;
+    return {
+      opened, bytes, closedCount: () => closed,
+      relay: {
+        openSession(input: { agentAccountId: string; channelId: string; threadRootId: string | null; harness: 'claude-code' | 'codex' | 'gemini' }) {
+          opened.push(input);
+          return {
+            sessionId: `sess-${opened.length}`,
+            push: (chunk: Buffer) => { bytes.push(chunk); },
+            close: () => { closed += 1; },
+          };
+        },
+      },
+    };
+  }
+
+  it('턴을 세션으로 감싸고 PTY 바이트를 흘린다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const r = fakeRelay();
+    const { deps, runTurn } = await makeDeps(fake, { relay: r.relay });
+    const raw = Buffer.from([0x1b, 0x5b, 0x33, 0x31, 0x6d, 0xed, 0x95]);
+    runTurn.script = async (_plan, opts) => {
+      // 하네스가 바이트를 뱉는 것을 흉내낸다 — 프로덕션에서는 pty.ts 의 onData 가 부른다.
+      opts.onData?.(raw);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    // 세션 스코프는 이 턴의 **앵커**와 같다 — (에이전트, 스레드)당 세션 하나(스펙 §5)를
+    // 만드는 것이 그 등식이다. 여기서 `null` 인 이유는 이 파일의 다른 테스트와 같다:
+    // 앵커 변환(`mentionAnchor`)은 `main.ts` 가 하고 `runMentionTurn` 은 받은 값을
+    // 그대로 쓴다. 그 등식 자체는 아래 스레드 안 멘션 케이스가 확인한다.
+    expect(r.opened).toEqual([{
+      agentAccountId: ME.id, channelId: CHANNEL, threadRootId: null, harness: 'claude-code',
+    }]);
+    // 바이트가 **변형 없이** 그대로 온다 — 문자열로 뜨면 잘린 UTF-8 이 U+FFFD 가 된다.
+    expect(r.bytes).toHaveLength(1);
+    expect(r.bytes[0]!.equals(raw)).toBe(true);
+    // 턴이 끝나면 세션도 닫힌다 — 안 닫으면 서버 목록에 끝난 턴이 영구히 남는다.
+    expect(r.closedCount()).toBe(1);
+  });
+
+  it('스레드 안 멘션이면 세션 스코프가 그 스레드 루트다', async () => {
+    // 위 테스트가 `null` 로 통과하는 것만으로는 "앵커를 그대로 쓴다"를 확인하지 못한다 —
+    // 하드코딩된 null 도 초록이다. 앵커가 실제 값일 때 그 값이 세션에 실리는지를 본다.
+    const root = 'thread-root';
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '루트', root);
+    fake.seedFrom('human-1', '@forge 안녕', root);
+    const r = fakeRelay();
+    const { deps } = await makeDeps(fake, { relay: r.relay });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: root, mentionId: MENTION });
+
+    expect(r.opened.map((o) => o.threadRootId)).toEqual([root]);
+  });
+
+  it('턴이 실패해도 세션은 닫힌다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const r = fakeRelay();
+    const { deps, runTurn } = await makeDeps(fake, { relay: r.relay });
+    runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'boom' });
+
+    await expect(
+      runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
+    ).rejects.toThrow(/harness 종료 1/);
+
+    expect(r.closedCount()).toBe(1);
+  });
+
+  it('#141-7 릴레이가 붙어도 plan 이 그대로다 — 모드도 권한 프리셋도 바뀌지 않는다', async () => {
+    // 같은 정의(mentionPermission: 'readonly')로 릴레이 없이 한 번, 릴레이를 붙여 한 번
+    // 돌려 **조립된 plan 을 직접 비교**한다. "attach 해도 모드가 그대로다"를 화면이나
+    // 로그로 갈음하면, 프리셋이 바뀌어도 초록인 테스트가 된다.
+    const runOnce = async (relay?: ReturnType<typeof fakeRelay>['relay']) => {
+      const fake = new FakeMurmur(defOf({ mentionPermission: 'readonly' }));
+      fake.seedFrom('human-1', '@forge 안녕');
+      const { deps, plans } = await makeDeps(fake, relay ? { relay } : {});
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+      return plans[0]!;
+    };
+
+    const without = await runOnce();
+    const r = fakeRelay();
+    const withRelay = await runOnce(r.relay);
+
+    // 명령·인자가 한 글자도 다르지 않아야 한다 — 권한 프리셋은 전부 인자로 표현된다
+    // (turn.ts::PRESETS: `--permission-mode` 등).
+    //
+    // 두 값만 정규화한다: 세션 UUID 와 임시 디렉터리 경로는 턴마다 새로 생기므로 비교가
+    // 무조건 실패한다. **플래그 이름과 순서는 그대로 비교한다** — 정규화를 넓히면
+    // `--permission-mode` 의 값까지 지워져 이 테스트가 아무것도 지키지 않게 된다.
+    const normalize = (args: string[]) => args.map((a) =>
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(a) ? '<uuid>'
+        : a.includes('mention-turn-state-') ? '<stateDir>/system-prompt.txt' : a);
+
+    expect(withRelay.command).toBe(without.command);
+    expect(normalize(withRelay.args)).toEqual(normalize(without.args));
+    // 정규화가 프리셋 플래그를 삼키지 않았음을 직접 확인한다 — 'readonly' 프리셋의 증거다.
+    expect(normalize(withRelay.args)).toContain('--permission-mode');
+    expect(normalize(withRelay.args)[normalize(withRelay.args).indexOf('--permission-mode') + 1]).toBe('plan');
+    // 세션은 실제로 열렸다 — 열리지도 않았는데 "그대로다"로 초록이 되면 안 된다.
+    expect(r.opened).toHaveLength(1);
+  });
+});
