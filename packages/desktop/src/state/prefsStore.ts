@@ -1,11 +1,18 @@
 import { create } from 'zustand';
 import { DEFAULT_PREFS, prefsStorage, type ColorMode, type NotificationPrefs, type Prefs } from '../lib/prefs';
+import { validateRunnerCommand } from '../lib/runnerLauncher';
 
 export interface PrefsState extends Prefs {
   setNotifications(patch: Partial<NotificationPrefs>): void;
   setColorMode(mode: ColorMode): void;
   setRunnerAutoStart(enabled: boolean): void;
   setRunnerRepoPath(path: string): void;
+  /**
+   * `pnpm` 절대 경로를 저장한다(#305). **검증을 통과한 값만 저장하고**, 통과하지 못하면
+   * 사유를 돌려주고 저장하지 않는다 — 저장해 두고 기동 때 거절하면 사람은 설정 화면에서
+   * 아무 문제도 못 보고 러너만 안 뜬다.
+   */
+  setRunnerCommand(command: string): string | null;
 }
 
 // useAppStore 와 반드시 별개다 — appStore.reset() 은 로그아웃 때 도메인 데이터를 비우는데,
@@ -41,5 +48,11 @@ export const usePrefsStore = create<PrefsState>((set, get) => {
     setColorMode: (mode) => update({ colorMode: mode }),
     setRunnerAutoStart: (enabled) => update({ runnerAutoStart: enabled }),
     setRunnerRepoPath: (path) => update({ runnerRepoPath: path }),
+    setRunnerCommand: (command) => {
+      const error = validateRunnerCommand(command);
+      if (error) return error;
+      update({ runnerCommand: command.trim() });
+      return null;
+    },
   };
 });
