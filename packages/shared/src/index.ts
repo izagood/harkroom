@@ -320,9 +320,13 @@ export interface DmView {
  * 생겼으니 "덜 받겠다"는 사람에게는 `mentions` 라는 자리가 따로 있다. 이 주석이 없으면
  * "멘션은 예외였나?"가 세 번째로 논의된다.
  */
-export type NotifyLevel = 'all' | 'mentions' | 'none';
+export const NOTIFY_LEVELS = ['all', 'mentions', 'none'] as const;
 
-export const NOTIFY_LEVELS: readonly NotifyLevel[] = ['all', 'mentions', 'none'];
+/**
+ * 목록에서 파생한다 — 값의 집합이 **한 곳에만** 산다. 따로 적어 두면 네 번째 수준을
+ * 들일 때 목록만 고치고 타입을 잊는(또는 그 반대) 사고가 난다.
+ */
+export type NotifyLevel = (typeof NOTIFY_LEVELS)[number];
 
 export interface ChannelPrefRow {
   accountId: string;
@@ -337,14 +341,20 @@ export interface ChannelPrefRow {
 }
 
 /**
- * pref 행에서 알림 수준을 읽는다. **행이 없으면 `all`** — 아무것도 정하지 않은 채널은 지금
- * 동작 그대로여야 한다(024 마이그레이션의 default 와 같은 값이다).
+ * pref 행에서 알림 수준을 읽는다. **행이 없으면 `mentions`** — 아무것도 정하지 않은 채널은
+ * 지금 동작 그대로여야 하고, 지금 동작은 "나를 부른 것만 알린다"이다. 024 마이그레이션의
+ * default 와 **반드시 같은 값이어야 한다**: 여기와 저기가 갈라지면 pref 행이 있는 채널과
+ * 없는 채널이 다르게 울린다.
+ *
+ * `all` 을 기본값으로 두지 않는 이유: `all` 은 일반 메시지 알림이라는 **새 경로를 여는**
+ * 값이다(#224 가 그 경로를 함께 들여왔다). 기본값으로 두면 아무도 고르지 않은 변화가
+ * 업데이트하는 순간 모든 채널에 적용돼 모든 메시지가 OS 알림이 된다.
  *
  * `mutedAt` 은 **보지 않는다.** 알림·배지·훑기가 전부 이 한 함수를 지나가게 해서, 같은
  * 질문에 두 곳이 다르게 답하는 일을 막는다(#224).
  */
 export function notifyLevelOf(pref: { notifyLevel?: NotifyLevel } | undefined | null): NotifyLevel {
-  return pref?.notifyLevel ?? 'all';
+  return pref?.notifyLevel ?? 'mentions';
 }
 
 /**

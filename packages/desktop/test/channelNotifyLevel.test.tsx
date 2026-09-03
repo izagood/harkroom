@@ -194,6 +194,33 @@ describe('채널 알림 수준 — 알림', () => {
     expect(n.sent).toHaveLength(1);
   });
 
+  // 요구 8. pref 행이 아예 없는 채널 — 아무도 아무것도 고르지 않은 상태다. 여기가 'all' 이면
+  // 업데이트하는 순간 모든 채널의 모든 메시지가 OS 알림이 된다. 기본값은 024 이전 동작과
+  // 같아야 한다: 나를 부른 것만 알린다.
+  it('pref 를 정한 적 없는 채널은 일반 메시지를 알리지 않는다', async () => {
+    setFocus(false);
+    const n = fakeNotifier();
+    const { callbacks } = await started(n, [], []);
+
+    callbacks.current!.onEvent({ type: 'message.created', message: msg('m9', 'c1', 9, '잡담', 'u2'), audience: 'all' });
+    await drained();
+
+    expect(n.sent).toHaveLength(0);
+  });
+
+  // 같은 기본값의 나머지 절반 — 조용해지는 것이지 꺼지는 것이 아니다. 나를 부르면 알린다.
+  it('pref 를 정한 적 없는 채널도 멘션은 알린다', async () => {
+    setFocus(false);
+    const n = fakeNotifier();
+    const { callbacks } = await started(n, [entry(1, 'm1', 'c1')], []);
+    useAppStore.getState().upsertMessages('c1', [msg('m1', 'c1', 1, '불렀다', 'u2')]);
+
+    callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' });
+    await vi.waitFor(() => expect(n.sent).toHaveLength(1));
+
+    expect(n.sent[0]!.body).toBe('불렀다');
+  });
+
   // 내가 쓴 글에 내가 알림을 받으면 알림이 소음이 된다.
   it('내가 쓴 메시지는 알리지 않는다', async () => {
     setFocus(false);
