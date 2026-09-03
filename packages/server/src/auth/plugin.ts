@@ -12,6 +12,7 @@ declare module 'fastify' {
   interface FastifyInstance {
     requireAccount: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireAdmin: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
+    requireOwnerOrAdmin: (paramName: string) => (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
 }
 
@@ -47,6 +48,39 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
   app.decorate('requireAdmin', async (req: FastifyRequest, reply: FastifyReply) => {
     if (!req.account?.isAdmin) {
       await reply.code(403).send({ error: { code: 'forbidden', message: 'admin required' } });
+    }
+  });
+
+  app.decorate('requireOwnerOrAdmin', (paramName: string) => async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!req.account) {
+      await reply.code(401).send({ error: { code: 'unauthorized', message: 'authentication required' } });
+      return;
+    }
+    if (req.account.isAdmin) return;
+
+    const paramValue = (req.params as Record<string, string>)[paramName];
+    if (!paramValue) {
+      await reply.code(400).send({ error: { code: 'bad_request', message: `param '${paramName}' not found` } });
+      return;
+    }
+
+    const res = await pool.query<{ owner_account_id: string | null }>(
+      `select c.owner_account_id from account a left join agent_config c on c.account_id = a.id where a.id = $1`,
+      [paramValue],
+    );
+    if (!res.rowCount) {
+      await reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+      return;
+    }
+
+    const ownerAccountId = res.rows[0]!.owner_account_id;
+    if (ownerAccountId === null) {
+      await reply.code(403).send({ error: { code: 'forbidden', message: 'owner required — this agent has no owner' } });
+      return;
+    }
+
+    if (ownerAccountId !== req.account.id) {
+      await reply.code(403).send({ error: { code: 'forbidden', message: 'owner or admin required' } });
     }
   });
 }
