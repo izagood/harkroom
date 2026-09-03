@@ -741,7 +741,16 @@ const row = (active: boolean) =>
       <nav className="flex-1 space-y-4 overflow-y-auto p-2">
         <div>
           <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">Channels</div>
-          {sortedChannels.map(channelRow)}
+          {groupedChannels.map((group, groupIdx) => (
+            <div key={group.section ?? 'other'}>
+              {group.section !== null && (
+                <div className="px-2 py-1 text-xs font-medium text-zinc-400">
+                  {group.section}
+                </div>
+              )}
+              {group.channels.map((item) => channelRow(item.channel))}
+            </div>
+          ))}
           {me?.isAdmin && (
             createChannelOpen ? (
               <div className="mt-1 rounded border border-zinc-700 bg-zinc-800 p-1">
