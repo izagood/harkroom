@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PinRow } from '@murmur/shared';
+import type { AccountStatus, AccountView, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus } from '@murmur/shared';
 
 export interface HistoryEntry {
   channelId: string;
@@ -32,6 +32,8 @@ export interface AppState {
   online: string[];
   leases: LeaseRow[];
   connected: boolean;
+  /** avcs 투영 상태(#267). 60초마다 갱신한다. */
+  projectionStatus: ProjectionStatus | null;
   /** 계정별 채널 음소거·즐겨찾기. channelId → preference */
   channelPrefs: Record<string, ChannelPrefRow>;
   /**
@@ -112,7 +114,7 @@ export interface AppState {
 const initial = {
   me: null, accounts: {}, channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
-  online: [], leases: [], connected: false, channelPrefs: {}, pins: {}, channelMembers: {}, drafts: {},
+  online: [], leases: [], connected: false, projectionStatus: null, channelPrefs: {}, pins: {}, channelMembers: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
   expandedMessageIds: {},
 };

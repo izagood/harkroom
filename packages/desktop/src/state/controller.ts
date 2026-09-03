@@ -36,6 +36,7 @@ export class Controller {
 
   // fire-and-forget 호출의 unhandled rejection 방지 — 실패는 조용히 무시(다음 이벤트/리컨실이 자연 복구).
   private swallow(p: Promise<unknown>): void { void p.catch(() => {}); }
+  private projectionRefreshInterval: ReturnType<typeof setInterval> | null = null;
 
   async start(): Promise<void> {
     const store = useAppStore.getState();
@@ -57,6 +58,11 @@ export class Controller {
     this.swallow(this.api.channelPrefs().then((prefs) => {
       useAppStore.getState().set({ channelPrefs: Object.fromEntries(prefs.map((p) => [p.channelId, p])) });
     }));
+    // 투영 상태도 60초마다 갱신한다 — 앱 기동 시 한 번과 정기적으로.
+    this.swallow(this.refreshProjectionStatus());
+    this.projectionRefreshInterval = setInterval(() => {
+      this.swallow(this.refreshProjectionStatus());
+    }, 60_000);
     // 앱을 열자마자 쌓여 있던 미읽음이 한꺼번에 터지면 알림이 소음이 된다.
     for (const e of unread) this.announced.add(e.id);
     // 장기 토큰은 ApiClient 가 헤더로만 쓴다 — WS URL 에는 단기 티켓만 실린다.
@@ -67,7 +73,15 @@ export class Controller {
     });
   }
 
-  stop(): void { this.ws?.close(); this.ws = null; }
+  stop(): void { this.ws?.close(); this.ws = null; if (this.projectionRefreshInterval) { clearInterval(this.projectionRefreshInterval); this.projectionRefreshInterval = null; } }
+
+  /** 투영 상태를 갱신한다(#267). 60초마다 호출되며, 실패는 조용히 무시한다. */
+  private async refreshProjectionStatus(): Promise<void> {
+    try {
+      const status = await this.api.projectionStatus();
+      useAppStore.getState().set({ projectionStatus: status });
+    } catch { /* 실패는 조용히 무시 — 다음 주기에 다시 시도한다 */ }
+  }
 
   /** 문구는 UI 문자열이라 영어다(저장소 관례). 사유별로 다른 이유: 사용자가 할 일이 다르다. */
   private static readonly LOST_MESSAGE: Record<Exclude<WsDownReason, 'network'>, string> = {

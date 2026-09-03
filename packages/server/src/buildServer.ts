@@ -49,7 +49,10 @@ const LIMITED_ROUTES: { method: string; url: string; rule: keyof typeof DEFAULT_
 
 export interface ServerDeps {
   pool: Pool;
+  /** avcs 연결 상태 — /healthz 에서 쓴다. */
   getAvcsStatus?: () => { connected: boolean };
+  /** 투영 상태 — /projection/status 에서 쓴다. */
+  getProjectionStatus?: () => { configured: boolean; repo: string | null; lastLogIndex: number; lastPolledAt: number | null; lastAdvancedAt: number | null; lastError: string | null };
   /** 종료 시 in-flight long-poll을 정상 마감시키는 창구. main이 SIGTERM에서 beginDrain을 부른다. */
   lifecycle?: Lifecycle;
   /** null·미지정이면 모든 origin 을 반영한다. 목록이면 CORS 와 WS 핸드셰이크에 함께 적용된다. */
@@ -129,6 +132,46 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get('/readyz', async (_req, reply) => {
     await deps.pool.query('select 1');
     return { ok: true };
+  });
+
+  /**
+   * avcs 투영 상태. "커서가 안 움직이는 것"은 문제가 아니다 — 조용한 저장소도 안 움직인다.
+   * 신호는 "폴링이 돌고 있는가"다 — lastPolledAt 이 5분 이내면 폴링 중, 그 외는 정지.
+   * "없다"와 "못 읽었다"를 한 화면에 두지 않는다(design.md §4).
+   *
+   * state:
+   * - unconfigured: avcsBaseUrl 이 null 인 경우
+   * - stalled: configured 이지만 lastPolledAt 이 null 이거나 5분보다 오래됐거나 lastError 가 있는 경우
+   * - ok: 그 외 (폴링 중이고 에러 없음)
+   */
+  app.get('/projection/status', { preHandler: app.requireAccount }, async (_req, reply) => {
+    const status = deps.getProjectionStatus?.();
+    const configured = status?.configured ?? false;
+    const now = Date.now();
+    const fiveMinutes = 5 * 60 * 1000;
+
+    let state: 'unconfigured' | 'stalled' | 'ok';
+    if (!configured) {
+      state = 'unconfigured';
+    } else if (
+      !status?.lastPolledAt ||
+      (now - status.lastPolledAt > fiveMinutes) ||
+      status.lastError
+    ) {
+      state = 'stalled';
+    } else {
+      state = 'ok';
+    }
+
+    return {
+      state,
+      configured,
+      repo: status?.repo ?? null,
+      lastLogIndex: status?.lastLogIndex ?? 0,
+      lastPolledAt: status?.lastPolledAt ?? null,
+      lastAdvancedAt: status?.lastAdvancedAt ?? null,
+      lastError: status?.lastError ?? null,
+    };
   });
 
   const metrics = createMetrics();

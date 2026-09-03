@@ -22,13 +22,25 @@ if (config.avcsBaseUrl) {
     systemAccountId: await ensureSystemAccount(pool),
   });
   worker.start();
+} else {
+  // avcsBaseUrl 이 null 이면 투영이 비활성이다. AVCS_BASE_URL 환경변수로 켤 수 있다.
+  console.warn('avcs projection is disabled — set AVCS_BASE_URL to enable');
 }
 
 const lifecycle = new Lifecycle();
 const app = await buildServer({
   pool,
   lifecycle,
-  getAvcsStatus: () => worker?.status() ?? { connected: false },
+  getAvcsStatus: () => ({ connected: (worker?.status() ?? { connected: false }).connected }),
+  getProjectionStatus: () => worker?.status() ?? {
+    configured: false,
+    connected: false,
+    repo: null,
+    lastLogIndex: 0,
+    lastPolledAt: null,
+    lastAdvancedAt: null,
+    lastError: null,
+  },
   corsOrigins: config.corsOrigins,
   logLevel: config.logLevel,
   trustProxy: config.trustProxy,

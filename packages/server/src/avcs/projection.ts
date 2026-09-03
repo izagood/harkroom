@@ -3,6 +3,16 @@ import { emitEvent } from '../events.js';
 import { listBoundRepos } from '../services/channels.js';
 import type { AvcsLogEntry, AvcsServerClient } from './client.js';
 
+export interface ProjectionStatus {
+  configured: boolean;
+  connected: boolean;
+  repo: string | null;
+  lastLogIndex: number;
+  lastPolledAt: number | null;
+  lastAdvancedAt: number | null;
+  lastError: string | null;
+}
+
 export interface ProjectionDeps {
   pool: Pool;
   avcs: AvcsServerClient;
@@ -33,11 +43,24 @@ export class ProjectionWorker {
   private running = false;
   private connected = false;
   private loop: Promise<void> | null = null;
+  private statusInternal: ProjectionStatus = {
+    configured: true,
+    connected: false,
+    repo: null,
+    lastLogIndex: 0,
+    lastPolledAt: null,
+    lastAdvancedAt: null,
+    lastError: null,
+  };
 
   constructor(private deps: ProjectionDeps) {}
 
-  status(): { connected: boolean } {
-    return { connected: this.connected };
+  status(): ProjectionStatus {
+    return { ...this.statusInternal };
+  }
+
+  configured(): boolean {
+    return this.statusInternal.configured;
   }
 
   async runOnce(repo: string, channelId: string): Promise<number> {
@@ -164,6 +187,11 @@ export class ProjectionWorker {
       );
       await client.query('commit');
 
+      // 커서가 전진했으므로 lastAdvancedAt 과 lastLogIndex 를 갱신한다.
+      this.statusInternal.lastAdvancedAt = Date.now();
+      this.statusInternal.lastLogIndex = next;
+      this.statusInternal.repo = repo;
+
       for (const { message } of emitted) emitEvent({ type: 'message.created', message, audience: 'all' });
       if (leaseChanged) emitEvent({ type: 'lease.changed', repo });
       return entries.length;
@@ -182,12 +210,17 @@ export class ProjectionWorker {
       let backoffMs = 1_000;
       while (this.running) {
         let hadFailure = false;
+        let lastRepoError: string | null = null;
         try {
           const bound = await listBoundRepos(this.deps.pool);
           // repo 단위 try/catch — 한 repo가 연속 실패해도 같은 사이클의 나머지 repo 처리를
           // 막지 않는다(감사 ⑥). 백오프는 단순화를 위해 사이클 전체에 한 번만 적용한다.
           for (const { repo, channelId } of bound) {
             try {
+              // 매 폴링마다 lastPolledAt 을 갱신한다 — 이것이 폴링이 돌고 있는가를 나타내는 신호다.
+              this.statusInternal.lastPolledAt = Date.now();
+              this.statusInternal.lastError = null;
+
               const cur = await this.deps.pool.query(
                 `select last_log_index from projection_cursor where repo = $1`, [repo],
               );
@@ -195,16 +228,25 @@ export class ProjectionWorker {
               const changed = await this.deps.avcs.waitForChange(repo, since, pollMs);
               this.connected = true;
               if (changed) await this.runOnce(repo, channelId);
-            } catch {
+            } catch (err) {
               this.connected = false;
               hadFailure = true;
+              // 에러 메시지를 200자로 자른다.
+              lastRepoError = err instanceof Error ? err.message.slice(0, 200) : 'unknown error';
             }
           }
           if (!bound.length) await new Promise((r) => setTimeout(r, pollMs));
-        } catch {
+        } catch (err) {
           // listBoundRepos 자체 실패(예: DB 다운) — 사이클 전체 실패로 취급.
           this.connected = false;
           hadFailure = true;
+          lastRepoError = err instanceof Error ? err.message.slice(0, 200) : 'unknown error';
+        }
+        // 폴링 사이클이 끝날 때 lastError 를 갱신한다 — 성공 시 null, 실패 시 에러 메시지.
+        // 커서가 안 움직이는 것 자체는 문제가 아니라 "조용한 저장소"일 수 있으므로,
+        // 에러가 있는지만 확인한다. 폴링이 돌고 있는지는 lastPolledAt 으로 판단한다.
+        if (lastRepoError) {
+          this.statusInternal.lastError = lastRepoError;
         }
         if (hadFailure) {
           await new Promise((r) => setTimeout(r, backoffMs));
