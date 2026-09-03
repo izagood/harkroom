@@ -163,6 +163,18 @@ export class ApiClient {
   async inboxUnread(): Promise<InboxEntry[]> {
     return (await this.req<{ entries: InboxEntry[] }>('GET', '/inbox?unread=1')).entries;
   }
+  /**
+   * inbox 전체 — 읽은 것까지(#185). `inboxUnread` 와 갈라 두는 이유는 **쓰는 곳이 다른 것을
+   * 물어보기 때문**이다: 배지·알림은 "아직 안 본 것"만 알면 되고(그래서 `?unread=1`),
+   * 목록 화면은 읽은 것도 있어야 "안 읽음만" 필터가 고를 것이 생긴다. 안 읽은 것만 받아
+   * 놓고 안 읽음 필터를 붙이면 그 스위치는 항상 참이라 아무것도 거르지 않는다.
+   *
+   * 서버 파라미터를 새로 만들지 않았다 — `GET /inbox` 는 `unread` 가 없으면 이미 전체를
+   * 준다(`listInbox` 의 `unreadOnly` 기본값이 false).
+   */
+  async inbox(): Promise<InboxEntry[]> {
+    return (await this.req<{ entries: InboxEntry[] }>('GET', '/inbox')).entries;
+  }
   editMessage(channelId: string, messageId: string, body: string): Promise<MessageRow> {
     return this.req('PATCH', `/channels/${channelId}/messages/${messageId}`, { body });
   }
@@ -253,6 +265,27 @@ export class ApiClient {
     });
     if (!res.ok) throw new ApiError(res.status, 'attachment_failed', `HTTP ${res.status}`);
     return res.blob();
+  }
+
+  /**
+   * 아바타 바이트를 받는다(#159). `fetchAttachment` 과 같은 이유로 토큰을 URL 에 넣지 않고,
+   * 받은 blob 으로 objectURL 을 만들어 그린다. 첨부와 **다른 라우트**인 이유: 첨부 다운로드는
+   * 메시지에 붙지 않은 업로드를 올린 사람에게만 내주고, 아바타는 영원히 메시지에 붙지 않는다.
+   */
+  async fetchAvatar(accountId: string): Promise<Blob> {
+    const res = await fetch(`${this.baseUrl}/accounts/${accountId}/avatar`, {
+      headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) throw new ApiError(res.status, 'avatar_failed', `HTTP ${res.status}`);
+    return res.blob();
+  }
+
+  /**
+   * 내 아바타를 정하거나(첨부 id) 지운다(**명시적 null**). 키를 생략하지 않는다 —
+   * `undefined` 는 `JSON.stringify` 가 버려서 지우기가 조용히 무시된다.
+   */
+  setAvatar(attachmentId: string | null): Promise<{ avatarAttachmentId: string | null }> {
+    return this.req('PUT', '/accounts/me/avatar', { attachmentId });
   }
 
   markRead(ids: number[]): Promise<void> { return this.req('POST', '/inbox/read', { ids }); }

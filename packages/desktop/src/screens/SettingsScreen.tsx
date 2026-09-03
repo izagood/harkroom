@@ -3,6 +3,7 @@ import { AgentsSettings } from '../components/settings/AgentsSettings';
 import { ConnectionSettings } from '../components/settings/ConnectionSettings';
 import { InviteSettings } from '../components/settings/InviteSettings';
 import { NotificationSettings } from '../components/settings/NotificationSettings';
+import { MessageSettings } from '../components/settings/MessageSettings';
 import { ProfileSettings } from '../components/settings/ProfileSettings';
 import { UpdatesSettings } from '../components/settings/UpdatesSettings';
 import { SETTINGS_GROUPS, type SectionId } from '../components/settings/sections';
@@ -53,6 +54,7 @@ export function SettingsScreen({ initialSection = 'profile', onBack, onSignOut }
       <main className="min-w-0 flex-1 overflow-y-auto">
         {section === 'profile' && <ProfileSettings onSignOut={onSignOut} />}
         {section === 'notifications' && <NotificationSettings />}
+        {section === 'messages' && <MessageSettings />}
         {section === 'connection' && <ConnectionSettings onSignOut={onSignOut} />}
         {/* AgentsSettings 는 자체 2단 레이아웃이라 SettingsPage 여백을 쓰지 않는다. */}
         {section === 'agents' && <AgentsSettings />}
