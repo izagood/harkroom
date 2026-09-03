@@ -30,13 +30,13 @@ beforeAll(async () => {
   app = await buildServer({ pool: db.pool });
   await app.inject({
     method: 'POST', url: '/bootstrap',
-    payload: { handle: HANDLE, displayName: 'Locked Admin', password: OLD },
+    payload: { handle: HANDLE, loginId: HANDLE, displayName: 'Locked Admin', password: OLD },
   });
 });
 afterAll(async () => { await app.close(); await stop(); });
 
 const login = (password: string) =>
-  app.inject({ method: 'POST', url: '/auth/login', payload: { handle: HANDLE, password } });
+  app.inject({ method: 'POST', url: '/auth/login', payload: { loginId: HANDLE, password } });
 
 /** 리포지토리 안의 tsx 를 직접 쓴다 — npx 로 받아오면 네트워크에 의존한다. */
 const tsx = join(process.cwd(), 'node_modules', '.bin', 'tsx');

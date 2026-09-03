@@ -28,11 +28,11 @@ beforeAll(async () => {
   const inv = await app.inject({ method: 'POST', url: '/invites', headers: auth(adminToken) });
   const user = await app.inject({
     method: 'POST', url: '/auth/register',
-    payload: { handle: 'chuser', displayName: 'Ch User', password: 'pw123456', inviteToken: inv.json().token as string },
+    payload: { handle: 'chuser', loginId: 'chuser', displayName: 'Ch User', password: 'pw123456', inviteToken: inv.json().token as string },
   });
   userId = user.json().id as string;
   const userLogin = await app.inject({
-    method: 'POST', url: '/auth/login', payload: { handle: 'chuser', password: 'pw123456' },
+    method: 'POST', url: '/auth/login', payload: { loginId: 'chuser', password: 'pw123456' },
   });
   userToken = userLogin.json().token as string;
 

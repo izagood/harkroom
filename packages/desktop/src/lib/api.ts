@@ -40,11 +40,11 @@ export class ApiClient {
     return json as T;
   }
 
-  login(handle: string, password: string): Promise<{ token: string }> {
-    return this.req('POST', '/auth/login', { handle, password });
+  login(loginId: string, password: string): Promise<{ token: string }> {
+    return this.req('POST', '/auth/login', { loginId, password });
   }
-  bootstrap(handle: string, displayName: string, password: string): Promise<{ id: string }> {
-    return this.req('POST', '/bootstrap', { handle, displayName, password });
+  bootstrap(loginId: string, handle: string, displayName: string, password: string): Promise<{ id: string }> {
+    return this.req('POST', '/bootstrap', { loginId, handle, displayName, password });
   }
   /**
    * 초대 토큰으로 가입한다(#120). `bootstrap` 과 다른 점: 부트스트랩은 "첫 사람"이고 사람
@@ -53,10 +53,16 @@ export class ApiClient {
    * 세션을 돌려주지 않는다 — 서버가 `{ id }` 만 준다(`POST /auth/register`). 그래서 호출자가
    * 곧바로 `login` 을 이어 불러야 한다(부트스트랩도 같은 모양이다).
    */
-  register(handle: string, displayName: string, password: string, inviteToken: string): Promise<{ id: string }> {
-    return this.req('POST', '/auth/register', { handle, displayName, password, inviteToken });
+  register(loginId: string, handle: string, displayName: string, password: string, inviteToken: string): Promise<{ id: string }> {
+    return this.req('POST', '/auth/register', { loginId, handle, displayName, password, inviteToken });
   }
   me(): Promise<AccountView> { return this.req('GET', '/auth/me'); }
+  /**
+   * 내 handle 을 바꾼다(#271).
+   */
+  updateMyHandle(handle: string): Promise<{ handle: string }> {
+    return this.req('PATCH', '/accounts/me/handle', { handle });
+  }
   /**
    * 내 상태를 정한다(#186). `statusText` 는 **키 부재와 null 을 구분한다** — 부재는
    * '문구는 손대지 않음', null 은 '지우기'다. 그래서 `undefined` 를 넣어 지우기를
@@ -351,7 +357,10 @@ export class ApiClient {
   }
 
   /** `muted` 는 없다 — `notifyLevel` 이 대체했다(#224). */
-  updateChannelPref(channelId: string, patch: { notifyLevel?: NotifyLevel; starred?: boolean }): Promise<ChannelPrefRow> {
+  updateChannelPref(
+    channelId: string,
+    patch: { notifyLevel?: NotifyLevel; starred?: boolean; section?: string | null; sortOrder?: number | null },
+  ): Promise<ChannelPrefRow> {
     return this.req('PATCH', `/channels/${channelId}/pref`, patch);
   }
 

@@ -73,12 +73,12 @@ describe('멘션 클릭 (#279)', () => {
     expect(onOpenDirectory).not.toHaveBeenCalled();
   });
 
-  /**
-   * spec 은 "소유자도 admin 과 같게 설정으로" 였다. 그 결정은 **틀린 사실에 기댄다**:
-   * `GET /accounts/agents` 가 아직 `requireAdmin` 이라(`routes/accountRoutes.ts`) 소유자는
-   * 목록 조회에서 403 을 받는다. 아래 두 테스트가 그 사실과 그 결과를 함께 못박는다.
-   */
-  it('소유자(admin 아님)가 누르면 디렉터리로 열린다 — 설정 화면이 소유자에게 막혀 있다', () => {
+/**
+    * #299: 이전에는 `GET /accounts/agents` 가 `requireAdmin` 이라 소유자가 설정으로 가면
+    * 403 을 받고 빈 화면을 보냈다. 이제 라우트가 열렸고, 소유자도 자기 에이전트를
+    * 설정에서 볼 수 있다. 아래 테스트가 그 새 동작을 확인한다.
+    */
+  it('소유자(admin 아님)가 에이전트 멘션을 누르면 설정이 그 에이전트로 열린다', () => {
     useAppStore.getState().set({
       me: acc('u2', 'owner', 'human', false),
       accounts: {
@@ -89,28 +89,38 @@ describe('멘션 클릭 (#279)', () => {
     });
     showWithCallbacks('@buzz 이거 봐줘');
 
-    fireEvent.click(screen.getByTestId('mention-buzz'));
+    const mention = screen.getByTestId('mention-buzz');
+    expect(mention.tagName).toBe('BUTTON');
+    fireEvent.click(mention);
 
-    expect(onOpenDirectory).toHaveBeenCalledWith('a2');
-    expect(onOpenSettings).not.toHaveBeenCalled();
+    expect(onOpenSettings).toHaveBeenCalledWith('agents', 'a2');
+    expect(onOpenDirectory).not.toHaveBeenCalled();
   });
 
-  it('소유자를 설정으로 보내면 아무것도 고르지 못하는 화면이다 (그래서 보내지 않는다)', async () => {
+  it('소유자가 설정으로 가면 에이전트가 선택된 화면이다', async () => {
     useAppStore.getState().set({ me: acc('u2', 'owner', 'human', false) });
     const api = fakeApi();
-    // 서버가 소유자에게 하는 응답. `requireAdmin` 라우트라 목록 자체가 오지 않는다.
+    // 서버가 소유자에게 하는 응답. 목록 필터가 적용되어 자기 에이전트만 온다.
+    // 소유자에게는 PAT·메모리도 열린다(#253 의 표) — 그래서 그 조회도 나간다. 목을
+    // 빠뜨리면 화면이 터지는데, 그 터짐이야말로 "조회가 실제로 나간다"는 증거다.
+    const listPats = vi.fn().mockResolvedValue([]);
+    const agentMemory = vi.fn().mockResolvedValue([]);
     setController({
-      listAgents: vi.fn().mockRejectedValue(new Error('forbidden')),
+      listAgents: vi.fn().mockResolvedValue([
+        { id: 'a2', handle: 'buzz', kind: 'agent', ownerAccountId: 'u2', harness: 'claude-code' },
+      ]),
       agentDefaults: vi.fn().mockRejectedValue(new Error('forbidden')),
+      listPats, agentMemory,
       api,
     } as unknown as Controller);
 
     render(<AgentsSettings targetId="a2" />);
 
-    // 목록이 비어 `targetId` 가 아무것도 고르지 못한다 — 갈 수 있는데 할 수 있는 것이
-    // 없는 곳이다(design.md §4).
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('에이전트 목록'));
-    expect(screen.queryByDisplayValue('buzz')).toBeNull();
+    // #299: 이제 목록이 오고, targetId 로 그 에이전트가 선택된다.
+    await waitFor(() => expect(screen.getByDisplayValue('buzz')).toBeTruthy());
+    // 패널이 그려지는 것으로 끝나면 안 된다 — 조회가 실제로 나가야 내용이 채워진다.
+    await waitFor(() => expect(listPats).toHaveBeenCalledWith('a2'));
+    await waitFor(() => expect(agentMemory).toHaveBeenCalledWith('a2'));
   });
 
   it('소유자도 admin 도 아니면 디렉터리로 열린다', () => {
@@ -142,18 +152,30 @@ describe('멘션 클릭 (#279)', () => {
     expect(screen.getByRole('button', { name: 'someone 프로필 열기' })).toBeTruthy();
   });
 
-  it('이름이 실제로 열리는 곳을 말한다 — admin 은 설정, 그 외는 프로필', () => {
+  it('이름이 실제로 열리는 곳을 말한다 — admin 과 소유자는 설정, 그 외는 프로필', () => {
     showWithCallbacks('@fizz 안녕');
     expect(screen.getByTestId('mention-fizz').getAttribute('aria-label'))
       .toBe('fizz 에이전트 설정 열기');
     cleanup();
 
-    // 같은 에이전트를 admin 이 아닌 사람이 보면 디렉터리로 열린다 — 이름도 그렇게 말해야
-    // 한다. "설정 열기" 라고 부르면서 프로필을 열면 이름이 거짓이 된다.
+    // admin 이 아닌 사람이 보면 디렉터리로 열린다 — 이름도 그렇게 말해야 한다.
     useAppStore.getState().set({ me: acc('u3', 'stranger', 'human', false) });
     showWithCallbacks('@fizz 안녕');
     expect(screen.getByTestId('mention-fizz').getAttribute('aria-label'))
       .toBe('fizz 프로필 열기');
+    cleanup();
+
+    // 소유자도 설정으로 간다(#299) — 이름이 "설정 열기"라야 한다.
+    useAppStore.getState().set({
+      me: acc('u1', 'owner', 'human', false),
+      accounts: {
+        u1: acc('u1', 'owner', 'human', false),
+        a1: acc('a1', 'fizz', 'agent', false, { ownerAccountId: 'u1' }),
+      },
+    });
+    showWithCallbacks('@fizz 안녕');
+    expect(screen.getByTestId('mention-fizz').getAttribute('aria-label'))
+      .toBe('fizz 에이전트 설정 열기');
   });
 
   /**
@@ -266,6 +288,32 @@ describe('멘션 클릭 배선 — Workspace 를 통째로 (#279)', () => {
     await waitFor(() =>
       expect(screen.getByTestId('directory-row-u4').getAttribute('data-selected')).toBe('true'));
     expect(screen.getByTestId('directory-disabled-u4').textContent).toContain('비활성');
+  });
+
+  /**
+   * 8. 소유자 경로도 **`Workspace` 를 통째로 띄워** 확인한다(#299).
+   *
+   * 위 단위 테스트는 `MessageItem` 에 콜백을 손으로 넘긴다 — 그래서 `Workspace` 가
+   * `onOpenSettings` 를 안 넘기는 배선 결함을 하나도 잡지 못한다. 소유자 분기는 admin
+   * 분기와 **다른 조건**을 타므로, admin 경로만 통째로 확인해 두면 소유자 경로는
+   * 여전히 죽어 있을 수 있다.
+   */
+  it('소유자가 에이전트 멘션을 누르면 설정이 그 에이전트로 열린다', () => {
+    // a2(buzz)의 소유자는 u2 다. 그 사람으로 로그인한다 — admin 이 아니다.
+    mount('@buzz 이거 봐줘', { me: acc('u2', 'someone', 'human', false) });
+
+    fireEvent.click(screen.getByTestId('mention-buzz'));
+
+    expect(onOpenSettings).toHaveBeenCalledWith('agents', 'a2');
+  });
+
+  it('소유자도 admin 도 아니면 통째 배선에서도 디렉터리로 간다', async () => {
+    mount('@buzz 이거 봐줘', { me: acc('u3', 'stranger', 'human', false) });
+
+    fireEvent.click(screen.getByTestId('mention-buzz'));
+
+    await screen.findByRole('dialog', { name: '디렉터리' });
+    expect(onOpenSettings).not.toHaveBeenCalled();
   });
 
   it('스레드 패널의 멘션도 같게 동작한다', () => {
