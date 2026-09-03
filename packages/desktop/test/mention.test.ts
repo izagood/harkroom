@@ -63,8 +63,11 @@ describe('splitMentions', () => {
   it('marks a known handle as a mention and leaves the rest as text', () => {
     const parts = splitMentions('@fizz 이거 봐줘', ['fizz', 'rusalka']);
 
+    // #230 이후 조각에 `isGroup` 이 붙는다. **명시적으로 false 를 적는다** — 사람 멘션이
+    // 집합이 아니라는 것이 이 단언의 일부다. 생략하면 `toEqual` 이 통과하지 않을 뿐
+    // 아니라(엄격 비교다), 나중에 사람 멘션에 집합 표시가 붙어도 알 수 없게 된다.
     expect(parts).toEqual([
-      { kind: 'mention', text: '@fizz', handle: 'fizz' },
+      { kind: 'mention', text: '@fizz', handle: 'fizz', isGroup: false },
       { kind: 'text', text: ' 이거 봐줘' },
     ]);
   });
@@ -74,8 +77,10 @@ describe('splitMentions', () => {
   it('marks @channel even though no such account exists', () => {
     const parts = splitMentions('@channel 공지', ['fizz']);
 
+    // `@channel` 은 예약어이지 집합이 아니다 — 집합처럼 칠하면 사람은 저장된 명단이
+    // 있다고 믿고 그 명단을 찾으려 한다.
     expect(parts).toEqual([
-      { kind: 'mention', text: '@channel', handle: 'channel' },
+      { kind: 'mention', text: '@channel', handle: 'channel', isGroup: false },
       { kind: 'text', text: ' 공지' },
     ]);
   });

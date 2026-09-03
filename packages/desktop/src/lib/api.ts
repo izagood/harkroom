@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -74,8 +74,8 @@ export class ApiClient {
   markChannelUnread(channelId: string, seq: number | null): Promise<void> {
     return this.req('PUT', `/channels/${channelId}/unread`, { seq });
   }
-  async accounts(): Promise<AccountView[]> {
-    return (await this.req<{ accounts: AccountView[] }>('GET', '/accounts')).accounts;
+  async accounts(): Promise<{ accounts: AccountView[]; groups: HandleGroupRow[] }> {
+    return this.req<{ accounts: AccountView[]; groups: HandleGroupRow[] }>('GET', '/accounts');
   }
   async channels(): Promise<ChannelRow[]> {
     return (await this.req<{ channels: ChannelRow[] }>('GET', '/channels')).channels;
