@@ -594,47 +594,52 @@ export function notifyLevelOf(pref: { notifyLevel?: NotifyLevel } | undefined | 
 }
 
 /**
- * 채널 정렬 함수(#157). 섹션 → 별표 → sortOrder → 이름 순으로 정렬한다.
+ * 사이드바 채널 순서(#157). **섹션 → 별표 → `sortOrder` → 이름** 4단이다.
  *
- * 섹션: 이름순, null(섹션 없음)은 맨 아래 "기타"에 놓인다.
- * 섹션 안: 별표 먼저 → sortOrder(있으면) → 이름순.
+ * 사이드바 안에 흩어 놓지 않고 여기 순수 함수 하나로 두는 이유: 이 순서는 화면 세 곳
+ * (채널 목록·섹션 헤더 묶기·"위로/아래로"가 계산하는 이웃)이 **같은 답**을 봐야 뜻이
+ * 성립한다. 한 곳이라도 따로 정렬하면 위로 눌렀는데 다른 자리로 가는 화면이 된다.
  *
- * @param channels.channel 채널 행
- * @param channels.pref 해당 채널의 선호(null 이면 섹션 없음)
+ * 각 단의 뜻:
+ * - **섹션**: 이름순. 섹션 없음(null)은 맨 아래다 — 사람이 이름 지은 묶음이 먼저고,
+ *   아직 정리하지 않은 것이 밑에 남는 편이 "기타"라는 말과 맞는다.
+ * - **별표**: 섹션 안에서 먼저다. 별표는 섹션의 특수한 하나가 아니라 **별도 축**이다(#152).
+ * - **`sortOrder`**: 사람이 손으로 매긴 순서. **값이 있는 것이 없는 것보다 앞**이다 —
+ *   null 은 "아직 안 매겼다"이므로 이름순으로 뒤에 붙는다.
+ * - **이름**: 나머지를 가른다.
+ *
+ * @param channels 각 원소는 채널 행과 그 채널의 선호(없으면 null)
  */
 export function sortChannelsBySection<T extends { channel: ChannelRow; pref: ChannelPrefRow | null }>(
   channels: T[],
 ): T[] {
-  const SECTION_OTHER = '\uFFFF';
   return [...channels].sort((a, b) => {
+    // 1단 — 섹션. null 을 sentinel 문자열로 바꾸지 않는다: 그러면 그 문자를 이름에 쓴
+    // 섹션과 "섹션 없음"이 같은 값이 되고, 로케일에 따라 sentinel 이 맨 앞으로 가기도 한다.
     const aSection = a.pref?.section ?? null;
     const bSection = b.pref?.section ?? null;
-
-    // 섹션 순서: null 이면 "기타"로 Ming Ming Ming Ming Ming Ming
-    const aSectionKey = aSection ?? SECTION_OTHER;
-    const bSectionKey = bSection ?? SECTION_OTHER;
-    if (aSectionKey !== bSectionKey) {
-      return aSectionKey.localeCompare(bSectionKey);
+    if (aSection !== bSection) {
+      if (aSection === null) return 1;
+      if (bSection === null) return -1;
+      const bySection = aSection.localeCompare(bSection);
+      if (bySection !== 0) return bySection;
     }
 
-    // 섹션 안: 별표 먼저
+    // 2단 — 별표가 먼저.
     const aStarred = !!a.pref?.starredAt;
     const bStarred = !!b.pref?.starredAt;
-    if (aStarred !== bStarred) {
-      return aStarred ? -1 : 1;
-    }
+    if (aStarred !== bStarred) return aStarred ? -1 : 1;
 
-    // sortOrder (있으면)
+    // 3단 — 손으로 매긴 순서. 값이 있는 쪽이 앞이고, 둘 다 있으면 작은 값이 앞이다.
     const aOrder = a.pref?.sortOrder ?? null;
     const bOrder = b.pref?.sortOrder ?? null;
-    if (aOrder !== null && bOrder !== null) {
-      if (aOrder !== bOrder) {
-        return aOrder - bOrder;
-      }
+    if (aOrder !== bOrder) {
+      if (aOrder === null) return 1;
+      if (bOrder === null) return -1;
+      if (aOrder !== bOrder) return aOrder - bOrder;
     }
-    // 한쪽만 있으면 sortOrder 있는 것이 뒤에 (null 이 이름순 뒤에 붙는다)
 
-    // 이름순
+    // 4단 — 이름.
     return (a.channel.name ?? '').localeCompare(b.channel.name ?? '');
   });
 }

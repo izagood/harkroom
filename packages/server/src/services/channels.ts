@@ -389,18 +389,33 @@ export async function updateChannelPref(
       [accountId, channelId, patch.starred ? new Date() : null],
     );
   }
-  if (patch.section !== undefined || patch.sortOrder !== undefined) {
-    // 섹션: null 은 "지우기"고, 문자열은 앞뒤 공백 제거, 빈 문자열은 null 로 저장.
-    // 길이 1~40 검증은 라우트에서 한다.
-    const sectionInput = patch.section;
-    const sectionValue: string | null = sectionInput === undefined || sectionInput === '' || sectionInput === null
-      ? null
-      : sectionInput.trim();
+  /**
+   * 섹션·순서(#157). **보낸 컬럼만 쓴다.**
+   *
+   * 둘을 한 문장에서 함께 쓰면 한쪽만 보낸 요청이 다른 쪽을 지운다 — 실측으로 그랬다:
+   * "위로/아래로"(`sortOrder` 만 보낸다)를 누를 때마다 그 채널의 `section` 이 null 이 되어
+   * 방금 옮겨 넣은 섹션에서 빠져나왔다. 옵셔널 필드에 `?? null` 을 물리면 "안 보냈다"와
+   * "지워라"가 같은 뜻이 된다(docs/design.md 4절).
+   *
+   * `section` 의 값 가공(앞뒤 공백 제거, 빈 문자열은 null)은 여기서 한다 — 길이 검증만
+   * 라우트의 zod 가 맡는다.
+   */
+  if (patch.section !== undefined) {
+    const trimmed = patch.section === null ? null : patch.section.trim();
+    const sectionValue: string | null = trimmed === '' ? null : trimmed;
     await pool.query(
-      `insert into channel_pref (account_id, channel_id, section, sort_order)
-       values ($1, $2, $3, $4)
-       on conflict (account_id, channel_id) do update set section = $3, sort_order = $4`,
-      [accountId, channelId, sectionValue, patch.sortOrder ?? null],
+      `insert into channel_pref (account_id, channel_id, section)
+       values ($1, $2, $3)
+       on conflict (account_id, channel_id) do update set section = $3`,
+      [accountId, channelId, sectionValue],
+    );
+  }
+  if (patch.sortOrder !== undefined) {
+    await pool.query(
+      `insert into channel_pref (account_id, channel_id, sort_order)
+       values ($1, $2, $3)
+       on conflict (account_id, channel_id) do update set sort_order = $3`,
+      [accountId, channelId, patch.sortOrder],
     );
   }
   return getChannelPref(pool, accountId, channelId);

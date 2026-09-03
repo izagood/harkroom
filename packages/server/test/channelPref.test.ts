@@ -2,7 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
-import { bootstrapAdmin } from './helpers/fixtures.js';
+import { readFile } from 'node:fs/promises';
+import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -219,17 +220,10 @@ describe('channel pref', () => {
       expect(set.json().sortOrder).toBe(5);
     });
 
-it('removes section when set to null', async () => {
-    // 템플릿 DB 에 컬럼이 없으면 이 테스트를 건너뛴다 — #035 마이그레이션이 적용된 뒤에야
-    // 테스트가 통과한다. CI 에서 템플릿 재구축이 일어나면 자동으로 포함된다.
-    const checkCol = await app.inject({
-      method: 'GET', url: '/healthz',
-    });
-    if (checkCol.statusCode !== 200) {
-      // healthz 가 안 돌아오면 DB 연결이 안 된 것이다 — 이 테스트를 건너뛴다.
-      return;
-    }
-
+  // 조건부 `return` 으로 빠져나가지 않는다. 원래 여기에 "healthz 가 200 이 아니면 건너뛴다"
+  // 가 있었는데, 그 분기는 마이그레이션 적용 여부와 아무 상관이 없고 초록으로 통과하는
+  // 길만 하나 더 만든다 — 건너뛴 테스트는 지키지 않은 테스트다.
+  it('removes section when set to null', async () => {
     await app.inject({
       method: 'PATCH', url: `/channels/${channelId}/pref`,
       headers: { authorization: `Bearer ${adminToken}` },
@@ -244,5 +238,99 @@ it('removes section when set to null', async () => {
     expect(remove.statusCode).toBe(200);
     expect(remove.json().section).toBeNull();
   });
+
+  /**
+   * 한쪽만 보낸 요청이 다른 쪽을 지우지 않는다(#157).
+   *
+   * 실측 결함이었다: `section` 과 `sort_order` 를 한 문장에서 함께 써서, "위로/아래로"가
+   * 보내는 `sortOrder` 만 든 요청이 그 채널의 `section` 을 null 로 만들었다 — 누를 때마다
+   * 채널이 방금 넣은 섹션에서 빠져나왔다.
+   */
+  it('sortOrder 만 보내도 section 이 남는다', async () => {
+    await app.inject({
+      method: 'PATCH', url: `/channels/${channelId}/pref`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { section: 'Keep Me' },
+    });
+
+    const moved = await app.inject({
+      method: 'PATCH', url: `/channels/${channelId}/pref`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { sortOrder: 3 },
+    });
+    expect(moved.statusCode).toBe(200);
+    expect(moved.json().section).toBe('Keep Me');
+    expect(moved.json().sortOrder).toBe(3);
   });
+
+  it('section 만 보내도 sortOrder 가 남는다', async () => {
+    await app.inject({
+      method: 'PATCH', url: `/channels/${channelId}/pref`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { section: 'Anywhere', sortOrder: 7 },
+    });
+
+    const renamed = await app.inject({
+      method: 'PATCH', url: `/channels/${channelId}/pref`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { section: 'Renamed' },
+    });
+    expect(renamed.statusCode).toBe(200);
+    expect(renamed.json().section).toBe('Renamed');
+    expect(renamed.json().sortOrder).toBe(7);
+  });
+
+  it('sortOrder 를 명시적 null 로 지울 수 있다', async () => {
+    await app.inject({
+      method: 'PATCH', url: `/channels/${channelId}/pref`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { sortOrder: 9 },
+    });
+    const cleared = await app.inject({
+      method: 'PATCH', url: `/channels/${channelId}/pref`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { sortOrder: null },
+    });
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.json().sortOrder).toBeNull();
+  });
+
+  /**
+   * 볼 수 없는 채널에 대한 응답은 그 채널이 DM 이라는 사실도 말하지 않는다.
+   *
+   * DM 검사를 가시성 검사보다 앞에 두면 남의 DM 에 섹션을 붙여 보는 것만으로 400
+   * (`cannot_section_dm`)과 403 이 갈려 종류가 새 나간다.
+   */
+  it('남의 DM 에 섹션을 붙이면 400 이 아니라 403 이다 — 종류를 흘리지 않는다', async () => {
+    const { pat: strangerPat } = await createAgent(app, adminToken, 'section-stranger');
+    const res = await app.inject({
+      method: 'PATCH', url: `/channels/${dmId}/pref`,
+      headers: { authorization: `Bearer ${strangerPat}` },
+      payload: { section: 'Peek' },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  /**
+   * 5. `listChannels` 의 SQL 을 **바꾸지 않았다**.
+   *
+   * `COLS` 와 `order by name` 을 건드리면 모든 채널 조회 경로가 영향을 받는다. 섹션은
+   * 선호에 실려 오고 사이드바가 그룹핑하는 것이 이 작업의 결정이었다 — 문자열로 못박는다.
+   */
+  it('5. listChannels 의 SQL 이 그대로다 — COLS 와 order by name', async () => {
+    const src = await readFile(new URL('../src/services/channels.ts', import.meta.url), 'utf8');
+    const cols = /^const COLS = `([^`]*)`/m.exec(src);
+    expect(cols).not.toBeNull();
+    expect(cols![1]).toBe(
+      'id, name, topic, kind, repo, archived_at as "archivedAt", visibility, created_at as "createdAt"',
+    );
+    expect(cols![1]).not.toContain('section');
+    expect(cols![1]).not.toContain('sort_order');
+
+    const listBody = src.slice(src.indexOf('export async function listChannels')).slice(0, 700);
+    expect(listBody).toContain('order by name');
+    expect(listBody).not.toContain('sort_order');
+    expect(listBody).not.toContain('section');
+  });
+});
 });

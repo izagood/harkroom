@@ -1126,12 +1126,36 @@ export class Controller {
   }
 
   /**
-   * 채널의 sortOrder 를 설정한다(#157). 섹션 안 순서 조절에 쓴다.
+   * 채널의 `sortOrder` 를 설정한다(#157). 섹션 안 순서 조절의 최소 단위다.
    */
   async setChannelSortOrder(channelId: string, sortOrder: number | null): Promise<void> {
     const store = useAppStore.getState();
     const updated = await this.api.updateChannelPref(channelId, { sortOrder });
     store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
+  }
+
+  /**
+   * 한 섹션의 채널 순서를 통째로 다시 매긴다(#157) — 받은 배열 순서대로 0..n-1 이다.
+   *
+   * **일부만 매기지 않는 이유**: `sortOrder` 가 null 인 채널은 값이 있는 것들보다 뒤로
+   * 가므로, 두 개만 바꿔 쓰면 나머지가 전부 아래로 쏟아진다. 그 묶음을 통째로 명시로
+   * 만들면 다음 클릭도 예측대로 돈다.
+   *
+   * 스토어는 **한 번에** 갈아 끼운다. 응답마다 `set` 하면 중간 상태가 화면에 그려져
+   * 순서가 잠깐 뒤엉킨다.
+   */
+  async reorderChannels(orderedChannelIds: string[]): Promise<void> {
+    const updated: ChannelPrefRow[] = [];
+    for (const [index, channelId] of orderedChannelIds.entries()) {
+      updated.push(await this.api.updateChannelPref(channelId, { sortOrder: index }));
+    }
+    const store = useAppStore.getState();
+    store.set({
+      channelPrefs: {
+        ...store.channelPrefs,
+        ...Object.fromEntries(updated.map((p) => [p.channelId, p])),
+      },
+    });
   }
 
   /**
