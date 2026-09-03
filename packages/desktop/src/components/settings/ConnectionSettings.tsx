@@ -1,9 +1,12 @@
 import { useAppStore } from '../../state/appStore';
 import { getController } from '../../state/controller';
+import { usePrefsStore } from '../../state/prefsStore';
 import { ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
 
 export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
   const connected = useAppStore((s) => s.connected);
+  const runnerAutoStart = usePrefsStore((s) => s.runnerAutoStart);
+  const setRunnerAutoStart = usePrefsStore((s) => s.setRunnerAutoStart);
   // 보관된 값이 아니라 **지금 붙어 있는** 주소를 보여준다. 키체인 읽기가 비동기가 되면서
   // 렌더 중에 읽을 수 없게 됐고, 어차피 사용자가 알고 싶은 것은 실제 연결 대상이다.
   const baseUrl = getController().api.baseUrl || '—';
@@ -21,6 +24,31 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
             </span>
           }
         />
+      </SettingsGroup>
+
+      <SettingsGroup>
+        <div className="flex items-center justify-between gap-4 px-4 py-3">
+          <span className="min-w-0 flex-1">
+            <span className="block font-medium text-zinc-900">Auto-start runners</span>
+            <span className="mt-0.5 block text-zinc-500">
+              Automatically launch agent runners when app starts.
+            </span>
+          </span>
+          <button
+            className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              runnerAutoStart ? 'bg-blue-600' : 'bg-zinc-300'
+            }`}
+            onClick={() => setRunnerAutoStart(!runnerAutoStart)}
+            role="switch"
+            aria-checked={runnerAutoStart}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                runnerAutoStart ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </div>
       </SettingsGroup>
 
       <SettingsGroup>

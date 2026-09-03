@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
 import type { AccountStatus, AccountView, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PinRow } from '@murmur/shared';
+import type { RunnerState } from '../lib/runnerLauncher';
 
 export interface HistoryEntry {
   channelId: string;
@@ -80,6 +81,8 @@ export interface AppState {
    * 다시 앞뒤 대화를 스크롤 밖으로 밀어내지 않는다.
    */
   expandedMessageIds: Record<string, true>;
+  /** 에이전트별 러너 실행 상태. agentId → state */
+  runnerStates: Record<string, RunnerState>;
   set(partial: Partial<AppState>): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
@@ -114,7 +117,7 @@ const initial = {
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], leases: [], connected: false, channelPrefs: {}, pins: {}, channelMembers: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
-  expandedMessageIds: {},
+  expandedMessageIds: {}, runnerStates: {},
 };
 
 export const useAppStore = create<AppState>((set, get) => ({

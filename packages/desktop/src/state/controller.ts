@@ -4,6 +4,7 @@ import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type Notifier } from '../lib/notify';
+import { RunnerLauncher } from '../lib/runnerLauncher';
 import { useAppStore } from './appStore';
 import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
 import { usePrefsStore } from './prefsStore';
@@ -21,6 +22,7 @@ export class Controller {
    * 두 경로가 서로의 기록을 보므로 어느 쪽이 먼저 도착해도 한 번만 울린다.
    */
   private notifiedMessages = new Set<string>();
+  private runnerLauncher: RunnerLauncher;
 
   constructor(
     public api: ApiClient,
@@ -32,7 +34,16 @@ export class Controller {
      * #164: accountId 파라미터가 추가되어 어느 커뮤니티의 세션이 죽었는지 알 수 있다.
      */
     private onSessionLost: (message: string, accountId: string) => void = () => {},
-  ) {}
+  ) {
+    this.runnerLauncher = new RunnerLauncher({
+      baseUrl: api.baseUrl,
+      listAgents: () => api.listAgents(),
+      mintPat: (accountId, label) => api.mintPat(accountId, label),
+      listPats: (accountId) => api.listPats(accountId),
+      revokePat: (accountId, label) => api.revokePat(accountId, label),
+      me: () => api.me(),
+    });
+  }
 
   // fire-and-forget 호출의 unhandled rejection 방지 — 실패는 조용히 무시(다음 이벤트/리컨실이 자연 복구).
   private swallow(p: Promise<unknown>): void { void p.catch(() => {}); }
@@ -65,9 +76,22 @@ export class Controller {
       onOpen: () => { useAppStore.getState().set({ connected: true }); this.swallow(this.reconcile()); },
       onDown: (reason) => this.handleDown(reason),
     });
+
+    this.runnerLauncher.setOnStateChange((states) => {
+      const stateMap: Record<string, { agentId: string; status: string; exitCode: number | null }> = {};
+      for (const s of states) {
+        stateMap[s.agentId] = s;
+      }
+      useAppStore.getState().set({ runnerStates: stateMap as Record<string, { agentId: string; status: 'stopped' | 'running' | 'external' | 'needs_reissue' | 'failed'; exitCode: number | null }> });
+    });
+    this.swallow(this.runnerLauncher.startAll());
   }
 
-  stop(): void { this.ws?.close(); this.ws = null; }
+  stop(): void {
+    this.runnerLauncher.dispose();
+    this.ws?.close();
+    this.ws = null;
+  }
 
   /** 문구는 UI 문자열이라 영어다(저장소 관례). 사유별로 다른 이유: 사용자가 할 일이 다르다. */
   private static readonly LOST_MESSAGE: Record<Exclude<WsDownReason, 'network'>, string> = {

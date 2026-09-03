@@ -217,7 +217,8 @@ while (running) {
             console.error('  claude-code harness 는 claude CLI 의 로그인을 쓴다 — `claude` 를 한 번 실행해 로그인해라.');
           }
           console.error(`  원문: ${err instanceof Error ? err.message : String(err)}`);
-          process.exit(1);
+          console.error('murmur-agent: credential rejected (revoked or rotated); exiting');
+          process.exit(78);
         }
         failed = true;
         console.error(`  ${entry.messageId} 답변 실패 (${tried}/${MAX_ATTEMPTS}):`,
