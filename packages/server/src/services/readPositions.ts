@@ -8,10 +8,36 @@ import type { Pool } from 'pg';
  * 구분선이 이 값에서 나온다.
  */
 export interface ReadState {
+  /**
+   * 미읽음 경계(`UNREAD_BOUNDARY`). 저장된 `last_read_seq` 원본이 아니라 미읽음 표시(#154)를
+   * 반영한 값이다 — 클라이언트가 이 값으로 구분선을 얼리고 "끝까지 읽었나"를 판단하기 때문에
+   * 원본을 주면 표시된 채널을 열어도 이미 최신이라 판단해 ack 를 보내지 않고, 그러면 표시가
+   * 영원히 지워지지 않는다.
+   */
   lastReadSeq: number;
   /** 내 위치보다 뒤에 있는, 내가 쓰지 않은, 살아 있는 메시지 수. */
   unread: number;
 }
+
+/**
+ * 미읽음 경계. **이 seq 뒤부터가 미읽음이다.**
+ *
+ * 한 곳에 모으는 이유는 `channels.ts` 의 `audienceFor` 와 같다: 같은 계산이 `allReadStates`
+ * (사이드바 배지)와 `readState`(채널 안 미읽음·구분선)에 각각 있었다. 한쪽만 고치면 두 표면이
+ * 서로 다른 말을 한다 — 사이드바는 미읽음이라는데 채널을 열면 아무것도 새것이 없는 식이다.
+ * 판정이 갈리는 것 자체가 결함이므로 SQL 조각을 상수 하나로 두고 두 질의가 **같은 것**을
+ * 참조하게 한다.
+ *
+ * 두 입력을 읽는다: 자동으로 전진하는 `last_read_seq` 와 사용자가 지정한 `unread_from_seq`.
+ * `least` 인 이유 — 사용자가 "여기부터 안 읽음"이라고 하면 그 앞까지만 읽은 것이 되어야 하고,
+ * 표시가 없으면(`null`) 자동 위치를 그대로 쓴다.
+ *
+ * 질의는 `channel_read` 를 `r` 로 left join 해야 한다(행이 없는 채널도 0 으로 답해야 하므로).
+ */
+const UNREAD_BOUNDARY = `least(
+       coalesce(r.last_read_seq, 0),
+       coalesce(r.unread_from_seq - 1, coalesce(r.last_read_seq, 0))
+     )`;
 
 /**
  * 위치를 전진시킨다. **되돌아가지 않고, 채널 끝을 넘지 않는다.**
@@ -21,6 +47,10 @@ export interface ReadState {
  *
  * 상한: 미래의 seq 를 그대로 받으면 그 뒤에 도착하는 실제 메시지가 처음부터 읽은 것이 되어
  * **조용히 놓친다.** 그래서 채널의 현재 최대 seq 로 자른다.
+ *
+ * 미읽음 표시(#154)는 **끝까지 읽었을 때만** 지운다: 요청의 seq 가 채널의 현재 최대 seq
+ * 이상일 때다. 낡은 ack 는 정의상 그보다 작으므로 표시를 지우지 못한다 — 시계도, 기기 식별도
+ * 없이 "사람이 정말 끝까지 봤다"와 "늦게 도착한 옛 ack"가 구분된다.
  */
 export async function markChannelRead(
   pool: Pool, opts: { accountId: string; channelId: string; seq: number },
@@ -30,6 +60,33 @@ export async function markChannelRead(
      values ($1, $2, least($3::bigint, coalesce((select max(seq) from message where channel_id = $2), 0)))
      on conflict (account_id, channel_id) do update
        set last_read_seq = greatest(channel_read.last_read_seq, excluded.last_read_seq),
+           unread_from_seq = case
+             when $3::bigint >= coalesce((select max(seq) from message where channel_id = $2), 0)
+               then null
+             else channel_read.unread_from_seq
+           end,
+           updated_at = now()`,
+    [opts.accountId, opts.channelId, opts.seq],
+  );
+}
+
+/**
+ * 사용자가 명시적으로 지정한 미읽음 시작점을 쓴다(#154). `seq: null` 이 표시를 지운다.
+ *
+ * `markChannelRead` 와 다른 함수·다른 컬럼인 것이 핵심이다. 자동 ack 와 사람의 조작을 같은
+ * 값에 쓰면 서버가 둘을 구분할 수 없고, 그 구분이 없으면 단조성을 풀 수밖에 없다.
+ *
+ * 여기에는 `greatest` 가 없다 — 사람이 방금 누른 것이 최신 의도이므로 그대로 덮는다. 낡은
+ * 요청이 뒤늦게 도착하는 문제는 자동 ack 쪽 이야기다(이 라우트는 사람이 한 번 누를 때만 온다).
+ */
+export async function markChannelUnread(
+  pool: Pool, opts: { accountId: string; channelId: string; seq: number | null },
+): Promise<void> {
+  await pool.query(
+    `insert into channel_read (account_id, channel_id, unread_from_seq)
+     values ($1, $2, $3::bigint)
+     on conflict (account_id, channel_id) do update
+       set unread_from_seq = excluded.unread_from_seq,
            updated_at = now()`,
     [opts.accountId, opts.channelId, opts.seq],
   );
@@ -53,12 +110,12 @@ export async function allReadStates(pool: Pool, accountId: string): Promise<Chan
   const res = await pool.query(
     `select
        c.id as "channelId",
-       coalesce(r.last_read_seq, 0)::int as "lastReadSeq",
+       (${UNREAD_BOUNDARY})::int as "lastReadSeq",
        (select count(*) from message m
          where m.channel_id = c.id
            and m.deleted_at is null
            and m.author_id <> $1
-           and m.seq > coalesce(r.last_read_seq, 0))::int as unread
+           and m.seq > (${UNREAD_BOUNDARY}))::int as unread
      from channel c
      left join channel_read r on r.account_id = $1 and r.channel_id = c.id
      where c.kind = 'standard'
@@ -75,12 +132,12 @@ export async function readState(
 ): Promise<ReadState> {
   const res = await pool.query(
     `select
-       coalesce(r.last_read_seq, 0)::int as "lastReadSeq",
+       (${UNREAD_BOUNDARY})::int as "lastReadSeq",
        (select count(*) from message m
          where m.channel_id = $2
            and m.deleted_at is null            -- 지운 메시지는 미읽음이 아니다
            and m.author_id <> $1               -- 내가 쓴 것도 아니다(발화마다 배지가 뜨면 안 된다)
-           and m.seq > coalesce(r.last_read_seq, 0))::int as unread
+           and m.seq > (${UNREAD_BOUNDARY}))::int as unread
      from (select 1) one
      left join channel_read r on r.account_id = $1 and r.channel_id = $2`,
     [opts.accountId, opts.channelId],
