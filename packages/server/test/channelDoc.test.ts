@@ -34,12 +34,12 @@ async function registerHuman(handle: string): Promise<{ token: string; id: strin
   const created = await app.inject({
     method: 'POST', url: '/auth/register',
     payload: {
-      handle, displayName: handle, password: 'pw123456',
+      handle, loginId: handle, displayName: handle, password: 'pw123456',
       inviteToken: invite.json().token as string,
     },
   });
   const login = await app.inject({
-    method: 'POST', url: '/auth/login', payload: { handle, password: 'pw123456' },
+    method: 'POST', url: '/auth/login', payload: { loginId: handle, password: 'pw123456' },
   });
   return { token: login.json().token as string, id: created.json().id as string };
 }

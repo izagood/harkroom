@@ -20,6 +20,8 @@ const pref = (channelId: string, muted: boolean): ChannelPrefRow =>
     starredAt: null,
     // 훑기가 보는 것은 `notifyLevel` 이다(#224). `mutedAt` 은 기록일 뿐이다.
     notifyLevel: muted ? 'none' : 'all',
+    section: null,
+    sortOrder: null,
   });
 
 const OLD = '2026-09-01T00:00:00.000Z';

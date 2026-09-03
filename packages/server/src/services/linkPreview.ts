@@ -14,6 +14,7 @@ import * as http from 'node:http';
 import { isIP } from 'node:net';
 import { normalizePreviewUrl } from '@murmur/shared';
 import { emitEvent } from '../events.js';
+import { getLinkPreviewByUrl } from './linkPreviewDb.js';
 
 export type LinkPreviewStatus = 'ok' | 'failed' | 'blocked';
 
@@ -36,7 +37,31 @@ export const MAX_REDIRECTS = 3;
 /** 값은 200자로 자른다 — 카드 한 장에 들어갈 양이다. */
 export const MAX_FIELD_LENGTH = 200;
 
+/**
+ * 캐시 TTL. 실패를 오래 붙들 이유가 없으니(일시적 실패가 영구 실패로 굳는다)
+ * `failed`/`blocked` 는 짧고, 성공은 오래 둔다.
+ *
+ * - 7일(ok): 성공한 미리보기는 자주 다시 가져올 이유가 없다.
+ * - 1시간(failed/blocked): 일시적 장애가 영구 상태로 남는 것을 방지한다.
+ *   blocked 는 IP 가 바뀌어 이제는 공인일 수 있으므로 재검사가 필요하다.
+ */
+export const TTL_OK_MS = 7 * 24 * 60 * 60 * 1000;
+export const TTL_FAILED_MS = 60 * 60 * 1000;
+
 const USER_AGENT = 'murmur-link-preview';
+
+/**
+ * 이 미리보기 행이 만료되었는가.
+ *
+ * **단일 판정 지점** — 조회 경로(GET /link-previews)와 백그라운드 가져오기
+ * (queueLinkPreviewFetch) 가 같은 함수를 통과하게 한다. 두 곳에 TTL 비교를
+ * 쓰면 곧 갈라진다.
+ */
+export function isStale(preview: LinkPreview, now: number = Date.now()): boolean {
+  const age = now - preview.fetchedAt.getTime();
+  if (preview.status === 'ok') return age > TTL_OK_MS;
+  return age > TTL_FAILED_MS; // failed | blocked
+}
 
 /**
  * 이름만으로 막는 호스트. **주소 판정의 보조**일 뿐이다 — 진짜 판정은 해석된 주소가 한다.
@@ -412,6 +437,10 @@ const inFlight = new Set<string>();
 /**
  * 메시지 본문의 URL 을 백그라운드로 가져온다. **`postMessage` 를 막지 않는다** — 호출부는
  * 이 promise 를 기다리지 않고, 트랜잭션 밖에서 부른다.
+ *
+ * **만료된 행은 다시 가져온다**(#312). 기존 행이 있으면 `isStale` 로 검사해서
+ * 만료되었으면 재조회한다. 이렇게 하면 (1) 클라이언트가 조회할 때 stale 면 백그라운드에서
+ * 갱신하고 (2) 메시지 본문에 같은 URL 이 들어오면 만료되었으면 다시 가져온다.
  */
 export async function queueLinkPreviewFetch(
   pool: Pool,
@@ -425,8 +454,12 @@ export async function queueLinkPreviewFetch(
   if (inFlight.has(normalized)) return;
   inFlight.add(normalized);
   try {
-    const existing = await pool.query('select 1 from link_preview where url = $1', [normalized]);
-    if (existing.rowCount) return; // 같은 URL 은 한 번만 가져온다
+    // 조회는 라우트와 **같은 읽기 함수**를 쓴다 — 컬럼 매핑을 두 벌 두면 한쪽만 고쳐진다.
+    const existing = await getLinkPreviewByUrl(pool, normalized);
+    // 행이 있어도 만료되었으면 다시 가져온다. 판정은 `isStale` 한 곳이다.
+    if (existing && !isStale(existing)) return; // fresh — 다시 가져올 필요 없다
+    // 만료되었으면 재조회해 **같은 행을 덮어쓴다**(`saveLinkPreview` 는 upsert 다).
+    // 지웠다 넣으면 그 사이 조회가 404 를 본다 — 카드가 잠깐 사라진다.
     const preview = await fetchLinkPreview(normalized, net);
     if (preview) await saveLinkPreview(pool, preview);
   } finally {

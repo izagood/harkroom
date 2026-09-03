@@ -11,7 +11,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   RunnerLauncher, patLabelPrefix,
   type LaunchableAgent, type RunnerProcess, type RunnerSecretStore, type RunnerSpawner,
-  type SpawnRequest, type StoredRunnerPat,
+  type LoginPathReader, type SpawnRequest, type StoredRunnerPat,
 } from '../src/lib/runnerLauncher';
 
 const agent = (id: string, extra: Partial<LaunchableAgent> = {}): LaunchableAgent => ({
@@ -57,6 +57,14 @@ function fakeSpawner() {
   return spawner;
 }
 
+/**
+ * 로그인 셸 `PATH` 조회 목(#305). 기본값을 주는 이유: 이 파일의 기존 테스트들은 `PATH`
+ * 이야기를 하지 않으므로 '조회가 된다'가 그 자리의 정상 상태다.
+ */
+function fakeLoginPath(value: string | null = '/login/bin'): LoginPathReader {
+  return { read: vi.fn(async () => value) };
+}
+
 function fakeApi(calls: string[] = []) {
   return {
     calls,
@@ -68,17 +76,22 @@ function fakeApi(calls: string[] = []) {
 }
 
 const make = (
-  api = fakeApi(), secrets = fakeSecrets(), spawner = fakeSpawner(), now = () => 1_700_000_000_000,
-) => ({ api, secrets, spawner, launcher: new RunnerLauncher(api, secrets, spawner, now) });
+  api = fakeApi(), secrets = fakeSecrets(), spawner = fakeSpawner(),
+  loginPath = fakeLoginPath(), now = () => 1_700_000_000_000,
+) => ({
+  api, secrets, spawner, loginPath,
+  launcher: new RunnerLauncher(api, secrets, spawner, loginPath, now),
+});
 
 const startAll = (
   l: RunnerLauncher, agents: LaunchableAgent[],
-  over: { live?: string[] | null; repoPath?: string } = {},
+  over: { live?: string[] | null; repoPath?: string; runnerCommand?: string } = {},
 ) => l.startAll({
   agents,
   myAccountId: 'me',
   liveAccountIds: over.live === null ? null : new Set(over.live ?? []),
   repoPath: over.repoPath ?? '/repo',
+  runnerCommand: over.runnerCommand ?? '',
 });
 
 describe('1. 대상 선별', () => {
@@ -183,7 +196,7 @@ describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
     await startAll(launcher, [agent('a')]);
     api.calls.length = 0;
 
-    await launcher.reissue({ agent: agent('a'), repoPath: '/repo' });
+    await launcher.reissue({ agent: agent('a'), repoPath: '/repo', runnerCommand: '' });
 
     const newLabel = `${oldLabel}#1700000000000`;
     // 발급이 먼저다. 폐기가 먼저면 발급 실패 한 번에 쓸 수 있는 PAT 가 사라진다.
@@ -204,7 +217,7 @@ describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
     await startAll(launcher, [agent('a')]);
     api.mintPat = vi.fn(async () => { throw new Error('server down'); });
 
-    await launcher.reissue({ agent: agent('a'), repoPath: '/repo' });
+    await launcher.reissue({ agent: agent('a'), repoPath: '/repo', runnerCommand: '' });
 
     expect(api.revokePat).not.toHaveBeenCalled();
     expect(spawner.kills).toEqual([]);
@@ -220,7 +233,7 @@ describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
     await startAll(launcher, [agent('a')]);
     api.revokePat = vi.fn(async () => { throw new Error('403'); });
 
-    await launcher.reissue({ agent: agent('a'), repoPath: '/repo' });
+    await launcher.reissue({ agent: agent('a'), repoPath: '/repo', runnerCommand: '' });
 
     const state = launcher.getStates()[0]!;
     expect(state.status).toBe('running');
@@ -257,7 +270,7 @@ describe('6. 종료 코드', () => {
     await startAll(launcher, [agent('a')]);
     spawner.exit(78);
 
-    await launcher.reissue({ agent: agent('a'), repoPath: '/repo' });
+    await launcher.reissue({ agent: agent('a'), repoPath: '/repo', runnerCommand: '' });
 
     expect(spawner.spawns).toHaveLength(2);
     expect(launcher.getStates()[0]!.status).toBe('running');
