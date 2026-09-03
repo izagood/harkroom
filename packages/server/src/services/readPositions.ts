@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { channelVisibleSql } from './channels.js';
 
 /**
  * 채널 단위 읽음 위치.
@@ -100,8 +101,12 @@ export interface ChannelReadState extends ReadState {
  * 내가 볼 수 있는 모든 채널의 읽음 상태. 사이드바 배지가 채널마다 요청하면 N+1 이 되고,
  * 채널이 늘수록 앱을 열 때마다 그만큼 왕복한다.
  *
- * 가시성은 `listChannels`(standard 전부) + 내가 멤버인 dm 이다 — 여기서 그 경계를 흘리면
- * 채널의 존재 자체가 새어 나간다.
+ * 가시성은 `channelVisibleSql` 하나로 판정한다 — 여기서 그 경계를 흘리면 채널의 존재
+ * 자체가 새어 나간다. 배지는 특히 조용한 누출 경로다: 목록에 없는 채널이라도 미읽음 수가
+ * 딸려 오면 "내가 모르는 곳에서 대화가 있다"가 새고, 개수는 활동량까지 알려 준다.
+ *
+ * admin 예외를 **넣지 않는다**. `listChannels` 는 운영을 위해 admin 에게 private 채널의
+ * 이름을 주지만, 미읽음 수는 대화 내용의 대리 지표다 — 읽기 게이트와 같은 편에 선다.
  *
  * 아직 아무것도 읽지 않은 채널도 행을 준다(`lastReadSeq: 0`). 빠뜨리면 클라이언트가
  * "0 이다"와 "모른다"를 구분할 수 없어 배지를 그릴지 말지 판단할 수 없다.
@@ -118,9 +123,7 @@ export async function allReadStates(pool: Pool, accountId: string): Promise<Chan
            and m.seq > (${UNREAD_BOUNDARY}))::int as unread
      from channel c
      left join channel_read r on r.account_id = $1 and r.channel_id = c.id
-     where c.kind = 'standard'
-        or exists (select 1 from channel_member cm
-                    where cm.channel_id = c.id and cm.account_id = $1)
+     where ${channelVisibleSql('c', '$1')}
      order by c.id`,
     [accountId],
   );
