@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import type { MessageRow, ReactionRow } from '@murmur/shared';
 import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
@@ -122,5 +122,63 @@ describe('pressing a reaction', () => {
     render(<MessageItem message={{ ...withReactions([]), kind: 'system' }} />);
 
     expect(screen.getByRole('button', { name: 'Add reaction' })).toBeTruthy();
+  });
+});
+
+describe('#145 인라인 이모지 버튼 토글과 눌린 상태', () => {
+  it('인라인 버튼을 누르면 그 이모지가 토글된다', async () => {
+    const c = fakeController();
+    render(<MessageItem message={withReactions([])} />);
+
+    // 👍 버튼을 찾는다 (첫 번째 인라인 이모지)
+    const button = screen.getByRole('button', { name: '👍' });
+    fireEvent.click(button);
+
+    await waitFor(() =>
+      expect(c.toggleReaction).toHaveBeenCalledWith('c1', 'm1', '👍', true)
+    );
+  });
+
+  it('내가 누른 인라인 이모지는 눌린 상태로 보인다', () => {
+    fakeController();
+    render(
+      <MessageItem
+        message={withReactions([{ emoji: '👍', accountIds: ['u1'] }])}
+      />
+    );
+
+    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const button = within(toolbar).getByRole('button', { name: /^👍/ });
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('남이 누른 인라인 이모지는 눌리지 않은 상태로 보인다', () => {
+    fakeController();
+    render(
+      <MessageItem
+        message={withReactions([{ emoji: '👍', accountIds: ['u2'] }])}
+      />
+    );
+
+    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const button = within(toolbar).getByRole('button', { name: /^👍/ });
+    expect(button.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('인라인 버튼 토글은 기존 리액션을 덮어쓴다', async () => {
+    const c = fakeController();
+    render(
+      <MessageItem
+        message={withReactions([{ emoji: '👍', accountIds: ['u2'] }])}
+      />
+    );
+
+    // 👍 가 이미 있다. 내 버튼을 누르면 내가 추가한다.
+    const button = screen.getByRole('button', { name: '👍' });
+    fireEvent.click(button);
+
+    await waitFor(() =>
+      expect(c.toggleReaction).toHaveBeenCalledWith('c1', 'm1', '👍', true)
+    );
   });
 });
