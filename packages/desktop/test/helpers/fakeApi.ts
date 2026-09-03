@@ -4,11 +4,12 @@ import type { ApiClient } from '../../src/lib/api';
 
 // #186: 상태는 옵셔널이 아니라 **필수 필드**다 — fixture 도 그것을 적어야 한다.
 // 기본값은 서버의 기본값과 같은 'available' 이고, 상태를 보는 테스트가 덮어쓴다.
+// #181: ownerAccountId 도 필수다 — 에이전트는 null 이 정상이고, 사람 계정에도 null 이다.
 // #159: 아바타도 필수 필드다. 기본은 null(사진 없음)이고, 아바타를 보는 테스트가 extra 로 덮어쓴다.
 export const acc = (id: string, handle: string, kind: 'human' | 'agent' = 'human', isAdmin = false,
   extra: Partial<AccountView> = {}): AccountView =>
   ({ id, handle, displayName: handle, kind, isAdmin, disabled: false, status: 'available', statusText: null,
-    avatarAttachmentId: null, ...extra });
+    ownerAccountId: null, avatarAttachmentId: null, ...extra });
 
 // #182: 공개 범위도 **필수 필드**다 — fixture 가 그것을 적어야 한다. 기본값은 서버의
 // 기본값과 같은 'public' 이고, private 을 보는 테스트가 마지막 인자로 덮어쓴다.
@@ -22,7 +23,7 @@ export const msg = (id: string, channelId: string, seq: number, body: string, au
   extra: Partial<MessageRow> = {}): MessageRow =>
   // #161: 스레드 메타데이터는 **루트에만** 붙고 옵셔널이 아니라 명시적 null 이다 —
   // fixture 도 그것을 적어야 한다. 루트 메시지를 만드는 테스트는 extra 로 덮어쓴다.
-  ({ id, seq, channelId, threadRootId: null, authorId, body, kind: 'user', meta: {}, createdAt: new Date().toISOString(), editedAt: null, reactions: [], attachments: [], replyCount: null, lastReplyAt: null, participantIds: null, ...extra });
+  ({ id, seq, channelId, threadRootId: null, authorId, body, kind: 'user', meta: {}, createdAt: new Date().toISOString(), editedAt: null, reactions: [], attachments: [], replyCount: null, lastReplyAt: null, participantIds: null, alsoInChannel: false, ...extra });
 
 // #218: 핀은 메시지를 통째로 싣는다 — 목록이 본문 한 줄을 미리 보여 줘야 쓸모가 있어서다.
 // 그래서 fixture 도 메시지를 함께 만든다(기본은 그 자리에서 만든 한 줄짜리 메시지다).
