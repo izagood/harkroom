@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { mentionedHandles, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
+import { channelVisibleSql } from './channels.js';
 
 /**
  * 게시 결과. 첨부 연결이 거절되면 메시지 자체가 만들어지지 않는다(트랜잭션 롤백) —
@@ -46,7 +47,9 @@ const ATTACHMENTS = `coalesce((
   from attachment a where a.message_id = message.id
 ), '[]'::json) as attachments`;
 
-const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
+// #218: 핀 목록도 이 컬럼 집합으로 메시지를 내주기 때문에 export 다. 핀 전용으로 컬럼을
+// 다시 적으면 위에 적은 "네 갈래" 가 다섯이 되고, 리액션·첨부가 그 응답에서만 빠진다.
+export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
   author_id as "authorId", body, kind, meta, created_at as "createdAt",
   edited_at as "editedAt", ${REACTIONS}, ${ATTACHMENTS},
   null::int as "replyCount", null::text as "lastReplyAt", null::text[] as "participantIds"`;
@@ -335,9 +338,10 @@ export async function searchMessages(
      from message m
      join channel c on c.id = m.channel_id
      where m.search @@ websearch_to_tsquery('simple', $1) and m.deleted_at is null
-       and (c.kind = 'standard' or exists (
-         select 1 from channel_member cm where cm.channel_id = c.id and cm.account_id = $3
-       ))
+       -- 검색은 채널 목록을 우회해 본문에 바로 닿는 표면이다. 여기만 넓으면 목록에도
+       -- 배지에도 없는 private 채널의 발언이 검색 결과로 통째로 나온다 — 그래서 목록·배지와
+       -- **같은 술어**를 쓴다. admin 예외 없다(결과가 곧 메시지 본문이다).
+       and ${channelVisibleSql('c', '$3')}
      order by m.seq desc limit $2`,
     [query, Math.min(limit, 100), requesterId],
   );

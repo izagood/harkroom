@@ -197,6 +197,16 @@ export function messagePermalink(messageId: string): string {
  *
  * 앞뒤 공백은 잘라 낸다 — 사람이 복사한 링크에는 줄바꿈이 붙어 오는 일이 흔하고,
  * 그것 때문에 "형식이 틀렸다"고 말하면 거짓말이 된다.
+ *
+ * **전체 일치만 링크로 본다.** 문장 안에서 링크를 찾아내지 않는다 — 붙여넣기를 가로채는
+ * 쪽(#228)이 이 판정을 그대로 쓰기 때문이다. 부분 일치까지 링크로 보면 링크를 **인용**하려고
+ * 문장째 붙여넣은 사람이 쓰던 글을 잃고 엉뚱한 곳으로 끌려간다.
+ *
+ * **이 형식에는 서버·커뮤니티 식별자가 없다(#228).** 지금은 데스크탑이 한 서버만 보므로
+ * uuid 하나로 좌표가 되지만, 다중 커뮤니티(#163)가 들어오면 이 링크는 **어느 커뮤니티의
+ * 메시지인지 말하지 못한다** — 다른 커뮤니티를 보고 있을 때 붙여넣으면 '사라진 메시지'로
+ * 보인다. 지금 형식을 바꾸지 않는 이유: 이미 나간 링크가 있고, 서버를 무엇으로 적을지는
+ * #163 계열의 결정이다.
  */
 export function parseMessagePermalink(text: string): string | null {
   const trimmed = text.trim();
@@ -269,6 +279,21 @@ export interface ChannelRow {
   kind: 'standard' | 'dm';
   repo: string | null;
   archivedAt: string | null;
+  /**
+   * 공개 범위(#182). **옵셔널이 아닌 이유**: 옵셔널로 두면 이 필드를 안 넘기는 호출부가
+   * 조용히 통과하고, 화면은 `undefined` 를 public 으로 읽어 private 채널에 자물쇠가
+   * 사라진다. 필수로 두면 타입 검사가 그런 자리를 전부 짚는다.
+   *
+   * private 은 '보이지만 못 읽는다'가 아니라 '멤버만 존재를 안다'다 — 이 값이 'private'
+   * 인 행을 받았다는 것 자체가 이미 '나는 멤버이거나 admin 이다'라는 뜻이다.
+   */
+  visibility: 'public' | 'private';
+}
+
+/** 채널 멤버 한 명. 멤버 목록 화면이 handle 을 따로 조회하지 않도록 함께 준다. */
+export interface ChannelMemberRow {
+  accountId: string;
+  handle: string;
 }
 
 export interface InboxEntry {
@@ -289,6 +314,25 @@ export interface ChannelPrefRow {
   channelId: string;
   mutedAt: string | null;
   starredAt: string | null;
+}
+
+/**
+ * 채널에 고정된 메시지 하나(#218).
+ *
+ * **채널 전역이다** — 보관(#153)과 같은 층이고, 음소거·즐겨찾기(#151, #152)처럼 계정별이
+ * 아니다. 그래서 이 행에는 "누가 보는가"가 없고 `pinnedBy`("누가 고정했는가")만 있다.
+ * `pinnedBy` 는 취향이 아니라 해제 권한의 근거다 — 해제는 고정한 사람 또는 admin 이다.
+ *
+ * `message` 를 통째로 싣는 이유: 핀 목록은 본문 한 줄을 미리 보여 줘야 쓸모가 있고,
+ * 그것을 위해 클라이언트가 핀마다 메시지를 다시 물으면 목록 하나에 왕복이 N 번 생긴다.
+ * 지워진 메시지는 여기 **아예 오지 않는다** — 서버가 `deleted_at is null` 로 조인한다.
+ */
+export interface PinRow {
+  messageId: string;
+  channelId: string;
+  pinnedBy: string;
+  pinnedAt: string;
+  message: MessageRow;
 }
 
 export interface LeaseRow {
