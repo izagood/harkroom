@@ -176,7 +176,9 @@ export function ChannelPane() {
         )}
       </div>
     </main>
-    {filesOpen && activeChannelId && (
+    {/* `activeChannelId` 는 위에서 이미 이른 반환으로 걸러졌다 — 여기서 또 보면
+        "널일 수도 있다" 는 거짓 신호가 남는다. */}
+    {filesOpen && (
       <ChannelFiles key={activeChannelId} channelId={activeChannelId} onClose={() => setFilesOpen(false)} />
     )}
     </div>
