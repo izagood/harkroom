@@ -347,3 +347,152 @@ export async function channelPostGate(
   if (!row.visible) return 'forbidden';
   return row.archived ? 'archived' : 'ok';
 }
+
+/**
+ * 보관된 표준 채널을 영구히 삭제한다(#155).
+ *
+ * **지우는 대상은 스키마에게 물어서 정했다.** 마이그레이션 전체에서
+ * `references channel(id)` 와 `references message(id)` 를 찾아 목록을 만들었고,
+ * `channelDelete.test.ts` 가 같은 것을 `information_schema` 로 다시 세어 이 목록과
+ * 어긋나면 빨개진다 — 다음 마이그레이션이 새 참조를 더할 때 알려 주는 자리다.
+ *
+ * 목록(참조 열과 처리 방식):
+ *   - `message_pin`      (channel_id, message_id)      명시적 삭제
+ *   - `channel_read`     (channel_id)                  명시적 삭제
+ *   - `channel_member`   (channel_id)                  명시적 삭제
+ *   - `channel_pref`     (channel_id, cascade)         명시적 삭제(cascade 에 기대지 않는다)
+ *   - `inbox`            (message_id)                  명시적 삭제 — cascade 없음
+ *   - `idempotency_key`  (message_id, channel_id)      명시적 삭제 — cascade 없음
+ *   - `work_thread`      (thread_root_message_id)      명시적 삭제 — cascade 없음
+ *   - `message_reaction` (message_id, cascade)         message 삭제로 함께 사라진다
+ *   - `attachment`       (message_id, cascade)         message 삭제로 함께 사라진다
+ *   - `message`          (channel_id, thread_root_id)  명시적 삭제
+ *   - `channel`          (자신)                        마지막
+ *
+ * `inbox`·`idempotency_key`·`work_thread` 를 빠뜨리면 **멘션이 하나라도 있거나 재시도 키가
+ * 하나라도 붙은 채널**의 삭제가 FK 위반으로 터진다. 처음 판이 그랬고, 회귀선이 API 로 볼 수
+ * 있는 것만 확인해서 초록이었다.
+ *
+ * FK 를 `on delete cascade` 로 바꾸지 않는 이유: cascade 를 스키마에 박으면 무엇이 함께
+ * 사라지는지가 코드 어디에도 안 적힌다 — 나중에 새 테이블이 `channel_id` 를 참조할 때 그
+ * 테이블도 조용히 같이 지워지고, 아무도 그것을 결정한 적이 없다. 지우는 순서와 대상이 이
+ * 함수에 적혀 있는 것이 이 작업의 산출물이다.
+ *
+ * 계정(`009_agent_disable.sql`)이 반대 결정(소프트 비활성화)을 내린 이유와 채널이 다른 이유:
+ * 계정은 남의 메시지에 **작성자로 남는다** — 지우면 그 메시지가 작성자를 잃는다. 채널은 그
+ * 안의 것을 다 지우면 밖에서 가리키는 것이 남지 않는다.
+ *
+ * 파일 삭제는 **행 삭제 이후**다. 업로드는 "파일 먼저, 행 나중"이지만(`attachmentRoutes.ts`:
+ * 반대 순서면 가리키는 파일이 없는 행이 남는다) 삭제는 그 반대가 안전하다 — 행을 먼저
+ * 지우면 파일 삭제가 실패해도 남는 것은 고아 파일(나중에 치울 수 있다)이고, 파일을 먼저
+ * 지우면 그 사이 읽는 요청이 '깨진 첨부'를 본다.
+ *
+ * 파일 삭제 실패는 **트랜잭션을 되돌리지 않는다** — 고아 파일은 무해하고, 되돌리면 사람은
+ * 지웠다고 믿는데 채널이 살아 있다.
+ *
+ * 판정과 삭제를 **한 트랜잭션·한 연결에서** 한다. 판정을 풀에서 따로 하면 다른 연결이라
+ * 그 사이 보관이 풀려도 삭제가 그대로 나간다. `for update` 로 채널 행을 잡는 이유가 그것이다.
+ */
+export async function deleteChannel(
+  pool: Pool, channelId: string,
+  storage?: { remove(key: string): Promise<void> },
+): Promise<
+  { name: string; messageCount: number; attachmentCount: number; storageKeys: string[] }
+  | 'not_archived' | 'not_found' | 'is_dm'
+> {
+  const client = await pool.connect();
+  let committed = false;
+  let storageKeys: string[] = [];
+  let result:
+    | { name: string; messageCount: number; attachmentCount: number; storageKeys: string[] }
+    | 'not_archived' | 'not_found' | 'is_dm';
+  try {
+    await client.query('begin');
+
+    // 판정 대상 행을 잠근다 — 판정과 삭제 사이에 보관이 풀리는 것을 막는다.
+    const channel = await client.query(
+      `select id, name, kind, archived_at from channel where id = $1 for update`,
+      [channelId],
+    );
+    if (!channel.rowCount) {
+      await client.query('rollback');
+      return 'not_found';
+    }
+    const row = channel.rows[0] as { id: string; name: string; kind: string; archived_at: string | null };
+    // DM 은 지울 수 없다 — 표준 채널만 대상이다.
+    if (row.kind !== 'standard') {
+      await client.query('rollback');
+      return 'is_dm';
+    }
+    // 보관이 선행 조건이다. 삭제는 되돌릴 수 없는데 채널 메뉴는 한 번의 클릭이므로,
+    // "그만 쓰기로 했다"와 "영구히 없앤다"를 두 번의 의도적 조작으로 가른다.
+    if (!row.archived_at) {
+      await client.query('rollback');
+      return 'not_archived';
+    }
+
+    // 지울 파일 키를 행 삭제 **전에** 읽는다 — 지운 뒤에는 물을 곳이 없다.
+    const keys = await client.query<{ storage_key: string }>(
+      `select a.storage_key from attachment a
+       join message m on m.id = a.message_id
+       where m.channel_id = $1`,
+      [channelId],
+    );
+    storageKeys = keys.rows.map((r) => r.storage_key);
+
+    // 감사에 남길 개수. 삭제 후에는 무엇이 사라졌는지 물을 곳이 없으니 규모라도 남아야
+    // "실수로 큰 채널을 지웠다"를 나중에 알 수 있다.
+    const counted = await client.query<{ cnt: number }>(
+      `select count(*)::int as cnt from message where channel_id = $1`,
+      [channelId],
+    );
+    const messageCount = counted.rows[0]!.cnt;
+    const attachmentCount = storageKeys.length;
+
+    // 아래 순서는 위 목록과 같다. 메시지를 참조하는 것부터 지우고, 채널을 참조하는 것,
+    // 마지막에 채널 자신이다.
+    //
+    // inbox: message_id 참조, cascade 없음. 멘션이 있는 채널이 여기서 걸렸다.
+    await client.query(
+      `delete from inbox where message_id in (select id from message where channel_id = $1)`,
+      [channelId],
+    );
+    // idempotency_key: message_id·channel_id 둘 다 참조, cascade 없음. channel_id 로 지우면
+    // 둘 다 정리된다(같은 채널의 메시지만 가리킨다).
+    await client.query(`delete from idempotency_key where channel_id = $1`, [channelId]);
+    // work_thread: thread_root_message_id 참조, cascade 없음. avcs 투영이 만든다.
+    await client.query(
+      `delete from work_thread
+       where thread_root_message_id in (select id from message where channel_id = $1)`,
+      [channelId],
+    );
+    // message_pin: channel_id·message_id 참조.
+    await client.query(`delete from message_pin where channel_id = $1`, [channelId]);
+    // channel_read: channel_id 참조.
+    await client.query(`delete from channel_read where channel_id = $1`, [channelId]);
+    // channel_member: channel_id 참조.
+    await client.query(`delete from channel_member where channel_id = $1`, [channelId]);
+    // channel_pref: channel_id 참조(cascade 지만 명시적으로 지운다 — 목록이 코드에 남아야 한다).
+    await client.query(`delete from channel_pref where channel_id = $1`, [channelId]);
+    // message: channel_id 참조. attachment·message_reaction 은 cascade 로 함께 사라진다.
+    // thread_root_id 자기 참조는 한 문장 안에서 부모·자식을 함께 지우므로 문제가 없다.
+    await client.query(`delete from message where channel_id = $1`, [channelId]);
+    // channel: 마지막.
+    await client.query(`delete from channel where id = $1`, [channelId]);
+
+    await client.query('commit');
+    committed = true;
+    result = { name: row.name ?? '', messageCount, attachmentCount, storageKeys };
+  } catch (err) {
+    if (!committed) await client.query('rollback').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  // 커밋 뒤에 파일을 지운다. 실패는 삼키지만 되돌리지 않는다 — 위 주석의 이유다.
+  if (storage && storageKeys.length > 0) {
+    await Promise.allSettled(storageKeys.map((key) => storage.remove(key)));
+  }
+  return result;
+}
