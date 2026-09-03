@@ -183,6 +183,15 @@ export function mentionedHandles(body: string): string[] {
 export const CHANNEL_MENTION_HANDLE = 'channel';
 
 /**
+ * 집합을 부르는 handle(#230). `CHANNEL_MENTION_HANDLE` 와 같은 방식으로 처리된다:
+ * 문법을 따로 만들지 않고 평범한 `MENTION_PATTERN` 에서 잡힌다.
+ *
+ * 집합과 **같은 이름의 계정이 있으면 계정이 이긴다** — `@foo` 가 사람인지
+ * 집합인지 갈라지면 안 되므로, 같은 네임스페이스를 쓴다.
+ */
+export const GROUP_MENTION_HANDLE = 'group';
+
+/**
  * 메시지 하나를 가리키는 링크의 스킴(#178). 문자열을 여기저기서 조립하지 않는다 —
  * 만드는 쪽과 읽는 쪽이 갈라지면 자기가 만든 링크를 자기가 못 여는 상태가 된다.
  *
@@ -344,6 +353,28 @@ export interface PinRow {
   pinnedBy: string;
   pinnedAt: string;
   message: MessageRow;
+}
+
+/**
+ * 사람 집합을 한 handle 로 부르는 것(#230). 저장된 명단이다 — 계산된 질의가 아니다.
+ *
+ * 계정과 **같은 네임스페이스**를 쓴다. `@foo` 가 사람인지 집합인지 갈라지면
+ * 안 되므로, 집합을 만들 때 같은 이름의 계정이 있으면 거절하고, 계정을 만들 때도
+ * 같은 이름의 집합이 있으면 거절한다.
+ */
+export interface HandleGroupRow {
+  id: string;
+  handle: string;
+  displayName: string;
+  createdAt: string;
+}
+
+/**
+ * 집합의 구성원. `account_id` 로 조인해账户를 가져온다.
+ */
+export interface HandleGroupMemberRow {
+  groupId: string;
+  accountId: string;
 }
 
 export interface LeaseRow {

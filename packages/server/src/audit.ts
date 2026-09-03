@@ -32,7 +32,9 @@ export type AuditAction =
   | 'channel.member.added' | 'channel.member.removed'
   // #182: 공개 범위 전환. 이 한 번의 조작으로 채널 전체가 전원에게 열리거나 닫힌다 —
   // 'channel.updated' 에 묻어 두면 감사 조회에서 그 사건을 골라낼 수 없다.
-  | 'channel.visibility.changed';
+  | 'channel.visibility.changed'
+  // #230: 사람 집합 생성·수정·삭제. admin 만 할 수 있는 조작이므로 기록이 남아야 한다.
+  | 'handle_group.created' | 'handle_group.updated' | 'handle_group.deleted';
 
 export interface AuditEntry {
   action: AuditAction;

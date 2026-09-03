@@ -12,6 +12,7 @@ import { createLocalStorage } from './storage/local.js';
 import { registerDirectoryRoutes } from './routes/directoryRoutes.js';
 import { registerAuditRoutes } from './routes/auditRoutes.js';
 import { registerSettingsRoutes } from './routes/settingsRoutes.js';
+import { registerHandleGroupRoutes } from './routes/handleGroupRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
 import { createAgentPresence } from './mcp/presence.js';
@@ -248,6 +249,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerDirectoryRoutes(app, deps.pool);
   await registerAuditRoutes(app, deps.pool);
   await registerSettingsRoutes(app, deps.pool);
+  await registerHandleGroupRoutes(app, deps.pool);
 
   // **registerAuth 뒤에 등록해야 한다.** `app.requireAccount` 는 registerAuth 가 데코레이트하므로,
   // 앞에서 등록하면 preHandler 가 undefined 로 박혀 인증 없이 열린다(테스트가 이걸 잡았다).

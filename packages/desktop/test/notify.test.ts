@@ -34,7 +34,7 @@ async function started(
   let calls = 0;
   const api = fakeApi({
     channels: vi.fn(async () => [chan('c1', 'general')]),
-    accounts: vi.fn(async () => [acc('u1', 'admin'), acc('u2', 'bot', 'agent')]),
+    accounts: vi.fn(async () => ({ accounts: [acc('u1', 'admin'), acc('u2', 'bot', 'agent')], groups: [] })),
     inboxUnread: vi.fn(async () => (++calls === 1 ? backlog : arriving)),
   });
   const { makeWs, callbacks } = fakeWsFactory();

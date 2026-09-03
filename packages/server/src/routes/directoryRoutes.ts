@@ -12,7 +12,11 @@ export async function registerDirectoryRoutes(app: FastifyInstance, pool: Pool):
               status, status_text as "statusText"
        from account order by handle`,
     );
-    return { accounts: res.rows };
+    const groupRes = await pool.query(
+      `select id, handle, display_name as "displayName", created_at as "createdAt"
+       from handle_group order by handle`,
+    );
+    return { accounts: res.rows, groups: groupRes.rows };
   });
 
   app.get('/dms', { preHandler: app.requireAccount }, async (req) => {
