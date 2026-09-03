@@ -55,7 +55,7 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
   if (notifyLevel === 'none' || !count) return null;
   return (
     <span data-testid={`unread-${channelId}`}
-      className="ml-auto rounded-full bg-danger px-1.5 text-[10px] font-bold text-white">
+      className="ml-auto rounded-full bg-danger px-1.5 text-[10px] font-bold text-fg-on-strong">
       {count}
     </span>
   );
@@ -451,7 +451,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
           <input
             type="text"
             aria-label="Topic"
-            className="mb-1 w-full rounded bg-zinc-900 px-2 py-1 text-sm text-zinc-200 placeholder-zinc-500"
+            className="mb-1 w-full rounded border border-border bg-field px-2 py-1 text-sm text-fg placeholder-fg-subtle"
             placeholder="topic (선택)"
             value={editTopic}
             onChange={(e) => { setEditTopic(e.target.value); setEditError(null); }}
@@ -460,22 +460,22 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
             <input
               type="text"
               aria-label="Repository"
-              className="flex-1 rounded bg-surface-raised px-2 py-1 text-sm text-fg placeholder-fg-subtle"
+              className="flex-1 rounded border border-border bg-field px-2 py-1 text-sm text-fg placeholder-fg-subtle"
               placeholder="repo (비우면 해제)"
               value={editRepo}
               onChange={(e) => { setEditRepo(e.target.value); setEditError(null); }}
             />
           </div>
-          {editError && <p role="alert" className="mb-1 text-[10px] text-red-400">{editError}</p>}
+          {editError && <p role="alert" className="mb-1 text-[10px] text-danger">{editError}</p>}
           <div className="flex gap-1">
             <button
-              className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-500"
+              className="rounded bg-accent px-2 py-0.5 text-xs text-fg-on-strong hover:bg-accent-hover"
               onClick={() => void submitEdit()}
             >
               저장
             </button>
             <button
-              className="rounded px-2 py-0.5 text-xs text-zinc-400 hover:bg-zinc-700"
+              className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-hover"
               onClick={closeEdit}
             >
               취소
@@ -492,26 +492,26 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
           </div>
           {/* 지울 규모를 보여 준다 — 삭제 뒤에는 무엇이 사라졌는지 물을 곳이 없다.
               아직 못 읽었으면 개수를 지어내지 않는다. */}
-          {deleteCount === null && <p className="mb-1 text-[10px] text-zinc-500">메시지 수를 읽고 있다…</p>}
+          {deleteCount === null && <p className="mb-1 text-[10px] text-fg-subtle">메시지 수를 읽고 있다…</p>}
           {typeof deleteCount === 'number' && (
-            <p className="mb-1 text-[10px] text-amber-400">
+            <p className="mb-1 text-[10px] text-warning">
               이 채널과 메시지 {deleteCount}개를 영구히 지운다. 되돌릴 수 없다.
             </p>
           )}
-          {deleteError && <p role="alert" className="mb-1 text-[10px] text-red-400">{deleteError}</p>}
+          {deleteError && <p role="alert" className="mb-1 text-[10px] text-danger">{deleteError}</p>}
           <div className="flex gap-1">
             {/* 개수를 모르면 확인 버튼을 만들지 않는다 — 규모를 모르는 채로 되돌릴 수 없는
                 조작을 승인하게 하지 않는다. */}
             {typeof deleteCount === 'number' && (
               <button
-                className="rounded bg-red-700 px-2 py-0.5 text-xs text-white hover:bg-red-600"
+                className="rounded bg-danger px-2 py-0.5 text-xs text-fg-on-strong hover:bg-danger-hover"
                 onClick={() => void confirmDelete(ch.id)}
               >
                 정말 삭제
               </button>
             )}
             <button
-              className="rounded px-2 py-0.5 text-xs text-zinc-400 hover:bg-zinc-700"
+              className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-hover"
               onClick={closeDelete}
             >
               취소
@@ -542,24 +542,24 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
               읽고 쓸 수 있으므로 여기 적힌 사람들은 "볼 수 있는 사람"이 아니라 구독자다 —
               그 말을 하지 않으면 목록에 없는 사람은 못 본다는 뜻으로 읽힌다. private 은
               반대로 이 목록이 곧 볼 수 있는 사람의 전부다. */}
-          <p className="mb-1 text-[10px] text-zinc-500">
+          <p className="mb-1 text-[10px] text-fg-subtle">
             {ch.visibility === 'private'
               ? '이 목록이 이 채널을 볼 수 있는 사람의 전부다.'
               : '누구나 읽고 쓸 수 있는 채널이다 — 이 목록은 구독한 사람이지, 볼 수 있는 사람의 전부가 아니다.'}
           </p>
-          {memberError && <p role="alert" className="mb-1 text-[10px] text-red-400">{memberError}</p>}
+          {memberError && <p role="alert" className="mb-1 text-[10px] text-danger">{memberError}</p>}
           {/* 키 자체가 없으면 '아직 못 받았다'다 — 빈 목록으로 그리면 거짓 사실이 된다. */}
           {members === undefined
-            ? !memberError && <p className="mb-1 text-[10px] text-zinc-500">불러오는 중…</p>
+            ? !memberError && <p className="mb-1 text-[10px] text-fg-subtle">불러오는 중…</p>
             : (
               <ul className="mb-1 space-y-0.5">
-                {members.length === 0 && <li className="text-[10px] text-zinc-500">멤버가 없다</li>}
+                {members.length === 0 && <li className="text-[10px] text-fg-subtle">멤버가 없다</li>}
                 {members.map((m) => {
                   // 디렉터리에 없는 계정은 **아무 종류도 주장하지 않는다** — 모르는 것을
                   // '사람'으로 그리면 에이전트가 사람으로 보이는 거짓 사실이 된다.
                   const account = accounts[m.accountId];
                   return (
-                    <li key={m.accountId} className="flex items-center gap-1 text-xs text-zinc-300">
+                    <li key={m.accountId} className="flex items-center gap-1 text-xs text-fg-muted">
                       <span>@{m.handle}</span>
                       {account && (
                         <span className="rounded bg-surface-raised px-1 text-[10px] text-fg">
@@ -578,7 +578,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
                       )}
                       {me?.isAdmin && m.accountId !== me?.id && (
                         <button
-                          className="ml-auto rounded px-1 text-[10px] text-zinc-500 hover:bg-zinc-700 hover:text-red-400"
+                          className="ml-auto rounded px-1 text-[10px] text-fg-subtle hover:bg-surface-hover hover:text-danger"
                           aria-label={`${m.handle} 내보내기`}
                           onClick={() => void getController().leaveChannel(ch.id, m.accountId)
                             .catch((err: unknown) => setMemberError(err instanceof Error ? err.message : '내보내기에 실패했다'))}
@@ -605,25 +605,25 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
               .filter((a) => a.kind === 'agent' && (me?.isAdmin ? (!a.disabled || onIds.has(a.id)) : onIds.has(a.id)))
               .sort((a, b) => a.handle.localeCompare(b.handle));
             return (
-              <div data-testid={`auto-mentions-${ch.id}`} className="mb-1 border-t border-zinc-700 pt-1">
-                <div className="mb-0.5 text-xs text-zinc-400">자동 멘션</div>
-                <p className="mb-1 text-[10px] text-zinc-500">
+              <div data-testid={`auto-mentions-${ch.id}`} className="mb-1 border-t border-border pt-1">
+                <div className="mb-0.5 text-xs text-fg-muted">자동 멘션</div>
+                <p className="mb-1 text-[10px] text-fg-subtle">
                   켜진 에이전트는 이 채널에서 사람이 쓰는 글 앞에 자동으로 불린다. 작성창의 칩 × 로 한 메시지에서만 뺄 수 있다.
                   {!me?.isAdmin && ' 바꾸는 것은 admin 만 할 수 있다.'}
                 </p>
-                {autoMentionError && <p role="alert" className="mb-1 text-[10px] text-red-400">{autoMentionError}</p>}
+                {autoMentionError && <p role="alert" className="mb-1 text-[10px] text-danger">{autoMentionError}</p>}
                 {/* 키가 없으면 '아직 못 받았다' — 빈 목록으로 그리면 "아무도 안 부른다"는 거짓 사실이 된다. */}
                 {autoRows === undefined
-                  ? !autoMentionError && <p className="mb-1 text-[10px] text-zinc-500">불러오는 중…</p>
+                  ? !autoMentionError && <p className="mb-1 text-[10px] text-fg-subtle">불러오는 중…</p>
                   : (
                     <ul className="mb-1 space-y-0.5">
                       {agents.length === 0 && (
-                        <li className="text-[10px] text-zinc-500">
+                        <li className="text-[10px] text-fg-subtle">
                           {me?.isAdmin ? '켤 수 있는 에이전트가 없다' : '자동으로 부르는 에이전트가 없다'}
                         </li>
                       )}
                       {agents.map((a) => (
-                        <li key={a.id} className="flex items-center gap-1 text-xs text-zinc-300">
+                        <li key={a.id} className="flex items-center gap-1 text-xs text-fg-muted">
                           {me?.isAdmin ? (
                             <label className="flex items-center gap-1">
                               <input
@@ -641,9 +641,9 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
                               무조건 붙이면 체크가 비어 있는 줄에 '자동' 이라고 적힌다 — 화면이
                               체크박스와 반대되는 말을 한다. */}
                           {onIds.has(a.id) && (
-                            <span className="rounded bg-indigo-900 px-1 text-[10px] text-indigo-200">자동</span>
+                            <span className="rounded bg-accent-surface px-1 text-[10px] text-accent">자동</span>
                           )}
-                          {a.disabled && <span className="rounded bg-zinc-700 px-1 text-[10px] text-zinc-400">비활성</span>}
+                          {a.disabled && <span className="rounded bg-surface-hover px-1 text-[10px] text-fg-muted">비활성</span>}
                         </li>
                       ))}
                     </ul>
@@ -652,7 +652,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
             );
           })()}
           {leaveConfirmId === ch.id && (
-            <p role="alert" className="mb-1 text-[10px] text-amber-400">
+            <p role="alert" className="mb-1 text-[10px] text-warning">
               나가면 아무도 이 채널을 볼 수 없다 — 마지막 멤버다. 채널은 지워지지 않는다.
             </p>
           )}
@@ -660,7 +660,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
             <div className="mb-1 flex items-center gap-1">
               <select
                 aria-label="초대할 계정"
-                className="flex-1 rounded bg-surface-raised px-1 py-0.5 text-xs text-fg"
+                className="flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-fg"
                 value={inviteAccountId}
                 onChange={(e) => setInviteAccountId(e.target.value)}
               >
@@ -668,7 +668,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
                 {invitable.map((a) => <option key={a.id} value={a.id}>@{a.handle}</option>)}
               </select>
               <button
-                className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-500 disabled:opacity-40"
+                className="rounded bg-accent px-2 py-0.5 text-xs text-fg-on-strong hover:bg-accent-hover disabled:opacity-40"
                 disabled={!inviteAccountId}
                 onClick={() => void submitInvite(ch.id)}
               >
@@ -689,15 +689,15 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
             것은 다른 사실이라 `teamError` 로 따로 말한다.
           */}
           {ch.visibility === 'private' && teamError && (
-            <p role="alert" className="mb-1 text-[10px] text-amber-400">{teamError}</p>
+            <p role="alert" className="mb-1 text-[10px] text-warning">{teamError}</p>
           )}
           {ch.visibility === 'private' && teams.length > 0 && (
             <div className="mb-1 space-y-1">
-              <div className="text-[10px] text-zinc-500">팀으로 추가</div>
+              <div className="text-[10px] text-fg-subtle">팀으로 추가</div>
               <div className="flex items-center gap-1">
                 <select
                   aria-label="추가할 팀"
-                  className="flex-1 rounded bg-zinc-900 px-1 py-0.5 text-xs text-zinc-200"
+                  className="flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-fg"
                   value={selectedTeamId}
                   onChange={(e) => { setSelectedTeamId(e.target.value); setTeamAddResult(null); }}
                 >
@@ -705,7 +705,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
                   {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
                 <button
-                  className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-500 disabled:opacity-40"
+                  className="rounded bg-accent px-2 py-0.5 text-xs text-fg-on-strong hover:bg-accent-hover disabled:opacity-40"
                   disabled={!selectedTeamId}
                   onClick={() => void submitTeamAdd(ch.id)}
                 >
@@ -713,9 +713,9 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
                 </button>
               </div>
               {teamAddResult && (
-                <div className="text-[10px] text-zinc-400">
+                <div className="text-[10px] text-fg-muted">
                   {teamAddResult.added.length > 0 && <span>추가: {teamAddResult.added.join(', ')}</span>}
-                  {teamAddResult.skipped.length > 0 && <span className="ml-1 text-amber-400">건너뜀: {teamAddResult.skipped.join(', ')}</span>}
+                  {teamAddResult.skipped.length > 0 && <span className="ml-1 text-warning">건너뜀: {teamAddResult.skipped.join(', ')}</span>}
                   {teamAddResult.alreadyMember.length > 0 && <span className="ml-1">이미 있음: {teamAddResult.alreadyMember.join(', ')}</span>}
                 </div>
               )}
@@ -733,7 +733,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
               </button>
             )}
             <button
-              className="rounded px-2 py-0.5 text-xs text-zinc-400 hover:bg-zinc-700"
+              className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-hover"
               onClick={closeMembers}
             >
               닫기
@@ -900,7 +900,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
             <Logo size={16} decorative />
           </span>
           murmur
-          <span className={`h-2 w-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}
+          <span className={`h-2 w-2 rounded-full ${connected ? 'bg-success' : 'bg-danger'}`}
             title={connected ? 'connected' : 'disconnected'} />
           <button
             onClick={onToggleCollapse}
@@ -931,7 +931,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
                 <input
                   type="text"
                   aria-label="New channel name"
-                  className="mb-1 w-full rounded bg-surface-raised px-2 py-1 text-sm text-fg placeholder-fg-subtle"
+                  className="mb-1 w-full rounded border border-border bg-field px-2 py-1 text-sm text-fg placeholder-fg-subtle"
                   placeholder="channel-name"
                   value={newChannelName}
                   onChange={(e) => { setNewChannelName(e.target.value); setCreateError(null); }}
@@ -955,7 +955,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
                 {createError && <p role="alert" className="mb-1 text-[10px] text-danger">{createError}</p>}
                 <div className="flex gap-1">
                   <button
-className="rounded bg-accent px-2 py-0.5 text-xs text-white hover:bg-accent"
+className="rounded bg-accent px-2 py-0.5 text-xs text-fg-on-strong hover:bg-accent-hover"
                     onClick={() => void submitNewChannel()}
                   >
                     만들기
@@ -1003,7 +1003,7 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
             {savedCount > 0 && (
               <span
                 aria-label={`담아 둔 메시지 ${savedCount}개`}
-                className="ml-auto rounded-full bg-accent px-1.5 text-[10px] font-bold text-white"
+                className="ml-auto rounded-full bg-accent px-1.5 text-[10px] font-bold text-fg-on-strong"
               >
                 {savedCount}
               </span>
@@ -1041,7 +1041,7 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
                     파생), 상태는 지금 말을 걸어도 되는가(사람이 선언)다 — 하나로 합치면
                     "연결이 끊긴 사람"과 "방해 금지인 사람"이 뭉친다(#186). */}
                 <span data-testid={`presence-${dm.id}`} data-online={String(dm.online)}
-                  className={`h-2 w-2 rounded-full ${dm.online ? 'bg-green-500' : 'bg-zinc-600'}`} />
+                  className={`h-2 w-2 rounded-full ${dm.online ? 'bg-success' : 'bg-fg-subtle'}`} />
                 <StatusMark account={dm.peer} />
                 {/* #250: 러너 상태는 presence 와 **또 다른 사실**이다 — presence 는 "러너가
                     붙어 있나"(누가 띄웠든)이고, 이것은 "이 앱이 띄운 자식이 어떤 상태인가"다.

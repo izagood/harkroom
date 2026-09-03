@@ -168,15 +168,15 @@ export function Inbox({ open, onClose }: Props) {
       <button
         data-testid={`inbox-entry-${e.id}`}
         onClick={() => openEntry(e)}
-        className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-zinc-700"
+        className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-surface-hover"
       >
         <span
           data-testid={`inbox-reason-${e.id}`}
-          className="rounded bg-zinc-800 px-1 text-[10px] uppercase tracking-wide text-zinc-400"
+          className="rounded bg-surface-raised px-1 text-[10px] uppercase tracking-wide text-fg-muted"
         >
           {REASON_LABEL[e.reason]}
         </span>
-        <span className="text-zinc-300">{channelLabel(e.channelId)}</span>
+        <span className="text-fg-muted">{channelLabel(e.channelId)}</span>
         {/* 안 읽음은 표시가 있어야 한다. 필터로 걸러 볼 수 있는 것이 목록에서는 안 보이면
             "안 읽음만" 을 껐을 때 무엇이 안 읽은 것인지 알 수 없다. */}
         {e.readAt === null && (
@@ -196,21 +196,21 @@ export function Inbox({ open, onClose }: Props) {
       <button
         data-testid={`inbox-draft-${d.scopeKey}`}
         onClick={() => openDraft(d)}
-        className="flex w-full items-center gap-2 rounded border-l-2 border-amber-600 px-2 py-1.5 text-left hover:bg-zinc-700"
+        className="flex w-full items-center gap-2 rounded border-l-2 border-warning-border px-2 py-1.5 text-left hover:bg-surface-hover"
       >
         {/* 초안은 inbox 항목과 **눈으로 구분돼야 한다.** 하나는 남이 나를 부른 것이고
             하나는 내가 쓰다 만 것이다. 섞이면 목록이 무엇을 말하는지 알 수 없다.
             색만으로는 부족해 글자 표를 함께 단다. */}
         <span
           data-testid={`inbox-draft-badge-${d.scopeKey}`}
-          className="rounded bg-amber-900 px-1 text-[10px] uppercase tracking-wide text-amber-200"
+          className="rounded bg-warning-surface px-1 text-[10px] uppercase tracking-wide text-warning"
         >
           초안
         </span>
-        <span className="text-zinc-300">
+        <span className="text-fg-muted">
           {d.channelId ? channelLabel(d.channelId) : d.threadRootId ? '스레드' : d.scopeKey}
         </span>
-        <span className="truncate text-zinc-500">{d.body}</span>
+        <span className="truncate text-fg-subtle">{d.body}</span>
       </button>
     </li>
   );
@@ -223,26 +223,26 @@ export function Inbox({ open, onClose }: Props) {
       <div
         role="dialog"
         aria-label="인박스"
-        className="flex max-h-full w-[42rem] flex-col overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 text-sm text-zinc-200"
+        className="flex max-h-full w-[42rem] flex-col overflow-hidden rounded-lg border border-border bg-surface-raised text-sm text-fg"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
       >
-        <div className="flex items-center gap-2 border-b border-zinc-800 p-3">
+        <div className="flex items-center gap-2 border-b border-border p-3">
           <span className="font-bold">Inbox</span>
           <button
             onClick={onClose}
-            className="ml-auto rounded px-2 py-1 text-zinc-400 hover:bg-zinc-700"
+            className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover"
             aria-label="인박스 닫기"
           >
             ✕
           </button>
         </div>
-        <div className="flex flex-wrap items-center gap-3 border-b border-zinc-800 p-3">
+        <div className="flex flex-wrap items-center gap-3 border-b border-border p-3">
           <label className="flex items-center gap-1">
-            <span className="text-xs text-zinc-500">종류</span>
+            <span className="text-xs text-fg-subtle">종류</span>
             <select
               aria-label="종류 필터"
-              className="rounded bg-zinc-800 px-2 py-1 text-zinc-100"
+              className="rounded border border-border bg-field px-2 py-1 text-fg"
               value={reason}
               onChange={(e) => setReason(e.target.value as ReasonFilter)}
             >
@@ -253,10 +253,10 @@ export function Inbox({ open, onClose }: Props) {
             </select>
           </label>
           <label className="flex items-center gap-1">
-            <span className="text-xs text-zinc-500">채널</span>
+            <span className="text-xs text-fg-subtle">채널</span>
             <select
               aria-label="채널 필터"
-              className="rounded bg-zinc-800 px-2 py-1 text-zinc-100"
+              className="rounded border border-border bg-field px-2 py-1 text-fg"
               value={channelFilter}
               onChange={(e) => setChannelFilter(e.target.value)}
             >
@@ -273,33 +273,33 @@ export function Inbox({ open, onClose }: Props) {
               checked={unreadOnly}
               onChange={(e) => setUnreadOnly(e.target.checked)}
             />
-            <span className="text-xs text-zinc-400">안 읽음만</span>
+            <span className="text-xs text-fg-muted">안 읽음만</span>
           </label>
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {/* 실패는 목록 위에 남긴다. 실패했는데 빈 목록만 보이면 사람은 "아무도 나를
               부르지 않았다" 로 읽는다 — 조회 실패를 빈 목록으로 삼키지 않는다. */}
           {load.kind === 'error' && (
-            <div role="alert" className="mb-3 rounded border border-red-800 bg-red-950 p-2 text-xs text-red-200">
+            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-xs text-danger">
               인박스를 불러오지 못했다 — {load.message}
               <button
                 onClick={() => { reload(); }}
-                className="ml-2 rounded bg-red-800 px-2 py-0.5 text-red-100 hover:bg-red-700"
+                className="ml-2 rounded bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
               >
                 다시 시도
               </button>
             </div>
           )}
-          {load.kind === 'loading' && <p className="px-2 text-xs text-zinc-500">불러오는 중…</p>}
+          {load.kind === 'loading' && <p className="px-2 text-xs text-fg-subtle">불러오는 중…</p>}
 
           <section aria-label="나를 부른 것" className="mb-4">
-            <h3 className="px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">
+            <h3 className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
               나를 부른 것 ({shownEntries.length})
             </h3>
             {/* '없다' 는 조회가 성공했을 때만 말할 수 있다. 실패·대기 중에 이 문장을 내면
                 모르는 것을 아는 것처럼 말하는 것이다. */}
             {load.kind === 'ready' && shownEntries.length === 0 && (
-              <p data-testid="inbox-empty" className="px-2 text-xs text-zinc-500">
+              <p data-testid="inbox-empty" className="px-2 text-xs text-fg-subtle">
                 {entries.length === 0 ? '나를 부른 것이 없다' : '필터에 맞는 것이 없다'}
               </p>
             )}
@@ -309,11 +309,11 @@ export function Inbox({ open, onClose }: Props) {
           {/* 초안은 나란한 **별도 구획**이다. 하나는 서버 진실이고 하나는 로컬 상태라
               정렬 기준(시간)을 공유하지 않는다 — 한 목록에 섞으면 순서가 거짓말이 된다. */}
           <section aria-label="쓰다 만 초안">
-            <h3 className="px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">
+            <h3 className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
               쓰다 만 초안 ({shownDrafts.length})
             </h3>
             {shownDrafts.length === 0
-              ? <p className="px-2 text-xs text-zinc-500">쓰다 만 초안이 없다</p>
+              ? <p className="px-2 text-xs text-fg-subtle">쓰다 만 초안이 없다</p>
               : <ul>{shownDrafts.map(draftRow)}</ul>}
           </section>
         </div>

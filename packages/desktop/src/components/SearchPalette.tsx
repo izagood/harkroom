@@ -176,12 +176,12 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
       }}
     >
       <div
-        className="w-full max-w-xl rounded-lg border border-zinc-700 bg-zinc-800 shadow-xl"
+        className="w-full max-w-xl rounded-lg border border-border bg-surface-raised shadow-xl"
         role="dialog"
         aria-modal="true"
         aria-label="메시지 검색"
       >
-        <div className="flex items-center gap-2 border-b border-zinc-700 p-3">
+        <div className="flex items-center gap-2 border-b border-border p-3">
           <input
             ref={inputRef}
             type="text"
@@ -193,13 +193,13 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
             }}
             placeholder={scoped && activeChannelId ? `이 채널에서 찾기 (${getChannelName(activeChannelId)})` : '전체에서 찾기'}
             aria-label="검색어 입력"
-            className="flex-1 bg-transparent text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none"
+            className="flex-1 bg-transparent text-sm text-fg placeholder-fg-subtle focus:outline-none"
           />
-          {loading && <span className="text-xs text-zinc-500">검색 중...</span>}
+          {loading && <span className="text-xs text-fg-subtle">검색 중...</span>}
         </div>
 
         {activeChannelId && (
-          <div className="flex items-center gap-2 border-b border-zinc-700 px-3 py-2">
+          <div className="flex items-center gap-2 border-b border-border px-3 py-2">
             <input
               id="search-scope-toggle"
               type="checkbox"
@@ -207,14 +207,14 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
               onChange={toggleScope}
               className="accent-teal-500"
             />
-            <label htmlFor="search-scope-toggle" className="cursor-pointer text-xs text-zinc-400">
+            <label htmlFor="search-scope-toggle" className="cursor-pointer text-xs text-fg-muted">
               이 채널에서만 ({getChannelName(activeChannelId)})
             </label>
           </div>
         )}
 
         {error && (
-          <div role="alert" className="border-b border-zinc-700 bg-red-900/20 p-3 text-sm text-red-400">
+          <div role="alert" className="border-b border-border bg-danger-surface p-3 text-sm text-danger">
             {error}
           </div>
         )}
@@ -225,7 +225,7 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
           aria-label="검색 결과"
         >
           {hasSearched && enabledResults.length === 0 && !loading && !error && (
-            <li className="p-4 text-center text-sm text-zinc-500">검색 결과가 없습니다</li>
+            <li className="p-4 text-center text-sm text-fg-subtle">검색 결과가 없습니다</li>
           )}
           {enabledResults.map((msg, index) => (
             <li
@@ -241,26 +241,26 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
                 close();
               }}
               className={`cursor-pointer rounded px-3 py-2 ${
-                index === activeIndex ? 'bg-zinc-700' : 'hover:bg-zinc-700/50'
+                index === activeIndex ? 'bg-surface-hover' : 'hover:bg-surface-hover'
               }`}
             >
-              <div className="flex items-center gap-2 text-xs text-zinc-400">
-                <span className="font-medium text-zinc-300">{getAuthorName(msg.authorId)}</span>
+              <div className="flex items-center gap-2 text-xs text-fg-muted">
+                <span className="font-medium text-fg-muted">{getAuthorName(msg.authorId)}</span>
                 <span>·</span>
                 <span>{getChannelName(msg.channelId)}</span>
                 {msg.threadRootId && msg.threadRootId !== msg.id && (
                   <>
                     <span>·</span>
-                    <span className="text-zinc-500">스레드</span>
+                    <span className="text-fg-subtle">스레드</span>
                   </>
                 )}
               </div>
-              <div className="mt-1 truncate text-sm text-zinc-200">{msg.body}</div>
+              <div className="mt-1 truncate text-sm text-fg">{msg.body}</div>
             </li>
           ))}
         </ul>
 
-        <div className="border-t border-zinc-700 px-3 py-2 text-xs text-zinc-500">
+        <div className="border-t border-border px-3 py-2 text-xs text-fg-subtle">
           <span>↑↓ 이동</span>
           <span className="mx-2">·</span>
           <span>Enter 선택</span>

@@ -8,7 +8,7 @@ export function UpdatesSettings() {
         <ReadonlyRow label="Automatic updates" value="Not available" />
       </SettingsGroup>
 
-      <p className="text-zinc-500">
+      <p className="text-fg-subtle">
         murmur cannot update itself yet — install a newer build to move versions. Restarting the
         app does not disturb your agents: they run as their own processes and keep working.
         Unsent drafts and open threads are not preserved across a restart.

@@ -89,7 +89,7 @@ export function SavedMessages({ open, onClose }: Props) {
     const time = new Date(e.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
     return (
-      <li key={e.messageId} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-zinc-800">
+      <li key={e.messageId} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-surface-raised">
         {/* #219 결정 3: 지워진 메시지도 자리가 남는다 — 담아 둔 사실은 내 기록이다.
             본문은 서버가 내주지 않으므로(`message: null`) 그릴 것이 없고, 갈 곳도 없어
             누를 수 없게 둔다. 눌러도 아무 일이 없는 버튼은 거짓 신호다(design.md §4). */}
@@ -98,11 +98,11 @@ export function SavedMessages({ open, onClose }: Props) {
             data-testid={`saved-entry-${e.messageId}`}
             className="flex flex-1 items-center gap-2 text-left"
           >
-            <span className="rounded bg-zinc-800 px-1 text-[10px] uppercase tracking-wide text-zinc-400">
+            <span className="rounded bg-surface-raised px-1 text-[10px] uppercase tracking-wide text-fg-muted">
               {channelLabel(e.channelId)}
             </span>
-            <span className="flex-1 italic text-zinc-500">삭제된 메시지</span>
-            <span className="text-[10px] text-zinc-500">{time}</span>
+            <span className="flex-1 italic text-fg-subtle">삭제된 메시지</span>
+            <span className="text-[10px] text-fg-subtle">{time}</span>
           </span>
         ) : (
           <button
@@ -110,14 +110,14 @@ export function SavedMessages({ open, onClose }: Props) {
             onClick={() => openEntry(e)}
             className="flex min-w-0 flex-1 items-center gap-2 text-left"
           >
-            <span className="rounded bg-zinc-800 px-1 text-[10px] uppercase tracking-wide text-zinc-400">
+            <span className="rounded bg-surface-raised px-1 text-[10px] uppercase tracking-wide text-fg-muted">
               {channelLabel(e.channelId)}
             </span>
-            <span className="text-zinc-300">@{accounts[e.message.authorId]?.handle ?? '…'}</span>
-            <span className="min-w-0 flex-1 truncate text-zinc-400">
+            <span className="text-fg-muted">@{accounts[e.message.authorId]?.handle ?? '…'}</span>
+            <span className="min-w-0 flex-1 truncate text-fg-muted">
               {e.message.body.length > 100 ? `${e.message.body.slice(0, 100)}…` : e.message.body}
             </span>
-            <span className="text-[10px] text-zinc-500">
+            <span className="text-[10px] text-fg-subtle">
               {new Date(e.message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
           </button>
@@ -126,7 +126,7 @@ export function SavedMessages({ open, onClose }: Props) {
           data-testid={`saved-toggle-${e.messageId}`}
           aria-label={e.state === 'open' ? '완료로 표시' : '할 것으로 되돌리기'}
           onClick={() => { void toggleState(e); }}
-          className="shrink-0 rounded border border-zinc-600 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-zinc-700"
+          className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-fg-muted hover:bg-surface-hover"
         >
           {e.state === 'open' ? '✓' : '↺'}
         </button>
@@ -142,29 +142,29 @@ export function SavedMessages({ open, onClose }: Props) {
       <div
         role="dialog"
         aria-label="저장된 메시지"
-        className="flex max-h-full w-[42rem] flex-col overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 text-sm text-zinc-200"
+        className="flex max-h-full w-[42rem] flex-col overflow-hidden rounded-lg border border-border bg-surface-raised text-sm text-fg"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
       >
-        <div className="flex items-center gap-2 border-b border-zinc-800 p-3">
+        <div className="flex items-center gap-2 border-b border-border p-3">
           <span className="font-bold">Saved</span>
           <button
             onClick={onClose}
-            className="ml-auto rounded px-2 py-1 text-zinc-400 hover:bg-zinc-700"
+            className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover"
             aria-label="패널 닫기"
           >
             ✕
           </button>
         </div>
-        <div className="flex items-center gap-3 border-b border-zinc-800 p-3">
+        <div className="flex items-center gap-3 border-b border-border p-3">
           <button
-            className={`rounded px-2 py-1 ${tab === 'open' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-zinc-700'}`}
+            className={`rounded px-2 py-1 ${tab === 'open' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:bg-surface-hover'}`}
             onClick={() => setTab('open')}
           >
             할 것
           </button>
           <button
-            className={`rounded px-2 py-1 ${tab === 'done' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-zinc-700'}`}
+            className={`rounded px-2 py-1 ${tab === 'done' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:bg-surface-hover'}`}
             onClick={() => setTab('done')}
           >
             완료
@@ -172,20 +172,20 @@ export function SavedMessages({ open, onClose }: Props) {
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {load.kind === 'error' && (
-            <div role="alert" className="mb-3 rounded border border-red-800 bg-red-950 p-2 text-xs text-red-200">
+            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-xs text-danger">
               불러오지 못했다 — {load.message}
               <button
                 onClick={() => setReloadSeq((n) => n + 1)}
-                className="ml-2 rounded bg-red-800 px-2 py-0.5 text-red-100 hover:bg-red-700"
+                className="ml-2 rounded bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
               >
                 다시 시도
               </button>
             </div>
           )}
-          {load.kind === 'loading' && <p className="px-2 text-xs text-zinc-500">불러오는 중…</p>}
+          {load.kind === 'loading' && <p className="px-2 text-xs text-fg-subtle">불러오는 중…</p>}
 
           {load.kind === 'ready' && entries.length === 0 && (
-            <p data-testid="saved-empty" className="px-2 text-xs text-zinc-500">
+            <p data-testid="saved-empty" className="px-2 text-xs text-fg-subtle">
               {tab === 'open' ? '저장된 메시지가 없다' : '완료된 메시지가 없다'}
             </p>
           )}
