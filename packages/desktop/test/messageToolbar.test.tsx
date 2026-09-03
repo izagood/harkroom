@@ -253,9 +253,9 @@ describe('#145 인라인 이모지 버튼', () => {
     const toolbar = screen.getByRole('group', { name: 'message toolbar' });
     fireEvent.mouseEnter(toolbar);
 
-    expect(within(toolbar).getByRole('button', { name: /^👍$/ })).toBeTruthy();
-    expect(within(toolbar).getByRole('button', { name: /^🎉$/ })).toBeTruthy();
-    expect(within(toolbar).getByRole('button', { name: /^✅$/ })).toBeTruthy();
+    expect(within(toolbar).getByRole('button', { name: 'React with 👍' })).toBeTruthy();
+    expect(within(toolbar).getByRole('button', { name: 'React with 🎉' })).toBeTruthy();
+    expect(within(toolbar).getByRole('button', { name: 'React with ✅' })).toBeTruthy();
   });
 
   it('👀 와 💬 는 인라인에 없다 — 피커에만 있다', () => {
@@ -268,7 +268,7 @@ describe('#145 인라인 이모지 버튼', () => {
     // 피커를 열기 전에 인라인 버튼들을 확인 - 👀💬 가 없어야 한다
     const inlineButtons = within(toolbar).getAllByRole('button');
     const inlineEmojis = inlineButtons.map((b) => b.getAttribute('aria-label'));
-    expect(inlineEmojis.some((l) => l === '👀' || l === '💬')).toBe(false);
+    expect(inlineEmojis.some((l) => l === 'React with 👀' || l === 'React with 💬')).toBe(false);
 
     // 이제 피커를 열고 👀💬 가 있는지 확인
     fireEvent.click(within(toolbar).getByRole('button', { name: /Add reaction/ }));
