@@ -8,8 +8,8 @@ import { Menu } from './Menu';
 import { StatusMark } from './Identity';
 import { StatusPicker } from './StatusPicker';
 import type { SectionId } from './settings/sections';
-import type { ChannelRow, NotifyLevel } from '@murmur/shared';
-import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, notifyLevelOf } from '@murmur/shared';
+import type { ChannelRow, NotifyLevel, ChannelPrefRow } from '@murmur/shared';
+import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, notifyLevelOf, sortChannelsBySection } from '@murmur/shared';
 import { Logo } from './Logo';
 
 /** 메뉴에 그리는 이름. 값(`all`/`mentions`/`none`)은 저장·전송용이라 번역하지 않는다. */
@@ -339,18 +339,28 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
     }), [dms, accounts, me, online, channelPrefs]);
 
   const others = Object.values(accounts).filter((a) => a.id !== me?.id);
-  const row = (active: boolean) =>
+const row = (active: boolean) =>
     `flex w-full items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-zinc-700 ${active ? 'bg-zinc-700' : ''}`;
 
-  const sortedChannels = useMemo(() => {
+  // 섹션으로 그룹화된 채널 목록을 구한다(#157).
+  // 정렬: 섹션(이름순, null 은 맨 아래) → 별표 → sortOrder → 이름.
+  const groupedChannels = useMemo(() => {
     const standardChannels = channels.filter((ch) => ch.kind === 'standard' && !ch.archivedAt);
-    const withPref = standardChannels.map((ch) => ({ channel: ch, pref: channelPrefs[ch.id] }));
-    const sorted = [...withPref].sort((a, b) => {
-      if (a.pref?.starredAt && !b.pref?.starredAt) return -1;
-      if (!a.pref?.starredAt && b.pref?.starredAt) return 1;
-      return (a.channel.name ?? '').localeCompare(b.channel.name ?? '');
-    });
-    return sorted.map((x) => x.channel);
+    const withPref = standardChannels.map((ch) => ({ channel: ch, pref: channelPrefs[ch.id] as ChannelPrefRow | null }));
+    const sorted = sortChannelsBySection(withPref);
+
+    // 섹션별로 그룹화한다.
+    const groups: { section: string | null; channels: typeof withPref }[] = [];
+    for (const item of sorted) {
+      const section = item.pref?.section ?? null;
+      const lastGroup = groups[groups.length - 1];
+      if (lastGroup && lastGroup.section === section) {
+        lastGroup.channels.push(item);
+      } else {
+        groups.push({ section, channels: [item] });
+      }
+    }
+    return groups;
   }, [channels, channelPrefs]);
 
   const archivedChannels = useMemo(() => {

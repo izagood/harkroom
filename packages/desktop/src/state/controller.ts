@@ -903,6 +903,25 @@ export class Controller {
   }
 
   /**
+   * 채널의 섹션을 설정한다(#157). 빈 문자열은 null(섹션 없음)로 저장.
+   * DM 에는 사용할 수 없다 — 400 을 받으면 그대로 던진다.
+   */
+  async setChannelSection(channelId: string, section: string | null): Promise<void> {
+    const store = useAppStore.getState();
+    const updated = await this.api.updateChannelPref(channelId, { section });
+    store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
+  }
+
+  /**
+   * 채널의 sortOrder 를 설정한다(#157). 섹션 안 순서 조절에 쓴다.
+   */
+  async setChannelSortOrder(channelId: string, sortOrder: number | null): Promise<void> {
+    const store = useAppStore.getState();
+    const updated = await this.api.updateChannelPref(channelId, { sortOrder });
+    store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
+  }
+
+  /**
    * 훑기 목록을 만든다(#227) — `reads` 맵 기반의 **전체 미읽음** 모드다.
    *
    * `openChannel` 을 쓰지 않는 것이 핵심이다. 채널을 열면 `settleReadPosition` 이 최신까지

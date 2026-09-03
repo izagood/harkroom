@@ -270,12 +270,21 @@ export interface ChannelPrefRow {
   mutedAt: string | null;
   starredAt: string | null;
   notifyLevel: NotifyLevel;
+  /**
+   * 채널이 속한 섹션(#157). null 이면 섹션 없음(맨 아래 "기타").
+   */
+  section: string | null;
+  /**
+   * 섹션 안에서의 수동 순서(#157). null 이면 이름순 뒤에 붙는다.
+   */
+  sortOrder: number | null;
 }
 
 export async function updateChannelPref(
-  pool: Pool, accountId: string, channelId: string, patch: { notifyLevel?: NotifyLevel; starred?: boolean },
+  pool: Pool, accountId: string, channelId: string,
+  patch: { notifyLevel?: NotifyLevel; starred?: boolean; section?: string | null; sortOrder?: number | null },
 ): Promise<ChannelPrefRow | null> {
-  const channel = await pool.query(`select id from channel where id = $1`, [channelId]);
+  const channel = await pool.query(`select id, kind from channel where id = $1`, [channelId]);
   if (!channel.rowCount) return null;
 
   if (patch.notifyLevel !== undefined) {
@@ -296,6 +305,19 @@ export async function updateChannelPref(
       [accountId, channelId, patch.starred ? new Date() : null],
     );
   }
+  if (patch.section !== undefined || patch.sortOrder !== undefined) {
+    // 섹션: null 은 "지우기"고, 문자열은 앞뒤 공백 제거, 빈 문자열은 null 로 저장.
+    // 길이 1~40 검증은 라우트에서 한다.
+    const sectionValue = patch.section === undefined ? null
+      : patch.section === '' ? null
+      : patch.section.trim();
+    await pool.query(
+      `insert into channel_pref (account_id, channel_id, section, sort_order)
+       values ($1, $2, $3, $4)
+       on conflict (account_id, channel_id) do update set section = $3, sort_order = $4`,
+      [accountId, channelId, sectionValue, patch.sortOrder ?? null],
+    );
+  }
   return getChannelPref(pool, accountId, channelId);
 }
 
@@ -304,7 +326,7 @@ export async function getChannelPref(
 ): Promise<ChannelPrefRow | null> {
   const res = await pool.query(
     `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt", starred_at as "starredAt",
-            notify_level as "notifyLevel"
+            notify_level as "notifyLevel", section, sort_order as "sortOrder"
      from channel_pref where account_id = $1 and channel_id = $2`,
     [accountId, channelId],
   );
@@ -314,7 +336,7 @@ export async function getChannelPref(
 export async function listChannelPrefs(pool: Pool, accountId: string): Promise<ChannelPrefRow[]> {
   const res = await pool.query(
     `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt", starred_at as "starredAt",
-            notify_level as "notifyLevel"
+            notify_level as "notifyLevel", section, sort_order as "sortOrder"
      from channel_pref where account_id = $1`,
     [accountId],
   );

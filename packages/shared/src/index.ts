@@ -421,6 +421,15 @@ export interface ChannelPrefRow {
   mutedAt: string | null;
   starredAt: string | null;
   notifyLevel: NotifyLevel;
+  /**
+   * 채널이 속한 섹션(#157). null 이면 섹션 없음(맨 아래 "기타").
+   * 길이 1~40, 앞뒤 공백 제거, 빈 문자열은 null 로 저장.
+   */
+  section: string | null;
+  /**
+   * 섹션 안에서의 수동 순서(#157). null 이면 이름순 뒤에 붙는다.
+   */
+  sortOrder: number | null;
 }
 
 /**
@@ -438,6 +447,52 @@ export interface ChannelPrefRow {
  */
 export function notifyLevelOf(pref: { notifyLevel?: NotifyLevel } | undefined | null): NotifyLevel {
   return pref?.notifyLevel ?? 'mentions';
+}
+
+/**
+ * 채널 정렬 함수(#157). 섹션 → 별표 → sortOrder → 이름 순으로 정렬한다.
+ *
+ * 섹션: 이름순, null(섹션 없음)은 맨 아래 "기타"에 놓인다.
+ * 섹션 안: 별표 먼저 → sortOrder(있으면) → 이름순.
+ *
+ * @param channels.channel 채널 행
+ * @param channels.pref 해당 채널의 선호(null 이면 섹션 없음)
+ */
+export function sortChannelsBySection<T extends { channel: ChannelRow; pref: ChannelPrefRow | null }>(
+  channels: T[],
+): T[] {
+  const SECTION_OTHER = '\uFFFF';
+  return [...channels].sort((a, b) => {
+    const aSection = a.pref?.section ?? null;
+    const bSection = b.pref?.section ?? null;
+
+    // 섹션 순서: null 이면 "기타"로 Ming Ming Ming Ming Ming Ming
+    const aSectionKey = aSection ?? SECTION_OTHER;
+    const bSectionKey = bSection ?? SECTION_OTHER;
+    if (aSectionKey !== bSectionKey) {
+      return aSectionKey.localeCompare(bSectionKey);
+    }
+
+    // 섹션 안: 별표 먼저
+    const aStarred = !!a.pref?.starredAt;
+    const bStarred = !!b.pref?.starredAt;
+    if (aStarred !== bStarred) {
+      return aStarred ? -1 : 1;
+    }
+
+    // sortOrder (있으면)
+    const aOrder = a.pref?.sortOrder ?? null;
+    const bOrder = b.pref?.sortOrder ?? null;
+    if (aOrder !== null && bOrder !== null) {
+      if (aOrder !== bOrder) {
+        return aOrder - bOrder;
+      }
+    }
+    // 한쪽만 있으면 sortOrder 있는 것이 뒤에 (null 이 이름순 뒤에 붙는다)
+
+    // 이름순
+    return (a.channel.name ?? '').localeCompare(b.channel.name ?? '');
+  });
 }
 
 /**

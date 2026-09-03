@@ -220,15 +220,38 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     // 한쪽만 고쳐 API 가 새 값을 400 으로 막는다.
     notifyLevel: z.enum(NOTIFY_LEVELS).optional(),
     starred: z.boolean().optional(),
+    // 섹션: DM 에는 사용할 수 없다(#157). 길이 1~40, 앞뒤 공백 제거, 빈 문자열은 null.
+    section: z.string().min(1).max(40).optional(),
+    // 섹션 안에서의 수동 순서(#157). null 이면 이름순 뒤에 붙는다.
+    sortOrder: z.number().int().optional(),
   }).strict();
 
   app.patch('/channels/:id/pref', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = prefParam.parse(req.params);
     const patch = prefBody.parse(req.body);
+
+    // DM 은 섹션을 가질 수 없다(#157).
+    if (patch.section !== undefined) {
+      const channel = await pool.query(`select kind from channel where id = $1`, [id]);
+      if (!channel.rowCount) {
+        return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+      }
+      if (channel.rows[0]!.kind === 'dm') {
+        return reply.code(400).send({ error: { code: 'cannot_section_dm', message: 'DMs cannot have a section' } });
+      }
+    }
+
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
-    const pref = await updateChannelPref(pool, req.account!.id, id, patch);
+    // section 문자열 가공: undefined 는 손안댄것, 빈 문자열은 null 로 저장.
+    const processedPatch = {
+      ...patch,
+      section: patch.section === undefined ? undefined
+        : patch.section.trim() === '' ? null
+        : patch.section.trim(),
+    };
+    const pref = await updateChannelPref(pool, req.account!.id, id, processedPatch);
     if (!pref) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
     }
