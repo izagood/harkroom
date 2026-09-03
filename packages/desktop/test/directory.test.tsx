@@ -28,6 +28,8 @@ const agentWithSecrets = (id: string, handle: string): AgentView => ({
   mentionPermission: 'auto',
   ownerAccountId: 'u1',
   runnerVersion: 'deadbeef',
+  // #176 이 AgentView 에 더한 필수 필드. #226 브랜치가 그 앞에서 갈라져 fixture 에 없었다.
+  lastTurnAt: null,
   stopRequestedAt: null,
   stopAckedAt: null,
 });
@@ -151,6 +153,7 @@ describe('Directory (#226)', () => {
     render(
       <Sidebar
         onOpenDirectory={onOpenDirectory}
+        onOpenInbox={vi.fn()}
         onLogout={vi.fn()}
         onOpenSettings={vi.fn()}
         collapsed={false}
