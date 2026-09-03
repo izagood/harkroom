@@ -68,8 +68,142 @@ function AvatarRow() {
       </div>
       {/* 눈에 보이게 낸다. `sr-only` 로만 두면 스크린리더가 아닌 사람에게는 **아무 일도
           일어나지 않은 것**과 구분되지 않는다 — 버튼이 잠깐 눌렸다 풀리고 사진은 그대로다.
-          이 저장소의 다른 오류 표면과 같은 모양을 쓴다(`Composer.tsx` 의 업로드 오류). */}
+          이 저장소의 다른 오류 표면과 같은 모양을 쓴다(Composer.tsx 의 업로드 오류). */}
       {error && <p role="alert" className="mt-1 text-[11px] text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+function HandleRow() {
+  const me = useAppStore((s) => s.me);
+  const [editing, setEditing] = useState(false);
+  const [newHandle, setNewHandle] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+
+  const startEdit = () => {
+    setNewHandle(me?.handle ?? '');
+    setEditing(true);
+    setError(null);
+    setConfirming(false);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setNewHandle('');
+    setError(null);
+    setConfirming(false);
+  };
+
+  const requestConfirm = () => {
+    if (newHandle === me?.handle) {
+      setError('새 이름을 입력하세요.');
+      return;
+    }
+    if (newHandle.length < 2 || newHandle.length > 32) {
+      setError('2~32자로 입력하세요.');
+      return;
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(newHandle)) {
+      setError('영문자와 숫자, 밑줄, 하이픈만 사용할 수 있습니다.');
+      return;
+    }
+    setConfirming(true);
+  };
+
+  async function apply() {
+    if (!newHandle || newHandle === me?.handle) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await getController().setHandle(newHandle);
+      setEditing(false);
+      setConfirming(false);
+      setNewHandle('');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('409') || msg.includes('taken')) {
+        setError('이 이름은 사용할 수 없습니다.');
+      } else if (msg.includes('400')) {
+        setError('잘못된 이름입니다.');
+      } else {
+        setError('변경에 실패했습니다.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <div className="flex items-center gap-4 px-4 py-3">
+        <span className="font-medium text-zinc-900">불리는 이름</span>
+        <span className="ml-auto min-w-0 truncate text-zinc-600">@{me?.handle ?? '—'}</span>
+        <button
+          className="shrink-0 rounded-lg border border-zinc-300 px-3 py-1.5 font-medium text-zinc-700 hover:bg-zinc-50"
+          onClick={startEdit}
+        >
+          바꾸기
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3 px-4 py-3">
+      <div className="flex items-center gap-4">
+        <span className="font-medium text-zinc-900">불리는 이름</span>
+        <div className="ml-auto flex items-center gap-2">
+          <input
+            type="text"
+            value={newHandle}
+            onChange={(e) => setNewHandle(e.target.value)}
+            className="w-40 rounded-lg border border-zinc-300 px-2 py-1 text-sm text-zinc-900 focus:border-indigo-500 focus:outline-none"
+            placeholder="새 이름"
+          />
+          {!confirming ? (
+            <>
+              <button
+                className="rounded-lg border border-zinc-300 px-3 py-1 font-medium text-zinc-700 hover:bg-zinc-50"
+                onClick={cancelEdit}
+              >
+                취소
+              </button>
+              <button
+                className="rounded-lg bg-indigo-600 px-3 py-1 font-medium text-white hover:bg-indigo-700"
+                onClick={requestConfirm}
+              >
+                확인
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                className="rounded-lg border border-zinc-300 px-3 py-1 font-medium text-zinc-700 hover:bg-zinc-50"
+                onClick={() => setConfirming(false)}
+                disabled={busy}
+              >
+                취소
+              </button>
+              <button
+                className="rounded-lg bg-indigo-600 px-3 py-1 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                onClick={apply}
+                disabled={busy}
+              >
+                {busy ? '...' : '적용'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      {confirming && (
+        <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+          <p className="font-medium">과거 메시지의 멘션도 새 이름으로 표시됩니다.</p>
+          <p className="mt-1 text-amber-700">이 변경은 되돌릴 수 없습니다.</p>
+        </div>
+      )}
+      {error && <p role="alert" className="text-[11px] text-red-600">{error}</p>}
     </div>
   );
 }
@@ -81,15 +215,14 @@ export function ProfileSettings({ onSignOut }: { onSignOut(): void }) {
     <SettingsPage title="Profile" description="Who you are signed in as on this server.">
       <SettingsGroup>
         <AvatarRow />
-        <ReadonlyRow label="Handle" value={me ? `@${me.handle}` : '—'} />
+        <HandleRow />
         <ReadonlyRow label="Display name" value={me?.displayName ?? '—'} />
         <ReadonlyRow label="Account type" value={me?.kind === 'agent' ? 'Agent' : 'Person'} />
         {me?.isAdmin && <ReadonlyRow label="Role" value="Administrator" />}
       </SettingsGroup>
 
       <p data-testid="profile-readonly-note" className="-mt-6 mb-8 text-zinc-500">
-        Your profile photo is the only thing you can change here. Your handle and display name are
-        set when the account is created and cannot be changed from the app yet.
+        Your profile photo is the only thing you can change here.
       </p>
 
       <SettingsGroup>

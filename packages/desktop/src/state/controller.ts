@@ -200,6 +200,10 @@ export class Controller {
         store.applyAvatar(e.accountId, e.avatarAttachmentId);
         if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
         break;
+      case 'account.handle_changed':
+        store.applyHandle(e.accountId, e.newHandle);
+        if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
+        break;
     }
   }
 
@@ -861,6 +865,17 @@ export class Controller {
     const saved = await this.api.setMyStatus(statusText === undefined ? { status } : { status, statusText });
     const meId = store.me?.id;
     if (meId) store.applyStatus(meId, saved.status, saved.statusText);
+  }
+
+  /**
+   * 내 handle 을 서버에 정하고 로컬에도 반영한다(#271). 소켓 이벤트가 곧 돌아오지만 그것만
+   * 기다리면 누른 뒤 한 왕복 동안 화면이 예전 값을 보여 준다.
+   */
+  async setHandle(handle: string): Promise<void> {
+    const saved = await this.api.updateMyHandle(handle);
+    const store = useAppStore.getState();
+    const meId = store.me?.id;
+    if (meId) store.applyHandle(meId, saved.handle);
   }
 
   /**
