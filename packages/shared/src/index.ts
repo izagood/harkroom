@@ -79,6 +79,23 @@ export interface AgentConfig {
   ownerAccountId: string | null;
   /** 이 에이전트에 붙어 있는 러너의 빌드 버전. null 은 아직 한 번도 접속한 적이 없거나 버전 정보를 보내지 않은 것이다. */
   runnerVersion: string | null;
+  /**
+   * 러너에게 종료를 요청한 시각(#129). null 은 '요청 없음'이다.
+   *
+   * **재시작이 아니다.** murmur 는 러너를 띄우지 않으므로 다시 띄우는 것은 사람의 몫이고,
+   * 이 값이 뜻하는 것은 "지금 턴을 끝내고 스스로 물러나 달라고 부탁했다"까지다.
+   * `runnerVersion` 과 마찬가지로 읽기 전용이다 — PATCH 로는 바꿀 수 없고
+   * `POST /accounts/agents/:id/stop` 하나만 이 값을 쓴다.
+   */
+  stopRequestedAt: string | null;
+  /**
+   * 러너가 그 요청을 읽어 간 시각. null 은 '아직 읽어 가지 않았다'이다.
+   *
+   * 이것이 '멈췄다'를 뜻하지는 **않는다**. 러너가 종료하면 다음 `GET /agent/config` 자체가
+   * 오지 않으므로 서버는 프로세스의 생사를 알 수 없다. 화면은 이 구분(요청 없음 / 요청했으나
+   * 아직 못 봄 / 러너가 받아 감)까지만 말할 수 있다.
+   */
+  stopAckedAt: string | null;
 }
 
 export interface AgentView extends AccountView, AgentConfig {}
