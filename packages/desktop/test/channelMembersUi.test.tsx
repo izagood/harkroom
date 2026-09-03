@@ -55,7 +55,7 @@ const seed = (opts: { admin: boolean }) => {
 };
 
 const sidebar = () => render(
-  <Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} onOpenDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenSaved={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
+  <Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} onOpenDirectory={vi.fn()} onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenSaved={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
 const openMenuFor = (accessibleName: RegExp): void => {
