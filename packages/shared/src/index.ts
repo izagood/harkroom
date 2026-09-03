@@ -352,12 +352,53 @@ export interface ChannelRow {
    * 인 행을 받았다는 것 자체가 이미 '나는 멤버이거나 admin 이다'라는 뜻이다.
    */
   visibility: 'public' | 'private';
+  /**
+   * 채널이 만들어진 시각(#180). **옵셔널이 아닌 이유**: 채널 디렉터리의 "생성순" 정렬은
+   * 클라이언트에서 하고, 이 값이 없으면 비교 함수가 쓸 것이 없다. 옵셔널로 두면 정렬은
+   * 조용히 원래 순서를 그대로 두고 — `listChannels` 는 `order by name` 이라 — 사용자에게는
+   * "생성순을 눌러도 이름순"으로 보인다. 필수로 두면 타입 검사가 이 값을 안 싣는 자리를 짚는다.
+   */
+  createdAt: string;
 }
 
 /** 채널 멤버 한 명. 멤버 목록 화면이 handle 을 따로 조회하지 않도록 함께 준다. */
 export interface ChannelMemberRow {
   accountId: string;
   handle: string;
+}
+
+/**
+ * 채널이 자동으로 멘션하는 에이전트 한 명(#173). 채널 전역 사실이다 — 누가 봐도 같다.
+ *
+ * `handle` 을 함께 주는 이유는 `ChannelMemberRow` 와 같다: 작성창이 칩을 그리려면 handle 이
+ * 필요하고, 그것을 위해 디렉터리를 다시 뒤지게 하면 디렉터리가 아직 안 온 순간 칩이 비었다가
+ * 나타난다. 접두는 이 handle 로 만든다.
+ */
+export interface ChannelAutoMentionRow {
+  channelId: string;
+  agentAccountId: string;
+  handle: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+/**
+ * 채널 문서(#188). 채널당 하나고 덮어쓰기다 — 메시지의 추가와는 성질이 다르다.
+ *
+ * `updatedBy` 와 `updatedAt` 은 화면에 "누가 언제"를 보여주는 용도다. 에이전트가
+ * 읽을 수 있지만 쓰지는 못한다(쓰기 도구를 제공하지 않는다).
+ *
+ * **둘이 nullable 인 이유:** 아직 아무도 저장하지 않은 채널도 이 모양으로 읽힌다
+ * (본문 `''`). 그때 "누가 언제"를 **지금 시각과 보는 사람으로 채우면 화면이 거짓말한다** —
+ * 아무도 쓴 적 없는 문서를 내가 방금 고친 것처럼 보여 준다. 게다가 그 가짜 시각이
+ * `expectedUpdatedAt` 으로 되돌아오면 낙관적 동시성 검사가 무엇과 비교하는지 알 수 없게
+ * 된다. `null` 은 "아직 아무도"이고, 그 상태로 저장하는 것이 첫 저장이다.
+ */
+export interface ChannelDoc {
+  channelId: string;
+  body: string;
+  updatedBy: string | null;
+  updatedAt: string | null;
 }
 
 export interface InboxEntry {
@@ -441,6 +482,26 @@ export interface PinRow {
 }
 
 /**
+ * 나중에 볼 메시지 한 줄(#219). **개인 전용**이다 — 서버가 요청자 자신의 행만 내준다.
+ * `createdAt`·`doneAt` 은 담은 시각·완료 시각이고, 메시지 자체의 시각은 `message.createdAt` 다.
+ */
+export interface SavedMessageRow {
+  messageId: string;
+  channelId: string;
+  state: 'open' | 'done';
+  createdAt: string;
+  doneAt: string | null;
+  /** 담아 둔 메시지가 지워졌는가. 지워져도 목록의 자리는 남는다(#219 결정 3). */
+  deleted: boolean;
+  /**
+   * `deleted` 가 true 면 **null** 이다 — 지워진 메시지의 본문은 내주지 않는다.
+   * 옵셔널이 아니라 명시적 null 인 이유: 키가 사라지면 '아직 안 받았다'와 '삭제됐다'가
+   * 한 화면이 된다.
+   */
+  message: MessageRow | null;
+}
+
+/**
  * 사람 집합을 한 handle 로 부르는 것(#230). 저장된 명단이다 — 계산된 질의가 아니다.
  *
  * 계정과 **같은 네임스페이스**를 쓴다. `@foo` 가 사람인지 집합인지 갈라지면
@@ -452,6 +513,16 @@ export interface HandleGroupRow {
   handle: string;
   displayName: string;
   createdAt: string;
+  /**
+   * 지금 이 집합에 든 사람 수(#285). **옵셔널이 아니라 필수다** — 이 값을 안 실어 주는
+   * 경로가 하나라도 있으면 화면은 "몇 명인지 모른다"를 그릴 방법이 없고, 결국 수를 아예
+   * 안 보이는 쪽으로 떨어진다. 자동완성 후보가 `@release` 를 부르기 직전에 그것이
+   * 한 사람인지 스무 사람인지 보여야 하는 유일한 자리다.
+   *
+   * 파생값이므로 저장하지 않고 조회할 때 센다 — 저장하면 구성원 추가·제거마다 두 곳을
+   * 맞춰야 하고, 한쪽만 틀린 수가 화면에 남는다.
+   */
+  memberCount: number;
 }
 
 /**
@@ -467,6 +538,74 @@ export interface LeaseRow {
   path: string;
   actorKeyId: string;
   expiresAt: string;
+}
+
+/**
+ * 투영 워커가 들고 있는 **원자료**(#267). 서버 메모리에만 산다 — 마이그레이션 없음.
+ *
+ * `state` 는 여기서 파생된다(`projectionState`). 파생을 라우트 핸들러에 인라인으로
+ * 두지 않는 이유: 같은 판정이 서버·클라이언트·문서에 세 벌 생기면 5분 임계값을 고칠 때
+ * 한 벌만 고쳐지고 화면과 API 가 서로 다른 말을 한다.
+ */
+export interface ProjectionRuntime {
+  /** `AVCS_BASE_URL` 이 있어서 워커가 아예 만들어졌는가. */
+  configured: boolean;
+  /** 마지막으로 폴링한 저장소. 조용한 저장소도 여기 남는다 — 폴링했다는 사실이므로. */
+  repo: string | null;
+  lastLogIndex: number;
+  /** 마지막 폴링 시각(ms). **이것이 살아 있는가의 신호다.** */
+  lastPolledAt: number | null;
+  /** 커서가 마지막으로 전진한 시각(ms). 신호가 **아니다** — 아래 주석 참고. */
+  lastAdvancedAt: number | null;
+  /** 마지막 실패 메시지(200자). 성공 폴링이 지운다. */
+  lastError: string | null;
+}
+
+export type ProjectionState = 'unconfigured' | 'stalled' | 'ok';
+
+/**
+ * 폴링이 이보다 오래 안 돌았으면 멈춘 것으로 본다. 폴링 주기(25초)의 몇 배로 잡아
+ * 한두 번 늦는 것을 장애로 오해하지 않는다.
+ */
+export const PROJECTION_STALL_MS = 5 * 60 * 1000;
+
+/**
+ * 원자료에서 상태 하나를 뽑는다. **커서가 안 움직이는 것 자체는 신호가 아니다** —
+ * 아무도 커밋하지 않는 조용한 저장소도 커서가 그대로다. 그것을 장애로 부르면 정상인
+ * 저장소가 영영 빨갛고, 사람은 곧 이 표시를 무시하게 된다. 신호는 `lastAdvancedAt`
+ * 이 아니라 **`lastPolledAt`** 이다: 우리가 물어보고 있는가.
+ */
+export function projectionState(r: ProjectionRuntime, now: number = Date.now()): ProjectionState {
+  if (!r.configured) return 'unconfigured';
+  // 폴링을 아직 한 번도 못 했거나(null), 너무 오래됐거나, 마지막 시도가 실패했다.
+  if (r.lastPolledAt === null) return 'stalled';
+  if (now - r.lastPolledAt > PROJECTION_STALL_MS) return 'stalled';
+  if (r.lastError) return 'stalled';
+  return 'ok';
+}
+
+/**
+ * `GET /projection/status` 의 응답. 원자료 + 파생 상태다.
+ *
+ * `connected`(avcs 소켓이 붙었는가)는 **여기 없다** — 그것은 `/healthz` 의 것이고,
+ * 이 화면이 답하는 질문("투영이 돌고 있는가")과 다른 사실이다. 두 사실을 한 객체에
+ * 실으면 화면이 어느 것을 믿어야 하는지 정하지 못한다.
+ */
+export interface ProjectionStatus extends ProjectionRuntime {
+  state: ProjectionState;
+}
+
+export interface ScheduledMessageView {
+  id: string;
+  channelId: string;
+  authorId: string;
+  threadRootId: string | null;
+  body: string;
+  sendAt: string;
+  createdAt: string;
+  sentMessageId: string | null;
+  failedReason: string | null;
+  canceledAt: string | null;
 }
 
 export type WsServerEvent =
@@ -495,4 +634,50 @@ export type WsServerEvent =
    * 보내는 이유: 두 이벤트면 클라이언트가 두 곳에서 같은 맵을 갱신하고 그 두 곳이 갈라진다.
    * 받는 사람 자신은 목록에서 빠져 있다 — 자기 그림자를 그리지 않게, 서버가 한 곳에서 거른다.
    */
-  | { type: 'typing.changed'; channelId: string; accountIds: string[]; audience: 'all' | string[] };
+  | { type: 'typing.changed'; channelId: string; accountIds: string[]; audience: 'all' | string[] }
+  // 채널 목록 변경(#284). public 은 전원, private 은 멤버만 받는다.
+  | { type: 'channel.created'; channel: ChannelRow; audience: 'all' | string[] }
+  | { type: 'channel.updated'; channel: ChannelRow; audience: 'all' | string[] }
+  | { type: 'channel.deleted'; channelId: string; audience: 'all' | string[] }
+  // 담기/해제/상태 변경(#219). 본인의 소켓에만 온다.
+  | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string };
+
+/**
+ * 에이전트 팀(#172). **저장된 엔티티다** — "이 다섯을 넣는다"를 매번 고르는 즉석
+ * 멀티셀렉트가 아니라, 이름을 붙여 남기는 운영자의 의도 기록이다.
+ *
+ * `name` 은 계정 handle 과 **같은 네임스페이스**를 쓴다(집합 #230 과 같은 결정) —
+ * 나중에 `@팀` 멘션을 열 여지를 남기기 위한 예약이고, 멘션 해석은 아직 하지 않는다.
+ */
+export interface AgentTeamRow {
+  id: string;
+  name: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+/**
+ * 팀원 한 명. handle 을 함께 준다 — 화면이 계정 목록을 따로 받아 맞출 필요가 없다
+ * (`ChannelMemberRow` 와 같은 이유).
+ *
+ * `disabled` 를 싣는 이유: 비활성 에이전트는 팀에 **남고** 채널에 넣을 때만 걸러지므로
+ * (`AddTeamToChannelResult.skipped`), 화면이 그 사실을 미리 말할 수 있어야 한다.
+ * 안 실으면 "추가했는데 왜 안 들어갔지" 를 결과가 나온 뒤에야 알게 된다.
+ */
+export interface AgentTeamMemberRow {
+  accountId: string;
+  handle: string;
+  /** 에이전트 계정이 비활성화되어 있으면 true. */
+  disabled: boolean;
+}
+
+/**
+ * 채널에 팀을 넣은 결과(#172). 세 갈래를 **따로** 돌려준다 — 하나로 합치면
+ * "넣었다"가 "이미 있었다"와 "비활성이라 건너뛰었다"를 삼켜, 화면이 사람에게
+ * 아무 것도 설명할 수 없다. 값은 모두 handle 이다.
+ */
+export interface AddTeamToChannelResult {
+  added: string[];
+  skipped: string[];
+  alreadyMember: string[];
+}

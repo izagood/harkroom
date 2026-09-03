@@ -5,8 +5,10 @@ import { MessageItem } from './MessageItem';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
 import { ChannelFiles } from './ChannelFiles';
+import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { dayLabel, localDayKey } from '../lib/day';
+import type { SectionId } from './settings/sections';
 
 interface ChannelPaneProps {
   /**
@@ -17,9 +19,16 @@ interface ChannelPaneProps {
    * `test/searchEntryPoint.test.tsx` 가 Workspace 를 통째로 띄워 그 배선을 지킨다.
    */
   onOpenSearch?: (scoped: boolean) => void;
+  /**
+   * 멘션을 눌렀을 때 갈 곳(#279). `onOpenSearch` 와 같은 이유로 옵셔널이고 같은 위험을 진다 —
+   * 넘기지 않으면 멘션이 버튼이 아니게 되고 화면에서는 조용하다. `test/mentionClick.test.tsx`
+   * 가 `Workspace` 를 통째로 띄워 그 배선을 지킨다.
+   */
+  onOpenDirectory?: (accountId: string | null) => void;
+  onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }
 
-export function ChannelPane({ onOpenSearch }: ChannelPaneProps) {
+export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: ChannelPaneProps) {
   const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins } = useAppStore();
   const bottomRef = useRef<HTMLDivElement>(null);
   // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
@@ -31,7 +40,12 @@ export function ChannelPane({ onOpenSearch }: ChannelPaneProps) {
    * 채널을 옮기면 다시 접힌다 — 이 상태는 지금 보는 채널에 대한 것이라 들고 다닐 뜻이 없다.
    */
   const [pinsOpen, setPinsOpen] = useState(false);
-  useEffect(() => { setPinsOpen(false); }, [activeChannelId]);
+  /**
+   * 문서 패널(#188)도 채널을 옮기면 닫는다 — 열린 채로 두면 방금 떠난 채널의 문서가 잠깐
+   * 남아 어느 채널의 전제인지 오해할 여지가 생긴다(파일 패널과 같은 이유다).
+   */
+  const [docOpen, setDocOpen] = useState(false);
+  useEffect(() => { setPinsOpen(false); setDocOpen(false); }, [activeChannelId]);
 
   const channel = channels.find((c) => c.id === activeChannelId);
   const dm = dms.find((d) => d.id === activeChannelId);
@@ -80,8 +94,19 @@ export function ChannelPane({ onOpenSearch }: ChannelPaneProps) {
         {channel?.topic && <span className="truncate text-xs text-zinc-500">{channel.topic}</span>}
         {channel?.repo && <span className="rounded bg-zinc-100 px-1.5 text-[11px] text-zinc-600">{channel.repo}</span>}
         {isArchived && <span className="rounded bg-zinc-200 px-1.5 text-[11px] text-zinc-600">보관됨</span>}
+        {/* 문서는 채널에 붙는다(#188) — DM 에는 없다. `channel` 이 없을 때 버튼을 그리면
+            눌러도 아무 일이 없는 죽은 버튼이 된다(패널 쪽 조건과 같은 조건이어야 한다). */}
+        {channel && (
+          <button
+            className="ml-auto shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
+            aria-expanded={docOpen}
+            onClick={() => setDocOpen((v) => !v)}
+          >
+            문서
+          </button>
+        )}
         <button
-          className="ml-auto shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
+          className={`${channel ? '' : 'ml-auto '}shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100`}
           onClick={() => setFilesOpen((v) => !v)}
         >
           파일
@@ -177,7 +202,7 @@ export function ChannelPane({ onOpenSearch }: ChannelPaneProps) {
                   <span className="h-px flex-1 bg-red-300" />
                 </div>
               )}
-              <MessageItem message={m} />
+              <MessageItem message={m} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />
             </Fragment>
           );
         })}
@@ -192,6 +217,10 @@ export function ChannelPane({ onOpenSearch }: ChannelPaneProps) {
         ) : (
           <Composer
             scopeKey={activeChannelId}
+            channelId={activeChannelId}
+            // 같은 값을 두 번 넘긴다 — 뜻이 둘이라서다(Composer 의 prop 주석): 여기는
+            // 채널에 직접 올리는 자리라 예약도 되고 자동 멘션도 그 채널의 것을 본다.
+            autoMentionChannelId={activeChannelId}
             placeholder={`Message ${composerTarget}`}
             // 채널을 **지금 렌더된 것으로 붙여 준다**(#223). 보냄 취소 창이 도는 동안
             // 채널을 옮겨도 이 클로저가 든 채널로 나간다 — 컨트롤러가 스토어를 다시 읽으면
@@ -205,6 +234,17 @@ export function ChannelPane({ onOpenSearch }: ChannelPaneProps) {
         "널일 수도 있다" 는 거짓 신호가 남는다. */}
     {filesOpen && (
       <ChannelFiles key={activeChannelId} channelId={activeChannelId} onClose={() => setFilesOpen(false)} />
+    )}
+    {docOpen && channel && (
+      <ChannelDocPanel
+        key={activeChannelId}
+        channelId={activeChannelId}
+        onClose={() => setDocOpen(false)}
+        // 채널 문서의 본문도 멘션을 담는다(#279) — 여기서 신호를 끊으면 같은 `@handle` 이
+        // 대화에서는 눌리고 문서에서는 안 눌린다.
+        onOpenDirectory={onOpenDirectory}
+        onOpenSettings={onOpenSettings}
+      />
     )}
     </div>
   );

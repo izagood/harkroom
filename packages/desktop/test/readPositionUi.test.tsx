@@ -4,7 +4,7 @@ import { useAppStore } from '../src/state/appStore';
 import { setController, Controller, type Controller as C } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { Sidebar } from '../src/components/Sidebar';
-import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
+import { acc, chan, fakeApi, fakeWsFactory, msg, scheduledApiStub } from './helpers/fakeApi';
 
 afterEach(() => cleanup());
 
@@ -17,7 +17,8 @@ const seed = (over: Partial<ReturnType<typeof useAppStore.getState>> = {}) => {
     activeChannelId: 'c1',
     ...over,
   });
-  setController({ openChannel: vi.fn(), openThread: vi.fn(), startDm: vi.fn(), logout: vi.fn() } as unknown as C);
+  // #222: 컴포저가 예약 목록을 읽는다 — 목에 이 표면이 없으면 화면이 뜨지 않는다.
+  setController({ openChannel: vi.fn(), openThread: vi.fn(), startDm: vi.fn(), logout: vi.fn(), api: scheduledApiStub() } as unknown as C);
 };
 
 describe('안 읽음 구분선', () => {
@@ -75,7 +76,7 @@ describe('채널 미읽음 배지', () => {
   it('shows the unread count on a channel that has one', () => {
     useAppStore.getState().set({ reads: { c2: { lastReadSeq: 0, unread: 3 } } });
 
-    render(<Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onLogout={() => {}} onOpenSettings={() => {}} collapsed={false} onToggleCollapse={() => {}} />);
+    render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={() => {}} onOpenSettings={() => {}} collapsed={false} onToggleCollapse={() => {}} />);
 
     expect(screen.getByLabelText('3 unread in other')).toBeTruthy();
   });
@@ -83,7 +84,7 @@ describe('채널 미읽음 배지', () => {
   it('shows no badge at zero', () => {
     useAppStore.getState().set({ reads: { c2: { lastReadSeq: 5, unread: 0 } } });
 
-    render(<Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onLogout={() => {}} onOpenSettings={() => {}} collapsed={false} onToggleCollapse={() => {}} />);
+    render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={() => {}} onOpenSettings={() => {}} collapsed={false} onToggleCollapse={() => {}} />);
 
     expect(screen.queryByLabelText(/unread in other/)).toBeNull();
   });

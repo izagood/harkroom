@@ -163,8 +163,8 @@ describe('Directory (#226)', () => {
     const onOpenDirectory = vi.fn();
     render(
       <Sidebar
-        onOpenDirectory={onOpenDirectory}
-        onOpenInbox={vi.fn()}
+        onOpenDirectory={onOpenDirectory} onOpenChannelDirectory={vi.fn()}
+        onOpenInbox={vi.fn()} onOpenSaved={() => {}}
         onLogout={vi.fn()}
         onOpenSettings={vi.fn()}
         collapsed={false}

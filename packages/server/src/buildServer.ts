@@ -2,10 +2,14 @@ import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import fastifyMultipart from '@fastify/multipart';
 import type { Pool } from 'pg';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { projectionState, type ProjectionRuntime, type ProjectionStatus } from '@murmur/shared';
 import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
 import { registerChannelRoutes } from './routes/channelRoutes.js';
+import { registerTeamRoutes } from './routes/teamRoutes.js';
 import { registerMessageRoutes } from './routes/messageRoutes.js';
 import { registerAttachmentRoutes } from './routes/attachmentRoutes.js';
 import { registerAvatarRoutes } from './routes/avatarRoutes.js';
@@ -15,6 +19,7 @@ import { registerAuditRoutes } from './routes/auditRoutes.js';
 import { registerSettingsRoutes } from './routes/settingsRoutes.js';
 import { registerHandleGroupRoutes } from './routes/handleGroupRoutes.js';
 import { registerLinkPreviewRoutes } from './routes/linkPreviewRoutes.js';
+import { registerSkillRoutes } from './routes/skillRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
 import { createAgentPresence } from './mcp/presence.js';
@@ -22,6 +27,7 @@ import { Lifecycle } from './lifecycle.js';
 import { loggerConfig } from './logging.js';
 import { createRateLimiter, type RateLimitRule } from './rateLimit.js';
 import { createMetrics } from './metrics.js';
+import { createScheduledMessageSweeper } from './services/scheduledMessages.js';
 
 /**
  * 인증 표면 기본 리밋.
@@ -51,7 +57,14 @@ const LIMITED_ROUTES: { method: string; url: string; rule: keyof typeof DEFAULT_
 
 export interface ServerDeps {
   pool: Pool;
+  /** avcs 연결 상태 — /healthz 에서 쓴다. */
   getAvcsStatus?: () => { connected: boolean };
+  /**
+   * 투영 상태의 **원자료** — `/projection/status` 에서 쓴다. `state` 는 이 라우트가
+   * `projectionState` 로 뽑는다(shared). 미지정이면 `configured: false` 로 답한다:
+   * 투영을 물어봤는데 아무도 답할 수 없는 상태가 곧 "설정되지 않았다"다.
+   */
+  getProjectionStatus?: () => ProjectionRuntime;
   /** 종료 시 in-flight long-poll을 정상 마감시키는 창구. main이 SIGTERM에서 beginDrain을 부른다. */
   lifecycle?: Lifecycle;
   /** null·미지정이면 모든 origin 을 반영한다. 목록이면 CORS 와 WS 핸드셰이크에 함께 적용된다. */
@@ -92,6 +105,40 @@ export interface ServerDeps {
 
 /** 25MB. 스크린샷·로그 파일에는 넉넉하고, 디스크가 조용히 차지 않을 만큼은 좁다. */
 const DEFAULT_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+/**
+ * 첨부 저장 루트의 기본값(#257). **작업 디렉터리에 기대지 않는다.**
+ *
+ * 원래 `process.env.ATTACHMENT_ROOT ?? './.attachments'` 였다. 상대경로는 **어디서
+ * 기동했느냐**에 따라 다른 곳을 가리킨다 — 그래서 업로드는 성공하는데, 며칠 뒤 다른
+ * 디렉터리에서 기동한 서버에서 누가 그 첨부를 누르면 파일이 없다. 워크트리를 여러 개 두고
+ * 개발하는 이 저장소에서는 그것이 예외가 아니라 기본값이었다.
+ *
+ * `006_attachment.sql` 이 적어 둔 문제의식의 연장이다: 거기서는 파일을 먼저 쓰고 행을
+ * 나중에 만들어 "가리키는 파일이 없는 행"을 한 건씩 피했다. 여기서 일어난 것은 그 사고의
+ * 전역판이다 — 경로의 **기준**이 바뀌면서 이미 있던 **모든 행이 한꺼번에** 깨졌다.
+ * 한 건씩 막는 순서 규칙은 기준이 흔들리는 것을 막아 주지 않는다.
+ *
+ * 그래서 이 파일의 위치(`import.meta.url`)를 기준으로 잡는다. `packages/server` 는 빌드
+ * 단계가 없고 `tsx` 로 `src/` 를 직접 돌리므로 이 파일은 항상 `packages/server/src` 에
+ * 있다 — 한 단계 올라간 **패키지 루트**가 저장 루트의 기준이다(예전에 `packages/server`
+ * 에서 기동했을 때 상대경로가 가리켰던 곳과 같으므로, 이미 쌓인 파일도 그대로 보인다).
+ * 빌드 산출물로 돌리게 되면 이 `'..'` 를 그 레이아웃에 맞춰야 한다.
+ *
+ * `ATTACHMENT_ROOT` 가 주어지면 그것을 쓰되 상대경로면 절대경로로 풀고, 풀린 결과를
+ * 로그에 남긴다 — 사람이 어디로 갔는지 볼 수 있어야 한다.
+ */
+function defaultAttachmentRoot(app: FastifyInstance): string {
+  const fromEnv = process.env.ATTACHMENT_ROOT;
+  if (fromEnv) {
+    const resolved = resolve(fromEnv);
+    if (resolved !== fromEnv) {
+      app.log.info(`ATTACHMENT_ROOT "${fromEnv}" resolved to "${resolved}"`);
+    }
+    return resolved;
+  }
+  return resolve(dirname(fileURLToPath(import.meta.url)), '..', '.attachments');
+}
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({
@@ -229,6 +276,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   agentPresence.startSweep(app);
 
+  const scheduledSweeper = createScheduledMessageSweeper(deps.pool);
+  scheduledSweeper.startSweep(app);
+
   await registerWs(app, deps.pool, {
     onSocketCount: (read) => { socketCount = read; },
     allowedOrigins: deps.corsOrigins ?? null,
@@ -239,10 +289,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   await registerAuthRoutes(app, deps.pool);
   await registerAccountRoutes(app, deps.pool);
+  await registerTeamRoutes(app, deps.pool);
   const storageOpts = deps.storage ?? {
-    root: process.env.ATTACHMENT_ROOT ?? './.attachments',
+    root: defaultAttachmentRoot(app),
     maxBytes: Number(process.env.ATTACHMENT_MAX_BYTES ?? DEFAULT_MAX_ATTACHMENT_BYTES),
   };
+  // **실제로 쓰는 절대경로**를 한 줄 남긴다(#257). 기본값을 계산한 자리가 아니라 여기서
+  // 찍는 이유: `deps.storage` 가 주어지면 기본값은 버려지므로, 계산 자리에서 찍으면 로그가
+  // 쓰지 않는 경로를 가리킨다. 이 사고는 **로그만으로** 알아낼 수 있어야 한다.
+  app.log.info(`attachment storage root: ${storageOpts.root}`);
   const storage = createLocalStorage(storageOpts);
   // multipart 의 자체 제한도 같은 값으로 맞춘다 — 스토리지만 막으면 파서가 먼저 메모리를 쓴다.
   await app.register(fastifyMultipart, { limits: { fileSize: storageOpts.maxBytes, files: 1 } });
@@ -259,6 +314,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerSettingsRoutes(app, deps.pool);
   await registerHandleGroupRoutes(app, deps.pool);
   await registerLinkPreviewRoutes(app, deps.pool);
+  await registerSkillRoutes(app, deps.pool);
 
   // **registerAuth 뒤에 등록해야 한다.** `app.requireAccount` 는 registerAuth 가 데코레이트하므로,
   // 앞에서 등록하면 preHandler 가 undefined 로 박혀 인증 없이 열린다(테스트가 이걸 잡았다).
@@ -268,6 +324,29 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get('/metrics', { preHandler: app.requireAccount }, async (_req, reply) => {
     reply.header('content-type', 'text/plain; version=0.0.4; charset=utf-8');
     return metrics.renderAsync();
+  });
+
+  /**
+   * avcs 투영 상태(#267). 화면이 "투영이 꺼졌다·멈췄다·비어 있다"를 **서로 다르게**
+   * 말할 수 있게 하는 것이 전부다 — "없다"와 "못 읽었다"를 한 화면에 두지 않는다
+   * (docs/design.md §4).
+   *
+   * 판정은 여기서 하지 않고 `projectionState`(shared)가 한다. 라우트에 인라인으로
+   * 두면 5분 임계값이 서버·클라이언트·문서에 세 벌 생긴다.
+   *
+   * **위 `/metrics` 와 같은 이유로 `registerAuth` 뒤에 있어야 한다.** 처음에는
+   * `/healthz` 옆(앞쪽)에 뒀는데, 그 자리에서는 `app.requireAccount` 가 아직
+   * undefined 라 `preHandler` 가 통째로 사라지고 라우트가 **인증 없이 열린다**.
+   * 이 응답은 저장소 이름과 에러 메시지(내부 URL 이 섞일 수 있다)를 담으므로 로그인
+   * 하지 않은 사람에게 줄 것이 아니다. 401 을 확인하는 테스트가 이 자리를 지킨다.
+   */
+  app.get('/projection/status', { preHandler: app.requireAccount }, async () => {
+    const runtime: ProjectionRuntime = deps.getProjectionStatus?.() ?? {
+      configured: false, repo: null, lastLogIndex: 0,
+      lastPolledAt: null, lastAdvancedAt: null, lastError: null,
+    };
+    // 원자료를 그대로 싣고 파생만 더한다 — 필드를 하나씩 베끼면 새 필드가 조용히 빠진다.
+    return { ...runtime, state: projectionState(runtime) } satisfies ProjectionStatus;
   });
   await registerMcp(app, deps.pool, lifecycle, agentPresence);
 

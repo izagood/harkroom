@@ -41,7 +41,7 @@ const seed = (isAdmin: boolean) => {
 };
 
 const sidebar = () => render(
-  <Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onLogout={vi.fn()}
+  <Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()}
     onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
