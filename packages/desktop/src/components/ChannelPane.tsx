@@ -18,9 +18,11 @@ interface ChannelPaneProps {
    * `test/searchEntryPoint.test.tsx` 가 Workspace 를 통째로 띄워 그 배선을 지킨다.
    */
   onOpenSearch?: (scoped: boolean) => void;
+  onOpenDirectory?: (accountId: string | null) => void;
+  onOpenSettings?: (section?: string, targetId?: string) => void;
 }
 
-export function ChannelPane({ onOpenSearch }: ChannelPaneProps) {
+export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: ChannelPaneProps) {
   const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins } = useAppStore();
   const bottomRef = useRef<HTMLDivElement>(null);
   // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
@@ -194,7 +196,7 @@ export function ChannelPane({ onOpenSearch }: ChannelPaneProps) {
                   <span className="h-px flex-1 bg-red-300" />
                 </div>
               )}
-              <MessageItem message={m} />
+              <MessageItem message={m} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />
             </Fragment>
           );
         })}

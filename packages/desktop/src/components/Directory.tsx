@@ -7,6 +7,8 @@ import { Identity, StatusMark } from './Identity';
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** 특정 계정으로 열면 해당 행이 강조·스크롤된다. */
+  accountId?: string | null;
 }
 
 /**
@@ -31,11 +33,13 @@ type LoadState = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; mess
  * 검색은 클라이언트에서 한다. 목록이 이미 스토어에 다 있으므로 서버 질의를 새로 만들 이유가
  * 없다. handle 과 displayName **둘 다** 본다 — 사람은 둘 중 아는 쪽으로 친다.
  */
-export function Directory({ open, onClose }: Props) {
+export function Directory({ open, onClose, accountId }: Props) {
   const accounts = useAppStore((s) => s.accounts);
   const online = useAppStore((s) => s.online);
   const [query, setQuery] = useState('');
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
+
+  const account = accountId ? accounts[accountId] : null;
 
   const reload = useCallback((): (() => void) => {
     let alive = true;
@@ -54,9 +58,11 @@ export function Directory({ open, onClose }: Props) {
 
   useEffect(() => {
     if (!open) return;
-    setQuery('');
+    setLoad({ kind: 'loading' });
+    // accountId 가 있으면 해당 계정의 handle 로 검색한다.
+    setQuery(account ? account.handle : '');
     return reload();
-  }, [open, reload]);
+  }, [open, reload, account]);
 
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -74,12 +80,15 @@ export function Directory({ open, onClose }: Props) {
 
   const total = Object.keys(accounts).length;
 
-  const row = (a: AccountView) => (
-    <li
-      key={a.id}
-      data-testid={`directory-row-${a.id}`}
-      className={`flex items-center gap-2 rounded px-2 py-1.5 ${a.disabled ? 'opacity-60' : ''}`}
-    >
+  const row = (a: AccountView) => {
+    const isSelected = accountId === a.id;
+    return (
+      <li
+        key={a.id}
+        data-testid={`directory-row-${a.id}`}
+        ref={isSelected ? (el: HTMLLIElement | null) => { el?.scrollIntoView({ block: 'center', behavior: 'smooth' }); } : undefined}
+        className={`flex items-center gap-2 rounded px-2 py-1.5 ${a.disabled ? 'opacity-60' : ''} ${isSelected ? 'bg-indigo-50 ring-2 ring-indigo-500' : ''}`}
+      >
       <Identity account={a} />
       {/* 연결 점은 소켓이 붙어 있는가다. 사람이 고른 상태(StatusMark)와 나란히 둔다 —
           합치면 "연결이 끊긴 사람"과 "방해 금지인 사람"이 한 표시로 뭉친다(#186). */}
@@ -113,7 +122,8 @@ export function Directory({ open, onClose }: Props) {
         </span>
       )}
     </li>
-  );
+    );
+  };
 
   const section = (label: string, rows: AccountView[]) => (
     <section aria-label={label} className="mb-4">

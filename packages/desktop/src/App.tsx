@@ -26,7 +26,8 @@ export default function App() {
   // #164: 활성 커뮤니티의 계정 id. 세션 손실이 **활성** 커뮤니티의 것인지 가르는 데 쓴다.
   const [activeId, setActiveId] = useState<string | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
-  const [settings, setSettings] = useState<{ section?: SectionId } | null>(null);
+  const [settings, setSettings] = useState<{ section?: SectionId; targetId?: string } | null>(null);
+  const [directoryAccountId, setDirectoryAccountId] = useState<string | null>(null);
 
   // 세션이 실행 중에 죽는 경로(다른 기기에서 로그아웃·PAT 폐기·세션 만료)를 부팅 실패와
   // 같은 표면으로 보낸다. 이것이 없으면 사이드바 빨간 점과 영구 재연결만 보이고 이유를
@@ -113,6 +114,7 @@ export default function App() {
     return (
       <SettingsScreen
         initialSection={settings.section}
+        targetId={settings.targetId}
         onBack={() => setSettings(null)}
         onSignOut={signOut}
       />
@@ -121,7 +123,8 @@ export default function App() {
   return (
     <Workspace
       onLogout={() => setPhase('connect')}
-      onOpenSettings={(section) => setSettings({ section })}
+      onOpenSettings={(section, targetId) => setSettings({ section, targetId })}
+      onOpenDirectory={(accountId) => setDirectoryAccountId(accountId)}
     />
   );
 }

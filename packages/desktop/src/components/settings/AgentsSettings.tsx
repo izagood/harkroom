@@ -105,7 +105,7 @@ const draftOf = (a: AgentView): Draft => ({
   ownerAccountId: a.ownerAccountId,
 });
 
-export function AgentsSettings() {
+export function AgentsSettings({ targetId }: { targetId?: string }) {
   const [agents, setAgents] = useState<AgentView[]>([]);
   const [selected, setSelected] = useState<AgentView | null>(null);
   // 초안이 null 인 것은 '무엇을 기본으로 둘지 아직 모른다'는 뜻이다 — 기본값을 못 읽었는데
@@ -164,6 +164,13 @@ export function AgentsSettings() {
     void getController().listAgents().then(setAgents).catch(() => setError('에이전트 목록을 받지 못했다'));
   };
   useEffect(reload, []);
+
+  // targetId 가 있으면 해당 에이전트를 선택한다.
+  useEffect(() => {
+    if (!targetId) return;
+    const agent = agents.find((a) => a.id === targetId);
+    if (agent) pick(agent);
+  }, [targetId, agents]);
 
   // 기본값은 admin 전용 라우트다(`GET /settings/agent-defaults`). admin 이 아닌 사람에게
   // 부르면 403 이 나고, 그 403 을 오류로 그리면 아무 잘못도 없는 화면에 붉은 글이 뜬다.
