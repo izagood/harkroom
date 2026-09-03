@@ -56,6 +56,10 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
         </label>
         <Composer
           scopeKey={`thread:${threadRootId}`}
+          // 스레드도 그 채널 안이다 — 채널이 부르는 에이전트는 스레드 답글에서도 불린다(#173).
+          // `channelId` 가 아니라 이쪽으로 넘기는 이유는 Composer 의 prop 주석에 있다:
+          // 예약 표면은 스레드 뿌리를 못 실어서 답글을 채널 본문으로 내보낸다.
+          autoMentionChannelId={activeChannelId ?? undefined}
           placeholder="Reply…"
           // 채널과 스레드 뿌리를 지금 것으로 붙인다(#223) — 창이 도는 동안 패널을 닫으면
           // 스토어의 `threadRootId` 는 null 이 되어 답글이 조용히 사라진다.
