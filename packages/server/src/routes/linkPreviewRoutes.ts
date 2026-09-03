@@ -3,6 +3,13 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { normalizePreviewUrl } from '@murmur/shared';
 import { getLinkPreviewByUrl } from '../services/linkPreviewDb.js';
+import { isStale, queueLinkPreviewFetch, defaultPreviewNet, type PreviewNet } from '../services/linkPreview.js';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    linkPreviewNet?: PreviewNet;
+  }
+}
 
 export async function registerLinkPreviewRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   /**
@@ -15,6 +22,9 @@ export async function registerLinkPreviewRoutes(app: FastifyInstance, pool: Pool
    * **키를 여기서 정규화한다.** 클라이언트가 본문에서 집은 글자와 서버가 저장할 때 쓴 키가
    * 한 글자라도 다르면 카드는 영원히 404 다. 양쪽 다 `normalizePreviewUrl`(shared)을 쓰고,
    * 이 라우트가 마지막 관문이다.
+   *
+   * **만료된 행은 다시 가져온다**(#312). `isStale` 로 판정하고 백그라운드에서 갱신한다.
+   * 클라이언트는_stale 데이터를 먼저 보고_, 갱신되면 `link_preview.ready` 이벤트를 받는다.
    */
   app.get('/link-previews', { preHandler: app.requireAccount }, async (req, reply) => {
     const parsed = z.object({ url: z.string().min(1) }).safeParse(req.query);
@@ -30,6 +40,12 @@ export async function registerLinkPreviewRoutes(app: FastifyInstance, pool: Pool
     const preview = await getLinkPreviewByUrl(pool, url);
     if (!preview) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'link preview not found' } });
+    }
+// 만료되었으면 백그라운드에서 다시 가져온다. 클라이언트는_stale 데이터를 먼저 보고_,
+    // 갱신되면 이벤트를 받는다. 테스트가 가짜 네트워크를 주입할 수 있도록 요청 시점의 net 을 쓴다.
+    if (isStale(preview)) {
+      const net = (app as any).linkPreviewNet ?? defaultPreviewNet;
+      queueLinkPreviewFetch(pool, url, net).catch(() => {});
     }
     return preview;
   });
