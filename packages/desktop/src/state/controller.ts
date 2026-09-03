@@ -1146,6 +1146,19 @@ export class Controller {
   }
 
   /**
+   * 섹션 이름 바꾸기(#323). 새 이름이 이미 존재하면 합친다.
+   */
+  async renameSection(oldName: string, newName: string | null): Promise<void> {
+    const store = useAppStore.getState();
+    const { prefs } = await this.api.renameSection(oldName, newName);
+    const prefsMap: Record<string, typeof prefs[0]> = {};
+    for (const p of prefs) {
+      prefsMap[p.channelId] = p;
+    }
+    store.set({ channelPrefs: { ...store.channelPrefs, ...prefsMap } });
+  }
+
+  /**
    * 채널의 `sortOrder` 를 설정한다(#157). 섹션 안 순서 조절의 최소 단위다.
    */
   async setChannelSortOrder(channelId: string, sortOrder: number | null): Promise<void> {

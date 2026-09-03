@@ -444,6 +444,90 @@ export async function listChannelPrefs(pool: Pool, accountId: string): Promise<C
 }
 
 /**
+ * 섹션 이름 바꾸기(#323). 요청자의 `channel_pref` 중 `section = 옛이름` 인 행을 전부
+ * 새 이름으로 한 트랜잭션에서 갱신한다.
+ *
+ * 새 이름이 이미 존재하면 **합친다** — 두 섹션의 `sort_order` 가 중복되지 않게 0..n-1 로
+ * 재부여한다(#157 의 재부여 로직을 재사용). 거절하면 사용자가 채널을 하나씩 옮겨야 한다.
+ *
+ * @param oldName 바꿀 섹션 이름. null 이나 빈 문자열은 "섹션 없음"이 아니고 오류다.
+ * @param newName 새 이름. 빈 문자열은 null(섹션 없음)로 저장.
+ * @returns 새로고침된 전체 선호 목록.
+ */
+export async function renameSection(
+  pool: Pool, accountId: string, oldName: string, newName: string,
+): Promise<ChannelPrefRow[]> {
+  const trimmedNew = newName.trim();
+  const newSection: string | null = trimmedNew === '' ? null : trimmedNew;
+  const trimmedOld = oldName.trim();
+  if (trimmedOld === '') {
+    throw new Error('old name cannot be empty');
+  }
+  if (trimmedOld === newSection) {
+    return listChannelPrefs(pool, accountId);
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+
+    const oldPrefs = await client.query<ChannelPrefRow>(
+      `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt",
+              starred_at as "starredAt", notify_level as "notifyLevel", section, sort_order as "sortOrder"
+       from channel_pref where account_id = $1 and section = $2`,
+      [accountId, trimmedOld],
+    );
+
+    if (!oldPrefs.rowCount) {
+      await client.query('rollback');
+      return listChannelPrefs(pool, accountId);
+    }
+
+    if (newSection !== null) {
+      const existingPrefs = await client.query<ChannelPrefRow>(
+        `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt",
+                starred_at as "starredAt", notify_level as "notifyLevel", section, sort_order as "sortOrder"
+         from channel_pref where account_id = $1 and section = $2`,
+        [accountId, newSection],
+      );
+
+      if ((existingPrefs.rowCount ?? 0) > 0) {
+        const allPrefs = [...existingPrefs.rows, ...oldPrefs.rows];
+        for (let i = 0; i < allPrefs.length; i++) {
+          await client.query(
+            `update channel_pref set section = $3, sort_order = $4
+             where account_id = $1 and channel_id = $2`,
+            [accountId, allPrefs[i]!.channelId, newSection, i],
+          );
+        }
+      } else {
+        for (const pref of oldPrefs.rows) {
+          await client.query(
+            `update channel_pref set section = $3 where account_id = $1 and channel_id = $2`,
+            [accountId, pref.channelId, newSection],
+          );
+        }
+      }
+    } else {
+      for (const pref of oldPrefs.rows) {
+        await client.query(
+          `update channel_pref set section = null where account_id = $1 and channel_id = $2`,
+          [accountId, pref.channelId],
+        );
+      }
+    }
+
+    await client.query('commit');
+    return listChannelPrefs(pool, accountId);
+  } catch (e) {
+    await client.query('rollback');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * 글을 쓸 수 있는가 — 가시성과 보관 여부를 **한 질의로** 함께 본다.
  *
  * 둘을 따로 물으면 메시지 POST 한 번에 왕복이 하나 늘어난다. 이건 이 앱에서 가장 자주
