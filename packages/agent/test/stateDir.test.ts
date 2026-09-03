@@ -42,3 +42,33 @@ describe('resolveAgentStateDir (#167)', () => {
     expect(legacyPath).not.toBe(agentStateDir);
   });
 });
+
+describe('resolveAgentStateDir (#174 instance)', () => {
+  // 회귀 테스트 1: instance 가 없으면 기존 경로가 그대로(하위 호환)
+  it('instance 가 없으면 경로가 기존과 문자 그대로 같다', () => {
+    const without = resolveAgentStateDir('/state', 'forge', 'acct-1');
+    const withDefault = resolveAgentStateDir('/state', 'forge', 'acct-1', undefined);
+    expect(without.agentStateDir).toBe(withDefault.agentStateDir);
+    expect(without.agentStateDir).toBe('/state/forge-acct-1');
+  });
+
+  // 회귀 테스트 2: instance 가 있으면 경로 마지막에 붙는다
+  it('instance 가 있으면 경로 마지막에 붙는다', () => {
+    const { agentStateDir } = resolveAgentStateDir('/state', 'forge', 'acct-1', 'instance-a');
+    expect(agentStateDir).toBe('/state/forge-acct-1/instance-a');
+  });
+
+  // 회귀 테스트 2: 두 인스턴스의 경로가 다르다
+  it('두 인스턴스의 경로가 다르다', () => {
+    const a = resolveAgentStateDir('/state', 'forge', 'acct-1', 'a');
+    const b = resolveAgentStateDir('/state', 'forge', 'acct-1', 'b');
+    expect(a.agentStateDir).not.toBe(b.agentStateDir);
+  });
+
+  // 회귀 테스트 4: session file, MCP 설정, avcs workspace 전부 인스턴스 경로 아래
+  // (세션 파일: agentStateDir/sessions.json, MCP: agentStateDir/mcp, workspace: agentStateDir/workspaces)
+  it('세션 파일·MCP 설정·avcs 워크스페이스 전부 인스턴스 경로 아래에 있다', () => {
+    const { agentStateDir } = resolveAgentStateDir('/state', 'forge', 'acct-1', 'my-instance');
+    expect(agentStateDir).toBe('/state/forge-acct-1/my-instance');
+  });
+});
