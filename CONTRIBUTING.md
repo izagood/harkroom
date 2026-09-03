@@ -17,7 +17,7 @@ Thank you for your interest in contributing to murmur! This document outlines th
 
 4. Ensure all CI checks pass before requesting review.
 
-5. After approval, squash and merge your PR.
+5. After CI is green, merge the PR with a merge commit (`gh pr merge <n> --merge --delete-branch`). This repository keeps the branch history rather than squashing.
 
 ## Commit Message Format
 

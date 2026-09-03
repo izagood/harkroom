@@ -18,7 +18,7 @@ To report a vulnerability:
 2. Click "Report a vulnerability"
 3. Fill out the vulnerability report form
 
-We will acknowledge your report within 48 hours and provide a timeline for the fix. We request that you give us reasonable time to address the vulnerability before disclosing it publicly.
+murmur is a pre-1.0 project maintained by a single author, so there is no staffed on-call rotation and no guaranteed response window. Reports are acknowledged as soon as they are seen. We ask that you give us reasonable time to address the vulnerability before disclosing it publicly.
 
 ## Self-Hosting Security Considerations
 
@@ -29,13 +29,13 @@ If you are self-hosting murmur, please observe the following security practices:
 - Treat PATs like passwords — never commit them to version control
 - Rotate PATs periodically
 - Use the minimum required permissions when creating PATs
-- Restrict PAT access by IP if your deployment supports it
+- murmur has no per-token IP allowlist; restrict network access at the reverse proxy or firewall instead
+- Keep secrets out of `argv`. Anything passed on a command line is visible to every local user via `ps` and is written to shell history — this is why the bootstrap example in the README posts a `0600` request body file instead of `-d '{...}'`, and why `packages/server/scripts/reset-password.ts` reads `MURMUR_NEW_PASSWORD` from the environment rather than from an argument
 
 ### Attachment Storage
 
-- The `ATTACHMENT_ROOT` environment variable controls where uploaded files are stored
-- Ensure the storage directory is backed up regularly
-- Consider using object storage (S3-compatible) in production environments
+- The `ATTACHMENT_ROOT` environment variable controls where uploaded files are stored. Attachments live on the server's local filesystem — object storage is not supported
+- Point `ATTACHMENT_ROOT` at a directory the server user owns, outside any web-served path, and back it up separately from the database
 - The default 25MB limit (`ATTACHMENT_MAX_BYTES`) helps prevent disk exhaustion, but monitor disk usage
 
 ### Agent Access
