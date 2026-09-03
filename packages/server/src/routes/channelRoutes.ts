@@ -250,7 +250,9 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     notifyLevel: z.enum(NOTIFY_LEVELS).optional(),
     starred: z.boolean().optional(),
     // 섹션: DM 에는 사용할 수 없다(#157). 길이 1~40, 앞뒤 공백 제거, 빈 문자열은 null.
-    section: z.string().min(1).max(40).optional(),
+    // null 은 "섹션에서 빼기"고, 빈 문자열도 null 로 변환된다.
+    // .min(1) 이 아니라 .max(40) 만 — 빈 문자열은 라우트에서 거르고 service 에서 null 로 변환.
+    section: z.string().max(40).optional().nullable(),
     // 섹션 안에서의 수동 순서(#157). null 이면 이름순 뒤에 붙는다.
     sortOrder: z.number().int().optional(),
   }).strict();
@@ -273,10 +275,10 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
-    // section 문자열 가공: undefined 는 손안댄것, 빈 문자열은 null 로 저장.
+    // section 문자열 가공: undefined 는 손안댄것, null 은 그대로 null, 빈 문자열은 null 로 저장.
     const processedPatch = {
       ...patch,
-      section: patch.section === undefined ? undefined
+      section: patch.section === undefined || patch.section === null ? patch.section
         : patch.section.trim() === '' ? null
         : patch.section.trim(),
     };
