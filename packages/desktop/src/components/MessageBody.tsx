@@ -149,7 +149,7 @@ export function MessageBody({ body, messageId }: { body: string; messageId: stri
           );
         }
         // 코드가 아닌 구간에만 기존 인식이 얹힌다.
-return splitLinks(splitMentions(seg.text, handles, accountsMap)).map((p, j) => renderPart(p, `${i}-${j}`));
+return splitLinks(splitMentions(seg.text, handles, accountsMap, groupHandles)).map((p, j) => renderPart(p, `${i}-${j}`));
       })}
     </div>
   );
