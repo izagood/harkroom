@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import type { MessageRow } from '@murmur/shared';
+import { useEffect, useRef, useState } from 'react';
+import { messagePermalink, type MessageRow } from '@murmur/shared';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { MessageBody } from './MessageBody';
@@ -15,6 +15,14 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
   const accounts = useAppStore((s) => s.accounts);
   const [draft, setDraft] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // 링크로 방금 온 메시지인가. **스토어의 화면 상태**를 보고 그린다 — 이 사실을 message 에
+  // 넣으면 서버에서 온 데이터와 지금 화면의 사정이 한 값에 섞인다(#178).
+  const highlighted = useAppStore((s) => s.highlightedMessageId === message.id);
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  // 강조만 하고 화면 밖에 두면 긴 채널에서는 아무 일도 안 일어난 것과 같다.
+  // jsdom 에는 scrollIntoView 가 없으므로 옵셔널 호출이다(ChannelPane 도 같은 이유로 그렇다).
+  useEffect(() => { if (highlighted) rowRef.current?.scrollIntoView?.(); }, [highlighted]);
 
   const isSystem = message.kind === 'system';
   const avcsType = typeof message.meta.avcsType === 'string' ? message.meta.avcsType : null;
@@ -41,13 +49,38 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
   const hoverOnly = 'opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100';
   const iconBtn = 'rounded p-1 text-zinc-500 hover:bg-zinc-100';
 
+  /**
+   * 링크를 클립보드에 담는다(#178). **실패를 조용히 삼키지 않는다** — 삼키면 사람은
+   * 붙여넣기를 시도하고 나서야 안 됐다는 것을 알고, 그때는 어느 메시지였는지도 잊는다.
+   * 그래서 실패하면 링크 문자열 자체를 알림에 실어 손으로 복사할 길을 남긴다.
+   */
+  const copyLink = async () => {
+    const link = messagePermalink(message.id);
+    try {
+      // clipboard 자체가 없는 환경(비보안 컨텍스트)도 실패다 — 같은 자리에서 잡는다.
+      if (!navigator.clipboard) throw new Error('no clipboard');
+      await navigator.clipboard.writeText(link);
+      useAppStore.getState().set({ notice: 'Link copied.' });
+    } catch {
+      useAppStore.getState().set({ notice: `Could not copy the link. Copy it by hand: ${link}` });
+    }
+  };
+
   const menuItems = [
+    // 어떤 메시지든 가리킬 수 있다 — 남의 것도, system 메시지도 링크의 대상이다.
+    { label: 'Copy link', onSelect: () => { void copyLink(); } },
     ...(canEdit ? [{ label: 'Edit', onSelect: () => setDraft(message.body) }] : []),
     ...(canDelete && !confirmingDelete ? [{ label: 'Delete', onSelect: () => setConfirmingDelete(true) }] : []),
   ];
 
   return (
-    <div className={`group relative flex gap-2 px-4 py-1.5 hover:bg-zinc-50 ${isSystem ? 'border-l-2 border-amber-400 bg-amber-50/50' : ''}`}>
+    <div
+      ref={rowRef}
+      // 강조는 system 배경을 덮는다 — 둘 다 배경을 칠하면 어느 쪽이 이길지 클래스 문자열이
+      // 정하지 못한다. 링크로 방금 왔다는 사실이 더 급한 정보다.
+      className={`group relative flex gap-2 px-4 py-1.5 hover:bg-zinc-50 ${isSystem ? 'border-l-2 border-amber-400' : ''} ${highlighted ? 'bg-amber-100 ring-1 ring-amber-300' : isSystem ? 'bg-amber-50/50' : ''}`}
+      data-highlighted={highlighted ? 'true' : undefined}
+    >
       {/* 작성자 아바타 거터 - 메시지 행 왼쪽에 고정폭 열로 배치. #161 2단계. 가로 예산:
           #143 호버 툴바가 right-full 로 왼쪽으로 자라고, #145 가 오른쪽에서 같은 예산을 쓴다.
           거터 폭은 32px(h-8 w-8)로 하고, Identity 컴포넌트의 className 로 크기를 조절한다. */}
@@ -169,6 +202,12 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
             ) : (
               // 항목이 하나도 없으면 트리거를 만들지 않는다 — 열어도 비어 있는 메뉴는
               // "할 수 있는 게 있다"는 거짓 신호다(design.md §4).
+              //
+              // #178 이후 이 조건은 **실제로는 거짓이 되지 않는다**: "Copy link" 는 어떤
+              // 메시지에도 있으므로 목록이 비지 않는다. 그래도 남겨 둔다 — 항목이 다시
+              // 전부 조건부가 되는 순간(예: 링크를 admin 에게만 여는 결정) 이 가드가
+              // 없으면 빈 메뉴가 조용히 생긴다. 지금 지키는 것이 없다는 사실을 적어 두는
+              // 이유는, 이 줄을 읽고 "여기서 걸러진다"고 믿는 사람이 없게 하기 위해서다.
               menuItems.length > 0 && (
                 <Menu
                   renderTrigger={(props) => (
