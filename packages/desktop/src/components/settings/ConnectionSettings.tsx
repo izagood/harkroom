@@ -1,10 +1,10 @@
-import { useAppStore } from '../../state/appStore';
+import { useActiveStore } from '../../state/communities';
 import { getController } from '../../state/controller';
 import { usePrefsStore } from '../../state/prefsStore';
 import { ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
 
 export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
-  const connected = useAppStore((s) => s.connected);
+  const connected = useActiveStore((s) => s.connected);
   const runnerAutoStart = usePrefsStore((s) => s.runnerAutoStart);
   const setRunnerAutoStart = usePrefsStore((s) => s.setRunnerAutoStart);
   const runnerRepoPath = usePrefsStore((s) => s.runnerRepoPath);

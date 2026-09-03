@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 
 const shortActor = (keyId: string) => (keyId.length > 12 ? `${keyId.slice(0, 12)}…` : keyId);
 
@@ -31,9 +31,9 @@ function minutesAgo(timestamp: number): string {
  * 오래된 사실을 지금 사실로 주장하게 된다.
  */
 export function LeasePanel() {
-  const leases = useAppStore((s) => s.leases);
-  const projectionStatus = useAppStore((s) => s.projectionStatus);
-  const projectionStatusError = useAppStore((s) => s.projectionStatusError);
+  const leases = useActiveStore((s) => s.leases);
+  const projectionStatus = useActiveStore((s) => s.projectionStatus);
+  const projectionStatusError = useActiveStore((s) => s.projectionStatusError);
   const byRepo = useMemo(() => {
     const groups = new Map<string, typeof leases>();
     for (const l of leases) groups.set(l.repo, [...(groups.get(l.repo) ?? []), l]);

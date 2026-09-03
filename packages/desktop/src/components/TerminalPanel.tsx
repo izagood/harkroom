@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AgentSessionState } from '@murmur/shared';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { connectAgentAttach, type AttachHandle } from '../lib/agentTerminal';
 import { getTerminalSinkFactory, type TerminalSink } from '../lib/terminalSink';
@@ -18,9 +18,9 @@ import { getTerminalSinkFactory, type TerminalSink } from '../lib/terminalSink';
  * 읽지 않는다(그것을 바꿀 표면이 없다는 뜻이다).
  */
 export function TerminalPanel() {
-  const agentId = useAppStore((s) => s.terminalAgentId);
-  const agent = useAppStore((s) => (s.terminalAgentId ? s.accounts[s.terminalAgentId] : undefined));
-  const set = useAppStore((s) => s.set);
+  const agentId = useActiveStore((s) => s.terminalAgentId);
+  const agent = useActiveStore((s) => (s.terminalAgentId ? s.accounts[s.terminalAgentId] : undefined));
+  const set = useActiveStore((s) => s.set);
   const hostRef = useRef<HTMLDivElement | null>(null);
   /**
    * 세 가지를 갈라 말한다(docs/design.md §4). 'loading' 은 "아직 모른다"이고,
