@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
-import { acc, chan, msg } from './helpers/fakeApi';
+import { acc, chan, msg, scheduledApiStub } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
 
 const fakeController = () => {
@@ -13,6 +13,8 @@ const fakeController = () => {
     editMessage: vi.fn(async () => undefined),
     deleteMessage: vi.fn(async () => undefined),
     loadOlder: vi.fn(async () => undefined),
+    // #222: 컴포저가 예약 목록을 읽는다 — 목에 이 표면이 없으면 화면이 뜨지 않는다.
+    api: scheduledApiStub(),
   };
   setController(c as unknown as Controller);
   return c;
@@ -283,6 +285,29 @@ describe('ChannelPane', () => {
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(c.send).toHaveBeenCalledWith('hi there', [], 'c1');
     await waitFor(() => expect(box.value).toBe('hi there'));
+  });
+});
+
+describe('ChannelPane 검색 버튼 (#258)', () => {
+  it('헤더에 검색 버튼이 있고 접근 가능한 이름이 있다', () => {
+    fakeController();
+    render(<ChannelPane onOpenSearch={vi.fn()} />);
+    expect(screen.getByRole('button', { name: '이 채널에서 찾기' })).toBeTruthy();
+  });
+
+  it('검색 버튼을 누르면 onOpenSearch 가 scoped=true 로 불린다', () => {
+    const onOpenSearch = vi.fn();
+    fakeController();
+    render(<ChannelPane onOpenSearch={onOpenSearch} />);
+    fireEvent.click(screen.getByRole('button', { name: '이 채널에서 찾기' }));
+    expect(onOpenSearch).toHaveBeenCalledWith(true);
+  });
+
+  it('채널이 열려 있지 않으면 검색 버튼이 없다', () => {
+    fakeController();
+    useAppStore.getState().set({ activeChannelId: null });
+    render(<ChannelPane onOpenSearch={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: '이 채널에서 찾기' })).toBeNull();
   });
 });
 

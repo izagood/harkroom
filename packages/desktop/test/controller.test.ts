@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useAppStore } from '../src/state/appStore';
 import { Controller } from '../src/state/controller';
-import { acc, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
+import { acc, accountsResult, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 beforeEach(() => useAppStore.getState().reset());
 
@@ -79,9 +79,12 @@ describe('Controller', () => {
     const { makeWs, callbacks } = fakeWsFactory();
     const c = new Controller(api, makeWs);
     await c.start();
-    (api.accounts as ReturnType<typeof vi.fn>).mockResolvedValue([
+    // 캐스트가 타입 검사를 우회하므로 **모양을 손으로 맞춰야 한다.** #230 이 `accounts()`
+    // 를 `{ accounts, groups }` 로 바꿨고, 배열을 그대로 두면 tsc 는 통과하지만 런타임에
+    // `accounts` 가 undefined 가 되어 디렉터리 갱신이 조용히 사라진다.
+    (api.accounts as ReturnType<typeof vi.fn>).mockResolvedValue(accountsResult([
       acc('u1', 'admin'), acc('u2', 'bot', 'agent'), acc('sys', 'murmur', 'agent'),
-    ]);
+    ]));
 
     callbacks.current!.onEvent({
       type: 'message.created',
@@ -349,7 +352,7 @@ describe('Controller', () => {
   // 자동완성을 짧은 간격으로 여러 번 열어도 디렉터리 요청이 한 번만 나가게 한다.
   // 최소 간격 가드는 5초다.
   it('refreshAccounts throttles rapid calls within 5 seconds', async () => {
-    const accountsCalls = vi.fn(async () => [acc('u1', 'admin')]);
+    const accountsCalls = vi.fn(async () => accountsResult([acc('u1', 'admin')]));
     const api = fakeApi({ accounts: accountsCalls });
     const { makeWs } = fakeWsFactory();
     const c = new Controller(api, makeWs);
@@ -364,7 +367,7 @@ describe('Controller', () => {
   });
 
   it('refreshAccounts with force: true bypasses throttle', async () => {
-    const accountsCalls = vi.fn(async () => [acc('u1', 'admin')]);
+    const accountsCalls = vi.fn(async () => accountsResult([acc('u1', 'admin')]));
     const api = fakeApi({ accounts: accountsCalls });
     const { makeWs } = fakeWsFactory();
     const c = new Controller(api, makeWs);
@@ -375,5 +378,79 @@ describe('Controller', () => {
     await c.refreshAccounts({ force: true });
 
     expect(accountsCalls).toHaveBeenCalledTimes(2);
+  });
+  /**
+   * #267: 투영 상태는 앱 기동 시 한 번 + **60초마다** 다시 읽는다. 한 번만 읽으면
+   * 그 뒤에 투영이 멈춰도 화면은 마지막 성공 상태를 계속 보여 준다 — 멈춘 것을
+   * 말하려고 만든 표시가 멈춘 것을 못 말하게 된다.
+   */
+  it('#267 투영 상태를 기동 시 한 번, 이후 60초마다 다시 읽는다', async () => {
+    vi.useFakeTimers();
+    try {
+      const status = vi.fn(async () => ({
+        state: 'ok' as const, configured: true, repo: null, lastLogIndex: 0,
+        lastPolledAt: Date.now(), lastAdvancedAt: null, lastError: null,
+      }));
+      const { makeWs } = fakeWsFactory();
+      const c = new Controller(fakeApi({ projectionStatus: status }), makeWs);
+      await c.start();
+      expect(status).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(status).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(status).toHaveBeenCalledTimes(3);
+
+      // stop() 이 타이머를 걷어야 한다 — 안 그러면 로그아웃 뒤에도 계속 요청한다.
+      c.stop();
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(status).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * #267 의 핵심 기준: 조회 **실패를 삼키지 않는다**. 삼키면 마지막 성공 상태(또는
+   * null)가 그대로 남아 못 읽고 있는 화면이 정상으로 보인다 — "못 읽었다"가 "없다"로
+   * 그려지는 그 결함이다(docs/design.md §4).
+   */
+  it('#267 투영 상태 조회가 실패하면 그 사실이 스토어에 남는다', async () => {
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(
+      fakeApi({ projectionStatus: vi.fn(async () => { throw new Error('Failed to fetch'); }) }),
+      makeWs,
+    );
+    await c.start();
+    expect(useAppStore.getState().projectionStatusError).toBe('Failed to fetch');
+    expect(useAppStore.getState().projectionStatus).toBeNull();
+  });
+
+  it('#267 다음 성공 조회가 실패 표시를 지운다', async () => {
+    let fail = true;
+    const status = vi.fn(async () => {
+      if (fail) throw new Error('Failed to fetch');
+      return {
+        state: 'ok' as const, configured: true, repo: null, lastLogIndex: 0,
+        lastPolledAt: Date.now(), lastAdvancedAt: null, lastError: null,
+      };
+    });
+    const { makeWs } = fakeWsFactory();
+    // 주기 타이머를 세기 전부터 가짜 시계여야 한다 — start() 뒤에 켜면 이미 만들어진
+    // 진짜 타이머는 advanceTimersByTime 으로 움직이지 않는다.
+    vi.useFakeTimers();
+    try {
+      const c = new Controller(fakeApi({ projectionStatus: status }), makeWs);
+      await c.start();
+      expect(useAppStore.getState().projectionStatusError).toBe('Failed to fetch');
+
+      fail = false;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(useAppStore.getState().projectionStatusError).toBeNull();
+      expect(useAppStore.getState().projectionStatus?.state).toBe('ok');
+      c.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

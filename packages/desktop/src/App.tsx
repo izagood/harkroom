@@ -26,7 +26,10 @@ export default function App() {
   // #164: 활성 커뮤니티의 계정 id. 세션 손실이 **활성** 커뮤니티의 것인지 가르는 데 쓴다.
   const [activeId, setActiveId] = useState<string | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
-  const [settings, setSettings] = useState<{ section?: SectionId } | null>(null);
+  // #279: `targetId` 는 "설정을 이 대상이 선택된 상태로" 라는 뜻이다. 디렉터리는 여기에
+  // 두지 않는다 — `Workspace` 가 자기 안에서 열고 닫는 겹창이고, 여기에 상태를 또 두면
+  // 같은 사실이 두 곳에 생긴다(초판이 그렇게 두고 한쪽을 읽지 않았다).
+  const [settings, setSettings] = useState<{ section?: SectionId; targetId?: string } | null>(null);
 
   // 세션이 실행 중에 죽는 경로(다른 기기에서 로그아웃·PAT 폐기·세션 만료)를 부팅 실패와
   // 같은 표면으로 보낸다. 이것이 없으면 사이드바 빨간 점과 영구 재연결만 보이고 이유를
@@ -113,6 +116,7 @@ export default function App() {
     return (
       <SettingsScreen
         initialSection={settings.section}
+        targetId={settings.targetId}
         onBack={() => setSettings(null)}
         onSignOut={signOut}
       />
@@ -121,7 +125,7 @@ export default function App() {
   return (
     <Workspace
       onLogout={() => setPhase('connect')}
-      onOpenSettings={(section) => setSettings({ section })}
+      onOpenSettings={(section, targetId) => setSettings({ section, targetId })}
     />
   );
 }

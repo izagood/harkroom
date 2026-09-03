@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { AGENT_HARNESSES, type AgentConfig, type AgentHarness, type AgentView } from '@murmur/shared';
 import { getAgentDefaults } from './agentDefaults.js';
+import { getHandleGroupByHandle } from './handleGroups.js';
 
 const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admin as "isAdmin",
   coalesce(c.instructions, '') as instructions,
@@ -107,6 +108,20 @@ export async function createAgentAccount(
   const client = await pool.connect();
   try {
     await client.query('begin');
+
+    /**
+     * 집합과 같은 이름의 계정은 만들 수 없다(#230 결정 3). 이쪽(계정 생성)을 빠뜨리기
+     * 쉽다 — 집합 생성만 막으면 나중에 만든 계정이 같은 이름을 차지해 `@foo` 가 사람인지
+     * 집합인지 갈린다.
+     *
+     * `pool` 이 아니라 `client` 로 읽는다: 트랜잭션 클라이언트를 쥔 채 풀에서 또 다른
+     * 연결을 얻으면 풀이 포화된 순간 자기 자신을 기다리는 교착이 된다.
+     */
+    const group = await getHandleGroupByHandle(client, input.handle);
+    if (group) {
+      throw Object.assign(new Error('a group with this handle already exists'), { code: 'handle_taken' });
+    }
+
     const created = await client.query(
       `insert into account (handle, display_name, kind) values ($1, $2, 'agent') returning id`,
       [input.handle, input.displayName],
