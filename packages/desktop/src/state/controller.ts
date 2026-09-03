@@ -1,4 +1,4 @@
-import type { AttachmentRow, ChannelRow, ChannelPrefRow, WsServerEvent } from '@murmur/shared';
+import type { AccountStatus, AttachmentRow, ChannelRow, ChannelPrefRow, WsServerEvent } from '@murmur/shared';
 import type { ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
@@ -151,6 +151,13 @@ export class Controller {
         store.set({ online: [...cur] });
         break;
       }
+      case 'status.changed':
+        // presence 와 **다른 자리**를 갱신한다. 여기서 online 을 손대면 사람이 상태를
+        // 바꿨을 뿐인데 연결 표시가 흔들린다 — 두 사실을 분리한 이유가 무너진다.
+        store.applyStatus(e.accountId, e.status, e.statusText);
+        // 아직 못 본 계정이면 상태만 와도 이름을 그리지 못한다.
+        if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
+        break;
     }
   }
 
@@ -469,6 +476,20 @@ export class Controller {
     const muted = !current?.mutedAt;
     const updated = await this.api.updateChannelPref(channelId, { muted });
     store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
+  }
+
+  /**
+   * 내 상태를 서버에 정하고 로컬에도 반영한다(#186). 소켓 이벤트가 곧 돌아오지만 그것만
+   * 기다리면 누른 뒤 한 왕복 동안 화면이 예전 값을 보여 준다 — 같은 값이 두 번 들어와도
+   * `applyStatus` 는 덮어쓰기라 두 번 세는 문제가 없다(리액션과 다른 점이다).
+   */
+  async setStatus(status: AccountStatus, statusText?: string | null): Promise<void> {
+    const store = useAppStore.getState();
+    // 키 부재와 null 을 구분해서 그대로 넘긴다 — 여기서 `?? null` 로 뭉개면 '문구는
+    // 손대지 않음'이 '지우기'가 된다.
+    const saved = await this.api.setMyStatus(statusText === undefined ? { status } : { status, statusText });
+    const meId = store.me?.id;
+    if (meId) store.applyStatus(meId, saved.status, saved.statusText);
   }
 
   async toggleChannelStar(channelId: string): Promise<void> {
