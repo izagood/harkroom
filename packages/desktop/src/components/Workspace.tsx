@@ -9,6 +9,7 @@ import { ThreadPanel } from './ThreadPanel';
 import { SearchPalette } from './SearchPalette';
 import { Sweep } from './Sweep';
 import { Directory } from './Directory';
+import { Inbox } from './Inbox';
 import type { SectionId } from './settings/sections';
 
 export function Workspace({ onLogout, onOpenSettings }: {
@@ -21,6 +22,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
   const [searchOpen, setSearchOpen] = useState(false);
   const [sweepOpen, setSweepOpen] = useState(false);
   const [directoryOpen, setDirectoryOpen] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sidebarStorage.loadCollapsed());
 
   const canGoBack = historyIndex > 0;
@@ -87,6 +89,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
         onLogout={onLogout}
         onOpenSettings={onOpenSettings}
         onOpenDirectory={() => setDirectoryOpen(true)}
+        onOpenInbox={() => setInboxOpen(true)}
         collapsed={sidebarCollapsed}
         onToggleCollapse={handleToggleSidebar}
       />
@@ -142,6 +145,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
       <Sweep open={sweepOpen} onClose={() => setSweepOpen(false)} />
       <Directory open={directoryOpen} onClose={() => setDirectoryOpen(false)} />
+      <Inbox open={inboxOpen} onClose={() => setInboxOpen(false)} />
     </div>
   );
 }
