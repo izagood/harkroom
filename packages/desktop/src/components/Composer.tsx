@@ -492,7 +492,9 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
                 onClick={() => choose(a.handle)}
               >
                 <span className="font-medium">@{a.handle}</span>
-                <Identity account={a} className="ml-1" />
+                {/* 거터가 아니라 **핸들 옆** 자리다(#277) — 여기서 소유자를 지우면 "누구의
+                    에이전트를 부르는지"를 부르기 직전에 못 보게 된다. variant 는 badge. */}
+                <Identity account={a} className="ml-1" variant="badge" />
               </button>
             </li>
           ))}
