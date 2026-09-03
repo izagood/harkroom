@@ -59,19 +59,19 @@ function Attachment({ attachment }: { attachment: AttachmentRow }) {
       <img
         src={url}
         alt={attachment.filename}
-        className="max-h-64 max-w-full rounded border border-zinc-200"
+        className="max-h-64 max-w-full rounded border border-border"
       />
     );
   }
   return (
     <button
-      className="inline-flex items-center gap-2 rounded border border-zinc-200 bg-zinc-50 px-2 py-1 text-[12px] text-zinc-700 hover:bg-zinc-100"
+      className="inline-flex items-center gap-2 rounded border border-border bg-surface px-2 py-1 text-[12px] text-fg hover:bg-surface-sunken"
       onClick={() => void getController().saveAttachment(attachment)}
     >
       <span aria-hidden>📎</span>
       <span className="font-medium">{attachment.filename}</span>
-      <span className="text-zinc-500">{formatSize(attachment.sizeBytes)}</span>
-      {failed && <span className="text-red-600">(불러오기 실패)</span>}
+      <span className="text-fg-subtle">{formatSize(attachment.sizeBytes)}</span>
+      {failed && <span className="text-danger">(불러오기 실패)</span>}
     </button>
   );
 }

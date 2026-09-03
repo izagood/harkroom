@@ -162,7 +162,7 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
           ref={menuRef}
           role="menu"
           onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } }}
-          className={`${openAt ? '' : `absolute ${placement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 min-w-32 rounded border border-zinc-700 bg-zinc-800 py-1 shadow-lg ${className}`}
+          className={`${openAt ? '' : `absolute ${placement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 min-w-32 rounded border border-border bg-surface-raised py-1 shadow-lg ${className}`}
           style={menuStyle}
         >
           {items.map((item, index) => (
@@ -174,7 +174,7 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
               onClick={() => { if (!item.disabled) { item.onSelect(); close(); } }}
               onKeyDown={(e) => onMenuKeyDown(e, index)}
               className={`flex w-full px-3 py-1.5 text-left text-sm ${
-                item.disabled ? 'cursor-not-allowed text-zinc-500' : 'text-zinc-200 hover:bg-zinc-700 hover:text-zinc-100'
+                item.disabled ? 'cursor-not-allowed text-fg-subtle' : 'text-fg-muted hover:bg-surface-hover hover:text-fg'
               }`}
             >
               {item.label}

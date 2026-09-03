@@ -107,7 +107,7 @@ export function MessageBody({
           rel="noreferrer noopener"
           data-testid="body-link"
           data-link-kind={p.target.kind}
-          className="text-indigo-600 underline underline-offset-2 hover:text-indigo-800"
+          className="text-accent underline underline-offset-2 hover:text-accent-hover"
           onClick={(e) => { e.preventDefault(); void followLink(p.target); }}
         >
           {p.text}
@@ -155,8 +155,8 @@ export function MessageBody({
       isGroup
         ? 'bg-teal-50 text-teal-700'
         : isSelf
-          ? 'bg-amber-200 text-amber-900'
-          : 'bg-indigo-50 text-indigo-700'
+          ? 'bg-warning-surface-strong text-warning'
+          : 'bg-accent-surface text-accent'
     }`;
     // 표시는 한 곳에서 나온다 — 누를 수 있는 것과 없는 것을 따로 그리면 색·배지가 갈라진다.
     const shared = {
@@ -191,7 +191,7 @@ export function MessageBody({
             <code
               key={i}
               data-testid="inline-code"
-              className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.9em] text-slate-800"
+              className="rounded bg-surface-sunken px-1 py-0.5 font-mono text-[0.9em] text-fg"
             >
               {seg.code}
             </code>
@@ -201,12 +201,12 @@ export function MessageBody({
           return (
             // 코드는 접히지 않는다 — 줄바꿈된 명령줄은 그대로 복사해도 실행되지 않는다.
             // 대신 가로로 스크롤한다.
-            <div key={i} className="my-1 overflow-hidden rounded border border-slate-200">
+            <div key={i} className="my-1 overflow-hidden rounded border border-border">
               {seg.lang && (
                 // 언어는 **표시만** 한다. 문법 강조기를 들이면 의존성과 공격 표면이 같이 커진다.
                 <div
                   data-testid="code-lang"
-                  className="border-b border-slate-200 bg-slate-100 px-2 py-0.5 font-mono text-[0.75em] text-slate-500"
+                  className="border-b border-border bg-surface-sunken px-2 py-0.5 font-mono text-[0.75em] text-fg-subtle"
                 >
                   {seg.lang}
                 </div>
@@ -214,7 +214,7 @@ export function MessageBody({
               <pre
                 data-testid="code-block"
                 data-lang={seg.lang ?? ''}
-                className="overflow-x-auto bg-slate-50 px-2 py-1 font-mono text-[0.9em] text-slate-800"
+                className="overflow-x-auto bg-surface px-2 py-1 font-mono text-[0.9em] text-fg"
               >
                 <code>{seg.code}</code>
               </pre>
@@ -262,7 +262,7 @@ export function MessageBody({
         data-testid="expand-body"
         // 상태를 색이나 글자로만 알리지 않는다 — disclosure 는 aria-expanded 가 상태다.
         aria-expanded={expanded}
-        className="mt-0.5 rounded border border-zinc-300 px-1.5 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
+        className="mt-0.5 rounded border border-border px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-sunken"
         onClick={() => toggleExpanded(messageId)}
       >
         {collapsed ? 'Show more' : 'Show less'}
