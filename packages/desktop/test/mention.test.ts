@@ -69,6 +69,17 @@ describe('splitMentions', () => {
     ]);
   });
 
+  // `@channel`(#225)은 계정이 아니지만 서버가 채널 전체에 알림을 보낸다. 강조하지 않으면
+  // 강조되지 않은 것이 몰래 알림을 보내는 쪽으로 갈라진다.
+  it('marks @channel even though no such account exists', () => {
+    const parts = splitMentions('@channel 공지', ['fizz']);
+
+    expect(parts).toEqual([
+      { kind: 'mention', text: '@channel', handle: 'channel' },
+      { kind: 'text', text: ' 공지' },
+    ]);
+  });
+
   it('leaves an unknown handle as plain text', () => {
     const parts = splitMentions('@nobody 안녕', ['fizz']);
 
