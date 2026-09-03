@@ -13,6 +13,30 @@ const PLANNED = ['cursor', 'goose', 'amp', 'devin'];
 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
+/**
+ * "마지막 활동: N분 전"(#176). `null` 은 **'활동 없음'**이다 — '죽었다'가 아니다.
+ * murmur 는 러너 프로세스를 보지 못하므로(docs/design.md §1 외부 접속형) 한 번도 턴을
+ * 돌리지 않았다는 것과 죽었다는 것을 구분할 수단이 없고, 구분할 수 없는 것을 단정하면
+ * 그것이 §4 가 금지하는 거짓 신호다. 오래된 값도 '멈췄다'가 아니다 — 아무도 부르지
+ * 않았으면 활동이 없는 것이 정상이다.
+ *
+ * 절대 시각을 그대로 쓰지 않는 이유: 운영자가 알고 싶은 것은 "얼마나 됐나"이고, 그것을
+ * 사람이 시계와 뺄셈으로 계산하게 만들 이유가 없다. 대신 title 로 절대 시각을 함께 준다.
+ */
+export function lastTurnLabel(iso: string | null, now: number = Date.now()): string {
+  if (iso === null) return '활동 없음';
+  const ms = now - new Date(iso).getTime();
+  // 미래 시각은 서버가 now() 로 찍으므로 정상적으로는 오지 않는다(러너가 보낸 값을 저장하지
+  // 않는 이유가 그것이다). 그래도 시계 보정이나 왕복 지연으로 음수가 될 수 있어, "N분 후"
+  // 같은 말을 만들지 않고 '방금'으로 뭉갠다.
+  const mins = Math.floor(ms / 60_000);
+  if (mins < 1) return '마지막 활동: 방금';
+  if (mins < 60) return `마지막 활동: ${mins}분 전`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `마지막 활동: ${hours}시간 전`;
+  return `마지막 활동: ${Math.floor(hours / 24)}일 전`;
+}
+
 interface Draft {
   handle: string;
   instructions: string;
@@ -78,6 +102,12 @@ export function AgentsSettings() {
   const [busy, setBusy] = useState(false);
   const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
   const accounts = useAppStore((s) => s.accounts);
+  // #176: 생존(presence)과 마지막 활동은 **다른 두 사실**이라 두 자리에서 온다 — presence 는
+  // 소켓 이벤트로 살아 있는 목록이고(#124), 마지막 활동은 `AgentView.lastTurnAt` 이다.
+  // `connected` 를 함께 보는 이유: 소켓이 끊겼으면 `online` 은 그냥 빈 배열이라, 그것을
+  // '오프라인'으로 그리면 실제로는 잘 돌고 있는 러너를 전부 죽은 것으로 표시한다.
+  const online = useAppStore((s) => s.online);
+  const connected = useAppStore((s) => s.connected);
   const humanAccounts = Object.values(accounts).filter((a) => a.kind === 'human');
 
   const reload = () => {
@@ -283,6 +313,30 @@ export function AgentsSettings() {
                       docs/design.md 4절이 금지하는 형태의 거울상이다. */}
                   <span className={`ml-1 text-[10px] ${owner ? 'text-indigo-600' : 'text-zinc-400'}`}>
                     {a.ownerAccountId === null ? '없음' : (owner ?? '알 수 없는 계정')}
+                  </span>
+                  {/* #176: 생존과 마지막 활동을 **나란히** 그린다. 하나로 합치면 #124 가 닫은
+                      결함(러너 없는 에이전트가 정상으로 보임)이 되살아난다 — 온라인인데
+                      마지막 활동이 두 시간 전인 것은 정상이고(아무도 부르지 않았다), 그
+                      반대(활동 기록은 있는데 지금 붙어 있지 않다)도 봐야 하는 사실이다.
+                      색 점만 두지 않고 글자를 함께 두는 이유: 색은 스크린리더에 아무 말도
+                      하지 않고, 두 사실 중 하나가 사라졌는지 테스트도 볼 수 없다. */}
+                  <span className="mt-0.5 block text-[10px]">
+                    <span
+                      data-testid={`agent-presence-${a.id}`}
+                      data-online={connected ? String(online.includes(a.id)) : 'unknown'}
+                      className={connected
+                        ? (online.includes(a.id) ? 'text-green-600' : 'text-zinc-400')
+                        : 'text-zinc-400'}
+                    >
+                      {connected ? (online.includes(a.id) ? '온라인' : '오프라인') : '연결 끊김 — 알 수 없음'}
+                    </span>
+                    <span
+                      data-testid={`agent-last-turn-${a.id}`}
+                      title={a.lastTurnAt ? new Date(a.lastTurnAt).toLocaleString() : undefined}
+                      className="ml-1 text-zinc-500"
+                    >
+                      {lastTurnLabel(a.lastTurnAt)}
+                    </span>
                   </span>
                 </button>
               );
@@ -692,7 +746,11 @@ export function AgentsSettings() {
               </div>
             )}
 
-            {error && <p className="text-xs text-red-600">{error}</p>}
+            {/* #176: 목록 조회가 실패하면 마지막 활동도 presence 도 알 수 없다 — 그때 빈 화면을
+                그리면 '에이전트가 없다'와 '못 읽었다'가 같아진다. 위 PAT 로더가 실패를
+                `setPats([])` 로 삼키는데, 그것을 따라 하지 않는다. role 을 주는 이유: 색만으로
+                는 스크린리더에 아무 말도 하지 않는다. */}
+            {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
 
             {pat && (
               // 서버가 해시만 보관하므로 지금 놓치면 다시 볼 수 없다.
