@@ -4,6 +4,7 @@ import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { acc, chan, msg } from './helpers/fakeApi';
+import { undoSendStorage } from '../src/lib/prefs';
 
 const fakeController = () => {
   const c = {
@@ -18,6 +19,9 @@ const fakeController = () => {
 };
 
 beforeEach(() => {
+  // 이 파일이 검증하는 것은 보냄 취소 창이 아니다(#223) — 창을 끄고 즉시 전송 경로를 본다.
+  // 창 자체는 undoSend.test.tsx 가 단독으로 지킨다.
+  undoSendStorage.saveWindowMs(0);
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'admin'),
@@ -237,7 +241,7 @@ describe('ChannelPane', () => {
     const box = screen.getByPlaceholderText('Message #general') as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: 'hi there' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(c.send).toHaveBeenCalledWith('hi there', []);
+    expect(c.send).toHaveBeenCalledWith('hi there', [], 'c1');
     expect(box.value).toBe('');
   });
 
@@ -277,7 +281,7 @@ describe('ChannelPane', () => {
     const box = screen.getByPlaceholderText('Message #general') as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: 'hi there' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(c.send).toHaveBeenCalledWith('hi there', []);
+    expect(c.send).toHaveBeenCalledWith('hi there', [], 'c1');
     await waitFor(() => expect(box.value).toBe('hi there'));
   });
 });
