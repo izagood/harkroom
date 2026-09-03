@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -295,7 +295,29 @@ export class ApiClient {
     return this.req('DELETE', `/accounts/agents/${agentId}/memory/${encodeURIComponent(slug)}`);
   }
 
-  async search(q: string): Promise<MessageRow[]> {
-    return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}`)).messages;
+  /**
+   * 채널에 고정된 메시지들(#218). **계정별 선호(`channelPrefs`)와 다른 표면이다** — 핀은
+   * 채널 전역 상태라 누가 물어도 같은 답이 온다.
+   */
+  async pins(channelId: string): Promise<PinRow[]> {
+    return (await this.req<{ pins: PinRow[] }>('GET', `/channels/${channelId}/pins`)).pins;
+  }
+
+  pinMessage(channelId: string, messageId: string): Promise<PinRow> {
+    return this.req('POST', `/channels/${channelId}/pins`, { messageId });
+  }
+
+  /** 해제는 고정한 사람 또는 admin 만 된다 — 아니면 서버가 403 을 준다. */
+  unpinMessage(channelId: string, messageId: string): Promise<void> {
+    return this.req('DELETE', `/channels/${channelId}/pins/${messageId}`);
+  }
+
+  /**
+   * #221: `channelId` 를 주면 서버가 질의를 좁힌다. 받아 온 결과를 여기서 거르지 않는 이유는
+   * 전역 결과가 상위 N 건에서 잘려 이 채널 것이 아예 안 실려 올 수 있기 때문이다.
+   */
+  async search(q: string, channelId?: string | null): Promise<MessageRow[]> {
+    const scope = channelId ? `&channelId=${encodeURIComponent(channelId)}` : '';
+    return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
   }
 }
