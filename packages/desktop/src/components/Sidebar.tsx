@@ -908,13 +908,13 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
     return (
       <div key={ch.id} className="relative w-full">
       {sectionEditFor === ch.id && (
-        <div className="mb-1 rounded border border-zinc-700 bg-zinc-800 p-1">
+        <div className="mb-1 rounded border border-border bg-surface-raised p-1">
           <input
             type="text"
             autoFocus
             aria-label="새 섹션 이름"
             maxLength={40}
-            className="w-full rounded bg-zinc-900 px-2 py-1 text-sm text-zinc-200 placeholder-zinc-500"
+            className="w-full rounded border border-border bg-field px-2 py-1 text-sm text-fg placeholder-fg-subtle"
             placeholder="섹션 이름"
             value={sectionDraft}
             onChange={(e) => setSectionDraft(e.target.value)}
@@ -926,13 +926,13 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
           />
           <div className="mt-1 flex gap-1">
             <button
-              className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-500"
+              className="rounded bg-accent px-2 py-0.5 text-xs text-fg-on-strong hover:bg-accent-hover"
               onClick={submitSection}
             >
               옮기기
             </button>
             <button
-              className="rounded px-2 py-0.5 text-xs text-zinc-400 hover:bg-zinc-700"
+              className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
               onClick={() => { setSectionEditFor(null); setSectionDraft(''); }}
             >
               취소
@@ -1055,7 +1055,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
               {group.section !== null && (
                 <div
                   data-testid={`section-header-${group.section}`}
-                  className="px-2 py-1 text-xs font-medium text-zinc-400"
+                  className="px-2 py-1 text-xs font-medium text-fg-muted"
                 >
                   {group.section}
                 </div>
