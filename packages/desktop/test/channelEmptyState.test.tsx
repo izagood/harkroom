@@ -3,7 +3,7 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller as C } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
-import { acc, chan, msg } from './helpers/fakeApi';
+import { acc, chan, msg, scheduledApiStub } from './helpers/fakeApi';
 
 afterEach(() => { cleanup(); });
 
@@ -17,7 +17,8 @@ beforeEach(() => {
     channels: [chan('c1', 'general')],
     activeChannelId: 'c1',
   });
-  setController({ openChannel: vi.fn(), openThread: vi.fn(), startDm: vi.fn(), logout: vi.fn() } as unknown as C);
+  // #222: 컴포저가 채널에 붙으면 예약 목록을 읽는다 — 그 표면이 목에 없으면 화면이 뜨지 않는다.
+  setController({ openChannel: vi.fn(), openThread: vi.fn(), startDm: vi.fn(), logout: vi.fn(), api: scheduledApiStub() } as unknown as C);
 });
 
 describe('빈 채널의 다음 걸음', () => {

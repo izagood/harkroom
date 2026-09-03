@@ -4,7 +4,7 @@ import { useAppStore } from '../src/state/appStore';
 import { setController, Controller, type Controller as C } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { Sidebar } from '../src/components/Sidebar';
-import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
+import { acc, chan, fakeApi, fakeWsFactory, msg, scheduledApiStub } from './helpers/fakeApi';
 
 afterEach(() => cleanup());
 
@@ -17,7 +17,8 @@ const seed = (over: Partial<ReturnType<typeof useAppStore.getState>> = {}) => {
     activeChannelId: 'c1',
     ...over,
   });
-  setController({ openChannel: vi.fn(), openThread: vi.fn(), startDm: vi.fn(), logout: vi.fn() } as unknown as C);
+  // #222: 컴포저가 예약 목록을 읽는다 — 목에 이 표면이 없으면 화면이 뜨지 않는다.
+  setController({ openChannel: vi.fn(), openThread: vi.fn(), startDm: vi.fn(), logout: vi.fn(), api: scheduledApiStub() } as unknown as C);
 };
 
 describe('안 읽음 구분선', () => {

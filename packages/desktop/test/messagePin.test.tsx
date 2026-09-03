@@ -4,7 +4,7 @@ import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { MessageItem } from '../src/components/MessageItem';
-import { acc, chan, msg, pin } from './helpers/fakeApi';
+import { acc, chan, msg, pin, scheduledApiStub } from './helpers/fakeApi';
 
 // 메시지 고정(#218)의 화면 쪽. 고정 목록이 실제로 도달 가능한가(접힘 → 펼침 → 그 메시지로
 // 이동), 그리고 ⋯ 메뉴가 서버의 권한과 같은 것을 내주는가를 지킨다.
@@ -19,6 +19,8 @@ const fakeController = () => {
     loadOlder: vi.fn(async () => undefined),
     pinMessage: vi.fn(async () => undefined),
     unpinMessage: vi.fn(async () => undefined),
+    // #222: 컴포저가 예약 목록을 읽는다 — 목에 이 표면이 없으면 화면이 뜨지 않는다.
+    api: scheduledApiStub(),
   };
   setController(c as unknown as Controller);
   return c;

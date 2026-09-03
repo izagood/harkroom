@@ -3,7 +3,7 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller as C } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
-import { acc, chan, msg } from './helpers/fakeApi';
+import { acc, chan, msg, scheduledApiStub } from './helpers/fakeApi';
 
 // 로컬 자정으로 만든 시각. **로컬로 만들어야** 이 테스트가 어떤 시간대의 기계에서도
 // 같은 "날"을 뜻한다 — ISO 문자열을 손으로 적으면 UTC 기준이라 UTC+9 에서 하루가 밀린다.
@@ -24,7 +24,8 @@ beforeEach(() => {
     channels: [chan('c1', 'general')],
     activeChannelId: 'c1',
   });
-  setController({ openChannel: vi.fn(), openThread: vi.fn(), startDm: vi.fn(), logout: vi.fn() } as unknown as C);
+  // #222: 컴포저가 채널에 붙으면 예약 목록을 읽는다 — 그 표면이 목에 없으면 화면이 뜨지 않는다.
+  setController({ openChannel: vi.fn(), openThread: vi.fn(), startDm: vi.fn(), logout: vi.fn(), api: scheduledApiStub() } as unknown as C);
 });
 
 const seedMessages = (rows: ReturnType<typeof msg>[]) =>
