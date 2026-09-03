@@ -24,10 +24,10 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
   if (!threadRootId) return null;
 
   return (
-    <section className="flex w-96 flex-col border-l border-zinc-200 bg-white">
-      <header className="flex items-center border-b border-zinc-200 px-4 py-2">
+    <section className="flex w-96 flex-col border-l border-border bg-surface-raised">
+      <header className="flex items-center border-b border-border px-4 py-2">
         <span className="font-bold">Thread</span>
-        <button className="ml-auto rounded px-2 text-zinc-500 hover:bg-zinc-100"
+        <button className="ml-auto rounded px-2 text-fg-subtle hover:bg-surface-sunken"
           onClick={() => getController().closeThread()}>
           ×
         </button>
@@ -44,13 +44,13 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
         ))}
       </div>
       <TypingLine />
-      <div className="border-t border-zinc-200 p-3">
-        <label className="mb-2 flex items-center gap-2 text-sm text-zinc-600">
+      <div className="border-t border-border p-3">
+        <label className="mb-2 flex items-center gap-2 text-sm text-fg-muted">
           <input
             type="checkbox"
             checked={alsoInChannel}
             onChange={(e) => setAlsoInChannel(e.target.checked)}
-            className="rounded border-zinc-300"
+            className="rounded border-border"
           />
           채널에도 올리기
         </label>
