@@ -409,4 +409,33 @@ export class ApiClient {
   unsaveMessage(messageId: string): Promise<void> {
     return this.req('DELETE', `/saved/${messageId}`);
   }
+
+  // #285: 핸들 집합 관리
+  async listHandleGroups(): Promise<HandleGroupRow[]> {
+    return (await this.req<{ groups: HandleGroupRow[] }>('GET', '/handle-groups')).groups;
+  }
+
+  async createHandleGroup(input: { handle: string; displayName: string }): Promise<HandleGroupRow> {
+    return this.req('POST', '/handle-groups', input);
+  }
+
+  async getHandleGroup(id: string): Promise<{ group: HandleGroupRow; members: string[] }> {
+    return this.req('GET', `/handle-groups/${id}`);
+  }
+
+  async updateHandleGroup(id: string, patch: { displayName: string }): Promise<HandleGroupRow> {
+    return this.req('PATCH', `/handle-groups/${id}`, patch);
+  }
+
+  async deleteHandleGroup(id: string): Promise<void> {
+    return this.req('DELETE', `/handle-groups/${id}`);
+  }
+
+  async addHandleGroupMembers(id: string, accountIds: string[]): Promise<{ members: string[] }> {
+    return this.req('POST', `/handle-groups/${id}/members`, { accountIds });
+  }
+
+  async removeHandleGroupMembers(id: string, accountIds: string[]): Promise<{ members: string[] }> {
+    return this.req('DELETE', `/handle-groups/${id}/members`, { accountIds });
+  }
 }
