@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { assertChannelVisible } from '../services/channels.js';
 import { findDownloadTarget, listChannelFiles, recordUpload } from '../services/attachments.js';
-import { StorageLimitError, type StorageBackend } from '../storage/local.js';
+import { StorageLimitError, AttachmentMissingError, type StorageBackend } from '../storage/local.js';
 
 /**
  * 절대 inline 으로 내주지 않는 타입. SVG 는 `<script>` 를 담을 수 있어 이미지처럼 보이지만
@@ -111,16 +111,25 @@ export async function registerAttachmentRoutes(
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
 
-    const body = await storage.read(target.attachment.storageKey);
-    const type = NEVER_INLINE.includes(target.attachment.contentType)
-      ? 'application/octet-stream'
-      : target.attachment.contentType;
-    return reply
-      // nosniff 없이는 브라우저가 내용을 보고 타입을 다시 판정해 스크립트로 실행할 수 있다.
-      .header('x-content-type-options', 'nosniff')
-      .header('content-disposition', dispositionFor(target.attachment.filename))
-      .header('content-length', String(target.attachment.sizeBytes))
-      .type(type)
-      .send(body);
+    try {
+      const body = await storage.read(target.attachment.storageKey);
+      const type = NEVER_INLINE.includes(target.attachment.contentType)
+        ? 'application/octet-stream'
+        : target.attachment.contentType;
+      return reply
+        // nosniff 없이는 브라우저가 내용을 보고 타입을 다시 판정해 스크립트로 실행할 수 있다.
+        .header('x-content-type-options', 'nosniff')
+        .header('content-disposition', dispositionFor(target.attachment.filename))
+        .header('content-length', String(target.attachment.sizeBytes))
+        .type(type)
+        .send(body);
+    } catch (err) {
+      if (err instanceof AttachmentMissingError) {
+        return reply.code(404).send({
+          error: { code: 'attachment_missing', message: `attachment file not found: ${err.path}` },
+        });
+      }
+      throw err;
+    }
   });
 }

@@ -5,6 +5,8 @@ import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
 import { Composer } from '../src/components/Composer';
+import { Notice } from '../src/components/Notice';
+import { ApiError } from '../src/lib/api';
 import { acc, msg } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
 
@@ -103,6 +105,16 @@ describe('showing attachments on a message', () => {
     render(<MessageItem message={withAttachments([att({ contentType: 'image/png', filename: 'ok.png' })])} />);
 
     await waitFor(() => expect(c.fetchAttachment).toHaveBeenCalledWith('a1'));
+  });
+
+  // 실패를 조용히 삼키면 "불러오지 못했다"는 신호를 못 받는다 — 칩만 보인다.
+  it('shows "(불러오기 실패)" when preview fetch fails', async () => {
+    const c = fakeController({
+      fetchAttachment: vi.fn(async () => { throw new Error('network error'); }),
+    });
+    render(<MessageItem message={withAttachments([att({ contentType: 'image/png', filename: 'fail.png' })])} />);
+
+    await waitFor(() => expect(screen.getByText('(불러오기 실패)')).toBeTruthy());
   });
 });
 
