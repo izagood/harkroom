@@ -136,7 +136,9 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   // 예약 메시지 목록 조회(#222). 채널이 바뀔 때마다 새로 받는다.
   useEffect(() => {
     if (!channelId) return;
-    getController().api.scheduledMessages(channelId)
+    const api = getController().api;
+    if (typeof api.scheduledMessages !== 'function') return;
+    api.scheduledMessages(channelId)
       .then(setScheduledMessages)
       .catch(() => {});
   }, [channelId]);
@@ -494,16 +496,23 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
 
   const handleSchedule = async () => {
     if (!channelId || !scheduleDateTime) return;
+    const api = getController().api;
+    if (typeof api.scheduleMessage !== 'function') {
+      setScheduleError('예약功能이 없다');
+      return;
+    }
     setScheduleError(null);
     setIsScheduling(true);
     try {
       const sendAt = new Date(scheduleDateTime).toISOString();
-      await getController().api.scheduleMessage(channelId, draft, sendAt);
+      await api.scheduleMessage(channelId, draft, sendAt);
       setDraftLocal('');
       setPending([]);
       setScheduleModalOpen(false);
-      const updated = await getController().api.scheduledMessages(channelId);
-      setScheduledMessages(updated);
+      if (typeof api.scheduledMessages === 'function') {
+        const updated = await api.scheduledMessages(channelId);
+        setScheduledMessages(updated);
+      }
     } catch (err: unknown) {
       const e = err as { error?: { code?: string; message?: string } };
       setScheduleError(e.error?.message ?? '예약에 실패했다');
@@ -514,10 +523,14 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
 
   const handleCancelScheduled = async (id: string) => {
     if (!channelId) return;
+    const api = getController().api;
+    if (typeof api.cancelScheduledMessage !== 'function') return;
     try {
-      await getController().api.cancelScheduledMessage(id);
-      const updated = await getController().api.scheduledMessages(channelId);
-      setScheduledMessages(updated);
+      await api.cancelScheduledMessage(id);
+      if (typeof api.scheduledMessages === 'function') {
+        const updated = await api.scheduledMessages(channelId);
+        setScheduledMessages(updated);
+      }
     } catch { /* 조용히 실패 */ }
   };
 
@@ -759,10 +772,6 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
           전송
         </button>
       </div>
-    </div>
-);
-  return (
-    <>
       {scheduleModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
           <div className="w-80 rounded-lg bg-white p-4 shadow-lg">
@@ -797,6 +806,6 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }
