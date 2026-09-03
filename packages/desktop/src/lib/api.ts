@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PatView, PinRow } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -287,7 +287,8 @@ export class ApiClient {
     return (await this.req<{ prefs: ChannelPrefRow[] }>('GET', '/channels/prefs')).prefs;
   }
 
-  updateChannelPref(channelId: string, patch: { muted?: boolean; starred?: boolean }): Promise<ChannelPrefRow> {
+  /** `muted` 는 없다 — `notifyLevel` 이 대체했다(#224). */
+  updateChannelPref(channelId: string, patch: { notifyLevel?: NotifyLevel; starred?: boolean }): Promise<ChannelPrefRow> {
     return this.req('PATCH', `/channels/${channelId}/pref`, patch);
   }
 

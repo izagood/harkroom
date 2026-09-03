@@ -25,7 +25,7 @@ beforeEach(() => {
     startDm: vi.fn(),
     createChannel: vi.fn(),
     updateChannel: vi.fn(),
-    toggleChannelMute: vi.fn(),
+    setChannelNotifyLevel: vi.fn(),
     toggleChannelStar: vi.fn(),
     closeThread: vi.fn(),
     notifyTyping: vi.fn(),
