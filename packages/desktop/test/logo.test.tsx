@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 const sidebar = () =>
-  render(<Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+  render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
 describe('murmur 로고 (#191)', () => {
   it('사이드바에 로고가 그려지고 텍스트 murmur 도 함께 있다', () => {
