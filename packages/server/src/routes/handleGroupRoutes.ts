@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { HANDLE_PATTERN } from '@murmur/shared';
 import { recordAudit } from '../audit.js';
+import { emitEvent } from '../events.js';
 import {
   createHandleGroup, deleteHandleGroup, getHandleGroup, listHandleGroupMembers,
   listHandleGroups, updateHandleGroup, addHandleGroupMembers, removeHandleGroupMembers,
@@ -133,6 +134,8 @@ export async function registerHandleGroupRoutes(app: FastifyInstance, pool: Pool
       action: 'handle_group.members.added', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: id, detail: { handle: group.handle, requested: body.accountIds.length, inserted },
     }, req);
+    // 집합 구성원 변경을 로그인한 전원에게 알린다(#300).
+    emitEvent({ type: 'handle_group.changed', groupId: id, audience: 'all' });
     return { members: members.map((m) => m.accountId) };
   });
 
@@ -153,6 +156,8 @@ export async function registerHandleGroupRoutes(app: FastifyInstance, pool: Pool
       action: 'handle_group.members.removed', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: id, detail: { handle: group.handle, requested: body.accountIds.length, removed },
     }, req);
+    // 집합 구성원 변경을 로그인한 전원에게 알린다(#300).
+    emitEvent({ type: 'handle_group.changed', groupId: id, audience: 'all' });
     return { members: members.map((m) => m.accountId) };
   });
 }

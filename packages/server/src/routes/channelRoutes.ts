@@ -8,6 +8,8 @@ import {
   getChannelDoc, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
   updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs,
 } from '../services/channels.js';
+
+const COLS = `id, name, topic, kind, repo, archived_at as "archivedAt", visibility`;
 import { listPins, pinMessage, unpinMessage } from '../services/pins.js';
 import { allReadStates, markChannelRead, markChannelUnread, readState } from '../services/readPositions.js';
 import {
@@ -190,11 +192,29 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     if (!account.rowCount) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
     }
+    const channelRes = await pool.query(
+      `select ${COLS} from channel where id = $1`,
+      [id],
+    );
     await addChannelMember(pool, id, accountId);
     await recordAudit(pool, {
       action: 'channel.member.added', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: id, detail: { accountId },
     }, req);
+    // 삽입이 커밋된 뒤에 발행한다(#284) — 커밋 전에 보내면 수신자가 없는 채널을 조회한다.
+    // channel.member_added: 수신자는 그 채널을 목록에서 볼 수 있는 사람(#284 의 channelListAudience 재사용).
+    emitEvent({
+      type: 'channel.member_added',
+      channelId: id,
+      accountId,
+      audience: await channelListAudience(pool, id),
+    });
+    // 추가된 사람에게는 channel.created 를 보낸다 — 그 사람에게 목록에 새로 나타난 것이다.
+    emitEvent({
+      type: 'channel.created',
+      channel: channelRes.rows[0],
+      audience: [accountId],
+    });
     return { members: await listChannelMembers(pool, id) };
   });
 
@@ -227,6 +247,24 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
         action: 'channel.member.removed', actorId: req.account!.id, actorHandle: req.account!.handle,
         target: id, detail: { accountId },
       }, req);
+      // 삭제 후 커밋에 이벤트 발행(#284).
+      // channel.member_removed: 수신자는 여전히 볼 수 있는 사람(channelListAudience 재사용).
+      emitEvent({
+        type: 'channel.member_removed',
+        channelId: id,
+        accountId,
+        audience: await channelListAudience(pool, id),
+      });
+      // channel.deleted: #284 의 public→private 전환과 같은 논리. 목록에서 사라진 사람에게.
+      // 제거된 사람이 채널을 더 이상 목록에서 볼 수 없으면 channel.deleted 를 보낸다.
+      const lostAudience = await channelListLostAudience(pool, id);
+      if (lostAudience.includes(accountId)) {
+        emitEvent({
+          type: 'channel.deleted',
+          channelId: id,
+          audience: [accountId],
+        });
+      }
     }
     return { members: await listChannelMembers(pool, id) };
   });

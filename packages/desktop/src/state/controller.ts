@@ -232,6 +232,10 @@ export class Controller {
           this.swallow(this.loadSavedSummary());
         }
         break;
+      case 'handle_group.changed':
+        // 집합 목록과 구성원 수를 갱신한다(#300).
+        this.swallow(this.refreshAccounts({ force: true }));
+        break;
     }
   }
 
