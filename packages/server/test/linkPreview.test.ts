@@ -497,7 +497,6 @@ describe('캐시 만료 (#312)', () => {
   // isStale 순수 함수 tests
   it('ok 는 7일 이후에 만료, 그 전에는 fresh', () => {
     const now = Date.now();
-    const oldOk = { url: 'x', title: 't', description: null, imageUrl: null, siteName: null, status: 'ok' as const, fetchedAt: new Date(now - TTL_OK_MS + 1) };
     const freshOk = { url: 'x', title: 't', description: null, imageUrl: null, siteName: null, status: 'ok' as const, fetchedAt: new Date(now - TTL_OK_MS + 1) };
     const staleOk = { url: 'x', title: 't', description: null, imageUrl: null, siteName: null, status: 'ok' as const, fetchedAt: new Date(now - TTL_OK_MS - 1) };
     expect(isStale(freshOk, now)).toBe(false);
@@ -572,8 +571,21 @@ describe('캐시 만료 (#312)', () => {
        values ($1, $2, $3, $4, $5, $6, $7)`,
       [oldUrl, 'Old Title', 'old desc', null, null, 'failed', new Date(Date.now() - TTL_FAILED_MS - 1000)],
     );
-    // 다시 가져온다
-    await queueLinkPreviewFetch(pool, oldUrl, net);
+    // **SQL 을 엿본다.** 행 개수만 세면 "지웠다 다시 넣기"를 구분하지 못한다 — 그 구현은
+    // 삭제와 삽입 사이에 조회가 404 를 보는 구멍이고, 그것이 이 요구가 막는 것이다.
+    const seen: string[] = [];
+    const realQuery = pool.query.bind(pool);
+    (pool as unknown as { query: unknown }).query = (...args: unknown[]) => {
+      const sql = typeof args[0] === 'string' ? args[0] : String((args[0] as { text?: string })?.text ?? '');
+      seen.push(sql);
+      return (realQuery as (...a: unknown[]) => unknown)(...args);
+    };
+    try {
+      await queueLinkPreviewFetch(pool, oldUrl, net);
+    } finally {
+      (pool as unknown as { query: unknown }).query = realQuery;
+    }
+    expect(seen.some((sql) => /delete\s+from\s+link_preview/i.test(sql))).toBe(false);
     // 행이 삭제되지 않고 갱신되었는지 확인
     const rows = await pool.query('select count(*)::int as n from link_preview where url = $1', [oldUrl]);
     expect(rows.rows[0].n).toBe(1); // 행은 하나만 있어야 한다
