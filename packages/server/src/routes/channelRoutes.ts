@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import type { StorageBackend } from '../storage/local.js';
 import { z } from 'zod';
 import {
-  addChannelMember, assertChannelVisible, channelPostGate, createChannel, deleteChannel, getOrCreateDm,
+  addChannelMember, assertChannelVisible, audienceFor, channelPostGate, createChannel, deleteChannel, getOrCreateDm,
   listChannelMembers, listChannels, removeChannelMember, updateChannel, updateChannelPref,
   listChannelPrefs,
 } from '../services/channels.js';
@@ -13,6 +13,7 @@ import { allReadStates, markChannelRead, markChannelUnread, readState } from '..
 // 정규식을 여기 리터럴로 두지 않고 shared 의 상수를 쓴다.
 import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS } from '@murmur/shared';
 import { recordAudit } from '../audit.js';
+import { emitEvent } from '../events.js';
 
 export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, storage?: StorageBackend): Promise<void> {
   app.post('/channels', { preHandler: app.requireAdmin }, async (req, reply) => {
@@ -25,6 +26,8 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     }).parse(req.body);
     // private 이면 만든 사람이 첫 멤버다. 이 인자를 빠뜨리면 아무도 열 수 없는 채널이 생긴다.
     const channel = await createChannel(pool, { ...body, creatorId: req.account!.id });
+    const audience = await audienceFor(pool, channel.id);
+    emitEvent({ type: 'channel.created', channel, audience });
     return reply.code(201).send(channel);
   });
 
@@ -37,10 +40,37 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
       archived: z.boolean().optional(),
       visibility: z.enum(['public', 'private']).optional(),
     }).parse(req.body);
+
+    // 비공개화 전환을 처리하려면 기존 채널의.visibility 를 미리 읽어야 한다.
+    const oldChannel = patch.visibility !== undefined
+      ? await pool.query(`select visibility from channel where id = $1`, [id])
+      : null;
+    const wasPublic = oldChannel?.rows[0]?.visibility === 'public';
+
     const channel = await updateChannel(pool, id, req.account!.id, patch);
     if (!channel) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
     }
+
+    // 비공개화 전환(#284): public→private 일 때 기존 비멤버에게 channel.deleted 를 보내고,
+    // 멤버에게는 channel.updated 를 보낸다. public→private 은 그 사람에게 채널이 사라진 것이기 때문이다.
+    // public 채널은 멤버가 없을 수 있으므로, 변경을 시작한 계정(actor)도 포함한다.
+    if (wasPublic && patch.visibility === 'private') {
+      const currentMembers = await audienceFor(pool, id);
+      const isCurrentMembersAll = currentMembers === 'all';
+      const membersArray = isCurrentMembersAll ? [] : currentMembers;
+      // 채널을 변경한 계정도 포함 — public→private 전환 시 创建자는 명시적 멤버가 아닐 수 있다.
+      const audienceSet = new Set([...membersArray, req.account!.id]);
+      const audience = [...audienceSet];
+      // 전원에게 channel.deleted — 비멤버는 필터에서 걸러진다.
+      emitEvent({ type: 'channel.deleted', channelId: id, audience: 'all' });
+      // 변경한 계정을 포함한 멤버에게 channel.updated
+      emitEvent({ type: 'channel.updated', channel, audience });
+    } else {
+      const audience = await audienceFor(pool, id);
+      emitEvent({ type: 'channel.updated', channel, audience });
+    }
+
     // 공개 범위 전환은 별도 감사 항목이다 — 채널 하나가 통째로 열리거나 닫히는 사건이라
     // 'channel.updated' 의 필드 목록에 섞여 있으면 나중에 골라낼 수 없다. topic 과 함께
     // 온 경우에도 둘 다 남긴다(아래 else 가 나머지 필드를 계속 기록한다).
@@ -332,6 +362,8 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
    */
   app.delete('/channels/:id', { preHandler: app.requireAdmin }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    // 삭제 전 수신자를 미리 구한다 — 삭제 후에는 채널이 존재하지 않아 audienceFor 가 'all'을 반환한다.
+    const audience = await audienceFor(pool, id);
     const result = await deleteChannel(pool, id, storage);
     if (result === 'not_found') {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
@@ -342,6 +374,9 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     if (result === 'not_archived') {
       return reply.code(409).send({ error: { code: 'not_archived', message: 'only archived channels can be deleted' } });
     }
+    // 삭제 전 구한 수신자에게 channel.deleted 를 보낸다 — 트랜잭션 커밋 뒤이므로
+    // 수신자가 채널을 조회해도 없는 상태다.
+    emitEvent({ type: 'channel.deleted', channelId: id, audience });
     // 감사에 이름과 개수만 남기고 본문·topic 은 절대 넣지 않는다 — 지운 것이 감사에 남으면 삭제가 아니다.
     await recordAudit(pool, {
       action: 'channel.deleted', actorId: req.account!.id, actorHandle: req.account!.handle,

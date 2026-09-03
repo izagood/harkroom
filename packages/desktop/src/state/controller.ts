@@ -174,6 +174,34 @@ export class Controller {
         store.applyAvatar(e.accountId, e.avatarAttachmentId);
         if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
         break;
+      case 'channel.created':
+        // 새 채널을 목록에 추가한다. public 은 전원에게 오고, private 은 멤버에게만 온다.
+        // 이미 있으면 무시(upsert 가 아니라 adds 를 쓴다).
+        if (!store.channels.some((c) => c.id === e.channel.id)) {
+          store.set({ channels: [...store.channels, e.channel] });
+        }
+        break;
+      case 'channel.updated':
+        // 채널 정보를 갱신한다. 목록에서 찾아 교체한다.
+        store.set({
+          channels: store.channels.map((c) => (c.id === e.channel.id ? e.channel : c)),
+        });
+        break;
+      case 'channel.deleted':
+        // 채널을 목록에서 제거한다. 보고 있던 채널이면 선택을 비우고 안내를 보인다.
+        store.set({
+          channels: store.channels.filter((c) => c.id !== e.channelId),
+          ...(store.activeChannelId === e.channelId
+            ? { activeChannelId: null, threadRootId: null, notice: 'This channel was deleted.' }
+            : {}),
+        });
+        break;
+      case 'saved.changed':
+        // 담기 상태가 바뀌면 사이드바의 "Saved N" 을 갱신한다(#219).
+        if (e.accountId === store.me?.id) {
+          this.swallow(this.loadSavedSummary());
+        }
+        break;
     }
   }
 
