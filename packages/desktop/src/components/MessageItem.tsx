@@ -12,6 +12,7 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
   const author = useAppStore((s) => s.accounts[message.authorId]);
   const isMine = useAppStore((s) => s.me?.id === message.authorId);
   const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
+  const myId = useAppStore((s) => s.me?.id ?? null);
   const accounts = useAppStore((s) => s.accounts);
   const [draft, setDraft] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -39,6 +40,17 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
   // 비밀·스팸을 치울 경로가 admin 에게 없어, 서버가 열어 둔 조정 수단이 도달 불가가 된다.
   // 수정은 admin 에게도 열지 않는다: 남의 발언을 고칠 수 있으면 기록이 증거가 못 된다.
   const canDelete = (isMine || isAdmin) && !isSystem;
+  /**
+   * 이 메시지의 핀(#218). 핀은 **채널 전역 사실**이라 메시지 행이 아니라 채널별 목록에서
+   * 찾는다 — `MessageRow` 에 넣으면 같은 사실이 두 곳에 생기고, 남이 고정했을 때 한쪽만
+   * 갱신되는 갈라짐이 난다(리액션과 달리 핀은 델타 이벤트가 없다).
+   */
+  const pin = useAppStore((s) => (s.pins[message.channelId] ?? []).find((p) => p.messageId === message.id));
+  // 해제는 고정한 사람 또는 admin — 서버가 그렇게 판정한다. UI 가 더 넓게 내주면 누를 때마다
+  // 403 이 돌아오고, 더 좁게 내주면 admin 의 조정 수단이 도달 불가가 된다.
+  const canUnpin = pin !== undefined && (pin.pinnedBy === myId || isAdmin);
+  // 보관된 채널은 읽기 전용이라 고정이 거절된다(서버의 `channelPostGate`).
+  const isArchived = useAppStore((s) => s.channels.find((c) => c.id === message.channelId)?.archivedAt != null);
 
   const save = () => {
     const next = draft ?? '';
@@ -69,6 +81,12 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
   const menuItems = [
     // 어떤 메시지든 가리킬 수 있다 — 남의 것도, system 메시지도 링크의 대상이다.
     { label: 'Copy link', onSelect: () => { void copyLink(); } },
+    // 고정은 **글을 쓸 수 있는 사람 누구나** 한다(#218) — 그래서 작성자·admin 조건이 없다.
+    // 보관된 채널에서만 뺀다: 서버가 거절하는 것을 메뉴에 남겨 두면 없는 것을 있다고
+    // 표시하는 셈이다(design.md §4). 해제는 보관된 채널에서도 남는다 — 잘못 올라간 핀을
+    // 치울 길이 있어야 한다(서버의 DELETE 도 보관을 보지 않는다).
+    ...(!pin && !isArchived ? [{ label: 'Pin', onSelect: () => { void getController().pinMessage(message.channelId, message.id); } }] : []),
+    ...(canUnpin ? [{ label: 'Unpin', onSelect: () => { void getController().unpinMessage(message.channelId, message.id); } }] : []),
     ...(canEdit ? [{ label: 'Edit', onSelect: () => setDraft(message.body) }] : []),
     ...(canDelete && !confirmingDelete ? [{ label: 'Delete', onSelect: () => setConfirmingDelete(true) }] : []),
   ];
