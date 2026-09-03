@@ -223,11 +223,14 @@ describe('mention autocomplete', () => {
   // 그 새 계정이 후보에 나타난다.
   it('refreshes accounts when autocomplete opens', async () => {
     const api = fakeApi({
-      accounts: vi.fn(async () => [
-        acc('u1', 'me'),
-        acc('a1', 'fizz', 'agent'),
-        acc('new', 'newagent', 'agent'), // 서버에 있지만 로컬에 없는 새 계정
-      ]),
+      accounts: vi.fn(async () => ({
+        accounts: [
+          acc('u1', 'me'),
+          acc('a1', 'fizz', 'agent'),
+          acc('new', 'newagent', 'agent'), // 서버에 있지만 로컬에 없는 새 계정
+        ],
+        groups: [],
+      })),
     });
     const c = new Controller(api);
     setController(c);
@@ -269,10 +272,13 @@ describe('mention autocomplete', () => {
   // 가드 테스트: 자동완성을 짧은 간격으로 여러 번 열어도 디렉터리 요청이 한 번만 나간다.
   it('does not refetch accounts rapidly when autocomplete opens repeatedly', async () => {
     const api = fakeApi({
-      accounts: vi.fn(async () => [
-        acc('u1', 'me'),
-        acc('a1', 'fizz', 'agent'),
-      ]),
+      accounts: vi.fn(async () => ({
+        accounts: [
+          acc('u1', 'me'),
+          acc('a1', 'fizz', 'agent'),
+        ],
+        groups: [],
+      })),
     });
     const c = new Controller(api);
     setController(c);

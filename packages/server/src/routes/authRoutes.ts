@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { newToken, hashToken } from '../auth/tokens.js';
 import { recordAudit } from '../audit.js';
 import { createChannel } from '../services/channels.js';
+import { getHandleGroupByHandle } from '../services/handleGroups.js';
 
 const SESSION_TTL_DAYS = 14;
 
@@ -117,6 +118,15 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
         await client.query('rollback');
         return reply.code(400).send({ error: { code: 'invalid_invite', message: 'invite invalid or used' } });
       }
+
+      const group = await getHandleGroupByHandle(pool, body.handle);
+      if (group) {
+        await client.query('rollback');
+        return reply.code(400).send({
+          error: { code: 'handle_taken', message: 'a group with this handle already exists' },
+        });
+      }
+
       const pw = await argon2.hash(body.password);
       const acc = await client.query(
         `insert into account (handle, display_name, kind, password_hash)

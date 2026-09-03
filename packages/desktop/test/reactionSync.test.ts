@@ -80,7 +80,7 @@ describe('reaction events from the socket', () => {
 
   // 누른 사람이 처음 보는 계정이면 이름이 '…'로 남는다 — 리액션 툴팁이 빈칸이 된다.
   it('fetches the directory when an unknown account reacts', () => {
-    const accounts = vi.fn(async () => [acc('u1', 'me'), acc('u9', 'newcomer')]);
+    const accounts = vi.fn(async () => ({ accounts: [acc('u1', 'me'), acc('u9', 'newcomer')], groups: [] }));
     const c = new Controller(fakeApi({ accounts }));
 
     feed(c, { type: 'reaction.added', channelId: 'c1', messageId: 'm1', emoji: '👀', accountId: 'u9' });

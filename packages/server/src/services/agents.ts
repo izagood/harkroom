@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { AGENT_HARNESSES, type AgentConfig, type AgentHarness, type AgentView } from '@murmur/shared';
 import { getAgentDefaults } from './agentDefaults.js';
+import { getHandleGroupByHandle } from './handleGroups.js';
 
 const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admin as "isAdmin",
   coalesce(c.instructions, '') as instructions,
@@ -104,6 +105,12 @@ export async function createAgentAccount(
   const client = await pool.connect();
   try {
     await client.query('begin');
+
+    const group = await getHandleGroupByHandle(pool, input.handle);
+    if (group) {
+      throw Object.assign(new Error('a group with this handle already exists'), { code: 'handle_taken' });
+    }
+
     const created = await client.query(
       `insert into account (handle, display_name, kind) values ($1, $2, 'agent') returning id`,
       [input.handle, input.displayName],

@@ -1,7 +1,8 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, mentionedHandles, type InboxEntry, type MessageRow } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, GROUP_MENTION_HANDLE, mentionedHandles, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { channelVisibleSql } from './channels.js';
+import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
 
 /**
  * 게시 결과. 첨부 연결이 거절되면 메시지 자체가 만들어지지 않는다(트랜잭션 롤백) —
@@ -149,7 +150,7 @@ export async function postMessage(
         if (row.id !== input.authorId) await insertInbox(client, row.id, message.id, 'mention', notified);
       }
 
-      // `@channel`(#225) — 채널 전체 호출. 본문은 손대지 않는다: `@channel` 은 원문에
+// `@channel`(#225) — 채널 전체 호출. 본문은 손대지 않는다: `@channel` 은 원문에
       // 그대로 남고 서버는 inbox 항목만 펼쳐 넣는다. 본문을 치환하면 원문이 사라져
       // 수정할 때 되돌릴 수 없다.
       //
@@ -171,6 +172,32 @@ export async function postMessage(
           `select a.id from account a, channel c
             where c.id = $1 and a.id <> $2 and ${channelVisibleSql('c', 'a.id')}`,
           [input.channelId, input.authorId],
+        );
+        for (const row of audience.rows) {
+          if (!notified.has(row.id)) await insertInbox(client, row.id, message.id, 'mention', notified);
+        }
+      }
+
+      // `@group`(#230) — 집합 호출. 본문은 손대지 않고 inbox 항목만 펼쳐 넣는다.
+      //
+      // 계정이 우선한다 — `@foo` 가 계정으로 있으면 계정이 이긴다(위에서 이미 처리됨).
+      // 집합도 같은 `@foo` 네임스페이스이므로 여기서는 "계정이 아닌 handle"만 처리한다.
+      const accountHandles = new Set(accounts.rows.map((r) => r.handle));
+      for (const handle of handles) {
+        if (handle === CHANNEL_MENTION_HANDLE) continue;
+        if (accountHandles.has(handle)) continue;
+
+        const group = await getHandleGroupByHandle(pool, handle);
+        if (!group) continue;
+
+        const members = await listHandleGroupMembers(pool, group.id);
+        const memberIds = members.map((m) => m.accountId);
+        if (!memberIds.length) continue;
+
+        const audience = await client.query(
+          `select a.id from account a, channel c
+            where c.id = $1 and a.id = any($2) and a.id <> $3 and ${channelVisibleSql('c', 'a.id')}`,
+          [input.channelId, memberIds, input.authorId],
         );
         for (const row of audience.rows) {
           if (!notified.has(row.id)) await insertInbox(client, row.id, message.id, 'mention', notified);
