@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { newToken } from '../auth/tokens.js';
+import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { ACCOUNT_STATUSES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@murmur/shared';
 import {
   ackAgentStop, createAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
@@ -83,6 +84,8 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     ownerAccountId: z.string().uuid().nullable().optional(),
   };
 
+  const ADMIN_ONLY_FIELDS = ['ownerAccountId', 'disabled', 'mentionPermission'] as const;
+
   /**
    * 감사에 남길 에이전트 설정 필드와, 값을 그대로 남겨도 되는지의 표.
    * `if` 사슬로 두면 `configFields` 에 필드가 늘 때 이쪽에 더하는 것을 잊는다 — 표로 둬야
@@ -137,21 +140,58 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
       displayName: z.string().min(1).max(64),
       ...configFields,
     }).parse(req.body);
-    const created = await createAgentAccount(pool, body, req.account!.id);
-    await recordAudit(pool, {
-      action: 'agent.created', actorId: req.account!.id, actorHandle: req.account!.handle,
-      target: created.id, detail: { handle: body.handle },
-    }, req);
-    return reply.code(201).send(created);
+    try {
+      const created = await createAgentAccount(pool, body, req.account!.id);
+      await recordAudit(pool, {
+        action: 'agent.created', actorId: req.account!.id, actorHandle: req.account!.handle,
+        target: created.id, detail: { handle: body.handle },
+      }, req);
+      return reply.code(201).send(created);
+    } catch (err) {
+      if ((err as { code?: string }).code === 'handle_taken') {
+        return reply.code(400).send({
+          error: { code: 'handle_taken', message: 'a group with this handle already exists' },
+        });
+      }
+      throw err;
+    }
   });
 
-  app.patch('/accounts/agents/:id', { preHandler: app.requireAdmin }, async (req, reply) => {
+  /**
+   * 가드가 `requireOwnerOrAdmin` preHandler 가 **아닌** 이유: 이 라우트는 필드별로 게이트가
+   * 갈린다(#253). preHandler 는 본문을 보기 전에 통째로 판정하므로 여기서는 쓸 수 없다.
+   * 대신 `requireAccount` 로 인증만 preHandler 에서 세우고 — 이걸 빼면 익명 요청이 소유자
+   * 판정까지 흘러들어 존재 여부(404)를 흘리거나 `req.account!` 에서 터진다 — 인가는
+   * `checkOwnerOrAdmin`(auth/plugin.ts 의 그 하나뿐인 술어)을 직접 부른다.
+   *
+   * 순서가 중요하다: **admin 전용 필드 검사가 소유자 조회보다 앞이다.** 소유자가 admin 전용
+   * 필드를 섞어 보내면 403 이고 **아무것도 바꾸지 않는다**(부분 적용 금지). 일부만 적용하면
+   * 사람은 전부 됐다고 믿는다 — 그리고 안 된 쪽이 하필 권한 필드다.
+   */
+  app.patch('/accounts/agents/:id', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const patch = z.object({
       displayName: z.string().min(1).max(64).optional(),
       disabled: z.boolean().optional(),
       ...configFields,
     }).parse(req.body);
+
+    const account = req.account!;
+    if (!account.isAdmin) {
+      // `Object.keys` 를 보는 이유: zod 는 보내지 않은 키를 만들지 않으므로 키의 **존재**가
+      // "이 필드를 건드리려 한다"와 같다. 값으로 판정하면 `disabled: false` 나
+      // `ownerAccountId: null` 처럼 "지우기"를 뜻하는 요청이 게이트를 빠져나간다.
+      const hasAdminOnlyField = Object.keys(patch)
+        .some((f) => (ADMIN_ONLY_FIELDS as readonly string[]).includes(f));
+      if (hasAdminOnlyField) {
+        return reply.code(403).send({ error: { code: 'forbidden', message: 'admin required for this field' } });
+      }
+      const verdict = await checkOwnerOrAdmin(pool, account, id);
+      if (!verdict.ok) {
+        return reply.code(verdict.status).send({ error: { code: verdict.code, message: verdict.message } });
+      }
+    }
+
     const before = await getAgent(pool, id);
     // 존재 확인을 **먼저** 한다. 없는 에이전트에 대해 비활성화를 처리하면 update 는 0 행이라
     // 무해하지만 감사 로그에는 "비활성화했다"가 남는다 — 응답은 404 인데 기록은 남는 모양이다.
@@ -306,18 +346,26 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
    * MCP 로는 안 된다 — `registerMcp` 가 `kind !== 'agent'` 를 걸러 사람 계정은 MCP 에
    * 붙지 못한다. 그래서 REST 가 필요하다.
    *
-   * 가드가 `requireAdmin` 인 이유: 이 파일의 에이전트 관리 라우트가 전부 그렇고,
-   * 메모리는 그 에이전트의 **정의에 준하는 상태**다. 아무 사람이나 남의 에이전트
-   * 기억을 읽고 지울 수 있으면 `ownerAccountId` 가 attach 를 게이트하는 것과 어긋난다.
+   * 가드가 `requireAdmin` 에서 `requireOwnerOrAdmin` 으로 **바뀌었다**(#253). 원래 여기
+   * 적혀 있던 근거는 "아무 사람이나 남의 에이전트 기억을 읽고 지울 수 있으면
+   * `ownerAccountId` 가 attach 를 게이트하는 것과 어긋난다"였다. 그 문장은 지금도 맞지만
+   * 결론이 뒤집혔다 — 어긋나는 것은 **소유자에게 열어 주는 것**이 아니라 소유자에게도
+   * 닫아 두는 것이다. `ownerAccountId` 가 attach 를 게이트한다는 사실은 곧 소유자가 이미
+   * 그 에이전트의 진행 중 턴에 붙을 수 있다는 뜻이고, 거기서 보이는 것이 메모리보다 넓다.
+   *
+   * 민감도 순서도 같은 방향이다: #253 이 소유자에게 PAT(그 에이전트로서 발화하고 채널을
+   * 읽는 가장 센 자격증명)를 열었으므로, 그보다 약한 메모리를 닫아 두면 순서가 뒤집힌다.
+   * "아무 사람이나"는 여전히 막힌다 — 소유자와 admin 뿐이고, 소유자가 없는
+   * 에이전트(`null`)는 admin 만이다.
    *
    * 질의는 `services/memory.ts` 를 그대로 부른다 — 여기서 다시 쓰면 계정 스코프가 두
    * 곳에 생기고 한쪽만 고치는 사고가 난다.
    */
-  app.get('/accounts/agents/:id/memory', { preHandler: app.requireAdmin }, async (req) => ({
+  app.get('/accounts/agents/:id/memory', { preHandler: app.requireOwnerOrAdmin('id') }, async (req) => ({
     memories: await listMemoryEntries(pool, z.object({ id: z.string().uuid() }).parse(req.params).id),
   }));
 
-  app.delete('/accounts/agents/:id/memory/:slug', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.delete('/accounts/agents/:id/memory/:slug', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
     const { id, slug } = z.object({
       id: z.string().uuid(),
       slug: z.string().min(1).max(255),
@@ -332,7 +380,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     return reply.code(204).send();
   });
 
-  app.get('/accounts/:id/pats', { preHandler: app.requireAdmin }, async (req) => {
+  app.get('/accounts/:id/pats', { preHandler: app.requireOwnerOrAdmin('id') }, async (req) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const res = await pool.query(
       `select label, created_at, revoked_at from pat where account_id = $1 order by created_at desc`,
@@ -347,7 +395,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     };
   });
 
-  app.post('/accounts/:id/pats', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.post('/accounts/:id/pats', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({ label: z.string().min(1).max(64) }).parse(req.body);
     // 라벨은 살아 있는 토큰 안에서 유일하다(마이그레이션 010) — 같은 라벨이 둘이면
@@ -374,7 +422,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
 
   // 라벨 단위 폐기다. pat.label 에 유일성이 없어 같은 라벨의 토큰이 여러 개면 전부 폐기된다 —
   // 폐기에서는 하나 남기는 것보다 하나 더 끊는 쪽이 안전하다.
-  app.delete('/accounts/:id/pats/:label', { preHandler: app.requireAdmin }, async (req) => {
+  app.delete('/accounts/:id/pats/:label', { preHandler: app.requireOwnerOrAdmin('id') }, async (req) => {
     const { id, label } = z.object({ id: z.string().uuid(), label: z.string().min(1).max(64) }).parse(req.params);
     const res = await pool.query(
       `update pat set revoked_at = now() where account_id = $1 and label = $2 and revoked_at is null`,
