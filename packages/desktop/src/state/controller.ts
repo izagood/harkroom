@@ -39,13 +39,14 @@ export class Controller {
 
   async start(): Promise<void> {
     const store = useAppStore.getState();
-    const [me, accounts, channels, dms, leases, unread, reads] = await Promise.all([
+    const [me, { accounts, groups }, channels, dms, leases, unread, reads] = await Promise.all([
       this.api.me(), this.api.accounts(), this.api.channels(),
       this.api.dms(), this.api.leases(), this.api.inboxUnread(), this.api.reads(),
     ]);
     store.set({
       me, channels, dms, leases, unread,
       accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
+      groups,
       reads: Object.fromEntries(reads.map((r) => [r.channelId, { lastReadSeq: r.lastReadSeq, unread: r.unread }])),
     });
     // 초안은 기기 로컬에 있으므로 서버 왕복이 없다 — 크리티컬 패스에 둬도 비용이 없다.
@@ -211,8 +212,11 @@ export class Controller {
     this.lastAccountsRefresh = now;
     this.accountsInFlight ??= this.api
       .accounts()
-      .then((accounts) => {
-        useAppStore.getState().set({ accounts: Object.fromEntries(accounts.map((a) => [a.id, a])) });
+      .then(({ accounts, groups }) => {
+        useAppStore.getState().set({
+          accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
+          groups,
+        });
       })
       .finally(() => { this.accountsInFlight = null; });
     return this.accountsInFlight;
