@@ -170,7 +170,31 @@ export async function listChannelPrefs(pool: Pool, accountId: string): Promise<C
   return res.rows;
 }
 
-export async function isChannelArchived(pool: Pool, channelId: string): Promise<boolean> {
-  const res = await pool.query(`select archived_at is not null as archived from channel where id = $1`, [channelId]);
-  return res.rows[0]?.archived ?? false;
+/**
+ * 글을 쓸 수 있는가 — 가시성과 보관 여부를 **한 질의로** 함께 본다.
+ *
+ * 둘을 따로 물으면 메시지 POST 한 번에 왕복이 하나 늘어난다. 이건 이 앱에서 가장 자주
+ * 도는 경로이고, 보관 여부는 이미 읽고 있는 `channel` 행에 같이 들어 있다 — 같은 행을
+ * 두 번 읽을 이유가 없다.
+ *
+ * 편집·삭제·리액션에는 쓰지 않는다. 보관된 채널에서도 잘못 올라간 것을 치울 수 있어야
+ * 하고, 그 경로까지 닫으면 admin 에게 조정 수단이 없어진다.
+ */
+export async function channelPostGate(
+  pool: Pool, channelId: string, accountId: string,
+): Promise<'ok' | 'forbidden' | 'archived'> {
+  const res = await pool.query(
+    `select kind, archived_at is not null as archived from channel where id = $1`,
+    [channelId],
+  );
+  const row = res.rows[0] as { kind: string; archived: boolean } | undefined;
+  if (!row) return 'ok';
+  if (row.kind === 'dm') {
+    const member = await pool.query(
+      `select 1 from channel_member where channel_id = $1 and account_id = $2`,
+      [channelId, accountId],
+    );
+    if (!member.rowCount) return 'forbidden';
+  }
+  return row.archived ? 'archived' : 'ok';
 }
