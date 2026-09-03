@@ -55,7 +55,7 @@ describe('App', () => {
     expect(await screen.findByText('Server URL')).toBeTruthy();
 
     // Fill in and submit
-    fireEvent.change(screen.getByLabelText('Handle'), { target: { value: 'admin' } });
+    fireEvent.change(screen.getByLabelText('Login ID'), { target: { value: 'admin' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 

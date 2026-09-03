@@ -7,6 +7,8 @@ import { deleteMessage, editMessage, getMessageById, hasOlderMessages, listInbox
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
+import { normalizeSearchQuery } from '../services/mentions.js';
+import { extractUrls, queueLinkPreviewFetch } from '../services/linkPreview.js';
 
 export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.post('/channels/:id/messages', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -47,6 +49,10 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
       const audience = await audienceFor(pool, id);
       emitEvent({ type: 'message.created', message, audience });
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+      const urls = extractUrls(body.body);
+      for (const url of urls) {
+        queueLinkPreviewFetch(pool, url).catch(() => {});
+      }
     }
     return reply.code(replayed ? 200 : 201).send(message);
   });
@@ -218,7 +224,13 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     if (q.channelId && !(await assertChannelVisible(pool, q.channelId, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
-    return { messages: await searchMessages(pool, req.account!.id, q.q, 50, q.channelId ?? null) };
+    // 검색어의 `@handle` 도 본문과 **같은 규칙**으로 `<@id>` 로 바꾼다(#271) — 저장된
+    // 정본이 `<@id>` 이므로, 바꾸지 않으면 이름을 바꾼 뒤 옛 메시지를 영영 못 찾는다.
+    return {
+      messages: await searchMessages(
+        pool, req.account!.id, await normalizeSearchQuery(pool, q.q), 50, q.channelId ?? null,
+      ),
+    };
   });
 
   // #219: 나중에 볼 메시지. 라우트 전부가 **요청자 자신의 행만** 다룬다 — 남의 큐를 가리키는

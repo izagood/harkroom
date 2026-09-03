@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import type { Pool } from 'pg';
 import WebSocket from 'ws';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { onEvent } from '../src/events.js';
 
 /**
  * 채널 목록 변경 WS 이벤트(#284).
@@ -17,15 +19,18 @@ import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 let app: FastifyInstance;
 let stop: () => Promise<void>;
 let adminToken: string;
+let adminId: string;
 let bystanderPat: string;
 let bystanderId: string;
 let baseUrl: string;
+let pool: Pool;
 
 beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
+  pool = db.pool;
   app = await buildServer({ pool: db.pool });
-  ({ token: adminToken } = await bootstrapAdmin(app));
+  ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
   ({ accountId: bystanderId, pat: bystanderPat } = await createAgent(app, adminToken, 'bystander'));
   await app.listen({ port: 0, host: '127.0.0.1' });
   const addr = app.server.address();
@@ -316,5 +321,283 @@ describe('채널 목록 변경 WS 이벤트 (#284)', () => {
     expect(await listChannelIds(bystanderPat)).toContain(channelId);
 
     admin.close(); bystander.close();
+  });
+});
+
+/**
+ * 채널 멤버십 변경 WS 이벤트(#300).
+ *
+ * #284 의 channelListAudience 함수를 재사용한다 — 메시지 층의 audienceFor 가 아니다.
+ * 수신자는 목록에서 채널을 볼 수 있는 사람이고, 추가된 사람/제거된 사람은 각각
+ * channel.created/channel.deleted 를 받는다(#284 의 public→private 전환 논리).
+ */
+describe('채널 멤버십 변경 WS 이벤트 (#300)', () => {
+  const collect = async (token: string) => collectWithTicket(await ticketFor(token));
+
+  it('1. 초대되면 그 사람은 channel.created 를 받는다(목록에 새로 나타난다)', async () => {
+    // bystander 를 초대할 private 채널을 만든다.
+    const channelId = await createChannel('member-add-test', 'private');
+    const bystander = await collect(bystanderPat);
+    await bystander.ready;
+
+    // admin 은 만들 때 첫 멤버가 되므로 channel.created 를 받았을 것이다.
+    // bystander 가 초대되어 channel.created 를 받는지를 본다.
+    const add = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/members`,
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { accountId: bystanderId },
+    });
+    expect(add.statusCode).toBe(200);
+
+    await waitFor(() => has(bystander, 'channel.created', (e) => e.channel.id === channelId));
+    // channel.created 페이로드는 `ChannelRow` **전부**여야 한다. 몇 개만 보면 컬럼 목록을
+    // 베껴 쓴 자리에서 필드가 빠져도 초록으로 남는다 — 실측으로 `createdAt` 이 빠져 있었고,
+    // 그 행을 받은 화면에서는 채널 디렉터리의 "생성순" 정렬이 비교할 값을 잃었다.
+    const seen = bystander.events.find((e) => e.type === 'channel.created' && e.channel.id === channelId);
+    expect(seen.channel.name).toBe('member-add-test');
+    expect(seen.channel.visibility).toBe('private');
+    expect(Object.keys(seen.channel).sort())
+      .toEqual(['archivedAt', 'createdAt', 'id', 'kind', 'name', 'repo', 'topic', 'visibility']);
+
+    bystander.close();
+  });
+
+  it('2. 추방되면 그 사람에게 channel.deleted 가 간다', async () => {
+    // bystander 를 초대하고, 그 다음 추방한다.
+    const channelId = await createChannel('member-remove-test', 'private');
+    const add = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/members`,
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { accountId: bystanderId },
+    });
+    expect(add.statusCode).toBe(200);
+
+    const bystander = await collect(bystanderPat);
+    await bystander.ready;
+
+    const rem = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/members/${bystanderId}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(rem.statusCode).toBe(200);
+
+    await waitFor(() => has(bystander, 'channel.deleted', (e) => e.channelId === channelId));
+
+    bystander.close();
+  });
+
+  it('3. 남은 멤버는 channel.member_removed 를 받고 목록은 유지된다', async () => {
+    // bystander 를 초대하고, 다른 계정을 하나 더 만든 뒤 bystander 를 추방한다.
+    const channelId = await createChannel('member-remove-others', 'private');
+    const add1 = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/members`,
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { accountId: bystanderId },
+    });
+    expect(add1.statusCode).toBe(200);
+
+    // admin (이미 멤버) 이 channel.member_removed 를 받는지를 본다.
+    const admin = await collect(adminToken);
+    await admin.ready;
+
+    const rem = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/members/${bystanderId}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(rem.statusCode).toBe(200);
+
+    await waitFor(() => has(admin, 'channel.member_removed', (e) => e.channelId === channelId && e.accountId === bystanderId));
+    // 채널이 목록에서 사라지지 않았음을 확인한다.
+    expect(await listChannelIds(adminToken)).toContain(channelId);
+
+    admin.close();
+  });
+
+  it('4. private 채널 멤버십 변경: 남은 멤버는 channel.member_removed 를 받는다, 제거된 사람은 channel.deleted 를 받는다', async () => {
+    // 세 계정을 쓴다: admin(만든 사람), bystander(비멤버), member(멤버 → 제거됨)
+    const channelId = await createChannel('private-member-events', 'private');
+    // member 계정을 만들고 채널에 초대한다.
+    const { accountId: memberId, pat: memberPat } = await createAgent(app, adminToken, 'member');
+    const add = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/members`,
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { accountId: memberId },
+    });
+    expect(add.statusCode).toBe(200);
+
+    // bystander(비멤버), member(멤버 → 제거될 사람), admin(만든 사람, 첫 멤버) 소켓을 연다.
+    const bystander = await collect(bystanderPat);
+    const member = await collect(memberPat);
+    const admin = await collect(adminToken);
+    await bystander.ready; await member.ready; await admin.ready;
+
+    // member 를 추방한다.
+    const rem = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/members/${memberId}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(rem.statusCode).toBe(200);
+
+    // 남은 멤버(admin) 는 channel.member_removed 를 받아야 한다.
+    await waitFor(() => has(admin, 'channel.member_removed', (e) => e.channelId === channelId && e.accountId === memberId));
+    // 제거된 사람(member) 은 channel.deleted 를 받아야 한다(목록에서 사라진 것이기 때문).
+    await waitFor(() => has(member, 'channel.deleted', (e) => e.channelId === channelId));
+    // 비멤버(bystander) 는 아무것도 받지 않아야 한다.
+    await settle();
+    expect(has(bystander, 'channel.member_added')).toBe(false);
+    expect(has(bystander, 'channel.member_removed')).toBe(false);
+    expect(has(bystander, 'channel.created')).toBe(false);
+    expect(has(bystander, 'channel.deleted')).toBe(false);
+
+    bystander.close(); member.close(); admin.close();
+  });
+
+  /**
+   * 6. 발행은 **커밋 뒤**다.
+   *
+   * WS 로 받은 뒤 HTTP 로 조회하는 방식은 이 보증을 지키지 못한다 — 조회가 왕복하는 사이에
+   * 삽입이 끝나 버려서, 삽입 **전에** 발행하도록 되돌려도 초록으로 남는다(실측). 그래서
+   * 발행 순간을 **버스에서** 잡는다: `emitEvent` 는 동기라, 구독자가 그 자리에서 띄운 질의는
+   * 라우트가 아직 삽입 문장을 보내기도 전에 서버에 도착한다. 그 질의가 "이미 멤버다" 를
+   * 보면 발행이 커밋 뒤였다는 뜻이다.
+   */
+  it('6. 발행 순간에 이미 커밋돼 있다 — 발행을 삽입 앞으로 옮기면 빨개진다', async () => {
+    const channelId = await createChannel('member-commit-test', 'private');
+    const { accountId: joinerId } = await createAgent(app, adminToken, 'commit-joiner');
+
+    let atEmit: Promise<boolean> | null = null;
+    const off = onEvent((e) => {
+      if (e.type === 'channel.member_added' && e.channelId === channelId && e.accountId === joinerId) {
+        atEmit = pool
+          .query(`select 1 from channel_member where channel_id = $1 and account_id = $2`, [channelId, joinerId])
+          .then((r) => (r.rowCount ?? 0) > 0);
+      }
+    });
+    try {
+      const add = await app.inject({
+        method: 'POST', url: `/channels/${channelId}/members`,
+        headers: { authorization: `Bearer ${adminToken}` }, payload: { accountId: joinerId },
+      });
+      expect(add.statusCode).toBe(200);
+      expect(atEmit).not.toBeNull();
+      expect(await atEmit!).toBe(true);
+    } finally {
+      off();
+    }
+  });
+
+  it('6b. 실패한 요청(없는 계정 404)에서는 멤버십 이벤트가 나가지 않는다', async () => {
+    const channelId = await createChannel('member-no-event', 'private');
+    const seen: string[] = [];
+    const off = onEvent((e) => {
+      if ((e.type === 'channel.member_added' || e.type === 'channel.member_removed') && e.channelId === channelId) {
+        seen.push(e.type);
+      }
+    });
+    try {
+      const missing = '00000000-0000-4000-8000-000000000000';
+      const add = await app.inject({
+        method: 'POST', url: `/channels/${channelId}/members`,
+        headers: { authorization: `Bearer ${adminToken}` }, payload: { accountId: missing },
+      });
+      expect(add.statusCode).toBe(404);
+
+      // 멤버가 아닌 사람을 빼는 요청은 지워진 행이 없다 — 그것도 이벤트가 아니다.
+      const { accountId: strangerId } = await createAgent(app, adminToken, 'member-stranger');
+      const rem = await app.inject({
+        method: 'DELETE', url: `/channels/${channelId}/members/${strangerId}`,
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(rem.statusCode).toBe(200);
+
+      // 대조군: 같은 경로가 성공하면 이벤트는 실제로 나간다.
+      const { accountId: realId } = await createAgent(app, adminToken, 'member-real');
+      await app.inject({
+        method: 'POST', url: `/channels/${channelId}/members`,
+        headers: { authorization: `Bearer ${adminToken}` }, payload: { accountId: realId },
+      });
+      expect(seen).toEqual(['channel.member_added']);
+    } finally {
+      off();
+    }
+  });
+});
+
+/**
+ * 5·7. 핸들 집합 변경과, 수신자 계산이 **어느 층의 함수**인지.
+ *
+ * 7 이 층을 구분하는 방법은 admin 예외다. `channelListAudience`(목록 층, #284)는 standard
+ * 채널을 **멤버가 아닌 admin 에게도** 보이는 것으로 친다 — `listChannels` 의 admin 예외를
+ * 같은 술어에서 가져오기 때문이다. 반면 메시지 층의 `audienceFor` 는 private 채널을 멤버로만
+ * 좁힌다. 그래서 "멤버가 아닌 admin 이 private 채널의 멤버십 이벤트를 받는가" 가 두 함수를
+ * 실제로 갈라 놓는다 — 호출을 목으로 세는 것과 달리 이 단언은 구현이 바뀌어도 **동작**을
+ * 지킨다. `audienceFor` 로 바꾸면 이 절은 빨개진다.
+ */
+describe('멤버십·집합 이벤트의 수신자 층 (#300)', () => {
+  const collect = async (token: string) => collectWithTicket(await ticketFor(token));
+
+  it('5. handle_group.changed 가 로그인한 다른 계정에도 가고 구성원 수가 갱신된다', async () => {
+    const bystander = await collect(bystanderPat);
+    await bystander.ready;
+
+    const created = await app.inject({
+      method: 'POST', url: '/handle-groups', headers: { authorization: `Bearer ${adminToken}` },
+      payload: { handle: 'ws-team', displayName: 'WS Team' },
+    });
+    expect(created.statusCode).toBe(201);
+    const groupId = created.json().id as string;
+    // 집합이 생긴 것 자체가 후보 목록의 변화다 — 구성원 변경만 알리면 새 집합은 아무의
+    // 자동완성에도 나타나지 않는다.
+    await waitFor(() => has(bystander, 'handle_group.changed', (e) => e.groupId === groupId));
+
+    const before = bystander.events.filter((e) => e.type === 'handle_group.changed').length;
+    const added = await app.inject({
+      method: 'POST', url: `/handle-groups/${groupId}/members`,
+      // 집합에는 사람만 들어간다(#230 결정 1) — 에이전트 계정은 400 이다. 그래서
+      // 구성원은 admin(사람)이고, 듣는 쪽이 bystander(다른 계정)다.
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { accountIds: [adminId] },
+    });
+    expect(added.statusCode).toBe(200);
+    await waitFor(() => bystander.events.filter((e) => e.type === 'handle_group.changed').length > before);
+
+    // 이벤트를 받은 뒤 조회하면 구성원 수가 이미 올라 있다 — 화면이 이것으로 후보의 수를 고친다.
+    const accounts = await app.inject({
+      method: 'GET', url: '/accounts', headers: { authorization: `Bearer ${bystanderPat}` },
+    });
+    const group = (accounts.json() as { groups: { id: string; memberCount: number }[] })
+      .groups.find((g) => g.id === groupId);
+    expect(group?.memberCount).toBe(1);
+
+    bystander.close();
+  });
+
+  it('7. 멤버가 아닌 admin 도 private 채널의 멤버십 이벤트를 받는다(목록 층 판정)', async () => {
+    // 두 번째 admin 을 만든다. admin 은 부트스트랩으로만 생기므로 직접 승격시킨다 —
+    // 이 테스트가 필요로 하는 것은 "멤버가 아닌 admin" 이라는 상태 하나뿐이다.
+    const { accountId: adminTwoId, pat: adminTwoPat } = await createAgent(app, adminToken, 'admin-two');
+    await pool.query(`update account set is_admin = true where id = $1`, [adminTwoId]);
+
+    // admin-two 가 멤버가 아닌 private 채널.
+    const channelId = await createChannel('layer-check', 'private');
+    const { accountId: newcomerId } = await createAgent(app, adminToken, 'layer-newcomer');
+
+    const adminTwo = await collect(adminTwoPat);
+    await adminTwo.ready;
+
+    const add = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/members`,
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { accountId: newcomerId },
+    });
+    expect(add.statusCode).toBe(200);
+
+    // 목록 층(channelListAudience)이면 온다. 메시지 층(audienceFor)이면 오지 않는다.
+    await waitFor(() => has(adminTwo, 'channel.member_added',
+      (e) => e.channelId === channelId && e.accountId === newcomerId));
+
+    const rem = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/members/${newcomerId}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(rem.statusCode).toBe(200);
+    await waitFor(() => has(adminTwo, 'channel.member_removed',
+      (e) => e.channelId === channelId && e.accountId === newcomerId));
+
+    adminTwo.close();
   });
 });

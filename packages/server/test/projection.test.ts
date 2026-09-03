@@ -157,7 +157,8 @@ describe('projection', () => {
 
   it('actor label resolves @handle for a registered account_key', async () => {
     const acct = await pool.query(
-      `insert into account (handle, display_name, kind) values ('alice', 'Alice', 'human') returning id`,
+      // 사람 계정은 login_id 가 필수다(#271, 033) — 직접 넣는 자리도 그것을 적어야 한다.
+      `insert into account (handle, login_id, display_name, kind) values ('alice', 'alice', 'Alice', 'human') returning id`,
     );
     await pool.query(
       `insert into account_key (key_id, account_id, public_key_pem) values ('k-alice', $1, 'PEM')`,

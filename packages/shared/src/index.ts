@@ -184,8 +184,15 @@ export const CHANNEL_NAME_PATTERN = '^[a-z0-9_-]{1,48}$';
  * export 한다 — **복사가 아니라 재수출이다.**
  */
 export type CodeSegment =
-  /** 코드가 아닌 부분. 여기에만 멘션·링크 인식을 얹는다. */
-  | { kind: 'plain'; text: string }
+  /**
+   * 코드가 아닌 부분. 여기에만 멘션·링크 인식을 얹는다.
+   *
+   * `start` 는 이 조각이 **원문에서 시작한 위치**다(#271). 멘션 정규화가 코드 구간을
+   * 비껴가려면 평문의 원문 위치가 있어야 한다 — 없으면 정규화가 코드 판정 규칙을
+   * 자기 정규식으로 한 벌 더 갖게 되고, 그 둘이 갈라지면 코드 블록 안의 `@handle` 이
+   * 저장 시 멘션으로 바뀌어 알림까지 간다(#298 이 막은 바로 그 일이다).
+   */
+  | { kind: 'plain'; text: string; start: number }
   /** 백틱 하나로 감싼 것. */
   | { kind: 'inlineCode'; code: string }
   /** 백틱 세 개로 감싼 것. `lang` 은 **표시용일 뿐** — 문법 강조는 하지 않는다. */
@@ -207,14 +214,16 @@ const FENCE_LINE = /^[ \t]*```([^\n`]*)$/;
 const INLINE_CODE = /(?<!`)`([^`\n]+)`(?!`)/g;
 
 /** 코드가 아닌 구간을 인라인 코드로 한 번 더 나눈다. */
-function splitInline(text: string, out: CodeSegment[]): void {
+function splitInline(text: string, out: CodeSegment[], offset: number): void {
   let cursor = 0;
   for (const m of text.matchAll(INLINE_CODE)) {
-    if (m.index > cursor) out.push({ kind: 'plain', text: text.slice(cursor, m.index) });
+    if (m.index > cursor) {
+      out.push({ kind: 'plain', text: text.slice(cursor, m.index), start: offset + cursor });
+    }
     out.push({ kind: 'inlineCode', code: m[1]! });
     cursor = m.index + m[0].length;
   }
-  if (cursor < text.length) out.push({ kind: 'plain', text: text.slice(cursor) });
+  if (cursor < text.length) out.push({ kind: 'plain', text: text.slice(cursor), start: offset + cursor });
 }
 
 /**
@@ -230,9 +239,17 @@ export function splitCode(body: string): CodeSegment[] {
   let plainFrom = 0;
   let i = 0;
 
+  // 각 줄이 원문에서 시작하는 위치. `join('\n')` 이 되돌리는 것과 같은 오프셋이다 —
+  // 줄 하나마다 길이 + 개행 하나.
+  const lineStart: number[] = [];
+  {
+    let at = 0;
+    for (const line of lines) { lineStart.push(at); at += line.length + 1; }
+  }
+
   const flushPlain = (until: number) => {
     if (until <= plainFrom) return;
-    splitInline(lines.slice(plainFrom, until).join('\n'), out);
+    splitInline(lines.slice(plainFrom, until).join('\n'), out, lineStart[plainFrom]!);
   };
 
   while (i < lines.length) {
@@ -259,7 +276,7 @@ export function splitCode(body: string): CodeSegment[] {
   }
   flushPlain(lines.length);
 
-  return out.length ? out : [{ kind: 'plain', text: body }];
+  return out.length ? out : [{ kind: 'plain', text: body, start: 0 }];
 }
 
 /**
@@ -270,8 +287,22 @@ export function splitCode(body: string): CodeSegment[] {
  * 선행 문자 조건이 핵심이다. `@` 앞이 문자·숫자면 멘션이 아니다 — 이메일 주소와 단어
  * 중간의 `@` 를 걸러 낸다. handle 은 소문자로만 만들어지지만 사람은 `@Fizz` 라고 쓰므로
  * 대소문자를 무시하고 찾고, 조회할 때 소문자로 맞춘다.
+ *
+ * **역할 분리:**
+ * - `MENTION_PATTERN` (@handle): 사람이 입력하는 형식. 클라이언트 입력, 화면 표시 원문.
+ * - `MENTION_TOKEN_PATTERN` (<@id>): 저장소 안 정본. 본문 저장, REST/WS 응답.
+ *
+ * 입력 -> 저장: `normalizeMentions()` 가 @handle 을 <@id> 로 바꾼다.
+ * 저장 -> 화면: `renderMentions()` 가 <@id> 를 현재 handle 로 바꾼다.
+ * 저장 -> MCP: `denormalizeMentions()` 가 <@id> 를 현재 handle 로 바꾼다(에이전트가 handle 로 생각한다).
  */
 export const MENTION_PATTERN = `(^|[^a-zA-Z0-9_-])@(${HANDLE_PATTERN})`;
+
+/**
+ * 저장된 멘션 토큰. 본문에 **정본으로** 저장되는 형식이다.
+ * <@id> 는 본문을 다시 쓰지 않고 handle 변경을 반영할 수 있게 해 준다.
+ */
+export const MENTION_TOKEN_PATTERN = '<@([0-9a-f-]{36})>';
 
 /**
  * 본문에서 불린 handle 들. 소문자로 정규화해 중복을 없앤다(`@fizz` 와 `@Fizz` 는 한 사람).
@@ -293,6 +324,94 @@ export function mentionedHandles(body: string): string[] {
 }
 
 /**
+ * 본문에 저장된 멘션 ID 집합. 정규화된 본문(<@id> 토큰)에서 추출한다.
+ * 알림 판정에 쓴다 — inbox 를 만든 뒤에는 본문을 다시 읽지 않는다.
+ */
+export function mentionedIds(body: string): string[] {
+  const found = new Set<string>();
+  for (const m of body.matchAll(new RegExp(MENTION_TOKEN_PATTERN, 'g'))) {
+    if (m[1]) found.add(m[1]);
+  }
+  return [...found];
+}
+
+/**
+ * 본문의 `@handle`(**존재하는 계정만**)을 `<@id>` 로 정규화한다(#271). 저장 전에 한 번 돈다.
+ *
+ * **코드 구간은 건드리지 않는다**(#298). 판정은 `splitCode` 하나가 하고 여기서는 그것이
+ * 내준 평문 조각의 원문 범위만 고쳐 쓴다 — 자기 정규식으로 코드를 다시 판정하면 규칙이
+ * 두 벌이 되고, 갈라지는 순간 코드 블록 안의 `@handle` 이 저장 시 멘션이 되어 알림까지
+ * 간다. `mentionedHandles` 가 같은 이유로 `stripCodeSpans` 를 지난다.
+ *
+ * 계정 목록을 순회하지 않고 **본문을 한 번** 훑는다. 순회하면 비용이 워크스페이스의 계정
+ * 수에 비례하고, 그보다 나쁘게는 handle 을 정규식에 끼워 넣는 자리가 생긴다.
+ *
+ * #230 그룹 멘션(`@그룹`)은 여기서 처리하지 않는다 — 호출부가 먼저 그룹을 펼치고, 그룹
+ * 토큰은 `accountsMap` 에 없으므로 **글자 그대로** 남는다. 존재하지 않는 handle 이 그대로
+ * 남는 것도 같은 이유다(오타를 멘션처럼 보이지 않게 한다).
+ *
+ * @param body 사람이 입력한 본문(`@handle` 형식)
+ * @param accountsMap handle(소문자) -> 계정 id
+ */
+export function normalizeMentions(body: string, accountsMap: Map<string, string>): string {
+  if (!accountsMap.size) return body;
+  const mention = new RegExp(MENTION_PATTERN, 'g');
+  // 뒤에서부터 고친다 — 앞에서 고치면 뒤 조각의 원문 오프셋이 밀린다.
+  const plains = splitCode(body).filter((s): s is { kind: 'plain'; text: string; start: number } => s.kind === 'plain');
+  let out = body;
+  for (const seg of [...plains].reverse()) {
+    const replaced = seg.text.replace(mention, (whole, lead: string, handle: string) => {
+      const id = accountsMap.get(handle.toLowerCase());
+      return id ? `${lead}<@${id}>` : whole;
+    });
+    if (replaced !== seg.text) {
+      out = out.slice(0, seg.start) + replaced + out.slice(seg.start + seg.text.length);
+    }
+  }
+  return out;
+}
+
+/**
+ * 저장된 `<@id>` 를 현재 handle 로 되돌린다 — MCP 가 에이전트에게 줄 때 쓴다(#271).
+ * 에이전트는 handle 로 생각하고, 그 입력은 다시 `normalizeMentions` 를 탄다.
+ *
+ * **모르는 id 는 그대로 둔다.** `@알 수 없음` 같은 표시 문구로 바꾸면 에이전트가 그것을
+ * 그대로 되받아 쓸 수 있고, 그때는 사람 이름처럼 생긴 문자열이 본문에 남는다. 화면(사람)
+ * 과 도구(에이전트)의 처리가 다른 이유가 이것이다.
+ *
+ * @param body 저장된 본문(`<@id>` 형식)
+ * @param idToHandle 계정 id -> 현재 handle
+ */
+export function denormalizeMentions(body: string, idToHandle: Map<string, string>): string {
+  return body.replace(new RegExp(MENTION_TOKEN_PATTERN, 'g'), (whole, id: string) => {
+    const handle = idToHandle.get(id);
+    return handle ? `@${handle}` : whole;
+  });
+}
+
+/**
+ * 저장된 `<@id>` 를 **화면에 그릴** 현재 handle 로 바꾼다(#271). 본문을 그리는 곳은
+ * 전부 이 함수를 지난다 — 두 벌이 되면 한쪽만 새 이름을 반영한다.
+ *
+ * 모르는 id 는 `@알 수 없음` 이다. 여기서는 `<@uuid>` 를 그대로 두는 것이 더 나쁘다 —
+ * 사람에게 그 문자열은 아무 뜻이 없고, 무엇이 잘못됐는지도 말해 주지 않는다.
+ *
+ * @param body 저장된 본문(`<@id>` 형식)
+ * @param idToHandle 계정 id -> 현재 handle
+ * @param unknownLabel 모르는 id 를 대신할 라벨
+ */
+export function renderMentions(
+  body: string,
+  idToHandle: Map<string, string>,
+  unknownLabel = '알 수 없음',
+): string {
+  return body.replace(new RegExp(MENTION_TOKEN_PATTERN, 'g'), (_whole, id: string) => {
+    const handle = idToHandle.get(id);
+    return handle ? `@${handle}` : `@${unknownLabel}`;
+  });
+}
+
+/**
  * 본문에서 코드 구간을 걷어낸 나머지(#298). 멘션을 찾을 대상은 **이것뿐**이다.
  *
  * 남은 조각을 개행으로 이어 붙인다. 개행은 handle 문자가 아니므로 `MENTION_PATTERN` 의
@@ -305,7 +424,7 @@ export function mentionedHandles(body: string): string[] {
  */
 export function stripCodeSpans(body: string): string {
   return splitCode(body)
-    .filter((seg): seg is { kind: 'plain'; text: string } => seg.kind === 'plain')
+    .filter((seg): seg is { kind: 'plain'; text: string; start: number } => seg.kind === 'plain')
     .map((seg) => seg.text)
     .join('\n');
 }
@@ -748,6 +867,11 @@ export type WsServerEvent =
    * id 로 아바타를 받아 오고, 지우기는 null 이다.
    */
   | { type: 'avatar.changed'; accountId: string; avatarAttachmentId: string | null }
+  /**
+   * 누군가 자기 handle 을 바꿨다(#271). 데스크탑은 디렉터리만 갱신하면 본문은 다음 렌더에
+   * 새 이름으로 나온다 — 매핑이 그 일을 한다.
+   */
+  | { type: 'account.handle_changed'; accountId: string; newHandle: string }
   // 리액션은 델타로 보낸다 — 메시지 전체를 다시 실으면 한 번 누를 때마다 본문이 오간다.
   | { type: 'reaction.added'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
   | { type: 'reaction.removed'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
@@ -761,8 +885,19 @@ export type WsServerEvent =
   | { type: 'channel.created'; channel: ChannelRow; audience: 'all' | string[] }
   | { type: 'channel.updated'; channel: ChannelRow; audience: 'all' | string[] }
   | { type: 'channel.deleted'; channelId: string; audience: 'all' | string[] }
+  // 채널 멤버십 변경(#300). 목록 수신자는 #284 의 channelListAudience 를 쓴다.
+  | { type: 'channel.member_added'; channelId: string; accountId: string; audience: 'all' | string[] }
+  | { type: 'channel.member_removed'; channelId: string; accountId: string; audience: 'all' | string[] }
+  // 핸들 집합 변경(#300). 로그인한 전원에게 간다.
+  | { type: 'handle_group.changed'; groupId: string; audience: 'all' | string[] }
   // 담기/해제/상태 변경(#219). 본인의 소켓에만 온다.
-  | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string };
+  | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string }
+  /**
+   * 링크 미리보기가 준비됐다(#215). 가져오기는 비동기라 메시지가 먼저 뜨고 카드가 뒤에
+   * 온다 — 이 이벤트가 없으면 카드는 **다음에 그 메시지를 다시 그릴 때까지** 안 보인다.
+   * URL 만 보낸다: 카드 내용은 받는 쪽이 `GET /link-previews` 로 읽는다(캐시가 하나다).
+   */
+  | { type: 'link_preview.ready'; url: string; audience: 'all' | string[] };
 
 /**
  * ── Phase 2 attach: 러너 PTY ↔ 서버 ↔ 데스크탑 xterm 릴레이 (스펙 §5) ──
@@ -868,4 +1003,111 @@ export interface AddTeamToChannelResult {
   added: string[];
   skipped: string[];
   alreadyMember: string[];
+}
+
+/**
+ * 링크 미리보기(#215) — 서버와 데스크탑이 **같은 함수**로 URL 을 집고 정규화한다.
+ *
+ * 두 곳에 각자 정규식을 두면 서버가 저장하는 키와 클라이언트가 조회하는 키가 갈라진다.
+ * 그러면 카드는 영원히 404 이고, 어느 쪽도 틀린 것처럼 보이지 않아 원인을 찾기 어렵다
+ * (이 브랜치의 초판이 정확히 그랬다: 서버는 `[^\s<>"']+`, 클라이언트는 `[^\s]+` 였고
+ * 클라이언트는 후행 문장부호를 떼지 않았다).
+ */
+
+/**
+ * URL 후보를 **넓게** 집는 패턴의 원본. `://` 를 요구하지 않는 것이 의도다 — 좁게 집으면
+ * `javascript:alert(1)` 이 애초에 후보가 되지 못해, 스킴 검사가 없어도 테스트가 초록이
+ * 된다. 방어선은 판정(`normalizePreviewUrl`·`classifyLink`) 한 곳에만 있어야 실재를
+ * 확인할 수 있다.
+ *
+ * 정규식 **객체**가 아니라 원본 문자열을 내보내는 이유: `/g` 정규식은 `lastIndex` 를
+ * 들고 있어서 모듈 간에 공유하면 호출 순서에 따라 결과가 달라진다.
+ */
+export const URL_CANDIDATE_SOURCE = '[a-zA-Z][a-zA-Z0-9+.-]*:[^\\s]+';
+
+/** 매번 새 `/g` 정규식을 만든다(공유 객체의 `lastIndex` 를 피한다). */
+export function urlCandidateRegex(): RegExp {
+  return new RegExp(URL_CANDIDATE_SOURCE, 'g');
+}
+
+/**
+ * 문장 끝에 붙어 온 문장부호는 URL 이 아니다 — `자세히는 https://a.io/b.` 의 마침표까지
+ * 링크에 넣으면 열리지 않는 주소가 된다. 짝이 맞는 괄호는 남긴다(위키 주소가 실제로 쓴다).
+ */
+export function trimTrailingPunctuation(token: string): string {
+  let end = token.length;
+  while (end > 0) {
+    const ch = token[end - 1]!;
+    if ('.,;:!?\'"'.includes(ch)) { end -= 1; continue; }
+    if (ch === ')' || ch === ']') {
+      const open = ch === ')' ? '(' : '[';
+      const slice = token.slice(0, end);
+      const balanced = slice.split(open).length <= slice.split(ch).length;
+      if (balanced) { end -= 1; continue; }
+    }
+    break;
+  }
+  return token.slice(0, end);
+}
+
+/**
+ * 미리보기 캐시의 **키**. 같은 페이지가 여러 키로 저장되면 같은 URL 을 여러 번 가져온다.
+ *
+ * - `http`/`https` 만. 다른 스킴은 미리보기 대상이 아니다(가져올 것이 없거나 위험하다).
+ * - **자격증명이 실린 URL(`user:pass@host`)은 거절한다.** 벗겨서 가져오는 길도 있지만,
+ *   그러면 사람이 본 링크와 **다른 자원**을 가져와 카드로 보여 주게 된다. 게다가
+ *   `user:pass@` 는 호스트 혼동 공격의 고전적 재료다 — 파서마다 무엇을 호스트로 보는지
+ *   갈린다. 가져오지 않는 쪽이 정직하다(카드가 안 뜨는 것은 사람이 바로 안다).
+ * - 후행 점(`example.com.`)을 뗀다. DNS 상 같은 이름인데 키가 갈라진다.
+ * - fragment 제거(서버가 받지 않는다), 기본 포트 제거·스킴/호스트 소문자는 `URL` 이 한다.
+ */
+export function normalizePreviewUrl(raw: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  if (url.username || url.password) return null;
+  url.hash = '';
+  // `URL` 은 IPv4 를 어떤 표기로 써도(`2130706433`, `0x7f000001`) 점 표기로 정규화하고,
+  // IDN 을 punycode 로 바꾼다 — 그 결과를 그대로 키로 쓴다.
+  const host = url.hostname.replace(/\.+$/, '');
+  if (!host) return null;
+  url.hostname = host;
+  return url.toString();
+}
+
+/**
+ * 미리보기 카드 하나(#215). `imageUrl` 은 **URL 만** 담는다 — 바이트를 프록시하지 않는다.
+ * v1 클라이언트는 이 값을 `<img>` 로 그리지 않는다(그리면 결정 1 이 무너진다).
+ */
+export interface LinkPreviewView {
+  url: string;
+  title: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  siteName: string | null;
+  status: 'ok' | 'failed' | 'blocked';
+  fetchedAt: string;
+}
+
+/**
+ * 본문에서 미리보기를 가져올 URL 을 집는다. 최대 `max` 개(기본 3) — 한 메시지가 링크
+ * 스무 개를 담으면 그만큼의 외부 요청이 서버에서 나간다.
+ */
+export function extractPreviewUrls(body: string, max = 3): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const m of body.matchAll(urlCandidateRegex())) {
+    const token = trimTrailingPunctuation(m[0]);
+    if (!token) continue;
+    const normalized = normalizePreviewUrl(token);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+    if (out.length >= max) break;
+  }
+  return out;
 }
