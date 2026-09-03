@@ -149,7 +149,7 @@ export class ApiClient {
   }
   postMessage(
     channelId: string, body: string, threadRootId?: string, idempotencyKey?: string,
-    attachmentIds: string[] = [],
+    attachmentIds: string[] = [], alsoInChannel?: boolean,
   ): Promise<MessageRow> {
     return this.req('POST', `/channels/${channelId}/messages`,
       {
@@ -157,6 +157,7 @@ export class ApiClient {
         ...(threadRootId ? { threadRootId } : {}),
         // 빈 배열은 보내지 않는다 — 첨부를 쓰지 않는 요청의 본문을 넓히지 않는다.
         ...(attachmentIds.length ? { attachmentIds } : {}),
+        ...(alsoInChannel ? { alsoInChannel } : {}),
       },
       idempotencyKey ? { 'idempotency-key': idempotencyKey } : undefined);
   }

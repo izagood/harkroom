@@ -441,13 +441,19 @@ export class Controller {
    * 스레드 답글도 같은 이유로 자리를 인자로 받는다. 여기는 사유가 하나 더 있다 — 스레드
    * 패널을 닫으면 `threadRootId` 가 null 이 되어, 창이 도는 동안 닫으면 답글이 **아예
    * 사라진다**(아래 가드에서 그냥 반환된다).
+   *
+   * `alsoInChannel`(#231)은 그 뒤에 온다 — 자리를 앞에 끼우면 기존 호출부가 조용히
+   * 어긋난다.
    */
-  async reply(body: string, attachmentIds: string[] = [], channelId?: string, threadRootId?: string): Promise<void> {
+  async reply(
+    body: string, attachmentIds: string[] = [], channelId?: string, threadRootId?: string,
+    alsoInChannel = false,
+  ): Promise<void> {
     const state = useAppStore.getState();
     const target = channelId ?? state.activeChannelId;
     const root = threadRootId ?? state.threadRootId;
     if (!target || !root || (!body.trim() && !attachmentIds.length)) return;
-    const m = await this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds);
+    const m = await this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel);
     useAppStore.getState().upsertMessages(target, [m]);
   }
 
