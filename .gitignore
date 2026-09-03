@@ -14,3 +14,6 @@ docker-compose.override.yml
 
 # 로컬 실행 시 첨부가 쌓이는 곳(컨테이너는 볼륨을 쓴다).
 .attachments/
+
+# 오케스트레이터 작업용 임시 스크립트(gh 래퍼 등) — 저장소에 들어갈 것이 아니다.
+.scratch/

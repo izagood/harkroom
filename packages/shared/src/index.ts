@@ -563,6 +563,19 @@ export interface ProjectionStatus extends ProjectionRuntime {
   state: ProjectionState;
 }
 
+export interface ScheduledMessageView {
+  id: string;
+  channelId: string;
+  authorId: string;
+  threadRootId: string | null;
+  body: string;
+  sendAt: string;
+  createdAt: string;
+  sentMessageId: string | null;
+  failedReason: string | null;
+  canceledAt: string | null;
+}
+
 export type WsServerEvent =
   | { type: 'message.created'; message: MessageRow; audience: 'all' | string[] }
   | { type: 'message.updated'; message: MessageRow; audience: 'all' | string[] }

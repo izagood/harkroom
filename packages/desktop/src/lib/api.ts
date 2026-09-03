@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
 
 export class ApiError extends Error {
   /**
@@ -400,6 +400,26 @@ export class ApiClient {
   async search(q: string, channelId?: string | null): Promise<MessageRow[]> {
     const scope = channelId ? `&channelId=${encodeURIComponent(channelId)}` : '';
     return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
+  }
+
+  /** 이 채널에서 내가 예약한 메시지 목록(#222). */
+  async scheduledMessages(channelId: string): Promise<ScheduledMessageView[]> {
+    return (await this.req<{ scheduled: ScheduledMessageView[] }>('GET', `/channels/${channelId}/scheduled`)).scheduled;
+  }
+
+  /**
+   * 예약 메시지 생성(#222). 서버는 목록과 **같은 봉투**(`{ scheduled }`)로 답한다 —
+   * 여기서 벗겨 호출부에는 뷰 하나만 준다.
+   */
+  async scheduleMessage(channelId: string, body: string, sendAt: string, threadRootId?: string): Promise<ScheduledMessageView> {
+    return (await this.req<{ scheduled: ScheduledMessageView }>(
+      'POST', `/channels/${channelId}/scheduled`, { body, sendAt, ...(threadRootId ? { threadRootId } : {}) },
+    )).scheduled;
+  }
+
+  /** 예약 메시지 취소(#222). */
+  cancelScheduledMessage(id: string): Promise<void> {
+    return this.req('DELETE', `/scheduled/${id}`);
   }
 
   /**

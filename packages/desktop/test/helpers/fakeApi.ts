@@ -83,6 +83,12 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     // #178: 링크가 가리키는 메시지 하나. 베이스가 이것을 덮어야 "부르지 않았다" 를 단언할 수 있다.
     message: vi.fn(async () => msg('m-link', 'c1', 1, 'linked')),
     postMessage: vi.fn(async () => msg('m-post', 'c1', 99, 'sent')),
+    // #222: 예약 발송. 베이스가 덮어야 컴포저를 띄우는 화면 테스트가 실제 배선을
+    // 그대로 재현한다 — 이것이 없으면 컴포저가 실제로 부르는 표면이 목에 없어,
+    // 프로덕션 코드에 "없으면 건너뛴다" 를 넣어 초록을 사는 유혹이 생긴다.
+    scheduledMessages: vi.fn(async () => []),
+    scheduleMessage: vi.fn(),
+    cancelScheduledMessage: vi.fn(async () => undefined),
     inboxUnread: vi.fn(async () => []),
     // #185: 읽은 것까지 포함한 inbox 전체. 베이스가 덮어야 목록 화면 테스트가 fake 를 갈아끼울 수 있다.
     inbox: vi.fn(async () => []),
@@ -136,3 +142,18 @@ export function fakeWsFactory() {
   }) as typeof import('../../src/lib/ws').connectWs;
   return { makeWs, callbacks };
 }
+
+/**
+ * 컴포저가 마운트되는 화면 테스트를 위한 **최소 api**(#222). 컨트롤러를 통째로 세우지
+ * 않고 손으로 만든 컨트롤러 목에 `api` 로 끼워 넣는다 — 컴포저는 채널이 붙으면 예약
+ * 목록을 읽으므로, 이 표면이 없으면 화면 자체가 뜨지 않는다.
+ */
+export const scheduledApiStub = (): {
+  scheduledMessages: ReturnType<typeof vi.fn>;
+  scheduleMessage: ReturnType<typeof vi.fn>;
+  cancelScheduledMessage: ReturnType<typeof vi.fn>;
+} => ({
+  scheduledMessages: vi.fn(async () => []),
+  scheduleMessage: vi.fn(),
+  cancelScheduledMessage: vi.fn(async () => undefined),
+});
