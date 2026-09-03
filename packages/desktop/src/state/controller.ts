@@ -1394,6 +1394,8 @@ export async function startCommunitySession(opts: {
   onSessionLost?: (message: string, accountId: string) => void;
   makeWs?: typeof connectWs;
   notifier?: Notifier;
+  /** 테스트가 서버 왕복 없이 이 경로를 그대로 지나가는 자리. 주지 않으면 진짜 클라이언트를 만든다. */
+  api?: ApiClient;
 }): Promise<CommunityEntry> {
   const registry = useCommunityRegistry.getState();
   // `active` 는 "화면이 이것을 본다" 이므로 **활성 엔트리를 그 커뮤니티로 만든다** — 새로
@@ -1401,7 +1403,7 @@ export async function startCommunitySession(opts: {
   const entry = opts.active
     ? registry.claimActive({ baseUrl: opts.baseUrl })
     : registry.register({ baseUrl: opts.baseUrl });
-  const api = new ApiClient(opts.baseUrl, opts.token);
+  const api = opts.api ?? new ApiClient(opts.baseUrl, opts.token);
   const controller = new Controller(
     api,
     opts.makeWs ?? connectWs,
