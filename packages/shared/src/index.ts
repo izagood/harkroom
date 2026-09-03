@@ -172,6 +172,17 @@ export function mentionedHandles(body: string): string[] {
 }
 
 /**
+ * 채널 전체를 부르는 예약 handle(#225). 문법을 따로 만들지 않는다 — `@channel` 은 평범한
+ * 멘션과 **같은** `MENTION_PATTERN` 에 걸리고, 이름만 예약이다. 파서를 갈라 두면 서버와
+ * 데스크탑이 서로 다른 것을 멘션이라 부르게 된다.
+ *
+ * 같은 handle 을 가진 **계정이 있으면 계정이 이긴다.** 사람의 이름이 예약어에 밀리면 그
+ * 사람은 영영 불릴 수 없다 — 예약어를 못 쓰는 쪽이 훨씬 가벼운 손해다. 그래서 서버는
+ * 계정 조회를 먼저 하고, 그 handle 의 계정이 **없을 때만** 채널 전체로 펼친다.
+ */
+export const CHANNEL_MENTION_HANDLE = 'channel';
+
+/**
  * 메시지 하나를 가리키는 링크의 스킴(#178). 문자열을 여기저기서 조립하지 않는다 —
  * 만드는 쪽과 읽는 쪽이 갈라지면 자기가 만든 링크를 자기가 못 여는 상태가 된다.
  *
@@ -297,6 +308,21 @@ export interface ChannelRow {
   kind: 'standard' | 'dm';
   repo: string | null;
   archivedAt: string | null;
+  /**
+   * 공개 범위(#182). **옵셔널이 아닌 이유**: 옵셔널로 두면 이 필드를 안 넘기는 호출부가
+   * 조용히 통과하고, 화면은 `undefined` 를 public 으로 읽어 private 채널에 자물쇠가
+   * 사라진다. 필수로 두면 타입 검사가 그런 자리를 전부 짚는다.
+   *
+   * private 은 '보이지만 못 읽는다'가 아니라 '멤버만 존재를 안다'다 — 이 값이 'private'
+   * 인 행을 받았다는 것 자체가 이미 '나는 멤버이거나 admin 이다'라는 뜻이다.
+   */
+  visibility: 'public' | 'private';
+}
+
+/** 채널 멤버 한 명. 멤버 목록 화면이 handle 을 따로 조회하지 않도록 함께 준다. */
+export interface ChannelMemberRow {
+  accountId: string;
+  handle: string;
 }
 
 export interface InboxEntry {
@@ -312,11 +338,71 @@ export interface DmView {
   memberIds: string[];
 }
 
+/**
+ * 채널별 알림 수준(#224). `muted_at` 의 on/off 를 대체한다.
+ *
+ * - `all`     — 이 채널의 알림을 전부 받는다(전역 알림 설정이 정한 범위 안에서).
+ * - `mentions` — 나를 부른 것만 받는다.
+ * - `none`    — 아무것도 받지 않는다. **멘션도 아니다.**
+ *
+ * `none` 에서 멘션이 예외가 아닌 것은 #229 의 결정이고 #224 가 그것을 유지한다 — 세분화가
+ * 생겼으니 "덜 받겠다"는 사람에게는 `mentions` 라는 자리가 따로 있다. 이 주석이 없으면
+ * "멘션은 예외였나?"가 세 번째로 논의된다.
+ */
+export const NOTIFY_LEVELS = ['all', 'mentions', 'none'] as const;
+
+/**
+ * 목록에서 파생한다 — 값의 집합이 **한 곳에만** 산다. 따로 적어 두면 네 번째 수준을
+ * 들일 때 목록만 고치고 타입을 잊는(또는 그 반대) 사고가 난다.
+ */
+export type NotifyLevel = (typeof NOTIFY_LEVELS)[number];
+
 export interface ChannelPrefRow {
   accountId: string;
   channelId: string;
+  /**
+   * 언제 음소거했는지의 기록. **동작 판정에 쓰지 마라** — 알림도 배지도 `notifyLevel` 만
+   * 본다(#224). 같은 사실이 두 곳에 살면 한쪽만 고치는 사고가 난다.
+   */
   mutedAt: string | null;
   starredAt: string | null;
+  notifyLevel: NotifyLevel;
+}
+
+/**
+ * pref 행에서 알림 수준을 읽는다. **행이 없으면 `mentions`** — 아무것도 정하지 않은 채널은
+ * 지금 동작 그대로여야 하고, 지금 동작은 "나를 부른 것만 알린다"이다. 024 마이그레이션의
+ * default 와 **반드시 같은 값이어야 한다**: 여기와 저기가 갈라지면 pref 행이 있는 채널과
+ * 없는 채널이 다르게 울린다.
+ *
+ * `all` 을 기본값으로 두지 않는 이유: `all` 은 일반 메시지 알림이라는 **새 경로를 여는**
+ * 값이다(#224 가 그 경로를 함께 들여왔다). 기본값으로 두면 아무도 고르지 않은 변화가
+ * 업데이트하는 순간 모든 채널에 적용돼 모든 메시지가 OS 알림이 된다.
+ *
+ * `mutedAt` 은 **보지 않는다.** 알림·배지·훑기가 전부 이 한 함수를 지나가게 해서, 같은
+ * 질문에 두 곳이 다르게 답하는 일을 막는다(#224).
+ */
+export function notifyLevelOf(pref: { notifyLevel?: NotifyLevel } | undefined | null): NotifyLevel {
+  return pref?.notifyLevel ?? 'mentions';
+}
+
+/**
+ * 채널에 고정된 메시지 하나(#218).
+ *
+ * **채널 전역이다** — 보관(#153)과 같은 층이고, 음소거·즐겨찾기(#151, #152)처럼 계정별이
+ * 아니다. 그래서 이 행에는 "누가 보는가"가 없고 `pinnedBy`("누가 고정했는가")만 있다.
+ * `pinnedBy` 는 취향이 아니라 해제 권한의 근거다 — 해제는 고정한 사람 또는 admin 이다.
+ *
+ * `message` 를 통째로 싣는 이유: 핀 목록은 본문 한 줄을 미리 보여 줘야 쓸모가 있고,
+ * 그것을 위해 클라이언트가 핀마다 메시지를 다시 물으면 목록 하나에 왕복이 N 번 생긴다.
+ * 지워진 메시지는 여기 **아예 오지 않는다** — 서버가 `deleted_at is null` 로 조인한다.
+ */
+export interface PinRow {
+  messageId: string;
+  channelId: string;
+  pinnedBy: string;
+  pinnedAt: string;
+  message: MessageRow;
 }
 
 export interface LeaseRow {

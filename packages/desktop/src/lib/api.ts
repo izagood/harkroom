@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PatView } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -80,8 +80,24 @@ export class ApiClient {
   async channels(): Promise<ChannelRow[]> {
     return (await this.req<{ channels: ChannelRow[] }>('GET', '/channels')).channels;
   }
-  createChannel(input: { name: string; topic?: string; repo?: string }): Promise<ChannelRow> {
+  createChannel(
+    input: { name: string; topic?: string; repo?: string; visibility?: 'public' | 'private' },
+  ): Promise<ChannelRow> {
     return this.req('POST', '/channels', input);
+  }
+
+  /** 채널 멤버 목록. private 채널에서는 곧 '이 채널을 볼 수 있는 사람 전부'다. */
+  async channelMembers(id: string): Promise<ChannelMemberRow[]> {
+    return (await this.req<{ members: ChannelMemberRow[] }>('GET', `/channels/${id}/members`)).members;
+  }
+
+  /** 초대. 서버가 갱신된 목록을 돌려주므로 호출부가 다시 조회하지 않아도 된다. */
+  async inviteChannelMember(id: string, accountId: string): Promise<ChannelMemberRow[]> {
+    return (await this.req<{ members: ChannelMemberRow[] }>('POST', `/channels/${id}/members`, { accountId })).members;
+  }
+
+  async removeChannelMember(id: string, accountId: string): Promise<ChannelMemberRow[]> {
+    return (await this.req<{ members: ChannelMemberRow[] }>('DELETE', `/channels/${id}/members/${accountId}`)).members;
   }
 
   /**
@@ -92,7 +108,10 @@ export class ApiClient {
    * 호출자가 이 구분을 잃으면(빈 문자열을 보내거나 항상 두 필드를 다 보내면) 운영자가 topic 만
    * 고치려다 avcs 바인딩이 조용히 끊긴다.
    */
-  updateChannel(id: string, input: { topic?: string; repo?: string | null; archived?: boolean }): Promise<ChannelRow> {
+  updateChannel(
+    id: string,
+    input: { topic?: string; repo?: string | null; archived?: boolean; visibility?: 'public' | 'private' },
+  ): Promise<ChannelRow> {
     return this.req('PATCH', `/channels/${id}`, input);
   }
 
@@ -247,7 +266,8 @@ export class ApiClient {
     return (await this.req<{ prefs: ChannelPrefRow[] }>('GET', '/channels/prefs')).prefs;
   }
 
-  updateChannelPref(channelId: string, patch: { muted?: boolean; starred?: boolean }): Promise<ChannelPrefRow> {
+  /** `muted` 는 없다 — `notifyLevel` 이 대체했다(#224). */
+  updateChannelPref(channelId: string, patch: { notifyLevel?: NotifyLevel; starred?: boolean }): Promise<ChannelPrefRow> {
     return this.req('PATCH', `/channels/${channelId}/pref`, patch);
   }
 
@@ -289,7 +309,29 @@ export class ApiClient {
     return this.req('GET', `/channels/${channelId}/files${qs}`);
   }
 
-  async search(q: string): Promise<MessageRow[]> {
-    return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}`)).messages;
+  /**
+   * 채널에 고정된 메시지들(#218). **계정별 선호(`channelPrefs`)와 다른 표면이다** — 핀은
+   * 채널 전역 상태라 누가 물어도 같은 답이 온다.
+   */
+  async pins(channelId: string): Promise<PinRow[]> {
+    return (await this.req<{ pins: PinRow[] }>('GET', `/channels/${channelId}/pins`)).pins;
+  }
+
+  pinMessage(channelId: string, messageId: string): Promise<PinRow> {
+    return this.req('POST', `/channels/${channelId}/pins`, { messageId });
+  }
+
+  /** 해제는 고정한 사람 또는 admin 만 된다 — 아니면 서버가 403 을 준다. */
+  unpinMessage(channelId: string, messageId: string): Promise<void> {
+    return this.req('DELETE', `/channels/${channelId}/pins/${messageId}`);
+  }
+
+  /**
+   * #221: `channelId` 를 주면 서버가 질의를 좁힌다. 받아 온 결과를 여기서 거르지 않는 이유는
+   * 전역 결과가 상위 N 건에서 잘려 이 채널 것이 아예 안 실려 올 수 있기 때문이다.
+   */
+  async search(q: string, channelId?: string | null): Promise<MessageRow[]> {
+    const scope = channelId ? `&channelId=${encodeURIComponent(channelId)}` : '';
+    return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
   }
 }

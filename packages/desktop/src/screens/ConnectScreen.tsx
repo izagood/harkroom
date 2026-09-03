@@ -35,6 +35,10 @@ export function ConnectScreen({ onConnected, initialError = null }: { onConnecte
       // 계정 생성 라우트는 둘 다 세션을 주지 않는다(`{ id }` 만) — 만든 자격증명으로 이어서
       // 로그인한다. 그래서 가입 성공이 곧 로그인 상태가 된다.
       const { token } = await api.login(handle, password);
+      // 토큰을 **여기서** 클라이언트에 싣는다. `login()` 은 토큰을 돌려주기만 하므로,
+      // 싣지 않고 `me()` 를 부르면 authorization 헤더가 없어 401 이 된다(#246 — login 은
+      // 200 인데 그 직후 /auth/me 가 401 이라 아무도 앱에 들어갈 수 없었다).
+      api.setToken(token);
       const me = await api.me();
       onConnected(api.baseUrl, token, me.id, me.handle);
     } catch (err) {

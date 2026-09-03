@@ -10,7 +10,7 @@ const fakeController = () => {
   const c = {
     openChannel: vi.fn(), startDm: vi.fn(), logout: vi.fn(),
     createChannel: vi.fn(), updateChannel: vi.fn(), archiveChannel: vi.fn(),
-    toggleChannelMute: vi.fn(), toggleChannelStar: vi.fn(), send: vi.fn(),
+    setChannelNotifyLevel: vi.fn(), toggleChannelStar: vi.fn(), send: vi.fn(),
     openThread: vi.fn(), loadOlder: vi.fn(),
   };
   setController(c as unknown as Controller);
@@ -30,7 +30,7 @@ const seed = (isAdmin: boolean) => {
 };
 
 const sidebar = () => render(
-  <Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />,
+  <Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
 beforeEach(() => { vi.clearAllMocks(); });
