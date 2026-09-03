@@ -61,6 +61,51 @@ describe('#161 2단계 작성자 아바타 거터', () => {
     expect(screen.getAllByText('에이전트')).toHaveLength(2);
   });
 
+  it('#181: 에이전트에 소유자가 있으면 소유자 표시가 나온다', () => {
+    useAppStore.getState().set({
+      accounts: {
+        u1: acc('u1', 'owner'),
+        a1: { ...acc('a1', 'bot', 'agent'), ownerAccountId: 'u1' },
+      },
+    });
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
+
+    // 거터와 작성자 옆 두 곳에서 에이전트 표시
+    expect(screen.getAllByText('에이전트')).toHaveLength(2);
+    // 소유자 표시가 두 곳 모두에서 보인다
+    expect(screen.getAllByText('@owner')).toHaveLength(2);
+  });
+
+  it('#181: 에이전트에 소유자가 없으면 소유자 표시가 안 나온다', () => {
+    useAppStore.getState().set({
+      accounts: {
+        a1: { ...acc('a1', 'bot', 'agent'), ownerAccountId: null },
+      },
+    });
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
+
+    // 에이전트 표시만 있고 소유자 표시가 없다
+    expect(screen.getAllByText('에이전트')).toHaveLength(2);
+    expect(screen.queryByText('@owner')).toBeNull();
+    expect(screen.queryByText(/소유자/)).toBeNull();
+  });
+
+  it('#181: 사람 계정에는 소유자 표시가 안 나온다', () => {
+    useAppStore.getState().set({
+      accounts: {
+        u1: acc('u1', 'alice'),
+      },
+    });
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'u1')} />);
+
+    // 사람 계정이므로 에이전트 표시도 없고 소유자 표시도 없다
+    expect(screen.queryByText('에이전트')).toBeNull();
+    expect(screen.queryByText('@owner')).toBeNull();
+  });
+
   it('알 수 없는 계정은 거터에서도 명시적 표시를 한다', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'unknown')} />);

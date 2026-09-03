@@ -26,7 +26,10 @@ const agentWithSecrets = (id: string, handle: string): AgentView => ({
   effort: 'high',
   workingDir: '/Users/secret/workspace',
   mentionPermission: 'auto',
-  ownerAccountId: 'u1',
+  // #181: 소유자는 **null 이 정상 상태**다. 여기에 값을 넣으면 소유자 handle 이 목록에
+  // 한 번 더 나타나 이 파일의 다른 회귀선들이 세는 수를 바꾼다 — 소유자 표시는 아래
+  // 전용 회귀선이 따로 본다.
+  ownerAccountId: null,
   runnerVersion: 'deadbeef', lastTurnAt: null,
   stopRequestedAt: null,
   stopAckedAt: null,
@@ -54,6 +57,14 @@ describe('Directory (#226)', () => {
     open();
     await waitFor(() => expect(screen.getByText('@alice')).toBeTruthy());
     expect(screen.getByText('@scribe')).toBeTruthy();
+  });
+
+  // #181: 소유자도 `Identity` 를 통과해 나온다 — 디렉터리가 따로 그리지 않는다.
+  it('에이전트 행에 소유자가 함께 보인다', async () => {
+    put(acc('u1', 'alice'), { ...agentWithSecrets('a1', 'scribe'), ownerAccountId: 'u1' });
+    open();
+    const agents = await waitFor(() => screen.getByRole('region', { name: 'Agents' }));
+    expect(within(agents).getByText('@alice')).toBeTruthy();
   });
 
   // 섹션이 갈려 있어야 "이 handle 이 사람인가 에이전트인가"를 화면이 답한다. 한 목록에
