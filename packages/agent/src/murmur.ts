@@ -88,6 +88,27 @@ export class MurmurAgentClient {
     return (await res.json()) as AgentView;
   }
 
+  /**
+   * 턴을 마쳤다고 서버에 보고한다(#176). **본문이 없다** — 시각은 서버가 찍는다. 여기서
+   * `new Date()` 를 실어 보내면 이 머신의 시계 오차가 그대로 화면의 "마지막 활동"이 된다.
+   *
+   * REST 인 이유는 `definition()` 과 같다: MCP 에는 이 표면이 없다. 대상 id 를 보내지
+   * 않는다 — 서버가 PAT 의 주인만 갱신한다.
+   *
+   * 실패를 던지는 것은 의도다. 삼키면 호출자가 "보고했다"와 "보고가 실패했다"를 구분하지
+   * 못한다 — **턴을 실패로 만들지 않는 판단은 호출자(mentionTurn)의 몫이고**, 거기서
+   * 로그로 남긴다(`readMemory` 가 같은 이유로 던진다).
+   */
+  async reportActivity(): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/agent/activity`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${this.pat}` },
+    });
+    if (!res.ok) {
+      throw murmurError(`agent/activity 실패: ${res.status}`, res.status);
+    }
+  }
+
   async guide(): Promise<string> {
     const res = await this.call<{ guide?: string } | string>('workspace.guide');
     return typeof res === 'string' ? res : (res.guide ?? JSON.stringify(res));
