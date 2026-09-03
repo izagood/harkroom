@@ -296,6 +296,25 @@ export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse 
     );
   };
 
+  // 접히면 **내용을 아예 그리지 않는다.** 폭만 0 으로 두면 안쪽 컨테이너의
+  // `min-w-[180px]` 가 그대로 남아 0 폭 상자 밖으로 넘쳐 본문을 덮고(플렉스 아이템은
+  // 기본으로 클리핑하지 않는다), DOM 에 남은 버튼들이 탭 순서에도 그대로 걸려
+  // **화면에서 사라진 것을 키보드로 밟게 된다.**
+  //
+  // jsdom 에는 레이아웃 엔진이 없어 `style.width === '0px'` 만 확인하는 테스트는 이
+  // 결함을 통과시킨다 — 그래서 "내용이 그려지지 않는다" 로 확인한다.
+  //
+  // 펴는 길은 사이드바 밖에 있다: `Workspace` 헤더의 "사이드바 펼치기" 버튼.
+  if (collapsed) {
+    return (
+      <aside
+        className="overflow-hidden bg-zinc-900"
+        style={{ width: 0 }}
+        aria-hidden="true"
+      />
+    );
+  }
+
   return (
     <aside
       className="relative flex flex-col bg-zinc-900 text-zinc-200"
