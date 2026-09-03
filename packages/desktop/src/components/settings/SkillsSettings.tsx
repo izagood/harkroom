@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { skillGroupOf, type SkillGroupId, type WorkspaceSkillView } from '@murmur/shared';
 import { getController } from '../../state/controller';
-import { useAppStore } from '../../state/appStore';
+import { useActiveStore } from '../../state/communities';
 import { SettingsPage } from './primitives';
 
 /**
@@ -36,10 +36,10 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
   const [confirmingApprove, setConfirmingApprove] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
-  const accounts = useAppStore((s) => s.accounts);
+  const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
+  const accounts = useActiveStore((s) => s.accounts);
   // `skill.*` 이벤트가 올 때마다 올라가는 세는 수(#311 요구 6). 목록을 다시 읽는 신호다.
-  const skillsRevision = useAppStore((s) => s.skillsRevision);
+  const skillsRevision = useActiveStore((s) => s.skillsRevision);
 
   const reload = useCallback(() => {
     setSkills(null);
