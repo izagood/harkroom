@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import type { StorageBackend } from '../storage/local.js';
 import { z } from 'zod';
 import {
-  addChannelMember, assertChannelVisible, channelListAudience, channelListLostAudience,
+  addChannelMember, assertChannelVisible, audienceFor, channelListAudience, channelListLostAudience,
   channelPostGate, createChannel, deleteChannel,
   getChannelDoc, getChannelRow, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
   updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs,
@@ -190,10 +190,16 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     }
     // 존재하지 않는 계정은 FK 위반으로 500 이 된다 — 잘못된 입력을 서버 오류로 답하면
     // 호출부가 재시도할 대상인지 아닌지 구분하지 못한다.
-    const account = await pool.query(`select 1 from account where id = $1`, [accountId]);
+    // handle 까지 여기서 읽는다 — 아래 시스템 메시지(#322)가 쓸 값이고, 존재 확인과 같은
+    // 질문이다. 뒤에서 다시 조회하면 그 사이에 지워진 계정에 대해 "없다"를 두 번 다르게
+    // 판정하는 자리가 생기고, 없을 때 조용히 메시지를 건너뛰는 분기가 필요해진다.
+    const account = await pool.query<{ handle: string }>(
+      `select handle from account where id = $1`, [accountId],
+    );
     if (!account.rowCount) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
     }
+    const targetHandle = account.rows[0]!.handle;
     await addChannelMember(pool, id, accountId);
     await recordAudit(pool, {
       action: 'channel.member.added', actorId: req.account!.id, actorHandle: req.account!.handle,
@@ -212,17 +218,25 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     // `ChannelRow` 가 실려 나가고, 받는 화면의 "생성순" 정렬이 조용히 깨진다.
     const channel = await getChannelRow(pool, id);
     if (channel) emitEvent({ type: 'channel.created', channel, audience: [accountId] });
-    // 시스템 메시지(#322). 초대된 사람의 핸들을 표시하지만 @멘션은 아니다 — 알림이 가지 않도록.
-    const targetAccount = await pool.query<{ handle: string }>(
-      `select handle from account where id = $1`, [accountId],
-    );
-    if (targetAccount.rows[0]) {
-      await postMessage(pool, {
-        channelId: id,
-        authorId: req.account!.id,
-        body: `${targetAccount.rows[0].handle}님이 추가되었습니다.`,
-        kind: 'system',
-      });
+    /**
+     * 시스템 메시지(#322). **삽입이 커밋된 뒤**다 — 위 이벤트들과 같은 자리에 두는 이유가
+     * 그것이다. 앞으로 옮기면 `audienceFor` 가 아직 멤버가 아닌 사람을 빼고 계산해,
+     * 초대된 본인이 자기 초대를 알리는 메시지를 실시간으로 받지 못한다.
+     *
+     * 본문에 `@` 를 붙이지 않는다: `postMessage` 는 kind 와 무관하게 본문의 멘션을
+     * 판정하므로, `@handle` 로 적으면 그 사람의 inbox 에 mention 행이 생긴다.
+     * 시스템 메시지는 사실을 남기는 것이지 부르는 것이 아니다.
+     */
+    const added = await postMessage(pool, {
+      channelId: id,
+      authorId: req.account!.id,
+      body: `${targetHandle}님이 채널에 추가되었습니다.`,
+      kind: 'system',
+    });
+    // 메시지 이벤트의 수신자는 메시지 층의 `audienceFor` 다 — 위 목록 이벤트의
+    // `channelListAudience` 를 여기 쓰면 private 채널의 본문이 비멤버 admin 에게 흘러간다.
+    if (added.message) {
+      emitEvent({ type: 'message.created', message: added.message, audience: await audienceFor(pool, id) });
     }
     return { members: await listChannelMembers(pool, id) };
   });
@@ -274,17 +288,32 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
           audience: [accountId],
         });
       }
-      // 시스템 메시지(#322). 제거된 사람의 핸들을 표시하지만 @멘션은 아니다 — 알림이 가지 않도록.
-      const targetAccount = await pool.query<{ handle: string }>(
+      /**
+       * 시스템 메시지(#322). 삭제가 커밋된 뒤다 — 초대 쪽과 같은 이유.
+       *
+       * **문구를 둘로 둔다.** 이 라우트는 위에서 이미 `isSelf` 로 두 경우를 갈라
+       * 권한을 다르게 판정한다 — 나간 것과 내보낸 것은 여기서 실재하는 구분이므로
+       * 화면이 그대로 말해도 거짓 신호가 아니다(구분이 없었다면 문구도 하나여야 했다).
+       *
+       * 계정 행은 방금 지운 `channel_member` 의 FK 가 보장한다 — 없으면 그것은 결함이지
+       * "메시지를 남기지 않을 사유"가 아니므로 조용히 건너뛰지 않는다.
+       * 본문에 `@` 를 붙이지 않는 이유는 초대 쪽과 같다.
+       */
+      const target = await pool.query<{ handle: string }>(
         `select handle from account where id = $1`, [accountId],
       );
-      if (targetAccount.rows[0]) {
-        await postMessage(pool, {
-          channelId: id,
-          authorId: req.account!.id,
-          body: `${targetAccount.rows[0].handle}님이 제거되었습니다.`,
-          kind: 'system',
-        });
+      const targetHandle = target.rows[0]!.handle;
+      const posted = await postMessage(pool, {
+        channelId: id,
+        authorId: req.account!.id,
+        body: isSelf
+          ? `${targetHandle}님이 채널에서 나갔습니다.`
+          : `${targetHandle}님이 채널에서 제거되었습니다.`,
+        kind: 'system',
+      });
+      // 초대 쪽과 같이 메시지 층의 `audienceFor` 를 쓴다.
+      if (posted.message) {
+        emitEvent({ type: 'message.created', message: posted.message, audience: await audienceFor(pool, id) });
       }
     }
     return { members: await listChannelMembers(pool, id) };
