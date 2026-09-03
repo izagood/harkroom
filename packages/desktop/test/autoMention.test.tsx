@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { ChannelAutoMentionRow } from '@murmur/shared';
 import { useAppStore } from '../src/state/appStore';
-import { setController, type Controller } from '../src/state/controller';
+import { setController, Controller } from '../src/state/controller';
 import { Composer } from '../src/components/Composer';
 import { Workspace } from '../src/components/Workspace';
-import { acc, chan, fakeApi, msg } from './helpers/fakeApi';
+import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
 
 /**
@@ -209,5 +209,67 @@ describe('자동 멘션 배선 — Workspace 를 통째로 (#173)', () => {
     fireEvent.keyDown(box, { key: 'Enter' });
 
     expect(reply).toHaveBeenCalledWith('@fizz 답글', [], 'c1', 'm1', false);
+  });
+});
+
+/**
+ * 컨트롤러 쪽 회귀선(#173). 위의 화면 테스트는 **가짜 컨트롤러**를 쓴다 — 그 가짜가
+ * 스스로 스토어를 갱신하므로, 실제 `Controller` 가 서버를 다시 읽지 않아도(또는 채널을 열 때
+ * 목록을 아예 받지 않아도) 전부 초록이다. 여기서 진짜 `Controller` 로 그 세 가지를 못박는다.
+ */
+describe('자동 멘션 컨트롤러 (#173)', () => {
+  beforeEach(() => { useAppStore.getState().reset(); });
+
+  const row2 = (agentAccountId: string, handle: string): ChannelAutoMentionRow =>
+    ({ channelId: 'c1', agentAccountId, handle, createdBy: 'ad', createdAt: new Date().toISOString() });
+
+  it('채널을 열면 자동 멘션 목록을 받아 스토어에 넣는다', async () => {
+    const api = fakeApi({ channelAutoMentions: vi.fn(async () => [row2('a1', 'fizz')]) });
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    await c.openChannel('c1');
+
+    // 크리티컬 패스 밖(`swallow`)이라 다음 틱에 들어온다.
+    await waitFor(() =>
+      expect(useAppStore.getState().channelAutoMentions.c1?.map((r) => r.handle)).toEqual(['fizz']));
+  });
+
+  it('목록 조회가 실패해도 채널은 열린다 — 그리고 빈 배열로 삼키지 않는다', async () => {
+    const api = fakeApi({
+      channelAutoMentions: vi.fn(async () => { throw new Error('boom'); }),
+    });
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    await c.openChannel('c1');
+
+    expect(useAppStore.getState().activeChannelId).toBe('c1');
+    // 빈 배열이 들어가면 "아무도 안 부른다" 는 거짓 사실이 되고 작성창은 칩을 안 그린다.
+    expect(useAppStore.getState().channelAutoMentions.c1).toBeUndefined();
+  });
+
+  it('걸고 푼 뒤 목록을 서버에서 다시 읽는다 — 로컬 델타로 때우지 않는다', async () => {
+    const rows: ChannelAutoMentionRow[] = [];
+    const api = fakeApi({
+      channelAutoMentions: vi.fn(async () => [...rows]),
+      setChannelAutoMention: vi.fn(async (channelId: string, agentAccountId: string) => {
+        const r = row2(agentAccountId, 'fizz');
+        rows.push(r);
+        return r;
+      }),
+      unsetChannelAutoMention: vi.fn(async (_channelId: string, agentAccountId: string) => {
+        rows.splice(0, rows.length, ...rows.filter((r) => r.agentAccountId !== agentAccountId));
+      }),
+    });
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+
+    await c.setChannelAutoMention('c1', 'a1');
+    expect(useAppStore.getState().channelAutoMentions.c1?.map((r) => r.handle)).toEqual(['fizz']);
+
+    await c.unsetChannelAutoMention('c1', 'a1');
+    expect(useAppStore.getState().channelAutoMentions.c1).toEqual([]);
   });
 });
