@@ -219,6 +219,21 @@ export async function deleteMessage(
   return 'deleted';
 }
 
+/**
+ * 링크 하나(#178)로 여는 경로. **채널을 모른 채 id 만 들고 온다** — 그래서 채널 조건이 없고,
+ * 가시성 판정은 이 결과의 `channelId` 로 호출부가 `assertChannelVisible` 을 부른다.
+ * 여기서 규칙을 다시 쓰면 같은 계산이 두 곳에 생긴다.
+ *
+ * `deleted_at is null` 이 조건에 들어 있는 것이 핵심이다: 지워진 메시지는 본문을 담아
+ * 돌려준 뒤 걸러 내는 것이 아니라 **애초에 없는 것**이 되어 404 로 떨어진다.
+ */
+export async function getMessageById(pool: Pool, messageId: string): Promise<MessageRow | null> {
+  const res = await pool.query(
+    `select ${COLS} from message where id = $1 and deleted_at is null`, [messageId],
+  );
+  return res.rows[0] ?? null;
+}
+
 export async function listMessages(
   pool: Pool, channelId: string,
   opts: { since?: number; before?: number; threadRootId?: string | null; limit?: number },

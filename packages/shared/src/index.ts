@@ -138,6 +138,52 @@ export function mentionedHandles(body: string): string[] {
 }
 
 /**
+ * 메시지 하나를 가리키는 링크의 스킴(#178). 문자열을 여기저기서 조립하지 않는다 —
+ * 만드는 쪽과 읽는 쪽이 갈라지면 자기가 만든 링크를 자기가 못 여는 상태가 된다.
+ *
+ * **OS 에 등록하는 URL 스킴이 아니다.** murmur 는 셀프호스트라 호스트가 인스턴스마다
+ * 다르고, 그래서 링크에 호스트를 넣지 않는다 — 이 문자열은 앱 안에서 붙여넣어 여는
+ * 좌표이지 브라우저가 넘겨 주는 주소가 아니다.
+ */
+export const MESSAGE_PERMALINK_PREFIX = 'murmur://message/';
+
+/**
+ * uuid 판정. `parseMessagePermalink` 가 **형식까지** 보게 하는 것이 요점이다 —
+ * 접두사만 확인하고 나머지를 통과시키면 사람이 붙여넣은 임의 문자열이 그대로 서버 질의가 된다.
+ */
+const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/** 이 메시지를 가리키는 링크 문자열. */
+export function messagePermalink(messageId: string): string {
+  return `${MESSAGE_PERMALINK_PREFIX}${messageId}`;
+}
+
+/**
+ * 링크에서 메시지 id 를 꺼낸다. 링크가 아니거나 uuid 가 아니면 **null** 이다.
+ *
+ * 앞뒤 공백은 잘라 낸다 — 사람이 복사한 링크에는 줄바꿈이 붙어 오는 일이 흔하고,
+ * 그것 때문에 "형식이 틀렸다"고 말하면 거짓말이 된다.
+ */
+export function parseMessagePermalink(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith(MESSAGE_PERMALINK_PREFIX)) return null;
+  const id = trimmed.slice(MESSAGE_PERMALINK_PREFIX.length);
+  return UUID_PATTERN.test(id) ? id : null;
+}
+
+/**
+ * 링크가 가리키는 메시지가 **어디에 있는가**. `GET /messages/:id` 의 응답이 이것을 만족한다
+ * (`MessageRow` 가 구조적으로 들어맞는다).
+ *
+ * 이름을 따로 두는 이유: 링크를 여는 쪽이 실제로 필요한 것은 본문이 아니라 이 두 좌표다.
+ * `threadRootId` 가 있으면 스레드 패널까지 열어야 한다 — 답글을 스레드 밖에서 보면 맥락을 잃는다.
+ */
+export interface MessageLocation {
+  channelId: string;
+  threadRootId: string | null;
+}
+
+/**
  * 한 이모지에 누가 눌렀는지. `count`·`mine` 이 아니라 누른 사람 목록인 이유는 요청자에 따라
  * 값이 달라지면 같은 페이로드를 여러 명에게 브로드캐스트할 수 없기 때문이다.
  * count 는 `accountIds.length`, '내가 눌렀나' 는 `includes(me.id)` 로 클라이언트가 센다.
