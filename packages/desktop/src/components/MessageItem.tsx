@@ -130,9 +130,10 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
       className={`group relative flex gap-2 px-4 py-1.5 hover:bg-zinc-50 ${isSystem ? 'border-l-2 border-amber-400' : ''} ${highlighted ? 'bg-amber-100 ring-1 ring-amber-300' : isSystem ? 'bg-amber-50/50' : ''}`}
       data-highlighted={highlighted ? 'true' : undefined}
     >
-      {/* 작성자 아바타 거터 - 메시지 행 왼쪽에 고정폭 열로 배치. #161 2단계. 가로 예산:
-          #143 호버 툴바가 right-full 로 왼쪽으로 자라고, #145 가 오른쪽에서 같은 예산을 쓴다.
-          거터 폭은 32px(h-8 w-8)로 하고, Identity 컴포넌트의 className 로 크기를 조절한다. */}
+      {/* 작성자 아바타 거터 - 메시지 행 왼쪽에 고정폭 열로 배치. #161 2단계.
+          #254 이후 답글 컨트롤이 본문 열로 이동하고 툴바는 행 기준 right-2 top-1 에
+          앵커한다. 거터 폭은 32px(h-8 w-8)로 하고, Identity 컴포넌트의 className 로
+          크기를 조절한다. */}
       <div className="flex h-8 w-8 shrink-0 items-center justify-center">
         <Identity account={author} className="h-8 w-8 text-sm" />
       </div>
@@ -153,6 +154,50 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
             {message.body.trim() && <MessageBody body={message.body} messageId={message.id} />}
             <Attachments attachments={message.attachments} />
             <Reactions message={message} />
+            {/* #254: 답글 컨트롤을 본문 열에 둔다 — 리액션 칩 바로 뒤. 우상단 열에는
+                툴바만 남으므로 right-full 은 의미가 없고, 행 기준 right-2 top-1 로
+                앵커한다. 답글 컨트롤과 툴바가 다른 컨테이너에 있어 구조적으로 겹칠 수
+                없으므로 #143 의 "겹침"은 더 이상 문제가 되지 않는다. */}
+            {!inThread && message.replyCount !== null && (
+              <button
+                className="mt-1 self-start flex items-center gap-1 rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[11px] text-indigo-700"
+                onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
+                aria-label={`${message.replyCount} ${message.replyCount === 1 ? 'reply' : 'replies'}${lastReplyTime ? `, last reply ${lastReplyTime}` : ''}`}
+              >
+                <span className="flex -space-x-1" aria-hidden="true">
+                  {displayedParticipants.map((id) => (
+                    <span key={id} className="ring-1 ring-white">
+                      <Identity account={accounts[id]} className="h-4 w-4 text-[8px]" />
+                    </span>
+                  ))}
+                  {remainingCount > 0 && (
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-zinc-200 text-[8px] font-medium text-zinc-600 ring-1 ring-white">
+                      +{remainingCount}
+                    </span>
+                  )}
+                </span>
+                <span>
+                  {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
+                  {lastReplyTime && <span className="ml-1 text-zinc-500">{lastReplyTime}</span>}
+                </span>
+              </button>
+            )}
+            {!inThread && message.replyCount === null && (
+              <button
+                className={`mt-1 self-start rounded border px-1.5 text-[11px] border-zinc-300 text-zinc-600 ${hoverOnly}`}
+                onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
+              >
+                Reply in thread
+              </button>
+            )}
+            {!inThread && message.alsoInChannel && message.threadRootId && (
+              <button
+                className="mt-1 self-start rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[11px] text-indigo-700"
+                onClick={() => void getController().openThread(message.threadRootId!)}
+              >
+                View in thread
+              </button>
+            )}
           </>
         ) : (
           <div className="space-y-1">
@@ -175,70 +220,12 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
       </div>
 
       <div className="relative flex shrink-0 items-start gap-1">
-        {!inThread && message.replyCount !== null && (
-          <button
-            // 답글이 달린 메시지는 호버 없이도 그 사실이 보여야 한다. 답글이 없을 때만 호버로
-            // 드러나되, visibility 가 아니라 opacity 로 숨긴다 — visibility:hidden 은 접근성
-            // 트리에서 요소를 제거해 키보드·스크린리더가 스레드에 도달할 길을 없앤다.
-            //
-            // **흐름 안에 둔다(absolute 로 띄우지 않는다)**: 이 버튼은 답글이 있으면 상시
-            // 노출되므로, 절대 배치로 본문 위에 올리면 긴 한 줄 메시지를 가린다.
-            //
-            // #161 2단계: 서버의 replyCount 를 쓰고, 참여자 아바타와 마지막 답글 시각을 보여준다.
-            // 참여자 얼굴은 장식이다 — 접근 가능한 이름은 버튼 하나에 붙는다.
-            // 예: "51개의 답글, 마지막 답글 오후 8:24". 이미지가 각각 이름을 갖지 않도록
-            // opacity 로 숨기고 sr-only 텍스트도 주지 않는다.
-            className="self-start flex items-center gap-1 rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[11px] text-indigo-700"
-            onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
-            aria-label={`${message.replyCount} ${message.replyCount === 1 ? 'reply' : 'replies'}${lastReplyTime ? `, last reply ${lastReplyTime}` : ''}`}
-          >
-            {/* 참여자 아바타 — 최대 5개, 나머지는 +N 으로 접는다. 장식 용도라 스크린리더가
-                읽지 않도록 aria-hidden 처리하고 sr-only 도 안 준다. */}
-            <span className="flex -space-x-1" aria-hidden="true">
-              {displayedParticipants.map((id) => (
-                <span key={id} className="ring-1 ring-white">
-                  <Identity account={accounts[id]} className="h-4 w-4 text-[8px]" />
-                </span>
-              ))}
-              {remainingCount > 0 && (
-                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-zinc-200 text-[8px] font-medium text-zinc-600 ring-1 ring-white">
-                  +{remainingCount}
-                </span>
-              )}
-            </span>
-            <span>
-              {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
-              {lastReplyTime && <span className="ml-1 text-zinc-500">{lastReplyTime}</span>}
-            </span>
-          </button>
-        )}
-        {!inThread && message.replyCount === null && (
-          <button
-            className={`self-start rounded border px-1.5 text-[11px] border-zinc-300 text-zinc-600 ${hoverOnly}`}
-            onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
-          >
-            Reply in thread
-          </button>
-        )}
-        {/* #231: alsoInChannel 메시지는 채널에도 보이므로 스레드에서 왔을 때가 아니라
-            채널에서 볼 때 이 버튼이 필요하다. "View in thread" 로 표시한다. */}
-        {!inThread && message.alsoInChannel && message.threadRootId && (
-          <button
-            className="self-start rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[11px] text-indigo-700"
-            onClick={() => void getController().openThread(message.threadRootId!)}
-          >
-            View in thread
-          </button>
-        )}
-        {/* #121: 우상단 호버 툴바. #143: 기준을 **행이 아니라 답글 컨트롤**로 잡는다 —
-            둘 다 행의 `right` 에 앵커되면 같은 자리를 다투고, 호버 시 툴바가 답글 pill 을
-            덮어 스레드 진입이 막힌다. `right-full` 은 "내 우측 = 답글 컨트롤의 좌측"이라
-            pill 텍스트 폭(`Reply in thread` ↔ `3 replies`)이 변해도 비겹침이 유지된다.
-            흐름 밖에 남으므로 상시 여백을 예약하지도 않는다. 숨기는 방식은 반드시
-            opacity 다 — visibility:hidden 은 접근성 트리에서 요소를 지워 키보드 경로를
-            없앤다(Reactions.tsx 주석이 이미 그 비용을 기록한다). */}
+        {/* #121: 우상단 호버 툴바. #254 이후 답글 컨트롤이 본문 열로 이동해서 둘이 같은
+            자리를 다투지 않으므로, 툴바는 행 기준 `right-2 top-1` 로 앵커한다.
+            숨기는 방식은 반드시 opacity 다 — visibility:hidden 은 접근성 트리에서
+            요소를 지워 키보드 경로를 없앤다(Reactions.tsx 주석이 그 비용을 기록한다). */}
         {draft === null && (
-          <div role="group" aria-label="message toolbar" className={`absolute right-full top-0 mr-1 flex items-center gap-0.5 rounded border border-zinc-200 bg-white px-1 py-0.5 shadow-sm ${hoverOnly}`}>
+          <div role="group" aria-label="message toolbar" className={`absolute right-2 top-1 flex items-center gap-0.5 rounded border border-zinc-200 bg-white px-1 py-0.5 shadow-sm ${hoverOnly}`}>
             <InlineReactionButtons message={message} />
             <ReactionPicker message={message} />
             {confirmingDelete ? (
