@@ -144,8 +144,11 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
       {/* 작성자 아바타 거터 - 메시지 행 왼쪽에 고정폭 열로 배치. #161 2단계.
           #254 이후 답글 컨트롤이 본문 열로 이동하고 툴바는 행 기준 right-2 top-1 에
           앵커한다. 거터 폭은 32px(h-8 w-8)로 하고, Identity 컴포넌트의 className 로
-          크기를 조절한다. #277 에서 variant="avatar" 로 거터 자리를 명시한다. */}
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center">
+          크기를 조절한다. #277 에서 variant="avatar" 로 거터 자리를 명시한다 — 이 열은
+          32px 고정이라 안에 든 것이 넓어지면 열을 넘친다(그것이 #277 의 결함이었다).
+          `data-testid` 는 회귀 테스트가 이 열을 클래스 문자열로 더듬지 않게 하려고 둔다 —
+          클래스로 찾으면 스타일을 조금 손보는 순간 테스트가 조용히 아무것도 안 지킨다. */}
+      <div data-testid="author-gutter" className="flex h-8 w-8 shrink-0 items-center justify-center">
         <Identity account={author} className="h-8 w-8 text-sm" variant="avatar" />
       </div>
       <div className="min-w-0 flex-1">

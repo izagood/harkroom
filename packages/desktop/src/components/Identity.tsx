@@ -8,7 +8,7 @@ import { getController } from '../state/controller';
  *
  * 같은 `agent` 필 마크업이 컴포저(멘션 후보)와 메시지(작성자 옆) 두 곳에 중복돼 있었다 —
  * 이 저장소에서 반복되는 결함 형태다(하나의 사실이 두 곳에 유지된다). `#159`(아바타
- * 업로드)와 `#161`(채팅 거터 아바타)도 각자 그치지 말고 여기를 통과해야 한다. 실제
+ * 업로드)와 `#161`(채팅 거터 아바타)도 각자 그리지 말고 여기를 통과해야 한다. 실제
  * 이미지가 들어올 때 캐시가 필요해지는데, 그때도 **여기 한 곳**에 들어간다.
  *
  * #159 로 실제 사진이 들어왔다. 사진이 있으면 사진, 없으면 **기존 폴백 그대로**(이니셜·색,
@@ -18,11 +18,20 @@ import { getController } from '../state/controller';
  * #181 에이전트 소유자 표시도 여기서 한다 — ownerAccountId 가 있으면 소유자 계정을
  * 계정 디렉터리에서 찾아 표시한다. 소유자가 없거나 삭제된 계정이면 아무것도 안 보인다.
  *
- * #277 에이전트 메시지의 소유자 @핸들이 아바타 거터를 넘치는 문제를 고친다.
- * 두 가지 variant 로 자리를 명시한다:
- * - avatar: 거터 자리. 모든 kind 에서 정사각 상자 하나. 사람은 둥근 아바타, 에이전트는
- *   봇 글리프만(소유자 핸들·가운뎃점 없음). overflow-hidden, flex-wrap 없음.
- * - badge: 이름 옆 자리. 지금의 인라인 배지 그대로.
+ * #277 에이전트 메시지의 소유자 @핸들이 아바타 거터를 넘치는 문제를 고친다. **한
+ * 컴포넌트가 두 자리를 겸하다 한쪽에서 넘쳤다** — 그래서 자리를 prop 으로 명시한다:
+ * - `avatar`: 거터 자리(메시지 행 왼쪽 고정폭 열, 스레드 참여자 띠, 프로필 사진 칸).
+ *   모든 kind 에서 정사각 상자 하나다. 사람은 **지금의 둥근 아바타 그대로**(이 variant
+ *   에서 사람 쪽 마크업은 한 글자도 바뀌지 않는다 — 넘친 것은 에이전트 쪽이었다),
+ *   에이전트는 봇 글리프만(소유자 핸들·가운뎃점 없음). `overflow-hidden`, `flex-wrap` 없음.
+ * - `badge`: 이름 옆 자리(메시지 이름줄, 컴포저 멘션 후보, 디렉터리 행). 지금의 인라인
+ *   배지 그대로 — `#181` 이 소유자를 여기에 넣은 결정은 유효하다. **자리가 잘못됐던
+ *   것이지 표시가 잘못된 게 아니다.** 기본값을 `badge` 로 두는 이유도 이것이다:
+ *   새 호출자가 variant 를 잊으면 정보가 사라지는 쪽이 아니라 남는 쪽으로 떨어진다.
+ *
+ * 크기는 호출자가 `className` 으로 준다(`h-8 w-8` 등). 그래서 두 kind 의 기본 상자
+ * 크기를 `h-5 w-5` 로 **같게** 둔다 — `h-full` 로 부모에 기대면 크기를 주지 않는
+ * 부모(스레드 참여자 띠의 `ring` 래퍼) 아래에서 에이전트만 사람과 다른 크기로 그려진다.
  */
 type IdentityVariant = 'avatar' | 'badge';
 
@@ -130,10 +139,13 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
 
   if (account.kind === 'agent') {
     // #277: avatar variant 는 거터 자리 — 봇 글리프만, 소유자 핸들·가운뎃점 없음.
+    // 상자 크기·모양은 사람 쪽(아래)과 같은 `h-5 w-5 rounded-full` 이다. 한 열에 사람과
+    // 에이전트가 섞여 서는 자리(거터·참여자 띠)라 둘이 다른 크기면 열이 들쭉날쭉해진다.
+    // `overflow-hidden` 이 이 자리의 계약이다 — 무엇이 들어와도 상자를 넘지 않는다.
     if (variant === 'avatar') {
       return (
         <span
-          className={`inline-flex h-full w-full items-center justify-center overflow-hidden text-[10px] ${className}`}
+          className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] ${className}`}
         >
           <span aria-hidden="true">🤖</span>
           <span className="sr-only">에이전트</span>
@@ -169,11 +181,14 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
     );
   }
 
-  // 사람 계정: avatar variant 는 둥근 아바타(지금과 같은 형태), badge variant 도 같은 형태로 표시.
-  // #277 에서 avatar variant 는 flex-wrap 이 없고 overflow-hidden 인 것이 특징.
+  // 사람 계정. **variant 를 보지 않는다** — 사람은 두 자리에서 이미 같은 둥근 아바타
+  // 하나였고 넘친 적이 없다. #277 의 결함은 에이전트 배지가 거터에 들어간 것이므로,
+  // 여기에 variant 분기를 넣으면 고칠 것 없는 자리를 바꿔 `rounded-full` 이 `rounded` 로
+  // 갈리는 식의 무관한 회귀만 생긴다. `overflow-hidden` 도 두 자리 모두에서 필요하다 —
+  // 사진(#159)은 badge 자리에도 걸리고, 상자를 넘지 않아야 하는 것은 자리와 무관하다.
   return (
     <span
-      className={`inline-flex ${variant === 'avatar' ? 'overflow-hidden' : ''} h-5 w-5 items-center justify-center ${variant === 'avatar' ? 'rounded' : 'rounded-full'} text-[10px] font-semibold text-white ${avatarUrl ? 'bg-zinc-200' : handleColor(account.handle)} ${className}`}
+      className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-white ${avatarUrl ? 'bg-zinc-200' : handleColor(account.handle)} ${className}`}
     >
       {avatarUrl ? (
         // `alt` 를 **비운다**. 접근성 이름은 아래 sr-only 가 이미 내고 있고, 사진에 핸들을
