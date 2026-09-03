@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PinRow, SavedMessageRow } from '@murmur/shared';
+import type { AccountStatus, AccountView, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PinRow } from '@murmur/shared';
 
 export interface HistoryEntry {
   channelId: string;
@@ -41,11 +41,17 @@ export interface AppState {
    */
   pins: Record<string, PinRow[]>;
   /**
-   * 저장된 메시지(#219). state 가 'open' 인 것만 목록에 보인다.
+   * 내가 담아 둔 메시지의 id 전부(#219). `open` 과 `done` 을 **둘 다** 담는다 —
+   * `⋯` 메뉴가 "담겨 있는가"를 이것으로 판단하고, 완료로 옮긴 메시지도 담긴 상태다.
+   *
+   * 목록 화면의 행들을 여기 두지 않는 이유: 패널은 탭 하나(`open` 또는 `done`)만 받아
+   * 오는데 그것을 이 자리에 쓰면 '완료' 탭을 한 번 본 뒤로 메뉴가 `open` 인 메시지를
+   * 담기지 않은 것으로 읽는다. 행들은 패널의 지역 상태다.
    */
-  savedMessages: SavedMessageRow[];
+  savedIds: string[];
   /**
-   * 저장된 메시지 중 state 가 'open' 인 개수. 사이드바 배지에 쓴다.
+   * 담아 둔 것 중 `open` 개수. 사이드바 배지에 쓴다 — `savedIds.length` 가 아니다
+   * (완료로 옮긴 것은 배지에서 빠져야 한다).
    */
   savedCount: number;
   /**
@@ -122,7 +128,7 @@ const initial = {
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], leases: [], connected: false, channelPrefs: {}, pins: {}, channelMembers: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
-  expandedMessageIds: {}, savedMessages: [], savedCount: 0,
+  expandedMessageIds: {}, savedIds: [], savedCount: 0,
 };
 
 export const useAppStore = create<AppState>((set, get) => ({

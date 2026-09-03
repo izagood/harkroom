@@ -388,12 +388,14 @@ export class ApiClient {
     return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
   }
 
-  async savedMessages(state: 'open' | 'done' = 'open'): Promise<SavedMessageRow[]> {
-    return (await this.req<{ entries: SavedMessageRow[] }>(`GET`, `/saved?state=${state}`)).entries;
+  // #219: `state` 는 **필수**다 — 기본값을 여기서 공급하면 호출부가 어느 탭을 받는지 적지
+  // 않아도 통과하고, 그 화면은 늘 '할 것'만 보게 된다.
+  async savedMessages(state: 'open' | 'done'): Promise<SavedMessageRow[]> {
+    return (await this.req<{ entries: SavedMessageRow[] }>('GET', `/saved?state=${state}`)).entries;
   }
 
-  async savedCount(): Promise<number> {
-    return (await this.req<{ count: number }>('GET', '/saved/count')).count;
+  savedSummary(): Promise<{ openCount: number; messageIds: string[] }> {
+    return this.req('GET', '/saved/summary');
   }
 
   saveMessage(messageId: string): Promise<SavedMessageRow> {

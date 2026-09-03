@@ -59,13 +59,17 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
   );
 }
 
-export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox, onOpenSaved = () => {}, collapsed, onToggleCollapse }: {
+export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox, onOpenSaved, collapsed, onToggleCollapse }: {
   onLogout: () => void;
   onOpenSettings: (section?: SectionId) => void;
   /** 워크스페이스 전체 디렉터리를 연다(#226). 채널 멤버 목록이 아니라 워크스페이스 전체다. */
   onOpenDirectory: () => void;
   onOpenInbox: () => void;
-  onOpenSaved?: () => void;
+  /**
+   * 담아 둔 메시지 패널을 연다(#219). **옵셔널이 아니다** — 기본값을 여기서 공급하면
+   * 배선을 잊은 화면에서도 버튼이 그려지고, 눌러도 아무 일이 없는 항목이 남는다(design.md §4).
+   */
+  onOpenSaved: () => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
@@ -776,8 +780,18 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
           <button className={`${row(false)} text-zinc-400`} onClick={onOpenInbox}>
             Inbox
           </button>
+          {/* #219: 담아 둔 메시지. 배지의 숫자는 **open 개수**다 — 완료로 옮긴 것까지 세면
+              다 처리한 뒤에도 숫자가 남아 할 일이 있다고 거짓을 말한다. */}
           <button className={`${row(false)} text-zinc-400`} onClick={onOpenSaved}>
-            Saved {savedCount > 0 && <span className="ml-auto rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold text-white">{savedCount}</span>}
+            Saved
+            {savedCount > 0 && (
+              <span
+                aria-label={`담아 둔 메시지 ${savedCount}개`}
+                className="ml-auto rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold text-white"
+              >
+                {savedCount}
+              </span>
+            )}
           </button>
           <button className={`${row(false)} text-zinc-400`} onClick={onOpenDirectory}>
             Directory

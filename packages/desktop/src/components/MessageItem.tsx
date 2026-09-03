@@ -51,8 +51,10 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
   const canUnpin = pin !== undefined && (pin.pinnedBy === myId || isAdmin);
   // 보관된 채널은 읽기 전용이라 고정이 거절된다(서버의 `channelPostGate`).
   const isArchived = useAppStore((s) => s.channels.find((c) => c.id === message.channelId)?.archivedAt != null);
-  const savedMessages = useAppStore((s) => s.savedMessages);
-  const isSaved = savedMessages.some((sm) => sm.messageId === message.id);
+  // #219: 담긴 상태는 **id 집합**(open+done 전부)으로 본다. 패널이 받아 온 한 탭의 행들로
+  // 판단하면 '완료' 탭을 한 번 열어 본 뒤로 open 인 메시지가 담기지 않은 것으로 읽힌다.
+  const savedIds = useAppStore((s) => s.savedIds);
+  const isSaved = savedIds.includes(message.id);
 
   const save = () => {
     const next = draft ?? '';
@@ -122,7 +124,13 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
     ...(canUnpin ? [{ label: 'Unpin', onSelect: () => { void getController().unpinMessage(message.channelId, message.id); } }] : []),
     ...(canEdit ? [{ label: 'Edit', onSelect: () => setDraft(message.body) }] : []),
     ...(canDelete && !confirmingDelete ? [{ label: 'Delete', onSelect: () => setConfirmingDelete(true) }] : []),
-    ...(isSaved ? [{ label: 'Unsave', onSelect: () => { void getController().unsaveMessage(message.id); } }] : [{ label: 'Save for later', onSelect: () => { void getController().saveMessage(message.id); } }]),
+    // #219: 나중에 볼 것으로 담기. 담겨 있으면 문구가 해제로 바뀐다 — 같은 자리에 두 항목을
+    // 나란히 두면 어느 것이 지금 상태인지 화면이 말하지 않는다.
+    // 문구는 이 메뉴의 나머지(Pin·Edit·Delete…)와 같은 영문이다: 여기만 한국어로 두면
+    // 한 메뉴 안에서 언어가 갈린다(#219 spec 은 UI 가 한국어라고 보고 "나중에 보기"를 적었다).
+    ...(isSaved
+      ? [{ label: 'Unsave', onSelect: () => { void getController().unsaveMessage(message.id); } }]
+      : [{ label: 'Save for later', onSelect: () => { void getController().saveMessage(message.id); } }]),
   ];
 
   return (

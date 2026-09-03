@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { emitEvent } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { deleteMessage, editMessage, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
-import { listSavedMessages, getSavedMessage, getSavedMessageOpenCount, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
+import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 
@@ -221,20 +221,27 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     return { messages: await searchMessages(pool, req.account!.id, q.q, 50, q.channelId ?? null) };
   });
 
+  // #219: 나중에 볼 메시지. 라우트 전부가 **요청자 자신의 행만** 다룬다 — 남의 큐를 가리키는
+  // 매개변수가 아예 없다(계정 id 는 토큰에서 오고 경로에는 messageId 만 있다).
   app.get('/saved', { preHandler: app.requireAccount }, async (req) => {
     const q = z.object({ state: z.enum(['open', 'done']).optional() }).parse(req.query);
     return { entries: await listSavedMessages(pool, req.account!.id, q.state ?? 'open') };
   });
 
-  app.get('/saved/count', { preHandler: app.requireAccount }, async (req) => {
-    return { count: await getSavedMessageOpenCount(pool, req.account!.id) };
+  // 사이드바 배지(open 개수)와 `⋯` 메뉴 문구(담겼는가)를 한 왕복으로 받는다.
+  app.get('/saved/summary', { preHandler: app.requireAccount }, async (req) => {
+    return getSavedSummary(pool, req.account!.id);
   });
 
   app.put('/saved/:messageId', { preHandler: app.requireAccount }, async (req, reply) => {
     const { messageId } = z.object({ messageId: z.string().uuid() }).parse(req.params);
     const result = await saveMessage(pool, { accountId: req.account!.id, messageId });
+    // 없는(또는 이미 지워진) 메시지와 **볼 수 없는** 메시지를 나눠 답한다 — 후자는 403 이다(#219 결정 2).
     if (result === 'not_found') {
-      return reply.code(404).send({ error: { code: 'not_found', message: 'message not found or not visible' } });
+      return reply.code(404).send({ error: { code: 'not_found', message: 'message not found' } });
+    }
+    if (result === 'forbidden') {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
     return result;
   });
