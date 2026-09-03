@@ -51,6 +51,8 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
   const canUnpin = pin !== undefined && (pin.pinnedBy === myId || isAdmin);
   // 보관된 채널은 읽기 전용이라 고정이 거절된다(서버의 `channelPostGate`).
   const isArchived = useAppStore((s) => s.channels.find((c) => c.id === message.channelId)?.archivedAt != null);
+  const savedMessages = useAppStore((s) => s.savedMessages);
+  const isSaved = savedMessages.some((sm) => sm.messageId === message.id);
 
   const save = () => {
     const next = draft ?? '';
@@ -120,6 +122,7 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
     ...(canUnpin ? [{ label: 'Unpin', onSelect: () => { void getController().unpinMessage(message.channelId, message.id); } }] : []),
     ...(canEdit ? [{ label: 'Edit', onSelect: () => setDraft(message.body) }] : []),
     ...(canDelete && !confirmingDelete ? [{ label: 'Delete', onSelect: () => setConfirmingDelete(true) }] : []),
+    ...(isSaved ? [{ label: 'Unsave', onSelect: () => { void getController().unsaveMessage(message.id); } }] : [{ label: 'Save for later', onSelect: () => { void getController().saveMessage(message.id); } }]),
   ];
 
   return (

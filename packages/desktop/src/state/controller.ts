@@ -1,4 +1,4 @@
-import type { AccountStatus, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, MessageRow, NotifyLevel, WsServerEvent } from '@murmur/shared';
+import type { AccountStatus, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent } from '@murmur/shared';
 import { notifyLevelOf } from '@murmur/shared';
 import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
@@ -57,6 +57,8 @@ export class Controller {
     this.swallow(this.api.channelPrefs().then((prefs) => {
       useAppStore.getState().set({ channelPrefs: Object.fromEntries(prefs.map((p) => [p.channelId, p])) });
     }));
+    // 저장된 메시지 개수도 같은 방식으로fire-and-forget 로딩한다.
+    this.swallow(this.loadSavedCount());
     // 앱을 열자마자 쌓여 있던 미읽음이 한꺼번에 터지면 알림이 소음이 된다.
     for (const e of unread) this.announced.add(e.id);
     // 장기 토큰은 ApiClient 가 헤더로만 쓴다 — WS URL 에는 단기 티켓만 실린다.
@@ -911,6 +913,34 @@ export class Controller {
   /** 초대 토큰을 발급한다 — admin 전용. */
   createInvite(): Promise<string> {
     return this.api.createInvite();
+  }
+
+  async loadSavedMessages(state: 'open' | 'done' = 'open'): Promise<SavedMessageRow[]> {
+    const entries = await this.api.savedMessages(state);
+    useAppStore.getState().set({ savedMessages: entries });
+    return entries;
+  }
+
+  async loadSavedCount(): Promise<number> {
+    const count = await this.api.savedCount();
+    useAppStore.getState().set({ savedCount: count });
+    return count;
+  }
+
+  async saveMessage(messageId: string): Promise<void> {
+    await this.api.saveMessage(messageId);
+    await this.loadSavedCount();
+  }
+
+  async unsaveMessage(messageId: string): Promise<void> {
+    await this.api.unsaveMessage(messageId);
+    await this.loadSavedCount();
+  }
+
+  async updateSavedMessageState(messageId: string, state: 'open' | 'done'): Promise<void> {
+    await this.api.updateSavedMessage(messageId, state);
+    await this.loadSavedMessages(state);
+    await this.loadSavedCount();
   }
 }
 

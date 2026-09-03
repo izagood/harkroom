@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PinRow } from '@murmur/shared';
+import type { AccountStatus, AccountView, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PinRow, SavedMessageRow } from '@murmur/shared';
 
 export interface HistoryEntry {
   channelId: string;
@@ -40,6 +40,14 @@ export interface AppState {
    * 초안처럼 비밀로 다룰 것이 없고, 다음 사람이 열면 서버에서 다시 받는다.
    */
   pins: Record<string, PinRow[]>;
+  /**
+   * 저장된 메시지(#219). state 가 'open' 인 것만 목록에 보인다.
+   */
+  savedMessages: SavedMessageRow[];
+  /**
+   * 저장된 메시지 중 state 가 'open' 인 개수. 사이드바 배지에 쓴다.
+   */
+  savedCount: number;
   /**
    * 채널별 멤버 목록. channelId → members. **키가 없는 것과 빈 배열은 다르다** —
    * 없으면 "아직 안 받았다", 빈 배열이면 "정말 아무도 없다"다. 조회 실패를 빈 배열로
@@ -114,7 +122,7 @@ const initial = {
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], leases: [], connected: false, channelPrefs: {}, pins: {}, channelMembers: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
-  expandedMessageIds: {},
+  expandedMessageIds: {}, savedMessages: [], savedCount: 0,
 };
 
 export const useAppStore = create<AppState>((set, get) => ({

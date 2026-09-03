@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, SavedMessageRow } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -367,5 +367,25 @@ export class ApiClient {
   async search(q: string, channelId?: string | null): Promise<MessageRow[]> {
     const scope = channelId ? `&channelId=${encodeURIComponent(channelId)}` : '';
     return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
+  }
+
+  async savedMessages(state: 'open' | 'done' = 'open'): Promise<SavedMessageRow[]> {
+    return (await this.req<{ entries: SavedMessageRow[] }>(`GET`, `/saved?state=${state}`)).entries;
+  }
+
+  async savedCount(): Promise<number> {
+    return (await this.req<{ count: number }>('GET', '/saved/count')).count;
+  }
+
+  saveMessage(messageId: string): Promise<SavedMessageRow> {
+    return this.req('PUT', `/saved/${messageId}`);
+  }
+
+  updateSavedMessage(messageId: string, state: 'open' | 'done'): Promise<SavedMessageRow> {
+    return this.req('PATCH', `/saved/${messageId}`, { state });
+  }
+
+  unsaveMessage(messageId: string): Promise<void> {
+    return this.req('DELETE', `/saved/${messageId}`);
   }
 }
