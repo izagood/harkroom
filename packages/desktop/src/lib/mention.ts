@@ -1,4 +1,4 @@
-import { MENTION_PATTERN, mentionedHandles } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, MENTION_PATTERN, mentionedHandles } from '@murmur/shared';
 
 // 멘션 문법은 @murmur/shared 에 있다 — 서버의 알림 발송과 같은 규칙을 봐야 한다. 갈라지면
 // 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(me@x.com), 강조된
@@ -43,7 +43,10 @@ export type MessagePart =
  * 아무 @단어나 칠하면 오타가 멘션처럼 보이고, 사용자가 알림이 갔다고 착각한다.
  */
 export function splitMentions(body: string, knownHandles: string[]): MessagePart[] {
-  const known = new Set(knownHandles.map((h) => h.toLowerCase()));
+  // `@channel`(#225)은 그 handle 의 계정이 없어도 칠한다 — 서버가 채널 전체에 알림을
+  // 보내기 때문이다. 여기서 빼면 위 주석이 경계하는 바로 그 불일치가 된다: 강조되지 않은
+  // 것이 몰래 알림을 보낸다. 계정이 있으면 `knownHandles` 에 이미 들어 있어 중복이 없다.
+  const known = new Set([...knownHandles.map((h) => h.toLowerCase()), CHANNEL_MENTION_HANDLE]);
   const parts: MessagePart[] = [];
   let cursor = 0;
 
