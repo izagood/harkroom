@@ -154,16 +154,34 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
             {message.body.trim() && <MessageBody body={message.body} messageId={message.id} />}
             <Attachments attachments={message.attachments} />
             <Reactions message={message} />
-            {/* #254: 답글 컨트롤을 본문 열에 둔다 — 리액션 칩 바로 뒤. 우상단 열에는
-                툴바만 남으므로 right-full 은 의미가 없고, 행 기준 right-2 top-1 로
-                앵커한다. 답글 컨트롤과 툴바가 다른 컨테이너에 있어 구조적으로 겹칠 수
-                없으므로 #143 의 "겹침"은 더 이상 문제가 되지 않는다. */}
+            {/* #254: 답글 컨트롤을 **본문 열**에 둔다 — 리액션 칩 바로 뒤, 왼쪽 정렬.
+                우상단 열에는 툴바만 남으므로 `right-full`("내 우측 = 답글 컨트롤의 좌측")은
+                가리킬 대상이 없어져 뜻을 잃는다. 그래서 툴바는 행 기준 `right-2 top-1` 로
+                앵커한다. 답글 컨트롤과 툴바가 **다른 컨테이너**에 있어 구조적으로 겹칠 수
+                없으므로, #143 이 풀던 "호버 툴바가 답글 pill 을 덮어 스레드 진입이 막힌다"는
+                더 이상 발생할 수 없다 — 앵커를 행으로 되돌려도 마찬가지다. 이 사실을 적어
+                두는 이유는, 답글 컨트롤을 다시 오른쪽 열로 올리는 순간 #143 이 그대로
+                되살아나기 때문이다. */}
             {!inThread && message.replyCount !== null && (
               <button
+                // 답글이 달린 메시지는 호버 없이도 그 사실이 보여야 한다(#161). 답글이 없을
+                // 때만 호버로 드러나되, visibility 가 아니라 opacity 로 숨긴다 —
+                // visibility:hidden 은 접근성 트리에서 요소를 제거해 키보드·스크린리더가
+                // 스레드에 도달할 길을 없앤다(Reactions.tsx 주석이 그 비용을 기록한다).
+                //
+                // **흐름 안에 둔다(absolute 로 띄우지 않는다)**: 이 버튼은 답글이 있으면
+                // 상시 노출되므로, 절대 배치로 본문 위에 올리면 긴 한 줄 메시지를 가린다.
+                //
+                // #161 2단계: 서버의 replyCount 를 쓰고, 참여자 아바타와 마지막 답글 시각을
+                // 보여준다. 참여자 얼굴은 장식이다 — 접근 가능한 이름은 버튼 하나에 붙는다.
+                // 예: "51개의 답글, 마지막 답글 오후 8:24". 이미지가 각각 이름을 갖지
+                // 않도록 opacity 로 숨기고 sr-only 텍스트도 주지 않는다.
                 className="mt-1 self-start flex items-center gap-1 rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[11px] text-indigo-700"
                 onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
                 aria-label={`${message.replyCount} ${message.replyCount === 1 ? 'reply' : 'replies'}${lastReplyTime ? `, last reply ${lastReplyTime}` : ''}`}
               >
+                {/* 참여자 아바타 — 최대 5개, 나머지는 +N 으로 접는다. 장식 용도라 스크린리더가
+                    읽지 않도록 aria-hidden 처리하고 sr-only 도 안 준다. */}
                 <span className="flex -space-x-1" aria-hidden="true">
                   {displayedParticipants.map((id) => (
                     <span key={id} className="ring-1 ring-white">
@@ -190,6 +208,8 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
                 Reply in thread
               </button>
             )}
+            {/* #231: alsoInChannel 메시지는 채널에도 보이므로 스레드에서 왔을 때가 아니라
+                채널에서 볼 때 이 버튼이 필요하다. "View in thread" 로 표시한다. */}
             {!inThread && message.alsoInChannel && message.threadRootId && (
               <button
                 className="mt-1 self-start rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[11px] text-indigo-700"
