@@ -15,8 +15,9 @@ export interface PrefsState extends Prefs {
   setRunnerCommand(command: string): string | null;
 }
 
-// useAppStore 와 반드시 별개다 — appStore.reset() 은 로그아웃 때 도메인 데이터를 비우는데,
-// 설정은 로그아웃해도 남아야 한다.
+// 커뮤니티 스토어(`createAppStore`)와 반드시 별개다 — appStore.reset() 은 로그아웃 때 도메인
+// 데이터를 비우는데, 설정은 로그아웃해도 남아야 한다. #166 이후로도 그대로다: 설정은 기기의
+// 것이라 커뮤니티마다 갈리지 않으므로 레지스트리 밖에 하나로 남는다.
 export const usePrefsStore = create<PrefsState>((set, get) => {
   /**
    * 저장할 `Prefs` 를 만든다. **필드를 손으로 나열하지 않는다**(#250).

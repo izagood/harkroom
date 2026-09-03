@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getController } from '../state/controller';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import type { LinkPreviewView } from '@murmur/shared';
 
 /**
@@ -19,7 +19,7 @@ export function LinkPreview({ url }: { url: string }) {
   const [preview, setPreview] = useState<LinkPreviewView | null>(null);
   // 가져오기는 비동기라 메시지가 먼저 뜬다 — 서버가 "준비됐다"고 하면 다시 읽는다(#215).
   // 이 신호가 없으면 카드는 이 메시지를 다시 그릴 때까지(사실상 앱을 다시 켤 때까지) 안 보인다.
-  const readyAt = useAppStore((s) => s.linkPreviewReadyAt[url]);
+  const readyAt = useActiveStore((s) => s.linkPreviewReadyAt[url]);
 
   useEffect(() => {
     let cancelled = false;

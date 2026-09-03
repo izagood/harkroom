@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { SavedMessageRow } from '@murmur/shared';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 
 interface Props {
@@ -16,10 +16,10 @@ type LoadState = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; mess
 type Tab = 'open' | 'done';
 
 export function SavedMessages({ open, onClose }: Props) {
-  const channels = useAppStore((s) => s.channels);
-  const dms = useAppStore((s) => s.dms);
-  const accounts = useAppStore((s) => s.accounts);
-  const me = useAppStore((s) => s.me);
+  const channels = useActiveStore((s) => s.channels);
+  const dms = useActiveStore((s) => s.dms);
+  const accounts = useActiveStore((s) => s.accounts);
+  const me = useActiveStore((s) => s.me);
 
   const [entries, setEntries] = useState<SavedMessageRow[]>([]);
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
