@@ -77,6 +77,17 @@ export interface RunnerSpawner {
   spawn(req: SpawnRequest): Promise<RunnerProcess>;
 }
 
+/**
+ * 로그인 셸의 `PATH` 를 읽는 표면(#305). 자식 프로세스와 마찬가지로 **주입한다** —
+ * 테스트가 "조회에 실패했다"를 만들 수 없으면 그 경로의 회귀선을 걸 자리가 없다.
+ *
+ * `null` 은 '얻지 못했다'다(실패했거나 빈 문자열이었다). 그때 조용히 기존 `PATH` 로
+ * 넘어가지 않는 것이 이 기능의 요점이다 — 그것이 지금의 실패 모습이다.
+ */
+export interface LoginPathReader {
+  read(): Promise<string | null>;
+}
+
 export interface RunnerApi {
   baseUrl: string;
   mintPat(accountId: string, label: string): Promise<string>;
@@ -111,6 +122,11 @@ export interface StartAllInput {
   liveAccountIds: Set<string> | null;
   /** 러너를 돌릴 murmur 저장소 경로. 비어 있으면 띄우지 않고 사람에게 설정하라고 말한다. */
   repoPath: string;
+  /**
+   * 설정이 지정한 `pnpm` 실행 파일의 **절대 경로**(#305). 빈 문자열은 '정하지 않았다'다.
+   * `validateRunnerCommand` 를 통과한 값만 여기 들어온다.
+   */
+  runnerCommand: string;
 }
 
 /** 살아 있는 PAT 라벨의 접두사. 회전 라벨(`desktop:<id>#<epoch>`)도 이 접두사를 갖는다. */
@@ -128,8 +144,70 @@ export const patLabelPrefix = (deviceId: string): string => `desktop:${deviceId}
 export const RUNNER_SCOPE_NAME = 'murmur-runner';
 export const RUNNER_ARGS = ['--filter', '@murmur/agent', 'start'];
 
+/**
+ * 로그인 셸의 `PATH` 를 얻는 스코프 항목(#305). **인자가 배열 리터럴로 못박혀 있다** —
+ * `sh` 를 허용하되 `['-lc', 'echo $PATH']` **그 한 줄만** 허용하므로 와일드카드가 아니다.
+ * `args: true` 나 정규식 인자로 바꾸는 순간 웹뷰가 임의 명령을 실행할 수 있게 되고, 그것이
+ * `#250` 의 보안 회귀선(`runnerShellScope.test.ts`)이 지키는 경계다.
+ *
+ * 왜 이것이 필요한가: macOS 에서 Dock/Finder 로 띄운 앱은 로그인 셸의 `PATH` 를 물려받지
+ * 않는다(`/usr/bin:/bin:/usr/sbin:/sbin` 정도다). `docs/operations.md` §8-1 이 launchd
+ * 감독에서 같은 함정을 이미 기록해 뒀다 — 같은 것을 다시 발견하지 마라.
+ */
+export const LOGIN_PATH_SCOPE_NAME = 'login-path';
+export const LOGIN_PATH_ARGS = ['-lc', 'echo $PATH'];
+
+/** 설정이 받는 값의 끝. 이것으로 끝나지 않으면 저장을 거절한다. */
+export const RUNNER_COMMAND_SUFFIX = '/pnpm';
+
 const REPO_PATH_MISSING =
   '러너를 돌릴 murmur 저장소 경로가 설정되지 않았다 — 설정 → 연결에서 지정한다';
+
+/**
+ * `PATH` 를 얻지도 못했고 설정도 비어 있을 때 사람이 보는 문장(#305).
+ *
+ * **무엇을 하라는 말이 들어 있어야 한다.** '기동 실패' 만 남기면 사람이 할 수 있는 일이
+ * 없고, 그것이 `docs/design.md` §4 가 금지하는 거짓 신호다. 이 문장은 화면의 보이는
+ * 자리에 붙는다(`RunnerStatusLine`) — `sr-only` 나 콘솔이 아니다.
+ */
+export const RUNNER_COMMAND_MISSING =
+  '러너 명령을 찾을 수 없다 — 로그인 셸의 PATH 를 읽지 못했다. 설정 → 연결에서 pnpm 의 절대 경로를 지정하라';
+
+/**
+ * 설정이 받는 러너 명령을 검사한다(#305). 문제가 없으면 `null`, 있으면 사람이 읽는 사유.
+ *
+ * **`pnpm` 실행 파일의 절대 경로만 받는다.** 명령 전체(프로그램 + 인자)를 사용자가 정하게
+ * 하면 그것이 곧 임의 실행 표면이다 — `#250` 이 명령을 설정에서 받지 않기로 한 이유가
+ * 그것이고, 여기서도 인자는 앱이 고정한다(`RUNNER_ARGS`).
+ *
+ * 이 경로는 **프로그램으로 넘어가지 않는다**: Tauri 의 shell 스코프에서 `cmd` 는 설정
+ * 파일이 정하고 JS 는 항목 **이름**만 고를 수 있다(`Command.create` 의 첫 인자). 그래서
+ * 이 값은 디렉터리로 쪼개져 자식 `PATH` 에 들어가고, 스코프의 `cmd: "pnpm"` 이 그것으로
+ * 해석된다 — 스코프는 한 글자도 넓어지지 않는다.
+ */
+export function validateRunnerCommand(value: string): string | null {
+  const v = value.trim();
+  if (!v) return null; // 비어 있음은 '정하지 않았다'다 — 오류가 아니다.
+  if (!v.startsWith('/')) {
+    return '절대 경로여야 한다 — `/` 로 시작해야 한다';
+  }
+  // `..` 를 막는 이유: `/opt/homebrew/bin/../../../usr/bin/pnpm` 처럼 끝만 맞춘 경로가
+  // 실제로 가리키는 디렉터리를 사람이 읽어서 알 수 없게 된다.
+  if (v.split('/').includes('..')) {
+    return '`..` 가 들어간 경로는 받지 않는다 — 실제로 가리키는 곳이 보이지 않는다';
+  }
+  if (!v.endsWith(RUNNER_COMMAND_SUFFIX)) {
+    return `pnpm 실행 파일의 절대 경로여야 한다 — \`...${RUNNER_COMMAND_SUFFIX}\` 로 끝나야 한다`;
+  }
+  return null;
+}
+
+/** 설정의 절대 경로에서 자식 `PATH` 에 넣을 디렉터리를 뽑는다. 값이 없거나 틀렸으면 `null`. */
+export function runnerCommandDir(value: string): string | null {
+  const v = value.trim();
+  if (!v || validateRunnerCommand(v) !== null) return null;
+  return v.slice(0, v.length - RUNNER_COMMAND_SUFFIX.length) || '/';
+}
 
 export class RunnerLauncher {
   /** 이 앱이 띄운 자식만. 외부 러너는 여기 없다(앱은 그것을 죽일 수도, 죽여서도 안 된다). */
@@ -137,10 +215,19 @@ export class RunnerLauncher {
   private states = new Map<string, RunnerState>();
   private onStateChange?: (states: RunnerState[]) => void;
 
+  /**
+   * 로그인 셸 `PATH` 조회 결과의 캐시(#305). **프로세스 생애 동안 한 번만 읽는다** —
+   * 자식을 띄울 때마다 셸을 부르면 러너 수만큼 셸이 뜨고, 값은 어차피 바뀌지 않는다.
+   * 실패도 캐시한다: 실패를 캐시하지 않으면 셸이 없는 환경에서 매번 다시 시도한다.
+   */
+  private loginPathOnce: Promise<string | null> | null = null;
+
   constructor(
     private api: RunnerApi,
     private secrets: RunnerSecretStore,
     private spawner: RunnerSpawner,
+    /** 로그인 셸의 `PATH` 를 읽는 표면(#305). 테스트가 실패를 만들 수 있게 주입한다. */
+    private loginPath: LoginPathReader = tauriLoginPathReader,
     /** 회전 라벨에 들어가는 시각. 테스트가 고정할 수 있게 주입한다. */
     private now: () => number = () => Date.now(),
   ) {}
@@ -205,7 +292,7 @@ export class RunnerLauncher {
 
     const pat = await this.ensurePat(agent.id);
     if (!pat) return; // 사유는 ensurePat 이 상태에 남겼다.
-    await this.spawnRunner(agent, pat.token, input.repoPath);
+    await this.spawnRunner(agent, pat.token, input.repoPath, input.runnerCommand);
   }
 
   /**
@@ -242,12 +329,42 @@ export class RunnerLauncher {
     return stored;
   }
 
+  /**
+   * 자식이 쓸 `PATH` 를 정한다(#305). 순서가 곧 결정이다:
+   *
+   * 1. 로그인 셸의 `PATH` 를 **한 번** 읽어 캐시한다.
+   * 2. 설정에 `pnpm` 의 절대 경로가 있으면 그 **디렉터리를 앞에** 붙인다 — 사람이 고른
+   *    것이 이기되, 로그인 셸의 나머지는 버리지 않는다(`pnpm` 은 `node` 를 `PATH` 에서
+   *    찾는다. 디렉터리 하나만 남기면 그 다음이 안 뜬다).
+   * 3. 둘 다 없으면 **띄우지 않고 사유를 남긴다.** 여기서 조용히 앱의 `PATH` 로 시도하는
+   *    것이 지금의 실패 모습이다 — Dock 으로 띄운 앱의 `PATH` 에는 `pnpm` 이 없다
+   *    (`docs/operations.md` §8-1 의 같은 함정).
+   */
+  private async resolveChildPath(
+    runnerCommand: string,
+  ): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+    this.loginPathOnce ??= this.loginPath.read()
+      .then((p) => (p && p.trim() ? p.trim() : null))
+      .catch(() => null);
+    const login = await this.loginPathOnce;
+    const dir = runnerCommandDir(runnerCommand);
+
+    if (dir) return { ok: true, path: login ? `${dir}:${login}` : dir };
+    if (login) return { ok: true, path: login };
+    return { ok: false, error: RUNNER_COMMAND_MISSING };
+  }
+
   private async spawnRunner(
-    agent: LaunchableAgent, token: string, repoPath: string,
+    agent: LaunchableAgent, token: string, repoPath: string, runnerCommand: string,
   ): Promise<void> {
+    const path = await this.resolveChildPath(runnerCommand);
+    if (!path.ok) {
+      this.setState(agent.id, { status: 'failed', exitCode: null, message: path.error });
+      return;
+    }
     const child = await this.spawner.spawn({
       cwd: repoPath,
-      env: { MURMUR_PAT: token, MURMUR_URL: this.api.baseUrl },
+      env: { MURMUR_PAT: token, MURMUR_URL: this.api.baseUrl, PATH: path.path },
       onExit: (code) => this.handleExit(agent.id, code),
     });
     this.runners.set(agent.id, child);
@@ -286,7 +403,9 @@ export class RunnerLauncher {
    * 시각을 붙여 새 라벨로 발급하고 곧바로 옛 라벨을 폐기한다 — 두 개가 함께 사는 시간은
    * 그 사이뿐이다.
    */
-  async reissue(target: { agent: LaunchableAgent; repoPath: string }): Promise<void> {
+  async reissue(
+    target: { agent: LaunchableAgent; repoPath: string; runnerCommand: string },
+  ): Promise<void> {
     const agentId = target.agent.id;
     if (!target.repoPath) {
       this.setState(agentId, { status: 'failed', exitCode: null, message: REPO_PATH_MISSING });
@@ -331,7 +450,7 @@ export class RunnerLauncher {
     }
 
     await this.stop(agentId);
-    await this.spawnRunner(target.agent, token, target.repoPath);
+    await this.spawnRunner(target.agent, token, target.repoPath, target.runnerCommand);
     if (revokeError) {
       this.setState(agentId, {
         status: 'running', exitCode: null,
@@ -473,5 +592,31 @@ export const tauriSpawner: RunnerSpawner = {
     cmd.on('error', () => once(null));
     const child = await cmd.spawn();
     return { kill: () => child.kill() };
+  },
+};
+
+/**
+ * 로그인 셸의 `PATH` 를 한 번 읽는다(#305).
+ *
+ * `sh -lc 'echo $PATH'` 는 **`PATH` 를 얻기 위해서만** 돈다 — 러너를 이 셸로 띄우는 것이
+ * 아니다. 스코프(`capabilities/default.json` 의 `login-path`)가 `sh` 에 그 인자 배열
+ * 하나만 허용하므로, 웹뷰가 이 이름으로 부를 수 있는 것은 이 한 줄뿐이다.
+ *
+ * `execute()` 를 쓰는 이유: 이 명령은 자식으로 살아 있을 필요가 없고 **stdout 한 줄**이
+ * 전부다. `spawn` 으로 띄우면 종료를 기다리며 이벤트를 모아야 하는데, 얻는 것이 같다.
+ *
+ * 실패는 `null` 로 올라간다 — 셸이 없거나(윈도우) 스코프가 막았거나 비어 있으면 호출자가
+ * 설정의 절대 경로로 넘어간다.
+ */
+export const tauriLoginPathReader: LoginPathReader = {
+  async read() {
+    try {
+      const out = await Command.create(LOGIN_PATH_SCOPE_NAME, LOGIN_PATH_ARGS).execute();
+      if (out.code !== 0) return null;
+      const value = out.stdout.trim();
+      return value || null;
+    } catch {
+      return null;
+    }
   },
 };

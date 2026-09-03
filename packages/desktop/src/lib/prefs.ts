@@ -24,6 +24,16 @@ export interface Prefs {
    * 원인이 사람이 볼 수 없는 곳에 숨는다. 비어 있으면 띄우지 않고 그 사실을 말한다.
    */
   runnerRepoPath: string;
+  /**
+   * `pnpm` 실행 파일의 절대 경로(#305). 빈 문자열은 '정하지 않았다'다 — 그때는 로그인
+   * 셸에서 읽은 `PATH` 로 `pnpm` 을 찾는다.
+   *
+   * **왜 명령 전체가 아니라 `pnpm` 의 경로인가:** 명령 전체를 사람이 정하게 하면 그것이
+   * 곧 임의 실행 표면이다(#250 이 명령을 설정에서 받지 않기로 한 이유). 인자는 앱이
+   * 고정하고(`RUNNER_ARGS`), 이 값은 `.../pnpm` 으로 끝나는 절대 경로만 받는다 —
+   * `validateRunnerCommand` 를 통과하지 못한 값은 저장하지 않는다.
+   */
+  runnerCommand: string;
 }
 
 const KEY = 'murmur.prefs';
@@ -54,6 +64,7 @@ export const DEFAULT_PREFS: Prefs = {
   sidebarCollapsed: false,
   runnerAutoStart: true,
   runnerRepoPath: '',
+  runnerCommand: '',
 };
 
 export const prefsStorage = {
@@ -70,6 +81,7 @@ export const prefsStorage = {
         sidebarCollapsed: parsed.sidebarCollapsed ?? DEFAULT_PREFS.sidebarCollapsed,
         runnerAutoStart: parsed.runnerAutoStart ?? DEFAULT_PREFS.runnerAutoStart,
         runnerRepoPath: parsed.runnerRepoPath ?? DEFAULT_PREFS.runnerRepoPath,
+        runnerCommand: parsed.runnerCommand ?? DEFAULT_PREFS.runnerCommand,
       };
     } catch {
       return DEFAULT_PREFS;
