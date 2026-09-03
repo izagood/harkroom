@@ -49,9 +49,11 @@ function UnreadBadge({ channelId, muted }: { channelId: string; muted: boolean }
   );
 }
 
-export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse }: {
+export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, collapsed, onToggleCollapse }: {
   onLogout: () => void;
   onOpenSettings: (section?: SectionId) => void;
+  /** 워크스페이스 전체 디렉터리를 연다(#226). 채널 멤버 목록이 아니라 워크스페이스 전체다. */
+  onOpenDirectory: () => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
@@ -441,6 +443,11 @@ export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse 
           </div>
         )}
         <div>
+          {/* 디렉터리는 조회 전용이라 admin 여부를 보지 않는다 — 누가 이 워크스페이스에
+              있는지는 모두가 알아야 한다. 계정 관리는 아래 설정 진입점의 몫이다. */}
+          <button className={`${row(false)} text-zinc-400`} onClick={onOpenDirectory}>
+            Directory
+          </button>
           <button className={`${row(false)} text-zinc-400`} onClick={() => onOpenSettings('agents')}>
             + Add or edit agents
           </button>
