@@ -9,7 +9,18 @@ import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { dayLabel, localDayKey } from '../lib/day';
 
-export function ChannelPane() {
+interface ChannelPaneProps {
+  /**
+   * 검색 팔레트를 여는 요청. `scoped` 는 "지금 보는 대화로 좁혀서" 라는 뜻이다.
+   *
+   * 옵셔널인 이유는 이 컴포넌트를 홀로 띄우는 기존 테스트가 많아서다. 안 넘기면 버튼이
+   * 아무 일도 하지 않으므로 배선이 끊기면 조용히 죽은 버튼이 된다 —
+   * `test/searchEntryPoint.test.tsx` 가 Workspace 를 통째로 띄워 그 배선을 지킨다.
+   */
+  onOpenSearch?: (scoped: boolean) => void;
+}
+
+export function ChannelPane({ onOpenSearch }: ChannelPaneProps) {
   const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins } = useAppStore();
   const bottomRef = useRef<HTMLDivElement>(null);
   // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
@@ -83,6 +94,17 @@ export function ChannelPane() {
           onClick={() => setFilesOpen((v) => !v)}
         >
           파일
+        </button>
+        {/* 검색은 ⌘K 로도 열리지만 단축키만으로는 보이지 않는다(#258). 헤더 버튼은
+            **지금 보는 대화로 좁힌 채** 열고, ⌘K 는 전역으로 남는다 — 두 진입점이 서로
+            다른 뜻을 가지므로 title 에 그 차이를 적는다. DM 에도 같은 버튼이 나온다. */}
+        <button
+          className="shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
+          onClick={() => onOpenSearch?.(true)}
+          aria-label="이 채널에서 찾기"
+          title="이 채널에서 찾기 (⌘K 는 전체 검색)"
+        >
+          검색
         </button>
       </header>
       {/* 고정된 메시지(#218). 핀이 하나도 없으면 아무것도 그리지 않는다 — 늘 있는 빈 줄은

@@ -20,6 +20,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
   const history = useAppStore((s) => s.history);
   const historyIndex = useAppStore((s) => s.historyIndex);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchInitialScoped, setSearchInitialScoped] = useState(false);
   const [sweepOpen, setSweepOpen] = useState(false);
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
@@ -34,6 +35,11 @@ export function Workspace({ onLogout, onOpenSettings }: {
       sidebarStorage.saveCollapsed(newValue);
       return newValue;
     });
+  }, []);
+
+  const handleOpenSearch = useCallback((scoped: boolean) => {
+    setSearchInitialScoped(scoped);
+    setSearchOpen(true);
   }, []);
 
   const handleGoBack = useCallback(async () => {
@@ -54,6 +60,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
 
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
+        setSearchInitialScoped(false);
         setSearchOpen(true);
         return;
       }
@@ -138,11 +145,11 @@ export function Workspace({ onLogout, onOpenSettings }: {
             보여 줄 자리 자체가 없다. */}
         <Notice />
         <div className="flex flex-1 overflow-hidden">
-          <ChannelPane />
+          <ChannelPane onOpenSearch={handleOpenSearch} />
           {threadRootId && <ThreadPanel />}
         </div>
       </div>
-      <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} initialScoped={searchInitialScoped} />
       <Sweep open={sweepOpen} onClose={() => setSweepOpen(false)} />
       <Directory open={directoryOpen} onClose={() => setDirectoryOpen(false)} />
       <Inbox open={inboxOpen} onClose={() => setInboxOpen(false)} />
