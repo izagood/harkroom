@@ -347,11 +347,29 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, collapsed, 
       const members = channelMembers[ch.id];
       const memberIds = new Set((members ?? []).map((m) => m.accountId));
       const invitable = Object.values(accounts).filter((a) => !memberIds.has(a.id));
+      const isMember = !!me && memberIds.has(me.id);
+      /**
+       * 초대 가능 여부는 **서버 게이트(`assertChannelVisible`)와 같은 술어**다: public 표준
+       * 채널은 누구나, private 은 그 채널의 멤버만이다. 넓게 잡으면 admin 이 자기가 없는
+       * private 채널에서 초대를 눌러 403 을 받는다 — 눌러서 실패하는 항목은 "할 수 있다"는
+       * 거짓 신호다(docs/design.md §4). 목록을 아직 못 받았으면 판정할 근거가 없으므로
+       * 내주지 않는다.
+       */
+      const canInvite = members !== undefined && (ch.visibility === 'public' || isMember);
       return (
-        <div key={ch.id} className="mt-1 rounded border border-zinc-700 bg-zinc-800 p-1">
+        <div key={ch.id} data-testid={`members-${ch.id}`} className="mt-1 rounded border border-zinc-700 bg-zinc-800 p-1">
           <div className="mb-1 text-xs text-zinc-400">
             {ch.visibility === 'private' ? '🔒' : '#'}{ch.name} 멤버
           </div>
+          {/* public 과 private 에서 이 목록의 **뜻이 다르다**. public 채널은 멤버가 아니어도
+              읽고 쓸 수 있으므로 여기 적힌 사람들은 "볼 수 있는 사람"이 아니라 구독자다 —
+              그 말을 하지 않으면 목록에 없는 사람은 못 본다는 뜻으로 읽힌다. private 은
+              반대로 이 목록이 곧 볼 수 있는 사람의 전부다. */}
+          <p className="mb-1 text-[10px] text-zinc-500">
+            {ch.visibility === 'private'
+              ? '이 목록이 이 채널을 볼 수 있는 사람의 전부다.'
+              : '누구나 읽고 쓸 수 있는 채널이다 — 이 목록은 구독한 사람이지, 볼 수 있는 사람의 전부가 아니다.'}
+          </p>
           {memberError && <p role="alert" className="mb-1 text-[10px] text-red-400">{memberError}</p>}
           {/* 키 자체가 없으면 '아직 못 받았다'다 — 빈 목록으로 그리면 거짓 사실이 된다. */}
           {members === undefined
@@ -359,21 +377,41 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, collapsed, 
             : (
               <ul className="mb-1 space-y-0.5">
                 {members.length === 0 && <li className="text-[10px] text-zinc-500">멤버가 없다</li>}
-                {members.map((m) => (
-                  <li key={m.accountId} className="flex items-center gap-1 text-xs text-zinc-300">
-                    <span>@{m.handle}</span>
-                    {me?.isAdmin && m.accountId !== me?.id && (
-                      <button
-                        className="ml-auto rounded px-1 text-[10px] text-zinc-500 hover:bg-zinc-700 hover:text-red-400"
-                        aria-label={`${m.handle} 내보내기`}
-                        onClick={() => void getController().leaveChannel(ch.id, m.accountId)
-                          .catch((err: unknown) => setMemberError(err instanceof Error ? err.message : '내보내기에 실패했다'))}
-                      >
-                        내보내기
-                      </button>
-                    )}
-                  </li>
-                ))}
+                {members.map((m) => {
+                  // 디렉터리에 없는 계정은 **아무 종류도 주장하지 않는다** — 모르는 것을
+                  // '사람'으로 그리면 에이전트가 사람으로 보이는 거짓 사실이 된다.
+                  const account = accounts[m.accountId];
+                  return (
+                    <li key={m.accountId} className="flex items-center gap-1 text-xs text-zinc-300">
+                      <span>@{m.handle}</span>
+                      {account && (
+                        <span className="rounded bg-zinc-700 px-1 text-[10px] text-zinc-300">
+                          {account.kind === 'agent' ? '에이전트' : '사람'}
+                        </span>
+                      )}
+                      {/* 채널 역할이 아니라 **계정 속성**이다 — 채널별 역할은 아직 없다(#183).
+                          그래서 'admin' 이 아니라 '워크스페이스 admin' 이라고 적는다. */}
+                      {account?.isAdmin && (
+                        <span
+                          className="rounded bg-zinc-700 px-1 text-[10px] text-amber-300"
+                          title="워크스페이스 admin — 채널 역할이 아니다"
+                        >
+                          워크스페이스 admin
+                        </span>
+                      )}
+                      {me?.isAdmin && m.accountId !== me?.id && (
+                        <button
+                          className="ml-auto rounded px-1 text-[10px] text-zinc-500 hover:bg-zinc-700 hover:text-red-400"
+                          aria-label={`${m.handle} 내보내기`}
+                          onClick={() => void getController().leaveChannel(ch.id, m.accountId)
+                            .catch((err: unknown) => setMemberError(err instanceof Error ? err.message : '내보내기에 실패했다'))}
+                        >
+                          내보내기
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           {leaveConfirmId === ch.id && (
@@ -381,31 +419,37 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, collapsed, 
               나가면 아무도 이 채널을 볼 수 없다 — 마지막 멤버다. 채널은 지워지지 않는다.
             </p>
           )}
-          <div className="mb-1 flex items-center gap-1">
-            <select
-              aria-label="초대할 계정"
-              className="flex-1 rounded bg-zinc-900 px-1 py-0.5 text-xs text-zinc-200"
-              value={inviteAccountId}
-              onChange={(e) => setInviteAccountId(e.target.value)}
-            >
-              <option value="">계정 선택…</option>
-              {invitable.map((a) => <option key={a.id} value={a.id}>@{a.handle}</option>)}
-            </select>
-            <button
-              className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-500 disabled:opacity-40"
-              disabled={!inviteAccountId}
-              onClick={() => void submitInvite(ch.id)}
-            >
-              초대
-            </button>
-          </div>
+          {canInvite && (
+            <div className="mb-1 flex items-center gap-1">
+              <select
+                aria-label="초대할 계정"
+                className="flex-1 rounded bg-zinc-900 px-1 py-0.5 text-xs text-zinc-200"
+                value={inviteAccountId}
+                onChange={(e) => setInviteAccountId(e.target.value)}
+              >
+                <option value="">계정 선택…</option>
+                {invitable.map((a) => <option key={a.id} value={a.id}>@{a.handle}</option>)}
+              </select>
+              <button
+                className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-500 disabled:opacity-40"
+                disabled={!inviteAccountId}
+                onClick={() => void submitInvite(ch.id)}
+              >
+                초대
+              </button>
+            </div>
+          )}
           <div className="flex gap-1">
-            <button
-              className="rounded px-2 py-0.5 text-xs text-red-400 hover:bg-zinc-700"
-              onClick={() => void (leaveConfirmId === ch.id ? confirmLeave(ch.id) : requestLeave(ch.id))}
-            >
-              {leaveConfirmId === ch.id ? '정말 나가기' : '나가기'}
-            </button>
+            {/* 멤버가 아니면 나갈 것이 없다. public 채널에서 비멤버의 '나가기'는 서버가
+                200 으로 받아 주지만 아무 일도 일어나지 않는다 — 그런 항목은 만들지 않는다. */}
+            {isMember && (
+              <button
+                className="rounded px-2 py-0.5 text-xs text-red-400 hover:bg-zinc-700"
+                onClick={() => void (leaveConfirmId === ch.id ? confirmLeave(ch.id) : requestLeave(ch.id))}
+              >
+                {leaveConfirmId === ch.id ? '정말 나가기' : '나가기'}
+              </button>
+            )}
             <button
               className="rounded px-2 py-0.5 text-xs text-zinc-400 hover:bg-zinc-700"
               onClick={closeMembers}
@@ -450,6 +494,9 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, collapsed, 
     // 않는다. 0 이면 보낼 것이 없으므로 항목을 아예 만들지 않는다: 눌러도 아무 일이 없는
     // 항목은 "할 수 있다"는 거짓 신호다(docs/design.md §4).
     const lastSeq = Math.max(0, ...(messages[ch.id] ?? []).map((m) => m.seq));
+    // 목록을 아직 못 받았으면 undefined 다 — 그때는 '모른다'이지 '아니다'가 아니다.
+    const knownMembers = channelMembers[ch.id];
+    const knownMember = knownMembers === undefined || (!!me && knownMembers.some((m) => m.accountId === me.id));
     const menuItems = [
       ...(lastSeq > 0 ? [{
         // 마지막 메시지부터 미읽음 — 결과는 미읽음 1, 즉 "이 채널 다시 보라"는 표시다.
@@ -463,8 +510,12 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, collapsed, 
         : { label: '보관', onSelect: () => void getController().archiveChannel(ch.id, true) }]
       : []),
       { label: '멤버 보기', onSelect: () => void openMembers(ch.id) },
-      { label: '초대', onSelect: () => void openMembers(ch.id) },
-      { label: '나가기', onSelect: () => void requestLeave(ch.id) },
+      // 초대와 나가기는 **그 채널의 멤버**여야 하는 동작이다(public 채널의 초대는 예외 —
+      // 서버 게이트가 누구나 통과시킨다). 메뉴는 목록을 받기 전에도 그려지므로 아직
+      // 모르는 것을 '아니다'로 단정하지 않는다: 목록을 받아 아닌 것이 확인된 때만 뺀다.
+      ...(ch.visibility === 'public' || knownMember
+        ? [{ label: '초대', onSelect: () => void openMembers(ch.id) }] : []),
+      ...(knownMember ? [{ label: '나가기', onSelect: () => void requestLeave(ch.id) }] : []),
       { label: '채널명 복사', onSelect: copyChannelName },
       { label: '채널 ID 복사', onSelect: copyChannelId },
       { label: isMuted ? '음소거 해제' : '음소거', onSelect: () => void getController().toggleChannelMute(ch.id) },
