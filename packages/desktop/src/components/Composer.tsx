@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
+import { parseMessagePermalink } from '@murmur/shared';
 import type { AccountView, AttachmentRow } from '@murmur/shared';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
@@ -279,6 +280,37 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     });
   };
 
+  /**
+   * 붙여넣은 것이 **퍼머링크 하나뿐**이면 글자로 넣지 않고 그 메시지로 이동한다(#228).
+   * 이 자리가 없으면 "Copy link" 는 어디에도 쓸 수 없는 문자열만 만든다 — 누를 수 있고,
+   * 성공했다고 말하고, 결과물은 쓸 데가 없는 거짓 신호다(design.md §4).
+   *
+   * 판정은 `parseMessagePermalink` 에 맡긴다. 그 함수는 **전체 일치만** 링크로 보므로
+   * 문장 속에 섞인 링크는 여기서 걸리지 않는다 — 그게 맞다. 인용하려고 문장째 붙여넣은
+   * 사람을 끌고 가면 쓰던 글을 잃는다.
+   *
+   * 컨트롤러를 **먼저** 잡고 나서 기본 동작을 막는다. 순서가 뒤바뀌면 아직 컨트롤러가
+   * 없는 순간에 붙여넣은 글자만 사라지고 이동도 못 한다 — 둘 다 잃는 것이 가장 나쁘다.
+   */
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const messageId = parseMessagePermalink(e.clipboardData.getData('text'));
+    // 링크가 아니면 아무것도 하지 않는다 — 평범한 붙여넣기다.
+    if (!messageId) return;
+    let controller: ReturnType<typeof getController> | null = null;
+    try { controller = getController(); } catch { /* 아직 없다 — 평범한 붙여넣기로 둔다 */ }
+    if (!controller) return;
+    // 가로챘으면 초안에 넣지 않는다 — 이동하면서 남은 글자가 초안을 더럽힌다.
+    e.preventDefault();
+    // 링크가 가리키는 메시지를 못 여는 사유(사라짐·볼 수 없음·연결 실패)는 openMessage 가
+    // 스스로 사람 앞에 세운다. 여기서 남는 것은 그보다 뒤에서 터진 경우(채널·스레드를
+    // 여는 중 연결이 끊김)뿐이고, 그것도 조용히 삼키면 링크를 누른 사람은 앱이 멈춘 줄 안다.
+    void controller.openMessage(messageId).catch(() => {
+      useAppStore.getState().set({
+        notice: 'Could not open that message. Check your connection and try again.',
+      });
+    });
+  };
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (open) {
       if (e.key === 'ArrowDown') {
@@ -416,6 +448,7 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
           recompute(t.value, t.selectionStart);
         }}
         onKeyDown={onKeyDown}
+        onPaste={onPaste}
       />
       <div className="mt-1 flex items-center justify-between">
         <div className="flex items-center gap-1">
