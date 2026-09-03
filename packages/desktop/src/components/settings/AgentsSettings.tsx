@@ -6,6 +6,34 @@ import {
 import { getController } from '../../state/controller';
 import { useAppStore } from '../../state/appStore';
 
+/** 클립보드 복사 실패 시 조용히 넘어가지 않고 텍스트를 선택해 ⌘C 있게 한다. */
+const copyToClipboard = async (text: string, onError: (msg: string) => void): Promise<boolean> => {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // 권한 없음 등 → 아래 fallback 으로
+    }
+  }
+  // 비보안 컨텍스트나 clipboard API 없음 → 텍스트 선택
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand('copy');
+    return true;
+  } catch {
+    onError('복사 실패: 텍스트를 선택했으니 ⌘C 로 복사하세요');
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
+  }
+};
+
 /** AGENT_HARNESSES 에조차 없는 harness. 없는 것은 사용자의 CLI 가 아니라 murmur 의 구현이므로
  *  '설치 안 됨'이 아니라 '지원 예정'이다. AGENT_HARNESSES 에는 있지만 아직 못 돌리는 것(RUNNABLE_HARNESSES
  *  밖)은 아래 select 렌더링에서 따로 disabled 처리한다 — 여기 중복해서 적지 않는다. */
@@ -100,6 +128,8 @@ export function AgentsSettings() {
   const [newPatLabel, setNewPatLabel] = useState('runner');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // 복사 성공 시 버튼 문구를 잠깐 "복사됨"으로 바꾼다(2초).
+  const [copySuccess, setCopySuccess] = useState<string | null>(null);
   const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
   const accounts = useAppStore((s) => s.accounts);
   // #176: 생존(presence)과 마지막 활동은 **다른 두 사실**이라 두 자리에서 온다 — presence 는
@@ -762,8 +792,22 @@ export function AgentsSettings() {
                 {/* #125: 이 명령의 토큰을 자르고 말줄임표를 붙여 두면, 그대로 복사해 실행했을 때
                     인증이 실패한다 — "완성된 명령"처럼 보이는데 아니었다. 전체 토큰을 싣는다.
                     바로 위 코드 블록에 이미 전체 토큰이 있으므로 중복 노출이 새 위험은 아니다. */}
-                <div className="mt-2 break-all font-mono text-[11px] text-amber-900">
-                  MURMUR_PAT={pat} pnpm --filter @murmur/agent start
+                <div className="mt-2 flex items-center gap-2 break-all font-mono text-[11px] text-amber-900">
+                  <span>MURMUR_PAT={pat} pnpm --filter @murmur/agent start</span>
+                  <button
+                    className="shrink-0 rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-900 hover:bg-amber-200"
+                    aria-label="명령 복사"
+                    onClick={async () => {
+                      const cmd = `MURMUR_PAT=${pat} pnpm --filter @murmur/agent start`;
+                      const ok = await copyToClipboard(cmd, setError);
+                      if (ok) {
+                        setCopySuccess('full');
+                        setTimeout(() => setCopySuccess((s) => s === 'full' ? null : s), 2000);
+                      }
+                    }}
+                  >
+                    {copySuccess === 'full' ? '복사됨' : '복사'}
+                  </button>
                 </div>
                 {/* #125: 등록만으로는 아무 일도 일어나지 않는다. 실측으로 에이전트 6개 중 4개가
                     러너를 가져본 적이 없고 그중 2개는 미읽음 멘션이 쌓인 채였다. 사용자의 기대는
@@ -773,6 +817,34 @@ export function AgentsSettings() {
                   murmur 는 러너를 띄우지 않는다. <strong>위 명령을 직접 실행해 러너를 붙이기
                   전까지 이 에이전트는 멘션에 답하지 않는다</strong> — 멘션은 쌓이기만 한다.
                   murmur 저장소를 체크아웃한 머신에서 실행한다.
+                </p>
+              </div>
+            )}
+
+            {/* #177: PAT 가 있으면(발급했거나 이미 있던) 러너 실행 명령 틀을 항상 보인다.
+                토큰은 해시만 저장하므로 재노출이 불가능하다 — 틀만 보여서Issuance 진입점을 안내한다. */}
+            {selected && isAdmin && pats.length > 0 && (
+              <div className="rounded border border-zinc-200 p-3">
+                <div className="text-xs font-medium text-zinc-600">러너 실행</div>
+                <div className="mt-2 flex items-center gap-2 break-all font-mono text-[11px] text-zinc-700">
+                  <span>MURMUR_PAT=&lt;토큰&gt; pnpm --filter @murmur/agent start</span>
+                  <button
+                    className="shrink-0 rounded border border-zinc-300 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-700 hover:bg-zinc-100"
+                    aria-label="명령 복사"
+                    onClick={async () => {
+                      const cmd = 'MURMUR_PAT=<토큰> pnpm --filter @murmur/agent start';
+                      const ok = await copyToClipboard(cmd, setError);
+                      if (ok) {
+                        setCopySuccess('template');
+                        setTimeout(() => setCopySuccess((s) => s === 'template' ? null : s), 2000);
+                      }
+                    }}
+                  >
+                    {copySuccess === 'template' ? '복사됨' : '복사'}
+                  </button>
+                </div>
+                <p className="mt-2 text-[11px] text-zinc-500">
+                  토큰은 발급 순간에만 보인다. 잃어버렸으면 위에서 새로 발급한다.
                 </p>
               </div>
             )}
