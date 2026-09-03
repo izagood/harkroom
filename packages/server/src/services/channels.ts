@@ -349,51 +349,61 @@ export async function channelPostGate(
 }
 
 /**
- * 채널 문서 조회(#188). 가시성은 `assertChannelVisible` 로 검사하고, 채널이
- * 존재하지 않으면 null 이 아니라 404 로 처리되도록 channelRoutes 에서 판별한다.
+ * 채널 문서 조회(#188). 아직 저장된 것이 없으면 **본문이 빈 문서**를 준다 — 404 가 아니다.
  *
- * 문서가 없으면 본문 '' 와 함께 반환한다 — "없다"와 "빈 문서"가 같은 화면이므로.
- * 후자를 선택한 것은 새 채널마다 빈 문서를 만들어 둘 이유가 없기 때문이다.
+ * "문서가 없다"와 "문서가 비어 있다"는 사람에게 같은 화면이므로, 채널을 만들 때마다 빈 행을
+ * 심어 두지 않고 읽는 쪽에서 그 모양으로 맞춘다. 다만 `updatedBy`·`updatedAt` 은
+ * **`null` 로 둔다** — 지금 시각과 보는 사람으로 채우면 아무도 쓴 적 없는 문서를 내가
+ * 방금 고친 것처럼 보여 주고, 그 가짜 시각이 `expectedUpdatedAt` 으로 돌아오면 낙관적
+ * 동시성 검사가 무엇과 비교하는지 알 수 없게 된다.
+ *
+ * 가시성은 여기서 보지 않는다 — 호출부(`channelRoutes`, `mcpPlugin`)가
+ * `assertChannelVisible`/`channelPostGate` 로 먼저 검사한다. 채널이 존재하지 않는 경우도
+ * 호출부가 404 로 답한다(`assertChannelVisible` 이 그렇게 쓰이도록 만들어져 있다).
  */
-export async function getChannelDoc(
-  pool: Pool, channelId: string,
-): Promise<ChannelDoc | null> {
-  const res = await pool.query(
-    `select d.channel_id as "channelId", d.body, d.updated_by as "updatedBy", d.updated_at as "updatedAt"
+export async function getChannelDoc(pool: Pool, channelId: string): Promise<ChannelDoc> {
+  const res = await pool.query<ChannelDoc>(
+    `select d.channel_id as "channelId", d.body, d.updated_by as "updatedBy",
+            d.updated_at as "updatedAt"
      from channel_doc d where d.channel_id = $1`,
     [channelId],
   );
-  if (!res.rowCount) {
-    return null;
-  }
-  return res.rows[0];
+  const row = res.rows[0];
+  if (!row) return { channelId, body: '', updatedBy: null, updatedAt: null };
+  // pg 가 timestamptz 를 Date 로 준다. 계약(`ChannelDoc`)은 문자열이므로 여기서 맞춘다 —
+  // 클라이언트가 되돌려 보내는 `expectedUpdatedAt` 과 같은 값이어야 한다.
+  return { ...row, updatedAt: new Date(row.updatedAt!).toISOString() };
 }
 
 /**
- * 채널 문서 수정(#188). 낙관적 동시성 제어를 위해 `expectedUpdatedAt` 을 받는다.
- * 서버의 updatedAt 과 다르면 현재 본문과 함께 'stale' 을 반환한다.
+ * 채널 문서 저장(#188) — **낙관적 동시성은 한 문장 안에서 판정한다.**
  *
- * 문서가 없을 때는 INSERT 로 생성한다 — 채널당 하나 정책이 PK 로 enforcing 된다.
+ * 읽고 나서 쓰면(select 로 `updated_at` 을 확인한 뒤 update) 두 요청이 같은 기대값으로
+ * 동시에 검사를 통과하고 둘 다 쓴다. 그러면 나중 것이 앞선 것을 조용히 덮어쓰는데, 그것이
+ * 바로 이 기능이 막으려던 사고다. 그래서 `on conflict ... do update ... where` 로 조건을
+ * **쓰기 문장 자체에** 붙인다. 조건이 틀리면 0 행이 돌아오고, 그때가 stale 이다.
+ *
+ * `expectedUpdatedAt` 이 `null` 인 것은 "검사하지 마라"가 아니라 **"아직 문서가 없다고
+ * 믿는다"**다. 옵셔널을 "검사 생략"으로 읽으면 필드를 빼기만 해도 낙관적 동시성이 사라진다 —
+ * 조용히 덮어쓰기를 막으려고 만든 장치가 필드 하나로 꺼지면 안 된다. 그래서 `null` 이면
+ * insert 만 성공하고, 이미 행이 있으면(`on conflict` 로 들어와 `updated_at = null` 비교가
+ * 거짓) stale 이다.
  */
 export async function updateChannelDoc(
   pool: Pool, channelId: string, actorId: string,
   body: string, expectedUpdatedAt: Date | null,
 ): Promise<{ ok: ChannelDoc } | { stale: ChannelDoc }> {
-  if (expectedUpdatedAt !== null) {
-    const check = await pool.query(
-      `select updated_at as "updatedAt" from channel_doc where channel_id = $1`,
-      [channelId],
-    );
-    if (check.rowCount && new Date(check.rows[0].updatedAt).getTime() !== expectedUpdatedAt.getTime()) {
-      const current = await getChannelDoc(pool, channelId);
-      return { stale: current! };
-    }
-  }
-  await pool.query(
+  const res = await pool.query(
     `insert into channel_doc (channel_id, body, updated_by, updated_at)
      values ($1, $2, $3, now())
-     on conflict (channel_id) do update set body = $2, updated_by = $3, updated_at = now()`,
-    [channelId, body, actorId],
+     on conflict (channel_id) do update
+       set body = excluded.body, updated_by = excluded.updated_by, updated_at = now()
+       where channel_doc.updated_at = $4::timestamptz
+     returning channel_id`,
+    [channelId, body, actorId, expectedUpdatedAt],
   );
-  return { ok: (await getChannelDoc(pool, channelId))! };
+  // 0 행이면 행이 이미 있는데 기대값이 어긋난 것이다. 현재 본문을 함께 돌려줘야 사람이
+  // 무엇이 달라졌는지 보고 다시 편집할 수 있다 — 조용히 버리지도, 덮어쓰지도 않는다.
+  if (!res.rowCount) return { stale: await getChannelDoc(pool, channelId) };
+  return { ok: await getChannelDoc(pool, channelId) };
 }
