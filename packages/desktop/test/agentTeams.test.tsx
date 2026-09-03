@@ -194,7 +194,7 @@ describe('설정 목차에 팀 절이 있다 (#172)', () => {
   it('9. 목차에서 Teams 를 고르면 팀 화면이 그려진다', async () => {
     const api = fakeApi({ teams: vi.fn(async () => [team('t1', 'ops')]) });
     setController(new Controller(api, fakeWsFactory().makeWs));
-    render(<SettingsScreen onBack={vi.fn()} onSignOut={vi.fn()} />);
+    render(<SettingsScreen onBack={vi.fn()} onSignOut={vi.fn()} onCommunitiesEmpty={vi.fn()} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Teams' }));
 

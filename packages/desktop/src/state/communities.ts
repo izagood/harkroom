@@ -28,6 +28,23 @@ export interface CommunityEntry {
   id: string;
   /** 이 커뮤니티의 서버 주소. 아직 세션이 붙지 않은 기동 엔트리는 빈 문자열이다. */
   baseUrl: string;
+  /**
+   * 이 커뮤니티에 로그인한 계정 id(#165). 세션이 아직 안 붙은 기동 엔트리는 빈 문자열이다.
+   *
+   * 왜 엔트리가 이것을 들고 있어야 하는가: 영속 목록(`lib/session.ts`)의 키가 계정 id고,
+   * 세션 손실 판정(`App`)도 계정 id로 온다. 엔트리에 없으면 그 둘을 잇는 코드가 매번
+   * `store.getState().me?.id` 를 뒤져야 하고, `me` 를 아직 못 받은 순간에 조용히 빗나간다.
+   */
+  accountId: string;
+  /**
+   * 이 기기에서 붙인 표시 이름(#165). **명시적 `null` 이 "붙이지 않았다"** 다 — 그때
+   * `communityLabel()` 이 호스트명으로 떨어진다. 옵셔널로 두지 않는 이유는 이 저장소의
+   * 관례이자, 빈 문자열과 미설정이 구분되지 않으면 "이름을 지웠다" 를 표현할 수 없기 때문이다.
+   *
+   * **서버에 보내지 않는다.** 같은 `#general` 을 가진 서버 둘을 URL 만으로 구분할 수 없어
+   * 사람이 붙이는 꼬리표이고, 서버 계약은 (A) 아래서 바뀌지 않는다.
+   */
+  label: string | null;
   /** 이 커뮤니티의 세계. 다른 커뮤니티의 스토어와 아무것도 공유하지 않는다. */
   store: AppStore;
   /**
@@ -35,6 +52,18 @@ export interface CommunityEntry {
    * 안 붙은 순간이 실제로 존재한다. 그 순간을 `undefined` 로 흘리지 않고 명시적 `null` 로 적는다.
    */
   controller: Controller | null;
+}
+
+/**
+ * 커뮤니티를 등록·갱신할 때 넘기는 값(#165). `accountId`·`label` 을 생략할 수 있게 둔 것은
+ * **기동 엔트리와 테스트** 때문이다 — 세션이 붙기 전에는 계정 id 가 없고, 그 없음을 빈
+ * 문자열로 적는다(`CommunityEntry.accountId` 주석).
+ */
+export interface CommunityInput {
+  baseUrl: string;
+  accountId?: string;
+  label?: string | null;
+  controller?: Controller | null;
 }
 
 export interface CommunityRegistryState {
@@ -50,9 +79,15 @@ export interface CommunityRegistryState {
    * 붙이면 죽은 커뮤니티가 목록에 쌓이고, 그것만으로 알림 제목에 커뮤니티 꼬리표가 붙어
    * 사용자 눈에 보이는 변화가 생긴다.
    */
-  claimActive(input: { baseUrl: string; controller?: Controller | null }): CommunityEntry;
+  claimActive(input: CommunityInput): CommunityEntry;
   /** 커뮤니티를 **덧붙인다**. 활성으로 만들지는 않는다 — 그것은 `setActive` 가 한다. */
-  register(input: { baseUrl: string; controller?: Controller | null }): CommunityEntry;
+  register(input: CommunityInput): CommunityEntry;
+  /**
+   * 이 기기에서의 표시 이름을 바꾼다(#165). `null` 은 "지운다" — 그러면 호스트명으로 돌아간다.
+   * 영속은 여기서 하지 않는다(`state/controller.ts` 의 `setCommunityLabel`) — 레지스트리는
+   * 키체인을 모르는 자리다.
+   */
+  setLabel(id: string, label: string | null): void;
   /** 활성 커뮤니티를 바꾼다. 모르는 id 면 던진다 — 조용히 무시하면 전환 실패가 안 보인다. */
   setActive(id: string): void;
   /** 그 커뮤니티의 컨트롤러를 꽂는다. `null` 은 떼어낸다는 뜻이다. */
@@ -64,27 +99,49 @@ export interface CommunityRegistryState {
 let seq = 0;
 function nextId(): string { return `community-${++seq}`; }
 
-function makeEntry(baseUrl: string, controller: Controller | null = null): CommunityEntry {
-  return { id: nextId(), baseUrl, store: createAppStore(), controller };
+function makeEntry(input: CommunityInput): CommunityEntry {
+  return {
+    id: nextId(),
+    baseUrl: input.baseUrl,
+    accountId: input.accountId ?? '',
+    label: input.label ?? null,
+    store: createAppStore(),
+    controller: input.controller ?? null,
+  };
 }
 
 function bootstrap(): Pick<CommunityRegistryState, 'entries' | 'activeId'> {
-  const entry = makeEntry('');
+  const entry = makeEntry({ baseUrl: '' });
   return { entries: [entry], activeId: entry.id };
 }
 
 export const useCommunityRegistry = create<CommunityRegistryState>((set, get) => ({
   ...bootstrap(),
-  claimActive: ({ baseUrl, controller = null }) => {
+  claimActive: (input) => {
     const { entries, activeId } = get();
-    const next = entries.map((e) => (e.id === activeId ? { ...e, baseUrl, controller } : e));
+    const next = entries.map((e) => (e.id === activeId
+      ? {
+          ...e,
+          baseUrl: input.baseUrl,
+          accountId: input.accountId ?? '',
+          controller: input.controller ?? null,
+          // 이름은 **넘어온 것이 있을 때만** 갈아 끼운다. 재로그인마다 `null` 로 덮으면
+          // 사람이 붙인 꼬리표가 로그인 한 번에 조용히 사라진다.
+          label: input.label === undefined ? e.label : input.label,
+        }
+      : e));
     set({ entries: next });
     return next.find((e) => e.id === activeId)!;
   },
-  register: ({ baseUrl, controller = null }) => {
-    const entry = makeEntry(baseUrl, controller);
+  register: (input) => {
+    const entry = makeEntry(input);
     set({ entries: [...get().entries, entry] });
     return entry;
+  },
+  setLabel: (id, label) => {
+    const { entries } = get();
+    if (!entries.some((e) => e.id === id)) throw new Error(`모르는 커뮤니티다: ${id}`);
+    set({ entries: entries.map((e) => (e.id === id ? { ...e, label } : e)) });
   },
   setActive: (id) => {
     if (!get().entries.some((e) => e.id === id)) throw new Error(`모르는 커뮤니티다: ${id}`);
@@ -151,11 +208,13 @@ export function getCommunityConnected(): { id: string; connected: boolean }[] {
 }
 
 /**
- * 알림에 붙일 커뮤니티 꼬리표(#166 §6). 서버는 커뮤니티 이름을 모르고 이름을 붙이는 UI 도
- * 아직 없으므로(#165) 호스트를 쓴다. 파싱에 실패하면 id 로 떨어진다 — 빈 문자열을 흘리면
- * 알림 제목이 "posted in #general ()" 처럼 망가진다.
+ * 커뮤니티의 표시 이름(#166 §6, #165). 서버는 커뮤니티 이름을 모르므로 순서는
+ * **기기 로컬 이름 → 호스트 → id** 다. 파싱에 실패하면 id 로 떨어진다 — 빈 문자열을 흘리면
+ * 알림 제목이 "posted in #general ()" 처럼 망가지고, 전환기 타일의 이니셜도 사라진다.
  */
 export function communityLabel(entry: CommunityEntry): string {
+  // #165: 사람이 붙인 이름이 있으면 그것이 이긴다. 빈 문자열은 이름이 아니므로 아래로 떨어진다.
+  if (entry.label && entry.label.trim()) return entry.label.trim();
   if (!entry.baseUrl) return entry.id;
   try {
     return new URL(entry.baseUrl).host || UNNAMED;
