@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
 
 export class ApiError extends Error {
   /**
@@ -394,6 +394,23 @@ export class ApiClient {
   }
 
   /**
+   * 채널이 자동으로 멘션하는 에이전트들(#173). 핀과 같은 채널 전역 사실이라 채널을 볼 수
+   * 있는 사람 누구나 받는다 — 작성창이 칩을 그려야 하기 때문이다.
+   */
+  async channelAutoMentions(channelId: string): Promise<ChannelAutoMentionRow[]> {
+    return (await this.req<{ autoMentions: ChannelAutoMentionRow[] }>('GET', `/channels/${channelId}/auto-mentions`)).autoMentions;
+  }
+
+  /** 건다. admin 이 아니면 서버가 403, 에이전트가 아니거나 비활성이면 400 을 준다. */
+  setChannelAutoMention(channelId: string, agentAccountId: string): Promise<ChannelAutoMentionRow> {
+    return this.req('PUT', `/channels/${channelId}/auto-mentions/${agentAccountId}`);
+  }
+
+  unsetChannelAutoMention(channelId: string, agentAccountId: string): Promise<void> {
+    return this.req('DELETE', `/channels/${channelId}/auto-mentions/${agentAccountId}`);
+  }
+
+  /**
    * #221: `channelId` 를 주면 서버가 질의를 좁힌다. 받아 온 결과를 여기서 거르지 않는 이유는
    * 전역 결과가 상위 N 건에서 잘려 이 채널 것이 아예 안 실려 올 수 있기 때문이다.
    */
@@ -493,5 +510,37 @@ export class ApiClient {
 
   async removeHandleGroupMembers(id: string, accountIds: string[]): Promise<{ members: string[] }> {
     return this.req('DELETE', `/handle-groups/${id}/members`, { accountIds });
+  }
+
+  async teams(): Promise<AgentTeamRow[]> {
+    return (await this.req<{ teams: AgentTeamRow[] }>('GET', '/teams')).teams;
+  }
+
+  createTeam(name: string): Promise<AgentTeamRow> {
+    return this.req('POST', '/teams', { name });
+  }
+
+  updateTeam(id: string, name: string): Promise<AgentTeamRow> {
+    return this.req('PATCH', `/teams/${id}`, { name });
+  }
+
+  deleteTeam(id: string): Promise<void> {
+    return this.req('DELETE', `/teams/${id}`);
+  }
+
+  async team(id: string): Promise<{ team: AgentTeamRow; members: AgentTeamMemberRow[] }> {
+    return this.req('GET', `/teams/${id}`);
+  }
+
+  addTeamMember(teamId: string, accountId: string): Promise<{ members: AgentTeamMemberRow[] }> {
+    return this.req('PUT', `/teams/${teamId}/members/${accountId}`);
+  }
+
+  removeTeamMember(teamId: string, accountId: string): Promise<{ members: AgentTeamMemberRow[] }> {
+    return this.req('DELETE', `/teams/${teamId}/members/${accountId}`);
+  }
+
+  addTeamToChannel(channelId: string, teamId: string): Promise<AddTeamToChannelResult> {
+    return this.req('POST', `/channels/${channelId}/teams/${teamId}/add`);
   }
 }

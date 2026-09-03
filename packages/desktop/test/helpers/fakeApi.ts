@@ -30,11 +30,17 @@ export function accountsResult(
 
 // #182: 공개 범위도 **필수 필드**다 — fixture 가 그것을 적어야 한다. 기본값은 서버의
 // 기본값과 같은 'public' 이고, private 을 보는 테스트가 마지막 인자로 덮어쓴다.
+// #180: 생성 시각도 **필수 필드**다 — 채널 디렉터리의 "생성순" 정렬이 이 값으로 비교한다.
+// 기본값은 모든 채널이 같은 고정 시각이고, 순서를 보는 테스트가 extra 로 서로 다르게 덮어쓴다.
+// 고정값을 쓰는 이유: 호출 시각을 쓰면 fixture 를 나열한 순서가 곧 생성순이 되어, 비교 함수를
+// 지워도 테스트가 우연히 초록으로 남는다.
 export const chan = (
   id: string, name: string, repo: string | null = null,
   visibility: 'public' | 'private' = 'public',
+  extra: Partial<ChannelRow> = {},
 ): ChannelRow =>
-  ({ id, name, topic: '', kind: 'standard', repo, archivedAt: null, visibility });
+  ({ id, name, topic: '', kind: 'standard', repo, archivedAt: null, visibility,
+    createdAt: '2024-01-01T00:00:00.000Z', ...extra });
 
 export const msg = (id: string, channelId: string, seq: number, body: string, authorId = 'u1',
   extra: Partial<MessageRow> = {}): MessageRow =>
@@ -116,6 +122,11 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     fetchAttachment: vi.fn(async () => new Blob(['x'])),
     // #218: 베이스가 핀 표면을 덮어야 openChannel 이 조용히 던지지 않고, "부르지 않았다" 도 단언할 수 있다.
     pins: vi.fn(async () => []),
+    // #173: 자동 멘션 표면. 베이스가 덮어야 openChannel 이 조용히 던지지 않는다.
+    channelAutoMentions: vi.fn(async () => []),
+    setChannelAutoMention: vi.fn(async (channelId: string, agentAccountId: string) =>
+      ({ channelId, agentAccountId, handle: agentAccountId, createdBy: 'u1', createdAt: new Date().toISOString() })),
+    unsetChannelAutoMention: vi.fn(async () => undefined),
     // #188: 채널 문서. 베이스가 덮어야 "부르지 않았다" 를 단언할 수 있고, 아직 아무도
     // 쓰지 않은 문서의 모양(본문 '', 누가·언제 null)이 fixture 에도 적혀 있어야 한다.
     channelDoc: vi.fn(async (channelId: string) =>
@@ -139,6 +150,12 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     deleteHandleGroup: vi.fn(async () => undefined),
     addHandleGroupMembers: vi.fn(async () => ({ members: ['u1'] })),
     removeHandleGroupMembers: vi.fn(async () => ({ members: [] })),
+    // #250: 러너 실행기가 부르는 표면. 베이스가 덮어야 `Controller.start` 뒤의 자동 기동이
+    // 조용히 던지지 않고, "발급을 부르지 않았다" 도 단언할 수 있다.
+    listAgents: vi.fn(async () => []),
+    listPats: vi.fn(async () => []),
+    mintPat: vi.fn(async (_id: string, label: string) => `murp_${label}`),
+    revokePat: vi.fn(async () => ({ revoked: 1 })),
     ...overrides,
   };
   return base as unknown as ApiClient;
