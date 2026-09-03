@@ -133,14 +133,22 @@ describe('#271-5 저장되는 정본은 <@id> 다', () => {
   });
 
   it('코드 블록 안의 @handle 은 바뀌지 않는다 (#298 과 같은 판정)', async () => {
-    // 정규화가 자기 정규식으로 코드를 다시 판정하면 여기가 빨개진다 — 그리고 그때는
-    // 코드 안의 이름이 저장 시 멘션이 되어 알림까지 간다.
-    const body = '평문 @fizz\n```\n@buzz 는 코드다\n```\n`@buzz` 도 코드다';
+    // **같은 handle 을 평문과 코드에 둘 다 둔다.** 코드에만 두면 그 handle 이 애초에
+    // 대상 목록에 들어오지 않아(`mentionedHandles` 가 코드를 걷어낸다) 정규화가 코드를
+    // 보든 말든 결과가 같다 — 그러면 이 줄은 아무것도 지키지 않는다. 평문에 같은 이름이
+    // 있어야 목록에 들어오고, 그때 코드 안의 것까지 바뀌는지가 비로소 드러난다.
+    const body = '평문 @fizz\n```\n@fizz 는 코드다\n```\n`@fizz` 도 코드다';
     const id = await post(adminToken, body);
     expect(await storedBody(id)).toBe(
-      `평문 <@${fizzId}>\n\`\`\`\n@buzz 는 코드다\n\`\`\`\n\`@buzz\` 도 코드다`,
+      `평문 <@${fizzId}>\n\`\`\`\n@fizz 는 코드다\n\`\`\`\n\`@fizz\` 도 코드다`,
     );
+    // 알림은 한 번이다 — 평문 하나가 부른 것이고, 코드 두 개는 부른 것이 아니다.
     expect(await inboxIds(fizzToken, id)).toBe(1);
+  });
+
+  it('코드 **안에만** 있는 @handle 은 정규화도 알림도 없다', async () => {
+    const id = await post(adminToken, '```\n@buzz 는 코드 안에만 있다\n```');
+    expect(await storedBody(id)).toBe('```\n@buzz 는 코드 안에만 있다\n```');
   });
 
   it('수정도 같은 정규화를 탄다', async () => {
