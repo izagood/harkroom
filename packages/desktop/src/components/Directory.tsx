@@ -86,10 +86,13 @@ export function Directory({ open, onClose, accountId }: Props) {
       <li
         key={a.id}
         data-testid={`directory-row-${a.id}`}
+        data-selected={String(isSelected)}
         ref={isSelected ? (el: HTMLLIElement | null) => { el?.scrollIntoView({ block: 'center', behavior: 'smooth' }); } : undefined}
-        className={`flex items-center gap-2 rounded px-2 py-1.5 ${a.disabled ? 'opacity-60' : ''} ${isSelected ? 'bg-indigo-50 ring-2 ring-indigo-500' : ''}`}
+        className={`flex items-center gap-2 rounded px-2 py-1.5 ${a.disabled ? 'opacity-60' : ''} ${isSelected ? 'bg-indigo-950 ring-2 ring-indigo-500' : ''}`}
       >
-      <Identity account={a} />
+      {/* #277: 이 자리는 **거터가 아니다** — 고정폭 열이 아니라 넓어지면 행이 늘어나는
+          인라인 칸이고, 디렉터리는 소유자를 보여 주는 것이 일이다(#181·#226). badge 로 둔다. */}
+      <Identity account={a} variant="badge" />
       {/* 연결 점은 소켓이 붙어 있는가다. 사람이 고른 상태(StatusMark)와 나란히 둔다 —
           합치면 "연결이 끊긴 사람"과 "방해 금지인 사람"이 한 표시로 뭉친다(#186). */}
       <span
