@@ -16,7 +16,10 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   -- #129 종료 요청. 러너 자신(GET /agent/config)과 운영자 목록이 **같은 뷰**를 본다 —
   -- 두 곳에서 따로 읽으면 화면이 보여주는 값과 러너가 실제로 집어 가는 값이 갈릴 수 있다.
   c.stop_requested_at as "stopRequestedAt",
-  c.stop_acked_at as "stopAckedAt"`;
+  c.stop_acked_at as "stopAckedAt",
+  -- #176 마지막으로 턴을 마친 시각. presence(온라인 여부)와 **다른 사실**이라 여기 한 컬럼으로
+  -- 오고, 화면은 둘을 나란히 그린다 — 합치면 #124 가 닫은 결함이 되살아난다.
+  c.last_turn_at as "lastTurnAt"`;
 
 const FROM = `from account a left join agent_config c on c.account_id = a.id
   left join agent_runner_version v on v.account_id = a.id`;
@@ -178,6 +181,36 @@ export async function ackAgentStop(pool: Pool, agentId: string): Promise<string 
     [agentId],
   );
   return res.rowCount ? (res.rows[0].stopAckedAt as string) : null;
+}
+
+/**
+ * 이 에이전트가 턴을 마쳤다는 사실을 남긴다(#176).
+ *
+ * **시각은 여기서 찍는다.** 러너가 보낸 타임스탬프는 받지 않는다 — 러너 시계가 서버보다
+ * 앞선 머신에서는 "3분 뒤에 활동함"이 화면에 뜨고, 그건 활동 시각이 아니라 시계 오차다.
+ *
+ * `agent_config` 행이 없을 수도 있어 upsert 다: 에이전트는 정의 없이도 만들어지고
+ * (`listAgents` 가 left join 인 이유), 그런 에이전트에도 러너는 붙는다 —
+ * `requestAgentStop` 이 같은 이유로 upsert 한다.
+ *
+ * 매 턴 덮어쓰는 것이 맞다. 이 컬럼은 이력이 아니라 **현재 상태 하나**이고(마이그레이션
+ * 020 의 주석), 그래서 `recordRunnerVersion` 처럼 '값이 바뀔 때만' 쓸 이유가 없다 —
+ * 여기서는 바뀐 값 자체가 담으려는 사실이다. 턴은 폴(25초)보다 훨씬 드물게 끝나므로
+ * 그 쓰기가 핫 패스가 되지도 않는다.
+ *
+ * 호출 계정이 에이전트인지는 **라우트가** 확인한다 — 여기서 다시 확인하지 않는 이유는
+ * 이 함수가 자기 행만 갱신하고, 존재하지 않는 계정이면 외래키가 막기 때문이다. 대신
+ * 사람 계정을 조용히 성공시키지 않도록 라우트가 400 으로 먼저 거절한다.
+ */
+export async function recordAgentTurn(pool: Pool, accountId: string): Promise<string> {
+  const res = await pool.query(
+    `insert into agent_config (account_id, last_turn_at)
+     values ($1, now())
+     on conflict (account_id) do update set last_turn_at = now(), updated_at = now()
+     returning last_turn_at as "lastTurnAt"`,
+    [accountId],
+  );
+  return res.rows[0].lastTurnAt as string;
 }
 
 /**
