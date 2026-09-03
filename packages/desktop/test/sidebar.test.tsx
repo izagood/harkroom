@@ -60,7 +60,9 @@ describe('Sidebar', () => {
       fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'design' } });
       fireEvent.click(screen.getByText('만들기'));
 
-      await waitFor(() => expect(c.createChannel).toHaveBeenCalledWith('design'));
+      // #182 이후 공개 범위가 인자로 함께 간다. 체크박스를 건드리지 않았으므로 'public' 이다 —
+      // 기본값이 조용히 private 이 되면 만든 사람 말고는 아무도 못 보는 채널이 생긴다.
+      await waitFor(() => expect(c.createChannel).toHaveBeenCalledWith('design', 'public'));
       // 성공하면 입력 자리는 닫힌다.
       await waitFor(() => expect(screen.queryByLabelText('New channel name')).toBeNull());
     });
