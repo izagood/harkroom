@@ -64,7 +64,7 @@ describe('사이드바 너비 조절', () => {
   it('드래그로 너비가 바뀐다', () => {
     fakeController();
     const { container } = render(
-      <Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />
+      <Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />
     );
 
     const separator = container.querySelector('[role="separator"]') as HTMLElement;
@@ -82,7 +82,7 @@ describe('사이드바 너비 조절', () => {
   it('최소를 넘겨 끌어도 clamp 된다', () => {
     fakeController();
     const { container } = render(
-      <Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />
+      <Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />
     );
 
     const separator = container.querySelector('[role="separator"]') as HTMLElement;
@@ -97,7 +97,7 @@ describe('사이드바 너비 조절', () => {
   it('최대를 넘겨 끌어도 clamp 된다', () => {
     fakeController();
     const { container } = render(
-      <Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />
+      <Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />
     );
 
     const separator = container.querySelector('[role="separator"]') as HTMLElement;
@@ -112,7 +112,7 @@ describe('사이드바 너비 조절', () => {
   it('화살표 키로도 너비가 바뀐다', () => {
     fakeController();
     const { container } = render(
-      <Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />
+      <Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />
     );
 
     const separator = container.querySelector('[role="separator"]') as HTMLElement;
@@ -130,7 +130,7 @@ describe('사이드바 너비 조절', () => {
     sidebarStorage.saveWidth(350);
 
     const { container, unmount } = render(
-      <Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />
+      <Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />
     );
 
     const aside = container.querySelector('aside');
@@ -139,7 +139,7 @@ describe('사이드바 너비 조절', () => {
     unmount();
 
     const { container: container2 } = render(
-      <Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />
+      <Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />
     );
 
     const aside2 = container2.querySelector('aside');
@@ -157,7 +157,7 @@ describe('사이드바 너비 조절', () => {
     onTestFinished(() => spy.mockRestore());
 
     const { container } = render(
-      <Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />
+      <Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />
     );
 
     const aside = container.querySelector('aside');
@@ -169,7 +169,7 @@ describe('사이드바 접기', () => {
   it('접으면 사이드바가 사라진다', () => {
     fakeController();
     const { container } = render(
-      <Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={true} onToggleCollapse={vi.fn()} />
+      <Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={true} onToggleCollapse={vi.fn()} />
     );
 
     const aside = container.querySelector('aside');
@@ -180,7 +180,7 @@ describe('사이드바 접기', () => {
     fakeController();
     const onToggleCollapse = vi.fn();
     const { container } = render(
-      <Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={onToggleCollapse} />
+      <Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={onToggleCollapse} />
     );
 
     const collapseButton = container.querySelector('[aria-label="사이드바 접기"]') as HTMLButtonElement;

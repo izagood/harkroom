@@ -166,6 +166,103 @@ export const HANDLE_PATTERN = '[a-zA-Z0-9_-]{2,32}';
 export const CHANNEL_NAME_PATTERN = '^[a-z0-9_-]{1,48}$';
 
 /**
+ * 본문에서 **코드만** 떼어낸다(#216). 마크다운 전체가 아니다 — 에이전트 출력에서 가치가
+ * 가장 크면서 렌더링 표면이, 따라서 공격 표면도 가장 작은 것이 코드다.
+ *
+ * 이 판정이 사슬의 **맨 앞**에 있는 것이 요점이다. 멘션·링크(#214)보다 먼저 raw 본문을
+ * 나눠야 코드가 우선권을 갖는다. 순서가 뒤집히면 코드 블록 안의 URL 이 이미 링크가 된
+ * 뒤라 되돌릴 방법이 없다 — 코드는 코드다.
+ *
+ * 라이브러리를 쓰지 않는다. 마크다운 렌더러는 raw HTML 통과를 기본으로 켜 두는 경우가
+ * 많고, 그 설정 하나가 "HTML 을 통과시키지 않는다"는 결정을 조용히 뒤집는다. 직접
+ * 토크나이즈해서 React 엘리먼트로 넘기면 이스케이프는 React 가 보장한다.
+ *
+ * **`shared` 에 있는 이유(#298).** 데스크탑의 `MessageBody` 만 코드를 갈라내던 동안 서버는
+ * 본문 전체에서 멘션을 뽑아 알림을 보냈다 — 알림은 갔는데 화면은 안 갔다고 말하는, 판정이
+ * 두 벌일 때 나는 거짓말이다. 서버가 양보하고(코드 예시의 `@forge` 는 그 에이전트를 부르는
+ * 뜻이 아니다) 그 판정을 여기 한 벌만 둔다. 데스크탑은 `src/lib/code.ts` 가 이것을 다시
+ * export 한다 — **복사가 아니라 재수출이다.**
+ */
+export type CodeSegment =
+  /** 코드가 아닌 부분. 여기에만 멘션·링크 인식을 얹는다. */
+  | { kind: 'plain'; text: string }
+  /** 백틱 하나로 감싼 것. */
+  | { kind: 'inlineCode'; code: string }
+  /** 백틱 세 개로 감싼 것. `lang` 은 **표시용일 뿐** — 문법 강조는 하지 않는다. */
+  | { kind: 'codeBlock'; code: string; lang: string | null };
+
+/**
+ * 펜스 줄. 줄 전체가 펜스여야 한다 — `see ```x``` here` 처럼 문장 안에 섞인 것은 펜스가
+ * 아니다. 여는 줄의 나머지는 언어 표시로 읽는다.
+ */
+const FENCE_LINE = /^[ \t]*```([^\n`]*)$/;
+
+/**
+ * 인라인 코드. 개행을 넘지 않는 것이 의도다 — 짝이 없는 백틱 하나가 뒤의 본문 전체를
+ * 코드로 삼키면 메시지가 사라진 것처럼 보인다(펜스에서 같은 이유로 같은 결정을 한다).
+ *
+ * 앞뒤에 백틱이 더 붙어 있으면 집지 않는다. ```` ```x``` ```` 를 한 줄에 쓴 것은 인라인도
+ * 블록도 아닌 애매한 입력이니, 애매한 것은 평문으로 둔다.
+ */
+const INLINE_CODE = /(?<!`)`([^`\n]+)`(?!`)/g;
+
+/** 코드가 아닌 구간을 인라인 코드로 한 번 더 나눈다. */
+function splitInline(text: string, out: CodeSegment[]): void {
+  let cursor = 0;
+  for (const m of text.matchAll(INLINE_CODE)) {
+    if (m.index > cursor) out.push({ kind: 'plain', text: text.slice(cursor, m.index) });
+    out.push({ kind: 'inlineCode', code: m[1]! });
+    cursor = m.index + m[0].length;
+  }
+  if (cursor < text.length) out.push({ kind: 'plain', text: text.slice(cursor) });
+}
+
+/**
+ * 본문을 코드/비코드 구간으로 나눈다(#216, #298).
+ *
+ * **닫히지 않은 펜스는 코드가 아니다.** 열고 닫지 않은 것을 블록으로 그리면 그 뒤 본문
+ * 전체가 코드가 되어 메시지가 통째로 사라진 것처럼 보인다. 그래서 닫는 줄을 먼저 찾고,
+ * 없으면 여는 줄까지 평문으로 되돌린다.
+ */
+export function splitCode(body: string): CodeSegment[] {
+  const out: CodeSegment[] = [];
+  const lines = body.split('\n');
+  let plainFrom = 0;
+  let i = 0;
+
+  const flushPlain = (until: number) => {
+    if (until <= plainFrom) return;
+    splitInline(lines.slice(plainFrom, until).join('\n'), out);
+  };
+
+  while (i < lines.length) {
+    const open = FENCE_LINE.exec(lines[i]!);
+    if (!open) { i += 1; continue; }
+
+    // 닫는 줄을 찾는다. 언어 표시가 붙어 있어도 닫는 줄로 본다 — 두 번째 펜스가 나온
+    // 시점에서 블록은 끝난 것이고, 그 뒤를 계속 코드로 두면 위 결정을 어기게 된다.
+    let close = -1;
+    for (let j = i + 1; j < lines.length; j += 1) {
+      if (FENCE_LINE.test(lines[j]!)) { close = j; break; }
+    }
+    if (close === -1) { i += 1; continue; }
+
+    flushPlain(i);
+    const lang = (open[1] ?? '').trim();
+    out.push({
+      kind: 'codeBlock',
+      code: lines.slice(i + 1, close).join('\n'),
+      lang: lang.length ? lang : null,
+    });
+    i = close + 1;
+    plainFrom = i;
+  }
+  flushPlain(lines.length);
+
+  return out.length ? out : [{ kind: 'plain', text: body }];
+}
+
+/**
  * 본문 안의 멘션. 서버(알림 발송)와 데스크탑(강조)이 **반드시 같은 규칙**을 써야 한다 —
  * 갈라지면 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(`me@x.com`),
  * 강조된 것이 알림을 보내지 않는다(`@Fizz`).
@@ -179,13 +276,38 @@ export const MENTION_PATTERN = `(^|[^a-zA-Z0-9_-])@(${HANDLE_PATTERN})`;
 /**
  * 본문에서 불린 handle 들. 소문자로 정규화해 중복을 없앤다(`@fizz` 와 `@Fizz` 는 한 사람).
  * 패턴이 대문자를 이미 포함하므로 `i` 플래그는 필요하지 않다.
+ *
+ * 코드 블록(#298) 안의 `@handle` 은 무시한다 — `stripCodeSpans` 가 먼저 코드를 걷어낸다.
+ *
+ * **순서가 결정이다: 코드 제거 → 멘션 추출 → 그룹 확장(#230)·채널 전체(#225).** 코드 제거가
+ * 맨 앞이므로 코드 안의 그룹 handle 은 애초에 `handles` 에 들어오지 못하고, 따라서 확장될
+ * 기회도 없다 — 예외 처리가 아니라 순서에서 따라오는 결과다. 서버(`services/messages.ts`)의
+ * 그룹 확장은 이 함수가 돌려준 목록만 훑으므로 그 순서가 코드로 강제된다.
  */
 export function mentionedHandles(body: string): string[] {
   const found = new Set<string>();
-  for (const m of body.matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
+  for (const m of stripCodeSpans(body).matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
     if (m[2]) found.add(m[2].toLowerCase());
   }
   return [...found];
+}
+
+/**
+ * 본문에서 코드 구간을 걷어낸 나머지(#298). 멘션을 찾을 대상은 **이것뿐**이다.
+ *
+ * 남은 조각을 개행으로 이어 붙인다. 개행은 handle 문자가 아니므로 `MENTION_PATTERN` 의
+ * 선행 문자 조건에서 조각의 첫 글자가 `^` 와 같은 자격을 갖는다 — 조각을 따로 훑는 것과
+ * 결과가 같고, 코드를 걷어낸 자리에서 두 조각이 붙어 없던 멘션이 생기는 일도 없다.
+ *
+ * 문자열 하나를 돌려주는 이유: 이 값을 쓰는 곳이 서버의 멘션 추출과 데스크탑의 "부를
+ * 상대"(#278) 둘인데, 둘 다 정규식을 한 번 돌릴 평문이 필요할 뿐이다. 각자 세그먼트를
+ * 이어 붙이게 두면 그 이어 붙이는 규칙이 다시 두 벌이 된다.
+ */
+export function stripCodeSpans(body: string): string {
+  return splitCode(body)
+    .filter((seg): seg is { kind: 'plain'; text: string } => seg.kind === 'plain')
+    .map((seg) => seg.text)
+    .join('\n');
 }
 
 /**
@@ -352,12 +474,34 @@ export interface ChannelRow {
    * 인 행을 받았다는 것 자체가 이미 '나는 멤버이거나 admin 이다'라는 뜻이다.
    */
   visibility: 'public' | 'private';
+  /**
+   * 채널이 만들어진 시각(#180). **옵셔널이 아닌 이유**: 채널 디렉터리의 "생성순" 정렬은
+   * 클라이언트에서 하고, 이 값이 없으면 비교 함수가 쓸 것이 없다. 옵셔널로 두면 정렬은
+   * 조용히 원래 순서를 그대로 두고 — `listChannels` 는 `order by name` 이라 — 사용자에게는
+   * "생성순을 눌러도 이름순"으로 보인다. 필수로 두면 타입 검사가 이 값을 안 싣는 자리를 짚는다.
+   */
+  createdAt: string;
 }
 
 /** 채널 멤버 한 명. 멤버 목록 화면이 handle 을 따로 조회하지 않도록 함께 준다. */
 export interface ChannelMemberRow {
   accountId: string;
   handle: string;
+}
+
+/**
+ * 채널이 자동으로 멘션하는 에이전트 한 명(#173). 채널 전역 사실이다 — 누가 봐도 같다.
+ *
+ * `handle` 을 함께 주는 이유는 `ChannelMemberRow` 와 같다: 작성창이 칩을 그리려면 handle 이
+ * 필요하고, 그것을 위해 디렉터리를 다시 뒤지게 하면 디렉터리가 아직 안 온 순간 칩이 비었다가
+ * 나타난다. 접두는 이 handle 로 만든다.
+ */
+export interface ChannelAutoMentionRow {
+  channelId: string;
+  agentAccountId: string;
+  handle: string;
+  createdBy: string;
+  createdAt: string;
 }
 
 /**
@@ -672,5 +816,229 @@ export type WsServerEvent =
   | { type: 'channel.created'; channel: ChannelRow; audience: 'all' | string[] }
   | { type: 'channel.updated'; channel: ChannelRow; audience: 'all' | string[] }
   | { type: 'channel.deleted'; channelId: string; audience: 'all' | string[] }
+  // 채널 멤버십 변경(#300). 목록 수신자는 #284 의 channelListAudience 를 쓴다.
+  | { type: 'channel.member_added'; channelId: string; accountId: string; audience: 'all' | string[] }
+  | { type: 'channel.member_removed'; channelId: string; accountId: string; audience: 'all' | string[] }
+  // 핸들 집합 변경(#300). 로그인한 전원에게 간다.
+  | { type: 'handle_group.changed'; groupId: string; audience: 'all' | string[] }
   // 담기/해제/상태 변경(#219). 본인의 소켓에만 온다.
-  | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string };
+  | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string }
+  /**
+   * 링크 미리보기가 준비됐다(#215). 가져오기는 비동기라 메시지가 먼저 뜨고 카드가 뒤에
+   * 온다 — 이 이벤트가 없으면 카드는 **다음에 그 메시지를 다시 그릴 때까지** 안 보인다.
+   * URL 만 보낸다: 카드 내용은 받는 쪽이 `GET /link-previews` 로 읽는다(캐시가 하나다).
+   */
+  | { type: 'link_preview.ready'; url: string; audience: 'all' | string[] };
+
+/**
+ * ── Phase 2 attach: 러너 PTY ↔ 서버 ↔ 데스크탑 xterm 릴레이 (스펙 §5) ──
+ *
+ * 이 절의 타입이 **불투명 우체국**(스펙 §2)의 계약이다. 바이트는 항상 `data: string`
+ * (base64) 로만 오간다 — 서버는 봉투(JSON)를 열어 `sessionId` 만 읽고 `data` 는
+ * **절대 디코드하지 않는다.** 디코드하면 잘린 UTF-8 이 U+FFFD 로 치환되고 ANSI
+ * 이스케이프가 깨져 xterm 이 화면을 재구성하지 못한다(`packages/agent/src/pty.ts`
+ * 의 `RingBuffer` 주석이 같은 이유로 문자 경계 정렬을 거부한다).
+ *
+ * base64 를 고른 이유: WS 는 바이너리 프레임을 실을 수 있지만, 한 소켓에 세션이
+ * 여럿 다중화되므로 프레임마다 `sessionId` 가 붙어야 한다. 봉투를 JSON 으로 두고
+ * 바이트만 base64 로 싣는 것이 "봉투는 열고 내용은 안 연다"를 코드 모양으로
+ * 드러내는 가장 단순한 방법이다.
+ */
+
+/** 진행 중인 PTY 세션 하나. 러너가 announce 하고 서버가 인메모리로만 들고 있다. */
+export interface AgentSessionView {
+  /** 러너가 만든 세션 식별자(UUID). 스레드 키가 아니다 — URL 경로에 실려야 한다. */
+  sessionId: string;
+  /** 이 세션을 돌리는 에이전트 계정. attach 권한은 이 계정의 `ownerAccountId` 가 판정한다. */
+  agentAccountId: string;
+  channelId: string;
+  /** 스레드 루트. 채널 최상위 멘션은 그 멘션 메시지가 루트다(#98). */
+  threadRootId: string | null;
+  harness: AgentHarness;
+  /** 러너가 이 세션을 연 시각(ISO). 러너 시계다 — 서버가 찍지 않는다(러너만 아는 사실이다). */
+  startedAt: string;
+}
+
+/** 뷰어(데스크탑)가 보는 세션 상태. `runner-offline` 은 '끝났다'와 다르다. */
+export type AgentSessionState = 'running' | 'ended' | 'runner-offline';
+
+/**
+ * 러너 → 서버 프레임. `GET /agent-relay` 소켓에 실린다.
+ *
+ * `announce` 가 재접속마다 다시 오는 것이 중요하다 — 서버는 소켓이 끊기면 그 러너의
+ * 세션 레지스트리를 버리므로(살아 있는지 알 방법이 없다), 재접속 후 announce 가
+ * 없으면 진행 중인 턴이 서버 쪽에서 영구히 사라진다.
+ */
+export type RelayRunnerFrame =
+  | { type: 'announce'; sessions: AgentSessionView[] }
+  | { type: 'session.started'; session: AgentSessionView }
+  | { type: 'session.ended'; sessionId: string }
+  /** 라이브 PTY 바이트. `data` 는 base64 이고 서버는 열지 않는다. */
+  | { type: 'output'; sessionId: string; data: string }
+  /** ring buffer 재생(서버의 `replay.request` 에 대한 답). 빈 버퍼도 빈 문자열로 답한다. */
+  | { type: 'replay'; sessionId: string; data: string };
+
+/**
+ * 서버 → 러너 프레임. Phase 2 는 읽기만이므로 이 하나뿐이다 —
+ * `input`·`resize` 는 범위 밖(권한·턴 모드 상호작용이 스펙 §6 결정을 건드린다).
+ */
+export type RelayServerFrame = { type: 'replay.request'; sessionId: string };
+
+/**
+ * 서버 → 뷰어 프레임. `GET /agent-attach` 소켓에 실린다.
+ *
+ * 순서 보장: attach 직후 `status(running)` → `output`(ring 재생) → 그 뒤 라이브
+ * `output`. 재생이 도착하기 전에 들어온 라이브 바이트는 서버가 뷰어별로 잠시
+ * 큐에 담아 두고 재생 뒤에 흘린다 — 안 그러면 xterm 이 최신 바이트를 먼저 그린 뒤
+ * 과거 화면으로 덮어쓴다.
+ */
+export type AttachServerFrame =
+  | { type: 'output'; data: string }
+  | { type: 'status'; state: AgentSessionState };
+
+/**
+ * 에이전트 팀(#172). **저장된 엔티티다** — "이 다섯을 넣는다"를 매번 고르는 즉석
+ * 멀티셀렉트가 아니라, 이름을 붙여 남기는 운영자의 의도 기록이다.
+ *
+ * `name` 은 계정 handle 과 **같은 네임스페이스**를 쓴다(집합 #230 과 같은 결정) —
+ * 나중에 `@팀` 멘션을 열 여지를 남기기 위한 예약이고, 멘션 해석은 아직 하지 않는다.
+ */
+export interface AgentTeamRow {
+  id: string;
+  name: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+/**
+ * 팀원 한 명. handle 을 함께 준다 — 화면이 계정 목록을 따로 받아 맞출 필요가 없다
+ * (`ChannelMemberRow` 와 같은 이유).
+ *
+ * `disabled` 를 싣는 이유: 비활성 에이전트는 팀에 **남고** 채널에 넣을 때만 걸러지므로
+ * (`AddTeamToChannelResult.skipped`), 화면이 그 사실을 미리 말할 수 있어야 한다.
+ * 안 실으면 "추가했는데 왜 안 들어갔지" 를 결과가 나온 뒤에야 알게 된다.
+ */
+export interface AgentTeamMemberRow {
+  accountId: string;
+  handle: string;
+  /** 에이전트 계정이 비활성화되어 있으면 true. */
+  disabled: boolean;
+}
+
+/**
+ * 채널에 팀을 넣은 결과(#172). 세 갈래를 **따로** 돌려준다 — 하나로 합치면
+ * "넣었다"가 "이미 있었다"와 "비활성이라 건너뛰었다"를 삼켜, 화면이 사람에게
+ * 아무 것도 설명할 수 없다. 값은 모두 handle 이다.
+ */
+export interface AddTeamToChannelResult {
+  added: string[];
+  skipped: string[];
+  alreadyMember: string[];
+}
+
+/**
+ * 링크 미리보기(#215) — 서버와 데스크탑이 **같은 함수**로 URL 을 집고 정규화한다.
+ *
+ * 두 곳에 각자 정규식을 두면 서버가 저장하는 키와 클라이언트가 조회하는 키가 갈라진다.
+ * 그러면 카드는 영원히 404 이고, 어느 쪽도 틀린 것처럼 보이지 않아 원인을 찾기 어렵다
+ * (이 브랜치의 초판이 정확히 그랬다: 서버는 `[^\s<>"']+`, 클라이언트는 `[^\s]+` 였고
+ * 클라이언트는 후행 문장부호를 떼지 않았다).
+ */
+
+/**
+ * URL 후보를 **넓게** 집는 패턴의 원본. `://` 를 요구하지 않는 것이 의도다 — 좁게 집으면
+ * `javascript:alert(1)` 이 애초에 후보가 되지 못해, 스킴 검사가 없어도 테스트가 초록이
+ * 된다. 방어선은 판정(`normalizePreviewUrl`·`classifyLink`) 한 곳에만 있어야 실재를
+ * 확인할 수 있다.
+ *
+ * 정규식 **객체**가 아니라 원본 문자열을 내보내는 이유: `/g` 정규식은 `lastIndex` 를
+ * 들고 있어서 모듈 간에 공유하면 호출 순서에 따라 결과가 달라진다.
+ */
+export const URL_CANDIDATE_SOURCE = '[a-zA-Z][a-zA-Z0-9+.-]*:[^\\s]+';
+
+/** 매번 새 `/g` 정규식을 만든다(공유 객체의 `lastIndex` 를 피한다). */
+export function urlCandidateRegex(): RegExp {
+  return new RegExp(URL_CANDIDATE_SOURCE, 'g');
+}
+
+/**
+ * 문장 끝에 붙어 온 문장부호는 URL 이 아니다 — `자세히는 https://a.io/b.` 의 마침표까지
+ * 링크에 넣으면 열리지 않는 주소가 된다. 짝이 맞는 괄호는 남긴다(위키 주소가 실제로 쓴다).
+ */
+export function trimTrailingPunctuation(token: string): string {
+  let end = token.length;
+  while (end > 0) {
+    const ch = token[end - 1]!;
+    if ('.,;:!?\'"'.includes(ch)) { end -= 1; continue; }
+    if (ch === ')' || ch === ']') {
+      const open = ch === ')' ? '(' : '[';
+      const slice = token.slice(0, end);
+      const balanced = slice.split(open).length <= slice.split(ch).length;
+      if (balanced) { end -= 1; continue; }
+    }
+    break;
+  }
+  return token.slice(0, end);
+}
+
+/**
+ * 미리보기 캐시의 **키**. 같은 페이지가 여러 키로 저장되면 같은 URL 을 여러 번 가져온다.
+ *
+ * - `http`/`https` 만. 다른 스킴은 미리보기 대상이 아니다(가져올 것이 없거나 위험하다).
+ * - **자격증명이 실린 URL(`user:pass@host`)은 거절한다.** 벗겨서 가져오는 길도 있지만,
+ *   그러면 사람이 본 링크와 **다른 자원**을 가져와 카드로 보여 주게 된다. 게다가
+ *   `user:pass@` 는 호스트 혼동 공격의 고전적 재료다 — 파서마다 무엇을 호스트로 보는지
+ *   갈린다. 가져오지 않는 쪽이 정직하다(카드가 안 뜨는 것은 사람이 바로 안다).
+ * - 후행 점(`example.com.`)을 뗀다. DNS 상 같은 이름인데 키가 갈라진다.
+ * - fragment 제거(서버가 받지 않는다), 기본 포트 제거·스킴/호스트 소문자는 `URL` 이 한다.
+ */
+export function normalizePreviewUrl(raw: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  if (url.username || url.password) return null;
+  url.hash = '';
+  // `URL` 은 IPv4 를 어떤 표기로 써도(`2130706433`, `0x7f000001`) 점 표기로 정규화하고,
+  // IDN 을 punycode 로 바꾼다 — 그 결과를 그대로 키로 쓴다.
+  const host = url.hostname.replace(/\.+$/, '');
+  if (!host) return null;
+  url.hostname = host;
+  return url.toString();
+}
+
+/**
+ * 미리보기 카드 하나(#215). `imageUrl` 은 **URL 만** 담는다 — 바이트를 프록시하지 않는다.
+ * v1 클라이언트는 이 값을 `<img>` 로 그리지 않는다(그리면 결정 1 이 무너진다).
+ */
+export interface LinkPreviewView {
+  url: string;
+  title: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  siteName: string | null;
+  status: 'ok' | 'failed' | 'blocked';
+  fetchedAt: string;
+}
+
+/**
+ * 본문에서 미리보기를 가져올 URL 을 집는다. 최대 `max` 개(기본 3) — 한 메시지가 링크
+ * 스무 개를 담으면 그만큼의 외부 요청이 서버에서 나간다.
+ */
+export function extractPreviewUrls(body: string, max = 3): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const m of body.matchAll(urlCandidateRegex())) {
+    const token = trimTrailingPunctuation(m[0]);
+    if (!token) continue;
+    const normalized = normalizePreviewUrl(token);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+    if (out.length >= max) break;
+  }
+  return out;
+}

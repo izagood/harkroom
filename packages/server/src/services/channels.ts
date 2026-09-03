@@ -1,7 +1,10 @@
 import type { Pool, PoolClient } from 'pg';
 import type { ChannelDoc, ChannelMemberRow, ChannelRow, NotifyLevel } from '@murmur/shared';
 
-const COLS = `id, name, topic, kind, repo, archived_at as "archivedAt", visibility`;
+// #180: `created_at` 도 싣는다. 채널 디렉터리의 "생성순" 정렬을 클라이언트가 하는데,
+// 목록 질의는 `order by name` 이라 순서 자체로는 생성 시각을 알 수 없다. 컬럼은 001 부터
+// 있었고 마이그레이션은 필요 없다 — 안 보내던 것을 보내기 시작하는 것뿐이다.
+const COLS = `id, name, topic, kind, repo, archived_at as "archivedAt", visibility, created_at as "createdAt"`;
 
 /** `Pool` 과 `PoolClient` 가 함께 만족하는 최소 표면. 트랜잭션 안에서도 쓰라고 둔다. */
 type Queryable = Pick<Pool, 'query'>;
@@ -185,6 +188,20 @@ export async function listBoundRepos(pool: Pool): Promise<{ repo: string; channe
 }
 
 /**
+ * 채널 행 하나를 `ChannelRow` 그대로 읽는다.
+ *
+ * 이 함수가 따로 있는 이유: 라우트가 `select` 컬럼 목록을 **베껴 쓰면** 이 파일의 `COLS`
+ * 와 갈라진다. 실측으로 그렇게 베낀 목록에 `createdAt` 이 빠져 있었고, 그 행을 실어 보낸
+ * `channel.created` 를 받은 화면에서는 채널 디렉터리의 "생성순" 정렬이 그 채널만 비교할
+ * 값을 잃었다 — 타입은 `any` 를 거쳐 오므로 검사에 걸리지도 않는다. 컬럼 목록의 뜻은
+ * 여기 한 곳에만 둔다.
+ */
+export async function getChannelRow(pool: Pool, channelId: string): Promise<ChannelRow | null> {
+  const res = await pool.query(`select ${COLS} from channel where id = $1`, [channelId]);
+  return (res.rows[0] as ChannelRow | undefined) ?? null;
+}
+
+/**
  * 이 채널의 멤버 id. DM 과 private 채널이 **같은 테이블**을 쓰므로 함수도 하나다 — 예전
  * 이름은 `dmMemberIds` 였는데, 그 이름을 남겨 두면 private 채널에 쓸 때 "이건 DM 전용
  * 아닌가" 하고 두 번째 함수를 만들게 된다.
@@ -205,16 +222,19 @@ export async function listChannelMembers(pool: Pool, channelId: string): Promise
   return res.rows;
 }
 
-export async function isChannelMember(pool: Pool, channelId: string, accountId: string): Promise<boolean> {
-  const res = await pool.query(
+// 아래 둘은 `Pool` 대신 `Queryable` 을 받는다 — 팀을 통째로 넣는 경로(#172)가 이 두
+// 함수를 **트랜잭션 클라이언트로** 부른다. 여기서 `Pool` 로 좁혀 두면 그 경로가 자기
+// 멤버십 삽입을 다시 쓰게 되고, 멤버십의 뜻이 두 곳에 살게 된다.
+export async function isChannelMember(db: Queryable, channelId: string, accountId: string): Promise<boolean> {
+  const res = await db.query(
     `select 1 from channel_member where channel_id = $1 and account_id = $2`, [channelId, accountId],
   );
   return Boolean(res.rowCount);
 }
 
 /** 이미 멤버면 아무 일도 하지 않는다 — 초대를 두 번 눌렀다고 실패로 보이면 안 된다. */
-export async function addChannelMember(pool: Pool, channelId: string, accountId: string): Promise<void> {
-  await pool.query(
+export async function addChannelMember(db: Queryable, channelId: string, accountId: string): Promise<void> {
+  await db.query(
     `insert into channel_member (channel_id, account_id) values ($1, $2) on conflict do nothing`,
     [channelId, accountId],
   );

@@ -553,6 +553,27 @@ describe('부를 상대 미리보기 (#278)', () => {
     expect(line.textContent).not.toContain('(채널 전체)');
   });
 
+  /**
+   * #298 — 코드 블록 안의 handle 은 알림이 가지 않으므로 이 줄에도 나오지 않는다.
+   *
+   * 순수 함수(`bodyRecipients`)만 보는 단언은 `Composer` 가 그 함수를 부르지 않게 되어도
+   * 초록이다. 그래서 여기서는 **작성창에 실제로 타이핑해** 그 줄을 읽는다.
+   */
+  it('코드 블록 안의 handle 은 이 줄에 나오지 않는다 (#298)', () => {
+    useAppStore.getState().set({ groups: [grp('g1', 'oncall', 'On-call')] });
+    render(<Composer onSend={vi.fn()} />);
+
+    typeInto('```\n@fizz @oncall\n```');
+    expect(listed()).toEqual([]);
+
+    // 코드 밖은 그대로 살아 있다 — 위 단언이 이 줄 자체가 죽은 것을 통과시키지 않는다.
+    typeInto('@fizz 이거 봐\n```\n@oncall\n```');
+    expect(listed()).toEqual(['fizz']);
+
+    typeInto('`@fizz` 라고 적어');
+    expect(listed()).toEqual([]);
+  });
+
   it('이 줄의 항목은 누를 수 없다 — 지우려면 본문을 고친다', () => {
     render(<Composer onSend={vi.fn()} />);
     typeInto('@fizz @rusalka 안녕');

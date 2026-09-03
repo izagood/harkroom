@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import type { AccountStatus, ChannelRow, MessageRow } from '@murmur/shared';
+import type { WorkspaceSkill } from './services/skills.js';
 
 export type WorkspaceEvent =
   | { type: 'message.created'; message: MessageRow; audience: 'all' | string[] }
@@ -20,8 +21,20 @@ export type WorkspaceEvent =
   | { type: 'channel.created'; channel: ChannelRow; audience: 'all' | string[] }
   | { type: 'channel.updated'; channel: ChannelRow; audience: 'all' | string[] }
   | { type: 'channel.deleted'; channelId: string; audience: 'all' | string[] }
+  // 채널 멤버십 변경(#300). 목록 수신자는 #284 의 channelListAudience 를 쓴다.
+  // 추가된 사람은 channel.created 를, 제거된 사람은 channel.deleted 를 함께 받는다(#284 의 public→private 논리).
+  | { type: 'channel.member_added'; channelId: string; accountId: string; audience: 'all' | string[] }
+  | { type: 'channel.member_removed'; channelId: string; accountId: string; audience: 'all' | string[] }
+  // 핸들 집합 변경(#300). 로그인한 전원에게 간다.
+  | { type: 'handle_group.changed'; groupId: string; audience: 'all' | string[] }
   // 담기/해제/상태 변경(#219). 본인의 소켓에만 간다.
-  | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string };
+  | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string }
+  // 워크스페이스 스킬(#140). 제안·승인·비활성을 알린다.
+  | { type: 'skill.proposed'; skill: WorkspaceSkill; channelId: string }
+  | { type: 'skill.approved'; skill: WorkspaceSkill }
+  | { type: 'skill.disabled'; skill: WorkspaceSkill }
+  // 링크 미리보기 준비 완료(#215). 가져오기는 비동기라, 메시지가 먼저 뜨고 카드가 뒤에 온다.
+  | { type: 'link_preview.ready'; url: string; audience: 'all' | string[] };
 
 const bus = new EventEmitter();
 bus.setMaxListeners(1000);
