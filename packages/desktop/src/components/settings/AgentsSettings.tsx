@@ -165,11 +165,20 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   };
   useEffect(reload, []);
 
-  // targetId 가 있으면 해당 에이전트를 선택한다.
+  /**
+   * 멘션에서 이 화면으로 왔다면 그 에이전트를 고른 상태로 시작한다(#279).
+   *
+   * **한 targetId 에 한 번만** 고른다. `agents` 는 저장·재조회마다 새 배열이라 그것만 보고
+   * 다시 고르면, 사람이 다른 에이전트를 고른 뒤 저장한 순간 화면이 원래 대상으로 튀고
+   * `pick` 이 초안을 갈아 사람이 쓰던 편집이 사라진다.
+   */
+  const pickedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!targetId) return;
+    if (!targetId || pickedFor.current === targetId) return;
     const agent = agents.find((a) => a.id === targetId);
-    if (agent) pick(agent);
+    if (!agent) return;
+    pickedFor.current = targetId;
+    pick(agent);
   }, [targetId, agents]);
 
   // 기본값은 admin 전용 라우트다(`GET /settings/agent-defaults`). admin 이 아닌 사람에게

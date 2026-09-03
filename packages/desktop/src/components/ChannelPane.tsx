@@ -8,6 +8,7 @@ import { ChannelFiles } from './ChannelFiles';
 import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { dayLabel, localDayKey } from '../lib/day';
+import type { SectionId } from './settings/sections';
 
 interface ChannelPaneProps {
   /**
@@ -18,8 +19,13 @@ interface ChannelPaneProps {
    * `test/searchEntryPoint.test.tsx` 가 Workspace 를 통째로 띄워 그 배선을 지킨다.
    */
   onOpenSearch?: (scoped: boolean) => void;
+  /**
+   * 멘션을 눌렀을 때 갈 곳(#279). `onOpenSearch` 와 같은 이유로 옵셔널이고 같은 위험을 진다 —
+   * 넘기지 않으면 멘션이 버튼이 아니게 되고 화면에서는 조용하다. `test/mentionClick.test.tsx`
+   * 가 `Workspace` 를 통째로 띄워 그 배선을 지킨다.
+   */
   onOpenDirectory?: (accountId: string | null) => void;
-  onOpenSettings?: (section?: string, targetId?: string) => void;
+  onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }
 
 export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: ChannelPaneProps) {
@@ -226,7 +232,15 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       <ChannelFiles key={activeChannelId} channelId={activeChannelId} onClose={() => setFilesOpen(false)} />
     )}
     {docOpen && channel && (
-      <ChannelDocPanel key={activeChannelId} channelId={activeChannelId} onClose={() => setDocOpen(false)} />
+      <ChannelDocPanel
+        key={activeChannelId}
+        channelId={activeChannelId}
+        onClose={() => setDocOpen(false)}
+        // 채널 문서의 본문도 멘션을 담는다(#279) — 여기서 신호를 끊으면 같은 `@handle` 이
+        // 대화에서는 눌리고 문서에서는 안 눌린다.
+        onOpenDirectory={onOpenDirectory}
+        onOpenSettings={onOpenSettings}
+      />
     )}
     </div>
   );
