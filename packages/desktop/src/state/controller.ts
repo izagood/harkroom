@@ -1190,7 +1190,7 @@ export class Controller {
    * 섹션 이름 바꾸기(#323). 새 이름이 이미 존재하면 합친다.
    */
   async renameSection(oldName: string, newName: string | null): Promise<void> {
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     const { prefs } = await this.api.renameSection(oldName, newName);
     const prefsMap: Record<string, typeof prefs[0]> = {};
     for (const p of prefs) {
