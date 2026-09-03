@@ -169,7 +169,7 @@ describe('담아 둔 메시지 — 메뉴와 사이드바 (#219)', () => {
     useAppStore.getState().set({ savedCount: 3, savedIds: ['m1', 'm2', 'm3', 'm4'] });
     render(
       <Sidebar
-        onOpenDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}}
+        onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}}
         onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()}
       />,
     );
@@ -183,7 +183,7 @@ describe('담아 둔 메시지 — 메뉴와 사이드바 (#219)', () => {
     useAppStore.getState().set({ savedCount: 0 });
     render(
       <Sidebar
-        onOpenDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}}
+        onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}}
         onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()}
       />,
     );
