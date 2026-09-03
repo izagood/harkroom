@@ -1,4 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+// #140 워크스페이스 스킬 — 서버 쪽 보증.
+//
+// 가장 중요한 회귀선은 **승인 게이트**다: 에이전트가 스스로 승인할 수 있으면 한 에이전트가
+// 잘못 배운 문장이 모두의 시스템 프롬프트가 된다. 그래서 여기서는 (i) 에이전트 PAT 로
+// approve 가 403 인지, (ii) MCP 표면에 쓰기 도구가 아예 없는지를 **둘 다** 고정한다 —
+// 403 만 고정하면 나중에 MCP 도구를 하나 더 만들어 게이트를 우회할 수 있다.
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -6,8 +12,6 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
-import { onEvent } from '../src/events.js';
-import type { WorkspaceEvent } from '../src/events.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -45,41 +49,58 @@ async function mcpClient(token: string): Promise<Client> {
   return client;
 }
 
+/** MCP `skill.propose` 를 한 번 부르고 도구가 돌려준 JSON 을 준다. */
+async function propose(
+  token: string, args: { slug: string; body: string; channelId?: string },
+): Promise<Record<string, unknown>> {
+  const client = await mcpClient(token);
+  try {
+    const res = await client.callTool({
+      name: 'skill.propose',
+      arguments: { channelId, ...args },
+    });
+    return JSON.parse((res.content as { text: string }[])[0]!.text) as Record<string, unknown>;
+  } finally {
+    await client.close();
+  }
+}
+
+async function channelBodies(): Promise<string[]> {
+  const res = await app.inject({
+    method: 'GET', url: `/channels/${channelId}/messages`,
+    headers: { authorization: `Bearer ${adminToken}` },
+  });
+  return (res.json().messages as { body: string }[]).map((m) => m.body);
+}
+
 describe('workspace skill', () => {
-  // 테스트 1: 에이전트가 skill.propose 로 제안하면 미승인 행이 생기고 채널에 알림이 남는다.
+  // 요구 1. **이벤트가 아니라 채널에 남은 메시지를 본다.** 이벤트만 단언하면 알림을 실제로
+  // 올리는 경로(proposeSkill → postMessage)를 지워도 초록이다 — 승인 게이트의 값은 사람이
+  // 제안을 본다는 것 하나에 있으므로, 그 경로가 회귀선 안에 있어야 한다.
   it('에이전트가 제안하면 미승인 행이 생기고 채널에 알림이 남는다', async () => {
-    const events: WorkspaceEvent[] = [];
-    const off = onEvent((e) => events.push(e));
-    try {
-      const client = await mcpClient(agentPat);
-      await client.callTool({
-        name: 'skill.propose',
-        arguments: { slug: 'test-skill', body: '# 테스트 스킬', channelId },
-      });
-      await client.close();
+    const result = await propose(agentPat, { slug: 'test-skill', body: '# 테스트 스킬' });
+    expect(result.ok).toBeDefined();
 
-      // DB에 미승인 행이 생겼는지 확인
-      const skill = await pool.query('select * from workspace_skill where slug = $1', ['test-skill']);
-      expect(skill.rowCount).toBe(1);
-      expect(skill.rows[0].approved_at).toBeNull();
+    const skill = await pool.query('select * from workspace_skill where slug = $1', ['test-skill']);
+    expect(skill.rowCount).toBe(1);
+    expect(skill.rows[0].approved_at).toBeNull();
+    expect(skill.rows[0].proposed_by).toBe(agentAccountId);
 
-      // 채널에 알림이 남았는지 확인
-      const notification = events.find((e) => e.type === 'skill.proposed');
-      expect(notification).toBeDefined();
-      expect((notification as { channelId: string }).channelId).toBe(channelId);
-    } finally { off(); }
+    expect((await channelBodies()).some((b) => b.includes('test-skill'))).toBe(true);
   });
 
-  // 테스트 2: 에이전트 PAT 로 approve 는 403, admin 은 200
+  // 요구 2 — **이 파일의 핵심 회귀선.** `requireAdmin` 을 빼면 여기가 빨개진다.
   it('에이전트 PAT 로 approve 는 403, admin 은 200', async () => {
-    // 에이전트로 approve 시도 (403)
     const agentRes = await app.inject({
       method: 'POST', url: '/skills/test-skill/approve',
       headers: { authorization: `Bearer ${agentPat}` },
     });
     expect(agentRes.statusCode).toBe(403);
+    // 거절이 실제로 승인 도장을 남기지 않았는지도 본다 — 403 만 보고 넘어가면
+    // "거절 응답 + 부수효과" 조합을 놓친다.
+    const after = await pool.query('select approved_at from workspace_skill where slug = $1', ['test-skill']);
+    expect(after.rows[0].approved_at).toBeNull();
 
-    // admin으로 approve 시도 (200)
     const adminRes = await app.inject({
       method: 'POST', url: '/skills/test-skill/approve',
       headers: { authorization: `Bearer ${adminToken}` },
@@ -87,9 +108,20 @@ describe('workspace skill', () => {
     expect(adminRes.statusCode).toBe(200);
   });
 
-  // 테스트 3: 미승인 스킬은 GET /skills?approved=true 에 없다
+  // 비활성(=거부)도 admin 전용이다. approve 만 막고 delete 를 열어 두면 에이전트가
+  // 남의 스킬을 끌 수 있다.
+  it('에이전트 PAT 로 비활성도 403', async () => {
+    const res = await app.inject({
+      method: 'DELETE', url: '/skills/test-skill',
+      headers: { authorization: `Bearer ${agentPat}` },
+    });
+    expect(res.statusCode).toBe(403);
+    const row = await pool.query('select disabled_at from workspace_skill where slug = $1', ['test-skill']);
+    expect(row.rows[0].disabled_at).toBeNull();
+  });
+
+  // 요구 3.
   it('미승인 스킬은 approved=true 에 없다', async () => {
-    // 다른 스킬 제안 (미승인)
     await pool.query(
       `insert into workspace_skill (slug, body, proposed_by) values ($1, $2, $3)`,
       ['pending-skill', '# 대기중', agentAccountId],
@@ -104,79 +136,135 @@ describe('workspace skill', () => {
     expect(skills.find((s) => s.slug === 'test-skill')).toBeDefined();
   });
 
-  // 테스트 4: 같은 slug 재제안은 기존 행을 덮되 승인 상태를 잃는다
-  it('같은 slug 재제안은 승인 상태를 잃는다', async () => {
-    // 이미 승인된 스킬을 다시 제안
-    const client = await mcpClient(agentPat);
-    await client.callTool({
-      name: 'skill.propose',
-      arguments: { slug: 'test-skill', body: '# 수정된 스킬', channelId },
-    });
-    await client.close();
+  // 요구 4. 본문이 바뀌었는데 승인 도장이 남아 있으면, 사람이 읽어 본 적 없는 문장이
+  // 승인된 것으로 통한다 — 스킬은 프롬프트 인젝션 표면이다.
+  it('같은 slug 재제안은 본문을 덮고 승인 상태를 잃는다', async () => {
+    const before = await pool.query('select approved_at from workspace_skill where slug = $1', ['test-skill']);
+    expect(before.rows[0].approved_at).not.toBeNull(); // 앞 테스트가 승인해 둔 상태
 
-    // 승인 상태가 없어졌는지 확인
-    const skill = await pool.query('select approved_at from workspace_skill where slug = $1', ['test-skill']);
-    expect(skill.rows[0].approved_at).toBeNull();
+    await propose(agentPat, { slug: 'test-skill', body: '# 수정된 스킬' });
+
+    const after = await pool.query(
+      'select body, approved_at, approved_by from workspace_skill where slug = $1', ['test-skill']);
+    expect(after.rows[0].body).toBe('# 수정된 스킬');
+    expect(after.rows[0].approved_at).toBeNull();
+    expect(after.rows[0].approved_by).toBeNull();
+
+    // 그리고 승인 목록에서도 실제로 빠진다.
+    const listed = await app.inject({
+      method: 'GET', url: '/skills?approved=true',
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect((listed.json() as { slug: string }[]).find((s) => s.slug === 'test-skill')).toBeUndefined();
   });
 
-  // 테스트 5: slug 규칙 위반은 400
-  it('slug 규칙 위반은 400', async () => {
-    const client = await mcpClient(agentPat);
-    const res = await client.callTool({
-      name: 'skill.propose',
-      arguments: { slug: 'invalid slug!', body: '# 잘못된', channelId },
-    });
-    await client.close();
+  // 요구 5.
+  it('slug 규칙 위반은 거절된다', async () => {
+    expect(await propose(agentPat, { slug: 'invalid slug!', body: '# 잘못된' }))
+      .toMatchObject({ error: { code: 'invalid_slug' } });
+    expect(await propose(agentPat, { slug: 'a', body: '# 너무 짧다' }))
+      .toMatchObject({ error: { code: 'invalid_slug' } });
+    expect(await propose(agentPat, { slug: 'Has-Upper', body: '# 대문자' }))
+      .toMatchObject({ error: { code: 'invalid_slug' } });
 
-    const result = JSON.parse(((res.content as { text: string }[])[0] as { text: string }).text) as { error: { code: string } };
-    expect(result.error.code).toBe('invalid_slug');
+    // 거절된 제안은 행을 만들지 않는다.
+    const rows = await pool.query(`select count(*)::int as n from workspace_skill where slug ilike '%upper%'`);
+    expect(rows.rows[0].n).toBe(0);
   });
 
-  // 테스트 7: 비활성·삭제된 스킬의 파일과 링크가 사라진다 (REST로 테스트)
-  it('비활성화된 스킬을 approved=true 에서 조회할 수 없다', async () => {
-    // 스킬을 제안하고 승인 (고유 slug 사용)
-    const skillSlug = `disable-test-${Date.now()}`;
+  it('REST 도 slug 규칙을 지킨다 — 없는 slug 승인은 404', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/skills/no-such-skill/approve',
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  // 요구 7 의 서버 쪽 절반(파일·링크는 러너 테스트가 본다):
+  // 러너가 읽는 목록에서 사라져야 러너가 지운다.
+  it('비활성화된 스킬은 approved=true 에서 사라진다', async () => {
+    const slug = 'disable-test';
     await pool.query(
       `insert into workspace_skill (slug, body, proposed_by, approved_by, approved_at)
        values ($1, $2, $3, $4, now())`,
-      [skillSlug, '# 테스트', agentAccountId, agentAccountId],
+      [slug, '# 테스트', agentAccountId, agentAccountId],
     );
 
-    // 비활성화
     const delRes = await app.inject({
-      method: 'DELETE', url: `/skills/${skillSlug}`,
+      method: 'DELETE', url: `/skills/${slug}`,
       headers: { authorization: `Bearer ${adminToken}` },
     });
-
-    if (delRes.statusCode !== 200) {
-      console.log('Delete failed:', delRes.statusCode, delRes.body);
-    }
     expect(delRes.statusCode).toBe(200);
 
-    // approved=true 에서는 사라짐
     const res = await app.inject({
       method: 'GET', url: '/skills?approved=true',
       headers: { authorization: `Bearer ${adminToken}` },
     });
-    const skills = res.json() as { slug: string }[];
-    expect(skills.find((s) => s.slug === skillSlug)).toBeUndefined();
+    expect((res.json() as { slug: string }[]).find((s) => s.slug === slug)).toBeUndefined();
+
+    // 두 번 비활성은 409 — 404 로 답하면 slug 오타와 구분되지 않는다.
+    const again = await app.inject({
+      method: 'DELETE', url: `/skills/${slug}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(again.statusCode).toBe(409);
+  });
+
+  // 승인된 스킬 본문은 곧 모두의 시스템 프롬프트다 — 인증 없이 읽히면 프롬프트 표면이 샌다.
+  it('스킬 조회는 인증을 요구한다', async () => {
+    expect((await app.inject({ method: 'GET', url: '/skills' })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/skills?approved=true' })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/skills/test-skill' })).statusCode).toBe(401);
+    // 에이전트 PAT 는 읽을 수 있다 — 러너가 턴마다 이 경로로 동기화한다.
+    expect((await app.inject({
+      method: 'GET', url: '/skills?approved=true', headers: { authorization: `Bearer ${agentPat}` },
+    })).statusCode).toBe(200);
+  });
+
+  // 에이전트는 자기가 못 보는 채널에 알림을 심을 수 없다 — 그렇지 않으면 제안 알림이
+  // private 채널을 들여다보는(그리고 글을 남기는) 경로가 된다.
+  it('보이지 않는 채널로는 제안할 수 없다', async () => {
+    const priv = await app.inject({
+      method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: 'secret-ch', visibility: 'private' },
+    });
+    const result = await propose(agentPat, {
+      slug: 'sneaky', body: '# 몰래', channelId: priv.json().id,
+    });
+    expect(result).toMatchObject({ error: { code: 'forbidden' } });
+    const rows = await pool.query(`select count(*)::int as n from workspace_skill where slug = 'sneaky'`);
+    expect(rows.rows[0].n).toBe(0);
   });
 });
 
-describe('skill propose via MCP', () => {
-  // 추가 테스트: skill.propose의 입력 유효성 검사
-  it('slug 길이 제한 검사', async () => {
+describe('MCP 표면에 스킬 쓰기 도구가 없다', () => {
+  // 게이트를 우회하는 가장 쉬운 길은 MCP 도구를 하나 더 만드는 것이다. 이름을 리터럴로
+  // 확인한다 — 에이전트에게 열린 스킬 도구는 `skill.propose` 하나뿐이어야 한다.
+  it('에이전트가 부를 수 있는 스킬 도구는 skill.propose 하나뿐이다', async () => {
     const client = await mcpClient(agentPat);
-    // 40자 초과 slug
-    const res = await client.callTool({
-      name: 'skill.propose',
-      arguments: { slug: 'a'.repeat(41), body: '# 너무 긴 스킬', channelId },
-    });
-    await client.close();
+    try {
+      const names = (await client.listTools()).tools.map((t) => t.name);
+      expect(names.filter((n) => n.startsWith('skill.'))).toEqual(['skill.propose']);
+      for (const forbidden of ['skill.approve', 'skill.disable', 'skill.delete', 'skill.reject']) {
+        expect(names).not.toContain(forbidden);
+      }
+    } finally {
+      await client.close();
+    }
+  });
 
-    const text = ((res.content as { text: string }[])[0] as { text: string }).text;
-    // MCP 에러는 JSON 또는 에러 메시지
-    const hasError = text.includes('invalid_slug') || text.includes('error');
-    expect(hasError).toBe(true);
+  // 없는 도구를 부르면 실패한다 — "도구 목록에는 없지만 부르면 동작한다"를 막는다.
+  it('없는 이름으로 부르면 승인되지 않는다', async () => {
+    const client = await mcpClient(agentPat);
+    try {
+      const res = await client.callTool({ name: 'skill.approve', arguments: { slug: 'test-skill' } });
+      expect(res.isError).toBe(true);
+      expect(JSON.stringify(res.content)).toContain('not found');
+      // 그리고 아무 것도 승인되지 않았다.
+      const row = await pool.query('select approved_at from workspace_skill where slug = $1', ['test-skill']);
+      expect(row.rows[0].approved_at).toBeNull();
+    } finally {
+      await client.close();
+    }
   });
 });
