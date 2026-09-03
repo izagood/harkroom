@@ -2,12 +2,59 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { newToken } from '../auth/tokens.js';
-import { MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@murmur/shared';
+import { ACCOUNT_STATUSES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@murmur/shared';
 import { createAgentAccount, getAgent, listAgents, revokeAllPats, updateAgent } from '../services/agents.js';
 import { recordAudit } from '../audit.js';
+import { emitEvent } from '../events.js';
 import { deleteMemory, listMemoryEntries } from '../services/memory.js';
 
 export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
+  /**
+   * 사람이 자기 상태를 직접 정한다(#186). presence 를 **덮지 않는다** — 별도 컬럼·별도
+   * 이벤트다. 여기서 `presence.changed` 를 내면 소켓 연결에서 파생되는 사실과 사람이 고른
+   * 신호가 한 표시로 뭉쳐, 하트비트가 잡아내려던 것(죽은 연결을 online 으로 남기지 않는다)을
+   * 잃는다.
+   *
+   * 에이전트를 거절하는 이유: 에이전트에게는 이미 러너 상태라는 **기계가 파생하는 사실**이
+   * 따로 있다(#124/#125). 사람이 손으로 고르는 사회적 신호를 같은 자리에 허용하면 "대화
+   * 가능"이라고 표시하면서 러너가 없는 상태를 만들 수 있다. 코드는 `POST /auth/password`
+   * 의 선례를 그대로 따른다 — 같은 이유이므로 같은 코드(`invalid_account`)를 쓴다.
+   *
+   * 감사 로그는 남기지 않는다: 권한도 도달 범위도 바꾸지 않고, 문구는 자유 텍스트라
+   * 원문을 감사에 복사하면 "지웠다"가 지운 것이 아니게 된다.
+   */
+  app.put('/accounts/me/status', { preHandler: app.requireAccount }, async (req, reply) => {
+    const body = z.object({
+      status: z.enum(ACCOUNT_STATUSES),
+      // **키 부재와 null 을 구분한다.** 부재는 '손대지 않음', null 은 '지우기'다.
+      // `undefined` 로 지우기를 표현하면 `JSON.stringify` 가 그 키를 버려 조작이 조용히
+      // 무시된다 — 사용자는 지웠다고 믿는데 문구가 그대로 남는다.
+      // 80자 상한은 이 문구가 사이드바·DM 행 같은 좁은 자리에 그대로 실리기 때문이다.
+      statusText: z.string().max(80).nullable().optional(),
+    }).parse(req.body);
+
+    const account = req.account!;
+    if (account.kind !== 'human') {
+      return reply.code(400).send({ error: { code: 'invalid_account', message: 'status is only for human accounts' } });
+    }
+
+    // 부재는 기존 값을 그대로 둔다 — coalesce 가 아니라 `$3::boolean` 플래그로 가른다.
+    // coalesce($4, status_text) 로 쓰면 null(지우기)이 '손대지 않음'과 같아져 버린다.
+    const touchText = body.statusText !== undefined;
+    const res = await pool.query(
+      `update account
+          set status = $2,
+              status_text = case when $3::boolean then $4::text else status_text end
+        where id = $1
+        returning status, status_text as "statusText"`,
+      [account.id, body.status, touchText, body.statusText ?? null],
+    );
+    const row = res.rows[0] as { status: typeof body.status; statusText: string | null };
+
+    emitEvent({ type: 'status.changed', accountId: account.id, status: row.status, statusText: row.statusText });
+    return row;
+  });
+
   app.post('/invites', { preHandler: app.requireAdmin }, async (req, reply) => {
     const { token, hash } = newToken('muri');
     await pool.query(`insert into invite (token_hash, created_by) values ($1, $2)`, [hash, req.account!.id]);
