@@ -68,6 +68,12 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     channels: vi.fn(async () => [chan('c1', 'general')]),
     dms: vi.fn(async () => []),
     leases: vi.fn(async () => []),
+    // #267: 베이스가 덮지 않으면 컨트롤러의 상태 조회가 TypeError 로 떨어져, 모든
+    // 테스트가 "투영 상태를 못 읽었다" 화면 위에서 돌게 된다.
+    projectionStatus: vi.fn(async () => ({
+      state: 'ok' as const, configured: true, repo: null, lastLogIndex: 0,
+      lastPolledAt: Date.now(), lastAdvancedAt: null, lastError: null,
+    })),
     channelPrefs: vi.fn(async () => []),
     agentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),
     updateAgentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),

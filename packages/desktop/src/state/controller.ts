@@ -78,12 +78,24 @@ export class Controller {
 
   stop(): void { this.ws?.close(); this.ws = null; if (this.projectionRefreshInterval) { clearInterval(this.projectionRefreshInterval); this.projectionRefreshInterval = null; } }
 
-  /** 투영 상태를 갱신한다(#267). 60초마다 호출되며, 실패는 조용히 무시한다. */
+  /**
+   * 투영 상태를 갱신한다(#267). 기동 시 한 번, 이후 60초마다.
+   *
+   * **실패를 삼키지 않는다.** 다른 fire-and-forget 조회(`swallow`)와 다른 이유가 있다:
+   * 이 조회의 결과물이 곧 "투영이 어떤 상태인가"를 말하는 화면이므로, 실패를 삼키면
+   * 마지막 성공 상태(또는 `null`)가 그대로 남아 **못 읽고 있는 화면이 정상으로 보인다**.
+   * 그것이 이 이슈가 닫으려는 결함 그 자체다. 그래서 실패는 `projectionStatusError` 로
+   * 화면까지 올라가고, 다음 주기가 성공하면 지워진다.
+   */
   private async refreshProjectionStatus(): Promise<void> {
     try {
       const status = await this.api.projectionStatus();
-      useAppStore.getState().set({ projectionStatus: status });
-    } catch { /* 실패는 조용히 무시 — 다음 주기에 다시 시도한다 */ }
+      useAppStore.getState().set({ projectionStatus: status, projectionStatusError: null });
+    } catch (err) {
+      useAppStore.getState().set({
+        projectionStatusError: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /** 문구는 UI 문자열이라 영어다(저장소 관례). 사유별로 다른 이유: 사용자가 할 일이 다르다. */
