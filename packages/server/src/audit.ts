@@ -36,6 +36,13 @@ export type AuditAction =
   // #188: 채널 문서 수정. detail 에는 본문 없이 bodyLength 만 남긴다 — 문서 전체를
   // 감사에 복사하면 덮어쓰기마다 복사가 누적되고, 검색이 불가능해진다.
   | 'channel.doc.updated'
+  // #172: 에이전트 팀의 생애주기. detail 에는 handle 만 남긴다.
+  | 'team.created' | 'team.updated' | 'team.deleted'
+  | 'team.member.added' | 'team.member.removed'
+  // #172: 채널에 팀을 통째로 넣은 사건. 팀 이름과 결과 개수만 남긴다 — 넣은 handle 을
+  // 전부 적으면 팀이 클수록 detail 이 부풀고, 누가 멤버가 됐는지는
+  // 'channel.member.added' 가 아니라 멤버 목록이 답한다.
+  | 'channel.team.added'
   // #230: 사람 집합의 생애주기. admin 만 할 수 있는 조작이므로 기록이 남아야 한다.
   //
   // 구성원 변경을 따로 두는 이유: 집합에서 실제로 사람을 부르는 것은 **명단**이다.

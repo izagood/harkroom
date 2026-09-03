@@ -9,6 +9,7 @@ import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
 import { registerChannelRoutes } from './routes/channelRoutes.js';
+import { registerTeamRoutes } from './routes/teamRoutes.js';
 import { registerMessageRoutes } from './routes/messageRoutes.js';
 import { registerAttachmentRoutes } from './routes/attachmentRoutes.js';
 import { registerAvatarRoutes } from './routes/avatarRoutes.js';
@@ -287,6 +288,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   await registerAuthRoutes(app, deps.pool);
   await registerAccountRoutes(app, deps.pool);
+  await registerTeamRoutes(app, deps.pool);
   const storageOpts = deps.storage ?? {
     root: defaultAttachmentRoot(app),
     maxBytes: Number(process.env.ATTACHMENT_MAX_BYTES ?? DEFAULT_MAX_ATTACHMENT_BYTES),
