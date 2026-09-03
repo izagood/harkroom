@@ -235,8 +235,8 @@ describe('downloading an attachment', () => {
     expect(res.statusCode).toBe(404);
   });
 
-  // DB 행은 있지만 파일이 없을 때 500 이 아니라 404 를返す — "서버가 고장 못했다"와
-  // "행은 있는데 바이트가 없다"는 대처가 다르다.
+  // DB 행은 있는데 파일이 없으면 500 이 아니라 404 다 — "서버가 고장났다"와 "이 첨부의
+  // 파일이 없다"는 사람이 할 일이 다르다(재시도 대 운영 조치).
   it('returns 404 attachment_missing when row exists but file is gone', async () => {
     const up = (await upload('orphan.txt', 'content')).json();
     await say('메시지에 연결', [up.id]);
