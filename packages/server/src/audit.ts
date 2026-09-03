@@ -11,6 +11,8 @@ import type { Pool } from 'pg';
 export type AuditAction =
   | 'login.succeeded' | 'login.failed' | 'logout'
   | 'account.created' | 'agent.created' | 'agent.updated' | 'agent.disabled' | 'agent.enabled' | 'invite.created'
+  // #139: 메모리 삭제. detail 에는 slug 만 남긴다 — 본문을 복사하면 삭제가 삭제가 아니다.
+  | 'agent.memory.deleted'
   | 'pat.issued' | 'pat.revoked'
   | 'password.changed'
   | 'channel.created' | 'channel.updated' | 'message.deleted';
