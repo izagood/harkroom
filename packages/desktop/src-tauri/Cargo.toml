@@ -9,6 +9,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-notification = "2.4.0"
+# 본문의 링크를 OS 기본 브라우저로 넘기는 표면(#214). 여는 대상은 앱 쪽
+# 허용 목록(src/lib/link.ts)이 http/https 로만 좁힌 뒤에 온다.
+tauri-plugin-shell = "2"
 # OS 키체인. Tauri 에 공식 플러그인이 없어 이 크레이트를 명령으로 노출한다(src/main.rs).
 # apple-native / windows-native / linux-native-sync-persistent 로 각 OS 의 기본 저장소를 쓴다.
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }

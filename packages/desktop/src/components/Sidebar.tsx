@@ -27,10 +27,20 @@ function ChannelUnreadDot({ channelId, name }: { channelId: string; name: string
   );
 }
 
-function UnreadBadge({ channelId }: { channelId: string }) {
+/**
+ * 멘션 배지. **음소거한 채널에서는 뜨지 않는다**(#229) — 음소거는 알림과 배지를 같이 끄고,
+ * 한쪽만 끄면 "껐는데 빨간 숫자가 남는다"가 되어 여전히 거짓말이다. 다만 새 대화가 있다는
+ * 사실 자체는 위의 회색 점(`ChannelUnreadDot`)이 계속 말한다 — 음소거는 조용히 하겠다는
+ * 뜻이지 그 채널을 없애겠다는 뜻이 아니다.
+ *
+ * `muted` 를 스토어에서 직접 읽지 않고 prop 으로 받는다: 채널 행이 이미 pref 를 구해 두고,
+ * 같은 값을 두 번 구독하면 두 곳이 갈라질 수 있다. **옵셔널이 아니라 필수 prop 이다** —
+ * 기본값을 두면 새 호출자가 음소거를 잊어도 타입이 통과해 같은 결함이 다시 생긴다.
+ */
+function UnreadBadge({ channelId, muted }: { channelId: string; muted: boolean }) {
   const unread = useAppStore((s) => s.unread);
   const count = unread.filter((e) => e.channelId === channelId && !e.readAt).length;
-  if (!count) return null;
+  if (muted || !count) return null;
   return (
     <span data-testid={`unread-${channelId}`}
       className="ml-auto rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white">
@@ -39,9 +49,11 @@ function UnreadBadge({ channelId }: { channelId: string }) {
   );
 }
 
-export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse }: {
+export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, collapsed, onToggleCollapse }: {
   onLogout: () => void;
   onOpenSettings: (section?: SectionId) => void;
+  /** 워크스페이스 전체 디렉터리를 연다(#226). 채널 멤버 목록이 아니라 워크스페이스 전체다. */
+  onOpenDirectory: () => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
@@ -257,8 +269,11 @@ export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse 
         online: peers.some((id) => online.includes(id)),
         // 1:1 DM 에서만 상태를 그린다. 여러 사람이면 누구의 상태인지 표시가 답하지 못한다.
         peer: peers.length === 1 ? accounts[peers[0]!] : undefined,
+        // 배지를 그릴 때가 아니라 목록을 만들 때 구한다 — 렌더 순서에 기대면 배지가
+        // 음소거를 보지 못하는 자리에 놓이기 쉽다(#229 가 채널 쪽에서 그랬다).
+        muted: !!channelPrefs[dm.id]?.mutedAt,
       };
-    }), [dms, accounts, me, online]);
+    }), [dms, accounts, me, online, channelPrefs]);
 
   const others = Object.values(accounts).filter((a) => a.id !== me?.id);
   const row = (active: boolean) =>
@@ -282,6 +297,11 @@ export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse 
   }, [channels]);
 
   const channelRow = (ch: ChannelRow) => {
+    // pref 는 **배지를 그리기 전에** 구한다. 예전에는 이 계산이 배지 아래에 있어서
+    // 음소거가 배지에 닿을 수조차 없었다(#229).
+    const pref = channelPrefs[ch.id];
+    const isMuted = !!pref?.mutedAt;
+    const isStarred = !!pref?.starredAt;
     const isEditing = editingChannelId === ch.id;
     if (isEditing) {
       return (
@@ -407,13 +427,9 @@ export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse 
         {ch.name}
         {ch.repo && <span className="rounded bg-zinc-800 px-1 text-[10px] text-zinc-400">{ch.repo}</span>}
         <ChannelUnreadDot channelId={ch.id} name={ch.name ?? ''} />
-        <UnreadBadge channelId={ch.id} />
+        <UnreadBadge channelId={ch.id} muted={isMuted} />
       </button>
     );
-    const pref = channelPrefs[ch.id];
-    const isMuted = !!pref?.mutedAt;
-    const isStarred = !!pref?.starredAt;
-
     const copyChannelName = async () => {
       try {
         await navigator.clipboard.writeText(ch.name ?? '');
@@ -601,6 +617,11 @@ export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse 
           </div>
         )}
         <div>
+          {/* 디렉터리는 조회 전용이라 admin 여부를 보지 않는다 — 누가 이 워크스페이스에
+              있는지는 모두가 알아야 한다. 계정 관리는 아래 설정 진입점의 몫이다. */}
+          <button className={`${row(false)} text-zinc-400`} onClick={onOpenDirectory}>
+            Directory
+          </button>
           <button className={`${row(false)} text-zinc-400`} onClick={() => onOpenSettings('agents')}>
             + Add or edit agents
           </button>
@@ -633,7 +654,7 @@ export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse 
                   className={`h-2 w-2 rounded-full ${dm.online ? 'bg-green-500' : 'bg-zinc-600'}`} />
                 <StatusMark account={dm.peer} />
                 {dm.label}
-                <UnreadBadge channelId={dm.id} />
+                <UnreadBadge channelId={dm.id} muted={dm.muted} />
               </button>
             ))
           )}
