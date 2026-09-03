@@ -136,8 +136,6 @@ export class RunnerLauncher {
   private runners = new Map<string, RunnerProcess>();
   private states = new Map<string, RunnerState>();
   private onStateChange?: (states: RunnerState[]) => void;
-  /** 회전 대상을 다시 띄우려면 저장소 경로와 handle 이 필요하다 — 마지막으로 본 것을 쥔다. */
-  private lastSeen = new Map<string, { agent: LaunchableAgent; repoPath: string }>();
 
   constructor(
     private api: RunnerApi,
@@ -170,7 +168,6 @@ export class RunnerLauncher {
     );
 
     for (const agent of targets) {
-      this.lastSeen.set(agent.id, { agent, repoPath: input.repoPath });
       try {
         await this.startOne(agent, input);
       } catch (err) {
@@ -289,16 +286,9 @@ export class RunnerLauncher {
    * 시각을 붙여 새 라벨로 발급하고 곧바로 옛 라벨을 폐기한다 — 두 개가 함께 사는 시간은
    * 그 사이뿐이다.
    */
-  async reissue(agentId: string): Promise<void> {
-    const seen = this.lastSeen.get(agentId);
-    if (!seen) {
-      this.setState(agentId, {
-        status: 'failed', exitCode: null,
-        message: '이 에이전트를 아직 한 번도 대상으로 보지 못했다 — 앱을 다시 열어라',
-      });
-      return;
-    }
-    if (!seen.repoPath) {
+  async reissue(target: { agent: LaunchableAgent; repoPath: string }): Promise<void> {
+    const agentId = target.agent.id;
+    if (!target.repoPath) {
       this.setState(agentId, { status: 'failed', exitCode: null, message: REPO_PATH_MISSING });
       return;
     }
@@ -341,7 +331,7 @@ export class RunnerLauncher {
     }
 
     await this.stop(agentId);
-    await this.spawnRunner(seen.agent, token, seen.repoPath);
+    await this.spawnRunner(target.agent, token, target.repoPath);
     if (revokeError) {
       this.setState(agentId, {
         status: 'running', exitCode: null,

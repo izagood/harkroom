@@ -57,9 +57,21 @@ export class Controller {
     });
   }
 
-  /** 설정 화면의 "PAT 재발급" 이 부르는 자리. 실행기를 화면에 직접 노출하지 않는다. */
-  reissueRunnerPat(agentId: string): Promise<void> {
-    return this.runnerLauncher.reissue(agentId);
+  /**
+   * 설정 화면의 "PAT 재발급" 이 부르는 자리. 실행기를 화면에 직접 노출하지 않는다.
+   *
+   * 대상을 **여기서 다시 조회한다** — 실행기가 자동 기동 때 본 것을 기억해 두고 그것에
+   * 기대면, 자동 기동을 끄고 쓰는 사람에게는 이 버튼이 영원히 죽어 있다(누를 수는 있고
+   * 아무 일도 일어나지 않는다). 저장소 경로도 지금 값을 읽는다: 사람이 방금 경로를 고쳐
+   * 넣고 이 버튼을 누르는 것이 자연스러운 순서다.
+   */
+  async reissueRunnerPat(agentId: string): Promise<void> {
+    const agents = await this.api.listAgents();
+    const agent = agents.find((a) => a.id === agentId);
+    if (!agent) throw new Error('에이전트를 찾지 못했다 — 목록을 다시 읽어라');
+    await this.runnerLauncher.reissue({
+      agent, repoPath: usePrefsStore.getState().runnerRepoPath,
+    });
   }
 
   /**
