@@ -77,6 +77,26 @@ describe('mention autocomplete', () => {
     expect(screen.queryByRole('option', { name: /rusalka/ })).toBeNull();
   });
 
+  /**
+   * #277 경계. 후보 목록의 `Identity` 는 **핸들 옆** 자리이므로 `badge` 다 — 거터가 아니다.
+   * 여기를 `avatar` 로 바꾸면 소유자(#181)가 조용히 사라진다. 부르기 직전이 "누구의
+   * 에이전트인가"가 가장 필요한 순간이고, 사라진 정보는 화면에 아무 흔적을 남기지 않는다.
+   */
+  it('#277: 후보 목록의 에이전트에 소유자 핸들이 함께 나온다', () => {
+    useAppStore.getState().set({
+      accounts: {
+        u1: acc('u1', 'me'),
+        u2: acc('u2', 'rusalka'),
+        a1: { ...acc('a1', 'fizz', 'agent'), ownerAccountId: 'u2' },
+      },
+    });
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@fizz');
+
+    const opt = screen.getByRole('option', { name: /fizz/ });
+    expect(opt.textContent).toContain('@rusalka');
+  });
+
   // 에이전트를 부르는 것이 murmur 의 목적이지만, 사람도 멘션 대상이다.
   it('offers humans too', () => {
     render(<Composer onSend={vi.fn()} />);
