@@ -17,7 +17,7 @@ const fakeController = (members: { accountId: string; handle: string }[]) => {
   const c = {
     openChannel: vi.fn(), startDm: vi.fn(), logout: vi.fn(),
     createChannel: vi.fn(), updateChannel: vi.fn(), archiveChannel: vi.fn(),
-    toggleChannelMute: vi.fn(), toggleChannelStar: vi.fn(), send: vi.fn(),
+    setChannelNotifyLevel: vi.fn(), toggleChannelStar: vi.fn(), send: vi.fn(),
     openThread: vi.fn(), loadOlder: vi.fn(), markChannelUnread: vi.fn(),
     loadChannelMembers: vi.fn(async (channelId: string) => {
       const store = useAppStore.getState();
@@ -42,7 +42,7 @@ const seed = () => {
 };
 
 const sidebar = () => render(
-  <Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} onOpenDirectory={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />,
+  <Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} onOpenDirectory={vi.fn()} onOpenInbox={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
 const openMenuFor = (accessibleName: RegExp): void => {

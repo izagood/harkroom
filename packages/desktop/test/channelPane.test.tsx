@@ -4,6 +4,7 @@ import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { acc, chan, msg } from './helpers/fakeApi';
+import { undoSendStorage } from '../src/lib/prefs';
 
 const fakeController = () => {
   const c = {
@@ -18,6 +19,9 @@ const fakeController = () => {
 };
 
 beforeEach(() => {
+  // 이 파일이 검증하는 것은 보냄 취소 창이 아니다(#223) — 창을 끄고 즉시 전송 경로를 본다.
+  // 창 자체는 undoSend.test.tsx 가 단독으로 지킨다.
+  undoSendStorage.saveWindowMs(0);
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'admin'),
@@ -237,7 +241,7 @@ describe('ChannelPane', () => {
     const box = screen.getByPlaceholderText('Message #general') as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: 'hi there' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(c.send).toHaveBeenCalledWith('hi there', []);
+    expect(c.send).toHaveBeenCalledWith('hi there', [], 'c1');
     expect(box.value).toBe('');
   });
 
@@ -277,8 +281,31 @@ describe('ChannelPane', () => {
     const box = screen.getByPlaceholderText('Message #general') as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: 'hi there' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(c.send).toHaveBeenCalledWith('hi there', []);
+    expect(c.send).toHaveBeenCalledWith('hi there', [], 'c1');
     await waitFor(() => expect(box.value).toBe('hi there'));
+  });
+});
+
+describe('ChannelPane 검색 버튼 (#258)', () => {
+  it('헤더에 검색 버튼이 있고 접근 가능한 이름이 있다', () => {
+    fakeController();
+    render(<ChannelPane onOpenSearch={vi.fn()} />);
+    expect(screen.getByRole('button', { name: '이 채널에서 찾기' })).toBeTruthy();
+  });
+
+  it('검색 버튼을 누르면 onOpenSearch 가 scoped=true 로 불린다', () => {
+    const onOpenSearch = vi.fn();
+    fakeController();
+    render(<ChannelPane onOpenSearch={onOpenSearch} />);
+    fireEvent.click(screen.getByRole('button', { name: '이 채널에서 찾기' }));
+    expect(onOpenSearch).toHaveBeenCalledWith(true);
+  });
+
+  it('채널이 열려 있지 않으면 검색 버튼이 없다', () => {
+    fakeController();
+    useAppStore.getState().set({ activeChannelId: null });
+    render(<ChannelPane onOpenSearch={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: '이 채널에서 찾기' })).toBeNull();
   });
 });
 

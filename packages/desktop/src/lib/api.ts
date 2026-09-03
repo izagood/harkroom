@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PatView, PinRow } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -149,7 +149,7 @@ export class ApiClient {
   }
   postMessage(
     channelId: string, body: string, threadRootId?: string, idempotencyKey?: string,
-    attachmentIds: string[] = [],
+    attachmentIds: string[] = [], alsoInChannel?: boolean,
   ): Promise<MessageRow> {
     return this.req('POST', `/channels/${channelId}/messages`,
       {
@@ -157,11 +157,24 @@ export class ApiClient {
         ...(threadRootId ? { threadRootId } : {}),
         // 빈 배열은 보내지 않는다 — 첨부를 쓰지 않는 요청의 본문을 넓히지 않는다.
         ...(attachmentIds.length ? { attachmentIds } : {}),
+        ...(alsoInChannel ? { alsoInChannel } : {}),
       },
       idempotencyKey ? { 'idempotency-key': idempotencyKey } : undefined);
   }
   async inboxUnread(): Promise<InboxEntry[]> {
     return (await this.req<{ entries: InboxEntry[] }>('GET', '/inbox?unread=1')).entries;
+  }
+  /**
+   * inbox 전체 — 읽은 것까지(#185). `inboxUnread` 와 갈라 두는 이유는 **쓰는 곳이 다른 것을
+   * 물어보기 때문**이다: 배지·알림은 "아직 안 본 것"만 알면 되고(그래서 `?unread=1`),
+   * 목록 화면은 읽은 것도 있어야 "안 읽음만" 필터가 고를 것이 생긴다. 안 읽은 것만 받아
+   * 놓고 안 읽음 필터를 붙이면 그 스위치는 항상 참이라 아무것도 거르지 않는다.
+   *
+   * 서버 파라미터를 새로 만들지 않았다 — `GET /inbox` 는 `unread` 가 없으면 이미 전체를
+   * 준다(`listInbox` 의 `unreadOnly` 기본값이 false).
+   */
+  async inbox(): Promise<InboxEntry[]> {
+    return (await this.req<{ entries: InboxEntry[] }>('GET', '/inbox')).entries;
   }
   editMessage(channelId: string, messageId: string, body: string): Promise<MessageRow> {
     return this.req('PATCH', `/channels/${channelId}/messages/${messageId}`, { body });
@@ -195,6 +208,15 @@ export class ApiClient {
 
   updateAgent(id: string, patch: Partial<AgentConfig> & { displayName?: string }): Promise<AgentView> {
     return this.req('PATCH', `/accounts/agents/${id}`, patch);
+  }
+
+  /**
+   * 에이전트를 비활성화하거나 다시 활성화한다(#251). 설정 저장이 아니라 감사 대상 생애주기
+   * 상태이므로 `updateAgent` 와 별도 메서드로 둔다. 요청 본문은 `{ disabled }` 하나만 보내며,
+   * 다른 필드를 보내면 서버가 거절한다.
+   */
+  setAgentDisabled(id: string, disabled: boolean): Promise<AgentView> {
+    return this.req('PATCH', `/accounts/agents/${id}`, { disabled });
   }
 
   /**
@@ -255,6 +277,27 @@ export class ApiClient {
     return res.blob();
   }
 
+  /**
+   * 아바타 바이트를 받는다(#159). `fetchAttachment` 과 같은 이유로 토큰을 URL 에 넣지 않고,
+   * 받은 blob 으로 objectURL 을 만들어 그린다. 첨부와 **다른 라우트**인 이유: 첨부 다운로드는
+   * 메시지에 붙지 않은 업로드를 올린 사람에게만 내주고, 아바타는 영원히 메시지에 붙지 않는다.
+   */
+  async fetchAvatar(accountId: string): Promise<Blob> {
+    const res = await fetch(`${this.baseUrl}/accounts/${accountId}/avatar`, {
+      headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) throw new ApiError(res.status, 'avatar_failed', `HTTP ${res.status}`);
+    return res.blob();
+  }
+
+  /**
+   * 내 아바타를 정하거나(첨부 id) 지운다(**명시적 null**). 키를 생략하지 않는다 —
+   * `undefined` 는 `JSON.stringify` 가 버려서 지우기가 조용히 무시된다.
+   */
+  setAvatar(attachmentId: string | null): Promise<{ avatarAttachmentId: string | null }> {
+    return this.req('PUT', '/accounts/me/avatar', { attachmentId });
+  }
+
   markRead(ids: number[]): Promise<void> { return this.req('POST', '/inbox/read', { ids }); }
   createDm(accountIds: string[]): Promise<ChannelRow> { return this.req('POST', '/dms', { accountIds }); }
   /** 초대 토큰을 발급한다 — admin 전용. 토큰은 생성 직후 한 번만 볼 수 있다. */
@@ -266,7 +309,8 @@ export class ApiClient {
     return (await this.req<{ prefs: ChannelPrefRow[] }>('GET', '/channels/prefs')).prefs;
   }
 
-  updateChannelPref(channelId: string, patch: { muted?: boolean; starred?: boolean }): Promise<ChannelPrefRow> {
+  /** `muted` 는 없다 — `notifyLevel` 이 대체했다(#224). */
+  updateChannelPref(channelId: string, patch: { notifyLevel?: NotifyLevel; starred?: boolean }): Promise<ChannelPrefRow> {
     return this.req('PATCH', `/channels/${channelId}/pref`, patch);
   }
 
@@ -292,6 +336,20 @@ export class ApiClient {
 
   deleteAgentMemory(agentId: string, slug: string): Promise<void> {
     return this.req('DELETE', `/accounts/agents/${agentId}/memory/${encodeURIComponent(slug)}`);
+  }
+
+  /**
+   * 이 채널에 오간 파일들(#232). `before` 는 메시지 seq 커서다 — 메시지 목록의 `before` 와
+   * 같은 단위이므로, 파일 하나를 누르면 그 seq 로 대화를 찾아 들어갈 수 있다.
+   */
+  channelFiles(
+    channelId: string, opts?: { before?: number; limit?: number },
+  ): Promise<{ files: ChannelFileRow[]; hasMore: boolean }> {
+    const q = new URLSearchParams();
+    if (opts?.before !== undefined) q.set('before', String(opts.before));
+    if (opts?.limit !== undefined) q.set('limit', String(opts.limit));
+    const qs = q.size ? `?${q.toString()}` : '';
+    return this.req('GET', `/channels/${channelId}/files${qs}`);
   }
 
   /**

@@ -70,13 +70,14 @@ function buildMcpServer(
       channelId: z.string().uuid(),
       body: z.string().min(1).max(8000),
       threadRootId: z.string().uuid().optional(),
+      alsoInChannel: z.boolean().optional(),
     },
-  }, async ({ channelId, body, threadRootId }) => {
+  }, async ({ channelId, body, threadRootId, alsoInChannel }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
     const posted = await postMessage(pool, {
-      channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
+      channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, alsoInChannel,
     });
     // 에이전트는 첨부를 붙이지 않는다(도구에 그 입력이 없다). 그래도 합 타입이므로 확인해야
     // 하고, 확인 자체가 나중에 도구가 첨부를 받게 될 때의 자리를 남겨 둔다.
@@ -193,7 +194,8 @@ function buildMcpServer(
       const ids = entries.map((e) => e.messageId);
       const msgs = await pool.query(
         `select id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
-           author_id as "authorId", body, kind, meta, created_at as "createdAt"
+           author_id as "authorId", body, kind, meta, created_at as "createdAt",
+           also_in_channel as "alsoInChannel"
          from message where id = any($1) order by seq`, [ids]);
       return { entries, messages: msgs.rows };
     };

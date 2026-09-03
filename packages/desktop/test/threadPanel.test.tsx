@@ -4,6 +4,7 @@ import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
 import { ThreadPanel } from '../src/components/ThreadPanel';
 import { acc, msg } from './helpers/fakeApi';
+import { undoSendStorage } from '../src/lib/prefs';
 
 const fakeController = () => {
   const c = {
@@ -16,6 +17,9 @@ const fakeController = () => {
 };
 
 beforeEach(() => {
+  // 이 파일이 검증하는 것은 보냄 취소 창이 아니다(#223) — 창을 끄고 즉시 전송 경로를 본다.
+  // 창 자체는 undoSend.test.tsx 가 단독으로 지킨다.
+  undoSendStorage.saveWindowMs(0);
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'admin'),
@@ -51,7 +55,7 @@ describe('ThreadPanel', () => {
     const box = screen.getByPlaceholderText('Reply…') as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: 'on it' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(c.reply).toHaveBeenCalledWith('on it', []);
+    expect(c.reply).toHaveBeenCalledWith('on it', [], 'c1', 'm1', false);
     fireEvent.click(screen.getByRole('button', { name: '×' }));
     expect(c.closeThread).toHaveBeenCalled();
   });
@@ -73,7 +77,7 @@ describe('ThreadPanel', () => {
     const box = screen.getByPlaceholderText('Reply…') as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: 'help me' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(c.reply).toHaveBeenCalledWith('help me', []);
+    expect(c.reply).toHaveBeenCalledWith('help me', [], 'c1', 'm1', false);
     await waitFor(() => expect(box.value).toBe('help me'));
   });
 });

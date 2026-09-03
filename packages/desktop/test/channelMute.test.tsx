@@ -6,7 +6,7 @@ import { Controller, setController } from '../src/state/controller';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { DEFAULT_PREFS } from '../src/lib/prefs';
 import { Sidebar } from '../src/components/Sidebar';
-import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
+import { acc, accountsResult, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 /**
  * #229 회귀선. 음소거는 저장·조회·토글까지만 되어 있고 **소비하는 곳이 없었다** —
@@ -18,8 +18,16 @@ const entry = (id: number, messageId: string, channelId = 'c1',
   reason: InboxEntry['reason'] = 'mention'): InboxEntry =>
   ({ id, messageId, reason, readAt: null, channelId });
 
+// #224 이후 음소거는 `notifyLevel: 'none'` 이다. `mutedAt` 도 같이 두는 것은 서버가 기록으로
+// 계속 적기 때문이고, 판정은 `notifyLevel` 만 본다 — 여기 두 값을 나란히 둔 채로 초록이어야
+// "두 곳을 함께 읽지 않는다"가 확인된다.
 const pref = (channelId: string, muted: boolean): ChannelPrefRow =>
-  ({ accountId: 'u1', channelId, mutedAt: muted ? '2026-09-03T00:00:00.000Z' : null, starredAt: null });
+  ({
+    accountId: 'u1', channelId,
+    mutedAt: muted ? '2026-09-03T00:00:00.000Z' : null,
+    starredAt: null,
+    notifyLevel: muted ? 'none' : 'all',
+  });
 
 function fakeNotifier() {
   const sent: { title: string; body: string }[] = [];
@@ -39,7 +47,7 @@ async function started(notifier: ReturnType<typeof fakeNotifier>, arriving: Inbo
   let calls = 0;
   const api = fakeApi({
     channels: vi.fn(async () => [chan('c1', 'general'), chan('c2', 'dev')]),
-    accounts: vi.fn(async () => ({ accounts: [acc('u1', 'admin'), acc('u2', 'bot', 'agent')], groups: [] })),
+    accounts: vi.fn(async () => accountsResult([acc('u1', 'admin'), acc('u2', 'bot', 'agent')])),
     // 첫 조회(백로그)는 비어 있다 — 시작 시점에 쌓여 있던 것은 이미 '지나간 것'으로 표시되므로
     // 그 위에서는 음소거 가드가 도는지 아닌지를 구분할 수 없다.
     inboxUnread: vi.fn(async () => (calls++ === 0 ? [] : arriving)),
@@ -124,9 +132,9 @@ describe('음소거된 채널의 미읽음 배지', () => {
   const renderSidebar = () => {
     setController({
       openChannel: vi.fn(), startDm: vi.fn(), logout: vi.fn(),
-      toggleChannelMute: vi.fn(), toggleChannelStar: vi.fn(),
+      setChannelNotifyLevel: vi.fn(), toggleChannelStar: vi.fn(),
     } as unknown as Controller);
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} onOpenDirectory={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} onOpenDirectory={vi.fn()} onOpenInbox={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
   };
 
   beforeEach(() => {
