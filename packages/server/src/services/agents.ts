@@ -32,9 +32,19 @@ export function isHarness(value: unknown): value is AgentHarness {
   return typeof value === 'string' && (AGENT_HARNESSES as readonly string[]).includes(value);
 }
 
-/** 정의가 없는 에이전트도 목록에 나와야 한다(설정 없이 만들 수 있다) — 그래서 left join 이다. */
-export async function listAgents(pool: Pool): Promise<AgentView[]> {
-  const res = await pool.query(`select ${COLS} ${FROM} where a.kind = 'agent' order by a.handle`);
+/** 정의가 없는 에이전트도 목록에 나와야 한다(설정 없이 만들 수 있다) — 그래서 left join 이다.
+ *
+ * #299: `ownerId` 로 소유자 필터를 받는다. admin 은 null 이라 전부를 보고, 비admin 은
+ * 자기 id 로 필터한다. SQL 에서 필터하는 이유: 가져와서 걸러내면 남의 설정이 응답에
+ * 실렸다가 지워지는 모양이 된다. */
+export async function listAgents(pool: Pool, ownerId: string | null = null): Promise<AgentView[]> {
+  const where = ownerId
+    ? `where a.kind = 'agent' and c.owner_account_id = $1`
+    : `where a.kind = 'agent'`;
+  const res = await pool.query(
+    `select ${COLS} ${FROM} ${where} order by a.handle`,
+    ownerId ? [ownerId] : [],
+  );
   return res.rows;
 }
 
