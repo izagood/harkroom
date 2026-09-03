@@ -11,6 +11,7 @@ export type WorkspaceEvent =
   // 사람이 직접 고른 상태(#186). presence 와 나란히 산다 — 이 이벤트는
   // presence.changed 를 만들지 않고, 소켓이 끊겨도 상태는 그대로 남는다.
   | { type: 'status.changed'; accountId: string; status: AccountStatus; statusText: string | null }
+  | { type: 'avatar.changed'; accountId: string; avatarAttachmentId: string | null }
   | { type: 'reaction.added'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
   | { type: 'reaction.removed'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
   | { type: 'typing.changed'; channelId: string; accountIds: string[]; audience: 'all' | string[] };

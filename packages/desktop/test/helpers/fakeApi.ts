@@ -4,8 +4,11 @@ import type { ApiClient } from '../../src/lib/api';
 
 // #186: 상태는 옵셔널이 아니라 **필수 필드**다 — fixture 도 그것을 적어야 한다.
 // 기본값은 서버의 기본값과 같은 'available' 이고, 상태를 보는 테스트가 덮어쓴다.
-export const acc = (id: string, handle: string, kind: 'human' | 'agent' = 'human', isAdmin = false): AccountView =>
-  ({ id, handle, displayName: handle, kind, isAdmin, disabled: false, status: 'available', statusText: null });
+// #159: 아바타도 필수 필드다. 기본은 null(사진 없음)이고, 아바타를 보는 테스트가 extra 로 덮어쓴다.
+export const acc = (id: string, handle: string, kind: 'human' | 'agent' = 'human', isAdmin = false,
+  extra: Partial<AccountView> = {}): AccountView =>
+  ({ id, handle, displayName: handle, kind, isAdmin, disabled: false, status: 'available', statusText: null,
+    avatarAttachmentId: null, ...extra });
 
 export const chan = (id: string, name: string, repo: string | null = null): ChannelRow =>
   ({ id, name, topic: '', kind: 'standard', repo, archivedAt: null });
