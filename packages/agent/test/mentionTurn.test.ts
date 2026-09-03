@@ -45,6 +45,9 @@ function defOf(overrides: Partial<AgentView> = {}): AgentView {
     // #129: 종료 요청 없음이 기본이다. 종료를 검증하는 테스트가 이 값을 덮는다.
     stopRequestedAt: null,
     stopAckedAt: null,
+    // #176: 마지막 활동은 **서버가** 들고 있는 사실이고 러너는 그것을 읽지 않는다.
+    // 옵셔널이 아니라 명시적 null 이라 fixture 도 그것을 적어야 한다.
+    lastTurnAt: null,
     // #186: 에이전트는 상태를 고를 수 없다(서버가 거절한다). DB 기본값 그대로이지만
     // AccountView 의 필수 필드라 fixture 도 적어야 한다.
     status: 'available', statusText: null,
@@ -134,6 +137,17 @@ class FakeMurmur implements MentionTurnMurmur {
 
   removeReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
     this.reactions.push({ channelId, messageId, emoji, action: 'remove' });
+    return Promise.resolve();
+  }
+
+  /** #176: 활동 보고 횟수. 인자가 없으므로(시각은 서버가 찍는다) 셀 것은 이것뿐이다. */
+  activityReports = 0;
+  /** 보고가 실패하는 상황. 프로덕션 클라이언트도 던진다 — 삼키는 판단은 호출자 몫이다. */
+  activityError: Error | null = null;
+
+  reportActivity(): Promise<void> {
+    this.activityReports += 1;
+    if (this.activityError) return Promise.reject(this.activityError);
     return Promise.resolve();
   }
 
@@ -1369,5 +1383,80 @@ describe('종료 요청 (#129)', () => {
     expect(fake.reactions.filter((r) => r.emoji === '💬' && r.action === 'remove')).toHaveLength(1);
     // 그리고 요청은 호출자에게 전달된다.
     expect(result.stopRequestedAt).toBe(REQUESTED_AT);
+  });
+});
+
+describe('활동 보고 (#176)', () => {
+  // 이 값이 화면의 "마지막 활동: N분 전"이 되는 유일한 원천이다 — 러너가 부르지 않으면
+  // 화면은 영원히 '활동 없음'을 그린다(서버는 러너 프로세스를 보지 못한다).
+  it('턴이 끝나면 보고한다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, runTurn } = await makeDeps(fake);
+    runTurn.script = async () => {
+      // 보고는 턴이 **끝난 뒤**여야 한다 — 시작 시각을 보고하면 긴 턴이 도는 동안 화면이
+      // 계속 오래된 값을 보여 준다. 여기서 아직 보고가 없어야 그 순서가 지켜진 것이다.
+      expect(fake.activityReports).toBe(0);
+      await fake.post(CHANNEL, '답이다', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(fake.activityReports).toBe(1);
+  });
+
+  // 발화 없이 끝나는 턴(도구만 쓰고 끝난다)도 활동이다 — 발화를 활동으로 삼으면 그런 턴이
+  // 화면에서 사라진다. 그래서 보고는 발화 여부와 무관하다.
+  it('발화가 없는 턴도 보고한다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps } = await makeDeps(fake);
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(fake.activityReports).toBe(1);
+    // 발화가 없었다는 것 자체도 확인한다 — 있었다면 위 단언이 다른 것을 증명한 셈이 된다.
+    // (NO_REPLY_NOTICE 통보는 러너가 올린 것이지 에이전트의 답이 아니다.)
+    expect(fake.posts.map((p) => p.body)).toEqual([NO_REPLY_NOTICE]);
+  });
+
+  // 활동 보고가 안 됐다고 사람이 기다리는 답을 못 준 것은 아니다. 여기서 던지면 세션 상태
+  // 저장·발화 확인까지 건너뛰고, 다음 턴이 같은 메시지를 다시 먹인다.
+  it('보고가 실패해도 턴은 성공으로 끝난다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    fake.activityError = new Error('agent/activity 실패: 503');
+    const { deps, runTurn } = await makeDeps(fake);
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '답이다', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    // 던지지 않는다.
+    const result = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(fake.activityReports).toBe(1);
+    expect(result.stopRequestedAt).toBeNull();
+    // 그리고 턴의 결과가 전부 남았다: 답이 올라갔고, 세션이 전진했고, 💬 가 제거됐다.
+    expect(fake.posts.map((p) => p.body)).toEqual(['답이다']);
+    expect(deps.store.get(SessionStore.threadKey(CHANNEL, null))!.turnsRun).toBe(1);
+    expect(fake.reactions.filter((r) => r.emoji === '💬' && r.action === 'remove')).toHaveLength(1);
+  });
+
+  // 실패한 턴도 움직인 턴이다 — "마지막으로 언제 움직였나"에 성공 여부는 들어 있지 않다.
+  // 이것이 없으면 계속 실패하는 러너가 화면에서 '활동 없음'으로 보여, 운영자는 러너가 아예
+  // 안 붙었다고 오해한다.
+  it('턴이 실패해도 활동은 보고한다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, runTurn } = await makeDeps(fake);
+    runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'boom' });
+
+    await expect(
+      runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
+    ).rejects.toThrow(/harness 종료 1/);
+
+    expect(fake.activityReports).toBe(1);
   });
 });

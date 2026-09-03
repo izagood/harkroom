@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PinRow } from '@murmur/shared';
+import type { AccountStatus, AccountView, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PinRow } from '@murmur/shared';
 
 export interface HistoryEntry {
   channelId: string;
@@ -40,6 +40,12 @@ export interface AppState {
    * 초안처럼 비밀로 다룰 것이 없고, 다음 사람이 열면 서버에서 다시 받는다.
    */
   pins: Record<string, PinRow[]>;
+  /**
+   * 채널별 멤버 목록. channelId → members. **키가 없는 것과 빈 배열은 다르다** —
+   * 없으면 "아직 안 받았다", 빈 배열이면 "정말 아무도 없다"다. 조회 실패를 빈 배열로
+   * 채우면 그 구분이 사라져 나가기 경고가 조용히 꺼진다.
+   */
+  channelMembers: Record<string, ChannelMemberRow[]>;
   /**
    * 스코프별 초안. 키는 scopeKey (channelId 또는 thread:<rootId>).
    * 설정과 달리 사용자가 쓴 문장 전체이므로 로그아웃 시 반드시 삭제한다.
@@ -91,7 +97,7 @@ export interface AppState {
 const initial = {
   me: null, accounts: {}, channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
-  online: [], leases: [], connected: false, channelPrefs: {}, pins: {}, drafts: {},
+  online: [], leases: [], connected: false, channelPrefs: {}, pins: {}, channelMembers: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
 };
 

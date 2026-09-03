@@ -12,6 +12,8 @@ const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
   // #129: 종료 요청은 읽기 전용 사실이다 — 기본은 '요청 없음'이고, 필요한 테스트가 덮는다.
   stopRequestedAt: null, stopAckedAt: null,
+  // #176: 기본은 '아직 한 번도 턴을 돌린 적 없음'이다 — 화면은 그것을 '활동 없음'으로만 그린다.
+  lastTurnAt: null,
   // #186: 에이전트는 상태를 고를 수 없지만 AccountView 의 필수 필드다.
   status: 'available', statusText: null, ...extra,
 });
