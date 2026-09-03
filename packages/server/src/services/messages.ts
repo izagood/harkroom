@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
-import { mentionedHandles, type InboxEntry, type MessageRow } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, mentionedHandles, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
+import { channelVisibleSql } from './channels.js';
 
 /**
  * 게시 결과. 첨부 연결이 거절되면 메시지 자체가 만들어지지 않는다(트랜잭션 롤백) —
@@ -46,7 +47,9 @@ const ATTACHMENTS = `coalesce((
   from attachment a where a.message_id = message.id
 ), '[]'::json) as attachments`;
 
-const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
+// #218: 핀 목록도 이 컬럼 집합으로 메시지를 내주기 때문에 export 다. 핀 전용으로 컬럼을
+// 다시 적으면 위에 적은 "네 갈래" 가 다섯이 되고, 리액션·첨부가 그 응답에서만 빠진다.
+export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
   author_id as "authorId", body, kind, meta, created_at as "createdAt",
   edited_at as "editedAt", ${REACTIONS}, ${ATTACHMENTS},
   null::int as "replyCount", null::text as "lastReplyAt", null::text[] as "participantIds"`;
@@ -136,11 +139,43 @@ export async function postMessage(
     const handles = mentionedHandles(input.body);
     if (handles.length) {
       // handle 은 소문자로 만들어지지만 사람은 @Fizz 라고 쓴다. 양쪽을 소문자로 맞춘다.
+      // 작성자 자신도 함께 뽑고 알림에서만 걸러 낸다 — `@channel` 이 계정인지 판정하려면
+      // 작성자가 바로 그 handle 의 주인인 경우도 보여야 하기 때문이다.
       const accounts = await client.query(
-        `select id from account where lower(handle) = any($1) and id <> $2`,
-        [handles, input.authorId],
+        `select id, lower(handle) as handle from account where lower(handle) = any($1)`,
+        [handles],
       );
-      for (const row of accounts.rows) await insertInbox(client, row.id, message.id, 'mention', notified);
+      for (const row of accounts.rows) {
+        if (row.id !== input.authorId) await insertInbox(client, row.id, message.id, 'mention', notified);
+      }
+
+      // `@channel`(#225) — 채널 전체 호출. 본문은 손대지 않는다: `@channel` 은 원문에
+      // 그대로 남고 서버는 inbox 항목만 펼쳐 넣는다. 본문을 치환하면 원문이 사라져
+      // 수정할 때 되돌릴 수 없다.
+      //
+      // `@channel` 이라는 handle 의 **계정이 실제로 있으면 계정이 이긴다** — 위에서 이미
+      // 평범한 멘션으로 처리됐고 여기서는 아무것도 하지 않는다. 사람의 이름이 예약어에
+      // 밀리면 그 사람은 영영 불릴 수 없다.
+      const claimed = accounts.rows.some((row) => row.handle === CHANNEL_MENTION_HANDLE);
+      if (handles.includes(CHANNEL_MENTION_HANDLE) && !claimed) {
+        // 대상은 **그 채널을 볼 수 있는 사람 전부**다. 멤버십을 여기서 다시 정의하지 않고
+        // `channelVisibleSql` 을 그대로 부른다 — 판정이 갈라지면 private 채널의 비멤버에게
+        // 알림이 새거나(채널의 존재 자체가 샌다), public 채널에서 조용히 빠지는 사람이
+        // 생긴다. 술어가 계정 id 를 파라미터가 아니라 컬럼(`a.id`)으로 받는 덕에 방향을
+        // 뒤집어 "이 채널을 볼 수 있는 계정 전부"로 쓸 수 있다.
+        //
+        // 부른 사람 자신은 뺀다 — 자기 발화로 자기에게 알림이 오면 안 된다
+        // (`readPositions.ts` 의 `author_id <> $1` 과 같은 규칙).
+        // 비활성 계정을 따로 거르지 않는 것은 평범한 멘션과 같은 처지로 두기 위해서다.
+        const audience = await client.query(
+          `select a.id from account a, channel c
+            where c.id = $1 and a.id <> $2 and ${channelVisibleSql('c', 'a.id')}`,
+          [input.channelId, input.authorId],
+        );
+        for (const row of audience.rows) {
+          if (!notified.has(row.id)) await insertInbox(client, row.id, message.id, 'mention', notified);
+        }
+      }
     }
 
     if (input.threadRootId) {
@@ -324,8 +359,14 @@ export async function markInboxRead(pool: Pool, accountId: string, ids: number[]
   return res.rowCount ?? 0;
 }
 
+/**
+ * `channelId` 를 주면 그 채널 안만 본다. 클라이언트에서 거르지 않는 이유(#221): 전역 검색은
+ * seq desc 상위 N 건에서 잘리므로, 다른 채널의 일치가 많으면 이 채널 것이 애초에 응답에
+ * 들어오지 않는다 — "이 대화 안에 있는 걸 아는데 못 찾는" 정확히 반대되는 결과가 된다.
+ * 그래서 질의 자체를 좁힌다.
+ */
 export async function searchMessages(
-  pool: Pool, requesterId: string, query: string, limit = 50,
+  pool: Pool, requesterId: string, query: string, limit = 50, channelId: string | null = null,
 ): Promise<MessageRow[]> {
   const res = await pool.query(
     `select m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
@@ -335,11 +376,15 @@ export async function searchMessages(
      from message m
      join channel c on c.id = m.channel_id
      where m.search @@ websearch_to_tsquery('simple', $1) and m.deleted_at is null
-       and (c.kind = 'standard' or exists (
-         select 1 from channel_member cm where cm.channel_id = c.id and cm.account_id = $3
-       ))
+       -- 검색은 채널 목록을 우회해 본문에 바로 닿는 표면이다. 여기만 넓으면 목록에도
+       -- 배지에도 없는 private 채널의 발언이 검색 결과로 통째로 나온다 — 그래서 목록·배지와
+       -- **같은 술어**를 쓴다. admin 예외 없다(결과가 곧 메시지 본문이다).
+       and ${channelVisibleSql('c', '$3')}
+       -- 스코프는 가시성 **위에** 얹는 별개 조건이다. null 이면 절이 상수로 접혀 전역 검색의
+       -- 계획이 그대로 남는다 — 기존 동작을 건드리지 않는다.
+       and ($4::uuid is null or m.channel_id = $4)
      order by m.seq desc limit $2`,
-    [query, Math.min(limit, 100), requesterId],
+    [query, Math.min(limit, 100), requesterId, channelId],
   );
   return res.rows;
 }

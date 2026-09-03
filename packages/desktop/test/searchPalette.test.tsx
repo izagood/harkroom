@@ -25,7 +25,7 @@ beforeEach(() => {
     startDm: vi.fn(),
     createChannel: vi.fn(),
     updateChannel: vi.fn(),
-    toggleChannelMute: vi.fn(),
+    setChannelNotifyLevel: vi.fn(),
     toggleChannelStar: vi.fn(),
     closeThread: vi.fn(),
     notifyTyping: vi.fn(),
@@ -74,7 +74,8 @@ describe('SearchPalette', () => {
     fireEvent.change(input, { target: { value: 'hello' } });
 
     await waitFor(() => {
-      expect(mockController.api.search).toHaveBeenCalledWith('hello');
+      // 채널을 열어 두지 않았으므로 스코프는 null 이다 — 전역 검색.
+      expect(mockController.api.search).toHaveBeenCalledWith('hello', null);
     }, { timeout: 1000 });
   });
 
@@ -210,6 +211,56 @@ describe('SearchPalette', () => {
     vi.useRealTimers();
 
     expect(mockController.api.search).toHaveBeenCalledTimes(1);
-    expect(mockController.api.search).toHaveBeenCalledWith('abc');
+    expect(mockController.api.search).toHaveBeenCalledWith('abc', null);
+  });
+
+  /**
+   * #221 — 스코프 토글. 확인하는 것은 "서버에 무엇을 보냈나"다. 결과 목록을 보는 것으로는
+   * 클라이언트 필터와 구분되지 않고, 이 기능의 요점이 바로 서버에서 좁히는 것이다.
+   */
+  it('채널을 열어 두었어도 기본값은 전역이다', async () => {
+    useAppStore.getState().set({ activeChannelId: 'c1' });
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    render(<SearchPalette open={true} onClose={vi.fn()} />);
+
+    const toggle = screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+
+    fireEvent.change(screen.getByLabelText('검색어 입력'), { target: { value: 'hello' } });
+
+    await waitFor(() => {
+      expect(mockController.api.search).toHaveBeenCalledWith('hello', null);
+    }, { timeout: 1000 });
+  });
+
+  it('토글을 켜면 열려 있는 채널로 스코프가 걸려 다시 검색한다', async () => {
+    useAppStore.getState().set({ activeChannelId: 'c1' });
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    render(<SearchPalette open={true} onClose={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('검색어 입력'), { target: { value: 'hello' } });
+    await waitFor(() => {
+      expect(mockController.api.search).toHaveBeenCalledWith('hello', null);
+    }, { timeout: 1000 });
+
+    fireEvent.click(screen.getByLabelText('이 채널에서만 (general)'));
+
+    await waitFor(() => {
+      expect(mockController.api.search).toHaveBeenCalledWith('hello', 'c1');
+    }, { timeout: 1000 });
+
+    // 다시 끄면 전역으로 돌아온다 — 한 방향으로만 도는 토글은 토글이 아니다.
+    fireEvent.click(screen.getByLabelText('이 채널에서만 (general)'));
+    await waitFor(() => {
+      const calls = (mockController.api.search as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls[calls.length - 1]).toEqual(['hello', null]);
+    }, { timeout: 1000 });
+  });
+
+  it('열려 있는 채널이 없으면 토글 자체가 없다', () => {
+    render(<SearchPalette open={true} onClose={vi.fn()} />);
+    expect(screen.queryByLabelText(/이 채널에서만/)).toBeNull();
   });
 });

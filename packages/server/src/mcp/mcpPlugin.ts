@@ -38,8 +38,11 @@ function buildMcpServer(
   server.registerTool('account.me', { description: '내 계정 정보' },
     async () => jsonResult(account));
 
+  // 에이전트도 사람과 같은 가시성 규칙을 받는다 — private 채널은 멤버인 에이전트만 본다.
+  // admin 예외는 주지 않는다: 이 목록은 곧 `message.read` 로 이어지는 경로이고, admin 이
+  // 목록에서 이름을 보는 절충은 사람이 운영 화면에서 쓰라고 만든 것이다.
   server.registerTool('channel.list', { description: '채널 목록' },
-    async () => jsonResult({ channels: await listChannels(pool) }));
+    async () => jsonResult({ channels: await listChannels(pool, account.id) }));
 
   server.registerTool('message.read', {
     description: '채널/스레드 메시지 읽기(seq 커서)',
@@ -263,6 +266,12 @@ function buildMcpServer(
     if (!msg.rowCount) {
       return jsonResult({ error: { code: 'invalid_thread', message: 'thread root message does not exist' } });
     }
+    // repo -> 채널 조회에 **가시성 술어를 넣지 않는다.** 이건 avcs 투영의 배선이고,
+    // `listBoundRepos` 와 같은 판단이다: 투영은 사람이 아니라 서버가 하는 일이라 '보는
+    // 계정'이 없다. 여기에 멤버십을 걸면 private 채널에 바인딩된 repo 만 조용히 work_thread
+    // 연결을 잃는다. 결과가 새지 않는 이유는 그 다음 단계다 — 이 채널의 메시지를 실제로
+    // 읽는 것은 `message.read` 이고, 거기에는 술어가 걸려 있다. 즉 투영은 되고, 보이는
+    // 사람이 그 채널의 멤버로 제한된다.
     const boundChannel = await pool.query(
       `select id from channel where repo = $1 and kind = 'standard'`, [repo],
     );
