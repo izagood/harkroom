@@ -47,7 +47,9 @@ const ATTACHMENTS = `coalesce((
   from attachment a where a.message_id = message.id
 ), '[]'::json) as attachments`;
 
-const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
+// #218: 핀 목록도 이 컬럼 집합으로 메시지를 내주기 때문에 export 다. 핀 전용으로 컬럼을
+// 다시 적으면 위에 적은 "네 갈래" 가 다섯이 되고, 리액션·첨부가 그 응답에서만 빠진다.
+export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
   author_id as "authorId", body, kind, meta, created_at as "createdAt",
   edited_at as "editedAt", ${REACTIONS}, ${ATTACHMENTS},
   null::int as "replyCount", null::text as "lastReplyAt", null::text[] as "participantIds"`;
