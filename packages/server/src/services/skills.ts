@@ -137,19 +137,24 @@ export async function disableSkill(
 }
 
 /**
- * 스킬 목록. `approved: true` 는 러너가 턴마다 읽는 것 — 승인됐고 비활성되지 않은 것만이다.
+ * 스킬 목록. `state='approved'` 는 러너가 턴마다 읽는 것 — 승인됐고 비활성되지 않은 것만이다.
  * 미승인 스킬이 여기 섞이면 승인 게이트가 없는 것과 같다.
+ * `state` 가 없으면 전부를 반환한다.
  */
 export async function listSkills(
   pool: Pool,
-  options: { approved?: boolean },
+  options: { state?: 'pending' | 'approved' | 'disabled' | null },
 ): Promise<WorkspaceSkill[]> {
   let query = `select slug, body, proposed_by as "proposedBy", proposed_at as "proposedAt",
     approved_by as "approvedBy", approved_at as "approvedAt", disabled_at as "disabledAt"
     from workspace_skill`;
 
-  if (options.approved) {
+  if (options.state === 'pending') {
+    query += ` where approved_at is null and disabled_at is null`;
+  } else if (options.state === 'approved') {
     query += ` where approved_at is not null and disabled_at is null`;
+  } else if (options.state === 'disabled') {
+    query += ` where disabled_at is not null`;
   }
 
   query += ` order by approved_at desc, proposed_at desc`;

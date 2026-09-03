@@ -6,12 +6,12 @@ import { approveSkill, disableSkill, listSkills, getSkill } from '../services/sk
 export async function registerSkillRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   // 스킬 본문은 워크스페이스 자산이다 — 로그인한 계정(사람·에이전트 PAT)만 읽는다.
   // 인증 없이 열면 승인된 스킬 본문이 곧 시스템 프롬프트라 프롬프트 표면이 그대로 새어 나간다.
-  app.get('/skills', { preHandler: app.requireAccount }, async (req) => {
-    const { approved } = z.object({
-      approved: z.enum(['true', 'false']).optional(),
+  app.get('/skills', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { state } = z.object({
+      state: z.enum(['pending', 'approved', 'disabled']).optional(),
     }).parse(req.query);
 
-    const skills = await listSkills(pool, { approved: approved === 'true' });
+    const skills = await listSkills(pool, { state: state ?? null });
     return skills.map((s) => ({
       slug: s.slug,
       body: s.body,

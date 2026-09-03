@@ -1429,9 +1429,9 @@ export class Controller {
     return this.api.addTeamToChannel(channelId, teamId);
   }
 
-  /** 워크스페이스 스킬 목록(#311). */
-  listSkills(): Promise<WorkspaceSkillView[]> {
-    return this.api.listSkills();
+  /** 워크스페이스 스킬 목록(#311). #325 — `state` 파라미터로 필터링한다. */
+  listSkills(state?: 'pending' | 'approved' | 'disabled'): Promise<WorkspaceSkillView[]> {
+    return this.api.listSkills(state);
   }
 
   /** 스킬 상세 조회. */
