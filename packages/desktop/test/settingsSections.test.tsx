@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { ProfileSettings } from '../src/components/settings/ProfileSettings';
 import { ConnectionSettings } from '../src/components/settings/ConnectionSettings';
 import { UpdatesSettings } from '../src/components/settings/UpdatesSettings';

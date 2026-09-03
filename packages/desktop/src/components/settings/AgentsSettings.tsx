@@ -4,7 +4,7 @@ import {
   type AgentConfig, type AgentDefaults, type AgentView, type MentionPermission, type PatView,
 } from '@murmur/shared';
 import { getController } from '../../state/controller';
-import { useAppStore } from '../../state/appStore';
+import { useActiveStore } from '../../state/communities';
 import { RunnerStatusLine } from '../RunnerStatus';
 
 /** #177: 클립보드가 없거나 거부되면 **조용히 실패하지 않는다** — 화면에 있는 그 명령
@@ -151,18 +151,18 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const templateCommandRef = useRef<HTMLSpanElement | null>(null);
   // #177: "잃었으면 새로 발급한다" 를 글로만 두면 발급 자리를 찾아야 한다 — 진입점으로 보낸다.
   const newPatLabelRef = useRef<HTMLInputElement | null>(null);
-  const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
-  const myId = useAppStore((s) => s.me?.id);
+  const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
+  const myId = useActiveStore((s) => s.me?.id);
   // #250: 이 앱이 띄운 러너의 상태. 실행기가 스토어에 밀어 넣고 화면은 읽기만 한다.
-  const runnerStates = useAppStore((s) => s.runnerStates);
+  const runnerStates = useActiveStore((s) => s.runnerStates);
   const [reissuing, setReissuing] = useState(false);
-  const accounts = useAppStore((s) => s.accounts);
+  const accounts = useActiveStore((s) => s.accounts);
   // #176: 생존(presence)과 마지막 활동은 **다른 두 사실**이라 두 자리에서 온다 — presence 는
   // 소켓 이벤트로 살아 있는 목록이고(#124), 마지막 활동은 `AgentView.lastTurnAt` 이다.
   // `connected` 를 함께 보는 이유: 소켓이 끊겼으면 `online` 은 그냥 빈 배열이라, 그것을
   // '오프라인'으로 그리면 실제로는 잘 돌고 있는 러너를 전부 죽은 것으로 표시한다.
-  const online = useAppStore((s) => s.online);
-  const connected = useAppStore((s) => s.connected);
+  const online = useActiveStore((s) => s.online);
+  const connected = useActiveStore((s) => s.connected);
   const humanAccounts = Object.values(accounts).filter((a) => a.kind === 'human');
 
   const reload = () => {

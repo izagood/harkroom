@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { mentionedHandles } from '@murmur/shared';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { MessageItem } from '../src/components/MessageItem';
 import { bodyRecipients } from '../src/lib/mention';
 import { acc, grp, msg } from './helpers/fakeApi';

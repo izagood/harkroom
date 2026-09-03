@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup, act } from '@testing-library/react'
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { usePrefsStore } from '../src/state/prefsStore';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { prefsStorage, DEFAULT_PREFS } from '../src/lib/prefs';
 import { AppearanceSettings } from '../src/components/settings/AppearanceSettings';
 import { useColorMode } from '../src/lib/useColorMode';

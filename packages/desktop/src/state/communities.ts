@@ -42,13 +42,16 @@ export interface CommunityRegistryState {
   /** 지금 화면이 보고 있는 커뮤니티. 항상 `entries` 안의 id 다. */
   activeId: string;
   /**
-   * 아직 서버가 정해지지 않은 기동 엔트리의 id. `null` 이면 이미 첫 커뮤니티가 가져갔다.
+   * **활성 엔트리**를 이 서버의 커뮤니티로 정한다. 스토어는 그대로 둔다 — 같은 커뮤니티에
+   * 다시 로그인하는 것뿐이고, 스토어 객체가 바뀌면 그것을 구독하던 화면이 전부 끊긴다
+   * (로그아웃이 이미 `reset()` 으로 내용을 비웠다).
    *
-   * 왜 별도 필드인가: `baseUrl === ''` 으로 판정하면 "아직 안 정해졌다"와 "빈 주소로
-   * 등록됐다"가 한 값에 뭉친다. 이 저장소가 여러 자리에서 거절한 모양이다.
+   * 앱은 커뮤니티 하나로 기동하고 그 하나가 곧 기동 엔트리다. 재로그인마다 새 엔트리를
+   * 붙이면 죽은 커뮤니티가 목록에 쌓이고, 그것만으로 알림 제목에 커뮤니티 꼬리표가 붙어
+   * 사용자 눈에 보이는 변화가 생긴다.
    */
-  unclaimedId: string | null;
-  /** 커뮤니티를 등록한다. 활성으로 만들지는 않는다 — 그것은 `setActive` 가 한다. */
+  claimActive(input: { baseUrl: string; controller?: Controller | null }): CommunityEntry;
+  /** 커뮤니티를 **덧붙인다**. 활성으로 만들지는 않는다 — 그것은 `setActive` 가 한다. */
   register(input: { baseUrl: string; controller?: Controller | null }): CommunityEntry;
   /** 활성 커뮤니티를 바꾼다. 모르는 id 면 던진다 — 조용히 무시하면 전환 실패가 안 보인다. */
   setActive(id: string): void;
@@ -65,25 +68,22 @@ function makeEntry(baseUrl: string, controller: Controller | null = null): Commu
   return { id: nextId(), baseUrl, store: createAppStore(), controller };
 }
 
-function bootstrap(): Pick<CommunityRegistryState, 'entries' | 'activeId' | 'unclaimedId'> {
+function bootstrap(): Pick<CommunityRegistryState, 'entries' | 'activeId'> {
   const entry = makeEntry('');
-  return { entries: [entry], activeId: entry.id, unclaimedId: entry.id };
+  return { entries: [entry], activeId: entry.id };
 }
 
 export const useCommunityRegistry = create<CommunityRegistryState>((set, get) => ({
   ...bootstrap(),
+  claimActive: ({ baseUrl, controller = null }) => {
+    const { entries, activeId } = get();
+    const next = entries.map((e) => (e.id === activeId ? { ...e, baseUrl, controller } : e));
+    set({ entries: next });
+    return next.find((e) => e.id === activeId)!;
+  },
   register: ({ baseUrl, controller = null }) => {
-    const { entries, unclaimedId } = get();
-    // 기동 엔트리가 남아 있으면 **그것을 쓴다.** 레지스트리는 활성 스토어가 항상 존재하도록
-    // 엔트리 하나를 들고 시작하는데(그래야 세션 이전에도 `useActiveStore` 가 읽힌다), 첫
-    // 커뮤니티를 그 옆에 새로 붙이면 서버가 정해지지 않은 빈 커뮤니티가 목록에 유령으로 남는다.
-    if (unclaimedId) {
-      const claimed = entries.map((e) => (e.id === unclaimedId ? { ...e, baseUrl, controller } : e));
-      set({ entries: claimed, unclaimedId: null });
-      return claimed.find((e) => e.id === unclaimedId)!;
-    }
     const entry = makeEntry(baseUrl, controller);
-    set({ entries: [...entries, entry] });
+    set({ entries: [...get().entries, entry] });
     return entry;
   },
   setActive: (id) => {
@@ -104,7 +104,6 @@ export const useCommunityRegistry = create<CommunityRegistryState>((set, get) =>
       entries: next,
       // 활성을 뺐으면 남은 첫 번째로 옮긴다. 활성 없는 상태를 만들지 않는다.
       activeId: activeId === id ? next[0]!.id : activeId,
-      unclaimedId: get().unclaimedId === id ? null : get().unclaimedId,
     });
   },
 }));
