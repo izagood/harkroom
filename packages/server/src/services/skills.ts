@@ -55,11 +55,16 @@ export async function proposeSkill(
 
   // 제안한 에이전트를 author 로 둔다 — 누가 제안했는지가 승인 판단의 절반이다.
   // kind='system' 이라 대화 발화로 세지 않는다.
+  //
+  // `meta.skillSlug` 는 **화면이 이 알림에서 승인 절로 가는 버튼을 그리는 표시**다(#311).
+  // 본문 글자를 정규식으로 더듬게 두면 문구를 한 글자 다듬는 순간 그 진입점이 조용히
+  // 사라진다 — 어느 스킬인지는 데이터로 남긴다.
   await postMessage(pool, {
     channelId: input.channelId,
     authorId: skill.proposedBy,
     body: `스킬이 제안되었습니다: **${skill.slug}** — 승인을 기다리고 있습니다.`,
     kind: 'system',
+    meta: { skillSlug: skill.slug },
   });
 
   emitEvent({ type: 'skill.proposed', skill, channelId: input.channelId });

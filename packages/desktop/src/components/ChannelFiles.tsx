@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ChannelFileRow } from '@murmur/shared';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { formatSize } from './Attachments';
 
@@ -22,7 +22,7 @@ export function FilesPanel({ files, loading, error, hasMore, onRetry, onLoadMore
   onClose: () => void;
   onOpen: (file: ChannelFileRow) => void;
 }) {
-  const accounts = useAppStore((s) => s.accounts);
+  const accounts = useActiveStore((s) => s.accounts);
 
   return (
     <section className="flex w-80 flex-col border-l border-border bg-surface-raised" aria-label="채널 파일">

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { MessageRow } from '@murmur/shared';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 
 interface Props {
@@ -35,17 +35,17 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
   const [activeIndex, setActiveIndex] = useState(-1);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const accounts = useAppStore((s) => s.accounts);
-  const channels = useAppStore((s) => s.channels);
-  const dms = useAppStore((s) => s.dms);
-  const activeChannelId = useAppStore((s) => s.activeChannelId);
+  const accounts = useActiveStore((s) => s.accounts);
+  const channels = useActiveStore((s) => s.channels);
+  const dms = useActiveStore((s) => s.dms);
+  const activeChannelId = useActiveStore((s) => s.activeChannelId);
 
   const getChannelName = useCallback((channelId: string): string => {
     const channel = channels.find((c) => c.id === channelId);
     if (channel) return channel.name ?? '이름 없는 채널';
     const dm = dms.find((d) => d.id === channelId);
     if (dm) {
-      const otherId = dm.memberIds.find((id) => id !== useAppStore.getState().me?.id);
+      const otherId = dm.memberIds.find((id) => id !== useActiveStore.getState().me?.id);
       const other = otherId ? accounts[otherId] : null;
       return other ? `@${other.handle}` : 'DM';
     }

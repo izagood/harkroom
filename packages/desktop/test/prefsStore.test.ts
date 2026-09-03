@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { DEFAULT_PREFS, prefsStorage } from '../src/lib/prefs';
 import { usePrefsStore } from '../src/state/prefsStore';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 
 beforeEach(() => {
   localStorage.clear();

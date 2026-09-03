@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller } from '../src/state/controller';
 import { acc, accountsResult, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { MessageRow } from '@murmur/shared';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 
 /**
@@ -37,7 +37,7 @@ const INLINE = pickInline(QUICK);
  * (초판이 그렇게 복사돼 리액션 테스트 4개가 깨졌다). QUICK 목록과 토글 규칙은 여기 하나다.
  */
 export function ReactionPicker({ message }: { message: MessageRow }) {
-  const myId = useAppStore((s) => s.me?.id ?? null);
+  const myId = useActiveStore((s) => s.me?.id ?? null);
   const [picking, setPicking] = useState(false);
 
   const toggle = (emoji: string, on: boolean) => {
@@ -87,7 +87,7 @@ export function ReactionPicker({ message }: { message: MessageRow }) {
  * 토글 가능하고, 내가 누른 리액션은 눌린 상태로 표시한다.
  */
 export function InlineReactionButtons({ message }: { message: MessageRow }) {
-  const myId = useAppStore((s) => s.me?.id ?? null);
+  const myId = useActiveStore((s) => s.me?.id ?? null);
 
   const toggle = (emoji: string, on: boolean) => {
     void getController().toggleReaction(message.channelId, message.id, emoji, on).catch(() => {});
@@ -123,8 +123,8 @@ export function InlineReactionButtons({ message }: { message: MessageRow }) {
 
 /** 달린 리액션 칩. 추가는 `ReactionPicker`(툴바)가 맡는다 — 같은 것을 두 곳에 두지 않는다. */
 export function Reactions({ message }: { message: MessageRow }) {
-  const accounts = useAppStore((s) => s.accounts);
-  const myId = useAppStore((s) => s.me?.id ?? null);
+  const accounts = useActiveStore((s) => s.accounts);
+  const myId = useActiveStore((s) => s.me?.id ?? null);
 
   const toggle = (emoji: string, on: boolean) => {
     void getController().toggleReaction(message.channelId, message.id, emoji, on).catch(() => {});

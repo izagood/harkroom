@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ACCOUNT_STATUSES, type AccountStatus } from '@murmur/shared';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 
 /** 화면에 쓰는 이름. 값 집합은 shared 의 `ACCOUNT_STATUSES` 하나에서 나온다. */
@@ -21,7 +21,7 @@ const LABELS: Record<AccountStatus, string> = {
  * 일이고 상태는 계정 속성이라, 둘이 만나는 자리는 따로 정해야 한다(이슈 본문).
  */
 export function StatusPicker() {
-  const me = useAppStore((s) => s.me);
+  const me = useActiveStore((s) => s.me);
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
