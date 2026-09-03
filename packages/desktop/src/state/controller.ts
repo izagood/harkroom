@@ -1,4 +1,4 @@
-import type { AccountStatus, AttachmentRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent } from '@murmur/shared';
+import type { AccountStatus, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent } from '@murmur/shared';
 import { notifyLevelOf } from '@murmur/shared';
 import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
@@ -200,6 +200,38 @@ export class Controller {
         store.applyAvatar(e.accountId, e.avatarAttachmentId);
         if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
         break;
+      case 'channel.created':
+        // 새 채널을 목록에 추가한다. public 은 전원에게 오고, private 은 멤버에게만 온다.
+        // 이미 있으면 무시(upsert 가 아니라 adds 를 쓴다).
+        if (!store.channels.some((c) => c.id === e.channel.id)) {
+          store.set({ channels: [...store.channels, e.channel] });
+        }
+        break;
+      case 'channel.updated':
+        // 목록에 있으면 교체하고, **없으면 넣는다.** private→public 전환이 그 경우다:
+        // 그때까지 목록에 없던 사람에게도 이벤트가 오는데(이제 볼 수 있으므로) 교체만
+        // 하면 아무 일도 일어나지 않아, 새로 열린 채널이 새로고침 전까지 보이지 않는다.
+        store.set({
+          channels: store.channels.some((c) => c.id === e.channel.id)
+            ? store.channels.map((c) => (c.id === e.channel.id ? e.channel : c))
+            : [...store.channels, e.channel],
+        });
+        break;
+      case 'channel.deleted':
+        // 채널을 목록에서 제거한다. 보고 있던 채널이면 선택을 비우고 안내를 보인다.
+        store.set({
+          channels: store.channels.filter((c) => c.id !== e.channelId),
+          ...(store.activeChannelId === e.channelId
+            ? { activeChannelId: null, threadRootId: null, notice: 'This channel was deleted.' }
+            : {}),
+        });
+        break;
+      case 'saved.changed':
+        // 담기 상태가 바뀌면 사이드바의 "Saved N" 을 갱신한다(#219).
+        if (e.accountId === store.me?.id) {
+          this.swallow(this.loadSavedSummary());
+        }
+        break;
     }
   }
 
@@ -363,6 +395,9 @@ export class Controller {
     // 핀은 **크리티컬 패스에서 뺀다.** 이 엔드포인트가 없는 서버(구버전)에 붙었을 때
     // 채널이 아예 안 열리면 안 된다 — 채널 선호(`start`)와 같은 이유다.
     this.swallow(this.loadPins(channelId));
+    // 자동 멘션(#173)도 같은 이유로 크리티컬 패스 밖이다. 못 받으면 칩이 없는 것뿐이고,
+    // 그때 글을 보내면 접두가 안 붙는다 — 채널이 안 열리는 것보다 낫다.
+    this.swallow(this.loadChannelAutoMentions(channelId));
     const page = await this.api.messages(channelId, { since });
     this.loadedChannels.add(channelId);
     useAppStore.getState().upsertMessages(channelId, page.messages);
@@ -755,6 +790,63 @@ export class Controller {
   }
 
   /**
+   * 핸들 집합 관리(#285). **모든 변경이 스토어의 `groups` 를 함께 고친다.**
+   *
+   * 이유는 위 `setAgentDisabled` 와 같다: 이 사실을 읽는 화면은 설정 화면이 아니라
+   * 작성창의 멘션 후보다. 설정 화면의 지역 상태만 고치면 이름을 바꾼 직후에도 후보에는
+   * 옛 이름이 남고, 부르는 사람은 자기가 고친 것이 반영되지 않았다고 읽는다.
+   *
+   * 목록을 다시 받아 오지 않고 서버가 돌려준 행을 그대로 넣는 것도 같은 이유다 — 다시
+   * 받으면 그 사이의 다른 변경까지 섞여 "내가 방금 한 일"과 구분되지 않는다.
+   */
+  async createHandleGroup(input: { handle: string; displayName: string }): Promise<HandleGroupRow> {
+    const group = await this.api.createHandleGroup(input);
+    const store = useAppStore.getState();
+    store.set({ groups: [...store.groups, group] });
+    return group;
+  }
+
+  getHandleGroup(id: string): Promise<{ group: HandleGroupRow; members: string[] }> {
+    return this.api.getHandleGroup(id);
+  }
+
+  async updateHandleGroup(id: string, patch: { displayName: string }): Promise<HandleGroupRow> {
+    const updated = await this.api.updateHandleGroup(id, patch);
+    const store = useAppStore.getState();
+    store.set({ groups: store.groups.map((g) => (g.id === id ? updated : g)) });
+    return updated;
+  }
+
+  async deleteHandleGroup(id: string): Promise<void> {
+    await this.api.deleteHandleGroup(id);
+    const store = useAppStore.getState();
+    store.set({ groups: store.groups.filter((g) => g.id !== id) });
+  }
+
+  /**
+   * 구성원 추가·제거. 라우트는 **바뀐 뒤의 명단 전체**를 준다 — 그래서 후보에 보이는
+   * 구성원 수를 추측하지 않고 그 길이로 정확히 고친다. 추측(±1)으로 두면 같은 계정을
+   * 두 번 넣는 요청에서 수가 실제와 갈라지고, 그 어긋남은 다음 조회까지 화면에 남는다.
+   */
+  private applyGroupMembers(id: string, members: string[]): string[] {
+    const store = useAppStore.getState();
+    store.set({
+      groups: store.groups.map((g) => (g.id === id ? { ...g, memberCount: members.length } : g)),
+    });
+    return members;
+  }
+
+  async addHandleGroupMembers(id: string, accountIds: string[]): Promise<string[]> {
+    const { members } = await this.api.addHandleGroupMembers(id, accountIds);
+    return this.applyGroupMembers(id, members);
+  }
+
+  async removeHandleGroupMembers(id: string, accountIds: string[]): Promise<string[]> {
+    const { members } = await this.api.removeHandleGroupMembers(id, accountIds);
+    return this.applyGroupMembers(id, members);
+  }
+
+  /**
    * 채널을 만들고 목록에 반영한 뒤 그 채널을 연다 — `startDm` 과 같은 모양이다.
    * 컴포넌트가 `api` 를 직접 부르고 스토어를 손으로 갱신하면 그 절차가 화면마다 흩어지고,
    * 서버가 채운 필드(kind·topic 기본값)를 클라이언트가 추측하게 된다. 목록은 다시 받아온다.
@@ -776,6 +868,29 @@ export class Controller {
     const store = useAppStore.getState();
     store.set({ channelMembers: { ...store.channelMembers, [channelId]: members } });
     return members;
+  }
+
+  /**
+   * 이 채널의 자동 멘션 목록(#173)을 서버에서 다시 받는다. 핀과 같이 목록 전체를 갈아 끼운다
+   * — admin 이 다른 기기에서 바꾼 것도 섞여 들어오므로 로컬 델타는 갈라진다.
+   * **실패를 빈 목록으로 삼키지 않는다** — 빈 목록은 "아무도 안 부른다"는 거짓 사실이 된다.
+   */
+  async loadChannelAutoMentions(channelId: string): Promise<ChannelAutoMentionRow[]> {
+    const rows = await this.api.channelAutoMentions(channelId);
+    const store = useAppStore.getState();
+    store.set({ channelAutoMentions: { ...store.channelAutoMentions, [channelId]: rows } });
+    return rows;
+  }
+
+  /** 건다. 실패를 삼키지 않는다 — 호출부(설정 화면)가 사유를 사람에게 보여 준다. */
+  async setChannelAutoMention(channelId: string, agentAccountId: string): Promise<void> {
+    await this.api.setChannelAutoMention(channelId, agentAccountId);
+    await this.loadChannelAutoMentions(channelId);
+  }
+
+  async unsetChannelAutoMention(channelId: string, agentAccountId: string): Promise<void> {
+    await this.api.unsetChannelAutoMention(channelId, agentAccountId);
+    await this.loadChannelAutoMentions(channelId);
   }
 
   async inviteChannelMember(channelId: string, accountId: string): Promise<ChannelMemberRow[]> {
@@ -1019,6 +1134,7 @@ export class Controller {
     // 핀은 **크리티컬 패스에서 뺀다.** 이 엔드포인트가 없는 서버(구버전)에 붙었을 때
     // 채널이 아예 안 열리면 안 된다 — 채널 선호(`start`)와 같은 이유다.
     this.swallow(this.loadPins(channelId));
+    this.swallow(this.loadChannelAutoMentions(channelId));
     const page = await this.api.messages(channelId, { since });
     this.loadedChannels.add(channelId);
     store.upsertMessages(channelId, page.messages);

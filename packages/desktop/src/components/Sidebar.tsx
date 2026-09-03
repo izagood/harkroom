@@ -60,11 +60,16 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
   );
 }
 
-export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox, onOpenSaved, collapsed, onToggleCollapse }: {
+export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChannelDirectory, onOpenInbox, onOpenSaved, collapsed, onToggleCollapse }: {
   onLogout: () => void;
   onOpenSettings: (section?: SectionId) => void;
   /** 워크스페이스 전체 디렉터리를 연다(#226). 채널 멤버 목록이 아니라 워크스페이스 전체다. */
   onOpenDirectory: () => void;
+  /**
+   * 채널 디렉터리 모달을 연다(#180). **옵셔널이 아니다** — 여기서 기본값을 공급하면
+   * 배선을 잊은 화면에서도 "채널 찾기" 버튼이 그려지고 눌러도 아무 일이 없다(design.md §4).
+   */
+  onOpenChannelDirectory: () => void;
   onOpenInbox: () => void;
   /**
    * 담아 둔 메시지 패널을 연다(#219). **옵셔널이 아니다** — 기본값을 여기서 공급하면
@@ -74,7 +79,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
-  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, messages, savedCount } = useAppStore();
+  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, channelAutoMentions, messages, savedCount } = useAppStore();
   /**
    * macOS 신호등 여백(#270). 사이드바가 펴져 있으면 브랜드 바가 창의 좌상단이라 여기가
    * 여백을 진다. 접혀 있으면 사이드바는 폭 0 이고 `Workspace` 헤더가 좌상단이 되므로
@@ -91,6 +96,9 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
   // 목록을 보고 있는지가 화면에서 사라진다(편집 패널과 같은 규칙).
   const [membersChannelId, setMembersChannelId] = useState<string | null>(null);
   const [memberError, setMemberError] = useState<string | null>(null);
+  // 자동 멘션 절(#173)의 실패. 멤버 목록 실패와 자리를 나눈다 — 한 문장에 두 사고를 섞으면
+  // 사용자는 어느 쪽을 다시 시도해야 하는지 모른다.
+  const [autoMentionError, setAutoMentionError] = useState<string | null>(null);
   const [inviteAccountId, setInviteAccountId] = useState('');
   // '마지막 멤버가 나간다'는 되돌릴 수 없는 조작이라 한 번 더 묻는다.
   const [leaveConfirmId, setLeaveConfirmId] = useState<string | null>(null);
@@ -177,6 +185,10 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
    */
   const openMembers = async (channelId: string): Promise<void> => {
     setMembersChannelId(channelId);
+    setAutoMentionError(null);
+    // 자동 멘션 목록(#173)은 멤버 목록과 **별개로** 받는다 — 한쪽 실패가 다른 쪽을 가리면 안 된다.
+    void getController().loadChannelAutoMentions(channelId)
+      .catch((err: unknown) => setAutoMentionError(err instanceof Error ? err.message : '자동 멘션 목록을 받지 못했다'));
     setMemberError(null);
     setInviteAccountId('');
     setLeaveConfirmId(null);
@@ -260,6 +272,21 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
       closeDelete();
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : '삭제에 실패했다');
+    }
+  };
+
+  /**
+   * 자동 멘션을 켜고 끈다(#173). admin 만 부를 수 있다 — 화면도 admin 에게만 토글을 내준다.
+   * 실패는 그 절 안에 보여 준다: 서버가 400(에이전트 아님·비활성)이나 403 을 줄 수 있고,
+   * 그 사유가 조용히 사라지면 사용자는 체크박스가 고장 났다고 여긴다.
+   */
+  const toggleAutoMention = async (channelId: string, agentAccountId: string, on: boolean): Promise<void> => {
+    setAutoMentionError(null);
+    try {
+      if (on) await getController().setChannelAutoMention(channelId, agentAccountId);
+      else await getController().unsetChannelAutoMention(channelId, agentAccountId);
+    } catch (err) {
+      setAutoMentionError(err instanceof Error ? err.message : '자동 멘션을 바꾸지 못했다');
     }
   };
 
@@ -513,6 +540,66 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
                 })}
               </ul>
             )}
+          {/* 자동 멘션(#173). 채널 설정 화면이 따로 없어 채널의 관리 표면인 이 패널에 둔다 —
+              admin 전용 편집 폼에 두면 admin 이 아닌 사람은 "이 채널이 누구를 자동으로 부르나"를
+              어디에서도 볼 수 없다. admin 은 토글, 나머지는 읽기 전용이다: 서버가 403 을 줄
+              조작을 화면이 내주면 "할 수 있다"는 거짓 신호다(docs/design.md §4). */}
+          {(() => {
+            const autoRows = channelAutoMentions[ch.id];
+            const onIds = new Set((autoRows ?? []).map((r) => r.agentAccountId));
+            // admin 은 켤 수 있는 에이전트 전부(비활성은 이미 켜져 있을 때만 — 끄는 길은 있어야
+            // 한다)를, 나머지는 켜진 것만 본다. 서버가 비활성 에이전트의 추가를 400 으로
+            // 막으므로, 그 토글을 내주면 눌러서 실패하는 항목이 된다.
+            const agents = Object.values(accounts)
+              .filter((a) => a.kind === 'agent' && (me?.isAdmin ? (!a.disabled || onIds.has(a.id)) : onIds.has(a.id)))
+              .sort((a, b) => a.handle.localeCompare(b.handle));
+            return (
+              <div data-testid={`auto-mentions-${ch.id}`} className="mb-1 border-t border-zinc-700 pt-1">
+                <div className="mb-0.5 text-xs text-zinc-400">자동 멘션</div>
+                <p className="mb-1 text-[10px] text-zinc-500">
+                  켜진 에이전트는 이 채널에서 사람이 쓰는 글 앞에 자동으로 불린다. 작성창의 칩 × 로 한 메시지에서만 뺄 수 있다.
+                  {!me?.isAdmin && ' 바꾸는 것은 admin 만 할 수 있다.'}
+                </p>
+                {autoMentionError && <p role="alert" className="mb-1 text-[10px] text-red-400">{autoMentionError}</p>}
+                {/* 키가 없으면 '아직 못 받았다' — 빈 목록으로 그리면 "아무도 안 부른다"는 거짓 사실이 된다. */}
+                {autoRows === undefined
+                  ? !autoMentionError && <p className="mb-1 text-[10px] text-zinc-500">불러오는 중…</p>
+                  : (
+                    <ul className="mb-1 space-y-0.5">
+                      {agents.length === 0 && (
+                        <li className="text-[10px] text-zinc-500">
+                          {me?.isAdmin ? '켤 수 있는 에이전트가 없다' : '자동으로 부르는 에이전트가 없다'}
+                        </li>
+                      )}
+                      {agents.map((a) => (
+                        <li key={a.id} className="flex items-center gap-1 text-xs text-zinc-300">
+                          {me?.isAdmin ? (
+                            <label className="flex items-center gap-1">
+                              <input
+                                type="checkbox"
+                                aria-label={`@${a.handle} 자동 멘션`}
+                                checked={onIds.has(a.id)}
+                                onChange={(e) => void toggleAutoMention(ch.id, a.id, e.target.checked)}
+                              />
+                              <span>@{a.handle}</span>
+                            </label>
+                          ) : (
+                            <span>@{a.handle}</span>
+                          )}
+                          {/* 배지는 **켜진 행에만** 붙는다. admin 목록에는 꺼진 에이전트도 서므로
+                              무조건 붙이면 체크가 비어 있는 줄에 '자동' 이라고 적힌다 — 화면이
+                              체크박스와 반대되는 말을 한다. */}
+                          {onIds.has(a.id) && (
+                            <span className="rounded bg-indigo-900 px-1 text-[10px] text-indigo-200">자동</span>
+                          )}
+                          {a.disabled && <span className="rounded bg-zinc-700 px-1 text-[10px] text-zinc-400">비활성</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+              </div>
+            );
+          })()}
           {leaveConfirmId === ch.id && (
             <p role="alert" className="mb-1 text-[10px] text-amber-400">
               나가면 아무도 이 채널을 볼 수 없다 — 마지막 멤버다. 채널은 지워지지 않는다.
@@ -730,7 +817,17 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
         </div>
       <nav className="flex-1 space-y-4 overflow-y-auto p-2">
         <div>
-          <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">Channels</div>
+          <div className="flex items-center gap-1 px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">
+            Channels
+            <button
+              className="rounded px-1 text-[10px] hover:bg-zinc-700"
+              aria-label="채널 찾기"
+              title="채널 찾기"
+              onClick={onOpenChannelDirectory}
+            >
+              🔍
+            </button>
+          </div>
           {sortedChannels.map(channelRow)}
           {me?.isAdmin && (
             createChannelOpen ? (

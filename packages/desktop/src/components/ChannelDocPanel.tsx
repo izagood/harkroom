@@ -4,10 +4,14 @@ import { getController } from '../state/controller';
 import { MessageBody } from './MessageBody';
 import { ApiError } from '../lib/api';
 import type { ChannelDoc } from '@murmur/shared';
+import type { SectionId } from './settings/sections';
 
 interface ChannelDocPanelProps {
   channelId: string;
   onClose: () => void;
+  /** 문서 본문의 멘션을 눌렀을 때 갈 곳(#279). `MessageBody` 로 그대로 넘긴다. */
+  onOpenDirectory?: (accountId: string | null) => void;
+  onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }
 
 /** 서버가 준 시각을 `expectedUpdatedAt`(epoch ms) 로. 아직 아무도 안 썼으면 null 이다. */
@@ -30,7 +34,7 @@ function expectationOf(doc: ChannelDoc | undefined | null): number | null {
  *    스토어에서 뜬다. 스토어를 `useEffect` 의존성으로 걸어 매번 맞추면 문서가 갱신되는
  *    순간 타이핑 중인 내용이 날아간다.
  */
-export function ChannelDocPanel({ channelId, onClose }: ChannelDocPanelProps) {
+export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSettings }: ChannelDocPanelProps) {
   const accounts = useAppStore((s) => s.accounts);
   const doc = useAppStore((s) => s.channelDocs[channelId]);
 
@@ -155,7 +159,12 @@ export function ChannelDocPanel({ channelId, onClose }: ChannelDocPanelProps) {
               />
             ) : doc?.body ? (
               <div className="text-sm text-zinc-700">
-                <MessageBody body={doc.body} messageId={`channel-doc:${channelId}`} />
+                <MessageBody
+                  body={doc.body}
+                  messageId={`channel-doc:${channelId}`}
+                  onOpenDirectory={onOpenDirectory}
+                  onOpenSettings={onOpenSettings}
+                />
               </div>
             ) : (
               <span className="text-sm text-zinc-400">아직 문서가 없다</span>
