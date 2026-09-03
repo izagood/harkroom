@@ -59,11 +59,13 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
   );
 }
 
-export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox, collapsed, onToggleCollapse }: {
+export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChannelDirectory, onOpenInbox, collapsed, onToggleCollapse }: {
   onLogout: () => void;
   onOpenSettings: (section?: SectionId) => void;
   /** 워크스페이스 전체 디렉터리를 연다(#226). 채널 멤버 목록이 아니라 워크스페이스 전체다. */
   onOpenDirectory: () => void;
+  /** 채널 디렉터리를 연다(#180). */
+  onOpenChannelDirectory: () => void;
   onOpenInbox: () => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -619,7 +621,17 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
         </div>
       <nav className="flex-1 space-y-4 overflow-y-auto p-2">
         <div>
-          <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">Channels</div>
+          <div className="flex items-center gap-1 px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">
+            Channels
+            <button
+              className="rounded px-1 text-[10px] hover:bg-zinc-700"
+              aria-label="채널 찾기"
+              title="채널 찾기"
+              onClick={onOpenChannelDirectory}
+            >
+              🔍
+            </button>
+          </div>
           {sortedChannels.map(channelRow)}
           {me?.isAdmin && (
             createChannelOpen ? (

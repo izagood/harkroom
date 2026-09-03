@@ -30,7 +30,7 @@ const seed = (isAdmin: boolean) => {
 };
 
 const sidebar = () => render(
-  <Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />,
+  <Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onOpenChannelDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
 beforeEach(() => { vi.clearAllMocks(); });
