@@ -309,11 +309,42 @@ export interface DmView {
   memberIds: string[];
 }
 
+/**
+ * 채널별 알림 수준(#224). `muted_at` 의 on/off 를 대체한다.
+ *
+ * - `all`     — 이 채널의 알림을 전부 받는다(전역 알림 설정이 정한 범위 안에서).
+ * - `mentions` — 나를 부른 것만 받는다.
+ * - `none`    — 아무것도 받지 않는다. **멘션도 아니다.**
+ *
+ * `none` 에서 멘션이 예외가 아닌 것은 #229 의 결정이고 #224 가 그것을 유지한다 — 세분화가
+ * 생겼으니 "덜 받겠다"는 사람에게는 `mentions` 라는 자리가 따로 있다. 이 주석이 없으면
+ * "멘션은 예외였나?"가 세 번째로 논의된다.
+ */
+export type NotifyLevel = 'all' | 'mentions' | 'none';
+
+export const NOTIFY_LEVELS: readonly NotifyLevel[] = ['all', 'mentions', 'none'];
+
 export interface ChannelPrefRow {
   accountId: string;
   channelId: string;
+  /**
+   * 언제 음소거했는지의 기록. **동작 판정에 쓰지 마라** — 알림도 배지도 `notifyLevel` 만
+   * 본다(#224). 같은 사실이 두 곳에 살면 한쪽만 고치는 사고가 난다.
+   */
   mutedAt: string | null;
   starredAt: string | null;
+  notifyLevel: NotifyLevel;
+}
+
+/**
+ * pref 행에서 알림 수준을 읽는다. **행이 없으면 `all`** — 아무것도 정하지 않은 채널은 지금
+ * 동작 그대로여야 한다(024 마이그레이션의 default 와 같은 값이다).
+ *
+ * `mutedAt` 은 **보지 않는다.** 알림·배지·훑기가 전부 이 한 함수를 지나가게 해서, 같은
+ * 질문에 두 곳이 다르게 답하는 일을 막는다(#224).
+ */
+export function notifyLevelOf(pref: { notifyLevel?: NotifyLevel } | undefined | null): NotifyLevel {
+  return pref?.notifyLevel ?? 'all';
 }
 
 export interface LeaseRow {

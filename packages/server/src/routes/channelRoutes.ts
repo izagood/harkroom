@@ -211,8 +211,10 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
   }));
 
   const prefParam = z.object({ id: z.string().uuid() });
+  // `muted` 는 받지 않는다 — `notifyLevel` 이 그 자리를 대체했다(#224). 아무것도 읽지 않는
+  // 스위치를 남겨 두면 "껐는데 왜 아직도 울리나"가 그대로 돌아온다(#229 가 그 모양이었다).
   const prefBody = z.object({
-    muted: z.boolean().optional(),
+    notifyLevel: z.enum(['all', 'mentions', 'none']).optional(),
     starred: z.boolean().optional(),
   }).strict();
 

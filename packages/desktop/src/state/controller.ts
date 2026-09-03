@@ -1,4 +1,5 @@
-import type { AccountStatus, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, MessageRow, WsServerEvent } from '@murmur/shared';
+import type { AccountStatus, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, MessageRow, NotifyLevel, WsServerEvent } from '@murmur/shared';
+import { notifyLevelOf } from '@murmur/shared';
 import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
@@ -14,6 +15,12 @@ export class Controller {
   private loadedChannels = new Set<string>();
   /** 이미 알린 inbox 항목. 같은 항목을 두 번 알리면 알림이 쓸모없어진다. */
   private announced = new Set<number>();
+  /**
+   * 이미 OS 알림을 보낸 메시지 id(#224). `all` 채널에서는 같은 메시지가 `message.created`
+   * 와 `inbox.updated` 두 경로로 오기 때문에, 이것이 없으면 그 채널의 멘션이 두 번 울린다.
+   * 두 경로가 서로의 기록을 보므로 어느 쪽이 먼저 도착해도 한 번만 울린다.
+   */
+  private notifiedMessages = new Set<string>();
 
   constructor(
     public api: ApiClient,
@@ -105,6 +112,7 @@ export class Controller {
       case 'message.created':
         store.upsertMessages(e.message.channelId, [e.message]);
         this.bumpUnread(e.message.channelId, e.message.authorId);
+        this.swallow(this.announceNewMessage(e.message));
         // 서버는 기동 시 투영용 system 계정을 만든다 — 그보다 먼저 부트스트랩한 클라이언트는
         // 그 계정을 모르고, 작성자가 '…'로 표시된다. 디렉터리는 정적이 아니다.
         if (!store.accounts[e.message.authorId]) this.swallow(this.refreshAccounts());
@@ -204,6 +212,45 @@ export class Controller {
     return this.accountsInFlight;
   }
 
+  /**
+   * 알림 수준이 `all` 인 채널의 **일반 새 메시지**를 알린다(#224).
+   *
+   * `announceNewMentions` 와 나뉘어 있는 이유는 재료가 다르기 때문이다: 저쪽은 서버가 만든
+   * `InboxEntry`(나를 부른 것)를 순회하고, 이쪽은 그 목록에 아예 오르지 않는 평범한 메시지를
+   * 다룬다. `mentions` 는 "나를 부른 것만"이므로 여기서 걸러지고, `none` 도 마찬가지다.
+   *
+   * 여기서는 `announced` 같은 '지나간 것' 기록이 필요 없다. 이 경로는 소켓 이벤트 하나당
+   * 한 번 도는 것이라 다시 훑는 일이 없다 — 한꺼번에 터질 목록 자체가 존재하지 않는다.
+   * 되훑는 쪽(`announceNewMentions`)에만 그 기록이 있다.
+   */
+  private async announceNewMessage(message: MessageRow): Promise<void> {
+    const store = useAppStore.getState();
+    // 내가 쓴 것은 알리지 않는다. 보고 있는 창에도 띄우지 않는다 — 배지가 그 일을 한다.
+    if (message.authorId === store.me?.id || document.hasFocus()) return;
+    if (notifyLevelOf(store.channelPrefs[message.channelId]) !== 'all') return;
+    // 이 채널을 `all` 로 둔 것이 옵트인이지만, 기기 전체 스위치는 여전히 위에 있다.
+    const prefs = usePrefsStore.getState().notifications;
+    if (!prefs.enabled) return;
+    // 멘션 경로가 이미 알렸으면 두 번 울리지 않는다.
+    if (this.notifiedMessages.has(message.id)) return;
+
+    const channel = store.channels.find((c) => c.id === message.channelId);
+    const dm = store.dms.find((d) => d.id === message.channelId);
+    const where = channel
+      ? `#${channel.name}`
+      : dm
+        ? dm.memberIds.filter((id) => id !== store.me?.id).map((id) => store.accounts[id]?.handle ?? '…').join(', ')
+        : 'murmur';
+    const author = store.accounts[message.authorId]?.handle;
+
+    this.notifiedMessages.add(message.id);
+    await this.notifier.notify({
+      title: `${author ? `@${author} ` : ''}posted in ${where}`.trim(),
+      // 미리보기를 끄면 제목(누가·어디서)은 남기고 대화 내용만 뺀다 — 멘션 알림과 같은 규칙이다.
+      body: prefs.showPreview ? message.body : 'New message',
+    });
+  }
+
   /** 새로 들어온 미읽음을 OS 알림으로 알린다. 보고 있는 창에는 띄우지 않는다 — 배지가 그 일을 한다. */
   private async announceNewMentions(): Promise<void> {
     const { unread, me, channels, dms, accounts, messages, channelPrefs } = useAppStore.getState();
@@ -222,10 +269,17 @@ export class Controller {
       // 끈 알림도 여기서 '지나간 것'으로 표시한다 — 아니면 사용자가 알림을 켜는 순간
       // 그동안 쌓인 것이 한꺼번에 터진다. 포커스 분기와 같은 이유다.
       this.announced.add(e.id);
-      // 음소거한 채널도 마찬가지로 '지나간 것'으로 표시한 뒤 건너뛴다(#229). 음소거는
-      // "덜 방해받겠다"는 약속이므로 멘션·DM도 예외가 아니다 — 세분화(전체/멘션만/없음)는
-      // #224 의 몫이고, 지금 스키마는 on/off 하나뿐이니 끄면 끈다.
-      if (channelPrefs[e.channelId]?.mutedAt) continue;
+      // 채널 알림 수준(#224). **`none` 이면 멘션도 알리지 않는다** — #229 가 "음소거는
+      // 멘션·DM도 예외가 아니다"로 갔고, 세분화가 생긴 지금 그 결정을 **명시적으로
+      // 유지한다**: 덜 받고 싶은 사람에게는 `mentions` 라는 자리가 따로 생겼으므로
+      // `none` 을 고른 것은 정말로 전부 끄겠다는 뜻이다. `mutedAt` 은 보지 않는다 —
+      // 같은 질문에 두 컬럼이 답하면 한쪽만 고치는 사고가 난다.
+      //
+      // 건너뛰기 전에 위에서 이미 '지나간 것'으로 적었다. 그 순서가 중요하다: 나중에
+      // 수준을 올리는 순간 그동안 묶여 있던 알림이 한꺼번에 터지지 않게 하는 자리다.
+      if (notifyLevelOf(channelPrefs[e.channelId]) === 'none') continue;
+      // `all` 채널이면 `announceNewMessage` 가 같은 메시지를 이미 알렸을 수 있다.
+      if (this.notifiedMessages.has(e.messageId)) continue;
       if (!prefs.enabled || !wanted[e.reason]) continue;
 
       const row = (messages[e.channelId] ?? []).find((m) => m.id === e.messageId);
@@ -240,6 +294,7 @@ export class Controller {
       // 본문이 스토어에 없으면(창 밖으로 밀려난 채널 등) 이유만으로도 알림은 성립한다.
       const generic = `New ${e.reason.replace('_', ' ')}`;
 
+      this.notifiedMessages.add(e.messageId);
       await this.notifier.notify({
         title: `${author ? `@${author} ` : ''}${label[e.reason]} ${where}`.trim(),
         // 미리보기를 끄면 제목(누가·어디서)은 남기고 대화 내용만 뺀다.
@@ -565,11 +620,13 @@ export class Controller {
     await this.openChannel(dm.id);
   }
 
-  async toggleChannelMute(channelId: string): Promise<void> {
+  /**
+   * 채널 알림 수준을 정한다(#224). 음소거 토글을 대체한다 — 토글과 수준이 같이 있으면
+   * 같은 사실을 두 곳이 말하게 되고, 그 둘이 갈라진다.
+   */
+  async setChannelNotifyLevel(channelId: string, notifyLevel: NotifyLevel): Promise<void> {
     const store = useAppStore.getState();
-    const current = store.channelPrefs[channelId];
-    const muted = !current?.mutedAt;
-    const updated = await this.api.updateChannelPref(channelId, { muted });
+    const updated = await this.api.updateChannelPref(channelId, { notifyLevel });
     store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
   }
 
@@ -636,9 +693,10 @@ export class Controller {
     // 조회한 김에 배지도 같은 값으로 맞춘다 — 훑기와 사이드바가 서로 다른 미읽음을 말하면
     // 어느 쪽이 맞는지 사람이 판단할 수 없다.
     store.set({ reads: Object.fromEntries(reads.map((r) => [r.channelId, { lastReadSeq: r.lastReadSeq, unread: r.unread }])) });
-    // 음소거된 채널은 뜨지 않는다(#229). 음소거는 "이 채널은 나를 부르지 마라"이고
-    // 훑기 목록에 오르는 것은 부름의 한 형태다 — 여기서 빠뜨리면 음소거의 뜻이 다시 무너진다.
-    const candidates = reads.filter((r) => r.unread > 0 && !store.channelPrefs[r.channelId]?.mutedAt);
+    // `none` 인 채널은 뜨지 않는다(#229, #224). 알림을 끈다는 것은 "이 채널은 나를 부르지
+    // 마라"이고 훑기 목록에 오르는 것은 부름의 한 형태다. `mentions` 는 남긴다 — 배지를
+    // 남기는 것과 같은 결이다(덜 알리겠다는 뜻이지 안 보겠다는 뜻이 아니다).
+    const candidates = reads.filter((r) => r.unread > 0 && notifyLevelOf(store.channelPrefs[r.channelId]) !== 'none');
     const pages = await Promise.all(
       // `lastReadSeq` 가 0(한 번도 안 읽음)이면 서버는 최신 한 페이지를 준다 — 그 채널의
       // 정렬 기준은 '받아 온 것 중 가장 오래된 것'이 된다. 훑기가 보여 줄 수 있는 범위와

@@ -13,7 +13,13 @@ import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
  */
 
 const pref = (channelId: string, muted: boolean): ChannelPrefRow =>
-  ({ accountId: 'u1', channelId, mutedAt: muted ? '2026-09-03T00:00:00.000Z' : null, starredAt: null });
+  ({
+    accountId: 'u1', channelId,
+    mutedAt: muted ? '2026-09-03T00:00:00.000Z' : null,
+    starredAt: null,
+    // 훑기가 보는 것은 `notifyLevel` 이다(#224). `mutedAt` 은 기록일 뿐이다.
+    notifyLevel: muted ? 'none' : 'all',
+  });
 
 const OLD = '2026-09-01T00:00:00.000Z';
 const NEW = '2026-09-02T00:00:00.000Z';
