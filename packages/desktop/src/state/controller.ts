@@ -315,6 +315,20 @@ export class Controller {
           this.swallow(this.loadSavedSummary());
         }
         break;
+      case 'channel.member_added':
+      case 'channel.member_removed':
+        // 멤버 집합이 바뀌었다(#300). 이미 들고 있는 채널의 멤버 목록만 다시 받는다 —
+        // 들고 있다는 것은 멤버 패널이나 사이드바가 그것을 그리고 있다는 뜻이고, 안 들고
+        // 있는 채널까지 받으면 남이 사람을 옮길 때마다 안 보는 채널의 조회가 폭주한다.
+        // 목록 자체가 생기거나 사라지는 일은 같이 오는 channel.created/deleted 가 맡는다.
+        if (store.channelMembers[e.channelId]) {
+          this.swallow(this.loadChannelMembers(e.channelId));
+        }
+        break;
+      case 'handle_group.changed':
+        // 집합 목록과 구성원 수를 갱신한다(#300).
+        this.swallow(this.refreshAccounts({ force: true }));
+        break;
       case 'link_preview.ready':
         // 카드가 준비됐다는 신호만 남긴다(#215). 내용은 그 URL 을 그리는 컴포넌트가
         // 스스로 읽는다 — 지금 화면에 없는 URL 의 카드를 미리 받아 둘 이유가 없다.

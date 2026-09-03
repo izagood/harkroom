@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useAppStore } from '../src/state/appStore';
 import { Controller } from '../src/state/controller';
-import { chan, fakeApi, fakeWsFactory } from './helpers/fakeApi';
+import { acc, accountsResult, chan, fakeApi, fakeWsFactory, grp } from './helpers/fakeApi';
 
 /**
  * 채널 목록 변경 WS 이벤트의 데스크탑 쪽(#284).
@@ -105,5 +105,85 @@ describe('채널 목록 변경 이벤트를 받는 데스크탑 (#284)', () => {
     callbacks.current!.onEvent({ type: 'saved.changed', messageId: 'm1', state: 'open', accountId: 'someone-else' });
     await new Promise((r) => setTimeout(r, 20));
     expect(savedSummary.mock.calls.length).toBe(callsAfterStart + 1);
+  });
+});
+
+/**
+ * 멤버십·집합 변경 이벤트를 받는 데스크탑(#300).
+ *
+ * 서버가 옳은 수신자에게 보내도 **아무도 듣지 않으면** 화면은 그대로다 — 실측으로 그런
+ * 이벤트가 있었다(#140). 여기서 확인하는 것은 이벤트마다 정말로 조회가 한 번 더 도는가다.
+ */
+describe('멤버십·집합 변경 이벤트를 받는 데스크탑 (#300)', () => {
+  it('channel.member_added 는 들고 있는 채널의 멤버 목록을 다시 받는다', async () => {
+    const channelMembers = vi.fn(async () => [{ accountId: 'u2', handle: 'bot' }]);
+    const { callbacks, controller } = await startWith({ channelMembers });
+    // 멤버 패널이 열려 있는 상태 — 그래야 다시 받을 이유가 있다.
+    await controller.loadChannelMembers('c1');
+    const before = channelMembers.mock.calls.length;
+
+    callbacks.current!.onEvent({
+      type: 'channel.member_added', channelId: 'c1', accountId: 'u3', audience: 'all',
+    });
+    await vi.waitFor(() => expect(channelMembers.mock.calls.length).toBe(before + 1));
+  });
+
+  it('channel.member_removed 도 같은 경로로 다시 받는다', async () => {
+    const channelMembers = vi.fn(async () => [{ accountId: 'u2', handle: 'bot' }]);
+    const { callbacks, controller } = await startWith({ channelMembers });
+    await controller.loadChannelMembers('c1');
+    const before = channelMembers.mock.calls.length;
+
+    callbacks.current!.onEvent({
+      type: 'channel.member_removed', channelId: 'c1', accountId: 'u2', audience: 'all',
+    });
+    await vi.waitFor(() => expect(channelMembers.mock.calls.length).toBe(before + 1));
+  });
+
+  it('안 들고 있는 채널의 멤버십 변경은 조회하지 않는다', async () => {
+    const channelMembers = vi.fn(async () => []);
+    const { callbacks } = await startWith({ channelMembers });
+    const before = channelMembers.mock.calls.length;
+
+    callbacks.current!.onEvent({
+      type: 'channel.member_added', channelId: 'c2', accountId: 'u3', audience: 'all',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(channelMembers.mock.calls.length).toBe(before);
+  });
+
+  it('handle_group.changed 는 집합 목록을 다시 받아 구성원 수를 갱신한다', async () => {
+    // 첫 조회는 구성원 0, 두 번째는 2 — 갱신이 실제로 화면 값까지 바꾸는지 본다.
+    // 개수만 세면 조회를 하고 스토어에 안 넣어도 통과한다.
+    let call = 0;
+    const accounts = vi.fn(async () => {
+      call += 1;
+      return accountsResult([acc('u1', 'admin')], [grp('g1', 'team', 'Team', call === 1 ? 0 : 2)]);
+    });
+    const { callbacks } = await startWith({ accounts });
+    await vi.waitFor(() => expect(useAppStore.getState().groups).toHaveLength(1));
+    expect(useAppStore.getState().groups[0]!.memberCount).toBe(0);
+
+    callbacks.current!.onEvent({ type: 'handle_group.changed', groupId: 'g1', audience: 'all' });
+
+    await vi.waitFor(() => expect(useAppStore.getState().groups[0]!.memberCount).toBe(2));
+  });
+
+  /**
+   * 이 경로는 `refreshAccounts` 의 5초 최소 간격 가드를 **넘어야** 한다. `force` 없이
+   * 부르면 시작 직후의 조회로부터 5초가 지나지 않아 그냥 돌아오고, 집합을 방금 고친
+   * 사람의 화면만 맞고 다른 사람 화면은 5초 동안 낡은 채 남는다.
+   */
+  it('handle_group.changed 는 최소 간격 가드에 막히지 않는다(force)', async () => {
+    const accounts = vi.fn(async () => accountsResult([acc('u1', 'admin')], [grp('g1', 'team', 'Team')]));
+    const { callbacks, controller } = await startWith({ accounts });
+    // 가드를 **먼저 물린다**. 이 줄이 없으면 `lastAccountsRefresh` 가 0 이라 `force` 없이도
+    // 조회가 돌아, `force` 를 지워도 테스트가 우연히 초록으로 남는다. 실제 화면에서는
+    // 작성기가 `@` 를 칠 때마다 이 가드를 물려 둔다.
+    await controller.refreshAccounts();
+    const before = accounts.mock.calls.length;
+
+    callbacks.current!.onEvent({ type: 'handle_group.changed', groupId: 'g1', audience: 'all' });
+    await vi.waitFor(() => expect(accounts.mock.calls.length).toBe(before + 1));
   });
 });
