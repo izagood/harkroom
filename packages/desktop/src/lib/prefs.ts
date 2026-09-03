@@ -10,10 +10,13 @@ export interface NotificationPrefs {
   showPreview: boolean;
 }
 
+export type ColorMode = 'system' | 'light' | 'dark';
+
 export interface Prefs {
   notifications: NotificationPrefs;
   sidebarWidth: number;
   sidebarCollapsed: boolean;
+  colorMode: ColorMode;
   /** 앱 시작 시 내가 소유한 에이전트의 러너를 자동으로 띄울지(#250). */
   runnerAutoStart: boolean;
   /**
@@ -62,6 +65,7 @@ export const DEFAULT_PREFS: Prefs = {
   notifications: { enabled: true, mention: true, threadReply: true, dm: true, showPreview: true },
   sidebarWidth: 240,
   sidebarCollapsed: false,
+  colorMode: 'system',
   runnerAutoStart: true,
   runnerRepoPath: '',
   runnerCommand: '',
@@ -79,6 +83,7 @@ export const prefsStorage = {
         notifications: { ...DEFAULT_PREFS.notifications, ...(parsed.notifications ?? {}) },
         sidebarWidth: parsed.sidebarWidth ?? DEFAULT_PREFS.sidebarWidth,
         sidebarCollapsed: parsed.sidebarCollapsed ?? DEFAULT_PREFS.sidebarCollapsed,
+        colorMode: parsed.colorMode ?? DEFAULT_PREFS.colorMode,
         runnerAutoStart: parsed.runnerAutoStart ?? DEFAULT_PREFS.runnerAutoStart,
         runnerRepoPath: parsed.runnerRepoPath ?? DEFAULT_PREFS.runnerRepoPath,
         runnerCommand: parsed.runnerCommand ?? DEFAULT_PREFS.runnerCommand,

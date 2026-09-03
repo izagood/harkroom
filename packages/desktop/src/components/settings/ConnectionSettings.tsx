@@ -28,7 +28,7 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
           label="Realtime connection"
           value={
             <span className="inline-flex items-center gap-2">
-              <span className={`h-2 w-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
+              <span className={`h-2 w-2 rounded-full ${connected ? 'bg-success' : 'bg-danger'}`} />
               <span data-testid="connection-state">{connected ? 'Connected' : 'Disconnected'}</span>
             </span>
           }
@@ -40,14 +40,14 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
       <SettingsGroup>
         <div className="flex items-center justify-between gap-4 px-4 py-3">
           <span className="min-w-0 flex-1">
-            <span className="block font-medium text-zinc-900">Auto-start runners</span>
-            <span className="mt-0.5 block text-zinc-500">
+            <span className="block font-medium text-fg">Auto-start runners</span>
+            <span className="mt-0.5 block text-fg-subtle">
               Launch runners for agents you own when the app starts.
             </span>
           </span>
           <button
             className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              runnerAutoStart ? 'bg-blue-600' : 'bg-zinc-300'
+              runnerAutoStart ? 'bg-accent' : 'bg-fg-subtle'
             }`}
             onClick={() => setRunnerAutoStart(!runnerAutoStart)}
             role="switch"
@@ -55,7 +55,7 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
             aria-label="러너 자동 기동"
           >
             <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+              className={`inline-block h-4 w-4 transform rounded-full bg-surface-raised transition-transform ${
                 runnerAutoStart ? 'translate-x-6' : 'translate-x-1'
               }`}
             />
@@ -65,16 +65,16 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
             있는 명령은 곧 Tauri shell 스코프를 와일드카드로 열어야 한다는 뜻이고, 그것이
             임의 명령 실행 표면이 된다(runnerLauncher.ts::RUNNER_SCOPE_NAME 주석). */}
         <div className="px-4 py-3">
-          <label className="block font-medium text-zinc-900" htmlFor="runner-repo-path">
+          <label className="block font-medium text-fg" htmlFor="runner-repo-path">
             murmur repository path
           </label>
-          <span className="mt-0.5 block text-zinc-500">
+          <span className="mt-0.5 block text-fg-subtle">
             Runners start with <code className="font-mono">pnpm --filter @murmur/agent start</code>
             {' '}in this directory. Leave empty to not start any.
           </span>
           <input
             id="runner-repo-path"
-            className="mt-2 w-full rounded border border-zinc-300 px-2 py-1 font-mono text-xs"
+            className="mt-2 w-full rounded border border-border bg-field px-2 py-1 font-mono text-xs"
             placeholder="/Users/me/dev/murmur"
             value={runnerRepoPath}
             onChange={(e) => setRunnerRepoPath(e.target.value)}
@@ -111,13 +111,13 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
       <SettingsGroup>
         <div className="flex items-center gap-4 px-4 py-3">
           <span className="min-w-0 flex-1">
-            <span className="block font-medium text-zinc-900">Use a different server</span>
-            <span className="mt-0.5 block text-zinc-500">
+            <span className="block font-medium text-fg">Use a different server</span>
+            <span className="mt-0.5 block text-fg-subtle">
               Sign out to enter another server address.
             </span>
           </span>
           <button
-            className="shrink-0 rounded-lg border border-zinc-300 px-3 py-1.5 font-medium hover:bg-zinc-50"
+            className="shrink-0 rounded-lg border border-border px-3 py-1.5 font-medium hover:bg-surface"
             onClick={onSignOut}
           >
             Sign out

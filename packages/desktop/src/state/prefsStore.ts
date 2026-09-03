@@ -1,9 +1,10 @@
 import { create } from 'zustand';
-import { DEFAULT_PREFS, prefsStorage, type NotificationPrefs, type Prefs } from '../lib/prefs';
+import { DEFAULT_PREFS, prefsStorage, type ColorMode, type NotificationPrefs, type Prefs } from '../lib/prefs';
 import { validateRunnerCommand } from '../lib/runnerLauncher';
 
 export interface PrefsState extends Prefs {
   setNotifications(patch: Partial<NotificationPrefs>): void;
+  setColorMode(mode: ColorMode): void;
   setRunnerAutoStart(enabled: boolean): void;
   setRunnerRepoPath(path: string): void;
   /**
@@ -44,6 +45,7 @@ export const usePrefsStore = create<PrefsState>((set, get) => {
   return {
     ...prefsStorage.load(),
     setNotifications: (patch) => update({ notifications: { ...get().notifications, ...patch } }),
+    setColorMode: (mode) => update({ colorMode: mode }),
     setRunnerAutoStart: (enabled) => update({ runnerAutoStart: enabled }),
     setRunnerRepoPath: (path) => update({ runnerRepoPath: path }),
     setRunnerCommand: (command) => {

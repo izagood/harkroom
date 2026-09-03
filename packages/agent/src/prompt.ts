@@ -212,6 +212,15 @@ export function countOwnPostsSince(messages: MessageRow[], meId: string, sinceSe
  * 두 곳에 생기지 않게 한다. 실패 경로(커서를 전진시킬지 정하는 자리)가 이 불리언을 쓴다.
  *
  * #144: progress 메시지는 제외되므로, 진행 설명만 있고 결과가 없는 턴은 NO_REPLY_NOTICE 를 표시한다.
+ *
+ * #174: 같은 에이전트를 **여러 인스턴스**로 돌리면 이 판정이 둘을 구분하지 못한다 —
+ * 인스턴스 A 가 올린 발화를 B 도 "내 발화"로 본다(계정이 같기 때문이다). 그래서 두
+ * 인스턴스가 같은 스레드에 동시에 답하면 답이 둘 남을 수 있다.
+ *
+ * **그것을 여기서 고치지 않는다.** 인스턴스별 구분을 넣으면 발화를 세는 규칙이 두 벌이
+ * 되고(`countOwnPostsSince` 와 갈린다), 이 저장소는 이미 at-least-once 를 택했다. 대가는
+ * 문서로 알린다 — `packages/agent/README.md` 의 "대가" 절이 그 자리이고, 인스턴스를
+ * 여러 개 띄우는 것은 그 대가를 아는 운영자의 선택이다.
  */
 export function hasOwnPostSince(messages: MessageRow[], meId: string, sinceSeq: number): boolean {
   return countOwnPostsSince(messages, meId, sinceSeq) > 0;

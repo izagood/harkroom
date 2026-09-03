@@ -131,6 +131,13 @@ export interface AppState {
   expandedMessageIds: Record<string, true>;
   /** 에이전트별 러너 실행 상태. agentId → state */
   runnerStates: Record<string, RunnerState>;
+  /**
+   * 링크 미리보기가 준비된 시각. url → 타임스탬프(#215).
+   *
+   * 카드 **내용**을 여기 담지 않는 이유: 캐시는 서버에 하나뿐이고, 두 벌을 두면 어느 쪽이
+   * 최신인지 화면마다 갈린다. 여기 있는 것은 "다시 읽어라"는 신호뿐이다.
+   */
+  linkPreviewReadyAt: Record<string, number>;
   set(partial: Partial<AppState>): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
@@ -143,6 +150,8 @@ export interface AppState {
   applyStatus(accountId: string, status: AccountStatus, statusText: string | null): void;
   /** 그 계정의 프로필 사진 첨부 id 를 갈아 끼운다. null 은 지우기다(#159). */
   applyAvatar(accountId: string, avatarAttachmentId: string | null): void;
+  /** 그 계정의 handle 을 바꾼다(#271). */
+  applyHandle(accountId: string, handle: string): void;
   reset(): void;
   clearDrafts(): void;
   setDraft(scopeKey: string, draft: string): void;
@@ -167,6 +176,7 @@ const initial = {
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
   expandedMessageIds: {}, runnerStates: {}, savedIds: [], savedCount: 0,
+  linkPreviewReadyAt: {},
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -240,11 +250,24 @@ export const useAppStore = create<AppState>((set, get) => ({
   applyAvatar: (accountId, avatarAttachmentId) => {
     const cur = get().accounts[accountId];
     const me = get().me;
-    // 디렉터리에 없는 계정에 껍데기를 만들지 않는다 — `applyStatus` 와 같은 판단이다.
+// 디렉터리에 없는 계정에 껍데기를 만들지 않는다 — `applyStatus` 와 같은 판단이다.
     if (!cur && me?.id !== accountId) return;
     set({
       ...(cur ? { accounts: { ...get().accounts, [accountId]: { ...cur, avatarAttachmentId } } } : {}),
       ...(me?.id === accountId ? { me: { ...me, avatarAttachmentId } } : {}),
+    });
+  },
+  /**
+   * handle 이 바뀌었다(#271). `applyStatus` 와 같은 이유로 `me` 도 함께 고친다 —
+   * 한쪽만 고치면 내가 방금 바꾼 이름이 남의 화면에는 보이는데 내 화면에는 안 된다.
+   */
+  applyHandle: (accountId, handle) => {
+    const cur = get().accounts[accountId];
+    const me = get().me;
+    if (!cur && me?.id !== accountId) return;
+    set({
+      ...(cur ? { accounts: { ...get().accounts, [accountId]: { ...cur, handle } } } : {}),
+      ...(me?.id === accountId ? { me: { ...me, handle } } : {}),
     });
   },
   reset: () => set({ ...initial }),

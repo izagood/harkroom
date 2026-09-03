@@ -50,7 +50,7 @@ export function LeasePanel() {
     if (projectionStatusError !== null) {
       return {
         testid: 'projection-unreadable',
-        tone: 'text-red-400',
+        tone: 'text-danger',
         text: '투영 상태를 읽지 못했다',
         detail: projectionStatusError,
       };
@@ -59,7 +59,7 @@ export function LeasePanel() {
     if (projectionStatus === null) {
       return {
         testid: 'projection-unknown',
-        tone: 'text-zinc-500',
+        tone: 'text-fg-subtle',
         text: '투영 상태를 확인하는 중…',
         detail: null,
       };
@@ -67,7 +67,7 @@ export function LeasePanel() {
     if (projectionStatus.state === 'unconfigured') {
       return {
         testid: 'projection-unconfigured',
-        tone: 'text-amber-400',
+        tone: 'text-warning',
         text: '투영이 설정되지 않았다',
         detail: 'AVCS_BASE_URL 로 켠다',
       };
@@ -80,7 +80,7 @@ export function LeasePanel() {
         : `${minutesAgo(projectionStatus.lastPolledAt)}부터`;
       return {
         testid: 'projection-stalled',
-        tone: 'text-amber-400',
+        tone: 'text-warning',
         text: `투영이 ${since} 멈춰 있다`,
         detail: projectionStatus.lastError,
       };
@@ -90,14 +90,14 @@ export function LeasePanel() {
 
   return (
     <div>
-      <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">Active work</div>
+      <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">Active work</div>
       {banner && (
         <div data-testid={banner.testid} className="space-y-0.5 px-2 pb-1">
           <div className={`text-xs ${banner.tone}`}>{banner.text}</div>
           {banner.detail && (
             // 에러 원문은 길 수 있다. 잘라서 보여 주되 `title` 로 전문을 남긴다 —
             // 잘린 채로만 두면 무엇이 잘못됐는지 화면에서 알 수 없다.
-            <div className="truncate text-xs text-zinc-500" title={banner.detail}>
+            <div className="truncate text-xs text-fg-subtle" title={banner.detail}>
               {banner.detail}
             </div>
           )}
@@ -107,13 +107,13 @@ export function LeasePanel() {
           배너가 왜 비어 있는지 이미 말했고, 거기에 "없다"를 덧붙이면 읽지도 못한
           것을 없다고 단정하는 셈이다. */}
       {byRepo.length === 0 && banner === null && (
-        <div className="px-2 text-xs text-zinc-600">No active work</div>
+        <div className="px-2 text-xs text-fg-muted">No active work</div>
       )}
       {byRepo.map(([repo, rows]) => (
         <div key={repo} className="px-2 pb-1">
-          <div className="text-xs font-semibold text-zinc-400">{repo}</div>
+          <div className="text-xs font-semibold text-fg-muted">{repo}</div>
           {rows.map((l) => (
-            <div key={`${l.path}:${l.actorKeyId}`} className="truncate text-xs text-zinc-500">
+            <div key={`${l.path}:${l.actorKeyId}`} className="truncate text-xs text-fg-subtle">
               {l.path} — {shortActor(l.actorKeyId)}
             </div>
           ))}

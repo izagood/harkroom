@@ -18,6 +18,7 @@ import { registerDirectoryRoutes } from './routes/directoryRoutes.js';
 import { registerAuditRoutes } from './routes/auditRoutes.js';
 import { registerSettingsRoutes } from './routes/settingsRoutes.js';
 import { registerHandleGroupRoutes } from './routes/handleGroupRoutes.js';
+import { registerLinkPreviewRoutes } from './routes/linkPreviewRoutes.js';
 import { registerAgentRelayRoutes } from './routes/agentRelayRoutes.js';
 import { registerSkillRoutes } from './routes/skillRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
@@ -315,6 +316,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerAuditRoutes(app, deps.pool);
   await registerSettingsRoutes(app, deps.pool);
   await registerHandleGroupRoutes(app, deps.pool);
+  await registerLinkPreviewRoutes(app, deps.pool);
   await registerSkillRoutes(app, deps.pool);
 
   // #141 Phase 2 attach. **registerWs 뒤여야 한다** — `websocket: true` 라우트는

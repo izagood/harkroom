@@ -15,7 +15,7 @@ export function NotificationSettings() {
     >
       {!hasNotificationSurface() && (
         <p data-testid="no-notification-surface"
-          className="mb-8 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">
+          className="mb-8 rounded-xl border border-warning-border bg-warning-surface px-4 py-3 text-warning">
           This build has no system notification surface, so nothing is delivered here.
           Your choices are still saved and apply once you run the desktop app.
         </p>

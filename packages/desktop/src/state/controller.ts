@@ -284,6 +284,10 @@ export class Controller {
         store.applyAvatar(e.accountId, e.avatarAttachmentId);
         if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
         break;
+      case 'account.handle_changed':
+        store.applyHandle(e.accountId, e.newHandle);
+        if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
+        break;
       case 'channel.created':
         // 새 채널을 목록에 추가한다. public 은 전원에게 오고, private 은 멤버에게만 온다.
         // 이미 있으면 무시(upsert 가 아니라 adds 를 쓴다).
@@ -315,6 +319,25 @@ export class Controller {
         if (e.accountId === store.me?.id) {
           this.swallow(this.loadSavedSummary());
         }
+        break;
+      case 'channel.member_added':
+      case 'channel.member_removed':
+        // 멤버 집합이 바뀌었다(#300). 이미 들고 있는 채널의 멤버 목록만 다시 받는다 —
+        // 들고 있다는 것은 멤버 패널이나 사이드바가 그것을 그리고 있다는 뜻이고, 안 들고
+        // 있는 채널까지 받으면 남이 사람을 옮길 때마다 안 보는 채널의 조회가 폭주한다.
+        // 목록 자체가 생기거나 사라지는 일은 같이 오는 channel.created/deleted 가 맡는다.
+        if (store.channelMembers[e.channelId]) {
+          this.swallow(this.loadChannelMembers(e.channelId));
+        }
+        break;
+      case 'handle_group.changed':
+        // 집합 목록과 구성원 수를 갱신한다(#300).
+        this.swallow(this.refreshAccounts({ force: true }));
+        break;
+      case 'link_preview.ready':
+        // 카드가 준비됐다는 신호만 남긴다(#215). 내용은 그 URL 을 그리는 컴포넌트가
+        // 스스로 읽는다 — 지금 화면에 없는 URL 의 카드를 미리 받아 둘 이유가 없다.
+        store.set({ linkPreviewReadyAt: { ...store.linkPreviewReadyAt, [e.url]: Date.now() } });
         break;
     }
   }
@@ -1071,6 +1094,17 @@ export class Controller {
     const saved = await this.api.setMyStatus(statusText === undefined ? { status } : { status, statusText });
     const meId = store.me?.id;
     if (meId) store.applyStatus(meId, saved.status, saved.statusText);
+  }
+
+  /**
+   * 내 handle 을 서버에 정하고 로컬에도 반영한다(#271). 소켓 이벤트가 곧 돌아오지만 그것만
+   * 기다리면 누른 뒤 한 왕복 동안 화면이 예전 값을 보여 준다.
+   */
+  async setHandle(handle: string): Promise<void> {
+    const saved = await this.api.updateMyHandle(handle);
+    const store = useAppStore.getState();
+    const meId = store.me?.id;
+    if (meId) store.applyHandle(meId, saved.handle);
   }
 
   /**
