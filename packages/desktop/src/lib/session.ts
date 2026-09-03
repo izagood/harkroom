@@ -16,6 +16,8 @@
  * - 키: 커뮤니티 구분은 계정 id다. URL(baseUrl)이 아니다 — 같은 서버가 localhost와 LAN IP 등 여러 URL 로 닿을 수 있어 URL 로 키를 두면 같은 커뮤니티가 목록에 두 번 나타난다.
  * - accountId는 서버 DB의 UUID라 어느 URL로 접근해도 동일하고, 다른 서버와는 다르다.
  */
+import { useAppStore } from '../state/appStore';
+
 export interface StoredCommunity {
   accountId: string;
   baseUrl: string;
@@ -30,6 +32,18 @@ export interface StoredSessions {
 
 const KEY = 'murmur.sessions';
 const LEGACY_KEY = 'murmur.session';
+
+/**
+ * 키체인 쓰기가 실패했을 때 사람 앞에 세우는 문구(#212).
+ *
+ * 두 가지를 **다** 말해야 한다: 저장이 안 됐다는 것과, 지금은 계속 쓸 수 있지만 앱을 다시
+ * 켜면 다시 로그인해야 한다는 것. 앞만 말하면 사람은 무엇이 걸린 일인지 모르고, 뒤를 빼면
+ * 다음 기동의 로그아웃이 여전히 이유 없는 로그아웃으로 남는다 — 이 이슈가 고치려는 것이 그것이다.
+ *
+ * 문구는 영어다(저장소 관례 — UI 문자열은 영어, 주석은 한국어).
+ */
+const SAVE_FAILED_NOTICE =
+  'Could not save your session to the OS keychain. You can keep using the app now, but you will need to sign in again the next time you open it.';
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
@@ -112,6 +126,18 @@ export const sessionStore = {
       await invoke('secret_set', { key: KEY, value: JSON.stringify(s) });
       localStorage.removeItem(LEGACY_KEY);
     } catch {
+      // 평문으로 **내려가지 않는다**(#212). 키체인을 쓰겠다고 해놓고 조용히 평문이 되는 것이
+      // 더 나쁘다 — 그 결정은 유지한다. 고칠 것은 아무에게도 알리지 않는 것 하나였다:
+      // 세션이 어디에도 없는데 화면은 로그인 상태라, 사람은 다음 기동에 로그아웃되고 이유를
+      // 알 방법이 없었다.
+      //
+      // 알림을 호출부에 맡기지 않고 여기서 세우는 이유: save() 를 부르는 자리가 여럿이고
+      // (로그인 직후의 App, remove()), 한 곳이 확인을 빼먹으면 이 조용한 삼킴이 그대로
+      // 돌아온다. 실패한 자리에서 알리면 빼먹을 수가 없다.
+      //
+      // 재시도는 넣지 않는다 — 키체인 잠김은 사람이 풀어야 하는 것이고, 조용한 재시도는
+      // 실패를 다시 숨긴다. 이번 실행은 메모리의 세션으로 계속된다(로그인을 막지 않는다).
+      useAppStore.getState().set({ notice: SAVE_FAILED_NOTICE });
     }
   },
 
