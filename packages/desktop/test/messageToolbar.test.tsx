@@ -244,3 +244,53 @@ describe('#143 호버 툴바가 답글 컨트롤을 덮지 않는다', () => {
     expect(toolbar.parentElement!.className).toMatch(/\brelative\b/);
   });
 });
+
+describe('#145 인라인 이모지 버튼', () => {
+  it('툴바에 인라인 이모지 버튼이 3개 있다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, '테스트', 'u1')} />);
+
+    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    fireEvent.mouseEnter(toolbar);
+
+    expect(within(toolbar).getByRole('button', { name: 'React with 👍' })).toBeTruthy();
+    expect(within(toolbar).getByRole('button', { name: 'React with 🎉' })).toBeTruthy();
+    expect(within(toolbar).getByRole('button', { name: 'React with ✅' })).toBeTruthy();
+  });
+
+  it('👀 와 💬 는 인라인에 없다 — 피커에만 있다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, '테스트', 'u1')} />);
+
+    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    fireEvent.mouseEnter(toolbar);
+
+    // 피커를 열기 전에 인라인 버튼들을 확인 - 👀💬 가 없어야 한다
+    const inlineButtons = within(toolbar).getAllByRole('button');
+    const inlineEmojis = inlineButtons.map((b) => b.getAttribute('aria-label'));
+    expect(inlineEmojis.some((l) => l === 'React with 👀' || l === 'React with 💬')).toBe(false);
+
+    // 이제 피커를 열고 👀💬 가 있는지 확인
+    fireEvent.click(within(toolbar).getByRole('button', { name: /Add reaction/ }));
+
+    expect(within(toolbar).getByRole('button', { name: /👀/ })).toBeTruthy();
+    expect(within(toolbar).getByRole('button', { name: /💬/ })).toBeTruthy();
+  });
+
+  it('＋ 피커는 그대로 있고, 그 안에는 👀💬 가 남아 있다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, '테스트', 'u1')} />);
+
+    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    fireEvent.mouseEnter(toolbar);
+
+    // ＋ 버튼이 있다
+    expect(within(toolbar).getByRole('button', { name: /＋|Add reaction/ })).toBeTruthy();
+
+    // 피커를 열면 👀💬 가 있다
+    fireEvent.click(within(toolbar).getByRole('button', { name: /＋|Add reaction/ }));
+    const pickerButtons = within(toolbar).getAllByRole('button');
+    expect(pickerButtons.some((b) => b.textContent === '👀')).toBe(true);
+    expect(pickerButtons.some((b) => b.textContent === '💬')).toBe(true);
+  });
+});
