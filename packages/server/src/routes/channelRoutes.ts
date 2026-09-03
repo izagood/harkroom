@@ -3,7 +3,8 @@ import type { Pool } from 'pg';
 import type { StorageBackend } from '../storage/local.js';
 import { z } from 'zod';
 import {
-  addChannelMember, assertChannelVisible, audienceFor, channelPostGate, createChannel, deleteChannel,
+  addChannelMember, assertChannelVisible, channelListAudience, channelListLostAudience,
+  channelPostGate, createChannel, deleteChannel,
   getChannelDoc, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
   updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs,
 } from '../services/channels.js';
@@ -26,8 +27,8 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     }).parse(req.body);
     // private 이면 만든 사람이 첫 멤버다. 이 인자를 빠뜨리면 아무도 열 수 없는 채널이 생긴다.
     const channel = await createChannel(pool, { ...body, creatorId: req.account!.id });
-    const audience = await audienceFor(pool, channel.id);
-    emitEvent({ type: 'channel.created', channel, audience });
+    // 삽입이 커밋된 뒤에 발행한다(#284) — 커밋 전에 보내면 수신자가 없는 채널을 조회한다.
+    emitEvent({ type: 'channel.created', channel, audience: await channelListAudience(pool, channel.id) });
     return reply.code(201).send(channel);
   });
 
@@ -41,7 +42,8 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
       visibility: z.enum(['public', 'private']).optional(),
     }).parse(req.body);
 
-    // 비공개화 전환을 처리하려면 기존 채널의.visibility 를 미리 읽어야 한다.
+    // 비공개화 전환을 판정하려면 바꾸기 **전** 의 visibility 를 읽어야 한다 — 갱신 뒤에는
+    // 'private' 만 남아 "원래도 private 이었나"를 구분할 수 없다.
     const oldChannel = patch.visibility !== undefined
       ? await pool.query(`select visibility from channel where id = $1`, [id])
       : null;
@@ -52,24 +54,17 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
     }
 
-    // 비공개화 전환(#284): public→private 일 때 기존 비멤버에게 channel.deleted 를 보내고,
-    // 멤버에게는 channel.updated 를 보낸다. public→private 은 그 사람에게 채널이 사라진 것이기 때문이다.
-    // public 채널은 멤버가 없을 수 있으므로, 변경을 시작한 계정(actor)도 포함한다.
+    // 발행은 갱신이 커밋된 **뒤** 다(#284). 커밋 전에 보내면 수신자가 이벤트를 받고
+    // 곧바로 조회했을 때 아직 옛 값을 읽는다.
+    //
+    // 비공개화 전환: public→private 이면 목록에서 채널을 잃은 계정에게 `channel.deleted`
+    // 를 보낸다 — 그 사람에게 이 채널은 사라진 것이고, 그것을 표현하는 이벤트가 삭제다.
+    // 수신자를 `audience: 'all'` 로 두면 **멤버도** 받아서 보고 있던 채널이 비워지고
+    // "삭제됐다" 안내가 뜬다. 그래서 두 수신자를 목록 술어 하나와 그 부정으로 계산한다.
     if (wasPublic && patch.visibility === 'private') {
-      const currentMembers = await audienceFor(pool, id);
-      const isCurrentMembersAll = currentMembers === 'all';
-      const membersArray = isCurrentMembersAll ? [] : currentMembers;
-      // 채널을 변경한 계정도 포함 — public→private 전환 시 创建자는 명시적 멤버가 아닐 수 있다.
-      const audienceSet = new Set([...membersArray, req.account!.id]);
-      const audience = [...audienceSet];
-      // 전원에게 channel.deleted — 비멤버는 필터에서 걸러진다.
-      emitEvent({ type: 'channel.deleted', channelId: id, audience: 'all' });
-      // 변경한 계정을 포함한 멤버에게 channel.updated
-      emitEvent({ type: 'channel.updated', channel, audience });
-    } else {
-      const audience = await audienceFor(pool, id);
-      emitEvent({ type: 'channel.updated', channel, audience });
+      emitEvent({ type: 'channel.deleted', channelId: id, audience: await channelListLostAudience(pool, id) });
     }
+    emitEvent({ type: 'channel.updated', channel, audience: await channelListAudience(pool, id) });
 
     // 공개 범위 전환은 별도 감사 항목이다 — 채널 하나가 통째로 열리거나 닫히는 사건이라
     // 'channel.updated' 의 필드 목록에 섞여 있으면 나중에 골라낼 수 없다. topic 과 함께
@@ -449,8 +444,9 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
    */
   app.delete('/channels/:id', { preHandler: app.requireAdmin }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    // 삭제 전 수신자를 미리 구한다 — 삭제 후에는 채널이 존재하지 않아 audienceFor 가 'all'을 반환한다.
-    const audience = await audienceFor(pool, id);
+    // 삭제 전 수신자를 미리 구한다 — 삭제 후에는 채널 행이 없어 수신자 계산이 'all' 로
+    // 넓어진다(존재하지 않는 채널의 규약). 발행은 아래 삭제가 커밋된 뒤다.
+    const audience = await channelListAudience(pool, id);
     const result = await deleteChannel(pool, id, storage);
     if (result === 'not_found') {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
