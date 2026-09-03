@@ -91,6 +91,9 @@ describe('자동 멘션 설정 (#173)', () => {
     expect(within(section).queryByRole('checkbox', { name: '@sleepy 자동 멘션' })).toBeNull();
     // 사람은 목록에 없다 — 에이전트만 자동 멘션할 수 있다.
     expect(within(section).queryByText('@other')).toBeNull();
+    // '자동' 배지는 켜진 줄에만 붙는다 — 꺼진 줄에 붙으면 화면이 체크박스와 반대되는 말을 한다.
+    expect(within(fizz.closest('li')!.parentElement!).queryAllByText('자동')).toHaveLength(1);
+    expect(within(honey.closest('li')!).queryByText('자동')).toBeNull();
 
     fireEvent.click(honey);
     expect(c.setChannelAutoMention).toHaveBeenCalledWith('c1', 'a2');

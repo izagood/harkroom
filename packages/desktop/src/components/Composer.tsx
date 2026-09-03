@@ -80,13 +80,22 @@ interface Props {
    */
   scopeKey?: string;
   /**
-   * 이 작성창이 속한 채널. 예약 발송(#222)에 필요하고, 채널이 자동으로 멘션하는
-   * 에이전트를 스토어에서 찾는 열쇠(#173)이기도 하다.
+   * 예약 발송(#222)이 글을 올릴 채널. **"이 작성창이 채널에 직접 올린다"**는 뜻이다 —
+   * 없으면 예약 표면을 아예 그리지 않는다(눌러도 아무 일이 없는 죽은 버튼이 되므로).
+   *
+   * 스레드 작성창은 이것을 넘기지 않는다: `POST /channels/:id/scheduled` 는 스레드 뿌리를
+   * 받지 않으므로, 스레드에서 예약하면 답글이 **채널 본문으로** 나가 스레드가 조용히
+   * 사라진다. 그래서 자동 멘션에 필요한 채널 열쇠는 아래 `autoMentionChannelId` 로 따로
+   * 받는다 — 두 뜻을 한 prop 에 얹으면 스레드에 채널을 알려 주는 순간 예약 버튼이 되살아난다.
+   */
+  channelId?: string;
+  /**
+   * 자동 멘션(#173)을 찾을 채널. 채널이 자동으로 멘션하는 에이전트를 스토어에서 찾는 열쇠다.
    *
    * `scopeKey` 와 다른 값인 이유: 스레드의 scopeKey 는 `thread:<rootId>` 지만 자동 멘션은
    * 채널의 사실이라 스레드 안에서도 그 채널의 것을 봐야 한다. 없으면 자동 멘션은 없다.
    */
-  channelId?: string;
+  autoMentionChannelId?: string;
 }
 
 /**
@@ -118,12 +127,14 @@ interface HeldMessage {
   send: Props['onSend'];
 }
 
-export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = '', channelId }: Props) {
+export function Composer({
+  onSend, placeholder, rows = 2, autoFocus, scopeKey = '', channelId, autoMentionChannelId,
+}: Props) {
   const accounts = useAppStore((s) => s.accounts);
   const groups = useAppStore((s) => s.groups);
   const myId = useAppStore((s) => s.me?.id);
   // 채널이 자동으로 멘션하는 에이전트(#173). 키가 없으면 아직 못 받은 것이고 그때는 칩도 접두도 없다.
-  const autoRows = useAppStore((s) => (channelId ? s.channelAutoMentions[channelId] : undefined));
+  const autoRows = useAppStore((s) => (autoMentionChannelId ? s.channelAutoMentions[autoMentionChannelId] : undefined));
   // `MessageBody` 와 같은 자리에서 읽는다 — 자기 멘션 판정이 두 화면에서 달라지면 안 된다.
   const myHandle = useAppStore((s) => s.me?.handle?.toLowerCase() ?? null);
   const [query, setQuery] = useState<MentionQuery | null>(null);
