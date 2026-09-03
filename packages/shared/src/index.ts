@@ -274,6 +274,25 @@ export interface ChannelPrefRow {
   starredAt: string | null;
 }
 
+/**
+ * 채널에 고정된 메시지 하나(#218).
+ *
+ * **채널 전역이다** — 보관(#153)과 같은 층이고, 음소거·즐겨찾기(#151, #152)처럼 계정별이
+ * 아니다. 그래서 이 행에는 "누가 보는가"가 없고 `pinnedBy`("누가 고정했는가")만 있다.
+ * `pinnedBy` 는 취향이 아니라 해제 권한의 근거다 — 해제는 고정한 사람 또는 admin 이다.
+ *
+ * `message` 를 통째로 싣는 이유: 핀 목록은 본문 한 줄을 미리 보여 줘야 쓸모가 있고,
+ * 그것을 위해 클라이언트가 핀마다 메시지를 다시 물으면 목록 하나에 왕복이 N 번 생긴다.
+ * 지워진 메시지는 여기 **아예 오지 않는다** — 서버가 `deleted_at is null` 로 조인한다.
+ */
+export interface PinRow {
+  messageId: string;
+  channelId: string;
+  pinnedBy: string;
+  pinnedAt: string;
+  message: MessageRow;
+}
+
 export interface LeaseRow {
   repo: string;
   path: string;

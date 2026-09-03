@@ -21,7 +21,11 @@ export type AuditAction =
   | 'agent.stop.requested'
   | 'pat.issued' | 'pat.revoked'
   | 'password.changed'
-  | 'channel.created' | 'channel.updated' | 'channel.archived' | 'channel.unarchived' | 'message.deleted';
+  | 'channel.created' | 'channel.updated' | 'channel.archived' | 'channel.unarchived' | 'message.deleted'
+  // #218: 메시지 고정·해제. 채널 전역 상태를 바꾸는 조작이라 남는 기록이 있어야 한다.
+  // detail 에는 messageId 만 남긴다 — 본문을 복사하면 그 메시지를 지워도 감사에 남는다
+  // (같은 파일 위 message.deleted 와 agent.memory.deleted 가 같은 이유로 그렇다).
+  | 'message.pinned' | 'message.unpinned';
 
 export interface AuditEntry {
   action: AuditAction;
