@@ -3,7 +3,7 @@ import type { MessageRow } from '@murmur/shared';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { MessageBody } from './MessageBody';
-import { ReactionPicker, Reactions } from './Reactions';
+import { ReactionPicker, Reactions, InlineReactionButtons } from './Reactions';
 import { Identity } from './Identity';
 import { Attachments } from './Attachments';
 import { Menu } from './Menu';
@@ -144,6 +144,7 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
             없앤다(Reactions.tsx 주석이 이미 그 비용을 기록한다). */}
         {draft === null && (
           <div role="group" aria-label="message toolbar" className={`absolute right-full top-0 mr-1 flex items-center gap-0.5 rounded border border-zinc-200 bg-white px-1 py-0.5 shadow-sm ${hoverOnly}`}>
+            <InlineReactionButtons message={message} />
             <ReactionPicker message={message} />
             {confirmingDelete ? (
               // 삭제는 되돌릴 수 없으니 한 번 더 묻는다. 확인은 **메뉴 밖**에 둔다 — 메뉴 안에

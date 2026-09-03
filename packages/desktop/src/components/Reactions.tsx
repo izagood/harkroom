@@ -6,8 +6,12 @@ import { getController } from '../state/controller';
 /**
  * 피커에 올려 둘 이모지. 전체 이모지 검색은 별개 작업이고, 실제로 쓰이는 것은 소수다 —
  * 스크린샷의 👀·💬 가 여기 있어야 한다.
+ *
+ * #145: 인라인 버튼(툴바에 바로 보이는 3개)은 👀💬 를 제외한다 — 그 둘은 에이전트 상태 신호로 쓰이고,
+ * 사람이 그걸 흉내 내면 신호의 의미가 무너진다.
  */
 const QUICK = ['👀', '💬', '👍', '🎉', '✅', '🔥', '🤔', '😄'];
+const INLINE = QUICK.slice(2, 5);
 
 /**
  * 리액션을 **추가하는** 표면. `MessageItem` 의 호버 툴바가 이것을 쓴다(#121).
@@ -58,6 +62,41 @@ export function ReactionPicker({ message }: { message: MessageRow }) {
     >
       ＋
     </button>
+  );
+}
+
+/**
+ * #145: 툴바에 바로 보이는 인라인 이모지 버튼 3개.
+ * 👀💬는 에이전트 상태 신호로 쓰이므로, 사람이 누를 수 있는 인라인 버튼에 포함하지 않는다.
+ * 토글 가능하고, 내가 누른 리액션은 눌린 상태로 표시한다.
+ */
+export function InlineReactionButtons({ message }: { message: MessageRow }) {
+  const myId = useAppStore((s) => s.me?.id ?? null);
+
+  const toggle = (emoji: string, on: boolean) => {
+    void getController().toggleReaction(message.channelId, message.id, emoji, on).catch(() => {});
+  };
+
+  return (
+    <>
+      {INLINE.map((emoji) => {
+        const existing = message.reactions.find((r) => r.emoji === emoji);
+        const mine = myId !== null && existing?.accountIds.includes(myId);
+        return (
+          <button
+            key={emoji}
+            aria-label={`${emoji}${mine ? ' (내가 누름)' : ''}`}
+            aria-pressed={mine}
+            className={`rounded px-1 text-[11px] ${
+              mine ? 'bg-indigo-50 text-indigo-800' : 'text-zinc-500 hover:bg-zinc-100'
+            }`}
+            onClick={() => toggle(emoji, !mine)}
+          >
+            {emoji}
+          </button>
+        );
+      })}
+    </>
   );
 }
 
