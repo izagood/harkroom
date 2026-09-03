@@ -38,13 +38,15 @@ describe('#181 에이전트 소유자 표시', () => {
     // 거터(variant=avatar)와 작성자 옆(variant=badge), 두 곳 다 Identity 를 통과한다.
     const badges = screen.getAllByText('에이전트').map((el) => el.parentElement!);
     expect(badges).toHaveLength(2);
-    // #277: 소유자 표시(@owner)는 이름 줄(badge)에서만 나오고, 거터(avatar)에서는 안 나온다.
+    // #277: 소유자 표시는 이름줄(badge)에서만 나온다. 거터(avatar)에는 안 나온다 —
+    // 32px 고정폭 열이라 배지가 들어가면 넘쳤다. **표시가 틀렸던 게 아니라 자리가 틀렸다.**
     const shown = screen.getAllByText('@owner');
-    // 1개만owner 표시(이름 줄), 2개가 아님(거터는 owner 안 나옴)
     expect(shown).toHaveLength(1);
-    // 그 1개가 이름 줄의 badge 안에 있다
-    const nameLineBadge = badges[1]!; // 이름 줄은 두 번째 badge
+    // 그 하나가 이름줄 배지 안에 있다. 개수만 세면 "거터에만 남은" 경우도 초록이다.
+    const nameLineBadge = badges[1]!; // DOM 순서상 거터가 먼저, 이름줄이 두 번째다.
     expect(nameLineBadge.contains(shown[0]!)).toBe(true);
+    // 거터 쪽 배지에는 없다.
+    expect(badges[0]!.textContent).not.toContain('@owner');
   });
 
   it('Identity 를 단독으로 그려도 같은 표시가 나온다', () => {
