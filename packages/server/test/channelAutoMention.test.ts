@@ -153,6 +153,41 @@ describe('설정 라우트 (#173)', () => {
     expect((await listAuto(adminToken)).some((r) => r.agentAccountId === sleepy.accountId)).toBe(false);
   });
 
+  /**
+   * GET 은 admin 이 아니어도 열려 있다 — 작성창이 칩을 그려야 하기 때문이다. 그러나
+   * **채널을 볼 수 없는 사람에게는 닫혀 있어야 한다**: 목록에는 어떤 에이전트가 그 채널에
+   * 투입돼 있는지가 적혀 있고, private 채널에서 그것은 채널의 내용과 같은 등급의 사실이다.
+   *
+   * 되돌려 RED: `assertChannelVisible` 검사를 지우면 이 테스트만 빨간다(초판에는 이 회귀선이
+   * 없어서 게이트를 지워도 8건이 전부 초록이었다).
+   */
+  it('채널을 볼 수 없는 사람은 GET 403 — private 채널의 비멤버', async () => {
+    const priv = await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken),
+      payload: { name: 'automention-private', visibility: 'private' },
+    });
+    expect(priv.statusCode).toBe(201);
+    const privId = priv.json().id as string;
+    const set = await app.inject({
+      method: 'PUT', url: `/channels/${privId}/auto-mentions/${fizz.accountId}`, headers: auth(adminToken),
+    });
+    expect(set.statusCode).toBe(200);
+
+    // 만든 사람(admin)은 첫 멤버라 본다.
+    const asAdmin = await app.inject({
+      method: 'GET', url: `/channels/${privId}/auto-mentions`, headers: auth(adminToken),
+    });
+    expect(asAdmin.statusCode).toBe(200);
+    expect(asAdmin.json().autoMentions.map((r: { handle: string }) => r.handle)).toEqual(['fizz']);
+
+    // 비멤버는 못 본다 — handle 하나도 새지 않는다.
+    const asOutsider = await app.inject({
+      method: 'GET', url: `/channels/${privId}/auto-mentions`, headers: auth(humanToken),
+    });
+    expect(asOutsider.statusCode).toBe(403);
+    expect(JSON.stringify(asOutsider.json())).not.toContain('fizz');
+  });
+
   it('DELETE 는 행을 지우고, 없던 것은 404 다', async () => {
     const del = await app.inject({
       method: 'DELETE', url: `/channels/${channelId}/auto-mentions/${honey.accountId}`, headers: auth(adminToken),
@@ -217,9 +252,13 @@ describe('본문과 알림 (#173)', () => {
     await app.inject({
       method: 'DELETE', url: `/channels/${channelId}/auto-mentions/${honey.accountId}`, headers: auth(adminToken),
     });
+    // 이 채널의 것만 본다 — 다른 테스트가 다른 채널에 남긴 행까지 섞으면 아래의
+    // `target` 단언이 무엇을 말하는지 흐려진다.
     const rows = await pool.query<{ action: string; target: string; detail: Record<string, unknown> }>(
       `select action, target, detail from audit_log
-        where action in ('channel.auto_mention.set', 'channel.auto_mention.unset') order by id`,
+        where action in ('channel.auto_mention.set', 'channel.auto_mention.unset') and target = $1
+        order by id`,
+      [channelId],
     );
     const actions = rows.rows.map((r) => r.action);
     expect(actions).toContain('channel.auto_mention.set');
@@ -229,6 +268,12 @@ describe('본문과 알림 (#173)', () => {
       expect(Object.keys(row.detail)).toEqual(['handle']);
       expect(JSON.stringify(row.detail)).not.toContain(secret);
     }
+    // 채널을 가리지 않고 한 번 더 본다: 어느 채널의 행이든 detail 은 handle 하나뿐이어야 한다.
+    const all = await pool.query<{ detail: Record<string, unknown> }>(
+      `select detail from audit_log
+        where action in ('channel.auto_mention.set', 'channel.auto_mention.unset')`,
+    );
+    for (const row of all.rows) expect(Object.keys(row.detail)).toEqual(['handle']);
     expect(rows.rows[rows.rows.length - 1]!.detail.handle).toBe('honey');
   });
 });
