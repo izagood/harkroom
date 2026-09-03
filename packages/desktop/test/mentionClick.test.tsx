@@ -101,11 +101,16 @@ describe('멘션 클릭 (#279)', () => {
     useAppStore.getState().set({ me: acc('u2', 'owner', 'human', false) });
     const api = fakeApi();
     // 서버가 소유자에게 하는 응답. 목록 필터가 적용되어 자기 에이전트만 온다.
+    // 소유자에게는 PAT·메모리도 열린다(#253 의 표) — 그래서 그 조회도 나간다. 목을
+    // 빠뜨리면 화면이 터지는데, 그 터짐이야말로 "조회가 실제로 나간다"는 증거다.
+    const listPats = vi.fn().mockResolvedValue([]);
+    const agentMemory = vi.fn().mockResolvedValue([]);
     setController({
       listAgents: vi.fn().mockResolvedValue([
         { id: 'a2', handle: 'buzz', kind: 'agent', ownerAccountId: 'u2', harness: 'claude-code' },
       ]),
       agentDefaults: vi.fn().mockRejectedValue(new Error('forbidden')),
+      listPats, agentMemory,
       api,
     } as unknown as Controller);
 
@@ -113,6 +118,9 @@ describe('멘션 클릭 (#279)', () => {
 
     // #299: 이제 목록이 오고, targetId 로 그 에이전트가 선택된다.
     await waitFor(() => expect(screen.getByDisplayValue('buzz')).toBeTruthy());
+    // 패널이 그려지는 것으로 끝나면 안 된다 — 조회가 실제로 나가야 내용이 채워진다.
+    await waitFor(() => expect(listPats).toHaveBeenCalledWith('a2'));
+    await waitFor(() => expect(agentMemory).toHaveBeenCalledWith('a2'));
   });
 
   it('소유자도 admin 도 아니면 디렉터리로 열린다', () => {
@@ -280,6 +288,32 @@ describe('멘션 클릭 배선 — Workspace 를 통째로 (#279)', () => {
     await waitFor(() =>
       expect(screen.getByTestId('directory-row-u4').getAttribute('data-selected')).toBe('true'));
     expect(screen.getByTestId('directory-disabled-u4').textContent).toContain('비활성');
+  });
+
+  /**
+   * 8. 소유자 경로도 **`Workspace` 를 통째로 띄워** 확인한다(#299).
+   *
+   * 위 단위 테스트는 `MessageItem` 에 콜백을 손으로 넘긴다 — 그래서 `Workspace` 가
+   * `onOpenSettings` 를 안 넘기는 배선 결함을 하나도 잡지 못한다. 소유자 분기는 admin
+   * 분기와 **다른 조건**을 타므로, admin 경로만 통째로 확인해 두면 소유자 경로는
+   * 여전히 죽어 있을 수 있다.
+   */
+  it('소유자가 에이전트 멘션을 누르면 설정이 그 에이전트로 열린다', () => {
+    // a2(buzz)의 소유자는 u2 다. 그 사람으로 로그인한다 — admin 이 아니다.
+    mount('@buzz 이거 봐줘', { me: acc('u2', 'someone', 'human', false) });
+
+    fireEvent.click(screen.getByTestId('mention-buzz'));
+
+    expect(onOpenSettings).toHaveBeenCalledWith('agents', 'a2');
+  });
+
+  it('소유자도 admin 도 아니면 통째 배선에서도 디렉터리로 간다', async () => {
+    mount('@buzz 이거 봐줘', { me: acc('u3', 'stranger', 'human', false) });
+
+    fireEvent.click(screen.getByTestId('mention-buzz'));
+
+    await screen.findByRole('dialog', { name: '디렉터리' });
+    expect(onOpenSettings).not.toHaveBeenCalled();
   });
 
   it('스레드 패널의 멘션도 같게 동작한다', () => {
