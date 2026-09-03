@@ -3,6 +3,7 @@ import { useAppStore } from '../state/appStore';
 import { splitMentions } from '../lib/mention';
 import { splitLinks, type LinkTarget, type BodyPart } from '../lib/link';
 import { splitCode } from '../lib/code';
+import { shouldCollapse, COLLAPSED_MAX_PX } from '../lib/collapse';
 import { getExternalOpener } from '../lib/openExternal';
 import { getController } from '../state/controller';
 
@@ -15,6 +16,10 @@ import { getController } from '../state/controller';
  *
  * 그 앞에 코드가 온다(#216). 코드가 먼저 나뉘므로 코드 안의 URL 과 @handle 은 링크도
  * 멘션도 되지 않는다 — 별도 예외 처리가 아니라 순서에서 따라오는 결과다.
+ *
+ * 다 그린 결과를 마지막에 접는다(#217). 접기는 **그리는 방식을 바꾸지 않는다** — 위의
+ * 인식 결과를 그대로 담은 뒤 담긴 상자의 높이만 자르므로, 접힌 상태에서도 코드는 코드로,
+ * 링크는 링크로 남는다.
  */
 
 /**
@@ -38,9 +43,16 @@ async function followLink(target: LinkTarget): Promise<void> {
   }
 }
 
-export function MessageBody({ body }: { body: string }) {
+export function MessageBody({ body, messageId }: { body: string; messageId: string }) {
   const accounts = useAppStore((s) => s.accounts);
   const myHandle = useAppStore((s) => s.me?.handle?.toLowerCase() ?? null);
+  // 접기 판정은 본문만 본다 — 작성자가 누구인지 보지 않는다. 자기가 쓴 긴 메시지도 남의
+  // 대화를 밀어내는 것은 똑같고, 예외를 두면 "왜 이건 접히고 저건 안 접히지" 를 사람이
+  // 매번 판단해야 한다(#217).
+  const collapsible = useMemo(() => shouldCollapse(body), [body]);
+  const expanded = useAppStore((s) => s.expandedMessageIds[messageId] === true);
+  const toggleExpanded = useAppStore((s) => s.toggleExpanded);
+  const collapsed = collapsible && !expanded;
 
   const segments = useMemo(() => splitCode(body), [body]);
   const handles = useMemo(() => Object.values(accounts).map((a) => a.handle), [accounts]);
@@ -81,7 +93,7 @@ export function MessageBody({ body }: { body: string }) {
     );
   };
 
-  return (
+  const content = (
     <div className="whitespace-pre-wrap break-words" data-testid="message-body">
       {segments.map((seg, i) => {
         if (seg.kind === 'inlineCode') {
@@ -122,6 +134,40 @@ export function MessageBody({ body }: { body: string }) {
         // 코드가 아닌 구간에만 기존 인식이 얹힌다.
         return splitLinks(splitMentions(seg.text, handles)).map((p, j) => renderPart(p, `${i}-${j}`));
       })}
+    </div>
+  );
+
+  // 접을 대상이 아니면 상자도 버튼도 만들지 않는다. **자르기와 "더 보기" 는 같은 조건
+  // 하나에서 나온다** — 둘을 따로 판단하면 버튼 없이 잘린 상태가 생길 수 있고, 그것은
+  // 정보가 사라진 것이다.
+  if (!collapsible) return content;
+
+  return (
+    <div data-testid="collapsible-body" data-collapsed={String(collapsed)}>
+      <div
+        data-testid="body-clip"
+        // 접을 때 본문을 DOM 에서 빼지 않는다 — `display:none` 이면 브라우저 찾기·복사·
+        // 스크린리더가 본문에 도달하지 못하고, 그건 내용을 지운 것과 다르지 않다.
+        // 그래서 자르는 수단은 `max-height` + `overflow:hidden` 이다.
+        className={collapsed ? 'overflow-hidden' : undefined}
+        // 값을 클래스 문자열로 적지 않고 상수에서 가져온다 — 판정에 쓴 높이와 실제로 자른
+        // 높이가 두 곳에 적히면 한쪽만 고쳐질 때 소리 없이 어긋난다.
+        style={collapsed ? { maxHeight: `${COLLAPSED_MAX_PX}px` } : undefined}
+      >
+        {content}
+      </div>
+      {/* 버튼은 **본문 흐름 아래**에 둔다. 왼쪽 아바타 거터(#161 2단계)의 고정폭 예산에
+          끼워 넣지 않는다 — 거기는 이미 아바타가 쓰고 있고, 호버 툴바(#143)와 답글
+          컨트롤(#145)이 가로 예산을 다투는 자리다. */}
+      <button
+        data-testid="expand-body"
+        // 상태를 색이나 글자로만 알리지 않는다 — disclosure 는 aria-expanded 가 상태다.
+        aria-expanded={expanded}
+        className="mt-0.5 rounded border border-zinc-300 px-1.5 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
+        onClick={() => toggleExpanded(messageId)}
+      >
+        {collapsed ? 'Show more' : 'Show less'}
+      </button>
     </div>
   );
 }

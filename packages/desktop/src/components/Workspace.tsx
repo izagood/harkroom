@@ -7,8 +7,8 @@ import { ChannelPane } from './ChannelPane';
 import { Notice } from './Notice';
 import { ThreadPanel } from './ThreadPanel';
 import { SearchPalette } from './SearchPalette';
-import { Directory } from './Directory';
 import { Sweep } from './Sweep';
+import { Directory } from './Directory';
 import type { SectionId } from './settings/sections';
 
 export function Workspace({ onLogout, onOpenSettings }: {
@@ -19,8 +19,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
   const history = useAppStore((s) => s.history);
   const historyIndex = useAppStore((s) => s.historyIndex);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [directoryOpen, setDirectoryOpen] = useState(false);
   const [sweepOpen, setSweepOpen] = useState(false);
+  const [directoryOpen, setDirectoryOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sidebarStorage.loadCollapsed());
 
   const canGoBack = historyIndex > 0;
@@ -140,8 +140,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
         </div>
       </div>
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
-      <Directory open={directoryOpen} onClose={() => setDirectoryOpen(false)} />
       <Sweep open={sweepOpen} onClose={() => setSweepOpen(false)} />
+      <Directory open={directoryOpen} onClose={() => setDirectoryOpen(false)} />
     </div>
   );
 }
