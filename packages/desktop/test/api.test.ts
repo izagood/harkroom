@@ -40,4 +40,23 @@ describe('ApiClient', () => {
     const [url2] = fn.mock.calls[1]! as unknown as [string];
     expect(url2).toBe('http://x:3400/channels/c1/messages?since=5');
   });
+
+  /**
+   * #221 — 스코프가 실제로 **선을 타는지** 본다. 팔레트 테스트는 `api.search` 를 목으로
+   * 바꾸므로 URL 조립을 하나도 지키지 않는다. 여기가 그 배선을 지키는 유일한 자리다.
+   */
+  it('puts the channel scope on the search query string', async () => {
+    const fn = stubFetch(200, { messages: [] });
+    const api = new ApiClient('http://x:3400', 'tok');
+
+    await api.search('needle');
+    expect((fn.mock.calls[0]! as unknown as [string])[0]).toBe('http://x:3400/search?q=needle');
+
+    await api.search('needle', 'c1');
+    expect((fn.mock.calls[1]! as unknown as [string])[0]).toBe('http://x:3400/search?q=needle&channelId=c1');
+
+    // null 은 "스코프 없음"이지 빈 스코프가 아니다 — 빈 channelId 가 붙으면 서버가 400 이다.
+    await api.search('needle', null);
+    expect((fn.mock.calls[2]! as unknown as [string])[0]).toBe('http://x:3400/search?q=needle');
+  });
 });
