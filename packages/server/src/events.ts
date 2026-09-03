@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import type { AccountStatus, ChannelRow, MessageRow } from '@murmur/shared';
+import type { WorkspaceSkill } from './services/skills.js';
 
 export type WorkspaceEvent =
   | { type: 'message.created'; message: MessageRow; audience: 'all' | string[] }
@@ -21,7 +22,13 @@ export type WorkspaceEvent =
   | { type: 'channel.updated'; channel: ChannelRow; audience: 'all' | string[] }
   | { type: 'channel.deleted'; channelId: string; audience: 'all' | string[] }
   // 담기/해제/상태 변경(#219). 본인의 소켓에만 간다.
-  | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string };
+  | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string }
+  // 워크스페이스 스킬(#140). 제안·승인·비활성을 알린다.
+  | { type: 'skill.proposed'; skill: WorkspaceSkill; channelId: string }
+  | { type: 'skill.approved'; skill: WorkspaceSkill }
+  | { type: 'skill.disabled'; skill: WorkspaceSkill }
+  // 링크 미리보기 준비 완료(#215). 가져오기는 비동기라, 메시지가 먼저 뜨고 카드가 뒤에 온다.
+  | { type: 'link_preview.ready'; url: string; audience: 'all' | string[] };
 
 const bus = new EventEmitter();
 bus.setMaxListeners(1000);

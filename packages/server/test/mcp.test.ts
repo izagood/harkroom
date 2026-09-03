@@ -105,7 +105,7 @@ describe('mcp surface', () => {
       'account.me', 'channel.doc', 'channel.list', 'inbox.poll', 'inbox.read',
       'memory.get', 'memory.list', 'memory.set',
       'message.post', 'message.progress', 'message.react', 'message.read', 'message.search', 'message.unreact',
-      'work.link', 'workspace.guide',
+      'skill.propose', 'work.link', 'workspace.guide',
     ]);
 
     const posted = text(await client.callTool({
