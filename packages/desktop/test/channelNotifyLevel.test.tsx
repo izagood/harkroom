@@ -6,7 +6,7 @@ import { Controller, setController } from '../src/state/controller';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { DEFAULT_PREFS } from '../src/lib/prefs';
 import { Sidebar } from '../src/components/Sidebar';
-import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
+import { acc, accountsResult, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 /**
  * #224 회귀선 — 채널마다 알림 수준(`all`/`mentions`/`none`).
@@ -50,7 +50,7 @@ async function started(notifier: ReturnType<typeof fakeNotifier>, arriving: Inbo
   let calls = 0;
   const api = fakeApi({
     channels: vi.fn(async () => [chan('c1', 'general'), chan('c2', 'dev')]),
-    accounts: vi.fn(async () => [acc('u1', 'admin'), acc('u2', 'bot', 'agent')]),
+    accounts: vi.fn(async () => accountsResult([acc('u1', 'admin'), acc('u2', 'bot', 'agent')])),
     // 첫 조회(백로그)는 비어 있다 — 시작 시점에 쌓여 있던 것은 이미 '지나간 것'으로 표시되므로
     // 그 위에서는 수준 가드가 도는지 아닌지를 구분할 수 없다.
     inboxUnread: vi.fn(async () => (calls++ === 0 ? [] : arriving)),
