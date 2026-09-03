@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { getController } from '../../state/controller';
-import { useAppStore } from '../../state/appStore';
+import { useActiveStore } from '../../state/communities';
 
 export function InviteSettings() {
-  const me = useAppStore((s) => s.me);
+  const me = useActiveStore((s) => s.me);
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

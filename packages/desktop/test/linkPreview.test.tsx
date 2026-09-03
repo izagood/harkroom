@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, Controller, type Controller as ControllerType } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
 import { acc, msg, fakeApi, fakeWsFactory } from './helpers/fakeApi';

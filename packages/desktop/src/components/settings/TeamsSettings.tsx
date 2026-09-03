@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AgentTeamRow, AgentTeamMemberRow } from '@murmur/shared';
 import { HANDLE_PATTERN } from '@murmur/shared';
 import { getController } from '../../state/controller';
-import { useAppStore } from '../../state/appStore';
+import { useActiveStore } from '../../state/communities';
 
 /**
  * 팀 이름 문법. **`HANDLE_PATTERN` 을 그대로 쓴다** — 팀 이름은 계정 handle 과 같은
@@ -26,8 +26,8 @@ export function TeamsSettings() {
    * 인라인이다. 되돌릴 수 없는 조작을 한 번 누름으로 끝내지 않는다.
    */
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
-  const accounts = useAppStore((s) => s.accounts);
+  const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
+  const accounts = useActiveStore((s) => s.accounts);
   const agents = Object.values(accounts).filter((a) => a.kind === 'agent');
 
   const reload = () => {

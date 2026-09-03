@@ -42,6 +42,40 @@ describe('ApiClient', () => {
   });
 
   /**
+   * #311 — `GET /skills` 의 **응답 모양**을 지킨다.
+   *
+   * 화면 테스트는 `listSkills` 를 목으로 바꾸므로 이 배선을 하나도 지키지 않는다. 실제로
+   * 여기서 결함이 하나 나왔다: 라우트는 배열을 그대로 주는데 클라이언트가 `.skills` 를
+   * 꺼내 `undefined` 를 받았고, 스킬 화면이 통째로 죽어 있었다(목 위의 테스트는 전부 초록).
+   */
+  it('reads GET /skills as a bare array — not wrapped in { skills }', async () => {
+    const row = {
+      slug: 'note', body: 'b', proposedBy: 'a1', proposedAt: 'now',
+      approvedBy: null, approvedAt: null, disabledAt: null,
+    };
+    const fn = stubFetch(200, [row]);
+    const api = new ApiClient('http://x:3400', 'tok');
+
+    const skills = await api.listSkills();
+    expect((fn.mock.calls[0]! as unknown as [string])[0]).toBe('http://x:3400/skills');
+    expect(skills).toHaveLength(1);
+    expect(skills[0]!.slug).toBe('note');
+  });
+
+  it('escapes the slug in skill routes — a slug is never spliced raw into the path', async () => {
+    const fn = stubFetch(200, {});
+    const api = new ApiClient('http://x:3400', 'tok');
+
+    await api.approveSkill('a/b');
+    expect((fn.mock.calls[0]! as unknown as [string])[0]).toBe('http://x:3400/skills/a%2Fb/approve');
+
+    await api.disableSkill('a/b');
+    const [url, init] = fn.mock.calls[1]! as unknown as [string, RequestInit];
+    expect(url).toBe('http://x:3400/skills/a%2Fb');
+    expect(init.method).toBe('DELETE');
+  });
+
+  /**
    * #221 — 스코프가 실제로 **선을 타는지** 본다. 팔레트 테스트는 `api.search` 를 목으로
    * 바꾸므로 URL 조립을 하나도 지키지 않는다. 여기가 그 배선을 지키는 유일한 자리다.
    */

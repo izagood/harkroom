@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { messagePermalink, type MessageRow } from '@murmur/shared';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageBody } from './MessageBody';
 import { ReactionPicker, Reactions, InlineReactionButtons } from './Reactions';
@@ -18,16 +18,16 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   onOpenDirectory?: (accountId: string | null) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }) {
-  const author = useAppStore((s) => s.accounts[message.authorId]);
-  const isMine = useAppStore((s) => s.me?.id === message.authorId);
-  const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
-  const myId = useAppStore((s) => s.me?.id ?? null);
-  const accounts = useAppStore((s) => s.accounts);
+  const author = useActiveStore((s) => s.accounts[message.authorId]);
+  const isMine = useActiveStore((s) => s.me?.id === message.authorId);
+  const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
+  const myId = useActiveStore((s) => s.me?.id ?? null);
+  const accounts = useActiveStore((s) => s.accounts);
   const [draft, setDraft] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   // 링크로 방금 온 메시지인가. **스토어의 화면 상태**를 보고 그린다 — 이 사실을 message 에
   // 넣으면 서버에서 온 데이터와 지금 화면의 사정이 한 값에 섞인다(#178).
-  const highlighted = useAppStore((s) => s.highlightedMessageId === message.id);
+  const highlighted = useActiveStore((s) => s.highlightedMessageId === message.id);
   const rowRef = useRef<HTMLDivElement>(null);
 
   // 강조만 하고 화면 밖에 두면 긴 채널에서는 아무 일도 안 일어난 것과 같다.
@@ -36,6 +36,17 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
 
   const isSystem = message.kind === 'system';
   const avcsType = typeof message.meta.avcsType === 'string' ? message.meta.avcsType : null;
+  /**
+   * 스킬 제안 알림에서 승인 화면으로 가는 진입점(#311 요구 5).
+   *
+   * **본문 글자를 파싱하지 않는다** — 서버가 `meta.skillSlug` 로 표시한다. 알림 문구를
+   * 정규식으로 더듬으면 문구를 한 글자 다듬는 순간 진입점이 조용히 사라진다.
+   * 신호는 `#279` 의 `onOpenSettings(section, targetId)` 를 **재사용**한다(새 신호를
+   * 만들지 않는다). 대상까지 넘기므로 설정이 그 스킬의 본문을 펼친 채로 열린다.
+   */
+  const skillSlug = isSystem && typeof message.meta.skillSlug === 'string'
+    ? message.meta.skillSlug
+    : null;
   const time = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const lastReplyTime = message.lastReplyAt
     ? new Date(message.lastReplyAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -54,15 +65,15 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    * 찾는다 — `MessageRow` 에 넣으면 같은 사실이 두 곳에 생기고, 남이 고정했을 때 한쪽만
    * 갱신되는 갈라짐이 난다(리액션과 달리 핀은 델타 이벤트가 없다).
    */
-  const pin = useAppStore((s) => (s.pins[message.channelId] ?? []).find((p) => p.messageId === message.id));
+  const pin = useActiveStore((s) => (s.pins[message.channelId] ?? []).find((p) => p.messageId === message.id));
   // 해제는 고정한 사람 또는 admin — 서버가 그렇게 판정한다. UI 가 더 넓게 내주면 누를 때마다
   // 403 이 돌아오고, 더 좁게 내주면 admin 의 조정 수단이 도달 불가가 된다.
   const canUnpin = pin !== undefined && (pin.pinnedBy === myId || isAdmin);
   // 보관된 채널은 읽기 전용이라 고정이 거절된다(서버의 `channelPostGate`).
-  const isArchived = useAppStore((s) => s.channels.find((c) => c.id === message.channelId)?.archivedAt != null);
+  const isArchived = useActiveStore((s) => s.channels.find((c) => c.id === message.channelId)?.archivedAt != null);
   // #219: 담긴 상태는 **id 집합**(open+done 전부)으로 본다. 패널이 받아 온 한 탭의 행들로
   // 판단하면 '완료' 탭을 한 번 열어 본 뒤로 open 인 메시지가 담기지 않은 것으로 읽힌다.
-  const savedIds = useAppStore((s) => s.savedIds);
+  const savedIds = useActiveStore((s) => s.savedIds);
   const isSaved = savedIds.includes(message.id);
 
   const save = () => {
@@ -84,9 +95,9 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
       // clipboard 자체가 없는 환경(비보안 컨텍스트)도 실패다 — 같은 자리에서 잡는다.
       if (!navigator.clipboard) throw new Error('no clipboard');
       await navigator.clipboard.writeText(text);
-      useAppStore.getState().set({ notice: ok });
+      useActiveStore.getState().set({ notice: ok });
     } catch {
-      useAppStore.getState().set({ notice: fail });
+      useActiveStore.getState().set({ notice: fail });
     }
   };
 
@@ -186,6 +197,15 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
         {draft === null ? (
           <>
             {message.body.trim() && <MessageBody body={message.body} messageId={message.id} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
+            {skillSlug && onOpenSettings && (
+              <button
+                className="mt-1 rounded-lg border border-border px-2 py-1 text-[11px] font-medium
+                           text-fg hover:bg-surface-hover"
+                onClick={() => onOpenSettings('skills', skillSlug)}
+              >
+                스킬 승인 화면 열기
+              </button>
+            )}
             <Attachments attachments={message.attachments} />
             <Reactions message={message} />
             {/* #254: 답글 컨트롤을 **본문 열**에 둔다 — 리액션 칩 바로 뒤, 왼쪽 정렬.

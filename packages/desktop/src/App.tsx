@@ -1,24 +1,30 @@
 import { useEffect, useState } from 'react';
-import { ApiClient } from './lib/api';
-import { connectWs } from './lib/ws';
 import { createNotifier } from './lib/notify';
 import { sessionStore, type StoredCommunity } from './lib/session';
 import { useColorMode } from './lib/useColorMode';
-import { Controller, getController, setController } from './state/controller';
+import { getController, startCommunitySession } from './state/controller';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { Workspace } from './components/Workspace';
 import { SettingsScreen } from './screens/SettingsScreen';
 import type { SectionId } from './components/settings/sections';
 
+/**
+ * #166: 세션을 레지스트리를 거쳐 띄운다. `active: true` 는 "화면이 이 커뮤니티를 본다" 는
+ * 뜻이고, 그 커뮤니티의 스토어·컨트롤러 인스턴스가 활성 엔트리에 꽂힌다. 두 번째 커뮤니티를
+ * 붙이는 경로(`active: false`)는 여기서 부르지 않는다 — 등록·전환 UI 는 #165 의 몫이다.
+ */
 async function startSession(
   community: StoredCommunity,
   onSessionLost: (message: string, accountId: string) => void,
-): Promise<{ controller: Controller; accountId: string }> {
-  const api = new ApiClient(community.baseUrl, community.token);
-  const controller = new Controller(api, connectWs, createNotifier(), (message: string, accountId: string) => onSessionLost(message, accountId));
-  setController(controller);
-  await controller.start();
-  return { controller, accountId: community.accountId };
+): Promise<{ accountId: string }> {
+  await startCommunitySession({
+    baseUrl: community.baseUrl,
+    token: community.token,
+    active: true,
+    notifier: createNotifier(),
+    onSessionLost: (message: string, accountId: string) => onSessionLost(message, accountId),
+  });
+  return { accountId: community.accountId };
 }
 
 export default function App() {

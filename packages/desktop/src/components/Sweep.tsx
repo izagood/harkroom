@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import type { SweepItem } from '../state/sweep';
 
@@ -21,7 +21,7 @@ export function SweepShell({ items, loading, error, onRetry, onClose, onMarkRead
 }) {
   const [index, setIndex] = useState(0);
   const [actionError, setActionError] = useState<string | null>(null);
-  const accounts = useAppStore((s) => s.accounts);
+  const accounts = useActiveStore((s) => s.accounts);
 
   /**
    * 목록을 다시 불러오면 처음부터 본다. 인덱스를 그대로 두면 짧아진 목록의 끝을 가리켜
