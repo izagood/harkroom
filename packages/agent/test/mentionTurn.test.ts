@@ -42,6 +42,9 @@ function defOf(overrides: Partial<AgentView> = {}): AgentView {
     instructions: '친절하게 답한다', harness: 'claude-code', model: null, effort: null,
     workingDir: '/repo', mentionPermission: 'auto', ownerAccountId: 'human-1', disabled: false,
     runnerVersion: null,
+    // #129: 종료 요청 없음이 기본이다. 종료를 검증하는 테스트가 이 값을 덮는다.
+    stopRequestedAt: null,
+    stopAckedAt: null,
     // #186: 에이전트는 상태를 고를 수 없다(서버가 거절한다). DB 기본값 그대로이지만
     // AccountView 의 필수 필드라 fixture 도 적어야 한다.
     status: 'available', statusText: null,
@@ -644,7 +647,10 @@ describe('runMentionTurn', () => {
       const { deps } = await makeDeps(fake); // 기본 스크립트: exit 0, 발화 없음 → NO_REPLY 시도
       vi.spyOn(fake, 'post').mockRejectedValueOnce(new Error('network blip'));
 
-      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })).resolves.toBeUndefined();
+      // #129: 반환값이 생겼다. 여기서 확인하려는 것은 여전히 "던지지 않는다"이고,
+      // 종료 요청이 없었다는 사실도 함께 고정한다.
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
+        .resolves.toEqual({ stopRequestedAt: null });
 
       const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null));
       expect(rec).toBeDefined();
@@ -665,7 +671,10 @@ describe('runMentionTurn', () => {
         return original(...args);
       });
 
-      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })).resolves.toBeUndefined();
+      // #129: 반환값이 생겼다. 여기서 확인하려는 것은 여전히 "던지지 않는다"이고,
+      // 종료 요청이 없었다는 사실도 함께 고정한다.
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
+        .resolves.toEqual({ stopRequestedAt: null });
 
       const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null));
       expect(rec).toBeDefined();
@@ -1333,5 +1342,32 @@ describe('메모리 주입 (#139)', () => {
 
     expect(ran).toBe(true);
     expect(fake.memoryReads).toBe(1);
+  });
+});
+
+describe('종료 요청 (#129)', () => {
+  // #129 회귀: 종료 요청은 턴 **시작 직후**에 읽는 정의에 실려 오지만, 그것을 본 즉시
+  // 물러나면 사람이 기다리는 답이 사라진다. 이 함수는 사실만 돌려주고 물러날지는
+  // 호출자(main.ts 의 폴 루프)가 턴이 끝난 뒤에 정한다.
+  it('종료 요청이 와 있어도 턴을 끝까지 마치고, 요청은 반환값으로만 알린다', async () => {
+    const REQUESTED_AT = '2026-09-03T10:00:00.000Z';
+    const fake = new FakeMurmur(defOf({ stopRequestedAt: REQUESTED_AT }));
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, plans, runTurn } = await makeDeps(fake);
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '답이다', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    const result = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    // 턴이 실제로 돌았다: 하네스를 띄웠고, 답이 올라갔고, 세션이 저장됐다.
+    expect(plans).toHaveLength(1);
+    expect(fake.posts.map((p) => p.body)).toEqual(['답이다']);
+    expect(deps.store.get(SessionStore.threadKey(CHANNEL, null))!.turnsRun).toBe(1);
+    // 💬 도 제거됐다 — 정상 종료 경로를 그대로 탔다는 증거다(중간에 돌아섰다면 남는다).
+    expect(fake.reactions.filter((r) => r.emoji === '💬' && r.action === 'remove')).toHaveLength(1);
+    // 그리고 요청은 호출자에게 전달된다.
+    expect(result.stopRequestedAt).toBe(REQUESTED_AT);
   });
 });

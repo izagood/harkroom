@@ -424,6 +424,11 @@ export class Controller {
     return this.api.updateAgent(id, patch);
   }
 
+  /** #129: 러너 종료 요청. 실패를 삼키지 않는다 — 요청이 갔는지 화면이 말해야 한다. */
+  requestAgentStop(agentId: string): Promise<import('@murmur/shared').AgentView> {
+    return this.api.requestAgentStop(agentId);
+  }
+
   /** #171: 새 에이전트의 기본값. 실패를 삼키지 않는다 — 화면이 실패를 그려야 한다. */
   agentDefaults(): Promise<import('@murmur/shared').AgentDefaults> {
     return this.api.agentDefaults();
