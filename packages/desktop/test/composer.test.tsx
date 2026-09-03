@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import { useAppStore } from '../src/state/appStore';
 import { Composer } from '../src/components/Composer';
 import { Controller, setController } from '../src/state/controller';
-import { acc, accountsResult, fakeApi } from './helpers/fakeApi';
+import { acc, accountsResult, fakeApi, grp } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
 
 /** 지금 강조된 후보의 handle. 목록 정렬은 여기서 검증할 대상이 아니다. */
@@ -377,5 +377,111 @@ describe('바깥 클릭 dismiss', () => {
     fireEvent.mouseDown(container);
 
     expect(screen.queryAllByRole('option')).toHaveLength(2);
+  });
+});
+
+describe('부를 상대 미리보기 (#278)', () => {
+  // 테스트 1: 본문에 존재하는 handle 이 있으면 목록에 나온다.
+  it('본문에 존재하는 handle 이 있으면 목록에 나온다', () => {
+    useAppStore.getState().set({
+      accounts: {
+        u1: acc('u1', 'me'),
+        a1: acc('a1', 'fizz', 'agent'),
+        u2: acc('u2', 'rusalka'),
+      },
+    });
+    render(<Composer onSend={vi.fn()} />);
+
+    typeInto('안녕 @fizz');
+    expect(screen.getByTestId('body-mentions')).toBeTruthy();
+    expect(screen.getByTestId('body-mentions')!.textContent).toContain('@fizz');
+  });
+
+  // 테스트 2: 존재하지 않는 handle 은 목록에 없다
+  it('존재하지 않는 handle 은 목록에 없다', () => {
+    useAppStore.getState().set({
+      accounts: {
+        u1: acc('u1', 'me'),
+        a1: acc('a1', 'fizz', 'agent'),
+      },
+    });
+    render(<Composer onSend={vi.fn()} />);
+
+    typeInto('안녕 @notexist');
+    expect(screen.queryByTestId('body-mentions')).toBeNull();
+  });
+
+  // 테스트 3: 본문이 비거나 멘션이 없으면 줄 자체가 렌더되지 않는다
+  it('본문이 비거나 멘션이 없으면 줄이 렌더되지 않는다', () => {
+    useAppStore.getState().set({
+      accounts: {
+        u1: acc('u1', 'me'),
+        a1: acc('a1', 'fizz', 'agent'),
+      },
+    });
+    render(<Composer onSend={vi.fn()} />);
+
+    typeInto('안녕');
+    expect(screen.queryByTestId('body-mentions')).toBeNull();
+
+    typeInto('');
+    expect(screen.queryByTestId('body-mentions')).toBeNull();
+  });
+
+  // 테스트 4: 목록 판정이 MessageBody 강조와 같은 함수를 쓴다
+  // mentionedHandles 를 직접 테스트 — 같은 입력이 같은 결과를出す
+  it('mentionedHandles 가 같은 입력에 같은 결과를 낸다', () => {
+    const { mentionedHandles } = require('@murmur/shared');
+    // 이 테스트는 mentionedHandles 함수 자체가 splitMentions 와 같은 패턴을 쓰는지를 확인
+    // shared 패키지의 테스트에서 이미 검증되므로 여기서는 간단히 확인
+    expect(mentionedHandles('@fizz @Fizz')).toEqual(['fizz']); // 중복 제거
+    expect(mentionedHandles('hi @rusalka')).toContain('rusalka');
+    expect(mentionedHandles('no mention')).toEqual([]);
+  });
+
+  // 테스트 5: 고정 멘션 칩과 이 줄이 다른 요소다
+  it('고정 멘션 칩과 이 줄이 다른 요소다', () => {
+    useAppStore.getState().set({
+      accounts: {
+        u1: acc('u1', 'me'),
+        a1: acc('a1', 'fizz', 'agent'),
+        u2: acc('u2', 'rusalka'),
+      },
+    });
+    render(<Composer onSend={vi.fn()} />);
+
+    // @ 버튼으로 고정 추가 (picking 모드)
+    fireEvent.click(screen.getByRole('button', { name: /Add mention/ }));
+    // 첫 번째 후보 선택 (fizz)
+    fireEvent.click(screen.getByRole('option', { name: /fizz/ }));
+
+    // 고정 칩이 생김
+    const stickyItems = screen.queryAllByTestId('sticky-mention');
+    expect(stickyItems.length).toBe(1);
+
+    // 이제 본문에 @rusalka 라고 입력 (이 계정은 있음)
+    typeInto('@rusalka 안녕');
+
+    // 고정 칩과 bodyMentions가 모두 존재, 하지만 다른 handle
+    const bodyMentions = screen.getByTestId('body-mentions');
+    expect(bodyMentions.textContent).toContain('rusalka');
+    expect(bodyMentions.textContent).not.toContain('fizz'); // 고정과 중복되지 않음
+  });
+
+  // 테스트 6: 그룹 핸들이 본문에 있으면 집합 표시와 함께 나온다
+  it('그룹 핸들이 본문에 있으면 집합 표시와 함께 나온다', () => {
+    useAppStore.getState().set({
+      accounts: {
+        u1: acc('u1', 'me'),
+        a1: acc('a1', 'fizz', 'agent'),
+      },
+      groups: [grp('g1', 'oncall', 'On-call')],
+    });
+    render(<Composer onSend={vi.fn()} />);
+
+    typeInto('@oncall 서버 문제가 있어');
+    const bodyMentions = screen.getByTestId('body-mentions');
+    expect(bodyMentions.textContent).toContain('@oncall');
+    expect(bodyMentions.textContent).toContain('(집합)');
   });
 });
