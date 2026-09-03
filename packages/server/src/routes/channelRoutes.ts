@@ -1,7 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { assertChannelVisible, createChannel, getOrCreateDm, listChannels, updateChannel, updateChannelPref, listChannelPrefs } from '../services/channels.js';
+import {
+  addChannelMember, assertChannelVisible, createChannel, getOrCreateDm,
+  listChannelMembers, listChannels, removeChannelMember, updateChannel, updateChannelPref,
+  listChannelPrefs,
+} from '../services/channels.js';
 import { allReadStates, markChannelRead, markChannelUnread, readState } from '../services/readPositions.js';
 // 이름 규칙은 데스크탑의 채널 생성 입력(Sidebar.tsx)과 **같은 것**이어야 한다 — 그래서
 // 정규식을 여기 리터럴로 두지 않고 shared 의 상수를 쓴다.
@@ -14,8 +18,11 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
       name: z.string().regex(new RegExp(CHANNEL_NAME_PATTERN)),
       topic: z.string().max(256).optional(),
       repo: z.string().max(128).optional(),
+      // 키가 없으면 public 이다 — 기존 호출부(부트스트랩·데스크탑의 기존 경로)가 그대로 돈다.
+      visibility: z.enum(['public', 'private']).optional(),
     }).parse(req.body);
-    const channel = await createChannel(pool, body);
+    // private 이면 만든 사람이 첫 멤버다. 이 인자를 빠뜨리면 아무도 열 수 없는 채널이 생긴다.
+    const channel = await createChannel(pool, { ...body, creatorId: req.account!.id });
     return reply.code(201).send(channel);
   });
 
@@ -26,10 +33,20 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
       // null은 바인딩 해제, 키 부재는 그대로 두기 — zod에서도 이 둘을 구분해야 한다.
       repo: z.string().max(128).nullable().optional(),
       archived: z.boolean().optional(),
+      visibility: z.enum(['public', 'private']).optional(),
     }).parse(req.body);
     const channel = await updateChannel(pool, id, req.account!.id, patch);
     if (!channel) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+    // 공개 범위 전환은 별도 감사 항목이다 — 채널 하나가 통째로 열리거나 닫히는 사건이라
+    // 'channel.updated' 의 필드 목록에 섞여 있으면 나중에 골라낼 수 없다. topic 과 함께
+    // 온 경우에도 둘 다 남긴다(아래 else 가 나머지 필드를 계속 기록한다).
+    if (patch.visibility !== undefined) {
+      await recordAudit(pool, {
+        action: 'channel.visibility.changed', actorId: req.account!.id, actorHandle: req.account!.handle,
+        target: id, detail: { visibility: patch.visibility },
+      }, req);
     }
     const isArchive = patch.archived === true;
     const isUnarchive = patch.archived === false;
@@ -44,16 +61,21 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
         target: id, detail: {},
       }, req);
     } else {
-      await recordAudit(pool, {
-        action: 'channel.updated', actorId: req.account!.id, actorHandle: req.account!.handle,
-        target: id, detail: { fields: Object.keys(patch).filter((k) => k !== 'archived') },
-      }, req);
+      const fields = Object.keys(patch).filter((k) => k !== 'archived' && k !== 'visibility');
+      // visibility 만 온 요청은 위에서 이미 기록했다 — 빈 필드 목록의 'channel.updated' 를
+      // 덧붙이면 감사 로그에 아무것도 안 바뀐 항목이 하나 더 생긴다.
+      if (fields.length) {
+        await recordAudit(pool, {
+          action: 'channel.updated', actorId: req.account!.id, actorHandle: req.account!.handle,
+          target: id, detail: { fields },
+        }, req);
+      }
     }
     return channel;
   });
 
-  app.get('/channels', { preHandler: app.requireAccount }, async () => ({
-    channels: await listChannels(pool),
+  app.get('/channels', { preHandler: app.requireAccount }, async (req) => ({
+    channels: await listChannels(pool, req.account!.id, req.account!.isAdmin),
   }));
 
   // 읽음 위치. 채널 스코프라 여기 둔다(messageRoutes 는 병렬 세션이 첨부파일로 만지는 중이다).
@@ -99,6 +121,83 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
     return readState(pool, { accountId: req.account!.id, channelId: id });
+  });
+
+  /**
+   * 멤버 목록. private 채널에서는 **admin 도 볼 수 있다** — 목록에서 보이는 채널의
+   * "누가 있나"까지는 운영에 필요하다(#182 의 절충). 메시지는 여전히 못 본다.
+   */
+  app.get('/channels/:id/members', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = channelParam.parse(req.params);
+    const exists = await pool.query(`select 1 from channel where id = $1`, [id]);
+    if (!exists.rowCount) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+    if (!req.account!.isAdmin && !(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    return { members: await listChannelMembers(pool, id) };
+  });
+
+  /**
+   * 초대. **admin 전용이 아니다** — 그 채널의 멤버라면 누구나 부를 수 있다.
+   *
+   * 게이트가 `assertChannelVisible` 인 것이 핵심이다: private 채널에서는 그 술어가 곧
+   * 멤버십이므로 "남의 private 채널에 사람을 밀어 넣기"가 막히고, public 채널에서는 누구나
+   * 통과하므로 초대가 필요 없다는 결정이 그대로 성립한다(멤버십은 구독일 뿐이다).
+   * admin 이라는 이유로 열지 않는다 — admin 도 자기가 없는 private 채널에는 못 부른다.
+   */
+  app.post('/channels/:id/members', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = channelParam.parse(req.params);
+    const { accountId } = z.object({ accountId: z.string().uuid() }).parse(req.body);
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    // 존재하지 않는 계정은 FK 위반으로 500 이 된다 — 잘못된 입력을 서버 오류로 답하면
+    // 호출부가 재시도할 대상인지 아닌지 구분하지 못한다.
+    const account = await pool.query(`select 1 from account where id = $1`, [accountId]);
+    if (!account.rowCount) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
+    }
+    await addChannelMember(pool, id, accountId);
+    await recordAudit(pool, {
+      action: 'channel.member.added', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { accountId },
+    }, req);
+    return { members: await listChannelMembers(pool, id) };
+  });
+
+  /**
+   * 나가기/내보내기.
+   *
+   * 자기 자신은 언제나 뺄 수 있다 — 나가기를 막을 이유가 없고, 막으면 private 채널이
+   * 편도가 된다. 남을 빼는 것은 admin 만이다: 멤버 누구나 서로를 뺄 수 있으면
+   * 초대한 사람이 초대한 사람을 지우는 경합이 생긴다.
+   *
+   * 마지막 멤버가 나가도 채널 행은 남는다(#155 의 캐스케이드 결정 전까지). 그 상태는
+   * admin 만 목록에서 보는 채널이 되므로, 화면이 나가기 전에 그 사실을 알린다.
+   */
+  app.delete('/channels/:id/members/:accountId', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id, accountId } = z.object({
+      id: z.string().uuid(), accountId: z.string().uuid(),
+    }).parse(req.params);
+    const isSelf = accountId === req.account!.id;
+    if (!isSelf && !req.account!.isAdmin) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'only admin can remove others' } });
+    }
+    // 자기 자신을 뺄 때도 그 채널을 볼 수 있어야 한다 — 볼 수 없는 채널에 대한 조작이
+    // 성공/실패로 갈리면 그 응답 자체가 채널의 존재를 알려 준다.
+    if (isSelf && !(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    const removed = await removeChannelMember(pool, id, accountId);
+    if (removed) {
+      await recordAudit(pool, {
+        action: 'channel.member.removed', actorId: req.account!.id, actorHandle: req.account!.handle,
+        target: id, detail: { accountId },
+      }, req);
+    }
+    return { members: await listChannelMembers(pool, id) };
   });
 
   app.post('/dms', { preHandler: app.requireAccount }, async (req, reply) => {
