@@ -11,6 +11,9 @@ export async function registerDirectoryRoutes(app: FastifyInstance, pool: Pool):
       `select a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admin as "isAdmin",
               a.disabled_at is not null as disabled,
               a.status, a.status_text as "statusText",
+              -- 아바타는 id 만 싣는다(#159) — 바이트를 실으면 디렉터리 한 번에 모든 사진이
+              -- 따라온다. 화면이 이 id 로 아바타를 따로 받아 온다.
+              a.avatar_attachment_id as "avatarAttachmentId",
               c.owner_account_id as "ownerAccountId"
        from account a left join agent_config c on c.account_id = a.id
        order by a.handle`,

@@ -4,6 +4,7 @@ import { useAppStore } from '../src/state/appStore';
 import { Composer } from '../src/components/Composer';
 import { Controller, setController } from '../src/state/controller';
 import { acc, fakeApi } from './helpers/fakeApi';
+import { undoSendStorage } from '../src/lib/prefs';
 
 /** 지금 강조된 후보의 handle. 목록 정렬은 여기서 검증할 대상이 아니다. */
 // 핸들은 **속성**에서 읽는다. textContent 에서 뽑으면 장식이 하나 늘 때마다 깨진다 —
@@ -22,6 +23,9 @@ const typeInto = (value: string) => {
 };
 
 beforeEach(() => {
+  // 이 파일이 검증하는 것은 보냄 취소 창이 아니다(#223) — 창을 끄고 즉시 전송 경로를 본다.
+  // 창 자체는 undoSend.test.tsx 가 단독으로 지킨다.
+  undoSendStorage.saveWindowMs(0);
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'me'),
