@@ -80,24 +80,42 @@ describe('PAT management', () => {
     expect(oldPat!.revokedAt).not.toBeNull();
   });
 
+  /**
+   * 이 테스트는 원래 `POST /accounts/agents` 로 'user' 라는 **에이전트**를 만들고
+   * `/auth/login` 에 비밀번호를 보내 토큰을 얻으려 했다. 에이전트 계정에는 비밀번호가
+   * 없으므로 로그인은 실패하고 `token` 은 `undefined` 였다 — 즉 `Bearer undefined` 로
+   * **인증되지 않은** 요청을 보내고 있었고, `requireAdmin` 이 미인증에도 403 을 주기
+   * 때문에 초록이었다. 이름이 말하는 "non-admin 거절"은 한 번도 확인되지 않았다.
+   *
+   * #253 이 이 라우트를 `requireOwnerOrAdmin` 으로 바꾸면서 미인증이 401 로 갈라져
+   * 드러났다. 사람 계정을 초대·등록해 **실제로 non-admin 토큰**으로 확인하고,
+   * 미인증 401 도 따로 못박는다.
+   */
   it('rejects non-admin GET /accounts/:id/pats', async () => {
     const accountId = await createAgentOnly('nonadminpatbot');
 
+    const invite = await app.inject({ method: 'POST', url: '/invites', headers: admin() });
     await app.inject({
-      method: 'POST', url: '/accounts/agents', headers: admin(),
-      payload: { handle: 'user', displayName: 'User' },
+      method: 'POST', url: '/auth/register',
+      payload: {
+        handle: 'patoutsider', displayName: 'Outsider', password: 'pw123456',
+        inviteToken: invite.json().token as string,
+      },
     });
     const userLogin = await app.inject({
-      method: 'POST', url: '/auth/login', payload: { handle: 'user', password: 'pw123456' },
+      method: 'POST', url: '/auth/login', payload: { handle: 'patoutsider', password: 'pw123456' },
     });
     const token = userLogin.json().token as string;
+    expect(token).toBeTruthy();
 
     const res = await app.inject({
       method: 'GET', url: `/accounts/${accountId}/pats`,
       headers: { authorization: `Bearer ${token}` },
     });
-
     expect(res.statusCode).toBe(403);
+
+    const anon = await app.inject({ method: 'GET', url: `/accounts/${accountId}/pats` });
+    expect(anon.statusCode).toBe(401);
   });
 
   // 라벨은 살아 있는 토큰 안에서 유일하다(마이그레이션 010). 이 제약이 없으면 같은 라벨이
