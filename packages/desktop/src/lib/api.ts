@@ -118,6 +118,16 @@ export class ApiClient {
     const qs = q.size ? `?${q.toString()}` : '';
     return this.req('GET', `/channels/${channelId}/messages${qs}`);
   }
+  /**
+   * 링크가 가리키는 메시지 하나(#178). 채널 경로가 **아니다** — 링크를 받은 사람은 채널을
+   * 모르고, 그것을 알려 주는 것이 이 응답의 `channelId`·`threadRootId` 다.
+   *
+   * 실패를 삼키지 않는다: 없는 메시지(404)·볼 수 없는 메시지(403)는 `ApiError` 로 올라가고
+   * 호출부가 사람에게 보여 준다.
+   */
+  message(id: string): Promise<MessageRow> {
+    return this.req('GET', `/messages/${id}`);
+  }
   postMessage(
     channelId: string, body: string, threadRootId?: string, idempotencyKey?: string,
     attachmentIds: string[] = [],

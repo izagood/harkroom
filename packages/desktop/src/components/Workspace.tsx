@@ -4,6 +4,7 @@ import { getController } from '../state/controller';
 import { sidebarStorage } from '../lib/prefs';
 import { Sidebar } from './Sidebar';
 import { ChannelPane } from './ChannelPane';
+import { Notice } from './Notice';
 import { ThreadPanel } from './ThreadPanel';
 import { SearchPalette } from './SearchPalette';
 import type { SectionId } from './settings/sections';
@@ -116,6 +117,9 @@ export function Workspace({ onLogout, onOpenSettings }: {
             →
           </button>
         </div>
+        {/* 알림은 헤더 바로 아래, 대화 위에 둔다 — 채널 안에 그리면 채널을 못 연 실패를
+            보여 줄 자리 자체가 없다. */}
+        <Notice />
         <div className="flex flex-1 overflow-hidden">
           <ChannelPane />
           {threadRootId && <ThreadPanel />}
