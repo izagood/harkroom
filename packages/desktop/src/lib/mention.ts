@@ -1,4 +1,4 @@
-import { CHANNEL_MENTION_HANDLE, MENTION_PATTERN, mentionedHandles } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, MENTION_PATTERN, MENTION_TOKEN_PATTERN, mentionedHandles, renderMentions } from '@murmur/shared';
 
 // 멘션 문법은 @murmur/shared 에 있다 — 서버의 알림 발송과 같은 규칙을 봐야 한다. 갈라지면
 // 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(me@x.com), 강조된
@@ -41,8 +41,18 @@ export type MessagePart =
 /**
  * 본문을 텍스트와 멘션 조각으로 나눈다. **존재하는 handle 만** 멘션으로 표시한다 —
  * 아무 @단어나 칠하면 오타가 멘션처럼 보이고, 사용자가 알림이 갔다고 착각한다.
+ *
+ * @param body 입력 본문 (<@id> 또는 @handle 형식)
+ * @param knownHandles 알려진 handle 목록
+ * @param accountsMap (선택) account ID -> handle 맵. 있으면 <@id> 토큰을 현재 handle 로 렌더링한다.
  */
-export function splitMentions(body: string, knownHandles: string[]): MessagePart[] {
+export function splitMentions(body: string, knownHandles: string[], accountsMap?: Map<string, string>): MessagePart[] {
+  // <@id> 토큰이 있으면 현재 handle 로 렌더링한다(#271)
+  let processedBody = body;
+  if (accountsMap && accountsMap.size > 0) {
+    processedBody = renderMentions(body, accountsMap, '알 수 없음');
+  }
+
   // `@channel`(#225)은 그 handle 의 계정이 없어도 칠한다 — 서버가 채널 전체에 알림을
   // 보내기 때문이다. 여기서 빼면 위 주석이 경계하는 바로 그 불일치가 된다: 강조되지 않은
   // 것이 몰래 알림을 보낸다. 계정이 있으면 `knownHandles` 에 이미 들어 있어 중복이 없다.
@@ -50,17 +60,17 @@ export function splitMentions(body: string, knownHandles: string[]): MessagePart
   const parts: MessagePart[] = [];
   let cursor = 0;
 
-  for (const m of body.matchAll(MENTION_IN_TEXT)) {
+  for (const m of processedBody.matchAll(MENTION_IN_TEXT)) {
     const handle = (m[2] ?? '').toLowerCase();
     if (!known.has(handle)) continue;
     // m.index 는 선행 문자를 포함한다 — @ 의 실제 위치를 다시 계산한다.
     const at = m.index + (m[1] ?? '').length;
-    if (at > cursor) parts.push({ kind: 'text', text: body.slice(cursor, at) });
+    if (at > cursor) parts.push({ kind: 'text', text: processedBody.slice(cursor, at) });
     parts.push({ kind: 'mention', text: `@${m[2]}`, handle });
     cursor = at + 1 + (m[2] ?? '').length;
   }
-  if (cursor < body.length) parts.push({ kind: 'text', text: body.slice(cursor) });
-  return parts.length ? parts : [{ kind: 'text', text: body }];
+  if (cursor < processedBody.length) parts.push({ kind: 'text', text: processedBody.slice(cursor) });
+  return parts.length ? parts : [{ kind: 'text', text: processedBody }];
 }
 
 /**

@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, mentionedHandles, type InboxEntry, type MessageRow } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, mentionedHandles, mentionedIds, normalizeMentions, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { channelVisibleSql } from './channels.js';
 
@@ -143,47 +143,72 @@ export async function postMessage(
 
     const notified = new Set<string>();
 
-    // 멘션 규칙은 @murmur/shared 에 있다 — 데스크탑의 강조와 같은 것을 봐야 한다.
-    const handles = mentionedHandles(input.body);
-    if (handles.length) {
-      // handle 은 소문자로 만들어지지만 사람은 @Fizz 라고 쓴다. 양쪽을 소문자로 맞춘다.
-      // 작성자 자신도 함께 뽑고 알림에서만 걸러 낸다 — `@channel` 이 계정인지 판정하려면
-      // 작성자가 바로 그 handle 의 주인인 경우도 보여야 하기 때문이다.
-      const accounts = await client.query(
-        `select id, lower(handle) as handle from account where lower(handle) = any($1)`,
-        [handles],
-      );
-      for (const row of accounts.rows) {
-        if (row.id !== input.authorId) await insertInbox(client, row.id, message.id, 'mention', notified);
-      }
+    // 멘션 정규화: @handle -> <@id>
+    // #230 그룹 멘션(@그룹)은 이 작업 범위 밖 — 호출부가 먼저 그룹 확장을 하고 남은
+    // @handle 을 정규화해야 한다. 여기서는 일반 계정 멘션만 처리한다.
+    //
+    // 먼저 현재 채널의 멤버 목록을 가져온다 — 정규화에 필요한 accountsMap 과 @channel
+    // 확장에 필요한 대상자 목록을 한 번에 구한다.
+    const channelMembers = await client.query(
+      `select a.id, lower(a.handle) as handle from account a
+       join channel_member cm on cm.account_id = a.id
+       where cm.channel_id = $1 and a.disabled = false`,
+      [input.channelId],
+    );
+    const accountsMap = new Map<string, string>(); // handle(lower) -> id
+    const idToHandle = new Map<string, string>(); // id -> handle
+    for (const row of channelMembers.rows) {
+      accountsMap.set(row.handle, row.id);
+      idToHandle.set(row.id, row.handle);
+    }
 
-      // `@channel`(#225) — 채널 전체 호출. 본문은 손대지 않는다: `@channel` 은 원문에
-      // 그대로 남고 서버는 inbox 항목만 펼쳐 넣는다. 본문을 치환하면 원문이 사라져
-      // 수정할 때 되돌릴 수 없다.
-      //
-      // `@channel` 이라는 handle 의 **계정이 실제로 있으면 계정이 이긴다** — 위에서 이미
-      // 평범한 멘션으로 처리됐고 여기서는 아무것도 하지 않는다. 사람의 이름이 예약어에
-      // 밀리면 그 사람은 영영 불릴 수 없다.
-      const claimed = accounts.rows.some((row) => row.handle === CHANNEL_MENTION_HANDLE);
-      if (handles.includes(CHANNEL_MENTION_HANDLE) && !claimed) {
-        // 대상은 **그 채널을 볼 수 있는 사람 전부**다. 멤버십을 여기서 다시 정의하지 않고
-        // `channelVisibleSql` 을 그대로 부른다 — 판정이 갈라지면 private 채널의 비멤버에게
-        // 알림이 새거나(채널의 존재 자체가 샌다), public 채널에서 조용히 빠지는 사람이
-        // 생긴다. 술어가 계정 id 를 파라미터가 아니라 컬럼(`a.id`)으로 받는 덕에 방향을
-        // 뒤집어 "이 채널을 볼 수 있는 계정 전부"로 쓸 수 있다.
-        //
-        // 부른 사람 자신은 뺀다 — 자기 발화로 자기에게 알림이 오면 안 된다
-        // (`readPositions.ts` 의 `author_id <> $1` 과 같은 규칙).
-        // 비활성 계정을 따로 거르지 않는 것은 평범한 멘션과 같은 처지로 두기 위해서다.
-        const audience = await client.query(
-          `select a.id from account a, channel c
-            where c.id = $1 and a.id <> $2 and ${channelVisibleSql('c', 'a.id')}`,
-          [input.channelId, input.authorId],
-        );
-        for (const row of audience.rows) {
-          if (!notified.has(row.id)) await insertInbox(client, row.id, message.id, 'mention', notified);
-        }
+    // @channelMentionHandle (@channel) 은 본문을 손대지 않고 inbox 만 만든다.
+    // 원문에 그대로 남겨야 수정할 때 되돌릴 수 있다.
+    const hasChannelMention = mentionedHandles(input.body).includes(CHANNEL_MENTION_HANDLE);
+    // @channel 이 계정으로 존재하면 일반 멘션으로 처리되고, 여기서는 무시된다.
+
+    // 본문을 정규화: @handle -> <@id>
+    const normalizedBody = normalizeMentions(input.body, accountsMap);
+
+    // 알림 판정은 정규화된 본문의 <@id> 토큰에서 한다.
+    // mentionedIds 는 Set 을 반환하므로 [...set] 로 배열로 만든 뒤Set 으로 중복 제거.
+    const mentionedAccountIds = new Set(mentionedIds(normalizedBody));
+    for (const accountId of mentionedAccountIds) {
+      if (accountId !== input.authorId) {
+        await insertInbox(client, accountId, message.id, 'mention', notified);
       }
+    }
+
+    // @channel(#225) — 채널 전체 호출. 본문은 손대지 않는다: @channel 은 원문에
+    // 그대로 남고 서버는 inbox 항목만 펼쳐 넣는다.
+    //
+    // @channel 이라는 handle 의 **계정이 실제로 있으면 계정이 이긴다** — 위에서 이미
+    // 평범한 멘션으로 처리（比如 @channel 이 채널 멤버의 handle 이면)되고, 여기서는
+    // 아무것도 하지 않는다.
+    if (hasChannelMention && !accountsMap.has(CHANNEL_MENTION_HANDLE)) {
+      // 대상은 **그 채널을 볼 수 있는 사람 전부**다. 멤버십을 여기서 다시 정의하지 않고
+      // `channelVisibleSql` 을 그대로 부른다 — 판정이 갈라지면 private 채널의 비멤버에게
+      // 알림이 새거나(채널의 존재 자체가 샌다), public 채널에서 조용히 빠지는 사람이
+      // 생긴다. 술어가 계정 id 를 파라미터가 아니라 컬럼(`a.id`)으로 받는 덕에 방향을
+      // 뒤집어 "이 채널을 볼 수 있는 계정 전부"로 쓸 수 있다.
+      //
+      // 부른 사람 자신은 뺀다 — 자기 발화로 자기에게 알림이 오면 안 된다
+      // (`readPositions.ts` 의 `author_id <> $1` 과 같은 규칙).
+      // 비활성 계정을 따로 거르지 않는 것은 평범한 멘션과 같은 처지로 두기 위해서다.
+      const audience = await client.query(
+        `select a.id from account a, channel c
+          where c.id = $1 and a.id <> $2 and ${channelVisibleSql('c', 'a.id')}`,
+        [input.channelId, input.authorId],
+      );
+      for (const row of audience.rows) {
+        if (!notified.has(row.id)) await insertInbox(client, row.id, message.id, 'mention', notified);
+      }
+    }
+
+    // 본문을 정규화된 버전으로 업데이트
+    if (normalizedBody !== input.body) {
+      await client.query(`update message set body = $1 where id = $2`, [normalizedBody, messageId]);
+      message.body = normalizedBody;
     }
 
     if (input.threadRootId) {
@@ -239,9 +264,22 @@ export async function editMessage(
   const row = found.rows[0];
   if (row.author_id !== args.actorId || row.kind !== 'user') return 'forbidden';
 
+  // 멘션 정규화: @handle -> <@id>
+  const channelMembers = await pool.query(
+    `select a.id, lower(a.handle) as handle from account a
+     join channel_member cm on cm.account_id = a.id
+     where cm.channel_id = $1 and a.disabled = false`,
+    [args.channelId],
+  );
+  const accountsMap = new Map<string, string>();
+  for (const mRow of channelMembers.rows) {
+    accountsMap.set(mRow.handle, mRow.id);
+  }
+  const normalizedBody = normalizeMentions(args.body, accountsMap);
+
   const updated = await pool.query(
     `update message set body = $2, edited_at = now() where id = $1 returning ${COLS}`,
-    [args.messageId, args.body],
+    [args.messageId, normalizedBody],
   );
   return updated.rows[0];
 }

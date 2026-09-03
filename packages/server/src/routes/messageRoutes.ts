@@ -6,6 +6,7 @@ import { assertChannelVisible, audienceFor, channelPostGate } from '../services/
 import { deleteMessage, editMessage, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
+import { normalizeMentions } from '@murmur/shared';
 
 export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.post('/channels/:id/messages', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -217,6 +218,17 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     if (q.channelId && !(await assertChannelVisible(pool, q.channelId, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
-    return { messages: await searchMessages(pool, req.account!.id, q.q, 50, q.channelId ?? null) };
+    // 검색 쿼리의 @handle 도 <@id> 로 정규화한다(#271) — 이름을 바꾼 뒤 옛 검색이 안 맞으면 안 된다.
+    const accounts = await pool.query(`select id, lower(handle) as handle from account where disabled = false`);
+    const handleToId = new Map<string, string>();
+    for (const row of accounts.rows) {
+      handleToId.set(row.handle, row.id);
+    }
+    let normalizedQuery = q.q;
+    for (const [handle, id] of handleToId) {
+      const pattern = new RegExp(`(^|[^a-zA-Z0-9_-])@(${handle})(?![a-zA-Z0-9_-])`, 'gi');
+      normalizedQuery = normalizedQuery.replace(pattern, `$1<@${id}>`);
+    }
+    return { messages: await searchMessages(pool, req.account!.id, normalizedQuery, 50, q.channelId ?? null) };
   });
 }

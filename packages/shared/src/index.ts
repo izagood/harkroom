@@ -173,8 +173,22 @@ export const CHANNEL_NAME_PATTERN = '^[a-z0-9_-]{1,48}$';
  * 선행 문자 조건이 핵심이다. `@` 앞이 문자·숫자면 멘션이 아니다 — 이메일 주소와 단어
  * 중간의 `@` 를 걸러 낸다. handle 은 소문자로만 만들어지지만 사람은 `@Fizz` 라고 쓰므로
  * 대소문자를 무시하고 찾고, 조회할 때 소문자로 맞춘다.
+ *
+ * **역할 분리:**
+ * - `MENTION_PATTERN` (@handle): 사람이 입력하는 형식. 클라이언트 입력, 화면 표시 원문.
+ * - `MENTION_TOKEN_PATTERN` (<@id>): 저장소 안 정본. 본문 저장, REST/WS 응답.
+ *
+ * 입력 -> 저장: `normalizeMentions()` 가 @handle 을 <@id> 로 바꾼다.
+ * 저장 -> 화면: `renderMentions()` 가 <@id> 를 현재 handle 로 바꾼다.
+ * 저장 -> MCP: `denormalizeMentions()` 가 <@id> 를 현재 handle 로 바꾼다(에이전트가 handle 로 생각한다).
  */
 export const MENTION_PATTERN = `(^|[^a-zA-Z0-9_-])@(${HANDLE_PATTERN})`;
+
+/**
+ * 저장된 멘션 토큰. 본문에 **정본으로** 저장되는 형식이다.
+ * <@id> 는 본문을 다시 쓰지 않고 handle 변경을 반영할 수 있게 해 준다.
+ */
+export const MENTION_TOKEN_PATTERN = '<@([0-9a-f-]{36})>';
 
 /**
  * 본문에서 불린 handle 들. 소문자로 정규화해 중복을 없앤다(`@fizz` 와 `@Fizz` 는 한 사람).
@@ -186,6 +200,89 @@ export function mentionedHandles(body: string): string[] {
     if (m[2]) found.add(m[2].toLowerCase());
   }
   return [...found];
+}
+
+/**
+ * 본문에 저장된 멘션 ID 집합. 정규화된 본문(<@id> 토큰)에서 추출한다.
+ * 알림 판정에 쓴다 — inbox 를 만든 뒤에는 본문을 다시 읽지 않는다.
+ */
+export function mentionedIds(body: string): string[] {
+  const found = new Set<string>();
+  for (const m of body.matchAll(new RegExp(MENTION_TOKEN_PATTERN, 'g'))) {
+    if (m[1]) found.add(m[1]);
+  }
+  return [...found];
+}
+
+/**
+ * 본문의 @handle (존재하는 계정만) を <@id> 로 정규화한다.
+ * #230 그룹 멘션(@그룹) 은 이 함수에서 처리하지 않는다 — 호출부가 먼저 그룹 확장을 하고
+ * 남은 @handle 을 정규화해야 한다. 그룹 토큰은 글자 그대로 둔다.
+ *
+ * 존재하지 않는 handle 은 글자 그대로 남는다 — 오타를 멘션처럼 보이지 않게 한다.
+ *
+ * @param body 입력 본문 (@handle 형식)
+ * @param accountsMap handle(소문자) -> account ID 맵
+ * @returns 정규화된 본문 (<@id> 형식)
+ */
+export function normalizeMentions(body: string, accountsMap: Map<string, string>): string {
+  let result = body;
+  // 경계 검사를 정확히 하려면 MENTION_PATTERN 을 써야 한다.
+  // 하지만 단순 replaceAll 로는 경계 검사가 어려우므로 regexp_replace 를 쓴다.
+  // 각 handle 에 대해 순회하며 치환
+  for (const [handleLower, accountId] of accountsMap) {
+    // (?<![a-zA-Z0-9_-])@handle(?![a-zA-Z0-9_-]) 와 같은 부정 전방탐색/후방탐색
+    // 하지만 js 정규식에서는 부정 전방탐색이 잘 안 되므로 수동으로 한다.
+    const pattern = new RegExp(`(^|[^a-zA-Z0-9_-])@(${handleLower})(?![a-zA-Z0-9_-])`, 'gi');
+    result = result.replace(pattern, `$1<@${accountId}>`);
+  }
+  return result;
+}
+
+/**
+ * 저장된 <@id> 토큰을 현재 handle 로 역정규화한다. MCP 에서 에이전트가 handle 로 생각하게
+ * 하기 위해 쓴다 — 에이전트는 @handle 으로 입력하고, 그 입력은 normalize 를 탄다.
+ *
+ * @param body 정규화된 본문 (<@id> 형식)
+ * @param accountsMap account ID -> handle 맵
+ * @returns 역정규화된 본문 (@handle 형식)
+ */
+export function denormalizeMentions(body: string, accountsMap: Map<string, string>): string {
+  let result = body;
+  for (const m of body.matchAll(new RegExp(MENTION_TOKEN_PATTERN, 'g'))) {
+    const id = m[1];
+    if (!id) continue;
+    const handle = accountsMap.get(id);
+    if (handle) {
+      result = result.replace(`<@${id}>`, `@${handle}`);
+    }
+  }
+  return result;
+}
+
+/**
+ * <@id> 토큰을 현재 handle 로 렌더링한다. 데스크탑 화면 표시용이다.
+ * 모르는 ID 는 "@알 수 없음" 으로 표시한다.
+ *
+ * @param body 정규화된 본문 (<@id> 형식)
+ * @param accountsMap account ID -> handle 맵
+ * @param unknownLabel 모르는 ID 를 대신할 라벨
+ * @returns 화면용 본문 (@handle 형식)
+ */
+export function renderMentions(
+  body: string,
+  accountsMap: Map<string, string>,
+  unknownLabel = '알 수 없음',
+): string {
+  let result = body;
+  for (const m of body.matchAll(new RegExp(MENTION_TOKEN_PATTERN, 'g'))) {
+    const id = m[1];
+    if (!id) continue;
+    const handle = accountsMap.get(id);
+    const display = handle ? `@${handle}` : `@${unknownLabel}`;
+    result = result.replace(`<@${id}>`, display);
+  }
+  return result;
 }
 
 /**
@@ -449,6 +546,11 @@ export type WsServerEvent =
    * id 로 아바타를 받아 오고, 지우기는 null 이다.
    */
   | { type: 'avatar.changed'; accountId: string; avatarAttachmentId: string | null }
+  /**
+   * 누군가 자기 handle 을 바꿨다(#271). 데스크탑은 디렉터리만 갱신하면 본문은 다음 렌더에
+   * 새 이름으로 나온다 — 매핑이 그 일을 한다.
+   */
+  | { type: 'account.handle_changed'; accountId: string; newHandle: string }
   // 리액션은 델타로 보낸다 — 메시지 전체를 다시 실으면 한 번 누를 때마다 본문이 오간다.
   | { type: 'reaction.added'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
   | { type: 'reaction.removed'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
