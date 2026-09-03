@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
-import { parseMessagePermalink } from '@murmur/shared';
+import { parseMessagePermalink, type ScheduledMessageView } from '@murmur/shared';
 import type { AccountView, AttachmentRow } from '@murmur/shared';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
@@ -28,7 +28,7 @@ function rank(a: AccountView, b: AccountView): number {
 interface Props {
   /**
    * 실패를 reject 로 알리면 초안을 되돌린다 — 쓴 글이 조용히 사라지지 않게.
-   * 두 번째 인자는 이미 업로드된 첨부의 id 들이다(업로드는 파일을 고른 순간 끝나 있다).
+   * 두 번째 인자는 이미 업로드된 첨부의 id 들이다(업로드는 파일를 고른 순간 끝나 있다).
    */
   onSend: (body: string, attachmentIds: string[]) => void | Promise<unknown>;
   placeholder?: string;
@@ -39,6 +39,8 @@ interface Props {
    * 앞 채널의 에이전트를 끌고 가면 엉뚱한 곳에서 깨어난다.
    */
   scopeKey?: string;
+  /** 이 컴포저가 속한 채널 ID. 예약 발송(#222)에 필요하다. */
+  channelId?: string;
 }
 
 /**
@@ -70,7 +72,7 @@ interface HeldMessage {
   send: Props['onSend'];
 }
 
-export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = '' }: Props) {
+export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = '', channelId }: Props) {
   const accounts = useAppStore((s) => s.accounts);
   const myId = useAppStore((s) => s.me?.id);
   const [query, setQuery] = useState<MentionQuery | null>(null);
@@ -100,6 +102,14 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   const heldRef = useRef<HeldMessage | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // 예약 발송 상태(#222)
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [scheduleDateTime, setScheduleDateTime] = useState('');
+  const [scheduledMessages, setScheduledMessages] = useState<ScheduledMessageView[]>([]);
+  const [scheduledExpanded, setScheduledExpanded] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [isScheduling, setIsScheduling] = useState(false);
+
   // 초안은 **스코프 키로 스토어에 산다.** 지역 state 로 두면 컴포넌트 인스턴스가 채널
   // 전환에도 유지되기 때문에(ChannelPane 이 같은 자리에 렌더한다) A 에 쓴 글이 B 입력창에
   // 남고 B 로 나간다 — 그게 #184 다. 스토어가 영속까지 책임진다.
@@ -122,6 +132,14 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     setPicking(false);
     setActive(0);
   }, [scopeKey]);
+
+  // 예약 메시지 목록 조회(#222). 채널이 바뀔 때마다 새로 받는다.
+  useEffect(() => {
+    if (!channelId) return;
+    getController().api.scheduledMessages(channelId)
+      .then(setScheduledMessages)
+      .catch(() => {});
+  }, [channelId]);
 
   const matches = useMemo(() => {
     if (!query) return [];
@@ -464,6 +482,49 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     }
   };
 
+  // 예약 발송 핸들러(#222)
+  const openScheduleModal = () => {
+    if (!channelId) return;
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    setScheduleDateTime(now.toISOString().slice(0, 16));
+    setScheduleError(null);
+    setScheduleModalOpen(true);
+  };
+
+  const handleSchedule = async () => {
+    if (!channelId || !scheduleDateTime) return;
+    setScheduleError(null);
+    setIsScheduling(true);
+    try {
+      const sendAt = new Date(scheduleDateTime).toISOString();
+      await getController().api.scheduleMessage(channelId, draft, sendAt);
+      setDraftLocal('');
+      setPending([]);
+      setScheduleModalOpen(false);
+      const updated = await getController().api.scheduledMessages(channelId);
+      setScheduledMessages(updated);
+    } catch (err: unknown) {
+      const e = err as { error?: { code?: string; message?: string } };
+      setScheduleError(e.error?.message ?? '예약에 실패했다');
+    } finally {
+      setIsScheduling(false);
+    }
+  };
+
+  const handleCancelScheduled = async (id: string) => {
+    if (!channelId) return;
+    try {
+      await getController().api.cancelScheduledMessage(id);
+      const updated = await getController().api.scheduledMessages(channelId);
+      setScheduledMessages(updated);
+    } catch { /* 조용히 실패 */ }
+  };
+
+  const pendingScheduledCount = scheduledMessages.filter(
+    (m) => !m.sentMessageId && !m.failedReason && !m.canceledAt,
+  ).length;
+
   const listId = 'mention-suggestions';
 
   return (
@@ -574,6 +635,48 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
         </div>
       )}
 
+      {pendingScheduledCount > 0 && (
+        <div
+          role="status"
+          className="mb-1 flex cursor-pointer flex-col rounded bg-indigo-50 px-2 py-1 text-[11px] text-indigo-700"
+          onClick={() => setScheduledExpanded(!scheduledExpanded)}
+        >
+          <div className="flex items-center justify-between">
+            <span>예약 {pendingScheduledCount}건</span>
+            <span className="text-lg">{scheduledExpanded ? '▼' : '▶'}</span>
+          </div>
+          {scheduledExpanded && (
+            <div className="mt-1 flex flex-col gap-1">
+              {scheduledMessages
+                .filter((m) => !m.sentMessageId && !m.failedReason && !m.canceledAt)
+                .map((m) => (
+                  <div key={m.id} className="flex items-center justify-between rounded bg-white px-2 py-1 text-zinc-700">
+                    <span className="min-w-0 flex-1 truncate">{m.body.slice(0, 30)}…</span>
+                    <span className="ml-2 text-zinc-500">{new Date(m.sendAt).toLocaleString()}</span>
+                    <button
+                      type="button"
+                      aria-label="Cancel scheduled"
+                      className="ml-2 rounded px-1 text-red-500 hover:bg-red-100"
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={() => handleCancelScheduled(m.id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              {scheduledMessages
+                .filter((m) => m.failedReason)
+                .map((m) => (
+                  <div key={m.id} className="flex items-center justify-between rounded bg-red-50 px-2 py-1 text-red-700">
+                    <span className="min-w-0 flex-1 truncate">{m.body.slice(0, 30)}…</span>
+                    <span className="ml-2 text-xs">{m.failedReason}</span>
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <textarea
         ref={ref}
         className="w-full resize-none rounded border border-zinc-300 px-3 py-2"
@@ -619,8 +722,8 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
           >
             @
           </button>
-          {/* aria-label 은 **input** 에 붙인다. label 에 붙이면 그 요소 자신의 이름이
-              될 뿐 input 과 연결되지 않아 입력이 접근 불가가 된다. */}
+{/* aria-label 은 **input** 에 붙인다. label 에 붙이면 그 요소 자신의 이름이
+               될 뿐 input 과 연결되지 않아 입력이 접근 불가가 된다. */}
           <label className="cursor-pointer rounded px-2 py-0.5 text-sm text-zinc-600 hover:bg-zinc-100">
             📎
             <input
@@ -632,6 +735,15 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
               onChange={(e) => void pickFiles(e.target.files)}
             />
           </label>
+          <button
+            type="button"
+            aria-label="나중에 보내기"
+            className="rounded px-2 py-0.5 text-sm text-zinc-600 hover:bg-zinc-100"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={openScheduleModal}
+          >
+            🕐
+          </button>
         </div>
         <button
           type="button"
@@ -648,5 +760,43 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
         </button>
       </div>
     </div>
+);
+  return (
+    <>
+      {scheduleModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="w-80 rounded-lg bg-white p-4 shadow-lg">
+            <h3 className="mb-3 text-base font-medium">예약 발송</h3>
+            <input
+              type="datetime-local"
+              aria-label="예약 시각"
+              className="mb-3 w-full rounded border border-zinc-300 px-3 py-2"
+              value={scheduleDateTime}
+              onChange={(e) => setScheduleDateTime(e.target.value)}
+            />
+            {scheduleError && (
+              <p role="alert" className="mb-3 text-sm text-red-600">{scheduleError}</p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded px-3 py-1 text-sm text-zinc-600 hover:bg-zinc-100"
+                onClick={() => setScheduleModalOpen(false)}
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                className="rounded bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-700 disabled:bg-zinc-300"
+                onClick={handleSchedule}
+                disabled={isScheduling || !scheduleDateTime}
+              >
+                {isScheduling ? '예약 중…' : '예약'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
