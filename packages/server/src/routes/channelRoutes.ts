@@ -22,6 +22,7 @@ import {
 import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS } from '@murmur/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
+import { postMessage } from '../services/messages.js';
 
 export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, storage?: StorageBackend): Promise<void> {
   app.post('/channels', { preHandler: app.requireAdmin }, async (req, reply) => {
@@ -211,6 +212,18 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     // `ChannelRow` 가 실려 나가고, 받는 화면의 "생성순" 정렬이 조용히 깨진다.
     const channel = await getChannelRow(pool, id);
     if (channel) emitEvent({ type: 'channel.created', channel, audience: [accountId] });
+    // 시스템 메시지(#322). 초대된 사람의 핸들을 표시하지만 @멘션은 아니다 — 알림이 가지 않도록.
+    const targetAccount = await pool.query<{ handle: string }>(
+      `select handle from account where id = $1`, [accountId],
+    );
+    if (targetAccount.rows[0]) {
+      await postMessage(pool, {
+        channelId: id,
+        authorId: req.account!.id,
+        body: `${targetAccount.rows[0].handle}님이 추가되었습니다.`,
+        kind: 'system',
+      });
+    }
     return { members: await listChannelMembers(pool, id) };
   });
 
@@ -259,6 +272,18 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
           type: 'channel.deleted',
           channelId: id,
           audience: [accountId],
+        });
+      }
+      // 시스템 메시지(#322). 제거된 사람의 핸들을 표시하지만 @멘션은 아니다 — 알림이 가지 않도록.
+      const targetAccount = await pool.query<{ handle: string }>(
+        `select handle from account where id = $1`, [accountId],
+      );
+      if (targetAccount.rows[0]) {
+        await postMessage(pool, {
+          channelId: id,
+          authorId: req.account!.id,
+          body: `${targetAccount.rows[0].handle}님이 제거되었습니다.`,
+          kind: 'system',
         });
       }
     }
