@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { emitEvent } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
-import { deleteMessage, editMessage, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
+import { deleteMessage, editMessage, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 
@@ -168,6 +168,26 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
       accountId: req.account!.id, audience: await audienceFor(pool, id),
     });
     return reply.code(204).send();
+  });
+
+  /**
+   * 링크가 가리키는 메시지 하나(#178). 채널 경로 아래가 아닌 이유는 링크를 받은 사람이
+   * 채널을 모르기 때문이다 — 그것을 알려 주는 것이 이 라우트의 일이다.
+   *
+   * 순서가 규칙이다: 먼저 읽어 `channelId` 를 얻고, 그 다음에 `assertChannelVisible` 로 묻는다.
+   * 남의 DM 메시지는 403 이고 본문은 응답에 실리지 않는다.
+   */
+  app.get('/messages/:id', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const message = await getMessageById(pool, id);
+    // 지워진 메시지도 여기서 404 다 — 서비스가 걸러 null 을 준다. 본문을 주면 삭제가 삭제가 아니다.
+    if (!message) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such message' } });
+    }
+    if (!(await assertChannelVisible(pool, message.channelId, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    return message;
   });
 
   app.get('/inbox', { preHandler: app.requireAccount }, async (req) => {

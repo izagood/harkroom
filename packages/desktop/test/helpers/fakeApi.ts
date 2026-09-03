@@ -31,6 +31,7 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     logout: vi.fn(async () => undefined),
     reads: vi.fn(async () => []),
     markChannelRead: vi.fn(async () => undefined),
+    markChannelUnread: vi.fn(async () => undefined),
     accounts: vi.fn(async () => [acc('u1', 'admin'), acc('u2', 'bot', 'agent')]),
     channels: vi.fn(async () => [chan('c1', 'general')]),
     dms: vi.fn(async () => []),
@@ -41,6 +42,8 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     agentMemory: vi.fn(async () => []),
     deleteAgentMemory: vi.fn(async () => undefined),
     messages: vi.fn(async () => ({ messages: [], hasMore: false })),
+    // #178: 링크가 가리키는 메시지 하나. 베이스가 이것을 덮어야 "부르지 않았다" 를 단언할 수 있다.
+    message: vi.fn(async () => msg('m-link', 'c1', 1, 'linked')),
     postMessage: vi.fn(async () => msg('m-post', 'c1', 99, 'sent')),
     inboxUnread: vi.fn(async () => []),
     markRead: vi.fn(async () => undefined),

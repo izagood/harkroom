@@ -34,16 +34,20 @@ describe('삭제 권한이 UI에서 도달 가능해야 한다', () => {
     seed(acc('u1', 'admin'));
     render(<MessageItem message={msg('m1', 'c1', 1, 'not mine', 'u2')} />);
 
-    // 권한이 없으면 트리거 자체가 없다 — 빈 메뉴를 열지 않는다.
-    expect(screen.queryByRole('button', { name: 'More actions' })).toBeNull();
+    // #178: 메뉴는 링크 복사 때문에 열린다 — 없어야 하는 것은 트리거가 아니라 두 항목이다.
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull();
   });
 
   it('offers neither on a system message even to an admin', () => {
     seed({ ...acc('u1', 'admin'), isAdmin: true });
     render(<MessageItem message={msg('m1', 'c1', 1, 'projected', 'u2', { kind: 'system' })} />);
 
-    // 권한이 없으면 트리거 자체가 없다 — 빈 메뉴를 열지 않는다.
-    expect(screen.queryByRole('button', { name: 'More actions' })).toBeNull();
+    // #178: 투영된 메시지도 가리킬 수는 있다 — 그래서 트리거는 있고, 고치기·지우기만 없다.
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull();
   });
 });
 

@@ -87,13 +87,21 @@ describe('ChannelPane', () => {
       },
     });
     render(<ChannelPane />);
-    // #121: Edit·Delete 는 메시지 호버 툴바의 ⋯ 오버플로 메뉴 안으로 옮겨졌다. 트리거가
-    // 하나만 있어야 한다 — 남의 메시지에는 항목이 없어 트리거도 없다.
+    // #121: Edit·Delete 는 메시지 호버 툴바의 ⋯ 오버플로 메뉴 안으로 옮겨졌다.
+    // #178: 트리거는 이제 **두 메시지 모두**에 있다 — 어떤 메시지든 링크는 만들 수 있어
+    // 메뉴가 비지 않는다. 그래서 세는 것은 트리거 수가 아니라 각 메뉴의 내용이다.
     const triggers = screen.getAllByRole('button', { name: 'More actions' });
-    expect(triggers).toHaveLength(1);
+    expect(triggers).toHaveLength(2);
     fireEvent.click(triggers[0]!);
     expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeTruthy();
+    // 남의 메시지에는 링크 복사만 있다. 바깥 mousedown 으로 첫 메뉴를 닫는다 — click 만으로는
+    // 안 닫힌다(Menu 는 document 의 mousedown 을 본다).
+    fireEvent.mouseDown(document.body);
+    fireEvent.click(screen.getAllByRole('button', { name: 'More actions' })[1]!);
+    expect(screen.getByRole('menuitem', { name: 'Copy link' })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull();
   });
 
   it('sends the rewritten body when an edit is confirmed', () => {

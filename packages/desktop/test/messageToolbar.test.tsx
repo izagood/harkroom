@@ -99,22 +99,28 @@ describe('overflow menu permissions', () => {
 
   // 항목이 하나도 없으면 트리거를 아예 만들지 않는다 — 열어도 비어 있는 메뉴는
   // "할 수 있는 게 있다"는 거짓 신호다(design.md §4).
-  it('권한이 없으면 ⋯ 트리거 자체가 없다 (빈 메뉴를 열지 않는다)', () => {
+  // #178: 그 가드는 코드에 그대로 남아 있지만 실제로 걸리지는 않는다 — "Copy link" 는
+  // 어떤 메시지에도 있어 메뉴가 비지 않는다. 그래서 여기서 세는 것은 **항목의 내용**이다.
+  it('남의 메시지에는 고치기·지우기가 없다 (링크 복사만 남는다)', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '남의 메시지', 'u2')} />);
 
     const toolbar = screen.getByRole('group', { name: 'message toolbar' });
-    expect(within(toolbar).queryByRole('button', { name: 'More actions' })).toBeNull();
+    fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }));
+    expect(screen.getByRole('menuitem', { name: 'Copy link' })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull();
     // 리액션은 남의 메시지에도 달 수 있다.
     expect(within(toolbar).getByRole('button', { name: 'Add reaction' })).toBeTruthy();
   });
 
   it('shows no Edit/Delete for system message', () => {
-    const c = fakeController();
+    fakeController();
     render(<MessageItem message={{ ...msg('m1', 'c1', 1, '시스템', 'u1'), kind: 'system' }} />);
 
-    const moreActions = screen.queryByRole('button', { name: 'More actions' });
-    expect(moreActions).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull();
   });
 });
 
