@@ -8,6 +8,7 @@ import { InviteSettings } from '../components/settings/InviteSettings';
 import { NotificationSettings } from '../components/settings/NotificationSettings';
 import { MessageSettings } from '../components/settings/MessageSettings';
 import { ProfileSettings } from '../components/settings/ProfileSettings';
+import { SkillsSettings } from '../components/settings/SkillsSettings';
 import { TeamsSettings } from '../components/settings/TeamsSettings';
 import { UpdatesSettings } from '../components/settings/UpdatesSettings';
 import { SETTINGS_GROUPS, type SectionId } from '../components/settings/sections';
@@ -75,6 +76,7 @@ export function SettingsScreen({ initialSection = 'profile', targetId, onBack, o
         {section === 'handle-groups' && <HandleGroupsSettings />}
         {section === 'invite' && <InviteSettings />}
         {section === 'updates' && <UpdatesSettings />}
+        {section === 'skills' && <SkillsSettings targetId={targetId} />}
       </main>
     </div>
   );

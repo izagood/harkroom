@@ -1,4 +1,4 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@murmur/shared';
 import { notifyLevelOf } from '@murmur/shared';
 import { ApiClient, ApiError } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
@@ -366,6 +366,19 @@ export class Controller {
         // 카드가 준비됐다는 신호만 남긴다(#215). 내용은 그 URL 을 그리는 컴포넌트가
         // 스스로 읽는다 — 지금 화면에 없는 URL 의 카드를 미리 받아 둘 이유가 없다.
         store.set({ linkPreviewReadyAt: { ...store.linkPreviewReadyAt, [e.url]: Date.now() } });
+        break;
+      /**
+       * 워크스페이스 스킬(#311). 제안·승인·비활성을 받으면 **신호만** 올린다 —
+       * 열려 있는 스킬 설정 화면이 그것을 보고 목록을 다시 읽는다.
+       *
+       * 이벤트가 실어 온 `skill` 을 스토어에 넣지 않는 이유: 목록은 서버에 하나뿐이고,
+       * 여기서 한 건만 끼워 넣으면 그 사이 다른 admin 이 한 승인이 화면에서 사라진다.
+       * 신호를 받고 통째로 다시 읽는 쪽이 언제나 서버와 같다.
+       */
+      case 'skill.proposed':
+      case 'skill.approved':
+      case 'skill.disabled':
+        store.set({ skillsRevision: store.skillsRevision + 1 });
         break;
     }
   }
@@ -1414,6 +1427,26 @@ export class Controller {
 
   addTeamToChannel(channelId: string, teamId: string): Promise<AddTeamToChannelResult> {
     return this.api.addTeamToChannel(channelId, teamId);
+  }
+
+  /** 워크스페이스 스킬 목록(#311). */
+  listSkills(): Promise<WorkspaceSkillView[]> {
+    return this.api.listSkills();
+  }
+
+  /** 스킬 상세 조회. */
+  getSkill(slug: string): Promise<WorkspaceSkillView> {
+    return this.api.getSkill(slug);
+  }
+
+  /** 스킬 승인(#311). admin 전용. */
+  approveSkill(slug: string): Promise<WorkspaceSkillView> {
+    return this.api.approveSkill(slug);
+  }
+
+  /** 스킬 비활성화/거부(#311). admin 전용. */
+  disableSkill(slug: string): Promise<WorkspaceSkillView> {
+    return this.api.disableSkill(slug);
   }
 }
 
