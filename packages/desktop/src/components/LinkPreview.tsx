@@ -24,10 +24,18 @@ export function LinkPreview({ url }: { url: string }) {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      // 실패(404·오프라인·5xx)는 조용히 넘어간다 — 카드는 장식이고, 없으면 링크가 그대로
-      // 남는다. 사람에게 알릴 실패가 아니다.
-      const data = await getController().api.getLinkPreview(url).catch(() => null);
-      if (!cancelled) setPreview(data);
+      try {
+        const data = await getController().api.getLinkPreview(url);
+        if (!cancelled) setPreview(data);
+      } catch {
+        // 실패(404·오프라인·5xx·컨트롤러 없음)는 조용히 넘어간다 — 카드는 장식이고, 없으면
+        // 링크가 그대로 남는다. 사람에게 알릴 실패가 아니다.
+        //
+        // **`try` 가 `getController()` 까지 감싸는 것이 중요하다.** 반환값에만 `.catch` 를
+        // 걸면 컨트롤러가 아직(또는 이미) 없을 때 던지는 것이 `.catch` 밖이라 잡히지 않고,
+        // 화면 밖에서 unhandled rejection 이 된다. 이미 그린 카드는 지우지 않는다 —
+        // 한 번 실패했다고 보이던 것을 없애면 깜빡임만 남는다.
+      }
     })();
     return () => { cancelled = true; };
   }, [url, readyAt]);
