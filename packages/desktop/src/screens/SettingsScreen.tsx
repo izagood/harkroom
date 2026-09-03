@@ -2,16 +2,19 @@ import { useState } from 'react';
 import { AgentsSettings } from '../components/settings/AgentsSettings';
 import { AppearanceSettings } from '../components/settings/AppearanceSettings';
 import { ConnectionSettings } from '../components/settings/ConnectionSettings';
+import { HandleGroupsSettings } from '../components/settings/HandleGroupsSettings';
 import { InviteSettings } from '../components/settings/InviteSettings';
 import { NotificationSettings } from '../components/settings/NotificationSettings';
 import { MessageSettings } from '../components/settings/MessageSettings';
 import { ProfileSettings } from '../components/settings/ProfileSettings';
+import { TeamsSettings } from '../components/settings/TeamsSettings';
 import { UpdatesSettings } from '../components/settings/UpdatesSettings';
 import { SETTINGS_GROUPS, type SectionId } from '../components/settings/sections';
 import { useAppStore } from '../state/appStore';
 
-export function SettingsScreen({ initialSection = 'profile', onBack, onSignOut }: {
+export function SettingsScreen({ initialSection = 'profile', targetId, onBack, onSignOut }: {
   initialSection?: SectionId;
+  targetId?: string;
   onBack(): void;
   onSignOut(): void;
 }) {
@@ -59,7 +62,9 @@ export function SettingsScreen({ initialSection = 'profile', onBack, onSignOut }
         {section === 'appearance' && <AppearanceSettings />}
         {section === 'connection' && <ConnectionSettings onSignOut={onSignOut} />}
         {/* AgentsSettings 는 자체 2단 레이아웃이라 SettingsPage 여백을 쓰지 않는다. */}
-        {section === 'agents' && <AgentsSettings />}
+        {section === 'agents' && <AgentsSettings targetId={targetId} />}
+        {section === 'teams' && <TeamsSettings />}
+        {section === 'handle-groups' && <HandleGroupsSettings />}
         {section === 'invite' && <InviteSettings />}
         {section === 'updates' && <UpdatesSettings />}
       </main>

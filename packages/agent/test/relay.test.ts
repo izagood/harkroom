@@ -1,0 +1,244 @@
+// #141 Phase 2 — 러너 쪽 릴레이 회귀선. 소켓 없이 검증한다(dialer 주입) — 재접속 순서와
+// 백오프 곡선은 네트워크를 태우면 "느리다"로만 보이고 무엇이 깨졌는지 알려 주지 않는다.
+import { describe, it, expect } from 'vitest';
+import type { RelayRunnerFrame } from '@murmur/shared';
+import { createRelayClient, relayUrl, RING_CAP_BYTES, type RelayHandlers, type RelayTransport } from '../src/relay.js';
+import { nextBackoffMs } from '../src/policy.js';
+
+/**
+ * 가짜 dialer. dial 마다 핸들러를 붙잡아 두고, 테스트가 `open()`/`drop()` 으로 소켓의
+ * 생애를 직접 돌린다.
+ */
+function fakeDialer() {
+  const dials: { url: string; pat: string; handlers: RelayHandlers }[] = [];
+  const sent: RelayRunnerFrame[] = [];
+  let closedCount = 0;
+
+  const dial = (url: string, pat: string, handlers: RelayHandlers) => {
+    dials.push({ url, pat, handlers });
+  };
+
+  const open = (index = dials.length - 1): RelayTransport => {
+    const transport: RelayTransport = {
+      send: (data) => sent.push(JSON.parse(data) as RelayRunnerFrame),
+      close: () => { closedCount += 1; },
+    };
+    dials[index]!.handlers.onOpen(transport);
+    return transport;
+  };
+
+  const drop = (index = dials.length - 1) => dials[index]!.handlers.onClose();
+  const deliver = (frame: unknown, index = dials.length - 1) =>
+    dials[index]!.handlers.onMessage(JSON.stringify(frame));
+
+  return { dial, dials, sent, open, drop, deliver, closedCount: () => closedCount };
+}
+
+/**
+ * 재접속 예약을 붙잡아 두고 테스트가 직접 터뜨린다.
+ *
+ * 예약된 지연을 **터뜨린 것까지 전부** 누적해 둔다(`pending` 과 별도) — 큐에 남은 것만
+ * 보면 곡선을 확인할 수 없고, "몇 번 예약됐는가"도 못 센다(이중 예약 결함이 그 모양이다).
+ */
+function fakeSchedule() {
+  const pending: { fn: () => void; ms: number }[] = [];
+  const all: number[] = [];
+  return {
+    schedule: (fn: () => void, ms: number) => { pending.push({ fn, ms }); all.push(ms); },
+    /** 이 클라이언트가 예약한 모든 지연, 예약 순서대로. */
+    delays: () => [...all],
+    fire: () => { const next = pending.shift(); next?.fn(); },
+  };
+}
+
+const SESSION = { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1', harness: 'claude-code' } as const;
+
+/** ANSI + 잘린 UTF-8. 어디서든 문자열로 뜨면 U+FFFD 로 치환돼 되돌릴 수 없다. */
+const RAW = Buffer.concat([Buffer.from('\x1b[31mERR\x1b[0m', 'binary'), Buffer.from([0xed, 0x95])]);
+
+describe('relayUrl', () => {
+  it('http(s) 를 ws(s) 로 바꾸고 /agent-relay 를 붙인다', () => {
+    expect(relayUrl('http://localhost:3400')).toBe('ws://localhost:3400/agent-relay');
+    expect(relayUrl('https://murmur.example/')).toBe('wss://murmur.example/agent-relay');
+  });
+});
+
+describe('#141 러너 릴레이 — 접속과 announce', () => {
+  it('PAT 를 dialer 에 넘긴다 — URL 이 아니라 헤더로 가야 한다', () => {
+    const d = fakeDialer();
+    createRelayClient({ murmurUrl: 'http://x', pat: 'murp_secret', dial: d.dial }).start();
+    expect(d.dials).toHaveLength(1);
+    expect(d.dials[0]!.pat).toBe('murp_secret');
+    // PAT 가 URL 에 실리면 앞단 프록시 로그에 남는다 — 그래서 URL 에는 없어야 한다.
+    expect(d.dials[0]!.url).not.toContain('murp_secret');
+  });
+
+  it('접속하면 진행 중인 세션을 announce 한다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial });
+    client.start();
+    d.open();
+    // 접속 시점에 세션이 없으면 빈 announce 다 — 안 보내면 서버가 "아직 못 받았다"와
+    // "세션이 없다"를 구분할 수 없다.
+    expect(d.sent[0]).toEqual({ type: 'announce', sessions: [] });
+
+    const session = client.openSession({ ...SESSION });
+    expect(d.sent[1]).toMatchObject({ type: 'session.started' });
+    expect((d.sent[1] as { session: { sessionId: string } }).session.sessionId).toBe(session.sessionId);
+  });
+
+  it('릴레이가 끊겨 있어도 세션은 열리고 ring 은 계속 쌓인다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial, schedule: () => {} });
+    client.start();
+    // open 을 안 부른다 — 아직 붙지 못한 상태다.
+    const session = client.openSession({ ...SESSION });
+    session.push(RAW);
+    expect(client.connected()).toBe(false);
+    expect(d.sent).toHaveLength(0);
+
+    // 그 뒤에 붙으면 재생 요청에 **끊긴 구간까지** 답한다 — 여기서 ring 을 안 채웠으면
+    // 재접속 뒤 attach 한 사람은 그 구간을 영구히 못 본다.
+    d.open();
+    d.deliver({ type: 'replay.request', sessionId: session.sessionId });
+    const replay = d.sent.find((f) => f.type === 'replay') as { data: string };
+    expect(Buffer.from(replay.data, 'base64').equals(RAW)).toBe(true);
+  });
+});
+
+describe('#141-2 러너는 바이트를 변형하지 않는다', () => {
+  it('output 프레임의 base64 가 원본 바이트와 정확히 같다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial });
+    client.start();
+    d.open();
+    const session = client.openSession({ ...SESSION });
+    session.push(RAW);
+
+    const out = d.sent.find((f) => f.type === 'output') as { data: string };
+    const back = Buffer.from(out.data, 'base64');
+    expect(back.equals(RAW)).toBe(true);
+    expect(back.includes(Buffer.from([0xef, 0xbf, 0xbd]))).toBe(false);
+  });
+
+  it('ring 은 256KB 를 넘으면 앞을 버리고 뒤를 남긴다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial });
+    client.start();
+    d.open();
+    const session = client.openSession({ ...SESSION });
+    // 용량보다 크게 밀어 넣고, 남은 것이 **끝**인지 본다 — "tail" 이라는 이름이 실제로
+    // 끝을 가리키려면 잘라내는 방향이 이래야 한다(pty.ts RingBuffer).
+    session.push(Buffer.alloc(RING_CAP_BYTES, 0x41));
+    session.push(Buffer.from('END'));
+    d.deliver({ type: 'replay.request', sessionId: session.sessionId });
+    const replay = d.sent.find((f) => f.type === 'replay') as { data: string };
+    const bytes = Buffer.from(replay.data, 'base64');
+    expect(bytes).toHaveLength(RING_CAP_BYTES);
+    expect(bytes.subarray(bytes.length - 3).toString()).toBe('END');
+  });
+
+  it('모르는 세션의 재생 요청에는 답하지 않는다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial });
+    client.start();
+    d.open();
+    d.deliver({ type: 'replay.request', sessionId: 'nope' });
+    // 빈 재생으로 답하면 "끝난 세션"과 "아직 출력이 없는 세션"이 뷰어에게 같아진다.
+    expect(d.sent.filter((f) => f.type === 'replay')).toHaveLength(0);
+  });
+});
+
+describe('#141-6 러너 재접속 (백오프 경로)', () => {
+  it('끊기면 백오프로 재접속하고, 붙으면 진행 중인 세션을 다시 announce 한다', () => {
+    const d = fakeDialer();
+    const s = fakeSchedule();
+    const client = createRelayClient({
+      murmurUrl: 'http://x', pat: 'p', dial: d.dial, schedule: s.schedule, initialBackoffMs: 1_000,
+    });
+    client.start();
+    d.open();
+    const session = client.openSession({ ...SESSION });
+    session.push(RAW);
+
+    // 서버가 재시작해 소켓이 끊긴다.
+    d.drop();
+    expect(client.connected()).toBe(false);
+    expect(s.delays()).toEqual([1_000]);
+
+    // 백오프가 만료돼 다시 붙는다.
+    s.fire();
+    expect(d.dials).toHaveLength(2);
+    d.open();
+
+    // **진행 중인 세션이 다시 announce 돼야 한다.** 서버는 소켓이 끊기면 그 러너의 세션
+    // 레지스트리를 버리므로, 이 announce 가 없으면 진행 중인 턴에 다시 붙을 방법이 없다.
+    const announces = d.sent.filter((f) => f.type === 'announce') as { sessions: { sessionId: string }[] }[];
+    expect(announces).toHaveLength(2);
+    expect(announces[1]!.sessions.map((x) => x.sessionId)).toEqual([session.sessionId]);
+  });
+
+  it('백오프는 policy.ts 의 곡선을 따르고, 붙으면 초기값으로 되돌아간다', () => {
+    const d = fakeDialer();
+    const s = fakeSchedule();
+    const client = createRelayClient({
+      murmurUrl: 'http://x', pat: 'p', dial: d.dial, schedule: s.schedule, initialBackoffMs: 1_000,
+    });
+    client.start();
+
+    // 세 번 연속 실패 — 곡선은 poll 루프와 **같은 함수**를 써야 한다. 릴레이만의 곡선을
+    // 두면 러너 한 프로세스가 서버 재시작에 두 속도로 반응하고, 둘이 갈라진다.
+    d.drop(); s.fire();
+    d.drop(); s.fire();
+    d.drop();
+    expect(s.delays()).toEqual([1_000, nextBackoffMs(1_000), nextBackoffMs(nextBackoffMs(1_000))]);
+
+    // 붙으면 초기화된다 — 안 하면 한 번 오래 끊긴 뒤 짧은 끊김에도 1분씩 기다린다.
+    s.fire();
+    d.open();
+    d.drop();
+    expect(s.delays().at(-1)).toBe(1_000);
+  });
+
+  it('종료 뒤에는 재접속하지 않는다', () => {
+    const d = fakeDialer();
+    const s = fakeSchedule();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial, schedule: s.schedule });
+    client.start();
+    d.open();
+    client.stop();
+    d.drop();
+    // 러너가 물러나는 중에 재접속을 예약하면 프로세스가 끝나지 않는다.
+    expect(s.delays()).toEqual([]);
+    expect(d.closedCount()).toBe(1);
+  });
+});
+
+describe('#141 세션의 끝', () => {
+  it('세션을 닫으면 서버에 알리고, 그 뒤 재생 요청에는 답하지 않는다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial });
+    client.start();
+    d.open();
+    const session = client.openSession({ ...SESSION });
+    session.close();
+    expect(d.sent.at(-1)).toEqual({ type: 'session.ended', sessionId: session.sessionId });
+
+    d.deliver({ type: 'replay.request', sessionId: session.sessionId });
+    expect(d.sent.filter((f) => f.type === 'replay')).toHaveLength(0);
+  });
+
+  it('닫힌 세션은 재접속 announce 에도 실리지 않는다', () => {
+    const d = fakeDialer();
+    const s = fakeSchedule();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial, schedule: s.schedule });
+    client.start();
+    d.open();
+    client.openSession({ ...SESSION }).close();
+    d.drop();
+    s.fire();
+    d.open();
+    const announces = d.sent.filter((f) => f.type === 'announce') as { sessions: unknown[] }[];
+    expect(announces.at(-1)!.sessions).toEqual([]);
+  });
+});

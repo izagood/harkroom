@@ -7,24 +7,30 @@ import { Sidebar } from './Sidebar';
 import { ChannelPane } from './ChannelPane';
 import { Notice } from './Notice';
 import { ThreadPanel } from './ThreadPanel';
+import { TerminalPanel } from './TerminalPanel';
 import { SearchPalette } from './SearchPalette';
 import { Sweep } from './Sweep';
 import { Directory } from './Directory';
+import { ChannelDirectory } from './ChannelDirectory';
 import { Inbox } from './Inbox';
 import { SavedMessages } from './SavedMessages';
 import type { SectionId } from './settings/sections';
 
 export function Workspace({ onLogout, onOpenSettings }: {
   onLogout: () => void;
-  onOpenSettings: (section?: SectionId) => void;
+  /** #279: `targetId` 는 "이 에이전트가 선택된 상태로" 라는 뜻이다. */
+  onOpenSettings: (section?: SectionId, targetId?: string) => void;
 }) {
   const threadRootId = useAppStore((s) => s.threadRootId);
+  const terminalAgentId = useAppStore((s) => s.terminalAgentId);
   const history = useAppStore((s) => s.history);
   const historyIndex = useAppStore((s) => s.historyIndex);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchInitialScoped, setSearchInitialScoped] = useState(false);
   const [sweepOpen, setSweepOpen] = useState(false);
   const [directoryOpen, setDirectoryOpen] = useState(false);
+  const [channelDirectoryOpen, setChannelDirectoryOpen] = useState(false);
+  const [directoryAccountId, setDirectoryAccountId] = useState<string | null>(null);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sidebarStorage.loadCollapsed());
@@ -51,6 +57,11 @@ export function Workspace({ onLogout, onOpenSettings }: {
 
   const handleGoForward = useCallback(async () => {
     await getController().goForward();
+  }, []);
+
+  const handleOpenDirectory = useCallback((accountId: string | null = null) => {
+    setDirectoryAccountId(accountId);
+    setDirectoryOpen(true);
   }, []);
 
   useEffect(() => {
@@ -106,7 +117,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
       <Sidebar
         onLogout={onLogout}
         onOpenSettings={onOpenSettings}
-        onOpenDirectory={() => setDirectoryOpen(true)}
+        onOpenDirectory={() => handleOpenDirectory(null)}
+        onOpenChannelDirectory={() => setChannelDirectoryOpen(true)}
         onOpenInbox={() => setInboxOpen(true)}
         onOpenSaved={() => setSavedOpen(true)}
         collapsed={sidebarCollapsed}
@@ -169,13 +181,28 @@ export function Workspace({ onLogout, onOpenSettings }: {
             보여 줄 자리 자체가 없다. */}
         <Notice />
         <div className="flex flex-1 overflow-hidden">
-          <ChannelPane onOpenSearch={handleOpenSearch} />
-          {threadRootId && <ThreadPanel />}
+          {/* 멘션 이동(#279)의 배선은 **여기**다. 초판이 이 두 줄을 빼먹어 앱에서 모든
+              멘션이 눌러도 아무 일이 없는 버튼이었다 — 단위 테스트는 props 를 손으로
+              넘겨 그 사실을 볼 수 없었다. `test/mentionClick.test.tsx` 가 이 화면을
+              통째로 띄워 지킨다. */}
+          <ChannelPane
+            onOpenSearch={handleOpenSearch}
+            onOpenDirectory={handleOpenDirectory}
+            onOpenSettings={onOpenSettings}
+          />
+          {threadRootId && (
+            <ThreadPanel onOpenDirectory={handleOpenDirectory} onOpenSettings={onOpenSettings} />
+          )}
+          {/* #141: 터미널은 스레드 패널과 **같은 자리**를 쓰고 둘이 나란히 열린다.
+              채널 레이아웃 안에 심지 않는다 — `#189`(앱 안 터미널 패널이 어디서 도는가)가
+              열려 있어서, 지금 심으면 그 결정이 코드로 먼저 굳는다. */}
+          {terminalAgentId && <TerminalPanel />}
         </div>
       </div>
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} initialScoped={searchInitialScoped} />
       <Sweep open={sweepOpen} onClose={() => setSweepOpen(false)} />
-      <Directory open={directoryOpen} onClose={() => setDirectoryOpen(false)} />
+      <Directory open={directoryOpen} onClose={() => { setDirectoryOpen(false); setDirectoryAccountId(null); }} accountId={directoryAccountId} />
+      <ChannelDirectory open={channelDirectoryOpen} onClose={() => setChannelDirectoryOpen(false)} />
       <Inbox open={inboxOpen} onClose={() => setInboxOpen(false)} />
       <SavedMessages open={savedOpen} onClose={() => setSavedOpen(false)} />
     </div>

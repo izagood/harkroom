@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus } from '@murmur/shared';
+import type { AccountStatus, AccountView, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus } from '@murmur/shared';
+import type { RunnerState } from '../lib/runnerLauncher';
 
 export interface HistoryEntry {
   channelId: string;
@@ -31,6 +32,12 @@ export interface AppState {
    */
   dividerSeq: Record<string, number>;
   online: string[];
+  /**
+   * 지금 터미널 패널이 붙어 있는 에이전트 계정 id(#141). `null` 은 패널이 닫혀 있다는
+   * 뜻이다 — 세션 id 가 아니라 **에이전트** id 인 이유: 칩은 에이전트별로 뜨고(스펙 §5,
+   * 한 스레드에 세션이 N개일 수 있다), 어느 세션에 붙을지는 패널이 목록을 받아 정한다.
+   */
+  terminalAgentId: string | null;
   leases: LeaseRow[];
   connected: boolean;
   /**
@@ -83,6 +90,12 @@ export interface AppState {
    */
   channelMembers: Record<string, ChannelMemberRow[]>;
   /**
+   * 채널별 자동 멘션 에이전트(#173). `pins` 와 같은 채널 전역 사실이다 — 내 취향이 아니라
+   * 누가 봐도 같은 값이라 비밀로 다룰 것이 없다. `channelMembers` 와 같이 **키가 없는 것과
+   * 빈 배열은 다르다**: 없으면 아직 못 받았다, 빈 배열이면 정말 아무도 없다.
+   */
+  channelAutoMentions: Record<string, ChannelAutoMentionRow[]>;
+  /**
    * 스코프별 초안. 키는 scopeKey (channelId 또는 thread:<rootId>).
    * 설정과 달리 사용자가 쓴 문장 전체이므로 로그아웃 시 반드시 삭제한다.
    */
@@ -116,6 +129,8 @@ export interface AppState {
    * 다시 앞뒤 대화를 스크롤 밖으로 밀어내지 않는다.
    */
   expandedMessageIds: Record<string, true>;
+  /** 에이전트별 러너 실행 상태. agentId → state */
+  runnerStates: Record<string, RunnerState>;
   set(partial: Partial<AppState>): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
@@ -148,10 +163,10 @@ export interface AppState {
 const initial = {
   me: null, accounts: {}, groups: [], channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
-  online: [], leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
-  channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, drafts: {},
+  online: [], terminalAgentId: null, leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
+  channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
-  expandedMessageIds: {}, savedIds: [], savedCount: 0,
+  expandedMessageIds: {}, runnerStates: {}, savedIds: [], savedCount: 0,
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
