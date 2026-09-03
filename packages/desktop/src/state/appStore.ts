@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
-import type { AccountView, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow } from '@murmur/shared';
+import type { AccountStatus, AccountView, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow } from '@murmur/shared';
 
 export interface AppState {
   me: AccountView | null;
@@ -36,6 +36,12 @@ export interface AppState {
   upsertMessages(channelId: string, rows: MessageRow[]): void;
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
   removeMessage(channelId: string, messageId: string): void;
+  /**
+   * 사람이 고른 상태를 반영한다(#186). `online` 은 **건드리지 않는다** — 연결 여부는
+   * presence 이벤트만이 정한다. 둘을 한 자리에서 갱신하면 상태 변경이 연결 표시를
+   * 흔들어, 소켓이 멀쩡한 사람이 잠깐 회색으로 보인다.
+   */
+  applyStatus(accountId: string, status: AccountStatus, statusText: string | null): void;
   reset(): void;
   clearDrafts(): void;
   setDraft(scopeKey: string, draft: string): void;
@@ -86,6 +92,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     const rows = get().messages[channelId];
     if (!rows) return;
     set({ messages: { ...get().messages, [channelId]: rows.filter((m) => m.id !== messageId) } });
+  },
+  applyStatus: (accountId, status, statusText) => {
+    const cur = get().accounts[accountId];
+    // 처음 보는 계정이면 디렉터리에 없다는 뜻이다. 여기서 껍데기를 만들면 handle 없는
+    // 계정이 멘션 후보·작성자 표에 섞인다 — 계정을 다시 받아오는 것은 컨트롤러의 몫이다.
+    if (!cur) return;
+    const patched = { ...cur, status, statusText };
+    const me = get().me;
+    // `me` 는 accounts 와 **별도 객체**다. 한쪽만 고치면 내가 정한 상태가 남의 화면에는
+    // 보이는데 내 사이드바에는 안 보이는(또는 그 반대인) 갈라짐이 생긴다.
+    set({
+      accounts: { ...get().accounts, [accountId]: patched },
+      ...(me?.id === accountId ? { me: { ...me, status, statusText } } : {}),
+    });
   },
   reset: () => set({ ...initial }),
   clearDrafts: () => { set({ drafts: {} }); draftsStorage.clear(); },
