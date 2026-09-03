@@ -1,10 +1,44 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AGENT_HARNESSES, RUNNABLE_HARNESSES,
   type AgentConfig, type AgentDefaults, type AgentView, type MentionPermission, type PatView,
 } from '@murmur/shared';
 import { getController } from '../../state/controller';
 import { useAppStore } from '../../state/appStore';
+
+/** #177: 클립보드가 없거나 거부되면 **조용히 실패하지 않는다** — 화면에 있는 그 명령
+ *  텍스트를 선택 상태로 만들어 사람이 ⌘C 할 수 있게 하고, 오류를 눈에 보이게 남긴다.
+ *  화면 밖 textarea + `document.execCommand('copy')` 는 쓰지 않는다: 사람이 볼 수도
+ *  선택할 수도 없는 노드를 곧바로 지우고, execCommand 는 복사에 실패해도 던지지 않고
+ *  `false` 만 돌려주므로 "복사됨"을 거짓으로 띄우게 된다.
+ *  `target` 은 복사 대상 명령이 그려진 노드다(선택해 줄 대상). */
+const copyToClipboard = async (
+  text: string,
+  target: HTMLElement | null,
+  onError: (msg: string) => void,
+): Promise<boolean> => {
+  // 비보안 컨텍스트에서는 브라우저가 `navigator.clipboard` 를 아예 노출하지 않는다 —
+  // 그래서 `isSecureContext` 를 따로 보지 않고 존재 여부만 본다(MessageItem 과 같은 판정).
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // 권한 거부 등 → 아래 선택 경로로 내려간다. 성공했다고 하지 않는다.
+    }
+  }
+  const selection = window.getSelection?.();
+  if (target && selection) {
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    onError('클립보드를 쓸 수 없다 — 명령을 선택해 두었으니 ⌘C 로 복사한다');
+  } else {
+    onError('클립보드를 쓸 수 없고 명령을 선택할 수도 없다 — 명령을 손으로 옮겨 적는다');
+  }
+  return false;
+};
 
 /** AGENT_HARNESSES 에조차 없는 harness. 없는 것은 사용자의 CLI 가 아니라 murmur 의 구현이므로
  *  '설치 안 됨'이 아니라 '지원 예정'이다. AGENT_HARNESSES 에는 있지만 아직 못 돌리는 것(RUNNABLE_HARNESSES
@@ -71,7 +105,7 @@ const draftOf = (a: AgentView): Draft => ({
   ownerAccountId: a.ownerAccountId,
 });
 
-export function AgentsSettings() {
+export function AgentsSettings({ targetId }: { targetId?: string }) {
   const [agents, setAgents] = useState<AgentView[]>([]);
   const [selected, setSelected] = useState<AgentView | null>(null);
   // 초안이 null 인 것은 '무엇을 기본으로 둘지 아직 모른다'는 뜻이다 — 기본값을 못 읽었는데
@@ -109,6 +143,13 @@ export function AgentsSettings() {
   const [newPatLabel, setNewPatLabel] = useState('runner');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // 복사 성공 시 버튼 문구를 잠깐 "복사됨"으로 바꾼다(2초).
+  const [copySuccess, setCopySuccess] = useState<string | null>(null);
+  // 클립보드를 못 쓸 때 선택해 줄 명령 노드들. 화면 밖 복제가 아니라 사람이 보고 있는 그 텍스트다.
+  const fullCommandRef = useRef<HTMLSpanElement | null>(null);
+  const templateCommandRef = useRef<HTMLSpanElement | null>(null);
+  // #177: "잃었으면 새로 발급한다" 를 글로만 두면 발급 자리를 찾아야 한다 — 진입점으로 보낸다.
+  const newPatLabelRef = useRef<HTMLInputElement | null>(null);
   const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
   const accounts = useAppStore((s) => s.accounts);
   // #176: 생존(presence)과 마지막 활동은 **다른 두 사실**이라 두 자리에서 온다 — presence 는
@@ -123,6 +164,22 @@ export function AgentsSettings() {
     void getController().listAgents().then(setAgents).catch(() => setError('에이전트 목록을 받지 못했다'));
   };
   useEffect(reload, []);
+
+  /**
+   * 멘션에서 이 화면으로 왔다면 그 에이전트를 고른 상태로 시작한다(#279).
+   *
+   * **한 targetId 에 한 번만** 고른다. `agents` 는 저장·재조회마다 새 배열이라 그것만 보고
+   * 다시 고르면, 사람이 다른 에이전트를 고른 뒤 저장한 순간 화면이 원래 대상으로 튀고
+   * `pick` 이 초안을 갈아 사람이 쓰던 편집이 사라진다.
+   */
+  const pickedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!targetId || pickedFor.current === targetId) return;
+    const agent = agents.find((a) => a.id === targetId);
+    if (!agent) return;
+    pickedFor.current = targetId;
+    pick(agent);
+  }, [targetId, agents]);
 
   // 기본값은 admin 전용 라우트다(`GET /settings/agent-defaults`). admin 이 아닌 사람에게
   // 부르면 403 이 나고, 그 403 을 오류로 그리면 아무 잘못도 없는 화면에 붉은 글이 뜬다.
@@ -842,6 +899,7 @@ export function AgentsSettings() {
                 </div>
                 <div className="mt-2 flex items-center gap-2">
                   <input
+                    ref={newPatLabelRef}
                     className="w-40 rounded border border-zinc-300 px-2 py-1 text-xs"
                     aria-label="New PAT label"
                     placeholder="runner"
@@ -878,8 +936,24 @@ export function AgentsSettings() {
                 {/* #125: 이 명령의 토큰을 자르고 말줄임표를 붙여 두면, 그대로 복사해 실행했을 때
                     인증이 실패한다 — "완성된 명령"처럼 보이는데 아니었다. 전체 토큰을 싣는다.
                     바로 위 코드 블록에 이미 전체 토큰이 있으므로 중복 노출이 새 위험은 아니다. */}
-                <div className="mt-2 break-all font-mono text-[11px] text-amber-900">
-                  MURMUR_PAT={pat} pnpm --filter @murmur/agent start
+                <div className="mt-2 flex items-center gap-2 break-all font-mono text-[11px] text-amber-900">
+                  <span ref={fullCommandRef}>MURMUR_PAT={pat} pnpm --filter @murmur/agent start</span>
+                  <button
+                    className="shrink-0 rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-900 hover:bg-amber-200"
+                    aria-label="명령 복사"
+                    onClick={async () => {
+                      // #125: 토큰을 자르거나 말줄임표를 붙이지 않는다 — 클립보드에도 명령 전체가 들어간다.
+                      const cmd = `MURMUR_PAT=${pat} pnpm --filter @murmur/agent start`;
+                      setError(null);
+                      const ok = await copyToClipboard(cmd, fullCommandRef.current, setError);
+                      if (ok) {
+                        setCopySuccess('full');
+                        setTimeout(() => setCopySuccess((s) => s === 'full' ? null : s), 2000);
+                      }
+                    }}
+                  >
+                    {copySuccess === 'full' ? '복사됨' : '복사'}
+                  </button>
                 </div>
                 {/* #125: 등록만으로는 아무 일도 일어나지 않는다. 실측으로 에이전트 6개 중 4개가
                     러너를 가져본 적이 없고 그중 2개는 미읽음 멘션이 쌓인 채였다. 사용자의 기대는
@@ -889,6 +963,48 @@ export function AgentsSettings() {
                   murmur 는 러너를 띄우지 않는다. <strong>위 명령을 직접 실행해 러너를 붙이기
                   전까지 이 에이전트는 멘션에 답하지 않는다</strong> — 멘션은 쌓이기만 한다.
                   murmur 저장소를 체크아웃한 머신에서 실행한다.
+                </p>
+              </div>
+            )}
+
+            {/* #177: 러너 실행 명령 틀은 **항상** 보인다 — PAT 를 막 발급한 직후만이 아니다.
+                토큰은 해시만 저장하므로 재노출이 불가능하다(design.md §4). 그래서 여기서는
+                자리표시가 든 틀만 보이고, 전체 토큰이 든 명령은 위의 발급 직후 화면에만 있다.
+                PAT 개수로 이 절을 가리지 않는다: PAT 가 0 개인 에이전트야말로 "무엇을 실행해야
+                하는가"를 알아야 하고, 틀에는 비밀이 없다. */}
+            {selected && isAdmin && (
+              <div className="rounded border border-zinc-200 p-3">
+                <div className="text-xs font-medium text-zinc-600">러너 실행</div>
+                <div className="mt-2 flex items-center gap-2 break-all font-mono text-[11px] text-zinc-700">
+                  <span ref={templateCommandRef}>MURMUR_PAT=&lt;발급한 토큰&gt; pnpm --filter @murmur/agent start</span>
+                  <button
+                    className="shrink-0 rounded border border-zinc-300 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-700 hover:bg-zinc-100"
+                    aria-label="명령 복사"
+                    onClick={async () => {
+                      // 틀은 자리표시까지 통째로 복사한다 — 사람이 그 자리만 토큰으로 바꿔 쓴다.
+                      const cmd = 'MURMUR_PAT=<발급한 토큰> pnpm --filter @murmur/agent start';
+                      setError(null);
+                      const ok = await copyToClipboard(cmd, templateCommandRef.current, setError);
+                      if (ok) {
+                        setCopySuccess('template');
+                        setTimeout(() => setCopySuccess((s) => s === 'template' ? null : s), 2000);
+                      }
+                    }}
+                  >
+                    {copySuccess === 'template' ? '복사됨' : '복사'}
+                  </button>
+                </div>
+                <p className="mt-2 text-[11px] text-zinc-500">
+                  토큰은 발급 순간에만 보인다. 잃었으면 새로 발급한다.{' '}
+                  <button
+                    className="text-indigo-600 underline"
+                    onClick={() => {
+                      newPatLabelRef.current?.scrollIntoView({ block: 'center' });
+                      newPatLabelRef.current?.focus();
+                    }}
+                  >
+                    PAT 발급으로 이동
+                  </button>
                 </p>
               </div>
             )}

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
+import { listHandleGroups } from '../services/handleGroups.js';
 
 export async function registerDirectoryRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.get('/accounts', { preHandler: app.requireAccount }, async () => {
@@ -18,7 +19,11 @@ export async function registerDirectoryRoutes(app: FastifyInstance, pool: Pool):
        from account a left join agent_config c on c.account_id = a.id
        order by a.handle`,
     );
-    return { accounts: res.rows };
+    // 집합 목록은 `listHandleGroups` 하나가 낸다(#285). 여기에 질의 사본을 두면 서버가
+    // 집합 행에 필드를 하나 더할 때(구성원 수가 그것이었다) 이쪽만 낡아, 같은 `groups` 를
+    // 두 라우트가 **다른 모양**으로 주게 된다 — 화면은 어느 쪽을 받았는지 모른다.
+    const groups = await listHandleGroups(pool);
+    return { accounts: res.rows, groups };
   });
 
   app.get('/dms', { preHandler: app.requireAccount }, async (req) => {

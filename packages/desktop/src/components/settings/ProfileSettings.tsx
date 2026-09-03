@@ -39,7 +39,7 @@ function AvatarRow() {
       <div className="flex items-center gap-4">
         <span className="font-medium text-zinc-900">Profile photo</span>
         <span className="ml-auto flex items-center gap-3">
-          <Identity account={me ?? undefined} className="h-10 w-10 text-base" />
+          <Identity account={me ?? undefined} className="h-10 w-10 text-base" variant="avatar" />
           <input
             ref={pick}
             type="file"

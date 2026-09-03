@@ -173,7 +173,7 @@ describe('Inbox (#185)', () => {
     render(
       <Sidebar
         onOpenDirectory={vi.fn()}
-        onOpenInbox={onOpenInbox}
+        onOpenInbox={onOpenInbox} onOpenSaved={() => {}}
         onLogout={vi.fn()}
         onOpenSettings={vi.fn()}
         collapsed={false}
