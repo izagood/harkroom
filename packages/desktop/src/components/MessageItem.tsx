@@ -72,7 +72,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   };
 
   const hoverOnly = 'opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100';
-  const iconBtn = 'rounded p-1 text-zinc-500 hover:bg-zinc-100';
+  const iconBtn = 'rounded p-1 text-fg-subtle hover:bg-surface-raised';
 
   /**
    * 클립보드에 담는다(#178). **실패를 조용히 삼키지 않는다** — 삼키면 사람은
@@ -154,7 +154,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
       ref={rowRef}
       // 강조는 system 배경을 덮는다 — 둘 다 배경을 칠하면 어느 쪽이 이길지 클래스 문자열이
       // 정하지 못한다. 링크로 방금 왔다는 사실이 더 급한 정보다.
-      className={`group relative flex gap-2 px-4 py-1.5 hover:bg-zinc-50 ${isSystem ? 'border-l-2 border-amber-400' : ''} ${highlighted ? 'bg-amber-100 ring-1 ring-amber-300' : isSystem ? 'bg-amber-50/50' : ''}`}
+      className={`group relative flex gap-2 px-4 py-1.5 hover:bg-surface ${isSystem ? 'border-l-2 border-warning-border' : ''} ${highlighted ? 'bg-warning-surface-strong ring-1 ring-warning-border' : isSystem ? 'bg-warning-surface' : ''}`}
       data-highlighted={highlighted ? 'true' : undefined}
     >
       {/* 작성자 아바타 거터 - 메시지 행 왼쪽에 고정폭 열로 배치. #161 2단계.
@@ -178,9 +178,9 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               (TerminalChip 이 판정한다) — 이름줄에 두는 이유는 소유자 배지와 같다:
               32px 거터에 넣으면 넘친다(#277). */}
           <TerminalChip account={author} />
-          {avcsType && <span className="rounded bg-amber-200 px-1 text-[10px] text-amber-900">{avcsType}</span>}
-          <span className="text-[11px] text-zinc-400">{time}</span>
-          {message.editedAt && <span className="text-[11px] text-zinc-400">(edited)</span>}
+          {avcsType && <span className="rounded bg-warning-surface-strong px-1 text-[10px] text-warning">{avcsType}</span>}
+          <span className="text-[11px] text-fg-muted">{time}</span>
+          {message.editedAt && <span className="text-[11px] text-fg-muted">(edited)</span>}
         </div>
 
         {draft === null ? (
@@ -210,7 +210,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 // 보여준다. 참여자 얼굴은 장식이다 — 접근 가능한 이름은 버튼 하나에 붙는다.
                 // 예: "51개의 답글, 마지막 답글 오후 8:24". 이미지가 각각 이름을 갖지
                 // 않도록 opacity 로 숨기고 sr-only 텍스트도 주지 않는다.
-                className="mt-1 self-start flex items-center gap-1 rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[11px] text-indigo-700"
+                className="mt-1 self-start flex items-center gap-1 rounded border border-accent bg-accent-surface px-1.5 py-0.5 text-[11px] text-accent"
                 onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
                 aria-label={`${message.replyCount} ${message.replyCount === 1 ? 'reply' : 'replies'}${lastReplyTime ? `, last reply ${lastReplyTime}` : ''}`}
               >
@@ -218,25 +218,25 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                     읽지 않도록 aria-hidden 처리하고 sr-only 도 안 준다. #277: variant="avatar" */}
                 <span className="flex -space-x-1" aria-hidden="true">
                   {displayedParticipants.map((id) => (
-                    <span key={id} className="ring-1 ring-white">
+                    <span key={id} className="ring-1 ring-accent-surface">
                       <Identity account={accounts[id]} className="h-4 w-4 text-[8px]" variant="avatar" />
                     </span>
                   ))}
                   {remainingCount > 0 && (
-                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-zinc-200 text-[8px] font-medium text-zinc-600 ring-1 ring-white">
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-surface-hover text-[8px] font-medium text-fg-muted ring-1 ring-accent-surface">
                       +{remainingCount}
                     </span>
                   )}
                 </span>
                 <span>
                   {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
-                  {lastReplyTime && <span className="ml-1 text-zinc-500">{lastReplyTime}</span>}
+                  {lastReplyTime && <span className="ml-1 text-fg-subtle">{lastReplyTime}</span>}
                 </span>
               </button>
             )}
             {!inThread && message.replyCount === null && (
               <button
-                className={`mt-1 self-start rounded border px-1.5 text-[11px] border-zinc-300 text-zinc-600 ${hoverOnly}`}
+                className={`mt-1 self-start rounded border px-1.5 text-[11px] border-border text-fg-muted ${hoverOnly}`}
                 onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
               >
                 Reply in thread
@@ -246,7 +246,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 채널에서 볼 때 이 버튼이 필요하다. "View in thread" 로 표시한다. */}
             {!inThread && message.alsoInChannel && message.threadRootId && (
               <button
-                className="mt-1 self-start rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[11px] text-indigo-700"
+                className="mt-1 self-start rounded border border-accent bg-accent-surface px-1.5 py-0.5 text-[11px] text-accent"
                 onClick={() => void getController().openThread(message.threadRootId!)}
               >
                 View in thread
@@ -256,7 +256,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
         ) : (
           <div className="space-y-1">
             <textarea
-              className="w-full resize-none rounded border border-zinc-300 px-2 py-1"
+              className="w-full resize-none rounded border border-border bg-field px-2 py-1"
               rows={2}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -266,8 +266,8 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               }}
             />
             <div className="flex gap-1">
-              <button className="rounded border border-zinc-300 px-1.5 text-[11px] text-zinc-600" onClick={save}>Save</button>
-              <button className="rounded border border-zinc-300 px-1.5 text-[11px] text-zinc-600" onClick={() => setDraft(null)}>Cancel</button>
+              <button className="rounded border border-border px-1.5 text-[11px] text-fg-muted" onClick={save}>Save</button>
+              <button className="rounded border border-border px-1.5 text-[11px] text-fg-muted" onClick={() => setDraft(null)}>Cancel</button>
             </div>
           </div>
         )}
@@ -279,7 +279,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
             숨기는 방식은 반드시 opacity 다 — visibility:hidden 은 접근성 트리에서
             요소를 지워 키보드 경로를 없앤다(Reactions.tsx 주석이 그 비용을 기록한다). */}
         {draft === null && (
-          <div role="group" aria-label="message toolbar" className={`absolute right-2 top-1 flex items-center gap-0.5 rounded border border-zinc-200 bg-white px-1 py-0.5 shadow-sm ${hoverOnly}`}>
+          <div role="group" aria-label="message toolbar" className={`absolute right-2 top-1 flex items-center gap-0.5 rounded border border-border bg-surface-raised px-1 py-0.5 shadow-sm ${hoverOnly}`}>
             <InlineReactionButtons message={message} />
             <ReactionPicker message={message} />
             {confirmingDelete ? (
@@ -287,13 +287,13 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               // 두면 항목을 누르는 순간 메뉴가 닫히면서 확인 단계가 사라진다.
               <>
                 <button
-                  className="rounded border border-red-300 bg-red-50 px-1.5 text-[11px] text-red-700"
+                  className="rounded border border-danger-border bg-danger-surface px-1.5 text-[11px] text-danger"
                   onClick={() => { setConfirmingDelete(false); void getController().deleteMessage(message.id); }}
                 >
                   Really delete
                 </button>
                 <button
-                  className="rounded border border-zinc-300 px-1.5 text-[11px] text-zinc-600"
+                  className="rounded border border-border px-1.5 text-[11px] text-fg-muted"
                   onClick={() => setConfirmingDelete(false)}
                 >
                   Keep

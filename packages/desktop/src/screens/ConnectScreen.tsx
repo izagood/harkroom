@@ -49,14 +49,14 @@ export function ConnectScreen({ onConnected, initialError = null }: { onConnecte
     }
   };
 
-  const field = 'w-full rounded border border-zinc-300 px-3 py-2';
+  const field = 'w-full rounded border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
   return (
-    <div className="flex h-screen items-center justify-center bg-zinc-100">
+    <div className="flex h-screen items-center justify-center bg-surface-sunken">
       <form
-        className="w-80 space-y-3 rounded-lg bg-white p-6 shadow"
+        className="w-80 space-y-3 rounded-lg bg-surface-raised p-6 shadow"
         onSubmit={(e) => { e.preventDefault(); void submit(); }}
       >
-        <div className="flex flex-col items-center gap-1 text-zinc-900">
+        <div className="flex flex-col items-center gap-1 text-fg">
           <Logo size={48} decorative />
           <h1 className="text-lg font-bold">murmur</h1>
         </div>
@@ -100,12 +100,12 @@ export function ConnectScreen({ onConnected, initialError = null }: { onConnecte
           Password
           <input className={field} type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
         </label>
-        {error && <p className="text-xs text-red-600">{error}</p>}
+        {error && <p className="text-xs text-danger">{error}</p>}
         <button
           type="submit"
           // 초대 가입은 토큰 없이 보내면 서버가 400 을낸다 — 보내기 전에 막는다.
           disabled={busy || (mode === 'register' && inviteToken.trim() === '')}
-          className="w-full rounded bg-indigo-600 py-2 font-medium text-white disabled:opacity-50"
+          className="w-full rounded bg-accent py-2 font-medium text-fg-on-strong disabled:opacity-50"
         >
           {mode === 'signin' ? 'Sign in' : mode === 'bootstrap' ? 'Create account' : 'Join with invite'}
         </button>
@@ -113,14 +113,14 @@ export function ConnectScreen({ onConnected, initialError = null }: { onConnecte
           <div className="space-y-1">
             <button
               type="button"
-              className="w-full text-xs text-zinc-500 underline"
+              className="w-full text-xs text-fg-subtle underline"
               onClick={() => setMode('register')}
             >
               Have an invite token? Join this workspace
             </button>
             <button
               type="button"
-              className="w-full text-xs text-zinc-500 underline"
+              className="w-full text-xs text-fg-subtle underline"
               onClick={() => setMode('bootstrap')}
             >
               First run? Create the admin account
@@ -129,7 +129,7 @@ export function ConnectScreen({ onConnected, initialError = null }: { onConnecte
         ) : (
           <button
             type="button"
-            className="w-full text-xs text-zinc-500 underline"
+            className="w-full text-xs text-fg-subtle underline"
             onClick={() => { setMode('signin'); setError(null); }}
           >
             Back to sign in

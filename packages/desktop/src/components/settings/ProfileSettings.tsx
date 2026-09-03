@@ -38,7 +38,7 @@ function AvatarRow() {
   return (
     <div className="px-4 py-3">
       <div className="flex items-center gap-4">
-        <span className="font-medium text-zinc-900">Profile photo</span>
+        <span className="font-medium text-fg">Profile photo</span>
         <span className="ml-auto flex items-center gap-3">
           <Identity account={me ?? undefined} className="h-10 w-10 text-base" variant="avatar" />
           <input
@@ -50,7 +50,7 @@ function AvatarRow() {
             onChange={(e) => { const f = e.target.files?.[0]; if (f) void apply(f); }}
           />
           <button
-            className="rounded-lg border border-zinc-300 px-3 py-1.5 font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+            className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg hover:bg-surface disabled:opacity-50"
             disabled={busy}
             onClick={() => pick.current?.click()}
           >
@@ -58,7 +58,7 @@ function AvatarRow() {
           </button>
           {me?.avatarAttachmentId && (
             <button
-              className="rounded-lg border border-zinc-300 px-3 py-1.5 font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+              className="rounded-lg border border-border px-3 py-1.5 font-medium text-danger hover:bg-danger-surface disabled:opacity-50"
               disabled={busy}
               onClick={() => void apply(null)}
             >
@@ -69,8 +69,8 @@ function AvatarRow() {
       </div>
       {/* 눈에 보이게 낸다. `sr-only` 로만 두면 스크린리더가 아닌 사람에게는 **아무 일도
           일어나지 않은 것**과 구분되지 않는다 — 버튼이 잠깐 눌렸다 풀리고 사진은 그대로다.
-          이 저장소의 다른 오류 표면과 같은 모양을 쓴다(Composer.tsx 의 업로드 오류). */}
-      {error && <p role="alert" className="mt-1 text-[11px] text-red-600">{error}</p>}
+          이 저장소의 다른 오류 표면과 같은 모양을 쓴다(`Composer.tsx` 의 업로드 오류). */}
+      {error && <p role="alert" className="mt-1 text-[11px] text-danger">{error}</p>}
     </div>
   );
 }
@@ -144,10 +144,10 @@ function HandleRow() {
   if (!editing) {
     return (
       <div className="flex items-center gap-4 px-4 py-3">
-        <span className="font-medium text-zinc-900">불리는 이름</span>
-        <span className="ml-auto min-w-0 truncate text-zinc-600">@{me?.handle ?? '—'}</span>
+        <span className="font-medium text-fg">불리는 이름</span>
+        <span className="ml-auto min-w-0 truncate text-fg-muted">@{me?.handle ?? '—'}</span>
         <button
-          className="shrink-0 rounded-lg border border-zinc-300 px-3 py-1.5 font-medium text-zinc-700 hover:bg-zinc-50"
+          className="shrink-0 rounded-lg border border-border px-3 py-1.5 font-medium hover:bg-surface"
           onClick={startEdit}
         >
           바꾸기
@@ -159,25 +159,25 @@ function HandleRow() {
   return (
     <div className="flex flex-col gap-3 px-4 py-3">
       <div className="flex items-center gap-4">
-        <span className="font-medium text-zinc-900">불리는 이름</span>
+        <span className="font-medium text-fg">불리는 이름</span>
         <div className="ml-auto flex items-center gap-2">
           <input
             type="text"
             value={newHandle}
             onChange={(e) => setNewHandle(e.target.value)}
-            className="w-40 rounded-lg border border-zinc-300 px-2 py-1 text-sm text-zinc-900 focus:border-indigo-500 focus:outline-none"
+            className="w-40 rounded-lg border border-border bg-field px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none"
             placeholder="새 이름"
           />
           {!confirming ? (
             <>
               <button
-                className="rounded-lg border border-zinc-300 px-3 py-1 font-medium text-zinc-700 hover:bg-zinc-50"
+                className="rounded-lg border border-border px-3 py-1 font-medium hover:bg-surface"
                 onClick={cancelEdit}
               >
                 취소
               </button>
               <button
-                className="rounded-lg bg-indigo-600 px-3 py-1 font-medium text-white hover:bg-indigo-700"
+                className="rounded-lg bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover"
                 onClick={requestConfirm}
               >
                 확인
@@ -186,14 +186,14 @@ function HandleRow() {
           ) : (
             <>
               <button
-                className="rounded-lg border border-zinc-300 px-3 py-1 font-medium text-zinc-700 hover:bg-zinc-50"
+                className="rounded-lg border border-border px-3 py-1 font-medium hover:bg-surface"
                 onClick={() => setConfirming(false)}
                 disabled={busy}
               >
                 취소
               </button>
               <button
-                className="rounded-lg bg-indigo-600 px-3 py-1 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                className="rounded-lg bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
                 onClick={apply}
                 disabled={busy}
               >
@@ -204,12 +204,12 @@ function HandleRow() {
         </div>
       </div>
       {confirming && (
-        <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+        <div className="rounded-lg border border-warning-border bg-warning-surface p-3 text-sm text-warning">
           <p className="font-medium">과거 메시지의 멘션도 새 이름으로 표시됩니다.</p>
-          <p className="mt-1 text-amber-700">이 변경은 되돌릴 수 없습니다.</p>
+          <p className="mt-1 text-warning">이 변경은 되돌릴 수 없습니다.</p>
         </div>
       )}
-      {error && <p role="alert" className="text-[11px] text-red-600">{error}</p>}
+      {error && <p role="alert" className="text-[11px] text-danger">{error}</p>}
     </div>
   );
 }
@@ -227,20 +227,24 @@ export function ProfileSettings({ onSignOut }: { onSignOut(): void }) {
         {me?.isAdmin && <ReadonlyRow label="Role" value="Administrator" />}
       </SettingsGroup>
 
-      <p data-testid="profile-readonly-note" className="-mt-6 mb-8 text-zinc-500">
-        Your profile photo is the only thing you can change here.
+      {/* #271 로 handle 은 바꿀 수 있게 됐다 — main 의 문구("handle 과 display name 은
+          만들 때 정해지고 앱에서 바꿀 수 없다")는 이제 사실이 아니다. 무엇이 바뀌고
+          무엇이 안 바뀌는지를 그대로 적는다: 로그인 ID 는 v1 불변이다. */}
+      <p data-testid="profile-readonly-note" className="-mt-6 mb-8 text-fg-subtle">
+        You can change your profile photo and your handle here. Your display name and login ID are
+        set when the account is created and cannot be changed from the app yet.
       </p>
 
       <SettingsGroup>
         <div className="flex items-center gap-4 px-4 py-3">
           <span className="min-w-0 flex-1">
-            <span className="block font-medium text-zinc-900">Sign out</span>
-            <span className="mt-0.5 block text-zinc-500">
+            <span className="block font-medium text-fg">Sign out</span>
+            <span className="mt-0.5 block text-fg-subtle">
               Ends this session on this device only. Your other devices stay signed in.
             </span>
           </span>
           <button
-            className="shrink-0 rounded-lg border border-zinc-300 px-3 py-1.5 font-medium text-red-600 hover:bg-red-50"
+            className="shrink-0 rounded-lg border border-border px-3 py-1.5 font-medium text-danger hover:bg-danger-surface"
             onClick={onSignOut}
           >
             Sign out
