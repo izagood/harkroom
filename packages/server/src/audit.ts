@@ -32,7 +32,12 @@ export type AuditAction =
   | 'channel.member.added' | 'channel.member.removed'
   // #182: 공개 범위 전환. 이 한 번의 조작으로 채널 전체가 전원에게 열리거나 닫힌다 —
   // 'channel.updated' 에 묻어 두면 감사 조회에서 그 사건을 골라낼 수 없다.
-  | 'channel.visibility.changed';
+  | 'channel.visibility.changed'
+  // #172: 에이전트 팀. detail 에는 handle 만 남긴다.
+  | 'team.created' | 'team.updated' | 'team.deleted'
+  | 'team.member.added' | 'team.member.removed'
+  // #172: 채널에 팀 추가.
+  | 'channel.team.added';
 
 export interface AuditEntry {
   action: AuditAction;

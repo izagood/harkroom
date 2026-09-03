@@ -458,3 +458,26 @@ export type WsServerEvent =
    * 받는 사람 자신은 목록에서 빠져 있다 — 자기 그림자를 그리지 않게, 서버가 한 곳에서 거른다.
    */
   | { type: 'typing.changed'; channelId: string; accountIds: string[]; audience: 'all' | string[] };
+
+/** 에이전트 팀 (#172). */
+export interface AgentTeamRow {
+  id: string;
+  name: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+/** 팀원. 에이전트의 handle 과 정보를 함께 준다. */
+export interface AgentTeamMemberRow {
+  accountId: string;
+  handle: string;
+  /** 에이전트 계정이 비활성화되어 있으면 true. */
+  disabled: boolean;
+}
+
+/** 채널에 팀을 추가한 결과. */
+export interface AddTeamToChannelResult {
+  added: string[];
+  skipped: string[];
+  alreadyMember: string[];
+}
