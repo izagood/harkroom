@@ -1,7 +1,18 @@
 import type { Pool, PoolClient } from 'pg';
+import type { ProjectionRuntime } from '@murmur/shared';
 import { emitEvent } from '../events.js';
 import { listBoundRepos } from '../services/channels.js';
 import type { AvcsLogEntry, AvcsServerClient } from './client.js';
+
+/**
+ * 워커가 내보내는 상태(#267). `ProjectionRuntime`(공유 계약) + `connected`.
+ *
+ * `connected` 는 이 객체에 남지만 **`/projection/status` 로는 나가지 않는다** —
+ * `/healthz` 의 사실이다(shared 의 `ProjectionStatus` 주석 참고). 저장 자리는 한 곳이다:
+ * 예전에는 `this.connected` 와 상태 객체 안의 사본이 따로 있었고, 갱신이 한쪽에만
+ * 가서 `status().connected` 가 영구히 false 였다.
+ */
+export type ProjectionWorkerStatus = ProjectionRuntime & { connected: boolean };
 
 export interface ProjectionDeps {
   pool: Pool;
@@ -31,13 +42,26 @@ async function actorLabel(client: PoolClient, keyId: string | null): Promise<str
 
 export class ProjectionWorker {
   private running = false;
-  private connected = false;
   private loop: Promise<void> | null = null;
+  /**
+   * 상태의 **유일한 저장 자리**. 워커가 만들어졌다는 것 자체가 `AVCS_BASE_URL` 이
+   * 있었다는 뜻이므로 `configured` 는 여기서 항상 true 다 — 없는 경우는 워커가 아예
+   * 없고, `main.ts` 가 그 자리를 대신 답한다.
+   */
+  private runtime: ProjectionWorkerStatus = {
+    configured: true,
+    connected: false,
+    repo: null,
+    lastLogIndex: 0,
+    lastPolledAt: null,
+    lastAdvancedAt: null,
+    lastError: null,
+  };
 
   constructor(private deps: ProjectionDeps) {}
 
-  status(): { connected: boolean } {
-    return { connected: this.connected };
+  status(): ProjectionWorkerStatus {
+    return { ...this.runtime };
   }
 
   async runOnce(repo: string, channelId: string): Promise<number> {
@@ -164,6 +188,11 @@ export class ProjectionWorker {
       );
       await client.query('commit');
 
+      // 커서가 전진했다. **이것은 살아 있음의 신호가 아니라 기록이다** — 조용한
+      // 저장소는 영영 전진하지 않으므로 상태 판정은 lastPolledAt 이 한다(#267).
+      this.runtime.lastAdvancedAt = Date.now();
+      this.runtime.lastLogIndex = next;
+
       for (const { message } of emitted) emitEvent({ type: 'message.created', message, audience: 'all' });
       if (leaseChanged) emitEvent({ type: 'lease.changed', repo });
       return entries.length;
@@ -182,30 +211,49 @@ export class ProjectionWorker {
       let backoffMs = 1_000;
       while (this.running) {
         let hadFailure = false;
+        let lastRepoError: string | null = null;
+        /**
+         * **사이클마다 한 번, repo 목록을 보기 전에 찍는다**(#267). repo 루프 안에서
+         * 찍으면 바인딩된 저장소가 하나도 없는 서버는 폴링이 멀쩡히 돌고 있는데도
+         * `lastPolledAt` 이 영영 null 로 남아 `stalled` 로 보인다 — 정상을 장애로
+         * 부르는 것이고, 그러면 사람은 이 표시를 곧 무시한다.
+         */
+        this.runtime.lastPolledAt = Date.now();
         try {
           const bound = await listBoundRepos(this.deps.pool);
           // repo 단위 try/catch — 한 repo가 연속 실패해도 같은 사이클의 나머지 repo 처리를
           // 막지 않는다(감사 ⑥). 백오프는 단순화를 위해 사이클 전체에 한 번만 적용한다.
           for (const { repo, channelId } of bound) {
             try {
+              // 폴링한 저장소를 남긴다 — 커서가 안 움직여도(조용한 저장소) 물어봤다는 사실이다.
+              this.runtime.repo = repo;
               const cur = await this.deps.pool.query(
                 `select last_log_index from projection_cursor where repo = $1`, [repo],
               );
               const since = cur.rowCount ? Number(cur.rows[0].last_log_index) : 0;
               const changed = await this.deps.avcs.waitForChange(repo, since, pollMs);
-              this.connected = true;
+              this.runtime.connected = true;
               if (changed) await this.runOnce(repo, channelId);
-            } catch {
-              this.connected = false;
+            } catch (err) {
+              this.runtime.connected = false;
               hadFailure = true;
+              // 에러 메시지를 200자로 자른다.
+              lastRepoError = err instanceof Error ? err.message.slice(0, 200) : 'unknown error';
             }
           }
           if (!bound.length) await new Promise((r) => setTimeout(r, pollMs));
-        } catch {
+        } catch (err) {
           // listBoundRepos 자체 실패(예: DB 다운) — 사이클 전체 실패로 취급.
-          this.connected = false;
+          this.runtime.connected = false;
           hadFailure = true;
+          lastRepoError = err instanceof Error ? err.message.slice(0, 200) : 'unknown error';
         }
+        /**
+         * 사이클이 끝날 때 `lastError` 를 **덮어쓴다** — 실패면 메시지, 성공이면 null.
+         * `if (lastRepoError)` 로 실패만 기록하면 한 번 난 오류가 영영 남아 복구한
+         * 서버가 계속 `stalled` 로 보인다("다음 성공 폴링이 지운다"가 성립해야 한다).
+         */
+        this.runtime.lastError = lastRepoError;
         if (hadFailure) {
           await new Promise((r) => setTimeout(r, backoffMs));
           backoffMs = Math.min(backoffMs * 2, 60_000);
@@ -220,4 +268,36 @@ export class ProjectionWorker {
     this.running = false;
     await this.loop;
   }
+}
+
+/** 워커가 없을 때의 상태. `main.ts` 와 테스트가 같은 값을 보게 한 곳에 둔다. */
+export const DISABLED_PROJECTION_STATUS: ProjectionWorkerStatus = {
+  configured: false,
+  connected: false,
+  repo: null,
+  lastLogIndex: 0,
+  lastPolledAt: null,
+  lastAdvancedAt: null,
+  lastError: null,
+};
+
+/**
+ * 투영이 꺼져 있으면 기동 시 **경고 한 줄**을 남긴다(#267).
+ *
+ * 함수로 빼 둔 이유는 시험 가능성이다 — `main.ts` 는 최상위 await 로 서버를 띄우는
+ * 스크립트라 임포트만으로 포트를 잡는다. 결정(경고를 낼지)과 실행(서버 기동)이 한
+ * 파일에 붙어 있으면 이 한 줄은 어떤 테스트도 확인할 수 없다.
+ *
+ * 로거는 인자로 받는다. `buildServer` 가 fastify 로거를 만들기 **전**이라 이 시점에는
+ * 아직 로거가 없고, `main.ts` 의 나머지(`console.error`·`console.log`)와 모양을 맞춘다.
+ *
+ * @returns 경고를 냈는가.
+ */
+export function warnIfProjectionDisabled(
+  avcsBaseUrl: string | null,
+  warn: (message: string) => void = (m) => console.warn(m),
+): boolean {
+  if (avcsBaseUrl) return false;
+  warn('avcs projection is disabled — set AVCS_BASE_URL to enable it');
+  return true;
 }

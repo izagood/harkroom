@@ -36,6 +36,7 @@ export class Controller {
 
   // fire-and-forget 호출의 unhandled rejection 방지 — 실패는 조용히 무시(다음 이벤트/리컨실이 자연 복구).
   private swallow(p: Promise<unknown>): void { void p.catch(() => {}); }
+  private projectionRefreshInterval: ReturnType<typeof setInterval> | null = null;
 
   async start(): Promise<void> {
     const store = useAppStore.getState();
@@ -60,6 +61,11 @@ export class Controller {
     }));
     // 담아 둔 메시지 요약(#219)도 같은 방식으로 fire-and-forget 으로 받는다.
     this.swallow(this.loadSavedSummary());
+    // 투영 상태도 60초마다 갱신한다(#267) — 앱 기동 시 한 번과 정기적으로.
+    this.swallow(this.refreshProjectionStatus());
+    this.projectionRefreshInterval = setInterval(() => {
+      this.swallow(this.refreshProjectionStatus());
+    }, 60_000);
     // 앱을 열자마자 쌓여 있던 미읽음이 한꺼번에 터지면 알림이 소음이 된다.
     for (const e of unread) this.announced.add(e.id);
     // 장기 토큰은 ApiClient 가 헤더로만 쓴다 — WS URL 에는 단기 티켓만 실린다.
@@ -70,7 +76,27 @@ export class Controller {
     });
   }
 
-  stop(): void { this.ws?.close(); this.ws = null; }
+  stop(): void { this.ws?.close(); this.ws = null; if (this.projectionRefreshInterval) { clearInterval(this.projectionRefreshInterval); this.projectionRefreshInterval = null; } }
+
+  /**
+   * 투영 상태를 갱신한다(#267). 기동 시 한 번, 이후 60초마다.
+   *
+   * **실패를 삼키지 않는다.** 다른 fire-and-forget 조회(`swallow`)와 다른 이유가 있다:
+   * 이 조회의 결과물이 곧 "투영이 어떤 상태인가"를 말하는 화면이므로, 실패를 삼키면
+   * 마지막 성공 상태(또는 `null`)가 그대로 남아 **못 읽고 있는 화면이 정상으로 보인다**.
+   * 그것이 이 이슈가 닫으려는 결함 그 자체다. 그래서 실패는 `projectionStatusError` 로
+   * 화면까지 올라가고, 다음 주기가 성공하면 지워진다.
+   */
+  private async refreshProjectionStatus(): Promise<void> {
+    try {
+      const status = await this.api.projectionStatus();
+      useAppStore.getState().set({ projectionStatus: status, projectionStatusError: null });
+    } catch (err) {
+      useAppStore.getState().set({
+        projectionStatusError: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
   /** 문구는 UI 문자열이라 영어다(저장소 관례). 사유별로 다른 이유: 사용자가 할 일이 다르다. */
   private static readonly LOST_MESSAGE: Record<Exclude<WsDownReason, 'network'>, string> = {
@@ -505,9 +531,20 @@ export class Controller {
   /**
    * 첨부를 사용자 디스크에 저장한다. objectURL + `download` 앵커를 쓴다 — 토큰을 URL 에
    * 넣지 않으려면 바이트를 먼저 받아야 하고, 받은 다음에는 이것이 가장 단순한 저장 경로다.
+   * 실패하면 Notice 로 사람 앞에 세운다.
    */
   async saveAttachment(attachment: AttachmentRow): Promise<void> {
-    const blob = await this.api.fetchAttachment(attachment.id);
+    let blob: Blob;
+    try {
+      blob = await this.fetchAttachment(attachment.id);
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'attachment_missing') {
+        useAppStore.getState().set({ notice: '첨부 파일이 서버에 없습니다' });
+      } else {
+        useAppStore.getState().set({ notice: '첨부를 불러오지 못했습니다' });
+      }
+      return;
+    }
     const url = URL.createObjectURL(blob);
     try {
       const a = document.createElement('a');

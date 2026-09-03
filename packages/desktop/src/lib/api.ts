@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
 
 export class ApiError extends Error {
   /**
@@ -143,6 +143,10 @@ export class ApiClient {
   }
   async leases(): Promise<LeaseRow[]> {
     return (await this.req<{ leases: LeaseRow[] }>('GET', '/leases')).leases;
+  }
+  /** avcs 투영 상태(#267). */
+  async projectionStatus(): Promise<ProjectionStatus> {
+    return this.req<ProjectionStatus>('GET', '/projection/status');
   }
   /** `hasMore` 는 '이 페이지보다 오래된 것이 남았는가'다 — 상단 추가 로드 표시에 쓴다. */
   messages(

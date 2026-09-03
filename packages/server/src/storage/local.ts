@@ -13,6 +13,14 @@ export class StorageLimitError extends Error {
   }
 }
 
+/** 파일이 스토어에 없음. 라우트가 404 로 바꿔 응답한다. */
+export class AttachmentMissingError extends Error {
+  constructor(public readonly key: string, public readonly path: string) {
+    super(`attachment not found: ${key} at ${path}`);
+    this.name = 'AttachmentMissingError';
+  }
+}
+
 export interface StorageBackend {
   /** 스트림을 저장하고 키와 실제 바이트 수를 돌려준다. */
   write(source: Readable): Promise<{ key: string; bytes: number }>;
@@ -73,8 +81,14 @@ export function createLocalStorage(opts: { root: string; maxBytes: number }): St
 
     async read(key) {
       const src = pathFor(root, key);
-      // 없는 키에 빈 스트림을 돌려주면 호출부가 '내용이 빈 파일'과 구분할 수 없다.
-      await stat(src);
+      try {
+        await stat(src);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          throw new AttachmentMissingError(key, src);
+        }
+        throw err;
+      }
       return createReadStream(src);
     },
 

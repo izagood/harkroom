@@ -3,7 +3,9 @@ import { runMigrations } from './db/migrate.js';
 import { createPool } from './db/pool.js';
 import { buildServer } from './buildServer.js';
 import { httpAvcsClient } from './avcs/client.js';
-import { ProjectionWorker, ensureSystemAccount } from './avcs/projection.js';
+import {
+  ProjectionWorker, ensureSystemAccount, warnIfProjectionDisabled, DISABLED_PROJECTION_STATUS,
+} from './avcs/projection.js';
 import { Lifecycle } from './lifecycle.js';
 
 const config = loadConfig();
@@ -23,12 +25,18 @@ if (config.avcsBaseUrl) {
   });
   worker.start();
 }
+// 꺼져 있으면 기동 시 경고 한 줄(#267). 판정은 projection.ts 에 있다 — 이 파일은
+// 임포트만으로 포트를 잡으므로 여기 인라인으로 두면 시험할 수 없다.
+warnIfProjectionDisabled(config.avcsBaseUrl);
 
 const lifecycle = new Lifecycle();
 const app = await buildServer({
   pool,
   lifecycle,
-  getAvcsStatus: () => worker?.status() ?? { connected: false },
+  // 두 표면은 **다른 질문**에 답한다: /healthz 는 avcs 소켓이 붙었는가,
+  // /projection/status 는 투영이 돌고 있는가다(#267).
+  getAvcsStatus: () => ({ connected: (worker?.status() ?? DISABLED_PROJECTION_STATUS).connected }),
+  getProjectionStatus: () => worker?.status() ?? DISABLED_PROJECTION_STATUS,
   corsOrigins: config.corsOrigins,
   logLevel: config.logLevel,
   trustProxy: config.trustProxy,
