@@ -470,7 +470,13 @@ describe('channel delete — 참조 테이블 전부 (#155)', () => {
     // 같아야 한다 — 달라지면 아래 단언이 알려 준다.
     const explicit = new Set([
       'message_pin', 'channel_read', 'channel_member', 'channel_pref',
-      'inbox', 'idempotency_key', 'work_thread', 'message', 'channel',
+      // #188: 채널 문서. 이 테스트가 실제로 그 누락을 잡았다 — 문서 테이블이 생겼는데
+      // deleteChannel 이 그것을 몰라, 문서가 있는 채널의 삭제가 FK 위반으로 터졌다.
+      'channel_doc',
+      // #222: 예약 메시지. channel 과 message 를 모두 참조한다 — 예약이 하나라도 걸린
+      // 채널은 이것이 없으면 삭제가 FK 위반으로 터진다.
+      'scheduled_message',
+      'inbox', 'idempotency_key', 'work_thread', 'saved_message', 'message', 'channel',
     ]);
 
     const unhandled = refs.rows
