@@ -512,6 +512,26 @@ export class Controller {
     if (meId) store.applyStatus(meId, saved.status, saved.statusText);
   }
 
+  /**
+   * 이 채널을 미읽음으로 표시한다(#154). `seq` 부터가 미읽음이 된다.
+   *
+   * 낙관적 갱신은 **서버의 경계 규칙을 그대로 흉내낸다**(`readPositions.ts` 의
+   * `UNREAD_BOUNDARY`): 경계는 `min(현재 위치, seq - 1)` 이고 그 뒤의, 내가 쓰지 않은
+   * 메시지가 미읽음이다. 여기서 다르게 세면 새로고침 전까지 사이드바가 서버와 다른 말을 한다.
+   *
+   * 위치를 여기서 되돌려 두는 것이 중요하다 — 이 채널을 다시 열면 `settleReadPosition` 이
+   * "최신이 위치보다 뒤에 있다"를 보고 읽음 ack 를 보내고, 그 ack 가 표시를 지운다.
+   */
+  async markChannelUnread(channelId: string, seq: number): Promise<void> {
+    await this.api.markChannelUnread(channelId, seq);
+    const store = useAppStore.getState();
+    const cur = store.reads[channelId] ?? { lastReadSeq: 0, unread: 0 };
+    const boundary = Math.min(cur.lastReadSeq, seq - 1);
+    const unread = (store.messages[channelId] ?? [])
+      .filter((m) => m.seq > boundary && m.authorId !== store.me?.id).length;
+    store.set({ reads: { ...store.reads, [channelId]: { lastReadSeq: boundary, unread } } });
+  }
+
   async toggleChannelStar(channelId: string): Promise<void> {
     const store = useAppStore.getState();
     const current = store.channelPrefs[channelId];
