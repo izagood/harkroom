@@ -5,13 +5,14 @@
 // 일어나는 일이라 이 테스트(프로세스 경계 밖)에서 직접 재현할 수 없다 — 그래서 runTurn
 // 스텁이 하네스 대신 fakeMurmur.post 를 호출해 "턴 도중 에이전트가 답을 올렸다"를
 // 흉내낸다(task-9 브리프 시나리오 1 주석 그대로).
-import { mkdir, mkdtemp, readFile, stat } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readlink, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentView, MessageRow } from '@murmur/shared';
-import { mentionAnchor, runMentionTurn, type MentionTurnDeps, type MentionTurnMurmur, type RunTurn } from '../src/mentionTurn.js';
+import { mentionAnchor, runMentionTurn, syncSkills, type MentionTurnDeps, type MentionTurnMurmur, type RunTurn } from '../src/mentionTurn.js';
 import { NO_REPLY_NOTICE } from '../src/prompt.js';
+import { MurmurAgentClient } from '../src/murmur.js';
 import { SessionStore } from '../src/sessions.js';
 import type { Exec } from '../src/workspace.js';
 import type { TurnPlan } from '../src/turn.js';
@@ -130,6 +131,21 @@ class FakeMurmur implements MentionTurnMurmur {
     this.memoryReads += 1;
     if (this.memory instanceof Error) return Promise.reject(this.memory);
     return Promise.resolve(this.memory);
+  }
+
+  /**
+   * #140: 기본은 "조회 성공, 승인된 스킬 없음". 테스트가 배열이나 Error 로 갈아끼운다.
+   * Error 를 담을 수 있어야 "조회 실패에도 턴이 진행된다"를 실제로 빨갛게 만들 수 있다 —
+   * 프로덕션 클라이언트가 실패를 빈 배열로 삼키면 이 테스트는 아무것도 증명하지 못한다.
+   */
+  skills: { slug: string; body: string }[] | Error = [];
+
+  skillReads = 0;
+
+  listApprovedSkills(): Promise<{ slug: string; body: string }[]> {
+    this.skillReads += 1;
+    if (this.skills instanceof Error) return Promise.reject(this.skills);
+    return Promise.resolve(this.skills);
   }
 
   async addReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
@@ -1460,5 +1476,219 @@ describe('활동 보고 (#176)', () => {
     ).rejects.toThrow(/harness 종료 1/);
 
     expect(fake.activityReports).toBe(1);
+  });
+});
+
+// #140 워크스페이스 스킬 — 러너 쪽 보증.
+//
+// **전부 runMentionTurn 을 통과시킨다.** syncSkills 를 손으로만 부르는 테스트는 러너가
+// 그것을 부르지 않아도(또는 await 하지 않아도) 초록이다 — 첫 구현이 실제로 await 없이
+// 불러서, 하네스는 아직 없는 스킬 디렉터리를 읽고 스킬은 항상 한 턴 늦게 붙었다.
+// 그 결함을 잡는 것은 "턴 도중에 읽힌다"는 단언뿐이다.
+describe('runMentionTurn: 스킬 동기화(#140)', () => {
+  const BODY = '# 배포 절차\n1. 확인한다';
+
+  /** exec 기록에서 워크스페이스 경로를 읽는다: avcs workspace project <name> --out <dir> */
+  function workspaceOf(execCalls: string[][]): string {
+    const call = execCalls.find((c) => c[0] === 'avcs' && c[2] === 'project');
+    return call![5]!;
+  }
+
+  // 요구 6.
+  it('승인된 스킬을 상태 디렉터리에 쓰고 하네스 디렉터리로 심볼릭 링크한다 — 복사가 아니다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    fake.skills = [{ slug: 'deploy-runbook', body: BODY }];
+    const { deps, execCalls, runTurn } = await makeDeps(fake);
+
+    // 하네스가 도는 **그 시점에** 스킬이 읽혀야 한다. 동기화를 await 하지 않으면 null 이다.
+    let seenDuringTurn: string | null = null;
+    runTurn.script = async (_plan, opts) => {
+      seenDuringTurn = await readFile(
+        join(opts.cwd, '.claude', 'skills', 'deploy-runbook', 'SKILL.md'), 'utf8',
+      ).catch(() => null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    // 본문은 워크스페이스 **밖** 상태 디렉터리에 있다(avcs 가 쓸어 가지 못하는 자리).
+    const skillDir = join(deps.stateDir, 'skills', 'deploy-runbook');
+    expect(await readFile(join(skillDir, 'SKILL.md'), 'utf8')).toBe(BODY);
+
+    // 워크스페이스 안에 있는 것은 링크뿐이다 — 복사로 되돌리면 isSymbolicLink 가 false 로 빨개진다.
+    const link = join(workspaceOf(execCalls), '.claude', 'skills', 'deploy-runbook');
+    const st = await lstat(link);
+    expect(st.isSymbolicLink()).toBe(true);
+    // 링크는 **디렉터리**를 가리킨다. SKILL.md 를 직접 링크하면 하네스는
+    // `<링크>/SKILL.md` = `.../SKILL.md/SKILL.md` 를 찾아 아무것도 읽지 못한다.
+    expect(await readlink(link)).toBe(skillDir);
+    expect(seenDuringTurn).toBe(BODY);
+  });
+
+  it('codex 하네스 디렉터리에도 같은 링크가 걸린다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    fake.skills = [{ slug: 'deploy-runbook', body: BODY }];
+    const { deps, execCalls } = await makeDeps(fake);
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    const link = join(workspaceOf(execCalls), '.codex', 'skills', 'deploy-runbook');
+    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+  });
+
+  // 요구 7.
+  it('목록에서 사라진 스킬(비활성·삭제)은 파일과 링크가 함께 사라진다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    fake.skills = [{ slug: 'keep-me', body: '남는다' }, { slug: 'drop-me', body: '사라진다' }];
+    const { deps, execCalls } = await makeDeps(fake);
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    const ws = workspaceOf(execCalls);
+    expect(await lstat(join(ws, '.claude', 'skills', 'drop-me')).then(() => true, () => false)).toBe(true);
+
+    // 두 번째 턴: 하나가 비활성돼 목록에서 빠졌다.
+    fake.skills = [{ slug: 'keep-me', body: '남는다' }];
+    fake.seedFrom('human-1', '@forge 또 안녕');
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    // 상태 디렉터리의 파일도, 워크스페이스의 링크도 없어야 한다.
+    expect(await stat(join(deps.stateDir, 'skills', 'drop-me')).then(() => true, () => false)).toBe(false);
+    expect(await lstat(join(ws, '.claude', 'skills', 'drop-me')).then(() => true, () => false)).toBe(false);
+    expect(await lstat(join(ws, '.codex', 'skills', 'drop-me')).then(() => true, () => false)).toBe(false);
+    // 남은 것은 그대로다.
+    expect((await lstat(join(ws, '.claude', 'skills', 'keep-me'))).isSymbolicLink()).toBe(true);
+  });
+
+  // 요구 8.
+  it('스킬 조회가 실패해도 턴은 진행되고 실패가 stderr 에 한 줄 남는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    fake.skills = new Error('skills 실패: 503');
+    const { deps, runTurn } = await makeDeps(fake);
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '답이다', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      // 던지지 않는다.
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+      expect(fake.skillReads).toBe(1);
+      expect(fake.posts.map((p) => p.body)).toEqual(['답이다']);
+      expect(deps.store.get(SessionStore.threadKey(CHANNEL, null))!.turnsRun).toBe(1);
+      // 조용히 넘어가지 않는다 — 운영자가 로그에서 볼 수 있어야 한다.
+      const logged = errors.mock.calls.map((c) => c.join(' ')).join('\n');
+      expect(logged).toMatch(/스킬 동기화 실패/);
+      expect(logged).toMatch(/503/);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  // 조회 실패를 빈 목록으로 삼키면 "승인된 스킬이 없다"와 같아져, 동기화가 이미 붙어 있는
+  // 스킬을 '사라진 것'으로 보고 지운다. 그 삼킴을 되돌리면 이 테스트가 빨개진다.
+  it('조회가 실패하면 이미 실체화된 스킬을 지우지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    fake.skills = [{ slug: 'deploy-runbook', body: BODY }];
+    const { deps, execCalls } = await makeDeps(fake);
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    const ws = workspaceOf(execCalls);
+
+    fake.skills = new Error('skills 실패: 503');
+    fake.seedFrom('human-1', '@forge 또 안녕');
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    } finally {
+      errors.mockRestore();
+    }
+
+    expect(await readFile(join(deps.stateDir, 'skills', 'deploy-runbook', 'SKILL.md'), 'utf8')).toBe(BODY);
+    expect((await lstat(join(ws, '.claude', 'skills', 'deploy-runbook'))).isSymbolicLink()).toBe(true);
+  });
+});
+
+describe('syncSkills 단독(#140)', () => {
+  async function dirs(): Promise<{ stateDir: string; workspaceDir: string }> {
+    const stateDir = await mkdtemp(join(tmpdir(), 'skill-state-'));
+    const workspaceDir = join(stateDir, 'workspaces', 'ws');
+    await mkdir(workspaceDir, { recursive: true });
+    return { stateDir, workspaceDir };
+  }
+
+  // 앞선 턴(또는 이전 버전)이 남긴 **복사본**은 갈라진 사본이다 — 링크로 갈아 끼워야 한다.
+  it('이전에 남은 복사본을 링크로 갈아 끼운다', async () => {
+    const { stateDir, workspaceDir } = await dirs();
+    const stale = join(workspaceDir, '.claude', 'skills', 'copied');
+    await mkdir(stale, { recursive: true });
+    await writeFile(join(stale, 'SKILL.md'), '오래된 사본', 'utf8');
+
+    await syncSkills(stateDir, workspaceDir, async () => [{ slug: 'copied', body: '새 본문' }]);
+
+    expect((await lstat(stale)).isSymbolicLink()).toBe(true);
+    expect(await readFile(join(stale, 'SKILL.md'), 'utf8')).toBe('새 본문');
+  });
+
+  // 워크스페이스는 사람의 작업 공간이다. 우리 상태 디렉터리를 가리키지 않는 것은 남의 것이다.
+  it('사람이 직접 둔 스킬 디렉터리와 남의 링크는 지우지 않는다', async () => {
+    const { stateDir, workspaceDir } = await dirs();
+    const harness = join(workspaceDir, '.claude', 'skills');
+    const mine = join(harness, 'hand-written');
+    await mkdir(mine, { recursive: true });
+    await writeFile(join(mine, 'SKILL.md'), '사람이 쓴 것', 'utf8');
+    const elsewhere = await mkdtemp(join(tmpdir(), 'other-skill-'));
+    await symlink(elsewhere, join(harness, 'other-tool'));
+
+    await syncSkills(stateDir, workspaceDir, async () => []);
+
+    expect(await readFile(join(mine, 'SKILL.md'), 'utf8')).toBe('사람이 쓴 것');
+    expect((await lstat(join(harness, 'other-tool'))).isSymbolicLink()).toBe(true);
+  });
+
+  it('본문이 바뀌면 링크는 그대로 두고 파일만 갱신한다', async () => {
+    const { stateDir, workspaceDir } = await dirs();
+    await syncSkills(stateDir, workspaceDir, async () => [{ slug: 's', body: '처음' }]);
+    const link = join(workspaceDir, '.claude', 'skills', 's');
+    const target = await readlink(link);
+    await syncSkills(stateDir, workspaceDir, async () => [{ slug: 's', body: '나중' }]);
+    expect(await readlink(link)).toBe(target);
+    expect(await readFile(join(link, 'SKILL.md'), 'utf8')).toBe('나중');
+  });
+});
+
+// 위 시나리오들은 FakeMurmur 를 태운다 — 그것만으로는 **프로덕션 클라이언트**가 실패를
+// 빈 배열로 삼켜도 전부 초록이다(가짜가 대신 던져 주기 때문이다). 그래서 실제 클라이언트를
+// 스텁 fetch 로 한 번 태운다: 러너가 stderr 에 한 줄 남길 수 있는지는 여기서 갈린다.
+describe('MurmurAgentClient.listApprovedSkills(#140)', () => {
+  it('승인된 것만 요청한다 — 미승인 스킬을 실체화하면 승인 게이트가 없는 것과 같다', async () => {
+    const original = globalThis.fetch;
+    let seen = '';
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      seen = String(url);
+      return new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    try {
+      await new MurmurAgentClient('http://localhost:3400', 'murp_t').listApprovedSkills();
+      expect(seen).toContain('/skills?approved=true');
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('조회 실패를 빈 배열로 삼키지 않고 던진다', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => new Response('nope', { status: 503 })) as typeof fetch;
+    try {
+      const client = new MurmurAgentClient('http://localhost:3400', 'murp_t');
+      await expect(client.listApprovedSkills()).rejects.toThrow(/503/);
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 });

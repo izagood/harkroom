@@ -30,6 +30,8 @@ const fakeController = (members: ChannelMemberRow[]) => {
       return members;
     }),
     inviteChannelMember: vi.fn(async () => members),
+    // #173: 멤버 패널이 자동 멘션 목록도 받는다 — 이 파일은 그 절을 보지 않으므로 빈 목록이다.
+    loadChannelAutoMentions: vi.fn(async () => []),
     leaveChannel: vi.fn(async () => undefined),
   };
   setController(c as unknown as Controller);
@@ -53,7 +55,7 @@ const seed = (opts: { admin: boolean }) => {
 };
 
 const sidebar = () => render(
-  <Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} onOpenDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenSaved={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
+  <Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} onOpenDirectory={vi.fn()} onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenSaved={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
 const openMenuFor = (accessibleName: RegExp): void => {
