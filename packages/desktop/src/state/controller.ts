@@ -4,7 +4,7 @@ import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type Notifier } from '../lib/notify';
-import { RunnerLauncher } from '../lib/runnerLauncher';
+import { RunnerLauncher, tauriSecretStore, tauriSpawner, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
 import { useAppStore } from './appStore';
 import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
 import { usePrefsStore } from './prefsStore';
@@ -23,6 +23,8 @@ export class Controller {
    */
   private notifiedMessages = new Set<string>();
   private runnerLauncher: RunnerLauncher;
+  /** 이번 `start()` 에서 러너 자동 기동을 이미 했는가(#250). */
+  private runnerAutoStartDone = false;
 
   constructor(
     public api: ApiClient,
@@ -34,14 +36,51 @@ export class Controller {
      * #164: accountId 파라미터가 추가되어 어느 커뮤니티의 세션이 죽었는지 알 수 있다.
      */
     private onSessionLost: (message: string, accountId: string) => void = () => {},
+    /** 테스트가 키체인·자식 프로세스를 목으로 바꿔 끼우는 자리(#250). */
+    secrets: RunnerSecretStore = tauriSecretStore,
+    spawner: RunnerSpawner = tauriSpawner,
   ) {
-    this.runnerLauncher = new RunnerLauncher({
-      baseUrl: api.baseUrl,
-      listAgents: () => api.listAgents(),
-      mintPat: (accountId, label) => api.mintPat(accountId, label),
-      listPats: (accountId) => api.listPats(accountId),
-      revokePat: (accountId, label) => api.revokePat(accountId, label),
-      me: () => api.me(),
+    this.runnerLauncher = new RunnerLauncher(
+      {
+        baseUrl: api.baseUrl,
+        mintPat: (accountId, label) => api.mintPat(accountId, label),
+        listPats: (accountId) => api.listPats(accountId),
+        revokePat: (accountId, label) => api.revokePat(accountId, label),
+      },
+      secrets,
+      spawner,
+    );
+    this.runnerLauncher.setOnStateChange((states) => {
+      useAppStore.getState().set({
+        runnerStates: Object.fromEntries(states.map((s) => [s.agentId, s])),
+      });
+    });
+  }
+
+  /** 설정 화면의 "PAT 재발급" 이 부르는 자리. 실행기를 화면에 직접 노출하지 않는다. */
+  reissueRunnerPat(agentId: string): Promise<void> {
+    return this.runnerLauncher.reissue(agentId);
+  }
+
+  /**
+   * 내가 소유한 에이전트의 러너를 띄운다(#250). presence 를 받은 뒤에 불린다.
+   *
+   * 토글이 꺼져 있으면 아무것도 하지 않는다 — 상태도 만들지 않는다: 안 띄우기로 한 것에
+   * '꺼짐' 배지를 달면 뭔가 잘못된 것처럼 보인다.
+   */
+  private async startRunners(): Promise<void> {
+    const prefs = usePrefsStore.getState();
+    if (!prefs.runnerAutoStart) return;
+    const store = useAppStore.getState();
+    const myId = store.me?.id;
+    if (!myId) return;
+    const agents = await this.api.listAgents();
+    await this.runnerLauncher.startAll({
+      agents,
+      myAccountId: myId,
+      // `connected` 가 false 면 presence 는 '모른다'다 — 빈 배열이 '아무도 없다'가 아니다.
+      liveAccountIds: store.connected ? new Set(store.online) : null,
+      repoPath: prefs.runnerRepoPath,
     });
   }
 
@@ -86,14 +125,10 @@ export class Controller {
       onDown: (reason) => this.handleDown(reason),
     });
 
-    this.runnerLauncher.setOnStateChange((states) => {
-      const stateMap: Record<string, { agentId: string; status: string; exitCode: number | null }> = {};
-      for (const s of states) {
-        stateMap[s.agentId] = s;
-      }
-      useAppStore.getState().set({ runnerStates: stateMap as Record<string, { agentId: string; status: 'stopped' | 'running' | 'external' | 'needs_reissue' | 'failed'; exitCode: number | null }> });
-    });
-    this.swallow(this.runnerLauncher.startAll());
+    // 러너 자동 기동은 **presence 를 받은 뒤**에 한다 — 여기서 바로 부르면 `online` 이
+    // 아직 빈 배열이라 이미 붙어 있는 러너 옆에 두 번째를 띄운다(handleEvent 의
+    // `presence.snapshot` 절 참고). 이 플래그는 start() 마다 초기화된다.
+    this.runnerAutoStartDone = false;
   }
 
   stop(): void {
@@ -207,6 +242,13 @@ export class Controller {
         break;
       case 'presence.snapshot':
         store.set({ online: e.online });
+        // #250: 러너 자동 기동은 **여기서** 시작한다. presence 가 도착한 이 순간이
+        // "누가 이미 붙어 있는가"를 처음 아는 시점이고, 그것을 모른 채 띄우면 중복 러너가
+        // 생긴다. 재접속마다 다시 하지 않는다(플래그) — 재접속은 러너의 생사와 무관하다.
+        if (!this.runnerAutoStartDone) {
+          this.runnerAutoStartDone = true;
+          this.swallow(this.startRunners());
+        }
         break;
       case 'presence.changed': {
         const cur = new Set(useAppStore.getState().online);
