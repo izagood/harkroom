@@ -192,6 +192,7 @@ export function ChannelPane({ onOpenSearch }: ChannelPaneProps) {
         ) : (
           <Composer
             scopeKey={activeChannelId}
+            channelId={activeChannelId}
             placeholder={`Message ${composerTarget}`}
             // 채널을 **지금 렌더된 것으로 붙여 준다**(#223). 보냄 취소 창이 도는 동안
             // 채널을 옮겨도 이 클로저가 든 채널로 나간다 — 컨트롤러가 스토어를 다시 읽으면

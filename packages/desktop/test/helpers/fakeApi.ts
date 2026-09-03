@@ -102,6 +102,11 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     fetchAttachment: vi.fn(async () => new Blob(['x'])),
     // #218: 베이스가 핀 표면을 덮어야 openChannel 이 조용히 던지지 않고, "부르지 않았다" 도 단언할 수 있다.
     pins: vi.fn(async () => []),
+    // #173: 자동 멘션 표면. 베이스가 덮어야 openChannel 이 조용히 던지지 않는다.
+    channelAutoMentions: vi.fn(async () => []),
+    setChannelAutoMention: vi.fn(async (channelId: string, agentAccountId: string) =>
+      ({ channelId, agentAccountId, handle: agentAccountId, createdBy: 'u1', createdAt: new Date().toISOString() })),
+    unsetChannelAutoMention: vi.fn(async () => undefined),
     pinMessage: vi.fn(async (channelId: string, messageId: string) => pin(messageId, channelId)),
     unpinMessage: vi.fn(async () => undefined),
     // #219: 담아 둔 메시지 표면. 베이스가 덮어야 Controller.start 가 조용히 던지지 않고,

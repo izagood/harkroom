@@ -43,6 +43,8 @@ export function ThreadPanel() {
         </label>
         <Composer
           scopeKey={`thread:${threadRootId}`}
+          // 스레드도 그 채널 안이다 — 채널이 부르는 에이전트는 스레드 답글에서도 불린다(#173).
+          channelId={activeChannelId ?? undefined}
           placeholder="Reply…"
           // 채널과 스레드 뿌리를 지금 것으로 붙인다(#223) — 창이 도는 동안 패널을 닫으면
           // 스토어의 `threadRootId` 는 null 이 되어 답글이 조용히 사라진다.

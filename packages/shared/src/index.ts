@@ -360,6 +360,21 @@ export interface ChannelMemberRow {
   handle: string;
 }
 
+/**
+ * 채널이 자동으로 멘션하는 에이전트 한 명(#173). 채널 전역 사실이다 — 누가 봐도 같다.
+ *
+ * `handle` 을 함께 주는 이유는 `ChannelMemberRow` 와 같다: 작성창이 칩을 그리려면 handle 이
+ * 필요하고, 그것을 위해 디렉터리를 다시 뒤지게 하면 디렉터리가 아직 안 온 순간 칩이 비었다가
+ * 나타난다. 접두는 이 handle 로 만든다.
+ */
+export interface ChannelAutoMentionRow {
+  channelId: string;
+  agentAccountId: string;
+  handle: string;
+  createdBy: string;
+  createdAt: string;
+}
+
 export interface InboxEntry {
   id: number;
   messageId: string;
