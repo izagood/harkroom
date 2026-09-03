@@ -6,7 +6,8 @@ import { getController } from '../state/controller';
 import { Identity } from './Identity';
 import { formatSize } from './Attachments';
 import {
-  mentionQueryAt, applyMention, withStickyMentions, keepMentioned, type MentionQuery,
+  mentionQueryAt, applyMention, withStickyMentions, keepMentioned, bodyRecipients,
+  type MentionQuery,
 } from '../lib/mention';
 import { undoSendStorage } from '../lib/prefs';
 
@@ -72,7 +73,10 @@ interface HeldMessage {
 
 export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = '' }: Props) {
   const accounts = useAppStore((s) => s.accounts);
+  const groups = useAppStore((s) => s.groups);
   const myId = useAppStore((s) => s.me?.id);
+  // `MessageBody` 와 같은 자리에서 읽는다 — 자기 멘션 판정이 두 화면에서 달라지면 안 된다.
+  const myHandle = useAppStore((s) => s.me?.handle?.toLowerCase() ?? null);
   const [query, setQuery] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
   const [stickyByScope, setStickyByScope] = useState<Record<string, string[]>>({});
@@ -145,6 +149,22 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   const sticky = useMemo(
     () => (stickyByScope[scopeKey] ?? []).filter((h) => known.has(h)),
     [stickyByScope, scopeKey, known],
+  );
+
+  // 아래 두 목록은 `MessageBody` 가 `splitMentions` 에 주는 것과 **같은 인자**다(#278).
+  // 자기 계정도 뺀 것이 없다 — 인자가 달라지면 같은 함수를 써도 판정이 갈라진다.
+  const allHandles = useMemo(() => Object.values(accounts).map((a) => a.handle), [accounts]);
+  const groupHandleList = useMemo(() => groups.map((g) => g.handle), [groups]);
+
+  // 지금 본문이 부를 상대(#278). 판정은 `bodyRecipients` 하나에 있고 그것은 `MessageBody`
+  // 와 같은 `splitMentions` 를 쓴다 — 여기에 조건을 더하면 그 단일 판정이 깨진다.
+  //
+  // **고정된 handle 을 빼지 않는다.** 칩은 사람이 명시적으로 고정한 것이고 이 줄은 본문에서
+  // 해석된 것이다. 겹칠 때 이 줄에서 지우면 이 줄이 고정 상태에 따라 달라져 "본문 기준" 이
+  // 아니게 되고, 칩을 지우는 순간 항목이 갑자기 나타난다.
+  const bodyMentionList = useMemo(
+    () => bodyRecipients(draft, allHandles, groupHandleList, myHandle),
+    [draft, allHandles, groupHandleList, myHandle],
   );
 
   // @ 버튼으로 여는 목록. 첫 줄을 보내기 전에도 상대를 정해 둘 수 있어야 한다.
@@ -520,6 +540,48 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
               >
                 ×
               </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {/*
+        부를 상대(#278). 아무도 없으면 **줄 자체를 그리지 않는다** — 빈 자리를 만들면 사람은
+        거기에 무엇이 있었는지를 매번 확인해야 한다.
+
+        위의 고정 칩과 **다른 요소**다. 칩은 사람이 명시적으로 고정한 것이고 이 줄은 본문에서
+        해석된 것이라 뜻이 다르다. 한 줄에 섞으면 지울 때 어느 쪽이 사라지는지 알 수 없다.
+
+        항목에 버튼을 달지 않는 것도 그 때문이다: 이 줄의 근거는 본문이므로 여기서 지울 수
+        있게 하면 본문과 화면이 어긋난다(또는 우리가 몰래 본문을 고쳐야 한다). 지우려면 본문을
+        고친다 — 그것이 이 줄이 말하는 유일한 사실이다.
+      */}
+      {bodyMentionList.length > 0 && (
+        <ul
+          data-testid="body-mentions"
+          aria-label="부를 상대"
+          className="mb-1 flex flex-wrap items-center gap-1 text-xs text-zinc-600"
+        >
+          <li>부를 상대:</li>
+          {bodyMentionList.map((r) => (
+            <li
+              key={r.handle}
+              data-handle={r.handle}
+              data-kind={r.kind}
+              className={`flex items-center gap-0.5 font-medium ${
+                r.kind === 'account' ? 'text-zinc-700' : 'text-teal-700'
+              }`}
+            >
+              <span>@{r.handle}</span>
+              {/*
+                집합·채널 전체는 **사람 하나가 아니라는 것이 보여야 한다** — `@oncall` 이
+                사람 이름처럼 보이면 몇 명을 부르는지 모르고 보낸다.
+
+                구성원 수는 여기서 낼 수 없다: `HandleGroupRow` 에 수가 없고 데스크탑은
+                명단을 받지 않는다(`listHandleGroupMembers` 는 서버 전용). 글자마다 명단을
+                조회하는 것은 이 줄이 살 값이 아니다.
+              */}
+              {r.kind === 'group' && <span className="text-zinc-500">(집합)</span>}
+              {r.kind === 'channel' && <span className="text-zinc-500">(채널 전체)</span>}
             </li>
           ))}
         </ul>
