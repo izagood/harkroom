@@ -14,6 +14,7 @@ export interface Prefs {
   notifications: NotificationPrefs;
   sidebarWidth: number;
   sidebarCollapsed: boolean;
+  runnerAutoStart: boolean;
 }
 
 const KEY = 'murmur.prefs';
@@ -37,6 +38,7 @@ export const DEFAULT_PREFS: Prefs = {
   notifications: { enabled: true, mention: true, threadReply: true, dm: true, showPreview: true },
   sidebarWidth: 240,
   sidebarCollapsed: false,
+  runnerAutoStart: true,
 };
 
 export const prefsStorage = {
@@ -51,6 +53,7 @@ export const prefsStorage = {
         notifications: { ...DEFAULT_PREFS.notifications, ...(parsed.notifications ?? {}) },
         sidebarWidth: parsed.sidebarWidth ?? DEFAULT_PREFS.sidebarWidth,
         sidebarCollapsed: parsed.sidebarCollapsed ?? DEFAULT_PREFS.sidebarCollapsed,
+        runnerAutoStart: parsed.runnerAutoStart ?? DEFAULT_PREFS.runnerAutoStart,
       };
     } catch {
       return DEFAULT_PREFS;
