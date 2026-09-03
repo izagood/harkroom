@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentView, AccountView, AttachmentRow, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PatView } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PatView } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -214,6 +214,19 @@ export class ApiClient {
 
   updateChannelPref(channelId: string, patch: { muted?: boolean; starred?: boolean }): Promise<ChannelPrefRow> {
     return this.req('PATCH', `/channels/${channelId}/pref`, patch);
+  }
+
+  /**
+   * #171: 새 에이전트의 기본값. admin 전용이다.
+   * 실패를 여기서 삼키지 않는다 — 호출부가 "못 읽었다" 를 사람에게 보여야 한다.
+   */
+  agentDefaults(): Promise<AgentDefaults> {
+    return this.req('GET', '/settings/agent-defaults');
+  }
+
+  /** model·effort 를 지우는 것은 **명시적 null** 이다 — 키를 빼면 '손대지 않음'이 된다. */
+  updateAgentDefaults(patch: Partial<AgentDefaults>): Promise<AgentDefaults> {
+    return this.req('PUT', '/settings/agent-defaults', patch);
   }
 
   /** #139: 에이전트 메모리 조회. MCP 는 에이전트 전용이라 사람은 이 REST 를 쓴다. */
