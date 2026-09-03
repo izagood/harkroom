@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ScheduledMessageView } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -367,5 +367,20 @@ export class ApiClient {
   async search(q: string, channelId?: string | null): Promise<MessageRow[]> {
     const scope = channelId ? `&channelId=${encodeURIComponent(channelId)}` : '';
     return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
+  }
+
+  /** 이 채널에서 내가 예약한 메시지 목록(#222). */
+  async scheduledMessages(channelId: string): Promise<ScheduledMessageView[]> {
+    return (await this.req<{ scheduled: ScheduledMessageView[] }>('GET', `/channels/${channelId}/scheduled`)).scheduled;
+  }
+
+  /** 예약 메시지 생성(#222). */
+  scheduleMessage(channelId: string, body: string, sendAt: string, threadRootId?: string): Promise<ScheduledMessageView> {
+    return this.req('POST', `/channels/${channelId}/scheduled`, { body, sendAt, ...(threadRootId ? { threadRootId } : {}) });
+  }
+
+  /** 예약 메시지 취소(#222). */
+  cancelScheduledMessage(id: string): Promise<void> {
+    return this.req('DELETE', `/scheduled/${id}`);
   }
 }

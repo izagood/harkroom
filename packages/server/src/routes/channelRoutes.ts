@@ -8,6 +8,10 @@ import {
 } from '../services/channels.js';
 import { listPins, pinMessage, unpinMessage } from '../services/pins.js';
 import { allReadStates, markChannelRead, markChannelUnread, readState } from '../services/readPositions.js';
+import {
+  cancelScheduledMessage, listScheduledMessages, scheduleMessage,
+  SCHEDULE_MAX_DAYS,
+} from '../services/scheduledMessages.js';
 // 이름 규칙은 데스크탑의 채널 생성 입력(Sidebar.tsx)과 **같은 것**이어야 한다 — 그래서
 // 정규식을 여기 리터럴로 두지 않고 shared 의 상수를 쓴다.
 import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS } from '@murmur/shared';
@@ -308,6 +312,79 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
       action: 'message.unpinned', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: id, detail: { messageId },
     }, req);
+    return reply.code(204).send();
+  });
+
+  const scheduledChannelParam = z.object({ id: z.string().uuid() });
+
+  /**
+   * 예약 메시지 목록(#222). 작성자本人만 볼 수 있다 — 다른 사람에게는 존재 자체가
+   * 보이지 않는다(그렇지 않으면 초안과 다를 게 없다).
+   */
+  app.get('/channels/:id/scheduled', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = scheduledChannelParam.parse(req.params);
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    return { scheduled: await listScheduledMessages(pool, id, req.account!.id) };
+  });
+
+  /**
+   * 예약 메시지 생성(#222).
+   *
+   * 에이전트가 예약할 수 없는 이유: 에이전트가 "지금은 조용히, 나중에 터뜨린다"를 스스로
+   * 고르는 신뢰 문제가 있다. 에이전트가 스스로 스케줄을 짜면 사람이 언제 그 발화가
+   * 날지 예측할 수 없고, 그것이 에이전트 작동 방식의 전제(사람이 발화를 검토한다)와
+   * 맞지 않는다.
+   */
+  app.post('/channels/:id/scheduled', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = scheduledChannelParam.parse(req.params);
+    const { body, sendAt, threadRootId } = z.object({
+      body: z.string().min(1).max(10000),
+      sendAt: z.string().datetime(),
+      threadRootId: z.string().uuid().optional(),
+    }).parse(req.body);
+
+    if (req.account!.kind === 'agent') {
+      return reply.code(403).send({ error: { code: 'agents_cannot_schedule', message: 'agents cannot schedule messages' } });
+    }
+
+    const gate = await channelPostGate(pool, id, req.account!.id);
+    if (gate === 'forbidden') {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    if (gate === 'archived') {
+      return reply.code(403).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
+    }
+
+    const sendTime = new Date(sendAt);
+    const now = new Date();
+
+    const maxDate = new Date(now.getTime() + SCHEDULE_MAX_DAYS * 24 * 60 * 60 * 1000);
+    if (sendTime > maxDate) {
+      return reply.code(400).send({ error: { code: 'send_at_too_far', message: `send_at cannot be more than ${SCHEDULE_MAX_DAYS} days in the future` } });
+    }
+
+    const result = await scheduleMessage(pool, {
+      channelId: id,
+      authorId: req.account!.id,
+      body,
+      sendAt: sendTime,
+      threadRootId: threadRootId ?? null,
+    });
+    return reply.code(201).send(result);
+  });
+
+  /**
+   * 예약 메시지 취소(#222). 작성자만 가능하고, 행을 지우지 않고 canceled_at 을 찍는다 —
+   * 무엇을 취소했는지 남는다.
+   */
+  app.delete('/scheduled/:id', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const canceled = await cancelScheduledMessage(pool, id, req.account!.id);
+    if (!canceled) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'scheduled message not found or already sent/canceled' } });
+    }
     return reply.code(204).send();
   });
 }
