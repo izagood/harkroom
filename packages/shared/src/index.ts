@@ -602,4 +602,10 @@ export type WsServerEvent =
    * 보내는 이유: 두 이벤트면 클라이언트가 두 곳에서 같은 맵을 갱신하고 그 두 곳이 갈라진다.
    * 받는 사람 자신은 목록에서 빠져 있다 — 자기 그림자를 그리지 않게, 서버가 한 곳에서 거른다.
    */
-  | { type: 'typing.changed'; channelId: string; accountIds: string[]; audience: 'all' | string[] };
+  | { type: 'typing.changed'; channelId: string; accountIds: string[]; audience: 'all' | string[] }
+  // 채널 목록 변경(#284). public 은 전원, private 은 멤버만 받는다.
+  | { type: 'channel.created'; channel: ChannelRow; audience: 'all' | string[] }
+  | { type: 'channel.updated'; channel: ChannelRow; audience: 'all' | string[] }
+  | { type: 'channel.deleted'; channelId: string; audience: 'all' | string[] }
+  // 담기/해제/상태 변경(#219). 본인의 소켓에만 온다.
+  | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string };
