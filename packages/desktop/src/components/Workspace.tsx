@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { sidebarStorage } from '../lib/prefs';
 import { isMacOS, MAC_TRAFFIC_LIGHT_PL } from '../lib/platform';
@@ -21,10 +21,10 @@ export function Workspace({ onLogout, onOpenSettings }: {
   /** #279: `targetId` 는 "이 에이전트가 선택된 상태로" 라는 뜻이다. */
   onOpenSettings: (section?: SectionId, targetId?: string) => void;
 }) {
-  const threadRootId = useAppStore((s) => s.threadRootId);
-  const terminalAgentId = useAppStore((s) => s.terminalAgentId);
-  const history = useAppStore((s) => s.history);
-  const historyIndex = useAppStore((s) => s.historyIndex);
+  const threadRootId = useActiveStore((s) => s.threadRootId);
+  const terminalAgentId = useActiveStore((s) => s.terminalAgentId);
+  const history = useActiveStore((s) => s.history);
+  const historyIndex = useActiveStore((s) => s.historyIndex);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchInitialScoped, setSearchInitialScoped] = useState(false);
   const [sweepOpen, setSweepOpen] = useState(false);

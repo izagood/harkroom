@@ -1,11 +1,12 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@murmur/shared';
 import { notifyLevelOf } from '@murmur/shared';
-import { ApiError, type ApiClient } from '../lib/api';
+import { ApiClient, ApiError } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type Notifier } from '../lib/notify';
 import { RunnerLauncher, tauriLoginPathReader, tauriSecretStore, tauriSpawner, type LoginPathReader, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
-import { useAppStore } from './appStore';
+import type { AppStore } from './appStore';
+import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
 import { usePrefsStore } from './prefsStore';
 
@@ -41,6 +42,17 @@ export class Controller {
     spawner: RunnerSpawner = tauriSpawner,
     /** 로그인 셸 `PATH` 조회(#305). 테스트가 조회 실패를 만들 수 있게 주입한다. */
     loginPath: LoginPathReader = tauriLoginPathReader,
+    /**
+     * 이 컨트롤러가 쓰는 커뮤니티의 스토어(#166). 예전에는 모듈 최상위 싱글턴을 직접
+     * 읽었다 — 그러면 보고 있지 않은 커뮤니티의 이벤트가 **활성 커뮤니티의 스토어**로
+     * 들어가, A 의 메시지가 B 의 채널에 조용히 붙는다. 인스턴스를 들고 있으면 그 사고가
+     * 구조적으로 불가능하다.
+     *
+     * 기본값이 활성 스토어인 이유는 **생성 시점에 한 번** 평가되기 때문이다 — 뒤에 활성이
+     * 바뀌어도 이 컨트롤러는 자기 것을 계속 쓴다. 커뮤니티를 지목해 띄우는 자리
+     * (`startCommunitySession`)는 언제나 명시적으로 넘긴다.
+     */
+    private store: AppStore = getActiveStore(),
   ) {
     this.runnerLauncher = new RunnerLauncher(
       {
@@ -54,7 +66,7 @@ export class Controller {
       loginPath,
     );
     this.runnerLauncher.setOnStateChange((states) => {
-      useAppStore.getState().set({
+      this.store.getState().set({
         runnerStates: Object.fromEntries(states.map((s) => [s.agentId, s])),
       });
     });
@@ -87,7 +99,7 @@ export class Controller {
   private async startRunners(): Promise<void> {
     const prefs = usePrefsStore.getState();
     if (!prefs.runnerAutoStart) return;
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     const myId = store.me?.id;
     if (!myId) return;
     const agents = await this.api.listAgents();
@@ -101,12 +113,28 @@ export class Controller {
     });
   }
 
+  /**
+   * 알림 제목에 붙일 커뮤니티 꼬리표(#166 §6). 커뮤니티가 **하나뿐이면 빈 문자열**이다 —
+   * 하나뿐인데 이름을 붙이면 오늘 보던 알림이 달라진다(이 이슈의 성공 기준은 사용자 눈에
+   * 보이는 변화가 0 인 것이다). 둘 이상이면 어느 커뮤니티에서 온 것인지 드러내야 한다:
+   * 같은 이름의 채널이 커뮤니티마다 있고, 제목만으로는 구분이 안 된다.
+   *
+   * 자기 엔트리를 스토어 신원으로 찾는다 — 커뮤니티 id 를 따로 들고 다니면 레지스트리에서
+   * 빠진 뒤에도 남아 있는 값이 생긴다.
+   */
+  private communitySuffix(): string {
+    const { entries } = useCommunityRegistry.getState();
+    if (entries.length < 2) return '';
+    const mine = entries.find((e) => e.store === this.store);
+    return mine ? ` (${communityLabel(mine)})` : '';
+  }
+
   // fire-and-forget 호출의 unhandled rejection 방지 — 실패는 조용히 무시(다음 이벤트/리컨실이 자연 복구).
   private swallow(p: Promise<unknown>): void { void p.catch(() => {}); }
   private projectionRefreshInterval: ReturnType<typeof setInterval> | null = null;
 
   async start(): Promise<void> {
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     const [me, { accounts, groups }, channels, dms, leases, unread, reads] = await Promise.all([
       this.api.me(), this.api.accounts(), this.api.channels(),
       this.api.dms(), this.api.leases(), this.api.inboxUnread(), this.api.reads(),
@@ -124,7 +152,7 @@ export class Controller {
     // 없는 서버(구버전)에 붙었을 때 앱이 기동조차 못 한다. 선호는 UI 편의값이라 없으면
     // 정렬이 이름순으로 남을 뿐이다 — `refreshAccounts` 가 같은 이유로 실패를 삼킨다.
     this.swallow(this.api.channelPrefs().then((prefs) => {
-      useAppStore.getState().set({ channelPrefs: Object.fromEntries(prefs.map((p) => [p.channelId, p])) });
+      this.store.getState().set({ channelPrefs: Object.fromEntries(prefs.map((p) => [p.channelId, p])) });
     }));
     // 담아 둔 메시지 요약(#219)도 같은 방식으로 fire-and-forget 으로 받는다.
     this.swallow(this.loadSavedSummary());
@@ -138,7 +166,7 @@ export class Controller {
     // 장기 토큰은 ApiClient 가 헤더로만 쓴다 — WS URL 에는 단기 티켓만 실린다.
     this.ws = this.makeWs(this.api.baseUrl, () => this.api.wsTicket(), {
       onEvent: (e) => this.handleEvent(e),
-      onOpen: () => { useAppStore.getState().set({ connected: true }); this.swallow(this.reconcile()); },
+      onOpen: () => { this.store.getState().set({ connected: true }); this.swallow(this.reconcile()); },
       onDown: (reason) => this.handleDown(reason),
     });
 
@@ -167,9 +195,9 @@ export class Controller {
   private async refreshProjectionStatus(): Promise<void> {
     try {
       const status = await this.api.projectionStatus();
-      useAppStore.getState().set({ projectionStatus: status, projectionStatusError: null });
+      this.store.getState().set({ projectionStatus: status, projectionStatusError: null });
     } catch (err) {
-      useAppStore.getState().set({
+      this.store.getState().set({
         projectionStatusError: err instanceof Error ? err.message : String(err),
       });
     }
@@ -182,14 +210,14 @@ export class Controller {
   };
 
   private handleDown(reason: WsDownReason): void {
-    useAppStore.getState().set({ connected: false });
+    this.store.getState().set({ connected: false });
     // 네트워크 끊김은 기다리면 낫는다 — 세션을 건드리지 않는다. 잠깐 끊겼다고 로그아웃시키면 최악이다.
     if (reason === 'network') return;
     // 되돌릴 수 없는 사유다. 로컬 상태를 비우고 사유를 위로 올린다 — 안 그러면 사용자는
     // 빨간 점과 영구 재연결만 본다(조용한 실패).
     // **`me` 를 먼저 읽는다.** `clearLocal()` 이 스토어를 reset 하므로 그 뒤에 읽으면
     // 항상 null 이고, accountId 가 빈 문자열이 되어 App 이 활성 커뮤니티를 못 알아본다.
-    const accountId = useAppStore.getState().me?.id ?? '';
+    const accountId = this.store.getState().me?.id ?? '';
     this.clearLocal(accountId);
     this.onSessionLost(Controller.LOST_MESSAGE[reason], accountId);
   }
@@ -208,12 +236,12 @@ export class Controller {
     // 초안은 사용자가 쓴 문장 전체다. 계정이 로그아웃된 뒤에도 디스크에 남으면
     // #92(argv 노출)와 PAT 키체인 결정이 세운 기준과 어긋난다. 스토어 액션이
     // 인메모리와 보관소를 함께 비운다 — 보관소만 지우면 스토어에 남는다.
-    useAppStore.getState().clearDrafts();
-    useAppStore.getState().reset();
+    this.store.getState().clearDrafts();
+    this.store.getState().reset();
   }
 
   private handleEvent(e: WsServerEvent): void {
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     switch (e.type) {
       case 'message.created':
         store.upsertMessages(e.message.channelId, [e.message]);
@@ -255,7 +283,7 @@ export class Controller {
         }
         break;
       case 'lease.changed':
-        this.swallow(this.api.leases().then((leases) => useAppStore.getState().set({ leases })));
+        this.swallow(this.api.leases().then((leases) => this.store.getState().set({ leases })));
         break;
       case 'presence.snapshot':
         store.set({ online: e.online });
@@ -268,7 +296,7 @@ export class Controller {
         }
         break;
       case 'presence.changed': {
-        const cur = new Set(useAppStore.getState().online);
+        const cur = new Set(this.store.getState().online);
         if (e.online) cur.add(e.accountId); else cur.delete(e.accountId);
         store.set({ online: [...cur] });
         break;
@@ -339,6 +367,19 @@ export class Controller {
         // 스스로 읽는다 — 지금 화면에 없는 URL 의 카드를 미리 받아 둘 이유가 없다.
         store.set({ linkPreviewReadyAt: { ...store.linkPreviewReadyAt, [e.url]: Date.now() } });
         break;
+      /**
+       * 워크스페이스 스킬(#311). 제안·승인·비활성을 받으면 **신호만** 올린다 —
+       * 열려 있는 스킬 설정 화면이 그것을 보고 목록을 다시 읽는다.
+       *
+       * 이벤트가 실어 온 `skill` 을 스토어에 넣지 않는 이유: 목록은 서버에 하나뿐이고,
+       * 여기서 한 건만 끼워 넣으면 그 사이 다른 admin 이 한 승인이 화면에서 사라진다.
+       * 신호를 받고 통째로 다시 읽는 쪽이 언제나 서버와 같다.
+       */
+      case 'skill.proposed':
+      case 'skill.approved':
+      case 'skill.disabled':
+        store.set({ skillsRevision: store.skillsRevision + 1 });
+        break;
     }
   }
 
@@ -347,21 +388,21 @@ export class Controller {
    * 뜨면 배지가 "가봐야 할 곳"이라는 뜻을 잃고, 자기 발화에 배지가 뜨면 더 무의미하다.
    */
   private bumpUnread(channelId: string, authorId: string): void {
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     if (channelId === store.activeChannelId || authorId === store.me?.id) return;
     const cur = store.reads[channelId] ?? { lastReadSeq: 0, unread: 0 };
     store.set({ reads: { ...store.reads, [channelId]: { ...cur, unread: cur.unread + 1 } } });
   }
 
   private async reconcile(): Promise<void> {
-    const { activeChannelId, messages } = useAppStore.getState();
+    const { activeChannelId, messages } = this.store.getState();
     if (activeChannelId) {
       const maxSeq = Math.max(0, ...(messages[activeChannelId] ?? []).map((m) => m.seq));
       const page = await this.api.messages(activeChannelId, { since: maxSeq });
-      useAppStore.getState().upsertMessages(activeChannelId, page.messages);
+      this.store.getState().upsertMessages(activeChannelId, page.messages);
     }
     await this.refreshUnread();
-    useAppStore.getState().set({ leases: await this.api.leases() });
+    this.store.getState().set({ leases: await this.api.leases() });
   }
 
   /** 미지의 작성자가 연달아 오면 요청이 폭주하므로, 진행 중인 조회 하나에 합류시킨다. */
@@ -378,7 +419,7 @@ export class Controller {
     this.accountsInFlight ??= this.api
       .accounts()
       .then(({ accounts, groups }) => {
-        useAppStore.getState().set({
+        this.store.getState().set({
           accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
           groups,
         });
@@ -399,7 +440,7 @@ export class Controller {
    * 되훑는 쪽(`announceNewMentions`)에만 그 기록이 있다.
    */
   private async announceNewMessage(message: MessageRow): Promise<void> {
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     // 내가 쓴 것은 알리지 않는다. 보고 있는 창에도 띄우지 않는다 — 배지가 그 일을 한다.
     if (message.authorId === store.me?.id || document.hasFocus()) return;
     if (notifyLevelOf(store.channelPrefs[message.channelId]) !== 'all') return;
@@ -420,7 +461,7 @@ export class Controller {
 
     this.notifiedMessages.add(message.id);
     await this.notifier.notify({
-      title: `${author ? `@${author} ` : ''}posted in ${where}`.trim(),
+      title: `${author ? `@${author} ` : ''}posted in ${where}`.trim() + this.communitySuffix(),
       // 미리보기를 끄면 제목(누가·어디서)은 남기고 대화 내용만 뺀다 — 멘션 알림과 같은 규칙이다.
       body: prefs.showPreview ? message.body : 'New message',
     });
@@ -428,7 +469,7 @@ export class Controller {
 
   /** 새로 들어온 미읽음을 OS 알림으로 알린다. 보고 있는 창에는 띄우지 않는다 — 배지가 그 일을 한다. */
   private async announceNewMentions(): Promise<void> {
-    const { unread, me, channels, dms, accounts, messages, channelPrefs } = useAppStore.getState();
+    const { unread, me, channels, dms, accounts, messages, channelPrefs } = this.store.getState();
     if (document.hasFocus()) {
       // 포커스 중에는 알리지 않되, 본 것으로 처리해 나중에 뒤늦게 터지지 않게 한다.
       for (const e of unread) this.announced.add(e.id);
@@ -471,7 +512,7 @@ export class Controller {
 
       this.notifiedMessages.add(e.messageId);
       await this.notifier.notify({
-        title: `${author ? `@${author} ` : ''}${label[e.reason]} ${where}`.trim(),
+        title: `${author ? `@${author} ` : ''}${label[e.reason]} ${where}`.trim() + this.communitySuffix(),
         // 미리보기를 끄면 제목(누가·어디서)은 남기고 대화 내용만 뺀다.
         body: prefs.showPreview ? (row?.body ?? generic) : generic,
       });
@@ -482,11 +523,11 @@ export class Controller {
   private async refreshUnread(): Promise<void> {
     const seq = ++this.unreadFetchSeq;
     const entries = await this.api.inboxUnread();
-    if (seq === this.unreadFetchSeq) useAppStore.getState().set({ unread: entries });
+    if (seq === this.unreadFetchSeq) this.store.getState().set({ unread: entries });
   }
 
   async openChannel(channelId: string): Promise<void> {
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     // 채널·스레드 열림은 이력에 추가한다. 뒤로/앞으로 이동은 pushHistory 를 안 부른다.
     store.pushHistory({ channelId, threadRootId: null });
     // 다른 곳으로 움직이면 이전 링크 강조는 뜻을 잃는다 — 남겨 두면 엉뚱한 메시지가 계속 빛난다.
@@ -507,11 +548,11 @@ export class Controller {
     this.swallow(this.loadChannelAutoMentions(channelId));
     const page = await this.api.messages(channelId, { since });
     this.loadedChannels.add(channelId);
-    useAppStore.getState().upsertMessages(channelId, page.messages);
-    useAppStore.getState().set({
-      hasMore: { ...useAppStore.getState().hasMore, [channelId]: page.hasMore },
+    this.store.getState().upsertMessages(channelId, page.messages);
+    this.store.getState().set({
+      hasMore: { ...this.store.getState().hasMore, [channelId]: page.hasMore },
     });
-    const ids = useAppStore.getState().unread
+    const ids = this.store.getState().unread
       .filter((e) => e.channelId === channelId && !e.readAt)
       .map((e) => e.id);
     if (ids.length) {
@@ -529,24 +570,24 @@ export class Controller {
    * 그 자리에 남는 것이 의도다("내가 열었을 때 어디까지 읽었는가"를 말하는 선이다).
    */
   private async settleReadPosition(channelId: string): Promise<void> {
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     const frozen = store.reads[channelId]?.lastReadSeq ?? 0;
     store.set({ dividerSeq: { ...store.dividerSeq, [channelId]: frozen } });
 
     const newest = Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq));
     if (newest <= frozen) return;
     await this.api.markChannelRead(channelId, newest);
-    const after = useAppStore.getState();
+    const after = this.store.getState();
     after.set({ reads: { ...after.reads, [channelId]: { lastReadSeq: newest, unread: 0 } } });
   }
 
   async openThread(rootId: string): Promise<void> {
-    const channelId = useAppStore.getState().activeChannelId;
+    const channelId = this.store.getState().activeChannelId;
     if (!channelId) return;
-    useAppStore.getState().pushHistory({ channelId, threadRootId: rootId });
-    useAppStore.getState().set({ threadRootId: rootId });
+    this.store.getState().pushHistory({ channelId, threadRootId: rootId });
+    this.store.getState().set({ threadRootId: rootId });
     const page = await this.api.messages(channelId, { thread: rootId });
-    useAppStore.getState().upsertMessages(channelId, page.messages);
+    this.store.getState().upsertMessages(channelId, page.messages);
   }
 
   /**
@@ -563,7 +604,7 @@ export class Controller {
       target = await this.api.message(messageId);
     } catch (e) {
       const status = e instanceof ApiError ? e.status : 0;
-      useAppStore.getState().set({
+      this.store.getState().set({
         notice: status === 404
           ? 'That message is gone — it was deleted, or the link points at nothing.'
           : status === 403
@@ -576,25 +617,25 @@ export class Controller {
     // 답글은 스레드 패널까지 연다 — 스레드 밖에서 보면 무엇에 대한 답인지 잃는다.
     if (target.threadRootId) await this.openThread(target.threadRootId);
     // 강조는 openChannel 이 지운 **뒤에** 건다. 순서가 뒤바뀌면 방금 건 강조를 스스로 지운다.
-    useAppStore.getState().set({ highlightedMessageId: target.id, notice: null });
+    this.store.getState().set({ highlightedMessageId: target.id, notice: null });
   }
 
   /** 상단에 도달했을 때 한 페이지 더 과거로. 남은 게 없으면 요청하지 않는다. */
   async loadOlder(): Promise<void> {
-    const { activeChannelId, messages, hasMore } = useAppStore.getState();
+    const { activeChannelId, messages, hasMore } = this.store.getState();
     if (!activeChannelId || !hasMore[activeChannelId]) return;
     const rows = messages[activeChannelId] ?? [];
     if (!rows.length) return;
     const oldest = Math.min(...rows.map((m) => m.seq));
 
     const page = await this.api.messages(activeChannelId, { before: oldest });
-    useAppStore.getState().upsertMessages(activeChannelId, page.messages);
-    useAppStore.getState().set({
-      hasMore: { ...useAppStore.getState().hasMore, [activeChannelId]: page.hasMore },
+    this.store.getState().upsertMessages(activeChannelId, page.messages);
+    this.store.getState().set({
+      hasMore: { ...this.store.getState().hasMore, [activeChannelId]: page.hasMore },
     });
   }
 
-  closeThread(): void { useAppStore.getState().set({ threadRootId: null }); }
+  closeThread(): void { this.store.getState().set({ threadRootId: null }); }
 
   /**
    * 보낼 자리를 **인자로 받는다**(#223). 스토어의 활성 채널을 호출 시점에 읽으면, 보냄 취소
@@ -604,11 +645,11 @@ export class Controller {
    * 인자를 생략하면 예전처럼 활성 채널로 간다 — 즉시 보내는 호출부는 그 편이 짧다.
    */
   async send(body: string, attachmentIds: string[] = [], channelId?: string): Promise<void> {
-    const target = channelId ?? useAppStore.getState().activeChannelId;
+    const target = channelId ?? this.store.getState().activeChannelId;
     // 파일만 보내는 것은 자연스럽다 — 본문이 비었다고 막으면 첨부를 보낼 길이 없다.
     if (!target || (!body.trim() && !attachmentIds.length)) return;
     const m = await this.api.postMessage(target, body, undefined, crypto.randomUUID(), attachmentIds);
-    useAppStore.getState().upsertMessages(target, [m]);
+    this.store.getState().upsertMessages(target, [m]);
   }
 
   /**
@@ -623,12 +664,12 @@ export class Controller {
     body: string, attachmentIds: string[] = [], channelId?: string, threadRootId?: string,
     alsoInChannel = false,
   ): Promise<void> {
-    const state = useAppStore.getState();
+    const state = this.store.getState();
     const target = channelId ?? state.activeChannelId;
     const root = threadRootId ?? state.threadRootId;
     if (!target || !root || (!body.trim() && !attachmentIds.length)) return;
     const m = await this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel);
-    useAppStore.getState().upsertMessages(target, [m]);
+    this.store.getState().upsertMessages(target, [m]);
   }
 
   /**
@@ -636,7 +677,7 @@ export class Controller {
    * 소켓이 없으면 조용히 넘긴다 — 입력 중 표시는 없어도 대화가 되는 기능이다.
    */
   notifyTyping(on: boolean): void {
-    const { activeChannelId, threadRootId } = useAppStore.getState();
+    const { activeChannelId, threadRootId } = this.store.getState();
     // 스레드에서 쓰는 것도 그 채널에서 입력 중이다 — 채널 단위로 보낸다.
     void threadRootId;
     if (!activeChannelId) return;
@@ -666,8 +707,8 @@ export class Controller {
   async setAvatar(file: File | null): Promise<void> {
     const attachmentId = file ? (await this.api.upload(file)).id : null;
     const { avatarAttachmentId } = await this.api.setAvatar(attachmentId);
-    const me = useAppStore.getState().me;
-    if (me) useAppStore.getState().applyAvatar(me.id, avatarAttachmentId);
+    const me = this.store.getState().me;
+    if (me) this.store.getState().applyAvatar(me.id, avatarAttachmentId);
   }
 
   /**
@@ -681,9 +722,9 @@ export class Controller {
       blob = await this.fetchAttachment(attachment.id);
     } catch (e) {
       if (e instanceof ApiError && e.code === 'attachment_missing') {
-        useAppStore.getState().set({ notice: '첨부 파일이 서버에 없습니다' });
+        this.store.getState().set({ notice: '첨부 파일이 서버에 없습니다' });
       } else {
-        useAppStore.getState().set({ notice: '첨부를 불러오지 못했습니다' });
+        this.store.getState().set({ notice: '첨부를 불러오지 못했습니다' });
       }
       return;
     }
@@ -705,18 +746,18 @@ export class Controller {
    * 뒤이어 오는 소켓 이벤트는 같은 결과를 내므로(멱등) 두 번 반영되지 않는다.
    */
   async toggleReaction(channelId: string, messageId: string, emoji: string, on: boolean): Promise<void> {
-    const me = useAppStore.getState().me;
+    const me = this.store.getState().me;
     if (!me) return;
     if (on) await this.api.addReaction(channelId, messageId, emoji);
     else await this.api.removeReaction(channelId, messageId, emoji);
-    useAppStore.getState().applyReaction(channelId, messageId, emoji, me.id, on);
+    this.store.getState().applyReaction(channelId, messageId, emoji, me.id, on);
   }
 
   async editMessage(messageId: string, body: string): Promise<void> {
-    const { activeChannelId } = useAppStore.getState();
+    const { activeChannelId } = this.store.getState();
     if (!activeChannelId || !body.trim()) return;
     const updated = await this.api.editMessage(activeChannelId, messageId, body);
-    useAppStore.getState().upsertMessages(activeChannelId, [updated]);
+    this.store.getState().upsertMessages(activeChannelId, [updated]);
   }
 
   /**
@@ -727,7 +768,7 @@ export class Controller {
    */
   async loadPins(channelId: string): Promise<void> {
     const pins = await this.api.pins(channelId);
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     store.set({ pins: { ...store.pins, [channelId]: pins } });
   }
 
@@ -742,7 +783,7 @@ export class Controller {
     try {
       await this.api.pinMessage(channelId, messageId);
     } catch (e) {
-      useAppStore.getState().set({
+      this.store.getState().set({
         notice: e instanceof ApiError && e.code === 'channel_archived'
           ? "This channel is archived — it's read-only, so nothing new can be pinned."
           : 'Could not pin that message. Check your connection and try again.',
@@ -757,7 +798,7 @@ export class Controller {
     try {
       await this.api.unpinMessage(channelId, messageId);
     } catch (e) {
-      useAppStore.getState().set({
+      this.store.getState().set({
         notice: e instanceof ApiError && e.status === 403
           ? 'Only the person who pinned that message, or an admin, can unpin it.'
           : 'Could not unpin that message. Check your connection and try again.',
@@ -776,7 +817,7 @@ export class Controller {
    */
   async loadChannelDoc(channelId: string): Promise<ChannelDoc> {
     const doc = await this.api.channelDoc(channelId);
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     store.set({ channelDocs: { ...store.channelDocs, [channelId]: doc } });
     return doc;
   }
@@ -793,14 +834,14 @@ export class Controller {
   ): Promise<ChannelDoc> {
     try {
       const doc = await this.api.updateChannelDoc(channelId, body, expectedUpdatedAt);
-      const store = useAppStore.getState();
+      const store = this.store.getState();
       store.set({ channelDocs: { ...store.channelDocs, [channelId]: doc } });
       return doc;
     } catch (err) {
       if (err instanceof ApiError && err.code === 'doc_stale') {
         const current = (err.payload as { doc?: ChannelDoc } | null)?.doc;
         if (current) {
-          const store = useAppStore.getState();
+          const store = this.store.getState();
           store.set({ channelDocs: { ...store.channelDocs, [channelId]: current } });
         }
       }
@@ -809,12 +850,12 @@ export class Controller {
   }
 
   async deleteMessage(messageId: string): Promise<void> {
-    const { activeChannelId, threadRootId } = useAppStore.getState();
+    const { activeChannelId, threadRootId } = this.store.getState();
     if (!activeChannelId) return;
     await this.api.deleteMessage(activeChannelId, messageId);
-    useAppStore.getState().removeMessage(activeChannelId, messageId);
+    this.store.getState().removeMessage(activeChannelId, messageId);
     // 내가 지운 경우에도 같다. WS 이벤트를 기다리지 않고 즉시 닫는다.
-    if (threadRootId === messageId) useAppStore.getState().set({ threadRootId: null });
+    if (threadRootId === messageId) this.store.getState().set({ threadRootId: null });
   }
 
   listAgents(): Promise<import('@murmur/shared').AgentView[]> {
@@ -859,7 +900,7 @@ export class Controller {
     agentId: string, disabled: boolean,
   ): Promise<import('@murmur/shared').AgentView> {
     const updated = await this.api.setAgentDisabled(agentId, disabled);
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     store.set({ accounts: { ...store.accounts, [updated.id]: updated } });
     return updated;
   }
@@ -908,7 +949,7 @@ export class Controller {
    */
   async createHandleGroup(input: { handle: string; displayName: string }): Promise<HandleGroupRow> {
     const group = await this.api.createHandleGroup(input);
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     store.set({ groups: [...store.groups, group] });
     return group;
   }
@@ -919,14 +960,14 @@ export class Controller {
 
   async updateHandleGroup(id: string, patch: { displayName: string }): Promise<HandleGroupRow> {
     const updated = await this.api.updateHandleGroup(id, patch);
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     store.set({ groups: store.groups.map((g) => (g.id === id ? updated : g)) });
     return updated;
   }
 
   async deleteHandleGroup(id: string): Promise<void> {
     await this.api.deleteHandleGroup(id);
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     store.set({ groups: store.groups.filter((g) => g.id !== id) });
   }
 
@@ -936,7 +977,7 @@ export class Controller {
    * 두 번 넣는 요청에서 수가 실제와 갈라지고, 그 어긋남은 다음 조회까지 화면에 남는다.
    */
   private applyGroupMembers(id: string, members: string[]): string[] {
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     store.set({
       groups: store.groups.map((g) => (g.id === id ? { ...g, memberCount: members.length } : g)),
     });
@@ -960,7 +1001,7 @@ export class Controller {
    */
   async createChannel(name: string, visibility: 'public' | 'private' = 'public'): Promise<ChannelRow> {
     const created = await this.api.createChannel({ name, visibility });
-    useAppStore.getState().set({ channels: await this.api.channels() });
+    this.store.getState().set({ channels: await this.api.channels() });
     await this.openChannel(created.id);
     return created;
   }
@@ -972,7 +1013,7 @@ export class Controller {
    */
   async loadChannelMembers(channelId: string): Promise<ChannelMemberRow[]> {
     const members = await this.api.channelMembers(channelId);
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     store.set({ channelMembers: { ...store.channelMembers, [channelId]: members } });
     return members;
   }
@@ -984,7 +1025,7 @@ export class Controller {
    */
   async loadChannelAutoMentions(channelId: string): Promise<ChannelAutoMentionRow[]> {
     const rows = await this.api.channelAutoMentions(channelId);
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     store.set({ channelAutoMentions: { ...store.channelAutoMentions, [channelId]: rows } });
     return rows;
   }
@@ -1002,7 +1043,7 @@ export class Controller {
 
   async inviteChannelMember(channelId: string, accountId: string): Promise<ChannelMemberRow[]> {
     const members = await this.api.inviteChannelMember(channelId, accountId);
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     store.set({ channelMembers: { ...store.channelMembers, [channelId]: members } });
     return members;
   }
@@ -1013,7 +1054,7 @@ export class Controller {
    */
   async leaveChannel(channelId: string, accountId: string): Promise<void> {
     const members = await this.api.removeChannelMember(channelId, accountId);
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     store.set({
       channelMembers: { ...store.channelMembers, [channelId]: members },
       channels: await this.api.channels(),
@@ -1028,13 +1069,13 @@ export class Controller {
     id: string, input: { topic?: string; repo?: string | null; visibility?: 'public' | 'private' },
   ): Promise<ChannelRow> {
     const updated = await this.api.updateChannel(id, input);
-    useAppStore.getState().set({ channels: await this.api.channels() });
+    this.store.getState().set({ channels: await this.api.channels() });
     return updated;
   }
 
   async archiveChannel(id: string, archived: boolean): Promise<ChannelRow> {
     const updated = await this.api.archiveChannel(id, archived);
-    useAppStore.getState().set({ channels: await this.api.channels() });
+    this.store.getState().set({ channels: await this.api.channels() });
     return updated;
   }
 
@@ -1059,7 +1100,7 @@ export class Controller {
    */
   async deleteChannel(id: string): Promise<void> {
     await this.api.deleteChannel(id);
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     store.set({
       channels: await this.api.channels(),
       ...(store.activeChannelId === id ? { activeChannelId: null, threadRootId: null } : {}),
@@ -1068,7 +1109,7 @@ export class Controller {
 
   async startDm(accountId: string): Promise<void> {
     const dm = await this.api.createDm([accountId]);
-    useAppStore.getState().set({ dms: await this.api.dms() });
+    this.store.getState().set({ dms: await this.api.dms() });
     await this.openChannel(dm.id);
   }
 
@@ -1077,7 +1118,7 @@ export class Controller {
    * 같은 사실을 두 곳이 말하게 되고, 그 둘이 갈라진다.
    */
   async setChannelNotifyLevel(channelId: string, notifyLevel: NotifyLevel): Promise<void> {
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     const updated = await this.api.updateChannelPref(channelId, { notifyLevel });
     store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
   }
@@ -1088,7 +1129,7 @@ export class Controller {
    * `applyStatus` 는 덮어쓰기라 두 번 세는 문제가 없다(리액션과 다른 점이다).
    */
   async setStatus(status: AccountStatus, statusText?: string | null): Promise<void> {
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     // 키 부재와 null 을 구분해서 그대로 넘긴다 — 여기서 `?? null` 로 뭉개면 '문구는
     // 손대지 않음'이 '지우기'가 된다.
     const saved = await this.api.setMyStatus(statusText === undefined ? { status } : { status, statusText });
@@ -1102,7 +1143,7 @@ export class Controller {
    */
   async setHandle(handle: string): Promise<void> {
     const saved = await this.api.updateMyHandle(handle);
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     const meId = store.me?.id;
     if (meId) store.applyHandle(meId, saved.handle);
   }
@@ -1119,7 +1160,7 @@ export class Controller {
    */
   async markChannelUnread(channelId: string, seq: number): Promise<void> {
     await this.api.markChannelUnread(channelId, seq);
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     const cur = store.reads[channelId] ?? { lastReadSeq: 0, unread: 0 };
     const boundary = Math.min(cur.lastReadSeq, seq - 1);
     const unread = (store.messages[channelId] ?? [])
@@ -1128,7 +1169,7 @@ export class Controller {
   }
 
   async toggleChannelStar(channelId: string): Promise<void> {
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     const current = store.channelPrefs[channelId];
     const starred = !current?.starredAt;
     const updated = await this.api.updateChannelPref(channelId, { starred });
@@ -1140,7 +1181,7 @@ export class Controller {
    * DM 에는 사용할 수 없다 — 400 을 받으면 그대로 던진다.
    */
   async setChannelSection(channelId: string, section: string | null): Promise<void> {
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     const updated = await this.api.updateChannelPref(channelId, { section });
     store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
   }
@@ -1162,7 +1203,7 @@ export class Controller {
    * 채널의 `sortOrder` 를 설정한다(#157). 섹션 안 순서 조절의 최소 단위다.
    */
   async setChannelSortOrder(channelId: string, sortOrder: number | null): Promise<void> {
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     const updated = await this.api.updateChannelPref(channelId, { sortOrder });
     store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
   }
@@ -1182,7 +1223,7 @@ export class Controller {
     for (const [index, channelId] of orderedChannelIds.entries()) {
       updated.push(await this.api.updateChannelPref(channelId, { sortOrder: index }));
     }
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     store.set({
       channelPrefs: {
         ...store.channelPrefs,
@@ -1208,7 +1249,7 @@ export class Controller {
    */
   async loadUnreadSweep(): Promise<SweepItem[]> {
     const reads = await this.api.reads();
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     // 조회한 김에 배지도 같은 값으로 맞춘다 — 훑기와 사이드바가 서로 다른 미읽음을 말하면
     // 어느 쪽이 맞는지 사람이 판단할 수 없다.
     store.set({ reads: Object.fromEntries(reads.map((r) => [r.channelId, { lastReadSeq: r.lastReadSeq, unread: r.unread }])) });
@@ -1222,7 +1263,7 @@ export class Controller {
       // 정렬 기준을 같은 것으로 두는 편이, 못 본 메시지를 기준으로 줄 세우는 것보다 정직하다.
       candidates.map((r) => this.api.messages(r.channelId, { since: r.lastReadSeq })),
     );
-    const after = useAppStore.getState();
+    const after = this.store.getState();
     const items: SweepItem[] = [];
     candidates.forEach((r, i) => {
       const page = pages[i];
@@ -1252,7 +1293,7 @@ export class Controller {
    */
   async markChannelReadUpTo(channelId: string, seq: number): Promise<void> {
     await this.api.markChannelRead(channelId, seq);
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     const cur = store.reads[channelId] ?? { lastReadSeq: 0, unread: 0 };
     store.set({ reads: { ...store.reads, [channelId]: { lastReadSeq: Math.max(cur.lastReadSeq, seq), unread: 0 } } });
   }
@@ -1281,16 +1322,16 @@ export class Controller {
    * 것은 오류가 아니므로 조용히 넘어가고, 갈 곳이 하나도 없으면 아무것도 하지 않는다.
    */
   private async navigateHistory(step: -1 | 1): Promise<boolean> {
-    const { history, historyIndex } = useAppStore.getState();
+    const { history, historyIndex } = this.store.getState();
     for (let i = historyIndex + step; i >= 0 && i < history.length; i += step) {
       const entry = history[i]!;
-      const st = useAppStore.getState();
+      const st = this.store.getState();
       const exists = st.channels.some((c) => c.id === entry.channelId) ||
         st.dms.some((d) => d.id === entry.channelId);
       if (!exists) continue;
       st.set({ historyIndex: i });
       await this.openChannelWithoutHistory(entry.channelId);
-      if (entry.threadRootId) useAppStore.getState().set({ threadRootId: entry.threadRootId });
+      if (entry.threadRootId) this.store.getState().set({ threadRootId: entry.threadRootId });
       return true;
     }
     return false;
@@ -1298,7 +1339,7 @@ export class Controller {
 
   /** 채널을 연다(히스토리 미추가). 뒤로·앞으로 이동 전용. */
   private async openChannelWithoutHistory(channelId: string): Promise<void> {
-    const store = useAppStore.getState();
+    const store = this.store.getState();
     // 뒤로·앞으로 이동도 채널을 새로 여는 것이다 — 접힘 기본값이 여기서 갈리면
     // 같은 채널이 어떻게 도착했는지에 따라 다르게 보인다(#217).
     store.set({ activeChannelId: channelId, threadRootId: null, highlightedMessageId: null, expandedMessageIds: {} });
@@ -1350,7 +1391,7 @@ export class Controller {
   /** 사이드바 배지(open 개수)와 `⋯` 메뉴 문구(담겼는가)를 한 왕복으로 갱신한다. */
   async loadSavedSummary(): Promise<{ openCount: number; messageIds: string[] }> {
     const summary = await this.api.savedSummary();
-    useAppStore.getState().set({ savedCount: summary.openCount, savedIds: summary.messageIds });
+    this.store.getState().set({ savedCount: summary.openCount, savedIds: summary.messageIds });
     return summary;
   }
 
@@ -1400,11 +1441,89 @@ export class Controller {
   addTeamToChannel(channelId: string, teamId: string): Promise<AddTeamToChannelResult> {
     return this.api.addTeamToChannel(channelId, teamId);
   }
+
+  /** 워크스페이스 스킬 목록(#311). */
+  listSkills(): Promise<WorkspaceSkillView[]> {
+    return this.api.listSkills();
+  }
+
+  /** 스킬 상세 조회. */
+  getSkill(slug: string): Promise<WorkspaceSkillView> {
+    return this.api.getSkill(slug);
+  }
+
+  /** 스킬 승인(#311). admin 전용. */
+  approveSkill(slug: string): Promise<WorkspaceSkillView> {
+    return this.api.approveSkill(slug);
+  }
+
+  /** 스킬 비활성화/거부(#311). admin 전용. */
+  disableSkill(slug: string): Promise<WorkspaceSkillView> {
+    return this.api.disableSkill(slug);
+  }
 }
 
-let current: Controller | null = null;
-export function setController(c: Controller | null): void { current = c; }
+/**
+ * 활성 커뮤니티의 컨트롤러를 꽂는다(#166).
+ *
+ * 레지스트리 등록(`startCommunitySession`)이 정식 경로지만 이 함수를 남긴다 — 오늘 여러
+ * 테스트가 이것으로 가짜 컨트롤러를 활성 자리에 꽂는다. 이름과 시그니처를 지키면 이 이슈의
+ * diff 가 "상태 구조" 에 머문다.
+ */
+export function setController(c: Controller | null): void {
+  const { activeId, attachController } = useCommunityRegistry.getState();
+  attachController(activeId, c);
+}
+
+/**
+ * 호출부 수십 곳이 이 이름으로 "그 서버" 를 뜻한다. 이름과 시그니처를 그대로 두고 **내부만**
+ * 레지스트리를 보게 바꿨다 — 이제 뜻은 "활성 커뮤니티의 컨트롤러" 다.
+ */
 export function getController(): Controller {
-  if (!current) throw new Error('controller not initialized');
-  return current;
+  return getActiveController();
+}
+
+/**
+ * 커뮤니티 하나의 세션을 띄운다(#166). 스토어를 만들고, 그 스토어에 묶인 컨트롤러를 만들고,
+ * WS 를 붙인다.
+ *
+ * **보고 있지 않은 커뮤니티도 붙여 둔다** — 안 그러면 알림이 오지 않는다. 다만 히스토리는
+ * 늦게 받는다: `start()` 는 채널 목록·미읽음·읽음 위치까지만 받고 메시지 본문은 받지 않으며,
+ * `onOpen` 의 `reconcile()` 은 `activeChannelId` 가 있을 때만 페이지를 읽는다. 비활성
+ * 커뮤니티는 그것이 `null` 이므로 이벤트로 미읽음·알림만 갱신되고, 본문 로드는 활성화되어
+ * `openChannel` 이 불릴 때 일어난다.
+ *
+ * `active: false` 로 부르면 활성 커뮤니티를 바꾸지 않는다. 두 번째 커뮤니티를 등록하는
+ * 경로는 지금 그것뿐이고 **화면에서는 부르지 않는다** — 등록·전환 UI 는 #165 의 몫이다.
+ */
+export async function startCommunitySession(opts: {
+  baseUrl: string;
+  token: string;
+  active: boolean;
+  onSessionLost?: (message: string, accountId: string) => void;
+  makeWs?: typeof connectWs;
+  notifier?: Notifier;
+  /** 테스트가 서버 왕복 없이 이 경로를 그대로 지나가는 자리. 주지 않으면 진짜 클라이언트를 만든다. */
+  api?: ApiClient;
+}): Promise<CommunityEntry> {
+  const registry = useCommunityRegistry.getState();
+  // `active` 는 "화면이 이것을 본다" 이므로 **활성 엔트리를 그 커뮤니티로 만든다** — 새로
+  // 덧붙이지 않는다. 그래야 재로그인이 목록을 늘리지 않는다.
+  const entry = opts.active
+    ? registry.claimActive({ baseUrl: opts.baseUrl })
+    : registry.register({ baseUrl: opts.baseUrl });
+  const api = opts.api ?? new ApiClient(opts.baseUrl, opts.token);
+  const controller = new Controller(
+    api,
+    opts.makeWs ?? connectWs,
+    opts.notifier ?? silentNotifier,
+    opts.onSessionLost ?? (() => {}),
+    undefined,
+    undefined,
+    undefined,
+    entry.store,
+  );
+  useCommunityRegistry.getState().attachController(entry.id, controller);
+  await controller.start();
+  return { ...entry, controller };
 }

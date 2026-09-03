@@ -8,7 +8,7 @@
 // 부르지 않아도 초록이다 — 그러면 정본은 바뀌었는데 화면에는 `<@0f3c…>` 가 뜬다.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { MessageItem } from '../src/components/MessageItem';
 import { bodyAsHandles } from '../src/lib/mention';
 import { acc, msg } from './helpers/fakeApi';

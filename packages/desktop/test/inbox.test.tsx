@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import type { InboxEntry } from '@murmur/shared';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Inbox } from '../src/components/Inbox';
 import { Sidebar } from '../src/components/Sidebar';

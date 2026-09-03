@@ -1,4 +1,4 @@
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 
 /**
  * 조용히 삼키면 안 되는 실패를 사람 앞에 세우는 자리(#178).
@@ -12,7 +12,7 @@ import { useAppStore } from '../state/appStore';
  * 저절로 사라지면 자리를 비운 사이에 뜬 오류를 아무도 못 본다.
  */
 export function Notice() {
-  const notice = useAppStore((s) => s.notice);
+  const notice = useActiveStore((s) => s.notice);
   if (!notice) return null;
   return (
     <div
@@ -23,7 +23,7 @@ export function Notice() {
       <button
         className="rounded px-1 text-warning hover:bg-warning-surface-strong"
         aria-label="Dismiss notice"
-        onClick={() => useAppStore.getState().set({ notice: null })}
+        onClick={() => useActiveStore.getState().set({ notice: null })}
       >
         ×
       </button>

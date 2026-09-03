@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageBody } from './MessageBody';
 import { ApiError } from '../lib/api';
@@ -35,8 +35,8 @@ function expectationOf(doc: ChannelDoc | undefined | null): number | null {
  *    순간 타이핑 중인 내용이 날아간다.
  */
 export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSettings }: ChannelDocPanelProps) {
-  const accounts = useAppStore((s) => s.accounts);
-  const doc = useAppStore((s) => s.channelDocs[channelId]);
+  const accounts = useActiveStore((s) => s.accounts);
+  const doc = useActiveStore((s) => s.channelDocs[channelId]);
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);

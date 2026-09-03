@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AccountView } from '@murmur/shared';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { Identity, StatusMark } from './Identity';
 
@@ -34,8 +34,8 @@ type LoadState = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; mess
  * 없다. handle 과 displayName **둘 다** 본다 — 사람은 둘 중 아는 쪽으로 친다.
  */
 export function Directory({ open, onClose, accountId }: Props) {
-  const accounts = useAppStore((s) => s.accounts);
-  const online = useAppStore((s) => s.online);
+  const accounts = useActiveStore((s) => s.accounts);
+  const online = useActiveStore((s) => s.online);
   const [query, setQuery] = useState('');
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
 

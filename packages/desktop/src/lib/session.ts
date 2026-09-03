@@ -16,7 +16,7 @@
  * - 키: 커뮤니티 구분은 계정 id다. URL(baseUrl)이 아니다 — 같은 서버가 localhost와 LAN IP 등 여러 URL 로 닿을 수 있어 URL 로 키를 두면 같은 커뮤니티가 목록에 두 번 나타난다.
  * - accountId는 서버 DB의 UUID라 어느 URL로 접근해도 동일하고, 다른 서버와는 다르다.
  */
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 
 export interface StoredCommunity {
   accountId: string;
@@ -137,7 +137,7 @@ export const sessionStore = {
       //
       // 재시도는 넣지 않는다 — 키체인 잠김은 사람이 풀어야 하는 것이고, 조용한 재시도는
       // 실패를 다시 숨긴다. 이번 실행은 메모리의 세션으로 계속된다(로그인을 막지 않는다).
-      useAppStore.getState().set({ notice: SAVE_FAILED_NOTICE });
+      useActiveStore.getState().set({ notice: SAVE_FAILED_NOTICE });
     }
   },
 
