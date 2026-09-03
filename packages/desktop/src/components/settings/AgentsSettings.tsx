@@ -138,9 +138,6 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const [confirmingSlug, setConfirmingSlug] = useState<string | null>(null);
   // #251: 비활성화는 되돌릴 수 없는 작업이므로 확인 단계를 거친다.
   const [confirmingDisable, setConfirmingDisable] = useState(false);
-  // #299: 소유자 판정. 목록이 이미 필터되어 있어도 UI 에서 명시적으로 쓴다 — admin 전용
-  // 필드(ownerAccountId, disabled, mentionPermission)와 일반 필드(PAT, memory)를 가린다.
-  const [isOwner, setIsOwner] = useState(false);
   // 라벨을 하드코딩하면 재발급이 막힌다 — 라벨은 살아 있는 토큰 안에서 유일하고
   // (마이그레이션 010) 서버가 중복을 409 로 거절한다. 토큰을 잃어 폐기한 뒤 같은 이름으로
   // 다시 발급하는 것이 주 사용 흐름이라, 사용자가 이름을 정할 수 있어야 한다.
@@ -205,16 +202,32 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       .catch(() => setDefaults('error'));
   }, [isAdmin]);
 
-  const loadPats = (agentId: string) => {
-    if (!isAdmin && !isOwner) return;
+  /**
+   * PAT·메모리를 읽을 수 있는가(#253 의 표: 소유자 또는 admin).
+   *
+   * **판정을 대상 에이전트에서 직접 뽑는 이유**: 이 값을 `useState` 에 담고 `pick` 안에서
+   * 세팅하면, 같은 `pick` 이 곧바로 부르는 아래 두 조회는 아직 **갱신 전 값**을 읽는다
+   * (React 의 상태 갱신은 다음 렌더에 보인다). 실측으로 그래서 소유자가 에이전트를 처음
+   * 고르면 PAT·메모리 패널은 그려지는데 조회가 한 번도 나가지 않아 영영 비어 있었다.
+   */
+  const canReadSecrets = (a: AgentView) => isAdmin || (myId !== undefined && a.ownerAccountId === myId);
+
+  /**
+   * 지금 고른 에이전트의 소유자인가(admin 은 아니다). **상태가 아니라 파생값**이다 —
+   * 상태로 두면 `pick` 이 세팅한 값을 같은 `pick` 안의 조회가 못 본다(위 주석).
+   */
+  const isOwner = !isAdmin && selected !== null && myId !== undefined && selected.ownerAccountId === myId;
+
+  const loadPats = (a: AgentView) => {
+    if (!canReadSecrets(a)) return;
     setPats(null);
-    void getController().listPats(agentId).then(setPats).catch(() => setPats('error'));
+    void getController().listPats(a.id).then(setPats).catch(() => setPats('error'));
   };
 
-  const loadMemories = (agentId: string) => {
-    if (!isAdmin && !isOwner) return;
+  const loadMemories = (a: AgentView) => {
+    if (!canReadSecrets(a)) return;
     setMemories(null);
-    void getController().agentMemory(agentId)
+    void getController().agentMemory(a.id)
       .then(setMemories)
       .catch(() => setMemories('error'));
   };
@@ -229,12 +242,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     setError(null);
     setConfirmingSlug(null);
     setConfirmingDisable(false);
-    // #299: 소유자 판정. isAdmin 이면 무조건 false(_ADMIN_ONLY_FIELDS 가 admin 전용).
-    // isAdmin 이 아니면 ownerAccountId 가 자기 id 인지만 보면 된다 — 목록이 이미 필터되어
-    // 있지만 UI 에서 명시적으로 판정하면 admin 전용 필드 가리기가 정확해진다.
-    setIsOwner(!isAdmin && a.ownerAccountId === myId);
-    loadPats(a.id);
-    loadMemories(a.id);
+    loadPats(a);
+    loadMemories(a);
   };
 
   const startNew = () => {
@@ -252,14 +261,22 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   };
 
   /** 'harness 기본값 사용'이면 명시적 null 로 비운다 — 필드를 안 보내면 서버가 기존 값을 유지한다. */
+  /**
+   * 저장 본문. **admin 전용 필드(`mentionPermission`·`ownerAccountId`)는 admin 일 때만
+   * 싣는다**(#253·#299).
+   *
+   * 서버는 키의 **존재**로 판정한다 — 값이 바뀌지 않았어도 키가 있으면 403 이고 아무것도
+   * 저장되지 않는다(`accountRoutes.ts` 의 `ADMIN_ONLY_FIELDS` 주석: 부분 적용 금지).
+   * 그래서 이 두 키를 늘 싣던 동안 소유자의 저장 버튼은 **무엇을 고치든 반드시 실패**했다 —
+   * 화면은 그저 "저장하지 못했다" 만 띄웠다. 실측으로 나온 결함이다.
+   */
   const configPatch = (d: Draft): Partial<AgentConfig> => ({
     instructions: d.instructions,
     harness: d.harness,
     model: customized && d.model ? d.model : null,
     effort: customized && d.effort ? d.effort : null,
     workingDir: d.workingDir || null,
-    mentionPermission: d.mentionPermission,
-    ownerAccountId: d.ownerAccountId,
+    ...(isAdmin ? { mentionPermission: d.mentionPermission, ownerAccountId: d.ownerAccountId } : {}),
   });
 
   const submit = async () => {
@@ -356,7 +373,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       // **양쪽 다** 다시 읽는다. 켤 때는 0개라는 사실이 재발급 안내의 근거이고, 끌 때는
       // 확인 문구가 "모든 PAT 가 폐기된다"고 말한 것이 화면에도 나타나야 한다 — 안 읽으면
       // 방금 폐기된 토큰이 살아 있는 것처럼 남는다.
-      loadPats(selected.id);
+      loadPats(selected);
     } catch {
       setError(willDisable ? '비활성화하지 못했다' : '활성화하지 못했다');
     } finally {
@@ -370,7 +387,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     setError(null);
     try {
       await getController().revokePat(selected.id, label);
-      loadPats(selected.id);
+      loadPats(selected);
     } catch {
       setError('PAT 를 폐기하지 못했다');
     }
@@ -384,7 +401,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     try {
       const token = await getController().mintPat(selected.id, newPatLabel.trim());
       setPat(token);
-      loadPats(selected.id);
+      loadPats(selected);
     } catch (e) {
       // 서버가 왜 거절했는지 그대로 보여야 한다 — 특히 '이 라벨은 이미 쓰인다'(409)는
       // 사용자가 라벨만 바꾸면 해결되는 것이라, 뭉개면 막힌 것처럼 보인다.
@@ -596,21 +613,26 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               </select>
             </label>
 
-            <label className={label}>
-              Mention permission
-              <select
-                className={field}
-                aria-label="Mention permission"
-                value={draft.mentionPermission}
-                onChange={(e) => setDraft({ ...draft, mentionPermission: e.target.value as MentionPermission })}
-              >
-                <option value="auto">auto — 멘션 턴에서 도구를 모두 허용</option>
-                <option value="readonly">readonly — 읽기만 (상담 전용)</option>
-              </select>
-              <span className="text-[11px] text-zinc-500">
-                사람이 터미널로 직접 조종할 때는 이 설정과 무관하게 하네스가 물어본다.
-              </span>
-            </label>
+            {/* #253 의 표에서 `mentionPermission` 은 **admin 전용**이다. 소유자에게는 비활성
+                입력이 아니라 **아예 그리지 않는다** — 눌러도 안 되는 것을 보여 주면 사람은
+                자기가 뭘 잘못했다고 생각한다(#299). 값 자체는 아래 읽기 전용 칸에 적는다. */}
+            {isAdmin && (
+              <label className={label}>
+                Mention permission
+                <select
+                  className={field}
+                  aria-label="Mention permission"
+                  value={draft.mentionPermission}
+                  onChange={(e) => setDraft({ ...draft, mentionPermission: e.target.value as MentionPermission })}
+                >
+                  <option value="auto">auto — 멘션 턴에서 도구를 모두 허용</option>
+                  <option value="readonly">readonly — 읽기만 (상담 전용)</option>
+                </select>
+                <span className="text-[11px] text-zinc-500">
+                  사람이 터미널로 직접 조종할 때는 이 설정과 무관하게 하네스가 물어본다.
+                </span>
+              </label>
+            )}
 
             {customized && (
               <div className="grid grid-cols-2 gap-3">
@@ -677,6 +699,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     ? `소유자: @${accounts[draft.ownerAccountId]?.handle ?? '?'}`
                     : '소유자: 없음 — attach 불가'}
                 </div>
+                {/* admin 전용 필드의 **값**은 숨길 것이 아니다 — 숨기면 소유자는 자기 에이전트가
+                    읽기 전용인지도 모른 채 부른다. 바꿀 수 없다는 것만 분명히 한다. */}
+                <div className="mt-1 text-xs text-zinc-500">
+                  {`Mention permission: ${draft.mentionPermission} (admin 만 바꾼다)`}
+                </div>
               </div>
             )}
 
@@ -708,7 +735,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                               onClick={() => {
                                 setConfirmingSlug(null);
                                 void getController().deleteAgentMemory(selected.id, m.slug)
-                                  .then(() => loadMemories(selected.id))
+                                  .then(() => loadMemories(selected))
                                   .catch(() => setError('기억을 지우지 못했다'));
                               }}
                             >
