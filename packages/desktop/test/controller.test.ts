@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useAppStore } from '../src/state/appStore';
 import { Controller } from '../src/state/controller';
-import { acc, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
+import { acc, accountsResult, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 beforeEach(() => useAppStore.getState().reset());
 
@@ -79,9 +79,12 @@ describe('Controller', () => {
     const { makeWs, callbacks } = fakeWsFactory();
     const c = new Controller(api, makeWs);
     await c.start();
-    (api.accounts as ReturnType<typeof vi.fn>).mockResolvedValue([
+    // 캐스트가 타입 검사를 우회하므로 **모양을 손으로 맞춰야 한다.** #230 이 `accounts()`
+    // 를 `{ accounts, groups }` 로 바꿨고, 배열을 그대로 두면 tsc 는 통과하지만 런타임에
+    // `accounts` 가 undefined 가 되어 디렉터리 갱신이 조용히 사라진다.
+    (api.accounts as ReturnType<typeof vi.fn>).mockResolvedValue(accountsResult([
       acc('u1', 'admin'), acc('u2', 'bot', 'agent'), acc('sys', 'murmur', 'agent'),
-    ]);
+    ]));
 
     callbacks.current!.onEvent({
       type: 'message.created',
@@ -349,7 +352,7 @@ describe('Controller', () => {
   // 자동완성을 짧은 간격으로 여러 번 열어도 디렉터리 요청이 한 번만 나가게 한다.
   // 최소 간격 가드는 5초다.
   it('refreshAccounts throttles rapid calls within 5 seconds', async () => {
-    const accountsCalls = vi.fn(async () => [acc('u1', 'admin')]);
+    const accountsCalls = vi.fn(async () => accountsResult([acc('u1', 'admin')]));
     const api = fakeApi({ accounts: accountsCalls });
     const { makeWs } = fakeWsFactory();
     const c = new Controller(api, makeWs);
@@ -364,7 +367,7 @@ describe('Controller', () => {
   });
 
   it('refreshAccounts with force: true bypasses throttle', async () => {
-    const accountsCalls = vi.fn(async () => [acc('u1', 'admin')]);
+    const accountsCalls = vi.fn(async () => accountsResult([acc('u1', 'admin')]));
     const api = fakeApi({ accounts: accountsCalls });
     const { makeWs } = fakeWsFactory();
     const c = new Controller(api, makeWs);
