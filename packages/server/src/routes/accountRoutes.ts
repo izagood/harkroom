@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { newToken } from '../auth/tokens.js';
+import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { ACCOUNT_STATUSES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@murmur/shared';
 import {
   ackAgentStop, createAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
@@ -147,7 +148,18 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     return reply.code(201).send(created);
   });
 
-  app.patch('/accounts/agents/:id', async (req, reply) => {
+  /**
+   * 가드가 `requireOwnerOrAdmin` preHandler 가 **아닌** 이유: 이 라우트는 필드별로 게이트가
+   * 갈린다(#253). preHandler 는 본문을 보기 전에 통째로 판정하므로 여기서는 쓸 수 없다.
+   * 대신 `requireAccount` 로 인증만 preHandler 에서 세우고 — 이걸 빼면 익명 요청이 소유자
+   * 판정까지 흘러들어 존재 여부(404)를 흘리거나 `req.account!` 에서 터진다 — 인가는
+   * `checkOwnerOrAdmin`(auth/plugin.ts 의 그 하나뿐인 술어)을 직접 부른다.
+   *
+   * 순서가 중요하다: **admin 전용 필드 검사가 소유자 조회보다 앞이다.** 소유자가 admin 전용
+   * 필드를 섞어 보내면 403 이고 **아무것도 바꾸지 않는다**(부분 적용 금지). 일부만 적용하면
+   * 사람은 전부 됐다고 믿는다 — 그리고 안 된 쪽이 하필 권한 필드다.
+   */
+  app.patch('/accounts/agents/:id', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const patch = z.object({
       displayName: z.string().min(1).max(64).optional(),
@@ -155,23 +167,19 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
       ...configFields,
     }).parse(req.body);
 
-    const isAdmin = req.account?.isAdmin ?? false;
-    if (!isAdmin) {
-      const requestedFields = Object.keys(patch);
-      const hasAdminOnlyField = requestedFields.some((f) => ADMIN_ONLY_FIELDS.includes(f as typeof ADMIN_ONLY_FIELDS[number]));
+    const account = req.account!;
+    if (!account.isAdmin) {
+      // `Object.keys` 를 보는 이유: zod 는 보내지 않은 키를 만들지 않으므로 키의 **존재**가
+      // "이 필드를 건드리려 한다"와 같다. 값으로 판정하면 `disabled: false` 나
+      // `ownerAccountId: null` 처럼 "지우기"를 뜻하는 요청이 게이트를 빠져나간다.
+      const hasAdminOnlyField = Object.keys(patch)
+        .some((f) => (ADMIN_ONLY_FIELDS as readonly string[]).includes(f));
       if (hasAdminOnlyField) {
         return reply.code(403).send({ error: { code: 'forbidden', message: 'admin required for this field' } });
       }
-      const res = await pool.query<{ owner_account_id: string | null }>(
-        `select c.owner_account_id from account a left join agent_config c on c.account_id = a.id where a.id = $1`,
-        [id],
-      );
-      if (!res.rowCount) {
-        return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
-      }
-      const ownerAccountId = res.rows[0]!.owner_account_id;
-      if (ownerAccountId === null || ownerAccountId !== req.account!.id) {
-        return reply.code(403).send({ error: { code: 'forbidden', message: 'owner or admin required' } });
+      const verdict = await checkOwnerOrAdmin(pool, account, id);
+      if (!verdict.ok) {
+        return reply.code(verdict.status).send({ error: { code: verdict.code, message: verdict.message } });
       }
     }
 
@@ -329,9 +337,17 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
    * MCP 로는 안 된다 — `registerMcp` 가 `kind !== 'agent'` 를 걸러 사람 계정은 MCP 에
    * 붙지 못한다. 그래서 REST 가 필요하다.
    *
-   * 가드가 `requireOwnerOrAdmin` 인 이유: #253 에서 결정된 바와 같이, 소유자는 자기
-   * 에이전트의 PAT·메모리에 모두 접근할 수 있어야 한다(민감도 순서 — PAT 가 메모리보다
-   * 강하므로). 소유자가 없는 에이전트(null)는 admin 만 접근할 수 있다.
+   * 가드가 `requireAdmin` 에서 `requireOwnerOrAdmin` 으로 **바뀌었다**(#253). 원래 여기
+   * 적혀 있던 근거는 "아무 사람이나 남의 에이전트 기억을 읽고 지울 수 있으면
+   * `ownerAccountId` 가 attach 를 게이트하는 것과 어긋난다"였다. 그 문장은 지금도 맞지만
+   * 결론이 뒤집혔다 — 어긋나는 것은 **소유자에게 열어 주는 것**이 아니라 소유자에게도
+   * 닫아 두는 것이다. `ownerAccountId` 가 attach 를 게이트한다는 사실은 곧 소유자가 이미
+   * 그 에이전트의 진행 중 턴에 붙을 수 있다는 뜻이고, 거기서 보이는 것이 메모리보다 넓다.
+   *
+   * 민감도 순서도 같은 방향이다: #253 이 소유자에게 PAT(그 에이전트로서 발화하고 채널을
+   * 읽는 가장 센 자격증명)를 열었으므로, 그보다 약한 메모리를 닫아 두면 순서가 뒤집힌다.
+   * "아무 사람이나"는 여전히 막힌다 — 소유자와 admin 뿐이고, 소유자가 없는
+   * 에이전트(`null`)는 admin 만이다.
    *
    * 질의는 `services/memory.ts` 를 그대로 부른다 — 여기서 다시 쓰면 계정 스코프가 두
    * 곳에 생기고 한쪽만 고치는 사고가 난다.
