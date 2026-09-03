@@ -1,4 +1,4 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
 
 export class ApiError extends Error {
   /**
@@ -391,6 +391,23 @@ export class ApiClient {
   /** 해제는 고정한 사람 또는 admin 만 된다 — 아니면 서버가 403 을 준다. */
   unpinMessage(channelId: string, messageId: string): Promise<void> {
     return this.req('DELETE', `/channels/${channelId}/pins/${messageId}`);
+  }
+
+  /**
+   * 채널이 자동으로 멘션하는 에이전트들(#173). 핀과 같은 채널 전역 사실이라 채널을 볼 수
+   * 있는 사람 누구나 받는다 — 작성창이 칩을 그려야 하기 때문이다.
+   */
+  async channelAutoMentions(channelId: string): Promise<ChannelAutoMentionRow[]> {
+    return (await this.req<{ autoMentions: ChannelAutoMentionRow[] }>('GET', `/channels/${channelId}/auto-mentions`)).autoMentions;
+  }
+
+  /** 건다. admin 이 아니면 서버가 403, 에이전트가 아니거나 비활성이면 400 을 준다. */
+  setChannelAutoMention(channelId: string, agentAccountId: string): Promise<ChannelAutoMentionRow> {
+    return this.req('PUT', `/channels/${channelId}/auto-mentions/${agentAccountId}`);
+  }
+
+  unsetChannelAutoMention(channelId: string, agentAccountId: string): Promise<void> {
+    return this.req('DELETE', `/channels/${channelId}/auto-mentions/${agentAccountId}`);
   }
 
   /**
