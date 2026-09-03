@@ -42,6 +42,9 @@ function defOf(overrides: Partial<AgentView> = {}): AgentView {
     instructions: '친절하게 답한다', harness: 'claude-code', model: null, effort: null,
     workingDir: '/repo', mentionPermission: 'auto', ownerAccountId: 'human-1', disabled: false,
     runnerVersion: null,
+    // #186: 에이전트는 상태를 고를 수 없다(서버가 거절한다). DB 기본값 그대로이지만
+    // AccountView 의 필수 필드라 fixture 도 적어야 한다.
+    status: 'available', statusText: null,
     ...overrides,
   };
 }

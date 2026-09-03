@@ -4,7 +4,7 @@ import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { MessageBody } from './MessageBody';
 import { ReactionPicker, Reactions, InlineReactionButtons } from './Reactions';
-import { Identity } from './Identity';
+import { Identity, StatusMark } from './Identity';
 import { Attachments } from './Attachments';
 import { Menu } from './Menu';
 
@@ -58,6 +58,9 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
         <div className="flex items-baseline gap-2">
           <span className="font-semibold">{author?.handle ?? '…'}</span>
           <Identity account={author} />
+          {/* 작성 시점이 아니라 **지금**의 상태다 — 이 줄이 답하는 질문은 "이 사람에게
+              지금 물어봐도 되는가"이지 "그때 무슨 상태였나"가 아니다(#186). */}
+          <StatusMark account={author} />
           {avcsType && <span className="rounded bg-amber-200 px-1 text-[10px] text-amber-900">{avcsType}</span>}
           <span className="text-[11px] text-zinc-400">{time}</span>
           {message.editedAt && <span className="text-[11px] text-zinc-400">(edited)</span>}
