@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useAppStore } from '../../state/appStore';
 import { getController } from '../../state/controller';
+import { ApiError } from '../../lib/api';
 import { Identity } from '../Identity';
 import { ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
 
@@ -105,8 +106,11 @@ function HandleRow() {
       setError('2~32자로 입력하세요.');
       return;
     }
-    if (!/^[a-zA-Z0-9_-]+$/.test(newHandle)) {
-      setError('영문자와 숫자, 밑줄, 하이픈만 사용할 수 있습니다.');
+    // 서버와 **같은 문자 집합**이다(`accountRoutes.ts` 의 `^[a-z0-9_-]{2,32}$`). 여기서
+    // 대문자를 통과시키면 서버가 400 을 주고, 사람은 "잘못된 이름입니다" 만 보게 된다 —
+    // 무엇이 잘못됐는지는 화면 어디에도 없다. 판정을 넓게 두는 쪽이 더 나쁜 거짓말이다.
+    if (!/^[a-z0-9_-]+$/.test(newHandle)) {
+      setError('소문자와 숫자, 밑줄, 하이픈만 사용할 수 있습니다.');
       return;
     }
     setConfirming(true);
@@ -122,11 +126,13 @@ function HandleRow() {
       setConfirming(false);
       setNewHandle('');
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes('409') || msg.includes('taken')) {
-        setError('이 이름은 사용할 수 없습니다.');
-      } else if (msg.includes('400')) {
-        setError('잘못된 이름입니다.');
+      // 서버가 준 **코드**로 가른다. 문구를 문자열로 뒤지면(`msg.includes('409')`) 서버가
+      // 문구를 다듬는 순간 조용히 "변경에 실패했습니다" 로 뭉개진다 — 실제로 400 가지는
+      // 그 방식으로는 한 번도 맞지 않았다(오류 메시지에 상태 코드가 들어 있지 않다).
+      if (e instanceof ApiError && e.code === 'handle_taken') {
+        setError('이 이름은 이미 쓰고 있습니다.');
+      } else if (e instanceof ApiError && e.status === 400) {
+        setError('쓸 수 없는 이름입니다.');
       } else {
         setError('변경에 실패했습니다.');
       }
