@@ -4,6 +4,8 @@ import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
+import { ChannelEmptyState } from './ChannelEmptyState';
+import { dayLabel, localDayKey } from '../lib/day';
 
 export function ChannelPane() {
   const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins } = useAppStore();
@@ -105,18 +107,43 @@ export function ChannelPane() {
             </button>
           </div>
         )}
-        {roots.map((m) => (
-          <Fragment key={m.id}>
-            {m.id === dividerBeforeId && (
-              <div className="flex items-center gap-2 px-4 py-1" role="separator">
-                <span className="h-px flex-1 bg-red-300" />
-                <span className="text-[11px] font-medium text-red-500">New messages</span>
-                <span className="h-px flex-1 bg-red-300" />
-              </div>
-            )}
-            <MessageItem message={m} />
-          </Fragment>
-        ))}
+        {/*
+          빈 상태는 **메시지가 없을 때만**이다. `hasMore` 가 참이면 과거가 서버에 더 있고 아직
+          안 받아온 것뿐이라, 그때 "아직 메시지가 없다"를 그리면 거짓말이 된다(#234).
+        */}
+        {roots.length === 0 && !hasMore[activeChannelId] && (
+          <ChannelEmptyState channel={channel} isArchived={isArchived} />
+        )}
+        {roots.map((m, i) => {
+          // 앞 메시지와 로컬 날짜가 다르면 새 날이다. 목록의 첫 메시지도 새 날로 친다 —
+          // 그 채널의 첫 날도 날이고, 여기에 선이 없으면 위쪽 메시지들의 날짜를 알 길이 없다.
+          const prev = roots[i - 1];
+          const newDay = !prev || localDayKey(prev.createdAt) !== localDayKey(m.createdAt);
+          return (
+            <Fragment key={m.id}>
+              {/*
+                날짜 구분선과 "New messages" 구분선은 **한 지점에 둘 다 걸릴 수 있고, 그때 둘 다 그린다**.
+                하나를 감추면 "여기부터 새 날"과 "여기부터 안 읽음"이라는 서로 다른 두 사실 중
+                하나가 사라진다. 날짜를 먼저 두는 것은 읽는 순서다 — 날이 바뀌고, 그 안에서 안 읽음이 시작된다.
+              */}
+              {newDay && (
+                <div className="flex items-center gap-2 px-4 py-1" role="separator">
+                  <span className="h-px flex-1 bg-zinc-200" />
+                  <span className="text-[11px] font-medium text-zinc-500">{dayLabel(m.createdAt)}</span>
+                  <span className="h-px flex-1 bg-zinc-200" />
+                </div>
+              )}
+              {m.id === dividerBeforeId && (
+                <div className="flex items-center gap-2 px-4 py-1" role="separator">
+                  <span className="h-px flex-1 bg-red-300" />
+                  <span className="text-[11px] font-medium text-red-500">New messages</span>
+                  <span className="h-px flex-1 bg-red-300" />
+                </div>
+              )}
+              <MessageItem message={m} />
+            </Fragment>
+          );
+        })}
         <div ref={bottomRef} />
       </div>
       <TypingLine />

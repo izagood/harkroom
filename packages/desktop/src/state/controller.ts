@@ -1,4 +1,4 @@
-import type { AccountStatus, AttachmentRow, ChannelRow, ChannelPrefRow, MessageRow, WsServerEvent } from '@murmur/shared';
+import type { AccountStatus, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, MessageRow, WsServerEvent } from '@murmur/shared';
 import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
@@ -552,18 +552,52 @@ export class Controller {
    * 컴포넌트가 `api` 를 직접 부르고 스토어를 손으로 갱신하면 그 절차가 화면마다 흩어지고,
    * 서버가 채운 필드(kind·topic 기본값)를 클라이언트가 추측하게 된다. 목록은 다시 받아온다.
    */
-  async createChannel(name: string): Promise<ChannelRow> {
-    const created = await this.api.createChannel({ name });
+  async createChannel(name: string, visibility: 'public' | 'private' = 'public'): Promise<ChannelRow> {
+    const created = await this.api.createChannel({ name, visibility });
     useAppStore.getState().set({ channels: await this.api.channels() });
     await this.openChannel(created.id);
     return created;
   }
 
   /**
+   * 멤버 목록을 받아 스토어에 넣는다. **실패를 빈 목록으로 삼키지 않는다** — 조회가
+   * 실패했는데 화면이 "멤버 없음"을 그리면, private 채널에서 그것은 "이 채널은 아무도
+   * 볼 수 없다"는 거짓 사실이 되고 나가기 경고가 사라진다. 던져서 호출부가 안내하게 한다.
+   */
+  async loadChannelMembers(channelId: string): Promise<ChannelMemberRow[]> {
+    const members = await this.api.channelMembers(channelId);
+    const store = useAppStore.getState();
+    store.set({ channelMembers: { ...store.channelMembers, [channelId]: members } });
+    return members;
+  }
+
+  async inviteChannelMember(channelId: string, accountId: string): Promise<ChannelMemberRow[]> {
+    const members = await this.api.inviteChannelMember(channelId, accountId);
+    const store = useAppStore.getState();
+    store.set({ channelMembers: { ...store.channelMembers, [channelId]: members } });
+    return members;
+  }
+
+  /**
+   * 나가기/내보내기. 나간 뒤에는 **채널 목록을 다시 받는다** — private 채널에서 나가면 그
+   * 채널은 더 이상 내게 존재하지 않으므로 사이드바에 남아 있으면 안 된다.
+   */
+  async leaveChannel(channelId: string, accountId: string): Promise<void> {
+    const members = await this.api.removeChannelMember(channelId, accountId);
+    const store = useAppStore.getState();
+    store.set({
+      channelMembers: { ...store.channelMembers, [channelId]: members },
+      channels: await this.api.channels(),
+    });
+  }
+
+  /**
    * 채널을 편집하고 목록을 갱신한다 — sidebar 가 `repo` 배지와 topic 을 직접 보여주므로
    * 편집 결과를 반영하려면 목록을 다시 받아야 한다. `createChannel` 과 같은 이유다.
    */
-  async updateChannel(id: string, input: { topic?: string; repo?: string | null }): Promise<ChannelRow> {
+  async updateChannel(
+    id: string, input: { topic?: string; repo?: string | null; visibility?: 'public' | 'private' },
+  ): Promise<ChannelRow> {
     const updated = await this.api.updateChannel(id, input);
     useAppStore.getState().set({ channels: await this.api.channels() });
     return updated;

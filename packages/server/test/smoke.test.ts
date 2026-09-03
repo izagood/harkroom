@@ -5,7 +5,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { createFakeAvcs, type FakeAvcs } from './helpers/fakeAvcs.js';
 import { buildServer } from '../src/buildServer.js';
 import { ProjectionWorker, ensureSystemAccount } from '../src/avcs/projection.js';
-import { listBoundRepos, dmMemberIds } from '../src/services/channels.js';
+import { listBoundRepos, channelMemberIds } from '../src/services/channels.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 
 let app: FastifyInstance;
@@ -75,13 +75,13 @@ describe('smoke: mention → work → projection into linked thread', () => {
     const applied = await worker.runOnce('smoke-repo', channelId);
     expect(applied).toBe(1); // 이전 2개(int-1, op-1)는 재적용되지 않음
 
-    // 5) admin↔agent DM 생성 후 dmMemberIds가 실제 두 계정을 반환하는지 검증
+    // 5) admin↔agent DM 생성 후 channelMemberIds가 실제 두 계정을 반환하는지 검증
     const dm = await app.inject({
       method: 'POST', url: '/dms', headers: { authorization: `Bearer ${adminToken}` },
       payload: { accountIds: [accountId] },
     });
     const dmId = dm.json().id as string;
-    const members = await dmMemberIds(pool, dmId);
+    const members = await channelMemberIds(pool, dmId);
     expect(members.sort()).toEqual([accountId, adminId].sort());
 
     // 6) DM에 admin이 메시지를 보내면 agent의 inbox(unread)에 reason 'dm' 엔트리가 생긴다
