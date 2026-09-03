@@ -158,6 +158,10 @@ export class Controller {
         // 아직 못 본 계정이면 상태만 와도 이름을 그리지 못한다.
         if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
         break;
+      case 'avatar.changed':
+        store.applyAvatar(e.accountId, e.avatarAttachmentId);
+        if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
+        break;
     }
   }
 
@@ -387,6 +391,24 @@ export class Controller {
 
   fetchAttachment(id: string): Promise<Blob> {
     return this.api.fetchAttachment(id);
+  }
+
+  fetchAvatar(accountId: string): Promise<Blob> {
+    return this.api.fetchAvatar(accountId);
+  }
+
+  /**
+   * 내 프로필 사진을 바꾼다(#159). 파일을 주면 기존 업로드 경로로 올린 뒤 그 첨부를 걸고,
+   * `null` 을 주면 지운다 — 지우기는 **명시적 null** 이다.
+   *
+   * 서버가 받아들인 뒤에 화면을 갱신한다: 미리 그려 두면 서버가 거절한 사진(이미지가 아닌
+   * 파일은 400 이다)이 잠깐 내 얼굴로 떴다가 사라진다.
+   */
+  async setAvatar(file: File | null): Promise<void> {
+    const attachmentId = file ? (await this.api.upload(file)).id : null;
+    const { avatarAttachmentId } = await this.api.setAvatar(attachmentId);
+    const me = useAppStore.getState().me;
+    if (me) useAppStore.getState().applyAvatar(me.id, avatarAttachmentId);
   }
 
   /**
