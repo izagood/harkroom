@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, SavedMessageRow } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -74,8 +74,8 @@ export class ApiClient {
   markChannelUnread(channelId: string, seq: number | null): Promise<void> {
     return this.req('PUT', `/channels/${channelId}/unread`, { seq });
   }
-  async accounts(): Promise<AccountView[]> {
-    return (await this.req<{ accounts: AccountView[] }>('GET', '/accounts')).accounts;
+  async accounts(): Promise<{ accounts: AccountView[]; groups: HandleGroupRow[] }> {
+    return this.req<{ accounts: AccountView[]; groups: HandleGroupRow[] }>('GET', '/accounts');
   }
   async channels(): Promise<ChannelRow[]> {
     return (await this.req<{ channels: ChannelRow[] }>('GET', '/channels')).channels;
@@ -386,5 +386,27 @@ export class ApiClient {
   async search(q: string, channelId?: string | null): Promise<MessageRow[]> {
     const scope = channelId ? `&channelId=${encodeURIComponent(channelId)}` : '';
     return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
+  }
+
+  // #219: `state` 는 **필수**다 — 기본값을 여기서 공급하면 호출부가 어느 탭을 받는지 적지
+  // 않아도 통과하고, 그 화면은 늘 '할 것'만 보게 된다.
+  async savedMessages(state: 'open' | 'done'): Promise<SavedMessageRow[]> {
+    return (await this.req<{ entries: SavedMessageRow[] }>('GET', `/saved?state=${state}`)).entries;
+  }
+
+  savedSummary(): Promise<{ openCount: number; messageIds: string[] }> {
+    return this.req('GET', '/saved/summary');
+  }
+
+  saveMessage(messageId: string): Promise<SavedMessageRow> {
+    return this.req('PUT', `/saved/${messageId}`);
+  }
+
+  updateSavedMessage(messageId: string, state: 'open' | 'done'): Promise<SavedMessageRow> {
+    return this.req('PATCH', `/saved/${messageId}`, { state });
+  }
+
+  unsaveMessage(messageId: string): Promise<void> {
+    return this.req('DELETE', `/saved/${messageId}`);
   }
 }

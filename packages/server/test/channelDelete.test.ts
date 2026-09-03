@@ -470,7 +470,7 @@ describe('channel delete — 참조 테이블 전부 (#155)', () => {
     // 같아야 한다 — 달라지면 아래 단언이 알려 준다.
     const explicit = new Set([
       'message_pin', 'channel_read', 'channel_member', 'channel_pref',
-      'inbox', 'idempotency_key', 'work_thread', 'message', 'channel',
+      'inbox', 'idempotency_key', 'work_thread', 'saved_message', 'message', 'channel',
     ]);
 
     const unhandled = refs.rows

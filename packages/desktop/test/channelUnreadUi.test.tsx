@@ -17,7 +17,7 @@ const fakeController = () => {
 };
 
 const sidebar = () => render(
-  <Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />,
+  <Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
 /** `c1` 은 메시지가 있고 `c2` 는 없다 — 항목이 붙는 조건이 그것이다. */
