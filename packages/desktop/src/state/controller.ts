@@ -266,6 +266,9 @@ export class Controller {
     const since = this.loadedChannels.has(channelId)
       ? Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq))
       : 0;
+    // 핀은 **크리티컬 패스에서 뺀다.** 이 엔드포인트가 없는 서버(구버전)에 붙었을 때
+    // 채널이 아예 안 열리면 안 된다 — 채널 선호(`start`)와 같은 이유다.
+    this.swallow(this.loadPins(channelId));
     const page = await this.api.messages(channelId, { since });
     this.loadedChannels.add(channelId);
     useAppStore.getState().upsertMessages(channelId, page.messages);
@@ -429,6 +432,54 @@ export class Controller {
     if (!activeChannelId || !body.trim()) return;
     const updated = await this.api.editMessage(activeChannelId, messageId, body);
     useAppStore.getState().upsertMessages(activeChannelId, [updated]);
+  }
+
+  /**
+   * 이 채널의 고정 목록을 서버에서 다시 받는다(#218).
+   *
+   * 델타가 아니라 목록 전체를 갈아 끼운다: 핀은 채널 전역 상태라 다른 사람이 고정·해제한
+   * 것도 섞여 들어오고, 그때 내 로컬 델타만 쌓으면 화면이 서버와 조용히 갈라진다.
+   */
+  async loadPins(channelId: string): Promise<void> {
+    const pins = await this.api.pins(channelId);
+    const store = useAppStore.getState();
+    store.set({ pins: { ...store.pins, [channelId]: pins } });
+  }
+
+  /**
+   * 고정한다. 성공 응답의 핀을 목록에 얹지 않고 **다시 받아 온다** — 정렬(최근 순)이
+   * 서버의 것이라 여기서 자리를 추측하면 다음 새로고침에 순서가 바뀐다.
+   *
+   * 실패를 삼키지 않는다: 보관된 채널이나 남의 DM 은 서버가 403 을 주고, 그 사실이
+   * 사람에게 보여야 한다 — 조용히 아무 일도 안 하면 계속 다시 누른다.
+   */
+  async pinMessage(channelId: string, messageId: string): Promise<void> {
+    try {
+      await this.api.pinMessage(channelId, messageId);
+    } catch (e) {
+      useAppStore.getState().set({
+        notice: e instanceof ApiError && e.code === 'channel_archived'
+          ? "This channel is archived — it's read-only, so nothing new can be pinned."
+          : 'Could not pin that message. Check your connection and try again.',
+      });
+      return;
+    }
+    await this.loadPins(channelId);
+  }
+
+  /** 해제한다. 고정한 사람도 admin 도 아니면 서버가 403 을 주고, 그 사유를 그대로 보여 준다. */
+  async unpinMessage(channelId: string, messageId: string): Promise<void> {
+    try {
+      await this.api.unpinMessage(channelId, messageId);
+    } catch (e) {
+      useAppStore.getState().set({
+        notice: e instanceof ApiError && e.status === 403
+          ? 'Only the person who pinned that message, or an admin, can unpin it.'
+          : 'Could not unpin that message. Check your connection and try again.',
+      });
+      return;
+    }
+    await this.loadPins(channelId);
   }
 
   async deleteMessage(messageId: string): Promise<void> {
@@ -626,6 +677,9 @@ export class Controller {
     const since = this.loadedChannels.has(channelId)
       ? Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq))
       : 0;
+    // 핀은 **크리티컬 패스에서 뺀다.** 이 엔드포인트가 없는 서버(구버전)에 붙었을 때
+    // 채널이 아예 안 열리면 안 된다 — 채널 선호(`start`)와 같은 이유다.
+    this.swallow(this.loadPins(channelId));
     const page = await this.api.messages(channelId, { since });
     this.loadedChannels.add(channelId);
     store.upsertMessages(channelId, page.messages);

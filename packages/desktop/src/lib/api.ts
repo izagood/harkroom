@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PatView } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PatView, PinRow } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -273,6 +273,23 @@ export class ApiClient {
 
   deleteAgentMemory(agentId: string, slug: string): Promise<void> {
     return this.req('DELETE', `/accounts/agents/${agentId}/memory/${encodeURIComponent(slug)}`);
+  }
+
+  /**
+   * 채널에 고정된 메시지들(#218). **계정별 선호(`channelPrefs`)와 다른 표면이다** — 핀은
+   * 채널 전역 상태라 누가 물어도 같은 답이 온다.
+   */
+  async pins(channelId: string): Promise<PinRow[]> {
+    return (await this.req<{ pins: PinRow[] }>('GET', `/channels/${channelId}/pins`)).pins;
+  }
+
+  pinMessage(channelId: string, messageId: string): Promise<PinRow> {
+    return this.req('POST', `/channels/${channelId}/pins`, { messageId });
+  }
+
+  /** 해제는 고정한 사람 또는 admin 만 된다 — 아니면 서버가 403 을 준다. */
+  unpinMessage(channelId: string, messageId: string): Promise<void> {
+    return this.req('DELETE', `/channels/${channelId}/pins/${messageId}`);
   }
 
   async search(q: string): Promise<MessageRow[]> {
