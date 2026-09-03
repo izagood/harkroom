@@ -17,7 +17,7 @@ import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 import {
   fetchLinkPreview, queueLinkPreviewFetch, parseHtml, isBlockedAddress, isBlockedHost,
   normalizeUrl, extractUrls, httpFetchHop, MAX_BODY_BYTES, TIMEOUT_MS, MAX_REDIRECTS,
-  type PreviewNet, type HopResult,
+  type PreviewNet, type HopResult, isStale, TTL_OK_MS, TTL_FAILED_MS,
 } from '../src/services/linkPreview.js';
 
 /** 가짜 네트워크 경계. 호출 기록을 남겨 "가져가지 않았다"를 단언할 수 있게 한다. */
@@ -467,5 +467,166 @@ describe('DB·라우트·큐', () => {
       method: 'GET', url: '/link-previews', headers: { authorization: `Bearer ${userPat}` },
     });
     expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('캐시 만료 (#312)', () => {
+  let app: FastifyInstance;
+  let stop: () => Promise<void>;
+  let pool: Pool;
+  let adminToken: string;
+  let userPat: string;
+
+  beforeAll(async () => {
+    const db = await startTestDb();
+    stop = db.stop;
+    pool = db.pool;
+    app = await buildServer({ pool: db.pool });
+    ({ token: adminToken } = await bootstrapAdmin(app));
+    ({ pat: userPat } = await createAgent(app, adminToken, 'ttluser'));
+  });
+
+  afterAll(async () => { await app.close(); await stop(); });
+
+  // TTL 상수 확인
+  it('TTL_OK_MS 는 7일, TTL_FAILED_MS 는 1시간', () => {
+    expect(TTL_OK_MS).toBe(7 * 24 * 60 * 60 * 1000);
+    expect(TTL_FAILED_MS).toBe(60 * 60 * 1000);
+  });
+
+  // isStale 순수 함수 tests
+  it('ok 는 7일 이후에 만료, 그 전에는 fresh', () => {
+    const now = Date.now();
+    const oldOk = { url: 'x', title: 't', description: null, imageUrl: null, siteName: null, status: 'ok' as const, fetchedAt: new Date(now - TTL_OK_MS + 1) };
+    const freshOk = { url: 'x', title: 't', description: null, imageUrl: null, siteName: null, status: 'ok' as const, fetchedAt: new Date(now - TTL_OK_MS + 1) };
+    const staleOk = { url: 'x', title: 't', description: null, imageUrl: null, siteName: null, status: 'ok' as const, fetchedAt: new Date(now - TTL_OK_MS - 1) };
+    expect(isStale(freshOk, now)).toBe(false);
+    expect(isStale(staleOk, now)).toBe(true);
+  });
+
+  it('failed/blocked 는 1시간 이후에 만료', () => {
+    const now = Date.now();
+    const freshFailed = { url: 'x', title: null, description: null, imageUrl: null, siteName: null, status: 'failed' as const, fetchedAt: new Date(now - TTL_FAILED_MS + 1) };
+    const staleFailed = { url: 'x', title: null, description: null, imageUrl: null, siteName: null, status: 'failed' as const, fetchedAt: new Date(now - TTL_FAILED_MS - 1) };
+    const staleBlocked = { url: 'x', title: null, description: null, imageUrl: null, siteName: null, status: 'blocked' as const, fetchedAt: new Date(now - TTL_FAILED_MS - 1) };
+    expect(isStale(freshFailed, now)).toBe(false);
+    expect(isStale(staleFailed, now)).toBe(true);
+    expect(isStale(staleBlocked, now)).toBe(true);
+  });
+
+  // 회귀 테스트 1: 만료된 failed 가 다시 시도된다
+  it('만료된 failed 를 다시 큐에 넣으면 fetch 가 불린다', async () => {
+    const net = fakeNet({ hop: () => ({ status: 200, location: null, body: PAGE }) });
+    // 만료된 failed 행을 수동으로 넣는다
+    await pool.query(
+      `insert into link_preview (url, title, description, image_url, site_name, status, fetched_at)
+       values ($1, $2, $3, $4, $5, $6, $7)`,
+      ['https://example.com/expired', null, null, null, null, 'failed', new Date(Date.now() - TTL_FAILED_MS - 1000)],
+    );
+    // 이제 큐에 넣으면 다시 가져와야 한다
+    const before = Date.now();
+    await queueLinkPreviewFetch(pool, 'https://example.com/expired', net);
+    expect(net.hops).toHaveLength(1); // 만료되었으니 다시 가져온다
+    // 저장된 행이 ok 로 바뀌었는지 확인
+    const row = await pool.query('select status from link_preview where url = $1', ['https://example.com/expired']);
+    expect(row.rows[0].status).toBe('ok');
+  });
+
+  // 회귀 테스트 2: 만료 안 된 ok 는 fetch 를 부르지 않는다
+  it('만료 안 된 ok 는 fetch 를 부르지 않는다', async () => {
+    const net = fakeNet({ hop: () => ({ status: 200, location: null, body: PAGE }) });
+    // fresh ok 행을 수동으로 넣는다
+    await pool.query(
+      `insert into link_preview (url, title, description, image_url, site_name, status, fetched_at)
+       values ($1, $2, $3, $4, $5, $6, $7)`,
+      ['https://example.com/fresh', 'Fresh Title', null, null, null, 'ok', new Date()],
+    );
+    await queueLinkPreviewFetch(pool, 'https://example.com/fresh', net);
+    expect(net.hops).toHaveLength(0); // fresh 니까 다시 가져오지 않는다
+  });
+
+  // 회귀 테스트 3: 만료된 blocked 재검사에서 여전히 사설 IP 면 다시 blocked — 가드를 통과한다
+  it('만료된 blocked 재검사에서 사설 IP 면 다시 blocked (가드 통과)', async () => {
+    const net = fakeNet({ resolve: () => ['10.0.0.1'] }); // 사설 IP 로 해석
+    // 만료된 blocked 행을 수동으로 넣는다
+    await pool.query(
+      `insert into link_preview (url, title, description, image_url, site_name, status, fetched_at)
+       values ($1, $2, $3, $4, $5, $6, $7)`,
+      ['https://private.example/blocked', null, null, null, null, 'blocked', new Date(Date.now() - TTL_FAILED_MS - 1000)],
+    );
+    await queueLinkPreviewFetch(pool, 'https://private.example/blocked', net);
+    // fetchHop 은 불리지 않아야 한다 (가드에서 막혀서)
+    expect(net.hops).toHaveLength(0);
+    // 그래도 blocked 로 남아 있어야 한다
+    const row = await pool.query('select status from link_preview where url = $1', ['https://private.example/blocked']);
+    expect(row.rows[0].status).toBe('blocked');
+  });
+
+  // 회귀 테스트 4: 만료 재조회가 행을 지우지 않는다 (같은 url 로 갱신된다)
+  it('만료 재조회가 행을 지우지 않고 갱신한다', async () => {
+    const net = fakeNet({ hop: () => ({ status: 200, location: null, body: '<title>New Title</title>' }) });
+    const oldUrl = 'https://example.com/update';
+    // 만료된 failed 행을 넣고
+    await pool.query(
+      `insert into link_preview (url, title, description, image_url, site_name, status, fetched_at)
+       values ($1, $2, $3, $4, $5, $6, $7)`,
+      [oldUrl, 'Old Title', 'old desc', null, null, 'failed', new Date(Date.now() - TTL_FAILED_MS - 1000)],
+    );
+    // 다시 가져온다
+    await queueLinkPreviewFetch(pool, oldUrl, net);
+    // 행이 삭제되지 않고 갱신되었는지 확인
+    const rows = await pool.query('select count(*)::int as n from link_preview where url = $1', [oldUrl]);
+    expect(rows.rows[0].n).toBe(1); // 행은 하나만 있어야 한다
+    const row = await pool.query('select title, status from link_preview where url = $1', [oldUrl]);
+    expect(row.rows[0].title).toBe('New Title');
+    expect(row.rows[0].status).toBe('ok');
+  });
+
+  // 회귀 테스트 5: 동시 조회 열 건에 fetch 는 한 번 (in-flight 중복 방지)
+  it('동시에 열 번 queueLinkPreviewFetch 해도 fetch 는 한 번', async () => {
+    const net = fakeNet({});
+    const slow: PreviewNet = {
+      resolve: net.resolve.bind(net),
+      async fetchHop(req) {
+        await new Promise((r) => setTimeout(r, 50));
+        return net.fetchHop(req);
+      },
+    };
+    // 만료된 행을 넣어둔다
+    await pool.query(
+      `insert into link_preview (url, title, description, image_url, site_name, status, fetched_at)
+       values ($1, $2, $3, $4, $5, $6, $7)`,
+      ['https://example.com/concurrent', null, null, null, null, 'failed', new Date(Date.now() - TTL_FAILED_MS - 1000)],
+    );
+    // 동시에 10번 호출
+    const promises = Array.from({ length: 10 }, () => queueLinkPreviewFetch(pool, 'https://example.com/concurrent', slow));
+    await Promise.all(promises);
+    // fetchHop 은 한 번만 불려야 한다
+    expect(net.hops).toHaveLength(1);
+  });
+
+  // 라우트에서 만료 시 재조회 테스트
+  it('GET /link-previews 에서 만료된 행은 백그라운드에서 재조회된다', async () => {
+    const net = fakeNet({ hop: () => ({ status: 200, location: null, body: '<title>Fetched</title>' }) });
+    // 가짜 네트워크를 라우트에 주입한다
+    (app as any).linkPreviewNet = net;
+    // 만료된 ok 행을 넣는다
+    await pool.query(
+      `insert into link_preview (url, title, description, image_url, site_name, status, fetched_at)
+       values ($1, $2, $3, $4, $5, $6, $7)`,
+      ['https://example.com/route', 'Old', null, null, null, 'ok', new Date(Date.now() - TTL_OK_MS - 1000)],
+    );
+    // 조회가 stale trigger
+    const res = await app.inject({
+      method: 'GET', url: '/link-previews?url=https://example.com/route',
+      headers: { authorization: `Bearer ${userPat}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().title).toBe('Old'); // 먼저 stale 데이터를 반환
+    // background 에서 재조회되길 기다린다
+    await new Promise((r) => setTimeout(r, 100));
+    expect(net.hops).toHaveLength(1); // 백그라운드에서 가져옴
+    const row = await pool.query('select title from link_preview where url = $1', ['https://example.com/route']);
+    expect(row.rows[0].title).toBe('Fetched');
   });
 });
