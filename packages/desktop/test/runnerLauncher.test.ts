@@ -183,7 +183,7 @@ describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
     await startAll(launcher, [agent('a')]);
     api.calls.length = 0;
 
-    await launcher.reissue('a');
+    await launcher.reissue({ agent: agent('a'), repoPath: '/repo' });
 
     const newLabel = `${oldLabel}#1700000000000`;
     // 발급이 먼저다. 폐기가 먼저면 발급 실패 한 번에 쓸 수 있는 PAT 가 사라진다.
@@ -204,7 +204,7 @@ describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
     await startAll(launcher, [agent('a')]);
     api.mintPat = vi.fn(async () => { throw new Error('server down'); });
 
-    await launcher.reissue('a');
+    await launcher.reissue({ agent: agent('a'), repoPath: '/repo' });
 
     expect(api.revokePat).not.toHaveBeenCalled();
     expect(spawner.kills).toEqual([]);
@@ -220,7 +220,7 @@ describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
     await startAll(launcher, [agent('a')]);
     api.revokePat = vi.fn(async () => { throw new Error('403'); });
 
-    await launcher.reissue('a');
+    await launcher.reissue({ agent: agent('a'), repoPath: '/repo' });
 
     const state = launcher.getStates()[0]!;
     expect(state.status).toBe('running');
@@ -257,7 +257,7 @@ describe('6. 종료 코드', () => {
     await startAll(launcher, [agent('a')]);
     spawner.exit(78);
 
-    await launcher.reissue('a');
+    await launcher.reissue({ agent: agent('a'), repoPath: '/repo' });
 
     expect(spawner.spawns).toHaveLength(2);
     expect(launcher.getStates()[0]!.status).toBe('running');

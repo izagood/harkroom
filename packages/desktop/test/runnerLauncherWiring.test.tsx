@@ -175,6 +175,29 @@ describe('설정 → 에이전트 상세가 그 상태를 그린다', () => {
     expect(revoke.mock.calls[0]![1]).toBe('desktop:dev0');
   });
 
+  it('자동 기동을 껐어도 재발급 버튼이 실제로 동작한다 — 눌러도 아무 일 없는 버튼이 아니다', async () => {
+    // 실행기가 자동 기동 때 본 것을 기억해 두고 그것에 기대면, 자동 기동을 끄고 쓰는
+    // 사람에게는 이 버튼이 영원히 죽어 있다. 컨트롤러가 대상을 그 자리에서 다시 조회한다.
+    usePrefsStore.setState({ runnerAutoStart: false, runnerRepoPath: '/repo' });
+    const secrets = fakeSecrets();
+    const spawner = fakeSpawner();
+    const api = fakeApi({
+      me: vi.fn(async () => acc('u1', 'admin', 'human', true)),
+      listAgents: vi.fn(async () => [agentView('rusalka')]),
+      accounts: vi.fn(async () => accountsResult([acc('u1', 'admin', 'human', true), acc('rusalka', 'rusalka', 'agent')])),
+    });
+    const c = new Controller(api, fakeWsFactory().makeWs, undefined, undefined, secrets, spawner);
+    setController(c);
+    await c.start();
+
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByRole('button', { name: 'PAT 재발급' }));
+
+    await waitFor(() => expect(spawner.spawns).toHaveLength(1));
+    expect(useAppStore.getState().runnerStates.rusalka!.status).toBe('running');
+  });
+
   it('소유자(admin 아님)에게도 러너 절과 재발급 버튼이 보인다', async () => {
     const secrets = fakeSecrets();
     const spawner = fakeSpawner();
