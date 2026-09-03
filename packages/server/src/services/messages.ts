@@ -47,7 +47,9 @@ const ATTACHMENTS = `coalesce((
   from attachment a where a.message_id = message.id
 ), '[]'::json) as attachments`;
 
-const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
+// #218: 핀 목록도 이 컬럼 집합으로 메시지를 내주기 때문에 export 다. 핀 전용으로 컬럼을
+// 다시 적으면 위에 적은 "네 갈래" 가 다섯이 되고, 리액션·첨부가 그 응답에서만 빠진다.
+export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
   author_id as "authorId", body, kind, meta, created_at as "createdAt",
   edited_at as "editedAt", ${REACTIONS}, ${ATTACHMENTS},
   null::int as "replyCount", null::text as "lastReplyAt", null::text[] as "participantIds"`;
@@ -357,8 +359,14 @@ export async function markInboxRead(pool: Pool, accountId: string, ids: number[]
   return res.rowCount ?? 0;
 }
 
+/**
+ * `channelId` 를 주면 그 채널 안만 본다. 클라이언트에서 거르지 않는 이유(#221): 전역 검색은
+ * seq desc 상위 N 건에서 잘리므로, 다른 채널의 일치가 많으면 이 채널 것이 애초에 응답에
+ * 들어오지 않는다 — "이 대화 안에 있는 걸 아는데 못 찾는" 정확히 반대되는 결과가 된다.
+ * 그래서 질의 자체를 좁힌다.
+ */
 export async function searchMessages(
-  pool: Pool, requesterId: string, query: string, limit = 50,
+  pool: Pool, requesterId: string, query: string, limit = 50, channelId: string | null = null,
 ): Promise<MessageRow[]> {
   const res = await pool.query(
     `select m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
@@ -372,8 +380,11 @@ export async function searchMessages(
        -- 배지에도 없는 private 채널의 발언이 검색 결과로 통째로 나온다 — 그래서 목록·배지와
        -- **같은 술어**를 쓴다. admin 예외 없다(결과가 곧 메시지 본문이다).
        and ${channelVisibleSql('c', '$3')}
+       -- 스코프는 가시성 **위에** 얹는 별개 조건이다. null 이면 절이 상수로 접혀 전역 검색의
+       -- 계획이 그대로 남는다 — 기존 동작을 건드리지 않는다.
+       and ($4::uuid is null or m.channel_id = $4)
      order by m.seq desc limit $2`,
-    [query, Math.min(limit, 100), requesterId],
+    [query, Math.min(limit, 100), requesterId, channelId],
   );
   return res.rows;
 }
