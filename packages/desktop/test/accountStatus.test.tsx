@@ -38,7 +38,7 @@ describe('사람이 정한 상태 (#186)', () => {
     // 결정 1의 회귀선: 상태는 연결 점을 **대체하지 않는다**. 하나로 합치면 "연결이 끊긴
     // 사람"과 "방해 금지인 사람"이 한 표시로 뭉친다.
     fakeController();
-    render(<Sidebar onOpenDirectory={() => {} onOpenChannelDirectory={() => {}}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
     const dot = screen.getByTestId('presence-d1');
     expect(dot).toBeTruthy();
@@ -65,7 +65,7 @@ describe('사람이 정한 상태 (#186)', () => {
       dms: [{ id: 'd1', memberIds: ['u1', 'u2'] }],
       online: ['u2'],
     });
-    render(<Sidebar onOpenDirectory={() => {} onOpenChannelDirectory={() => {}}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
     expect(screen.getByTestId('status-u2').getAttribute('data-status')).toBe('dnd');
 
     act(() => {
