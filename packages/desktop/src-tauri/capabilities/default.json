@@ -18,6 +18,16 @@
         }
       ]
     },
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "login-path",
+          "cmd": "sh",
+          "args": ["-lc", "echo $PATH"]
+        }
+      ]
+    },
     "shell:allow-kill"
   ]
 }

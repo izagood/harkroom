@@ -354,12 +354,21 @@ export interface ChannelPrefRow {
   mutedAt: string | null;
   starredAt: string | null;
   notifyLevel: NotifyLevel;
+  /**
+   * 채널이 속한 섹션(#157). null 이면 섹션 없음(맨 아래 "기타").
+   */
+  section: string | null;
+  /**
+   * 섹션 안에서의 수동 순서(#157). null 이면 이름순 뒤에 붙는다.
+   */
+  sortOrder: number | null;
 }
 
 export async function updateChannelPref(
-  pool: Pool, accountId: string, channelId: string, patch: { notifyLevel?: NotifyLevel; starred?: boolean },
+  pool: Pool, accountId: string, channelId: string,
+  patch: { notifyLevel?: NotifyLevel; starred?: boolean; section?: string | null; sortOrder?: number | null },
 ): Promise<ChannelPrefRow | null> {
-  const channel = await pool.query(`select id from channel where id = $1`, [channelId]);
+  const channel = await pool.query(`select id, kind from channel where id = $1`, [channelId]);
   if (!channel.rowCount) return null;
 
   if (patch.notifyLevel !== undefined) {
@@ -380,6 +389,35 @@ export async function updateChannelPref(
       [accountId, channelId, patch.starred ? new Date() : null],
     );
   }
+  /**
+   * 섹션·순서(#157). **보낸 컬럼만 쓴다.**
+   *
+   * 둘을 한 문장에서 함께 쓰면 한쪽만 보낸 요청이 다른 쪽을 지운다 — 실측으로 그랬다:
+   * "위로/아래로"(`sortOrder` 만 보낸다)를 누를 때마다 그 채널의 `section` 이 null 이 되어
+   * 방금 옮겨 넣은 섹션에서 빠져나왔다. 옵셔널 필드에 `?? null` 을 물리면 "안 보냈다"와
+   * "지워라"가 같은 뜻이 된다(docs/design.md 4절).
+   *
+   * `section` 의 값 가공(앞뒤 공백 제거, 빈 문자열은 null)은 여기서 한다 — 길이 검증만
+   * 라우트의 zod 가 맡는다.
+   */
+  if (patch.section !== undefined) {
+    const trimmed = patch.section === null ? null : patch.section.trim();
+    const sectionValue: string | null = trimmed === '' ? null : trimmed;
+    await pool.query(
+      `insert into channel_pref (account_id, channel_id, section)
+       values ($1, $2, $3)
+       on conflict (account_id, channel_id) do update set section = $3`,
+      [accountId, channelId, sectionValue],
+    );
+  }
+  if (patch.sortOrder !== undefined) {
+    await pool.query(
+      `insert into channel_pref (account_id, channel_id, sort_order)
+       values ($1, $2, $3)
+       on conflict (account_id, channel_id) do update set sort_order = $3`,
+      [accountId, channelId, patch.sortOrder],
+    );
+  }
   return getChannelPref(pool, accountId, channelId);
 }
 
@@ -388,7 +426,7 @@ export async function getChannelPref(
 ): Promise<ChannelPrefRow | null> {
   const res = await pool.query(
     `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt", starred_at as "starredAt",
-            notify_level as "notifyLevel"
+            notify_level as "notifyLevel", section, sort_order as "sortOrder"
      from channel_pref where account_id = $1 and channel_id = $2`,
     [accountId, channelId],
   );
@@ -398,7 +436,7 @@ export async function getChannelPref(
 export async function listChannelPrefs(pool: Pool, accountId: string): Promise<ChannelPrefRow[]> {
   const res = await pool.query(
     `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt", starred_at as "starredAt",
-            notify_level as "notifyLevel"
+            notify_level as "notifyLevel", section, sort_order as "sortOrder"
      from channel_pref where account_id = $1`,
     [accountId],
   );

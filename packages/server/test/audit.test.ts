@@ -43,7 +43,7 @@ describe('감사 추적 — 기록', () => {
     const before = (await entries('login.succeeded')).length;
 
     await app.inject({
-      method: 'POST', url: '/auth/login', payload: { handle: 'admin', password: PASSWORD },
+      method: 'POST', url: '/auth/login', payload: { loginId: 'admin', password: PASSWORD },
       remoteAddress: '10.1.0.1',
     });
 
@@ -59,11 +59,11 @@ describe('감사 추적 — 기록', () => {
   // 기록하지 않는다.
   it('records a failed login with the attempted handle and no actor', async () => {
     await app.inject({
-      method: 'POST', url: '/auth/login', payload: { handle: 'admin', password: 'wrong' },
+      method: 'POST', url: '/auth/login', payload: { loginId: 'admin', password: 'wrong' },
       remoteAddress: '10.1.0.2',
     });
     await app.inject({
-      method: 'POST', url: '/auth/login', payload: { handle: 'ghost', password: 'wrong' },
+      method: 'POST', url: '/auth/login', payload: { loginId: 'ghost', password: 'wrong' },
       remoteAddress: '10.1.0.2',
     });
 
@@ -94,7 +94,7 @@ describe('감사 추적 — 기록', () => {
 
   it('records account creation and logout', async () => {
     const token = (await app.inject({
-      method: 'POST', url: '/auth/login', payload: { handle: 'admin', password: PASSWORD },
+      method: 'POST', url: '/auth/login', payload: { loginId: 'admin', password: PASSWORD },
     })).json().token as string;
     await app.inject({ method: 'POST', url: '/auth/logout', headers: auth(token) });
 
@@ -132,7 +132,7 @@ describe('감사 추적 — 기록', () => {
   // 감사 로그는 널리 읽히도록 만드는 것이 목적이다. 거기 비밀이 있으면 열람 권한이 곧 계정 권한이 된다.
   it('never stores a password or a token anywhere in the table', async () => {
     const login = await app.inject({
-      method: 'POST', url: '/auth/login', payload: { handle: 'admin', password: PASSWORD },
+      method: 'POST', url: '/auth/login', payload: { loginId: 'admin', password: PASSWORD },
     });
     const token = login.json().token as string;
     const bot = await createAgent(app, adminToken, 'secretbot');

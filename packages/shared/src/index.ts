@@ -184,8 +184,15 @@ export const CHANNEL_NAME_PATTERN = '^[a-z0-9_-]{1,48}$';
  * export 한다 — **복사가 아니라 재수출이다.**
  */
 export type CodeSegment =
-  /** 코드가 아닌 부분. 여기에만 멘션·링크 인식을 얹는다. */
-  | { kind: 'plain'; text: string }
+  /**
+   * 코드가 아닌 부분. 여기에만 멘션·링크 인식을 얹는다.
+   *
+   * `start` 는 이 조각이 **원문에서 시작한 위치**다(#271). 멘션 정규화가 코드 구간을
+   * 비껴가려면 평문의 원문 위치가 있어야 한다 — 없으면 정규화가 코드 판정 규칙을
+   * 자기 정규식으로 한 벌 더 갖게 되고, 그 둘이 갈라지면 코드 블록 안의 `@handle` 이
+   * 저장 시 멘션으로 바뀌어 알림까지 간다(#298 이 막은 바로 그 일이다).
+   */
+  | { kind: 'plain'; text: string; start: number }
   /** 백틱 하나로 감싼 것. */
   | { kind: 'inlineCode'; code: string }
   /** 백틱 세 개로 감싼 것. `lang` 은 **표시용일 뿐** — 문법 강조는 하지 않는다. */
@@ -207,14 +214,16 @@ const FENCE_LINE = /^[ \t]*```([^\n`]*)$/;
 const INLINE_CODE = /(?<!`)`([^`\n]+)`(?!`)/g;
 
 /** 코드가 아닌 구간을 인라인 코드로 한 번 더 나눈다. */
-function splitInline(text: string, out: CodeSegment[]): void {
+function splitInline(text: string, out: CodeSegment[], offset: number): void {
   let cursor = 0;
   for (const m of text.matchAll(INLINE_CODE)) {
-    if (m.index > cursor) out.push({ kind: 'plain', text: text.slice(cursor, m.index) });
+    if (m.index > cursor) {
+      out.push({ kind: 'plain', text: text.slice(cursor, m.index), start: offset + cursor });
+    }
     out.push({ kind: 'inlineCode', code: m[1]! });
     cursor = m.index + m[0].length;
   }
-  if (cursor < text.length) out.push({ kind: 'plain', text: text.slice(cursor) });
+  if (cursor < text.length) out.push({ kind: 'plain', text: text.slice(cursor), start: offset + cursor });
 }
 
 /**
@@ -230,9 +239,17 @@ export function splitCode(body: string): CodeSegment[] {
   let plainFrom = 0;
   let i = 0;
 
+  // 각 줄이 원문에서 시작하는 위치. `join('\n')` 이 되돌리는 것과 같은 오프셋이다 —
+  // 줄 하나마다 길이 + 개행 하나.
+  const lineStart: number[] = [];
+  {
+    let at = 0;
+    for (const line of lines) { lineStart.push(at); at += line.length + 1; }
+  }
+
   const flushPlain = (until: number) => {
     if (until <= plainFrom) return;
-    splitInline(lines.slice(plainFrom, until).join('\n'), out);
+    splitInline(lines.slice(plainFrom, until).join('\n'), out, lineStart[plainFrom]!);
   };
 
   while (i < lines.length) {
@@ -259,7 +276,7 @@ export function splitCode(body: string): CodeSegment[] {
   }
   flushPlain(lines.length);
 
-  return out.length ? out : [{ kind: 'plain', text: body }];
+  return out.length ? out : [{ kind: 'plain', text: body, start: 0 }];
 }
 
 /**
@@ -270,8 +287,22 @@ export function splitCode(body: string): CodeSegment[] {
  * 선행 문자 조건이 핵심이다. `@` 앞이 문자·숫자면 멘션이 아니다 — 이메일 주소와 단어
  * 중간의 `@` 를 걸러 낸다. handle 은 소문자로만 만들어지지만 사람은 `@Fizz` 라고 쓰므로
  * 대소문자를 무시하고 찾고, 조회할 때 소문자로 맞춘다.
+ *
+ * **역할 분리:**
+ * - `MENTION_PATTERN` (@handle): 사람이 입력하는 형식. 클라이언트 입력, 화면 표시 원문.
+ * - `MENTION_TOKEN_PATTERN` (<@id>): 저장소 안 정본. 본문 저장, REST/WS 응답.
+ *
+ * 입력 -> 저장: `normalizeMentions()` 가 @handle 을 <@id> 로 바꾼다.
+ * 저장 -> 화면: `renderMentions()` 가 <@id> 를 현재 handle 로 바꾼다.
+ * 저장 -> MCP: `denormalizeMentions()` 가 <@id> 를 현재 handle 로 바꾼다(에이전트가 handle 로 생각한다).
  */
 export const MENTION_PATTERN = `(^|[^a-zA-Z0-9_-])@(${HANDLE_PATTERN})`;
+
+/**
+ * 저장된 멘션 토큰. 본문에 **정본으로** 저장되는 형식이다.
+ * <@id> 는 본문을 다시 쓰지 않고 handle 변경을 반영할 수 있게 해 준다.
+ */
+export const MENTION_TOKEN_PATTERN = '<@([0-9a-f-]{36})>';
 
 /**
  * 본문에서 불린 handle 들. 소문자로 정규화해 중복을 없앤다(`@fizz` 와 `@Fizz` 는 한 사람).
@@ -293,6 +324,94 @@ export function mentionedHandles(body: string): string[] {
 }
 
 /**
+ * 본문에 저장된 멘션 ID 집합. 정규화된 본문(<@id> 토큰)에서 추출한다.
+ * 알림 판정에 쓴다 — inbox 를 만든 뒤에는 본문을 다시 읽지 않는다.
+ */
+export function mentionedIds(body: string): string[] {
+  const found = new Set<string>();
+  for (const m of body.matchAll(new RegExp(MENTION_TOKEN_PATTERN, 'g'))) {
+    if (m[1]) found.add(m[1]);
+  }
+  return [...found];
+}
+
+/**
+ * 본문의 `@handle`(**존재하는 계정만**)을 `<@id>` 로 정규화한다(#271). 저장 전에 한 번 돈다.
+ *
+ * **코드 구간은 건드리지 않는다**(#298). 판정은 `splitCode` 하나가 하고 여기서는 그것이
+ * 내준 평문 조각의 원문 범위만 고쳐 쓴다 — 자기 정규식으로 코드를 다시 판정하면 규칙이
+ * 두 벌이 되고, 갈라지는 순간 코드 블록 안의 `@handle` 이 저장 시 멘션이 되어 알림까지
+ * 간다. `mentionedHandles` 가 같은 이유로 `stripCodeSpans` 를 지난다.
+ *
+ * 계정 목록을 순회하지 않고 **본문을 한 번** 훑는다. 순회하면 비용이 워크스페이스의 계정
+ * 수에 비례하고, 그보다 나쁘게는 handle 을 정규식에 끼워 넣는 자리가 생긴다.
+ *
+ * #230 그룹 멘션(`@그룹`)은 여기서 처리하지 않는다 — 호출부가 먼저 그룹을 펼치고, 그룹
+ * 토큰은 `accountsMap` 에 없으므로 **글자 그대로** 남는다. 존재하지 않는 handle 이 그대로
+ * 남는 것도 같은 이유다(오타를 멘션처럼 보이지 않게 한다).
+ *
+ * @param body 사람이 입력한 본문(`@handle` 형식)
+ * @param accountsMap handle(소문자) -> 계정 id
+ */
+export function normalizeMentions(body: string, accountsMap: Map<string, string>): string {
+  if (!accountsMap.size) return body;
+  const mention = new RegExp(MENTION_PATTERN, 'g');
+  // 뒤에서부터 고친다 — 앞에서 고치면 뒤 조각의 원문 오프셋이 밀린다.
+  const plains = splitCode(body).filter((s): s is { kind: 'plain'; text: string; start: number } => s.kind === 'plain');
+  let out = body;
+  for (const seg of [...plains].reverse()) {
+    const replaced = seg.text.replace(mention, (whole, lead: string, handle: string) => {
+      const id = accountsMap.get(handle.toLowerCase());
+      return id ? `${lead}<@${id}>` : whole;
+    });
+    if (replaced !== seg.text) {
+      out = out.slice(0, seg.start) + replaced + out.slice(seg.start + seg.text.length);
+    }
+  }
+  return out;
+}
+
+/**
+ * 저장된 `<@id>` 를 현재 handle 로 되돌린다 — MCP 가 에이전트에게 줄 때 쓴다(#271).
+ * 에이전트는 handle 로 생각하고, 그 입력은 다시 `normalizeMentions` 를 탄다.
+ *
+ * **모르는 id 는 그대로 둔다.** `@알 수 없음` 같은 표시 문구로 바꾸면 에이전트가 그것을
+ * 그대로 되받아 쓸 수 있고, 그때는 사람 이름처럼 생긴 문자열이 본문에 남는다. 화면(사람)
+ * 과 도구(에이전트)의 처리가 다른 이유가 이것이다.
+ *
+ * @param body 저장된 본문(`<@id>` 형식)
+ * @param idToHandle 계정 id -> 현재 handle
+ */
+export function denormalizeMentions(body: string, idToHandle: Map<string, string>): string {
+  return body.replace(new RegExp(MENTION_TOKEN_PATTERN, 'g'), (whole, id: string) => {
+    const handle = idToHandle.get(id);
+    return handle ? `@${handle}` : whole;
+  });
+}
+
+/**
+ * 저장된 `<@id>` 를 **화면에 그릴** 현재 handle 로 바꾼다(#271). 본문을 그리는 곳은
+ * 전부 이 함수를 지난다 — 두 벌이 되면 한쪽만 새 이름을 반영한다.
+ *
+ * 모르는 id 는 `@알 수 없음` 이다. 여기서는 `<@uuid>` 를 그대로 두는 것이 더 나쁘다 —
+ * 사람에게 그 문자열은 아무 뜻이 없고, 무엇이 잘못됐는지도 말해 주지 않는다.
+ *
+ * @param body 저장된 본문(`<@id>` 형식)
+ * @param idToHandle 계정 id -> 현재 handle
+ * @param unknownLabel 모르는 id 를 대신할 라벨
+ */
+export function renderMentions(
+  body: string,
+  idToHandle: Map<string, string>,
+  unknownLabel = '알 수 없음',
+): string {
+  return body.replace(new RegExp(MENTION_TOKEN_PATTERN, 'g'), (_whole, id: string) => {
+    const handle = idToHandle.get(id);
+    return handle ? `@${handle}` : `@${unknownLabel}`;
+  });
+}
+
+/**
  * 본문에서 코드 구간을 걷어낸 나머지(#298). 멘션을 찾을 대상은 **이것뿐**이다.
  *
  * 남은 조각을 개행으로 이어 붙인다. 개행은 handle 문자가 아니므로 `MENTION_PATTERN` 의
@@ -305,7 +424,7 @@ export function mentionedHandles(body: string): string[] {
  */
 export function stripCodeSpans(body: string): string {
   return splitCode(body)
-    .filter((seg): seg is { kind: 'plain'; text: string } => seg.kind === 'plain')
+    .filter((seg): seg is { kind: 'plain'; text: string; start: number } => seg.kind === 'plain')
     .map((seg) => seg.text)
     .join('\n');
 }
@@ -565,6 +684,15 @@ export interface ChannelPrefRow {
   mutedAt: string | null;
   starredAt: string | null;
   notifyLevel: NotifyLevel;
+  /**
+   * 채널이 속한 섹션(#157). null 이면 섹션 없음(맨 아래 "기타").
+   * 길이 1~40, 앞뒤 공백 제거, 빈 문자열은 null 로 저장.
+   */
+  section: string | null;
+  /**
+   * 섹션 안에서의 수동 순서(#157). null 이면 이름순 뒤에 붙는다.
+   */
+  sortOrder: number | null;
 }
 
 /**
@@ -582,6 +710,57 @@ export interface ChannelPrefRow {
  */
 export function notifyLevelOf(pref: { notifyLevel?: NotifyLevel } | undefined | null): NotifyLevel {
   return pref?.notifyLevel ?? 'mentions';
+}
+
+/**
+ * 사이드바 채널 순서(#157). **섹션 → 별표 → `sortOrder` → 이름** 4단이다.
+ *
+ * 사이드바 안에 흩어 놓지 않고 여기 순수 함수 하나로 두는 이유: 이 순서는 화면 세 곳
+ * (채널 목록·섹션 헤더 묶기·"위로/아래로"가 계산하는 이웃)이 **같은 답**을 봐야 뜻이
+ * 성립한다. 한 곳이라도 따로 정렬하면 위로 눌렀는데 다른 자리로 가는 화면이 된다.
+ *
+ * 각 단의 뜻:
+ * - **섹션**: 이름순. 섹션 없음(null)은 맨 아래다 — 사람이 이름 지은 묶음이 먼저고,
+ *   아직 정리하지 않은 것이 밑에 남는 편이 "기타"라는 말과 맞는다.
+ * - **별표**: 섹션 안에서 먼저다. 별표는 섹션의 특수한 하나가 아니라 **별도 축**이다(#152).
+ * - **`sortOrder`**: 사람이 손으로 매긴 순서. **값이 있는 것이 없는 것보다 앞**이다 —
+ *   null 은 "아직 안 매겼다"이므로 이름순으로 뒤에 붙는다.
+ * - **이름**: 나머지를 가른다.
+ *
+ * @param channels 각 원소는 채널 행과 그 채널의 선호(없으면 null)
+ */
+export function sortChannelsBySection<T extends { channel: ChannelRow; pref: ChannelPrefRow | null }>(
+  channels: T[],
+): T[] {
+  return [...channels].sort((a, b) => {
+    // 1단 — 섹션. null 을 sentinel 문자열로 바꾸지 않는다: 그러면 그 문자를 이름에 쓴
+    // 섹션과 "섹션 없음"이 같은 값이 되고, 로케일에 따라 sentinel 이 맨 앞으로 가기도 한다.
+    const aSection = a.pref?.section ?? null;
+    const bSection = b.pref?.section ?? null;
+    if (aSection !== bSection) {
+      if (aSection === null) return 1;
+      if (bSection === null) return -1;
+      const bySection = aSection.localeCompare(bSection);
+      if (bySection !== 0) return bySection;
+    }
+
+    // 2단 — 별표가 먼저.
+    const aStarred = !!a.pref?.starredAt;
+    const bStarred = !!b.pref?.starredAt;
+    if (aStarred !== bStarred) return aStarred ? -1 : 1;
+
+    // 3단 — 손으로 매긴 순서. 값이 있는 쪽이 앞이고, 둘 다 있으면 작은 값이 앞이다.
+    const aOrder = a.pref?.sortOrder ?? null;
+    const bOrder = b.pref?.sortOrder ?? null;
+    if (aOrder !== bOrder) {
+      if (aOrder === null) return 1;
+      if (bOrder === null) return -1;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+    }
+
+    // 4단 — 이름.
+    return (a.channel.name ?? '').localeCompare(b.channel.name ?? '');
+  });
 }
 
 /**
@@ -748,6 +927,11 @@ export type WsServerEvent =
    * id 로 아바타를 받아 오고, 지우기는 null 이다.
    */
   | { type: 'avatar.changed'; accountId: string; avatarAttachmentId: string | null }
+  /**
+   * 누군가 자기 handle 을 바꿨다(#271). 데스크탑은 디렉터리만 갱신하면 본문은 다음 렌더에
+   * 새 이름으로 나온다 — 매핑이 그 일을 한다.
+   */
+  | { type: 'account.handle_changed'; accountId: string; newHandle: string }
   // 리액션은 델타로 보낸다 — 메시지 전체를 다시 실으면 한 번 누를 때마다 본문이 오간다.
   | { type: 'reaction.added'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
   | { type: 'reaction.removed'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }

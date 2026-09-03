@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useActiveStore } from '../../state/communities';
 import { getController } from '../../state/controller';
 import { usePrefsStore } from '../../state/prefsStore';
@@ -9,6 +10,12 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
   const setRunnerAutoStart = usePrefsStore((s) => s.setRunnerAutoStart);
   const runnerRepoPath = usePrefsStore((s) => s.runnerRepoPath);
   const setRunnerRepoPath = usePrefsStore((s) => s.setRunnerRepoPath);
+  const runnerCommand = usePrefsStore((s) => s.runnerCommand);
+  const setRunnerCommand = usePrefsStore((s) => s.setRunnerCommand);
+  // 입력 중인 값과 저장된 값을 나눈다 — 타이핑 도중의 `/opt/homeb` 를 거절 문구로 덮으면
+  // 사람은 글자를 하나도 넣을 수 없다. 거절은 저장 시점에만 말한다.
+  const [commandDraft, setCommandDraft] = useState(runnerCommand);
+  const [commandError, setCommandError] = useState<string | null>(null);
   // 보관된 값이 아니라 **지금 붙어 있는** 주소를 보여준다. 키체인 읽기가 비동기가 되면서
   // 렌더 중에 읽을 수 없게 됐고, 어차피 사용자가 알고 싶은 것은 실제 연결 대상이다.
   const baseUrl = getController().api.baseUrl || '—';
@@ -72,6 +79,32 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
             value={runnerRepoPath}
             onChange={(e) => setRunnerRepoPath(e.target.value)}
           />
+        </div>
+        {/* #305: Dock/Finder 로 띄운 앱은 로그인 셸의 `PATH` 를 물려받지 않아 `pnpm` 을 못
+            찾는다(docs/operations.md §8-1 의 같은 함정). 앱이 먼저 로그인 셸의 `PATH` 를
+            한 번 읽어 쓰고, 그것이 안 되는 기기에서 **사람이 고치는 길**이 이 칸이다.
+            **`pnpm` 실행 파일의 절대 경로만** 받는다 — 명령 전체를 받으면 그것이 임의 실행
+            표면이고, 인자는 앱이 고정한다(runnerLauncher.ts::validateRunnerCommand). */}
+        <div className="px-4 py-3">
+          <label className="block font-medium text-fg" htmlFor="runner-command">
+            pnpm path (optional)
+          </label>
+          <span className="mt-0.5 block text-fg-subtle">
+            Absolute path to the <code className="font-mono">pnpm</code> executable, used when the
+            app cannot read your login shell&apos;s PATH. Must end with
+            {' '}<code className="font-mono">/pnpm</code>. Arguments are fixed by the app.
+          </span>
+          <input
+            id="runner-command"
+            className="mt-2 w-full rounded border border-border bg-field px-2 py-1 font-mono text-xs"
+            placeholder="/opt/homebrew/bin/pnpm"
+            value={commandDraft}
+            onChange={(e) => { setCommandDraft(e.target.value); setCommandError(null); }}
+            onBlur={() => setCommandError(setRunnerCommand(commandDraft))}
+          />
+          {commandError && (
+            <span className="mt-1 block text-danger" role="alert">{commandError}</span>
+          )}
         </div>
       </SettingsGroup>
 
