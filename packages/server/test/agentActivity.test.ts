@@ -58,10 +58,12 @@ beforeAll(async () => {
 afterAll(async () => { await app.close(); await stop(); });
 
 /** 러너가 턴을 마치고 부르는 것과 같은 호출. 본문이 없다 — 시각은 서버가 찍는다. */
-const report = (token: string, payload?: unknown) => app.inject({
+const report = (token: string, payload?: Record<string, string>) => app.inject({
   method: 'POST', url: '/agent/activity',
   headers: { authorization: `Bearer ${token}` },
-  ...(payload === undefined ? {} : { payload }),
+  // 조건부 spread 로 키를 빼면 inject 의 반환 타입이 갈려 `res.json()` 이 사라진다.
+  // `payload: undefined` 는 본문 없는 POST 와 같다 — 그것이 프로덕션의 호출 모양이다.
+  payload,
 });
 
 /** 운영자 화면이 보는 것과 같은 뷰. 화면과 러너가 같은 값을 봐야 한다. */
