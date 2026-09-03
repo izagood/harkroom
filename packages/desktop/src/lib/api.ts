@@ -387,4 +387,12 @@ export class ApiClient {
     const scope = channelId ? `&channelId=${encodeURIComponent(channelId)}` : '';
     return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
   }
+
+  async getLinkPreview(url: string): Promise<{ url: string; title: string | null; description: string | null; imageUrl: string | null; siteName: string | null; status: string; fetchedAt: string } | null> {
+    try {
+      return await this.req<{ url: string; title: string | null; description: string | null; imageUrl: string | null; siteName: string | null; status: string; fetchedAt: string }>('GET', `/link-previews?url=${encodeURIComponent(url)}`);
+    } catch {
+      return null;
+    }
+  }
 }

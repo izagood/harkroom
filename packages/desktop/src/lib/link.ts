@@ -26,7 +26,7 @@ const OPENABLE_SCHEMES = new Set(['http:', 'https:']);
  * 순수 URL 만 본다 — `owner/repo#123` 같은 참조 문법은 넣지 않는다. 평범한 텍스트가
  * 링크로 오인되면 사람이 무엇이 링크인지 믿지 못한다.
  */
-const URL_CANDIDATE = /[a-zA-Z][a-zA-Z0-9+.-]*:[^\s]+/g;
+export const URL_CANDIDATE = /[a-zA-Z][a-zA-Z0-9+.-]*:[^\s]+/g;
 
 /**
  * 문장 끝에 붙어 온 문장부호는 URL 이 아니다 — `자세히는 https://a.io/b.` 의 마침표까지

@@ -1,11 +1,12 @@
 import { useMemo } from 'react';
 import { useAppStore } from '../state/appStore';
 import { splitMentions } from '../lib/mention';
-import { splitLinks, type LinkTarget, type BodyPart } from '../lib/link';
+import { splitLinks, type LinkTarget, type BodyPart, URL_CANDIDATE } from '../lib/link';
 import { splitCode } from '../lib/code';
 import { shouldCollapse, COLLAPSED_MAX_PX } from '../lib/collapse';
 import { getExternalOpener } from '../lib/openExternal';
 import { getController } from '../state/controller';
+import { LinkPreview } from './LinkPreview';
 
 /**
  * 본문을 그리면서 멘션만 강조한다. 존재하는 handle 만 칠한다 — 오타를 멘션처럼 보여 주면
@@ -58,6 +59,11 @@ export function MessageBody({ body, messageId }: { body: string; messageId: stri
   const segments = useMemo(() => splitCode(body), [body]);
   const handles = useMemo(() => Object.values(accounts).map((a) => a.handle), [accounts]);
   const groupHandles = useMemo(() => groups.map((g) => g.handle), [groups]);
+  const urls = useMemo(() => {
+    const matches = body.match(URL_CANDIDATE);
+    if (!matches) return [];
+    return [...new Set(matches.slice(0, 3))];
+  }, [body]);
 
   /** 코드가 아닌 구간만 멘션·링크 조각으로 나눠 그린다. */
   const renderPart = (p: BodyPart, key: string) => {
@@ -103,7 +109,7 @@ export function MessageBody({ body, messageId }: { body: string; messageId: stri
     );
   };
 
-  const content = (
+  const bodyContent = (
     <div className="whitespace-pre-wrap break-words" data-testid="message-body">
       {segments.map((seg, i) => {
         if (seg.kind === 'inlineCode') {
@@ -145,6 +151,15 @@ export function MessageBody({ body, messageId }: { body: string; messageId: stri
         return splitLinks(splitMentions(seg.text, handles, groupHandles)).map((p, j) => renderPart(p, `${i}-${j}`));
       })}
     </div>
+  );
+
+  const linkPreviews = urls.map((url, i) => <LinkPreview key={i} url={url} />);
+
+  const content = (
+    <>
+      {bodyContent}
+      {linkPreviews}
+    </>
   );
 
   // 접을 대상이 아니면 상자도 버튼도 만들지 않는다. **자르기와 "더 보기" 는 같은 조건
