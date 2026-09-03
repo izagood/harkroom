@@ -139,6 +139,12 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     deleteHandleGroup: vi.fn(async () => undefined),
     addHandleGroupMembers: vi.fn(async () => ({ members: ['u1'] })),
     removeHandleGroupMembers: vi.fn(async () => ({ members: [] })),
+    // #250: 러너 실행기가 부르는 표면. 베이스가 덮어야 `Controller.start` 뒤의 자동 기동이
+    // 조용히 던지지 않고, "발급을 부르지 않았다" 도 단언할 수 있다.
+    listAgents: vi.fn(async () => []),
+    listPats: vi.fn(async () => []),
+    mintPat: vi.fn(async (_id: string, label: string) => `murp_${label}`),
+    revokePat: vi.fn(async () => ({ revoked: 1 })),
     ...overrides,
   };
   return base as unknown as ApiClient;

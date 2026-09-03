@@ -14,7 +14,16 @@ export interface Prefs {
   notifications: NotificationPrefs;
   sidebarWidth: number;
   sidebarCollapsed: boolean;
+  /** 앱 시작 시 내가 소유한 에이전트의 러너를 자동으로 띄울지(#250). */
   runnerAutoStart: boolean;
+  /**
+   * 러너를 돌릴 murmur 저장소 경로(#250). 빈 문자열은 '아직 정하지 않았다'다.
+   *
+   * **기본값을 지어내지 않는다.** 앱은 자기가 어느 디렉터리에 체크아웃돼 있는지 알 수
+   * 없고(번들된 앱의 cwd 는 `/` 다), 짐작한 경로로 자식을 띄우면 "왜 러너가 안 뜨지"의
+   * 원인이 사람이 볼 수 없는 곳에 숨는다. 비어 있으면 띄우지 않고 그 사실을 말한다.
+   */
+  runnerRepoPath: string;
 }
 
 const KEY = 'murmur.prefs';
@@ -44,6 +53,7 @@ export const DEFAULT_PREFS: Prefs = {
   sidebarWidth: 240,
   sidebarCollapsed: false,
   runnerAutoStart: true,
+  runnerRepoPath: '',
 };
 
 export const prefsStorage = {
@@ -59,6 +69,7 @@ export const prefsStorage = {
         sidebarWidth: parsed.sidebarWidth ?? DEFAULT_PREFS.sidebarWidth,
         sidebarCollapsed: parsed.sidebarCollapsed ?? DEFAULT_PREFS.sidebarCollapsed,
         runnerAutoStart: parsed.runnerAutoStart ?? DEFAULT_PREFS.runnerAutoStart,
+        runnerRepoPath: parsed.runnerRepoPath ?? DEFAULT_PREFS.runnerRepoPath,
       };
     } catch {
       return DEFAULT_PREFS;

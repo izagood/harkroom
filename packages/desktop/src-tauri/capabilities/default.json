@@ -8,7 +8,16 @@
     "core:default",
     "notification:default",
     "shell:allow-open",
-    "shell:allow-spawn",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "murmur-runner",
+          "cmd": "pnpm",
+          "args": ["--filter", "@murmur/agent", "start"]
+        }
+      ]
+    },
     "shell:allow-kill"
   ]
 }

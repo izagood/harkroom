@@ -1,156 +1,343 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { AgentView } from '@murmur/shared';
+/**
+ * 러너 실행기 회귀선(#250).
+ *
+ * **실행기 자체를 부른다.** 앞선 판본의 이 파일은 대상 판정·상태 판정·라벨 규칙을 테스트
+ * 안에 다시 구현해 그 사본에 단언했고, `runnerLauncher.ts` 를 import 조차 하지 않았다 —
+ * 구현이 무엇을 하든 초록이었다(실제로 그 구현은 5초마다 자식을 `kill()` 했고 종료 코드를
+ * 볼 수 없었으며 Tauri shell 스코프가 비어 있어 애초에 자식을 띄우지 못했는데, 그 파일은
+ * 전부 통과했다). 여기서는 키체인과 자식 프로세스만 목이고 판정은 전부 실물이다.
+ */
+import { describe, it, expect, vi } from 'vitest';
+import {
+  RunnerLauncher, patLabelPrefix,
+  type LaunchableAgent, type RunnerProcess, type RunnerSecretStore, type RunnerSpawner,
+  type SpawnRequest, type StoredRunnerPat,
+} from '../src/lib/runnerLauncher';
 
-const mockAgent = (overrides: Partial<AgentView> = {}): AgentView => ({
-  id: 'agent-1',
-  handle: 'test-agent',
-  displayName: 'Test Agent',
-  kind: 'agent',
-  isAdmin: false,
-  ownerAccountId: 'owner-1',
-  disabled: false,
-  status: 'available',
-  statusText: null,
-  avatarAttachmentId: null,
-  instructions: '',
-  harness: 'claude-code',
-  model: null,
-  effort: null,
-  workingDir: null,
-  mentionPermission: 'auto',
-  runnerVersion: null,
-  stopRequestedAt: null,
-  stopAckedAt: null,
-  lastTurnAt: null,
-  ...overrides,
+const agent = (id: string, extra: Partial<LaunchableAgent> = {}): LaunchableAgent => ({
+  id, handle: id, ownerAccountId: 'me', disabled: false, stopRequestedAt: null, ...extra,
 });
 
-describe('에이전트 필터링 로직', () => {
-  const me = { id: 'owner-1' };
+const DEVICE = 'ab12cd34';
 
-  const isTargetAgent = (agent: AgentView, myId: string): boolean => {
-    return agent.ownerAccountId === myId &&
-      !agent.disabled &&
-      !agent.stopRequestedAt;
+/** 키체인 목. 저장소는 맵이고, 읽기 실패를 강제할 수 있다(그 구분이 이 기능의 핵이다). */
+function fakeSecrets(initial: Record<string, StoredRunnerPat> = {}) {
+  const map = new Map(Object.entries(initial));
+  const s = {
+    readError: null as string | null,
+    read: vi.fn(async (agentId: string) => (
+      s.readError
+        ? { ok: false as const, error: s.readError }
+        : { ok: true as const, value: map.get(agentId) ?? null }
+    )),
+    write: vi.fn(async (agentId: string, value: StoredRunnerPat) => { map.set(agentId, value); }),
+    clear: vi.fn(async (agentId: string) => { map.delete(agentId); }),
+    deviceId: vi.fn(async () => DEVICE),
+    map,
   };
+  return s;
+}
 
-  it('소유자만 필터링한다', () => {
-    const agents = [
-      mockAgent({ id: 'a1', ownerAccountId: 'owner-1' }),
-      mockAgent({ id: 'a2', ownerAccountId: 'other-owner' }),
-    ];
-
-    const targetAgents = agents.filter(a => isTargetAgent(a, 'owner-1'));
-
-    expect(targetAgents).toHaveLength(1);
-    expect(targetAgents[0].id).toBe('a1');
-  });
-
-  it('비활성화된 에이전트는 제외한다', () => {
-    const agents = [
-      mockAgent({ id: 'a1', ownerAccountId: 'owner-1', disabled: false }),
-      mockAgent({ id: 'a2', ownerAccountId: 'owner-1', disabled: true }),
-    ];
-
-    const targetAgents = agents.filter(a => isTargetAgent(a, 'owner-1'));
-
-    expect(targetAgents).toHaveLength(1);
-    expect(targetAgents[0].id).toBe('a1');
-  });
-
-  it('종료 요청이 있는 에이전트는 제외한다', () => {
-    const agents = [
-      mockAgent({ id: 'a1', ownerAccountId: 'owner-1', stopRequestedAt: null }),
-      mockAgent({ id: 'a2', ownerAccountId: 'owner-1', stopRequestedAt: '2024-01-01T00:00:00Z' }),
-    ];
-
-    const targetAgents = agents.filter(a => isTargetAgent(a, 'owner-1'));
-
-    expect(targetAgents).toHaveLength(1);
-    expect(targetAgents[0].id).toBe('a1');
-  });
-
-  it('runnerVersion이 있으면 외부에서 실행 중으로 표시해야 함 (안 띄움)', () => {
-    const agent = mockAgent({ id: 'a1', ownerAccountId: 'owner-1', runnerVersion: 'sha-abc123' });
-    const shouldNotStart = agent.runnerVersion !== null;
-
-    expect(shouldNotStart).toBe(true);
-  });
-
-  it('runnerVersion이 없으면 실행 대상임', () => {
-    const agent = mockAgent({ id: 'a1', ownerAccountId: 'owner-1', runnerVersion: null });
-    const shouldStart = agent.runnerVersion === null;
-
-    expect(shouldStart).toBe(true);
-  });
-});
-
-describe('러너 상태 타입', () => {
-  it('모든 가능한 상태를 정의한다', () => {
-    type RunnerStatus = 'stopped' | 'running' | 'external' | 'needs_reissue' | 'failed';
-    const statuses: RunnerStatus[] = ['stopped', 'running', 'external', 'needs_reissue', 'failed'];
-
-    expect(statuses).toContain('running');
-    expect(statuses).toContain('needs_reissue');
-    expect(statuses).toContain('external');
-  });
-
-  it('종료 코드 78은 재발급 필요 상태임', () => {
-    const exitCode = 78;
-    const expectedStatus = exitCode === 78 ? 'needs_reissue' : 'stopped';
-
-    expect(expectedStatus).toBe('needs_reissue');
-  });
-
-  it('다른 종료 코드는 중지 상태임', () => {
-    const exitCode = 1;
-    const expectedStatus = exitCode === 78 ? 'needs_reissue' : 'stopped';
-
-    expect(expectedStatus).toBe('stopped');
-  });
-});
-
-describe('PAT 라벨 생성', () => {
-  const getPatLabel = (hostname: string): string => {
-    return `desktop:${hostname}`;
+/** 자식 프로세스 목. `exit(code)` 로 종료를 흉내낸다 — 실행기는 `onExit` 만 본다. */
+function fakeSpawner() {
+  const spawns: SpawnRequest[] = [];
+  const kills: number[] = [];
+  const spawner = {
+    spawns,
+    kills,
+    failNext: null as Error | null,
+    spawn: vi.fn(async (req: SpawnRequest): Promise<RunnerProcess> => {
+      if (spawner.failNext) { const e = spawner.failNext; spawner.failNext = null; throw e; }
+      const index = spawns.push(req) - 1;
+      return { kill: async () => { kills.push(index); } };
+    }),
+    /** 마지막으로 띄운 자식이 `code` 로 끝났다고 알린다. */
+    exit(code: number | null, index = spawns.length - 1) { spawns[index]!.onExit(code); },
   };
+  return spawner;
+}
 
-  it('호스트명을 포함한 PAT 라벨 생성', () => {
-    const label = getPatLabel('myhostname');
+function fakeApi(calls: string[] = []) {
+  return {
+    calls,
+    baseUrl: 'https://murmur.example',
+    listPats: vi.fn(async () => { calls.push('listPats'); return [] as { label: string; revokedAt: string | null }[]; }),
+    mintPat: vi.fn(async (_id: string, label: string) => { calls.push(`mint:${label}`); return `murp_${label}`; }),
+    revokePat: vi.fn(async (_id: string, label: string) => { calls.push(`revoke:${label}`); return { revoked: 1 }; }),
+  };
+}
 
-    expect(label).toBe('desktop:myhostname');
-  });
+const make = (
+  api = fakeApi(), secrets = fakeSecrets(), spawner = fakeSpawner(), now = () => 1_700_000_000_000,
+) => ({ api, secrets, spawner, launcher: new RunnerLauncher(api, secrets, spawner, now) });
 
-  it('라벨이 이미 있으면 먼저 폐기 후 발급해야 함 (호출 순서 단언)', () => {
-    const calls: string[] = [];
+const startAll = (
+  l: RunnerLauncher, agents: LaunchableAgent[],
+  over: { live?: string[] | null; repoPath?: string } = {},
+) => l.startAll({
+  agents,
+  myAccountId: 'me',
+  liveAccountIds: over.live === null ? null : new Set(over.live ?? []),
+  repoPath: over.repoPath ?? '/repo',
+});
 
-    const existingLabel = 'desktop:myhost';
-    const newLabel = 'desktop:myhost';
+describe('1. 대상 선별', () => {
+  it('소유·비활성 아님·종료요청 없음만 뽑는다', async () => {
+    const { launcher, spawner } = make();
+    await startAll(launcher, [
+      agent('mine'),
+      agent('theirs', { ownerAccountId: 'someone-else' }),
+      agent('unowned', { ownerAccountId: null }),
+      agent('off', { disabled: true }),
+      agent('stopping', { stopRequestedAt: '2026-09-01T00:00:00Z' }),
+    ]);
 
-    const processRevoke = () => { calls.push('revoke'); };
-    const processIssue = () => { calls.push('issue'); };
-
-    processRevoke();
-    processIssue();
-
-    expect(calls[0]).toBe('revoke');
-    expect(calls[1]).toBe('issue');
+    expect(spawner.spawns).toHaveLength(1);
+    expect(launcher.getStates().map((s) => s.agentId)).toEqual(['mine']);
   });
 });
 
-describe('설정 기본값', () => {
-  it('runnerAutoStart 기본값은 true', () => {
-    const DEFAULT_PREFS = {
-      runnerAutoStart: true,
-    };
+describe('2. liveness', () => {
+  it('러너가 이미 붙어 있으면 띄우지 않고 "외부에서 실행 중"이다', async () => {
+    const { launcher, spawner } = make();
+    await startAll(launcher, [agent('a')], { live: ['a'] });
 
-    expect(DEFAULT_PREFS.runnerAutoStart).toBe(true);
+    expect(spawner.spawn).not.toHaveBeenCalled();
+    expect(launcher.getStates()[0]!.status).toBe('external');
   });
 
-  it('runnerAutoStart가 false면 자동 기동 안 함', () => {
-    const prefs = { runnerAutoStart: false };
-    const shouldAutoStart = prefs.runnerAutoStart;
+  it('presence 를 모르면(소켓 끊김) 띄우지 않는다 — 빈 목록을 "아무도 없다"로 읽지 않는다', async () => {
+    const { launcher, spawner } = make();
+    await startAll(launcher, [agent('a')], { live: null });
 
-    expect(shouldAutoStart).toBe(false);
+    expect(spawner.spawn).not.toHaveBeenCalled();
+    expect(launcher.getStates()[0]!.message).toContain('알 수 없다');
+  });
+});
+
+describe('3. 키체인의 PAT 를 재사용한다 (기동마다 재발급하지 않는다)', () => {
+  it('PAT 가 있으면 발급·폐기를 부르지 않고 그 토큰으로 띄운다', async () => {
+    const secrets = fakeSecrets({ a: { label: patLabelPrefix(DEVICE), token: 'murp_old' } });
+    const { launcher, api, spawner } = make(fakeApi(), secrets);
+    await startAll(launcher, [agent('a')]);
+
+    expect(api.mintPat).not.toHaveBeenCalled();
+    expect(api.revokePat).not.toHaveBeenCalled();
+    expect(api.listPats).not.toHaveBeenCalled();
+    expect(spawner.spawns[0]!.env.MURMUR_PAT).toBe('murp_old');
+  });
+
+  it('키체인을 못 읽으면 발급하지 않는다 — 돌고 있는 러너를 죽이지 않는다', async () => {
+    const secrets = fakeSecrets();
+    secrets.readError = 'keychain locked';
+    const { launcher, api, spawner } = make(fakeApi(), secrets);
+    await startAll(launcher, [agent('a')]);
+
+    expect(api.mintPat).not.toHaveBeenCalled();
+    expect(spawner.spawn).not.toHaveBeenCalled();
+    const state = launcher.getStates()[0]!;
+    expect(state.status).toBe('failed');
+    expect(state.message).toContain('keychain locked');
+  });
+});
+
+describe('4. 첫 발급', () => {
+  it('없으면 발급하고 키체인에 저장한다', async () => {
+    const secrets = fakeSecrets();
+    const { launcher, api, spawner } = make(fakeApi(), secrets);
+    await startAll(launcher, [agent('a')]);
+
+    const label = patLabelPrefix(DEVICE);
+    expect(api.mintPat).toHaveBeenCalledWith('a', label);
+    expect(secrets.map.get('a')).toEqual({ label, token: `murp_${label}` });
+    expect(spawner.spawns[0]!.env.MURMUR_PAT).toBe(`murp_${label}`);
+  });
+
+  it('같은 라벨이 서버에 살아 있으면 **먼저 폐기하고** 발급한다', async () => {
+    const api = fakeApi();
+    const label = patLabelPrefix(DEVICE);
+    api.listPats = vi.fn(async () => {
+      api.calls.push('listPats');
+      return [
+        { label, revokedAt: null },
+        { label: `${label}#1`, revokedAt: null },
+        // 다른 기기·다른 용도의 라벨은 건드리지 않는다.
+        { label: 'desktop:other', revokedAt: null },
+        { label: 'runner', revokedAt: null },
+        // 이미 폐기된 것은 다시 폐기하지 않는다.
+        { label: `${label}#0`, revokedAt: '2026-01-01T00:00:00Z' },
+      ];
+    });
+    const { launcher } = make(api, fakeSecrets());
+    await startAll(launcher, [agent('a')]);
+
+    expect(api.calls).toEqual(['listPats', `revoke:${label}`, `revoke:${label}#1`, `mint:${label}`]);
+  });
+});
+
+describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
+  it('호출 순서가 그 순서다', async () => {
+    const oldLabel = patLabelPrefix(DEVICE);
+    const secrets = fakeSecrets({ a: { label: oldLabel, token: 'murp_old' } });
+    const { launcher, api, spawner } = make(fakeApi(), secrets);
+    await startAll(launcher, [agent('a')]);
+    api.calls.length = 0;
+
+    await launcher.reissue('a');
+
+    const newLabel = `${oldLabel}#1700000000000`;
+    // 발급이 먼저다. 폐기가 먼저면 발급 실패 한 번에 쓸 수 있는 PAT 가 사라진다.
+    expect(api.calls).toEqual([`mint:${newLabel}`, `revoke:${oldLabel}`]);
+    // 그리고 재실행이 일어났고, 새 토큰으로 떴다.
+    expect(spawner.spawns).toHaveLength(2);
+    expect(spawner.spawns[1]!.env.MURMUR_PAT).toBe(`murp_${newLabel}`);
+    // 옛 자식은 죽였다 — 같은 에이전트에 러너가 둘이면 안 된다.
+    expect(spawner.kills).toEqual([0]);
+    expect(secrets.map.get('a')).toEqual({ label: newLabel, token: `murp_${newLabel}` });
+  });
+
+  it('발급이 실패하면 옛 PAT 를 폐기하지 않는다 — 돌던 러너를 잃지 않는다', async () => {
+    const oldLabel = patLabelPrefix(DEVICE);
+    const secrets = fakeSecrets({ a: { label: oldLabel, token: 'murp_old' } });
+    const api = fakeApi();
+    const { launcher, spawner } = make(api, secrets);
+    await startAll(launcher, [agent('a')]);
+    api.mintPat = vi.fn(async () => { throw new Error('server down'); });
+
+    await launcher.reissue('a');
+
+    expect(api.revokePat).not.toHaveBeenCalled();
+    expect(spawner.kills).toEqual([]);
+    expect(secrets.map.get('a')).toEqual({ label: oldLabel, token: 'murp_old' });
+    expect(launcher.getStates()[0]!.message).toContain('옛 PAT 는 그대로 살아 있다');
+  });
+
+  it('폐기가 실패하면 삼키지 않고 남은 일을 말한다', async () => {
+    const oldLabel = patLabelPrefix(DEVICE);
+    const secrets = fakeSecrets({ a: { label: oldLabel, token: 'murp_old' } });
+    const api = fakeApi();
+    const { launcher } = make(api, secrets);
+    await startAll(launcher, [agent('a')]);
+    api.revokePat = vi.fn(async () => { throw new Error('403'); });
+
+    await launcher.reissue('a');
+
+    const state = launcher.getStates()[0]!;
+    expect(state.status).toBe('running');
+    expect(state.message).toContain('폐기에 실패했다');
+    expect(state.message).toContain(oldLabel);
+  });
+});
+
+describe('6. 종료 코드', () => {
+  it('78 이면 "재발급 필요"가 된다', async () => {
+    const { launcher, spawner } = make();
+    await startAll(launcher, [agent('a')]);
+    spawner.exit(78);
+
+    const state = launcher.getStates()[0]!;
+    expect(state.status).toBe('needs_reissue');
+    expect(state.exitCode).toBe(78);
+  });
+
+  it('다른 코드면 그 코드가 보인다 — 원인을 지어내지 않는다', async () => {
+    const { launcher, spawner } = make();
+    await startAll(launcher, [agent('a')]);
+    spawner.exit(1);
+
+    const state = launcher.getStates()[0]!;
+    expect(state.status).toBe('stopped');
+    expect(state.exitCode).toBe(1);
+    // 78 이 아닌 것을 '재발급 필요'로 뭉치지 않는다 — 사람이 할 일이 다르다.
+    expect(state.status).not.toBe('needs_reissue');
+  });
+
+  it('78 로 죽은 뒤 재발급하면 다시 뜬다', async () => {
+    const { launcher, spawner } = make();
+    await startAll(launcher, [agent('a')]);
+    spawner.exit(78);
+
+    await launcher.reissue('a');
+
+    expect(spawner.spawns).toHaveLength(2);
+    expect(launcher.getStates()[0]!.status).toBe('running');
+  });
+});
+
+describe('7. 한 에이전트가 못 떠도 나머지는 뜬다', () => {
+  it('첫 에이전트의 spawn 이 throw 해도 둘째가 뜬다', async () => {
+    const { launcher, spawner } = make();
+    spawner.failNext = new Error('program not allowed');
+    await startAll(launcher, [agent('a'), agent('b')]);
+
+    expect(spawner.spawns.map((s) => s.env.MURMUR_PAT)).toHaveLength(1);
+    const byId = Object.fromEntries(launcher.getStates().map((s) => [s.agentId, s]));
+    expect(byId.a!.status).toBe('failed');
+    expect(byId.a!.message).toContain('program not allowed');
+    expect(byId.b!.status).toBe('running');
+  });
+
+  it('발급이 throw 해도 나머지가 뜬다', async () => {
+    const api = fakeApi();
+    let first = true;
+    api.mintPat = vi.fn(async (_id: string, label: string) => {
+      if (first) { first = false; throw new Error('409 label_in_use'); }
+      return `murp_${label}`;
+    });
+    const { launcher, spawner } = make(api);
+    await startAll(launcher, [agent('a'), agent('b')]);
+
+    expect(spawner.spawns).toHaveLength(1);
+    const byId = Object.fromEntries(launcher.getStates().map((s) => [s.agentId, s]));
+    expect(byId.a!.status).toBe('failed');
+    expect(byId.b!.status).toBe('running');
+  });
+});
+
+describe('8. 저장소 경로', () => {
+  it('경로를 cwd 로 넘기고, MURMUR_URL 은 서버 주소다', async () => {
+    const { launcher, spawner } = make();
+    await startAll(launcher, [agent('a')], { repoPath: '/Users/me/dev/murmur' });
+
+    expect(spawner.spawns[0]!.cwd).toBe('/Users/me/dev/murmur');
+    expect(spawner.spawns[0]!.env.MURMUR_URL).toBe('https://murmur.example');
+  });
+
+  it('경로가 비어 있으면 띄우지 않고 그 사실을 말한다 — 기본값을 지어내지 않는다', async () => {
+    const { launcher, spawner } = make();
+    await startAll(launcher, [agent('a')], { repoPath: '' });
+
+    expect(spawner.spawn).not.toHaveBeenCalled();
+    const state = launcher.getStates()[0]!;
+    expect(state.status).toBe('failed');
+    expect(state.message).toContain('저장소 경로');
+  });
+});
+
+describe('9. 중복 방지·정리', () => {
+  it('두 번 startAll 해도 자식은 하나다', async () => {
+    const { launcher, spawner } = make();
+    await startAll(launcher, [agent('a')]);
+    await startAll(launcher, [agent('a')]);
+
+    expect(spawner.spawns).toHaveLength(1);
+  });
+
+  it('dispose 는 띄운 자식을 끝낸다', async () => {
+    const { launcher, spawner } = make();
+    await startAll(launcher, [agent('a'), agent('b')]);
+    launcher.dispose();
+
+    expect(spawner.kills.sort()).toEqual([0, 1]);
+  });
+
+  it('상태 변화가 구독자에게 간다', async () => {
+    const { launcher, spawner } = make();
+    const seen: string[] = [];
+    launcher.setOnStateChange((states) => seen.push(states.map((s) => s.status).join(',')));
+    await startAll(launcher, [agent('a')]);
+    spawner.exit(78);
+
+    expect(seen).toEqual(['running', 'needs_reissue']);
   });
 });
