@@ -7,6 +7,7 @@ import { LeasePanel } from './LeasePanel';
 import { Menu } from './Menu';
 import { StatusMark } from './Identity';
 import { StatusPicker } from './StatusPicker';
+import { RunnerStatusDot } from './RunnerStatus';
 import type { SectionId } from './settings/sections';
 import type { ChannelRow, NotifyLevel } from '@murmur/shared';
 import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, notifyLevelOf } from '@murmur/shared';
@@ -79,7 +80,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
-  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, channelAutoMentions, messages, savedCount } = useAppStore();
+  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, channelAutoMentions, messages, savedCount, runnerStates } = useAppStore();
   /**
    * macOS 신호등 여백(#270). 사이드바가 펴져 있으면 브랜드 바가 창의 좌상단이라 여기가
    * 여백을 진다. 접혀 있으면 사이드바는 폭 0 이고 `Workspace` 헤더가 좌상단이 되므로
@@ -359,6 +360,9 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
         online: peers.some((id) => online.includes(id)),
         // 1:1 DM 에서만 상태를 그린다. 여러 사람이면 누구의 상태인지 표시가 답하지 못한다.
         peer: peers.length === 1 ? accounts[peers[0]!] : undefined,
+        // #250: 이 앱이 띄운 러너의 상태. 1:1 에이전트 DM 에서만 뜻이 있다 — 사람에게는
+        // 러너가 없고, 여러 사람이면 누구의 러너인지 표시가 답하지 못한다.
+        agentId: peers.length === 1 && accounts[peers[0]!]?.kind === 'agent' ? peers[0]! : undefined,
         // 배지를 그릴 때가 아니라 목록을 만들 때 구한다 — 렌더 순서에 기대면 배지가
         // 알림 수준을 보지 못하는 자리에 놓이기 쉽다(#229 가 채널 쪽에서 그랬다).
         notifyLevel: notifyLevelOf(channelPrefs[dm.id]),
@@ -947,6 +951,11 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
                 <span data-testid={`presence-${dm.id}`} data-online={String(dm.online)}
                   className={`h-2 w-2 rounded-full ${dm.online ? 'bg-green-500' : 'bg-zinc-600'}`} />
                 <StatusMark account={dm.peer} />
+                {/* #250: 러너 상태는 presence 와 **또 다른 사실**이다 — presence 는 "러너가
+                    붙어 있나"(누가 띄웠든)이고, 이것은 "이 앱이 띄운 자식이 어떤 상태인가"다.
+                    78 로 죽은 러너는 presence 로도 사라지지만, 사람이 할 일(재발급)은
+                    이 표시만이 말해 준다. */}
+                {dm.agentId && <RunnerStatusDot agentId={dm.agentId} state={runnerStates[dm.agentId]} />}
                 {dm.label}
                 <UnreadBadge channelId={dm.id} notifyLevel={dm.notifyLevel} />
               </button>
