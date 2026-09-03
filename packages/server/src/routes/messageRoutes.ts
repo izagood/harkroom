@@ -266,7 +266,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     if (result === 'not_found') {
       return reply.code(404).send({ error: { code: 'not_found', message: 'saved message not found' } });
     }
-    // 해제을 본인의 소켓에만 알린다(#219). state null 은 "담기지 않음"이다.
+    // 해제를 본인의 소켓에만 알린다(#219). state null 은 "담기지 않음"이다.
     emitEvent({ type: 'saved.changed', messageId, state: null, accountId: req.account!.id });
     return reply.code(204).send();
   });

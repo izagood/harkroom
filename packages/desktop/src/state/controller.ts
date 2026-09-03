@@ -208,9 +208,13 @@ export class Controller {
         }
         break;
       case 'channel.updated':
-        // 채널 정보를 갱신한다. 목록에서 찾아 교체한다.
+        // 목록에 있으면 교체하고, **없으면 넣는다.** private→public 전환이 그 경우다:
+        // 그때까지 목록에 없던 사람에게도 이벤트가 오는데(이제 볼 수 있으므로) 교체만
+        // 하면 아무 일도 일어나지 않아, 새로 열린 채널이 새로고침 전까지 보이지 않는다.
         store.set({
-          channels: store.channels.map((c) => (c.id === e.channel.id ? e.channel : c)),
+          channels: store.channels.some((c) => c.id === e.channel.id)
+            ? store.channels.map((c) => (c.id === e.channel.id ? e.channel : c))
+            : [...store.channels, e.channel],
         });
         break;
       case 'channel.deleted':
