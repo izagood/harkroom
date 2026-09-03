@@ -4,7 +4,7 @@ import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
 import { Workspace } from '../src/components/Workspace';
 import { MAC_TRAFFIC_LIGHT_PL } from '../src/lib/platform';
-import { acc, chan } from './helpers/fakeApi';
+import { acc, chan, scheduledApiStub } from './helpers/fakeApi';
 // 설정 파일은 **이 파일 기준**으로 끌어온다(`?raw`, Vite 가 변환 시점에 해석한다). `process.cwd()`
 // 로 조립하면 러너가 어디서 도는지에 결과가 달리고, 파일이 없으면 ENOENT 가 아니라 "경로가 틀렸다"
 // 로 보인다 — 실제로 이 파일의 초판이 다른 기기의 절대 경로를 박아 두고 빨갛게 남아 있었다.
@@ -38,6 +38,8 @@ const fakeController = () => {
     goBack: vi.fn().mockResolvedValue(true),
     goForward: vi.fn().mockResolvedValue(true),
     loadUnreadSweep: vi.fn().mockResolvedValue([]),
+    // #222: 컴포저가 예약 목록을 읽는다 — 목에 이 표면이 없으면 화면이 뜨지 않는다.
+    api: scheduledApiStub(),
   };
   setController(c as unknown as Controller);
   return c;
