@@ -3,6 +3,7 @@ import { ApiClient } from './lib/api';
 import { connectWs } from './lib/ws';
 import { createNotifier } from './lib/notify';
 import { sessionStore, type StoredCommunity } from './lib/session';
+import { useColorMode } from './lib/useColorMode';
 import { Controller, getController, setController } from './state/controller';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { Workspace } from './components/Workspace';
@@ -21,6 +22,7 @@ async function startSession(
 }
 
 export default function App() {
+  useColorMode();
   const [phase, setPhase] = useState<'boot' | 'connect' | 'ready'>('boot');
   // 설정은 세션 상태(phase)가 아니라 뷰다 — 그래서 별도 상태로 둔다.
   // #164: 활성 커뮤니티의 계정 id. 세션 손실이 **활성** 커뮤니티의 것인지 가르는 데 쓴다.

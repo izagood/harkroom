@@ -30,7 +30,7 @@ function ChannelUnreadDot({ channelId, name }: { channelId: string; name: string
   return (
     <span
       aria-label={`${unread} unread in ${name}`}
-      className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-400"
+      className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-fg-subtle"
     />
   );
 }
@@ -54,7 +54,7 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
   if (notifyLevel === 'none' || !count) return null;
   return (
     <span data-testid={`unread-${channelId}`}
-      className="ml-auto rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white">
+      className="ml-auto rounded-full bg-danger px-1.5 text-[10px] font-bold text-white">
       {count}
     </span>
   );
@@ -340,7 +340,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
 
   const others = Object.values(accounts).filter((a) => a.id !== me?.id);
   const row = (active: boolean) =>
-    `flex w-full items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-zinc-700 ${active ? 'bg-zinc-700' : ''}`;
+    `flex w-full items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-surface-raised ${active ? 'bg-surface-raised' : ''}`;
 
   const sortedChannels = useMemo(() => {
     const standardChannels = channels.filter((ch) => ch.kind === 'standard' && !ch.archivedAt);
@@ -368,8 +368,8 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
     const isEditing = editingChannelId === ch.id;
     if (isEditing) {
       return (
-        <div key={ch.id} className="mt-1 rounded border border-zinc-700 bg-zinc-800 p-1">
-          <div className="mb-1 text-xs text-zinc-400">#{ch.name} 편집</div>
+        <div key={ch.id} className="mt-1 rounded border border-border bg-surface-raised p-1">
+          <div className="mb-1 text-xs text-fg-muted">#{ch.name} 편집</div>
           <input
             type="text"
             aria-label="Topic"
@@ -382,7 +382,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
             <input
               type="text"
               aria-label="Repository"
-              className="flex-1 rounded bg-zinc-900 px-2 py-1 text-sm text-zinc-200 placeholder-zinc-500"
+              className="flex-1 rounded bg-surface-raised px-2 py-1 text-sm text-fg placeholder-fg-subtle"
               placeholder="repo (비우면 해제)"
               value={editRepo}
               onChange={(e) => { setEditRepo(e.target.value); setEditError(null); }}
@@ -408,8 +408,8 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
     }
     if (deletingChannelId === ch.id) {
       return (
-        <div key={ch.id} data-testid={`delete-${ch.id}`} className="mt-1 rounded border border-red-700 bg-zinc-800 p-1">
-          <div className="mb-1 text-xs text-zinc-400">
+        <div key={ch.id} data-testid={`delete-${ch.id}`} className="mt-1 rounded border border-danger bg-surface-raised p-1">
+          <div className="mb-1 text-xs text-fg-muted">
             {ch.visibility === 'private' ? '🔒' : '#'}{ch.name} 삭제
           </div>
           {/* 지울 규모를 보여 준다 — 삭제 뒤에는 무엇이 사라졌는지 물을 곳이 없다.
@@ -456,8 +456,8 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
        */
       const canInvite = members !== undefined && (ch.visibility === 'public' || isMember);
       return (
-        <div key={ch.id} data-testid={`members-${ch.id}`} className="mt-1 rounded border border-zinc-700 bg-zinc-800 p-1">
-          <div className="mb-1 text-xs text-zinc-400">
+        <div key={ch.id} data-testid={`members-${ch.id}`} className="mt-1 rounded border border-border bg-surface-raised p-1">
+          <div className="mb-1 text-xs text-fg-muted">
             {ch.visibility === 'private' ? '🔒' : '#'}{ch.name} 멤버
           </div>
           {/* public 과 private 에서 이 목록의 **뜻이 다르다**. public 채널은 멤버가 아니어도
@@ -484,7 +484,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
                     <li key={m.accountId} className="flex items-center gap-1 text-xs text-zinc-300">
                       <span>@{m.handle}</span>
                       {account && (
-                        <span className="rounded bg-zinc-700 px-1 text-[10px] text-zinc-300">
+                        <span className="rounded bg-surface-raised px-1 text-[10px] text-fg">
                           {account.kind === 'agent' ? '에이전트' : '사람'}
                         </span>
                       )}
@@ -492,7 +492,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
                           그래서 'admin' 이 아니라 '워크스페이스 admin' 이라고 적는다. */}
                       {account?.isAdmin && (
                         <span
-                          className="rounded bg-zinc-700 px-1 text-[10px] text-amber-300"
+                          className="rounded bg-surface-raised px-1 text-[10px] text-warning"
                           title="워크스페이스 admin — 채널 역할이 아니다"
                         >
                           워크스페이스 admin
@@ -522,7 +522,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
             <div className="mb-1 flex items-center gap-1">
               <select
                 aria-label="초대할 계정"
-                className="flex-1 rounded bg-zinc-900 px-1 py-0.5 text-xs text-zinc-200"
+                className="flex-1 rounded bg-surface-raised px-1 py-0.5 text-xs text-fg"
                 value={inviteAccountId}
                 onChange={(e) => setInviteAccountId(e.target.value)}
               >
@@ -543,7 +543,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
                 200 으로 받아 주지만 아무 일도 일어나지 않는다 — 그런 항목은 만들지 않는다. */}
             {isMember && (
               <button
-                className="rounded px-2 py-0.5 text-xs text-red-400 hover:bg-zinc-700"
+                className="rounded px-2 py-0.5 text-xs text-danger hover:bg-surface-raised"
                 onClick={() => void (leaveConfirmId === ch.id ? confirmLeave(ch.id) : requestLeave(ch.id))}
               >
                 {leaveConfirmId === ch.id ? '정말 나가기' : '나가기'}
@@ -565,10 +565,10 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
         {/* private 채널은 '#' 대신 자물쇠다. 여기 이 표시가 없으면 사용자는 자기가 쓰는
             글이 전원에게 가는지 멤버에게만 가는지 화면 어디에서도 알 수 없다. */}
         {ch.visibility === 'private'
-          ? <span className="text-zinc-500" aria-label="비공개 채널" title="비공개 채널">🔒</span>
-          : <span className="text-zinc-500">#</span>}
+          ? <span className="text-fg-subtle" aria-label="비공개 채널" title="비공개 채널">🔒</span>
+          : <span className="text-fg-subtle">#</span>}
         {ch.name}
-        {ch.repo && <span className="rounded bg-zinc-800 px-1 text-[10px] text-zinc-400">{ch.repo}</span>}
+        {ch.repo && <span className="rounded bg-surface-raised px-1 text-[10px] text-fg-muted">{ch.repo}</span>}
         <ChannelUnreadDot channelId={ch.id} name={ch.name ?? ''} />
         <UnreadBadge channelId={ch.id} notifyLevel={notifyLevel} />
       </button>
@@ -647,7 +647,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
               <button
                 {...props}
                 onClick={(e) => { e.stopPropagation(); props.onClick(); }}
-                className="ml-auto rounded px-1 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300"
+                className="ml-auto rounded px-1 text-fg-subtle hover:bg-surface-raised hover:text-fg"
               >
                 ⋯
               </button>
@@ -673,7 +673,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
   if (collapsed) {
     return (
       <aside
-        className="overflow-hidden bg-zinc-900"
+        className="overflow-hidden bg-surface-sunken"
         style={{ width: 0 }}
         aria-hidden="true"
       />
@@ -682,7 +682,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
 
   return (
     <aside
-      className="relative flex flex-col bg-zinc-900 text-zinc-200"
+      className="relative flex flex-col bg-surface-sunken text-fg"
       style={{ width: collapsed ? 0 : width }}
     >
       {/* 드래그 핸들: 사이드바 우측 가장자리에 위치 */}
@@ -692,7 +692,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
           aria-orientation="vertical"
           aria-label="사이드바 너비 조절"
           tabIndex={0}
-          className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-indigo-500 focus:bg-indigo-500"
+          className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-accent focus:bg-accent"
           onMouseDown={handleDragStart}
           onKeyDown={handleKeyDown}
         />
@@ -709,7 +709,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
         <div
           data-testid="sidebar-brand"
           data-tauri-drag-region
-          className={`flex items-center gap-2 border-b border-zinc-800 py-3 pr-3 font-bold ${
+          className={`flex items-center gap-2 border-b border-border py-3 pr-3 font-bold ${
             macTrafficLightRoom ? MAC_TRAFFIC_LIGHT_PL : 'pl-3'
           }`}
         >
@@ -721,7 +721,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
             title={connected ? 'connected' : 'disconnected'} />
           <button
             onClick={onToggleCollapse}
-            className="ml-auto rounded p-1 hover:bg-zinc-700"
+            className="ml-auto rounded p-1 hover:bg-surface-raised"
             aria-label="사이드바 접기"
             title="사이드바 접기"
           >
@@ -730,15 +730,15 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
         </div>
       <nav className="flex-1 space-y-4 overflow-y-auto p-2">
         <div>
-          <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">Channels</div>
+          <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">Channels</div>
           {sortedChannels.map(channelRow)}
           {me?.isAdmin && (
             createChannelOpen ? (
-              <div className="mt-1 rounded border border-zinc-700 bg-zinc-800 p-1">
+              <div className="mt-1 rounded border border-border bg-surface-raised p-1">
                 <input
                   type="text"
                   aria-label="New channel name"
-                  className="mb-1 w-full rounded bg-zinc-900 px-2 py-1 text-sm text-zinc-200 placeholder-zinc-500"
+                  className="mb-1 w-full rounded bg-surface-raised px-2 py-1 text-sm text-fg placeholder-fg-subtle"
                   placeholder="channel-name"
                   value={newChannelName}
                   onChange={(e) => { setNewChannelName(e.target.value); setCreateError(null); }}
@@ -751,7 +751,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
                 {/* 공개 범위는 **만들 때** 고른다. 만든 뒤 admin 이 바꿀 수 있지만, private
                     으로 시작해야 할 채널을 public 으로 만들면 그 사이에 오간 말은 이미
                     전원이 봤다 — 나중에 닫아도 되돌릴 수 없다. */}
-                <label className="mb-1 flex items-center gap-1 text-[11px] text-zinc-400">
+                <label className="mb-1 flex items-center gap-1 text-[11px] text-fg-muted">
                   <input
                     type="checkbox"
                     checked={newChannelPrivate}
@@ -759,16 +759,16 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
                   />
                   비공개 (멤버만 볼 수 있다)
                 </label>
-                {createError && <p role="alert" className="mb-1 text-[10px] text-red-400">{createError}</p>}
+                {createError && <p role="alert" className="mb-1 text-[10px] text-danger">{createError}</p>}
                 <div className="flex gap-1">
                   <button
-                    className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-500"
+className="rounded bg-accent px-2 py-0.5 text-xs text-white hover:bg-accent"
                     onClick={() => void submitNewChannel()}
                   >
                     만들기
                   </button>
                   <button
-                    className="rounded px-2 py-0.5 text-xs text-zinc-400 hover:bg-zinc-700"
+className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
                     onClick={closeCreate}
                   >
                     취소
@@ -776,7 +776,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
                 </div>
               </div>
             ) : (
-              <button className={`${row(false)} text-zinc-400`} onClick={() => setCreateChannelOpen(true)}>
+              <button className={`${row(false)} text-fg-muted`} onClick={() => setCreateChannelOpen(true)}>
                 + Create channel
               </button>
             )
@@ -785,7 +785,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
         {archivedChannels.length > 0 && (
           <div>
             <button
-              className="flex w-full items-center gap-1 px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500 hover:text-zinc-400"
+              className="flex w-full items-center gap-1 px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle hover:text-fg-muted"
               onClick={() => setArchivedOpen((v) => !v)}
             >
               <span>{archivedOpen ? '▼' : '▶'}</span>
@@ -800,43 +800,43 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
           {/* 인박스도 디렉터리와 **같은 방식으로** 연다(#185) — 사이드바 항목이 뷰를
               열고, 뷰는 닫혀 있으면 아무것도 그리지 않는다. 화면마다 여는 방식이 다르면
               세 번째 화면을 만들 때 어느 쪽을 따를지 알 수 없다. */}
-          <button className={`${row(false)} text-zinc-400`} onClick={onOpenInbox}>
+          <button className={`${row(false)} text-fg-muted`} onClick={onOpenInbox}>
             Inbox
           </button>
           {/* #219: 담아 둔 메시지. 배지의 숫자는 **open 개수**다 — 완료로 옮긴 것까지 세면
               다 처리한 뒤에도 숫자가 남아 할 일이 있다고 거짓을 말한다. */}
-          <button className={`${row(false)} text-zinc-400`} onClick={onOpenSaved}>
+          <button className={`${row(false)} text-fg-muted`} onClick={onOpenSaved}>
             Saved
             {savedCount > 0 && (
               <span
                 aria-label={`담아 둔 메시지 ${savedCount}개`}
-                className="ml-auto rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold text-white"
+                className="ml-auto rounded-full bg-accent px-1.5 text-[10px] font-bold text-white"
               >
                 {savedCount}
               </span>
             )}
           </button>
-          <button className={`${row(false)} text-zinc-400`} onClick={onOpenDirectory}>
+          <button className={`${row(false)} text-fg-muted`} onClick={onOpenDirectory}>
             Directory
           </button>
-          <button className={`${row(false)} text-zinc-400`} onClick={() => onOpenSettings('agents')}>
+          <button className={`${row(false)} text-fg-muted`} onClick={() => onOpenSettings('agents')}>
             + Add or edit agents
           </button>
         </div>
         <div>
-          <div className="flex items-center px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">
+          <div className="flex items-center px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
             Direct messages
-            <button className="ml-auto rounded px-1 hover:bg-zinc-700" onClick={() => setPickerOpen((v) => !v)}>
+            <button className="ml-auto rounded px-1 hover:bg-surface-raised" onClick={() => setPickerOpen((v) => !v)}>
               + New
             </button>
           </div>
           {pickerOpen ? (
-            <div className="mb-1 rounded border border-zinc-700 bg-zinc-800 p-1">
+            <div className="mb-1 rounded border border-border bg-surface-raised p-1">
               {others.map((a) => (
                 <button key={a.id} className={row(false)}
                   onClick={() => { setPickerOpen(false); void getController().startDm(a.id); }}>
                   {a.handle}
-                  <span className="text-[10px] text-zinc-500">{a.kind}</span>
+                  <span className="text-[10px] text-fg-subtle">{a.kind}</span>
                 </button>
               ))}
             </div>
@@ -858,7 +858,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
         </div>
         <LeasePanel />
         </nav>
-        <div className="relative flex items-center gap-2 border-t border-zinc-800 p-3 text-xs">
+        <div className="relative flex items-center gap-2 border-t border-border p-3 text-xs">
           {/* 계정 행 자체가 진입점이다 — gear 아이콘이 아니라(#113). 트리거 요소는 소비자가
               만들고 접근성 속성·ref 는 Menu 가 준다(그래야 #111 이 우클릭 트리거로 같은
               프리미티브를 쓸 수 있다). */}

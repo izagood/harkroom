@@ -10,10 +10,13 @@ export interface NotificationPrefs {
   showPreview: boolean;
 }
 
+export type ColorMode = 'system' | 'light' | 'dark';
+
 export interface Prefs {
   notifications: NotificationPrefs;
   sidebarWidth: number;
   sidebarCollapsed: boolean;
+  colorMode: ColorMode;
 }
 
 const KEY = 'murmur.prefs';
@@ -42,6 +45,7 @@ export const DEFAULT_PREFS: Prefs = {
   notifications: { enabled: true, mention: true, threadReply: true, dm: true, showPreview: true },
   sidebarWidth: 240,
   sidebarCollapsed: false,
+  colorMode: 'system',
 };
 
 export const prefsStorage = {
@@ -56,6 +60,7 @@ export const prefsStorage = {
         notifications: { ...DEFAULT_PREFS.notifications, ...(parsed.notifications ?? {}) },
         sidebarWidth: parsed.sidebarWidth ?? DEFAULT_PREFS.sidebarWidth,
         sidebarCollapsed: parsed.sidebarCollapsed ?? DEFAULT_PREFS.sidebarCollapsed,
+        colorMode: parsed.colorMode ?? DEFAULT_PREFS.colorMode,
       };
     } catch {
       return DEFAULT_PREFS;

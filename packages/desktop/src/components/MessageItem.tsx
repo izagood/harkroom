@@ -63,7 +63,7 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
   };
 
   const hoverOnly = 'opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100';
-  const iconBtn = 'rounded p-1 text-zinc-500 hover:bg-zinc-100';
+  const iconBtn = 'rounded p-1 text-fg-subtle hover:bg-surface-raised';
 
   /**
    * 클립보드에 담는다(#178). **실패를 조용히 삼키지 않는다** — 삼키면 사람은

@@ -1,1 +1,46 @@
 @import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* 라이트 모드(기본값): 화면 바닥, 본문 배경 */
+:root {
+  --color-surface: var(--color-zinc-50);
+  --color-surface-raised: var(--color-white);
+  /* 사이드바: 본문보다 한 단계 어두운 회색 — 라이트에서 zinc-100 */
+  --color-surface-sunken: var(--color-zinc-100);
+  --color-border: var(--color-zinc-200);
+  --color-fg: var(--color-zinc-900);
+  --color-fg-muted: var(--color-zinc-600);
+  --color-fg-subtle: var(--color-zinc-500);
+  --color-accent: var(--color-indigo-600);
+  --color-danger: var(--color-red-600);
+  --color-warning: var(--color-amber-600);
+}
+
+/* 다크 모드: <html data-theme="dark" 에서 적용 */
+:root[data-theme="dark"] {
+  --color-surface: var(--color-zinc-950);
+  --color-surface-raised: var(--color-zinc-900);
+  /* 사이드바: 본문보다 한 단계 어두운 검정 — 다크에서 zinc-800 */
+  --color-surface-sunken: var(--color-zinc-800);
+  --color-border: var(--color-zinc-700);
+  --color-fg: var(--color-zinc-100);
+  --color-fg-muted: var(--color-zinc-400);
+  --color-fg-subtle: var(--color-zinc-500);
+  --color-accent: var(--color-indigo-400);
+  --color-danger: var(--color-red-400);
+  --color-warning: var(--color-amber-400);
+}
+
+@theme {
+  --color-surface: var(--color-surface);
+  --color-surface-raised: var(--color-surface-raised);
+  --color-surface-sunken: var(--color-surface-sunken);
+  --color-border: var(--color-border);
+  --color-fg: var(--color-fg);
+  --color-fg-muted: var(--color-fg-muted);
+  --color-fg-subtle: var(--color-fg-subtle);
+  --color-accent: var(--color-accent);
+  --color-danger: var(--color-danger);
+  --color-warning: var(--color-warning);
+}
