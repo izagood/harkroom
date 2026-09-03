@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus } from '@murmur/shared';
+import type { AccountStatus, AccountView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus } from '@murmur/shared';
 
 export interface HistoryEntry {
   channelId: string;
@@ -54,6 +54,14 @@ export interface AppState {
    * 초안처럼 비밀로 다룰 것이 없고, 다음 사람이 열면 서버에서 다시 받는다.
    */
   pins: Record<string, PinRow[]>;
+  /**
+   * 채널별 문서(#188). **키가 없는 것과 본문이 빈 문서는 다르다** — 없으면 "아직 안
+   * 받았다", 있는데 본문이 ''면 "정말 비어 있다"다. 조회 실패를 빈 문서로 채우면 두
+   * 상태가 같은 화면이 되고, 사람은 못 읽은 문서를 없는 문서로 읽는다.
+   *
+   * `pins` 와 같은 이유로 로그아웃 시 비밀로 다룰 것이 없다 — 채널 전역 사실이다.
+   */
+  channelDocs: Record<string, ChannelDoc>;
   /**
    * 내가 담아 둔 메시지의 id 전부(#219). `open` 과 `done` 을 **둘 다** 담는다 —
    * `⋯` 메뉴가 "담겨 있는가"를 이것으로 판단하고, 완료로 옮긴 메시지도 담긴 상태다.
@@ -141,7 +149,7 @@ const initial = {
   me: null, accounts: {}, groups: [], channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
-  channelPrefs: {}, pins: {}, channelMembers: {}, drafts: {},
+  channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
   expandedMessageIds: {}, savedIds: [], savedCount: 0,
 };

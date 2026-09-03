@@ -470,6 +470,9 @@ describe('channel delete — 참조 테이블 전부 (#155)', () => {
     // 같아야 한다 — 달라지면 아래 단언이 알려 준다.
     const explicit = new Set([
       'message_pin', 'channel_read', 'channel_member', 'channel_pref',
+      // #188: 채널 문서. 이 테스트가 실제로 그 누락을 잡았다 — 문서 테이블이 생겼는데
+      // deleteChannel 이 그것을 몰라, 문서가 있는 채널의 삭제가 FK 위반으로 터졌다.
+      'channel_doc',
       'inbox', 'idempotency_key', 'work_thread', 'saved_message', 'message', 'channel',
     ]);
 
