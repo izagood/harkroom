@@ -464,4 +464,34 @@ export class ApiClient {
   unsaveMessage(messageId: string): Promise<void> {
     return this.req('DELETE', `/saved/${messageId}`);
   }
+
+  /**
+   * 핸들 집합 관리(#285). `GET /handle-groups` 를 여기 두지 않는 이유: 그 라우트는
+   * **admin 전용**이고, 집합 목록은 `GET /accounts`(모든 계정)가 계정과 함께 이미 준다.
+   * 두 경로로 같은 목록을 받으면 비-admin 화면에서 한쪽이 403 이 되고, 그 403 이
+   * "집합이 없다"로 그려진다 — `HandleGroupsSettings` 의 주석이 그 결정을 적는다.
+   */
+  async createHandleGroup(input: { handle: string; displayName: string }): Promise<HandleGroupRow> {
+    return this.req('POST', '/handle-groups', input);
+  }
+
+  async getHandleGroup(id: string): Promise<{ group: HandleGroupRow; members: string[] }> {
+    return this.req('GET', `/handle-groups/${id}`);
+  }
+
+  async updateHandleGroup(id: string, patch: { displayName: string }): Promise<HandleGroupRow> {
+    return this.req('PATCH', `/handle-groups/${id}`, patch);
+  }
+
+  async deleteHandleGroup(id: string): Promise<void> {
+    return this.req('DELETE', `/handle-groups/${id}`);
+  }
+
+  async addHandleGroupMembers(id: string, accountIds: string[]): Promise<{ members: string[] }> {
+    return this.req('POST', `/handle-groups/${id}/members`, { accountIds });
+  }
+
+  async removeHandleGroupMembers(id: string, accountIds: string[]): Promise<{ members: string[] }> {
+    return this.req('DELETE', `/handle-groups/${id}/members`, { accountIds });
+  }
 }

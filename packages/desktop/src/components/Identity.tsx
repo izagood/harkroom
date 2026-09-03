@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../state/appStore';
-import type { AccountStatus, AccountView } from '@murmur/shared';
+import type { AccountStatus, AccountView, HandleGroupRow } from '@murmur/shared';
 import { getController } from '../state/controller';
 
 /**
@@ -199,6 +199,33 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
         <span aria-hidden="true">{account.handle.charAt(0).toUpperCase()}</span>
       )}
       <span className="sr-only">{account.handle}</span>
+    </span>
+  );
+}
+
+/**
+ * 핸들 집합의 표시(#285). `Identity` 와 **같은 자리·같은 크기의 인라인 배지**다.
+ *
+ * 여기 두는 이유는 위 `Identity` 주석과 같다: 같은 마크업이 두 곳에 살면 한쪽만 바뀐다.
+ * 집합은 계정이 아니라 `Identity` 의 인자를 받을 수 없으므로 형제 컴포넌트로 둔다
+ * (`StatusMark` 가 같은 이유로 여기 있다).
+ *
+ * **구성원 수를 함께 보인다.** 이름만 보이면 `@release` 가 한 사람인지 스무 사람인지
+ * 모르는 채로 부르게 된다 — 부르기 직전이 그것을 알아야 하는 유일한 순간이다. 수는
+ * 서버가 목록에 실어 준다(`HandleGroupRow.memberCount`).
+ *
+ * 색을 에이전트 배지(indigo)와 다르게 둔다 — 사람·에이전트·집합이 한 목록에 섞여 서므로
+ * 셋이 서로 다른 것으로 읽혀야 한다.
+ */
+export function GroupBadge({ group, className = '' }: { group: HandleGroupRow; className?: string }) {
+  return (
+    <span
+      data-testid={`group-badge-${group.handle}`}
+      className={`inline-flex items-center gap-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800 ${className}`}
+    >
+      <span aria-hidden="true">👥</span>
+      <span className="sr-only">집합</span>
+      <span>{group.memberCount}명</span>
     </span>
   );
 }
