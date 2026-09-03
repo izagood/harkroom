@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PinRow } from '@murmur/shared';
+import type { AccountStatus, AccountView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow } from '@murmur/shared';
 
 export interface HistoryEntry {
   channelId: string;
@@ -12,6 +12,7 @@ const MAX_HISTORY_LENGTH = 50;
 export interface AppState {
   me: AccountView | null;
   accounts: Record<string, AccountView>;
+  groups: HandleGroupRow[];
   channels: ChannelRow[];
   dms: DmView[];
   activeChannelId: string | null;
@@ -118,7 +119,7 @@ export interface AppState {
 }
 
 const initial = {
-  me: null, accounts: {}, channels: [], dms: [], activeChannelId: null, threadRootId: null,
+  me: null, accounts: {}, groups: [], channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], leases: [], connected: false, channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,

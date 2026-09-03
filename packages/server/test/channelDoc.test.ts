@@ -289,6 +289,25 @@ describe('#188 채널 문서', () => {
     expect(write.statusCode).toBe(401);
   });
 
+  it('문서가 있는 채널도 삭제된다 — 문서 행이 삭제를 막지 않는다', async () => {
+    // `channel_doc.channel_id` 는 cascade 가 아니다. `deleteChannel`(#155)이 이 테이블을
+    // 모르면 **문서가 하나라도 있는 채널만** 삭제가 FK 위반으로 터진다 — 스키마 목록
+    // 단언(`channelDelete.test.ts`)과 별개로 실제 경로도 한 번 지나가 본다.
+    const channelId = await makeChannel('doc-deletable', 'public');
+    await putDoc(channelId, adminToken, '삭제될 채널의 문서', null);
+    await app.inject({
+      method: 'PATCH', url: `/channels/${channelId}`, headers: auth(adminToken),
+      payload: { archived: true },
+    });
+
+    const deleted = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}`, headers: auth(adminToken),
+    });
+    expect(deleted.statusCode).toBe(204);
+    const rows = await pool.query('select 1 from channel_doc where channel_id = $1', [channelId]);
+    expect(rows.rowCount).toBe(0);
+  });
+
   it('admin 도 예외가 아니다 — 볼 수 없는 채널이면 못 쓴다', async () => {
     // admin 은 private 채널을 만들면 첫 멤버가 되므로, 남이 만든 private 채널로 확인한다.
     const channelId = await makeChannel('doc-admin-created', 'private');
