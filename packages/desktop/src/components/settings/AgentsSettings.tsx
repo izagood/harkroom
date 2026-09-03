@@ -1,10 +1,44 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AGENT_HARNESSES, RUNNABLE_HARNESSES,
   type AgentConfig, type AgentDefaults, type AgentView, type MentionPermission, type PatView,
 } from '@murmur/shared';
 import { getController } from '../../state/controller';
 import { useAppStore } from '../../state/appStore';
+
+/** #177: 클립보드가 없거나 거부되면 **조용히 실패하지 않는다** — 화면에 있는 그 명령
+ *  텍스트를 선택 상태로 만들어 사람이 ⌘C 할 수 있게 하고, 오류를 눈에 보이게 남긴다.
+ *  화면 밖 textarea + `document.execCommand('copy')` 는 쓰지 않는다: 사람이 볼 수도
+ *  선택할 수도 없는 노드를 곧바로 지우고, execCommand 는 복사에 실패해도 던지지 않고
+ *  `false` 만 돌려주므로 "복사됨"을 거짓으로 띄우게 된다.
+ *  `target` 은 복사 대상 명령이 그려진 노드다(선택해 줄 대상). */
+const copyToClipboard = async (
+  text: string,
+  target: HTMLElement | null,
+  onError: (msg: string) => void,
+): Promise<boolean> => {
+  // 비보안 컨텍스트에서는 브라우저가 `navigator.clipboard` 를 아예 노출하지 않는다 —
+  // 그래서 `isSecureContext` 를 따로 보지 않고 존재 여부만 본다(MessageItem 과 같은 판정).
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // 권한 거부 등 → 아래 선택 경로로 내려간다. 성공했다고 하지 않는다.
+    }
+  }
+  const selection = window.getSelection?.();
+  if (target && selection) {
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    onError('클립보드를 쓸 수 없다 — 명령을 선택해 두었으니 ⌘C 로 복사한다');
+  } else {
+    onError('클립보드를 쓸 수 없고 명령을 선택할 수도 없다 — 명령을 손으로 옮겨 적는다');
+  }
+  return false;
+};
 
 /** AGENT_HARNESSES 에조차 없는 harness. 없는 것은 사용자의 CLI 가 아니라 murmur 의 구현이므로
  *  '설치 안 됨'이 아니라 '지원 예정'이다. AGENT_HARNESSES 에는 있지만 아직 못 돌리는 것(RUNNABLE_HARNESSES
@@ -86,7 +120,14 @@ export function AgentsSettings() {
   // null 이면 'harness 기본값 사용'. 되돌릴 때 model·effort 를 명시적 null 로 비워야 한다.
   const [customized, setCustomized] = useState(false);
   const [pat, setPat] = useState<string | null>(null);
-  const [pats, setPats] = useState<PatView[]>([]);
+  /**
+   * #251: PAT 목록도 **세 상태**다 — null(아직 안 읽음) / 'error'(못 읽음) / 목록.
+   * 위 `defaults` 주석이 "PAT 로더가 실패를 `setPats([])` 로 삼켜 '없음'과 같은 화면을
+   * 만든다"고 적어 둔 그 결함을 여기서 없앤다. #251 이 "0개면 재발급이 필요하다"를
+   * 그 자리에서 말하기로 결정했으므로, '못 읽었다'가 0개로 보이면 화면이 있는 PAT 를
+   * 없다고 하고 운영자에게 필요 없는 재발급을 권한다.
+   */
+  const [pats, setPats] = useState<PatView[] | 'error' | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
   // #139: 메모리는 **세 상태**다 — null(아직 안 읽음) / 'error'(못 읽음) / 목록.
   // 실패를 빈 배열로 삼키면 "기억이 없다" 와 "못 읽었다" 가 구분되지 않는다
@@ -94,12 +135,21 @@ export function AgentsSettings() {
   type MemoryEntry = { slug: string; value: string; updatedAt: string };
   const [memories, setMemories] = useState<MemoryEntry[] | 'error' | null>(null);
   const [confirmingSlug, setConfirmingSlug] = useState<string | null>(null);
+  // #251: 비활성화는 되돌릴 수 없는 작업이므로 확인 단계를 거친다.
+  const [confirmingDisable, setConfirmingDisable] = useState(false);
   // 라벨을 하드코딩하면 재발급이 막힌다 — 라벨은 살아 있는 토큰 안에서 유일하고
   // (마이그레이션 010) 서버가 중복을 409 로 거절한다. 토큰을 잃어 폐기한 뒤 같은 이름으로
   // 다시 발급하는 것이 주 사용 흐름이라, 사용자가 이름을 정할 수 있어야 한다.
   const [newPatLabel, setNewPatLabel] = useState('runner');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // 복사 성공 시 버튼 문구를 잠깐 "복사됨"으로 바꾼다(2초).
+  const [copySuccess, setCopySuccess] = useState<string | null>(null);
+  // 클립보드를 못 쓸 때 선택해 줄 명령 노드들. 화면 밖 복제가 아니라 사람이 보고 있는 그 텍스트다.
+  const fullCommandRef = useRef<HTMLSpanElement | null>(null);
+  const templateCommandRef = useRef<HTMLSpanElement | null>(null);
+  // #177: "잃었으면 새로 발급한다" 를 글로만 두면 발급 자리를 찾아야 한다 — 진입점으로 보낸다.
+  const newPatLabelRef = useRef<HTMLInputElement | null>(null);
   const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
   const accounts = useAppStore((s) => s.accounts);
   // #176: 생존(presence)과 마지막 활동은 **다른 두 사실**이라 두 자리에서 온다 — presence 는
@@ -133,7 +183,8 @@ export function AgentsSettings() {
 
   const loadPats = (agentId: string) => {
     if (!isAdmin) return;
-    void getController().listPats(agentId).then(setPats).catch(() => setPats([]));
+    setPats(null);
+    void getController().listPats(agentId).then(setPats).catch(() => setPats('error'));
   };
 
   const loadMemories = (agentId: string) => {
@@ -149,10 +200,11 @@ export function AgentsSettings() {
     setDraft(draftOf(a));
     setCustomized(a.model !== null || a.effort !== null);
     setPat(null);
-    setPats([]);
+    setPats(null);
     setRevoking(null);
     setError(null);
     setConfirmingSlug(null);
+    setConfirmingDisable(false);
     loadPats(a.id);
     loadMemories(a.id);
   };
@@ -165,9 +217,10 @@ export function AgentsSettings() {
     setDraft(known ? emptyDraft(known) : null);
     setCustomized(known !== null && (known.model !== null || known.effort !== null));
     setPat(null);
-    setPats([]);
+    setPats(null);
     setRevoking(null);
     setError(null);
+    setConfirmingDisable(false);
   };
 
   /** 'harness 기본값 사용'이면 명시적 null 로 비운다 — 필드를 안 보내면 서버가 기존 값을 유지한다. */
@@ -255,6 +308,33 @@ export function AgentsSettings() {
     } catch {
       setError('종료를 요청하지 못했다');
     } finally { setBusy(false); }
+  };
+
+  /** #251: 에이전트를 비활성화하거나 다시 활성화한다. 비활성화는 되돌릴 수 없는 작업이므로
+   * 확인 단계가 필요하고, 그 문구에 PAT 폐기·재발급 필요를 적어야 한다. */
+  const toggleDisabled = async () => {
+    if (!selected) return;
+    const willDisable = !selected.disabled;
+    if (willDisable && !confirmingDisable) {
+      setConfirmingDisable(true);
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    try {
+      const updated = await getController().setAgentDisabled(selected.id, willDisable);
+      setSelected(updated);
+      setAgents((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+      // **양쪽 다** 다시 읽는다. 켤 때는 0개라는 사실이 재발급 안내의 근거이고, 끌 때는
+      // 확인 문구가 "모든 PAT 가 폐기된다"고 말한 것이 화면에도 나타나야 한다 — 안 읽으면
+      // 방금 폐기된 토큰이 살아 있는 것처럼 남는다.
+      loadPats(selected.id);
+    } catch {
+      setError(willDisable ? '비활성화하지 못했다' : '활성화하지 못했다');
+    } finally {
+      setBusy(false);
+      setConfirmingDisable(false);
+    }
   };
 
   const revokePat = async (label: string) => {
@@ -633,6 +713,69 @@ export function AgentsSettings() {
               </div>
             )}
 
+            {/* #251: 에이전트 비활성화/활성화. 관리 행위이므로 admin 만 보인다. */}
+            {selected && isAdmin && (
+              <div className={`rounded border p-3 ${selected.disabled ? 'border-zinc-200 bg-zinc-50' : 'border-red-200 bg-red-50'}`}>
+                <div className="text-xs font-medium text-zinc-600">
+                  {selected.disabled ? '비활성화된 에이전트' : '에이전트 활성화'}
+                </div>
+                {selected.disabled ? (
+                  <div className="mt-2">
+                    <p className="text-[11px] text-zinc-500 mb-2">
+                      이 에이전트는 비활성화되어 있습니다. 다시 활성화하면 PAT 가 없다(재발급 필요)고
+                      안내가 뜹니다 — 비활성화 시 모든 PAT 가 폐기되었기 때문입니다.
+                    </p>
+                    <button
+                      className="rounded border border-indigo-300 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
+                      aria-label="에이전트 활성화"
+                      disabled={busy}
+                      onClick={() => void toggleDisabled()}
+                    >
+                      활성화
+                    </button>
+                  </div>
+                ) : confirmingDisable ? (
+                  <div className="mt-2">
+                    <p className="text-[11px] text-red-700 mb-2">
+                      <strong>이 에이전트의 모든 PAT 가 폐기</strong>되어 러너가 멈춥니다.
+                      다시 활성화해도 PAT 는 돌아오지 않으며, <strong>새로 발급</strong>해야 합니다.
+                    </p>
+                    <div className="flex gap-1">
+                      <button
+                        className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                        aria-label="정말 비활성화"
+                        disabled={busy}
+                        onClick={() => void toggleDisabled()}
+                      >
+                        정말 비활성화
+                      </button>
+                      <button
+                        className="rounded border border-zinc-300 px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100"
+                        onClick={() => setConfirmingDisable(false)}
+                      >
+                        취소
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2">
+                    <p className="text-[11px] text-zinc-500 mb-2">
+                      에이전트를 비활성화하면 <strong>모든 PAT 가 폐기</strong>되고, 다시 활성화해도
+                      PAT 는 복구되지 않아 <strong>새로 발급</strong>해야 합니다.
+                    </p>
+                    <button
+                      className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                      aria-label="에이전트 비활성화"
+                      disabled={busy}
+                      onClick={() => void toggleDisabled()}
+                    >
+                      비활성화
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {selected && isAdmin && (
               <div className="rounded border border-zinc-200 p-3">
                 {/* #129: "재시작"이라고 쓰지 않는다. murmur 는 러너를 띄우지 않으므로
@@ -681,8 +824,22 @@ export function AgentsSettings() {
               <div className="rounded border border-zinc-200 p-3">
                 <div className="text-xs font-medium text-zinc-600">PAT (Personal Access Token)</div>
                 <div className="mt-2 space-y-2">
-                  {pats.length === 0 ? (
-                    <div className="text-[11px] text-zinc-400">PAT 가 없다</div>
+                  {pats === null ? (
+                    <div className="text-[11px] text-zinc-400">PAT 를 읽고 있다…</div>
+                  ) : pats === 'error' ? (
+                    // 실패를 '없음'으로 그리면 살아 있는 PAT 를 없다고 하고, 그 위에서
+                    // "새로 발급해야 한다"까지 말하게 된다(docs/design.md 4절).
+                    <div className="text-[11px] text-red-600" role="alert">PAT 목록을 읽지 못했다</div>
+                  ) : pats.length === 0 ? (
+                    /* #251: 켜진 에이전트에 PAT 가 0개면 러너가 뜰 수 없다 — 비활성화가
+                       PAT 를 전부 폐기하고 다시 켜도 되살리지 않으므로(서버가 해시만
+                       보관한다), 재발급이 필요하다는 것을 이 자리에서 말한다. 꺼진
+                       에이전트에서는 0개가 정상 상태라 권하지 않는다. */
+                    <div className={`text-[11px] ${selected.disabled ? 'text-zinc-400' : 'text-amber-600'}`}>
+                      {selected.disabled
+                        ? 'PAT 가 없다'
+                        : 'PAT 가 없다 — 새로 발급해야 한다(비활성화 시 전부 폐기됨)'}
+                    </div>
                   ) : (
                     pats.map((p) => (
                       <div key={`${p.label}:${p.createdAt}`} className="flex items-center justify-between rounded bg-zinc-50 px-2 py-1.5">
@@ -726,6 +883,7 @@ export function AgentsSettings() {
                 </div>
                 <div className="mt-2 flex items-center gap-2">
                   <input
+                    ref={newPatLabelRef}
                     className="w-40 rounded border border-zinc-300 px-2 py-1 text-xs"
                     aria-label="New PAT label"
                     placeholder="runner"
@@ -762,8 +920,24 @@ export function AgentsSettings() {
                 {/* #125: 이 명령의 토큰을 자르고 말줄임표를 붙여 두면, 그대로 복사해 실행했을 때
                     인증이 실패한다 — "완성된 명령"처럼 보이는데 아니었다. 전체 토큰을 싣는다.
                     바로 위 코드 블록에 이미 전체 토큰이 있으므로 중복 노출이 새 위험은 아니다. */}
-                <div className="mt-2 break-all font-mono text-[11px] text-amber-900">
-                  MURMUR_PAT={pat} pnpm --filter @murmur/agent start
+                <div className="mt-2 flex items-center gap-2 break-all font-mono text-[11px] text-amber-900">
+                  <span ref={fullCommandRef}>MURMUR_PAT={pat} pnpm --filter @murmur/agent start</span>
+                  <button
+                    className="shrink-0 rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-900 hover:bg-amber-200"
+                    aria-label="명령 복사"
+                    onClick={async () => {
+                      // #125: 토큰을 자르거나 말줄임표를 붙이지 않는다 — 클립보드에도 명령 전체가 들어간다.
+                      const cmd = `MURMUR_PAT=${pat} pnpm --filter @murmur/agent start`;
+                      setError(null);
+                      const ok = await copyToClipboard(cmd, fullCommandRef.current, setError);
+                      if (ok) {
+                        setCopySuccess('full');
+                        setTimeout(() => setCopySuccess((s) => s === 'full' ? null : s), 2000);
+                      }
+                    }}
+                  >
+                    {copySuccess === 'full' ? '복사됨' : '복사'}
+                  </button>
                 </div>
                 {/* #125: 등록만으로는 아무 일도 일어나지 않는다. 실측으로 에이전트 6개 중 4개가
                     러너를 가져본 적이 없고 그중 2개는 미읽음 멘션이 쌓인 채였다. 사용자의 기대는
@@ -773,6 +947,48 @@ export function AgentsSettings() {
                   murmur 는 러너를 띄우지 않는다. <strong>위 명령을 직접 실행해 러너를 붙이기
                   전까지 이 에이전트는 멘션에 답하지 않는다</strong> — 멘션은 쌓이기만 한다.
                   murmur 저장소를 체크아웃한 머신에서 실행한다.
+                </p>
+              </div>
+            )}
+
+            {/* #177: 러너 실행 명령 틀은 **항상** 보인다 — PAT 를 막 발급한 직후만이 아니다.
+                토큰은 해시만 저장하므로 재노출이 불가능하다(design.md §4). 그래서 여기서는
+                자리표시가 든 틀만 보이고, 전체 토큰이 든 명령은 위의 발급 직후 화면에만 있다.
+                PAT 개수로 이 절을 가리지 않는다: PAT 가 0 개인 에이전트야말로 "무엇을 실행해야
+                하는가"를 알아야 하고, 틀에는 비밀이 없다. */}
+            {selected && isAdmin && (
+              <div className="rounded border border-zinc-200 p-3">
+                <div className="text-xs font-medium text-zinc-600">러너 실행</div>
+                <div className="mt-2 flex items-center gap-2 break-all font-mono text-[11px] text-zinc-700">
+                  <span ref={templateCommandRef}>MURMUR_PAT=&lt;발급한 토큰&gt; pnpm --filter @murmur/agent start</span>
+                  <button
+                    className="shrink-0 rounded border border-zinc-300 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-700 hover:bg-zinc-100"
+                    aria-label="명령 복사"
+                    onClick={async () => {
+                      // 틀은 자리표시까지 통째로 복사한다 — 사람이 그 자리만 토큰으로 바꿔 쓴다.
+                      const cmd = 'MURMUR_PAT=<발급한 토큰> pnpm --filter @murmur/agent start';
+                      setError(null);
+                      const ok = await copyToClipboard(cmd, templateCommandRef.current, setError);
+                      if (ok) {
+                        setCopySuccess('template');
+                        setTimeout(() => setCopySuccess((s) => s === 'template' ? null : s), 2000);
+                      }
+                    }}
+                  >
+                    {copySuccess === 'template' ? '복사됨' : '복사'}
+                  </button>
+                </div>
+                <p className="mt-2 text-[11px] text-zinc-500">
+                  토큰은 발급 순간에만 보인다. 잃었으면 새로 발급한다.{' '}
+                  <button
+                    className="text-indigo-600 underline"
+                    onClick={() => {
+                      newPatLabelRef.current?.scrollIntoView({ block: 'center' });
+                      newPatLabelRef.current?.focus();
+                    }}
+                  >
+                    PAT 발급으로 이동
+                  </button>
                 </p>
               </div>
             )}

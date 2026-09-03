@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
+import type { StorageBackend } from '../storage/local.js';
 import { z } from 'zod';
 import {
-  addChannelMember, assertChannelVisible, channelPostGate, createChannel, getOrCreateDm,
-  listChannelMembers, listChannels, removeChannelMember, updateChannel, updateChannelPref,
-  listChannelPrefs,
+  addChannelMember, assertChannelVisible, channelPostGate, createChannel, deleteChannel,
+  getChannelDoc, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
+  updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs,
 } from '../services/channels.js';
 import { listPins, pinMessage, unpinMessage } from '../services/pins.js';
 import { allReadStates, markChannelRead, markChannelUnread, readState } from '../services/readPositions.js';
@@ -17,7 +18,7 @@ import {
 import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS } from '@murmur/shared';
 import { recordAudit } from '../audit.js';
 
-export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
+export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, storage?: StorageBackend): Promise<void> {
   app.post('/channels', { preHandler: app.requireAdmin }, async (req, reply) => {
     const body = z.object({
       name: z.string().regex(new RegExp(CHANNEL_NAME_PATTERN)),
@@ -315,6 +316,158 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
     return reply.code(204).send();
   });
 
+  /**
+   * 채널 문서 조회(#188). 가시성은 `assertChannelVisible` 로 검사한다 — 채널을 볼 수 없으면
+   * 문서도 못 본다. `#156` 이 만든 그 술어를 그대로 쓰므로 public 채널은 볼 수 있는 사람
+   * 전부, private 은 멤버다. 가시성 술어를 여기서 다시 쓰면 한쪽만 고치는 사고가 난다.
+   *
+   * 순서가 이렇다: **가시성 먼저, 존재 확인 나중.** `assertChannelVisible` 은 없는 채널에
+   * `true` 를 주도록 만들어져 있고(그 자리 주석이 이유를 적는다) 그 다음 단계가 404 로
+   * 답한다 — 이 저장소의 다른 라우트와 같은 모양이다.
+   *
+   * 저장된 것이 없으면 404 가 아니라 본문 `''` 인 문서다. "없다"와 "비어 있다"는 사람에게
+   * 같은 화면이고, 그래야 클라이언트가 읽기와 첫 쓰기를 같은 표면으로 처리한다.
+   */
+  app.get('/channels/:id/doc', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = channelParam.parse(req.params);
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    const channel = await pool.query(`select 1 from channel where id = $1`, [id]);
+    if (!channel.rowCount) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+    return getChannelDoc(pool, id);
+  });
+
+  /**
+   * 채널 문서 저장(#188). 편집 권한은 **그 채널을 볼 수 있는 사람**이다 — `#156` 이 멤버십을
+   * 세운 뒤로 이슈가 걱정했던 전제("멤버십이 표준 채널에 없다")가 사라졌다. public 채널은
+   * 볼 수 있는 사람 전부, private 은 멤버다. admin 전용으로 두면 대부분의 채널에서 아무도
+   * 고치지 못한다.
+   *
+   * `channelPostGate` 를 쓰는 이유: 가시성과 보관 여부를 한 질의로 함께 본다. 보관된 채널은
+   * 읽기 전용이라는 약속이 메시지에만 적용되고 문서에는 안 적용되면, 보관이 "더 이상 바뀌지
+   * 않는다"는 뜻이 아니게 된다.
+   *
+   * 존재 확인을 따로 하는 이유: `channelPostGate` 는 **없는 채널에 `'ok'`** 를 준다
+   * (메시지 경로에서는 이어지는 단계가 404 로 답한다). 그것을 그대로 통과시키면 insert 가
+   * 외래키에서 터져 500 이 되므로 여기서 404 로 답한다.
+   *
+   * 낙관적 동시성: `expectedUpdatedAt` 이 서버의 것과 다르면 **409 `doc_stale` 과 현재
+   * 본문**을 함께 준다. 클라이언트는 그것을 사람에게 보이고 다시 편집하게 한다 — 조용히
+   * 덮어쓰지도, 조용히 버리지도 않는다.
+   *
+   * 감사 detail 에 **본문을 넣지 않는다.** 문서는 덮어쓰기라 매 저장이 전문을 복사하면
+   * 감사 로그가 문서 이력 테이블이 된다 — 우리가 만들지 않기로 한 그것이고, 그러면서도
+   * 되돌리기는 못 하는 최악의 모양이다. 길이만 남긴다.
+   */
+  app.put('/channels/:id/doc', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = channelParam.parse(req.params);
+    const body = z.object({
+      body: z.string().max(64 * 1024),
+      /**
+       * 내가 읽은 판의 시각(epoch ms). **부재·null 은 "아직 문서가 없다고 믿는다"**다 —
+       * "검사하지 마라"가 아니다. 옵셔널을 검사 생략으로 읽으면 이 필드를 빼기만 해도
+       * 조용한 덮어쓰기가 되살아난다.
+       */
+      expectedUpdatedAt: z.number().int().min(0).nullable().optional(),
+    }).parse(req.body);
+
+    const gate = await channelPostGate(pool, id, req.account!.id);
+    if (gate === 'forbidden') {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+
+    }
+    if (gate === 'archived') {
+      return reply.code(403).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
+    }
+    const channel = await pool.query(`select 1 from channel where id = $1`, [id]);
+    if (!channel.rowCount) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+
+    const result = await updateChannelDoc(
+      pool, id, req.account!.id, body.body,
+      body.expectedUpdatedAt != null ? new Date(body.expectedUpdatedAt) : null,
+    );
+    if ('stale' in result) {
+      return reply.code(409).send({
+        error: { code: 'doc_stale', message: 'the document changed since you read it' },
+        doc: result.stale,
+      });
+    }
+    await recordAudit(pool, {
+      action: 'channel.doc.updated', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { bodyLength: body.body.length },
+    }, req);
+    return result.ok;
+  });
+
+  /**
+   * 채널 삭제(#155). **보관된 표준 채널만** 삭제 가능하고, **admin 만** 할 수 있다.
+   *
+   * DM 은 삭제할 수 없다 — kind = 'standard' 만 대상이다.
+   * 보관되지 않은 채널은 409 로 거절한다 — 삭제 전에 보관이 선행 조건이다.
+   *
+   * 삭제 대상 테이블( channel_id 또는 message_id 로 참조하는 전부):
+   *   - attachment (message_id 로 참조, cascade)
+   *   - message_reaction (message_id 로 참조, cascade)
+   *   - message_pin (channel_id 로 직접 참조)
+   *   - channel_read (channel_id 로 직접 참조)
+   *   - channel_member (channel_id 로 직접 참조)
+   *   - channel_pref (channel_id 로 직접 참조)
+   *   - message (channel_id 로 직접 참조)
+   *   - channel (자신)
+   *
+   * 확인 문구에 지울 메시지 수를 보여 준다.
+   */
+  app.delete('/channels/:id', { preHandler: app.requireAdmin }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const result = await deleteChannel(pool, id, storage);
+    if (result === 'not_found') {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+    if (result === 'is_dm') {
+      return reply.code(409).send({ error: { code: 'cannot_delete_dm', message: 'DMs cannot be deleted' } });
+    }
+    if (result === 'not_archived') {
+      return reply.code(409).send({ error: { code: 'not_archived', message: 'only archived channels can be deleted' } });
+    }
+    // 감사에 이름과 개수만 남기고 본문·topic 은 절대 넣지 않는다 — 지운 것이 감사에 남으면 삭제가 아니다.
+    await recordAudit(pool, {
+      action: 'channel.deleted', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { name: result.name, messageCount: result.messageCount, attachmentCount: result.attachmentCount },
+    }, req);
+    return reply.code(204).send();
+  });
+
+  /**
+   * 채널 삭제 전 확인용 메시지 수 조회(#155). 보관된 표준 채널만 가능하고 admin 만 할 수 있다.
+   * 이 수치는 확인 문구에 "이 채널과 메시지 N개를 영구히 지운다"로 표시된다.
+   */
+  app.get('/channels/:id/delete-info', { preHandler: app.requireAdmin }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const channel = await pool.query(
+      `select id, name, kind, archived_at from channel where id = $1`,
+      [id],
+    );
+    if (!channel.rowCount) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+    const row = channel.rows[0] as { id: string; name: string; kind: string; archived_at: string | null };
+    if (row.kind !== 'standard') {
+      return reply.code(409).send({ error: { code: 'cannot_delete_dm', message: 'DMs cannot be deleted' } });
+    }
+    if (!row.archived_at) {
+      return reply.code(409).send({ error: { code: 'not_archived', message: 'only archived channels can be deleted' } });
+    }
+    const messageCountResult = await pool.query(
+      `select count(*)::int as cnt from message where channel_id = $1`,
+      [id],
+    );
+    return { name: row.name ?? '', messageCount: messageCountResult.rows[0]!.cnt };
+  });
   const scheduledChannelParam = z.object({ id: z.string().uuid() });
 
   /**
@@ -352,6 +505,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
     const gate = await channelPostGate(pool, id, req.account!.id);
     if (gate === 'forbidden') {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+
     }
     if (gate === 'archived') {
       return reply.code(403).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
@@ -391,4 +545,5 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
     }
     return reply.code(204).send();
   });
+
 }
