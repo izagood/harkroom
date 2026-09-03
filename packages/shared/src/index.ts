@@ -338,6 +338,19 @@ export interface ChannelMemberRow {
   handle: string;
 }
 
+/**
+ * 채널 문서(#188). 채널당 하나고 덮어쓰기이다 — 메시지의 추가와는 성질이 다르다.
+ *
+ * `updatedBy` 와 `updatedAt` 은 화면에 "누가 언제"를 보여주는 용도다. 에이전트가
+ * 읽을 수 있지만 쓰지는 못한다(쓰기 도구를 제공하지 않는다).
+ */
+export interface ChannelDoc {
+  channelId: string;
+  body: string;
+  updatedBy: string;
+  updatedAt: string;
+}
+
 export interface InboxEntry {
   id: number;
   messageId: string;

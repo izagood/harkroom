@@ -6,7 +6,7 @@ import { z } from 'zod';
 import type { AccountView } from '@murmur/shared';
 import { emitEvent, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
-import { assertChannelVisible, audienceFor, listChannels } from '../services/channels.js';
+import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
 import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { getMemory, listMemory, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, setMemory } from '../services/memory.js';
@@ -43,6 +43,22 @@ function buildMcpServer(
   // 목록에서 이름을 보는 절충은 사람이 운영 화면에서 쓰라고 만든 것이다.
   server.registerTool('channel.list', { description: '채널 목록' },
     async () => jsonResult({ channels: await listChannels(pool, account.id) }));
+
+  // 에이전트는 읽기만 가능 — 쓰기 도구를 제공하지 않는다(#188). 문서는 덮어쓰기라
+  // 버전·되돌리기·"누가 바꿨나"가 요구사항으로 딸려 오고, 그것은 별개 결정이다.
+  server.registerTool('channel.doc', {
+    description: '채널 문서 조회(읽기 전용)',
+    inputSchema: { channelId: z.string().uuid() },
+  }, async ({ channelId }) => {
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    const doc = await getChannelDoc(pool, channelId);
+    if (!doc) {
+      return jsonResult({ channelId, body: '', updatedBy: account.id, updatedAt: new Date().toISOString() });
+    }
+    return jsonResult(doc);
+  });
 
   server.registerTool('message.read', {
     description: '채널/스레드 메시지 읽기(seq 커서)',

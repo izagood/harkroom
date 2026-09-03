@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -367,5 +367,20 @@ export class ApiClient {
   async search(q: string, channelId?: string | null): Promise<MessageRow[]> {
     const scope = channelId ? `&channelId=${encodeURIComponent(channelId)}` : '';
     return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
+  }
+
+  /**
+   * 채널 문서 조회(#188). 가시성은 서버가 검사하고, 없으면 본문 '' 인 문서를 반환한다.
+   */
+  async channelDoc(channelId: string): Promise<ChannelDoc> {
+    return this.req('GET', `/channels/${channelId}/doc`);
+  }
+
+  /**
+   * 채널 문서 수정(#188). 낙관적 동시성 제어를 위해 `expectedUpdatedAt` 을 보낸다.
+   * 서버가 409 를 주면 현재 본문과 함께 예외가 터진다.
+   */
+  async updateChannelDoc(channelId: string, body: string, expectedUpdatedAt?: number | null): Promise<ChannelDoc> {
+    return this.req('PUT', `/channels/${channelId}/doc`, { body, expectedUpdatedAt });
   }
 }

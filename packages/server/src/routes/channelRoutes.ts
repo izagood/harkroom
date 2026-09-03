@@ -2,9 +2,9 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import {
-  addChannelMember, assertChannelVisible, channelPostGate, createChannel, getOrCreateDm,
-  listChannelMembers, listChannels, removeChannelMember, updateChannel, updateChannelPref,
-  listChannelPrefs,
+  addChannelMember, assertChannelVisible, channelPostGate, createChannel, getChannelDoc,
+  getOrCreateDm, listChannelMembers, listChannels, removeChannelMember, updateChannel,
+  updateChannelDoc, updateChannelPref, listChannelPrefs,
 } from '../services/channels.js';
 import { listPins, pinMessage, unpinMessage } from '../services/pins.js';
 import { allReadStates, markChannelRead, markChannelUnread, readState } from '../services/readPositions.js';
@@ -309,5 +309,70 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
       target: id, detail: { messageId },
     }, req);
     return reply.code(204).send();
+  });
+
+  /**
+   * 채널 문서 조회(#188). 가시성은 `assertChannelVisible` 로 검사한다 — 채널을 볼 수
+   * 없으면 문서도 못 본다. public 채널은 누구나, private 채널은 멤버만.
+   *
+   * 문서가 없으면 404 가 아니라 본문 '' 인 문서를 반환한다 — "없다"와 "빈 문서"가 같은
+   * 화면이므로 후자를 선택한 것이고, 그래야 클라이언트가 같은 표면으로 읽기와 쓰기를
+   * 처리할 수 있다. 감사 detail 에는 본문을 넣지 않는다(필요하면 bodyLength 같은
+   * 표시만).
+   */
+  app.get('/channels/:id/doc', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = channelParam.parse(req.params);
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    const channel = await pool.query(`select 1 from channel where id = $1`, [id]);
+    if (!channel.rowCount) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+    const doc = await getChannelDoc(pool, id);
+    if (!doc) {
+      return { channelId: id, body: '', updatedBy: req.account!.id, updatedAt: new Date().toISOString() };
+    }
+    return doc;
+  });
+
+  /**
+   * 채널 문서 수정(#188). **멤버만** 수정할 수 있다 — public 채널도 예외 없이.
+   * admin 전용으로 두면 대부분의 채널에서 아무도 고치지 못한다.
+   *
+   * 낙관적 동시성 제어: `expectedUpdatedAt` 이 서버의 updatedAt 과 다르면 409 와 현재
+   * 본문을 함께 준다. 클라이언트는 그 본문을 사람에게 보여주고 다시 편집하게 한다.
+   */
+  app.put('/channels/:id/doc', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = channelParam.parse(req.params);
+    // channelPostGate 를 써서 가시성과 보관 여부를 한 번에 검사한다. public 채널도
+    // 멤버만 쓸 수 있다 — admin 예외 없음.
+    const gate = await channelPostGate(pool, id, req.account!.id);
+    if (gate === 'forbidden') {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    if (gate === 'archived') {
+      return reply.code(403).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
+    }
+    const body = z.object({
+      body: z.string().max(64 * 1024),
+      // null 은 "检查 안 함" 이다 — 클라이언트가 첫 편집이면 안 보내도 되도록.
+      expectedUpdatedAt: z.number().int().min(0).nullable().optional(),
+    }).parse(req.body);
+    const result = await updateChannelDoc(
+      pool, id, req.account!.id, body.body,
+      body.expectedUpdatedAt != null ? new Date(body.expectedUpdatedAt) : null,
+    );
+    if ('stale' in result) {
+      return reply.code(409).send({
+        error: { code: 'doc_stale', message: '문서를 먼저 읽어 주세요' },
+        doc: result.stale,
+      });
+    }
+    await recordAudit(pool, {
+      action: 'channel.doc.updated', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { bodyLength: body.body.length },
+    }, req);
+    return result.ok;
   });
 }

@@ -32,7 +32,10 @@ export type AuditAction =
   | 'channel.member.added' | 'channel.member.removed'
   // #182: 공개 범위 전환. 이 한 번의 조작으로 채널 전체가 전원에게 열리거나 닫힌다 —
   // 'channel.updated' 에 묻어 두면 감사 조회에서 그 사건을 골라낼 수 없다.
-  | 'channel.visibility.changed';
+  | 'channel.visibility.changed'
+  // #188: 채널 문서 수정. detail 에는 본문 없이 bodyLength 만 남긴다 — 문서 전체를
+  // 감사에 복사하면 덮어쓰기마다 복사가 누적되고, 검색이 불가능해진다.
+  | 'channel.doc.updated';
 
 export interface AuditEntry {
   action: AuditAction;
