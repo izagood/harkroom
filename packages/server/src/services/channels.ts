@@ -425,6 +425,7 @@ export async function updateChannelDoc(
  *   - `inbox`            (message_id)                  명시적 삭제 — cascade 없음
  *   - `idempotency_key`  (message_id, channel_id)      명시적 삭제 — cascade 없음
  *   - `work_thread`      (thread_root_message_id)      명시적 삭제 — cascade 없음
+ *   - `saved_message`    (message_id)                  명시적 삭제 — cascade 없음(#219)
  *   - `message_reaction` (message_id, cascade)         message 삭제로 함께 사라진다
  *   - `attachment`       (message_id, cascade)         message 삭제로 함께 사라진다
  *   - `message`          (channel_id, thread_root_id)  명시적 삭제
@@ -525,6 +526,14 @@ export async function deleteChannel(
     await client.query(
       `delete from work_thread
        where thread_root_message_id in (select id from message where channel_id = $1)`,
+      [channelId],
+    );
+    // saved_message: message_id 참조, cascade 없음(#219). 채널이 사라지면 담아 둔 자리도
+    // 사라진다 — "삭제됨"으로 남기는 것은 **메시지** 삭제이고(#219 결정 3), 채널 삭제는
+    // 그 채널이 있었다는 사실 자체를 지우는 별개의 작업이다(#155).
+    await client.query(
+      `delete from saved_message
+       where message_id in (select id from message where channel_id = $1)`,
       [channelId],
     );
     // message_pin: channel_id·message_id 참조.
