@@ -5,6 +5,7 @@ import { MessageItem } from './MessageItem';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
 import { ChannelFiles } from './ChannelFiles';
+import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { dayLabel, localDayKey } from '../lib/day';
 
@@ -31,7 +32,12 @@ export function ChannelPane({ onOpenSearch }: ChannelPaneProps) {
    * 채널을 옮기면 다시 접힌다 — 이 상태는 지금 보는 채널에 대한 것이라 들고 다닐 뜻이 없다.
    */
   const [pinsOpen, setPinsOpen] = useState(false);
-  useEffect(() => { setPinsOpen(false); }, [activeChannelId]);
+  /**
+   * 문서 패널(#188)도 채널을 옮기면 닫는다 — 열린 채로 두면 방금 떠난 채널의 문서가 잠깐
+   * 남아 어느 채널의 전제인지 오해할 여지가 생긴다(파일 패널과 같은 이유다).
+   */
+  const [docOpen, setDocOpen] = useState(false);
+  useEffect(() => { setPinsOpen(false); setDocOpen(false); }, [activeChannelId]);
 
   const channel = channels.find((c) => c.id === activeChannelId);
   const dm = dms.find((d) => d.id === activeChannelId);
@@ -80,8 +86,19 @@ export function ChannelPane({ onOpenSearch }: ChannelPaneProps) {
         {channel?.topic && <span className="truncate text-xs text-zinc-500">{channel.topic}</span>}
         {channel?.repo && <span className="rounded bg-zinc-100 px-1.5 text-[11px] text-zinc-600">{channel.repo}</span>}
         {isArchived && <span className="rounded bg-zinc-200 px-1.5 text-[11px] text-zinc-600">보관됨</span>}
+        {/* 문서는 채널에 붙는다(#188) — DM 에는 없다. `channel` 이 없을 때 버튼을 그리면
+            눌러도 아무 일이 없는 죽은 버튼이 된다(패널 쪽 조건과 같은 조건이어야 한다). */}
+        {channel && (
+          <button
+            className="ml-auto shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
+            aria-expanded={docOpen}
+            onClick={() => setDocOpen((v) => !v)}
+          >
+            문서
+          </button>
+        )}
         <button
-          className="ml-auto shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
+          className={`${channel ? '' : 'ml-auto '}shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100`}
           onClick={() => setFilesOpen((v) => !v)}
         >
           파일
@@ -205,6 +222,9 @@ export function ChannelPane({ onOpenSearch }: ChannelPaneProps) {
         "널일 수도 있다" 는 거짓 신호가 남는다. */}
     {filesOpen && (
       <ChannelFiles key={activeChannelId} channelId={activeChannelId} onClose={() => setFilesOpen(false)} />
+    )}
+    {docOpen && channel && (
+      <ChannelDocPanel key={activeChannelId} channelId={activeChannelId} onClose={() => setDocOpen(false)} />
     )}
     </div>
   );

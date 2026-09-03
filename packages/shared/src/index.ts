@@ -360,6 +360,25 @@ export interface ChannelMemberRow {
   handle: string;
 }
 
+/**
+ * 채널 문서(#188). 채널당 하나고 덮어쓰기다 — 메시지의 추가와는 성질이 다르다.
+ *
+ * `updatedBy` 와 `updatedAt` 은 화면에 "누가 언제"를 보여주는 용도다. 에이전트가
+ * 읽을 수 있지만 쓰지는 못한다(쓰기 도구를 제공하지 않는다).
+ *
+ * **둘이 nullable 인 이유:** 아직 아무도 저장하지 않은 채널도 이 모양으로 읽힌다
+ * (본문 `''`). 그때 "누가 언제"를 **지금 시각과 보는 사람으로 채우면 화면이 거짓말한다** —
+ * 아무도 쓴 적 없는 문서를 내가 방금 고친 것처럼 보여 준다. 게다가 그 가짜 시각이
+ * `expectedUpdatedAt` 으로 되돌아오면 낙관적 동시성 검사가 무엇과 비교하는지 알 수 없게
+ * 된다. `null` 은 "아직 아무도"이고, 그 상태로 저장하는 것이 첫 저장이다.
+ */
+export interface ChannelDoc {
+  channelId: string;
+  body: string;
+  updatedBy: string | null;
+  updatedAt: string | null;
+}
+
 export interface InboxEntry {
   id: number;
   messageId: string;
