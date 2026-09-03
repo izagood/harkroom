@@ -215,39 +215,45 @@ describe('toolbar accessibility', () => {
     expect(toolbar.className).not.toMatch(/hidden|visibility/);
   });
 });
-describe('#143 호버 툴바가 답글 컨트롤을 덮지 않는다', () => {
-  // 답글 pill 은 답글이 있으면 **상시** 보여야 해서 흐름 안 우상단에 있고(MessageItem 주석이
-  // 그 이유를 적어 뒀다), 툴바는 절대 배치다. 둘이 같은 기준(행)에 앵커되면 같은 자리를
-  // 다투고, 호버하는 순간 툴바가 pill 을 덮어 **스레드 진입 경로가 사라진다**.
+describe('#143/#254 답글 컨트롤과 툴바가 다른 컨테이너에 있다', () => {
+  // #254 이후 답글 컨트롤이 본문 열(	flex-1)로 이동하고 툴바는 오른쪽 열(relative)에
+  // 별도로 놓인다. 둘이 다른 컨테이너에 있어 구조적으로 겹칠 수 없으므로, #143 의
+  // "호버 툴바가 답글 컨트롤을 덮는다"는 문제가 더 이상 발생하지 않는다.
   //
   // jsdom 에는 레이아웃 엔진이 없다 — rect 는 전부 0이고 Tailwind 도 로드되지 않아 겹침을
-  // 픽셀로 볼 수 없다. 그래서 아래 셋을 함께 고정한다: ① 툴바의 containing block 이 답글
-  // 컨트롤이고 ② 그 컨테이너가 positioned 이며 ③ 툴바가 `right-full` 로 푼다. 하나만
-  // 되돌려도(예: 행 기준 `right-3` 복귀) 이 테스트가 빨개진다.
-  it('툴바의 기준은 행이 아니라 답글 컨트롤 컨테이너다', () => {
+  // 픽셀로 볼 수 없다. 그래서 DOM 구조로 단언한다: 답글 버튼은 본문 열 안에, 툴바는
+  // 오른쪽 열 안에. 하나라도 되돌리면(예: 답글 버튼을 다시 오른쪽 열로 복귀) 이 테스트가 빨개진다.
+  it('답글 버튼은 본문 열 안에, 툴바는 오른쪽 열 안에 있다', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
 
     const toolbar = screen.getByRole('group', { name: 'message toolbar' });
     const replyBtn = screen.getByRole('button', { name: '2 replies' });
 
-    // ① 같은 부모 = 같은 containing block. 행에 앵커돼 있으면 부모가 다르다.
-    expect(toolbar.parentElement).toBe(replyBtn.parentElement);
-    // ② 그 부모가 positioned 여야 `right-full` 이 pill 기준으로 풀린다.
-    expect(toolbar.parentElement!.className).toMatch(/\brelative\b/);
-    // ③ 우측 끝을 pill 의 좌측에 맞춘다. pill 텍스트 폭이 변해도 비겹침이 유지되는 이유다.
-    expect(toolbar.className).toMatch(/\bright-full\b/);
+    // 답글 버튼과 툴바가 다른 부모를 갖는다 (다른 컨테이너)
+    expect(toolbar.parentElement).not.toBe(replyBtn.parentElement);
+
+    // 답글 버튼은 본문 열(	min-w-0 flex-1) 안에
+    const mainColumn = document.querySelector('.min-w-0.flex-1');
+    expect(mainColumn?.contains(replyBtn)).toBe(true);
+
+    // 툴바는 오른쪽 열(relative flex shrink-0 items-start gap-1) 안에
+    const rightColumn = document.querySelector('.relative.flex.shrink-0.items-start.gap-1');
+    expect(rightColumn?.contains(toolbar)).toBe(true);
   });
 
-  it('스레드 안에서도 툴바는 같은 컨테이너 안에 남는다', () => {
+  it('inThread=true 이면 답글 버튼이 없고 툴바만 오른쪽 열에 있다', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '답글', 'u1')} inThread />);
 
-    // inThread 면 답글 pill 자체가 없다. 컨테이너는 폭 0으로 남고 툴바는 그 좌측에
-    // 붙어 행 우측 끝에 놓인다 — 덮을 pill 이 없으니 이전 동작과 같다.
-    expect(screen.queryByRole('button', { name: /repl/i })).toBeNull();
+    // 답글 버튼이 없어야 함
+    expect(screen.queryByRole('button', { name: /repl(y|ies)/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reply in thread' })).toBeNull();
+
+    // 툴바는 여전히 오른쪽 열에 있다
     const toolbar = screen.getByRole('group', { name: 'message toolbar' });
-    expect(toolbar.parentElement!.className).toMatch(/\brelative\b/);
+    const rightColumn = document.querySelector('.relative.flex.shrink-0.items-start.gap-1');
+    expect(rightColumn?.contains(toolbar)).toBe(true);
   });
 });
 
