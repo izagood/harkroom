@@ -27,12 +27,12 @@ beforeAll(async () => {
 
   const register = await app.inject({
     method: 'POST', url: '/auth/register',
-    payload: { handle: 'otheruser', displayName: 'Other User', password: 'pw123456', inviteToken },
+    payload: { handle: 'otheruser', loginId: 'otheruser', displayName: 'Other User', password: 'pw123456', inviteToken },
   });
   otherId = register.json().id as string;
   const login = await app.inject({
     method: 'POST', url: '/auth/login',
-    payload: { handle: 'otheruser', password: 'pw123456' },
+    payload: { loginId: 'otheruser', password: 'pw123456' },
   });
   otherToken = login.json().token as string;
 

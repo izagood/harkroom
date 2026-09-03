@@ -129,7 +129,7 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
   if (!account) {
     return (
       <span
-        className={`inline-flex h-5 w-5 items-center justify-center rounded-full bg-zinc-400 text-[10px] font-semibold text-white ${className}`}
+        className={`inline-flex h-5 w-5 items-center justify-center rounded-full bg-fg-subtle text-[10px] font-semibold text-fg-on-strong ${className}`}
       >
         <span aria-hidden="true">?</span>
         <span className="sr-only">알 수 없는 계정</span>
@@ -166,7 +166,7 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
     // 방법이지만 **질의 표면을 전역으로 바꾼다** — 이 저장소에는 `queryByRole('img')` 로
     // "SVG 미리보기가 없다"를 확인하는 보안 테스트가 있고, 장식 배지가 그것을 오염시킨다.
     return (
-      <span className={`inline-flex flex-wrap items-center gap-1 rounded bg-indigo-100 px-1 text-[10px] text-indigo-700 ${className}`}>
+      <span className={`inline-flex flex-wrap items-center gap-1 rounded bg-accent-surface px-1 text-[10px] text-accent ${className}`}>
         <span aria-hidden="true">🤖</span>
         <span className="sr-only">에이전트</span>
         {owner && (
@@ -188,7 +188,7 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
   // 사진(#159)은 badge 자리에도 걸리고, 상자를 넘지 않아야 하는 것은 자리와 무관하다.
   return (
     <span
-      className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-white ${avatarUrl ? 'bg-zinc-200' : handleColor(account.handle)} ${className}`}
+      className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-fg-on-strong ${avatarUrl ? 'bg-surface-hover' : handleColor(account.handle)} ${className}`}
     >
       {avatarUrl ? (
         // `alt` 를 **비운다**. 접근성 이름은 아래 sr-only 가 이미 내고 있고, 사진에 핸들을
@@ -221,7 +221,7 @@ export function GroupBadge({ group, className = '' }: { group: HandleGroupRow; c
   return (
     <span
       data-testid={`group-badge-${group.handle}`}
-      className={`inline-flex items-center gap-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800 ${className}`}
+      className={`inline-flex items-center gap-1 rounded bg-warning-surface-strong px-1 text-[10px] text-warning ${className}`}
     >
       <span aria-hidden="true">👥</span>
       <span className="sr-only">집합</span>
