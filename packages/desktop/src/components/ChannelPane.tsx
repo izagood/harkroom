@@ -1,13 +1,17 @@
-import { Fragment, useEffect, useMemo, useRef } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
+import { ChannelFiles } from './ChannelFiles';
 
 export function ChannelPane() {
   const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq } = useAppStore();
   const bottomRef = useRef<HTMLDivElement>(null);
+  // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
+  // 열림 상태도 채널 화면이 들고 있고, 채널이 바뀌면 `key` 로 패널이 다시 만들어진다.
+  const [filesOpen, setFilesOpen] = useState(false);
 
   const channel = channels.find((c) => c.id === activeChannelId);
   const dm = dms.find((d) => d.id === activeChannelId);
@@ -37,6 +41,10 @@ export function ChannelPane() {
 
   useEffect(() => { bottomRef.current?.scrollIntoView?.(); }, [roots.length]);
 
+  // 채널을 옮기면 파일 패널을 닫는다. 열린 채로 두면 방금 떠난 채널의 목록이 잠깐 남아
+  // 어느 채널의 파일인지 오해할 여지가 생긴다.
+  useEffect(() => { setFilesOpen(false); }, [activeChannelId]);
+
   if (!activeChannelId) {
     return <main className="flex flex-1 items-center justify-center text-zinc-400">Pick a channel to start</main>;
   }
@@ -44,12 +52,19 @@ export function ChannelPane() {
   const isArchived = channel?.archivedAt != null;
 
   return (
+    <div className="flex min-w-0 flex-1">
     <main className="flex min-w-0 flex-1 flex-col bg-white">
       <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-2">
         <span className="font-bold">{title}</span>
         {channel?.topic && <span className="truncate text-xs text-zinc-500">{channel.topic}</span>}
         {channel?.repo && <span className="rounded bg-zinc-100 px-1.5 text-[11px] text-zinc-600">{channel.repo}</span>}
         {isArchived && <span className="rounded bg-zinc-200 px-1.5 text-[11px] text-zinc-600">보관됨</span>}
+        <button
+          className="ml-auto shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
+          onClick={() => setFilesOpen((v) => !v)}
+        >
+          파일
+        </button>
       </header>
       <div className="flex-1 overflow-y-auto py-2">
         {activeChannelId && hasMore[activeChannelId] && (
@@ -92,5 +107,9 @@ export function ChannelPane() {
         )}
       </div>
     </main>
+    {filesOpen && activeChannelId && (
+      <ChannelFiles key={activeChannelId} channelId={activeChannelId} onClose={() => setFilesOpen(false)} />
+    )}
+    </div>
   );
 }

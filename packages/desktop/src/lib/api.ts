@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PatView } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PatView } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -273,6 +273,20 @@ export class ApiClient {
 
   deleteAgentMemory(agentId: string, slug: string): Promise<void> {
     return this.req('DELETE', `/accounts/agents/${agentId}/memory/${encodeURIComponent(slug)}`);
+  }
+
+  /**
+   * 이 채널에 오간 파일들(#232). `before` 는 메시지 seq 커서다 — 메시지 목록의 `before` 와
+   * 같은 단위이므로, 파일 하나를 누르면 그 seq 로 대화를 찾아 들어갈 수 있다.
+   */
+  channelFiles(
+    channelId: string, opts?: { before?: number; limit?: number },
+  ): Promise<{ files: ChannelFileRow[]; hasMore: boolean }> {
+    const q = new URLSearchParams();
+    if (opts?.before !== undefined) q.set('before', String(opts.before));
+    if (opts?.limit !== undefined) q.set('limit', String(opts.limit));
+    const qs = q.size ? `?${q.toString()}` : '';
+    return this.req('GET', `/channels/${channelId}/files${qs}`);
   }
 
   async search(q: string): Promise<MessageRow[]> {
