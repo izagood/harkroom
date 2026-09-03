@@ -25,15 +25,30 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
       topic: z.string().max(256).optional(),
       // null은 바인딩 해제, 키 부재는 그대로 두기 — zod에서도 이 둘을 구분해야 한다.
       repo: z.string().max(128).nullable().optional(),
+      archived: z.boolean().optional(),
     }).parse(req.body);
-    const channel = await updateChannel(pool, id, patch);
+    const channel = await updateChannel(pool, id, req.account!.id, patch);
     if (!channel) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
     }
-    await recordAudit(pool, {
-      action: 'channel.updated', actorId: req.account!.id, actorHandle: req.account!.handle,
-      target: id, detail: { fields: Object.keys(patch) },
-    }, req);
+    const isArchive = patch.archived === true;
+    const isUnarchive = patch.archived === false;
+    if (isArchive) {
+      await recordAudit(pool, {
+        action: 'channel.archived', actorId: req.account!.id, actorHandle: req.account!.handle,
+        target: id, detail: {},
+      }, req);
+    } else if (isUnarchive) {
+      await recordAudit(pool, {
+        action: 'channel.unarchived', actorId: req.account!.id, actorHandle: req.account!.handle,
+        target: id, detail: {},
+      }, req);
+    } else {
+      await recordAudit(pool, {
+        action: 'channel.updated', actorId: req.account!.id, actorHandle: req.account!.handle,
+        target: id, detail: { fields: Object.keys(patch).filter((k) => k !== 'archived') },
+      }, req);
+    }
     return channel;
   });
 

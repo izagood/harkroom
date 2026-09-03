@@ -188,6 +188,7 @@ export interface ChannelRow {
   topic: string;
   kind: 'standard' | 'dm';
   repo: string | null;
+  archivedAt: string | null;
 }
 
 export interface InboxEntry {

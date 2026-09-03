@@ -82,8 +82,12 @@ export class ApiClient {
    * 호출자가 이 구분을 잃으면(빈 문자열을 보내거나 항상 두 필드를 다 보내면) 운영자가 topic 만
    * 고치려다 avcs 바인딩이 조용히 끊긴다.
    */
-  updateChannel(id: string, input: { topic?: string; repo?: string | null }): Promise<ChannelRow> {
+  updateChannel(id: string, input: { topic?: string; repo?: string | null; archived?: boolean }): Promise<ChannelRow> {
     return this.req('PATCH', `/channels/${id}`, input);
+  }
+
+  archiveChannel(id: string, archived: boolean): Promise<ChannelRow> {
+    return this.updateChannel(id, { archived });
   }
   async dms(): Promise<DmView[]> {
     return (await this.req<{ dms: DmView[] }>('GET', '/dms')).dms;

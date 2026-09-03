@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import type { ChannelRow } from '@murmur/shared';
 
-const COLS = `id, name, topic, kind, repo`;
+const COLS = `id, name, topic, kind, repo, archived_at as "archivedAt"`;
 
 /**
  * `pool` 이 `PoolClient` 도 받는 이유: 부트스트랩이 계정과 기본 채널을 한 트랜잭션에 묶는다
@@ -19,20 +19,26 @@ export async function createChannel(
 }
 
 /** 지정된 필드만 갱신한다. `repo: null`은 "바인딩 해제"이고, 키 자체가 없으면 "손대지 않음"이다 —
- *  둘을 구분하지 못하면 topic만 고치려다 avcs 바인딩이 조용히 끊긴다. */
+ *  둘을 구분하지 못하면 topic만 고치려다 avcs 바인딩이 조용히 끊긴다.
+ * archived 는 archived_at 과 archived_by 를 함께 갱신한다 — archived_at = now() / null,
+ * archived_by = actorId / null. */
 export async function updateChannel(
-  pool: Pool, id: string, patch: { topic?: string; repo?: string | null },
+  pool: Pool, id: string, actorId: string, patch: { topic?: string; repo?: string | null; archived?: boolean },
 ): Promise<ChannelRow | null> {
+  const hasArchived = patch.archived !== undefined;
   const res = await pool.query(
     `update channel set
        topic = case when $2::bool then $3::text else topic end,
-       repo  = case when $4::bool then $5::text else repo  end
+       repo  = case when $4::bool then $5::text else repo  end,
+       archived_at = case when $6 is true then now() when $6 is false then null else archived_at end,
+       archived_by = case when $6 is true then $7::uuid when $6 is false then null else archived_by end
      where id = $1 and kind = 'standard'
      returning ${COLS}`,
     [
       id,
       patch.topic !== undefined, patch.topic ?? null,
       patch.repo !== undefined, patch.repo ?? null,
+      hasArchived ? patch.archived : null, patch.archived ? actorId : null,
     ],
   );
   return res.rowCount ? res.rows[0] : null;
@@ -162,4 +168,33 @@ export async function listChannelPrefs(pool: Pool, accountId: string): Promise<C
     [accountId],
   );
   return res.rows;
+}
+
+/**
+ * 글을 쓸 수 있는가 — 가시성과 보관 여부를 **한 질의로** 함께 본다.
+ *
+ * 둘을 따로 물으면 메시지 POST 한 번에 왕복이 하나 늘어난다. 이건 이 앱에서 가장 자주
+ * 도는 경로이고, 보관 여부는 이미 읽고 있는 `channel` 행에 같이 들어 있다 — 같은 행을
+ * 두 번 읽을 이유가 없다.
+ *
+ * 편집·삭제·리액션에는 쓰지 않는다. 보관된 채널에서도 잘못 올라간 것을 치울 수 있어야
+ * 하고, 그 경로까지 닫으면 admin 에게 조정 수단이 없어진다.
+ */
+export async function channelPostGate(
+  pool: Pool, channelId: string, accountId: string,
+): Promise<'ok' | 'forbidden' | 'archived'> {
+  const res = await pool.query(
+    `select kind, archived_at is not null as archived from channel where id = $1`,
+    [channelId],
+  );
+  const row = res.rows[0] as { kind: string; archived: boolean } | undefined;
+  if (!row) return 'ok';
+  if (row.kind === 'dm') {
+    const member = await pool.query(
+      `select 1 from channel_member where channel_id = $1 and account_id = $2`,
+      [channelId, accountId],
+    );
+    if (!member.rowCount) return 'forbidden';
+  }
+  return row.archived ? 'archived' : 'ok';
 }
