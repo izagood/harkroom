@@ -118,6 +118,16 @@ export class ApiClient {
   archiveChannel(id: string, archived: boolean): Promise<ChannelRow> {
     return this.updateChannel(id, { archived });
   }
+
+  /** 채널을 영구히 삭제한다(#155). 보관된 표준 채널만 가능하고 admin 만 할 수 있다. */
+  deleteChannel(id: string): Promise<void> {
+    return this.req('DELETE', `/channels/${id}`);
+  }
+
+  /** 채널 삭제 전 확인용 메시지 수 조회(#155). */
+  async deleteChannelInfo(id: string): Promise<{ name: string; messageCount: number }> {
+    return this.req('GET', `/channels/${id}/delete-info`);
+  }
   async dms(): Promise<DmView[]> {
     return (await this.req<{ dms: DmView[] }>('GET', '/dms')).dms;
   }
@@ -208,6 +218,15 @@ export class ApiClient {
 
   updateAgent(id: string, patch: Partial<AgentConfig> & { displayName?: string }): Promise<AgentView> {
     return this.req('PATCH', `/accounts/agents/${id}`, patch);
+  }
+
+  /**
+   * 에이전트를 비활성화하거나 다시 활성화한다(#251). 설정 저장이 아니라 감사 대상 생애주기
+   * 상태이므로 `updateAgent` 와 별도 메서드로 둔다. 요청 본문은 `{ disabled }` 하나만 보내며,
+   * 다른 필드를 보내면 서버가 거절한다.
+   */
+  setAgentDisabled(id: string, disabled: boolean): Promise<AgentView> {
+    return this.req('PATCH', `/accounts/agents/${id}`, { disabled });
   }
 
   /**
