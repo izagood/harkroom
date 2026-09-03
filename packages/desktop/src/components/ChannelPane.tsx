@@ -41,12 +41,15 @@ export function ChannelPane() {
     return <main className="flex flex-1 items-center justify-center text-zinc-400">Pick a channel to start</main>;
   }
 
+  const isArchived = channel?.archivedAt != null;
+
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-white">
       <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-2">
         <span className="font-bold">{title}</span>
         {channel?.topic && <span className="truncate text-xs text-zinc-500">{channel.topic}</span>}
         {channel?.repo && <span className="rounded bg-zinc-100 px-1.5 text-[11px] text-zinc-600">{channel.repo}</span>}
+        {isArchived && <span className="rounded bg-zinc-200 px-1.5 text-[11px] text-zinc-600">보관됨</span>}
       </header>
       <div className="flex-1 overflow-y-auto py-2">
         {activeChannelId && hasMore[activeChannelId] && (
@@ -76,11 +79,17 @@ export function ChannelPane() {
       </div>
       <TypingLine />
       <div className="border-t border-zinc-200 p-3">
-        <Composer
-          scopeKey={activeChannelId}
-          placeholder={`Message ${composerTarget}`}
-          onSend={(body, attachmentIds) => getController().send(body, attachmentIds)}
-        />
+        {isArchived ? (
+          <div className="rounded bg-zinc-100 p-2 text-center text-sm text-zinc-500">
+            보관된 채널이다
+          </div>
+        ) : (
+          <Composer
+            scopeKey={activeChannelId}
+            placeholder={`Message ${composerTarget}`}
+            onSend={(body, attachmentIds) => getController().send(body, attachmentIds)}
+          />
+        )}
       </div>
     </main>
   );

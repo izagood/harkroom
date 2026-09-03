@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { emitEvent } from '../events.js';
-import { assertChannelVisible, audienceFor } from '../services/channels.js';
+import { assertChannelVisible, audienceFor, isChannelArchived } from '../services/channels.js';
 import { deleteMessage, editMessage, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -20,6 +20,9 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     }).parse(req.body);
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    if (await isChannelArchived(pool, id)) {
+      return reply.code(403).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
     }
     const idempotencyKey = (req.headers['idempotency-key'] as string | undefined) ?? null;
     const posted = await postMessage(pool, {
