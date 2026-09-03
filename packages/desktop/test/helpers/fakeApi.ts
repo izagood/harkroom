@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import type { AccountView, ChannelRow, MessageRow, PinRow } from '@murmur/shared';
+import type { AccountView, ChannelRow, HandleGroupRow, MessageRow, PinRow } from '@murmur/shared';
 import type { ApiClient } from '../../src/lib/api';
 
 // #186: 상태는 옵셔널이 아니라 **필수 필드**다 — fixture 도 그것을 적어야 한다.
@@ -10,6 +10,21 @@ export const acc = (id: string, handle: string, kind: 'human' | 'agent' = 'human
   extra: Partial<AccountView> = {}): AccountView =>
   ({ id, handle, displayName: handle, kind, isAdmin, disabled: false, status: 'available', statusText: null,
     ownerAccountId: null, avatarAttachmentId: null, ...extra });
+
+export const grp = (id: string, handle: string, displayName: string): HandleGroupRow =>
+  ({ id, handle, displayName, createdAt: new Date().toISOString() });
+
+/**
+ * `GET /accounts` 의 응답 모양(#230). 계정 목록과 집합 목록을 함께 준다.
+ *
+ * 헬퍼로 두는 이유: 이 모양을 fake 마다 손으로 적으면 서버가 필드를 하나 더 줄 때
+ * 고칠 자리가 테스트 파일 수만큼 생긴다 — 아래 `fakeApi` 주석이 경계하는 그 결함이다.
+ */
+export function accountsResult(
+  accounts: AccountView[], groups: HandleGroupRow[] = [],
+): { accounts: AccountView[]; groups: HandleGroupRow[] } {
+  return { accounts, groups };
+}
 
 // #182: 공개 범위도 **필수 필드**다 — fixture 가 그것을 적어야 한다. 기본값은 서버의
 // 기본값과 같은 'public' 이고, private 을 보는 테스트가 마지막 인자로 덮어쓴다.
@@ -49,7 +64,7 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     reads: vi.fn(async () => []),
     markChannelRead: vi.fn(async () => undefined),
     markChannelUnread: vi.fn(async () => undefined),
-    accounts: vi.fn(async () => [acc('u1', 'admin'), acc('u2', 'bot', 'agent')]),
+    accounts: vi.fn(async () => accountsResult([acc('u1', 'admin'), acc('u2', 'bot', 'agent')])),
     channels: vi.fn(async () => [chan('c1', 'general')]),
     dms: vi.fn(async () => []),
     leases: vi.fn(async () => []),
@@ -89,6 +104,13 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     pins: vi.fn(async () => []),
     pinMessage: vi.fn(async (channelId: string, messageId: string) => pin(messageId, channelId)),
     unpinMessage: vi.fn(async () => undefined),
+    // #219: 담아 둔 메시지 표면. 베이스가 덮어야 Controller.start 가 조용히 던지지 않고,
+    // "부르지 않았다" 도 단언할 수 있다.
+    savedMessages: vi.fn(async (_state: 'open' | 'done') => []),
+    savedSummary: vi.fn(async () => ({ openCount: 0, messageIds: [] as string[] })),
+    saveMessage: vi.fn(),
+    updateSavedMessage: vi.fn(),
+    unsaveMessage: vi.fn(async () => undefined),
     ...overrides,
   };
   return base as unknown as ApiClient;

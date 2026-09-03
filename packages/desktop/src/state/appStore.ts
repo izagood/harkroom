@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus } from '@murmur/shared';
+import type { AccountStatus, AccountView, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus } from '@murmur/shared';
 
 export interface HistoryEntry {
   channelId: string;
@@ -12,6 +12,7 @@ const MAX_HISTORY_LENGTH = 50;
 export interface AppState {
   me: AccountView | null;
   accounts: Record<string, AccountView>;
+  groups: HandleGroupRow[];
   channels: ChannelRow[];
   dms: DmView[];
   activeChannelId: string | null;
@@ -42,6 +43,20 @@ export interface AppState {
    * 초안처럼 비밀로 다룰 것이 없고, 다음 사람이 열면 서버에서 다시 받는다.
    */
   pins: Record<string, PinRow[]>;
+  /**
+   * 내가 담아 둔 메시지의 id 전부(#219). `open` 과 `done` 을 **둘 다** 담는다 —
+   * `⋯` 메뉴가 "담겨 있는가"를 이것으로 판단하고, 완료로 옮긴 메시지도 담긴 상태다.
+   *
+   * 목록 화면의 행들을 여기 두지 않는 이유: 패널은 탭 하나(`open` 또는 `done`)만 받아
+   * 오는데 그것을 이 자리에 쓰면 '완료' 탭을 한 번 본 뒤로 메뉴가 `open` 인 메시지를
+   * 담기지 않은 것으로 읽는다. 행들은 패널의 지역 상태다.
+   */
+  savedIds: string[];
+  /**
+   * 담아 둔 것 중 `open` 개수. 사이드바 배지에 쓴다 — `savedIds.length` 가 아니다
+   * (완료로 옮긴 것은 배지에서 빠져야 한다).
+   */
+  savedCount: number;
   /**
    * 채널별 멤버 목록. channelId → members. **키가 없는 것과 빈 배열은 다르다** —
    * 없으면 "아직 안 받았다", 빈 배열이면 "정말 아무도 없다"다. 조회 실패를 빈 배열로
@@ -112,11 +127,11 @@ export interface AppState {
 }
 
 const initial = {
-  me: null, accounts: {}, channels: [], dms: [], activeChannelId: null, threadRootId: null,
+  me: null, accounts: {}, groups: [], channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], leases: [], connected: false, projectionStatus: null, channelPrefs: {}, pins: {}, channelMembers: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
-  expandedMessageIds: {},
+  expandedMessageIds: {}, savedIds: [], savedCount: 0,
 };
 
 export const useAppStore = create<AppState>((set, get) => ({

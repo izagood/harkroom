@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -74,8 +74,8 @@ export class ApiClient {
   markChannelUnread(channelId: string, seq: number | null): Promise<void> {
     return this.req('PUT', `/channels/${channelId}/unread`, { seq });
   }
-  async accounts(): Promise<AccountView[]> {
-    return (await this.req<{ accounts: AccountView[] }>('GET', '/accounts')).accounts;
+  async accounts(): Promise<{ accounts: AccountView[]; groups: HandleGroupRow[] }> {
+    return this.req<{ accounts: AccountView[]; groups: HandleGroupRow[] }>('GET', '/accounts');
   }
   async channels(): Promise<ChannelRow[]> {
     return (await this.req<{ channels: ChannelRow[] }>('GET', '/channels')).channels;
@@ -117,6 +117,16 @@ export class ApiClient {
 
   archiveChannel(id: string, archived: boolean): Promise<ChannelRow> {
     return this.updateChannel(id, { archived });
+  }
+
+  /** 채널을 영구히 삭제한다(#155). 보관된 표준 채널만 가능하고 admin 만 할 수 있다. */
+  deleteChannel(id: string): Promise<void> {
+    return this.req('DELETE', `/channels/${id}`);
+  }
+
+  /** 채널 삭제 전 확인용 메시지 수 조회(#155). */
+  async deleteChannelInfo(id: string): Promise<{ name: string; messageCount: number }> {
+    return this.req('GET', `/channels/${id}/delete-info`);
   }
   async dms(): Promise<DmView[]> {
     return (await this.req<{ dms: DmView[] }>('GET', '/dms')).dms;
@@ -212,6 +222,15 @@ export class ApiClient {
 
   updateAgent(id: string, patch: Partial<AgentConfig> & { displayName?: string }): Promise<AgentView> {
     return this.req('PATCH', `/accounts/agents/${id}`, patch);
+  }
+
+  /**
+   * 에이전트를 비활성화하거나 다시 활성화한다(#251). 설정 저장이 아니라 감사 대상 생애주기
+   * 상태이므로 `updateAgent` 와 별도 메서드로 둔다. 요청 본문은 `{ disabled }` 하나만 보내며,
+   * 다른 필드를 보내면 서버가 거절한다.
+   */
+  setAgentDisabled(id: string, disabled: boolean): Promise<AgentView> {
+    return this.req('PATCH', `/accounts/agents/${id}`, { disabled });
   }
 
   /**
@@ -371,5 +390,27 @@ export class ApiClient {
   async search(q: string, channelId?: string | null): Promise<MessageRow[]> {
     const scope = channelId ? `&channelId=${encodeURIComponent(channelId)}` : '';
     return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
+  }
+
+  // #219: `state` 는 **필수**다 — 기본값을 여기서 공급하면 호출부가 어느 탭을 받는지 적지
+  // 않아도 통과하고, 그 화면은 늘 '할 것'만 보게 된다.
+  async savedMessages(state: 'open' | 'done'): Promise<SavedMessageRow[]> {
+    return (await this.req<{ entries: SavedMessageRow[] }>('GET', `/saved?state=${state}`)).entries;
+  }
+
+  savedSummary(): Promise<{ openCount: number; messageIds: string[] }> {
+    return this.req('GET', '/saved/summary');
+  }
+
+  saveMessage(messageId: string): Promise<SavedMessageRow> {
+    return this.req('PUT', `/saved/${messageId}`);
+  }
+
+  updateSavedMessage(messageId: string, state: 'open' | 'done'): Promise<SavedMessageRow> {
+    return this.req('PATCH', `/saved/${messageId}`, { state });
+  }
+
+  unsaveMessage(messageId: string): Promise<void> {
+    return this.req('DELETE', `/saved/${messageId}`);
   }
 }

@@ -200,6 +200,22 @@ export function mentionedHandles(body: string): string[] {
 export const CHANNEL_MENTION_HANDLE = 'channel';
 
 /**
+ * 집합(#230)에는 **예약 handle 이 없다.** `@channel` 과 다른 점이 여기다: `@channel` 은
+ * 이름 하나가 고정된 뜻을 갖는 예약어지만, 집합은 admin 이 이름을 정하는 저장된 엔티티라
+ * 계정과 **같은 네임스페이스**를 쓴다(`HandleGroupRow` 주석). 그래서 문법도 따로 없고
+ * 평범한 `MENTION_PATTERN` 에서 잡힌다.
+ *
+ * `GROUP_MENTION_HANDLE = 'group'` 같은 상수를 두지 않는 이유: 그런 상수가 있으면 `@group`
+ * 이 특별한 이름이라는 **거짓 사실**을 코드가 주장하게 된다. 초판에 그 상수가 있었고,
+ * 아무 곳에서도 쓰이지 않으면서 두 파일이 import 하고 있었다.
+ *
+ * 집합과 같은 이름의 계정은 만들 수 없고 그 반대도 안 된다 — 서버가 양쪽에서 막는다
+ * (`authRoutes.ts`·`agents.ts`·`handleGroupRoutes.ts`). 그래도 판정 순서는 정해 둔다:
+ * **계정이 이긴다**(`services/messages.ts`). 사람의 이름이 집합에 밀리면 그 사람은
+ * 영영 불릴 수 없다.
+ */
+
+/**
  * 메시지 하나를 가리키는 링크의 스킴(#178). 문자열을 여기저기서 조립하지 않는다 —
  * 만드는 쪽과 읽는 쪽이 갈라지면 자기가 만든 링크를 자기가 못 여는 상태가 된다.
  *
@@ -422,6 +438,48 @@ export interface PinRow {
   pinnedBy: string;
   pinnedAt: string;
   message: MessageRow;
+}
+
+/**
+ * 나중에 볼 메시지 한 줄(#219). **개인 전용**이다 — 서버가 요청자 자신의 행만 내준다.
+ * `createdAt`·`doneAt` 은 담은 시각·완료 시각이고, 메시지 자체의 시각은 `message.createdAt` 다.
+ */
+export interface SavedMessageRow {
+  messageId: string;
+  channelId: string;
+  state: 'open' | 'done';
+  createdAt: string;
+  doneAt: string | null;
+  /** 담아 둔 메시지가 지워졌는가. 지워져도 목록의 자리는 남는다(#219 결정 3). */
+  deleted: boolean;
+  /**
+   * `deleted` 가 true 면 **null** 이다 — 지워진 메시지의 본문은 내주지 않는다.
+   * 옵셔널이 아니라 명시적 null 인 이유: 키가 사라지면 '아직 안 받았다'와 '삭제됐다'가
+   * 한 화면이 된다.
+   */
+  message: MessageRow | null;
+}
+
+/**
+ * 사람 집합을 한 handle 로 부르는 것(#230). 저장된 명단이다 — 계산된 질의가 아니다.
+ *
+ * 계정과 **같은 네임스페이스**를 쓴다. `@foo` 가 사람인지 집합인지 갈라지면
+ * 안 되므로, 집합을 만들 때 같은 이름의 계정이 있으면 거절하고, 계정을 만들 때도
+ * 같은 이름의 집합이 있으면 거절한다.
+ */
+export interface HandleGroupRow {
+  id: string;
+  handle: string;
+  displayName: string;
+  createdAt: string;
+}
+
+/**
+ * 집합의 구성원. `account_id` 로 `account` 를 조인해 계정을 가져온다.
+ */
+export interface HandleGroupMemberRow {
+  groupId: string;
+  accountId: string;
 }
 
 export interface LeaseRow {

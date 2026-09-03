@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import { useAppStore } from '../src/state/appStore';
 import { Composer } from '../src/components/Composer';
 import { Controller, setController } from '../src/state/controller';
-import { acc, fakeApi } from './helpers/fakeApi';
+import { acc, accountsResult, fakeApi } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
 
 /** 지금 강조된 후보의 handle. 목록 정렬은 여기서 검증할 대상이 아니다. */
@@ -227,11 +227,11 @@ describe('mention autocomplete', () => {
   // 그 새 계정이 후보에 나타난다.
   it('refreshes accounts when autocomplete opens', async () => {
     const api = fakeApi({
-      accounts: vi.fn(async () => [
+      accounts: vi.fn(async () => accountsResult([
         acc('u1', 'me'),
         acc('a1', 'fizz', 'agent'),
         acc('new', 'newagent', 'agent'), // 서버에 있지만 로컬에 없는 새 계정
-      ]),
+      ])),
     });
     const c = new Controller(api);
     setController(c);
@@ -273,10 +273,10 @@ describe('mention autocomplete', () => {
   // 가드 테스트: 자동완성을 짧은 간격으로 여러 번 열어도 디렉터리 요청이 한 번만 나간다.
   it('does not refetch accounts rapidly when autocomplete opens repeatedly', async () => {
     const api = fakeApi({
-      accounts: vi.fn(async () => [
+      accounts: vi.fn(async () => accountsResult([
         acc('u1', 'me'),
         acc('a1', 'fizz', 'agent'),
-      ]),
+      ])),
     });
     const c = new Controller(api);
     setController(c);
