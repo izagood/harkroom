@@ -40,6 +40,10 @@ export function Directory({ open, onClose, accountId }: Props) {
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
 
   const account = accountId ? accounts[accountId] : null;
+  // 씨앗 검색어는 **handle 문자열**이다. 계정 객체를 아래 효과의 의존성에 걸면 presence·
+  // 상태가 바뀔 때마다 객체 신원이 갈려 효과가 다시 돌고, 사람이 치고 있던 검색어를 덮는다
+  // (초판이 그랬다). handle 은 만든 뒤 바뀌지 않으므로 문자열이면 그 되풀이가 없다.
+  const seedHandle = account?.handle ?? null;
 
   const reload = useCallback((): (() => void) => {
     let alive = true;
@@ -56,13 +60,19 @@ export function Directory({ open, onClose, accountId }: Props) {
     return () => { alive = false; };
   }, []);
 
+  /**
+   * 열릴 때 한 번 씨앗을 놓고 목록을 새로 받는다.
+   *
+   * 특정 계정으로 열면(#279) 그 handle 로 검색어를 채운다 — 큰 목록에서 그 행만 남기는
+   * 것이 "그 계정으로 열렸다"의 절반이고, 나머지 절반은 아래 `isSelected` 강조·스크롤이다.
+   * 씨앗은 **덮어쓸 수 있어야 한다**: 사람이 지우고 다른 이름을 치는 것이 이 화면의 일이다.
+   * 그래서 의존성은 열림·대상 뿐이고 계정 객체가 아니다(위 주석).
+   */
   useEffect(() => {
     if (!open) return;
-    setLoad({ kind: 'loading' });
-    // accountId 가 있으면 해당 계정의 handle 로 검색한다.
-    setQuery(account ? account.handle : '');
+    setQuery(seedHandle ?? '');
     return reload();
-  }, [open, reload, account]);
+  }, [open, reload, accountId, seedHandle]);
 
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -87,7 +97,10 @@ export function Directory({ open, onClose, accountId }: Props) {
         key={a.id}
         data-testid={`directory-row-${a.id}`}
         data-selected={String(isSelected)}
-        ref={isSelected ? (el: HTMLLIElement | null) => { el?.scrollIntoView({ block: 'center', behavior: 'smooth' }); } : undefined}
+        // 강조만 하고 화면 밖에 두면 긴 목록에서는 아무 일도 안 일어난 것과 같다.
+        // `scrollIntoView?.` 인 이유: jsdom 에는 그 함수가 없다 — 옵셔널 호출을 빼면 이
+        // 화면을 띄우는 테스트가 렌더 도중 터진다(`MessageItem` 도 같은 이유로 그렇다).
+        ref={isSelected ? (el: HTMLLIElement | null) => { el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' }); } : undefined}
         className={`flex items-center gap-2 rounded px-2 py-1.5 ${a.disabled ? 'opacity-60' : ''} ${isSelected ? 'bg-indigo-950 ring-2 ring-indigo-500' : ''}`}
       >
       {/* #277: 이 자리는 **거터가 아니다** — 고정폭 열이 아니라 넓어지면 행이 늘어나는

@@ -7,12 +7,14 @@ import { ReactionPicker, Reactions, InlineReactionButtons } from './Reactions';
 import { Identity, StatusMark } from './Identity';
 import { Attachments } from './Attachments';
 import { Menu } from './Menu';
+import type { SectionId } from './settings/sections';
 
 export function MessageItem({ message, inThread = false, onOpenDirectory, onOpenSettings }: {
   message: MessageRow;
   inThread?: boolean;
+  /** 멘션을 눌렀을 때 갈 곳(#279). 넘기지 않으면 멘션은 버튼이 아니다 — `MessageBody` 참고. */
   onOpenDirectory?: (accountId: string | null) => void;
-  onOpenSettings?: (section?: string, targetId?: string) => void;
+  onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }) {
   const author = useAppStore((s) => s.accounts[message.authorId]);
   const isMine = useAppStore((s) => s.me?.id === message.authorId);

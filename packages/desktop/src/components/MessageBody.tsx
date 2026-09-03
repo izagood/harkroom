@@ -6,6 +6,7 @@ import { splitCode } from '../lib/code';
 import { shouldCollapse, COLLAPSED_MAX_PX } from '../lib/collapse';
 import { getExternalOpener } from '../lib/openExternal';
 import { getController } from '../state/controller';
+import type { SectionId } from './settings/sections';
 
 /**
  * 본문을 그리면서 멘션만 강조한다. 존재하는 handle 만 칠한다 — 오타를 멘션처럼 보여 주면
@@ -43,6 +44,20 @@ async function followLink(target: LinkTarget): Promise<void> {
   }
 }
 
+/**
+ * 멘션을 눌렀을 때 갈 곳(#279). 두 신호를 **옵셔널**로 두는 이유와 그 위험을 함께 적는다:
+ * 이 컴포넌트는 채널 문서 패널처럼 이동이 없는 자리에서도 쓰이고, 단위 테스트가 본문만
+ * 띄우기도 한다. 대신 옵셔널이 **조용히 죽은 버튼을 만드는 것**은 막는다 — 신호가 없으면
+ * 버튼을 아예 그리지 않는다(아래 `openable`). 배선이 끊긴 채로 눌러도 아무 일이 없는
+ * 컨트롤을 남기는 것이 옵셔널의 진짜 위험이고, 실제로 이 브랜치의 초판이 그랬다:
+ * `Workspace` 가 `ChannelPane` 에 두 신호를 넘기지 않아 앱에서 모든 멘션이 죽은 버튼이었다.
+ * 그 배선은 `test/mentionClick.test.tsx` 가 `Workspace` 를 통째로 띄워 지킨다.
+ */
+interface MentionOpeners {
+  onOpenDirectory?: (accountId: string | null) => void;
+  onOpenSettings?: (section?: SectionId, targetId?: string) => void;
+}
+
 export function MessageBody({
   body,
   messageId,
@@ -51,9 +66,7 @@ export function MessageBody({
 }: {
   body: string;
   messageId: string;
-  onOpenDirectory?: (accountId: string | null) => void;
-  onOpenSettings?: (section?: string, targetId?: string) => void;
-}) {
+} & MentionOpeners) {
   const accounts = useAppStore((s) => s.accounts);
   const groups = useAppStore((s) => s.groups);
   const me = useAppStore((s) => s.me);
@@ -69,6 +82,11 @@ export function MessageBody({
   const segments = useMemo(() => splitCode(body), [body]);
   const handles = useMemo(() => Object.values(accounts).map((a) => a.handle), [accounts]);
   const groupHandles = useMemo(() => groups.map((g) => g.handle), [groups]);
+  // handle → 계정. 멘션마다 `Object.values(...).find` 를 돌면 본문 하나에 계정 수 × 멘션 수다.
+  const byHandle = useMemo(
+    () => new Map(Object.values(accounts).map((a) => [a.handle.toLowerCase(), a])),
+    [accounts],
+  );
 
   /** 코드가 아닌 구간만 멘션·링크 조각으로 나눠 그린다. */
   const renderPart = (p: BodyPart, key: string) => {
@@ -91,63 +109,68 @@ export function MessageBody({
       );
     }
     const isSelf = p.handle === myHandle;
-    const isGroup = (p as { isGroup?: boolean }).isGroup;
-    const account = Object.values(accounts).find((a) => a.handle.toLowerCase() === p.handle);
-    const isAgent = account?.kind === 'agent';
-    const isAdmin = me?.isAdmin === true;
-    const isOwner = account?.ownerAccountId === me?.id;
+    const isGroup = (p as { isGroup?: boolean }).isGroup === true;
+    const account = byHandle.get(p.handle);
 
-    const handleMentionClick = () => {
-      if (!account || !onOpenDirectory && !onOpenSettings) return;
-      if (isAgent && (isAdmin || isOwner) && onOpenSettings) {
-        onOpenSettings('agents', account.id);
-      } else if (onOpenDirectory) {
-        onOpenDirectory(account.id);
+    // 어디로 가는가(#279). `null` 이면 누를 것이 없다.
+    //
+    // 계정이 없는 멘션(`@channel`)과 집합(#230)은 **갈 곳이 없다.** 디렉터리는 계정의 표라서
+    // 집합의 행이 없고, 없는 계정으로 열면 아무 행도 강조되지 않는다. 강조되지 않는
+    // 오타(`@없는이름`)가 애초에 여기 오지 않는 것과 같은 이유다: 누를 수 있게 만들면
+    // "여기에 뭔가 있다" 는 거짓을 말하게 된다.
+    //
+    // 에이전트는 **admin 만** 설정으로 보낸다. spec 은 소유자도 보내라고 했지만
+    // `GET /accounts/agents` 가 아직 `requireAdmin` 이어서(`routes/accountRoutes.ts`)
+    // 소유자는 목록 조회에서 403 을 받는다 — 그 화면은 "에이전트 목록을 받지 못했다" 만
+    // 띄우고 목록이 비어 `targetId` 도 아무것도 고르지 못한다. #253 이 열어 준 것은
+    // `PATCH`·메모리·PAT 이고 **목록은 아니다.** 갈 수 있는데 할 수 있는 것이 없는 곳을
+    // 만들지 않는다(design.md §4). 목록 라우트가 소유자에게 열리면 여기에 소유자 판정을
+    // 더하는 것이 맞다.
+    const target: (() => void) | null = (() => {
+      if (!account) return null;
+      if (isGroup) return null;
+      if (account.kind === 'agent' && me?.isAdmin === true && onOpenSettings) {
+        return () => onOpenSettings('agents', account.id);
       }
+      if (onOpenDirectory) return () => onOpenDirectory(account.id);
+      return null;
+    })();
+
+    // 접근 가능한 이름은 `@handle` 이 아니라 **무엇을 하는지**다. 그러므로 실제로 열리는
+    // 곳을 말해야 한다 — 디렉터리로 가는데 "설정 열기" 라고 부르면 이름이 거짓이 된다.
+    const goesToSettings = account?.kind === 'agent' && me?.isAdmin === true && !!onOpenSettings;
+    const accessibleName = account && (goesToSettings
+      ? `${account.handle} 에이전트 설정 열기`
+      : `${account.handle} 프로필 열기`);
+
+    // 나를 부른 멘션은 더 강하게. 색만으로 구분하지 않는다(배경 + 굵기).
+    // 집합은 다른 색(teal)으로 구분한다.
+    const className = `rounded px-0.5 font-medium ${
+      isGroup
+        ? 'bg-teal-50 text-teal-700'
+        : isSelf
+          ? 'bg-amber-200 text-amber-900'
+          : 'bg-indigo-50 text-indigo-700'
+    }`;
+    // 표시는 한 곳에서 나온다 — 누를 수 있는 것과 없는 것을 따로 그리면 색·배지가 갈라진다.
+    const shared = {
+      'data-testid': `mention-${p.handle}`,
+      'data-self': String(isSelf),
+      'data-group': String(isGroup),
+      className,
     };
 
-    // 접근 가능한 이름은 @handle 이 아니라 무엇을 하는지 나타낸다.
-    const accessibleName = account
-      ? isAgent
-        ? `${account.handle} 에이전트 설정 열기`
-        : `${account.handle} 프로필 열기`
-      : `${p.handle} 열기`;
-
-    // 집합(#230)은 버튼이 아니다 — 집합은 설정이 없으므로 디렉터리로만 열린다.
-    if (isGroup || !account) {
-      return (
-        <span
-          key={key}
-          data-testid={`mention-${p.handle}`}
-          data-self={String(isSelf)}
-          data-group={String(isGroup)}
-          className={`rounded px-0.5 font-medium ${
-            isGroup
-              ? 'bg-teal-50 text-teal-700'
-              : isSelf
-                ? 'bg-amber-200 text-amber-900'
-                : 'bg-indigo-50 text-indigo-700'
-          }`}
-        >
-          {p.text}
-        </span>
-      );
-    }
+    // 갈 곳이 없으면 **버튼이 아니다.** 눌러도 아무 일이 없는 컨트롤은 없는 것보다 나쁘다.
+    if (!target) return <span key={key} {...shared}>{p.text}</span>;
 
     return (
       <button
         key={key}
         type="button"
-        data-testid={`mention-${p.handle}`}
-        data-self={String(isSelf)}
-        data-group={String(isGroup)}
+        {...shared}
+        className={`${className} cursor-pointer`}
         aria-label={accessibleName}
-        onClick={handleMentionClick}
-        className={`rounded px-0.5 font-medium cursor-pointer ${
-          isSelf
-            ? 'bg-amber-200 text-amber-900'
-            : 'bg-indigo-50 text-indigo-700'
-        }`}
+        onClick={target}
       >
         {p.text}
       </button>
