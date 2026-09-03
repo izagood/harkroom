@@ -1,7 +1,16 @@
 import { useEffect, useState } from 'react';
 import type { AgentTeamRow, AgentTeamMemberRow } from '@murmur/shared';
+import { HANDLE_PATTERN } from '@murmur/shared';
 import { getController } from '../../state/controller';
 import { useAppStore } from '../../state/appStore';
+
+/**
+ * 팀 이름 문법. **`HANDLE_PATTERN` 을 그대로 쓴다** — 팀 이름은 계정 handle 과 같은
+ * 네임스페이스이고(서버 `teamRoutes.ts` 가 같은 상수로 검사한다), 여기 리터럴로 다시
+ * 적으면 한쪽 문법이 바뀔 때 화면과 서버가 갈라진다. 그러면 화면이 통과시킨 이름을
+ * 서버가 400 으로 거절하거나, 그 반대가 된다.
+ */
+const NAME_RE = new RegExp(`^${HANDLE_PATTERN}$`);
 
 export function TeamsSettings() {
   const [teams, setTeams] = useState<AgentTeamRow[]>([]);
@@ -11,6 +20,12 @@ export function TeamsSettings() {
   const [editName, setEditName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /**
+   * 삭제 확인(#155 의 선례). 확인 단계를 **화면 안에** 둔다 — `window.confirm` 은 Tauri
+   * 웹뷰에서 막힐 수 있고, 이 저장소의 선례(`Sidebar` 의 채널 삭제·나가기 확인)가 이미
+   * 인라인이다. 되돌릴 수 없는 조작을 한 번 누름으로 끝내지 않는다.
+   */
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
   const accounts = useAppStore((s) => s.accounts);
   const agents = Object.values(accounts).filter((a) => a.kind === 'agent');
@@ -24,6 +39,7 @@ export function TeamsSettings() {
     setSelected(team);
     setEditName(team.name);
     setError(null);
+    setConfirmDelete(false);
     try {
       const { members: m } = await getController().getTeam(team.id);
       setMembers(m);
@@ -37,11 +53,12 @@ export function TeamsSettings() {
     setMembers([]);
     setNewTeamName('');
     setError(null);
+    setConfirmDelete(false);
   };
 
   const submitCreate = async () => {
     if (!newTeamName.trim()) return;
-    if (!/^[a-zA-Z0-9_-]{2,32}$/.test(newTeamName)) {
+    if (!NAME_RE.test(newTeamName.trim())) {
       setError('이름은 영문·숫자·-·_ 2~32자여야 한다');
       return;
     }
@@ -58,7 +75,7 @@ export function TeamsSettings() {
 
   const submitEdit = async () => {
     if (!selected || !editName.trim()) return;
-    if (!/^[a-zA-Z0-9_-]{2,32}$/.test(editName)) {
+    if (!NAME_RE.test(editName.trim())) {
       setError('이름은 영문·숫자·-·_ 2~32자여야 한다');
       return;
     }
@@ -81,6 +98,7 @@ export function TeamsSettings() {
       await getController().deleteTeam(selected.id);
       setSelected(null);
       setMembers([]);
+      setConfirmDelete(false);
       reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : '팀을 지우지 못했다');
@@ -128,6 +146,7 @@ export function TeamsSettings() {
         {teams.map((t) => (
           <button
             key={t.id}
+            data-testid={`team-row-${t.name}`}
             className={`w-full rounded px-2 py-1.5 text-left ${selected?.id === t.id ? 'bg-zinc-100' : 'hover:bg-zinc-50'}`}
             onClick={() => void loadTeam(t)}
           >
@@ -147,6 +166,7 @@ export function TeamsSettings() {
               <label className="block text-xs font-medium text-zinc-600">
                 Team name
                 <input
+                  aria-label="팀 이름"
                   className="mt-1 w-full rounded border border-zinc-300 px-3 py-2"
                   placeholder="team-name"
                   value={newTeamName}
@@ -180,6 +200,7 @@ export function TeamsSettings() {
                 <div className="text-xs font-medium text-zinc-600">팀 이름</div>
                 <div className="mt-2 flex gap-2">
                   <input
+                    aria-label="팀 이름 수정"
                     className="flex-1 rounded border border-zinc-300 px-3 py-2"
                     value={editName}
                     onChange={(e) => { setEditName(e.target.value); setError(null); }}
@@ -209,6 +230,7 @@ export function TeamsSettings() {
                       </span>
                       {isAdmin && (
                         <button
+                          aria-label={`팀원 빼기: ${m.handle}`}
                           className="text-xs text-red-600 hover:underline"
                           onClick={() => void removeMember(m.accountId)}
                         >
@@ -221,6 +243,7 @@ export function TeamsSettings() {
                 {isAdmin && availableAgents.length > 0 && (
                   <div className="mt-2 flex gap-2">
                     <select
+                      aria-label="팀원 추가"
                       className="flex-1 rounded border border-zinc-300 px-2 py-1"
                       value=""
                       onChange={(e) => { if (e.target.value) void addMember(e.target.value); }}
@@ -238,13 +261,32 @@ export function TeamsSettings() {
                 <div className="rounded border border-red-200 p-3">
                   <div className="text-xs font-medium text-red-600">팀 삭제</div>
                   <p className="mt-1 text-[11px] text-zinc-500">팀을 지워도 팀에 속했던 에이전트는 그대로 있다.</p>
-                  <button
-                    className="mt-2 rounded border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
-                    disabled={busy}
-                    onClick={() => void deleteTeam()}
-                  >
-                    Delete team
-                  </button>
+                  {confirmDelete ? (
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="text-[11px] text-red-700">정말 지우는가?</span>
+                      <button
+                        className="rounded border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                        disabled={busy}
+                        onClick={() => void deleteTeam()}
+                      >
+                        정말 삭제
+                      </button>
+                      <button
+                        className="rounded border border-zinc-300 px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-50"
+                        onClick={() => setConfirmDelete(false)}
+                      >
+                        취소
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="mt-2 rounded border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                      disabled={busy}
+                      onClick={() => setConfirmDelete(true)}
+                    >
+                      Delete team
+                    </button>
+                  )}
                 </div>
               )}
             </div>
