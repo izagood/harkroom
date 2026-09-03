@@ -40,12 +40,12 @@ export function ChannelEmptyState(
 
   return (
     <div className="px-4 py-10 text-center" data-testid="channel-empty-state">
-      <p className="text-sm font-medium text-zinc-600">
+      <p className="text-sm font-medium text-fg-muted">
         {channel ? `#${channel.name} 에 아직 메시지가 없다` : '아직 메시지가 없다'}
       </p>
-      {channel?.topic && <p className="mt-1 text-xs text-zinc-500">{channel.topic}</p>}
+      {channel?.topic && <p className="mt-1 text-xs text-fg-subtle">{channel.topic}</p>}
       {(mentionAgent || showTopic) && (
-        <ul className="mx-auto mt-4 max-w-sm list-disc space-y-1 pl-5 text-left text-xs text-zinc-500">
+        <ul className="mx-auto mt-4 max-w-sm list-disc space-y-1 pl-5 text-left text-xs text-fg-subtle">
           {mentionAgent && (
             <li>@{mentionAgent.handle} 처럼 에이전트를 멘션하면 그 에이전트의 inbox 로 들어간다.</li>
           )}

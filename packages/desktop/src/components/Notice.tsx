@@ -17,11 +17,11 @@ export function Notice() {
   return (
     <div
       role="alert"
-      className="flex items-start gap-2 border-b border-amber-300 bg-amber-50 px-4 py-2 text-[13px] text-amber-900"
+      className="flex items-start gap-2 border-b border-warning-border bg-warning-surface px-4 py-2 text-[13px] text-warning"
     >
       <span className="flex-1">{notice}</span>
       <button
-        className="rounded px-1 text-amber-700 hover:bg-amber-100"
+        className="rounded px-1 text-warning hover:bg-warning-surface-strong"
         aria-label="Dismiss notice"
         onClick={() => useAppStore.getState().set({ notice: null })}
       >
