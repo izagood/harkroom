@@ -1,4 +1,4 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
 
 export class ApiError extends Error {
   /**
@@ -252,6 +252,23 @@ export class ApiClient {
    */
   requestAgentStop(agentId: string): Promise<AgentView> {
     return this.req('POST', `/accounts/agents/${agentId}/stop`);
+  }
+
+  /**
+   * 진행 중인 에이전트 PTY 세션 목록(#141). **내가 볼 수 있는 것만 온다** — 소유하지
+   * 않은 에이전트의 세션은 목록에 아예 없다(403 이 아니라 부재다).
+   */
+  async agentSessions(): Promise<AgentSessionView[]> {
+    const res = await this.req<{ sessions: AgentSessionView[] }>('GET', '/agent-sessions');
+    return res.sessions;
+  }
+
+  /**
+   * 세션 하나에 attach 한다. 인가는 **여기서** 끝난다 — 돌려받는 티켓은 그 세션 하나에만
+   * 쓸 수 있는 1회용이고, WS 핸드셰이크는 그 티켓만 소모한다.
+   */
+  attachAgentSession(sessionId: string): Promise<{ ticket: string; session: AgentSessionView }> {
+    return this.req('POST', `/agent-sessions/${sessionId}/attach`);
   }
 
   /** WS 핸드셰이크용 단기 1회용 티켓. 연결 시도마다 새로 받는다. */
