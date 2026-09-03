@@ -39,11 +39,12 @@ function UnreadBadge({ channelId }: { channelId: string }) {
   );
 }
 
-export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, collapsed, onToggleCollapse }: {
+export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox, collapsed, onToggleCollapse }: {
   onLogout: () => void;
   onOpenSettings: (section?: SectionId) => void;
   /** 워크스페이스 전체 디렉터리를 연다(#226). 채널 멤버 목록이 아니라 워크스페이스 전체다. */
   onOpenDirectory: () => void;
+  onOpenInbox: () => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
@@ -431,6 +432,12 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, collapsed, 
         <div>
           {/* 디렉터리는 조회 전용이라 admin 여부를 보지 않는다 — 누가 이 워크스페이스에
               있는지는 모두가 알아야 한다. 계정 관리는 아래 설정 진입점의 몫이다. */}
+          {/* 인박스도 디렉터리와 **같은 방식으로** 연다(#185) — 사이드바 항목이 뷰를
+              열고, 뷰는 닫혀 있으면 아무것도 그리지 않는다. 화면마다 여는 방식이 다르면
+              세 번째 화면을 만들 때 어느 쪽을 따를지 알 수 없다. */}
+          <button className={`${row(false)} text-zinc-400`} onClick={onOpenInbox}>
+            Inbox
+          </button>
           <button className={`${row(false)} text-zinc-400`} onClick={onOpenDirectory}>
             Directory
           </button>

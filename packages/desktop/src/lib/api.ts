@@ -144,6 +144,18 @@ export class ApiClient {
   async inboxUnread(): Promise<InboxEntry[]> {
     return (await this.req<{ entries: InboxEntry[] }>('GET', '/inbox?unread=1')).entries;
   }
+  /**
+   * inbox 전체 — 읽은 것까지(#185). `inboxUnread` 와 갈라 두는 이유는 **쓰는 곳이 다른 것을
+   * 물어보기 때문**이다: 배지·알림은 "아직 안 본 것"만 알면 되고(그래서 `?unread=1`),
+   * 목록 화면은 읽은 것도 있어야 "안 읽음만" 필터가 고를 것이 생긴다. 안 읽은 것만 받아
+   * 놓고 안 읽음 필터를 붙이면 그 스위치는 항상 참이라 아무것도 거르지 않는다.
+   *
+   * 서버 파라미터를 새로 만들지 않았다 — `GET /inbox` 는 `unread` 가 없으면 이미 전체를
+   * 준다(`listInbox` 의 `unreadOnly` 기본값이 false).
+   */
+  async inbox(): Promise<InboxEntry[]> {
+    return (await this.req<{ entries: InboxEntry[] }>('GET', '/inbox')).entries;
+  }
   editMessage(channelId: string, messageId: string, body: string): Promise<MessageRow> {
     return this.req('PATCH', `/channels/${channelId}/messages/${messageId}`, { body });
   }
