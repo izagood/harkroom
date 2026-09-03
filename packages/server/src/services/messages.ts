@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, mentionedHandles, type InboxEntry, type MessageRow } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, mentionedHandles, mentionedIds, normalizeMentions, stripCodeSpans, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { channelVisibleSql } from './channels.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
@@ -153,10 +153,34 @@ export async function postMessage(
     // threadRootId 없이 true 를 보내는 것은 이미 채널 메시지이기 때문이다.
     const alsoInChannel = input.threadRootId ? (input.alsoInChannel ?? false) : false;
 
+    /**
+     * 멘션 정규화(#271). 저장되는 정본은 `<@id>` 다 — 그래야 handle 을 바꿔도 과거 본문을
+     * 다시 쓰지 않는다.
+     *
+     * **삽입 전에 한다.** 넣고 나서 update 로 고치면 그 사이에 읽는 경로(`COLS` 재조회,
+     * WS 이벤트)가 정규화 전 본문을 보고, 같은 메시지가 두 형식으로 존재하는 순간이 생긴다.
+     *
+     * 대상은 **워크스페이스의 모든 계정**이다. 채널 멤버로 좁히면 public standard 채널에는
+     * `channel_member` 행이 아예 없으므로(`createChannel` — private 만 첫 멤버를 넣는다)
+     * 정규화가 통째로 비고, 그 채널의 멘션은 알림이 하나도 가지 않는다.
+     *
+     * `mentionedHandles` 가 코드 구간을 걷어내므로(#298) 코드 안의 `@handle` 은 여기
+     * 목록에 들어오지 않고, `normalizeMentions` 도 같은 판정으로 코드 구간을 비껴간다.
+     */
+    const bodyHandles = mentionedHandles(input.body);
+    const mentionedAccounts = bodyHandles.length
+      ? (await client.query(
+          `select id, lower(handle) as handle from account where lower(handle) = any($1)`,
+          [bodyHandles],
+        )).rows as { id: string; handle: string }[]
+      : [];
+    const handleToId = new Map(mentionedAccounts.map((r) => [r.handle, r.id]));
+    const normalizedBody = normalizeMentions(input.body, handleToId);
+
     const inserted = await client.query(
       `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel)
        values ($1, $2, $3, $4, $5, $6, $7) returning id`,
-      [input.channelId, input.threadRootId ?? null, input.authorId, input.body,
+      [input.channelId, input.threadRootId ?? null, input.authorId, normalizedBody,
        input.kind ?? 'user', JSON.stringify(input.meta ?? {}), alsoInChannel],
     );
     const messageId = inserted.rows[0].id as string;
@@ -184,57 +208,57 @@ export async function postMessage(
 
     const notified = new Set<string>();
 
-    // 멘션 규칙은 @murmur/shared 에 있다 — 데스크탑의 강조와 같은 것을 봐야 한다.
-    const handles = mentionedHandles(input.body);
-    if (handles.length) {
-      // handle 은 소문자로 만들어지지만 사람은 @Fizz 라고 쓴다. 양쪽을 소문자로 맞춘다.
-      // 작성자 자신도 함께 뽑고 알림에서만 걸러 낸다 — `@channel` 이 계정인지 판정하려면
-      // 작성자가 바로 그 handle 의 주인인 경우도 보여야 하기 때문이다.
-      const accounts = await client.query(
-        `select id, lower(handle) as handle from account where lower(handle) = any($1)`,
-        [handles],
+    /**
+     * 알림 판정은 **정규화된 본문의 `<@id>` 토큰**에서 한다(#271 요구 6). 옛 handle 경로를
+     * 남겨 두면 두 판정이 갈라지고, 그때 본문에 남은 것과 알림이 간 곳이 달라진다.
+     *
+     * 코드 구간을 한 번 더 걷어내는 이유: 사람이 코드 블록 안에 `<@uuid>` 를 **직접** 적을
+     * 수 있다. 정규화는 코드를 비껴가지만 그렇게 손으로 적힌 토큰까지 막지는 못한다 —
+     * 코드 안은 알림을 만들지 않는다는 #298 의 결정을 여기서도 같은 함수로 지킨다.
+     *
+     * 작성자 자신은 걸러 낸다.
+     */
+    for (const accountId of mentionedIds(stripCodeSpans(normalizedBody))) {
+      if (accountId !== input.authorId) {
+        await insertInbox(client, accountId, message.id, 'mention', notified);
+      }
+    }
+
+    // `@channel`(#225) — 채널 전체 호출. 본문은 손대지 않는다: `@channel` 은 원문에
+    // 그대로 남고 서버는 inbox 항목만 펼쳐 넣는다. 본문을 치환하면 원문이 사라져
+    // 수정할 때 되돌릴 수 없다(계정이 없으므로 정규화도 지나친다).
+    //
+    // `@channel` 이라는 handle 의 **계정이 실제로 있으면 계정이 이긴다** — 위에서 이미
+    // 평범한 멘션으로 처리됐고 여기서는 아무것도 하지 않는다. 사람의 이름이 예약어에
+    // 밀리면 그 사람은 영영 불릴 수 없다.
+    const accountHandles = new Set(handleToId.keys());
+    if (bodyHandles.includes(CHANNEL_MENTION_HANDLE) && !accountHandles.has(CHANNEL_MENTION_HANDLE)) {
+      // 대상은 **그 채널을 볼 수 있는 사람 전부**다. 규칙은 `fanOutMention` 하나에 있다.
+      await fanOutMention(client, { ...input, messageId: message.id }, null, notified);
+    }
+
+    // 집합(#230) — 저장된 명단을 펼친다. 본문은 손대지 않는다: `@team` 은 원문에 그대로
+    // 남고 서버는 inbox 항목만 펼쳐 넣는다(`@channel` 과 같은 이유다).
+    //
+    // **계정이 이긴다.** `@foo` 가 계정이면 위에서 이미 평범한 멘션으로 처리됐고 여기서는
+    // 건너뛴다. 서버가 양방향 충돌을 막으므로 정상 경로에서는 겹치지 않지만, 026 이전에
+    // 만들어진 행이나 동시 생성 경합으로 겹칠 수 있다 — 그때 사람의 이름이 집합에 밀리면
+    // 그 사람은 영영 불릴 수 없다.
+    //
+    // 조회를 `client` 로 하는 이유: 트랜잭션 클라이언트를 쥔 채 `pool` 에서 또 다른 연결을
+    // 얻으면 풀이 포화된 순간 자기 자신을 기다리는 교착이 된다. 같은 트랜잭션 스냅샷을
+    // 보는 것도 이쪽이 맞다.
+    for (const handle of bodyHandles) {
+      if (handle === CHANNEL_MENTION_HANDLE) continue;
+      if (accountHandles.has(handle)) continue;
+
+      const group = await getHandleGroupByHandle(client, handle);
+      if (!group) continue;
+
+      const members = await listHandleGroupMembers(client, group.id);
+      await fanOutMention(
+        client, { ...input, messageId: message.id }, members.map((m) => m.accountId), notified,
       );
-      for (const row of accounts.rows) {
-        if (row.id !== input.authorId) await insertInbox(client, row.id, message.id, 'mention', notified);
-      }
-
-      // `@channel`(#225) — 채널 전체 호출. 본문은 손대지 않는다: `@channel` 은 원문에
-      // 그대로 남고 서버는 inbox 항목만 펼쳐 넣는다. 본문을 치환하면 원문이 사라져
-      // 수정할 때 되돌릴 수 없다.
-      //
-      // `@channel` 이라는 handle 의 **계정이 실제로 있으면 계정이 이긴다** — 위에서 이미
-      // 평범한 멘션으로 처리됐고 여기서는 아무것도 하지 않는다. 사람의 이름이 예약어에
-      // 밀리면 그 사람은 영영 불릴 수 없다.
-      const claimed = accounts.rows.some((row) => row.handle === CHANNEL_MENTION_HANDLE);
-      if (handles.includes(CHANNEL_MENTION_HANDLE) && !claimed) {
-        // 대상은 **그 채널을 볼 수 있는 사람 전부**다. 규칙은 `fanOutMention` 하나에 있다.
-        await fanOutMention(client, { ...input, messageId: message.id }, null, notified);
-      }
-
-      // 집합(#230) — 저장된 명단을 펼친다. 본문은 손대지 않는다: `@team` 은 원문에 그대로
-      // 남고 서버는 inbox 항목만 펼쳐 넣는다(`@channel` 과 같은 이유다).
-      //
-      // **계정이 이긴다.** `@foo` 가 계정이면 위에서 이미 평범한 멘션으로 처리됐고 여기서는
-      // 건너뛴다. 서버가 양방향 충돌을 막으므로 정상 경로에서는 겹치지 않지만, 026 이전에
-      // 만들어진 행이나 동시 생성 경합으로 겹칠 수 있다 — 그때 사람의 이름이 집합에 밀리면
-      // 그 사람은 영영 불릴 수 없다.
-      //
-      // 조회를 `client` 로 하는 이유: 트랜잭션 클라이언트를 쥔 채 `pool` 에서 또 다른 연결을
-      // 얻으면 풀이 포화된 순간 자기 자신을 기다리는 교착이 된다. 같은 트랜잭션 스냅샷을
-      // 보는 것도 이쪽이 맞다.
-      const accountHandles = new Set(accounts.rows.map((r) => r.handle));
-      for (const handle of handles) {
-        if (handle === CHANNEL_MENTION_HANDLE) continue;
-        if (accountHandles.has(handle)) continue;
-
-        const group = await getHandleGroupByHandle(client, handle);
-        if (!group) continue;
-
-        const members = await listHandleGroupMembers(client, group.id);
-        await fanOutMention(
-          client, { ...input, messageId: message.id }, members.map((m) => m.accountId), notified,
-        );
-      }
     }
 
     if (input.threadRootId) {
@@ -290,9 +314,28 @@ export async function editMessage(
   const row = found.rows[0];
   if (row.author_id !== args.actorId || row.kind !== 'user') return 'forbidden';
 
+  /**
+   * 수정도 **같은 정규화**를 탄다(#271) — 안 그러면 고친 메시지만 옛 형식으로 남아,
+   * 그 메시지의 멘션만 이름 변경을 따라가지 못한다.
+   *
+   * `postMessage` 와 같은 이유로 채널 멤버가 아니라 **모든 계정**에서 찾는다:
+   * public standard 채널에는 `channel_member` 행이 없다.
+   *
+   * 알림은 여기서 다시 만들지 않는다 — 그것은 이 함수가 원래 하지 않던 일이고,
+   * 수정으로 뒤늦게 알림이 가는 것은 이 작업의 범위가 아니다.
+   */
+  const bodyHandles = mentionedHandles(args.body);
+  const accounts = bodyHandles.length
+    ? (await pool.query(
+        `select id, lower(handle) as handle from account where lower(handle) = any($1)`,
+        [bodyHandles],
+      )).rows as { id: string; handle: string }[]
+    : [];
+  const normalizedBody = normalizeMentions(args.body, new Map(accounts.map((r) => [r.handle, r.id])));
+
   const updated = await pool.query(
     `update message set body = $2, edited_at = now() where id = $1 returning ${COLS}`,
-    [args.messageId, args.body],
+    [args.messageId, normalizedBody],
   );
   return updated.rows[0];
 }

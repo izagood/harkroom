@@ -10,6 +10,7 @@ let stop: () => Promise<void>;
 let adminToken: string;
 let adminId: string;
 let botPat: string;
+let botId: string;
 let channelId: string;
 let baseUrl: string;
 
@@ -18,7 +19,7 @@ beforeAll(async () => {
   stop = db.stop;
   app = await buildServer({ pool: db.pool });
   ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
-  ({ pat: botPat } = await createAgent(app, adminToken, 'wsbot'));
+  ({ pat: botPat, accountId: botId } = await createAgent(app, adminToken, 'wsbot'));
   const ch = await app.inject({
     method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
     payload: { name: 'live' },
@@ -108,8 +109,12 @@ describe('websocket', () => {
       payload: { body: '@wsbot ping' },
     });
 
+    // WS 는 **정본**을 그대로 보낸다(#271) — `@handle` 이 아니라 `<@id>` 다. 화면이 현재
+    // handle 로 매핑하므로, 이름을 바꿔도 이미 흘러간 이벤트를 다시 보낼 필요가 없다.
+    // 여기서 `@wsbot` 을 기대하면 정규화가 저장에만 걸리고 이벤트에는 안 걸린 상태도
+    // 통과한다 — 그때 데스크탑은 실시간 메시지만 옛 형식으로 받는다.
     await waitFor(() =>
-      admin.events.some((e: any) => e.type === 'message.created' && e.message.body === '@wsbot ping') &&
+      admin.events.some((e: any) => e.type === 'message.created' && e.message.body === `<@${botId}> ping`) &&
       bot.events.some((e: any) => e.type === 'inbox.updated'));
     admin.close(); bot.close();
   });

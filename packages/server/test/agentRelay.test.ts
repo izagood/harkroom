@@ -152,10 +152,10 @@ beforeAll(async () => {
     const inv = await app.inject({ method: 'POST', url: '/invites', headers: auth(adminToken) });
     const created = await app.inject({
       method: 'POST', url: '/auth/register',
-      payload: { handle, displayName: handle, password: 'pw123456', inviteToken: inv.json().token as string },
+      payload: { handle, loginId: handle, displayName: handle, password: 'pw123456', inviteToken: inv.json().token as string },
     });
     const login = await app.inject({
-      method: 'POST', url: '/auth/login', payload: { handle, password: 'pw123456' },
+      method: 'POST', url: '/auth/login', payload: { loginId: handle, password: 'pw123456' },
     });
     return { id: created.json().id as string, token: login.json().token as string };
   };

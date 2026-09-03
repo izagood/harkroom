@@ -4,6 +4,7 @@ import { Logo } from '../components/Logo';
 
 export function ConnectScreen({ onConnected, initialError = null }: { onConnected: (baseUrl: string, token: string, accountId: string, handle: string) => void; initialError?: string | null }) {
   const [baseUrl, setBaseUrl] = useState('http://localhost:3400');
+  const [loginId, setLoginId] = useState('');
   const [handle, setHandle] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
@@ -30,11 +31,11 @@ export function ConnectScreen({ onConnected, initialError = null }: { onConnecte
     setError(null);
     try {
       const api = new ApiClient(baseUrl);
-      if (mode === 'bootstrap') await api.bootstrap(handle, displayName || handle, password);
-      if (mode === 'register') await api.register(handle, displayName || handle, password, inviteToken.trim());
+      if (mode === 'bootstrap') await api.bootstrap(loginId, handle, displayName || handle, password);
+      if (mode === 'register') await api.register(loginId, handle, displayName || handle, password, inviteToken.trim());
       // 계정 생성 라우트는 둘 다 세션을 주지 않는다(`{ id }` 만) — 만든 자격증명으로 이어서
       // 로그인한다. 그래서 가입 성공이 곧 로그인 상태가 된다.
-      const { token } = await api.login(handle, password);
+      const { token } = await api.login(loginId, password);
       // 토큰을 **여기서** 클라이언트에 싣는다. `login()` 은 토큰을 돌려주기만 하므로,
       // 싣지 않고 `me()` 를 부르면 authorization 헤더가 없어 401 이 된다(#246 — login 은
       // 200 인데 그 직후 /auth/me 가 401 이라 아무도 앱에 들어갈 수 없었다).
@@ -63,15 +64,26 @@ export function ConnectScreen({ onConnected, initialError = null }: { onConnecte
           Server URL
           <input className={field} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
         </label>
-        <label className="block text-xs font-medium">
-          Handle
-          <input className={field} value={handle} onChange={(e) => setHandle(e.target.value)} />
-        </label>
-        {mode !== 'signin' && (
+        {mode === 'signin' ? (
           <label className="block text-xs font-medium">
-            Display name
-            <input className={field} value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+            Login ID
+            <input className={field} value={loginId} onChange={(e) => setLoginId(e.target.value)} />
           </label>
+        ) : (
+          <>
+            <label className="block text-xs font-medium">
+              Login ID
+              <input className={field} value={loginId} onChange={(e) => setLoginId(e.target.value)} />
+            </label>
+            <label className="block text-xs font-medium">
+              Handle (@)
+              <input className={field} value={handle} onChange={(e) => setHandle(e.target.value)} />
+            </label>
+            <label className="block text-xs font-medium">
+              Display name
+              <input className={field} value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+            </label>
+          </>
         )}
         {mode === 'register' && (
           <label className="block text-xs font-medium">
@@ -91,7 +103,7 @@ export function ConnectScreen({ onConnected, initialError = null }: { onConnecte
         {error && <p className="text-xs text-danger">{error}</p>}
         <button
           type="submit"
-          // 초대 가입은 토큰 없이 보내면 서버가 400 을 낸다 — 보내기 전에 막는다.
+          // 초대 가입은 토큰 없이 보내면 서버가 400 을낸다 — 보내기 전에 막는다.
           disabled={busy || (mode === 'register' && inviteToken.trim() === '')}
           className="w-full rounded bg-accent py-2 font-medium text-fg-on-strong disabled:opacity-50"
         >
