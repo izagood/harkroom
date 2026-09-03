@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
 import type { ChannelPrefRow } from '@murmur/shared';
+import type { SweepItem } from '../src/state/sweep';
 import { useAppStore } from '../src/state/appStore';
 import { Controller, setController } from '../src/state/controller';
-import { Sweep } from '../src/components/Sweep';
+import { Sweep, SweepShell } from '../src/components/Sweep';
 import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 /**
@@ -64,7 +65,7 @@ describe('미읽음 훑기', () => {
     expect(screen.getByText('1 / 2')).toBeTruthy();
 
     fireEvent.click(screen.getByText('그냥 다음'));
-    expect(screen.getByText('#dev')).toBeTruthy();
+    await screen.findByText('#dev');
   });
 
   it('"읽음 처리하고 다음"이 읽음 위치를 전진시키고 다음으로 간다', async () => {
@@ -92,7 +93,9 @@ describe('미읽음 훑기', () => {
     // 때문에 #154 의 미읽음 표시로만 되돌릴 수 있게 된다 — 사람이 모르는 사이에 치르는 대가다.
     expect(api.markChannelRead).not.toHaveBeenCalled();
     expect(useAppStore.getState().reads['c1']).toEqual({ lastReadSeq: 0, unread: 1 });
-    expect(screen.getByText('#dev')).toBeTruthy();
+    // 클릭 직후 동기 조회는 CI 에서 흔들린다 — 다음 채널로의 전환은 상태 갱신을 거쳐
+    // 다시 그려지므로, 형제 테스트처럼 findByText 로 기다린다.
+    await screen.findByText('#dev');
   });
 
   it('음소거된 채널은 훑기 목록에 없다', async () => {
@@ -106,7 +109,8 @@ describe('미읽음 훑기', () => {
     expect(api.messages).not.toHaveBeenCalledWith('c2', expect.anything());
 
     fireEvent.click(screen.getByText('그냥 다음'));
-    expect(screen.getByText('다 봤다')).toBeTruthy();
+    // 같은 이유로 여기도 기다린다 — 회수 중 이 단언이 실제로 한 번 흔들렸다.
+    await screen.findByText('다 봤다');
     expect(screen.queryByText('#dev')).toBeNull();
   });
 
@@ -115,6 +119,44 @@ describe('미읽음 훑기', () => {
       reads: vi.fn(async () => [{ channelId: 'c1', lastReadSeq: 5, unread: 0 }]),
     }));
     expect(await screen.findByText('다 봤다')).toBeTruthy();
+  });
+
+  /**
+   * 목록을 다시 불러오면 처음부터 본다. `SweepShell` 이 이 되돌리기를 **effect 가 아니라
+   * 렌더 중에** 하는 이유는 그쪽 주석에 있다 — effect 로 두면 클릭으로 올라간 인덱스를
+   * 뒤늦게 도착한 effect 가 0 으로 되돌려, 눌렀는데 첫 항목에 머문다(CI 에서 위 두 건이
+   * 그렇게 빨개졌다). 되돌리기 **자체가** 사라지지 않게 여기서 못 박는다: 인덱스를 그대로
+   * 두면 짧아진 목록의 끝을 가리켜 볼 것이 남았는데도 "다 봤다"가 뜬다.
+   *
+   * `Sweep` 이 아니라 `SweepShell` 을 직접 띄우는 이유: 같은 컴포넌트를 **살려 둔 채로**
+   * `items` 의 식별자만 갈아야 되돌리기가 일어나는 자리에 닿는다. 다시 mount 하면
+   * `useState(0)` 이 알아서 0 이라 무엇도 지키지 않는다.
+   */
+  it('같은 화면에 새 목록이 오면 인덱스가 처음으로 되돌아간다', async () => {
+    const items = (bodies: string[]): SweepItem[] => bodies.map((body, i) => ({
+      channelId: `c${i + 1}`, label: `#${body}`, newestSeq: 1, oldestAt: OLD,
+      messages: [msg(`m${i + 1}`, `c${i + 1}`, 1, body, 'u2', { createdAt: OLD })],
+    }));
+    useAppStore.getState().set({ accounts: { u2: acc('u2', 'peer') } });
+
+    const first = items(['alpha', 'beta']);
+    const { rerender } = render(
+      <SweepShell items={first} loading={false} error={null}
+        onRetry={() => {}} onClose={() => {}} onMarkRead={async () => {}} />,
+    );
+
+    fireEvent.click(screen.getByText('그냥 다음'));
+    expect(screen.getByText('#beta')).toBeTruthy();
+    expect(screen.getByText('2 / 2')).toBeTruthy();
+
+    // 새 목록(다른 배열 식별자)이 오면 처음으로 돌아간다.
+    rerender(
+      <SweepShell items={items(['alpha', 'beta'])} loading={false} error={null}
+        onRetry={() => {}} onClose={() => {}} onMarkRead={async () => {}} />,
+    );
+
+    expect(screen.getByText('#alpha')).toBeTruthy();
+    expect(screen.getByText('1 / 2')).toBeTruthy();
   });
 
   it('조회 실패는 "다 봤다"가 아니라 오류로 보인다', async () => {

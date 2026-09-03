@@ -1,0 +1,160 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
+import { useAppStore } from '../src/state/appStore';
+import { setController, type Controller } from '../src/state/controller';
+import { MessageItem } from '../src/components/MessageItem';
+import { acc, msg } from './helpers/fakeApi';
+
+const fakeController = () => {
+  const c = {
+    toggleReaction: vi.fn(async () => undefined),
+    openThread: vi.fn(async () => undefined),
+    editMessage: vi.fn(async () => undefined),
+    deleteMessage: vi.fn(async () => undefined),
+  };
+  setController(c as unknown as Controller);
+  return c;
+};
+
+beforeEach(() => {
+  useAppStore.getState().reset();
+  useAppStore.getState().set({
+    me: acc('u1', 'me'),
+    accounts: { u1: acc('u1', 'me'), u2: acc('u2', 'someone') },
+    messages: { c1: [] },
+  });
+});
+afterEach(() => cleanup());
+
+describe('#254 답글 컨트롤 위치 변경', () => {
+  // 회귀선 1: 답글 컨트롤이 본문 열 안, 리액션 다음에 온다.
+  //
+  // 리액션 칩을 **실제로 달아 둔다** — `Reactions` 는 리액션이 없으면 null 을 반환하므로
+  // (Reactions.tsx 의 `if (!message.reactions.length) return null`), 빈 fixture 로는
+  // [data-testid="reactions"] 가 아예 없어 순서를 물을 대상이 사라진다. 초판이 그것을
+  // `if (reactions)` 로 감싸 두어, 답글 컨트롤을 오른쪽 열로 되돌려도 초록이었다.
+  it('답글 컨트롤이 본문 열 안에서 리액션 칩 다음에 온다', () => {
+    fakeController();
+    render(
+      <MessageItem
+        message={msg('m1', 'c1', 1, 'root', 'u2', {
+          replyCount: 2,
+          reactions: [{ emoji: '👍', accountIds: ['u1'] }],
+        })}
+      />,
+    );
+
+    const replyBtn = screen.getByRole('button', { name: '2 replies' });
+    // 가드 없이 찾는다 — 없으면 그 자체가 실패여야 한다.
+    const reactions = screen.getByTestId('reactions');
+
+    // ① 리액션 칩과 답글 컨트롤이 **같은 열**(본문 열) 안에 있다.
+    const mainColumn = document.querySelector('.min-w-0.flex-1')!;
+    expect(mainColumn.contains(reactions)).toBe(true);
+    expect(mainColumn.contains(replyBtn)).toBe(true);
+
+    // ② 그 안에서 답글 컨트롤이 리액션 칩 **뒤에** 온다.
+    expect(
+      reactions.compareDocumentPosition(replyBtn) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  // 회귀선 2: 답글 컨트롤과 호버 툴바가 다른 컨테이너에 있다 (구조적 비겹침)
+  it('답글 컨트롤과 툴바가 다른 컨테이너에 있어 겹칠 수 없다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
+
+    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const replyBtn = screen.getByRole('button', { name: '2 replies' });
+
+    // 답글 버튼과 툴바가 다른 부모를 갖는다 (다른 컨테이너)
+    expect(toolbar.parentElement).not.toBe(replyBtn.parentElement);
+
+    // 답글 버튼은 본문 열(	min-w-0 flex-1) 안에, 툴바는 오른쪽 열(relative) 안에
+    const mainColumn = document.querySelector('.min-w-0.flex-1');
+    const rightColumn = document.querySelector('.relative.flex.shrink-0.items-start.gap-1');
+
+    expect(mainColumn?.contains(replyBtn)).toBe(true);
+    expect(rightColumn?.contains(toolbar)).toBe(true);
+  });
+
+  // 회귀선 3: 답글이 있으면 호버 없이 pill 이 보인다(#161). jsdom 에는 레이아웃이 없으니
+  // "보인다"를 픽셀로 재지 못한다 — 호버로만 드러나게 하는 클래스가 **붙지 않았음**을
+  // 단언한다. 존재만 확인하면 pill 에 hoverOnly 를 붙여도 초록으로 남는다.
+  it('답글이 있으면 호버 없이 답글 pill 이 보인다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
+
+    const replyBtn = screen.getByRole('button', { name: '2 replies' });
+    expect(replyBtn.className).not.toMatch(/\bopacity-0\b/);
+    expect(replyBtn.className).not.toMatch(/\binvisible\b/);
+    expect(replyBtn.className).not.toMatch(/\bhidden\b/);
+  });
+
+  // 회귀선 4: 답글이 없으면 "Reply in thread" 가 opacity 로 숨고 visibility 로 숨지 않는다
+  it('"Reply in thread" 가 opacity 로 숨고 visibility:hidden 이 아니다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: null })} />);
+
+    // 버튼이 DOM 에 있지만 opacity-0 으로 숨겨져 있다
+    const replyBtn = screen.getByRole('button', { name: 'Reply in thread' });
+    expect(replyBtn).toBeTruthy();
+
+    // opacity-0 로 숨어야 하고, visibility 계열로 숨어서는 안 된다. Tailwind 에서
+    // visibility:hidden 은 `invisible` 이다 — `/visibility/` 로 찾으면 클래스 문자열에
+    // 그 낱말이 없어 무엇도 걸리지 않는다(초판이 그랬다).
+    expect(replyBtn.className).toMatch(/\bopacity-0\b/);
+    expect(replyBtn.className).not.toMatch(/\binvisible\b/);
+    expect(replyBtn.className).not.toMatch(/\bcollapse\b/);
+
+    // 호버 후에는 opacity-100 이 되어 보여야 함
+    const message = screen.getByText('root').closest('.group')!;
+    fireEvent.mouseEnter(message);
+    expect(replyBtn.className).toMatch(/group-hover:opacity-100/);
+  });
+
+  // 회귀선 5: 툴바의 기존 동작(리액션 피커, ⋯ 메뉴, 인라인 리액션)이 그대로다
+  it('툴바에 리액션 피커, 메뉴, 인라인 리액션이 모두 있다', () => {
+    const c = fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, '테스트', 'u1')} />);
+
+    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    fireEvent.mouseEnter(toolbar);
+
+    // 인라인 이모지 버튼 3개
+    expect(within(toolbar).getByRole('button', { name: 'React with 👍' })).toBeTruthy();
+    expect(within(toolbar).getByRole('button', { name: 'React with 🎉' })).toBeTruthy();
+    expect(within(toolbar).getByRole('button', { name: 'React with ✅' })).toBeTruthy();
+
+    // 피커
+    expect(within(toolbar).getByRole('button', { name: /Add reaction|＋/ })).toBeTruthy();
+
+    // 메뉴
+    expect(within(toolbar).getByRole('button', { name: 'More actions' })).toBeTruthy();
+  });
+
+  // 회귀선 6: 스레드 패널(inThread) 안에서는 답글 컨트롤이 없다
+  it('inThread=true 이면 답글 컨트롤이 없다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'reply', 'u2', { replyCount: 2 })} inThread />);
+
+    // 답글 버튼이 없어야 함
+    expect(screen.queryByRole('button', { name: /repl(y|ies)/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reply in thread' })).toBeNull();
+  });
+});
+
+describe('#254 툴바 앵커 변경 (#145 관련)', () => {
+  it('툴바가 right-full 이 아니라 right-2 top-1 로 앵커된다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
+
+    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+
+    // right-full 이 아니어야 함
+    expect(toolbar.className).not.toMatch(/\bright-full\b/);
+    // right-2 top-1 이어야 함
+    expect(toolbar.className).toMatch(/\bright-2\b/);
+    expect(toolbar.className).toMatch(/\btop-1\b/);
+  });
+});
