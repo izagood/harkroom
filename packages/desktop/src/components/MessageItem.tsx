@@ -202,6 +202,12 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
             ) : (
               // 항목이 하나도 없으면 트리거를 만들지 않는다 — 열어도 비어 있는 메뉴는
               // "할 수 있는 게 있다"는 거짓 신호다(design.md §4).
+              //
+              // #178 이후 이 조건은 **실제로는 거짓이 되지 않는다**: "Copy link" 는 어떤
+              // 메시지에도 있으므로 목록이 비지 않는다. 그래도 남겨 둔다 — 항목이 다시
+              // 전부 조건부가 되는 순간(예: 링크를 admin 에게만 여는 결정) 이 가드가
+              // 없으면 빈 메뉴가 조용히 생긴다. 지금 지키는 것이 없다는 사실을 적어 두는
+              // 이유는, 이 줄을 읽고 "여기서 걸러진다"고 믿는 사람이 없게 하기 위해서다.
               menuItems.length > 0 && (
                 <Menu
                   renderTrigger={(props) => (
