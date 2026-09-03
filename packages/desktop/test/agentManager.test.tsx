@@ -9,7 +9,9 @@ import { acc } from './helpers/fakeApi';
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
-  mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null, ...extra,
+  mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
+  // #186: 에이전트는 상태를 고를 수 없지만 AccountView 의 필수 필드다.
+  status: 'available', statusText: null, ...extra,
 });
 
 type CreateInput = { handle: string; displayName: string } & Partial<AgentConfig>;

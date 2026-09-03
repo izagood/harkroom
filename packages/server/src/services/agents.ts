@@ -9,6 +9,9 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   coalesce(c.mention_permission, 'auto') as "mentionPermission",
   c.owner_account_id as "ownerAccountId",
   a.disabled_at is not null as disabled,
+  -- 에이전트는 상태를 고를 수 없다(서버가 거절한다). 기본값 그대로지만 AccountView 의
+  -- 필수 필드라 형태를 맞춰 준다 — 화면은 사람 계정에만 이 값을 그린다.
+  a.status, a.status_text as "statusText",
   v.version as "runnerVersion"`;
 
 const FROM = `from account a left join agent_config c on c.account_id = a.id
