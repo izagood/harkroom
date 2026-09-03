@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
 import type { ChannelPrefRow } from '@murmur/shared';
 import type { SweepItem } from '../src/state/sweep';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController } from '../src/state/controller';
 import { Sweep, SweepShell } from '../src/components/Sweep';
 import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';

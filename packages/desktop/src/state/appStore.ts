@@ -179,141 +179,156 @@ const initial = {
   linkPreviewReadyAt: {},
 };
 
-export const useAppStore = create<AppState>((set, get) => ({
-  ...initial,
-  set: (partial) => set(partial),
-  toggleExpanded: (messageId) => {
-    const cur = get().expandedMessageIds;
-    if (!cur[messageId]) {
-      set({ expandedMessageIds: { ...cur, [messageId]: true } });
-      return;
-    }
-    // 다시 접을 때는 키를 **지운다** — false 를 남기면 "접어 둔 것" 과 "손대지 않은 것" 이
-    // 구분되지 않는 채 목록만 자란다.
-    const next = { ...cur };
-    delete next[messageId];
-    set({ expandedMessageIds: next });
-  },
-  upsertMessages: (channelId, rows) => {
-    const byId = new Map((get().messages[channelId] ?? []).map((m) => [m.id, m]));
-    for (const r of rows) byId.set(r.id, r);
-    const merged = [...byId.values()].sort((a, b) => a.seq - b.seq);
-    set({ messages: { ...get().messages, [channelId]: merged } });
-  },
-  /**
-   * 리액션 델타를 적용한다. 같은 사람이 두 번 들어오지 않게 하는 것이 핵심이다 — 내가 누른
-   * 것은 로컬 갱신과 소켓 이벤트로 두 번 도착하고, 두 번 세면 1 이 2 로 보인다.
-   */
-  applyReaction: (channelId, messageId, emoji, accountId, on) => {
-    const rows = get().messages[channelId];
-    if (!rows) return;
-    const next = rows.map((m) => {
-      if (m.id !== messageId) return m;
-      const others = m.reactions.filter((r) => r.emoji !== emoji);
-      const hit = m.reactions.find((r) => r.emoji === emoji);
-      const ids = (hit?.accountIds ?? []).filter((id) => id !== accountId);
-      if (on) ids.push(accountId);
-      // 아무도 남지 않으면 칩을 지운다 — 0 이 적힌 칩은 UI 의 거짓말이다.
-      if (!ids.length) return { ...m, reactions: others };
-      // 이모지의 원래 자리를 지킨다. 뒤로 밀면 누를 때마다 칩이 춤춘다.
-      return {
-        ...m,
-        reactions: m.reactions.map((r) => (r.emoji === emoji ? { emoji, accountIds: ids } : r))
-          .concat(hit ? [] : [{ emoji, accountIds: ids }]),
-      };
-    });
-    set({ messages: { ...get().messages, [channelId]: next } });
-  },
-  removeMessage: (channelId, messageId) => {
-    const rows = get().messages[channelId];
-    if (!rows) return;
-    set({ messages: { ...get().messages, [channelId]: rows.filter((m) => m.id !== messageId) } });
-  },
-  applyStatus: (accountId, status, statusText) => {
-    const cur = get().accounts[accountId];
-    // 처음 보는 계정이면 디렉터리에 없다는 뜻이다. 여기서 껍데기를 만들면 handle 없는
-    // 계정이 멘션 후보·작성자 표에 섞인다 — 계정을 다시 받아오는 것은 컨트롤러의 몫이다.
-    if (!cur) return;
-    const patched = { ...cur, status, statusText };
-    const me = get().me;
-    // `me` 는 accounts 와 **별도 객체**다. 한쪽만 고치면 내가 정한 상태가 남의 화면에는
-    // 보이는데 내 사이드바에는 안 보이는(또는 그 반대인) 갈라짐이 생긴다.
-    set({
-      accounts: { ...get().accounts, [accountId]: patched },
-      ...(me?.id === accountId ? { me: { ...me, status, statusText } } : {}),
-    });
-  },
-  /**
-   * 프로필 사진이 바뀌었다(#159). `applyStatus` 와 같은 이유로 `me` 도 함께 고친다 —
-   * 한쪽만 고치면 내가 방금 올린 사진이 남의 화면에는 보이는데 내 화면에는 안 보인다.
-   */
-  applyAvatar: (accountId, avatarAttachmentId) => {
-    const cur = get().accounts[accountId];
-    const me = get().me;
-// 디렉터리에 없는 계정에 껍데기를 만들지 않는다 — `applyStatus` 와 같은 판단이다.
-    if (!cur && me?.id !== accountId) return;
-    set({
-      ...(cur ? { accounts: { ...get().accounts, [accountId]: { ...cur, avatarAttachmentId } } } : {}),
-      ...(me?.id === accountId ? { me: { ...me, avatarAttachmentId } } : {}),
-    });
-  },
-  /**
-   * handle 이 바뀌었다(#271). `applyStatus` 와 같은 이유로 `me` 도 함께 고친다 —
-   * 한쪽만 고치면 내가 방금 바꾼 이름이 남의 화면에는 보이는데 내 화면에는 안 된다.
-   */
-  applyHandle: (accountId, handle) => {
-    const cur = get().accounts[accountId];
-    const me = get().me;
-    if (!cur && me?.id !== accountId) return;
-    set({
-      ...(cur ? { accounts: { ...get().accounts, [accountId]: { ...cur, handle } } } : {}),
-      ...(me?.id === accountId ? { me: { ...me, handle } } : {}),
-    });
-  },
-  reset: () => set({ ...initial }),
-  clearDrafts: () => { set({ drafts: {} }); draftsStorage.clear(); },
-  /**
-   * 스토어가 초안의 **단일 원천**이다. 영속도 여기서 한다 — 컴포저가 지역 state 와
-   * 보관소를 각각 들면 진실이 둘이 되고, 실제로 초판이 그랬다(스토어 쪽은 아무도
-   * 쓰지 않는 죽은 코드였고 로그아웃이 그쪽을 비우지 않았다).
-   *
-   * 맵이 이미 메모리에 있으므로 키 입력마다 보관소를 **읽지** 않는다. 초판은 매
-   * 글자마다 load() 로 JSON 을 파싱했다 — murmur 메시지는 길다는 것이 이 기능의
-   * 전제인데 그 전제와 정면으로 어긋난다.
-   */
-  setDraft: (scopeKey, draft) => {
-    const next = { ...get().drafts };
-    if (draft) next[scopeKey] = draft;
-    else delete next[scopeKey];
-    set({ drafts: next });
-    draftsStorage.save(next);
-  },
-  hydrateDrafts: () => set({ drafts: draftsStorage.load() }),
-  pushHistory: (entry) => {
-    const { history, historyIndex } = get();
-    const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(entry);
-    if (newHistory.length > MAX_HISTORY_LENGTH) {
-      newHistory.shift();
-      set({ history: newHistory, historyIndex: newHistory.length - 1 });
-    } else {
-      set({ history: newHistory, historyIndex: newHistory.length - 1 });
-    }
-  },
-  goBack: () => {
-    const { history, historyIndex } = get();
-    if (historyIndex <= 0) return null;
-    const entry = history[historyIndex - 1];
-    return entry ?? null;
-  },
-  goForward: () => {
-    const { history, historyIndex } = get();
-    if (historyIndex >= history.length - 1) return null;
-    const entry = history[historyIndex + 1];
-    return entry ?? null;
-  },
-  truncateForward: () => {
-    const { history, historyIndex } = get();
-    set({ history: history.slice(0, historyIndex + 1) });
-  },
-}));
+/**
+ * 커뮤니티 하나의 세계를 담는 스토어를 만든다(#166).
+ *
+ * 예전에는 이 자리에 모듈 최상위 싱글턴 `useAppStore` 가 있었고, 그 하나가 곧 "그 서버"
+ * 였다. 커뮤니티가 N 개가 되면 그 전제가 깨지므로 **팩토리**로 바꾼다. `AppState`·
+ * `initial`·`reset()` 의 모양은 하나도 건드리지 않았다 — 이 이슈가 바꾸는 것은 상태의
+ * 모양이 아니라 그것이 **몇 벌 존재하는가**다.
+ *
+ * 활성 커뮤니티의 것을 읽는 자리는 `state/communities.ts` 의 `useActiveStore` 다.
+ */
+export function createAppStore() {
+  return create<AppState>((set, get) => ({
+    ...initial,
+    set: (partial) => set(partial),
+    toggleExpanded: (messageId) => {
+      const cur = get().expandedMessageIds;
+      if (!cur[messageId]) {
+        set({ expandedMessageIds: { ...cur, [messageId]: true } });
+        return;
+      }
+      // 다시 접을 때는 키를 **지운다** — false 를 남기면 "접어 둔 것" 과 "손대지 않은 것" 이
+      // 구분되지 않는 채 목록만 자란다.
+      const next = { ...cur };
+      delete next[messageId];
+      set({ expandedMessageIds: next });
+    },
+    upsertMessages: (channelId, rows) => {
+      const byId = new Map((get().messages[channelId] ?? []).map((m) => [m.id, m]));
+      for (const r of rows) byId.set(r.id, r);
+      const merged = [...byId.values()].sort((a, b) => a.seq - b.seq);
+      set({ messages: { ...get().messages, [channelId]: merged } });
+    },
+    /**
+     * 리액션 델타를 적용한다. 같은 사람이 두 번 들어오지 않게 하는 것이 핵심이다 — 내가 누른
+     * 것은 로컬 갱신과 소켓 이벤트로 두 번 도착하고, 두 번 세면 1 이 2 로 보인다.
+     */
+    applyReaction: (channelId, messageId, emoji, accountId, on) => {
+      const rows = get().messages[channelId];
+      if (!rows) return;
+      const next = rows.map((m) => {
+        if (m.id !== messageId) return m;
+        const others = m.reactions.filter((r) => r.emoji !== emoji);
+        const hit = m.reactions.find((r) => r.emoji === emoji);
+        const ids = (hit?.accountIds ?? []).filter((id) => id !== accountId);
+        if (on) ids.push(accountId);
+        // 아무도 남지 않으면 칩을 지운다 — 0 이 적힌 칩은 UI 의 거짓말이다.
+        if (!ids.length) return { ...m, reactions: others };
+        // 이모지의 원래 자리를 지킨다. 뒤로 밀면 누를 때마다 칩이 춤춘다.
+        return {
+          ...m,
+          reactions: m.reactions.map((r) => (r.emoji === emoji ? { emoji, accountIds: ids } : r))
+            .concat(hit ? [] : [{ emoji, accountIds: ids }]),
+        };
+      });
+      set({ messages: { ...get().messages, [channelId]: next } });
+    },
+    removeMessage: (channelId, messageId) => {
+      const rows = get().messages[channelId];
+      if (!rows) return;
+      set({ messages: { ...get().messages, [channelId]: rows.filter((m) => m.id !== messageId) } });
+    },
+    applyStatus: (accountId, status, statusText) => {
+      const cur = get().accounts[accountId];
+      // 처음 보는 계정이면 디렉터리에 없다는 뜻이다. 여기서 껍데기를 만들면 handle 없는
+      // 계정이 멘션 후보·작성자 표에 섞인다 — 계정을 다시 받아오는 것은 컨트롤러의 몫이다.
+      if (!cur) return;
+      const patched = { ...cur, status, statusText };
+      const me = get().me;
+      // `me` 는 accounts 와 **별도 객체**다. 한쪽만 고치면 내가 정한 상태가 남의 화면에는
+      // 보이는데 내 사이드바에는 안 보이는(또는 그 반대인) 갈라짐이 생긴다.
+      set({
+        accounts: { ...get().accounts, [accountId]: patched },
+        ...(me?.id === accountId ? { me: { ...me, status, statusText } } : {}),
+      });
+    },
+    /**
+     * 프로필 사진이 바뀌었다(#159). `applyStatus` 와 같은 이유로 `me` 도 함께 고친다 —
+     * 한쪽만 고치면 내가 방금 올린 사진이 남의 화면에는 보이는데 내 화면에는 안 보인다.
+     */
+    applyAvatar: (accountId, avatarAttachmentId) => {
+      const cur = get().accounts[accountId];
+      const me = get().me;
+      // 디렉터리에 없는 계정에 껍데기를 만들지 않는다 — `applyStatus` 와 같은 판단이다.
+      if (!cur && me?.id !== accountId) return;
+      set({
+        ...(cur ? { accounts: { ...get().accounts, [accountId]: { ...cur, avatarAttachmentId } } } : {}),
+        ...(me?.id === accountId ? { me: { ...me, avatarAttachmentId } } : {}),
+      });
+    },
+    /**
+     * handle 이 바뀌었다(#271). `applyStatus` 와 같은 이유로 `me` 도 함께 고친다 —
+     * 한쪽만 고치면 내가 방금 바꾼 이름이 남의 화면에는 보이는데 내 화면에는 안 된다.
+     */
+    applyHandle: (accountId, handle) => {
+      const cur = get().accounts[accountId];
+      const me = get().me;
+      if (!cur && me?.id !== accountId) return;
+      set({
+        ...(cur ? { accounts: { ...get().accounts, [accountId]: { ...cur, handle } } } : {}),
+        ...(me?.id === accountId ? { me: { ...me, handle } } : {}),
+      });
+    },
+    reset: () => set({ ...initial }),
+    clearDrafts: () => { set({ drafts: {} }); draftsStorage.clear(); },
+    /**
+     * 스토어가 초안의 **단일 원천**이다. 영속도 여기서 한다 — 컴포저가 지역 state 와
+     * 보관소를 각각 들면 진실이 둘이 되고, 실제로 초판이 그랬다(스토어 쪽은 아무도
+     * 쓰지 않는 죽은 코드였고 로그아웃이 그쪽을 비우지 않았다).
+     *
+     * 맵이 이미 메모리에 있으므로 키 입력마다 보관소를 **읽지** 않는다. 초판은 매
+     * 글자마다 load() 로 JSON 을 파싱했다 — murmur 메시지는 길다는 것이 이 기능의
+     * 전제인데 그 전제와 정면으로 어긋난다.
+     */
+    setDraft: (scopeKey, draft) => {
+      const next = { ...get().drafts };
+      if (draft) next[scopeKey] = draft;
+      else delete next[scopeKey];
+      set({ drafts: next });
+      draftsStorage.save(next);
+    },
+    hydrateDrafts: () => set({ drafts: draftsStorage.load() }),
+    pushHistory: (entry) => {
+      const { history, historyIndex } = get();
+      const newHistory = history.slice(0, historyIndex + 1);
+      newHistory.push(entry);
+      if (newHistory.length > MAX_HISTORY_LENGTH) {
+        newHistory.shift();
+        set({ history: newHistory, historyIndex: newHistory.length - 1 });
+      } else {
+        set({ history: newHistory, historyIndex: newHistory.length - 1 });
+      }
+    },
+    goBack: () => {
+      const { history, historyIndex } = get();
+      if (historyIndex <= 0) return null;
+      const entry = history[historyIndex - 1];
+      return entry ?? null;
+    },
+    goForward: () => {
+      const { history, historyIndex } = get();
+      if (historyIndex >= history.length - 1) return null;
+      const entry = history[historyIndex + 1];
+      return entry ?? null;
+    },
+    truncateForward: () => {
+      const { history, historyIndex } = get();
+      set({ history: history.slice(0, historyIndex + 1) });
+    },
+  }));
+}
+
+/** `createAppStore()` 가 만든 스토어 하나. 커뮤니티 엔트리가 이것을 들고 있다. */
+export type AppStore = ReturnType<typeof createAppStore>;

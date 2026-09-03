@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ChannelRow } from '@murmur/shared';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 
 interface Props {
@@ -25,7 +25,7 @@ function compareChannels(mode: SortMode, a: ChannelRow, b: ChannelRow): number {
 }
 
 export function ChannelDirectory({ open, onClose }: Props) {
-  const channels = useAppStore((s) => s.channels);
+  const channels = useActiveStore((s) => s.channels);
   const [query, setQuery] = useState('');
   const [sortMode, setSortMode] = useState<SortMode>('name');
   const [archivedOpen, setArchivedOpen] = useState(false);
