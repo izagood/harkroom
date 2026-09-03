@@ -71,10 +71,10 @@ describe('#161 2단계 작성자 아바타 거터', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
 
-    // 거터와 작성자 옆 두 곳에서 에이전트 표시
+    // 거터(variant=avatar)와 작성자 옆(variant=badge) 두 곳에서 에이전트 표시
     expect(screen.getAllByText('에이전트')).toHaveLength(2);
-    // 소유자 표시가 두 곳 모두에서 보인다
-    expect(screen.getAllByText('@owner')).toHaveLength(2);
+    // #277: 소유자 표시가 이름 줄(badge)에서만 보인다 — 거터(avatar)에서는 넘침 방지
+    expect(screen.getAllByText('@owner')).toHaveLength(1);
   });
 
   it('#181: 에이전트에 소유자가 없으면 소유자 표시가 안 나온다', () => {
