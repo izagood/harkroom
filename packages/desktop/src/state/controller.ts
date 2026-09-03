@@ -205,7 +205,7 @@ export class Controller {
 
   /** 새로 들어온 미읽음을 OS 알림으로 알린다. 보고 있는 창에는 띄우지 않는다 — 배지가 그 일을 한다. */
   private async announceNewMentions(): Promise<void> {
-    const { unread, me, channels, dms, accounts, messages } = useAppStore.getState();
+    const { unread, me, channels, dms, accounts, messages, channelPrefs } = useAppStore.getState();
     if (document.hasFocus()) {
       // 포커스 중에는 알리지 않되, 본 것으로 처리해 나중에 뒤늦게 터지지 않게 한다.
       for (const e of unread) this.announced.add(e.id);
@@ -221,6 +221,10 @@ export class Controller {
       // 끈 알림도 여기서 '지나간 것'으로 표시한다 — 아니면 사용자가 알림을 켜는 순간
       // 그동안 쌓인 것이 한꺼번에 터진다. 포커스 분기와 같은 이유다.
       this.announced.add(e.id);
+      // 음소거한 채널도 마찬가지로 '지나간 것'으로 표시한 뒤 건너뛴다(#229). 음소거는
+      // "덜 방해받겠다"는 약속이므로 멘션·DM도 예외가 아니다 — 세분화(전체/멘션만/없음)는
+      // #224 의 몫이고, 지금 스키마는 on/off 하나뿐이니 끄면 끈다.
+      if (channelPrefs[e.channelId]?.mutedAt) continue;
       if (!prefs.enabled || !wanted[e.reason]) continue;
 
       const row = (messages[e.channelId] ?? []).find((m) => m.id === e.messageId);
