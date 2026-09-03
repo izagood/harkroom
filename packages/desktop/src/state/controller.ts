@@ -260,7 +260,9 @@ export class Controller {
     // 채널·스레드 열림은 이력에 추가한다. 뒤로/앞으로 이동은 pushHistory 를 안 부른다.
     store.pushHistory({ channelId, threadRootId: null });
     // 다른 곳으로 움직이면 이전 링크 강조는 뜻을 잃는다 — 남겨 두면 엉뚱한 메시지가 계속 빛난다.
-    store.set({ activeChannelId: channelId, threadRootId: null, highlightedMessageId: null });
+    // 펼쳐 둔 긴 메시지도 같이 접는다(#217) — 나갔다 돌아온 채널에서 긴 메시지가 여전히
+    // 펼쳐져 있으면, 애초에 접기가 막으려던 상태(하나가 화면을 다 먹는 것)로 되돌아간다.
+    store.set({ activeChannelId: channelId, threadRootId: null, highlightedMessageId: null, expandedMessageIds: {} });
     // 투영된 system 메시지는 사용자가 그 채널을 보고 있지 않아도 WS로 들어와 maxSeq를 올린다.
     // 그 상태에서 증분 조회를 하면 backlog 전체가 건너뛰어져 채널이 거의 비어 보인다 —
     // 그래서 처음 여는 채널은 히스토리를 통째로 받는다(since=0 → 서버가 최신 N개를 준다).
@@ -773,7 +775,9 @@ export class Controller {
   /** 채널을 연다(히스토리 미추가). 뒤로·앞으로 이동 전용. */
   private async openChannelWithoutHistory(channelId: string): Promise<void> {
     const store = useAppStore.getState();
-    store.set({ activeChannelId: channelId, threadRootId: null, highlightedMessageId: null });
+    // 뒤로·앞으로 이동도 채널을 새로 여는 것이다 — 접힘 기본값이 여기서 갈리면
+    // 같은 채널이 어떻게 도착했는지에 따라 다르게 보인다(#217).
+    store.set({ activeChannelId: channelId, threadRootId: null, highlightedMessageId: null, expandedMessageIds: {} });
     const since = this.loadedChannels.has(channelId)
       ? Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq))
       : 0;
