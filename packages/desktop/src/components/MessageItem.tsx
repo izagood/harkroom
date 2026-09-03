@@ -8,7 +8,12 @@ import { Identity, StatusMark } from './Identity';
 import { Attachments } from './Attachments';
 import { Menu } from './Menu';
 
-export function MessageItem({ message, inThread = false }: { message: MessageRow; inThread?: boolean }) {
+export function MessageItem({ message, inThread = false, onOpenDirectory, onOpenSettings }: {
+  message: MessageRow;
+  inThread?: boolean;
+  onOpenDirectory?: (accountId: string | null) => void;
+  onOpenSettings?: (section?: string, targetId?: string) => void;
+}) {
   const author = useAppStore((s) => s.accounts[message.authorId]);
   const isMine = useAppStore((s) => s.me?.id === message.authorId);
   const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
@@ -162,7 +167,7 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
 
         {draft === null ? (
           <>
-            {message.body.trim() && <MessageBody body={message.body} messageId={message.id} />}
+            {message.body.trim() && <MessageBody body={message.body} messageId={message.id} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
             <Attachments attachments={message.attachments} />
             <Reactions message={message} />
             {/* #254: 답글 컨트롤을 **본문 열**에 둔다 — 리액션 칩 바로 뒤, 왼쪽 정렬.

@@ -43,10 +43,21 @@ async function followLink(target: LinkTarget): Promise<void> {
   }
 }
 
-export function MessageBody({ body, messageId }: { body: string; messageId: string }) {
+export function MessageBody({
+  body,
+  messageId,
+  onOpenDirectory,
+  onOpenSettings,
+}: {
+  body: string;
+  messageId: string;
+  onOpenDirectory?: (accountId: string | null) => void;
+  onOpenSettings?: (section?: string, targetId?: string) => void;
+}) {
   const accounts = useAppStore((s) => s.accounts);
   const groups = useAppStore((s) => s.groups);
-  const myHandle = useAppStore((s) => s.me?.handle?.toLowerCase() ?? null);
+  const me = useAppStore((s) => s.me);
+  const myHandle = me?.handle?.toLowerCase() ?? null;
   // 접기 판정은 본문만 본다 — 작성자가 누구인지 보지 않는다. 자기가 쓴 긴 메시지도 남의
   // 대화를 밀어내는 것은 똑같고, 예외를 두면 "왜 이건 접히고 저건 안 접히지" 를 사람이
   // 매번 판단해야 한다(#217).
@@ -81,25 +92,65 @@ export function MessageBody({ body, messageId }: { body: string; messageId: stri
     }
     const isSelf = p.handle === myHandle;
     const isGroup = (p as { isGroup?: boolean }).isGroup;
-    // 집합(#230)은 사람처럼 보이면 안 된다 — 시각적으로 집합임이 드러나야 한다.
+    const account = Object.values(accounts).find((a) => a.handle.toLowerCase() === p.handle);
+    const isAgent = account?.kind === 'agent';
+    const isAdmin = me?.isAdmin === true;
+    const isOwner = account?.ownerAccountId === me?.id;
+
+    const handleMentionClick = () => {
+      if (!account || !onOpenDirectory && !onOpenSettings) return;
+      if (isAgent && (isAdmin || isOwner) && onOpenSettings) {
+        onOpenSettings('agents', account.id);
+      } else if (onOpenDirectory) {
+        onOpenDirectory(account.id);
+      }
+    };
+
+    // 접근 가능한 이름은 @handle 이 아니라 무엇을 하는지 나타낸다.
+    const accessibleName = account
+      ? isAgent
+        ? `${account.handle} 에이전트 설정 열기`
+        : `${account.handle} 프로필 열기`
+      : `${p.handle} 열기`;
+
+    // 집합(#230)은 버튼이 아니다 — 집합은 설정이 없으므로 디렉터리로만 열린다.
+    if (isGroup || !account) {
+      return (
+        <span
+          key={key}
+          data-testid={`mention-${p.handle}`}
+          data-self={String(isSelf)}
+          data-group={String(isGroup)}
+          className={`rounded px-0.5 font-medium ${
+            isGroup
+              ? 'bg-teal-50 text-teal-700'
+              : isSelf
+                ? 'bg-amber-200 text-amber-900'
+                : 'bg-indigo-50 text-indigo-700'
+          }`}
+        >
+          {p.text}
+        </span>
+      );
+    }
+
     return (
-      <span
+      <button
         key={key}
+        type="button"
         data-testid={`mention-${p.handle}`}
         data-self={String(isSelf)}
         data-group={String(isGroup)}
-        // 나를 부른 멘션은 더 강하게. 색만으로 구분하지 않는다(배경 + 굵기).
-        // 집합은 다른 색(teal)으로 구분한다.
-        className={`rounded px-0.5 font-medium ${
-          isGroup
-            ? 'bg-teal-50 text-teal-700'
-            : isSelf
-              ? 'bg-amber-200 text-amber-900'
-              : 'bg-indigo-50 text-indigo-700'
+        aria-label={accessibleName}
+        onClick={handleMentionClick}
+        className={`rounded px-0.5 font-medium cursor-pointer ${
+          isSelf
+            ? 'bg-amber-200 text-amber-900'
+            : 'bg-indigo-50 text-indigo-700'
         }`}
       >
         {p.text}
-      </span>
+      </button>
     );
   };
 

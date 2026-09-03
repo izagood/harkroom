@@ -14,9 +14,10 @@ import { Inbox } from './Inbox';
 import { SavedMessages } from './SavedMessages';
 import type { SectionId } from './settings/sections';
 
-export function Workspace({ onLogout, onOpenSettings }: {
+export function Workspace({ onLogout, onOpenSettings, onOpenDirectory }: {
   onLogout: () => void;
-  onOpenSettings: (section?: SectionId) => void;
+  onOpenSettings: (section?: SectionId, targetId?: string) => void;
+  onOpenDirectory?: (accountId: string | null) => void;
 }) {
   const threadRootId = useAppStore((s) => s.threadRootId);
   const history = useAppStore((s) => s.history);
@@ -25,6 +26,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
   const [searchInitialScoped, setSearchInitialScoped] = useState(false);
   const [sweepOpen, setSweepOpen] = useState(false);
   const [directoryOpen, setDirectoryOpen] = useState(false);
+  const [directoryAccountId, setDirectoryAccountId] = useState<string | null>(null);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sidebarStorage.loadCollapsed());
@@ -51,6 +53,11 @@ export function Workspace({ onLogout, onOpenSettings }: {
 
   const handleGoForward = useCallback(async () => {
     await getController().goForward();
+  }, []);
+
+  const handleOpenDirectory = useCallback((accountId: string | null = null) => {
+    setDirectoryAccountId(accountId);
+    setDirectoryOpen(true);
   }, []);
 
   useEffect(() => {
@@ -106,7 +113,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
       <Sidebar
         onLogout={onLogout}
         onOpenSettings={onOpenSettings}
-        onOpenDirectory={() => setDirectoryOpen(true)}
+        onOpenDirectory={() => handleOpenDirectory(null)}
         onOpenInbox={() => setInboxOpen(true)}
         onOpenSaved={() => setSavedOpen(true)}
         collapsed={sidebarCollapsed}
@@ -175,7 +182,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
       </div>
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} initialScoped={searchInitialScoped} />
       <Sweep open={sweepOpen} onClose={() => setSweepOpen(false)} />
-      <Directory open={directoryOpen} onClose={() => setDirectoryOpen(false)} />
+      <Directory open={directoryOpen} onClose={() => { setDirectoryOpen(false); setDirectoryAccountId(null); }} accountId={directoryAccountId} />
       <Inbox open={inboxOpen} onClose={() => setInboxOpen(false)} />
       <SavedMessages open={savedOpen} onClose={() => setSavedOpen(false)} />
     </div>
