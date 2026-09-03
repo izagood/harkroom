@@ -26,10 +26,11 @@ export const MIN_SIDEBAR_WIDTH = 180;
 export const MAX_SIDEBAR_WIDTH = 480;
 
 /**
- * 보냄 취소 창의 기본 길이(#223). 5초는 "방금 잘못 보냈다"를 알아차리는 데 걸리는 시간이지
- * 안전 보장이 아니다 — 창이 끝나면 되돌릴 길은 없다.
+ * 보냄 취소 창의 기본 길이(#274). 기본은 바로 보내기(0)이고 되돌리기는 켜는 사람의 선택이다.
+ * 되돌리기가 켜지면 **모든 메시지**의 발송이 늦어지므로 잘못 보낸 순간이 아니라 평소에는
+ * 메시지를 바로 보내고 싶을 때마다 껐다 켜야 한다.
  */
-export const DEFAULT_UNDO_SEND_MS = 5_000;
+export const DEFAULT_UNDO_SEND_MS = 0;
 /** 이보다 길게 두면 자기가 보낸 것이 언제 나갈지 모르는 상태로 앉아 있게 된다. */
 export const MAX_UNDO_SEND_MS = 30_000;
 
