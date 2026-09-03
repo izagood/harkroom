@@ -2,6 +2,13 @@ import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
 import type { AccountView, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow } from '@murmur/shared';
 
+export interface HistoryEntry {
+  channelId: string;
+  threadRootId: string | null;
+}
+
+const MAX_HISTORY_LENGTH = 50;
+
 export interface AppState {
   me: AccountView | null;
   accounts: Record<string, AccountView>;
@@ -32,6 +39,12 @@ export interface AppState {
    * 설정과 달리 사용자가 쓴 문장 전체이므로 로그아웃 시 반드시 삭제한다.
    */
   drafts: Record<string, string>;
+  /** 뒤로/앞으로 탐색용 이력 스택. 채널·스레드만 담고 스크롤 위치는 담지 않는다.
+   * 뒤로/앞으로 이동 시에는push하지 않는다 — 그렇게 하면 뒤로 갈 때마다 스택이 자라
+   * 영원히 빠져나오지 못한다. openChannel/openThread 에서만 새 항목을 밀어 넣는다.
+   * 세션 한정 인메모리다 — localStorage 에 넣지 않는다. */
+  history: HistoryEntry[];
+  historyIndex: number;
   set(partial: Partial<AppState>): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
@@ -41,12 +54,21 @@ export interface AppState {
   setDraft(scopeKey: string, draft: string): void;
   /** 기동 시 보관소에서 초안을 읽어 온다. */
   hydrateDrafts(): void;
+  /** 새 채널·스레드를 열 때 이력에 추가한다. 뒤로/앞로 이동에서는 부른다. */
+  pushHistory(entry: HistoryEntry): void;
+  /** 이력에서 뒤로 간다. 이미 첫 항목이면 아무 일도 하지 않는다. */
+  goBack(): HistoryEntry | null;
+  /** 이력에서 앞으로 간다. 이미 마지막 항목이면 아무 일도 하지 않는다. */
+  goForward(): HistoryEntry | null;
+  /** 현재 위치에서 미래 이력을 모두 잘라낸다(새 항목 추가 시). */
+  truncateForward(): void;
 }
 
 const initial = {
   me: null, accounts: {}, channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], leases: [], connected: false, channelPrefs: {}, drafts: {},
+  history: [], historyIndex: -1,
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -106,4 +128,31 @@ export const useAppStore = create<AppState>((set, get) => ({
     draftsStorage.save(next);
   },
   hydrateDrafts: () => set({ drafts: draftsStorage.load() }),
+  pushHistory: (entry) => {
+    const { history, historyIndex } = get();
+    const newHistory = history.slice(0, historyIndex + 1);
+    newHistory.push(entry);
+    if (newHistory.length > MAX_HISTORY_LENGTH) {
+      newHistory.shift();
+      set({ history: newHistory, historyIndex: newHistory.length - 1 });
+    } else {
+      set({ history: newHistory, historyIndex: newHistory.length - 1 });
+    }
+  },
+  goBack: () => {
+    const { history, historyIndex } = get();
+    if (historyIndex <= 0) return null;
+    const entry = history[historyIndex - 1];
+    return entry ?? null;
+  },
+  goForward: () => {
+    const { history, historyIndex } = get();
+    if (historyIndex >= history.length - 1) return null;
+    const entry = history[historyIndex + 1];
+    return entry ?? null;
+  },
+  truncateForward: () => {
+    const { history, historyIndex } = get();
+    set({ history: history.slice(0, historyIndex + 1) });
+  },
 }));

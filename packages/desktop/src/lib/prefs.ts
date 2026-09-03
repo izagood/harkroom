@@ -12,13 +12,22 @@ export interface NotificationPrefs {
 
 export interface Prefs {
   notifications: NotificationPrefs;
+  sidebarWidth: number;
+  sidebarCollapsed: boolean;
 }
 
 const KEY = 'murmur.prefs';
 const DRAFTS_KEY = 'murmur.drafts';
+const SIDEBAR_WIDTH_KEY = 'murmur.sidebarWidth';
+const SIDEBAR_COLLAPSED_KEY = 'murmur.sidebarCollapsed';
+
+export const MIN_SIDEBAR_WIDTH = 180;
+export const MAX_SIDEBAR_WIDTH = 480;
 
 export const DEFAULT_PREFS: Prefs = {
   notifications: { enabled: true, mention: true, threadReply: true, dm: true, showPreview: true },
+  sidebarWidth: 240,
+  sidebarCollapsed: false,
 };
 
 export const prefsStorage = {
@@ -29,13 +38,49 @@ export const prefsStorage = {
       const parsed = JSON.parse(raw) as Partial<Prefs>;
       // 저장본을 그대로 쓰지 않고 기본값과 병합한다 — 없는 키를 undefined 로 두면
       // 나중에 추가된 설정이 기존 사용자에게 꺼진 채로 시작한다.
-      return { notifications: { ...DEFAULT_PREFS.notifications, ...(parsed.notifications ?? {}) } };
+      return {
+        notifications: { ...DEFAULT_PREFS.notifications, ...(parsed.notifications ?? {}) },
+        sidebarWidth: parsed.sidebarWidth ?? DEFAULT_PREFS.sidebarWidth,
+        sidebarCollapsed: parsed.sidebarCollapsed ?? DEFAULT_PREFS.sidebarCollapsed,
+      };
     } catch {
       return DEFAULT_PREFS;
     }
   },
   save(p: Prefs): void {
     try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* 저장 불가 환경 허용 */ }
+  },
+};
+
+export const sidebarStorage = {
+  loadWidth(): number {
+    try {
+      const raw = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+      if (!raw) return DEFAULT_PREFS.sidebarWidth;
+      const parsed = parseInt(raw, 10);
+      if (isNaN(parsed)) return DEFAULT_PREFS.sidebarWidth;
+      return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, parsed));
+    } catch {
+      return DEFAULT_PREFS.sidebarWidth;
+    }
+  },
+  saveWidth(width: number): void {
+    try {
+      const clamped = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(clamped));
+    } catch { /* 저장 불가 환경 허용 */ }
+  },
+  loadCollapsed(): boolean {
+    try {
+      const raw = localStorage.getItem(SIDEBAR_COLLAPSED_KEY);
+      if (!raw) return DEFAULT_PREFS.sidebarCollapsed;
+      return raw === 'true';
+    } catch {
+      return DEFAULT_PREFS.sidebarCollapsed;
+    }
+  },
+  saveCollapsed(collapsed: boolean): void {
+    try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed)); } catch { /* 저장 불가 환경 허용 */ }
   },
 };
 
