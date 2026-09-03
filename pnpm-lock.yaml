@@ -41,6 +41,9 @@ importers:
       '@tauri-apps/plugin-notification':
         specifier: ^2.3.3
         version: 2.3.3
+      '@tauri-apps/plugin-shell':
+        specifier: ^2.3.6
+        version: 2.3.6
       react:
         specifier: ^19.0.0
         version: 19.2.8
@@ -894,6 +897,9 @@ packages:
 
   '@tauri-apps/plugin-notification@2.3.3':
     resolution: {integrity: sha512-Zw+ZH18RJb41G4NrfHgIuofJiymusqN+q8fGUIIV7vyCH+5sSn5coqRv/MWB9qETsUs97vmU045q7OyseCV3Qg==}
+
+  '@tauri-apps/plugin-shell@2.3.6':
+    resolution: {integrity: sha512-C2AG+QmBJPK0E3gccLXfRdjTfGBC9DgwzGi/PfYa61ieAZbYvhvOss4OdSGfn/D28N3THGhJZEhf3lozOh/Uqw==}
 
   '@testcontainers/postgresql@10.28.0':
     resolution: {integrity: sha512-NN25rruG5D4Q7pCNIJuHwB+G85OSeJ3xHZ2fWx0O6sPoPEfCYwvpj8mq99cyn68nxFkFYZeyrZJtSFO+FnydiA==}
@@ -3181,6 +3187,10 @@ snapshots:
       '@tauri-apps/cli-win32-x64-msvc': 2.11.4
 
   '@tauri-apps/plugin-notification@2.3.3':
+    dependencies:
+      '@tauri-apps/api': 2.11.1
+
+  '@tauri-apps/plugin-shell@2.3.6':
     dependencies:
       '@tauri-apps/api': 2.11.1
 
