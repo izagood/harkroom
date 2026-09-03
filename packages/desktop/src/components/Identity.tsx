@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import type { AccountStatus, AccountView } from '@murmur/shared';
+import { getController } from '../state/controller';
 
 /**
  * 계정의 아이덴티티 표현. **이 컴포넌트가 유일한 경로다.**
@@ -8,7 +10,9 @@ import type { AccountStatus, AccountView } from '@murmur/shared';
  * 업로드)와 `#161`(채팅 거터 아바타)도 각자 그리지 말고 여기를 통과해야 한다. 실제
  * 이미지가 들어올 때 캐시가 필요해지는데, 그때도 **여기 한 곳**에 들어간다.
  *
- * 지금은 스키마에 아바타 필드가 없어 **결정론적 생성 표현**이다(#146 이 그 스코프를 골랐다).
+ * #159 로 실제 사진이 들어왔다. 사진이 있으면 사진, 없으면 **기존 폴백 그대로**(이니셜·색,
+ * 에이전트 글리프, 모르는 계정의 물음표)다 — 폴백은 대다수 계정이 여전히 쓰는 경로이고,
+ * 사진을 얹으면서 그것을 갈아엎으면 아무 사진도 없는 워크스페이스가 통째로 망가진다.
  */
 interface IdentityProps {
   /** 계정 디렉터리에서 못 찾은 경우를 위해 undefined 를 받는다 — 아래 처리 참고. */
@@ -32,7 +36,66 @@ function handleColor(handle: string): string {
   return colors[Math.abs(hash) % colors.length]!;
 }
 
+/**
+ * 아바타 blob 캐시. **`Identity` 안에 있는 것이 요점이다** — 아바타는 메시지 목록·멘션
+ * 후보·사이드바에 동시에 수십 번 걸리므로, 컴포넌트마다 따로 받으면 같은 사진을 화면당
+ * 수십 번 내려받는다(`Attachments.tsx` 의 컴포넌트별 fetch 가 그 모양이다).
+ *
+ * 키는 계정 id 가 아니라 **첨부 id** 다. 아바타를 바꾸면 업로드가 새로 생겨 id 가 바뀌므로
+ * 캐시가 저절로 무효화된다 — 따로 비우는 코드를 두지 않아도 된다.
+ *
+ * **revoke 하지 않는다.** 언마운트마다 revoke 하면 같은 URL 을 쓰는 다른 자리의 `<img>`
+ * 가 그 순간 깨진다. 캐시는 아바타를 건 계정 수만큼만 자란다.
+ */
+const avatarUrls = new Map<string, string>();
+/** 같은 아바타를 동시에 여러 곳에서 요청해도 왕복은 한 번이다. */
+const avatarLoads = new Map<string, Promise<string | null>>();
+
+/** 테스트가 세션 사이에 캐시를 비운다 — 앱에서는 부르지 않는다. */
+export function resetAvatarCache(): void {
+  avatarUrls.clear();
+  avatarLoads.clear();
+}
+
+function useAvatarUrl(accountId: string | null, attachmentId: string | null): string | null {
+  const [url, setUrl] = useState<string | null>(
+    () => (attachmentId ? avatarUrls.get(attachmentId) ?? null : null),
+  );
+
+  useEffect(() => {
+    if (!accountId || !attachmentId) { setUrl(null); return; }
+    const hit = avatarUrls.get(attachmentId);
+    if (hit) { setUrl(hit); return; }
+
+    let alive = true;
+    let load = avatarLoads.get(attachmentId);
+    if (!load) {
+      load = getController().fetchAvatar(accountId).then((blob) => {
+        const objectUrl = URL.createObjectURL(blob);
+        avatarUrls.set(attachmentId, objectUrl);
+        return objectUrl;
+      }).catch(() => {
+        // 못 받으면 폴백으로 남는다. 실패를 캐시에 남기면 다시 시도할 방법이 없다.
+        avatarLoads.delete(attachmentId);
+        return null;
+      });
+      avatarLoads.set(attachmentId, load);
+    }
+    void load.then((got) => { if (alive) setUrl(got); });
+    return () => { alive = false; };
+  }, [accountId, attachmentId]);
+
+  return url;
+}
+
 export function Identity({ account, className = '' }: IdentityProps) {
+  // 에이전트에게만 사진을 받지 않는다 — 에이전트는 스스로 올릴 수단이 없고(#159 범위 밖),
+  // 그 자리는 글리프가 지킨다. 훅은 조건부로 부를 수 없으므로 인자로 걸러 낸다.
+  const avatarUrl = useAvatarUrl(
+    account && account.kind === 'human' ? account.id : null,
+    account && account.kind === 'human' ? account.avatarAttachmentId : null,
+  );
+
   // **"없다"와 "모른다"는 다르다.** 계정 디렉터리에 없는 id 는 후자이고, 아무것도
   // 그리지 않으면 "에이전트가 아니다"로 읽힌다 — docs/design.md 4절의 거울상이다.
   if (!account) {
@@ -61,9 +124,16 @@ export function Identity({ account, className = '' }: IdentityProps) {
 
   return (
     <span
-      className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold text-white ${handleColor(account.handle)} ${className}`}
+      className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-white ${avatarUrl ? 'bg-zinc-200' : handleColor(account.handle)} ${className}`}
     >
-      <span aria-hidden="true">{account.handle.charAt(0).toUpperCase()}</span>
+      {avatarUrl ? (
+        // `alt` 를 **비운다**. 접근성 이름은 아래 sr-only 가 이미 내고 있고, 사진에 핸들을
+        // 또 넣으면 같은 이름이 두 번 읽힌다. 사진은 이름을 바꾸지 않는다 — 표현만 바꾼다.
+        // src 는 blob 이다: 라우트를 직접 가리키면 헤더를 붙일 수 없어 토큰이 URL 로 샌다.
+        <img data-testid="identity-avatar" src={avatarUrl} alt="" className="h-full w-full object-cover" />
+      ) : (
+        <span aria-hidden="true">{account.handle.charAt(0).toUpperCase()}</span>
+      )}
       <span className="sr-only">{account.handle}</span>
     </span>
   );

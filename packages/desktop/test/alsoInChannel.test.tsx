@@ -90,6 +90,6 @@ describe('#231 스레드 답을 채널에도 함께 올린다', () => {
     const box = screen.getByPlaceholderText('Reply…') as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: 'on it' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(c.reply).toHaveBeenCalledWith('on it', [], true);
+    expect(c.reply).toHaveBeenCalledWith('on it', [], 'c1', 'm1', true);
   });
 });

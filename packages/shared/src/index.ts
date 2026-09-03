@@ -32,6 +32,17 @@ export interface AccountView {
   status: AccountStatus;
   /** 상태에 덧붙이는 짧은 문구. 없음은 **null** 이다 — 빈 문자열과 구분해야 "지웠다"가 표현된다. */
   statusText: string | null;
+  /**
+   * 이 계정이 건 프로필 사진의 첨부 id(#159). 없으면 **null** 이다.
+   *
+   * **바이트가 아니라 id 만 싣는다.** 이 뷰는 계정 목록 전체로 오가므로 바이트를 실으면
+   * 디렉터리 한 번에 모든 사진이 따라온다. 화면은 이 id 가 있을 때만 아바타를 받아 오고,
+   * 값이 바뀌면 캐시가 자연히 무효화된다(id 는 업로드마다 새로 생긴다).
+   *
+   * 그리는 곳은 `Identity` **한 곳**이다 — 자리마다 따로 그리면 이 저장소가 반복 결함으로
+   * 지목한 "하나의 사실이 두 곳에 유지된다"가 된다.
+   */
+  avatarAttachmentId: string | null;
 }
 
 /** murmur 가 스키마·설정 차원에서 아는 harness 이름 전체. 실제 실행 가능 여부는 `RUNNABLE_HARNESSES` 를 본다. */
@@ -259,6 +270,24 @@ export interface AttachmentRow {
   sizeBytes: number;
 }
 
+/**
+ * 채널 파일 색인의 한 줄(#232). `AttachmentRow` 에 "어느 메시지에서 왔는가"를 더한 것이다 —
+ * 이 화면의 유일한 동작이 '누르면 그 메시지로 간다'(`controller.openMessage`)이므로
+ * `messageId` 가 곁가지가 아니라 본체다.
+ *
+ * 올린 사람은 `uploaderId` 가 아니라 메시지 작성자(`authorId`)로 준다. `AttachmentRow` 가
+ * `uploaderId` 를 일부러 뺀 이유가 "업로더는 메시지 작성자와 같으므로 중복"이라는 것이고,
+ * 그 판단을 여기서 되돌리면 같은 사실을 두 이름으로 부르게 된다.
+ */
+export interface ChannelFileRow extends AttachmentRow {
+  messageId: string;
+  /** 그 메시지의 seq. 최신순 정렬 기준이자 `before` 커서에 그대로 넣는 값이다. */
+  messageSeq: number;
+  authorId: string;
+  /** 첨부가 오간 시각 = 그 메시지의 작성 시각(ISO). 업로드 시각이 아니다. */
+  createdAt: string;
+}
+
 export interface MessageRow {
   id: string;
   seq: number;
@@ -409,6 +438,11 @@ export type WsServerEvent =
    * `presence.changed` 를 만들지 않고, 연결이 끊겨도 상태는 남는다.
    */
   | { type: 'status.changed'; accountId: string; status: AccountStatus; statusText: string | null }
+  /**
+   * 누군가 자기 프로필 사진을 바꿨다(#159). 바이트가 아니라 id 만 보낸다 — 받는 쪽이 그
+   * id 로 아바타를 받아 오고, 지우기는 null 이다.
+   */
+  | { type: 'avatar.changed'; accountId: string; avatarAttachmentId: string | null }
   // 리액션은 델타로 보낸다 — 메시지 전체를 다시 실으면 한 번 누를 때마다 본문이 오간다.
   | { type: 'reaction.added'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
   | { type: 'reaction.removed'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }

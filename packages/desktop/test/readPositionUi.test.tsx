@@ -75,7 +75,7 @@ describe('채널 미읽음 배지', () => {
   it('shows the unread count on a channel that has one', () => {
     useAppStore.getState().set({ reads: { c2: { lastReadSeq: 0, unread: 3 } } });
 
-    render(<Sidebar onOpenDirectory={() => {}} onLogout={() => {}} onOpenSettings={() => {}} collapsed={false} onToggleCollapse={() => {}} />);
+    render(<Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onLogout={() => {}} onOpenSettings={() => {}} collapsed={false} onToggleCollapse={() => {}} />);
 
     expect(screen.getByLabelText('3 unread in other')).toBeTruthy();
   });
@@ -83,7 +83,7 @@ describe('채널 미읽음 배지', () => {
   it('shows no badge at zero', () => {
     useAppStore.getState().set({ reads: { c2: { lastReadSeq: 5, unread: 0 } } });
 
-    render(<Sidebar onOpenDirectory={() => {}} onLogout={() => {}} onOpenSettings={() => {}} collapsed={false} onToggleCollapse={() => {}} />);
+    render(<Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onLogout={() => {}} onOpenSettings={() => {}} collapsed={false} onToggleCollapse={() => {}} />);
 
     expect(screen.queryByLabelText(/unread in other/)).toBeNull();
   });

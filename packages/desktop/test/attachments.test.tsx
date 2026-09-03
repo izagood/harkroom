@@ -6,6 +6,7 @@ import { setController, type Controller } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
 import { Composer } from '../src/components/Composer';
 import { acc, msg } from './helpers/fakeApi';
+import { undoSendStorage } from '../src/lib/prefs';
 
 const withAttachments = (attachments: AttachmentRow[]): MessageRow =>
   ({ ...msg('m1', 'c1', 1, '파일 보냅니다', 'u2'), attachments });
@@ -27,6 +28,9 @@ const fakeController = (over: Partial<Controller> = {}) => {
 };
 
 beforeEach(() => {
+  // 이 파일이 검증하는 것은 보냄 취소 창이 아니다(#223) — 창을 끄고 즉시 전송 경로를 본다.
+  // 창 자체는 undoSend.test.tsx 가 단독으로 지킨다.
+  undoSendStorage.saveWindowMs(0);
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'me'),

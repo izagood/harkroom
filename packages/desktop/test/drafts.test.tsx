@@ -4,7 +4,7 @@ import { useAppStore } from '../src/state/appStore';
 import { Composer } from '../src/components/Composer';
 import { Controller, setController } from '../src/state/controller';
 import { acc, fakeApi } from './helpers/fakeApi';
-import { draftsStorage } from '../src/lib/prefs';
+import { draftsStorage, undoSendStorage } from '../src/lib/prefs';
 
 const typeInto = (value: string) => {
   const box = screen.getByRole('textbox') as HTMLTextAreaElement;
@@ -14,6 +14,10 @@ const typeInto = (value: string) => {
 
 beforeEach(() => {
   localStorage.clear();
+  // 반드시 clear 뒤다 — 같은 localStorage 에 사는 값이라 순서가 바뀌면 조용히 지워진다.
+  // 이 파일이 검증하는 것은 보냄 취소 창이 아니다(#223) — 창을 끄고 즉시 전송 경로를 본다.
+  // 창 자체는 undoSend.test.tsx 가 단독으로 지킨다.
+  undoSendStorage.saveWindowMs(0);
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'me'),

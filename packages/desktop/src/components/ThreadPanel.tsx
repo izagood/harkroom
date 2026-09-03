@@ -44,7 +44,10 @@ export function ThreadPanel() {
         <Composer
           scopeKey={`thread:${threadRootId}`}
           placeholder="Reply…"
-          onSend={(body, attachmentIds) => getController().reply(body, attachmentIds, alsoInChannel)}
+          // 채널과 스레드 뿌리를 지금 것으로 붙인다(#223) — 창이 도는 동안 패널을 닫으면
+          // 스토어의 `threadRootId` 는 null 이 되어 답글이 조용히 사라진다.
+          onSend={(body, attachmentIds) =>
+            getController().reply(body, attachmentIds, activeChannelId ?? undefined, threadRootId, alsoInChannel)}
         />
       </div>
     </section>

@@ -167,6 +167,10 @@ export class Controller {
         // 아직 못 본 계정이면 상태만 와도 이름을 그리지 못한다.
         if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
         break;
+      case 'avatar.changed':
+        store.applyAvatar(e.accountId, e.avatarAttachmentId);
+        if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
+        break;
     }
   }
 
@@ -418,19 +422,39 @@ export class Controller {
 
   closeThread(): void { useAppStore.getState().set({ threadRootId: null }); }
 
-  async send(body: string, attachmentIds: string[] = []): Promise<void> {
-    const { activeChannelId } = useAppStore.getState();
+  /**
+   * 보낼 자리를 **인자로 받는다**(#223). 스토어의 활성 채널을 호출 시점에 읽으면, 보냄 취소
+   * 창이 도는 동안 채널을 옮긴 사람의 메시지가 **옮긴 채널로 나간다** — #184 가 닫은 결함과
+   * 같은 모양이다. 호출부가 글을 쓴 순간의 채널을 붙여 주면 시점이 어긋날 자리가 없다.
+   *
+   * 인자를 생략하면 예전처럼 활성 채널로 간다 — 즉시 보내는 호출부는 그 편이 짧다.
+   */
+  async send(body: string, attachmentIds: string[] = [], channelId?: string): Promise<void> {
+    const target = channelId ?? useAppStore.getState().activeChannelId;
     // 파일만 보내는 것은 자연스럽다 — 본문이 비었다고 막으면 첨부를 보낼 길이 없다.
-    if (!activeChannelId || (!body.trim() && !attachmentIds.length)) return;
-    const m = await this.api.postMessage(activeChannelId, body, undefined, crypto.randomUUID(), attachmentIds);
-    useAppStore.getState().upsertMessages(activeChannelId, [m]);
+    if (!target || (!body.trim() && !attachmentIds.length)) return;
+    const m = await this.api.postMessage(target, body, undefined, crypto.randomUUID(), attachmentIds);
+    useAppStore.getState().upsertMessages(target, [m]);
   }
 
-  async reply(body: string, attachmentIds: string[] = [], alsoInChannel = false): Promise<void> {
-    const { activeChannelId, threadRootId } = useAppStore.getState();
-    if (!activeChannelId || !threadRootId || (!body.trim() && !attachmentIds.length)) return;
-    const m = await this.api.postMessage(activeChannelId, body, threadRootId, crypto.randomUUID(), attachmentIds, alsoInChannel);
-    useAppStore.getState().upsertMessages(activeChannelId, [m]);
+  /**
+   * 스레드 답글도 같은 이유로 자리를 인자로 받는다. 여기는 사유가 하나 더 있다 — 스레드
+   * 패널을 닫으면 `threadRootId` 가 null 이 되어, 창이 도는 동안 닫으면 답글이 **아예
+   * 사라진다**(아래 가드에서 그냥 반환된다).
+   *
+   * `alsoInChannel`(#231)은 그 뒤에 온다 — 자리를 앞에 끼우면 기존 호출부가 조용히
+   * 어긋난다.
+   */
+  async reply(
+    body: string, attachmentIds: string[] = [], channelId?: string, threadRootId?: string,
+    alsoInChannel = false,
+  ): Promise<void> {
+    const state = useAppStore.getState();
+    const target = channelId ?? state.activeChannelId;
+    const root = threadRootId ?? state.threadRootId;
+    if (!target || !root || (!body.trim() && !attachmentIds.length)) return;
+    const m = await this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel);
+    useAppStore.getState().upsertMessages(target, [m]);
   }
 
   /**
@@ -452,6 +476,24 @@ export class Controller {
 
   fetchAttachment(id: string): Promise<Blob> {
     return this.api.fetchAttachment(id);
+  }
+
+  fetchAvatar(accountId: string): Promise<Blob> {
+    return this.api.fetchAvatar(accountId);
+  }
+
+  /**
+   * 내 프로필 사진을 바꾼다(#159). 파일을 주면 기존 업로드 경로로 올린 뒤 그 첨부를 걸고,
+   * `null` 을 주면 지운다 — 지우기는 **명시적 null** 이다.
+   *
+   * 서버가 받아들인 뒤에 화면을 갱신한다: 미리 그려 두면 서버가 거절한 사진(이미지가 아닌
+   * 파일은 400 이다)이 잠깐 내 얼굴로 떴다가 사라진다.
+   */
+  async setAvatar(file: File | null): Promise<void> {
+    const attachmentId = file ? (await this.api.upload(file)).id : null;
+    const { avatarAttachmentId } = await this.api.setAvatar(attachmentId);
+    const me = useAppStore.getState().me;
+    if (me) useAppStore.getState().applyAvatar(me.id, avatarAttachmentId);
   }
 
   /**
