@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { sidebarStorage, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../lib/prefs';
+import { isMacOS, MAC_TRAFFIC_LIGHT_PL } from '../lib/platform';
 import { LeasePanel } from './LeasePanel';
 import { Menu } from './Menu';
 import { StatusMark } from './Identity';
@@ -59,18 +60,32 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
   );
 }
 
-export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChannelDirectory, onOpenInbox, collapsed, onToggleCollapse }: {
+export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChannelDirectory, onOpenInbox, onOpenSaved, collapsed, onToggleCollapse }: {
   onLogout: () => void;
   onOpenSettings: (section?: SectionId) => void;
   /** 워크스페이스 전체 디렉터리를 연다(#226). 채널 멤버 목록이 아니라 워크스페이스 전체다. */
   onOpenDirectory: () => void;
-  /** 채널 디렉터리를 연다(#180). */
+  /**
+   * 채널 디렉터리 모달을 연다(#180). **옵셔널이 아니다** — 여기서 기본값을 공급하면
+   * 배선을 잊은 화면에서도 "채널 찾기" 버튼이 그려지고 눌러도 아무 일이 없다(design.md §4).
+   */
   onOpenChannelDirectory: () => void;
   onOpenInbox: () => void;
+  /**
+   * 담아 둔 메시지 패널을 연다(#219). **옵셔널이 아니다** — 기본값을 여기서 공급하면
+   * 배선을 잊은 화면에서도 버튼이 그려지고, 눌러도 아무 일이 없는 항목이 남는다(design.md §4).
+   */
+  onOpenSaved: () => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
-  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, messages } = useAppStore();
+  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, messages, savedCount } = useAppStore();
+  /**
+   * macOS 신호등 여백(#270). 사이드바가 펴져 있으면 브랜드 바가 창의 좌상단이라 여기가
+   * 여백을 진다. 접혀 있으면 사이드바는 폭 0 이고 `Workspace` 헤더가 좌상단이 되므로
+   * 여백도 그쪽으로 넘어간다 — 두 곳이 동시에 비우면 접었다 펼 때마다 78px 이 두 번 든다.
+   */
+  const macTrafficLightRoom = useMemo(() => isMacOS() && !collapsed, [collapsed]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
@@ -84,6 +99,18 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
   const [inviteAccountId, setInviteAccountId] = useState('');
   // '마지막 멤버가 나간다'는 되돌릴 수 없는 조작이라 한 번 더 묻는다.
   const [leaveConfirmId, setLeaveConfirmId] = useState<string | null>(null);
+  /**
+   * 채널 삭제 확인(#155). 확인 단계를 **화면 안에** 둔다 — `window.confirm` 은 Tauri
+   * 웹뷰에서 막힐 수 있고, 이 저장소의 선례(`MessageItem` 의 '정말 삭제', 바로 위
+   * `leaveConfirmId`)가 이미 인라인 확인이다. 새 확인 컴포넌트를 만들지 않는다.
+   *
+   * 메시지 수는 **세 상태**다 — null(아직 안 읽음) / 'error'(못 읽음) / 값. 실패를 0 으로
+   * 갈아 넣으면 확인 문구가 "메시지 0개를 지운다"고 거짓을 말한다. 못 읽었으면 지우지도
+   * 않는다: 규모를 모르는 채로 되돌릴 수 없는 조작을 승인하게 하지 않는다.
+   */
+  const [deletingChannelId, setDeletingChannelId] = useState<string | null>(null);
+  const [deleteCount, setDeleteCount] = useState<number | 'error' | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
 
   const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
@@ -210,6 +237,34 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
       closeMembers();
     } catch (err) {
       setMemberError(err instanceof Error ? err.message : '나가기에 실패했다');
+    }
+  };
+
+  const startDelete = (channelId: string): void => {
+    setDeletingChannelId(channelId);
+    setDeleteCount(null);
+    setDeleteError(null);
+    void getController().channelDeleteInfo(channelId).then(
+      (info) => setDeleteCount(info.messageCount),
+      (err: unknown) => {
+        setDeleteCount('error');
+        setDeleteError(err instanceof Error ? err.message : '메시지 수를 읽지 못했다');
+      },
+    );
+  };
+
+  const closeDelete = (): void => {
+    setDeletingChannelId(null);
+    setDeleteCount(null);
+    setDeleteError(null);
+  };
+
+  const confirmDelete = async (channelId: string): Promise<void> => {
+    try {
+      await getController().deleteChannel(channelId);
+      closeDelete();
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : '삭제에 실패했다');
     }
   };
 
@@ -349,6 +404,42 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
             <button
               className="rounded px-2 py-0.5 text-xs text-zinc-400 hover:bg-zinc-700"
               onClick={closeEdit}
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      );
+    }
+    if (deletingChannelId === ch.id) {
+      return (
+        <div key={ch.id} data-testid={`delete-${ch.id}`} className="mt-1 rounded border border-red-700 bg-zinc-800 p-1">
+          <div className="mb-1 text-xs text-zinc-400">
+            {ch.visibility === 'private' ? '🔒' : '#'}{ch.name} 삭제
+          </div>
+          {/* 지울 규모를 보여 준다 — 삭제 뒤에는 무엇이 사라졌는지 물을 곳이 없다.
+              아직 못 읽었으면 개수를 지어내지 않는다. */}
+          {deleteCount === null && <p className="mb-1 text-[10px] text-zinc-500">메시지 수를 읽고 있다…</p>}
+          {typeof deleteCount === 'number' && (
+            <p className="mb-1 text-[10px] text-amber-400">
+              이 채널과 메시지 {deleteCount}개를 영구히 지운다. 되돌릴 수 없다.
+            </p>
+          )}
+          {deleteError && <p role="alert" className="mb-1 text-[10px] text-red-400">{deleteError}</p>}
+          <div className="flex gap-1">
+            {/* 개수를 모르면 확인 버튼을 만들지 않는다 — 규모를 모르는 채로 되돌릴 수 없는
+                조작을 승인하게 하지 않는다. */}
+            {typeof deleteCount === 'number' && (
+              <button
+                className="rounded bg-red-700 px-2 py-0.5 text-xs text-white hover:bg-red-600"
+                onClick={() => void confirmDelete(ch.id)}
+              >
+                정말 삭제
+              </button>
+            )}
+            <button
+              className="rounded px-2 py-0.5 text-xs text-zinc-400 hover:bg-zinc-700"
+              onClick={closeDelete}
             >
               취소
             </button>
@@ -522,6 +613,13 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
         ? { label: '보관 해제', onSelect: () => void getController().archiveChannel(ch.id, false) }
         : { label: '보관', onSelect: () => void getController().archiveChannel(ch.id, true) }]
       : []),
+      /**
+       * 삭제(#155). **보관된 채널에만** 만든다 — 서버가 보관되지 않은 채널의 삭제를 409 로
+       * 거절하므로, 눌러도 거절되는 항목을 남겨 두면 "할 수 있다"는 거짓 신호가 된다
+       * (docs/design.md 4절). DM 은 이 목록(`sortedChannels`)에 없어 애초에 닿지 않는다.
+       */
+      ...(me?.isAdmin && isArchived
+        ? [{ label: '삭제', onSelect: () => startDelete(ch.id) }] : []),
       { label: '멤버 보기', onSelect: () => void openMembers(ch.id) },
       // 초대와 나가기는 **그 채널의 멤버**여야 하는 동작이다(public 채널의 초대는 예외 —
       // 서버 게이트가 누구나 통과시킨다). 메뉴는 목록을 받기 전에도 그려지므로 아직
@@ -605,8 +703,24 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
         />
       )}
       <div className="flex min-w-[180px] flex-1 flex-col overflow-hidden">
-        <div className="flex items-center gap-2 border-b border-zinc-800 p-3 font-bold">
-          <Logo size={16} decorative />
+        {/* 브랜드 바 = 사이드바가 펴져 있을 때 **창의 좌상단**이다(#270). macOS 신호등이
+            `titleBarStyle: "Overlay"` 로 콘텐츠 위에 뜨므로 여백을 비우는 자리도, 창을 끄는
+            손잡이가 되는 자리도 여기다.
+
+            `data-tauri-drag-region` 은 그 속성이 있는 요소 **자체**를 눌렀을 때만 드래그를
+            시작한다 — 접기 버튼을 누르면 이벤트 대상이 버튼이라 창은 움직이지 않는다. 로고는
+            `<svg>` 라 그 자체가 대상이 되므로 손잡이를 따로 씌운다(제목 텍스트는 요소가 아닌
+            텍스트 노드여서 이 div 가 그대로 대상이 된다). */}
+        <div
+          data-testid="sidebar-brand"
+          data-tauri-drag-region
+          className={`flex items-center gap-2 border-b border-zinc-800 py-3 pr-3 font-bold ${
+            macTrafficLightRoom ? MAC_TRAFFIC_LIGHT_PL : 'pl-3'
+          }`}
+        >
+          <span data-tauri-drag-region className="flex items-center">
+            <Logo size={16} decorative />
+          </span>
           murmur
           <span className={`h-2 w-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}
             title={connected ? 'connected' : 'disconnected'} />
@@ -703,6 +817,19 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
               세 번째 화면을 만들 때 어느 쪽을 따를지 알 수 없다. */}
           <button className={`${row(false)} text-zinc-400`} onClick={onOpenInbox}>
             Inbox
+          </button>
+          {/* #219: 담아 둔 메시지. 배지의 숫자는 **open 개수**다 — 완료로 옮긴 것까지 세면
+              다 처리한 뒤에도 숫자가 남아 할 일이 있다고 거짓을 말한다. */}
+          <button className={`${row(false)} text-zinc-400`} onClick={onOpenSaved}>
+            Saved
+            {savedCount > 0 && (
+              <span
+                aria-label={`담아 둔 메시지 ${savedCount}개`}
+                className="ml-auto rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold text-white"
+              >
+                {savedCount}
+              </span>
+            )}
           </button>
           <button className={`${row(false)} text-zinc-400`} onClick={onOpenDirectory}>
             Directory

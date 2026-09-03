@@ -3,7 +3,7 @@ import { mkdtemp, rm, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { createLocalStorage, StorageLimitError } from '../src/storage/local.js';
+import { createLocalStorage, StorageLimitError, AttachmentMissingError } from '../src/storage/local.js';
 
 let root: string;
 let storage: ReturnType<typeof createLocalStorage>;
@@ -73,8 +73,17 @@ describe('the size limit', () => {
 });
 
 describe('reading a key that is not there', () => {
-  it('rejects rather than returning an empty stream', async () => {
-    await expect(storage.read('no/such/key')).rejects.toThrow();
+  it('throws AttachmentMissingError with key and path', async () => {
+    const key = 'no/such/key';
+    try {
+      await storage.read(key);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(AttachmentMissingError);
+      const e = err as AttachmentMissingError;
+      expect(e.key).toBe(key);
+      expect(e.path).toContain(root);
+    }
   });
 
   // 키가 경로로 해석되면 스토리지 밖의 파일을 읽는 통로가 된다.

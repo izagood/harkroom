@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from 'pg';
 import { CHANNEL_MENTION_HANDLE, mentionedHandles, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { channelVisibleSql } from './channels.js';
+import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
 
 /**
  * 게시 결과. 첨부 연결이 거절되면 메시지 자체가 만들어지지 않는다(트랜잭션 롤백) —
@@ -86,6 +87,46 @@ async function insertInbox(
   notified.add(accountId);
 }
 
+/**
+ * 이름 하나를 여러 사람으로 펼쳐 inbox 에 넣는다. `@channel`(#225)과 집합(#230)이 **같은
+ * 함수를 쓴다.**
+ *
+ * 한 자리로 모아 둔 이유: 확장 지점이 둘이 되면 하나만 고치는 사고가 난다. 여기 묶여 있는
+ * 규칙은 셋이고, 어느 하나를 한쪽에서만 빠뜨리면 조용히 새거나 조용히 빠진다.
+ *
+ * ① **가시성**은 `channelVisibleSql` 이 판정한다 — 멤버십을 여기서 다시 정의하지 않는다.
+ *    판정이 갈라지면 private 채널의 비멤버에게 알림이 새거나(채널의 존재 자체가 샌다),
+ *    public 채널에서 조용히 빠지는 사람이 생긴다. 술어가 계정 id 를 파라미터가 아니라
+ *    컬럼(`a.id`)으로 받는 덕에 방향을 뒤집어 "이 채널을 볼 수 있는 계정 전부"로 쓸 수 있다.
+ * ② **부른 사람 자신은 뺀다** — 자기 발화로 자기에게 알림이 오면 안 된다
+ *    (`readPositions.ts` 의 `author_id <> $1` 과 같은 규칙).
+ * ③ **이미 알린 사람은 다시 넣지 않는다** — 평범한 멘션으로 이미 불린 사람이 집합에도
+ *    들어 있으면 inbox 항목이 둘 생긴다.
+ *
+ * 비활성 계정을 따로 거르지 않는 것은 평범한 멘션과 같은 처지로 두기 위해서다.
+ *
+ * `candidateIds` 가 `null` 이면 "이 채널을 볼 수 있는 사람 전부"(`@channel`), 배열이면
+ * 그중 볼 수 있는 사람(집합의 명단)이다.
+ */
+async function fanOutMention(
+  client: PoolClient,
+  input: { channelId: string; authorId: string; messageId: string },
+  candidateIds: string[] | null,
+  notified: Set<string>,
+): Promise<void> {
+  if (candidateIds !== null && candidateIds.length === 0) return;
+  const audience = await client.query<{ id: string }>(
+    `select a.id from account a, channel c
+      where c.id = $1 and a.id <> $2
+        and ($3::uuid[] is null or a.id = any($3))
+        and ${channelVisibleSql('c', 'a.id')}`,
+    [input.channelId, input.authorId, candidateIds],
+  );
+  for (const row of audience.rows) {
+    if (!notified.has(row.id)) await insertInbox(client, row.id, input.messageId, 'mention', notified);
+  }
+}
+
 export async function postMessage(
   pool: Pool, input: PostMessageInput,
 ): Promise<PostMessageResult> {
@@ -166,23 +207,33 @@ export async function postMessage(
       // 밀리면 그 사람은 영영 불릴 수 없다.
       const claimed = accounts.rows.some((row) => row.handle === CHANNEL_MENTION_HANDLE);
       if (handles.includes(CHANNEL_MENTION_HANDLE) && !claimed) {
-        // 대상은 **그 채널을 볼 수 있는 사람 전부**다. 멤버십을 여기서 다시 정의하지 않고
-        // `channelVisibleSql` 을 그대로 부른다 — 판정이 갈라지면 private 채널의 비멤버에게
-        // 알림이 새거나(채널의 존재 자체가 샌다), public 채널에서 조용히 빠지는 사람이
-        // 생긴다. 술어가 계정 id 를 파라미터가 아니라 컬럼(`a.id`)으로 받는 덕에 방향을
-        // 뒤집어 "이 채널을 볼 수 있는 계정 전부"로 쓸 수 있다.
-        //
-        // 부른 사람 자신은 뺀다 — 자기 발화로 자기에게 알림이 오면 안 된다
-        // (`readPositions.ts` 의 `author_id <> $1` 과 같은 규칙).
-        // 비활성 계정을 따로 거르지 않는 것은 평범한 멘션과 같은 처지로 두기 위해서다.
-        const audience = await client.query(
-          `select a.id from account a, channel c
-            where c.id = $1 and a.id <> $2 and ${channelVisibleSql('c', 'a.id')}`,
-          [input.channelId, input.authorId],
+        // 대상은 **그 채널을 볼 수 있는 사람 전부**다. 규칙은 `fanOutMention` 하나에 있다.
+        await fanOutMention(client, { ...input, messageId: message.id }, null, notified);
+      }
+
+      // 집합(#230) — 저장된 명단을 펼친다. 본문은 손대지 않는다: `@team` 은 원문에 그대로
+      // 남고 서버는 inbox 항목만 펼쳐 넣는다(`@channel` 과 같은 이유다).
+      //
+      // **계정이 이긴다.** `@foo` 가 계정이면 위에서 이미 평범한 멘션으로 처리됐고 여기서는
+      // 건너뛴다. 서버가 양방향 충돌을 막으므로 정상 경로에서는 겹치지 않지만, 026 이전에
+      // 만들어진 행이나 동시 생성 경합으로 겹칠 수 있다 — 그때 사람의 이름이 집합에 밀리면
+      // 그 사람은 영영 불릴 수 없다.
+      //
+      // 조회를 `client` 로 하는 이유: 트랜잭션 클라이언트를 쥔 채 `pool` 에서 또 다른 연결을
+      // 얻으면 풀이 포화된 순간 자기 자신을 기다리는 교착이 된다. 같은 트랜잭션 스냅샷을
+      // 보는 것도 이쪽이 맞다.
+      const accountHandles = new Set(accounts.rows.map((r) => r.handle));
+      for (const handle of handles) {
+        if (handle === CHANNEL_MENTION_HANDLE) continue;
+        if (accountHandles.has(handle)) continue;
+
+        const group = await getHandleGroupByHandle(client, handle);
+        if (!group) continue;
+
+        const members = await listHandleGroupMembers(client, group.id);
+        await fanOutMention(
+          client, { ...input, messageId: message.id }, members.map((m) => m.accountId), notified,
         );
-        for (const row of audience.rows) {
-          if (!notified.has(row.id)) await insertInbox(client, row.id, message.id, 'mention', notified);
-        }
       }
     }
 

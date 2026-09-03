@@ -4,8 +4,13 @@ import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
+import type { SectionId } from './settings/sections';
 
-export function ThreadPanel() {
+export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
+  /** 멘션 이동(#279). 스레드의 멘션도 대화의 멘션과 같게 동작해야 한다. */
+  onOpenDirectory?: (accountId: string | null) => void;
+  onOpenSettings?: (section?: SectionId, targetId?: string) => void;
+} = {}) {
   const { activeChannelId, threadRootId, messages } = useAppStore();
   const [alsoInChannel, setAlsoInChannel] = useState(false);
 
@@ -28,7 +33,15 @@ export function ThreadPanel() {
         </button>
       </header>
       <div className="flex-1 overflow-y-auto py-2">
-        {thread.map((m) => <MessageItem key={m.id} message={m} inThread />)}
+        {thread.map((m) => (
+          <MessageItem
+            key={m.id}
+            message={m}
+            inThread
+            onOpenDirectory={onOpenDirectory}
+            onOpenSettings={onOpenSettings}
+          />
+        ))}
       </div>
       <TypingLine />
       <div className="border-t border-zinc-200 p-3">
