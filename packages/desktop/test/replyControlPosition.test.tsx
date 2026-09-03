@@ -27,18 +27,36 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('#254 답글 컨트롤 위치 변경', () => {
-  // 회귀선 1: 답글 컨트롤이 본문 열 안, 리액션 다음에 온다
-  it('답글 컨트롤이 본문 열(Reactions 다음)에 있다', () => {
+  // 회귀선 1: 답글 컨트롤이 본문 열 안, 리액션 다음에 온다.
+  //
+  // 리액션 칩을 **실제로 달아 둔다** — `Reactions` 는 리액션이 없으면 null 을 반환하므로
+  // (Reactions.tsx 의 `if (!message.reactions.length) return null`), 빈 fixture 로는
+  // [data-testid="reactions"] 가 아예 없어 순서를 물을 대상이 사라진다. 초판이 그것을
+  // `if (reactions)` 로 감싸 두어, 답글 컨트롤을 오른쪽 열로 되돌려도 초록이었다.
+  it('답글 컨트롤이 본문 열 안에서 리액션 칩 다음에 온다', () => {
     fakeController();
-    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
+    render(
+      <MessageItem
+        message={msg('m1', 'c1', 1, 'root', 'u2', {
+          replyCount: 2,
+          reactions: [{ emoji: '👍', accountIds: ['u1'] }],
+        })}
+      />,
+    );
 
     const replyBtn = screen.getByRole('button', { name: '2 replies' });
-    const reactions = document.querySelector('[data-testid="reactions"]');
+    // 가드 없이 찾는다 — 없으면 그 자체가 실패여야 한다.
+    const reactions = screen.getByTestId('reactions');
 
-    // 답글 버튼이 reactions 다음에 DOM 에 있다
-    if (reactions) {
-      expect(reactions.compareDocumentPosition(replyBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    }
+    // ① 리액션 칩과 답글 컨트롤이 **같은 열**(본문 열) 안에 있다.
+    const mainColumn = document.querySelector('.min-w-0.flex-1')!;
+    expect(mainColumn.contains(reactions)).toBe(true);
+    expect(mainColumn.contains(replyBtn)).toBe(true);
+
+    // ② 그 안에서 답글 컨트롤이 리액션 칩 **뒤에** 온다.
+    expect(
+      reactions.compareDocumentPosition(replyBtn) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   // 회귀선 2: 답글 컨트롤과 호버 툴바가 다른 컨테이너에 있다 (구조적 비겹침)
@@ -60,13 +78,17 @@ describe('#254 답글 컨트롤 위치 변경', () => {
     expect(rightColumn?.contains(toolbar)).toBe(true);
   });
 
-  // 회귀선 3: 답글이 있으면 호버 없이 pill 이 보인다
+  // 회귀선 3: 답글이 있으면 호버 없이 pill 이 보인다(#161). jsdom 에는 레이아웃이 없으니
+  // "보인다"를 픽셀로 재지 못한다 — 호버로만 드러나게 하는 클래스가 **붙지 않았음**을
+  // 단언한다. 존재만 확인하면 pill 에 hoverOnly 를 붙여도 초록으로 남는다.
   it('답글이 있으면 호버 없이 답글 pill 이 보인다', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
 
-    // 호버 없이 답글 버튼이 보여야 함
-    expect(screen.getByRole('button', { name: '2 replies' })).toBeTruthy();
+    const replyBtn = screen.getByRole('button', { name: '2 replies' });
+    expect(replyBtn.className).not.toMatch(/\bopacity-0\b/);
+    expect(replyBtn.className).not.toMatch(/\binvisible\b/);
+    expect(replyBtn.className).not.toMatch(/\bhidden\b/);
   });
 
   // 회귀선 4: 답글이 없으면 "Reply in thread" 가 opacity 로 숨고 visibility 로 숨지 않는다
@@ -78,9 +100,12 @@ describe('#254 답글 컨트롤 위치 변경', () => {
     const replyBtn = screen.getByRole('button', { name: 'Reply in thread' });
     expect(replyBtn).toBeTruthy();
 
-    // opacity-0 클래스가 있어야 하고, visibility 가 없어야 함
+    // opacity-0 로 숨어야 하고, visibility 계열로 숨어서는 안 된다. Tailwind 에서
+    // visibility:hidden 은 `invisible` 이다 — `/visibility/` 로 찾으면 클래스 문자열에
+    // 그 낱말이 없어 무엇도 걸리지 않는다(초판이 그랬다).
     expect(replyBtn.className).toMatch(/\bopacity-0\b/);
-    expect(replyBtn.className).not.toMatch(/visibility/);
+    expect(replyBtn.className).not.toMatch(/\binvisible\b/);
+    expect(replyBtn.className).not.toMatch(/\bcollapse\b/);
 
     // 호버 후에는 opacity-100 이 되어 보여야 함
     const message = screen.getByText('root').closest('.group')!;
