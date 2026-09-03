@@ -4,7 +4,7 @@ import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { ThreadPanel } from '../src/components/ThreadPanel';
-import { acc, chan, msg } from './helpers/fakeApi';
+import { acc, chan, msg, scheduledApiStub } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
 
 // #231: 스레드 답을 채널에도 함께 올린다. **메시지는 하나**이고 두 곳에 보인다 —
@@ -18,6 +18,8 @@ const fakeController = () => {
     editMessage: vi.fn(async () => undefined),
     deleteMessage: vi.fn(async () => undefined),
     loadOlder: vi.fn(async () => undefined),
+    // #222: 컴포저가 예약 목록을 읽는다 — 목에 이 표면이 없으면 화면이 뜨지 않는다.
+    api: scheduledApiStub(),
   };
   setController(c as unknown as Controller);
   return c;

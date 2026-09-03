@@ -1,22 +1,34 @@
 import type { Pool, PoolClient } from 'pg';
 import type { HandleGroupRow, HandleGroupMemberRow } from '@murmur/shared';
 
-const COLS = `id, handle, display_name as "displayName", created_at as "createdAt"`;
+/**
+ * 집합 행의 컬럼 목록. **`g` 별칭을 전제한다** — `memberCount` 가 상관 부질의라 테이블을
+ * 지목해야 하기 때문이다.
+ *
+ * `memberCount`(#285)를 저장 컬럼이 아니라 여기서 세는 이유는 `HandleGroupRow` 주석에
+ * 있다: 저장하면 구성원 추가·제거마다 맞출 곳이 둘이 된다. 한 곳에 두면 이 목록을 쓰는
+ * 모든 경로(목록·조회·생성·수정)가 수를 **함께** 얻는다 — 빠뜨릴 자리가 없다.
+ *
+ * `::int` 로 좁히는 이유: `count(*)` 는 bigint 라 pg 드라이버가 **문자열**로 준다.
+ * 그대로 두면 화면에 `"3"` 이 실려 와서 타입은 통과하고 산술만 조용히 틀린다.
+ */
+const COLS = `g.id, g.handle, g.display_name as "displayName", g.created_at as "createdAt",
+  (select count(*) from handle_group_member m where m.group_id = g.id)::int as "memberCount"`;
 
 export async function listHandleGroups(pool: Pool): Promise<HandleGroupRow[]> {
-  const res = await pool.query(`select ${COLS} from handle_group order by handle`);
+  const res = await pool.query(`select ${COLS} from handle_group g order by g.handle`);
   return res.rows;
 }
 
 export async function getHandleGroup(pool: Pool, id: string): Promise<HandleGroupRow | null> {
-  const res = await pool.query(`select ${COLS} from handle_group where id = $1`, [id]);
+  const res = await pool.query(`select ${COLS} from handle_group g where g.id = $1`, [id]);
   return res.rowCount ? res.rows[0] : null;
 }
 
 export async function getHandleGroupByHandle(
   pool: Pool | PoolClient, handle: string,
 ): Promise<HandleGroupRow | null> {
-  const res = await pool.query(`select ${COLS} from handle_group where lower(handle) = lower($1)`, [handle]);
+  const res = await pool.query(`select ${COLS} from handle_group g where lower(g.handle) = lower($1)`, [handle]);
   return res.rowCount ? res.rows[0] : null;
 }
 
@@ -34,7 +46,9 @@ export async function createHandleGroup(
   pool: Pool, input: { handle: string; displayName: string },
 ): Promise<HandleGroupRow | null> {
   const res = await pool.query(
-    `insert into handle_group (handle, display_name)
+    // `as g` 는 `COLS` 가 그 별칭을 전제하기 때문이다 — 갓 만든 집합의 memberCount 는
+    // 언제나 0 이지만, 그 0 을 여기서 손으로 적으면 COLS 를 안 쓰는 경로가 하나 생긴다.
+    `insert into handle_group as g (handle, display_name)
      select $1, $2
      where not exists (select 1 from account where lower(handle) = lower($1))
      returning ${COLS}`,
@@ -48,7 +62,7 @@ export async function updateHandleGroup(
 ): Promise<HandleGroupRow | null> {
   if (patch.displayName === undefined) return getHandleGroup(pool, id);
   const res = await pool.query(
-    `update handle_group set display_name = $2 where id = $1 returning ${COLS}`,
+    `update handle_group as g set display_name = $2 where g.id = $1 returning ${COLS}`,
     [id, patch.displayName],
   );
   return res.rowCount ? res.rows[0] : null;

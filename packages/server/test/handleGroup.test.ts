@@ -178,6 +178,49 @@ describe('집합 CRUD (admin만 가능)', () => {
     expect(members).toContain(blindMemberId);
   });
 
+  /**
+   * `memberCount`(#285)는 집합 행을 주는 **모든 경로**에 실린다.
+   *
+   * 한 경로만 확인하면 안 되는 이유: 데스크탑의 자동완성 후보는 `GET /accounts` 가 준
+   * 목록을 쓰고, 설정 화면은 `POST`·`PATCH` 가 돌려준 행을 스토어에 넣는다. 한 곳이
+   * 수를 빠뜨리면 그 화면만 `undefined명` 이 되고, 그것은 타입이 잡아 주지 않는다
+   * (필수 필드지만 서버 응답은 런타임 값이다).
+   */
+  it('구성원 수가 집합 행을 주는 모든 경로에 실린다', async () => {
+    const countIn = (groups: Array<{ handle: string; memberCount: number }>, handle: string) =>
+      groups.find((g) => g.handle === handle)?.memberCount;
+
+    // 이 시점에 myteam 에는 위 테스트가 셋을 넣어 두었다.
+    const admin = await app.inject({ method: 'GET', url: '/handle-groups', headers: auth(adminToken) });
+    expect(countIn(admin.json().groups, 'myteam')).toBe(3);
+
+    // 자동완성 후보의 원천. **admin 전용이 아니다** — 비-admin 도 같은 수를 받아야 한다.
+    const directory = await app.inject({ method: 'GET', url: '/accounts', headers: auth(memberPat) });
+    expect(countIn(directory.json().groups, 'myteam')).toBe(3);
+
+    const one = await app.inject({ method: 'GET', url: `/handle-groups/${groupId}`, headers: auth(adminToken) });
+    expect(one.json().group.memberCount).toBe(3);
+
+    // 갓 만든 집합은 0 이다 — null 도 undefined 도 아니다.
+    const created = await app.inject({
+      method: 'POST', url: '/handle-groups', headers: auth(adminToken),
+      payload: { handle: 'counted', displayName: 'Counted' },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().memberCount).toBe(0);
+
+    // 이름을 바꾼 뒤에도 수는 그대로다 — 설정 화면이 이 행을 스토어에 그대로 넣는다.
+    const renamed = await app.inject({
+      method: 'PATCH', url: `/handle-groups/${groupId}`, headers: auth(adminToken),
+      payload: { displayName: 'Renamed team' },
+    });
+    expect(renamed.json().memberCount).toBe(3);
+    expect(renamed.json().displayName).toBe('Renamed team');
+
+    // count(*) 는 bigint 라 드라이버가 문자열로 준다 — `::int` 가 없으면 여기서 "3" 이 된다.
+    expect(typeof one.json().group.memberCount).toBe('number');
+  });
+
   it('에이전트를 집합에 넣으려 하면 400 이고 들어가지 않는다', async () => {
     const { accountId: agentId } = await createAgent(app, adminToken, 'agent2');
     const res = await app.inject({

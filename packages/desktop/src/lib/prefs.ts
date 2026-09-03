@@ -14,6 +14,16 @@ export interface Prefs {
   notifications: NotificationPrefs;
   sidebarWidth: number;
   sidebarCollapsed: boolean;
+  /** 앱 시작 시 내가 소유한 에이전트의 러너를 자동으로 띄울지(#250). */
+  runnerAutoStart: boolean;
+  /**
+   * 러너를 돌릴 murmur 저장소 경로(#250). 빈 문자열은 '아직 정하지 않았다'다.
+   *
+   * **기본값을 지어내지 않는다.** 앱은 자기가 어느 디렉터리에 체크아웃돼 있는지 알 수
+   * 없고(번들된 앱의 cwd 는 `/` 다), 짐작한 경로로 자식을 띄우면 "왜 러너가 안 뜨지"의
+   * 원인이 사람이 볼 수 없는 곳에 숨는다. 비어 있으면 띄우지 않고 그 사실을 말한다.
+   */
+  runnerRepoPath: string;
 }
 
 const KEY = 'murmur.prefs';
@@ -26,10 +36,15 @@ export const MIN_SIDEBAR_WIDTH = 180;
 export const MAX_SIDEBAR_WIDTH = 480;
 
 /**
- * 보냄 취소 창의 기본 길이(#223). 5초는 "방금 잘못 보냈다"를 알아차리는 데 걸리는 시간이지
- * 안전 보장이 아니다 — 창이 끝나면 되돌릴 길은 없다.
+ * 보냄 취소 창의 기본 길이(#223, 기본값은 #274 에서 0 으로). **0 이라 기본 동작은 즉시
+ * 발송**이고, 되돌리기는 켜는 사람의 선택이다.
+ *
+ * 켜 두는 것을 기본으로 하지 않는 이유: 창이 늦추는 것은 잘못 보낸 그 한 통이 아니라
+ * **모든 메시지**다. 잘못 보내는 일은 드물게 일어나므로, 항상 켜 두면 드문 실수 하나를 위해
+ * 평소의 모든 대화가 창 길이만큼 밀린다. 값을 이미 고른 기기의 저장값은 이 기본값이 바뀌어도
+ * 덮이지 않는다(`loadWindowMs`).
  */
-export const DEFAULT_UNDO_SEND_MS = 5_000;
+export const DEFAULT_UNDO_SEND_MS = 0;
 /** 이보다 길게 두면 자기가 보낸 것이 언제 나갈지 모르는 상태로 앉아 있게 된다. */
 export const MAX_UNDO_SEND_MS = 30_000;
 
@@ -37,6 +52,8 @@ export const DEFAULT_PREFS: Prefs = {
   notifications: { enabled: true, mention: true, threadReply: true, dm: true, showPreview: true },
   sidebarWidth: 240,
   sidebarCollapsed: false,
+  runnerAutoStart: true,
+  runnerRepoPath: '',
 };
 
 export const prefsStorage = {
@@ -51,6 +68,8 @@ export const prefsStorage = {
         notifications: { ...DEFAULT_PREFS.notifications, ...(parsed.notifications ?? {}) },
         sidebarWidth: parsed.sidebarWidth ?? DEFAULT_PREFS.sidebarWidth,
         sidebarCollapsed: parsed.sidebarCollapsed ?? DEFAULT_PREFS.sidebarCollapsed,
+        runnerAutoStart: parsed.runnerAutoStart ?? DEFAULT_PREFS.runnerAutoStart,
+        runnerRepoPath: parsed.runnerRepoPath ?? DEFAULT_PREFS.runnerRepoPath,
       };
     } catch {
       return DEFAULT_PREFS;

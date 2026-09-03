@@ -6,10 +6,11 @@ import { z } from 'zod';
 import type { AccountView } from '@murmur/shared';
 import { emitEvent, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
-import { assertChannelVisible, audienceFor, listChannels } from '../services/channels.js';
+import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
 import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { getMemory, listMemory, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, setMemory } from '../services/memory.js';
+import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { GUIDE } from './guide.js';
 import { recordRunnerVersion } from '../services/runnerVersion.js';
 
@@ -43,6 +44,29 @@ function buildMcpServer(
   // 목록에서 이름을 보는 절충은 사람이 운영 화면에서 쓰라고 만든 것이다.
   server.registerTool('channel.list', { description: '채널 목록' },
     async () => jsonResult({ channels: await listChannels(pool, account.id) }));
+
+  /**
+   * 채널 문서 읽기(#188). **에이전트에게는 읽기만 준다 — 짝이 되는 쓰기 도구가 없다.**
+   *
+   * 문서는 덮어쓰기다. 에이전트에게 쓰기를 열면 "누가 바꿨나"·버전·되돌리기가 곧바로
+   * 요구사항으로 딸려 온다(사람은 자기가 지운 단락을 에이전트가 지운 것과 구별해야 한다).
+   * 그것은 별개 결정이므로 v1 에서는 만들지 않는다.
+   *
+   * 읽기를 여는 이유는 이 기능의 존재 이유 자체다: 새 세션의 에이전트가 채널의 전제를
+   * 재구성할 곳이 필요하다. 그 목적에는 읽기만으로 충분하다.
+   *
+   * 별도 도구인 이유: `channel.list` 에 본문을 실으면 채널 수만큼 문서 전문이 목록 응답에
+   * 실려 컨텍스트를 먹는다. 문서는 필요할 때 하나만 읽는 것이다.
+   */
+  server.registerTool('channel.doc', {
+    description: '채널 문서 조회(읽기 전용)',
+    inputSchema: { channelId: z.string().uuid() },
+  }, async ({ channelId }) => {
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    return jsonResult(await getChannelDoc(pool, channelId));
+  });
 
   server.registerTool('message.read', {
     description: '채널/스레드 메시지 읽기(seq 커서)',
@@ -330,6 +354,25 @@ function buildMcpServer(
       });
     }
     return jsonResult({ ok: true });
+  });
+
+  // skill.propose — 에이전트가 스킬을 제안한다. 미승인 상태로 들어가고 채널에 알림이 간다.
+  server.registerTool('skill.propose', {
+    description: '워크스페이스 스킬 제안(미승인 상태, 채널에 알림)',
+    inputSchema: {
+      slug: z.string().min(1).max(40),
+      body: z.string().min(1).max(8000),
+      channelId: z.string().uuid(),
+    },
+  }, async ({ slug, body, channelId }) => {
+    if (!isValidSkillSlug(slug)) {
+      return jsonResult({ error: { code: 'invalid_slug', message: 'slug must be [a-z0-9-]{2,40}' } });
+    }
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    const result = await proposeSkill(pool, { slug, body, proposedBy: account.id, channelId });
+    return jsonResult(result);
   });
 
   return server;

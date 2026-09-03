@@ -1,9 +1,10 @@
-import type { AccountStatus, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, MessageRow, NotifyLevel, WsServerEvent } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent } from '@murmur/shared';
 import { notifyLevelOf } from '@murmur/shared';
 import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type Notifier } from '../lib/notify';
+import { RunnerLauncher, tauriSecretStore, tauriSpawner, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
 import { useAppStore } from './appStore';
 import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
 import { usePrefsStore } from './prefsStore';
@@ -21,6 +22,9 @@ export class Controller {
    * 두 경로가 서로의 기록을 보므로 어느 쪽이 먼저 도착해도 한 번만 울린다.
    */
   private notifiedMessages = new Set<string>();
+  private runnerLauncher: RunnerLauncher;
+  /** 이번 `start()` 에서 러너 자동 기동을 이미 했는가(#250). */
+  private runnerAutoStartDone = false;
 
   constructor(
     public api: ApiClient,
@@ -32,10 +36,69 @@ export class Controller {
      * #164: accountId 파라미터가 추가되어 어느 커뮤니티의 세션이 죽었는지 알 수 있다.
      */
     private onSessionLost: (message: string, accountId: string) => void = () => {},
-  ) {}
+    /** 테스트가 키체인·자식 프로세스를 목으로 바꿔 끼우는 자리(#250). */
+    secrets: RunnerSecretStore = tauriSecretStore,
+    spawner: RunnerSpawner = tauriSpawner,
+  ) {
+    this.runnerLauncher = new RunnerLauncher(
+      {
+        baseUrl: api.baseUrl,
+        mintPat: (accountId, label) => api.mintPat(accountId, label),
+        listPats: (accountId) => api.listPats(accountId),
+        revokePat: (accountId, label) => api.revokePat(accountId, label),
+      },
+      secrets,
+      spawner,
+    );
+    this.runnerLauncher.setOnStateChange((states) => {
+      useAppStore.getState().set({
+        runnerStates: Object.fromEntries(states.map((s) => [s.agentId, s])),
+      });
+    });
+  }
+
+  /**
+   * 설정 화면의 "PAT 재발급" 이 부르는 자리. 실행기를 화면에 직접 노출하지 않는다.
+   *
+   * 대상을 **여기서 다시 조회한다** — 실행기가 자동 기동 때 본 것을 기억해 두고 그것에
+   * 기대면, 자동 기동을 끄고 쓰는 사람에게는 이 버튼이 영원히 죽어 있다(누를 수는 있고
+   * 아무 일도 일어나지 않는다). 저장소 경로도 지금 값을 읽는다: 사람이 방금 경로를 고쳐
+   * 넣고 이 버튼을 누르는 것이 자연스러운 순서다.
+   */
+  async reissueRunnerPat(agentId: string): Promise<void> {
+    const agents = await this.api.listAgents();
+    const agent = agents.find((a) => a.id === agentId);
+    if (!agent) throw new Error('에이전트를 찾지 못했다 — 목록을 다시 읽어라');
+    await this.runnerLauncher.reissue({
+      agent, repoPath: usePrefsStore.getState().runnerRepoPath,
+    });
+  }
+
+  /**
+   * 내가 소유한 에이전트의 러너를 띄운다(#250). presence 를 받은 뒤에 불린다.
+   *
+   * 토글이 꺼져 있으면 아무것도 하지 않는다 — 상태도 만들지 않는다: 안 띄우기로 한 것에
+   * '꺼짐' 배지를 달면 뭔가 잘못된 것처럼 보인다.
+   */
+  private async startRunners(): Promise<void> {
+    const prefs = usePrefsStore.getState();
+    if (!prefs.runnerAutoStart) return;
+    const store = useAppStore.getState();
+    const myId = store.me?.id;
+    if (!myId) return;
+    const agents = await this.api.listAgents();
+    await this.runnerLauncher.startAll({
+      agents,
+      myAccountId: myId,
+      // `connected` 가 false 면 presence 는 '모른다'다 — 빈 배열이 '아무도 없다'가 아니다.
+      liveAccountIds: store.connected ? new Set(store.online) : null,
+      repoPath: prefs.runnerRepoPath,
+    });
+  }
 
   // fire-and-forget 호출의 unhandled rejection 방지 — 실패는 조용히 무시(다음 이벤트/리컨실이 자연 복구).
   private swallow(p: Promise<unknown>): void { void p.catch(() => {}); }
+  private projectionRefreshInterval: ReturnType<typeof setInterval> | null = null;
 
   async start(): Promise<void> {
     const store = useAppStore.getState();
@@ -58,6 +121,13 @@ export class Controller {
     this.swallow(this.api.channelPrefs().then((prefs) => {
       useAppStore.getState().set({ channelPrefs: Object.fromEntries(prefs.map((p) => [p.channelId, p])) });
     }));
+    // 담아 둔 메시지 요약(#219)도 같은 방식으로 fire-and-forget 으로 받는다.
+    this.swallow(this.loadSavedSummary());
+    // 투영 상태도 60초마다 갱신한다(#267) — 앱 기동 시 한 번과 정기적으로.
+    this.swallow(this.refreshProjectionStatus());
+    this.projectionRefreshInterval = setInterval(() => {
+      this.swallow(this.refreshProjectionStatus());
+    }, 60_000);
     // 앱을 열자마자 쌓여 있던 미읽음이 한꺼번에 터지면 알림이 소음이 된다.
     for (const e of unread) this.announced.add(e.id);
     // 장기 토큰은 ApiClient 가 헤더로만 쓴다 — WS URL 에는 단기 티켓만 실린다.
@@ -66,9 +136,39 @@ export class Controller {
       onOpen: () => { useAppStore.getState().set({ connected: true }); this.swallow(this.reconcile()); },
       onDown: (reason) => this.handleDown(reason),
     });
+
+    // 러너 자동 기동은 **presence 를 받은 뒤**에 한다 — 여기서 바로 부르면 `online` 이
+    // 아직 빈 배열이라 이미 붙어 있는 러너 옆에 두 번째를 띄운다(handleEvent 의
+    // `presence.snapshot` 절 참고). 이 플래그는 start() 마다 초기화된다.
+    this.runnerAutoStartDone = false;
   }
 
-  stop(): void { this.ws?.close(); this.ws = null; }
+  stop(): void {
+    this.runnerLauncher.dispose();
+    this.ws?.close();
+    this.ws = null;
+    if (this.projectionRefreshInterval) { clearInterval(this.projectionRefreshInterval); this.projectionRefreshInterval = null; }
+  }
+
+  /**
+   * 투영 상태를 갱신한다(#267). 기동 시 한 번, 이후 60초마다.
+   *
+   * **실패를 삼키지 않는다.** 다른 fire-and-forget 조회(`swallow`)와 다른 이유가 있다:
+   * 이 조회의 결과물이 곧 "투영이 어떤 상태인가"를 말하는 화면이므로, 실패를 삼키면
+   * 마지막 성공 상태(또는 `null`)가 그대로 남아 **못 읽고 있는 화면이 정상으로 보인다**.
+   * 그것이 이 이슈가 닫으려는 결함 그 자체다. 그래서 실패는 `projectionStatusError` 로
+   * 화면까지 올라가고, 다음 주기가 성공하면 지워진다.
+   */
+  private async refreshProjectionStatus(): Promise<void> {
+    try {
+      const status = await this.api.projectionStatus();
+      useAppStore.getState().set({ projectionStatus: status, projectionStatusError: null });
+    } catch (err) {
+      useAppStore.getState().set({
+        projectionStatusError: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
   /** 문구는 UI 문자열이라 영어다(저장소 관례). 사유별로 다른 이유: 사용자가 할 일이 다르다. */
   private static readonly LOST_MESSAGE: Record<Exclude<WsDownReason, 'network'>, string> = {
@@ -154,6 +254,13 @@ export class Controller {
         break;
       case 'presence.snapshot':
         store.set({ online: e.online });
+        // #250: 러너 자동 기동은 **여기서** 시작한다. presence 가 도착한 이 순간이
+        // "누가 이미 붙어 있는가"를 처음 아는 시점이고, 그것을 모른 채 띄우면 중복 러너가
+        // 생긴다. 재접속마다 다시 하지 않는다(플래그) — 재접속은 러너의 생사와 무관하다.
+        if (!this.runnerAutoStartDone) {
+          this.runnerAutoStartDone = true;
+          this.swallow(this.startRunners());
+        }
         break;
       case 'presence.changed': {
         const cur = new Set(useAppStore.getState().online);
@@ -171,6 +278,38 @@ export class Controller {
       case 'avatar.changed':
         store.applyAvatar(e.accountId, e.avatarAttachmentId);
         if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
+        break;
+      case 'channel.created':
+        // 새 채널을 목록에 추가한다. public 은 전원에게 오고, private 은 멤버에게만 온다.
+        // 이미 있으면 무시(upsert 가 아니라 adds 를 쓴다).
+        if (!store.channels.some((c) => c.id === e.channel.id)) {
+          store.set({ channels: [...store.channels, e.channel] });
+        }
+        break;
+      case 'channel.updated':
+        // 목록에 있으면 교체하고, **없으면 넣는다.** private→public 전환이 그 경우다:
+        // 그때까지 목록에 없던 사람에게도 이벤트가 오는데(이제 볼 수 있으므로) 교체만
+        // 하면 아무 일도 일어나지 않아, 새로 열린 채널이 새로고침 전까지 보이지 않는다.
+        store.set({
+          channels: store.channels.some((c) => c.id === e.channel.id)
+            ? store.channels.map((c) => (c.id === e.channel.id ? e.channel : c))
+            : [...store.channels, e.channel],
+        });
+        break;
+      case 'channel.deleted':
+        // 채널을 목록에서 제거한다. 보고 있던 채널이면 선택을 비우고 안내를 보인다.
+        store.set({
+          channels: store.channels.filter((c) => c.id !== e.channelId),
+          ...(store.activeChannelId === e.channelId
+            ? { activeChannelId: null, threadRootId: null, notice: 'This channel was deleted.' }
+            : {}),
+        });
+        break;
+      case 'saved.changed':
+        // 담기 상태가 바뀌면 사이드바의 "Saved N" 을 갱신한다(#219).
+        if (e.accountId === store.me?.id) {
+          this.swallow(this.loadSavedSummary());
+        }
         break;
     }
   }
@@ -335,6 +474,9 @@ export class Controller {
     // 핀은 **크리티컬 패스에서 뺀다.** 이 엔드포인트가 없는 서버(구버전)에 붙었을 때
     // 채널이 아예 안 열리면 안 된다 — 채널 선호(`start`)와 같은 이유다.
     this.swallow(this.loadPins(channelId));
+    // 자동 멘션(#173)도 같은 이유로 크리티컬 패스 밖이다. 못 받으면 칩이 없는 것뿐이고,
+    // 그때 글을 보내면 접두가 안 붙는다 — 채널이 안 열리는 것보다 낫다.
+    this.swallow(this.loadChannelAutoMentions(channelId));
     const page = await this.api.messages(channelId, { since });
     this.loadedChannels.add(channelId);
     useAppStore.getState().upsertMessages(channelId, page.messages);
@@ -503,9 +645,20 @@ export class Controller {
   /**
    * 첨부를 사용자 디스크에 저장한다. objectURL + `download` 앵커를 쓴다 — 토큰을 URL 에
    * 넣지 않으려면 바이트를 먼저 받아야 하고, 받은 다음에는 이것이 가장 단순한 저장 경로다.
+   * 실패하면 Notice 로 사람 앞에 세운다.
    */
   async saveAttachment(attachment: AttachmentRow): Promise<void> {
-    const blob = await this.api.fetchAttachment(attachment.id);
+    let blob: Blob;
+    try {
+      blob = await this.fetchAttachment(attachment.id);
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'attachment_missing') {
+        useAppStore.getState().set({ notice: '첨부 파일이 서버에 없습니다' });
+      } else {
+        useAppStore.getState().set({ notice: '첨부를 불러오지 못했습니다' });
+      }
+      return;
+    }
     const url = URL.createObjectURL(blob);
     try {
       const a = document.createElement('a');
@@ -584,6 +737,47 @@ export class Controller {
       return;
     }
     await this.loadPins(channelId);
+  }
+
+  /**
+   * 채널 문서를 서버에서 받는다(#188).
+   *
+   * **실패를 삼키지 않는다** — try/catch 로 빈 문서를 넣으면 "못 읽었다"가 "비어 있다"로
+   * 보이고, 그 위에 저장하면 남의 문서를 빈 본문으로 덮어쓴다. 던지는 것이 호출부의
+   * 책임을 강제한다.
+   */
+  async loadChannelDoc(channelId: string): Promise<ChannelDoc> {
+    const doc = await this.api.channelDoc(channelId);
+    const store = useAppStore.getState();
+    store.set({ channelDocs: { ...store.channelDocs, [channelId]: doc } });
+    return doc;
+  }
+
+  /**
+   * 채널 문서를 저장한다(#188).
+   *
+   * 409 `doc_stale` 도 그대로 던진다 — 여기서 삼키면 화면은 저장된 줄 안다. 다만 그 오류가
+   * 실어 온 **현재 본문**은 스토어에 반영한다: 사람이 두 판을 나란히 보고 판단해야 하므로
+   * 화면이 그 값을 필요로 하고, 다시 저장할 때 쓸 `expectedUpdatedAt` 도 그 값에서 온다.
+   */
+  async saveChannelDoc(
+    channelId: string, body: string, expectedUpdatedAt: number | null,
+  ): Promise<ChannelDoc> {
+    try {
+      const doc = await this.api.updateChannelDoc(channelId, body, expectedUpdatedAt);
+      const store = useAppStore.getState();
+      store.set({ channelDocs: { ...store.channelDocs, [channelId]: doc } });
+      return doc;
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'doc_stale') {
+        const current = (err.payload as { doc?: ChannelDoc } | null)?.doc;
+        if (current) {
+          const store = useAppStore.getState();
+          store.set({ channelDocs: { ...store.channelDocs, [channelId]: current } });
+        }
+      }
+      throw err;
+    }
   }
 
   async deleteMessage(messageId: string): Promise<void> {
@@ -675,6 +869,63 @@ export class Controller {
   }
 
   /**
+   * 핸들 집합 관리(#285). **모든 변경이 스토어의 `groups` 를 함께 고친다.**
+   *
+   * 이유는 위 `setAgentDisabled` 와 같다: 이 사실을 읽는 화면은 설정 화면이 아니라
+   * 작성창의 멘션 후보다. 설정 화면의 지역 상태만 고치면 이름을 바꾼 직후에도 후보에는
+   * 옛 이름이 남고, 부르는 사람은 자기가 고친 것이 반영되지 않았다고 읽는다.
+   *
+   * 목록을 다시 받아 오지 않고 서버가 돌려준 행을 그대로 넣는 것도 같은 이유다 — 다시
+   * 받으면 그 사이의 다른 변경까지 섞여 "내가 방금 한 일"과 구분되지 않는다.
+   */
+  async createHandleGroup(input: { handle: string; displayName: string }): Promise<HandleGroupRow> {
+    const group = await this.api.createHandleGroup(input);
+    const store = useAppStore.getState();
+    store.set({ groups: [...store.groups, group] });
+    return group;
+  }
+
+  getHandleGroup(id: string): Promise<{ group: HandleGroupRow; members: string[] }> {
+    return this.api.getHandleGroup(id);
+  }
+
+  async updateHandleGroup(id: string, patch: { displayName: string }): Promise<HandleGroupRow> {
+    const updated = await this.api.updateHandleGroup(id, patch);
+    const store = useAppStore.getState();
+    store.set({ groups: store.groups.map((g) => (g.id === id ? updated : g)) });
+    return updated;
+  }
+
+  async deleteHandleGroup(id: string): Promise<void> {
+    await this.api.deleteHandleGroup(id);
+    const store = useAppStore.getState();
+    store.set({ groups: store.groups.filter((g) => g.id !== id) });
+  }
+
+  /**
+   * 구성원 추가·제거. 라우트는 **바뀐 뒤의 명단 전체**를 준다 — 그래서 후보에 보이는
+   * 구성원 수를 추측하지 않고 그 길이로 정확히 고친다. 추측(±1)으로 두면 같은 계정을
+   * 두 번 넣는 요청에서 수가 실제와 갈라지고, 그 어긋남은 다음 조회까지 화면에 남는다.
+   */
+  private applyGroupMembers(id: string, members: string[]): string[] {
+    const store = useAppStore.getState();
+    store.set({
+      groups: store.groups.map((g) => (g.id === id ? { ...g, memberCount: members.length } : g)),
+    });
+    return members;
+  }
+
+  async addHandleGroupMembers(id: string, accountIds: string[]): Promise<string[]> {
+    const { members } = await this.api.addHandleGroupMembers(id, accountIds);
+    return this.applyGroupMembers(id, members);
+  }
+
+  async removeHandleGroupMembers(id: string, accountIds: string[]): Promise<string[]> {
+    const { members } = await this.api.removeHandleGroupMembers(id, accountIds);
+    return this.applyGroupMembers(id, members);
+  }
+
+  /**
    * 채널을 만들고 목록에 반영한 뒤 그 채널을 연다 — `startDm` 과 같은 모양이다.
    * 컴포넌트가 `api` 를 직접 부르고 스토어를 손으로 갱신하면 그 절차가 화면마다 흩어지고,
    * 서버가 채운 필드(kind·topic 기본값)를 클라이언트가 추측하게 된다. 목록은 다시 받아온다.
@@ -696,6 +947,29 @@ export class Controller {
     const store = useAppStore.getState();
     store.set({ channelMembers: { ...store.channelMembers, [channelId]: members } });
     return members;
+  }
+
+  /**
+   * 이 채널의 자동 멘션 목록(#173)을 서버에서 다시 받는다. 핀과 같이 목록 전체를 갈아 끼운다
+   * — admin 이 다른 기기에서 바꾼 것도 섞여 들어오므로 로컬 델타는 갈라진다.
+   * **실패를 빈 목록으로 삼키지 않는다** — 빈 목록은 "아무도 안 부른다"는 거짓 사실이 된다.
+   */
+  async loadChannelAutoMentions(channelId: string): Promise<ChannelAutoMentionRow[]> {
+    const rows = await this.api.channelAutoMentions(channelId);
+    const store = useAppStore.getState();
+    store.set({ channelAutoMentions: { ...store.channelAutoMentions, [channelId]: rows } });
+    return rows;
+  }
+
+  /** 건다. 실패를 삼키지 않는다 — 호출부(설정 화면)가 사유를 사람에게 보여 준다. */
+  async setChannelAutoMention(channelId: string, agentAccountId: string): Promise<void> {
+    await this.api.setChannelAutoMention(channelId, agentAccountId);
+    await this.loadChannelAutoMentions(channelId);
+  }
+
+  async unsetChannelAutoMention(channelId: string, agentAccountId: string): Promise<void> {
+    await this.api.unsetChannelAutoMention(channelId, agentAccountId);
+    await this.loadChannelAutoMentions(channelId);
   }
 
   async inviteChannelMember(channelId: string, accountId: string): Promise<ChannelMemberRow[]> {
@@ -939,6 +1213,7 @@ export class Controller {
     // 핀은 **크리티컬 패스에서 뺀다.** 이 엔드포인트가 없는 서버(구버전)에 붙었을 때
     // 채널이 아예 안 열리면 안 된다 — 채널 선호(`start`)와 같은 이유다.
     this.swallow(this.loadPins(channelId));
+    this.swallow(this.loadChannelAutoMentions(channelId));
     const page = await this.api.messages(channelId, { since });
     this.loadedChannels.add(channelId);
     store.upsertMessages(channelId, page.messages);
@@ -966,6 +1241,69 @@ export class Controller {
   /** 초대 토큰을 발급한다 — admin 전용. */
   createInvite(): Promise<string> {
     return this.api.createInvite();
+  }
+
+  /**
+   * 담긴 목록 한 탭. **스토어에 쓰지 않고 그대로 돌려준다** — 패널의 지역 상태다.
+   * 여기서 전역에 쓰면 '완료' 탭을 본 뒤 `⋯` 메뉴가 open 인 메시지를 담기지 않은 것으로 읽는다.
+   * 실패는 삼키지 않고 그대로 던진다 — 부르는 화면이 "못 읽었다"를 그린다.
+   */
+  loadSavedMessages(state: 'open' | 'done'): Promise<SavedMessageRow[]> {
+    return this.api.savedMessages(state);
+  }
+
+  /** 사이드바 배지(open 개수)와 `⋯` 메뉴 문구(담겼는가)를 한 왕복으로 갱신한다. */
+  async loadSavedSummary(): Promise<{ openCount: number; messageIds: string[] }> {
+    const summary = await this.api.savedSummary();
+    useAppStore.getState().set({ savedCount: summary.openCount, savedIds: summary.messageIds });
+    return summary;
+  }
+
+  async saveMessage(messageId: string): Promise<void> {
+    await this.api.saveMessage(messageId);
+    await this.loadSavedSummary();
+  }
+
+  async unsaveMessage(messageId: string): Promise<void> {
+    await this.api.unsaveMessage(messageId);
+    await this.loadSavedSummary();
+  }
+
+  async updateSavedMessageState(messageId: string, state: 'open' | 'done'): Promise<void> {
+    await this.api.updateSavedMessage(messageId, state);
+    await this.loadSavedSummary();
+  }
+
+  async listTeams(): Promise<AgentTeamRow[]> {
+    return this.api.teams();
+  }
+
+  createTeam(name: string): Promise<AgentTeamRow> {
+    return this.api.createTeam(name);
+  }
+
+  updateTeam(id: string, name: string): Promise<AgentTeamRow> {
+    return this.api.updateTeam(id, name);
+  }
+
+  deleteTeam(id: string): Promise<void> {
+    return this.api.deleteTeam(id);
+  }
+
+  async getTeam(id: string): Promise<{ team: AgentTeamRow; members: AgentTeamMemberRow[] }> {
+    return this.api.team(id);
+  }
+
+  addTeamMember(teamId: string, accountId: string): Promise<{ members: AgentTeamMemberRow[] }> {
+    return this.api.addTeamMember(teamId, accountId);
+  }
+
+  removeTeamMember(teamId: string, accountId: string): Promise<{ members: AgentTeamMemberRow[] }> {
+    return this.api.removeTeamMember(teamId, accountId);
+  }
+
+  addTeamToChannel(channelId: string, teamId: string): Promise<AddTeamToChannelResult> {
+    return this.api.addTeamToChannel(channelId, teamId);
   }
 }
 

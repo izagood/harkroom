@@ -2,10 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { AttachmentRow, MessageRow } from '@murmur/shared';
 import { useAppStore } from '../src/state/appStore';
-import { setController, type Controller } from '../src/state/controller';
+import { Controller, setController } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
 import { Composer } from '../src/components/Composer';
-import { acc, msg } from './helpers/fakeApi';
+import { Notice } from '../src/components/Notice';
+import { ApiError } from '../src/lib/api';
+import { acc, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
 
 const withAttachments = (attachments: AttachmentRow[]): MessageRow =>
@@ -103,6 +105,77 @@ describe('showing attachments on a message', () => {
     render(<MessageItem message={withAttachments([att({ contentType: 'image/png', filename: 'ok.png' })])} />);
 
     await waitFor(() => expect(c.fetchAttachment).toHaveBeenCalledWith('a1'));
+  });
+
+  // 5. 실패를 조용히 삼키면 "불러오지 못했다"는 신호를 못 받는다 — 이미지가 파일 칩으로
+  // 강등되기만 하고, 칩이 보이는 것이 실패 신호인데 아무도 그렇게 읽지 못한다(#257).
+  it('shows "(불러오기 실패)" when preview fetch fails', async () => {
+    fakeController({
+      fetchAttachment: vi.fn(async () => { throw new Error('network error'); }),
+    });
+    render(<MessageItem message={withAttachments([att({ contentType: 'image/png', filename: 'fail.png' })])} />);
+
+    await waitFor(() => expect(screen.getByText('(불러오기 실패)')).toBeTruthy());
+    // 문구가 칩 **안에** 있어야 한다 — 어딘가 화면 밖에 있으면 강등을 설명하지 못한다.
+    expect(screen.getByRole('button', { name: /fail\.png/ }).textContent)
+      .toContain('(불러오기 실패)');
+  });
+
+  it('미리보기가 성공하면 실패 문구는 없다', async () => {
+    fakeController();
+    render(<MessageItem message={withAttachments([att({ contentType: 'image/png', filename: 'ok.png' })])} />);
+
+    await waitFor(() => expect(screen.getByRole('img')).toBeTruthy());
+    expect(screen.queryByText('(불러오기 실패)')).toBeNull();
+  });
+});
+
+/**
+ * #257 회귀선(칩 클릭). 칩을 누르면 바이트를 받아 디스크에 저장하는데, 그 거부가
+ * `void getController().saveAttachment(...)` 로 버려지고 있었다 — 누른 사람에게는 아무
+ * 일도 일어나지 않은 것처럼 보인다.
+ *
+ * 여기서는 **진짜 `Controller`** 를 쓴다. 컨트롤러를 가짜로 두면 "실패를 Notice 로
+ * 세운다"는 그 컨트롤러의 책임이 검사되지 않는다.
+ */
+describe('첨부 저장 실패를 사람 앞에 세운다', () => {
+  function mountWithRealController(fetchAttachment: () => Promise<Blob>) {
+    const api = fakeApi({ fetchAttachment: vi.fn(fetchAttachment) });
+    setController(new Controller(api, fakeWsFactory().makeWs));
+    render(<><Notice /><MessageItem message={withAttachments([att()])} /></>);
+    return api;
+  }
+
+  it('6. 칩 클릭이 실패하면 Notice 가 뜬다', async () => {
+    mountWithRealController(async () => { throw new Error('네트워크가 끊겼다'); });
+
+    fireEvent.click(screen.getByRole('button', { name: /note\.txt/ }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('첨부를 불러오지 못했');
+  });
+
+  it('7. 404 attachment_missing 은 "서버에 없다"로 구분돼 보인다', async () => {
+    // "행은 있는데 바이트가 없다" 는 재시도로 해결되지 않는다 — 사람이 그 차이를 알아야
+    // 운영자에게 말할 수 있다. 일반 실패와 같은 문구면 그 구분이 사라진다.
+    mountWithRealController(async () => {
+      throw new ApiError(404, 'attachment_missing', 'attachment file not found on the server');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /note\.txt/ }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('서버에 없');
+    expect(alert.textContent).not.toContain('첨부를 불러오지 못했');
+  });
+
+  it('성공하면 Notice 가 뜨지 않는다', async () => {
+    mountWithRealController(async () => new Blob(['bytes']));
+
+    fireEvent.click(screen.getByRole('button', { name: /note\.txt/ }));
+
+    await waitFor(() => expect(useAppStore.getState().notice).toBeNull());
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });
 

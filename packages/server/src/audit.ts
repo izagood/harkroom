@@ -33,6 +33,16 @@ export type AuditAction =
   // #182: 공개 범위 전환. 이 한 번의 조작으로 채널 전체가 전원에게 열리거나 닫힌다 —
   // 'channel.updated' 에 묻어 두면 감사 조회에서 그 사건을 골라낼 수 없다.
   | 'channel.visibility.changed'
+  // #188: 채널 문서 수정. detail 에는 본문 없이 bodyLength 만 남긴다 — 문서 전체를
+  // 감사에 복사하면 덮어쓰기마다 복사가 누적되고, 검색이 불가능해진다.
+  | 'channel.doc.updated'
+  // #172: 에이전트 팀의 생애주기. detail 에는 handle 만 남긴다.
+  | 'team.created' | 'team.updated' | 'team.deleted'
+  | 'team.member.added' | 'team.member.removed'
+  // #172: 채널에 팀을 통째로 넣은 사건. 팀 이름과 결과 개수만 남긴다 — 넣은 handle 을
+  // 전부 적으면 팀이 클수록 detail 이 부풀고, 누가 멤버가 됐는지는
+  // 'channel.member.added' 가 아니라 멤버 목록이 답한다.
+  | 'channel.team.added'
   // #230: 사람 집합의 생애주기. admin 만 할 수 있는 조작이므로 기록이 남아야 한다.
   //
   // 구성원 변경을 따로 두는 이유: 집합에서 실제로 사람을 부르는 것은 **명단**이다.
@@ -42,7 +52,11 @@ export type AuditAction =
   // detail 에는 handle 과 **개수**만 남긴다 — 계정 id 목록은 남기지 않는다. 집합에서
   // 빼는 이유가 사람 사정일 수 있고, 감사 로그는 그것을 영구히 붙잡는 자리가 아니다.
   | 'handle_group.created' | 'handle_group.updated' | 'handle_group.deleted'
-  | 'handle_group.members.added' | 'handle_group.members.removed';
+  | 'handle_group.members.added' | 'handle_group.members.removed'
+  // #173: 채널의 자동 멘션 에이전트. 어떤 에이전트를 어느 채널에 자동 투입할지는 admin 의
+  // 관리 행위라 기록이 남아야 한다. detail 에는 **에이전트 handle 만** 남긴다 — 그 채널의
+  // 메시지 본문도, topic 도 넣지 않는다(같은 파일 위 규칙).
+  | 'channel.auto_mention.set' | 'channel.auto_mention.unset';
 
 export interface AuditEntry {
   action: AuditAction;
