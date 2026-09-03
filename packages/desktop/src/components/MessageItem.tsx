@@ -101,7 +101,7 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
 
         {draft === null ? (
           <>
-            {message.body.trim() && <MessageBody body={message.body} />}
+            {message.body.trim() && <MessageBody body={message.body} messageId={message.id} />}
             <Attachments attachments={message.attachments} />
             <Reactions message={message} />
           </>
