@@ -579,9 +579,14 @@ export class ApiClient {
     return this.req('POST', `/channels/${channelId}/teams/${teamId}/add`);
   }
 
-  /** 워크스페이스 스킬(#311). 목록은 로그인한 사람 모두 볼 수 있다. */
-  async listSkills(): Promise<WorkspaceSkillView[]> {
-    return (await this.req<{ skills: WorkspaceSkillView[] }>('GET', '/skills')).skills;
+  /**
+   * 워크스페이스 스킬 목록(#311). 목록은 로그인한 사람 모두 볼 수 있다(`requireAccount`).
+   *
+   * 라우트는 **배열을 그대로** 돌려준다 — `{ skills: [...] }` 로 감싸지 않는다.
+   * (초판이 `.skills` 를 꺼내려다 `undefined` 를 받아 화면이 통째로 죽었다.)
+   */
+  listSkills(): Promise<WorkspaceSkillView[]> {
+    return this.req('GET', '/skills');
   }
 
   /** 스킬 상세. 본문은 곧 시스템 프롬프트이므로 인증이 필요하다. */

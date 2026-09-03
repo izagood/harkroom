@@ -68,7 +68,7 @@ export function SettingsScreen({ initialSection = 'profile', targetId, onBack, o
         {section === 'handle-groups' && <HandleGroupsSettings />}
         {section === 'invite' && <InviteSettings />}
         {section === 'updates' && <UpdatesSettings />}
-        {section === 'skills' && <SkillsSettings />}
+        {section === 'skills' && <SkillsSettings targetId={targetId} />}
       </main>
     </div>
   );

@@ -952,18 +952,31 @@ export type WsServerEvent =
   | { type: 'handle_group.changed'; groupId: string; audience: 'all' | string[] }
   // 담기/해제/상태 변경(#219). 본인의 소켓에만 온다.
   | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string }
-/**
- * 링크 미리보기가 준비됐다(#215). 가져오기는 비동기라 메시지가 먼저 뜨고 카드가 뒤에
- * 온다 — 이 이벤트가 없으면 카드는 **다음에 그 메시지를 다시 그릴 때까지** 안 보인다.
- * URL 만 보낸다: 카드 내용은 받는 쪽이 `GET /link-previews` 로 읽는다(캐시가 하나다).
- */
+  /**
+   * 링크 미리보기가 준비됐다(#215). 가져오기는 비동기라 메시지가 먼저 뜨고 카드가 뒤에
+   * 온다 — 이 이벤트가 없으면 카드는 **다음에 그 메시지를 다시 그릴 때까지** 안 보인다.
+   * URL 만 보낸다: 카드 내용은 받는 쪽이 `GET /link-previews` 로 읽는다(캐시가 하나다).
+   */
   | { type: 'link_preview.ready'; url: string; audience: 'all' | string[] }
-  // 워크스페이스 스킬(#311). 제안·승인·비활성을 알린다.
+  /**
+   * 워크스페이스 스킬(#140·#311). 제안·승인·비활성을 알린다.
+   *
+   * **`audience` 가 없다 — 전 소켓으로 간다.** 스킬 목록과 본문은 `GET /skills` 가
+   * `requireAccount` 로 이미 로그인한 계정 전원에게 열려 있으므로, 이벤트를 좁혀도
+   * 감출 수 있는 것이 없다. 승인은 워크스페이스 전체에 영향을 주는 사실이라
+   * 열려 있는 설정 화면이 누구 것이든 같이 갱신되는 편이 맞다.
+   */
   | { type: 'skill.proposed'; skill: WorkspaceSkillView; channelId: string }
   | { type: 'skill.approved'; skill: WorkspaceSkillView }
   | { type: 'skill.disabled'; skill: WorkspaceSkillView };
 
-/** 워크스페이스 스킬 하나의 뷰(#311). */
+/**
+ * 워크스페이스 스킬 하나의 뷰(#140·#311).
+ *
+ * 세 묶음(대기·승인됨·비활성)은 이 세 시각으로 갈린다: `approvedAt` 도 `disabledAt` 도
+ * 없으면 대기, `approvedAt` 만 있으면 승인됨, `disabledAt` 이 있으면 비활성이다.
+ * (거부와 비활성은 서버에서 같은 경로다 — 미승인 스킬을 비활성한 것이 거부다.)
+ */
 export interface WorkspaceSkillView {
   slug: string;
   body: string;
@@ -972,6 +985,19 @@ export interface WorkspaceSkillView {
   approvedBy: string | null;
   approvedAt: string | null;
   disabledAt: string | null;
+}
+
+export type SkillGroupId = 'pending' | 'approved' | 'disabled';
+
+/**
+ * 이 스킬이 어느 묶음인가(#311). **판정은 여기 한 곳이다** — 화면이 세 자리에서 각각
+ * `!approvedAt && !disabledAt` 같은 식을 다시 쓰면, 비활성된 승인 스킬이 두 묶음에
+ * 동시에 뜨는 식으로 갈라진다. 순서가 곧 규칙이다: 비활성이 승인을 이긴다.
+ */
+export function skillGroupOf(skill: WorkspaceSkillView): SkillGroupId {
+  if (skill.disabledAt) return 'disabled';
+  if (skill.approvedAt) return 'approved';
+  return 'pending';
 }
 
 /**
