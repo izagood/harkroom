@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { mentionedHandles, type InboxEntry, type MessageRow } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, mentionedHandles, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { channelVisibleSql } from './channels.js';
 
@@ -147,11 +147,43 @@ export async function postMessage(
     const handles = mentionedHandles(input.body);
     if (handles.length) {
       // handle 은 소문자로 만들어지지만 사람은 @Fizz 라고 쓴다. 양쪽을 소문자로 맞춘다.
+      // 작성자 자신도 함께 뽑고 알림에서만 걸러 낸다 — `@channel` 이 계정인지 판정하려면
+      // 작성자가 바로 그 handle 의 주인인 경우도 보여야 하기 때문이다.
       const accounts = await client.query(
-        `select id from account where lower(handle) = any($1) and id <> $2`,
-        [handles, input.authorId],
+        `select id, lower(handle) as handle from account where lower(handle) = any($1)`,
+        [handles],
       );
-      for (const row of accounts.rows) await insertInbox(client, row.id, message.id, 'mention', notified);
+      for (const row of accounts.rows) {
+        if (row.id !== input.authorId) await insertInbox(client, row.id, message.id, 'mention', notified);
+      }
+
+      // `@channel`(#225) — 채널 전체 호출. 본문은 손대지 않는다: `@channel` 은 원문에
+      // 그대로 남고 서버는 inbox 항목만 펼쳐 넣는다. 본문을 치환하면 원문이 사라져
+      // 수정할 때 되돌릴 수 없다.
+      //
+      // `@channel` 이라는 handle 의 **계정이 실제로 있으면 계정이 이긴다** — 위에서 이미
+      // 평범한 멘션으로 처리됐고 여기서는 아무것도 하지 않는다. 사람의 이름이 예약어에
+      // 밀리면 그 사람은 영영 불릴 수 없다.
+      const claimed = accounts.rows.some((row) => row.handle === CHANNEL_MENTION_HANDLE);
+      if (handles.includes(CHANNEL_MENTION_HANDLE) && !claimed) {
+        // 대상은 **그 채널을 볼 수 있는 사람 전부**다. 멤버십을 여기서 다시 정의하지 않고
+        // `channelVisibleSql` 을 그대로 부른다 — 판정이 갈라지면 private 채널의 비멤버에게
+        // 알림이 새거나(채널의 존재 자체가 샌다), public 채널에서 조용히 빠지는 사람이
+        // 생긴다. 술어가 계정 id 를 파라미터가 아니라 컬럼(`a.id`)으로 받는 덕에 방향을
+        // 뒤집어 "이 채널을 볼 수 있는 계정 전부"로 쓸 수 있다.
+        //
+        // 부른 사람 자신은 뺀다 — 자기 발화로 자기에게 알림이 오면 안 된다
+        // (`readPositions.ts` 의 `author_id <> $1` 과 같은 규칙).
+        // 비활성 계정을 따로 거르지 않는 것은 평범한 멘션과 같은 처지로 두기 위해서다.
+        const audience = await client.query(
+          `select a.id from account a, channel c
+            where c.id = $1 and a.id <> $2 and ${channelVisibleSql('c', 'a.id')}`,
+          [input.channelId, input.authorId],
+        );
+        for (const row of audience.rows) {
+          if (!notified.has(row.id)) await insertInbox(client, row.id, message.id, 'mention', notified);
+        }
+      }
     }
 
     if (input.threadRootId) {
