@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import type { ChannelFileRow } from '@murmur/shared';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController } from '../src/state/controller';
 import { ChannelFiles } from '../src/components/ChannelFiles';
 import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';

@@ -1,5 +1,5 @@
 import type { AccountView } from '@murmur/shared';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 
 /**
  * 진행 중인 에이전트 터미널로 들어가는 진입점(#141 Phase 2, 스펙 §5 "소유자").
@@ -17,8 +17,8 @@ import { useAppStore } from '../state/appStore';
  * 넣지 않은 것은 의도였고(#181), 그래서 `null` 은 "아무나"가 아니라 "아직 아무도"다.
  */
 export function TerminalChip({ account }: { account: AccountView | undefined }) {
-  const me = useAppStore((s) => s.me);
-  const set = useAppStore((s) => s.set);
+  const me = useActiveStore((s) => s.me);
+  const set = useActiveStore((s) => s.set);
 
   if (!account || account.kind !== 'agent' || !me) return null;
   // `ownerAccountId === null` 은 `me.id` 와 결코 같아지지 않으므로 이 비교만으로도

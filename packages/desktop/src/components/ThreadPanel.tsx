@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
 import { Composer } from './Composer';
@@ -11,7 +11,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
   onOpenDirectory?: (accountId: string | null) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 } = {}) {
-  const { activeChannelId, threadRootId, messages } = useAppStore();
+  const { activeChannelId, threadRootId, messages } = useActiveStore();
   const [alsoInChannel, setAlsoInChannel] = useState(false);
 
   const thread = useMemo(() => {

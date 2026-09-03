@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { WorkspaceSkillView } from '@murmur/shared';
 import { skillGroupOf } from '@murmur/shared';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController, type Controller as ControllerType } from '../src/state/controller';
 import { SkillsSettings, APPROVE_CONFIRM_TEXT } from '../src/components/settings/SkillsSettings';
 import { Workspace } from '../src/components/Workspace';

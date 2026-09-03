@@ -4,7 +4,7 @@
 // 화면에 없어도, 확인 문구가 안 떠도, 오류가 안 보여도 전부 초록이다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { ProfileSettings } from '../src/components/settings/ProfileSettings';
 import { ApiError } from '../src/lib/api';

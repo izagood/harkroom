@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { useAppStore } from '../../state/appStore';
+import { useActiveStore } from '../../state/communities';
 import { getController } from '../../state/controller';
 import { ApiError } from '../../lib/api';
 import { Identity } from '../Identity';
@@ -14,7 +14,7 @@ import { ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
  * 그게 바로 `Identity` 주석이 못박은 "하나의 사실이 두 곳에 유지된다"다.
  */
 function AvatarRow() {
-  const me = useAppStore((s) => s.me);
+  const me = useActiveStore((s) => s.me);
   const pick = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,7 +76,7 @@ function AvatarRow() {
 }
 
 function HandleRow() {
-  const me = useAppStore((s) => s.me);
+  const me = useActiveStore((s) => s.me);
   const [editing, setEditing] = useState(false);
   const [newHandle, setNewHandle] = useState('');
   const [busy, setBusy] = useState(false);
@@ -215,7 +215,7 @@ function HandleRow() {
 }
 
 export function ProfileSettings({ onSignOut }: { onSignOut(): void }) {
-  const me = useAppStore((s) => s.me);
+  const me = useActiveStore((s) => s.me);
 
   return (
     <SettingsPage title="Profile" description="Who you are signed in as on this server.">

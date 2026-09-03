@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { sidebarStorage, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../lib/prefs';
 import { isMacOS, MAC_TRAFFIC_LIGHT_PL } from '../lib/platform';
@@ -28,7 +28,7 @@ const NOTIFY_LEVEL_LABEL: Record<NotifyLevel, string> = {
  * 잃는다. 수치는 aria-label 로만 노출한다(스크린리더·테스트가 읽을 수 있게).
  */
 function ChannelUnreadDot({ channelId, name }: { channelId: string; name: string }) {
-  const unread = useAppStore((s) => s.reads[channelId]?.unread ?? 0);
+  const unread = useActiveStore((s) => s.reads[channelId]?.unread ?? 0);
   if (!unread) return null;
   return (
     <span
@@ -52,7 +52,7 @@ function ChannelUnreadDot({ channelId, name }: { channelId: string; name: string
  * 기본값을 두면 새 호출자가 이 규칙을 잊어도 타입이 통과해 같은 결함이 다시 생긴다.
  */
 function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLevel: NotifyLevel }) {
-  const unread = useAppStore((s) => s.unread);
+  const unread = useActiveStore((s) => s.unread);
   const count = unread.filter((e) => e.channelId === channelId && !e.readAt).length;
   if (notifyLevel === 'none' || !count) return null;
   return (
@@ -82,7 +82,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
-  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, channelAutoMentions, messages, savedCount, runnerStates } = useAppStore();
+  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, channelAutoMentions, messages, savedCount, runnerStates } = useActiveStore();
   /**
    * macOS 신호등 여백(#270). 사이드바가 펴져 있으면 브랜드 바가 창의 좌상단이라 여기가
    * 여백을 진다. 접혀 있으면 사이드바는 폭 0 이고 `Workspace` 헤더가 좌상단이 되므로
@@ -356,7 +356,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
 
   const submitEdit = async (): Promise<void> => {
     if (!editingChannelId) return;
-    const original = useAppStore.getState().channels.find((c) => c.id === editingChannelId);
+    const original = useActiveStore.getState().channels.find((c) => c.id === editingChannelId);
     const input: { topic?: string; repo?: string | null } = {};
     if (editTopic !== original?.topic) {
       input.topic = editTopic;
