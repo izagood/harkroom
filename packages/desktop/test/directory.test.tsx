@@ -27,7 +27,7 @@ const agentWithSecrets = (id: string, handle: string): AgentView => ({
   workingDir: '/Users/secret/workspace',
   mentionPermission: 'auto',
   ownerAccountId: 'u1',
-  runnerVersion: 'deadbeef',
+  runnerVersion: 'deadbeef', lastTurnAt: null,
   stopRequestedAt: null,
   stopAckedAt: null,
 });
