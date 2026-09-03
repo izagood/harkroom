@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
+import type { StorageBackend } from '../storage/local.js';
 import { z } from 'zod';
 import {
-  addChannelMember, assertChannelVisible, channelPostGate, createChannel, getOrCreateDm,
+  addChannelMember, assertChannelVisible, channelPostGate, createChannel, deleteChannel, getOrCreateDm,
   listChannelMembers, listChannels, removeChannelMember, updateChannel, updateChannelPref,
   listChannelPrefs,
 } from '../services/channels.js';
@@ -13,7 +14,7 @@ import { allReadStates, markChannelRead, markChannelUnread, readState } from '..
 import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS } from '@murmur/shared';
 import { recordAudit } from '../audit.js';
 
-export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
+export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, storage?: StorageBackend): Promise<void> {
   app.post('/channels', { preHandler: app.requireAdmin }, async (req, reply) => {
     const body = z.object({
       name: z.string().regex(new RegExp(CHANNEL_NAME_PATTERN)),
@@ -309,5 +310,70 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
       target: id, detail: { messageId },
     }, req);
     return reply.code(204).send();
+  });
+
+  /**
+   * 채널 삭제(#155). **보관된 표준 채널만** 삭제 가능하고, **admin 만** 할 수 있다.
+   *
+   * DM 은 삭제할 수 없다 — kind = 'standard' 만 대상이다.
+   * 보관되지 않은 채널은 409 로 거절한다 — 삭제 전에 보관이 선행 조건이다.
+   *
+   * 삭제 대상 테이블( channel_id 또는 message_id 로 참조하는 전부):
+   *   - attachment (message_id 로 참조, cascade)
+   *   - message_reaction (message_id 로 참조, cascade)
+   *   - message_pin (channel_id 로 직접 참조)
+   *   - channel_read (channel_id 로 직접 참조)
+   *   - channel_member (channel_id 로 직접 참조)
+   *   - channel_pref (channel_id 로 직접 참조)
+   *   - message (channel_id 로 직접 참조)
+   *   - channel (자신)
+   *
+   * 확인 문구에 지울 메시지 수를 보여 준다.
+   */
+  app.delete('/channels/:id', { preHandler: app.requireAdmin }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const result = await deleteChannel(pool, id, storage);
+    if (result === 'not_found') {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+    if (result === 'is_dm') {
+      return reply.code(409).send({ error: { code: 'cannot_delete_dm', message: 'DMs cannot be deleted' } });
+    }
+    if (result === 'not_archived') {
+      return reply.code(409).send({ error: { code: 'not_archived', message: 'only archived channels can be deleted' } });
+    }
+    // 감사에 이름과 개수만 남기고 본문·topic 은 절대 넣지 않는다 — 지운 것이 감사에 남으면 삭제가 아니다.
+    await recordAudit(pool, {
+      action: 'channel.deleted', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { name: result.name, messageCount: result.messageCount, attachmentCount: result.attachmentCount },
+    }, req);
+    return reply.code(204).send();
+  });
+
+  /**
+   * 채널 삭제 전 확인용 메시지 수 조회(#155). 보관된 표준 채널만 가능하고 admin 만 할 수 있다.
+   * 이 수치는 확인 문구에 "이 채널과 메시지 N개를 영구히 지운다"로 표시된다.
+   */
+  app.get('/channels/:id/delete-info', { preHandler: app.requireAdmin }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const channel = await pool.query(
+      `select id, name, kind, archived_at from channel where id = $1`,
+      [id],
+    );
+    if (!channel.rowCount) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+    const row = channel.rows[0] as { id: string; name: string; kind: string; archived_at: string | null };
+    if (row.kind !== 'standard') {
+      return reply.code(409).send({ error: { code: 'cannot_delete_dm', message: 'DMs cannot be deleted' } });
+    }
+    if (!row.archived_at) {
+      return reply.code(409).send({ error: { code: 'not_archived', message: 'only archived channels can be deleted' } });
+    }
+    const messageCountResult = await pool.query(
+      `select count(*)::int as cnt from message where channel_id = $1`,
+      [id],
+    );
+    return { name: row.name ?? '', messageCount: messageCountResult.rows[0]!.cnt };
   });
 }
