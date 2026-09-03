@@ -46,7 +46,7 @@ describe('Sidebar', () => {
 
     it('admin 이 아니면 생성 수단이 보이지 않는다', () => {
       fakeController();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
       expect(screen.queryByText('+ Create channel')).toBeNull();
     });
 
@@ -54,7 +54,7 @@ describe('Sidebar', () => {
       const c = fakeController();
       c.createChannel.mockResolvedValue(chan('c9', 'design'));
       asAdmin();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       fireEvent.click(screen.getByText('+ Create channel'));
       fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'design' } });
@@ -71,7 +71,7 @@ describe('Sidebar', () => {
       const c = fakeController();
       c.createChannel.mockRejectedValue(new Error('이미 있는 이름이다'));
       asAdmin();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       fireEvent.click(screen.getByText('+ Create channel'));
       fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'general' } });
@@ -85,7 +85,7 @@ describe('Sidebar', () => {
     it('이름 규칙에 맞지 않으면 서버에 보내지 않고 안내한다', async () => {
       const c = fakeController();
       asAdmin();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       fireEvent.click(screen.getByText('+ Create channel'));
       fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'Design Team' } });
@@ -107,7 +107,7 @@ describe('Sidebar', () => {
     // "트리거가 없다"로는 더 이상 검사할 수 없다 — 의도는 **편집 항목이 없다**는 것이다.
     it('admin 이 아니면 메뉴에 편집 항목이 없다', () => {
       fakeController();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       fireEvent.click(screen.getAllByRole('button', { name: '⋯' })[0]!);
 
@@ -129,7 +129,7 @@ describe('Sidebar', () => {
     it('admin 이면 채널 행에 편집 메뉴 (…) 가 보인다', () => {
       fakeController();
       asAdmin();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
       const menus = screen.getAllByRole('button', { name: '⋯' });
       expect(menus.length).toBe(2);
     });
@@ -137,7 +137,7 @@ describe('Sidebar', () => {
     it('편집 메뉴를 누르면 폼이 열리고 현재 값이 채워진다', () => {
       const c = fakeController();
       asAdmin();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       openMenuFor('general');
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
@@ -151,7 +151,7 @@ describe('Sidebar', () => {
       const c = fakeController();
       c.updateChannel.mockResolvedValue(chan('c1', 'c1', null));
       asAdmin();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       openMenuFor('general');
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
@@ -167,7 +167,7 @@ describe('Sidebar', () => {
       c.updateChannel.mockResolvedValue(chan('c1', 'c1', null));
       asAdmin();
       useAppStore.getState().set({ channels: [chan('c1', 'c1', 'old-repo')] });
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       openMenuFor('c1');
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
@@ -186,7 +186,7 @@ describe('Sidebar', () => {
       c.updateChannel.mockResolvedValue(chan('c1', 'c1', 'new-repo'));
       asAdmin();
       useAppStore.getState().set({ channels: [chan('c1', 'c1', 'old-repo')] });
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       openMenuFor('c1');
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
@@ -201,7 +201,7 @@ describe('Sidebar', () => {
       const c = fakeController();
       c.updateChannel.mockRejectedValue(new Error('권한이 없다'));
       asAdmin();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       openMenuFor('general');
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
@@ -214,7 +214,7 @@ describe('Sidebar', () => {
       const c = fakeController();
       c.updateChannel.mockResolvedValue(chan('c1', 'c1', 'new-repo'));
       asAdmin();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       openMenuFor('general');
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
@@ -227,7 +227,7 @@ describe('Sidebar', () => {
 
   it('lists channels with unread badge and opens on click', () => {
     const c = fakeController();
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
     expect(screen.getByText('general')).toBeTruthy();
     expect(screen.getByTestId('unread-c2').textContent).toBe('1');
     fireEvent.click(screen.getByText('dev'));
@@ -236,7 +236,7 @@ describe('Sidebar', () => {
 
   it('shows dm with peer handle, presence dot, unread badge', () => {
     fakeController();
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
     expect(screen.getByText('bot')).toBeTruthy();
     expect(screen.getByTestId('presence-d1').dataset.online).toBe('true');
     expect(screen.getByTestId('unread-d1').textContent).toBe('1');
@@ -244,7 +244,7 @@ describe('Sidebar', () => {
 
   it('starts a new dm from account picker', () => {
     const c = fakeController();
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: '+ New' }));
     fireEvent.click(screen.getByRole('button', { name: /bot/ }));
     expect(c.startDm).toHaveBeenCalledWith('u2');
@@ -253,7 +253,7 @@ describe('Sidebar', () => {
   it('opens settings, and jumps straight to agents from the agents link', () => {
     fakeController();
     const onOpenSettings = vi.fn();
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={onOpenSettings} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={onOpenSettings} collapsed={false} onToggleCollapse={vi.fn()} />);
 
     fireEvent.click(screen.getByRole('button', { name: /@admin/ }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Settings' }));
@@ -267,7 +267,7 @@ describe('Sidebar', () => {
   describe('계정 메뉴', () => {
     it('계정 행이 클릭 가능한 트리거다', () => {
       fakeController();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       const trigger = screen.getByRole('button', { name: /@admin/ });
       // ARIA 1.1 의 값은 'menu' 다 — 'true' 는 레거시 별칭이라 어느 종류의 팝업인지 말하지 못한다.
@@ -277,7 +277,7 @@ describe('Sidebar', () => {
 
     it('계정 행을 클릭하면 메뉴가 열린다', () => {
       fakeController();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       const trigger = screen.getByRole('button', { name: /@admin/ });
       fireEvent.click(trigger);
@@ -289,7 +289,7 @@ describe('Sidebar', () => {
     it('메뉴 안의 Settings 를 누르면 onOpenSettings 가 불린다', () => {
       fakeController();
       const onOpenSettings = vi.fn();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={onOpenSettings} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={onOpenSettings} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       const trigger = screen.getByRole('button', { name: /@admin/ });
       fireEvent.click(trigger);
@@ -301,7 +301,7 @@ describe('Sidebar', () => {
     it('메뉴 안의 Sign out 을 누르면 controller.logout 과 onLogout 이 불린다', () => {
       const c = fakeController();
       const onLogout = vi.fn();
-      render(<Sidebar onLogout={onLogout} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={onLogout} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       const trigger = screen.getByRole('button', { name: /@admin/ });
       fireEvent.click(trigger);
@@ -313,7 +313,7 @@ describe('Sidebar', () => {
 
     it('Escape 로 닫히고 포커스가 트리거로 돌아온다', () => {
       fakeController();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       const trigger = screen.getByRole('button', { name: /@admin/ });
       fireEvent.click(trigger);
@@ -326,7 +326,7 @@ describe('Sidebar', () => {
 
     it('바깥을 클릭하면 닫힌다', () => {
       fakeController();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       const trigger = screen.getByRole('button', { name: /@admin/ });
       fireEvent.click(trigger);
@@ -339,7 +339,7 @@ describe('Sidebar', () => {
 
     it('화살표 키로 항목 사이를 이동한다', async () => {
       fakeController();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       const trigger = screen.getByRole('button', { name: /@admin/ });
       fireEvent.click(trigger);
@@ -356,7 +356,7 @@ describe('Sidebar', () => {
 
     it('메뉴가 닫혀 있을 때는 role="menu" 가 문서에 없다', () => {
       fakeController();
-      render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       expect(screen.queryByRole('menu')).toBeNull();
     });
@@ -368,7 +368,7 @@ describe('Sidebar', () => {
     it('항목을 활성화하면 그 동작이 실행되고 메뉴가 닫힌다', () => {
       const c = fakeController();
       const onLogout = vi.fn();
-      render(<Sidebar onLogout={onLogout} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+      render(<Sidebar onOpenDirectory={() => {}} onLogout={onLogout} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       fireEvent.click(screen.getByRole('button', { name: /@admin/ }));
       fireEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }));
@@ -395,7 +395,7 @@ describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
       channels: [chan('c1', 'alpha'), chan('c2', 'beta'), chan('c3', 'zulu')],
       channelPrefs: { c3: pref('c3', { starred: true }) },
     });
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
     // 행 텍스트에는 미읽음 배지 숫자가 섞여 들어온다 — 이름만 뽑지 말고 **상대 순서**를 본다.
     const order = screen.getAllByRole('button')
@@ -409,7 +409,7 @@ describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
   // 음소거·즐겨찾기는 **계정별**이라 비-admin 에게도 도달 가능해야 한다.
   it('비-admin 도 음소거·즐겨찾기에 도달한다', () => {
     const c = fakeController();
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
     fireEvent.click(screen.getAllByRole('button', { name: '⋯' })[0]!);
     fireEvent.click(screen.getByRole('menuitem', { name: '음소거' }));
@@ -423,7 +423,7 @@ describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
       channels: [chan('c1', 'general')],
       channelPrefs: { c1: pref('c1', { muted: true }) },
     });
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
     fireEvent.click(screen.getByRole('button', { name: '⋯' }));
 
@@ -432,8 +432,14 @@ describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
   });
 
   // #151 본문: "알림 층이 mute 를 어떻게 읽을지는 저장 모양을 정한 뒤의 후속" —
-  // 이 작업은 저장과 표시까지다. 배지 계산을 건드리면 범위 이탈이고, 이게 그 방지선이다.
-  it('음소거가 미읽음 배지 계산을 바꾸지 않는다', () => {
+  // 그 작업은 저장과 표시까지였고, 배지 계산을 건드리는 것이 범위 이탈이라 이 자리에
+  // "음소거가 배지를 바꾸지 않는다"는 방지선이 서 있었다.
+  //
+  // #229 가 그 후속이다: 저장해 놓고 아무 데서도 읽지 않는 상태는 미완성이 아니라 거짓
+  // 이행이었으므로(사용자는 껐다고 믿는다) 방지선의 방향을 뒤집는다. 알림 쪽까지 묶은
+  // 회귀선은 channelMute.test.tsx 에 있고, 여기서는 같은 미읽음이 음소거만으로 다른
+  // 결과가 된다는 것을 남긴다.
+  it('음소거하면 미읽음 배지가 사라진다 (#229)', () => {
     fakeController();
     const seed = {
       channels: [chan('c1', 'general')],
@@ -444,16 +450,16 @@ describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
     };
 
     useAppStore.getState().set({ ...seed, channelPrefs: {} });
-    const { unmount } = render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    const { unmount } = render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
     const before = screen.getByTestId('unread-c1').textContent;
     unmount();
 
     useAppStore.getState().set({ ...seed, channelPrefs: { c1: pref('c1', { muted: true }) } });
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-    // 음소거해도 배지가 그대로다. 알림 층이 mute 를 읽는 것은 후속 작업이고, 이 선이
-    // 그 범위를 지킨다.
-    expect(screen.getByTestId('unread-c1').textContent).toBe(before);
+    // 음소거 전에는 세던 것이(before) 음소거 뒤에는 배지 자체가 없다.
+    expect(before).toBe('2');
+    expect(screen.queryByTestId('unread-c1')).toBeNull();
   });
 });
 
@@ -464,7 +470,7 @@ describe('채널 컨텍스트 메뉴 (#111)', () => {
 
   it('채널 행을 우클릭하면 메뉴가 열린다', () => {
     fakeController();
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
     const button = getChannelButton('general');
     fireEvent.contextMenu(button);
@@ -477,7 +483,7 @@ describe('채널 컨텍스트 메뉴 (#111)', () => {
     // preventDefault 테스트는 testing-library 와 React event 시스템의 조합으로
     // 정확하게 검증하기 어렵다. 수동 테스트로 대체한다.
     fakeController();
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
     const button = getChannelButton('general');
     fireEvent.contextMenu(button);
@@ -494,7 +500,7 @@ describe('채널 컨텍스트 메뉴 (#111)', () => {
   // 우클릭해도 안 닫힌다).
   it('여는 우클릭이 자기 메뉴를 닫지 않는다', () => {
     fakeController();
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
     const button = getChannelButton('general');
     fireEvent.mouseDown(button, { button: 2 });
@@ -505,7 +511,7 @@ describe('채널 컨텍스트 메뉴 (#111)', () => {
 
   it('메뉴가 열린 뒤 바깥을 누르면 닫힌다 — 버튼 종류와 무관하다', () => {
     fakeController();
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
     fireEvent.contextMenu(getChannelButton('general'));
     expect(screen.getByRole('menu')).toBeTruthy();
@@ -523,7 +529,7 @@ describe('채널 컨텍스트 메뉴 (#111)', () => {
   // Escape 후 포커스 복귀를 잃었다.
   it('트리거에 접근성 속성이 붙어 있다', () => {
     fakeController();
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
     const trigger = screen.getAllByRole('button', { name: '⋯' })[0]!;
     expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
@@ -536,7 +542,7 @@ describe('채널 컨텍스트 메뉴 (#111)', () => {
   it('⋯ 클릭과 우클릭이 같은 항목을 낸다', () => {
     // 좌클릭과 우클릭이 같은 메뉴를 열어야 한다 — 같은 항목이 포함되어 있는지 확인한다.
     fakeController();
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
     fireEvent.click(screen.getAllByRole('button', { name: '⋯' })[0]!);
     const clickItems = screen.getAllByRole('menuitem').map((el) => el.textContent);
@@ -554,7 +560,7 @@ describe('채널 컨텍스트 메뉴 (#111)', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('navigator', { clipboard: { writeText } });
     fakeController();
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
     fireEvent.contextMenu(getChannelButton('general'));
     fireEvent.click(screen.getByRole('menuitem', { name: '채널명 복사' }));
@@ -567,7 +573,7 @@ describe('채널 컨텍스트 메뉴 (#111)', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('navigator', { clipboard: { writeText } });
     fakeController();
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
     fireEvent.contextMenu(getChannelButton('general'));
     fireEvent.click(screen.getByRole('menuitem', { name: '채널 ID 복사' }));
@@ -578,7 +584,7 @@ describe('채널 컨텍스트 메뉴 (#111)', () => {
 
   it('안 되는 항목(Archive/Delete/Leave/Mark unread/Move to section)이 메뉴에 없다', () => {
     fakeController();
-    render(<Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar onOpenDirectory={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
     fireEvent.contextMenu(getChannelButton('general'));
     const items = screen.getAllByRole('menuitem').map((el) => el.textContent);
