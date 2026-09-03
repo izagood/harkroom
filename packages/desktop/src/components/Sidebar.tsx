@@ -7,9 +7,16 @@ import { Menu } from './Menu';
 import { StatusMark } from './Identity';
 import { StatusPicker } from './StatusPicker';
 import type { SectionId } from './settings/sections';
-import type { ChannelRow } from '@murmur/shared';
-import { CHANNEL_NAME_PATTERN } from '@murmur/shared';
+import type { ChannelRow, NotifyLevel } from '@murmur/shared';
+import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, notifyLevelOf } from '@murmur/shared';
 import { Logo } from './Logo';
+
+/** 메뉴에 그리는 이름. 값(`all`/`mentions`/`none`)은 저장·전송용이라 번역하지 않는다. */
+const NOTIFY_LEVEL_LABEL: Record<NotifyLevel, string> = {
+  all: '전체',
+  mentions: '멘션만',
+  none: '없음',
+};
 
 /**
  * 채널 미읽음 표시. **멘션 배지와 다른 신호다** — 멘션은 "당신을 불렀다"(빨간 숫자),
@@ -28,19 +35,22 @@ function ChannelUnreadDot({ channelId, name }: { channelId: string; name: string
 }
 
 /**
- * 멘션 배지. **음소거한 채널에서는 뜨지 않는다**(#229) — 음소거는 알림과 배지를 같이 끄고,
- * 한쪽만 끄면 "껐는데 빨간 숫자가 남는다"가 되어 여전히 거짓말이다. 다만 새 대화가 있다는
- * 사실 자체는 위의 회색 점(`ChannelUnreadDot`)이 계속 말한다 — 음소거는 조용히 하겠다는
- * 뜻이지 그 채널을 없애겠다는 뜻이 아니다.
+ * 멘션 배지. **`none` 인 채널에서만 뜨지 않는다**(#229, #224) — 알림을 끄면서 빨간 숫자만
+ * 남기면 "껐는데 숫자가 남는다"가 되어 여전히 거짓말이다. 다만 새 대화가 있다는 사실 자체는
+ * 위의 회색 점(`ChannelUnreadDot`)이 계속 말한다.
  *
- * `muted` 를 스토어에서 직접 읽지 않고 prop 으로 받는다: 채널 행이 이미 pref 를 구해 두고,
- * 같은 값을 두 번 구독하면 두 곳이 갈라질 수 있다. **옵셔널이 아니라 필수 prop 이다** —
- * 기본값을 두면 새 호출자가 음소거를 잊어도 타입이 통과해 같은 결함이 다시 생긴다.
+ * `mentions` 에서는 배지를 **남긴다**: "덜 알리겠다"는 약속이지 "숫자도 보지 않겠다"가
+ * 아니다. 그 채널에서 나를 부른 것은 여전히 알림이 오므로, 배지를 지우면 알림과 화면이
+ * 서로 다른 말을 하게 된다.
+ *
+ * `notifyLevel` 을 스토어에서 직접 읽지 않고 prop 으로 받는다: 채널 행이 이미 pref 를 구해
+ * 두고, 같은 값을 두 번 구독하면 두 곳이 갈라질 수 있다. **옵셔널이 아니라 필수 prop 이다** —
+ * 기본값을 두면 새 호출자가 이 규칙을 잊어도 타입이 통과해 같은 결함이 다시 생긴다.
  */
-function UnreadBadge({ channelId, muted }: { channelId: string; muted: boolean }) {
+function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLevel: NotifyLevel }) {
   const unread = useAppStore((s) => s.unread);
   const count = unread.filter((e) => e.channelId === channelId && !e.readAt).length;
-  if (muted || !count) return null;
+  if (notifyLevel === 'none' || !count) return null;
   return (
     <span data-testid={`unread-${channelId}`}
       className="ml-auto rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white">
@@ -270,8 +280,8 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, collapsed, 
         // 1:1 DM 에서만 상태를 그린다. 여러 사람이면 누구의 상태인지 표시가 답하지 못한다.
         peer: peers.length === 1 ? accounts[peers[0]!] : undefined,
         // 배지를 그릴 때가 아니라 목록을 만들 때 구한다 — 렌더 순서에 기대면 배지가
-        // 음소거를 보지 못하는 자리에 놓이기 쉽다(#229 가 채널 쪽에서 그랬다).
-        muted: !!channelPrefs[dm.id]?.mutedAt,
+        // 알림 수준을 보지 못하는 자리에 놓이기 쉽다(#229 가 채널 쪽에서 그랬다).
+        notifyLevel: notifyLevelOf(channelPrefs[dm.id]),
       };
     }), [dms, accounts, me, online, channelPrefs]);
 
@@ -300,7 +310,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, collapsed, 
     // pref 는 **배지를 그리기 전에** 구한다. 예전에는 이 계산이 배지 아래에 있어서
     // 음소거가 배지에 닿을 수조차 없었다(#229).
     const pref = channelPrefs[ch.id];
-    const isMuted = !!pref?.mutedAt;
+    const notifyLevel = notifyLevelOf(pref);
     const isStarred = !!pref?.starredAt;
     const isEditing = editingChannelId === ch.id;
     if (isEditing) {
@@ -427,7 +437,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, collapsed, 
         {ch.name}
         {ch.repo && <span className="rounded bg-zinc-800 px-1 text-[10px] text-zinc-400">{ch.repo}</span>}
         <ChannelUnreadDot channelId={ch.id} name={ch.name ?? ''} />
-        <UnreadBadge channelId={ch.id} muted={isMuted} />
+        <UnreadBadge channelId={ch.id} notifyLevel={notifyLevel} />
       </button>
     );
     const copyChannelName = async () => {
@@ -467,7 +477,12 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, collapsed, 
       { label: '나가기', onSelect: () => void requestLeave(ch.id) },
       { label: '채널명 복사', onSelect: copyChannelName },
       { label: '채널 ID 복사', onSelect: copyChannelId },
-      { label: isMuted ? '음소거 해제' : '음소거', onSelect: () => void getController().toggleChannelMute(ch.id) },
+      // 음소거 토글 하나가 아니라 세 수준을 나란히 둔다(#224). 켬/끔 스위치와 수준을 같이
+      // 두면 "음소거 껐는데 왜 아직 조용하지"가 생긴다 — 여기가 유일한 조작 자리다.
+      ...NOTIFY_LEVELS.map((level) => ({
+        label: `${notifyLevel === level ? '✓ ' : ''}알림: ${NOTIFY_LEVEL_LABEL[level]}`,
+        onSelect: () => void getController().setChannelNotifyLevel(ch.id, level),
+      })),
       { label: isStarred ? '즐겨찾기 해제' : '즐겨찾기', onSelect: () => void getController().toggleChannelStar(ch.id) },
     ];
     return (
@@ -654,7 +669,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, collapsed, 
                   className={`h-2 w-2 rounded-full ${dm.online ? 'bg-green-500' : 'bg-zinc-600'}`} />
                 <StatusMark account={dm.peer} />
                 {dm.label}
-                <UnreadBadge channelId={dm.id} muted={dm.muted} />
+                <UnreadBadge channelId={dm.id} notifyLevel={dm.notifyLevel} />
               </button>
             ))
           )}

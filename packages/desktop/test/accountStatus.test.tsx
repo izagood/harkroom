@@ -9,7 +9,7 @@ const fakeController = () => {
   const c = {
     openChannel: vi.fn(), startDm: vi.fn(), logout: vi.fn(),
     createChannel: vi.fn(), updateChannel: vi.fn(),
-    toggleChannelMute: vi.fn(), toggleChannelStar: vi.fn(), setStatus: vi.fn(),
+    setChannelNotifyLevel: vi.fn(), toggleChannelStar: vi.fn(), setStatus: vi.fn(),
   };
   setController(c as unknown as Controller);
   return c;
