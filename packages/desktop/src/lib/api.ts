@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
 
 export class ApiError extends Error {
   /**
@@ -254,6 +254,23 @@ export class ApiClient {
     return this.req('POST', `/accounts/agents/${agentId}/stop`);
   }
 
+  /**
+   * 진행 중인 에이전트 PTY 세션 목록(#141). **내가 볼 수 있는 것만 온다** — 소유하지
+   * 않은 에이전트의 세션은 목록에 아예 없다(403 이 아니라 부재다).
+   */
+  async agentSessions(): Promise<AgentSessionView[]> {
+    const res = await this.req<{ sessions: AgentSessionView[] }>('GET', '/agent-sessions');
+    return res.sessions;
+  }
+
+  /**
+   * 세션 하나에 attach 한다. 인가는 **여기서** 끝난다 — 돌려받는 티켓은 그 세션 하나에만
+   * 쓸 수 있는 1회용이고, WS 핸드셰이크는 그 티켓만 소모한다.
+   */
+  attachAgentSession(sessionId: string): Promise<{ ticket: string; session: AgentSessionView }> {
+    return this.req('POST', `/agent-sessions/${sessionId}/attach`);
+  }
+
   /** WS 핸드셰이크용 단기 1회용 티켓. 연결 시도마다 새로 받는다. */
   async wsTicket(): Promise<string> {
     const res = await this.req<{ ticket: string }>('POST', '/ws-ticket');
@@ -397,12 +414,38 @@ export class ApiClient {
   }
 
   /**
+   * 채널이 자동으로 멘션하는 에이전트들(#173). 핀과 같은 채널 전역 사실이라 채널을 볼 수
+   * 있는 사람 누구나 받는다 — 작성창이 칩을 그려야 하기 때문이다.
+   */
+  async channelAutoMentions(channelId: string): Promise<ChannelAutoMentionRow[]> {
+    return (await this.req<{ autoMentions: ChannelAutoMentionRow[] }>('GET', `/channels/${channelId}/auto-mentions`)).autoMentions;
+  }
+
+  /** 건다. admin 이 아니면 서버가 403, 에이전트가 아니거나 비활성이면 400 을 준다. */
+  setChannelAutoMention(channelId: string, agentAccountId: string): Promise<ChannelAutoMentionRow> {
+    return this.req('PUT', `/channels/${channelId}/auto-mentions/${agentAccountId}`);
+  }
+
+  unsetChannelAutoMention(channelId: string, agentAccountId: string): Promise<void> {
+    return this.req('DELETE', `/channels/${channelId}/auto-mentions/${agentAccountId}`);
+  }
+
+  /**
    * #221: `channelId` 를 주면 서버가 질의를 좁힌다. 받아 온 결과를 여기서 거르지 않는 이유는
    * 전역 결과가 상위 N 건에서 잘려 이 채널 것이 아예 안 실려 올 수 있기 때문이다.
    */
   async search(q: string, channelId?: string | null): Promise<MessageRow[]> {
     const scope = channelId ? `&channelId=${encodeURIComponent(channelId)}` : '';
     return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
+  }
+
+  /**
+   * 링크 미리보기 카드(#215). 아직 없으면 서버가 404 를 준다 — **여기서 삼키지 않는다.**
+   * 삼키면 "아직 안 왔다"와 "요청이 실패했다"가 한 값이 되고, 그러면 호출부가 다시 읽을
+   * 이유를 판단할 수 없다. 카드가 장식이라 조용히 넘어가는 판단은 호출부(`LinkPreview`)가 한다.
+   */
+  getLinkPreview(url: string): Promise<LinkPreviewView> {
+    return this.req<LinkPreviewView>('GET', `/link-previews?url=${encodeURIComponent(url)}`);
   }
 
   /** 이 채널에서 내가 예약한 메시지 목록(#222). */
@@ -496,5 +539,37 @@ export class ApiClient {
 
   async removeHandleGroupMembers(id: string, accountIds: string[]): Promise<{ members: string[] }> {
     return this.req('DELETE', `/handle-groups/${id}/members`, { accountIds });
+  }
+
+  async teams(): Promise<AgentTeamRow[]> {
+    return (await this.req<{ teams: AgentTeamRow[] }>('GET', '/teams')).teams;
+  }
+
+  createTeam(name: string): Promise<AgentTeamRow> {
+    return this.req('POST', '/teams', { name });
+  }
+
+  updateTeam(id: string, name: string): Promise<AgentTeamRow> {
+    return this.req('PATCH', `/teams/${id}`, { name });
+  }
+
+  deleteTeam(id: string): Promise<void> {
+    return this.req('DELETE', `/teams/${id}`);
+  }
+
+  async team(id: string): Promise<{ team: AgentTeamRow; members: AgentTeamMemberRow[] }> {
+    return this.req('GET', `/teams/${id}`);
+  }
+
+  addTeamMember(teamId: string, accountId: string): Promise<{ members: AgentTeamMemberRow[] }> {
+    return this.req('PUT', `/teams/${teamId}/members/${accountId}`);
+  }
+
+  removeTeamMember(teamId: string, accountId: string): Promise<{ members: AgentTeamMemberRow[] }> {
+    return this.req('DELETE', `/teams/${teamId}/members/${accountId}`);
+  }
+
+  addTeamToChannel(channelId: string, teamId: string): Promise<AddTeamToChannelResult> {
+    return this.req('POST', `/channels/${channelId}/teams/${teamId}/add`);
   }
 }

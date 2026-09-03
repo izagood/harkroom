@@ -79,8 +79,23 @@ interface Props {
    * 앞 채널의 에이전트를 끌고 가면 엉뚱한 곳에서 깨어난다.
    */
   scopeKey?: string;
-  /** 이 컴포저가 속한 채널 ID. 예약 발송(#222)에 필요하다. */
+  /**
+   * 예약 발송(#222)이 글을 올릴 채널. **"이 작성창이 채널에 직접 올린다"**는 뜻이다 —
+   * 없으면 예약 표면을 아예 그리지 않는다(눌러도 아무 일이 없는 죽은 버튼이 되므로).
+   *
+   * 스레드 작성창은 이것을 넘기지 않는다: `POST /channels/:id/scheduled` 는 스레드 뿌리를
+   * 받지 않으므로, 스레드에서 예약하면 답글이 **채널 본문으로** 나가 스레드가 조용히
+   * 사라진다. 그래서 자동 멘션에 필요한 채널 열쇠는 아래 `autoMentionChannelId` 로 따로
+   * 받는다 — 두 뜻을 한 prop 에 얹으면 스레드에 채널을 알려 주는 순간 예약 버튼이 되살아난다.
+   */
   channelId?: string;
+  /**
+   * 자동 멘션(#173)을 찾을 채널. 채널이 자동으로 멘션하는 에이전트를 스토어에서 찾는 열쇠다.
+   *
+   * `scopeKey` 와 다른 값인 이유: 스레드의 scopeKey 는 `thread:<rootId>` 지만 자동 멘션은
+   * 채널의 사실이라 스레드 안에서도 그 채널의 것을 봐야 한다. 없으면 자동 멘션은 없다.
+   */
+  autoMentionChannelId?: string;
 }
 
 /**
@@ -112,15 +127,25 @@ interface HeldMessage {
   send: Props['onSend'];
 }
 
-export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = '', channelId }: Props) {
+export function Composer({
+  onSend, placeholder, rows = 2, autoFocus, scopeKey = '', channelId, autoMentionChannelId,
+}: Props) {
   const accounts = useAppStore((s) => s.accounts);
   const groups = useAppStore((s) => s.groups);
   const myId = useAppStore((s) => s.me?.id);
+  // 채널이 자동으로 멘션하는 에이전트(#173). 키가 없으면 아직 못 받은 것이고 그때는 칩도 접두도 없다.
+  const autoRows = useAppStore((s) => (autoMentionChannelId ? s.channelAutoMentions[autoMentionChannelId] : undefined));
   // `MessageBody` 와 같은 자리에서 읽는다 — 자기 멘션 판정이 두 화면에서 달라지면 안 된다.
   const myHandle = useAppStore((s) => s.me?.handle?.toLowerCase() ?? null);
   const [query, setQuery] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
   const [stickyByScope, setStickyByScope] = useState<Record<string, string[]>>({});
+  /**
+   * **이번 메시지에서만** 뺀 자동 멘션(#173). 칩의 × 는 설정을 지우지 않는다 — 설정은 admin 의
+   * 것이고, 사람이 매번 필요한 것은 "이 한 줄은 에이전트를 부르지 않고 쓰기"다. 보내면 비운다:
+   * 다음 메시지에는 다시 나타난다.
+   */
+  const [skippedAutoByScope, setSkippedAutoByScope] = useState<Record<string, string[]>>({});
   const [picking, setPicking] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -222,10 +247,30 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     [accounts, groups, myId],
   );
 
+  /**
+   * 자동 멘션 handle(#173). 디렉터리에서 그 계정을 다시 확인한다 — 설정된 뒤 비활성화된
+   * 에이전트는 붙이지 않는다(깨어나지 못하는 상대를 매 줄에 붙이면 죽은 handle 만 남는다).
+   * 고정 멘션이 "계정이 사라지면 빠진다"는 것과 같은 규칙이다.
+   */
+  const autoHandles = useMemo(
+    () => (autoRows ?? [])
+      .filter((r) => { const a = accounts[r.agentAccountId]; return !!a && !a.disabled && a.id !== myId; })
+      .map((r) => r.handle.toLowerCase()),
+    [autoRows, accounts, myId],
+  );
+  const skippedAuto = skippedAutoByScope[scopeKey] ?? [];
+  /** 이번 메시지에 실제로 붙을 자동 멘션 — 설정에서 이번만 뺀 것을 제하고 남은 것. */
+  const autoActive = useMemo(
+    () => autoHandles.filter((h) => !skippedAuto.includes(h)),
+    [autoHandles, skippedAuto],
+  );
+
   // 계정이 사라지면 고정도 사라진다 — 없는 handle 을 붙이면 멘션이 아니라 그냥 글자다.
+  // 자동 멘션인 handle 은 고정에서 뺀다 — 같은 상대에 칩이 둘 서면 × 하나로 어느 쪽이
+  // 빠지는지 알 수 없다. 자동 칩이 그 자리를 대신한다.
   const sticky = useMemo(
-    () => (stickyByScope[scopeKey] ?? []).filter((h) => known.has(h)),
-    [stickyByScope, scopeKey, known],
+    () => (stickyByScope[scopeKey] ?? []).filter((h) => known.has(h) && !autoHandles.includes(h)),
+    [stickyByScope, scopeKey, known, autoHandles],
   );
 
   // 아래 두 목록은 `MessageBody` 가 `splitMentions` 에 주는 것과 **같은 인자**다(#278).
@@ -245,18 +290,20 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   );
 
   // @ 버튼으로 여는 목록. 첫 줄을 보내기 전에도 상대를 정해 둘 수 있어야 한다.
-  // 이미 고정된 상대는 뺀다 — 다시 골라도 달라지는 것이 없다.
+  // 이미 고정된(또는 채널이 자동으로 부르는) 상대는 뺀다 — 다시 골라도 달라지는 것이 없다.
   const pickable = useMemo((): Candidate[] => {
     const groupsList = groups
       .filter((g) => !sticky.includes(g.handle.toLowerCase()))
       .sort((a, b) => a.handle.localeCompare(b.handle))
       .slice(0, MAX_GROUP_SUGGESTIONS);
     const accountsList = Object.values(accounts)
-      .filter((a) => a.id !== myId && !sticky.includes(a.handle.toLowerCase()))
+      .filter((a) => a.id !== myId
+        && !sticky.includes(a.handle.toLowerCase())
+        && !autoHandles.includes(a.handle.toLowerCase()))
       .sort(rank)
       .slice(0, MAX_SUGGESTIONS - groupsList.length);
     return [...asAccountCandidates(accountsList), ...asGroupCandidates(groupsList)];
-  }, [accounts, groups, myId, sticky]);
+  }, [accounts, groups, myId, sticky, autoHandles]);
 
   // 두 목록은 한자리에 뜨고 키보드도 하나다 — 동시에 열리면 Enter 가 어디로 갈지 모른다.
   const options = picking ? pickable : matches;
@@ -381,6 +428,12 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     ref.current?.focus();
   };
 
+  /** 자동 멘션을 **이번 메시지에서만** 뺀다(#173). 설정은 그대로다 — 보내면 다시 나타난다. */
+  const skipAuto = (handle: string) => {
+    setSkippedAutoByScope((prev) => ({ ...prev, [scopeKey]: [...skippedAuto, handle] }));
+    ref.current?.focus();
+  };
+
   const pickFiles = async (files: FileList | null) => {
     if (!files?.length) return;
     setUploadError(null);
@@ -476,7 +529,15 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     // 다만 파일만 보내는 것은 자연스럽다.
     if (!draft.trim() && !pending.length) return;
     const typed = draft;
-    const body = withStickyMentions(typed, sticky);
+    /**
+     * 접두는 **여기, 발송 시점에** 본문에 들어간다(#173, design.md §4 "접두는 실제 본문에
+     * 들어간다"). 서버가 저장 직후 본문에 접두하는 방식은 에이전트가 MCP 로 올린 답에도
+     * 접두를 붙여 그 에이전트가 자기 답에 다시 불리는 루프가 된다 — 그래서 사람이 쓰는
+     * 이 작성창만 붙이고, 에이전트가 올리는 메시지에는 적용되지 않는다. 그것이 의도다.
+     * 서버의 알림 판정은 이 본문을 평범한 멘션으로 읽는다. 이미 본문이 부르고 있는 handle
+     * 은 `withStickyMentions` 가 건너뛴다. 자동이 먼저, 고정이 뒤다.
+     */
+    const body = withStickyMentions(typed, [...autoActive, ...sticky]);
     const attachments = pending;
     // 앞의 것이 아직 대기 중이면 **먼저 내보낸다.** 한 번에 하나만 들 수 있으므로 덮으면
     // 앞의 글을 잃고, 사람이 친 순서도 이 편이 지켜진다.
@@ -491,6 +552,8 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     // 이번에 부른 상대는 다음 줄부터 고정이다. 한 번 부른 뒤 매번 @ 를 다시 치게 하면
     // 사용자는 잊어버리고, 잊으면 에이전트는 깨어나지 않는다.
     setStickyByScope((prev) => ({ ...prev, [scopeKey]: keepMentioned(sticky, typed, known) }));
+    // 이번만 뺀 자동 멘션은 이 메시지로 끝이다 — 다음 줄에는 다시 붙는다(#173).
+    if (skippedAuto.length) setSkippedAutoByScope((prev) => ({ ...prev, [scopeKey]: [] }));
 
     // `onSend` 를 **지금** 붙잡는다. 타이머가 터질 때 읽으면 그 사이 옮긴 채널을 가리킨다.
     const item: HeldMessage = { body, typed, attachments, scope: scopeKey, send: onSend };
@@ -686,8 +749,32 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
           ))}
         </ul>
       )}
-      {sticky.length > 0 && (
+      {(autoActive.length > 0 || sticky.length > 0) && (
         <ul className="mb-1 flex flex-wrap items-center gap-1" aria-label="Kept mentions">
+          {/* 자동 멘션 칩(#173). 고정 칩과 같은 줄을 쓰되 '자동' 배지와 색으로 구분한다 —
+              사람이 부른 것과 채널이 부르는 것이 같아 보이면 × 가 무엇을 지우는지 알 수 없다.
+              × 는 이번 메시지에서만 뺀다. 설정을 지우는 자리는 채널의 멤버 패널이다. */}
+          {autoActive.map((h) => (
+            <li
+              key={`auto:${h}`}
+              data-testid="auto-mention"
+              data-handle={h}
+              title="이 채널이 자동으로 멘션한다"
+              className="flex items-center gap-1 rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-xs font-medium text-indigo-700"
+            >
+              <span>@{h}</span>
+              <span className="rounded bg-indigo-100 px-1 text-[10px] font-normal">자동</span>
+              <button
+                type="button"
+                aria-label={`Skip @${h} this time`}
+                className="rounded px-0.5 text-indigo-500 hover:bg-indigo-100"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => skipAuto(h)}
+              >
+                ×
+              </button>
+            </li>
+          ))}
           {sticky.map((h) => (
             <li
               key={h}

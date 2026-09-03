@@ -7,7 +7,7 @@ import { emitEvent, onEvent, type WorkspaceEvent } from '../events.js';
 import { createTicketStore } from './tickets.js';
 import { createTypingRegistry } from './typing.js';
 import { assertChannelVisible, audienceFor } from '../services/channels.js';
-import { findInvalidCredentials } from './credentials.js';
+import { createCredentialSweep, DEFAULT_REVALIDATE_MS, originAllowed as isOriginAllowed } from './socketLifetime.js';
 import { createHeartbeat } from './heartbeat.js';
 import type { AgentPresence } from '../mcp/presence.js';
 
@@ -20,6 +20,9 @@ function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
     case 'channel.created':
     case 'channel.updated':
     case 'channel.deleted':
+    case 'channel.member_added':
+    case 'channel.member_removed':
+    case 'handle_group.changed':
       return e.audience === 'all' || e.audience.includes(accountId);
     case 'inbox.updated':
     case 'saved.changed':
@@ -64,33 +67,14 @@ export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptio
   const tickets = createTicketStore();
   const typing = createTypingRegistry({ ttlMs: opts.typingTtlMs ?? 6_000 });
   const allowedOrigins = opts.allowedOrigins ?? null;
-  // 소켓을 연 자격증명을 들고 있어야, 그게 죽었을 때 소켓도 닫을 수 있다.
-  const live = new Set<{ socket: { close(code: number, reason: string): void }; credentialHash: string }>();
-
-  // WebSocket 핸드셰이크는 CORS 의 보호를 받지 않는다 — 브라우저는 교차 출처로도 연결을 맺는다.
-  // 다만 Origin 은 브라우저만 보낸다. 에이전트·CLI 는 보내지 않으므로 부재는 허용해야 한다.
+  // Origin 판정과 자격증명 재검증은 `socketLifetime.ts` 하나가 갖는다 — 터미널 뷰어
+  // 소켓(`/agent-attach`, #141)도 같은 것을 쓴다. 사본을 두면 한쪽만 고쳐지고, 수명에서
+  // 그것은 조용히 열려 있는 쪽으로 어긋난다(더 민감한 쪽이 느슨해진 사고가 실제로 났다).
+  const sweep = createCredentialSweep(pool, opts.revalidateMs ?? DEFAULT_REVALIDATE_MS);
   const originAllowed = (origin: string | undefined): boolean =>
-    !allowedOrigins || !origin || allowedOrigins.includes(origin);
-
-  // 토큰을 연결 시점에만 검증하면, 만료 직전에 열린 소켓이 만료 후에도 이벤트를 계속 받는다.
-  // 판정은 살아 있는 해시 전체에 대해 **한 번의 질의**로 한다. 소켓마다 왕복하면 비용이
-  // N배인 것도 있지만, 더 나쁜 건 같은 자격증명의 소켓들이 서로 다른 순간에 판정돼
-  // "어떤 탭은 끊기고 어떤 탭은 사는" 상태가 생기는 것이다. 해시 집합 하나로 보면 운명이 같다.
-  const sweep = setInterval(() => {
-    void (async () => {
-      if (!live.size) return;
-      const invalid = await findInvalidCredentials(pool, [...new Set([...live].map((e) => e.credentialHash))]);
-      if (!invalid.size) return;
-      for (const entry of [...live]) {
-        if (invalid.has(entry.credentialHash)) {
-          live.delete(entry);
-          entry.socket.close(4401, 'credential no longer valid');
-        }
-      }
-    })();
-  }, opts.revalidateMs ?? 60_000);
+    isOriginAllowed(allowedOrigins, origin);
   // 테스트는 서버를 여럿 만든다 — 해제하지 않으면 이벤트 루프가 살아남아 러너가 끝나지 않는다.
-  app.addHook('onClose', async () => { clearInterval(sweep); });
+  app.addHook('onClose', async () => { sweep.stop(); });
 
   // 하트비트. design.md §4 는 presence 를 "WS 연결 + 하트비트 기준"이라고 적었지만 ping/pong 이
   // 없어서, 케이블이 뽑히거나 피어가 wedge 되면 **close 이벤트가 오지 않아** 죽은 연결이 online
@@ -123,8 +107,7 @@ export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptio
     if (!claim) { socket.close(4401, 'unauthorized'); return; }
     const { accountId, credentialHash } = claim;
 
-    const entry = { socket, credentialHash };
-    live.add(entry);
+    const untrack = sweep.track(socket, credentialHash);
     // 정상 ws 클라이언트는 ping 에 자동으로 pong 한다. 서버는 그 답을 기록만 한다.
     heartbeat.track(socket);
     socket.on('pong', () => heartbeat.pong(socket));
@@ -194,7 +177,7 @@ export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptio
     socket.send(JSON.stringify(snapshot));
 
     socket.on('close', () => {
-      live.delete(entry);
+      untrack();
       heartbeat.untrack(socket);
       off();
       // 소켓이 닫히면 stop 이 오지 않는다 — 그래도 '입력 중'이 남으면 안 된다.

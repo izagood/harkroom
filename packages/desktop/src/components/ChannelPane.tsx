@@ -218,6 +218,9 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           <Composer
             scopeKey={activeChannelId}
             channelId={activeChannelId}
+            // 같은 값을 두 번 넘긴다 — 뜻이 둘이라서다(Composer 의 prop 주석): 여기는
+            // 채널에 직접 올리는 자리라 예약도 되고 자동 멘션도 그 채널의 것을 본다.
+            autoMentionChannelId={activeChannelId}
             placeholder={`Message ${composerTarget}`}
             // 채널을 **지금 렌더된 것으로 붙여 준다**(#223). 보냄 취소 창이 도는 동안
             // 채널을 옮겨도 이 클로저가 든 채널로 나간다 — 컨트롤러가 스토어를 다시 읽으면
