@@ -5,6 +5,7 @@ import { newToken } from '../auth/tokens.js';
 import { MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@murmur/shared';
 import { createAgentAccount, getAgent, listAgents, revokeAllPats, updateAgent } from '../services/agents.js';
 import { recordAudit } from '../audit.js';
+import { deleteMemory, listMemoryEntries } from '../services/memory.js';
 
 export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.post('/invites', { preHandler: app.requireAdmin }, async (req, reply) => {
@@ -183,6 +184,38 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
    * 폐기 시각 자체가 감사에 쓸모 있는 사실이다. 라벨은 살아 있는 토큰 안에서 유일하다
    * (마이그레이션 010) — `DELETE .../pats/:label` 이 라벨로 폐기하기 때문이다.
    */
+  /**
+   * 에이전트 메모리 조회·삭제(#139 3단계). **사람이 쓰는 경로다.**
+   *
+   * MCP 로는 안 된다 — `registerMcp` 가 `kind !== 'agent'` 를 걸러 사람 계정은 MCP 에
+   * 붙지 못한다. 그래서 REST 가 필요하다.
+   *
+   * 가드가 `requireAdmin` 인 이유: 이 파일의 에이전트 관리 라우트가 전부 그렇고,
+   * 메모리는 그 에이전트의 **정의에 준하는 상태**다. 아무 사람이나 남의 에이전트
+   * 기억을 읽고 지울 수 있으면 `ownerAccountId` 가 attach 를 게이트하는 것과 어긋난다.
+   *
+   * 질의는 `services/memory.ts` 를 그대로 부른다 — 여기서 다시 쓰면 계정 스코프가 두
+   * 곳에 생기고 한쪽만 고치는 사고가 난다.
+   */
+  app.get('/accounts/agents/:id/memory', { preHandler: app.requireAdmin }, async (req) => ({
+    memories: await listMemoryEntries(pool, z.object({ id: z.string().uuid() }).parse(req.params).id),
+  }));
+
+  app.delete('/accounts/agents/:id/memory/:slug', { preHandler: app.requireAdmin }, async (req, reply) => {
+    const { id, slug } = z.object({
+      id: z.string().uuid(),
+      slug: z.string().min(1).max(255),
+    }).parse(req.params);
+    await deleteMemory(pool, id, slug);
+    await recordAudit(pool, {
+      // 본문은 남기지 않는다 — docs/design.md 가 "감사에 본문을 복사하면 삭제가 삭제가
+      // 아니다" 를 못박았다. slug 만 남긴다.
+      action: 'agent.memory.deleted', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { slug },
+    }, req);
+    return reply.code(204).send();
+  });
+
   app.get('/accounts/:id/pats', { preHandler: app.requireAdmin }, async (req) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const res = await pool.query(

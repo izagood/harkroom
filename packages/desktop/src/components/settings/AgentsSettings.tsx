@@ -48,6 +48,12 @@ export function AgentsSettings() {
   const [pat, setPat] = useState<string | null>(null);
   const [pats, setPats] = useState<PatView[]>([]);
   const [revoking, setRevoking] = useState<string | null>(null);
+  // #139: 메모리는 **세 상태**다 — null(아직 안 읽음) / 'error'(못 읽음) / 목록.
+  // 실패를 빈 배열로 삼키면 "기억이 없다" 와 "못 읽었다" 가 구분되지 않는다
+  // (docs/design.md 4절). 러너 쪽 MemoryContext 가 같은 이유로 세 상태다.
+  type MemoryEntry = { slug: string; value: string; updatedAt: string };
+  const [memories, setMemories] = useState<MemoryEntry[] | 'error' | null>(null);
+  const [confirmingSlug, setConfirmingSlug] = useState<string | null>(null);
   // 라벨을 하드코딩하면 재발급이 막힌다 — 라벨은 살아 있는 토큰 안에서 유일하고
   // (마이그레이션 010) 서버가 중복을 409 로 거절한다. 토큰을 잃어 폐기한 뒤 같은 이름으로
   // 다시 발급하는 것이 주 사용 흐름이라, 사용자가 이름을 정할 수 있어야 한다.
@@ -68,6 +74,14 @@ export function AgentsSettings() {
     void getController().listPats(agentId).then(setPats).catch(() => setPats([]));
   };
 
+  const loadMemories = (agentId: string) => {
+    if (!isAdmin) return;
+    setMemories(null);
+    void getController().agentMemory(agentId)
+      .then(setMemories)
+      .catch(() => setMemories('error'));
+  };
+
   const pick = (a: AgentView) => {
     setSelected(a);
     setDraft(draftOf(a));
@@ -76,7 +90,9 @@ export function AgentsSettings() {
     setPats([]);
     setRevoking(null);
     setError(null);
+    setConfirmingSlug(null);
     loadPats(a.id);
+    loadMemories(a.id);
   };
 
   const startNew = () => {
@@ -339,6 +355,64 @@ export function AgentsSettings() {
                   {draft.ownerAccountId
                     ? `소유자: @${accounts[draft.ownerAccountId]?.handle ?? '?'}`
                     : '소유자: 없음 — attach 불가'}
+                </div>
+              </div>
+            )}
+
+            {selected && isAdmin && (
+              <div className="rounded border border-zinc-200 p-3">
+                <div className="text-xs font-medium text-zinc-600">기억 (memory)</div>
+                {/* 읽기·삭제만이다. 편집을 넣지 않는 이유(#139): 사람이 고쳐도 에이전트가
+                    다음 턴에 덮어쓰면 **사람은 자기 수정이 왜 사라졌는지 알 수 없다.** */}
+                <div className="mt-2 space-y-2">
+                  {memories === null && <div className="text-[11px] text-zinc-400">불러오는 중…</div>}
+                  {memories === 'error' && (
+                    <div role="alert" className="text-[11px] text-red-600">기억을 불러오지 못했다</div>
+                  )}
+                  {Array.isArray(memories) && memories.length === 0 && (
+                    <div className="text-[11px] text-zinc-400">기억이 없다</div>
+                  )}
+                  {Array.isArray(memories) && memories.map((m) => (
+                    <div key={m.slug} className="rounded bg-zinc-50 px-2 py-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium">{m.slug}</span>
+                        {confirmingSlug === m.slug ? (
+                          <span className="flex gap-1">
+                            {/* 되돌릴 수 없으니 한 번 더 묻는다 — MessageItem 의 삭제 확인과 같은 규칙. */}
+                            <button
+                              className="rounded border border-red-300 bg-red-50 px-1.5 text-[11px] text-red-700"
+                              onClick={() => {
+                                setConfirmingSlug(null);
+                                void getController().deleteAgentMemory(selected.id, m.slug)
+                                  .then(() => loadMemories(selected.id))
+                                  .catch(() => setError('기억을 지우지 못했다'));
+                              }}
+                            >
+                              정말 지운다
+                            </button>
+                            <button
+                              className="rounded border border-zinc-300 px-1.5 text-[11px] text-zinc-600"
+                              onClick={() => setConfirmingSlug(null)}
+                            >
+                              두기
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            className="rounded border border-zinc-300 px-1.5 text-[11px] text-zinc-600"
+                            aria-label={`${m.slug} 기억 지우기`}
+                            onClick={() => setConfirmingSlug(m.slug)}
+                          >
+                            지우기
+                          </button>
+                        )}
+                      </div>
+                      {/* 값은 최대 8000자다 — 설정 화면이 그것 때문에 무한히 길어지면 안 된다. */}
+                      <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[11px] text-zinc-600">
+                        {m.value}
+                      </pre>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

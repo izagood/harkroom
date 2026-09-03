@@ -23,6 +23,9 @@ const fakeController = (agents: AgentView[] = []) => {
     listPats: vi.fn(async (): Promise<PatView[]> => []),
     revokePat: vi.fn(async (): Promise<{ revoked: number }> => ({ revoked: 1 })),
     mintPat: vi.fn(async (): Promise<string> => 'murp_new'),
+    // #139: 기본은 "읽었고 비어 있다". 실패나 목록이 필요한 테스트가 갈아끼운다.
+    agentMemory: vi.fn(async (): Promise<{ slug: string; value: string; updatedAt: string }[]> => []),
+    deleteAgentMemory: vi.fn(async (): Promise<void> => undefined),
   };
   setController(c as unknown as Controller);
   return c;
@@ -386,5 +389,72 @@ describe('AgentsSettings', () => {
       expect(optionTexts.some((t) => t.includes('botty'))).toBe(false);
       expect(optionTexts.some((t) => t.includes('alice'))).toBe(true);
     });
+  });
+});
+
+describe('에이전트 기억 (#139 3단계)', () => {
+  const mem = (slug: string, value: string) => ({ slug, value, updatedAt: '2026-09-03T00:00:00.000Z' });
+
+  it('기억 목록이 slug 와 값으로 그려진다', async () => {
+    useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+    const c = fakeController([agent('rusalka')]);
+    c.agentMemory.mockResolvedValue([mem('core', '재빈은 러너를 담당한다')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByText('rusalka'));
+
+    expect(await screen.findByText('core')).toBeTruthy();
+    expect(screen.getByText('재빈은 러너를 담당한다')).toBeTruthy();
+  });
+
+  // 빈 목록을 그대로 두면 "기억이 없다" 와 "못 읽었다" 가 구분되지 않는다.
+  it('기억이 없으면 "없다" 가 보인다', async () => {
+    useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+    const c = fakeController([agent('rusalka')]);
+    c.agentMemory.mockResolvedValue([]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByText('rusalka'));
+
+    expect(await screen.findByText('기억이 없다')).toBeTruthy();
+  });
+
+  // 실패를 빈 배열로 삼키면 위 "없다" 와 같은 화면이 된다 — 이게 이 절의 핵심 구분이다.
+  it('조회가 실패하면 오류가 보인다 — "없다" 가 아니다', async () => {
+    useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+    const c = fakeController([agent('rusalka')]);
+    c.agentMemory.mockRejectedValue(new Error('boom'));
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByText('rusalka'));
+
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.queryByText('기억이 없다')).toBeNull();
+  });
+
+  it('삭제에 확인이 한 번 더 있고 확인해야 실제로 지운다', async () => {
+    useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+    const c = fakeController([agent('rusalka')]);
+    c.agentMemory.mockResolvedValue([mem('mem/deploy', '배포는 redeploy.sh')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByText('rusalka'));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'mem/deploy 기억 지우기' }));
+    expect(c.deleteAgentMemory).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('정말 지운다'));
+    await waitFor(() => expect(c.deleteAgentMemory).toHaveBeenCalledWith('id-rusalka', 'mem/deploy'));
+  });
+
+  // 편집을 넣지 않은 것이 결정이다 — 사람이 고쳐도 에이전트가 다음 턴에 덮어쓰면
+  // 사람은 자기 수정이 왜 사라졌는지 알 수 없다.
+  it('기억을 편집하는 입력이 없다', async () => {
+    useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+    const c = fakeController([agent('rusalka')]);
+    c.agentMemory.mockResolvedValue([mem('core', '값')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByText('rusalka'));
+    await screen.findByText('core');
+
+    expect(screen.queryByLabelText(/기억.*편집|edit.*memory/i)).toBeNull();
+    // 값은 pre 로 그린다 — 입력 필드가 아니다.
+    expect(screen.getByText('값').tagName).toBe('PRE');
   });
 });
