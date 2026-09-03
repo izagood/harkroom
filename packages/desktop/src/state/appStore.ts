@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow } from '@murmur/shared';
+import type { AccountStatus, AccountView, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PinRow } from '@murmur/shared';
 
 export interface HistoryEntry {
   channelId: string;
@@ -35,6 +35,18 @@ export interface AppState {
   /** 계정별 채널 음소거·즐겨찾기. channelId → preference */
   channelPrefs: Record<string, ChannelPrefRow>;
   /**
+   * 채널별 고정 메시지(#218). `channelPrefs` 와 나란히 있지만 **성질이 다르다** — 저쪽은
+   * 내 취향이고 이쪽은 채널 전역 사실이라 누가 봐도 같은 값이다. 그래서 로그아웃 시
+   * 초안처럼 비밀로 다룰 것이 없고, 다음 사람이 열면 서버에서 다시 받는다.
+   */
+  pins: Record<string, PinRow[]>;
+  /**
+   * 채널별 멤버 목록. channelId → members. **키가 없는 것과 빈 배열은 다르다** —
+   * 없으면 "아직 안 받았다", 빈 배열이면 "정말 아무도 없다"다. 조회 실패를 빈 배열로
+   * 채우면 그 구분이 사라져 나가기 경고가 조용히 꺼진다.
+   */
+  channelMembers: Record<string, ChannelMemberRow[]>;
+  /**
    * 스코프별 초안. 키는 scopeKey (channelId 또는 thread:<rootId>).
    * 설정과 달리 사용자가 쓴 문장 전체이므로 로그아웃 시 반드시 삭제한다.
    */
@@ -57,6 +69,17 @@ export interface AppState {
    * 다음 이동 때 갈아탄다(`openChannel` 이 지우고 `openMessage` 가 다시 건다).
    */
   highlightedMessageId: string | null;
+  /**
+   * 지금 펼쳐 둔 긴 메시지들(#217). messageId → true.
+   *
+   * **세션 한정 화면 상태다.** `localStorage` 에 넣지 않는다 — 다시 켰을 때 무엇이 펼쳐져
+   * 있을지 사람이 예측할 수 없다. `MessageRow` 에도 넣지 않는다 — 서버에서 온 사실과 지금
+   * 화면의 사정이 한 값에 섞인다(강조 상태가 바로 위에 있는 것과 같은 이유다).
+   *
+   * 채널을 옮기면 비워진다(`openChannel`). 돌아왔을 때 접힌 상태가 기본이어야 긴 메시지가
+   * 다시 앞뒤 대화를 스크롤 밖으로 밀어내지 않는다.
+   */
+  expandedMessageIds: Record<string, true>;
   set(partial: Partial<AppState>): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
@@ -82,18 +105,33 @@ export interface AppState {
   goForward(): HistoryEntry | null;
   /** 현재 위치에서 미래 이력을 모두 잘라낸다(새 항목 추가 시). */
   truncateForward(): void;
+  /** 긴 메시지의 펼침을 뒤집는다(#217). */
+  toggleExpanded(messageId: string): void;
 }
 
 const initial = {
   me: null, accounts: {}, channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
-  online: [], leases: [], connected: false, channelPrefs: {}, drafts: {},
+  online: [], leases: [], connected: false, channelPrefs: {}, pins: {}, channelMembers: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
+  expandedMessageIds: {},
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
   ...initial,
   set: (partial) => set(partial),
+  toggleExpanded: (messageId) => {
+    const cur = get().expandedMessageIds;
+    if (!cur[messageId]) {
+      set({ expandedMessageIds: { ...cur, [messageId]: true } });
+      return;
+    }
+    // 다시 접을 때는 키를 **지운다** — false 를 남기면 "접어 둔 것" 과 "손대지 않은 것" 이
+    // 구분되지 않는 채 목록만 자란다.
+    const next = { ...cur };
+    delete next[messageId];
+    set({ expandedMessageIds: next });
+  },
   upsertMessages: (channelId, rows) => {
     const byId = new Map((get().messages[channelId] ?? []).map((m) => [m.id, m]));
     for (const r of rows) byId.set(r.id, r);
