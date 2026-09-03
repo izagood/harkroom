@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
-import { parseMessagePermalink } from '@murmur/shared';
+import { mentionedHandles, parseMessagePermalink } from '@murmur/shared';
 import type { AccountView, AttachmentRow } from '@murmur/shared';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
@@ -72,6 +72,7 @@ interface HeldMessage {
 
 export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = '' }: Props) {
   const accounts = useAppStore((s) => s.accounts);
+  const groups = useAppStore((s) => s.groups);
   const myId = useAppStore((s) => s.me?.id);
   const [query, setQuery] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
@@ -146,6 +147,22 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     () => (stickyByScope[scopeKey] ?? []).filter((h) => known.has(h)),
     [stickyByScope, scopeKey, known],
   );
+
+  // 집합 handle Set. `splitMentions` 과 같은 방식이다 — 같은 함수로 판정해야 보내기 전후가
+  // 어긋나지 않는다(#278). 이 Set 은 본문 해석에만 쓰이고 고정과 합쳐지지 않는다.
+  const groupHandles = useMemo(
+    () => new Set(groups.map((g) => g.handle.toLowerCase())),
+    [groups],
+  );
+
+  // 본문에서 불린 상대. 알려진 계정과 집합 모두 포함하고,固定은 뺀다 —固定은 별도로
+  // 그리기 때문이다. 둘을 합치면 "이 줄을 지우면 谁을 지우는 지"를 사용자가 모른다.
+  const bodyMentions = useMemo(() => {
+    const handles = mentionedHandles(draft);
+    return handles
+      .filter((h) => known.has(h) || groupHandles.has(h))
+      .filter((h) => !sticky.includes(h));
+  }, [draft, known, groupHandles, sticky]);
 
   // @ 버튼으로 여는 목록. 첫 줄을 보내기 전에도 상대를 정해 둘 수 있어야 한다.
   // 이미 고정된 상대는 뺀다 — 다시 골라도 달라지는 것이 없다.
@@ -521,6 +538,28 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
             </li>
           ))}
         </ul>
+      )}
+      {bodyMentions.length > 0 && (
+        <div
+          data-testid="body-mentions"
+          className="mb-1 flex flex-wrap items-center gap-1 text-xs text-zinc-600"
+        >
+          <span>부를 상대:</span>
+          {bodyMentions.map((h) => {
+            const isGroup = groupHandles.has(h);
+            const group = isGroup ? groups.find((g) => g.handle.toLowerCase() === h) : null;
+            return (
+              <span
+                key={h}
+                data-handle={h}
+                className={`flex items-center gap-0.5 font-medium ${isGroup ? 'text-indigo-600' : 'text-zinc-700'}`}
+              >
+                <span>@{h}</span>
+                {isGroup && group && <span className="text-zinc-400">(집합)</span>}
+              </span>
+            );
+          })}
+        </div>
       )}
       {uploadError && (
         <p role="alert" className="mb-1 text-[11px] text-red-600">{uploadError}</p>
