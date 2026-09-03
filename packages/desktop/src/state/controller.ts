@@ -311,6 +311,11 @@ export class Controller {
           this.swallow(this.loadSavedSummary());
         }
         break;
+      case 'link_preview.ready':
+        // 카드가 준비됐다는 신호만 남긴다(#215). 내용은 그 URL 을 그리는 컴포넌트가
+        // 스스로 읽는다 — 지금 화면에 없는 URL 의 카드를 미리 받아 둘 이유가 없다.
+        store.set({ linkPreviewReadyAt: { ...store.linkPreviewReadyAt, [e.url]: Date.now() } });
+        break;
     }
   }
 
