@@ -215,7 +215,7 @@ export function mentionedIds(body: string): string[] {
 }
 
 /**
- * 본문의 @handle (존재하는 계정만) を <@id> 로 정규화한다.
+ * 본문의 @handle (존재하는 계정만) 를 <@id> 로 정규화한다.
  * #230 그룹 멘션(@그룹) 은 이 함수에서 처리하지 않는다 — 호출부가 먼저 그룹 확장을 하고
  * 남은 @handle 을 정규화해야 한다. 그룹 토큰은 글자 그대로 둔다.
  *
