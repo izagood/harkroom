@@ -79,6 +79,11 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     archiveChannel: vi.fn(async (id: string, _archived: boolean) =>
       chan(id, id, null)),
     search: vi.fn(async () => []),
+    // #232: 채널 파일 색인. 베이스가 덮어야 "부르지 않았다" 를 단언할 수 있다.
+    channelFiles: vi.fn(async () => ({ files: [], hasMore: false })),
+    // 파일 패널의 항목 클릭은 **이동이지 내려받기가 아니다.** 그것을 단언하려면
+    // 내려받기 경로도 베이스에 있어야 한다.
+    fetchAttachment: vi.fn(async () => new Blob(['x'])),
     // #218: 베이스가 핀 표면을 덮어야 openChannel 이 조용히 던지지 않고, "부르지 않았다" 도 단언할 수 있다.
     pins: vi.fn(async () => []),
     pinMessage: vi.fn(async (channelId: string, messageId: string) => pin(messageId, channelId)),

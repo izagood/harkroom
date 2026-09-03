@@ -270,6 +270,24 @@ export interface AttachmentRow {
   sizeBytes: number;
 }
 
+/**
+ * 채널 파일 색인의 한 줄(#232). `AttachmentRow` 에 "어느 메시지에서 왔는가"를 더한 것이다 —
+ * 이 화면의 유일한 동작이 '누르면 그 메시지로 간다'(`controller.openMessage`)이므로
+ * `messageId` 가 곁가지가 아니라 본체다.
+ *
+ * 올린 사람은 `uploaderId` 가 아니라 메시지 작성자(`authorId`)로 준다. `AttachmentRow` 가
+ * `uploaderId` 를 일부러 뺀 이유가 "업로더는 메시지 작성자와 같으므로 중복"이라는 것이고,
+ * 그 판단을 여기서 되돌리면 같은 사실을 두 이름으로 부르게 된다.
+ */
+export interface ChannelFileRow extends AttachmentRow {
+  messageId: string;
+  /** 그 메시지의 seq. 최신순 정렬 기준이자 `before` 커서에 그대로 넣는 값이다. */
+  messageSeq: number;
+  authorId: string;
+  /** 첨부가 오간 시각 = 그 메시지의 작성 시각(ISO). 업로드 시각이 아니다. */
+  createdAt: string;
+}
+
 export interface MessageRow {
   id: string;
   seq: number;
