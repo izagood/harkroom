@@ -85,7 +85,7 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
       id: z.string().uuid(), accountId: z.string().uuid(),
     }).parse(req.params);
 
-    const account = await pool.query(`select kind from account where id = $1`, [accountId]);
+    const account = await pool.query(`select kind, handle from account where id = $1`, [accountId]);
     if (!account.rowCount) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
     }
