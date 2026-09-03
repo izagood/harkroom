@@ -64,6 +64,16 @@ export class ApiClient {
   markChannelRead(channelId: string, seq: number): Promise<void> {
     return this.req('PUT', `/channels/${channelId}/read`, { seq });
   }
+  /**
+   * 미읽음 표시(#154). 읽음 ack 와 **다른 엔드포인트**다 — 서버가 자동 전진과 사람의 조작을
+   * 구분해야 단조성을 깨지 않고 되돌릴 수 있다.
+   *
+   * `seq: null` 이 표시 지우기다. `undefined` 로 표현하면 `JSON.stringify` 가 키를 버려
+   * 서버가 못 받는다.
+   */
+  markChannelUnread(channelId: string, seq: number | null): Promise<void> {
+    return this.req('PUT', `/channels/${channelId}/unread`, { seq });
+  }
   async accounts(): Promise<AccountView[]> {
     return (await this.req<{ accounts: AccountView[] }>('GET', '/accounts')).accounts;
   }
