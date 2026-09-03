@@ -16,6 +16,12 @@ export interface AccountView {
   kind: 'human' | 'agent';
   isAdmin: boolean;
   /**
+   * 에이전트를 소유한 계정의 ID. **null 이 정상이다** — backfill 없이 컬럼이 추가됐고
+   * "추측 소유자는 소유자가 아니다"라는 원칙(#181)에 따라 null 이면 운영자가 없는 것이다.
+   * 사람 계정에서는 항상 null 이다.
+   */
+  ownerAccountId: string | null;
+  /**
    * 비활성화된 계정. **디렉터리에서 빼지 않고 표시만 한다** — 이 목록은 멘션 자동완성의
    * 원천이면서 동시에 **작성자 이름을 푸는 표**이기도 하다(`MessageItem` 이 `accounts[authorId]`
    * 를 본다). 빼 버리면 그 에이전트의 과거 메시지가 작성자를 잃는다 — "이력은 건드리지
@@ -32,6 +38,17 @@ export interface AccountView {
   status: AccountStatus;
   /** 상태에 덧붙이는 짧은 문구. 없음은 **null** 이다 — 빈 문자열과 구분해야 "지웠다"가 표현된다. */
   statusText: string | null;
+  /**
+   * 이 계정이 건 프로필 사진의 첨부 id(#159). 없으면 **null** 이다.
+   *
+   * **바이트가 아니라 id 만 싣는다.** 이 뷰는 계정 목록 전체로 오가므로 바이트를 실으면
+   * 디렉터리 한 번에 모든 사진이 따라온다. 화면은 이 id 가 있을 때만 아바타를 받아 오고,
+   * 값이 바뀌면 캐시가 자연히 무효화된다(id 는 업로드마다 새로 생긴다).
+   *
+   * 그리는 곳은 `Identity` **한 곳**이다 — 자리마다 따로 그리면 이 저장소가 반복 결함으로
+   * 지목한 "하나의 사실이 두 곳에 유지된다"가 된다.
+   */
+  avatarAttachmentId: string | null;
 }
 
 /** murmur 가 스키마·설정 차원에서 아는 harness 이름 전체. 실제 실행 가능 여부는 `RUNNABLE_HARNESSES` 를 본다. */
@@ -172,6 +189,17 @@ export function mentionedHandles(body: string): string[] {
 }
 
 /**
+ * 채널 전체를 부르는 예약 handle(#225). 문법을 따로 만들지 않는다 — `@channel` 은 평범한
+ * 멘션과 **같은** `MENTION_PATTERN` 에 걸리고, 이름만 예약이다. 파서를 갈라 두면 서버와
+ * 데스크탑이 서로 다른 것을 멘션이라 부르게 된다.
+ *
+ * 같은 handle 을 가진 **계정이 있으면 계정이 이긴다.** 사람의 이름이 예약어에 밀리면 그
+ * 사람은 영영 불릴 수 없다 — 예약어를 못 쓰는 쪽이 훨씬 가벼운 손해다. 그래서 서버는
+ * 계정 조회를 먼저 하고, 그 handle 의 계정이 **없을 때만** 채널 전체로 펼친다.
+ */
+export const CHANNEL_MENTION_HANDLE = 'channel';
+
+/**
  * 메시지 하나를 가리키는 링크의 스킴(#178). 문자열을 여기저기서 조립하지 않는다 —
  * 만드는 쪽과 읽는 쪽이 갈라지면 자기가 만든 링크를 자기가 못 여는 상태가 된다.
  *
@@ -248,6 +276,24 @@ export interface AttachmentRow {
   sizeBytes: number;
 }
 
+/**
+ * 채널 파일 색인의 한 줄(#232). `AttachmentRow` 에 "어느 메시지에서 왔는가"를 더한 것이다 —
+ * 이 화면의 유일한 동작이 '누르면 그 메시지로 간다'(`controller.openMessage`)이므로
+ * `messageId` 가 곁가지가 아니라 본체다.
+ *
+ * 올린 사람은 `uploaderId` 가 아니라 메시지 작성자(`authorId`)로 준다. `AttachmentRow` 가
+ * `uploaderId` 를 일부러 뺀 이유가 "업로더는 메시지 작성자와 같으므로 중복"이라는 것이고,
+ * 그 판단을 여기서 되돌리면 같은 사실을 두 이름으로 부르게 된다.
+ */
+export interface ChannelFileRow extends AttachmentRow {
+  messageId: string;
+  /** 그 메시지의 seq. 최신순 정렬 기준이자 `before` 커서에 그대로 넣는 값이다. */
+  messageSeq: number;
+  authorId: string;
+  /** 첨부가 오간 시각 = 그 메시지의 작성 시각(ISO). 업로드 시각이 아니다. */
+  createdAt: string;
+}
+
 export interface MessageRow {
   id: string;
   seq: number;
@@ -270,6 +316,8 @@ export interface MessageRow {
   lastReplyAt: string | null;
   /** 스레드 루트에만 있음. 답글 작성자 목록 (중복 없음). */
   participantIds: string[] | null;
+  /** 스레드 답을 채널에도 함께 올린다(#231). threadRootId 가 없으면 이 값은 항상 false 다. */
+  alsoInChannel: boolean;
 }
 
 export interface ChannelRow {
@@ -309,11 +357,52 @@ export interface DmView {
   memberIds: string[];
 }
 
+/**
+ * 채널별 알림 수준(#224). `muted_at` 의 on/off 를 대체한다.
+ *
+ * - `all`     — 이 채널의 알림을 전부 받는다(전역 알림 설정이 정한 범위 안에서).
+ * - `mentions` — 나를 부른 것만 받는다.
+ * - `none`    — 아무것도 받지 않는다. **멘션도 아니다.**
+ *
+ * `none` 에서 멘션이 예외가 아닌 것은 #229 의 결정이고 #224 가 그것을 유지한다 — 세분화가
+ * 생겼으니 "덜 받겠다"는 사람에게는 `mentions` 라는 자리가 따로 있다. 이 주석이 없으면
+ * "멘션은 예외였나?"가 세 번째로 논의된다.
+ */
+export const NOTIFY_LEVELS = ['all', 'mentions', 'none'] as const;
+
+/**
+ * 목록에서 파생한다 — 값의 집합이 **한 곳에만** 산다. 따로 적어 두면 네 번째 수준을
+ * 들일 때 목록만 고치고 타입을 잊는(또는 그 반대) 사고가 난다.
+ */
+export type NotifyLevel = (typeof NOTIFY_LEVELS)[number];
+
 export interface ChannelPrefRow {
   accountId: string;
   channelId: string;
+  /**
+   * 언제 음소거했는지의 기록. **동작 판정에 쓰지 마라** — 알림도 배지도 `notifyLevel` 만
+   * 본다(#224). 같은 사실이 두 곳에 살면 한쪽만 고치는 사고가 난다.
+   */
   mutedAt: string | null;
   starredAt: string | null;
+  notifyLevel: NotifyLevel;
+}
+
+/**
+ * pref 행에서 알림 수준을 읽는다. **행이 없으면 `mentions`** — 아무것도 정하지 않은 채널은
+ * 지금 동작 그대로여야 하고, 지금 동작은 "나를 부른 것만 알린다"이다. 024 마이그레이션의
+ * default 와 **반드시 같은 값이어야 한다**: 여기와 저기가 갈라지면 pref 행이 있는 채널과
+ * 없는 채널이 다르게 울린다.
+ *
+ * `all` 을 기본값으로 두지 않는 이유: `all` 은 일반 메시지 알림이라는 **새 경로를 여는**
+ * 값이다(#224 가 그 경로를 함께 들여왔다). 기본값으로 두면 아무도 고르지 않은 변화가
+ * 업데이트하는 순간 모든 채널에 적용돼 모든 메시지가 OS 알림이 된다.
+ *
+ * `mutedAt` 은 **보지 않는다.** 알림·배지·훑기가 전부 이 한 함수를 지나가게 해서, 같은
+ * 질문에 두 곳이 다르게 답하는 일을 막는다(#224).
+ */
+export function notifyLevelOf(pref: { notifyLevel?: NotifyLevel } | undefined | null): NotifyLevel {
+  return pref?.notifyLevel ?? 'mentions';
 }
 
 /**
@@ -355,6 +444,11 @@ export type WsServerEvent =
    * `presence.changed` 를 만들지 않고, 연결이 끊겨도 상태는 남는다.
    */
   | { type: 'status.changed'; accountId: string; status: AccountStatus; statusText: string | null }
+  /**
+   * 누군가 자기 프로필 사진을 바꿨다(#159). 바이트가 아니라 id 만 보낸다 — 받는 쪽이 그
+   * id 로 아바타를 받아 오고, 지우기는 null 이다.
+   */
+  | { type: 'avatar.changed'; accountId: string; avatarAttachmentId: string | null }
   // 리액션은 델타로 보낸다 — 메시지 전체를 다시 실으면 한 번 누를 때마다 본문이 오간다.
   | { type: 'reaction.added'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
   | { type: 'reaction.removed'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }

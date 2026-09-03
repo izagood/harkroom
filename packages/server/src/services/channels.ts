@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import type { ChannelMemberRow, ChannelRow } from '@murmur/shared';
+import type { ChannelMemberRow, ChannelRow, NotifyLevel } from '@murmur/shared';
 
 const COLS = `id, name, topic, kind, repo, archived_at as "archivedAt", visibility`;
 
@@ -263,22 +263,29 @@ export async function audienceFor(pool: Pool, channelId: string): Promise<'all' 
 export interface ChannelPrefRow {
   accountId: string;
   channelId: string;
+  /**
+   * 언제 음소거했는지의 기록일 뿐이다. **동작 판정에 쓰지 마라** — 알림도 배지도 훑기도
+   * `notifyLevel` 만 본다(#224). 같은 사실이 두 컬럼에 살면 한쪽만 고치는 사고가 난다.
+   */
   mutedAt: string | null;
   starredAt: string | null;
+  notifyLevel: NotifyLevel;
 }
 
 export async function updateChannelPref(
-  pool: Pool, accountId: string, channelId: string, patch: { muted?: boolean; starred?: boolean },
+  pool: Pool, accountId: string, channelId: string, patch: { notifyLevel?: NotifyLevel; starred?: boolean },
 ): Promise<ChannelPrefRow | null> {
   const channel = await pool.query(`select id from channel where id = $1`, [channelId]);
   if (!channel.rowCount) return null;
 
-  if (patch.muted !== undefined) {
+  if (patch.notifyLevel !== undefined) {
+    // `muted_at` 도 같이 적어 둔다 — 다만 이것은 **기록일 뿐 판정에 쓰이지 않는다**(#224).
+    // "언제 조용히 했나"는 수준 값으로 복원되지 않는 별개의 사실이라 남긴다.
     await pool.query(
-      `insert into channel_pref (account_id, channel_id, muted_at)
-       values ($1, $2, $3)
-       on conflict (account_id, channel_id) do update set muted_at = $3`,
-      [accountId, channelId, patch.muted ? new Date() : null],
+      `insert into channel_pref (account_id, channel_id, notify_level, muted_at)
+       values ($1, $2, $3, $4)
+       on conflict (account_id, channel_id) do update set notify_level = $3, muted_at = $4`,
+      [accountId, channelId, patch.notifyLevel, patch.notifyLevel === 'none' ? new Date() : null],
     );
   }
   if (patch.starred !== undefined) {
@@ -296,7 +303,8 @@ export async function getChannelPref(
   pool: Pool, accountId: string, channelId: string,
 ): Promise<ChannelPrefRow | null> {
   const res = await pool.query(
-    `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt", starred_at as "starredAt"
+    `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt", starred_at as "starredAt",
+            notify_level as "notifyLevel"
      from channel_pref where account_id = $1 and channel_id = $2`,
     [accountId, channelId],
   );
@@ -305,7 +313,8 @@ export async function getChannelPref(
 
 export async function listChannelPrefs(pool: Pool, accountId: string): Promise<ChannelPrefRow[]> {
   const res = await pool.query(
-    `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt", starred_at as "starredAt"
+    `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt", starred_at as "starredAt",
+            notify_level as "notifyLevel"
      from channel_pref where account_id = $1`,
     [accountId],
   );

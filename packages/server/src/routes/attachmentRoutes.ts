@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { assertChannelVisible } from '../services/channels.js';
-import { findDownloadTarget, recordUpload } from '../services/attachments.js';
+import { findDownloadTarget, listChannelFiles, recordUpload } from '../services/attachments.js';
 import { StorageLimitError, type StorageBackend } from '../storage/local.js';
 
 /**
@@ -68,6 +68,29 @@ export async function registerAttachmentRoutes(
       await storage.remove(stored.key).catch(() => {});
       throw err;
     }
+  });
+
+  /**
+   * 채널에 오간 파일 목록(#232). 채널 경로지만 **여기** 있는 이유: 이 응답이 답하는 질문은
+   * 첨부에 대한 것이고, 가시성 판정과 첨부 조회를 같은 파일에 두면 둘 중 하나만 고쳐서
+   * 갈리는 일이 없다.
+   *
+   * 가시성은 이 채널의 규칙을 **그대로** 따른다 — `assertChannelVisible` 을 부르고 여기서
+   * 규칙을 다시 쓰지 않는다(`channels.ts` 의 `audienceFor` 주석이 그 사고를 기록한다).
+   * 그리고 판정이 먼저다: 파일명은 그 자체로 내용이므로 볼 수 없는 채널이면 개수도
+   * 파일명도 나가면 안 된다.
+   */
+  app.get('/channels/:id/files', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const q = z.object({
+      before: z.coerce.number().int().min(0).optional(),
+      limit: z.coerce.number().int().min(1).max(200).optional(),
+    }).parse(req.query);
+
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    return await listChannelFiles(pool, id, { before: q.before, limit: q.limit });
   });
 
   app.get('/attachments/:id', { preHandler: app.requireAccount }, async (req, reply) => {

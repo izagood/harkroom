@@ -3,6 +3,7 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import { useAppStore } from '../src/state/appStore';
 import { Composer } from '../src/components/Composer';
 import { acc } from './helpers/fakeApi';
+import { undoSendStorage } from '../src/lib/prefs';
 
 const typeInto = (value: string) => {
   const box = screen.getByRole('textbox');
@@ -22,6 +23,9 @@ const chips = () =>
   screen.queryAllByTestId('sticky-mention').map((el) => el.getAttribute('data-handle'));
 
 beforeEach(() => {
+  // 이 파일이 검증하는 것은 보냄 취소 창이 아니다(#223) — 창을 끄고 즉시 전송 경로를 본다.
+  // 창 자체는 undoSend.test.tsx 가 단독으로 지킨다.
+  undoSendStorage.saveWindowMs(0);
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'me'),

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
@@ -7,6 +7,7 @@ import { TypingLine } from './TypingLine';
 
 export function ThreadPanel() {
   const { activeChannelId, threadRootId, messages } = useAppStore();
+  const [alsoInChannel, setAlsoInChannel] = useState(false);
 
   const thread = useMemo(() => {
     if (!activeChannelId || !threadRootId) return [];
@@ -31,10 +32,22 @@ export function ThreadPanel() {
       </div>
       <TypingLine />
       <div className="border-t border-zinc-200 p-3">
+        <label className="mb-2 flex items-center gap-2 text-sm text-zinc-600">
+          <input
+            type="checkbox"
+            checked={alsoInChannel}
+            onChange={(e) => setAlsoInChannel(e.target.checked)}
+            className="rounded border-zinc-300"
+          />
+          채널에도 올리기
+        </label>
         <Composer
           scopeKey={`thread:${threadRootId}`}
           placeholder="Reply…"
-          onSend={(body, attachmentIds) => getController().reply(body, attachmentIds)}
+          // 채널과 스레드 뿌리를 지금 것으로 붙인다(#223) — 창이 도는 동안 패널을 닫으면
+          // 스토어의 `threadRootId` 는 null 이 되어 답글이 조용히 사라진다.
+          onSend={(body, attachmentIds) =>
+            getController().reply(body, attachmentIds, activeChannelId ?? undefined, threadRootId, alsoInChannel)}
         />
       </div>
     </section>

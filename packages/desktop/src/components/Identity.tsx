@@ -1,4 +1,7 @@
+import { useEffect, useState } from 'react';
+import { useAppStore } from '../state/appStore';
 import type { AccountStatus, AccountView } from '@murmur/shared';
+import { getController } from '../state/controller';
 
 /**
  * 계정의 아이덴티티 표현. **이 컴포넌트가 유일한 경로다.**
@@ -8,7 +11,12 @@ import type { AccountStatus, AccountView } from '@murmur/shared';
  * 업로드)와 `#161`(채팅 거터 아바타)도 각자 그리지 말고 여기를 통과해야 한다. 실제
  * 이미지가 들어올 때 캐시가 필요해지는데, 그때도 **여기 한 곳**에 들어간다.
  *
- * 지금은 스키마에 아바타 필드가 없어 **결정론적 생성 표현**이다(#146 이 그 스코프를 골랐다).
+ * #159 로 실제 사진이 들어왔다. 사진이 있으면 사진, 없으면 **기존 폴백 그대로**(이니셜·색,
+ * 에이전트 글리프, 모르는 계정의 물음표)다 — 폴백은 대다수 계정이 여전히 쓰는 경로이고,
+ * 사진을 얹으면서 그것을 갈아엎으면 아무 사진도 없는 워크스페이스가 통째로 망가진다.
+ *
+ * #181 에이전트 소유자 표시도 여기서 한다 — ownerAccountId 가 있으면 소유자 계정을
+ * 계정 디렉터리에서 찾아 표시한다. 소유자가 없거나 삭제된 계정이면 아무것도 안 보인다.
  */
 interface IdentityProps {
   /** 계정 디렉터리에서 못 찾은 경우를 위해 undefined 를 받는다 — 아래 처리 참고. */
@@ -32,7 +40,71 @@ function handleColor(handle: string): string {
   return colors[Math.abs(hash) % colors.length]!;
 }
 
+/**
+ * 아바타 blob 캐시. **`Identity` 안에 있는 것이 요점이다** — 아바타는 메시지 목록·멘션
+ * 후보·사이드바에 동시에 수십 번 걸리므로, 컴포넌트마다 따로 받으면 같은 사진을 화면당
+ * 수십 번 내려받는다(`Attachments.tsx` 의 컴포넌트별 fetch 가 그 모양이다).
+ *
+ * 키는 계정 id 가 아니라 **첨부 id** 다. 아바타를 바꾸면 업로드가 새로 생겨 id 가 바뀌므로
+ * 캐시가 저절로 무효화된다 — 따로 비우는 코드를 두지 않아도 된다.
+ *
+ * **revoke 하지 않는다.** 언마운트마다 revoke 하면 같은 URL 을 쓰는 다른 자리의 `<img>`
+ * 가 그 순간 깨진다. 캐시는 아바타를 건 계정 수만큼만 자란다.
+ */
+const avatarUrls = new Map<string, string>();
+/** 같은 아바타를 동시에 여러 곳에서 요청해도 왕복은 한 번이다. */
+const avatarLoads = new Map<string, Promise<string | null>>();
+
+/** 테스트가 세션 사이에 캐시를 비운다 — 앱에서는 부르지 않는다. */
+export function resetAvatarCache(): void {
+  avatarUrls.clear();
+  avatarLoads.clear();
+}
+
+function useAvatarUrl(accountId: string | null, attachmentId: string | null): string | null {
+  const [url, setUrl] = useState<string | null>(
+    () => (attachmentId ? avatarUrls.get(attachmentId) ?? null : null),
+  );
+
+  useEffect(() => {
+    if (!accountId || !attachmentId) { setUrl(null); return; }
+    const hit = avatarUrls.get(attachmentId);
+    if (hit) { setUrl(hit); return; }
+
+    let alive = true;
+    let load = avatarLoads.get(attachmentId);
+    if (!load) {
+      load = getController().fetchAvatar(accountId).then((blob) => {
+        const objectUrl = URL.createObjectURL(blob);
+        avatarUrls.set(attachmentId, objectUrl);
+        return objectUrl;
+      }).catch(() => {
+        // 못 받으면 폴백으로 남는다. 실패를 캐시에 남기면 다시 시도할 방법이 없다.
+        avatarLoads.delete(attachmentId);
+        return null;
+      });
+      avatarLoads.set(attachmentId, load);
+    }
+    void load.then((got) => { if (alive) setUrl(got); });
+    return () => { alive = false; };
+  }, [accountId, attachmentId]);
+
+  return url;
+}
+
 export function Identity({ account, className = '' }: IdentityProps) {
+  // 에이전트에게만 사진을 받지 않는다 — 에이전트는 스스로 올릴 수단이 없고(#159 범위 밖),
+  // 그 자리는 글리프가 지킨다. 훅은 조건부로 부를 수 없으므로 인자로 걸러 낸다.
+  const avatarUrl = useAvatarUrl(
+    account && account.kind === 'human' ? account.id : null,
+    account && account.kind === 'human' ? account.avatarAttachmentId : null,
+  );
+
+  // #181 소유자는 계정 디렉터리에서 푼다. `getState()` 가 아니라 **구독**이어야 한다 —
+  // 디렉터리는 로그인 뒤에 채워지고 계정 변경 이벤트로 갱신되므로, 스냅샷으로 읽으면
+  // 먼저 그려진 메시지의 소유자가 영영 안 붙는다. 훅은 조건 밖 최상단에서만 부를 수 있다.
+  const accounts = useAppStore((s) => s.accounts);
+
   // **"없다"와 "모른다"는 다르다.** 계정 디렉터리에 없는 id 는 후자이고, 아무것도
   // 그리지 않으면 "에이전트가 아니다"로 읽힌다 — docs/design.md 4절의 거울상이다.
   if (!account) {
@@ -47,23 +119,45 @@ export function Identity({ account, className = '' }: IdentityProps) {
   }
 
   if (account.kind === 'agent') {
+    // #181 소유자 표시. `null` 이 정상 상태다 — `008_agent_runner.sql` 이 backfill 없이
+    // 컬럼을 더했고 "추측 소유자는 소유자가 아니다"가 그 이유였다. 그래서 없을 때는
+    // **아무것도 그리지 않는다**: "운영자 미상" 같은 문구를 넣으면 화면 대부분이 그
+    // 문구로 채워져 아무것도 구분하지 못하고, 서버가 모르는 것을 없다고 단정하게 된다.
+    // 소유자 계정이 지워졌으면 컬럼이 `on delete set null` 이라 같은 자리로 온다.
+    const owner = account.ownerAccountId ? accounts[account.ownerAccountId] : undefined;
+
     // 접근성 이름을 **시각적으로 숨긴 텍스트**로 준다. 이모지만 두면 스크린리더가 "로봇
     // 이모지"를 읽고 이전에 있던 `agent` 정보가 사라진다. `role="img"` + `aria-label` 도
     // 방법이지만 **질의 표면을 전역으로 바꾼다** — 이 저장소에는 `queryByRole('img')` 로
     // "SVG 미리보기가 없다"를 확인하는 보안 테스트가 있고, 장식 배지가 그것을 오염시킨다.
     return (
-      <span className={`inline-flex items-center rounded bg-indigo-100 px-1 text-[10px] text-indigo-700 ${className}`}>
+      <span className={`inline-flex flex-wrap items-center gap-1 rounded bg-indigo-100 px-1 text-[10px] text-indigo-700 ${className}`}>
         <span aria-hidden="true">🤖</span>
         <span className="sr-only">에이전트</span>
+        {owner && (
+          <>
+            {/* 가운뎃점은 장식이다 — 스크린리더에는 "소유자"라는 말이 대신 간다. */}
+            <span aria-hidden="true">·</span>
+            <span className="sr-only">소유자</span>
+            <span title={`소유자: ${owner.displayName || owner.handle}`}>@{owner.handle}</span>
+          </>
+        )}
       </span>
     );
   }
 
   return (
     <span
-      className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold text-white ${handleColor(account.handle)} ${className}`}
+      className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-white ${avatarUrl ? 'bg-zinc-200' : handleColor(account.handle)} ${className}`}
     >
-      <span aria-hidden="true">{account.handle.charAt(0).toUpperCase()}</span>
+      {avatarUrl ? (
+        // `alt` 를 **비운다**. 접근성 이름은 아래 sr-only 가 이미 내고 있고, 사진에 핸들을
+        // 또 넣으면 같은 이름이 두 번 읽힌다. 사진은 이름을 바꾸지 않는다 — 표현만 바꾼다.
+        // src 는 blob 이다: 라우트를 직접 가리키면 헤더를 붙일 수 없어 토큰이 URL 로 샌다.
+        <img data-testid="identity-avatar" src={avatarUrl} alt="" className="h-full w-full object-cover" />
+      ) : (
+        <span aria-hidden="true">{account.handle.charAt(0).toUpperCase()}</span>
+      )}
       <span className="sr-only">{account.handle}</span>
     </span>
   );
