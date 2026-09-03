@@ -160,6 +160,16 @@ export const LOGIN_PATH_ARGS = ['-lc', 'echo $PATH'];
 /** 설정이 받는 값의 끝. 이것으로 끝나지 않으면 저장을 거절한다. */
 export const RUNNER_COMMAND_SUFFIX = '/pnpm';
 
+/**
+ * 로그인 셸의 `PATH` 를 못 읽었을 때 설정 경로 뒤에 붙이는 기본 디렉터리들(#305).
+ *
+ * **디렉터리 하나만 남기면 안 된다.** 자식 `PATH` 는 앱의 것을 덮어쓰므로, 설정이 준
+ * `/opt/homebrew/bin` 만 넘기면 `pnpm` 은 떠도 그것이 부르는 `node`·`git`·`sh` 가
+ * `PATH` 에 없는 기기가 생긴다 — 러너가 뜬 직후 알 수 없는 이유로 죽는 모습이 된다.
+ * 로그인 셸 값을 얻었을 때는 그것이 이 자리를 대신하므로 붙이지 않는다.
+ */
+export const SYSTEM_PATH_FALLBACK = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+
 const REPO_PATH_MISSING =
   '러너를 돌릴 murmur 저장소 경로가 설정되지 않았다 — 설정 → 연결에서 지정한다';
 
@@ -349,7 +359,7 @@ export class RunnerLauncher {
     const login = await this.loginPathOnce;
     const dir = runnerCommandDir(runnerCommand);
 
-    if (dir) return { ok: true, path: login ? `${dir}:${login}` : dir };
+    if (dir) return { ok: true, path: `${dir}:${login ?? SYSTEM_PATH_FALLBACK}` };
     if (login) return { ok: true, path: login };
     return { ok: false, error: RUNNER_COMMAND_MISSING };
   }
