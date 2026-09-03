@@ -5,6 +5,7 @@ import { setController, type Controller } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { ThreadPanel } from '../src/components/ThreadPanel';
 import { acc, chan, msg } from './helpers/fakeApi';
+import { undoSendStorage } from '../src/lib/prefs';
 
 // #231: 스레드 답을 채널에도 함께 올린다. **메시지는 하나**이고 두 곳에 보인다 —
 // 그래서 이 파일의 회귀선은 "같은 id 가 두 화면에 각각 뜨는가"를 본다.
@@ -23,6 +24,8 @@ const fakeController = () => {
 };
 
 const seed = (alsoInChannel: boolean) => {
+  // 되돌리기 창(#223)을 0 으로 둔다 — 여기서 보려는 것은 전달되는 인자이지 그 창이 아니다.
+  undoSendStorage.saveWindowMs(0);
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'admin'),
