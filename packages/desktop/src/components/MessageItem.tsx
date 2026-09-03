@@ -3,8 +3,8 @@ import type { MessageRow } from '@murmur/shared';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { MessageBody } from './MessageBody';
-import { ReactionPicker, Reactions } from './Reactions';
-import { Identity } from './Identity';
+import { ReactionPicker, Reactions, InlineReactionButtons } from './Reactions';
+import { Identity, StatusMark } from './Identity';
 import { Attachments } from './Attachments';
 import { Menu } from './Menu';
 
@@ -58,6 +58,9 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
         <div className="flex items-baseline gap-2">
           <span className="font-semibold">{author?.handle ?? '…'}</span>
           <Identity account={author} />
+          {/* 작성 시점이 아니라 **지금**의 상태다 — 이 줄이 답하는 질문은 "이 사람에게
+              지금 물어봐도 되는가"이지 "그때 무슨 상태였나"가 아니다(#186). */}
+          <StatusMark account={author} />
           {avcsType && <span className="rounded bg-amber-200 px-1 text-[10px] text-amber-900">{avcsType}</span>}
           <span className="text-[11px] text-zinc-400">{time}</span>
           {message.editedAt && <span className="text-[11px] text-zinc-400">(edited)</span>}
@@ -144,6 +147,7 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
             없앤다(Reactions.tsx 주석이 이미 그 비용을 기록한다). */}
         {draft === null && (
           <div role="group" aria-label="message toolbar" className={`absolute right-full top-0 mr-1 flex items-center gap-0.5 rounded border border-zinc-200 bg-white px-1 py-0.5 shadow-sm ${hoverOnly}`}>
+            <InlineReactionButtons message={message} />
             <ReactionPicker message={message} />
             {confirmingDelete ? (
               // 삭제는 되돌릴 수 없으니 한 번 더 묻는다. 확인은 **메뉴 밖**에 둔다 — 메뉴 안에

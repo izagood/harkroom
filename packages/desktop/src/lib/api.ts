@@ -1,4 +1,4 @@
-import type { AgentConfig, AgentView, AccountView, AttachmentRow, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PatView } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PatView } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -47,6 +47,15 @@ export class ApiClient {
     return this.req('POST', '/auth/register', { handle, displayName, password, inviteToken });
   }
   me(): Promise<AccountView> { return this.req('GET', '/auth/me'); }
+  /**
+   * 내 상태를 정한다(#186). `statusText` 는 **키 부재와 null 을 구분한다** — 부재는
+   * '문구는 손대지 않음', null 은 '지우기'다. 그래서 `undefined` 를 넣어 지우기를
+   * 표현하지 않는다: `JSON.stringify` 가 그 키를 통째로 버려 지우기가 조용히 무시된다.
+   */
+  setMyStatus(input: { status: AccountStatus; statusText?: string | null }):
+  Promise<{ status: AccountStatus; statusText: string | null }> {
+    return this.req('PUT', '/accounts/me/status', input);
+  }
   logout(): Promise<void> { return this.req('POST', '/auth/logout'); }
   /** 채널 전체의 읽음 상태를 한 번에. 채널마다 묻지 않기 위한 표면이다. */
   async reads(): Promise<{ channelId: string; lastReadSeq: number; unread: number }[]> {
@@ -209,6 +218,19 @@ export class ApiClient {
 
   updateChannelPref(channelId: string, patch: { muted?: boolean; starred?: boolean }): Promise<ChannelPrefRow> {
     return this.req('PATCH', `/channels/${channelId}/pref`, patch);
+  }
+
+  /**
+   * #171: 새 에이전트의 기본값. admin 전용이다.
+   * 실패를 여기서 삼키지 않는다 — 호출부가 "못 읽었다" 를 사람에게 보여야 한다.
+   */
+  agentDefaults(): Promise<AgentDefaults> {
+    return this.req('GET', '/settings/agent-defaults');
+  }
+
+  /** model·effort 를 지우는 것은 **명시적 null** 이다 — 키를 빼면 '손대지 않음'이 된다. */
+  updateAgentDefaults(patch: Partial<AgentDefaults>): Promise<AgentDefaults> {
+    return this.req('PUT', '/settings/agent-defaults', patch);
   }
 
   /** #139: 에이전트 메모리 조회. MCP 는 에이전트 전용이라 사람은 이 REST 를 쓴다. */
