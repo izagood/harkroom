@@ -17,11 +17,30 @@ import { getController } from '../state/controller';
  *
  * #181 에이전트 소유자 표시도 여기서 한다 — ownerAccountId 가 있으면 소유자 계정을
  * 계정 디렉터리에서 찾아 표시한다. 소유자가 없거나 삭제된 계정이면 아무것도 안 보인다.
+ *
+ * #277 에이전트 메시지의 소유자 @핸들이 아바타 거터를 넘치는 문제를 고친다. **한
+ * 컴포넌트가 두 자리를 겸하다 한쪽에서 넘쳤다** — 그래서 자리를 prop 으로 명시한다:
+ * - `avatar`: 거터 자리(메시지 행 왼쪽 고정폭 열, 스레드 참여자 띠, 프로필 사진 칸).
+ *   모든 kind 에서 정사각 상자 하나다. 사람은 **지금의 둥근 아바타 그대로**(이 variant
+ *   에서 사람 쪽 마크업은 한 글자도 바뀌지 않는다 — 넘친 것은 에이전트 쪽이었다),
+ *   에이전트는 봇 글리프만(소유자 핸들·가운뎃점 없음). `overflow-hidden`, `flex-wrap` 없음.
+ * - `badge`: 이름 옆 자리(메시지 이름줄, 컴포저 멘션 후보, 디렉터리 행). 지금의 인라인
+ *   배지 그대로 — `#181` 이 소유자를 여기에 넣은 결정은 유효하다. **자리가 잘못됐던
+ *   것이지 표시가 잘못된 게 아니다.** 기본값을 `badge` 로 두는 이유도 이것이다:
+ *   새 호출자가 variant 를 잊으면 정보가 사라지는 쪽이 아니라 남는 쪽으로 떨어진다.
+ *
+ * 크기는 호출자가 `className` 으로 준다(`h-8 w-8` 등). 그래서 두 kind 의 기본 상자
+ * 크기를 `h-5 w-5` 로 **같게** 둔다 — `h-full` 로 부모에 기대면 크기를 주지 않는
+ * 부모(스레드 참여자 띠의 `ring` 래퍼) 아래에서 에이전트만 사람과 다른 크기로 그려진다.
  */
+type IdentityVariant = 'avatar' | 'badge';
+
 interface IdentityProps {
   /** 계정 디렉터리에서 못 찾은 경우를 위해 undefined 를 받는다 — 아래 처리 참고. */
   account: AccountView | undefined;
   className?: string;
+  /** 거터(avatar)인지 이름 옆(badge) 자리인지 명시. 기본값은 badge. */
+  variant?: IdentityVariant;
 }
 
 /** 핸들에서 결정론적으로 색을 고른다. 순수 함수라 캐시가 필요 없다. */
@@ -92,7 +111,7 @@ function useAvatarUrl(accountId: string | null, attachmentId: string | null): st
   return url;
 }
 
-export function Identity({ account, className = '' }: IdentityProps) {
+export function Identity({ account, className = '', variant = 'badge' }: IdentityProps) {
   // 에이전트에게만 사진을 받지 않는다 — 에이전트는 스스로 올릴 수단이 없고(#159 범위 밖),
   // 그 자리는 글리프가 지킨다. 훅은 조건부로 부를 수 없으므로 인자로 걸러 낸다.
   const avatarUrl = useAvatarUrl(
@@ -119,6 +138,22 @@ export function Identity({ account, className = '' }: IdentityProps) {
   }
 
   if (account.kind === 'agent') {
+    // #277: avatar variant 는 거터 자리 — 봇 글리프만, 소유자 핸들·가운뎃점 없음.
+    // 상자 크기·모양은 사람 쪽(아래)과 같은 `h-5 w-5 rounded-full` 이다. 한 열에 사람과
+    // 에이전트가 섞여 서는 자리(거터·참여자 띠)라 둘이 다른 크기면 열이 들쭉날쭉해진다.
+    // `overflow-hidden` 이 이 자리의 계약이다 — 무엇이 들어와도 상자를 넘지 않는다.
+    if (variant === 'avatar') {
+      return (
+        <span
+          className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] ${className}`}
+        >
+          <span aria-hidden="true">🤖</span>
+          <span className="sr-only">에이전트</span>
+        </span>
+      );
+    }
+
+    // badge variant (기본값): 이름 옆 자리 — 지금의 인라인 배지 그대로.
     // #181 소유자 표시. `null` 이 정상 상태다 — `008_agent_runner.sql` 이 backfill 없이
     // 컬럼을 더했고 "추측 소유자는 소유자가 아니다"가 그 이유였다. 그래서 없을 때는
     // **아무것도 그리지 않는다**: "운영자 미상" 같은 문구를 넣으면 화면 대부분이 그
@@ -146,6 +181,11 @@ export function Identity({ account, className = '' }: IdentityProps) {
     );
   }
 
+  // 사람 계정. **variant 를 보지 않는다** — 사람은 두 자리에서 이미 같은 둥근 아바타
+  // 하나였고 넘친 적이 없다. #277 의 결함은 에이전트 배지가 거터에 들어간 것이므로,
+  // 여기에 variant 분기를 넣으면 고칠 것 없는 자리를 바꿔 `rounded-full` 이 `rounded` 로
+  // 갈리는 식의 무관한 회귀만 생긴다. `overflow-hidden` 도 두 자리 모두에서 필요하다 —
+  // 사진(#159)은 badge 자리에도 걸리고, 상자를 넘지 않아야 하는 것은 자리와 무관하다.
   return (
     <span
       className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-white ${avatarUrl ? 'bg-zinc-200' : handleColor(account.handle)} ${className}`}

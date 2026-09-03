@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow } from '@murmur/shared';
+import type { AccountStatus, AccountView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus } from '@murmur/shared';
 
 export interface HistoryEntry {
   channelId: string;
@@ -33,6 +33,19 @@ export interface AppState {
   online: string[];
   leases: LeaseRow[];
   connected: boolean;
+  /**
+   * avcs 투영 상태(#267). 60초마다 갱신한다. `null` 은 **"아직 모른다"** 다 —
+   * "투영이 없다"가 아니다. 화면이 둘을 갈라 말해야 하므로 별도의 값으로 둔다.
+   */
+  projectionStatus: ProjectionStatus | null;
+  /**
+   * 투영 상태를 **읽지 못한** 이유(#267). `null` 이면 실패하지 않았다는 뜻이다.
+   *
+   * 왜 별도 필드인가: 조회 실패를 `projectionStatus: null` 로만 표현하면 "아직 안 왔다"와
+   * "물어봤는데 실패했다"가 한 값에 뭉치고, 화면은 그 둘을 같은 문구로 그린다 —
+   * 이 이슈가 닫으려는 결함이 스토어 층에 그대로 되살아난다(docs/design.md §4).
+   */
+  projectionStatusError: string | null;
   /** 계정별 채널 음소거·즐겨찾기. channelId → preference */
   channelPrefs: Record<string, ChannelPrefRow>;
   /**
@@ -41,6 +54,14 @@ export interface AppState {
    * 초안처럼 비밀로 다룰 것이 없고, 다음 사람이 열면 서버에서 다시 받는다.
    */
   pins: Record<string, PinRow[]>;
+  /**
+   * 채널별 문서(#188). **키가 없는 것과 본문이 빈 문서는 다르다** — 없으면 "아직 안
+   * 받았다", 있는데 본문이 ''면 "정말 비어 있다"다. 조회 실패를 빈 문서로 채우면 두
+   * 상태가 같은 화면이 되고, 사람은 못 읽은 문서를 없는 문서로 읽는다.
+   *
+   * `pins` 와 같은 이유로 로그아웃 시 비밀로 다룰 것이 없다 — 채널 전역 사실이다.
+   */
+  channelDocs: Record<string, ChannelDoc>;
   /**
    * 내가 담아 둔 메시지의 id 전부(#219). `open` 과 `done` 을 **둘 다** 담는다 —
    * `⋯` 메뉴가 "담겨 있는가"를 이것으로 판단하고, 완료로 옮긴 메시지도 담긴 상태다.
@@ -127,7 +148,8 @@ export interface AppState {
 const initial = {
   me: null, accounts: {}, groups: [], channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
-  online: [], leases: [], connected: false, channelPrefs: {}, pins: {}, channelMembers: {}, drafts: {},
+  online: [], leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
+  channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
   expandedMessageIds: {}, savedIds: [], savedCount: 0,
 };
