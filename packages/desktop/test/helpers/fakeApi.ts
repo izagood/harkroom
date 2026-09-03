@@ -68,6 +68,12 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     channels: vi.fn(async () => [chan('c1', 'general')]),
     dms: vi.fn(async () => []),
     leases: vi.fn(async () => []),
+    // #267: 베이스가 덮지 않으면 컨트롤러의 상태 조회가 TypeError 로 떨어져, 모든
+    // 테스트가 "투영 상태를 못 읽었다" 화면 위에서 돌게 된다.
+    projectionStatus: vi.fn(async () => ({
+      state: 'ok' as const, configured: true, repo: null, lastLogIndex: 0,
+      lastPolledAt: Date.now(), lastAdvancedAt: null, lastError: null,
+    })),
     channelPrefs: vi.fn(async () => []),
     agentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),
     updateAgentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),
@@ -102,6 +108,12 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     fetchAttachment: vi.fn(async () => new Blob(['x'])),
     // #218: 베이스가 핀 표면을 덮어야 openChannel 이 조용히 던지지 않고, "부르지 않았다" 도 단언할 수 있다.
     pins: vi.fn(async () => []),
+    // #188: 채널 문서. 베이스가 덮어야 "부르지 않았다" 를 단언할 수 있고, 아직 아무도
+    // 쓰지 않은 문서의 모양(본문 '', 누가·언제 null)이 fixture 에도 적혀 있어야 한다.
+    channelDoc: vi.fn(async (channelId: string) =>
+      ({ channelId, body: '', updatedBy: null, updatedAt: null })),
+    updateChannelDoc: vi.fn(async (channelId: string, body: string) =>
+      ({ channelId, body, updatedBy: 'u1', updatedAt: new Date().toISOString() })),
     pinMessage: vi.fn(async (channelId: string, messageId: string) => pin(messageId, channelId)),
     unpinMessage: vi.fn(async () => undefined),
     // #219: 담아 둔 메시지 표면. 베이스가 덮어야 Controller.start 가 조용히 던지지 않고,
