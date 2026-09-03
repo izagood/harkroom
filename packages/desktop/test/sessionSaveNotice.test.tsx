@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { sessionStore, type StoredSessions } from '../src/lib/session';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Notice } from '../src/components/Notice';
 
 // #212 — 키체인 쓰기 실패의 회귀선.

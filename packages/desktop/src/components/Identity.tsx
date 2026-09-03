@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import type { AccountStatus, AccountView, HandleGroupRow } from '@murmur/shared';
 import { getController } from '../state/controller';
 
@@ -122,7 +122,7 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
   // #181 소유자는 계정 디렉터리에서 푼다. `getState()` 가 아니라 **구독**이어야 한다 —
   // 디렉터리는 로그인 뒤에 채워지고 계정 변경 이벤트로 갱신되므로, 스냅샷으로 읽으면
   // 먼저 그려진 메시지의 소유자가 영영 안 붙는다. 훅은 조건 밖 최상단에서만 부를 수 있다.
-  const accounts = useAppStore((s) => s.accounts);
+  const accounts = useActiveStore((s) => s.accounts);
 
   // **"없다"와 "모른다"는 다르다.** 계정 디렉터리에 없는 id 는 후자이고, 아무것도
   // 그리지 않으면 "에이전트가 아니다"로 읽힌다 — docs/design.md 4절의 거울상이다.

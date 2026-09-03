@@ -1,5 +1,5 @@
 import type { ChannelRow } from '@murmur/shared';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 
 /**
  * 메시지가 하나도 없는 채널에 다음 걸음을 보여 준다(#234).
@@ -15,7 +15,7 @@ import { useAppStore } from '../state/appStore';
 export function ChannelEmptyState(
   { channel, isArchived }: { channel: ChannelRow | undefined; isArchived: boolean },
 ) {
-  const { accounts, me } = useAppStore();
+  const { accounts, me } = useActiveStore();
 
   // 멘션 자동완성과 **같은 기준**으로 고른다(Composer.tsx 의 후보 필터 — 나 자신 제외,
   // disabled 제외). 기준이 갈리면 여기서 이름을 보여 준 에이전트가 정작 자동완성에는 뜨지

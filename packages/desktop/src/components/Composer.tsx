@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { parseMessagePermalink, type ScheduledMessageView } from '@murmur/shared';
 import type { AccountView, AttachmentRow, HandleGroupRow } from '@murmur/shared';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { ApiError } from '../lib/api';
 import { GroupBadge, Identity } from './Identity';
@@ -130,13 +130,13 @@ interface HeldMessage {
 export function Composer({
   onSend, placeholder, rows = 2, autoFocus, scopeKey = '', channelId, autoMentionChannelId,
 }: Props) {
-  const accounts = useAppStore((s) => s.accounts);
-  const groups = useAppStore((s) => s.groups);
-  const myId = useAppStore((s) => s.me?.id);
+  const accounts = useActiveStore((s) => s.accounts);
+  const groups = useActiveStore((s) => s.groups);
+  const myId = useActiveStore((s) => s.me?.id);
   // 채널이 자동으로 멘션하는 에이전트(#173). 키가 없으면 아직 못 받은 것이고 그때는 칩도 접두도 없다.
-  const autoRows = useAppStore((s) => (autoMentionChannelId ? s.channelAutoMentions[autoMentionChannelId] : undefined));
+  const autoRows = useActiveStore((s) => (autoMentionChannelId ? s.channelAutoMentions[autoMentionChannelId] : undefined));
   // `MessageBody` 와 같은 자리에서 읽는다 — 자기 멘션 판정이 두 화면에서 달라지면 안 된다.
-  const myHandle = useAppStore((s) => s.me?.handle?.toLowerCase() ?? null);
+  const myHandle = useActiveStore((s) => s.me?.handle?.toLowerCase() ?? null);
   const [query, setQuery] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
   const [stickyByScope, setStickyByScope] = useState<Record<string, string[]>>({});
@@ -182,9 +182,9 @@ export function Composer({
   // 초안은 **스코프 키로 스토어에 산다.** 지역 state 로 두면 컴포넌트 인스턴스가 채널
   // 전환에도 유지되기 때문에(ChannelPane 이 같은 자리에 렌더한다) A 에 쓴 글이 B 입력창에
   // 남고 B 로 나간다 — 그게 #184 다. 스토어가 영속까지 책임진다.
-  const draft = useAppStore((s) => s.drafts[scopeKey] ?? '');
+  const draft = useActiveStore((s) => s.drafts[scopeKey] ?? '');
   const setDraftLocal = (next: string | ((current: string) => string)): void => {
-    const store = useAppStore.getState();
+    const store = useActiveStore.getState();
     const current = store.drafts[scopeKey] ?? '';
     store.setDraft(scopeKey, typeof next === 'function' ? next(current) : next);
   };
@@ -467,7 +467,7 @@ export function Composer({
     void Promise.resolve(item.send(item.body, item.attachments.map((a) => a.id))).catch(() => {
       // 실패하면 사용자가 친 것만 되돌린다 — 접두사까지 남기면 다음 전송에서 두 번 붙는다.
       // **쓴 자리로** 되돌린다: 대기 중에 채널을 옮겼다면 지금 입력창은 남의 자리다.
-      const store = useAppStore.getState();
+      const store = useActiveStore.getState();
       if (!(store.drafts[item.scope] ?? '')) store.setDraft(item.scope, item.typed);
       // 첨부 목록은 그 자리에 그대로 있을 때만 되돌린다 — 파일 자체는 이미 서버에 있으므로
       // 잃는 것은 목록뿐이고, 남의 자리에 남의 첨부를 세우는 편이 더 나쁘다.
@@ -593,7 +593,7 @@ export function Composer({
     // 스스로 사람 앞에 세운다. 여기서 남는 것은 그보다 뒤에서 터진 경우(채널·스레드를
     // 여는 중 연결이 끊김)뿐이고, 그것도 조용히 삼키면 링크를 누른 사람은 앱이 멈춘 줄 안다.
     void controller.openMessage(messageId).catch(() => {
-      useAppStore.getState().set({
+      useActiveStore.getState().set({
         notice: 'Could not open that message. Check your connection and try again.',
       });
     });

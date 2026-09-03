@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import type { AgentConfig, AgentDefaults, AgentView, PatView } from '@murmur/shared';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { acc } from './helpers/fakeApi';

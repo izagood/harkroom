@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Composer } from '../src/components/Composer';
 import { acc } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
 import { Composer } from './Composer';
@@ -29,7 +29,7 @@ interface ChannelPaneProps {
 }
 
 export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: ChannelPaneProps) {
-  const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins } = useAppStore();
+  const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins } = useActiveStore();
   const bottomRef = useRef<HTMLDivElement>(null);
   // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
   // 열림 상태도 채널 화면이 들고 있고, 채널이 바뀌면 `key` 로 패널이 다시 만들어진다.

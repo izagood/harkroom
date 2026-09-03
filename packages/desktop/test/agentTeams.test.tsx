@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import type { AgentTeamMemberRow, AgentTeamRow } from '@murmur/shared';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController } from '../src/state/controller';
 import { TeamsSettings } from '../src/components/settings/TeamsSettings';
 import { Sidebar } from '../src/components/Sidebar';
