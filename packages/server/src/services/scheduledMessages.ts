@@ -110,6 +110,18 @@ export function createScheduledMessageSweeper(pool: Pool): {
       );
 
       for (const row of due.rows) {
+        const channelCheck = await client.query(
+          `select archived_at from channel where id = $1`,
+          [row.channel_id],
+        );
+        if (channelCheck.rows[0]?.archived_at) {
+          await client.query(
+            `update scheduled_message set failed_reason = $1 where id = $2`,
+            ['channel_archived', row.id],
+          );
+          continue;
+        }
+
         const result = await postMessage(pool, {
           channelId: row.channel_id,
           authorId: row.author_id,

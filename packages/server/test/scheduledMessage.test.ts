@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
@@ -22,7 +23,19 @@ async function createUser(app: FastifyInstance, adminToken: string, handle: stri
   return { token: login.json().token as string, accountId };
 }
 
+async function createScheduledMessageDirect(
+  pool: Pool, channelId: string, authorId: string, body: string, sendAt: string, threadRootId?: string,
+): Promise<string> {
+  const res = await pool.query(
+    `insert into scheduled_message (channel_id, author_id, thread_root_id, body, send_at)
+     values ($1, $2, $3, $4, $5) returning id`,
+    [channelId, authorId, threadRootId ?? null, body, sendAt],
+  );
+  return res.rows[0].id;
+}
+
 let app: FastifyInstance;
+let pool: Pool;
 let stop: () => Promise<void>;
 let adminToken: string;
 let adminId: string;
@@ -33,6 +46,7 @@ let channelId: string;
 beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
+  pool = db.pool;
   app = await buildServer({ pool: db.pool });
   ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
   const user = await createUser(app, adminToken, 'testuser');
@@ -139,15 +153,9 @@ describe('scheduled messages', () => {
 
   it('sweep sends messages that are due', async () => {
     const pastTime = new Date(Date.now() - 1000).toISOString();
-    const createRes = await app.inject({
-      method: 'POST', url: `/channels/${channelId}/scheduled`,
-      headers: { authorization: `Bearer ${userToken}` },
-      payload: { body: '지금 발송', sendAt: pastTime },
-    });
-    expect(createRes.statusCode).toBe(201);
-    const scheduledId = createRes.json().scheduled.id as string;
+    const scheduledId = await createScheduledMessageDirect(pool, channelId, userId, '지금 발송', pastTime);
 
-    const sweeper = createScheduledMessageSweeper(app.pool as never);
+    const sweeper = createScheduledMessageSweeper(pool);
     await sweeper.sweep();
 
     const list = await app.inject({
@@ -155,41 +163,38 @@ describe('scheduled messages', () => {
       headers: { authorization: `Bearer ${userToken}` },
     });
     const scheduled = list.json().scheduled as Array<{ sentMessageId: string | null }>;
-    expect(scheduled[0].sentMessageId).toBeDefined();
+    expect(scheduled.length).toBeGreaterThan(0);
+    expect(scheduled[0]!.sentMessageId).toBeDefined();
 
     const messages = await app.inject({
       method: 'GET', url: `/channels/${channelId}/messages`,
       headers: { authorization: `Bearer ${userToken}` },
     });
     expect(messages.json().messages).toHaveLength(1);
-    expect(messages.json().messages[0].body).toBe('지금 발송');
+    expect(messages.json().messages[0]!.body).toBe('지금 발송');
   });
 
   it('canceled messages are skipped by sweep', async () => {
     const pastTime = new Date(Date.now() - 1000).toISOString();
-    const createRes = await app.inject({
-      method: 'POST', url: `/channels/${channelId}/scheduled`,
-      headers: { authorization: `Bearer ${userToken}` },
-      payload: { body: '취소할 예약', sendAt: pastTime },
-    });
-    expect(createRes.statusCode).toBe(201);
-    const scheduledId = createRes.json().scheduled.id as string;
+    const scheduledId = await createScheduledMessageDirect(pool, channelId, userId, '취소할 예약', pastTime);
 
     await app.inject({
       method: 'DELETE', url: `/scheduled/${scheduledId}`,
       headers: { authorization: `Bearer ${userToken}` },
     });
 
-    const sweeper = createScheduledMessageSweeper(app.pool as never);
+    const sweeper = createScheduledMessageSweeper(pool);
     await sweeper.sweep();
 
     const list = await app.inject({
       method: 'GET', url: `/channels/${channelId}/scheduled`,
       headers: { authorization: `Bearer ${userToken}` },
     });
-    const scheduled = list.json().scheduled as Array<{ canceledAt: string | null; sentMessageId: string | null }>;
-    expect(scheduled[0].canceledAt).toBeDefined();
-    expect(scheduled[0].sentMessageId).toBeNull();
+    const allScheduled = list.json().scheduled as Array<{ id: string; canceledAt: string | null; sentMessageId: string | null }>;
+    const scheduled = allScheduled.filter((s) => s.id === scheduledId);
+    expect(scheduled.length).toBe(1);
+    expect(scheduled[0]!.canceledAt).toBeDefined();
+    expect(scheduled[0]!.sentMessageId).toBeNull();
   });
 
   it('channel archive blocks scheduled message sending', async () => {
@@ -206,12 +211,7 @@ describe('scheduled messages', () => {
 
     // Schedule first (not archived yet)
     const pastTime = new Date(Date.now() - 1000).toISOString();
-    const createRes = await app.inject({
-      method: 'POST', url: `/channels/${newChannelId}/scheduled`,
-      headers: { authorization: `Bearer ${userToken}` },
-      payload: { body: '보관된 채널 예약', sendAt: pastTime },
-    });
-    expect(createRes.statusCode).toBe(201);
+    await createScheduledMessageDirect(pool, newChannelId, userId, '보관된 채널 예약', pastTime);
 
     // Then archive the channel
     await app.inject({
@@ -220,7 +220,7 @@ describe('scheduled messages', () => {
       payload: { archived: true },
     });
 
-    const sweeper = createScheduledMessageSweeper(app.pool as never);
+    const sweeper = createScheduledMessageSweeper(pool);
     await sweeper.sweep();
 
     const list = await app.inject({
@@ -228,7 +228,8 @@ describe('scheduled messages', () => {
       headers: { authorization: `Bearer ${userToken}` },
     });
     const scheduled = list.json().scheduled as Array<{ failedReason: string | null }>;
-    expect(scheduled[0].failedReason).toBe('channel_archived');
+    expect(scheduled.length).toBeGreaterThan(0);
+    expect(scheduled[0]!.failedReason).toBe('channel_archived');
   });
 
   it('can cancel a scheduled message', async () => {
@@ -252,6 +253,7 @@ describe('scheduled messages', () => {
       headers: { authorization: `Bearer ${userToken}` },
     });
     const scheduled = list.json().scheduled as Array<{ canceledAt: string | null }>;
-    expect(scheduled[0].canceledAt).toBeDefined();
+    expect(scheduled.length).toBeGreaterThan(0);
+    expect(scheduled[0]!.canceledAt).toBeDefined();
   });
 });

@@ -318,7 +318,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
   const scheduledChannelParam = z.object({ id: z.string().uuid() });
 
   /**
-   * 예약 메시지 목록(#222). 작성자本人만 볼 수 있다 — 다른 사람에게는 존재 자체가
+   * 예약 메시지 목록(#222). 작성자만 볼 수 있다 — 다른 사람에게는 존재 자체가
    * 보이지 않는다(그렇지 않으면 초안과 다를 게 없다).
    */
   app.get('/channels/:id/scheduled', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -359,6 +359,10 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
 
     const sendTime = new Date(sendAt);
     const now = new Date();
+
+    if (sendTime <= now) {
+      return reply.code(400).send({ error: { code: 'send_at_in_past', message: 'send_at must be in the future' } });
+    }
 
     const maxDate = new Date(now.getTime() + SCHEDULE_MAX_DAYS * 24 * 60 * 60 * 1000);
     if (sendTime > maxDate) {
