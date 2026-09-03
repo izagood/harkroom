@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { sidebarStorage } from '../lib/prefs';
+import { isMacOS, MAC_TRAFFIC_LIGHT_PL } from '../lib/platform';
 import { Sidebar } from './Sidebar';
 import { ChannelPane } from './ChannelPane';
 import { Notice } from './Notice';
@@ -11,16 +12,6 @@ import { Sweep } from './Sweep';
 import { Directory } from './Directory';
 import { Inbox } from './Inbox';
 import type { SectionId } from './settings/sections';
-
-function isMac(): boolean {
-  try {
-    const platform = typeof navigator !== 'undefined' ? navigator.platform : '';
-    const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
-    return /Mac|iPhone|iPad|iPod/.test(platform) || (/Mac/.test(userAgent) && !/Windows/.test(userAgent));
-  } catch {
-    return false;
-  }
-}
 
 export function Workspace({ onLogout, onOpenSettings }: {
   onLogout: () => void;
@@ -100,7 +91,13 @@ export function Workspace({ onLogout, onOpenSettings }: {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [handleGoBack, handleGoForward, handleToggleSidebar]);
 
-  const isMacOS = useMemo(() => isMac(), []);
+  /**
+   * 신호등 여백은 **창의 좌상단에 실제로 있는 바**가 진다. 사이드바가 펴져 있으면 그 자리는
+   * 사이드바 브랜드 바(`Sidebar`)이고, 접었을 때만 이 헤더가 좌상단이 된다. 판정은 마운트마다
+   * 한 번이면 된다 — 앱이 도는 동안 OS 가 바뀌지는 않는다.
+   */
+  const isMac = useMemo(() => isMacOS(), []);
+  const headerNeedsTrafficLightRoom = isMac && sidebarCollapsed;
 
   return (
     <div className="flex h-screen text-sm">
@@ -113,12 +110,19 @@ export function Workspace({ onLogout, onOpenSettings }: {
         onToggleCollapse={handleToggleSidebar}
       />
       <div className="flex flex-1 flex-col overflow-hidden">
-        {/* 헤더: 뒤로/앞으로 버튼과 사이드바 펼치기 버튼. data-tauri-drag-region 은
-            이 요소 자체를 눌렀을 때만 드래그를 시작하므로 자식 버튼(←, →, etc.)은
-            그대로 눌린다. */}
+        {/* 헤더: 뒤로/앞으로 버튼과 사이드바 펼치기 버튼(#270 에서 창 손잡이가 되었다).
+            `data-tauri-drag-region` 은 **그 속성이 있는 요소 자체**를 눌렀을 때만 드래그를
+            시작한다 — 자식 버튼을 누르면 이벤트 대상이 버튼이므로 창은 움직이지 않고 버튼이
+            그대로 눌린다. 그래서 손잡이는 루트에만 두고 버튼·입력에는 붙이지 않는다.
+
+            왼쪽 여백은 `pl-2`/`pl-[78px]` 를 **갈아 끼운다**. `px-2` 와 `pl-[78px]` 를 같이
+            두면 어느 쪽이 이기는지가 Tailwind 의 출력 순서에 달리므로 승부를 만들지 않는다. */}
         <div
+          data-testid="app-header"
           data-tauri-drag-region
-          className={`flex items-center gap-2 border-b border-zinc-800 bg-zinc-900 px-2 py-1 ${isMacOS ? 'pl-[78px]' : ''}`}
+          className={`flex items-center gap-2 border-b border-zinc-800 bg-zinc-900 py-1 pr-2 ${
+            headerNeedsTrafficLightRoom ? MAC_TRAFFIC_LIGHT_PL : 'pl-2'
+          }`}
         >
           {sidebarCollapsed && (
             <button
