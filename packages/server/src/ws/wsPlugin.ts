@@ -6,7 +6,7 @@ import type { WsServerEvent } from '@murmur/shared';
 import { emitEvent, onEvent, type WorkspaceEvent } from '../events.js';
 import { createTicketStore } from './tickets.js';
 import { createTypingRegistry } from './typing.js';
-import { assertChannelVisible, dmMemberIds } from '../services/channels.js';
+import { assertChannelVisible, audienceFor } from '../services/channels.js';
 import { findInvalidCredentials } from './credentials.js';
 import { createHeartbeat } from './heartbeat.js';
 import type { AgentPresence } from '../mcp/presence.js';
@@ -131,10 +131,12 @@ export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptio
      * 갈라지고, 한쪽만 고쳐지는 버그가 된다.
      */
     const announceTyping = async (channelId: string) => {
-      const ch = await pool.query(`select kind from channel where id = $1`, [channelId]);
+      const ch = await pool.query(`select 1 from channel where id = $1`, [channelId]);
       if (!ch.rowCount) return;
-      const members: 'all' | string[] =
-        ch.rows[0].kind === 'dm' ? await dmMemberIds(pool, channelId) : 'all';
+      // 수신자 계산은 `audienceFor` 하나만 쓴다. 여기에 있던 인라인 사본이 바로 그 함수의
+      // 주석이 경고하는 종류의 복사본이었다 — private 채널이 생긴 뒤에는 이 사본이
+      // 'standard 면 전원' 으로 남아 비멤버에게 입력 중 표시를 뿌린다(누가 그 채널에 있는지가 샌다).
+      const members = await audienceFor(pool, channelId);
       const who = typing.who(channelId);
       const recipients = members === 'all' ? [...connections.keys()] : members;
       for (const recipient of recipients) {

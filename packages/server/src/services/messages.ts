@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { mentionedHandles, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
+import { channelVisibleSql } from './channels.js';
 
 /**
  * 게시 결과. 첨부 연결이 거절되면 메시지 자체가 만들어지지 않는다(트랜잭션 롤백) —
@@ -335,9 +336,10 @@ export async function searchMessages(
      from message m
      join channel c on c.id = m.channel_id
      where m.search @@ websearch_to_tsquery('simple', $1) and m.deleted_at is null
-       and (c.kind = 'standard' or exists (
-         select 1 from channel_member cm where cm.channel_id = c.id and cm.account_id = $3
-       ))
+       -- 검색은 채널 목록을 우회해 본문에 바로 닿는 표면이다. 여기만 넓으면 목록에도
+       -- 배지에도 없는 private 채널의 발언이 검색 결과로 통째로 나온다 — 그래서 목록·배지와
+       -- **같은 술어**를 쓴다. admin 예외 없다(결과가 곧 메시지 본문이다).
+       and ${channelVisibleSql('c', '$3')}
      order by m.seq desc limit $2`,
     [query, Math.min(limit, 100), requesterId],
   );
