@@ -44,20 +44,20 @@ export function LinkPreview({ url }: { url: string }) {
   if (!preview.title && !preview.description && !preview.siteName) return null;
 
   return (
-    <div className="mt-2 rounded border border-slate-200 p-3" data-testid="link-preview">
+    <div className="mt-2 rounded border border-border p-3" data-testid="link-preview">
       {preview.siteName && (
-        <div className="text-xs text-slate-500">{preview.siteName}</div>
+        <div className="text-xs text-fg-subtle">{preview.siteName}</div>
       )}
       {preview.title && (
-        <div className="font-semibold text-slate-900">{preview.title}</div>
+        <div className="font-semibold text-fg">{preview.title}</div>
       )}
       {preview.description && (
-        <div className="mt-1 text-sm text-slate-600">{preview.description}</div>
+        <div className="mt-1 text-sm text-fg-muted">{preview.description}</div>
       )}
       <a
         href={preview.url}
         rel="noreferrer noopener"
-        className="mt-2 block truncate text-xs text-slate-400 hover:text-slate-600"
+        className="mt-2 block truncate text-xs text-fg-subtle hover:text-fg"
       >
         {preview.url}
       </a>

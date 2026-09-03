@@ -112,35 +112,35 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
   const updatedAtLabel = doc?.updatedAt ? new Date(doc.updatedAt).toLocaleString() : null;
 
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col border-l border-zinc-200 bg-zinc-50">
-      <div className="flex items-center gap-2 border-b border-zinc-200 px-3 py-2">
+    <aside className="flex h-full w-80 shrink-0 flex-col border-l border-border bg-surface">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
         <span className="text-sm font-semibold">문서</span>
         {/* "누가 언제"는 실제로 저장된 판에만 붙는다. 아직 아무도 쓰지 않은 문서에 지금
             시각과 내 이름을 붙이면 화면이 거짓말한다. */}
         {updatedAtLabel && (
-          <span className="truncate text-[11px] text-zinc-500">
+          <span className="truncate text-[11px] text-fg-subtle">
             {updatedByHandle ?? '알 수 없는 사람'} · {updatedAtLabel}
           </span>
         )}
         <button
-          className="ml-auto shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
+          className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-sunken"
           onClick={onClose}
         >
           닫기
         </button>
       </div>
 
-      {loading && <div className="p-3 text-sm text-zinc-500">불러오는 중…</div>}
+      {loading && <div className="p-3 text-sm text-fg-subtle">불러오는 중…</div>}
 
       {/* 조회 실패는 오류다 — 빈 문서가 아니다(docs/design.md §4). */}
       {loadError && (
-        <div role="alert" className="m-3 rounded bg-red-50 px-2 py-1 text-xs text-red-700">
+        <div role="alert" className="m-3 rounded bg-danger-surface px-2 py-1 text-xs text-danger">
           문서를 불러오지 못했다: {loadError}
         </div>
       )}
 
       {saveError && (
-        <div role="alert" className="m-3 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">
+        <div role="alert" className="m-3 rounded bg-warning-surface px-2 py-1 text-xs text-warning">
           {saveError}
         </div>
       )}
@@ -151,14 +151,14 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
             {editing ? (
               <textarea
                 aria-label="문서 편집"
-                className="w-full resize-none rounded border border-zinc-300 p-2 text-sm focus:border-zinc-400 focus:outline-none"
+                className="w-full resize-none rounded border border-border bg-field p-2 text-sm focus:border-border focus:outline-none"
                 rows={12}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder="이 채널의 전제를 적어 둔다"
               />
             ) : doc?.body ? (
-              <div className="text-sm text-zinc-700">
+              <div className="text-sm text-fg">
                 <MessageBody
                   body={doc.body}
                   messageId={`channel-doc:${channelId}`}
@@ -167,32 +167,32 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
                 />
               </div>
             ) : (
-              <span className="text-sm text-zinc-400">아직 문서가 없다</span>
+              <span className="text-sm text-fg-muted">아직 문서가 없다</span>
             )}
 
             {/* 409 뒤에만 나온다. 내 편집은 위 편집칸에 그대로 있고 서버에 있는 것은 여기
                 있다 — 둘을 나란히 보고 사람이 정한다. */}
             {theirBody !== null && (
-              <section className="mt-3 rounded border border-amber-300 bg-amber-50 p-2">
-                <h3 className="text-[11px] font-semibold text-amber-800">서버의 현재 내용</h3>
-                <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-zinc-700">
+              <section className="mt-3 rounded border border-warning-border bg-warning-surface p-2">
+                <h3 className="text-[11px] font-semibold text-warning">서버의 현재 내용</h3>
+                <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-fg">
                   {theirBody === '' ? '(빈 문서)' : theirBody}
                 </pre>
               </section>
             )}
           </div>
 
-          <div className="border-t border-zinc-200 p-2">
+          <div className="border-t border-border p-2">
             {editing ? (
               <div className="flex gap-2">
                 <button
-                  className="flex-1 rounded bg-zinc-200 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-300"
+                  className="flex-1 rounded bg-surface-hover px-3 py-1.5 text-sm text-fg hover:bg-border"
                   onClick={cancelEditing}
                 >
                   취소
                 </button>
                 <button
-                  className="flex-1 rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                  className="flex-1 rounded bg-accent px-3 py-1.5 text-sm text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
                   onClick={() => void save()}
                   disabled={saving}
                 >
@@ -201,7 +201,7 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
               </div>
             ) : (
               <button
-                className="w-full rounded border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
+                className="w-full rounded border border-border px-3 py-1.5 text-sm text-fg hover:bg-surface-sunken"
                 onClick={startEditing}
               >
                 편집
