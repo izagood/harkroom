@@ -10,8 +10,9 @@ import { UpdatesSettings } from '../components/settings/UpdatesSettings';
 import { SETTINGS_GROUPS, type SectionId } from '../components/settings/sections';
 import { useAppStore } from '../state/appStore';
 
-export function SettingsScreen({ initialSection = 'profile', onBack, onSignOut }: {
+export function SettingsScreen({ initialSection = 'profile', targetId, onBack, onSignOut }: {
   initialSection?: SectionId;
+  targetId?: string;
   onBack(): void;
   onSignOut(): void;
 }) {
@@ -58,7 +59,7 @@ export function SettingsScreen({ initialSection = 'profile', onBack, onSignOut }
         {section === 'messages' && <MessageSettings />}
         {section === 'connection' && <ConnectionSettings onSignOut={onSignOut} />}
         {/* AgentsSettings 는 자체 2단 레이아웃이라 SettingsPage 여백을 쓰지 않는다. */}
-        {section === 'agents' && <AgentsSettings />}
+        {section === 'agents' && <AgentsSettings targetId={targetId} />}
         {section === 'handle-groups' && <HandleGroupsSettings />}
         {section === 'invite' && <InviteSettings />}
         {section === 'updates' && <UpdatesSettings />}
