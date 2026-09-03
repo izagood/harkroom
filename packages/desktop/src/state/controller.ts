@@ -1,4 +1,4 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@murmur/shared';
 import { notifyLevelOf } from '@murmur/shared';
 import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
@@ -315,6 +315,12 @@ export class Controller {
         // 카드가 준비됐다는 신호만 남긴다(#215). 내용은 그 URL 을 그리는 컴포넌트가
         // 스스로 읽는다 — 지금 화면에 없는 URL 의 카드를 미리 받아 둘 이유가 없다.
         store.set({ linkPreviewReadyAt: { ...store.linkPreviewReadyAt, [e.url]: Date.now() } });
+        break;
+      // 워크스페이스 스킬(#311). 제안·승인·비활성 이벤트를 받으면 설정 화면이
+      // 자동으로 새로고침하지 않는다 — 사용자가 설정 화면을 열 때 새로고침한다.
+      case 'skill.proposed':
+      case 'skill.approved':
+      case 'skill.disabled':
         break;
     }
   }
@@ -1309,6 +1315,26 @@ export class Controller {
 
   addTeamToChannel(channelId: string, teamId: string): Promise<AddTeamToChannelResult> {
     return this.api.addTeamToChannel(channelId, teamId);
+  }
+
+  /** 워크스페이스 스킬 목록(#311). */
+  listSkills(): Promise<WorkspaceSkillView[]> {
+    return this.api.listSkills();
+  }
+
+  /** 스킬 상세 조회. */
+  getSkill(slug: string): Promise<WorkspaceSkillView> {
+    return this.api.getSkill(slug);
+  }
+
+  /** 스킬 승인(#311). admin 전용. */
+  approveSkill(slug: string): Promise<WorkspaceSkillView> {
+    return this.api.approveSkill(slug);
+  }
+
+  /** 스킬 비활성화/거부(#311). admin 전용. */
+  disableSkill(slug: string): Promise<WorkspaceSkillView> {
+    return this.api.disableSkill(slug);
   }
 }
 

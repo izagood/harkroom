@@ -1,4 +1,4 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@murmur/shared';
 
 export class ApiError extends Error {
   /**
@@ -568,5 +568,25 @@ export class ApiClient {
 
   addTeamToChannel(channelId: string, teamId: string): Promise<AddTeamToChannelResult> {
     return this.req('POST', `/channels/${channelId}/teams/${teamId}/add`);
+  }
+
+  /** 워크스페이스 스킬(#311). 목록은 로그인한 사람 모두 볼 수 있다. */
+  async listSkills(): Promise<WorkspaceSkillView[]> {
+    return (await this.req<{ skills: WorkspaceSkillView[] }>('GET', '/skills')).skills;
+  }
+
+  /** 스킬 상세. 본문은 곧 시스템 프롬프트이므로 인증이 필요하다. */
+  async getSkill(slug: string): Promise<WorkspaceSkillView> {
+    return this.req<WorkspaceSkillView>('GET', `/skills/${encodeURIComponent(slug)}`);
+  }
+
+  /** 스킬 승인(#311). admin 전용. */
+  approveSkill(slug: string): Promise<WorkspaceSkillView> {
+    return this.req('POST', `/skills/${encodeURIComponent(slug)}/approve`);
+  }
+
+  /** 스킬 비활성화/거부(#311). admin 전용. */
+  disableSkill(slug: string): Promise<WorkspaceSkillView> {
+    return this.req('DELETE', `/skills/${encodeURIComponent(slug)}`);
   }
 }
