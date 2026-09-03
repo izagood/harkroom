@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { useAppStore } from '../src/state/appStore';
 import { Composer } from '../src/components/Composer';
+// 판정이 갈라지지 않았는지 보려면 **본문을 실제로 렌더해** 대조해야 한다(#278).
+import { MessageBody } from '../src/components/MessageBody';
 import { Controller, setController } from '../src/state/controller';
 import { acc, accountsResult, fakeApi, grp } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
@@ -400,108 +402,161 @@ describe('바깥 클릭 dismiss', () => {
   });
 });
 
-describe('부를 상대 미리보기 (#278)', () => {
-  // 테스트 1: 본문에 존재하는 handle 이 있으면 목록에 나온다.
-  it('본문에 존재하는 handle 이 있으면 목록에 나온다', () => {
-    useAppStore.getState().set({
-      accounts: {
-        u1: acc('u1', 'me'),
-        a1: acc('a1', 'fizz', 'agent'),
-        u2: acc('u2', 'rusalka'),
-      },
-    });
-    render(<Composer onSend={vi.fn()} />);
 
+/**
+ * 보내기 전에 "부를 상대" 를 보여 준다(#278).
+ *
+ * 이 줄이 막으려는 것은 **알림이 갔다는 착각**이다. 그래서 이 블록의 중심은 어떤 항목이
+ * 보이는지가 아니라 **판정이 `MessageBody` 강조와 같은 함수에서 나오는지**다 — 판정이
+ * 갈라지면 이 줄이 오히려 거짓말의 근거가 된다.
+ */
+describe('부를 상대 미리보기 (#278)', () => {
+  /** 이 줄에 실제로 올라온 handle 들. 장식(집합·채널 전체)이 늘어도 깨지지 않게 속성에서 읽는다. */
+  const listed = (): string[] => {
+    const line = screen.queryByTestId('body-mentions');
+    if (!line) return [];
+    return [...line.querySelectorAll('[data-handle]')].map((el) => el.getAttribute('data-handle')!);
+  };
+
+  it('본문에 존재하는 handle 이 있으면 목록에 나온다', () => {
+    render(<Composer onSend={vi.fn()} />);
     typeInto('안녕 @fizz');
-    expect(screen.getByTestId('body-mentions')).toBeTruthy();
-    expect(screen.getByTestId('body-mentions')!.textContent).toContain('@fizz');
+    expect(listed()).toEqual(['fizz']);
   });
 
-  // 테스트 2: 존재하지 않는 handle 은 목록에 없다
-  it('존재하지 않는 handle 은 목록에 없다', () => {
-    useAppStore.getState().set({
-      accounts: {
-        u1: acc('u1', 'me'),
-        a1: acc('a1', 'fizz', 'agent'),
-      },
-    });
+  it('존재하지 않는 handle 은 목록에 없다 — 이메일도 멘션이 아니다', () => {
     render(<Composer onSend={vi.fn()} />);
-
     typeInto('안녕 @notexist');
     expect(screen.queryByTestId('body-mentions')).toBeNull();
+
+    // 선행 문자 규칙(`MENTION_PATTERN`)이 이메일을 걸러 낸다. 여기서 새 정규식을 쓰면
+    // `me@fizz.com` 이 fizz 를 부르는 것처럼 보인다 — shared 의 주석이 경계하는 거짓말이다.
+    typeInto('보낼 곳은 me@fizz.com 이야');
+    expect(screen.queryByTestId('body-mentions')).toBeNull();
   });
 
-  // 테스트 3: 본문이 비거나 멘션이 없으면 줄 자체가 렌더되지 않는다
-  it('본문이 비거나 멘션이 없으면 줄이 렌더되지 않는다', () => {
-    useAppStore.getState().set({
-      accounts: {
-        u1: acc('u1', 'me'),
-        a1: acc('a1', 'fizz', 'agent'),
-      },
-    });
+  it('본문이 비거나 멘션이 없으면 줄 자체가 렌더되지 않는다', () => {
     render(<Composer onSend={vi.fn()} />);
-
     typeInto('안녕');
     expect(screen.queryByTestId('body-mentions')).toBeNull();
-
     typeInto('');
     expect(screen.queryByTestId('body-mentions')).toBeNull();
   });
 
-  // 테스트 4: 목록 판정이 MessageBody 강조와 같은 함수를 쓴다
-  // mentionedHandles 를 직접 테스트 — 같은 입력이 같은 결과를出す
-  it('mentionedHandles 가 같은 입력에 같은 결과를 낸다', () => {
-    const { mentionedHandles } = require('@murmur/shared');
-    // 이 테스트는 mentionedHandles 함수 자체가 splitMentions 와 같은 패턴을 쓰는지를 확인
-    // shared 패키지의 테스트에서 이미 검증되므로 여기서는 간단히 확인
-    expect(mentionedHandles('@fizz @Fizz')).toEqual(['fizz']); // 중복 제거
-    expect(mentionedHandles('hi @rusalka')).toContain('rusalka');
-    expect(mentionedHandles('no mention')).toEqual([]);
+  /**
+   * 케이스 표. 이 줄의 판정과 `MessageBody` 강조가 **같은 함수**(`splitMentions`)에서 나오는지
+   * 를 같은 입력·같은 결과로 단언한다. 컴포저가 자기 정규식을 복제하면(예전 초판이 그랬다)
+   * 이메일·`@channel`·대소문자에서 결과가 갈라지고 이 표가 빨개진다.
+   */
+  const CASES: string[] = [
+    '@fizz 안녕',
+    '@Fizz 와 @fizz 는 한 사람',
+    '보낼 곳은 me@fizz.com 이야',
+    '@notexist 는 아무도 아니다',
+    '@channel 공지',
+    '@oncall 서버 문제',
+    '@fizz @rusalka @oncall 모두',
+    '멘션 없음',
+  ];
+
+  it('판정이 MessageBody 강조와 같은 함수에서 나온다 (케이스 표)', () => {
+    const accounts = {
+      u1: acc('u1', 'me'),
+      a1: acc('a1', 'fizz', 'agent'),
+      u2: acc('u2', 'rusalka'),
+    };
+    const groups = [grp('g1', 'oncall', 'On-call')];
+    useAppStore.getState().set({ accounts, groups, me: acc('u1', 'me') });
+
+    for (const body of CASES) {
+      // `MessageBody` 가 실제로 칠한 handle 들. 단위 함수를 직접 부르지 않는 이유: 컴포저와
+      // 본문이 **같은 인자**를 넘기는지까지 봐야 한다. 같은 함수를 써도 인자가 다르면
+      // (자기 계정을 빼거나 `@channel` 을 빼면) 판정은 갈라진다.
+      const body1 = render(<MessageBody body={body} messageId="m1" />);
+      const painted = [...document.querySelectorAll('[data-testid^="mention-"]')]
+        .map((el) => el.getAttribute('data-testid')!.replace('mention-', ''));
+      body1.unmount();
+
+      const composer = render(<Composer onSend={vi.fn()} />);
+      typeInto(body);
+      const shown = listed();
+      composer.unmount();
+      useAppStore.getState().setDraft('', '');
+
+      // 자기 자신은 이 줄에서만 빠진다(서버가 알림에서 작성자를 걸러 낸다). 그 하나를
+      // 빼면 두 판정은 **완전히 같아야 한다**.
+      expect(shown, `본문: ${body}`).toEqual([...new Set(painted)].filter((h) => h !== 'me'));
+    }
   });
 
-  // 테스트 5: 고정 멘션 칩과 이 줄이 다른 요소다
-  it('고정 멘션 칩과 이 줄이 다른 요소다', () => {
-    useAppStore.getState().set({
-      accounts: {
-        u1: acc('u1', 'me'),
-        a1: acc('a1', 'fizz', 'agent'),
-        u2: acc('u2', 'rusalka'),
-      },
-    });
+  it('자기 멘션은 본문에서는 칠해지고 이 줄에는 없다 (서버가 작성자를 알림에서 뺀다)', () => {
+    const body1 = render(<MessageBody body="@me 나에게" messageId="m1" />);
+    expect(document.querySelector('[data-testid="mention-me"]')).toBeTruthy();
+    body1.unmount();
+
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@me 나에게');
+    expect(screen.queryByTestId('body-mentions')).toBeNull();
+  });
+
+  it('고정 멘션 칩과 이 줄은 다른 요소다 — 겹쳐도 둘 다 남고, 칩을 지워도 이 줄은 본문 기준이다', () => {
     render(<Composer onSend={vi.fn()} />);
 
-    // @ 버튼으로 고정 추가 (picking 모드)
     fireEvent.click(screen.getByRole('button', { name: /Add mention/ }));
-    // 첫 번째 후보 선택 (fizz)
-    fireEvent.click(screen.getByRole('option', { name: /fizz/ }));
+    fireEvent.click(screen.getAllByRole('option').find((o) => o.getAttribute('data-handle') === 'fizz')!);
+    expect(screen.queryAllByTestId('sticky-mention')).toHaveLength(1);
 
-    // 고정 칩이 생김
-    const stickyItems = screen.queryAllByTestId('sticky-mention');
-    expect(stickyItems.length).toBe(1);
+    // 같은 handle 을 본문에도 쓴다. 뜻이 다른 두 줄이므로 **둘 다** 그 handle 을 보여야 한다.
+    typeInto('@fizz 안녕');
+    expect(listed()).toEqual(['fizz']);
+    expect(screen.queryAllByTestId('sticky-mention')).toHaveLength(1);
 
-    // 이제 본문에 @rusalka 라고 입력 (이 계정은 있음)
-    typeInto('@rusalka 안녕');
-
-    // 고정 칩과 bodyMentions가 모두 존재, 하지만 다른 handle
-    const bodyMentions = screen.getByTestId('body-mentions');
-    expect(bodyMentions.textContent).toContain('rusalka');
-    expect(bodyMentions.textContent).not.toContain('fizz'); // 고정과 중복되지 않음
+    // 칩을 지운다. 이 줄의 근거는 본문이므로 그대로 남아야 한다.
+    fireEvent.click(screen.getByRole('button', { name: 'Remove @fizz' }));
+    expect(screen.queryAllByTestId('sticky-mention')).toHaveLength(0);
+    expect(listed()).toEqual(['fizz']);
   });
 
-  // 테스트 6: 그룹 핸들이 본문에 있으면 집합 표시와 함께 나온다
-  it('그룹 핸들이 본문에 있으면 집합 표시와 함께 나온다', () => {
+  it('집합 handle 은 (집합) 표시와 함께 나온다', () => {
+    useAppStore.getState().set({ groups: [grp('g1', 'oncall', 'On-call')] });
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@oncall 서버 문제가 있어');
+
+    const line = screen.getByTestId('body-mentions');
+    expect(line.querySelector('[data-handle="oncall"]')!.getAttribute('data-kind')).toBe('group');
+    expect(line.textContent).toContain('(집합)');
+  });
+
+  /**
+   * `@channel`(#225)은 계정이 없어도 대상이다 — `splitMentions` 가 칠하고 서버가 채널 전체에
+   * 알림을 넣는다. 이 줄이 계정만 보고 걸렀을 때 `@channel` 을 쓴 사람만 자기가 누구를
+   * 부르는지 못 보게 됐다.
+   */
+  it('@channel 은 (채널 전체) 로 나온다', () => {
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@channel 공지합니다');
+
+    const line = screen.getByTestId('body-mentions');
+    expect(line.querySelector('[data-handle="channel"]')!.getAttribute('data-kind')).toBe('channel');
+    expect(line.textContent).toContain('(채널 전체)');
+  });
+
+  it('channel 이라는 계정이 있으면 그 사람이고 채널 전체가 아니다 (계정이 이긴다)', () => {
     useAppStore.getState().set({
-      accounts: {
-        u1: acc('u1', 'me'),
-        a1: acc('a1', 'fizz', 'agent'),
-      },
-      groups: [grp('g1', 'oncall', 'On-call')],
+      accounts: { u1: acc('u1', 'me'), u3: acc('u3', 'channel') },
     });
     render(<Composer onSend={vi.fn()} />);
+    typeInto('@channel 공지합니다');
 
-    typeInto('@oncall 서버 문제가 있어');
-    const bodyMentions = screen.getByTestId('body-mentions');
-    expect(bodyMentions.textContent).toContain('@oncall');
-    expect(bodyMentions.textContent).toContain('(집합)');
+    const line = screen.getByTestId('body-mentions');
+    expect(line.querySelector('[data-handle="channel"]')!.getAttribute('data-kind')).toBe('account');
+    expect(line.textContent).not.toContain('(채널 전체)');
+  });
+
+  it('이 줄의 항목은 누를 수 없다 — 지우려면 본문을 고친다', () => {
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@fizz @rusalka 안녕');
+    const line = screen.getByTestId('body-mentions');
+    expect(line.querySelectorAll('button')).toHaveLength(0);
   });
 });
