@@ -7,7 +7,7 @@ import { SavedMessages } from '../src/components/SavedMessages';
 import { MessageItem } from '../src/components/MessageItem';
 import { Sidebar } from '../src/components/Sidebar';
 import { Workspace } from '../src/components/Workspace';
-import { acc, chan, msg, fakeApi } from './helpers/fakeApi';
+import { acc, chan, msg, fakeApi, scheduledApiStub } from './helpers/fakeApi';
 
 /**
  * 나중에 볼 메시지의 데스크탑 쪽(#219).
@@ -47,6 +47,8 @@ const fakeController = (over: Record<string, unknown> = {}) => {
     pinMessage: vi.fn(async () => undefined),
     unpinMessage: vi.fn(async () => undefined),
     markChannelUnread: vi.fn(async () => undefined),
+    // #222: 컴포저가 예약 목록을 읽는다 — 목에 이 표면이 없으면 화면이 뜨지 않는다.
+    api: scheduledApiStub(),
     ...over,
   };
   setController(c as unknown as ControllerType);
@@ -167,7 +169,7 @@ describe('담아 둔 메시지 — 메뉴와 사이드바 (#219)', () => {
     useAppStore.getState().set({ savedCount: 3, savedIds: ['m1', 'm2', 'm3', 'm4'] });
     render(
       <Sidebar
-        onOpenDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}}
+        onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}}
         onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()}
       />,
     );
@@ -181,7 +183,7 @@ describe('담아 둔 메시지 — 메뉴와 사이드바 (#219)', () => {
     useAppStore.getState().set({ savedCount: 0 });
     render(
       <Sidebar
-        onOpenDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}}
+        onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}}
         onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()}
       />,
     );
