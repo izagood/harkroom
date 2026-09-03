@@ -19,14 +19,16 @@ function mount(api: {
   scheduledMessages?: ReturnType<typeof vi.fn>;
   scheduleMessage?: ReturnType<typeof vi.fn>;
   cancelScheduledMessage?: ReturnType<typeof vi.fn>;
-}) {
+}, controller: Record<string, unknown> = {}) {
   const full = {
     scheduledMessages: vi.fn().mockResolvedValue([]),
     scheduleMessage: vi.fn().mockResolvedValue(view('s1')),
     cancelScheduledMessage: vi.fn().mockResolvedValue(undefined),
     ...api,
   };
-  setController({ typing: vi.fn(), upload: vi.fn(), api: full } as unknown as Controller);
+  setController({
+    typing: vi.fn(), upload: vi.fn(), api: full, ...controller,
+  } as unknown as Controller);
   return full;
 }
 
@@ -53,9 +55,10 @@ describe('예약 발송 컴포저 (#222)', () => {
     fireEvent.click(screen.getByRole('button', { name: '예약' }));
 
     await waitFor(() => expect(api.scheduleMessage).toHaveBeenCalled());
-    expect(api.scheduleMessage.mock.calls[0][0]).toBe('c1');
-    expect(api.scheduleMessage.mock.calls[0][1]).toBe('나중에 보낼 말');
-    expect(new Date(api.scheduleMessage.mock.calls[0][2] as string).getFullYear()).toBe(2030);
+    const [channelId, body, sendAt] = api.scheduleMessage.mock.calls[0]!;
+    expect(channelId).toBe('c1');
+    expect(body).toBe('나중에 보낼 말');
+    expect(new Date(sendAt as string).getFullYear()).toBe(2030);
     await waitFor(() => expect(textbox.value).toBe(''));
   });
 
@@ -114,6 +117,32 @@ describe('예약 발송 컴포저 (#222)', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('목록을 읽지 못했다');
+  });
+
+  // 예약 표면은 `attachmentIds` 를 받지 않는다. 그런데도 예약하고 `pending` 을 비우면
+  // 이미 업로드된 첨부가 어디에도 안 붙은 채 사라진다 — 사람은 첨부까지 예약됐다고
+  // 믿는다. 거절하고 이유를 말하는지, 그리고 첨부가 컴포저에 **남는지** 본다.
+  it('첨부가 붙어 있으면 예약하지 않고 이유를 말한다', async () => {
+    const api = mount({}, {
+      upload: vi.fn(async () => ({
+        id: 'a1', filename: 'note.txt', contentType: 'text/plain', sizeBytes: 12,
+      })),
+    });
+    const { container } = render(<Composer onSend={vi.fn()} scopeKey="c1" channelId="c1" />);
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['x'], 'note.txt', { type: 'text/plain' })] } });
+    await screen.findByText(/note\.txt/);
+
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '첨부와 함께' } });
+    fireEvent.click(screen.getByRole('button', { name: '나중에 보내기' }));
+    fireEvent.click(screen.getByRole('button', { name: '예약' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('첨부');
+    expect(api.scheduleMessage).not.toHaveBeenCalled();
+    // 첨부는 컴포저에 그대로 남는다 — 떼거나 지금 보내는 두 길이 다 열려 있어야 한다.
+    expect(screen.getByText(/note\.txt/)).toBeTruthy();
   });
 
   // 채널이 없는 자리(단독 컴포저)에는 버튼을 그리지 않는다 — 눌러도 아무 일이 없는

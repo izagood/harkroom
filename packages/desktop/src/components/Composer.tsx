@@ -517,23 +517,39 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
 
   const handleSchedule = async () => {
     if (!channelId || !scheduleDateTime || !draft.trim()) return;
+    // 예약 표면(`POST /channels/:id/scheduled`)은 `attachmentIds` 를 받지 않는다. 그런데도
+    // 예약하고 `pending` 을 비우면 이미 업로드된 첨부가 **어디에도 안 붙은 채** 사라진다 —
+    // 사람은 첨부까지 예약됐다고 믿는다. 그래서 거절하고 이유를 말한다: 첨부는 컴포저에
+    // 그대로 남으므로 떼거나 지금 보내는 두 길이 다 열려 있다.
+    if (pending.length > 0) {
+      setScheduleError('첨부가 붙은 메시지는 예약할 수 없다 — 첨부를 떼거나 지금 보내라');
+      return;
+    }
     const api = getController().api;
     setScheduleError(null);
     setIsScheduling(true);
     try {
       const sendAt = new Date(scheduleDateTime).toISOString();
       await api.scheduleMessage(channelId, draft, sendAt);
-      setDraftLocal('');
-      setPending([]);
-      setScheduleModalOpen(false);
-      setScheduledMessages(await api.scheduledMessages(channelId));
     } catch (err: unknown) {
       // 서버가 준 사유(`send_at_in_past`·`send_at_too_far`·`agents_cannot_schedule`)를
       // 그대로 보인다. `ApiError` 는 사유를 `message` 에 들고 오지 `error.message` 가
       // 아니다 — 초판이 그 자리를 잘못 읽어 늘 "예약에 실패했다"만 떴다.
       setScheduleError(errorText(err, '예약에 실패했다'));
+      return;
     } finally {
       setIsScheduling(false);
+    }
+    setDraftLocal('');
+    setScheduleModalOpen(false);
+    // 목록 재조회는 **예약이 끝난 뒤의 별개 일**이다. 이것을 위 try 안에 두면 재조회
+    // 실패가 `scheduleError` 로 들어가는데 모달은 이미 닫혀 있어 사유가 보이지 않는다 —
+    // 예약은 성공했는데 화면에 줄이 안 뜨고 아무 말도 없는 모양이 된다. 예약 줄 쪽
+    // (`listError`)에 적는다.
+    try {
+      setScheduledMessages(await api.scheduledMessages(channelId));
+    } catch (err: unknown) {
+      setListError(errorText(err, '예약 목록을 불러오지 못했다'));
     }
   };
 
@@ -583,7 +599,9 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
                 onClick={() => choose(a.handle)}
               >
                 <span className="font-medium">@{a.handle}</span>
-                <Identity account={a} className="ml-1" />
+                {/* 거터가 아니라 **핸들 옆** 자리다(#277) — 여기서 소유자를 지우면 "누구의
+                    에이전트를 부르는지"를 부르기 직전에 못 보게 된다. variant 는 badge. */}
+                <Identity account={a} className="ml-1" variant="badge" />
               </button>
             </li>
           ))}

@@ -377,7 +377,6 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     const gate = await channelPostGate(pool, id, req.account!.id);
     if (gate === 'forbidden') {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
-
     }
     if (gate === 'archived') {
       return reply.code(403).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
@@ -494,7 +493,9 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
   app.post('/channels/:id/scheduled', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = scheduledChannelParam.parse(req.params);
     const { body, sendAt, threadRootId } = z.object({
-      body: z.string().min(1).max(10000),
+      // 8000 은 즉시 발송(`messageRoutes.ts`·`mcpPlugin.ts`)과 **같은 상한**이다. 여기만
+      // 넉넉하게 두면 예약을 거쳐 8000자를 넘는 메시지를 넣을 수 있는 우회로가 된다.
+      body: z.string().min(1).max(8000),
       sendAt: z.string().datetime(),
       threadRootId: z.string().uuid().optional(),
     }).parse(req.body);
@@ -547,5 +548,4 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     }
     return reply.code(204).send();
   });
-
 }

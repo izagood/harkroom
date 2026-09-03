@@ -116,6 +116,20 @@ describe('예약 발송 (#222)', () => {
     });
     expect(list.json().scheduled).toHaveLength(1);
     expect(list.json().scheduled[0]).toMatchObject({ body: '예약 테스트' });
+
+    // spec 1 은 "**다른 사람이 채널을 읽어도** 안 보인다"까지 요구한다. 작성자 시점만
+    // 보면 "내 화면에 아직 안 뜬다"만 지켜지고, 남의 실시간 뷰에 구멍이 생기는 것을
+    // (별도 테이블을 만든 그 이유를) 아무도 지키지 않는다.
+    const reader = await createUser(app, adminToken, 'sched-reader');
+    await app.inject({
+      method: 'POST', url: `/channels/${ch}/members`, headers: { authorization: `Bearer ${adminToken}` },
+      payload: { accountId: reader.accountId },
+    });
+    const asOther = await app.inject({
+      method: 'GET', url: `/channels/${ch}/messages`,
+      headers: { authorization: `Bearer ${reader.token}` },
+    });
+    expect(asOther.json().messages).toHaveLength(0);
   });
 
   // 2. 남에게는 **존재 자체가** 보이지 않는다. 보이면 초안과 다를 게 없다.
@@ -323,6 +337,31 @@ describe('예약 발송 (#222)', () => {
        where channel_id = $1 and sent_message_id is null`, [ch],
     );
     expect(pending.rows[0].n).toBe(0);
+  });
+
+  // 본문 상한은 즉시 발송과 **같아야** 한다. 여기만 넉넉하면 예약을 거쳐 8000자를
+  // 넘기는 우회로가 된다 — 발송은 `postMessage` 를 그대로 통과하므로 그 글이 그대로
+  // 채널에 들어간다.
+  it('본문 상한은 즉시 발송과 같다 — 8000자를 넘기면 400 이고 행이 생기지 않는다', async () => {
+    const ch = await makeChannel(app, adminToken, 'sched-too-long', userId);
+    const before = await countScheduled(pool);
+
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${ch}/scheduled`,
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { body: 'ㄱ'.repeat(8001), sendAt: inAnHour() },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(await countScheduled(pool)).toBe(before);
+
+    // 8000자는 통과해야 한다 — 상한을 한 칸 잘못 잡은 것을 잡는 경계선이다.
+    const ok = await app.inject({
+      method: 'POST', url: `/channels/${ch}/scheduled`,
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { body: 'ㄱ'.repeat(8000), sendAt: inAnHour() },
+    });
+    expect(ok.statusCode).toBe(201);
   });
 
   // 채널 삭제(#155)는 그 채널의 예약도 함께 지운다. 남겨 두면 sweep 이 매번 없는 채널을

@@ -508,6 +508,61 @@ export interface LeaseRow {
   expiresAt: string;
 }
 
+/**
+ * 투영 워커가 들고 있는 **원자료**(#267). 서버 메모리에만 산다 — 마이그레이션 없음.
+ *
+ * `state` 는 여기서 파생된다(`projectionState`). 파생을 라우트 핸들러에 인라인으로
+ * 두지 않는 이유: 같은 판정이 서버·클라이언트·문서에 세 벌 생기면 5분 임계값을 고칠 때
+ * 한 벌만 고쳐지고 화면과 API 가 서로 다른 말을 한다.
+ */
+export interface ProjectionRuntime {
+  /** `AVCS_BASE_URL` 이 있어서 워커가 아예 만들어졌는가. */
+  configured: boolean;
+  /** 마지막으로 폴링한 저장소. 조용한 저장소도 여기 남는다 — 폴링했다는 사실이므로. */
+  repo: string | null;
+  lastLogIndex: number;
+  /** 마지막 폴링 시각(ms). **이것이 살아 있는가의 신호다.** */
+  lastPolledAt: number | null;
+  /** 커서가 마지막으로 전진한 시각(ms). 신호가 **아니다** — 아래 주석 참고. */
+  lastAdvancedAt: number | null;
+  /** 마지막 실패 메시지(200자). 성공 폴링이 지운다. */
+  lastError: string | null;
+}
+
+export type ProjectionState = 'unconfigured' | 'stalled' | 'ok';
+
+/**
+ * 폴링이 이보다 오래 안 돌았으면 멈춘 것으로 본다. 폴링 주기(25초)의 몇 배로 잡아
+ * 한두 번 늦는 것을 장애로 오해하지 않는다.
+ */
+export const PROJECTION_STALL_MS = 5 * 60 * 1000;
+
+/**
+ * 원자료에서 상태 하나를 뽑는다. **커서가 안 움직이는 것 자체는 신호가 아니다** —
+ * 아무도 커밋하지 않는 조용한 저장소도 커서가 그대로다. 그것을 장애로 부르면 정상인
+ * 저장소가 영영 빨갛고, 사람은 곧 이 표시를 무시하게 된다. 신호는 `lastAdvancedAt`
+ * 이 아니라 **`lastPolledAt`** 이다: 우리가 물어보고 있는가.
+ */
+export function projectionState(r: ProjectionRuntime, now: number = Date.now()): ProjectionState {
+  if (!r.configured) return 'unconfigured';
+  // 폴링을 아직 한 번도 못 했거나(null), 너무 오래됐거나, 마지막 시도가 실패했다.
+  if (r.lastPolledAt === null) return 'stalled';
+  if (now - r.lastPolledAt > PROJECTION_STALL_MS) return 'stalled';
+  if (r.lastError) return 'stalled';
+  return 'ok';
+}
+
+/**
+ * `GET /projection/status` 의 응답. 원자료 + 파생 상태다.
+ *
+ * `connected`(avcs 소켓이 붙었는가)는 **여기 없다** — 그것은 `/healthz` 의 것이고,
+ * 이 화면이 답하는 질문("투영이 돌고 있는가")과 다른 사실이다. 두 사실을 한 객체에
+ * 실으면 화면이 어느 것을 믿어야 하는지 정하지 못한다.
+ */
+export interface ProjectionStatus extends ProjectionRuntime {
+  state: ProjectionState;
+}
+
 export interface ScheduledMessageView {
   id: string;
   channelId: string;
