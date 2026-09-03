@@ -10,6 +10,20 @@ interface Props {
 
 type SortMode = 'name' | 'creation';
 
+/**
+ * 정렬 비교 함수(#180). **두 모드 모두 실제로 비교한다** — "생성순" 을 "서버가 준 순서를
+ * 그대로 둔다" 로 구현하면 안 된다. `listChannels` 는 `order by name` 이라 그 순서가 이미
+ * 이름순이고, 그러면 토글은 눌러도 아무 것도 바꾸지 않는다. 그래서 `createdAt` 을
+ * `ChannelRow` 에 실어(#180) 여기서 오래된 것부터 세운다.
+ */
+function compareChannels(mode: SortMode, a: ChannelRow, b: ChannelRow): number {
+  if (mode === 'name') return (a.name ?? '').localeCompare(b.name ?? '');
+  const at = Date.parse(a.createdAt);
+  const bt = Date.parse(b.createdAt);
+  // 같은 시각이면 id 로 갈라 순서를 안정시킨다 — 안 그러면 렌더마다 순서가 흔들린다.
+  return at === bt ? a.id.localeCompare(b.id) : at - bt;
+}
+
 export function ChannelDirectory({ open, onClose }: Props) {
   const channels = useAppStore((s) => s.channels);
   const [query, setQuery] = useState('');
@@ -23,27 +37,35 @@ export function ChannelDirectory({ open, onClose }: Props) {
     setArchivedOpen(false);
   }, [open]);
 
-  const { standardChannels, archivedChannels } = useMemo(() => {
-    const standard = channels.filter((ch) => ch.kind === 'standard' && !ch.archivedAt);
-    const archived = channels.filter((ch) => ch.kind === 'standard' && ch.archivedAt);
-    return { standardChannels: standard, archivedChannels: archived };
+  /**
+   * DM 은 목록에서 뺀다 — 디렉터리는 "들어갈 수 있는 채널을 찾는 곳"이고 DM 은 사람을
+   * 골라 여는 것이라 성질이 다르다. 보관된 채널(#153)은 아래 접힌 그룹으로 갈라 놓는다:
+   * 본 목록에 섞으면 이미 끝난 채널이 살아 있는 채널과 같은 무게로 보인다.
+   */
+  const { activeChannels, archivedChannels } = useMemo(() => {
+    const standard = channels.filter((ch) => ch.kind === 'standard');
+    return {
+      activeChannels: standard.filter((ch) => !ch.archivedAt),
+      archivedChannels: standard.filter((ch) => ch.archivedAt),
+    };
   }, [channels]);
 
-  const filteredChannels = useMemo(() => {
+  const matchesQuery = useMemo(() => {
     const q = query.trim().toLowerCase();
-    let result = q
-      ? standardChannels.filter((ch) => (ch.name ?? '').toLowerCase().includes(q))
-      : standardChannels;
+    return (ch: ChannelRow) => (q ? (ch.name ?? '').toLowerCase().includes(q) : true);
+  }, [query]);
 
-    if (sortMode === 'name') {
-      result = [...result].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
-    }
-    return result;
-  }, [standardChannels, query, sortMode]);
+  const filteredChannels = useMemo(
+    () => activeChannels.filter(matchesQuery).sort((a, b) => compareChannels(sortMode, a, b)),
+    [activeChannels, matchesQuery, sortMode],
+  );
 
-  const sortedArchived = useMemo(() => {
-    return [...archivedChannels].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
-  }, [archivedChannels]);
+  // 필터는 보관 그룹에도 걸린다 — 안 걸면 이름을 좁혀 놓고 "보관됨" 을 펼쳤을 때
+  // 관계없는 채널이 쏟아진다.
+  const filteredArchived = useMemo(
+    () => archivedChannels.filter(matchesQuery).sort((a, b) => compareChannels(sortMode, a, b)),
+    [archivedChannels, matchesQuery, sortMode],
+  );
 
   const handleChannelClick = async (channel: ChannelRow) => {
     await getController().openChannel(channel.id);
@@ -107,12 +129,14 @@ export function ChannelDirectory({ open, onClose }: Props) {
           <div className="flex rounded bg-zinc-800 text-xs">
             <button
               className={`rounded px-2 py-1 ${sortMode === 'name' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+              aria-pressed={sortMode === 'name'}
               onClick={() => setSortMode('name')}
             >
               이름순
             </button>
             <button
               className={`rounded px-2 py-1 ${sortMode === 'creation' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+              aria-pressed={sortMode === 'creation'}
               onClick={() => setSortMode('creation')}
             >
               생성순
@@ -127,17 +151,18 @@ export function ChannelDirectory({ open, onClose }: Props) {
           ) : (
             <ul>{filteredChannels.map(row)}</ul>
           )}
-          {archivedChannels.length > 0 && (
+          {filteredArchived.length > 0 && (
             <div className="mt-4 border-t border-zinc-800 pt-2">
               <button
                 className="flex w-full items-center gap-1 px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500 hover:text-zinc-400"
+                aria-expanded={archivedOpen}
                 onClick={() => setArchivedOpen((v) => !v)}
               >
                 <span>{archivedOpen ? '▼' : '▶'}</span>
-                보관됨 ({archivedChannels.length})
+                보관됨 ({filteredArchived.length})
               </button>
               {archivedOpen && (
-                <ul>{sortedArchived.map(row)}</ul>
+                <ul>{filteredArchived.map(row)}</ul>
               )}
             </div>
           )}
