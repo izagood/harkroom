@@ -239,8 +239,6 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   await registerAuthRoutes(app, deps.pool);
   await registerAccountRoutes(app, deps.pool);
-await registerAuthRoutes(app, deps.pool);
-  await registerAccountRoutes(app, deps.pool);
   await registerTeamRoutes(app, deps.pool);
   const storageOpts = deps.storage ?? {
     root: process.env.ATTACHMENT_ROOT ?? './.attachments',
