@@ -20,6 +20,9 @@ function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
     case 'channel.created':
     case 'channel.updated':
     case 'channel.deleted':
+    case 'channel.member_added':
+    case 'channel.member_removed':
+    case 'handle_group.changed':
       return e.audience === 'all' || e.audience.includes(accountId);
     case 'inbox.updated':
     case 'saved.changed':

@@ -318,3 +318,149 @@ describe('채널 목록 변경 WS 이벤트 (#284)', () => {
     admin.close(); bystander.close();
   });
 });
+
+/**
+ * 채널 멤버십 변경 WS 이벤트(#300).
+ *
+ * #284 의 channelListAudience 함수를 재사용한다 — 메시지 층의 audienceFor 가 아니다.
+ * 수신자는 목록에서 채널을 볼 수 있는 사람이고, 추가된 사람/제거된 사람은 각각
+ * channel.created/channel.deleted 를 받는다(#284 의 public→private 전환 논리).
+ */
+describe('채널 멤버십 변경 WS 이벤트 (#300)', () => {
+  const collect = async (token: string) => collectWithTicket(await ticketFor(token));
+
+  it('1. 초대되면 그 사람은 channel.created 를 받는다(목록에 새로 나타난다)', async () => {
+    // bystander 를 초대할 private 채널을 만든다.
+    const channelId = await createChannel('member-add-test', 'private');
+    const bystander = await collect(bystanderPat);
+    await bystander.ready;
+
+    // admin 은 만들 때 첫 멤버가 되므로 channel.created 를 받았을 것이다.
+    // bystander 가 초대되어 channel.created 를 받는지를 본다.
+    const add = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/members`,
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { accountId: bystanderId },
+    });
+    expect(add.statusCode).toBe(200);
+
+    await waitFor(() => has(bystander, 'channel.created', (e) => e.channel.id === channelId));
+    // channel.created 페이로드에 채널 정보가 있어야 한다.
+    const seen = bystander.events.find((e) => e.type === 'channel.created' && e.channel.id === channelId);
+    expect(seen.channel.name).toBe('member-add-test');
+    expect(seen.channel.visibility).toBe('private');
+
+    bystander.close();
+  });
+
+  it('2. 추방되면 그 사람에게 channel.deleted 가 간다', async () => {
+    // bystander 를 초대하고, 그 다음 추방한다.
+    const channelId = await createChannel('member-remove-test', 'private');
+    const add = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/members`,
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { accountId: bystanderId },
+    });
+    expect(add.statusCode).toBe(200);
+
+    const bystander = await collect(bystanderPat);
+    await bystander.ready;
+
+    const rem = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/members/${bystanderId}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(rem.statusCode).toBe(200);
+
+    await waitFor(() => has(bystander, 'channel.deleted', (e) => e.channelId === channelId));
+
+    bystander.close();
+  });
+
+  it('3. 남은 멤버는 channel.member_removed 를 받고 목록은 유지된다', async () => {
+    // bystander 를 초대하고, 다른 계정을 하나 더 만든 뒤 bystander 를 추방한다.
+    const channelId = await createChannel('member-remove-others', 'private');
+    const add1 = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/members`,
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { accountId: bystanderId },
+    });
+    expect(add1.statusCode).toBe(200);
+
+    // admin (이미 멤버) 이 channel.member_removed 를 받는지를 본다.
+    const admin = await collect(adminToken);
+    await admin.ready;
+
+    const rem = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/members/${bystanderId}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(rem.statusCode).toBe(200);
+
+    await waitFor(() => has(admin, 'channel.member_removed', (e) => e.channelId === channelId && e.accountId === bystanderId));
+    // 채널이 목록에서 사라지지 않았음을 확인한다.
+    expect(await listChannelIds(adminToken)).toContain(channelId);
+
+    admin.close();
+  });
+
+  it('4. private 채널 멤버십 변경: 남은 멤버는 channel.member_removed 를 받는다, 제거된 사람은 channel.deleted 를 받는다', async () => {
+    // 세 계정을 쓴다: admin(만든 사람), bystander(비멤버), member(멤버 → 제거됨)
+    const channelId = await createChannel('private-member-events', 'private');
+    // member 계정을 만들고 채널에 초대한다.
+    const { accountId: memberId, pat: memberPat } = await createAgent(app, adminToken, 'member');
+    const add = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/members`,
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { accountId: memberId },
+    });
+    expect(add.statusCode).toBe(200);
+
+    // bystander(비멤버), member(멤버 → 제거될 사람), admin(만든 사람, 첫 멤버) 소켓을 연다.
+    const bystander = await collect(bystanderPat);
+    const member = await collect(memberPat);
+    const admin = await collect(adminToken);
+    await bystander.ready; await member.ready; await admin.ready;
+
+    // member 를 추방한다.
+    const rem = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/members/${memberId}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(rem.statusCode).toBe(200);
+
+    // 남은 멤버(admin) 는 channel.member_removed 를 받아야 한다.
+    await waitFor(() => has(admin, 'channel.member_removed', (e) => e.channelId === channelId && e.accountId === memberId));
+    // 제거된 사람(member) 은 channel.deleted 를 받아야 한다(목록에서 사라진 것이기 때문).
+    await waitFor(() => has(member, 'channel.deleted', (e) => e.channelId === channelId));
+    // 비멤버(bystander) 는 아무것도 받지 않아야 한다.
+    await settle();
+    expect(has(bystander, 'channel.member_added')).toBe(false);
+    expect(has(bystander, 'channel.member_removed')).toBe(false);
+    expect(has(bystander, 'channel.created')).toBe(false);
+    expect(has(bystander, 'channel.deleted')).toBe(false);
+
+    bystander.close(); member.close(); admin.close();
+  });
+
+  it('6. 멤버십 변경 이벤트를 받은 순간 조회하면 이미 변경된 상태다', async () => {
+    const channelId = await createChannel('member-commit-test', 'private');
+
+    // bystander 가 초대된 직후 목록을 조회해 본다.
+    const bystander = await collect(bystanderPat);
+    await bystander.ready;
+
+    const seenAt: Promise<string[]> = new Promise((resolve) => {
+      const timer = setInterval(() => {
+        const e = bystander.events.find((x) => x.type === 'channel.created' && x.channel.id === channelId);
+        if (e) { clearInterval(timer); resolve(listChannelIds(bystanderPat)); }
+      }, 5);
+    });
+
+    await app.inject({
+      method: 'POST', url: `/channels/${channelId}/members`,
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { accountId: bystanderId },
+    });
+
+    // 이벤트를 받은 순간 조회하면 채널이 이미 목록에 있다.
+    expect(await seenAt).toContain(channelId);
+
+bystander.close();
+  });
+});
