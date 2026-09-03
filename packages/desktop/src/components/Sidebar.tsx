@@ -641,6 +641,35 @@ const row = (active: boolean) =>
         onSelect: () => void getController().setChannelNotifyLevel(ch.id, level),
       })),
       { label: isStarred ? '즐겨찾기 해제' : '즐겨찾기', onSelect: () => void getController().toggleChannelStar(ch.id) },
+      // 섹션 이동(#157). DM 은 섹션을 가질 수 없다 — kind 로 구분하고, 서버도 400 을 준다.
+      ...(ch.kind === 'standard' ? [
+        { label: '섹션으로 옮기기', onSelect: () => {
+          const sections = [...new Set(Object.values(channelPrefs).map((p) => p?.section).filter((s): s is string => s !== null && s !== undefined))].sort((a, b) => a.localeCompare(b));
+          const currentSection = pref?.section;
+          const section = prompt(
+            currentSection
+              ? `현재: ${currentSection}\n새 섹션 이름 입력 (취소하면 기존 섹션 유지):`
+              : '새 섹션 이름 입력:',
+          );
+          if (section !== null) {
+            void getController().setChannelSection(ch.id, section === '' ? null : section.trim());
+          }
+        }},
+        ...(pref?.section ? [
+          { label: '섹션에서 빼기', onSelect: () => void getController().setChannelSection(ch.id, null) },
+        ] : []),
+      ] : []),
+      // 섹션 안 순서 조절(#157)
+      ...(ch.kind === 'standard' && pref?.section ? [
+        { label: '위로', onSelect: () => {
+          const currentOrder = pref.sortOrder ?? 0;
+          void getController().setChannelSortOrder(ch.id, currentOrder - 1);
+        }},
+        { label: '아래로', onSelect: () => {
+          const currentOrder = pref.sortOrder ?? 0;
+          void getController().setChannelSortOrder(ch.id, currentOrder + 1);
+        }},
+      ] : []),
     ];
     return (
       <div key={ch.id} className="relative flex w-full items-center">
