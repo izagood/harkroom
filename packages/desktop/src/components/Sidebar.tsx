@@ -59,16 +59,17 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
   );
 }
 
-export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox, collapsed, onToggleCollapse }: {
+export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox, onOpenSaved = () => {}, collapsed, onToggleCollapse }: {
   onLogout: () => void;
   onOpenSettings: (section?: SectionId) => void;
   /** 워크스페이스 전체 디렉터리를 연다(#226). 채널 멤버 목록이 아니라 워크스페이스 전체다. */
   onOpenDirectory: () => void;
   onOpenInbox: () => void;
+  onOpenSaved?: () => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
-  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, messages } = useAppStore();
+  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, messages, savedCount } = useAppStore();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
@@ -691,6 +692,9 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
               세 번째 화면을 만들 때 어느 쪽을 따를지 알 수 없다. */}
           <button className={`${row(false)} text-zinc-400`} onClick={onOpenInbox}>
             Inbox
+          </button>
+          <button className={`${row(false)} text-zinc-400`} onClick={onOpenSaved}>
+            Saved {savedCount > 0 && <span className="ml-auto rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold text-white">{savedCount}</span>}
           </button>
           <button className={`${row(false)} text-zinc-400`} onClick={onOpenDirectory}>
             Directory

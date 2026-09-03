@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { emitEvent } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { deleteMessage, editMessage, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
+import { listSavedMessages, getSavedMessage, getSavedMessageOpenCount, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 
@@ -218,5 +219,42 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
     return { messages: await searchMessages(pool, req.account!.id, q.q, 50, q.channelId ?? null) };
+  });
+
+  app.get('/saved', { preHandler: app.requireAccount }, async (req) => {
+    const q = z.object({ state: z.enum(['open', 'done']).optional() }).parse(req.query);
+    return { entries: await listSavedMessages(pool, req.account!.id, q.state ?? 'open') };
+  });
+
+  app.get('/saved/count', { preHandler: app.requireAccount }, async (req) => {
+    return { count: await getSavedMessageOpenCount(pool, req.account!.id) };
+  });
+
+  app.put('/saved/:messageId', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { messageId } = z.object({ messageId: z.string().uuid() }).parse(req.params);
+    const result = await saveMessage(pool, { accountId: req.account!.id, messageId });
+    if (result === 'not_found') {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'message not found or not visible' } });
+    }
+    return result;
+  });
+
+  app.patch('/saved/:messageId', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { messageId } = z.object({ messageId: z.string().uuid() }).parse(req.params);
+    const { state } = z.object({ state: z.enum(['open', 'done']) }).parse(req.body);
+    const result = await updateSavedMessageState(pool, { accountId: req.account!.id, messageId, state });
+    if (result === 'not_found') {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'saved message not found' } });
+    }
+    return result;
+  });
+
+  app.delete('/saved/:messageId', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { messageId } = z.object({ messageId: z.string().uuid() }).parse(req.params);
+    const result = await unsaveMessage(pool, { accountId: req.account!.id, messageId });
+    if (result === 'not_found') {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'saved message not found' } });
+    }
+    return reply.code(204).send();
   });
 }

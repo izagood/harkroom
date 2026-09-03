@@ -10,6 +10,7 @@ import { SearchPalette } from './SearchPalette';
 import { Sweep } from './Sweep';
 import { Directory } from './Directory';
 import { Inbox } from './Inbox';
+import { SavedMessages } from './SavedMessages';
 import type { SectionId } from './settings/sections';
 
 export function Workspace({ onLogout, onOpenSettings }: {
@@ -24,6 +25,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
   const [sweepOpen, setSweepOpen] = useState(false);
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
+  const [savedOpen, setSavedOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sidebarStorage.loadCollapsed());
 
   const canGoBack = historyIndex > 0;
@@ -97,6 +99,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
         onOpenSettings={onOpenSettings}
         onOpenDirectory={() => setDirectoryOpen(true)}
         onOpenInbox={() => setInboxOpen(true)}
+        onOpenSaved={() => setSavedOpen(true)}
         collapsed={sidebarCollapsed}
         onToggleCollapse={handleToggleSidebar}
       />
@@ -153,6 +156,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
       <Sweep open={sweepOpen} onClose={() => setSweepOpen(false)} />
       <Directory open={directoryOpen} onClose={() => setDirectoryOpen(false)} />
       <Inbox open={inboxOpen} onClose={() => setInboxOpen(false)} />
+      <SavedMessages open={savedOpen} onClose={() => setSavedOpen(false)} />
     </div>
   );
 }

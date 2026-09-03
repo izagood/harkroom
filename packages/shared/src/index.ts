@@ -424,6 +424,15 @@ export interface PinRow {
   message: MessageRow;
 }
 
+export interface SavedMessageRow {
+  messageId: string;
+  channelId: string;
+  state: 'open' | 'done';
+  createdAt: string;
+  doneAt: string | null;
+  message: MessageRow;
+}
+
 export interface LeaseRow {
   repo: string;
   path: string;
