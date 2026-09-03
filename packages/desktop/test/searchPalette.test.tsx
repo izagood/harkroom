@@ -263,4 +263,82 @@ describe('SearchPalette', () => {
     render(<SearchPalette open={true} onClose={vi.fn()} />);
     expect(screen.queryByLabelText(/이 채널에서만/)).toBeNull();
   });
+
+  it('initialScoped=true 로 열면 첫 검색이 채널로 좁혀진다', async () => {
+    useAppStore.getState().set({ activeChannelId: 'c1' });
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    render(<SearchPalette open={true} onClose={vi.fn()} initialScoped={true} />);
+
+    const toggle = screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+
+    fireEvent.change(screen.getByLabelText('검색어 입력'), { target: { value: 'hello' } });
+
+    await waitFor(() => {
+      expect(mockController.api.search).toHaveBeenCalledWith('hello', 'c1');
+    }, { timeout: 1000 });
+  });
+
+  it('initialScoped=false 로 열면 전역이다', async () => {
+    useAppStore.getState().set({ activeChannelId: 'c1' });
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    render(<SearchPalette open={true} onClose={vi.fn()} initialScoped={false} />);
+
+    const toggle = screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+
+    fireEvent.change(screen.getByLabelText('검색어 입력'), { target: { value: 'hello' } });
+
+    await waitFor(() => {
+      expect(mockController.api.search).toHaveBeenCalledWith('hello', null);
+    }, { timeout: 1000 });
+  });
+
+  it('placeholder 가 스코프 상태를 말한다', () => {
+    useAppStore.getState().set({ activeChannelId: 'c1' });
+
+    // 두 번째 render 를 겹쳐 띄우면 앞의 팔레트가 화면에 남아 두 placeholder 가 동시에
+    // 존재한다. 지금은 문구가 달라 우연히 통과하지만, 문구를 손대는 순간 어느 팔레트를
+    // 집었는지 모르게 되므로 하나씩 내리고 확인한다.
+    const scopedRender = render(
+      <SearchPalette open={true} onClose={vi.fn()} initialScoped={true} />,
+    );
+    expect(screen.getByPlaceholderText('이 채널에서 찾기 (general)')).toBeTruthy();
+    scopedRender.unmount();
+
+    render(<SearchPalette open={true} onClose={vi.fn()} initialScoped={false} />);
+    expect(screen.getByPlaceholderText('전체에서 찾기')).toBeTruthy();
+  });
+
+  // 팔레트는 Workspace 에 계속 마운트된 채 open 만 뒤집힌다. useState 초기값은 마운트
+  // 때 한 번만 읽히므로, 열릴 때마다 initialScoped 를 다시 적용하지 않으면 진입점이
+  // 정한 스코프가 두 번째 열기부터 무시된다(#258 회수 중 발견).
+  it('닫았다 다시 열면 그때의 initialScoped 를 반영한다', () => {
+    useAppStore.getState().set({ activeChannelId: 'c1' });
+
+    const view = render(<SearchPalette open={false} onClose={vi.fn()} initialScoped={false} />);
+    view.rerender(<SearchPalette open={true} onClose={vi.fn()} initialScoped={true} />);
+
+    const toggle = screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement;
+    expect(toggle.checked, '열 때의 initialScoped 가 반영돼야 한다').toBe(true);
+  });
+
+  // 이미 열려 있는 동안 부모가 initialScoped 를 바꿔도, 사람이 손으로 켠 토글을
+  // 덮어쓰지 않는다. 스코프는 사람의 선택이고 열기 동작만 그걸 초기화한다.
+  it('열려 있는 동안 initialScoped 가 바뀌어도 손으로 켠 토글을 덮지 않는다', () => {
+    useAppStore.getState().set({ activeChannelId: 'c1' });
+
+    const view = render(<SearchPalette open={true} onClose={vi.fn()} initialScoped={false} />);
+    fireEvent.click(screen.getByLabelText('이 채널에서만 (general)'));
+    expect((screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement).checked).toBe(
+      true,
+    );
+
+    view.rerender(<SearchPalette open={true} onClose={vi.fn()} initialScoped={false} />);
+    expect((screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement).checked).toBe(
+      true,
+    );
+  });
 });
