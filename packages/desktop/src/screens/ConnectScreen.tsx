@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ApiClient, ApiError } from '../lib/api';
+import { Logo } from '../components/Logo';
 
 export function ConnectScreen({ onConnected, initialError = null }: { onConnected: (baseUrl: string, token: string, accountId: string, handle: string) => void; initialError?: string | null }) {
   const [baseUrl, setBaseUrl] = useState('http://localhost:3400');
@@ -50,7 +51,10 @@ export function ConnectScreen({ onConnected, initialError = null }: { onConnecte
         className="w-80 space-y-3 rounded-lg bg-white p-6 shadow"
         onSubmit={(e) => { e.preventDefault(); void submit(); }}
       >
-        <h1 className="text-lg font-bold">murmur</h1>
+        <div className="flex flex-col items-center gap-1 text-zinc-900">
+          <Logo size={48} decorative />
+          <h1 className="text-lg font-bold">murmur</h1>
+        </div>
         <label className="block text-xs font-medium">
           Server URL
           <input className={field} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />

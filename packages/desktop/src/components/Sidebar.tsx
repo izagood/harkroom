@@ -9,6 +9,7 @@ import { StatusPicker } from './StatusPicker';
 import type { SectionId } from './settings/sections';
 import type { ChannelRow } from '@murmur/shared';
 import { CHANNEL_NAME_PATTERN } from '@murmur/shared';
+import { Logo } from './Logo';
 
 /**
  * 채널 미읽음 표시. **멘션 배지와 다른 신호다** — 멘션은 "당신을 불렀다"(빨간 숫자),
@@ -357,6 +358,7 @@ export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse 
       )}
       <div className="flex min-w-[180px] flex-1 flex-col overflow-hidden">
         <div className="flex items-center gap-2 border-b border-zinc-800 p-3 font-bold">
+          <Logo size={16} decorative />
           murmur
           <span className={`h-2 w-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}
             title={connected ? 'connected' : 'disconnected'} />
