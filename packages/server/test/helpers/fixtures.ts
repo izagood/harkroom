@@ -3,12 +3,12 @@ import type { FastifyInstance } from 'fastify';
 export async function bootstrapAdmin(app: FastifyInstance): Promise<{ token: string; accountId: string }> {
   const boot = await app.inject({
     method: 'POST', url: '/bootstrap',
-    payload: { handle: 'admin', displayName: 'Admin', password: 'pw123456' },
+    payload: { handle: 'admin', loginId: 'admin', displayName: 'Admin', password: 'pw123456' },
   });
   const accountId = boot.json().id as string;
   const login = await app.inject({
     method: 'POST', url: '/auth/login',
-    payload: { handle: 'admin', password: 'pw123456' },
+    payload: { loginId: 'admin', password: 'pw123456' },
   });
   return { token: login.json().token as string, accountId };
 }

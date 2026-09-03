@@ -36,8 +36,12 @@ describe('InviteSettings', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '초대 토큰 발급' }));
 
-    await waitFor(() => expect(c.createInvite).toHaveBeenCalled());
-    expect(screen.getByText(/muri_abc123/)).toBeTruthy();
+    // **토큰 렌더까지 `waitFor` 안에서 기다린다.** 호출만 기다린 뒤 화면을 동기로 단언하면
+    // 느린 러너에서 튄다 — 호출은 이미 됐지만 프로미스 해소 뒤의 리렌더가 아직 안 왔다.
+    await waitFor(() => {
+      expect(c.createInvite).toHaveBeenCalled();
+      expect(screen.getByText(/muri_abc123/)).toBeTruthy();
+    });
   });
 
   it('실패하면 오류 메시지가 화면에 표시된다', async () => {
@@ -49,8 +53,11 @@ describe('InviteSettings', () => {
     render(<InviteSettings />);
     fireEvent.click(screen.getByRole('button', { name: '초대 토큰 발급' }));
 
-    await waitFor(() => expect(c.createInvite).toHaveBeenCalled());
-    expect(screen.getByText(/403 Forbidden/)).toBeTruthy();
+    // 위와 같은 이유로 오류 문구도 `waitFor` 안에서 기다린다.
+    await waitFor(() => {
+      expect(c.createInvite).toHaveBeenCalled();
+      expect(screen.getByText(/403 Forbidden/)).toBeTruthy();
+    });
   });
 
   // 초대는 여러 사람에게 하는 일이고, 토큰은 한 번 쓰면 소진된다 — 한 번 발급했다고
@@ -68,8 +75,11 @@ describe('InviteSettings', () => {
     expect((again as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(again);
 
-    await waitFor(() => expect(screen.getByText('muri_2')).toBeTruthy());
-    expect(screen.queryByText('muri_1')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText('muri_2')).toBeTruthy();
+      // 옛 토큰이 사라진 것도 같은 리렌더의 결과다 — 따로 동기 단언하면 같은 경합이 난다.
+      expect(screen.queryByText('muri_1')).toBeNull();
+    });
     expect(c.createInvite).toHaveBeenCalledTimes(2);
   });
 

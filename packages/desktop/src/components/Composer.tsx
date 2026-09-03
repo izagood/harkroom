@@ -707,7 +707,7 @@ export function Composer({
           id={listId}
           role="listbox"
           aria-label={picking ? 'Mentions to keep' : 'Mention suggestions'}
-          className="absolute bottom-full left-0 z-10 mb-1 max-h-64 w-72 overflow-y-auto rounded border border-zinc-300 bg-white py-1 shadow-lg"
+          className="absolute bottom-full left-0 z-10 mb-1 max-h-64 w-72 overflow-y-auto rounded border border-border bg-surface-raised py-1 shadow-lg"
         >
           {options.map((item, i) => (
             <li key={item.id}>
@@ -722,7 +722,7 @@ export function Composer({
                 // 계정인지 집합인지도 속성으로 노출한다(#285). 같은 이유다: 배지 문구가
                 // 바뀌면 문구로 종류를 확인하던 테스트가 깨진다.
                 data-kind={item.kind}
-                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left ${i === active ? 'bg-indigo-50' : ''}`}
+                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left ${i === active ? 'bg-accent-surface' : ''}`}
                 // mousedown 을 막지 않으면 클릭 전에 textarea 가 blur 되어 커서 위치가 사라진다.
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseEnter={() => setActive(i)}
@@ -735,7 +735,7 @@ export function Composer({
                     {/* 집합에는 표시 이름을 함께 보인다 — `@release` 만으로는 그것이 무엇을
                         묶은 것인지 알 수 없고, 부르기 직전이 그것을 확인하는 자리다. 계정에는
                         붙이지 않는다: 사람·에이전트는 핸들이 곧 이름으로 통한다. */}
-                    <span className="ml-1 truncate text-[10px] text-zinc-500">{item.group.displayName}</span>
+                    <span className="ml-1 truncate text-[10px] text-fg-subtle">{item.group.displayName}</span>
                   </>
                 ) : (
                   <>
@@ -760,14 +760,14 @@ export function Composer({
               data-testid="auto-mention"
               data-handle={h}
               title="이 채널이 자동으로 멘션한다"
-              className="flex items-center gap-1 rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-xs font-medium text-indigo-700"
+              className="flex items-center gap-1 rounded border border-accent bg-accent-surface px-1.5 py-0.5 text-xs font-medium text-accent"
             >
               <span>@{h}</span>
-              <span className="rounded bg-indigo-100 px-1 text-[10px] font-normal">자동</span>
+              <span className="rounded bg-accent px-1 text-[10px] font-normal text-fg-on-strong">자동</span>
               <button
                 type="button"
                 aria-label={`Skip @${h} this time`}
-                className="rounded px-0.5 text-indigo-500 hover:bg-indigo-100"
+                className="rounded px-0.5 text-accent hover:bg-surface-hover"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => skipAuto(h)}
               >
@@ -780,13 +780,13 @@ export function Composer({
               key={h}
               data-testid="sticky-mention"
               data-handle={h}
-              className="flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-700"
+              className="flex items-center gap-1 rounded bg-surface-sunken px-1.5 py-0.5 text-xs font-medium text-fg"
             >
               <span>@{h}</span>
               <button
                 type="button"
                 aria-label={`Remove @${h}`}
-                className="rounded px-0.5 text-zinc-500 hover:bg-zinc-200"
+                className="rounded px-0.5 text-fg-subtle hover:bg-surface-hover"
                 // 목록의 버튼과 같은 이유로 blur 를 막는다 — 지운 뒤에도 커서는 글 안에 있어야 한다.
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => drop(h)}
@@ -812,7 +812,7 @@ export function Composer({
         <ul
           data-testid="body-mentions"
           aria-label="부를 상대"
-          className="mb-1 flex flex-wrap items-center gap-1 text-xs text-zinc-600"
+          className="mb-1 flex flex-wrap items-center gap-1 text-xs text-fg-muted"
         >
           <li>부를 상대:</li>
           {bodyMentionList.map((r) => (
@@ -821,7 +821,7 @@ export function Composer({
               data-handle={r.handle}
               data-kind={r.kind}
               className={`flex items-center gap-0.5 font-medium ${
-                r.kind === 'account' ? 'text-zinc-700' : 'text-teal-700'
+                r.kind === 'account' ? 'text-fg' : 'text-teal-700'
               }`}
             >
               <span>@{r.handle}</span>
@@ -833,14 +833,14 @@ export function Composer({
                 명단을 받지 않는다(`listHandleGroupMembers` 는 서버 전용). 글자마다 명단을
                 조회하는 것은 이 줄이 살 값이 아니다.
               */}
-              {r.kind === 'group' && <span className="text-zinc-500">(집합)</span>}
-              {r.kind === 'channel' && <span className="text-zinc-500">(채널 전체)</span>}
+              {r.kind === 'group' && <span className="text-fg-subtle">(집합)</span>}
+              {r.kind === 'channel' && <span className="text-fg-subtle">(채널 전체)</span>}
             </li>
           ))}
         </ul>
       )}
       {uploadError && (
-        <p role="alert" className="mb-1 text-[11px] text-red-600">{uploadError}</p>
+        <p role="alert" className="mb-1 text-[11px] text-danger">{uploadError}</p>
       )}
 
       {pending.length > 0 && (
@@ -848,14 +848,14 @@ export function Composer({
           {pending.map((a) => (
             <span
               key={a.id}
-              className="inline-flex items-center gap-1 rounded border border-zinc-300 bg-zinc-50 px-1.5 text-[11px] text-zinc-700"
+              className="inline-flex items-center gap-1 rounded border border-border bg-surface px-1.5 text-[11px] text-fg"
             >
               <span aria-hidden>📎</span>
               {a.filename}
-              <span className="text-zinc-500">{formatSize(a.sizeBytes)}</span>
+              <span className="text-fg-subtle">{formatSize(a.sizeBytes)}</span>
               <button
                 aria-label={`Remove ${a.filename}`}
-                className="rounded px-0.5 text-zinc-400 hover:bg-zinc-200"
+                className="rounded px-0.5 text-fg-muted hover:bg-surface-hover"
                 onClick={() => setPending((cur) => cur.filter((x) => x.id !== a.id))}
               >
                 ×
@@ -873,7 +873,7 @@ export function Composer({
         <div
           role="status"
           data-testid="undo-send"
-          className="mb-1 flex items-center gap-2 rounded bg-zinc-100 px-2 py-1 text-[11px] text-zinc-600"
+          className="mb-1 flex items-center gap-2 rounded bg-surface-sunken px-2 py-1 text-[11px] text-fg-muted"
         >
           <span className="min-w-0 flex-1 truncate">
             보내는 중… {held.typed || `첨부 ${held.attachments.length}개`}
@@ -881,7 +881,7 @@ export function Composer({
           <button
             type="button"
             aria-label="Undo send"
-            className="rounded px-1.5 py-0.5 font-medium text-indigo-600 hover:bg-zinc-200"
+            className="rounded px-1.5 py-0.5 font-medium text-accent hover:bg-surface-hover"
             // 누른 뒤 원문이 입력창으로 돌아오므로 커서를 지켜야 한다 — @·첨부 버튼과 같은 이유다.
             onMouseDown={(e) => e.preventDefault()}
             onClick={undoSend}
@@ -895,8 +895,8 @@ export function Composer({
           실패만 있을 때 줄 전체가 사라지면, 작성자는 자기 글이 안 나갔다는 것을 영영
           모른다. 목록 조회·취소가 실패한 경우도 여기서 말한다. */}
       {(pendingScheduled.length > 0 || failedScheduled.length > 0 || listError) && (
-        <div className="mb-1 flex flex-col rounded bg-indigo-50 px-2 py-1 text-[11px] text-indigo-700">
-          {listError && <p role="alert" className="text-red-700">{listError}</p>}
+        <div className="mb-1 flex flex-col rounded bg-accent-surface px-2 py-1 text-[11px] text-accent">
+          {listError && <p role="alert" className="text-danger">{listError}</p>}
           {(pendingScheduled.length > 0 || failedScheduled.length > 0) && (
             <button
               type="button"
@@ -914,13 +914,13 @@ export function Composer({
           {scheduledExpanded && (
             <div className="mt-1 flex flex-col gap-1">
               {pendingScheduled.map((m) => (
-                <div key={m.id} className="flex items-center justify-between rounded bg-white px-2 py-1 text-zinc-700">
+                <div key={m.id} className="flex items-center justify-between rounded bg-surface-raised px-2 py-1 text-fg">
                   <span className="min-w-0 flex-1 truncate">{m.body}</span>
-                  <span className="ml-2 shrink-0 text-zinc-500">{new Date(m.sendAt).toLocaleString()}</span>
+                  <span className="ml-2 shrink-0 text-fg-subtle">{new Date(m.sendAt).toLocaleString()}</span>
                   <button
                     type="button"
                     aria-label="예약 취소"
-                    className="ml-2 rounded px-1 text-red-500 hover:bg-red-100"
+                    className="ml-2 rounded px-1 text-danger hover:bg-danger-surface-strong"
                     onClick={() => void handleCancelScheduled(m.id)}
                   >
                     ×
@@ -928,7 +928,7 @@ export function Composer({
                 </div>
               ))}
               {failedScheduled.map((m) => (
-                <div key={m.id} className="flex items-center justify-between rounded bg-red-50 px-2 py-1 text-red-700">
+                <div key={m.id} className="flex items-center justify-between rounded bg-danger-surface px-2 py-1 text-danger">
                   <span className="min-w-0 flex-1 truncate">{m.body}</span>
                   {/* 사유는 **글로도** 보여야 한다 — 색만으로 실패를 말하면 색을 못 보는
                       사람에게는 평범한 줄이다. */}
@@ -942,7 +942,7 @@ export function Composer({
 
       <textarea
         ref={ref}
-        className="w-full resize-none rounded border border-zinc-300 px-3 py-2"
+        className="w-full resize-none rounded border border-border bg-field px-3 py-2"
         rows={rows}
         autoFocus={autoFocus}
         placeholder={placeholder}
@@ -970,8 +970,8 @@ export function Composer({
             type="button"
             aria-label="Add mention"
             aria-pressed={picking}
-            className={`rounded px-2 py-0.5 text-sm text-zinc-600 hover:bg-zinc-100 ${
-              picking ? 'bg-zinc-200' : ''
+            className={`rounded px-2 py-0.5 text-sm text-fg-muted hover:bg-surface-sunken ${
+              picking ? 'bg-surface-hover' : ''
             }`}
             // 누르는 동안 textarea 가 blur 되면 커서 자리가 사라진다.
             onMouseDown={(e) => e.preventDefault()}
@@ -987,7 +987,7 @@ export function Composer({
           </button>
           {/* aria-label 은 **input** 에 붙인다. label 에 붙이면 그 요소 자신의 이름이
               될 뿐 input 과 연결되지 않아 입력이 접근 불가가 된다. */}
-          <label className="cursor-pointer rounded px-2 py-0.5 text-sm text-zinc-600 hover:bg-zinc-100">
+          <label className="cursor-pointer rounded px-2 py-0.5 text-sm text-fg-muted hover:bg-surface-sunken">
             📎
             <input
               ref={fileRef}
@@ -1006,7 +1006,7 @@ export function Composer({
             <button
               type="button"
               aria-label="나중에 보내기"
-              className="rounded px-2 py-0.5 text-sm text-zinc-600 hover:bg-zinc-100 disabled:opacity-40"
+              className="rounded px-2 py-0.5 text-sm text-fg-muted hover:bg-surface-sunken disabled:opacity-40"
               disabled={!draft.trim()}
               onMouseDown={(e) => e.preventDefault()}
               onClick={openScheduleModal}
@@ -1018,7 +1018,7 @@ export function Composer({
         <button
           type="button"
           aria-label="Send message"
-          className="rounded-full bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-700 disabled:bg-zinc-300 disabled:text-zinc-500"
+          className="rounded-full bg-accent px-3 py-1 text-sm font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border disabled:text-fg-subtle"
           // 여기는 blur 를 막지 않는다 — 전송에 성공하면 초안이 비므로 커서를 보존할
           // 이유가 없고, 실패하면 사용자가 다시 textarea 를 눌러 이어 쓴다. 반면 위
           // @·첨부 버튼은 누른 뒤에도 같은 자리에 계속 써야 하므로 막는다.
@@ -1031,29 +1031,29 @@ export function Composer({
       </div>
       {scheduleModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-          <div className="w-80 rounded-lg bg-white p-4 shadow-lg">
+          <div className="w-80 rounded-lg bg-surface-raised p-4 shadow-lg">
             <h3 className="mb-3 text-base font-medium">예약 발송</h3>
             <input
               type="datetime-local"
               aria-label="예약 시각"
-              className="mb-3 w-full rounded border border-zinc-300 px-3 py-2"
+              className="mb-3 w-full rounded border border-border bg-field px-3 py-2"
               value={scheduleDateTime}
               onChange={(e) => setScheduleDateTime(e.target.value)}
             />
             {scheduleError && (
-              <p role="alert" className="mb-3 text-sm text-red-600">{scheduleError}</p>
+              <p role="alert" className="mb-3 text-sm text-danger">{scheduleError}</p>
             )}
             <div className="flex justify-end gap-2">
               <button
                 type="button"
-                className="rounded px-3 py-1 text-sm text-zinc-600 hover:bg-zinc-100"
+                className="rounded px-3 py-1 text-sm text-fg-muted hover:bg-surface-sunken"
                 onClick={() => setScheduleModalOpen(false)}
               >
                 취소
               </button>
               <button
                 type="button"
-                className="rounded bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-700 disabled:bg-zinc-300"
+                className="rounded bg-accent px-3 py-1 text-sm font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border"
                 onClick={handleSchedule}
                 disabled={isScheduling || !scheduleDateTime}
               >

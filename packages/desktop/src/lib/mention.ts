@@ -1,4 +1,4 @@
-import { CHANNEL_MENTION_HANDLE, MENTION_PATTERN, mentionedHandles, stripCodeSpans } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, denormalizeMentions, MENTION_PATTERN, MENTION_TOKEN_PATTERN, mentionedHandles, renderMentions, stripCodeSpans } from '@murmur/shared';
 
 // 멘션 문법은 @murmur/shared 에 있다 — 서버의 알림 발송과 같은 규칙을 봐야 한다. 갈라지면
 // 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(me@x.com), 강조된
@@ -42,10 +42,25 @@ export type MessagePart =
  * 본문을 텍스트와 멘션 조각으로 나눈다. **존재하는 handle 만** 멘션으로 표시한다 —
  * 아무 @단어나 칠하면 오타가 멘션처럼 보이고, 사용자가 알림이 갔다고 착각한다.
  *
- * @param knownHandles 계정 handle 목록
- * @param groupHandles 집합 handle 목록. 이 목록에 있으면 `isGroup` 플래그가 켜진다.
+ * `accountsMap` 은 **맨 뒤**에 있다. 가운데에 두면 기존 호출부의 `groupHandles` 가 조용히
+ * 이 자리에 묶여서, 집합 멘션이 `isGroup` 을 잃고도 컴파일된다 — 실제로 그렇게 놓였고
+ * 기존 테스트 한 줄이 `undefined` 를 끼워 넣는 쪽으로 고쳐졌다(#271). 새 인자는 더한다,
+ * 끼우지 않는다.
+ *
+ * @param body 입력 본문 (<@id> 또는 @handle 형식)
+ * @param knownHandles 알려진 handle 목록
+ * @param groupHandles (선택) 집합 handle 목록. 이 목록에 있으면 `isGroup` 플래그가 켜진다.
+ * @param accountsMap (선택) account ID -> handle 맵. 있으면 <@id> 토큰을 현재 handle 로 렌더링한다.
  */
-export function splitMentions(body: string, knownHandles: string[], groupHandles: string[] = []): MessagePart[] {
+export function splitMentions(
+  body: string, knownHandles: string[], groupHandles: string[] = [],
+  accountsMap?: Map<string, string>,
+): MessagePart[] {
+  // <@id> 토큰이 있으면 현재 handle 로 렌더링한다(#271)
+  let processedBody = body;
+  if (accountsMap && accountsMap.size > 0) {
+    processedBody = renderMentions(body, accountsMap, '알 수 없음');
+  }
   // `@channel`(#225)은 그 handle 의 계정이 없어도 칠한다 — 서버가 채널 전체에 알림을
   // 보내기 때문이다. 여기서 빼면 위 주석이 경계하는 바로 그 불일치가 된다: 강조되지 않은
   // 것이 몰래 알림을 보낸다. 계정이 있으면 `knownHandles` 에 이미 들어 있어 중복이 없다.
@@ -54,17 +69,17 @@ export function splitMentions(body: string, knownHandles: string[], groupHandles
   const parts: MessagePart[] = [];
   let cursor = 0;
 
-  for (const m of body.matchAll(MENTION_IN_TEXT)) {
+  for (const m of processedBody.matchAll(MENTION_IN_TEXT)) {
     const handle = (m[2] ?? '').toLowerCase();
     if (!known.has(handle) && !groupSet.has(handle)) continue;
     // m.index 는 선행 문자를 포함한다 — @ 의 실제 위치를 다시 계산한다.
     const at = m.index + (m[1] ?? '').length;
-    if (at > cursor) parts.push({ kind: 'text', text: body.slice(cursor, at) });
+    if (at > cursor) parts.push({ kind: 'text', text: processedBody.slice(cursor, at) });
     parts.push({ kind: 'mention', text: `@${m[2]}`, handle, isGroup: groupSet.has(handle) });
     cursor = at + 1 + (m[2] ?? '').length;
   }
-  if (cursor < body.length) parts.push({ kind: 'text', text: body.slice(cursor) });
-  return parts.length ? parts : [{ kind: 'text', text: body }];
+  if (cursor < processedBody.length) parts.push({ kind: 'text', text: processedBody.slice(cursor) });
+  return parts.length ? parts : [{ kind: 'text', text: processedBody }];
 }
 
 /** 보내기 전에 보여 줄 한 항목. `kind` 는 표시에만 쓰인다 — 판정은 이미 끝났다. */
@@ -138,4 +153,23 @@ export function keepMentioned(sticky: string[], body: string, known: Set<string>
   const kept = new Set(sticky);
   const added = mentionedHandles(body).filter((h) => known.has(h) && !kept.has(h));
   return added.length ? [...sticky, ...added] : sticky;
+}
+
+/**
+ * 저장된 본문을 **사람이 다시 입력할 수 있는 형태**로 되돌린다(#271). 수정창에 채울 때와
+ * 본문을 클립보드에 담을 때 쓴다.
+ *
+ * `renderMentions`(화면용)와 **다른 함수**를 쓴다. 화면은 모르는 id 를 `@알 수 없음` 으로
+ * 그려도 되지만, 여기서 그러면 수정 저장·붙여넣기에서 그 문구가 본문에 박히고 원래 가리켰던
+ * 계정을 영영 되찾을 수 없다. 그래서 모르는 id 는 `<@id>` 로 **그대로 남긴다** — 서버가
+ * 저장할 때 그 토큰을 그대로 둔다.
+ *
+ * 왜 필요한가: 정본이 `<@id>` 가 된 뒤로 `message.body` 를 그대로 수정창에 넣으면 사람이
+ * `<@0f3c…>` 를 보게 된다. 복사도 같다 — 그 문자열을 다른 곳에 붙여넣으면 아무 뜻이 없고,
+ * murmur 에 다시 붙여넣어도 그 사람을 부르지 못한다(`normalizeMentions` 는 `@handle` 만 본다).
+ */
+export function bodyAsHandles(body: string, accounts: Record<string, { id: string; handle: string }>): string {
+  const idToHandle = new Map<string, string>();
+  for (const a of Object.values(accounts)) idToHandle.set(a.id, a.handle);
+  return denormalizeMentions(body, idToHandle);
 }

@@ -80,7 +80,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   useEffect(() => { setFilesOpen(false); }, [activeChannelId]);
 
   if (!activeChannelId) {
-    return <main className="flex flex-1 items-center justify-center text-zinc-400">Pick a channel to start</main>;
+    return <main className="flex flex-1 items-center justify-center text-fg-muted">Pick a channel to start</main>;
   }
 
   const isArchived = channel?.archivedAt != null;
@@ -88,17 +88,17 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
 
   return (
     <div className="flex min-w-0 flex-1">
-    <main className="flex min-w-0 flex-1 flex-col bg-white">
-      <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-2">
+    <main className="flex min-w-0 flex-1 flex-col bg-surface-raised">
+      <header className="flex items-center gap-2 border-b border-border px-4 py-2">
         <span className="font-bold">{title}</span>
-        {channel?.topic && <span className="truncate text-xs text-zinc-500">{channel.topic}</span>}
-        {channel?.repo && <span className="rounded bg-zinc-100 px-1.5 text-[11px] text-zinc-600">{channel.repo}</span>}
-        {isArchived && <span className="rounded bg-zinc-200 px-1.5 text-[11px] text-zinc-600">보관됨</span>}
+        {channel?.topic && <span className="truncate text-xs text-fg-subtle">{channel.topic}</span>}
+        {channel?.repo && <span className="rounded bg-surface-sunken px-1.5 text-[11px] text-fg-muted">{channel.repo}</span>}
+        {isArchived && <span className="rounded bg-surface-hover px-1.5 text-[11px] text-fg-muted">보관됨</span>}
         {/* 문서는 채널에 붙는다(#188) — DM 에는 없다. `channel` 이 없을 때 버튼을 그리면
             눌러도 아무 일이 없는 죽은 버튼이 된다(패널 쪽 조건과 같은 조건이어야 한다). */}
         {channel && (
           <button
-            className="ml-auto shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
+            className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-sunken"
             aria-expanded={docOpen}
             onClick={() => setDocOpen((v) => !v)}
           >
@@ -106,7 +106,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           </button>
         )}
         <button
-          className={`${channel ? '' : 'ml-auto '}shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100`}
+          className={`${channel ? '' : 'ml-auto '}shrink-0 rounded border border-border px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-sunken`}
           onClick={() => setFilesOpen((v) => !v)}
         >
           파일
@@ -115,7 +115,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
             **지금 보는 대화로 좁힌 채** 열고, ⌘K 는 전역으로 남는다 — 두 진입점이 서로
             다른 뜻을 가지므로 title 에 그 차이를 적는다. DM 에도 같은 버튼이 나온다. */}
         <button
-          className="shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
+          className="shrink-0 rounded border border-border px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-sunken"
           onClick={() => onOpenSearch?.(true)}
           aria-label="이 채널에서 찾기"
           title="이 채널에서 찾기 (⌘K 는 전체 검색)"
@@ -126,9 +126,9 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       {/* 고정된 메시지(#218). 핀이 하나도 없으면 아무것도 그리지 않는다 — 늘 있는 빈 줄은
           "여기에 뭔가 있다"는 거짓 신호이고, 헤더 아래 세로 공간을 그냥 먹는다. */}
       {channelPins.length > 0 && (
-        <div className="border-b border-zinc-200 bg-zinc-50">
+        <div className="border-b border-border bg-surface">
           <button
-            className="flex w-full items-center gap-1 px-4 py-1 text-left text-[11px] text-zinc-600"
+            className="flex w-full items-center gap-1 px-4 py-1 text-left text-[11px] text-fg-muted"
             aria-expanded={pinsOpen}
             onClick={() => setPinsOpen((v) => !v)}
           >
@@ -142,7 +142,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
                   {/* 누르면 그 메시지로 간다. `openMessage` 를 쓰는 이유: 답글이면 스레드
                       패널까지 열고 강조를 거는 일이 이미 거기 한 곳에 있다(#178). */}
                   <button
-                    className="flex w-full gap-2 px-6 py-0.5 text-left text-[12px] text-zinc-700 hover:bg-zinc-100"
+                    className="flex w-full gap-2 px-6 py-0.5 text-left text-[12px] text-fg hover:bg-surface-sunken"
                     onClick={() => void getController().openMessage(p.messageId)}
                   >
                     <span className="shrink-0 font-semibold">{accounts[p.message.authorId]?.handle ?? '…'}</span>
@@ -162,7 +162,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           // 서버 히스토리 창(최신 N개) 밖으로 밀려난 대화로 돌아가는 유일한 경로다.
           <div className="px-4 py-2 text-center">
             <button
-              className="rounded border border-zinc-300 px-2 py-1 text-[11px] text-zinc-600"
+              className="rounded border border-border px-2 py-1 text-[11px] text-fg-muted"
               onClick={() => void getController().loadOlder()}
             >
               Load older messages
@@ -190,16 +190,16 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
               */}
               {newDay && (
                 <div className="flex items-center gap-2 px-4 py-1" role="separator">
-                  <span className="h-px flex-1 bg-zinc-200" />
-                  <span className="text-[11px] font-medium text-zinc-500">{dayLabel(m.createdAt)}</span>
-                  <span className="h-px flex-1 bg-zinc-200" />
+                  <span className="h-px flex-1 bg-surface-hover" />
+                  <span className="text-[11px] font-medium text-fg-subtle">{dayLabel(m.createdAt)}</span>
+                  <span className="h-px flex-1 bg-surface-hover" />
                 </div>
               )}
               {m.id === dividerBeforeId && (
                 <div className="flex items-center gap-2 px-4 py-1" role="separator">
-                  <span className="h-px flex-1 bg-red-300" />
-                  <span className="text-[11px] font-medium text-red-500">New messages</span>
-                  <span className="h-px flex-1 bg-red-300" />
+                  <span className="h-px flex-1 bg-danger-border" />
+                  <span className="text-[11px] font-medium text-danger">New messages</span>
+                  <span className="h-px flex-1 bg-danger-border" />
                 </div>
               )}
               <MessageItem message={m} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />
@@ -209,9 +209,9 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         <div ref={bottomRef} />
       </div>
       <TypingLine />
-      <div className="border-t border-zinc-200 p-3">
+      <div className="border-t border-border p-3">
         {isArchived ? (
-          <div className="rounded bg-zinc-100 p-2 text-center text-sm text-zinc-500">
+          <div className="rounded bg-surface-sunken p-2 text-center text-sm text-fg-subtle">
             보관된 채널이다
           </div>
         ) : (
