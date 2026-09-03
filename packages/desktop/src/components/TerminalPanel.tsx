@@ -80,29 +80,29 @@ export function TerminalPanel() {
 
   return (
     <aside
-      className="flex w-[38rem] shrink-0 flex-col border-l border-zinc-200 bg-zinc-950"
+      className="flex w-[38rem] shrink-0 flex-col border-l border-border bg-surface-sunken"
       aria-label="에이전트 터미널"
     >
-      <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2 text-xs text-zinc-300">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs text-fg-muted">
         <span className="font-semibold">터미널</span>
-        <span className="text-zinc-500">@{agent?.handle ?? agentId}</span>
-        {state && <span className="rounded bg-zinc-800 px-1.5 py-0.5">{STATE_LABEL[state]}</span>}
+        <span className="text-fg-subtle">@{agent?.handle ?? agentId}</span>
+        {state && <span className="rounded bg-surface-raised px-1.5 py-0.5">{STATE_LABEL[state]}</span>}
         <button
           onClick={() => set({ terminalAgentId: null })}
-          className="ml-auto rounded px-2 py-0.5 text-zinc-400 hover:bg-zinc-800"
+          className="ml-auto rounded px-2 py-0.5 text-fg-muted hover:bg-surface-raised"
           aria-label="터미널 닫기"
         >
           닫기
         </button>
       </div>
-      {phase === 'loading' && <p className="px-3 py-2 text-xs text-zinc-500">세션을 확인하는 중…</p>}
+      {phase === 'loading' && <p className="px-3 py-2 text-xs text-fg-subtle">세션을 확인하는 중…</p>}
       {phase === 'no-session' && (
-        <p className="px-3 py-2 text-xs text-zinc-500">
+        <p className="px-3 py-2 text-xs text-fg-subtle">
           진행 중인 턴이 없다 — 이 에이전트를 부르면 그 턴에 붙을 수 있다.
         </p>
       )}
       {phase === 'error' && (
-        <p className="px-3 py-2 text-xs text-amber-400">터미널을 열지 못했다: {error}</p>
+        <p className="px-3 py-2 text-xs text-warning">터미널을 열지 못했다: {error}</p>
       )}
       {/* 이 자리는 항상 렌더한다 — 조건부로 만들면 세션을 찾은 순간 ref 가 아직 null 이라
           xterm 을 붙일 곳이 없다. */}
