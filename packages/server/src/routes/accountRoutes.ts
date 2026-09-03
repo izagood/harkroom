@@ -3,7 +3,9 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { newToken } from '../auth/tokens.js';
 import { ACCOUNT_STATUSES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@murmur/shared';
-import { createAgentAccount, getAgent, listAgents, revokeAllPats, updateAgent } from '../services/agents.js';
+import {
+  ackAgentStop, createAgentAccount, getAgent, listAgents, requestAgentStop, revokeAllPats, updateAgent,
+} from '../services/agents.js';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { deleteMemory, listMemoryEntries } from '../services/memory.js';
@@ -211,6 +213,34 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     return updated;
   });
 
+  /**
+   * 러너에게 **종료를 요청한다**(#129). 재시작 버튼이 아니다.
+   *
+   * murmur 는 러너를 띄우지 않는다(docs/design.md §1 외부 접속형, §6 스코프 제외) — 그
+   * 머신에도, harness 로그인 세션에도, 파일시스템에도 닿지 못한다. 여기서 하는 일은
+   * 정의에 시각을 하나 남기는 것뿐이고, 러너가 다음에 자기 정의를 읽을 때 그것을 보고
+   * **지금 턴을 끝낸 뒤** 스스로 물러난다. 다시 띄우는 것은 사람(또는 그 사람의
+   * launchd/systemd 감독)의 몫이다.
+   *
+   * 가드가 `requireAdmin` 인 이유: 이 파일의 에이전트 관리 라우트가 전부 그렇고, 남의
+   * 러너를 세우는 것은 그중에서도 도달 범위가 큰 조작이다.
+   */
+  app.post('/accounts/agents/:id/stop', { preHandler: app.requireAdmin }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const updated = await requestAgentStop(pool, id, req.account!.id);
+    // 존재 확인은 서비스가 한다 — 없는 에이전트에 감사만 남는 모양(위 PATCH 주석)을 피한다.
+    if (!updated) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+    }
+    await recordAudit(pool, {
+      // 지시문도 대화 본문도 넣지 않는다 — 감사에 본문을 복사하면 삭제가 삭제가 아니다.
+      // 누가·언제·누구를 멈추라고 했는지만 남긴다.
+      action: 'agent.stop.requested', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { handle: updated.handle },
+    }, req);
+    return updated;
+  });
+
   // 러너가 자기 정의를 읽는 자리. 이것이 없으면 UI 수정이 도는 러너에 도달하지 않는다.
   app.get('/agent/config', { preHandler: app.requireAccount }, async (req, reply) => {
     if (req.account!.kind !== 'agent') {
@@ -219,6 +249,19 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     const self = await getAgent(pool, req.account!.id);
     if (!self) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+    }
+    // #129: 종료 요청은 이 응답을 타고 러너에게 간다(새 채널을 만들지 않는다 — 러너는
+    // 이미 매 턴 여기를 읽는다). 읽어 간 사실을 지금 남긴다: 러너가 종료하면 그 다음
+    // 요청 자체가 오지 않으므로, 서버가 관측할 수 있는 마지막 사실이 이 수령이다.
+    // 응답에도 그 값을 실어 준다 — 러너와 화면이 같은 뷰를 봐야 한다.
+    if (self.stopRequestedAt && !self.stopAckedAt) {
+      const ackedAt = await ackAgentStop(pool, req.account!.id);
+      if (ackedAt) {
+        self.stopAckedAt = ackedAt;
+        // #126: 요청을 받았다/처리했다는 사실은 로그에도 남긴다.
+        req.log.info({ agentId: req.account!.id, handle: req.account!.handle },
+          'runner picked up stop request');
+      }
     }
     return self;
   });

@@ -16,6 +16,9 @@ export type AuditAction =
   // #171: 새 에이전트의 기본값 변경. 이미 만들어진 에이전트는 바뀌지 않으므로, 이 기록은
   // '앞으로 만들 것의 서식이 언제 누구 손에 바뀌었나' 를 답한다.
   | 'agent.defaults.updated'
+  // #129: 러너 종료 요청. 남의 러너를 멈추는 조작이라 남는 기록이 있어야 한다.
+  // detail 에는 handle 만 남긴다 — 지시문도 대화 본문도 넣지 않는다(같은 파일 위 규칙).
+  | 'agent.stop.requested'
   | 'pat.issued' | 'pat.revoked'
   | 'password.changed'
   | 'channel.created' | 'channel.updated' | 'channel.archived' | 'channel.unarchived' | 'message.deleted';

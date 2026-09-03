@@ -12,7 +12,11 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   -- 에이전트는 상태를 고를 수 없다(서버가 거절한다). 기본값 그대로지만 AccountView 의
   -- 필수 필드라 형태를 맞춰 준다 — 화면은 사람 계정에만 이 값을 그린다.
   a.status, a.status_text as "statusText",
-  v.version as "runnerVersion"`;
+  v.version as "runnerVersion",
+  -- #129 종료 요청. 러너 자신(GET /agent/config)과 운영자 목록이 **같은 뷰**를 본다 —
+  -- 두 곳에서 따로 읽으면 화면이 보여주는 값과 러너가 실제로 집어 가는 값이 갈릴 수 있다.
+  c.stop_requested_at as "stopRequestedAt",
+  c.stop_acked_at as "stopAckedAt"`;
 
 const FROM = `from account a left join agent_config c on c.account_id = a.id
   left join agent_runner_version v on v.account_id = a.id`;
@@ -125,6 +129,55 @@ export async function updateAgent(
   }
   await upsertConfig(pool, id, patch);
   return getAgent(pool, id);
+}
+
+/**
+ * 러너에게 종료를 요청한다(#129). **재시작이 아니다** — murmur 는 러너를 다시 띄우지 못한다.
+ *
+ * `agent_config` 행이 없을 수도 있어 upsert 다: 에이전트는 정의 없이도 만들어질 수 있고
+ * (`listAgents` 가 left join 인 이유가 그것이다), 그런 에이전트에도 러너는 붙는다.
+ *
+ * 다시 요청하면 `stop_acked_at` 을 null 로 되돌린다. 새 요청은 새 수령을 기다려야 한다 —
+ * 옛 수령 기록을 남겨 두면 화면이 "러너가 이번 요청을 받아 갔다"고 거짓을 말한다.
+ */
+export async function requestAgentStop(
+  pool: Pool, agentId: string, actorId: string,
+): Promise<AgentView | null> {
+  // 대상 확인이 **먼저**다. 없는 계정에 upsert 하면 agent_config 가 account 를 참조하므로
+  // 외래키로 실패하지만, 사람 계정이면 조용히 성공해 사람에게 종료 요청이 달린다.
+  const existing = await getAgent(pool, agentId);
+  if (!existing) return null;
+  await pool.query(
+    `insert into agent_config (account_id, stop_requested_at, stop_requested_by)
+     values ($1, now(), $2)
+     on conflict (account_id) do update set
+       stop_requested_at = now(),
+       stop_requested_by = $2,
+       stop_acked_at = null,
+       updated_at = now()`,
+    [agentId, actorId],
+  );
+  return getAgent(pool, agentId);
+}
+
+/**
+ * 러너가 종료 요청을 읽어 갔다는 사실을 남긴다(#129).
+ *
+ * 러너가 실제로 종료했는지는 여기서 알 수 없다 — 종료하면 다음 요청 자체가 오지 않기
+ * 때문이다. 그래서 이 값의 뜻은 '멈췄다'가 아니라 '요청이 러너에게 도달했다'뿐이다.
+ *
+ * 이미 수령한 요청은 다시 찍지 않는다(`stop_acked_at is null` 조건). 매 턴 덮어쓰면
+ * "언제 도달했나"가 러너가 마지막으로 정의를 읽은 시각으로 밀려 의미를 잃는다.
+ * 요청이 없으면 아무 행도 건드리지 않는다 — 수령은 요청에 대해서만 존재한다.
+ */
+export async function ackAgentStop(pool: Pool, agentId: string): Promise<string | null> {
+  const res = await pool.query(
+    `update agent_config set stop_acked_at = now()
+      where account_id = $1 and stop_requested_at is not null and stop_acked_at is null
+      returning stop_acked_at as "stopAckedAt"`,
+    [agentId],
+  );
+  return res.rowCount ? (res.rows[0].stopAckedAt as string) : null;
 }
 
 /**
