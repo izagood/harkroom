@@ -1,4 +1,4 @@
-import type { AccountStatus, AttachmentRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent } from '@murmur/shared';
+import type { AccountStatus, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent } from '@murmur/shared';
 import { notifyLevelOf } from '@murmur/shared';
 import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
@@ -395,6 +395,9 @@ export class Controller {
     // 핀은 **크리티컬 패스에서 뺀다.** 이 엔드포인트가 없는 서버(구버전)에 붙었을 때
     // 채널이 아예 안 열리면 안 된다 — 채널 선호(`start`)와 같은 이유다.
     this.swallow(this.loadPins(channelId));
+    // 자동 멘션(#173)도 같은 이유로 크리티컬 패스 밖이다. 못 받으면 칩이 없는 것뿐이고,
+    // 그때 글을 보내면 접두가 안 붙는다 — 채널이 안 열리는 것보다 낫다.
+    this.swallow(this.loadChannelAutoMentions(channelId));
     const page = await this.api.messages(channelId, { since });
     this.loadedChannels.add(channelId);
     useAppStore.getState().upsertMessages(channelId, page.messages);
@@ -867,6 +870,29 @@ export class Controller {
     return members;
   }
 
+  /**
+   * 이 채널의 자동 멘션 목록(#173)을 서버에서 다시 받는다. 핀과 같이 목록 전체를 갈아 끼운다
+   * — admin 이 다른 기기에서 바꾼 것도 섞여 들어오므로 로컬 델타는 갈라진다.
+   * **실패를 빈 목록으로 삼키지 않는다** — 빈 목록은 "아무도 안 부른다"는 거짓 사실이 된다.
+   */
+  async loadChannelAutoMentions(channelId: string): Promise<ChannelAutoMentionRow[]> {
+    const rows = await this.api.channelAutoMentions(channelId);
+    const store = useAppStore.getState();
+    store.set({ channelAutoMentions: { ...store.channelAutoMentions, [channelId]: rows } });
+    return rows;
+  }
+
+  /** 건다. 실패를 삼키지 않는다 — 호출부(설정 화면)가 사유를 사람에게 보여 준다. */
+  async setChannelAutoMention(channelId: string, agentAccountId: string): Promise<void> {
+    await this.api.setChannelAutoMention(channelId, agentAccountId);
+    await this.loadChannelAutoMentions(channelId);
+  }
+
+  async unsetChannelAutoMention(channelId: string, agentAccountId: string): Promise<void> {
+    await this.api.unsetChannelAutoMention(channelId, agentAccountId);
+    await this.loadChannelAutoMentions(channelId);
+  }
+
   async inviteChannelMember(channelId: string, accountId: string): Promise<ChannelMemberRow[]> {
     const members = await this.api.inviteChannelMember(channelId, accountId);
     const store = useAppStore.getState();
@@ -1108,6 +1134,7 @@ export class Controller {
     // 핀은 **크리티컬 패스에서 뺀다.** 이 엔드포인트가 없는 서버(구버전)에 붙었을 때
     // 채널이 아예 안 열리면 안 된다 — 채널 선호(`start`)와 같은 이유다.
     this.swallow(this.loadPins(channelId));
+    this.swallow(this.loadChannelAutoMentions(channelId));
     const page = await this.api.messages(channelId, { since });
     this.loadedChannels.add(channelId);
     store.upsertMessages(channelId, page.messages);
