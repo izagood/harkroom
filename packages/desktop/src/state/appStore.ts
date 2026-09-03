@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow } from '@murmur/shared';
+import type { AccountStatus, AccountView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus } from '@murmur/shared';
 
 export interface HistoryEntry {
   channelId: string;
@@ -33,6 +33,19 @@ export interface AppState {
   online: string[];
   leases: LeaseRow[];
   connected: boolean;
+  /**
+   * avcs 투영 상태(#267). 60초마다 갱신한다. `null` 은 **"아직 모른다"** 다 —
+   * "투영이 없다"가 아니다. 화면이 둘을 갈라 말해야 하므로 별도의 값으로 둔다.
+   */
+  projectionStatus: ProjectionStatus | null;
+  /**
+   * 투영 상태를 **읽지 못한** 이유(#267). `null` 이면 실패하지 않았다는 뜻이다.
+   *
+   * 왜 별도 필드인가: 조회 실패를 `projectionStatus: null` 로만 표현하면 "아직 안 왔다"와
+   * "물어봤는데 실패했다"가 한 값에 뭉치고, 화면은 그 둘을 같은 문구로 그린다 —
+   * 이 이슈가 닫으려는 결함이 스토어 층에 그대로 되살아난다(docs/design.md §4).
+   */
+  projectionStatusError: string | null;
   /** 계정별 채널 음소거·즐겨찾기. channelId → preference */
   channelPrefs: Record<string, ChannelPrefRow>;
   /**
@@ -135,7 +148,8 @@ export interface AppState {
 const initial = {
   me: null, accounts: {}, groups: [], channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
-  online: [], leases: [], connected: false, channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, drafts: {},
+  online: [], leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
+  channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
   expandedMessageIds: {}, savedIds: [], savedCount: 0,
 };
