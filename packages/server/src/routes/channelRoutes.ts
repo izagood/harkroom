@@ -261,8 +261,8 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     const { id } = prefParam.parse(req.params);
     const patch = prefBody.parse(req.body);
 
-    // DM 은 섹션을 가질 수 없다(#157).
-    if (patch.section !== undefined) {
+    // DM 은 섹션을 가질 수 없다(#157). null 은 "섹션에서 빼기"이므로 허용한다.
+    if (patch.section !== undefined && patch.section !== null) {
       const channel = await pool.query(`select kind from channel where id = $1`, [id]);
       if (!channel.rowCount) {
         return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
