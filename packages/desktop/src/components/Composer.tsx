@@ -124,8 +124,8 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     setActive(0);
   }, [scopeKey]);
 
-  const matches = useMemo(() => {
-    if (!query) return [];
+  const matches = useMemo((): { accounts: AccountView[]; groups: HandleGroupRow[] } => {
+    if (!query) return { accounts: [], groups: [] };
     const q = query.query.toLowerCase();
     const accountMatches = Object.values(accounts)
       // 비활성 계정은 부를 수 없다 — 디렉터리에는 남아 있다(과거 메시지의 작성자 이름을
@@ -156,7 +156,7 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
 
   // @ 버튼으로 여는 목록. 첫 줄을 보내기 전에도 상대를 정해 둘 수 있어야 한다.
   // 이미 고정된 상대는 뺀다 — 다시 골라도 달라지는 것이 없다.
-  const pickable = useMemo(() => {
+  const pickable = useMemo((): { accounts: AccountView[]; groups: HandleGroupRow[] } => {
     const accountsList = Object.values(accounts)
       .filter((a) => a.id !== myId && !sticky.includes(a.handle.toLowerCase()))
       .sort(rank)
@@ -499,7 +499,7 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
           className="absolute bottom-full left-0 z-10 mb-1 max-h-64 w-72 overflow-y-auto rounded border border-zinc-300 bg-white py-1 shadow-lg"
         >
           {flatOptions.map((item, i) => {
-            const isGroup = 'displayName' in item;
+            const isGroup = 'createdAt' in item;
             return (
               <li key={item.id}>
                 <button
