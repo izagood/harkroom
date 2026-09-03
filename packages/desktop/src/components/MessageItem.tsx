@@ -51,6 +51,10 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
   const canUnpin = pin !== undefined && (pin.pinnedBy === myId || isAdmin);
   // 보관된 채널은 읽기 전용이라 고정이 거절된다(서버의 `channelPostGate`).
   const isArchived = useAppStore((s) => s.channels.find((c) => c.id === message.channelId)?.archivedAt != null);
+  // #219: 담긴 상태는 **id 집합**(open+done 전부)으로 본다. 패널이 받아 온 한 탭의 행들로
+  // 판단하면 '완료' 탭을 한 번 열어 본 뒤로 open 인 메시지가 담기지 않은 것으로 읽힌다.
+  const savedIds = useAppStore((s) => s.savedIds);
+  const isSaved = savedIds.includes(message.id);
 
   const save = () => {
     const next = draft ?? '';
@@ -120,6 +124,13 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
     ...(canUnpin ? [{ label: 'Unpin', onSelect: () => { void getController().unpinMessage(message.channelId, message.id); } }] : []),
     ...(canEdit ? [{ label: 'Edit', onSelect: () => setDraft(message.body) }] : []),
     ...(canDelete && !confirmingDelete ? [{ label: 'Delete', onSelect: () => setConfirmingDelete(true) }] : []),
+    // #219: 나중에 볼 것으로 담기. 담겨 있으면 문구가 해제로 바뀐다 — 같은 자리에 두 항목을
+    // 나란히 두면 어느 것이 지금 상태인지 화면이 말하지 않는다.
+    // 문구는 이 메뉴의 나머지(Pin·Edit·Delete…)와 같은 영문이다: 여기만 한국어로 두면
+    // 한 메뉴 안에서 언어가 갈린다(#219 spec 은 UI 가 한국어라고 보고 "나중에 보기"를 적었다).
+    ...(isSaved
+      ? [{ label: 'Unsave', onSelect: () => { void getController().unsaveMessage(message.id); } }]
+      : [{ label: 'Save for later', onSelect: () => { void getController().saveMessage(message.id); } }]),
   ];
 
   return (
@@ -133,14 +144,17 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
       {/* 작성자 아바타 거터 - 메시지 행 왼쪽에 고정폭 열로 배치. #161 2단계.
           #254 이후 답글 컨트롤이 본문 열로 이동하고 툴바는 행 기준 right-2 top-1 에
           앵커한다. 거터 폭은 32px(h-8 w-8)로 하고, Identity 컴포넌트의 className 로
-          크기를 조절한다. */}
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center">
-        <Identity account={author} className="h-8 w-8 text-sm" />
+          크기를 조절한다. #277 에서 variant="avatar" 로 거터 자리를 명시한다 — 이 열은
+          32px 고정이라 안에 든 것이 넓어지면 열을 넘친다(그것이 #277 의 결함이었다).
+          `data-testid` 는 회귀 테스트가 이 열을 클래스 문자열로 더듬지 않게 하려고 둔다 —
+          클래스로 찾으면 스타일을 조금 손보는 순간 테스트가 조용히 아무것도 안 지킨다. */}
+      <div data-testid="author-gutter" className="flex h-8 w-8 shrink-0 items-center justify-center">
+        <Identity account={author} className="h-8 w-8 text-sm" variant="avatar" />
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="font-semibold">{author?.handle ?? '…'}</span>
-          <Identity account={author} />
+          <Identity account={author} variant="badge" />
           {/* 작성 시점이 아니라 **지금**의 상태다 — 이 줄이 답하는 질문은 "이 사람에게
               지금 물어봐도 되는가"이지 "그때 무슨 상태였나"가 아니다(#186). */}
           <StatusMark account={author} />
@@ -181,11 +195,11 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
                 aria-label={`${message.replyCount} ${message.replyCount === 1 ? 'reply' : 'replies'}${lastReplyTime ? `, last reply ${lastReplyTime}` : ''}`}
               >
                 {/* 참여자 아바타 — 최대 5개, 나머지는 +N 으로 접는다. 장식 용도라 스크린리더가
-                    읽지 않도록 aria-hidden 처리하고 sr-only 도 안 준다. */}
+                    읽지 않도록 aria-hidden 처리하고 sr-only 도 안 준다. #277: variant="avatar" */}
                 <span className="flex -space-x-1" aria-hidden="true">
                   {displayedParticipants.map((id) => (
                     <span key={id} className="ring-1 ring-white">
-                      <Identity account={accounts[id]} className="h-4 w-4 text-[8px]" />
+                      <Identity account={accounts[id]} className="h-4 w-4 text-[8px]" variant="avatar" />
                     </span>
                   ))}
                   {remainingCount > 0 && (

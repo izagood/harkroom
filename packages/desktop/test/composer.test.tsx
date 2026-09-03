@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import { useAppStore } from '../src/state/appStore';
 import { Composer } from '../src/components/Composer';
 import { Controller, setController } from '../src/state/controller';
-import { acc, fakeApi } from './helpers/fakeApi';
+import { acc, accountsResult, fakeApi } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
 
 /** 지금 강조된 후보의 handle. 목록 정렬은 여기서 검증할 대상이 아니다. */
@@ -75,6 +75,26 @@ describe('mention autocomplete', () => {
     expect(screen.getByRole('option', { name: /fizz/ })).toBeTruthy();
     expect(screen.getByRole('option', { name: /fixit/ })).toBeTruthy();
     expect(screen.queryByRole('option', { name: /rusalka/ })).toBeNull();
+  });
+
+  /**
+   * #277 경계. 후보 목록의 `Identity` 는 **핸들 옆** 자리이므로 `badge` 다 — 거터가 아니다.
+   * 여기를 `avatar` 로 바꾸면 소유자(#181)가 조용히 사라진다. 부르기 직전이 "누구의
+   * 에이전트인가"가 가장 필요한 순간이고, 사라진 정보는 화면에 아무 흔적을 남기지 않는다.
+   */
+  it('#277: 후보 목록의 에이전트에 소유자 핸들이 함께 나온다', () => {
+    useAppStore.getState().set({
+      accounts: {
+        u1: acc('u1', 'me'),
+        u2: acc('u2', 'rusalka'),
+        a1: { ...acc('a1', 'fizz', 'agent'), ownerAccountId: 'u2' },
+      },
+    });
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@fizz');
+
+    const opt = screen.getByRole('option', { name: /fizz/ });
+    expect(opt.textContent).toContain('@rusalka');
   });
 
   // 에이전트를 부르는 것이 murmur 의 목적이지만, 사람도 멘션 대상이다.
@@ -227,11 +247,11 @@ describe('mention autocomplete', () => {
   // 그 새 계정이 후보에 나타난다.
   it('refreshes accounts when autocomplete opens', async () => {
     const api = fakeApi({
-      accounts: vi.fn(async () => [
+      accounts: vi.fn(async () => accountsResult([
         acc('u1', 'me'),
         acc('a1', 'fizz', 'agent'),
         acc('new', 'newagent', 'agent'), // 서버에 있지만 로컬에 없는 새 계정
-      ]),
+      ])),
     });
     const c = new Controller(api);
     setController(c);
@@ -273,10 +293,10 @@ describe('mention autocomplete', () => {
   // 가드 테스트: 자동완성을 짧은 간격으로 여러 번 열어도 디렉터리 요청이 한 번만 나간다.
   it('does not refetch accounts rapidly when autocomplete opens repeatedly', async () => {
     const api = fakeApi({
-      accounts: vi.fn(async () => [
+      accounts: vi.fn(async () => accountsResult([
         acc('u1', 'me'),
         acc('a1', 'fizz', 'agent'),
-      ]),
+      ])),
     });
     const c = new Controller(api);
     setController(c);

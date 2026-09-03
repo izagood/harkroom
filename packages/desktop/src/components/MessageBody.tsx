@@ -45,6 +45,7 @@ async function followLink(target: LinkTarget): Promise<void> {
 
 export function MessageBody({ body, messageId }: { body: string; messageId: string }) {
   const accounts = useAppStore((s) => s.accounts);
+  const groups = useAppStore((s) => s.groups);
   const myHandle = useAppStore((s) => s.me?.handle?.toLowerCase() ?? null);
   // 접기 판정은 본문만 본다 — 작성자가 누구인지 보지 않는다. 자기가 쓴 긴 메시지도 남의
   // 대화를 밀어내는 것은 똑같고, 예외를 두면 "왜 이건 접히고 저건 안 접히지" 를 사람이
@@ -63,6 +64,7 @@ export function MessageBody({ body, messageId }: { body: string; messageId: stri
     }
     return map;
   }, [accounts]);
+  const groupHandles = useMemo(() => groups.map((g) => g.handle), [groups]);
 
   /** 코드가 아닌 구간만 멘션·링크 조각으로 나눠 그린다. */
   const renderPart = (p: BodyPart, key: string) => {
@@ -85,14 +87,22 @@ export function MessageBody({ body, messageId }: { body: string; messageId: stri
       );
     }
     const isSelf = p.handle === myHandle;
+    const isGroup = (p as { isGroup?: boolean }).isGroup;
+    // 집합(#230)은 사람처럼 보이면 안 된다 — 시각적으로 집합임이 드러나야 한다.
     return (
       <span
         key={key}
         data-testid={`mention-${p.handle}`}
         data-self={String(isSelf)}
+        data-group={String(isGroup)}
         // 나를 부른 멘션은 더 강하게. 색만으로 구분하지 않는다(배경 + 굵기).
+        // 집합은 다른 색(teal)으로 구분한다.
         className={`rounded px-0.5 font-medium ${
-          isSelf ? 'bg-amber-200 text-amber-900' : 'bg-indigo-50 text-indigo-700'
+          isGroup
+            ? 'bg-teal-50 text-teal-700'
+            : isSelf
+              ? 'bg-amber-200 text-amber-900'
+              : 'bg-indigo-50 text-indigo-700'
         }`}
       >
         {p.text}
@@ -139,7 +149,7 @@ export function MessageBody({ body, messageId }: { body: string; messageId: stri
           );
         }
         // 코드가 아닌 구간에만 기존 인식이 얹힌다.
-        return splitLinks(splitMentions(seg.text, handles, accountsMap)).map((p, j) => renderPart(p, `${i}-${j}`));
+return splitLinks(splitMentions(seg.text, handles, accountsMap)).map((p, j) => renderPart(p, `${i}-${j}`));
       })}
     </div>
   );
