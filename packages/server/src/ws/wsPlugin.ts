@@ -17,8 +17,12 @@ function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
     case 'message.updated':
     case 'message.deleted':
     case 'typing.changed':
+    case 'channel.created':
+    case 'channel.updated':
+    case 'channel.deleted':
       return e.audience === 'all' || e.audience.includes(accountId);
     case 'inbox.updated':
+    case 'saved.changed':
       return e.accountId === accountId;
     case 'presence.changed':
     // 상태도 presence 와 같은 범위로 간다 — 전원. 문구는 임의 텍스트지만 이 워크스페이스는
