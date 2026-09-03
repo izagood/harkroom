@@ -85,6 +85,18 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
   const [teamAddResult, setTeamAddResult] = useState<{ added: string[]; skipped: string[]; alreadyMember: string[] } | null>(null);
   // '마지막 멤버가 나간다'는 되돌릴 수 없는 조작이라 한 번 더 묻는다.
   const [leaveConfirmId, setLeaveConfirmId] = useState<string | null>(null);
+  /**
+   * 채널 삭제 확인(#155). 확인 단계를 **화면 안에** 둔다 — `window.confirm` 은 Tauri
+   * 웹뷰에서 막힐 수 있고, 이 저장소의 선례(`MessageItem` 의 '정말 삭제', 바로 위
+   * `leaveConfirmId`)가 이미 인라인 확인이다. 새 확인 컴포넌트를 만들지 않는다.
+   *
+   * 메시지 수는 **세 상태**다 — null(아직 안 읽음) / 'error'(못 읽음) / 값. 실패를 0 으로
+   * 갈아 넣으면 확인 문구가 "메시지 0개를 지운다"고 거짓을 말한다. 못 읽었으면 지우지도
+   * 않는다: 규모를 모르는 채로 되돌릴 수 없는 조작을 승인하게 하지 않는다.
+   */
+  const [deletingChannelId, setDeletingChannelId] = useState<string | null>(null);
+  const [deleteCount, setDeleteCount] = useState<number | 'error' | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
 
   const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
@@ -240,6 +252,34 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
     }
   };
 
+  const startDelete = (channelId: string): void => {
+    setDeletingChannelId(channelId);
+    setDeleteCount(null);
+    setDeleteError(null);
+    void getController().channelDeleteInfo(channelId).then(
+      (info) => setDeleteCount(info.messageCount),
+      (err: unknown) => {
+        setDeleteCount('error');
+        setDeleteError(err instanceof Error ? err.message : '메시지 수를 읽지 못했다');
+      },
+    );
+  };
+
+  const closeDelete = (): void => {
+    setDeletingChannelId(null);
+    setDeleteCount(null);
+    setDeleteError(null);
+  };
+
+  const confirmDelete = async (channelId: string): Promise<void> => {
+    try {
+      await getController().deleteChannel(channelId);
+      closeDelete();
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : '삭제에 실패했다');
+    }
+  };
+
   const closeEdit = (): void => {
     setEditingChannelId(null);
     setEditTopic('');
@@ -376,6 +416,42 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
             <button
               className="rounded px-2 py-0.5 text-xs text-zinc-400 hover:bg-zinc-700"
               onClick={closeEdit}
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      );
+    }
+    if (deletingChannelId === ch.id) {
+      return (
+        <div key={ch.id} data-testid={`delete-${ch.id}`} className="mt-1 rounded border border-red-700 bg-zinc-800 p-1">
+          <div className="mb-1 text-xs text-zinc-400">
+            {ch.visibility === 'private' ? '🔒' : '#'}{ch.name} 삭제
+          </div>
+          {/* 지울 규모를 보여 준다 — 삭제 뒤에는 무엇이 사라졌는지 물을 곳이 없다.
+              아직 못 읽었으면 개수를 지어내지 않는다. */}
+          {deleteCount === null && <p className="mb-1 text-[10px] text-zinc-500">메시지 수를 읽고 있다…</p>}
+          {typeof deleteCount === 'number' && (
+            <p className="mb-1 text-[10px] text-amber-400">
+              이 채널과 메시지 {deleteCount}개를 영구히 지운다. 되돌릴 수 없다.
+            </p>
+          )}
+          {deleteError && <p role="alert" className="mb-1 text-[10px] text-red-400">{deleteError}</p>}
+          <div className="flex gap-1">
+            {/* 개수를 모르면 확인 버튼을 만들지 않는다 — 규모를 모르는 채로 되돌릴 수 없는
+                조작을 승인하게 하지 않는다. */}
+            {typeof deleteCount === 'number' && (
+              <button
+                className="rounded bg-red-700 px-2 py-0.5 text-xs text-white hover:bg-red-600"
+                onClick={() => void confirmDelete(ch.id)}
+              >
+                정말 삭제
+              </button>
+            )}
+            <button
+              className="rounded px-2 py-0.5 text-xs text-zinc-400 hover:bg-zinc-700"
+              onClick={closeDelete}
             >
               취소
             </button>
@@ -580,6 +656,13 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
         ? { label: '보관 해제', onSelect: () => void getController().archiveChannel(ch.id, false) }
         : { label: '보관', onSelect: () => void getController().archiveChannel(ch.id, true) }]
       : []),
+      /**
+       * 삭제(#155). **보관된 채널에만** 만든다 — 서버가 보관되지 않은 채널의 삭제를 409 로
+       * 거절하므로, 눌러도 거절되는 항목을 남겨 두면 "할 수 있다"는 거짓 신호가 된다
+       * (docs/design.md 4절). DM 은 이 목록(`sortedChannels`)에 없어 애초에 닿지 않는다.
+       */
+      ...(me?.isAdmin && isArchived
+        ? [{ label: '삭제', onSelect: () => startDelete(ch.id) }] : []),
       { label: '멤버 보기', onSelect: () => void openMembers(ch.id) },
       // 초대와 나가기는 **그 채널의 멤버**여야 하는 동작이다(public 채널의 초대는 예외 —
       // 서버 게이트가 누구나 통과시킨다). 메뉴는 목록을 받기 전에도 그려지므로 아직
