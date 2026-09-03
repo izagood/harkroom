@@ -154,15 +154,23 @@ export class MurmurAgentClient {
     };
   }
 
-  /** 승인된 스킬 목록을 가져온다(#140). 실패하면 빈 배열을 반환한다 — 스킬은 "있으면 좋은 것"이다. */
+  /**
+   * 승인된 스킬 목록(#140). `approved=true` 만 읽는다 — 미승인 스킬을 러너가 실체화하면
+   * 승인 게이트가 없는 것과 같다.
+   *
+   * **던지는 것을 삼키지 않는다.** readMemory 와 같은 이유다: 여기서 빈 배열로 뭉개면
+   * "승인된 스킬이 없다"와 "서버를 못 읽었다"가 같은 값이 되고, 그러면 동기화가 이미
+   * 있는 스킬을 '사라진 것'으로 보고 지운다. 삼키는 것은 호출자(syncSkills)의 일이고,
+   * 그쪽은 삼키면서 stderr 에 한 줄을 남긴다.
+   */
   async listApprovedSkills(): Promise<{ slug: string; body: string }[]> {
-    try {
-      const res = await fetch(`${this.baseUrl}/skills?approved=true`, {
-        headers: { authorization: `Bearer ${this.pat}` },
-      });
-      if (!res.ok) return [];
-      return (await res.json()) as { slug: string; body: string }[];
-    } catch { return []; }
+    const res = await fetch(`${this.baseUrl}/skills?approved=true`, {
+      headers: { authorization: `Bearer ${this.pat}` },
+    });
+    if (!res.ok) {
+      throw murmurError(`skills 실패: ${res.status}`, res.status);
+    }
+    return (await res.json()) as { slug: string; body: string }[];
   }
 
   /** timeoutMs 동안 park 한다. 새 항목이 없으면 빈 배치로 정상 반환된다. */

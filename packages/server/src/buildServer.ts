@@ -18,8 +18,6 @@ import { registerAuditRoutes } from './routes/auditRoutes.js';
 import { registerSettingsRoutes } from './routes/settingsRoutes.js';
 import { registerHandleGroupRoutes } from './routes/handleGroupRoutes.js';
 import { registerSkillRoutes } from './routes/skillRoutes.js';
-import { onEvent } from './events.js';
-import { postMessage } from './services/messages.js';
 import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
 import { createAgentPresence } from './mcp/presence.js';
@@ -347,18 +345,6 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return { ...runtime, state: projectionState(runtime) } satisfies ProjectionStatus;
   });
   await registerMcp(app, deps.pool, lifecycle, agentPresence);
-
-  onEvent(async (e) => {
-    if (e.type === 'skill.proposed') {
-      const { skill, channelId } = e;
-      await postMessage(deps.pool, {
-        channelId,
-        authorId: skill.proposedBy,
-        body: `스킬이 제안되었습니다: **${skill.slug}** — 승인을 기다리고 있습니다.`,
-        kind: 'system',
-      });
-    }
-  });
 
   return app;
 }
