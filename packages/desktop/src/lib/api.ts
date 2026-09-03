@@ -1,4 +1,4 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
 
 export class ApiError extends Error {
   /**
@@ -419,12 +419,13 @@ export class ApiClient {
     return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
   }
 
-  async getLinkPreview(url: string): Promise<{ url: string; title: string | null; description: string | null; imageUrl: string | null; siteName: string | null; status: string; fetchedAt: string } | null> {
-    try {
-      return await this.req<{ url: string; title: string | null; description: string | null; imageUrl: string | null; siteName: string | null; status: string; fetchedAt: string }>('GET', `/link-previews?url=${encodeURIComponent(url)}`);
-    } catch {
-      return null;
-    }
+  /**
+   * 링크 미리보기 카드(#215). 아직 없으면 서버가 404 를 준다 — **여기서 삼키지 않는다.**
+   * 삼키면 "아직 안 왔다"와 "요청이 실패했다"가 한 값이 되고, 그러면 호출부가 다시 읽을
+   * 이유를 판단할 수 없다. 카드가 장식이라 조용히 넘어가는 판단은 호출부(`LinkPreview`)가 한다.
+   */
+  getLinkPreview(url: string): Promise<LinkPreviewView> {
+    return this.req<LinkPreviewView>('GET', `/link-previews?url=${encodeURIComponent(url)}`);
   }
 
   /** 이 채널에서 내가 예약한 메시지 목록(#222). */
