@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { AgentView, MessageRow } from '@murmur/shared';
+import type { AgentHarness, AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
 import { buildSystemPrompt, buildTurnPrompt, type MemoryContext, countOwnPostsSince, hasOwnPostSince, NO_REPLY_NOTICE } from './prompt.js';
 import { SessionStore } from './sessions.js';
@@ -45,7 +45,35 @@ export interface MentionTurnMurmur {
 /** 한 턴을 실제로 돌리는 함수. 프로덕션은 pty.ts::runPtyTurn 을 그대로 넘기고, 테스트는
  * 이 자리에 스텁을 꽂아 buildTurnCommand 가 만든 plan 을 가로채 검증한다(브리프: "buildTurnCommand
  * 호출 캡처는 runMentionTurn 에 spawn 함수를 주입해 확인"). */
-export type RunTurn = (plan: TurnPlan, opts: { cwd: string; timeoutMs: number }) => Promise<TurnResult>;
+export type RunTurn = (
+  plan: TurnPlan,
+  opts: {
+    cwd: string;
+    timeoutMs: number;
+    /**
+     * PTY raw 바이트 탭(#141). `runPtyTurn` 의 옵션에 이미 있던 것을 이 계약에도
+     * 열었다 — 그전에는 `RunPtyTurnOptions` 에 있는 필드를 조립 경로에서 넘길 방법이
+     * 없어서(이 타입이 좁혀 놨다) Phase 2 의 라이브 중계가 구조적으로 불가능했다.
+     */
+    onData?: (chunk: Buffer) => void;
+  },
+) => Promise<TurnResult>;
+
+/**
+ * 진행 중인 턴을 attach 가능한 세션으로 감싸는 릴레이(#141 Phase 2, 스펙 §5).
+ *
+ * `relay.ts` 의 `RelayClient` 를 그대로 받지 않고 이 좁은 모양으로 받는 이유: 이 파일이
+ * 릴레이 모듈을 알면 소켓·재접속·`ws` 의존까지 끌고 오게 되고, 턴 조립 테스트가 그것을
+ * 전부 세워야 한다. 릴레이는 관찰이고 턴은 답이다 — 관찰이 답의 의존이 되면 안 된다.
+ */
+export interface TurnRelay {
+  openSession(input: {
+    agentAccountId: string;
+    channelId: string;
+    threadRootId: string | null;
+    harness: AgentHarness;
+  }): { sessionId: string; push(chunk: Buffer): void; close(): void };
+}
 
 export interface MentionTurnDeps {
   murmur: MentionTurnMurmur;
@@ -72,6 +100,11 @@ export interface MentionTurnDeps {
   murmurUrl: string;
   pat: string;
   turnTimeoutMs: number;
+  /**
+   * PTY 릴레이(#141). **옵셔널이다** — 릴레이가 없어도 턴은 그대로 돌아야 한다.
+   * 관찰을 못 하는 것과 답을 못 하는 것은 같은 실패가 아니다.
+   */
+  relay?: TurnRelay;
   /** 테스트가 sinceMs 캡처 시점을 결정론적으로 만들기 위한 시계 주입. 생략하면 Date.now. */
   now?: () => number;
 }
@@ -349,10 +382,32 @@ export async function runMentionTurn(
     );
   });
 
+  // #141: 이 턴을 attach 가능한 세션으로 연다. `plan` 이 조립된 **뒤**, PTY 가 뜨기
+  // **직전**이어야 한다 — 더 앞이면 avcs workspace project 가 도는 수 초 동안 빈 세션이
+  // 목록에 뜨고, 더 뒤면 첫 바이트를 놓친다.
+  //
+  // **attach 는 이 턴의 권한을 건드리지 않는다.** `plan` 은 위에서 `mode: 'mention'` 과
+  // `def.mentionPermission` 으로 이미 조립됐고, 세션을 여는 것은 그 뒤다 — 스펙 §6 의
+  // "멘션 턴에 attach 해도 그 턴의 모드는 바꿀 수 없다"가 이 순서로 성립한다.
+  const session = deps.relay?.openSession({
+    agentAccountId: deps.me.id,
+    channelId,
+    threadRootId: anchor,
+    harness: def.harness,
+  });
+
   let result: TurnResult;
   try {
-    result = await deps.runTurn(plan, { cwd: rec.workspaceDir, timeoutMs: deps.turnTimeoutMs });
+    result = await deps.runTurn(plan, {
+      cwd: rec.workspaceDir,
+      timeoutMs: deps.turnTimeoutMs,
+      // 릴레이가 없으면 탭도 없다 — `undefined` 를 넘겨 pty 쪽 호출을 아예 안 만든다.
+      onData: session ? (chunk) => session.push(chunk) : undefined,
+    });
   } finally {
+    // 턴이 어떻게 끝나든(정상·타임아웃·예외) 세션은 닫는다. 안 닫으면 서버의 세션
+    // 목록에 끝난 턴이 영구히 남아, 사람이 attach 해도 아무 바이트도 오지 않는다.
+    session?.close();
     // 💬 는 반드시 제거한다 — 타임아웃·예외로 끝나도 남으면 "영원히 작업 중"이라는
     // 거짓 신호가 되고, 그것이 docs/design.md 4절 "없는 것을 있다고 표시하지 않는다" 다.
     // 추가가 끝난 뒤에 제거한다(순서가 뒤집히면 💬 가 남는다).

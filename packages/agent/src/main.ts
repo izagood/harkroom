@@ -24,6 +24,7 @@ import type { Exec } from './workspace.js';
 import { exhausted, isCredentialFailure, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 import { stopRequestedForRunner } from './stop.js';
 import { FAILURE_NOTICE } from './prompt.js';
+import { createRelayClient } from './relay.js';
 
 const config = loadConfig();
 const murmur = new MurmurAgentClient(config.murmurUrl, config.murmurPat);
@@ -126,6 +127,16 @@ const exec: Exec = (cmd, args, opts) =>
 console.log(`@${me.handle} 로 붙었다 — ${config.murmurUrl}`);
 console.log('정의는 서버에서 읽는다 (murmur UI 의 Add/Edit agent 로 바꾼다)');
 
+// #141 Phase 2: 진행 중인 턴의 PTY 바이트를 서버로 중계하는 상시 outbound WS. 여기서
+// 시작하고, 끊기면 스스로 백오프로 다시 붙는다(`relay.ts` — `policy.ts::nextBackoffMs`
+// 를 poll 루프와 공유한다).
+//
+// **접속 실패로 러너를 죽이지 않는다.** 릴레이는 관찰이고 poll 루프는 답이다 — 서버가
+// attach 를 지원하지 않는 구버전이거나 릴레이가 막혀 있어도 멘션에는 답해야 한다.
+// 그래서 여기에 await 도, 성공 확인도 없다.
+const relay = createRelayClient({ murmurUrl: config.murmurUrl, pat: config.murmurPat });
+relay.start();
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** 항목별 시도 횟수. 영원히 실패하는 한 건이 나머지 멘션을 가로막지 않게 한다. */
@@ -181,6 +192,7 @@ while (running) {
           stateDir: agentStateDir,
           murmurUrl: config.murmurUrl, pat: config.murmurPat,
           turnTimeoutMs: config.turnTimeoutMs,
+          relay,
         };
         // #98: 채널 최상위 멘션(threadRootId 가 null)은 **그 멘션 메시지를 루트로 하는
         // 스레드**에 답한다. 두 가지를 한 번에 얻는다: 긴 답이 채널 본문에 쌓이지 않고,
@@ -258,4 +270,5 @@ while (running) {
     backoffMs = nextBackoffMs(backoffMs);
   }
 }
+relay.stop();
 console.log('종료');

@@ -45,7 +45,14 @@ export type AuditAction =
   // detail 에는 handle 과 **개수**만 남긴다 — 계정 id 목록은 남기지 않는다. 집합에서
   // 빼는 이유가 사람 사정일 수 있고, 감사 로그는 그것을 영구히 붙잡는 자리가 아니다.
   | 'handle_group.created' | 'handle_group.updated' | 'handle_group.deleted'
-  | 'handle_group.members.added' | 'handle_group.members.removed';
+  | 'handle_group.members.added' | 'handle_group.members.removed'
+  // #141: 진행 중인 에이전트 터미널에 사람이 붙었다·떠났다(스펙 §5 "감사").
+  //
+  // detail 에는 sessionId·channelId 만 남긴다 — **PTY 바이트는 절대 넣지 않는다.** PTY
+  // 출력에는 하네스가 화면에 그린 모든 것(토큰, 환경변수, 사람이 붙여 넣은 비밀)이 들어가고,
+  // 감사에 복사하면 그것을 지울 방법이 없다(같은 파일 위 message.deleted 와 같은 규칙).
+  // 스크롤백을 러너 메모리의 ring buffer 에만 두는 것도 같은 이유다.
+  | 'agent.attached' | 'agent.detached';
 
 export interface AuditEntry {
   action: AuditAction;
