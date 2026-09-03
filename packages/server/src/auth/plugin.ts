@@ -18,7 +18,7 @@ declare module 'fastify' {
 // 상태는 여기서 함께 읽는다 — `/auth/me` 가 `req.account` 를 그대로 돌려주므로,
 // 빠뜨리면 내가 방금 정한 상태가 내 화면에만 안 보인다.
 const ACCOUNT_COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admin as "isAdmin",
-  a.status, a.status_text as "statusText"`;
+  a.status, a.status_text as "statusText", a.avatar_attachment_id as "avatarAttachmentId"`;
 
 export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<void> {
   app.decorateRequest('account', null);

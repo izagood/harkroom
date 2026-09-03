@@ -15,7 +15,7 @@ const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
   // #176: 기본은 '아직 한 번도 턴을 돌린 적 없음'이다 — 화면은 그것을 '활동 없음'으로만 그린다.
   lastTurnAt: null,
   // #186: 에이전트는 상태를 고를 수 없지만 AccountView 의 필수 필드다.
-  status: 'available', statusText: null, ...extra,
+  status: 'available', statusText: null, avatarAttachmentId: null, ...extra,
 });
 
 type CreateInput = { handle: string; displayName: string } & Partial<AgentConfig>;

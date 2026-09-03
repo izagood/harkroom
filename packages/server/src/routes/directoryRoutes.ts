@@ -9,7 +9,10 @@ export async function registerDirectoryRoutes(app: FastifyInstance, pool: Pool):
       // 자동완성 후보에서 빼는 것은 `disabled` 를 보는 화면의 몫이다.
       `select id, handle, display_name as "displayName", kind, is_admin as "isAdmin",
               disabled_at is not null as disabled,
-              status, status_text as "statusText"
+              status, status_text as "statusText",
+              -- 아바타는 id 만 싣는다(#159) — 바이트를 실으면 디렉터리 한 번에 모든 사진이
+              -- 따라온다. 화면이 이 id 로 아바타를 따로 받아 온다.
+              avatar_attachment_id as "avatarAttachmentId"
        from account order by handle`,
     );
     return { accounts: res.rows };
