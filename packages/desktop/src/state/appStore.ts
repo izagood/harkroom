@@ -45,6 +45,18 @@ export interface AppState {
    * 세션 한정 인메모리다 — localStorage 에 넣지 않는다. */
   history: HistoryEntry[];
   historyIndex: number;
+  /**
+   * 사람에게 보여야 하는 짧은 알림·오류(#178). 조용히 삼키면 안 되는 실패가 여기로 온다 —
+   * 링크가 가리키는 메시지를 못 열었다, 클립보드 쓰기가 막혔다 같은 것들.
+   * 없으면 null 이다. 화면 상태이므로 영속하지 않는다.
+   */
+  notice: string | null;
+  /**
+   * 링크로 방금 이동한 메시지(#178). **메시지 데이터가 아니라 화면 상태다** — 여기 두지
+   * 않고 `MessageRow` 에 넣으면 서버에서 온 사실과 지금 화면의 사정이 한 값에 섞인다.
+   * 다음 이동 때 갈아탄다(`openChannel` 이 지우고 `openMessage` 가 다시 건다).
+   */
+  highlightedMessageId: string | null;
   set(partial: Partial<AppState>): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
@@ -74,7 +86,7 @@ const initial = {
   me: null, accounts: {}, channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], leases: [], connected: false, channelPrefs: {}, drafts: {},
-  history: [], historyIndex: -1,
+  history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
 };
 
 export const useAppStore = create<AppState>((set, get) => ({

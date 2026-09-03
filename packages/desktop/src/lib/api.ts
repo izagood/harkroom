@@ -64,6 +64,16 @@ export class ApiClient {
   markChannelRead(channelId: string, seq: number): Promise<void> {
     return this.req('PUT', `/channels/${channelId}/read`, { seq });
   }
+  /**
+   * 미읽음 표시(#154). 읽음 ack 와 **다른 엔드포인트**다 — 서버가 자동 전진과 사람의 조작을
+   * 구분해야 단조성을 깨지 않고 되돌릴 수 있다.
+   *
+   * `seq: null` 이 표시 지우기다. `undefined` 로 표현하면 `JSON.stringify` 가 키를 버려
+   * 서버가 못 받는다.
+   */
+  markChannelUnread(channelId: string, seq: number | null): Promise<void> {
+    return this.req('PUT', `/channels/${channelId}/unread`, { seq });
+  }
   async accounts(): Promise<AccountView[]> {
     return (await this.req<{ accounts: AccountView[] }>('GET', '/accounts')).accounts;
   }
@@ -107,6 +117,16 @@ export class ApiClient {
     if (opts?.thread) q.set('thread', opts.thread);
     const qs = q.size ? `?${q.toString()}` : '';
     return this.req('GET', `/channels/${channelId}/messages${qs}`);
+  }
+  /**
+   * 링크가 가리키는 메시지 하나(#178). 채널 경로가 **아니다** — 링크를 받은 사람은 채널을
+   * 모르고, 그것을 알려 주는 것이 이 응답의 `channelId`·`threadRootId` 다.
+   *
+   * 실패를 삼키지 않는다: 없는 메시지(404)·볼 수 없는 메시지(403)는 `ApiError` 로 올라가고
+   * 호출부가 사람에게 보여 준다.
+   */
+  message(id: string): Promise<MessageRow> {
+    return this.req('GET', `/messages/${id}`);
   }
   postMessage(
     channelId: string, body: string, threadRootId?: string, idempotencyKey?: string,

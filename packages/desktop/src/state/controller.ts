@@ -1,5 +1,5 @@
-import type { AccountStatus, AttachmentRow, ChannelRow, ChannelPrefRow, WsServerEvent } from '@murmur/shared';
-import type { ApiClient } from '../lib/api';
+import type { AccountStatus, AttachmentRow, ChannelRow, ChannelPrefRow, MessageRow, WsServerEvent } from '@murmur/shared';
+import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type Notifier } from '../lib/notify';
@@ -254,7 +254,8 @@ export class Controller {
     const store = useAppStore.getState();
     // 채널·스레드 열림은 이력에 추가한다. 뒤로/앞으로 이동은 pushHistory 를 안 부른다.
     store.pushHistory({ channelId, threadRootId: null });
-    store.set({ activeChannelId: channelId, threadRootId: null });
+    // 다른 곳으로 움직이면 이전 링크 강조는 뜻을 잃는다 — 남겨 두면 엉뚱한 메시지가 계속 빛난다.
+    store.set({ activeChannelId: channelId, threadRootId: null, highlightedMessageId: null });
     // 투영된 system 메시지는 사용자가 그 채널을 보고 있지 않아도 WS로 들어와 maxSeq를 올린다.
     // 그 상태에서 증분 조회를 하면 backlog 전체가 건너뛰어져 채널이 거의 비어 보인다 —
     // 그래서 처음 여는 채널은 히스토리를 통째로 받는다(since=0 → 서버가 최신 N개를 준다).
@@ -303,6 +304,36 @@ export class Controller {
     useAppStore.getState().set({ threadRootId: rootId });
     const page = await this.api.messages(channelId, { thread: rootId });
     useAppStore.getState().upsertMessages(channelId, page.messages);
+  }
+
+  /**
+   * 링크가 가리키는 메시지로 이동한다(#178). 채널을 열고(이력에도 남긴다), 답글이면
+   * 스레드 패널까지 열고, 그 메시지에 강조를 건다.
+   *
+   * **실패는 반드시 사람에게 보인다.** 조용히 아무 일도 안 하면 링크를 누른 사람은 앱이
+   * 멈춘 것으로 보고 같은 링크를 계속 누른다. 사유를 셋으로 나누는 이유: 지워진 것과
+   * 볼 수 없는 것과 연결이 끊긴 것은 사람이 다음에 할 일이 서로 다르다.
+   */
+  async openMessage(messageId: string): Promise<void> {
+    let target: MessageRow;
+    try {
+      target = await this.api.message(messageId);
+    } catch (e) {
+      const status = e instanceof ApiError ? e.status : 0;
+      useAppStore.getState().set({
+        notice: status === 404
+          ? 'That message is gone — it was deleted, or the link points at nothing.'
+          : status === 403
+            ? "You can't open that message — it's in a conversation you're not part of."
+            : 'Could not open that message. Check your connection and try again.',
+      });
+      return;
+    }
+    await this.openChannel(target.channelId);
+    // 답글은 스레드 패널까지 연다 — 스레드 밖에서 보면 무엇에 대한 답인지 잃는다.
+    if (target.threadRootId) await this.openThread(target.threadRootId);
+    // 강조는 openChannel 이 지운 **뒤에** 건다. 순서가 뒤바뀌면 방금 건 강조를 스스로 지운다.
+    useAppStore.getState().set({ highlightedMessageId: target.id, notice: null });
   }
 
   /** 상단에 도달했을 때 한 페이지 더 과거로. 남은 게 없으면 요청하지 않는다. */
@@ -517,6 +548,26 @@ export class Controller {
     if (meId) store.applyStatus(meId, saved.status, saved.statusText);
   }
 
+  /**
+   * 이 채널을 미읽음으로 표시한다(#154). `seq` 부터가 미읽음이 된다.
+   *
+   * 낙관적 갱신은 **서버의 경계 규칙을 그대로 흉내낸다**(`readPositions.ts` 의
+   * `UNREAD_BOUNDARY`): 경계는 `min(현재 위치, seq - 1)` 이고 그 뒤의, 내가 쓰지 않은
+   * 메시지가 미읽음이다. 여기서 다르게 세면 새로고침 전까지 사이드바가 서버와 다른 말을 한다.
+   *
+   * 위치를 여기서 되돌려 두는 것이 중요하다 — 이 채널을 다시 열면 `settleReadPosition` 이
+   * "최신이 위치보다 뒤에 있다"를 보고 읽음 ack 를 보내고, 그 ack 가 표시를 지운다.
+   */
+  async markChannelUnread(channelId: string, seq: number): Promise<void> {
+    await this.api.markChannelUnread(channelId, seq);
+    const store = useAppStore.getState();
+    const cur = store.reads[channelId] ?? { lastReadSeq: 0, unread: 0 };
+    const boundary = Math.min(cur.lastReadSeq, seq - 1);
+    const unread = (store.messages[channelId] ?? [])
+      .filter((m) => m.seq > boundary && m.authorId !== store.me?.id).length;
+    store.set({ reads: { ...store.reads, [channelId]: { lastReadSeq: boundary, unread } } });
+  }
+
   async toggleChannelStar(channelId: string): Promise<void> {
     const store = useAppStore.getState();
     const current = store.channelPrefs[channelId];
@@ -567,7 +618,7 @@ export class Controller {
   /** 채널을 연다(히스토리 미추가). 뒤로·앞으로 이동 전용. */
   private async openChannelWithoutHistory(channelId: string): Promise<void> {
     const store = useAppStore.getState();
-    store.set({ activeChannelId: channelId, threadRootId: null });
+    store.set({ activeChannelId: channelId, threadRootId: null, highlightedMessageId: null });
     const since = this.loadedChannels.has(channelId)
       ? Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq))
       : 0;
