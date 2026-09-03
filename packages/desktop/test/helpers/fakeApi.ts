@@ -89,7 +89,7 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     createDm: vi.fn(),
     channelMembers: vi.fn(async () => []),
     inviteChannelMember: vi.fn(async () => []),
-    removeChannelMember: vi.fn(async () => []),
+    removeChannelMember: vi.fn(async () => undefined),
     updateChannel: vi.fn(async (id: string, input: { topic?: string; repo?: string | null; archived?: boolean }) =>
       chan(id, id, input.repo ?? null)),
     archiveChannel: vi.fn(async (id: string, _archived: boolean) =>
@@ -111,6 +111,15 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     saveMessage: vi.fn(),
     updateSavedMessage: vi.fn(),
     unsaveMessage: vi.fn(async () => undefined),
+    // #285: 핸들 집합
+    listHandleGroups: vi.fn(async () => []),
+    createHandleGroup: vi.fn(async (input: { handle: string; displayName: string }) =>
+      grp('g-new', input.handle, input.displayName)),
+    getHandleGroup: vi.fn(async () => ({ group: grp('g1', 'test', 'Test'), members: [] })),
+    updateHandleGroup: vi.fn(async () => grp('g1', 'test', 'Updated')),
+    deleteHandleGroup: vi.fn(async () => undefined),
+    addHandleGroupMembers: vi.fn(async () => ({ members: ['u1'] })),
+    removeHandleGroupMembers: vi.fn(async () => ({ members: [] })),
     ...overrides,
   };
   return base as unknown as ApiClient;
