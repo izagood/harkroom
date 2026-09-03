@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import type { Pool } from 'pg';
 import { mkdtemp, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,12 +13,14 @@ let stop: () => Promise<void>;
 let adminToken: string;
 let channelId: string;
 let storageRoot: string;
+let pool: Pool;
 
 const MAX = 2048;
 
 beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
+  pool = db.pool;
   storageRoot = await mkdtemp(join(tmpdir(), 'murmur-att-'));
   app = await buildServer({ pool: db.pool, storage: { root: storageRoot, maxBytes: MAX } });
   ({ token: adminToken } = await bootstrapAdmin(app));
@@ -230,6 +233,29 @@ describe('downloading an attachment', () => {
     });
 
     expect(res.statusCode).toBe(404);
+  });
+
+  // DB 행은 있는데 파일이 없으면 500 이 아니라 404 다 — "서버가 고장났다"와 "이 첨부의
+  // 파일이 없다"는 사람이 할 일이 다르다(재시도 대 운영 조치).
+  it('returns 404 attachment_missing when row exists but file is gone', async () => {
+    const up = (await upload('orphan.txt', 'content')).json();
+    await say('메시지에 연결', [up.id]);
+
+    // storageKey 를 DB 에서 가져온다.
+    const keyRes = await pool.query<{ storageKey: string }>(
+      'select storage_key as "storageKey" from attachment where id = $1',
+      [up.id],
+    );
+    const storageKey = keyRes.rows[0]!.storageKey;
+
+    // 파일 시스템에서 직접 파일을 지운다 — 파일이 없는 상태를 만든다.
+    const filePath = join(storageRoot, storageKey);
+    await rm(filePath);
+
+    const res = await app.inject({ method: 'GET', url: `/attachments/${up.id}`, headers: auth(adminToken) });
+
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('attachment_missing');
   });
 
   // 아직 메시지에 붙지 않은 업로드는 올린 사람만 볼 수 있다 — 남이 id 를 맞히면 열리면 안 된다.

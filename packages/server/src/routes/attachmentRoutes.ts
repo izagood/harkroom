@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { assertChannelVisible } from '../services/channels.js';
 import { findDownloadTarget, listChannelFiles, recordUpload } from '../services/attachments.js';
-import { StorageLimitError, type StorageBackend } from '../storage/local.js';
+import { StorageLimitError, AttachmentMissingError, type StorageBackend } from '../storage/local.js';
 
 /**
  * 절대 inline 으로 내주지 않는 타입. SVG 는 `<script>` 를 담을 수 있어 이미지처럼 보이지만
@@ -111,16 +111,35 @@ export async function registerAttachmentRoutes(
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
 
-    const body = await storage.read(target.attachment.storageKey);
-    const type = NEVER_INLINE.includes(target.attachment.contentType)
-      ? 'application/octet-stream'
-      : target.attachment.contentType;
-    return reply
-      // nosniff 없이는 브라우저가 내용을 보고 타입을 다시 판정해 스크립트로 실행할 수 있다.
-      .header('x-content-type-options', 'nosniff')
-      .header('content-disposition', dispositionFor(target.attachment.filename))
-      .header('content-length', String(target.attachment.sizeBytes))
-      .type(type)
-      .send(body);
+    try {
+      const body = await storage.read(target.attachment.storageKey);
+      const type = NEVER_INLINE.includes(target.attachment.contentType)
+        ? 'application/octet-stream'
+        : target.attachment.contentType;
+      return reply
+        // nosniff 없이는 브라우저가 내용을 보고 타입을 다시 판정해 스크립트로 실행할 수 있다.
+        .header('x-content-type-options', 'nosniff')
+        .header('content-disposition', dispositionFor(target.attachment.filename))
+        .header('content-length', String(target.attachment.sizeBytes))
+        .type(type)
+        .send(body);
+    } catch (err) {
+      if (err instanceof AttachmentMissingError) {
+        /**
+         * 행은 있는데 바이트가 없다(#257). **500 이 아니다** — 500 은 "서버가 고장났다"고
+         * 말하지만 실제 사실은 "이 첨부의 파일이 없다"이고, 그 둘은 대처가 다르다(전자는
+         * 재시도, 후자는 운영 조치).
+         *
+         * 찾은 경로는 **로그에만** 남긴다. 응답에 실으면 서버 파일시스템의 절대경로를
+         * 아무 로그인 사용자에게나 알려 주는 셈이고, 사람이 이 화면에서 할 수 있는 일은
+         * 경로를 알아도 달라지지 않는다.
+         */
+        req.log.warn(`attachment ${target.attachment.id} row exists but file is missing at ${err.path}`);
+        return reply.code(404).send({
+          error: { code: 'attachment_missing', message: 'attachment file not found on the server' },
+        });
+      }
+      throw err;
+    }
   });
 }

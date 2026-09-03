@@ -2,6 +2,8 @@ import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import fastifyMultipart from '@fastify/multipart';
 import type { Pool } from 'pg';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { projectionState, type ProjectionRuntime, type ProjectionStatus } from '@murmur/shared';
 import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
@@ -99,6 +101,40 @@ export interface ServerDeps {
 
 /** 25MB. 스크린샷·로그 파일에는 넉넉하고, 디스크가 조용히 차지 않을 만큼은 좁다. */
 const DEFAULT_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+/**
+ * 첨부 저장 루트의 기본값(#257). **작업 디렉터리에 기대지 않는다.**
+ *
+ * 원래 `process.env.ATTACHMENT_ROOT ?? './.attachments'` 였다. 상대경로는 **어디서
+ * 기동했느냐**에 따라 다른 곳을 가리킨다 — 그래서 업로드는 성공하는데, 며칠 뒤 다른
+ * 디렉터리에서 기동한 서버에서 누가 그 첨부를 누르면 파일이 없다. 워크트리를 여러 개 두고
+ * 개발하는 이 저장소에서는 그것이 예외가 아니라 기본값이었다.
+ *
+ * `006_attachment.sql` 이 적어 둔 문제의식의 연장이다: 거기서는 파일을 먼저 쓰고 행을
+ * 나중에 만들어 "가리키는 파일이 없는 행"을 한 건씩 피했다. 여기서 일어난 것은 그 사고의
+ * 전역판이다 — 경로의 **기준**이 바뀌면서 이미 있던 **모든 행이 한꺼번에** 깨졌다.
+ * 한 건씩 막는 순서 규칙은 기준이 흔들리는 것을 막아 주지 않는다.
+ *
+ * 그래서 이 파일의 위치(`import.meta.url`)를 기준으로 잡는다. `packages/server` 는 빌드
+ * 단계가 없고 `tsx` 로 `src/` 를 직접 돌리므로 이 파일은 항상 `packages/server/src` 에
+ * 있다 — 한 단계 올라간 **패키지 루트**가 저장 루트의 기준이다(예전에 `packages/server`
+ * 에서 기동했을 때 상대경로가 가리켰던 곳과 같으므로, 이미 쌓인 파일도 그대로 보인다).
+ * 빌드 산출물로 돌리게 되면 이 `'..'` 를 그 레이아웃에 맞춰야 한다.
+ *
+ * `ATTACHMENT_ROOT` 가 주어지면 그것을 쓰되 상대경로면 절대경로로 풀고, 풀린 결과를
+ * 로그에 남긴다 — 사람이 어디로 갔는지 볼 수 있어야 한다.
+ */
+function defaultAttachmentRoot(app: FastifyInstance): string {
+  const fromEnv = process.env.ATTACHMENT_ROOT;
+  if (fromEnv) {
+    const resolved = resolve(fromEnv);
+    if (resolved !== fromEnv) {
+      app.log.info(`ATTACHMENT_ROOT "${fromEnv}" resolved to "${resolved}"`);
+    }
+    return resolved;
+  }
+  return resolve(dirname(fileURLToPath(import.meta.url)), '..', '.attachments');
+}
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({
@@ -247,9 +283,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerAuthRoutes(app, deps.pool);
   await registerAccountRoutes(app, deps.pool);
   const storageOpts = deps.storage ?? {
-    root: process.env.ATTACHMENT_ROOT ?? './.attachments',
+    root: defaultAttachmentRoot(app),
     maxBytes: Number(process.env.ATTACHMENT_MAX_BYTES ?? DEFAULT_MAX_ATTACHMENT_BYTES),
   };
+  // **실제로 쓰는 절대경로**를 한 줄 남긴다(#257). 기본값을 계산한 자리가 아니라 여기서
+  // 찍는 이유: `deps.storage` 가 주어지면 기본값은 버려지므로, 계산 자리에서 찍으면 로그가
+  // 쓰지 않는 경로를 가리킨다. 이 사고는 **로그만으로** 알아낼 수 있어야 한다.
+  app.log.info(`attachment storage root: ${storageOpts.root}`);
   const storage = createLocalStorage(storageOpts);
   // multipart 의 자체 제한도 같은 값으로 맞춘다 — 스토리지만 막으면 파서가 먼저 메모리를 쓴다.
   await app.register(fastifyMultipart, { limits: { fileSize: storageOpts.maxBytes, files: 1 } });
