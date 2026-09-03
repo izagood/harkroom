@@ -9,6 +9,7 @@ import { StatusPicker } from './StatusPicker';
 import type { SectionId } from './settings/sections';
 import type { ChannelRow } from '@murmur/shared';
 import { CHANNEL_NAME_PATTERN } from '@murmur/shared';
+import { Logo } from './Logo';
 
 /**
  * 채널 미읽음 표시. **멘션 배지와 다른 신호다** — 멘션은 "당신을 불렀다"(빨간 숫자),
@@ -44,7 +45,7 @@ export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse 
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
-  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs } = useAppStore();
+  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, messages } = useAppStore();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
@@ -269,7 +270,17 @@ export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse 
     };
 
     const isArchived = !!ch.archivedAt;
+    // 마지막 메시지 seq. **로드된 메시지에서만 알 수 있다** — 서버는 채널별 최대 seq 를 주지
+    // 않는다. 0 이면 보낼 것이 없으므로 항목을 아예 만들지 않는다: 눌러도 아무 일이 없는
+    // 항목은 "할 수 있다"는 거짓 신호다(docs/design.md §4).
+    const lastSeq = Math.max(0, ...(messages[ch.id] ?? []).map((m) => m.seq));
     const menuItems = [
+      ...(lastSeq > 0 ? [{
+        // 마지막 메시지부터 미읽음 — 결과는 미읽음 1, 즉 "이 채널 다시 보라"는 표시다.
+        // 특정 메시지를 골라 그 지점부터 미읽음으로 만드는 것은 #179 다.
+        label: '미읽음으로 표시',
+        onSelect: () => void getController().markChannelUnread(ch.id, lastSeq),
+      }] : []),
       ...(me?.isAdmin ? [{ label: '채널 편집', onSelect: () => startEdit(ch) }] : []),
       ...(me?.isAdmin ? [isArchived
         ? { label: '보관 해제', onSelect: () => void getController().archiveChannel(ch.id, false) }
@@ -347,6 +358,7 @@ export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse 
       )}
       <div className="flex min-w-[180px] flex-1 flex-col overflow-hidden">
         <div className="flex items-center gap-2 border-b border-zinc-800 p-3 font-bold">
+          <Logo size={16} decorative />
           murmur
           <span className={`h-2 w-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}
             title={connected ? 'connected' : 'disconnected'} />

@@ -10,6 +10,8 @@ const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
+  // #129: 종료 요청은 읽기 전용 사실이다 — 기본은 '요청 없음'이고, 필요한 테스트가 덮는다.
+  stopRequestedAt: null, stopAckedAt: null,
   // #186: 에이전트는 상태를 고를 수 없지만 AccountView 의 필수 필드다.
   status: 'available', statusText: null, ...extra,
 });
@@ -31,6 +33,10 @@ const fakeController = (agents: AgentView[] = []) => {
     )),
     updateAgentDefaults: vi.fn(async (patch: Partial<AgentDefaults>): Promise<AgentDefaults> => (
       { harness: 'claude-code', model: null, effort: null, ...patch }
+    )),
+    // #129: 기본은 "요청이 갔다". 응답으로 온 정의가 화면의 상태를 정한다.
+    requestAgentStop: vi.fn(async (id: string): Promise<AgentView> => (
+      agent('rusalka', { id, stopRequestedAt: '2026-09-03T10:00:00.000Z', stopAckedAt: null })
     )),
     // #139: 기본은 "읽었고 비어 있다". 실패나 목록이 필요한 테스트가 갈아끼운다.
     agentMemory: vi.fn(async (): Promise<{ slug: string; value: string; updatedAt: string }[]> => []),
@@ -525,5 +531,81 @@ describe('새 에이전트 기본값', () => {
     const row = await screen.findByText('rusalka');
     expect(row.textContent).toContain('claude-code');
     expect(row.textContent).not.toMatch(/기본값|inherit/i);
+  });
+});
+
+/**
+ * 러너 종료 요청(#129). 화면이 말할 수 있는 것은 **세 가지**뿐이다:
+ * 요청 없음 / 요청했고 러너가 아직 못 봄 / 러너가 읽어 감.
+ * 넷째("멈췄다")는 murmur 가 알 수 없는 사실이라 절대 쓰지 않는다 — 러너가 종료하면
+ * 다음 GET /agent/config 자체가 오지 않으므로 서버는 프로세스의 생사를 관측하지 못한다.
+ */
+describe('러너 종료 요청 (#129)', () => {
+  /** 종료 요청 절만 떼어 본다 — 다른 절의 문구가 단언에 섞이지 않게 한다. */
+  const stopPanel = async () => (await screen.findByText('러너 종료 요청')).parentElement!;
+
+  beforeEach(() => {
+    useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+  });
+
+  it('요청 전에는 요청이 없다고만 말하고, 누르면 아직 읽어 가지 않았음을 보여준다', async () => {
+    const c = fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByText('rusalka'));
+
+    expect((await stopPanel()).textContent).toContain('종료를 요청한 적이 없다');
+
+    fireEvent.click(screen.getByRole('button', { name: '러너 종료 요청' }));
+    await waitFor(() => expect(c.requestAgentStop).toHaveBeenCalledWith('id-rusalka'));
+
+    const panel = await stopPanel();
+    await waitFor(() => expect(panel.textContent).toContain('아직 읽어 가지 않았다'));
+    expect(panel.textContent).not.toContain('종료를 요청한 적이 없다');
+  });
+
+  it('러너가 읽어 간 상태는 요청만 한 상태와 다르게 보인다', async () => {
+    fakeController([agent('rusalka', {
+      stopRequestedAt: '2026-09-03T10:00:00.000Z',
+      stopAckedAt: '2026-09-03T10:00:20.000Z',
+    })]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByText('rusalka'));
+
+    const panel = await stopPanel();
+    expect(panel.textContent).toContain('러너가 요청을 읽어 갔다');
+    expect(panel.textContent).not.toContain('아직 읽어 가지 않았다');
+    expect(panel.textContent).not.toContain('종료를 요청한 적이 없다');
+  });
+
+  it('어느 상태에서도 멈췄다고 단정하지 않는다', async () => {
+    // 세 상태를 모두 그려 보고, 셋 다 murmur 가 관측할 수 없는 사실을 주장하지 않는지 본다.
+    const states: Partial<AgentView>[] = [
+      {},
+      { stopRequestedAt: '2026-09-03T10:00:00.000Z', stopAckedAt: null },
+      { stopRequestedAt: '2026-09-03T10:00:00.000Z', stopAckedAt: '2026-09-03T10:00:20.000Z' },
+    ];
+    for (const state of states) {
+      fakeController([agent('rusalka', state)]);
+      render(<AgentsSettings />);
+      fireEvent.click(await screen.findByText('rusalka'));
+      const text = (await stopPanel()).textContent ?? '';
+
+      // 프로세스의 생사를 단정하는 문구, 그리고 murmur 가 하지 않는 일(재시작)의 약속.
+      expect(text).not.toMatch(/멈췄|멈춤|중지됨|종료됨|정지됨|재시작/);
+      // 대신 반드시 있어야 하는 것: 다시 띄우는 것은 사람의 몫이라는 사실.
+      expect(text).toContain('다시 띄우는 것은 사람');
+      cleanup();
+    }
+  });
+
+  it('러너가 읽어 갔다는 표시가 종료를 뜻하지 않음을 화면이 직접 말한다', async () => {
+    fakeController([agent('rusalka', {
+      stopRequestedAt: '2026-09-03T10:00:00.000Z',
+      stopAckedAt: '2026-09-03T10:00:20.000Z',
+    })]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByText('rusalka'));
+
+    expect((await stopPanel()).textContent).toContain('실제로 종료했는지는 murmur 가 알 수 없다');
   });
 });

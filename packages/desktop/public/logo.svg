@@ -1,0 +1,14 @@
+<!-- favicon 전용 사본이다. 화면 안의 로고는 src/components/Logo.tsx 이고,
+     favicon 은 파일이어야 해서 컴포넌트를 재사용할 수 없다.
+     둘 중 하나를 고치면 다른 하나도 같이 고쳐라. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" color="#16181C" role="img" aria-label="murmur">
+  <title>murmur</title>
+  <style>@media (prefers-color-scheme: dark) { svg { color: #F3F1ED; } }</style>
+  <path d="M20 52.0 V 76.0" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+  <path d="M35 42.0 V 86.0" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+  <path d="M50 31.0 V 97.0" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+  <path d="M65 18.0 V 110.0" stroke="#E8613C" stroke-width="9" stroke-linecap="round"/>
+  <path d="M80 33.0 V 95.0" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+  <path d="M95 45.0 V 83.0" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+  <path d="M110 53.0 V 75.0" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+</svg>

@@ -207,6 +207,26 @@ export function AgentsSettings() {
     } finally { setBusy(false); }
   };
 
+  /**
+   * 러너에게 종료를 요청한다(#129). **재시작 버튼이 아니다** — murmur 는 러너를 띄우지
+   * 않으므로 여기서 할 수 있는 것은 "지금 턴을 끝내고 물러나 달라"는 요청까지다.
+   *
+   * 목록 전체를 다시 받지 않고 응답으로 온 정의만 갈아끼운다 — 방금 누른 사람이 자기
+   * 조작의 결과(요청 시각)를 곧바로 봐야 한다.
+   */
+  const requestStop = async () => {
+    if (!selected) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const updated = await getController().requestAgentStop(selected.id);
+      setSelected(updated);
+      setAgents((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+    } catch {
+      setError('종료를 요청하지 못했다');
+    } finally { setBusy(false); }
+  };
+
   const revokePat = async (label: string) => {
     if (!selected) return;
     setError(null);
@@ -556,6 +576,50 @@ export function AgentsSettings() {
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {selected && isAdmin && (
+              <div className="rounded border border-zinc-200 p-3">
+                {/* #129: "재시작"이라고 쓰지 않는다. murmur 는 러너를 띄우지 않으므로
+                    재시작은 murmur 가 할 수 있는 일이 아니고, 할 수 없는 일을 버튼 이름으로
+                    약속하면 그것이 곧 거짓 신호다(docs/design.md 4절). */}
+                <div className="text-xs font-medium text-zinc-600">러너 종료 요청</div>
+                <p className="mt-1 text-[11px] text-zinc-500">
+                  러너에게 <strong>진행 중인 턴을 마친 뒤 스스로 종료</strong>해 달라고 요청한다.
+                  턴 중간에 끊지 않는다 — 사람이 기다리는 답을 잃지 않기 위해서다.
+                  murmur 는 러너를 띄우지 않으므로 <strong>다시 띄우는 것은 사람</strong>(또는
+                  그 머신의 launchd/systemd 감독)의 몫이다. 감독이 없으면 이 요청은 정지로 끝난다.
+                </p>
+                {/* 세 상태를 구분해 그린다: 요청 없음 / 요청했으나 러너가 아직 못 봄 /
+                    러너가 읽어 감. **'멈췄다'고 쓰지 않는다** — 러너가 종료하면 다음
+                    GET /agent/config 자체가 오지 않아, murmur 는 프로세스의 생사를 모른다. */}
+                <div className="mt-2 text-[11px]" role="status">
+                  {!selected.stopRequestedAt && (
+                    <span className="text-zinc-400">종료를 요청한 적이 없다</span>
+                  )}
+                  {selected.stopRequestedAt && !selected.stopAckedAt && (
+                    <span className="text-amber-700">
+                      종료 요청함 ({new Date(selected.stopRequestedAt).toLocaleString()}) —
+                      러너가 아직 읽어 가지 않았다. 러너가 붙어 있지 않으면 읽어 갈 사람도 없다.
+                    </span>
+                  )}
+                  {selected.stopRequestedAt && selected.stopAckedAt && (
+                    <span className="text-zinc-600">
+                      러너가 요청을 읽어 갔다 (요청 {new Date(selected.stopRequestedAt).toLocaleString()}
+                      {' '}· 수령 {new Date(selected.stopAckedAt).toLocaleString()}).
+                      진행 중이던 턴을 마치고 종료한다 — 실제로 종료했는지는 murmur 가 알 수 없다.
+                    </span>
+                  )}
+                </div>
+                <button
+                  className="mt-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                  aria-label="러너 종료 요청"
+                  disabled={busy}
+                  onClick={() => void requestStop()}
+                >
+                  종료 요청
+                </button>
               </div>
             )}
 
