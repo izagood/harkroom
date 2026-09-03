@@ -1,4 +1,4 @@
-import type { AccountStatus, AttachmentRow, ChannelRow, ChannelPrefRow, MessageRow, WsServerEvent } from '@murmur/shared';
+import type { AccountStatus, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, MessageRow, WsServerEvent } from '@murmur/shared';
 import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
@@ -267,6 +267,9 @@ export class Controller {
     const since = this.loadedChannels.has(channelId)
       ? Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq))
       : 0;
+    // 핀은 **크리티컬 패스에서 뺀다.** 이 엔드포인트가 없는 서버(구버전)에 붙었을 때
+    // 채널이 아예 안 열리면 안 된다 — 채널 선호(`start`)와 같은 이유다.
+    this.swallow(this.loadPins(channelId));
     const page = await this.api.messages(channelId, { since });
     this.loadedChannels.add(channelId);
     useAppStore.getState().upsertMessages(channelId, page.messages);
@@ -432,6 +435,54 @@ export class Controller {
     useAppStore.getState().upsertMessages(activeChannelId, [updated]);
   }
 
+  /**
+   * 이 채널의 고정 목록을 서버에서 다시 받는다(#218).
+   *
+   * 델타가 아니라 목록 전체를 갈아 끼운다: 핀은 채널 전역 상태라 다른 사람이 고정·해제한
+   * 것도 섞여 들어오고, 그때 내 로컬 델타만 쌓으면 화면이 서버와 조용히 갈라진다.
+   */
+  async loadPins(channelId: string): Promise<void> {
+    const pins = await this.api.pins(channelId);
+    const store = useAppStore.getState();
+    store.set({ pins: { ...store.pins, [channelId]: pins } });
+  }
+
+  /**
+   * 고정한다. 성공 응답의 핀을 목록에 얹지 않고 **다시 받아 온다** — 정렬(최근 순)이
+   * 서버의 것이라 여기서 자리를 추측하면 다음 새로고침에 순서가 바뀐다.
+   *
+   * 실패를 삼키지 않는다: 보관된 채널이나 남의 DM 은 서버가 403 을 주고, 그 사실이
+   * 사람에게 보여야 한다 — 조용히 아무 일도 안 하면 계속 다시 누른다.
+   */
+  async pinMessage(channelId: string, messageId: string): Promise<void> {
+    try {
+      await this.api.pinMessage(channelId, messageId);
+    } catch (e) {
+      useAppStore.getState().set({
+        notice: e instanceof ApiError && e.code === 'channel_archived'
+          ? "This channel is archived — it's read-only, so nothing new can be pinned."
+          : 'Could not pin that message. Check your connection and try again.',
+      });
+      return;
+    }
+    await this.loadPins(channelId);
+  }
+
+  /** 해제한다. 고정한 사람도 admin 도 아니면 서버가 403 을 주고, 그 사유를 그대로 보여 준다. */
+  async unpinMessage(channelId: string, messageId: string): Promise<void> {
+    try {
+      await this.api.unpinMessage(channelId, messageId);
+    } catch (e) {
+      useAppStore.getState().set({
+        notice: e instanceof ApiError && e.status === 403
+          ? 'Only the person who pinned that message, or an admin, can unpin it.'
+          : 'Could not unpin that message. Check your connection and try again.',
+      });
+      return;
+    }
+    await this.loadPins(channelId);
+  }
+
   async deleteMessage(messageId: string): Promise<void> {
     const { activeChannelId, threadRootId } = useAppStore.getState();
     if (!activeChannelId) return;
@@ -502,18 +553,52 @@ export class Controller {
    * 컴포넌트가 `api` 를 직접 부르고 스토어를 손으로 갱신하면 그 절차가 화면마다 흩어지고,
    * 서버가 채운 필드(kind·topic 기본값)를 클라이언트가 추측하게 된다. 목록은 다시 받아온다.
    */
-  async createChannel(name: string): Promise<ChannelRow> {
-    const created = await this.api.createChannel({ name });
+  async createChannel(name: string, visibility: 'public' | 'private' = 'public'): Promise<ChannelRow> {
+    const created = await this.api.createChannel({ name, visibility });
     useAppStore.getState().set({ channels: await this.api.channels() });
     await this.openChannel(created.id);
     return created;
   }
 
   /**
+   * 멤버 목록을 받아 스토어에 넣는다. **실패를 빈 목록으로 삼키지 않는다** — 조회가
+   * 실패했는데 화면이 "멤버 없음"을 그리면, private 채널에서 그것은 "이 채널은 아무도
+   * 볼 수 없다"는 거짓 사실이 되고 나가기 경고가 사라진다. 던져서 호출부가 안내하게 한다.
+   */
+  async loadChannelMembers(channelId: string): Promise<ChannelMemberRow[]> {
+    const members = await this.api.channelMembers(channelId);
+    const store = useAppStore.getState();
+    store.set({ channelMembers: { ...store.channelMembers, [channelId]: members } });
+    return members;
+  }
+
+  async inviteChannelMember(channelId: string, accountId: string): Promise<ChannelMemberRow[]> {
+    const members = await this.api.inviteChannelMember(channelId, accountId);
+    const store = useAppStore.getState();
+    store.set({ channelMembers: { ...store.channelMembers, [channelId]: members } });
+    return members;
+  }
+
+  /**
+   * 나가기/내보내기. 나간 뒤에는 **채널 목록을 다시 받는다** — private 채널에서 나가면 그
+   * 채널은 더 이상 내게 존재하지 않으므로 사이드바에 남아 있으면 안 된다.
+   */
+  async leaveChannel(channelId: string, accountId: string): Promise<void> {
+    const members = await this.api.removeChannelMember(channelId, accountId);
+    const store = useAppStore.getState();
+    store.set({
+      channelMembers: { ...store.channelMembers, [channelId]: members },
+      channels: await this.api.channels(),
+    });
+  }
+
+  /**
    * 채널을 편집하고 목록을 갱신한다 — sidebar 가 `repo` 배지와 topic 을 직접 보여주므로
    * 편집 결과를 반영하려면 목록을 다시 받아야 한다. `createChannel` 과 같은 이유다.
    */
-  async updateChannel(id: string, input: { topic?: string; repo?: string | null }): Promise<ChannelRow> {
+  async updateChannel(
+    id: string, input: { topic?: string; repo?: string | null; visibility?: 'public' | 'private' },
+  ): Promise<ChannelRow> {
     const updated = await this.api.updateChannel(id, input);
     useAppStore.getState().set({ channels: await this.api.channels() });
     return updated;
@@ -692,6 +777,9 @@ export class Controller {
     const since = this.loadedChannels.has(channelId)
       ? Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq))
       : 0;
+    // 핀은 **크리티컬 패스에서 뺀다.** 이 엔드포인트가 없는 서버(구버전)에 붙었을 때
+    // 채널이 아예 안 열리면 안 된다 — 채널 선호(`start`)와 같은 이유다.
+    this.swallow(this.loadPins(channelId));
     const page = await this.api.messages(channelId, { since });
     this.loadedChannels.add(channelId);
     store.upsertMessages(channelId, page.messages);
