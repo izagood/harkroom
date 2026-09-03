@@ -5,6 +5,7 @@ import { MessageItem } from './MessageItem';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
 import { ChannelFiles } from './ChannelFiles';
+import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { dayLabel, localDayKey } from '../lib/day';
 
@@ -20,7 +21,9 @@ export function ChannelPane() {
    * 채널을 옮기면 다시 접힌다 — 이 상태는 지금 보는 채널에 대한 것이라 들고 다닐 뜻이 없다.
    */
   const [pinsOpen, setPinsOpen] = useState(false);
+  const [docOpen, setDocOpen] = useState(false);
   useEffect(() => { setPinsOpen(false); }, [activeChannelId]);
+  useEffect(() => { setDocOpen(false); }, [activeChannelId]);
 
   const channel = channels.find((c) => c.id === activeChannelId);
   const dm = dms.find((d) => d.id === activeChannelId);
@@ -69,6 +72,12 @@ export function ChannelPane() {
         {channel?.topic && <span className="truncate text-xs text-zinc-500">{channel.topic}</span>}
         {channel?.repo && <span className="rounded bg-zinc-100 px-1.5 text-[11px] text-zinc-600">{channel.repo}</span>}
         {isArchived && <span className="rounded bg-zinc-200 px-1.5 text-[11px] text-zinc-600">보관됨</span>}
+        <button
+          className="shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
+          onClick={() => setDocOpen((v) => !v)}
+        >
+          문서
+        </button>
         <button
           className="ml-auto shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
           onClick={() => setFilesOpen((v) => !v)}
@@ -183,6 +192,9 @@ export function ChannelPane() {
         "널일 수도 있다" 는 거짓 신호가 남는다. */}
     {filesOpen && (
       <ChannelFiles key={activeChannelId} channelId={activeChannelId} onClose={() => setFilesOpen(false)} />
+    )}
+    {docOpen && channel && (
+      <ChannelDocPanel key={activeChannelId} channelId={activeChannelId} onClose={() => setDocOpen(false)} />
     )}
     </div>
   );

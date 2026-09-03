@@ -1,4 +1,4 @@
-import type { AccountStatus, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, MessageRow, NotifyLevel, WsServerEvent } from '@murmur/shared';
+import type { AccountStatus, AttachmentRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, MessageRow, NotifyLevel, WsServerEvent } from '@murmur/shared';
 import { notifyLevelOf } from '@murmur/shared';
 import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
@@ -580,6 +580,30 @@ export class Controller {
       return;
     }
     await this.loadPins(channelId);
+  }
+
+  /**
+   * 채널 문서를 서버에서 다시 받는다(#188).
+   *
+   * 읽기 전용이므로 실패를 삼키지 않는다 — "없다"와 "못 읽었다"가 같은 화면이 되면
+   * 안 되므로 호출부가 사람에게 실패를 보여줘야 한다.
+   */
+  async loadChannelDoc(channelId: string): Promise<ChannelDoc> {
+    const doc = await this.api.channelDoc(channelId);
+    const store = useAppStore.getState();
+    store.set({ channelDocs: { ...store.channelDocs, [channelId]: doc } });
+    return doc;
+  }
+
+  /**
+   * 채널 문서를 저장한다(#188). 409 (stale) 가 돌아오면 현재 본문을 사람에게 보여주고
+   * 다시 편집하게 한다 — 조용히 덮어쓰지도, 조용히 버리지도 않는다.
+   */
+  async saveChannelDoc(channelId: string, body: string, expectedUpdatedAt?: number | null): Promise<ChannelDoc> {
+    const doc = await this.api.updateChannelDoc(channelId, body, expectedUpdatedAt);
+    const store = useAppStore.getState();
+    store.set({ channelDocs: { ...store.channelDocs, [channelId]: doc } });
+    return doc;
   }
 
   async deleteMessage(messageId: string): Promise<void> {

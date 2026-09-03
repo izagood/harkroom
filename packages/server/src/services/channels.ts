@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import type { ChannelMemberRow, ChannelRow, NotifyLevel } from '@murmur/shared';
+import type { ChannelDoc, ChannelMemberRow, ChannelRow, NotifyLevel } from '@murmur/shared';
 
 const COLS = `id, name, topic, kind, repo, archived_at as "archivedAt", visibility`;
 
@@ -346,4 +346,54 @@ export async function channelPostGate(
   // (멤버십은 구독일 뿐이다), private 채널은 비멤버에게 403 이다 — admin 예외 없다.
   if (!row.visible) return 'forbidden';
   return row.archived ? 'archived' : 'ok';
+}
+
+/**
+ * 채널 문서 조회(#188). 가시성은 `assertChannelVisible` 로 검사하고, 채널이
+ * 존재하지 않으면 null 이 아니라 404 로 처리되도록 channelRoutes 에서 판별한다.
+ *
+ * 문서가 없으면 본문 '' 와 함께 반환한다 — "없다"와 "빈 문서"가 같은 화면이므로.
+ * 후자를 선택한 것은 새 채널마다 빈 문서를 만들어 둘 이유가 없기 때문이다.
+ */
+export async function getChannelDoc(
+  pool: Pool, channelId: string,
+): Promise<ChannelDoc | null> {
+  const res = await pool.query(
+    `select d.channel_id as "channelId", d.body, d.updated_by as "updatedBy", d.updated_at as "updatedAt"
+     from channel_doc d where d.channel_id = $1`,
+    [channelId],
+  );
+  if (!res.rowCount) {
+    return null;
+  }
+  return res.rows[0];
+}
+
+/**
+ * 채널 문서 수정(#188). 낙관적 동시성 제어를 위해 `expectedUpdatedAt` 을 받는다.
+ * 서버의 updatedAt 과 다르면 현재 본문과 함께 'stale' 을 반환한다.
+ *
+ * 문서가 없을 때는 INSERT 로 생성한다 — 채널당 하나 정책이 PK 로 enforcing 된다.
+ */
+export async function updateChannelDoc(
+  pool: Pool, channelId: string, actorId: string,
+  body: string, expectedUpdatedAt: Date | null,
+): Promise<{ ok: ChannelDoc } | { stale: ChannelDoc }> {
+  if (expectedUpdatedAt !== null) {
+    const check = await pool.query(
+      `select updated_at as "updatedAt" from channel_doc where channel_id = $1`,
+      [channelId],
+    );
+    if (check.rowCount && new Date(check.rows[0].updatedAt).getTime() !== expectedUpdatedAt.getTime()) {
+      const current = await getChannelDoc(pool, channelId);
+      return { stale: current! };
+    }
+  }
+  await pool.query(
+    `insert into channel_doc (channel_id, body, updated_by, updated_at)
+     values ($1, $2, $3, now())
+     on conflict (channel_id) do update set body = $2, updated_by = $3, updated_at = now()`,
+    [channelId, body, actorId],
+  );
+  return { ok: (await getChannelDoc(pool, channelId))! };
 }
