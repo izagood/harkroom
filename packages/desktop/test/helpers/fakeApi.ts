@@ -30,11 +30,17 @@ export function accountsResult(
 
 // #182: 공개 범위도 **필수 필드**다 — fixture 가 그것을 적어야 한다. 기본값은 서버의
 // 기본값과 같은 'public' 이고, private 을 보는 테스트가 마지막 인자로 덮어쓴다.
+// #180: 생성 시각도 **필수 필드**다 — 채널 디렉터리의 "생성순" 정렬이 이 값으로 비교한다.
+// 기본값은 모든 채널이 같은 고정 시각이고, 순서를 보는 테스트가 extra 로 서로 다르게 덮어쓴다.
+// 고정값을 쓰는 이유: 호출 시각을 쓰면 fixture 를 나열한 순서가 곧 생성순이 되어, 비교 함수를
+// 지워도 테스트가 우연히 초록으로 남는다.
 export const chan = (
   id: string, name: string, repo: string | null = null,
   visibility: 'public' | 'private' = 'public',
+  extra: Partial<ChannelRow> = {},
 ): ChannelRow =>
-  ({ id, name, topic: '', kind: 'standard', repo, archivedAt: null, visibility });
+  ({ id, name, topic: '', kind: 'standard', repo, archivedAt: null, visibility,
+    createdAt: '2024-01-01T00:00:00.000Z', ...extra });
 
 export const msg = (id: string, channelId: string, seq: number, body: string, authorId = 'u1',
   extra: Partial<MessageRow> = {}): MessageRow =>
