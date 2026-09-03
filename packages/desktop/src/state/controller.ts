@@ -339,11 +339,18 @@ export class Controller {
         // 스스로 읽는다 — 지금 화면에 없는 URL 의 카드를 미리 받아 둘 이유가 없다.
         store.set({ linkPreviewReadyAt: { ...store.linkPreviewReadyAt, [e.url]: Date.now() } });
         break;
-      // 워크스페이스 스킬(#311). 제안·승인·비활성 이벤트를 받으면 설정 화면이
-      // 자동으로 새로고침하지 않는다 — 사용자가 설정 화면을 열 때 새로고침한다.
+      /**
+       * 워크스페이스 스킬(#311). 제안·승인·비활성을 받으면 **신호만** 올린다 —
+       * 열려 있는 스킬 설정 화면이 그것을 보고 목록을 다시 읽는다.
+       *
+       * 이벤트가 실어 온 `skill` 을 스토어에 넣지 않는 이유: 목록은 서버에 하나뿐이고,
+       * 여기서 한 건만 끼워 넣으면 그 사이 다른 admin 이 한 승인이 화면에서 사라진다.
+       * 신호를 받고 통째로 다시 읽는 쪽이 언제나 서버와 같다.
+       */
       case 'skill.proposed':
       case 'skill.approved':
       case 'skill.disabled':
+        store.set({ skillsRevision: store.skillsRevision + 1 });
         break;
     }
   }

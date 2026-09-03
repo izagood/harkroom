@@ -36,6 +36,17 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
 
   const isSystem = message.kind === 'system';
   const avcsType = typeof message.meta.avcsType === 'string' ? message.meta.avcsType : null;
+  /**
+   * 스킬 제안 알림에서 승인 화면으로 가는 진입점(#311 요구 5).
+   *
+   * **본문 글자를 파싱하지 않는다** — 서버가 `meta.skillSlug` 로 표시한다. 알림 문구를
+   * 정규식으로 더듬으면 문구를 한 글자 다듬는 순간 진입점이 조용히 사라진다.
+   * 신호는 `#279` 의 `onOpenSettings(section, targetId)` 를 **재사용**한다(새 신호를
+   * 만들지 않는다). 대상까지 넘기므로 설정이 그 스킬의 본문을 펼친 채로 열린다.
+   */
+  const skillSlug = isSystem && typeof message.meta.skillSlug === 'string'
+    ? message.meta.skillSlug
+    : null;
   const time = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const lastReplyTime = message.lastReplyAt
     ? new Date(message.lastReplyAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -186,6 +197,15 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
         {draft === null ? (
           <>
             {message.body.trim() && <MessageBody body={message.body} messageId={message.id} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
+            {skillSlug && onOpenSettings && (
+              <button
+                className="mt-1 rounded-lg border border-border px-2 py-1 text-[11px] font-medium
+                           text-fg hover:bg-surface-hover"
+                onClick={() => onOpenSettings('skills', skillSlug)}
+              >
+                스킬 승인 화면 열기
+              </button>
+            )}
             <Attachments attachments={message.attachments} />
             <Reactions message={message} />
             {/* #254: 답글 컨트롤을 **본문 열**에 둔다 — 리액션 칩 바로 뒤, 왼쪽 정렬.
