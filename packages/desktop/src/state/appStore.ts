@@ -138,6 +138,16 @@ export interface AppState {
    * 최신인지 화면마다 갈린다. 여기 있는 것은 "다시 읽어라"는 신호뿐이다.
    */
   linkPreviewReadyAt: Record<string, number>;
+  /**
+   * 스킬 목록이 바뀐 횟수(#311). `skill.*` 이벤트를 받을 때마다 1 올라간다.
+   *
+   * 목록을 여기 담지 않는 이유는 미리보기와 같다 — 목록은 서버에 하나뿐이고, 두 벌을
+   * 두면 어느 쪽이 최신인지 갈린다. 여기 있는 것은 "다시 읽어라"는 신호뿐이다.
+   *
+   * **시각이 아니라 세는 수인 이유:** 같은 밀리초에 두 이벤트가 오면 `Date.now()` 는
+   * 같은 값이라 화면이 두 번째를 못 본다. 세는 수는 그런 자리가 없다.
+   */
+  skillsRevision: number;
   set(partial: Partial<AppState>): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
@@ -176,7 +186,7 @@ const initial = {
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
   expandedMessageIds: {}, runnerStates: {}, savedIds: [], savedCount: 0,
-  linkPreviewReadyAt: {},
+  linkPreviewReadyAt: {}, skillsRevision: 0,
 };
 
 /**

@@ -52,6 +52,15 @@ async function countScheduled(pool: Pool): Promise<number> {
   return (await pool.query(`select count(*)::int as n from scheduled_message`)).rows[0].n;
 }
 
+/**
+ * 채널에 실제로 발송된 **사람 메시지**만. `makeChannel` 의 초대가 시스템 메시지를 남기므로
+ * (#322) 전체 목록을 세면 예약 발송과 무관한 행이 섞인다. 개수 단언을 느슨하게 푸는 대신
+ * 종류로 좁힌다 — 예약 발송이 세는 대상은 `kind='user'` 뿐이다.
+ */
+function userMessages(res: { json: () => { messages: Array<{ kind: string; body: string; id: string }> } }) {
+  return res.json().messages.filter((m) => m.kind === 'user');
+}
+
 /** 새 채널 하나와 그 채널의 멤버십. 테스트끼리 행을 섞지 않으려고 매번 새로 판다. */
 async function makeChannel(app: FastifyInstance, adminToken: string, name: string, memberId: string): Promise<string> {
   const created = await app.inject({
@@ -108,7 +117,7 @@ describe('예약 발송 (#222)', () => {
       method: 'GET', url: `/channels/${ch}/messages`,
       headers: { authorization: `Bearer ${userToken}` },
     });
-    expect(messages.json().messages).toHaveLength(0);
+    expect(userMessages(messages)).toHaveLength(0);
 
     const list = await app.inject({
       method: 'GET', url: `/channels/${ch}/scheduled`,
@@ -129,7 +138,7 @@ describe('예약 발송 (#222)', () => {
       method: 'GET', url: `/channels/${ch}/messages`,
       headers: { authorization: `Bearer ${reader.token}` },
     });
-    expect(asOther.json().messages).toHaveLength(0);
+    expect(userMessages(asOther)).toHaveLength(0);
   });
 
   // 2. 남에게는 **존재 자체가** 보이지 않는다. 보이면 초안과 다를 게 없다.
@@ -168,9 +177,9 @@ describe('예약 발송 (#222)', () => {
       method: 'GET', url: `/channels/${ch}/messages`,
       headers: { authorization: `Bearer ${userToken}` },
     });
-    expect(messages.json().messages).toHaveLength(1);
-    expect(messages.json().messages[0].body).toBe('지금 발송');
-    expect(messages.json().messages[0].id).toBe(due.sent_message_id);
+    const sent = userMessages(messages);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ body: '지금 발송', id: due.sent_message_id });
   });
 
   // 4. **일반 발송과 같은 부작용**이 나야 한다. 이것이 `postMessage` 를 그대로 통과시키는
@@ -219,7 +228,7 @@ describe('예약 발송 (#222)', () => {
       method: 'GET', url: `/channels/${ch}/messages`,
       headers: { authorization: `Bearer ${adminToken}` },
     });
-    expect(messages.json().messages).toHaveLength(0);
+    expect(userMessages(messages)).toHaveLength(0);
   });
 
   // 6. 에이전트는 예약할 수 없다. 403 이고 **행도 남지 않는다**.
@@ -328,7 +337,7 @@ describe('예약 발송 (#222)', () => {
       method: 'GET', url: `/channels/${ch}/messages`,
       headers: { authorization: `Bearer ${userToken}` },
     });
-    const bodies = (messages.json().messages as Array<{ body: string }>).map((m) => m.body);
+    const bodies = userMessages(messages).map((m) => m.body);
     expect(bodies).toHaveLength(5);
     expect(new Set(bodies).size).toBe(5);
 
