@@ -105,7 +105,7 @@ const draftOf = (a: AgentView): Draft => ({
   ownerAccountId: a.ownerAccountId,
 });
 
-export function AgentsSettings() {
+export function AgentsSettings({ targetId }: { targetId?: string }) {
   const [agents, setAgents] = useState<AgentView[]>([]);
   const [selected, setSelected] = useState<AgentView | null>(null);
   // 초안이 null 인 것은 '무엇을 기본으로 둘지 아직 모른다'는 뜻이다 — 기본값을 못 읽었는데
@@ -164,6 +164,22 @@ export function AgentsSettings() {
     void getController().listAgents().then(setAgents).catch(() => setError('에이전트 목록을 받지 못했다'));
   };
   useEffect(reload, []);
+
+  /**
+   * 멘션에서 이 화면으로 왔다면 그 에이전트를 고른 상태로 시작한다(#279).
+   *
+   * **한 targetId 에 한 번만** 고른다. `agents` 는 저장·재조회마다 새 배열이라 그것만 보고
+   * 다시 고르면, 사람이 다른 에이전트를 고른 뒤 저장한 순간 화면이 원래 대상으로 튀고
+   * `pick` 이 초안을 갈아 사람이 쓰던 편집이 사라진다.
+   */
+  const pickedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!targetId || pickedFor.current === targetId) return;
+    const agent = agents.find((a) => a.id === targetId);
+    if (!agent) return;
+    pickedFor.current = targetId;
+    pick(agent);
+  }, [targetId, agents]);
 
   // 기본값은 admin 전용 라우트다(`GET /settings/agent-defaults`). admin 이 아닌 사람에게
   // 부르면 403 이 나고, 그 403 을 오류로 그리면 아무 잘못도 없는 화면에 붉은 글이 뜬다.
