@@ -389,6 +389,8 @@ describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
     starredAt: o.starred ? '2026-09-03T00:00:00.000Z' : null,
     // #224 이후 음소거는 수준 `none` 이다.
     notifyLevel: o.muted ? 'none' : 'all',
+    section: null,
+    sortOrder: null,
   });
 
   // star 를 저장만 하고 정렬을 안 건드리면 기능이 아무것도 하지 않는다(#152 본문).

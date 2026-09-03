@@ -372,9 +372,10 @@ export async function updateChannelPref(
   if (patch.section !== undefined || patch.sortOrder !== undefined) {
     // 섹션: null 은 "지우기"고, 문자열은 앞뒤 공백 제거, 빈 문자열은 null 로 저장.
     // 길이 1~40 검증은 라우트에서 한다.
-    const sectionValue = patch.section === undefined ? null
-      : patch.section === '' ? null
-      : patch.section.trim();
+    const sectionInput = patch.section;
+    const sectionValue: string | null = sectionInput === undefined || sectionInput === '' || sectionInput === null
+      ? null
+      : sectionInput.trim();
     await pool.query(
       `insert into channel_pref (account_id, channel_id, section, sort_order)
        values ($1, $2, $3, $4)
