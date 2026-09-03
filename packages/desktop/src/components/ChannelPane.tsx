@@ -4,12 +4,16 @@ import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
+import { ChannelFiles } from './ChannelFiles';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { dayLabel, localDayKey } from '../lib/day';
 
 export function ChannelPane() {
   const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins } = useAppStore();
   const bottomRef = useRef<HTMLDivElement>(null);
+  // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
+  // 열림 상태도 채널 화면이 들고 있고, 채널이 바뀌면 `key` 로 패널이 다시 만들어진다.
+  const [filesOpen, setFilesOpen] = useState(false);
   /**
    * 고정 목록은 **접힌 채로 시작한다**(#218). 핀은 "필요할 때 찾아가는 자리"이지 늘 읽는
    * 것이 아니고, 펼친 채로 두면 핀이 몇 개만 쌓여도 대화가 화면 아래로 밀린다.
@@ -46,6 +50,10 @@ export function ChannelPane() {
 
   useEffect(() => { bottomRef.current?.scrollIntoView?.(); }, [roots.length]);
 
+  // 채널을 옮기면 파일 패널을 닫는다. 열린 채로 두면 방금 떠난 채널의 목록이 잠깐 남아
+  // 어느 채널의 파일인지 오해할 여지가 생긴다.
+  useEffect(() => { setFilesOpen(false); }, [activeChannelId]);
+
   if (!activeChannelId) {
     return <main className="flex flex-1 items-center justify-center text-zinc-400">Pick a channel to start</main>;
   }
@@ -54,12 +62,19 @@ export function ChannelPane() {
   const channelPins = pins[activeChannelId] ?? [];
 
   return (
+    <div className="flex min-w-0 flex-1">
     <main className="flex min-w-0 flex-1 flex-col bg-white">
       <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-2">
         <span className="font-bold">{title}</span>
         {channel?.topic && <span className="truncate text-xs text-zinc-500">{channel.topic}</span>}
         {channel?.repo && <span className="rounded bg-zinc-100 px-1.5 text-[11px] text-zinc-600">{channel.repo}</span>}
         {isArchived && <span className="rounded bg-zinc-200 px-1.5 text-[11px] text-zinc-600">보관됨</span>}
+        <button
+          className="ml-auto shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
+          onClick={() => setFilesOpen((v) => !v)}
+        >
+          파일
+        </button>
       </header>
       {/* 고정된 메시지(#218). 핀이 하나도 없으면 아무것도 그리지 않는다 — 늘 있는 빈 줄은
           "여기에 뭔가 있다"는 거짓 신호이고, 헤더 아래 세로 공간을 그냥 먹는다. */}
@@ -164,5 +179,11 @@ export function ChannelPane() {
         )}
       </div>
     </main>
+    {/* `activeChannelId` 는 위에서 이미 이른 반환으로 걸러졌다 — 여기서 또 보면
+        "널일 수도 있다" 는 거짓 신호가 남는다. */}
+    {filesOpen && (
+      <ChannelFiles key={activeChannelId} channelId={activeChannelId} onClose={() => setFilesOpen(false)} />
+    )}
+    </div>
   );
 }
