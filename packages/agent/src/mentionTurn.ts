@@ -34,6 +34,12 @@ export interface MentionTurnMurmur {
   addReaction(channelId: string, messageId: string, emoji: string): Promise<void>;
   /** 턴이 진행 중임을 알리는 리액션(💬). 턴 종료 후 반드시 제거한다. */
   removeReaction(channelId: string, messageId: string, emoji: string): Promise<void>;
+  /**
+   * #176: 턴을 마쳤다고 보고한다. 인자가 없다 — 시각은 서버가 찍는다.
+   * 실패는 **던진다**: 턴을 실패로 만들지 않는 판단은 호출자가 하고, 여기서 삼키면
+   * "보고했다"와 "보고가 실패했다"가 구분되지 않아 로그에도 남지 않는다.
+   */
+  reportActivity(): Promise<void>;
 }
 
 /** 한 턴을 실제로 돌리는 함수. 프로덕션은 pty.ts::runPtyTurn 을 그대로 넘기고, 테스트는
@@ -365,6 +371,20 @@ export async function runMentionTurn(
   const elapsedMs = (deps.now ?? Date.now)() - turnStartMs;
   const exitInfo = result.timedOut ? `timeout (${result.exitCode})` : String(result.exitCode);
   console.log(`[mentionTurn] ${key}: 턴 종료 (경과=${elapsedMs}ms, exitCode=${exitInfo})`);
+
+  // #176: 마지막 활동 시각을 서버에 남긴다. **여기가 자리다** — 실패 분기(아래)보다 위여서
+  // 실패한 턴도 보고된다. 실패한 턴도 움직인 턴이고, "마지막으로 언제 움직였나"에 성공
+  // 여부는 들어 있지 않다. 발화 여부와도 무관하다(도구만 쓰고 끝나는 턴이 있다).
+  //
+  // **실패해도 턴을 실패로 만들지 않는다.** 활동 보고가 안 됐다고 사람이 기다리는 답을
+  // 못 준 것은 아니다 — 이 호출로 던지면 아래의 세션 상태 저장·발화 확인까지 건너뛰게 되고,
+  // 그러면 다음 턴이 같은 메시지를 다시 먹인다. 조용히 삼키지는 않는다: 화면의 "마지막
+  // 활동"이 왜 멈춰 있는지 답할 수 있는 자리가 이 로그뿐이다.
+  await deps.murmur.reportActivity().catch((err: unknown) => {
+    console.error(
+      `[mentionTurn] ${key}: 활동 보고 실패(턴은 계속한다) — ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
 
   // codex 세션 발견(findCodexSessionId)의 sinceMs 는 PTY 를 띄우기 **직전** 시각이어야 한다.
   // 턴이 끝난 뒤에 재면 방금 만들어진 rollout 파일이 그보다 오래돼 보여 발견이 조용히
