@@ -89,6 +89,20 @@ describe('workspace skill', () => {
     expect((await channelBodies()).some((b) => b.includes('test-skill'))).toBe(true);
   });
 
+  // #311 요구 5 — 알림에서 승인 화면으로 가는 진입점의 **표시**.
+  //
+  // 화면은 이 값으로 버튼을 그린다(`MessageItem` 의 `meta.skillSlug`). 본문 글자를
+  // 정규식으로 더듬게 두면 알림 문구를 한 글자 다듬는 순간 진입점이 조용히 사라진다.
+  it('제안 알림에 어느 스킬인지가 meta 로 남는다', async () => {
+    const rows = await pool.query(
+      `select body, meta from message where channel_id = $1 and kind = 'system' order by seq desc`,
+      [channelId],
+    );
+    const notice = rows.rows.find((r) => String(r.body).includes('test-skill'));
+    expect(notice).toBeDefined();
+    expect(notice.meta.skillSlug).toBe('test-skill');
+  });
+
   // 요구 2 — **이 파일의 핵심 회귀선.** `requireAdmin` 을 빼면 여기가 빨개진다.
   it('에이전트 PAT 로 approve 는 403, admin 은 200', async () => {
     const agentRes = await app.inject({
