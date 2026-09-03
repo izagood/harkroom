@@ -583,10 +583,11 @@ export class Controller {
   }
 
   /**
-   * 채널 문서를 서버에서 다시 받는다(#188).
+   * 채널 문서를 서버에서 받는다(#188).
    *
-   * 읽기 전용이므로 실패를 삼키지 않는다 — "없다"와 "못 읽었다"가 같은 화면이 되면
-   * 안 되므로 호출부가 사람에게 실패를 보여줘야 한다.
+   * **실패를 삼키지 않는다** — try/catch 로 빈 문서를 넣으면 "못 읽었다"가 "비어 있다"로
+   * 보이고, 그 위에 저장하면 남의 문서를 빈 본문으로 덮어쓴다. 던지는 것이 호출부의
+   * 책임을 강제한다.
    */
   async loadChannelDoc(channelId: string): Promise<ChannelDoc> {
     const doc = await this.api.channelDoc(channelId);
@@ -596,14 +597,30 @@ export class Controller {
   }
 
   /**
-   * 채널 문서를 저장한다(#188). 409 (stale) 가 돌아오면 현재 본문을 사람에게 보여주고
-   * 다시 편집하게 한다 — 조용히 덮어쓰지도, 조용히 버리지도 않는다.
+   * 채널 문서를 저장한다(#188).
+   *
+   * 409 `doc_stale` 도 그대로 던진다 — 여기서 삼키면 화면은 저장된 줄 안다. 다만 그 오류가
+   * 실어 온 **현재 본문**은 스토어에 반영한다: 사람이 두 판을 나란히 보고 판단해야 하므로
+   * 화면이 그 값을 필요로 하고, 다시 저장할 때 쓸 `expectedUpdatedAt` 도 그 값에서 온다.
    */
-  async saveChannelDoc(channelId: string, body: string, expectedUpdatedAt?: number | null): Promise<ChannelDoc> {
-    const doc = await this.api.updateChannelDoc(channelId, body, expectedUpdatedAt);
-    const store = useAppStore.getState();
-    store.set({ channelDocs: { ...store.channelDocs, [channelId]: doc } });
-    return doc;
+  async saveChannelDoc(
+    channelId: string, body: string, expectedUpdatedAt: number | null,
+  ): Promise<ChannelDoc> {
+    try {
+      const doc = await this.api.updateChannelDoc(channelId, body, expectedUpdatedAt);
+      const store = useAppStore.getState();
+      store.set({ channelDocs: { ...store.channelDocs, [channelId]: doc } });
+      return doc;
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'doc_stale') {
+        const current = (err.payload as { doc?: ChannelDoc } | null)?.doc;
+        if (current) {
+          const store = useAppStore.getState();
+          store.set({ channelDocs: { ...store.channelDocs, [channelId]: current } });
+        }
+      }
+      throw err;
+    }
   }
 
   async deleteMessage(messageId: string): Promise<void> {

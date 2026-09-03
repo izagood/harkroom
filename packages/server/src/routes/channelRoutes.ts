@@ -312,13 +312,16 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
   });
 
   /**
-   * 채널 문서 조회(#188). 가시성은 `assertChannelVisible` 로 검사한다 — 채널을 볼 수
-   * 없으면 문서도 못 본다. public 채널은 누구나, private 채널은 멤버만.
+   * 채널 문서 조회(#188). 가시성은 `assertChannelVisible` 로 검사한다 — 채널을 볼 수 없으면
+   * 문서도 못 본다. `#156` 이 만든 그 술어를 그대로 쓰므로 public 채널은 볼 수 있는 사람
+   * 전부, private 은 멤버다. 가시성 술어를 여기서 다시 쓰면 한쪽만 고치는 사고가 난다.
    *
-   * 문서가 없으면 404 가 아니라 본문 '' 인 문서를 반환한다 — "없다"와 "빈 문서"가 같은
-   * 화면이므로 후자를 선택한 것이고, 그래야 클라이언트가 같은 표면으로 읽기와 쓰기를
-   * 처리할 수 있다. 감사 detail 에는 본문을 넣지 않는다(필요하면 bodyLength 같은
-   * 표시만).
+   * 순서가 이렇다: **가시성 먼저, 존재 확인 나중.** `assertChannelVisible` 은 없는 채널에
+   * `true` 를 주도록 만들어져 있고(그 자리 주석이 이유를 적는다) 그 다음 단계가 404 로
+   * 답한다 — 이 저장소의 다른 라우트와 같은 모양이다.
+   *
+   * 저장된 것이 없으면 404 가 아니라 본문 `''` 인 문서다. "없다"와 "비어 있다"는 사람에게
+   * 같은 화면이고, 그래야 클라이언트가 읽기와 첫 쓰기를 같은 표면으로 처리한다.
    */
   app.get('/channels/:id/doc', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = channelParam.parse(req.params);
@@ -329,24 +332,43 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
     if (!channel.rowCount) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
     }
-    const doc = await getChannelDoc(pool, id);
-    if (!doc) {
-      return { channelId: id, body: '', updatedBy: req.account!.id, updatedAt: new Date().toISOString() };
-    }
-    return doc;
+    return getChannelDoc(pool, id);
   });
 
   /**
-   * 채널 문서 수정(#188). **멤버만** 수정할 수 있다 — public 채널도 예외 없이.
-   * admin 전용으로 두면 대부분의 채널에서 아무도 고치지 못한다.
+   * 채널 문서 저장(#188). 편집 권한은 **그 채널을 볼 수 있는 사람**이다 — `#156` 이 멤버십을
+   * 세운 뒤로 이슈가 걱정했던 전제("멤버십이 표준 채널에 없다")가 사라졌다. public 채널은
+   * 볼 수 있는 사람 전부, private 은 멤버다. admin 전용으로 두면 대부분의 채널에서 아무도
+   * 고치지 못한다.
    *
-   * 낙관적 동시성 제어: `expectedUpdatedAt` 이 서버의 updatedAt 과 다르면 409 와 현재
-   * 본문을 함께 준다. 클라이언트는 그 본문을 사람에게 보여주고 다시 편집하게 한다.
+   * `channelPostGate` 를 쓰는 이유: 가시성과 보관 여부를 한 질의로 함께 본다. 보관된 채널은
+   * 읽기 전용이라는 약속이 메시지에만 적용되고 문서에는 안 적용되면, 보관이 "더 이상 바뀌지
+   * 않는다"는 뜻이 아니게 된다.
+   *
+   * 존재 확인을 따로 하는 이유: `channelPostGate` 는 **없는 채널에 `'ok'`** 를 준다
+   * (메시지 경로에서는 이어지는 단계가 404 로 답한다). 그것을 그대로 통과시키면 insert 가
+   * 외래키에서 터져 500 이 되므로 여기서 404 로 답한다.
+   *
+   * 낙관적 동시성: `expectedUpdatedAt` 이 서버의 것과 다르면 **409 `doc_stale` 과 현재
+   * 본문**을 함께 준다. 클라이언트는 그것을 사람에게 보이고 다시 편집하게 한다 — 조용히
+   * 덮어쓰지도, 조용히 버리지도 않는다.
+   *
+   * 감사 detail 에 **본문을 넣지 않는다.** 문서는 덮어쓰기라 매 저장이 전문을 복사하면
+   * 감사 로그가 문서 이력 테이블이 된다 — 우리가 만들지 않기로 한 그것이고, 그러면서도
+   * 되돌리기는 못 하는 최악의 모양이다. 길이만 남긴다.
    */
   app.put('/channels/:id/doc', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = channelParam.parse(req.params);
-    // channelPostGate 를 써서 가시성과 보관 여부를 한 번에 검사한다. public 채널도
-    // 멤버만 쓸 수 있다 — admin 예외 없음.
+    const body = z.object({
+      body: z.string().max(64 * 1024),
+      /**
+       * 내가 읽은 판의 시각(epoch ms). **부재·null 은 "아직 문서가 없다고 믿는다"**다 —
+       * "검사하지 마라"가 아니다. 옵셔널을 검사 생략으로 읽으면 이 필드를 빼기만 해도
+       * 조용한 덮어쓰기가 되살아난다.
+       */
+      expectedUpdatedAt: z.number().int().min(0).nullable().optional(),
+    }).parse(req.body);
+
     const gate = await channelPostGate(pool, id, req.account!.id);
     if (gate === 'forbidden') {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
@@ -354,18 +376,18 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
     if (gate === 'archived') {
       return reply.code(403).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
     }
-    const body = z.object({
-      body: z.string().max(64 * 1024),
-      // null 은 "检查 안 함" 이다 — 클라이언트가 첫 편집이면 안 보내도 되도록.
-      expectedUpdatedAt: z.number().int().min(0).nullable().optional(),
-    }).parse(req.body);
+    const channel = await pool.query(`select 1 from channel where id = $1`, [id]);
+    if (!channel.rowCount) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+
     const result = await updateChannelDoc(
       pool, id, req.account!.id, body.body,
       body.expectedUpdatedAt != null ? new Date(body.expectedUpdatedAt) : null,
     );
     if ('stale' in result) {
       return reply.code(409).send({
-        error: { code: 'doc_stale', message: '문서를 먼저 읽어 주세요' },
+        error: { code: 'doc_stale', message: 'the document changed since you read it' },
         doc: result.stale,
       });
     }

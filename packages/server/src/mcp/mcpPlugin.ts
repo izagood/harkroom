@@ -44,8 +44,19 @@ function buildMcpServer(
   server.registerTool('channel.list', { description: '채널 목록' },
     async () => jsonResult({ channels: await listChannels(pool, account.id) }));
 
-  // 에이전트는 읽기만 가능 — 쓰기 도구를 제공하지 않는다(#188). 문서는 덮어쓰기라
-  // 버전·되돌리기·"누가 바꿨나"가 요구사항으로 딸려 오고, 그것은 별개 결정이다.
+  /**
+   * 채널 문서 읽기(#188). **에이전트에게는 읽기만 준다 — 짝이 되는 쓰기 도구가 없다.**
+   *
+   * 문서는 덮어쓰기다. 에이전트에게 쓰기를 열면 "누가 바꿨나"·버전·되돌리기가 곧바로
+   * 요구사항으로 딸려 온다(사람은 자기가 지운 단락을 에이전트가 지운 것과 구별해야 한다).
+   * 그것은 별개 결정이므로 v1 에서는 만들지 않는다.
+   *
+   * 읽기를 여는 이유는 이 기능의 존재 이유 자체다: 새 세션의 에이전트가 채널의 전제를
+   * 재구성할 곳이 필요하다. 그 목적에는 읽기만으로 충분하다.
+   *
+   * 별도 도구인 이유: `channel.list` 에 본문을 실으면 채널 수만큼 문서 전문이 목록 응답에
+   * 실려 컨텍스트를 먹는다. 문서는 필요할 때 하나만 읽는 것이다.
+   */
   server.registerTool('channel.doc', {
     description: '채널 문서 조회(읽기 전용)',
     inputSchema: { channelId: z.string().uuid() },
@@ -53,11 +64,7 @@ function buildMcpServer(
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
-    const doc = await getChannelDoc(pool, channelId);
-    if (!doc) {
-      return jsonResult({ channelId, body: '', updatedBy: account.id, updatedAt: new Date().toISOString() });
-    }
-    return jsonResult(doc);
+    return jsonResult(await getChannelDoc(pool, channelId));
   });
 
   server.registerTool('message.read', {
