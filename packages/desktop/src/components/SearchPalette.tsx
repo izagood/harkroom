@@ -6,20 +6,22 @@ import { getController } from '../state/controller';
 interface Props {
   open: boolean;
   onClose: () => void;
+  initialScoped?: boolean;
 }
 
 /**
  * 검색은 디바운스(300ms) 처리한다 — 입력마다 서버를 치지 않는다.
  * 전문검색 쿼리가 값싸지 않으므로 입력 후 잠시 기다렸다가 보낸다.
+ *
+ * 전역 진입점(⌘K)은 꺼진 채, 채널 진입점(헤더 버튼)은 켜진 채 연다 — 둘 다 사람의 명시적 선택이다.
  */
-export function SearchPalette({ open, onClose }: Props) {
+export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<MessageRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
-  // #221: 기본값은 전역이다. 좁히는 것은 사람이 명시적으로 하는 선택이라 열 때마다 꺼진 상태로 돌아간다.
-  const [scoped, setScoped] = useState(false);
+  const [scoped, setScoped] = useState(initialScoped);
   const inputRef = useRef<HTMLInputElement>(null);
   const resultRefs = useRef<(HTMLLIElement | null)[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -173,7 +175,7 @@ export function SearchPalette({ open, onClose }: Props) {
               setQuery(value);
               handleSearch(value);
             }}
-            placeholder="메시지 검색..."
+            placeholder={scoped && activeChannelId ? `이 채널에서 찾기 (${getChannelName(activeChannelId)})` : '전체에서 찾기'}
             aria-label="검색어 입력"
             className="flex-1 bg-transparent text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none"
           />

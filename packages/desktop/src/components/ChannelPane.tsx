@@ -8,7 +8,11 @@ import { ChannelFiles } from './ChannelFiles';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { dayLabel, localDayKey } from '../lib/day';
 
-export function ChannelPane() {
+interface ChannelPaneProps {
+  onOpenSearch?: (scoped: boolean) => void;
+}
+
+export function ChannelPane({ onOpenSearch }: ChannelPaneProps) {
   const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins } = useAppStore();
   const bottomRef = useRef<HTMLDivElement>(null);
   // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
@@ -74,6 +78,14 @@ export function ChannelPane() {
           onClick={() => setFilesOpen((v) => !v)}
         >
           파일
+        </button>
+        <button
+          className="shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100"
+          onClick={() => onOpenSearch?.(true)}
+          aria-label="이 채널에서 찾기"
+          title="⌘K 는 전체 검색"
+        >
+          검색
         </button>
       </header>
       {/* 고정된 메시지(#218). 핀이 하나도 없으면 아무것도 그리지 않는다 — 늘 있는 빈 줄은

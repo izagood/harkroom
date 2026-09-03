@@ -263,4 +263,46 @@ describe('SearchPalette', () => {
     render(<SearchPalette open={true} onClose={vi.fn()} />);
     expect(screen.queryByLabelText(/이 채널에서만/)).toBeNull();
   });
+
+  it('initialScoped=true 로 열면 첫 검색이 채널로 좁혀진다', async () => {
+    useAppStore.getState().set({ activeChannelId: 'c1' });
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    render(<SearchPalette open={true} onClose={vi.fn()} initialScoped={true} />);
+
+    const toggle = screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+
+    fireEvent.change(screen.getByLabelText('검색어 입력'), { target: { value: 'hello' } });
+
+    await waitFor(() => {
+      expect(mockController.api.search).toHaveBeenCalledWith('hello', 'c1');
+    }, { timeout: 1000 });
+  });
+
+  it('initialScoped=false 로 열면 전역이다', async () => {
+    useAppStore.getState().set({ activeChannelId: 'c1' });
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    render(<SearchPalette open={true} onClose={vi.fn()} initialScoped={false} />);
+
+    const toggle = screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+
+    fireEvent.change(screen.getByLabelText('검색어 입력'), { target: { value: 'hello' } });
+
+    await waitFor(() => {
+      expect(mockController.api.search).toHaveBeenCalledWith('hello', null);
+    }, { timeout: 1000 });
+  });
+
+  it('placeholder 가 스코프 상태를 말한다', async () => {
+    useAppStore.getState().set({ activeChannelId: 'c1' });
+
+    render(<SearchPalette open={true} onClose={vi.fn()} initialScoped={true} />);
+    expect(screen.getByPlaceholderText('이 채널에서 찾기 (general)')).toBeTruthy();
+
+    render(<SearchPalette open={true} onClose={vi.fn()} initialScoped={false} />);
+    expect(screen.getByPlaceholderText('전체에서 찾기')).toBeTruthy();
+  });
 });
