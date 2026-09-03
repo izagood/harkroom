@@ -28,12 +28,16 @@ const GROUPS: { id: SkillGroupId; title: string; empty: string }[] = [
  */
 export const APPROVE_CONFIRM_TEXT = '승인하면 모든 에이전트가 이 스킬을 시스템 프롬프트로 읽는다';
 
+/** 비활성/거부 확인 문구. */
+export const DISABLE_CONFIRM_TEXT = '비활성화하면 모든 에이전트가 이 스킬의 파일과 링크를 삭제한다';
+
 export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
   const [skills, setSkills] = useState<WorkspaceSkillView[] | 'error' | null>(null);
   // 제안 알림에서 왔으면 그 스킬의 본문을 처음부터 펼쳐 둔다 — 승인하러 온 사람이
   // 한 번 더 눌러야 본문을 보게 되면, 그 클릭이 곧 안 보고 승인하는 길이 된다.
   const [expandedSlug, setExpandedSlug] = useState<string | null>(targetId ?? null);
   const [confirmingApprove, setConfirmingApprove] = useState<string | null>(null);
+  const [confirmingDisable, setConfirmingDisable] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
@@ -62,6 +66,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
     try {
       await action();
       setConfirmingApprove(null);
+      setConfirmingDisable(null);
       reload();
     } catch (e) {
       setError(reason(e, fallback));
@@ -145,12 +150,8 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                           <button
                             className="rounded-lg border border-danger-border px-3 py-1.5 font-medium text-danger
                                        hover:bg-danger-surface disabled:opacity-50"
-                            disabled={busy === skill.slug}
-                            onClick={() => void run(
-                              skill.slug,
-                              () => getController().disableSkill(skill.slug),
-                              group.id === 'pending' ? '거부하지 못했다' : '비활성화하지 못했다',
-                            )}
+                            disabled={busy === skill.slug || confirmingDisable === skill.slug}
+                            onClick={() => setConfirmingDisable(skill.slug)}
                           >
                             {group.id === 'pending' ? '거부' : '비활성화'}
                           </button>
@@ -180,6 +181,33 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                                      hover:bg-surface-hover disabled:opacity-50"
                           disabled={busy === skill.slug}
                           onClick={() => setConfirmingApprove(null)}
+                        >
+                          취소
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {isAdmin && confirmingDisable === skill.slug && (
+                    <div className="mt-2 rounded-lg border border-warning-border bg-warning-surface p-3">
+                      <p className="text-warning">{DISABLE_CONFIRM_TEXT}</p>
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          className="rounded-lg bg-danger px-3 py-1.5 font-medium text-fg-on-strong
+                                     hover:bg-danger-hover disabled:opacity-50"
+                          disabled={busy === skill.slug}
+                          onClick={() => void run(
+                            skill.slug,
+                            () => getController().disableSkill(skill.slug),
+                            group.id === 'pending' ? '거부하지 못했다' : '비활성화하지 못했다',
+                          )}
+                        >
+                          {group.id === 'pending' ? '거부 확인' : '비활성화 확인'}
+                        </button>
+                        <button
+                          className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg
+                                     hover:bg-surface-hover disabled:opacity-50"
+                          disabled={busy === skill.slug}
+                          onClick={() => setConfirmingDisable(null)}
                         >
                           취소
                         </button>

@@ -135,14 +135,14 @@ describe('workspace skill', () => {
   });
 
   // 요구 3.
-  it('미승인 스킬은 approved=true 에 없다', async () => {
+  it('미승인 스킬은 state=approved 에 없다', async () => {
     await pool.query(
       `insert into workspace_skill (slug, body, proposed_by) values ($1, $2, $3)`,
       ['pending-skill', '# 대기중', agentAccountId],
     );
 
     const res = await app.inject({
-      method: 'GET', url: '/skills?approved=true',
+      method: 'GET', url: '/skills?state=approved',
       headers: { authorization: `Bearer ${adminToken}` },
     });
     const skills = res.json() as { slug: string }[];
@@ -166,7 +166,7 @@ describe('workspace skill', () => {
 
     // 그리고 승인 목록에서도 실제로 빠진다.
     const listed = await app.inject({
-      method: 'GET', url: '/skills?approved=true',
+      method: 'GET', url: '/skills?state=approved',
       headers: { authorization: `Bearer ${adminToken}` },
     });
     expect((listed.json() as { slug: string }[]).find((s) => s.slug === 'test-skill')).toBeUndefined();
@@ -196,7 +196,7 @@ describe('workspace skill', () => {
 
   // 요구 7 의 서버 쪽 절반(파일·링크는 러너 테스트가 본다):
   // 러너가 읽는 목록에서 사라져야 러너가 지운다.
-  it('비활성화된 스킬은 approved=true 에서 사라진다', async () => {
+  it('비활성화된 스킬은 state=approved 에서 사라진다', async () => {
     const slug = 'disable-test';
     await pool.query(
       `insert into workspace_skill (slug, body, proposed_by, approved_by, approved_at)
@@ -211,7 +211,7 @@ describe('workspace skill', () => {
     expect(delRes.statusCode).toBe(200);
 
     const res = await app.inject({
-      method: 'GET', url: '/skills?approved=true',
+      method: 'GET', url: '/skills?state=approved',
       headers: { authorization: `Bearer ${adminToken}` },
     });
     expect((res.json() as { slug: string }[]).find((s) => s.slug === slug)).toBeUndefined();
@@ -227,11 +227,11 @@ describe('workspace skill', () => {
   // 승인된 스킬 본문은 곧 모두의 시스템 프롬프트다 — 인증 없이 읽히면 프롬프트 표면이 샌다.
   it('스킬 조회는 인증을 요구한다', async () => {
     expect((await app.inject({ method: 'GET', url: '/skills' })).statusCode).toBe(401);
-    expect((await app.inject({ method: 'GET', url: '/skills?approved=true' })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/skills?state=approved' })).statusCode).toBe(401);
     expect((await app.inject({ method: 'GET', url: '/skills/test-skill' })).statusCode).toBe(401);
     // 에이전트 PAT 는 읽을 수 있다 — 러너가 턴마다 이 경로로 동기화한다.
     expect((await app.inject({
-      method: 'GET', url: '/skills?approved=true', headers: { authorization: `Bearer ${agentPat}` },
+      method: 'GET', url: '/skills?state=approved', headers: { authorization: `Bearer ${agentPat}` },
     })).statusCode).toBe(200);
   });
 
@@ -248,6 +248,58 @@ describe('workspace skill', () => {
     expect(result).toMatchObject({ error: { code: 'forbidden' } });
     const rows = await pool.query(`select count(*)::int as n from workspace_skill where slug = 'sneaky'`);
     expect(rows.rows[0].n).toBe(0);
+  });
+
+  // #325 state 파라미터 테스트
+  it('state=pending 는 미승인만 반환한다', async () => {
+    await pool.query(
+      `insert into workspace_skill (slug, body, proposed_by) values ($1, $2, $3)`,
+      ['pending-only', '# 대기', agentAccountId],
+    );
+
+    const res = await app.inject({
+      method: 'GET', url: '/skills?state=pending',
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    const skills = res.json() as { slug: string; approvedAt: string | null; disabledAt: string | null }[];
+    expect(skills.every((s) => !s.approvedAt && !s.disabledAt)).toBe(true);
+    expect(skills.find((s) => s.slug === 'pending-only')).toBeDefined();
+  });
+
+  it('state=disabled 는 비활성만 반환한다', async () => {
+    await pool.query(
+      `insert into workspace_skill (slug, body, proposed_by, disabled_at) values ($1, $2, $3, now())`,
+      ['disabled-only', '# 비활성', agentAccountId],
+    );
+
+    const res = await app.inject({
+      method: 'GET', url: '/skills?state=disabled',
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    const skills = res.json() as { slug: string; disabledAt: string | null }[];
+    expect(skills.every((s) => !!s.disabledAt)).toBe(true);
+    expect(skills.find((s) => s.slug === 'disabled-only')).toBeDefined();
+  });
+
+  it('파라미터 없으면 전부 반환한다', async () => {
+    const res = await app.inject({
+      method: 'GET', url: '/skills',
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    const skills = res.json() as { slug: string }[];
+    //，前面 테스트에서 만든各种状态的 스킬이 다 포함되어야 함
+    expect(skills.find((s) => s.slug === 'pending-skill')).toBeDefined();
+    expect(skills.find((s) => s.slug === 'test-skill')).toBeDefined();
+    expect(skills.find((s) => s.slug === 'disable-test')).toBeDefined();
+    expect(skills.find((s) => s.slug === 'disabled-only')).toBeDefined();
+  });
+
+  it('잘못된 state 값은 400 을 반환한다', async () => {
+    const res = await app.inject({
+      method: 'GET', url: '/skills?state=invalid',
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(400);
   });
 });
 
