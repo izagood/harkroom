@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import type { AgentConfig, AgentView, PatView } from '@murmur/shared';
+import type { AgentConfig, AgentDefaults, AgentView, PatView } from '@murmur/shared';
 import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
@@ -23,6 +23,13 @@ const fakeController = (agents: AgentView[] = []) => {
     listPats: vi.fn(async (): Promise<PatView[]> => []),
     revokePat: vi.fn(async (): Promise<{ revoked: number }> => ({ revoked: 1 })),
     mintPat: vi.fn(async (): Promise<string> => 'murp_new'),
+    // #171: 기본은 "읽었다". 실패가 필요한 테스트가 갈아끼운다.
+    agentDefaults: vi.fn(async (): Promise<AgentDefaults> => (
+      { harness: 'claude-code', model: null, effort: null }
+    )),
+    updateAgentDefaults: vi.fn(async (patch: Partial<AgentDefaults>): Promise<AgentDefaults> => (
+      { harness: 'claude-code', model: null, effort: null, ...patch }
+    )),
     // #139: 기본은 "읽었고 비어 있다". 실패나 목록이 필요한 테스트가 갈아끼운다.
     agentMemory: vi.fn(async (): Promise<{ slug: string; value: string; updatedAt: string }[]> => []),
     deleteAgentMemory: vi.fn(async (): Promise<void> => undefined),
@@ -33,7 +40,10 @@ const fakeController = (agents: AgentView[] = []) => {
 
 beforeEach(() => {
   useAppStore.getState().reset();
-  useAppStore.getState().set({ me: acc('u1', 'admin') });
+  // 에이전트 설정은 admin 화면이다 — 생성도 기본값 조회도 서버가 admin 만 받는다.
+  // 기본값이 admin 이 아니면 이 파일의 생성 테스트들이 실제로는 서버가 거절할 흐름을
+  // 검증하게 된다. admin 이 아닌 경우는 그것을 확인하는 테스트가 따로 덮어쓴다.
+  useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
 });
 afterEach(() => cleanup());
 
@@ -456,5 +466,62 @@ describe('에이전트 기억 (#139 3단계)', () => {
     expect(screen.queryByLabelText(/기억.*편집|edit.*memory/i)).toBeNull();
     // 값은 pre 로 그린다 — 입력 필드가 아니다.
     expect(screen.getByText('값').tagName).toBe('PRE');
+  });
+});
+
+// #171: 새 에이전트의 기본값.
+describe('새 에이전트 기본값', () => {
+  it('새 에이전트 초안을 서버가 준 기본값으로 채운다 — 컴포넌트가 지어내지 않는다', async () => {
+    const c = fakeController();
+    c.agentDefaults.mockResolvedValue({ harness: 'claude-code', model: 'sonnet-x', effort: 'high' });
+    render(<AgentsSettings />);
+
+    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() => expect(c.createAgent).toHaveBeenCalled());
+    expect(c.createAgent.mock.calls[0]![0]).toMatchObject({
+      harness: 'claude-code', model: 'sonnet-x', effort: 'high',
+    });
+  });
+
+  /**
+   * 조회 실패를 조용한 기본값으로 삼키면, 화면에 보이는 harness 가 운영자가 정한 것인지
+   * 컴포넌트가 지어낸 것인지 사람이 구분할 수 없다. 같은 파일의 PAT 로더가
+   * `.catch(() => setPats([]))` 로 그렇게 하고 있는데, 그것을 따라 하지 않는다.
+   */
+  it('기본값 조회가 실패하면 오류가 보이고, 초안을 지어내지 않는다', async () => {
+    const c = fakeController();
+    c.agentDefaults.mockRejectedValue(new Error('boom'));
+    render(<AgentsSettings />);
+
+    expect((await screen.findByRole('alert')).textContent).toContain('기본값을 불러오지 못했다');
+    // 조용한 기본값이 아니다 — 초안 자체가 없으므로 harness 를 고르는 자리도 없다.
+    expect(screen.queryByLabelText('Agent harness')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Create agent' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('기본 model 을 비우면 명시적 null 을 보낸다 — 키를 빼면 서버가 손대지 않는다', async () => {
+    const c = fakeController();
+    c.agentDefaults.mockResolvedValue({ harness: 'claude-code', model: 'sonnet-x', effort: 'high' });
+    render(<AgentsSettings />);
+
+    fireEvent.change(await screen.findByLabelText('기본 model'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: '기본값 저장' }));
+
+    await waitFor(() => expect(c.updateAgentDefaults).toHaveBeenCalled());
+    const patch = c.updateAgentDefaults.mock.calls[0]![0];
+    expect(patch.model).toBeNull();
+    expect('model' in patch).toBe(true);
+  });
+
+  // 복사본이므로 만들어진 뒤에는 '물려받았다'가 더 이상 참이 아니다 — 표시하면 거짓말이 된다.
+  it('좌측 목록은 실제 harness 만 보여준다 — 물려받았다는 표시를 두지 않는다', async () => {
+    fakeController([agent('rusalka', { harness: 'claude-code' })]);
+    render(<AgentsSettings />);
+
+    const row = await screen.findByText('rusalka');
+    expect(row.textContent).toContain('claude-code');
+    expect(row.textContent).not.toMatch(/기본값|inherit/i);
   });
 });
