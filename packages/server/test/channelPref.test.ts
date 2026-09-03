@@ -333,4 +333,125 @@ describe('channel pref', () => {
     expect(listBody).not.toContain('section');
   });
 });
+
+describe('섹션 이름 바꾸기 (#323)', () => {
+  let channelId2: string;
+  let channelId3: string;
+
+  beforeAll(async () => {
+    const c2 = await app.inject({
+      method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: 'channel-2' },
+    });
+    channelId2 = c2.json().id as string;
+    const c3 = await app.inject({
+      method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: 'channel-3' },
+    });
+    channelId3 = c3.json().id as string;
+
+    await app.inject({
+      method: 'PATCH', url: `/channels/${channelId}/pref`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { section: 'OldSection', sortOrder: 0 },
+    });
+    await app.inject({
+      method: 'PATCH', url: `/channels/${channelId2}/pref`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { section: 'OldSection', sortOrder: 1 },
+    });
+    await app.inject({
+      method: 'PATCH', url: `/channels/${channelId3}/pref`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { section: 'ExistingSection', sortOrder: 0 },
+    });
+  });
+
+  it('1. 이름을 바꾸면 그 섹션의 채널 전부가 따라간다', async () => {
+    const res = await app.inject({
+      method: 'PATCH', url: '/channels/sections/OldSection',
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: 'NewSection' },
+    });
+    expect(res.statusCode).toBe(200);
+    const prefs = res.json().prefs as { channelId: string; section: string | null }[];
+
+    const oldSectionPrefs = prefs.filter((p) => p.section === 'OldSection');
+    expect(oldSectionPrefs).toHaveLength(0);
+
+    const newSectionPrefs = prefs.filter((p) => p.section === 'NewSection');
+    expect(newSectionPrefs).toHaveLength(2);
+  });
+
+  it('2. 남의 선호는 안 바뀐다', async () => {
+    const prefsBefore = await app.inject({
+      method: 'GET', url: '/channels/prefs',
+      headers: { authorization: `Bearer ${otherToken}` },
+    });
+    const otherPrefs = prefsBefore.json().prefs as { section: string | null }[];
+
+    await app.inject({
+      method: 'PATCH', url: '/channels/sections/ExistingSection',
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: 'MergedSection' },
+    });
+
+    const prefsAfter = await app.inject({
+      method: 'GET', url: '/channels/prefs',
+      headers: { authorization: `Bearer ${otherToken}` },
+    });
+    const otherPrefsAfter = prefsAfter.json().prefs as { section: string | null }[];
+
+    expect(otherPrefs).toEqual(otherPrefsAfter);
+  });
+
+  it('3. 길이·공백 규칙이 생성과 같다 — 41자 400', async () => {
+    const longName = 'A'.repeat(41);
+    const res = await app.inject({
+      method: 'PATCH', url: '/channels/sections/OldSection',
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: longName },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('4. 이미 있는 이름으로 바꾸면 합쳐지고 sort_order 가 0..n-1 중복 없이 재부여된다', async () => {
+    await app.inject({
+      method: 'PATCH', url: `/channels/${channelId3}/pref`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { section: 'TargetSection' },
+    });
+
+    const res = await app.inject({
+      method: 'PATCH', url: '/channels/sections/NewSection',
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: 'TargetSection' },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const prefs = res.json().prefs as { channelId: string; section: string | null; sortOrder: number | null }[];
+    const targetPrefs = prefs.filter((p) => p.section === 'TargetSection').sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+
+    expect(targetPrefs).toHaveLength(3);
+    expect(targetPrefs[0]!.sortOrder).toBe(0);
+    expect(targetPrefs[1]!.sortOrder).toBe(1);
+    expect(targetPrefs[2]!.sortOrder).toBe(2);
+
+    const sortOrders = targetPrefs.map((p) => p.sortOrder);
+    const uniqueSortOrders = new Set(sortOrders);
+    expect(uniqueSortOrders.size).toBe(3);
+  });
+
+  it('빈 이름으로 바꾸면 null(섹션 없음)이 된다', async () => {
+    const res = await app.inject({
+      method: 'PATCH', url: '/channels/sections/TargetSection',
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: '' },
+    });
+    expect(res.statusCode).toBe(200);
+    const prefs = res.json().prefs as { section: string | null }[];
+    const targetPrefs = prefs.filter((p) => p.section === null);
+    expect(targetPrefs.length).toBeGreaterThan(0);
+  });
+});
 });

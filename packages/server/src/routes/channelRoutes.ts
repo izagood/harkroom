@@ -6,7 +6,7 @@ import {
   addChannelMember, assertChannelVisible, channelListAudience, channelListLostAudience,
   channelPostGate, createChannel, deleteChannel,
   getChannelDoc, getChannelRow, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
-  updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs,
+  updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs, renameSection,
 } from '../services/channels.js';
 import { listPins, pinMessage, unpinMessage } from '../services/pins.js';
 import {
@@ -322,6 +322,27 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
     }
     return pref;
+  });
+
+  /**
+   * 섹션 이름 바꾸기(#323). 요청자의 `channel_pref` 중 `section = 옛이름` 인 행을 전부
+   * 새 이름으로 한 트랜잭션에서 갱신한다.
+   *
+   * 새 이름이 이미 존재하면 합친다 — 두 섹션의 `sort_order` 가 중복되지 않게 0..n-1 로
+   * 재부여한다(#157 의 재부여 로직을 재사용).
+   */
+  app.patch('/channels/sections/:name', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { name: oldName } = z.object({ name: z.string().max(40) }).parse(req.params);
+    const { name: newName } = z.object({
+      name: z.string().max(40).optional().nullable(),
+    }).parse(req.body);
+
+    if (newName === undefined) {
+      return reply.code(400).send({ error: { code: 'invalid_body', message: 'name is required' } });
+    }
+
+    const prefs = await renameSection(pool, req.account!.id, oldName, newName ?? '');
+    return { prefs };
   });
 
   /**

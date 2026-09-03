@@ -423,6 +423,9 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
   // "새 섹션…" 을 고른 채널과 입력 중인 이름(#157). `prompt()` 대신 인라인 입력이다.
   const [sectionEditFor, setSectionEditFor] = useState<string | null>(null);
   const [sectionDraft, setSectionDraft] = useState('');
+  // 섹션 이름 바꾸기(#323) 를 위한 입력 상태.
+  const [sectionRenameFor, setSectionRenameFor] = useState<string | null>(null);
+  const [sectionRenameDraft, setSectionRenameDraft] = useState('');
 
   const row = (active: boolean) =>
     `flex w-full items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-surface-raised ${active ? 'bg-surface-raised' : ''}`;
@@ -1050,19 +1053,81 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
             </button>
           </div>
           {/* 섹션(#157)으로 묶어 그린다. 섹션 없는 것들은 맨 아래 무제목 묶음이다. */}
-          {groupedChannels.map((group) => (
-            <div key={group.section ?? 'other'}>
-              {group.section !== null && (
-                <div
-                  data-testid={`section-header-${group.section}`}
-                  className="px-2 py-1 text-xs font-medium text-fg-muted"
-                >
-                  {group.section}
+          {groupedChannels.map((group) => {
+            const sectionName = group.section;
+            const isRenaming = sectionRenameFor === sectionName;
+            const sectionHeader = isRenaming ? (
+              <div className="mb-1 rounded border border-border bg-surface-raised p-1 ml-2 mr-2">
+                <input
+                  type="text"
+                  autoFocus
+                  aria-label="섹션 새 이름"
+                  maxLength={40}
+                  className="w-full rounded border border-border bg-field px-2 py-1 text-xs text-fg placeholder-fg-subtle"
+                  placeholder="새 이름"
+                  value={sectionRenameDraft}
+                  onChange={(e) => setSectionRenameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const newName = sectionRenameDraft.trim();
+                      setSectionRenameFor(null);
+                      setSectionRenameDraft('');
+                      if (sectionName) {
+                        void getController().renameSection(sectionName, newName || null);
+                      }
+                    }
+                    if (e.key === 'Escape') { setSectionRenameFor(null); setSectionRenameDraft(''); }
+                  }}
+                />
+                <div className="mt-1 flex gap-1">
+                  <button
+                    className="rounded bg-accent px-2 py-0.5 text-xs text-fg-on-strong hover:bg-accent-hover"
+                    onClick={() => {
+                      const newName = sectionRenameDraft.trim();
+                      setSectionRenameFor(null);
+                      setSectionRenameDraft('');
+                      if (sectionName) {
+                        void getController().renameSection(sectionName, newName || null);
+                      }
+                    }}
+                  >
+                    바꾸기
+                  </button>
+                  <button
+                    className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
+                    onClick={() => { setSectionRenameFor(null); setSectionRenameDraft(''); }}
+                  >
+                    취소
+                  </button>
                 </div>
-              )}
-              {group.channels.map((item) => channelRow(item.channel))}
-            </div>
-          ))}
+              </div>
+            ) : (
+              <Menu
+                renderTrigger={(props) => (
+                  <div
+                    data-testid={`section-header-${sectionName}`}
+                    className="group px-2 py-1 text-xs font-medium text-fg-muted hover:bg-surface-raised cursor-pointer"
+                    {...props}
+                  >
+                    {sectionName}
+                  </div>
+                )}
+                items={[
+                  {
+                    label: '이름 바꾸기',
+                    onSelect: () => { if (sectionName) { setSectionRenameFor(sectionName); setSectionRenameDraft(sectionName); } },
+                  },
+                ]}
+                openOnContextMenu
+              />
+            );
+            return (
+              <div key={sectionName ?? 'other'}>
+                {sectionName !== null && sectionHeader}
+                {group.channels.map((item) => channelRow(item.channel))}
+              </div>
+            );
+          })}
           {me?.isAdmin && (
             createChannelOpen ? (
               <div className="mt-1 rounded border border-border bg-surface-raised p-1">

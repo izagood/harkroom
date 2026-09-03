@@ -105,6 +105,7 @@ const fakeController = (overrides: Record<string, unknown> = {}) => {
     createChannel: vi.fn(), updateChannel: vi.fn(),
     setChannelNotifyLevel: vi.fn(), toggleChannelStar: vi.fn(),
     setChannelSection: vi.fn(async () => undefined),
+    renameSection: vi.fn(async () => undefined),
     reorderChannels: vi.fn(async () => undefined),
     ...overrides,
   };
@@ -344,5 +345,133 @@ describe('사이드바의 섹션 (#157)', () => {
     openMenuFor('ay');
     expect(screen.queryByRole('menuitem', { name: '위로' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: '아래로' })).toBeNull();
+  });
+
+  describe('섹션 이름 바꾸기 (#323)', () => {
+    it('5. 섹션 헤더 우클릭으로 컨텍스트 메뉴가 열리고 "이름 바꾸기"가 있다', () => {
+      const c = fakeController();
+      useAppStore.getState().set({
+        channels: [chan('c1', 'ay'), chan('c2', 'bee')],
+        channelPrefs: {
+          c1: pref('c1', { section: 'Work' }),
+          c2: pref('c2', { section: 'Work' }),
+        },
+      });
+      mount();
+
+      const sectionHeader = screen.getByTestId('section-header-Work');
+      fireEvent.contextMenu(sectionHeader);
+
+      expect(screen.getByRole('menuitem', { name: '이름 바꾸기' })).toBeTruthy();
+    });
+
+    it('"이름 바꾸기" 를 선택하면 인라인 입력框이 나타난다', () => {
+      fakeController();
+      useAppStore.getState().set({
+        channels: [chan('c1', 'ay'), chan('c2', 'bee')],
+        channelPrefs: {
+          c1: pref('c1', { section: 'Work' }),
+          c2: pref('c2', { section: 'Work' }),
+        },
+      });
+      mount();
+
+      const sectionHeader = screen.getByTestId('section-header-Work');
+      fireEvent.contextMenu(sectionHeader);
+      fireEvent.click(screen.getByRole('menuitem', { name: '이름 바꾸기' }));
+
+      expect(screen.getByLabelText('섹션 새 이름')).toBeTruthy();
+      expect(screen.getByDisplayValue('Work')).toBeTruthy();
+    });
+
+    it('인라인 입력에서 Enter 를 치면 renameSection 이 호출되고 입력框이 닫힌다', async () => {
+      const c = fakeController();
+      useAppStore.getState().set({
+        channels: [chan('c1', 'ay'), chan('c2', 'bee')],
+        channelPrefs: {
+          c1: pref('c1', { section: 'Work' }),
+          c2: pref('c2', { section: 'Work' }),
+        },
+      });
+      mount();
+
+      const sectionHeader = screen.getByTestId('section-header-Work');
+      fireEvent.contextMenu(sectionHeader);
+      fireEvent.click(screen.getByRole('menuitem', { name: '이름 바꾸기' }));
+
+      const input = screen.getByLabelText('섹션 새 이름');
+      fireEvent.change(input, { target: { value: 'NewName' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      expect(c.renameSection).toHaveBeenCalledWith('Work', 'NewName');
+      expect(screen.queryByLabelText('섹션 새 이름')).toBeNull();
+    });
+
+    it('"바꾸기" 버튼을 눌러도 renameSection 이 호출된다', () => {
+      const c = fakeController();
+      useAppStore.getState().set({
+        channels: [chan('c1', 'ay'), chan('c2', 'bee')],
+        channelPrefs: {
+          c1: pref('c1', { section: 'Work' }),
+          c2: pref('c2', { section: 'Work' }),
+        },
+      });
+      mount();
+
+      const sectionHeader = screen.getByTestId('section-header-Work');
+      fireEvent.contextMenu(sectionHeader);
+      fireEvent.click(screen.getByRole('menuitem', { name: '이름 바꾸기' }));
+
+      const input = screen.getByLabelText('섹션 새 이름');
+      fireEvent.change(input, { target: { value: 'NewName' } });
+      fireEvent.click(screen.getByRole('button', { name: '바꾸기' }));
+
+      expect(c.renameSection).toHaveBeenCalledWith('Work', 'NewName');
+    });
+
+    it('"취소" 버튼을 누르면 입력框이 닫히고 renameSection 은 호출되지 않는다', () => {
+      const c = fakeController();
+      useAppStore.getState().set({
+        channels: [chan('c1', 'ay'), chan('c2', 'bee')],
+        channelPrefs: {
+          c1: pref('c1', { section: 'Work' }),
+          c2: pref('c2', { section: 'Work' }),
+        },
+      });
+      mount();
+
+      const sectionHeader = screen.getByTestId('section-header-Work');
+      fireEvent.contextMenu(sectionHeader);
+      fireEvent.click(screen.getByRole('menuitem', { name: '이름 바꾸기' }));
+
+      const input = screen.getByLabelText('섹션 새 이름');
+      fireEvent.change(input, { target: { value: 'NewName' } });
+      fireEvent.click(screen.getByRole('button', { name: '취소' }));
+
+      expect(c.renameSection).not.toHaveBeenCalled();
+      expect(screen.queryByLabelText('섹션 새 이름')).toBeNull();
+    });
+
+    it('빈 이름으로 바꾸면 섹션이 제거된다(null)', () => {
+      const c = fakeController();
+      useAppStore.getState().set({
+        channels: [chan('c1', 'ay'), chan('c2', 'bee')],
+        channelPrefs: {
+          c1: pref('c1', { section: 'Work' }),
+          c2: pref('c2', { section: 'Work' }),
+        },
+      });
+      mount();
+
+      const sectionHeader = screen.getByTestId('section-header-Work');
+      fireEvent.contextMenu(sectionHeader);
+      fireEvent.click(screen.getByRole('menuitem', { name: '이름 바꾸기' }));
+
+      const input = screen.getByLabelText('섹션 새 이름');
+      fireEvent.change(input, { target: { value: '' } });
+      fireEvent.click(screen.getByRole('button', { name: '바꾸기' }));
+
+      expect(c.renameSection).toHaveBeenCalledWith('Work', null);
+    });
   });
 });
