@@ -67,11 +67,11 @@ async function registerHuman(handle: string): Promise<{ id: string; token: strin
   const inviteToken = inviteRes.json().token as string;
   const created = await app.inject({
     method: 'POST', url: '/auth/register',
-    payload: { handle, displayName: handle, password: 'pw123456', inviteToken },
+    payload: { handle, loginId: handle, displayName: handle, password: 'pw123456', inviteToken },
   });
   expect(created.statusCode).toBe(201);
   const login = await app.inject({
-    method: 'POST', url: '/auth/login', payload: { handle, password: 'pw123456' },
+    method: 'POST', url: '/auth/login', payload: { loginId: handle, password: 'pw123456' },
   });
   expect(login.statusCode).toBe(200);
   return { id: created.json().id as string, token: login.json().token as string };
@@ -408,7 +408,7 @@ describe('계정 생성 시 집합 이름 충돌 검사', () => {
 
     const accRes = await app.inject({
       method: 'POST', url: '/auth/register',
-      payload: { handle: 'myteam', displayName: 'Conflict', password: 'password123', inviteToken: token },
+      payload: { handle: 'myteam', loginId: 'myteam', displayName: 'Conflict', password: 'password123', inviteToken: token },
     });
     expect(accRes.statusCode).toBe(400);
     expect(accRes.json().error.code).toBe('handle_taken');

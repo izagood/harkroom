@@ -45,10 +45,10 @@ beforeAll(async () => {
   });
   const owner = await app.inject({
     method: 'POST', url: '/auth/register',
-    payload: { handle: 'owner', displayName: 'Owner', password: 'pw123456', inviteToken: inv.json().token as string },
+    payload: { handle: 'owner', loginId: 'owner', displayName: 'Owner', password: 'pw123456', inviteToken: inv.json().token as string },
   });
   const ownerLogin = await app.inject({
-    method: 'POST', url: '/auth/login', payload: { handle: 'owner', password: 'pw123456' },
+    method: 'POST', url: '/auth/login', payload: { loginId: 'owner', password: 'pw123456' },
   });
   ownerToken = ownerLogin.json().token as string;
   ownerId = owner.json().id as string;
@@ -58,10 +58,10 @@ beforeAll(async () => {
   });
   const stranger = await app.inject({
     method: 'POST', url: '/auth/register',
-    payload: { handle: 'stranger', displayName: 'Stranger', password: 'pw123456', inviteToken: inv2.json().token as string },
+    payload: { handle: 'stranger', loginId: 'stranger', displayName: 'Stranger', password: 'pw123456', inviteToken: inv2.json().token as string },
   });
   const strangerLogin = await app.inject({
-    method: 'POST', url: '/auth/login', payload: { handle: 'stranger', password: 'pw123456' },
+    method: 'POST', url: '/auth/login', payload: { loginId: 'stranger', password: 'pw123456' },
   });
   strangerToken = strangerLogin.json().token as string;
 
@@ -208,7 +208,7 @@ describe('#253 소유자 기반 인가', () => {
       const stranger2 = await app.inject({
         method: 'POST', url: '/auth/register',
         payload: {
-          handle: 'stranger2', displayName: 'Stranger2', password: 'pw123456',
+          handle: 'stranger2', loginId: 'stranger2', displayName: 'Stranger2', password: 'pw123456',
           inviteToken: inv3.json().token as string,
         },
       });

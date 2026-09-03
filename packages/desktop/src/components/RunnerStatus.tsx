@@ -24,30 +24,30 @@ export function runnerStatusLabel(state: RunnerState | undefined): string {
 }
 
 const TONE: Record<RunnerStatus, string> = {
-  running: 'text-green-700',
-  external: 'text-blue-700',
-  needs_reissue: 'text-amber-800',
-  stopped: 'text-zinc-500',
-  failed: 'text-red-700',
+  running: 'text-success',
+  external: 'text-accent',
+  needs_reissue: 'text-warning',
+  stopped: 'text-fg-subtle',
+  failed: 'text-danger',
 };
 
 /** 사이드바의 점. presence 점과 **다른 사실**이라 나란히 산다(Sidebar 의 주석 참고). */
 const DOT: Record<RunnerStatus, string> = {
-  running: 'bg-green-500',
-  external: 'bg-blue-400',
-  needs_reissue: 'bg-amber-400',
-  stopped: 'bg-zinc-600',
-  failed: 'bg-red-500',
+  running: 'bg-success',
+  external: 'bg-accent',
+  needs_reissue: 'bg-warning',
+  stopped: 'bg-fg-subtle',
+  failed: 'bg-danger',
 };
 
 export function RunnerStatusLine({ state }: { state: RunnerState | undefined }) {
   const label = runnerStatusLabel(state);
   return (
     <div className="text-[11px]" role="status">
-      <span className={state ? TONE[state.status] : 'text-zinc-400'}>{label}</span>
+      <span className={state ? TONE[state.status] : 'text-fg-muted'}>{label}</span>
       {/* 사유는 **보이는 자리**에 둔다 — `sr-only` 나 콘솔에만 두면 아무도 읽지 않는다. */}
       {state?.message && (
-        <span className="ml-1 text-zinc-600">— {state.message}</span>
+        <span className="ml-1 text-fg-muted">— {state.message}</span>
       )}
     </div>
   );

@@ -4,7 +4,7 @@ import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type Notifier } from '../lib/notify';
-import { RunnerLauncher, tauriSecretStore, tauriSpawner, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
+import { RunnerLauncher, tauriLoginPathReader, tauriSecretStore, tauriSpawner, type LoginPathReader, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
 import { useAppStore } from './appStore';
 import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
 import { usePrefsStore } from './prefsStore';
@@ -39,6 +39,8 @@ export class Controller {
     /** 테스트가 키체인·자식 프로세스를 목으로 바꿔 끼우는 자리(#250). */
     secrets: RunnerSecretStore = tauriSecretStore,
     spawner: RunnerSpawner = tauriSpawner,
+    /** 로그인 셸 `PATH` 조회(#305). 테스트가 조회 실패를 만들 수 있게 주입한다. */
+    loginPath: LoginPathReader = tauriLoginPathReader,
   ) {
     this.runnerLauncher = new RunnerLauncher(
       {
@@ -49,6 +51,7 @@ export class Controller {
       },
       secrets,
       spawner,
+      loginPath,
     );
     this.runnerLauncher.setOnStateChange((states) => {
       useAppStore.getState().set({
@@ -69,8 +72,9 @@ export class Controller {
     const agents = await this.api.listAgents();
     const agent = agents.find((a) => a.id === agentId);
     if (!agent) throw new Error('에이전트를 찾지 못했다 — 목록을 다시 읽어라');
+    const prefs = usePrefsStore.getState();
     await this.runnerLauncher.reissue({
-      agent, repoPath: usePrefsStore.getState().runnerRepoPath,
+      agent, repoPath: prefs.runnerRepoPath, runnerCommand: prefs.runnerCommand,
     });
   }
 
@@ -93,6 +97,7 @@ export class Controller {
       // `connected` 가 false 면 presence 는 '모른다'다 — 빈 배열이 '아무도 없다'가 아니다.
       liveAccountIds: store.connected ? new Set(store.online) : null,
       repoPath: prefs.runnerRepoPath,
+      runnerCommand: prefs.runnerCommand,
     });
   }
 
@@ -279,6 +284,10 @@ export class Controller {
         store.applyAvatar(e.accountId, e.avatarAttachmentId);
         if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
         break;
+      case 'account.handle_changed':
+        store.applyHandle(e.accountId, e.newHandle);
+        if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
+        break;
       case 'channel.created':
         // 새 채널을 목록에 추가한다. public 은 전원에게 오고, private 은 멤버에게만 온다.
         // 이미 있으면 무시(upsert 가 아니라 adds 를 쓴다).
@@ -310,6 +319,20 @@ export class Controller {
         if (e.accountId === store.me?.id) {
           this.swallow(this.loadSavedSummary());
         }
+        break;
+      case 'channel.member_added':
+      case 'channel.member_removed':
+        // 멤버 집합이 바뀌었다(#300). 이미 들고 있는 채널의 멤버 목록만 다시 받는다 —
+        // 들고 있다는 것은 멤버 패널이나 사이드바가 그것을 그리고 있다는 뜻이고, 안 들고
+        // 있는 채널까지 받으면 남이 사람을 옮길 때마다 안 보는 채널의 조회가 폭주한다.
+        // 목록 자체가 생기거나 사라지는 일은 같이 오는 channel.created/deleted 가 맡는다.
+        if (store.channelMembers[e.channelId]) {
+          this.swallow(this.loadChannelMembers(e.channelId));
+        }
+        break;
+      case 'handle_group.changed':
+        // 집합 목록과 구성원 수를 갱신한다(#300).
+        this.swallow(this.refreshAccounts({ force: true }));
         break;
       case 'link_preview.ready':
         // 카드가 준비됐다는 신호만 남긴다(#215). 내용은 그 URL 을 그리는 컴포넌트가
@@ -1080,6 +1103,17 @@ export class Controller {
   }
 
   /**
+   * 내 handle 을 서버에 정하고 로컬에도 반영한다(#271). 소켓 이벤트가 곧 돌아오지만 그것만
+   * 기다리면 누른 뒤 한 왕복 동안 화면이 예전 값을 보여 준다.
+   */
+  async setHandle(handle: string): Promise<void> {
+    const saved = await this.api.updateMyHandle(handle);
+    const store = useAppStore.getState();
+    const meId = store.me?.id;
+    if (meId) store.applyHandle(meId, saved.handle);
+  }
+
+  /**
    * 이 채널을 미읽음으로 표시한다(#154). `seq` 부터가 미읽음이 된다.
    *
    * 낙관적 갱신은 **서버의 경계 규칙을 그대로 흉내낸다**(`readPositions.ts` 의
@@ -1105,6 +1139,49 @@ export class Controller {
     const starred = !current?.starredAt;
     const updated = await this.api.updateChannelPref(channelId, { starred });
     store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
+  }
+
+  /**
+   * 채널의 섹션을 설정한다(#157). 빈 문자열은 null(섹션 없음)로 저장.
+   * DM 에는 사용할 수 없다 — 400 을 받으면 그대로 던진다.
+   */
+  async setChannelSection(channelId: string, section: string | null): Promise<void> {
+    const store = useAppStore.getState();
+    const updated = await this.api.updateChannelPref(channelId, { section });
+    store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
+  }
+
+  /**
+   * 채널의 `sortOrder` 를 설정한다(#157). 섹션 안 순서 조절의 최소 단위다.
+   */
+  async setChannelSortOrder(channelId: string, sortOrder: number | null): Promise<void> {
+    const store = useAppStore.getState();
+    const updated = await this.api.updateChannelPref(channelId, { sortOrder });
+    store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
+  }
+
+  /**
+   * 한 섹션의 채널 순서를 통째로 다시 매긴다(#157) — 받은 배열 순서대로 0..n-1 이다.
+   *
+   * **일부만 매기지 않는 이유**: `sortOrder` 가 null 인 채널은 값이 있는 것들보다 뒤로
+   * 가므로, 두 개만 바꿔 쓰면 나머지가 전부 아래로 쏟아진다. 그 묶음을 통째로 명시로
+   * 만들면 다음 클릭도 예측대로 돈다.
+   *
+   * 스토어는 **한 번에** 갈아 끼운다. 응답마다 `set` 하면 중간 상태가 화면에 그려져
+   * 순서가 잠깐 뒤엉킨다.
+   */
+  async reorderChannels(orderedChannelIds: string[]): Promise<void> {
+    const updated: ChannelPrefRow[] = [];
+    for (const [index, channelId] of orderedChannelIds.entries()) {
+      updated.push(await this.api.updateChannelPref(channelId, { sortOrder: index }));
+    }
+    const store = useAppStore.getState();
+    store.set({
+      channelPrefs: {
+        ...store.channelPrefs,
+        ...Object.fromEntries(updated.map((p) => [p.channelId, p])),
+      },
+    });
   }
 
   /**

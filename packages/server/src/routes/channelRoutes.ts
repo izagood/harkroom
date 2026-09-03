@@ -5,7 +5,7 @@ import { z } from 'zod';
 import {
   addChannelMember, assertChannelVisible, channelListAudience, channelListLostAudience,
   channelPostGate, createChannel, deleteChannel,
-  getChannelDoc, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
+  getChannelDoc, getChannelRow, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
   updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs,
 } from '../services/channels.js';
 import { listPins, pinMessage, unpinMessage } from '../services/pins.js';
@@ -198,6 +198,19 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
       action: 'channel.member.added', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: id, detail: { accountId },
     }, req);
+    // 삽입이 커밋된 뒤에 발행한다(#284) — 커밋 전에 보내면 수신자가 없는 채널을 조회한다.
+    // channel.member_added: 수신자는 그 채널을 목록에서 볼 수 있는 사람(#284 의 channelListAudience 재사용).
+    emitEvent({
+      type: 'channel.member_added',
+      channelId: id,
+      accountId,
+      audience: await channelListAudience(pool, id),
+    });
+    // 추가된 사람에게는 channel.created 를 보낸다 — 그 사람에게 목록에 새로 나타난 것이다.
+    // 행은 `getChannelRow` 로 읽는다: 컬럼 목록을 여기 베껴 쓰면 `createdAt` 같은 필드가 빠진
+    // `ChannelRow` 가 실려 나가고, 받는 화면의 "생성순" 정렬이 조용히 깨진다.
+    const channel = await getChannelRow(pool, id);
+    if (channel) emitEvent({ type: 'channel.created', channel, audience: [accountId] });
     return { members: await listChannelMembers(pool, id) };
   });
 
@@ -230,6 +243,24 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
         action: 'channel.member.removed', actorId: req.account!.id, actorHandle: req.account!.handle,
         target: id, detail: { accountId },
       }, req);
+      // 삭제 후 커밋에 이벤트 발행(#284).
+      // channel.member_removed: 수신자는 여전히 볼 수 있는 사람(channelListAudience 재사용).
+      emitEvent({
+        type: 'channel.member_removed',
+        channelId: id,
+        accountId,
+        audience: await channelListAudience(pool, id),
+      });
+      // channel.deleted: #284 의 public→private 전환과 같은 논리. 목록에서 사라진 사람에게.
+      // 제거된 사람이 채널을 더 이상 목록에서 볼 수 없으면 channel.deleted 를 보낸다.
+      const lostAudience = await channelListLostAudience(pool, id);
+      if (lostAudience.includes(accountId)) {
+        emitEvent({
+          type: 'channel.deleted',
+          channelId: id,
+          audience: [accountId],
+        });
+      }
     }
     return { members: await listChannelMembers(pool, id) };
   });
@@ -252,14 +283,40 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     // 한쪽만 고쳐 API 가 새 값을 400 으로 막는다.
     notifyLevel: z.enum(NOTIFY_LEVELS).optional(),
     starred: z.boolean().optional(),
+    // 섹션: DM 에는 사용할 수 없다(#157). 길이 1~40, 앞뒤 공백 제거, 빈 문자열은 null.
+    // null 은 "섹션에서 빼기"고, 빈 문자열도 null 로 변환된다.
+    // .min(1) 이 아니라 .max(40) 만 — 빈 문자열은 라우트에서 거르고 service 에서 null 로 변환.
+    section: z.string().max(40).optional().nullable(),
+    // 섹션 안에서의 수동 순서(#157). null 이면 이름순 뒤에 붙는다.
+    // `nullable` 인 이유: "지우기"는 명시적 null 이다 — 이것이 없으면 한 번 매긴 순서를
+    // 되돌릴 방법이 없다(`undefined` 는 JSON 에서 키 자체가 사라져 "안 보냈다"가 된다).
+    sortOrder: z.number().int().optional().nullable(),
   }).strict();
 
   app.patch('/channels/:id/pref', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = prefParam.parse(req.params);
     const patch = prefBody.parse(req.body);
+
+    // 가시성 검사가 **먼저**다. 아래 DM 검사를 앞에 두면 남의 DM 에 섹션을 붙여 보는 것만으로
+    // 400(`cannot_section_dm`)과 403 이 갈려 그 채널이 DM 이라는 사실이 새 나간다 — 볼 수 없는
+    // 채널에 대한 응답은 종류도 존재도 말하지 않아야 한다.
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
+
+    // DM 은 섹션을 가질 수 없다(#157). null 은 "섹션에서 빼기"이므로 허용한다 —
+    // 이미 붙은 섹션을 뗄 길이 없으면 잘못 들어간 DM 이 영영 그 자리에 남는다.
+    if (patch.section !== undefined && patch.section !== null) {
+      const channel = await pool.query(`select kind from channel where id = $1`, [id]);
+      if (!channel.rowCount) {
+        return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+      }
+      if (channel.rows[0]!.kind === 'dm') {
+        return reply.code(400).send({ error: { code: 'cannot_section_dm', message: 'DMs cannot have a section' } });
+      }
+    }
+    // 값 가공(앞뒤 공백 제거, 빈 문자열은 null)은 `updateChannelPref` 한 곳에서 한다 —
+    // 여기서 한 번 더 다듬으면 같은 뜻이 두 곳에 살고, 한쪽만 고치는 사고가 난다.
     const pref = await updateChannelPref(pool, req.account!.id, id, patch);
     if (!pref) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });

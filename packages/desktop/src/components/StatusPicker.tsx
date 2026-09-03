@@ -49,19 +49,19 @@ export function StatusPicker() {
       <button
         aria-label="내 상태"
         aria-expanded={open}
-        className="rounded px-1 py-0.5 text-[11px] text-zinc-400 hover:bg-zinc-700"
+        className="rounded px-1 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover"
         onClick={() => setOpen((v) => !v)}
       >
         {LABELS[me.status]}
-        {me.statusText && <span className="ml-1 text-zinc-500">{me.statusText}</span>}
+        {me.statusText && <span className="ml-1 text-fg-subtle">{me.statusText}</span>}
       </button>
       {open && (
-        <div className="absolute bottom-full left-0 z-10 mb-1 w-52 rounded border border-zinc-700 bg-zinc-800 p-1">
+        <div className="absolute bottom-full left-0 z-10 mb-1 w-52 rounded border border-border bg-surface-raised p-1">
           {ACCOUNT_STATUSES.map((s) => (
             <button
               key={s}
               aria-pressed={me.status === s}
-              className={`block w-full rounded px-2 py-1 text-left text-xs hover:bg-zinc-700 ${me.status === s ? 'text-white' : 'text-zinc-300'}`}
+              className={`block w-full rounded px-2 py-1 text-left text-xs hover:bg-surface-hover ${me.status === s ? 'text-fg' : 'text-fg-muted'}`}
               // 문구는 넘기지 않는다 — 키 부재가 '손대지 않음'이다. 상태만 바꾸려던
               // 조작이 문구를 함께 지우면 사용자는 왜 사라졌는지 알 수 없다.
               onClick={() => void apply(s)}
@@ -74,21 +74,21 @@ export function StatusPicker() {
             maxLength={80}
             value={text}
             placeholder="짧은 문구 (최대 80자)"
-            className="mt-1 w-full rounded bg-zinc-900 px-2 py-1 text-xs text-white outline-none"
+            className="mt-1 w-full rounded border border-border bg-field px-2 py-1 text-xs text-fg outline-none"
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') void apply(me.status, text.trim() || null); }}
           />
-          {error && <p role="alert" className="mt-1 text-[10px] text-red-400">{error}</p>}
+          {error && <p role="alert" className="mt-1 text-[10px] text-danger">{error}</p>}
           <div className="mt-1 flex gap-1">
             <button
-              className="rounded bg-indigo-600 px-2 py-0.5 text-[11px] text-white hover:bg-indigo-500"
+              className="rounded bg-accent px-2 py-0.5 text-[11px] text-fg-on-strong hover:bg-accent-hover"
               onClick={() => void apply(me.status, text.trim() || null)}
             >
               저장
             </button>
             {me.statusText && (
               <button
-                className="rounded px-2 py-0.5 text-[11px] text-zinc-400 hover:bg-zinc-700"
+                className="rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover"
                 // 지우기는 **명시적 null** 이다. 빈 문자열로 지우면 "문구가 없다"와
                 // "빈 문구가 있다"가 섞인다.
                 onClick={() => void apply(me.status, null)}

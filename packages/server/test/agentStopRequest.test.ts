@@ -47,12 +47,12 @@ beforeAll(async () => {
   await app.inject({
     method: 'POST', url: '/auth/register',
     payload: {
-      handle: 'plainuser', displayName: 'Plain User', password: 'pw123456',
+      handle: 'plainuser', loginId: 'plainuser', displayName: 'Plain User', password: 'pw123456',
       inviteToken: inv.json().token as string,
     },
   });
   const login = await app.inject({
-    method: 'POST', url: '/auth/login', payload: { handle: 'plainuser', password: 'pw123456' },
+    method: 'POST', url: '/auth/login', payload: { loginId: 'plainuser', password: 'pw123456' },
   });
   plainToken = login.json().token as string;
 });

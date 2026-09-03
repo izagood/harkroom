@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useAppStore } from '../../state/appStore';
 import { getController } from '../../state/controller';
 import { usePrefsStore } from '../../state/prefsStore';
@@ -9,6 +10,12 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
   const setRunnerAutoStart = usePrefsStore((s) => s.setRunnerAutoStart);
   const runnerRepoPath = usePrefsStore((s) => s.runnerRepoPath);
   const setRunnerRepoPath = usePrefsStore((s) => s.setRunnerRepoPath);
+  const runnerCommand = usePrefsStore((s) => s.runnerCommand);
+  const setRunnerCommand = usePrefsStore((s) => s.setRunnerCommand);
+  // 입력 중인 값과 저장된 값을 나눈다 — 타이핑 도중의 `/opt/homeb` 를 거절 문구로 덮으면
+  // 사람은 글자를 하나도 넣을 수 없다. 거절은 저장 시점에만 말한다.
+  const [commandDraft, setCommandDraft] = useState(runnerCommand);
+  const [commandError, setCommandError] = useState<string | null>(null);
   // 보관된 값이 아니라 **지금 붙어 있는** 주소를 보여준다. 키체인 읽기가 비동기가 되면서
   // 렌더 중에 읽을 수 없게 됐고, 어차피 사용자가 알고 싶은 것은 실제 연결 대상이다.
   const baseUrl = getController().api.baseUrl || '—';
@@ -21,7 +28,7 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
           label="Realtime connection"
           value={
             <span className="inline-flex items-center gap-2">
-              <span className={`h-2 w-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
+              <span className={`h-2 w-2 rounded-full ${connected ? 'bg-success' : 'bg-danger'}`} />
               <span data-testid="connection-state">{connected ? 'Connected' : 'Disconnected'}</span>
             </span>
           }
@@ -33,14 +40,14 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
       <SettingsGroup>
         <div className="flex items-center justify-between gap-4 px-4 py-3">
           <span className="min-w-0 flex-1">
-            <span className="block font-medium text-zinc-900">Auto-start runners</span>
-            <span className="mt-0.5 block text-zinc-500">
+            <span className="block font-medium text-fg">Auto-start runners</span>
+            <span className="mt-0.5 block text-fg-subtle">
               Launch runners for agents you own when the app starts.
             </span>
           </span>
           <button
             className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              runnerAutoStart ? 'bg-blue-600' : 'bg-zinc-300'
+              runnerAutoStart ? 'bg-accent' : 'bg-fg-subtle'
             }`}
             onClick={() => setRunnerAutoStart(!runnerAutoStart)}
             role="switch"
@@ -48,7 +55,7 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
             aria-label="러너 자동 기동"
           >
             <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+              className={`inline-block h-4 w-4 transform rounded-full bg-surface-raised transition-transform ${
                 runnerAutoStart ? 'translate-x-6' : 'translate-x-1'
               }`}
             />
@@ -58,33 +65,59 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
             있는 명령은 곧 Tauri shell 스코프를 와일드카드로 열어야 한다는 뜻이고, 그것이
             임의 명령 실행 표면이 된다(runnerLauncher.ts::RUNNER_SCOPE_NAME 주석). */}
         <div className="px-4 py-3">
-          <label className="block font-medium text-zinc-900" htmlFor="runner-repo-path">
+          <label className="block font-medium text-fg" htmlFor="runner-repo-path">
             murmur repository path
           </label>
-          <span className="mt-0.5 block text-zinc-500">
+          <span className="mt-0.5 block text-fg-subtle">
             Runners start with <code className="font-mono">pnpm --filter @murmur/agent start</code>
             {' '}in this directory. Leave empty to not start any.
           </span>
           <input
             id="runner-repo-path"
-            className="mt-2 w-full rounded border border-zinc-300 px-2 py-1 font-mono text-xs"
+            className="mt-2 w-full rounded border border-border bg-field px-2 py-1 font-mono text-xs"
             placeholder="/Users/me/dev/murmur"
             value={runnerRepoPath}
             onChange={(e) => setRunnerRepoPath(e.target.value)}
           />
+        </div>
+        {/* #305: Dock/Finder 로 띄운 앱은 로그인 셸의 `PATH` 를 물려받지 않아 `pnpm` 을 못
+            찾는다(docs/operations.md §8-1 의 같은 함정). 앱이 먼저 로그인 셸의 `PATH` 를
+            한 번 읽어 쓰고, 그것이 안 되는 기기에서 **사람이 고치는 길**이 이 칸이다.
+            **`pnpm` 실행 파일의 절대 경로만** 받는다 — 명령 전체를 받으면 그것이 임의 실행
+            표면이고, 인자는 앱이 고정한다(runnerLauncher.ts::validateRunnerCommand). */}
+        <div className="px-4 py-3">
+          <label className="block font-medium text-fg" htmlFor="runner-command">
+            pnpm path (optional)
+          </label>
+          <span className="mt-0.5 block text-fg-subtle">
+            Absolute path to the <code className="font-mono">pnpm</code> executable, used when the
+            app cannot read your login shell&apos;s PATH. Must end with
+            {' '}<code className="font-mono">/pnpm</code>. Arguments are fixed by the app.
+          </span>
+          <input
+            id="runner-command"
+            className="mt-2 w-full rounded border border-border bg-field px-2 py-1 font-mono text-xs"
+            placeholder="/opt/homebrew/bin/pnpm"
+            value={commandDraft}
+            onChange={(e) => { setCommandDraft(e.target.value); setCommandError(null); }}
+            onBlur={() => setCommandError(setRunnerCommand(commandDraft))}
+          />
+          {commandError && (
+            <span className="mt-1 block text-danger" role="alert">{commandError}</span>
+          )}
         </div>
       </SettingsGroup>
 
       <SettingsGroup>
         <div className="flex items-center gap-4 px-4 py-3">
           <span className="min-w-0 flex-1">
-            <span className="block font-medium text-zinc-900">Use a different server</span>
-            <span className="mt-0.5 block text-zinc-500">
+            <span className="block font-medium text-fg">Use a different server</span>
+            <span className="mt-0.5 block text-fg-subtle">
               Sign out to enter another server address.
             </span>
           </span>
           <button
-            className="shrink-0 rounded-lg border border-zinc-300 px-3 py-1.5 font-medium hover:bg-zinc-50"
+            className="shrink-0 rounded-lg border border-border px-3 py-1.5 font-medium hover:bg-surface"
             onClick={onSignOut}
           >
             Sign out

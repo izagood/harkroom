@@ -31,8 +31,8 @@ export function MessageSettings() {
     >
       <SettingsGroup title="Undo send">
         <div className="px-4 py-3">
-          <p className="font-medium text-zinc-900">Hold a message before it goes out</p>
-          <p className="mt-0.5 text-zinc-500">
+          <p className="font-medium text-fg">Hold a message before it goes out</p>
+          <p className="mt-0.5 text-fg-subtle">
             murmur keeps the message on this device for that long. Undo it and nothing was ever
             sent — no message, no mention, no agent woken. Once the window closes there is no
             way back.
@@ -45,8 +45,8 @@ export function MessageSettings() {
                 aria-pressed={windowMs === ms}
                 className={`rounded-lg border px-3 py-1 ${
                   windowMs === ms
-                    ? 'border-indigo-600 bg-indigo-50 font-medium text-indigo-700'
-                    : 'border-zinc-300 text-zinc-700 hover:bg-zinc-50'
+                    ? 'border-accent bg-accent-surface font-medium text-accent'
+                    : 'border-border text-fg hover:bg-surface'
                 }`}
                 onClick={() => choose(ms)}
               >
@@ -55,7 +55,7 @@ export function MessageSettings() {
             ))}
           </div>
           {windowMs === 0 && (
-            <p data-testid="undo-send-off" className="mt-2 text-zinc-500">
+            <p data-testid="undo-send-off" className="mt-2 text-fg-subtle">
               Off sends every message the moment you press Enter.
             </p>
           )}
