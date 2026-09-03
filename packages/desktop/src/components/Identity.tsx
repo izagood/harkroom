@@ -129,7 +129,7 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
   if (!account) {
     return (
       <span
-        className={`inline-flex h-5 w-5 items-center justify-center rounded-full bg-fg-subtle text-[10px] font-semibold text-white ${className}`}
+        className={`inline-flex h-5 w-5 items-center justify-center rounded-full bg-fg-subtle text-[10px] font-semibold text-fg-on-strong ${className}`}
       >
         <span aria-hidden="true">?</span>
         <span className="sr-only">알 수 없는 계정</span>
@@ -188,7 +188,7 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
   // 사진(#159)은 badge 자리에도 걸리고, 상자를 넘지 않아야 하는 것은 자리와 무관하다.
   return (
     <span
-      className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-fg ${avatarUrl ? 'bg-surface-hover' : handleColor(account.handle)} ${className}`}
+      className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-fg-on-strong ${avatarUrl ? 'bg-surface-hover' : handleColor(account.handle)} ${className}`}
     >
       {avatarUrl ? (
         // `alt` 를 **비운다**. 접근성 이름은 아래 sr-only 가 이미 내고 있고, 사진에 핸들을

@@ -241,7 +241,7 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
                 close();
               }}
               className={`cursor-pointer rounded px-3 py-2 ${
-                index === activeIndex ? 'bg-surface-hover' : 'hover:bg-surface-hover'
+                index === activeIndex ? 'bg-surface-hover' : 'hover:bg-surface-sunken'
               }`}
             >
               <div className="flex items-center gap-2 text-xs text-fg-muted">
