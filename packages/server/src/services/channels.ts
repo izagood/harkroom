@@ -3,6 +3,9 @@ import type { ChannelDoc, ChannelMemberRow, ChannelRow, NotifyLevel } from '@mur
 
 const COLS = `id, name, topic, kind, repo, archived_at as "archivedAt", visibility`;
 
+/** `Pool` 과 `PoolClient` 가 함께 만족하는 최소 표면. 트랜잭션 안에서도 쓰라고 둔다. */
+type Queryable = Pick<Pool, 'query'>;
+
 /**
  * 채널 가시성 술어 — **이 저장소에서 가시성을 판정하는 유일한 정의다.**
  *
@@ -332,9 +335,15 @@ export async function listChannelPrefs(pool: Pool, accountId: string): Promise<C
  * 하고, 그 경로까지 닫으면 admin 에게 조정 수단이 없어진다.
  */
 export async function channelPostGate(
-  pool: Pool, channelId: string, accountId: string,
+  /**
+   * `Pool` 뿐 아니라 **트랜잭션 클라이언트**도 받는다(#222). 예약 발송 sweep 은 행을
+   * `for update skip locked` 로 잡은 트랜잭션 안에서 이 술어를 물어야 하는데, 그때
+   * `pool` 로 물으면 **커넥션을 하나 더** 잡는다 — 락을 쥔 채 풀을 기다리는 모양이라
+   * 풀이 마르면 그대로 교착이다. 쥐고 있는 클라이언트로 묻게 열어 둔다.
+   */
+  db: Queryable, channelId: string, accountId: string,
 ): Promise<'ok' | 'forbidden' | 'archived'> {
-  const res = await pool.query(
+  const res = await db.query(
     `select ${channelVisibleSql('c', '$2')} as visible,
             c.archived_at is not null as archived
      from channel c where c.id = $1`,
@@ -548,6 +557,11 @@ export async function deleteChannel(
     // 여기 없으면 FK 위반으로 터진다 — `channelDelete.test.ts` 가 스키마를 다시 세어
     // 이 목록의 누락을 잡아 줬다(#155 가 세운 그 자리가 실제로 작동했다).
     await client.query(`delete from channel_doc where channel_id = $1`, [channelId]);
+    // scheduled_message: channel_id·thread_root_id·sent_message_id 참조, cascade 없음(#222).
+    // 아직 나가지 않은 예약도 함께 사라진다 — 채널이 없어졌으니 보낼 곳이 없고, 남겨 두면
+    // sweep 이 매번 없는 채널을 집어 든다. **message 보다 먼저** 지워야 한다:
+    // `sent_message_id` 가 이 채널의 메시지를 가리키기 때문이다.
+    await client.query(`delete from scheduled_message where channel_id = $1`, [channelId]);
     // message: channel_id 참조. attachment·message_reaction 은 cascade 로 함께 사라진다.
     // thread_root_id 자기 참조는 한 문장 안에서 부모·자식을 함께 지우므로 문제가 없다.
     await client.query(`delete from message where channel_id = $1`, [channelId]);

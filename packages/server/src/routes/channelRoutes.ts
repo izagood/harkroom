@@ -468,6 +468,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     );
     return { name: row.name ?? '', messageCount: messageCountResult.rows[0]!.cnt };
   });
+
   const scheduledChannelParam = z.object({ id: z.string().uuid() });
 
   /**
@@ -504,8 +505,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
 
     const gate = await channelPostGate(pool, id, req.account!.id);
     if (gate === 'forbidden') {
-      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
-
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
     if (gate === 'archived') {
       return reply.code(403).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
@@ -523,14 +523,16 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
       return reply.code(400).send({ error: { code: 'send_at_too_far', message: `send_at cannot be more than ${SCHEDULE_MAX_DAYS} days in the future` } });
     }
 
-    const result = await scheduleMessage(pool, {
+    const scheduled = await scheduleMessage(pool, {
       channelId: id,
       authorId: req.account!.id,
       body,
       sendAt: sendTime,
       threadRootId: threadRootId ?? null,
     });
-    return reply.code(201).send(result);
+    // 목록(`GET`)과 **같은 봉투**로 답한다 — 한쪽만 벗겨져 있으면 클라이언트가 두 모양을
+    // 다 알아야 한다.
+    return reply.code(201).send({ scheduled });
   });
 
   /**
