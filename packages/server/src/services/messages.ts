@@ -183,7 +183,7 @@ export async function postMessage(
     // 그대로 남고 서버는 inbox 항목만 펼쳐 넣는다.
     //
     // @channel 이라는 handle 의 **계정이 실제로 있으면 계정이 이긴다** — 위에서 이미
-    // 평범한 멘션으로 처리（比如 @channel 이 채널 멤버의 handle 이면)되고, 여기서는
+    // 평범한 멘션으로 처리예를 들어 @channel 이 채널 멤버의 handle 이면)되고, 여기서는
     // 아무것도 하지 않는다.
     if (hasChannelMention && !accountsMap.has(CHANNEL_MENTION_HANDLE)) {
       // 대상은 **그 채널을 볼 수 있는 사람 전부**다. 멤버십을 여기서 다시 정의하지 않고
