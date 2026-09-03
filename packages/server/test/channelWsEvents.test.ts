@@ -92,7 +92,7 @@ const patchChannel = (id: string, payload: Record<string, unknown>) => app.injec
 
 const listChannelIds = async (token: string): Promise<string[]> => {
   const res = await app.inject({ method: 'GET', url: '/channels', headers: { authorization: `Bearer ${token}` } });
-  return (res.json() as { id: string }[]).map((c) => c.id);
+  return (res.json() as { channels: { id: string }[] }).channels.map((c) => c.id);
 };
 
 describe('채널 목록 변경 WS 이벤트 (#284)', () => {
