@@ -26,6 +26,7 @@ import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { createAttachTicketStore } from '../ws/tickets.js';
 import { createRelayHub } from '../ws/relay.js';
+import { createCredentialSweep, DEFAULT_REVALIDATE_MS, originAllowed } from '../ws/socketLifetime.js';
 
 /**
  * 러너 소켓의 인증. `requireAccount` 뒤에 붙어 **에이전트 계정인지**까지 본다.
@@ -54,6 +55,14 @@ async function ownedAgentIds(pool: Pool, accountId: string): Promise<string[]> {
 export interface AgentRelayDeps {
   /** attach 티켓 수명(ms). 미지정이면 `/ws` 티켓과 같은 기본값(30초). */
   attachTicketTtlMs?: number;
+  /**
+   * 뷰어 소켓의 Origin 허용 목록. `null`(기본)이면 판정하지 않는다 — `/ws` 와 **같은
+   * 값**이어야 한다. WS 핸드셰이크는 CORS 의 보호를 받지 않으므로, 이벤트 소켓만 막고
+   * 터미널 소켓을 열어 두면 더 민감한 쪽이 더 느슨해진다.
+   */
+  allowedOrigins?: readonly string[] | null;
+  /** 자격증명 재검증 주기(ms). `/ws` 와 같은 값을 쓴다. 테스트가 짧게 준다. */
+  revalidateMs?: number;
 }
 
 export async function registerAgentRelayRoutes(
@@ -61,6 +70,16 @@ export async function registerAgentRelayRoutes(
 ): Promise<void> {
   const hub = createRelayHub();
   const attachTickets = createAttachTicketStore({ ttlMs: deps.attachTicketTtlMs });
+  /**
+   * 뷰어 소켓의 수명. `/ws` 와 **같은 정책**(`ws/socketLifetime.ts`)을 쓴다.
+   *
+   * 왜 필요한가: attach 티켓은 처음부터 `credentialHash` 를 운반했지만 아무도 읽지
+   * 않았다. 그래서 로그인 세션이 만료되거나 PAT 가 폐기된 뒤에도, 열려 있던 터미널
+   * 패널로 PTY 바이트가 계속 흘렀다 — 그 바이트에는 하네스가 화면에 그린 모든 것이
+   * 들어 있으므로, 이벤트 소켓보다 느슨해서는 안 된다.
+   */
+  const sweep = createCredentialSweep(pool, deps.revalidateMs ?? DEFAULT_REVALIDATE_MS);
+  app.addHook('onClose', async () => { sweep.stop(); });
 
   /**
    * 러너의 상시 outbound WS. 재접속은 러너가 백오프로 한다(`packages/agent/src/policy.ts`
@@ -138,14 +157,23 @@ export async function registerAgentRelayRoutes(
    * 모드를 사람이 사실상 바꾸는 경로가 생긴다.
    */
   app.get('/agent-attach', { websocket: true }, (socket, req) => {
+    // Origin 을 티켓 소모보다 **먼저** 본다 — 거절할 연결이 1회용 티켓을 태우면, 사람이
+    // 다시 열 때 인가를 한 번 더 받아야 하고 그 이유가 화면에 설명되지 않는다.
+    if (!originAllowed(deps.allowedOrigins ?? null, req.headers.origin)) {
+      socket.close(4403, 'origin not allowed');
+      return;
+    }
     const query = req.query as Record<string, string | undefined>;
     const ticket = query.ticket;
     const claim = ticket ? attachTickets.consume(ticket) : null;
     if (!claim) { socket.close(4401, 'unauthorized'); return; }
 
     const off = hub.addViewer(claim.sessionId, socket);
+    // 자격증명이 죽으면 이 소켓도 닫힌다(위 `sweep` 주석).
+    const untrack = sweep.track(socket, claim.credentialHash);
     socket.on('close', () => {
       off();
+      untrack();
       // detach 도 남긴다 — attach 만 남기면 감사 조회에서 "지금 붙어 있는 사람"과
       // "붙었다 떠난 사람"이 구분되지 않는다. 여기서도 바이트는 넣지 않는다.
       void recordAudit(pool, {
