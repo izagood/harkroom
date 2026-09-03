@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { ChannelAutoMentionRow } from '@murmur/shared';
 import { useAppStore } from '../src/state/appStore';
+import { setController, type Controller } from '../src/state/controller';
 import { Composer } from '../src/components/Composer';
-import { acc } from './helpers/fakeApi';
+import { Workspace } from '../src/components/Workspace';
+import { acc, chan, fakeApi, msg } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
 
 /**
@@ -57,7 +59,7 @@ describe('자동 멘션 작성창 (#173)', () => {
   // 회귀 3
   it('전송 직전 본문 앞에 @handle 을 붙인다', () => {
     const onSend = vi.fn();
-    render(<Composer onSend={onSend} scopeKey="c1" channelId="c1" />);
+    render(<Composer onSend={onSend} scopeKey="c1" autoMentionChannelId="c1" />);
 
     sendText('이거 확인해 줘');
 
@@ -67,7 +69,7 @@ describe('자동 멘션 작성창 (#173)', () => {
   it('채널이 부르지 않으면(설정 없음) 아무것도 붙이지 않는다', () => {
     useAppStore.getState().set({ channelAutoMentions: {} });
     const onSend = vi.fn();
-    render(<Composer onSend={onSend} scopeKey="c1" channelId="c1" />);
+    render(<Composer onSend={onSend} scopeKey="c1" autoMentionChannelId="c1" />);
 
     sendText('그냥 글');
 
@@ -78,7 +80,7 @@ describe('자동 멘션 작성창 (#173)', () => {
   // 회귀 4
   it('본문이 이미 그 handle 을 부르면 두 번 붙이지 않는다', () => {
     const onSend = vi.fn();
-    render(<Composer onSend={onSend} scopeKey="c1" channelId="c1" />);
+    render(<Composer onSend={onSend} scopeKey="c1" autoMentionChannelId="c1" />);
 
     sendText('@fizz 직접 불렀다');
 
@@ -91,7 +93,7 @@ describe('자동 멘션 작성창 (#173)', () => {
   // 회귀 5
   it('칩 × 는 그 메시지에서만 뺀다 — 다음 메시지에는 다시 붙는다', () => {
     const onSend = vi.fn();
-    render(<Composer onSend={onSend} scopeKey="c1" channelId="c1" />);
+    render(<Composer onSend={onSend} scopeKey="c1" autoMentionChannelId="c1" />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Skip @fizz this time' }));
     expect(autoChips()).toEqual([]);
@@ -105,7 +107,7 @@ describe('자동 멘션 작성창 (#173)', () => {
   });
 
   it('칩은 고정 멘션과 구분된다 — 자동 배지와 title', () => {
-    render(<Composer onSend={vi.fn()} scopeKey="c1" channelId="c1" />);
+    render(<Composer onSend={vi.fn()} scopeKey="c1" autoMentionChannelId="c1" />);
 
     const chip = screen.getByTestId('auto-mention');
     expect(chip.getAttribute('title')).toBe('이 채널이 자동으로 멘션한다');
@@ -118,7 +120,7 @@ describe('자동 멘션 작성창 (#173)', () => {
   it('채널이 여럿을 부르면 전부 붙고, 고정 멘션은 그 뒤에 온다', () => {
     useAppStore.getState().set({ channelAutoMentions: { c1: [row('a1', 'fizz'), row('a2', 'honey')] } });
     const onSend = vi.fn();
-    render(<Composer onSend={onSend} scopeKey="c1" channelId="c1" />);
+    render(<Composer onSend={onSend} scopeKey="c1" autoMentionChannelId="c1" />);
 
     sendText('@rusalka 같이 보자');
     sendText('다음');
@@ -132,11 +134,80 @@ describe('자동 멘션 작성창 (#173)', () => {
       accounts: { ...useAppStore.getState().accounts, a1: acc('a1', 'fizz', 'agent', false, { disabled: true }) },
     });
     const onSend = vi.fn();
-    render(<Composer onSend={onSend} scopeKey="c1" channelId="c1" />);
+    render(<Composer onSend={onSend} scopeKey="c1" autoMentionChannelId="c1" />);
 
     sendText('깨어나지 못하는 상대');
 
     expect(autoChips()).toEqual([]);
     expect(onSend).toHaveBeenCalledWith('깨어나지 못하는 상대', []);
+  });
+});
+
+/**
+ * 배선을 **`Workspace` 를 통째로 띄워** 확인한다(#173).
+ *
+ * 위의 단위 테스트는 `Composer` 에 `autoMentionChannelId` 를 손으로 넘긴다 — 그 prop 을
+ * `ChannelPane`·`ThreadPanel` 이 넘기지 않으면 앱에서는 칩도 접두도 없는데 위 7건은 전부
+ * 초록이다. #279 가 정확히 그 틈에서 죽은 버튼을 통과시켰다(`mentionClick.test.tsx` 의
+ * 같은 이름 절이 그 사고를 적는다). 그래서 실제 화면에서 칩과 접두를 본다.
+ */
+describe('자동 멘션 배선 — Workspace 를 통째로 (#173)', () => {
+  const mount = (extra: Record<string, unknown> = {}) => {
+    const send = vi.fn();
+    const reply = vi.fn();
+    setController({
+      api: fakeApi(),
+      openChannel: vi.fn().mockResolvedValue(undefined),
+      openThread: vi.fn(), closeThread: vi.fn(), startDm: vi.fn(), logout: vi.fn(),
+      notifyTyping: vi.fn(), refreshAccounts: vi.fn().mockResolvedValue(undefined),
+      send, reply, loadOlder: vi.fn(),
+      goBack: vi.fn().mockResolvedValue(false),
+      goForward: vi.fn().mockResolvedValue(false),
+    } as unknown as Controller);
+    useAppStore.getState().set({
+      channels: [chan('c1', 'general')],
+      connected: true,
+      activeChannelId: 'c1',
+      messages: { c1: [msg('m1', 'c1', 1, '첫 줄', 'u1')] },
+      ...extra,
+    });
+    render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+    return { send, reply };
+  };
+
+  beforeEach(() => { localStorage.clear(); });
+  afterEach(() => { setController(null as unknown as Controller); });
+
+  it('채널 작성창에 칩이 서고 보낸 본문에 접두가 붙는다', async () => {
+    const { send } = mount();
+
+    await waitFor(() => expect(screen.getByTestId('auto-mention')).toBeTruthy());
+    const box = screen.getByPlaceholderText('Message #general') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '이거 확인해 줘', selectionStart: 7 } });
+    fireEvent.keyDown(box, { key: 'Escape' });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    expect(send).toHaveBeenCalledWith('@fizz 이거 확인해 줘', [], 'c1');
+  });
+
+  it('스레드 답장에도 칩이 서고 접두가 붙는다 — 다만 예약 버튼은 없다', async () => {
+    const { reply } = mount({ threadRootId: 'm1' });
+
+    // 스레드 패널의 작성창이다 — 채널 작성창의 칩과 구분해 그 안에서 찾는다.
+    const box = await screen.findByPlaceholderText('Reply…') as HTMLTextAreaElement;
+    const panel = box.closest('section')!;
+    await waitFor(() => expect(panel.querySelector('[data-testid="auto-mention"]')).toBeTruthy());
+    /**
+     * 예약 표면(#222)은 스레드에 없어야 한다. `POST /channels/:id/scheduled` 는 스레드
+     * 뿌리를 실어 보내지 않으므로, 여기서 예약하면 답글이 **채널 본문으로** 나가 스레드가
+     * 조용히 사라진다. 자동 멘션 때문에 채널을 알려 준다고 이 버튼이 되살아나면 안 된다.
+     */
+    expect(panel.querySelector('button[aria-label="나중에 보내기"]')).toBeNull();
+
+    fireEvent.change(box, { target: { value: '답글', selectionStart: 2 } });
+    fireEvent.keyDown(box, { key: 'Escape' });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    expect(reply).toHaveBeenCalledWith('@fizz 답글', [], 'c1', 'm1', false);
   });
 });

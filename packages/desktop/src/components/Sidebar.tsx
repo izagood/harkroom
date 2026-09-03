@@ -581,7 +581,12 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
                           ) : (
                             <span>@{a.handle}</span>
                           )}
-                          <span className="rounded bg-indigo-900 px-1 text-[10px] text-indigo-200">자동</span>
+                          {/* 배지는 **켜진 행에만** 붙는다. admin 목록에는 꺼진 에이전트도 서므로
+                              무조건 붙이면 체크가 비어 있는 줄에 '자동' 이라고 적힌다 — 화면이
+                              체크박스와 반대되는 말을 한다. */}
+                          {onIds.has(a.id) && (
+                            <span className="rounded bg-indigo-900 px-1 text-[10px] text-indigo-200">자동</span>
+                          )}
                           {a.disabled && <span className="rounded bg-zinc-700 px-1 text-[10px] text-zinc-400">비활성</span>}
                         </li>
                       ))}
