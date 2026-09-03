@@ -64,6 +64,16 @@ export class ApiClient {
   markChannelRead(channelId: string, seq: number): Promise<void> {
     return this.req('PUT', `/channels/${channelId}/read`, { seq });
   }
+  /**
+   * 미읽음 표시(#154). 읽음 ack 와 **다른 엔드포인트**다 — 서버가 자동 전진과 사람의 조작을
+   * 구분해야 단조성을 깨지 않고 되돌릴 수 있다.
+   *
+   * `seq: null` 이 표시 지우기다. `undefined` 로 표현하면 `JSON.stringify` 가 키를 버려
+   * 서버가 못 받는다.
+   */
+  markChannelUnread(channelId: string, seq: number | null): Promise<void> {
+    return this.req('PUT', `/channels/${channelId}/unread`, { seq });
+  }
   async accounts(): Promise<AccountView[]> {
     return (await this.req<{ accounts: AccountView[] }>('GET', '/accounts')).accounts;
   }
@@ -166,6 +176,17 @@ export class ApiClient {
 
   updateAgent(id: string, patch: Partial<AgentConfig> & { displayName?: string }): Promise<AgentView> {
     return this.req('PATCH', `/accounts/agents/${id}`, patch);
+  }
+
+  /**
+   * 러너에게 **종료를 요청한다**(#129). 재시작이 아니다 — murmur 는 러너를 띄우지 않으므로
+   * 다시 띄우는 것은 사람의 몫이다. 정의 수정(PATCH)과 섞지 않고 별도 라우트인 이유:
+   * 이 값은 운영자가 편집하는 정의가 아니라 러너에게 보내는 일회성 요청이다.
+   *
+   * 응답은 갱신된 정의다 — 목록을 다시 받지 않고도 요청 시각을 바로 그린다.
+   */
+  requestAgentStop(agentId: string): Promise<AgentView> {
+    return this.req('POST', `/accounts/agents/${agentId}/stop`);
   }
 
   /** WS 핸드셰이크용 단기 1회용 티켓. 연결 시도마다 새로 받는다. */

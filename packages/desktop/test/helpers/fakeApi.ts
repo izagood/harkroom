@@ -31,6 +31,7 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     logout: vi.fn(async () => undefined),
     reads: vi.fn(async () => []),
     markChannelRead: vi.fn(async () => undefined),
+    markChannelUnread: vi.fn(async () => undefined),
     accounts: vi.fn(async () => [acc('u1', 'admin'), acc('u2', 'bot', 'agent')]),
     channels: vi.fn(async () => [chan('c1', 'general')]),
     dms: vi.fn(async () => []),

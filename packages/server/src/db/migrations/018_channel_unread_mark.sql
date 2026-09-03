@@ -1,0 +1,12 @@
+-- 사용자가 명시적으로 지정한 미읽음 시작점(#154).
+--
+-- 왜 last_read_seq 를 되돌리지 않고 별개 컬럼인가: markChannelRead 의 단조성(greatest)이
+-- 막는 사고는 실재한다 — 여러 기기에서 늦게 도착한 오래된 ack 가 위치를 되돌리면 이미 읽은
+-- 대화가 다시 미읽음이 된다. 그 clamp 를 풀면 mark-unread 를 얻는 대신 그 사고를 되산다.
+--
+-- 자동 ack(PUT /channels/:id/read)와 사용자 조작(PUT /channels/:id/unread)이 다른 라우트로
+-- 들어와 다른 컬럼에 쓰이므로 서버가 둘을 구분할 수 있다. 낡은 ack 는 정의상 채널의 현재
+-- 최대 seq 보다 작으므로 이 표시를 지우지 못한다 — 시계 없이 구분이 된다.
+--
+-- null 이 곧 "표시 없음"이라 backfill 이 필요 없고, 컬럼 추가만이라 옛 코드와 호환된다.
+alter table channel_read add column unread_from_seq bigint;

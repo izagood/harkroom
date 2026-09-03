@@ -22,6 +22,7 @@ import { resolveAgentStateDir } from './stateDir.js';
 import { assertHarnessContract, writeMcpConfigOnce } from './turn.js';
 import type { Exec } from './workspace.js';
 import { exhausted, isCredentialFailure, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
+import { stopRequestedForRunner } from './stop.js';
 import { FAILURE_NOTICE } from './prompt.js';
 
 const config = loadConfig();
@@ -34,6 +35,25 @@ assertHarnessContract();
 let running = true;
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => { running = false; });
+}
+
+// 기동 시각. 종료 요청(#129)이 **나를 향한 것인지** 가르는 기준이다 — 내가 뜨기 전에 남은
+// 요청은 이미 물러난 앞 러너의 것이고, 그것으로 죽으면 새 러너가 뜰 때마다 곧바로 죽는다
+// (stop.ts 주석). 원격 종료 요청은 위 SIGTERM 과 **같은 플래그**를 끈다: 진행 중인 배치를
+// 끝낸 뒤에만 루프를 벗어난다는 이미 검증된 성질을 그대로 물려받는다.
+const startedAtMs = Date.now();
+
+/**
+ * 종료 요청을 받아들인다. 여기서 프로세스를 죽이지 않는다 — 플래그만 끄고, 실제 종료는
+ * 진행 중인 턴·배치가 끝난 뒤 루프가 스스로 빠져나가며 일어난다.
+ *
+ * #126: 요청을 받았다는 사실은 로그에 남긴다. 로그가 없으면 운영자는 러너가 요청 때문에
+ * 물러난 것인지 죽은 것인지 구분할 수 없다.
+ */
+function acceptStopRequest(at: string): void {
+  running = false;
+  console.log(`[main] 종료 요청을 받았다 (요청 시각: ${at}) — 진행 중인 턴을 마쳤으므로 물러난다.`);
+  console.log('  murmur 는 러너를 띄우지 않는다 — 다시 띄우는 것은 사람(또는 launchd/systemd 감독)의 몫이다.');
 }
 
 const me = await murmur.me();
@@ -115,7 +135,18 @@ let backoffMs = 1_000;
 while (running) {
   try {
     const batch = await murmur.pollInbox(config.pollTimeoutMs);
-    if (!batch.entries.length) { backoffMs = 1_000; continue; }
+    if (!batch.entries.length) {
+      backoffMs = 1_000;
+      // 멘션이 없어도 종료 요청은 봐야 한다. 턴 안에서만 정의를 읽으면 **조용한 러너는
+      // 영원히 물러나지 않는다** — 낡은 코드로 도는 러너가 마침 한가한 경우가 정확히
+      // 운영자가 세우고 싶어 하는 경우다. 새 채널을 만드는 것이 아니라 러너가 이미 매 턴
+      // 읽는 그 정의를 한 번 더 읽는 것이다(빈 폴은 pollTimeoutMs 만큼 park 된 뒤라 잦지 않다).
+      const idleDef = await murmur.definition();
+      if (stopRequestedForRunner(idleDef.stopRequestedAt, startedAtMs)) {
+        acceptStopRequest(idleDef.stopRequestedAt!);
+      }
+      continue;
+    }
 
     // 채널 이름·계정 handle 은 턴마다 바뀌지 않으니 배치 단위로 한 번만 받는다.
     const channels = await murmur.channels();
@@ -159,13 +190,21 @@ while (running) {
         // 두 곳에 적으면 나중에 한쪽만 고치는 사고가 난다.
         // mentionId 는 앵커와 **다르다**: 스레드 안 멘션의 앵커는 스레드 루트이고,
         // 리액션 대상은 방금 온 그 멘션이어야 한다.
-        await runMentionTurn(deps, {
+        const turn = await runMentionTurn(deps, {
           channelId: mention.channelId,
           threadRootId: anchor,
           mentionId: mention.id,
         });
         done.push(entry.id);
         attempts.delete(entry.id);
+        // #129: 종료 요청은 **턴이 끝난 지금** 본다. runMentionTurn 은 턴 시작 직후에
+        // 정의를 읽지만 스스로 돌아서지 않는다 — 그 간격이 "사람이 기다리는 답을 잃지
+        // 않는다"를 만든다. 배치의 나머지는 미읽음으로 남겨 다음 러너가 이어받는다:
+        // markRead 는 이 for 밖에서 done 만 처리하므로 답한 것만 소비된다.
+        if (stopRequestedForRunner(turn.stopRequestedAt, startedAtMs)) {
+          acceptStopRequest(turn.stopRequestedAt!);
+          break;
+        }
       } catch (err) {
         // 자격증명 실패는 재시도로 낫지 않는다. 조용히 반복하면 "왜 답이 없지"의 원인이 묻힌다.
         const credType = isCredentialFailure(err);
