@@ -7,7 +7,7 @@ import { SavedMessages } from '../src/components/SavedMessages';
 import { MessageItem } from '../src/components/MessageItem';
 import { Sidebar } from '../src/components/Sidebar';
 import { Workspace } from '../src/components/Workspace';
-import { acc, chan, msg, fakeApi } from './helpers/fakeApi';
+import { acc, chan, msg, fakeApi, scheduledApiStub } from './helpers/fakeApi';
 
 /**
  * 나중에 볼 메시지의 데스크탑 쪽(#219).
@@ -47,6 +47,8 @@ const fakeController = (over: Record<string, unknown> = {}) => {
     pinMessage: vi.fn(async () => undefined),
     unpinMessage: vi.fn(async () => undefined),
     markChannelUnread: vi.fn(async () => undefined),
+    // #222: 컴포저가 예약 목록을 읽는다 — 목에 이 표면이 없으면 화면이 뜨지 않는다.
+    api: scheduledApiStub(),
     ...over,
   };
   setController(c as unknown as ControllerType);

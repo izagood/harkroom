@@ -5,7 +5,7 @@ import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
 import { Workspace } from '../src/components/Workspace';
 import { sidebarStorage, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, DEFAULT_PREFS } from '../src/lib/prefs';
-import { acc, chan } from './helpers/fakeApi';
+import { acc, chan, scheduledApiStub } from './helpers/fakeApi';
 
 const fakeController = () => {
   const c = {
@@ -34,6 +34,8 @@ const fakeController = () => {
       }
       return false;
     }),
+    // #222: 컴포저가 예약 목록을 읽는다 — 목에 이 표면이 없으면 화면이 뜨지 않는다.
+    api: scheduledApiStub(),
   };
   setController(c as unknown as Controller);
   return c;

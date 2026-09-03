@@ -24,6 +24,7 @@ import { Lifecycle } from './lifecycle.js';
 import { loggerConfig } from './logging.js';
 import { createRateLimiter, type RateLimitRule } from './rateLimit.js';
 import { createMetrics } from './metrics.js';
+import { createScheduledMessageSweeper } from './services/scheduledMessages.js';
 
 /**
  * 인증 표면 기본 리밋.
@@ -271,6 +272,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     now: deps.now,
   });
   agentPresence.startSweep(app);
+
+  const scheduledSweeper = createScheduledMessageSweeper(deps.pool);
+  scheduledSweeper.startSweep(app);
 
   await registerWs(app, deps.pool, {
     onSocketCount: (read) => { socketCount = read; },
