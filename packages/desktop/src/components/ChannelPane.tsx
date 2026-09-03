@@ -171,7 +171,10 @@ export function ChannelPane() {
           <Composer
             scopeKey={activeChannelId}
             placeholder={`Message ${composerTarget}`}
-            onSend={(body, attachmentIds) => getController().send(body, attachmentIds)}
+            // 채널을 **지금 렌더된 것으로 붙여 준다**(#223). 보냄 취소 창이 도는 동안
+            // 채널을 옮겨도 이 클로저가 든 채널로 나간다 — 컨트롤러가 스토어를 다시 읽으면
+            // 옮긴 채널로 새어 나간다.
+            onSend={(body, attachmentIds) => getController().send(body, attachmentIds, activeChannelId)}
           />
         )}
       </div>

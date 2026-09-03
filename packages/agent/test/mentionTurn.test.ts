@@ -51,6 +51,8 @@ function defOf(overrides: Partial<AgentView> = {}): AgentView {
     // #186: 에이전트는 상태를 고를 수 없다(서버가 거절한다). DB 기본값 그대로이지만
     // AccountView 의 필수 필드라 fixture 도 적어야 한다.
     status: 'available', statusText: null,
+    // #159: 에이전트는 스스로 아바타를 올리지 않는다. AccountView 의 필수 필드라 fixture 도 적는다.
+    avatarAttachmentId: null,
     ...overrides,
   };
 }
