@@ -60,11 +60,16 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
   );
 }
 
-export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox, onOpenSaved, collapsed, onToggleCollapse }: {
+export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChannelDirectory, onOpenInbox, onOpenSaved, collapsed, onToggleCollapse }: {
   onLogout: () => void;
   onOpenSettings: (section?: SectionId) => void;
   /** 워크스페이스 전체 디렉터리를 연다(#226). 채널 멤버 목록이 아니라 워크스페이스 전체다. */
   onOpenDirectory: () => void;
+  /**
+   * 채널 디렉터리 모달을 연다(#180). **옵셔널이 아니다** — 여기서 기본값을 공급하면
+   * 배선을 잊은 화면에서도 "채널 찾기" 버튼이 그려지고 눌러도 아무 일이 없다(design.md §4).
+   */
+  onOpenChannelDirectory: () => void;
   onOpenInbox: () => void;
   /**
    * 담아 둔 메시지 패널을 연다(#219). **옵셔널이 아니다** — 기본값을 여기서 공급하면
@@ -790,7 +795,17 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenInbox
         </div>
       <nav className="flex-1 space-y-4 overflow-y-auto p-2">
         <div>
-          <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">Channels</div>
+          <div className="flex items-center gap-1 px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">
+            Channels
+            <button
+              className="rounded px-1 text-[10px] hover:bg-zinc-700"
+              aria-label="채널 찾기"
+              title="채널 찾기"
+              onClick={onOpenChannelDirectory}
+            >
+              🔍
+            </button>
+          </div>
           {sortedChannels.map(channelRow)}
           {me?.isAdmin && (
             createChannelOpen ? (

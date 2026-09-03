@@ -1,7 +1,10 @@
 import type { Pool, PoolClient } from 'pg';
 import type { ChannelDoc, ChannelMemberRow, ChannelRow, NotifyLevel } from '@murmur/shared';
 
-const COLS = `id, name, topic, kind, repo, archived_at as "archivedAt", visibility`;
+// #180: `created_at` 도 싣는다. 채널 디렉터리의 "생성순" 정렬을 클라이언트가 하는데,
+// 목록 질의는 `order by name` 이라 순서 자체로는 생성 시각을 알 수 없다. 컬럼은 001 부터
+// 있었고 마이그레이션은 필요 없다 — 안 보내던 것을 보내기 시작하는 것뿐이다.
+const COLS = `id, name, topic, kind, repo, archived_at as "archivedAt", visibility, created_at as "createdAt"`;
 
 /** `Pool` 과 `PoolClient` 가 함께 만족하는 최소 표면. 트랜잭션 안에서도 쓰라고 둔다. */
 type Queryable = Pick<Pool, 'query'>;
