@@ -10,7 +10,12 @@ export interface PrefsState extends Prefs {
 export const usePrefsStore = create<PrefsState>((set, get) => ({
   ...prefsStorage.load(),
   setNotifications: (patch) => {
-    const next: Prefs = { notifications: { ...get().notifications, ...patch } };
+    const current = get();
+    const next: Prefs = {
+      notifications: { ...current.notifications, ...patch },
+      sidebarWidth: current.sidebarWidth,
+      sidebarCollapsed: current.sidebarCollapsed,
+    };
     prefsStorage.save(next);
     set(next);
   },
