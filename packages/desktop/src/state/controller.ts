@@ -39,13 +39,14 @@ export class Controller {
 
   async start(): Promise<void> {
     const store = useAppStore.getState();
-    const [me, accounts, channels, dms, leases, unread, reads] = await Promise.all([
+    const [me, { accounts, groups }, channels, dms, leases, unread, reads] = await Promise.all([
       this.api.me(), this.api.accounts(), this.api.channels(),
       this.api.dms(), this.api.leases(), this.api.inboxUnread(), this.api.reads(),
     ]);
     store.set({
       me, channels, dms, leases, unread,
       accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
+      groups,
       reads: Object.fromEntries(reads.map((r) => [r.channelId, { lastReadSeq: r.lastReadSeq, unread: r.unread }])),
     });
     // 초안은 기기 로컬에 있으므로 서버 왕복이 없다 — 크리티컬 패스에 둬도 비용이 없다.
@@ -209,8 +210,11 @@ export class Controller {
     this.lastAccountsRefresh = now;
     this.accountsInFlight ??= this.api
       .accounts()
-      .then((accounts) => {
-        useAppStore.getState().set({ accounts: Object.fromEntries(accounts.map((a) => [a.id, a])) });
+      .then(({ accounts, groups }) => {
+        useAppStore.getState().set({
+          accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
+          groups,
+        });
       })
       .finally(() => { this.accountsInFlight = null; });
     return this.accountsInFlight;
@@ -615,6 +619,29 @@ export class Controller {
     return this.api.requestAgentStop(agentId);
   }
 
+  /**
+   * #251: 에이전트 비활성화/재활성화. 설정 저장(`updateAgent`)과 별도 경로인 이유는
+   * `api.setAgentDisabled` 주석에 있다.
+   *
+   * **스토어의 계정 표를 함께 갱신한다.** 이 사실을 읽는 화면은 설정 화면이 아니다 —
+   * 멘션 후보를 거르는 `Composer` 와 `비활성` 배지를 그리는 `Directory` 가 스토어의
+   * `accounts` 를 본다(shared 의 `AccountView.disabled` 주석). 설정 화면의 지역 상태만
+   * 고치면 끈 직후에도 그 에이전트가 여전히 자동완성에 뜨고, 부른 사람은 답이 올 것이라
+   * 믿는다. 갱신을 여기서 하는 이유는 스토어를 아는 곳이 컨트롤러 하나이기 때문이다.
+   *
+   * 서버가 돌려준 뷰를 그대로 넣는다 — 목록을 다시 받아 오지 않는 이유는 `AgentView` 가
+   * `AccountView` 를 포함해서 이미 정본이고, 다시 받으면 그 사이의 다른 변경까지 섞여
+   * "내가 방금 한 일"과 구분되지 않기 때문이다.
+   */
+  async setAgentDisabled(
+    agentId: string, disabled: boolean,
+  ): Promise<import('@murmur/shared').AgentView> {
+    const updated = await this.api.setAgentDisabled(agentId, disabled);
+    const store = useAppStore.getState();
+    store.set({ accounts: { ...store.accounts, [updated.id]: updated } });
+    return updated;
+  }
+
   /** #171: 새 에이전트의 기본값. 실패를 삼키지 않는다 — 화면이 실패를 그려야 한다. */
   agentDefaults(): Promise<import('@murmur/shared').AgentDefaults> {
     return this.api.agentDefaults();
@@ -707,6 +734,34 @@ export class Controller {
     const updated = await this.api.archiveChannel(id, archived);
     useAppStore.getState().set({ channels: await this.api.channels() });
     return updated;
+  }
+
+  /**
+   * 삭제 확인에 쓸 수치(#155). **개수를 모르면 모른다고 말할 수 있어야** 하므로 실패를
+   * 삼키지 않는다 — 0 으로 갈아 넣으면 확인 문구가 "메시지 0개를 지운다"고 거짓을 말한다.
+   */
+  channelDeleteInfo(id: string): Promise<{ name: string; messageCount: number }> {
+    return this.api.deleteChannelInfo(id);
+  }
+
+  /**
+   * 채널을 영구히 삭제한다(#155). 실패를 삼키지 않는다 — 호출부가 사람에게 보여 줘야 한다.
+   *
+   * 목록을 다시 받는 이유는 `leaveChannel` 과 같다: 그 채널은 더 이상 존재하지 않으므로
+   * 사이드바에 남아 있으면 안 된다.
+   *
+   * **보고 있던 채널이었으면 선택을 비운다.** 안 비우면 `activeChannelId` 가 없는 채널을
+   * 가리킨 채 남아, 본문 열은 빈 채널을 그리고 작성창은 보낼 곳이 없는 글을 받는다.
+   * `leaveChannel` 이 이것을 안 하는 것은 나간 채널이 public 이면 여전히 볼 수 있기
+   * 때문이다 — 삭제는 그럴 여지가 없다.
+   */
+  async deleteChannel(id: string): Promise<void> {
+    await this.api.deleteChannel(id);
+    const store = useAppStore.getState();
+    store.set({
+      channels: await this.api.channels(),
+      ...(store.activeChannelId === id ? { activeChannelId: null, threadRootId: null } : {}),
+    });
   }
 
   async startDm(accountId: string): Promise<void> {
