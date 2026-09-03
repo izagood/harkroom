@@ -23,9 +23,22 @@ export function SweepShell({ items, loading, error, onRetry, onClose, onMarkRead
   const [actionError, setActionError] = useState<string | null>(null);
   const accounts = useAppStore((s) => s.accounts);
 
-  // 목록을 다시 불러오면 처음부터 본다. 인덱스를 그대로 두면 짧아진 목록의 끝을 가리켜
-  // 볼 것이 남았는데도 "다 봤다"가 뜬다.
-  useEffect(() => { setIndex(0); setActionError(null); }, [items]);
+  /**
+   * 목록을 다시 불러오면 처음부터 본다. 인덱스를 그대로 두면 짧아진 목록의 끝을 가리켜
+   * 볼 것이 남았는데도 "다 봤다"가 뜬다.
+   *
+   * **effect 가 아니라 렌더 중에 되돌린다.** `useEffect(..., [items])` 로 두면 목록이
+   * 그려진 뒤 effect 가 흘러나가기 전에 사람이 '다음'을 누를 수 있고, 그 클릭으로 올라간
+   * 인덱스를 뒤늦게 도착한 effect 가 0 으로 되돌린다 — 눌렀는데 첫 항목에 머무는 것으로
+   * 보인다. CI 에서 `unreadSweep` 두 건이 그렇게 빨개졌다(#227 회귀선). 렌더 중에
+   * 이전 값과 비교해 되돌리면 그 창이 없다.
+   */
+  const [seenItems, setSeenItems] = useState(items);
+  if (seenItems !== items) {
+    setSeenItems(items);
+    setIndex(0);
+    setActionError(null);
+  }
 
   const current = items[index];
 
