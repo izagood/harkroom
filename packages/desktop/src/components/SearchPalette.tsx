@@ -18,6 +18,8 @@ export function SearchPalette({ open, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+  // #221: 기본값은 전역이다. 좁히는 것은 사람이 명시적으로 하는 선택이라 열 때마다 꺼진 상태로 돌아간다.
+  const [scoped, setScoped] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const resultRefs = useRef<(HTMLLIElement | null)[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -26,6 +28,7 @@ export function SearchPalette({ open, onClose }: Props) {
   const accounts = useAppStore((s) => s.accounts);
   const channels = useAppStore((s) => s.channels);
   const dms = useAppStore((s) => s.dms);
+  const activeChannelId = useAppStore((s) => s.activeChannelId);
 
   const getChannelName = useCallback((channelId: string): string => {
     const channel = channels.find((c) => c.id === channelId);
@@ -44,12 +47,12 @@ export function SearchPalette({ open, onClose }: Props) {
     return account ? `@${account.handle}` : authorId;
   }, [accounts]);
 
-  const search = useCallback(async (q: string) => {
+  const search = useCallback(async (q: string, channelId: string | null) => {
     if (!q.trim()) return;
     setLoading(true);
     setError(null);
     try {
-      const messages = await getController().api.search(q);
+      const messages = await getController().api.search(q, channelId);
       setResults(messages);
       setHasSearched(true);
       setActiveIndex(messages.length > 0 ? 0 : -1);
@@ -61,12 +64,25 @@ export function SearchPalette({ open, onClose }: Props) {
     }
   }, []);
 
+  const scopeChannelId = scoped && activeChannelId ? activeChannelId : null;
+
   const handleSearch = useCallback((value: string) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      search(value);
+      search(value, scopeChannelId);
     }, 300);
-  }, [search]);
+  }, [search, scopeChannelId]);
+
+  /**
+   * 토글은 디바운스를 건너뛴다 — 타이핑과 달리 이건 한 번의 명시적 동작이라
+   * 기다릴 이유가 없고, 기다리면 방금 누른 것이 반영됐는지 알 수 없다.
+   */
+  const toggleScope = useCallback(() => {
+    const next = !scoped;
+    setScoped(next);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (query.trim()) search(query, next && activeChannelId ? activeChannelId : null);
+  }, [scoped, query, activeChannelId, search]);
 
   useEffect(() => {
     if (!open) {
@@ -75,6 +91,7 @@ export function SearchPalette({ open, onClose }: Props) {
       setError(null);
       setHasSearched(false);
       setActiveIndex(-1);
+      setScoped(false);
       if (debounceRef.current) clearTimeout(debounceRef.current);
       return;
     }
@@ -162,6 +179,21 @@ export function SearchPalette({ open, onClose }: Props) {
           />
           {loading && <span className="text-xs text-zinc-500">검색 중...</span>}
         </div>
+
+        {activeChannelId && (
+          <div className="flex items-center gap-2 border-b border-zinc-700 px-3 py-2">
+            <input
+              id="search-scope-toggle"
+              type="checkbox"
+              checked={scoped}
+              onChange={toggleScope}
+              className="accent-teal-500"
+            />
+            <label htmlFor="search-scope-toggle" className="cursor-pointer text-xs text-zinc-400">
+              이 채널에서만 ({getChannelName(activeChannelId)})
+            </label>
+          </div>
+        )}
 
         {error && (
           <div role="alert" className="border-b border-zinc-700 bg-red-900/20 p-3 text-sm text-red-400">

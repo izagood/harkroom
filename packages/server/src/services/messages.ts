@@ -327,8 +327,14 @@ export async function markInboxRead(pool: Pool, accountId: string, ids: number[]
   return res.rowCount ?? 0;
 }
 
+/**
+ * `channelId` 를 주면 그 채널 안만 본다. 클라이언트에서 거르지 않는 이유(#221): 전역 검색은
+ * seq desc 상위 N 건에서 잘리므로, 다른 채널의 일치가 많으면 이 채널 것이 애초에 응답에
+ * 들어오지 않는다 — "이 대화 안에 있는 걸 아는데 못 찾는" 정확히 반대되는 결과가 된다.
+ * 그래서 질의 자체를 좁힌다.
+ */
 export async function searchMessages(
-  pool: Pool, requesterId: string, query: string, limit = 50,
+  pool: Pool, requesterId: string, query: string, limit = 50, channelId: string | null = null,
 ): Promise<MessageRow[]> {
   const res = await pool.query(
     `select m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
@@ -342,8 +348,11 @@ export async function searchMessages(
        -- 배지에도 없는 private 채널의 발언이 검색 결과로 통째로 나온다 — 그래서 목록·배지와
        -- **같은 술어**를 쓴다. admin 예외 없다(결과가 곧 메시지 본문이다).
        and ${channelVisibleSql('c', '$3')}
+       -- 스코프는 가시성 **위에** 얹는 별개 조건이다. null 이면 절이 상수로 접혀 전역 검색의
+       -- 계획이 그대로 남는다 — 기존 동작을 건드리지 않는다.
+       and ($4::uuid is null or m.channel_id = $4)
      order by m.seq desc limit $2`,
-    [query, Math.min(limit, 100), requesterId],
+    [query, Math.min(limit, 100), requesterId, channelId],
   );
   return res.rows;
 }
