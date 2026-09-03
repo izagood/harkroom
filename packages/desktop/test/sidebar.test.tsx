@@ -60,7 +60,9 @@ describe('Sidebar', () => {
       fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'design' } });
       fireEvent.click(screen.getByText('만들기'));
 
-      await waitFor(() => expect(c.createChannel).toHaveBeenCalledWith('design'));
+      // #182 이후 공개 범위가 인자로 함께 간다. 체크박스를 건드리지 않았으므로 'public' 이다 —
+      // 기본값이 조용히 private 이 되면 만든 사람 말고는 아무도 못 보는 채널이 생긴다.
+      await waitFor(() => expect(c.createChannel).toHaveBeenCalledWith('design', 'public'));
       // 성공하면 입력 자리는 닫힌다.
       await waitFor(() => expect(screen.queryByLabelText('New channel name')).toBeNull());
     });
@@ -430,8 +432,14 @@ describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
   });
 
   // #151 본문: "알림 층이 mute 를 어떻게 읽을지는 저장 모양을 정한 뒤의 후속" —
-  // 이 작업은 저장과 표시까지다. 배지 계산을 건드리면 범위 이탈이고, 이게 그 방지선이다.
-  it('음소거가 미읽음 배지 계산을 바꾸지 않는다', () => {
+  // 그 작업은 저장과 표시까지였고, 배지 계산을 건드리는 것이 범위 이탈이라 이 자리에
+  // "음소거가 배지를 바꾸지 않는다"는 방지선이 서 있었다.
+  //
+  // #229 가 그 후속이다: 저장해 놓고 아무 데서도 읽지 않는 상태는 미완성이 아니라 거짓
+  // 이행이었으므로(사용자는 껐다고 믿는다) 방지선의 방향을 뒤집는다. 알림 쪽까지 묶은
+  // 회귀선은 channelMute.test.tsx 에 있고, 여기서는 같은 미읽음이 음소거만으로 다른
+  // 결과가 된다는 것을 남긴다.
+  it('음소거하면 미읽음 배지가 사라진다 (#229)', () => {
     fakeController();
     const seed = {
       channels: [chan('c1', 'general')],
@@ -449,9 +457,9 @@ describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
     useAppStore.getState().set({ ...seed, channelPrefs: { c1: pref('c1', { muted: true }) } });
     render(<Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-    // 음소거해도 배지가 그대로다. 알림 층이 mute 를 읽는 것은 후속 작업이고, 이 선이
-    // 그 범위를 지킨다.
-    expect(screen.getByTestId('unread-c1').textContent).toBe(before);
+    // 음소거 전에는 세던 것이(before) 음소거 뒤에는 배지 자체가 없다.
+    expect(before).toBe('2');
+    expect(screen.queryByTestId('unread-c1')).toBeNull();
   });
 });
 

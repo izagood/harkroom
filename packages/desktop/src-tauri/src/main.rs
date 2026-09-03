@@ -43,6 +43,8 @@ fn main() {
     tauri::Builder::default()
         // 멘션 알림 표면. 권한은 capabilities/default.json 에서 허용한다.
         .plugin(tauri_plugin_notification::init())
+        // 링크를 OS 로 넘기는 표면. 권한은 capabilities/default.json 에서 허용한다.
+        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![secret_get, secret_set, secret_delete])
         .run(tauri::generate_context!())
         .expect("error while running murmur");
