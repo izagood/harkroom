@@ -13,6 +13,8 @@ export type WorkspaceEvent =
   // presence.changed 를 만들지 않고, 소켓이 끊겨도 상태는 그대로 남는다.
   | { type: 'status.changed'; accountId: string; status: AccountStatus; statusText: string | null }
   | { type: 'avatar.changed'; accountId: string; avatarAttachmentId: string | null }
+  // #271: 계정 handle 변경. 데스크탑은 디렉터리만 갱신하면 본문은 다음 렌더에 새 이름.
+  | { type: 'account.handle_changed'; accountId: string; newHandle: string }
   | { type: 'reaction.added'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
   | { type: 'reaction.removed'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
   | { type: 'typing.changed'; channelId: string; accountIds: string[]; audience: 'all' | string[] }

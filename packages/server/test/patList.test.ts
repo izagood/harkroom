@@ -98,12 +98,12 @@ describe('PAT management', () => {
     await app.inject({
       method: 'POST', url: '/auth/register',
       payload: {
-        handle: 'patoutsider', displayName: 'Outsider', password: 'pw123456',
+        handle: 'patoutsider', loginId: 'patoutsider', displayName: 'Outsider', password: 'pw123456',
         inviteToken: invite.json().token as string,
       },
     });
     const userLogin = await app.inject({
-      method: 'POST', url: '/auth/login', payload: { handle: 'patoutsider', password: 'pw123456' },
+      method: 'POST', url: '/auth/login', payload: { loginId: 'patoutsider', password: 'pw123456' },
     });
     const token = userLogin.json().token as string;
     expect(token).toBeTruthy();

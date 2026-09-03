@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { AccountView } from '@murmur/shared';
+import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
 import { emitEvent, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
@@ -80,13 +81,19 @@ function buildMcpServer(
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
-    return jsonResult({ messages: await listMessages(pool, channelId, { since, limit, threadRootId: threadRootId ?? null }) });
+    // 에이전트는 handle 로 생각한다 — 정본(`<@id>`)을 **현재** handle 로 되돌려 준다(#271).
+    const messages = await listMessages(pool, channelId, { since, limit, threadRootId: threadRootId ?? null });
+    return jsonResult({ messages: await denormalizeBodies(pool, messages) });
   });
 
   server.registerTool('message.search', {
     description: '메시지 전문 검색',
     inputSchema: { query: z.string().min(1).max(256) },
-  }, async ({ query }) => jsonResult({ messages: await searchMessages(pool, account.id, query) }));
+  }, async ({ query }) => {
+    // 검색어도 본문과 같은 규칙으로 정본에 맞춘다 — REST `/search` 와 **같은 함수**다.
+    const messages = await searchMessages(pool, account.id, await normalizeSearchQuery(pool, query));
+    return jsonResult({ messages: await denormalizeBodies(pool, messages) });
+  });
 
   server.registerTool('message.post', {
     description: '채널 또는 스레드에 메시지 발화',
@@ -221,7 +228,7 @@ function buildMcpServer(
            author_id as "authorId", body, kind, meta, created_at as "createdAt",
            also_in_channel as "alsoInChannel"
          from message where id = any($1) order by seq`, [ids]);
-      return { entries, messages: msgs.rows };
+      return { entries, messages: await denormalizeBodies(pool, msgs.rows as { body: string }[]) };
     };
     // Subscribe before the first fetch so an inbox.updated arriving during that DB round trip is
     // not lost in the gap between "query returned empty" and "we started listening" — it sets

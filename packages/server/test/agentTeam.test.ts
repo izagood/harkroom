@@ -28,10 +28,10 @@ beforeAll(async () => {
   });
   const user = await app.inject({
     method: 'POST', url: '/auth/register',
-    payload: { handle: 'user', displayName: 'User', password: 'pw123456', inviteToken: inv.json().token as string },
+    payload: { handle: 'user', loginId: 'user', displayName: 'User', password: 'pw123456', inviteToken: inv.json().token as string },
   });
   const userLogin = await app.inject({
-    method: 'POST', url: '/auth/login', payload: { handle: 'user', password: 'pw123456' },
+    method: 'POST', url: '/auth/login', payload: { loginId: 'user', password: 'pw123456' },
   });
   userToken = userLogin.json().token as string;
   userId = user.json().id as string;
