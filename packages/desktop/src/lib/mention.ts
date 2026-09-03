@@ -1,4 +1,4 @@
-import { CHANNEL_MENTION_HANDLE, MENTION_PATTERN, MENTION_TOKEN_PATTERN, mentionedHandles, renderMentions, stripCodeSpans } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, denormalizeMentions, MENTION_PATTERN, MENTION_TOKEN_PATTERN, mentionedHandles, renderMentions, stripCodeSpans } from '@murmur/shared';
 
 // 멘션 문법은 @murmur/shared 에 있다 — 서버의 알림 발송과 같은 규칙을 봐야 한다. 갈라지면
 // 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(me@x.com), 강조된
@@ -153,4 +153,23 @@ export function keepMentioned(sticky: string[], body: string, known: Set<string>
   const kept = new Set(sticky);
   const added = mentionedHandles(body).filter((h) => known.has(h) && !kept.has(h));
   return added.length ? [...sticky, ...added] : sticky;
+}
+
+/**
+ * 저장된 본문을 **사람이 다시 입력할 수 있는 형태**로 되돌린다(#271). 수정창에 채울 때와
+ * 본문을 클립보드에 담을 때 쓴다.
+ *
+ * `renderMentions`(화면용)와 **다른 함수**를 쓴다. 화면은 모르는 id 를 `@알 수 없음` 으로
+ * 그려도 되지만, 여기서 그러면 수정 저장·붙여넣기에서 그 문구가 본문에 박히고 원래 가리켰던
+ * 계정을 영영 되찾을 수 없다. 그래서 모르는 id 는 `<@id>` 로 **그대로 남긴다** — 서버가
+ * 저장할 때 그 토큰을 그대로 둔다.
+ *
+ * 왜 필요한가: 정본이 `<@id>` 가 된 뒤로 `message.body` 를 그대로 수정창에 넣으면 사람이
+ * `<@0f3c…>` 를 보게 된다. 복사도 같다 — 그 문자열을 다른 곳에 붙여넣으면 아무 뜻이 없고,
+ * murmur 에 다시 붙여넣어도 그 사람을 부르지 못한다(`normalizeMentions` 는 `@handle` 만 본다).
+ */
+export function bodyAsHandles(body: string, accounts: Record<string, { id: string; handle: string }>): string {
+  const idToHandle = new Map<string, string>();
+  for (const a of Object.values(accounts)) idToHandle.set(a.id, a.handle);
+  return denormalizeMentions(body, idToHandle);
 }

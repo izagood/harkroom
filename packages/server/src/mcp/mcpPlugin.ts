@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { AccountView } from '@murmur/shared';
-import { denormalizeMentions } from '@murmur/shared';
+import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
 import { emitEvent, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
@@ -46,16 +46,6 @@ function buildMcpServer(
   server.registerTool('channel.list', { description: '채널 목록' },
     async () => jsonResult({ channels: await listChannels(pool, account.id) }));
 
-// <@id> 토큰을 @handle 로 역정규화한다. 에이전트가 @handle 로 생각하게 하기 위함.
-  async function denormalizeMessagesBody(messages: { body: string }[]): Promise<{ body: string }[]> {
-    const accounts = await pool.query(`select id, handle from account where disabled = false`);
-    const idToHandle = new Map<string, string>();
-    for (const row of accounts.rows) {
-      idToHandle.set(row.id, row.handle);
-    }
-    return messages.map((msg) => ({ ...msg, body: denormalizeMentions(msg.body, idToHandle) }));
-  }
-
   /**
    * 채널 문서 읽기(#188). **에이전트에게는 읽기만 준다 — 짝이 되는 쓰기 도구가 없다.**
    *
@@ -91,30 +81,18 @@ function buildMcpServer(
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
+    // 에이전트는 handle 로 생각한다 — 정본(`<@id>`)을 **현재** handle 로 되돌려 준다(#271).
     const messages = await listMessages(pool, channelId, { since, limit, threadRootId: threadRootId ?? null });
-    const denormalized = await denormalizeMessagesBody(messages);
-    return jsonResult({ messages: denormalized });
+    return jsonResult({ messages: await denormalizeBodies(pool, messages) });
   });
 
   server.registerTool('message.search', {
     description: '메시지 전문 검색',
     inputSchema: { query: z.string().min(1).max(256) },
   }, async ({ query }) => {
-    // 검색 쿼리의 @handle 도 <@id> 로 정규화해야 한다 — 이름을 바꾼 뒤 옛 검색이 안 맞으면 안 된다.
-    const accounts = await pool.query(`select id, lower(handle) as handle from account where disabled = false`);
-    const handleToId = new Map<string, string>();
-    for (const row of accounts.rows) {
-      handleToId.set(row.handle, row.id);
-    }
-    // 쿼리의 @handle 을 <@id> 로 정규화
-    let normalizedQuery = query;
-    for (const [handle, id] of handleToId) {
-      const pattern = new RegExp(`(^|[^a-zA-Z0-9_-])@(${handle})(?![a-zA-Z0-9_-])`, 'gi');
-      normalizedQuery = normalizedQuery.replace(pattern, `$1<@${id}>`);
-    }
-    const messages = await searchMessages(pool, account.id, normalizedQuery);
-    const denormalized = await denormalizeMessagesBody(messages);
-    return jsonResult({ messages: denormalized });
+    // 검색어도 본문과 같은 규칙으로 정본에 맞춘다 — REST `/search` 와 **같은 함수**다.
+    const messages = await searchMessages(pool, account.id, await normalizeSearchQuery(pool, query));
+    return jsonResult({ messages: await denormalizeBodies(pool, messages) });
   });
 
   server.registerTool('message.post', {
@@ -250,8 +228,7 @@ function buildMcpServer(
            author_id as "authorId", body, kind, meta, created_at as "createdAt",
            also_in_channel as "alsoInChannel"
          from message where id = any($1) order by seq`, [ids]);
-      const denormalized = await denormalizeMessagesBody(msgs.rows);
-      return { entries, messages: denormalized };
+      return { entries, messages: await denormalizeBodies(pool, msgs.rows as { body: string }[]) };
     };
     // Subscribe before the first fetch so an inbox.updated arriving during that DB round trip is
     // not lost in the gap between "query returned empty" and "we started listening" — it sets

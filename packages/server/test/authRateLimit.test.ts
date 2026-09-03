@@ -26,7 +26,7 @@ afterAll(async () => { await app.close(); await stop(); });
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
 const login = (password: string, ip = '10.0.0.1') => app.inject({
-  method: 'POST', url: '/auth/login', payload: { handle: 'admin', password }, remoteAddress: ip,
+  method: 'POST', url: '/auth/login', payload: { loginId: 'admin', password }, remoteAddress: ip,
 });
 
 describe('인증 표면 레이트 리밋', () => {
@@ -51,7 +51,7 @@ describe('인증 표면 레이트 리밋', () => {
     expect((await login('wrong-password', '10.0.0.2')).statusCode).toBe(429);
 
     const other = await app.inject({
-      method: 'POST', url: '/auth/login', payload: { handle: 'admin', password: 'pw123456' },
+      method: 'POST', url: '/auth/login', payload: { loginId: 'admin', password: 'pw123456' },
       remoteAddress: '10.0.0.3',
     });
 
@@ -74,12 +74,12 @@ describe('인증 표면 레이트 리밋', () => {
   it('does not reveal whether the handle exists', async () => {
     for (let i = 0; i < LOGIN_MAX + 1; i += 1) {
       await app.inject({
-        method: 'POST', url: '/auth/login', payload: { handle: 'nobody', password: 'x' },
+        method: 'POST', url: '/auth/login', payload: { loginId: 'nobody', password: 'x' },
         remoteAddress: '10.0.0.5',
       });
     }
     const unknown = await app.inject({
-      method: 'POST', url: '/auth/login', payload: { handle: 'nobody', password: 'x' },
+      method: 'POST', url: '/auth/login', payload: { loginId: 'nobody', password: 'x' },
       remoteAddress: '10.0.0.5',
     });
     const known = await login('wrong-password', '10.0.0.6');
@@ -94,7 +94,7 @@ describe('인증 표면 레이트 리밋', () => {
     for (let i = 0; i < 12; i += 1) {
       attempts.push((await app.inject({
         method: 'POST', url: '/auth/register',
-        payload: { handle: `spam${i}`, displayName: 'x', password: 'pw123456', inviteToken: 'nope' },
+        payload: { handle: `spam${i}`, loginId: `spam${i}`, displayName: 'x', password: 'pw123456', inviteToken: 'nope' },
         remoteAddress: '10.0.0.7',
       })).statusCode);
     }
