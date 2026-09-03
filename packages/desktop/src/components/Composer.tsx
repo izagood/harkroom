@@ -1,10 +1,10 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { parseMessagePermalink, type ScheduledMessageView } from '@murmur/shared';
-import type { AccountView, AttachmentRow } from '@murmur/shared';
+import type { AccountView, AttachmentRow, HandleGroupRow } from '@murmur/shared';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { ApiError } from '../lib/api';
-import { Identity } from './Identity';
+import { GroupBadge, Identity } from './Identity';
 import { formatSize } from './Attachments';
 import {
   mentionQueryAt, applyMention, withStickyMentions, keepMentioned, bodyRecipients,
@@ -21,6 +21,18 @@ const MAX_SUGGESTIONS = 8;
  */
 const TYPING_THROTTLE_MS = 3_000;
 
+/**
+ * 후보 목록에서 집합에 **미리 떼어 두는 자리**(#285).
+ *
+ * 자리를 떼지 않으면 계정이 여덟 개 걸리는 흔한 질의(`@a`)에서 집합이 목록에 아예
+ * 나타나지 않는다 — 있는데 안 보이는 것이 가장 나쁜 상태다. 반대로 양쪽을 각자
+ * `MAX_SUGGESTIONS` 까지 담으면 목록이 두 배가 되어 위 주석의 약속(화면을 덮지 않는다)이
+ * 깨진다. 그래서 총량은 그대로 두고 집합에 앞자리 몇 개를 예약한다.
+ *
+ * 집합이 없는 워크스페이스에서는 예약이 0 이므로 목록은 **글자 하나도 달라지지 않는다.**
+ */
+const MAX_GROUP_SUGGESTIONS = 3;
+
 /** 에이전트를 먼저 세운다 — murmur 에서 @ 를 치는 주된 이유다. 그 안에서는 이름순. */
 function rank(a: AccountView, b: AccountView): number {
   if (a.kind !== b.kind) return a.kind === 'agent' ? -1 : 1;
@@ -34,6 +46,24 @@ function rank(a: AccountView, b: AccountView): number {
 function errorText(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
 }
+
+/**
+ * 후보 하나. 계정과 집합이 **한 목록에 섞여 서고 키보드도 하나**이므로, 어느 쪽에서 온
+ * 항목인지를 목록을 만들 때 태그로 붙인다.
+ *
+ * 렌더 시점에 필드 유무(`'createdAt' in item` 같은 것)로 되짚지 않는 이유: 계정에 같은
+ * 이름의 필드가 하나 생기는 순간 판정이 조용히 갈리고, 그때 깨지는 것은 타입이 아니라
+ * 화면이다. 태그는 컴파일러가 지킨다.
+ */
+type Candidate =
+  | { kind: 'account'; id: string; handle: string; account: AccountView }
+  | { kind: 'group'; id: string; handle: string; group: HandleGroupRow };
+
+const asAccountCandidates = (list: AccountView[]): Candidate[] =>
+  list.map((a) => ({ kind: 'account', id: a.id, handle: a.handle, account: a }));
+
+const asGroupCandidates = (list: HandleGroupRow[]): Candidate[] =>
+  list.map((g) => ({ kind: 'group', id: g.id, handle: g.handle, group: g }));
 
 interface Props {
   /**
@@ -166,22 +196,30 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     return () => { alive = false; };
   }, [channelId]);
 
-  const matches = useMemo(() => {
+  const matches = useMemo((): Candidate[] => {
     if (!query) return [];
     const q = query.query.toLowerCase();
-    return Object.values(accounts)
+    const groupMatches = groups
+      .filter((g) => g.handle.toLowerCase().startsWith(q))
+      .sort((a, b) => a.handle.localeCompare(b.handle))
+      .slice(0, MAX_GROUP_SUGGESTIONS);
+    const accountMatches = Object.values(accounts)
       // 비활성 계정은 부를 수 없다 — 디렉터리에는 남아 있다(과거 메시지의 작성자 이름을
       // 풀어야 하므로). 후보에서 빼는 것이 이쪽 책임이다(shared 의 AccountView.disabled 주석).
       .filter((a) => a.id !== myId && !a.disabled && a.handle.toLowerCase().startsWith(q))
       .sort(rank)
-      .slice(0, MAX_SUGGESTIONS);
-  }, [accounts, myId, query]);
+      .slice(0, MAX_SUGGESTIONS - groupMatches.length);
+    // 계정이 먼저, 집합이 뒤다 — 사람·에이전트를 부르는 것이 흔한 쪽이고, 집합은
+    // 목록 아래에 모여 있어야 "이 아래는 여러 사람"이라고 한눈에 읽힌다.
+    return [...asAccountCandidates(accountMatches), ...asGroupCandidates(groupMatches)];
+  }, [accounts, groups, myId, query]);
 
   const known = useMemo(
-    () => new Set(
-      Object.values(accounts).filter((a) => a.id !== myId).map((a) => a.handle.toLowerCase()),
-    ),
-    [accounts, myId],
+    () => new Set([
+      ...Object.values(accounts).filter((a) => a.id !== myId).map((a) => a.handle.toLowerCase()),
+      ...groups.map((g) => g.handle.toLowerCase()),
+    ]),
+    [accounts, groups, myId],
   );
 
   // 계정이 사라지면 고정도 사라진다 — 없는 handle 을 붙이면 멘션이 아니라 그냥 글자다.
@@ -208,13 +246,17 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
 
   // @ 버튼으로 여는 목록. 첫 줄을 보내기 전에도 상대를 정해 둘 수 있어야 한다.
   // 이미 고정된 상대는 뺀다 — 다시 골라도 달라지는 것이 없다.
-  const pickable = useMemo(
-    () => Object.values(accounts)
+  const pickable = useMemo((): Candidate[] => {
+    const groupsList = groups
+      .filter((g) => !sticky.includes(g.handle.toLowerCase()))
+      .sort((a, b) => a.handle.localeCompare(b.handle))
+      .slice(0, MAX_GROUP_SUGGESTIONS);
+    const accountsList = Object.values(accounts)
       .filter((a) => a.id !== myId && !sticky.includes(a.handle.toLowerCase()))
       .sort(rank)
-      .slice(0, MAX_SUGGESTIONS),
-    [accounts, myId, sticky],
-  );
+      .slice(0, MAX_SUGGESTIONS - groupsList.length);
+    return [...asAccountCandidates(accountsList), ...asGroupCandidates(groupsList)];
+  }, [accounts, groups, myId, sticky]);
 
   // 두 목록은 한자리에 뜨고 키보드도 하나다 — 동시에 열리면 Enter 가 어디로 갈지 모른다.
   const options = picking ? pickable : matches;
@@ -508,6 +550,8 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
+        // 계정이든 집합이든 본문에 들어가는 것은 `@핸들` 하나다(멘션은 본문 문자열 —
+        // docs/design.md). 그래서 고르는 자리에서 둘을 갈라 다룰 것이 없다.
         choose(options[active]!.handle);
         return;
       }
@@ -602,8 +646,8 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
           aria-label={picking ? 'Mentions to keep' : 'Mention suggestions'}
           className="absolute bottom-full left-0 z-10 mb-1 max-h-64 w-72 overflow-y-auto rounded border border-zinc-300 bg-white py-1 shadow-lg"
         >
-          {options.map((a, i) => (
-            <li key={a.id}>
+          {options.map((item, i) => (
+            <li key={item.id}>
               <button
                 id={`${listId}-${i}`}
                 role="option"
@@ -611,17 +655,32 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
                 type="button"
                 // 핸들을 속성으로 노출한다. 테스트가 textContent 에서 핸들을 뽑으면
                 // 장식(에이전트 표시 등)이 하나 늘 때마다 깨진다 — 실제로 그랬다.
-                data-handle={a.handle}
+                data-handle={item.handle}
+                // 계정인지 집합인지도 속성으로 노출한다(#285). 같은 이유다: 배지 문구가
+                // 바뀌면 문구로 종류를 확인하던 테스트가 깨진다.
+                data-kind={item.kind}
                 className={`flex w-full items-center gap-2 px-3 py-1.5 text-left ${i === active ? 'bg-indigo-50' : ''}`}
                 // mousedown 을 막지 않으면 클릭 전에 textarea 가 blur 되어 커서 위치가 사라진다.
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseEnter={() => setActive(i)}
-                onClick={() => choose(a.handle)}
+                onClick={() => choose(item.handle)}
               >
-                <span className="font-medium">@{a.handle}</span>
-                {/* 거터가 아니라 **핸들 옆** 자리다(#277) — 여기서 소유자를 지우면 "누구의
-                    에이전트를 부르는지"를 부르기 직전에 못 보게 된다. variant 는 badge. */}
-                <Identity account={a} className="ml-1" variant="badge" />
+                <span className="font-medium">@{item.handle}</span>
+                {item.kind === 'group' ? (
+                  <>
+                    <GroupBadge group={item.group} className="ml-1" />
+                    {/* 집합에는 표시 이름을 함께 보인다 — `@release` 만으로는 그것이 무엇을
+                        묶은 것인지 알 수 없고, 부르기 직전이 그것을 확인하는 자리다. 계정에는
+                        붙이지 않는다: 사람·에이전트는 핸들이 곧 이름으로 통한다. */}
+                    <span className="ml-1 truncate text-[10px] text-zinc-500">{item.group.displayName}</span>
+                  </>
+                ) : (
+                  <>
+                    {/* 거터가 아니라 **핸들 옆** 자리다(#277) — 여기서 소유자를 지우면 "누구의
+                        에이전트를 부르는지"를 부르기 직전에 못 보게 된다. variant 는 badge. */}
+                    <Identity account={item.account} className="ml-1" variant="badge" />
+                  </>
+                )}
               </button>
             </li>
           ))}

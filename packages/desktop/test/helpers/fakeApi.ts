@@ -11,8 +11,10 @@ export const acc = (id: string, handle: string, kind: 'human' | 'agent' = 'human
   ({ id, handle, displayName: handle, kind, isAdmin, disabled: false, status: 'available', statusText: null,
     ownerAccountId: null, avatarAttachmentId: null, ...extra });
 
-export const grp = (id: string, handle: string, displayName: string): HandleGroupRow =>
-  ({ id, handle, displayName, createdAt: new Date().toISOString() });
+// #285: 구성원 수도 **필수 필드**다 — fixture 가 그것을 적어야 한다. 기본은 0(빈 집합)이고,
+// 후보의 수 표시를 보는 테스트가 마지막 인자로 덮어쓴다.
+export const grp = (id: string, handle: string, displayName: string, memberCount = 0): HandleGroupRow =>
+  ({ id, handle, displayName, createdAt: new Date().toISOString(), memberCount });
 
 /**
  * `GET /accounts` 의 응답 모양(#230). 계정 목록과 집합 목록을 함께 준다.
@@ -101,7 +103,7 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     createDm: vi.fn(),
     channelMembers: vi.fn(async () => []),
     inviteChannelMember: vi.fn(async () => []),
-    removeChannelMember: vi.fn(async () => []),
+    removeChannelMember: vi.fn(async () => undefined),
     updateChannel: vi.fn(async (id: string, input: { topic?: string; repo?: string | null; archived?: boolean }) =>
       chan(id, id, input.repo ?? null)),
     archiveChannel: vi.fn(async (id: string, _archived: boolean) =>
@@ -129,6 +131,14 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     saveMessage: vi.fn(),
     updateSavedMessage: vi.fn(),
     unsaveMessage: vi.fn(async () => undefined),
+    // #285: 핸들 집합
+    createHandleGroup: vi.fn(async (input: { handle: string; displayName: string }) =>
+      grp('g-new', input.handle, input.displayName)),
+    getHandleGroup: vi.fn(async () => ({ group: grp('g1', 'test', 'Test'), members: [] })),
+    updateHandleGroup: vi.fn(async () => grp('g1', 'test', 'Updated')),
+    deleteHandleGroup: vi.fn(async () => undefined),
+    addHandleGroupMembers: vi.fn(async () => ({ members: ['u1'] })),
+    removeHandleGroupMembers: vi.fn(async () => ({ members: [] })),
     ...overrides,
   };
   return base as unknown as ApiClient;

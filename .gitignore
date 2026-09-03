@@ -9,6 +9,10 @@ target/
 *.log
 .DS_Store
 
+# 작업용 스크래치. 커밋되지 않아야 한다 — #295 가 실수로 여기 있던 gh 래퍼를
+# main 에 올렸다(값이 든 비밀은 없었지만, 저장소에 있을 것이 아니다).
+.scratch/
+
 # 로컬 개발용 compose 오버라이드
 docker-compose.override.yml
 
