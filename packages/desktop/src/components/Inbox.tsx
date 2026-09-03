@@ -172,7 +172,7 @@ export function Inbox({ open, onClose }: Props) {
       >
         <span
           data-testid={`inbox-reason-${e.id}`}
-          className="rounded bg-surface-raised px-1 text-[10px] uppercase tracking-wide text-fg-muted"
+          className="rounded bg-surface-sunken px-1 text-[10px] uppercase tracking-wide text-fg-muted"
         >
           {REASON_LABEL[e.reason]}
         </span>

@@ -89,7 +89,7 @@ export function SavedMessages({ open, onClose }: Props) {
     const time = new Date(e.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
     return (
-      <li key={e.messageId} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-surface-raised">
+      <li key={e.messageId} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-surface-hover">
         {/* #219 결정 3: 지워진 메시지도 자리가 남는다 — 담아 둔 사실은 내 기록이다.
             본문은 서버가 내주지 않으므로(`message: null`) 그릴 것이 없고, 갈 곳도 없어
             누를 수 없게 둔다. 눌러도 아무 일이 없는 버튼은 거짓 신호다(design.md §4). */}
@@ -98,7 +98,7 @@ export function SavedMessages({ open, onClose }: Props) {
             data-testid={`saved-entry-${e.messageId}`}
             className="flex flex-1 items-center gap-2 text-left"
           >
-            <span className="rounded bg-surface-raised px-1 text-[10px] uppercase tracking-wide text-fg-muted">
+            <span className="rounded bg-surface-sunken px-1 text-[10px] uppercase tracking-wide text-fg-muted">
               {channelLabel(e.channelId)}
             </span>
             <span className="flex-1 italic text-fg-subtle">삭제된 메시지</span>
@@ -110,7 +110,7 @@ export function SavedMessages({ open, onClose }: Props) {
             onClick={() => openEntry(e)}
             className="flex min-w-0 flex-1 items-center gap-2 text-left"
           >
-            <span className="rounded bg-surface-raised px-1 text-[10px] uppercase tracking-wide text-fg-muted">
+            <span className="rounded bg-surface-sunken px-1 text-[10px] uppercase tracking-wide text-fg-muted">
               {channelLabel(e.channelId)}
             </span>
             <span className="text-fg-muted">@{accounts[e.message.authorId]?.handle ?? '…'}</span>

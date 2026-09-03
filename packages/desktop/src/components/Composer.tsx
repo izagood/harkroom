@@ -763,11 +763,11 @@ export function Composer({
               className="flex items-center gap-1 rounded border border-accent bg-accent-surface px-1.5 py-0.5 text-xs font-medium text-accent"
             >
               <span>@{h}</span>
-              <span className="rounded bg-accent-surface px-1 text-[10px] font-normal">자동</span>
+              <span className="rounded bg-accent px-1 text-[10px] font-normal text-fg-on-strong">자동</span>
               <button
                 type="button"
                 aria-label={`Skip @${h} this time`}
-                className="rounded px-0.5 text-accent hover:bg-accent-surface"
+                className="rounded px-0.5 text-accent hover:bg-surface-hover"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => skipAuto(h)}
               >

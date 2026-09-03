@@ -115,7 +115,7 @@ export function SweepShell({ items, loading, error, onRetry, onClose, onMarkRead
               </div>
               <ul className="space-y-2">
                 {current.messages.map((m) => (
-                  <li key={m.id} className="rounded bg-surface-raised p-2 text-sm text-fg">
+                  <li key={m.id} className="rounded bg-surface-sunken p-2 text-sm text-fg">
                     <span className="mr-2 text-xs text-fg-subtle">@{accounts[m.authorId]?.handle ?? m.authorId}</span>
                     {m.body}
                   </li>

@@ -78,7 +78,7 @@ export function ChannelDirectory({ open, onClose }: Props) {
     <li key={ch.id}>
       <button
         data-testid={`channel-row-${ch.id}`}
-        className="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-surface-raised"
+        className="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-surface-hover"
         onClick={() => handleChannelClick(ch)}
       >
         {ch.visibility === 'private'
@@ -126,7 +126,7 @@ export function ChannelDirectory({ open, onClose }: Props) {
             onChange={(e) => setQuery(e.target.value)}
             autoFocus
           />
-          <div className="flex rounded bg-surface-raised text-xs">
+          <div className="flex rounded bg-surface-sunken text-xs">
             <button
               className={`rounded px-2 py-1 ${sortMode === 'name' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:text-fg'}`}
               aria-pressed={sortMode === 'name'}

@@ -117,7 +117,7 @@ export function Directory({ open, onClose, accountId }: Props) {
       <span className="text-fg-muted">@{a.handle}</span>
       <span
         data-testid={`directory-kind-${a.id}`}
-        className="rounded bg-surface-raised px-1 text-[10px] uppercase tracking-wide text-fg-muted"
+        className="rounded bg-surface-sunken px-1 text-[10px] uppercase tracking-wide text-fg-muted"
       >
         {a.kind}
       </span>

@@ -136,7 +136,7 @@ export function TeamsSettings() {
     <div className="flex h-full min-h-0 bg-surface-raised">
       <aside className="w-56 shrink-0 border-r border-border p-3">
         <button
-          className="mb-3 w-full rounded bg-surface-raised px-3 py-2 text-left text-fg"
+          className="mb-3 w-full rounded bg-accent px-3 py-2 text-left text-fg-on-strong hover:bg-accent-hover"
           onClick={startNew}
         >
           + Create team

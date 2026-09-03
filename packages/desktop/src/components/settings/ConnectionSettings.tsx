@@ -40,7 +40,7 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
           </span>
           <button
             className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              runnerAutoStart ? 'bg-accent' : 'bg-border'
+              runnerAutoStart ? 'bg-accent' : 'bg-fg-subtle'
             }`}
             onClick={() => setRunnerAutoStart(!runnerAutoStart)}
             role="switch"
