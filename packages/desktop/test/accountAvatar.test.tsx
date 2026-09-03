@@ -130,6 +130,25 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
   });
 
+  /**
+   * 서버가 거절하면(이미지가 아닌 파일은 400 이다) 그 사실이 **눈에 보여야** 한다.
+   * `sr-only` 로만 내면 스크린리더가 아닌 사람에게는 '아무 일도 일어나지 않은 것'과
+   * 구분되지 않는다 — 버튼이 잠깐 눌렸다 풀리고 사진은 그대로다.
+   */
+  it('서버가 거절하면 보이는 오류를 낸다', async () => {
+    fakeController({ setAvatar: vi.fn(async () => { throw new Error('400'); }) });
+    useAppStore.getState().set({ me: acc('u1', 'me') });
+    render(<ProfileSettings onSignOut={() => {}} />);
+
+    const file = new File(['<html>'], 'evil.png', { type: 'image/png' });
+    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/이미지 파일만/);
+    // 화면에서 감춰 두면 낸 것이 아니다.
+    expect(alert.className).not.toMatch(/sr-only/);
+  });
+
   it('읽기 전용 안내가 사진은 바꿀 수 있다고 말한다', () => {
     // 문구가 "아무것도 못 바꾼다"로 남으면, 바로 위에 있는 Upload 버튼과 어긋난다.
     fakeController();
