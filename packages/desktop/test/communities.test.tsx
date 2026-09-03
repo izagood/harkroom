@@ -8,7 +8,7 @@ import {
   useCommunityRegistry,
   type CommunityEntry,
 } from '../src/state/communities';
-import { setController, startCommunitySession, type Controller } from '../src/state/controller';
+import { getController, setController, startCommunitySession, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { DEFAULT_PREFS } from '../src/lib/prefs';
@@ -247,6 +247,24 @@ describe('커뮤니티마다 스토어·컨트롤러 인스턴스 (#166)', () =>
     const entries = useCommunityRegistry.getState().entries;
     expect(entries.find((e) => e.id === a.id)!.controller).toBe(fake);
     expect(entries.find((e) => e.id === b.id)!.controller).toBe(b.controller);
+  });
+
+  it('getController() 는 활성 커뮤니티의 컨트롤러를 따라간다', async () => {
+    const { a, b } = await twoCommunities();
+    const ca = fakeController();
+    const cb = fakeController();
+    useCommunityRegistry.getState().attachController(a.id, ca);
+    useCommunityRegistry.getState().attachController(b.id, cb);
+
+    expect(getController()).toBe(ca);
+
+    useCommunityRegistry.getState().setActive(b.id);
+
+    // **이것이 이 이슈에서 가장 조용한 실패 지점이다.** 시그니처를 그대로 뒀으므로 이 함수가
+    // 예전처럼 모듈 변수 하나를 붙들고 있어도 타입 검사는 아무것도 말하지 않고, 호출부
+    // 수십 곳이 전부 조용히 **잘못된 커뮤니티**에 조작을 보낸다. 값이 아니라 **인스턴스
+    // 동일성**으로 본다 — 두 컨트롤러의 겉모습이 같아 값 비교로는 갈리지 않는다.
+    expect(getController()).toBe(cb);
   });
 
   it('같은 커뮤니티에 다시 로그인해도 목록이 늘지 않는다', async () => {
