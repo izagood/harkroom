@@ -10,7 +10,7 @@ import { listPins, pinMessage, unpinMessage } from '../services/pins.js';
 import { allReadStates, markChannelRead, markChannelUnread, readState } from '../services/readPositions.js';
 // 이름 규칙은 데스크탑의 채널 생성 입력(Sidebar.tsx)과 **같은 것**이어야 한다 — 그래서
 // 정규식을 여기 리터럴로 두지 않고 shared 의 상수를 쓴다.
-import { CHANNEL_NAME_PATTERN } from '@murmur/shared';
+import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS } from '@murmur/shared';
 import { recordAudit } from '../audit.js';
 
 export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
@@ -215,7 +215,9 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool): P
   // `muted` 는 받지 않는다 — `notifyLevel` 이 그 자리를 대체했다(#224). 아무것도 읽지 않는
   // 스위치를 남겨 두면 "껐는데 왜 아직도 울리나"가 그대로 돌아온다(#229 가 그 모양이었다).
   const prefBody = z.object({
-    notifyLevel: z.enum(['all', 'mentions', 'none']).optional(),
+    // 값의 목록은 `NOTIFY_LEVELS` 하나뿐이다 — 여기에 다시 적으면 수준이 늘어날 때
+    // 한쪽만 고쳐 API 가 새 값을 400 으로 막는다.
+    notifyLevel: z.enum(NOTIFY_LEVELS).optional(),
     starred: z.boolean().optional(),
   }).strict();
 
