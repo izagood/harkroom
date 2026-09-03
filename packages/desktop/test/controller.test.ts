@@ -379,4 +379,78 @@ describe('Controller', () => {
 
     expect(accountsCalls).toHaveBeenCalledTimes(2);
   });
+  /**
+   * #267: 투영 상태는 앱 기동 시 한 번 + **60초마다** 다시 읽는다. 한 번만 읽으면
+   * 그 뒤에 투영이 멈춰도 화면은 마지막 성공 상태를 계속 보여 준다 — 멈춘 것을
+   * 말하려고 만든 표시가 멈춘 것을 못 말하게 된다.
+   */
+  it('#267 투영 상태를 기동 시 한 번, 이후 60초마다 다시 읽는다', async () => {
+    vi.useFakeTimers();
+    try {
+      const status = vi.fn(async () => ({
+        state: 'ok' as const, configured: true, repo: null, lastLogIndex: 0,
+        lastPolledAt: Date.now(), lastAdvancedAt: null, lastError: null,
+      }));
+      const { makeWs } = fakeWsFactory();
+      const c = new Controller(fakeApi({ projectionStatus: status }), makeWs);
+      await c.start();
+      expect(status).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(status).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(status).toHaveBeenCalledTimes(3);
+
+      // stop() 이 타이머를 걷어야 한다 — 안 그러면 로그아웃 뒤에도 계속 요청한다.
+      c.stop();
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(status).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * #267 의 핵심 기준: 조회 **실패를 삼키지 않는다**. 삼키면 마지막 성공 상태(또는
+   * null)가 그대로 남아 못 읽고 있는 화면이 정상으로 보인다 — "못 읽었다"가 "없다"로
+   * 그려지는 그 결함이다(docs/design.md §4).
+   */
+  it('#267 투영 상태 조회가 실패하면 그 사실이 스토어에 남는다', async () => {
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(
+      fakeApi({ projectionStatus: vi.fn(async () => { throw new Error('Failed to fetch'); }) }),
+      makeWs,
+    );
+    await c.start();
+    expect(useAppStore.getState().projectionStatusError).toBe('Failed to fetch');
+    expect(useAppStore.getState().projectionStatus).toBeNull();
+  });
+
+  it('#267 다음 성공 조회가 실패 표시를 지운다', async () => {
+    let fail = true;
+    const status = vi.fn(async () => {
+      if (fail) throw new Error('Failed to fetch');
+      return {
+        state: 'ok' as const, configured: true, repo: null, lastLogIndex: 0,
+        lastPolledAt: Date.now(), lastAdvancedAt: null, lastError: null,
+      };
+    });
+    const { makeWs } = fakeWsFactory();
+    // 주기 타이머를 세기 전부터 가짜 시계여야 한다 — start() 뒤에 켜면 이미 만들어진
+    // 진짜 타이머는 advanceTimersByTime 으로 움직이지 않는다.
+    vi.useFakeTimers();
+    try {
+      const c = new Controller(fakeApi({ projectionStatus: status }), makeWs);
+      await c.start();
+      expect(useAppStore.getState().projectionStatusError).toBe('Failed to fetch');
+
+      fail = false;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(useAppStore.getState().projectionStatusError).toBeNull();
+      expect(useAppStore.getState().projectionStatus?.state).toBe('ok');
+      c.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -122,7 +122,80 @@ update projection_cursor set last_log_index = 0 where repo = 'org/repo';
 - [ ] 에이전트 PAT로 `inbox.poll` 1회가 정상 응답하는지
 - [ ] repo 바인딩 채널에서 새 avcs 객체가 투영되는지(커서가 전진하는지)
 
-## 6. 관측 지점
+## 6. AVCS_BASE_URL — 투영 활성화와 그 상태 읽기
+
+murmur 는 avcs 서버를 폴링해 intent·operation·decision 같은 객체를 채널 메시지로
+투영한다. 이 투영은 기본적으로 **비활성**이고, 환경변수 하나로 켠다:
+
+```bash
+AVCS_BASE_URL=https://your-avcs-server.example.com
+```
+
+### 꺼져 있을 때 보이는 것
+
+- 서버 기동 로그에 경고 한 줄: `avcs projection is disabled — set AVCS_BASE_URL to enable it`
+- `GET /projection/status` 가 `state: "unconfigured"` 를 준다
+- 사이드바 ACTIVE WORK 에 "투영이 설정되지 않았다 / AVCS_BASE_URL 로 켠다"
+
+이 세 자리가 **모두 필요한 이유**: 예전에는 투영이 꺼져 있어도 화면이 평소와 똑같이
+"No active work" 였다. 아무 일도 안 일어나는 것과 아무도 보고 있지 않은 것이 같은
+그림이라 도그푸딩 중에 투영이 끊긴 것을 며칠 동안 아무도 몰랐다
+(`docs/design.md` §4: "없다"와 "못 읽었다"를 한 화면에 두지 않는다).
+
+### 켜져 있을 때 — `GET /projection/status`
+
+로그인이 필요하다(`requireAccount`). 응답은 워커의 원자료에 `state` 하나를 더한 것이다:
+
+| 필드 | 뜻 |
+|---|---|
+| `state` | `unconfigured` · `stalled` · `ok` |
+| `configured` | `AVCS_BASE_URL` 이 있어 워커가 떴는가 |
+| `repo` | 마지막으로 폴링한 저장소 |
+| `lastLogIndex` | 커서 위치 |
+| `lastPolledAt` | 마지막 폴링 시각(ms) — **살아 있음의 신호** |
+| `lastAdvancedAt` | 커서가 마지막으로 전진한 시각(ms) |
+| `lastError` | 마지막 실패 메시지(200자). 성공 폴링이 지운다 |
+
+`state` 판정:
+
+- `unconfigured` — `AVCS_BASE_URL` 이 없다
+- `stalled` — 켜져 있는데 `lastPolledAt` 이 없거나 **5분**보다 오래됐거나 `lastError` 가 있다
+- `ok` — 그 외
+
+> **커서가 안 움직이는 것은 장애가 아니다.** 아무도 커밋하지 않는 조용한 저장소도
+> `lastAdvancedAt` 이 그대로다. 그것을 장애로 부르면 정상인 저장소가 영영 빨갛고,
+> 사람은 곧 이 표시를 무시하게 된다. 신호는 `lastAdvancedAt` 이 아니라
+> **`lastPolledAt`** 이다 — 우리가 물어보고 있는가.
+
+### 사이드바 ACTIVE WORK 가 말하는 네 가지
+
+앱은 기동 시 한 번, 이후 60초마다 이 상태를 다시 읽는다.
+
+| 상황 | 표시 |
+|---|---|
+| 상태를 못 읽었다(요청 실패) | "투영 상태를 읽지 못했다" + 사유 |
+| 아직 첫 응답 전 | "투영 상태를 확인하는 중…" |
+| `unconfigured` | "투영이 설정되지 않았다" + `AVCS_BASE_URL` |
+| `stalled` | "투영이 N분 전부터 멈춰 있다" (+ `lastError`) |
+| `ok` + 빈 목록 | "No active work" |
+| `ok` + 항목 | 저장소별 리스 목록 |
+
+"No active work" 는 **상태를 읽었고 정상일 때만** 쓴다. 나머지는 왜 비어 있는지를
+먼저 말한다.
+
+### `/healthz` 와의 차이
+
+`GET /healthz` 의 `avcs.connected` 는 **avcs 서버에 붙었는가**이고,
+`/projection/status` 는 **투영이 돌고 있는가**다. 다른 사실이라 한 객체에 싣지 않는다 —
+붙어 있어도 폴링이 멈출 수 있고, 잠깐 끊겨도 투영은 곧 따라잡는다.
+
+### 끊긴 곳: `.avcs` 가 `git clean` 에 지워진다
+
+투영이 켜져 있어도 브리지 쪽에서 `.avcs` 디렉터리가 지워지면 로그가 흐르지 않는다.
+이것은 이 저장소 밖(avcs 브리지)의 일이라 여기서 고치지 않는다 — 위 표시가 그때
+`stalled` 로 보이게 하는 것이 murmur 쪽의 몫이다.
+
+## 7. 관측 지점
 
 문제가 났을 때 먼저 볼 곳:
 
@@ -139,7 +212,7 @@ update projection_cursor set last_log_index = 0 where repo = 'org/repo';
 스크레이프에는 인증이 필요하다. 만료 없는 **에이전트 PAT**를 쓰는 것이 실용적이다
 (사람 세션 토큰은 14일에 만료된다).
 
-## 7. 에이전트가 답하지 않을 때
+## 8. 에이전트가 답하지 않을 때
 
 2026-09-01 실측: 사용자가 `@fizz`를 불렀는데 답이 없었다. **서버·DB·투영 전부 정상이었고
 러너 프로세스가 죽어 있었다.** 그 상태에서 보이는 것과 안 보이는 것:
@@ -194,7 +267,7 @@ where a.kind = 'agent';
 `harness`가 비어 있으면 murmur가 실행할 수 없는 계정이다. 답은 지표를 고치는 것이 아니라
 그 계정을 정리하거나 정의를 붙이는 것이다(UI의 Add/Edit agent).
 
-## 7-1. 러너를 감독 하에 두기 (macOS)
+## 8-1. 러너를 감독 하에 두기 (macOS)
 
 `~/Library/LaunchAgents/dev.murmur.agent.<handle>.plist`를 만들고
 `launchctl load <경로>`. 세 가지가 함정이다:
@@ -219,7 +292,7 @@ where a.kind = 'agent';
 리눅스는 같은 내용의 systemd 유닛(`Restart=always`, `RestartSec=10`,
 `Environment=PATH=...`)으로 대체한다.
 
-## 8. 클라이언트 주소가 보이지 않는다 (compose 기본 배포)
+## 9. 클라이언트 주소가 보이지 않는다 (compose 기본 배포)
 
 실측(2026-09-01): 감사 로그의 `ip` 가 전부 `192.168.65.1` 이었다 — **Docker 브리지 게이트웨이**다.
 컨테이너 안에서는 모든 요청이 그 주소로 보이므로 실제 클라이언트 주소가 없다. 그 결과 둘이 생긴다.
@@ -242,14 +315,14 @@ where a.kind = 'agent';
 macOS·Windows 의 Docker Desktop 에서는 프록시 없이 실제 주소를 보는 방법이 없다(포트 게시가
 주소를 다시 쓴다). Linux 에서는 `network_mode: host` 로 우회할 수 있지만 포트 격리를 잃는다.
 
-## 9. 아직 없는 것
+## 10. 아직 없는 것
 
 - **자동화**: cron/타이머가 없다. 위 명령을 손으로 돌린다.
 - **오프사이트 사본**: 덤프가 같은 호스트에 남는다. 호스트를 잃으면 백업도 잃는다.
 - **PITR**: WAL 아카이빙이 없다. 복구 지점은 마지막 덤프뿐이다.
 - **보존 정책**: 오래된 덤프를 지우는 규칙이 없다.
 
-## 10. 비밀번호 복구
+## 11. 비밀번호 복구
 
 비밀번호를 분실한 경우 두 가지 복구 경로가 있다.
 

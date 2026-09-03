@@ -360,6 +360,25 @@ export interface ChannelMemberRow {
   handle: string;
 }
 
+/**
+ * 채널 문서(#188). 채널당 하나고 덮어쓰기다 — 메시지의 추가와는 성질이 다르다.
+ *
+ * `updatedBy` 와 `updatedAt` 은 화면에 "누가 언제"를 보여주는 용도다. 에이전트가
+ * 읽을 수 있지만 쓰지는 못한다(쓰기 도구를 제공하지 않는다).
+ *
+ * **둘이 nullable 인 이유:** 아직 아무도 저장하지 않은 채널도 이 모양으로 읽힌다
+ * (본문 `''`). 그때 "누가 언제"를 **지금 시각과 보는 사람으로 채우면 화면이 거짓말한다** —
+ * 아무도 쓴 적 없는 문서를 내가 방금 고친 것처럼 보여 준다. 게다가 그 가짜 시각이
+ * `expectedUpdatedAt` 으로 되돌아오면 낙관적 동시성 검사가 무엇과 비교하는지 알 수 없게
+ * 된다. `null` 은 "아직 아무도"이고, 그 상태로 저장하는 것이 첫 저장이다.
+ */
+export interface ChannelDoc {
+  channelId: string;
+  body: string;
+  updatedBy: string | null;
+  updatedAt: string | null;
+}
+
 export interface InboxEntry {
   id: number;
   messageId: string;
@@ -472,6 +491,16 @@ export interface HandleGroupRow {
   handle: string;
   displayName: string;
   createdAt: string;
+  /**
+   * 지금 이 집합에 든 사람 수(#285). **옵셔널이 아니라 필수다** — 이 값을 안 실어 주는
+   * 경로가 하나라도 있으면 화면은 "몇 명인지 모른다"를 그릴 방법이 없고, 결국 수를 아예
+   * 안 보이는 쪽으로 떨어진다. 자동완성 후보가 `@release` 를 부르기 직전에 그것이
+   * 한 사람인지 스무 사람인지 보여야 하는 유일한 자리다.
+   *
+   * 파생값이므로 저장하지 않고 조회할 때 센다 — 저장하면 구성원 추가·제거마다 두 곳을
+   * 맞춰야 하고, 한쪽만 틀린 수가 화면에 남는다.
+   */
+  memberCount: number;
 }
 
 /**
@@ -487,6 +516,61 @@ export interface LeaseRow {
   path: string;
   actorKeyId: string;
   expiresAt: string;
+}
+
+/**
+ * 투영 워커가 들고 있는 **원자료**(#267). 서버 메모리에만 산다 — 마이그레이션 없음.
+ *
+ * `state` 는 여기서 파생된다(`projectionState`). 파생을 라우트 핸들러에 인라인으로
+ * 두지 않는 이유: 같은 판정이 서버·클라이언트·문서에 세 벌 생기면 5분 임계값을 고칠 때
+ * 한 벌만 고쳐지고 화면과 API 가 서로 다른 말을 한다.
+ */
+export interface ProjectionRuntime {
+  /** `AVCS_BASE_URL` 이 있어서 워커가 아예 만들어졌는가. */
+  configured: boolean;
+  /** 마지막으로 폴링한 저장소. 조용한 저장소도 여기 남는다 — 폴링했다는 사실이므로. */
+  repo: string | null;
+  lastLogIndex: number;
+  /** 마지막 폴링 시각(ms). **이것이 살아 있는가의 신호다.** */
+  lastPolledAt: number | null;
+  /** 커서가 마지막으로 전진한 시각(ms). 신호가 **아니다** — 아래 주석 참고. */
+  lastAdvancedAt: number | null;
+  /** 마지막 실패 메시지(200자). 성공 폴링이 지운다. */
+  lastError: string | null;
+}
+
+export type ProjectionState = 'unconfigured' | 'stalled' | 'ok';
+
+/**
+ * 폴링이 이보다 오래 안 돌았으면 멈춘 것으로 본다. 폴링 주기(25초)의 몇 배로 잡아
+ * 한두 번 늦는 것을 장애로 오해하지 않는다.
+ */
+export const PROJECTION_STALL_MS = 5 * 60 * 1000;
+
+/**
+ * 원자료에서 상태 하나를 뽑는다. **커서가 안 움직이는 것 자체는 신호가 아니다** —
+ * 아무도 커밋하지 않는 조용한 저장소도 커서가 그대로다. 그것을 장애로 부르면 정상인
+ * 저장소가 영영 빨갛고, 사람은 곧 이 표시를 무시하게 된다. 신호는 `lastAdvancedAt`
+ * 이 아니라 **`lastPolledAt`** 이다: 우리가 물어보고 있는가.
+ */
+export function projectionState(r: ProjectionRuntime, now: number = Date.now()): ProjectionState {
+  if (!r.configured) return 'unconfigured';
+  // 폴링을 아직 한 번도 못 했거나(null), 너무 오래됐거나, 마지막 시도가 실패했다.
+  if (r.lastPolledAt === null) return 'stalled';
+  if (now - r.lastPolledAt > PROJECTION_STALL_MS) return 'stalled';
+  if (r.lastError) return 'stalled';
+  return 'ok';
+}
+
+/**
+ * `GET /projection/status` 의 응답. 원자료 + 파생 상태다.
+ *
+ * `connected`(avcs 소켓이 붙었는가)는 **여기 없다** — 그것은 `/healthz` 의 것이고,
+ * 이 화면이 답하는 질문("투영이 돌고 있는가")과 다른 사실이다. 두 사실을 한 객체에
+ * 실으면 화면이 어느 것을 믿어야 하는지 정하지 못한다.
+ */
+export interface ProjectionStatus extends ProjectionRuntime {
+  state: ProjectionState;
 }
 
 export type WsServerEvent =
