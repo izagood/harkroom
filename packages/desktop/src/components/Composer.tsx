@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { parseMessagePermalink } from '@murmur/shared';
-import type { AccountView, AttachmentRow } from '@murmur/shared';
+import type { AccountView, AttachmentRow, HandleGroupRow } from '@murmur/shared';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { Identity } from './Identity';
@@ -72,6 +72,7 @@ interface HeldMessage {
 
 export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = '' }: Props) {
   const accounts = useAppStore((s) => s.accounts);
+  const groups = useAppStore((s) => s.groups);
   const myId = useAppStore((s) => s.me?.id);
   const [query, setQuery] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
@@ -126,19 +127,25 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   const matches = useMemo(() => {
     if (!query) return [];
     const q = query.query.toLowerCase();
-    return Object.values(accounts)
+    const accountMatches = Object.values(accounts)
       // 비활성 계정은 부를 수 없다 — 디렉터리에는 남아 있다(과거 메시지의 작성자 이름을
       // 풀어야 하므로). 후보에서 빼는 것이 이쪽 책임이다(shared 의 AccountView.disabled 주석).
       .filter((a) => a.id !== myId && !a.disabled && a.handle.toLowerCase().startsWith(q))
       .sort(rank)
       .slice(0, MAX_SUGGESTIONS);
-  }, [accounts, myId, query]);
+    const groupMatches = groups
+      .filter((g) => g.handle.toLowerCase().startsWith(q))
+      .sort((a, b) => a.handle.localeCompare(b.handle))
+      .slice(0, MAX_SUGGESTIONS);
+    return { accounts: accountMatches, groups: groupMatches };
+  }, [accounts, groups, myId, query]);
 
   const known = useMemo(
-    () => new Set(
-      Object.values(accounts).filter((a) => a.id !== myId).map((a) => a.handle.toLowerCase()),
-    ),
-    [accounts, myId],
+    () => new Set([
+      ...Object.values(accounts).filter((a) => a.id !== myId).map((a) => a.handle.toLowerCase()),
+      ...groups.map((g) => g.handle.toLowerCase()),
+    ]),
+    [accounts, groups, myId],
   );
 
   // 계정이 사라지면 고정도 사라진다 — 없는 handle 을 붙이면 멘션이 아니라 그냥 글자다.
@@ -149,18 +156,24 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
 
   // @ 버튼으로 여는 목록. 첫 줄을 보내기 전에도 상대를 정해 둘 수 있어야 한다.
   // 이미 고정된 상대는 뺀다 — 다시 골라도 달라지는 것이 없다.
-  const pickable = useMemo(
-    () => Object.values(accounts)
+  const pickable = useMemo(() => {
+    const accountsList = Object.values(accounts)
       .filter((a) => a.id !== myId && !sticky.includes(a.handle.toLowerCase()))
       .sort(rank)
-      .slice(0, MAX_SUGGESTIONS),
-    [accounts, myId, sticky],
-  );
+      .slice(0, MAX_SUGGESTIONS);
+    const groupsList = groups
+      .filter((g) => !sticky.includes(g.handle.toLowerCase()))
+      .sort((a, b) => a.handle.localeCompare(b.handle))
+      .slice(0, MAX_SUGGESTIONS);
+    return { accounts: accountsList, groups: groupsList };
+  }, [accounts, groups, myId, sticky]);
 
   // 두 목록은 한자리에 뜨고 키보드도 하나다 — 동시에 열리면 Enter 가 어디로 갈지 모른다.
-  const options = picking ? pickable : matches;
+  const options = picking
+    ? { accounts: pickable.accounts, groups: pickable.groups }
+    : { accounts: matches.accounts, groups: matches.groups };
   // 후보가 없으면 목록은 없는 것과 같다 — Enter 를 붙잡아 두면 메시지를 못 보낸다.
-  const open = options.length > 0 && (picking || query !== null);
+  const open = (options.accounts.length > 0 || options.groups.length > 0) && (picking || query !== null);
 
   useLayoutEffect(() => {
     const caret = pendingCaret.current;
@@ -437,19 +450,27 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (open) {
-      if (e.key === 'ArrowDown') {
+      const total = options.accounts.length + options.groups.length;
+      if (total === 0) {
+        // 열려 있지만 선택지가 없으면 일반 입력
+      } else if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setActive((i) => (i + 1) % options.length);
+        setActive((i) => (i + 1) % total);
         return;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setActive((i) => (i - 1 + options.length) % options.length);
+        setActive((i) => (i - 1 + total) % total);
         return;
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
-        choose(options[active]!.handle);
+        const idx = active;
+        if (idx < options.accounts.length) {
+          choose(options.accounts[idx]!.handle);
+        } else {
+          choose(options.groups[idx - options.accounts.length]!.handle);
+        }
         return;
       }
       if (e.key === 'Escape') {
@@ -466,6 +487,8 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
 
   const listId = 'mention-suggestions';
 
+  const flatOptions = [...options.accounts, ...options.groups] as (AccountView | HandleGroupRow)[];
+
   return (
     <div ref={containerRef} className="relative" onBlur={onContainerBlur}>
       {open && (
@@ -475,27 +498,34 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
           aria-label={picking ? 'Mentions to keep' : 'Mention suggestions'}
           className="absolute bottom-full left-0 z-10 mb-1 max-h-64 w-72 overflow-y-auto rounded border border-zinc-300 bg-white py-1 shadow-lg"
         >
-          {options.map((a, i) => (
-            <li key={a.id}>
-              <button
-                id={`${listId}-${i}`}
-                role="option"
-                aria-selected={i === active}
-                type="button"
-                // 핸들을 속성으로 노출한다. 테스트가 textContent 에서 핸들을 뽑으면
-                // 장식(에이전트 표시 등)이 하나 늘 때마다 깨진다 — 실제로 그랬다.
-                data-handle={a.handle}
-                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left ${i === active ? 'bg-indigo-50' : ''}`}
-                // mousedown 을 막지 않으면 클릭 전에 textarea 가 blur 되어 커서 위치가 사라진다.
-                onMouseDown={(e) => e.preventDefault()}
-                onMouseEnter={() => setActive(i)}
-                onClick={() => choose(a.handle)}
-              >
-                <span className="font-medium">@{a.handle}</span>
-                <Identity account={a} className="ml-1" />
-              </button>
-            </li>
-          ))}
+          {flatOptions.map((item, i) => {
+            const isGroup = 'displayName' in item;
+            return (
+              <li key={item.id}>
+                <button
+                  id={`${listId}-${i}`}
+                  role="option"
+                  aria-selected={i === active}
+                  type="button"
+                  data-handle={item.handle}
+                  data-kind={isGroup ? 'group' : 'account'}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left ${i === active ? 'bg-indigo-50' : ''}`}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onMouseEnter={() => setActive(i)}
+                  onClick={() => choose(item.handle)}
+                >
+                  <span className="font-medium">@{item.handle}</span>
+                  {isGroup ? (
+                    <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                      집합
+                    </span>
+                  ) : (
+                    <Identity account={item} className="ml-1" />
+                  )}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
       {sticky.length > 0 && (
