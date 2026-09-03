@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import type { AccountView, ChannelRow, HandleGroupRow, MessageRow, PinRow } from '@murmur/shared';
+import type { AccountView, AgentSessionView, ChannelRow, HandleGroupRow, MessageRow, PinRow } from '@murmur/shared';
 import type { ApiClient } from '../../src/lib/api';
 
 // #186: 상태는 옵셔널이 아니라 **필수 필드**다 — fixture 도 그것을 적어야 한다.
@@ -55,6 +55,14 @@ export const pin = (messageId: string, channelId: string, pinnedBy = 'u1', messa
     messageId, channelId, pinnedBy, pinnedAt: new Date().toISOString(),
     message: message ?? msg(messageId, channelId, 1, 'pinned body', pinnedBy),
   });
+
+/**
+ * 진행 중인 에이전트 PTY 세션(#141). 기본값은 러너가 announce 한 모양 그대로다 —
+ * 옵셔널 필드가 없으므로(스펙 §5) fixture 도 전부 적는다.
+ */
+export const sess = (overrides: Partial<AgentSessionView> = {}): AgentSessionView =>
+  ({ sessionId: 'sess-1', agentAccountId: 'a1', channelId: 'c1', threadRootId: null,
+    harness: 'claude-code', startedAt: '2026-09-04T00:00:00.000Z', ...overrides });
 
 // override 를 ApiClient 의 실제 시그니처로 받는다. 이전에는 값 타입이 `unknown` 이어서
 // 반환 형태가 어긋난 fake 를 tsc 가 통과시켰다 — 실제로 api.messages() 가 배열에서
@@ -115,6 +123,9 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     archiveChannel: vi.fn(async (id: string, _archived: boolean) =>
       chan(id, id, null)),
     search: vi.fn(async () => []),
+    // #215: 링크 미리보기 카드. 베이스가 덮어야 "부르지 않았다" 를 단언할 수 있고, 본문에
+    // URL 이 있는 다른 테스트가 없는 표면을 부르지 않는다.
+    getLinkPreview: vi.fn(async () => { throw Object.assign(new Error('not found'), { status: 404 }); }),
     // #232: 채널 파일 색인. 베이스가 덮어야 "부르지 않았다" 를 단언할 수 있다.
     channelFiles: vi.fn(async () => ({ files: [], hasMore: false })),
     // 파일 패널의 항목 클릭은 **이동이지 내려받기가 아니다.** 그것을 단언하려면
@@ -156,6 +167,11 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     listPats: vi.fn(async () => []),
     mintPat: vi.fn(async (_id: string, label: string) => `murp_${label}`),
     revokePat: vi.fn(async () => ({ revoked: 1 })),
+    // #141: 터미널 패널이 부르는 표면. 베이스가 덮어야 패널을 띄우는 배선 테스트가
+    // "못 물어봤다"(error) 화면 위에서 돌지 않고, "세션을 묻지 않았다" 도 단언할 수 있다.
+    // 기본은 **진행 중인 턴이 없는** 상태다 — 세션이 있는 화면은 각 테스트가 덮어쓴다.
+    agentSessions: vi.fn(async (): Promise<AgentSessionView[]> => []),
+    attachAgentSession: vi.fn(async (sessionId: string) => ({ ticket: 'murt_base', session: sess({ sessionId }) })),
     ...overrides,
   };
   return base as unknown as ApiClient;

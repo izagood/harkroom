@@ -56,7 +56,14 @@ export type AuditAction =
   // #173: 채널의 자동 멘션 에이전트. 어떤 에이전트를 어느 채널에 자동 투입할지는 admin 의
   // 관리 행위라 기록이 남아야 한다. detail 에는 **에이전트 handle 만** 남긴다 — 그 채널의
   // 메시지 본문도, topic 도 넣지 않는다(같은 파일 위 규칙).
-  | 'channel.auto_mention.set' | 'channel.auto_mention.unset';
+  | 'channel.auto_mention.set' | 'channel.auto_mention.unset'
+  // #141: 진행 중인 에이전트 터미널에 사람이 붙었다·떠났다(스펙 §5 "감사").
+  //
+  // detail 에는 sessionId·channelId 만 남긴다 — **PTY 바이트는 절대 넣지 않는다.** PTY
+  // 출력에는 하네스가 화면에 그린 모든 것(토큰, 환경변수, 사람이 붙여 넣은 비밀)이 들어가고,
+  // 감사에 복사하면 그것을 지울 방법이 없다(같은 파일 위 message.deleted 와 같은 규칙).
+  // 스크롤백을 러너 메모리의 ring buffer 에만 두는 것도 같은 이유다.
+  | 'agent.attached' | 'agent.detached';
 
 export interface AuditEntry {
   action: AuditAction;

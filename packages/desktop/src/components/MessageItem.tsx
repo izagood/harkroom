@@ -5,6 +5,7 @@ import { getController } from '../state/controller';
 import { MessageBody } from './MessageBody';
 import { ReactionPicker, Reactions, InlineReactionButtons } from './Reactions';
 import { Identity, StatusMark } from './Identity';
+import { TerminalChip } from './TerminalChip';
 import { Attachments } from './Attachments';
 import { Menu } from './Menu';
 import { bodyAsHandles } from '../lib/mention';
@@ -173,6 +174,10 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
           {/* 작성 시점이 아니라 **지금**의 상태다 — 이 줄이 답하는 질문은 "이 사람에게
               지금 물어봐도 되는가"이지 "그때 무슨 상태였나"가 아니다(#186). */}
           <StatusMark account={author} />
+          {/* #141: 진행 중인 터미널 진입점. 소유자·admin 이 아니면 렌더 자체가 없다
+              (TerminalChip 이 판정한다) — 이름줄에 두는 이유는 소유자 배지와 같다:
+              32px 거터에 넣으면 넘친다(#277). */}
+          <TerminalChip account={author} />
           {avcsType && <span className="rounded bg-amber-200 px-1 text-[10px] text-amber-900">{avcsType}</span>}
           <span className="text-[11px] text-zinc-400">{time}</span>
           {message.editedAt && <span className="text-[11px] text-zinc-400">(edited)</span>}
