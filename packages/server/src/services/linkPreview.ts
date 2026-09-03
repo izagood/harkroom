@@ -14,6 +14,7 @@ import * as http from 'node:http';
 import { isIP } from 'node:net';
 import { normalizePreviewUrl } from '@murmur/shared';
 import { emitEvent } from '../events.js';
+import { getLinkPreviewByUrl } from './linkPreviewDb.js';
 
 export type LinkPreviewStatus = 'ok' | 'failed' | 'blocked';
 
@@ -62,6 +63,11 @@ export function isStale(preview: LinkPreview, now: number = Date.now()): boolean
   return age > TTL_FAILED_MS; // failed | blocked
 }
 
+/**
+ * 이름만으로 막는 호스트. **주소 판정의 보조**일 뿐이다 — 진짜 판정은 해석된 주소가 한다.
+ * 여기 있는 이유: `localhost` 계열은 해석 결과가 환경마다 다르고(hosts 파일), 클라우드
+ * 메타데이터 이름은 링크 미리보기가 볼 이유가 애초에 없다.
+ */
 const BLOCKED_HOST_SUFFIXES = [
   'localhost',
   'localdomain',
@@ -70,12 +76,6 @@ const BLOCKED_HOST_SUFFIXES = [
   'metadata.google.internal',
   'kubernetes.default.svc',
 ];
-
-/**
- * 이름만으로 막는 호스트. **주소 판정의 보조**일 뿐이다 — 진짜 판정은 해석된 주소가 한다.
- * 여기 있는 이유: `localhost` 계열은 해석 결과가 환경마다 다르고(hosts 파일), 클라우드
- * 메타데이터 이름은 링크 미리보기가 볼 이유가 애초에 없다.
- */
 
 /** 호스트명 정규화 — **판정 앞에** 둔다. */
 function hostOf(url: URL): string {
@@ -454,25 +454,12 @@ export async function queueLinkPreviewFetch(
   if (inFlight.has(normalized)) return;
   inFlight.add(normalized);
   try {
-    const existing = await pool.query(
-      'select url, title, description, image_url, site_name, status, fetched_at as "fetchedAt" from link_preview where url = $1',
-      [normalized],
-    );
-    if (existing.rowCount) {
-      // 행이 있으면 만료되었는지 검사한다. 만료되었으면 다시 가져온다.
-      const row = existing.rows[0]!;
-      const preview: LinkPreview = {
-        url: row.url,
-        title: row.title,
-        description: row.description,
-        imageUrl: row.image_url,
-        siteName: row.site_name,
-        status: row.status,
-        fetchedAt: row.fetchedAt,
-      };
-      if (!isStale(preview)) return; // fresh — 다시 가져올 필요 없다
-      // 만료되었으면 재조회한다(같은 URL 로 덮어쓴다).
-    }
+    // 조회는 라우트와 **같은 읽기 함수**를 쓴다 — 컬럼 매핑을 두 벌 두면 한쪽만 고쳐진다.
+    const existing = await getLinkPreviewByUrl(pool, normalized);
+    // 행이 있어도 만료되었으면 다시 가져온다. 판정은 `isStale` 한 곳이다.
+    if (existing && !isStale(existing)) return; // fresh — 다시 가져올 필요 없다
+    // 만료되었으면 재조회해 **같은 행을 덮어쓴다**(`saveLinkPreview` 는 upsert 다).
+    // 지웠다 넣으면 그 사이 조회가 404 를 본다 — 카드가 잠깐 사라진다.
     const preview = await fetchLinkPreview(normalized, net);
     if (preview) await saveLinkPreview(pool, preview);
   } finally {

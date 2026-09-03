@@ -24,7 +24,9 @@ export async function registerLinkPreviewRoutes(app: FastifyInstance, pool: Pool
    * 이 라우트가 마지막 관문이다.
    *
    * **만료된 행은 다시 가져온다**(#312). `isStale` 로 판정하고 백그라운드에서 갱신한다.
-   * 클라이언트는_stale 데이터를 먼저 보고_, 갱신되면 `link_preview.ready` 이벤트를 받는다.
+   * 응답은 기다리지 않고 **있는(만료된) 카드를 먼저 준다** — 갱신이 끝나면 클라이언트는
+   * `link_preview.ready` 이벤트로 새 값을 받는다. 조회를 막고 다시 가져오면 링크 하나가
+   * 느린 사이트를 만났을 때 채널 렌더가 통째로 멈춘다.
    */
   app.get('/link-previews', { preHandler: app.requireAccount }, async (req, reply) => {
     const parsed = z.object({ url: z.string().min(1) }).safeParse(req.query);
@@ -41,11 +43,15 @@ export async function registerLinkPreviewRoutes(app: FastifyInstance, pool: Pool
     if (!preview) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'link preview not found' } });
     }
-// 만료되었으면 백그라운드에서 다시 가져온다. 클라이언트는_stale 데이터를 먼저 보고_,
-    // 갱신되면 이벤트를 받는다. 테스트가 가짜 네트워크를 주입할 수 있도록 요청 시점의 net 을 쓴다.
+    // 만료되었으면 백그라운드에서 다시 가져온다. 만료된 카드를 먼저 돌려주고, 갱신되면
+    // 이벤트가 나간다. 테스트가 가짜 네트워크를 주입할 수 있도록 요청 시점의 net 을 쓴다.
     if (isStale(preview)) {
-      const net = (app as any).linkPreviewNet ?? defaultPreviewNet;
-      queueLinkPreviewFetch(pool, url, net).catch(() => {});
+      const net = app.linkPreviewNet ?? defaultPreviewNet;
+      // 실패는 삼키지 않고 남긴다 — 응답을 막지는 않지만, 갱신이 계속 실패하면
+      // 카드가 영원히 만료 상태로 도는 것이므로 로그가 유일한 단서다.
+      queueLinkPreviewFetch(pool, url, net).catch((err) => {
+        app.log.warn({ err, url }, 'link preview refresh failed');
+      });
     }
     return preview;
   });
