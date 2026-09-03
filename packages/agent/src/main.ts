@@ -21,7 +21,8 @@ import { SessionStore } from './sessions.js';
 import { resolveAgentStateDir } from './stateDir.js';
 import { assertHarnessContract, writeMcpConfigOnce } from './turn.js';
 import type { Exec } from './workspace.js';
-import { exhausted, isCredentialFailure, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
+import { exhausted, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
+import { runnerExitPlan } from './exit.js';
 import { stopRequestedForRunner } from './stop.js';
 import { FAILURE_NOTICE } from './prompt.js';
 
@@ -53,11 +54,35 @@ const startedAtMs = Date.now();
 function acceptStopRequest(at: string): void {
   running = false;
   console.log(`[main] 종료 요청을 받았다 (요청 시각: ${at}) — 진행 중인 턴을 마쳤으므로 물러난다.`);
-  console.log('  murmur 는 러너를 띄우지 않는다 — 다시 띄우는 것은 사람(또는 launchd/systemd 감독)의 몫이다.');
+  // #250: 데스크탑 앱이 띄운 러너라면 앱이 다시 띄운다(내가 소유한 에이전트인 경우).
+  // 그 밖에는 여전히 사람(또는 감독)의 몫이다 — 서버는 러너를 띄우지 않는다(design.md §1).
+  console.log('  murmur 서버는 러너를 띄우지 않는다 — 다시 띄우는 것은 데스크탑 앱(소유한 에이전트) 또는 사람/launchd/systemd 감독의 몫이다.');
 }
 
-const me = await murmur.me();
-const guide = await murmur.guide();
+/**
+ * 자격증명 실패면 78 로 물러난다(#250). 판정은 `exit.ts::runnerExitPlan` 하나가 갖는다 —
+ * 세 자리(기동·멘션 턴·폴 루프)가 같은 판정을 써야 한다.
+ */
+function exitIfCredentialRejected(err: unknown): void {
+  const plan = runnerExitPlan(err);
+  if (!plan) return;
+  for (const line of plan.lines) console.error(line);
+  process.exit(plan.code);
+}
+
+/**
+ * 기동의 첫 두 호출. 여기서 401 이 나는 것이 **가장 흔한 경우**다 — 앱이 PAT 를 회전한
+ * 뒤 옛 PAT 로 다시 뜬 러너, 또는 사람이 폐기된 PAT 를 넘긴 러너. 감싸지 않으면 top-level
+ * rejection 이 되어 Node 가 종료 코드 1 로 죽고, 앱은 "그냥 죽었다"와 구분할 수 없다.
+ */
+const [me, guide] = await (async () => {
+  try {
+    return [await murmur.me(), await murmur.guide()] as const;
+  } catch (err) {
+    exitIfCredentialRejected(err);
+    throw err;
+  }
+})();
 
 // spec §3: 상태는 handle 로 스코프한다 — `workspaceName` 은 이미 이름에 handle 을 넣어
 // 워크스페이스끼리는 안 겹치지만(다중 에이전트 격리), 세션 레코드·MCP 설정까지 나누지
@@ -218,18 +243,7 @@ while (running) {
         }
       } catch (err) {
         // 자격증명 실패는 재시도로 낫지 않는다. 조용히 반복하면 "왜 답이 없지"의 원인이 묻힌다.
-        const credType = isCredentialFailure(err);
-        if (credType !== 'other') {
-          console.error(`\n${credType === 'murmur-credential' ? 'Murmur' : 'Harness'} 자격증명을 해결할 수 없다. 러너를 멈춘다.`);
-          if (credType === 'murmur-credential') {
-            console.error('  Murmur API 의 PAT 가 만료·폐기됐는지 확인해라.');
-            console.error('  MURMUR_PAT 환경변수를 새 PAT 로 교체하고 러너를 재시작한다.');
-          } else {
-            console.error('  claude-code harness 는 claude CLI 의 로그인을 쓴다 — `claude` 를 한 번 실행해 로그인해라.');
-          }
-          console.error(`  원문: ${err instanceof Error ? err.message : String(err)}`);
-          process.exit(1);
-        }
+        exitIfCredentialRejected(err);
         failed = true;
         console.error(`  ${entry.messageId} 답변 실패 (${tried}/${MAX_ATTEMPTS}):`,
           err instanceof Error ? err.message : err);
@@ -261,6 +275,11 @@ while (running) {
       backoffMs = 1_000;
     }
   } catch (err) {
+    // #250: 자격증명 실패는 **여기서** 먼저 걸러야 한다. 앱이 PAT 를 회전할 때 옛 러너는
+    // 거의 항상 롱폴에 park 돼 있어 401 이 이 catch 로 온다 — 아래 "재접속하면 된다"로
+    // 삼키면 러너는 영원히 물러나지 않고, 폐기된 PAT 로 무한 재시도만 한다. 회전이
+    // 약속한 것("옛 러너는 다음 호출에서 401 을 받고 78 로 스스로 물러난다")이 여기 걸려 있다.
+    exitIfCredentialRejected(err);
     // 서버 재시작이면 poll 이 빈 결과로 끝나거나 transport 오류가 난다 — 둘 다 정상이고
     // 재접속하면 된다(workspace.guide 의 poll 루프 계약).
     console.error('poll 루프 오류, 재접속:', err instanceof Error ? err.message : err);

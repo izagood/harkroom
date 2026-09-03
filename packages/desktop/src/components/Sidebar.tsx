@@ -7,8 +7,9 @@ import { LeasePanel } from './LeasePanel';
 import { Menu } from './Menu';
 import { StatusMark } from './Identity';
 import { StatusPicker } from './StatusPicker';
+import { RunnerStatusDot } from './RunnerStatus';
 import type { SectionId } from './settings/sections';
-import type { ChannelRow, NotifyLevel } from '@murmur/shared';
+import type { AddTeamToChannelResult, AgentTeamRow, ChannelRow, NotifyLevel } from '@murmur/shared';
 import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, notifyLevelOf } from '@murmur/shared';
 import { Logo } from './Logo';
 
@@ -79,7 +80,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
-  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, messages, savedCount } = useAppStore();
+  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, channelAutoMentions, messages, savedCount, runnerStates } = useAppStore();
   /**
    * macOS 신호등 여백(#270). 사이드바가 펴져 있으면 브랜드 바가 창의 좌상단이라 여기가
    * 여백을 진다. 접혀 있으면 사이드바는 폭 0 이고 `Workspace` 헤더가 좌상단이 되므로
@@ -96,7 +97,16 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
   // 목록을 보고 있는지가 화면에서 사라진다(편집 패널과 같은 규칙).
   const [membersChannelId, setMembersChannelId] = useState<string | null>(null);
   const [memberError, setMemberError] = useState<string | null>(null);
+  // 자동 멘션 절(#173)의 실패. 멤버 목록 실패와 자리를 나눈다 — 한 문장에 두 사고를 섞으면
+  // 사용자는 어느 쪽을 다시 시도해야 하는지 모른다.
+  const [autoMentionError, setAutoMentionError] = useState<string | null>(null);
   const [inviteAccountId, setInviteAccountId] = useState('');
+  const [teams, setTeams] = useState<AgentTeamRow[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState('');
+  const [teamAddResult, setTeamAddResult] = useState<AddTeamToChannelResult | null>(null);
+  // 팀 쪽 실패는 멤버 목록 실패와 **다른 자리**에 적는다 — 한 칸을 나눠 쓰면 어느 쪽이
+  // 실패했는지가 화면에서 사라진다.
+  const [teamError, setTeamError] = useState<string | null>(null);
   // '마지막 멤버가 나간다'는 되돌릴 수 없는 조작이라 한 번 더 묻는다.
   const [leaveConfirmId, setLeaveConfirmId] = useState<string | null>(null);
   /**
@@ -173,6 +183,10 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
     setMemberError(null);
     setInviteAccountId('');
     setLeaveConfirmId(null);
+    setTeams([]);
+    setSelectedTeamId('');
+    setTeamAddResult(null);
+    setTeamError(null);
   };
 
   /**
@@ -182,13 +196,54 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
    */
   const openMembers = async (channelId: string): Promise<void> => {
     setMembersChannelId(channelId);
+    setAutoMentionError(null);
+    // 자동 멘션 목록(#173)은 멤버 목록과 **별개로** 받는다 — 한쪽 실패가 다른 쪽을 가리면 안 된다.
+    void getController().loadChannelAutoMentions(channelId)
+      .catch((err: unknown) => setAutoMentionError(err instanceof Error ? err.message : '자동 멘션 목록을 받지 못했다'));
     setMemberError(null);
     setInviteAccountId('');
     setLeaveConfirmId(null);
+    setTeams([]);
+    setSelectedTeamId('');
+    setTeamAddResult(null);
+    setTeamError(null);
     try {
       await getController().loadChannelMembers(channelId);
     } catch (err) {
       setMemberError(err instanceof Error ? err.message : '멤버 목록을 받지 못했다');
+      return;
+    }
+    /**
+     * 팀 목록(#172)은 **따로** 받는다. 한 try 에 묶으면 팀 조회가 실패했을 때 화면이
+     * "멤버 목록을 받지 못했다"고 말한다 — 멤버 목록은 방금 받았는데 거짓을 말하는 것이다.
+     * 팀 목록이 없으면 "팀으로 추가" 자리만 안 뜨면 되고, 그 사실을 따로 알린다.
+     *
+     * private 채널에서만 부른다: public 채널에는 멤버십이 없어(#156) 서버가 400 으로
+     * 거절한다 — 뜻이 없는 조작의 진입점을 만들지 않는다.
+     */
+    const channel = channels.find((c) => c.id === channelId);
+    if (channel?.visibility === 'private') {
+      try {
+        setTeams(await getController().listTeams());
+      } catch {
+        setTeamError('팀 목록을 받지 못했다');
+      }
+    }
+  };
+
+  const submitTeamAdd = async (channelId: string): Promise<void> => {
+    if (!selectedTeamId) return;
+    setTeamAddResult(null);
+    setTeamError(null);
+    try {
+      const result = await getController().addTeamToChannel(channelId, selectedTeamId);
+      setTeamAddResult(result);
+      setSelectedTeamId('');
+      // 넣은 결과가 멤버 목록에 보여야 한다 — 결과 문구만 갱신하면 바로 아래 목록이
+      // 방금 들어온 에이전트를 빼고 그린다.
+      await getController().loadChannelMembers(channelId);
+    } catch (err) {
+      setTeamError(err instanceof Error ? err.message : '팀 추가에 실패했다');
     }
   };
 
@@ -268,6 +323,21 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
     }
   };
 
+  /**
+   * 자동 멘션을 켜고 끈다(#173). admin 만 부를 수 있다 — 화면도 admin 에게만 토글을 내준다.
+   * 실패는 그 절 안에 보여 준다: 서버가 400(에이전트 아님·비활성)이나 403 을 줄 수 있고,
+   * 그 사유가 조용히 사라지면 사용자는 체크박스가 고장 났다고 여긴다.
+   */
+  const toggleAutoMention = async (channelId: string, agentAccountId: string, on: boolean): Promise<void> => {
+    setAutoMentionError(null);
+    try {
+      if (on) await getController().setChannelAutoMention(channelId, agentAccountId);
+      else await getController().unsetChannelAutoMention(channelId, agentAccountId);
+    } catch (err) {
+      setAutoMentionError(err instanceof Error ? err.message : '자동 멘션을 바꾸지 못했다');
+    }
+  };
+
   const closeEdit = (): void => {
     setEditingChannelId(null);
     setEditTopic('');
@@ -337,6 +407,9 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
         online: peers.some((id) => online.includes(id)),
         // 1:1 DM 에서만 상태를 그린다. 여러 사람이면 누구의 상태인지 표시가 답하지 못한다.
         peer: peers.length === 1 ? accounts[peers[0]!] : undefined,
+        // #250: 이 앱이 띄운 러너의 상태. 1:1 에이전트 DM 에서만 뜻이 있다 — 사람에게는
+        // 러너가 없고, 여러 사람이면 누구의 러너인지 표시가 답하지 못한다.
+        agentId: peers.length === 1 && accounts[peers[0]!]?.kind === 'agent' ? peers[0]! : undefined,
         // 배지를 그릴 때가 아니라 목록을 만들 때 구한다 — 렌더 순서에 기대면 배지가
         // 알림 수준을 보지 못하는 자리에 놓이기 쉽다(#229 가 채널 쪽에서 그랬다).
         notifyLevel: notifyLevelOf(channelPrefs[dm.id]),
@@ -518,6 +591,66 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
                 })}
               </ul>
             )}
+          {/* 자동 멘션(#173). 채널 설정 화면이 따로 없어 채널의 관리 표면인 이 패널에 둔다 —
+              admin 전용 편집 폼에 두면 admin 이 아닌 사람은 "이 채널이 누구를 자동으로 부르나"를
+              어디에서도 볼 수 없다. admin 은 토글, 나머지는 읽기 전용이다: 서버가 403 을 줄
+              조작을 화면이 내주면 "할 수 있다"는 거짓 신호다(docs/design.md §4). */}
+          {(() => {
+            const autoRows = channelAutoMentions[ch.id];
+            const onIds = new Set((autoRows ?? []).map((r) => r.agentAccountId));
+            // admin 은 켤 수 있는 에이전트 전부(비활성은 이미 켜져 있을 때만 — 끄는 길은 있어야
+            // 한다)를, 나머지는 켜진 것만 본다. 서버가 비활성 에이전트의 추가를 400 으로
+            // 막으므로, 그 토글을 내주면 눌러서 실패하는 항목이 된다.
+            const agents = Object.values(accounts)
+              .filter((a) => a.kind === 'agent' && (me?.isAdmin ? (!a.disabled || onIds.has(a.id)) : onIds.has(a.id)))
+              .sort((a, b) => a.handle.localeCompare(b.handle));
+            return (
+              <div data-testid={`auto-mentions-${ch.id}`} className="mb-1 border-t border-zinc-700 pt-1">
+                <div className="mb-0.5 text-xs text-zinc-400">자동 멘션</div>
+                <p className="mb-1 text-[10px] text-zinc-500">
+                  켜진 에이전트는 이 채널에서 사람이 쓰는 글 앞에 자동으로 불린다. 작성창의 칩 × 로 한 메시지에서만 뺄 수 있다.
+                  {!me?.isAdmin && ' 바꾸는 것은 admin 만 할 수 있다.'}
+                </p>
+                {autoMentionError && <p role="alert" className="mb-1 text-[10px] text-red-400">{autoMentionError}</p>}
+                {/* 키가 없으면 '아직 못 받았다' — 빈 목록으로 그리면 "아무도 안 부른다"는 거짓 사실이 된다. */}
+                {autoRows === undefined
+                  ? !autoMentionError && <p className="mb-1 text-[10px] text-zinc-500">불러오는 중…</p>
+                  : (
+                    <ul className="mb-1 space-y-0.5">
+                      {agents.length === 0 && (
+                        <li className="text-[10px] text-zinc-500">
+                          {me?.isAdmin ? '켤 수 있는 에이전트가 없다' : '자동으로 부르는 에이전트가 없다'}
+                        </li>
+                      )}
+                      {agents.map((a) => (
+                        <li key={a.id} className="flex items-center gap-1 text-xs text-zinc-300">
+                          {me?.isAdmin ? (
+                            <label className="flex items-center gap-1">
+                              <input
+                                type="checkbox"
+                                aria-label={`@${a.handle} 자동 멘션`}
+                                checked={onIds.has(a.id)}
+                                onChange={(e) => void toggleAutoMention(ch.id, a.id, e.target.checked)}
+                              />
+                              <span>@{a.handle}</span>
+                            </label>
+                          ) : (
+                            <span>@{a.handle}</span>
+                          )}
+                          {/* 배지는 **켜진 행에만** 붙는다. admin 목록에는 꺼진 에이전트도 서므로
+                              무조건 붙이면 체크가 비어 있는 줄에 '자동' 이라고 적힌다 — 화면이
+                              체크박스와 반대되는 말을 한다. */}
+                          {onIds.has(a.id) && (
+                            <span className="rounded bg-indigo-900 px-1 text-[10px] text-indigo-200">자동</span>
+                          )}
+                          {a.disabled && <span className="rounded bg-zinc-700 px-1 text-[10px] text-zinc-400">비활성</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+              </div>
+            );
+          })()}
           {leaveConfirmId === ch.id && (
             <p role="alert" className="mb-1 text-[10px] text-amber-400">
               나가면 아무도 이 채널을 볼 수 없다 — 마지막 멤버다. 채널은 지워지지 않는다.
@@ -541,6 +674,51 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
               >
                 초대
               </button>
+            </div>
+          )}
+          {/*
+            팀 추가(#172): **private 채널에서만.** public 채널에는 멤버십이 없어(#156)
+            서버가 400 으로 거절하므로 뜻이 없는 진입점을 만들지 않는다.
+
+            admin 게이트를 걸지 **않는다**: 서버의 게이트는 `#156` 의 초대와 같은
+            `assertChannelVisible` 이라 그 채널의 멤버면 누구나 넣을 수 있다. 화면만
+            admin 으로 좁히면 할 수 있는 조작이 화면에서 사라진다 — 그것도 화면이
+            서버와 다른 말을 하는 것이다.
+
+            팀이 하나도 없으면 고를 것이 없으니 자리도 없다. 다만 목록을 **못 받은**
+            것은 다른 사실이라 `teamError` 로 따로 말한다.
+          */}
+          {ch.visibility === 'private' && teamError && (
+            <p role="alert" className="mb-1 text-[10px] text-amber-400">{teamError}</p>
+          )}
+          {ch.visibility === 'private' && teams.length > 0 && (
+            <div className="mb-1 space-y-1">
+              <div className="text-[10px] text-zinc-500">팀으로 추가</div>
+              <div className="flex items-center gap-1">
+                <select
+                  aria-label="추가할 팀"
+                  className="flex-1 rounded bg-zinc-900 px-1 py-0.5 text-xs text-zinc-200"
+                  value={selectedTeamId}
+                  onChange={(e) => { setSelectedTeamId(e.target.value); setTeamAddResult(null); }}
+                >
+                  <option value="">팀 선택…</option>
+                  {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+                <button
+                  className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-500 disabled:opacity-40"
+                  disabled={!selectedTeamId}
+                  onClick={() => void submitTeamAdd(ch.id)}
+                >
+                  추가
+                </button>
+              </div>
+              {teamAddResult && (
+                <div className="text-[10px] text-zinc-400">
+                  {teamAddResult.added.length > 0 && <span>추가: {teamAddResult.added.join(', ')}</span>}
+                  {teamAddResult.skipped.length > 0 && <span className="ml-1 text-amber-400">건너뜀: {teamAddResult.skipped.join(', ')}</span>}
+                  {teamAddResult.alreadyMember.length > 0 && <span className="ml-1">이미 있음: {teamAddResult.alreadyMember.join(', ')}</span>}
+                </div>
+              )}
             </div>
           )}
           <div className="flex gap-1">
@@ -865,6 +1043,11 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
                 <span data-testid={`presence-${dm.id}`} data-online={String(dm.online)}
                   className={`h-2 w-2 rounded-full ${dm.online ? 'bg-green-500' : 'bg-zinc-600'}`} />
                 <StatusMark account={dm.peer} />
+                {/* #250: 러너 상태는 presence 와 **또 다른 사실**이다 — presence 는 "러너가
+                    붙어 있나"(누가 띄웠든)이고, 이것은 "이 앱이 띄운 자식이 어떤 상태인가"다.
+                    78 로 죽은 러너는 presence 로도 사라지지만, 사람이 할 일(재발급)은
+                    이 표시만이 말해 준다. */}
+                {dm.agentId && <RunnerStatusDot agentId={dm.agentId} state={runnerStates[dm.agentId]} />}
                 {dm.label}
                 <UnreadBadge channelId={dm.id} notifyLevel={dm.notifyLevel} />
               </button>

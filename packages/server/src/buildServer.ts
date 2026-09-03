@@ -9,6 +9,7 @@ import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
 import { registerChannelRoutes } from './routes/channelRoutes.js';
+import { registerTeamRoutes } from './routes/teamRoutes.js';
 import { registerMessageRoutes } from './routes/messageRoutes.js';
 import { registerAttachmentRoutes } from './routes/attachmentRoutes.js';
 import { registerAvatarRoutes } from './routes/avatarRoutes.js';
@@ -17,6 +18,7 @@ import { registerDirectoryRoutes } from './routes/directoryRoutes.js';
 import { registerAuditRoutes } from './routes/auditRoutes.js';
 import { registerSettingsRoutes } from './routes/settingsRoutes.js';
 import { registerHandleGroupRoutes } from './routes/handleGroupRoutes.js';
+import { registerSkillRoutes } from './routes/skillRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
 import { createAgentPresence } from './mcp/presence.js';
@@ -286,6 +288,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   await registerAuthRoutes(app, deps.pool);
   await registerAccountRoutes(app, deps.pool);
+  await registerTeamRoutes(app, deps.pool);
   const storageOpts = deps.storage ?? {
     root: defaultAttachmentRoot(app),
     maxBytes: Number(process.env.ATTACHMENT_MAX_BYTES ?? DEFAULT_MAX_ATTACHMENT_BYTES),
@@ -309,6 +312,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerAuditRoutes(app, deps.pool);
   await registerSettingsRoutes(app, deps.pool);
   await registerHandleGroupRoutes(app, deps.pool);
+  await registerSkillRoutes(app, deps.pool);
 
   // **registerAuth 뒤에 등록해야 한다.** `app.requireAccount` 는 registerAuth 가 데코레이트하므로,
   // 앞에서 등록하면 preHandler 가 undefined 로 박혀 인증 없이 열린다(테스트가 이걸 잡았다).

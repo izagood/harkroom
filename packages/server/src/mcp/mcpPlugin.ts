@@ -10,6 +10,7 @@ import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '
 import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { getMemory, listMemory, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, setMemory } from '../services/memory.js';
+import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { GUIDE } from './guide.js';
 import { recordRunnerVersion } from '../services/runnerVersion.js';
 
@@ -353,6 +354,25 @@ function buildMcpServer(
       });
     }
     return jsonResult({ ok: true });
+  });
+
+  // skill.propose — 에이전트가 스킬을 제안한다. 미승인 상태로 들어가고 채널에 알림이 간다.
+  server.registerTool('skill.propose', {
+    description: '워크스페이스 스킬 제안(미승인 상태, 채널에 알림)',
+    inputSchema: {
+      slug: z.string().min(1).max(40),
+      body: z.string().min(1).max(8000),
+      channelId: z.string().uuid(),
+    },
+  }, async ({ slug, body, channelId }) => {
+    if (!isValidSkillSlug(slug)) {
+      return jsonResult({ error: { code: 'invalid_slug', message: 'slug must be [a-z0-9-]{2,40}' } });
+    }
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    const result = await proposeSkill(pool, { slug, body, proposedBy: account.id, channelId });
+    return jsonResult(result);
   });
 
   return server;
