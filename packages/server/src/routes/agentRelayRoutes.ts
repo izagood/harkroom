@@ -25,7 +25,7 @@ import type { AgentSessionView } from '@murmur/shared';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { createAttachTicketStore } from '../ws/tickets.js';
-import { createRelayHub, type RelayHub } from '../ws/relay.js';
+import { createRelayHub } from '../ws/relay.js';
 
 /**
  * 러너 소켓의 인증. `requireAccount` 뒤에 붙어 **에이전트 계정인지**까지 본다.
@@ -58,7 +58,7 @@ export interface AgentRelayDeps {
 
 export async function registerAgentRelayRoutes(
   app: FastifyInstance, pool: Pool, deps: AgentRelayDeps = {},
-): Promise<RelayHub> {
+): Promise<void> {
   const hub = createRelayHub();
   const attachTickets = createAttachTicketStore({ ttlMs: deps.attachTicketTtlMs });
 
@@ -157,6 +157,4 @@ export async function registerAgentRelayRoutes(
       });
     });
   });
-
-  return hub;
 }

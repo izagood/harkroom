@@ -72,8 +72,6 @@ export interface RelayHub {
    * 붙는 즉시 상태를 보내고, 러너가 살아 있으면 ring buffer 재생을 요청한다.
    */
   addViewer(sessionId: string, socket: RelaySocket): () => void;
-  /** 이 세션에 붙어 있는 뷰어 수. 테스트·감사가 본다. */
-  viewerCount(sessionId: string): number;
 }
 
 export function createRelayHub(): RelayHub {
@@ -236,10 +234,6 @@ export function createRelayHub(): RelayHub {
         current.delete(viewer);
         if (!current.size) viewers.delete(sessionId);
       };
-    },
-
-    viewerCount(sessionId) {
-      return viewers.get(sessionId)?.size ?? 0;
     },
   };
 }

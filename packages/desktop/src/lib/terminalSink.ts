@@ -32,6 +32,10 @@ const xtermSink: TerminalSinkFactory = (el) => {
   let disposed = false;
 
   void (async () => {
+    // 스타일시트를 함께 받는다 — 없으면 xterm 이 셀 크기를 계산하지 못해 화면이 겹친다.
+    // 동적 import 안에 두는 이유는 모듈과 같다: 가짜 sink 를 쓰는 테스트가 이것을 로드하지
+    // 않게 한다(jsdom 은 CSS 를 파싱하지 않지만, Vite 의 CSS 처리 경로 자체를 태우지 않는다).
+    await import('@xterm/xterm/css/xterm.css');
     const { Terminal } = await import('@xterm/xterm');
     if (disposed) return;
     const t = new Terminal({

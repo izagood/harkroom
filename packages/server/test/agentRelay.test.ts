@@ -359,16 +359,30 @@ describe('#141-5 PTY 바이트는 DB 에 남지 않는다', () => {
     const b64 = RAW_BYTES.toString('base64');
     const replayB64 = REPLAY_BYTES.toString('base64');
 
-    // 감사 detail 전체를 문자열로 떠서 본다 — 특정 키만 보면 나중에 키가 하나 늘 때
-    // 이 테스트가 조용히 눈을 감는다.
-    const audit = await pool.query<{ action: string; detail: string }>(
-      `select action, detail::text as detail from audit_log`,
+    const audit = await pool.query<{ action: string; detail: Record<string, unknown> }>(
+      `select action, detail from audit_log`,
     );
     expect(audit.rows.some((r) => r.action === 'agent.attached')).toBe(true);
     expect(audit.rows.some((r) => r.action === 'agent.detached')).toBe(true);
+
+    /**
+     * **허용된 키를 못박는다.** 되돌려 RED 를 하다 알게 된 것: 바이트열을 문자열로 찾는
+     * 것만으로는 부족했다 — 실제로 detail 에 스크롤백을 심어 봤는데, 그 바이트가 테스트가
+     * 아는 정확한 바이트열이 아니면(현실에서는 언제나 그렇다) 이 테스트가 조용히 초록이
+     * 됐다. 새 키가 하나라도 늘면 빨개지는 쪽이 실제로 무언가를 지킨다.
+     */
+    const allowed: Record<string, string[]> = {
+      'agent.attached': ['sessionId', 'channelId'],
+      'agent.detached': ['sessionId'],
+    };
     for (const row of audit.rows) {
+      const keys = allowed[row.action];
+      if (keys) expect(Object.keys(row.detail).sort()).toEqual([...keys].sort());
+      // 아는 바이트열이 어디에도 없다는 것도 함께 본다 — 키 검사만으로는 기존 키에
+      // 바이트를 담는 경우(sessionId 에 출력을 이어 붙이는 등)를 못 잡는다.
+      const text = JSON.stringify(row.detail);
       for (const needle of [b64, replayB64, 'ERR']) {
-        expect(row.detail.includes(needle)).toBe(false);
+        expect(text.includes(needle)).toBe(false);
       }
     }
 
