@@ -172,7 +172,7 @@ describe('Inbox (#185)', () => {
     const onOpenInbox = vi.fn();
     render(
       <Sidebar
-        onOpenDirectory={vi.fn()}
+        onOpenDirectory={vi.fn()} onOpenChannelDirectory={vi.fn()}
         onOpenInbox={onOpenInbox} onOpenSaved={() => {}}
         onLogout={vi.fn()}
         onOpenSettings={vi.fn()}

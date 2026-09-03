@@ -2,10 +2,12 @@ import { useMemo } from 'react';
 import { useAppStore } from '../state/appStore';
 import { splitMentions } from '../lib/mention';
 import { splitLinks, type LinkTarget, type BodyPart } from '../lib/link';
+import { extractPreviewUrls } from '@murmur/shared';
 import { splitCode } from '../lib/code';
 import { shouldCollapse, COLLAPSED_MAX_PX } from '../lib/collapse';
 import { getExternalOpener } from '../lib/openExternal';
 import { getController } from '../state/controller';
+import { LinkPreview } from './LinkPreview';
 import type { SectionId } from './settings/sections';
 
 /**
@@ -82,6 +84,10 @@ export function MessageBody({
   const segments = useMemo(() => splitCode(body), [body]);
   const handles = useMemo(() => Object.values(accounts).map((a) => a.handle), [accounts]);
   const groupHandles = useMemo(() => groups.map((g) => g.handle), [groups]);
+  // 미리보기 대상 URL(#215). **서버와 같은 함수**를 쓴다 — 각자 정규식을 두면 서버가
+  // 저장한 키와 여기서 조회하는 키가 갈라져 카드가 영원히 404 다(초판이 그랬다: 여기는
+  // 후행 문장부호를 떼지 않아 `…/b.` 로 조회했다).
+  const urls = useMemo(() => extractPreviewUrls(body), [body]);
   // handle → 계정. 멘션마다 `Object.values(...).find` 를 돌면 본문 하나에 계정 수 × 멘션 수다.
   const byHandle = useMemo(
     () => new Map(Object.values(accounts).map((a) => [a.handle.toLowerCase(), a])),
@@ -177,7 +183,7 @@ export function MessageBody({
     );
   };
 
-  const content = (
+  const bodyContent = (
     <div className="whitespace-pre-wrap break-words" data-testid="message-body">
       {segments.map((seg, i) => {
         if (seg.kind === 'inlineCode') {
@@ -219,6 +225,15 @@ export function MessageBody({
         return splitLinks(splitMentions(seg.text, handles, groupHandles)).map((p, j) => renderPart(p, `${i}-${j}`));
       })}
     </div>
+  );
+
+  const linkPreviews = urls.map((url) => <LinkPreview key={url} url={url} />);
+
+  const content = (
+    <>
+      {bodyContent}
+      {linkPreviews}
+    </>
   );
 
   // 접을 대상이 아니면 상자도 버튼도 만들지 않는다. **자르기와 "더 보기" 는 같은 조건
