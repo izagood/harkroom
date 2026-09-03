@@ -546,6 +546,16 @@ export interface HandleGroupRow {
   handle: string;
   displayName: string;
   createdAt: string;
+  /**
+   * 지금 이 집합에 든 사람 수(#285). **옵셔널이 아니라 필수다** — 이 값을 안 실어 주는
+   * 경로가 하나라도 있으면 화면은 "몇 명인지 모른다"를 그릴 방법이 없고, 결국 수를 아예
+   * 안 보이는 쪽으로 떨어진다. 자동완성 후보가 `@release` 를 부르기 직전에 그것이
+   * 한 사람인지 스무 사람인지 보여야 하는 유일한 자리다.
+   *
+   * 파생값이므로 저장하지 않고 조회할 때 센다 — 저장하면 구성원 추가·제거마다 두 곳을
+   * 맞춰야 하고, 한쪽만 틀린 수가 화면에 남는다.
+   */
+  memberCount: number;
 }
 
 /**
@@ -618,6 +628,19 @@ export interface ProjectionStatus extends ProjectionRuntime {
   state: ProjectionState;
 }
 
+export interface ScheduledMessageView {
+  id: string;
+  channelId: string;
+  authorId: string;
+  threadRootId: string | null;
+  body: string;
+  sendAt: string;
+  createdAt: string;
+  sentMessageId: string | null;
+  failedReason: string | null;
+  canceledAt: string | null;
+}
+
 export type WsServerEvent =
   | { type: 'message.created'; message: MessageRow; audience: 'all' | string[] }
   | { type: 'message.updated'; message: MessageRow; audience: 'all' | string[] }
@@ -644,4 +667,10 @@ export type WsServerEvent =
    * 보내는 이유: 두 이벤트면 클라이언트가 두 곳에서 같은 맵을 갱신하고 그 두 곳이 갈라진다.
    * 받는 사람 자신은 목록에서 빠져 있다 — 자기 그림자를 그리지 않게, 서버가 한 곳에서 거른다.
    */
-  | { type: 'typing.changed'; channelId: string; accountIds: string[]; audience: 'all' | string[] };
+  | { type: 'typing.changed'; channelId: string; accountIds: string[]; audience: 'all' | string[] }
+  // 채널 목록 변경(#284). public 은 전원, private 은 멤버만 받는다.
+  | { type: 'channel.created'; channel: ChannelRow; audience: 'all' | string[] }
+  | { type: 'channel.updated'; channel: ChannelRow; audience: 'all' | string[] }
+  | { type: 'channel.deleted'; channelId: string; audience: 'all' | string[] }
+  // 담기/해제/상태 변경(#219). 본인의 소켓에만 온다.
+  | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string };

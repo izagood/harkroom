@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
 
 export class ApiError extends Error {
   /**
@@ -405,6 +405,26 @@ export class ApiClient {
     return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
   }
 
+  /** 이 채널에서 내가 예약한 메시지 목록(#222). */
+  async scheduledMessages(channelId: string): Promise<ScheduledMessageView[]> {
+    return (await this.req<{ scheduled: ScheduledMessageView[] }>('GET', `/channels/${channelId}/scheduled`)).scheduled;
+  }
+
+  /**
+   * 예약 메시지 생성(#222). 서버는 목록과 **같은 봉투**(`{ scheduled }`)로 답한다 —
+   * 여기서 벗겨 호출부에는 뷰 하나만 준다.
+   */
+  async scheduleMessage(channelId: string, body: string, sendAt: string, threadRootId?: string): Promise<ScheduledMessageView> {
+    return (await this.req<{ scheduled: ScheduledMessageView }>(
+      'POST', `/channels/${channelId}/scheduled`, { body, sendAt, ...(threadRootId ? { threadRootId } : {}) },
+    )).scheduled;
+  }
+
+  /** 예약 메시지 취소(#222). */
+  cancelScheduledMessage(id: string): Promise<void> {
+    return this.req('DELETE', `/scheduled/${id}`);
+  }
+
   /**
    * 채널 문서 조회(#188). 가시성은 서버가 검사한다. 아직 저장된 것이 없으면 본문 `''` 이고
    * `updatedBy`·`updatedAt` 이 `null` 인 문서가 온다 — "아직 아무도"다.
@@ -446,5 +466,35 @@ export class ApiClient {
 
   unsaveMessage(messageId: string): Promise<void> {
     return this.req('DELETE', `/saved/${messageId}`);
+  }
+
+  /**
+   * 핸들 집합 관리(#285). `GET /handle-groups` 를 여기 두지 않는 이유: 그 라우트는
+   * **admin 전용**이고, 집합 목록은 `GET /accounts`(모든 계정)가 계정과 함께 이미 준다.
+   * 두 경로로 같은 목록을 받으면 비-admin 화면에서 한쪽이 403 이 되고, 그 403 이
+   * "집합이 없다"로 그려진다 — `HandleGroupsSettings` 의 주석이 그 결정을 적는다.
+   */
+  async createHandleGroup(input: { handle: string; displayName: string }): Promise<HandleGroupRow> {
+    return this.req('POST', '/handle-groups', input);
+  }
+
+  async getHandleGroup(id: string): Promise<{ group: HandleGroupRow; members: string[] }> {
+    return this.req('GET', `/handle-groups/${id}`);
+  }
+
+  async updateHandleGroup(id: string, patch: { displayName: string }): Promise<HandleGroupRow> {
+    return this.req('PATCH', `/handle-groups/${id}`, patch);
+  }
+
+  async deleteHandleGroup(id: string): Promise<void> {
+    return this.req('DELETE', `/handle-groups/${id}`);
+  }
+
+  async addHandleGroupMembers(id: string, accountIds: string[]): Promise<{ members: string[] }> {
+    return this.req('POST', `/handle-groups/${id}/members`, { accountIds });
+  }
+
+  async removeHandleGroupMembers(id: string, accountIds: string[]): Promise<{ members: string[] }> {
+    return this.req('DELETE', `/handle-groups/${id}/members`, { accountIds });
   }
 }
