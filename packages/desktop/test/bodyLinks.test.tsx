@@ -90,6 +90,18 @@ describe('허용 목록 밖의 스킴은 링크가 되지 않는다', () => {
     expect(screen.getByTestId('message-body').textContent).toBe('file:///etc/passwd 여기');
   });
 
+  // 정규화가 지키는 것은 금지 방향만이 아니다 — 대문자 스킴의 **정상 주소가 살아남는
+  // 것**도 정규화가 한다. 손수 문자열을 잘라 비교하면 'HTTPS:' 가 허용 목록에 없어
+  // 멀쩡한 링크가 조용히 글자로 떨어진다. 그 방향의 회귀선이 없으면 `new URL` 을
+  // 걷어내도 테스트가 초록이다.
+  it('대문자 HTTPS 주소도 링크로 살아남는다', () => {
+    show('HTTPS://Example.COM/a 봐');
+
+    const link = screen.getByTestId('body-link');
+    expect(link).toBeTruthy();
+    expect(link.textContent).toBe('HTTPS://Example.COM/a');
+  });
+
   it('JaVaScRiPt: 처럼 대소문자를 섞어도 링크가 되지 않는다', () => {
     // 판정 전에 정규화하지 않으면 여기서 뚫린다 — 금지 목록이 늘 지는 자리다.
     show('JaVaScRiPt:alert(1) 과 DATA:text/html,<b>x</b> 와 VBScript:msgbox(1)');
