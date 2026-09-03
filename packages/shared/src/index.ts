@@ -1,3 +1,14 @@
+/**
+ * 사람이 **직접 고르는** 상태(#186). 소켓 연결에서 파생되는 presence 와 나란히 산다 —
+ * 덮지 않는다. 둘을 한 필드에 합치면 "연결이 끊긴 사람"과 "방해 금지인 사람"이 한 표시로
+ * 뭉쳐, 하트비트가 잡아내려던 신호(죽은 연결을 online 으로 남기지 않는다)를 잃는다.
+ *
+ * 값 집합은 DB 의 check 제약(마이그레이션 016)과 **같은 것**이어야 한다. 한쪽만 늘리면
+ * 서버는 받아들이는데 DB 가 거절하거나, 그 반대가 된다.
+ */
+export const ACCOUNT_STATUSES = ['available', 'away', 'dnd'] as const;
+export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
+
 export interface AccountView {
   id: string;
   handle: string;
@@ -12,6 +23,15 @@ export interface AccountView {
    * 화면의 몫이다.
    */
   disabled: boolean;
+  /**
+   * 사람이 직접 고른 상태. **에이전트에게는 뜻이 없다** — 서버가 `kind !== 'human'` 의
+   * 변경을 거절하므로 에이전트 행은 기본값 `'available'` 로 남고, 화면은 사람 계정에만
+   * 이 값을 그린다. 에이전트의 "지금 일할 수 있는가"는 러너 상태이지 사회적 신호가 아니다
+   * (#124 가 닫은 결함 — 파생 사실과 사람이 고른 신호를 한 필드에 합치면 되살아난다).
+   */
+  status: AccountStatus;
+  /** 상태에 덧붙이는 짧은 문구. 없음은 **null** 이다 — 빈 문자열과 구분해야 "지웠다"가 표현된다. */
+  statusText: string | null;
 }
 
 /** murmur 가 스키마·설정 차원에서 아는 harness 이름 전체. 실제 실행 가능 여부는 `RUNNABLE_HARNESSES` 를 본다. */
@@ -62,6 +82,21 @@ export interface AgentConfig {
 }
 
 export interface AgentView extends AccountView, AgentConfig {}
+
+/**
+ * 새 에이전트를 만들 때 채워 넣는 기본값(#171). 워크스페이스 전체에 하나뿐이다.
+ *
+ * **에이전트가 이것을 참조하지 않는다.** 생성 시점 값을 그 에이전트의 정의에 복사하고,
+ * 그 뒤로는 서로 독립이다 — 여기를 바꿔도 이미 만들어진 에이전트는 그대로다.
+ * 참조로 두면 기본값을 고치는 순간 돌고 있는 러너의 harness 가 중간에 바뀐다.
+ *
+ * `model`·`effort` 의 null 은 `AgentConfig` 와 같은 뜻이다 — 'harness 기본값 사용'.
+ */
+export interface AgentDefaults {
+  harness: string;
+  model: string | null;
+  effort: string | null;
+}
 
 export interface PatView {
   label: string;
@@ -191,6 +226,11 @@ export type WsServerEvent =
   | { type: 'lease.changed'; repo: string }
   | { type: 'presence.changed'; accountId: string; online: boolean }
   | { type: 'presence.snapshot'; online: string[] }
+  /**
+   * 사람이 자기 상태를 바꿨다(#186). presence 와 **별개의 이벤트**다 — 상태 변경은
+   * `presence.changed` 를 만들지 않고, 연결이 끊겨도 상태는 남는다.
+   */
+  | { type: 'status.changed'; accountId: string; status: AccountStatus; statusText: string | null }
   // 리액션은 델타로 보낸다 — 메시지 전체를 다시 실으면 한 번 누를 때마다 본문이 오간다.
   | { type: 'reaction.added'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
   | { type: 'reaction.removed'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }

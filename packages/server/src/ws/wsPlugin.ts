@@ -21,6 +21,9 @@ function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
     case 'inbox.updated':
       return e.accountId === accountId;
     case 'presence.changed':
+    // 상태도 presence 와 같은 범위로 간다 — 전원. 문구는 임의 텍스트지만 이 워크스페이스는
+    // 단일 스코프라 계정 디렉터리 자체가 이미 전원에게 열려 있다(directoryRoutes 의 /accounts).
+    case 'status.changed':
       return true;
     default:
       return true;

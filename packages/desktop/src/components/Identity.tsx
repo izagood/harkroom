@@ -1,4 +1,4 @@
-import type { AccountView } from '@murmur/shared';
+import type { AccountStatus, AccountView } from '@murmur/shared';
 
 /**
  * 계정의 아이덴티티 표현. **이 컴포넌트가 유일한 경로다.**
@@ -65,6 +65,46 @@ export function Identity({ account, className = '' }: IdentityProps) {
     >
       <span aria-hidden="true">{account.handle.charAt(0).toUpperCase()}</span>
       <span className="sr-only">{account.handle}</span>
+    </span>
+  );
+}
+
+/** 상태별 글리프와 사람이 읽는 이름. 화면과 접근성 이름이 갈리지 않게 한 표에서 낸다. */
+const STATUS_MARKS: Record<AccountStatus, { glyph: string; label: string } | null> = {
+  // 기본값에는 표시를 붙이지 않는다 — 모두에게 붙은 표시는 아무것도 구분하지 못하고,
+  // 초록 연결 점 옆에 초록 무언가를 하나 더 두면 둘의 뜻이 섞인다.
+  available: null,
+  away: { glyph: '🌙', label: '자리 비움' },
+  dnd: { glyph: '⛔', label: '방해 금지' },
+};
+
+/**
+ * 사람이 직접 고른 상태 표시(#186). **연결 점을 대체하지 않는다** — 나란히 붙는다.
+ * 둘은 다른 사실이다: 점은 소켓이 붙어 있는가(기계가 파생), 이것은 지금 말을 걸어도
+ * 되는가(사람이 선언). 하나로 합치면 "연결이 끊긴 사람"과 "방해 금지인 사람"이 뭉친다.
+ *
+ * 에이전트에는 그리지 않는다 — 서버가 에이전트의 상태 변경을 거절하므로 그 값은 기본값일
+ * 뿐이고, 그리면 사람이 고른 신호처럼 읽힌다.
+ */
+export function StatusMark({ account, className = '' }: {
+  account: AccountView | undefined;
+  className?: string;
+}) {
+  if (!account || account.kind !== 'human') return null;
+  const mark = STATUS_MARKS[account.status];
+  if (!mark) return null;
+  // 문구가 있으면 접근성 이름에 함께 싣는다 — 좁은 자리에 글자를 더 밀어 넣지 않으면서도
+  // 스크린리더와 툴팁에는 사람이 적은 말이 도달한다. 이스케이프는 React 가 한다.
+  const name = account.statusText ? `${mark.label}: ${account.statusText}` : mark.label;
+  return (
+    <span
+      data-testid={`status-${account.id}`}
+      data-status={account.status}
+      title={name}
+      className={`inline-flex items-center text-[10px] leading-none ${className}`}
+    >
+      <span aria-hidden="true">{mark.glyph}</span>
+      <span className="sr-only">{name}</span>
     </span>
   );
 }

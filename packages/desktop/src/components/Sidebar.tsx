@@ -3,6 +3,8 @@ import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { LeasePanel } from './LeasePanel';
 import { Menu } from './Menu';
+import { StatusMark } from './Identity';
+import { StatusPicker } from './StatusPicker';
 import type { SectionId } from './settings/sections';
 import type { ChannelRow } from '@murmur/shared';
 import { CHANNEL_NAME_PATTERN } from '@murmur/shared';
@@ -124,6 +126,8 @@ export function Sidebar({ onLogout, onOpenSettings }: {
         id: dm.id,
         label: peers.map((id) => accounts[id]?.handle ?? '…').join(', ') || 'just me',
         online: peers.some((id) => online.includes(id)),
+        // 1:1 DM 에서만 상태를 그린다. 여러 사람이면 누구의 상태인지 표시가 답하지 못한다.
+        peer: peers.length === 1 ? accounts[peers[0]!] : undefined,
       };
     }), [dms, accounts, me, online]);
 
@@ -347,8 +351,12 @@ export function Sidebar({ onLogout, onOpenSettings }: {
             dmPeers.map((dm) => (
               <button key={dm.id} className={row(dm.id === activeChannelId)}
                 onClick={() => void getController().openChannel(dm.id)}>
+                {/* 연결 점과 상태 표시는 **둘 다** 남는다. 점은 소켓이 붙어 있는가(기계가
+                    파생), 상태는 지금 말을 걸어도 되는가(사람이 선언)다 — 하나로 합치면
+                    "연결이 끊긴 사람"과 "방해 금지인 사람"이 뭉친다(#186). */}
                 <span data-testid={`presence-${dm.id}`} data-online={String(dm.online)}
                   className={`h-2 w-2 rounded-full ${dm.online ? 'bg-green-500' : 'bg-zinc-600'}`} />
+                <StatusMark account={dm.peer} />
                 {dm.label}
                 <UnreadBadge channelId={dm.id} />
               </button>
@@ -372,6 +380,7 @@ export function Sidebar({ onLogout, onOpenSettings }: {
             { label: 'Sign out', onSelect: () => { getController().logout(); onLogout(); } },
           ]}
         />
+        <StatusPicker />
       </div>
     </aside>
   );
