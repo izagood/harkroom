@@ -125,4 +125,42 @@ describe('ConnectScreen', () => {
     expect(screen.queryByLabelText('Invite token')).toBeNull();
     expect(screen.getByLabelText('Display name')).toBeTruthy();
   });
+  // #246: login 200 직후 `/auth/me` 가 401 이라 앱에 들어갈 수 없었다. 원인은 `api.login()`
+  // 이 토큰을 **반환만** 하고 클라이언트에 싣지 않는데 이어서 같은 클라이언트로 `me()` 를
+  // 부른 것이다(#164 가 커뮤니티 키로 쓸 accountId 를 알려고 이 호출을 더했다).
+  //
+  // 위의 기존 테스트들이 이 회귀를 못 잡은 이유: 스텁이 **authorization 헤더를 보지 않고**
+  // `/auth/me` 에 늘 200 을 준다. 실서버는 인증 없으면 401 이다. 그래서 이 테스트는
+  // 헤더를 실제로 단언한다 — 그것이 이 회귀의 유일한 관측 지점이다.
+  it('로그인 응답의 토큰을 실어 /auth/me 를 부른다 (#246)', async () => {
+    const seen: { url: string; auth: string | null }[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const auth = (init?.headers as Record<string, string> | undefined)?.authorization ?? null;
+      seen.push({ url: String(url), auth });
+      if (String(url).endsWith('/auth/login')) {
+        return new Response(JSON.stringify({ token: 'tok-246' }), { status: 200 });
+      }
+      if (String(url).endsWith('/auth/me')) {
+        if (auth !== 'Bearer tok-246') {
+          return new Response(
+            JSON.stringify({ error: { code: 'unauthorized', message: 'unauthorized' } }),
+            { status: 401 },
+          );
+        }
+        return new Response(
+          JSON.stringify({ id: 'acct_246', handle: 'admin', displayName: 'Admin', kind: 'human', isAdmin: true, disabled: false }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    const onConnected = vi.fn();
+    render(<ConnectScreen onConnected={onConnected} />);
+    fireEvent.change(screen.getByLabelText('Handle'), { target: { value: 'admin' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await waitFor(() =>
+      expect(onConnected).toHaveBeenCalledWith('http://localhost:3400', 'tok-246', 'acct_246', 'admin'));
+    expect(seen.find((s) => s.url.endsWith('/auth/me'))?.auth).toBe('Bearer tok-246');
+  });
 });

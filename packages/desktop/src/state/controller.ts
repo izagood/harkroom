@@ -1,9 +1,10 @@
-import type { AccountStatus, AttachmentRow, ChannelRow, ChannelPrefRow, MessageRow, WsServerEvent } from '@murmur/shared';
+import type { AccountStatus, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, MessageRow, WsServerEvent } from '@murmur/shared';
 import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type Notifier } from '../lib/notify';
 import { useAppStore } from './appStore';
+import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
 import { usePrefsStore } from './prefsStore';
 
 export class Controller {
@@ -268,6 +269,9 @@ export class Controller {
     const since = this.loadedChannels.has(channelId)
       ? Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq))
       : 0;
+    // 핀은 **크리티컬 패스에서 뺀다.** 이 엔드포인트가 없는 서버(구버전)에 붙었을 때
+    // 채널이 아예 안 열리면 안 된다 — 채널 선호(`start`)와 같은 이유다.
+    this.swallow(this.loadPins(channelId));
     const page = await this.api.messages(channelId, { since });
     this.loadedChannels.add(channelId);
     useAppStore.getState().upsertMessages(channelId, page.messages);
@@ -433,6 +437,54 @@ export class Controller {
     useAppStore.getState().upsertMessages(activeChannelId, [updated]);
   }
 
+  /**
+   * 이 채널의 고정 목록을 서버에서 다시 받는다(#218).
+   *
+   * 델타가 아니라 목록 전체를 갈아 끼운다: 핀은 채널 전역 상태라 다른 사람이 고정·해제한
+   * 것도 섞여 들어오고, 그때 내 로컬 델타만 쌓으면 화면이 서버와 조용히 갈라진다.
+   */
+  async loadPins(channelId: string): Promise<void> {
+    const pins = await this.api.pins(channelId);
+    const store = useAppStore.getState();
+    store.set({ pins: { ...store.pins, [channelId]: pins } });
+  }
+
+  /**
+   * 고정한다. 성공 응답의 핀을 목록에 얹지 않고 **다시 받아 온다** — 정렬(최근 순)이
+   * 서버의 것이라 여기서 자리를 추측하면 다음 새로고침에 순서가 바뀐다.
+   *
+   * 실패를 삼키지 않는다: 보관된 채널이나 남의 DM 은 서버가 403 을 주고, 그 사실이
+   * 사람에게 보여야 한다 — 조용히 아무 일도 안 하면 계속 다시 누른다.
+   */
+  async pinMessage(channelId: string, messageId: string): Promise<void> {
+    try {
+      await this.api.pinMessage(channelId, messageId);
+    } catch (e) {
+      useAppStore.getState().set({
+        notice: e instanceof ApiError && e.code === 'channel_archived'
+          ? "This channel is archived — it's read-only, so nothing new can be pinned."
+          : 'Could not pin that message. Check your connection and try again.',
+      });
+      return;
+    }
+    await this.loadPins(channelId);
+  }
+
+  /** 해제한다. 고정한 사람도 admin 도 아니면 서버가 403 을 주고, 그 사유를 그대로 보여 준다. */
+  async unpinMessage(channelId: string, messageId: string): Promise<void> {
+    try {
+      await this.api.unpinMessage(channelId, messageId);
+    } catch (e) {
+      useAppStore.getState().set({
+        notice: e instanceof ApiError && e.status === 403
+          ? 'Only the person who pinned that message, or an admin, can unpin it.'
+          : 'Could not unpin that message. Check your connection and try again.',
+      });
+      return;
+    }
+    await this.loadPins(channelId);
+  }
+
   async deleteMessage(messageId: string): Promise<void> {
     const { activeChannelId, threadRootId } = useAppStore.getState();
     if (!activeChannelId) return;
@@ -503,18 +555,52 @@ export class Controller {
    * 컴포넌트가 `api` 를 직접 부르고 스토어를 손으로 갱신하면 그 절차가 화면마다 흩어지고,
    * 서버가 채운 필드(kind·topic 기본값)를 클라이언트가 추측하게 된다. 목록은 다시 받아온다.
    */
-  async createChannel(name: string): Promise<ChannelRow> {
-    const created = await this.api.createChannel({ name });
+  async createChannel(name: string, visibility: 'public' | 'private' = 'public'): Promise<ChannelRow> {
+    const created = await this.api.createChannel({ name, visibility });
     useAppStore.getState().set({ channels: await this.api.channels() });
     await this.openChannel(created.id);
     return created;
   }
 
   /**
+   * 멤버 목록을 받아 스토어에 넣는다. **실패를 빈 목록으로 삼키지 않는다** — 조회가
+   * 실패했는데 화면이 "멤버 없음"을 그리면, private 채널에서 그것은 "이 채널은 아무도
+   * 볼 수 없다"는 거짓 사실이 되고 나가기 경고가 사라진다. 던져서 호출부가 안내하게 한다.
+   */
+  async loadChannelMembers(channelId: string): Promise<ChannelMemberRow[]> {
+    const members = await this.api.channelMembers(channelId);
+    const store = useAppStore.getState();
+    store.set({ channelMembers: { ...store.channelMembers, [channelId]: members } });
+    return members;
+  }
+
+  async inviteChannelMember(channelId: string, accountId: string): Promise<ChannelMemberRow[]> {
+    const members = await this.api.inviteChannelMember(channelId, accountId);
+    const store = useAppStore.getState();
+    store.set({ channelMembers: { ...store.channelMembers, [channelId]: members } });
+    return members;
+  }
+
+  /**
+   * 나가기/내보내기. 나간 뒤에는 **채널 목록을 다시 받는다** — private 채널에서 나가면 그
+   * 채널은 더 이상 내게 존재하지 않으므로 사이드바에 남아 있으면 안 된다.
+   */
+  async leaveChannel(channelId: string, accountId: string): Promise<void> {
+    const members = await this.api.removeChannelMember(channelId, accountId);
+    const store = useAppStore.getState();
+    store.set({
+      channelMembers: { ...store.channelMembers, [channelId]: members },
+      channels: await this.api.channels(),
+    });
+  }
+
+  /**
    * 채널을 편집하고 목록을 갱신한다 — sidebar 가 `repo` 배지와 topic 을 직접 보여주므로
    * 편집 결과를 반영하려면 목록을 다시 받아야 한다. `createChannel` 과 같은 이유다.
    */
-  async updateChannel(id: string, input: { topic?: string; repo?: string | null }): Promise<ChannelRow> {
+  async updateChannel(
+    id: string, input: { topic?: string; repo?: string | null; visibility?: 'public' | 'private' },
+  ): Promise<ChannelRow> {
     const updated = await this.api.updateChannel(id, input);
     useAppStore.getState().set({ channels: await this.api.channels() });
     return updated;
@@ -582,6 +668,71 @@ export class Controller {
     store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
   }
 
+  /**
+   * 훑기 목록을 만든다(#227) — `reads` 맵 기반의 **전체 미읽음** 모드다.
+   *
+   * `openChannel` 을 쓰지 않는 것이 핵심이다. 채널을 열면 `settleReadPosition` 이 최신까지
+   * 읽음 ack 를 보내므로, 열어서 보여 주는 훑기에는 '그냥 다음'이 존재할 수 없다 — 지나간 것이
+   * 전부 읽음이 된다. 그래서 훑기는 자기 조회로 내용을 들고 와 화면 안에서 보여 준다.
+   *
+   * 채널마다 한 번씩 조회한다. 서버가 채널별 '가장 오래된 미읽음의 시각'을 주지 않아
+   * **정렬 기준을 메시지에서만 얻을 수 있기 때문**이다(`seq` 는 채널마다 독립이라 채널을
+   * 가로질러 비교할 수 없다). 어차피 훑기는 그 내용을 보여 줘야 하므로 같은 조회가 정렬 기준과
+   * 화면 내용을 함께 준다. 채널 수가 커지면 `/reads` 에 시각을 실어 주는 쪽이 다음 수순이다.
+   *
+   * **실패를 삼키지 않는다.** 여기서 던지는 예외를 빈 목록으로 바꾸면 화면이 "다 봤다"고
+   * 말하게 되는데, 그것은 못 불러온 것을 다 읽었다고 하는 거짓말이다(docs/design.md §4).
+   */
+  async loadUnreadSweep(): Promise<SweepItem[]> {
+    const reads = await this.api.reads();
+    const store = useAppStore.getState();
+    // 조회한 김에 배지도 같은 값으로 맞춘다 — 훑기와 사이드바가 서로 다른 미읽음을 말하면
+    // 어느 쪽이 맞는지 사람이 판단할 수 없다.
+    store.set({ reads: Object.fromEntries(reads.map((r) => [r.channelId, { lastReadSeq: r.lastReadSeq, unread: r.unread }])) });
+    // 음소거된 채널은 뜨지 않는다(#229). 음소거는 "이 채널은 나를 부르지 마라"이고
+    // 훑기 목록에 오르는 것은 부름의 한 형태다 — 여기서 빠뜨리면 음소거의 뜻이 다시 무너진다.
+    const candidates = reads.filter((r) => r.unread > 0 && !store.channelPrefs[r.channelId]?.mutedAt);
+    const pages = await Promise.all(
+      // `lastReadSeq` 가 0(한 번도 안 읽음)이면 서버는 최신 한 페이지를 준다 — 그 채널의
+      // 정렬 기준은 '받아 온 것 중 가장 오래된 것'이 된다. 훑기가 보여 줄 수 있는 범위와
+      // 정렬 기준을 같은 것으로 두는 편이, 못 본 메시지를 기준으로 줄 세우는 것보다 정직하다.
+      candidates.map((r) => this.api.messages(r.channelId, { since: r.lastReadSeq })),
+    );
+    const after = useAppStore.getState();
+    const items: SweepItem[] = [];
+    candidates.forEach((r, i) => {
+      const page = pages[i];
+      if (!page) return;
+      // 내가 쓴 메시지는 미읽음이 아니다 — 서버의 미읽음 셈(`readPositions.ts`)과 같은 기준이다.
+      const unreadMessages = page.messages.filter((m) => m.seq > r.lastReadSeq && m.authorId !== after.me?.id);
+      const oldest = unreadMessages[0];
+      // 보여 줄 것이 없으면 항목을 만들지 않는다. 눌러도 아무것도 없는 항목은
+      // "여기 볼 것이 있다"는 거짓 신호다.
+      if (!oldest) return;
+      items.push({
+        channelId: r.channelId,
+        label: sweepLabel(after, r.channelId),
+        messages: unreadMessages,
+        oldestAt: oldest.createdAt,
+        newestSeq: Math.max(...page.messages.map((m) => m.seq)),
+      });
+    });
+    return sortSweepItems(items);
+  }
+
+  /**
+   * 이 채널을 `seq` 까지 읽음 처리한다(#227의 '읽음 처리하고 다음').
+   *
+   * `markChannelUnread` 의 반대편이고 `settleReadPosition` 과 같은 ack 를 쓴다 — 서버가
+   * 단조 전진(`readPositions.ts`: "되돌아가지 않고")을 지키므로 낙관적 갱신도 되돌리지 않는다.
+   */
+  async markChannelReadUpTo(channelId: string, seq: number): Promise<void> {
+    await this.api.markChannelRead(channelId, seq);
+    const store = useAppStore.getState();
+    const cur = store.reads[channelId] ?? { lastReadSeq: 0, unread: 0 };
+    store.set({ reads: { ...store.reads, [channelId]: { lastReadSeq: Math.max(cur.lastReadSeq, seq), unread: 0 } } });
+  }
+
   /** 뒤로 탐색. 이력 스택에서 이전 항목으로 이동한다.
    * 사라진 채널을 만나면 건너뛴다. 갈 곳이 없으면 false 를 반환한다. */
   async goBack(): Promise<boolean> {
@@ -630,6 +781,9 @@ export class Controller {
     const since = this.loadedChannels.has(channelId)
       ? Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq))
       : 0;
+    // 핀은 **크리티컬 패스에서 뺀다.** 이 엔드포인트가 없는 서버(구버전)에 붙었을 때
+    // 채널이 아예 안 열리면 안 된다 — 채널 선호(`start`)와 같은 이유다.
+    this.swallow(this.loadPins(channelId));
     const page = await this.api.messages(channelId, { since });
     this.loadedChannels.add(channelId);
     store.upsertMessages(channelId, page.messages);
