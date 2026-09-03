@@ -509,6 +509,20 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, collapsed, 
         ? { label: '보관 해제', onSelect: () => void getController().archiveChannel(ch.id, false) }
         : { label: '보관', onSelect: () => void getController().archiveChannel(ch.id, true) }]
       : []),
+      // 삭제(#155): 보관된 채널에만 표시, admin만 가능, 두 번 묻기 (메시지 수 보여주기)
+      ...(me?.isAdmin && isArchived ? [{
+        label: '삭제',
+        onSelect: async () => {
+          try {
+            const info = await getController().api.deleteChannelInfo(ch.id);
+            if (confirm(`이 채널과 메시지 ${info.messageCount}개를 영구히 지운다.`)) {
+              await getController().deleteChannel(ch.id);
+            }
+          } catch (err) {
+            console.error('채널 삭제 실패:', err);
+          }
+        },
+      }] : []),
       { label: '멤버 보기', onSelect: () => void openMembers(ch.id) },
       // 초대와 나가기는 **그 채널의 멤버**여야 하는 동작이다(public 채널의 초대는 예외 —
       // 서버 게이트가 누구나 통과시킨다). 메뉴는 목록을 받기 전에도 그려지므로 아직

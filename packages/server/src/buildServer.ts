@@ -236,15 +236,16 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   await registerAuthRoutes(app, deps.pool);
   await registerAccountRoutes(app, deps.pool);
-  await registerChannelRoutes(app, deps.pool);
-  await registerMessageRoutes(app, deps.pool);
   const storageOpts = deps.storage ?? {
     root: process.env.ATTACHMENT_ROOT ?? './.attachments',
     maxBytes: Number(process.env.ATTACHMENT_MAX_BYTES ?? DEFAULT_MAX_ATTACHMENT_BYTES),
   };
+  const storage = createLocalStorage(storageOpts);
   // multipart 의 자체 제한도 같은 값으로 맞춘다 — 스토리지만 막으면 파서가 먼저 메모리를 쓴다.
   await app.register(fastifyMultipart, { limits: { fileSize: storageOpts.maxBytes, files: 1 } });
-  await registerAttachmentRoutes(app, deps.pool, createLocalStorage(storageOpts));
+  await registerChannelRoutes(app, deps.pool, storage);
+  await registerMessageRoutes(app, deps.pool);
+  await registerAttachmentRoutes(app, deps.pool, storage);
   await registerDirectoryRoutes(app, deps.pool);
   await registerAuditRoutes(app, deps.pool);
   await registerSettingsRoutes(app, deps.pool);

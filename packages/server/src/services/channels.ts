@@ -338,3 +338,100 @@ export async function channelPostGate(
   if (!row.visible) return 'forbidden';
   return row.archived ? 'archived' : 'ok';
 }
+
+/**
+ * 보관된 표준 채널을 영구히 삭제한다(#155).
+ *
+ * 삭제 대상 테이블( channel_id 또는 message_id 로 참조하는 전부):
+ *   - attachment (message_id 로 참조, on delete cascade)
+ *   - message_reaction (message_id 로 참조, on delete cascade)
+ *   - message_pin (channel_id 로 직접 참조)
+ *   - channel_read (channel_id 로 직접 참조)
+ *   - channel_member (channel_id 로 직접 참조)
+ *   - channel_pref (channel_id 로 직접 참조, on delete cascade)
+ *   - message (channel_id 로 직접 참조)
+ *   - channel (자신)
+ *
+ * FK cascade 를 쓰지 않는 이유: cascade 를 스키마에 박으면 무엇이 함께 사라지는지가
+ * 코드 어디에도 안 적혀서, 나중에 새 테이블이 channel_id 를 참조할 때 그 테이블도
+ * 조용히 같이 지워진다. 이 함수가 명시적으로 지우는 순서와 대상을 적는 것이 이 작업의
+ * 산출물이다.
+ *
+ * 계정 삭제(009_agent_disable.sql) 와 다른 이유: 계정은 남의 메시지에 작성자로 남지만,
+ * 채널은 그 안의 것을 다 지우면 참조가 남지 않는다 — 계정은 soft delete 로
+ * "비활성화"하고, 채널은 hard delete 로 "완전히 사라진다".
+ *
+ * 파일 삭제는 행 삭제 **이후**에 한다: 행을 먼저 지우면 파일 삭제가 실패해도 남는
+ * 것이 고아 파일(나중에 GC 로 치울 수 있다)이고, 파일을 먼저 지우면 그 사이 읽는
+ * 요청이 '깨진 첨부'를 본다. 파일 삭제 실패는 트랜잭션을 되돌리지 않는다 — 고아 파일은
+ * 무해하고, 되돌리면 사람은 지웠다고 믿는데 채널이 살아 있다.
+ *
+ * @param storage 파일 삭제를 위한 스토리지 백엔드 (테스트용 mocking 가능)
+ * @returns 삭제된 채널 정보와 지운 메시지·첨부 개수, 삭제할 파일 키 목록
+ */
+export async function deleteChannel(
+  pool: Pool, channelId: string,
+  storage?: { remove(key: string): Promise<void> },
+): Promise<{ name: string; messageCount: number; attachmentCount: number; storageKeys: string[] } | 'not_archived' | 'not_found' | 'is_dm'> {
+  const client = await pool.connect();
+  try {
+    // 채널 존재와 상태 확인 (트랜잭션 외부에서 먼저 확인)
+    const channel = await pool.query(
+      `select id, name, kind, archived_at from channel where id = $1`,
+      [channelId],
+    );
+    if (!channel.rowCount) return 'not_found';
+    const row = channel.rows[0] as { id: string; name: string; kind: string; archived_at: string | null };
+    if (row.kind !== 'standard') return 'is_dm';
+    if (!row.archived_at) return 'not_archived';
+
+    // 삭제할 파일 키를 먼저 조회 (행 삭제 전에)
+    const storageKeysResult = await pool.query(
+      `select a.storage_key from attachment a
+       join message m on m.id = a.message_id
+       where m.channel_id = $1`,
+      [channelId],
+    );
+    const storageKeys = storageKeysResult.rows.map((r) => r.storage_key);
+
+    // 삭제 대상 개수 조회 (감사에 남기기 위함)
+    const messageCountResult = await pool.query(
+      `select count(*)::int as cnt from message where channel_id = $1`,
+      [channelId],
+    );
+    const messageCount = messageCountResult.rows[0]!.cnt;
+
+    const attachmentCount = storageKeys.length;
+
+    // 트랜잭션 시작
+    await client.query('begin');
+
+    // 행 삭제 (파일보다 먼저 — 행을 먼저 지우면 파일 삭제가 실패해도 고아 파일만 남는다)
+    // message_pin: channel_id 로 직접 참조
+    await client.query(`delete from message_pin where channel_id = $1`, [channelId]);
+    // channel_read: channel_id 로 직접 참조
+    await client.query(`delete from channel_read where channel_id = $1`, [channelId]);
+    // channel_member: channel_id 로 직접 참조
+    await client.query(`delete from channel_member where channel_id = $1`, [channelId]);
+    // channel_pref: channel_id 로 직접 참조, cascade 로도 되지만 명시적으로
+    await client.query(`delete from channel_pref where channel_id = $1`, [channelId]);
+    // message: channel_id 로 직접 참조 (attachment, message_reaction 은 cascade 로 함께 삭제)
+    await client.query(`delete from message where channel_id = $1`, [channelId]);
+    // channel: 마지막에 삭제
+    await client.query(`delete from channel where id = $1`, [channelId]);
+
+    await client.query('commit');
+
+    // 트랜잭션 성공 후 파일 삭제 (실패해도 트랜잭션은 되돌리지 않음 — 고아 파일은 무해)
+    if (storage && storageKeys.length > 0) {
+      await Promise.allSettled(storageKeys.map((key) => storage.remove(key).catch(() => {})));
+    }
+
+    return { name: row.name ?? '', messageCount, attachmentCount, storageKeys };
+  } catch (err) {
+    await client.query('rollback');
+    throw err;
+  } finally {
+    client.release();
+  }
+}

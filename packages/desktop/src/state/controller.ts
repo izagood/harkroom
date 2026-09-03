@@ -612,6 +612,16 @@ export class Controller {
     return updated;
   }
 
+  /**
+   * 채널을 영구히 삭제한다(#155). 삭제 후에는 채널 목록에서 해당 채널이 사라진다.
+   * 실패를 삼키지 않는다 — 호출부가 사람에게 보여 줘야 한다.
+   */
+  async deleteChannel(id: string): Promise<void> {
+    await this.api.deleteChannel(id);
+    // 삭제 후 목록을 다시 받아서 화면에서 채널을 없앤다.
+    useAppStore.getState().set({ channels: await this.api.channels() });
+  }
+
   async startDm(accountId: string): Promise<void> {
     const dm = await this.api.createDm([accountId]);
     useAppStore.getState().set({ dms: await this.api.dms() });
