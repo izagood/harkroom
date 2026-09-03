@@ -414,6 +414,15 @@ export class Controller {
     return this.api.updateAgent(id, patch);
   }
 
+  /** #139: 에이전트 메모리. 실패를 삼키지 않는다 — 호출부가 "없다" 와 "못 읽었다" 를 가른다. */
+  agentMemory(agentId: string): Promise<{ slug: string; value: string; updatedAt: string }[]> {
+    return this.api.agentMemory(agentId);
+  }
+
+  deleteAgentMemory(agentId: string, slug: string): Promise<void> {
+    return this.api.deleteAgentMemory(agentId, slug);
+  }
+
   listPats(accountId: string): Promise<import('@murmur/shared').PatView[]> {
     return this.api.listPats(accountId);
   }
