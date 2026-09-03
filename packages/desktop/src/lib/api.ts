@@ -357,7 +357,10 @@ export class ApiClient {
   }
 
   /** `muted` 는 없다 — `notifyLevel` 이 대체했다(#224). */
-  updateChannelPref(channelId: string, patch: { notifyLevel?: NotifyLevel; starred?: boolean }): Promise<ChannelPrefRow> {
+  updateChannelPref(
+    channelId: string,
+    patch: { notifyLevel?: NotifyLevel; starred?: boolean; section?: string | null; sortOrder?: number | null },
+  ): Promise<ChannelPrefRow> {
     return this.req('PATCH', `/channels/${channelId}/pref`, patch);
   }
 

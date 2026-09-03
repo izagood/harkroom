@@ -283,14 +283,40 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     // 한쪽만 고쳐 API 가 새 값을 400 으로 막는다.
     notifyLevel: z.enum(NOTIFY_LEVELS).optional(),
     starred: z.boolean().optional(),
+    // 섹션: DM 에는 사용할 수 없다(#157). 길이 1~40, 앞뒤 공백 제거, 빈 문자열은 null.
+    // null 은 "섹션에서 빼기"고, 빈 문자열도 null 로 변환된다.
+    // .min(1) 이 아니라 .max(40) 만 — 빈 문자열은 라우트에서 거르고 service 에서 null 로 변환.
+    section: z.string().max(40).optional().nullable(),
+    // 섹션 안에서의 수동 순서(#157). null 이면 이름순 뒤에 붙는다.
+    // `nullable` 인 이유: "지우기"는 명시적 null 이다 — 이것이 없으면 한 번 매긴 순서를
+    // 되돌릴 방법이 없다(`undefined` 는 JSON 에서 키 자체가 사라져 "안 보냈다"가 된다).
+    sortOrder: z.number().int().optional().nullable(),
   }).strict();
 
   app.patch('/channels/:id/pref', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = prefParam.parse(req.params);
     const patch = prefBody.parse(req.body);
+
+    // 가시성 검사가 **먼저**다. 아래 DM 검사를 앞에 두면 남의 DM 에 섹션을 붙여 보는 것만으로
+    // 400(`cannot_section_dm`)과 403 이 갈려 그 채널이 DM 이라는 사실이 새 나간다 — 볼 수 없는
+    // 채널에 대한 응답은 종류도 존재도 말하지 않아야 한다.
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
+
+    // DM 은 섹션을 가질 수 없다(#157). null 은 "섹션에서 빼기"이므로 허용한다 —
+    // 이미 붙은 섹션을 뗄 길이 없으면 잘못 들어간 DM 이 영영 그 자리에 남는다.
+    if (patch.section !== undefined && patch.section !== null) {
+      const channel = await pool.query(`select kind from channel where id = $1`, [id]);
+      if (!channel.rowCount) {
+        return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+      }
+      if (channel.rows[0]!.kind === 'dm') {
+        return reply.code(400).send({ error: { code: 'cannot_section_dm', message: 'DMs cannot have a section' } });
+      }
+    }
+    // 값 가공(앞뒤 공백 제거, 빈 문자열은 null)은 `updateChannelPref` 한 곳에서 한다 —
+    // 여기서 한 번 더 다듬으면 같은 뜻이 두 곳에 살고, 한쪽만 고치는 사고가 난다.
     const pref = await updateChannelPref(pool, req.account!.id, id, patch);
     if (!pref) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
