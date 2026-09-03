@@ -117,6 +117,22 @@ export interface RunPtyTurnOptions {
   /** Phase 2 가 onData 로 확장해 라이브 중계에 쓴다. 없어도 tail 계약에는 영향 없다. */
   ring?: RingBuffer;
   /**
+   * PTY 가 뱉은 **raw 바이트**를 청크마다 그대로 넘긴다(#141 Phase 2 라이브 중계).
+   *
+   * `ring` 과 나란히 있는 이유: ring 은 attach 시 재생할 **과거**이고 이것은 지금 붙어
+   * 있는 사람에게 흘릴 **현재**다. 하나로 합칠 수 없다 — ring 하나만 두면 뷰어가 폴링을
+   * 해야 하고, 이것만 두면 attach 시점 이전 화면이 없다.
+   *
+   * 문자열이 아니라 `Buffer` 를 넘긴다. 이 청크는 xterm 까지 **한 번도 디코드되지 않고**
+   * 가야 한다 — 청크 경계에서 잘린 UTF-8 을 문자열로 뜨면 U+FFFD 로 치환돼 되돌릴 수
+   * 없고, ANSI 이스케이프가 조각나 화면이 깨진다(위 `RingBuffer` 주석과 같은 규율).
+   *
+   * **던지지 않는 것은 호출자의 책임이다.** 여기서 감싸지 않는 이유: 이 콜백이 던지면
+   * node-pty 의 data 리스너 안에서 터지고, 그것은 턴 전체를 죽인다. 관찰 하나가 사람이
+   * 기다리는 답을 죽이지 않도록 넘기는 쪽(`relay.ts`)이 스스로 삼킨다.
+   */
+  onData?: (chunk: Buffer) => void;
+  /**
    * SIGTERM → SIGKILL 유예(ms). 생략하면 프로덕션 기본값(SIGKILL_GRACE_MS, 5초)을 그대로
    * 쓴다 — 테스트가 SIGKILL 승격 경로를 확인하려고 5초를 통째로 기다리지 않게 여는 구멍이지,
    * 운영 판단을 호출자에게 넘기는 옵션이 아니다.
@@ -170,6 +186,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       const buf = Buffer.from(chunk, 'utf8');
       tail.push(buf);
       opts.ring?.push(buf);
+      opts.onData?.(buf);
     });
 
     const timeoutTimer = setTimeout(() => {

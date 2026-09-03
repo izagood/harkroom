@@ -13,7 +13,7 @@
 import { execFile } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
-import { loadConfig } from './config.js';
+import { loadConfig, runnerLabel } from './config.js';
 import { MurmurAgentClient } from './murmur.js';
 import { mentionAnchor, runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
 import { runPtyTurn } from './pty.js';
@@ -25,6 +25,7 @@ import { exhausted, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 import { runnerExitPlan } from './exit.js';
 import { stopRequestedForRunner } from './stop.js';
 import { FAILURE_NOTICE } from './prompt.js';
+import { createRelayClient } from './relay.js';
 
 const config = loadConfig();
 const murmur = new MurmurAgentClient(config.murmurUrl, config.murmurPat);
@@ -94,7 +95,17 @@ const [me, guide] = await (async () => {
 // #167: 그 격리가 **서버 축에서** 또 절반이었다. handle 만으로 나누면 서로 다른 서버의
 // 같은 handle 이 같은 디렉터리를 쓴다. 키에 계정 id 를 넣어 서버별로 갈린다 — 왜 URL 이
 // 아니라 id 인지는 stateDir.ts 주석에 있다.
-const { agentStateDir, legacyPath } = resolveAgentStateDir(config.stateDir, me.handle, me.id);
+//
+// #174: 같은 에이전트를 여러 인스턴스로 동시에 돌리기 위해 인스턴스 축을 하나 더한다.
+// MURMUR_AGENT_INSTANCE 가 없으면 기존 경로가 그대로(하위 호환). 있으면 마지막
+// 세그먼트로 붙는다.
+//
+// **세션 파일·MCP 설정·avcs 워크스페이스 경로를 여기서 이어 붙이지 않는다** — 그 셋을
+// `resolveAgentStateDir` 이 함께 돌려준다. 여기서 각자 조립하면 하나를 옛 뿌리에 두는
+// 실수가 타입에 걸리지 않고, 그 파일 하나만 두 인스턴스가 밟는다(그러면 격리는 없다).
+const {
+  agentStateDir, legacyPath, sessionsPath, mcpDir, workspaceBaseDir,
+} = resolveAgentStateDir(config.stateDir, me.handle, me.id, config.agentInstance);
 
 // 서버별로 갈리기 전 경로가 남아 있으면 **경고만** 한다 — 자동으로 옮기지 않는다.
 // 코드는 그 디렉터리가 *어느 서버의* 이 handle 것인지 알 방법이 없다(아래 레거시
@@ -115,16 +126,13 @@ if (hasLegacySessions) {
   console.warn('  자동으로 옮기지 않는다 — 고아 워크스페이스·claude 세션을 직접 확인하고 정리해라.');
 }
 
-const store = new SessionStore(join(agentStateDir, 'sessions.json'));
+const store = new SessionStore(sessionsPath);
 await store.load();
 
 // MCP 설정 파일은 기동 시 한 번만 쓴다 — PAT 는 실값이 아니라 플레이스홀더로 들어가므로
 // 파일 자체는 비밀이 아니다(turn.ts::writeMcpConfigOnce). stateDir/handle 아래 고정 경로에
 // 둬서 러너가 재시작돼도 같은 경로를 그대로 재사용한다.
-const mcpConfigPath = await writeMcpConfigOnce(join(agentStateDir, 'mcp'), config.murmurUrl);
-
-// avcs 워크스페이스들이 사는 상위 디렉터리. stateDir/handle 아래에 둬서 세션 파일과 생애주기를 같이 한다.
-const workspaceBaseDir = join(agentStateDir, 'workspaces');
+const mcpConfigPath = await writeMcpConfigOnce(mcpDir, config.murmurUrl);
 
 /**
  * `node:child_process` 의 `execFile` 을 workspace.ts::Exec 계약으로 감싼 얇은 어댑터.
@@ -148,8 +156,21 @@ const exec: Exec = (cmd, args, opts) =>
     });
   });
 
-console.log(`@${me.handle} 로 붙었다 — ${config.murmurUrl}`);
+// 기동 로그에 handle 과 인스턴스를 함께 적는다(#174) — 운영자가 `ps` 로 구분해야 한다.
+// 형식은 `runnerLabel` 하나가 갖는다: 여기서 직접 조립하면 로그와 문서가 갈린다.
+console.log(`${runnerLabel(me.handle, config.agentInstance)} 로 붙었다 — ${config.murmurUrl}`);
+console.log(`상태 디렉터리: ${agentStateDir}`);
 console.log('정의는 서버에서 읽는다 (murmur UI 의 Add/Edit agent 로 바꾼다)');
+
+// #141 Phase 2: 진행 중인 턴의 PTY 바이트를 서버로 중계하는 상시 outbound WS. 여기서
+// 시작하고, 끊기면 스스로 백오프로 다시 붙는다(`relay.ts` — `policy.ts::nextBackoffMs`
+// 를 poll 루프와 공유한다).
+//
+// **접속 실패로 러너를 죽이지 않는다.** 릴레이는 관찰이고 poll 루프는 답이다 — 서버가
+// attach 를 지원하지 않는 구버전이거나 릴레이가 막혀 있어도 멘션에는 답해야 한다.
+// 그래서 여기에 await 도, 성공 확인도 없다.
+const relay = createRelayClient({ murmurUrl: config.murmurUrl, pat: config.murmurPat });
+relay.start();
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -206,6 +227,7 @@ while (running) {
           stateDir: agentStateDir,
           murmurUrl: config.murmurUrl, pat: config.murmurPat,
           turnTimeoutMs: config.turnTimeoutMs,
+          relay,
         };
         // #98: 채널 최상위 멘션(threadRootId 가 null)은 **그 멘션 메시지를 루트로 하는
         // 스레드**에 답한다. 두 가지를 한 번에 얻는다: 긴 답이 채널 본문에 쌓이지 않고,
@@ -277,4 +299,5 @@ while (running) {
     backoffMs = nextBackoffMs(backoffMs);
   }
 }
+relay.stop();
 console.log('종료');

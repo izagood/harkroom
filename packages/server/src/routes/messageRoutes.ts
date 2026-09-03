@@ -8,6 +8,7 @@ import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateS
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { normalizeSearchQuery } from '../services/mentions.js';
+import { extractUrls, queueLinkPreviewFetch } from '../services/linkPreview.js';
 
 export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.post('/channels/:id/messages', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -48,6 +49,10 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
       const audience = await audienceFor(pool, id);
       emitEvent({ type: 'message.created', message, audience });
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+      const urls = extractUrls(body.body);
+      for (const url of urls) {
+        queueLinkPreviewFetch(pool, url).catch(() => {});
+      }
     }
     return reply.code(replayed ? 200 : 201).send(message);
   });

@@ -1,4 +1,4 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView } from '@murmur/shared';
 
 export class ApiError extends Error {
   /**
@@ -260,6 +260,23 @@ export class ApiClient {
     return this.req('POST', `/accounts/agents/${agentId}/stop`);
   }
 
+  /**
+   * 진행 중인 에이전트 PTY 세션 목록(#141). **내가 볼 수 있는 것만 온다** — 소유하지
+   * 않은 에이전트의 세션은 목록에 아예 없다(403 이 아니라 부재다).
+   */
+  async agentSessions(): Promise<AgentSessionView[]> {
+    const res = await this.req<{ sessions: AgentSessionView[] }>('GET', '/agent-sessions');
+    return res.sessions;
+  }
+
+  /**
+   * 세션 하나에 attach 한다. 인가는 **여기서** 끝난다 — 돌려받는 티켓은 그 세션 하나에만
+   * 쓸 수 있는 1회용이고, WS 핸드셰이크는 그 티켓만 소모한다.
+   */
+  attachAgentSession(sessionId: string): Promise<{ ticket: string; session: AgentSessionView }> {
+    return this.req('POST', `/agent-sessions/${sessionId}/attach`);
+  }
+
   /** WS 핸드셰이크용 단기 1회용 티켓. 연결 시도마다 새로 받는다. */
   async wsTicket(): Promise<string> {
     const res = await this.req<{ ticket: string }>('POST', '/ws-ticket');
@@ -423,6 +440,15 @@ export class ApiClient {
   async search(q: string, channelId?: string | null): Promise<MessageRow[]> {
     const scope = channelId ? `&channelId=${encodeURIComponent(channelId)}` : '';
     return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
+  }
+
+  /**
+   * 링크 미리보기 카드(#215). 아직 없으면 서버가 404 를 준다 — **여기서 삼키지 않는다.**
+   * 삼키면 "아직 안 왔다"와 "요청이 실패했다"가 한 값이 되고, 그러면 호출부가 다시 읽을
+   * 이유를 판단할 수 없다. 카드가 장식이라 조용히 넘어가는 판단은 호출부(`LinkPreview`)가 한다.
+   */
+  getLinkPreview(url: string): Promise<LinkPreviewView> {
+    return this.req<LinkPreviewView>('GET', `/link-previews?url=${encodeURIComponent(url)}`);
   }
 
   /** 이 채널에서 내가 예약한 메시지 목록(#222). */

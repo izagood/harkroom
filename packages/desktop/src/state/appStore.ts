@@ -32,6 +32,12 @@ export interface AppState {
    */
   dividerSeq: Record<string, number>;
   online: string[];
+  /**
+   * 지금 터미널 패널이 붙어 있는 에이전트 계정 id(#141). `null` 은 패널이 닫혀 있다는
+   * 뜻이다 — 세션 id 가 아니라 **에이전트** id 인 이유: 칩은 에이전트별로 뜨고(스펙 §5,
+   * 한 스레드에 세션이 N개일 수 있다), 어느 세션에 붙을지는 패널이 목록을 받아 정한다.
+   */
+  terminalAgentId: string | null;
   leases: LeaseRow[];
   connected: boolean;
   /**
@@ -125,6 +131,13 @@ export interface AppState {
   expandedMessageIds: Record<string, true>;
   /** 에이전트별 러너 실행 상태. agentId → state */
   runnerStates: Record<string, RunnerState>;
+  /**
+   * 링크 미리보기가 준비된 시각. url → 타임스탬프(#215).
+   *
+   * 카드 **내용**을 여기 담지 않는 이유: 캐시는 서버에 하나뿐이고, 두 벌을 두면 어느 쪽이
+   * 최신인지 화면마다 갈린다. 여기 있는 것은 "다시 읽어라"는 신호뿐이다.
+   */
+  linkPreviewReadyAt: Record<string, number>;
   set(partial: Partial<AppState>): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
@@ -159,10 +172,11 @@ export interface AppState {
 const initial = {
   me: null, accounts: {}, groups: [], channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
-  online: [], leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
+  online: [], terminalAgentId: null, leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
   expandedMessageIds: {}, runnerStates: {}, savedIds: [], savedCount: 0,
+  linkPreviewReadyAt: {},
 };
 
 export const useAppStore = create<AppState>((set, get) => ({

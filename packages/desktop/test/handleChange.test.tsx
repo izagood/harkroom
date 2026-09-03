@@ -14,7 +14,7 @@ function mount(setHandle = vi.fn(async () => {})) {
   setController({ api: { baseUrl: 'http://x' }, setHandle } as unknown as Controller);
   useAppStore.getState().reset();
   useAppStore.getState().set({ me: acc('u1', 'fizz'), accounts: { u1: acc('u1', 'fizz') } });
-  render(<ProfileSettings />);
+  render(<ProfileSettings onSignOut={vi.fn()} />);
   return setHandle;
 }
 
