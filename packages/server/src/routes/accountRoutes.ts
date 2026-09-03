@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { newToken } from '../auth/tokens.js';
 import { ACCOUNT_STATUSES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@murmur/shared';
 import {
-  ackAgentStop, createAgentAccount, getAgent, listAgents, requestAgentStop, revokeAllPats, updateAgent,
+  ackAgentStop, createAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
+  revokeAllPats, updateAgent,
 } from '../services/agents.js';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
@@ -264,6 +265,31 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
       }
     }
     return self;
+  });
+
+  /**
+   * 러너가 **턴을 마쳤다**고 보고하는 자리(#176). 러너 자신의 PAT 로 부르고, **자기 행만**
+   * 갱신한다 — 대상 id 를 받지 않는 이유가 그것이다. 받으면 러너 하나가 남의 활동 시각을
+   * 쓸 수 있게 되고, 그 값은 더 이상 그 에이전트가 움직였다는 증거가 아니다.
+   *
+   * **본문이 없다.** 시각은 서버가 `now()` 로 찍는다: 러너 시계가 서버보다 앞선 머신에서
+   * 러너가 보낸 값을 그대로 저장하면 "3분 뒤에 활동함"이 화면에 뜨고, 그건 활동 시각이
+   * 아니라 시계 오차다(마이그레이션 020 주석).
+   *
+   * 사람 계정을 400 으로 거절한다. `GET /agent/config` 는 같은 자리에서 403 을 쓰는데,
+   * 거기는 '남의 정의를 읽으려는 시도'라 권한 문제인 반면 여기는 사람 계정에 **뜻이 없는
+   * 요청**이다 — `PUT /accounts/me/status` 가 에이전트를 400 `invalid_account` 로 돌려보내는
+   * 것과 같은 결이다. 거절했으면 아무것도 쓰지 않는다.
+   *
+   * 감사 기록을 남기지 않는다: 이것은 매 턴 일어나는 일이라, 감사에 쌓으면 감사 로그가
+   * 사람이 읽을 수 없는 잡음이 된다(감사는 권한·도달 범위를 바꾼 조작을 남기는 자리다).
+   */
+  app.post('/agent/activity', { preHandler: app.requireAccount }, async (req, reply) => {
+    if (req.account!.kind !== 'agent') {
+      return reply.code(400).send({ error: { code: 'invalid_account', message: 'activity is only for agent accounts' } });
+    }
+    const lastTurnAt = await recordAgentTurn(pool, req.account!.id);
+    return { lastTurnAt };
   });
 
   /**
