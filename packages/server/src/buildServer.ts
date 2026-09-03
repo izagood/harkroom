@@ -17,6 +17,7 @@ import { registerDirectoryRoutes } from './routes/directoryRoutes.js';
 import { registerAuditRoutes } from './routes/auditRoutes.js';
 import { registerSettingsRoutes } from './routes/settingsRoutes.js';
 import { registerHandleGroupRoutes } from './routes/handleGroupRoutes.js';
+import { registerAgentRelayRoutes } from './routes/agentRelayRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
 import { createAgentPresence } from './mcp/presence.js';
@@ -98,6 +99,8 @@ export interface ServerDeps {
    * S3 호환으로 바꿀 때는 storage/local.ts 만 갈아 끼우면 된다.
    */
   storage?: { root: string; maxBytes: number };
+  /** attach 티켓 수명(ms). 기본 30초 — `/ws` 티켓과 같다. 테스트에서 짧게 준다. */
+  attachTicketTtlMs?: number;
 }
 
 /** 25MB. 스크린샷·로그 파일에는 넉넉하고, 디스크가 조용히 차지 않을 만큼은 좁다. */
@@ -309,6 +312,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerAuditRoutes(app, deps.pool);
   await registerSettingsRoutes(app, deps.pool);
   await registerHandleGroupRoutes(app, deps.pool);
+
+  // #141 Phase 2 attach. **registerWs 뒤여야 한다** — `websocket: true` 라우트는
+  // `@fastify/websocket` 이 등록된 뒤에만 만들어질 수 있고, 그 등록은 registerWs 안에서
+  // 일어난다. `registerAuth` 뒤여야 하는 이유는 `/metrics` 와 같다: `app.requireAccount`
+  // 가 아직 undefined 면 preHandler 가 통째로 사라져 러너 소켓이 인증 없이 열린다.
+  await registerAgentRelayRoutes(app, deps.pool, {
+    attachTicketTtlMs: deps.attachTicketTtlMs,
+  });
 
   // **registerAuth 뒤에 등록해야 한다.** `app.requireAccount` 는 registerAuth 가 데코레이트하므로,
   // 앞에서 등록하면 preHandler 가 undefined 로 박혀 인증 없이 열린다(테스트가 이걸 잡았다).

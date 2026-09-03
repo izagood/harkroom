@@ -31,6 +31,12 @@ export interface AppState {
    */
   dividerSeq: Record<string, number>;
   online: string[];
+  /**
+   * 지금 터미널 패널이 붙어 있는 에이전트 계정 id(#141). `null` 은 패널이 닫혀 있다는
+   * 뜻이다 — 세션 id 가 아니라 **에이전트** id 인 이유: 칩은 에이전트별로 뜨고(스펙 §5,
+   * 한 스레드에 세션이 N개일 수 있다), 어느 세션에 붙을지는 패널이 목록을 받아 정한다.
+   */
+  terminalAgentId: string | null;
   leases: LeaseRow[];
   connected: boolean;
   /**
@@ -148,7 +154,7 @@ export interface AppState {
 const initial = {
   me: null, accounts: {}, groups: [], channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
-  online: [], leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
+  online: [], terminalAgentId: null, leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
   expandedMessageIds: {}, savedIds: [], savedCount: 0,
