@@ -422,19 +422,33 @@ export class Controller {
 
   closeThread(): void { useAppStore.getState().set({ threadRootId: null }); }
 
-  async send(body: string, attachmentIds: string[] = []): Promise<void> {
-    const { activeChannelId } = useAppStore.getState();
+  /**
+   * 보낼 자리를 **인자로 받는다**(#223). 스토어의 활성 채널을 호출 시점에 읽으면, 보냄 취소
+   * 창이 도는 동안 채널을 옮긴 사람의 메시지가 **옮긴 채널로 나간다** — #184 가 닫은 결함과
+   * 같은 모양이다. 호출부가 글을 쓴 순간의 채널을 붙여 주면 시점이 어긋날 자리가 없다.
+   *
+   * 인자를 생략하면 예전처럼 활성 채널로 간다 — 즉시 보내는 호출부는 그 편이 짧다.
+   */
+  async send(body: string, attachmentIds: string[] = [], channelId?: string): Promise<void> {
+    const target = channelId ?? useAppStore.getState().activeChannelId;
     // 파일만 보내는 것은 자연스럽다 — 본문이 비었다고 막으면 첨부를 보낼 길이 없다.
-    if (!activeChannelId || (!body.trim() && !attachmentIds.length)) return;
-    const m = await this.api.postMessage(activeChannelId, body, undefined, crypto.randomUUID(), attachmentIds);
-    useAppStore.getState().upsertMessages(activeChannelId, [m]);
+    if (!target || (!body.trim() && !attachmentIds.length)) return;
+    const m = await this.api.postMessage(target, body, undefined, crypto.randomUUID(), attachmentIds);
+    useAppStore.getState().upsertMessages(target, [m]);
   }
 
-  async reply(body: string, attachmentIds: string[] = []): Promise<void> {
-    const { activeChannelId, threadRootId } = useAppStore.getState();
-    if (!activeChannelId || !threadRootId || (!body.trim() && !attachmentIds.length)) return;
-    const m = await this.api.postMessage(activeChannelId, body, threadRootId, crypto.randomUUID(), attachmentIds);
-    useAppStore.getState().upsertMessages(activeChannelId, [m]);
+  /**
+   * 스레드 답글도 같은 이유로 자리를 인자로 받는다. 여기는 사유가 하나 더 있다 — 스레드
+   * 패널을 닫으면 `threadRootId` 가 null 이 되어, 창이 도는 동안 닫으면 답글이 **아예
+   * 사라진다**(아래 가드에서 그냥 반환된다).
+   */
+  async reply(body: string, attachmentIds: string[] = [], channelId?: string, threadRootId?: string): Promise<void> {
+    const state = useAppStore.getState();
+    const target = channelId ?? state.activeChannelId;
+    const root = threadRootId ?? state.threadRootId;
+    if (!target || !root || (!body.trim() && !attachmentIds.length)) return;
+    const m = await this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds);
+    useAppStore.getState().upsertMessages(target, [m]);
   }
 
   /**

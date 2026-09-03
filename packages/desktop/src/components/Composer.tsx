@@ -8,6 +8,7 @@ import { formatSize } from './Attachments';
 import {
   mentionQueryAt, applyMention, withStickyMentions, keepMentioned, type MentionQuery,
 } from '../lib/mention';
+import { undoSendStorage } from '../lib/prefs';
 
 /** 목록이 화면을 덮지 않을 만큼만 보여준다. 더 좁히는 것은 사용자가 글자를 더 치는 일이다. */
 const MAX_SUGGESTIONS = 8;
@@ -40,6 +41,35 @@ interface Props {
   scopeKey?: string;
 }
 
+/**
+ * 보낼 예정이지만 **아직 서버로 나가지 않은** 메시지(#223).
+ *
+ * 왜 서버 지연이 아니라 클라이언트 보류인가 — 멘션 알림은 `postMessage` 트랜잭션 **안에서**
+ * 즉시 `insertInbox` 한다. 즉시 삽입을 그대로 두고 창만 UI 에 얹으면 "알림은 이미 갔는데
+ * 되돌렸다는 표시만 뜨는" 거짓 안전감이 된다. 그렇다고 삽입을 미룰 수도 없다: 이 서버에는
+ * 스케줄러도 지연 작업 장치도 없고, 그것을 세우는 일은 #222(예약 발송)와 같은 기반이 필요한
+ * 별개의 작업이다.
+ *
+ * 그래서 **클라이언트가 아예 보내지 않는다.** 되돌리면 서버도, 알림도, 에이전트도 이 메시지를
+ * 본 적이 없다 — 되돌리기가 정직해진다. 이슈가 걱정한 "롱폴이 즉시 반환된다"도 서버 지연
+ * 방식에서만 생기는 문제라 여기서는 아예 발생하지 않는다.
+ */
+interface HeldMessage {
+  /** 서버로 갈 본문 — 고정 멘션까지 붙은 최종형이다. */
+  body: string;
+  /** 사람이 직접 친 것. 되돌리면 **이것만** 입력창으로 돌아간다(접두사까지 되돌리면 다음 전송에서 두 번 붙는다). */
+  typed: string;
+  attachments: AttachmentRow[];
+  /** 이 글을 쓴 자리. 실패해서 되돌릴 때 **쓴 자리로** 돌려놓기 위해 들고 있는다. */
+  scope: string;
+  /**
+   * 보낼 자리를 든 함수. **타이머가 터질 때의 `onSend` prop 을 쓰면 안 된다** — 컴포저
+   * 인스턴스는 채널 전환에도 살아 있어서(ChannelPane 이 같은 자리에 렌더한다) 그때의 prop 은
+   * 이미 새 채널을 가리킨다. 그러면 A 에서 쓴 것이 B 로 나간다 — #184 가 닫은 결함이다.
+   */
+  send: Props['onSend'];
+}
+
 export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = '' }: Props) {
   const accounts = useAppStore((s) => s.accounts);
   const myId = useAppStore((s) => s.me?.id);
@@ -59,6 +89,16 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   const pendingCaret = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const prevScopeKey = useRef(scopeKey);
+  // 지금 그려진 스코프. 타이머와 언마운트 정리 함수는 렌더 클로저 밖에서 돌기 때문에
+  // 그 자리에서 현재 자리를 알려면 ref 여야 한다.
+  const scopeRef = useRef(scopeKey);
+  scopeRef.current = scopeKey;
+
+  // 대기 중인 메시지. 화면에 그리려면 state 가, 타이머·정리 함수에서 최신 값을 보려면
+  // ref 가 필요하다 — 둘은 같은 것을 가리킨다.
+  const [held, setHeld] = useState<HeldMessage | null>(null);
+  const heldRef = useRef<HeldMessage | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 초안은 **스코프 키로 스토어에 산다.** 지역 state 로 두면 컴포넌트 인스턴스가 채널
   // 전환에도 유지되기 때문에(ChannelPane 이 같은 자리에 렌더한다) A 에 쓴 글이 B 입력창에
@@ -75,6 +115,9 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   useEffect(() => {
     if (prevScopeKey.current === scopeKey) return;
     prevScopeKey.current = scopeKey;
+    // 채널을 옮기는 것도 화면을 떠나는 것이다 — 대기 중인 것을 여기서 내보낸다(#223).
+    // 항목이 자기 자리를 들고 있으므로 **옮기기 전 채널로** 나간다.
+    flushRef.current();
     setQuery(null);
     setPicking(false);
     setActive(0);
@@ -255,13 +298,89 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     if (fileRef.current) fileRef.current.value = '';
   };
 
+  /** 대기를 끝낸다 — 타이머를 걷고 표시를 지운다. 보낼지 버릴지는 부르는 쪽이 정한다. */
+  const clearHold = () => {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    heldRef.current = null;
+    setHeld(null);
+  };
+
+  /** 여기를 지나야만 메시지가 존재하기 시작한다 — 그 전에는 서버도 알림도 이 글을 모른다. */
+  const dispatch = (item: HeldMessage) => {
+    void Promise.resolve(item.send(item.body, item.attachments.map((a) => a.id))).catch(() => {
+      // 실패하면 사용자가 친 것만 되돌린다 — 접두사까지 남기면 다음 전송에서 두 번 붙는다.
+      // **쓴 자리로** 되돌린다: 대기 중에 채널을 옮겼다면 지금 입력창은 남의 자리다.
+      const store = useAppStore.getState();
+      if (!(store.drafts[item.scope] ?? '')) store.setDraft(item.scope, item.typed);
+      // 첨부 목록은 그 자리에 그대로 있을 때만 되돌린다 — 파일 자체는 이미 서버에 있으므로
+      // 잃는 것은 목록뿐이고, 남의 자리에 남의 첨부를 세우는 편이 더 나쁘다.
+      if (item.scope === scopeRef.current) {
+        setPending((current) => (current.length ? current : item.attachments));
+      }
+    });
+  };
+
+  /**
+   * 대기 중인 것을 지금 내보낸다(#223).
+   *
+   * **사람이 쓴 것을 잃는 것이 가장 나쁘다.** 창이 끝나기 전에 화면을 떠나거나 앱을 닫아도,
+   * 되돌린 것이 아니면 반드시 나간다.
+   */
+  const flush = () => {
+    const item = heldRef.current;
+    if (!item) return;
+    clearHold();
+    dispatch(item);
+  };
+
+  // 언마운트 정리 함수와 타이머는 **만들어진 시점의** flush 를 붙잡는다. 그때 대기 항목은
+  // 아직 없으므로, 실제로 부를 것은 언제나 최신 flush 여야 한다.
+  const flushRef = useRef(flush);
+  flushRef.current = flush;
+
+  /**
+   * 되돌린다 — **서버는 이 메시지를 본 적이 없다.** 알림도, 에이전트도 마찬가지다.
+   *
+   * 원문을 입력창으로 돌려놓는 것까지가 되돌리기다: 되돌리는 이유는 대개 "이렇게 보내면
+   * 안 됐다"이지 "안 보내고 싶다"가 아니라서, 고쳐 다시 보낼 수 있어야 한다. 그 사이에
+   * 새로 쓴 글이 있으면 덮지 않는다.
+   */
+  const undoSend = () => {
+    const item = heldRef.current;
+    if (!item) return;
+    clearHold();
+    setDraftLocal((current) => (current ? current : item.typed));
+    setPending((current) => (current.length ? current : item.attachments));
+    ref.current?.focus();
+  };
+
+  /**
+   * 언마운트·창 닫기에서도 내보낸다(#223). `beforeunload` 뒤에 POST 가 끝나는 것을 보장할
+   * 수는 없지만, 시도조차 하지 않고 버리는 것보다 낫다.
+   */
+  useEffect(() => {
+    const onUnload = () => { flushRef.current(); };
+    window.addEventListener('beforeunload', onUnload);
+    return () => {
+      window.removeEventListener('beforeunload', onUnload);
+      flushRef.current();
+    };
+  }, []);
+
   const send = () => {
     // 고정 멘션만으로는 보낼 것이 없다 — 빈 Enter 가 '@fizz' 하나만 던지면 사고다.
     // 다만 파일만 보내는 것은 자연스럽다.
     if (!draft.trim() && !pending.length) return;
     const typed = draft;
     const body = withStickyMentions(typed, sticky);
-    const ids = pending.map((a) => a.id);
+    const attachments = pending;
+    // 앞의 것이 아직 대기 중이면 **먼저 내보낸다.** 한 번에 하나만 들 수 있으므로 덮으면
+    // 앞의 글을 잃고, 사람이 친 순서도 이 편이 지켜진다.
+    flush();
+    // 초안을 먼저 비우는 이유는 창이 도는 동안에도 다음 글을 쓸 수 있어야 하기 때문이다.
     setDraftLocal('');
     setPending([]);
     setQuery(null);
@@ -271,13 +390,18 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     // 이번에 부른 상대는 다음 줄부터 고정이다. 한 번 부른 뒤 매번 @ 를 다시 치게 하면
     // 사용자는 잊어버리고, 잊으면 에이전트는 깨어나지 않는다.
     setStickyByScope((prev) => ({ ...prev, [scopeKey]: keepMentioned(sticky, typed, known) }));
-    // 초안을 먼저 비우는 이유는 응답을 기다리는 동안 다음 글을 쓸 수 있어야 하기 때문이다.
-    // 실패하면 사용자가 친 것만 되돌린다 — 접두사까지 남기면 다음 전송에서 두 번 붙는다.
-    void Promise.resolve(onSend(body, ids)).catch(() => {
-      setDraftLocal((current) => (current ? current : typed));
-      // 첨부도 되돌린다 — 파일은 이미 서버에 있으니 다시 올릴 필요가 없다.
-      setPending((current) => (current.length ? current : pending));
-    });
+
+    // `onSend` 를 **지금** 붙잡는다. 타이머가 터질 때 읽으면 그 사이 옮긴 채널을 가리킨다.
+    const item: HeldMessage = { body, typed, attachments, scope: scopeKey, send: onSend };
+    const windowMs = undoSendStorage.loadWindowMs();
+    // 0 이면 창을 끈 것이다 — 예전처럼 누른 즉시 나간다.
+    if (windowMs <= 0) {
+      dispatch(item);
+      return;
+    }
+    heldRef.current = item;
+    setHeld(item);
+    timerRef.current = setTimeout(() => { flushRef.current(); }, windowMs);
   };
 
   /**
@@ -424,7 +548,31 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
         </div>
       )}
 
-
+      {held && (
+        /* 대기 중인 것은 **메시지 목록에 그리지 않는다.** "서버가 받아들인 뒤에만 화면이
+           바뀌므로 화면은 언제나 서버와 같다"(Reactions.tsx)는 규칙을 깨면 화면과 서버가
+           갈라지고, 되돌렸을 때 목록에서 빼는 경로가 하나 더 생긴다. 그래서 대기 상태는
+           컴포저 자리에만 선다. */
+        <div
+          role="status"
+          data-testid="undo-send"
+          className="mb-1 flex items-center gap-2 rounded bg-zinc-100 px-2 py-1 text-[11px] text-zinc-600"
+        >
+          <span className="min-w-0 flex-1 truncate">
+            보내는 중… {held.typed || `첨부 ${held.attachments.length}개`}
+          </span>
+          <button
+            type="button"
+            aria-label="Undo send"
+            className="rounded px-1.5 py-0.5 font-medium text-indigo-600 hover:bg-zinc-200"
+            // 누른 뒤 원문이 입력창으로 돌아오므로 커서를 지켜야 한다 — @·첨부 버튼과 같은 이유다.
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={undoSend}
+          >
+            보냄 취소
+          </button>
+        </div>
+      )}
 
       <textarea
         ref={ref}
