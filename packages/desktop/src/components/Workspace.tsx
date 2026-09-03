@@ -7,6 +7,7 @@ import { ChannelPane } from './ChannelPane';
 import { Notice } from './Notice';
 import { ThreadPanel } from './ThreadPanel';
 import { SearchPalette } from './SearchPalette';
+import { Sweep } from './Sweep';
 import { Directory } from './Directory';
 import type { SectionId } from './settings/sections';
 
@@ -18,6 +19,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
   const history = useAppStore((s) => s.history);
   const historyIndex = useAppStore((s) => s.historyIndex);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [sweepOpen, setSweepOpen] = useState(false);
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sidebarStorage.loadCollapsed());
 
@@ -119,6 +121,15 @@ export function Workspace({ onLogout, onOpenSettings }: {
           >
             →
           </button>
+          {/* 훑기는 사이드바가 아니라 헤더에 둔다 — 사이드바를 접은 사람도 미읽음을
+              정리할 수 있어야 하고, 그것이 바로 이 기능을 쓰는 상황이다. */}
+          <button
+            onClick={() => setSweepOpen(true)}
+            className="ml-auto rounded px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-700"
+            title="미읽음을 하나씩 훑는다"
+          >
+            미읽음 훑기
+          </button>
         </div>
         {/* 알림은 헤더 바로 아래, 대화 위에 둔다 — 채널 안에 그리면 채널을 못 연 실패를
             보여 줄 자리 자체가 없다. */}
@@ -129,6 +140,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
         </div>
       </div>
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <Sweep open={sweepOpen} onClose={() => setSweepOpen(false)} />
       <Directory open={directoryOpen} onClose={() => setDirectoryOpen(false)} />
     </div>
   );
