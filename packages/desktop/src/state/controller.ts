@@ -506,45 +506,38 @@ export class Controller {
   /** 뒤로 탐색. 이력 스택에서 이전 항목으로 이동한다.
    * 사라진 채널을 만나면 건너뛴다. 갈 곳이 없으면 false 를 반환한다. */
   async goBack(): Promise<boolean> {
-    const store = useAppStore.getState();
-    let entry = store.goBack();
-    if (!entry) return false;
-    // 사라진 채널을 건너뛴다.
-    while (entry) {
-      const channelExists = store.channels.some((c) => c.id === entry!.channelId) ||
-        store.dms.some((d) => d.id === entry!.channelId);
-      if (channelExists) {
-        store.set({ historyIndex: store.historyIndex - 1 });
-        await this.openChannelWithoutHistory(entry.channelId);
-        if (entry.threadRootId) {
-          store.set({ threadRootId: entry.threadRootId });
-        }
-        return true;
-      }
-      entry = store.goBack();
-    }
-    return false;
+    // 목표 인덱스를 **먼저 찾고 한 번만 적용한다.** 찾는 도중에 인덱스를 내리면
+    // 갈 곳이 없어 실패했을 때도 위치가 움직여 있다.
+    //
+    // 그리고 `store.goBack()` 은 인덱스를 바꾸지 않는 **순수 조회**다 — 인덱스를 내리지
+    // 않은 채 그것을 다시 부르면 같은 항목이 영원히 돌아와 **사라진 채널 하나가 앱을
+    // 멈춘다.** 그래서 조회를 반복하지 않고 배열을 직접 훑는다.
+    return this.navigateHistory(-1);
   }
 
   /** 앞으로 탐색. 이력 스택에서 다음 항목으로 이동한다.
    * 사라진 채널을 만나면 건너뛴다. 갈 곳이 없으면 false 를 반환한다. */
   async goForward(): Promise<boolean> {
-    const store = useAppStore.getState();
-    let entry = store.goForward();
-    if (!entry) return false;
-    // 사라진 채널을 건너뛴다.
-    while (entry) {
-      const channelExists = store.channels.some((c) => c.id === entry!.channelId) ||
-        store.dms.some((d) => d.id === entry!.channelId);
-      if (channelExists) {
-        store.set({ historyIndex: store.historyIndex + 1 });
-        await this.openChannelWithoutHistory(entry.channelId);
-        if (entry.threadRootId) {
-          store.set({ threadRootId: entry.threadRootId });
-        }
-        return true;
-      }
-      entry = store.goForward();
+    return this.navigateHistory(1);
+  }
+
+  /**
+   * 이력을 한 방향으로 훑어 **살아 있는 채널**을 가리키는 첫 항목으로 이동한다.
+   * 사라진 채널을 가리키는 항목은 건너뛴다 — 사람이 지운 채널을 다시 보여줄 수 없는
+   * 것은 오류가 아니므로 조용히 넘어가고, 갈 곳이 하나도 없으면 아무것도 하지 않는다.
+   */
+  private async navigateHistory(step: -1 | 1): Promise<boolean> {
+    const { history, historyIndex } = useAppStore.getState();
+    for (let i = historyIndex + step; i >= 0 && i < history.length; i += step) {
+      const entry = history[i]!;
+      const st = useAppStore.getState();
+      const exists = st.channels.some((c) => c.id === entry.channelId) ||
+        st.dms.some((d) => d.id === entry.channelId);
+      if (!exists) continue;
+      st.set({ historyIndex: i });
+      await this.openChannelWithoutHistory(entry.channelId);
+      if (entry.threadRootId) useAppStore.getState().set({ threadRootId: entry.threadRootId });
+      return true;
     }
     return false;
   }

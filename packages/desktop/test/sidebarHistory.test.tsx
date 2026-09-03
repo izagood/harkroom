@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
@@ -146,7 +146,13 @@ describe('사이드바 너비 조절', () => {
 
   it('localStorage가 던져도 기본 너비로 정상 렌더링된다', () => {
     fakeController();
-    vi.spyOn(localStorage, 'getItem').mockImplementation(() => { throw new Error('error'); });
+    // `vi.spyOn(localStorage, 'getItem')` 은 jsdom 에서 **적용되지 않는다** — 그렇게 쓰면
+    // 저장소가 그냥 비어 있는 경우를 확인할 뿐이라, try/catch 를 지워도 초록이다.
+    // 접근이 막힌 브라우저(사생활 보호 모드 등)를 재현하려면 프로토타입을 가로채야 한다.
+    const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('access denied');
+    });
+    onTestFinished(() => spy.mockRestore());
 
     const { container } = render(
       <Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />
@@ -202,25 +208,9 @@ describe('뒤로/앞으로 탐색', () => {
     expect(c.goBack).toHaveBeenCalled();
   });
 
-  it('뒤로 가면 historyIndex가 감소한다 (뒤로가 이력을 밀어 넣지 않음)', async () => {
-    const c = fakeController();
-    useAppStore.getState().set({
-      history: [
-        { channelId: 'c1', threadRootId: null },
-        { channelId: 'c2', threadRootId: null },
-        { channelId: 'c3', threadRootId: null },
-      ],
-      historyIndex: 2,
-    });
-
-    render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
-
-    const backButton = screen.getByLabelText('뒤로') as HTMLButtonElement;
-    fireEvent.click(backButton);
-
-    expect(c.goBack).toHaveBeenCalled();
-  });
-
+  // 이름이 약속한 "historyIndex 가 감소한다" 는 가짜 컨트롤러로는 확인할 수 없다 —
+  // 실제 이동 로직은 `historyNav.test.ts` 가 진짜 Controller 로 검증한다.
+  // 여기서는 화면이 컨트롤러를 부르는지만 본다.
   it('갈 곳이 없으면 뒤로 버튼이 비활성화된다', () => {
     fakeController();
     useAppStore.getState().set({
@@ -252,8 +242,8 @@ describe('뒤로/앞으로 탐색', () => {
 });
 
 describe('키보드 단축키', () => {
-  it('입력 요소에 포커스가 있을 때 단축키가 무시된다', () => {
-    fakeController();
+  it('입력 요소에 포커스가 있으면 단축키를 가로채지 않는다', () => {
+    const c = fakeController();
     useAppStore.getState().set({
       history: [
         { channelId: 'c1', threadRootId: null },
@@ -272,10 +262,27 @@ describe('키보드 단축키', () => {
     fireEvent.keyDown(input, { key: ']', metaKey: true });
     fireEvent.keyDown(input, { key: '\\', metaKey: true });
 
-    const backButton = screen.getByLabelText('뒤로') as HTMLButtonElement;
-
-    expect(backButton).toHaveProperty('disabled', false);
+    // 컴포저에서 대괄호를 치는 동안 채널이 바뀌거나 사이드바가 접히면 안 된다.
+    expect(c.goBack).not.toHaveBeenCalled();
+    expect(c.goForward).not.toHaveBeenCalled();
+    expect(screen.getByText('murmur')).toBeTruthy();
 
     document.body.removeChild(input);
+  });
+
+  it('입력 밖에서는 단축키가 동작한다 — 위 테스트가 전부를 막고 있지 않다', () => {
+    const c = fakeController();
+    useAppStore.getState().set({
+      history: [
+        { channelId: 'c1', threadRootId: null },
+        { channelId: 'c2', threadRootId: null },
+      ],
+      historyIndex: 1,
+    });
+    render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    fireEvent.keyDown(document.body, { key: '[', metaKey: true });
+
+    expect(c.goBack).toHaveBeenCalled();
   });
 });
