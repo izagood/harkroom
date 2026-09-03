@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
+import { sidebarStorage, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../lib/prefs';
 import { LeasePanel } from './LeasePanel';
 import { Menu } from './Menu';
 import type { SectionId } from './settings/sections';
@@ -35,9 +36,11 @@ function UnreadBadge({ channelId }: { channelId: string }) {
   );
 }
 
-export function Sidebar({ onLogout, onOpenSettings }: {
+export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse }: {
   onLogout: () => void;
   onOpenSettings: (section?: SectionId) => void;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
 }) {
   const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs } = useAppStore();
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -49,6 +52,49 @@ export function Sidebar({ onLogout, onOpenSettings }: {
   const [editTopic, setEditTopic] = useState('');
   const [editRepo, setEditRepo] = useState('');
   const [editError, setEditError] = useState<string | null>(null);
+
+  const [width, setWidth] = useState(() => sidebarStorage.loadWidth());
+  const isDragging = useRef(false);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return;
+      const newWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, e.clientX));
+      setWidth(newWidth);
+      sidebarStorage.saveWidth(newWidth);
+    };
+    const handleMouseUp = () => {
+      isDragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
+
+  const handleDragStart = () => {
+    isDragging.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const newWidth = Math.max(MIN_SIDEBAR_WIDTH, width - 10);
+      setWidth(newWidth);
+      sidebarStorage.saveWidth(newWidth);
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      const newWidth = Math.min(MAX_SIDEBAR_WIDTH, width + 10);
+      setWidth(newWidth);
+      sidebarStorage.saveWidth(newWidth);
+    }
+  }, [width]);
 
   const closeCreate = (): void => {
     setCreateChannelOpen(false);
@@ -247,12 +293,36 @@ export function Sidebar({ onLogout, onOpenSettings }: {
   };
 
   return (
-    <aside className="flex w-60 flex-col bg-zinc-900 text-zinc-200">
-      <div className="flex items-center gap-2 border-b border-zinc-800 p-3 font-bold">
-        murmur
-        <span className={`h-2 w-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}
-          title={connected ? 'connected' : 'disconnected'} />
-      </div>
+    <aside
+      className="relative flex flex-col bg-zinc-900 text-zinc-200"
+      style={{ width: collapsed ? 0 : width }}
+    >
+      {/* 드래그 핸들: 사이드바 우측 가장자리에 위치 */}
+      {!collapsed && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="사이드바 너비 조절"
+          tabIndex={0}
+          className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-indigo-500 focus:bg-indigo-500"
+          onMouseDown={handleDragStart}
+          onKeyDown={handleKeyDown}
+        />
+      )}
+      <div className="flex min-w-[180px] flex-1 flex-col overflow-hidden">
+        <div className="flex items-center gap-2 border-b border-zinc-800 p-3 font-bold">
+          murmur
+          <span className={`h-2 w-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}
+            title={connected ? 'connected' : 'disconnected'} />
+          <button
+            onClick={onToggleCollapse}
+            className="ml-auto rounded p-1 hover:bg-zinc-700"
+            aria-label="사이드바 접기"
+            title="사이드바 접기"
+          >
+            ←
+          </button>
+        </div>
       <nav className="flex-1 space-y-4 overflow-y-auto p-2">
         <div>
           <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">Channels</div>
@@ -331,22 +401,23 @@ export function Sidebar({ onLogout, onOpenSettings }: {
           )}
         </div>
         <LeasePanel />
-      </nav>
-      <div className="relative flex items-center gap-2 border-t border-zinc-800 p-3 text-xs">
-        {/* 계정 행 자체가 진입점이다 — gear 아이콘이 아니라(#113). 트리거 요소는 소비자가
-            만들고 접근성 속성·ref 는 Menu 가 준다(그래야 #111 이 우클릭 트리거로 같은
-            프리미티브를 쓸 수 있다). */}
-        <Menu
-          renderTrigger={(props) => (
-            <button {...props} className="font-medium">
-              @{me?.handle}
-            </button>
-          )}
-          items={[
-            { label: 'Settings', onSelect: () => onOpenSettings() },
-            { label: 'Sign out', onSelect: () => { getController().logout(); onLogout(); } },
-          ]}
-        />
+        </nav>
+        <div className="relative flex items-center gap-2 border-t border-zinc-800 p-3 text-xs">
+          {/* 계정 행 자체가 진입점이다 — gear 아이콘이 아니라(#113). 트리거 요소는 소비자가
+              만들고 접근성 속성·ref 는 Menu 가 준다(그래야 #111 이 우클릭 트리거로 같은
+              프리미티브를 쓸 수 있다). */}
+          <Menu
+            renderTrigger={(props) => (
+              <button {...props} className="font-medium">
+                @{me?.handle}
+              </button>
+            )}
+            items={[
+              { label: 'Settings', onSelect: () => onOpenSettings() },
+              { label: 'Sign out', onSelect: () => { getController().logout(); onLogout(); } },
+            ]}
+          />
+        </div>
       </div>
     </aside>
   );

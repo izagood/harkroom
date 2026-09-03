@@ -245,6 +245,8 @@ export class Controller {
 
   async openChannel(channelId: string): Promise<void> {
     const store = useAppStore.getState();
+    // 채널·스레드 열림은 이력에 추가한다. 뒤로/앞으로 이동은 pushHistory 를 안 부른다.
+    store.pushHistory({ channelId, threadRootId: null });
     store.set({ activeChannelId: channelId, threadRootId: null });
     // 투영된 system 메시지는 사용자가 그 채널을 보고 있지 않아도 WS로 들어와 maxSeq를 올린다.
     // 그 상태에서 증분 조회를 하면 backlog 전체가 건너뛰어져 채널이 거의 비어 보인다 —
@@ -290,6 +292,7 @@ export class Controller {
   async openThread(rootId: string): Promise<void> {
     const channelId = useAppStore.getState().activeChannelId;
     if (!channelId) return;
+    useAppStore.getState().pushHistory({ channelId, threadRootId: rootId });
     useAppStore.getState().set({ threadRootId: rootId });
     const page = await this.api.messages(channelId, { thread: rootId });
     useAppStore.getState().upsertMessages(channelId, page.messages);
@@ -477,6 +480,75 @@ export class Controller {
     const starred = !current?.starredAt;
     const updated = await this.api.updateChannelPref(channelId, { starred });
     store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
+  }
+
+  /** 뒤로 탐색. 이력 스택에서 이전 항목으로 이동한다.
+   * 사라진 채널을 만나면 건너뛴다. 갈 곳이 없으면 false 를 반환한다. */
+  async goBack(): Promise<boolean> {
+    const store = useAppStore.getState();
+    let entry = store.goBack();
+    if (!entry) return false;
+    // 사라진 채널을 건너뛴다.
+    while (entry) {
+      const channelExists = store.channels.some((c) => c.id === entry!.channelId) ||
+        store.dms.some((d) => d.id === entry!.channelId);
+      if (channelExists) {
+        store.set({ historyIndex: store.historyIndex - 1 });
+        await this.openChannelWithoutHistory(entry.channelId);
+        if (entry.threadRootId) {
+          store.set({ threadRootId: entry.threadRootId });
+        }
+        return true;
+      }
+      entry = store.goBack();
+    }
+    return false;
+  }
+
+  /** 앞으로 탐색. 이력 스택에서 다음 항목으로 이동한다.
+   * 사라진 채널을 만나면 건너뛴다. 갈 곳이 없으면 false 를 반환한다. */
+  async goForward(): Promise<boolean> {
+    const store = useAppStore.getState();
+    let entry = store.goForward();
+    if (!entry) return false;
+    // 사라진 채널을 건너뛴다.
+    while (entry) {
+      const channelExists = store.channels.some((c) => c.id === entry!.channelId) ||
+        store.dms.some((d) => d.id === entry!.channelId);
+      if (channelExists) {
+        store.set({ historyIndex: store.historyIndex + 1 });
+        await this.openChannelWithoutHistory(entry.channelId);
+        if (entry.threadRootId) {
+          store.set({ threadRootId: entry.threadRootId });
+        }
+        return true;
+      }
+      entry = store.goForward();
+    }
+    return false;
+  }
+
+  /** 채널을 연다(히스토리 미추가). 뒤로/앞으로 이동专用. */
+  private async openChannelWithoutHistory(channelId: string): Promise<void> {
+    const store = useAppStore.getState();
+    store.set({ activeChannelId: channelId, threadRootId: null });
+    const since = this.loadedChannels.has(channelId)
+      ? Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq))
+      : 0;
+    const page = await this.api.messages(channelId, { since });
+    this.loadedChannels.add(channelId);
+    store.upsertMessages(channelId, page.messages);
+    store.set({
+      hasMore: { ...store.hasMore, [channelId]: page.hasMore },
+    });
+    const ids = store.unread
+      .filter((e) => e.channelId === channelId && !e.readAt)
+      .map((e) => e.id);
+    if (ids.length) {
+      await this.api.markRead(ids);
+      await this.refreshUnread();
+    }
+    await this.settleReadPosition(channelId);
   }
 
   logout(): void {
