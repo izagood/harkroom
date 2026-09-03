@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
-import type { AccountStatus, MessageRow } from '@murmur/shared';
+import type { AccountStatus, ChannelRow, MessageRow } from '@murmur/shared';
+import type { WorkspaceSkill } from './services/skills.js';
 
 export type WorkspaceEvent =
   | { type: 'message.created'; message: MessageRow; audience: 'all' | string[] }
@@ -16,7 +17,18 @@ export type WorkspaceEvent =
   | { type: 'account.handle_changed'; accountId: string; newHandle: string }
   | { type: 'reaction.added'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
   | { type: 'reaction.removed'; channelId: string; messageId: string; emoji: string; accountId: string; audience: 'all' | string[] }
-  | { type: 'typing.changed'; channelId: string; accountIds: string[]; audience: 'all' | string[] };
+  | { type: 'typing.changed'; channelId: string; accountIds: string[]; audience: 'all' | string[] }
+  // 채널 목록 변경(#284). public 채널은 전원, private 은 멤버만 받는다.
+  // public→private 전환시 비멤버는 channel.deleted 를 받는다 — 그 사람에게 채널이 사라진 것이기 때문이다.
+  | { type: 'channel.created'; channel: ChannelRow; audience: 'all' | string[] }
+  | { type: 'channel.updated'; channel: ChannelRow; audience: 'all' | string[] }
+  | { type: 'channel.deleted'; channelId: string; audience: 'all' | string[] }
+  // 담기/해제/상태 변경(#219). 본인의 소켓에만 간다.
+  | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string }
+  // 워크스페이스 스킬(#140). 제안·승인·비활성을 알린다.
+  | { type: 'skill.proposed'; skill: WorkspaceSkill; channelId: string }
+  | { type: 'skill.approved'; skill: WorkspaceSkill }
+  | { type: 'skill.disabled'; skill: WorkspaceSkill };
 
 const bus = new EventEmitter();
 bus.setMaxListeners(1000);

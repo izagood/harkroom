@@ -77,7 +77,7 @@ describe('집합 멘션 표시 (#230)', () => {
 
   // `splitMentions` 자체의 계약. 컴포넌트를 지나지 않고 규칙만 확인한다.
   it('splitMentions 가 집합만 isGroup 으로 표시한다', () => {
-    const parts = splitMentions('@fizz 랑 @oncall 둘 다', ['fizz'], undefined, ['oncall']);
+    const parts = splitMentions('@fizz 랑 @oncall 둘 다', ['fizz'], ['oncall']);
     const mentions = parts.filter((p) => p.kind === 'mention');
 
     expect(mentions.map((m) => [m.handle, m.isGroup === true]))

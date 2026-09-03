@@ -255,6 +255,8 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     if (result === 'forbidden') {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
+    // 담기 성공을 본인의 소켓에만 알린다(#219).
+    emitEvent({ type: 'saved.changed', messageId, state: 'open', accountId: req.account!.id });
     return result;
   });
 
@@ -265,6 +267,8 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     if (result === 'not_found') {
       return reply.code(404).send({ error: { code: 'not_found', message: 'saved message not found' } });
     }
+    // 상태 변경을 본인의 소켓에만 알린다(#219).
+    emitEvent({ type: 'saved.changed', messageId, state, accountId: req.account!.id });
     return result;
   });
 
@@ -274,6 +278,8 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     if (result === 'not_found') {
       return reply.code(404).send({ error: { code: 'not_found', message: 'saved message not found' } });
     }
+    // 해제를 본인의 소켓에만 알린다(#219). state null 은 "담기지 않음"이다.
+    emitEvent({ type: 'saved.changed', messageId, state: null, accountId: req.account!.id });
     return reply.code(204).send();
   });
 }
