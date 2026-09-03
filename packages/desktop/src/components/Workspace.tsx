@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
 import { sidebarStorage } from '../lib/prefs';
@@ -11,6 +11,16 @@ import { Sweep } from './Sweep';
 import { Directory } from './Directory';
 import { Inbox } from './Inbox';
 import type { SectionId } from './settings/sections';
+
+function isMac(): boolean {
+  try {
+    const platform = typeof navigator !== 'undefined' ? navigator.platform : '';
+    const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    return /Mac|iPhone|iPad|iPod/.test(platform) || (/Mac/.test(userAgent) && !/Windows/.test(userAgent));
+  } catch {
+    return false;
+  }
+}
 
 export function Workspace({ onLogout, onOpenSettings }: {
   onLogout: () => void;
@@ -90,6 +100,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [handleGoBack, handleGoForward, handleToggleSidebar]);
 
+  const isMacOS = useMemo(() => isMac(), []);
+
   return (
     <div className="flex h-screen text-sm">
       <Sidebar
@@ -101,8 +113,13 @@ export function Workspace({ onLogout, onOpenSettings }: {
         onToggleCollapse={handleToggleSidebar}
       />
       <div className="flex flex-1 flex-col overflow-hidden">
-        {/* 헤더: 뒤로/앞으로 버튼과 사이드바 펼치기 버튼 */}
-        <div className="flex items-center gap-2 border-b border-zinc-800 bg-zinc-900 px-2 py-1">
+        {/* 헤더: 뒤로/앞으로 버튼과 사이드바 펼치기 버튼. data-tauri-drag-region 은
+            이 요소 자체를 눌렀을 때만 드래그를 시작하므로 자식 버튼(←, →, etc.)은
+            그대로 눌린다. */}
+        <div
+          data-tauri-drag-region
+          className={`flex items-center gap-2 border-b border-zinc-800 bg-zinc-900 px-2 py-1 ${isMacOS ? 'pl-[78px]' : ''}`}
+        >
           {sidebarCollapsed && (
             <button
               onClick={handleToggleSidebar}
