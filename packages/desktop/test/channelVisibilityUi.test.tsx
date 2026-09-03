@@ -42,7 +42,7 @@ const seed = () => {
 };
 
 const sidebar = () => render(
-  <Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} onOpenDirectory={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />,
+  <Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} onOpenDirectory={vi.fn()} onOpenInbox={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
 const openMenuFor = (accessibleName: RegExp): void => {
