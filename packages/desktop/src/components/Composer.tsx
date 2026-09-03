@@ -3,10 +3,11 @@ import { parseMessagePermalink } from '@murmur/shared';
 import type { AccountView, AttachmentRow, HandleGroupRow } from '@murmur/shared';
 import { useAppStore } from '../state/appStore';
 import { getController } from '../state/controller';
-import { Identity } from './Identity';
+import { GroupBadge, Identity } from './Identity';
 import { formatSize } from './Attachments';
 import {
-  mentionQueryAt, applyMention, withStickyMentions, keepMentioned, type MentionQuery,
+  mentionQueryAt, applyMention, withStickyMentions, keepMentioned, bodyRecipients,
+  type MentionQuery,
 } from '../lib/mention';
 import { undoSendStorage } from '../lib/prefs';
 
@@ -19,11 +20,41 @@ const MAX_SUGGESTIONS = 8;
  */
 const TYPING_THROTTLE_MS = 3_000;
 
+/**
+ * 후보 목록에서 집합에 **미리 떼어 두는 자리**(#285).
+ *
+ * 자리를 떼지 않으면 계정이 여덟 개 걸리는 흔한 질의(`@a`)에서 집합이 목록에 아예
+ * 나타나지 않는다 — 있는데 안 보이는 것이 가장 나쁜 상태다. 반대로 양쪽을 각자
+ * `MAX_SUGGESTIONS` 까지 담으면 목록이 두 배가 되어 위 주석의 약속(화면을 덮지 않는다)이
+ * 깨진다. 그래서 총량은 그대로 두고 집합에 앞자리 몇 개를 예약한다.
+ *
+ * 집합이 없는 워크스페이스에서는 예약이 0 이므로 목록은 **글자 하나도 달라지지 않는다.**
+ */
+const MAX_GROUP_SUGGESTIONS = 3;
+
 /** 에이전트를 먼저 세운다 — murmur 에서 @ 를 치는 주된 이유다. 그 안에서는 이름순. */
 function rank(a: AccountView, b: AccountView): number {
   if (a.kind !== b.kind) return a.kind === 'agent' ? -1 : 1;
   return a.handle.localeCompare(b.handle);
 }
+
+/**
+ * 후보 하나. 계정과 집합이 **한 목록에 섞여 서고 키보드도 하나**이므로, 어느 쪽에서 온
+ * 항목인지를 목록을 만들 때 태그로 붙인다.
+ *
+ * 렌더 시점에 필드 유무(`'createdAt' in item` 같은 것)로 되짚지 않는 이유: 계정에 같은
+ * 이름의 필드가 하나 생기는 순간 판정이 조용히 갈리고, 그때 깨지는 것은 타입이 아니라
+ * 화면이다. 태그는 컴파일러가 지킨다.
+ */
+type Candidate =
+  | { kind: 'account'; id: string; handle: string; account: AccountView }
+  | { kind: 'group'; id: string; handle: string; group: HandleGroupRow };
+
+const asAccountCandidates = (list: AccountView[]): Candidate[] =>
+  list.map((a) => ({ kind: 'account', id: a.id, handle: a.handle, account: a }));
+
+const asGroupCandidates = (list: HandleGroupRow[]): Candidate[] =>
+  list.map((g) => ({ kind: 'group', id: g.id, handle: g.handle, group: g }));
 
 interface Props {
   /**
@@ -74,6 +105,8 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
   const accounts = useAppStore((s) => s.accounts);
   const groups = useAppStore((s) => s.groups);
   const myId = useAppStore((s) => s.me?.id);
+  // `MessageBody` 와 같은 자리에서 읽는다 — 자기 멘션 판정이 두 화면에서 달라지면 안 된다.
+  const myHandle = useAppStore((s) => s.me?.handle?.toLowerCase() ?? null);
   const [query, setQuery] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
   const [stickyByScope, setStickyByScope] = useState<Record<string, string[]>>({});
@@ -124,20 +157,22 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     setActive(0);
   }, [scopeKey]);
 
-  const matches = useMemo((): { accounts: AccountView[]; groups: HandleGroupRow[] } => {
-    if (!query) return { accounts: [], groups: [] };
+  const matches = useMemo((): Candidate[] => {
+    if (!query) return [];
     const q = query.query.toLowerCase();
+    const groupMatches = groups
+      .filter((g) => g.handle.toLowerCase().startsWith(q))
+      .sort((a, b) => a.handle.localeCompare(b.handle))
+      .slice(0, MAX_GROUP_SUGGESTIONS);
     const accountMatches = Object.values(accounts)
       // 비활성 계정은 부를 수 없다 — 디렉터리에는 남아 있다(과거 메시지의 작성자 이름을
       // 풀어야 하므로). 후보에서 빼는 것이 이쪽 책임이다(shared 의 AccountView.disabled 주석).
       .filter((a) => a.id !== myId && !a.disabled && a.handle.toLowerCase().startsWith(q))
       .sort(rank)
-      .slice(0, MAX_SUGGESTIONS);
-    const groupMatches = groups
-      .filter((g) => g.handle.toLowerCase().startsWith(q))
-      .sort((a, b) => a.handle.localeCompare(b.handle))
-      .slice(0, MAX_SUGGESTIONS);
-    return { accounts: accountMatches, groups: groupMatches };
+      .slice(0, MAX_SUGGESTIONS - groupMatches.length);
+    // 계정이 먼저, 집합이 뒤다 — 사람·에이전트를 부르는 것이 흔한 쪽이고, 집합은
+    // 목록 아래에 모여 있어야 "이 아래는 여러 사람"이라고 한눈에 읽힌다.
+    return [...asAccountCandidates(accountMatches), ...asGroupCandidates(groupMatches)];
   }, [accounts, groups, myId, query]);
 
   const known = useMemo(
@@ -154,26 +189,40 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
     [stickyByScope, scopeKey, known],
   );
 
+  // 아래 두 목록은 `MessageBody` 가 `splitMentions` 에 주는 것과 **같은 인자**다(#278).
+  // 자기 계정도 뺀 것이 없다 — 인자가 달라지면 같은 함수를 써도 판정이 갈라진다.
+  const allHandles = useMemo(() => Object.values(accounts).map((a) => a.handle), [accounts]);
+  const groupHandleList = useMemo(() => groups.map((g) => g.handle), [groups]);
+
+  // 지금 본문이 부를 상대(#278). 판정은 `bodyRecipients` 하나에 있고 그것은 `MessageBody`
+  // 와 같은 `splitMentions` 를 쓴다 — 여기에 조건을 더하면 그 단일 판정이 깨진다.
+  //
+  // **고정된 handle 을 빼지 않는다.** 칩은 사람이 명시적으로 고정한 것이고 이 줄은 본문에서
+  // 해석된 것이다. 겹칠 때 이 줄에서 지우면 이 줄이 고정 상태에 따라 달라져 "본문 기준" 이
+  // 아니게 되고, 칩을 지우는 순간 항목이 갑자기 나타난다.
+  const bodyMentionList = useMemo(
+    () => bodyRecipients(draft, allHandles, groupHandleList, myHandle),
+    [draft, allHandles, groupHandleList, myHandle],
+  );
+
   // @ 버튼으로 여는 목록. 첫 줄을 보내기 전에도 상대를 정해 둘 수 있어야 한다.
   // 이미 고정된 상대는 뺀다 — 다시 골라도 달라지는 것이 없다.
-  const pickable = useMemo((): { accounts: AccountView[]; groups: HandleGroupRow[] } => {
-    const accountsList = Object.values(accounts)
-      .filter((a) => a.id !== myId && !sticky.includes(a.handle.toLowerCase()))
-      .sort(rank)
-      .slice(0, MAX_SUGGESTIONS);
+  const pickable = useMemo((): Candidate[] => {
     const groupsList = groups
       .filter((g) => !sticky.includes(g.handle.toLowerCase()))
       .sort((a, b) => a.handle.localeCompare(b.handle))
-      .slice(0, MAX_SUGGESTIONS);
-    return { accounts: accountsList, groups: groupsList };
+      .slice(0, MAX_GROUP_SUGGESTIONS);
+    const accountsList = Object.values(accounts)
+      .filter((a) => a.id !== myId && !sticky.includes(a.handle.toLowerCase()))
+      .sort(rank)
+      .slice(0, MAX_SUGGESTIONS - groupsList.length);
+    return [...asAccountCandidates(accountsList), ...asGroupCandidates(groupsList)];
   }, [accounts, groups, myId, sticky]);
 
   // 두 목록은 한자리에 뜨고 키보드도 하나다 — 동시에 열리면 Enter 가 어디로 갈지 모른다.
-  const options = picking
-    ? { accounts: pickable.accounts, groups: pickable.groups }
-    : { accounts: matches.accounts, groups: matches.groups };
+  const options = picking ? pickable : matches;
   // 후보가 없으면 목록은 없는 것과 같다 — Enter 를 붙잡아 두면 메시지를 못 보낸다.
-  const open = (options.accounts.length > 0 || options.groups.length > 0) && (picking || query !== null);
+  const open = options.length > 0 && (picking || query !== null);
 
   useLayoutEffect(() => {
     const caret = pendingCaret.current;
@@ -450,27 +499,21 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (open) {
-      const total = options.accounts.length + options.groups.length;
-      if (total === 0) {
-        // 열려 있지만 선택지가 없으면 일반 입력
-      } else if (e.key === 'ArrowDown') {
+      if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setActive((i) => (i + 1) % total);
+        setActive((i) => (i + 1) % options.length);
         return;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setActive((i) => (i - 1 + total) % total);
+        setActive((i) => (i - 1 + options.length) % options.length);
         return;
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
-        const idx = active;
-        if (idx < options.accounts.length) {
-          choose(options.accounts[idx]!.handle);
-        } else {
-          choose(options.groups[idx - options.accounts.length]!.handle);
-        }
+        // 계정이든 집합이든 본문에 들어가는 것은 `@핸들` 하나다(멘션은 본문 문자열 —
+        // docs/design.md). 그래서 고르는 자리에서 둘을 갈라 다룰 것이 없다.
+        choose(options[active]!.handle);
         return;
       }
       if (e.key === 'Escape') {
@@ -487,8 +530,6 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
 
   const listId = 'mention-suggestions';
 
-  const flatOptions = [...options.accounts, ...options.groups] as (AccountView | HandleGroupRow)[];
-
   return (
     <div ref={containerRef} className="relative" onBlur={onContainerBlur}>
       {open && (
@@ -498,34 +539,38 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
           aria-label={picking ? 'Mentions to keep' : 'Mention suggestions'}
           className="absolute bottom-full left-0 z-10 mb-1 max-h-64 w-72 overflow-y-auto rounded border border-zinc-300 bg-white py-1 shadow-lg"
         >
-          {flatOptions.map((item, i) => {
-            const isGroup = 'createdAt' in item;
-            return (
-              <li key={item.id}>
-                <button
-                  id={`${listId}-${i}`}
-                  role="option"
-                  aria-selected={i === active}
-                  type="button"
-                  data-handle={item.handle}
-                  data-kind={isGroup ? 'group' : 'account'}
-                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left ${i === active ? 'bg-indigo-50' : ''}`}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onMouseEnter={() => setActive(i)}
-                  onClick={() => choose(item.handle)}
-                >
-                  <span className="font-medium">@{item.handle}</span>
-                  {isGroup ? (
-                    <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
-                      집합
-                    </span>
-                  ) : (
-                    <Identity account={item} className="ml-1" />
-                  )}
-                </button>
-              </li>
-            );
-          })}
+          {options.map((item, i) => (
+            <li key={item.id}>
+              <button
+                id={`${listId}-${i}`}
+                role="option"
+                aria-selected={i === active}
+                type="button"
+                // 핸들을 속성으로 노출한다. 테스트가 textContent 에서 핸들을 뽑으면
+                // 장식(에이전트 표시 등)이 하나 늘 때마다 깨진다 — 실제로 그랬다.
+                data-handle={item.handle}
+                // 계정인지 집합인지도 속성으로 노출한다(#285). 같은 이유다: 배지 문구가
+                // 바뀌면 문구로 종류를 확인하던 테스트가 깨진다.
+                data-kind={item.kind}
+                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left ${i === active ? 'bg-indigo-50' : ''}`}
+                // mousedown 을 막지 않으면 클릭 전에 textarea 가 blur 되어 커서 위치가 사라진다.
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => choose(item.handle)}
+              >
+                <span className="font-medium">@{item.handle}</span>
+                {item.kind === 'group' ? (
+                  <GroupBadge group={item.group} className="ml-1" />
+                ) : (
+                  <>
+                    {/* 거터가 아니라 **핸들 옆** 자리다(#277) — 여기서 소유자를 지우면 "누구의
+                        에이전트를 부르는지"를 부르기 직전에 못 보게 된다. variant 는 badge. */}
+                    <Identity account={item.account} className="ml-1" variant="badge" />
+                  </>
+                )}
+              </button>
+            </li>
+          ))}
         </ul>
       )}
       {sticky.length > 0 && (
@@ -548,6 +593,48 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
               >
                 ×
               </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {/*
+        부를 상대(#278). 아무도 없으면 **줄 자체를 그리지 않는다** — 빈 자리를 만들면 사람은
+        거기에 무엇이 있었는지를 매번 확인해야 한다.
+
+        위의 고정 칩과 **다른 요소**다. 칩은 사람이 명시적으로 고정한 것이고 이 줄은 본문에서
+        해석된 것이라 뜻이 다르다. 한 줄에 섞으면 지울 때 어느 쪽이 사라지는지 알 수 없다.
+
+        항목에 버튼을 달지 않는 것도 그 때문이다: 이 줄의 근거는 본문이므로 여기서 지울 수
+        있게 하면 본문과 화면이 어긋난다(또는 우리가 몰래 본문을 고쳐야 한다). 지우려면 본문을
+        고친다 — 그것이 이 줄이 말하는 유일한 사실이다.
+      */}
+      {bodyMentionList.length > 0 && (
+        <ul
+          data-testid="body-mentions"
+          aria-label="부를 상대"
+          className="mb-1 flex flex-wrap items-center gap-1 text-xs text-zinc-600"
+        >
+          <li>부를 상대:</li>
+          {bodyMentionList.map((r) => (
+            <li
+              key={r.handle}
+              data-handle={r.handle}
+              data-kind={r.kind}
+              className={`flex items-center gap-0.5 font-medium ${
+                r.kind === 'account' ? 'text-zinc-700' : 'text-teal-700'
+              }`}
+            >
+              <span>@{r.handle}</span>
+              {/*
+                집합·채널 전체는 **사람 하나가 아니라는 것이 보여야 한다** — `@oncall` 이
+                사람 이름처럼 보이면 몇 명을 부르는지 모르고 보낸다.
+
+                구성원 수는 여기서 낼 수 없다: `HandleGroupRow` 에 수가 없고 데스크탑은
+                명단을 받지 않는다(`listHandleGroupMembers` 는 서버 전용). 글자마다 명단을
+                조회하는 것은 이 줄이 살 값이 아니다.
+              */}
+              {r.kind === 'group' && <span className="text-zinc-500">(집합)</span>}
+              {r.kind === 'channel' && <span className="text-zinc-500">(채널 전체)</span>}
             </li>
           ))}
         </ul>
