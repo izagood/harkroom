@@ -1,4 +1,4 @@
-import type { AccountStatus, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, MessageRow, NotifyLevel, WsServerEvent } from '@murmur/shared';
+import type { AccountStatus, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent } from '@murmur/shared';
 import { notifyLevelOf } from '@murmur/shared';
 import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
@@ -58,6 +58,8 @@ export class Controller {
     this.swallow(this.api.channelPrefs().then((prefs) => {
       useAppStore.getState().set({ channelPrefs: Object.fromEntries(prefs.map((p) => [p.channelId, p])) });
     }));
+    // 담아 둔 메시지 요약(#219)도 같은 방식으로 fire-and-forget 으로 받는다.
+    this.swallow(this.loadSavedSummary());
     // 앱을 열자마자 쌓여 있던 미읽음이 한꺼번에 터지면 알림이 소음이 된다.
     for (const e of unread) this.announced.add(e.id);
     // 장기 토큰은 ApiClient 가 헤더로만 쓴다 — WS URL 에는 단기 티켓만 실린다.
@@ -966,6 +968,37 @@ export class Controller {
   /** 초대 토큰을 발급한다 — admin 전용. */
   createInvite(): Promise<string> {
     return this.api.createInvite();
+  }
+
+  /**
+   * 담긴 목록 한 탭. **스토어에 쓰지 않고 그대로 돌려준다** — 패널의 지역 상태다.
+   * 여기서 전역에 쓰면 '완료' 탭을 본 뒤 `⋯` 메뉴가 open 인 메시지를 담기지 않은 것으로 읽는다.
+   * 실패는 삼키지 않고 그대로 던진다 — 부르는 화면이 "못 읽었다"를 그린다.
+   */
+  loadSavedMessages(state: 'open' | 'done'): Promise<SavedMessageRow[]> {
+    return this.api.savedMessages(state);
+  }
+
+  /** 사이드바 배지(open 개수)와 `⋯` 메뉴 문구(담겼는가)를 한 왕복으로 갱신한다. */
+  async loadSavedSummary(): Promise<{ openCount: number; messageIds: string[] }> {
+    const summary = await this.api.savedSummary();
+    useAppStore.getState().set({ savedCount: summary.openCount, savedIds: summary.messageIds });
+    return summary;
+  }
+
+  async saveMessage(messageId: string): Promise<void> {
+    await this.api.saveMessage(messageId);
+    await this.loadSavedSummary();
+  }
+
+  async unsaveMessage(messageId: string): Promise<void> {
+    await this.api.unsaveMessage(messageId);
+    await this.loadSavedSummary();
+  }
+
+  async updateSavedMessageState(messageId: string, state: 'open' | 'done'): Promise<void> {
+    await this.api.updateSavedMessage(messageId, state);
+    await this.loadSavedSummary();
   }
 }
 
