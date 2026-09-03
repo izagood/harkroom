@@ -62,25 +62,56 @@ export function MessageItem({ message, inThread = false }: { message: MessageRow
   const iconBtn = 'rounded p-1 text-zinc-500 hover:bg-zinc-100';
 
   /**
-   * 링크를 클립보드에 담는다(#178). **실패를 조용히 삼키지 않는다** — 삼키면 사람은
+   * 클립보드에 담는다(#178). **실패를 조용히 삼키지 않는다** — 삼키면 사람은
    * 붙여넣기를 시도하고 나서야 안 됐다는 것을 알고, 그때는 어느 메시지였는지도 잊는다.
-   * 그래서 실패하면 링크 문자열 자체를 알림에 실어 손으로 복사할 길을 남긴다.
+   * 실패 문구를 부르는 쪽이 정하는 이유는 손으로 복사할 길이 대상마다 다르기 때문이다(#179).
    */
-  const copyLink = async () => {
-    const link = messagePermalink(message.id);
+  const copyToClipboard = async (text: string, ok: string, fail: string) => {
     try {
       // clipboard 자체가 없는 환경(비보안 컨텍스트)도 실패다 — 같은 자리에서 잡는다.
       if (!navigator.clipboard) throw new Error('no clipboard');
-      await navigator.clipboard.writeText(link);
-      useAppStore.getState().set({ notice: 'Link copied.' });
+      await navigator.clipboard.writeText(text);
+      useAppStore.getState().set({ notice: ok });
     } catch {
-      useAppStore.getState().set({ notice: `Could not copy the link. Copy it by hand: ${link}` });
+      useAppStore.getState().set({ notice: fail });
     }
   };
+
+  // 링크는 화면 어디에도 안 보인다 — 그래서 실패하면 링크 문자열 자체를 알림에 실어야
+  // 손으로 복사할 길이 남는다.
+  const copyLink = () => {
+    const link = messagePermalink(message.id);
+    return copyToClipboard(link, 'Link copied.', `Could not copy the link. Copy it by hand: ${link}`);
+  };
+
+  /**
+   * 본문 복사(#179). 복사하는 것은 **원본 `body`** 다 — `MessageBody` 가 그린 형태가
+   * 아니다. 렌더 결과를 복사하면 멘션이 사람이 다시 붙여넣을 수 없는 모양으로 바뀌고,
+   * 원문으로 되돌릴 방법이 사라진다.
+   *
+   * 실패 문구에 본문을 싣지 않는다 — 본문은 이미 화면에 그려져 있어 손으로 고를 수 있고,
+   * 긴 메시지를 알림에 통째로 밀어 넣으면 알림이 화면을 덮는다.
+   */
+  const copyBody = () =>
+    copyToClipboard(message.body, 'Message copied.', 'Could not copy the message. Select it in the message and copy by hand.');
 
   const menuItems = [
     // 어떤 메시지든 가리킬 수 있다 — 남의 것도, system 메시지도 링크의 대상이다.
     { label: 'Copy link', onSelect: () => { void copyLink(); } },
+    // 복사는 **권한 게이트가 없다**(#179) — 읽을 수 있으면 이미 본문을 눈으로 옮길 수 있다.
+    // Edit·Delete 와 성격이 다르니 그 둘의 조건을 따라가지 않는다.
+    { label: 'Copy text', onSelect: () => { void copyBody(); } },
+    /**
+     * 여기부터 안 읽음(#179). #154 의 `PUT /channels/:id/unread` 를 그대로 부른다.
+     *
+     * 보내는 것은 **이 메시지의 seq** 다. 다음 메시지의 seq 를 보내면 경계가 이 메시지
+     * 뒤로 가서, 사람이 표시한 그 메시지가 읽은 것으로 남고 돌아왔을 때 보이지 않는다.
+     *
+     * 내가 쓴 메시지에는 만들지 않는다 — 미읽음 셈은 내 발화를 애초에 빼므로
+     * (`readPositions.ts` 의 `author_id <> $1`) 눌러도 숫자가 그대로다. 아무 일도
+     * 일어나지 않는 항목은 거짓 신호다(design.md §4).
+     */
+    ...(!isMine ? [{ label: 'Mark unread from here', onSelect: () => { void getController().markChannelUnread(message.channelId, message.seq); } }] : []),
     // 고정은 **글을 쓸 수 있는 사람 누구나** 한다(#218) — 그래서 작성자·admin 조건이 없다.
     // 보관된 채널에서만 뺀다: 서버가 거절하는 것을 메뉴에 남겨 두면 없는 것을 있다고
     // 표시하는 셈이다(design.md §4). 해제는 보관된 채널에서도 남는다 — 잘못 올라간 핀을
