@@ -294,7 +294,12 @@ export class ApiClient {
     return this.req('DELETE', `/accounts/agents/${agentId}/memory/${encodeURIComponent(slug)}`);
   }
 
-  async search(q: string): Promise<MessageRow[]> {
-    return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}`)).messages;
+  /**
+   * #221: `channelId` 를 주면 서버가 질의를 좁힌다. 받아 온 결과를 여기서 거르지 않는 이유는
+   * 전역 결과가 상위 N 건에서 잘려 이 채널 것이 아예 안 실려 올 수 있기 때문이다.
+   */
+  async search(q: string, channelId?: string | null): Promise<MessageRow[]> {
+    const scope = channelId ? `&channelId=${encodeURIComponent(channelId)}` : '';
+    return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
   }
 }
