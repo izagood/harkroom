@@ -63,6 +63,21 @@ export interface AgentConfig {
 
 export interface AgentView extends AccountView, AgentConfig {}
 
+/**
+ * 새 에이전트를 만들 때 채워 넣는 기본값(#171). 워크스페이스 전체에 하나뿐이다.
+ *
+ * **에이전트가 이것을 참조하지 않는다.** 생성 시점 값을 그 에이전트의 정의에 복사하고,
+ * 그 뒤로는 서로 독립이다 — 여기를 바꿔도 이미 만들어진 에이전트는 그대로다.
+ * 참조로 두면 기본값을 고치는 순간 돌고 있는 러너의 harness 가 중간에 바뀐다.
+ *
+ * `model`·`effort` 의 null 은 `AgentConfig` 와 같은 뜻이다 — 'harness 기본값 사용'.
+ */
+export interface AgentDefaults {
+  harness: string;
+  model: string | null;
+  effort: string | null;
+}
+
 export interface PatView {
   label: string;
   createdAt: string;
