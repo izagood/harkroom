@@ -162,7 +162,25 @@ function warnOnDuplicatePosts(key: string, postCount: number): void {
   );
 }
 
-export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarget): Promise<void> {
+/**
+ * 턴 하나가 끝난 뒤 호출자(main.ts 의 폴 루프)에게 돌려주는 사실.
+ *
+ * 종료 요청을 여기 실어 보내는 이유(#129): 러너는 이미 매 턴 `deps.murmur.definition()`
+ * 으로 자기 정의를 다시 읽는다 — 요청은 그 응답에 얹혀 온다. 별도 채널을 두면 러너가
+ * 서버를 보는 경로가 둘이 되고, 두 경로가 서로 다른 시점의 사실을 말할 수 있다.
+ *
+ * **이 함수는 스스로 종료하지 않는다.** 턴 중간에 죽으면 사람이 기다리는 답이 사라진다.
+ * 요청을 본 시점(턴 시작 직후)과 그것에 따라 물러나는 시점(턴 종료 후)이 달라야 하고,
+ * 반환값이 정확히 그 간격을 만든다.
+ */
+export interface MentionTurnResult {
+  /** 이 턴에 읽은 정의에 실려 온 종료 요청 시각. null 은 '요청 없음'. */
+  stopRequestedAt: string | null;
+}
+
+export async function runMentionTurn(
+  deps: MentionTurnDeps, target: MentionTarget,
+): Promise<MentionTurnResult> {
   const { channelId, threadRootId: anchor, mentionId } = target;
 
   // 👀 신호: 멘션을 집은 **즉시**. 함수 진입 직후에 있어야 하는 이유가 있다 — 아래의
@@ -240,7 +258,7 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
     // 것"으로 들이밀어 세션이 자기 말을 또 보는 일이 없다. turnsRun 은 건드리지 않는다 —
     // 하네스가 안 돌았으니 "돌았다"고 기록할 것도 없다.
     await deps.store.put(key, { ...rec, lastFedSeq: fedSeq });
-    return;
+    return { stopRequestedAt: def.stopRequestedAt };
   }
 
   // 발화 판정(hasOwnPostSince)의 기준선이다 — 턴 시작 전에 이미 있던 자기 발화까지 세면,
@@ -438,4 +456,8 @@ export async function runMentionTurn(deps: MentionTurnDeps, target: MentionTarge
       `[mentionTurn] ${key}: 발화 확인/통보 실패(세션 상태는 이미 저장됐다) — ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+
+  // 종료 요청은 **여기서** 돌려준다 — 정의를 읽은 직후가 아니다. 그 자리에서 돌아서면
+  // 이 멘션은 답 없이 사라지고, 부른 사람은 왜 답이 없는지 알 방법이 없다.
+  return { stopRequestedAt: def.stopRequestedAt };
 }

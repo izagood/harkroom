@@ -158,6 +158,17 @@ export class ApiClient {
     return this.req('PATCH', `/accounts/agents/${id}`, patch);
   }
 
+  /**
+   * 러너에게 **종료를 요청한다**(#129). 재시작이 아니다 — murmur 는 러너를 띄우지 않으므로
+   * 다시 띄우는 것은 사람의 몫이다. 정의 수정(PATCH)과 섞지 않고 별도 라우트인 이유:
+   * 이 값은 운영자가 편집하는 정의가 아니라 러너에게 보내는 일회성 요청이다.
+   *
+   * 응답은 갱신된 정의다 — 목록을 다시 받지 않고도 요청 시각을 바로 그린다.
+   */
+  requestAgentStop(agentId: string): Promise<AgentView> {
+    return this.req('POST', `/accounts/agents/${agentId}/stop`);
+  }
+
   /** WS 핸드셰이크용 단기 1회용 티켓. 연결 시도마다 새로 받는다. */
   async wsTicket(): Promise<string> {
     const res = await this.req<{ ticket: string }>('POST', '/ws-ticket');
