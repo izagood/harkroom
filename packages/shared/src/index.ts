@@ -763,12 +763,27 @@ export type WsServerEvent =
   | { type: 'channel.deleted'; channelId: string; audience: 'all' | string[] }
   // 담기/해제/상태 변경(#219). 본인의 소켓에만 온다.
   | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string }
-  /**
-   * 링크 미리보기가 준비됐다(#215). 가져오기는 비동기라 메시지가 먼저 뜨고 카드가 뒤에
-   * 온다 — 이 이벤트가 없으면 카드는 **다음에 그 메시지를 다시 그릴 때까지** 안 보인다.
-   * URL 만 보낸다: 카드 내용은 받는 쪽이 `GET /link-previews` 로 읽는다(캐시가 하나다).
-   */
-  | { type: 'link_preview.ready'; url: string; audience: 'all' | string[] };
+/**
+ * 링크 미리보기가 준비됐다(#215). 가져오기는 비동기라 메시지가 먼저 뜨고 카드가 뒤에
+ * 온다 — 이 이벤트가 없으면 카드는 **다음에 그 메시지를 다시 그릴 때까지** 안 보인다.
+ * URL 만 보낸다: 카드 내용은 받는 쪽이 `GET /link-previews` 로 읽는다(캐시가 하나다).
+ */
+  | { type: 'link_preview.ready'; url: string; audience: 'all' | string[] }
+  // 워크스페이스 스킬(#311). 제안·승인·비활성을 알린다.
+  | { type: 'skill.proposed'; skill: WorkspaceSkillView; channelId: string }
+  | { type: 'skill.approved'; skill: WorkspaceSkillView }
+  | { type: 'skill.disabled'; skill: WorkspaceSkillView };
+
+/** 워크스페이스 스킬 하나의 뷰(#311). */
+export interface WorkspaceSkillView {
+  slug: string;
+  body: string;
+  proposedBy: string;
+  proposedAt: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  disabledAt: string | null;
+}
 
 /**
  * ── Phase 2 attach: 러너 PTY ↔ 서버 ↔ 데스크탑 xterm 릴레이 (스펙 §5) ──
