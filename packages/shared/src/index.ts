@@ -166,23 +166,43 @@ export const HANDLE_PATTERN = '[a-zA-Z0-9_-]{2,32}';
 export const CHANNEL_NAME_PATTERN = '^[a-z0-9_-]{1,48}$';
 
 /**
- * 코드 구간 타입. `MessageBody` 와 서버의 코드 블록 제외가 같은 함수를 써야 한다(#298).
+ * 본문에서 **코드만** 떼어낸다(#216). 마크다운 전체가 아니다 — 에이전트 출력에서 가치가
+ * 가장 크면서 렌더링 표면이, 따라서 공격 표면도 가장 작은 것이 코드다.
+ *
+ * 이 판정이 사슬의 **맨 앞**에 있는 것이 요점이다. 멘션·링크(#214)보다 먼저 raw 본문을
+ * 나눠야 코드가 우선권을 갖는다. 순서가 뒤집히면 코드 블록 안의 URL 이 이미 링크가 된
+ * 뒤라 되돌릴 방법이 없다 — 코드는 코드다.
+ *
+ * 라이브러리를 쓰지 않는다. 마크다운 렌더러는 raw HTML 통과를 기본으로 켜 두는 경우가
+ * 많고, 그 설정 하나가 "HTML 을 통과시키지 않는다"는 결정을 조용히 뒤집는다. 직접
+ * 토크나이즈해서 React 엘리먼트로 넘기면 이스케이프는 React 가 보장한다.
+ *
+ * **`shared` 에 있는 이유(#298).** 데스크탑의 `MessageBody` 만 코드를 갈라내던 동안 서버는
+ * 본문 전체에서 멘션을 뽑아 알림을 보냈다 — 알림은 갔는데 화면은 안 갔다고 말하는, 판정이
+ * 두 벌일 때 나는 거짓말이다. 서버가 양보하고(코드 예시의 `@forge` 는 그 에이전트를 부르는
+ * 뜻이 아니다) 그 판정을 여기 한 벌만 둔다. 데스크탑은 `src/lib/code.ts` 가 이것을 다시
+ * export 한다 — **복사가 아니라 재수출이다.**
  */
 export type CodeSegment =
   /** 코드가 아닌 부분. 여기에만 멘션·링크 인식을 얹는다. */
   | { kind: 'plain'; text: string }
   /** 백틱 하나로 감싼 것. */
   | { kind: 'inlineCode'; code: string }
-  /** 백틱 세 개로 감싼 것. */
+  /** 백틱 세 개로 감싼 것. `lang` 은 **표시용일 뿐** — 문법 강조는 하지 않는다. */
   | { kind: 'codeBlock'; code: string; lang: string | null };
 
 /**
- * 펜스 줄. 줄 전체가 펜스여야 한다.
+ * 펜스 줄. 줄 전체가 펜스여야 한다 — `see ```x``` here` 처럼 문장 안에 섞인 것은 펜스가
+ * 아니다. 여는 줄의 나머지는 언어 표시로 읽는다.
  */
 const FENCE_LINE = /^[ \t]*```([^\n`]*)$/;
 
 /**
- * 인라인 코드.
+ * 인라인 코드. 개행을 넘지 않는 것이 의도다 — 짝이 없는 백틱 하나가 뒤의 본문 전체를
+ * 코드로 삼키면 메시지가 사라진 것처럼 보인다(펜스에서 같은 이유로 같은 결정을 한다).
+ *
+ * 앞뒤에 백틱이 더 붙어 있으면 집지 않는다. ```` ```x``` ```` 를 한 줄에 쓴 것은 인라인도
+ * 블록도 아닌 애매한 입력이니, 애매한 것은 평문으로 둔다.
  */
 const INLINE_CODE = /(?<!`)`([^`\n]+)`(?!`)/g;
 
@@ -200,7 +220,9 @@ function splitInline(text: string, out: CodeSegment[]): void {
 /**
  * 본문을 코드/비코드 구간으로 나눈다(#216, #298).
  *
- * **닫히지 않은 펜스는 코드가 아니다.**
+ * **닫히지 않은 펜스는 코드가 아니다.** 열고 닫지 않은 것을 블록으로 그리면 그 뒤 본문
+ * 전체가 코드가 되어 메시지가 통째로 사라진 것처럼 보인다. 그래서 닫는 줄을 먼저 찾고,
+ * 없으면 여는 줄까지 평문으로 되돌린다.
  */
 export function splitCode(body: string): CodeSegment[] {
   const out: CodeSegment[] = [];
@@ -217,6 +239,8 @@ export function splitCode(body: string): CodeSegment[] {
     const open = FENCE_LINE.exec(lines[i]!);
     if (!open) { i += 1; continue; }
 
+    // 닫는 줄을 찾는다. 언어 표시가 붙어 있어도 닫는 줄로 본다 — 두 번째 펜스가 나온
+    // 시점에서 블록은 끝난 것이고, 그 뒤를 계속 코드로 두면 위 결정을 어기게 된다.
     let close = -1;
     for (let j = i + 1; j < lines.length; j += 1) {
       if (FENCE_LINE.test(lines[j]!)) { close = j; break; }
@@ -253,22 +277,37 @@ export const MENTION_PATTERN = `(^|[^a-zA-Z0-9_-])@(${HANDLE_PATTERN})`;
  * 본문에서 불린 handle 들. 소문자로 정규화해 중복을 없앤다(`@fizz` 와 `@Fizz` 는 한 사람).
  * 패턴이 대문자를 이미 포함하므로 `i` 플래그는 필요하지 않다.
  *
- * 코드 블록(#298) 안의 `@handle` 은 무시한다. 처리 순서:
- * 1. 코드 제거(splitCode 로 코드 구간 분리)
- * 2. (서버에서) 그룹 확장
- * 3. 멘션 추출
- * 같은 본문을 보므로/desktop 의 `MessageBody` 강조와 결과가 같다.
+ * 코드 블록(#298) 안의 `@handle` 은 무시한다 — `stripCodeSpans` 가 먼저 코드를 걷어낸다.
+ *
+ * **순서가 결정이다: 코드 제거 → 멘션 추출 → 그룹 확장(#230)·채널 전체(#225).** 코드 제거가
+ * 맨 앞이므로 코드 안의 그룹 handle 은 애초에 `handles` 에 들어오지 못하고, 따라서 확장될
+ * 기회도 없다 — 예외 처리가 아니라 순서에서 따라오는 결과다. 서버(`services/messages.ts`)의
+ * 그룹 확장은 이 함수가 돌려준 목록만 훑으므로 그 순서가 코드로 강제된다.
  */
 export function mentionedHandles(body: string): string[] {
-  const segments = splitCode(body);
   const found = new Set<string>();
-  for (const seg of segments) {
-    if (seg.kind !== 'plain') continue;
-    for (const m of seg.text.matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
-      if (m[2]) found.add(m[2].toLowerCase());
-    }
+  for (const m of stripCodeSpans(body).matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
+    if (m[2]) found.add(m[2].toLowerCase());
   }
   return [...found];
+}
+
+/**
+ * 본문에서 코드 구간을 걷어낸 나머지(#298). 멘션을 찾을 대상은 **이것뿐**이다.
+ *
+ * 남은 조각을 개행으로 이어 붙인다. 개행은 handle 문자가 아니므로 `MENTION_PATTERN` 의
+ * 선행 문자 조건에서 조각의 첫 글자가 `^` 와 같은 자격을 갖는다 — 조각을 따로 훑는 것과
+ * 결과가 같고, 코드를 걷어낸 자리에서 두 조각이 붙어 없던 멘션이 생기는 일도 없다.
+ *
+ * 문자열 하나를 돌려주는 이유: 이 값을 쓰는 곳이 서버의 멘션 추출과 데스크탑의 "부를
+ * 상대"(#278) 둘인데, 둘 다 정규식을 한 번 돌릴 평문이 필요할 뿐이다. 각자 세그먼트를
+ * 이어 붙이게 두면 그 이어 붙이는 규칙이 다시 두 벌이 된다.
+ */
+export function stripCodeSpans(body: string): string {
+  return splitCode(body)
+    .filter((seg): seg is { kind: 'plain'; text: string } => seg.kind === 'plain')
+    .map((seg) => seg.text)
+    .join('\n');
 }
 
 /**
