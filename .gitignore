@@ -9,8 +9,15 @@ target/
 *.log
 .DS_Store
 
+# 작업용 스크래치. 커밋되지 않아야 한다 — #295 가 실수로 여기 있던 gh 래퍼를
+# main 에 올렸다(값이 든 비밀은 없었지만, 저장소에 있을 것이 아니다).
+.scratch/
+
 # 로컬 개발용 compose 오버라이드
 docker-compose.override.yml
 
 # 로컬 실행 시 첨부가 쌓이는 곳(컨테이너는 볼륨을 쓴다).
 .attachments/
+
+# 오케스트레이터 작업용 임시 스크립트(gh 래퍼 등) — 저장소에 들어갈 것이 아니다.
+.scratch/

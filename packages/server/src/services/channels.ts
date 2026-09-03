@@ -3,6 +3,9 @@ import type { ChannelDoc, ChannelMemberRow, ChannelRow, NotifyLevel } from '@mur
 
 const COLS = `id, name, topic, kind, repo, archived_at as "archivedAt", visibility`;
 
+/** `Pool` 과 `PoolClient` 가 함께 만족하는 최소 표면. 트랜잭션 안에서도 쓰라고 둔다. */
+type Queryable = Pick<Pool, 'query'>;
+
 /**
  * 채널 가시성 술어 — **이 저장소에서 가시성을 판정하는 유일한 정의다.**
  *
@@ -119,11 +122,14 @@ export async function updateChannel(
  * 본다** — 읽기·쓰기 게이트(`assertChannelVisible`, `channelPostGate`)에는 이 예외가
  * 없다. `MessageItem.tsx` 가 "삭제는 admin 에게 열고 수정은 안 연다"고 한 것과 같은 결의
  * 절충이다: 조정 수단은 주되, 남의 대화 내용을 읽을 권한은 주지 않는다.
+ *
+ * admin 예외 자체는 `channelListVisibleSql` 이 갖는다 — 채널 목록 WS 이벤트(#284)의
+ * 수신자도 같은 술어를 봐야 하기 때문이다. 여기에 인라인으로 두면 두 벌이 된다.
  */
 export async function listChannels(pool: Pool, accountId: string, isAdmin = false): Promise<ChannelRow[]> {
   const res = await pool.query(
     `select ${COLS} from channel c
-     where c.kind = 'standard' and ($2::bool or ${channelVisibleSql('c', '$1')})
+     where c.kind = 'standard' and ${channelListVisibleSql('c', '$1', '$2::bool')}
      order by name`,
     [accountId, isAdmin],
   );
@@ -260,6 +266,64 @@ export async function audienceFor(pool: Pool, channelId: string): Promise<'all' 
   return channelMemberIds(pool, channelId);
 }
 
+/**
+ * **사이드바 목록에 이 채널이 보이는가** 를 계정 하나에 대해 묻는 SQL 술어.
+ *
+ * `channelVisibleSql` 과 다른 질문이다 — 목록에는 admin 예외가 있다(`listChannels` 의
+ * 주석: admin 은 목록에서는 보되 메시지는 못 본다). 그 예외를 여기 한 곳에 두고
+ * `listChannels` 와 아래 두 수신자 함수가 **같은 것을 참조**하게 한다. 복사하면
+ * "목록에 있는데 삭제됐다는 안내가 뜨는" 어긋남이 생긴다.
+ *
+ * @param channel 질의 안에서 `channel` 테이블을 가리키는 별칭
+ * @param accountParam 보는 사람의 계정 id 를 담은 식 (예: `'$1'`, `'a.id'`)
+ * @param isAdminExpr 보는 사람이 admin 인지를 담은 식 (예: `'$2::bool'`, `'a.is_admin'`)
+ */
+export function channelListVisibleSql(channel: string, accountParam: string, isAdminExpr: string): string {
+  return `((${channel}.kind = 'standard' and ${isAdminExpr})
+     or ${channelVisibleSql(channel, accountParam)})`;
+}
+
+/**
+ * 채널 **목록 변경** 이벤트(`channel.created` / `channel.updated`)의 수신자(#284).
+ *
+ * `audienceFor`(메시지·리액션용)와 나누는 이유: 목록 이벤트가 고쳐야 하는 화면은
+ * `listChannels` 가 그린 목록이고, 그 목록에는 admin 예외가 있다. `audienceFor` 를 쓰면
+ * private 채널의 이름이 바뀔 때 admin 의 목록만 낡은 이름으로 남는다. 새는 방향은 없다 —
+ * 페이로드(`ChannelRow`)는 admin 이 이미 `GET /channels` 로 보는 것과 같은 필드이고,
+ * 메시지 본문은 여기에 없다.
+ */
+export async function channelListAudience(pool: Pool, channelId: string): Promise<'all' | string[]> {
+  const channel = await pool.query(`select kind, visibility from channel where id = $1`, [channelId]);
+  const row = channel.rows[0] as { kind: string; visibility: string } | undefined;
+  // 존재하지 않는 채널 id 는 `audienceFor` 와 같이 'all' 이다.
+  if (!row) return 'all';
+  // public standard 는 전원이 목록에서 본다 — 계정을 훑을 필요가 없다.
+  if (row.kind === 'standard' && row.visibility === 'public') return 'all';
+  const res = await pool.query(
+    `select a.id from account a, channel c
+     where c.id = $1 and ${channelListVisibleSql('c', 'a.id', 'a.is_admin')}`,
+    [channelId],
+  );
+  return res.rows.map((r) => r.id);
+}
+
+/**
+ * 이 채널이 **목록에서 사라진** 계정들 — `channel.deleted` 의 수신자(#284).
+ *
+ * public→private 전환에서 필요하다: 비멤버에게 그 채널은 사라진 것이므로 삭제로 보인다.
+ * `audience: 'all'` 로 보내면 **멤버도** 받아서 활성 채널이 비워지고 "삭제됐다" 안내가
+ * 뜬다(멤버에게는 이름만 바뀐 사건인데). 그래서 여기서 위 술어를 **부정**해 목록에
+ * 남지 않은 계정만 고른다.
+ */
+export async function channelListLostAudience(pool: Pool, channelId: string): Promise<string[]> {
+  const res = await pool.query(
+    `select a.id from account a, channel c
+     where c.id = $1 and not ${channelListVisibleSql('c', 'a.id', 'a.is_admin')}`,
+    [channelId],
+  );
+  return res.rows.map((r) => r.id);
+}
+
 export interface ChannelPrefRow {
   accountId: string;
   channelId: string;
@@ -332,9 +396,15 @@ export async function listChannelPrefs(pool: Pool, accountId: string): Promise<C
  * 하고, 그 경로까지 닫으면 admin 에게 조정 수단이 없어진다.
  */
 export async function channelPostGate(
-  pool: Pool, channelId: string, accountId: string,
+  /**
+   * `Pool` 뿐 아니라 **트랜잭션 클라이언트**도 받는다(#222). 예약 발송 sweep 은 행을
+   * `for update skip locked` 로 잡은 트랜잭션 안에서 이 술어를 물어야 하는데, 그때
+   * `pool` 로 물으면 **커넥션을 하나 더** 잡는다 — 락을 쥔 채 풀을 기다리는 모양이라
+   * 풀이 마르면 그대로 교착이다. 쥐고 있는 클라이언트로 묻게 열어 둔다.
+   */
+  db: Queryable, channelId: string, accountId: string,
 ): Promise<'ok' | 'forbidden' | 'archived'> {
-  const res = await pool.query(
+  const res = await db.query(
     `select ${channelVisibleSql('c', '$2')} as visible,
             c.archived_at is not null as archived
      from channel c where c.id = $1`,
@@ -548,6 +618,11 @@ export async function deleteChannel(
     // 여기 없으면 FK 위반으로 터진다 — `channelDelete.test.ts` 가 스키마를 다시 세어
     // 이 목록의 누락을 잡아 줬다(#155 가 세운 그 자리가 실제로 작동했다).
     await client.query(`delete from channel_doc where channel_id = $1`, [channelId]);
+    // scheduled_message: channel_id·thread_root_id·sent_message_id 참조, cascade 없음(#222).
+    // 아직 나가지 않은 예약도 함께 사라진다 — 채널이 없어졌으니 보낼 곳이 없고, 남겨 두면
+    // sweep 이 매번 없는 채널을 집어 든다. **message 보다 먼저** 지워야 한다:
+    // `sent_message_id` 가 이 채널의 메시지를 가리키기 때문이다.
+    await client.query(`delete from scheduled_message where channel_id = $1`, [channelId]);
     // message: channel_id 참조. attachment·message_reaction 은 cascade 로 함께 사라진다.
     // thread_root_id 자기 참조는 한 문장 안에서 부모·자식을 함께 지우므로 문제가 없다.
     await client.query(`delete from message where channel_id = $1`, [channelId]);
