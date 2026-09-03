@@ -12,7 +12,7 @@ describe('prefsStorage', () => {
   });
 
   it('round-trips what was saved', () => {
-    prefsStorage.save({ notifications: { ...DEFAULT_PREFS.notifications, dm: false } });
+    prefsStorage.save({ ...DEFAULT_PREFS, notifications: { ...DEFAULT_PREFS.notifications, dm: false } });
     expect(prefsStorage.load().notifications.dm).toBe(false);
     expect(prefsStorage.load().notifications.mention).toBe(true);
   });

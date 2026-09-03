@@ -252,6 +252,8 @@ export class Controller {
 
   async openChannel(channelId: string): Promise<void> {
     const store = useAppStore.getState();
+    // 채널·스레드 열림은 이력에 추가한다. 뒤로/앞으로 이동은 pushHistory 를 안 부른다.
+    store.pushHistory({ channelId, threadRootId: null });
     store.set({ activeChannelId: channelId, threadRootId: null });
     // 투영된 system 메시지는 사용자가 그 채널을 보고 있지 않아도 WS로 들어와 maxSeq를 올린다.
     // 그 상태에서 증분 조회를 하면 backlog 전체가 건너뛰어져 채널이 거의 비어 보인다 —
@@ -297,6 +299,7 @@ export class Controller {
   async openThread(rootId: string): Promise<void> {
     const channelId = useAppStore.getState().activeChannelId;
     if (!channelId) return;
+    useAppStore.getState().pushHistory({ channelId, threadRootId: rootId });
     useAppStore.getState().set({ threadRootId: rootId });
     const page = await this.api.messages(channelId, { thread: rootId });
     useAppStore.getState().upsertMessages(channelId, page.messages);
@@ -515,6 +518,68 @@ export class Controller {
     const starred = !current?.starredAt;
     const updated = await this.api.updateChannelPref(channelId, { starred });
     store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
+  }
+
+  /** 뒤로 탐색. 이력 스택에서 이전 항목으로 이동한다.
+   * 사라진 채널을 만나면 건너뛴다. 갈 곳이 없으면 false 를 반환한다. */
+  async goBack(): Promise<boolean> {
+    // 목표 인덱스를 **먼저 찾고 한 번만 적용한다.** 찾는 도중에 인덱스를 내리면
+    // 갈 곳이 없어 실패했을 때도 위치가 움직여 있다.
+    //
+    // 그리고 `store.goBack()` 은 인덱스를 바꾸지 않는 **순수 조회**다 — 인덱스를 내리지
+    // 않은 채 그것을 다시 부르면 같은 항목이 영원히 돌아와 **사라진 채널 하나가 앱을
+    // 멈춘다.** 그래서 조회를 반복하지 않고 배열을 직접 훑는다.
+    return this.navigateHistory(-1);
+  }
+
+  /** 앞으로 탐색. 이력 스택에서 다음 항목으로 이동한다.
+   * 사라진 채널을 만나면 건너뛴다. 갈 곳이 없으면 false 를 반환한다. */
+  async goForward(): Promise<boolean> {
+    return this.navigateHistory(1);
+  }
+
+  /**
+   * 이력을 한 방향으로 훑어 **살아 있는 채널**을 가리키는 첫 항목으로 이동한다.
+   * 사라진 채널을 가리키는 항목은 건너뛴다 — 사람이 지운 채널을 다시 보여줄 수 없는
+   * 것은 오류가 아니므로 조용히 넘어가고, 갈 곳이 하나도 없으면 아무것도 하지 않는다.
+   */
+  private async navigateHistory(step: -1 | 1): Promise<boolean> {
+    const { history, historyIndex } = useAppStore.getState();
+    for (let i = historyIndex + step; i >= 0 && i < history.length; i += step) {
+      const entry = history[i]!;
+      const st = useAppStore.getState();
+      const exists = st.channels.some((c) => c.id === entry.channelId) ||
+        st.dms.some((d) => d.id === entry.channelId);
+      if (!exists) continue;
+      st.set({ historyIndex: i });
+      await this.openChannelWithoutHistory(entry.channelId);
+      if (entry.threadRootId) useAppStore.getState().set({ threadRootId: entry.threadRootId });
+      return true;
+    }
+    return false;
+  }
+
+  /** 채널을 연다(히스토리 미추가). 뒤로·앞으로 이동 전용. */
+  private async openChannelWithoutHistory(channelId: string): Promise<void> {
+    const store = useAppStore.getState();
+    store.set({ activeChannelId: channelId, threadRootId: null });
+    const since = this.loadedChannels.has(channelId)
+      ? Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq))
+      : 0;
+    const page = await this.api.messages(channelId, { since });
+    this.loadedChannels.add(channelId);
+    store.upsertMessages(channelId, page.messages);
+    store.set({
+      hasMore: { ...store.hasMore, [channelId]: page.hasMore },
+    });
+    const ids = store.unread
+      .filter((e) => e.channelId === channelId && !e.readAt)
+      .map((e) => e.id);
+    if (ids.length) {
+      await this.api.markRead(ids);
+      await this.refreshUnread();
+    }
+    await this.settleReadPosition(channelId);
   }
 
   logout(): void {
