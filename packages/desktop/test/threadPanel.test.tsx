@@ -55,7 +55,7 @@ describe('ThreadPanel', () => {
     const box = screen.getByPlaceholderText('Reply…') as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: 'on it' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(c.reply).toHaveBeenCalledWith('on it', [], 'c1', 'm1');
+    expect(c.reply).toHaveBeenCalledWith('on it', [], 'c1', 'm1', false);
     fireEvent.click(screen.getByRole('button', { name: '×' }));
     expect(c.closeThread).toHaveBeenCalled();
   });
@@ -77,7 +77,7 @@ describe('ThreadPanel', () => {
     const box = screen.getByPlaceholderText('Reply…') as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: 'help me' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(c.reply).toHaveBeenCalledWith('help me', [], 'c1', 'm1');
+    expect(c.reply).toHaveBeenCalledWith('help me', [], 'c1', 'm1', false);
     await waitFor(() => expect(box.value).toBe('help me'));
   });
 });

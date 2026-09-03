@@ -33,7 +33,7 @@ export function ChannelPane() {
   const composerTarget = channel ? `#${channel.name}` : (title ?? '');
 
   const roots = useMemo(
-    () => (activeChannelId ? (messages[activeChannelId] ?? []).filter((m) => m.threadRootId === null) : []),
+    () => (activeChannelId ? (messages[activeChannelId] ?? []).filter((m) => m.threadRootId === null || m.alsoInChannel) : []),
     [messages, activeChannelId],
   );
 

@@ -23,7 +23,7 @@ export const msg = (id: string, channelId: string, seq: number, body: string, au
   extra: Partial<MessageRow> = {}): MessageRow =>
   // #161: 스레드 메타데이터는 **루트에만** 붙고 옵셔널이 아니라 명시적 null 이다 —
   // fixture 도 그것을 적어야 한다. 루트 메시지를 만드는 테스트는 extra 로 덮어쓴다.
-  ({ id, seq, channelId, threadRootId: null, authorId, body, kind: 'user', meta: {}, createdAt: new Date().toISOString(), editedAt: null, reactions: [], attachments: [], replyCount: null, lastReplyAt: null, participantIds: null, ...extra });
+  ({ id, seq, channelId, threadRootId: null, authorId, body, kind: 'user', meta: {}, createdAt: new Date().toISOString(), editedAt: null, reactions: [], attachments: [], replyCount: null, lastReplyAt: null, participantIds: null, alsoInChannel: false, ...extra });
 
 // #218: 핀은 메시지를 통째로 싣는다 — 목록이 본문 한 줄을 미리 보여 줘야 쓸모가 있어서다.
 // 그래서 fixture 도 메시지를 함께 만든다(기본은 그 자리에서 만든 한 줄짜리 메시지다).
