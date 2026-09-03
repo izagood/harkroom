@@ -18,7 +18,7 @@ export type AuditAction =
   | 'agent.defaults.updated'
   | 'pat.issued' | 'pat.revoked'
   | 'password.changed'
-  | 'channel.created' | 'channel.updated' | 'message.deleted';
+  | 'channel.created' | 'channel.updated' | 'channel.archived' | 'channel.unarchived' | 'message.deleted';
 
 export interface AuditEntry {
   action: AuditAction;

@@ -478,6 +478,12 @@ export class Controller {
     return updated;
   }
 
+  async archiveChannel(id: string, archived: boolean): Promise<ChannelRow> {
+    const updated = await this.api.archiveChannel(id, archived);
+    useAppStore.getState().set({ channels: await this.api.channels() });
+    return updated;
+  }
+
   async startDm(accountId: string): Promise<void> {
     const dm = await this.api.createDm([accountId]);
     useAppStore.getState().set({ dms: await this.api.dms() });

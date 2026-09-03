@@ -8,7 +8,7 @@ export const acc = (id: string, handle: string, kind: 'human' | 'agent' = 'human
   ({ id, handle, displayName: handle, kind, isAdmin, disabled: false, status: 'available', statusText: null });
 
 export const chan = (id: string, name: string, repo: string | null = null): ChannelRow =>
-  ({ id, name, topic: '', kind: 'standard', repo });
+  ({ id, name, topic: '', kind: 'standard', repo, archivedAt: null });
 
 export const msg = (id: string, channelId: string, seq: number, body: string, authorId = 'u1',
   extra: Partial<MessageRow> = {}): MessageRow =>
@@ -50,8 +50,10 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     addReaction: vi.fn(async () => undefined),
     removeReaction: vi.fn(async () => undefined),
     createDm: vi.fn(),
-    updateChannel: vi.fn(async (id: string, input: { topic?: string; repo?: string | null }) =>
+    updateChannel: vi.fn(async (id: string, input: { topic?: string; repo?: string | null; archived?: boolean }) =>
       chan(id, id, input.repo ?? null)),
+    archiveChannel: vi.fn(async (id: string, _archived: boolean) =>
+      chan(id, id, null)),
     search: vi.fn(async () => []),
     ...overrides,
   };

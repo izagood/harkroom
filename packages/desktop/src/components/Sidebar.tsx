@@ -49,6 +49,7 @@ export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse 
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
+  const [archivedOpen, setArchivedOpen] = useState(false);
 
   const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
   const [editTopic, setEditTopic] = useState('');
@@ -181,7 +182,8 @@ export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse 
     `flex w-full items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-zinc-700 ${active ? 'bg-zinc-700' : ''}`;
 
   const sortedChannels = useMemo(() => {
-    const withPref = channels.map((ch) => ({ channel: ch, pref: channelPrefs[ch.id] }));
+    const standardChannels = channels.filter((ch) => ch.kind === 'standard' && !ch.archivedAt);
+    const withPref = standardChannels.map((ch) => ({ channel: ch, pref: channelPrefs[ch.id] }));
     const sorted = [...withPref].sort((a, b) => {
       if (a.pref?.starredAt && !b.pref?.starredAt) return -1;
       if (!a.pref?.starredAt && b.pref?.starredAt) return 1;
@@ -189,6 +191,12 @@ export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse 
     });
     return sorted.map((x) => x.channel);
   }, [channels, channelPrefs]);
+
+  const archivedChannels = useMemo(() => {
+    return channels
+      .filter((ch) => ch.kind === 'standard' && ch.archivedAt)
+      .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
+  }, [channels]);
 
   const channelRow = (ch: ChannelRow) => {
     const isEditing = editingChannelId === ch.id;
@@ -260,8 +268,13 @@ export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse 
       }
     };
 
+    const isArchived = !!ch.archivedAt;
     const menuItems = [
       ...(me?.isAdmin ? [{ label: '채널 편집', onSelect: () => startEdit(ch) }] : []),
+      ...(me?.isAdmin ? [isArchived
+        ? { label: '보관 해제', onSelect: () => void getController().archiveChannel(ch.id, false) }
+        : { label: '보관', onSelect: () => void getController().archiveChannel(ch.id, true) }]
+      : []),
       { label: '채널명 복사', onSelect: copyChannelName },
       { label: '채널 ID 복사', onSelect: copyChannelId },
       { label: isMuted ? '음소거 해제' : '음소거', onSelect: () => void getController().toggleChannelMute(ch.id) },
@@ -389,6 +402,18 @@ export function Sidebar({ onLogout, onOpenSettings, collapsed, onToggleCollapse 
             )
           )}
         </div>
+        {archivedChannels.length > 0 && (
+          <div>
+            <button
+              className="flex w-full items-center gap-1 px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500 hover:text-zinc-400"
+              onClick={() => setArchivedOpen((v) => !v)}
+            >
+              <span>{archivedOpen ? '▼' : '▶'}</span>
+              Archived ({archivedChannels.length})
+            </button>
+            {archivedOpen && archivedChannels.map(channelRow)}
+          </div>
+        )}
         <div>
           <button className={`${row(false)} text-zinc-400`} onClick={() => onOpenSettings('agents')}>
             + Add or edit agents
