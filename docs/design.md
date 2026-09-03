@@ -58,6 +58,15 @@
    여러 개를 알면 그 격리를 스코핑 컬럼과 쿼리 조건으로 **강제해야** 하고 조건 하나를
    빠뜨린 쿼리가 곧 교차 오염이다. 별개 배포에서는 격리가 설계가 아니라 배포로 강제된다.
    대가는 정직하게 적는다: 커뮤니티를 넘는 신원도, 단일 멤버 디렉터리도 없다.
+7. **OS 타이틀바를 앱 헤더로 대체하는 것은 macOS 에서만 한다**(#270). macOS 는
+   `titleBarStyle: "Overlay"` 로 창 컨트롤(신호등)을 **남긴 채** 타이틀바만 없앨 수 있지만,
+   Windows·Linux 에서 같은 결과를 얻는 유일한 길인 `decorations: false` 는 창 컨트롤을 통째로
+   지워 닫기·최소화·최대화를 앱이 직접 다시 그려야 한다. 그래서 플랫폼별 설정 파일
+   `src-tauri/tauri.macos.conf.json` 으로 가르고 기본 `tauri.conf.json` 은 손대지 않는다.
+   **Tauri 2 의 플랫폼별 병합은 JSON Merge Patch(RFC 7396) 라 배열은 병합이 아니라 통째로
+   교체된다** — `app.windows` 가 배열이므로 macOS 파일은 기본 파일의 `title`·`width`·`height`
+   까지 다시 적어야 하고, 빠뜨린 필드는 기본 파일 값이 아니라 Tauri 기본값으로 떨어진다.
+   `title` 은 창 전환기·화면 공유·접근성이 읽으므로 `hiddenTitle` 로 가릴 뿐 지우지 않는다.
 
 ### monorepo 구성 (pnpm, Apache-2.0)
 

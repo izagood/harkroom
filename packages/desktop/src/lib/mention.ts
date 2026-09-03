@@ -36,31 +36,88 @@ export function applyMention(
 
 export type MessagePart =
   | { kind: 'text'; text: string }
-  | { kind: 'mention'; text: string; handle: string };
+  | { kind: 'mention'; text: string; handle: string; isGroup?: boolean };
 
 /**
  * 본문을 텍스트와 멘션 조각으로 나눈다. **존재하는 handle 만** 멘션으로 표시한다 —
  * 아무 @단어나 칠하면 오타가 멘션처럼 보이고, 사용자가 알림이 갔다고 착각한다.
+ *
+ * @param knownHandles 계정 handle 목록
+ * @param groupHandles 집합 handle 목록. 이 목록에 있으면 `isGroup` 플래그가 켜진다.
  */
-export function splitMentions(body: string, knownHandles: string[]): MessagePart[] {
+export function splitMentions(body: string, knownHandles: string[], groupHandles: string[] = []): MessagePart[] {
   // `@channel`(#225)은 그 handle 의 계정이 없어도 칠한다 — 서버가 채널 전체에 알림을
   // 보내기 때문이다. 여기서 빼면 위 주석이 경계하는 바로 그 불일치가 된다: 강조되지 않은
   // 것이 몰래 알림을 보낸다. 계정이 있으면 `knownHandles` 에 이미 들어 있어 중복이 없다.
   const known = new Set([...knownHandles.map((h) => h.toLowerCase()), CHANNEL_MENTION_HANDLE]);
+  const groupSet = new Set(groupHandles.map((h) => h.toLowerCase()));
   const parts: MessagePart[] = [];
   let cursor = 0;
 
   for (const m of body.matchAll(MENTION_IN_TEXT)) {
     const handle = (m[2] ?? '').toLowerCase();
-    if (!known.has(handle)) continue;
+    if (!known.has(handle) && !groupSet.has(handle)) continue;
     // m.index 는 선행 문자를 포함한다 — @ 의 실제 위치를 다시 계산한다.
     const at = m.index + (m[1] ?? '').length;
     if (at > cursor) parts.push({ kind: 'text', text: body.slice(cursor, at) });
-    parts.push({ kind: 'mention', text: `@${m[2]}`, handle });
+    parts.push({ kind: 'mention', text: `@${m[2]}`, handle, isGroup: groupSet.has(handle) });
     cursor = at + 1 + (m[2] ?? '').length;
   }
   if (cursor < body.length) parts.push({ kind: 'text', text: body.slice(cursor) });
   return parts.length ? parts : [{ kind: 'text', text: body }];
+}
+
+/** 보내기 전에 보여 줄 한 항목. `kind` 는 표시에만 쓰인다 — 판정은 이미 끝났다. */
+export interface BodyRecipient {
+  handle: string;
+  /** `account` | `group`(집합, #230) | `channel`(채널 전체, #225) */
+  kind: 'account' | 'group' | 'channel';
+}
+
+/**
+ * 지금 본문이 부를 상대(#278). **`splitMentions` 을 그대로 통과시킨다** — 새 정규식을
+ * 쓰지 않는 것이 이 함수의 존재 이유다. 보내기 전 목록과 보낸 뒤 강조가 서로 다른 규칙을
+ * 쓰면 이 기능이 막으려는 착각을 오히려 만든다: 목록에 없던 사람에게 알림이 가거나,
+ * 목록에 있던 사람에게 가지 않는다.
+ *
+ * 그래서 호출부는 `MessageBody` 와 **같은 인자**를 준다(계정 handle 전부, 집합 handle 전부).
+ * `@channel`(#225)은 계정이 없어도 대상이다 — `splitMentions` 가 이미 그렇게 판정하고
+ * 서버도 채널 전체에 알림을 넣는다. 여기서 빼면 `@channel` 을 쓴 사람만 자기가 누구를
+ * 부르는지 못 보게 된다.
+ *
+ * 작성자 자신은 뺀다. `splitMentions` 는 자기 멘션도 칠하지만(`data-self`) 서버는 알림에서
+ * 작성자를 걸러 낸다(`services/messages.ts`). "부를 상대" 는 알림이 갈 사람의 목록이므로
+ * 자기 이름이 남으면 거짓이 된다. **판정이 아니라 표시 단계의 결정**이라 여기서 한다.
+ *
+ * 코드 블록 안의 `@handle` 은 여기서 **잡힌다**. `MessageBody` 는 `splitCode` 로 먼저 잘라
+ * 코드 안을 칠하지 않지만 서버는 본문 전체에서 멘션을 뽑아 알림을 보낸다 — 그 둘이 이미
+ * 어긋나 있고, 보내기 전 목록은 **알림이 실제로 가는 쪽**을 따라야 한다. 안 갈 사람을
+ * 보여 주는 것보다 갈 사람을 숨기는 것이 더 나쁜 거짓말이다.
+ */
+export function bodyRecipients(
+  body: string,
+  knownHandles: string[],
+  groupHandles: string[],
+  selfHandle?: string | null,
+): BodyRecipient[] {
+  const accountSet = new Set(knownHandles.map((h) => h.toLowerCase()));
+  const self = selfHandle?.toLowerCase() ?? null;
+  const seen = new Set<string>();
+  const out: BodyRecipient[] = [];
+  for (const part of splitMentions(body, knownHandles, groupHandles)) {
+    if (part.kind !== 'mention') continue;
+    if (part.handle === self || seen.has(part.handle)) continue;
+    seen.add(part.handle);
+    // 계정이 이긴다 — 서버(`services/messages.ts`)와 같은 순서다. `@channel` 이라는
+    // 이름의 계정이 있으면 그 사람이 대상이고, 채널 전체가 아니다.
+    const kind = accountSet.has(part.handle)
+      ? 'account'
+      : part.isGroup
+        ? 'group'
+        : 'channel';
+    out.push({ handle: part.handle, kind });
+  }
+  return out;
 }
 
 /**

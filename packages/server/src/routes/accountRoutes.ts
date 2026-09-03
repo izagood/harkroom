@@ -140,12 +140,21 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
       displayName: z.string().min(1).max(64),
       ...configFields,
     }).parse(req.body);
-    const created = await createAgentAccount(pool, body, req.account!.id);
-    await recordAudit(pool, {
-      action: 'agent.created', actorId: req.account!.id, actorHandle: req.account!.handle,
-      target: created.id, detail: { handle: body.handle },
-    }, req);
-    return reply.code(201).send(created);
+    try {
+      const created = await createAgentAccount(pool, body, req.account!.id);
+      await recordAudit(pool, {
+        action: 'agent.created', actorId: req.account!.id, actorHandle: req.account!.handle,
+        target: created.id, detail: { handle: body.handle },
+      }, req);
+      return reply.code(201).send(created);
+    } catch (err) {
+      if ((err as { code?: string }).code === 'handle_taken') {
+        return reply.code(400).send({
+          error: { code: 'handle_taken', message: 'a group with this handle already exists' },
+        });
+      }
+      throw err;
+    }
   });
 
   /**
