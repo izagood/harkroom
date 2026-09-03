@@ -7,6 +7,7 @@ import { Sidebar } from './Sidebar';
 import { ChannelPane } from './ChannelPane';
 import { Notice } from './Notice';
 import { ThreadPanel } from './ThreadPanel';
+import { TerminalPanel } from './TerminalPanel';
 import { SearchPalette } from './SearchPalette';
 import { Sweep } from './Sweep';
 import { Directory } from './Directory';
@@ -21,6 +22,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
   onOpenSettings: (section?: SectionId, targetId?: string) => void;
 }) {
   const threadRootId = useAppStore((s) => s.threadRootId);
+  const terminalAgentId = useAppStore((s) => s.terminalAgentId);
   const history = useAppStore((s) => s.history);
   const historyIndex = useAppStore((s) => s.historyIndex);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -191,6 +193,10 @@ export function Workspace({ onLogout, onOpenSettings }: {
           {threadRootId && (
             <ThreadPanel onOpenDirectory={handleOpenDirectory} onOpenSettings={onOpenSettings} />
           )}
+          {/* #141: 터미널은 스레드 패널과 **같은 자리**를 쓰고 둘이 나란히 열린다.
+              채널 레이아웃 안에 심지 않는다 — `#189`(앱 안 터미널 패널이 어디서 도는가)가
+              열려 있어서, 지금 심으면 그 결정이 코드로 먼저 굳는다. */}
+          {terminalAgentId && <TerminalPanel />}
         </div>
       </div>
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} initialScoped={searchInitialScoped} />

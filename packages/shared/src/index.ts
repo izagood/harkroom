@@ -765,6 +765,72 @@ export type WsServerEvent =
   | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string };
 
 /**
+ * ── Phase 2 attach: 러너 PTY ↔ 서버 ↔ 데스크탑 xterm 릴레이 (스펙 §5) ──
+ *
+ * 이 절의 타입이 **불투명 우체국**(스펙 §2)의 계약이다. 바이트는 항상 `data: string`
+ * (base64) 로만 오간다 — 서버는 봉투(JSON)를 열어 `sessionId` 만 읽고 `data` 는
+ * **절대 디코드하지 않는다.** 디코드하면 잘린 UTF-8 이 U+FFFD 로 치환되고 ANSI
+ * 이스케이프가 깨져 xterm 이 화면을 재구성하지 못한다(`packages/agent/src/pty.ts`
+ * 의 `RingBuffer` 주석이 같은 이유로 문자 경계 정렬을 거부한다).
+ *
+ * base64 를 고른 이유: WS 는 바이너리 프레임을 실을 수 있지만, 한 소켓에 세션이
+ * 여럿 다중화되므로 프레임마다 `sessionId` 가 붙어야 한다. 봉투를 JSON 으로 두고
+ * 바이트만 base64 로 싣는 것이 "봉투는 열고 내용은 안 연다"를 코드 모양으로
+ * 드러내는 가장 단순한 방법이다.
+ */
+
+/** 진행 중인 PTY 세션 하나. 러너가 announce 하고 서버가 인메모리로만 들고 있다. */
+export interface AgentSessionView {
+  /** 러너가 만든 세션 식별자(UUID). 스레드 키가 아니다 — URL 경로에 실려야 한다. */
+  sessionId: string;
+  /** 이 세션을 돌리는 에이전트 계정. attach 권한은 이 계정의 `ownerAccountId` 가 판정한다. */
+  agentAccountId: string;
+  channelId: string;
+  /** 스레드 루트. 채널 최상위 멘션은 그 멘션 메시지가 루트다(#98). */
+  threadRootId: string | null;
+  harness: AgentHarness;
+  /** 러너가 이 세션을 연 시각(ISO). 러너 시계다 — 서버가 찍지 않는다(러너만 아는 사실이다). */
+  startedAt: string;
+}
+
+/** 뷰어(데스크탑)가 보는 세션 상태. `runner-offline` 은 '끝났다'와 다르다. */
+export type AgentSessionState = 'running' | 'ended' | 'runner-offline';
+
+/**
+ * 러너 → 서버 프레임. `GET /agent-relay` 소켓에 실린다.
+ *
+ * `announce` 가 재접속마다 다시 오는 것이 중요하다 — 서버는 소켓이 끊기면 그 러너의
+ * 세션 레지스트리를 버리므로(살아 있는지 알 방법이 없다), 재접속 후 announce 가
+ * 없으면 진행 중인 턴이 서버 쪽에서 영구히 사라진다.
+ */
+export type RelayRunnerFrame =
+  | { type: 'announce'; sessions: AgentSessionView[] }
+  | { type: 'session.started'; session: AgentSessionView }
+  | { type: 'session.ended'; sessionId: string }
+  /** 라이브 PTY 바이트. `data` 는 base64 이고 서버는 열지 않는다. */
+  | { type: 'output'; sessionId: string; data: string }
+  /** ring buffer 재생(서버의 `replay.request` 에 대한 답). 빈 버퍼도 빈 문자열로 답한다. */
+  | { type: 'replay'; sessionId: string; data: string };
+
+/**
+ * 서버 → 러너 프레임. Phase 2 는 읽기만이므로 이 하나뿐이다 —
+ * `input`·`resize` 는 범위 밖(권한·턴 모드 상호작용이 스펙 §6 결정을 건드린다).
+ */
+export type RelayServerFrame = { type: 'replay.request'; sessionId: string };
+
+/**
+ * 서버 → 뷰어 프레임. `GET /agent-attach` 소켓에 실린다.
+ *
+ * 순서 보장: attach 직후 `status(running)` → `output`(ring 재생) → 그 뒤 라이브
+ * `output`. 재생이 도착하기 전에 들어온 라이브 바이트는 서버가 뷰어별로 잠시
+ * 큐에 담아 두고 재생 뒤에 흘린다 — 안 그러면 xterm 이 최신 바이트를 먼저 그린 뒤
+ * 과거 화면으로 덮어쓴다.
+ */
+export type AttachServerFrame =
+  | { type: 'output'; data: string }
+  | { type: 'status'; state: AgentSessionState };
+
+/**
  * 에이전트 팀(#172). **저장된 엔티티다** — "이 다섯을 넣는다"를 매번 고르는 즉석
  * 멀티셀렉트가 아니라, 이름을 붙여 남기는 운영자의 의도 기록이다.
  *
