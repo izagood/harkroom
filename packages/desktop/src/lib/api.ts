@@ -1,7 +1,17 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, SavedMessageRow } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow } from '@murmur/shared';
 
 export class ApiError extends Error {
-  constructor(public status: number, public code: string, message: string) {
+  /**
+   * 서버가 오류와 **함께 보낸 것**. 응답 본문을 그대로 들고 온다.
+   *
+   * 이것이 필요한 이유: 409 `doc_stale` 은 거절만 하지 않고 **현재 본문**을 함께 준다
+   * (`{ error, doc }`). 그것을 여기서 버리면 화면이 "누가 먼저 고쳤다"고만 말하고 무엇이
+   * 달라졌는지는 못 보여 준다 — 사람은 자기 편집을 버릴지 말지 판단할 근거가 없어진다.
+   */
+  constructor(
+    public status: number, public code: string, message: string,
+    public payload: unknown = null,
+  ) {
     super(message);
     this.name = 'ApiError';
   }
@@ -25,7 +35,7 @@ export class ApiClient {
     const json: unknown = await res.json().catch(() => null);
     if (!res.ok) {
       const err = (json as { error?: { code?: string; message?: string } } | null)?.error;
-      throw new ApiError(res.status, err?.code ?? 'unknown', err?.message ?? `HTTP ${res.status}`);
+      throw new ApiError(res.status, err?.code ?? 'unknown', err?.message ?? `HTTP ${res.status}`, json);
     }
     return json as T;
   }
@@ -133,6 +143,10 @@ export class ApiClient {
   }
   async leases(): Promise<LeaseRow[]> {
     return (await this.req<{ leases: LeaseRow[] }>('GET', '/leases')).leases;
+  }
+  /** avcs 투영 상태(#267). */
+  async projectionStatus(): Promise<ProjectionStatus> {
+    return this.req<ProjectionStatus>('GET', '/projection/status');
   }
   /** `hasMore` 는 '이 페이지보다 오래된 것이 남았는가'다 — 상단 추가 로드 표시에 쓴다. */
   messages(
@@ -386,6 +400,27 @@ export class ApiClient {
   async search(q: string, channelId?: string | null): Promise<MessageRow[]> {
     const scope = channelId ? `&channelId=${encodeURIComponent(channelId)}` : '';
     return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
+  }
+
+  /**
+   * 채널 문서 조회(#188). 가시성은 서버가 검사한다. 아직 저장된 것이 없으면 본문 `''` 이고
+   * `updatedBy`·`updatedAt` 이 `null` 인 문서가 온다 — "아직 아무도"다.
+   */
+  async channelDoc(channelId: string): Promise<ChannelDoc> {
+    return this.req('GET', `/channels/${channelId}/doc`);
+  }
+
+  /**
+   * 채널 문서 저장(#188). `expectedUpdatedAt` 은 내가 읽은 판의 시각(epoch ms)이고,
+   * 아직 문서가 없다고 믿을 때는 `null` 이다 — 서버가 "검사 생략"으로 읽지 않는다.
+   *
+   * 서버가 어긋남을 보면 409 `doc_stale` 을 던진다. 그 `ApiError.payload.doc` 에 **현재
+   * 본문**이 들어 있으므로 호출부가 그것을 사람에게 보여 줄 수 있다.
+   */
+  async updateChannelDoc(
+    channelId: string, body: string, expectedUpdatedAt: number | null,
+  ): Promise<ChannelDoc> {
+    return this.req('PUT', `/channels/${channelId}/doc`, { body, expectedUpdatedAt });
   }
 
   // #219: `state` 는 **필수**다 — 기본값을 여기서 공급하면 호출부가 어느 탭을 받는지 적지

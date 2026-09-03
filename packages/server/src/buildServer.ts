@@ -4,6 +4,7 @@ import fastifyMultipart from '@fastify/multipart';
 import type { Pool } from 'pg';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { projectionState, type ProjectionRuntime, type ProjectionStatus } from '@murmur/shared';
 import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
@@ -52,7 +53,14 @@ const LIMITED_ROUTES: { method: string; url: string; rule: keyof typeof DEFAULT_
 
 export interface ServerDeps {
   pool: Pool;
+  /** avcs 연결 상태 — /healthz 에서 쓴다. */
   getAvcsStatus?: () => { connected: boolean };
+  /**
+   * 투영 상태의 **원자료** — `/projection/status` 에서 쓴다. `state` 는 이 라우트가
+   * `projectionState` 로 뽑는다(shared). 미지정이면 `configured: false` 로 답한다:
+   * 투영을 물어봤는데 아무도 답할 수 없는 상태가 곧 "설정되지 않았다"다.
+   */
+  getProjectionStatus?: () => ProjectionRuntime;
   /** 종료 시 in-flight long-poll을 정상 마감시키는 창구. main이 SIGTERM에서 beginDrain을 부른다. */
   lifecycle?: Lifecycle;
   /** null·미지정이면 모든 origin 을 반영한다. 목록이면 CORS 와 WS 핸드셰이크에 함께 적용된다. */
@@ -306,6 +314,29 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get('/metrics', { preHandler: app.requireAccount }, async (_req, reply) => {
     reply.header('content-type', 'text/plain; version=0.0.4; charset=utf-8');
     return metrics.renderAsync();
+  });
+
+  /**
+   * avcs 투영 상태(#267). 화면이 "투영이 꺼졌다·멈췄다·비어 있다"를 **서로 다르게**
+   * 말할 수 있게 하는 것이 전부다 — "없다"와 "못 읽었다"를 한 화면에 두지 않는다
+   * (docs/design.md §4).
+   *
+   * 판정은 여기서 하지 않고 `projectionState`(shared)가 한다. 라우트에 인라인으로
+   * 두면 5분 임계값이 서버·클라이언트·문서에 세 벌 생긴다.
+   *
+   * **위 `/metrics` 와 같은 이유로 `registerAuth` 뒤에 있어야 한다.** 처음에는
+   * `/healthz` 옆(앞쪽)에 뒀는데, 그 자리에서는 `app.requireAccount` 가 아직
+   * undefined 라 `preHandler` 가 통째로 사라지고 라우트가 **인증 없이 열린다**.
+   * 이 응답은 저장소 이름과 에러 메시지(내부 URL 이 섞일 수 있다)를 담으므로 로그인
+   * 하지 않은 사람에게 줄 것이 아니다. 401 을 확인하는 테스트가 이 자리를 지킨다.
+   */
+  app.get('/projection/status', { preHandler: app.requireAccount }, async () => {
+    const runtime: ProjectionRuntime = deps.getProjectionStatus?.() ?? {
+      configured: false, repo: null, lastLogIndex: 0,
+      lastPolledAt: null, lastAdvancedAt: null, lastError: null,
+    };
+    // 원자료를 그대로 싣고 파생만 더한다 — 필드를 하나씩 베끼면 새 필드가 조용히 빠진다.
+    return { ...runtime, state: projectionState(runtime) } satisfies ProjectionStatus;
   });
   await registerMcp(app, deps.pool, lifecycle, agentPresence);
 
