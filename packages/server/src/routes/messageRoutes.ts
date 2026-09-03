@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { emitEvent } from '../events.js';
-import { assertChannelVisible, audienceFor, isChannelArchived } from '../services/channels.js';
+import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { deleteMessage, editMessage, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -18,10 +18,13 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     }).refine((v) => v.body.trim().length > 0 || (v.attachmentIds?.length ?? 0) > 0, {
       message: 'a message needs a body or an attachment',
     }).parse(req.body);
-    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+    // 가시성과 보관 여부를 한 번에 본다 — 메시지 POST 는 가장 자주 도는 경로라
+    // 같은 channel 행을 두 번 읽지 않는다.
+    const gate = await channelPostGate(pool, id, req.account!.id);
+    if (gate === 'forbidden') {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
-    if (await isChannelArchived(pool, id)) {
+    if (gate === 'archived') {
       return reply.code(403).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
     }
     const idempotencyKey = (req.headers['idempotency-key'] as string | undefined) ?? null;
