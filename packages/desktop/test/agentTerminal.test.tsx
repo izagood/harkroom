@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, act } from '@testing-library/react';
 import type { AgentSessionView } from '@murmur/shared';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { TerminalChip } from '../src/components/TerminalChip';
 import { TerminalPanel } from '../src/components/TerminalPanel';

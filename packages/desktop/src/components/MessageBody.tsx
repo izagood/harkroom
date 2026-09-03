@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { splitMentions } from '../lib/mention';
 import { splitLinks, type LinkTarget, type BodyPart } from '../lib/link';
 import { extractPreviewUrls } from '@murmur/shared';
@@ -40,7 +40,7 @@ async function followLink(target: LinkTarget): Promise<void> {
   try {
     await getExternalOpener().open(target.href);
   } catch {
-    useAppStore.getState().set({
+    useActiveStore.getState().set({
       notice: `Could not open ${target.href} — no browser answered. Copy the link and open it yourself.`,
     });
   }
@@ -69,16 +69,16 @@ export function MessageBody({
   body: string;
   messageId: string;
 } & MentionOpeners) {
-  const accounts = useAppStore((s) => s.accounts);
-  const groups = useAppStore((s) => s.groups);
-  const me = useAppStore((s) => s.me);
+  const accounts = useActiveStore((s) => s.accounts);
+  const groups = useActiveStore((s) => s.groups);
+  const me = useActiveStore((s) => s.me);
   const myHandle = me?.handle?.toLowerCase() ?? null;
   // 접기 판정은 본문만 본다 — 작성자가 누구인지 보지 않는다. 자기가 쓴 긴 메시지도 남의
   // 대화를 밀어내는 것은 똑같고, 예외를 두면 "왜 이건 접히고 저건 안 접히지" 를 사람이
   // 매번 판단해야 한다(#217).
   const collapsible = useMemo(() => shouldCollapse(body), [body]);
-  const expanded = useAppStore((s) => s.expandedMessageIds[messageId] === true);
-  const toggleExpanded = useAppStore((s) => s.toggleExpanded);
+  const expanded = useActiveStore((s) => s.expandedMessageIds[messageId] === true);
+  const toggleExpanded = useActiveStore((s) => s.toggleExpanded);
   const collapsed = collapsible && !expanded;
 
   const segments = useMemo(() => splitCode(body), [body]);

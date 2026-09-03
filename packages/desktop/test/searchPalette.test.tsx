@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { useAppStore } from '../src/state/appStore';
+import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, getController, type Controller } from '../src/state/controller';
 import { SearchPalette } from '../src/components/SearchPalette';
 import { acc, chan, msg, fakeApi } from './helpers/fakeApi';

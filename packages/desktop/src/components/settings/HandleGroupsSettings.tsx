@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { HandleGroupRow } from '@murmur/shared';
 import { HANDLE_PATTERN } from '@murmur/shared';
 import { getController } from '../../state/controller';
-import { useAppStore } from '../../state/appStore';
+import { useActiveStore } from '../../state/communities';
 import { GroupBadge } from '../Identity';
 
 /**
@@ -30,9 +30,9 @@ interface GroupWithMembers {
 
 export function HandleGroupsSettings() {
   // 스토어 구독이다 — `getState()` 스냅샷이면 만들기·이름 바꾸기 뒤에 목록이 그대로 남는다.
-  const groups = useAppStore((s) => s.groups);
-  const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
-  const accounts = useAppStore((s) => s.accounts);
+  const groups = useActiveStore((s) => s.groups);
+  const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
+  const accounts = useActiveStore((s) => s.accounts);
 
   const [selected, setSelected] = useState<GroupWithMembers | null>(null);
   const [error, setError] = useState<string | null>(null);

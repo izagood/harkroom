@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { InboxEntry } from '@murmur/shared';
-import { useAppStore } from '../state/appStore';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 
 interface Props {
@@ -55,12 +55,12 @@ interface DraftItem {
  * 다음에 열었을 때 **걸러져 사라진 항목이 없는 항목으로 보인다.**
  */
 export function Inbox({ open, onClose }: Props) {
-  const channels = useAppStore((s) => s.channels);
-  const dms = useAppStore((s) => s.dms);
-  const accounts = useAppStore((s) => s.accounts);
-  const me = useAppStore((s) => s.me);
-  const drafts = useAppStore((s) => s.drafts);
-  const messages = useAppStore((s) => s.messages);
+  const channels = useActiveStore((s) => s.channels);
+  const dms = useActiveStore((s) => s.dms);
+  const accounts = useActiveStore((s) => s.accounts);
+  const me = useActiveStore((s) => s.me);
+  const drafts = useActiveStore((s) => s.drafts);
+  const messages = useActiveStore((s) => s.messages);
 
   const [entries, setEntries] = useState<InboxEntry[]>([]);
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
