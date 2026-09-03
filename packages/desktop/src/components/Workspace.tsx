@@ -135,14 +135,14 @@ export function Workspace({ onLogout, onOpenSettings }: {
         <div
           data-testid="app-header"
           data-tauri-drag-region
-          className={`flex items-center gap-2 border-b border-zinc-800 bg-zinc-900 py-1 pr-2 ${
+          className={`flex items-center gap-2 border-b border-border bg-surface-raised py-1 pr-2 ${
             headerNeedsTrafficLightRoom ? MAC_TRAFFIC_LIGHT_PL : 'pl-2'
           }`}
         >
           {sidebarCollapsed && (
             <button
               onClick={handleToggleSidebar}
-              className="rounded px-2 py-1 hover:bg-zinc-700"
+              className="rounded px-2 py-1 hover:bg-surface-hover"
               aria-label="사이드바 펼치기"
               title="사이드바 펼치기"
             >
@@ -152,7 +152,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
           <button
             onClick={handleGoBack}
             disabled={!canGoBack}
-            className={`rounded px-2 py-1 ${canGoBack ? 'hover:bg-zinc-700' : 'text-zinc-600 cursor-not-allowed'}`}
+            className={`rounded px-2 py-1 ${canGoBack ? 'hover:bg-surface-hover' : 'text-fg-muted cursor-not-allowed'}`}
             aria-label="뒤로"
             title="뒤로 (Cmd+[)"
           >
@@ -161,7 +161,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
           <button
             onClick={handleGoForward}
             disabled={!canGoForward}
-            className={`rounded px-2 py-1 ${canGoForward ? 'hover:bg-zinc-700' : 'text-zinc-600 cursor-not-allowed'}`}
+            className={`rounded px-2 py-1 ${canGoForward ? 'hover:bg-surface-hover' : 'text-fg-muted cursor-not-allowed'}`}
             aria-label="앞으로"
             title="앞로 (Cmd+])"
           >
@@ -171,7 +171,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
               정리할 수 있어야 하고, 그것이 바로 이 기능을 쓰는 상황이다. */}
           <button
             onClick={() => setSweepOpen(true)}
-            className="ml-auto rounded px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-700"
+            className="ml-auto rounded px-2 py-1 text-xs text-fg-muted hover:bg-surface-hover"
             title="미읽음을 하나씩 훑는다"
           >
             미읽음 훑기

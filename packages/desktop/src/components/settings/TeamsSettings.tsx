@@ -133,21 +133,21 @@ export function TeamsSettings() {
   const availableAgents = agents.filter((a) => !memberIds.has(a.id));
 
   return (
-    <div className="flex h-full min-h-0 bg-white">
-      <aside className="w-56 shrink-0 border-r border-zinc-200 p-3">
+    <div className="flex h-full min-h-0 bg-surface-raised">
+      <aside className="w-56 shrink-0 border-r border-border p-3">
         <button
-          className="mb-3 w-full rounded bg-zinc-900 px-3 py-2 text-left text-white"
+          className="mb-3 w-full rounded bg-accent px-3 py-2 text-left text-fg-on-strong hover:bg-accent-hover"
           onClick={startNew}
         >
           + Create team
         </button>
-        <div className="text-[11px] uppercase tracking-wide text-zinc-500">Teams</div>
-        {teams.length === 0 && <div className="px-1 py-2 text-zinc-400">아직 없다</div>}
+        <div className="text-[11px] uppercase tracking-wide text-fg-subtle">Teams</div>
+        {teams.length === 0 && <div className="px-1 py-2 text-fg-muted">아직 없다</div>}
         {teams.map((t) => (
           <button
             key={t.id}
             data-testid={`team-row-${t.name}`}
-            className={`w-full rounded px-2 py-1.5 text-left ${selected?.id === t.id ? 'bg-zinc-100' : 'hover:bg-zinc-50'}`}
+            className={`w-full rounded px-2 py-1.5 text-left ${selected?.id === t.id ? 'bg-surface-sunken' : 'hover:bg-surface'}`}
             onClick={() => void loadTeam(t)}
           >
             {t.name}
@@ -158,16 +158,16 @@ export function TeamsSettings() {
       <div className="flex min-w-0 flex-1 flex-col">
         {!selected && (
           <>
-            <header className="flex items-center border-b border-zinc-200 px-5 py-3">
+            <header className="flex items-center border-b border-border px-5 py-3">
               <h2 className="text-base font-bold">Add team</h2>
             </header>
             <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
-              {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
-              <label className="block text-xs font-medium text-zinc-600">
+              {error && <p role="alert" className="text-xs text-danger">{error}</p>}
+              <label className="block text-xs font-medium text-fg-muted">
                 Team name
                 <input
                   aria-label="팀 이름"
-                  className="mt-1 w-full rounded border border-zinc-300 px-3 py-2"
+                  className="mt-1 w-full rounded border border-border bg-field px-3 py-2"
                   placeholder="team-name"
                   value={newTeamName}
                   onChange={(e) => { setNewTeamName(e.target.value); setError(null); }}
@@ -175,10 +175,10 @@ export function TeamsSettings() {
                 />
               </label>
               {!isAdmin && (
-                <p className="text-xs text-zinc-500">팀을 만들 수 있는 것은 admin 뿐이다</p>
+                <p className="text-xs text-fg-subtle">팀을 만들 수 있는 것은 admin 뿐이다</p>
               )}
               <button
-                className="rounded bg-indigo-600 px-3 py-2 font-medium text-white disabled:opacity-50"
+                className="rounded bg-accent px-3 py-2 font-medium text-fg-on-strong disabled:opacity-50"
                 disabled={busy || !isAdmin || !newTeamName.trim()}
                 onClick={() => void submitCreate()}
               >
@@ -190,25 +190,25 @@ export function TeamsSettings() {
 
         {selected && (
           <>
-            <header className="flex items-center border-b border-zinc-200 px-5 py-3">
+            <header className="flex items-center border-b border-border px-5 py-3">
               <h2 className="text-base font-bold">Edit {selected.name}</h2>
             </header>
             <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
-              {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
+              {error && <p role="alert" className="text-xs text-danger">{error}</p>}
 
-              <div className="rounded border border-zinc-200 p-3">
-                <div className="text-xs font-medium text-zinc-600">팀 이름</div>
+              <div className="rounded border border-border p-3">
+                <div className="text-xs font-medium text-fg-muted">팀 이름</div>
                 <div className="mt-2 flex gap-2">
                   <input
                     aria-label="팀 이름 수정"
-                    className="flex-1 rounded border border-zinc-300 px-3 py-2"
+                    className="flex-1 rounded border border-border bg-field px-3 py-2"
                     value={editName}
                     onChange={(e) => { setEditName(e.target.value); setError(null); }}
                     disabled={!isAdmin}
                   />
                   {isAdmin && (
                     <button
-                      className="rounded bg-indigo-600 px-3 py-2 text-white disabled:opacity-50"
+                      className="rounded bg-accent px-3 py-2 text-fg-on-strong disabled:opacity-50"
                       disabled={busy || editName === selected.name}
                       onClick={() => void submitEdit()}
                     >
@@ -218,20 +218,20 @@ export function TeamsSettings() {
                 </div>
               </div>
 
-              <div className="rounded border border-zinc-200 p-3">
-                <div className="text-xs font-medium text-zinc-600">팀원</div>
+              <div className="rounded border border-border p-3">
+                <div className="text-xs font-medium text-fg-muted">팀원</div>
                 <div className="mt-2 space-y-1">
-                  {members.length === 0 && <div className="text-xs text-zinc-400">팀원이 없다</div>}
+                  {members.length === 0 && <div className="text-xs text-fg-muted">팀원이 없다</div>}
                   {members.map((m) => (
-                    <div key={m.accountId} className="flex items-center justify-between rounded bg-zinc-50 px-2 py-1.5">
+                    <div key={m.accountId} className="flex items-center justify-between rounded bg-surface px-2 py-1.5">
                       <span className="text-sm">
                         @{m.handle}
-                        {m.disabled && <span className="ml-1 text-[10px] text-zinc-400">(비활성)</span>}
+                        {m.disabled && <span className="ml-1 text-[10px] text-fg-muted">(비활성)</span>}
                       </span>
                       {isAdmin && (
                         <button
                           aria-label={`팀원 빼기: ${m.handle}`}
-                          className="text-xs text-red-600 hover:underline"
+                          className="text-xs text-danger hover:underline"
                           onClick={() => void removeMember(m.accountId)}
                         >
                           빼기
@@ -244,7 +244,7 @@ export function TeamsSettings() {
                   <div className="mt-2 flex gap-2">
                     <select
                       aria-label="팀원 추가"
-                      className="flex-1 rounded border border-zinc-300 px-2 py-1"
+                      className="flex-1 rounded border border-border bg-field px-2 py-1"
                       value=""
                       onChange={(e) => { if (e.target.value) void addMember(e.target.value); }}
                     >
@@ -258,21 +258,21 @@ export function TeamsSettings() {
               </div>
 
               {isAdmin && (
-                <div className="rounded border border-red-200 p-3">
-                  <div className="text-xs font-medium text-red-600">팀 삭제</div>
-                  <p className="mt-1 text-[11px] text-zinc-500">팀을 지워도 팀에 속했던 에이전트는 그대로 있다.</p>
+                <div className="rounded border border-danger-border p-3">
+                  <div className="text-xs font-medium text-danger">팀 삭제</div>
+                  <p className="mt-1 text-[11px] text-fg-subtle">팀을 지워도 팀에 속했던 에이전트는 그대로 있다.</p>
                   {confirmDelete ? (
                     <div className="mt-2 flex items-center gap-2">
-                      <span className="text-[11px] text-red-700">정말 지우는가?</span>
+                      <span className="text-[11px] text-danger">정말 지우는가?</span>
                       <button
-                        className="rounded border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                        className="rounded border border-danger-border bg-danger-surface px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
                         disabled={busy}
                         onClick={() => void deleteTeam()}
                       >
                         정말 삭제
                       </button>
                       <button
-                        className="rounded border border-zinc-300 px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-50"
+                        className="rounded border border-border px-3 py-1.5 text-xs text-fg-muted hover:bg-surface-hover"
                         onClick={() => setConfirmDelete(false)}
                       >
                         취소
@@ -280,7 +280,7 @@ export function TeamsSettings() {
                     </div>
                   ) : (
                     <button
-                      className="mt-2 rounded border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                      className="mt-2 rounded border border-danger-border bg-danger-surface px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
                       disabled={busy}
                       onClick={() => setConfirmDelete(true)}
                     >

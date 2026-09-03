@@ -48,12 +48,12 @@ export function ReactionPicker({ message }: { message: MessageRow }) {
 
   if (picking) {
     return (
-      <div className="flex items-center gap-0.5 rounded-full border border-zinc-300 bg-white px-1 shadow-sm">
+      <div className="flex items-center gap-0.5 rounded-full border border-border bg-surface-raised px-1 shadow-sm">
         {QUICK.map((e) => (
           <button
             key={e}
             aria-label={e}
-            className="rounded px-1 hover:bg-zinc-100"
+            className="rounded px-1 hover:bg-surface-sunken"
             onClick={() => toggle(e, !message.reactions.find((r) => r.emoji === e)?.accountIds.includes(myId ?? ''))}
           >
             {e}
@@ -61,7 +61,7 @@ export function ReactionPicker({ message }: { message: MessageRow }) {
         ))}
         <button
           aria-label="Close reaction picker"
-          className="rounded px-1 text-[11px] text-zinc-400 hover:bg-zinc-100"
+          className="rounded px-1 text-[11px] text-fg-muted hover:bg-surface-sunken"
           onClick={() => setPicking(false)}
         >
           ×
@@ -73,7 +73,7 @@ export function ReactionPicker({ message }: { message: MessageRow }) {
   return (
     <button
       aria-label="Add reaction"
-      className="rounded-full border border-zinc-200 px-1.5 text-[11px] text-zinc-500 hover:bg-zinc-100"
+      className="rounded-full border border-border px-1.5 text-[11px] text-fg-subtle hover:bg-surface-sunken"
       onClick={() => setPicking(true)}
     >
       ＋
@@ -109,7 +109,7 @@ export function InlineReactionButtons({ message }: { message: MessageRow }) {
             aria-label={`React with ${emoji}`}
             aria-pressed={mine}
             className={`rounded px-1 text-[11px] ${
-              mine ? 'bg-indigo-50 text-indigo-800' : 'text-zinc-500 hover:bg-zinc-100'
+              mine ? 'bg-accent-surface text-accent' : 'text-fg-subtle hover:bg-surface-sunken'
             }`}
             onClick={() => toggle(emoji, !mine)}
           >
@@ -145,7 +145,7 @@ export function Reactions({ message }: { message: MessageRow }) {
             aria-label={`${r.emoji} — ${r.accountIds.map(nameOf).join(', ')}`}
             aria-pressed={mine}
             className={`flex items-center gap-1 rounded-full border px-1.5 text-[11px] ${
-              mine ? 'border-indigo-400 bg-indigo-50 text-indigo-800' : 'border-zinc-200 bg-zinc-50 text-zinc-600'
+              mine ? 'border-accent bg-accent-surface text-accent' : 'border-border bg-surface text-fg-muted'
             }`}
             onClick={() => toggle(r.emoji, !mine)}
           >
