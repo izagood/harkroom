@@ -26,6 +26,8 @@ const fakeController = (members: { accountId: string; handle: string }[]) => {
     }),
     inviteChannelMember: vi.fn(async () => members),
     leaveChannel: vi.fn(async () => undefined),
+    // #173: 멤버 패널이 자동 멘션 목록도 받는다 — 이 파일은 그 절을 보지 않으므로 빈 목록이다.
+    loadChannelAutoMentions: vi.fn(async () => []),
   };
   setController(c as unknown as Controller);
   return c;
