@@ -4,7 +4,7 @@ import { useAppStore } from '../src/state/appStore';
 import { Controller } from '../src/state/controller';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { DEFAULT_PREFS } from '../src/lib/prefs';
-import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
+import { acc, accountsResult, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 const entry = (id: number, messageId: string, reason: InboxEntry['reason'] = 'mention'): InboxEntry =>
   ({ id, messageId, reason, readAt: null, channelId: 'c1' });
@@ -34,7 +34,7 @@ async function started(
   let calls = 0;
   const api = fakeApi({
     channels: vi.fn(async () => [chan('c1', 'general')]),
-    accounts: vi.fn(async () => ({ accounts: [acc('u1', 'admin'), acc('u2', 'bot', 'agent')], groups: [] })),
+    accounts: vi.fn(async () => accountsResult([acc('u1', 'admin'), acc('u2', 'bot', 'agent')])),
     inboxUnread: vi.fn(async () => (++calls === 1 ? backlog : arriving)),
   });
   const { makeWs, callbacks } = fakeWsFactory();

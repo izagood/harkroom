@@ -24,6 +24,8 @@ export interface PostMessageInput {
   idempotencyKey?: string | null;
   /** 이 메시지에 붙일 업로드들. 같은 트랜잭션에서 연결한다 — 따로 하면 첨부 없는 메시지가 보인다. */
   attachmentIds?: string[];
+  /** 스레드 답을 채널에도 함께 올린다(#231). threadRootId 가 없으면 무시된다. */
+  alsoInChannel?: boolean;
 }
 
 // 리액션을 COLS 에 넣는 이유: 메시지를 내주는 경로가 네 갈래(목록·POST·PATCH·idempotency
@@ -53,7 +55,8 @@ const ATTACHMENTS = `coalesce((
 export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
   author_id as "authorId", body, kind, meta, created_at as "createdAt",
   edited_at as "editedAt", ${REACTIONS}, ${ATTACHMENTS},
-  null::int as "replyCount", null::text as "lastReplyAt", null::text[] as "participantIds"`;
+  null::int as "replyCount", null::text as "lastReplyAt", null::text[] as "participantIds",
+  also_in_channel as "alsoInChannel"`;
 
 // 스레드 메타데이터: 루트 메시지에만 계산. LATERAL join으로 같은 쿼리에서 계산한다 (N+1 방지).
 // 진행 설명(kind='progress')도 답글 수에 포함한다. 사용자가 "답글 3개"를 보고 열었을 때
@@ -71,7 +74,8 @@ const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.threa
   m.edited_at as "editedAt", ${REACTIONS.replace(/message\./g, 'm.')}, ${ATTACHMENTS.replace(/message\./g, 'm.')},
   case when m.thread_root_id is null then thread_stats.reply_count end as "replyCount",
   case when m.thread_root_id is null then thread_stats.last_reply_at end as "lastReplyAt",
-  case when m.thread_root_id is null then thread_stats.participant_ids end as "participantIds"`;
+  case when m.thread_root_id is null then thread_stats.participant_ids end as "participantIds",
+  m.also_in_channel as "alsoInChannel"`;
 
 async function insertInbox(
   client: PoolClient, accountId: string, messageId: string, reason: InboxEntry['reason'], notified: Set<string>,
@@ -105,11 +109,15 @@ export async function postMessage(
       }
     }
 
+    // threadRootId 가 없으면 alsoInChannel 은 의미 없다 — 조용히 false 로 정규화한다.
+    // threadRootId 없이 true 를 보내는 것은 이미 채널 메시지이기 때문이다.
+    const alsoInChannel = input.threadRootId ? (input.alsoInChannel ?? false) : false;
+
     const inserted = await client.query(
-      `insert into message (channel_id, thread_root_id, author_id, body, kind, meta)
-       values ($1, $2, $3, $4, $5, $6) returning id`,
+      `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel)
+       values ($1, $2, $3, $4, $5, $6, $7) returning id`,
       [input.channelId, input.threadRootId ?? null, input.authorId, input.body,
-       input.kind ?? 'user', JSON.stringify(input.meta ?? {})],
+       input.kind ?? 'user', JSON.stringify(input.meta ?? {}), alsoInChannel],
     );
     const messageId = inserted.rows[0].id as string;
 
@@ -399,7 +407,8 @@ export async function searchMessages(
     `select m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
        m.author_id as "authorId", m.body, m.kind, m.meta, m.created_at as "createdAt",
        m.edited_at as "editedAt", '[]'::json as reactions, '[]'::json as attachments,
-       null::int as "replyCount", null::text as "lastReplyAt", null::text[] as "participantIds"
+       null::int as "replyCount", null::text as "lastReplyAt", null::text[] as "participantIds",
+       m.also_in_channel as "alsoInChannel"
      from message m
      join channel c on c.id = m.channel_id
      where m.search @@ websearch_to_tsquery('simple', $1) and m.deleted_at is null

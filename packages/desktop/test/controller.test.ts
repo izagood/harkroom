@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useAppStore } from '../src/state/appStore';
 import { Controller } from '../src/state/controller';
-import { acc, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
+import { acc, accountsResult, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 beforeEach(() => useAppStore.getState().reset());
 
@@ -349,7 +349,7 @@ describe('Controller', () => {
   // 자동완성을 짧은 간격으로 여러 번 열어도 디렉터리 요청이 한 번만 나가게 한다.
   // 최소 간격 가드는 5초다.
   it('refreshAccounts throttles rapid calls within 5 seconds', async () => {
-    const accountsCalls = vi.fn(async () => ({ accounts: [acc('u1', 'admin')], groups: [] }));
+    const accountsCalls = vi.fn(async () => accountsResult([acc('u1', 'admin')]));
     const api = fakeApi({ accounts: accountsCalls });
     const { makeWs } = fakeWsFactory();
     const c = new Controller(api, makeWs);
@@ -364,7 +364,7 @@ describe('Controller', () => {
   });
 
   it('refreshAccounts with force: true bypasses throttle', async () => {
-    const accountsCalls = vi.fn(async () => ({ accounts: [acc('u1', 'admin')], groups: [] }));
+    const accountsCalls = vi.fn(async () => accountsResult([acc('u1', 'admin')]));
     const api = fakeApi({ accounts: accountsCalls });
     const { makeWs } = fakeWsFactory();
     const c = new Controller(api, makeWs);

@@ -20,9 +20,18 @@ const KEY = 'murmur.prefs';
 const DRAFTS_KEY = 'murmur.drafts';
 const SIDEBAR_WIDTH_KEY = 'murmur.sidebarWidth';
 const SIDEBAR_COLLAPSED_KEY = 'murmur.sidebarCollapsed';
+const UNDO_SEND_KEY = 'murmur.undoSendMs';
 
 export const MIN_SIDEBAR_WIDTH = 180;
 export const MAX_SIDEBAR_WIDTH = 480;
+
+/**
+ * 보냄 취소 창의 기본 길이(#223). 5초는 "방금 잘못 보냈다"를 알아차리는 데 걸리는 시간이지
+ * 안전 보장이 아니다 — 창이 끝나면 되돌릴 길은 없다.
+ */
+export const DEFAULT_UNDO_SEND_MS = 5_000;
+/** 이보다 길게 두면 자기가 보낸 것이 언제 나갈지 모르는 상태로 앉아 있게 된다. */
+export const MAX_UNDO_SEND_MS = 30_000;
 
 export const DEFAULT_PREFS: Prefs = {
   notifications: { enabled: true, mention: true, threadReply: true, dm: true, showPreview: true },
@@ -81,6 +90,39 @@ export const sidebarStorage = {
   },
   saveCollapsed(collapsed: boolean): void {
     try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed)); } catch { /* 저장 불가 환경 허용 */ }
+  },
+};
+
+/**
+ * 보냄 취소 창의 길이를 기기 로컬에 둔다(#223).
+ *
+ * 계정 설정이 아닌 이유: 얼마나 기다릴지는 이 기기에서 일하는 방식이다 — `design.md` 의
+ * "값은 전부 기기 로컬이다" 가 그대로 적용된다. 같은 사람이 노트북에서는 창을 두고
+ * 데스크톱에서는 끌 수 있어야 한다.
+ *
+ * **0 이면 창을 끈다** — 그때는 예전처럼 누른 즉시 나간다. 끄기를 별도 토글로 두지 않는
+ * 이유는, 길이와 켜짐 여부가 한 값이면 "켜져 있는데 0초" 같은 모순 상태가 아예 없기
+ * 때문이다.
+ */
+export const undoSendStorage = {
+  loadWindowMs(): number {
+    try {
+      const raw = localStorage.getItem(UNDO_SEND_KEY);
+      if (raw === null) return DEFAULT_UNDO_SEND_MS;
+      const parsed = parseInt(raw, 10);
+      // 깨진 값은 기본값으로 되돌린다 — NaN 을 그대로 setTimeout 에 넘기면 즉시 실행되어
+      // 창이 조용히 사라진다(끈 것과 구분되지 않는다).
+      if (isNaN(parsed)) return DEFAULT_UNDO_SEND_MS;
+      return Math.max(0, Math.min(MAX_UNDO_SEND_MS, parsed));
+    } catch {
+      return DEFAULT_UNDO_SEND_MS;
+    }
+  },
+  saveWindowMs(ms: number): void {
+    try {
+      const clamped = Math.max(0, Math.min(MAX_UNDO_SEND_MS, ms));
+      localStorage.setItem(UNDO_SEND_KEY, String(clamped));
+    } catch { /* 저장 불가 환경 허용 */ }
   },
 };
 
