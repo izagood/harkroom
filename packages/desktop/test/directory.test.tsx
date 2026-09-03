@@ -30,7 +30,9 @@ const agentWithSecrets = (id: string, handle: string): AgentView => ({
   // 한 번 더 나타나 이 파일의 다른 회귀선들이 세는 수를 바꾼다 — 소유자 표시는 아래
   // 전용 회귀선이 따로 본다.
   ownerAccountId: null,
-  runnerVersion: 'deadbeef', lastTurnAt: null,
+  runnerVersion: 'deadbeef',
+  // #176 이 AgentView 에 더한 필수 필드. #226 브랜치가 그 앞에서 갈라져 fixture 에 없었다.
+  lastTurnAt: null,
   stopRequestedAt: null,
   stopAckedAt: null,
 });
@@ -162,6 +164,7 @@ describe('Directory (#226)', () => {
     render(
       <Sidebar
         onOpenDirectory={onOpenDirectory}
+        onOpenInbox={vi.fn()}
         onLogout={vi.fn()}
         onOpenSettings={vi.fn()}
         collapsed={false}
