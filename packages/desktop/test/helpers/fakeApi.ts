@@ -122,6 +122,11 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     fetchAttachment: vi.fn(async () => new Blob(['x'])),
     // #218: 베이스가 핀 표면을 덮어야 openChannel 이 조용히 던지지 않고, "부르지 않았다" 도 단언할 수 있다.
     pins: vi.fn(async () => []),
+    // #173: 자동 멘션 표면. 베이스가 덮어야 openChannel 이 조용히 던지지 않는다.
+    channelAutoMentions: vi.fn(async () => []),
+    setChannelAutoMention: vi.fn(async (channelId: string, agentAccountId: string) =>
+      ({ channelId, agentAccountId, handle: agentAccountId, createdBy: 'u1', createdAt: new Date().toISOString() })),
+    unsetChannelAutoMention: vi.fn(async () => undefined),
     // #188: 채널 문서. 베이스가 덮어야 "부르지 않았다" 를 단언할 수 있고, 아직 아무도
     // 쓰지 않은 문서의 모양(본문 '', 누가·언제 null)이 fixture 에도 적혀 있어야 한다.
     channelDoc: vi.fn(async (channelId: string) =>
