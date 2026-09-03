@@ -26,7 +26,7 @@ const build = (trustProxy?: boolean): Promise<FastifyInstance> => buildServer({
 });
 
 const login = (app: FastifyInstance, remoteAddress: string, forwardedFor?: string) => app.inject({
-  method: 'POST', url: '/auth/login', payload: { handle: 'admin', password: 'wrong' },
+  method: 'POST', url: '/auth/login', payload: { loginId: 'admin', password: 'wrong' },
   remoteAddress,
   ...(forwardedFor ? { headers: { 'x-forwarded-for': forwardedFor } } : {}),
 });
@@ -67,7 +67,7 @@ describe('프록시 신뢰 — 켬', () => {
     const app = await build(true);
 
     await app.inject({
-      method: 'POST', url: '/auth/login', payload: { handle: 'admin', password: 'wrong' },
+      method: 'POST', url: '/auth/login', payload: { loginId: 'admin', password: 'wrong' },
       remoteAddress: '10.5.0.9', headers: { 'x-forwarded-for': '198.51.100.42' },
     });
 

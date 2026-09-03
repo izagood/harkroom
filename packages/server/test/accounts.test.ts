@@ -26,13 +26,13 @@ describe('invites', () => {
 
     const reg = await app.inject({
       method: 'POST', url: '/auth/register',
-      payload: { inviteToken, handle: 'friend', displayName: 'Friend', password: 'pw123456' },
+      payload: { inviteToken, handle: 'friend', loginId: 'friend', displayName: 'Friend', password: 'pw123456' },
     });
     expect(reg.statusCode).toBe(201);
 
     const again = await app.inject({
       method: 'POST', url: '/auth/register',
-      payload: { inviteToken, handle: 'other', displayName: 'O', password: 'pw123456' },
+      payload: { inviteToken, handle: 'other', loginId: 'other', displayName: 'O', password: 'pw123456' },
     });
     expect(again.statusCode).toBe(400);
   });
