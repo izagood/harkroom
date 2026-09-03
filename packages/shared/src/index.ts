@@ -166,6 +166,79 @@ export const HANDLE_PATTERN = '[a-zA-Z0-9_-]{2,32}';
 export const CHANNEL_NAME_PATTERN = '^[a-z0-9_-]{1,48}$';
 
 /**
+ * 코드 구간 타입. `MessageBody` 와 서버의 코드 블록 제외가 같은 함수를 써야 한다(#298).
+ */
+export type CodeSegment =
+  /** 코드가 아닌 부분. 여기에만 멘션·링크 인식을 얹는다. */
+  | { kind: 'plain'; text: string }
+  /** 백틱 하나로 감싼 것. */
+  | { kind: 'inlineCode'; code: string }
+  /** 백틱 세 개로 감싼 것. */
+  | { kind: 'codeBlock'; code: string; lang: string | null };
+
+/**
+ * 펜스 줄. 줄 전체가 펜스여야 한다.
+ */
+const FENCE_LINE = /^[ \t]*```([^\n`]*)$/;
+
+/**
+ * 인라인 코드.
+ */
+const INLINE_CODE = /(?<!`)`([^`\n]+)`(?!`)/g;
+
+/** 코드가 아닌 구간을 인라인 코드로 한 번 더 나눈다. */
+function splitInline(text: string, out: CodeSegment[]): void {
+  let cursor = 0;
+  for (const m of text.matchAll(INLINE_CODE)) {
+    if (m.index > cursor) out.push({ kind: 'plain', text: text.slice(cursor, m.index) });
+    out.push({ kind: 'inlineCode', code: m[1]! });
+    cursor = m.index + m[0].length;
+  }
+  if (cursor < text.length) out.push({ kind: 'plain', text: text.slice(cursor) });
+}
+
+/**
+ * 본문을 코드/비코드 구간으로 나눈다(#216, #298).
+ *
+ * **닫히지 않은 펜스는 코드가 아니다.**
+ */
+export function splitCode(body: string): CodeSegment[] {
+  const out: CodeSegment[] = [];
+  const lines = body.split('\n');
+  let plainFrom = 0;
+  let i = 0;
+
+  const flushPlain = (until: number) => {
+    if (until <= plainFrom) return;
+    splitInline(lines.slice(plainFrom, until).join('\n'), out);
+  };
+
+  while (i < lines.length) {
+    const open = FENCE_LINE.exec(lines[i]!);
+    if (!open) { i += 1; continue; }
+
+    let close = -1;
+    for (let j = i + 1; j < lines.length; j += 1) {
+      if (FENCE_LINE.test(lines[j]!)) { close = j; break; }
+    }
+    if (close === -1) { i += 1; continue; }
+
+    flushPlain(i);
+    const lang = (open[1] ?? '').trim();
+    out.push({
+      kind: 'codeBlock',
+      code: lines.slice(i + 1, close).join('\n'),
+      lang: lang.length ? lang : null,
+    });
+    i = close + 1;
+    plainFrom = i;
+  }
+  flushPlain(lines.length);
+
+  return out.length ? out : [{ kind: 'plain', text: body }];
+}
+
+/**
  * 본문 안의 멘션. 서버(알림 발송)와 데스크탑(강조)이 **반드시 같은 규칙**을 써야 한다 —
  * 갈라지면 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(`me@x.com`),
  * 강조된 것이 알림을 보내지 않는다(`@Fizz`).
@@ -179,11 +252,21 @@ export const MENTION_PATTERN = `(^|[^a-zA-Z0-9_-])@(${HANDLE_PATTERN})`;
 /**
  * 본문에서 불린 handle 들. 소문자로 정규화해 중복을 없앤다(`@fizz` 와 `@Fizz` 는 한 사람).
  * 패턴이 대문자를 이미 포함하므로 `i` 플래그는 필요하지 않다.
+ *
+ * 코드 블록(#298) 안의 `@handle` 은 무시한다. 처리 순서:
+ * 1. 코드 제거(splitCode 로 코드 구간 분리)
+ * 2. (서버에서) 그룹 확장
+ * 3. 멘션 추출
+ * 같은 본문을 보므로/desktop 의 `MessageBody` 강조와 결과가 같다.
  */
 export function mentionedHandles(body: string): string[] {
+  const segments = splitCode(body);
   const found = new Set<string>();
-  for (const m of body.matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
-    if (m[2]) found.add(m[2].toLowerCase());
+  for (const seg of segments) {
+    if (seg.kind !== 'plain') continue;
+    for (const m of seg.text.matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
+      if (m[2]) found.add(m[2].toLowerCase());
+    }
   }
   return [...found];
 }

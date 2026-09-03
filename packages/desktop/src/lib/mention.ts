@@ -1,4 +1,4 @@
-import { CHANNEL_MENTION_HANDLE, MENTION_PATTERN, mentionedHandles } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, MENTION_PATTERN, mentionedHandles, splitCode } from '@murmur/shared';
 
 // 멘션 문법은 @murmur/shared 에 있다 — 서버의 알림 발송과 같은 규칙을 봐야 한다. 갈라지면
 // 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(me@x.com), 강조된
@@ -89,10 +89,9 @@ export interface BodyRecipient {
  * 작성자를 걸러 낸다(`services/messages.ts`). "부를 상대" 는 알림이 갈 사람의 목록이므로
  * 자기 이름이 남으면 거짓이 된다. **판정이 아니라 표시 단계의 결정**이라 여기서 한다.
  *
- * 코드 블록 안의 `@handle` 은 여기서 **잡힌다**. `MessageBody` 는 `splitCode` 로 먼저 잘라
- * 코드 안을 칠하지 않지만 서버는 본문 전체에서 멘션을 뽑아 알림을 보낸다 — 그 둘이 이미
- * 어긋나 있고, 보내기 전 목록은 **알림이 실제로 가는 쪽**을 따라야 한다. 안 갈 사람을
- * 보여 주는 것보다 갈 사람을 숨기는 것이 더 나쁜 거짓말이다.
+ * 코드 블록(#298) 안의 `@handle` 은 무시한다 — `MessageBody` 와 서버가 같은 판정을
+ * 쓰므로 여기서도 코드 블록을 제외한다. 안 갈 사람을 보여 주는 것보다 갈 사람을
+ * 숨기는 것이 더 나쁜 거짓말이지만, 지금은 서버도 코드 안을 제외한다.
  */
 export function bodyRecipients(
   body: string,
@@ -104,12 +103,17 @@ export function bodyRecipients(
   const self = selfHandle?.toLowerCase() ?? null;
   const seen = new Set<string>();
   const out: BodyRecipient[] = [];
-  for (const part of splitMentions(body, knownHandles, groupHandles)) {
+
+  const segments = splitCode(body);
+  let mentionInput = '';
+  for (const seg of segments) {
+    if (seg.kind === 'plain') mentionInput += seg.text + '\n';
+  }
+
+  for (const part of splitMentions(mentionInput.trim(), knownHandles, groupHandles)) {
     if (part.kind !== 'mention') continue;
     if (part.handle === self || seen.has(part.handle)) continue;
     seen.add(part.handle);
-    // 계정이 이긴다 — 서버(`services/messages.ts`)와 같은 순서다. `@channel` 이라는
-    // 이름의 계정이 있으면 그 사람이 대상이고, 채널 전체가 아니다.
     const kind = accountSet.has(part.handle)
       ? 'account'
       : part.isGroup
