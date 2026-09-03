@@ -8,7 +8,8 @@ export async function registerDirectoryRoutes(app: FastifyInstance, pool: Pool):
       // 표이기도 하다 — 빼면 비활성화한 에이전트의 과거 메시지가 작성자를 잃는다.
       // 자동완성 후보에서 빼는 것은 `disabled` 를 보는 화면의 몫이다.
       `select id, handle, display_name as "displayName", kind, is_admin as "isAdmin",
-              disabled_at is not null as disabled
+              disabled_at is not null as disabled,
+              status, status_text as "statusText"
        from account order by handle`,
     );
     return { accounts: res.rows };
