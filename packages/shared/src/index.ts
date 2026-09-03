@@ -761,6 +761,11 @@ export type WsServerEvent =
   | { type: 'channel.created'; channel: ChannelRow; audience: 'all' | string[] }
   | { type: 'channel.updated'; channel: ChannelRow; audience: 'all' | string[] }
   | { type: 'channel.deleted'; channelId: string; audience: 'all' | string[] }
+  // 채널 멤버십 변경(#300). 목록 수신자는 #284 의 channelListAudience 를 쓴다.
+  | { type: 'channel.member_added'; channelId: string; accountId: string; audience: 'all' | string[] }
+  | { type: 'channel.member_removed'; channelId: string; accountId: string; audience: 'all' | string[] }
+  // 핸들 집합 변경(#300). 로그인한 전원에게 간다.
+  | { type: 'handle_group.changed'; groupId: string; audience: 'all' | string[] }
   // 담기/해제/상태 변경(#219). 본인의 소켓에만 온다.
   | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string }
   /**

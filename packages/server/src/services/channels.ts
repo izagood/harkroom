@@ -188,6 +188,20 @@ export async function listBoundRepos(pool: Pool): Promise<{ repo: string; channe
 }
 
 /**
+ * 채널 행 하나를 `ChannelRow` 그대로 읽는다.
+ *
+ * 이 함수가 따로 있는 이유: 라우트가 `select` 컬럼 목록을 **베껴 쓰면** 이 파일의 `COLS`
+ * 와 갈라진다. 실측으로 그렇게 베낀 목록에 `createdAt` 이 빠져 있었고, 그 행을 실어 보낸
+ * `channel.created` 를 받은 화면에서는 채널 디렉터리의 "생성순" 정렬이 그 채널만 비교할
+ * 값을 잃었다 — 타입은 `any` 를 거쳐 오므로 검사에 걸리지도 않는다. 컬럼 목록의 뜻은
+ * 여기 한 곳에만 둔다.
+ */
+export async function getChannelRow(pool: Pool, channelId: string): Promise<ChannelRow | null> {
+  const res = await pool.query(`select ${COLS} from channel where id = $1`, [channelId]);
+  return (res.rows[0] as ChannelRow | undefined) ?? null;
+}
+
+/**
  * 이 채널의 멤버 id. DM 과 private 채널이 **같은 테이블**을 쓰므로 함수도 하나다 — 예전
  * 이름은 `dmMemberIds` 였는데, 그 이름을 남겨 두면 private 채널에 쓸 때 "이건 DM 전용
  * 아닌가" 하고 두 번째 함수를 만들게 된다.
