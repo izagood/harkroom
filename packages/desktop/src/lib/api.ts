@@ -221,6 +221,15 @@ export class ApiClient {
   }
 
   /**
+   * 에이전트를 비활성화하거나 다시 활성화한다(#251). 설정 저장이 아니라 감사 대상 생애주기
+   * 상태이므로 `updateAgent` 와 별도 메서드로 둔다. 요청 본문은 `{ disabled }` 하나만 보내며,
+   * 다른 필드를 보내면 서버가 거절한다.
+   */
+  setAgentDisabled(id: string, disabled: boolean): Promise<AgentView> {
+    return this.req('PATCH', `/accounts/agents/${id}`, { disabled });
+  }
+
+  /**
    * 러너에게 **종료를 요청한다**(#129). 재시작이 아니다 — murmur 는 러너를 띄우지 않으므로
    * 다시 띄우는 것은 사람의 몫이다. 정의 수정(PATCH)과 섞지 않고 별도 라우트인 이유:
    * 이 값은 운영자가 편집하는 정의가 아니라 러너에게 보내는 일회성 요청이다.
