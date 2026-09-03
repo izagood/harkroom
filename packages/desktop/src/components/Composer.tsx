@@ -492,7 +492,7 @@ export function Composer({ onSend, placeholder, rows = 2, autoFocus, scopeKey = 
                 onClick={() => choose(a.handle)}
               >
                 <span className="font-medium">@{a.handle}</span>
-                <Identity account={a} className="ml-1" />
+                <Identity account={a} className="ml-1" variant="avatar" />
               </button>
             </li>
           ))}

@@ -8,7 +8,7 @@ import { getController } from '../state/controller';
  *
  * 같은 `agent` 필 마크업이 컴포저(멘션 후보)와 메시지(작성자 옆) 두 곳에 중복돼 있었다 —
  * 이 저장소에서 반복되는 결함 형태다(하나의 사실이 두 곳에 유지된다). `#159`(아바타
- * 업로드)와 `#161`(채팅 거터 아바타)도 각자 그리지 말고 여기를 통과해야 한다. 실제
+ * 업로드)와 `#161`(채팅 거터 아바타)도 각자 그치지 말고 여기를 통과해야 한다. 실제
  * 이미지가 들어올 때 캐시가 필요해지는데, 그때도 **여기 한 곳**에 들어간다.
  *
  * #159 로 실제 사진이 들어왔다. 사진이 있으면 사진, 없으면 **기존 폴백 그대로**(이니셜·색,
@@ -17,11 +17,21 @@ import { getController } from '../state/controller';
  *
  * #181 에이전트 소유자 표시도 여기서 한다 — ownerAccountId 가 있으면 소유자 계정을
  * 계정 디렉터리에서 찾아 표시한다. 소유자가 없거나 삭제된 계정이면 아무것도 안 보인다.
+ *
+ * #277 에이전트 메시지의 소유자 @핸들이 아바타 거터를 넘치는 문제를 고친다.
+ * 두 가지 variant 로 자리를 명시한다:
+ * - avatar: 거터 자리. 모든 kind 에서 정사각 상자 하나. 사람은 둥근 아바타, 에이전트는
+ *   봇 글리프만(소유자 핸들·가운뎃점 없음). overflow-hidden, flex-wrap 없음.
+ * - badge: 이름 옆 자리. 지금의 인라인 배지 그대로.
  */
+type IdentityVariant = 'avatar' | 'badge';
+
 interface IdentityProps {
   /** 계정 디렉터리에서 못 찾은 경우를 위해 undefined 를 받는다 — 아래 처리 참고. */
   account: AccountView | undefined;
   className?: string;
+  /** 거터(avatar)인지 이름 옆(badge) 자리인지 명시. 기본값은 badge. */
+  variant?: IdentityVariant;
 }
 
 /** 핸들에서 결정론적으로 색을 고른다. 순수 함수라 캐시가 필요 없다. */
@@ -92,7 +102,7 @@ function useAvatarUrl(accountId: string | null, attachmentId: string | null): st
   return url;
 }
 
-export function Identity({ account, className = '' }: IdentityProps) {
+export function Identity({ account, className = '', variant = 'badge' }: IdentityProps) {
   // 에이전트에게만 사진을 받지 않는다 — 에이전트는 스스로 올릴 수단이 없고(#159 범위 밖),
   // 그 자리는 글리프가 지킨다. 훅은 조건부로 부를 수 없으므로 인자로 걸러 낸다.
   const avatarUrl = useAvatarUrl(
@@ -119,6 +129,19 @@ export function Identity({ account, className = '' }: IdentityProps) {
   }
 
   if (account.kind === 'agent') {
+    // #277: avatar variant 는 거터 자리 — 봇 글리프만, 소유자 핸들·가운뎃점 없음.
+    if (variant === 'avatar') {
+      return (
+        <span
+          className={`inline-flex h-full w-full items-center justify-center overflow-hidden text-[10px] ${className}`}
+        >
+          <span aria-hidden="true">🤖</span>
+          <span className="sr-only">에이전트</span>
+        </span>
+      );
+    }
+
+    // badge variant (기본값): 이름 옆 자리 — 지금의 인라인 배지 그대로.
     // #181 소유자 표시. `null` 이 정상 상태다 — `008_agent_runner.sql` 이 backfill 없이
     // 컬럼을 더했고 "추측 소유자는 소유자가 아니다"가 그 이유였다. 그래서 없을 때는
     // **아무것도 그리지 않는다**: "운영자 미상" 같은 문구를 넣으면 화면 대부분이 그
@@ -146,9 +169,11 @@ export function Identity({ account, className = '' }: IdentityProps) {
     );
   }
 
+  // 사람 계정: avatar variant 는 둥근 아바타(지금과 같은 형태), badge variant 도 같은 형태로 표시.
+  // #277 에서 avatar variant 는 flex-wrap 이 없고 overflow-hidden 인 것이 특징.
   return (
     <span
-      className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-white ${avatarUrl ? 'bg-zinc-200' : handleColor(account.handle)} ${className}`}
+      className={`inline-flex ${variant === 'avatar' ? 'overflow-hidden' : ''} h-5 w-5 items-center justify-center ${variant === 'avatar' ? 'rounded' : 'rounded-full'} text-[10px] font-semibold text-white ${avatarUrl ? 'bg-zinc-200' : handleColor(account.handle)} ${className}`}
     >
       {avatarUrl ? (
         // `alt` 를 **비운다**. 접근성 이름은 아래 sr-only 가 이미 내고 있고, 사진에 핸들을

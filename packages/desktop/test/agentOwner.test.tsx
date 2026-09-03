@@ -35,13 +35,16 @@ describe('#181 에이전트 소유자 표시', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
 
-    // 거터와 작성자 옆, 두 곳 다 Identity 를 통과한다.
+    // 거터(variant=avatar)와 작성자 옆(variant=badge), 두 곳 다 Identity 를 통과한다.
     const badges = screen.getAllByText('에이전트').map((el) => el.parentElement!);
     expect(badges).toHaveLength(2);
-    // 소유자 표시의 수가 배지 수와 같고, 하나하나가 그 배지 **안**에 있다.
+    // #277: 소유자 표시(@owner)는 이름 줄(badge)에서만 나오고, 거터(avatar)에서는 안 나온다.
     const shown = screen.getAllByText('@owner');
-    expect(shown).toHaveLength(badges.length);
-    for (const el of shown) expect(badges.some((b) => b.contains(el))).toBe(true);
+    // 1개만owner 표시(이름 줄), 2개가 아님(거터는 owner 안 나옴)
+    expect(shown).toHaveLength(1);
+    // 그 1개가 이름 줄의 badge 안에 있다
+    const nameLineBadge = badges[1]!; // 이름 줄은 두 번째 badge
+    expect(nameLineBadge.contains(shown[0]!)).toBe(true);
   });
 
   it('Identity 를 단독으로 그려도 같은 표시가 나온다', () => {
