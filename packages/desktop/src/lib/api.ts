@@ -255,6 +255,27 @@ export class ApiClient {
     return res.blob();
   }
 
+  /**
+   * 아바타 바이트를 받는다(#159). `fetchAttachment` 과 같은 이유로 토큰을 URL 에 넣지 않고,
+   * 받은 blob 으로 objectURL 을 만들어 그린다. 첨부와 **다른 라우트**인 이유: 첨부 다운로드는
+   * 메시지에 붙지 않은 업로드를 올린 사람에게만 내주고, 아바타는 영원히 메시지에 붙지 않는다.
+   */
+  async fetchAvatar(accountId: string): Promise<Blob> {
+    const res = await fetch(`${this.baseUrl}/accounts/${accountId}/avatar`, {
+      headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) throw new ApiError(res.status, 'avatar_failed', `HTTP ${res.status}`);
+    return res.blob();
+  }
+
+  /**
+   * 내 아바타를 정하거나(첨부 id) 지운다(**명시적 null**). 키를 생략하지 않는다 —
+   * `undefined` 는 `JSON.stringify` 가 버려서 지우기가 조용히 무시된다.
+   */
+  setAvatar(attachmentId: string | null): Promise<{ avatarAttachmentId: string | null }> {
+    return this.req('PUT', '/accounts/me/avatar', { attachmentId });
+  }
+
   markRead(ids: number[]): Promise<void> { return this.req('POST', '/inbox/read', { ids }); }
   createDm(accountIds: string[]): Promise<ChannelRow> { return this.req('POST', '/dms', { accountIds }); }
   /** 초대 토큰을 발급한다 — admin 전용. 토큰은 생성 직후 한 번만 볼 수 있다. */
