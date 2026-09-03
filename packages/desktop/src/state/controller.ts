@@ -1,4 +1,4 @@
-import type { AccountStatus, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent } from '@murmur/shared';
 import { notifyLevelOf } from '@murmur/shared';
 import { ApiError, type ApiClient } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
@@ -1272,6 +1272,38 @@ export class Controller {
   async updateSavedMessageState(messageId: string, state: 'open' | 'done'): Promise<void> {
     await this.api.updateSavedMessage(messageId, state);
     await this.loadSavedSummary();
+  }
+
+  async listTeams(): Promise<AgentTeamRow[]> {
+    return this.api.teams();
+  }
+
+  createTeam(name: string): Promise<AgentTeamRow> {
+    return this.api.createTeam(name);
+  }
+
+  updateTeam(id: string, name: string): Promise<AgentTeamRow> {
+    return this.api.updateTeam(id, name);
+  }
+
+  deleteTeam(id: string): Promise<void> {
+    return this.api.deleteTeam(id);
+  }
+
+  async getTeam(id: string): Promise<{ team: AgentTeamRow; members: AgentTeamMemberRow[] }> {
+    return this.api.team(id);
+  }
+
+  addTeamMember(teamId: string, accountId: string): Promise<{ members: AgentTeamMemberRow[] }> {
+    return this.api.addTeamMember(teamId, accountId);
+  }
+
+  removeTeamMember(teamId: string, accountId: string): Promise<{ members: AgentTeamMemberRow[] }> {
+    return this.api.removeTeamMember(teamId, accountId);
+  }
+
+  addTeamToChannel(channelId: string, teamId: string): Promise<AddTeamToChannelResult> {
+    return this.api.addTeamToChannel(channelId, teamId);
   }
 }
 

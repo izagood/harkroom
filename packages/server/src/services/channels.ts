@@ -208,16 +208,19 @@ export async function listChannelMembers(pool: Pool, channelId: string): Promise
   return res.rows;
 }
 
-export async function isChannelMember(pool: Pool, channelId: string, accountId: string): Promise<boolean> {
-  const res = await pool.query(
+// 아래 둘은 `Pool` 대신 `Queryable` 을 받는다 — 팀을 통째로 넣는 경로(#172)가 이 두
+// 함수를 **트랜잭션 클라이언트로** 부른다. 여기서 `Pool` 로 좁혀 두면 그 경로가 자기
+// 멤버십 삽입을 다시 쓰게 되고, 멤버십의 뜻이 두 곳에 살게 된다.
+export async function isChannelMember(db: Queryable, channelId: string, accountId: string): Promise<boolean> {
+  const res = await db.query(
     `select 1 from channel_member where channel_id = $1 and account_id = $2`, [channelId, accountId],
   );
   return Boolean(res.rowCount);
 }
 
 /** 이미 멤버면 아무 일도 하지 않는다 — 초대를 두 번 눌렀다고 실패로 보이면 안 된다. */
-export async function addChannelMember(pool: Pool, channelId: string, accountId: string): Promise<void> {
-  await pool.query(
+export async function addChannelMember(db: Queryable, channelId: string, accountId: string): Promise<void> {
+  await db.query(
     `insert into channel_member (channel_id, account_id) values ($1, $2) on conflict do nothing`,
     [channelId, accountId],
   );

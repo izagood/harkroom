@@ -9,7 +9,7 @@ import { StatusMark } from './Identity';
 import { StatusPicker } from './StatusPicker';
 import { RunnerStatusDot } from './RunnerStatus';
 import type { SectionId } from './settings/sections';
-import type { ChannelRow, NotifyLevel } from '@murmur/shared';
+import type { AddTeamToChannelResult, AgentTeamRow, ChannelRow, NotifyLevel } from '@murmur/shared';
 import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, notifyLevelOf } from '@murmur/shared';
 import { Logo } from './Logo';
 
@@ -101,6 +101,12 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
   // 사용자는 어느 쪽을 다시 시도해야 하는지 모른다.
   const [autoMentionError, setAutoMentionError] = useState<string | null>(null);
   const [inviteAccountId, setInviteAccountId] = useState('');
+  const [teams, setTeams] = useState<AgentTeamRow[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState('');
+  const [teamAddResult, setTeamAddResult] = useState<AddTeamToChannelResult | null>(null);
+  // 팀 쪽 실패는 멤버 목록 실패와 **다른 자리**에 적는다 — 한 칸을 나눠 쓰면 어느 쪽이
+  // 실패했는지가 화면에서 사라진다.
+  const [teamError, setTeamError] = useState<string | null>(null);
   // '마지막 멤버가 나간다'는 되돌릴 수 없는 조작이라 한 번 더 묻는다.
   const [leaveConfirmId, setLeaveConfirmId] = useState<string | null>(null);
   /**
@@ -177,6 +183,10 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
     setMemberError(null);
     setInviteAccountId('');
     setLeaveConfirmId(null);
+    setTeams([]);
+    setSelectedTeamId('');
+    setTeamAddResult(null);
+    setTeamError(null);
   };
 
   /**
@@ -193,10 +203,47 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
     setMemberError(null);
     setInviteAccountId('');
     setLeaveConfirmId(null);
+    setTeams([]);
+    setSelectedTeamId('');
+    setTeamAddResult(null);
+    setTeamError(null);
     try {
       await getController().loadChannelMembers(channelId);
     } catch (err) {
       setMemberError(err instanceof Error ? err.message : '멤버 목록을 받지 못했다');
+      return;
+    }
+    /**
+     * 팀 목록(#172)은 **따로** 받는다. 한 try 에 묶으면 팀 조회가 실패했을 때 화면이
+     * "멤버 목록을 받지 못했다"고 말한다 — 멤버 목록은 방금 받았는데 거짓을 말하는 것이다.
+     * 팀 목록이 없으면 "팀으로 추가" 자리만 안 뜨면 되고, 그 사실을 따로 알린다.
+     *
+     * private 채널에서만 부른다: public 채널에는 멤버십이 없어(#156) 서버가 400 으로
+     * 거절한다 — 뜻이 없는 조작의 진입점을 만들지 않는다.
+     */
+    const channel = channels.find((c) => c.id === channelId);
+    if (channel?.visibility === 'private') {
+      try {
+        setTeams(await getController().listTeams());
+      } catch {
+        setTeamError('팀 목록을 받지 못했다');
+      }
+    }
+  };
+
+  const submitTeamAdd = async (channelId: string): Promise<void> => {
+    if (!selectedTeamId) return;
+    setTeamAddResult(null);
+    setTeamError(null);
+    try {
+      const result = await getController().addTeamToChannel(channelId, selectedTeamId);
+      setTeamAddResult(result);
+      setSelectedTeamId('');
+      // 넣은 결과가 멤버 목록에 보여야 한다 — 결과 문구만 갱신하면 바로 아래 목록이
+      // 방금 들어온 에이전트를 빼고 그린다.
+      await getController().loadChannelMembers(channelId);
+    } catch (err) {
+      setTeamError(err instanceof Error ? err.message : '팀 추가에 실패했다');
     }
   };
 
@@ -627,6 +674,51 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
               >
                 초대
               </button>
+            </div>
+          )}
+          {/*
+            팀 추가(#172): **private 채널에서만.** public 채널에는 멤버십이 없어(#156)
+            서버가 400 으로 거절하므로 뜻이 없는 진입점을 만들지 않는다.
+
+            admin 게이트를 걸지 **않는다**: 서버의 게이트는 `#156` 의 초대와 같은
+            `assertChannelVisible` 이라 그 채널의 멤버면 누구나 넣을 수 있다. 화면만
+            admin 으로 좁히면 할 수 있는 조작이 화면에서 사라진다 — 그것도 화면이
+            서버와 다른 말을 하는 것이다.
+
+            팀이 하나도 없으면 고를 것이 없으니 자리도 없다. 다만 목록을 **못 받은**
+            것은 다른 사실이라 `teamError` 로 따로 말한다.
+          */}
+          {ch.visibility === 'private' && teamError && (
+            <p role="alert" className="mb-1 text-[10px] text-amber-400">{teamError}</p>
+          )}
+          {ch.visibility === 'private' && teams.length > 0 && (
+            <div className="mb-1 space-y-1">
+              <div className="text-[10px] text-zinc-500">팀으로 추가</div>
+              <div className="flex items-center gap-1">
+                <select
+                  aria-label="추가할 팀"
+                  className="flex-1 rounded bg-zinc-900 px-1 py-0.5 text-xs text-zinc-200"
+                  value={selectedTeamId}
+                  onChange={(e) => { setSelectedTeamId(e.target.value); setTeamAddResult(null); }}
+                >
+                  <option value="">팀 선택…</option>
+                  {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+                <button
+                  className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-500 disabled:opacity-40"
+                  disabled={!selectedTeamId}
+                  onClick={() => void submitTeamAdd(ch.id)}
+                >
+                  추가
+                </button>
+              </div>
+              {teamAddResult && (
+                <div className="text-[10px] text-zinc-400">
+                  {teamAddResult.added.length > 0 && <span>추가: {teamAddResult.added.join(', ')}</span>}
+                  {teamAddResult.skipped.length > 0 && <span className="ml-1 text-amber-400">건너뜀: {teamAddResult.skipped.join(', ')}</span>}
+                  {teamAddResult.alreadyMember.length > 0 && <span className="ml-1">이미 있음: {teamAddResult.alreadyMember.join(', ')}</span>}
+                </div>
+              )}
             </div>
           )}
           <div className="flex gap-1">
