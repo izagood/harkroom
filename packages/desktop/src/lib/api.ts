@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PatView } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, InboxEntry, LeaseRow, MessageRow, PatView } from '@murmur/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -80,8 +80,24 @@ export class ApiClient {
   async channels(): Promise<ChannelRow[]> {
     return (await this.req<{ channels: ChannelRow[] }>('GET', '/channels')).channels;
   }
-  createChannel(input: { name: string; topic?: string; repo?: string }): Promise<ChannelRow> {
+  createChannel(
+    input: { name: string; topic?: string; repo?: string; visibility?: 'public' | 'private' },
+  ): Promise<ChannelRow> {
     return this.req('POST', '/channels', input);
+  }
+
+  /** 채널 멤버 목록. private 채널에서는 곧 '이 채널을 볼 수 있는 사람 전부'다. */
+  async channelMembers(id: string): Promise<ChannelMemberRow[]> {
+    return (await this.req<{ members: ChannelMemberRow[] }>('GET', `/channels/${id}/members`)).members;
+  }
+
+  /** 초대. 서버가 갱신된 목록을 돌려주므로 호출부가 다시 조회하지 않아도 된다. */
+  async inviteChannelMember(id: string, accountId: string): Promise<ChannelMemberRow[]> {
+    return (await this.req<{ members: ChannelMemberRow[] }>('POST', `/channels/${id}/members`, { accountId })).members;
+  }
+
+  async removeChannelMember(id: string, accountId: string): Promise<ChannelMemberRow[]> {
+    return (await this.req<{ members: ChannelMemberRow[] }>('DELETE', `/channels/${id}/members/${accountId}`)).members;
   }
 
   /**
@@ -92,7 +108,10 @@ export class ApiClient {
    * 호출자가 이 구분을 잃으면(빈 문자열을 보내거나 항상 두 필드를 다 보내면) 운영자가 topic 만
    * 고치려다 avcs 바인딩이 조용히 끊긴다.
    */
-  updateChannel(id: string, input: { topic?: string; repo?: string | null; archived?: boolean }): Promise<ChannelRow> {
+  updateChannel(
+    id: string,
+    input: { topic?: string; repo?: string | null; archived?: boolean; visibility?: 'public' | 'private' },
+  ): Promise<ChannelRow> {
     return this.req('PATCH', `/channels/${id}`, input);
   }
 

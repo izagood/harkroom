@@ -252,6 +252,21 @@ export interface ChannelRow {
   kind: 'standard' | 'dm';
   repo: string | null;
   archivedAt: string | null;
+  /**
+   * 공개 범위(#182). **옵셔널이 아닌 이유**: 옵셔널로 두면 이 필드를 안 넘기는 호출부가
+   * 조용히 통과하고, 화면은 `undefined` 를 public 으로 읽어 private 채널에 자물쇠가
+   * 사라진다. 필수로 두면 타입 검사가 그런 자리를 전부 짚는다.
+   *
+   * private 은 '보이지만 못 읽는다'가 아니라 '멤버만 존재를 안다'다 — 이 값이 'private'
+   * 인 행을 받았다는 것 자체가 이미 '나는 멤버이거나 admin 이다'라는 뜻이다.
+   */
+  visibility: 'public' | 'private';
+}
+
+/** 채널 멤버 한 명. 멤버 목록 화면이 handle 을 따로 조회하지 않도록 함께 준다. */
+export interface ChannelMemberRow {
+  accountId: string;
+  handle: string;
 }
 
 export interface InboxEntry {

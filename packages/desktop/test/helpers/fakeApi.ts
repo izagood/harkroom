@@ -7,8 +7,13 @@ import type { ApiClient } from '../../src/lib/api';
 export const acc = (id: string, handle: string, kind: 'human' | 'agent' = 'human', isAdmin = false): AccountView =>
   ({ id, handle, displayName: handle, kind, isAdmin, disabled: false, status: 'available', statusText: null });
 
-export const chan = (id: string, name: string, repo: string | null = null): ChannelRow =>
-  ({ id, name, topic: '', kind: 'standard', repo, archivedAt: null });
+// #182: 공개 범위도 **필수 필드**다 — fixture 가 그것을 적어야 한다. 기본값은 서버의
+// 기본값과 같은 'public' 이고, private 을 보는 테스트가 마지막 인자로 덮어쓴다.
+export const chan = (
+  id: string, name: string, repo: string | null = null,
+  visibility: 'public' | 'private' = 'public',
+): ChannelRow =>
+  ({ id, name, topic: '', kind: 'standard', repo, archivedAt: null, visibility });
 
 export const msg = (id: string, channelId: string, seq: number, body: string, authorId = 'u1',
   extra: Partial<MessageRow> = {}): MessageRow =>
@@ -53,6 +58,9 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     addReaction: vi.fn(async () => undefined),
     removeReaction: vi.fn(async () => undefined),
     createDm: vi.fn(),
+    channelMembers: vi.fn(async () => []),
+    inviteChannelMember: vi.fn(async () => []),
+    removeChannelMember: vi.fn(async () => []),
     updateChannel: vi.fn(async (id: string, input: { topic?: string; repo?: string | null; archived?: boolean }) =>
       chan(id, id, input.repo ?? null)),
     archiveChannel: vi.fn(async (id: string, _archived: boolean) =>
