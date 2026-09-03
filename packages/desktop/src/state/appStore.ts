@@ -125,6 +125,13 @@ export interface AppState {
   expandedMessageIds: Record<string, true>;
   /** 에이전트별 러너 실행 상태. agentId → state */
   runnerStates: Record<string, RunnerState>;
+  /**
+   * 링크 미리보기가 준비된 시각. url → 타임스탬프(#215).
+   *
+   * 카드 **내용**을 여기 담지 않는 이유: 캐시는 서버에 하나뿐이고, 두 벌을 두면 어느 쪽이
+   * 최신인지 화면마다 갈린다. 여기 있는 것은 "다시 읽어라"는 신호뿐이다.
+   */
+  linkPreviewReadyAt: Record<string, number>;
   set(partial: Partial<AppState>): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
@@ -161,6 +168,7 @@ const initial = {
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
   expandedMessageIds: {}, runnerStates: {}, savedIds: [], savedCount: 0,
+  linkPreviewReadyAt: {},
 };
 
 export const useAppStore = create<AppState>((set, get) => ({

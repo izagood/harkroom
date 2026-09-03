@@ -1,4 +1,4 @@
-import { parseMessagePermalink } from '@murmur/shared';
+import { parseMessagePermalink, trimTrailingPunctuation, urlCandidateRegex } from '@murmur/shared';
 import type { MessagePart } from './mention';
 
 /**
@@ -18,35 +18,9 @@ export type LinkTarget =
  */
 const OPENABLE_SCHEMES = new Set(['http:', 'https:']);
 
-/**
- * URL 후보를 **넓게** 집는다. `://` 를 요구하지 않는 것이 의도다 — 좁게 집으면
- * `javascript:alert(1)` 이 애초에 후보가 되지 못해, 스킴 검사가 없어도 테스트가 초록이
- * 된다. 방어선은 판정(`classifyLink`) 한 곳에만 있어야 실재를 확인할 수 있다.
- *
- * 순수 URL 만 본다 — `owner/repo#123` 같은 참조 문법은 넣지 않는다. 평범한 텍스트가
- * 링크로 오인되면 사람이 무엇이 링크인지 믿지 못한다.
- */
-export const URL_CANDIDATE = /[a-zA-Z][a-zA-Z0-9+.-]*:[^\s]+/g;
-
-/**
- * 문장 끝에 붙어 온 문장부호는 URL 이 아니다 — `자세히는 https://a.io/b.` 의 마침표까지
- * 링크에 넣으면 열리지 않는 주소가 된다. 짝이 맞는 괄호는 남긴다(위키 주소가 실제로 쓴다).
- */
-function trimTrailingPunctuation(token: string): string {
-  let end = token.length;
-  while (end > 0) {
-    const ch = token[end - 1]!;
-    if ('.,;:!?\'"'.includes(ch)) { end -= 1; continue; }
-    if (ch === ')' || ch === ']') {
-      const open = ch === ')' ? '(' : '[';
-      const slice = token.slice(0, end);
-      const balanced = slice.split(open).length <= slice.split(ch).length;
-      if (balanced) { end -= 1; continue; }
-    }
-    break;
-  }
-  return token.slice(0, end);
-}
+// URL 후보 패턴과 후행 문장부호 정리는 **`@murmur/shared` 에 하나만 둔다**(#215).
+// 서버도 같은 것으로 미리보기 대상을 집어야 캐시 키가 갈라지지 않는다 — 사본을 셋 두었더니
+// 실제로 갈라졌다.
 
 /**
  * 이 글자를 링크로 만들어도 되는가. 안 되면 **null** 이고, 그러면 그냥 글자로 남는다 —
@@ -83,7 +57,7 @@ export function splitLinks(parts: MessagePart[]): BodyPart[] {
   for (const part of parts) {
     if (part.kind !== 'text') { out.push(part); continue; }
     let cursor = 0;
-    for (const m of part.text.matchAll(URL_CANDIDATE)) {
+    for (const m of part.text.matchAll(urlCandidateRegex())) {
       const token = trimTrailingPunctuation(m[0]);
       const target = token ? classifyLink(token) : null;
       // 허용되지 않은 스킴은 조각을 만들지 않고 흘려보낸다 — 뒤의 text 조각에 그대로 남는다.
