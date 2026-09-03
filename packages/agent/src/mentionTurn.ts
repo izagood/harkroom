@@ -8,9 +8,9 @@
 // codexSessions) 을 순서대로 부르고, 그 결과로 무엇을 저장·발화·실패 처리할지 판단한다.
 // 하네스 출력은 파싱하지 않는다 — 에이전트가 스스로 murmur MCP 로 답을 올린다(spec §4).
 import { randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { AgentView, MessageRow } from '@murmur/shared';
+import type { AgentHarness, AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
 import { buildSystemPrompt, buildTurnPrompt, type MemoryContext, countOwnPostsSince, hasOwnPostSince, NO_REPLY_NOTICE } from './prompt.js';
 import { SessionStore } from './sessions.js';
@@ -26,6 +26,12 @@ export interface MentionTurnMurmur {
   readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
   /** #139: core 본문과 mem/* slug 목록. 실패는 **던진다** — 호출자가 구분해야 한다. */
   readMemory(): Promise<{ core: string | null; slugs: string[] }>;
+  /**
+   * #140: 승인된 스킬 목록. **실패는 던진다** — 러너가 stderr 에 한 줄 남길 수 있어야 한다.
+   * 여기서 빈 배열로 삼키면 "스킬이 없다"와 "서버를 못 읽었다"가 같은 값이 되고, 그러면
+   * 동기화 로직이 있는 스킬을 사라진 것으로 보고 지워 버린다.
+   */
+  listApprovedSkills(): Promise<{ slug: string; body: string }[]>;
   /** 발화 후 메시지의 seq 를 반환한다. */
   post(channelId: string, body: string, threadRootId: string | null): Promise<number>;
   /** #144: 긴 작업 시작 시 진행 설명 — 결과 발화로 세지 않는다. kind='progress'로 저장되어 message.read 응답에서 구분한다. */
@@ -45,7 +51,35 @@ export interface MentionTurnMurmur {
 /** 한 턴을 실제로 돌리는 함수. 프로덕션은 pty.ts::runPtyTurn 을 그대로 넘기고, 테스트는
  * 이 자리에 스텁을 꽂아 buildTurnCommand 가 만든 plan 을 가로채 검증한다(브리프: "buildTurnCommand
  * 호출 캡처는 runMentionTurn 에 spawn 함수를 주입해 확인"). */
-export type RunTurn = (plan: TurnPlan, opts: { cwd: string; timeoutMs: number }) => Promise<TurnResult>;
+export type RunTurn = (
+  plan: TurnPlan,
+  opts: {
+    cwd: string;
+    timeoutMs: number;
+    /**
+     * PTY raw 바이트 탭(#141). `runPtyTurn` 의 옵션에 이미 있던 것을 이 계약에도
+     * 열었다 — 그전에는 `RunPtyTurnOptions` 에 있는 필드를 조립 경로에서 넘길 방법이
+     * 없어서(이 타입이 좁혀 놨다) Phase 2 의 라이브 중계가 구조적으로 불가능했다.
+     */
+    onData?: (chunk: Buffer) => void;
+  },
+) => Promise<TurnResult>;
+
+/**
+ * 진행 중인 턴을 attach 가능한 세션으로 감싸는 릴레이(#141 Phase 2, 스펙 §5).
+ *
+ * `relay.ts` 의 `RelayClient` 를 그대로 받지 않고 이 좁은 모양으로 받는 이유: 이 파일이
+ * 릴레이 모듈을 알면 소켓·재접속·`ws` 의존까지 끌고 오게 되고, 턴 조립 테스트가 그것을
+ * 전부 세워야 한다. 릴레이는 관찰이고 턴은 답이다 — 관찰이 답의 의존이 되면 안 된다.
+ */
+export interface TurnRelay {
+  openSession(input: {
+    agentAccountId: string;
+    channelId: string;
+    threadRootId: string | null;
+    harness: AgentHarness;
+  }): { sessionId: string; push(chunk: Buffer): void; close(): void };
+}
 
 export interface MentionTurnDeps {
   murmur: MentionTurnMurmur;
@@ -72,6 +106,11 @@ export interface MentionTurnDeps {
   murmurUrl: string;
   pat: string;
   turnTimeoutMs: number;
+  /**
+   * PTY 릴레이(#141). **옵셔널이다** — 릴레이가 없어도 턴은 그대로 돌아야 한다.
+   * 관찰을 못 하는 것과 답을 못 하는 것은 같은 실패가 아니다.
+   */
+  relay?: TurnRelay;
   /** 테스트가 sinceMs 캡처 시점을 결정론적으로 만들기 위한 시계 주입. 생략하면 Date.now. */
   now?: () => number;
 }
@@ -179,6 +218,103 @@ function warnOnDuplicatePosts(key: string, postCount: number): void {
  * 요청을 본 시점(턴 시작 직후)과 그것에 따라 물러나는 시점(턴 종료 후)이 달라야 하고,
  * 반환값이 정확히 그 간격을 만든다.
  */
+/**
+ * #140: 승인된 스킬을 러너 상태 디렉터리에 실체화하고 하네스 스킬 디렉터리로 링크한다.
+ *
+ * **왜 워크스페이스 밖에 쓰고 링크만 넣는가**(스펙 §12 결정 3): 스킬 파일을 워크스페이스
+ * 안에 직접 쓰면 avcs 가 그것을 저장소로 쓸어 간다. 실측(0단계): `avcs workspace land` 는
+ * 미추적 파일을 건드리지 않지만, 같은 디렉터리에서 부르는 `avcs commit` 은
+ * `A .claude/skills/foo/SKILL.md` 로 전부 쓸어 담는다 — 반면 `.claude/skills/<slug>` 가
+ * **심볼릭 링크**면 avcs 는 따라 들어가지 않아 아무것도 담기지 않는다. 링크가 결정의 핵심이다.
+ *
+ * **복사가 아니라 링크**인 이유: 복사하면 갈라진 사본이 생겨, 승인이 취소된 스킬이
+ * 워크스페이스마다 다른 시점의 본문으로 남는다.
+ *
+ * **링크 대상은 SKILL.md 가 아니라 스킬 디렉터리다.** 하네스는 `<스킬디렉터리>/SKILL.md` 를
+ * 읽으므로 파일을 직접 링크하면 `.../SKILL.md/SKILL.md` 를 찾아 아무것도 읽지 못한다.
+ *
+ * 실패해도 **턴은 진행한다** — 스킬은 있으면 좋은 것이지 필수 자격이 아니다. 대신 실패를
+ * stderr 한 줄로 남긴다(조용히 빈 목록으로 삼키면 서버가 죽은 것과 스킬이 없는 것을
+ * 구분할 수 없다).
+ *
+ * @param stateDir 워크스페이스 **밖**의 러너 상태 디렉터리
+ * @param workspaceDir 에이전트 워크스페이스 — 여기에는 링크만 들어간다
+ */
+export async function syncSkills(
+  stateDir: string,
+  workspaceDir: string,
+  listSkills: () => Promise<{ slug: string; body: string }[]>,
+): Promise<void> {
+  const skillsDir = join(stateDir, 'skills');
+  // 하네스별 스킬 디렉터리. claude 는 `.claude/skills/<slug>/SKILL.md` 를 읽는다.
+  const harnessDirs = [
+    join(workspaceDir, '.claude', 'skills'),
+    join(workspaceDir, '.codex', 'skills'),
+  ];
+
+  try {
+    const skills = await listSkills();
+    const wanted = new Set(skills.map((s) => s.slug));
+
+    // 사라진 스킬(비활성·삭제): 상태 디렉터리의 파일과 하네스의 링크를 **함께** 지운다.
+    // 링크만 남기면 하네스가 깨진 링크를 읽고, 파일만 남기면 지워진 스킬이 계속 붙는다.
+    let existing: string[] = [];
+    try {
+      existing = await readdir(skillsDir);
+    } catch { /* 상태 디렉터리가 아직 없으면 지울 것도 없다 */ }
+    for (const slug of existing) {
+      if (wanted.has(slug)) continue;
+      await rm(join(skillsDir, slug), { recursive: true, force: true });
+    }
+    for (const dir of harnessDirs) {
+      await removeStaleLinks(dir, skillsDir, wanted);
+    }
+
+    for (const skill of skills) {
+      const skillPath = join(skillsDir, skill.slug);
+      await mkdir(skillPath, { recursive: true });
+      await writeFile(join(skillPath, 'SKILL.md'), skill.body, 'utf8');
+      for (const dir of harnessDirs) {
+        await mkdir(dir, { recursive: true });
+        await linkSkill(skillPath, join(dir, skill.slug));
+      }
+    }
+  } catch (err) {
+    console.error(
+      `[mentionTurn] 스킬 동기화 실패(턴은 계속한다): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
+ * 하네스 디렉터리에서 **우리가 만든** 링크 중 승인 목록에 없는 것만 지운다.
+ *
+ * 대상이 `skillsDir` 아래인지 확인하는 이유: 사람이 직접 넣은 스킬 디렉터리와 다른
+ * 도구가 만든 링크를 워크스페이스에서 함부로 지우지 않기 위해서다.
+ */
+async function removeStaleLinks(harnessDir: string, skillsDir: string, wanted: Set<string>): Promise<void> {
+  let entries: string[] = [];
+  try {
+    entries = await readdir(harnessDir);
+  } catch { return; /* 하네스 디렉터리가 없으면 지울 것도 없다 */ }
+  for (const name of entries) {
+    if (wanted.has(name)) continue;
+    const linkPath = join(harnessDir, name);
+    const st = await lstat(linkPath).catch(() => null);
+    if (!st?.isSymbolicLink()) continue;
+    const target = await readlink(linkPath).catch(() => null);
+    if (target && target.startsWith(skillsDir)) await rm(linkPath, { force: true });
+  }
+}
+
+/** 링크가 이미 올바르면 그대로 두고, 아니면(없거나·파일이거나·다른 곳을 가리키면) 다시 건다. */
+async function linkSkill(target: string, linkPath: string): Promise<void> {
+  const st = await lstat(linkPath).catch(() => null);
+  if (st?.isSymbolicLink() && (await readlink(linkPath).catch(() => null)) === target) return;
+  if (st) await rm(linkPath, { recursive: true, force: true });
+  await symlink(target, linkPath);
+}
+
 export interface MentionTurnResult {
   /** 이 턴에 읽은 정의에 실려 온 종료 요청 시각. null 은 '요청 없음'. */
   stopRequestedAt: string | null;
@@ -301,6 +437,11 @@ export async function runMentionTurn(
   // 턴은 순차적으로 돈다(main.ts 의 for 루프가 await 한다) — 그래서 파일 하나로 충분하다.
   const systemPromptFile = await writeSystemPromptFile(deps.stateDir, systemPrompt);
 
+  // #140: 승인된 스킬 동기화 — 하네스가 뜨기 **전에** 끝나야 한다. await 을 빼면 이 턴의
+  // 하네스는 아직 없는 스킬 디렉터리를 읽고, 스킬은 항상 한 턴 늦게 붙는다.
+  // 실패는 syncSkills 안에서 삼키고 stderr 로 남긴다 — 그래서 턴은 그대로 진행한다.
+  await syncSkills(deps.stateDir, rec.workspaceDir, () => deps.murmur.listApprovedSkills());
+
   // #117: 대화 본문도 stdin 파일로 이동한다. argv 에 있으면 같은 머신의 다른 로컬 사용자가
   // `ps -ef` 로 스레드 내용을 그대로 읽는다. codex 는 지시문까지 합쳐서 stdin 으로 가고,
   // claude 는 지시문이 이미 systemPromptFile 로 별도로 가므로 여기선 promptCtx 만 stdin 으로 간다.
@@ -349,10 +490,32 @@ export async function runMentionTurn(
     );
   });
 
+  // #141: 이 턴을 attach 가능한 세션으로 연다. `plan` 이 조립된 **뒤**, PTY 가 뜨기
+  // **직전**이어야 한다 — 더 앞이면 avcs workspace project 가 도는 수 초 동안 빈 세션이
+  // 목록에 뜨고, 더 뒤면 첫 바이트를 놓친다.
+  //
+  // **attach 는 이 턴의 권한을 건드리지 않는다.** `plan` 은 위에서 `mode: 'mention'` 과
+  // `def.mentionPermission` 으로 이미 조립됐고, 세션을 여는 것은 그 뒤다 — 스펙 §6 의
+  // "멘션 턴에 attach 해도 그 턴의 모드는 바꿀 수 없다"가 이 순서로 성립한다.
+  const session = deps.relay?.openSession({
+    agentAccountId: deps.me.id,
+    channelId,
+    threadRootId: anchor,
+    harness: def.harness,
+  });
+
   let result: TurnResult;
   try {
-    result = await deps.runTurn(plan, { cwd: rec.workspaceDir, timeoutMs: deps.turnTimeoutMs });
+    result = await deps.runTurn(plan, {
+      cwd: rec.workspaceDir,
+      timeoutMs: deps.turnTimeoutMs,
+      // 릴레이가 없으면 탭도 없다 — `undefined` 를 넘겨 pty 쪽 호출을 아예 안 만든다.
+      onData: session ? (chunk) => session.push(chunk) : undefined,
+    });
   } finally {
+    // 턴이 어떻게 끝나든(정상·타임아웃·예외) 세션은 닫는다. 안 닫으면 서버의 세션
+    // 목록에 끝난 턴이 영구히 남아, 사람이 attach 해도 아무 바이트도 오지 않는다.
+    session?.close();
     // 💬 는 반드시 제거한다 — 타임아웃·예외로 끝나도 남으면 "영원히 작업 중"이라는
     // 거짓 신호가 되고, 그것이 docs/design.md 4절 "없는 것을 있다고 표시하지 않는다" 다.
     // 추가가 끝난 뒤에 제거한다(순서가 뒤집히면 💬 가 남는다).
