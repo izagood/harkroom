@@ -26,13 +26,13 @@ describe('bootstrap & login', () => {
   it('bootstraps first admin with a default channel, then rejects a second bootstrap', async () => {
     const r1 = await app.inject({
       method: 'POST', url: '/bootstrap',
-      payload: { handle: 'jaebin', displayName: 'Jaebin', password: 'pw123456' },
+      payload: { handle: 'jaebin', loginId: 'jaebin', displayName: 'Jaebin', password: 'pw123456' },
     });
     expect(r1.statusCode).toBe(201);
 
     const token = (await app.inject({
       method: 'POST', url: '/auth/login',
-      payload: { handle: 'jaebin', password: 'pw123456' },
+      payload: { loginId: 'jaebin', password: 'pw123456' },
     })).json().token as string;
     const channels = await app.inject({
       method: 'GET', url: '/channels',
@@ -48,7 +48,7 @@ describe('bootstrap & login', () => {
 
     const r2 = await app.inject({
       method: 'POST', url: '/bootstrap',
-      payload: { handle: 'x', displayName: 'X', password: 'pw123456' },
+      payload: { handle: 'x', loginId: 'x', displayName: 'X', password: 'pw123456' },
     });
     expect(r2.statusCode).toBe(409);
   });
@@ -56,7 +56,7 @@ describe('bootstrap & login', () => {
   it('logs in and reads /auth/me', async () => {
     const login = await app.inject({
       method: 'POST', url: '/auth/login',
-      payload: { handle: 'jaebin', password: 'pw123456' },
+      payload: { loginId: 'jaebin', password: 'pw123456' },
     });
     expect(login.statusCode).toBe(200);
     const { token } = login.json();
@@ -71,7 +71,7 @@ describe('bootstrap & login', () => {
   it('rejects wrong password and missing token', async () => {
     const bad = await app.inject({
       method: 'POST', url: '/auth/login',
-      payload: { handle: 'jaebin', password: 'nope-nope' },
+      payload: { loginId: 'jaebin', password: 'nope-nope' },
     });
     expect(bad.statusCode).toBe(401);
     const noauth = await app.inject({ method: 'GET', url: '/auth/me' });
@@ -83,7 +83,7 @@ describe('password change', () => {
   it('changes password and new password works for login', async () => {
     const login = await app.inject({
       method: 'POST', url: '/auth/login',
-      payload: { handle: 'jaebin', password: 'pw123456' },
+      payload: { loginId: 'jaebin', password: 'pw123456' },
     });
     expect(login.statusCode).toBe(200);
     const { token } = login.json();
@@ -97,7 +97,7 @@ describe('password change', () => {
 
     const loginNew = await app.inject({
       method: 'POST', url: '/auth/login',
-      payload: { handle: 'jaebin', password: 'newpassword123' },
+      payload: { loginId: 'jaebin', password: 'newpassword123' },
     });
     expect(loginNew.statusCode).toBe(200);
   });
@@ -105,7 +105,7 @@ describe('password change', () => {
   it('old password does not work after change', async () => {
     const loginOld = await app.inject({
       method: 'POST', url: '/auth/login',
-      payload: { handle: 'jaebin', password: 'pw123456' },
+      payload: { loginId: 'jaebin', password: 'pw123456' },
     });
     expect(loginOld.statusCode).toBe(401);
   });
@@ -113,7 +113,7 @@ describe('password change', () => {
   it('rejects wrong current password', async () => {
     const login = await app.inject({
       method: 'POST', url: '/auth/login',
-      payload: { handle: 'jaebin', password: 'newpassword123' },
+      payload: { loginId: 'jaebin', password: 'newpassword123' },
     });
     expect(login.statusCode).toBe(200);
     const { token } = login.json();
@@ -138,7 +138,7 @@ describe('password change', () => {
   it('rejects new password that is too short', async () => {
     const login = await app.inject({
       method: 'POST', url: '/auth/login',
-      payload: { handle: 'jaebin', password: 'newpassword123' },
+      payload: { loginId: 'jaebin', password: 'newpassword123' },
     });
     const { token } = login.json();
 
@@ -153,13 +153,13 @@ describe('password change', () => {
   it('invalidates other sessions but keeps current session', async () => {
     const login1 = await app.inject({
       method: 'POST', url: '/auth/login',
-      payload: { handle: 'jaebin', password: 'newpassword123' },
+      payload: { loginId: 'jaebin', password: 'newpassword123' },
     });
     const token1 = login1.json().token as string;
 
     const login2 = await app.inject({
       method: 'POST', url: '/auth/login',
-      payload: { handle: 'jaebin', password: 'newpassword123' },
+      payload: { loginId: 'jaebin', password: 'newpassword123' },
     });
     const token2 = login2.json().token as string;
 
@@ -186,7 +186,7 @@ describe('password change', () => {
   it('records audit log without password or hash', async () => {
     const login = await app.inject({
       method: 'POST', url: '/auth/login',
-      payload: { handle: 'jaebin', password: 'finalpassword123' },
+      payload: { loginId: 'jaebin', password: 'finalpassword123' },
     });
     const { token } = login.json();
 

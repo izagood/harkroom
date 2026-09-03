@@ -10,7 +10,7 @@ import type { Pool } from 'pg';
  */
 export type AuditAction =
   | 'login.succeeded' | 'login.failed' | 'logout'
-  | 'account.created' | 'agent.created' | 'agent.updated' | 'agent.disabled' | 'agent.enabled' | 'invite.created'
+  | 'account.created' | 'account.handle.changed' | 'agent.created' | 'agent.updated' | 'agent.disabled' | 'agent.enabled' | 'invite.created'
   // #139: 메모리 삭제. detail 에는 slug 만 남긴다 — 본문을 복사하면 삭제가 삭제가 아니다.
   | 'agent.memory.deleted'
   // #171: 새 에이전트의 기본값 변경. 이미 만들어진 에이전트는 바뀌지 않으므로, 이 기록은

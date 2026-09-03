@@ -20,7 +20,7 @@ describe('ConnectScreen', () => {
     }));
     const onConnected = vi.fn();
     render(<ConnectScreen onConnected={onConnected} />);
-    fireEvent.change(screen.getByLabelText('Handle'), { target: { value: 'admin' } });
+    fireEvent.change(screen.getByLabelText('Login ID'), { target: { value: 'admin' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await waitFor(() => expect(onConnected).toHaveBeenCalledWith('http://localhost:3400', 'tok-9', 'acct_123', 'admin'));
@@ -30,7 +30,7 @@ describe('ConnectScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
       new Response(JSON.stringify({ error: { code: 'invalid_credentials', message: 'wrong handle or password' } }), { status: 401 })));
     render(<ConnectScreen onConnected={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText('Handle'), { target: { value: 'x1' } });
+    fireEvent.change(screen.getByLabelText('Login ID'), { target: { value: 'x1' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'bad-bad-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await waitFor(() => expect(screen.getByText('wrong handle or password')).toBeTruthy());
@@ -50,7 +50,7 @@ describe('ConnectScreen', () => {
     const onConnected = vi.fn();
     render(<ConnectScreen onConnected={onConnected} />);
     fireEvent.click(screen.getByText('First run? Create the admin account'));
-    fireEvent.change(screen.getByLabelText('Handle'), { target: { value: 'admin' } });
+    fireEvent.change(screen.getByLabelText('Handle (@)'), { target: { value: 'admin' } });
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Admin' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
@@ -80,7 +80,7 @@ describe('ConnectScreen', () => {
     render(<ConnectScreen onConnected={onConnected} />);
 
     fireEvent.click(screen.getByRole('button', { name: /Have an invite token/ }));
-    fireEvent.change(screen.getByLabelText('Handle'), { target: { value: 'newbie' } });
+    fireEvent.change(screen.getByLabelText('Handle (@)'), { target: { value: 'newbie' } });
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Newbie' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
     fireEvent.change(screen.getByLabelText('Invite token'), { target: { value: 'muri_abc' } });
@@ -102,7 +102,7 @@ describe('ConnectScreen', () => {
     render(<ConnectScreen onConnected={vi.fn()} />);
 
     fireEvent.click(screen.getByRole('button', { name: /Have an invite token/ }));
-    fireEvent.change(screen.getByLabelText('Handle'), { target: { value: 'newbie' } });
+    fireEvent.change(screen.getByLabelText('Handle (@)'), { target: { value: 'newbie' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
     fireEvent.change(screen.getByLabelText('Invite token'), { target: { value: 'muri_used' } });
     fireEvent.click(screen.getByRole('button', { name: 'Join with invite' }));
@@ -156,7 +156,7 @@ describe('ConnectScreen', () => {
     }));
     const onConnected = vi.fn();
     render(<ConnectScreen onConnected={onConnected} />);
-    fireEvent.change(screen.getByLabelText('Handle'), { target: { value: 'admin' } });
+    fireEvent.change(screen.getByLabelText('Login ID'), { target: { value: 'admin' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await waitFor(() =>

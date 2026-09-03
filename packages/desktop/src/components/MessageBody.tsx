@@ -83,6 +83,13 @@ export function MessageBody({
 
   const segments = useMemo(() => splitCode(body), [body]);
   const handles = useMemo(() => Object.values(accounts).map((a) => a.handle), [accounts]);
+  const accountsMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of Object.values(accounts)) {
+      map.set(a.id, a.handle);
+    }
+    return map;
+  }, [accounts]);
   const groupHandles = useMemo(() => groups.map((g) => g.handle), [groups]);
   // 미리보기 대상 URL(#215). **서버와 같은 함수**를 쓴다 — 각자 정규식을 두면 서버가
   // 저장한 키와 여기서 조회하는 키가 갈라져 카드가 영원히 404 다(초판이 그랬다: 여기는
@@ -222,7 +229,7 @@ export function MessageBody({
           );
         }
         // 코드가 아닌 구간에만 기존 인식이 얹힌다.
-        return splitLinks(splitMentions(seg.text, handles, groupHandles)).map((p, j) => renderPart(p, `${i}-${j}`));
+return splitLinks(splitMentions(seg.text, handles, groupHandles, accountsMap)).map((p, j) => renderPart(p, `${i}-${j}`));
       })}
     </div>
   );
