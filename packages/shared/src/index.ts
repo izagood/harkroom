@@ -460,6 +460,26 @@ export interface PinRow {
 }
 
 /**
+ * 나중에 볼 메시지 한 줄(#219). **개인 전용**이다 — 서버가 요청자 자신의 행만 내준다.
+ * `createdAt`·`doneAt` 은 담은 시각·완료 시각이고, 메시지 자체의 시각은 `message.createdAt` 다.
+ */
+export interface SavedMessageRow {
+  messageId: string;
+  channelId: string;
+  state: 'open' | 'done';
+  createdAt: string;
+  doneAt: string | null;
+  /** 담아 둔 메시지가 지워졌는가. 지워져도 목록의 자리는 남는다(#219 결정 3). */
+  deleted: boolean;
+  /**
+   * `deleted` 가 true 면 **null** 이다 — 지워진 메시지의 본문은 내주지 않는다.
+   * 옵셔널이 아니라 명시적 null 인 이유: 키가 사라지면 '아직 안 받았다'와 '삭제됐다'가
+   * 한 화면이 된다.
+   */
+  message: MessageRow | null;
+}
+
+/**
  * 사람 집합을 한 handle 로 부르는 것(#230). 저장된 명단이다 — 계산된 질의가 아니다.
  *
  * 계정과 **같은 네임스페이스**를 쓴다. `@foo` 가 사람인지 집합인지 갈라지면

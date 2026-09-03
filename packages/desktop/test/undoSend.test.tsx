@@ -15,6 +15,13 @@ import { DEFAULT_UNDO_SEND_MS, undoSendStorage } from '../src/lib/prefs';
  * 아니라 **"서버 호출이 일어났는가"** 로 한다.
  */
 
+/**
+ * 되돌리기를 **켠** 상태를 흉내내는 창 길이. 기본값(`DEFAULT_UNDO_SEND_MS`)과 일부러 분리해
+ * 둔다 — #274 로 기본이 0(바로 보내기)이 되었으므로 기본값에 기대어 창을 돌리면 "창이 도는
+ * 동안"을 검증하는 테스트가 창 없이 통과해 버린다.
+ */
+const WINDOW_MS = 5_000;
+
 const typeInto = (value: string) => {
   const box = screen.getByRole('textbox');
   // selectionStart 는 jsdom 이 change 로 갱신하지 않는다 — 커서를 끝에 두는 것을 직접 흉내낸다.
@@ -51,6 +58,7 @@ describe('보냄 취소 창', () => {
   // 이 하나가 무너지면 나머지는 전부 장식이다 — 창이 도는 동안 서버가 메시지를 이미 받았다면
   // 멘션 알림도 이미 나갔고, "되돌렸다"는 표시는 거짓말이 된다.
   it('창이 도는 동안에는 서버 호출이 일어나지 않는다', () => {
+    undoSendStorage.saveWindowMs(WINDOW_MS); // #274 로 기본이 0이 됨 — 명시적으로 켬
     const onSend = vi.fn();
     render(<Composer onSend={onSend} scopeKey="c1" />);
 
@@ -62,12 +70,14 @@ describe('보냄 취소 창', () => {
   });
 
   it('창이 끝나면 보내진다', async () => {
+    undoSendStorage.saveWindowMs(WINDOW_MS); // #274 로 기본이 0이 됨 — 명시적으로 켬
     const onSend = vi.fn();
     render(<Composer onSend={onSend} scopeKey="c1" />);
 
     typeInto('결국 나간다');
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
-    await advance(DEFAULT_UNDO_SEND_MS);
+    expect(onSend).not.toHaveBeenCalled(); // 창이 실제로 돌고 있어야 이 뒤가 의미를 가진다
+    await advance(WINDOW_MS);
 
     expect(onSend).toHaveBeenCalledWith('결국 나간다', []);
     expect(screen.queryByTestId('undo-send')).toBeNull();
@@ -75,6 +85,7 @@ describe('보냄 취소 창', () => {
 
   // 이 작업의 핵심. **영영** 일어나지 않아야 한다 — 창 길이만큼 더 밀어도 마찬가지다.
   it('되돌리면 서버 호출이 영영 일어나지 않는다', async () => {
+    undoSendStorage.saveWindowMs(WINDOW_MS); // #274 로 기본이 0이 됨 — 명시적으로 켬
     const onSend = vi.fn();
     render(<Composer onSend={onSend} scopeKey="c1" />);
 
@@ -82,12 +93,13 @@ describe('보냄 취소 창', () => {
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
     fireEvent.click(screen.getByRole('button', { name: 'Undo send' }));
 
-    await advance(DEFAULT_UNDO_SEND_MS * 4);
+    await advance(WINDOW_MS * 4);
     expect(onSend).not.toHaveBeenCalled();
   });
 
   // 되돌리는 이유는 대개 "이렇게 보내면 안 됐다"이지 "안 보내고 싶다"가 아니다.
   it('되돌리면 컴포저에 원문이 돌아온다', () => {
+    undoSendStorage.saveWindowMs(WINDOW_MS); // #274 로 기본이 0이 됨 — 명시적으로 켬
     const onSend = vi.fn();
     render(<Composer onSend={onSend} scopeKey="c1" />);
 
@@ -101,6 +113,7 @@ describe('보냄 취소 창', () => {
 
   // 사람이 쓴 것을 잃는 것이 가장 나쁘다 — 되돌린 것이 아니면 반드시 나간다.
   it('창이 끝나기 전에 언마운트되면 즉시 보내진다', () => {
+    undoSendStorage.saveWindowMs(WINDOW_MS); // #274 로 기본이 0이 됨 — 명시적으로 켬
     const onSend = vi.fn();
     render(<Composer onSend={onSend} scopeKey="c1" />);
 
@@ -126,6 +139,7 @@ describe('보냄 취소 창', () => {
 
   // 하나만 들 수 있으므로 덮으면 앞의 글을 잃는다 — 그 손실은 화면 어디에도 표시되지 않는다.
   it('창이 도는 동안 또 보내면 앞의 것이 먼저 나간다', () => {
+    undoSendStorage.saveWindowMs(WINDOW_MS); // #274 로 기본이 0이 됨 — 명시적으로 켬
     const onSend = vi.fn();
     render(<Composer onSend={onSend} scopeKey="c1" />);
 
@@ -146,6 +160,7 @@ describe('보냄 취소와 채널', () => {
    * 대기 항목이 자기 자리를 들고 있지 않으면 A 에 쓴 글이 B 로 나간다.
    */
   it('채널을 옮겨도 원래 채널로 간다', async () => {
+    undoSendStorage.saveWindowMs(WINDOW_MS); // #274 로 기본이 0이 됨 — 명시적으로 켬
     const postMessage = vi.fn(async (channelId: string) => ({
       id: 'm-new', seq: 1, channelId, threadRootId: null, authorId: 'u1', body: 'x',
       kind: 'user' as const, meta: {}, createdAt: new Date().toISOString(), editedAt: null,
@@ -170,5 +185,31 @@ describe('보냄 취소와 채널', () => {
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     expect(postMessage.mock.calls[0]![0]).toBe('c1');
+  });
+});
+
+describe('#274 회귀 테스트', () => {
+  it('저장값이 없으면 loadWindowMs() 가 0 이다', () => {
+    localStorage.removeItem('murmur.undoSendMs');
+    expect(undoSendStorage.loadWindowMs()).toBe(0);
+  });
+
+  it('저장값 10_000 이 있으면 기본값 변경과 무관하게 10_000 이다', () => {
+    // 기본값과 같은 값을 고르면 "저장값을 읽었는가"를 구분할 수 없다 — 다름을 먼저 못 박는다.
+    expect(DEFAULT_UNDO_SEND_MS).not.toBe(10_000);
+    undoSendStorage.saveWindowMs(10_000);
+    expect(undoSendStorage.loadWindowMs()).toBe(10_000);
+  });
+
+  it('기본 상태의 컴포저는 Enter 즉시 dispatch 하고 보류 UI 를 거치지 않는다', () => {
+    localStorage.removeItem('murmur.undoSendMs');
+    const onSend = vi.fn();
+    render(<Composer onSend={onSend} scopeKey="c1" />);
+
+    typeInto('기본값은 바로 간다');
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+
+    expect(onSend).toHaveBeenCalledWith('기본값은 바로 간다', []);
+    expect(screen.queryByTestId('undo-send')).toBeNull();
   });
 });

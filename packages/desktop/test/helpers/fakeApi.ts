@@ -110,6 +110,13 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
       ({ channelId, body, updatedBy: 'u1', updatedAt: new Date().toISOString() })),
     pinMessage: vi.fn(async (channelId: string, messageId: string) => pin(messageId, channelId)),
     unpinMessage: vi.fn(async () => undefined),
+    // #219: 담아 둔 메시지 표면. 베이스가 덮어야 Controller.start 가 조용히 던지지 않고,
+    // "부르지 않았다" 도 단언할 수 있다.
+    savedMessages: vi.fn(async (_state: 'open' | 'done') => []),
+    savedSummary: vi.fn(async () => ({ openCount: 0, messageIds: [] as string[] })),
+    saveMessage: vi.fn(),
+    updateSavedMessage: vi.fn(),
+    unsaveMessage: vi.fn(async () => undefined),
     ...overrides,
   };
   return base as unknown as ApiClient;

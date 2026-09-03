@@ -1,4 +1,4 @@
-import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow } from '@murmur/shared';
+import type { AccountStatus, AgentConfig, AgentDefaults, AgentView, AccountView, AttachmentRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, NotifyLevel, PatView, PinRow, SavedMessageRow } from '@murmur/shared';
 
 export class ApiError extends Error {
   /**
@@ -417,5 +417,27 @@ export class ApiClient {
     channelId: string, body: string, expectedUpdatedAt: number | null,
   ): Promise<ChannelDoc> {
     return this.req('PUT', `/channels/${channelId}/doc`, { body, expectedUpdatedAt });
+  }
+
+  // #219: `state` 는 **필수**다 — 기본값을 여기서 공급하면 호출부가 어느 탭을 받는지 적지
+  // 않아도 통과하고, 그 화면은 늘 '할 것'만 보게 된다.
+  async savedMessages(state: 'open' | 'done'): Promise<SavedMessageRow[]> {
+    return (await this.req<{ entries: SavedMessageRow[] }>('GET', `/saved?state=${state}`)).entries;
+  }
+
+  savedSummary(): Promise<{ openCount: number; messageIds: string[] }> {
+    return this.req('GET', '/saved/summary');
+  }
+
+  saveMessage(messageId: string): Promise<SavedMessageRow> {
+    return this.req('PUT', `/saved/${messageId}`);
+  }
+
+  updateSavedMessage(messageId: string, state: 'open' | 'done'): Promise<SavedMessageRow> {
+    return this.req('PATCH', `/saved/${messageId}`, { state });
+  }
+
+  unsaveMessage(messageId: string): Promise<void> {
+    return this.req('DELETE', `/saved/${messageId}`);
   }
 }
