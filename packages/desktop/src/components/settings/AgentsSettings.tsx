@@ -94,6 +94,8 @@ export function AgentsSettings() {
   type MemoryEntry = { slug: string; value: string; updatedAt: string };
   const [memories, setMemories] = useState<MemoryEntry[] | 'error' | null>(null);
   const [confirmingSlug, setConfirmingSlug] = useState<string | null>(null);
+  // #251: 비활성화는 되돌릴 수 없는 작업이므로 확인 단계를 거친다.
+  const [confirmingDisable, setConfirmingDisable] = useState(false);
   // 라벨을 하드코딩하면 재발급이 막힌다 — 라벨은 살아 있는 토큰 안에서 유일하고
   // (마이그레이션 010) 서버가 중복을 409 로 거절한다. 토큰을 잃어 폐기한 뒤 같은 이름으로
   // 다시 발급하는 것이 주 사용 흐름이라, 사용자가 이름을 정할 수 있어야 한다.
@@ -153,6 +155,7 @@ export function AgentsSettings() {
     setRevoking(null);
     setError(null);
     setConfirmingSlug(null);
+    setConfirmingDisable(false);
     loadPats(a.id);
     loadMemories(a.id);
   };
@@ -168,6 +171,7 @@ export function AgentsSettings() {
     setPats([]);
     setRevoking(null);
     setError(null);
+    setConfirmingDisable(false);
   };
 
   /** 'harness 기본값 사용'이면 명시적 null 로 비운다 — 필드를 안 보내면 서버가 기존 값을 유지한다. */
@@ -255,6 +259,32 @@ export function AgentsSettings() {
     } catch {
       setError('종료를 요청하지 못했다');
     } finally { setBusy(false); }
+  };
+
+  /** #251: 에이전트를 비활성화하거나 다시 활성화한다. 비활성화는 되돌릴 수 없는 작업이므로
+   * 확인 단계가 필요하고, 그 문구에 PAT 폐기·재발급 필요를 적어야 한다. */
+  const toggleDisabled = async () => {
+    if (!selected) return;
+    const willDisable = !selected.disabled;
+    if (willDisable && !confirmingDisable) {
+      setConfirmingDisable(true);
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    try {
+      const updated = await getController().setAgentDisabled(selected.id, willDisable);
+      setSelected(updated);
+      setAgents((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+      if (!willDisable) {
+        loadPats(selected.id);
+      }
+    } catch {
+      setError(willDisable ? '비활성화하지 못했다' : '활성화하지 못했다');
+    } finally {
+      setBusy(false);
+      setConfirmingDisable(false);
+    }
   };
 
   const revokePat = async (label: string) => {
@@ -633,6 +663,69 @@ export function AgentsSettings() {
               </div>
             )}
 
+            {/* #251: 에이전트 비활성화/활성화. 관리 행위이므로 admin 만 보인다. */}
+            {selected && isAdmin && (
+              <div className={`rounded border p-3 ${selected.disabled ? 'border-zinc-200 bg-zinc-50' : 'border-red-200 bg-red-50'}`}>
+                <div className="text-xs font-medium text-zinc-600">
+                  {selected.disabled ? '비활성화된 에이전트' : '에이전트 활성화'}
+                </div>
+                {selected.disabled ? (
+                  <div className="mt-2">
+                    <p className="text-[11px] text-zinc-500 mb-2">
+                      이 에이전트는 비활성화되어 있습니다. 다시 활성화하면 PAT 가 없다(재발급 필요)고
+                      안내가 뜹니다 — 비활성화 시 모든 PAT 가 폐기되었기 때문입니다.
+                    </p>
+                    <button
+                      className="rounded border border-indigo-300 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
+                      aria-label="에이전트 활성화"
+                      disabled={busy}
+                      onClick={() => void toggleDisabled()}
+                    >
+                      활성화
+                    </button>
+                  </div>
+                ) : confirmingDisable ? (
+                  <div className="mt-2">
+                    <p className="text-[11px] text-red-700 mb-2">
+                      <strong>이 에이전트의 모든 PAT 가 폐기</strong>되어 러너가 멈춥니다.
+                      다시 활성화해도 PAT 는 돌아오지 않으며, <strong>새로 발급</strong>해야 합니다.
+                    </p>
+                    <div className="flex gap-1">
+                      <button
+                        className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                        aria-label="정말 비활성화"
+                        disabled={busy}
+                        onClick={() => void toggleDisabled()}
+                      >
+                        정말 비활성화
+                      </button>
+                      <button
+                        className="rounded border border-zinc-300 px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100"
+                        onClick={() => setConfirmingDisable(false)}
+                      >
+                        취소
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2">
+                    <p className="text-[11px] text-zinc-500 mb-2">
+                      에이전트를 비활성화하면 <strong>모든 PAT 가 폐기</strong>되고, 다시 활성화해도
+                      PAT 는 복구되지 않아 <strong>새로 발급</strong>해야 합니다.
+                    </p>
+                    <button
+                      className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                      aria-label="에이전트 비활성화"
+                      disabled={busy}
+                      onClick={() => void toggleDisabled()}
+                    >
+                      비활성화
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {selected && isAdmin && (
               <div className="rounded border border-zinc-200 p-3">
                 {/* #129: "재시작"이라고 쓰지 않는다. murmur 는 러너를 띄우지 않으므로
@@ -682,7 +775,11 @@ export function AgentsSettings() {
                 <div className="text-xs font-medium text-zinc-600">PAT (Personal Access Token)</div>
                 <div className="mt-2 space-y-2">
                   {pats.length === 0 ? (
-                    <div className="text-[11px] text-zinc-400">PAT 가 없다</div>
+                    <div className="text-[11px] text-amber-600">
+                      {selected.disabled
+                        ? 'PAT 가 없다'
+                        : 'PAT 가 없다 — 새로 발급해야 한다(비활성화 시 전부 폐기됨)'}
+                    </div>
                   ) : (
                     pats.map((p) => (
                       <div key={`${p.label}:${p.createdAt}`} className="flex items-center justify-between rounded bg-zinc-50 px-2 py-1.5">

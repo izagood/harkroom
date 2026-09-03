@@ -615,6 +615,11 @@ export class Controller {
     return this.api.requestAgentStop(agentId);
   }
 
+  /** #251: 에이전트 비활성화/재활성화. */
+  setAgentDisabled(agentId: string, disabled: boolean): Promise<import('@murmur/shared').AgentView> {
+    return this.api.setAgentDisabled(agentId, disabled);
+  }
+
   /** #171: 새 에이전트의 기본값. 실패를 삼키지 않는다 — 화면이 실패를 그려야 한다. */
   agentDefaults(): Promise<import('@murmur/shared').AgentDefaults> {
     return this.api.agentDefaults();
