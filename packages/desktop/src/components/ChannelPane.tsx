@@ -4,6 +4,7 @@ import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
+import { ChannelEmptyState } from './ChannelEmptyState';
 import { dayLabel, localDayKey } from '../lib/day';
 
 export function ChannelPane() {
@@ -63,6 +64,13 @@ export function ChannelPane() {
               Load older messages
             </button>
           </div>
+        )}
+        {/*
+          빈 상태는 **메시지가 없을 때만**이다. `hasMore` 가 참이면 과거가 서버에 더 있고 아직
+          안 받아온 것뿐이라, 그때 "아직 메시지가 없다"를 그리면 거짓말이 된다(#234).
+        */}
+        {roots.length === 0 && !hasMore[activeChannelId] && (
+          <ChannelEmptyState channel={channel} isArchived={isArchived} />
         )}
         {roots.map((m, i) => {
           // 앞 메시지와 로컬 날짜가 다르면 새 날이다. 목록의 첫 메시지도 새 날로 친다 —
