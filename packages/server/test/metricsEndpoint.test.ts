@@ -68,7 +68,7 @@ describe('GET /metrics', () => {
 
   it('separates error responses so an error rate is computable', async () => {
     await app.inject({
-      method: 'POST', url: '/auth/login', payload: { handle: 'admin', password: 'wrong' },
+      method: 'POST', url: '/auth/login', payload: { loginId: 'admin', password: 'wrong' },
     });
 
     const text = await scrape();

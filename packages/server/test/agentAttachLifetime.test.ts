@@ -65,13 +65,13 @@ beforeAll(async () => {
   const created = await app.inject({
     method: 'POST', url: '/auth/register',
     payload: {
-      handle: 'owner', displayName: 'owner', password: 'pw123456',
+      handle: 'owner', loginId: 'owner', displayName: 'owner', password: 'pw123456',
       inviteToken: inv.json().token as string,
     },
   });
   const ownerId = created.json().id as string;
   const login = await app.inject({
-    method: 'POST', url: '/auth/login', payload: { handle: 'owner', password: 'pw123456' },
+    method: 'POST', url: '/auth/login', payload: { loginId: 'owner', password: 'pw123456' },
   });
   ownerToken = login.json().token as string;
 

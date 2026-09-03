@@ -45,13 +45,13 @@ beforeAll(async () => {
   const reg = await app.inject({
     method: 'POST', url: '/auth/register',
     payload: {
-      handle: 'humanuser', displayName: 'Human User', password: 'pw123456',
+      handle: 'humanuser', loginId: 'humanuser', displayName: 'Human User', password: 'pw123456',
       inviteToken: inv.json().token as string,
     },
   });
   humanId = reg.json().id as string;
   const login = await app.inject({
-    method: 'POST', url: '/auth/login', payload: { handle: 'humanuser', password: 'pw123456' },
+    method: 'POST', url: '/auth/login', payload: { loginId: 'humanuser', password: 'pw123456' },
   });
   humanToken = login.json().token as string;
 });

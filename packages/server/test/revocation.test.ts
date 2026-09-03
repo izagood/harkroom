@@ -34,7 +34,7 @@ beforeAll(async () => {
 afterAll(async () => { await app.close(); await stop(); });
 
 const loginAdmin = async (): Promise<string> => (await app.inject({
-  method: 'POST', url: '/auth/login', payload: { handle: 'admin', password: 'pw123456' },
+  method: 'POST', url: '/auth/login', payload: { loginId: 'admin', password: 'pw123456' },
 })).json().token as string;
 
 const me = (token: string): Promise<{ statusCode: number }> => app.inject({
