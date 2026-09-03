@@ -166,6 +166,103 @@ export const HANDLE_PATTERN = '[a-zA-Z0-9_-]{2,32}';
 export const CHANNEL_NAME_PATTERN = '^[a-z0-9_-]{1,48}$';
 
 /**
+ * 본문에서 **코드만** 떼어낸다(#216). 마크다운 전체가 아니다 — 에이전트 출력에서 가치가
+ * 가장 크면서 렌더링 표면이, 따라서 공격 표면도 가장 작은 것이 코드다.
+ *
+ * 이 판정이 사슬의 **맨 앞**에 있는 것이 요점이다. 멘션·링크(#214)보다 먼저 raw 본문을
+ * 나눠야 코드가 우선권을 갖는다. 순서가 뒤집히면 코드 블록 안의 URL 이 이미 링크가 된
+ * 뒤라 되돌릴 방법이 없다 — 코드는 코드다.
+ *
+ * 라이브러리를 쓰지 않는다. 마크다운 렌더러는 raw HTML 통과를 기본으로 켜 두는 경우가
+ * 많고, 그 설정 하나가 "HTML 을 통과시키지 않는다"는 결정을 조용히 뒤집는다. 직접
+ * 토크나이즈해서 React 엘리먼트로 넘기면 이스케이프는 React 가 보장한다.
+ *
+ * **`shared` 에 있는 이유(#298).** 데스크탑의 `MessageBody` 만 코드를 갈라내던 동안 서버는
+ * 본문 전체에서 멘션을 뽑아 알림을 보냈다 — 알림은 갔는데 화면은 안 갔다고 말하는, 판정이
+ * 두 벌일 때 나는 거짓말이다. 서버가 양보하고(코드 예시의 `@forge` 는 그 에이전트를 부르는
+ * 뜻이 아니다) 그 판정을 여기 한 벌만 둔다. 데스크탑은 `src/lib/code.ts` 가 이것을 다시
+ * export 한다 — **복사가 아니라 재수출이다.**
+ */
+export type CodeSegment =
+  /** 코드가 아닌 부분. 여기에만 멘션·링크 인식을 얹는다. */
+  | { kind: 'plain'; text: string }
+  /** 백틱 하나로 감싼 것. */
+  | { kind: 'inlineCode'; code: string }
+  /** 백틱 세 개로 감싼 것. `lang` 은 **표시용일 뿐** — 문법 강조는 하지 않는다. */
+  | { kind: 'codeBlock'; code: string; lang: string | null };
+
+/**
+ * 펜스 줄. 줄 전체가 펜스여야 한다 — `see ```x``` here` 처럼 문장 안에 섞인 것은 펜스가
+ * 아니다. 여는 줄의 나머지는 언어 표시로 읽는다.
+ */
+const FENCE_LINE = /^[ \t]*```([^\n`]*)$/;
+
+/**
+ * 인라인 코드. 개행을 넘지 않는 것이 의도다 — 짝이 없는 백틱 하나가 뒤의 본문 전체를
+ * 코드로 삼키면 메시지가 사라진 것처럼 보인다(펜스에서 같은 이유로 같은 결정을 한다).
+ *
+ * 앞뒤에 백틱이 더 붙어 있으면 집지 않는다. ```` ```x``` ```` 를 한 줄에 쓴 것은 인라인도
+ * 블록도 아닌 애매한 입력이니, 애매한 것은 평문으로 둔다.
+ */
+const INLINE_CODE = /(?<!`)`([^`\n]+)`(?!`)/g;
+
+/** 코드가 아닌 구간을 인라인 코드로 한 번 더 나눈다. */
+function splitInline(text: string, out: CodeSegment[]): void {
+  let cursor = 0;
+  for (const m of text.matchAll(INLINE_CODE)) {
+    if (m.index > cursor) out.push({ kind: 'plain', text: text.slice(cursor, m.index) });
+    out.push({ kind: 'inlineCode', code: m[1]! });
+    cursor = m.index + m[0].length;
+  }
+  if (cursor < text.length) out.push({ kind: 'plain', text: text.slice(cursor) });
+}
+
+/**
+ * 본문을 코드/비코드 구간으로 나눈다(#216, #298).
+ *
+ * **닫히지 않은 펜스는 코드가 아니다.** 열고 닫지 않은 것을 블록으로 그리면 그 뒤 본문
+ * 전체가 코드가 되어 메시지가 통째로 사라진 것처럼 보인다. 그래서 닫는 줄을 먼저 찾고,
+ * 없으면 여는 줄까지 평문으로 되돌린다.
+ */
+export function splitCode(body: string): CodeSegment[] {
+  const out: CodeSegment[] = [];
+  const lines = body.split('\n');
+  let plainFrom = 0;
+  let i = 0;
+
+  const flushPlain = (until: number) => {
+    if (until <= plainFrom) return;
+    splitInline(lines.slice(plainFrom, until).join('\n'), out);
+  };
+
+  while (i < lines.length) {
+    const open = FENCE_LINE.exec(lines[i]!);
+    if (!open) { i += 1; continue; }
+
+    // 닫는 줄을 찾는다. 언어 표시가 붙어 있어도 닫는 줄로 본다 — 두 번째 펜스가 나온
+    // 시점에서 블록은 끝난 것이고, 그 뒤를 계속 코드로 두면 위 결정을 어기게 된다.
+    let close = -1;
+    for (let j = i + 1; j < lines.length; j += 1) {
+      if (FENCE_LINE.test(lines[j]!)) { close = j; break; }
+    }
+    if (close === -1) { i += 1; continue; }
+
+    flushPlain(i);
+    const lang = (open[1] ?? '').trim();
+    out.push({
+      kind: 'codeBlock',
+      code: lines.slice(i + 1, close).join('\n'),
+      lang: lang.length ? lang : null,
+    });
+    i = close + 1;
+    plainFrom = i;
+  }
+  flushPlain(lines.length);
+
+  return out.length ? out : [{ kind: 'plain', text: body }];
+}
+
+/**
  * 본문 안의 멘션. 서버(알림 발송)와 데스크탑(강조)이 **반드시 같은 규칙**을 써야 한다 —
  * 갈라지면 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(`me@x.com`),
  * 강조된 것이 알림을 보내지 않는다(`@Fizz`).
@@ -179,13 +276,38 @@ export const MENTION_PATTERN = `(^|[^a-zA-Z0-9_-])@(${HANDLE_PATTERN})`;
 /**
  * 본문에서 불린 handle 들. 소문자로 정규화해 중복을 없앤다(`@fizz` 와 `@Fizz` 는 한 사람).
  * 패턴이 대문자를 이미 포함하므로 `i` 플래그는 필요하지 않다.
+ *
+ * 코드 블록(#298) 안의 `@handle` 은 무시한다 — `stripCodeSpans` 가 먼저 코드를 걷어낸다.
+ *
+ * **순서가 결정이다: 코드 제거 → 멘션 추출 → 그룹 확장(#230)·채널 전체(#225).** 코드 제거가
+ * 맨 앞이므로 코드 안의 그룹 handle 은 애초에 `handles` 에 들어오지 못하고, 따라서 확장될
+ * 기회도 없다 — 예외 처리가 아니라 순서에서 따라오는 결과다. 서버(`services/messages.ts`)의
+ * 그룹 확장은 이 함수가 돌려준 목록만 훑으므로 그 순서가 코드로 강제된다.
  */
 export function mentionedHandles(body: string): string[] {
   const found = new Set<string>();
-  for (const m of body.matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
+  for (const m of stripCodeSpans(body).matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
     if (m[2]) found.add(m[2].toLowerCase());
   }
   return [...found];
+}
+
+/**
+ * 본문에서 코드 구간을 걷어낸 나머지(#298). 멘션을 찾을 대상은 **이것뿐**이다.
+ *
+ * 남은 조각을 개행으로 이어 붙인다. 개행은 handle 문자가 아니므로 `MENTION_PATTERN` 의
+ * 선행 문자 조건에서 조각의 첫 글자가 `^` 와 같은 자격을 갖는다 — 조각을 따로 훑는 것과
+ * 결과가 같고, 코드를 걷어낸 자리에서 두 조각이 붙어 없던 멘션이 생기는 일도 없다.
+ *
+ * 문자열 하나를 돌려주는 이유: 이 값을 쓰는 곳이 서버의 멘션 추출과 데스크탑의 "부를
+ * 상대"(#278) 둘인데, 둘 다 정규식을 한 번 돌릴 평문이 필요할 뿐이다. 각자 세그먼트를
+ * 이어 붙이게 두면 그 이어 붙이는 규칙이 다시 두 벌이 된다.
+ */
+export function stripCodeSpans(body: string): string {
+  return splitCode(body)
+    .filter((seg): seg is { kind: 'plain'; text: string } => seg.kind === 'plain')
+    .map((seg) => seg.text)
+    .join('\n');
 }
 
 /**
@@ -707,3 +829,43 @@ export type RelayServerFrame = { type: 'replay.request'; sessionId: string };
 export type AttachServerFrame =
   | { type: 'output'; data: string }
   | { type: 'status'; state: AgentSessionState };
+
+/**
+ * 에이전트 팀(#172). **저장된 엔티티다** — "이 다섯을 넣는다"를 매번 고르는 즉석
+ * 멀티셀렉트가 아니라, 이름을 붙여 남기는 운영자의 의도 기록이다.
+ *
+ * `name` 은 계정 handle 과 **같은 네임스페이스**를 쓴다(집합 #230 과 같은 결정) —
+ * 나중에 `@팀` 멘션을 열 여지를 남기기 위한 예약이고, 멘션 해석은 아직 하지 않는다.
+ */
+export interface AgentTeamRow {
+  id: string;
+  name: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+/**
+ * 팀원 한 명. handle 을 함께 준다 — 화면이 계정 목록을 따로 받아 맞출 필요가 없다
+ * (`ChannelMemberRow` 와 같은 이유).
+ *
+ * `disabled` 를 싣는 이유: 비활성 에이전트는 팀에 **남고** 채널에 넣을 때만 걸러지므로
+ * (`AddTeamToChannelResult.skipped`), 화면이 그 사실을 미리 말할 수 있어야 한다.
+ * 안 실으면 "추가했는데 왜 안 들어갔지" 를 결과가 나온 뒤에야 알게 된다.
+ */
+export interface AgentTeamMemberRow {
+  accountId: string;
+  handle: string;
+  /** 에이전트 계정이 비활성화되어 있으면 true. */
+  disabled: boolean;
+}
+
+/**
+ * 채널에 팀을 넣은 결과(#172). 세 갈래를 **따로** 돌려준다 — 하나로 합치면
+ * "넣었다"가 "이미 있었다"와 "비활성이라 건너뛰었다"를 삼켜, 화면이 사람에게
+ * 아무 것도 설명할 수 없다. 값은 모두 handle 이다.
+ */
+export interface AddTeamToChannelResult {
+  added: string[];
+  skipped: string[];
+  alreadyMember: string[];
+}

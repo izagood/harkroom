@@ -120,10 +120,15 @@ describe('#141 뷰어 소켓의 Origin 허용 목록', () => {
       `ws://${baseUrl}/agent-attach?ticket=${await attachTicket(ownerToken, 'life-1')}`,
       { headers: { origin: 'https://evil.example' } },
     );
-    const code = await new Promise<number>((resolve) => {
-      socket.on('close', (c) => resolve(c));
-      socket.on('error', () => { /* close 로 판정한다 */ });
-    });
+    // 거절을 **기다리다 굶지 않는다**: 판정이 없으면 소켓은 그냥 열려 있고 이 약속은
+    // 안 풀린다 — 파일 타임아웃(2분)으로만 빨개지면 무엇이 깨졌는지가 로그에서 사라진다.
+    const code = await Promise.race([
+      new Promise<number>((resolve) => {
+        socket.on('close', (c) => resolve(c));
+        socket.on('error', () => { /* close 로 판정한다 */ });
+      }),
+      new Promise<number>((resolve) => setTimeout(() => resolve(-1), 3_000)),
+    ]);
     expect(code).toBe(4403);
   });
 
