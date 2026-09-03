@@ -493,9 +493,20 @@ export class Controller {
   /**
    * 첨부를 사용자 디스크에 저장한다. objectURL + `download` 앵커를 쓴다 — 토큰을 URL 에
    * 넣지 않으려면 바이트를 먼저 받아야 하고, 받은 다음에는 이것이 가장 단순한 저장 경로다.
+   * 실패하면 Notice 로 사람 앞에 세운다.
    */
   async saveAttachment(attachment: AttachmentRow): Promise<void> {
-    const blob = await this.api.fetchAttachment(attachment.id);
+    let blob: Blob;
+    try {
+      blob = await this.fetchAttachment(attachment.id);
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'attachment_missing') {
+        useAppStore.getState().set({ notice: '첨부 파일이 서버에 없습니다' });
+      } else {
+        useAppStore.getState().set({ notice: '첨부를 불러오지 못했습니다' });
+      }
+      return;
+    }
     const url = URL.createObjectURL(blob);
     try {
       const a = document.createElement('a');

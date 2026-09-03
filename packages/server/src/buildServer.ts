@@ -2,6 +2,8 @@ import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import fastifyMultipart from '@fastify/multipart';
 import type { Pool } from 'pg';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
@@ -239,8 +241,21 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerAccountRoutes(app, deps.pool);
   await registerChannelRoutes(app, deps.pool);
   await registerMessageRoutes(app, deps.pool);
+
+  const serverRoot = dirname(fileURLToPath(import.meta.url));
+  let attachmentRoot: string;
+  const envAttachmentRoot = process.env.ATTACHMENT_ROOT;
+  if (envAttachmentRoot) {
+    attachmentRoot = resolve(envAttachmentRoot);
+    if (attachmentRoot !== envAttachmentRoot) {
+      app.log.info(`ATTACHMENT_ROOT "${envAttachmentRoot}" → resolved to "${attachmentRoot}"`);
+    }
+  } else {
+    attachmentRoot = resolve(serverRoot, '.attachments');
+  }
+  app.log.info(`attachment storage: ${attachmentRoot}`);
   const storageOpts = deps.storage ?? {
-    root: process.env.ATTACHMENT_ROOT ?? './.attachments',
+    root: attachmentRoot,
     maxBytes: Number(process.env.ATTACHMENT_MAX_BYTES ?? DEFAULT_MAX_ATTACHMENT_BYTES),
   };
   // multipart 의 자체 제한도 같은 값으로 맞춘다 — 스토리지만 막으면 파서가 먼저 메모리를 쓴다.
