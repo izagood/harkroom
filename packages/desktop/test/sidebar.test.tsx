@@ -4,12 +4,13 @@ import { useAppStore } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
 import { acc, chan } from './helpers/fakeApi';
+import type { ChannelPrefRow } from '@murmur/shared';
 
 const fakeController = () => {
   const c = {
     openChannel: vi.fn(), startDm: vi.fn(), logout: vi.fn(),
     createChannel: vi.fn(), updateChannel: vi.fn(),
-    toggleChannelMute: vi.fn(), toggleChannelStar: vi.fn(),
+    setChannelNotifyLevel: vi.fn(), toggleChannelStar: vi.fn(),
   };
   setController(c as unknown as Controller);
   return c;
@@ -103,7 +104,7 @@ describe('Sidebar', () => {
       useAppStore.getState().set({ me: { ...acc('u1', 'admin'), isAdmin: true } });
     };
 
-    // #151/#152 로 비-admin 도 트리거를 갖는다(음소거·즐겨찾기는 계정별이다). 그래서
+    // #151/#152 로 비-admin 도 트리거를 갖는다(알림 수준·즐겨찾기는 계정별이다). 그래서
     // "트리거가 없다"로는 더 이상 검사할 수 없다 — 의도는 **편집 항목이 없다**는 것이다.
     it('admin 이 아니면 메뉴에 편집 항목이 없다', () => {
       fakeController();
@@ -113,7 +114,7 @@ describe('Sidebar', () => {
 
       expect(screen.queryByRole('menuitem', { name: '채널 편집' })).toBeNull();
       // 계정별 항목은 비-admin 에게도 도달 가능해야 한다.
-      expect(screen.getByRole('menuitem', { name: '음소거' })).toBeTruthy();
+      expect(screen.getByRole('menuitem', { name: '알림: 없음' })).toBeTruthy();
       expect(screen.getByRole('menuitem', { name: '즐겨찾기' })).toBeTruthy();
     });
 
@@ -382,10 +383,12 @@ describe('Sidebar', () => {
 });
 
 describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
-  const pref = (channelId: string, o: { muted?: boolean; starred?: boolean }) => ({
+  const pref = (channelId: string, o: { muted?: boolean; starred?: boolean }): ChannelPrefRow => ({
     accountId: 'u1', channelId,
     mutedAt: o.muted ? '2026-09-03T00:00:00.000Z' : null,
     starredAt: o.starred ? '2026-09-03T00:00:00.000Z' : null,
+    // #224 이후 음소거는 수준 `none` 이다.
+    notifyLevel: o.muted ? 'none' : 'all',
   });
 
   // star 를 저장만 하고 정렬을 안 건드리면 기능이 아무것도 하지 않는다(#152 본문).
@@ -406,18 +409,22 @@ describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
     expect(at('alpha')).toBeLessThan(at('beta'));
   });
 
-  // 음소거·즐겨찾기는 **계정별**이라 비-admin 에게도 도달 가능해야 한다.
-  it('비-admin 도 음소거·즐겨찾기에 도달한다', () => {
+  // 알림 수준·즐겨찾기는 **계정별**이라 비-admin 에게도 도달 가능해야 한다.
+  it('비-admin 도 알림 수준·즐겨찾기에 도달한다', () => {
     const c = fakeController();
     render(<Sidebar onOpenDirectory={() => {}} onOpenInbox={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
+    // 정렬이 있는 화면이라 인덱스로 고른 행이 c1 이라는 보장이 없다 — 채널 id 는
+    // 열어 둔 행의 것으로 맞춘다.
     fireEvent.click(screen.getAllByRole('button', { name: '⋯' })[0]!);
-    fireEvent.click(screen.getByRole('menuitem', { name: '음소거' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '알림: 없음' }));
 
-    expect(c.toggleChannelMute).toHaveBeenCalled();
+    expect(c.setChannelNotifyLevel).toHaveBeenCalledWith(expect.any(String), 'none');
   });
 
-  it('이미 음소거면 해제 항목이 보인다', () => {
+  // 토글이 아니라 세 수준이 나란히 있고 현재 값에 표시가 붙는다(#224). 켬/끔 스위치와
+  // 수준을 같이 두면 "음소거 껐는데 왜 아직 조용하지"가 생긴다.
+  it('현재 알림 수준에 표시가 붙는다', () => {
     fakeController();
     useAppStore.getState().set({
       channels: [chan('c1', 'general')],
@@ -427,8 +434,12 @@ describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '⋯' }));
 
-    expect(screen.getByRole('menuitem', { name: '음소거 해제' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '✓ 알림: 없음' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '알림: 전체' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '알림: 멘션만' })).toBeTruthy();
+    // 음소거 토글은 더 이상 없다.
     expect(screen.queryByRole('menuitem', { name: '음소거' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: '음소거 해제' })).toBeNull();
   });
 
   // #151 본문: "알림 층이 mute 를 어떻게 읽을지는 저장 모양을 정한 뒤의 후속" —
@@ -439,7 +450,7 @@ describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
   // 이행이었으므로(사용자는 껐다고 믿는다) 방지선의 방향을 뒤집는다. 알림 쪽까지 묶은
   // 회귀선은 channelMute.test.tsx 에 있고, 여기서는 같은 미읽음이 음소거만으로 다른
   // 결과가 된다는 것을 남긴다.
-  it('음소거하면 미읽음 배지가 사라진다 (#229)', () => {
+  it('알림을 끄면(none) 미읽음 배지가 사라진다 (#229, #224)', () => {
     fakeController();
     const seed = {
       channels: [chan('c1', 'general')],
@@ -547,13 +558,13 @@ describe('채널 컨텍스트 메뉴 (#111)', () => {
     fireEvent.click(screen.getAllByRole('button', { name: '⋯' })[0]!);
     const clickItems = screen.getAllByRole('menuitem').map((el) => el.textContent);
     expect(clickItems).toContain('채널명 복사');
-    expect(clickItems).toContain('음소거');
+    expect(clickItems).toContain('알림: 없음');
 
     fireEvent.click(document.body);
     fireEvent.contextMenu(getChannelButton('general'));
     const contextItems = screen.getAllByRole('menuitem').map((el) => el.textContent);
     expect(contextItems).toContain('채널명 복사');
-    expect(contextItems).toContain('음소거');
+    expect(contextItems).toContain('알림: 없음');
   });
 
   it('채널명 복사가 클립보드에 이름을 쓴다', async () => {

@@ -14,7 +14,7 @@ const fakeController = () => {
     logout: vi.fn(),
     createChannel: vi.fn(),
     updateChannel: vi.fn(),
-    toggleChannelMute: vi.fn(),
+    setChannelNotifyLevel: vi.fn(),
     toggleChannelStar: vi.fn(),
     goBack: vi.fn().mockImplementation(async () => {
       const store = useAppStore.getState();

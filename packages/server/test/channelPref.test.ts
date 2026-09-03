@@ -43,57 +43,77 @@ beforeAll(async () => {
 afterAll(async () => { await app.close(); await stop(); });
 
 describe('channel pref', () => {
-  it('mutes a channel and appears in GET', async () => {
-    const mute = await app.inject({
+  it('sets notify level and appears in GET', async () => {
+    const set = await app.inject({
       method: 'PATCH', url: `/channels/${channelId}/pref`,
       headers: { authorization: `Bearer ${adminToken}` },
-      payload: { muted: true },
+      payload: { notifyLevel: 'none' },
     });
-    expect(mute.statusCode).toBe(200);
-    expect(mute.json().mutedAt).not.toBeNull();
+    expect(set.statusCode).toBe(200);
+    expect(set.json().notifyLevel).toBe('none');
 
     const list = await app.inject({
       method: 'GET', url: '/channels/prefs',
       headers: { authorization: `Bearer ${adminToken}` },
     });
     expect(list.statusCode).toBe(200);
-    const prefs = list.json().prefs as { channelId: string; mutedAt: string | null }[];
+    const prefs = list.json().prefs as { channelId: string; notifyLevel: string }[];
     const found = prefs.find((p) => p.channelId === channelId);
     expect(found).not.toBeUndefined();
-    expect(found?.mutedAt).not.toBeNull();
+    expect(found?.notifyLevel).toBe('none');
   });
 
-  it('unmutes a channel by setting false', async () => {
-    const unmute = await app.inject({
+  it('accepts the middle level', async () => {
+    const set = await app.inject({
       method: 'PATCH', url: `/channels/${channelId}/pref`,
       headers: { authorization: `Bearer ${adminToken}` },
-      payload: { muted: false },
+      payload: { notifyLevel: 'mentions' },
     });
-    expect(unmute.statusCode).toBe(200);
-    expect(unmute.json().mutedAt).toBeNull();
+    expect(set.statusCode).toBe(200);
+    expect(set.json().notifyLevel).toBe('mentions');
   });
 
-  it('leaves starred intact when only muting', async () => {
+  it('rejects an unknown level', async () => {
+    const bad = await app.inject({
+      method: 'PATCH', url: `/channels/${channelId}/pref`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { notifyLevel: 'sometimes' },
+    });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  // `muted` 는 더 이상 받지 않는다(#224). 남겨 두면 아무것도 읽지 않는 스위치가 되어
+  // "껐는데 왜 아직 울리나"가 그대로 돌아온다.
+  it('no longer accepts a muted patch', async () => {
+    const legacy = await app.inject({
+      method: 'PATCH', url: `/channels/${channelId}/pref`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { muted: true },
+    });
+    expect(legacy.statusCode).not.toBe(200);
+  });
+
+  it('leaves starred intact when only setting the level', async () => {
     await app.inject({
       method: 'PATCH', url: `/channels/${channelId}/pref`,
       headers: { authorization: `Bearer ${adminToken}` },
       payload: { starred: true },
     });
-    const muteOnly = await app.inject({
+    const levelOnly = await app.inject({
       method: 'PATCH', url: `/channels/${channelId}/pref`,
       headers: { authorization: `Bearer ${adminToken}` },
-      payload: { muted: true },
+      payload: { notifyLevel: 'none' },
     });
-    expect(muteOnly.statusCode).toBe(200);
-    expect(muteOnly.json().mutedAt).not.toBeNull();
-    expect(muteOnly.json().starredAt).not.toBeNull();
+    expect(levelOnly.statusCode).toBe(200);
+    expect(levelOnly.json().notifyLevel).toBe('none');
+    expect(levelOnly.json().starredAt).not.toBeNull();
   });
 
   it('does not see other account prefs', async () => {
     await app.inject({
       method: 'PATCH', url: `/channels/${channelId}/pref`,
       headers: { authorization: `Bearer ${adminToken}` },
-      payload: { muted: true },
+      payload: { notifyLevel: 'none' },
     });
 
     const otherList = await app.inject({
@@ -110,7 +130,7 @@ describe('channel pref', () => {
     const notFound = await app.inject({
       method: 'PATCH', url: '/channels/00000000-0000-0000-0000-000000000000/pref',
       headers: { authorization: `Bearer ${adminToken}` },
-      payload: { muted: true },
+      payload: { notifyLevel: 'none' },
     });
     expect(notFound.statusCode).toBe(404);
   });
