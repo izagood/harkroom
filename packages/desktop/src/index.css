@@ -1,46 +1,137 @@
 @import "tailwindcss";
 
+/*
+  Appearance — semantic 토큰 한 벌로 라이트·다크를 만든다(#112).
+
+  **`dark:` variant 를 화면에 뿌리지 않는다.** 클래스마다 다크 짝을 다는 방식은 색을 두 벌
+  유지하는 것이고, 한쪽만 고치는 사고가 화면 어딘가에서만 조용히 난다. 대신 자리마다
+  **역할**을 부르고(`bg-surface-sunken`, `text-fg-muted`), 그 역할의 값을 여기 한 곳에서
+  모드별로 바꾼다. 그래서 화면 코드에는 색 이름이 없다.
+
+  아래 `dark` variant 는 토큰으로 표현할 수 없는 예외를 위한 탈출구로만 둔다 — 지금
+  화면 코드는 쓰지 않는다. 쓰기 전에 "이건 새 토큰이어야 하지 않나"를 먼저 물어라.
+*/
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
-/* 라이트 모드(기본값): 화면 바닥, 본문 배경 */
+/*
+  값은 `--app-*` 에 두고 `@theme` 에서 그것을 가리킨다.
+
+  `@theme` 이 만든 변수(`--color-surface` 등)는 컴파일 결과에서 `:root` 에 실린다. 그 이름을
+  `:root[data-theme="dark"]` 에서 다시 정의해도 되지만, `@theme` 안에서 자기 자신을
+  가리키면(`--color-surface: var(--color-surface)`) 순환이 되어 값이 통째로 무효가 된다.
+  한 겹을 두면 그 함정이 아예 없다.
+
+  값을 Tailwind 팔레트 변수(`var(--color-zinc-50)`)가 아니라 리터럴로 적는 이유: v4 는
+  **쓰이는 테마 변수만** 결과에 내보낸다. 화면이 `zinc-50` 유틸리티를 하나도 쓰지 않게 된
+  지금(그것이 이 작업의 목적이다) 그 변수는 결과에 없고, 참조는 조용히 빈 값이 된다.
+*/
 :root {
-  --color-surface: var(--color-zinc-50);
-  --color-surface-raised: var(--color-white);
-  /* 사이드바: 본문보다 한 단계 어두운 회색 — 라이트에서 zinc-100 */
-  --color-surface-sunken: var(--color-zinc-100);
-  --color-border: var(--color-zinc-200);
-  --color-fg: var(--color-zinc-900);
-  --color-fg-muted: var(--color-zinc-600);
-  --color-fg-subtle: var(--color-zinc-500);
-  --color-accent: var(--color-indigo-600);
-  --color-danger: var(--color-red-600);
-  --color-warning: var(--color-amber-600);
+  /*
+    라이트. **사이드바도 밝아진다** — 지금 화면(라이트 본문 + 검정 사이드바)은 라이트도
+    다크도 아니었다. 유지하는 것은 색이 아니라 **관계**다: 사이드바(sunken)는 본문(surface)
+    보다 한 단계 가라앉고, 카드·입력창(raised)은 한 단계 떠오른다. 지금의 "라이트인데
+    사이드바만 검정"은 다크 모드에서만 재현된다.
+  */
+  --app-surface: #fafafa;         /* 화면 바닥 — 본문 영역 */
+  --app-surface-raised: #ffffff;  /* 카드·입력창·팝오버. 바닥보다 한 단계 떠 있다 */
+  --app-surface-sunken: #f4f4f5;  /* 사이드바·목록 헤더. 바닥보다 한 단계 가라앉는다 */
+  --app-surface-hover: #e4e4e7;   /* 눌릴 수 있는 줄에 마우스를 올렸을 때 */
+  /*
+    입력 칸의 면. **면 세 단계와 따로 두는 이유**: 입력 칸은 사이드바(sunken) 안에도,
+    본문(surface) 위에도, 카드(raised) 안에도 앉는다. 어느 한 단계를 재사용하면 그 단계
+    위에 놓일 때 칸의 경계가 사라진다(옛 화면은 사이드바 zinc-900 안에 zinc-800 입력을
+    둬서 그 자리에서만 보이게 맞춰 놨다). 그래서 값은 세 단계와 다르게 두고, 어느 면 위에
+    올려도 보이도록 **항상 `border-border` 와 함께** 쓴다.
+  */
+  --app-field: #ffffff;
+  --app-border: #e4e4e7;          /* 면과 면을 가르는 선 */
+  --app-fg: #18181b;              /* 본문 글자 */
+  --app-fg-muted: #52525b;        /* 보조 글자 — 시각·타임스탬프·설명 */
+  --app-fg-subtle: #71717a;       /* 더 약한 글자 — 라벨·플레이스홀더 */
+  --app-accent: #4f46e5;          /* 강조 — 주요 버튼·선택된 항목 */
+  --app-accent-hover: #4338ca;    /* 강조로 채운 면의 hover */
+  --app-accent-surface: #eef2ff;  /* 강조의 옅은 면 — 선택 배경·안내 상자 */
+  --app-danger: #dc2626;          /* 위험 — 삭제 버튼의 면, 오류 글자 */
+  --app-danger-hover: #b91c1c;    /* 위험으로 채운 면의 hover */
+  --app-danger-surface: #fef2f2;  /* 오류 상자의 면 */
+  --app-danger-surface-strong: #fee2e2; /* 그보다 한 단계 짙은 틴트 — 그 상자의 hover */
+  --app-danger-border: #fca5a5;   /* 오류 상자의 선 */
+  --app-warning: #b45309;         /* 경고 — 주의 문구 */
+  --app-warning-surface: #fffbeb; /* 경고 상자의 면 */
+  --app-warning-surface-strong: #fef3c7; /* 한 단계 짙은 틴트 — 강조된 메시지·배지 */
+  --app-warning-border: #fcd34d;  /* 경고 상자의 선 */
+  --app-success: #16a34a;         /* 정상 — 연결됨 표시 */
+  /*
+    강조·위험처럼 **채도 높은 면 위에 얹는 글자**. 두 모드에서 같은 흰색이다 — 그 면 자체가
+    모드와 무관하게 어둡기 때문이고, 여기를 `fg` 로 두면 라이트에서 검은 글자가 남색 버튼
+    위에 얹혀 읽히지 않는다. 이름에 `accent` 를 넣지 않는 이유는 위험 버튼도 쓰기 때문이다.
+  */
+  --app-fg-on-strong: #ffffff;
 }
 
-/* 다크 모드: <html data-theme="dark" 에서 적용 */
+/*
+  다크. 같은 **관계**를 유지한다 — sunken < surface < raised 순으로 밝아진다.
+  (초판은 다크에서 sunken 을 zinc-800 으로 둬 사이드바가 본문보다 **밝았다**. 그러면
+  "가라앉은 면"이라는 역할 이름이 거짓이 되고, 두 모드가 서로 다른 규칙을 갖게 된다.)
+*/
 :root[data-theme="dark"] {
-  --color-surface: var(--color-zinc-950);
-  --color-surface-raised: var(--color-zinc-900);
-  /* 사이드바: 본문보다 한 단계 어두운 검정 — 다크에서 zinc-800 */
-  --color-surface-sunken: var(--color-zinc-800);
-  --color-border: var(--color-zinc-700);
-  --color-fg: var(--color-zinc-100);
-  --color-fg-muted: var(--color-zinc-400);
-  --color-fg-subtle: var(--color-zinc-500);
-  --color-accent: var(--color-indigo-400);
-  --color-danger: var(--color-red-400);
-  --color-warning: var(--color-amber-400);
+  --app-surface: #18181b;
+  --app-surface-raised: #27272a;
+  --app-surface-sunken: #09090b;
+  --app-surface-hover: #3f3f46;
+  --app-field: #27272a;
+  --app-border: #3f3f46;
+  --app-fg: #f4f4f5;
+  --app-fg-muted: #a1a1aa;
+  --app-fg-subtle: #71717a;
+  --app-accent: #6366f1;
+  --app-accent-hover: #4f46e5;
+  --app-accent-surface: #312e81;
+  --app-danger: #dc2626;
+  --app-danger-hover: #b91c1c;
+  --app-danger-surface: #450a0a;
+  --app-danger-surface-strong: #7f1d1d;
+  --app-danger-border: #7f1d1d;
+  --app-warning: #fbbf24;
+  --app-warning-surface: #451a03;
+  --app-warning-surface-strong: #78350f;
+  --app-warning-border: #78350f;
+  --app-success: #4ade80;
+  --app-fg-on-strong: #ffffff;
 }
 
 @theme {
-  --color-surface: var(--color-surface);
-  --color-surface-raised: var(--color-surface-raised);
-  --color-surface-sunken: var(--color-surface-sunken);
-  --color-border: var(--color-border);
-  --color-fg: var(--color-fg);
-  --color-fg-muted: var(--color-fg-muted);
-  --color-fg-subtle: var(--color-fg-subtle);
-  --color-accent: var(--color-accent);
-  --color-danger: var(--color-danger);
-  --color-warning: var(--color-warning);
+  --color-surface: var(--app-surface);
+  --color-surface-raised: var(--app-surface-raised);
+  --color-surface-sunken: var(--app-surface-sunken);
+  --color-surface-hover: var(--app-surface-hover);
+  --color-field: var(--app-field);
+  --color-border: var(--app-border);
+  --color-fg: var(--app-fg);
+  --color-fg-muted: var(--app-fg-muted);
+  --color-fg-subtle: var(--app-fg-subtle);
+  --color-accent: var(--app-accent);
+  --color-accent-hover: var(--app-accent-hover);
+  --color-accent-surface: var(--app-accent-surface);
+  --color-danger: var(--app-danger);
+  --color-danger-hover: var(--app-danger-hover);
+  --color-danger-surface: var(--app-danger-surface);
+  --color-danger-surface-strong: var(--app-danger-surface-strong);
+  --color-danger-border: var(--app-danger-border);
+  --color-warning: var(--app-warning);
+  --color-warning-surface: var(--app-warning-surface);
+  --color-warning-surface-strong: var(--app-warning-surface-strong);
+  --color-warning-border: var(--app-warning-border);
+  --color-success: var(--app-success);
+  --color-fg-on-strong: var(--app-fg-on-strong);
+}
+
+/*
+  바닥은 화면 전체가 칠해져야 한다 — 앱의 루트 컨테이너만 칠하면 그 밖(스크롤 바운스
+  영역, 앱보다 짧은 내용 아래)에 브라우저 기본 흰색이 남아 다크에서 흰 띠가 보인다.
+*/
+html,
+body {
+  background-color: var(--app-surface);
+  color: var(--app-fg);
 }
