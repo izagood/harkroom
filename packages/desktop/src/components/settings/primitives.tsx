@@ -6,8 +6,8 @@ export function SettingsPage({ title, description, children }: {
 }) {
   return (
     <div className="max-w-3xl px-10 py-10">
-      <h2 className="text-2xl font-bold text-zinc-900">{title}</h2>
-      <p className="mt-1 mb-8 text-zinc-500">{description ?? ''}</p>
+      <h2 className="text-2xl font-bold text-fg">{title}</h2>
+      <p className="mt-1 mb-8 text-fg-subtle">{description ?? ''}</p>
       {children}
     </div>
   );
@@ -17,8 +17,8 @@ export function SettingsPage({ title, description, children }: {
 export function SettingsGroup({ title, children }: { title?: string; children: ReactNode }) {
   return (
     <section className="mb-8">
-      {title && <h3 className="mb-2 text-[13px] font-semibold text-zinc-500">{title}</h3>}
-      <div className="divide-y divide-zinc-200 rounded-xl border border-zinc-200 bg-white">
+      {title && <h3 className="mb-2 text-[13px] font-semibold text-fg-subtle">{title}</h3>}
+      <div className="divide-y divide-border rounded-xl border border-border bg-surface-raised">
         {children}
       </div>
     </section>
@@ -29,8 +29,8 @@ export function SettingsGroup({ title, children }: { title?: string; children: R
 export function ReadonlyRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex items-center gap-4 px-4 py-3">
-      <span className="font-medium text-zinc-900">{label}</span>
-      <span className="ml-auto min-w-0 truncate text-zinc-600">{value}</span>
+      <span className="font-medium text-fg">{label}</span>
+      <span className="ml-auto min-w-0 truncate text-fg-muted">{value}</span>
     </div>
   );
 }
@@ -43,8 +43,8 @@ export function Toggle({ label, description, checked, disabled, onChange }: {
   return (
     <label className={`flex items-start gap-4 px-4 py-3 ${disabled ? 'opacity-50' : ''}`}>
       <span className="min-w-0 flex-1">
-        <span className="block font-medium text-zinc-900">{label}</span>
-        {description && <span className="mt-0.5 block text-zinc-500">{description}</span>}
+        <span className="block font-medium text-fg">{label}</span>
+        {description && <span className="mt-0.5 block text-fg-subtle">{description}</span>}
       </span>
       <input
         type="checkbox"
@@ -53,10 +53,10 @@ export function Toggle({ label, description, checked, disabled, onChange }: {
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5 h-5 w-9 shrink-0 cursor-pointer appearance-none rounded-full bg-zinc-300
+        className="mt-0.5 h-5 w-9 shrink-0 cursor-pointer appearance-none rounded-full bg-border
                    transition before:block before:h-4 before:w-4 before:translate-x-0.5
                    before:translate-y-0.5 before:rounded-full before:bg-white before:transition
-                   checked:bg-indigo-600 checked:before:translate-x-4 disabled:cursor-default"
+                   checked:bg-accent checked:before:translate-x-4 disabled:cursor-default"
       />
     </label>
   );

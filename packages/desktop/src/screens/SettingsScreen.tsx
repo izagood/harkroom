@@ -22,10 +22,10 @@ export function SettingsScreen({ initialSection = 'profile', targetId, onBack, o
   const me = useAppStore((s) => s.me);
 
   return (
-    <div className="flex h-screen bg-zinc-100 text-sm">
-      <aside className="flex w-64 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50">
+    <div className="flex h-screen bg-surface-sunken text-sm">
+      <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-surface">
         <button
-          className="flex items-center gap-2 px-4 py-4 text-left font-medium text-zinc-700 hover:text-zinc-900"
+          className="flex items-center gap-2 px-4 py-4 text-left font-medium text-fg-muted hover:text-fg"
           onClick={onBack}
         >
           <span aria-hidden>←</span> Back to app
@@ -34,12 +34,12 @@ export function SettingsScreen({ initialSection = 'profile', targetId, onBack, o
         <nav className="flex-1 overflow-y-auto px-2 pb-4">
           {SETTINGS_GROUPS.map((g) => (
             <div key={g.title} className="mb-4">
-              <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">{g.title}</div>
+              <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">{g.title}</div>
               {g.items.map((item) => (
                 <button
                   key={item.id}
                   className={`flex w-full items-center rounded-lg px-2 py-1.5 text-left
-                    ${section === item.id ? 'bg-zinc-200/70 font-medium text-zinc-900' : 'text-zinc-700 hover:bg-zinc-200/40'}`}
+                    ${section === item.id ? 'bg-surface-hover font-medium text-fg' : 'text-fg-muted hover:bg-surface-sunken'}`}
                   aria-current={section === item.id ? 'page' : undefined}
                   onClick={() => setSection(item.id)}
                 >
@@ -50,7 +50,7 @@ export function SettingsScreen({ initialSection = 'profile', targetId, onBack, o
           ))}
         </nav>
 
-        <div className="border-t border-zinc-200 px-4 py-3 text-[11px] text-zinc-500">
+        <div className="border-t border-border px-4 py-3 text-[11px] text-fg-subtle">
           {me ? `@${me.handle} · ` : ''}v{__APP_VERSION__}
         </div>
       </aside>

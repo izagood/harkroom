@@ -142,7 +142,7 @@ export function HandleGroupsSettings() {
     if (isAdmin) void loadGroupMembers(g.id);
   };
 
-  const field = 'w-full rounded border border-zinc-300 px-3 py-2';
+  const field = 'w-full rounded border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
 
   /**
    * 구성원 후보는 **사람 계정뿐**이다 — 에이전트는 집합에 들어가지 않는다(#230 결정 1,
@@ -152,11 +152,11 @@ export function HandleGroupsSettings() {
   const humanAccounts = Object.values(accounts).filter((a) => a.kind === 'human');
 
   return (
-    <div className="flex h-full min-h-0 bg-white">
-      <aside className="w-56 shrink-0 border-r border-zinc-200 p-3">
+    <div className="flex h-full min-h-0 bg-surface-raised">
+      <aside className="w-56 shrink-0 border-r border-border p-3">
         {isAdmin && (
-          <div className="mb-3 space-y-2 rounded border border-zinc-200 p-2">
-            <div className="text-[11px] font-medium text-zinc-600">새 집합</div>
+          <div className="mb-3 space-y-2 rounded border border-border p-2">
+            <div className="text-[11px] font-medium text-fg-muted">새 집합</div>
             <input
               className={field}
               aria-label="집합 핸들"
@@ -172,7 +172,7 @@ export function HandleGroupsSettings() {
               onChange={(e) => setNewDisplayName(e.target.value)}
             />
             <button
-              className="w-full rounded bg-zinc-900 px-3 py-2 text-left text-white disabled:opacity-50"
+              className="w-full rounded bg-surface-raised px-3 py-2 text-left text-fg disabled:opacity-50"
               disabled={saving || !newHandle.trim() || !newDisplayName.trim()}
               onClick={() => void createGroup()}
             >
@@ -181,21 +181,21 @@ export function HandleGroupsSettings() {
           </div>
         )}
 
-        <div className="text-[11px] uppercase tracking-wide text-zinc-500">집합</div>
+        <div className="text-[11px] uppercase tracking-wide text-fg-subtle">집합</div>
         {/* 목록이 비어 있는 것과 못 읽은 것을 섞지 않는다: 목록은 스토어(기동 시 조회)에서
             오므로 여기서 "불러오는 중"을 그릴 것이 없고, 조회가 실패했으면 컨트롤러가
             연결 상태로 말한다. 이 자리에서 말할 수 있는 것은 "정말 하나도 없다" 뿐이다. */}
-        {groups.length === 0 && <div className="px-1 py-2 text-zinc-400">아직 없다</div>}
+        {groups.length === 0 && <div className="px-1 py-2 text-fg-muted">아직 없다</div>}
         {groups.map((g) => (
           <button
             key={g.id}
             data-testid={`group-row-${g.handle}`}
-            className={`flex w-full items-center gap-1 rounded px-2 py-1.5 text-left ${selected?.group.id === g.id ? 'bg-zinc-100' : 'hover:bg-zinc-50'}`}
+            className={`flex w-full items-center gap-1 rounded px-2 py-1.5 text-left ${selected?.group.id === g.id ? 'bg-surface-sunken' : 'hover:bg-surface'}`}
             onClick={() => pick(g)}
           >
             <span className="font-medium">@{g.handle}</span>
             <GroupBadge group={g} />
-            <span className="ml-1 truncate text-[10px] text-zinc-500">{g.displayName}</span>
+            <span className="ml-1 truncate text-[10px] text-fg-subtle">{g.displayName}</span>
           </button>
         ))}
       </aside>
@@ -203,26 +203,26 @@ export function HandleGroupsSettings() {
       <div className="flex min-w-0 flex-1 flex-col">
         {/* 오류는 상세 패널 **밖**에 둔다. 안에 두면 상세가 열리지 않는 실패(목록·명단
             조회 실패, 만들기 실패)의 사유가 화면에 아예 나타나지 않는다. */}
-        {error && <p role="alert" className="border-b border-red-200 bg-red-50 px-5 py-2 text-xs text-red-700">{error}</p>}
+        {error && <p role="alert" className="border-b border-danger-border bg-danger-surface px-5 py-2 text-xs text-danger">{error}</p>}
         {!selected ? (
-          <div className="flex flex-1 items-center justify-center text-zinc-400">
+          <div className="flex flex-1 items-center justify-center text-fg-muted">
             {isAdmin ? '집합을 선택하세요' : '집합을 만들고 고치는 것은 관리자만 할 수 있습니다'}
           </div>
         ) : (
           <>
-            <header className="flex items-center justify-between border-b border-zinc-200 px-5 py-3">
+            <header className="flex items-center justify-between border-b border-border px-5 py-3">
               <h2 className="text-base font-bold">@{selected.group.handle}</h2>
               {isAdmin && (confirmingDelete ? (
                 <span className="flex items-center gap-2">
                   <button
-                    className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+                    className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-xs font-medium text-danger hover:bg-danger-surface-strong"
                     disabled={saving}
                     onClick={() => void deleteGroup()}
                   >
                     정말 지운다
                   </button>
                   <button
-                    className="rounded px-2 py-1 text-xs text-zinc-500"
+                    className="rounded px-2 py-1 text-xs text-fg-subtle"
                     onClick={() => setConfirmingDelete(false)}
                   >
                     취소
@@ -230,7 +230,7 @@ export function HandleGroupsSettings() {
                 </span>
               ) : (
                 <button
-                  className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+                  className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-xs font-medium text-danger hover:bg-danger-surface-strong"
                   onClick={() => setConfirmingDelete(true)}
                 >
                   집합 삭제
@@ -239,8 +239,8 @@ export function HandleGroupsSettings() {
             </header>
 
             <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
-              <div className="rounded border border-zinc-200 p-3">
-                <div className="text-xs font-medium text-zinc-600">이름</div>
+              <div className="rounded border border-border p-3">
+                <div className="text-xs font-medium text-fg-muted">이름</div>
                 {editingName === selected.group.id ? (
                   <div className="mt-2 flex gap-2">
                     <input
@@ -250,14 +250,14 @@ export function HandleGroupsSettings() {
                       onChange={(e) => setEditDisplayName(e.target.value)}
                     />
                     <button
-                      className="rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-700"
+                      className="rounded bg-surface-sunken px-2 py-1 text-xs font-medium text-fg"
                       disabled={saving}
                       onClick={() => void updateGroupName()}
                     >
                       저장
                     </button>
                     <button
-                      className="rounded px-2 py-1 text-xs text-zinc-500"
+                      className="rounded px-2 py-1 text-xs text-fg-subtle"
                       onClick={() => { setEditingName(null); setEditDisplayName(''); }}
                     >
                       취소
@@ -268,7 +268,7 @@ export function HandleGroupsSettings() {
                     <span className="text-sm">{selected.group.displayName}</span>
                     {isAdmin && (
                       <button
-                        className="text-[11px] text-indigo-600 hover:underline"
+                        className="text-[11px] text-accent hover:underline"
                         onClick={() => { setEditingName(selected.group.id); setEditDisplayName(selected.group.displayName); }}
                       >
                         이름 바꾸기
@@ -278,16 +278,16 @@ export function HandleGroupsSettings() {
                 )}
               </div>
 
-              <div className="rounded border border-zinc-200 p-3">
-                <div className="text-xs font-medium text-zinc-600">구성원 ({selected.members.length})</div>
+              <div className="rounded border border-border p-3">
+                <div className="text-xs font-medium text-fg-muted">구성원 ({selected.members.length})</div>
                 <div className="mt-2 space-y-1">
                   {selected.members.length === 0 ? (
-                    <div className="text-[11px] text-zinc-400">구성원이 없습니다</div>
+                    <div className="text-[11px] text-fg-muted">구성원이 없습니다</div>
                   ) : (
                     selected.members.map((id) => {
                       const account = accounts[id];
                       return (
-                        <div key={id} className="flex items-center justify-between rounded bg-zinc-50 px-2 py-1.5">
+                        <div key={id} className="flex items-center justify-between rounded bg-surface px-2 py-1.5">
                           {/* 계정 디렉터리에 없는 id 는 **"모른다"** 다 — 이름 자리를 비우면
                               "구성원이 아니다"로 읽힌다(design.md 4절). id 를 그대로 보인다. */}
                           <span className="text-xs">
@@ -295,7 +295,7 @@ export function HandleGroupsSettings() {
                           </span>
                           {isAdmin && (
                             <button
-                              className="text-[11px] text-red-600 hover:underline"
+                              className="text-[11px] text-danger hover:underline"
                               aria-label={`구성원 제거: ${account ? account.handle : id}`}
                               disabled={saving}
                               onClick={() => void changeMembers([id], 'remove')}
@@ -311,7 +311,7 @@ export function HandleGroupsSettings() {
 
                 {isAdmin && (
                   <div className="mt-3">
-                    <div className="mb-1 text-[11px] text-zinc-500">구성원 추가</div>
+                    <div className="mb-1 text-[11px] text-fg-subtle">구성원 추가</div>
                     <select
                       className={field}
                       aria-label="구성원 추가"

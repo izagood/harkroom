@@ -78,7 +78,7 @@ export default function App() {
     })();
   }, []);
 
-  if (phase === 'boot') return <div className="p-4 text-zinc-400">Connecting…</div>;
+  if (phase === 'boot') return <div className="p-4 text-fg-muted">Connecting…</div>;
   if (phase === 'connect') {
     return (
       <ConnectScreen

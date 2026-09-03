@@ -30,7 +30,7 @@ export function TerminalChip({ account }: { account: AccountView | undefined }) 
   return (
     <button
       onClick={() => set({ terminalAgentId: account.id })}
-      className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-200 hover:bg-zinc-700"
+      className="rounded bg-surface-raised px-1.5 py-0.5 text-[10px] text-fg hover:bg-surface-hover"
       title={`@${account.handle} 의 진행 중인 터미널을 본다`}
     >
       터미널 보기

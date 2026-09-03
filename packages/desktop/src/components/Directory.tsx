@@ -101,7 +101,7 @@ export function Directory({ open, onClose, accountId }: Props) {
         // `scrollIntoView?.` 인 이유: jsdom 에는 그 함수가 없다 — 옵셔널 호출을 빼면 이
         // 화면을 띄우는 테스트가 렌더 도중 터진다(`MessageItem` 도 같은 이유로 그렇다).
         ref={isSelected ? (el: HTMLLIElement | null) => { el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' }); } : undefined}
-        className={`flex items-center gap-2 rounded px-2 py-1.5 ${a.disabled ? 'opacity-60' : ''} ${isSelected ? 'bg-indigo-950 ring-2 ring-indigo-500' : ''}`}
+        className={`flex items-center gap-2 rounded px-2 py-1.5 ${a.disabled ? 'opacity-60' : ''} ${isSelected ? 'bg-accent-surface ring-2 ring-accent' : ''}`}
       >
       {/* #277: 이 자리는 **거터가 아니다** — 고정폭 열이 아니라 넓어지면 행이 늘어나는
           인라인 칸이고, 디렉터리는 소유자를 보여 주는 것이 일이다(#181·#226). badge 로 둔다. */}
@@ -111,28 +111,28 @@ export function Directory({ open, onClose, accountId }: Props) {
       <span
         data-testid={`directory-presence-${a.id}`}
         data-online={String(online.includes(a.id))}
-        className={`h-2 w-2 shrink-0 rounded-full ${online.includes(a.id) ? 'bg-green-500' : 'bg-zinc-600'}`}
+        className={`h-2 w-2 shrink-0 rounded-full ${online.includes(a.id) ? 'bg-success' : 'bg-fg-subtle'}`}
       />
-      <span className="font-medium text-zinc-100">{a.displayName}</span>
-      <span className="text-zinc-400">@{a.handle}</span>
+      <span className="font-medium text-fg">{a.displayName}</span>
+      <span className="text-fg-muted">@{a.handle}</span>
       <span
         data-testid={`directory-kind-${a.id}`}
-        className="rounded bg-zinc-800 px-1 text-[10px] uppercase tracking-wide text-zinc-400"
+        className="rounded bg-surface-raised px-1 text-[10px] uppercase tracking-wide text-fg-muted"
       >
         {a.kind}
       </span>
       {a.isAdmin && (
-        <span className="rounded bg-amber-900 px-1 text-[10px] text-amber-200">admin</span>
+        <span className="rounded bg-warning-surface px-1 text-[10px] text-warning">admin</span>
       )}
       <StatusMark account={a} />
-      {a.statusText && <span className="truncate text-[11px] text-zinc-500">{a.statusText}</span>}
+      {a.statusText && <span className="truncate text-[11px] text-fg-subtle">{a.statusText}</span>}
       {/* 비활성 계정은 목록에 남기되 **꺼져 있다는 것이 보여야 한다.** 감추면 "이 사람이
           없다"와 "꺼져 있다"가 구분되지 않는다. 흐리게만 두는 것도 부족하다 — 대비를
           못 보는 사람에게는 아무 신호도 아니다. */}
       {a.disabled && (
         <span
           data-testid={`directory-disabled-${a.id}`}
-          className="rounded bg-zinc-700 px-1 text-[10px] text-zinc-200"
+          className="rounded bg-surface-hover px-1 text-[10px] text-fg"
         >
           비활성
         </span>
@@ -143,11 +143,11 @@ export function Directory({ open, onClose, accountId }: Props) {
 
   const section = (label: string, rows: AccountView[]) => (
     <section aria-label={label} className="mb-4">
-      <h3 className="px-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">
+      <h3 className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
         {label} ({rows.length})
       </h3>
       {rows.length === 0
-        ? <p className="px-2 text-xs text-zinc-500">{label} 중 맞는 것이 없다</p>
+        ? <p className="px-2 text-xs text-fg-subtle">{label} 중 맞는 것이 없다</p>
         : <ul>{rows.map(row)}</ul>}
     </section>
   );
@@ -160,26 +160,26 @@ export function Directory({ open, onClose, accountId }: Props) {
       <div
         role="dialog"
         aria-label="디렉터리"
-        className="flex max-h-full w-[42rem] flex-col overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 text-sm text-zinc-200"
+        className="flex max-h-full w-[42rem] flex-col overflow-hidden rounded-lg border border-border bg-surface-raised text-sm text-fg"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
       >
-        <div className="flex items-center gap-2 border-b border-zinc-800 p-3">
+        <div className="flex items-center gap-2 border-b border-border p-3">
           <span className="font-bold">Directory</span>
           <button
             onClick={onClose}
-            className="ml-auto rounded px-2 py-1 text-zinc-400 hover:bg-zinc-700"
+            className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover"
             aria-label="디렉터리 닫기"
           >
             ✕
           </button>
         </div>
-        <div className="border-b border-zinc-800 p-3">
+        <div className="border-b border-border p-3">
           <input
             type="text"
             aria-label="디렉터리 검색"
             placeholder="handle 또는 이름으로 검색"
-            className="w-full rounded bg-zinc-800 px-2 py-1 text-zinc-100 placeholder-zinc-500"
+            className="w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             autoFocus
@@ -189,21 +189,21 @@ export function Directory({ open, onClose, accountId }: Props) {
           {/* 실패는 목록 위에 남긴다. 실패했는데 빈 목록만 보이면 사람은 "아무도 없다"로
               읽는다 — 조회 실패를 빈 목록으로 삼키지 않는다. */}
           {load.kind === 'error' && (
-            <div role="alert" className="mb-3 rounded border border-red-800 bg-red-950 p-2 text-xs text-red-200">
+            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-xs text-danger">
               계정 목록을 불러오지 못했다 — {load.message}
               <button
                 onClick={() => { reload(); }}
-                className="ml-2 rounded bg-red-800 px-2 py-0.5 text-red-100 hover:bg-red-700"
+                className="ml-2 rounded bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
               >
                 다시 시도
               </button>
             </div>
           )}
           {load.kind === 'loading' && total === 0 && (
-            <p className="px-2 text-xs text-zinc-500">불러오는 중…</p>
+            <p className="px-2 text-xs text-fg-subtle">불러오는 중…</p>
           )}
           {load.kind === 'ready' && total === 0 && (
-            <p className="px-2 text-xs text-zinc-500">이 워크스페이스에 아직 계정이 없다</p>
+            <p className="px-2 text-xs text-fg-subtle">이 워크스페이스에 아직 계정이 없다</p>
           )}
           {total > 0 && (
             <>

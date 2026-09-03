@@ -37,7 +37,7 @@ function AvatarRow() {
   return (
     <div className="px-4 py-3">
       <div className="flex items-center gap-4">
-        <span className="font-medium text-zinc-900">Profile photo</span>
+        <span className="font-medium text-fg">Profile photo</span>
         <span className="ml-auto flex items-center gap-3">
           <Identity account={me ?? undefined} className="h-10 w-10 text-base" variant="avatar" />
           <input
@@ -49,7 +49,7 @@ function AvatarRow() {
             onChange={(e) => { const f = e.target.files?.[0]; if (f) void apply(f); }}
           />
           <button
-            className="rounded-lg border border-zinc-300 px-3 py-1.5 font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+            className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg hover:bg-surface disabled:opacity-50"
             disabled={busy}
             onClick={() => pick.current?.click()}
           >
@@ -57,7 +57,7 @@ function AvatarRow() {
           </button>
           {me?.avatarAttachmentId && (
             <button
-              className="rounded-lg border border-zinc-300 px-3 py-1.5 font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+              className="rounded-lg border border-border px-3 py-1.5 font-medium text-danger hover:bg-danger-surface disabled:opacity-50"
               disabled={busy}
               onClick={() => void apply(null)}
             >
@@ -69,7 +69,7 @@ function AvatarRow() {
       {/* 눈에 보이게 낸다. `sr-only` 로만 두면 스크린리더가 아닌 사람에게는 **아무 일도
           일어나지 않은 것**과 구분되지 않는다 — 버튼이 잠깐 눌렸다 풀리고 사진은 그대로다.
           이 저장소의 다른 오류 표면과 같은 모양을 쓴다(`Composer.tsx` 의 업로드 오류). */}
-      {error && <p role="alert" className="mt-1 text-[11px] text-red-600">{error}</p>}
+      {error && <p role="alert" className="mt-1 text-[11px] text-danger">{error}</p>}
     </div>
   );
 }
@@ -87,7 +87,7 @@ export function ProfileSettings({ onSignOut }: { onSignOut(): void }) {
         {me?.isAdmin && <ReadonlyRow label="Role" value="Administrator" />}
       </SettingsGroup>
 
-      <p data-testid="profile-readonly-note" className="-mt-6 mb-8 text-zinc-500">
+      <p data-testid="profile-readonly-note" className="-mt-6 mb-8 text-fg-subtle">
         Your profile photo is the only thing you can change here. Your handle and display name are
         set when the account is created and cannot be changed from the app yet.
       </p>
@@ -95,13 +95,13 @@ export function ProfileSettings({ onSignOut }: { onSignOut(): void }) {
       <SettingsGroup>
         <div className="flex items-center gap-4 px-4 py-3">
           <span className="min-w-0 flex-1">
-            <span className="block font-medium text-zinc-900">Sign out</span>
-            <span className="mt-0.5 block text-zinc-500">
+            <span className="block font-medium text-fg">Sign out</span>
+            <span className="mt-0.5 block text-fg-subtle">
               Ends this session on this device only. Your other devices stay signed in.
             </span>
           </span>
           <button
-            className="shrink-0 rounded-lg border border-zinc-300 px-3 py-1.5 font-medium text-red-600 hover:bg-red-50"
+            className="shrink-0 rounded-lg border border-border px-3 py-1.5 font-medium text-danger hover:bg-danger-surface"
             onClick={onSignOut}
           >
             Sign out

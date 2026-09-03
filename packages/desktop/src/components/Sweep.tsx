@@ -75,60 +75,60 @@ export function SweepShell({ items, loading, error, onRetry, onClose, onMarkRead
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
-        className="flex max-h-[70vh] w-full max-w-xl flex-col rounded-lg border border-zinc-700 bg-zinc-800 shadow-xl"
+        className="flex max-h-[70vh] w-full max-w-xl flex-col rounded-lg border border-border bg-surface-raised shadow-xl"
         role="dialog"
         aria-modal="true"
         aria-label="미읽음 훑기"
       >
-        <div className="flex items-center gap-2 border-b border-zinc-700 p-3 text-sm text-zinc-200">
+        <div className="flex items-center gap-2 border-b border-border p-3 text-sm text-fg">
           <span className="font-medium">미읽음 훑기</span>
           {!loading && !error && items.length > 0 && index < items.length && (
-            <span className="text-xs text-zinc-500">{index + 1} / {items.length}</span>
+            <span className="text-xs text-fg-subtle">{index + 1} / {items.length}</span>
           )}
-          <button className="ml-auto rounded px-2 py-0.5 text-xs text-zinc-400 hover:bg-zinc-700"
+          <button className="ml-auto rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-hover"
             onClick={onClose}>닫기</button>
         </div>
 
-        {loading && <div className="p-4 text-sm text-zinc-400">불러오는 중…</div>}
+        {loading && <div className="p-4 text-sm text-fg-muted">불러오는 중…</div>}
 
         {/* 못 불러온 것과 볼 것이 없는 것은 **다른 상태다.** 조회 실패를 빈 목록으로 삼키면
             화면이 "다 봤다"고 말하게 되고, 그것은 거짓말이다(docs/design.md §4). 그래서
             오류일 때는 완료 문구를 그리는 분기 자체에 닿지 않는다. */}
         {!loading && error && (
           <div className="p-4">
-            <p role="alert" className="text-sm text-red-400">미읽음을 불러오지 못했다: {error}</p>
-            <button className="mt-2 rounded bg-indigo-600 px-2 py-1 text-xs text-white hover:bg-indigo-500"
+            <p role="alert" className="text-sm text-danger">미읽음을 불러오지 못했다: {error}</p>
+            <button className="mt-2 rounded bg-accent px-2 py-1 text-xs text-fg-on-strong hover:bg-accent-hover"
               onClick={onRetry}>다시 시도</button>
           </div>
         )}
 
         {!loading && !error && !current && (
-          <div className="p-6 text-center text-sm text-zinc-300">다 봤다</div>
+          <div className="p-6 text-center text-sm text-fg-muted">다 봤다</div>
         )}
 
         {!loading && !error && current && (
           <>
             <div className="flex-1 overflow-y-auto p-3">
-              <div className="mb-2 text-xs text-zinc-400">
+              <div className="mb-2 text-xs text-fg-muted">
                 {current.label}
-                <span className="ml-2 text-zinc-500">안 읽은 메시지 {current.messages.length}개</span>
+                <span className="ml-2 text-fg-subtle">안 읽은 메시지 {current.messages.length}개</span>
               </div>
               <ul className="space-y-2">
                 {current.messages.map((m) => (
-                  <li key={m.id} className="rounded bg-zinc-900 p-2 text-sm text-zinc-200">
-                    <span className="mr-2 text-xs text-zinc-500">@{accounts[m.authorId]?.handle ?? m.authorId}</span>
+                  <li key={m.id} className="rounded bg-surface-raised p-2 text-sm text-fg">
+                    <span className="mr-2 text-xs text-fg-subtle">@{accounts[m.authorId]?.handle ?? m.authorId}</span>
                     {m.body}
                   </li>
                 ))}
               </ul>
             </div>
             {actionError && (
-              <p role="alert" className="px-3 pb-2 text-xs text-red-400">{actionError}</p>
+              <p role="alert" className="px-3 pb-2 text-xs text-danger">{actionError}</p>
             )}
-            <div className="flex gap-2 border-t border-zinc-700 p-3">
-              <button className="rounded bg-indigo-600 px-2 py-1 text-xs text-white hover:bg-indigo-500"
+            <div className="flex gap-2 border-t border-border p-3">
+              <button className="rounded bg-accent px-2 py-1 text-xs text-fg-on-strong hover:bg-accent-hover"
                 onClick={() => void markAndNext()}>읽음 처리하고 다음</button>
-              <button className="rounded px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-700"
+              <button className="rounded px-2 py-1 text-xs text-fg-muted hover:bg-surface-hover"
                 onClick={skip}>그냥 다음</button>
             </div>
           </>
