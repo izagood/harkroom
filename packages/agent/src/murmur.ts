@@ -154,6 +154,17 @@ export class MurmurAgentClient {
     };
   }
 
+  /** 승인된 스킬 목록을 가져온다(#140). 실패하면 빈 배열을 반환한다 — 스킬은 "있으면 좋은 것"이다. */
+  async listApprovedSkills(): Promise<{ slug: string; body: string }[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/skills?approved=true`, {
+        headers: { authorization: `Bearer ${this.pat}` },
+      });
+      if (!res.ok) return [];
+      return (await res.json()) as { slug: string; body: string }[];
+    } catch { return []; }
+  }
+
   /** timeoutMs 동안 park 한다. 새 항목이 없으면 빈 배치로 정상 반환된다. */
   pollInbox(timeoutMs: number): Promise<InboxBatch> {
     return this.call<InboxBatch>('inbox.poll', { timeoutMs, version: VERSION });
