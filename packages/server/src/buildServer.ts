@@ -319,6 +319,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 가 아직 undefined 면 preHandler 가 통째로 사라져 러너 소켓이 인증 없이 열린다.
   await registerAgentRelayRoutes(app, deps.pool, {
     attachTicketTtlMs: deps.attachTicketTtlMs,
+    // 뷰어 소켓의 수명 규칙은 `/ws` 와 **같은 값**을 받아야 한다 — 갈라지면 더 민감한
+    // 쪽(PTY 바이트)이 더 느슨해진다.
+    allowedOrigins: deps.corsOrigins ?? null,
+    revalidateMs: deps.wsRevalidateMs,
   });
 
   // **registerAuth 뒤에 등록해야 한다.** `app.requireAccount` 는 registerAuth 가 데코레이트하므로,
