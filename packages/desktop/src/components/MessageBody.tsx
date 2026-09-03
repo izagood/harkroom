@@ -124,12 +124,14 @@ export function MessageBody({
     // 소유자는 목록 조회에서 403 을 받는다 — 그 화면은 "에이전트 목록을 받지 못했다" 만
     // 띄우고 목록이 비어 `targetId` 도 아무것도 고르지 못한다. #253 이 열어 준 것은
     // `PATCH`·메모리·PAT 이고 **목록은 아니다.** 갈 수 있는데 할 수 있는 것이 없는 곳을
-    // 만들지 않는다(design.md §4). 목록 라우트가 소유자에게 열리면 여기에 소유자 판정을
-    // 더하는 것이 맞다.
+    // 만들지 않는다(design.md §4). #299 에서 목록 라우트가 소유자에게 열렸으므로,
+    // admin 이거나 에이전트 소유자면 설정으로 간다.
     const target: (() => void) | null = (() => {
       if (!account) return null;
       if (isGroup) return null;
-      if (account.kind === 'agent' && me?.isAdmin === true && onOpenSettings) {
+      // #299: admin 또는 소유자면 설정으로 간다.
+      const isOwner = account.kind === 'agent' && account.ownerAccountId === me?.id;
+      if (account.kind === 'agent' && (me?.isAdmin === true || isOwner) && onOpenSettings) {
         return () => onOpenSettings('agents', account.id);
       }
       if (onOpenDirectory) return () => onOpenDirectory(account.id);
@@ -138,7 +140,9 @@ export function MessageBody({
 
     // 접근 가능한 이름은 `@handle` 이 아니라 **무엇을 하는지**다. 그러므로 실제로 열리는
     // 곳을 말해야 한다 — 디렉터리로 가는데 "설정 열기" 라고 부르면 이름이 거짓이 된다.
-    const goesToSettings = account?.kind === 'agent' && me?.isAdmin === true && !!onOpenSettings;
+    // #299: admin 또는 소유자면 "설정 열기", 그 외는 "프로필 열기".
+    const isOwner = account?.kind === 'agent' && account.ownerAccountId === me?.id;
+    const goesToSettings = account?.kind === 'agent' && (me?.isAdmin === true || isOwner) && !!onOpenSettings;
     const accessibleName = account && (goesToSettings
       ? `${account.handle} 에이전트 설정 열기`
       : `${account.handle} 프로필 열기`);

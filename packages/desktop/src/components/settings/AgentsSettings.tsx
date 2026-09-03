@@ -137,6 +137,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const [confirmingSlug, setConfirmingSlug] = useState<string | null>(null);
   // #251: 비활성화는 되돌릴 수 없는 작업이므로 확인 단계를 거친다.
   const [confirmingDisable, setConfirmingDisable] = useState(false);
+  // #299: 소유자 판정. 목록이 이미 필터되어 있어도 UI 에서 명시적으로 쓴다 — admin 전용
+  // 필드(ownerAccountId, disabled, mentionPermission)와 일반 필드(PAT, memory)를 가린다.
+  const [isOwner, setIsOwner] = useState(false);
   // 라벨을 하드코딩하면 재발급이 막힌다 — 라벨은 살아 있는 토큰 안에서 유일하고
   // (마이그레이션 010) 서버가 중복을 409 로 거절한다. 토큰을 잃어 폐기한 뒤 같은 이름으로
   // 다시 발급하는 것이 주 사용 흐름이라, 사용자가 이름을 정할 수 있어야 한다.
@@ -151,6 +154,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   // #177: "잃었으면 새로 발급한다" 를 글로만 두면 발급 자리를 찾아야 한다 — 진입점으로 보낸다.
   const newPatLabelRef = useRef<HTMLInputElement | null>(null);
   const isAdmin = useAppStore((s) => s.me?.isAdmin === true);
+  const myId = useAppStore((s) => s.me?.id);
   const accounts = useAppStore((s) => s.accounts);
   // #176: 생존(presence)과 마지막 활동은 **다른 두 사실**이라 두 자리에서 온다 — presence 는
   // 소켓 이벤트로 살아 있는 목록이고(#124), 마지막 활동은 `AgentView.lastTurnAt` 이다.
@@ -198,13 +202,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   }, [isAdmin]);
 
   const loadPats = (agentId: string) => {
-    if (!isAdmin) return;
+    if (!isAdmin && !isOwner) return;
     setPats(null);
     void getController().listPats(agentId).then(setPats).catch(() => setPats('error'));
   };
 
   const loadMemories = (agentId: string) => {
-    if (!isAdmin) return;
+    if (!isAdmin && !isOwner) return;
     setMemories(null);
     void getController().agentMemory(agentId)
       .then(setMemories)
@@ -221,6 +225,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     setError(null);
     setConfirmingSlug(null);
     setConfirmingDisable(false);
+    // #299: 소유자 판정. isAdmin 이면 무조건 false(_ADMIN_ONLY_FIELDS 가 admin 전용).
+    // isAdmin 이 아니면 ownerAccountId 가 자기 id 인지만 보면 된다 — 목록이 이미 필터되어
+    // 있지만 UI 에서 명시적으로 판정하면 admin 전용 필드 가리기가 정확해진다.
+    setIsOwner(!isAdmin && a.ownerAccountId === myId);
     loadPats(a.id);
     loadMemories(a.id);
   };
@@ -671,7 +679,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             </>
             )}
 
-            {selected && isAdmin && (
+            {selected && (isAdmin || isOwner) && (
               <div className="rounded border border-zinc-200 p-3">
                 <div className="text-xs font-medium text-zinc-600">기억 (memory)</div>
                 {/* 읽기·삭제만이다. 편집을 넣지 않는 이유(#139): 사람이 고쳐도 에이전트가
@@ -836,7 +844,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               </div>
             )}
 
-            {selected && isAdmin && (
+            {selected && (isAdmin || isOwner) && (
               <div className="rounded border border-zinc-200 p-3">
                 <div className="text-xs font-medium text-zinc-600">PAT (Personal Access Token)</div>
                 <div className="mt-2 space-y-2">
@@ -972,7 +980,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 자리표시가 든 틀만 보이고, 전체 토큰이 든 명령은 위의 발급 직후 화면에만 있다.
                 PAT 개수로 이 절을 가리지 않는다: PAT 가 0 개인 에이전트야말로 "무엇을 실행해야
                 하는가"를 알아야 하고, 틀에는 비밀이 없다. */}
-            {selected && isAdmin && (
+            {selected && (isAdmin || isOwner) && (
               <div className="rounded border border-zinc-200 p-3">
                 <div className="text-xs font-medium text-zinc-600">러너 실행</div>
                 <div className="mt-2 flex items-center gap-2 break-all font-mono text-[11px] text-zinc-700">
