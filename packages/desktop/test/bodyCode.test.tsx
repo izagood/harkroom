@@ -138,10 +138,13 @@ describe('애매한 입력은 평문으로 둔다', () => {
 });
 
 describe('코드가 없는 본문', () => {
-  it('지금과 똑같이 그려진다', () => {
-    show('평범한 한 줄이다');
+  it('지금과 똑같이 그려진다 — 개행도 글자 하나도 잃지 않는다', () => {
+    // 여러 줄인 것이 요점이다. 코드 토크나이저가 본문을 줄로 나눠 보므로, 다시 합칠 때
+    // 개행을 잃으면 코드가 없는 평범한 메시지가 조용히 망가진다.
+    const plain = '평범한 첫 줄\n두 번째 줄\n\n빈 줄 뒤 세 번째';
+    show(plain);
 
-    expect(screen.getByTestId('message-body').textContent).toBe('평범한 한 줄이다');
+    expect(screen.getByTestId('message-body').textContent).toBe(plain);
     expect(screen.queryByTestId('inline-code')).toBeNull();
     expect(screen.queryByTestId('code-block')).toBeNull();
   });
