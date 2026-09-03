@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { newToken, hashToken } from '../auth/tokens.js';
 import { recordAudit } from '../audit.js';
 import { createChannel } from '../services/channels.js';
+import { getHandleGroupByHandle } from '../services/handleGroups.js';
 
 const SESSION_TTL_DAYS = 14;
 
@@ -118,6 +119,22 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
         await client.query('rollback');
         return reply.code(400).send({ error: { code: 'invalid_invite', message: 'invite invalid or used' } });
       }
+
+      /**
+       * 집합과 같은 이름의 계정은 만들 수 없다(#230 결정 3). 집합 생성 쪽만 막으면
+       * 나중에 등록한 사람이 같은 이름을 차지해 `@foo` 가 사람인지 집합인지 갈린다.
+       *
+       * `pool` 이 아니라 `client` 로 읽는다 — 트랜잭션 클라이언트를 쥔 채 풀에서 또 다른
+       * 연결을 얻으면 풀이 포화된 순간 자기 자신을 기다리는 교착이 된다.
+       */
+      const group = await getHandleGroupByHandle(client, body.handle);
+      if (group) {
+        await client.query('rollback');
+        return reply.code(400).send({
+          error: { code: 'handle_taken', message: 'a group with this handle already exists' },
+        });
+      }
+
       const pw = await argon2.hash(body.password);
       const acc = await client.query(
         `insert into account (handle, login_id, display_name, kind, password_hash)

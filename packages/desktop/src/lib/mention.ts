@@ -36,7 +36,7 @@ export function applyMention(
 
 export type MessagePart =
   | { kind: 'text'; text: string }
-  | { kind: 'mention'; text: string; handle: string };
+  | { kind: 'mention'; text: string; handle: string; isGroup?: boolean };
 
 /**
  * 본문을 텍스트와 멘션 조각으로 나눈다. **존재하는 handle 만** 멘션으로 표시한다 —
@@ -45,28 +45,29 @@ export type MessagePart =
  * @param body 입력 본문 (<@id> 또는 @handle 형식)
  * @param knownHandles 알려진 handle 목록
  * @param accountsMap (선택) account ID -> handle 맵. 있으면 <@id> 토큰을 현재 handle 로 렌더링한다.
+ * @param groupHandles (선택) 집합 handle 목록. 이 목록에 있으면 `isGroup` 플래그가 켜진다.
  */
-export function splitMentions(body: string, knownHandles: string[], accountsMap?: Map<string, string>): MessagePart[] {
+export function splitMentions(body: string, knownHandles: string[], accountsMap?: Map<string, string>, groupHandles: string[] = []): MessagePart[] {
   // <@id> 토큰이 있으면 현재 handle 로 렌더링한다(#271)
   let processedBody = body;
   if (accountsMap && accountsMap.size > 0) {
     processedBody = renderMentions(body, accountsMap, '알 수 없음');
   }
-
   // `@channel`(#225)은 그 handle 의 계정이 없어도 칠한다 — 서버가 채널 전체에 알림을
   // 보내기 때문이다. 여기서 빼면 위 주석이 경계하는 바로 그 불일치가 된다: 강조되지 않은
   // 것이 몰래 알림을 보낸다. 계정이 있으면 `knownHandles` 에 이미 들어 있어 중복이 없다.
   const known = new Set([...knownHandles.map((h) => h.toLowerCase()), CHANNEL_MENTION_HANDLE]);
+  const groupSet = new Set(groupHandles.map((h) => h.toLowerCase()));
   const parts: MessagePart[] = [];
   let cursor = 0;
 
   for (const m of processedBody.matchAll(MENTION_IN_TEXT)) {
     const handle = (m[2] ?? '').toLowerCase();
-    if (!known.has(handle)) continue;
+    if (!known.has(handle) && !groupSet.has(handle)) continue;
     // m.index 는 선행 문자를 포함한다 — @ 의 실제 위치를 다시 계산한다.
     const at = m.index + (m[1] ?? '').length;
     if (at > cursor) parts.push({ kind: 'text', text: processedBody.slice(cursor, at) });
-    parts.push({ kind: 'mention', text: `@${m[2]}`, handle });
+    parts.push({ kind: 'mention', text: `@${m[2]}`, handle, isGroup: groupSet.has(handle) });
     cursor = at + 1 + (m[2] ?? '').length;
   }
   if (cursor < processedBody.length) parts.push({ kind: 'text', text: processedBody.slice(cursor) });
