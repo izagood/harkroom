@@ -52,7 +52,11 @@ export type AuditAction =
   // detail 에는 handle 과 **개수**만 남긴다 — 계정 id 목록은 남기지 않는다. 집합에서
   // 빼는 이유가 사람 사정일 수 있고, 감사 로그는 그것을 영구히 붙잡는 자리가 아니다.
   | 'handle_group.created' | 'handle_group.updated' | 'handle_group.deleted'
-  | 'handle_group.members.added' | 'handle_group.members.removed';
+  | 'handle_group.members.added' | 'handle_group.members.removed'
+  // #173: 채널의 자동 멘션 에이전트. 어떤 에이전트를 어느 채널에 자동 투입할지는 admin 의
+  // 관리 행위라 기록이 남아야 한다. detail 에는 **에이전트 handle 만** 남긴다 — 그 채널의
+  // 메시지 본문도, topic 도 넣지 않는다(같은 파일 위 규칙).
+  | 'channel.auto_mention.set' | 'channel.auto_mention.unset';
 
 export interface AuditEntry {
   action: AuditAction;
