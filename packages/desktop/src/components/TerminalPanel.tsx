@@ -109,13 +109,21 @@ export function TerminalPanel() {
             if (!writerRef.current) return;
             attach?.sendInput(new TextEncoder().encode(data));
           },
-          // 크기도 같은 가드를 탄다(#335 + #346): PTY 크기를 정하는 것은 지금의 writer 다 —
-          // 읽기 전용 창의 크기가 흘러가면 그 창은 더 이상 읽기 전용이 아니다.
+          // 크기는 **입력과 다른 가드를 탄다**(#369). `#335`+`#346` 은 둘을 한 가드에 묶었고
+          // 그 근거는 "읽기 전용 창의 크기가 흘러가면 그 창은 더 이상 읽기 전용이 아니다"
+          // 였다 — 그 문장은 *다른 창이 치고 있을 때* 참이다. 관찰 전용 세션(#369)에는 칠
+          // 사람이 아예 없어 침범할 작업 환경이 없고, 폭은 stdin 과 무관하게 ioctl 로 자식에
+          // 그대로 닿는다. 그래서 여기만 `resizeRef` 를 읽는다.
           onResize: (cols, rows) => {
             if (!resizeRef.current) return;
             attach?.sendResize(cols, rows);
           },
         });
+        // **차례를 받기 전에는 접어 둔다**(#369). sink 는 `onInput` 이 배선돼 있어 xterm 의
+        // stdin 이 켜진 채로 뜨는데, 서버의 첫 `writer` 프레임은 소켓이 붙은 **뒤에** 온다 —
+        // 그 사이 커서가 깜빡여 "칠 수 있다"고 말한다. 이 결함이 정확히 그 거짓말이다.
+        // 프레임이 영영 안 와도(구 서버) 읽기 전용으로 남는 규칙과도 같은 방향이다.
+        sink.setReadOnly?.(true);
         setPhase('attached');
         attach = connectAgentAttach(api.baseUrl, ticket, {
           onOutput: (bytes) => sink?.write(bytes),
