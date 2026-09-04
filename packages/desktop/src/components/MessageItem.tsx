@@ -8,7 +8,7 @@ import { Identity, StatusMark } from './Identity';
 import { TerminalChip } from './TerminalChip';
 import { Attachments } from './Attachments';
 import { Menu } from './Menu';
-import { bodyAsHandles } from '../lib/mention';
+import { bodyAsHandles, displayBody } from '../lib/mention';
 import type { SectionId } from './settings/sections';
 
 export function MessageItem({ message, inThread = false, onOpenDirectory, onOpenSettings }: {
@@ -35,6 +35,17 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   useEffect(() => { if (highlighted) rowRef.current?.scrollIntoView?.(); }, [highlighted]);
 
   const isSystem = message.kind === 'system';
+  /**
+   * 그릴 본문(#329). 시스템 메시지는 본문에 이름이 없고 자리표시자만 있으므로,
+   * `displayBody` 가 `meta.accountId` 로 지금의 handle 을 찾아 채운다 — 본문을 보여 주는
+   * 네 자리가 **같은 함수**를 지난다(`lib/mention.ts` 주석 참고).
+   *
+   * **이름줄이 아니라 본문에 채운다.** 이름줄은 이 메시지를 **쓴 사람**의 자리이고, 바로
+   * 옆의 아바타·배지·상태 표시(`Identity`·`StatusMark`·`TerminalChip`)가 전부 `author` 를
+   * 그린다. 거기에 대상의 이름을 넣으면 admin 이 내보낸 메시지가 내보내진 사람의 말처럼
+   * 보이고, 한 줄 안에서 이름과 아바타가 서로 다른 사람을 가리킨다.
+   */
+  const shownBody = displayBody(message, accounts);
   const avcsType = typeof message.meta.avcsType === 'string' ? message.meta.avcsType : null;
   /**
    * 스킬 제안 알림에서 승인 화면으로 가는 진입점(#311 요구 5).
@@ -180,7 +191,11 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span className="font-semibold">{author?.handle ?? '…'}</span>
+          {/* `data-testid` 를 두는 이유는 위 `author-gutter` 와 같다: 이 자리가 **작성자**의
+              것이라는 사실을 회귀선이 클래스 문자열로 더듬지 않게 한다. 아바타(`Identity`)도
+              handle 을 sr-only 로 내보내므로 글자로 찾으면 두 곳이 걸려, 이름줄이 다른
+              사람을 가리키게 되어도 테스트가 무엇을 봤는지 말하지 못한다(#329). */}
+          <span data-testid="author-name" className="font-semibold">{author?.handle ?? '…'}</span>
           <Identity account={author} variant="badge" />
           {/* 작성 시점이 아니라 **지금**의 상태다 — 이 줄이 답하는 질문은 "이 사람에게
               지금 물어봐도 되는가"이지 "그때 무슨 상태였나"가 아니다(#186). */}
@@ -196,7 +211,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
 
         {draft === null ? (
           <>
-            {message.body.trim() && <MessageBody body={message.body} messageId={message.id} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
+            {shownBody.trim() && <MessageBody body={shownBody} messageId={message.id} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
             {skillSlug && onOpenSettings && (
               <button
                 className="mt-1 rounded-lg border border-border px-2 py-1 text-[11px] font-medium

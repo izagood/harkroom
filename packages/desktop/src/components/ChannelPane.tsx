@@ -8,6 +8,7 @@ import { ChannelFiles } from './ChannelFiles';
 import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { dayLabel, localDayKey } from '../lib/day';
+import { displayBody } from '../lib/mention';
 import type { SectionId } from './settings/sections';
 
 interface ChannelPaneProps {
@@ -148,8 +149,10 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
                     <span className="shrink-0 font-semibold">{accounts[p.message.authorId]?.handle ?? '…'}</span>
                     {/* 본문은 한 줄만 미리 보여 준다 — 목록이 대화를 두 번 그리는 자리가 되면
                         접어 둔 이유가 사라진다. 첨부만 있는 메시지는 본문이 빈 문자열이라
-                        그대로 두면 누를 곳이 handle 뿐인 줄이 된다. */}
-                    <span className="truncate">{p.message.body.trim().split('\n')[0] || '(attachment)'}</span>
+                        그대로 두면 누를 곳이 handle 뿐인 줄이 된다.
+                        `displayBody` 를 지나는 이유(#329): 시스템 메시지는 본문에 이름이 없고
+                        자리표시자만 있어, 원본을 그대로 쓰면 이 줄에만 그 글자가 남는다. */}
+                    <span className="truncate">{displayBody(p.message, accounts).trim().split('\n')[0] || '(attachment)'}</span>
                   </button>
                 </li>
               ))}

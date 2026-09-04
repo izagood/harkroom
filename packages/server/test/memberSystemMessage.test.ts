@@ -5,6 +5,9 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin } from './helpers/fixtures.js';
 import { onEvent } from '../src/events.js';
+// 자리표시자 문자열을 여기 베껴 쓰지 않는다(#329) — 베끼면 서버가 그것을 바꿔도 이 파일은
+// 옛 문자열을 그대로 초록으로 통과시키고, 화면은 치환되지 않은 본문을 그린다.
+import { SYSTEM_ACCOUNT_PLACEHOLDER } from '@murmur/shared';
 
 let app: FastifyInstance;
 let pool: Pool;
@@ -63,6 +66,15 @@ async function systemBodies(channelId: string): Promise<string[]> {
   return res.rows.map((r) => r.body);
 }
 
+/** #329: 시스템 메시지의 meta 를 읽는다. */
+async function systemMeta(channelId: string): Promise<Array<{ accountId: string | null }>> {
+  const res = await pool.query<{ meta: { accountId: string | null } }>(
+    `select meta from message where channel_id = $1 and kind = 'system' order by seq`,
+    [channelId],
+  );
+  return res.rows.map((r) => r.meta);
+}
+
 beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
@@ -81,7 +93,11 @@ describe('멤버 입·퇴장 시스템 메시지 (#322)', () => {
     expect((await addMember(channelId, userId)).statusCode).toBe(200);
 
     // 개수까지 못박는다 — "하나 이상 있다"만 보면 같은 사건에 둘이 남아도 초록이다.
-    expect(await systemBodies(channelId)).toEqual(['testuser님이 채널에 추가되었습니다.']);
+    // #329: 본문에 이름 대신 자리표시자. 대상은 meta.accountId 로 싣고 화면이 표시 시점에
+    // 지금의 handle 을 채운다.
+    expect(await systemBodies(channelId)).toEqual([
+      `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에 추가되었습니다.`,
+    ]);
   });
 
   it('2. 제거되면 시스템 메시지가 남는다 — 나간 것과 내보낸 것의 문구가 다르다', async () => {
@@ -97,11 +113,16 @@ describe('멤버 입·퇴장 시스템 메시지 (#322)', () => {
     expect((await removeMember(channelId, self.accountId, self.token)).statusCode).toBe(200);
 
     expect(await systemBodies(channelId)).toEqual([
-      'testuser님이 채널에 추가되었습니다.',
-      'testuser님이 채널에서 제거되었습니다.',
-      'leaver님이 채널에 추가되었습니다.',
-      'leaver님이 채널에서 나갔습니다.',
+      `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에 추가되었습니다.`,
+      `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에서 제거되었습니다.`,
+      `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에 추가되었습니다.`,
+      `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에서 나갔습니다.`,
     ]);
+    // #329 이후 본문에는 이름이 없다 — 나감/내보냄을 가르는 것은 **문장**이다. 그 구분이
+    // 문장에서마저 사라지면 두 사건이 화면에서 같아지므로, 여기서 따로 못박는다.
+    // meta 로 누구인지는 아래 #329 회귀선이 본다.
+    const [, removedBody, , leftBody] = await systemBodies(channelId);
+    expect(removedBody).not.toBe(leftBody);
   });
 
   it('3. 시스템 메시지는 멘션 알림을 만들지 않는다 (inbox 에 행이 없다)', async () => {
@@ -214,9 +235,48 @@ describe('멤버 입·퇴장 시스템 메시지 (#322)', () => {
 
     expect(seen).toHaveLength(1);
     const only = seen[0]!;
-    expect(only.body).toBe('audience-joiner님이 채널에 추가되었습니다.');
+    // #329: 본문에 이름 대신 자리표시자.
+    expect(only.body).toBe(`${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에 추가되었습니다.`);
     expect(Array.isArray(only.audience)).toBe(true);
     expect(only.audience).toContain(joiner.accountId);
     expect(only.audience).not.toContain(outsider.accountId);
+  });
+
+  it('#329 1. 초대 메시지의 meta 에 대상 accountId 가 있다', async () => {
+    const channelId = await createChannel('member-meta-add');
+    const target = await createUser('meta-add-target');
+
+    await addMember(channelId, target.accountId);
+
+    const meta = await systemMeta(channelId);
+    expect(meta).toHaveLength(1);
+    expect(meta[0]!.accountId).toBe(target.accountId);
+  });
+
+  it('#329 2. 퇴장 메시지의 meta 에 대상 accountId 가 있다', async () => {
+    const channelId = await createChannel('member-meta-remove');
+    const target = await createUser('meta-remove-target');
+
+    await addMember(channelId, target.accountId);
+    await removeMember(channelId, target.accountId);
+
+    const meta = await systemMeta(channelId);
+    expect(meta).toHaveLength(2);
+    // 첫 번째: 초대, 두 번째: 제거
+    expect(meta[0]!.accountId).toBe(target.accountId);
+    expect(meta[1]!.accountId).toBe(target.accountId);
+  });
+
+  it('#329 3. 나감(본인 퇴장) 메시지의 meta 에 대상 accountId 가 있다', async () => {
+    const channelId = await createChannel('member-meta-leave');
+    const leaver = await createUser('meta-leaver');
+
+    await addMember(channelId, leaver.accountId);
+    await removeMember(channelId, leaver.accountId, leaver.token);
+
+    const meta = await systemMeta(channelId);
+    expect(meta).toHaveLength(2);
+    // 두 번째 메시지가 나감
+    expect(meta[1]!.accountId).toBe(leaver.accountId);
   });
 });

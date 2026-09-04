@@ -7,7 +7,7 @@ import {
   listTeamMembers, addAgentToTeam, removeAgentFromTeam, addTeamToChannel,
 } from '../services/teams.js';
 import { recordAudit } from '../audit.js';
-import { assertChannelVisible } from '../services/channels.js';
+import { assertChannelVisible, channelMembershipGate } from '../services/channels.js';
 
 /**
  * 에이전트 팀(#172)의 관리 표면.
@@ -168,6 +168,19 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
     const channel = await pool.query(`select visibility from channel where id = $1`, [id]);
     if (!channel.rowCount) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+    // 보관·DM 게이트(#328). 이 경로는 멤버십 라우트를 **재사용하지 않고**
+    // `addTeamToChannel` 로 직접 넣으므로, 게이트를 여기에도 붙이지 않으면 팀이 곧
+    // 보관 채널로 들어가는 우회로가 된다(`#172` 회수 때의 구멍과 같은 종류다).
+    //
+    // public 판정보다 **앞**이다: DM 은 `visibility` 가 기본값 'public' 이라
+    // 아래 절이 먼저 걸리면 DM 이 `channel_is_public` 으로 답한다 — 사실과 다른 사유다.
+    const gate = await channelMembershipGate(pool, id);
+    if (gate === 'archived') {
+      return reply.code(400).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
+    }
+    if (gate === 'dm') {
+      return reply.code(400).send({ error: { code: 'channel_is_dm', message: 'a dm has no membership to edit' } });
     }
     if (channel.rows[0].visibility === 'public') {
       return reply.code(400).send({ error: { code: 'channel_is_public', message: 'a public channel has no membership' } });

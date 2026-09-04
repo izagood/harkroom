@@ -4,7 +4,7 @@ import type { StorageBackend } from '../storage/local.js';
 import { z } from 'zod';
 import {
   addChannelMember, assertChannelVisible, audienceFor, channelListAudience, channelListLostAudience,
-  channelPostGate, createChannel, deleteChannel,
+  channelMembershipGate, channelPostGate, createChannel, deleteChannel,
   getChannelDoc, getChannelRow, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
   updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs, renameSection,
 } from '../services/channels.js';
@@ -19,7 +19,7 @@ import {
 } from '../services/scheduledMessages.js';
 // 이름 규칙은 데스크탑의 채널 생성 입력(Sidebar.tsx)과 **같은 것**이어야 한다 — 그래서
 // 정규식을 여기 리터럴로 두지 않고 shared 의 상수를 쓴다.
-import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS } from '@murmur/shared';
+import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, SYSTEM_ACCOUNT_PLACEHOLDER } from '@murmur/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { postMessage } from '../services/messages.js';
@@ -33,6 +33,29 @@ import { postMessage } from '../services/messages.js';
  * 여기서는 길이만 본다.
  */
 const sectionName = z.string().max(40).nullable();
+
+/**
+ * 멤버 입·퇴장 시스템 메시지의 본문과 `meta`(#329). **둘을 함께 돌려주는 것이 요점이다.**
+ *
+ * 자리표시자만 있는 본문과 그것을 채울 `meta.accountId` 는 한쪽만 있으면 뜻이 없다. 그런데
+ * `postMessage` 의 `meta` 는 옵셔널이므로(`services/messages.ts`), 호출부가 본문만 적고
+ * `meta` 를 빠뜨려도 타입 검사를 통과한다 — 그 상태로 남는 메시지는 화면에서 자리표시자를
+ * 글자 그대로 그린다. 여기서 쌍으로 묶으면 그 실수가 아예 표현되지 않는다.
+ *
+ * `event` 로 문구를 고르는 이유: 나감(`left`)과 내보냄(`removed`)은 라우트가 `isSelf` 로
+ * 이미 갈라 권한을 다르게 판정하는 **실재하는 구분**이다(#322). 하나로 합치면 화면이 없는
+ * 구분을 지우는 것이 아니라 있는 구분을 뭉갠다.
+ */
+function memberSystemMessage(
+  event: 'added' | 'left' | 'removed', accountId: string,
+): { body: string; kind: 'system'; meta: { accountId: string } } {
+  const body = {
+    added: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에 추가되었습니다.`,
+    left: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에서 나갔습니다.`,
+    removed: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에서 제거되었습니다.`,
+  }[event];
+  return { body, kind: 'system', meta: { accountId } };
+}
 
 export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, storage?: StorageBackend): Promise<void> {
   app.post('/channels', { preHandler: app.requireAdmin }, async (req, reply) => {
@@ -198,18 +221,30 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
+    // 보관·DM 게이트(#328). **가시성 뒤, 삽입 앞**이다. 가시성보다 앞에 두면 볼 수 없는
+    // 채널에 대한 응답이 보관 여부·kind 로 갈려 그 채널의 상태를 알려 준다. 삽입보다
+    // 앞이어야 하는 이유는 아래 시스템 메시지(#322)다 — 거절된 요청이 읽기 전용이어야 할
+    // 채널에 새 메시지를 남기면 안 된다.
+    const gate = await channelMembershipGate(pool, id);
+    if (gate === 'not_found') {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+    if (gate === 'archived') {
+      return reply.code(400).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
+    }
+    if (gate === 'dm') {
+      return reply.code(400).send({ error: { code: 'channel_is_dm', message: 'a dm has no membership to edit' } });
+    }
     // 존재하지 않는 계정은 FK 위반으로 500 이 된다 — 잘못된 입력을 서버 오류로 답하면
     // 호출부가 재시도할 대상인지 아닌지 구분하지 못한다.
-    // handle 까지 여기서 읽는다 — 아래 시스템 메시지(#322)가 쓸 값이고, 존재 확인과 같은
-    // 질문이다. 뒤에서 다시 조회하면 그 사이에 지워진 계정에 대해 "없다"를 두 번 다르게
-    // 판정하는 자리가 생기고, 없을 때 조용히 메시지를 건너뛰는 분기가 필요해진다.
-    const account = await pool.query<{ handle: string }>(
-      `select handle from account where id = $1`, [accountId],
-    );
+    // handle 은 더 이상 읽지 않는다(#329): 시스템 메시지 본문이 이름을 담지 않으므로 이
+    // 자리에서 지금의 이름을 알 필요가 없어졌다. `#322` 가 handle 을 이 질의에 합쳤던
+    // 이유("존재 확인과 같은 질문이라 두 번 조회하면 판정이 갈린다")는 그대로 유효하지만,
+    // 이제 그 질문의 답이 필요 없다 — 남길 것은 존재 확인뿐이다.
+    const account = await pool.query(`select 1 from account where id = $1`, [accountId]);
     if (!account.rowCount) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
     }
-    const targetHandle = account.rows[0]!.handle;
     await addChannelMember(pool, id, accountId);
     await recordAudit(pool, {
       action: 'channel.member.added', actorId: req.account!.id, actorHandle: req.account!.handle,
@@ -236,12 +271,16 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
      * 본문에 `@` 를 붙이지 않는다: `postMessage` 는 kind 와 무관하게 본문의 멘션을
      * 판정하므로, `@handle` 로 적으면 그 사람의 inbox 에 mention 행이 생긴다.
      * 시스템 메시지는 사실을 남기는 것이지 부르는 것이 아니다.
+     *
+     * 본문에 handle 도 박지 않는다(#329) — 자리표시자만 남기고 대상은 `meta.accountId`
+     * 로 싣는다. 그래야 `#271` 이후 이름을 바꾸면 과거 메시지도 새 이름으로 그려진다.
+     * 본문과 `meta` 를 이 파일 위쪽의 `memberSystemMessage` 가 **함께** 만든다 — 왜
+     * 쌍으로 묶어야 하는지는 그 주석에 있다.
      */
     const added = await postMessage(pool, {
       channelId: id,
       authorId: req.account!.id,
-      body: `${targetHandle}님이 채널에 추가되었습니다.`,
-      kind: 'system',
+      ...memberSystemMessage('added', accountId),
     });
     // 메시지 이벤트의 수신자는 메시지 층의 `audienceFor` 다 — 위 목록 이벤트의
     // `channelListAudience` 를 여기 쓰면 private 채널의 본문이 비멤버 admin 에게 흘러간다.
@@ -274,6 +313,19 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     if (isSelf && !(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
+    // 초대와 **같은 게이트**(#328). 제거도 막는다: 보관은 읽기 전용이고 멤버십 변경은
+    // 쓰기다. 삭제 앞에 두는 이유도 초대와 같다 — 거절된 요청이 퇴장 시스템 메시지를
+    // 남기면 읽기 전용 채널에 새 메시지가 생긴다.
+    const gate = await channelMembershipGate(pool, id);
+    if (gate === 'not_found') {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+    if (gate === 'archived') {
+      return reply.code(400).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
+    }
+    if (gate === 'dm') {
+      return reply.code(400).send({ error: { code: 'channel_is_dm', message: 'a dm has no membership to edit' } });
+    }
     const removed = await removeChannelMember(pool, id, accountId);
     if (removed) {
       await recordAudit(pool, {
@@ -304,22 +356,18 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
        * **문구를 둘로 둔다.** 이 라우트는 위에서 이미 `isSelf` 로 두 경우를 갈라
        * 권한을 다르게 판정한다 — 나간 것과 내보낸 것은 여기서 실재하는 구분이므로
        * 화면이 그대로 말해도 거짓 신호가 아니다(구분이 없었다면 문구도 하나여야 했다).
+       * `#329` 로 이름이 본문에서 빠진 뒤에도 그 구분은 문장에 그대로 남는다.
        *
-       * 계정 행은 방금 지운 `channel_member` 의 FK 가 보장한다 — 없으면 그것은 결함이지
-       * "메시지를 남기지 않을 사유"가 아니므로 조용히 건너뛰지 않는다.
+       * 계정 행 조회가 사라진 것은 `#329` 때문이다: 본문에 handle 을 박지 않으므로 이
+       * 자리에서 지금의 이름을 알 필요가 없다. 대상은 `meta.accountId` 로 싣고, 화면이
+       * 표시 시점에 그것으로 현재 handle 을 찾는다(그래서 이름을 바꾸면 과거 메시지도
+       * 새 이름으로 그려진다). "FK 가 계정 행을 보장한다"는 근거는 이제 쓸 곳이 없다.
        * 본문에 `@` 를 붙이지 않는 이유는 초대 쪽과 같다.
        */
-      const target = await pool.query<{ handle: string }>(
-        `select handle from account where id = $1`, [accountId],
-      );
-      const targetHandle = target.rows[0]!.handle;
       const posted = await postMessage(pool, {
         channelId: id,
         authorId: req.account!.id,
-        body: isSelf
-          ? `${targetHandle}님이 채널에서 나갔습니다.`
-          : `${targetHandle}님이 채널에서 제거되었습니다.`,
-        kind: 'system',
+        ...memberSystemMessage(isSelf ? 'left' : 'removed', accountId),
       });
       // 초대 쪽과 같이 메시지 층의 `audienceFor` 를 쓴다.
       if (posted.message) {
