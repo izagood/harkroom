@@ -15,14 +15,15 @@ import type { AgentView } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller } from '../src/state/controller';
 import { usePrefsStore } from '../src/state/prefsStore';
+import { REPO_PATH_MISSING } from '../src/lib/runnerLauncher';
 import type {
   LoginPathReader, RunnerProcess, RunnerSecretStore, RunnerSpawner, SpawnRequest, StoredRunnerPat,
 } from '../src/lib/runnerLauncher';
 import { acc, accountsResult, fakeApi, fakeWsFactory } from './helpers/fakeApi';
 
-/** 화면에 보이는 그 문구. 실행기의 상수와 **글자로** 맞춘다 — 그것이 사람이 읽는 것이다. */
-const REPO_PATH_MISSING =
-  '러너를 돌릴 murmur 저장소 경로가 설정되지 않았다 — 설정 → 연결에서 지정한다';
+// 문구는 실행기에서 **가져온다**. 여기 다시 적으면 `not.toBe(REPO_PATH_MISSING)` 단언들이
+// 자기 사본과 비교하는 셈이고, 실행기 쪽 문구가 갈라져도 아무것도 안 지킨다 —
+// `runnerFailureDisplay.test.tsx` 가 같은 이유로 이미 한 번 고쳐진 자리다(#368).
 
 const agentView = (id: string, extra: Partial<AgentView> = {}): AgentView => ({
   id, handle: id, displayName: id, kind: 'agent', isAdmin: false,
@@ -178,6 +179,26 @@ describe('전이가 아닌 저장에는 반응하지 않는다 — 중복 기동
 
     callbacks.current!.onEvent({ type: 'presence.snapshot', online: [] });
     await waitFor(() => expect(stateOf('rusalka')?.status).toBe('running'));
+    expect(listAgents).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * 구독은 컨트롤러의 수명 안에 있어야 한다. 이 파일의 다른 단언들은 **살아 있는** 컨트롤러만
+ * 지나므로, `stop()` 이 구독을 안 떼도 전부 초록이다(되돌려 재 보니 0건이었다).
+ *
+ * 새는 구독이 만드는 것은 정확히 이 이슈가 피하려는 것이다: 로그아웃하거나 커뮤니티를 바꿔
+ * 죽은 컨트롤러가, 사람이 나중에 경로를 채우는 순간 **또 하나의 러너를 띄운다.**
+ */
+describe('구독은 컨트롤러와 함께 죽는다', () => {
+  it('stop() 뒤에 경로를 채우면 그 컨트롤러는 다시 시도하지 않는다', async () => {
+    const { c, listAgents } = await boot('');
+    expect(listAgents).toHaveBeenCalledTimes(1);
+
+    c.stop();
+    usePrefsStore.getState().setRunnerRepoPath('/repo');
+    await new Promise((r) => setTimeout(r, 0));
+
     expect(listAgents).toHaveBeenCalledTimes(1);
   });
 });
