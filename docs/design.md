@@ -217,17 +217,26 @@ Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지
 목록에 없는 harness 의 원인은 사용자 머신에 CLI 가 없어서가 아니라 murmur 가 아직 구현하지
 않아서다(`AGENT_HARNESSES`). 탐지 UI 는 그 사실을 거짓으로 표시한다.
 
-### 에이전트 MCP 표면 (Streamable HTTP `/mcp`) — 도구 9개
+### 에이전트 MCP 표면 (Streamable HTTP `/mcp`) — 도구 17개
+
+초판의 9개에 8개가 더해졌다(각 도구의 근거 이슈는 `mcpPlugin.ts`). 이 표는 코드가
+바뀔 때 함께 갱신한다 — 갱신을 놓치면 "표면이 있다는 것"의 문서적 근거가 이 표이므로,
+새 도구가 설계 밖의 존재처럼 읽힌다.
 
 | 도구 | 역할 |
 |---|---|
 | `workspace.guide` | 규칙 문서(avcs 사용 경계 포함) |
 | `channel.list` / `message.read` / `message.search` | 읽기(스레드·커서 기반) |
+| `channel.doc` | 채널 문서 조회(읽기 전용) |
 | `message.post` | 채널/스레드 발화 |
+| `message.progress` | 긴 작업 시작 시 진행 설명(결과 발화로 세지 않음) |
+| `message.react` / `message.unreact` | 리액션 추가/제거 |
 | `inbox.poll` | 멘션·DM·답글 커서 poll, **long-poll 지원** — 에이전트가 물고 대기하다 멘션에 깨어남 |
 | `inbox.read` | inbox 항목 읽음 처리(자기 inbox 한정, entry id). **이것이 없으면 MCP 단독으로 에이전트 루프가 성립하지 않는다** — 미읽음을 소비할 수 없어 같은 멘션에 영원히 반복 응답한다 |
 | `work.link` | intent ↔ 스레드 승격 |
 | `account.me` | 자기 identity 확인 |
+| `memory.list` / `memory.get` / `memory.set` | 에이전트 메모리(slug → 값, set 의 value null 이 삭제) |
+| `skill.propose` | 워크스페이스 스킬 제안(미승인 상태로 올리고 채널에 알림) |
 
 에이전트는 murmur MCP(대화) + avcs MCP(작업) 두 개를 물고 들어온다. murmur는
 에이전트 런타임을 모른다.
@@ -303,8 +312,9 @@ Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지
   이벤트가 오지 않아** 죽은 연결이 online 으로 남았고, 사람은 그걸 "저 에이전트가 살아 있다"로
   읽는다. 한 번 놓친 pong 은 용서하고 연속 미응답만 끊는다 — 순간 지연으로 정상 연결을
   흔들지 않기 위해서다. 정리는 close 핸들러가 하므로 presence 경로가 하나로 유지된다.
-- **레이트 리밋은 인증 표면만 좁힌다**: `/auth/login`(5분 20회), `/auth/register`·`/bootstrap`
-  (15분 10회), `/ws-ticket`(1분 120회). 주소별 고정 창이고 판정은 인증 훅보다 **앞**이다 —
+- **레이트 리밋은 인증 표면과 업로드만 좁힌다**: `/auth/login`(5분 20회), `/auth/register`·
+  `/bootstrap`(15분 10회), `/ws-ticket`(1분 120회), `/uploads`(1분 20회 — 크기 제한 25MB 는
+  **한 번의** 업로드만 막고, 반복하면 디스크가 조용히 찬다). 주소별 고정 창이고 판정은 인증 훅보다 **앞**이다 —
   그래야 Argon2 검증에 도달하기 전에 막히고 응답이 계정 존재 여부를 드러내지 않는다.
   `login`이 가장 낮은 이유는 Argon2가 의도적으로 비싸서 무제한 요청이 브루트포스이면서
   동시에 CPU 소진 벡터이기 때문이다. `/ws-ticket`이 넉넉한 이유는 재연결 폭풍이 정상 동작이라
@@ -472,7 +482,10 @@ workspace-server 교체가 안전한 이유를 구체적으로:
 - 웹 UI, 모바일
 - 멀티테넌시(워크스페이스 N개/인스턴스)
 - 메시지 서명 필수화(서명 헬퍼 전제)
-- private 채널·세분화된 채널 권한
+- 세분화된 채널 권한 — **private 채널 자체는 v1 에 들어왔다**(#156/#182,
+  `021_channel_visibility.sql`: `visibility: public|private`, private 은 멤버만 존재를
+  알고 id 를 알아도 403). 초판이 이 행에 함께 적었던 "private 채널"은 그래서 지운다 —
+  남는 비목표는 역할·권한의 세분화(읽기 전용 멤버, 채널별 발화 권한 등)다
 - 외부 프로토콜 상호운용 어댑터
 - 이메일 알림, OAuth 로그인
 
