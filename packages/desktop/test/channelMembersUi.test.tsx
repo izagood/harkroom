@@ -266,9 +266,13 @@ describe('채널 멤버 화면 (#183)', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: '멤버 보기' }));
 
     const panel = await screen.findByTestId('members-c2');
-    expect(within(panel).getByRole('alert')).toBeTruthy();
+    // 패널이 보이는 것과 조회 실패가 화면에 닿은 것은 다른 사실이다 — 패널은 요청이
+    // 나가는 시점에 이미 서고, 오류는 promise 가 깨진 뒤 렌더에서야 붙는다. 여기서
+    // 동기로 찾으면 아직 없는 것을 없다고 읽는다(#367). 오류가 실제로 붙을 때까지 기다린다.
+    expect(await within(panel).findByRole('alert')).toBeTruthy();
     // 실패를 빈 목록으로 삼키면 private 채널에서 그것은 "아무도 이 채널을 볼 수 없다"는
-    // 거짓 사실이 되고, 나가기 경고까지 조용히 사라진다.
+    // 거짓 사실이 되고, 나가기 경고까지 조용히 사라진다. 위에서 오류가 닿은 것을 확인한
+    // 뒤이므로 이 둘은 "아직 안 그려졌다"가 아니라 **끝난 상태**에 대한 단언이다.
     expect(within(panel).queryByText('멤버가 없다')).toBeNull();
     expect(within(panel).queryByLabelText('초대할 계정')).toBeNull();
   });
