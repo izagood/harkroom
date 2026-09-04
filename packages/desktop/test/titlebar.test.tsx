@@ -3,6 +3,7 @@ import { render, screen, fireEvent, cleanup, act } from '@testing-library/react'
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Workspace } from '../src/components/Workspace';
+import App from '../src/App';
 import { MAC_TRAFFIC_LIGHT_PL } from '../src/lib/platform';
 import { acc, chan, scheduledApiStub } from './helpers/fakeApi';
 // 설정 파일은 **이 파일 기준**으로 끌어온다(`?raw`, Vite 가 변환 시점에 해석한다). `process.cwd()`
@@ -220,5 +221,62 @@ describe('#270 헤더 버튼은 여전히 눌린다', () => {
     // 좌상단이 다시 사이드바로 넘어갔으므로 여백도 함께 넘어간다.
     expect(screen.getByTestId('sidebar-brand').className).toContain(MAC_TRAFFIC_LIGHT_PL);
     expect(screen.getByTestId('app-header').className).not.toContain(MAC_TRAFFIC_LIGHT_PL);
+  });
+});
+
+/**
+ * #342: 손잡이가 `Workspace` 안에만 있었다. 창 설정(`titleBarStyle: "Overlay"`)은 앱 전역이라
+ * OS 타이틀바는 모든 화면에서 사라졌는데 대체 손잡이는 한 화면에만 생겼고, 그래서 로그인
+ * 전에는 창을 옮길 수단이 없었다.
+ *
+ * **이 블록은 `Workspace` 가 아니라 `App` 을 마운트한다.** 위쪽 블록들이 쓰는
+ * `renderWorkspace()` 는 `App` 의 `phase` 분기를 통과하지 않아서, 전부 초록인 채로 이 구멍을
+ * 그대로 두었다 — 같은 헬퍼를 재사용하면 회귀선이 아무것도 지키지 못한다.
+ */
+describe('#342 로그인 전 화면의 창 손잡이', () => {
+  const findStrip = () => document.querySelector('[data-testid="window-drag-strip"]');
+
+  it('로그인 화면에 손잡이가 있다', async () => {
+    pretendMac();
+    render(<App />);
+
+    // 접속 화면이 실제로 떴는지 먼저 확인한다 — 안 뜬 화면에서 손잡이가 없는 것은
+    // 이 이슈와 다른 이야기다.
+    expect(await screen.findByText('Server URL')).toBeTruthy();
+    const strip = findStrip();
+    expect(strip).toBeTruthy();
+    expect(strip!.hasAttribute('data-tauri-drag-region')).toBe(true);
+  });
+
+  it('로그인 폼의 입력·버튼에는 손잡이가 없다 — 붙으면 포커스가 드래그에 먹힌다', async () => {
+    pretendMac();
+    render(<App />);
+    expect(await screen.findByText('Server URL')).toBeTruthy();
+
+    const targets = Array.from(document.querySelectorAll('form button, form input'));
+    expect(targets.length).toBeGreaterThan(0);
+    for (const el of targets) {
+      expect(el.hasAttribute('data-tauri-drag-region')).toBe(false);
+      // 조상에 붙어도 같은 사고가 난다 — Tauri 는 속성이 붙은 요소 자체만 보지만,
+      // 폼을 통째로 감싸는 손잡이는 폼 바깥 클릭과 구분되지 않는다.
+      expect(el.closest('[data-tauri-drag-region]')).toBeNull();
+    }
+  });
+
+  it('로그인 화면의 입력이 여전히 값을 받는다', async () => {
+    pretendMac();
+    render(<App />);
+    expect(await screen.findByText('Server URL')).toBeTruthy();
+
+    const loginId = screen.getByLabelText('Login ID') as HTMLInputElement;
+    fireEvent.change(loginId, { target: { value: 'admin' } });
+    expect(loginId.value).toBe('admin');
+  });
+
+  it('macOS 가 아니면 띠를 그리지 않는다 — OS 장식이 그대로 있다', async () => {
+    pretendWindows();
+    render(<App />);
+    expect(await screen.findByText('Server URL')).toBeTruthy();
+    expect(findStrip()).toBeNull();
   });
 });

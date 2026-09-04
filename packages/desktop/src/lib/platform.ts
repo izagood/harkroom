@@ -32,3 +32,10 @@ export function isMacOS(): boolean {
  * 상태를 추적하려면 창 이벤트 구독이 필요하고, 그것은 이 작업의 범위가 아니다.
  */
 export const MAC_TRAFFIC_LIGHT_PL = 'pl-[78px]';
+
+/**
+ * 신호등이 세로로 차지하는 높이(#342). 로그인 화면처럼 좌상단에 바가 없는 화면이 창 손잡이
+ * 띠를 둘 때 쓴다 — OS 타이틀바가 있던 자리와 같은 높이여야 신호등이 띠 밖으로 삐져나오지
+ * 않는다. `MAC_TRAFFIC_LIGHT_PL` 이 가로 여백이라면 이쪽은 세로다.
+ */
+export const MAC_TRAFFIC_LIGHT_H = 'h-[38px]';
