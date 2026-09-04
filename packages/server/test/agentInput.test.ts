@@ -81,7 +81,12 @@ interface Viewer {
   received: AttachServerFrame[];
   /** 마지막으로 받은 writer 통지. 아직 없으면 null — 구 서버 흉내가 아니라 순서 검증용. */
   writer(): boolean | null;
+  /** 마지막 통지가 실은 **이유**(#369). 통지가 없으면 undefined — "이유가 null 이다"와 다르다. */
+  writerReason(): string | null | undefined;
+  /** 마지막 통지의 폭 주인 여부(#369). 입력과 갈라진 능력이라 따로 읽는다. */
+  canResize(): boolean | undefined;
   type(bytes: Buffer): void;
+  resize(cols: number, rows: number): void;
   close(): void;
 }
 
@@ -108,9 +113,20 @@ async function attach(token: string, sessionId: string): Promise<Viewer> {
       const frames = received.filter((f) => f.type === 'writer');
       return frames.length ? (frames.at(-1) as { writer: boolean }).writer : null;
     },
+    writerReason: () => {
+      const frames = received.filter((f) => f.type === 'writer');
+      return frames.length ? (frames.at(-1) as { reason: string | null }).reason : undefined;
+    },
+    canResize: () => {
+      const frames = received.filter((f) => f.type === 'writer');
+      return frames.length ? (frames.at(-1) as { resize: boolean }).resize : undefined;
+    },
     // **뷰어 소켓에 직접 쓴다.** 화면의 가드를 지나지 않는 경로다 — 서버가 막지 않으면
     // 여기서 뚫린다(화면만 비활성으로 두면 못 잡는 그 구멍).
     type: (bytes) => socket.send(JSON.stringify({ type: 'input', data: bytes.toString('base64') } satisfies AttachClientFrame)),
+    // 같은 소켓의 다른 프레임 종류(#335). 같은 자리에 두는 이유: #369 이후 이 둘의 게이트가
+    // 갈라졌으므로, 한 뷰어로 둘을 다 보내 봐야 그 분리가 실제로 성립하는지 잰다.
+    resize: (cols: number, rows: number) => socket.send(JSON.stringify({ type: 'resize', cols, rows } satisfies AttachClientFrame)),
     close: () => socket.close(),
   };
 }
@@ -138,6 +154,10 @@ async function waitForSession(sessionId: string): Promise<void> {
     return (res.json().sessions as AgentSessionView[]).some((s) => s.sessionId === sessionId);
   });
 }
+
+/** 러너가 받은 resize 프레임들(#335). 입력과 갈라진 게이트를 이 파일에서 함께 잰다(#369). */
+const resizes = (r: FakeRunner): { cols: number; rows: number }[] =>
+  r.received.filter((f) => f.type === 'resize').map((f) => ({ cols: f.cols, rows: f.rows }));
 
 /** 러너가 받은 input 프레임들의 바이트. */
 const inputBytes = (r: FakeRunner): Buffer[] =>
@@ -444,5 +464,97 @@ describe('#346 caps 없는 구 러너에는 입력이 조용히 사라지지 않
     expect((await detachedAuditRows(sessionId))[0]!.detail.inputBytes).toBe(0);
 
     await runner.close();
+  });
+});
+
+/**
+ * #369 — 진행 중인 멘션 턴에는 **서버가** 쓰기 차례를 주지 않는다.
+ *
+ * **화면이 아니라 여기서 잰다.** 오늘 실측한 함정이 정확히 그것이다: 화면만 입력을 막고
+ * 서버가 안 막으면 화면 테스트는 초록인데 실제로는 뚫린다 — attach 소켓은 누구나 직접
+ * 열 수 있으므로, 진짜 게이트는 허브 한 곳뿐이다. 그래서 이 describe 는 뷰어 소켓에
+ * 직접 쓰고, 러너가 무엇을 받았는지로 판정한다.
+ *
+ * 판정의 근거는 러너가 announce 에 실어 보낸 `acceptsInput` 하나다 — **하네스 종류를
+ * 보지 않는다.** 원인은 하네스가 아니라 stdin 이 프롬프트 파일로 리다이렉트된 것이고,
+ * 그 사실을 아는 것은 그 턴의 계획을 조립한 러너다.
+ */
+describe('#369 관찰 전용 세션에는 writer 차례가 없다', () => {
+  it('멘션 턴(acceptsInput=false)에는 writer:false 와 이유가 오고, 친 input 은 러너에 닿지 않는다', async () => {
+    const sessionId = 'sess-observe-only';
+    const runner = await connectRunner(agentPat);
+    // 능력은 **있다** — 구 러너와 구분하기 위해서다. 못 치는 이유가 러너의 나이가 아니라
+    // 이 턴의 stdin 이라는 것이 이 테스트의 요점이다.
+    runner.send({ type: 'announce', sessions: [session(sessionId, false)], caps: ['input', 'interactive'] });
+    await waitForSession(sessionId);
+
+    const viewer = await attach(ownerToken, sessionId);
+    await waitFor(() => viewer.writer() === false);
+    // 이유가 함께 온다 — 없으면 화면이 "다른 창이 입력 중"으로 지어낸다(아무도 안 붙었는데).
+    expect(viewer.writerReason()).toBe('observe-only');
+
+    // 화면 가드를 우회해 소켓에 직접 쓴다.
+    viewer.type(TYPED);
+    // "영영 안 온다"는 반대 방향 신호로 확인한다: 같은 소켓의 resize 는 **가야 하므로**,
+    // 그것이 러너에 도착한 시점이면 앞서 보낸 input 도 도착했을 시간이 지난 것이다.
+    // 고정 대기보다 이쪽이 정확하다(그 시간이 짧으면 통과가 우연이 된다).
+    viewer.resize(100, 30);
+    await waitFor(() => resizes(runner).length > 0);
+    expect(inputBytes(runner)).toEqual([]);
+
+    // 개입이 없었으므로 감사의 합산도 0 이다 — 포워딩 안 된 바이트를 세면 감사가 거짓말한다.
+    viewer.close();
+    await waitForAsync(async () => (await detachedAuditRows(sessionId)).length > 0);
+    expect((await detachedAuditRows(sessionId))[0]!.detail.inputBytes).toBe(0);
+
+    await runner.close();
+  });
+
+  /**
+   * #337 회귀 금지 — 이 변경이 인터랙티브 턴의 입력까지 닫으면 그 기능이 통째로 죽는다.
+   * 그쪽은 `stdinFile` 이 없어 PTY 가 그대로 자식의 stdin 이므로 **계속 쳐져야 한다.**
+   */
+  it('인터랙티브 턴(acceptsInput=true)에는 여전히 writer 가 열리고 input 이 러너에 도착한다', async () => {
+    const sessionId = 'sess-interactive-open';
+    const runner = await connectRunner(agentPat);
+    runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
+    await waitForSession(sessionId);
+
+    const viewer = await attach(ownerToken, sessionId);
+    await waitFor(() => viewer.writer() === true);
+    // 차례가 열렸을 때는 이유가 없다 — 빈 문자열이 아니라 명시적 null 이다.
+    expect(viewer.writerReason()).toBeNull();
+
+    viewer.type(TYPED);
+    await waitFor(() => inputBytes(runner).length > 0);
+    expect(inputBytes(runner)[0]!.equals(TYPED)).toBe(true);
+
+    viewer.close();
+    await runner.close();
+  });
+
+  /**
+   * #335 회귀 금지 — resize 는 stdin 과 무관하다(ioctl 로 자식의 창 크기를 바꾼다).
+   * **두 경우 다** 동작해야 한다: 관찰 전용 창도 폭의 주인이고, 여기서 폭까지 막으면
+   * 진행 중인 멘션 턴을 보는 화면이 러너의 spawn 기본값(120x40)에 갇혀 접힌다.
+   */
+  it('resize 는 관찰 전용 턴과 인터랙티브 턴 양쪽에서 러너에 도착한다', async () => {
+    for (const [sessionId, acceptsInput] of [['sess-rs-observe', false], ['sess-rs-live', true]] as const) {
+      const runner = await connectRunner(agentPat);
+      runner.send({ type: 'announce', sessions: [session(sessionId, acceptsInput)], caps: ['input', 'interactive'] });
+      await waitForSession(sessionId);
+
+      const viewer = await attach(ownerToken, sessionId);
+      // 폭의 주인 여부는 입력 차례와 갈라져 있다 — 관찰 전용에서도 true 다.
+      await waitFor(() => viewer.canResize() === true);
+      expect(viewer.writer()).toBe(acceptsInput);
+
+      viewer.resize(133, 44);
+      await waitFor(() => resizes(runner).length > 0);
+      expect(resizes(runner)[0]).toEqual({ cols: 133, rows: 44 });
+
+      viewer.close();
+      await runner.close();
+    }
   });
 });
