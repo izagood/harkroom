@@ -710,6 +710,21 @@ export interface ChannelPrefRow {
    */
   mutedAt: string | null;
   starredAt: string | null;
+  /**
+   * 이 채널을 사이드바에서 치운 시각(#376). null 이면 보인다.
+   *
+   * **보관(`channel.archivedAt`)과 독립이다.** 보관은 채널 전체의 상태(운영자가 정한다)이고
+   * 숨김은 한 사람의 상태다 — 보관된 채널도 숨길 수 있고, 숨긴 채널이 보관돼도 숨김은
+   * 유지된다. 한 필드로 합치면 한 사람이 치운 채널이 모두에게서 사라진다.
+   *
+   * **나가기(#344)와도 다르다.** 나가기는 멤버십을 지우지만 숨김은 남긴다 — 그래서 스스로
+   * 되돌릴 수 있고(다시 보이게 하기) 남에게 시스템 메시지로 보이지 않는다.
+   *
+   * 서버가 이 값을 **혼자서 null 로 되돌리는 경우가 하나 있다**: 나를 부르는 것이 오면
+   * (`services/messages.ts` 의 `insertInbox`) 숨김이 풀린다. 그때 다시 숨지 않는 이유는
+   * 그 함수 주석에 있다.
+   */
+  hiddenAt: string | null;
   notifyLevel: NotifyLevel;
   /**
    * 채널이 속한 섹션(#157). null 이면 섹션 없음(맨 아래 "기타").

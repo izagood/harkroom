@@ -191,9 +191,15 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     // #157/#323: 채널 선호를 쓰는 표면. 베이스가 덮어야 사이드바를 띄운 배선 테스트가
     // 실제 배선(Sidebar → Controller → ApiClient)을 그대로 지나가고, "부르지 않았다" 도
     // 단언할 수 있다. 여기가 비어 있으면 프로덕션이 끊겨 있어도 목이 대신 초록을 낸다.
-    updateChannelPref: vi.fn(async (channelId: string, patch: { section?: string | null; sortOrder?: number | null }) =>
+    // `hidden`(#376)도 되돌려 준다 — 컨트롤러가 응답을 그대로 스토어에 넣으므로, 여기서
+    // 무시하면 숨기기를 누른 배선 테스트가 프로덕션과 무관하게 초록이 된다.
+    updateChannelPref: vi.fn(async (
+      channelId: string,
+      patch: { section?: string | null; sortOrder?: number | null; hidden?: boolean },
+    ) =>
       ({ accountId: 'u1', channelId, mutedAt: null, starredAt: null, notifyLevel: 'all' as const,
-        section: patch.section ?? null, sortOrder: patch.sortOrder ?? null })),
+        section: patch.section ?? null, sortOrder: patch.sortOrder ?? null,
+        hiddenAt: patch.hidden ? '2026-09-04T00:00:00.000Z' : null })),
     renameSection: vi.fn(async (_oldName: string, _newName: string | null) => ({ prefs: [] })),
     ...overrides,
   };

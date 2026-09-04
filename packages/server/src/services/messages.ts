@@ -77,6 +77,16 @@ const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.threa
   case when m.thread_root_id is null then thread_stats.participant_ids end as "participantIds",
   m.also_in_channel as "alsoInChannel"`;
 
+/**
+ * 숨긴 채널(#376)을 다시 나타나게 하는 inbox 사유들. **`dm` 은 없다.**
+ *
+ * `mention`·`thread_reply` 는 누군가 나를 **지목한** 것이다(평범한 멘션·`@channel`·집합·내가
+ * 세운 스레드의 답). `dm` 은 그 채널의 **모든** 메시지가 갖는 사유라서, 그것으로 숨김을 풀면
+ * DM 을 숨기는 일이 첫 메시지에 무너진다 — #376 이 거부한 (C) "안 읽음이 생기면 나타난다"가
+ * 사실상 그것이다.
+ */
+const REVEAL_REASONS: ReadonlySet<InboxEntry['reason']> = new Set(['mention', 'thread_reply']);
+
 async function insertInbox(
   client: PoolClient, accountId: string, messageId: string, reason: InboxEntry['reason'], notified: Set<string>,
 ): Promise<void> {
@@ -84,6 +94,34 @@ async function insertInbox(
     `insert into inbox (account_id, message_id, reason) values ($1, $2, $3)`,
     [accountId, messageId, reason],
   );
+  /**
+   * 숨김 되돌리기(#376 결정 B) — **부름은 숨김을 뚫는다.** 이 자리인 이유: inbox 항목을
+   * 만드는 관문이 이 함수 하나이므로, "알림을 받은 사람"과 "사이드바에 다시 나타나는 사람"이
+   * 갈라질 수 없다. 호출부(평범한 멘션·`@channel`·집합·스레드) 넷에 흩어 놓으면 하나를
+   * 빠뜨리는 순간 그 경로의 부름만 조용히 삼켜진다 — 이 저장소가 오늘 반복해 고친 결함이다.
+   *
+   * 채널을 인자로 받지 않고 메시지에서 되찾는 이유: 인자로 받으면 호출부가 다른 채널을
+   * 넘겨 그 메시지와 다른 채널의 숨김이 풀리는 경우가 표현된다. 여기서는 표현되지 않는다.
+   *
+   * **읽은 뒤 자동으로 다시 숨지 않는다**(#376 이 나에게 남긴 결정). 이유:
+   * - 자동 재숨김은 "읽었는데 사라졌다"를 만든다. 방금 본 채널이 스스로 없어지면 사람은
+   *   그것이 어디로 갔는지, 지금 숨겨진 상태인지 아닌지를 화면에서 알 수 없다.
+   * - 숨김은 **사람의 명시적 조작으로만 바뀌는 상태**여야 예측된다. 서버가 되돌린 것은
+   *   `hidden_at = null` 로 **저장**되므로, 사이드바에 보이는 것이 곧 지금 상태다.
+   * - "한 번 쓰고 버리는 것이 된다"는 걱정은 다시 숨기는 값이 클릭 한 번이라 크지 않다.
+   *   반대쪽 비용(상태를 사람이 못 읽는다)은 화면을 못 믿게 만드는 종류다.
+   *
+   * `hidden_at is not null` 을 조건에 두어 숨기지 않은 채널의 행은 건드리지 않는다 —
+   * 아무것도 바뀌지 않는 update 가 매 멘션마다 pref 행을 잠그는 것을 막는다.
+   */
+  if (REVEAL_REASONS.has(reason)) {
+    await client.query(
+      `update channel_pref set hidden_at = null
+        where account_id = $1 and hidden_at is not null
+          and channel_id = (select channel_id from message where id = $2)`,
+      [accountId, messageId],
+    );
+  }
   notified.add(accountId);
 }
 

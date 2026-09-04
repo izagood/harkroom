@@ -27,7 +27,7 @@ const entry = (id: number, messageId: string, channelId = 'c1',
  * 된다(#224 요구 7).
  */
 const pref = (channelId: string, notifyLevel: NotifyLevel): ChannelPrefRow =>
-  ({ accountId: 'u1', channelId, mutedAt: '2026-09-03T00:00:00.000Z', starredAt: null, notifyLevel, section: null, sortOrder: null });
+  ({ accountId: 'u1', channelId, mutedAt: '2026-09-03T00:00:00.000Z', starredAt: null, hiddenAt: null, notifyLevel, section: null, sortOrder: null });
 
 function fakeNotifier() {
   const sent: { title: string; body: string }[] = [];
@@ -168,7 +168,7 @@ describe('채널 알림 수준 — 알림', () => {
     const n = fakeNotifier();
     const withMutedAt: ChannelPrefRow = {
       accountId: 'u1', channelId: 'c1',
-      mutedAt: '2026-09-03T00:00:00.000Z', starredAt: null, notifyLevel: 'all',
+      mutedAt: '2026-09-03T00:00:00.000Z', starredAt: null, hiddenAt: null, notifyLevel: 'all',
       section: null, sortOrder: null,
     };
     const { callbacks } = await started(n, [entry(1, 'm1', 'c1')], [withMutedAt]);

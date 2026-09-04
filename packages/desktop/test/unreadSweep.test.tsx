@@ -17,7 +17,7 @@ const pref = (channelId: string, muted: boolean): ChannelPrefRow =>
   ({
     accountId: 'u1', channelId,
     mutedAt: muted ? '2026-09-03T00:00:00.000Z' : null,
-    starredAt: null,
+    starredAt: null, hiddenAt: null,
     // 훑기가 보는 것은 `notifyLevel` 이다(#224). `mutedAt` 은 기록일 뿐이다.
     notifyLevel: muted ? 'none' : 'all',
     section: null,

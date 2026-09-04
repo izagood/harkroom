@@ -182,7 +182,7 @@ describe('#329 시스템 메시지가 현재 handle 로 그려진다', () => {
       channels: vi.fn(async () => [chan('c1', 'general')]),
       accounts: vi.fn(async () => accountsResult([acc('u1', 'admin'), acc(TARGET_ID, 'targetuser')])),
       channelPrefs: vi.fn(async (): Promise<ChannelPrefRow[]> => [{
-        accountId: TARGET_ID, channelId: 'c1', mutedAt: null, starredAt: null,
+        accountId: TARGET_ID, channelId: 'c1', mutedAt: null, starredAt: null, hiddenAt: null,
         notifyLevel: 'all', section: null, sortOrder: null,
       }]),
     });
