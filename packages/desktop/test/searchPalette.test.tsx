@@ -184,8 +184,14 @@ describe('SearchPalette', () => {
       expect(screen.getByText('Second')).toBeTruthy();
     }, { timeout: 1000 });
 
+    // 결정적 테스트: 키보드 이벤트 사이에 state 반영을 기다린다.
+    // React batching 으로 인해 연속 이벤트間に 렌더가 안 끝날 수 있다.
     fireEvent.keyDown(document, { key: 'ArrowDown' });
+    await new Promise((r) => setTimeout(r, 0));
+
     fireEvent.keyDown(document, { key: 'ArrowDown' });
+    await new Promise((r) => setTimeout(r, 0));
+
     fireEvent.keyDown(document, { key: 'Enter' });
 
     await waitFor(() => {

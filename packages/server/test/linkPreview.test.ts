@@ -7,7 +7,7 @@
 //
 // 초판의 테스트는 `isPrivateIp('10.0.0.1')` 같은 순수 함수만 태워서, **가드를 fetch 경로에서
 // 떼어내도 전부 초록**이었다. 여기서는 매 항목이 `fetchLinkPreview` 를 지난다.
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import * as http from 'node:http';
@@ -618,6 +618,8 @@ describe('캐시 만료 (#312)', () => {
   });
 
   // 라우트에서 만료 시 재조회 테스트
+  // 결정적 테스트: 관측 가능한 상태를 기다린다. "언젠가 일어난다"는 본질이므로
+  // polling 으로 상태 변화를 확인한다. 이렇게 하면 부하가 높아도 동일하게 동작한다.
   it('GET /link-previews 에서 만료된 행은 백그라운드에서 재조회된다', async () => {
     const net = fakeNet({ hop: () => ({ status: 200, location: null, body: '<title>Fetched</title>' }) });
     // 가짜 네트워크를 라우트에 주입한다
@@ -628,16 +630,21 @@ describe('캐시 만료 (#312)', () => {
        values ($1, $2, $3, $4, $5, $6, $7)`,
       ['https://example.com/route', 'Old', null, null, null, 'ok', new Date(Date.now() - TTL_OK_MS - 1000)],
     );
-    // 조회가 stale trigger
+    // 조회가 stale trigger - fire and forget 이므로 바로 응답이 온다
     const res = await app.inject({
       method: 'GET', url: '/link-previews?url=https://example.com/route',
       headers: { authorization: `Bearer ${userPat}` },
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().title).toBe('Old'); // 먼저 stale 데이터를 반환
-    // background 에서 재조회되길 기다린다
-    await new Promise((r) => setTimeout(r, 100));
+    // 백그라운드 재조회가 끝날 때까지 기다린다 - 관측 가능한 상태를 polling
+    const start = Date.now();
+    while (net.hops.length === 0) {
+      if (Date.now() - start > 5000) throw new Error('timeout waiting for background fetch');
+      await new Promise((r) => setTimeout(r, 10));
+    }
     expect(net.hops).toHaveLength(1); // 백그라운드에서 가져옴
+    // DB 도 업데이트되었는지 확인
     const row = await pool.query('select title from link_preview where url = $1', ['https://example.com/route']);
     expect(row.rows[0].title).toBe('Fetched');
   });
