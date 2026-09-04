@@ -99,3 +99,24 @@ if (mode === 'winsize') {
   });
   setTimeout(() => process.exit(12), 8_000);
 }
+// #369: stdin 이 **프롬프트 파일로 리다이렉트된** 턴에서, 파일 EOF 뒤에 PTY master 로 들어온
+// 바이트가 이 프로세스에 닿는지 잰다.
+//
+// 왜 이 모드가 따로 필요한가: 'stdin-live'·'echo-stdin-live' 는 stdinFile 이 **없는** 계획으로만
+// 돌아서 자식의 fd 0 이 PTY slave 다 — 그 조합으로는 이 결함이 재현되지 않는다(#369 가 지적한
+// 테스트 공백 그대로다). 여기서는 파일을 끝까지 읽어(EOF) 프로덕션 멘션 턴과 같은 상태를 만든
+// 뒤, 그 다음에 들어오는 것이 있는지를 본다.
+//
+// 판정을 **센티넬 문자열**로 하는 이유: PTY 는 자기가 받은 바이트를 에코해 master 로 돌려주므로
+// "출력에 그 글자가 있다"로는 도달을 잴 수 없다. 자식이 직접 읽은 것만 이 줄에 실린다.
+if (mode === 'stdin-file-probe') {
+  const data = readFileSync(0, 'utf8');
+  process.stdout.write(`file-read:${data.trim()}\n`);
+  process.stdout.write('EOF_SEEN\n');
+  let extra = '';
+  process.stdin.on('data', (d) => { extra += String(d); });
+  setTimeout(() => {
+    process.stdout.write(`probe-seen:${extra.includes('ZZPROBEZZ') ? 'yes' : 'no'}\n`);
+    process.exit(0);
+  }, Number(process.env.FAKE_PROBE_WAIT_MS ?? '1500'));
+}

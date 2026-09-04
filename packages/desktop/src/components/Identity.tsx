@@ -24,10 +24,12 @@ import { getController } from '../state/controller';
  *   모든 kind 에서 정사각 상자 하나다. 사람은 **지금의 둥근 아바타 그대로**(이 variant
  *   에서 사람 쪽 마크업은 한 글자도 바뀌지 않는다 — 넘친 것은 에이전트 쪽이었다),
  *   에이전트는 봇 글리프만(소유자 핸들·가운뎃점 없음). `overflow-hidden`, `flex-wrap` 없음.
- * - `badge`: 이름 옆 자리(메시지 이름줄, 컴포저 멘션 후보, 디렉터리 행). 지금의 인라인
- *   배지 그대로 — `#181` 이 소유자를 여기에 넣은 결정은 유효하다. **자리가 잘못됐던
+ * - `badge`: 이름 옆 자리(메시지 이름줄, 컴포저 멘션 후보, 디렉터리 행). 에이전트는 지금의
+ *   인라인 배지 그대로 — `#181` 이 소유자를 여기에 넣은 결정은 유효하다. **자리가 잘못됐던
  *   것이지 표시가 잘못된 게 아니다.** 기본값을 `badge` 로 두는 이유도 이것이다:
- *   새 호출자가 variant 를 잊으면 정보가 사라지는 쪽이 아니라 남는 쪽으로 떨어진다.
+ *   새 호출자가 variant 를 잊으면 소유자가 사라지는 쪽이 아니라 남는 쪽으로 떨어진다.
+ *   **사람은 이 자리에서 아무것도 그리지 않는다(#365)** — 이 자리는 "이 작성자가 무엇인가"를
+ *   덧붙이는 표식이고 사람에게는 덧붙일 것이 없다. 사람 아바타가 서는 자리는 `avatar` 다.
  *
  * 크기는 호출자가 `className` 으로 준다(`h-8 w-8` 등). 그래서 두 kind 의 기본 상자
  * 크기를 `h-5 w-5` 로 **같게** 둔다 — `h-full` 로 부모에 기대면 크기를 주지 않는
@@ -114,9 +116,13 @@ function useAvatarUrl(accountId: string | null, attachmentId: string | null): st
 export function Identity({ account, className = '', variant = 'badge' }: IdentityProps) {
   // 에이전트에게만 사진을 받지 않는다 — 에이전트는 스스로 올릴 수단이 없고(#159 범위 밖),
   // 그 자리는 글리프가 지킨다. 훅은 조건부로 부를 수 없으므로 인자로 걸러 낸다.
+  // #365 로 사람의 `badge` 가 아무것도 그리지 않게 되었으므로 variant 도 같이 걸러 낸다 —
+  // 그리지 않는 자리에서 바이트를 받으면 사람 100 명이 선 디렉터리가 아무것도 안 보이면서
+  // 왕복 100 번을 낸다. 캐시가 있어 첨부당 한 번이지만, 그 한 번도 필요 없는 왕복이다.
+  const human = account && account.kind === 'human' && variant === 'avatar';
   const avatarUrl = useAvatarUrl(
-    account && account.kind === 'human' ? account.id : null,
-    account && account.kind === 'human' ? account.avatarAttachmentId : null,
+    human ? account.id : null,
+    human ? account.avatarAttachmentId : null,
   );
 
   // #181 소유자는 계정 디렉터리에서 푼다. `getState()` 가 아니라 **구독**이어야 한다 —
@@ -181,11 +187,27 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
     );
   }
 
-  // 사람 계정. **variant 를 보지 않는다** — 사람은 두 자리에서 이미 같은 둥근 아바타
-  // 하나였고 넘친 적이 없다. #277 의 결함은 에이전트 배지가 거터에 들어간 것이므로,
-  // 여기에 variant 분기를 넣으면 고칠 것 없는 자리를 바꿔 `rounded-full` 이 `rounded` 로
-  // 갈리는 식의 무관한 회귀만 생긴다. `overflow-hidden` 도 두 자리 모두에서 필요하다 —
-  // 사진(#159)은 badge 자리에도 걸리고, 상자를 넘지 않아야 하는 것은 자리와 무관하다.
+  // 사람 계정.
+  //
+  // #365: 사람의 `badge` 는 **아무것도 아니다**. 이 자리가 답하는 질문은 "이 작성자가
+  // 무엇인가"이고, 에이전트에게는 🤖+소유자가 그 답이지만 사람에게는 덧붙일 것이 없다 —
+  // 이름은 이미 이름줄(`author-name`)에 있으므로, 여기 그린 아바타는 거터의 것을 한 번 더
+  // 세운 것뿐이었다. `handle` 을 sr-only 로 내보내므로 스크린리더에도 두 번 읽혔다.
+  //
+  // 이 자리에 있던 #277 의 주석은 여기에 variant 분기를 넣지 않은 근거였다: "고칠 것 없는
+  // 자리를 바꿔 `rounded-full` 이 `rounded` 로 갈리는 식의 무관한 회귀만 생긴다."
+  // **그 판단은 그때 기준으로 틀리지 않았다** — 사람 아바타는 32px 거터를 넘친 적이 없다.
+  // 다만 #277 이 본 것은 "넘치는가"이고 "그려야 하는가"는 검토되지 않았다. 지금 바뀌는
+  // 것은 후자뿐이다: 아래 `avatar` 분기의 마크업은 한 글자도 바뀌지 않았고(`rounded-full`
+  // ·`overflow-hidden` 그대로), 그 주석이 경고한 회귀는 #277 회귀선이 계속 지킨다.
+  //
+  // 기본값 `badge` 는 그대로 둔다. 사람 쪽에서는 그 기본값이 이제 "정보가 남는 쪽"이
+  // 아니라 "아무것도 없는 쪽"으로 떨어지지만, 사람 아바타가 서는 자리는 거터·참여자 띠·
+  // 프로필 칸뿐이고 그 호출자들은 이미 `variant="avatar"` 를 명시한다. 기본값을 뒤집으면
+  // 대신 소유자 표시를 잊는 에이전트 호출자가 생겨 #181 이 되돌아간다.
+  if (variant === 'badge') return null;
+
+  // `overflow-hidden` 은 이 자리에도 걸려 있다 — 사진(#159)이 상자를 넘지 않아야 한다.
   return (
     <span
       className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-fg-on-strong ${avatarUrl ? 'bg-surface-hover' : handleColor(account.handle)} ${className}`}

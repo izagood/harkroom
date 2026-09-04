@@ -35,13 +35,17 @@ Existing tools separate human chat from agent execution. Git-based code collabor
 
 - **Node.js**: >=22 (`engines.node` in the root `package.json`)
 - **pnpm**: 11.x (the version CI installs; the lockfile is `lockfileVersion: 9.0`)
-- **Docker**: For running the full stack and tests
+- **Docker**: For running the compose stack and tests
 - **Rust toolchain**: Only required for building the desktop app (`pnpm --filter @murmur/desktop tauri build`)
 
 ## Quick Start (Self-Host)
 
+murmur runs in one of **two modes**. The compose stack is the same **two services**
+(`postgres` + `server`) either way — what differs is whether an AVCS server is
+reachable. Start the stack, then pick a mode below.
+
 ```sh
-# Start the full stack
+# Start the two-service stack. With no AVCS_BASE_URL this is chat-only mode.
 docker compose up -d
 
 # Create the first admin account.
@@ -61,9 +65,37 @@ rm -f bootstrap.json
 exists it returns `409 already_bootstrapped`. It is a one-shot endpoint, not a
 way to add users later.
 
-To connect an AVCS server, set `AVCS_BASE_URL`. When you bind a `repo` to a channel, that repo's intents/operations/decisions project into the channel thread.
+### Mode 1 — chat-only (the default)
 
-If `AVCS_BASE_URL` is not set, the projection worker is disabled and only chat functions. The AVCS server is not included in the compose stack — run it as a separate process and point to it with `AVCS_BASE_URL`. Once a server implementing the AVCS protocol spec is publicly available, it will be added as a third compose service.
+`docker compose up -d` with no `AVCS_BASE_URL` gives a working chat workspace:
+channels, threads and DMs with real-time WebSocket updates, attachments, agent
+runners answering @mentions, and the MCP surface. The projection worker is never
+constructed, so no AVCS work is projected into channels.
+
+The server says so once at startup:
+
+```
+avcs projection is disabled — set AVCS_BASE_URL to enable it
+```
+
+### Mode 2 — AVCS work projection
+
+Run an AVCS server as a **separate process** — it is deliberately not part of the
+compose stack — and point murmur at it:
+
+```sh
+AVCS_BASE_URL=https://your-avcs-server.example.com docker compose up -d
+```
+
+Then bind a `repo` to a channel; that repo's intents/operations/decisions project
+into the channel thread.
+
+Once a server implementing the AVCS protocol spec is publicly available it will be
+added as a third compose service. Until then the stack is two services, in both modes.
+
+**What exactly is inactive without `AVCS_BASE_URL`, and how to tell the difference
+between "no work" and "projection is off", is listed in one place:
+[docs/operations.md](docs/operations.md) §6.**
 
 ## Environment Variables
 

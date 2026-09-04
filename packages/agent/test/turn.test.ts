@@ -2,7 +2,7 @@ import { chmod, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { assertHarnessContract, buildTurnCommand, preassignsSessionId, writeMcpConfigOnce, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
+import { HARNESS_ENV_DENYLIST, assertHarnessContract, buildTurnCommand, preassignsSessionId, writeMcpConfigOnce, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 
 // murmurUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
 // 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
@@ -492,5 +492,49 @@ describe('writePromptFile — 0600 권한', () => {
     const filePath = await writePromptFile(dir, '');
     const content = await readFile(filePath, 'utf8');
     expect(content).toBe('');
+  });
+});
+
+// #374 — 러너가 Claude Code 세션 안에서 뜨면(도그푸딩이 그렇다) 러너 env 에
+// `CLAUDE_CODE_CHILD_SESSION` 이 들어 있고, `childEnv` 는 부모 env 를 통째로 복사하므로
+// 그 마커가 자식 하네스까지 그대로 갔다. 마커를 물려받은 claude 는 전사 저장을 꺼서
+// 세션 파일이 안 생기고, 그러면 다음 턴의 `-r <uuid>` resume 이 성립하지 않는다(#348 §2).
+// 이 회귀선은 **부모에 있어도 자식에는 없다**를 두 모드 모두에서 고정한다.
+describe('buildTurnCommand — 세션 저장을 끄는 마커는 자식에 물려주지 않는다 (#374)', () => {
+  const saved = process.env.CLAUDE_CODE_CHILD_SESSION;
+  const savedOther = process.env.CLAUDE_CODE_ENTRYPOINT;
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env.CLAUDE_CODE_CHILD_SESSION;
+    else process.env.CLAUDE_CODE_CHILD_SESSION = saved;
+    if (savedOther === undefined) delete process.env.CLAUDE_CODE_ENTRYPOINT;
+    else process.env.CLAUDE_CODE_ENTRYPOINT = savedOther;
+  });
+
+  it('멘션 턴: 부모에 CLAUDE_CODE_CHILD_SESSION 이 있어도 자식 env 에는 없다', () => {
+    process.env.CLAUDE_CODE_CHILD_SESSION = '1';
+    const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true });
+    expect(p.env).not.toHaveProperty('CLAUDE_CODE_CHILD_SESSION');
+  });
+
+  it('인터랙티브 턴: 같은 마커가 자식 env 에는 없다', () => {
+    process.env.CLAUDE_CODE_CHILD_SESSION = '1';
+    const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'interactive', sessionId: 'uuid-1', isFirstTurn: true });
+    expect(p.env).not.toHaveProperty('CLAUDE_CODE_CHILD_SESSION');
+  });
+
+  // 과잉 삭제 회귀선. `CLAUDE*` 를 통째로 지우면 하네스가 정상 동작에 쓰는 것까지 뺏는다 —
+  // denylist 는 실측된 키만 담는다는 규칙을 여기서 고정한다(HARNESS_ENV_DENYLIST 주석).
+  it('근거 없는 다른 CLAUDE* 변수는 그대로 물려준다', () => {
+    process.env.CLAUDE_CODE_ENTRYPOINT = 'cli';
+    const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true });
+    expect(p.env.CLAUDE_CODE_ENTRYPOINT).toBe('cli');
+  });
+
+  // denylist 자체가 비어 버리면 위 두 테스트는 부모 env 에 마커가 없는 기기에서 조용히
+  // 통과한다(이 파일은 process.env 를 직접 심으므로 그럴 일은 없지만, 목록이 사라진 것을
+  // 알려 주는 신호는 따로 필요하다).
+  it('denylist 에 실측된 마커가 들어 있다', () => {
+    expect([...HARNESS_ENV_DENYLIST]).toContain('CLAUDE_CODE_CHILD_SESSION');
   });
 });
