@@ -364,6 +364,11 @@ export class ApiClient {
     return this.req('PATCH', `/channels/${channelId}/pref`, patch);
   }
 
+  /** 섹션 이름 바꾸기(#323). 새 이름이 이미 존재하면 합친다. */
+  renameSection(oldName: string, newName: string | null): Promise<{ prefs: ChannelPrefRow[] }> {
+    return this.req('PATCH', `/channels/sections/${encodeURIComponent(oldName)}`, { name: newName });
+  }
+
   /**
    * #171: 새 에이전트의 기본값. admin 전용이다.
    * 실패를 여기서 삼키지 않는다 — 호출부가 "못 읽었다" 를 사람에게 보여야 한다.
