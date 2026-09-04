@@ -70,8 +70,16 @@ export function TerminalPanel() {
         // 쓸 수 없으면 `onInput` 을 **넘기지 않는다** — sink 가 xterm 의 stdin 자체를 끈다
         // (terminalSink.ts). 받아 놓고 버리면 사람은 글자가 찍히는 것을 보고 쳤다고 믿는데
         // 러너에는 아무것도 닿지 않는다.
+        //
+        // **크기도 같은 판정을 탄다**(#335). 소유자의 폭이 PTY 폭이 되고, admin 은 그
+        // 폭을 받아 자기 패널에서 축소·스크롤해 본다 — 읽기 전용은 아무것도 바꾸지
+        // 않는다는 #315 의 결정과 같은 결이다. admin 이 좁은 창에서 접힌 줄을 보는 것은
+        // 받아들이기로 한 비용이지, 폭 협상으로 고칠 것이 아니다.
         sink = getTerminalSinkFactory()(host, writable
-          ? { onInput: (data) => attach?.sendInput(new TextEncoder().encode(data)) }
+          ? {
+              onInput: (data) => attach?.sendInput(new TextEncoder().encode(data)),
+              onResize: (cols, rows) => attach?.sendResize(cols, rows),
+            }
           : undefined);
         setPhase('attached');
         attach = connectAgentAttach(api.baseUrl, ticket, {
