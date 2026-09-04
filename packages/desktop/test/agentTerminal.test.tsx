@@ -250,7 +250,8 @@ describe('#335 소유자의 폭이 PTY 폭이 되고, admin 의 폭은 아무것
     useAppStore.getState().set({
       me: acc('u1', 'owner'),
       accounts: { a1: agent('a1', 'forge', 'u1') },
-      terminalAgentId: 'a1',
+      // #339 이후 대상은 3필드다 — `session()` 기본값(a1/c1/m1)과 일치해야 패널이 붙는다.
+      terminalTarget: { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1' },
     });
     render(<TerminalPanel />);
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
