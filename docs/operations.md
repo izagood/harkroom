@@ -131,11 +131,55 @@ murmur 는 avcs 서버를 폴링해 intent·operation·decision 같은 객체를
 AVCS_BASE_URL=https://your-avcs-server.example.com
 ```
 
+**`AVCS_BASE_URL` 이 없을 때 무엇이 꺼지는지는 이 절 하나에만 적는다**(#371).
+루트 `README.md` 와 `docs/design.md` 는 여기를 가리키기만 한다 — 같은 목록을 여러 곳에
+두면 한 곳만 낡고, 낡은 쪽을 읽은 사람이 손해를 본다.
+
+### 꺼지는 것은 하나다 — 투영 워커
+
+`AVCS_BASE_URL` 을 읽는 자리는 코드 전체에 **셋**뿐이다:
+
+| 자리 | 하는 일 |
+|---|---|
+| `packages/server/src/config.ts:27` | `env.AVCS_BASE_URL ?? null` 을 `config.avcsBaseUrl` 로 읽는다 |
+| `packages/server/src/main.ts:20` | 값이 **있을 때만** `ProjectionWorker` 를 만들고 `start()` 한다 |
+| `packages/server/src/main.ts:30` | 없으면 기동 경고 한 줄을 남긴다(`warnIfProjectionDisabled`) |
+
+그래서 꺼지는 것은 **투영 워커 하나**다. 없어지는 라우트도, 404 가 되는 경로도 없다 —
+전부 200 으로 답하고 **결과가 비어 있을 뿐**이다. 그것이 이 절이 필요한 이유다.
+
+| 기능 | 워커가 없을 때 | 그렇게 되는 근거 |
+|---|---|---|
+| avcs 객체 → 채널 시스템 메시지 투영 | 아무것도 들어오지 않는다 | 그 메시지의 유일한 작성자가 `avcs/projection.ts:94` |
+| 사이드바 ACTIVE WORK 의 리스 목록 | `GET /leases` 가 늘 `{leases: []}` | `active_lease` 의 유일한 작성자가 `projection.ts:156` |
+| `murmur_projection_cursor` 메트릭 | 시계열이 **아예 없다**(0 이 아니라 없음) | `projection_cursor` 의 유일한 작성자가 `projection.ts:184` |
+| `GET /healthz` 의 `avcs.connected` | 항상 `false` | `main.ts:38` 이 `DISABLED_PROJECTION_STATUS` 로 답한다 |
+| `murmur` 시스템 계정 | 만들어지지 않는다 | `ensureSystemAccount` 호출이 `main.ts:24`, 즉 `if` 블록 안이다 |
+| 채팅 전부 — 채널·스레드·DM·검색·첨부·반응·WS·PAT·MCP·러너 릴레이 | **그대로 동작한다** | `buildServer.ts` 가 라우트 모듈에 avcs 클라이언트를 넘기지 않는다 |
+
+### 말없이 성공하는 자리 — 여기가 사람을 속인다
+
+투영이 꺼져 있어도 **성공 응답을 주면서 아무 일도 하지 않는** 경로가 둘 있다. 둘 다
+화면에 표시가 없으므로 미리 알고 있어야 한다.
+
+- **MCP `work.link`** (`packages/server/src/mcp/mcpPlugin.ts:290`) — repo 가 바인딩된
+  채널만 있으면 `{ ok: true }` 를 주고 `work_thread` 행까지 쓴다. 그 행을 읽는 곳은
+  `projection.ts:109` 하나뿐이라 **투영이 꺼져 있으면 아무도 영원히 읽지 않는다.**
+  에이전트는 작업을 스레드에 묶었다고 믿는다.
+- **채널에 repo 바인딩** (`POST /channels` · `PATCH /channels/:id`, 데스크탑은
+  `Sidebar.tsx:529` 의 Repository 입력) — 값이 저장되고 사이드바와 채널 헤더에 배지까지
+  뜬다. 그 폼에는 아무 경고가 없다. 바인딩을 소비하는 곳은 `projection.ts:223` 뿐이다.
+
+이 둘은 **문서가 아니라 코드로 닫을 일**이다(성공 응답에 경고를 싣거나, 폼 옆에 투영
+상태를 붙이거나). 지금 알아챌 수 있는 자리는 아래 사이드바 배너 하나뿐이다.
+
 ### 꺼져 있을 때 보이는 것
 
 - 서버 기동 로그에 경고 한 줄: `avcs projection is disabled — set AVCS_BASE_URL to enable it`
+  (`avcs/projection.ts:301`)
 - `GET /projection/status` 가 `state: "unconfigured"` 를 준다
 - 사이드바 ACTIVE WORK 에 "투영이 설정되지 않았다 / AVCS_BASE_URL 로 켠다"
+  (`LeasePanel.tsx:67`, `Sidebar.tsx:1279` 에서 그려진다)
 
 이 세 자리가 **모두 필요한 이유**: 예전에는 투영이 꺼져 있어도 화면이 평소와 똑같이
 "No active work" 였다. 아무 일도 안 일어나는 것과 아무도 보고 있지 않은 것이 같은
@@ -188,6 +232,11 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
 `GET /healthz` 의 `avcs.connected` 는 **avcs 서버에 붙었는가**이고,
 `/projection/status` 는 **투영이 돌고 있는가**다. 다른 사실이라 한 객체에 싣지 않는다 —
 붙어 있어도 폴링이 멈출 수 있고, 잠깐 끊겨도 투영은 곧 따라잡는다.
+
+**`/healthz` 만으로는 "투영을 끈 것"과 "켰는데 못 붙은 것"을 구분할 수 없다** — 둘 다
+`connected: false` 다(`main.ts:38`). 그 구분은 `/projection/status` 의 `state` 가 한다:
+끈 것은 `unconfigured`, 켰는데 안 도는 것은 `stalled` 다. 감시를 붙인다면 `/healthz` 가
+아니라 이쪽을 봐야 한다.
 
 ### 끊긴 곳: `.avcs` 가 `git clean` 에 지워진다
 
