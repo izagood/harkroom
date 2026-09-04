@@ -72,9 +72,17 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
   });
 }
 
-/** 인가 판정 결과. 거절은 그대로 응답이 되도록 상태·코드·문구를 함께 들고 온다. */
+/**
+ * 인가 판정 결과. 거절은 그대로 응답이 되도록 상태·코드·문구를 함께 들고 온다.
+ *
+ * `via` 는 **어떻게** 통과했는지다(#315). 터미널 입력은 소유자만 허용하고 admin 은 읽기
+ * 전용인데, 그 구분을 부르는 쪽에서 다시 계산하면 판정이 두 벌이 된다 — 이 저장소에서
+ * 판정 복제가 반복해서 결함을 만들었고(#253 이 이 술어를 "이 파일에 하나만" 으로 못박은
+ * 이유), 인가에서 사본은 조용히 열리는 쪽으로 어긋난다. 술어는 이미 두 사실을 다 알고
+ * 있었으므로 새 술어를 만들지 않고 **알던 것을 돌려주게만** 했다.
+ */
 export type OwnerVerdict =
-  | { ok: true }
+  | { ok: true; via: 'owner' | 'admin' }
   | { ok: false; status: 403; code: 'forbidden'; message: string }
   | { ok: false; status: 404; code: 'not_found'; message: string };
 
@@ -99,7 +107,7 @@ export async function checkOwnerOrAdmin(
   account: AccountView,
   agentAccountId: string,
 ): Promise<OwnerVerdict> {
-  if (account.isAdmin) return { ok: true };
+  if (account.isAdmin) return { ok: true, via: 'admin' };
 
   // `left join` 이라 계정은 있는데 agent_config 가 없는 경우(사람 계정)도 한 행으로 온다 —
   // 그때 owner_account_id 는 null 이고, 아래 null 분기가 admin 만으로 좁힌다.
@@ -118,5 +126,5 @@ export async function checkOwnerOrAdmin(
   if (ownerAccountId !== account.id) {
     return { ok: false, status: 403, code: 'forbidden', message: 'owner or admin required' };
   }
-  return { ok: true };
+  return { ok: true, via: 'owner' };
 }
