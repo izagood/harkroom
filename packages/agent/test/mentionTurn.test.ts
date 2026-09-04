@@ -16,7 +16,7 @@ import { MurmurAgentClient } from '../src/murmur.js';
 import { SessionStore } from '../src/sessions.js';
 import type { Exec } from '../src/workspace.js';
 import type { TurnPlan } from '../src/turn.js';
-import type { TurnResult } from '../src/pty.js';
+import type { PtyWriter, TurnResult } from '../src/pty.js';
 
 const ME = { id: 'agent-1', handle: 'forge' };
 const CHANNEL = 'c1';
@@ -1706,15 +1706,18 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
   function fakeRelay() {
     const opened: { agentAccountId: string; channelId: string; threadRootId: string | null; harness: string }[] = [];
     const bytes: Buffer[] = [];
+    /** `bindInput` 으로 받은 PTY 통로들(#315). 세션 순서대로 쌓인다. */
+    const writers: PtyWriter[] = [];
     let closed = 0;
     return {
-      opened, bytes, closedCount: () => closed,
+      opened, bytes, writers, closedCount: () => closed,
       relay: {
         openSession(input: { agentAccountId: string; channelId: string; threadRootId: string | null; harness: 'claude-code' | 'codex' | 'gemini' }) {
           opened.push(input);
           return {
             sessionId: `sess-${opened.length}`,
             push: (chunk: Buffer) => { bytes.push(chunk); },
+            bindInput: (writer: PtyWriter) => { writers.push(writer); },
             close: () => { closed += 1; },
           };
         },
