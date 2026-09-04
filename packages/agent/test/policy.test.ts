@@ -106,6 +106,28 @@ describe('isCredentialFailure', () => {
   it('treats an unrelated failure as transient', () => {
     expect(isCredentialFailure(new Error('socket hang up'))).toBe('other');
   });
+
+  // #380 1단계 실측 — 프롬프트를 pty.write() 로 보내면 PTY 가 그 바이트를 그대로 에코해
+  // tail 앞부분에 남는다(실측: `MY_SECRET_PROMPT_MARKER_XYZ\r\nError: ...`). tail 은
+  // isCredentialFailure 의 유일한 증거이므로, 사람이 프롬프트에 이 함수가 찾는 문구를 그대로
+  // 쓰면 무관한 실패가 자격증명 실패로 오판된다. 이 오탐은 **실제로 재현된다** — 격리 없이
+  // stdinFile 경로를 없애면 이 세 케이스가 전부 깨진다.
+  describe('#380 1단계 실측 — 에코된 프롬프트 본문이 자격증명 판정을 오염시킨다', () => {
+    it('프롬프트에 x-api-key 를 언급하면 무관한 실패가 자격증명 실패로 오판된다', () => {
+      const tail = '이 프로젝트는 x-api-key 헤더를 어떻게 검증하나요?\r\nError: some unrelated bug\r\n';
+      expect(isCredentialFailure(new Error(`harness 종료 1: ${tail}`))).toBe('harness-credential');
+    });
+
+    it('프롬프트에 authentication_error 를 언급하면 오판된다', () => {
+      const tail = 'authentication_error 처리 로직을 문서화해줘\r\nError: unrelated crash\r\n';
+      expect(isCredentialFailure(new Error(`harness 종료 1: ${tail}`))).toBe('harness-credential');
+    });
+
+    it('프롬프트에 could not resolve authentication 문구를 그대로 쓰면 오판된다', () => {
+      const tail = '왜 could not resolve authentication 에러가 나는지 조사해줘\r\nError: unrelated crash\r\n';
+      expect(isCredentialFailure(new Error(`harness 종료 1: ${tail}`))).toBe('harness-credential');
+    });
+  });
 });
 
 describe('nextBackoffMs', () => {
