@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { sidebarStorage } from '../lib/prefs';
-import { isMacOS, MAC_TRAFFIC_LIGHT_PL } from '../lib/platform';
+import { isMacOS, MAC_TRAFFIC_LIGHT_PL, TOP_BAR_H } from '../lib/platform';
 import { CommunityRail } from './CommunityRail';
 import { Sidebar } from './Sidebar';
 import { ChannelPane } from './ChannelPane';
@@ -140,7 +140,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
         <div
           data-testid="app-header"
           data-tauri-drag-region
-          className={`flex items-center gap-2 border-b border-border bg-surface-raised py-1 pr-2 ${
+          className={`flex ${TOP_BAR_H} items-center gap-2 border-b border-border bg-surface-raised pr-2 ${
             headerNeedsTrafficLightRoom ? MAC_TRAFFIC_LIGHT_PL : 'pl-2'
           }`}
         >
