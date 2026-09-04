@@ -44,6 +44,8 @@ export interface AgentStatePaths {
   mcpDir: string;
   /** avcs 워크스페이스들의 상위 디렉터리. 세션 파일과 생애주기를 같이 한다. */
   workspaceBaseDir: string;
+  /** 개인 Codex 설정과 분리한 이 러너 전용 CODEX_HOME. */
+  codexHomeDir: string;
   /** 서버별로 갈리기 **전** 경로(handle 만으로 스코프). 존재 확인용이고 자동 이전은 하지 않는다. */
   legacyPath: string;
 }
@@ -63,6 +65,7 @@ export function resolveAgentStateDir(
     sessionsPath: join(agentStateDir, 'sessions.json'),
     mcpDir: join(agentStateDir, 'mcp'),
     workspaceBaseDir: join(agentStateDir, 'workspaces'),
+    codexHomeDir: join(agentStateDir, 'codex-home'),
     legacyPath: join(baseDir, handle),
   };
 }

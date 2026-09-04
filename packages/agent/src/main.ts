@@ -29,6 +29,7 @@ import { createRelayClient } from './relay.js';
 import { createInteractiveManager, type InteractiveManager } from './interactiveTurn.js';
 import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
+import { ensureCodexHome } from './codexHome.js';
 
 const config = loadConfig();
 const murmur = new MurmurAgentClient(config.murmurUrl, config.murmurPat);
@@ -118,8 +119,12 @@ const [me, guide] = await (async () => {
 // `resolveAgentStateDir` 이 함께 돌려준다. 여기서 각자 조립하면 하나를 옛 뿌리에 두는
 // 실수가 타입에 걸리지 않고, 그 파일 하나만 두 인스턴스가 밟는다(그러면 격리는 없다).
 const {
-  agentStateDir, legacyPath, sessionsPath, mcpDir, workspaceBaseDir,
+  agentStateDir, legacyPath, sessionsPath, mcpDir, workspaceBaseDir, codexHomeDir,
 } = resolveAgentStateDir(config.stateDir, me.handle, me.id, config.agentInstance);
+
+// 대화형 `codex resume` 은 --ignore-user-config 를 받지 않는다. 개인 config.toml/MCP 를
+// 물려주지 않으면서 기존 로그인은 재사용하도록 Murmur 전용 CODEX_HOME 을 준비한다.
+const codexHome = await ensureCodexHome(codexHomeDir);
 
 // 서버별로 갈리기 전 경로가 남아 있으면 **경고만** 한다 — 자동으로 옮기지 않는다.
 // 코드는 그 디렉터리가 *어느 서버의* 이 handle 것인지 알 방법이 없다(아래 레거시
@@ -202,7 +207,7 @@ const registry = new TurnRegistry();
 const mentionQueue = new MentionQueue();
 interactive = createInteractiveManager({
   murmur, store, exec, runTurn: runPtyTurn, me,
-  workspaceBaseDir, mcpConfigPath,
+  workspaceBaseDir, mcpConfigPath, codexHome,
   murmurUrl: config.murmurUrl, pat: config.murmurPat,
   relay, registry, queue: mentionQueue,
   orphanMs: config.interactiveOrphanMs,
@@ -288,6 +293,7 @@ while (running) {
           // 디렉터리다. 워크스페이스 안에 두면 bypassPermissions 에이전트가 자기 지시문을
           // 고칠 수 있다.
           stateDir: agentStateDir,
+          codexHome,
           murmurUrl: config.murmurUrl, pat: config.murmurPat,
           turnTimeoutMs: config.turnTimeoutMs,
           relay,
