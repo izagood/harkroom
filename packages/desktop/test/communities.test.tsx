@@ -271,10 +271,11 @@ describe('커뮤니티마다 스토어·컨트롤러 인스턴스 (#166)', () =>
 
   it('같은 커뮤니티에 다시 로그인해도 목록이 늘지 않는다', async () => {
     const ws = countingWsFactory();
-    await startCommunitySession({
+    const first = await startCommunitySession({
       baseUrl: 'https://a.example', token: 't-a', active: true, accountId: 'acct-a', label: null,
       api: fakeApi(), makeWs: ws.makeWs,
     });
+    const stopFirst = vi.spyOn(first.controller!, 'stop');
     await startCommunitySession({
       baseUrl: 'https://a.example', token: 't-a2', active: true, accountId: 'acct-a', label: null,
       api: fakeApi(), makeWs: ws.makeWs,
@@ -283,5 +284,7 @@ describe('커뮤니티마다 스토어·컨트롤러 인스턴스 (#166)', () =>
     // 재로그인마다 엔트리가 붙으면 죽은 커뮤니티가 쌓이고, 그것만으로 알림 제목에
     // 커뮤니티 꼬리표가 붙어 사용자 눈에 보이는 변화가 생긴다(§7 의 성공 기준).
     expect(useCommunityRegistry.getState().entries).toHaveLength(1);
+    // 기존 컨트롤러를 잃고 새것만 꽂으면 옛 WS와 runner가 백그라운드에 남는다.
+    expect(stopFirst).toHaveBeenCalledOnce();
   });
 });
