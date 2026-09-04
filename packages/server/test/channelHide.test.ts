@@ -177,6 +177,50 @@ describe('채널 숨기기(#376)', () => {
     expect(await hiddenAtOf(meId, channelId)).toEqual(hiddenBefore);
   });
 
+  // 되돌려 RED 회수에서 이 자리가 비어 있었다: `REVEAL_REASONS` 에 `'dm'` 을 **더해도**
+  // 스위트가 초록이었다. `dm` 사유는 DM 채널의 **모든** 메시지가 갖는 것이라, 그것으로
+  // 숨김을 풀면 DM 을 숨기는 일이 첫 메시지에 무너진다 — #376 이 명시적으로 거부한 (C)
+  // "안 읽음이 생기면 나타난다"가 바로 그 상태다. `messages.ts` 의 `REVEAL_REASONS` 주석이
+  // 그것을 근거로 적어 뒀는데 지키는 테스트가 없었으므로, 그 근거를 여기서 고정한다.
+  it('5b — DM 은 평범한 메시지로 다시 나타나지 않는다(`dm` 사유는 부름이 아니다)', async () => {
+    // DM 은 위 beforeEach 의 일반 채널과 다른 채널이므로 여기서 따로 만든다.
+    const dm = await app.inject({
+      method: 'POST', url: '/dms', headers: auth(adminToken), payload: { accountIds: [meId] },
+    });
+    expect(dm.statusCode).toBeLessThan(300);
+    const dmId = dm.json().id as string;
+
+    expect(await setHidden(meToken, dmId, true)).toBe(200);
+    const hiddenBefore = await hiddenAtOf(meId, dmId);
+    expect(hiddenBefore).not.toBeNull();
+
+    // 부르지 않는 평범한 DM 메시지다. 그래도 상대는 `dm` 사유로 inbox 를 받는다 —
+    // **알림은 오지만 숨김은 안 풀린다**가 이 테스트가 고정하는 사실이다.
+    const res = await postMessage(pool, { channelId: dmId, authorId: adminId, body: '자료 보냈어요' });
+    if (!res.message) throw new Error(`게시가 거절됐다: ${JSON.stringify(res.failure)}`);
+    expect(res.notified).toContain(meId);
+
+    // 시각까지 같은지 본다 — 지웠다 다시 적는 구현도 걸러진다(테스트 5 와 같은 이유).
+    expect(await hiddenAtOf(meId, dmId)).toEqual(hiddenBefore);
+  });
+
+  it('5c — DM 이라도 나를 **부르면** 다시 나타난다(숨긴 DM 이 무덤이 되지는 않는다)', async () => {
+    const dm = await app.inject({
+      method: 'POST', url: '/dms', headers: auth(adminToken), payload: { accountIds: [meId] },
+    });
+    const dmId = dm.json().id as string;
+    expect(await setHidden(meToken, dmId, true)).toBe(200);
+
+    // 위와 같은 DM 인데 이번엔 지목이다. 5b 와 짝이 되어 "DM 이라서 안 풀린다"가 아니라
+    // "**사유가 부름이 아니라서** 안 풀린다"임을 가른다 — 채널 종류로 재는 구현이었다면
+    // 이쪽이 빨개진다.
+    const res = await postMessage(pool, { channelId: dmId, authorId: adminId, body: '<@' + meId + '> 확인 부탁해요' });
+    if (!res.message) throw new Error(`게시가 거절됐다: ${JSON.stringify(res.failure)}`);
+    expect(res.notified).toContain(meId);
+
+    expect(await hiddenAtOf(meId, dmId)).toBeNull();
+  });
+
   it('6 — 스스로 되돌릴 수 있다(남에게 요청할 일이 없다)', async () => {
     expect(await setHidden(meToken, channelId, true)).toBe(200);
     expect(await hiddenAtOf(meId, channelId)).not.toBeNull();
