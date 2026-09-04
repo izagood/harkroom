@@ -8,7 +8,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import WebSocket from 'ws';
-import type { AgentSessionView, AttachClientFrame, RelayRunnerFrame, RelayServerFrame } from '@murmur/shared';
+import type { AgentSessionView, AttachClientFrame, AttachServerFrame, RelayRunnerFrame, RelayServerFrame } from '@murmur/shared';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
@@ -72,8 +72,10 @@ function session(sessionId: string): AgentSessionView {
 
 interface Viewer {
   socket: WebSocket;
-  /** 서버가 알려 준 쓰기 권한. attach 응답에서 온 값 그대로다. */
-  canInput: boolean;
+  /** 서버가 이 뷰어에 보낸 프레임 전부 — `writer` 통지가 여기 실린다(스펙 §5-2 결정 2). */
+  received: AttachServerFrame[];
+  /** 마지막으로 받은 writer 통지. 아직 없으면 null — 구 서버 흉내가 아니라 순서 검증용. */
+  writer(): boolean | null;
   type(bytes: Buffer): void;
   close(): void;
 }
@@ -84,14 +86,23 @@ async function attach(token: string, sessionId: string): Promise<Viewer> {
     method: 'POST', url: `/agent-sessions/${sessionId}/attach`, headers: auth(token),
   });
   expect(res.statusCode).toBe(200);
+  // 쓰기 차례는 응답이 아니라 소켓의 `writer` 프레임이 알린다 — 응답에 있으면 attach
+  // 시점의 판정이 얼어붙어 승격·강등을 담지 못한다(#346).
+  expect(res.json().canInput).toBeUndefined();
   const socket = new WebSocket(`ws://${baseUrl}/agent-attach?ticket=${res.json().ticket as string}`);
+  const received: AttachServerFrame[] = [];
+  socket.on('message', (d) => received.push(JSON.parse(String(d)) as AttachServerFrame));
   await new Promise<void>((resolve, reject) => {
     socket.on('open', () => resolve());
     socket.on('error', reject);
   });
   return {
     socket,
-    canInput: res.json().canInput as boolean,
+    received,
+    writer: () => {
+      const frames = received.filter((f) => f.type === 'writer');
+      return frames.length ? (frames.at(-1) as { writer: boolean }).writer : null;
+    },
     // **뷰어 소켓에 직접 쓴다.** 화면의 가드를 지나지 않는 경로다 — 서버가 막지 않으면
     // 여기서 뚫린다(화면만 비활성으로 두면 못 잡는 그 구멍).
     type: (bytes) => socket.send(JSON.stringify({ type: 'input', data: bytes.toString('base64') } satisfies AttachClientFrame)),
@@ -179,15 +190,16 @@ beforeAll(async () => {
 });
 afterAll(async () => { await app.close(); await stop(); });
 
-describe('#315-1 소유자가 친 바이트가 러너 PTY 로 간다', () => {
-  it('뷰어 소켓의 input 이 그 세션의 러너에게 바이트 그대로 도착한다', async () => {
+describe('#315-1 writer 뷰어가 친 바이트가 러너 PTY 로 간다', () => {
+  it('혼자 붙은 뷰어는 writer 통지를 받고, 그 input 이 러너에게 바이트 그대로 도착한다', async () => {
     const sessionId = 'sess-input-1';
     const runner = await connectRunner(agentPat);
     runner.send({ type: 'announce', sessions: [session(sessionId)] });
     await waitForSession(sessionId);
 
     const viewer = await attach(ownerToken, sessionId);
-    expect(viewer.canInput).toBe(true);
+    // 마지막(이자 유일한) attach 가 writer 다 — 서버가 먼저 통지한다(스펙 §5-2 결정 2).
+    await waitFor(() => viewer.writer() === true);
     viewer.type(TYPED);
     await waitFor(() => inputBytes(runner).length > 0);
 
@@ -203,29 +215,66 @@ describe('#315-1 소유자가 친 바이트가 러너 PTY 로 간다', () => {
   });
 });
 
-describe('#315-4 admin 은 볼 수 있지만 칠 수 없다', () => {
-  it('admin 의 input 은 거절되고 러너에 바이트가 가지 않는다', async () => {
-    const sessionId = 'sess-input-admin';
+describe('#315-4 writer 가 아닌 뷰어는 소켓에 직접 써도 러너에 닿지 않는다', () => {
+  it('두 번째 attach 가 첫 번째를 강등시키고, 강등된 창의 input 은 버려진다', async () => {
+    const sessionId = 'sess-input-nonwriter';
     const runner = await connectRunner(agentPat);
     runner.send({ type: 'announce', sessions: [session(sessionId)] });
     await waitForSession(sessionId);
 
-    const adminViewer = await attach(adminToken, sessionId);
-    // 서버가 먼저 말한다 — 화면은 이 값을 받아 입력을 안 연다.
-    expect(adminViewer.canInput).toBe(false);
-    adminViewer.type(TYPED);
+    const first = await attach(ownerToken, sessionId);
+    await waitFor(() => first.writer() === true);
 
-    // **소유자의 입력을 뒤에 보내 순서를 확인한다.** "아직 안 왔다"와 "영영 안 온다"를
+    // 두 번째 창이 붙으면 차례가 넘어간다 — 첫 창은 강등 통지를 받는다.
+    const second = await attach(adminToken, sessionId);
+    await waitFor(() => second.writer() === true);
+    await waitFor(() => first.writer() === false);
+
+    // **강등된 창이 소켓에 직접 쓴다.** 화면이 아니라 서버가 막아야 하는 자리다.
+    first.type(TYPED);
+
+    // writer 의 입력을 뒤에 보내 순서를 확인한다 — "아직 안 왔다"와 "영영 안 온다"를
     // 고정 지연으로 가르면 느린 머신에서 이 테스트가 자기 이유 없이 초록이 된다.
-    const ownerViewer = await attach(ownerToken, sessionId);
-    ownerViewer.type(Buffer.from('owner\r', 'utf8'));
+    second.type(Buffer.from('writer\r', 'utf8'));
     await waitFor(() => inputBytes(runner).length > 0);
 
     expect(inputBytes(runner)).toHaveLength(1);
-    expect(inputBytes(runner)[0]!.toString('utf8')).toBe('owner\r');
+    expect(inputBytes(runner)[0]!.toString('utf8')).toBe('writer\r');
 
-    adminViewer.close();
-    ownerViewer.close();
+    first.close();
+    second.close();
+    await runner.close();
+  });
+
+  it('writer 가 떠나면 가장 최근에 붙은 남은 뷰어가 승계한다', async () => {
+    const sessionId = 'sess-input-succession';
+    const runner = await connectRunner(agentPat);
+    runner.send({ type: 'announce', sessions: [session(sessionId)] });
+    await waitForSession(sessionId);
+
+    // 각 승격·강등을 **기다린 뒤** 다음으로 간다 — 안 기다리면 second 의 attach 시점
+    // writer:true 가 남아 있어, 아래의 "승계했다" 대기가 낡은 프레임으로 즉시 통과하고
+    // 그 사이 서버 쪽 차례는 아직 third 라 입력이 버려진다(실측한 경합).
+    const first = await attach(ownerToken, sessionId);
+    await waitFor(() => first.writer() === true);
+    const second = await attach(adminToken, sessionId);
+    await waitFor(() => second.writer() === true && first.writer() === false);
+    const third = await attach(ownerToken, sessionId);
+    await waitFor(() => third.writer() === true && second.writer() === false);
+
+    // writer(셋째)가 떠난다 — 남은 것 중 가장 최근(둘째)이 승계해야 한다. 첫째가
+    // 받으면 "마지막 attach 가 writer" 가 이탈 경로에서 뒤집힌 것이다.
+    third.close();
+    await waitFor(() => second.writer() === true);
+    expect(first.writer()).toBe(false);
+
+    // 승계한 창의 입력이 실제로 흐른다 — 통지만 오고 게이트가 안 열리면 반쪽이다.
+    second.type(Buffer.from('heir\r', 'utf8'));
+    await waitFor(() => inputBytes(runner).length > 0);
+    expect(inputBytes(runner)[0]!.toString('utf8')).toBe('heir\r');
+
+    first.close();
+    second.close();
     await runner.close();
   });
 });
@@ -311,15 +360,15 @@ describe('#315-8 연타가 감사 행을 폭증시키지 않는다', () => {
 });
 
 describe('#315-9 소유자가 admin 이어도 자기 에이전트에는 칠 수 있다', () => {
-  it('admin 이면서 그 에이전트의 소유자인 사람은 canInput 이고 바이트가 러너에 도착한다', async () => {
+  it('admin 이면서 그 에이전트의 소유자인 사람도 writer 통지를 받고 바이트가 러너에 도착한다', async () => {
     // **이 조합이 기본값이다.** 에이전트를 만들 수 있는 것은 admin 뿐이고
     // (`POST /accounts/agents` 는 `requireAdmin`), 만든 사람이 그대로 소유자가 된다.
     // 그래서 "소유자가 admin 이기도 하다"는 예외가 아니라 새 에이전트의 **출발 상태**다.
     //
-    // 여기를 admin 이라는 이유로 읽기 전용으로 만들면, 그 에이전트에 칠 수 있는 사람이
-    // 한 명도 남지 않는다 — 운영자 결정("쓰기는 소유자만")이 지키려던 사람이 바로 그
-    // 소유자인데, "admin 은 읽기 전용"이 그 사람을 덮어 버리는 것이다. 소유권을 다른
-    // 사람에게 넘긴 뒤에야 기능이 살아나는 것은 결정이 아니라 사고다.
+    // writer 규칙(#346)으로 오면서 "admin 은 읽기 전용" 판정 자체가 사라졌으므로 이
+    // 회귀선의 뜻은 좁아졌다: attach 인가를 통과한 사람이 혼자 붙어 있으면 — 그가
+    // admin 이든 소유자든 — 차례가 그에게 온다. 이 조합이 죽으면 갓 만든 에이전트의
+    // 터미널에 칠 수 있는 사람이 한 명도 없다(#338 이 잡은 사고의 재발 방지선).
     const sessionId = 'sess-input-adminowner';
     const runner = await connectRunner(adminOwnedAgentPat);
     runner.send({
@@ -332,8 +381,7 @@ describe('#315-9 소유자가 admin 이어도 자기 에이전트에는 칠 수 
     });
 
     const viewer = await attach(adminToken, sessionId);
-    // 서버가 스스로 "쓸 수 있다"고 답해야 한다 — 화면은 이 값만 보고 입력을 연다.
-    expect(viewer.canInput).toBe(true);
+    await waitFor(() => viewer.writer() === true);
 
     viewer.type(TYPED);
     await waitFor(() => inputBytes(runner).length === 1);

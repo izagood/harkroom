@@ -20,6 +20,7 @@
 import type {
   AgentSessionState,
   AgentSessionView,
+  AttachClientFrame,
   AttachServerFrame,
   RelayRunnerFrame,
   RelayServerFrame,
@@ -44,12 +45,35 @@ interface Viewer {
   awaitingReplay: boolean;
   /** 재생 전에 도착한 라이브 바이트(base64 문자열 그대로). */
   queued: string[];
+  /**
+   * 이 뷰어가 러너로 흘린 입력 바이트 누계(#315, 스펙 §5-2 결정 3). detach 감사가 이
+   * 합산 하나만 남긴다. **base64 길이 산술로만 센다** — 바이트 수를 세려고 디코드하면
+   * "서버는 `data` 를 열지 않는다"(파일 머리)가 그 자리에서 깨진다.
+   */
+  inputBytes: number;
 }
 
 interface Runner {
   socket: RelaySocket;
   /** 이 러너가 announce 한 세션들. 소켓이 끊기면 통째로 버린다. */
   sessions: Map<string, AgentSessionView>;
+}
+
+/**
+ * attach 한 뷰어 하나의 손잡이(#315). 라우트가 유일한 호출자다 — 소켓의 message/close
+ * 이벤트를 이리로 넘기고, detach 감사에 `inputBytes()` 를 싣는다.
+ */
+export interface ViewerHandle {
+  /** 구독을 끊는다(패널 닫힘·소켓 절단). writer 였다면 가장 최근 뷰어가 승계한다. */
+  close(): void;
+  /**
+   * 뷰어 소켓에서 온 원문 프레임 하나를 처리한다. 반환은 "러너로 포워딩됐는가" —
+   * writer 가 아니거나, 러너가 없거나, 프레임이 비정형이면 **조용히 버리고** false 다.
+   * 버리는 것이 의도다: 읽기 전용 뷰어의 타이핑은 오류가 아니라 차례가 아닌 것뿐이다.
+   */
+  handleMessage(raw: string): boolean;
+  /** 이 뷰어가 러너로 흘린 입력 바이트 누계. 내용은 여기 없다 — 수만 있다. */
+  inputBytes(): number;
 }
 
 export interface RelayHub {
@@ -68,24 +92,35 @@ export interface RelayHub {
   getSession(sessionId: string): AgentSessionView | null;
 
   /**
-   * 뷰어를 세션에 붙인다. 반환값을 부르면 구독이 끊긴다(패널을 닫는 경로).
-   * 붙는 즉시 상태를 보내고, 러너가 살아 있으면 ring buffer 재생을 요청한다.
+   * 뷰어를 세션에 붙인다. 붙는 즉시 상태를 보내고, 러너가 살아 있으면 ring buffer 재생을
+   * 요청하며, **writer 차례를 이 뷰어로 넘긴다**(스펙 §5-2 결정 2 — 마지막 attach 가
+   * writer). 입력 포워딩·바이트 누계도 반환 핸들이 갖는다 — writer 판정과 포워딩을 한
+   * 곳(허브)에 두지 않으면 "누가 지금 쓰는가"의 진실이 라우트와 허브로 갈라진다.
    */
-  addViewer(sessionId: string, socket: RelaySocket): () => void;
+  addViewer(sessionId: string, socket: RelaySocket): ViewerHandle;
+}
 
-  /**
-   * 사람이 친 바이트를 그 세션의 러너에게 넘긴다(#315). `data` 는 base64 이고, 여기서도
-   * **열지 않는다** — 출력과 같은 규율이다(파일 머리 주석). 러너가 없거나 세션을 모르면
-   * false 다: 인가는 라우트가 이미 했으므로 여기서 거절하는 것은 "러너가 없다" 뿐이다.
-   */
-  sendInput(sessionId: string, data: string): boolean;
+/**
+ * base64 문자열이 담은 바이트 수 — **디코드 없이** 길이 산술로만 구한다. 감사에 남길
+ * 입력 바이트 수가 이것뿐인데, 그 수를 세자고 디코드하면 "서버는 `data` 를 열지 않는다"
+ * 가 감사 경로에서 깨진다.
+ */
+export function base64ByteLength(data: string): number {
+  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((data.length * 3) / 4) - padding);
 }
 
 export function createRelayHub(): RelayHub {
   const runners = new Map<string, Runner>();
   /** sessionId → 그 세션을 가진 에이전트 계정. 세션 조회를 러너 순회 없이 하려고 둔다. */
   const ownerOf = new Map<string, string>();
-  const viewers = new Map<string, Set<Viewer>>();
+  /** 배열이다 — 삽입 순서가 곧 attach 순서이고, writer 승계가 그 순서의 끝을 읽는다. */
+  const viewers = new Map<string, Viewer[]>();
+  /**
+   * 세션별 현재 writer(스펙 §5-2 결정 2). 소유자·admin 이 동시에 붙어도 이 맵이 한 명만
+   * 가리키므로 바이트가 섞이는 상태 자체가 없다 — 잠금 장치를 따로 만들지 않는 이유다.
+   */
+  const writerOf = new Map<string, Viewer>();
 
   const sendTo = (viewer: Viewer, frame: AttachServerFrame): void => {
     // 이미 닫힌 소켓에 쓰면 ws 가 던진다 — 한 뷰어의 죽은 소켓이 나머지 중계를 멈추면
@@ -99,6 +134,22 @@ export function createRelayHub(): RelayHub {
 
   const sendToRunner = (runner: Runner, frame: RelayServerFrame): void => {
     try { runner.socket.send(JSON.stringify(frame)); } catch { /* 끊긴 러너는 close 가 정리한다 */ }
+  };
+
+  /**
+   * writer 차례를 넘긴다. 이전 writer 에 `false`, 새 writer 에 `true` 를 **이 순서로**
+   * 알린다 — 두 창이 동시에 "내 차례"라고 믿는 순간을 만들지 않는다.
+   */
+  const setWriter = (sessionId: string, next: Viewer | null): void => {
+    const prev = writerOf.get(sessionId) ?? null;
+    if (prev === next) return;
+    if (prev) sendTo(prev, { type: 'writer', writer: false });
+    if (next) {
+      writerOf.set(sessionId, next);
+      sendTo(next, { type: 'writer', writer: true });
+    } else {
+      writerOf.delete(sessionId);
+    }
   };
 
   const registerSession = (agentAccountId: string, session: AgentSessionView): void => {
@@ -218,23 +269,13 @@ export function createRelayHub(): RelayHub {
       return runners.get(agentAccountId)?.sessions.get(sessionId) ?? null;
     },
 
-    sendInput(sessionId, data) {
-      const agentAccountId = ownerOf.get(sessionId);
-      const runner = agentAccountId ? runners.get(agentAccountId) : undefined;
-      if (!runner) return false;
-      // ★ `data` 를 **그대로** 옮긴다. 되돌렸다 싣거나 문자열로 디코드하면 사람이 친
-      //   제어 바이트(Ctrl-C, 화살표, 붙여 넣은 멀티바이트)가 깨진다.
-      sendToRunner(runner, { type: 'input', sessionId, data });
-      return true;
-    },
-
     addViewer(sessionId, socket) {
       const agentAccountId = ownerOf.get(sessionId);
       const runner = agentAccountId ? runners.get(agentAccountId) : undefined;
-      const viewer: Viewer = { socket, awaitingReplay: Boolean(runner), queued: [] };
-      let set = viewers.get(sessionId);
-      if (!set) { set = new Set(); viewers.set(sessionId, set); }
-      set.add(viewer);
+      const viewer: Viewer = { socket, awaitingReplay: Boolean(runner), queued: [], inputBytes: 0 };
+      let list = viewers.get(sessionId);
+      if (!list) { list = []; viewers.set(sessionId, list); }
+      list.push(viewer);
 
       if (!runner) {
         // 러너가 없는 세션에 붙었다 — attach 인가와 핸드셰이크 사이에 러너가 끊긴 창이다.
@@ -245,11 +286,49 @@ export function createRelayHub(): RelayHub {
         sendToRunner(runner, { type: 'replay.request', sessionId });
       }
 
-      return () => {
-        const current = viewers.get(sessionId);
-        if (!current) return;
-        current.delete(viewer);
-        if (!current.size) viewers.delete(sessionId);
+      if (runner) {
+        // 마지막 attach 가 writer 다(스펙 §5-2 결정 2). 러너가 없으면 입력이 갈 곳이
+        // 없으므로 차례를 주지 않고 읽기 전용임을 바로 알린다 — 프레임이 안 오는 것
+        // (구 서버)과 "차례가 아니다"를 뷰어가 구분할 필요는 없다: 어느 쪽이든 안 쓴다.
+        setWriter(sessionId, viewer);
+      } else {
+        sendTo(viewer, { type: 'writer', writer: false });
+      }
+
+      return {
+        close() {
+          const current = viewers.get(sessionId);
+          if (!current) return;
+          const idx = current.indexOf(viewer);
+          if (idx === -1) return;
+          current.splice(idx, 1);
+          if (!current.length) viewers.delete(sessionId);
+          if (writerOf.get(sessionId) === viewer) {
+            // 가장 최근에 붙은 남은 뷰어가 승계한다 — 배열 끝이 곧 그 사람이다.
+            setWriter(sessionId, current.at(-1) ?? null);
+          }
+        },
+
+        handleMessage(raw) {
+          // 뷰어는 무엇이든 보낼 수 있다 — 파싱 실패로 소켓을 죽이지 않는다.
+          let parsed: unknown;
+          try { parsed = JSON.parse(raw); } catch { return false; }
+          const frame = parsed as AttachClientFrame;
+          if (frame?.type !== 'input' || typeof frame.data !== 'string') return false;
+          // **writer 가 아니면 여기서 멈춘다.** 화면이 입력을 안 그리는 것만으로는
+          // 게이트가 아니다 — 소켓은 누구나 직접 열 수 있으므로, 진짜 게이트는 이 줄이다.
+          if (writerOf.get(sessionId) !== viewer) return false;
+          const owner = ownerOf.get(sessionId);
+          const target = owner ? runners.get(owner) : undefined;
+          if (!target) return false;
+          // ★ `data` 를 **그대로** 옮긴다. 되돌렸다 싣거나 문자열로 디코드하면 사람이 친
+          //   제어 바이트(Ctrl-C, 화살표, 붙여 넣은 멀티바이트)가 깨진다.
+          sendToRunner(target, { type: 'input', sessionId, data: frame.data });
+          viewer.inputBytes += base64ByteLength(frame.data);
+          return true;
+        },
+
+        inputBytes: () => viewer.inputBytes,
       };
     },
   };

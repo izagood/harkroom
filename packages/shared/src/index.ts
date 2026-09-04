@@ -1108,18 +1108,25 @@ export type RelayServerFrame =
  */
 export type AttachServerFrame =
   | { type: 'output'; data: string }
-  | { type: 'status'; state: AgentSessionState };
+  | { type: 'status'; state: AgentSessionState }
+  /**
+   * 이 뷰어가 지금 **writer 인가**(스펙 §5-2 결정 2). attach 인가(붙어도 되는가)는 여전히
+   * 티켓이 운반하지만, 쓰기 **차례**는 서버 허브가 산다: **마지막으로 attach 한 뷰어가
+   * writer** 이고 나머지는 읽기 전용이다 — 소유자와 admin 이 동시에 붙어도 바이트가 섞이는
+   * 상태 자체가 생기지 않는다(잠금 장치 대신 이 규칙 하나다). 새 뷰어가 붙으면 이전
+   * writer 는 `writer:false` 를 받고, writer 가 떠나면 가장 최근에 붙은 뷰어가 승계한다.
+   * 이 프레임이 **한 번도 안 오면**(구 서버) 뷰어는 읽기 전용으로 남아야 한다 — 구/신
+   * 조합 4방향 안전의 데스크탑 쪽 절반이다.
+   */
+  | { type: 'writer'; writer: boolean };
 
 /**
  * 뷰어 → 서버 프레임(#315). 사람이 그 터미널에 친 바이트다.
  *
- * **쓰기는 소유자만이다.** 소유자가 아닌 admin 은 attach 해서 볼 수 있지만 칠 수 없다
- * (운영자 결정) — 그래서 잠금 장치가 없다: 한 세션에 바이트를 넣을 수 있는 주체가 애초에
- * 소유자 한 명뿐이라 두 사람의 키 입력이 섞이는 문제가 생기지 않는다. (소유자가 admin 을
- * **겸하는** 것은 흔하다 — 에이전트를 만든 admin 이 곧 소유자다 — 그리고 그때도 주체는
- * 여전히 한 명이므로 칠 수 있다: `auth/plugin.ts::OwnerVerdict.via` 가 소유자 자격을
- * 우선해서 읽는 이유.) 판정은 attach 인가 때 한 번 하고
- * 티켓이 그 결정을 운반한다(`server/src/ws/tickets.ts::AttachTicketClaim.canInput`).
+ * **쓰기 차례는 서버가 `writer` 프레임으로 알린다**(위 `AttachServerFrame`, 스펙 §5-2
+ * 결정 2). attach 인가는 소유자·admin 으로 좁혀져 있고(티켓 발급 시 `checkOwnerOrAdmin`),
+ * 그 안에서 누가 지금 치는가는 "마지막 attach 가 writer" 규칙 하나다 — writer 가 아닌
+ * 뷰어의 input 은 서버가 조용히 버린다(화면이 아니라 서버가 진짜 게이트다).
  *
  * `data` 는 base64 다 — 사람이 치는 것은 글자만이 아니다. 화살표·Ctrl-C·붙여 넣기는
  * 전부 제어 바이트이고, 문자열로 실으면 그 중 일부가 JSON 인코딩에서 왜곡된다.
