@@ -196,7 +196,7 @@ describe('멤버십·집합 변경 이벤트를 받는 데스크탑 (#300)', () 
  * 갱신하는 코드가 없었다. message.created 로 답글이 오면 부모의 replyCount 를 +1 한다.
  */
 describe('스레드 답글 이벤트를 받는 데스크탑 (#395)', () => {
-  it('message.created 로 스레드 답글的到来가 오면 부모의 replyCount 가진다', async () => {
+  it('message.created 로 스레드 답글이 오면 부모의 replyCount 가 오른다', async () => {
     const { callbacks } = await startWith();
     // 부모 메시지를 스토어에 넣는다 (replyCount: 2)
     useAppStore.getState().upsertMessages('c1', [msg('m-root', 'c1', 1, 'root', 'u1', { replyCount: 2 })]);
@@ -221,7 +221,7 @@ describe('스레드 답글 이벤트를 받는 데스크탑 (#395)', () => {
       audience: 'all',
     });
 
-    // 에러 없이 통과하고, 채널에 답글만 조용히 추가된다 (답글은 channel pane filter에 걸러지지만)
+    // 에러 없이 통과하고, 채널에 답글만 조용히 추가된다(그 답글은 채널 본문 필터에 걸러진다).
     expect(useAppStore.getState().messages['c1']!.some((m) => m.id === 'm-reply')).toBe(true);
   });
 
@@ -251,7 +251,7 @@ describe('스레드 답글 이벤트를 받는 데스크탑 (#395)', () => {
       audience: 'all',
     });
 
-    // ChannelPane.tsx:62 의 필터: (messages[activeChannelId] ?? []).filter((m) => m.threadRootId === null || m.alsoInChannel)
+    // ChannelPane.tsx:114 의 필터: (messages[activeChannelId] ?? []).filter((m) => m.threadRootId === null || m.alsoInChannel)
     // 답글은 threadRootId 가 있고 alsoInChannel 이 false 이므로 걸러진다
     const visibleMessages = useAppStore.getState().messages['c1']!.filter(
       (m) => m.threadRootId === null || m.alsoInChannel
