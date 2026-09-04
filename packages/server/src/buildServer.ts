@@ -104,6 +104,8 @@ export interface ServerDeps {
   storage?: { root: string; maxBytes: number };
   /** attach 티켓 수명(ms). 기본 30초 — `/ws` 티켓과 같다. 테스트에서 짧게 준다. */
   attachTicketTtlMs?: number;
+  /** interactive.open 응답 대기 한도(ms, #337). 기본 10초 — 테스트에서 짧게 준다. */
+  interactiveOpenTimeoutMs?: number;
 }
 
 /** 25MB. 스크린샷·로그 파일에는 넉넉하고, 디스크가 조용히 차지 않을 만큼은 좁다. */
@@ -325,6 +327,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 가 아직 undefined 면 preHandler 가 통째로 사라져 러너 소켓이 인증 없이 열린다.
   await registerAgentRelayRoutes(app, deps.pool, {
     attachTicketTtlMs: deps.attachTicketTtlMs,
+    interactiveOpenTimeoutMs: deps.interactiveOpenTimeoutMs,
     // 뷰어 소켓의 수명 규칙은 `/ws` 와 **같은 값**을 받아야 한다 — 갈라지면 더 민감한
     // 쪽(PTY 바이트)이 더 느슨해진다.
     allowedOrigins: deps.corsOrigins ?? null,

@@ -68,6 +68,8 @@ export interface AgentRelayDeps {
   allowedOrigins?: readonly string[] | null;
   /** 자격증명 재검증 주기(ms). `/ws` 와 같은 값을 쓴다. 테스트가 짧게 준다. */
   revalidateMs?: number;
+  /** interactive.open 응답 대기 한도(ms, #337). 기본 10초 — 테스트가 짧게 준다. */
+  interactiveOpenTimeoutMs?: number;
 }
 
 export async function registerAgentRelayRoutes(
@@ -155,6 +157,90 @@ export async function registerAgentRelayRoutes(
       session,
     };
   });
+
+  /**
+   * 사람이 스스로 인터랙티브 터미널을 연다(#337, 스펙 §5-2 결정 4). 진행 중인 턴이
+   * 없어도 된다 — 러너가 세션을 확보(없으면 생성)해 인터랙티브 PTY 를 띄우고, 서버는
+   * 그 세션의 attach 티켓을 준다. 인가는 attach 와 **같은 술어**(checkOwnerOrAdmin)다:
+   * "내 에이전트의 셸을 여는" 행위이므로 붙어서 보는 것과 같은 사람만 할 수 있다.
+   *
+   * 스레드를 가리키는 것은 세션 id 가 아니라 (agentAccountId, channelId, threadRootId)
+   * 셋이다 — 세션은 아직 없을 수 있고, 그때 만드는 것이 이 라우트의 존재 이유다.
+   */
+  app.post<{ Body: { agentAccountId?: unknown; channelId?: unknown; threadRootId?: unknown } }>(
+    '/agent-sessions/interactive',
+    { preHandler: app.requireAccount },
+    async (req, reply) => {
+      const account = req.account!;
+      const { agentAccountId, channelId, threadRootId } = req.body ?? {};
+      if (typeof agentAccountId !== 'string' || typeof channelId !== 'string' || typeof threadRootId !== 'string') {
+        return reply.code(400).send({
+          error: { code: 'bad_request', message: 'agentAccountId, channelId, threadRootId 가 모두 필요하다' },
+        });
+      }
+
+      const verdict = await checkOwnerOrAdmin(pool, account, agentAccountId);
+      if (!verdict.ok) {
+        return reply.code(verdict.status).send({ error: { code: verdict.code, message: verdict.message } });
+      }
+
+      const outcome = await hub.openInteractive(
+        agentAccountId,
+        { channelId, threadRootId, openedByHandle: account.handle },
+        { timeoutMs: deps.interactiveOpenTimeoutMs },
+      );
+      if (!outcome.ok) {
+        // 상태를 넷으로 가른다 — 화면이 이 문구를 그대로 사람에게 보여준다(docs/design.md
+        // §4: 없는 것·못 한 것·거절된 것을 한 화면으로 뭉치지 않는다).
+        switch (outcome.reason) {
+          case 'no_runner':
+            return reply.code(404).send({
+              error: { code: 'no_runner', message: '러너가 접속해 있지 않다 — 이 에이전트의 러너를 먼저 띄워라' },
+            });
+          case 'runner_outdated':
+            return reply.code(409).send({
+              error: { code: 'runner_outdated', message: '러너가 인터랙티브 열기를 지원하지 않는 버전이다 — 러너를 업데이트해라' },
+            });
+          case 'runner_rejected':
+            return reply.code(409).send({
+              error: { code: 'interactive_rejected', message: outcome.message ?? '러너가 인터랙티브 열기를 거절했다' },
+            });
+          case 'runner_timeout':
+            return reply.code(504).send({
+              error: { code: 'runner_timeout', message: '러너가 제때 응답하지 않았다 — 러너 로그를 확인해라' },
+            });
+        }
+      }
+
+      // 같은 소켓의 `session.started` 가 `interactive.opened` 보다 먼저 처리되므로(순서
+      // 보장) 여기서 세션 조회는 성립한다. 그래도 방어한다 — 러너가 started 를 빠뜨리는
+      // 결함이 생기면 여기서 잡혀야지, 티켓만 받고 붙을 세션이 없는 화면이 되면 안 된다.
+      const session = hub.getSession(outcome.sessionId);
+      if (!session) {
+        return reply.code(504).send({
+          error: { code: 'runner_timeout', message: '러너가 세션을 등록하지 않았다 — 러너 로그를 확인해라' },
+        });
+      }
+
+      // 셸을 여는 것은 관찰보다 강한 행위다 — attach 와 별도 액션으로 남긴다(§5-2 결정 4).
+      await recordAudit(pool, {
+        action: 'agent.interactive.opened',
+        ...actorOf(req),
+        target: agentAccountId,
+        detail: { sessionId: session.sessionId, channelId, threadRootId, created: outcome.created },
+      }, req);
+
+      // 티켓 발급은 attach 와 동일 경로 — 인가를 이미 지났고, 소켓은 이 결정을 소모만 한다.
+      return {
+        ticket: attachTickets.issue({
+          accountId: account.id,
+          credentialHash: req.credentialHash!,
+          sessionId: session.sessionId,
+        }),
+        session,
+      };
+    },
+  );
 
   /**
    * 뷰어 소켓. 티켓만으로 인가된다 — 브라우저의 WebSocket 생성자는 헤더를 붙일 수 없어
