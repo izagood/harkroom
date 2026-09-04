@@ -1500,6 +1500,14 @@ export async function startCommunitySession(opts: {
   baseUrl: string;
   token: string;
   active: boolean;
+  /**
+   * 이 커뮤니티에 로그인한 계정 id(#165). **필수다** — 옵셔널로 두면 배선을 잊은 호출부가
+   * 빈 문자열 엔트리를 만들고, 그 커뮤니티는 보관본에서도 세션 손실 판정에서도 자기를
+   * 못 찾는다(`CommunityEntry.accountId`).
+   */
+  accountId: string;
+  /** 이 기기에서 붙인 표시 이름(#165). `null` 은 "붙이지 않았다" — 호스트명으로 떨어진다. */
+  label: string | null;
   onSessionLost?: (message: string, accountId: string) => void;
   makeWs?: typeof connectWs;
   notifier?: Notifier;
@@ -1509,9 +1517,10 @@ export async function startCommunitySession(opts: {
   const registry = useCommunityRegistry.getState();
   // `active` 는 "화면이 이것을 본다" 이므로 **활성 엔트리를 그 커뮤니티로 만든다** — 새로
   // 덧붙이지 않는다. 그래야 재로그인이 목록을 늘리지 않는다.
+  const input = { baseUrl: opts.baseUrl, accountId: opts.accountId, label: opts.label };
   const entry = opts.active
-    ? registry.claimActive({ baseUrl: opts.baseUrl })
-    : registry.register({ baseUrl: opts.baseUrl });
+    ? registry.claimActive(input)
+    : registry.register(input);
   const api = opts.api ?? new ApiClient(opts.baseUrl, opts.token);
   const controller = new Controller(
     api,
@@ -1524,6 +1533,85 @@ export async function startCommunitySession(opts: {
     entry.store,
   );
   useCommunityRegistry.getState().attachController(entry.id, controller);
-  await controller.start();
+  try {
+    await controller.start();
+  } catch (err) {
+    /**
+     * 시작에 실패한 커뮤니티를 목록에 **남기지 않는다**(#165). 남기면 전환기 레일에 영원히
+     * 끊긴 타일이 서고, 사용자가 그것을 뺄 이유를 이 실패에서 알아낼 방법이 없다.
+     *
+     * 활성 엔트리(초기 로그인·재로그인)는 빼지 않는다 — 그 자리는 기동 엔트리라 뺄 수도
+     * 없고(마지막 하나), 실패는 화면이 `phase` 로 이미 처리한다.
+     */
+    controller.stop();
+    useCommunityRegistry.getState().attachController(entry.id, null);
+    if (!opts.active) useCommunityRegistry.getState().remove(entry.id);
+    throw err;
+  }
   return { ...entry, controller };
+}
+
+/**
+ * 보고 있는 커뮤니티를 바꾼다(#165).
+ *
+ * 보관본의 `active` 도 함께 옮긴다 — 안 그러면 전환한 뒤 앱을 다시 켤 때마다 예전 커뮤니티로
+ * 돌아가고, 사용자는 자기가 무엇을 잘못했는지 알 수 없다.
+ *
+ * **보관 실패로 전환을 막지 않는다.** 화면 전환은 이미 끝났고(레지스트리), 키체인 쓰기 실패는
+ * `sessionStore.save` 가 자기 자리에서 사람에게 말한다(#212). 여기서 던지면 눈에 보이는
+ * 전환은 됐는데 오류 문구가 뜨는 모순된 화면이 된다.
+ */
+export async function switchCommunity(id: string): Promise<void> {
+  const registry = useCommunityRegistry.getState();
+  const entry = registry.entries.find((e) => e.id === id);
+  if (!entry) throw new Error(`모르는 커뮤니티다: ${id}`);
+  registry.setActive(id);
+  if (!entry.accountId) return;
+  const stored = await sessionStore.load();
+  if (!stored) return;
+  await sessionStore.save({ ...stored, active: entry.accountId });
+}
+
+/**
+ * 이 기기에서의 표시 이름을 바꾼다(#165). 빈 입력은 **명시적 `null`**(= 이름 없음)이 되어
+ * 호스트명으로 돌아간다.
+ *
+ * 낙관적 갱신을 하지 않는다 — 보관에 실패했는데 화면에만 새 이름이 남으면, 다음 기동에
+ * 이름이 조용히 되돌아간다. 보관이 끝난 뒤에 레지스트리를 고친다.
+ */
+export async function setCommunityLabel(id: string, label: string): Promise<void> {
+  const registry = useCommunityRegistry.getState();
+  const entry = registry.entries.find((e) => e.id === id);
+  if (!entry) throw new Error(`모르는 커뮤니티다: ${id}`);
+  const next = label.trim() ? label.trim() : null;
+  if (entry.accountId) await sessionStore.setLabel(entry.accountId, next);
+  useCommunityRegistry.getState().setLabel(id, next);
+}
+
+/**
+ * 커뮤니티를 **이 기기의 목록에서** 뺀다(#165 결정 4).
+ *
+ * **`controller.logout()` 을 부르지 않는다.** 그것은 서버 세션까지 폐기하므로, 같은 서버에
+ * 다른 기기로 붙어 있던 세션까지 함께 죽는다 — 커뮤니티를 이 기기에서 치우겠다는 조작이
+ * 다른 기기의 로그아웃을 뜻하게 되는 것은 오답이다. 여기까지가 전부다: WS 를 끊고, 키체인
+ * 항목을 지우고, 레지스트리에서 뺀다.
+ *
+ * 마지막 하나면 레지스트리에서 빼지 않고 **엔트리를 비운다** — 활성 스토어가 없는 상태를
+ * 만들지 않는다(`useCommunityRegistry.remove` 가 그것을 거절하는 이유와 같다). 그때는 정말
+ * 세션이 없으므로 호출부가 `phase` 를 `connect` 로 돌린다. 그 판단을 여기서 하지 않고
+ * `{ empty }` 로 올려 보내는 이유는, `phase` 는 화면의 것이고 이 함수는 화면을 모르기 때문이다.
+ */
+export async function removeCommunity(id: string): Promise<{ empty: boolean }> {
+  const registry = useCommunityRegistry.getState();
+  const entry = registry.entries.find((e) => e.id === id);
+  if (!entry) throw new Error(`모르는 커뮤니티다: ${id}`);
+  entry.controller?.stop();
+  if (entry.accountId) await sessionStore.remove(entry.accountId);
+  if (registry.entries.length > 1) {
+    useCommunityRegistry.getState().remove(id);
+    return { empty: false };
+  }
+  entry.store.getState().reset();
+  useCommunityRegistry.getState().claimActive({ baseUrl: '', accountId: '', label: null });
+  return { empty: true };
 }

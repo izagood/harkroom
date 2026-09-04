@@ -23,6 +23,16 @@ export interface StoredCommunity {
   baseUrl: string;
   token: string;
   handle: string;
+  /**
+   * 이 기기에서 붙인 표시 이름(#165). **명시적 `null` 이 "붙이지 않았다"** 다 —
+   * 그때 화면은 호스트명으로 떨어진다(`state/communities.ts::communityLabel`).
+   *
+   * 왜 `prefs.ts` 가 아니라 여기인가: 커뮤니티 목록의 영속 사본이 이 파일 하나뿐이고
+   * 그 키가 계정 id 다. 이름만 다른 저장소에 두면 목록이 두 벌이 되어, 커뮤니티를 빼도
+   * 이름이 남는 고아가 생긴다. 키체인에 넣는 것이 과한 것도 아니다 — 어차피 같은 항목
+   * 하나에 함께 실린다. **서버에 보내지 않는다.**
+   */
+  label: string | null;
 }
 
 export interface StoredSessions {
@@ -52,12 +62,22 @@ function tauriInvoke(): Invoke | null {
   return typeof internals?.invoke === 'function' ? internals.invoke : null;
 }
 
+/**
+ * 저장본을 읽을 때 **없는 키를 채운다**(#165). `label` 이 나중에 생긴 필드라, 예전에
+ * 저장된 항목은 `undefined` 로 올라온다 — 그것을 그대로 흘리면 `label: string | null` 이라는
+ * 타입이 거짓이 되고, "이름 없음" 과 "필드 없음" 이 코드 안에서 갈린다.
+ */
+const normalize = (parsed: StoredSessions): StoredSessions => ({
+  active: parsed.active ?? null,
+  communities: parsed.communities.map((c) => ({ ...c, label: c.label ?? null })),
+});
+
 const readPlain = (): StoredSessions | null => {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as StoredSessions;
-    return parsed.communities && Array.isArray(parsed.communities) ? parsed : null;
+    return parsed.communities && Array.isArray(parsed.communities) ? normalize(parsed) : null;
   } catch { return null; }
 };
 
@@ -73,7 +93,7 @@ const parse = (raw: unknown): StoredSessions | null => {
   if (typeof raw !== 'string' || !raw) return null;
   try {
     const parsed = JSON.parse(raw) as StoredSessions;
-    return parsed.communities && Array.isArray(parsed.communities) ? parsed : null;
+    return parsed.communities && Array.isArray(parsed.communities) ? normalize(parsed) : null;
   } catch { return null; }
 };
 
@@ -96,7 +116,7 @@ export const sessionStore = {
       if (!legacy) return null;
       const migrated: StoredSessions = {
         active: null,
-        communities: [{ accountId: '', baseUrl: legacy.baseUrl, token: legacy.token, handle: '' }],
+        communities: [{ accountId: '', baseUrl: legacy.baseUrl, token: legacy.token, handle: '', label: null }],
       };
       writePlain(migrated);
       localStorage.removeItem(LEGACY_KEY);
@@ -109,7 +129,7 @@ export const sessionStore = {
       if (!legacy) return null;
       const migrated: StoredSessions = {
         active: null,
-        communities: [{ accountId: '', baseUrl: legacy.baseUrl, token: legacy.token, handle: '' }],
+        communities: [{ accountId: '', baseUrl: legacy.baseUrl, token: legacy.token, handle: '', label: null }],
       };
       await invoke('secret_set', { key: KEY, value: JSON.stringify(migrated) });
       localStorage.removeItem(LEGACY_KEY);
@@ -156,6 +176,23 @@ export const sessionStore = {
     await this.save({
       active: current.active === accountId ? null : current.active,
       communities,
+    });
+  },
+
+  /**
+   * 이 커뮤니티의 표시 이름을 보관본에 적는다(#165). `null` 은 "지운다" 다.
+   *
+   * 모르는 계정 id 면 **조용히 지나가지 않고 던진다** — 이름을 붙였는데 다음 기동에 사라지는
+   * 것은 사용자가 원인을 볼 수 없는 실패다.
+   */
+  async setLabel(accountId: string, label: string | null): Promise<void> {
+    const current = await this.load();
+    if (!current) throw new Error('보관된 세션이 없다');
+    const hit = current.communities.find((c) => c.accountId === accountId);
+    if (!hit) throw new Error(`보관되지 않은 커뮤니티다: ${accountId}`);
+    await this.save({
+      ...current,
+      communities: current.communities.map((c) => (c.accountId === accountId ? { ...c, label } : c)),
     });
   },
 
