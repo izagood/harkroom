@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { PROJECTION_UNCONFIGURED_DETAIL, PROJECTION_UNCONFIGURED_HEADLINE } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 
 const shortActor = (keyId: string) => (keyId.length > 12 ? `${keyId.slice(0, 12)}…` : keyId);
@@ -68,8 +69,8 @@ export function LeasePanel() {
       return {
         testid: 'projection-unconfigured',
         tone: 'text-warning',
-        text: '투영이 설정되지 않았다',
-        detail: 'AVCS_BASE_URL 로 켠다',
+        text: PROJECTION_UNCONFIGURED_HEADLINE,
+        detail: PROJECTION_UNCONFIGURED_DETAIL,
       };
     }
     if (projectionStatus.state === 'stalled') {

@@ -12,7 +12,7 @@ import type { SectionId } from './settings/sections';
 import type {
   AddTeamToChannelResult, AgentTeamRow, ChannelPrefRow, ChannelRow, NotifyLevel,
 } from '@murmur/shared';
-import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, notifyLevelOf, sortChannelsBySection } from '@murmur/shared';
+import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, PROJECTION_UNCONFIGURED_NOTICE, notifyLevelOf, sortChannelsBySection } from '@murmur/shared';
 import { Logo } from './Logo';
 
 /** 메뉴에 그리는 이름. 값(`all`/`mentions`/`none`)은 저장·전송용이라 번역하지 않는다. */
@@ -547,8 +547,14 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
             />
           </div>
           {editError && <p role="alert" className="mb-1 text-[10px] text-danger">{editError}</p>}
+          {/*
+            repo 를 채워도 아무도 읽지 않는다는 사실을 폼 안에서 말한다(#381). 배지가 뜨는
+            것만으로는 바인딩이 살아 있다고 읽히는데, 투영이 꺼져 있으면 `projection.ts`
+            말고는 이 값을 읽는 곳이 없다. 문구는 `LeasePanel` 배너와 **같은 상수**다 —
+            사본을 만들면 둘이 갈라진다.
+          */}
           {editRepo && projectionStatus?.state === 'unconfigured' && (
-            <p className="mb-1 text-[10px] text-warning">투영이 설정되지 않았다 — AVCS_BASE_URL 로 켠다</p>
+            <p className="mb-1 text-[10px] text-warning">{PROJECTION_UNCONFIGURED_NOTICE}</p>
           )}
           <div className="flex gap-1">
             <button
