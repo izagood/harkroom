@@ -194,7 +194,7 @@ describe('#337 분기 ③ — 아무 턴도 없으면 새로 연다', () => {
     const manager = createInteractiveManager(h.deps);
 
     const opened = await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin', handoff: false });
-    expect(opened).toEqual({ sessionId: 'relay-1', created: true });
+    expect(opened).toEqual({ sessionId: 'relay-1', created: true, waiting: false });
     expect(h.plans).toHaveLength(1);
     expect(h.plans[0]!.args).not.toContain('resume');
     expect(h.plans[0]!.env.CODEX_HOME).toBe(h.deps.codexHome);
@@ -212,7 +212,7 @@ describe('#337 분기 ①·② — 이미 도는 턴에는 합류한다', () => 
     const manager = createInteractiveManager(h.deps);
 
     const opened = await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin', handoff: false });
-    expect(opened).toEqual({ sessionId: 'sess-mention', created: false });
+    expect(opened).toEqual({ sessionId: 'sess-mention', created: false, waiting: false });
     expect(h.plans).toHaveLength(0);
   });
 
@@ -222,7 +222,7 @@ describe('#337 분기 ①·② — 이미 도는 턴에는 합류한다', () => 
 
     const first = await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin', handoff: false });
     const second = await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin', handoff: false });
-    expect(second).toEqual({ sessionId: first.sessionId, created: false });
+    expect(second).toEqual({ sessionId: first.sessionId, created: false, waiting: false });
     expect(h.plans).toHaveLength(1);
   });
 

@@ -197,7 +197,7 @@ describe('#337 [터미널 열기] — 세션이 없어도 스스로 연다', () 
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
     // 스레드 스코프 그대로 — 세션이 없으므로 세션 id 가 아니라 (에이전트, 채널, 스레드)다.
-    expect(api.openInteractiveSession).toHaveBeenCalledWith('a1', 'c1', 'm1');
+    expect(api.openInteractiveSession).toHaveBeenCalledWith('a1', 'c1', 'm1', false);
     // 기존 attach 경로에 합류했다 — 별도 소켓 경로가 아니라 같은 티켓 소켓이다.
     expect(FakeSocket.last).not.toBeNull();
     expect(FakeSocket.last!.url).toContain('murt_opened');

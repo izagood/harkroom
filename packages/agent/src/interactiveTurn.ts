@@ -36,6 +36,23 @@ const KILL_GRACE_MS = 5_000;
  */
 const NO_RELAY_REJECTION = '이 스레드에 멘션 턴이 진행 중이지만 관찰 릴레이가 없다 — 턴이 끝난 뒤 다시 열어라';
 
+/**
+ * codex 이어받기 거절(#384 운영자 결정). 이 문구는 relay 의 `interactive.error` 를 지나
+ * **사람 화면에 그대로** 뜬다 — 조용히 거절하면 눌렀는데 아무 일이 없는 것이 된다.
+ *
+ * **왜 이어받기만인가.** #384 는 "`interactiveTurn.ts` 가 이미 codex 를 거절하고 있으니 그
+ * 문구를 재사용하라"고 적었지만 그 전제는 이미 갱신됐다: 스펙 §5-2 결정 8(codex 인터랙티브
+ * 거절)은 2026-09-04 후속 실측으로 **대체**됐고(docs/specs/2026-09-01-runner-sessions-pty-design.md
+ * §13.6 부기), 지금 러너는 `codex resume` 을 격리 `CODEX_HOME` 으로 연다(codexHome.ts) —
+ * 재사용할 거절 문구가 없고, "개인 MCP 를 상속한다"는 근거도 그 격리로 이미 막혀 있다.
+ * 그래서 거절의 근거를 실재하는 것 하나로 좁혔다: **멘션 턴(`codex exec`)이 만든 세션을
+ * 대화형 `codex resume` 이 이어받는지가 실측되지 않았다.** 이어받기의 값 전부가 "그 대화를
+ * 이어서 친다"이므로, 그것이 성립하는지 모르는 채로 열면 사람이 이어받았다고 믿는 화면에서
+ * 다른 대화가 시작된다. 새 인터랙티브 턴([터미널 열기], #337)은 그대로 열린다 — 그쪽은
+ * 이어받을 대화가 없어 이 미실측과 무관하다.
+ */
+const CODEX_HANDOFF_REJECTION = 'codex 에이전트는 이어받기가 열려 있지 않다 — 멘션 턴(codex exec)이 만든 세션을 대화형 codex resume 이 이어받는지가 실측되지 않았다(#348 스파이크 범위 밖). 새 인터랙티브 턴은 [터미널 열기]로 열 수 있다.';
+
 /** 인터랙티브 턴을 실제로 돌리는 함수 — 프로덕션은 `runPtyTurn`, 테스트는 스텁. */
 export type RunInteractiveTurn = (
   plan: TurnPlan,
@@ -191,6 +208,10 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
   const spawn = async (key: string, req: InteractiveOpenRequest): Promise<InteractiveOpenResult> => {
     // 정의는 매번 새로 읽는다(멘션 턴과 같은 이유 — 하네스·모델이 UI 에서 바뀐다).
     const def = await deps.murmur.definition();
+    // 기다리는 사이에 하네스가 codex 로 바뀌었을 수 있다(정의는 UI 에서 바뀐다). 그때
+    // 조용히 열면 사람이 "이어받았다"고 믿는 화면에서 다른 대화가 시작된다 — `open` 의
+    // 누른-순간 검사와 **같은 판정**을 여기서 한 번 더 한다.
+    if (req.handoff && def.harness === 'codex') throw new Error(CODEX_HANDOFF_REJECTION);
 
     let rec = deps.store.get(key);
     if (rec && rec.harness !== def.harness) {
@@ -422,7 +443,10 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
         channelId: reserved.channelId,
         threadRootId: reserved.threadRootId,
         openedByHandle: reserved.openedByHandle,
-        handoff: false, // 이 호출이 곧 그 이어받기다 — 다시 예약할 것이 없다.
+        // 이 턴이 **곧 그 이어받기다.** true 로 넘기는 이유는 두 가지다: 예약은 이미
+        // 소비됐으므로(아래 clearHandoff·register) 다시 예약될 일이 없고, spawn 의 codex
+        // 판정이 이 값을 읽는다 — 기다리는 사이 하네스가 바뀐 경우를 그것이 잡는다.
+        handoff: true,
         cols: reserved.cols,
         rows: reserved.rows,
       });
@@ -434,6 +458,13 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
 
   const open = async (req: InteractiveOpenRequest): Promise<InteractiveOpenResult> => {
     const key = SessionStore.threadKey(req.channelId, req.threadRootId);
+
+    // 이어받기는 하네스를 **먼저** 본다(#384). 거절이 나올 요청이면 그 이유가 누른 순간
+    // 사람에게 가야 한다 — 예약해 두고 26초를 기다린 뒤에 거절하면, 그 기다림이 통째로
+    // 헛것이 되고 거절 문구는 러너 로그에만 남는다(사람은 이유 없이 안 열리는 화면을 본다).
+    if (req.handoff && (await deps.murmur.definition()).harness === 'codex') {
+      throw new Error(CODEX_HANDOFF_REJECTION);
+    }
 
     // ── 분기 ①·② — 이미 도는 턴이 있으면 새 PTY 를 띄우지 않는다.
     const running = deps.registry.get(key);
