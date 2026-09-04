@@ -617,9 +617,17 @@ describe('캐시 만료 (#312)', () => {
     expect(net.hops).toHaveLength(1);
   });
 
-  // 라우트에서 만료 시 재조회 테스트
-  // 결정적 테스트: 관측 가능한 상태를 기다린다. "언젠가 일어난다"는 본질이므로
-  // polling 으로 상태 변화를 확인한다. 이렇게 하면 부하가 높아도 동일하게 동작한다.
+  /**
+   * 라우트에서 만료 시 재조회(#312).
+   *
+   * 재조회는 fire-and-forget 이라 요청이 끝난 뒤에 일어난다 — 호출자에게는 "언제 끝났는지"를
+   * 알려 주는 값이 없다. 그래서 시간을 기다리는 대신(#333) **관측 가능한 최종 상태**를
+   * 기다린다: 같은 행이 새 제목으로 덮어써진 것.
+   *
+   * 기다리는 대상이 DB 인 이유: `net.hops` 는 fetch 가 **시작될 때** 쌓이고 upsert 는 그
+   * 뒤에 일어난다. hops 만 기다리면 대기 조건이 단언보다 약해서, 통과한 직후에도 DB 단언이
+   * 여전히 이르다.
+   */
   it('GET /link-previews 에서 만료된 행은 백그라운드에서 재조회된다', async () => {
     const net = fakeNet({ hop: () => ({ status: 200, location: null, body: '<title>Fetched</title>' }) });
     // 가짜 네트워크를 라우트에 주입한다
@@ -630,22 +638,18 @@ describe('캐시 만료 (#312)', () => {
        values ($1, $2, $3, $4, $5, $6, $7)`,
       ['https://example.com/route', 'Old', null, null, null, 'ok', new Date(Date.now() - TTL_OK_MS - 1000)],
     );
-    // 조회가 stale trigger - fire and forget 이므로 바로 응답이 온다
+    // 조회가 stale 을 건드린다 — 재조회는 응답을 막지 않으므로 바로 돌아온다.
     const res = await app.inject({
       method: 'GET', url: '/link-previews?url=https://example.com/route',
       headers: { authorization: `Bearer ${userPat}` },
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().title).toBe('Old'); // 먼저 stale 데이터를 반환
-    // 백그라운드 재조회가 끝날 때까지 기다린다 - 관측 가능한 상태를 polling
-    const start = Date.now();
-    while (net.hops.length === 0) {
-      if (Date.now() - start > 5000) throw new Error('timeout waiting for background fetch');
-      await new Promise((r) => setTimeout(r, 10));
-    }
-    expect(net.hops).toHaveLength(1); // 백그라운드에서 가져옴
-    // DB 도 업데이트되었는지 확인
-    const row = await pool.query('select title from link_preview where url = $1', ['https://example.com/route']);
-    expect(row.rows[0].title).toBe('Fetched');
+    // 재조회가 끝난 상태 = 행이 새 제목으로 바뀐 것. 그것을 직접 기다린다.
+    await vi.waitFor(async () => {
+      const updated = await pool.query('select title from link_preview where url = $1', ['https://example.com/route']);
+      expect(updated.rows[0].title).toBe('Fetched');
+    }, { timeout: 5000, interval: 10 });
+    expect(net.hops).toHaveLength(1); // 백그라운드에서 정확히 한 번만 가져왔다
   });
 });
