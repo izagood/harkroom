@@ -40,7 +40,13 @@ if (mode === 'hang-ignore-sigterm') {
   // 그 사이 창에 SIGTERM 이 닿으면 기본 처분으로 죽는데, 그때 테스트는 pid 를 읽는 데
   // 성공하므로 **승격 경로를 안 태우고도 초록으로 통과**했다. 실측(#391 통제 실험): 부팅이
   // timeoutMs 를 넘으면 pid 파일이 3초 뒤에도 안 생기고 턴이 SIGTERM 시점에 끝났다.
-  process.on('SIGTERM', () => {});
+  // 핸들러는 **SIGTERM 을 봤다는 사실을 남긴다**(#391). 이것이 없으면, 하네스가 핸들러를
+  // 못 걸고 SIGTERM 에 그냥 죽은 경우에도 테스트는 (pid 파일이 있고 프로세스가 사라졌으므로)
+  // 초록으로 통과한다 — 승격을 한 번도 안 태우고서. 무시했다는 증거를 파일로 남겨야 그
+  // 사건과 "SIGTERM 을 받고도 살아남았다" 를 테스트가 가를 수 있다.
+  process.on('SIGTERM', () => {
+    if (process.env.FAKE_SIGTERM_FILE) writeFileSync(process.env.FAKE_SIGTERM_FILE, 'seen');
+  });
   if (process.env.FAKE_PID_FILE) {
     writeFileSync(process.env.FAKE_PID_FILE, String(process.pid));
   }
