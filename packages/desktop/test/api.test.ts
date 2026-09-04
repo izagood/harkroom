@@ -62,6 +62,21 @@ describe('ApiClient', () => {
     expect(skills[0]!.slug).toBe('note');
   });
 
+  /**
+   * #325 — `state` 를 넘기면 실제로 질의 문자열이 붙는가.
+   *
+   * 서버는 이제 모르는 질의 키를 400 으로 거절한다(별칭을 두지 않기로 했으므로). 그래서
+   * 이 배선이 틀리면 화면이 조용히 잘못된 목록을 받는 것이 아니라 **통째로 실패한다**.
+   * 위 테스트가 "인자가 없으면 질의가 붙지 않는다"를 잡고, 이 테스트가 그 반대를 잡는다.
+   */
+  it('appends ?state= when a state is given (#325)', async () => {
+    const fn = stubFetch(200, []);
+    const api = new ApiClient('http://x:3400', 'tok');
+
+    await api.listSkills('pending');
+    expect((fn.mock.calls[0]! as unknown as [string])[0]).toBe('http://x:3400/skills?state=pending');
+  });
+
   it('escapes the slug in skill routes — a slug is never spliced raw into the path', async () => {
     const fn = stubFetch(200, {});
     const api = new ApiClient('http://x:3400', 'tok');

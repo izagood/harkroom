@@ -28,7 +28,15 @@ const GROUPS: { id: SkillGroupId; title: string; empty: string }[] = [
  */
 export const APPROVE_CONFIRM_TEXT = '승인하면 모든 에이전트가 이 스킬을 시스템 프롬프트로 읽는다';
 
-/** 비활성/거부 확인 문구. */
+/**
+ * 거부·비활성 확인 문구(#325). **한 문구가 아니라 둘인 이유:** 서버에서 둘은 같은 경로지만
+ * (`disableSkill` — 미승인을 비활성하면 그것이 거부다) 사람에게 일어나는 일이 다르다.
+ * 승인된 스킬을 비활성하면 러너가 다음 턴에 **이미 깔린 파일과 링크를 지운다**. 미승인
+ * 스킬은 애초에 실체화된 적이 없으므로 지울 파일이 없다 — 거부에까지 "파일을 삭제한다"고
+ * 적으면 일어나지 않는 일을 경고하는 것이고, 확인 문구가 한 번 거짓말하면 다음 문구도
+ * 읽히지 않는다.
+ */
+export const REJECT_CONFIRM_TEXT = '거부하면 이 스킬은 비활성으로 내려간다 — 되돌리려면 에이전트가 다시 제안해야 한다';
 export const DISABLE_CONFIRM_TEXT = '비활성화하면 모든 에이전트가 이 스킬의 파일과 링크를 삭제한다';
 
 export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
@@ -141,7 +149,12 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                             className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg
                                        hover:bg-surface-hover disabled:opacity-50"
                             disabled={busy === skill.slug}
-                            onClick={() => setConfirmingApprove(skill.slug)}
+                            onClick={() => {
+                              // 두 확인이 동시에 열리면 경고 상자와 '취소' 버튼이 둘씩 뜬다 —
+                              // 어느 쪽을 취소하는지 사람이 알 수 없다. 하나만 열어 둔다.
+                              setConfirmingDisable(null);
+                              setConfirmingApprove(skill.slug);
+                            }}
                           >
                             승인
                           </button>
@@ -151,7 +164,10 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                             className="rounded-lg border border-danger-border px-3 py-1.5 font-medium text-danger
                                        hover:bg-danger-surface disabled:opacity-50"
                             disabled={busy === skill.slug || confirmingDisable === skill.slug}
-                            onClick={() => setConfirmingDisable(skill.slug)}
+                            onClick={() => {
+                              setConfirmingApprove(null);
+                              setConfirmingDisable(skill.slug);
+                            }}
                           >
                             {group.id === 'pending' ? '거부' : '비활성화'}
                           </button>
@@ -189,7 +205,9 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                   )}
                   {isAdmin && confirmingDisable === skill.slug && (
                     <div className="mt-2 rounded-lg border border-warning-border bg-warning-surface p-3">
-                      <p className="text-warning">{DISABLE_CONFIRM_TEXT}</p>
+                      <p className="text-warning">
+                        {group.id === 'pending' ? REJECT_CONFIRM_TEXT : DISABLE_CONFIRM_TEXT}
+                      </p>
                       <div className="mt-2 flex items-center gap-2">
                         <button
                           className="rounded-lg bg-danger px-3 py-1.5 font-medium text-fg-on-strong
