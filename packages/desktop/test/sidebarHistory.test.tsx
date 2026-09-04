@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, createEvent } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
@@ -286,5 +286,80 @@ describe('키보드 단축키', () => {
     fireEvent.keyDown(document.body, { key: '[', metaKey: true });
 
     expect(c.goBack).toHaveBeenCalled();
+  });
+});
+
+// #372: 리사이저를 끌면 화면 텍스트가 통째로 선택되던 결함.
+// jsdom 에는 실제 텍스트 선택 동작이 없으므로 "선택됐다"를 잴 수 없다 —
+// 이 환경에서 정직하게 잴 수 있는 것은 mousedown 의 defaultPrevented 뿐이다.
+describe('#372 사이드바 리사이저가 텍스트를 선택하지 않는다', () => {
+  const renderSidebar = () =>
+    render(
+      <Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />
+    );
+
+  afterEach(() => {
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+
+  it('리사이저에 mousedown 을 보내면 기본 동작이 막힌다', () => {
+    fakeController();
+    const { container } = renderSidebar();
+
+    const separator = container.querySelector('[role="separator"]') as HTMLElement;
+    const ev = createEvent.mouseDown(separator);
+    fireEvent(separator, ev);
+
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
+  it('드래그 중에는 body 에 userSelect: none 이 걸린다', () => {
+    fakeController();
+    const { container } = renderSidebar();
+
+    const separator = container.querySelector('[role="separator"]') as HTMLElement;
+    fireEvent.mouseDown(separator);
+
+    expect(document.body.style.userSelect).toBe('none');
+    expect(document.body.style.cursor).toBe('col-resize');
+  });
+
+  it('드래그가 끝나면 cursor 와 userSelect 가 되돌아간다', () => {
+    fakeController();
+    const { container } = renderSidebar();
+
+    const separator = container.querySelector('[role="separator"]') as HTMLElement;
+    fireEvent.mouseDown(separator);
+    fireEvent.mouseMove(document, { clientX: 300 });
+    fireEvent.mouseUp(document);
+
+    expect(document.body.style.cursor).toBe('');
+    expect(document.body.style.userSelect).toBe('');
+  });
+
+  it('기본 동작을 막아도 너비 조절은 그대로 동작한다', () => {
+    fakeController();
+    const { container } = renderSidebar();
+
+    const separator = container.querySelector('[role="separator"]') as HTMLElement;
+    const ev = createEvent.mouseDown(separator);
+    fireEvent(separator, ev);
+    fireEvent.mouseMove(document, { clientX: 320 });
+    fireEvent.mouseUp(document);
+
+    expect(container.querySelector('aside')?.style.width).toBe('320px');
+  });
+
+  it('드래그 도중 언마운트돼도 cursor 와 userSelect 가 남지 않는다', () => {
+    fakeController();
+    const { container, unmount } = renderSidebar();
+
+    const separator = container.querySelector('[role="separator"]') as HTMLElement;
+    fireEvent.mouseDown(separator);
+    unmount();
+
+    expect(document.body.style.cursor).toBe('');
+    expect(document.body.style.userSelect).toBe('');
   });
 });

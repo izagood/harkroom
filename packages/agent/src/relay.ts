@@ -75,6 +75,12 @@ export interface OpenSessionInput {
   harness: AgentHarness;
   /** 이 PTY 가 어떤 턴인가(#337). 생략하면 멘션 턴이다 — 기존 호출부(mentionTurn)가 그대로다. */
   mode?: 'mention' | 'interactive';
+  /**
+   * 이 세션의 PTY 에 사람이 입력할 수 있는가(#369). **필수다** — 생략을 허용하면 기본값이
+   * 곧 판정이 되고, 그 기본값이 무엇이든 한쪽 호출부가 거짓말을 하게 된다. 호출부는
+   * `acceptsPtyInput(plan)` 으로 자기 계획에서 그대로 읽어 넘긴다.
+   */
+  acceptsInput: boolean;
   /** 이 세션의 뷰어 수 변동 통지(#337). 인터랙티브 턴만 넘긴다 — 멘션 턴의 끝은 exit 뿐이다. */
   onViewerCount?: (count: number) => void;
 }
@@ -307,6 +313,9 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         startedAt: new Date().toISOString(),
         // 데스크탑이 "사람이 조종 중인 세션"을 구분해 그릴 근거(#337). 생략은 멘션 턴이다.
         mode: input.mode ?? 'mention',
+        // 서버의 writer 판정이 읽는 사실(#369). 여기서 다시 계산하지 않는다 — 근거는
+        // 그 턴의 계획(stdinFile)이고, 그것을 아는 것은 턴을 조립한 호출부다.
+        acceptsInput: input.acceptsInput,
       };
       const live: LiveSession = {
         info, ring: new RingBuffer(RING_CAP_BYTES), writer: null, onViewerCount: input.onViewerCount,

@@ -21,6 +21,8 @@ const chipMsg = msg('m1', 'c1', 1, '다 됐다', 'a1');
 
 const session = (overrides: Partial<AgentSessionView> = {}): AgentSessionView => ({
   sessionId: 'sess-1',
+  // #369: 기본은 입력이 닿는 세션이다 — 관찰 전용(멘션 턴)은 테스트가 명시한다.
+  acceptsInput: true,
   agentAccountId: 'a1',
   channelId: 'c1',
   threadRootId: 'm1',
@@ -267,7 +269,7 @@ describe('#315 writer 인 창만 친다 — 차례는 서버가 정한다', () =
 
   it('writer 통지를 받은 창의 타이핑이 input 프레임으로 나간다', async () => {
     const { sinkOpts } = await mountPanel();
-    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true }); });
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true, resize: true, reason: null }); });
 
     // xterm 이 키를 넘기는 것을 흉내낸다. 제어 시퀀스를 섞는다 — 글자만 보내면
     // 인코딩이 깨져도 통과한다.
@@ -292,12 +294,12 @@ describe('#315 writer 인 창만 친다 — 차례는 서버가 정한다', () =
 
   it('강등(writer:false)이 오면 그 뒤의 타이핑은 나가지 않고 이유가 화면에 있다', async () => {
     const { sinkOpts } = await mountPanel();
-    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true }); });
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true, resize: true, reason: null }); });
     await act(async () => { sinkOpts()!.onInput!('a'); });
     expect(FakeSocket.last!.sent).toHaveLength(1);
 
     // 다른 창이 attach 해 서버가 이 창을 강등시켰다.
-    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: false }); });
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: false, resize: false, reason: 'other-writer' }); });
     await act(async () => { sinkOpts()!.onInput!('b'); });
 
     // 강등 뒤에 친 것은 나가지 않는다 — state 가 아니라 ref 가 가드해야 이 순간이 잡힌다.
@@ -346,7 +348,7 @@ describe('#335 writer 의 폭이 PTY 폭이 되고, 읽기 전용 창의 폭은 
 
   it('writer 패널의 크기가 attach 소켓에 resize 프레임으로 나간다', async () => {
     const { sinkOpts } = await mountPanel();
-    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true }); });
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true, resize: true, reason: null }); });
 
     // 터미널이 컨테이너에 맞춘 결과를 알려 오는 것을 흉내낸다.
     await act(async () => { sinkOpts()!.onResize!(100, 30); });
@@ -369,13 +371,93 @@ describe('#335 writer 의 폭이 PTY 폭이 되고, 읽기 전용 창의 폭은 
   it('승격 직후 refit 으로 자기 크기를 한 번 보고한다 — 승격 전의 보고는 버려졌다', async () => {
     const { refit } = await mountPanel();
     expect(refit).not.toHaveBeenCalled();
-    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true }); });
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true, resize: true, reason: null }); });
     // 스펙 §5 "attach 시 writer 의 크기로 resize" — 이 재보고가 없으면 PTY 가 이전
     // writer(또는 spawn 기본값)의 크기로 남는다.
     expect(refit).toHaveBeenCalledTimes(1);
     // 강등은 재보고할 것이 없다.
-    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: false }); });
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: false, resize: false, reason: 'other-writer' }); });
     expect(refit).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * #369 — 진행 중인 멘션 턴은 관찰 전용이고, 화면이 **왜**인지 말한다.
+ *
+ * 이 결함의 본체는 "입력이 안 간다"가 아니라 **화면이 거짓말을 했다**는 것이다: 사람이
+ * 입력 가능 상태를 보고 타이핑하는데 바이트가 조용히 사라졌다. 그래서 여기서 지키는 것은
+ * 세 가지다 — 못 친다는 것, 커서가 깜빡이지 않는다는 것(입력창 비활성), 그리고 **왜**가
+ * 글로 있다는 것. 셋 중 마지막이 빠지면 "눌러도 아무 일이 없는 버튼"이 그대로 남는다.
+ *
+ * 그리고 **폭은 계속 나간다**(#335 회귀 금지). 관찰 전용 창도 폭의 주인이다 — 여기서
+ * 폭까지 막으면 진행 중인 턴을 보는 화면이 러너의 spawn 기본값(120x40)에 갇혀 접힌다.
+ */
+describe('#369 관찰 전용 세션 — 못 치는 이유가 화면에 있다', () => {
+  const mountPanel = async () => {
+    let opts: { onInput?: (data: string) => void; onResize?: (c: number, r: number) => void } | undefined;
+    const readOnly: boolean[] = [];
+    setTerminalSinkFactory((_el, o) => {
+      opts = o;
+      return {
+        write: () => { /* 이 describe 는 출력이 아니라 개입 가능 여부를 본다 */ },
+        setReadOnly: (v: boolean) => { readOnly.push(v); },
+        dispose: () => {},
+      };
+    });
+    const api = {
+      baseUrl: 'http://localhost:8080',
+      // 진행 중인 멘션 턴이다 — 러너가 "이 세션은 입력을 받을 수 없다"로 announce 한 것.
+      agentSessions: vi.fn(async () => [session({ acceptsInput: false, mode: 'mention' })]),
+      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: session({ acceptsInput: false }) })),
+    };
+    setController({ api } as unknown as Controller);
+    useAppStore.getState().set({
+      me: acc('u1', 'owner'),
+      accounts: { a1: agent('a1', 'forge', 'u1') },
+      terminalTarget: { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1' },
+    });
+    render(<TerminalPanel />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    return { sinkOpts: () => opts, readOnly };
+  };
+
+  it('입력창이 비활성이고, 왜 못 치는지가 화면에 적혀 있다', async () => {
+    const { sinkOpts, readOnly } = await mountPanel();
+    // **첫 writer 프레임이 오기 전부터 접혀 있다**(#369). 서버의 통지는 소켓이 붙은 뒤에
+    // 오므로, 그 전까지 커서가 깜빡이면 화면이 그 동안 "칠 수 있다"고 말한다.
+    expect(readOnly[0]).toBe(true);
+    await act(async () => {
+      FakeSocket.last!.deliver({ type: 'writer', writer: false, resize: true, reason: 'observe-only' });
+    });
+
+    // 쳐도 나가지 않는다.
+    await act(async () => { sinkOpts()!.onInput!('yes\r'); });
+    expect(FakeSocket.last!.sent).toEqual([]);
+
+    // 입력창 자체가 비활성이다 — 가드가 바이트를 버리는 것만으로는 커서가 계속 깜빡여
+    // "칠 수 있다"로 보인다.
+    expect(readOnly.at(-1)).toBe(true);
+
+    // **이유가 있다.** "관찰 전용"만 적으면 임의의 제약으로 읽혀 "왜 안 되냐"가 다시
+    // 결함으로 올라온다 — 프롬프트를 파일로 받는다는 사실이 이 제약의 전부다.
+    const note = screen.getByTestId('writer-note');
+    expect(note.getAttribute('data-writer-reason')).toBe('observe-only');
+    expect(note.textContent).toContain('관찰 전용');
+    expect(note.textContent).toContain('프롬프트를 파일로');
+    // 다른 창 탓으로 돌리지 않는다 — 아무도 안 붙었는데 없는 사람을 만들어 내면 안 된다.
+    expect(note.textContent).not.toContain('다른 창');
+  });
+
+  it('관찰 전용이어도 폭은 나간다 — resize 는 stdin 과 무관하다 (#335 회귀 금지)', async () => {
+    const { sinkOpts } = await mountPanel();
+    await act(async () => {
+      FakeSocket.last!.deliver({ type: 'writer', writer: false, resize: true, reason: 'observe-only' });
+    });
+
+    await act(async () => { sinkOpts()!.onResize!(100, 30); });
+
+    expect(FakeSocket.last!.sent).toHaveLength(1);
+    expect(JSON.parse(FakeSocket.last!.sent[0]!)).toEqual({ type: 'resize', cols: 100, rows: 30 });
   });
 });
 
