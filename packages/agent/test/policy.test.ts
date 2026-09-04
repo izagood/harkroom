@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isCredentialFailure, nextBackoffMs, MAX_ATTEMPTS, exhausted } from '../src/policy.js';
+import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound, nextBackoffMs, MAX_ATTEMPTS, exhausted } from '../src/policy.js';
 import { MURMUR_ERROR_SOURCE } from '../src/policy.js';
 import { MurmurAgentClient } from '../src/murmur.js';
 
@@ -128,5 +128,53 @@ describe('exhausted', () => {
   it('gives up on an entry after a bounded number of attempts', () => {
     expect(exhausted(MAX_ATTEMPTS - 1)).toBe(false);
     expect(exhausted(MAX_ATTEMPTS)).toBe(true);
+  });
+});
+
+describe('#340 isExecutableNotFound', () => {
+  // 실행 파일 부재는 재시도로 낫지 않는다 — launchd KeepAlive 가 재기동해도 같은 이유로
+  // 즉시 죽는다. 그래서 반드시 크게 실패해야 한다.
+  it('ExecutableNotFoundError 를 executable-not-found 로 감지한다', () => {
+    const err = new ExecutableNotFoundError('/nonexistent/harness', '/usr/bin:/bin');
+    expect(isExecutableNotFound(err)).toBe('executable-not-found');
+  });
+
+  // 문구도 이름도 보지 않는다. 이 둘이 통과하면 판정이 문자열 매칭으로 후퇴한 것이다 —
+  // 그 후퇴가 위험한 이유는 **잘못 참**이 되는 쪽이기 때문이다: 아무 라이브러리가 name 을
+  // 그렇게 세워 던지면 러너가 통째로 죽는다.
+  it('메시지가 같아도 클래스가 아니면 other 다', () => {
+    expect(isExecutableNotFound(new Error('실행 파일을 찾을 수 없음: /nonexistent/harness')))
+      .toBe('other');
+  });
+
+  it('name 을 흉내 내도 other 다 — 이름 매칭이 아니다', () => {
+    const err = new Error('무엇이든');
+    err.name = 'ExecutableNotFoundError';
+    expect(isExecutableNotFound(err)).toBe('other');
+  });
+
+  // `code === 'ENOENT'` 만 보면 안 되는 이유. fs 어디서든 나는 흔한 코드라, 그것으로 재면
+  // 설정 파일 하나 없는 것에도 러너가 죽는다.
+  it('아무 ENOENT 나 러너를 죽이지 않는다', () => {
+    expect(isExecutableNotFound(Object.assign(new Error('open failed'), { code: 'ENOENT' })))
+      .toBe('other');
+  });
+
+  // 다른 에러는 other 다 — 자격증명 실패나 네트워크 오류는 여전히 재시도해야 한다.
+  it('일반 에러는 other 다 — 재시도 동작이 변하지 않는다', () => {
+    expect(isExecutableNotFound(new Error('some error'))).toBe('other');
+    expect(isExecutableNotFound(new Error('could not resolve authentication'))).toBe('other');
+    expect(isExecutableNotFound(null)).toBe('other');
+    expect(isExecutableNotFound(undefined)).toBe('other');
+  });
+
+  // 두 판정이 서로를 먹지 않는다 — 같은 자리(`exit.ts`)에서 나란히 보므로, 한쪽이 다른 쪽의
+  // 입력을 물면 안내문이 뒤바뀐다.
+  it('두 판정은 서로 배타적이다', () => {
+    const notFound = new ExecutableNotFoundError('claude', '/usr/bin');
+    expect(isCredentialFailure(notFound)).toBe('other');
+    const cred = new Error('could not resolve authentication');
+    expect(isExecutableNotFound(cred)).toBe('other');
+    expect(isCredentialFailure(cred)).toBe('harness-credential');
   });
 });
