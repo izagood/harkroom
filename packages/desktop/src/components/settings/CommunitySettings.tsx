@@ -158,7 +158,9 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
             Add community
           </button>
         </div>
-        {addError && (
+        {/* 겹창이 열려 있는 동안은 여기 적지 않는다 — 겹창이 이 자리를 덮으므로, 로그인에
+            성공했는데 화면에 아무 일도 일어나지 않은 것처럼 보인다. 그때의 자리는 겹창 안이다. */}
+        {addError && !addOpen && (
           <p role="alert" className="px-4 py-2 text-danger">{addError}</p>
         )}
       </SettingsGroup>
@@ -182,6 +184,12 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
               onAdded={handleAdded}
               onCancel={() => setAddOpen(false)}
             />
+            {/* 추가가 **폼 밖에서** 막힌 경우(이미 이 기기에 있는 커뮤니티, 세션 시작 실패)를
+                겹창 안에서 말한다. 폼 안의 오류(로그인 실패)는 `ConnectScreen` 이 자기가
+                적는다 — 두 오류의 자리가 다른 것은 원인이 다르기 때문이다. */}
+            {addError && (
+              <p role="alert" className="mt-2 rounded bg-surface-raised px-4 py-2 text-danger">{addError}</p>
+            )}
           </div>
         </div>
       )}

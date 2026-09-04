@@ -22,7 +22,7 @@ afterEach(() => {
   delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
 });
 
-const community: StoredCommunity = { accountId: 'acct_123', baseUrl: 'http://x:3400', token: 'murs_secret', handle: 'testuser' , label: null };
+const community: StoredCommunity = { accountId: 'acct_123', baseUrl: 'http://x:3400', token: 'murs_secret', handle: 'testuser', label: null };
 const sessions: StoredSessions = { active: 'acct_123', communities: [community] };
 
 describe('세션 보관 — 키체인이 있을 때', () => {
@@ -62,7 +62,7 @@ describe('세션 보관 — 키체인이 있을 때', () => {
 
     expect(loaded).toEqual({
       active: null,
-      communities: [{ accountId: '', baseUrl: 'http://x:3400', token: 'murs_secret', handle: '' , label: null }],
+      communities: [{ accountId: '', baseUrl: 'http://x:3400', token: 'murs_secret', handle: '', label: null }],
     });
     expect([...vault.values()].join()).toContain('murs_secret');
     expect(localStorage.getItem('murmur.session')).toBeNull();
@@ -118,12 +118,12 @@ describe('다중 커뮤니티 (#164)', () => {
     keychain();
     await sessionStore.save({
       active: 'acct_123',
-      communities: [{ accountId: 'acct_123', baseUrl: 'http://a:3400', token: 'token_a', handle: 'user_a' , label: null }],
+      communities: [{ accountId: 'acct_123', baseUrl: 'http://a:3400', token: 'token_a', handle: 'user_a', label: null }],
     });
 
     await sessionStore.save({
       active: 'acct_123',
-      communities: [{ accountId: 'acct_123', baseUrl: 'http://b:3400', token: 'token_b', handle: 'user_b' , label: null }],
+      communities: [{ accountId: 'acct_123', baseUrl: 'http://b:3400', token: 'token_b', handle: 'user_b', label: null }],
     });
 
     const loaded = await sessionStore.load();
@@ -135,14 +135,14 @@ describe('다중 커뮤니티 (#164)', () => {
     keychain();
     await sessionStore.save({
       active: 'acct_123',
-      communities: [{ accountId: 'acct_123', baseUrl: 'http://a:3400', token: 'token_a', handle: 'user_a' , label: null }],
+      communities: [{ accountId: 'acct_123', baseUrl: 'http://a:3400', token: 'token_a', handle: 'user_a', label: null }],
     });
 
     await sessionStore.save({
       active: 'acct_456',
       communities: [
-        { accountId: 'acct_123', baseUrl: 'http://a:3400', token: 'token_a', handle: 'user_a' , label: null },
-        { accountId: 'acct_456', baseUrl: 'http://b:3400', token: 'token_b', handle: 'user_b' , label: null },
+        { accountId: 'acct_123', baseUrl: 'http://a:3400', token: 'token_a', handle: 'user_a', label: null },
+        { accountId: 'acct_456', baseUrl: 'http://b:3400', token: 'token_b', handle: 'user_b', label: null },
       ],
     });
 
@@ -155,16 +155,16 @@ describe('다중 커뮤니티 (#164)', () => {
     await sessionStore.save({
       active: 'acct_123',
       communities: [
-        { accountId: 'acct_123', baseUrl: 'http://a:3400', token: 'token_a', handle: 'user_a' , label: null },
-        { accountId: 'acct_456', baseUrl: 'http://b:3400', token: 'token_b', handle: 'user_b' , label: null },
+        { accountId: 'acct_123', baseUrl: 'http://a:3400', token: 'token_a', handle: 'user_a', label: null },
+        { accountId: 'acct_456', baseUrl: 'http://b:3400', token: 'token_b', handle: 'user_b', label: null },
       ],
     });
 
     await sessionStore.save({
       active: 'acct_456',
       communities: [
-        { accountId: 'acct_123', baseUrl: 'http://a:3400', token: 'token_a', handle: 'user_a' , label: null },
-        { accountId: 'acct_456', baseUrl: 'http://b:3400', token: 'token_b', handle: 'user_b' , label: null },
+        { accountId: 'acct_123', baseUrl: 'http://a:3400', token: 'token_a', handle: 'user_a', label: null },
+        { accountId: 'acct_456', baseUrl: 'http://b:3400', token: 'token_b', handle: 'user_b', label: null },
       ],
     });
 
@@ -180,8 +180,8 @@ describe('커뮤니티 단위 제거 (#164)', () => {
     await sessionStore.save({
       active: 'a1',
       communities: [
-        { accountId: 'a1', baseUrl: 'http://x', token: 't1', handle: 'h1' , label: null },
-        { accountId: 'a2', baseUrl: 'http://y', token: 't2', handle: 'h2' , label: null },
+        { accountId: 'a1', baseUrl: 'http://x', token: 't1', handle: 'h1', label: null },
+        { accountId: 'a2', baseUrl: 'http://y', token: 't2', handle: 'h2', label: null },
       ],
     });
 
@@ -196,8 +196,8 @@ describe('커뮤니티 단위 제거 (#164)', () => {
     await sessionStore.save({
       active: 'a1',
       communities: [
-        { accountId: 'a1', baseUrl: 'http://x', token: 't1', handle: 'h1' , label: null },
-        { accountId: 'a2', baseUrl: 'http://y', token: 't2', handle: 'h2' , label: null },
+        { accountId: 'a1', baseUrl: 'http://x', token: 't1', handle: 'h1', label: null },
+        { accountId: 'a2', baseUrl: 'http://y', token: 't2', handle: 'h2', label: null },
       ],
     });
 
@@ -210,8 +210,8 @@ describe('커뮤니티 단위 제거 (#164)', () => {
     await sessionStore.save({
       active: 'a1',
       communities: [
-        { accountId: 'a1', baseUrl: 'http://x', token: 't1', handle: 'h1' , label: null },
-        { accountId: 'a2', baseUrl: 'http://y', token: 't2', handle: 'h2' , label: null },
+        { accountId: 'a1', baseUrl: 'http://x', token: 't1', handle: 'h1', label: null },
+        { accountId: 'a2', baseUrl: 'http://y', token: 't2', handle: 'h2', label: null },
       ],
     });
 
@@ -225,7 +225,7 @@ describe('커뮤니티 단위 제거 (#164)', () => {
   it('마지막 하나를 빼면 보관소가 비워진다', async () => {
     await sessionStore.save({
       active: 'a1',
-      communities: [{ accountId: 'a1', baseUrl: 'http://x', token: 't1', handle: 'h1' , label: null }],
+      communities: [{ accountId: 'a1', baseUrl: 'http://x', token: 't1', handle: 'h1', label: null }],
     });
 
     await sessionStore.remove('a1');
