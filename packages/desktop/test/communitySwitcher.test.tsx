@@ -301,6 +301,50 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
       expect(stored.communities).toHaveLength(2);
     });
   });
+  /**
+   * 추가가 **폼 밖에서** 막히는 두 경우. 겹창이 목록을 덮으므로, 그 문구를 목록 쪽에만
+   * 적으면 사람 눈에는 "로그인을 눌렀는데 아무 일도 없다" 가 된다 — 이 저장소가 반복해서
+   * 잡아 온 '눌러도 아무 일이 없는 버튼'의 오류 버전이다.
+   */
+  it('5c. 이미 이 기기에 있는 커뮤니티를 다시 추가하면 겹창 안에서 그 이유를 말한다', async () => {
+    const a = await community('https://a.example', 'acct-a', true);
+    seed(a, 'me-a', true);
+    storeSessions([{ accountId: 'acct-a', baseUrl: 'https://a.example', handle: 'me-a' }]);
+    vi.stubGlobal('fetch', serverFetch());
+
+    render(<CommunitySettings onCommunitiesEmpty={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add community' }));
+    // 같은 서버 = 같은 계정(acct-a) 이다.
+    fireEvent.change(screen.getByLabelText('Server URL'), { target: { value: 'https://a.example' } });
+    fireEvent.change(screen.getByLabelText('Login ID'), { target: { value: 'me-a' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    // 문구가 **겹창 안**에 있어야 한다. 목록 쪽에만 있으면 겹창이 덮어 보이지 않는다.
+    const dialog = await screen.findByRole('dialog', { name: '커뮤니티 추가' });
+    await waitFor(() => expect(
+      within(dialog).getByText('This community is already on this device.'),
+    ).toBeTruthy());
+
+    // 목록도 늘지 않고, 겹창도 닫히지 않는다 — 사람이 서버 주소를 고쳐 다시 시도할 자리다.
+    expect(useCommunityRegistry.getState().entries).toHaveLength(1);
+    expect(screen.getByText('Sign in to another community')).toBeTruthy();
+  });
+
+  it('5d. 세션 시작이 실패한 커뮤니티는 목록에 남지 않는다', async () => {
+    const a = await community('https://a.example', 'acct-a', true);
+    seed(a, 'me-a', true);
+
+    // 남기면 전환기 레일에 영원히 끊긴 타일이 서고, 사용자는 그것을 뺄 이유를 알 수 없다.
+    await expect(startCommunitySession({
+      baseUrl: 'https://b.example', token: 't-b', accountId: 'acct-b', label: null, active: false,
+      api: fakeApi({ me: vi.fn(async () => { throw new Error('nope'); }) }),
+      makeWs: countingWs().makeWs,
+    })).rejects.toThrow('nope');
+
+    expect(useCommunityRegistry.getState().entries).toHaveLength(1);
+    expect(useCommunityRegistry.getState().activeId).toBe(a.id);
+  });
 });
 
 describe('커뮤니티 제거 (#165 결정 4)', () => {
