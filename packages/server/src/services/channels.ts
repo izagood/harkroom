@@ -36,6 +36,18 @@ export function channelVisibleSql(channel: string, accountParam: string): string
 }
 
 /**
+ * 보관 여부 판정(#153). `channelVisibleSql` 과 **같은 이유로** 문자열 조각 하나로 둔다 —
+ * 이 술어를 쓰는 곳이 메시지 POST(`channelPostGate`)와 멤버십 변경(`channelMembershipGate`,
+ * #328) 둘로 늘었기 때문이다. 각자 `archived_at is not null` 을 적으면 보관의 뜻이 두 곳에
+ * 살고, 한쪽만 고치는 순간 "읽기 전용인데 멤버는 바뀌는" 상태가 다시 생긴다.
+ *
+ * @param channel 질의 안에서 `channel` 테이블을 가리키는 별칭
+ */
+export function channelArchivedSql(channel: string): string {
+  return `${channel}.archived_at is not null`;
+}
+
+/**
  * `pool` 이 `PoolClient` 도 받는 이유: 부트스트랩이 계정과 기본 채널을 한 트랜잭션에 묶는다
  * (`authRoutes.ts`). 그 트랜잭션의 커넥션으로 불러야 begin/commit 이 실제로 이 INSERT 를
  * 덮는다 — Pool 로 부르면 다른 커넥션의 별개 자동커밋이 된다.
@@ -575,7 +587,7 @@ export async function channelPostGate(
 ): Promise<'ok' | 'forbidden' | 'archived'> {
   const res = await db.query(
     `select ${channelVisibleSql('c', '$2')} as visible,
-            c.archived_at is not null as archived
+            ${channelArchivedSql('c')} as archived
      from channel c where c.id = $1`,
     [channelId, accountId],
   );
@@ -585,6 +597,41 @@ export async function channelPostGate(
   // (멤버십은 구독일 뿐이다), private 채널은 비멤버에게 403 이다 — admin 예외 없다.
   if (!row.visible) return 'forbidden';
   return row.archived ? 'archived' : 'ok';
+}
+
+/**
+ * 손으로 멤버십을 바꿀 수 있는 채널인가(#328). **추가와 제거 둘 다**가 이 게이트를 탄다.
+ *
+ * 제거까지 막는 이유: 보관은 "읽기 전용"이라는 결정(#153)이고 멤버십 변경은 쓰기다. 추가만
+ * 막으면 보관된 채널의 멤버 목록이 계속 움직이고, `#322` 의 퇴장 시스템 메시지까지 남아
+ * 읽기 전용이어야 할 채널에 새 메시지가 생긴다.
+ *
+ * 보관 판정은 `channelPostGate`(#153)와 **같은 `channelArchivedSql`** 을 본다 — 판정을
+ * 베끼면 곧 갈라진다.
+ *
+ * DM 은 `getOrCreateDm` 이 참여자를 정하는 채널이다. 사람이 손으로 넣고 빼는 자리가
+ * 아니므로 `kind = 'dm'` 은 거절한다 — 거절의 모양은 `#172` 의 `channel_is_public` 을
+ * 따른다(그 채널에는 이 조작에 할 일이 없다는 뜻이라 400 이다).
+ *
+ * 가시성은 **여기서 보지 않는다** — 호출부마다 다르기 때문이다. 초대는
+ * `assertChannelVisible`(#156), 제거는 자기 자신인지에 따라 갈린다. 그 판정을 여기 끌어오면
+ * 라우트가 이미 내린 결정을 두 번째 자리에서 다시 정하게 된다.
+ *
+ * 존재하지 않는 채널은 `'not_found'` 로 **명시해서** 돌려준다. 여기서 `'ok'` 로 삼키면
+ * 초대 경로가 `channel_member` 의 FK 위반으로 500 을 답한다 — 잘못된 입력이 서버 오류가 된다.
+ */
+export async function channelMembershipGate(
+  db: Queryable, channelId: string,
+): Promise<'ok' | 'not_found' | 'archived' | 'dm'> {
+  const res = await db.query(
+    `select c.kind, ${channelArchivedSql('c')} as archived from channel c where c.id = $1`,
+    [channelId],
+  );
+  const row = res.rows[0] as { kind: string; archived: boolean } | undefined;
+  if (!row) return 'not_found';
+  if (row.archived) return 'archived';
+  if (row.kind === 'dm') return 'dm';
+  return 'ok';
 }
 
 /**
