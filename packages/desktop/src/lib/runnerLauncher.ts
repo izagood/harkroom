@@ -576,7 +576,11 @@ export class RunnerLauncher {
     }
   }
 
-  /** 이 앱이 띄운 자식을 끝낸다. 상태는 자식의 `onExit` 이 갱신한다. */
+  /**
+   * 이 앱이 띄운 자식을 끝낸다. 세대를 먼저 무효화하므로 그 뒤 도착하는 `onExit` 은
+   * `handleExit` 첫 줄에서 early-return 한다 — **상태를 갱신하지 않는다.** 호출자가
+   * 상태를 책임져야 한다(현재 유일한 호출처인 `reissue` 는 바로 뒤 `spawnRunner` 로 새로 쓴다).
+   */
   async stop(agentId: string): Promise<void> {
     const child = this.runners.get(agentId);
     if (!child) return;
