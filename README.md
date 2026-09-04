@@ -123,6 +123,7 @@ between "no work" and "projection is off", is listed in one place:
 | `AGENT_TURN_TIMEOUT_MS` | Maximum wait for one turn (PTY execution) | `1800000` (30min) | No |
 | `AGENT_INTERACTIVE_ORPHAN_MS` | Grace before an interactive PTY with zero viewers is reclaimed (SIGTERM → SIGKILL) | `60000` (60s) | No |
 | `AGENT_STATE_DIR` | Directory for sessions.json, MCP config, AVCS workspace | `~/.murmur-agent` | No |
+| `CODEX_HOME` | Source Codex home whose `auth.json` is linked into the runner-isolated Codex home; child Codex processes always use the isolated home under `AGENT_STATE_DIR` | `~/.codex` | No |
 | `MURMUR_AGENT_INSTANCE` | Instance id for running the same agent account as several runners; becomes the last path segment of the state directory. Must match `[a-z0-9-]{1,32}` — an invalid value fails startup. Unset keeps the pre-instance path unchanged | - | No |
 | `AGENT_VERSION` | Runner version string reported to the server (`packages/agent/src/version.ts`); normally injected by the build | `unknown` | No |
 

@@ -75,6 +75,7 @@ interface Harness {
 }
 
 async function makeHarness(overrides: Partial<InteractiveTurnDeps> = {}, def: AgentView = defOf()): Promise<Harness> {
+  const stateDir = await mkdtemp(join(tmpdir(), 'interactive-state-'));
   const store = new SessionStore(join(await mkdtemp(join(tmpdir(), 'interactive-turn-')), 'sessions.json'));
   await store.load();
   const workspaceBaseDir = join(await mkdtemp(join(tmpdir(), 'interactive-ws-')), 'workspaces');
@@ -120,6 +121,7 @@ async function makeHarness(overrides: Partial<InteractiveTurnDeps> = {}, def: Ag
     murmur, store, exec: async () => ({ code: 0, stdout: '', stderr: '' }),
     runTurn, me: ME, workspaceBaseDir,
     mcpConfigPath: '/tmp/mcp.json', murmurUrl: 'http://localhost:3400', pat: 'murp_fake',
+    codexHome: join(stateDir, 'codex-home'),
     relay, registry, queue,
     orphanMs: 60_000, killGraceMs: 5_000,
     schedule: sched.schedule,
@@ -187,16 +189,19 @@ describe('#337 분기 ③ — 아무 턴도 없으면 새로 연다', () => {
     expect(h.plans[0]!.args).not.toContain('--session-id');
   });
 
-  it('codex 에이전트는 거절 메시지가 그대로 던져지고, 아무것도 등록되지 않는다 (§5-2 결정 8)', async () => {
+  it('codex 에이전트도 첫 인터랙티브 턴을 열고 격리 CODEX_HOME 을 사용한다', async () => {
     const h = await makeHarness({}, defOf({ harness: 'codex' }));
     const manager = createInteractiveManager(h.deps);
 
-    await expect(manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' }))
-      .rejects.toThrow(/codex 인터랙티브 턴은 지원하지 않는다/);
-    // 거절이 흔적을 남기면 안 된다 — 등록이 남으면 그 스레드의 멘션이 영원히 유예된다.
-    expect(h.registry.get(KEY)).toBeUndefined();
-    expect(h.relayLog.closed).toBe(0); // 세션을 열지도 않았다
-    expect(h.plans).toHaveLength(0);
+    const opened = await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    expect(opened).toEqual({ sessionId: 'relay-1', created: true });
+    expect(h.plans).toHaveLength(1);
+    expect(h.plans[0]!.args).not.toContain('resume');
+    expect(h.plans[0]!.env.CODEX_HOME).toBe(h.deps.codexHome);
+    expect(h.registry.get(KEY)).toMatchObject({ kind: 'interactive' });
+
+    h.endTurn();
+    await waitReleased(h.registry);
   });
 });
 

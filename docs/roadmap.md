@@ -160,27 +160,25 @@
   안다)와 **멘션 큐잉의 클램프**(조종이 끝난 뒤 풀려난 부름의 프롬프트가 비지 않는가)는
   단위 테스트가 잡을 수 없는 자리다.
 
-  같은 날 스파이크가 뒤집은 것도 적어 둔다: **codex 인터랙티브는 지원하지 않는다**(`codex
-  resume` 이 `--ignore-user-config` 를 파싱 단계에서 거부한다 — 열었다면 운영자 개인 MCP 를
-  상속했다). claude 는 세션 파일이 첫 사용자 메시지 전에는 생기지 않고 같은 uuid 재사용이
+  **2026-09-04 후속 실측으로 codex 인터랙티브 게이트도 닫혔다.** `codex resume` 이
+  `--ignore-user-config` 를 실제 파서에서 거부하는 사실은 그대로지만, 별도 `CODEX_HOME`에
+  기존 auth만 연결하면 개인 config/MCP 없이 로그인과 resume이 함께 동작했다. 구현·수용 기록은
+  [`docs/plans/2026-09-04-codex-harness-activation.md`](plans/2026-09-04-codex-harness-activation.md)에 있다.
+  claude 는 세션 파일이 첫 사용자 메시지 전에는 생기지 않고 같은 uuid 재사용이
   즉시 실패해, exit 후 파일 존재로 `turnsRun` 을 판정한다(`claudeSessions.ts`).
 - **러너가 오래 도는 것** — 지금까지 확인한 것은 "띄우면 답한다"이고, 며칠 연속으로 도는 동안
   자격증명 만료·메모리·좀비 `claude`/`codex` 프로세스가 어떻게 되는지는 모른다. 층 3 의 러너
   감독 항목과 같은 뿌리다
-- **harness 다양성** — **2026-09-02 실물로 부분 확인.** codex 로 실제 멘션 하나에 응답시켰다
+- ~~**harness 다양성**~~ — **2026-09-04 실물로 닫혔다.** codex 로 실제 멘션 첫 턴과 같은
+  세션의 resume 두 턴을 완주했고, 격리 `CODEX_HOME`에서 대화형 resume도 확인했다.
   — 상세는 `packages/agent/README.md`의 harness 절과 spec §4/§10 을 근거로 삼되, 이 항목엔
   실측 결과만 남긴다. **첫 턴은 성공했다**(murmur MCP 연결·`message.post`·발화 확인까지 실제로
   완주). 이 과정에서 `turn.ts` 의 진짜 결함 두 개를 실물로 찾아 고쳤다 — PTY 자식 프로세스
   env 가 부모를 상속하지 못해 harness 실행 파일 자체를 못 찾던 것, codex 의 murmur MCP URL 에
   `/mcp` 가 안 붙어 있던 것(둘 다 단위 테스트가 프로덕션과 다른 fixture 로 이 결함들을 가리고
-  있었다 — 테스트도 함께 고쳤다). **resume 턴은 이 워크트리에서 완주를 확인하지 못했다** —
-  codex 의 MCP 도구 호출이 이 개발 머신에 걸린 개인 도구(이 워크트리와 무관한 로컬 후크)의
-  승인 게이트에 막혔고, 그 게이트를 우회하는 유일한 수단(`codex exec --approve-for-me`)이
-  `codex exec resume` 에는 존재하지 않는다(`--help` 로 확인). 그래서 `RUNNABLE_HARNESSES`
-  에는 아직 추가하지 않았다 — 이 목록의 기준은 "resume 왕복까지 실물로 도는 것을 본 것"이고,
-  이번엔 그 절반만 닫혔다. 다음 확인은 이런 개인 후크가 없는 머신에서 같은 절차를 반복해
-  resume 이 완주하는지 보는 것이다(claude-code 처럼 순수 `-c sandbox_mode` 하나로 첫 턴·resume
-  이 대칭인지, 아니면 codex 자체에 다른 비대칭이 남아 있는지는 그때 가려진다).
+  있었다 — 테스트도 함께 고쳤다). 당시 막혔던 개인 후크는 격리 홈에서 로드되지 않았고,
+  `RUNNABLE_HARNESSES`에 `codex`를 추가했다. 자세한 명령 형태와 보안 경계는 위 활성화 기록에
+  남겼다.
 
 ## 6. 최근에 닫은 결함 중 기록해 둘 것
 
