@@ -113,6 +113,15 @@ function decodeTailText(buf: Buffer): string {
  */
 export interface PtyWriter {
   write(chunk: Buffer): void;
+  /**
+   * PTY 창 크기를 바꾼다(#335). **새 프로세스를 띄우지 않는다** — node-pty 의 `resize`
+   * 가 살아 있는 PTY 에 ioctl(TIOCSWINSZ)을 걸고 SIGWINCH 를 보내므로, 하네스는 자기가
+   * 그리던 화면을 유지한 채 폭만 다시 계산한다.
+   *
+   * `write` 와 **같은 이유로 던지지 않는다**: 프로세스가 끝난 뒤의 resize 도 사람이 아직
+   * 마지막 화면을 보며 창을 끄는 정상 상황이다.
+   */
+  resize(cols: number, rows: number): void;
 }
 
 export interface TurnResult {
@@ -219,6 +228,11 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         // 프로세스가 끝난 뒤의 쓰기는 EIO 로 던진다 — 사람이 마지막 화면에서 엔터를 한 번
         // 더 친 정상 상황이므로, 그것으로 러너를 죽이지 않는다(`PtyWriter` 주석).
         try { proc.write(chunk.toString('utf8')); } catch { /* 이미 끝난 PTY 는 조용히 버린다 */ }
+      },
+      resize(cols, rows) {
+        // 위 spawn 의 120x40 은 **아무도 안 붙었을 때의 기본값**이고, 소유자가 붙으면
+        // 그 패널 크기가 이것으로 덮어쓴다(#335 — 소유자의 폭이 정답이다).
+        try { proc.resize(cols, rows); } catch { /* 이미 끝난 PTY 는 조용히 버린다 */ }
       },
     });
 
