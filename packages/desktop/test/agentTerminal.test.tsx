@@ -116,9 +116,7 @@ describe('#141-8 패널을 닫으면 구독이 끊긴다', () => {
     const api = {
       baseUrl: 'http://localhost:8080',
       agentSessions: vi.fn(async () => sessions),
-      // 이 describe 의 주인공은 소유자다 — #315 이후로는 그 사실을 명시해야 패널이
-      // 입력을 연다(안 적으면 읽기 전용으로 떠서 무엇을 검증하는지 흐려진다).
-      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: sessions[0]!, canInput: true })),
+      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: sessions[0]! })),
     };
     setController({ api } as unknown as Controller);
     useAppStore.getState().set({
@@ -166,15 +164,14 @@ describe('#141-8 패널을 닫으면 구독이 끊긴다', () => {
 });
 
 /**
- * #315 — 사람이 이 패널에 타이핑한다. 두 가지를 가른다:
- *   1(클라이언트 절반). 소유자가 친 것이 attach 소켓으로 나간다.
- *   5. admin 에게는 **입력 자체가 열리지 않고**, 왜인지가 화면에 있다.
- *
- * sink 팩토리가 받은 옵션을 붙잡는다 — 여기가 "입력이 열렸는가"의 실제 경계다.
- * 화면에 문구만 확인하면, 문구는 맞는데 xterm 은 입력을 받는 상태로도 초록이 된다.
+ * #315·#346 — 사람이 이 패널에 타이핑한다. 쓰기 차례는 서버의 `writer` 프레임이 정한다
+ * (스펙 §5-2 결정 2 — 마지막 attach 가 writer). 화면 쪽이 지켜야 하는 것 세 가지:
+ *   1. writer 통지를 받은 창의 타이핑만 소켓으로 나간다.
+ *   2. 통지가 **한 번도 안 오면**(구 서버) 아무것도 보내지 않는다 — 4방향 호환의 절반.
+ *   3. 강등(writer:false)이 오면 그 순간부터 다시 보내지 않고, 왜인지가 화면에 있다.
  */
-describe('#315 소유자는 치고 admin 은 못 친다', () => {
-  const mountPanel = async (canInput: boolean) => {
+describe('#315 writer 인 창만 친다 — 차례는 서버가 정한다', () => {
+  const mountPanel = async () => {
     let opts: { onInput?: (data: string) => void } | undefined;
     setTerminalSinkFactory((_el, o) => {
       opts = o;
@@ -183,7 +180,7 @@ describe('#315 소유자는 치고 admin 은 못 친다', () => {
     const api = {
       baseUrl: 'http://localhost:8080',
       agentSessions: vi.fn(async () => [session()]),
-      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: session(), canInput })),
+      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: session() })),
     };
     setController({ api } as unknown as Controller);
     useAppStore.getState().set({
@@ -196,10 +193,9 @@ describe('#315 소유자는 치고 admin 은 못 친다', () => {
     return { sinkOpts: () => opts };
   };
 
-  it('소유자가 친 것이 attach 소켓에 input 프레임으로 나간다', async () => {
-    const { sinkOpts } = await mountPanel(true);
-    // 입력이 열려 있다 — 열려 있지 않으면 아래 호출 자체가 불가능하다.
-    expect(sinkOpts()?.onInput).toBeTypeOf('function');
+  it('writer 통지를 받은 창의 타이핑이 input 프레임으로 나간다', async () => {
+    const { sinkOpts } = await mountPanel();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true }); });
 
     // xterm 이 키를 넘기는 것을 흉내낸다. 제어 시퀀스를 섞는다 — 글자만 보내면
     // 인코딩이 깨져도 통과한다.
@@ -209,19 +205,34 @@ describe('#315 소유자는 치고 admin 은 못 친다', () => {
     const frame = JSON.parse(FakeSocket.last!.sent[0]!) as { type: string; data: string };
     expect(frame.type).toBe('input');
     expect(Buffer.from(frame.data, 'base64').toString('utf8')).toBe('\x1b[Ayes\r');
+    // 차례가 있다는 사실도 화면에 있다 — 두 창을 쓰는 사람이 어느 쪽이 살아 있는지
+    // 여기서 읽는다.
+    expect(screen.getByTestId('writer-note').textContent).toContain('입력 가능');
   });
 
-  it('admin 에게는 입력이 열리지 않고 왜인지가 화면에 있다', async () => {
-    const { sinkOpts } = await mountPanel(false);
-
-    // **입력창이 없다.** sink 에 onInput 이 안 가면 terminalSink 가 xterm 의 stdin 자체를
-    // 끈다 — 여기가 "눌러도 아무 일이 없는 입력창"을 막는 자리다.
-    expect(sinkOpts()?.onInput).toBeUndefined();
-    // 그리고 이유가 보인다. 비활성만 하고 이유를 안 적으면 사람은 고장으로 읽는다.
-    expect(screen.getByText(/읽기 전용/)).toBeTruthy();
-    expect(screen.getByText(/소유자/)).toBeTruthy();
-    // 소켓으로도 아무것도 나가지 않았다 — 화면 문구만 보면 못 잡는 절반이다.
+  it('writer 프레임이 한 번도 안 오면(구 서버) 아무것도 보내지 않는다', async () => {
+    const { sinkOpts } = await mountPanel();
+    // 통지 없이 바로 친다 — 구 서버는 writer 프레임을 모르고, 그때 보낸 input 은 서버가
+    // 해석하지 못한다. 보내지 않는 것이 "자연스러운 읽기 전용 저하"다(스펙 §5-2 결정 2).
+    await act(async () => { sinkOpts()!.onInput!('hello\r'); });
     expect(FakeSocket.last!.sent).toEqual([]);
+  });
+
+  it('강등(writer:false)이 오면 그 뒤의 타이핑은 나가지 않고 이유가 화면에 있다', async () => {
+    const { sinkOpts } = await mountPanel();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true }); });
+    await act(async () => { sinkOpts()!.onInput!('a'); });
+    expect(FakeSocket.last!.sent).toHaveLength(1);
+
+    // 다른 창이 attach 해 서버가 이 창을 강등시켰다.
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: false }); });
+    await act(async () => { sinkOpts()!.onInput!('b'); });
+
+    // 강등 뒤에 친 것은 나가지 않는다 — state 가 아니라 ref 가 가드해야 이 순간이 잡힌다.
+    expect(FakeSocket.last!.sent).toHaveLength(1);
+    // 이유가 보인다. 비활성만 하고 이유를 안 적으면 사람은 고장으로 읽는다.
+    expect(screen.getByTestId('writer-note').textContent).toContain('읽기 전용');
+    expect(screen.getByTestId('writer-note').textContent).toContain('다른 창');
   });
 });
 

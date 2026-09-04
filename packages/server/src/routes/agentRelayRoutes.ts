@@ -25,7 +25,7 @@
 // `agent.input` 하나이고, 그 행이 답하는 것은 "누가 언제 어느 턴에 개입했다" 뿐이다.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
-import type { AgentSessionView, AttachClientFrame } from '@murmur/shared';
+import type { AgentSessionView } from '@murmur/shared';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { createAttachTicketStore } from '../ws/tickets.js';
@@ -170,24 +170,17 @@ export async function registerAgentRelayRoutes(
       detail: { sessionId: session.sessionId, channelId: session.channelId },
     }, req);
 
-    // **쓰기는 소유자만이다**(#315 운영자 결정). 판정을 여기서 다시 하지 않고 위
-    // `verdict` 가 알려 준 통과 경로를 그대로 읽는다 — `checkOwnerOrAdmin` 이 이미
-    // 계산한 사실이고, 복제하면 한쪽만 고치는 사고가 난다.
-    //
-    // 소유자가 아닌 admin 을 읽기 전용으로 두는 것이 잠금 장치를 대신한다: 한 세션에
-    // 바이트를 넣을 수 있는 주체가 애초에 한 명(소유자)뿐이라, 두 사람의 키 입력이 섞이는
-    // 문제가 생기지 않는다. 화면도 이 값을 받아 admin 에게는 입력을 아예 열지 않고 이유를 적는다.
-    const canInput = verdict.via === 'owner';
-
+    // 티켓은 **attach 인가**만 운반한다. 쓰기 차례(지금 누가 writer 인가)는 티켓이 아니라
+    // 허브가 산다(스펙 §5-2 결정 2 — 마지막 attach 가 writer, `ws/relay.ts::setWriter`).
+    // 판정을 티켓에도 실으면 "누가 쓰는가"의 진실이 두 곳이 되고, 인가에서 그것은 조용히
+    // 열리는 쪽으로 어긋난다. `verdict.via` 는 이제 여기서 읽지 않는다.
     return {
       ticket: attachTickets.issue({
         accountId: account.id,
         credentialHash: req.credentialHash!,
         sessionId: session.sessionId,
-        canInput,
       }),
       session,
-      canInput,
     };
   });
 
@@ -203,7 +196,8 @@ export async function registerAgentRelayRoutes(
    * 근거다. 그리고 **입력을 여는 것은 턴 모드를 바꾸는 것이 아니다** — 이 경로는 PTY 에
    * 바이트를 넣을 뿐, 그 턴의 `TurnMode` 도 `mention_permission` 도 건드리지 않는다.
    *
-   * 쓰기 판정은 여기서 하지 않는다. `claim.canInput` 이 attach 인가 때의 결정을 운반한다.
+   * 쓰기 판정은 여기서 하지 않는다. writer 차례는 허브가 갖고(`ws/relay.ts::setWriter` —
+   * 마지막 attach 가 writer, 스펙 §5-2 결정 2), 이 핸들러는 프레임을 핸들에 넘길 뿐이다.
    */
   app.get('/agent-attach', { websocket: true }, (socket, req) => {
     // Origin 을 티켓 소모보다 **먼저** 본다 — 거절할 연결이 1회용 티켓을 태우면, 사람이
@@ -217,21 +211,15 @@ export async function registerAgentRelayRoutes(
     const claim = ticket ? attachTickets.consume(ticket) : null;
     if (!claim) { socket.close(4401, 'unauthorized'); return; }
 
-    const off = hub.addViewer(claim.sessionId, socket);
+    const viewer = hub.addViewer(claim.sessionId, socket);
     // 자격증명이 죽으면 이 소켓도 닫힌다(위 `sweep` 주석).
     const untrack = sweep.track(socket, claim.credentialHash);
     const shouldAuditInput = createInputAuditGate(deps.inputAuditWindowMs ?? INPUT_AUDIT_WINDOW_MS);
 
     socket.on('message', (raw) => {
-      // 뷰어는 무엇이든 보낼 수 있다 — 파싱 실패로 소켓을 죽이지 않는다.
-      let frame: AttachClientFrame;
-      try { frame = JSON.parse(String(raw)) as AttachClientFrame; } catch { return; }
-      if (frame?.type !== 'input' || typeof frame.data !== 'string') return;
-      // **admin 은 여기서 멈춘다.** 화면이 입력을 안 그리는 것만으로는 게이트가 아니다 —
-      // 소켓은 누구나 직접 열 수 있으므로, 진짜 게이트는 이 한 줄이다.
-      if (!claim.canInput) return;
-      // 바이트는 열지 않고 그대로 러너에게 넘긴다(허브 주석).
-      if (!hub.sendInput(claim.sessionId, frame.data)) return;
+      // 파싱·writer 판정·포워딩은 허브의 몫이다 — "누가 지금 쓰는가"의 진실을 두 곳에
+      // 두지 않는다. 여기 남는 것은 감사(관측)뿐이다.
+      if (!viewer.handleMessage(String(raw))) return;
       if (!shouldAuditInput()) return;
       // 사실만 남긴다: 누가(actorId) 언제(at) 어느 턴에(sessionId). **친 내용은 없다.**
       void recordAudit(pool, {
@@ -244,7 +232,7 @@ export async function registerAgentRelayRoutes(
     });
 
     socket.on('close', () => {
-      off();
+      viewer.close();
       untrack();
       // detach 도 남긴다 — attach 만 남기면 감사 조회에서 "지금 붙어 있는 사람"과
       // "붙었다 떠난 사람"이 구분되지 않는다. 여기서도 바이트는 넣지 않는다.
