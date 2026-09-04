@@ -13,6 +13,7 @@ const base = {
   systemPrompt: 'SYS', promptCtx: 'CTX', model: null, effort: null,
   mentionPermission: 'auto' as const, mcpConfigPath: '/mcp.json', pat: 'murp_x',
   murmurUrl: 'http://localhost:3401',
+  codexHome: '/state/codex-home',
   // 프로덕션(`mentionTurn.ts`)은 매 턴 `writeSystemPromptFile` 로 파일을 쓰고 그 경로를
   // 반드시 넘긴다 — fixture 가 null 로 두면 프로덕션이 절대 타지 않는 경로를 검증하게 된다.
   systemPromptFile: '/state/system-prompt.txt',
@@ -188,17 +189,17 @@ describe('buildTurnCommand — codex', () => {
     expect(p.args).toContain('--skip-git-repo-check');
   });
 
-  // #337 스파이크(codex-cli 0.147.0 실측): `codex resume` 은 `--ignore-user-config` 를
-  // 파싱 단계에서 거부한다 — 그 플래그 없이 열면 운영자 ~/.codex/config.toml 의 개인
-  // MCP(Slack·Gmail·Drive)를 통째로 상속해, §7 이 멘션 턴에서 막은 구멍이 인터랙티브로
-  // 다시 열린다. 그래서 codex 인터랙티브는 **명확한 에러로 거절한다**(스펙 §5-2 결정 8).
-  // 이 거절이 "미구현" 으로 읽히지 않게 에러 문구가 이유(플래그·config 상속)를 말해야 한다.
-  it('codex 인터랙티브 턴은 명확한 에러로 거절한다 — resume 이 --ignore-user-config 를 못 받는다 (§5-2 결정 8)', () => {
-    expect(() => buildTurnCommand({ ...base, harness: 'codex', mode: 'interactive', sessionId: 's', isFirstTurn: false }))
-      .toThrow(/--ignore-user-config.*config\.toml/s);
-    // 첫 턴(세션 없음)도 같은 거절이다 — 맨 `codex` 로 여는 경로도 config 상속은 같다.
-    expect(() => buildTurnCommand({ ...base, harness: 'codex', mode: 'interactive', sessionId: null, isFirstTurn: true }))
-      .toThrow(/인터랙티브 턴은 지원하지 않는다/);
+  it('codex 인터랙티브 첫 턴과 resume 을 조립하고 격리 CODEX_HOME 을 넘긴다', () => {
+    const first = buildTurnCommand({ ...base, harness: 'codex', mode: 'interactive', sessionId: null, isFirstTurn: true });
+    expect(first.args[0]).toBe('-c');
+    expect(first.args).not.toContain('resume');
+    expect(first.args).not.toContain('--ignore-user-config');
+    expect(first.env.CODEX_HOME).toBe('/state/codex-home');
+
+    const resumed = buildTurnCommand({ ...base, harness: 'codex', mode: 'interactive', sessionId: 's', isFirstTurn: false });
+    expect(resumed.args.slice(0, 2)).toEqual(['resume', 's']);
+    expect(resumed.args).not.toContain('--ignore-user-config');
+    expect(resumed.env.CODEX_HOME).toBe('/state/codex-home');
   });
 
   // --ignore-user-config 는 claude 의 --strict-mcp-config 와 같은 목적이다: 운영자의
@@ -358,9 +359,7 @@ describe('writeMcpConfigOnce', () => {
 describe('assertHarnessContract', () => {
   // RUNNABLE_HARNESSES 에 unsupported 인 harness 가 있으면 기동 시점에서 실패한다.
   // 이 테스트는 주입된 목록으로 검사한다(프로덕션 상수를 오염시키지 않음).
-  // codex 를 함께 넣어도 통과한다 — 이 검사가 보는 것은 "PRESETS 에 구현이 있는가"이고
-  // codex 는 구현돼 있다. RUNNABLE_HARNESSES 에 아직 없는 것은 별개의 판단(실물 resume
-  // 왕복 미확인, docs/roadmap.md §5)이지 구현 부재가 아니다.
+  // codex 를 함께 넣어도 통과한다 — 이 검사가 보는 것은 "PRESETS 에 구현이 있는가"다.
   it('PRESETS 에 구현이 있는 목록이면 통과한다', () => {
     expect(() => assertHarnessContract(['claude-code', 'codex'])).not.toThrow();
   });
