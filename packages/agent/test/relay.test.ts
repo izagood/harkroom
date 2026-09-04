@@ -251,7 +251,7 @@ describe('#315 서버가 보낸 input 을 그 세션의 PTY 로 넣는다', () =
     d.open();
     const session = client.openSession(SESSION);
     const written: Buffer[] = [];
-    session.bindInput({ write: (chunk) => { written.push(chunk); } });
+    session.bindInput({ write: (chunk) => { written.push(chunk); }, resize: () => {} });
 
     // 서버가 보내는 것과 **같은 모양**의 프레임이다(server/src/ws/relay.ts::sendInput).
     d.deliver({ type: 'input', sessionId: session.sessionId, data: RAW.toString('base64') });
@@ -280,7 +280,7 @@ describe('#315 서버가 보낸 input 을 그 세션의 PTY 로 넣는다', () =
     d.open();
     const session = client.openSession(SESSION);
     const written: Buffer[] = [];
-    session.bindInput({ write: (chunk) => { written.push(chunk); } });
+    session.bindInput({ write: (chunk) => { written.push(chunk); }, resize: () => {} });
 
     d.deliver({ type: 'input', sessionId: 'someone-elses-session', data: 'aGk=' });
 
