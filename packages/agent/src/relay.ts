@@ -153,6 +153,18 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
       // **이 경로는 턴의 모드를 건드리지 않는다.** PTY stdin 에 바이트를 넣을 뿐이고,
       // `plan`(모드·권한 프리셋)은 턴이 시작될 때 이미 조립돼 봉인됐다.
       live.writer?.write(Buffer.from(frame.data, 'base64'));
+      return;
+    }
+
+    if (frame.type === 'resize') {
+      // **여기서도 판정을 다시 하지 않는다**(위 `input` 주석과 같은 이유). 소유자만
+      // 크기를 정한다는 것은 서버가 attach 티켓의 `canInput` 으로 이미 판정했고,
+      // 러너가 지키는 것은 "이 세션이 내 것인가" 뿐이다.
+      //
+      // 값 검증도 서버가 했다(`agentRelayRoutes.ts::isPtySize`). 그래도 `writer` 가
+      // 없을 수 있다 — spawn 전이면 크기를 적용할 PTY 가 아직 없고, 그때는 버린다:
+      // 큐에 담아 두면 다음 턴의 PTY 가 지난 턴의 창 크기로 열린다.
+      live.writer?.resize(frame.cols, frame.rows);
     }
   };
 
