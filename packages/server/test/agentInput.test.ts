@@ -138,21 +138,19 @@ async function waitForSession(sessionId: string): Promise<void> {
 const inputBytes = (r: FakeRunner): Buffer[] =>
   r.received.filter((f) => f.type === 'input').map((f) => Buffer.from(f.data, 'base64'));
 
-/** 이 세션에 대한 `agent.input` 감사 행 전부. */
-async function inputAuditRows(sessionId: string): Promise<{ actorId: string | null; at: string; detail: unknown }[]> {
+/** 이 세션에 대한 `agent.detached` 감사 행 전부 — 개입 사실은 이 행의 inputBytes 로 남는다(#346). */
+async function detachedAuditRows(sessionId: string): Promise<{ actorId: string | null; at: string; detail: Record<string, unknown> }[]> {
   const res = await pool.query(
     `select actor_id as "actorId", at, detail from audit_log
-      where action = 'agent.input' and detail->>'sessionId' = $1 order by id`,
+      where action = 'agent.detached' and detail->>'sessionId' = $1 order by id`,
     [sessionId],
   );
-  return res.rows as { actorId: string | null; at: string; detail: unknown }[];
+  return res.rows as { actorId: string | null; at: string; detail: Record<string, unknown> }[];
 }
 
 beforeAll(async () => {
   ({ pool, stop } = await startTestDb());
-  // 감사 묶임 간격을 짧게 준다 — 기본 60초로는 "묶인다"는 확인만 되고 "간격이 지나면
-  // 다시 남는다"는 확인이 테스트를 1분 멈춘다.
-  app = await buildServer({ pool: pool as Pool, inputAuditWindowMs: 300 });
+  app = await buildServer({ pool: pool as Pool });
   ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
 
   const register = async (handle: string) => {
@@ -299,8 +297,8 @@ describe('#315-6 소유자도 admin 도 아니면 읽기도 못 한다 (#141 게
   });
 });
 
-describe('#315-7 감사에 누가 언제만 남고 내용은 남지 않는다', () => {
-  it('감사 행 전체를 문자열로 만들어도 타이핑한 값이 그 안에 없다', async () => {
+describe('#315-7 감사에 누가·언제·몇 바이트만 남고 내용은 남지 않는다', () => {
+  it('detach 행 전체를 문자열로 만들어도 타이핑한 값이 그 안에 없다', async () => {
     const sessionId = 'sess-input-audit';
     const secret = 'sk-live-0123456789abcdef';
     const runner = await connectRunner(agentPat);
@@ -309,13 +307,17 @@ describe('#315-7 감사에 누가 언제만 남고 내용은 남지 않는다', 
 
     const viewer = await attach(ownerToken, sessionId);
     viewer.type(Buffer.from(secret, 'utf8'));
-    await waitForAsync(async () => (await inputAuditRows(sessionId)).length > 0);
+    // 러너에 닿은 것을 확인한 뒤 detach 한다 — 개입 사실은 detach 행에만 남는다(#346).
+    await waitFor(() => inputBytes(runner).length === 1);
+    viewer.close();
+    await waitForAsync(async () => (await detachedAuditRows(sessionId)).length > 0);
 
-    const rows = await inputAuditRows(sessionId);
-    // 남아야 하는 사실: 누가(actorId), 언제(at), 어느 턴에(sessionId).
+    const rows = await detachedAuditRows(sessionId);
+    // 남아야 하는 사실: 누가(actorId), 언제(at), 어느 턴에(sessionId), 몇 바이트(inputBytes).
     expect(rows[0]!.actorId).toBe(ownerId);
     expect(Date.parse(rows[0]!.at)).not.toBeNaN();
-    expect(rows[0]!.detail).toEqual({ sessionId });
+    // 바이트 **수**가 실제 전송량과 일치한다 — 디코드 없이 base64 길이 산술로 센 값이다.
+    expect(rows[0]!.detail).toEqual({ sessionId, inputBytes: Buffer.byteLength(secret, 'utf8') });
 
     // **행 전체를 문자열로 만들어 검사한다.** "detail 에 그 키가 없다"로 단언하면 필드
     // 이름이 바뀌는 순간 아무것도 안 지키는 테스트가 된다. 원문과 base64 둘 다 본다 —
@@ -324,37 +326,54 @@ describe('#315-7 감사에 누가 언제만 남고 내용은 남지 않는다', 
     expect(dump).not.toContain(secret);
     expect(dump).not.toContain(Buffer.from(secret, 'utf8').toString('base64'));
 
-    viewer.close();
     await runner.close();
   });
 });
 
 describe('#315-8 연타가 감사 행을 폭증시키지 않는다', () => {
-  it('한 attach 세션의 연속 입력은 한 행으로 묶이고, 간격이 지나면 다시 한 행이 남는다', async () => {
+  it('한 attach 소켓의 입력 전부가 detach 행 하나의 합산으로 남는다', async () => {
     const sessionId = 'sess-input-burst';
     const runner = await connectRunner(agentPat);
     runner.send({ type: 'announce', sessions: [session(sessionId)] });
     await waitForSession(sessionId);
 
     const viewer = await attach(ownerToken, sessionId);
-    // 사람이 한 줄을 치는 것과 같은 모양 — 키 하나에 프레임 하나다.
-    for (const ch of 'yes, do it\r') viewer.type(Buffer.from(ch, 'utf8'));
-    await waitFor(() => inputBytes(runner).length === 11);
-    await waitForAsync(async () => (await inputAuditRows(sessionId)).length > 0);
+    // 사람이 한 줄을 치는 것과 같은 모양 — 키 하나에 프레임 하나다. 멀티바이트를 섞는다:
+    // 합산이 base64 길이 산술로 정확하려면 한글(3바이트)도 제대로 세어야 한다.
+    const typed = 'yes, 좋다\r';
+    for (const ch of typed) viewer.type(Buffer.from(ch, 'utf8'));
+    const frameCount = [...typed].length;
+    await waitFor(() => inputBytes(runner).length === frameCount);
 
-    // **바이트는 하나도 안 묶였다.** 묶이는 것은 감사뿐이고, PTY 에는 전부 가야 한다 —
+    // **바이트는 하나도 안 묶였다.** 합산되는 것은 감사뿐이고, PTY 에는 전부 가야 한다 —
     // 여기서 바이트가 줄면 사람이 친 것이 사라진 것이다.
-    expect(inputBytes(runner)).toHaveLength(11);
-    expect(await inputAuditRows(sessionId)).toHaveLength(1);
-
-    // 간격(테스트에서 300ms)이 지나면 다음 개입은 다시 남는다 — 묶임이 "첫 번째만 남기고
-    // 영원히 침묵한다"가 되면 두 시간 뒤의 개입이 감사에서 사라진다.
-    await new Promise((r) => setTimeout(r, 350));
-    viewer.type(Buffer.from('x', 'utf8'));
-    await waitForAsync(async () => (await inputAuditRows(sessionId)).length === 2);
-    expect(await inputAuditRows(sessionId)).toHaveLength(2);
+    expect(inputBytes(runner)).toHaveLength(frameCount);
 
     viewer.close();
+    await waitForAsync(async () => (await detachedAuditRows(sessionId)).length > 0);
+
+    // 행은 **하나**다 — 키 입력마다(또는 시간 창마다) 행을 만들면 행 타임스탬프가 곧
+    // 키 입력의 리듬이라 그 자체가 부채널이다(스펙 §5-2 결정 3).
+    const rows = await detachedAuditRows(sessionId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.detail.inputBytes).toBe(Buffer.byteLength(typed, 'utf8'));
+
+    await runner.close();
+  });
+
+  it('아무것도 안 친 뷰어의 detach 행은 inputBytes 0 이다 — 관찰과 개입이 구분된다', async () => {
+    const sessionId = 'sess-input-zero';
+    const runner = await connectRunner(agentPat);
+    runner.send({ type: 'announce', sessions: [session(sessionId)] });
+    await waitForSession(sessionId);
+
+    const viewer = await attach(ownerToken, sessionId);
+    viewer.close();
+    await waitForAsync(async () => (await detachedAuditRows(sessionId)).length > 0);
+
+    // 0 이 명시적으로 남아야 감사 조회가 "붙어서 보기만 했다"와 "붙어서 쳤다"를 가른다.
+    expect((await detachedAuditRows(sessionId))[0]!.detail.inputBytes).toBe(0);
+
     await runner.close();
   });
 });
