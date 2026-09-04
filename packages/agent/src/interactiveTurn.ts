@@ -329,8 +329,9 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
 
     void turn.then(
       (result) => finish(result),
-      // runPtyTurn 은 reject 하지 않는 계약이지만, spawn 자체가 실패하면(실행 파일 없음)
-      // 여기로 온다 — 그때도 레지스트리·세션을 정리해야 스레드가 영구히 "조종 중"으로 안 남는다.
+      // `runPtyTurn` 은 하네스가 **어떻게 죽든** reject 하지 않지만, 예외가 하나 있다:
+      // 실행 파일 부재(#340 — `ExecutableNotFoundError`). 그때도 레지스트리·세션을
+      // 정리해야 이 스레드가 영구히 "조종 중"으로 남아 멘션이 계속 유예되지 않는다.
       (err) => {
         console.error(`[interactiveTurn] ${key}: 인터랙티브 턴 실패 — ${err instanceof Error ? err.message : String(err)}`);
         return finish(null);
@@ -338,7 +339,13 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
     );
 
     // spawn 이 확인되면 곧장 돌려준다 — 서버의 10초 타임아웃 안에 티켓이 발급돼야 한다.
-    // spawn 자체가 실패하면 turn 이 그보다 먼저 끝나므로, 그 실패를 열기 실패로 돌려준다.
+    // 뜨지 못하면 turn 이 spawned 보다 먼저 끝나므로, 그것을 **열기 실패**로 돌려준다:
+    // 던진 것은 relay 가 `interactive.error` 로 옮기고 사람 화면에 그대로 뜬다.
+    //
+    // 두 갈래를 다 잡는다 — reject(실행 파일 부재, #340)는 그 오류를 **그대로** 올린다:
+    // 여기서 문구를 새로 지으면 "claude 가 PATH 에 없다"는 원인이 "뜨자마자 끝났다"로
+    // 뭉개져, 사람이 러너 로그를 뒤져야 알 수 있는 것이 된다. resolve(즉시 종료)는
+    // exitCode 밖에 단서가 없으므로 그때만 문구를 만든다.
     await Promise.race([
       spawned,
       turn.then((result) => {
