@@ -256,6 +256,27 @@ export class RunnerLauncher {
   }
 
   /**
+   * 옛 "저장소 경로가 설정되지 않았다" 실패를 지운다(#373).
+   *
+   * 경로가 채워진 순간 그 사유는 **이미 거짓**이다. 재시도가 성공하면 상태가 덮이므로
+   * 저절로 사라지지만, 재시도가 그 에이전트에 닿지 못하면(목록 조회 실패, 대상에서 빠짐)
+   * 사람은 경로를 채운 뒤에도 "설정되지 않았다"를 계속 읽는다 — 그것이 #373 의 증상
+   * 전부다. 그래서 재시도를 **시작하는 자리에서** 먼저 지운다.
+   *
+   * `failed` 를 남기고 문구만 비우지 않는다: 이유 없는 '실패'는 사람이 할 수 있는 일이
+   * 없는 신호다(`RunnerState.message` 주석). 새 사유는 곧 재시도가 채운다.
+   */
+  clearRepoPathFailures(): void {
+    let cleared = false;
+    for (const [agentId, state] of this.states) {
+      if (state.status !== 'failed' || state.message !== REPO_PATH_MISSING) continue;
+      this.states.set(agentId, { agentId, status: 'stopped', exitCode: null, message: null });
+      cleared = true;
+    }
+    if (cleared) this.onStateChange?.(this.getStates());
+  }
+
+  /**
    * 대상 전부를 띄운다. **한 에이전트가 못 떠도 나머지는 뜬다** — 하나의 throw 가 루프를
    * 끊으면 목록 뒤쪽 에이전트들은 이유도 없이 안 뜬다.
    */
