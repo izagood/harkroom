@@ -104,11 +104,6 @@ export interface ServerDeps {
   storage?: { root: string; maxBytes: number };
   /** attach 티켓 수명(ms). 기본 30초 — `/ws` 티켓과 같다. 테스트에서 짧게 준다. */
   attachTicketTtlMs?: number;
-  /**
-   * 터미널 입력 감사를 묶는 간격(ms, #315). 기본은 `INPUT_AUDIT_WINDOW_MS`(60초).
-   * 테스트가 0 을 주면 묶임이 꺼져 "연타가 폭증하지 않는다"의 반대 방향을 확인할 수 있다.
-   */
-  inputAuditWindowMs?: number;
 }
 
 /** 25MB. 스크린샷·로그 파일에는 넉넉하고, 디스크가 조용히 차지 않을 만큼은 좁다. */
@@ -330,7 +325,6 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 가 아직 undefined 면 preHandler 가 통째로 사라져 러너 소켓이 인증 없이 열린다.
   await registerAgentRelayRoutes(app, deps.pool, {
     attachTicketTtlMs: deps.attachTicketTtlMs,
-    inputAuditWindowMs: deps.inputAuditWindowMs,
     // 뷰어 소켓의 수명 규칙은 `/ws` 와 **같은 값**을 받아야 한다 — 갈라지면 더 민감한
     // 쪽(PTY 바이트)이 더 느슨해진다.
     allowedOrigins: deps.corsOrigins ?? null,

@@ -21,8 +21,9 @@
 // `agent.memory.deleted` 가 같은 이유로 본문을 남기지 않는다).
 //
 // **#315 로 입력이 열린 뒤에도 그 규칙은 그대로다.** 사람이 친 바이트도 감사에 넣지 않는다 —
-// 붙여 넣은 토큰이나 비밀번호 프롬프트의 답이 섞이므로 출력과 성질이 같다. 늘어난 것은
-// `agent.input` 하나이고, 그 행이 답하는 것은 "누가 언제 어느 턴에 개입했다" 뿐이다.
+// 붙여 넣은 토큰이나 비밀번호 프롬프트의 답이 섞이므로 출력과 성질이 같다. 개입 사실은
+// `agent.detached` 의 detail.inputBytes 하나로 남는다(스펙 §5-2 결정 3): 입력마다 행을
+// 쓰면 행 타임스탬프가 곧 키 입력의 리듬이라 그 자체가 부채널이다.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
 import type { AgentSessionView } from '@murmur/shared';
@@ -56,33 +57,6 @@ async function ownedAgentIds(pool: Pool, accountId: string): Promise<string[]> {
   return res.rows.map((r) => r.account_id);
 }
 
-/**
- * 한 attach 소켓에서 감사 행을 만드는 최소 간격(#315). 첫 입력은 즉시 남기고, 그 뒤로는
- * 이 간격마다 한 번만 남긴다.
- *
- * **왜 묶는가**: 감사가 답해야 하는 질문은 "이 턴에 사람이 개입했나"이지 "몇 글자를
- * 쳤나"가 아니다. 키 하나에 한 행씩 남기면 한 번의 개입이 감사 조회를 수백 행으로
- * 밀어내 다른 사건을 못 보게 만든다 — 감사가 스스로를 못 쓰게 만드는 것이 가장 나쁘다.
- * 60초를 고른 이유: 사람이 한 번 앉아 개입하는 단위가 그보다 짧고, 그보다 길면 "다시
- * 와서 또 쳤다"가 첫 개입에 묻힌다.
- */
-export const INPUT_AUDIT_WINDOW_MS = 60_000;
-
-/**
- * 이 소켓이 지금 감사 행을 하나 만들어야 하는가. attach 소켓 하나당 하나씩 만든다 —
- * 상태를 소켓 수명에 묶어 두면 패널을 닫았다 다시 연 사람은 다시 첫 행을 남긴다(그것이
- * "다시 개입했다"는 사실이므로 맞다).
- */
-function createInputAuditGate(windowMs: number, now: () => number = Date.now) {
-  let lastAt: number | null = null;
-  return (): boolean => {
-    const at = now();
-    if (lastAt !== null && at - lastAt < windowMs) return false;
-    lastAt = at;
-    return true;
-  };
-}
-
 export interface AgentRelayDeps {
   /** attach 티켓 수명(ms). 미지정이면 `/ws` 티켓과 같은 기본값(30초). */
   attachTicketTtlMs?: number;
@@ -94,8 +68,6 @@ export interface AgentRelayDeps {
   allowedOrigins?: readonly string[] | null;
   /** 자격증명 재검증 주기(ms). `/ws` 와 같은 값을 쓴다. 테스트가 짧게 준다. */
   revalidateMs?: number;
-  /** 입력 감사를 묶는 간격(ms). 기본은 `INPUT_AUDIT_WINDOW_MS`. 테스트가 0 을 준다. */
-  inputAuditWindowMs?: number;
 }
 
 export async function registerAgentRelayRoutes(
@@ -214,34 +186,29 @@ export async function registerAgentRelayRoutes(
     const viewer = hub.addViewer(claim.sessionId, socket);
     // 자격증명이 죽으면 이 소켓도 닫힌다(위 `sweep` 주석).
     const untrack = sweep.track(socket, claim.credentialHash);
-    const shouldAuditInput = createInputAuditGate(deps.inputAuditWindowMs ?? INPUT_AUDIT_WINDOW_MS);
 
-    socket.on('message', (raw) => {
-      // 파싱·writer 판정·포워딩은 허브의 몫이다 — "누가 지금 쓰는가"의 진실을 두 곳에
-      // 두지 않는다. 여기 남는 것은 감사(관측)뿐이다.
-      if (!viewer.handleMessage(String(raw))) return;
-      if (!shouldAuditInput()) return;
-      // 사실만 남긴다: 누가(actorId) 언제(at) 어느 턴에(sessionId). **친 내용은 없다.**
-      void recordAudit(pool, {
-        action: 'agent.input',
-        actorId: claim.accountId,
-        actorHandle: null,
-        target: null,
-        detail: { sessionId: claim.sessionId },
-      });
-    });
+    // 파싱·writer 판정·포워딩·바이트 누계 전부 허브의 몫이다 — "누가 지금 쓰는가"의
+    // 진실을 두 곳에 두지 않는다. 입력의 감사는 아래 detach 행이 합산으로 남긴다.
+    socket.on('message', (raw) => { viewer.handleMessage(String(raw)); });
 
     socket.on('close', () => {
+      const inputBytes = viewer.inputBytes();
       viewer.close();
       untrack();
       // detach 도 남긴다 — attach 만 남기면 감사 조회에서 "지금 붙어 있는 사람"과
-      // "붙었다 떠난 사람"이 구분되지 않는다. 여기서도 바이트는 넣지 않는다.
+      // "붙었다 떠난 사람"이 구분되지 않는다.
+      //
+      // 개입 사실은 이 행의 `inputBytes` **합산 1회**로만 남는다(스펙 §5-2 결정 3).
+      // 입력마다(또는 시간 창마다) 행을 쓰면 행 타임스탬프가 곧 키 입력의 리듬이라 그
+      // 자체가 부채널이었다. 내용은 여전히 없다 — 수는 base64 길이 산술이다(허브 주석).
+      // 서버가 detach 전에 죽으면 이 누계는 사라진다 — 릴레이 전체가 인메모리인 것과
+      // 같은 수용이다(스펙 §5: 세션 레지스트리도 재시작이면 비워진다).
       void recordAudit(pool, {
         action: 'agent.detached',
         actorId: claim.accountId,
         actorHandle: null,
         target: null,
-        detail: { sessionId: claim.sessionId },
+        detail: { sessionId: claim.sessionId, inputBytes },
       });
     });
   });
