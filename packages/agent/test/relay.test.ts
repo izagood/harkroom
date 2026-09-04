@@ -388,8 +388,8 @@ describe('#337 interactive.open 왕복', () => {
     const client = createRelayClient({
       murmurUrl: 'http://x', pat: 'p', dial: d.dial,
       onInteractiveOpen: async (req) => {
-        expect(req).toEqual({ channelId: 'c1', threadRootId: 'm1', openedByHandle: 'jaebin', cols: 100, rows: 30 });
-        return { sessionId: 'sess-i', created: true };
+        expect(req).toEqual({ channelId: 'c1', threadRootId: 'm1', openedByHandle: 'jaebin', handoff: false, cols: 100, rows: 30 });
+        return { sessionId: 'sess-i', created: true, waiting: false };
       },
     });
     client.start();
