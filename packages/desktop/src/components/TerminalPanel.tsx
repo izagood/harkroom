@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AgentSessionState } from '@murmur/shared';
+import type { AgentSessionState, WriterDeniedReason } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { connectAgentAttach, type AttachHandle } from '../lib/agentTerminal';
@@ -59,10 +59,22 @@ export function TerminalPanel() {
    */
   const [writer, setWriter] = useState<boolean | null>(null);
   /**
+   * **왜** 못 치는가(#369). 서버가 준 이유를 그대로 들고 있는다 — 화면이 지어내지 않는다.
+   * 진행 중인 멘션 턴은 프롬프트를 파일로 받아 PTY 입력이 자식에게 닿지 않으므로,
+   * "다른 창이 입력 중"과 같은 문장으로 뭉치면 없는 사람을 만들어 낸다.
+   */
+  const [writerReason, setWriterReason] = useState<WriterDeniedReason | null>(null);
+  /**
    * `onInput` 콜백이 읽는 최신 writer 값. state 만 쓰면 sink 생성 시점의 클로저에 옛
    * 값이 얼어붙어, 승격·강등이 입력 가드에 반영되지 않는다.
    */
   const writerRef = useRef(false);
+  /**
+   * 최신 **폭 주인** 여부(#369). `writerRef` 와 갈라 둔다: 관찰 전용 세션은 못 치지만
+   * 폭은 정한다 — 여기서 둘을 한 값으로 뭉치면 진행 중인 멘션 턴을 보는 창이 러너의
+   * spawn 기본값(120x40)에 영원히 갇혀 화면이 접힌 채로 남는다(#335 회귀).
+   */
+  const resizeRef = useRef(false);
   /**
    * [터미널 열기](#337)의 손잡이. effect 안의 attach 경로를 버튼이 재사용해야 해서
    * (인터랙티브 open 도 결국 티켓 하나로 수렴한다 — 서버가 그렇게 설계됐다) effect 가
@@ -97,24 +109,39 @@ export function TerminalPanel() {
             if (!writerRef.current) return;
             attach?.sendInput(new TextEncoder().encode(data));
           },
-          // 크기도 같은 가드를 탄다(#335 + #346): PTY 크기를 정하는 것은 지금의 writer 다 —
-          // 읽기 전용 창의 크기가 흘러가면 그 창은 더 이상 읽기 전용이 아니다.
+          // 크기는 **입력과 다른 가드를 탄다**(#369). `#335`+`#346` 은 둘을 한 가드에 묶었고
+          // 그 근거는 "읽기 전용 창의 크기가 흘러가면 그 창은 더 이상 읽기 전용이 아니다"
+          // 였다 — 그 문장은 *다른 창이 치고 있을 때* 참이다. 관찰 전용 세션(#369)에는 칠
+          // 사람이 아예 없어 침범할 작업 환경이 없고, 폭은 stdin 과 무관하게 ioctl 로 자식에
+          // 그대로 닿는다. 그래서 여기만 `resizeRef` 를 읽는다.
           onResize: (cols, rows) => {
-            if (!writerRef.current) return;
+            if (!resizeRef.current) return;
             attach?.sendResize(cols, rows);
           },
         });
+        // **차례를 받기 전에는 접어 둔다**(#369). sink 는 `onInput` 이 배선돼 있어 xterm 의
+        // stdin 이 켜진 채로 뜨는데, 서버의 첫 `writer` 프레임은 소켓이 붙은 **뒤에** 온다 —
+        // 그 사이 커서가 깜빡여 "칠 수 있다"고 말한다. 이 결함이 정확히 그 거짓말이다.
+        // 프레임이 영영 안 와도(구 서버) 읽기 전용으로 남는 규칙과도 같은 방향이다.
+        sink.setReadOnly?.(true);
         setPhase('attached');
         attach = connectAgentAttach(api.baseUrl, ticket, {
           onOutput: (bytes) => sink?.write(bytes),
           onStatus: setState,
-          onWriter: (w) => {
-            writerRef.current = w;
-            setWriter(w);
-            // 승격 직후 자기 크기를 한 번 보고한다(스펙 §5 "attach 시 writer 의 크기로
-            // resize"). 승격 전의 fit 은 위 가드가 버렸으므로, 여기서 다시 재지 않으면
-            // PTY 가 이전 writer(또는 spawn 기본값)의 크기로 남는다.
-            if (w) sink?.refit?.();
+          onWriter: (turn) => {
+            writerRef.current = turn.writer;
+            resizeRef.current = turn.resize;
+            setWriter(turn.writer);
+            setWriterReason(turn.reason);
+            // 화면도 함께 접는다(#369): 가드가 바이트를 버리는 것만으로는 커서가 계속
+            // 깜빡여 "칠 수 있다"로 보인다. xterm 의 stdin 자체를 끄면 화면이 스스로
+            // 읽기 전용임을 말하고, **왜**는 아래 배지가 글로 적는다.
+            sink?.setReadOnly?.(!turn.writer);
+            // 폭 주인이 된 직후 자기 크기를 한 번 보고한다(스펙 §5 "attach 시 writer 의
+            // 크기로 resize"). 그 전의 fit 은 위 가드가 버렸으므로, 여기서 다시 재지 않으면
+            // PTY 가 이전 주인(또는 spawn 기본값)의 크기로 남는다. **`writer` 가 아니라
+            // `resize` 를 본다**(#369) — 관찰 전용 창도 폭의 주인이다.
+            if (turn.resize) sink?.refit?.();
           },
           // 재접속하지 않는다(agentTerminal.ts 머리 주석) — 끊긴 사실만 그린다.
           onClosed: () => setState('runner-offline'),
@@ -224,8 +251,13 @@ export function TerminalPanel() {
         </p>
       )}
       {phase === 'attached' && writer === false && (
-        <p className="px-3 py-2 text-xs text-fg-subtle" role="note" data-testid="writer-note">
-          읽기 전용 — 다른 창이 입력 중이다. 이 창에 치면 아무 데도 가지 않는다.
+        <p
+          className="px-3 py-2 text-xs text-fg-subtle"
+          role="note"
+          data-testid="writer-note"
+          data-writer-reason={writerReason ?? 'unknown'}
+        >
+          {writerDeniedText(writerReason)}
         </p>
       )}
       {/* 이 자리는 항상 렌더한다 — 조건부로 만들면 세션을 찾은 순간 ref 가 아직 null 이라
@@ -233,6 +265,31 @@ export function TerminalPanel() {
       <div ref={hostRef} data-testid="terminal-host" className="min-h-0 flex-1 overflow-hidden" />
     </aside>
   );
+}
+
+/**
+ * 읽기 전용의 **이유**를 사람 문장으로(#369).
+ *
+ * **원인마다 다음 행동이 다르다** — 그래서 한 문장으로 뭉치지 않는다. 다른 창이 가져간
+ * 것이면 그 창을 닫으면 되고, 진행 중인 멘션 턴이면 기다리거나 따로 터미널을 열어야
+ * 하며, 구 러너면 러너를 올려야 한다. "읽기 전용이다"만 적으면 셋 다 막다른 길로 보인다.
+ *
+ * 멘션 턴 문구가 **원인을 그대로 말하는** 이유: "관찰 전용"만 적으면 임의의 제약으로
+ * 읽혀 "왜 안 되냐"가 결함으로 다시 올라온다. 프롬프트를 파일로 받는다는 사실이 이
+ * 제약의 전부이고, 그 사실을 아는 사람은 다른 길(터미널 열기)을 스스로 찾는다.
+ */
+function writerDeniedText(reason: WriterDeniedReason | null): string {
+  if (reason === 'observe-only') {
+    return '관찰 전용 — 진행 중인 멘션 턴은 프롬프트를 파일로 받으므로 이 터미널은 입력을 받을 수 없다. 직접 치려면 턴이 끝난 뒤 터미널을 열어라.';
+  }
+  if (reason === 'runner-outdated') {
+    return '읽기 전용 — 이 러너는 입력을 다룰 줄 모른다(구버전이거나 붙어 있지 않다).';
+  }
+  if (reason === 'other-writer') {
+    return '읽기 전용 — 다른 창이 입력 중이다. 이 창에 치면 아무 데도 가지 않는다.';
+  }
+  // 구 서버는 이유를 안 싣는다 — 그때 원인을 지어내지 않고 "모른다"를 그대로 적는다.
+  return '읽기 전용 — 이 창의 입력은 러너에 닿지 않는다.';
 }
 
 /**

@@ -169,10 +169,18 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      // #372: 드래그 도중 언마운트되면 mouseup 을 받을 리스너가 사라져
+      // body 의 cursor·userSelect 가 영구히 남는다. 여기서 되돌린다.
+      if (isDragging.current) handleMouseUp();
     };
   }, []);
 
-  const handleDragStart = () => {
+  // #372: preventDefault 와 userSelect 는 서로 다른 것을 막는다 — 둘 다 필요하다.
+  // preventDefault 는 mousedown 의 기본 동작인 "선택 시작"을 막고(이미 시작된 선택은
+  // userSelect 로도 취소되지 않는다), userSelect: none 은 드래그가 진행되는 동안
+  // 다른 경로로 새 선택이 생기는 것을 막는다.
+  const handleDragStart = (e: React.MouseEvent) => {
+    e.preventDefault();
     isDragging.current = true;
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';

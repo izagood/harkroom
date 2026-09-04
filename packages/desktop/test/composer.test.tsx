@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Composer } from '../src/components/Composer';
 // 판정이 갈라지지 않았는지 보려면 **본문을 실제로 렌더해** 대조해야 한다(#278).
@@ -97,6 +97,36 @@ describe('mention autocomplete', () => {
 
     const opt = screen.getByRole('option', { name: /fizz/ });
     expect(opt.textContent).toContain('@rusalka');
+  });
+
+  /**
+   * #365: 사람의 `badge` 가 아무것도 그리지 않게 되면서 **후보 목록의 사람 행에서도
+   * 아바타가 빠졌다.** 회귀선이 없으면 이 변화는 아무도 모르게 지나간다.
+   *
+   * **이 자리를 `variant="avatar"` 로 바꾸면 안 된다** — 바로 위 회귀선이 지키는 소유자
+   * 표시(#277)가 같은 호출에서 나오므로, 바꾸면 "누구의 에이전트를 부르는지"가 사라진다.
+   * 두 사실을 한 테스트에서 함께 본다: 한쪽만 보면 다른 쪽이 바뀌어도 초록이다.
+   */
+  it('#365 사람 후보에는 아바타가 없고, 같은 자리가 에이전트에게는 소유자를 낸다', () => {
+    useAppStore.getState().set({
+      accounts: {
+        u1: acc('u1', 'me'),
+        u2: acc('u2', 'rusalka'),
+        a1: { ...acc('a1', 'fizz', 'agent'), ownerAccountId: 'u2' },
+      },
+    });
+    render(<Composer onSend={vi.fn()} />);
+
+    typeInto('@rusalka');
+    const human = screen.getByRole('option', { name: /rusalka/ });
+    // 이니셜 폴백 상자가 없다. 핸들이 'rusalka' 라 대문자 한 글자와 섞이지 않는다.
+    expect(within(human).queryByText('R')).toBeNull();
+    // 핸들은 그대로다 — 부를 대상을 못 알아보게 된 것이 아니다.
+    expect(human.textContent).toContain('@rusalka');
+
+    typeInto('@fizz');
+    // 같은 badge 호출이 에이전트 후보에서는 소유자를 낸다.
+    expect(screen.getByRole('option', { name: /fizz/ }).textContent).toContain('@rusalka');
   });
 
   // 에이전트를 부르는 것이 murmur 의 목적이지만, 사람도 멘션 대상이다.

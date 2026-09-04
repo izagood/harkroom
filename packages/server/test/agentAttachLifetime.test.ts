@@ -29,9 +29,11 @@ let runner: WebSocket;
 const ALLOWED = 'tauri://localhost';
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
+// 이 파일은 attach 수명(티켓·인가·재접속)만 본다 — writer 차례는 agentInput 쪽이다.
+// `acceptsInput: true`(인터랙티브 턴)로 두어, 수명 검증이 #369 의 판정에 흔들리지 않게 한다.
 const session = (sessionId: string, agentAccountId: string): AgentSessionView => ({
   sessionId, agentAccountId, channelId: 'chan-1', threadRootId: null,
-  harness: 'claude-code', startedAt: '2026-09-04T00:00:00.000Z',
+  harness: 'claude-code', startedAt: '2026-09-04T00:00:00.000Z', acceptsInput: true,
 });
 
 const waitFor = async (pred: () => boolean, ms = 4000): Promise<void> => {

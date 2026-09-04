@@ -19,6 +19,15 @@ export interface TerminalSink {
    * 이전 writer 의 크기로 남는다. 옵셔널: 가짜 sink(테스트)는 구현하지 않아도 된다.
    */
   refit?(): void;
+  /**
+   * 이 터미널을 **읽기 전용으로 접거나 푼다**(#369). xterm 의 stdin 을 끄면 커서가 깜빡이지
+   * 않고 키를 눌러도 아무것도 그려지지 않는다 — 화면이 "여기는 못 친다"를 스스로 말한다.
+   *
+   * 생성 시점의 `disableStdin` 만으로는 부족하다: 쓰기 차례는 attach **뒤에** 오가고
+   * (#346 승격·강등, #369 관찰 전용 판정), sink 를 그때마다 다시 만들면 화면이 통째로
+   * 리셋된다. 옵셔널: 가짜 sink(테스트)는 구현하지 않아도 된다.
+   */
+  setReadOnly?(readOnly: boolean): void;
   dispose(): void;
 }
 
@@ -85,7 +94,14 @@ export type TerminalSinkFactory = (el: HTMLElement, opts?: TerminalSinkOptions) 
  */
 const xtermSink: TerminalSinkFactory = (el, opts) => {
   const pending: Uint8Array[] = [];
-  let term: { write(data: Uint8Array): void; resize(cols: number, rows: number): void; dispose(): void } | null = null;
+  // `options` 까지 드러내는 이유: 쓰기 차례가 attach 뒤에 오가므로(#346, #369) stdin 을
+  // 뜬 뒤에도 켜고 끌 수 있어야 한다(`setReadOnly`).
+  let term: {
+    write(data: Uint8Array): void;
+    resize(cols: number, rows: number): void;
+    options: { disableStdin?: boolean };
+    dispose(): void;
+  } | null = null;
   let disposed = false;
   let observer: ResizeObserver | null = null;
   /** 마지막으로 보낸 크기. 같은 값을 다시 보내지 않는다 — 드래그 한 번이 수십 프레임이다. */
@@ -146,6 +162,11 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
     write(bytes) {
       if (term) term.write(bytes);
       else pending.push(bytes);
+    },
+    setReadOnly(readOnly) {
+      // 아직 xterm 이 안 떴으면 생성자의 `disableStdin` 이 이미 옳은 값을 잡고 있다
+      // (`onInput` 이 없으면 처음부터 꺼진다) — 뜬 뒤의 차례 변동만 여기서 반영한다.
+      if (term) term.options.disableStdin = readOnly;
     },
     refit() {
       // "마지막으로 보낸 크기"를 지워 applyFit 의 중복 억제를 한 번 우회한다 — writer
