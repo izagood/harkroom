@@ -25,9 +25,19 @@ export interface AttachCallbacks {
    * 믿는데 러너에 닿지 않는다. 프레임이 안 오면 읽기 전용으로 남는 것이 4방향 호환의
    * 데스크탑 쪽 절반이다.
    */
-  onWriter(writer: boolean, reason: WriterDeniedReason | null): void;
+  onWriter(turn: AttachTurn): void;
   /** 소켓이 끊겼다. 재접속하지 않는다(파일 머리 주석). */
   onClosed(): void;
+}
+
+/**
+ * 서버가 알려 준 이 창의 **차례**(#346 + #369). 능력이 둘로 갈렸으므로 하나로 뭉치지
+ * 않는다: 관찰 전용 세션은 `writer:false` 이면서 `resize:true` 다 — 못 치지만 폭은 정한다.
+ */
+export interface AttachTurn {
+  writer: boolean;
+  resize: boolean;
+  reason: WriterDeniedReason | null;
 }
 
 export interface AttachHandle {
@@ -87,7 +97,11 @@ export function connectAgentAttach(
     // 이유를 **그대로** 넘긴다(#369). 화면이 다시 판정하지 않는다 — 원인을 아는 것은
     // 서버이고, 화면이 지어내면 아무도 안 붙은 멘션 턴에서 "다른 창이 입력 중"이 된다.
     // 구 서버는 `reason` 을 모르므로 `undefined` 로 온다 — `null` 로 정규화한다.
-    if (frame.type === 'writer') cb.onWriter(frame.writer, frame.reason ?? null);
+    if (frame.type === 'writer') {
+      // 구 서버는 `resize`·`reason` 을 모른다 — 그때는 옛 계약대로 읽는다: 차례가 있으면
+      // 폭도 그 창이 정했고(#335 는 둘을 한 판정으로 묶었다), 이유는 알 수 없다.
+      cb.onWriter({ writer: frame.writer, resize: frame.resize ?? frame.writer, reason: frame.reason ?? null });
+    }
   };
 
   socket.onclose = () => {

@@ -70,6 +70,12 @@ export function TerminalPanel() {
    */
   const writerRef = useRef(false);
   /**
+   * 최신 **폭 주인** 여부(#369). `writerRef` 와 갈라 둔다: 관찰 전용 세션은 못 치지만
+   * 폭은 정한다 — 여기서 둘을 한 값으로 뭉치면 진행 중인 멘션 턴을 보는 창이 러너의
+   * spawn 기본값(120x40)에 영원히 갇혀 화면이 접힌 채로 남는다(#335 회귀).
+   */
+  const resizeRef = useRef(false);
+  /**
    * [터미널 열기](#337)의 손잡이. effect 안의 attach 경로를 버튼이 재사용해야 해서
    * (인터랙티브 open 도 결국 티켓 하나로 수렴한다 — 서버가 그렇게 설계됐다) effect 가
    * 자기 클로저를 여기 걸어 둔다. 열기 경로를 밖에 따로 만들면 소켓·sink 정리가 두 벌이 된다.
@@ -106,7 +112,7 @@ export function TerminalPanel() {
           // 크기도 같은 가드를 탄다(#335 + #346): PTY 크기를 정하는 것은 지금의 writer 다 —
           // 읽기 전용 창의 크기가 흘러가면 그 창은 더 이상 읽기 전용이 아니다.
           onResize: (cols, rows) => {
-            if (!writerRef.current) return;
+            if (!resizeRef.current) return;
             attach?.sendResize(cols, rows);
           },
         });
@@ -114,18 +120,20 @@ export function TerminalPanel() {
         attach = connectAgentAttach(api.baseUrl, ticket, {
           onOutput: (bytes) => sink?.write(bytes),
           onStatus: setState,
-          onWriter: (w, reason) => {
-            writerRef.current = w;
-            setWriter(w);
-            setWriterReason(reason);
+          onWriter: (turn) => {
+            writerRef.current = turn.writer;
+            resizeRef.current = turn.resize;
+            setWriter(turn.writer);
+            setWriterReason(turn.reason);
             // 화면도 함께 접는다(#369): 가드가 바이트를 버리는 것만으로는 커서가 계속
             // 깜빡여 "칠 수 있다"로 보인다. xterm 의 stdin 자체를 끄면 화면이 스스로
             // 읽기 전용임을 말하고, **왜**는 아래 배지가 글로 적는다.
-            sink?.setReadOnly?.(!w);
-            // 승격 직후 자기 크기를 한 번 보고한다(스펙 §5 "attach 시 writer 의 크기로
-            // resize"). 승격 전의 fit 은 위 가드가 버렸으므로, 여기서 다시 재지 않으면
-            // PTY 가 이전 writer(또는 spawn 기본값)의 크기로 남는다.
-            if (w) sink?.refit?.();
+            sink?.setReadOnly?.(!turn.writer);
+            // 폭 주인이 된 직후 자기 크기를 한 번 보고한다(스펙 §5 "attach 시 writer 의
+            // 크기로 resize"). 그 전의 fit 은 위 가드가 버렸으므로, 여기서 다시 재지 않으면
+            // PTY 가 이전 주인(또는 spawn 기본값)의 크기로 남는다. **`writer` 가 아니라
+            // `resize` 를 본다**(#369) — 관찰 전용 창도 폭의 주인이다.
+            if (turn.resize) sink?.refit?.();
           },
           // 재접속하지 않는다(agentTerminal.ts 머리 주석) — 끊긴 사실만 그린다.
           onClosed: () => setState('runner-offline'),

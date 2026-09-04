@@ -1185,7 +1185,21 @@ export type AttachServerFrame =
    * 이 프레임이 **한 번도 안 오면**(구 서버) 뷰어는 읽기 전용으로 남아야 한다 — 구/신
    * 조합 4방향 안전의 데스크탑 쪽 절반이다.
    */
-  | { type: 'writer'; writer: boolean; reason: WriterDeniedReason | null };
+  | {
+      type: 'writer';
+      /** 이 창이 **입력**을 보낼 수 있는가. */
+      writer: boolean;
+      /**
+       * 이 창이 **폭**을 정하는가(#335 + #369). `writer` 와 갈라 두는 이유: `#346` 이 둘을
+       * 한 판정으로 묶은 근거는 "읽기 전용 창이 폭을 줄이면 writer 의 작업 환경이 좁아진다"
+       * 였고, 그 근거는 **writer 가 존재할 때만** 성립한다. 관찰 전용 세션(#369)에는 writer
+       * 가 아예 없어 좁혀질 작업 환경이 없고, 반대로 폭은 stdin 과 무관하게 ioctl 로 자식에
+       * 그대로 닿는다 — 여기서 폭까지 막으면 진행 중인 멘션 턴을 보는 창이 영원히 러너의
+       * spawn 기본값(120x40)에 갇힌다. 순서 규칙(마지막 attach 가 차례)은 하나 그대로다.
+       */
+      resize: boolean;
+      reason: WriterDeniedReason | null;
+    };
 
 /**
  * 이 창이 **왜** 읽기 전용인가(#369). `writer:false` 만 보내면 화면이 이유를 지어내야 하고,
@@ -1198,6 +1212,7 @@ export type AttachServerFrame =
  * - `'runner-outdated'` — 러너가 `input` 능력을 선언하지 않았거나 붙어 있지 않다(#346).
  *
  * `writer:true` 일 때는 `null` 이다 — "이유 없음"을 빈 문자열이 아니라 명시적 null 로 둔다.
+ * `'observe-only'` 는 `resize:true` 와 함께 온다 — 못 치지만 폭은 정한다.
  */
 export type WriterDeniedReason = 'other-writer' | 'observe-only' | 'runner-outdated';
 
