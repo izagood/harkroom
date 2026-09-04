@@ -1063,6 +1063,27 @@ export interface AgentSessionView {
    * 구분해 그릴 수단이다. 없으면(구 러너) 알 수 없다는 뜻이지 멘션 턴이라는 뜻이 아니다.
    */
   mode?: 'mention' | 'interactive';
+  /**
+   * 이 세션의 PTY stdin 이 **사람의 입력을 실제로 받을 수 있는가**(#369).
+   *
+   * **`mode` 로 대신할 수 없다.** 판정의 근거는 턴의 종류가 아니라 자식의 fd 0 이 무엇인가
+   * 하나다: 러너가 `stdinFile` 을 넘긴 턴은 `sh -c 'exec <하네스> ... < <파일>'` 로 감싸여
+   * 자식의 stdin 이 PTY slave 가 아니라 일반 파일이고, 그 파일이 EOF 에 닿은 뒤 PTY master
+   * 로 쓴 바이트는 자식에게 **도달하지 않는다**(#369 재현). 하네스 종류(`claude -p` 인지)로
+   * 재지 않는 이유도 같다 — 하네스가 늘어도 이 사실은 그대로다.
+   *
+   * `false` 면 서버는 그 세션의 뷰어에게 writer 차례를 주지 않는다. 없는 것을 있다고
+   * 표시하지 않는다(docs/design.md §4): 쳐도 아무 데도 안 가는 입력창이 최악이다.
+   *
+   * **없으면(`undefined`) `false` 와 다르다.** `mode` 와 같은 이유로 옵셔널이다 — `#346`
+   * 시절의 러너는 `input` 능력은 선언하면서 이 필드는 모른다. 그때 서버는 여전히 입력을
+   * 닫지만(모르는 것을 열 수는 없다) 이유는 `'observe-only'` 가 아니라
+   * `'runner-outdated'` 다: 그 세션의 stdin 이 파일이라는 사실을 확인한 적이 없으므로,
+   * 확인한 척하면 화면이 다시 원인을 지어내는 것이 된다(이 이슈가 멈추려던 바로 그것).
+   * 러너 쪽 계약(`OpenSessionInput.acceptsInput`)은 옵셔널이 아니다 — 새 러너가 실수로
+   * 빠뜨리면 그 기본값이 곧 판정이 되기 때문이다.
+   */
+  acceptsInput?: boolean;
 }
 
 /** 뷰어(데스크탑)가 보는 세션 상태. `runner-offline` 은 '끝났다'와 다르다. */
@@ -1172,7 +1193,36 @@ export type AttachServerFrame =
    * 이 프레임이 **한 번도 안 오면**(구 서버) 뷰어는 읽기 전용으로 남아야 한다 — 구/신
    * 조합 4방향 안전의 데스크탑 쪽 절반이다.
    */
-  | { type: 'writer'; writer: boolean };
+  | {
+      type: 'writer';
+      /** 이 창이 **입력**을 보낼 수 있는가. */
+      writer: boolean;
+      /**
+       * 이 창이 **폭**을 정하는가(#335 + #369). `writer` 와 갈라 두는 이유: `#346` 이 둘을
+       * 한 판정으로 묶은 근거는 "읽기 전용 창이 폭을 줄이면 writer 의 작업 환경이 좁아진다"
+       * 였고, 그 근거는 **writer 가 존재할 때만** 성립한다. 관찰 전용 세션(#369)에는 writer
+       * 가 아예 없어 좁혀질 작업 환경이 없고, 반대로 폭은 stdin 과 무관하게 ioctl 로 자식에
+       * 그대로 닿는다 — 여기서 폭까지 막으면 진행 중인 멘션 턴을 보는 창이 영원히 러너의
+       * spawn 기본값(120x40)에 갇힌다. 순서 규칙(마지막 attach 가 차례)은 하나 그대로다.
+       */
+      resize: boolean;
+      reason: WriterDeniedReason | null;
+    };
+
+/**
+ * 이 창이 **왜** 읽기 전용인가(#369). `writer:false` 만 보내면 화면이 이유를 지어내야 하고,
+ * 실제로 그랬다 — 원인이 무엇이든 "다른 창이 입력 중"이라고 적혀서, 아무도 안 붙은 멘션
+ * 턴에서 없는 사람을 만들어 냈다.
+ *
+ * - `'other-writer'` — 더 최근에 붙은 창이 차례를 가져갔다(스펙 §5-2 결정 2).
+ * - `'observe-only'` — 이 턴의 stdin 이 프롬프트 파일이라 PTY 로 넣은 입력이 자식에게
+ *   닿지 않는다(#369, `AgentSessionView.acceptsInput`). 진행 중인 멘션 턴이 여기다.
+ * - `'runner-outdated'` — 러너가 `input` 능력을 선언하지 않았거나 붙어 있지 않다(#346).
+ *
+ * `writer:true` 일 때는 `null` 이다 — "이유 없음"을 빈 문자열이 아니라 명시적 null 로 둔다.
+ * `'observe-only'` 는 `resize:true` 와 함께 온다 — 못 치지만 폭은 정한다.
+ */
+export type WriterDeniedReason = 'other-writer' | 'observe-only' | 'runner-outdated';
 
 /**
  * 뷰어 → 서버 프레임(#315). 사람이 그 터미널에 친 바이트다.

@@ -83,6 +83,9 @@ function session(overrides: Partial<AgentSessionView> = {}): AgentSessionView {
     threadRootId: 'root-1',
     harness: 'claude-code',
     startedAt: '2026-09-04T00:00:00.000Z',
+    // 기본은 인터랙티브 턴(#369) — 이 파일은 릴레이 프레임 왕복을 보고, writer 판정은
+    // agentInput 쪽이 잰다. overrides 로 멘션 턴(false)도 만들 수 있다.
+    acceptsInput: true,
     ...overrides,
   };
 }
