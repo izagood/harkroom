@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AgentsSettings } from '../components/settings/AgentsSettings';
 import { AppearanceSettings } from '../components/settings/AppearanceSettings';
+import { CommunitySettings } from '../components/settings/CommunitySettings';
 import { ConnectionSettings } from '../components/settings/ConnectionSettings';
 import { HandleGroupsSettings } from '../components/settings/HandleGroupsSettings';
 import { InviteSettings } from '../components/settings/InviteSettings';
@@ -13,11 +14,17 @@ import { UpdatesSettings } from '../components/settings/UpdatesSettings';
 import { SETTINGS_GROUPS, type SectionId } from '../components/settings/sections';
 import { useActiveStore } from '../state/communities';
 
-export function SettingsScreen({ initialSection = 'profile', targetId, onBack, onSignOut }: {
+export function SettingsScreen({ initialSection = 'profile', targetId, onBack, onSignOut, onCommunitiesEmpty }: {
   initialSection?: SectionId;
   targetId?: string;
   onBack(): void;
   onSignOut(): void;
+  /**
+   * 마지막 커뮤니티를 뺐다(#165) — `App` 이 `phase` 를 `connect` 로 돌린다. **옵셔널이
+   * 아니다**: 기본값을 여기서 공급하면 배선을 잊은 화면에서 그 버튼이 눌러도 아무 일이
+   * 없는 항목이 된다(docs/design.md §4).
+   */
+  onCommunitiesEmpty(): void;
 }) {
   const [section, setSection] = useState<SectionId>(initialSection);
   const me = useActiveStore((s) => s.me);
@@ -62,6 +69,7 @@ export function SettingsScreen({ initialSection = 'profile', targetId, onBack, o
         {section === 'messages' && <MessageSettings />}
         {section === 'appearance' && <AppearanceSettings />}
         {section === 'connection' && <ConnectionSettings onSignOut={onSignOut} />}
+        {section === 'communities' && <CommunitySettings onCommunitiesEmpty={onCommunitiesEmpty} />}
         {/* AgentsSettings 는 자체 2단 레이아웃이라 SettingsPage 여백을 쓰지 않는다. */}
         {section === 'agents' && <AgentsSettings targetId={targetId} />}
         {section === 'teams' && <TeamsSettings />}
