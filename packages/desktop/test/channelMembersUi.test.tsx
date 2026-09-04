@@ -32,6 +32,9 @@ const fakeController = (members: ChannelMemberRow[]) => {
     inviteChannelMember: vi.fn(async () => members),
     // #173: 멤버 패널이 자동 멘션 목록도 받는다 — 이 파일은 그 절을 보지 않으므로 빈 목록이다.
     loadChannelAutoMentions: vi.fn(async () => []),
+    // private 채널의 패널은 팀 목록도 받는다(#172). 이것을 안 주면 패널이 늘 '팀 목록을
+    // 받지 못했다' 경고를 하나 띄운 상태가 되어, 실패 문구를 보는 절이 그 경고를 대신 읽는다.
+    listTeams: vi.fn(async () => []),
     leaveChannel: vi.fn(async () => undefined),
   };
   setController(c as unknown as Controller);
@@ -198,6 +201,59 @@ describe('채널 멤버 화면 (#183)', () => {
     const privatePanel = await openMembers(/비공개 채널 secret\b/, 'c2');
     expect(within(privatePanel).getByText(/이 목록이 이 채널을 볼 수 있는 사람의 전부다/)).toBeTruthy();
     expect(within(privatePanel).queryByText(/구독한 사람이지, 볼 수 있는 사람의 전부가 아니다/)).toBeNull();
+  });
+
+  it('보관 채널의 영문 사유가 한국어로 뜬다 — 내보내기 (#344)', async () => {
+    // 서버는 사유를 영문으로 준다(`archived channels are read-only`). 그것을 그대로
+    // 띄우면 사람은 오류 코드를 읽게 된다. **이 자리가 실제로 그 사유를 받는 자리다** —
+    // 나가기는 `isSelf` 예외로 게이트를 통과하므로 이 문구가 오지 않는다.
+    seed({ admin: true });
+    const c = fakeController([
+      { accountId: 'u1', handle: 'me' },
+      { accountId: 'u2', handle: 'other' },
+    ]);
+    c.leaveChannel.mockRejectedValueOnce(new Error('archived channels are read-only'));
+    sidebar();
+
+    const panel = await openMembers(/비공개 채널 secret\b/, 'c2');
+    fireEvent.click(within(panel).getByLabelText('other 내보내기'));
+
+    const alert = await within(panel).findByRole('alert');
+    expect(alert.textContent).toBe('보관된 채널은 읽기 전용이라 멤버를 바꿀 수 없다');
+    // 원문이 화면에 남아 있으면 바꾼 것이 아니다.
+    expect(within(panel).queryByText(/archived channels are read-only/)).toBeNull();
+  });
+
+  it('보관 채널의 영문 사유가 한국어로 뜬다 — 초대 (#344)', async () => {
+    seed({ admin: false });
+    const c = fakeController([{ accountId: 'u1', handle: 'me' }]);
+    c.inviteChannelMember.mockRejectedValueOnce(new Error('archived channels are read-only'));
+    sidebar();
+
+    const panel = await openMembers(/비공개 채널 secret\b/, 'c2');
+    fireEvent.change(within(panel).getByLabelText('초대할 계정'), { target: { value: 'u2' } });
+    fireEvent.click(within(panel).getByRole('button', { name: '초대' }));
+
+    const alert = await within(panel).findByRole('alert');
+    expect(alert.textContent).toBe('보관된 채널은 읽기 전용이라 멤버를 바꿀 수 없다');
+  });
+
+  it('보관 사유가 아닌 실패는 서버 문구 그대로 남는다 (#344)', async () => {
+    // 바꿔 적는 것은 보관 사유 하나뿐이다 — 모르는 사유까지 뭉뚱그리면 서버가 말한 것이
+    // 화면에서 사라진다.
+    seed({ admin: true });
+    const c = fakeController([
+      { accountId: 'u1', handle: 'me' },
+      { accountId: 'u2', handle: 'other' },
+    ]);
+    c.leaveChannel.mockRejectedValueOnce(new Error('only admin can remove others'));
+    sidebar();
+
+    const panel = await openMembers(/비공개 채널 secret\b/, 'c2');
+    fireEvent.click(within(panel).getByLabelText('other 내보내기'));
+
+    const alert = await within(panel).findByRole('alert');
+    expect(alert.textContent).toBe('only admin can remove others');
   });
 
   it('조회 실패는 멤버가 없다가 아니라 오류로 보인다', async () => {

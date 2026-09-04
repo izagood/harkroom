@@ -69,19 +69,10 @@ async function dmInboxCount(channelId: string): Promise<number> {
   return Number(res.rows[0]!.n);
 }
 
-async function createUser(handle: string): Promise<string> {
-  const inv = await app.inject({ method: 'POST', url: '/invites', headers: auth(adminToken) });
-  const reg = await app.inject({
-    method: 'POST', url: '/auth/register',
-    payload: {
-      inviteToken: inv.json().token as string,
-      handle, loginId: handle, displayName: handle, password: 'pw123456',
-    },
-  });
-  return reg.json().id as string;
-}
-
-/** 사용자 생성 + 토큰 반환 */
+/**
+ * 사용자 생성 + 그 사람의 토큰. **나가기는 본인 토큰으로만 검증할 수 있다** — admin 토큰으로
+ * 남을 빼면 `isSelf` 가 거짓이라 이 파일이 보려는 경로를 아예 지나지 않는다.
+ */
 async function createUserWithToken(handle: string): Promise<{ id: string; token: string }> {
   const inv = await app.inject({ method: 'POST', url: '/invites', headers: auth(adminToken) });
   const reg = await app.inject({
@@ -98,6 +89,8 @@ async function createUserWithToken(handle: string): Promise<{ id: string; token:
   });
   return { id, token: login.json().token as string };
 }
+
+const createUser = async (handle: string): Promise<string> => (await createUserWithToken(handle)).id;
 
 beforeAll(async () => {
   ({ pool, stop } = await startTestDb());
@@ -276,12 +269,20 @@ describe('보관 채널에서 나가기 (#344)', () => {
     await setArchived(channelId, true);
     const messagesBefore = await messageCount(channelId);
 
-    await app.inject({
+    const res = await app.inject({
       method: 'DELETE', url: `/channels/${channelId}/members/${leaver.id}`,
       headers: auth(leaver.token),
     });
 
-    // 메시지 수가 그대로다 — 시스템 메시지가 안 남는다
+    // **나간 것이 먼저다.** 메시지 수만 보면 나가기가 400 으로 막힌 상태도 초록이다 —
+    // 그때도 새 메시지는 없기 때문이다. 실측으로 확인했다: `isSelf` 예외를 통째로
+    // 되돌리면 이 절은 이 단언 없이 초록으로 남는다.
+    expect(res.statusCode).toBe(200);
+    const gone = await pool.query(
+      `select 1 from channel_member where channel_id = $1 and account_id = $2`, [channelId, leaver.id],
+    );
+    expect(gone.rowCount).toBe(0);
+    // 그러고도 메시지 수가 그대로다 — 시스템 메시지가 안 남는다.
     expect(await messageCount(channelId)).toBe(messagesBefore);
   });
 
@@ -322,30 +323,44 @@ describe('보관 채널에서 나가기 (#344)', () => {
     // 보관 안 함
     const messagesBefore = await messageCount(channelId);
 
-    await app.inject({
+    const res = await app.inject({
       method: 'DELETE', url: `/channels/${channelId}/members/${leaver.id}`,
       headers: auth(leaver.token),
     });
 
-    // 메시지가新增됐다
+    expect(res.statusCode).toBe(200);
+    // 메시지가 한 건 늘었다 — 보관되지 않은 채널의 퇴장 메시지는 그대로 남는다(#322).
     expect(await messageCount(channelId)).toBe(messagesBefore + 1);
   });
 
-  it('6. 마지막 멤버가 나가도 채널은 남는다', async () => {
+  it('6. 마지막 한 사람까지 나갈 수 있다 — 갇히지 않는다', async () => {
+    // 이 이슈가 말하는 사실 그대로다: 보관된 채널에 **아무도 남지 않을 때까지** 나갈 수
+    // 있어야 한다. 한 사람만 내보내고 admin 을 남겨 두면 '마지막 멤버'를 한 번도 밟지 않아
+    // 제목이 말하는 것을 관찰하지 못한다.
     const channelId = await createChannel('last-member-leave');
     const leaver = await createUserWithToken('last-member-leaver');
-    // admin 과 leaver 만 있음 — admin 은 나가지 않음
     expect((await addMember(channelId, leaver.id)).statusCode).toBe(200);
+    // private 채널은 만든 admin 이 첫 멤버다 — 지금 둘이다.
+    expect(await memberCount(channelId)).toBe(2);
     await setArchived(channelId, true);
-    const before = await memberCount(channelId);
 
-    await app.inject({
+    const first = await app.inject({
       method: 'DELETE', url: `/channels/${channelId}/members/${leaver.id}`,
       headers: auth(leaver.token),
     });
+    expect(first.statusCode).toBe(200);
+    // 남은 사람이 나간 사람과 다른 계정이어야 이 절이 뜻을 갖는다.
+    expect(leaver.id).not.toBe(adminId);
+    expect(await memberCount(channelId)).toBe(1);
 
-    // 멤버는 줄었지만 채널은 그대로
-    expect(await memberCount(channelId)).toBe(before - 1);
+    const last = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/members/${adminId}`,
+      headers: auth(adminToken),
+    });
+
+    expect(last.statusCode).toBe(200);
+    expect(await memberCount(channelId)).toBe(0);
+    // 채널 행은 남는다(#155 의 캐스케이드 결정 전까지).
     const channelRows = await pool.query(`select 1 from channel where id = $1`, [channelId]);
     expect(channelRows.rowCount).toBe(1);
   });
