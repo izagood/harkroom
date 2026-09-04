@@ -233,6 +233,19 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         return;
       }
 
+      case 'resize': {
+        if (typeof frame.sessionId !== 'string') return;
+        const live = sessions.get(frame.sessionId);
+        if (!live) return;
+        // **여기서도 판정을 다시 하지 않는다**(위 `input` 주석과 같은 이유, #335). 크기를
+        // 정하는 것이 지금의 writer 라는 판정도, 값 검증(1..1000 정수)도 서버 허브가 이미
+        // 했다. 그래도 `writer`(PTY 통로)가 없을 수 있다 — spawn 전이면 크기를 적용할
+        // PTY 가 아직 없고, 그때는 버린다: 큐에 담아 두면 다음 턴의 PTY 가 지난 턴의 창
+        // 크기로 열린다.
+        live.writer?.resize(frame.cols, frame.rows);
+        return;
+      }
+
       case 'viewer.count': {
         if (typeof frame.sessionId !== 'string' || typeof frame.count !== 'number') return;
         const live = sessions.get(frame.sessionId);

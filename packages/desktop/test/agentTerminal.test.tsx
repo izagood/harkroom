@@ -8,7 +8,7 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { TerminalChip } from '../src/components/TerminalChip';
 import { TerminalPanel } from '../src/components/TerminalPanel';
-import { setTerminalSinkFactory } from '../src/lib/terminalSink';
+import { setTerminalSinkFactory, type TerminalSinkOptions } from '../src/lib/terminalSink';
 import { Workspace } from '../src/components/Workspace';
 import { acc, chan, fakeApi, msg } from './helpers/fakeApi';
 
@@ -305,6 +305,77 @@ describe('#315 writer 인 창만 친다 — 차례는 서버가 정한다', () =
     // 이유가 보인다. 비활성만 하고 이유를 안 적으면 사람은 고장으로 읽는다.
     expect(screen.getByTestId('writer-note').textContent).toContain('읽기 전용');
     expect(screen.getByTestId('writer-note').textContent).toContain('다른 창');
+  });
+});
+
+/**
+ * #335 — 패널 크기가 PTY 크기가 된다. 화면 쪽 절반이다:
+ *   1(클라이언트 절반). writer 패널의 크기가 attach 소켓으로 나간다.
+ *   3. **writer 가 아닌 패널의 크기는 아무것도 안 바꾼다** — 화면이 그 값을 버린다.
+ *
+ * #346(writer 규칙) 이후 판정 주체가 canInput(attach 시점 고정)에서 writer 통지(차례)로
+ * 옮겨졌다 — "읽기 전용은 아무것도 바꾸지 않는다"는 원 근거는 그대로다. 이것만으로 3 을
+ * 단언했다고 하면 안 된다(`#315` 에서 실측된 함정). 브라우저가 소켓에 직접 프레임을
+ * 보내는 경로는 이 테스트가 못 지나고, 그 절반은 서버 쪽 `agentResize.test.ts` 의
+ * `#335-2` 가 실제 소켓으로 잰다.
+ */
+describe('#335 writer 의 폭이 PTY 폭이 되고, 읽기 전용 창의 폭은 아무것도 안 바꾼다', () => {
+  const mountPanel = async () => {
+    let opts: TerminalSinkOptions | undefined;
+    const refit = vi.fn();
+    setTerminalSinkFactory((_el, o) => {
+      opts = o;
+      return { write: () => { /* 이 describe 는 출력이 아니라 크기를 본다 */ }, refit, dispose: () => {} };
+    });
+    const api = {
+      baseUrl: 'http://localhost:8080',
+      agentSessions: vi.fn(async () => [session()]),
+      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: session() })),
+    };
+    setController({ api } as unknown as Controller);
+    useAppStore.getState().set({
+      me: acc('u1', 'owner'),
+      accounts: { a1: agent('a1', 'forge', 'u1') },
+      // #339 이후 대상은 3필드다 — `session()` 기본값(a1/c1/m1)과 일치해야 패널이 붙는다.
+      terminalTarget: { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1' },
+    });
+    render(<TerminalPanel />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    return { sinkOpts: () => opts, refit };
+  };
+
+  it('writer 패널의 크기가 attach 소켓에 resize 프레임으로 나간다', async () => {
+    const { sinkOpts } = await mountPanel();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true }); });
+
+    // 터미널이 컨테이너에 맞춘 결과를 알려 오는 것을 흉내낸다.
+    await act(async () => { sinkOpts()!.onResize!(100, 30); });
+
+    expect(FakeSocket.last!.sent).toHaveLength(1);
+    const frame = JSON.parse(FakeSocket.last!.sent[0]!) as { type: string; cols: number; rows: number };
+    expect(frame).toEqual({ type: 'resize', cols: 100, rows: 30 });
+  });
+
+  it('writer 통지가 없으면(구 서버 포함) 크기를 아무 데도 보내지 않는다', async () => {
+    const { sinkOpts } = await mountPanel();
+
+    // **가드가 값을 버린다.** writer 규칙에서는 배선 자체는 항상 있고(차례가 언제든
+    // 올 수 있다) 가드가 최신 차례를 읽는다 — 읽기 전용은 아무것도 바꾸지 않는다.
+    await act(async () => { sinkOpts()!.onResize!(40, 10); });
+    // 소켓으로 아무것도 나가지 않았다.
+    expect(FakeSocket.last!.sent).toEqual([]);
+  });
+
+  it('승격 직후 refit 으로 자기 크기를 한 번 보고한다 — 승격 전의 보고는 버려졌다', async () => {
+    const { refit } = await mountPanel();
+    expect(refit).not.toHaveBeenCalled();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true }); });
+    // 스펙 §5 "attach 시 writer 의 크기로 resize" — 이 재보고가 없으면 PTY 가 이전
+    // writer(또는 spawn 기본값)의 크기로 남는다.
+    expect(refit).toHaveBeenCalledTimes(1);
+    // 강등은 재보고할 것이 없다.
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: false }); });
+    expect(refit).toHaveBeenCalledTimes(1);
   });
 });
 

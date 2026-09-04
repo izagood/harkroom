@@ -273,8 +273,9 @@ export async function registerAgentRelayRoutes(
     // 자격증명이 죽으면 이 소켓도 닫힌다(위 `sweep` 주석).
     const untrack = sweep.track(socket, claim.credentialHash);
 
-    // 파싱·writer 판정·포워딩·바이트 누계 전부 허브의 몫이다 — "누가 지금 쓰는가"의
-    // 진실을 두 곳에 두지 않는다. 입력의 감사는 아래 detach 행이 합산으로 남긴다.
+    // 파싱·writer 판정·포워딩·바이트 누계·resize 값 검증 전부 허브의 몫이다 — "누가
+    // 지금 쓰는가"의 진실을 두 곳에 두지 않는다(#335 의 resize 도 같은 핸들을 탄다).
+    // 입력의 감사는 아래 detach 행이 합산으로 남긴다.
     socket.on('message', (raw) => { viewer.handleMessage(String(raw)); });
 
     socket.on('close', () => {

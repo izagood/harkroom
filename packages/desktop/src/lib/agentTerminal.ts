@@ -38,6 +38,13 @@ export interface AttachHandle {
    * 서버가 조용히 버린다 — **진짜 게이트는 서버 쪽 하나다.**
    */
   sendInput(bytes: Uint8Array): void;
+  /**
+   * 이 패널의 크기를 그 PTY 에 알린다(#335). `sendInput` 과 **같은 소켓·같은 게이트**다 —
+   * 허브의 writer 판정 하나가 둘을 함께 막는다(#346). 화면은 writer 가 아닐 때 이 함수를
+   * 부르지 않지만(TerminalPanel 이 가드한다), 그래도 누가 직접 부르면 서버가 조용히
+   * 버린다 — **진짜 게이트는 서버 쪽 하나다.**
+   */
+  sendResize(cols: number, rows: number): void;
   close(): void;
 }
 
@@ -92,6 +99,13 @@ export function connectAgentAttach(
       // 죽이지 않는다(`onmessage` 의 `closed` 가드와 같은 이유, 반대 방향).
       if (closed || socket.readyState !== WebSocket.OPEN) return;
       try { socket.send(JSON.stringify({ type: 'input', data: encodeBase64(bytes) } satisfies AttachClientFrame)); }
+      catch { /* 죽은 소켓은 onclose 가 정리한다 */ }
+    },
+    sendResize(cols, rows) {
+      // 닫힌 뒤의 쓰기 가드는 `sendInput` 과 같다 — 패널을 닫는 순간 발생한 리사이즈
+      // 하나로 화면을 죽이지 않는다.
+      if (closed || socket.readyState !== WebSocket.OPEN) return;
+      try { socket.send(JSON.stringify({ type: 'resize', cols, rows } satisfies AttachClientFrame)); }
       catch { /* 죽은 소켓은 onclose 가 정리한다 */ }
     },
     close() {
