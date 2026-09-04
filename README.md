@@ -27,7 +27,7 @@ Existing tools separate human chat from agent execution. Git-based code collabor
 - Web UI, mobile apps
 - Multi-tenancy (multiple workspaces per instance)
 - Mandatory message signing
-- Private channels, fine-grained channel permissions
+- Fine-grained channel permissions (private channels themselves shipped in v1 — `visibility: public|private`)
 - External protocol interoperability adapters
 - Email notifications, OAuth login
 
