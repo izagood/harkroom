@@ -20,6 +20,7 @@ import type { PtyControls, TurnResult } from './pty.js';
 import type { Exec } from './workspace.js';
 import { resolveWorkspaceDir } from './mentionTurn.js';
 import { findCodexSessionId } from './codexSessions.js';
+import { codexSessionsDir } from './codexHome.js';
 import { claudeSessionFileExists } from './claudeSessions.js';
 import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
@@ -74,6 +75,7 @@ export interface InteractiveTurnDeps {
   mcpConfigPath: string;
   murmurUrl: string;
   pat: string;
+  codexHome: string;
   relay: InteractiveRelay;
   registry: TurnRegistry;
   queue: MentionQueue;
@@ -120,8 +122,7 @@ const defaultSchedule = (fn: () => void, ms: number): (() => void) => {
 
 const defaultSessionMaterialized = (harness: AgentHarness, sessionId: string): Promise<boolean> => {
   if (harness === 'claude-code') return claudeSessionFileExists(sessionId);
-  // codex 인터랙티브는 거절되므로(§5-2 결정 8) 여기 도달하지 않지만, sessionId 가 이미
-  // 발견돼 있다는 것 자체가 디스크의 사실이므로 참이 맞다.
+  // codex sessionId 는 rollout 파일에서 발견한 값이라 그 자체로 디스크 실재의 증거다.
   return Promise.resolve(true);
 };
 
@@ -209,6 +210,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       mcpConfigPath: deps.mcpConfigPath,
       pat: deps.pat,
       murmurUrl: deps.murmurUrl,
+      codexHome: deps.codexHome,
     });
 
     // definition() 을 기다리는 사이 멘션 턴이 시작됐을 수 있다 — 등록 직전에 다시 본다.
@@ -259,6 +261,9 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
     let resolveSpawned!: () => void;
     const spawned = new Promise<void>((resolve) => { resolveSpawned = resolve; });
 
+    // Codex 첫 인터랙티브 세션의 rollout 을 찾는 하한. PTY 를 띄우기 직전에 찍어야 방금
+    // 생성된 파일과 같은 cwd 의 오래된 세션을 혼동하지 않는다.
+    const turnStartMs = Date.now();
     const turn = deps.runTurn(plan, {
       cwd: rec.workspaceDir,
       timeoutMs: 0, // 무기한 — 사람이 앉아 있는 턴에는 시계가 없다(pty.ts 옵션 주석).
@@ -289,10 +294,12 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       let lastFedSeq = current.lastFedSeq;
       try {
         if (def.harness === 'codex' && sessionId === null) {
-          // 사후 발견(스펙 §3) — 지금은 codex 인터랙티브가 거절되어 도달하지 않지만, 위
-          // 거절 게이트(§5-2 결정 8)가 상류 codex 의 플래그 추가로 풀리는 날 이 경로가
-          // 곧바로 정답이어야 한다. 못 찾으면 다음 턴이 새로 시작한다(멘션 턴과 같은 후퇴).
-          sessionId = await findCodexSessionId(undefined, { cwd: current.workspaceDir, sinceMs: 0 });
+          // 첫 대화형 턴 뒤 사후 발견(스펙 §3). 못 찾으면 다음 턴이 새로 시작한다
+          // (멘션 턴과 같은 기능 후퇴).
+          sessionId = await findCodexSessionId(
+            codexSessionsDir(deps.codexHome),
+            { cwd: current.workspaceDir, sinceMs: turnStartMs },
+          );
         }
 
         // 스파이크 §2 실측이 요구하는 판정: 사람이 대화했으면(세션 파일 있음) turnsRun 을

@@ -64,16 +64,13 @@ export type AgentHarness = (typeof AGENT_HARNESSES)[number];
  * **이 목록에 들어가는 기준은 하나다: 실물 CLI 로 첫 턴 + resume 왕복이 도는 것을 봤는가**
  * (`packages/agent/README.md` harness 절, spec §10 "수용" 층).
  *
- * codex 가 아직 없는 이유(`docs/roadmap.md` §5, 2026-09-02 실측): 첫 턴은 murmur MCP 연결부터
- * `message.post` 발화까지 실제로 완주했지만 **resume 턴은 완주를 확인하지 못했다.** 막은 것은
- * murmur 쪽 결함이 아니라 그 개발 머신에 걸려 있던 개인 후크의 승인 게이트였고, 그것을
- * 우회하는 유일한 수단(`codex exec --approve-for-me`)이 `codex exec resume` 에는 없다.
- * 즉 기준의 절반만 닫혔다 — 그 후크가 없는 머신에서 resume 완주를 보면 추가한다.
- * (#89 신뢰 디렉터리와 #86 전역 MCP 상속은 그 전에 닫아야 했던 별개의 선행 조건이고, 둘 다 닫혔다.)
+ * codex 는 2026-09-04 codex-cli 0.153.2 실물 검증에서 첫 exec → 같은 세션 id 의 resume 두 번,
+ * 그리고 격리 CODEX_HOME 을 쓴 대화형 resume 까지 완주했다. 대화형 CLI 가
+ * --ignore-user-config 를 거부하는 문제는 러너별 CODEX_HOME 격리로 해결한다.
  *
  * gemini 는 `PRESETS.gemini === 'unsupported'` 로 구현 자체가 없다.
  */
-export const RUNNABLE_HARNESSES = ['claude-code'] as const satisfies readonly AgentHarness[];
+export const RUNNABLE_HARNESSES = ['claude-code', 'codex'] as const satisfies readonly AgentHarness[];
 
 /** 멘션 턴(화면 앞에 사람이 없다)의 권한. 사람 인터랙티브 턴은 하네스가 직접 묻는다. */
 export const MENTION_PERMISSIONS = ['auto', 'readonly'] as const;
@@ -893,6 +890,24 @@ export interface ProjectionRuntime {
 }
 
 export type ProjectionState = 'unconfigured' | 'stalled' | 'ok';
+
+/**
+ * 투영이 꺼져 있다는 사실을 사람·에이전트에게 말하는 **단 하나의 문구**(#381).
+ *
+ * 같은 사실을 말하는 자리가 셋이다: `LeasePanel` 의 ACTIVE WORK 배너(#267), `Sidebar`
+ * 채널 편집의 repo 입력, 그리고 MCP `work.link` 응답. 셋이 각자 문자열을 들고 있으면
+ * 문구를 고칠 때 한 벌만 고쳐지고 **화면과 API 가 같은 상태를 다른 말로 부른다** —
+ * `projectionState` 를 shared 에 둔 것과 같은 이유다(판정 한 벌, 문구도 한 벌).
+ *
+ * 서버가 이것을 쓰는 것이 이상하지 않다: `work.link` 가 실어 보내는 것은 화면이 이미
+ * 쓰는 그 문구이고, 에이전트가 사람에게 그대로 옮겨 적을 수 있어야 한다.
+ */
+export const PROJECTION_UNCONFIGURED_HEADLINE = '투영이 설정되지 않았다';
+/** 무엇을 하면 되는지. 배너에서는 headline 아래 줄이다. */
+export const PROJECTION_UNCONFIGURED_DETAIL = 'AVCS_BASE_URL 로 켠다';
+/** 한 줄로 써야 하는 자리(좁은 폼, API 응답)용. 위 둘에서 **파생**한다 — 세 번째 사본이 아니다. */
+export const PROJECTION_UNCONFIGURED_NOTICE =
+  `${PROJECTION_UNCONFIGURED_HEADLINE} — ${PROJECTION_UNCONFIGURED_DETAIL}`;
 
 /**
  * 폴링이 이보다 오래 안 돌았으면 멈춘 것으로 본다. 폴링 주기(25초)의 몇 배로 잡아

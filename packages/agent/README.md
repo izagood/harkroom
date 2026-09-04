@@ -197,6 +197,11 @@ export const RUNNABLE_HARNESSES = [/* ... */] as const satisfies readonly AgentH
 UI에서 아직 못 고르는 harness는 '지원 예정'으로 비활성이다. 없는 것은 사용자의 CLI가 아니라
 murmur의 harness 구현이다.
 
+Codex는 러너 상태 디렉터리의 `codex-home`을 `CODEX_HOME`으로 사용한다. 기존 사용자
+`auth.json`만 연결하고 config·sessions·logs는 에이전트별로 분리해, 직접 터미널에서도 개인
+MCP 설정을 상속하지 않는다. 승인된 Codex 스킬은 공식 저장소 범위 경로인
+`<workspace>/.agents/skills`에 링크한다.
+
 ## 권한 — 턴 종류로 갈린다
 
 같은 세션이라도 화면 앞에 사람이 있는지로 답이 달라진다(spec §6):
