@@ -7,6 +7,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 import { onEvent } from '../src/events.js';
+import { PROJECTION_UNCONFIGURED_NOTICE } from '@murmur/shared';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -120,7 +121,9 @@ describe('mcp surface', () => {
       name: 'work.link',
       arguments: { repo: 'mcp-repo', intentOid: 'i-77', threadRootMessageId: posted.message.id },
     }));
-    expect(linked).toEqual({ ok: true });
+    expect(linked).toEqual({
+      ok: true, projectionDisabled: true, warning: PROJECTION_UNCONFIGURED_NOTICE,
+    });
     await client.close();
   });
 
@@ -318,5 +321,91 @@ describe('MCP 리액션이 실시간 이벤트를 낸다', () => {
       expect.objectContaining({ type: 'reaction.added', messageId, emoji: '👀' }),
       expect.objectContaining({ type: 'reaction.removed', messageId, emoji: '👀' }),
     ]));
+  });
+});
+
+/**
+ * `#381` — 투영이 꺼져 있으면 `work.link` 가 말없이 성공했다.
+ *
+ * 결정은 "거절하지 않고 사실을 싣는다"이므로 회귀선도 **둘 다** 지켜야 한다: 사실이
+ * 실리는 것과, **그럼에도 행이 쓰이는 것.** 응답만 보면 행을 안 쓰도록 바꿔도 초록이다
+ * (실제로 그랬다 — 되돌림 실험에서 0건이었다).
+ */
+describe('#381 work.link 은 투영이 꺼진 것을 말하되 거절하지 않는다', () => {
+  const withAvcsBaseUrl = async <T>(value: string | undefined, fn: () => Promise<T>): Promise<T> => {
+    const before = process.env.AVCS_BASE_URL;
+    if (value === undefined) delete process.env.AVCS_BASE_URL;
+    else process.env.AVCS_BASE_URL = value;
+    try {
+      return await fn();
+    } finally {
+      if (before === undefined) delete process.env.AVCS_BASE_URL;
+      else process.env.AVCS_BASE_URL = before;
+    }
+  };
+
+  const postRoot = async (client: Client, body: string): Promise<string> => {
+    const posted = text(await client.callTool({
+      name: 'message.post', arguments: { channelId, body },
+    })) as { message: { id: string } };
+    return posted.message.id;
+  };
+
+  it('투영이 꺼져 있으면 응답이 그 사실을 싣는다 — 화면 배너와 같은 상수다', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      const rootId = await postRoot(client, '#381 꺼짐 응답');
+      const linked = await withAvcsBaseUrl(undefined, async () => text(await client.callTool({
+        name: 'work.link',
+        arguments: { repo: 'mcp-repo', intentOid: 'i-381-off', threadRootMessageId: rootId },
+      }))) as { ok: boolean; projectionDisabled: boolean; warning: string };
+
+      expect(linked.projectionDisabled).toBe(true);
+      // 상수를 **가져와서** 대조한다. 같은 문자열을 여기 적어 두면 이 단언은 자기 사본과
+      // 자기를 비교하는 것이고, 화면 배너가 갈라져도 아무것도 안 지킨다.
+      expect(linked.warning).toBe(PROJECTION_UNCONFIGURED_NOTICE);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('투영이 꺼져 있어도 work_thread 행은 쓰인다 — 거절이 아니다', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      const rootId = await postRoot(client, '#381 꺼짐 행');
+      const linked = await withAvcsBaseUrl(undefined, async () => text(await client.callTool({
+        name: 'work.link',
+        arguments: { repo: 'mcp-repo', intentOid: 'i-381-row', threadRootMessageId: rootId },
+      }))) as { ok?: boolean; error?: unknown };
+
+      // 거절이 아니다.
+      expect(linked.error).toBeUndefined();
+      expect(linked.ok).toBe(true);
+      // 그리고 행이 실제로 있다 — 투영을 나중에 켜면 이것이 읽힌다.
+      const row = await pool.query(
+        `select thread_root_message_id from work_thread where repo = $1 and intent_oid = $2`,
+        ['mcp-repo', 'i-381-row'],
+      );
+      expect(row.rowCount).toBe(1);
+      expect(row.rows[0].thread_root_message_id).toBe(rootId);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('투영이 켜져 있으면 문구를 싣지 않는다 — 늘 실으면 소음이다', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      const rootId = await postRoot(client, '#381 켜짐 응답');
+      const linked = await withAvcsBaseUrl('http://127.0.0.1:1/avcs', async () => text(await client.callTool({
+        name: 'work.link',
+        arguments: { repo: 'mcp-repo', intentOid: 'i-381-on', threadRootMessageId: rootId },
+      }))) as Record<string, unknown>;
+
+      expect(linked).toEqual({ ok: true, projectionDisabled: false });
+      expect(Object.keys(linked)).not.toContain('warning');
+    } finally {
+      await client.close();
+    }
   });
 });
