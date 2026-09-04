@@ -169,3 +169,39 @@ describe('#254 툴바 앵커 변경 (#145 관련)', () => {
     expect(toolbar.className).toMatch(/\btop-1\b/);
   });
 });
+describe('#424 답글 요약은 상자가 아니라 텍스트 링크다', () => {
+  // 회귀선: 채널을 스크롤하면 답글이 달린 메시지마다 파란 상자(테두리 + 옅은 강조 면)가
+  // 줄줄이 서서 본문보다 먼저 눈에 띄었다. 상자를 벗기고 강조색 텍스트로만 둔다.
+  //
+  // 클래스 이름을 직접 묻는다 — 이 회귀는 "무엇이 보이는가"가 아니라 "어떻게 칠했는가"라서
+  // 역할·이름만 보는 질문으로는 상자가 되돌아와도 초록이 된다. 대신 채움/테두리 유틸리티만
+  // 좁게 묻고 여백·정렬은 묻지 않아, 배치를 손볼 자유는 남긴다.
+  it('답글 요약에 테두리도 강조 면도 없다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
+
+    const replyBtn = screen.getByRole('button', { name: '2 replies' });
+
+    // 상시 노출되는 면이 없다. hover 에서만 깔리는 hover:bg-* 는 살아 있어야 하므로
+    // 접두사 없는 bg-/border- 만 걸리도록 경계를 둔다.
+    expect(replyBtn.className).not.toMatch(/(^|\s)bg-/);
+    expect(replyBtn.className).not.toMatch(/(^|\s)border(\s|-)/);
+  });
+
+  it('답글 개수는 강조색 텍스트로 남는다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
+
+    // 링크임을 알려 주는 단서가 색뿐이므로, 색을 잃으면 그냥 회색 잡음이 된다.
+    const count = screen.getByText(/2 replies/);
+    expect(count.className).toMatch(/\btext-accent\b/);
+  });
+
+  it('클릭하면 여전히 스레드가 열린다', () => {
+    const c = fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '2 replies' }));
+    expect(c.openThread).toHaveBeenCalledWith('m1');
+  });
+});
