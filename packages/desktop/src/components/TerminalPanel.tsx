@@ -22,8 +22,8 @@ import { getTerminalSinkFactory, type TerminalSink } from '../lib/terminalSink';
  * 바이트를 넣을 수 있는 주체뿐이다. 이 패널이 그 값을 읽기 시작하면 그때부터 화면이
  * 모드에 관여할 길이 생긴다.
  *
- * **쓰기는 소유자만이다.** admin 은 보이되 칠 수 없고, 화면은 그 사실을 글로 적는다 —
- * 눌러도 아무 일이 없는 입력창이 최악이다.
+ * **쓰기는 소유자만이다.** 소유자가 아닌 admin 은 보이되 칠 수 없고, 화면은 그 사실을
+ * 글로 적는다 — 눌러도 아무 일이 없는 입력창이 최악이다.
  */
 export function TerminalPanel() {
   const agentId = useActiveStore((s) => s.terminalAgentId);
