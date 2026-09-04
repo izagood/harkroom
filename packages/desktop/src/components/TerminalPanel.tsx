@@ -97,12 +97,25 @@ export function TerminalPanel() {
             if (!writerRef.current) return;
             attach?.sendInput(new TextEncoder().encode(data));
           },
+          // 크기도 같은 가드를 탄다(#335 + #346): PTY 크기를 정하는 것은 지금의 writer 다 —
+          // 읽기 전용 창의 크기가 흘러가면 그 창은 더 이상 읽기 전용이 아니다.
+          onResize: (cols, rows) => {
+            if (!writerRef.current) return;
+            attach?.sendResize(cols, rows);
+          },
         });
         setPhase('attached');
         attach = connectAgentAttach(api.baseUrl, ticket, {
           onOutput: (bytes) => sink?.write(bytes),
           onStatus: setState,
-          onWriter: (w) => { writerRef.current = w; setWriter(w); },
+          onWriter: (w) => {
+            writerRef.current = w;
+            setWriter(w);
+            // 승격 직후 자기 크기를 한 번 보고한다(스펙 §5 "attach 시 writer 의 크기로
+            // resize"). 승격 전의 fit 은 위 가드가 버렸으므로, 여기서 다시 재지 않으면
+            // PTY 가 이전 writer(또는 spawn 기본값)의 크기로 남는다.
+            if (w) sink?.refit?.();
+          },
           // 재접속하지 않는다(agentTerminal.ts 머리 주석) — 끊긴 사실만 그린다.
           onClosed: () => setState('runner-offline'),
         });

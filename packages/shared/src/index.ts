@@ -1124,6 +1124,12 @@ export type RelayServerFrame =
   | { type: 'replay.request'; sessionId: string }
   | { type: 'input'; sessionId: string; data: string }
   /**
+   * PTY 창 크기(#335). **바이트가 아니라 숫자 두 개다** — 그래서 위 `data` 들과 달리
+   * base64 규율을 타지 않고, 대신 서버가 값을 검증한다(러너의 `resize` 는 ioctl 로
+   * 그대로 내려간다).
+   */
+  | { type: 'resize'; sessionId: string; cols: number; rows: number }
+  /**
    * 이 세션을 보는 뷰어 수의 변동(#337). 러너의 인터랙티브 고아 회수가 읽는다 —
    * exit 없이 viewer 가 0 이 되면 유예 뒤 SIGTERM(스펙 §5-2 결정 5). 패널 닫힘·소켓
    * 단절·앱 강제종료가 서버 관점에서 전부 이 하나("viewer 소멸")로 수렴하므로, 명시적
@@ -1179,7 +1185,28 @@ export type AttachServerFrame =
  * `data` 는 base64 다 — 사람이 치는 것은 글자만이 아니다. 화살표·Ctrl-C·붙여 넣기는
  * 전부 제어 바이트이고, 문자열로 실으면 그 중 일부가 JSON 인코딩에서 왜곡된다.
  */
-export type AttachClientFrame = { type: 'input'; data: string };
+export type AttachClientFrame =
+  | { type: 'input'; data: string }
+  /**
+   * 이 뷰어의 패널 크기(#335). PTY 가 이 크기가 된다.
+   *
+   * **writer 의 폭이 정답이다**(#335 의 "소유자의 폭"이 writer 규칙(#346) 위에서 갱신된
+   * 표현이다 — 스펙 §5: "resize 는 writer 를 따른다"). 근거는 그대로 하나다 — **읽기
+   * 전용은 아무것도 바꾸지 않는다.** 붙은 사람 중 가장 좁은 폭에 맞추면 읽기 전용 창을
+   * 줄이는 것만으로 writer 의 작업 환경이 좁아지고, 그러면 그 창은 더 이상 읽기 전용이
+   * 아니다. 러너 하나에 크기 하나이고, 그 하나를 정하는 주체는 지금의 writer 다.
+   * 읽기 전용 창이 접힌 줄을 보는 것은 **받아들이기로 한 비용**이다 — 그것을 고치려고
+   * 폭 협상을 넣으면 위 문장이 깨진다.
+   *
+   * 그래서 게이트도 `input` 과 **같은 것 하나**를 탄다(허브의 writer 판정). 프레임
+   * 종류만 늘었지 판정이 늘지 않았다.
+   *
+   * **감사에는 남기지 않는다.** detach 감사의 `inputBytes` 가 남기는 것은 "사람이 이
+   * 턴에 개입했다"는 사실이고, 창 크기 조절은 개입이 아니라 **보기**다 — resize 는 그
+   * 합산에도 들어가지 않는다. "입력은 남기는데 왜 이것은 안 남기나"로 되돌리지 마라 —
+   * 남길 사실이 애초에 없다.
+   */
+  | { type: 'resize'; cols: number; rows: number };
 
 /**
  * 에이전트 팀(#172). **저장된 엔티티다** — "이 다섯을 넣는다"를 매번 고르는 즉석

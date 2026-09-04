@@ -135,6 +135,18 @@ export function base64ByteLength(data: string): number {
   return Math.max(0, Math.floor((data.length * 3) / 4) - padding);
 }
 
+/**
+ * PTY 창 크기로 받아들일 수 있는 값인가(#335). 여기서 막지 않으면 이 숫자가 러너의
+ * `resize` 를 지나 ioctl 로 그대로 내려간다 — 0·음수·NaN·정수 아닌 값은 node-pty 가
+ * 던지고, 터무니없이 큰 값은 러너가 그 크기의 화면 버퍼를 잡는다.
+ *
+ * 상한을 1000 으로 둔 이유: 실제 모니터에서 나올 수 있는 폭·높이보다 넉넉히 크면서,
+ * 잘못된 값이 러너 메모리를 물어뜯지는 못하는 자리다.
+ */
+function isPtySize(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 1000;
+}
+
 /** interactive.open 응답 대기의 기본 한도. 러너는 로컬 spawn 뿐이라 10초면 충분히 길다. */
 const INTERACTIVE_OPEN_TIMEOUT_MS = 10_000;
 
@@ -404,9 +416,12 @@ export function createRelayHub(): RelayHub {
           let parsed: unknown;
           try { parsed = JSON.parse(raw); } catch { return false; }
           const frame = parsed as AttachClientFrame;
-          if (frame?.type !== 'input' || typeof frame.data !== 'string') return false;
+          if (frame?.type !== 'input' && frame?.type !== 'resize') return false;
           // **writer 가 아니면 여기서 멈춘다.** 화면이 입력을 안 그리는 것만으로는
           // 게이트가 아니다 — 소켓은 누구나 직접 열 수 있으므로, 진짜 게이트는 이 줄이다.
+          // **#335 의 resize 도 이 한 줄이 막는다** — 스펙 §5 "resize 는 writer 를 따른다":
+          // 읽기 전용 창이 크기를 바꾸면 그 창은 더 이상 읽기 전용이 아니다. 프레임 종류만
+          // 늘었지 판정은 늘지 않았다.
           if (writerOf.get(sessionId) !== viewer) return false;
           const owner = ownerOf.get(sessionId);
           const target = owner ? runners.get(owner) : undefined;
@@ -414,6 +429,18 @@ export function createRelayHub(): RelayHub {
           // 러너가 능력 없는 버전으로 재접속·재announce 하는 창이 있다. 그때의 input 은
           // 러너가 조용히 버릴 프레임이므로 애초에 보내지 않는다.
           if (!target?.caps.has('input')) return false;
+
+          if (frame.type === 'resize') {
+            // 이 숫자는 러너의 resize 를 지나 ioctl 로 그대로 내려간다 — 0·음수·NaN·
+            // 정수 아닌 값은 node-pty 가 던지고, 터무니없이 큰 값은 러너가 그 크기의
+            // 화면 버퍼를 잡는다(#335). 감사 합산(inputBytes)에는 넣지 않는다 — 창 크기
+            // 조절은 개입이 아니라 보기다(shared 의 AttachClientFrame 주석).
+            if (!isPtySize(frame.cols) || !isPtySize(frame.rows)) return false;
+            sendToRunner(target, { type: 'resize', sessionId, cols: frame.cols, rows: frame.rows });
+            return true;
+          }
+
+          if (typeof frame.data !== 'string') return false;
           // ★ `data` 를 **그대로** 옮긴다. 되돌렸다 싣거나 문자열로 디코드하면 사람이 친
           //   제어 바이트(Ctrl-C, 화살표, 붙여 넣은 멀티바이트)가 깨진다.
           sendToRunner(target, { type: 'input', sessionId, data: frame.data });

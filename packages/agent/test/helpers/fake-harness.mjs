@@ -83,3 +83,19 @@ if (mode === 'stdin-live') {
   // 아무것도 안 오면 매달리지 않는다 — 그때는 이 종료 코드가 원인을 말해 준다.
   setTimeout(() => process.exit(11), 8_000);
 }
+// #335: attach 한 소유자의 패널 크기가 정말 이 프로세스의 PTY 창 크기가 되는지 확인한다.
+//
+// **SIGWINCH 를 기다린다.** "숫자가 러너까지 왔다"는 프레임을 세면 알 수 있지만, 그것과
+// "PTY 크기가 바뀌었다"는 다른 사실이다 — 커널이 TIOCSWINSZ 를 받아야 이 시그널이 오고,
+// 그때서야 `process.stdout.columns` 가 새 값을 준다. 하네스(claude code 의 입력 상자·표)가
+// 자기 폭을 다시 계산하는 것도 이 시그널이다.
+if (mode === 'winsize') {
+  // spawn 시점의 크기를 먼저 찍는다 — 이것이 있어야 "원래부터 그 크기였다"와
+  // "바뀌어서 그 크기가 됐다"를 테스트가 가를 수 있다.
+  process.stdout.write(`start:${process.stdout.columns}x${process.stdout.rows}\n`);
+  process.on('SIGWINCH', () => {
+    process.stdout.write(`winch:${process.stdout.columns}x${process.stdout.rows}\n`);
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(12), 8_000);
+}

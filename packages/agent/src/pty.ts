@@ -113,17 +113,24 @@ function decodeTailText(buf: Buffer): string {
  */
 export interface PtyWriter {
   write(chunk: Buffer): void;
+  /**
+   * PTY 창 크기를 바꾼다(#335). **새 프로세스를 띄우지 않는다** — node-pty 의 `resize`
+   * 가 살아 있는 PTY 에 ioctl(TIOCSWINSZ)을 걸고 SIGWINCH 를 보내므로, 하네스는 자기가
+   * 그리던 화면을 유지한 채 폭만 다시 계산한다.
+   *
+   * `write` 와 **같은 이유로 던지지 않는다**: 프로세스가 끝난 뒤의 resize 도 사람이 아직
+   * 마지막 화면을 보며 창을 끄는 정상 상황이다.
+   */
+  resize(cols: number, rows: number): void;
 }
 
 /**
- * PTY 조작 손잡이(#337) — `PtyWriter`(입력)에 크기와 종료를 더한 것. 인터랙티브 턴이
- * 필요로 한다: 고아 회수(viewer 0 → 유예 → SIGTERM)가 `kill` 을, attach 한 창의 크기
- * 반영이 `resize` 를 쓴다. 셋 다 **exit 후에는 no-op** — 이미 끝난 PTY 를 조작하는 것은
- * 사람이 마지막 화면에서 한 번 더 움직인 정상 상황이지 오류가 아니다.
+ * PTY 조작 손잡이(#337) — `PtyWriter`(입력·크기)에 **종료**를 더한 것. 인터랙티브 턴의
+ * 고아 회수(viewer 0 → 유예 → SIGTERM→SIGKILL)와 러너 SIGTERM 회수가 `kill` 을 쓴다.
+ * 전부 **exit 후에는 no-op** — 이미 끝난 PTY 를 조작하는 것은 사람이 마지막 화면에서
+ * 한 번 더 움직였거나 회수 타이머가 자연 종료와 경합한 정상 상황이지 오류가 아니다.
  */
 export interface PtyControls extends PtyWriter {
-  /** node-pty resize → 자식에 SIGWINCH 로 닿는다(스파이크 실측). 값은 호출자가 검증한다. */
-  resize(cols: number, rows: number): void;
   kill(signal?: 'SIGTERM' | 'SIGKILL'): void;
 }
 
@@ -243,7 +250,9 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         try { proc.write(chunk.toString('utf8')); } catch { /* 이미 끝난 PTY 는 조용히 버린다 */ }
       },
       resize(cols, rows) {
-        // 자식에 SIGWINCH 로 닿는다(스파이크 실측 — 계획 문서 "스파이크 결과" §3).
+        // 위 spawn 크기(기본 120x40)는 **아무도 안 붙었을 때의 값**이고, writer 패널이
+        // 붙으면 그 크기가 이것으로 덮어쓴다(#335 — 자식에 SIGWINCH 로 닿는다, 스파이크
+        // 실측: 계획 문서 "스파이크 결과" §3).
         if (settled) return;
         try { proc.resize(cols, rows); } catch { /* 끝난 PTY 의 크기는 의미가 없다 */ }
       },

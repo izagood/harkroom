@@ -4,11 +4,12 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Workspace } from '../src/components/Workspace';
 import App from '../src/App';
-import { MAC_TRAFFIC_LIGHT_PL } from '../src/lib/platform';
+import { MAC_TRAFFIC_LIGHT_PL, MAC_TITLEBAR_H, TOP_BAR_H } from '../src/lib/platform';
 import { acc, chan, scheduledApiStub } from './helpers/fakeApi';
 // 설정 파일은 **이 파일 기준**으로 끌어온다(`?raw`, Vite 가 변환 시점에 해석한다). `process.cwd()`
 // 로 조립하면 러너가 어디서 도는지에 결과가 달리고, 파일이 없으면 ENOENT 가 아니라 "경로가 틀렸다"
 // 로 보인다 — 실제로 이 파일의 초판이 다른 기기의 절대 경로를 박아 두고 빨갛게 남아 있었다.
+import capabilitiesRaw from '../src-tauri/capabilities/default.json?raw';
 import baseConfRaw from '../src-tauri/tauri.conf.json?raw';
 import macConfRaw from '../src-tauri/tauri.macos.conf.json?raw';
 
@@ -278,5 +279,87 @@ describe('#342 로그인 전 화면의 창 손잡이', () => {
     render(<App />);
     expect(await screen.findByText('Server URL')).toBeTruthy();
     expect(findStrip()).toBeNull();
+  });
+});
+
+/**
+ * 손잡이를 붙여도 **권한이 없으면 창은 끌리지 않는다**(#353).
+ *
+ * `data-tauri-drag-region` 이 눌리면 웹뷰는 `startDragging()` 을 부르는데, 그 명령은
+ * `core:default` 에 **들어 있지 않다** — `core:window:default` 가 주는 28 개는 전부 읽기
+ * 전용(`allow-title`·`allow-is-visible` 류)이다. 그래서 #270 이 OS 타이틀바를 없앤 뒤로
+ * 브랜드 바든 헤더든 로그인 화면 띠든 **어느 것도 창을 옮기지 못했다.**
+ *
+ * 위쪽 블록들이 지키는 것은 "속성이 올바른 자리에 있다" 까지다. 속성이 다 제자리에 있어도
+ * 이 한 줄이 없으면 기능은 앱에서 죽어 있고, 그 상태로 테스트는 전부 초록이었다 —
+ * ACL 은 런타임에만 걸리므로 렌더링 단언으로는 영원히 보이지 않는다. 그래서 결정을 갖고
+ * 있는 파일을 직접 읽는다(`runnerShellScope.test.ts` 와 같은 이유).
+ */
+describe('#353 드래그 권한', () => {
+  it('capabilities 가 core:window:allow-start-dragging 을 준다', () => {
+    const caps = JSON.parse(capabilitiesRaw) as { permissions: (string | { identifier: string })[] };
+    const names = caps.permissions.map((p) => (typeof p === 'string' ? p : p.identifier));
+    expect(names).toContain('core:window:allow-start-dragging');
+  });
+
+  it('그 권한이 창 손잡이가 붙는 창(main)에 걸려 있다', () => {
+    const caps = JSON.parse(capabilitiesRaw) as { windows: string[] };
+    // 창 라벨을 따로 적지 않으므로 Tauri 기본값 `main` 이다. 이 목록에서 빠지면 권한을
+    // 줘도 그 창에는 닿지 않는다.
+    expect(caps.windows).toContain('main');
+  });
+});
+
+/**
+ * 최상단 바 두 개의 **아래 경계가 맞는다**(#359).
+ *
+ * 브랜드 바와 헤더는 가로로 나란히 붙어 한 줄처럼 보인다. 각자 세로 여백으로 높이를 만들면
+ * 실측 48px 대 32px 처럼 어긋나고, 그 어긋남은 창 오른쪽 끝까지 이어져 눈에 띈다. 그래서
+ * **같은 높이 상수**를 쓰고 세로 여백으로 높이를 만들지 않는다.
+ */
+describe('#359 최상단 바 정렬', () => {
+  it('두 바가 타이틀바에 가까운 얇은 높이를 쓴다 — 옛 48px 이 아니다', () => {
+    // 이 바는 OS 타이틀바를 대신하는 자리다. 브랜드 바의 옛 48px(`h-12`)에 맞추면 위쪽을
+    // 낭비하면서 타이틀바처럼 보이지도 않는다. 신호등이 들어갈 높이는 유지한다.
+    expect(TOP_BAR_H).toBe('h-9');
+    expect(TOP_BAR_H).not.toBe('h-12');
+  });
+
+  it('브랜드 바와 헤더가 같은 높이 상수를 쓴다', () => {
+    pretendMac();
+    renderWorkspace({ sidebarCollapsed: false });
+
+    for (const id of ['sidebar-brand', 'app-header']) {
+      expect(screen.getByTestId(id).className).toContain(TOP_BAR_H);
+    }
+  });
+
+  it('두 바 어디에도 세로 여백으로 높이를 만드는 py- 가 없다', () => {
+    pretendMac();
+    renderWorkspace({ sidebarCollapsed: false });
+
+    // `py-*` 가 다시 붙으면 높이가 상수와 내용 양쪽에서 정해져 경계가 또 갈린다.
+    for (const id of ['sidebar-brand', 'app-header']) {
+      expect(screen.getByTestId(id).className).not.toMatch(/\bpy-/);
+    }
+  });
+});
+
+/**
+ * 로그인 화면 손잡이 띠는 **원래 타이틀바가 있던 높이까지만** 끈다(#359).
+ *
+ * 초판은 38px 이었는데 신호등 실측(지름 14px, 중심 y≈12px)이 말하는 띠는 28px 이다. 10px 이
+ * 더 크면 그만큼 폼 위 빈 공간이 드래그에 먹혀, 사용자에게는 "끌리는 자리가 타이틀바보다
+ * 아래로 내려온다" 로 보인다.
+ */
+describe('#359 띠 높이', () => {
+  it('띠가 타이틀바 높이(28px)를 쓴다', async () => {
+    pretendMac();
+    render(<App />);
+    expect(await screen.findByText('Server URL')).toBeTruthy();
+
+    const strip = document.querySelector('[data-testid="window-drag-strip"]')!;
+    expect(strip.className).toContain(MAC_TITLEBAR_H);
+    expect(MAC_TITLEBAR_H).toBe('h-[28px]');
   });
 });
