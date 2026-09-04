@@ -61,10 +61,14 @@ function acceptStopRequest(at: string): void {
 }
 
 /**
- * 자격증명 실패면 78 로 물러난다(#250). 판정은 `exit.ts::runnerExitPlan` 하나가 갖는다 —
- * 세 자리(기동·멘션 턴·폴 루프)가 같은 판정을 써야 한다.
+ * **재시도로 낫지 않는 실패**면 78 로 물러난다 — 자격증명 실패(#250)와 하네스 실행 파일
+ * 부재(#340). 판정은 `exit.ts::runnerExitPlan` 하나가 갖는다: 세 자리(기동·멘션 턴·폴 루프)가
+ * 같은 판정을 써야 하고, 판정을 늘릴 때도 여기가 아니라 거기를 고쳐야 한다.
+ *
+ * 이름이 `...CredentialRejected` 가 아닌 이유: #340 이 같은 결의 두 번째 부류를 더했다.
+ * 자격증명만 가리키는 이름으로 두면 다음 사람이 실행 파일 부재를 "왜 여기서 죽지"로 읽는다.
  */
-function exitIfCredentialRejected(err: unknown): void {
+function exitIfUnrecoverable(err: unknown): void {
   const plan = runnerExitPlan(err);
   if (!plan) return;
   for (const line of plan.lines) console.error(line);
@@ -80,7 +84,7 @@ const [me, guide] = await (async () => {
   try {
     return [await murmur.me(), await murmur.guide()] as const;
   } catch (err) {
-    exitIfCredentialRejected(err);
+    exitIfUnrecoverable(err);
     throw err;
   }
 })();
@@ -253,8 +257,11 @@ while (running) {
           break;
         }
       } catch (err) {
-        // 자격증명 실패는 재시도로 낫지 않는다. 조용히 반복하면 "왜 답이 없지"의 원인이 묻힌다.
-        exitIfCredentialRejected(err);
+        // 재시도로 낫지 않는 실패는 여기서 걸러 **재시도 회계에 들어가기 전에** 죽는다 —
+        // `failed`·`attempts`·`FAILURE_NOTICE` 는 아래 한 줄부터 시작한다. 조용히 반복하면
+        // "왜 답이 없지"의 원인이 묻힌다: 자격증명 실패는 폐기된 PAT 로 무한 재시도하고(#250),
+        // 하네스 실행 파일 부재는 멘션 MAX_ATTEMPTS 건을 태운 뒤에야 흔적을 남긴다(#340).
+        exitIfUnrecoverable(err);
         failed = true;
         console.error(`  ${entry.messageId} 답변 실패 (${tried}/${MAX_ATTEMPTS}):`,
           err instanceof Error ? err.message : err);
@@ -290,7 +297,7 @@ while (running) {
     // 거의 항상 롱폴에 park 돼 있어 401 이 이 catch 로 온다 — 아래 "재접속하면 된다"로
     // 삼키면 러너는 영원히 물러나지 않고, 폐기된 PAT 로 무한 재시도만 한다. 회전이
     // 약속한 것("옛 러너는 다음 호출에서 401 을 받고 78 로 스스로 물러난다")이 여기 걸려 있다.
-    exitIfCredentialRejected(err);
+    exitIfUnrecoverable(err);
     // 서버 재시작이면 poll 이 빈 결과로 끝나거나 transport 오류가 난다 — 둘 다 정상이고
     // 재접속하면 된다(workspace.guide 의 poll 루프 계약).
     console.error('poll 루프 오류, 재접속:', err instanceof Error ? err.message : err);
