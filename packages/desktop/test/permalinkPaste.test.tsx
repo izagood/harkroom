@@ -6,6 +6,7 @@ import { Controller, setController } from '../src/state/controller';
 import { ApiError } from '../src/lib/api';
 import { Composer } from '../src/components/Composer';
 import { Notice } from '../src/components/Notice';
+import { MessageItem } from '../src/components/MessageItem';
 import { acc, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 // #228 — 퍼머링크 고리의 **여는 쪽**. #178 이 링크를 만드는 쪽만 배선해서, 사용자가 얻는
@@ -140,5 +141,60 @@ describe('컴포저에 퍼머링크를 붙여넣는다', () => {
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toMatch(/gone/i);
     expect(useAppStore.getState().activeChannelId).toBeNull();
+  });
+
+  // #397 — 스레드를 닫으면 강조도 해제된다.
+  it('스레드를 닫으면 강조가 사라진다', async () => {
+    const { c } = mount({
+      message: vi.fn(async () => linked()),
+      messages: vi.fn(async () => ({ messages: [linked()], hasMore: false })),
+    });
+    await c.start();
+    render(<Composer onSend={vi.fn()} />);
+
+    paste(screen.getByRole('textbox'), messagePermalink(LINKED_ID));
+
+    await waitFor(() => expect(useAppStore.getState().highlightedMessageId).toBe(LINKED_ID));
+
+    c.closeThread();
+
+    expect(useAppStore.getState().highlightedMessageId).toBeNull();
+  });
+
+  // #397 — 시간 기반 해제. 강조가 영원히 남으면 같은 채널에서 다음 강조가 신호를 잃는다.
+  // 되돌려 RED 로 확인한 결과 이 경로를 지키는 회귀선이 없었으므로 여기서 고정한다.
+  it('일정 시간이 지나면 강조가 저절로 사라진다', () => {
+    vi.useFakeTimers();
+    try {
+      useAppStore.getState().set({ highlightedMessageId: LINKED_ID });
+      render(<MessageItem message={linked()} />);
+
+      expect(useAppStore.getState().highlightedMessageId).toBe(LINKED_ID);
+
+      vi.advanceTimersByTime(5000);
+
+      expect(useAppStore.getState().highlightedMessageId).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // #397 — 해제는 **자기 강조만** 지운다. 타이머가 도는 사이 강조가 다른 메시지로 옮겨가면
+  // 그 강조는 건드리지 않는다. 이 구분이 없으면 퍼머링크로 방금 건 강조를 남의 타이머가 지운다.
+  it('타이머는 다른 메시지로 옮겨간 강조를 지우지 않는다', () => {
+    vi.useFakeTimers();
+    try {
+      const OTHER_ID = '99999999-2222-4333-8444-555555555555';
+      useAppStore.getState().set({ highlightedMessageId: LINKED_ID });
+      render(<MessageItem message={linked()} />);
+
+      // 타이머가 만료되기 전에 강조가 다른 메시지로 옮겨간다.
+      useAppStore.getState().set({ highlightedMessageId: OTHER_ID });
+      vi.advanceTimersByTime(5000);
+
+      expect(useAppStore.getState().highlightedMessageId).toBe(OTHER_ID);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller } from '../src/state/controller';
-import { acc, accountsResult, chan, fakeApi, fakeWsFactory, grp } from './helpers/fakeApi';
+import { acc, accountsResult, chan, fakeApi, fakeWsFactory, grp, msg } from './helpers/fakeApi';
 
 /**
  * 채널 목록 변경 WS 이벤트의 데스크탑 쪽(#284).
@@ -185,5 +185,77 @@ describe('멤버십·집합 변경 이벤트를 받는 데스크탑 (#300)', () 
 
     callbacks.current!.onEvent({ type: 'handle_group.changed', groupId: 'g1', audience: 'all' });
     await vi.waitFor(() => expect(accounts.mock.calls.length).toBe(before + 1));
+  });
+});
+
+/**
+ * 스레드 답글 이벤트를 받는 데스크탑(#395).
+ *
+ * 스레드 답글은 채널 목록에서 걸러지고 부모 메시지의 replyCount 가 그 사실을 대신 말해야
+ * 하는데, replyCount 는 서버가 목록 쿼리에서 한 번 계산해 주는 값이라 클라이언트에 이 값을
+ * 갱신하는 코드가 없었다. message.created 로 답글이 오면 부모의 replyCount 를 +1 한다.
+ */
+describe('스레드 답글 이벤트를 받는 데스크탑 (#395)', () => {
+  it('message.created 로 스레드 답글이 오면 부모의 replyCount 가 오른다', async () => {
+    const { callbacks } = await startWith();
+    // 부모 메시지를 스토어에 넣는다 (replyCount: 2)
+    useAppStore.getState().upsertMessages('c1', [msg('m-root', 'c1', 1, 'root', 'u1', { replyCount: 2 })]);
+
+    callbacks.current!.onEvent({
+      type: 'message.created',
+      message: msg('m-reply', 'c1', 2, 'reply', 'u2', { threadRootId: 'm-root' }),
+      audience: 'all',
+    });
+
+    const m = useAppStore.getState().messages['c1']!.find((m) => m.id === 'm-root');
+    expect(m!.replyCount).toBe(3);
+  });
+
+  it('부모가 스토어에 없으면 아무 일도 안 난다(에러도 안 난다)', async () => {
+    const { callbacks } = await startWith();
+    // 부모 메시지를 스토어에 넣지 않는다
+
+    callbacks.current!.onEvent({
+      type: 'message.created',
+      message: msg('m-reply', 'c1', 2, 'reply', 'u2', { threadRootId: 'm-nonexistent' }),
+      audience: 'all',
+    });
+
+    // 에러 없이 통과하고, 채널에 답글만 조용히 추가된다(그 답글은 채널 본문 필터에 걸러진다).
+    expect(useAppStore.getState().messages['c1']!.some((m) => m.id === 'm-reply')).toBe(true);
+  });
+
+  it('replyCount 가 null 이던 부모가 1 이 된다', async () => {
+    const { callbacks } = await startWith();
+    // 부모 메시지를 스토어에 넣는다 (replyCount: null)
+    useAppStore.getState().upsertMessages('c1', [msg('m-root', 'c1', 1, 'root', 'u1', { replyCount: null })]);
+
+    callbacks.current!.onEvent({
+      type: 'message.created',
+      message: msg('m-reply', 'c1', 2, 'reply', 'u2', { threadRootId: 'm-root' }),
+      audience: 'all',
+    });
+
+    const m = useAppStore.getState().messages['c1']!.find((m) => m.id === 'm-root');
+    expect(m!.replyCount).toBe(1);
+  });
+
+  it('채널 본문에는 답글이 여전히 안 보인다(회귀선 — 의도된 설계)', async () => {
+    const { callbacks } = await startWith();
+    useAppStore.getState().set({ activeChannelId: 'c1' });
+    useAppStore.getState().upsertMessages('c1', [msg('m-root', 'c1', 1, 'root', 'u1', { replyCount: 1 })]);
+
+    callbacks.current!.onEvent({
+      type: 'message.created',
+      message: msg('m-reply', 'c1', 2, 'reply', 'u2', { threadRootId: 'm-root' }),
+      audience: 'all',
+    });
+
+    // ChannelPane.tsx:114 의 필터: (messages[activeChannelId] ?? []).filter((m) => m.threadRootId === null || m.alsoInChannel)
+    // 답글은 threadRootId 가 있고 alsoInChannel 이 false 이므로 걸러진다
+    const visibleMessages = useAppStore.getState().messages['c1']!.filter(
+      (m) => m.threadRootId === null || m.alsoInChannel
+    );
+    expect(visibleMessages.map((m) => m.id)).toEqual(['m-root']);
   });
 });

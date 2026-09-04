@@ -34,6 +34,19 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   // jsdom 에는 scrollIntoView 가 없으므로 옵셔널 호출이다(ChannelPane 도 같은 이유로 그렇다).
   useEffect(() => { if (highlighted) rowRef.current?.scrollIntoView?.(); }, [highlighted]);
 
+  // 강조가 계속 남으면 같은 채널에서 진짜 강조가 필요한 순간에 신호가 죽는다(#397).
+  // 몇 초 뒤에 자동으로 해제한다 — 사용자가 확인하고 있다는 신호다.
+  useEffect(() => {
+    if (!highlighted) return;
+    const timeout = setTimeout(() => {
+      const store = useActiveStore.getState();
+      if (store.highlightedMessageId === message.id) {
+        store.set({ highlightedMessageId: null });
+      }
+    }, 5000);
+    return () => clearTimeout(timeout);
+  }, [highlighted, message.id]);
+
   const isSystem = message.kind === 'system';
   /**
    * 그릴 본문(#329). 시스템 메시지는 본문에 이름이 없고 자리표시자만 있으므로,
