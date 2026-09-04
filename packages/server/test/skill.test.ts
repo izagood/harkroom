@@ -135,14 +135,14 @@ describe('workspace skill', () => {
   });
 
   // 요구 3.
-  it('미승인 스킬은 approved=true 에 없다', async () => {
+  it('미승인 스킬은 state=approved 에 없다', async () => {
     await pool.query(
       `insert into workspace_skill (slug, body, proposed_by) values ($1, $2, $3)`,
       ['pending-skill', '# 대기중', agentAccountId],
     );
 
     const res = await app.inject({
-      method: 'GET', url: '/skills?approved=true',
+      method: 'GET', url: '/skills?state=approved',
       headers: { authorization: `Bearer ${adminToken}` },
     });
     const skills = res.json() as { slug: string }[];
@@ -166,7 +166,7 @@ describe('workspace skill', () => {
 
     // 그리고 승인 목록에서도 실제로 빠진다.
     const listed = await app.inject({
-      method: 'GET', url: '/skills?approved=true',
+      method: 'GET', url: '/skills?state=approved',
       headers: { authorization: `Bearer ${adminToken}` },
     });
     expect((listed.json() as { slug: string }[]).find((s) => s.slug === 'test-skill')).toBeUndefined();
@@ -196,7 +196,7 @@ describe('workspace skill', () => {
 
   // 요구 7 의 서버 쪽 절반(파일·링크는 러너 테스트가 본다):
   // 러너가 읽는 목록에서 사라져야 러너가 지운다.
-  it('비활성화된 스킬은 approved=true 에서 사라진다', async () => {
+  it('비활성화된 스킬은 state=approved 에서 사라진다', async () => {
     const slug = 'disable-test';
     await pool.query(
       `insert into workspace_skill (slug, body, proposed_by, approved_by, approved_at)
@@ -211,7 +211,7 @@ describe('workspace skill', () => {
     expect(delRes.statusCode).toBe(200);
 
     const res = await app.inject({
-      method: 'GET', url: '/skills?approved=true',
+      method: 'GET', url: '/skills?state=approved',
       headers: { authorization: `Bearer ${adminToken}` },
     });
     expect((res.json() as { slug: string }[]).find((s) => s.slug === slug)).toBeUndefined();
@@ -227,11 +227,11 @@ describe('workspace skill', () => {
   // 승인된 스킬 본문은 곧 모두의 시스템 프롬프트다 — 인증 없이 읽히면 프롬프트 표면이 샌다.
   it('스킬 조회는 인증을 요구한다', async () => {
     expect((await app.inject({ method: 'GET', url: '/skills' })).statusCode).toBe(401);
-    expect((await app.inject({ method: 'GET', url: '/skills?approved=true' })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/skills?state=approved' })).statusCode).toBe(401);
     expect((await app.inject({ method: 'GET', url: '/skills/test-skill' })).statusCode).toBe(401);
     // 에이전트 PAT 는 읽을 수 있다 — 러너가 턴마다 이 경로로 동기화한다.
     expect((await app.inject({
-      method: 'GET', url: '/skills?approved=true', headers: { authorization: `Bearer ${agentPat}` },
+      method: 'GET', url: '/skills?state=approved', headers: { authorization: `Bearer ${agentPat}` },
     })).statusCode).toBe(200);
   });
 
@@ -248,6 +248,95 @@ describe('workspace skill', () => {
     expect(result).toMatchObject({ error: { code: 'forbidden' } });
     const rows = await pool.query(`select count(*)::int as n from workspace_skill where slug = 'sneaky'`);
     expect(rows.rows[0].n).toBe(0);
+  });
+
+  // #325 — `?state=pending|approved|disabled`.
+  //
+  // 이 절이 지키는 것은 **이름과 동작이 같다**는 것 하나다. #325 를 낳은 사고가 바로
+  // `approved=false` 가 "미승인만"이 아니라 전부를 돌려준 것이었다. 그래서 각 상태는
+  // "자기 것이 있다"만이 아니라 **"남의 것이 섞이지 않는다"**까지 단언한다 — 앞의 절반만
+  // 보면 필터를 통째로 지워도 초록이다.
+
+  /** 세 상태를 한 벌씩 심어 둔다 — 테스트 순서에 기대지 않기 위해서다. */
+  async function seedTriplet(tag: string): Promise<void> {
+    await pool.query(
+      `insert into workspace_skill (slug, body, proposed_by) values ($1, $2, $3)`,
+      [`${tag}-pending`, '# 대기', agentAccountId],
+    );
+    await pool.query(
+      `insert into workspace_skill (slug, body, proposed_by, approved_by, approved_at)
+       values ($1, $2, $3, $3, now())`,
+      [`${tag}-approved`, '# 승인', agentAccountId],
+    );
+    await pool.query(
+      `insert into workspace_skill (slug, body, proposed_by, disabled_at) values ($1, $2, $3, now())`,
+      [`${tag}-disabled`, '# 비활성', agentAccountId],
+    );
+  }
+
+  const slugsOf = async (url: string): Promise<string[]> => {
+    const res = await app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${adminToken}` } });
+    expect(res.statusCode).toBe(200);
+    return (res.json() as { slug: string }[]).map((s) => s.slug);
+  };
+
+  it('state=pending 는 미승인만 반환한다 — 승인·비활성이 섞이지 않는다', async () => {
+    await seedTriplet('p');
+    const slugs = await slugsOf('/skills?state=pending');
+
+    expect(slugs).toContain('p-pending');
+    expect(slugs).not.toContain('p-approved');
+    expect(slugs).not.toContain('p-disabled');
+  });
+
+  it('state=approved 는 승인만 반환한다 — 미승인·비활성이 섞이지 않는다', async () => {
+    await seedTriplet('a');
+    const slugs = await slugsOf('/skills?state=approved');
+
+    expect(slugs).toContain('a-approved');
+    expect(slugs).not.toContain('a-pending');
+    expect(slugs).not.toContain('a-disabled');
+  });
+
+  it('state=disabled 는 비활성만 반환한다 — 미승인·승인이 섞이지 않는다', async () => {
+    await seedTriplet('d');
+    const slugs = await slugsOf('/skills?state=disabled');
+
+    expect(slugs).toContain('d-disabled');
+    expect(slugs).not.toContain('d-pending');
+    expect(slugs).not.toContain('d-approved');
+  });
+
+  it('파라미터가 없으면 세 상태를 전부 반환한다', async () => {
+    // 기본값이 "전부"인 것은 #311 화면이 한 번 불러 세 묶음으로 가르기 때문이다.
+    // 기본을 approved 로 좁히면 그 화면에서 대기·비활성 묶음이 통째로 빈다.
+    await seedTriplet('all');
+    const slugs = await slugsOf('/skills');
+
+    expect(slugs).toContain('all-pending');
+    expect(slugs).toContain('all-approved');
+    expect(slugs).toContain('all-disabled');
+  });
+
+  it('잘못된 state 값은 400 을 반환한다', async () => {
+    const res = await app.inject({
+      method: 'GET', url: '/skills?state=invalid',
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  // #325 는 하위 호환 별칭을 두지 않기로 했다. 그 결정은 **옛 이름이 400 이어야** 지켜진다.
+  // zod 가 모르는 키를 말없이 버리면 `?approved=true` 는 "필터 없음"이 되어 미승인 스킬까지
+  // 200 으로 돌아간다 — 이름을 믿은 호출자가 받는 것이 정확히 #325 가 신고한 그 사고이고,
+  // 조용하기까지 해서 더 나쁘다. 무시가 아니라 거절인지를 여기서 고정한다.
+  it('옛 이름 approved= 는 무시가 아니라 400 이다 — 별칭을 두지 않았다', async () => {
+    for (const url of ['/skills?approved=true', '/skills?approved=false']) {
+      const res = await app.inject({
+        method: 'GET', url, headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(400);
+    }
   });
 });
 
