@@ -8,7 +8,7 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { TerminalChip } from '../src/components/TerminalChip';
 import { TerminalPanel } from '../src/components/TerminalPanel';
-import { setTerminalSinkFactory } from '../src/lib/terminalSink';
+import { setTerminalSinkFactory, type TerminalSinkOptions } from '../src/lib/terminalSink';
 import { Workspace } from '../src/components/Workspace';
 import { acc, chan, fakeApi, msg } from './helpers/fakeApi';
 
@@ -221,6 +221,63 @@ describe('#315 소유자는 치고 admin 은 못 친다', () => {
     expect(screen.getByText(/읽기 전용/)).toBeTruthy();
     expect(screen.getByText(/소유자/)).toBeTruthy();
     // 소켓으로도 아무것도 나가지 않았다 — 화면 문구만 보면 못 잡는 절반이다.
+    expect(FakeSocket.last!.sent).toEqual([]);
+  });
+});
+
+/**
+ * #335 — 패널 크기가 PTY 크기가 된다. 화면 쪽 절반이다:
+ *   1(클라이언트 절반). 소유자 패널의 크기가 attach 소켓으로 나간다.
+ *   3. **admin 패널의 크기는 소유자에게 전파되지 않는다** — 화면이 그 길을 안 연다.
+ *
+ * 이것만으로 3 을 단언했다고 하면 안 된다(`#315` 에서 실측된 함정). admin 브라우저가
+ * 소켓에 직접 프레임을 보내는 경로는 이 테스트가 못 지나고, 그 절반은 서버 쪽
+ * `agentResize.test.ts` 의 `#335-2` 가 실제 소켓으로 잰다.
+ */
+describe('#335 소유자의 폭이 PTY 폭이 되고, admin 의 폭은 아무것도 안 바꾼다', () => {
+  const mountPanel = async (canInput: boolean) => {
+    let opts: TerminalSinkOptions | undefined;
+    setTerminalSinkFactory((_el, o) => {
+      opts = o;
+      return { write: () => { /* 이 describe 는 출력이 아니라 크기를 본다 */ }, dispose: () => {} };
+    });
+    const api = {
+      baseUrl: 'http://localhost:8080',
+      agentSessions: vi.fn(async () => [session()]),
+      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: session(), canInput })),
+    };
+    setController({ api } as unknown as Controller);
+    useAppStore.getState().set({
+      me: acc('u1', 'owner'),
+      accounts: { a1: agent('a1', 'forge', 'u1') },
+      // #339 이후 대상은 3필드다 — `session()` 기본값(a1/c1/m1)과 일치해야 패널이 붙는다.
+      terminalTarget: { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1' },
+    });
+    render(<TerminalPanel />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    return { sinkOpts: () => opts };
+  };
+
+  it('소유자 패널의 크기가 attach 소켓에 resize 프레임으로 나간다', async () => {
+    const { sinkOpts } = await mountPanel(true);
+    // 크기 보고가 열려 있다 — 열려 있지 않으면 아래 호출 자체가 불가능하다.
+    expect(sinkOpts()?.onResize).toBeTypeOf('function');
+
+    // 터미널이 컨테이너에 맞춘 결과를 알려 오는 것을 흉내낸다.
+    await act(async () => { sinkOpts()!.onResize!(100, 30); });
+
+    expect(FakeSocket.last!.sent).toHaveLength(1);
+    const frame = JSON.parse(FakeSocket.last!.sent[0]!) as { type: string; cols: number; rows: number };
+    expect(frame).toEqual({ type: 'resize', cols: 100, rows: 30 });
+  });
+
+  it('admin 패널은 크기를 아예 보고하지 않는다 — 소유자의 화면이 안 좁아진다', async () => {
+    const { sinkOpts } = await mountPanel(false);
+
+    // **크기 보고의 길이 없다.** sink 에 onResize 가 안 가면 그 터미널은 자기 폭을
+    // 어디에도 말하지 않는다 — 읽기 전용은 아무것도 바꾸지 않는다(운영자 결정 A).
+    expect(sinkOpts()?.onResize).toBeUndefined();
+    // 소켓으로도 아무것도 나가지 않았다.
     expect(FakeSocket.last!.sent).toEqual([]);
   });
 });
