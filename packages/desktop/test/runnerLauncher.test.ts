@@ -256,6 +256,24 @@ describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
     expect(secrets.map.get('a')).toEqual({ label: newLabel, token: `murp_${newLabel}` });
   });
 
+  it('옛 자식의 늦은 종료가 새 자식의 실행 중 상태를 덮어쓰지 않는다', async () => {
+    const oldLabel = patLabelPrefix(DEVICE);
+    const secrets = fakeSecrets({ a: { label: oldLabel, token: 'murp_old' } });
+    const { launcher, spawner } = make(fakeApi(), secrets);
+    await startAll(launcher, [agent('a')]);
+
+    await launcher.reissue({ agent: agent('a'), repoPath: '/repo', runnerCommand: '' });
+    expect(launcher.getStates()[0]!.status).toBe('running');
+
+    // 실제 Tauri close 이벤트처럼 kill()이 끝난 뒤 옛 자식의 종료가 늦게 도착한다.
+    spawner.exit(0, 0);
+
+    expect(launcher.getStates()[0]).toMatchObject({ status: 'running', exitCode: null });
+    // 새 자식은 여전히 등록돼 있어 일반 자동 기동이 중복으로 하나를 더 만들지 않는다.
+    await startAll(launcher, [agent('a')]);
+    expect(spawner.spawns).toHaveLength(2);
+  });
+
   it('발급이 실패하면 옛 PAT 를 폐기하지 않는다 — 돌던 러너를 잃지 않는다', async () => {
     const oldLabel = patLabelPrefix(DEVICE);
     const secrets = fakeSecrets({ a: { label: oldLabel, token: 'murp_old' } });

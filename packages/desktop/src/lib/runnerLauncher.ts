@@ -234,6 +234,11 @@ export function runnerCommandDir(value: string): string | null {
 export class RunnerLauncher {
   /** 이 앱이 띄운 자식만. 외부 러너는 여기 없다(앱은 그것을 죽일 수도, 죽여서도 안 된다). */
   private runners = new Map<string, RunnerProcess>();
+  /**
+   * 에이전트별 최신 실행 세대. 종료 콜백은 자식보다 늦게 도착할 수 있으므로, 에이전트 id만
+   * 보고 상태를 바꾸면 PAT 재발급 뒤 옛 자식의 종료가 새 자식을 `stopped`로 덮어쓴다(#419).
+   */
+  private runTokens = new Map<string, symbol>();
   /** `startOne` 의 비동기 구간까지 포함한 에이전트별 잠금. */
   private starting = new Map<string, Promise<void>>();
   /** dispose 뒤 완료된 비동기 준비가 자식을 다시 띄우지 못하게 하는 수명 경계. */
@@ -456,13 +461,23 @@ export class RunnerLauncher {
       this.setState(agent.id, { status: 'failed', exitCode: null, message: path.error });
       return;
     }
-    const child = await this.spawner.spawn({
-      cwd: repoPath,
-      env: { MURMUR_PAT: token, MURMUR_URL: this.api.baseUrl, PATH: path.path },
-      onExit: (code) => this.handleExit(agent.id, code),
-    });
+    const runToken = Symbol(agent.id);
+    this.runTokens.set(agent.id, runToken);
+    let child: RunnerProcess;
+    try {
+      child = await this.spawner.spawn({
+        cwd: repoPath,
+        env: { MURMUR_PAT: token, MURMUR_URL: this.api.baseUrl, PATH: path.path },
+        onExit: (code) => this.handleExit(agent.id, runToken, code),
+      });
+    } catch (err) {
+      if (this.runTokens.get(agent.id) === runToken) this.runTokens.delete(agent.id);
+      throw err;
+    }
     // spawn IPC 도 비동기다. 그 사이 앱/세션이 닫혔다면 방금 생긴 자식을 즉시 거둔다.
-    if (this.disposed) {
+    // 또는 자식이 spawn 응답보다 먼저 끝났다면 종료 콜백이 이미 이 세대를 지웠다. 그때
+    // 뒤늦게 `running`을 쓰면 죽은 자식을 살아 있다고 표시하므로 같은 경계로 막는다.
+    if (this.disposed || this.runTokens.get(agent.id) !== runToken) {
       try { await child.kill(); } catch { /* 이미 끝난 자식 */ }
       return;
     }
@@ -475,7 +490,10 @@ export class RunnerLauncher {
    * 사람이 할 일은 "PAT 재발급"이다. 그 외의 코드는 코드를 그대로 보여 준다: 앱이 원인을
    * 지어내면 사람은 로그를 볼 이유를 잃는다.
    */
-  private handleExit(agentId: string, code: number | null): void {
+  private handleExit(agentId: string, runToken: symbol, code: number | null): void {
+    // PAT 재발급으로 대체된 옛 자식의 늦은 종료 통지는 최신 자식의 사실이 아니다.
+    if (this.runTokens.get(agentId) !== runToken) return;
+    this.runTokens.delete(agentId);
     this.runners.delete(agentId);
     if (code === 78) {
       this.setState(agentId, {
@@ -562,6 +580,9 @@ export class RunnerLauncher {
   async stop(agentId: string): Promise<void> {
     const child = this.runners.get(agentId);
     if (!child) return;
+    // kill 결과보다 종료 이벤트가 늦을 수 있다. 먼저 세대를 무효화해야 그 콜백이 뒤이어
+    // 뜨는 새 자식의 상태를 지우지 못한다.
+    this.runTokens.delete(agentId);
     this.runners.delete(agentId);
     try {
       await child.kill();
@@ -573,6 +594,7 @@ export class RunnerLauncher {
     this.disposed = true;
     for (const child of this.runners.values()) void child.kill().catch(() => {});
     this.runners.clear();
+    this.runTokens.clear();
   }
 }
 
