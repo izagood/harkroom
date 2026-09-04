@@ -231,6 +231,10 @@ describe('#141-3 attach 는 재생이 먼저다', () => {
   it('ring buffer 재생이 먼저 오고 그다음 실시간 바이트가 온다', async () => {
     const runner = await connectRunner(agentPat);
     runner.send({ type: 'announce', sessions: [session({ sessionId: 'ord-1' })] });
+    // `send` 는 소켓에 밀어 넣고 곧 돌아온다 — 서버가 그 프레임을 처리한 것과는 다른
+    // 사실이다. `attach` 는 `app.inject` 로 같은 프로세스 안에서 바로 도는 REST 요청이라
+    // 프레임 처리를 앞지를 수 있고, 그러면 세션이 아직 없어 **404** 다(#367).
+    await waitForSession(ownerToken, 'ord-1');
 
     const viewer = await attach(ownerToken, 'ord-1');
     await waitFor(() => runner.received.some((f) => f.type === 'replay.request'));
@@ -343,6 +347,8 @@ describe('#141-5 PTY 바이트는 DB 에 남지 않는다', () => {
   it('message·audit 어디에도 바이트가 없다', async () => {
     const runner = await connectRunner(agentPat);
     runner.send({ type: 'announce', sessions: [session({ sessionId: 'db-1' })] });
+    // announce 가 반영된 뒤에 붙는다 — 이유는 `#141-3` 의 같은 자리에 적었다(#367).
+    await waitForSession(ownerToken, 'db-1');
 
     const viewer = await attach(ownerToken, 'db-1');
     await waitFor(() => runner.received.some((f) => f.type === 'replay.request' && f.sessionId === 'db-1'));
@@ -401,6 +407,9 @@ describe('#141-6 러너 재접속 후에도 attach 가 이어진다', () => {
   it('재접속 러너의 announce 로 세션이 되살아나고 다시 붙을 수 있다', async () => {
     const first = await connectRunner(agentPat);
     first.send({ type: 'announce', sessions: [session({ sessionId: 'rc-1' })] });
+    // 첫 attach 도 announce 반영을 기다린다 — 아래 재접속 쪽만 기다리고 여기를 빼면
+    // 이 자리가 CI 에서 `expected 404 to be 200` 으로 샌다(#367 에서 실측).
+    await waitForSession(ownerToken, 'rc-1');
     const before = await attach(ownerToken, 'rc-1');
     await waitFor(() => before.frames.length > 0);
 
@@ -444,6 +453,8 @@ describe('#141-7 attach 는 턴의 권한을 바꾸지 않는다', () => {
 
     const runner = await connectRunner(agentPat);
     runner.send({ type: 'announce', sessions: [session({ sessionId: 'perm-1' })] });
+    // announce 가 반영된 뒤에 붙는다 — 이유는 `#141-3` 의 같은 자리에 적었다(#367).
+    await waitForSession(ownerToken, 'perm-1');
     const viewer = await attach(ownerToken, 'perm-1');
     await waitFor(() => runner.received.some((f) => f.type === 'replay.request' && f.sessionId === 'perm-1'));
     runner.send({ type: 'replay', sessionId: 'perm-1', data: '' });
