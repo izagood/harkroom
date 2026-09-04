@@ -164,6 +164,78 @@ describe('#141-8 패널을 닫으면 구독이 끊긴다', () => {
 });
 
 /**
+ * #337 — 진행 중인 턴이 없어도 사람이 스스로 연다. no-session 화면의 [터미널 열기]가
+ * REST 로 러너에 인터랙티브 PTY 를 띄우게 하고, 돌아온 티켓으로 **기존 attach 흐름에
+ * 합류한다** — 열기 전용 소켓 경로를 따로 만들지 않는 것이 이 배선의 요점이다.
+ */
+describe('#337 [터미널 열기] — 세션이 없어도 스스로 연다', () => {
+  const mountNoSession = async (api: Record<string, unknown>) => {
+    setTerminalSinkFactory(() => ({ write: () => { /* 배선만 본다 */ }, dispose: () => {} }));
+    setController({ api } as unknown as Controller);
+    useAppStore.getState().set({
+      me: acc('u1', 'owner'),
+      accounts: { a1: agent('a1', 'forge', 'u1') },
+      terminalTarget: { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1' },
+    });
+    render(<TerminalPanel />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  };
+
+  it('버튼이 스토어의 target 세 필드로 REST 를 부르고, 받은 티켓으로 attach 소켓이 열린다', async () => {
+    const api = {
+      baseUrl: 'http://localhost:8080',
+      agentSessions: vi.fn(async () => []),
+      attachAgentSession: vi.fn(),
+      openInteractiveSession: vi.fn(async () => ({ ticket: 'murt_opened', session: session() })),
+    };
+    await mountNoSession(api);
+    expect(FakeSocket.last).toBeNull();
+
+    await act(async () => { screen.getByText('터미널 열기').click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    // 스레드 스코프 그대로 — 세션이 없으므로 세션 id 가 아니라 (에이전트, 채널, 스레드)다.
+    expect(api.openInteractiveSession).toHaveBeenCalledWith('a1', 'c1', 'm1');
+    // 기존 attach 경로에 합류했다 — 별도 소켓 경로가 아니라 같은 티켓 소켓이다.
+    expect(FakeSocket.last).not.toBeNull();
+    expect(FakeSocket.last!.url).toContain('murt_opened');
+    // attach REST 는 부르지 않는다 — 인터랙티브 open 의 응답이 이미 티켓이다.
+    expect(api.attachAgentSession).not.toHaveBeenCalled();
+  });
+
+  it('열기 실패(러너 오프라인·구버전·codex 거절)는 서버 문구 그대로 error 화면에 온다', async () => {
+    const api = {
+      baseUrl: 'http://localhost:8080',
+      agentSessions: vi.fn(async () => []),
+      openInteractiveSession: vi.fn(async () => {
+        throw new Error('codex 인터랙티브 턴은 지원하지 않는다');
+      }),
+    };
+    await mountNoSession(api);
+
+    await act(async () => { screen.getByText('터미널 열기').click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    // 화면이 문구를 다시 쓰지 않는다 — 원인을 아는 것은 서버(러너)다.
+    expect(screen.getByText(/codex 인터랙티브 턴은 지원하지 않는다/)).toBeTruthy();
+    expect(FakeSocket.last).toBeNull();
+  });
+
+  it('세션이 이미 있으면 열기 버튼 없이 곧장 붙는다 — 열기는 no-session 의 것이다', async () => {
+    const api = {
+      baseUrl: 'http://localhost:8080',
+      agentSessions: vi.fn(async () => [session()]),
+      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: session() })),
+      openInteractiveSession: vi.fn(),
+    };
+    await mountNoSession(api);
+    expect(screen.queryByText('터미널 열기')).toBeNull();
+    expect(api.openInteractiveSession).not.toHaveBeenCalled();
+    expect(api.attachAgentSession).toHaveBeenCalledWith('sess-1');
+  });
+});
+
+/**
  * #315·#346 — 사람이 이 패널에 타이핑한다. 쓰기 차례는 서버의 `writer` 프레임이 정한다
  * (스펙 §5-2 결정 2 — 마지막 attach 가 writer). 화면 쪽이 지켜야 하는 것 세 가지:
  *   1. writer 통지를 받은 창의 타이핑만 소켓으로 나간다.

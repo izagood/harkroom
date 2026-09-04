@@ -281,6 +281,19 @@ export class ApiClient {
     return this.req('POST', `/agent-sessions/${sessionId}/attach`);
   }
 
+  /**
+   * 진행 중인 턴이 없어도 스스로 인터랙티브 터미널을 연다(#337, 스펙 §5-2 결정 4).
+   * 세션이 아니라 **스레드**를 가리킨다 — 러너가 세션을 확보(없으면 생성)해 인터랙티브
+   * PTY 를 띄우고, 응답의 티켓은 attach 와 같은 1회용이라 기존 attach 흐름에 그대로
+   * 합류한다. 실패(러너 오프라인 404 / 구버전 409 / codex 거절 409 / 응답 없음 504)는
+   * 서버 문구 그대로 ApiError 로 던진다 — 화면이 그 문구를 그대로 보여준다.
+   */
+  openInteractiveSession(
+    agentAccountId: string, channelId: string, threadRootId: string,
+  ): Promise<{ ticket: string; session: AgentSessionView }> {
+    return this.req('POST', '/agent-sessions/interactive', { agentAccountId, channelId, threadRootId });
+  }
+
   /** WS 핸드셰이크용 단기 1회용 티켓. 연결 시도마다 새로 받는다. */
   async wsTicket(): Promise<string> {
     const res = await this.req<{ ticket: string }>('POST', '/ws-ticket');
