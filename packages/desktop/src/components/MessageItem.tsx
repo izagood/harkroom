@@ -236,17 +236,17 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
             )}
             <Attachments attachments={message.attachments} />
             <Reactions message={message} />
-            {/* #254: 답글이 **있을 때**의 상시 pill 은 **본문 열**에 둔다 — 리액션 칩 바로 뒤,
-                왼쪽 정렬. 우상단 열에는 툴바만 남으므로 `right-full`("내 우측 = 답글 컨트롤의
+            {/* #254: 답글이 **있을 때**의 상시 답글 요약(#424 로 상자를 벗긴 텍스트 링크)은
+                **본문 열**에 둔다 — 리액션 칩 바로 뒤, 왼쪽 정렬. 우상단 열에는 툴바만 남으므로 `right-full`("내 우측 = 답글 컨트롤의
                 좌측")은 가리킬 대상이 없어져 뜻을 잃는다. 그래서 툴바는 행 기준
-                `right-2 top-1` 로 앵커한다. 이 pill 과 툴바가 **다른 컨테이너**에 있어
+                `right-2 top-1` 로 앵커한다. 이 답글 요약과 툴바가 **다른 컨테이너**에 있어
                 구조적으로 겹칠 수 없으므로, #143 이 풀던 "호버 툴바가 답글 pill 을 덮어
                 스레드 진입이 막힌다"는 더 이상 발생할 수 없다 — 앵커를 행으로 되돌려도
-                마찬가지다. 이 사실을 적어 두는 이유는, **이 pill 을** 다시 오른쪽 열(툴바)로
+                마찬가지다. 이 사실을 적어 두는 이유는, **이 답글 요약을** 다시 오른쪽 열(툴바)로
                 올리는 순간 #143 이 그대로 되살아나기 때문이다.
                 (#396: 답글이 **없을 때**의 진입점은 애초에 호버에서만 보이는 툴바 아이콘이라
                 조건이 툴바와 같다 — 같은 조건끼리는 서로 덮을 대상이 없으므로 이 경고는
-                적용되지 않는다. pill 은 여전히 절대 툴바로 올리지 않는다.) */}
+                적용되지 않는다. 답글 요약은 여전히 절대 툴바로 올리지 않는다.) */}
             {!inThread && message.replyCount !== null && (
               <button
                 // 답글이 달린 메시지는 호버 없이도 그 사실이 보여야 한다(#161). 답글이 없을
@@ -261,7 +261,11 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 // 보여준다. 참여자 얼굴은 장식이다 — 접근 가능한 이름은 버튼 하나에 붙는다.
                 // 예: "51개의 답글, 마지막 답글 오후 8:24". 이미지가 각각 이름을 갖지
                 // 않도록 opacity 로 숨기고 sr-only 텍스트도 주지 않는다.
-                className="mt-1 self-start flex items-center gap-1 rounded border border-accent bg-accent-surface px-1.5 py-0.5 text-[11px] text-accent"
+                // #424: 상자(테두리+옅은 면)를 벗긴다 — 채널을 스크롤하면 답글이 달린 메시지마다
+                // 파란 상자가 줄줄이 서서 본문보다 먼저 눈에 띄었다. Slack 처럼 참여자 얼굴 +
+                // 강조색 텍스트 링크로만 두고, 면은 hover 에서만 옅게 깔아 클릭 대상임을 알린다.
+                className="mt-0.5 self-start -mx-1 flex items-center gap-1.5 rounded px-1 py-0.5
+                           text-[11px] hover:bg-surface-hover"
                 onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
                 aria-label={`${message.replyCount} ${message.replyCount === 1 ? 'reply' : 'replies'}${lastReplyTime ? `, last reply ${lastReplyTime}` : ''}`}
               >
@@ -269,31 +273,34 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                     읽지 않도록 aria-hidden 처리하고 sr-only 도 안 준다. #277: variant="avatar" */}
                 <span className="flex -space-x-1" aria-hidden="true">
                   {displayedParticipants.map((id) => (
-                    <span key={id} className="ring-1 ring-accent-surface">
+                    <span key={id} className="ring-1 ring-surface">
                       <Identity account={accounts[id]} className="h-4 w-4 text-[8px]" variant="avatar" />
                     </span>
                   ))}
                   {remainingCount > 0 && (
-                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-surface-hover text-[8px] font-medium text-fg-muted ring-1 ring-accent-surface">
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-surface-hover text-[8px] font-medium text-fg-muted ring-1 ring-surface">
                       +{remainingCount}
                     </span>
                   )}
                 </span>
-                <span>
+                <span className="font-medium text-accent">
                   {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
-                  {lastReplyTime && <span className="ml-1 text-fg-subtle">{lastReplyTime}</span>}
                 </span>
+                {lastReplyTime && <span className="text-fg-subtle">{lastReplyTime}</span>}
               </button>
             )}
             {/* #396: 답글이 없을 때는 본문 아래에 버튼을 두지 않는다 — 답글이 달린 뒤의
-                pill(위 블록)과 같은 자리·같은 모양이라 "아직 아무 일도 없는 메시지"가
+                답글 요약(위 블록)과 같은 자리에 서서 "아직 아무 일도 없는 메시지"가
                 "뭔가 달린 메시지"처럼 보였다. 진입점은 호버 툴바의 아이콘으로 옮겼다
                 (아래 우상단 열, message toolbar 안). */}
             {/* #231: alsoInChannel 메시지는 채널에도 보이므로 스레드에서 왔을 때가 아니라
                 채널에서 볼 때 이 버튼이 필요하다. "View in thread" 로 표시한다. */}
             {!inThread && message.alsoInChannel && message.threadRootId && (
               <button
-                className="mt-1 self-start rounded border border-accent bg-accent-surface px-1.5 py-0.5 text-[11px] text-accent"
+                // #424: 답글 요약과 같은 자리에 서는 링크이므로 상자도 함께 벗긴다 —
+                // 한쪽만 상자면 두 진입점이 다른 종류처럼 보인다.
+                className="mt-0.5 self-start -mx-1 rounded px-1 py-0.5 text-[11px] font-medium
+                           text-accent hover:bg-surface-hover"
                 onClick={() => void getController().openThread(message.threadRootId!)}
               >
                 View in thread
@@ -330,7 +337,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
             <InlineReactionButtons message={message} />
             <ReactionPicker message={message} />
             {/* #396: 답글이 아직 없는 메시지(replyCount === null)의 스레드 진입점.
-                답글이 달리면 본문 열의 pill(위쪽, #161)이 상시 노출로 이 역할을 대신하므로
+                답글이 달리면 본문 열의 답글 요약(위쪽, #161)이 상시 노출로 이 역할을 대신하므로
                 그때는 여기 그리지 않는다 — 같은 진입을 두 곳에 두지 않는다. inThread 에서는
                 스레드 안에서 또 스레드를 열 수 없으므로 아예 그리지 않는다(바깥 조건이 막는다).
                 아이콘은 💬 를 쓰지 않는다 — 그건 에이전트 상태 신호 이모지라(#144,
