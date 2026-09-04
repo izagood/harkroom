@@ -4,6 +4,7 @@ import { ApiClient, ApiError } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type Notifier } from '../lib/notify';
+import { displayBody } from '../lib/mention';
 import { RunnerLauncher, tauriLoginPathReader, tauriSecretStore, tauriSpawner, type LoginPathReader, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
 import type { AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
@@ -463,7 +464,9 @@ export class Controller {
     await this.notifier.notify({
       title: `${author ? `@${author} ` : ''}posted in ${where}`.trim() + this.communitySuffix(),
       // 미리보기를 끄면 제목(누가·어디서)은 남기고 대화 내용만 뺀다 — 멘션 알림과 같은 규칙이다.
-      body: prefs.showPreview ? message.body : 'New message',
+      // 본문은 `displayBody` 를 지난다(#329) — 시스템 메시지는 자리표시자를 갖고 있어
+      // 원본을 그대로 실으면 OS 알림에만 그 글자가 뜬다.
+      body: prefs.showPreview ? displayBody(message, store.accounts) : 'New message',
     });
   }
 
@@ -514,7 +517,9 @@ export class Controller {
       await this.notifier.notify({
         title: `${author ? `@${author} ` : ''}${label[e.reason]} ${where}`.trim() + this.communitySuffix(),
         // 미리보기를 끄면 제목(누가·어디서)은 남기고 대화 내용만 뺀다.
-        body: prefs.showPreview ? (row?.body ?? generic) : generic,
+        // `displayBody` 를 지나는 이유는 `announceNewMessage` 와 같다(#329) — 본문을
+        // 사람에게 보여 주는 자리는 예외 없이 같은 함수를 지나야 자리표시자가 새지 않는다.
+        body: prefs.showPreview ? (row ? displayBody(row, accounts) : generic) : generic,
       });
     }
   }

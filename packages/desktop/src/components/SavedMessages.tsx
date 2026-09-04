@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { SavedMessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
+import { displayBody } from '../lib/mention';
 
 interface Props {
   open: boolean;
@@ -87,6 +88,10 @@ export function SavedMessages({ open, onClose }: Props) {
    */
   const entryRow = (e: SavedMessageRow) => {
     const time = new Date(e.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    // 시스템 메시지는 본문에 이름이 없고 자리표시자만 있다 — `displayBody` 를 지나지 않으면
+    // 이 목록에만 그 글자가 남는다(#329).
+    const body = e.message ? displayBody(e.message, accounts) : '';
+    const preview = body.length > 100 ? `${body.slice(0, 100)}…` : body;
 
     return (
       <li key={e.messageId} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-surface-hover">
@@ -115,7 +120,7 @@ export function SavedMessages({ open, onClose }: Props) {
             </span>
             <span className="text-fg-muted">@{accounts[e.message.authorId]?.handle ?? '…'}</span>
             <span className="min-w-0 flex-1 truncate text-fg-muted">
-              {e.message.body.length > 100 ? `${e.message.body.slice(0, 100)}…` : e.message.body}
+              {preview}
             </span>
             <span className="text-[10px] text-fg-subtle">
               {new Date(e.message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
