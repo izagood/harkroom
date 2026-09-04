@@ -12,7 +12,7 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { join } from 'node:path';
 import type { AgentHarness, AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
-import { buildSystemPrompt, buildTurnPrompt, type MemoryContext, countOwnPostsSince, hasOwnPostSince, NO_REPLY_NOTICE } from './prompt.js';
+import { buildSystemPrompt, buildTurnPrompt, type MemoryContext, countOwnPostsSince, NO_REPLY_NOTICE } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
 import type { PtyWriter, TurnResult } from './pty.js';
@@ -427,7 +427,7 @@ export async function runMentionTurn(
     return { stopRequestedAt: def.stopRequestedAt };
   }
 
-  // 발화 판정(hasOwnPostSince)의 기준선이다 — 턴 시작 전에 이미 있던 자기 발화까지 세면,
+  // 발화 판정(countOwnPostsSince)의 기준선이다 — 턴 시작 전에 이미 있던 자기 발화까지 세면,
   // 아무것도 안 하고 끝낸 턴도 "발화했다"로 잘못 판정된다.
   const turnStartSeq = thread.reduce((max, m) => Math.max(max, m.seq), 0);
 
@@ -622,7 +622,7 @@ export async function runMentionTurn(
     // 대표적인 경우가 타임아웃이다(답을 올린 뒤 계속 일하다 시간이 다 되어 SIGTERM 을
     // 맞는다). 그때 커서를 되돌려 두면 재시도가 같은 메시지를 다시 먹여 **같은 질문에 두 번
     // 답한다**(#90 과 같은 결의 중복 발화). `timedOut` 을 대리 신호로 쓰지 않는 이유는,
-    // 발화 여부가 진짜 신호이고 우리는 이미 그걸 관측할 수단(hasOwnPostSince)을 갖고 있어서다.
+    // 발화 여부가 진짜 신호이고 우리는 이미 그걸 관측할 수단(countOwnPostsSince)을 갖고 있어서다.
     //
     // 관측 자체가 실패하면(murmur 로 가는 네트워크가 잠깐 끊김) 전진시키지 않는다 —
     // "한 번 더 시도한다"가 "중복 발화"보다 회복 가능한 쪽이다.
