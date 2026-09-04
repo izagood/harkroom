@@ -15,6 +15,10 @@ import { acc, chan, fakeApi, msg } from './helpers/fakeApi';
 const agent = (id: string, handle: string, ownerAccountId: string | null) =>
   ({ ...acc(id, handle, 'agent'), ownerAccountId });
 
+// #339: 칩은 이제 눌린 메시지를 안다 — 렌더 판정만 보는 테스트도 메시지를 넘겨야 한다.
+// 채널 최상위 메시지라 앵커는 자기 자신(m1)이다.
+const chipMsg = msg('m1', 'c1', 1, '다 됐다', 'a1');
+
 const session = (overrides: Partial<AgentSessionView> = {}): AgentSessionView => ({
   sessionId: 'sess-1',
   agentAccountId: 'a1',
@@ -63,19 +67,19 @@ afterEach(() => {
 describe('#141-4 진입점은 소유자·admin 에게만 렌더된다', () => {
   it('소유자에게는 칩이 뜬다', () => {
     useAppStore.getState().set({ me: acc('u1', 'owner'), accounts: { a1: agent('a1', 'forge', 'u1') } });
-    render(<TerminalChip account={agent('a1', 'forge', 'u1')} />);
+    render(<TerminalChip account={agent('a1', 'forge', 'u1')} message={chipMsg} />);
     expect(screen.getByText('터미널 보기')).toBeTruthy();
   });
 
   it('admin 에게도 뜬다 — 서버의 checkOwnerOrAdmin 과 같은 판정이어야 한다', () => {
     useAppStore.getState().set({ me: acc('u9', 'admin', 'human', true) });
-    render(<TerminalChip account={agent('a1', 'forge', 'u1')} />);
+    render(<TerminalChip account={agent('a1', 'forge', 'u1')} message={chipMsg} />);
     expect(screen.getByText('터미널 보기')).toBeTruthy();
   });
 
   it('소유자도 admin 도 아니면 **아무것도 렌더하지 않는다** — 비활성 버튼이 아니다', () => {
     useAppStore.getState().set({ me: acc('u2', 'stranger') });
-    const { container } = render(<TerminalChip account={agent('a1', 'forge', 'u1')} />);
+    const { container } = render(<TerminalChip account={agent('a1', 'forge', 'u1')} message={chipMsg} />);
     // 부재를 본다. `disabled` 버튼을 찾는 방식으로 쓰면 "비활성으로 보여 주기"가 통과한다 —
     // 그것은 남의 러너 셸이 여기 있다는 사실을 새게 하므로 스펙 §5 의 요구가 아니다.
     expect(container.innerHTML).toBe('');
@@ -86,18 +90,18 @@ describe('#141-4 진입점은 소유자·admin 에게만 렌더된다', () => {
     // `008` 이 backfill 을 넣지 않은 것은 의도였다(#181) — null 은 "아무나"가 아니라
     // "아직 아무도"다. null 을 "일치"로 읽으면 소유자 미지정 에이전트가 전원에게 열린다.
     useAppStore.getState().set({ me: acc('u1', 'owner') });
-    const { container } = render(<TerminalChip account={agent('a2', 'orphan', null)} />);
+    const { container } = render(<TerminalChip account={agent('a2', 'orphan', null)} message={chipMsg} />);
     expect(container.innerHTML).toBe('');
 
     cleanup();
     useAppStore.getState().set({ me: acc('u9', 'admin', 'human', true) });
-    render(<TerminalChip account={agent('a2', 'orphan', null)} />);
+    render(<TerminalChip account={agent('a2', 'orphan', null)} message={chipMsg} />);
     expect(screen.getByText('터미널 보기')).toBeTruthy();
   });
 
   it('사람 계정에는 칩을 만들지 않는다', () => {
     useAppStore.getState().set({ me: acc('u9', 'admin', 'human', true) });
-    const { container } = render(<TerminalChip account={acc('u3', 'alice')} />);
+    const { container } = render(<TerminalChip account={acc('u3', 'alice')} message={chipMsg} />);
     expect(container.innerHTML).toBe('');
   });
 });
@@ -120,7 +124,7 @@ describe('#141-8 패널을 닫으면 구독이 끊긴다', () => {
     useAppStore.getState().set({
       me: acc('u1', 'owner'),
       accounts: { a1: agent('a1', 'forge', 'u1') },
-      terminalAgentId: 'a1',
+      terminalTarget: { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1' },
     });
     const view = render(<TerminalPanel />);
     // attach 왕복(두 번의 await)이 끝날 때까지 마이크로태스크를 흘린다.
@@ -149,7 +153,7 @@ describe('#141-8 패널을 닫으면 구독이 끊긴다', () => {
     // 그래서 닫힌 뒤에 프레임을 하나 더 밀어 넣어 본다 — 늘어나면 구독이 살아 있는 것이다.
     await act(async () => { socket.deliver({ type: 'output', data: b64('후') }); });
     expect(written).toHaveLength(1);
-    // 패널 자체도 사라진다(스토어의 terminalAgentId 가 null 이 된다).
+    // 패널 자체도 사라진다(스토어의 terminalTarget 이 null 이 된다).
     expect(screen.queryByLabelText('에이전트 터미널')).toBeNull();
   });
 
@@ -185,7 +189,7 @@ describe('#315 소유자는 치고 admin 은 못 친다', () => {
     useAppStore.getState().set({
       me: acc('u1', 'owner'),
       accounts: { a1: agent('a1', 'forge', 'u1') },
-      terminalAgentId: 'a1',
+      terminalTarget: { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1' },
     });
     render(<TerminalPanel />);
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
@@ -281,5 +285,118 @@ describe('#141 배선 — Workspace 에서 칩을 눌러 패널이 열린다', (
   it('사람이 쓴 메시지 행에는 칩이 없다', () => {
     mountApp({ messages: { c1: [msg('m1', 'c1', 1, '안녕', 'u1')] } });
     expect(screen.queryByText('터미널 보기')).toBeNull();
+  });
+});
+
+/**
+ * #339 — 칩·패널은 스레드에 스코프된다.
+ *
+ * 세션은 (에이전트, 스레드)당 하나라(스펙 §5), 같은 에이전트가 스레드 여럿에서 동시에
+ * 턴을 돌 수 있다. 예전 상태(`terminalAgentId` 하나)에서는 패널이 에이전트 일치만 보고
+ * **임의의 첫 세션**에 붙었다 — A 스레드에서 눌렀는데 B 스레드의 PTY 가 열렸다. 여기서
+ * 지키는 것은 두 문장이다: 칩은 눌린 메시지의 스레드 세션을 고르고, 다른 스레드의
+ * 세션에는 붙지 않는다.
+ */
+describe('#339 칩·패널은 스레드에 스코프된다 — 같은 에이전트 다중 세션', () => {
+  const mountApp = (extra: Record<string, unknown> = {}, api = fakeApi()) => {
+    setController({
+      api,
+      openChannel: vi.fn().mockResolvedValue(undefined),
+      openThread: vi.fn(), closeThread: vi.fn(), startDm: vi.fn(), logout: vi.fn(),
+      notifyTyping: vi.fn(), refreshAccounts: vi.fn().mockResolvedValue(undefined),
+      send: vi.fn(), loadOlder: vi.fn(),
+      goBack: vi.fn().mockResolvedValue(false), goForward: vi.fn().mockResolvedValue(false),
+    } as unknown as Controller);
+    setTerminalSinkFactory(() => ({ write: () => { /* 스코프만 본다 */ }, dispose: () => { /* 같음 */ } }));
+    useAppStore.getState().set({
+      me: acc('u1', 'owner'),
+      accounts: { u1: acc('u1', 'owner'), a1: agent('a1', 'forge', 'u1') },
+      channels: [chan('c1', 'general')],
+      connected: true,
+      activeChannelId: 'c1',
+      ...extra,
+    });
+    return render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+  };
+
+  it('칩은 눌린 메시지의 스레드 세션을 고른다 — 같은 에이전트의 다른 스레드 세션이 앞에 있어도', async () => {
+    // 같은 에이전트 a1 의 세션 셋: 첫 스레드(m1) · 다른 채널의 같은 스레드 id(c9/m2) ·
+    // 눌릴 스레드(m2). 목록 순서가 함정이다 — 에이전트 일치만 보면 sess-A 에 붙고,
+    // 채널을 안 보면 sess-X 에 붙는다. 정답은 sess-B 하나뿐이다.
+    const sessions = [
+      session({ sessionId: 'sess-A', threadRootId: 'm1' }),
+      session({ sessionId: 'sess-X', channelId: 'c9', threadRootId: 'm2' }),
+      session({ sessionId: 'sess-B', threadRootId: 'm2' }),
+    ];
+    const api = fakeApi({ agentSessions: vi.fn(async () => sessions) });
+    // 채널 최상위 멘션 둘 = 스레드 둘. 앵커는 각 메시지 자신이다(#98).
+    mountApp({ messages: { c1: [msg('m1', 'c1', 1, '첫 스레드', 'a1'), msg('m2', 'c1', 2, '둘째 스레드', 'a1')] } }, api);
+
+    // 두 번째 행(m2)의 칩을 누른다 — 행은 seq 순이므로 인덱스 1 이 m2 다.
+    await act(async () => { screen.getAllByText('터미널 보기')[1]!.click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    // 칩이 앵커식으로 target 을 채웠고(최상위라 자기 자신이 루트),
+    expect(useAppStore.getState().terminalTarget).toEqual({ agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm2' });
+    // 패널이 세 필드 일치로 **그 스레드의** 세션에 붙었다.
+    expect(api.attachAgentSession).toHaveBeenCalledTimes(1);
+    expect(api.attachAgentSession).toHaveBeenCalledWith('sess-B');
+  });
+
+  it('스레드 안 메시지의 칩은 자기 id 가 아니라 스레드 루트를 앵커로 채운다', async () => {
+    useAppStore.getState().set({ me: acc('u1', 'owner') });
+    render(<TerminalChip
+      account={agent('a1', 'forge', 'u1')}
+      message={msg('m7', 'c1', 7, '진행 중', 'a1', { threadRootId: 't1' })}
+    />);
+    await act(async () => { screen.getByText('터미널 보기').click(); });
+    // m7 을 앵커로 쓰면 러너의 세션 키(스레드 루트)와 어긋나 패널이 세션을 못 찾는다.
+    expect(useAppStore.getState().terminalTarget).toEqual({ agentAccountId: 'a1', channelId: 'c1', threadRootId: 't1' });
+  });
+
+  it('다른 스레드의 세션이나 스레드 미상(null) 세션에는 붙지 않는다', async () => {
+    // target 은 m1 스레드인데 목록에는 m2 세션과 threadRootId 미상 세션뿐이다.
+    // 예전처럼 에이전트 일치만 보면 여기서 sess-B 에 붙는다 — 그것이 이 이슈의 결함이다.
+    const api = {
+      baseUrl: 'http://localhost:8080',
+      agentSessions: vi.fn(async () => [
+        session({ sessionId: 'sess-B', threadRootId: 'm2' }),
+        session({ sessionId: 'sess-N', threadRootId: null }),
+      ]),
+      attachAgentSession: vi.fn(),
+    };
+    setController({ api } as unknown as Controller);
+    setTerminalSinkFactory(() => ({ write: () => { /* 붙지 않아야 한다 */ }, dispose: () => { /* 같음 */ } }));
+    useAppStore.getState().set({
+      me: acc('u1', 'owner'),
+      accounts: { a1: agent('a1', 'forge', 'u1') },
+      terminalTarget: { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1' },
+    });
+    render(<TerminalPanel />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    // attach 자체가 없어야 한다 — 엉뚱한 세션의 티켓을 받는 순간 이미 결함이다.
+    expect(api.attachAgentSession).not.toHaveBeenCalled();
+    expect(FakeSocket.last).toBeNull();
+    expect(screen.getByText(/진행 중인 턴이 없다/)).toBeTruthy();
+  });
+
+  it('헤더가 어느 채널·스레드의 터미널인지 적는다', async () => {
+    const api = fakeApi({ agentSessions: vi.fn(async () => [session()]) });
+    setController({ api } as unknown as Controller);
+    setTerminalSinkFactory(() => ({ write: () => { /* 헤더만 본다 */ }, dispose: () => { /* 같음 */ } }));
+    useAppStore.getState().set({
+      me: acc('u1', 'owner'),
+      accounts: { a1: agent('a1', 'forge', 'u1') },
+      channels: [chan('c1', 'general')],
+      messages: { c1: [msg('m1', 'c1', 1, '배포 준비', 'a1')] },
+      terminalTarget: { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1' },
+    });
+    render(<TerminalPanel />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    // 채널 이름과 스레드 루트 본문이 함께 보인다 — 같은 에이전트의 터미널이 여럿일 수
+    // 있으니, 지금 보는 화면이 어느 스레드의 것인지 헤더가 말해야 한다.
+    expect(screen.getByTestId('terminal-scope').textContent).toBe('#general · 배포 준비');
   });
 });
