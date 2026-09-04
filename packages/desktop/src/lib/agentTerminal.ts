@@ -18,23 +18,31 @@ export interface AttachCallbacks {
    */
   onOutput(bytes: Uint8Array): void;
   onStatus(state: AgentSessionState): void;
+  /**
+   * 쓰기 차례가 바뀌었다(스펙 §5-2 결정 2 — 마지막 attach 가 writer). **이 프레임이 오기
+   * 전에는 입력을 보내면 안 된다**: 구 서버는 이 프레임을 모르고, 그때 보낸 입력은 서버가
+   * 버리거나(신 서버, 차례 아님) 해석하지 못한다(구 서버) — 어느 쪽이든 사람은 쳤다고
+   * 믿는데 러너에 닿지 않는다. 프레임이 안 오면 읽기 전용으로 남는 것이 4방향 호환의
+   * 데스크탑 쪽 절반이다.
+   */
+  onWriter(writer: boolean): void;
   /** 소켓이 끊겼다. 재접속하지 않는다(파일 머리 주석). */
   onClosed(): void;
 }
 
 export interface AttachHandle {
   /**
-   * 사람이 친 바이트를 그 PTY 로 보낸다(#315). **쓰기 인가는 여기서 판정하지 않는다** —
-   * 서버가 attach 때 이미 했고(티켓의 `canInput`), 소켓이 그 결정을 들고 있다. 화면은
-   * 쓸 수 없는 사람에게 이 함수를 부를 길 자체를 만들지 않고(패널이 입력을 안 연다),
-   * 그래도 누가 직접 부르면 서버가 조용히 버린다 — **진짜 게이트는 서버 쪽 하나다.**
+   * 사람이 친 바이트를 그 PTY 로 보낸다(#315). **쓰기 차례는 여기서 판정하지 않는다** —
+   * 서버 허브가 writer 를 정하고 `onWriter` 로 알린다(스펙 §5-2 결정 2). 화면은 writer
+   * 가 아닐 때 이 함수를 부르지 않고(TerminalPanel 이 가드한다), 그래도 누가 직접 부르면
+   * 서버가 조용히 버린다 — **진짜 게이트는 서버 쪽 하나다.**
    */
   sendInput(bytes: Uint8Array): void;
   /**
    * 이 패널의 크기를 그 PTY 에 알린다(#335). `sendInput` 과 **같은 소켓·같은 게이트**다 —
-   * 서버가 attach 때 정한 `canInput` 하나가 둘을 함께 막는다. 화면은 admin 에게 이 함수를
-   * 부를 길 자체를 만들지 않지만(패널이 `onResize` 를 안 넘긴다), 그래도 누가 직접 부르면
-   * 서버가 조용히 버린다 — **진짜 게이트는 서버 쪽 하나다.**
+   * 허브의 writer 판정 하나가 둘을 함께 막는다(#346). 화면은 writer 가 아닐 때 이 함수를
+   * 부르지 않지만(TerminalPanel 이 가드한다), 그래도 누가 직접 부르면 서버가 조용히
+   * 버린다 — **진짜 게이트는 서버 쪽 하나다.**
    */
   sendResize(cols: number, rows: number): void;
   close(): void;
@@ -75,7 +83,8 @@ export function connectAgentAttach(
       try { cb.onOutput(decodeBase64(frame.data)); } catch { /* 비정형 프레임 무시 */ }
       return;
     }
-    if (frame.type === 'status') cb.onStatus(frame.state);
+    if (frame.type === 'status') { cb.onStatus(frame.state); return; }
+    if (frame.type === 'writer') cb.onWriter(frame.writer);
   };
 
   socket.onclose = () => {

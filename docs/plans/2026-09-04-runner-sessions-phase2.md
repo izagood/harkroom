@@ -130,4 +130,49 @@ PR #338 코멘트 참조): ① writer 규칙(스펙: 마지막 attach 가 writer
 
 ## 스파이크 결과 (Task 1 완료 후 기록)
 
-(비어 있음 — Task 1 이 채운다)
+측정일 2026-09-04, 이 머신의 실제 CLI: codex-cli **0.147.0** · claude **2.1.237** ·
+node-pty 1.2.0-beta.15.
+
+### 1. codex resume 표면 — `--ignore-user-config` 없음 → **codex 인터랙티브 거절 확정**
+
+`codex resume --help`(0.147.0)의 옵션 목록에 `--ignore-user-config` 가 없다. Phase 1 의
+교훈("`--help` 에 안 나오는 숨은 플래그가 있다") 때문에 도움말 대조로 끝내지 않고 실제
+파서에 넣어 봤다:
+
+```
+codex resume 00000000-0000-0000-0000-000000000000 --ignore-user-config
+→ error: unexpected argument '--ignore-user-config' found   (exit 2)
+```
+
+숨은 플래그가 아니라 정말 없다. 따라서 §5-2 결정 8 대로 **codex 인터랙티브 턴은 명확한
+에러로 거절한다** — 무방비로 열면 운영자 `~/.codex/config.toml` 의 개인 MCP(Slack·Gmail
+등)를 상속해, §7 이 멘션 턴에서 막은 구멍이 인터랙티브로 다시 열린다. `CODEX_HOME` 격리
+대안은 §13.6 이 이미 기각했다(auth.json 과 sessions 가 같은 디렉터리라 로그인·resume 이
+함께 깨진다). 부기: `codex resume` 에는 `-a/--ask-for-approval` 이 **있다**(비대화형
+`codex exec resume` 에는 없다) — 서브커맨드마다 표면이 다르다는 Phase 1 교훈의 재확인.
+
+### 2. claude 인터랙티브 첫 턴 왕복 — **성립**
+
+- `claude --session-id <uuid>`(`-p` 없음)가 인터랙티브 TUI 로 뜬다(PTY 실측, 1.3KB 의
+  화면 바이트 수신).
+- **세션 파일은 첫 사용자 메시지 전에는 안 생긴다** — TUI 만 띄웠다 닫으면
+  `~/.claude/projects/<cwd>/<uuid>.jsonl` 이 없고, 그 uuid 로의 `-r` resume 도 성립하지
+  않는다. 첫 턴을 실제로 한 번 치면(최소 프롬프트 1회) 파일이 생기고, 이후
+  `claude -r <uuid>` 가 그 대화를 화면에 재생하며 뜬다(실측 왕복 확인).
+- ⚠️ 개발 머신 함정: **Claude Code 안에서 띄운 자식 claude 는 세션을 저장하지 않는다** —
+  env 의 `CLAUDE_CODE_CHILD_SESSION` 마커를 상속하면 "Transcript saving is off" 로 뜬다.
+  러너는 사람의 로그인 세션에서 돌므로 프로덕션 경로는 무관하지만, 이 스파이크를 재현할
+  때는 `CLAUDE*` env 를 벗겨야 한다.
+- 추가 실측: **이미 존재하는 세션 id 로 `--session-id` 를 다시 주면 즉시 거절된다** —
+  `Error: Session ID <uuid> is already in use.` (exit 1, 모델 호출 없음). 따라서 인터랙티브
+  첫 턴에서 사람이 실제로 대화했다면(세션 파일 생성) 러너는 그 사실을 `turnsRun` 에
+  반영해야 한다 — 안 하면 다음 멘션 턴이 `isFirstTurn` 으로 `--session-id` 를 다시 조립해
+  이 에러로 죽는다. 반대로 대화 없이 닫았다면 세션 파일이 없어 `-r` resume 이 안 되므로
+  `turnsRun` 을 올리면 안 된다. 판별은 세션 파일의 존재로 한다(출력 파싱이 아니라 디스크
+  사실 — codex 의 rollout 발견(`codexSessions.ts`)과 같은 결).
+
+### 3. node-pty `resize()` → SIGWINCH — **전달된다**
+
+80x24 로 spawn 한 자식(node 스크립트)에 `p.resize(100, 50)` → 자식이 SIGWINCH 를 받고
+`process.stdout.columns/rows` 가 100x50 으로 갱신됨을 실측. `pty.ts` 에 resize 통로를
+열면 xterm fit 크기가 하네스 TUI 리플로우까지 닿는다.
