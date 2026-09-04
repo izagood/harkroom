@@ -150,4 +150,50 @@ describe('전역 저장소 provisioning 은 shell 스코프를 넓히지 않는�
       expect(entry.cmd).not.toBe('git');
     }
   });
+
+  /**
+   * 위 네 단언은 **이름을 아는 함수 하나**만 본다. 그래서 `runner_provision_global_repo` 를
+   * 그대로 둔 채 **두 번째 커맨드**를 새로 만들어 거기서 `Command::new("git")` 을 웹뷰가 준
+   * 문자열로 부르면 전부 초록으로 통과한다 — 실제로 그렇게 되는지 확인했고, 통과했다.
+   * 그것은 이 설계가 막으려던 바로 그 표면(웹뷰가 clone 의 URL·목적지를 고르는 길)이 옆문으로
+   * 다시 열린 것이라, 아래 두 단언으로 "그 함수 하나가 유일한 문"이라는 것까지 못박는다.
+   */
+  describe('그 커맨드 하나가 유일한 문이다 — 옆문이 새로 나지 않는다', () => {
+    /** 파일 전체에서 `Command::new(...)` 이 나오는 자리와, 그 앞의 함수 이름. */
+    const processSpawns = [...mainRs.matchAll(/Command::new\((.*?)\)/g)].map((m) => {
+      const before = mainRs.slice(0, m.index!);
+      const fnName = [...before.matchAll(/fn\s+([A-Za-z0-9_]+)\s*\(/g)].pop()?.[1] ?? '<없음>';
+      return { program: m[1]!.trim(), fn: fnName };
+    });
+
+    it('프로세스를 띄우는 자리가 정확히 하나고, 그것이 `runner_provision_global_repo` 다', () => {
+      // 하나라도 늘면 여기서 멈춘다. 늘려야 할 이유가 진짜 있다면 이 단언을 고치면서
+      // "그 새 자리도 웹뷰가 인자를 못 고른다"를 같이 못박아야 한다.
+      expect(processSpawns).toEqual([
+        { program: '"git"', fn: 'runner_provision_global_repo' },
+      ]);
+    });
+
+    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 표면뿐이다', () => {
+      // 시크릿 3종은 키·값을 웹뷰가 넘기는 것이 원래 설계다(키체인 항목 이름). 그 외에
+      // 파라미터를 받는 커맨드가 새로 생기면, 그것이 프로세스 실행·경로 조립에 닿는지
+      // 사람이 한 번은 봐야 한다 — 이 단언이 그 시선을 강제한다.
+      const commands = [...mainRs.matchAll(
+        /#\[tauri::command\]\s*\n\s*fn\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)/g,
+      )].map((m) => {
+        const params = m[2]!.split(',').map((s) => s.trim()).filter(Boolean)
+          // `AppHandle`·`State` 는 Tauri 가 채우는 프레임워크 값이지 웹뷰의 입력이 아니다.
+          .filter((p) => !/tauri::(AppHandle|State|Window|WebviewWindow)/.test(p));
+        return { fn: m[1]!, webviewParams: params };
+      });
+
+      expect(commands.filter((c) => c.webviewParams.length > 0).map((c) => c.fn).sort())
+        .toEqual(['secret_delete', 'secret_get', 'secret_set']);
+      // 그리고 이 기능의 두 커맨드는 그 목록에 없다 — 위 단언이 통째로 바뀌어도 남는다.
+      expect(commands.find((c) => c.fn === 'runner_provision_global_repo')!.webviewParams)
+        .toEqual([]);
+      expect(commands.find((c) => c.fn === 'runner_global_repo_dir')!.webviewParams)
+        .toEqual([]);
+    });
+  });
 });
