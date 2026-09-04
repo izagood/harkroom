@@ -127,7 +127,14 @@ const CLAUDE_PRESET: HarnessPreset = {
     // 다시 검사하지 않는다(같은 규칙을 두 곳에서 지키면 나중에 한쪽만 고치는 사고가 난다).
     // 아래 캐스트는 순수하게 TypeScript 타입 좁히기다.
     const id = sessionId as string;
-    if (mode === 'interactive') return ['-r', id];
+    if (mode === 'interactive') {
+      // 첫 턴은 resume 이 아니다 — "세션 없는 스레드에서 [터미널 열기]"(#337)가 이 분기다.
+      // `--session-id <uuid>`(비-`-p`)로 인터랙티브가 뜨고, 사람이 첫 메시지를 치면 그
+      // uuid 의 세션 파일이 생겨 이후 `-r` resume 이 성립한다(스파이크 실측, 계획 문서
+      // "스파이크 결과" §2). 여기서 `-r` 로 조립하면 존재한 적 없는 세션을 이어받으려다
+      // "No conversation found" 로 죽는다.
+      return isFirstTurn ? ['--session-id', id] : ['-r', id];
+    }
     return isFirstTurn ? ['-p', '--session-id', id] : ['-p', '-r', id];
   },
   allowsNullSessionOnFirstMention: false,
@@ -171,11 +178,18 @@ const CODEX_PRESET: HarnessPreset = {
   command: 'codex',
   session(sessionId, isFirstTurn, mode) {
     if (mode === 'interactive') {
-      // 인터랙티브는 언제나 기존 세션을 이어받는다(spec §2 — PTY 가 존재하는 세 경우 중
-      // "사람이 [▶ 터미널]"은 항상 resume 이다). sessionId 가 없으면 이어받을 게 없다 —
-      // `assertValidSession` 이 이미 이 조합을 걸렀다(claude 쪽과 같은 이유로 재검사 안 함).
-      const id = sessionId as string;
-      return ['resume', id];
+      // **명확한 거절이다 — 미구현이 아니라 결정이다**(스펙 §5-2 결정 8, 스파이크 실측:
+      // codex-cli 0.147.0 의 `codex resume` 은 `--ignore-user-config` 를 파싱 단계에서
+      // 거부한다 — `error: unexpected argument`). 그 플래그 없이 인터랙티브를 열면
+      // 운영자 `~/.codex/config.toml` 의 개인 MCP(Slack·Gmail·Drive)를 통째로 상속해,
+      // §7 이 멘션 턴에서 막은 구멍이 인터랙티브로 다시 열린다. `CODEX_HOME` 격리
+      // 대안은 기각됐다(§13.6) — auth.json 과 sessions 가 같은 디렉터리라 로그인과
+      // resume 이 함께 깨진다. gemini 의 "없는 것을 있다고 표시하지 않는다" 판례와 같은 결.
+      throw new Error(
+        'buildTurnCommand: codex 인터랙티브 턴은 지원하지 않는다 — codex resume 이 ' +
+          '--ignore-user-config 를 받지 못해(실측), 열면 운영자 개인 config.toml(MCP 포함)을 ' +
+          '상속한다(스펙 §5-2 결정 8). claude 하네스 에이전트로 열어라.',
+      );
     }
     if (sessionId === null) {
       // codex 는 세션 id 를 사전 할당할 수 없다 — 첫 턴은 id 없이 그냥 `exec` 로 시작하고,
@@ -261,8 +275,8 @@ const CODEX_PRESET: HarnessPreset = {
   // 직접 넘기므로 정상 동작하지만, 커스텀 프로바이더를 config.toml 로만 설정한 운영자는
   // 멘션 턴이 기본 프로바이더로 도는 것을 보게 된다. auth 는 영향받지 않는다(--help 명시).
   //
-  // 인터랙티브 턴(codex resume) 은 이 플래그를 못 받으므로 이 한계가 그대로 노출된다 —
-  // 사람이 화면 앞에 있는 턴이라 성격이 다르다.
+  // 인터랙티브 턴(codex resume)은 이 플래그를 못 받고, 그래서 턴 자체를 거절한다
+  // (위 session() 의 인터랙티브 분기, 스펙 §5-2 결정 8) — 여기 도달하는 것은 멘션 턴뿐이다.
   alwaysArgs: (mode) => (mode === 'mention' ? ['--skip-git-repo-check', '--ignore-user-config'] : []),
   // codex 도 stdin 파일을 통해 프롬프트를 받는다(#117). 원래는 PTY stdin 리다이렉션이
   // 불가능하다고 생각했으나 실측 결과 두 하네스 모두 exec/print 모드에서 stdin 에 TTY 를
@@ -288,19 +302,27 @@ const PRESETS: Record<AgentHarness, HarnessPreset | 'unsupported'> = {
 };
 
 /**
- * sessionId 가 null 인 조합 중 유일하게 유효한 것은 "`allowsNullSessionOnFirstMention` 인
- * harness 의 첫 멘션 턴"뿐이다. 그 밖의 조합(resume 인데 id 가 없다, claude 인데 id 가
- * 없다, 인터랙티브인데 이어받을 게 없다)은 호출자가 세션을 먼저 확보하지 않은 결함이다 —
- * 조용히 삼켜 이상한 명령을 조립하느니 여기서 크게 던진다(design.md 의 "없는 것을 있다고
- * 표시하지 않는다"와 같은 결). harness 이름은 여기서 보지 않는다 — preset 의 표 필드만
- * 읽는다(그래야 네 번째 harness 를 붙일 때 이 함수가 아니라 표만 고치면 된다).
+ * sessionId 가 null 인 조합 중 유효한 것은 "`allowsNullSessionOnFirstMention` 인 harness 의
+ * **첫 턴**"뿐이다. 그 밖의 조합(resume 인데 id 가 없다, claude 인데 id 가 없다)은
+ * 호출자가 세션을 먼저 확보하지 않은 결함이다 — 조용히 삼켜 이상한 명령을 조립하느니
+ * 여기서 크게 던진다(design.md 의 "없는 것을 있다고 표시하지 않는다"와 같은 결).
+ *
+ * 초판은 인터랙티브를 통째로 걸렀다("인터랙티브인데 이어받을 게 없다") — 그때는 사람이
+ * 여는 경로 자체가 없어 인터랙티브가 항상 resume 이었기 때문이다. #337 이 "세션 없는
+ * 스레드에서 [터미널 열기]"를 열면서 인터랙티브에도 첫 턴이 생겼으므로, 조건을 모드가
+ * 아니라 **isFirstTurn** 으로 완화한다. codex 인터랙티브는 어차피 preset.session 이
+ * 명확한 거절을 던진다(§5-2 결정 8) — 여기서 걸러 애매한 "세션 확보" 에러를 내는 것보다
+ * 그쪽 메시지가 원인을 정확히 말한다.
+ *
+ * harness 이름은 여기서 보지 않는다 — preset 의 표 필드만 읽는다(그래야 네 번째 harness
+ * 를 붙일 때 이 함수가 아니라 표만 고치면 된다).
  */
 function assertValidSession(
   opts: Pick<BuildTurnCommandOptions, 'harness' | 'mode' | 'sessionId' | 'isFirstTurn'>,
   preset: HarnessPreset,
 ): void {
   if (opts.sessionId !== null) return;
-  const allowed = preset.allowsNullSessionOnFirstMention && opts.mode === 'mention' && opts.isFirstTurn;
+  const allowed = preset.allowsNullSessionOnFirstMention && opts.isFirstTurn;
   if (allowed) return;
   throw new Error(
     `buildTurnCommand: sessionId 가 null 이다 (harness=${opts.harness}, mode=${opts.mode}, ` +

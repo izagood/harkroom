@@ -18,6 +18,16 @@ export const NO_REPLY_NOTICE = '(답 없이 턴을 끝냈습니다 — 프로세
 /** MAX_ATTEMPTS 를 소진했을 때 채널에 남기는 통지문구(#82). */
 export const FAILURE_NOTICE = '(답변에 실패했습니다 — 운영자 확인이 필요합니다)';
 
+/**
+ * 사람이 조종 중인 스레드에 온 멘션의 대기 통지(#337, 스펙 §5-2 결정 6). 러너가
+ * **에이전트 계정으로** 스레드에 올린다 — NO_REPLY_NOTICE 와 같은 판례다: 시스템 계정을
+ * 새로 만들지 않고, 그 스레드에서 말하던 바로 그 목소리가 자기 사정을 말한다.
+ * entry 당 1회만 올린다(중복 판정은 mentionQueue 가 갖는다).
+ */
+export function controlledNotice(handle: string, pending: number): string {
+  return `(지금 ${handle} 이(가) 직접 조종 중입니다 — 이 멘션은 대기 ${pending}건째로, 터미널이 닫히면 처리합니다)`;
+}
+
 /** 진행 설명이 담긴 progress 메시지의 kind 값. */
 export const MESSAGE_KIND_PROGRESS = 'progress';
 

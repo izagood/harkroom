@@ -24,8 +24,11 @@ import type { Exec } from './workspace.js';
 import { exhausted, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 import { runnerExitPlan } from './exit.js';
 import { stopRequestedForRunner } from './stop.js';
-import { FAILURE_NOTICE } from './prompt.js';
+import { controlledNotice, FAILURE_NOTICE } from './prompt.js';
 import { createRelayClient } from './relay.js';
+import { createInteractiveManager, type InteractiveManager } from './interactiveTurn.js';
+import { TurnRegistry } from './turnRegistry.js';
+import { MentionQueue } from './mentionQueue.js';
 
 const config = loadConfig();
 const murmur = new MurmurAgentClient(config.murmurUrl, config.murmurPat);
@@ -35,8 +38,15 @@ const murmur = new MurmurAgentClient(config.murmurUrl, config.murmurPat);
 assertHarnessContract();
 
 let running = true;
+/** 아래에서 늦게 배선된다(릴레이 ↔ 매니저 상호 참조). 시그널 핸들러가 참조하므로 먼저 선언한다. */
+let interactive: InteractiveManager | null = null;
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(sig, () => { running = false; });
+  process.on(sig, () => {
+    running = false;
+    // #337: 인터랙티브 PTY 는 사람이 닫아 줄 때까지 기다릴 대상이 없다 — 러너가 죽으면
+    // 릴레이도 함께 끊긴다. 고아 회수와 같은 경로(SIGTERM→유예→SIGKILL)로 즉시 회수한다.
+    interactive?.shutdown();
+  });
 }
 
 // 기동 시각. 종료 요청(#129)이 **나를 향한 것인지** 가르는 기준이다 — 내가 뜨기 전에 남은
@@ -173,8 +183,30 @@ console.log('정의는 서버에서 읽는다 (murmur UI 의 Add/Edit agent 로 
 // **접속 실패로 러너를 죽이지 않는다.** 릴레이는 관찰이고 poll 루프는 답이다 — 서버가
 // attach 를 지원하지 않는 구버전이거나 릴레이가 막혀 있어도 멘션에는 답해야 한다.
 // 그래서 여기에 await 도, 성공 확인도 없다.
-const relay = createRelayClient({ murmurUrl: config.murmurUrl, pat: config.murmurPat });
+const relay = createRelayClient({
+  murmurUrl: config.murmurUrl,
+  pat: config.murmurPat,
+  // #337: 서버의 interactive.open 은 매니저가 처리한다. 매니저가 relay 를 필요로 해서
+  // (세션 열기) 상호 참조가 생기므로 늦게 배선한다 — 매니저가 아직 없으면 릴레이가
+  // 스스로 interactive.error 로 답한다(relay.ts 의 훅 부재 처리).
+  onInteractiveOpen: (req) => {
+    if (!interactive) return Promise.reject(new Error('러너가 아직 기동 중이다 — 잠시 뒤 다시 열어라'));
+    return interactive.open(req);
+  },
+});
 relay.start();
+
+// #337: 진행 중 턴의 레지스트리와 멘션 유예 장부. 멘션 턴(runMentionTurn)과 인터랙티브
+// 턴이 같은 레지스트리를 봐야 한다 — 갈라지면 같은 세션에 PTY 가 둘 뜬다(turnRegistry.ts).
+const registry = new TurnRegistry();
+const mentionQueue = new MentionQueue();
+interactive = createInteractiveManager({
+  murmur, store, exec, runTurn: runPtyTurn, me,
+  workspaceBaseDir, mcpConfigPath,
+  murmurUrl: config.murmurUrl, pat: config.murmurPat,
+  relay, registry, queue: mentionQueue,
+  orphanMs: config.interactiveOrphanMs,
+});
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -209,17 +241,44 @@ while (running) {
 
     const done: number[] = [];
     let failed = false;
+    let deferred = 0;
     for (const entry of batch.entries) {
       const mention = batch.messages.find((m) => m.id === entry.messageId);
       if (!mention) { done.push(entry.id); continue; }
 
-      const tried = (attempts.get(entry.id) ?? 0) + 1;
-      attempts.set(entry.id, tried);
       // 이 턴의 앵커 — 규칙은 mentionTurn.ts::mentionAnchor 하나가 갖는다(그 주석 참고).
       // 여기서 한 번만 계산해 턴과 아래 실패 통지가 **같은 값**을 쓴다.
       // `mention` 은 `batch.messages.find((m) => m.id === entry.messageId)` 이므로
       // `mention.id` 는 멘션 **메시지** id 다(inbox 항목 id 인 `entry.id` 가 아니다).
       const anchor = mentionAnchor(mention);
+
+      // #337: 사람이 이 스레드를 직접 조종 중이면 멘션을 **유예한다** — markRead 도
+      // attempts 증가도 없이 건너뛴다(스펙 §5-2 결정 6: inbox 의 at-least-once 가 그대로
+      // 큐다). 그래서 이 분기는 attempts.set 보다 **앞**이어야 한다 — 뒤에 두면 유예가
+      // 시도 횟수를 갉아먹어, 오래 조종할수록 그 멘션이 MAX_ATTEMPTS 로 조용히 버려진다.
+      // 유예 대상은 인터랙티브 턴뿐이다 — 멘션 턴에 사람이 attach 만 한 경우 그 턴은
+      // 어차피 돌고 있으므로 막지 않는다.
+      const threadKey = SessionStore.threadKey(mention.channelId, anchor);
+      const controlling = registry.get(threadKey);
+      if (controlling?.kind === 'interactive') {
+        deferred += 1;
+        const { shouldNotify, pending } = mentionQueue.defer(threadKey, entry.id, mention.seq);
+        if (shouldNotify) {
+          // 통지는 entry 당 1회 — 재폴링마다 올리면 조종이 길수록 스레드가 도배된다.
+          // 에이전트 계정으로 올린다(NO_REPLY_NOTICE 판례). 실패해도 유예는 유지된다 —
+          // 통지는 관측이고 큐는 inbox 다.
+          try {
+            await murmur.post(mention.channelId, controlledNotice(controlling.openedByHandle ?? '소유자', pending), anchor);
+          } catch (err) {
+            console.error(`  ${entry.messageId} 대기 통지 발화 실패(유예는 유지된다):`,
+              err instanceof Error ? err.message : err);
+          }
+        }
+        continue;
+      }
+
+      const tried = (attempts.get(entry.id) ?? 0) + 1;
+      attempts.set(entry.id, tried);
       try {
         const deps: MentionTurnDeps = {
           murmur, store, exec, runTurn: runPtyTurn, me, guide,
@@ -232,6 +291,8 @@ while (running) {
           murmurUrl: config.murmurUrl, pat: config.murmurPat,
           turnTimeoutMs: config.turnTimeoutMs,
           relay,
+          // #337: 멘션 턴도 자기 존재를 등록해야 인터랙티브 open 이 그 PTY 에 합류한다.
+          registry,
         };
         // #98: 채널 최상위 멘션(threadRootId 가 null)은 **그 멘션 메시지를 루트로 하는
         // 스레드**에 답한다. 두 가지를 한 번에 얻는다: 긴 답이 채널 본문에 쌓이지 않고,
@@ -289,6 +350,13 @@ while (running) {
     if (failed) {
       await sleep(backoffMs);
       backoffMs = nextBackoffMs(backoffMs);
+    } else if (deferred > 0 && done.length === 0) {
+      // #337: 배치 전체가 유예뿐이면 미읽음이 그대로 남아 다음 폴이 **즉시** 같은 배치를
+      // 돌려준다 — 조종이 끝날 때까지 타이트 루프다. 실패 backoff 와 별개의 고정 5초다:
+      // 유예는 실패가 아니고(늘어나는 backoff 는 회수 뒤 반응만 늦춘다), 5초는 사람이
+      // 터미널을 닫은 뒤 대기 멘션이 처리되기까지의 최대 지연이다.
+      await sleep(5_000);
+      backoffMs = 1_000;
     } else {
       backoffMs = 1_000;
     }
