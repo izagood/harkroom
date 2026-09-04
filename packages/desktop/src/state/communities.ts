@@ -124,7 +124,10 @@ export const useCommunityRegistry = create<CommunityRegistryState>((set, get) =>
           ...e,
           baseUrl: input.baseUrl,
           accountId: input.accountId ?? '',
-          controller: input.controller ?? null,
+          // 생략은 "기존 세션을 유지"다. `startCommunitySession` 이 새 컨트롤러를 준비하기
+          // 전에 이 함수를 지나므로 여기서 null 로 덮으면, 교체해야 할 이전 컨트롤러를 잃고
+          // 그 러너·WS 를 더는 끝낼 수 없다. 명시적 null 만 떼어내기다.
+          controller: input.controller === undefined ? e.controller : input.controller,
           // 이름은 **넘어온 것이 있을 때만** 갈아 끼운다. 재로그인마다 `null` 로 덮으면
           // 사람이 붙인 꼬리표가 로그인 한 번에 조용히 사라진다.
           label: input.label === undefined ? e.label : input.label,

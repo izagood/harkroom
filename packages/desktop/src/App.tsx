@@ -3,7 +3,7 @@ import { createNotifier } from './lib/notify';
 import { sessionStore, type StoredCommunity } from './lib/session';
 import { useColorMode } from './lib/useColorMode';
 import { getActiveEntry } from './state/communities';
-import { getController, startCommunitySession } from './state/controller';
+import { getController, startCommunitySession, type Controller } from './state/controller';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { Workspace } from './components/Workspace';
 import { SettingsScreen } from './screens/SettingsScreen';
@@ -19,8 +19,8 @@ import type { SectionId } from './components/settings/sections';
 async function startSession(
   community: StoredCommunity,
   onSessionLost: (message: string, accountId: string) => void,
-): Promise<void> {
-  await startCommunitySession({
+): Promise<Controller> {
+  const entry = await startCommunitySession({
     baseUrl: community.baseUrl,
     token: community.token,
     accountId: community.accountId,
@@ -29,6 +29,7 @@ async function startSession(
     notifier: createNotifier(),
     onSessionLost: (message: string, accountId: string) => onSessionLost(message, accountId),
   });
+  return entry.controller!;
 }
 
 export default function App() {
@@ -62,9 +63,15 @@ export default function App() {
   };
 
   useEffect(() => {
+    let cancelled = false;
+    let startedController: Controller | null = null;
+
     void (async () => {
       // 키체인 접근은 IPC 뒤라 비동기다(lib/session.ts). 부팅 화면이 그 사이를 덮는다.
       const stored = await sessionStore.load();
+      // 개발 모드의 StrictMode 는 effect 를 한 번 정리한 뒤 다시 실행한다. 첫 실행의 IPC가
+      // 늦게 끝났다면 여기서 멈춰야 두 번째 세션을 다시 교체하지 않는다.
+      if (cancelled) return;
       if (!stored || !stored.communities.length) {
         setPhase('connect');
         return;
@@ -80,14 +87,25 @@ export default function App() {
       }
 
       try {
-        await startSession(active, handleSessionLost);
+        startedController = await startSession(active, handleSessionLost);
+        if (cancelled) {
+          startedController.stop();
+          return;
+        }
         setPhase('ready');
       } catch {
+        if (cancelled) return;
         await sessionStore.clear();
+        if (cancelled) return;
         setConnectError('Your saved session could not be resumed — it expired, or the server was unreachable. Please sign in again.');
         setPhase('connect');
       }
     })();
+
+    return () => {
+      cancelled = true;
+      startedController?.stop();
+    };
   }, []);
 
   /**

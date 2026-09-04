@@ -188,6 +188,53 @@ describe('4. 첫 발급', () => {
   });
 });
 
+describe('4-1. 앱 실행 뒤 만든 에이전트', () => {
+  it('생성 API 가 돌려준 PAT 를 키체인에 저장하고 추가 발급 없이 즉시 띄운다', async () => {
+    const secrets = fakeSecrets();
+    const { launcher, api, spawner } = make(fakeApi(), secrets);
+    const createdPat = { label: 'runner', token: 'murp_created' };
+
+    await launcher.startCreated({
+      agent: agent('codex'), pat: createdPat, autoStart: true,
+      liveAccountIds: new Set(), repoPath: '/repo', runnerCommand: '',
+    });
+
+    expect(secrets.map.get('codex')).toEqual(createdPat);
+    expect(api.mintPat).not.toHaveBeenCalled();
+    expect(spawner.spawns).toHaveLength(1);
+    expect(spawner.spawns[0]!.env.MURMUR_PAT).toBe('murp_created');
+    expect(launcher.getStates()[0]!.status).toBe('running');
+  });
+
+  it('자동 기동이 꺼져 있어도 유일한 PAT 원문은 키체인에 보관한다', async () => {
+    const secrets = fakeSecrets();
+    const { launcher, spawner } = make(fakeApi(), secrets);
+
+    await launcher.startCreated({
+      agent: agent('codex'), pat: { label: 'runner', token: 'murp_created' }, autoStart: false,
+      liveAccountIds: new Set(), repoPath: '/repo', runnerCommand: '',
+    });
+
+    expect(secrets.map.get('codex')?.token).toBe('murp_created');
+    expect(spawner.spawn).not.toHaveBeenCalled();
+  });
+
+  it('키체인 저장 실패는 생성 성공을 throw 로 뒤집지 않고 러너 상태에 이유를 남긴다', async () => {
+    const secrets = fakeSecrets();
+    secrets.write.mockRejectedValueOnce(new Error('keychain locked'));
+    const { launcher, spawner } = make(fakeApi(), secrets);
+
+    await expect(launcher.startCreated({
+      agent: agent('codex'), pat: { label: 'runner', token: 'murp_created' }, autoStart: true,
+      liveAccountIds: new Set(), repoPath: '/repo', runnerCommand: '',
+    })).resolves.toBeUndefined();
+
+    expect(spawner.spawn).not.toHaveBeenCalled();
+    expect(launcher.getStates()[0]).toMatchObject({ status: 'failed' });
+    expect(launcher.getStates()[0]!.message).toContain('keychain locked');
+  });
+});
+
 describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
   it('호출 순서가 그 순서다', async () => {
     const oldLabel = patLabelPrefix(DEVICE);
@@ -336,12 +383,44 @@ describe('9. 중복 방지·정리', () => {
     expect(spawner.spawns).toHaveLength(1);
   });
 
+  it('두 startAll 이 비동기로 겹쳐도 에이전트별 기동은 하나다', async () => {
+    const { launcher, api, spawner } = make();
+
+    await Promise.all([
+      startAll(launcher, [agent('a')]),
+      startAll(launcher, [agent('a')]),
+    ]);
+
+    expect(api.mintPat).toHaveBeenCalledTimes(1);
+    expect(spawner.spawns).toHaveLength(1);
+  });
+
   it('dispose 는 띄운 자식을 끝낸다', async () => {
     const { launcher, spawner } = make();
     await startAll(launcher, [agent('a'), agent('b')]);
     launcher.dispose();
 
     expect(spawner.kills.sort()).toEqual([0, 1]);
+  });
+
+  it('spawn IPC 도중 dispose 해도 뒤늦게 생긴 자식을 즉시 끝낸다', async () => {
+    const kill = vi.fn(async () => {});
+    let finishSpawn!: () => void;
+    const spawner: RunnerSpawner = {
+      spawn: vi.fn(() => new Promise<RunnerProcess>((resolve) => {
+        finishSpawn = () => resolve({ kill });
+      })),
+    };
+    const launcher = new RunnerLauncher(fakeApi(), fakeSecrets(), spawner, fakeLoginPath());
+
+    const starting = startAll(launcher, [agent('a')]);
+    await vi.waitFor(() => expect(spawner.spawn).toHaveBeenCalledOnce());
+    launcher.dispose();
+    finishSpawn();
+    await starting;
+
+    expect(kill).toHaveBeenCalledOnce();
+    expect(launcher.getStates().some((state) => state.status === 'running')).toBe(false);
   });
 
   it('상태 변화가 구독자에게 간다', async () => {
