@@ -242,3 +242,48 @@ describe('#141 세션의 끝', () => {
     expect(announces.at(-1)!.sessions).toEqual([]);
   });
 });
+
+describe('#315 서버가 보낸 input 을 그 세션의 PTY 로 넣는다', () => {
+  it('input 프레임의 바이트가 bindInput 으로 이어 붙인 통로에 그대로 간다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial });
+    client.start();
+    d.open();
+    const session = client.openSession(SESSION);
+    const written: Buffer[] = [];
+    session.bindInput({ write: (chunk) => { written.push(chunk); } });
+
+    // 서버가 보내는 것과 **같은 모양**의 프레임이다(server/src/ws/relay.ts::sendInput).
+    d.deliver({ type: 'input', sessionId: session.sessionId, data: RAW.toString('base64') });
+
+    expect(written).toHaveLength(1);
+    // 바이트 비교다 — 문자열로 비교하면 잘린 UTF-8 이 U+FFFD 로 같아져 통과한다.
+    expect(written[0]!.equals(RAW)).toBe(true);
+  });
+
+  it('아직 spawn 전이라 통로가 없으면 버린다 — 던지지 않는다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial });
+    client.start();
+    d.open();
+    const session = client.openSession(SESSION);
+
+    // 큐에 담지 않는 것이 의도다: 프롬프트가 뜨기 전에 친 것을 나중에 흘려 넣으면
+    // 엉뚱한 프롬프트의 답이 된다(relay.ts::LiveSession.writer 주석).
+    expect(() => d.deliver({ type: 'input', sessionId: session.sessionId, data: 'aGk=' })).not.toThrow();
+  });
+
+  it('모르는 세션의 input 은 어느 통로에도 가지 않는다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial });
+    client.start();
+    d.open();
+    const session = client.openSession(SESSION);
+    const written: Buffer[] = [];
+    session.bindInput({ write: (chunk) => { written.push(chunk); } });
+
+    d.deliver({ type: 'input', sessionId: 'someone-elses-session', data: 'aGk=' });
+
+    expect(written).toEqual([]);
+  });
+});

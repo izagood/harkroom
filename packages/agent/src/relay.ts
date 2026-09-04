@@ -1,6 +1,10 @@
 // 러너 → 서버 상시 outbound WS 릴레이(스펙 §5 "릴레이"). 진행 중인 턴의 PTY 바이트를
 // 서버로 밀어 넣어, 소유자가 데스크탑 xterm 에서 실시간으로 본다.
 //
+// **#315 로 방향이 하나 더 생겼다**: 소유자가 그 xterm 에 친 바이트가 `input` 프레임으로
+// 되돌아와 PTY stdin 에 들어간다. 쓰기 권한(소유자만)은 서버가 attach 인가 때 판정하고,
+// 러너는 그 판정을 다시 하지 않는다 — 인가를 두 곳에 두면 한쪽만 고치는 사고가 난다.
+//
 // **러너는 포트를 열지 않는다.** 러너는 사람의 로그인 세션 안에서 돌고, 관찰 하나 때문에
 // 두 번째 보안 표면(청취 포트 + 인증 + TLS)을 만들지 않는다 — 그것이 스펙 §2 가 안 C
 // (데스크탑 ↔ 러너 직결)를 기각한 이유다. 그래서 방향이 러너 → 서버이고, 인증은 PAT
@@ -16,7 +20,7 @@
 // 죽으면 스크롤백도 같이 사라지는 것이 이 설계의 결과이고, 그것이 의도다.
 import { randomUUID } from 'node:crypto';
 import type { AgentHarness, AgentSessionView, RelayRunnerFrame, RelayServerFrame } from '@murmur/shared';
-import { RingBuffer } from './pty.js';
+import { RingBuffer, type PtyWriter } from './pty.js';
 import { nextBackoffMs } from './policy.js';
 
 /** 세션당 스크롤백 용량(스펙 §5). 러너 메모리에만 산다. */
@@ -46,6 +50,13 @@ export type RelayDialer = (url: string, pat: string, handlers: RelayHandlers) =>
 interface LiveSession {
   info: AgentSessionView;
   ring: RingBuffer;
+  /**
+   * 이 세션의 PTY stdin(#315). 세션이 열린 시점에는 아직 spawn 전이라 `null` 이고,
+   * `runPtyTurn` 의 `onSpawn` 이 이어 붙인다. `null` 인 동안 도착한 입력은 **버린다** —
+   * 큐에 담아 두면 사람이 아직 프롬프트가 뜨지 않은 화면에 친 것이 나중에 엉뚱한
+   * 프롬프트의 답으로 들어간다. 안 보이는 화면에 친 것은 답이 아니다.
+   */
+  writer: PtyWriter | null;
 }
 
 export interface OpenSessionInput {
@@ -63,6 +74,11 @@ export interface OpenSession {
   sessionId: string;
   /** PTY 가 뱉은 바이트. ring 에 담고 서버로도 흘린다. */
   push(chunk: Buffer): void;
+  /**
+   * PTY stdin 을 이 세션에 이어 붙인다(#315). spawn 되는 순간 `runPtyTurn` 의 `onSpawn`
+   * 이 부른다 — 그 전에 서버가 보낸 입력은 쓸 곳이 없어 버려진다(`LiveSession.writer`).
+   */
+  bindInput(writer: PtyWriter): void;
   /** 턴이 끝났다. 세션을 닫고 서버에 알린다. */
   close(): void;
 }
@@ -116,12 +132,28 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
     try { parsed = JSON.parse(raw); } catch { return; }
     if (typeof parsed !== 'object' || parsed === null) return;
     const frame = parsed as RelayServerFrame;
-    if (frame.type !== 'replay.request' || typeof frame.sessionId !== 'string') return;
+    if (typeof frame.sessionId !== 'string') return;
     const live = sessions.get(frame.sessionId);
     // 모르는 세션에는 답하지 않는다. 빈 재생으로 답하면 "끝난 세션"과 "아직 출력이 없는
     // 세션"이 뷰어에게 같아진다.
     if (!live) return;
-    send({ type: 'replay', sessionId: frame.sessionId, data: live.ring.snapshot().toString('base64') });
+
+    if (frame.type === 'replay.request') {
+      send({ type: 'replay', sessionId: frame.sessionId, data: live.ring.snapshot().toString('base64') });
+      return;
+    }
+
+    if (frame.type === 'input') {
+      if (typeof frame.data !== 'string') return;
+      // **쓰기 권한은 서버가 이미 판정했다**(#315 — attach 티켓의 `canInput`). 러너는 그
+      // 판정을 다시 하지 않는다: 여기서 한 번 더 판정하려면 러너가 소유자·admin 을 알아야
+      // 하고, 그러면 인가가 두 곳으로 갈라진다. 러너가 지키는 것은 "이 세션이 내 것인가"
+      // 뿐이고, 그것은 위 `sessions.get` 이 이미 답했다.
+      //
+      // **이 경로는 턴의 모드를 건드리지 않는다.** PTY stdin 에 바이트를 넣을 뿐이고,
+      // `plan`(모드·권한 프리셋)은 턴이 시작될 때 이미 조립돼 봉인됐다.
+      live.writer?.write(Buffer.from(frame.data, 'base64'));
+    }
   };
 
   const connect = (): void => {
@@ -165,7 +197,7 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         // 서버가 프레임 도착 시각으로 대신하면 재접속 뒤 announce 에서 값이 바뀐다.
         startedAt: new Date().toISOString(),
       };
-      const live: LiveSession = { info, ring: new RingBuffer(RING_CAP_BYTES) };
+      const live: LiveSession = { info, ring: new RingBuffer(RING_CAP_BYTES), writer: null };
       sessions.set(info.sessionId, live);
       send({ type: 'session.started', session: info });
 
@@ -177,8 +209,14 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
           live.ring.push(chunk);
           send({ type: 'output', sessionId: info.sessionId, data: chunk.toString('base64') });
         },
+        bindInput(writer) {
+          live.writer = writer;
+        },
         close() {
           sessions.delete(info.sessionId);
+          // 세션을 맵에서 뺐으므로 뒤늦게 온 입력은 위 `sessions.get` 에서 걸린다.
+          // 통로도 함께 끊는다 — 이미 끝난 PTY 를 붙잡고 있을 이유가 없다.
+          live.writer = null;
           send({ type: 'session.ended', sessionId: info.sessionId });
         },
       };
