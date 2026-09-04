@@ -63,6 +63,25 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
   );
 }
 
+/**
+ * 멤버 패널의 실패 문구(#344). 서버의 사유는 영문이고 이 패널은 그것을 그대로 띄우고 있었다 —
+ * 화면에 영어 한 줄이 뜨면 사람은 그것을 오류 코드로 읽는다.
+ *
+ * 바꿔 적는 것은 **보관 사유 하나뿐**이다. 나머지는 서버 문구를 그대로 남긴다: 여기서 목록을
+ * 만들어 두면 서버가 새 사유를 늘릴 때마다 화면이 조용히 원문으로 되돌아가는 자리가 생긴다.
+ *
+ * 이 문구가 실제로 뜨는 자리는 **멤버 추가와 내보내기**다. 나가기 경로는 `isSelf` 예외(#344)
+ * 이후 보관 게이트를 통과하므로 이 사유를 받지 못한다 — 그래도 같은 함수를 통과시키는 이유는
+ * 세 자리가 같은 `memberError` 한 칸에 쓰기 때문이다. 그래서 문구도 "나갈 수 없다"가 아니라
+ * 남는 두 조작에 참인 것으로 적는다.
+ */
+const memberErrorText = (err: unknown, fallback: string): string => {
+  const msg = err instanceof Error ? err.message : fallback;
+  return msg === 'archived channels are read-only'
+    ? '보관된 채널은 읽기 전용이라 멤버를 바꿀 수 없다'
+    : msg;
+};
+
 export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChannelDirectory, onOpenInbox, onOpenSaved, collapsed, onToggleCollapse }: {
   onLogout: () => void;
   onOpenSettings: (section?: SectionId) => void;
@@ -256,7 +275,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
       setInviteAccountId('');
       setMemberError(null);
     } catch (err) {
-      setMemberError(err instanceof Error ? err.message : '초대에 실패했다');
+      setMemberError(memberErrorText(err, '초대에 실패했다'));
     }
   };
 
@@ -293,7 +312,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
       await getController().leaveChannel(channelId, me.id);
       closeMembers();
     } catch (err) {
-      setMemberError(err instanceof Error ? err.message : '나가기에 실패했다');
+      setMemberError(memberErrorText(err, '나가기에 실패했다'));
     }
   };
 
@@ -634,7 +653,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
                           className="ml-auto rounded px-1 text-[10px] text-fg-subtle hover:bg-surface-hover hover:text-danger"
                           aria-label={`${m.handle} 내보내기`}
                           onClick={() => void getController().leaveChannel(ch.id, m.accountId)
-                            .catch((err: unknown) => setMemberError(err instanceof Error ? err.message : '내보내기에 실패했다'))}
+                            .catch((err: unknown) => setMemberError(memberErrorText(err, '내보내기에 실패했다')))}
                         >
                           내보내기
                         </button>

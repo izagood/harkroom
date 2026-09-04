@@ -316,11 +316,22 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     // 초대와 **같은 게이트**(#328). 제거도 막는다: 보관은 읽기 전용이고 멤버십 변경은
     // 쓰기다. 삭제 앞에 두는 이유도 초대와 같다 — 거절된 요청이 퇴장 시스템 메시지를
     // 남기면 읽기 전용 채널에 새 메시지가 생긴다.
+    //
+    // **나가기는 허용한다(#344).** `isSelf` 인 제거는 보관 게이트를 통과한다 — 나가는 것이
+    // 남에게 하는 일이 아니라 자기 사이드바를 치우는 일이고, 보관이 뜻하는 "읽기 전용"은
+    // 채널의 내용에 관한 것이지 누가 그것을 구독하는지에 관한 것이 아니기 때문이다.
+    // 남을 내보내는 것은 계속 막힌다. 추가는 `isSelf` 와 무관하게 계속 막힌다(#328 그대로) —
+    // 자기를 넣는 것은 사이드바를 치우는 일의 반대이고 보관 채널의 멤버 목록을 움직인다.
+    //
+    // 이 예외가 DM 으로 새지 않는 근거: `channelMembershipGate` 는 보관을 `kind` 보다 먼저
+    // 보므로 보관된 DM 은 `'dm'` 이 아니라 `'archived'` 로 돌아온다. 그런 채널이 있으면
+    // `isSelf` 예외가 아래 `'dm'` 거절까지 건너뛴다. 실제로는 생길 수 없다 —
+    // `updateChannel` 의 갱신이 `where ... and kind = 'standard'` 라 DM 은 보관되지 않는다.
     const gate = await channelMembershipGate(pool, id);
     if (gate === 'not_found') {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
     }
-    if (gate === 'archived') {
+    if (gate === 'archived' && !isSelf) {
       return reply.code(400).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
     }
     if (gate === 'dm') {
@@ -363,15 +374,27 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
        * 표시 시점에 그것으로 현재 handle 을 찾는다(그래서 이름을 바꾸면 과거 메시지도
        * 새 이름으로 그려진다). "FK 가 계정 행을 보장한다"는 근거는 이제 쓸 곳이 없다.
        * 본문에 `@` 를 붙이지 않는 이유는 초대 쪽과 같다.
+       *
+       * **보관 채널에서는 시스템 메시지를 안 남긴다(#344).** 읽기 전용이어야 할 채널에
+       * 새 메시지가 생기면 `#328` 이 막으려던 것이 그대로 다시 생긴다 — 나가기를 열어 준
+       * 대가로 보관의 뜻을 도로 깨는 셈이다.
+       *
+       * 보관 여부는 **위의 `gate` 를 그대로 쓴다.** 여기서 다시 질의하면 같은 사실을 두
+       * 자리에서 판정하게 되고(그 이유로 `#328` 이 `channelArchivedSql` 을 조각 하나로
+       * 둔 것이다), 두 판정 사이에 보관 상태가 바뀌면 게이트가 내린 결정과 메시지 결정이
+       * 서로 다른 채널 상태를 보게 된다. 여기 닿는 `gate` 는 `'ok'` 아니면 `'archived'`
+       * 뿐이다 — `'not_found'` 와 `'dm'` 은 위에서 이미 응답했다.
        */
-      const posted = await postMessage(pool, {
-        channelId: id,
-        authorId: req.account!.id,
-        ...memberSystemMessage(isSelf ? 'left' : 'removed', accountId),
-      });
-      // 초대 쪽과 같이 메시지 층의 `audienceFor` 를 쓴다.
-      if (posted.message) {
-        emitEvent({ type: 'message.created', message: posted.message, audience: await audienceFor(pool, id) });
+      if (gate !== 'archived') {
+        const posted = await postMessage(pool, {
+          channelId: id,
+          authorId: req.account!.id,
+          ...memberSystemMessage(isSelf ? 'left' : 'removed', accountId),
+        });
+        // 초대 쪽과 같이 메시지 층의 `audienceFor` 를 쓴다.
+        if (posted.message) {
+          emitEvent({ type: 'message.created', message: posted.message, audience: await audienceFor(pool, id) });
+        }
       }
     }
     return { members: await listChannelMembers(pool, id) };
