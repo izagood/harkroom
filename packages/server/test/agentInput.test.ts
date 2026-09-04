@@ -534,6 +534,37 @@ describe('#369 관찰 전용 세션에는 writer 차례가 없다', () => {
   });
 
   /**
+   * 구/신 조합 — `#346` 시절의 러너는 `input` 능력은 선언하면서 `acceptsInput` 은 모른다.
+   *
+   * **모르는 것을 관찰 전용이라고 부르지 않는다.** 입력을 닫는 것은 같다(그 세션의 stdin
+   * 이 무엇인지 확인한 적이 없으므로 열 수 없다). 하지만 이유를 `'observe-only'` 로 주면
+   * 화면이 "진행 중인 멘션 턴은 프롬프트를 파일로 받으므로…"라는, 확인한 적 없는 사실을
+   * 사람에게 읽어 준다 — 이 이슈가 멈추려던 것이 정확히 그 지어내기다.
+   */
+  it('acceptsInput 을 안 싣는 구 러너에는 이유가 runner-outdated 다 — 관찰 전용이라고 지어내지 않는다', async () => {
+    const sessionId = 'sess-observe-unknown';
+    const runner = await connectRunner(agentPat);
+    // `#346` 러너 흉내 — caps 는 있고 세션에 `acceptsInput` **필드 자체가 없다.**
+    // `false` 로 두면 안 된다: 그것은 "러너가 관찰 전용이라고 말했다"는 다른 사실이다.
+    const { acceptsInput: _unknown, ...oldRunnerSession } = session(sessionId, true);
+    runner.send({ type: 'announce', sessions: [oldRunnerSession], caps: ['input', 'interactive'] });
+    await waitForSession(sessionId);
+
+    const viewer = await attach(ownerToken, sessionId);
+    await waitFor(() => viewer.writer() === false);
+    expect(viewer.writerReason()).toBe('runner-outdated');
+
+    // 입력은 닫힌다 — 모르는 것을 열 수는 없다.
+    viewer.type(TYPED);
+    viewer.resize(100, 30);
+    await waitFor(() => resizes(runner).length > 0);
+    expect(inputBytes(runner)).toEqual([]);
+
+    viewer.close();
+    await runner.close();
+  });
+
+  /**
    * #335 회귀 금지 — resize 는 stdin 과 무관하다(ioctl 로 자식의 창 크기를 바꾼다).
    * **두 경우 다** 동작해야 한다: 관찰 전용 창도 폭의 주인이고, 여기서 폭까지 막으면
    * 진행 중인 멘션 턴을 보는 화면이 러너의 spawn 기본값(120x40)에 갇혀 접힌다.
