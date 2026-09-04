@@ -171,7 +171,10 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     // "못 물어봤다"(error) 화면 위에서 돌지 않고, "세션을 묻지 않았다" 도 단언할 수 있다.
     // 기본은 **진행 중인 턴이 없는** 상태다 — 세션이 있는 화면은 각 테스트가 덮어쓴다.
     agentSessions: vi.fn(async (): Promise<AgentSessionView[]> => []),
-    attachAgentSession: vi.fn(async (sessionId: string) => ({ ticket: 'murt_base', session: sess({ sessionId }) })),
+    // #315: `canInput` 은 베이스에서 **false** 다 — 쓰기를 열려면 테스트가 그 사실을
+    // 직접 말해야 한다. 기본을 true 로 두면 admin 읽기 전용 회귀선이 "아무것도 안 했는데
+    // 초록"이 되고, 그 테스트가 지키는 것이 사라진다.
+    attachAgentSession: vi.fn(async (sessionId: string) => ({ ticket: 'murt_base', session: sess({ sessionId }), canInput: false })),
     // #157/#323: 채널 선호를 쓰는 표면. 베이스가 덮어야 사이드바를 띄운 배선 테스트가
     // 실제 배선(Sidebar → Controller → ApiClient)을 그대로 지나가고, "부르지 않았다" 도
     // 단언할 수 있다. 여기가 비어 있으면 프로덕션이 끊겨 있어도 목이 대신 초록을 낸다.
