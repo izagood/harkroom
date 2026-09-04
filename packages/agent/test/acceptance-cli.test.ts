@@ -105,10 +105,14 @@ interface Combo {
 const COMBOS: Combo[] = [
   { harness: 'claude-code', mode: 'mention', isFirstTurn: true, sessionId: '11111111-1111-4111-8111-111111111111', label: '첫 멘션 턴' },
   { harness: 'claude-code', mode: 'mention', isFirstTurn: false, sessionId: '22222222-2222-4222-8222-222222222222', label: 'resume 멘션 턴' },
-  { harness: 'claude-code', mode: 'interactive', isFirstTurn: false, sessionId: '33333333-3333-4333-8333-333333333333', label: '인터랙티브 턴' },
+  // #337·#346: 인터랙티브에 **첫 턴**이 생겼다 — [터미널 열기]가 세션 없는 스레드에서
+  // `--session-id`(비-`-p`)로 연다. resume 조합만 두면 이 분기가 수용 층에 안 걸린다.
+  { harness: 'claude-code', mode: 'interactive', isFirstTurn: true, sessionId: '66666666-6666-4666-8666-666666666666', label: '인터랙티브 첫 턴' },
+  { harness: 'claude-code', mode: 'interactive', isFirstTurn: false, sessionId: '33333333-3333-4333-8333-333333333333', label: '인터랙티브 resume 턴' },
   { harness: 'codex', mode: 'mention', isFirstTurn: true, sessionId: null, label: '첫 멘션 턴 (id 사전 발급 없음)' },
   { harness: 'codex', mode: 'mention', isFirstTurn: false, sessionId: '44444444-4444-4444-8444-444444444444', label: 'resume 멘션 턴' },
-  { harness: 'codex', mode: 'interactive', isFirstTurn: false, sessionId: '55555555-5555-4555-8555-555555555555', label: '인터랙티브 턴' },
+  // codex 인터랙티브는 조합이 아니라 **거절**이다(스펙 §5-2 결정 8) — buildTurnCommand 가
+  // argv 를 만들지 않으므로 수용 층에 올릴 것이 없다. 거절 자체는 turn.test.ts 가 고정한다.
 ];
 
 /**

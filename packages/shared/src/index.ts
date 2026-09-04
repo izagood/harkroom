@@ -1057,10 +1057,26 @@ export interface AgentSessionView {
   harness: AgentHarness;
   /** 러너가 이 세션을 연 시각(ISO). 러너 시계다 — 서버가 찍지 않는다(러너만 아는 사실이다). */
   startedAt: string;
+  /**
+   * 이 PTY 가 어떤 턴인가(#337). `'mention'` 은 멘션이 띄운 비대화형 턴, `'interactive'`
+   * 는 사람이 [터미널 열기]로 스스로 연 턴이다 — 데스크탑이 "지금 사람이 조종 중"을
+   * 구분해 그릴 수단이다. 없으면(구 러너) 알 수 없다는 뜻이지 멘션 턴이라는 뜻이 아니다.
+   */
+  mode?: 'mention' | 'interactive';
 }
 
 /** 뷰어(데스크탑)가 보는 세션 상태. `runner-offline` 은 '끝났다'와 다르다. */
 export type AgentSessionState = 'running' | 'ended' | 'runner-offline';
+
+/**
+ * 러너가 다룰 줄 아는 개입 능력(#346, 스펙 §5-2 결정 2). `announce` 에 실려 서버가
+ * 구/신 러너를 가른다:
+ * - `'input'` 이 없으면 서버는 그 러너로 `input` 을 포워딩하지 않고 뷰어에 `writer:false`
+ *   만 내린다 — 구 러너에서 타이핑이 "고장"이 아니라 "안 열림"으로 보이게.
+ * - `'interactive'` 가 없으면 인터랙티브 open 요청이 타임아웃 대기 없이 즉시
+ *   `runner_outdated` 로 거절된다.
+ */
+export type RunnerCap = 'input' | 'interactive';
 
 /**
  * 러너 → 서버 프레임. `GET /agent-relay` 소켓에 실린다.
@@ -1070,13 +1086,23 @@ export type AgentSessionState = 'running' | 'ended' | 'runner-offline';
  * 없으면 진행 중인 턴이 서버 쪽에서 영구히 사라진다.
  */
 export type RelayRunnerFrame =
-  | { type: 'announce'; sessions: AgentSessionView[] }
+  /** `caps` 가 없으면(구 러너) 능력이 하나도 없는 것으로 읽는다 — 없는 것을 있다고 표시하지 않는다. */
+  | { type: 'announce'; sessions: AgentSessionView[]; caps?: readonly RunnerCap[] }
   | { type: 'session.started'; session: AgentSessionView }
   | { type: 'session.ended'; sessionId: string }
   /** 라이브 PTY 바이트. `data` 는 base64 이고 서버는 열지 않는다. */
   | { type: 'output'; sessionId: string; data: string }
   /** ring buffer 재생(서버의 `replay.request` 에 대한 답). 빈 버퍼도 빈 문자열로 답한다. */
-  | { type: 'replay'; sessionId: string; data: string };
+  | { type: 'replay'; sessionId: string; data: string }
+  /**
+   * `interactive.open` 에 대한 응답(#337, 스펙 §5-2 결정 4). `created` 가 false 면 이미
+   * 돌고 있던 턴(멘션이든 인터랙티브든)의 세션을 그대로 준 것이다 — 서버는 이 sessionId 로
+   * attach 티켓을 발급한다. 같은 소켓의 `session.started` 가 항상 이 프레임보다 먼저
+   * 도착하므로(순서 보장), 서버가 이 응답을 받는 시점에 세션 조회는 성립한다.
+   */
+  | { type: 'interactive.opened'; requestId: string; sessionId: string; created: boolean }
+  /** interactive.open 이 실패했다(codex 거절 등). message 는 사람에게 그대로 보여줄 문구다. */
+  | { type: 'interactive.error'; requestId: string; message: string };
 
 /**
  * 서버 → 러너 프레임.
@@ -1096,7 +1122,35 @@ export type RelayRunnerFrame =
  */
 export type RelayServerFrame =
   | { type: 'replay.request'; sessionId: string }
-  | { type: 'input'; sessionId: string; data: string };
+  | { type: 'input'; sessionId: string; data: string }
+  /**
+   * PTY 창 크기(#335). **바이트가 아니라 숫자 두 개다** — 그래서 위 `data` 들과 달리
+   * base64 규율을 타지 않고, 대신 서버가 값을 검증한다(러너의 `resize` 는 ioctl 로
+   * 그대로 내려간다).
+   */
+  | { type: 'resize'; sessionId: string; cols: number; rows: number }
+  /**
+   * 이 세션을 보는 뷰어 수의 변동(#337). 러너의 인터랙티브 고아 회수가 읽는다 —
+   * exit 없이 viewer 가 0 이 되면 유예 뒤 SIGTERM(스펙 §5-2 결정 5). 패널 닫힘·소켓
+   * 단절·앱 강제종료가 서버 관점에서 전부 이 하나("viewer 소멸")로 수렴하므로, 명시적
+   * 종료 프레임은 두지 않는다.
+   */
+  | { type: 'viewer.count'; sessionId: string; count: number }
+  /**
+   * 사람이 스스로 터미널을 연다(#337, 스펙 §5-2 결정 4). 세션이 아니라 **스레드**를
+   * 가리킨다 — 세션이 아직 없을 수 있고, 없으면 러너가 만든다. `requestId` 로
+   * `interactive.opened`/`interactive.error` 와 상관된다. `openedByHandle` 은 조종 중
+   * 유예 통지("지금 {handle} 이 직접 조종 중")의 재료다.
+   */
+  | {
+      type: 'interactive.open';
+      requestId: string;
+      channelId: string;
+      threadRootId: string;
+      openedByHandle: string;
+      cols?: number;
+      rows?: number;
+    };
 
 /**
  * 서버 → 뷰어 프레임. `GET /agent-attach` 소켓에 실린다.
@@ -1108,23 +1162,51 @@ export type RelayServerFrame =
  */
 export type AttachServerFrame =
   | { type: 'output'; data: string }
-  | { type: 'status'; state: AgentSessionState };
+  | { type: 'status'; state: AgentSessionState }
+  /**
+   * 이 뷰어가 지금 **writer 인가**(스펙 §5-2 결정 2). attach 인가(붙어도 되는가)는 여전히
+   * 티켓이 운반하지만, 쓰기 **차례**는 서버 허브가 산다: **마지막으로 attach 한 뷰어가
+   * writer** 이고 나머지는 읽기 전용이다 — 소유자와 admin 이 동시에 붙어도 바이트가 섞이는
+   * 상태 자체가 생기지 않는다(잠금 장치 대신 이 규칙 하나다). 새 뷰어가 붙으면 이전
+   * writer 는 `writer:false` 를 받고, writer 가 떠나면 가장 최근에 붙은 뷰어가 승계한다.
+   * 이 프레임이 **한 번도 안 오면**(구 서버) 뷰어는 읽기 전용으로 남아야 한다 — 구/신
+   * 조합 4방향 안전의 데스크탑 쪽 절반이다.
+   */
+  | { type: 'writer'; writer: boolean };
 
 /**
  * 뷰어 → 서버 프레임(#315). 사람이 그 터미널에 친 바이트다.
  *
- * **쓰기는 소유자만이다.** 소유자가 아닌 admin 은 attach 해서 볼 수 있지만 칠 수 없다
- * (운영자 결정) — 그래서 잠금 장치가 없다: 한 세션에 바이트를 넣을 수 있는 주체가 애초에
- * 소유자 한 명뿐이라 두 사람의 키 입력이 섞이는 문제가 생기지 않는다. (소유자가 admin 을
- * **겸하는** 것은 흔하다 — 에이전트를 만든 admin 이 곧 소유자다 — 그리고 그때도 주체는
- * 여전히 한 명이므로 칠 수 있다: `auth/plugin.ts::OwnerVerdict.via` 가 소유자 자격을
- * 우선해서 읽는 이유.) 판정은 attach 인가 때 한 번 하고
- * 티켓이 그 결정을 운반한다(`server/src/ws/tickets.ts::AttachTicketClaim.canInput`).
+ * **쓰기 차례는 서버가 `writer` 프레임으로 알린다**(위 `AttachServerFrame`, 스펙 §5-2
+ * 결정 2). attach 인가는 소유자·admin 으로 좁혀져 있고(티켓 발급 시 `checkOwnerOrAdmin`),
+ * 그 안에서 누가 지금 치는가는 "마지막 attach 가 writer" 규칙 하나다 — writer 가 아닌
+ * 뷰어의 input 은 서버가 조용히 버린다(화면이 아니라 서버가 진짜 게이트다).
  *
  * `data` 는 base64 다 — 사람이 치는 것은 글자만이 아니다. 화살표·Ctrl-C·붙여 넣기는
  * 전부 제어 바이트이고, 문자열로 실으면 그 중 일부가 JSON 인코딩에서 왜곡된다.
  */
-export type AttachClientFrame = { type: 'input'; data: string };
+export type AttachClientFrame =
+  | { type: 'input'; data: string }
+  /**
+   * 이 뷰어의 패널 크기(#335). PTY 가 이 크기가 된다.
+   *
+   * **writer 의 폭이 정답이다**(#335 의 "소유자의 폭"이 writer 규칙(#346) 위에서 갱신된
+   * 표현이다 — 스펙 §5: "resize 는 writer 를 따른다"). 근거는 그대로 하나다 — **읽기
+   * 전용은 아무것도 바꾸지 않는다.** 붙은 사람 중 가장 좁은 폭에 맞추면 읽기 전용 창을
+   * 줄이는 것만으로 writer 의 작업 환경이 좁아지고, 그러면 그 창은 더 이상 읽기 전용이
+   * 아니다. 러너 하나에 크기 하나이고, 그 하나를 정하는 주체는 지금의 writer 다.
+   * 읽기 전용 창이 접힌 줄을 보는 것은 **받아들이기로 한 비용**이다 — 그것을 고치려고
+   * 폭 협상을 넣으면 위 문장이 깨진다.
+   *
+   * 그래서 게이트도 `input` 과 **같은 것 하나**를 탄다(허브의 writer 판정). 프레임
+   * 종류만 늘었지 판정이 늘지 않았다.
+   *
+   * **감사에는 남기지 않는다.** detach 감사의 `inputBytes` 가 남기는 것은 "사람이 이
+   * 턴에 개입했다"는 사실이고, 창 크기 조절은 개입이 아니라 **보기**다 — resize 는 그
+   * 합산에도 들어가지 않는다. "입력은 남기는데 왜 이것은 안 남기나"로 되돌리지 마라 —
+   * 남길 사실이 애초에 없다.
+   */
+  | { type: 'resize'; cols: number; rows: number };
 
 /**
  * 에이전트 팀(#172). **저장된 엔티티다** — "이 다섯을 넣는다"를 매번 고르는 즉석

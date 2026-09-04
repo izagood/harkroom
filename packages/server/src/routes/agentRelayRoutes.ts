@@ -21,11 +21,12 @@
 // `agent.memory.deleted` 가 같은 이유로 본문을 남기지 않는다).
 //
 // **#315 로 입력이 열린 뒤에도 그 규칙은 그대로다.** 사람이 친 바이트도 감사에 넣지 않는다 —
-// 붙여 넣은 토큰이나 비밀번호 프롬프트의 답이 섞이므로 출력과 성질이 같다. 늘어난 것은
-// `agent.input` 하나이고, 그 행이 답하는 것은 "누가 언제 어느 턴에 개입했다" 뿐이다.
+// 붙여 넣은 토큰이나 비밀번호 프롬프트의 답이 섞이므로 출력과 성질이 같다. 개입 사실은
+// `agent.detached` 의 detail.inputBytes 하나로 남는다(스펙 §5-2 결정 3): 입력마다 행을
+// 쓰면 행 타임스탬프가 곧 키 입력의 리듬이라 그 자체가 부채널이다.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
-import type { AgentSessionView, AttachClientFrame } from '@murmur/shared';
+import type { AgentSessionView } from '@murmur/shared';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { createAttachTicketStore } from '../ws/tickets.js';
@@ -56,33 +57,6 @@ async function ownedAgentIds(pool: Pool, accountId: string): Promise<string[]> {
   return res.rows.map((r) => r.account_id);
 }
 
-/**
- * 한 attach 소켓에서 감사 행을 만드는 최소 간격(#315). 첫 입력은 즉시 남기고, 그 뒤로는
- * 이 간격마다 한 번만 남긴다.
- *
- * **왜 묶는가**: 감사가 답해야 하는 질문은 "이 턴에 사람이 개입했나"이지 "몇 글자를
- * 쳤나"가 아니다. 키 하나에 한 행씩 남기면 한 번의 개입이 감사 조회를 수백 행으로
- * 밀어내 다른 사건을 못 보게 만든다 — 감사가 스스로를 못 쓰게 만드는 것이 가장 나쁘다.
- * 60초를 고른 이유: 사람이 한 번 앉아 개입하는 단위가 그보다 짧고, 그보다 길면 "다시
- * 와서 또 쳤다"가 첫 개입에 묻힌다.
- */
-export const INPUT_AUDIT_WINDOW_MS = 60_000;
-
-/**
- * 이 소켓이 지금 감사 행을 하나 만들어야 하는가. attach 소켓 하나당 하나씩 만든다 —
- * 상태를 소켓 수명에 묶어 두면 패널을 닫았다 다시 연 사람은 다시 첫 행을 남긴다(그것이
- * "다시 개입했다"는 사실이므로 맞다).
- */
-function createInputAuditGate(windowMs: number, now: () => number = Date.now) {
-  let lastAt: number | null = null;
-  return (): boolean => {
-    const at = now();
-    if (lastAt !== null && at - lastAt < windowMs) return false;
-    lastAt = at;
-    return true;
-  };
-}
-
 export interface AgentRelayDeps {
   /** attach 티켓 수명(ms). 미지정이면 `/ws` 티켓과 같은 기본값(30초). */
   attachTicketTtlMs?: number;
@@ -94,8 +68,8 @@ export interface AgentRelayDeps {
   allowedOrigins?: readonly string[] | null;
   /** 자격증명 재검증 주기(ms). `/ws` 와 같은 값을 쓴다. 테스트가 짧게 준다. */
   revalidateMs?: number;
-  /** 입력 감사를 묶는 간격(ms). 기본은 `INPUT_AUDIT_WINDOW_MS`. 테스트가 0 을 준다. */
-  inputAuditWindowMs?: number;
+  /** interactive.open 응답 대기 한도(ms, #337). 기본 10초 — 테스트가 짧게 준다. */
+  interactiveOpenTimeoutMs?: number;
 }
 
 export async function registerAgentRelayRoutes(
@@ -170,26 +144,103 @@ export async function registerAgentRelayRoutes(
       detail: { sessionId: session.sessionId, channelId: session.channelId },
     }, req);
 
-    // **쓰기는 소유자만이다**(#315 운영자 결정). 판정을 여기서 다시 하지 않고 위
-    // `verdict` 가 알려 준 통과 경로를 그대로 읽는다 — `checkOwnerOrAdmin` 이 이미
-    // 계산한 사실이고, 복제하면 한쪽만 고치는 사고가 난다.
-    //
-    // 소유자가 아닌 admin 을 읽기 전용으로 두는 것이 잠금 장치를 대신한다: 한 세션에
-    // 바이트를 넣을 수 있는 주체가 애초에 한 명(소유자)뿐이라, 두 사람의 키 입력이 섞이는
-    // 문제가 생기지 않는다. 화면도 이 값을 받아 admin 에게는 입력을 아예 열지 않고 이유를 적는다.
-    const canInput = verdict.via === 'owner';
-
+    // 티켓은 **attach 인가**만 운반한다. 쓰기 차례(지금 누가 writer 인가)는 티켓이 아니라
+    // 허브가 산다(스펙 §5-2 결정 2 — 마지막 attach 가 writer, `ws/relay.ts::setWriter`).
+    // 판정을 티켓에도 실으면 "누가 쓰는가"의 진실이 두 곳이 되고, 인가에서 그것은 조용히
+    // 열리는 쪽으로 어긋난다. `verdict.via` 는 이제 여기서 읽지 않는다.
     return {
       ticket: attachTickets.issue({
         accountId: account.id,
         credentialHash: req.credentialHash!,
         sessionId: session.sessionId,
-        canInput,
       }),
       session,
-      canInput,
     };
   });
+
+  /**
+   * 사람이 스스로 인터랙티브 터미널을 연다(#337, 스펙 §5-2 결정 4). 진행 중인 턴이
+   * 없어도 된다 — 러너가 세션을 확보(없으면 생성)해 인터랙티브 PTY 를 띄우고, 서버는
+   * 그 세션의 attach 티켓을 준다. 인가는 attach 와 **같은 술어**(checkOwnerOrAdmin)다:
+   * "내 에이전트의 셸을 여는" 행위이므로 붙어서 보는 것과 같은 사람만 할 수 있다.
+   *
+   * 스레드를 가리키는 것은 세션 id 가 아니라 (agentAccountId, channelId, threadRootId)
+   * 셋이다 — 세션은 아직 없을 수 있고, 그때 만드는 것이 이 라우트의 존재 이유다.
+   */
+  app.post<{ Body: { agentAccountId?: unknown; channelId?: unknown; threadRootId?: unknown } }>(
+    '/agent-sessions/interactive',
+    { preHandler: app.requireAccount },
+    async (req, reply) => {
+      const account = req.account!;
+      const { agentAccountId, channelId, threadRootId } = req.body ?? {};
+      if (typeof agentAccountId !== 'string' || typeof channelId !== 'string' || typeof threadRootId !== 'string') {
+        return reply.code(400).send({
+          error: { code: 'bad_request', message: 'agentAccountId, channelId, threadRootId 가 모두 필요하다' },
+        });
+      }
+
+      const verdict = await checkOwnerOrAdmin(pool, account, agentAccountId);
+      if (!verdict.ok) {
+        return reply.code(verdict.status).send({ error: { code: verdict.code, message: verdict.message } });
+      }
+
+      const outcome = await hub.openInteractive(
+        agentAccountId,
+        { channelId, threadRootId, openedByHandle: account.handle },
+        { timeoutMs: deps.interactiveOpenTimeoutMs },
+      );
+      if (!outcome.ok) {
+        // 상태를 넷으로 가른다 — 화면이 이 문구를 그대로 사람에게 보여준다(docs/design.md
+        // §4: 없는 것·못 한 것·거절된 것을 한 화면으로 뭉치지 않는다).
+        switch (outcome.reason) {
+          case 'no_runner':
+            return reply.code(404).send({
+              error: { code: 'no_runner', message: '러너가 접속해 있지 않다 — 이 에이전트의 러너를 먼저 띄워라' },
+            });
+          case 'runner_outdated':
+            return reply.code(409).send({
+              error: { code: 'runner_outdated', message: '러너가 인터랙티브 열기를 지원하지 않는 버전이다 — 러너를 업데이트해라' },
+            });
+          case 'runner_rejected':
+            return reply.code(409).send({
+              error: { code: 'interactive_rejected', message: outcome.message ?? '러너가 인터랙티브 열기를 거절했다' },
+            });
+          case 'runner_timeout':
+            return reply.code(504).send({
+              error: { code: 'runner_timeout', message: '러너가 제때 응답하지 않았다 — 러너 로그를 확인해라' },
+            });
+        }
+      }
+
+      // 같은 소켓의 `session.started` 가 `interactive.opened` 보다 먼저 처리되므로(순서
+      // 보장) 여기서 세션 조회는 성립한다. 그래도 방어한다 — 러너가 started 를 빠뜨리는
+      // 결함이 생기면 여기서 잡혀야지, 티켓만 받고 붙을 세션이 없는 화면이 되면 안 된다.
+      const session = hub.getSession(outcome.sessionId);
+      if (!session) {
+        return reply.code(504).send({
+          error: { code: 'runner_timeout', message: '러너가 세션을 등록하지 않았다 — 러너 로그를 확인해라' },
+        });
+      }
+
+      // 셸을 여는 것은 관찰보다 강한 행위다 — attach 와 별도 액션으로 남긴다(§5-2 결정 4).
+      await recordAudit(pool, {
+        action: 'agent.interactive.opened',
+        ...actorOf(req),
+        target: agentAccountId,
+        detail: { sessionId: session.sessionId, channelId, threadRootId, created: outcome.created },
+      }, req);
+
+      // 티켓 발급은 attach 와 동일 경로 — 인가를 이미 지났고, 소켓은 이 결정을 소모만 한다.
+      return {
+        ticket: attachTickets.issue({
+          accountId: account.id,
+          credentialHash: req.credentialHash!,
+          sessionId: session.sessionId,
+        }),
+        session,
+      };
+    },
+  );
 
   /**
    * 뷰어 소켓. 티켓만으로 인가된다 — 브라우저의 WebSocket 생성자는 헤더를 붙일 수 없어
@@ -203,7 +254,8 @@ export async function registerAgentRelayRoutes(
    * 근거다. 그리고 **입력을 여는 것은 턴 모드를 바꾸는 것이 아니다** — 이 경로는 PTY 에
    * 바이트를 넣을 뿐, 그 턴의 `TurnMode` 도 `mention_permission` 도 건드리지 않는다.
    *
-   * 쓰기 판정은 여기서 하지 않는다. `claim.canInput` 이 attach 인가 때의 결정을 운반한다.
+   * 쓰기 판정은 여기서 하지 않는다. writer 차례는 허브가 갖고(`ws/relay.ts::setWriter` —
+   * 마지막 attach 가 writer, 스펙 §5-2 결정 2), 이 핸들러는 프레임을 핸들에 넘길 뿐이다.
    */
   app.get('/agent-attach', { websocket: true }, (socket, req) => {
     // Origin 을 티켓 소모보다 **먼저** 본다 — 거절할 연결이 1회용 티켓을 태우면, 사람이
@@ -217,43 +269,33 @@ export async function registerAgentRelayRoutes(
     const claim = ticket ? attachTickets.consume(ticket) : null;
     if (!claim) { socket.close(4401, 'unauthorized'); return; }
 
-    const off = hub.addViewer(claim.sessionId, socket);
+    const viewer = hub.addViewer(claim.sessionId, socket);
     // 자격증명이 죽으면 이 소켓도 닫힌다(위 `sweep` 주석).
     const untrack = sweep.track(socket, claim.credentialHash);
-    const shouldAuditInput = createInputAuditGate(deps.inputAuditWindowMs ?? INPUT_AUDIT_WINDOW_MS);
 
-    socket.on('message', (raw) => {
-      // 뷰어는 무엇이든 보낼 수 있다 — 파싱 실패로 소켓을 죽이지 않는다.
-      let frame: AttachClientFrame;
-      try { frame = JSON.parse(String(raw)) as AttachClientFrame; } catch { return; }
-      if (frame?.type !== 'input' || typeof frame.data !== 'string') return;
-      // **admin 은 여기서 멈춘다.** 화면이 입력을 안 그리는 것만으로는 게이트가 아니다 —
-      // 소켓은 누구나 직접 열 수 있으므로, 진짜 게이트는 이 한 줄이다.
-      if (!claim.canInput) return;
-      // 바이트는 열지 않고 그대로 러너에게 넘긴다(허브 주석).
-      if (!hub.sendInput(claim.sessionId, frame.data)) return;
-      if (!shouldAuditInput()) return;
-      // 사실만 남긴다: 누가(actorId) 언제(at) 어느 턴에(sessionId). **친 내용은 없다.**
-      void recordAudit(pool, {
-        action: 'agent.input',
-        actorId: claim.accountId,
-        actorHandle: null,
-        target: null,
-        detail: { sessionId: claim.sessionId },
-      });
-    });
+    // 파싱·writer 판정·포워딩·바이트 누계·resize 값 검증 전부 허브의 몫이다 — "누가
+    // 지금 쓰는가"의 진실을 두 곳에 두지 않는다(#335 의 resize 도 같은 핸들을 탄다).
+    // 입력의 감사는 아래 detach 행이 합산으로 남긴다.
+    socket.on('message', (raw) => { viewer.handleMessage(String(raw)); });
 
     socket.on('close', () => {
-      off();
+      const inputBytes = viewer.inputBytes();
+      viewer.close();
       untrack();
       // detach 도 남긴다 — attach 만 남기면 감사 조회에서 "지금 붙어 있는 사람"과
-      // "붙었다 떠난 사람"이 구분되지 않는다. 여기서도 바이트는 넣지 않는다.
+      // "붙었다 떠난 사람"이 구분되지 않는다.
+      //
+      // 개입 사실은 이 행의 `inputBytes` **합산 1회**로만 남는다(스펙 §5-2 결정 3).
+      // 입력마다(또는 시간 창마다) 행을 쓰면 행 타임스탬프가 곧 키 입력의 리듬이라 그
+      // 자체가 부채널이었다. 내용은 여전히 없다 — 수는 base64 길이 산술이다(허브 주석).
+      // 서버가 detach 전에 죽으면 이 누계는 사라진다 — 릴레이 전체가 인메모리인 것과
+      // 같은 수용이다(스펙 §5: 세션 레지스트리도 재시작이면 비워진다).
       void recordAudit(pool, {
         action: 'agent.detached',
         actorId: claim.accountId,
         actorHandle: null,
         target: null,
-        detail: { sessionId: claim.sessionId },
+        detail: { sessionId: claim.sessionId, inputBytes },
       });
     });
   });
