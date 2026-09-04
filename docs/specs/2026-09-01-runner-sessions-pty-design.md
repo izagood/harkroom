@@ -161,7 +161,7 @@ A 를 고른 실제 이유는 지연이 아니라 **경계**다. 서버는 관�
 | 사람 턴 (인터랙티브) | `-r <id>` | `codex resume <id>` | — |
 | 지시문 주입 | `--append-system-prompt` | 프롬프트 앞 접두 | — |
 | MCP 등록 | `--mcp-config <파일>` | 턴별 `-c mcp_servers.*` | — |
-| 권한: auto | `--permission-mode bypassPermissions` | `-c sandbox_mode="workspace-write"` | — |
+| 권한: auto | `--permission-mode bypassPermissions` | `-c sandbox_mode="workspace-write"` + `-c mcp_servers.murmur.approval_mode="never"` | — |
 | 권한: readonly | `--permission-mode plan` | `-c sandbox_mode="read-only"` | — |
 
 세 칸이 초판과 다른 이유를 남긴다.
@@ -172,6 +172,12 @@ A 를 고른 실제 이유는 지연이 아니라 **경계**다. 서버는 관�
 - **`codex exec` 에는 `-a`/`--ask-for-approval` 이 없다.** 권한은 sandbox 단독이고,
   `danger-full-access` 는 쓰지 않는다 — 멘션 턴은 사람이 보지 않는 턴이라 workspace 경계를
   넘길 이유가 없고, 그 경계가 §3 의 avcs workspace 격리와 정확히 겹친다.
+
+  Codex CLI 0.153.2에서는 쓰기 MCP가 기본적으로 승인을 요구한다. 그러나 멘션 턴은
+  비대화형이라 승인을 받을 수 없고, 실제로 `message.post`가 `approval policy is never`로
+  거절돼 답이 채널에 도달하지 않았다(#404). auto 권한은 murmur MCP 서버의
+  `approval_mode="never"`만 턴별로 덧붙인다. 전체 승인과 sandbox를 없애는 위험한 플래그는
+  쓰지 않으며, readonly에는 이 예외를 주지 않는다.
 
   **그런데 `-s` 플래그로는 안 된다.** 이 표의 첫 수정판은 `-s workspace-write` 로 적었는데,
   리뷰가 실제 CLI 로 돌려 깨뜨렸다: `codex exec resume <id> -s workspace-write` →
