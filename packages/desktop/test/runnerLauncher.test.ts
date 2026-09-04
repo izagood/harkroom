@@ -340,6 +340,22 @@ describe('6. 종료 코드', () => {
     expect(spawner.spawns).toHaveLength(2);
     expect(launcher.getStates()[0]!.status).toBe('running');
   });
+
+  it('옛 자식의 늦은 78 종료가 새 자식의 실행 중 상태를 덮어쓰지 않는다', async () => {
+    const oldLabel = patLabelPrefix(DEVICE);
+    const secrets = fakeSecrets({ a: { label: oldLabel, token: 'murp_old' } });
+    const { launcher, spawner } = make(fakeApi(), secrets);
+    await startAll(launcher, [agent('a')]);
+
+    await launcher.reissue({ agent: agent('a'), repoPath: '/repo', runnerCommand: '' });
+    expect(launcher.getStates()[0]!.status).toBe('running');
+
+    // 재발급 순서(결정 3: 새 발급 → 옛 폐기 → 재실행)상 옛 자식은 폐기된 PAT 로 401 을
+    // 받고 78 로 죽는 것이 정상 경로다 — 그 통지가 새 자식을 'needs_reissue' 로 덮으면 안 된다.
+    spawner.exit(78, 0);
+
+    expect(launcher.getStates()[0]!).toMatchObject({ status: 'running', exitCode: null });
+  });
 });
 
 describe('7. 한 에이전트가 못 떠도 나머지는 뜬다', () => {
