@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { isCredentialFailure, nextBackoffMs, MAX_ATTEMPTS, exhausted } from '../src/policy.js';
+import { isCredentialFailure, isExecutableNotFound, nextBackoffMs, MAX_ATTEMPTS, exhausted } from '../src/policy.js';
 import { MURMUR_ERROR_SOURCE } from '../src/policy.js';
 import { MurmurAgentClient } from '../src/murmur.js';
+import { ExecutableNotFoundError } from '../src/pty.js';
 
 describe('isCredentialFailure', () => {
   // 자격증명 오류는 재시도로 낫지 않는다 — 운영자가 키를 넣어야 한다. 무한 재시도로 감추면
@@ -128,5 +129,29 @@ describe('exhausted', () => {
   it('gives up on an entry after a bounded number of attempts', () => {
     expect(exhausted(MAX_ATTEMPTS - 1)).toBe(false);
     expect(exhausted(MAX_ATTEMPTS)).toBe(true);
+  });
+});
+
+describe('#340 isExecutableNotFound', () => {
+  // 실행 파일 부재는 재시도로 낫지 않는다 — launchd KeepAlive 가 재기동해도 같은 이유로
+  // 즉시 죽는다. 그래서 반드시 크게 실패해야 한다.
+  it('ExecutableNotFoundError 를 executable-not-found 로 감지한다', () => {
+    const err = new ExecutableNotFoundError('/nonexistent/harness', '/usr/bin:/bin');
+    expect(isExecutableNotFound(err)).toBe('executable-not-found');
+  });
+
+  // 에러 이름으로 판정한다 — 문자열 매칭은 이 저장소에서 결함으로 잡힌 적이 있다.
+  it('문자열 매칭이 아니라 에러 이름으로 판정한다', () => {
+    const err = new Error('실행 파일을 찾을 수 없음: /nonexistent/harness');
+    err.name = 'ExecutableNotFoundError';
+    expect(isExecutableNotFound(err)).toBe('executable-not-found');
+  });
+
+  // 다른 에러는 other 다 — 자격증명 실패나 네트워크 오류는 여전히 재시도해야 한다.
+  it('일반 에러는 other 다 — 재시도 동작이 변하지 않는다', () => {
+    expect(isExecutableNotFound(new Error('some error'))).toBe('other');
+    expect(isExecutableNotFound(new Error('could not resolve authentication'))).toBe('other');
+    expect(isExecutableNotFound(null)).toBe('other');
+    expect(isExecutableNotFound(undefined)).toBe('other');
   });
 });

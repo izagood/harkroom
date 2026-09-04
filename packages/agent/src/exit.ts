@@ -7,7 +7,7 @@
  * (러너↔앱 통신 채널은 만들지 않기로 했으므로, 옛 PAT 로 돌던 러너를 물러나게 하는 것은
  * 서버의 401 과 이 종료 코드뿐이다).
  */
-import { isCredentialFailure } from './policy.js';
+import { isCredentialFailure, isExecutableNotFound } from './policy.js';
 
 /** `sysexits.h` 의 `EX_CONFIG`. "설정이 틀렸다 — 재시도로 낫지 않는다"는 뜻이다. */
 export const EX_CONFIG = 78;
@@ -19,6 +19,12 @@ export const EX_CONFIG = 78;
  */
 export const CREDENTIAL_REJECTED_LINE =
   'murmur-agent: credential rejected (revoked or rotated); exiting';
+
+/**
+ * 앱(그리고 사람)이 이 한 줄을 찾는다.
+ */
+export const EXECUTABLE_NOT_FOUND_LINE =
+  'murmur-agent: harness executable not found; exiting';
 
 export interface RunnerExitPlan {
   code: typeof EX_CONFIG;
@@ -36,6 +42,21 @@ export interface RunnerExitPlan {
  * 않는다(회전이 약속한 것이 그 반대다).
  */
 export function runnerExitPlan(err: unknown): RunnerExitPlan | null {
+  // 실행 파일 부재는 재시도로 낫지 않는다 — launchd KeepAlive 가 재기동해도 같은 이유로
+  // 즉시 죽는다. 그래서 운영자가 로그에서 원인을 바로 볼 수 있게 반드시 크게 실패한다.
+  const execNotFound = isExecutableNotFound(err);
+  if (execNotFound === 'executable-not-found') {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const lines = [
+      '\nharness 실행 파일을 찾을 수 없다. 러너를 멈춘다.',
+      '  실행 파일 경로와 PATH 를 확인해라.',
+      `  PATH: ${err instanceof Error && 'path' in err ? (err as { path?: string }).path ?? '(empty)' : '(unknown)'}`,
+      `  원문: ${errMsg}`,
+      EXECUTABLE_NOT_FOUND_LINE,
+    ];
+    return { code: EX_CONFIG, lines };
+  }
+
   const credType = isCredentialFailure(err);
   if (credType === 'other') return null;
 
