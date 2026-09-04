@@ -639,7 +639,7 @@ export async function runMentionTurn(
       // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
       const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
       // #144: progress 메시지는 결과 발화로 세지 않는다 — 에이전트가 message.progress 로 올린
-      // 진행 설명은.kind='progress'로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
+      // 진행 설명은 .kind='progress'로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
       // 따라서 "progress 메시지만 있고 결과가 없는 턴"은 NO_REPLY_NOTICE 로 처리된다.
       const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
       // 실패한 턴에서도 중복 발화는 일어난다(답을 두 번 올리고 나서 죽는다) — 성공 경로와
@@ -674,7 +674,7 @@ export async function runMentionTurn(
     // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
     const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
     // #144: progress 메시지는 결과 발화로 세지 않는다 — 에이전트가 message.progress 로 올린
-    // 진행 설명은.kind='progress'로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
+    // 진행 설명은 .kind='progress'로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
     // 따라서 "progress 메시지만 있고 결과가 없는 턴"은 NO_REPLY_NOTICE 로 처리된다.
     const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
     warnOnDuplicatePosts(key, postCount);
