@@ -152,9 +152,7 @@ export class Controller {
     // 채널 선호는 **크리티컬 패스에서 뺀다.** 위 Promise.all 에 넣으면 이 엔드포인트가
     // 없는 서버(구버전)에 붙었을 때 앱이 기동조차 못 한다. 선호는 UI 편의값이라 없으면
     // 정렬이 이름순으로 남을 뿐이다 — `refreshAccounts` 가 같은 이유로 실패를 삼킨다.
-    this.swallow(this.api.channelPrefs().then((prefs) => {
-      this.store.getState().set({ channelPrefs: Object.fromEntries(prefs.map((p) => [p.channelId, p])) });
-    }));
+    this.swallow(this.refreshChannelPrefs());
     // 담아 둔 메시지 요약(#219)도 같은 방식으로 fire-and-forget 으로 받는다.
     this.swallow(this.loadSavedSummary());
     // 투영 상태도 60초마다 갱신한다(#267) — 앱 기동 시 한 번과 정기적으로.
@@ -281,6 +279,11 @@ export class Controller {
       case 'inbox.updated':
         if (e.accountId === store.me?.id) {
           this.swallow(this.refreshUnread().then(() => this.announceNewMentions()));
+          // 선호도 다시 읽는다(#376). 나를 부르는 것이 오면 **서버가** 그 채널의 숨김을
+          // 풀기 때문이다(`services/messages.ts` 의 `insertInbox`). 같은 판정을 여기서 다시
+          // 구현하면 두 곳이 갈라져 "서버는 풀었는데 사이드바에는 안 보이는" 채널이 생긴다 —
+          // 규칙은 서버 한 곳에 두고 이쪽은 결과만 다시 읽는다.
+          this.swallow(this.refreshChannelPrefs());
         }
         break;
       case 'lease.changed':
@@ -522,6 +525,15 @@ export class Controller {
         body: prefs.showPreview ? (row ? displayBody(row, accounts) : generic) : generic,
       });
     }
+  }
+
+  /**
+   * 채널 선호를 서버에서 다시 읽는다. 기동(`start`)과 inbox 갱신(#376) 두 곳이 **같은 함수**를
+   * 쓴다 — 두 곳에 복제하면 한쪽만 고쳐져 어떤 경로에서는 숨김이 풀린 것이 화면에 안 온다.
+   */
+  private async refreshChannelPrefs(): Promise<void> {
+    const prefs = await this.api.channelPrefs();
+    this.store.getState().set({ channelPrefs: Object.fromEntries(prefs.map((p) => [p.channelId, p])) });
   }
 
   // 단조 버전 가드 — 나중에 발행됐지만 먼저 도착한 응답만 반영되도록, stale 응답은 버린다.
@@ -1171,6 +1183,22 @@ export class Controller {
     const unread = (store.messages[channelId] ?? [])
       .filter((m) => m.seq > boundary && m.authorId !== store.me?.id).length;
     store.set({ reads: { ...store.reads, [channelId]: { lastReadSeq: boundary, unread } } });
+  }
+
+  /**
+   * 이 채널을 사이드바에서 치운다/다시 꺼낸다(#376).
+   *
+   * `toggleChannelStar` 와 달리 **토글이 아니라 값을 받는다.** 숨김은 서버가 혼자서 되돌리는
+   * 상태이기 때문이다(부름이 오면 풀린다) — 스토어의 값을 뒤집어 보내면 그 사이에 서버가
+   * 풀어 둔 채널을 "다시 숨기기"로 잘못 보낼 수 있다. 메뉴가 무엇을 하려는지 그대로 보낸다.
+   *
+   * 되돌리는 길이 **이 한 함수**다: 숨긴 채널 목록에서 '숨김 해제'가 같은 함수를 `false` 로
+   * 부른다. 남에게 요청할 일이 없다는 것이 나가기(#344)와의 차이다.
+   */
+  async setChannelHidden(channelId: string, hidden: boolean): Promise<void> {
+    const store = this.store.getState();
+    const updated = await this.api.updateChannelPref(channelId, { hidden });
+    store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
   }
 
   async toggleChannelStar(channelId: string): Promise<void> {
