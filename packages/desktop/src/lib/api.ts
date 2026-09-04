@@ -589,9 +589,12 @@ export class ApiClient {
    *
    * 라우트는 **배열을 그대로** 돌려준다 — `{ skills: [...] }` 로 감싸지 않는다.
    * (초판이 `.skills` 를 꺼내려다 `undefined` 를 받아 화면이 통째로 죽었다.)
+   *
+   * #325 — `state` 파라미터로 필터링한다. 없으면 전부다.
    */
-  listSkills(): Promise<WorkspaceSkillView[]> {
-    return this.req('GET', '/skills');
+  listSkills(state?: 'pending' | 'approved' | 'disabled'): Promise<WorkspaceSkillView[]> {
+    const query = state ? `?state=${state}` : '';
+    return this.req('GET', `/skills${query}`);
   }
 
   /** 스킬 상세. 본문은 곧 시스템 프롬프트이므로 인증이 필요하다. */

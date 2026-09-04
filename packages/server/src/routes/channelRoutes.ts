@@ -4,7 +4,7 @@ import type { StorageBackend } from '../storage/local.js';
 import { z } from 'zod';
 import {
   addChannelMember, assertChannelVisible, audienceFor, channelListAudience, channelListLostAudience,
-  channelPostGate, createChannel, deleteChannel,
+  channelMembershipGate, channelPostGate, createChannel, deleteChannel,
   getChannelDoc, getChannelRow, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
   updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs, renameSection,
 } from '../services/channels.js';
@@ -198,6 +198,20 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
+    // 보관·DM 게이트(#328). **가시성 뒤, 삽입 앞**이다. 가시성보다 앞에 두면 볼 수 없는
+    // 채널에 대한 응답이 보관 여부·kind 로 갈려 그 채널의 상태를 알려 준다. 삽입보다
+    // 앞이어야 하는 이유는 아래 시스템 메시지(#322)다 — 거절된 요청이 읽기 전용이어야 할
+    // 채널에 새 메시지를 남기면 안 된다.
+    const gate = await channelMembershipGate(pool, id);
+    if (gate === 'not_found') {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+    if (gate === 'archived') {
+      return reply.code(400).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
+    }
+    if (gate === 'dm') {
+      return reply.code(400).send({ error: { code: 'channel_is_dm', message: 'a dm has no membership to edit' } });
+    }
     // 존재하지 않는 계정은 FK 위반으로 500 이 된다 — 잘못된 입력을 서버 오류로 답하면
     // 호출부가 재시도할 대상인지 아닌지 구분하지 못한다.
     // handle 까지 여기서 읽는다 — 아래 시스템 메시지(#322)가 쓸 값이고, 존재 확인과 같은
@@ -277,6 +291,19 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     // 성공/실패로 갈리면 그 응답 자체가 채널의 존재를 알려 준다.
     if (isSelf && !(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    // 초대와 **같은 게이트**(#328). 제거도 막는다: 보관은 읽기 전용이고 멤버십 변경은
+    // 쓰기다. 삭제 앞에 두는 이유도 초대와 같다 — 거절된 요청이 퇴장 시스템 메시지를
+    // 남기면 읽기 전용 채널에 새 메시지가 생긴다.
+    const gate = await channelMembershipGate(pool, id);
+    if (gate === 'not_found') {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+    }
+    if (gate === 'archived') {
+      return reply.code(400).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
+    }
+    if (gate === 'dm') {
+      return reply.code(400).send({ error: { code: 'channel_is_dm', message: 'a dm has no membership to edit' } });
     }
     const removed = await removeChannelMember(pool, id, accountId);
     if (removed) {
