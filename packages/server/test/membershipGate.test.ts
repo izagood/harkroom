@@ -69,7 +69,11 @@ async function dmInboxCount(channelId: string): Promise<number> {
   return Number(res.rows[0]!.n);
 }
 
-async function createUser(handle: string): Promise<string> {
+/**
+ * 사용자 생성 + 그 사람의 토큰. **나가기는 본인 토큰으로만 검증할 수 있다** — admin 토큰으로
+ * 남을 빼면 `isSelf` 가 거짓이라 이 파일이 보려는 경로를 아예 지나지 않는다.
+ */
+async function createUserWithToken(handle: string): Promise<{ id: string; token: string }> {
   const inv = await app.inject({ method: 'POST', url: '/invites', headers: auth(adminToken) });
   const reg = await app.inject({
     method: 'POST', url: '/auth/register',
@@ -78,8 +82,15 @@ async function createUser(handle: string): Promise<string> {
       handle, loginId: handle, displayName: handle, password: 'pw123456',
     },
   });
-  return reg.json().id as string;
+  const id = reg.json().id as string;
+  const login = await app.inject({
+    method: 'POST', url: '/auth/login',
+    payload: { loginId: handle, password: 'pw123456' },
+  });
+  return { id, token: login.json().token as string };
 }
+
+const createUser = async (handle: string): Promise<string> => (await createUserWithToken(handle)).id;
 
 beforeAll(async () => {
   ({ pool, stop } = await startTestDb());
@@ -224,5 +235,133 @@ describe('보관 채널·DM 멤버십 게이트 (#328)', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('channel_is_dm');
     expect(await memberCount(dmId)).toBe(before);
+  });
+});
+
+describe('보관 채널에서 나가기 (#344)', () => {
+  it('1. 보관된 채널에서 자기가 나가면 200 이고 channel_member 에서 행이 사라진다', async () => {
+    const channelId = await createChannel('leave-archived-self');
+    const leaver = await createUserWithToken('leave-archived-leaver');
+    // admin 과 leaver 가 있다
+    expect((await addMember(channelId, leaver.id)).statusCode).toBe(200);
+    await setArchived(channelId, true);
+    const before = await memberCount(channelId);
+
+    // 자기가 나감
+    const res = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/members/${leaver.id}`,
+      headers: auth(leaver.token),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(await memberCount(channelId)).toBe(before - 1);
+    // 남은 멤버가 있는가 확인
+    const rows = await pool.query(
+      `select 1 from channel_member where channel_id = $1 and account_id = $2`, [channelId, leaver.id],
+    );
+    expect(rows.rowCount).toBe(0);
+  });
+
+  it('2. 보관된 채널에서 나가면 시스템 메시지가 안 남는다', async () => {
+    const channelId = await createChannel('leave-archived-no-msg');
+    const leaver = await createUserWithToken('leave-archived-no-msg-leaver');
+    expect((await addMember(channelId, leaver.id)).statusCode).toBe(200);
+    await setArchived(channelId, true);
+    const messagesBefore = await messageCount(channelId);
+
+    const res = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/members/${leaver.id}`,
+      headers: auth(leaver.token),
+    });
+
+    // **나간 것이 먼저다.** 메시지 수만 보면 나가기가 400 으로 막힌 상태도 초록이다 —
+    // 그때도 새 메시지는 없기 때문이다. 실측으로 확인했다: `isSelf` 예외를 통째로
+    // 되돌리면 이 절은 이 단언 없이 초록으로 남는다.
+    expect(res.statusCode).toBe(200);
+    const gone = await pool.query(
+      `select 1 from channel_member where channel_id = $1 and account_id = $2`, [channelId, leaver.id],
+    );
+    expect(gone.rowCount).toBe(0);
+    // 그러고도 메시지 수가 그대로다 — 시스템 메시지가 안 남는다.
+    expect(await messageCount(channelId)).toBe(messagesBefore);
+  });
+
+  it('3. 보관된 채널에서 남을 내보내는 것은 여전히 400 이고 행이 남아 있다', async () => {
+    const channelId = await createChannel('kick-from-archived');
+    expect((await addMember(channelId, userId)).statusCode).toBe(200);
+    await setArchived(channelId, true);
+    const before = await memberCount(channelId);
+
+    const res = await removeMember(channelId, userId);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('channel_archived');
+    expect(await memberCount(channelId)).toBe(before);
+    // 행이 실제로 남아 있는지 확인
+    const rows = await pool.query(
+      `select 1 from channel_member where channel_id = $1 and account_id = $2`, [channelId, userId],
+    );
+    expect(rows.rowCount).toBe(1);
+  });
+
+  it('4. 보관된 채널에 멤버 추가는 여전히 400 (#328 회귀선)', async () => {
+    const channelId = await createChannel('add-to-archived-regression');
+    await setArchived(channelId, true);
+    const before = await memberCount(channelId);
+
+    const res = await addMember(channelId, otherId);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('channel_archived');
+    expect(await memberCount(channelId)).toBe(before);
+  });
+
+  it('5. 보관되지 않은 채널에서 나가면 시스템 메시지가 남는다 (#322 회귀선)', async () => {
+    const channelId = await createChannel('leave-unarchived');
+    const leaver = await createUserWithToken('leave-unarchived-leaver');
+    expect((await addMember(channelId, leaver.id)).statusCode).toBe(200);
+    // 보관 안 함
+    const messagesBefore = await messageCount(channelId);
+
+    const res = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/members/${leaver.id}`,
+      headers: auth(leaver.token),
+    });
+
+    expect(res.statusCode).toBe(200);
+    // 메시지가 한 건 늘었다 — 보관되지 않은 채널의 퇴장 메시지는 그대로 남는다(#322).
+    expect(await messageCount(channelId)).toBe(messagesBefore + 1);
+  });
+
+  it('6. 마지막 한 사람까지 나갈 수 있다 — 갇히지 않는다', async () => {
+    // 이 이슈가 말하는 사실 그대로다: 보관된 채널에 **아무도 남지 않을 때까지** 나갈 수
+    // 있어야 한다. 한 사람만 내보내고 admin 을 남겨 두면 '마지막 멤버'를 한 번도 밟지 않아
+    // 제목이 말하는 것을 관찰하지 못한다.
+    const channelId = await createChannel('last-member-leave');
+    const leaver = await createUserWithToken('last-member-leaver');
+    expect((await addMember(channelId, leaver.id)).statusCode).toBe(200);
+    // private 채널은 만든 admin 이 첫 멤버다 — 지금 둘이다.
+    expect(await memberCount(channelId)).toBe(2);
+    await setArchived(channelId, true);
+
+    const first = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/members/${leaver.id}`,
+      headers: auth(leaver.token),
+    });
+    expect(first.statusCode).toBe(200);
+    // 남은 사람이 나간 사람과 다른 계정이어야 이 절이 뜻을 갖는다.
+    expect(leaver.id).not.toBe(adminId);
+    expect(await memberCount(channelId)).toBe(1);
+
+    const last = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/members/${adminId}`,
+      headers: auth(adminToken),
+    });
+
+    expect(last.statusCode).toBe(200);
+    expect(await memberCount(channelId)).toBe(0);
+    // 채널 행은 남는다(#155 의 캐스케이드 결정 전까지).
+    const channelRows = await pool.query(`select 1 from channel where id = $1`, [channelId]);
+    expect(channelRows.rowCount).toBe(1);
   });
 });

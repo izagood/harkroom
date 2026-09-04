@@ -31,10 +31,14 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
+// #365 로 사람의 `badge` 는 아무것도 그리지 않는다. 아래에서 **아바타 자체**를 재는
+// 자리들은 `variant="avatar"` 를 명시한다 — 기본값(`badge`)으로 두면 이 테스트들이
+// 재는 대상이 사라져 무엇도 지키지 않는다. 아바타가 사는 자리가 옮겨진 것이지
+// #159 의 보증(사진·이니셜 폴백·왕복 한 번)이 약해진 것은 아니다.
 describe('#159 아바타 표시', () => {
   it('아바타가 있으면 Identity 가 사진을 그린다', async () => {
     const c = fakeController();
-    render(<Identity account={withPhoto('u2', 'alice')} />);
+    render(<Identity account={withPhoto('u2', 'alice')} variant="avatar" />);
 
     const img = await screen.findByTestId('identity-avatar');
     // blob 이어야 한다 — 라우트를 직접 가리키면 헤더를 못 붙여 토큰이 URL 로 샌다.
@@ -46,7 +50,7 @@ describe('#159 아바타 표시', () => {
 
   it('아바타가 없으면 기존 이니셜 폴백이 그대로 나온다', async () => {
     const c = fakeController();
-    render(<Identity account={acc('u2', 'alice')} />);
+    render(<Identity account={acc('u2', 'alice')} variant="avatar" />);
 
     expect(screen.queryByTestId('identity-avatar')).toBeNull();
     expect(screen.getByText('A')).toBeTruthy();
@@ -94,7 +98,7 @@ describe('#159 아바타 표시', () => {
     // 캐시가 `Identity` 안에 있어야 하는 이유다 — 메시지 목록은 같은 얼굴을 수십 번 그린다.
     const c = fakeController();
     const alice = withPhoto('u2', 'alice');
-    render(<div><Identity account={alice} /><Identity account={alice} /><Identity account={alice} /></div>);
+    render(<div><Identity account={alice} variant="avatar" /><Identity account={alice} variant="avatar" /><Identity account={alice} variant="avatar" /></div>);
 
     await waitFor(() => expect(screen.getAllByTestId('identity-avatar')).toHaveLength(3));
     expect(c.fetchAvatar).toHaveBeenCalledTimes(1);
