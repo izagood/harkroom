@@ -118,9 +118,11 @@ describe('runPtyTurn', () => {
     // 그래서 단언을 지우는 게 아니라 pid 를 얻는 경로를 경쟁 없는 것으로 바꾼다.
     const dir = await mkdtemp(join(tmpdir(), 'pty-pid-'));
     const pidFile = join(dir, 'pid');
+    const termFile = join(dir, 'term-seen');
     try {
       const p = plan('hang-ignore-sigterm');
       p.env.FAKE_PID_FILE = pidFile;
+      p.env.FAKE_SIGTERM_FILE = termFile;
       // 하네스가 **준비됐는지**를 기다린다 — 시간이 아니라 상태다(#391). `runPtyTurn` 은
       // 타임아웃 타이머를 `onSpawn` 이 돌아온 **뒤에** 건다(pty.ts 의 그 자리 주석이 이 순서를
       // 계약으로 적어 뒀다). 그래서 여기서 동기적으로 막고 있는 동안은 시계가 아직 안 감기고,
@@ -147,6 +149,10 @@ describe('runPtyTurn', () => {
       // 재고 있다(#391 실측: 하네스가 SIGTERM 기본 처분으로 죽고 승격이 안 탔다).
       expect(ready).toBe(true);
       expect(r.timedOut).toBe(true);
+      // 하네스가 SIGTERM 을 **받고도 살아남았다**는 증거다. 이 단언이 없으면 하네스가
+      // SIGTERM 에 그냥 죽은 경우도 (pid 파일이 있고 프로세스가 사라졌으니) 초록이 되어,
+      // 승격 경로를 한 번도 안 태우고 통과한다 — #391 이 실제로 그 상태였다.
+      expect(existsSync(termFile)).toBe(true);
 
       const pid = Number(await readFile(pidFile, 'utf8'));
       expect(Number.isInteger(pid)).toBe(true);
