@@ -15,7 +15,7 @@ import type { Me } from './murmur.js';
 import { buildSystemPrompt, buildTurnPrompt, type MemoryContext, countOwnPostsSince, hasOwnPostSince, NO_REPLY_NOTICE } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
-import type { TurnResult } from './pty.js';
+import type { PtyWriter, TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
 import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
 
@@ -62,6 +62,12 @@ export type RunTurn = (
      * 없어서(이 타입이 좁혀 놨다) Phase 2 의 라이브 중계가 구조적으로 불가능했다.
      */
     onData?: (chunk: Buffer) => void;
+    /**
+     * PTY stdin 통로(#315). `onData` 의 반대 방향 — attach 한 소유자가 친 바이트가 이리로
+     * 들어간다. `RunPtyTurnOptions` 의 같은 이름 필드를 이 계약에도 연 것이고, 이유도
+     * `onData` 와 같다: 좁혀 놓은 이 타입이 넘길 방법을 막으면 배선이 구조적으로 불가능하다.
+     */
+    onSpawn?: (writer: PtyWriter) => void;
   },
 ) => Promise<TurnResult>;
 
@@ -78,7 +84,13 @@ export interface TurnRelay {
     channelId: string;
     threadRootId: string | null;
     harness: AgentHarness;
-  }): { sessionId: string; push(chunk: Buffer): void; close(): void };
+  }): {
+    sessionId: string;
+    push(chunk: Buffer): void;
+    /** 사람이 친 바이트가 갈 곳(#315). spawn 시점에 이어 붙인다. */
+    bindInput(writer: PtyWriter): void;
+    close(): void;
+  };
 }
 
 export interface MentionTurnDeps {
@@ -511,6 +523,16 @@ export async function runMentionTurn(
       timeoutMs: deps.turnTimeoutMs,
       // 릴레이가 없으면 탭도 없다 — `undefined` 를 넘겨 pty 쪽 호출을 아예 안 만든다.
       onData: session ? (chunk) => session.push(chunk) : undefined,
+      // 반대 방향(#315): 사람이 attach 해서 친 바이트가 이 PTY 로 들어온다. 릴레이가
+      // 없으면 그 바이트를 나를 길 자체가 없으므로 통로도 만들지 않는다.
+      //
+      // **이 배선이 이 턴의 권한을 바꾸지 않는다.** `plan` 은 위에서 `mode: 'mention'` 과
+      // `def.mentionPermission` 으로 이미 조립됐고 여기서 손대지 않는다 — 스펙 §6 의
+      // "멘션 턴에 attach 해도 그 턴의 모드는 바꿀 수 없다"는 **여전히 참이다.** 바뀐
+      // 것은 그 PTY 에 바이트를 넣을 수 있는 주체뿐이고, 그 주체는 하네스가 아니라
+      // 사람이다: `mention_permission` 은 에이전트가 스스로 넘지 못하는 선이지 사람이
+      // 넘지 못하는 선이 아니다(#315 운영자 결정).
+      onSpawn: session ? (writer: PtyWriter) => session.bindInput(writer) : undefined,
     });
   } finally {
     // 턴이 어떻게 끝나든(정상·타임아웃·예외) 세션은 닫는다. 안 닫으면 서버의 세션
