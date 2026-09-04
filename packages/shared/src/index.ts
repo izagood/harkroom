@@ -1057,6 +1057,12 @@ export interface AgentSessionView {
   harness: AgentHarness;
   /** 러너가 이 세션을 연 시각(ISO). 러너 시계다 — 서버가 찍지 않는다(러너만 아는 사실이다). */
   startedAt: string;
+  /**
+   * 이 PTY 가 어떤 턴인가(#337). `'mention'` 은 멘션이 띄운 비대화형 턴, `'interactive'`
+   * 는 사람이 [터미널 열기]로 스스로 연 턴이다 — 데스크탑이 "지금 사람이 조종 중"을
+   * 구분해 그릴 수단이다. 없으면(구 러너) 알 수 없다는 뜻이지 멘션 턴이라는 뜻이 아니다.
+   */
+  mode?: 'mention' | 'interactive';
 }
 
 /** 뷰어(데스크탑)가 보는 세션 상태. `runner-offline` 은 '끝났다'와 다르다. */
@@ -1087,7 +1093,16 @@ export type RelayRunnerFrame =
   /** 라이브 PTY 바이트. `data` 는 base64 이고 서버는 열지 않는다. */
   | { type: 'output'; sessionId: string; data: string }
   /** ring buffer 재생(서버의 `replay.request` 에 대한 답). 빈 버퍼도 빈 문자열로 답한다. */
-  | { type: 'replay'; sessionId: string; data: string };
+  | { type: 'replay'; sessionId: string; data: string }
+  /**
+   * `interactive.open` 에 대한 응답(#337, 스펙 §5-2 결정 4). `created` 가 false 면 이미
+   * 돌고 있던 턴(멘션이든 인터랙티브든)의 세션을 그대로 준 것이다 — 서버는 이 sessionId 로
+   * attach 티켓을 발급한다. 같은 소켓의 `session.started` 가 항상 이 프레임보다 먼저
+   * 도착하므로(순서 보장), 서버가 이 응답을 받는 시점에 세션 조회는 성립한다.
+   */
+  | { type: 'interactive.opened'; requestId: string; sessionId: string; created: boolean }
+  /** interactive.open 이 실패했다(codex 거절 등). message 는 사람에게 그대로 보여줄 문구다. */
+  | { type: 'interactive.error'; requestId: string; message: string };
 
 /**
  * 서버 → 러너 프레임.
@@ -1107,7 +1122,29 @@ export type RelayRunnerFrame =
  */
 export type RelayServerFrame =
   | { type: 'replay.request'; sessionId: string }
-  | { type: 'input'; sessionId: string; data: string };
+  | { type: 'input'; sessionId: string; data: string }
+  /**
+   * 이 세션을 보는 뷰어 수의 변동(#337). 러너의 인터랙티브 고아 회수가 읽는다 —
+   * exit 없이 viewer 가 0 이 되면 유예 뒤 SIGTERM(스펙 §5-2 결정 5). 패널 닫힘·소켓
+   * 단절·앱 강제종료가 서버 관점에서 전부 이 하나("viewer 소멸")로 수렴하므로, 명시적
+   * 종료 프레임은 두지 않는다.
+   */
+  | { type: 'viewer.count'; sessionId: string; count: number }
+  /**
+   * 사람이 스스로 터미널을 연다(#337, 스펙 §5-2 결정 4). 세션이 아니라 **스레드**를
+   * 가리킨다 — 세션이 아직 없을 수 있고, 없으면 러너가 만든다. `requestId` 로
+   * `interactive.opened`/`interactive.error` 와 상관된다. `openedByHandle` 은 조종 중
+   * 유예 통지("지금 {handle} 이 직접 조종 중")의 재료다.
+   */
+  | {
+      type: 'interactive.open';
+      requestId: string;
+      channelId: string;
+      threadRootId: string;
+      openedByHandle: string;
+      cols?: number;
+      rows?: number;
+    };
 
 /**
  * 서버 → 뷰어 프레임. `GET /agent-attach` 소켓에 실린다.

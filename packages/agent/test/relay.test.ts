@@ -289,3 +289,96 @@ describe('#315 서버가 보낸 input 을 그 세션의 PTY 로 넣는다', () =
     expect(written).toEqual([]);
   });
 });
+
+describe('#337 viewer.count — 인터랙티브 고아 회수의 신호', () => {
+  it('세션을 연 쪽이 넘긴 콜백으로 count 가 도착한다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial });
+    client.start();
+    d.open();
+    const counts: number[] = [];
+    const session = client.openSession({ ...SESSION, mode: 'interactive', onViewerCount: (n) => counts.push(n) });
+
+    d.deliver({ type: 'viewer.count', sessionId: session.sessionId, count: 2 });
+    d.deliver({ type: 'viewer.count', sessionId: session.sessionId, count: 0 });
+    expect(counts).toEqual([2, 0]);
+    // 모르는 세션의 count 는 어디에도 안 간다.
+    d.deliver({ type: 'viewer.count', sessionId: 'nope', count: 9 });
+    expect(counts).toEqual([2, 0]);
+  });
+
+  it('콜백이 던져도 릴레이는 산다 — 관찰이 답을 죽이지 않는다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial });
+    client.start();
+    d.open();
+    const session = client.openSession({ ...SESSION, mode: 'interactive', onViewerCount: () => { throw new Error('boom'); } });
+    expect(() => d.deliver({ type: 'viewer.count', sessionId: session.sessionId, count: 0 })).not.toThrow();
+  });
+
+  it('인터랙티브로 연 세션은 announce·started 에 mode 가 실린다 — 데스크탑이 조종 중을 구분한다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial });
+    client.start();
+    d.open();
+    client.openSession({ ...SESSION, mode: 'interactive' });
+    const started = d.sent.find((f) => f.type === 'session.started') as { session: { mode?: string } };
+    expect(started.session.mode).toBe('interactive');
+    // 기존 호출부(멘션 턴)는 mode 를 안 넘긴다 — 그때는 mention 으로 채운다.
+    client.openSession(SESSION);
+    const all = d.sent.filter((f) => f.type === 'session.started') as { session: { mode?: string } }[];
+    expect(all[1]!.session.mode).toBe('mention');
+  });
+});
+
+describe('#337 interactive.open 왕복', () => {
+  const OPEN = {
+    type: 'interactive.open', requestId: 'req-1',
+    channelId: 'c1', threadRootId: 'm1', openedByHandle: 'jaebin', cols: 100, rows: 30,
+  };
+
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it('훅의 성공이 interactive.opened 로 서버에 돌아간다', async () => {
+    const d = fakeDialer();
+    const client = createRelayClient({
+      murmurUrl: 'http://x', pat: 'p', dial: d.dial,
+      onInteractiveOpen: async (req) => {
+        expect(req).toEqual({ channelId: 'c1', threadRootId: 'm1', openedByHandle: 'jaebin', cols: 100, rows: 30 });
+        return { sessionId: 'sess-i', created: true };
+      },
+    });
+    client.start();
+    d.open();
+    d.deliver(OPEN);
+    await flush();
+    expect(d.sent).toContainEqual({ type: 'interactive.opened', requestId: 'req-1', sessionId: 'sess-i', created: true });
+  });
+
+  it('훅이 던지면 그 메시지가 interactive.error 로 간다 — codex 거절 문구가 사람에게 닿는 경로', async () => {
+    const d = fakeDialer();
+    const client = createRelayClient({
+      murmurUrl: 'http://x', pat: 'p', dial: d.dial,
+      onInteractiveOpen: async () => { throw new Error('codex 인터랙티브 턴은 지원하지 않는다'); },
+    });
+    client.start();
+    d.open();
+    d.deliver(OPEN);
+    await flush();
+    expect(d.sent).toContainEqual({
+      type: 'interactive.error', requestId: 'req-1', message: 'codex 인터랙티브 턴은 지원하지 않는다',
+    });
+  });
+
+  it('훅이 배선되지 않았으면 조용히 버리지 않고 에러로 응답한다 — 침묵이 곧 서버 타임아웃이다', async () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial });
+    client.start();
+    d.open();
+    d.deliver(OPEN);
+    await flush();
+    const errors = d.sent.filter((f) => f.type === 'interactive.error') as { requestId: string }[];
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.requestId).toBe('req-1');
+  });
+});
