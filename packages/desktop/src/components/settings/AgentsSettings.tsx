@@ -462,6 +462,23 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     >
                       {lastTurnLabel(a.lastTurnAt)}
                     </span>
+                    {/* #368: 러너 기동이 실패했으면 이 줄을 **presence 문구로 끝내지 않는다.**
+                        `오프라인 · 활동 없음` 은 틀린 말은 아니지만 사람을 잘못된 방향으로
+                        보낸다 — 읽는 사람은 "잠깐 자리를 비웠나(곧 오겠지)"로 이해하고 기다린다.
+                        실제로는 이 앱이 러너를 못 띄우고 있고, 그것은 **사람이 할 일이 있다는
+                        뜻**이다. presence 를 덮어쓰지 않고 옆에 더하는 이유는 위 #176 주석과
+                        같다: 생존·마지막 활동·러너는 서로 다른 사실이고, 뭉치면 #124 가 닫은
+                        결함(러너 없는 에이전트가 정상으로 보임)이 되살아난다.
+                        문구는 `state.message` 를 그대로 쓴다 — 이 화면이 따로 쓰면
+                        `runnerLauncher.ts` 의 사유와 갈라진다. */}
+                    {runnerStates[a.id]?.status === 'failed' && (
+                      <span
+                        data-testid={`agent-runner-failed-${a.id}`}
+                        className="ml-1 block whitespace-normal text-danger"
+                      >
+                        기동 실패{runnerStates[a.id]?.message ? ` — ${runnerStates[a.id]!.message}` : ''}
+                      </span>
+                    )}
                   </span>
                 </button>
               );

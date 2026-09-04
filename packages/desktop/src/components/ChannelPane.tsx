@@ -7,8 +7,10 @@ import { TypingLine } from './TypingLine';
 import { ChannelFiles } from './ChannelFiles';
 import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
+import { RunnerStatusLine } from './RunnerStatus';
 import { dayLabel, localDayKey } from '../lib/day';
 import { displayBody } from '../lib/mention';
+import { mentionedHandles, mentionedIds } from '@murmur/shared';
 import type { SectionId } from './settings/sections';
 
 interface ChannelPaneProps {
@@ -30,7 +32,7 @@ interface ChannelPaneProps {
 }
 
 export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: ChannelPaneProps) {
-  const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins } = useActiveStore();
+  const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins, runnerStates } = useActiveStore();
   const bottomRef = useRef<HTMLDivElement>(null);
   // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
   // 열림 상태도 채널 화면이 들고 있고, 채널이 바뀌면 `key` 로 패널이 다시 만들어진다.
@@ -57,6 +59,56 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       : null;
   // DM은 채널이 아니다 — '#'을 붙이면 존재하지 않는 채널 이름을 가리키게 된다.
   const composerTarget = channel ? `#${channel.name}` : (title ?? '');
+
+  /**
+   * #368: 이 채널에서 **부른** 에이전트의 러너가 기동에 실패했으면 그 사유를 여기, 부른
+   * 자리에 그린다. 사유 문구는 러너 실행기가 상태에 실어 준 `state.message` 를 그대로
+   * 지나보낸다 — 화면이 문구를 새로 쓰면 설정 화면의 것과 갈라져 한쪽만 고치는 사고가
+   * 난다(`runnerLauncher.ts::REPO_PATH_MISSING` 이 유일한 출처다).
+   *
+   * **'불렀다'의 판정은 채널 설정이 아니라 실제 본문이다.** 자동 멘션 설정
+   * (`channelAutoMentions`, #173)만 보면 이슈가 적은 재현 — 일반 채널에서 사람이 손으로
+   * `@forge` 를 치는 경우 — 가 통째로 빠진다. 그 설정은 "이 채널이 누구를 자동으로 부르나"
+   * 이지 "방금 누가 불렸나"가 아니다. 자동 멘션은 작성창이 보낼 때 본문 앞에 멘션을 실제로
+   * 붙이므로(`Composer.tsx::autoActive` → `withStickyMentions`), 본문만 보면 손으로 친 것과
+   * 자동으로 붙은 것이 **둘 다** 잡힌다.
+   *
+   * id 토큰(`<@uuid>`)과 평문 `@handle` 을 모두 보는 이유: 정규화는 보내는 쪽에 계정 지도가
+   * 있을 때만 일어나고(`normalizeMentions` 는 지도가 비면 본문을 그대로 돌려준다), 없으면
+   * 평문이 그대로 저장된다. 한쪽만 보면 그 경로에서 조용히 안 뜬다.
+   *
+   * DM 은 멘션이 없어도 부른 것으로 친다 — 상대가 그 에이전트뿐이라 보낸 글은 전부 그
+   * 에이전트에게 간 것이다.
+   */
+  const runnerFailureInChannel = useMemo(() => {
+    if (!activeChannelId) return null;
+    const agentIdByHandle = new Map<string, string>();
+    for (const a of Object.values(accounts)) {
+      if (a.kind === 'agent') agentIdByHandle.set(a.handle.toLowerCase(), a.id);
+    }
+    const called = new Set<string>();
+    if (dm) {
+      for (const memberId of dm.memberIds) {
+        if (accounts[memberId]?.kind === 'agent') called.add(memberId);
+      }
+    }
+    for (const m of messages[activeChannelId] ?? []) {
+      for (const id of mentionedIds(m.body)) {
+        if (accounts[id]?.kind === 'agent') called.add(id);
+      }
+      for (const handle of mentionedHandles(m.body)) {
+        const id = agentIdByHandle.get(handle);
+        if (id) called.add(id);
+      }
+    }
+    for (const agentId of called) {
+      const state = runnerStates[agentId];
+      // failed 일 때만이다. 정상인 러너의 상태를 늘 띄우면 그것은 안내가 아니라 소음이고,
+      // 소음이 되면 진짜 실패도 같이 안 읽힌다.
+      if (state?.status === 'failed') return { agentId, state };
+    }
+    return null;
+  }, [activeChannelId, dm, accounts, messages, runnerStates]);
 
   const roots = useMemo(
     () => (activeChannelId ? (messages[activeChannelId] ?? []).filter((m) => m.threadRootId === null || m.alsoInChannel) : []),
@@ -212,6 +264,18 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         <div ref={bottomRef} />
       </div>
       <TypingLine />
+      {/* #368: 부른 에이전트의 러너가 안 떴다는 사실은 **부른 자리 바로 위**에 둔다. 헤더에
+          두면 답을 기다리며 보는 곳(작성창 위)에서 눈이 닿지 않는다 — 이슈가 적은 실패
+          방식이 정확히 "보내고 기다리다 포기했다" 였다. `TypingLine`(누가 입력 중) 옆에
+          서는 것도 같은 이유다: 둘 다 "지금 답이 오는 중인가"에 답하는 줄이다. */}
+      {runnerFailureInChannel && (
+        <div data-testid="channel-runner-failure" className="border-t border-danger-border bg-surface-sunken px-4 py-1.5">
+          <span className="text-[11px] font-medium text-danger">
+            @{accounts[runnerFailureInChannel.agentId]?.handle ?? '에이전트'} 는 지금 응답하지 않는다
+          </span>
+          <RunnerStatusLine state={runnerFailureInChannel.state} />
+        </div>
+      )}
       <div className="border-t border-border p-3">
         {isArchived ? (
           <div className="rounded bg-surface-sunken p-2 text-center text-sm text-fg-subtle">
