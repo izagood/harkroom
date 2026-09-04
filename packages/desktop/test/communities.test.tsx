@@ -45,11 +45,11 @@ const fakeController = () => ({
 async function twoCommunities() {
   const ws = countingWsFactory();
   const a = await startCommunitySession({
-    baseUrl: 'https://a.example', token: 't-a', active: true,
+    baseUrl: 'https://a.example', token: 't-a', active: true, accountId: 'acct-a', label: null,
     api: fakeApi({ baseUrl: 'https://a.example' }), makeWs: ws.makeWs,
   });
   const b = await startCommunitySession({
-    baseUrl: 'https://b.example', token: 't-b', active: false,
+    baseUrl: 'https://b.example', token: 't-b', active: false, accountId: 'acct-b', label: null,
     api: fakeApi({ baseUrl: 'https://b.example' }), makeWs: ws.makeWs,
   });
   return { a, b, ws };
@@ -91,7 +91,9 @@ async function communityWithMention(baseUrl: string, active: boolean, notifier: 
       : [{ id: 1, messageId: 'm1', reason: 'mention' as const, readAt: null, channelId: 'c1' }])),
   });
   const ws = countingWsFactory();
-  const entry = await startCommunitySession({ baseUrl, token: 't', active, api, makeWs: ws.makeWs, notifier });
+  const entry = await startCommunitySession({
+    baseUrl, token: 't', active, accountId: `acct-${baseUrl}`, label: null, api, makeWs: ws.makeWs, notifier,
+  });
   entry.store.getState().upsertMessages('c1', [msg('m1', 'c1', 1, '이것 좀 봐줘', 'u2')]);
   return { entry, ws };
 }
@@ -270,10 +272,12 @@ describe('커뮤니티마다 스토어·컨트롤러 인스턴스 (#166)', () =>
   it('같은 커뮤니티에 다시 로그인해도 목록이 늘지 않는다', async () => {
     const ws = countingWsFactory();
     await startCommunitySession({
-      baseUrl: 'https://a.example', token: 't-a', active: true, api: fakeApi(), makeWs: ws.makeWs,
+      baseUrl: 'https://a.example', token: 't-a', active: true, accountId: 'acct-a', label: null,
+      api: fakeApi(), makeWs: ws.makeWs,
     });
     await startCommunitySession({
-      baseUrl: 'https://a.example', token: 't-a2', active: true, api: fakeApi(), makeWs: ws.makeWs,
+      baseUrl: 'https://a.example', token: 't-a2', active: true, accountId: 'acct-a', label: null,
+      api: fakeApi(), makeWs: ws.makeWs,
     });
 
     // 재로그인마다 엔트리가 붙으면 죽은 커뮤니티가 쌓이고, 그것만으로 알림 제목에
