@@ -412,6 +412,18 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
  * 안에서 뜨고, 그 셸에는 이 마커가 실제로 들어 있다(2026-09-04 실측). 러너 env 가 무엇인지
  * 우리가 고를 수 없으므로, 자식에게 넘기지 않는 쪽을 이 함수가 보장한다.
  *
+ * 앱 경로도 막히지 않는다: `runnerLauncher.ts::tauriSpawner` 는 러너에 `MURMUR_PAT`·
+ * `MURMUR_URL`·`PATH` 만 넘기지만, `@tauri-apps/plugin-shell` 의 `env` 는 **덮어쓰기가
+ * 아니라 추가**다(`index.d.ts`: "Environment variables. set to `null` to clear the process
+ * env" — `null` 을 줘야 지워진다). 즉 앱의 env 가 러너에 그대로 상속되고, 앱을 터미널에서
+ * 띄웠다면 그 터미널의 마커가 앱 → 러너 → 하네스까지 3단으로 흘러간다.
+ *
+ * **해악의 범위는 #348 기록보다 좁다는 것도 함께 적어 둔다.** 멘션 턴이 쓰는 `-p` 경로는
+ * 마커가 살아 있어도 세션 파일이 생겼다(2026-09-04 실측: 마커가 있는 셸에서
+ * `claude -p --session-id <uuid>` → 그 uuid 의 `.jsonl` 생성 확인). #348 이 본 "저장하지
+ * 않는다"는 인터랙티브 TUI 경로의 관찰이고, 그 경로는 #374 에서 **재현하지 못했다**(반증이
+ * 아니라 미확인이다). 그래도 벗기는 이유: 상속된다는 사실은 확정이고 벗기는 비용이 없다.
+ *
  * **`CLAUDE*` 를 통째로 지우지 않는 이유.** 같은 셸에 `CLAUDE_CODE_ENTRYPOINT`·`CLAUDECODE`·
  * `CLAUDE_CODE_SESSION_ID` 등이 함께 있지만(같은 실측), 그것들이 전사 저장을 끈다는 근거는
  * 없다. 근거 없이 지우면 하네스가 정상 동작에 쓰는 것을 뺏을 수 있다 — 전체 상속을 택한
