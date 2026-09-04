@@ -892,6 +892,24 @@ export interface ProjectionRuntime {
 export type ProjectionState = 'unconfigured' | 'stalled' | 'ok';
 
 /**
+ * 투영이 꺼져 있다는 사실을 사람·에이전트에게 말하는 **단 하나의 문구**(#381).
+ *
+ * 같은 사실을 말하는 자리가 셋이다: `LeasePanel` 의 ACTIVE WORK 배너(#267), `Sidebar`
+ * 채널 편집의 repo 입력, 그리고 MCP `work.link` 응답. 셋이 각자 문자열을 들고 있으면
+ * 문구를 고칠 때 한 벌만 고쳐지고 **화면과 API 가 같은 상태를 다른 말로 부른다** —
+ * `projectionState` 를 shared 에 둔 것과 같은 이유다(판정 한 벌, 문구도 한 벌).
+ *
+ * 서버가 이것을 쓰는 것이 이상하지 않다: `work.link` 가 실어 보내는 것은 화면이 이미
+ * 쓰는 그 문구이고, 에이전트가 사람에게 그대로 옮겨 적을 수 있어야 한다.
+ */
+export const PROJECTION_UNCONFIGURED_HEADLINE = '투영이 설정되지 않았다';
+/** 무엇을 하면 되는지. 배너에서는 headline 아래 줄이다. */
+export const PROJECTION_UNCONFIGURED_DETAIL = 'AVCS_BASE_URL 로 켠다';
+/** 한 줄로 써야 하는 자리(좁은 폼, API 응답)용. 위 둘에서 **파생**한다 — 세 번째 사본이 아니다. */
+export const PROJECTION_UNCONFIGURED_NOTICE =
+  `${PROJECTION_UNCONFIGURED_HEADLINE} — ${PROJECTION_UNCONFIGURED_DETAIL}`;
+
+/**
  * 폴링이 이보다 오래 안 돌았으면 멈춘 것으로 본다. 폴링 주기(25초)의 몇 배로 잡아
  * 한두 번 늦는 것을 장애로 오해하지 않는다.
  */
