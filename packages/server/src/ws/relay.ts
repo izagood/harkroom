@@ -202,7 +202,13 @@ export function createRelayHub(): RelayHub {
     // #369: 이 턴의 stdin 이 프롬프트 파일이면(진행 중인 멘션 턴) PTY master 로 쓴 바이트가
     // 자식의 fd 0 에 닿지 않는다. **하네스 종류로 재지 않는다** — 러너가 자기 계획에서 읽어
     // 실어 보낸 사실 하나를 그대로 쓴다(`AgentSessionView.acceptsInput`).
-    if (!runner.sessions.get(sessionId)?.acceptsInput) return 'observe-only';
+    const accepts = runner.sessions.get(sessionId)?.acceptsInput;
+    // **모르는 것과 아닌 것을 가른다.** `#346` 시절의 러너는 `input` 능력은 선언하면서 이
+    // 필드는 안 싣는다 — 그때 `'observe-only'` 라고 답하면 화면이 "프롬프트를 파일로 받는다"
+    // 는, 확인한 적 없는 이유를 사람에게 읽어 준다. 입력을 닫는 것은 같지만(모르는 것을 열
+    // 수는 없다) 이유는 러너가 낡았다는 사실 그대로여야 한다.
+    if (accepts === undefined) return 'runner-outdated';
+    if (!accepts) return 'observe-only';
     return null;
   };
 

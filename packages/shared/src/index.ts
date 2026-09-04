@@ -1074,8 +1074,16 @@ export interface AgentSessionView {
    *
    * `false` 면 서버는 그 세션의 뷰어에게 writer 차례를 주지 않는다. 없는 것을 있다고
    * 표시하지 않는다(docs/design.md §4): 쳐도 아무 데도 안 가는 입력창이 최악이다.
+   *
+   * **없으면(`undefined`) `false` 와 다르다.** `mode` 와 같은 이유로 옵셔널이다 — `#346`
+   * 시절의 러너는 `input` 능력은 선언하면서 이 필드는 모른다. 그때 서버는 여전히 입력을
+   * 닫지만(모르는 것을 열 수는 없다) 이유는 `'observe-only'` 가 아니라
+   * `'runner-outdated'` 다: 그 세션의 stdin 이 파일이라는 사실을 확인한 적이 없으므로,
+   * 확인한 척하면 화면이 다시 원인을 지어내는 것이 된다(이 이슈가 멈추려던 바로 그것).
+   * 러너 쪽 계약(`OpenSessionInput.acceptsInput`)은 옵셔널이 아니다 — 새 러너가 실수로
+   * 빠뜨리면 그 기본값이 곧 판정이 되기 때문이다.
    */
-  acceptsInput: boolean;
+  acceptsInput?: boolean;
 }
 
 /** 뷰어(데스크탑)가 보는 세션 상태. `runner-offline` 은 '끝났다'와 다르다. */
