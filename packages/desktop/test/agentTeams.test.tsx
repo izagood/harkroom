@@ -120,7 +120,14 @@ describe('팀 설정 화면 (#172)', () => {
     });
     await openTeam();
 
-    const row = screen.getByText('@bot').closest('div')!;
+    // `Edit ops` 제목은 팀원 목록보다 먼저 선다. 그 사이에는 bot 이 아직 팀원이 아니어서
+    // 같은 `@bot` 이 '팀원 추가' 셀렉트의 option 으로 서 있다 — 동기로 `getByText('@bot')`
+    // 을 하면 그 option 을 잡고 "(비활성) 이 없다"고 읽는다(#367). 그래서 팀원 행이
+    // 실제로 들어온 것을 **그 행에만 있는 '빼기' 버튼**으로 확인한 뒤에 표시를 잰다.
+    await waitFor(() => expect(screen.getByLabelText('팀원 빼기: bot')).toBeTruthy());
+
+    const row = screen.getByLabelText('팀원 빼기: bot').closest('div')!;
+    expect(within(row).getByText('@bot')).toBeTruthy();
     expect(within(row).getByText('(비활성)')).toBeTruthy();
   });
 
