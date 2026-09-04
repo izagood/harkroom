@@ -348,6 +348,9 @@ describe('6. 종료 코드', () => {
     await startAll(launcher, [agent('a')]);
 
     await launcher.reissue({ agent: agent('a'), repoPath: '/repo', runnerCommand: '' });
+    // 새 자식이 실제로 떴는지 먼저 못박는다 — 자식이 하나뿐인 상태로 통과하면
+    // '옛 자식의 종료'라는 이 테스트의 전제 자체가 없는 것이다.
+    expect(spawner.spawns).toHaveLength(2);
     expect(launcher.getStates()[0]!.status).toBe('running');
 
     // 재발급 순서(결정 3: 새 발급 → 옛 폐기 → 재실행)상 옛 자식은 폐기된 PAT 로 401 을
@@ -355,6 +358,13 @@ describe('6. 종료 코드', () => {
     spawner.exit(78, 0);
 
     expect(launcher.getStates()[0]!).toMatchObject({ status: 'running', exitCode: null });
+
+    // 그리고 78 이 죽은 것이 아님을 같은 자리에서 못박는다: **지금 자식**이 78 로 끝나면
+    // 여전히 '재발급 필요'가 된다. 이 대조가 없으면 위 단언은 세대 판정만 재고 78 자체는
+    // 재지 않아, 78 분기를 통째로 지워도 초록으로 남는다.
+    spawner.exit(78, 1);
+
+    expect(launcher.getStates()[0]!).toMatchObject({ status: 'needs_reissue', exitCode: 78 });
   });
 });
 
