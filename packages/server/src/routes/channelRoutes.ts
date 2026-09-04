@@ -6,7 +6,7 @@ import {
   addChannelMember, assertChannelVisible, audienceFor, channelListAudience, channelListLostAudience,
   channelMembershipGate, channelPostGate, createChannel, deleteChannel,
   getChannelDoc, getChannelRow, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
-  updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs,
+  updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs, renameSection,
 } from '../services/channels.js';
 import { listPins, pinMessage, unpinMessage } from '../services/pins.js';
 import {
@@ -23,6 +23,16 @@ import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS } from '@murmur/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { postMessage } from '../services/messages.js';
+
+/**
+ * 섹션 이름의 길이 규칙(#157) — 만드는 경로(`PATCH /channels/:id/pref`)와 이름을 바꾸는
+ * 경로(`PATCH /channels/sections/:name`, #323)가 **이 스키마 하나**를 쓴다. 복제하면
+ * 한쪽만 늘어나 "만들 수는 있는데 이름을 바꿀 수 없는" 섹션이 생긴다.
+ *
+ * 값 가공(앞뒤 공백 제거, 빈 값은 null)은 서비스의 `normalizeSectionName` 이 한다 —
+ * 여기서는 길이만 본다.
+ */
+const sectionName = z.string().max(40).nullable();
 
 export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, storage?: StorageBackend): Promise<void> {
   app.post('/channels', { preHandler: app.requireAdmin }, async (req, reply) => {
@@ -367,7 +377,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     // 섹션: DM 에는 사용할 수 없다(#157). 길이 1~40, 앞뒤 공백 제거, 빈 문자열은 null.
     // null 은 "섹션에서 빼기"고, 빈 문자열도 null 로 변환된다.
     // .min(1) 이 아니라 .max(40) 만 — 빈 문자열은 라우트에서 거르고 service 에서 null 로 변환.
-    section: z.string().max(40).optional().nullable(),
+    section: sectionName.optional(),
     // 섹션 안에서의 수동 순서(#157). null 이면 이름순 뒤에 붙는다.
     // `nullable` 인 이유: "지우기"는 명시적 null 이다 — 이것이 없으면 한 번 매긴 순서를
     // 되돌릴 방법이 없다(`undefined` 는 JSON 에서 키 자체가 사라져 "안 보냈다"가 된다).
@@ -403,6 +413,29 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
     }
     return pref;
+  });
+
+  /**
+   * 섹션 이름 바꾸기(#323). 요청자의 `channel_pref` 중 `section = 옛이름` 인 행을 전부
+   * 새 이름으로 한 트랜잭션에서 갱신한다. 새 이름이 이미 있으면 합친다.
+   *
+   * 길이 규칙은 `/channels/:id/pref` 의 `section` 과 **같은 스키마**(`sectionName`)를 쓰고,
+   * 값 가공(공백 제거, 빈 값은 null)은 서비스의 `normalizeSectionName` 하나가 한다 —
+   * 만드는 경로와 갈라지면 "만들 때는 되는데 이름을 바꾸면 안 되는" 이름이 생긴다.
+   *
+   * `name` 은 **필수**다. 안 보낸 요청(`undefined`)은 400 이고, 명시적 `null`(또는 빈 값)만
+   * "섹션에서 빼기"다 — 옵셔널로 두면 빈 본문이 조용히 섹션을 지운다.
+   */
+  app.patch('/channels/sections/:name', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { name: oldName } = z.object({ name: sectionName }).parse(req.params);
+    const { name: newName } = z.object({ name: sectionName.optional() }).parse(req.body);
+
+    if (newName === undefined) {
+      return reply.code(400).send({ error: { code: 'invalid_body', message: 'name is required' } });
+    }
+
+    const prefs = await renameSection(pool, req.account!.id, oldName, newName);
+    return { prefs };
   });
 
   /**

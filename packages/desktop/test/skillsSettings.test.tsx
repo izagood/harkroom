@@ -4,7 +4,9 @@ import type { WorkspaceSkillView } from '@murmur/shared';
 import { skillGroupOf } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController, type Controller as ControllerType } from '../src/state/controller';
-import { SkillsSettings, APPROVE_CONFIRM_TEXT } from '../src/components/settings/SkillsSettings';
+import {
+  SkillsSettings, APPROVE_CONFIRM_TEXT, REJECT_CONFIRM_TEXT, DISABLE_CONFIRM_TEXT,
+} from '../src/components/settings/SkillsSettings';
 import { Workspace } from '../src/components/Workspace';
 import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
@@ -149,6 +151,93 @@ describe('3. 승인은 확인을 거친다 — `window.confirm` 이 아니다', 
 
     expect(screen.queryByText(APPROVE_CONFIRM_TEXT)).toBeNull();
     expect(c.approveSkill).not.toHaveBeenCalled();
+  });
+});
+
+describe('3-b. 거부·비활성도 확인을 거친다(#325)', () => {
+  // 승인에만 확인이 있고 거부·비활성에는 없던 것이 #325 의 "함께 볼 것"이다.
+  // 비활성은 되돌리기 번거롭다 — 러너가 다음 턴에 이미 깔린 파일과 링크를 지우고,
+  // 되돌리는 라우트가 없어 에이전트가 다시 제안하는 수밖에 없다. 그래서 승인과 같은
+  // 인라인 확인을 요구한다. **첫 클릭에 요청이 나가면 확인 단계가 장식이다.**
+
+  it('거부는 첫 클릭에 나가지 않고, 확인을 누른 뒤에만 나간다', async () => {
+    signIn(true);
+    const c = fakeController();
+    const nativeConfirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', nativeConfirm);
+
+    render(<SkillsSettings />);
+    await screen.findByText('pending-one');
+
+    fireEvent.click(screen.getByRole('button', { name: '거부' }));
+    expect(c.disableSkill).not.toHaveBeenCalled();
+    // 브라우저 확인창으로 대신하면 Tauri 웹뷰에서 막힐 수 있다 — 이 저장소가 거절한 수단이다.
+    expect(nativeConfirm).not.toHaveBeenCalled();
+    expect(screen.getByText(REJECT_CONFIRM_TEXT)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '거부 확인' }));
+    await waitFor(() => expect(c.disableSkill).toHaveBeenCalledWith('pending-one'));
+
+    vi.unstubAllGlobals();
+  });
+
+  it('비활성화도 첫 클릭에 나가지 않고, 확인을 누른 뒤에만 나간다', async () => {
+    signIn(true);
+    const c = fakeController();
+    render(<SkillsSettings />);
+    await screen.findByText('approved-one');
+
+    fireEvent.click(screen.getByRole('button', { name: '비활성화' }));
+    expect(c.disableSkill).not.toHaveBeenCalled();
+    expect(screen.getByText(DISABLE_CONFIRM_TEXT)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '비활성화 확인' }));
+    await waitFor(() => expect(c.disableSkill).toHaveBeenCalledWith('approved-one'));
+  });
+
+  it('취소하면 확인이 닫히고 요청은 끝내 나가지 않는다', async () => {
+    signIn(true);
+    const c = fakeController();
+    render(<SkillsSettings />);
+    await screen.findByText('pending-one');
+
+    fireEvent.click(screen.getByRole('button', { name: '거부' }));
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+
+    expect(screen.queryByText(REJECT_CONFIRM_TEXT)).toBeNull();
+    expect(c.disableSkill).not.toHaveBeenCalled();
+  });
+
+  it('거부와 비활성의 문구가 다르다 — 미승인에는 지울 파일이 없다', async () => {
+    // 한 문구를 둘에 돌려 쓰면, 승인된 적 없는 스킬을 거부하는 사람에게 "파일을
+    // 삭제한다"고 경고하게 된다. 일어나지 않는 일이다.
+    signIn(true);
+    fakeController();
+    render(<SkillsSettings />);
+    await screen.findByText('pending-one');
+
+    fireEvent.click(screen.getByRole('button', { name: '거부' }));
+    expect(screen.queryByText(DISABLE_CONFIRM_TEXT)).toBeNull();
+    expect(screen.getByText(REJECT_CONFIRM_TEXT).textContent).not.toContain('파일');
+
+    fireEvent.click(screen.getByRole('button', { name: '비활성화' }));
+    expect(screen.getByText(DISABLE_CONFIRM_TEXT).textContent).toContain('파일');
+  });
+
+  it('승인 확인을 열면 거부 확인이 닫힌다 — 취소 버튼이 둘씩 뜨지 않는다', async () => {
+    signIn(true);
+    fakeController();
+    render(<SkillsSettings />);
+    await screen.findByText('pending-one');
+
+    fireEvent.click(screen.getByRole('button', { name: '거부' }));
+    fireEvent.click(screen.getByRole('button', { name: '승인' }));
+
+    // 둘 다 열려 있으면 getByRole 이 "여럿 찾음"으로 던진다 — 사람도 어느 쪽을
+    // 취소하는지 알 수 없다.
+    expect(screen.getByRole('button', { name: '취소' })).toBeTruthy();
+    expect(screen.queryByText(REJECT_CONFIRM_TEXT)).toBeNull();
+    expect(screen.getByText(APPROVE_CONFIRM_TEXT)).toBeTruthy();
   });
 });
 

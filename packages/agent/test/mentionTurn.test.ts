@@ -1675,7 +1675,7 @@ describe('MurmurAgentClient.listApprovedSkills(#140)', () => {
     }) as typeof fetch;
     try {
       await new MurmurAgentClient('http://localhost:3400', 'murp_t').listApprovedSkills();
-      expect(seen).toContain('/skills?approved=true');
+      expect(seen).toContain('/skills?state=approved');
     } finally {
       globalThis.fetch = original;
     }

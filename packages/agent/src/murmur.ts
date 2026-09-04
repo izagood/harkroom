@@ -155,7 +155,7 @@ export class MurmurAgentClient {
   }
 
   /**
-   * 승인된 스킬 목록(#140). `approved=true` 만 읽는다 — 미승인 스킬을 러너가 실체화하면
+   * 승인된 스킬 목록(#140). `state=approved` 만 읽는다 — 미승인 스킬을 러너가 실체화하면
    * 승인 게이트가 없는 것과 같다.
    *
    * **던지는 것을 삼키지 않는다.** readMemory 와 같은 이유다: 여기서 빈 배열로 뭉개면
@@ -164,7 +164,7 @@ export class MurmurAgentClient {
    * 그쪽은 삼키면서 stderr 에 한 줄을 남긴다.
    */
   async listApprovedSkills(): Promise<{ slug: string; body: string }[]> {
-    const res = await fetch(`${this.baseUrl}/skills?approved=true`, {
+    const res = await fetch(`${this.baseUrl}/skills?state=approved`, {
       headers: { authorization: `Bearer ${this.pat}` },
     });
     if (!res.ok) {

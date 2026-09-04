@@ -38,7 +38,7 @@ function workingKeychain(): Map<string, string> {
 
 const sessions: StoredSessions = {
   active: 'acct_123',
-  communities: [{ accountId: 'acct_123', baseUrl: 'http://x:3400', token: 'murs_secret', handle: 'testuser' }],
+  communities: [{ accountId: 'acct_123', baseUrl: 'http://x:3400', token: 'murs_secret', handle: 'testuser', label: null }],
 };
 
 beforeEach(() => {
