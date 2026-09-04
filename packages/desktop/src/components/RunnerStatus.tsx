@@ -54,13 +54,25 @@ export function RunnerStatusLine({ state }: { state: RunnerState | undefined }) 
 }
 
 export function RunnerStatusDot({ state, agentId }: { state: RunnerState | undefined; agentId: string }) {
+  // 상태를 모르면 아무것도 그리지 않는다 — '알 수 없음'을 '꺼짐'으로 읽으면 사람이
+  // 아무 일도 안 하지만 Russalka 는 이미 띄워져 있을 수 있다. 알고 있는 사실만 말한다.
   if (!state) return null;
+  // failed 상태에서는 사람에게 보이는 사유를 함께 그린다(#368). 이유 없는 '실패'는
+  // 사람이 할 수 있는 일이 없는 거짓 신호다.
+  const message = state.status === 'failed' ? state.message : null;
   return (
-    <span
-      data-testid={`runner-${agentId}`}
-      data-runner-status={state.status}
-      title={`러너: ${runnerStatusLabel(state)}`}
-      className={`h-2 w-2 rounded-sm ${DOT[state.status]}`}
-    />
+    <>
+      <span
+        data-testid={`runner-${agentId}`}
+        data-runner-status={state.status}
+        title={`러너: ${runnerStatusLabel(state)}${message ? ` — ${message}` : ''}`}
+        className={`h-2 w-2 rounded-sm ${DOT[state.status]}`}
+      />
+      {message && (
+        <span className="text-[10px] text-danger" title={message}>
+          !
+        </span>
+      )}
+    </>
   );
 }

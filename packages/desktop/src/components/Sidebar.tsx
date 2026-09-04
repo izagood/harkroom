@@ -1276,6 +1276,29 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
             ))
           )}
         </div>
+        {/* #368: 에이전트별 러너 상태. DM 이 없어도 이 섹션에서 러너 실패 사유를 볼 수 있다.
+            이미 DM 이 있는 에이전트는 DMs 섹션에_runnerStatusDot 이 함께 보이므로 여기서는 뺀다. */}
+        {(() => {
+          const dmAgentIds = new Set(dms.map((dm) => dm.memberIds.find((id) => accounts[id]?.kind === 'agent')).filter(Boolean) as string[]);
+          const agents = Object.values(accounts).filter((a) => a.kind === 'agent' && !dmAgentIds.has(a.id));
+          if (agents.length === 0) return null;
+          return (
+            <>
+              <div className="flex items-center px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
+                Agents
+              </div>
+              <div className="mb-1">
+                {agents.map((a) => (
+                  <button key={a.id} className={row(false)}
+                    onClick={() => void getController().startDm(a.id)}>
+                    <RunnerStatusDot agentId={a.id} state={runnerStates[a.id]} />
+                    <span>@{a.handle}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          );
+        })()}
         <LeasePanel />
         </nav>
         <div className="relative flex items-center gap-2 border-t border-border p-3 text-xs">
