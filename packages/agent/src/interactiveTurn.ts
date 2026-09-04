@@ -15,6 +15,7 @@ import type { AgentHarness, AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, type TurnPlan } from './turn.js';
+import { acceptsPtyInput } from './pty.js';
 import type { PtyControls, TurnResult } from './pty.js';
 import type { Exec } from './workspace.js';
 import { resolveWorkspaceDir } from './mentionTurn.js';
@@ -242,6 +243,10 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       threadRootId: req.threadRootId,
       harness: def.harness,
       mode: 'interactive',
+      // #369: 이 턴의 계획은 `stdinFile: null` 이라(사람이 직접 친다) PTY 가 그대로
+      // 자식의 stdin 이다 — 입력이 실제로 닿는다. 위 `mode` 가 아니라 **계획**에서 읽는
+      // 이유: 판정의 근거는 턴의 이름이 아니라 fd 0 의 정체다(pty.ts::acceptsPtyInput).
+      acceptsInput: acceptsPtyInput(plan),
       onViewerCount,
     });
 

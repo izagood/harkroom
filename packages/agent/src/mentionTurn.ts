@@ -15,6 +15,7 @@ import type { Me } from './murmur.js';
 import { buildSystemPrompt, buildTurnPrompt, type MemoryContext, countOwnPostsSince, NO_REPLY_NOTICE } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
+import { acceptsPtyInput } from './pty.js';
 import type { PtyWriter, TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
 import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
@@ -526,6 +527,11 @@ export async function runMentionTurn(
     channelId,
     threadRootId: anchor,
     harness: def.harness,
+    // #369: 이 턴은 프롬프트를 **파일로** 받는다(#117 — 본문을 argv 에 올리지 않는다).
+    // 그래서 `composeSpawn` 이 `sh -c 'exec ... < 파일'` 로 감싸고, 자식의 fd 0 은 PTY 가
+    // 아니라 그 파일이다 — 사람이 여기 쳐도 자식에게 닿지 않는다. 그 사실을 서버까지
+    // 실어 보내 **차례 자체를 안 주게** 한다: 쳐도 아무 데도 안 가는 입력창이 최악이다.
+    acceptsInput: acceptsPtyInput(plan),
   });
 
   // #337: 이 스레드에 멘션 턴이 돈다는 사실을 등록한다 — 인터랙티브 open 의 3분기 ①
