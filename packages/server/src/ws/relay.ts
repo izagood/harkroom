@@ -188,32 +188,12 @@ export function createRelayHub(): RelayHub {
   };
 
   /**
-   * writer 차례를 넘긴다. 이전 writer 에 `false`, 새 writer 에 `true` 를 **이 순서로**
-   * 알린다 — 두 창이 동시에 "내 차례"라고 믿는 순간을 만들지 않는다.
-   */
-  const setWriter = (sessionId: string, next: Viewer | null): void => {
-    const prev = writerOf.get(sessionId) ?? null;
-    if (prev === next) return;
-    // 강등의 이유는 언제나 하나다 — 더 최근에 붙은 창이 차례를 가져갔다(#369: 이유를
-    // 함께 실어야 화면이 그것을 지어내지 않는다). 능력·stdin 때문에 못 주는 경우는
-    // 애초에 여기 오지 않는다(`writerDenial` 이 addViewer 에서 걸러 낸다).
-    if (prev) sendTo(prev, { type: 'writer', writer: false, reason: 'other-writer' });
-    if (next) {
-      writerOf.set(sessionId, next);
-      sendTo(next, { type: 'writer', writer: true, reason: null });
-    } else {
-      writerOf.delete(sessionId);
-    }
-  };
-
-  /**
-   * 이 세션에 쓰기 차례를 **줄 수 있는가**(#346 + #369). `null` 이면 줄 수 있고, 아니면
-   * 못 주는 이유다.
+   * 이 세션이 **입력**을 받을 수 있는가(#369). 못 받으면 그 이유다.
    *
-   * 판정을 한 곳에 모은 이유: attach 시점과 승계 시점이 각자 조건을 다시 쓰면 한쪽만
-   * 고쳐져 "붙을 때는 읽기 전용인데 앞 창이 닫히면 갑자기 writer 가 되는" 상태가 생긴다.
+   * `sessionAcceptsInput` 이 아니라 이유를 돌려주는 이유: 뷰어에 그대로 실어 보내야 하고,
+   * 화면이 원인을 지어내지 않는 것이 이 결함 수정의 절반이다.
    */
-  const writerDenial = (sessionId: string): WriterDeniedReason | null => {
+  const inputDenial = (sessionId: string): WriterDeniedReason | null => {
     const agentAccountId = ownerOf.get(sessionId);
     const runner = agentAccountId ? runners.get(agentAccountId) : undefined;
     // 러너가 없거나 `input` 능력을 선언하지 않았으면(구 러너, #346) 그 러너로 흘린 input 은
@@ -224,6 +204,29 @@ export function createRelayHub(): RelayHub {
     // 실어 보낸 사실 하나를 그대로 쓴다(`AgentSessionView.acceptsInput`).
     if (!runner.sessions.get(sessionId)?.acceptsInput) return 'observe-only';
     return null;
+  };
+
+  /**
+   * 차례를 넘긴다. 이전 차례에 `false`, 새 차례에 그 세션이 허용하는 능력을 **이 순서로**
+   * 알린다 — 두 창이 동시에 "내 차례"라고 믿는 순간을 만들지 않는다.
+   *
+   * **차례 하나에 능력 둘이다**(#369): 폭은 차례를 가진 창이면 언제나 정하고(#335 — stdin 과
+   * 무관하게 ioctl 로 닿는다), 입력은 그 세션이 실제로 받을 수 있을 때만 연다.
+   */
+  const setWriter = (sessionId: string, next: Viewer | null): void => {
+    const prev = writerOf.get(sessionId) ?? null;
+    if (prev === next) return;
+    // 강등의 이유는 언제나 하나다 — 더 최근에 붙은 창이 차례를 가져갔다(#369: 이유를
+    // 함께 실어야 화면이 그것을 지어내지 않는다). 능력이 없어 차례 자체를 못 주는 경우는
+    // 애초에 여기 오지 않는다(`addViewer` 가 걸러 낸다).
+    if (prev) sendTo(prev, { type: 'writer', writer: false, resize: false, reason: 'other-writer' });
+    if (next) {
+      writerOf.set(sessionId, next);
+      const denial = inputDenial(sessionId);
+      sendTo(next, { type: 'writer', writer: denial === null, resize: true, reason: denial });
+    } else {
+      writerOf.delete(sessionId);
+    }
   };
 
   const registerSession = (agentAccountId: string, session: AgentSessionView): void => {
@@ -405,15 +408,13 @@ export function createRelayHub(): RelayHub {
         sendToRunner(runner, { type: 'replay.request', sessionId });
       }
 
-      // 마지막 attach 가 writer 다(스펙 §5-2 결정 2) — 단, 그 세션이 입력을 받을 수 있을
-      // 때만이다. 못 주는 경우에는 **이유를 함께** 내려 읽기 전용임을 바로 알린다:
-      // "안 되는 것"은 고장이 아니라 안 열림으로 보여야 하고(#346), 왜 안 열렸는지까지
-      // 말해야 사람이 다른 길을 찾는다(#369).
-      const denial = writerDenial(sessionId);
-      if (denial === null) {
+      // 마지막 attach 가 차례를 갖는다(스펙 §5-2 결정 2). 러너가 아예 능력이 없으면
+      // (구 러너, #346) 차례 자체를 주지 않는다 — 폭도 입력도 그 러너에는 안 닿는다.
+      // 그 밖의 경우 차례는 주고, 무엇을 할 수 있는지는 `setWriter` 가 이유와 함께 알린다.
+      if (runner?.caps.has('input')) {
         setWriter(sessionId, viewer);
       } else {
-        sendTo(viewer, { type: 'writer', writer: false, reason: denial });
+        sendTo(viewer, { type: 'writer', writer: false, resize: false, reason: 'runner-outdated' });
       }
 
       // 러너의 인터랙티브 고아 회수(#337)가 이 수를 본다 — 늘어난 쪽도 알린다(0→1 이
@@ -441,11 +442,15 @@ export function createRelayHub(): RelayHub {
           try { parsed = JSON.parse(raw); } catch { return false; }
           const frame = parsed as AttachClientFrame;
           if (frame?.type !== 'input' && frame?.type !== 'resize') return false;
-          // **writer 가 아니면 여기서 멈춘다.** 화면이 입력을 안 그리는 것만으로는
-          // 게이트가 아니다 — 소켓은 누구나 직접 열 수 있으므로, 진짜 게이트는 이 줄이다.
+          // **차례가 아니면 여기서 멈춘다.** 화면이 입력을 안 그리는 것만으로는 게이트가
+          // 아니다 — 소켓은 누구나 직접 열 수 있으므로, 진짜 게이트는 이 줄이다.
           // **#335 의 resize 도 이 한 줄이 막는다** — 스펙 §5 "resize 는 writer 를 따른다":
-          // 읽기 전용 창이 크기를 바꾸면 그 창은 더 이상 읽기 전용이 아니다. 프레임 종류만
-          // 늘었지 판정은 늘지 않았다.
+          // 읽기 전용 창이 크기를 바꾸면 그 창은 더 이상 읽기 전용이 아니다.
+          //
+          // **#369 에서 이 줄의 뜻이 좁아졌다**: 전에는 이 한 줄이 두 프레임의 판정 전부였고
+          // "차례를 가진 사람 = 칠 수 있는 사람"이었다. 이제 차례는 **순서**만 정하고(누가
+          // 폭의 주인인가), 입력이 실제로 열리는지는 아래 한 겹이 더 본다 — 관찰 전용
+          // 세션에는 writer 가 없지만 폭의 주인은 여전히 있어야 하기 때문이다.
           if (writerOf.get(sessionId) !== viewer) return false;
           const owner = ownerOf.get(sessionId);
           const target = owner ? runners.get(owner) : undefined;
@@ -453,6 +458,11 @@ export function createRelayHub(): RelayHub {
           // 러너가 능력 없는 버전으로 재접속·재announce 하는 창이 있다. 그때의 input 은
           // 러너가 조용히 버릴 프레임이므로 애초에 보내지 않는다.
           if (!target?.caps.has('input')) return false;
+
+          // **입력은 한 겹 더 탄다**(#369). 차례는 폭까지만 보장하고, 바이트를 넣는 것은
+          // 그 세션의 stdin 이 PTY 일 때만 성립한다 — 아니면 자식에게 닿지 않으므로
+          // 애초에 보내지 않는다(러너까지 갔다가 버려지면 감사에는 "개입했다"로 남는다).
+          if (frame.type === 'input' && inputDenial(sessionId) !== null) return false;
 
           if (frame.type === 'resize') {
             // 이 숫자는 러너의 resize 를 지나 ioctl 로 그대로 내려간다 — 0·음수·NaN·
