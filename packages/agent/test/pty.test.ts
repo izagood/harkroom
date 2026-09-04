@@ -1,5 +1,6 @@
 import { tmpdir } from 'node:os';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { basename, delimiter, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -117,11 +118,46 @@ describe('runPtyTurn', () => {
     // 그래서 단언을 지우는 게 아니라 pid 를 얻는 경로를 경쟁 없는 것으로 바꾼다.
     const dir = await mkdtemp(join(tmpdir(), 'pty-pid-'));
     const pidFile = join(dir, 'pid');
+    const termFile = join(dir, 'term-seen');
     try {
       const p = plan('hang-ignore-sigterm');
       p.env.FAKE_PID_FILE = pidFile;
-      const r = await runPtyTurn(p, { cwd: process.cwd(), timeoutMs: 200, killGraceMs: 200 });
+      p.env.FAKE_SIGTERM_FILE = termFile;
+      // 하네스가 **준비됐는지**를 기다린다 — 시간이 아니라 상태다(#391).
+      //
+      // **이 대기가 동기라는 것이 핵심이다.** 타임아웃 타이머의 콜백은 이 스레드가 이벤트
+      // 루프로 돌아와야 발화하는데, 여기서 스레드를 막고 있는 동안은 돌아가지 않는다 —
+      // 그래서 `timeoutMs` 를 한 ms 도 늘리지 않으면서 "준비된 하네스에게서 200ms" 를
+      // 만든다. 부하가 더 커지면 준비를 더 기다릴 뿐이라 다시 새지 않는다.
+      //
+      // **이 대기를 `await` 로 바꾸지 마라** — 비동기가 되는 순간 이벤트 루프가 돌아 시계가
+      // 흐르고, 이 대기가 조용히 무력해진다. (타이머를 `onSpawn` **앞뒤** 어디에 등록하든
+      // 결과는 같다 — 통제 실험 4/4 초록. 등록 순서가 아니라 동기성이 이것을 성립시킨다.)
+      //
+      // 재우면서 기다리는 이유(`Atomics.wait`): busy loop 으로 돌면 이 스레드가 자식과 CPU 를
+      // 다투어 준비를 **더** 늦춘다 — 부하가 원인인 결함에 부하를 더 얹는 대기는 쓸 수 없다.
+      let ready = false;
+      const idle = new Int32Array(new SharedArrayBuffer(4));
+      const r = await runPtyTurn(p, {
+        cwd: process.cwd(), timeoutMs: 200, killGraceMs: 200,
+        onSpawn: () => {
+          const until = Date.now() + 15_000;
+          while (!existsSync(pidFile)) {
+            // 영영 안 생기면 여기서 매달리지 않는다 — 그때는 아래 단언이 원인을 말해 준다.
+            if (Date.now() > until) return;
+            Atomics.wait(idle, 0, 0, 10);
+          }
+          ready = true;
+        },
+      });
+      // 준비 확인이 **먼저다.** 이것이 거짓이면 아래 단언들은 승격 경로가 아니라 다른 사건을
+      // 재고 있다(#391 실측: 하네스가 SIGTERM 기본 처분으로 죽고 승격이 안 탔다).
+      expect(ready).toBe(true);
       expect(r.timedOut).toBe(true);
+      // 하네스가 SIGTERM 을 **받고도 살아남았다**는 증거다. 이 단언이 없으면 하네스가
+      // SIGTERM 에 그냥 죽은 경우도 (pid 파일이 있고 프로세스가 사라졌으니) 초록이 되어,
+      // 승격 경로를 한 번도 안 태우고 통과한다 — #391 이 실제로 그 상태였다.
+      expect(existsSync(termFile)).toBe(true);
 
       const pid = Number(await readFile(pidFile, 'utf8'));
       expect(Number.isInteger(pid)).toBe(true);

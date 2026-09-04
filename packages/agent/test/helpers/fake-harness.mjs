@@ -34,11 +34,23 @@ if (mode === 'hang-ignore-sigterm') {
   // ring 에 도달하기 전에 유실될 수 있다 — CI 부하에서 실제로 그렇게 실패했다
   // (`expected null not to be null`: ring 에 pid= 가 없었다). 파일 쓰기는 프로세스가 죽어도
   // 남으므로 테스트가 경쟁 없이 pid 를 얻는다.
+  //
+  // **핸들러를 pid 파일보다 먼저 건다**(#391). 순서가 계약이다: pid 파일이 존재한다는 것은
+  // 곧 이 프로세스가 이미 SIGTERM 에 면역이라는 뜻이어야 한다. 예전 순서(쓰기 → 핸들러)는
+  // 그 사이 창에 SIGTERM 이 닿으면 기본 처분으로 죽는데, 그때 테스트는 pid 를 읽는 데
+  // 성공하므로 **승격 경로를 안 태우고도 초록으로 통과**했다. 실측(#391 통제 실험): 부팅이
+  // timeoutMs 를 넘으면 pid 파일이 3초 뒤에도 안 생기고 턴이 SIGTERM 시점에 끝났다.
+  // 핸들러는 **SIGTERM 을 봤다는 사실을 남긴다**(#391). 이것이 없으면, 하네스가 핸들러를
+  // 못 걸고 SIGTERM 에 그냥 죽은 경우에도 테스트는 (pid 파일이 있고 프로세스가 사라졌으므로)
+  // 초록으로 통과한다 — 승격을 한 번도 안 태우고서. 무시했다는 증거를 파일로 남겨야 그
+  // 사건과 "SIGTERM 을 받고도 살아남았다" 를 테스트가 가를 수 있다.
+  process.on('SIGTERM', () => {
+    if (process.env.FAKE_SIGTERM_FILE) writeFileSync(process.env.FAKE_SIGTERM_FILE, 'seen');
+  });
   if (process.env.FAKE_PID_FILE) {
     writeFileSync(process.env.FAKE_PID_FILE, String(process.pid));
   }
   console.log(`pid=${process.pid}`);
-  process.on('SIGTERM', () => {});
   setInterval(() => {}, 1_000);
 }
 // #315: attach 한 사람이 친 바이트가 정말 이 프로세스의 stdin 에 닿는지 확인한다.
