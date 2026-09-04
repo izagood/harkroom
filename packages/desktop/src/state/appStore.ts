@@ -155,6 +155,7 @@ export interface AppState {
   skillsRevision: number;
   set(partial: Partial<AppState>): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
+  incrementReplyCount(channelId: string, messageId: string): void;
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
   removeMessage(channelId: string, messageId: string): void;
   /**
@@ -225,6 +226,16 @@ export function createAppStore() {
       for (const r of rows) byId.set(r.id, r);
       const merged = [...byId.values()].sort((a, b) => a.seq - b.seq);
       set({ messages: { ...get().messages, [channelId]: merged } });
+    },
+    incrementReplyCount: (channelId, messageId) => {
+      const rows = get().messages[channelId];
+      if (!rows) return;
+      const parent = rows.find((m) => m.id === messageId);
+      if (!parent) return;
+      const next = rows.map((m) =>
+        m.id === messageId ? { ...m, replyCount: (m.replyCount ?? 0) + 1 } : m
+      );
+      set({ messages: { ...get().messages, [channelId]: next } });
     },
     /**
      * 리액션 델타를 적용한다. 같은 사람이 두 번 들어오지 않게 하는 것이 핵심이다 — 내가 누른
