@@ -142,4 +142,25 @@ describe('부름이 오면 사이드바에 다시 나타난다(#376)', () => {
     // 워크스페이스의 모든 멘션마다 모든 기기가 선호를 다시 읽으면 안 된다.
     expect(channelPrefs.mock.calls.length).toBe(calls);
   });
+
+  it('6 — 숨긴 채널이 없으면 다시 읽지 않는다(로컬 선호를 되돌리지 않는다)', async () => {
+    const channelPrefs = vi.fn(async () => [pref('c1', { notifyLevel: 'none' })]);
+    const api = fakeApi({ channelPrefs } as never);
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    setController(c);
+    await c.start();
+    await waitFor(() => expect(useAppStore.getState().channelPrefs.c1).toBeTruthy());
+    const calls = channelPrefs.mock.calls.length;
+
+    // 방금 로컬에 반영한 값(음소거 해제 같은 낙관적 갱신). 무조건 다시 읽으면 이것이
+    // 한 박자 늦은 서버 응답에 되돌아간다 — `channelMute` 회귀선이 실제로 그렇게 빨개졌다.
+    const store = useAppStore.getState();
+    store.set({ channelPrefs: { c1: pref('c1', { notifyLevel: 'all' }) } });
+    callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(channelPrefs.mock.calls.length).toBe(calls);
+    expect(useAppStore.getState().channelPrefs.c1?.notifyLevel).toBe('all');
+  });
 });

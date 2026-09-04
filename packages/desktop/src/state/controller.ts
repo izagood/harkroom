@@ -283,7 +283,14 @@ export class Controller {
           // 풀기 때문이다(`services/messages.ts` 의 `insertInbox`). 같은 판정을 여기서 다시
           // 구현하면 두 곳이 갈라져 "서버는 풀었는데 사이드바에는 안 보이는" 채널이 생긴다 —
           // 규칙은 서버 한 곳에 두고 이쪽은 결과만 다시 읽는다.
-          this.swallow(this.refreshChannelPrefs());
+          //
+          // **숨긴 채널이 하나도 없으면 읽지 않는다.** 서버가 혼자 바꾸는 값은 `hiddenAt`
+          // 하나뿐이라, 숨긴 것이 없으면 다시 읽어도 같은 값이다. 무조건 읽으면 멘션마다
+          // 왕복이 하나 늘고, 방금 로컬에 반영한 선호(음소거 해제 등)를 한 박자 늦은 응답이
+          // 되돌리는 창이 생긴다 — `channelMute` · `channelNotifyLevel` 회귀선이 그 창을 본다.
+          if (Object.values(store.channelPrefs).some((p) => p?.hiddenAt)) {
+            this.swallow(this.refreshChannelPrefs());
+          }
         }
         break;
       case 'lease.changed':
