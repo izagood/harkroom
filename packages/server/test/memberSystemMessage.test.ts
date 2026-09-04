@@ -5,6 +5,9 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin } from './helpers/fixtures.js';
 import { onEvent } from '../src/events.js';
+// 자리표시자 문자열을 여기 베껴 쓰지 않는다(#329) — 베끼면 서버가 그것을 바꿔도 이 파일은
+// 옛 문자열을 그대로 초록으로 통과시키고, 화면은 치환되지 않은 본문을 그린다.
+import { SYSTEM_ACCOUNT_PLACEHOLDER } from '@murmur/shared';
 
 let app: FastifyInstance;
 let pool: Pool;
@@ -89,8 +92,12 @@ describe('멤버 입·퇴장 시스템 메시지 (#322)', () => {
 
     expect((await addMember(channelId, userId)).statusCode).toBe(200);
 
-    // #329: 본문에 이름 대신 자리표시자. 표시 시점에 meta.accountId 로 현재 handle 를 찾는다.
-    expect(await systemBodies(channelId)).toEqual(['계정이 채널에 추가되었습니다.']);
+    // 개수까지 못박는다 — "하나 이상 있다"만 보면 같은 사건에 둘이 남아도 초록이다.
+    // #329: 본문에 이름 대신 자리표시자. 대상은 meta.accountId 로 싣고 화면이 표시 시점에
+    // 지금의 handle 을 채운다.
+    expect(await systemBodies(channelId)).toEqual([
+      `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에 추가되었습니다.`,
+    ]);
   });
 
   it('2. 제거되면 시스템 메시지가 남는다 — 나간 것과 내보낸 것의 문구가 다르다', async () => {
@@ -106,11 +113,16 @@ describe('멤버 입·퇴장 시스템 메시지 (#322)', () => {
     expect((await removeMember(channelId, self.accountId, self.token)).statusCode).toBe(200);
 
     expect(await systemBodies(channelId)).toEqual([
-      '계정이 채널에 추가되었습니다.',
-      '계정이 채널에서 제거되었습니다.',
-      '계정이 채널에 추가되었습니다.',
-      '계정이 채널에서 나갔습니다.',
+      `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에 추가되었습니다.`,
+      `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에서 제거되었습니다.`,
+      `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에 추가되었습니다.`,
+      `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에서 나갔습니다.`,
     ]);
+    // #329 이후 본문에는 이름이 없다 — 나감/내보냄을 가르는 것은 **문장**이다. 그 구분이
+    // 문장에서마저 사라지면 두 사건이 화면에서 같아지므로, 여기서 따로 못박는다.
+    // meta 로 누구인지는 아래 #329 회귀선이 본다.
+    const [, removedBody, , leftBody] = await systemBodies(channelId);
+    expect(removedBody).not.toBe(leftBody);
   });
 
   it('3. 시스템 메시지는 멘션 알림을 만들지 않는다 (inbox 에 행이 없다)', async () => {
@@ -224,7 +236,7 @@ describe('멤버 입·퇴장 시스템 메시지 (#322)', () => {
     expect(seen).toHaveLength(1);
     const only = seen[0]!;
     // #329: 본문에 이름 대신 자리표시자.
-    expect(only.body).toBe('계정이 채널에 추가되었습니다.');
+    expect(only.body).toBe(`${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에 추가되었습니다.`);
     expect(Array.isArray(only.audience)).toBe(true);
     expect(only.audience).toContain(joiner.accountId);
     expect(only.audience).not.toContain(outsider.accountId);
