@@ -250,48 +250,72 @@ describe('workspace skill', () => {
     expect(rows.rows[0].n).toBe(0);
   });
 
-  // #325 state 파라미터 테스트
-  it('state=pending 는 미승인만 반환한다', async () => {
+  // #325 — `?state=pending|approved|disabled`.
+  //
+  // 이 절이 지키는 것은 **이름과 동작이 같다**는 것 하나다. #325 를 낳은 사고가 바로
+  // `approved=false` 가 "미승인만"이 아니라 전부를 돌려준 것이었다. 그래서 각 상태는
+  // "자기 것이 있다"만이 아니라 **"남의 것이 섞이지 않는다"**까지 단언한다 — 앞의 절반만
+  // 보면 필터를 통째로 지워도 초록이다.
+
+  /** 세 상태를 한 벌씩 심어 둔다 — 테스트 순서에 기대지 않기 위해서다. */
+  async function seedTriplet(tag: string): Promise<void> {
     await pool.query(
       `insert into workspace_skill (slug, body, proposed_by) values ($1, $2, $3)`,
-      ['pending-only', '# 대기', agentAccountId],
+      [`${tag}-pending`, '# 대기', agentAccountId],
     );
-
-    const res = await app.inject({
-      method: 'GET', url: '/skills?state=pending',
-      headers: { authorization: `Bearer ${adminToken}` },
-    });
-    const skills = res.json() as { slug: string; approvedAt: string | null; disabledAt: string | null }[];
-    expect(skills.every((s) => !s.approvedAt && !s.disabledAt)).toBe(true);
-    expect(skills.find((s) => s.slug === 'pending-only')).toBeDefined();
-  });
-
-  it('state=disabled 는 비활성만 반환한다', async () => {
+    await pool.query(
+      `insert into workspace_skill (slug, body, proposed_by, approved_by, approved_at)
+       values ($1, $2, $3, $3, now())`,
+      [`${tag}-approved`, '# 승인', agentAccountId],
+    );
     await pool.query(
       `insert into workspace_skill (slug, body, proposed_by, disabled_at) values ($1, $2, $3, now())`,
-      ['disabled-only', '# 비활성', agentAccountId],
+      [`${tag}-disabled`, '# 비활성', agentAccountId],
     );
+  }
 
-    const res = await app.inject({
-      method: 'GET', url: '/skills?state=disabled',
-      headers: { authorization: `Bearer ${adminToken}` },
-    });
-    const skills = res.json() as { slug: string; disabledAt: string | null }[];
-    expect(skills.every((s) => !!s.disabledAt)).toBe(true);
-    expect(skills.find((s) => s.slug === 'disabled-only')).toBeDefined();
+  const slugsOf = async (url: string): Promise<string[]> => {
+    const res = await app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${adminToken}` } });
+    expect(res.statusCode).toBe(200);
+    return (res.json() as { slug: string }[]).map((s) => s.slug);
+  };
+
+  it('state=pending 는 미승인만 반환한다 — 승인·비활성이 섞이지 않는다', async () => {
+    await seedTriplet('p');
+    const slugs = await slugsOf('/skills?state=pending');
+
+    expect(slugs).toContain('p-pending');
+    expect(slugs).not.toContain('p-approved');
+    expect(slugs).not.toContain('p-disabled');
   });
 
-  it('파라미터 없으면 전부 반환한다', async () => {
-    const res = await app.inject({
-      method: 'GET', url: '/skills',
-      headers: { authorization: `Bearer ${adminToken}` },
-    });
-    const skills = res.json() as { slug: string }[];
-    //，前面 테스트에서 만든各种状态的 스킬이 다 포함되어야 함
-    expect(skills.find((s) => s.slug === 'pending-skill')).toBeDefined();
-    expect(skills.find((s) => s.slug === 'test-skill')).toBeDefined();
-    expect(skills.find((s) => s.slug === 'disable-test')).toBeDefined();
-    expect(skills.find((s) => s.slug === 'disabled-only')).toBeDefined();
+  it('state=approved 는 승인만 반환한다 — 미승인·비활성이 섞이지 않는다', async () => {
+    await seedTriplet('a');
+    const slugs = await slugsOf('/skills?state=approved');
+
+    expect(slugs).toContain('a-approved');
+    expect(slugs).not.toContain('a-pending');
+    expect(slugs).not.toContain('a-disabled');
+  });
+
+  it('state=disabled 는 비활성만 반환한다 — 미승인·승인이 섞이지 않는다', async () => {
+    await seedTriplet('d');
+    const slugs = await slugsOf('/skills?state=disabled');
+
+    expect(slugs).toContain('d-disabled');
+    expect(slugs).not.toContain('d-pending');
+    expect(slugs).not.toContain('d-approved');
+  });
+
+  it('파라미터가 없으면 세 상태를 전부 반환한다', async () => {
+    // 기본값이 "전부"인 것은 #311 화면이 한 번 불러 세 묶음으로 가르기 때문이다.
+    // 기본을 approved 로 좁히면 그 화면에서 대기·비활성 묶음이 통째로 빈다.
+    await seedTriplet('all');
+    const slugs = await slugsOf('/skills');
+
+    expect(slugs).toContain('all-pending');
+    expect(slugs).toContain('all-approved');
+    expect(slugs).toContain('all-disabled');
   });
 
   it('잘못된 state 값은 400 을 반환한다', async () => {
@@ -300,6 +324,19 @@ describe('workspace skill', () => {
       headers: { authorization: `Bearer ${adminToken}` },
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  // #325 는 하위 호환 별칭을 두지 않기로 했다. 그 결정은 **옛 이름이 400 이어야** 지켜진다.
+  // zod 가 모르는 키를 말없이 버리면 `?approved=true` 는 "필터 없음"이 되어 미승인 스킬까지
+  // 200 으로 돌아간다 — 이름을 믿은 호출자가 받는 것이 정확히 #325 가 신고한 그 사고이고,
+  // 조용하기까지 해서 더 나쁘다. 무시가 아니라 거절인지를 여기서 고정한다.
+  it('옛 이름 approved= 는 무시가 아니라 400 이다 — 별칭을 두지 않았다', async () => {
+    for (const url of ['/skills?approved=true', '/skills?approved=false']) {
+      const res = await app.inject({
+        method: 'GET', url, headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(400);
+    }
   });
 });
 
