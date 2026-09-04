@@ -243,6 +243,49 @@ describe('#141 세션의 끝', () => {
   });
 });
 
+describe('#335 서버가 보낸 resize 를 그 세션의 PTY 창 크기로 넣는다', () => {
+  it('resize 프레임의 숫자가 bindInput 으로 이어 붙인 통로에 그대로 간다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial });
+    client.start();
+    d.open();
+    const session = client.openSession(SESSION);
+    const resized: [number, number][] = [];
+    session.bindInput({ write: () => {}, resize: (cols, rows) => { resized.push([cols, rows]); } });
+
+    // 서버가 보내는 것과 **같은 모양**의 프레임이다(server/src/ws/relay.ts::sendResize).
+    d.deliver({ type: 'resize', sessionId: session.sessionId, cols: 100, rows: 30 });
+
+    expect(resized).toEqual([[100, 30]]);
+  });
+
+  it('모르는 세션의 resize 는 어느 통로에도 가지 않는다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial });
+    client.start();
+    d.open();
+    const session = client.openSession(SESSION);
+    const resized: [number, number][] = [];
+    session.bindInput({ write: () => {}, resize: (cols, rows) => { resized.push([cols, rows]); } });
+
+    d.deliver({ type: 'resize', sessionId: 'someone-elses-session', cols: 100, rows: 30 });
+
+    expect(resized).toEqual([]);
+  });
+
+  it('아직 spawn 전이라 통로가 없으면 버린다 — 던지지 않는다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ murmurUrl: 'http://x', pat: 'p', dial: d.dial });
+    client.start();
+    d.open();
+    const session = client.openSession(SESSION);
+
+    // 큐에 담지 않는 것이 의도다(relay.ts 의 resize 분기 주석): 담아 두면 다음 턴의
+    // PTY 가 지난 턴의 창 크기로 열린다.
+    expect(() => d.deliver({ type: 'resize', sessionId: session.sessionId, cols: 80, rows: 24 })).not.toThrow();
+  });
+});
+
 describe('#315 서버가 보낸 input 을 그 세션의 PTY 로 넣는다', () => {
   it('input 프레임의 바이트가 bindInput 으로 이어 붙인 통로에 그대로 간다', () => {
     const d = fakeDialer();
