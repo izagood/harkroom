@@ -27,6 +27,8 @@ export class Controller {
   private runnerLauncher: RunnerLauncher;
   /** 이번 `start()` 에서 러너 자동 기동을 이미 했는가(#250). */
   private runnerAutoStartDone = false;
+  /** 비동기 부트스트랩 도중 교체·해제된 컨트롤러가 뒤늦게 살아나는 것을 막는다. */
+  private stopped = false;
 
   constructor(
     public api: ApiClient,
@@ -140,6 +142,9 @@ export class Controller {
       this.api.me(), this.api.accounts(), this.api.channels(),
       this.api.dms(), this.api.leases(), this.api.inboxUnread(), this.api.reads(),
     ]);
+    // React StrictMode 정리나 재로그인이 위 요청 도중 stop() 할 수 있다. 그 뒤 계속하면
+    // 폐기된 컨트롤러가 WS와 러너를 다시 만들며 세션 하나가 둘로 갈라진다.
+    if (this.stopped) return;
     store.set({
       me, channels, dms, leases, unread,
       accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
@@ -178,6 +183,7 @@ export class Controller {
   }
 
   stop(): void {
+    this.stopped = true;
     this.runnerLauncher.dispose();
     this.ws?.close();
     this.ws = null;
@@ -867,12 +873,26 @@ export class Controller {
     return this.api.listAgents();
   }
 
-  /** 생성과 PAT 발급을 함께 한다 — 러너를 띄우려면 둘 다 필요하고, PAT 는 지금만 볼 수 있다. */
+  /**
+   * 생성·PAT 발급·키체인 저장·선택적 즉시 기동을 한 흐름으로 묶는다.
+   * 러너 준비 실패는 RunnerState 에 남고, 이미 성공한 계정 생성과 PAT 원문은 호출자에게
+   * 그대로 돌려준다 — 화면이 "생성 실패"라고 거짓말하거나 유일한 PAT 를 잃으면 안 된다.
+   */
   async createAgent(
     input: { handle: string; displayName: string } & Partial<import('@murmur/shared').AgentConfig>,
   ): Promise<{ agent: import('@murmur/shared').AgentView; pat: string }> {
     const agent = await this.api.createAgent(input);
     const pat = await this.api.mintPat(agent.id, 'runner');
+    const prefs = usePrefsStore.getState();
+    const store = this.store.getState();
+    await this.runnerLauncher.startCreated({
+      agent,
+      pat: { label: 'runner', token: pat },
+      autoStart: prefs.runnerAutoStart,
+      liveAccountIds: store.connected ? new Set(store.online) : null,
+      repoPath: prefs.runnerRepoPath,
+      runnerCommand: prefs.runnerCommand,
+    });
     return { agent, pat };
   }
 
@@ -1526,6 +1546,9 @@ export async function startCommunitySession(opts: {
   const entry = opts.active
     ? registry.claimActive(input)
     : registry.register(input);
+  // 같은 활성 커뮤니티의 재로그인·StrictMode 재기동은 이전 세션을 대체한다. 보존된
+  // 컨트롤러를 먼저 끝내야 WS와 로컬 runner가 계정당 하나라는 불변식이 유지된다.
+  entry.controller?.stop();
   const api = opts.api ?? new ApiClient(opts.baseUrl, opts.token);
   const controller = new Controller(
     api,
@@ -1549,7 +1572,11 @@ export async function startCommunitySession(opts: {
      * 없고(마지막 하나), 실패는 화면이 `phase` 로 이미 처리한다.
      */
     controller.stop();
-    useCommunityRegistry.getState().attachController(entry.id, null);
+    const current = useCommunityRegistry.getState().entries.find((item) => item.id === entry.id);
+    // 겹친 새 기동이 이미 자리를 차지했다면, 늦게 실패한 옛 기동이 그것까지 떼면 안 된다.
+    if (current?.controller === controller) {
+      useCommunityRegistry.getState().attachController(entry.id, null);
+    }
     if (!opts.active) useCommunityRegistry.getState().remove(entry.id);
     throw err;
   }
