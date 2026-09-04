@@ -55,10 +55,12 @@ export function RunnerStatusLine({ state }: { state: RunnerState | undefined }) 
 
 export function RunnerStatusDot({ state, agentId }: { state: RunnerState | undefined; agentId: string }) {
   // 상태를 모르면 아무것도 그리지 않는다 — '알 수 없음'을 '꺼짐'으로 읽으면 사람이
-  // 아무 일도 안 하지만 Russalka 는 이미 띄워져 있을 수 있다. 알고 있는 사실만 말한다.
+  // 아무 일도 안 하지만 러너는 이미 떠 있을 수 있다. 알고 있는 사실만 말한다.
   if (!state) return null;
-  // failed 상태에서는 사람에게 보이는 사유를 함께 그린다(#368). 이유 없는 '실패'는
-  // 사람이 할 수 있는 일이 없는 거짓 신호다.
+  // failed 면 점 옆에 `!` 를 세우고 사유를 `title` 에 싣는다(#368). 이 자리는 목록 한 줄
+  // 안이라 문구를 통째로 펼칠 폭이 없다 — **사유 전문을 읽는 자리는 따로 있다**: 채널의
+  // 실패 줄(ChannelPane)과 사이드바 Agents 섹션이 같은 `state.message` 를 글자로 펼친다.
+  // 점 하나만 두지 않는 이유는 색이 스크린리더에 아무 말도 하지 않기 때문이다.
   const message = state.status === 'failed' ? state.message : null;
   return (
     <>
