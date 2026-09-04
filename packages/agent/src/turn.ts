@@ -192,10 +192,12 @@ const CODEX_PRESET: HarnessPreset = {
     return ['exec', 'resume', sessionId];
   },
   allowsNullSessionOnFirstTurn: true,
-  // `-a`/`--ask-for-approval` 은 `codex exec`/`codex exec resume` 어디에도 없다(실측,
-  // task-1 스파이크) — sandbox 만으로 권한을 조정한다. `danger-full-access` 는 어느 쪽에도
-  // 매핑하지 않는다: 멘션 턴은 사람이 안 보는 턴이라 workspace 경계를 넘길 이유가 없고,
-  // 그 경계가 avcs workspace 격리와 정확히 겹친다(spec §4).
+  // `message.post` 는 쓰기 MCP라 Codex 기본 `approval_mode="auto"` 에서는 승인 요청이 난다.
+  // 멘션 턴은 비대화형이고 approval policy가 never라 그 요청을 받을 사람이 없어, 답을
+  // 모두 만든 뒤에도 발화만 실패한다(#404 실물 재현). auto 권한에서는 **murmur 서버만**
+  // 승인 없이 실행한다. 전체 sandbox/승인을 우회하는
+  // `--dangerously-bypass-approvals-and-sandbox` 와 달리 workspace-write 경계는 그대로고,
+  // 운영자 개인 MCP도 `--ignore-user-config` 로 여전히 빠진다.
   //
   // **`-s` 플래그가 아니라 `-c sandbox_mode="…"` 다.** 리뷰가 실물 CLI(`codex-cli 0.148.0`)로
   // 깨뜨렸다: `codex exec resume <id> -s workspace-write` → `error: unexpected argument
@@ -205,7 +207,10 @@ const CODEX_PRESET: HarnessPreset = {
   // codex 자신의 마이그레이션 문서가 쓰는 실제 설정 키이고 `-c` 는 exec·resume 양쪽에 있어,
   // 두 턴이 같은 기전 하나를 쓰면 이 비대칭이 애초에 생기지 않는다(spec §4, 수정 커밋 9a1c852).
   permission: {
-    auto: ['-c', 'sandbox_mode="workspace-write"'],
+    auto: [
+      '-c', 'sandbox_mode="workspace-write"',
+      '-c', 'mcp_servers.murmur.approval_mode="never"',
+    ],
     readonly: ['-c', 'sandbox_mode="read-only"'],
   },
   mcp: ({ murmurUrl }) => [

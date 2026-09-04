@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import type { ProjectionStatus } from '@murmur/shared';
+import {
+  PROJECTION_UNCONFIGURED_DETAIL, PROJECTION_UNCONFIGURED_HEADLINE, type ProjectionStatus,
+} from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { LeasePanel } from '../src/components/LeasePanel';
 
@@ -66,8 +68,10 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
     });
     render(<LeasePanel />);
     expect(screen.getByTestId('projection-unconfigured')).toBeTruthy();
-    expect(screen.getByText(/투영이 설정되지 않았다/)).toBeTruthy();
-    expect(screen.getByText(/AVCS_BASE_URL/)).toBeTruthy();
+    // 상수를 가져와 대조한다 — `Sidebar` 의 repo 폼(#381)이 같은 상수를 쓰므로, 여기서
+    // 상수를 지키면 두 자리가 갈라지지 않는다.
+    expect(screen.getByText(PROJECTION_UNCONFIGURED_HEADLINE)).toBeTruthy();
+    expect(screen.getByText(PROJECTION_UNCONFIGURED_DETAIL)).toBeTruthy();
     // 꺼져 있는 것을 "없다"로 말하지 않는다.
     expect(screen.queryByText('No active work')).toBeNull();
   });
