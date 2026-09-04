@@ -120,7 +120,7 @@ describe('mcp surface', () => {
       name: 'work.link',
       arguments: { repo: 'mcp-repo', intentOid: 'i-77', threadRootMessageId: posted.message.id },
     }));
-    expect(linked).toEqual({ ok: true });
+    expect(linked).toEqual({ ok: true, projectionDisabled: true });
     await client.close();
   });
 

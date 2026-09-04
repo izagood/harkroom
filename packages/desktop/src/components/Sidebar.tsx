@@ -101,7 +101,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
-  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, channelAutoMentions, messages, savedCount, runnerStates } = useActiveStore();
+  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, channelAutoMentions, messages, savedCount, runnerStates, projectionStatus } = useActiveStore();
   /**
    * macOS 신호등 여백(#270). 사이드바가 펴져 있으면 브랜드 바가 창의 좌상단이라 여기가
    * 여백을 진다. 접혀 있으면 사이드바는 폭 0 이고 `Workspace` 헤더가 좌상단이 되므로
@@ -547,6 +547,9 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
             />
           </div>
           {editError && <p role="alert" className="mb-1 text-[10px] text-danger">{editError}</p>}
+          {editRepo && projectionStatus?.state === 'unconfigured' && (
+            <p className="mb-1 text-[10px] text-warning">투영이 설정되지 않았다 — AVCS_BASE_URL 로 켠다</p>
+          )}
           <div className="flex gap-1">
             <button
               className="rounded bg-accent px-2 py-0.5 text-xs text-fg-on-strong hover:bg-accent-hover"

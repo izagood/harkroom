@@ -318,7 +318,8 @@ function buildMcpServer(
        on conflict (repo, intent_oid) do update set thread_root_message_id = excluded.thread_root_message_id`,
       [repo, intentOid, threadRootMessageId],
     );
-    return jsonResult({ ok: true });
+    const projectionDisabled = !process.env.AVCS_BASE_URL;
+    return jsonResult({ ok: true, projectionDisabled });
   });
 
   // memory.list — slug만 돌려주고 값은 주지 않는다(값이 새면 목록 조회가 곧 전체 주입이 된다).
