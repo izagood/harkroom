@@ -100,7 +100,7 @@ interface Combo {
 
 /**
  * `assertValidSession` 이 허용하는 조합만 둔다. claude 는 sessionId 를 사전 발급하므로 null 이
- * 올 수 없고, codex 는 첫 멘션 턴에서만 null 이다(turn.ts 의 `allowsNullSessionOnFirstMention`).
+ * 올 수 없고, codex 는 첫 턴에서만 null 이다(turn.ts 의 `allowsNullSessionOnFirstTurn`).
  */
 const COMBOS: Combo[] = [
   { harness: 'claude-code', mode: 'mention', isFirstTurn: true, sessionId: '11111111-1111-4111-8111-111111111111', label: '첫 멘션 턴' },
@@ -111,8 +111,8 @@ const COMBOS: Combo[] = [
   { harness: 'claude-code', mode: 'interactive', isFirstTurn: false, sessionId: '33333333-3333-4333-8333-333333333333', label: '인터랙티브 resume 턴' },
   { harness: 'codex', mode: 'mention', isFirstTurn: true, sessionId: null, label: '첫 멘션 턴 (id 사전 발급 없음)' },
   { harness: 'codex', mode: 'mention', isFirstTurn: false, sessionId: '44444444-4444-4444-8444-444444444444', label: 'resume 멘션 턴' },
-  // codex 인터랙티브는 조합이 아니라 **거절**이다(스펙 §5-2 결정 8) — buildTurnCommand 가
-  // argv 를 만들지 않으므로 수용 층에 올릴 것이 없다. 거절 자체는 turn.test.ts 가 고정한다.
+  { harness: 'codex', mode: 'interactive', isFirstTurn: true, sessionId: null, label: '인터랙티브 첫 턴' },
+  { harness: 'codex', mode: 'interactive', isFirstTurn: false, sessionId: '55555555-5555-4555-8555-555555555555', label: '인터랙티브 resume 턴' },
 ];
 
 /**
@@ -137,6 +137,7 @@ async function planFor(combo: Combo, dir: string): Promise<TurnPlan> {
     mcpConfigPath,
     pat: 'murp_fake_never_sent',
     murmurUrl: 'http://localhost:3401',
+    codexHome: join(dir, 'codex-home'),
   });
 }
 

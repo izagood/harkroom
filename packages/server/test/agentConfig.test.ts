@@ -196,16 +196,13 @@ describe('harness 실행 가능 목록 검증', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  // codex 는 PRESETS 에 구현돼 있고 첫 턴도 실물로 완주했지만, 이 목록의 기준은
-  // "resume 왕복까지 실물로 도는 것을 본 것"이고 그건 아직 확인되지 않았다
-  // (docs/roadmap.md §5). 그래서 지금은 codex 도 거부된다 — 목록이 늘면 이 테스트가
-  // 빨개져서 함께 고쳐야 한다는 사실을 알려 준다.
-  it('codex 도 아직 거부된다 — 구현은 있지만 resume 왕복 실측이 남았다', async () => {
+  it('codex 는 실물 resume 왕복 검증 뒤 실행 가능 harness 로 받아들인다', async () => {
     const res = await create({ handle: 'codex-agent', displayName: 'CodexAgent', harness: 'codex' });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(201);
+    expect(res.json().harness).toBe('codex');
   });
 
-  it('claude-code 는 받아들인다 — 유일한 실행 가능 harness 다', async () => {
+  it('claude-code 도 계속 받아들인다', async () => {
     const res = await create({ handle: 'cc-agent', displayName: 'CcAgent', harness: 'claude-code' });
     expect(res.statusCode).toBe(201);
     expect(res.json().harness).toBe('claude-code');

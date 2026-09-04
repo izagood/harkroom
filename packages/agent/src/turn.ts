@@ -75,6 +75,8 @@ export interface BuildTurnCommandOptions {
    * 두지 않는다: 호출자가 안 채우면 여기서 타입 에러로, 넘겼는데 비어 있으면 즉시 예외로 죽는다.
    */
   murmurUrl: string;
+  /** 개인 config.toml/MCP 를 상속하지 않는 Murmur 전용 Codex 상태 루트. */
+  codexHome: string;
 }
 
 /** 멘션 턴(화면 앞에 사람이 없다)의 권한 매핑. 인터랙티브 턴은 아예 플래그를 안 준다(spec §6). */
@@ -93,7 +95,7 @@ interface HarnessPreset {
    * false(러너가 첫 턴도 미리 uuid 를 발급), codex 는 true(첫 턴은 id 없이 시작해 종료 후
    * 발견한다). 네 번째 harness 가 이 성질을 가지면 이 필드만 채우면 된다 — 함수를 안 고친다.
    */
-  allowsNullSessionOnFirstMention: boolean;
+  allowsNullSessionOnFirstTurn: boolean;
   /** mentionPermission → 멘션 턴 전용 권한 플래그. 인터랙티브에선 아예 쓰지 않는다. */
   permission: Record<MentionPermission, string[]>;
   mcp(args: { mcpConfigPath: string; murmurUrl: string }): string[];
@@ -123,7 +125,7 @@ const CLAUDE_PRESET: HarnessPreset = {
   command: 'claude',
   session(sessionId, isFirstTurn, mode) {
     // `buildTurnCommand` 가 이 함수를 부르기 전에 `assertValidSession` 이 이미 non-null 을
-    // 보장했다(claude 의 `allowsNullSessionOnFirstMention` 은 false) — 그 불변식을 여기서
+    // 보장했다(claude 의 `allowsNullSessionOnFirstTurn` 은 false) — 그 불변식을 여기서
     // 다시 검사하지 않는다(같은 규칙을 두 곳에서 지키면 나중에 한쪽만 고치는 사고가 난다).
     // 아래 캐스트는 순수하게 TypeScript 타입 좁히기다.
     const id = sessionId as string;
@@ -137,7 +139,7 @@ const CLAUDE_PRESET: HarnessPreset = {
     }
     return isFirstTurn ? ['-p', '--session-id', id] : ['-p', '-r', id];
   },
-  allowsNullSessionOnFirstMention: false,
+  allowsNullSessionOnFirstTurn: false,
   permission: {
     auto: ['--permission-mode', 'bypassPermissions'],
     readonly: ['--permission-mode', 'plan'],
@@ -178,18 +180,9 @@ const CODEX_PRESET: HarnessPreset = {
   command: 'codex',
   session(sessionId, isFirstTurn, mode) {
     if (mode === 'interactive') {
-      // **명확한 거절이다 — 미구현이 아니라 결정이다**(스펙 §5-2 결정 8, 스파이크 실측:
-      // codex-cli 0.147.0 의 `codex resume` 은 `--ignore-user-config` 를 파싱 단계에서
-      // 거부한다 — `error: unexpected argument`). 그 플래그 없이 인터랙티브를 열면
-      // 운영자 `~/.codex/config.toml` 의 개인 MCP(Slack·Gmail·Drive)를 통째로 상속해,
-      // §7 이 멘션 턴에서 막은 구멍이 인터랙티브로 다시 열린다. `CODEX_HOME` 격리
-      // 대안은 기각됐다(§13.6) — auth.json 과 sessions 가 같은 디렉터리라 로그인과
-      // resume 이 함께 깨진다. gemini 의 "없는 것을 있다고 표시하지 않는다" 판례와 같은 결.
-      throw new Error(
-        'buildTurnCommand: codex 인터랙티브 턴은 지원하지 않는다 — codex resume 이 ' +
-          '--ignore-user-config 를 받지 못해(실측), 열면 운영자 개인 config.toml(MCP 포함)을 ' +
-          '상속한다(스펙 §5-2 결정 8). claude 하네스 에이전트로 열어라.',
-      );
+      // 실제 codex-cli 0.153.2 에서 첫 턴은 맨 `codex`, 이후 턴은 `codex resume <id>` 다.
+      // 개인 config 격리는 지원되지 않는 --ignore-user-config 대신 CODEX_HOME 으로 보장한다.
+      return sessionId === null ? [] : ['resume', sessionId];
     }
     if (sessionId === null) {
       // codex 는 세션 id 를 사전 할당할 수 없다 — 첫 턴은 id 없이 그냥 `exec` 로 시작하고,
@@ -198,7 +191,7 @@ const CODEX_PRESET: HarnessPreset = {
     }
     return ['exec', 'resume', sessionId];
   },
-  allowsNullSessionOnFirstMention: true,
+  allowsNullSessionOnFirstTurn: true,
   // `-a`/`--ask-for-approval` 은 `codex exec`/`codex exec resume` 어디에도 없다(실측,
   // task-1 스파이크) — sandbox 만으로 권한을 조정한다. `danger-full-access` 는 어느 쪽에도
   // 매핑하지 않는다: 멘션 턴은 사람이 안 보는 턴이라 workspace 경계를 넘길 이유가 없고,
@@ -275,8 +268,8 @@ const CODEX_PRESET: HarnessPreset = {
   // 직접 넘기므로 정상 동작하지만, 커스텀 프로바이더를 config.toml 로만 설정한 운영자는
   // 멘션 턴이 기본 프로바이더로 도는 것을 보게 된다. auth 는 영향받지 않는다(--help 명시).
   //
-  // 인터랙티브 턴(codex resume)은 이 플래그를 못 받고, 그래서 턴 자체를 거절한다
-  // (위 session() 의 인터랙티브 분기, 스펙 §5-2 결정 8) — 여기 도달하는 것은 멘션 턴뿐이다.
+  // 인터랙티브 턴(codex resume)은 이 플래그를 못 받는다. 대신 자식 프로세스의 CODEX_HOME 을
+  // 러너 상태 디렉터리로 격리하므로 개인 config.toml 을 상속하지 않는다.
   alwaysArgs: (mode) => (mode === 'mention' ? ['--skip-git-repo-check', '--ignore-user-config'] : []),
   // codex 도 stdin 파일을 통해 프롬프트를 받는다(#117). 원래는 PTY stdin 리다이렉션이
   // 불가능하다고 생각했으나 실측 결과 두 하네스 모두 exec/print 모드에서 stdin 에 TTY 를
@@ -302,7 +295,7 @@ const PRESETS: Record<AgentHarness, HarnessPreset | 'unsupported'> = {
 };
 
 /**
- * sessionId 가 null 인 조합 중 유효한 것은 "`allowsNullSessionOnFirstMention` 인 harness 의
+ * sessionId 가 null 인 조합 중 유효한 것은 "`allowsNullSessionOnFirstTurn` 인 harness 의
  * **첫 턴**"뿐이다. 그 밖의 조합(resume 인데 id 가 없다, claude 인데 id 가 없다)은
  * 호출자가 세션을 먼저 확보하지 않은 결함이다 — 조용히 삼켜 이상한 명령을 조립하느니
  * 여기서 크게 던진다(design.md 의 "없는 것을 있다고 표시하지 않는다"와 같은 결).
@@ -310,9 +303,8 @@ const PRESETS: Record<AgentHarness, HarnessPreset | 'unsupported'> = {
  * 초판은 인터랙티브를 통째로 걸렀다("인터랙티브인데 이어받을 게 없다") — 그때는 사람이
  * 여는 경로 자체가 없어 인터랙티브가 항상 resume 이었기 때문이다. #337 이 "세션 없는
  * 스레드에서 [터미널 열기]"를 열면서 인터랙티브에도 첫 턴이 생겼으므로, 조건을 모드가
- * 아니라 **isFirstTurn** 으로 완화한다. codex 인터랙티브는 어차피 preset.session 이
- * 명확한 거절을 던진다(§5-2 결정 8) — 여기서 걸러 애매한 "세션 확보" 에러를 내는 것보다
- * 그쪽 메시지가 원인을 정확히 말한다.
+ * 아니라 **isFirstTurn** 으로 완화한다. Codex도 첫 대화형 턴을 세션 id 없이 시작하고,
+ * 종료 뒤 rollout 파일에서 id를 발견한다.
  *
  * harness 이름은 여기서 보지 않는다 — preset 의 표 필드만 읽는다(그래야 네 번째 harness
  * 를 붙일 때 이 함수가 아니라 표만 고치면 된다).
@@ -322,7 +314,7 @@ function assertValidSession(
   preset: HarnessPreset,
 ): void {
   if (opts.sessionId !== null) return;
-  const allowed = preset.allowsNullSessionOnFirstMention && opts.isFirstTurn;
+  const allowed = preset.allowsNullSessionOnFirstTurn && opts.isFirstTurn;
   if (allowed) return;
   throw new Error(
     `buildTurnCommand: sessionId 가 null 이다 (harness=${opts.harness}, mode=${opts.mode}, ` +
@@ -334,14 +326,14 @@ function assertValidSession(
 /**
  * 새 SessionRecord 를 만들 때 sessionId 를 러너가 미리 발급해야 하는 harness 인가
  * (main.ts::runMentionTurn). harness 이름을 main.ts 에서 직접 비교하면 이 표(PRESETS)와
- * 진실 원천이 둘로 갈린다 — `allowsNullSessionOnFirstMention` 하나로 양쪽을 다 결정한다.
+ * 진실 원천이 둘로 갈린다 — `allowsNullSessionOnFirstTurn` 하나로 양쪽을 다 결정한다.
  */
 export function preassignsSessionId(harness: AgentHarness): boolean {
   const preset = PRESETS[harness];
   if (preset === 'unsupported') {
     throw new Error(`preassignsSessionId: harness '${harness}' 는 러너가 아직 지원하지 않는다`);
   }
-  return !preset.allowsNullSessionOnFirstMention;
+  return !preset.allowsNullSessionOnFirstTurn;
 }
 
 /**
@@ -378,6 +370,9 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     // 실패(murmur MCP 미등록 → 답 못 함 → "답 없이 턴을 끝냈습니다")로 이어진다 — 여기서 막는다.
     throw new Error('buildTurnCommand: murmurUrl 이 비어 있다 — murmur MCP 없이는 에이전트가 답할 방법이 없다');
   }
+  if (opts.harness === 'codex' && !opts.codexHome) {
+    throw new Error('buildTurnCommand: codexHome 이 비어 있다 — 개인 Codex 설정을 격리할 수 없다');
+  }
 
   const args: string[] = [
     ...preset.session(opts.sessionId, opts.isFirstTurn, opts.mode),
@@ -392,7 +387,12 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
   // PAT 는 절대 argv 에 올리지 않는다 — 자식 프로세스 env 로만 준다. `ps` 로 argv 는 다른
   // 사용자에게도 보이지만 env 는 보이지 않는다(spec §7, task-1 실측 확인).
   // stdinFile 도 argv 에서 빼는 이유와 같다(#117). null 이면 PTY stdin 을 그대로 쓴다.
-  return { command: preset.command, args, env: childEnv(opts.pat), stdinFile: opts.stdinFile ?? null };
+  return {
+    command: preset.command,
+    args,
+    env: childEnv(opts.pat, opts.harness === 'codex' ? opts.codexHome : null),
+    stdinFile: opts.stdinFile ?? null,
+  };
 }
 
 /**
@@ -455,7 +455,7 @@ export const HARNESS_ENV_DENYLIST = ['CLAUDE_CODE_CHILD_SESSION'] as const;
  * **전체 상속에는 예외가 하나 있다(#374)**: `HARNESS_ENV_DENYLIST` 의 키는 넘기지 않는다.
  * 그 목록과 각 키를 빼는 근거는 위 상수의 주석에 있다 — 지우려거든 거기부터 읽어라.
  */
-function childEnv(pat: string): Record<string, string> {
+function childEnv(pat: string, codexHome: string | null): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) env[key] = value;
@@ -464,6 +464,7 @@ function childEnv(pat: string): Record<string, string> {
   // 조건을 섞으면 '전체 상속'이라는 규칙과 그 예외가 한 줄에 엉켜 둘 다 읽기 어려워진다.
   for (const key of HARNESS_ENV_DENYLIST) delete env[key];
   env.MURMUR_PAT = pat;
+  if (codexHome !== null) env.CODEX_HOME = codexHome;
   return env;
 }
 

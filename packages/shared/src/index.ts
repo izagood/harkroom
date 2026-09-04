@@ -64,16 +64,13 @@ export type AgentHarness = (typeof AGENT_HARNESSES)[number];
  * **이 목록에 들어가는 기준은 하나다: 실물 CLI 로 첫 턴 + resume 왕복이 도는 것을 봤는가**
  * (`packages/agent/README.md` harness 절, spec §10 "수용" 층).
  *
- * codex 가 아직 없는 이유(`docs/roadmap.md` §5, 2026-09-02 실측): 첫 턴은 murmur MCP 연결부터
- * `message.post` 발화까지 실제로 완주했지만 **resume 턴은 완주를 확인하지 못했다.** 막은 것은
- * murmur 쪽 결함이 아니라 그 개발 머신에 걸려 있던 개인 후크의 승인 게이트였고, 그것을
- * 우회하는 유일한 수단(`codex exec --approve-for-me`)이 `codex exec resume` 에는 없다.
- * 즉 기준의 절반만 닫혔다 — 그 후크가 없는 머신에서 resume 완주를 보면 추가한다.
- * (#89 신뢰 디렉터리와 #86 전역 MCP 상속은 그 전에 닫아야 했던 별개의 선행 조건이고, 둘 다 닫혔다.)
+ * codex 는 2026-09-04 codex-cli 0.153.2 실물 검증에서 첫 exec → 같은 세션 id 의 resume 두 번,
+ * 그리고 격리 CODEX_HOME 을 쓴 대화형 resume 까지 완주했다. 대화형 CLI 가
+ * --ignore-user-config 를 거부하는 문제는 러너별 CODEX_HOME 격리로 해결한다.
  *
  * gemini 는 `PRESETS.gemini === 'unsupported'` 로 구현 자체가 없다.
  */
-export const RUNNABLE_HARNESSES = ['claude-code'] as const satisfies readonly AgentHarness[];
+export const RUNNABLE_HARNESSES = ['claude-code', 'codex'] as const satisfies readonly AgentHarness[];
 
 /** 멘션 턴(화면 앞에 사람이 없다)의 권한. 사람 인터랙티브 턴은 하네스가 직접 묻는다. */
 export const MENTION_PERMISSIONS = ['auto', 'readonly'] as const;
