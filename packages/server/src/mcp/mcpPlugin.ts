@@ -3,7 +3,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import type { AccountView } from '@murmur/shared';
+import { PROJECTION_UNCONFIGURED_NOTICE, type AccountView } from '@murmur/shared';
 import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
 import { emitEvent, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
@@ -318,7 +318,20 @@ function buildMcpServer(
        on conflict (repo, intent_oid) do update set thread_root_message_id = excluded.thread_root_message_id`,
       [repo, intentOid, threadRootMessageId],
     );
-    return jsonResult({ ok: true });
+    /**
+     * 행은 **쓰고 나서** 투영이 꺼졌는지 말한다(#381). 순서가 결정이다.
+     *
+     * 거절하지 않는 이유: 행 자체는 쓸모가 있다 — 투영을 나중에 켜면 그때 읽힌다. 그리고
+     * 투영이 꺼진 것은 **에이전트가 고칠 수 있는 일이 아니다.** 거절은 에이전트를 세우지만
+     * 세워 봤자 할 수 있는 일이 없다. 문제는 실패가 아니라 침묵이었다.
+     *
+     * `warning` 은 꺼져 있을 때만 싣는다. 늘 실으면 그 필드는 곧 배경 소음이 되고,
+     * 정말 꺼진 날에도 아무도 읽지 않는다. 문구는 화면 배너와 **같은 상수**다.
+     */
+    const projectionDisabled = !process.env.AVCS_BASE_URL;
+    return jsonResult(projectionDisabled
+      ? { ok: true, projectionDisabled, warning: PROJECTION_UNCONFIGURED_NOTICE }
+      : { ok: true, projectionDisabled });
   });
 
   // memory.list — slug만 돌려주고 값은 주지 않는다(값이 새면 목록 조회가 곧 전체 주입이 된다).
