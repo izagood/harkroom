@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import { createNotifier } from './lib/notify';
 import { sessionStore, type StoredCommunity } from './lib/session';
 import { useColorMode } from './lib/useColorMode';
@@ -7,6 +7,7 @@ import { getController, startCommunitySession } from './state/controller';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { Workspace } from './components/Workspace';
 import { SettingsScreen } from './screens/SettingsScreen';
+import { WindowDragStrip } from './components/WindowDragStrip';
 import type { SectionId } from './components/settings/sections';
 
 /**
@@ -89,9 +90,22 @@ export default function App() {
     })();
   }, []);
 
-  if (phase === 'boot') return <div className="p-4 text-fg-muted">Connecting…</div>;
+  /**
+   * #342: `Workspace` 에 닿기 전의 두 화면(`boot`·`connect`)에는 창 손잡이가 없었다.
+   * `#270` 이 OS 타이틀바를 없앤 것은 창 전역인데 손잡이는 `Workspace` 안에만 달렸기 때문이다.
+   * 두 화면을 같은 띠로 감싸 이 갈래가 늘어나도 손잡이가 따라오게 한다.
+   */
+  const withDragStrip = (screen: ReactElement) => (
+    <div className="flex h-screen flex-col bg-surface-sunken">
+      <WindowDragStrip />
+      {/* 띠가 세로를 먹은 만큼 화면이 넘치지 않도록 나머지를 준다. */}
+      <div className="min-h-0 flex-1">{screen}</div>
+    </div>
+  );
+
+  if (phase === 'boot') return withDragStrip(<div className="p-4 text-fg-muted">Connecting…</div>);
   if (phase === 'connect') {
-    return (
+    return withDragStrip(
       <ConnectScreen
         initialError={connectError}
         onConnected={async (baseUrl, token, accountId, handle) => {
@@ -117,7 +131,7 @@ export default function App() {
             setPhase('connect');
           }
         }}
-      />
+      />,
     );
   }
   const signOut = () => {

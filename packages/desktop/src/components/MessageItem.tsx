@@ -203,7 +203,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
           {/* #141: 진행 중인 터미널 진입점. 소유자·admin 이 아니면 렌더 자체가 없다
               (TerminalChip 이 판정한다) — 이름줄에 두는 이유는 소유자 배지와 같다:
               32px 거터에 넣으면 넘친다(#277). */}
-          <TerminalChip account={author} />
+          <TerminalChip account={author} message={message} />
           {avcsType && <span className="rounded bg-warning-surface-strong px-1 text-[10px] text-warning">{avcsType}</span>}
           <span className="text-[11px] text-fg-muted">{time}</span>
           {message.editedAt && <span className="text-[11px] text-fg-muted">(edited)</span>}
