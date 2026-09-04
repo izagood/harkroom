@@ -74,14 +74,20 @@ describe('the size limit', () => {
     const realOpen = nodeFs.open;
     let opens = 0;
     let openFinished = false;
+    // 주입한 open 하나하나가 언제 끝났는지를 붙잡아 둔다 — 아래에서 "전부 끝났다"를
+    // 기다리는 데 쓴다. 되살아난 파일은 open 이 끝난 뒤에야 디스크에 보이기 때문이다.
+    const opensDone: Promise<void>[] = [];
     nodeFs.open = (...args: unknown[]) => {
       opens += 1;
       const cb = args[args.length - 1] as (...r: unknown[]) => void;
       const rest = args.slice(0, -1);
-      setTimeout(() => realOpen.apply(nodeFs, [...rest, (...r: unknown[]) => {
-        openFinished = true;
-        cb(...r);
-      }]), 25);
+      opensDone.push(new Promise<void>((settled) => {
+        setTimeout(() => realOpen.apply(nodeFs, [...rest, (...r: unknown[]) => {
+          openFinished = true;
+          cb(...r);
+          settled();
+        }]), 25);
+      }));
     };
 
     try {
@@ -93,6 +99,10 @@ describe('the size limit', () => {
     // open 을 한 번도 거치지 않았다면 이 테스트는 아무것도 관측하지 못한 것이다.
     expect(opens).toBeGreaterThan(0);
     expect(openFinished).toBe(true);
+    // 그리고 **되살아난 파일 자체**를 관측한다. 주입한 open 이 전부 끝나기를 기다린 뒤에
+    // 세는 것이 핵심이다 — 기다리지 않고 세면 늦은 open 이 아직 파일을 만들지 않았을
+    // 뿐이어서, 이 단언은 결함이 있어도 초록으로 지나간다(측정으로 확인했다).
+    await Promise.all(opensDone);
     const files = await readdir(root, { recursive: true, withFileTypes: true });
     expect(files.filter((f) => f.isFile())).toHaveLength(0);
   });
