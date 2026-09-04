@@ -23,8 +23,30 @@ export interface TurnRecord {
   openedByHandle?: string;
 }
 
+/**
+ * 이어받기 예약(#384). "이 스레드의 멘션 턴이 끝나면 인터랙티브 턴을 띄운다"는 사실이고,
+ * 턴이 아니다 — 그래서 `turns` 와 **다른 맵**에 산다: 예약을 턴으로 등록하면 진행 중인
+ * 멘션 턴과 겹쳐 `register` 가 던지고, 그 예약을 지우는 것이 곧 진행 중인 턴을 지우는 일이 된다.
+ */
+export interface HandoffReservation {
+  /** [이어받기] 를 누른 사람의 handle. 멘션 유예 통지 문구에 들어간다(진행 중인 턴과 같은 문구). */
+  openedByHandle: string;
+}
+
+/**
+ * 지금 이 스레드에 **사람의 조종이 걸려 있는가**의 답(#384). 도는 인터랙티브 턴이든,
+ * 아직 기다리는 이어받기 예약이든 멘션은 유예된다.
+ */
+export interface ThreadControl {
+  openedByHandle?: string;
+}
+
 export class TurnRegistry {
   private turns = new Map<string, TurnRecord>();
+  /** 이어받기 예약(#384). 인터랙티브 턴이 실제로 등록되는 순간 사라진다. */
+  private handoffs = new Map<string, HandoffReservation>();
+  /** 턴이 풀리는 순간의 관측자들. 이어받기가 이 통지로 대기하던 턴을 띄운다(#384). */
+  private releaseListeners = new Set<(threadKey: string) => void>();
 
   /**
    * 턴 시작에 등록한다. 같은 스레드에 이미 턴이 있으면 **크게 던진다** — 조용히
@@ -46,6 +68,55 @@ export class TurnRegistry {
   /** 턴의 finally 가 부른다. 없는 키를 지우는 것은 무해하다(이미 끝난 턴의 중복 정리). */
   release(threadKey: string): void {
     this.turns.delete(threadKey);
+    // 관측자 예외를 삼킨다 — 이어받기 기동이 실패해도 **턴의 finally 는 끝나야 한다**.
+    // 여기서 던지면 멘션 턴의 정리(세션 닫기·markRead)가 중간에 멈춘다.
+    for (const listener of this.releaseListeners) {
+      try { listener(threadKey); } catch (err) {
+        console.error(`[turnRegistry] ${threadKey}: 해제 통지 실패 — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  /**
+   * 턴 해제를 구독한다(#384). 반환값이 해지 함수다.
+   *
+   * 이어받기가 이것을 쓰는 이유: 대기 중인 인터랙티브 턴을 띄울 **정확한 순간**은 멘션
+   * 턴이 레지스트리를 놓는 순간이다. 폴링으로 재면 그 사이에 다음 멘션 턴이 먼저 들어와
+   * 사람이 기다린 자리를 빼앗는다.
+   */
+  onRelease(listener: (threadKey: string) => void): () => void {
+    this.releaseListeners.add(listener);
+    return () => { this.releaseListeners.delete(listener); };
+  }
+
+  /** 이어받기를 예약한다(#384). 먼저 누른 사람을 유지한다 — 예약은 턴 하나이고 그 턴은 하나뿐이다. */
+  reserveHandoff(threadKey: string, rec: HandoffReservation): void {
+    if (this.handoffs.has(threadKey)) return;
+    this.handoffs.set(threadKey, rec);
+  }
+
+  handoff(threadKey: string): HandoffReservation | undefined {
+    return this.handoffs.get(threadKey);
+  }
+
+  /** 예약을 지운다 — 인터랙티브 턴이 떴거나, 띄우다 실패했을 때. */
+  clearHandoff(threadKey: string): void {
+    this.handoffs.delete(threadKey);
+  }
+
+  /**
+   * 멘션을 유예해야 하는가 — **유예 판정은 이 하나다**(main 루프가 부른다).
+   *
+   * 인터랙티브 턴과 이어받기 예약을 호출부에서 각각 조립하면, 예약 구간에서만 유예가
+   * 빠진다. 그 구간이 정확히 사람이 [이어받기] 를 누르고 기다리는 26초이고, 거기서 새
+   * 멘션 턴이 시작되면 사람이 기다린 자리를 그 턴이 가져간다(스펙 §5-2 결정 6 의 구멍).
+   */
+  controlOf(threadKey: string): ThreadControl | null {
+    const turn = this.turns.get(threadKey);
+    if (turn?.kind === 'interactive') return { openedByHandle: turn.openedByHandle };
+    const reserved = this.handoffs.get(threadKey);
+    if (reserved) return { openedByHandle: reserved.openedByHandle };
+    return null;
   }
 
   get(threadKey: string): TurnRecord | undefined {
