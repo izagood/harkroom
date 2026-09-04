@@ -423,6 +423,9 @@ describe('#369 관찰 전용 세션 — 못 치는 이유가 화면에 있다', 
 
   it('입력창이 비활성이고, 왜 못 치는지가 화면에 적혀 있다', async () => {
     const { sinkOpts, readOnly } = await mountPanel();
+    // **첫 writer 프레임이 오기 전부터 접혀 있다**(#369). 서버의 통지는 소켓이 붙은 뒤에
+    // 오므로, 그 전까지 커서가 깜빡이면 화면이 그 동안 "칠 수 있다"고 말한다.
+    expect(readOnly[0]).toBe(true);
     await act(async () => {
       FakeSocket.last!.deliver({ type: 'writer', writer: false, resize: true, reason: 'observe-only' });
     });
