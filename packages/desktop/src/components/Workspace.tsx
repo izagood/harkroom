@@ -3,6 +3,7 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { sidebarStorage } from '../lib/prefs';
 import { isMacOS, MAC_TRAFFIC_LIGHT_PL } from '../lib/platform';
+import { CommunityRail } from './CommunityRail';
 import { Sidebar } from './Sidebar';
 import { ChannelPane } from './ChannelPane';
 import { Notice } from './Notice';
@@ -114,6 +115,10 @@ export function Workspace({ onLogout, onOpenSettings }: {
 
   return (
     <div className="flex h-screen text-sm">
+      {/* 전환기 레일은 **사이드바 밖**에 둔다(#165). 사이드바 안에 넣으면 사이드바를 접는
+          순간(폭 0) 전환기까지 함께 사라져, 커뮤니티를 바꾸려면 먼저 사이드바를 펴야 한다.
+          커뮤니티가 하나면 이 컴포넌트는 아무것도 그리지 않으므로 오늘 화면과 같다. */}
+      <CommunityRail />
       <Sidebar
         onLogout={onLogout}
         onOpenSettings={onOpenSettings}
