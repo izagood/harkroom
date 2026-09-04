@@ -293,7 +293,12 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
       await getController().leaveChannel(channelId, me.id);
       closeMembers();
     } catch (err) {
-      setMemberError(err instanceof Error ? err.message : '나가기에 실패했다');
+      const msg = err instanceof Error ? err.message : '나가기에 실패했다';
+      // 서버의 영문 사유를 한국어로 바꾼다(#344).
+      const translated = msg === 'archived channels are read-only'
+        ? '보관된 채널은 읽기 전용이라 나갈 수 없다'
+        : msg;
+      setMemberError(translated);
     }
   };
 

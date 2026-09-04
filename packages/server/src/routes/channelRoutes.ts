@@ -3,8 +3,8 @@ import type { Pool } from 'pg';
 import type { StorageBackend } from '../storage/local.js';
 import { z } from 'zod';
 import {
-  addChannelMember, assertChannelVisible, audienceFor, channelListAudience, channelListLostAudience,
-  channelMembershipGate, channelPostGate, createChannel, deleteChannel,
+  addChannelMember, assertChannelVisible, audienceFor, channelArchivedSql, channelListAudience,
+  channelListLostAudience, channelMembershipGate, channelPostGate, createChannel, deleteChannel,
   getChannelDoc, getChannelRow, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
   updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs, renameSection,
 } from '../services/channels.js';
@@ -314,13 +314,18 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
     // 초대와 **같은 게이트**(#328). 제거도 막는다: 보관은 읽기 전용이고 멤버십 변경은
-    // 쓰기다. 삭제 앞에 두는 이유도 초대와 같다 — 거절된 요청이 퇴장 시스템 메시지를
+    // 쓰기다. 삭제 앞에 두는 이유도 초대와 같다 — 거절된 요청이、退場 시스템 메시지를
     // 남기면 읽기 전용 채널에 새 메시지가 생긴다.
+    //
+    // **나가기는 허용한다(#344).** `isSelf` 인 제거는 보관 게이트를 통과한다 — 나가는 것이
+    // 남에게 하는 일이 아니라 자기 사이드바를 치우는 일이고, 보관이 뜻하는 "읽기 전용"은
+    // 채널의 내용에 관한 것이지 누가 그것을 구독하는지에 관한 것이 아니기 때문이다.
+    // 남을 내보내는 것은 계속 막힌다.
     const gate = await channelMembershipGate(pool, id);
     if (gate === 'not_found') {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
     }
-    if (gate === 'archived') {
+    if (gate === 'archived' && !isSelf) {
       return reply.code(400).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
     }
     if (gate === 'dm') {
@@ -363,15 +368,26 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
        * 표시 시점에 그것으로 현재 handle 을 찾는다(그래서 이름을 바꾸면 과거 메시지도
        * 새 이름으로 그려진다). "FK 가 계정 행을 보장한다"는 근거는 이제 쓸 곳이 없다.
        * 본문에 `@` 를 붙이지 않는 이유는 초대 쪽과 같다.
+       *
+       * **보관 채널에서는 시스템 메시지를 안 남긴다(#344).** 읽기 전용이어야 할 채널에
+       * 새 메시지가 생기면 `#328` 이 막으려던 것이 그대로 다시 생긴다. 보관 여부는
+       * `channelMembershipGate` 로 이미 확인했으므로 여기서 다시 판정하지 않고,
+       * `channelArchivedSql` 로만 확인한다 — gate 가 'ok' 로 돌아왔을 수도 있기 때문이다.
        */
-      const posted = await postMessage(pool, {
-        channelId: id,
-        authorId: req.account!.id,
-        ...memberSystemMessage(isSelf ? 'left' : 'removed', accountId),
-      });
-      // 초대 쪽과 같이 메시지 층의 `audienceFor` 를 쓴다.
-      if (posted.message) {
-        emitEvent({ type: 'message.created', message: posted.message, audience: await audienceFor(pool, id) });
+      const archivedRes = await pool.query(
+        `select ${channelArchivedSql('c')} as archived from channel c where c.id = $1`, [id],
+      );
+      const isArchived = archivedRes.rows[0]?.archived ?? false;
+      if (!isArchived) {
+        const posted = await postMessage(pool, {
+          channelId: id,
+          authorId: req.account!.id,
+          ...memberSystemMessage(isSelf ? 'left' : 'removed', accountId),
+        });
+        // 초대 쪽과 같이 메시지 층의 `audienceFor` 를 쓴다.
+        if (posted.message) {
+          emitEvent({ type: 'message.created', message: posted.message, audience: await audienceFor(pool, id) });
+        }
       }
     }
     return { members: await listChannelMembers(pool, id) };
