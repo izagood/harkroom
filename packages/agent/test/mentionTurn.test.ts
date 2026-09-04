@@ -7,7 +7,8 @@
 // 흉내낸다(task-9 브리프 시나리오 1 주석 그대로).
 import { lstat, mkdir, mkdtemp, readFile, readlink, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentView, MessageRow } from '@murmur/shared';
 import { mentionAnchor, runMentionTurn, syncSkills, type MentionTurnDeps, type MentionTurnMurmur, type RunTurn } from '../src/mentionTurn.js';
@@ -16,9 +17,14 @@ import { MurmurAgentClient } from '../src/murmur.js';
 import { SessionStore } from '../src/sessions.js';
 import type { Exec } from '../src/workspace.js';
 import type { TurnPlan } from '../src/turn.js';
+import { composeSpawn, runPtyTurn } from '../src/pty.js';
 import type { PtyWriter, TurnResult } from '../src/pty.js';
 import type { RelayRunnerFrame } from '@murmur/shared';
 import { createRelayClient, type RelayHandlers } from '../src/relay.js';
+
+// PTY 계약 테스트가 쓰는 가짜 하네스(#369) — 이 파일에서는 `claude` 라는 이름의 shim 뒤에
+// 놓아 진짜 하네스 프리셋·진짜 spawn 경로를 그대로 태운다.
+const FAKE_HARNESS = join(dirname(fileURLToPath(import.meta.url)), 'helpers/fake-harness.mjs');
 
 const ME = { id: 'agent-1', handle: 'forge' };
 const CHANNEL = 'c1';
@@ -1747,6 +1753,9 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     // 그대로 쓴다. 그 등식 자체는 아래 스레드 안 멘션 케이스가 확인한다.
     expect(r.opened).toEqual([{
       agentAccountId: ME.id, channelId: CHANNEL, threadRootId: null, harness: 'claude-code',
+      // #369: 멘션 턴은 프롬프트를 파일로 받으므로 이 PTY 는 입력을 받을 수 없다 —
+      // 그 사실을 세션에 실어 서버가 writer 차례를 안 주게 한다.
+      acceptsInput: false,
     }]);
     // 바이트가 **변형 없이** 그대로 온다 — 문자열로 뜨면 잘린 UTF-8 이 U+FFFD 가 된다.
     expect(r.bytes).toHaveLength(1);
@@ -1889,5 +1898,131 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     // 이 회귀선은 다시 뜻을 잃는다.
     expect(r.sessionId()).not.toBeNull();
     expect(typedCount).toBe(1);
+  });
+});
+
+/**
+ * #369 — 멘션 턴의 attach 입력은 자식에게 **닿지 않는다**. 그 사실을 코드로 고정한다.
+ *
+ * **이 파일의 다른 릴레이 테스트와 달리 `runTurn` 을 스텁하지 않는다.** 이슈가 지적한
+ * 테스트 공백이 정확히 그것이었다: `pty` 쪽 입력 테스트는 `stdinFile: null` 인 계획만
+ * 쓰고, `mentionTurn` 쪽 입력 테스트는 진짜 `runPtyTurn` 대신 `onSpawn` writer 를 직접
+ * 부르는 스텁을 써서, **`stdinFile` 이 non-null 인 진짜 멘션 계획과 live attach 입력을
+ * 한 테스트에서 함께 통과시킨 적이 없다.** 그 조합을 여기서 실제로 만든다.
+ *
+ * 그래서 `claude` 라는 이름의 실행 파일을 PATH 에 놓는다 — 하네스 프리셋(turn.ts)이
+ * 그 이름으로 명령을 조립하고, `childEnv` 가 부모 env 를 그대로 물려주므로 이 한 수로
+ * 진짜 조립·진짜 spawn·진짜 리다이렉션을 전부 태울 수 있다. 명령을 직접 갈아 끼우면
+ * 그 순간 이 테스트가 지키려는 "진짜 멘션 계획"이 사라진다.
+ */
+describe('#369 진행 중인 멘션 턴은 입력을 받을 수 없다 (진짜 PTY 배선)', () => {
+  /** 프롬프트 파일 EOF 뒤에 넣어 볼 센티넬. 출력 에코와 구분되도록 자식이 읽은 것만 센다. */
+  const PROBE = 'ZZPROBEZZ\r';
+
+  /** `claude` 라는 이름으로 fake-harness 를 띄우는 shim 을 만들고 그 디렉터리를 준다. */
+  async function harnessShim(): Promise<string> {
+    const binDir = await mkdtemp(join(tmpdir(), 'mention-turn-bin-'));
+    const script = `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(FAKE_HARNESS)} "$@"\n`;
+    await writeFile(join(binDir, 'claude'), script, { encoding: 'utf8', mode: 0o755 });
+    return binDir;
+  }
+
+  /**
+   * 세션 스텁 — 열린 계획과 PTY 통로를 잡아 두고, 하네스가 EOF 를 알린 **뒤에** 친다.
+   * 시간으로 재지 않는 이유: spawn 부터 파일 읽기까지의 시간이 기계마다 다르고, 너무
+   * 일찍 치면 그 바이트가 파일 EOF 전에 섞여 "안 닿았다"가 우연히 참이 된다.
+   */
+  function probeRelay() {
+    const opened: { acceptsInput: boolean }[] = [];
+    let out = '';
+    let typed = 0;
+    let seen: TurnPlan | null = null;
+    return {
+      opened, typedCount: () => typed, output: () => out, plan: () => seen,
+      /** 진짜 `runPtyTurn` 을 감싸 그 턴에 실제로 들어간 계획을 잡는다. */
+      capture: (run: RunTurn): RunTurn => (plan, opts) => { seen = plan; return run(plan, opts); },
+      relay: {
+        openSession(input: { acceptsInput: boolean }) {
+          opened.push(input);
+          let writer: PtyWriter | null = null;
+          return {
+            sessionId: 'sess-369',
+            push(chunk: Buffer) {
+              out += chunk.toString('utf8');
+              if (typed === 0 && out.includes('EOF_SEEN')) {
+                typed += 1;
+                writer?.write(Buffer.from(PROBE));
+              }
+            },
+            bindInput(w: PtyWriter) { writer = w; },
+            close() {},
+          };
+        },
+      },
+    };
+  }
+
+  it('stdinFile 이 non-null 인 진짜 멘션 계획에서, spawn 뒤에 보낸 입력이 자식에 도달하지 않는다', async () => {
+    const binDir = await harnessShim();
+    const prevPath = process.env.PATH;
+    const prevMode = process.env.FAKE_MODE;
+    process.env.PATH = `${binDir}:${prevPath ?? ''}`;
+    process.env.FAKE_MODE = 'stdin-file-probe';
+    try {
+      // `workingDir: null` 이어야 한다 — 다른 테스트의 기본값 '/repo' 는 이 기계에 없는
+      // 경로이고, 스텁 runTurn 은 cwd 를 안 쓰지만 진짜 spawn 은 그 디렉터리로 chdir 한다
+      // (없으면 자식이 출력 한 줄 없이 exit 1 로 죽어 원인이 안 보인다).
+      const fakeMurmur = new FakeMurmur(defOf({ workingDir: null }));
+      fakeMurmur.seedFrom('human-1', '@forge 안녕');
+      const r = probeRelay();
+      // 하네스가 EOF 뒤 기다리는 시간 — 기본 1.5초는 이 테스트에 불필요하게 길다.
+      process.env.FAKE_PROBE_WAIT_MS = '500';
+      const { deps } = await makeDeps(fakeMurmur, { relay: r.relay, runTurn: r.capture(runPtyTurn) });
+
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+      // 진짜 멘션 계획이다 — 프롬프트가 파일로 갔고(#117), 그래서 `composeSpawn` 이
+      // `sh -c 'exec ... < 파일'` 로 감싼다. 이 두 줄이 이 테스트의 전제다.
+      const plan = r.plan();
+      expect(plan).not.toBeNull();
+      expect(plan!.stdinFile).not.toBeNull();
+      expect(composeSpawn(plan!).command).toBe('sh');
+
+      // 하네스가 프롬프트 파일을 실제로 읽었고(리다이렉션은 동작한다), 그 뒤에 사람이 쳤다.
+      expect(r.output()).toContain('EOF_SEEN');
+      expect(r.typedCount()).toBe(1);
+      // **그런데 자식에게는 닿지 않았다.** 이것이 #369 다 — 자식의 fd 0 은 PTY slave 가
+      // 아니라 EOF 에 닿은 일반 파일이라, PTY master 로 쓴 바이트가 갈 곳이 없다.
+      expect(r.output()).toContain('probe-seen:no');
+      expect(r.output()).not.toContain('probe-seen:yes');
+      // 그래서 이 세션은 애초에 입력을 받을 수 없다고 서버에 신고한다(관찰 전용).
+      expect(r.opened.map((o) => o.acceptsInput)).toEqual([false]);
+    } finally {
+      process.env.PATH = prevPath;
+      if (prevMode === undefined) delete process.env.FAKE_MODE;
+      else process.env.FAKE_MODE = prevMode;
+    }
+  }, 30_000);
+
+  /**
+   * #117 유지 — 이 수정이 "입력을 받으려고 stdinFile 을 없애고 argv 로" 쪽으로 흐르지
+   * 않았음을 고정한다. 그 방향은 `ps -ef` 로 같은 머신의 다른 로컬 사용자에게 스레드
+   * 본문을 그대로 보여 준다.
+   */
+  it('프롬프트 본문이 argv 에 없다 — 파일 경로만 있다', async () => {
+    const fakeMurmur = new FakeMurmur(defOf());
+    fakeMurmur.seedFrom('human-1', '@forge 비밀번호는 hunter2 다');
+    const { deps, plans } = await makeDeps(fakeMurmur);
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    const plan = plans[0]!;
+    const body = await readFile(plan.stdinFile!, 'utf8');
+    expect(body).toContain('hunter2');
+    // 조립된 argv 에도, `composeSpawn` 이 셸로 감싼 최종 명령줄에도 본문이 없어야 한다 —
+    // 감싼 뒤를 안 보면 리다이렉션 문자열에 본문을 이어붙이는 회귀를 놓친다.
+    expect(plan.args.join(' ')).not.toContain('hunter2');
+    expect(composeSpawn(plan).args.join(' ')).not.toContain('hunter2');
+    expect(composeSpawn(plan).args.join(' ')).toContain(plan.stdinFile!);
   });
 });
