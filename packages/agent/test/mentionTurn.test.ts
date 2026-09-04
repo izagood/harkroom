@@ -17,6 +17,8 @@ import { SessionStore } from '../src/sessions.js';
 import type { Exec } from '../src/workspace.js';
 import type { TurnPlan } from '../src/turn.js';
 import type { PtyWriter, TurnResult } from '../src/pty.js';
+import type { RelayRunnerFrame } from '@murmur/shared';
+import { createRelayClient, type RelayHandlers } from '../src/relay.js';
 
 const ME = { id: 'agent-1', handle: 'forge' };
 const CHANNEL = 'c1';
@@ -1782,21 +1784,89 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     expect(r.closedCount()).toBe(1);
   });
 
-  it('#141-7 릴레이가 붙어도 plan 이 그대로다 — 모드도 권한 프리셋도 바뀌지 않는다', async () => {
-    // 같은 정의(mentionPermission: 'readonly')로 릴레이 없이 한 번, 릴레이를 붙여 한 번
-    // 돌려 **조립된 plan 을 직접 비교**한다. "attach 해도 모드가 그대로다"를 화면이나
-    // 로그로 갈음하면, 프리셋이 바뀌어도 초록인 테스트가 된다.
-    const runOnce = async (relay?: ReturnType<typeof fakeRelay>['relay']) => {
+  /**
+   * 진짜 릴레이 클라이언트를 `TurnRelay` 로 쓴다(#315). 가짜 relay 로는 "서버가 보낸
+   * input 이 그 턴의 PTY 로 간다"를 확인할 수 없다 — 그 경로가 릴레이 안에 있어서,
+   * 가짜를 꽂으면 배선이 끊겨 있어도 초록이다.
+   */
+  function realRelay() {
+    const sent: RelayRunnerFrame[] = [];
+    let handlers: RelayHandlers | null = null;
+    const client = createRelayClient({
+      murmurUrl: 'http://x', pat: 'p',
+      dial: (_url, _pat, h) => {
+        handlers = h;
+        h.onOpen({ send: (data) => sent.push(JSON.parse(data) as RelayRunnerFrame), close: () => {} });
+      },
+    });
+    client.start();
+    const sessionId = () => {
+      const started = sent.find((f) => f.type === 'session.started');
+      return started?.type === 'session.started' ? started.session.sessionId : null;
+    };
+    return {
+      relay: client,
+      sessionId,
+      /** 서버가 보내는 것과 같은 모양의 input 프레임을 러너에 넣는다. */
+      type: (bytes: Buffer) => handlers!.onMessage(JSON.stringify({
+        type: 'input', sessionId: sessionId(), data: bytes.toString('base64'),
+      })),
+    };
+  }
+
+  it('#315-2 mentionPermission 이 readonly 인 턴에도 사람이 친 바이트가 PTY 로 간다', async () => {
+    // 운영자 결정: `mention_permission` 은 **에이전트가 스스로 넘지 못하는 선이지 사람이
+    // 넘지 못하는 선이 아니다.** readonly 로 도는 턴의 프롬프트에 사람이 "yes" 를 칠 수
+    // 있어야 원 요청("터미널에 들어가서 작업하는 것과 동일하게")이 온전히 성립한다.
+    const fake = new FakeMurmur(defOf({ mentionPermission: 'readonly' }));
+    fake.seedFrom('human-1', '@forge 안녕');
+    const r = realRelay();
+    const { deps, runTurn, plans } = await makeDeps(fake, { relay: r.relay });
+
+    const typed = Buffer.from('\x1b[Ayes\r', 'binary');
+    const arrived: Buffer[] = [];
+    runTurn.script = async (_plan, opts) => {
+      // 프로덕션에서는 pty.ts 가 spawn 직후 이 통로를 넘긴다.
+      opts.onSpawn?.({ write: (chunk) => { arrived.push(chunk); } });
+      r.type(typed);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    // 이 턴이 정말 readonly 프리셋으로 돌았다 — 그 사실이 없으면 이 테스트는 아무것도
+    // 지키지 않는다(auto 턴에 입력이 가는 것은 애초에 논쟁거리가 아니었다).
+    expect(plans[0]!.args[plans[0]!.args.indexOf('--permission-mode') + 1]).toBe('plan');
+    expect(arrived).toHaveLength(1);
+    expect(arrived[0]!.equals(typed)).toBe(true);
+  });
+
+  it('#315-3 (구 #141-7) 사람이 실제로 타이핑해도 plan 이 그대로다 — 모드도 권한 프리셋도 바뀌지 않는다', async () => {
+    // **회귀선의 뜻을 다시 쓴 것이다.** #141 은 "attach 가 `TurnMode`·프리셋에 닿지
+    // 않는다"를 고정했고, 그때는 붙기만 하고 칠 수 없었으므로 릴레이의 유무만 비교했다.
+    // 입력이 열린 지금 그 비교는 **아무것도 지키지 않는다** — 승격은 붙는 순간이 아니라
+    // 치는 순간에 생길 수 있기 때문이다. 그래서 이 판은 사람이 **실제로 타이핑한 턴**의
+    // plan 을 비교한다: 입력을 여는 것은 턴 모드를 바꾸는 것이 아니고, 바뀌는 것은 그
+    // PTY 에 바이트를 넣을 수 있는 주체뿐이라는 문장이 여기서 성립한다.
+    const runOnce = async (r?: ReturnType<typeof realRelay>) => {
       const fake = new FakeMurmur(defOf({ mentionPermission: 'readonly' }));
       fake.seedFrom('human-1', '@forge 안녕');
-      const { deps, plans } = await makeDeps(fake, relay ? { relay } : {});
+      const { deps, plans, runTurn } = await makeDeps(fake, r ? { relay: r.relay } : {});
+      if (r) {
+        runTurn.script = async (_plan, opts) => {
+          opts.onSpawn?.({ write: () => { typedCount += 1; } });
+          r.type(Buffer.from('yes\r', 'utf8'));
+          return { exitCode: 0, timedOut: false, tail: '' };
+        };
+      }
       await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
       return plans[0]!;
     };
 
+    let typedCount = 0;
     const without = await runOnce();
-    const r = fakeRelay();
-    const withRelay = await runOnce(r.relay);
+    const r = realRelay();
+    const withRelay = await runOnce(r);
 
     // 명령·인자가 한 글자도 다르지 않아야 한다 — 권한 프리셋은 전부 인자로 표현된다
     // (turn.ts::PRESETS: `--permission-mode` 등).
@@ -1813,7 +1883,9 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     // 정규화가 프리셋 플래그를 삼키지 않았음을 직접 확인한다 — 'readonly' 프리셋의 증거다.
     expect(normalize(withRelay.args)).toContain('--permission-mode');
     expect(normalize(withRelay.args)[normalize(withRelay.args).indexOf('--permission-mode') + 1]).toBe('plan');
-    // 세션은 실제로 열렸다 — 열리지도 않았는데 "그대로다"로 초록이 되면 안 된다.
-    expect(r.opened).toHaveLength(1);
+    // 세션이 열렸고 **사람이 실제로 쳤다** — 치지도 않았는데 "그대로다"로 초록이 되면
+    // 이 회귀선은 다시 뜻을 잃는다.
+    expect(r.sessionId()).not.toBeNull();
+    expect(typedCount).toBe(1);
   });
 });
