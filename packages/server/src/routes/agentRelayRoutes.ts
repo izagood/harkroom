@@ -1,8 +1,9 @@
-// Phase 2 attach 의 서버 표면(스펙 §5). 네 개다:
+// Phase 2 attach 의 서버 표면(스펙 §5). 다섯 개다:
 //
 //   GET  /agent-relay              러너가 거는 상시 outbound WS (PAT 헤더 인증)
 //   GET  /agent-sessions           내가 볼 수 있는 진행 중 세션 목록
 //   POST /agent-sessions/:id/attach  소유자 판정 → attach 티켓 발급
+//   POST /agent-sessions/interactive 사람이 스스로 인터랙티브 턴을 연다(#337) → attach 티켓
 //   GET  /agent-attach?ticket=...  뷰어 WS (티켓 1회용)
 //
 // **러너가 포트를 열지 않는다.** 러너는 사람의 로그인 세션 안에서 돌고, 관찰 하나 때문에
