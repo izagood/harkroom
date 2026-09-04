@@ -50,6 +50,21 @@ export function composeSpawn(plan: TurnPlan): { command: string; args: string[] 
   return { command: 'sh', args: ['-c', `exec ${parts} < ${shellQuote(plan.stdinFile)}`] };
 }
 
+/**
+ * 이 계획의 PTY 에 **사람이 입력할 수 있는가**(#369).
+ *
+ * `composeSpawn` 바로 아래 두는 이유: 답의 근거가 그 함수가 하는 일 자체다. `stdinFile` 이
+ * 있으면 `sh -c 'exec <하네스> ... < <파일>'` 로 감싸이고, 그 순간 자식의 fd 0 은 PTY slave
+ * 가 아니라 일반 파일이다 — 파일이 EOF 에 닿은 뒤 PTY master 에 쓴 바이트는 자식에게
+ * **도달하지 않는다**(#369 재현: EOF_SEEN 뒤 입력에 data 이벤트가 한 번도 안 왔다).
+ *
+ * **하네스 종류로 판정하지 않는다**(`claude -p` 인지 보지 않는다). 원인은 하네스가 아니라
+ * stdin 리다이렉션이고, 그 사실 하나로 재면 하네스가 늘어도 이 판정은 안 깨진다.
+ */
+export function acceptsPtyInput(plan: TurnPlan): boolean {
+  return plan.stdinFile === null;
+}
+
 // SIGTERM → SIGKILL 유예 시간. 하네스가 모델 요청을 붙잡고 있는 도중일 수 있다 — 바로
 // SIGKILL 을 쏘면 정리(임시 파일, in-flight 요청 등)할 기회 자체를 빼앗는다.
 const SIGKILL_GRACE_MS = 5_000;

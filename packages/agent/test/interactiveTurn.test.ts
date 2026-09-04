@@ -65,7 +65,12 @@ interface Harness {
   /** 진행 중인 턴을 끝낸다(exit 흉내). */
   endTurn: (result?: TurnResult) => void;
   sched: ReturnType<typeof fakeSchedule>;
-  relayLog: { closed: number; viewerCount: ((n: number) => void) | undefined };
+  relayLog: {
+    closed: number;
+    viewerCount: ((n: number) => void) | undefined;
+    /** 세션마다 러너가 신고한 "입력을 받을 수 있는가"(#369). 인터랙티브 턴은 true 여야 한다. */
+    acceptsInput: boolean[];
+  };
   murmur: { definition: () => Promise<AgentView>; readThread: ReturnType<typeof vi.fn> };
 }
 
@@ -90,11 +95,12 @@ async function makeHarness(overrides: Partial<InteractiveTurnDeps> = {}, def: Ag
     return new Promise<TurnResult>((resolve) => { resolveTurn = resolve; });
   };
 
-  const relayLog: Harness['relayLog'] = { closed: 0, viewerCount: undefined };
+  const relayLog: Harness['relayLog'] = { closed: 0, viewerCount: undefined, acceptsInput: [] };
   let sessionSeq = 0;
   const relay: InteractiveRelay = {
     openSession(input) {
       relayLog.viewerCount = input.onViewerCount;
+      relayLog.acceptsInput.push(input.acceptsInput);
       sessionSeq += 1;
       return {
         sessionId: `relay-${sessionSeq}`,
@@ -160,6 +166,10 @@ describe('#337 분기 ③ — 아무 턴도 없으면 새로 연다', () => {
     expect(h.plans[0]!.args).not.toContain('-p');
     expect(h.plans[0]!.args).not.toContain('--permission-mode');
     expect(h.plans[0]!.stdinFile).toBeNull();
+    // #369: 그래서 이 PTY 는 사람의 입력을 **실제로 받는다** — 세션이 그 사실을 서버에
+    // 신고해야 writer 차례가 열린다. 위 `stdinFile: null` 과 이 줄은 같은 사실의 양면이고,
+    // 둘을 함께 두는 이유는 판정이 계획에서 나온다는 것을 회귀선에 박아 두기 위해서다.
+    expect(h.relayLog.acceptsInput).toEqual([true]);
     // 무기한 + 요청한 크기로 spawn 된다.
     expect(h.turnOpts[0]).toMatchObject({ timeoutMs: 0, cols: 100, rows: 30 });
 
