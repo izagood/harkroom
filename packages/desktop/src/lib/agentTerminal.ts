@@ -7,7 +7,7 @@
 // `ws.ts` 처럼 **재접속하지 않는다.** 이 소켓은 사람이 패널을 열어 둔 동안만 살고, 티켓은
 // 1회용이라 재접속에는 새 attach 인가가 필요하다 — 조용히 다시 붙으면 그 인가를 건너뛴다.
 // 끊기면 패널이 그 사실을 그리고, 다시 보려면 사람이 다시 연다.
-import type { AgentSessionState, AttachServerFrame } from '@murmur/shared';
+import type { AgentSessionState, AttachClientFrame, AttachServerFrame } from '@murmur/shared';
 
 export interface AttachCallbacks {
   /**
@@ -23,7 +23,21 @@ export interface AttachCallbacks {
 }
 
 export interface AttachHandle {
+  /**
+   * 사람이 친 바이트를 그 PTY 로 보낸다(#315). **쓰기 인가는 여기서 판정하지 않는다** —
+   * 서버가 attach 때 이미 했고(티켓의 `canInput`), 소켓이 그 결정을 들고 있다. 화면은
+   * 쓸 수 없는 사람에게 이 함수를 부를 길 자체를 만들지 않고(패널이 입력을 안 연다),
+   * 그래도 누가 직접 부르면 서버가 조용히 버린다 — **진짜 게이트는 서버 쪽 하나다.**
+   */
+  sendInput(bytes: Uint8Array): void;
   close(): void;
+}
+
+/** 바이트 → base64. `btoa` 는 latin1 문자열을 받으므로 바이트를 코드 포인트로 넘긴다. */
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }
 
 /** base64 → 바이트. `atob` 는 latin1 문자열을 주므로 코드 포인트가 곧 바이트다. */
@@ -64,6 +78,13 @@ export function connectAgentAttach(
   };
 
   return {
+    sendInput(bytes) {
+      // 닫힌 뒤에 쓰면 브라우저가 던진다 — 패널을 닫는 순간 도착한 키 하나로 화면을
+      // 죽이지 않는다(`onmessage` 의 `closed` 가드와 같은 이유, 반대 방향).
+      if (closed || socket.readyState !== WebSocket.OPEN) return;
+      try { socket.send(JSON.stringify({ type: 'input', data: encodeBase64(bytes) } satisfies AttachClientFrame)); }
+      catch { /* 죽은 소켓은 onclose 가 정리한다 */ }
+    },
     close() {
       // **먼저 플래그를 세운다.** 사람이 패널을 닫은 것을 '끊겼다'로 그리면, 닫는 순간
       // 오류 문구가 스쳐 지나간다. 이 소켓은 닫힘이 정상 종료다.

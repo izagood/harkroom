@@ -15,7 +15,17 @@ export interface TerminalSink {
   dispose(): void;
 }
 
-export type TerminalSinkFactory = (el: HTMLElement) => TerminalSink;
+export interface TerminalSinkOptions {
+  /**
+   * 사람이 이 터미널에 친 것(#315). xterm 의 `onData` 가 주는 문자열 그대로다 — 화살표·
+   * Ctrl-C·붙여 넣기가 전부 여기로 온다. **없으면 읽기 전용이다**: 옵션이 안 오면 xterm 의
+   * stdin 자체를 끈다. "받아 놓고 아무 데도 안 보낸다"로 두면 사람은 글자가 찍히는 것을
+   * 보고 쳤다고 믿지만 러너에는 아무것도 닿지 않는다 — 눌러도 아무 일이 없는 입력창이다.
+   */
+  onInput?: (data: string) => void;
+}
+
+export type TerminalSinkFactory = (el: HTMLElement, opts?: TerminalSinkOptions) => TerminalSink;
 
 /**
  * xterm 을 붙이는 실제 구현. `import()` 가 끝나기 전에 도착한 바이트는 **큐에 담고
@@ -26,7 +36,7 @@ export type TerminalSinkFactory = (el: HTMLElement) => TerminalSink;
  * 이 기능의 값이 사라진다. 순서를 지키면 되는 이유: 서버가 이미 뷰어별로 재생 → 라이브
  * 순서를 보장하므로(스펙 §5), 도착 순서대로 쓰면 그 보장이 화면까지 그대로 온다.
  */
-const xtermSink: TerminalSinkFactory = (el) => {
+const xtermSink: TerminalSinkFactory = (el, opts) => {
   const pending: Uint8Array[] = [];
   let term: { write(data: Uint8Array): void; dispose(): void } | null = null;
   let disposed = false;
@@ -44,8 +54,13 @@ const xtermSink: TerminalSinkFactory = (el) => {
       scrollback: 5_000,
       convertEol: false,
       fontSize: 12,
+      // 쓸 수 없는 사람에게는 xterm 의 stdin 을 아예 끈다(#315) — 커서도 깜빡이지 않고
+      // 키를 눌러도 아무것도 그려지지 않으므로, 화면이 "여기는 읽기 전용이다"를 스스로
+      // 말한다. 이유는 패널이 글로 따로 적는다(TerminalPanel.tsx).
+      disableStdin: !opts?.onInput,
     });
     t.open(el);
+    if (opts?.onInput) t.onData(opts.onInput);
     term = t;
     for (const chunk of pending) t.write(chunk);
     pending.length = 0;

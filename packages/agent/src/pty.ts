@@ -104,6 +104,17 @@ function decodeTailText(buf: Buffer): string {
   return buf.subarray(start).toString('utf8');
 }
 
+/**
+ * PTY stdin 에 바이트를 넣는 통로(#315). 사람이 attach 해서 친 것이 여기로 들어간다.
+ *
+ * **던지지 않는다.** 프로세스가 이미 끝난 뒤에 쓰면 node-pty 가 EIO 로 던지는데, 그것은
+ * 사람이 마지막 화면을 보며 엔터를 한 번 더 친 정상 상황이다 — 관찰·개입 하나가 러너
+ * 프로세스를 죽이지 않도록 여기서 삼킨다(`onData` 쪽 규율의 반대 방향 절반).
+ */
+export interface PtyWriter {
+  write(chunk: Buffer): void;
+}
+
 export interface TurnResult {
   exitCode: number;
   timedOut: boolean;
@@ -132,6 +143,19 @@ export interface RunPtyTurnOptions {
    * 기다리는 답을 죽이지 않도록 넘기는 쪽(`relay.ts`)이 스스로 삼킨다.
    */
   onData?: (chunk: Buffer) => void;
+  /**
+   * spawn 직후 **PTY stdin 으로 가는 통로**를 넘긴다(#315 — attach 한 사람의 타이핑).
+   *
+   * `onData` 의 정확한 반대 방향이라 나란히 둔다. 콜백으로 넘기는 이유: 세션은 spawn
+   * **전에** 열려야 하고(그래야 첫 바이트를 안 놓친다 — `mentionTurn.ts` 의 순서 주석),
+   * 그 시점에는 아직 쓸 대상이 없다. 그래서 세션이 통로를 미리 만들어 두고, spawn 되는
+   * 순간 여기서 이어 붙인다.
+   *
+   * **turn 의 권한과 무관하다.** 이 통로는 PTY 에 바이트를 넣을 뿐이고, `plan`(모드·권한
+   * 프리셋)은 이 함수에 들어오기 전에 이미 조립돼 있다 — 입력을 여는 것이 턴 모드를
+   * 바꾸는 것이 아니라는 사실이 이 순서로 성립한다(스펙 §6, #141 회귀선의 새 형태).
+   */
+  onSpawn?: (writer: PtyWriter) => void;
   /**
    * SIGTERM → SIGKILL 유예(ms). 생략하면 프로덕션 기본값(SIGKILL_GRACE_MS, 5초)을 그대로
    * 쓴다 — 테스트가 SIGKILL 승격 경로를 확인하려고 5초를 통째로 기다리지 않게 여는 구멍이지,
@@ -180,6 +204,22 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       dataListener.dispose();
       exitListener.dispose();
       resolve({ exitCode, timedOut, tail: decodeTailText(tail.snapshot()) });
+    });
+
+    // 사람이 attach 해서 친 바이트가 들어오는 통로(#315). spawn 직후에 건네는 이유는
+    // 위 `onSpawn` 주석에 있다.
+    //
+    // **여기서 처음으로 디코드한다.** 러너 → 서버 → 데스크탑 → 서버 → 여기까지 base64
+    // 로만 오는 규율(shared 의 릴레이 절 주석)은 **중계 구간**의 규칙이고, 여기는 중계가
+    // 아니라 파이프의 끝이다. node-pty 의 `write` 는 문자열만 받아 utf8 로 인코딩하므로
+    // 이 왕복은 무손실이다 — 제어 바이트(Ctrl-C, 화살표)는 ASCII 라 그대로이고, 붙여 넣은
+    // 멀티바이트는 온전한 UTF-8 로 왔다(데스크탑이 `TextEncoder` 로 인코딩한다).
+    opts.onSpawn?.({
+      write(chunk) {
+        // 프로세스가 끝난 뒤의 쓰기는 EIO 로 던진다 — 사람이 마지막 화면에서 엔터를 한 번
+        // 더 친 정상 상황이므로, 그것으로 러너를 죽이지 않는다(`PtyWriter` 주석).
+        try { proc.write(chunk.toString('utf8')); } catch { /* 이미 끝난 PTY 는 조용히 버린다 */ }
+      },
     });
 
     const dataListener = proc.onData((chunk) => {
