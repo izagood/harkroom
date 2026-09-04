@@ -63,6 +63,15 @@ async function systemBodies(channelId: string): Promise<string[]> {
   return res.rows.map((r) => r.body);
 }
 
+/** #329: 시스템 메시지의 meta 를 읽는다. */
+async function systemMeta(channelId: string): Promise<Array<{ accountId: string | null }>> {
+  const res = await pool.query<{ meta: { accountId: string | null } }>(
+    `select meta from message where channel_id = $1 and kind = 'system' order by seq`,
+    [channelId],
+  );
+  return res.rows.map((r) => r.meta);
+}
+
 beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
@@ -80,8 +89,8 @@ describe('멤버 입·퇴장 시스템 메시지 (#322)', () => {
 
     expect((await addMember(channelId, userId)).statusCode).toBe(200);
 
-    // 개수까지 못박는다 — "하나 이상 있다"만 보면 같은 사건에 둘이 남아도 초록이다.
-    expect(await systemBodies(channelId)).toEqual(['testuser님이 채널에 추가되었습니다.']);
+    // #329: 본문에 이름 대신 자리표시자. 표시 시점에 meta.accountId 로 현재 handle 를 찾는다.
+    expect(await systemBodies(channelId)).toEqual(['계정이 채널에 추가되었습니다.']);
   });
 
   it('2. 제거되면 시스템 메시지가 남는다 — 나간 것과 내보낸 것의 문구가 다르다', async () => {
@@ -97,10 +106,10 @@ describe('멤버 입·퇴장 시스템 메시지 (#322)', () => {
     expect((await removeMember(channelId, self.accountId, self.token)).statusCode).toBe(200);
 
     expect(await systemBodies(channelId)).toEqual([
-      'testuser님이 채널에 추가되었습니다.',
-      'testuser님이 채널에서 제거되었습니다.',
-      'leaver님이 채널에 추가되었습니다.',
-      'leaver님이 채널에서 나갔습니다.',
+      '계정이 채널에 추가되었습니다.',
+      '계정이 채널에서 제거되었습니다.',
+      '계정이 채널에 추가되었습니다.',
+      '계정이 채널에서 나갔습니다.',
     ]);
   });
 
@@ -214,9 +223,48 @@ describe('멤버 입·퇴장 시스템 메시지 (#322)', () => {
 
     expect(seen).toHaveLength(1);
     const only = seen[0]!;
-    expect(only.body).toBe('audience-joiner님이 채널에 추가되었습니다.');
+    // #329: 본문에 이름 대신 자리표시자.
+    expect(only.body).toBe('계정이 채널에 추가되었습니다.');
     expect(Array.isArray(only.audience)).toBe(true);
     expect(only.audience).toContain(joiner.accountId);
     expect(only.audience).not.toContain(outsider.accountId);
+  });
+
+  it('#329 1. 초대 메시지의 meta 에 대상 accountId 가 있다', async () => {
+    const channelId = await createChannel('member-meta-add');
+    const target = await createUser('meta-add-target');
+
+    await addMember(channelId, target.accountId);
+
+    const meta = await systemMeta(channelId);
+    expect(meta).toHaveLength(1);
+    expect(meta[0]!.accountId).toBe(target.accountId);
+  });
+
+  it('#329 2. 퇴장 메시지의 meta 에 대상 accountId 가 있다', async () => {
+    const channelId = await createChannel('member-meta-remove');
+    const target = await createUser('meta-remove-target');
+
+    await addMember(channelId, target.accountId);
+    await removeMember(channelId, target.accountId);
+
+    const meta = await systemMeta(channelId);
+    expect(meta).toHaveLength(2);
+    // 첫 번째: 초대, 두 번째: 제거
+    expect(meta[0]!.accountId).toBe(target.accountId);
+    expect(meta[1]!.accountId).toBe(target.accountId);
+  });
+
+  it('#329 3. 나감(본인 퇴장) 메시지의 meta 에 대상 accountId 가 있다', async () => {
+    const channelId = await createChannel('member-meta-leave');
+    const leaver = await createUser('meta-leaver');
+
+    await addMember(channelId, leaver.accountId);
+    await removeMember(channelId, leaver.accountId, leaver.token);
+
+    const meta = await systemMeta(channelId);
+    expect(meta).toHaveLength(2);
+    // 두 번째 메시지가 나감
+    expect(meta[1]!.accountId).toBe(leaver.accountId);
   });
 });

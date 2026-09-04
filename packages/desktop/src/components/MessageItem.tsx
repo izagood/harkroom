@@ -35,6 +35,16 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   useEffect(() => { if (highlighted) rowRef.current?.scrollIntoView?.(); }, [highlighted]);
 
   const isSystem = message.kind === 'system';
+  // #329: 시스템 메시지에서 meta.accountId 로 현재 handle 를 찾아 표시한다.
+  // 이렇게 하면 handle 변경 시 과거 메시지도 새 이름으로 그려진다.
+  // Old messages without meta.accountId fall back to author.handle.
+  const targetAccountId = isSystem && typeof message.meta.accountId === 'string'
+    ? message.meta.accountId
+    : null;
+  const targetHandle = targetAccountId
+    ? accounts[targetAccountId]?.handle ?? null
+    : null;
+  const displayHandle = targetHandle ?? author?.handle ?? '…';
   const avcsType = typeof message.meta.avcsType === 'string' ? message.meta.avcsType : null;
   /**
    * 스킬 제안 알림에서 승인 화면으로 가는 진입점(#311 요구 5).
@@ -180,7 +190,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span className="font-semibold">{author?.handle ?? '…'}</span>
+          <span className="font-semibold">{displayHandle}</span>
           <Identity account={author} variant="badge" />
           {/* 작성 시점이 아니라 **지금**의 상태다 — 이 줄이 답하는 질문은 "이 사람에게
               지금 물어봐도 되는가"이지 "그때 무슨 상태였나"가 아니다(#186). */}
