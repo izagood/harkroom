@@ -32,7 +32,7 @@ verify:
 
 migrations:
   dir: packages/server/src/db/migrations
-  next_free: 39
+  next_free: 40
   # 번호에 구멍이 있다(028·030·032 없음) — 파일 개수로 세지 말고 **최대 번호 + 1** 이다.
   # 재번호가 일어난다: 037 은 036 과 충돌해 d665248 에서 다시 번호를 받았다. 그래서 이 값은
   # 배정할 때마다 `git ls-tree origin/main` 로 최대 번호를 다시 확인하고 갱신한다.
