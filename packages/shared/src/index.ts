@@ -1049,10 +1049,24 @@ export type RelayRunnerFrame =
   | { type: 'replay'; sessionId: string; data: string };
 
 /**
- * 서버 → 러너 프레임. Phase 2 는 읽기만이므로 이 하나뿐이다 —
- * `input`·`resize` 는 범위 밖(권한·턴 모드 상호작용이 스펙 §6 결정을 건드린다).
+ * 서버 → 러너 프레임.
+ *
+ * `input` 이 #315 에서 늘어난 것이다. **운영자 결정**: 멘션 턴에도 사람의 입력을 허용한다 —
+ * `mention_permission` 은 **에이전트가 스스로 넘지 못하는 선이지, 사람이 넘지 못하는 선이
+ * 아니다.** 원 요청("터미널에 들어가서 작업하는 것과 동일하게")이 온전히 성립하려면 사람이
+ * 그 프롬프트에 답할 수 있어야 하고, 사람이 앞에 앉아 있다는 것 자체가 그 권한의 근거다.
+ * 이것을 "권한 구멍"으로 읽고 되돌리지 마라 — 되돌리면 이 기능의 절반이 다시 사라진다.
+ *
+ * **입력을 여는 것은 턴 모드를 바꾸는 것이 아니다.** 이 프레임은 PTY stdin 에 바이트를
+ * 넣을 뿐이고, 그 턴의 `TurnMode` 도 `mention_permission` 도 건드리지 않는다(#141 회귀선의
+ * 새 형태 — `packages/agent/test/mentionTurn.test.ts` 가 조립된 plan 을 직접 비교한다).
+ *
+ * `data` 는 `output` 과 **같은 규율**로 base64 다: 서버는 이 바이트도 열지 않는다.
+ * 사람이 친 것에도 비밀이 섞인다(붙여 넣은 토큰, 비밀번호 프롬프트의 답).
  */
-export type RelayServerFrame = { type: 'replay.request'; sessionId: string };
+export type RelayServerFrame =
+  | { type: 'replay.request'; sessionId: string }
+  | { type: 'input'; sessionId: string; data: string };
 
 /**
  * 서버 → 뷰어 프레임. `GET /agent-attach` 소켓에 실린다.
@@ -1065,6 +1079,22 @@ export type RelayServerFrame = { type: 'replay.request'; sessionId: string };
 export type AttachServerFrame =
   | { type: 'output'; data: string }
   | { type: 'status'; state: AgentSessionState };
+
+/**
+ * 뷰어 → 서버 프레임(#315). 사람이 그 터미널에 친 바이트다.
+ *
+ * **쓰기는 소유자만이다.** 소유자가 아닌 admin 은 attach 해서 볼 수 있지만 칠 수 없다
+ * (운영자 결정) — 그래서 잠금 장치가 없다: 한 세션에 바이트를 넣을 수 있는 주체가 애초에
+ * 소유자 한 명뿐이라 두 사람의 키 입력이 섞이는 문제가 생기지 않는다. (소유자가 admin 을
+ * **겸하는** 것은 흔하다 — 에이전트를 만든 admin 이 곧 소유자다 — 그리고 그때도 주체는
+ * 여전히 한 명이므로 칠 수 있다: `auth/plugin.ts::OwnerVerdict.via` 가 소유자 자격을
+ * 우선해서 읽는 이유.) 판정은 attach 인가 때 한 번 하고
+ * 티켓이 그 결정을 운반한다(`server/src/ws/tickets.ts::AttachTicketClaim.canInput`).
+ *
+ * `data` 는 base64 다 — 사람이 치는 것은 글자만이 아니다. 화살표·Ctrl-C·붙여 넣기는
+ * 전부 제어 바이트이고, 문자열로 실으면 그 중 일부가 JSON 인코딩에서 왜곡된다.
+ */
+export type AttachClientFrame = { type: 'input'; data: string };
 
 /**
  * 에이전트 팀(#172). **저장된 엔티티다** — "이 다섯을 넣는다"를 매번 고르는 즉석

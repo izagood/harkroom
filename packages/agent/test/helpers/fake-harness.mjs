@@ -41,3 +41,20 @@ if (mode === 'hang-ignore-sigterm') {
   process.on('SIGTERM', () => {});
   setInterval(() => {}, 1_000);
 }
+// #315: attach 한 사람이 친 바이트가 정말 이 프로세스의 stdin 에 닿는지 확인한다.
+// 받은 바이트를 **hex 로** 되뱉는다 — 문자열로 찍으면 제어 바이트(ESC, Ctrl-C)가 화면
+// 제어로 해석돼 ring 에서 사라지고, 그러면 "닿았다"를 바이트로 단언할 수 없다.
+// 줄이 끝나면(개행 어느 쪽이든 — PTY 의 라인 디서플린이 \r 을 \n 으로 바꾼다) 끝낸다.
+if (mode === 'stdin-live') {
+  const chunks = [];
+  process.stdin.on('data', (d) => {
+    chunks.push(Buffer.from(d));
+    const all = Buffer.concat(chunks);
+    if (all.includes(0x0a) || all.includes(0x0d)) {
+      process.stdout.write(`\ngot:${all.toString('hex')}\n`);
+      process.exit(0);
+    }
+  });
+  // 아무것도 안 오면 매달리지 않는다 — 그때는 이 종료 코드가 원인을 말해 준다.
+  setTimeout(() => process.exit(11), 8_000);
+}
