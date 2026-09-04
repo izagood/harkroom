@@ -4,7 +4,7 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
 import { acc, chan } from './helpers/fakeApi';
-import type { ChannelPrefRow, ProjectionStatus } from '@murmur/shared';
+import { PROJECTION_UNCONFIGURED_NOTICE, type ChannelPrefRow, type ProjectionStatus } from '@murmur/shared';
 
 const fakeController = () => {
   const c = {
@@ -226,31 +226,52 @@ describe('Sidebar', () => {
     });
 
     // #381: 투영이 꺼져 있을 때 repo 를 바인딩하면 그 사실을 말한다.
-    it('투영이 설정되지 않았으면 repo 입력에 경고를 보인다', () => {
-      const c = fakeController();
+    const projection = (over: Partial<ProjectionStatus> = {}): ProjectionStatus => ({
+      state: 'unconfigured',
+      configured: false,
+      repo: null,
+      lastLogIndex: 0,
+      lastPolledAt: null,
+      lastAdvancedAt: null,
+      lastError: null,
+      ...over,
+    });
+
+    /**
+     * 편집 폼 **안쪽**의 경고만 본다. `LeasePanel` 도 같은 문구를 그리므로 화면 전체에서
+     * 찾으면 사이드바 폼에 아무것도 없어도 초록이 된다.
+     */
+    const editFormWarning = (): string | null => {
+      const editFormRoot = screen.getByText('#general 편집').parentElement;
+      expect(editFormRoot).not.toBeNull();
+      return editFormRoot!.querySelector('.text-warning')?.textContent ?? null;
+    };
+
+    const openEditWithRepo = (projectionStatus: ProjectionStatus | null) => {
       asAdmin();
-      const projectionStatus: ProjectionStatus = {
-        state: 'unconfigured',
-        configured: false,
-        repo: null,
-        lastLogIndex: 0,
-        lastPolledAt: null,
-        lastAdvancedAt: null,
-        lastError: null,
-      };
       useAppStore.getState().set({ projectionStatus });
       render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
-
       openMenuFor('general');
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 편집' }));
-
-      // repo 입력에 값을 넣으면 편집 폼 안에만 경고가 나타난다.
       fireEvent.change(screen.getByLabelText('Repository'), { target: { value: 'new-repo' } });
-      // "AVCS_BASE_URL 로 켠다"는 구체적인 텍스트고,LeasePanel 과 겹치지 않게
-      // 편집 모달 안에서만 찾는다 — 편집 폼은 "#general 편집"이라는 헤더가 있다.
-      const editHeader = screen.getByText('#general 편집');
-      const editFormRoot = editHeader.parentElement;
-      expect(editFormRoot?.querySelector('.text-warning')?.textContent).toMatch(/AVCS_BASE_URL/);
+    };
+
+    it('투영이 설정되지 않았으면 repo 입력에 경고를 보인다', () => {
+      fakeController();
+      openEditWithRepo(projection());
+
+      // 상수를 **가져와서** 전문을 대조한다. `/AVCS_BASE_URL/` 같은 부분 일치로 두면
+      // 문구가 배너에서 갈라져도(예: "AVCS_BASE_URL" 한 낱말만 남아도) 초록이다.
+      expect(editFormWarning()).toBe(PROJECTION_UNCONFIGURED_NOTICE);
+    });
+
+    it('투영이 켜져 있으면 repo 입력에 경고가 없다 — 늘 보이면 소음이다', () => {
+      fakeController();
+      openEditWithRepo(projection({
+        state: 'ok', configured: true, repo: 'org/repo', lastPolledAt: Date.now(),
+      }));
+
+      expect(editFormWarning()).toBeNull();
     });
   });
 
