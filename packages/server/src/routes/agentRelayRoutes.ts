@@ -19,9 +19,13 @@
 // PTY 출력에는 하네스가 화면에 그린 모든 것(토큰, 환경변수, 사람이 붙여 넣은 비밀)이
 // 들어가고, 감사에 복사하면 그것을 지울 방법이 없다(audit.ts 의 `message.deleted`·
 // `agent.memory.deleted` 가 같은 이유로 본문을 남기지 않는다).
+//
+// **#315 로 입력이 열린 뒤에도 그 규칙은 그대로다.** 사람이 친 바이트도 감사에 넣지 않는다 —
+// 붙여 넣은 토큰이나 비밀번호 프롬프트의 답이 섞이므로 출력과 성질이 같다. 늘어난 것은
+// `agent.input` 하나이고, 그 행이 답하는 것은 "누가 언제 어느 턴에 개입했다" 뿐이다.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
-import type { AgentSessionView } from '@murmur/shared';
+import type { AgentSessionView, AttachClientFrame } from '@murmur/shared';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { createAttachTicketStore } from '../ws/tickets.js';
@@ -52,6 +56,33 @@ async function ownedAgentIds(pool: Pool, accountId: string): Promise<string[]> {
   return res.rows.map((r) => r.account_id);
 }
 
+/**
+ * 한 attach 소켓에서 감사 행을 만드는 최소 간격(#315). 첫 입력은 즉시 남기고, 그 뒤로는
+ * 이 간격마다 한 번만 남긴다.
+ *
+ * **왜 묶는가**: 감사가 답해야 하는 질문은 "이 턴에 사람이 개입했나"이지 "몇 글자를
+ * 쳤나"가 아니다. 키 하나에 한 행씩 남기면 한 번의 개입이 감사 조회를 수백 행으로
+ * 밀어내 다른 사건을 못 보게 만든다 — 감사가 스스로를 못 쓰게 만드는 것이 가장 나쁘다.
+ * 60초를 고른 이유: 사람이 한 번 앉아 개입하는 단위가 그보다 짧고, 그보다 길면 "다시
+ * 와서 또 쳤다"가 첫 개입에 묻힌다.
+ */
+export const INPUT_AUDIT_WINDOW_MS = 60_000;
+
+/**
+ * 이 소켓이 지금 감사 행을 하나 만들어야 하는가. attach 소켓 하나당 하나씩 만든다 —
+ * 상태를 소켓 수명에 묶어 두면 패널을 닫았다 다시 연 사람은 다시 첫 행을 남긴다(그것이
+ * "다시 개입했다"는 사실이므로 맞다).
+ */
+function createInputAuditGate(windowMs: number, now: () => number = Date.now) {
+  let lastAt: number | null = null;
+  return (): boolean => {
+    const at = now();
+    if (lastAt !== null && at - lastAt < windowMs) return false;
+    lastAt = at;
+    return true;
+  };
+}
+
 export interface AgentRelayDeps {
   /** attach 티켓 수명(ms). 미지정이면 `/ws` 티켓과 같은 기본값(30초). */
   attachTicketTtlMs?: number;
@@ -63,6 +94,8 @@ export interface AgentRelayDeps {
   allowedOrigins?: readonly string[] | null;
   /** 자격증명 재검증 주기(ms). `/ws` 와 같은 값을 쓴다. 테스트가 짧게 준다. */
   revalidateMs?: number;
+  /** 입력 감사를 묶는 간격(ms). 기본은 `INPUT_AUDIT_WINDOW_MS`. 테스트가 0 을 준다. */
+  inputAuditWindowMs?: number;
 }
 
 export async function registerAgentRelayRoutes(
@@ -137,13 +170,24 @@ export async function registerAgentRelayRoutes(
       detail: { sessionId: session.sessionId, channelId: session.channelId },
     }, req);
 
+    // **쓰기는 소유자만이다**(#315 운영자 결정). 판정을 여기서 다시 하지 않고 위
+    // `verdict` 가 알려 준 통과 경로를 그대로 읽는다 — `checkOwnerOrAdmin` 이 이미
+    // 계산한 사실이고, 복제하면 한쪽만 고치는 사고가 난다.
+    //
+    // admin 을 읽기 전용으로 두는 것이 잠금 장치를 대신한다: 한 세션에 바이트를 넣을 수
+    // 있는 주체가 애초에 한 명(소유자)뿐이라, 두 사람의 키 입력이 섞이는 문제가 생기지
+    // 않는다. 화면도 이 값을 받아 admin 에게는 입력을 아예 열지 않고 이유를 적는다.
+    const canInput = verdict.via === 'owner';
+
     return {
       ticket: attachTickets.issue({
         accountId: account.id,
         credentialHash: req.credentialHash!,
         sessionId: session.sessionId,
+        canInput,
       }),
       session,
+      canInput,
     };
   });
 
@@ -151,10 +195,15 @@ export async function registerAgentRelayRoutes(
    * 뷰어 소켓. 티켓만으로 인가된다 — 브라우저의 WebSocket 생성자는 헤더를 붙일 수 없어
    * 자격증명이 URL 로 갈 수밖에 없고, URL 은 앞단 프록시 로그에 남는다(ws/tickets.ts).
    *
-   * Phase 2 는 **읽기만**이다. 이 소켓으로 들어오는 인바운드 메시지는 없다 — 사람이
-   * 그 터미널에 타이핑해 개입하는 것(`input`·`resize`)은 별도 후속이다: 권한 프리셋과
-   * 턴 종류의 상호작용이 스펙 §6 결정을 건드리고, 그 결정 없이 입력을 열면 멘션 턴의
-   * 모드를 사람이 사실상 바꾸는 경로가 생긴다.
+   * **인바운드는 `input` 하나다**(#315 — 그전에는 없었다). 사람이 이 터미널에 타이핑해
+   * 개입하는 것이 원 요청("터미널에 들어가서 작업하는 것과 동일하게")의 나머지 절반이다.
+   *
+   * 멘션 턴에도 허용한다: `mention_permission` 은 **에이전트가 스스로 넘지 못하는
+   * 선이지 사람이 넘지 못하는 선이 아니다.** 사람이 앞에 앉아 있다는 것 자체가 그 권한의
+   * 근거다. 그리고 **입력을 여는 것은 턴 모드를 바꾸는 것이 아니다** — 이 경로는 PTY 에
+   * 바이트를 넣을 뿐, 그 턴의 `TurnMode` 도 `mention_permission` 도 건드리지 않는다.
+   *
+   * 쓰기 판정은 여기서 하지 않는다. `claim.canInput` 이 attach 인가 때의 결정을 운반한다.
    */
   app.get('/agent-attach', { websocket: true }, (socket, req) => {
     // Origin 을 티켓 소모보다 **먼저** 본다 — 거절할 연결이 1회용 티켓을 태우면, 사람이
@@ -171,6 +220,29 @@ export async function registerAgentRelayRoutes(
     const off = hub.addViewer(claim.sessionId, socket);
     // 자격증명이 죽으면 이 소켓도 닫힌다(위 `sweep` 주석).
     const untrack = sweep.track(socket, claim.credentialHash);
+    const shouldAuditInput = createInputAuditGate(deps.inputAuditWindowMs ?? INPUT_AUDIT_WINDOW_MS);
+
+    socket.on('message', (raw) => {
+      // 뷰어는 무엇이든 보낼 수 있다 — 파싱 실패로 소켓을 죽이지 않는다.
+      let frame: AttachClientFrame;
+      try { frame = JSON.parse(String(raw)) as AttachClientFrame; } catch { return; }
+      if (frame?.type !== 'input' || typeof frame.data !== 'string') return;
+      // **admin 은 여기서 멈춘다.** 화면이 입력을 안 그리는 것만으로는 게이트가 아니다 —
+      // 소켓은 누구나 직접 열 수 있으므로, 진짜 게이트는 이 한 줄이다.
+      if (!claim.canInput) return;
+      // 바이트는 열지 않고 그대로 러너에게 넘긴다(허브 주석).
+      if (!hub.sendInput(claim.sessionId, frame.data)) return;
+      if (!shouldAuditInput()) return;
+      // 사실만 남긴다: 누가(actorId) 언제(at) 어느 턴에(sessionId). **친 내용은 없다.**
+      void recordAudit(pool, {
+        action: 'agent.input',
+        actorId: claim.accountId,
+        actorHandle: null,
+        target: null,
+        detail: { sessionId: claim.sessionId },
+      });
+    });
+
     socket.on('close', () => {
       off();
       untrack();
