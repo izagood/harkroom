@@ -426,6 +426,14 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     // `nullable` 인 이유: "지우기"는 명시적 null 이다 — 이것이 없으면 한 번 매긴 순서를
     // 되돌릴 방법이 없다(`undefined` 는 JSON 에서 키 자체가 사라져 "안 보냈다"가 된다).
     sortOrder: z.number().int().optional().nullable(),
+    /**
+     * 사이드바에서 치우기(#376). true 가 숨김, false 가 다시 보이기다.
+     *
+     * `hiddenAt` 시각을 받지 않고 불리언인 이유: "언제 숨겼나"는 서버가 정하는 사실이다.
+     * 클라이언트가 시각을 보내면 두 기기가 서로 다른 시각을 적고, 그 값으로 정렬하거나
+     * 감사할 때 답이 갈린다. 되돌리기는 명시적 `false` 다 — 키를 빼는 것은 "안 보냈다"다.
+     */
+    hidden: z.boolean().optional(),
   }).strict();
 
   app.patch('/channels/:id/pref', { preHandler: app.requireAccount }, async (req, reply) => {
