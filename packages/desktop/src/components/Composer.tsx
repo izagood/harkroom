@@ -173,6 +173,7 @@ export function Composer({
   // 예약 발송 상태(#222)
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [scheduleDateTime, setScheduleDateTime] = useState('');
+  const [scheduleMin, setScheduleMin] = useState('');
   const [scheduledMessages, setScheduledMessages] = useState<ScheduledMessageView[]>([]);
   const [scheduledExpanded, setScheduledExpanded] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
@@ -635,8 +636,13 @@ export function Composer({
     if (!channelId) return;
     // 기본값을 **지금**으로 두면 사람이 그대로 눌렀을 때 이미 과거라 서버가 400 을 준다.
     // 10분 뒤로 연다. `datetime-local` 은 지역 시각을 받으므로 오프셋을 빼서 채운다.
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    const min = now.toISOString().slice(0, 16);
+
     const at = new Date(Date.now() + 10 * 60 * 1000);
     at.setMinutes(at.getMinutes() - at.getTimezoneOffset());
+    setScheduleMin(min);
     setScheduleDateTime(at.toISOString().slice(0, 16));
     setScheduleError(null);
     setScheduleModalOpen(true);
@@ -1030,7 +1036,7 @@ export function Composer({
         </button>
       </div>
       {scheduleModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-20">
           <div className="w-80 rounded-lg bg-surface-raised p-4 shadow-lg">
             <h3 className="mb-3 text-base font-medium">예약 발송</h3>
             <input
@@ -1038,6 +1044,7 @@ export function Composer({
               aria-label="예약 시각"
               className="mb-3 w-full rounded border border-border bg-field px-3 py-2"
               value={scheduleDateTime}
+              min={scheduleMin}
               onChange={(e) => setScheduleDateTime(e.target.value)}
             />
             {scheduleError && (
@@ -1055,7 +1062,7 @@ export function Composer({
                 type="button"
                 className="rounded bg-accent px-3 py-1 text-sm font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border"
                 onClick={handleSchedule}
-                disabled={isScheduling || !scheduleDateTime}
+                disabled={isScheduling || !scheduleDateTime || (scheduleMin !== '' && scheduleDateTime < scheduleMin)}
               >
                 {isScheduling ? '예약 중…' : '예약'}
               </button>
