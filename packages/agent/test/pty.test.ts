@@ -200,7 +200,58 @@ describe('#315 runPtyTurn — attach 한 사람의 입력이 PTY stdin 에 닿�
   });
 });
 
-describe('#335-1 runPtyTurn — 소유자의 패널 크기가 PTY 창 크기가 된다', () => {
+describe('#337 runPtyTurn — 인터랙티브 턴의 재료(무기한·resize·kill)', () => {
+  // `timeoutMs: 0` 을 setTimeout 에 그대로 넣으면 타이머가 **즉시** 발화한다 — 인터랙티브
+  // 턴이 뜨자마자 SIGTERM 을 맞는 정확히 그 결함이다(#337 선행 블로커). 0 이면 타이머를
+  // 아예 걸지 않아야 하고, 그 턴의 끝은 exit(여기서는 사람의 "exit" 입력 흉내)뿐이다.
+  it('timeoutMs 0 은 무기한이다 — 타이머가 즉시 발화해 턴을 죽이지 않는다', async () => {
+    const ring = new RingBuffer(256 * 1024);
+    const r = await runPtyTurn(plan('echo-stdin-live'), {
+      cwd: process.cwd(), timeoutMs: 0, ring,
+      onSpawn: (controls) => {
+        // 하네스가 뜬 뒤(0 타이머가 있었다면 이미 SIGTERM 을 맞았을 시점보다 뒤)에
+        // 사람이 종료를 치는 상황 — 1초를 살아남는 것 자체가 "타이머가 없다"의 증거다.
+        setTimeout(() => controls.write(Buffer.from('exit\r')), 1_000);
+      },
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.timedOut).toBe(false);
+    expect(ring.snapshot().toString()).toContain('interactive-ready');
+  }, 15_000);
+
+  it('resize 가 자식에 SIGWINCH 로 닿고 새 크기가 보인다 (스파이크 §3 고정)', async () => {
+    const ring = new RingBuffer(256 * 1024);
+    const r = await runPtyTurn(plan('report-winch'), {
+      cwd: process.cwd(), timeoutMs: 0, cols: 80, rows: 24, ring,
+      onSpawn: (controls) => { setTimeout(() => controls.resize(100, 50), 300); },
+    });
+    expect(r.exitCode).toBe(0);
+    const out = ring.snapshot().toString();
+    expect(out).toContain('ready 80x24');
+    expect(out).toContain('winch 100x50');
+  }, 15_000);
+
+  it('kill 이 무기한 턴을 끝낸다 — 고아 회수(viewer 0 → 유예 → SIGTERM)의 손잡이', async () => {
+    const r = await runPtyTurn(plan('echo-stdin-live'), {
+      cwd: process.cwd(), timeoutMs: 0,
+      onSpawn: (controls) => { setTimeout(() => controls.kill('SIGTERM'), 300); },
+    });
+    // SIGTERM 으로 죽은 프로세스는 exit 0 이 아니다 — 무엇이든 좋다, 끝났다는 사실이 계약이다.
+    expect(r.timedOut).toBe(false);
+  }, 15_000);
+
+  it('exit 후의 write·resize·kill 은 조용한 no-op 이다 — 마지막 화면에서의 조작은 오류가 아니다', async () => {
+    let controls: import('../src/pty.js').PtyControls | null = null;
+    await runPtyTurn(plan('ok'), {
+      cwd: process.cwd(), timeoutMs: 10_000,
+      onSpawn: (c) => { controls = c; },
+    });
+    const c = controls!;
+    expect(() => { c.write(Buffer.from('x')); c.resize(10, 10); c.kill('SIGKILL'); }).not.toThrow();
+  });
+});
+
+describe('#335-1 runPtyTurn — writer 패널 크기가 PTY 창 크기가 된다', () => {
   let writer: PtyWriter | null = null;
   beforeEach(() => { writer = null; });
 

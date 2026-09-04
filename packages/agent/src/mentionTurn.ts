@@ -18,6 +18,7 @@ import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemProm
 import type { PtyWriter, TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
 import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
+import type { TurnRegistry } from './turnRegistry.js';
 
 /** runMentionTurn 이 요구하는 murmur 표면. MurmurAgentClient 의 부분집합이라 실제 클래스를
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
@@ -123,6 +124,12 @@ export interface MentionTurnDeps {
    * 관찰을 못 하는 것과 답을 못 하는 것은 같은 실패가 아니다.
    */
   relay?: TurnRelay;
+  /**
+   * 진행 중 턴의 레지스트리(#337). 멘션 턴이 자기 존재를 등록해야 인터랙티브 open 의
+   * 3분기 ①("그 스레드 멘션 턴 진행 중 → 그 PTY 에 attach")이 성립한다. 옵셔널인 이유는
+   * relay 와 같다 — 기존 테스트·호출부가 관찰 없이 턴만 돌릴 수 있어야 한다.
+   */
+  registry?: TurnRegistry;
   /** 테스트가 sinceMs 캡처 시점을 결정론적으로 만들기 위한 시계 주입. 생략하면 Date.now. */
   now?: () => number;
 }
@@ -141,8 +148,13 @@ export interface MentionTurnDeps {
  * - `workingDir` 이 지정됨 → 지금처럼 `ensureWorkspace` 로 간다. 그 값이 avcs repo 가
  *   아니면 `ensureWorkspace` 자신의 폴백이 지정된 그 디렉터리를 그대로 돌려준다 — 사용자가
  *   그 파일들에서 일하라고 지정한 것이라 빈 디렉터리로 갈아치우면 설정이 장식이 된다.
+ *
+ * export 하는 이유(#337): 인터랙티브 턴(`interactiveTurn.ts`)이 세션 없는 스레드에서
+ * 워크스페이스를 만들 때 **같은 규칙**을 써야 한다 — 규칙이 두 벌이면 같은 스레드의
+ * 멘션 턴과 인터랙티브 턴이 서로 다른 디렉터리에서 돌아, 사람이 고친 것을 다음 멘션이
+ * 못 본다(스펙 §14 성공 기준 4 가 정확히 그것을 요구한다).
  */
-async function resolveWorkspaceDir(
+export async function resolveWorkspaceDir(
   deps: Pick<MentionTurnDeps, 'exec' | 'me' | 'workspaceBaseDir'>,
   def: Pick<AgentView, 'workingDir'>,
   threadKey: string,
@@ -516,6 +528,11 @@ export async function runMentionTurn(
     harness: def.harness,
   });
 
+  // #337: 이 스레드에 멘션 턴이 돈다는 사실을 등록한다 — 인터랙티브 open 의 3분기 ①
+  // ("멘션 턴 진행 중 → 그 PTY 에 attach")과 main 루프의 유예 판정이 이 등록을 본다.
+  // 세션을 연 **뒤**여야 한다: 등록의 sessionId 가 곧 attach 대상이다(릴레이가 없으면 null).
+  deps.registry?.register(key, { kind: 'mention', sessionId: session?.sessionId ?? null });
+
   let result: TurnResult;
   try {
     result = await deps.runTurn(plan, {
@@ -535,6 +552,9 @@ export async function runMentionTurn(
       onSpawn: session ? (writer: PtyWriter) => session.bindInput(writer) : undefined,
     });
   } finally {
+    // 등록도 세션과 같은 수명이다 — 남겨 두면 끝난 턴이 "진행 중"으로 남아 인터랙티브
+    // open 이 죽은 PTY 에 사람을 붙인다.
+    deps.registry?.release(key);
     // 턴이 어떻게 끝나든(정상·타임아웃·예외) 세션은 닫는다. 안 닫으면 서버의 세션
     // 목록에 끝난 턴이 영구히 남아, 사람이 attach 해도 아무 바이트도 오지 않는다.
     session?.close();
