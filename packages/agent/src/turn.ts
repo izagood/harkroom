@@ -396,6 +396,42 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
 }
 
 /**
+ * 자식 하네스에 물려주지 **않는** env 키(#374). 부모 env 전체 상속(아래 `childEnv`)의 유일한
+ * 예외이고, 목록은 **실측된 것만** 담는다.
+ *
+ * `CLAUDE_CODE_CHILD_SESSION` — Claude Code 가 자기 안에서 뜬 자식 프로세스를 표시하려고
+ * 넣는 마커다. 이 마커를 물려받은 `claude` 는 대화 전사 저장을 끄고("Transcript saving is
+ * off"), 그러면 `~/.claude/projects/<cwd>/<uuid>.jsonl` 이 안 생긴다(#348 스파이크 §2 실측).
+ * 세션 파일이 없으면 다음 턴의 `-r <uuid>` resume 이 "No conversation found" 로 죽는다 —
+ * 즉 이 마커 하나가 러너의 **턴 이어가기 전체**를 조용히 무너뜨린다.
+ *
+ * **왜 프로덕션 경로에도 해당하는가.** "러너는 사람의 로그인 셸에서 도니 무관하다"는 것이
+ * 스파이크 기록의 판단이었는데, 코드는 그것을 보장하지 않는다: 러너는 데스크탑 앱이 띄우고
+ * (#250 `runnerLauncher.ts`), 그 앱이 어디서 떴는지에 따라 env 가 다르다(#305 가 Dock 앱의
+ * env 상속이 경로마다 다르다는 것을 이미 실측했다). 도그푸딩 중에는 러너가 Claude Code 세션
+ * 안에서 뜨고, 그 셸에는 이 마커가 실제로 들어 있다(2026-09-04 실측). 러너 env 가 무엇인지
+ * 우리가 고를 수 없으므로, 자식에게 넘기지 않는 쪽을 이 함수가 보장한다.
+ *
+ * 앱 경로도 막히지 않는다: `runnerLauncher.ts::tauriSpawner` 는 러너에 `MURMUR_PAT`·
+ * `MURMUR_URL`·`PATH` 만 넘기지만, `@tauri-apps/plugin-shell` 의 `env` 는 **덮어쓰기가
+ * 아니라 추가**다(`index.d.ts`: "Environment variables. set to `null` to clear the process
+ * env" — `null` 을 줘야 지워진다). 즉 앱의 env 가 러너에 그대로 상속되고, 앱을 터미널에서
+ * 띄웠다면 그 터미널의 마커가 앱 → 러너 → 하네스까지 3단으로 흘러간다.
+ *
+ * **해악의 범위는 #348 기록보다 좁다는 것도 함께 적어 둔다.** 멘션 턴이 쓰는 `-p` 경로는
+ * 마커가 살아 있어도 세션 파일이 생겼다(2026-09-04 실측: 마커가 있는 셸에서
+ * `claude -p --session-id <uuid>` → 그 uuid 의 `.jsonl` 생성 확인). #348 이 본 "저장하지
+ * 않는다"는 인터랙티브 TUI 경로의 관찰이고, 그 경로는 #374 에서 **재현하지 못했다**(반증이
+ * 아니라 미확인이다). 그래도 벗기는 이유: 상속된다는 사실은 확정이고 벗기는 비용이 없다.
+ *
+ * **`CLAUDE*` 를 통째로 지우지 않는 이유.** 같은 셸에 `CLAUDE_CODE_ENTRYPOINT`·`CLAUDECODE`·
+ * `CLAUDE_CODE_SESSION_ID` 등이 함께 있지만(같은 실측), 그것들이 전사 저장을 끈다는 근거는
+ * 없다. 근거 없이 지우면 하네스가 정상 동작에 쓰는 것을 뺏을 수 있다 — 전체 상속을 택한
+ * `childEnv` 주석의 논리가 여기에도 그대로 적용된다. 새로 넣을 키는 실측을 먼저 하라.
+ */
+export const HARNESS_ENV_DENYLIST = ['CLAUDE_CODE_CHILD_SESSION'] as const;
+
+/**
  * PTY 자식에 넘길 env. 부모(러너) 전체를 물려주고 `MURMUR_PAT` 만 덮어쓴다.
  *
  * **실물 검증에서 발견된 회귀다.** `pty.spawn` 은 `env` 를 넘기면 부모 env 와 **병합하지
@@ -415,12 +451,18 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
  * 좁히려면 각 하네스가 실제로 무엇을 쓰는지 먼저 측정해야 하는데 그건 이 결함 수정의 범위가
  * 아니다. `process.env` 의 값 타입은 `string | undefined` 라 `TurnPlan.env`(`Record<string,
  * string>`)에 맞추려면 undefined 를 걸러야 한다.
+ *
+ * **전체 상속에는 예외가 하나 있다(#374)**: `HARNESS_ENV_DENYLIST` 의 키는 넘기지 않는다.
+ * 그 목록과 각 키를 빼는 근거는 위 상수의 주석에 있다 — 지우려거든 거기부터 읽어라.
  */
 function childEnv(pat: string): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) env[key] = value;
   }
+  // 부모에 있어도 자식에는 없어야 하는 키를 뺀다(#374). 복사 뒤에 지우는 이유: 복사 루프에
+  // 조건을 섞으면 '전체 상속'이라는 규칙과 그 예외가 한 줄에 엉켜 둘 다 읽기 어려워진다.
+  for (const key of HARNESS_ENV_DENYLIST) delete env[key];
   env.MURMUR_PAT = pat;
   return env;
 }
