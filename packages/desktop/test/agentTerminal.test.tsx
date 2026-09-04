@@ -21,6 +21,8 @@ const chipMsg = msg('m1', 'c1', 1, '다 됐다', 'a1');
 
 const session = (overrides: Partial<AgentSessionView> = {}): AgentSessionView => ({
   sessionId: 'sess-1',
+  // #369: 기본은 입력이 닿는 세션이다 — 관찰 전용(멘션 턴)은 테스트가 명시한다.
+  acceptsInput: true,
   agentAccountId: 'a1',
   channelId: 'c1',
   threadRootId: 'm1',
