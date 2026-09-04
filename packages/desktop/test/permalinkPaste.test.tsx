@@ -141,4 +141,22 @@ describe('컴포저에 퍼머링크를 붙여넣는다', () => {
     expect(alert.textContent).toMatch(/gone/i);
     expect(useAppStore.getState().activeChannelId).toBeNull();
   });
+
+  // #397 — 스레드를 닫으면 강조도 해제된다.
+  it('스레드를 닫으면 강조가 사라진다', async () => {
+    const { c } = mount({
+      message: vi.fn(async () => linked()),
+      messages: vi.fn(async () => ({ messages: [linked()], hasMore: false })),
+    });
+    await c.start();
+    render(<Composer onSend={vi.fn()} />);
+
+    paste(screen.getByRole('textbox'), messagePermalink(LINKED_ID));
+
+    await waitFor(() => expect(useAppStore.getState().highlightedMessageId).toBe(LINKED_ID));
+
+    c.closeThread();
+
+    expect(useAppStore.getState().highlightedMessageId).toBeNull();
+  });
 });

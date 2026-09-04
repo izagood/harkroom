@@ -701,7 +701,10 @@ export class Controller {
     });
   }
 
-  closeThread(): void { this.store.getState().set({ threadRootId: null }); }
+  closeThread(): void {
+    // 스레드를 닫으면 강조도 해제 — 스레드로 도달해 확인하고 닫는 것이 가장 흔한 경로다(#397).
+    this.store.getState().set({ threadRootId: null, highlightedMessageId: null });
+  }
 
   /**
    * 보낼 자리를 **인자로 받는다**(#223). 스토어의 활성 채널을 호출 시점에 읽으면, 보냄 취소
