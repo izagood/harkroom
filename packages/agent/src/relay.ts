@@ -64,6 +64,8 @@ interface LiveSession {
    * 프롬프트의 답으로 들어간다. 안 보이는 화면에 친 것은 답이 아니다.
    */
   writer: PtyWriter | null;
+  /** 서버가 알려 준 뷰어 수 변동(#337). 인터랙티브 고아 회수 타이머가 읽는다. */
+  onViewerCount?: (count: number) => void;
 }
 
 export interface OpenSessionInput {
@@ -71,7 +73,25 @@ export interface OpenSessionInput {
   channelId: string;
   threadRootId: string | null;
   harness: AgentHarness;
+  /** 이 PTY 가 어떤 턴인가(#337). 생략하면 멘션 턴이다 — 기존 호출부(mentionTurn)가 그대로다. */
+  mode?: 'mention' | 'interactive';
+  /** 이 세션의 뷰어 수 변동 통지(#337). 인터랙티브 턴만 넘긴다 — 멘션 턴의 끝은 exit 뿐이다. */
+  onViewerCount?: (count: number) => void;
 }
+
+/**
+ * 서버의 `interactive.open` 요청을 실제 턴으로 만드는 훅(#337). `interactiveTurn.ts` 가
+ * 꽂는다. 성공은 `{sessionId, created}` — created 가 false 면 이미 돌던 턴에 합류시킨
+ * 것이다. 실패는 **던진다** — 릴레이가 그 메시지를 `interactive.error` 로 서버에 그대로
+ * 돌려주고, 서버는 사람 화면에 그대로 올린다(codex 거절 문구가 이 경로로 사람에게 간다).
+ */
+export type InteractiveOpenHandler = (req: {
+  channelId: string;
+  threadRootId: string;
+  openedByHandle: string;
+  cols?: number;
+  rows?: number;
+}) => Promise<{ sessionId: string; created: boolean }>;
 
 /**
  * 열린 세션의 호출자 쪽 손잡이. 턴을 도는 코드(`mentionTurn.ts`)는 이것만 안다 —
@@ -99,6 +119,12 @@ export interface RelayClientOptions {
   schedule?: (fn: () => void, ms: number) => void;
   /** 첫 재접속 지연. 이후 `nextBackoffMs` 로 늘어난다. */
   initialBackoffMs?: number;
+  /**
+   * `interactive.open` 프레임의 처리자(#337). 없으면 — main.ts 가 배선을 빠뜨렸거나 아주
+   * 구식 조립이면 — 요청을 **에러로 응답한다**: caps 에 interactive 를 선언해 놓고 조용히
+   * 버리면 서버가 10초 타임아웃까지 기다린 뒤 원인 없는 504 를 사람에게 준다.
+   */
+  onInteractiveOpen?: InteractiveOpenHandler;
 }
 
 export interface RelayClient {
@@ -134,32 +160,95 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
     try { transport.send(JSON.stringify(frame)); } catch { /* 재접속이 announce 로 복구한다 */ }
   };
 
+  /**
+   * `interactive.open` 왕복(#337). 성공·실패 어느 쪽이든 **반드시 응답한다** — 응답이
+   * 없으면 서버는 10초 타임아웃까지 기다린 뒤 원인 없는 504 를 사람에게 준다. 훅이
+   * 던진 메시지는 그대로 서버로 간다: codex 거절(§5-2 결정 8)의 문구가 이 경로로
+   * 사람 화면에 도달한다.
+   */
+  const handleInteractiveOpen = async (frame: {
+    requestId: string;
+    channelId: string;
+    threadRootId: string;
+    openedByHandle: string;
+    cols?: number;
+    rows?: number;
+  }): Promise<void> => {
+    const handler = opts.onInteractiveOpen;
+    if (!handler) {
+      send({
+        type: 'interactive.error',
+        requestId: frame.requestId,
+        message: '이 러너에는 인터랙티브 열기가 배선되지 않았다 — 러너를 최신으로 올려 다시 시도해라',
+      });
+      return;
+    }
+    try {
+      const opened = await handler({
+        channelId: frame.channelId,
+        threadRootId: frame.threadRootId,
+        openedByHandle: frame.openedByHandle,
+        cols: frame.cols,
+        rows: frame.rows,
+      });
+      send({ type: 'interactive.opened', requestId: frame.requestId, sessionId: opened.sessionId, created: opened.created });
+    } catch (err) {
+      send({
+        type: 'interactive.error',
+        requestId: frame.requestId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
   const onServerFrame = (raw: string): void => {
     let parsed: unknown;
     try { parsed = JSON.parse(raw); } catch { return; }
     if (typeof parsed !== 'object' || parsed === null) return;
     const frame = parsed as RelayServerFrame;
-    if (typeof frame.sessionId !== 'string') return;
-    const live = sessions.get(frame.sessionId);
-    // 모르는 세션에는 답하지 않는다. 빈 재생으로 답하면 "끝난 세션"과 "아직 출력이 없는
-    // 세션"이 뷰어에게 같아진다.
-    if (!live) return;
 
-    if (frame.type === 'replay.request') {
-      send({ type: 'replay', sessionId: frame.sessionId, data: live.ring.snapshot().toString('base64') });
-      return;
-    }
+    switch (frame.type) {
+      case 'replay.request': {
+        if (typeof frame.sessionId !== 'string') return;
+        // 모르는 세션에는 답하지 않는다. 빈 재생으로 답하면 "끝난 세션"과 "아직 출력이
+        // 없는 세션"이 뷰어에게 같아진다.
+        const live = sessions.get(frame.sessionId);
+        if (!live) return;
+        send({ type: 'replay', sessionId: frame.sessionId, data: live.ring.snapshot().toString('base64') });
+        return;
+      }
 
-    if (frame.type === 'input') {
-      if (typeof frame.data !== 'string') return;
-      // **쓰기 권한은 서버가 이미 판정했다**(#315 — attach 티켓의 `canInput`). 러너는 그
-      // 판정을 다시 하지 않는다: 여기서 한 번 더 판정하려면 러너가 소유자·admin 을 알아야
-      // 하고, 그러면 인가가 두 곳으로 갈라진다. 러너가 지키는 것은 "이 세션이 내 것인가"
-      // 뿐이고, 그것은 위 `sessions.get` 이 이미 답했다.
-      //
-      // **이 경로는 턴의 모드를 건드리지 않는다.** PTY stdin 에 바이트를 넣을 뿐이고,
-      // `plan`(모드·권한 프리셋)은 턴이 시작될 때 이미 조립돼 봉인됐다.
-      live.writer?.write(Buffer.from(frame.data, 'base64'));
+      case 'input': {
+        if (typeof frame.sessionId !== 'string' || typeof frame.data !== 'string') return;
+        const live = sessions.get(frame.sessionId);
+        if (!live) return;
+        // **쓰기 차례는 서버가 이미 판정했다**(#315·#346 — writer 규칙, 허브의 setWriter).
+        // 러너는 그 판정을 다시 하지 않는다: 여기서 한 번 더 판정하려면 러너가 뷰어들을
+        // 알아야 하고, 그러면 인가가 두 곳으로 갈라진다. 러너가 지키는 것은 "이 세션이
+        // 내 것인가" 뿐이고, 그것은 위 `sessions.get` 이 이미 답했다.
+        //
+        // **이 경로는 턴의 모드를 건드리지 않는다.** PTY stdin 에 바이트를 넣을 뿐이고,
+        // `plan`(모드·권한 프리셋)은 턴이 시작될 때 이미 조립돼 봉인됐다.
+        live.writer?.write(Buffer.from(frame.data, 'base64'));
+        return;
+      }
+
+      case 'viewer.count': {
+        if (typeof frame.sessionId !== 'string' || typeof frame.count !== 'number') return;
+        const live = sessions.get(frame.sessionId);
+        // 콜백 예외는 삼킨다 — 관찰(고아 회수 타이머)이 다른 턴을 죽이면 안 된다.
+        try { live?.onViewerCount?.(frame.count); } catch { /* 관찰은 답을 죽이지 않는다 */ }
+        return;
+      }
+
+      case 'interactive.open': {
+        if (typeof frame.requestId !== 'string') return;
+        void handleInteractiveOpen(frame);
+        return;
+      }
+
+      default:
+        return;
     }
   };
 
@@ -203,8 +292,12 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         // 러너 시계다. 서버가 찍지 않는 이유: 세션이 언제 열렸는지는 러너만 아는 사실이고,
         // 서버가 프레임 도착 시각으로 대신하면 재접속 뒤 announce 에서 값이 바뀐다.
         startedAt: new Date().toISOString(),
+        // 데스크탑이 "사람이 조종 중인 세션"을 구분해 그릴 근거(#337). 생략은 멘션 턴이다.
+        mode: input.mode ?? 'mention',
       };
-      const live: LiveSession = { info, ring: new RingBuffer(RING_CAP_BYTES), writer: null };
+      const live: LiveSession = {
+        info, ring: new RingBuffer(RING_CAP_BYTES), writer: null, onViewerCount: input.onViewerCount,
+      };
       sessions.set(info.sessionId, live);
       send({ type: 'session.started', session: info });
 
