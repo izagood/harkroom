@@ -182,12 +182,15 @@ describe('ChannelPane', () => {
     expect(screen.getByRole('button', { name: '2 replies' })).toBeTruthy();
   });
 
+  // #396: 답글이 없는 메시지는 본문 아래에 "Reply in thread" 버튼을 두지 않는다 —
+  // 진입점은 호버 툴바의 아이콘("스레드에 답글 달기")으로 옮겨졌다.
   it('offers no reply count on a message without replies', () => {
     fakeController();
     useAppStore.getState().set({ messages: { c1: [msg('m1', 'c1', 1, 'lonely', 'u2')] } });
     render(<ChannelPane />);
     expect(screen.queryByRole('button', { name: /repl(y|ies)$/ })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Reply in thread' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Reply in thread' })).toBeNull();
+    expect(screen.getByRole('button', { name: '스레드에 답글 달기' })).toBeTruthy();
   });
 
   it('opens the thread from the reply count', () => {
@@ -247,10 +250,12 @@ describe('ChannelPane', () => {
     expect(box.value).toBe('');
   });
 
+  // #396: m1 은 "1 reply" pill 로 보이고, m3 은 답글이 없어 pill 대신 호버 툴바의
+  // "스레드에 답글 달기" 아이콘으로 스레드를 연다.
   it('opens a thread from a message that has no replies yet', () => {
     const c = fakeController();
     // #161 2단계: 서버의 replyCount 를 쓴다. m1 은 답글이 있어 replyCount: 1,
-    // m3 은 답글이 없어 replyCount: null 이라 "Reply in thread" 가 보인다.
+    // m3 은 답글이 없어 replyCount: null 이라 툴바의 스레드 아이콘이 보인다.
     useAppStore.getState().set({
       messages: {
         c1: [
@@ -261,8 +266,7 @@ describe('ChannelPane', () => {
       },
     });
     render(<ChannelPane />);
-    // m1 은 "1 reply" 로 보이고, m3 은 "Reply in thread" 로 보인다.
-    fireEvent.click(screen.getAllByRole('button', { name: 'Reply in thread' })[0]!);
+    fireEvent.click(screen.getByRole('button', { name: '스레드에 답글 달기' }));
     expect(c.openThread).toHaveBeenCalledWith('m3');
   });
 

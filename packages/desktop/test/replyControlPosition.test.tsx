@@ -91,26 +91,36 @@ describe('#254 답글 컨트롤 위치 변경', () => {
     expect(replyBtn.className).not.toMatch(/\bhidden\b/);
   });
 
-  // 회귀선 4: 답글이 없으면 "Reply in thread" 가 opacity 로 숨고 visibility 로 숨지 않는다
-  it('"Reply in thread" 가 opacity 로 숨고 visibility:hidden 이 아니다', () => {
-    fakeController();
+  // 회귀선 4 (#396 갱신): 답글이 없으면 본문 아래 "Reply in thread" 버튼 자체가 없다 —
+  // 진입점은 호버 툴바의 아이콘으로 옮겨졌고, 툴바를 숨기는 방식(opacity, visibility 아님)은
+  // 툴바 컨테이너 하나가 책임진다("toolbar accessibility" 테스트가 그것을 잰다). 이 아이콘도
+  // 같은 hoverOnly 툴바 안에 있으므로 조건이 같다.
+  it('답글이 없으면 본문 아래 버튼은 없고, 스레드 아이콘은 opacity 로 숨는 툴바 안에 있다', () => {
+    const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: null })} />);
 
-    // 버튼이 DOM 에 있지만 opacity-0 으로 숨겨져 있다
-    const replyBtn = screen.getByRole('button', { name: 'Reply in thread' });
-    expect(replyBtn).toBeTruthy();
+    // 본문 아래에는 더 이상 그려지지 않는다.
+    expect(screen.queryByRole('button', { name: 'Reply in thread' })).toBeNull();
+
+    // 진입점은 툴바 안의 아이콘 버튼이다.
+    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const threadBtn = within(toolbar).getByRole('button', { name: '스레드에 답글 달기' });
+    expect(threadBtn).toBeTruthy();
 
     // opacity-0 로 숨어야 하고, visibility 계열로 숨어서는 안 된다. Tailwind 에서
     // visibility:hidden 은 `invisible` 이다 — `/visibility/` 로 찾으면 클래스 문자열에
-    // 그 낱말이 없어 무엇도 걸리지 않는다(초판이 그랬다).
-    expect(replyBtn.className).toMatch(/\bopacity-0\b/);
-    expect(replyBtn.className).not.toMatch(/\binvisible\b/);
-    expect(replyBtn.className).not.toMatch(/\bcollapse\b/);
+    // 그 낱말이 없어 무엇도 걸리지 않는다(초판이 그랬다). 숨김은 툴바 컨테이너가 진다.
+    expect(toolbar.className).toMatch(/\bopacity-0\b/);
+    expect(toolbar.className).not.toMatch(/\binvisible\b/);
+    expect(toolbar.className).not.toMatch(/\bcollapse\b/);
 
     // 호버 후에는 opacity-100 이 되어 보여야 함
-    const message = screen.getByText('root').closest('.group')!;
-    fireEvent.mouseEnter(message);
-    expect(replyBtn.className).toMatch(/group-hover:opacity-100/);
+    fireEvent.mouseEnter(toolbar);
+    expect(toolbar.className).toMatch(/group-hover:opacity-100/);
+
+    // 누르면 스레드가 열린다.
+    fireEvent.click(threadBtn);
+    expect(c.openThread).toHaveBeenCalledWith('m1');
   });
 
   // 회귀선 5: 툴바의 기존 동작(리액션 피커, ⋯ 메뉴, 인라인 리액션)이 그대로다
@@ -133,7 +143,7 @@ describe('#254 답글 컨트롤 위치 변경', () => {
     expect(within(toolbar).getByRole('button', { name: 'More actions' })).toBeTruthy();
   });
 
-  // 회귀선 6: 스레드 패널(inThread) 안에서는 답글 컨트롤이 없다
+  // 회귀선 6: 스레드 패널(inThread) 안에서는 답글 컨트롤이 없다 (pill 도, 툴바 아이콘도)
   it('inThread=true 이면 답글 컨트롤이 없다', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'reply', 'u2', { replyCount: 2 })} inThread />);
@@ -141,6 +151,7 @@ describe('#254 답글 컨트롤 위치 변경', () => {
     // 답글 버튼이 없어야 함
     expect(screen.queryByRole('button', { name: /repl(y|ies)/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Reply in thread' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '스레드에 답글 달기' })).toBeNull();
   });
 });
 
