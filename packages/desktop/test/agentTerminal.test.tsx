@@ -31,11 +31,17 @@ const session = (overrides: Partial<AgentSessionView> = {}): AgentSessionView =>
  */
 class FakeSocket {
   static last: FakeSocket | null = null;
+  /** 브라우저 WebSocket 의 상수. `sendInput` 이 이 값으로 열림을 판정한다(#315). */
+  static readonly OPEN = 1;
   onmessage: ((ev: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
   closed = false;
+  readyState = 1;
+  /** 클라이언트가 서버로 보낸 원문 프레임들(#315 — 사람이 친 것이 여기 실린다). */
+  sent: string[] = [];
   constructor(public url: string) { FakeSocket.last = this; }
-  close(): void { this.closed = true; }
+  send(data: string): void { this.sent.push(data); }
+  close(): void { this.closed = true; this.readyState = 3; }
   /** 서버가 프레임을 보낸 것처럼 흉내낸다. */
   deliver(frame: unknown): void { this.onmessage?.({ data: JSON.stringify(frame) }); }
 }
@@ -106,7 +112,9 @@ describe('#141-8 패널을 닫으면 구독이 끊긴다', () => {
     const api = {
       baseUrl: 'http://localhost:8080',
       agentSessions: vi.fn(async () => sessions),
-      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: sessions[0]! })),
+      // 이 describe 의 주인공은 소유자다 — #315 이후로는 그 사실을 명시해야 패널이
+      // 입력을 연다(안 적으면 읽기 전용으로 떠서 무엇을 검증하는지 흐려진다).
+      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: sessions[0]!, canInput: true })),
     };
     setController({ api } as unknown as Controller);
     useAppStore.getState().set({
@@ -150,6 +158,66 @@ describe('#141-8 패널을 닫으면 구독이 끊긴다', () => {
     await mountPanel([]);
     expect(screen.getByText(/진행 중인 턴이 없다/)).toBeTruthy();
     expect(FakeSocket.last).toBeNull();
+  });
+});
+
+/**
+ * #315 — 사람이 이 패널에 타이핑한다. 두 가지를 가른다:
+ *   1(클라이언트 절반). 소유자가 친 것이 attach 소켓으로 나간다.
+ *   5. admin 에게는 **입력 자체가 열리지 않고**, 왜인지가 화면에 있다.
+ *
+ * sink 팩토리가 받은 옵션을 붙잡는다 — 여기가 "입력이 열렸는가"의 실제 경계다.
+ * 화면에 문구만 확인하면, 문구는 맞는데 xterm 은 입력을 받는 상태로도 초록이 된다.
+ */
+describe('#315 소유자는 치고 admin 은 못 친다', () => {
+  const mountPanel = async (canInput: boolean) => {
+    let opts: { onInput?: (data: string) => void } | undefined;
+    setTerminalSinkFactory((_el, o) => {
+      opts = o;
+      return { write: () => { /* 이 describe 는 출력이 아니라 입력을 본다 */ }, dispose: () => {} };
+    });
+    const api = {
+      baseUrl: 'http://localhost:8080',
+      agentSessions: vi.fn(async () => [session()]),
+      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: session(), canInput })),
+    };
+    setController({ api } as unknown as Controller);
+    useAppStore.getState().set({
+      me: acc('u1', 'owner'),
+      accounts: { a1: agent('a1', 'forge', 'u1') },
+      terminalAgentId: 'a1',
+    });
+    render(<TerminalPanel />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    return { sinkOpts: () => opts };
+  };
+
+  it('소유자가 친 것이 attach 소켓에 input 프레임으로 나간다', async () => {
+    const { sinkOpts } = await mountPanel(true);
+    // 입력이 열려 있다 — 열려 있지 않으면 아래 호출 자체가 불가능하다.
+    expect(sinkOpts()?.onInput).toBeTypeOf('function');
+
+    // xterm 이 키를 넘기는 것을 흉내낸다. 제어 시퀀스를 섞는다 — 글자만 보내면
+    // 인코딩이 깨져도 통과한다.
+    await act(async () => { sinkOpts()!.onInput!('\x1b[Ayes\r'); });
+
+    expect(FakeSocket.last!.sent).toHaveLength(1);
+    const frame = JSON.parse(FakeSocket.last!.sent[0]!) as { type: string; data: string };
+    expect(frame.type).toBe('input');
+    expect(Buffer.from(frame.data, 'base64').toString('utf8')).toBe('\x1b[Ayes\r');
+  });
+
+  it('admin 에게는 입력이 열리지 않고 왜인지가 화면에 있다', async () => {
+    const { sinkOpts } = await mountPanel(false);
+
+    // **입력창이 없다.** sink 에 onInput 이 안 가면 terminalSink 가 xterm 의 stdin 자체를
+    // 끈다 — 여기가 "눌러도 아무 일이 없는 입력창"을 막는 자리다.
+    expect(sinkOpts()?.onInput).toBeUndefined();
+    // 그리고 이유가 보인다. 비활성만 하고 이유를 안 적으면 사람은 고장으로 읽는다.
+    expect(screen.getByText(/읽기 전용/)).toBeTruthy();
+    expect(screen.getByText(/소유자/)).toBeTruthy();
+    // 소켓으로도 아무것도 나가지 않았다 — 화면 문구만 보면 못 잡는 절반이다.
+    expect(FakeSocket.last!.sent).toEqual([]);
   });
 });
 
