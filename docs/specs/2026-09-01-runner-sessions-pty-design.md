@@ -1,7 +1,9 @@
 # 러너 재구축 — 스레드 세션 · PTY · 관찰과 개입 (통합 설계)
 
-- 날짜: 2026-09-01
-- 상태: 초안 (사용자 리뷰 대기)
+- 날짜: 2026-09-01 (갱신: 2026-09-04)
+- 상태: Phase 1 착지 · Phase 2 는 **관찰만** 착지(#141, PR #308) — 개입(입력·인터랙티브
+  기동·멘션 큐잉)은 #315 로 재개, 상세는 §5-2 와
+  [`../plans/2026-09-04-runner-sessions-phase2.md`](../plans/2026-09-04-runner-sessions-phase2.md)
 - **대체**: `2026-09-01-acp-harness-design.md` (bc3af87) — 기각 근거는 부록 A
 - 관련: [`design.md`](../design.md) §1 §4, [`roadmap.md`](../roadmap.md) §5,
   avcs `docs/16-workspace-scope.md` · `docs/20-workspace-bridge.md`
@@ -107,8 +109,12 @@ A 를 고른 실제 이유는 지연이 아니라 **경계**다. 서버는 관�
    (avcs `docs/16`: *"git worktree 우회는 avcs 단독 버전관리 전제에 어긋난다"*).
 2. session-id 확보 — harness 에 따라 갈린다 (§4 표):
    - claude·gemini: **러너가 UUID 를 발급**해 `--session-id` 로 준다
-   - codex: 사전 할당이 없다. 첫 턴 종료 후 `~/.codex/session_index.jsonl` 에서
-     발견해 저장한다 (구현 시 실측 — §13)
+   - codex: 사전 할당이 없다. 첫 턴 종료 후 발견해 저장한다. 초판은 발견처를
+     `~/.codex/session_index.jsonl` 로 적었는데 **실측이 뒤집었다** — 그 파일에는 cwd
+     필드가 없고 `codex exec` 세션은 애초에 거기 기록되지도 않는다. 진짜 저장소는
+     `~/.codex/sessions/<yyyy>/<mm>/<dd>/rollout-<ts>-<uuid>.jsonl` 이고, 첫 줄
+     (`session_meta`)의 payload 에 cwd 가 있다(`codexSessions.ts` 상단 주석 — `--json`
+     파싱 대안을 기각한 이유 포함)
 3. 러너 로컬 상태 파일에 기록: `~/.murmur-agent/<agentHandle>/sessions.json` —
    `{threadKey: {workspaceDir, sessionId, harness, lastFedSeq}}`. **러너 머신의 사실은 러너 머신에
    둔다** — workspace 경로는 서버가 알 필요도, 알아서도 안 되는 값이다(경로 유출).
@@ -190,22 +196,23 @@ A 를 고른 실제 이유는 지연이 아니라 **경계**다. 서버는 관�
 **MCP 설정은 `--strict-mcp-config` 와 함께 간다** (§7). 러너가 생성하는 설정에는
 murmur(http, `${MURMUR_PAT}`)와 avcs(stdio, `avcs mcp`) 둘만 들어간다.
 
-#### 알려진 한계: argv 에 노출되는 정보
+#### argv 노출 — 해소됨 (#92, #117)
 
-에이전트 지시문과 스레드 델타(채팅 메시지 본문)가 argv 로 전달되면, 같은 머신의
-다른 사용자가 `ps aux` 로 그 내용을 볼 수 있다(spec §7 의 설계 원칙: env 는 보이지
-않지만 argv 는 보인다).
+초판은 이 절을 "알려진 한계"로 적었다 — 지시문·스레드 델타가 argv 로 나가고, *"PTY 안에서
+stdin 파이프를 쓸 수 없으므로(pty는 터미널이다)"* 구조적 한계라고 했다. **그 전제가 실측으로
+뒤집혔다**: claude·codex 모두 exec/print 모드에서 stdin 에 TTY 를 요구하지 않는다. 지금은
+프롬프트가 argv 에 실리지 않는다.
 
-- **claude 지시문**: `--append-system-prompt-file <path>` 로 파일을 전달한다.
-  파일 퍼미션 0600 으로 world-readable 이 아니다. 이 수정은 2026-09 이슈 #92.
-- **codex 지시문 + 델타**: PTY 안에서 stdin 파이프를 쓸 수 없으므로(pty는 터미널이다),
-  여전히 위치인자로 전달된다. `--ignore-user-config` 로 운영자 config.toml 은 무시되지만,
-  argv 자체의 내용은 노출된다.
-- **claude 델타**: `--append-system-prompt` 로 여전히 위치인자로 전달된다.
+- **지시문**: `writeSystemPromptFile()` 이 0600 파일로 쓰고 claude 는
+  `--append-system-prompt-file <path>` 로 받는다(#92). codex 는 지시문을 stdin 파일에
+  합쳐 받는다.
+- **스레드 델타(대화 본문)**: `writePromptFile()` 이 0600 파일로 쓰고, `composeSpawn`
+  (`pty.ts`)이 `sh -c 'exec <argv…> < <file>'` 리다이렉트로 감싼다(#117). `exec` 을 반드시
+  넣어 시그널이 sh 가 아니라 하네스에 닿는다.
+- `stdinFile` 이 `null` 인 턴(인터랙티브)은 감싸지 않는다 — 그 턴의 stdin 은 PTY 여야 한다.
 
-이 비대칭은 PTY 가 stdin 파이프를 지원하지 않아서 생기는 구조적 한계다. 추후
-개선 방향은 PTY에 EOT를 보내는 방법 등이 연구 대상이다. 또한 길이가 긴 대화가
-계속되면 `ARG_MAX`(최대 인수 길이)를 초과해 스폰 자체가 실패할 수 있다.
+부수 효과로 초판이 걱정한 `ARG_MAX` 초과(긴 대화의 스폰 실패)도 함께 사라졌다 — 본문이
+argv 에 없다.
 
 멘션 턴의 프롬프트 컨텍스트(`<ctx>`)는 기존 `reply.ts::buildReplyRequest` 산출물을
 문자열로 넘긴다 — 이 순수 로직은 그대로 산다. 단 세션이 맥락을 이미 가지므로
@@ -234,7 +241,14 @@ exit 후 그 스레드를 `message.read` 로 읽어 **턴 시작 이후 자기 �
 
 비대화형 턴은 `AGENT_TURN_TIMEOUT_MS`(기본 30분) 를 넘기면 SIGTERM → 5초 → SIGKILL.
 avcs 작업은 정당하게 길 수 있어 짧게 잡지 않되, 무한 대기(예: 하네스가 플래그를
-무시하고 입력을 기다림)는 반드시 끊는다. 타임아웃도 "발화 없음" 검사를 거친다.
+무시하고 입력을 기다림)는 반드시 끊는다.
+
+초판은 *"타임아웃도 '발화 없음' 검사를 거친다"* 고 적었는데 구현이 의도적으로 다르게
+착지했다(`mentionTurn.ts`): 실패 턴(타임아웃·exit ≠ 0)은 발화 여부를 **관측만** 해서
+`lastFedSeq` 전진 판단에 쓰고, "(답 없이 턴을 끝냈습니다)" 통지는 **정상 종료(exit 0)
+턴에만** 올린다. 실패 턴은 `MAX_ATTEMPTS` 소진 후 `FAILURE_NOTICE` 가 한 번 통지하므로,
+실패마다 "발화 없음"을 또 올리면 같은 실패가 스레드에 두 번 뜬다 — 이중 통지 방지가
+근거다. 이 문서가 코드를 따라간다.
 
 ## 5. 관찰과 개입 (attach)
 
@@ -269,12 +283,62 @@ null 이면 아무에게도 칩이 없다(기존 행 backfill 은 하지 않는�
 - **스크롤백**: 러너의 ring buffer(세션당 최근 256KB, 프로세스 살아있는 동안만) 를
   attach 시 재생 → xterm 이 화면을 재구성. **DB 에 저장하지 않는다** — PTY 출력에
   비밀이 섞인다.
-- **writer 규칙**: 소유자만 붙으므로 동시 attach 는 같은 사람의 창 여러 개다.
-  마지막 attach 가 writer, 나머지 읽기 전용, resize 는 writer 를 따른다.
+- **writer 규칙**: 마지막 attach 가 writer, 나머지 읽기 전용, resize 는 writer 를 따른다.
+  초판은 근거를 "소유자만 붙으므로 동시 attach 는 같은 사람"이라 적었는데, 서버 구현은
+  admin 의 attach 도 허용한다(`checkOwnerOrAdmin`) — 사람이 달라도 규칙은 같다(마지막
+  attach 가 이긴다). 소유자와 admin 이 동시에 타이핑하는 경합은 잠금이 아니라 이 규칙
+  하나로 정리한다: 바이트가 섞이는 상태 자체를 만들지 않는다.
 - **감사**: attach / detach / 입력 바이트 **수**만 `audit_log` 에 남긴다. 입력 내용은
   남기지 않는다(프롬프트에 비밀이 들어갈 수 있다) — "감사에 본문을 복사하지 않는다"는
   기존 원칙 그대로.
 - PTY 크기: 비대화형 턴 기본 `120x40`. attach 시 writer 의 크기로 resize.
+
+### §5-2. 개입 — 착지 현황과 확정 결정 (2026-09-04)
+
+Phase 2 는 **관찰까지만** 착지했다(#141, PR #308): 릴레이·소유자 게이트·ring 재생·status
+통지가 위 서술대로 돌고, `input`/`resize` 는 코드가 "범위 밖" 주석으로 유예했다
+(`shared/src/index.ts` `RelayServerFrame` 주석, `agentRelayRoutes.ts`, `TerminalPanel.tsx`).
+유예의 이유였던 미결 질문(#315)에 답이 정해졌고(2026-09-04, 사용자 확정), 개입 구현은
+[`../plans/2026-09-04-runner-sessions-phase2.md`](../plans/2026-09-04-runner-sessions-phase2.md)
+가 계획한다. 여기에는 **결정만** 남긴다.
+
+1. **멘션 턴에 입력을 허용하고, 그 턴의 권한 모드는 유지한다.** §6 표 3행("모드 변경
+   불가")이 그대로 산다 — `readonly` 로 도는 턴의 프롬프트에 사람이 답할 수는 있지만
+   턴의 플래그는 바뀌지 않는다. attach 가 소유자·admin 으로 좁혀져 있으므로 이것은
+   "내 머신의 내 에이전트에 대한 개입"이다.
+2. **프레임 계약.** 뷰어→서버 `AttachClientFrame`(`input`/`resize`, base64) 신설,
+   서버→뷰어에 `{type:'writer', writer}` 통지 추가, 서버→러너 `RelayServerFrame` 을
+   유니온으로(`input`·`resize`·`viewer.count`·`interactive.open`), 러너→서버에
+   `interactive.opened`/`interactive.error`, announce 에 `caps: ['input','interactive']`.
+   서버는 여전히 `data` 를 열지 않는다 — 입력 바이트 수도 base64 길이 **산술**로 센다.
+   구/신 조합 4방향 전부 안전해야 한다: 구 러너는 미지 프레임을 버리고(caps 부재를 서버가
+   보고 포워딩 안 함), 신 데스크탑은 `writer` 프레임이 안 오면 읽기 전용으로 남는다.
+3. **입력 감사는 detach 시 합산 1회.** 키 입력마다 감사 행을 쓰면 행 타임스탬프가 곧
+   키스트로크 타이밍이라 그 자체가 부채널이다. 기존 `agent.detached` detail 에
+   `inputBytes` 를 싣는다 — 내용은 여전히 남기지 않는다(§5 원칙).
+4. **인터랙티브 기동.** `POST /agent-sessions/interactive`(소유자·admin, attach 와 같은
+   술어) → 서버가 러너로 `interactive.open` 프레임 → 러너가 세션을 확보(없으면 생성)해
+   인터랙티브 턴을 띄우고 `interactive.opened` 로 응답 → 서버가 attach 티켓 반환.
+   감사 액션 `agent.interactive.opened` 신설 — 셸을 여는 것은 관찰보다 강한 행위다.
+5. **인터랙티브 턴의 끝은 둘이다.** 1차: 프로세스 exit(사람이 하네스 안에서 종료 — "프로세스
+   종료 = 턴의 끝" 원칙 유지). 2차: viewer 가 0 이 된 뒤 유예(기본 60초) 지나면 러너가
+   SIGTERM→SIGKILL 로 회수한다 — 패널 닫힘·소켓 단절·앱 강제종료가 서버 관점에서 전부
+   "viewer 소멸" 하나로 수렴하고, 세션은 디스크라 kill 로 잃는 것이 없다. 명시적 종료
+   프레임은 두지 않는다.
+6. **멘션 큐잉은 inbox 가 곧 큐다.** 사람이 인터랙티브로 조종 중인 스레드(§3)의 멘션은
+   `markRead` 도 attempts 증가도 없이 건너뛴다 — inbox 의 at-least-once 가 그대로 큐가
+   되고, 러너가 재시작하면 인터랙티브 PTY 도 함께 죽으므로 유예가 저절로 풀린다. 통지
+   ("지금 {handle} 이(가) 직접 조종 중 — 대기 N건")는 러너가 에이전트 계정으로 entry 당
+   1회만 올린다. 유예 대상은 **인터랙티브 턴뿐** — 멘션 턴에 사람이 attach 만 한 경우
+   그 턴은 어차피 돌고 있으므로 막지 않는다.
+7. **인터랙티브 턴이 끝나면 `lastFedSeq` 를 전진하되, 대기 멘션의 min seq − 1 로
+   클램프한다.** 클램프 없이 전진하면 큐에서 나온 멘션 턴의 델타 프롬프트가 비어 그 부름이
+   조용히 소실된다 — §3 의 "사람이 닫으면 러너가 처리한다"와 "인터랙티브 턴도 lastFedSeq 를
+   당긴다"가 교차하는 지점이다.
+8. **codex 인터랙티브는 게이트가 있다.** `codex resume` 이 `--ignore-user-config` 를 받지
+   못하면(§13 스파이크로 확정) codex 인터랙티브 턴은 **명확한 에러로 거절**한다 — 무방비로
+   운영자 config.toml(개인 MCP 포함)을 상속하는 경로를 열지 않는다. gemini 의 "없는 것을
+   있다고 표시하지 않는다" 판례와 같은 결.
 
 ## 6. 권한 — 턴 종류로 갈라진다
 
@@ -350,8 +414,8 @@ ACP 안의 "`allow_always` 금지"에 해당하는 원칙의 번역: **하네스
 | 패키지 | 변경 |
 |---|---|
 | `shared` | `AgentConfig.mentionPermission` · `AgentView.ownerAccountId` · 릴레이 메시지 타입 |
-| `server` | `008_agent_runner.sql` · `routes/agentSessionRoutes.ts`(목록·attach) · `ws/relayPlugin.ts`(러너측 `/agent-relay` + viewer 승격, 소켓 쌍 맵) · `services/agents.ts` COLS 확장 · audit 이벤트 3종 |
-| `agent` | 신규: `sessions.ts`(디스크 상태) · `workspace.ts`(avcs project) · `pty.ts`(node-pty 래핑) · `turn.ts`(플래그 표 + exit 판정) · `relay.ts`(상시 WS + ring buffer). 제거: `harness/claudeCode.ts` 의 `parseClaudeResult`·`buildClaudeArgs`(플래그 표로 대체), `main.ts` 의 stdout 수집 경로 |
+| `server` | `008_agent_runner.sql` · `routes/agentRelayRoutes.ts`(목록·attach·러너 WS·viewer WS — 초판이 적은 `agentSessionRoutes.ts` 는 이 이름으로 착지) · `ws/relay.ts`(소켓 쌍 허브 — 초판의 `relayPlugin.ts`) · `services/agents.ts` COLS 확장 · audit 이벤트 |
+| `agent` | 신규: `sessions.ts`(디스크 상태) · `workspace.ts`(avcs project) · `pty.ts`(node-pty 래핑) · `turn.ts`(플래그 표 + exit 판정) · `relay.ts`(상시 WS + ring buffer) · `mentionTurn.ts`(턴 조립 — `main.ts` 가 top-level await 라 테스트 가능한 분리가 필요했다). 제거: `harness/claudeCode.ts` 의 `parseClaudeResult`·`buildClaudeArgs`(플래그 표로 대체), `main.ts` 의 stdout 수집 경로 |
 | `desktop` | `[▶ 터미널]` 칩(스레드 헤더, 소유자만) · xterm.js 패널 · attach 흐름 |
 | 의존성 | agent: `node-pty` / desktop: `@xterm/xterm` |
 
@@ -403,8 +467,11 @@ CLI 가 필요하므로 로컬 전용 태그로 두되, **§4 표를 고칠 때�
 ## 11. 구현 페이즈
 
 - **Phase 1 — 세션 코어**: §3 + §4 + §6 + §7. 멘션 응답이 새 구조로 완결.
-  성공 기준 1·2·5·6·7 이 여기서 닫힌다.
-- **Phase 2 — 관찰·개입**: §5. 성공 기준 3·4.
+  성공 기준 1·2·5·6·7 이 여기서 닫힌다. — **착지 완료**
+  ([phase1 계획](../plans/2026-09-01-runner-sessions-phase1.md))
+- **Phase 2 — 관찰·개입**: §5. 성공 기준 3·4. — **관찰(기준 3)만 착지**(#141, PR #308).
+  개입(기준 4)은 §5-2 의 확정 결정에 따라
+  [phase2 계획](../plans/2026-09-04-runner-sessions-phase2.md)이 이어받는다(#315)
 
 Phase 1 만으로 배포 가능하고 Phase 2 는 순수 추가라 롤백 반경이 분리된다.
 
@@ -424,6 +491,17 @@ Phase 1 만으로 배포 가능하고 Phase 2 는 순수 추가라 롤백 반경
 3. gemini: 비대화형 resume(`-r <id> -p`) · 권한 플래그 · 지시문 주입구
 4. `avcs workspace land` 가 미추적 파일(스킬·상태 파일)을 어떻게 다루나
 5. launchd 데몬화 시 Keychain 접근 (러너 감독 문서 §7 갱신과 함께)
+
+**Phase 2 후반(개입, §5-2) 구현 전 검증 — 2026-09-04 추가:**
+
+6. `codex resume --help` 에 `--ignore-user-config` 가 있는가. `turn.ts` 주석은 "못 받는다"
+   로 적어 뒀지만(codex-cli 0.148.0 에서 `--skip-git-repo-check` 부재는 실측, 이 플래그는
+   추정) 버전이 갱신됐을 수 있다 — 있으면 인터랙티브 턴에 붙이고, 없으면 §5-2 결정 8대로
+   codex 인터랙티브를 거절한다. `CODEX_HOME` 격리 대안은 기각 — `auth.json` 과
+   `~/.codex/sessions`(resume 대상 rollout)가 같은 디렉터리라 로그인과 resume 이 함께 깨진다
+7. claude 인터랙티브 **첫** 턴: `claude --session-id <uuid>`(`-p` 없음)가 인터랙티브로 뜨고
+   그 uuid 로 이후 `-r` resume 이 되는가 — "세션 없는 스레드에서 [▶ 터미널]"의 전제
+8. node-pty `resize()` 가 자식에게 SIGWINCH 로 전달되는가 (fake-harness 로)
 
 ## 14. 성공 기준
 
