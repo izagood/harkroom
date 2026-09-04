@@ -9,6 +9,7 @@ import { acc, chan, scheduledApiStub } from './helpers/fakeApi';
 // 설정 파일은 **이 파일 기준**으로 끌어온다(`?raw`, Vite 가 변환 시점에 해석한다). `process.cwd()`
 // 로 조립하면 러너가 어디서 도는지에 결과가 달리고, 파일이 없으면 ENOENT 가 아니라 "경로가 틀렸다"
 // 로 보인다 — 실제로 이 파일의 초판이 다른 기기의 절대 경로를 박아 두고 빨갛게 남아 있었다.
+import capabilitiesRaw from '../src-tauri/capabilities/default.json?raw';
 import baseConfRaw from '../src-tauri/tauri.conf.json?raw';
 import macConfRaw from '../src-tauri/tauri.macos.conf.json?raw';
 
@@ -278,5 +279,33 @@ describe('#342 로그인 전 화면의 창 손잡이', () => {
     render(<App />);
     expect(await screen.findByText('Server URL')).toBeTruthy();
     expect(findStrip()).toBeNull();
+  });
+});
+
+/**
+ * 손잡이를 붙여도 **권한이 없으면 창은 끌리지 않는다**(#353).
+ *
+ * `data-tauri-drag-region` 이 눌리면 웹뷰는 `startDragging()` 을 부르는데, 그 명령은
+ * `core:default` 에 **들어 있지 않다** — `core:window:default` 가 주는 28 개는 전부 읽기
+ * 전용(`allow-title`·`allow-is-visible` 류)이다. 그래서 #270 이 OS 타이틀바를 없앤 뒤로
+ * 브랜드 바든 헤더든 로그인 화면 띠든 **어느 것도 창을 옮기지 못했다.**
+ *
+ * 위쪽 블록들이 지키는 것은 "속성이 올바른 자리에 있다" 까지다. 속성이 다 제자리에 있어도
+ * 이 한 줄이 없으면 기능은 앱에서 죽어 있고, 그 상태로 테스트는 전부 초록이었다 —
+ * ACL 은 런타임에만 걸리므로 렌더링 단언으로는 영원히 보이지 않는다. 그래서 결정을 갖고
+ * 있는 파일을 직접 읽는다(`runnerShellScope.test.ts` 와 같은 이유).
+ */
+describe('#353 드래그 권한', () => {
+  it('capabilities 가 core:window:allow-start-dragging 을 준다', () => {
+    const caps = JSON.parse(capabilitiesRaw) as { permissions: (string | { identifier: string })[] };
+    const names = caps.permissions.map((p) => (typeof p === 'string' ? p : p.identifier));
+    expect(names).toContain('core:window:allow-start-dragging');
+  });
+
+  it('그 권한이 창 손잡이가 붙는 창(main)에 걸려 있다', () => {
+    const caps = JSON.parse(capabilitiesRaw) as { windows: string[] };
+    // 창 라벨을 따로 적지 않으므로 Tauri 기본값 `main` 이다. 이 목록에서 빠지면 권한을
+    // 줘도 그 창에는 닿지 않는다.
+    expect(caps.windows).toContain('main');
   });
 });
