@@ -169,6 +169,23 @@ describe('buildTurnCommand — codex', () => {
     expect(resumeTurn.args).not.toContain('-s');
   });
 
+  it('auto 멘션 턴은 murmur MCP만 승인 없이 실행한다 — 답을 만들고도 message.post가 막히지 않는다', () => {
+    const first = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true });
+    const resumed = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
+    for (const plan of [first, resumed]) {
+      expect(plan.args.join(' ')).toContain('mcp_servers.murmur.approval_mode="never"');
+      expect(plan.args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
+    }
+  });
+
+  it('readonly 멘션 턴은 murmur 쓰기 MCP의 승인을 우회하지 않는다', () => {
+    const plan = buildTurnCommand({
+      ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false,
+      mentionPermission: 'readonly',
+    });
+    expect(plan.args.join(' ')).not.toContain('mcp_servers.murmur.approval_mode="never"');
+  });
+
   it('MCP 는 턴별 -c 오버라이드다 — codex mcp add 는 config.toml 을 영구 변경한다 (spec §6)', () => {
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
     expect(p.args.join(' ')).toContain('-c mcp_servers.');
