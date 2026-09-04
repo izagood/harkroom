@@ -7,6 +7,13 @@
 //      열었다고 PTY 가 두 개 뜨면, 한 하네스 세션을 두 프로세스가 밟는다.
 //   ③ 아무 턴도 없다 → 세션을 확보(없으면 생성)하고 인터랙티브 PTY 를 띄운다.
 //
+// **#384 로 분기 ①에 갈래가 하나 생겼다**: 요청이 `handoff: true`(사람이 [이어받기] 를
+// 눌렀다)면 그 멘션 턴에 관찰로 붙이는 대신 **예약**하고 `waiting` 으로 답한다. 진행 중인
+// 턴은 멈추지 않는다(운영자 결정 A — 멈추면 하네스가 어디까지 했는지 사람이 모른다).
+// 그 턴이 끝난 뒤 main 루프가 `resumeHandoff` 로 예약을 풀고, 같은 하네스 세션 id 의
+// 인터랙티브 턴이 뜬다. 기다림은 "한 하네스 세션에 프로세스는 하나"라는 위 ②의 보호를
+// **지키는 방법**이지 뚫는 방법이 아니다.
+//
 // **exit 을 기다리지 않는다.** 이 함수의 반환은 "떴다"이지 "끝났다"가 아니다 — 서버는
 // 티켓을 발급해야 하고 사람은 그 티켓으로 attach 한다. 턴의 끝은 둘이다(스펙 §5-2 결정 5):
 // 1차 exit(사람이 하네스 안에서 종료), 2차 고아 회수(viewer 0 → 유예 → SIGTERM→SIGKILL).
@@ -27,6 +34,31 @@ import { MentionQueue } from './mentionQueue.js';
 
 /** SIGTERM 뒤 SIGKILL 승격까지의 유예. pty.ts 의 타임아웃 경로와 같은 값·같은 이유다. */
 const KILL_GRACE_MS = 5_000;
+
+/**
+ * 관찰 릴레이 없이 도는 멘션 턴에는 붙을 수도, 이어받을 수도 없다는 거절.
+ *
+ * 한 곳에 둔 이유(#384): 세 자리(분기 ①·경합 재검사·이어받기)가 같은 사실을 말한다.
+ * 문구를 각자 적으면 한쪽만 고쳐져, 같은 상황에서 화면에 다른 이유가 뜬다.
+ */
+const NO_RELAY_REJECTION = '이 스레드에 멘션 턴이 진행 중이지만 관찰 릴레이가 없다 — 턴이 끝난 뒤 다시 열어라';
+
+/**
+ * codex 이어받기 거절(#384 운영자 결정). 이 문구는 relay 의 `interactive.error` 를 지나
+ * **사람 화면에 그대로** 뜬다 — 조용히 거절하면 눌렀는데 아무 일이 없는 것이 된다.
+ *
+ * **왜 이어받기만인가.** #384 는 "`interactiveTurn.ts` 가 이미 codex 를 거절하고 있으니 그
+ * 문구를 재사용하라"고 적었지만 그 전제는 이미 갱신됐다: 스펙 §5-2 결정 8(codex 인터랙티브
+ * 거절)은 2026-09-04 후속 실측으로 **대체**됐고(docs/specs/2026-09-01-runner-sessions-pty-design.md
+ * §13.6 부기), 지금 러너는 `codex resume` 을 격리 `CODEX_HOME` 으로 연다(codexHome.ts) —
+ * 재사용할 거절 문구가 없고, "개인 MCP 를 상속한다"는 근거도 그 격리로 이미 막혀 있다.
+ * 그래서 거절의 근거를 실재하는 것 하나로 좁혔다: **멘션 턴(`codex exec`)이 만든 세션을
+ * 대화형 `codex resume` 이 이어받는지가 실측되지 않았다.** 이어받기의 값 전부가 "그 대화를
+ * 이어서 친다"이므로, 그것이 성립하는지 모르는 채로 열면 사람이 이어받았다고 믿는 화면에서
+ * 다른 대화가 시작된다. 새 인터랙티브 턴([터미널 열기], #337)은 그대로 열린다 — 그쪽은
+ * 이어받을 대화가 없어 이 미실측과 무관하다.
+ */
+const CODEX_HANDOFF_REJECTION = 'codex 에이전트는 이어받기가 열려 있지 않다 — 멘션 턴(codex exec)이 만든 세션을 대화형 codex resume 이 이어받는지가 실측되지 않았다(#348 스파이크 범위 밖). 새 인터랙티브 턴은 [터미널 열기]로 열 수 있다.';
 
 /** 인터랙티브 턴을 실제로 돌리는 함수 — 프로덕션은 `runPtyTurn`, 테스트는 스텁. */
 export type RunInteractiveTurn = (
@@ -100,13 +132,35 @@ export interface InteractiveOpenRequest {
   channelId: string;
   threadRootId: string;
   openedByHandle: string;
+  /**
+   * 진행 중인 멘션 턴을 **이어받으러** 온 요청인가(#384). **필수다** — 옵셔널로 두면 그
+   * 기본값이 곧 판정이 되고, 어느 쪽을 기본으로 두든 한쪽 호출부가 사람이 부탁하지 않은
+   * 것을 한다(부탁 없이 턴을 띄우거나, 부탁했는데 관찰만 붙인다).
+   */
+  handoff: boolean;
   cols?: number;
   rows?: number;
 }
 
+export interface InteractiveOpenResult {
+  sessionId: string;
+  created: boolean;
+  /**
+   * 이어받기가 예약됐다(#384) — 지금 도는 멘션 턴이 끝난 뒤에 인터랙티브 턴이 뜬다.
+   * `sessionId` 는 그 **멘션 턴**의 것이다: 사람은 기다리는 동안 그 화면을 계속 본다.
+   */
+  waiting: boolean;
+}
+
 export interface InteractiveManager {
   /** 3분기를 지나 세션 id 를 돌려준다. 실패는 던진다 — 릴레이가 interactive.error 로 옮긴다. */
-  open(req: InteractiveOpenRequest): Promise<{ sessionId: string; created: boolean }>;
+  open(req: InteractiveOpenRequest): Promise<InteractiveOpenResult>;
+  /**
+   * 이 스레드에 이어받기 예약이 있으면 지금 인터랙티브 턴을 띄운다(#384). 예약이 없으면
+   * 아무 일도 없다. **멘션 턴이 완전히 끝난 뒤**(상태 저장까지) 부른다 — main 루프가
+   * 그 자리를 안다. 던지지 않는다: 이어받기 실패로 멘션 배치를 죽이지 않는다.
+   */
+  resumeHandoff(threadKey: string): Promise<void>;
   /**
    * 러너가 물러난다(SIGTERM) — 진행 중인 인터랙티브 PTY 전부를 고아 회수와 같은 경로
    * (SIGTERM → 유예 → SIGKILL)로 끝낸다. 멘션 턴과 달리 기다릴 답이 없으므로 즉시다.
@@ -132,6 +186,9 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
   const killGraceMs = deps.killGraceMs ?? KILL_GRACE_MS;
   const sessionMaterialized = deps.sessionMaterialized ?? defaultSessionMaterialized;
 
+  /** 러너가 물러나는 중인가(#384). shutdown 이 켠다 — 그 뒤로는 이어받기를 띄우지 않는다. */
+  let retreating = false;
+
   /** 진행 중인 인터랙티브 턴의 회수 손잡이(threadKey → 상태). shutdown 이 순회한다. */
   const liveTurns = new Map<string, {
     controls: PtyControls | null;
@@ -148,23 +205,20 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
     state.cancelKill = schedule(() => { if (!state.exited) state.controls?.kill('SIGKILL'); }, killGraceMs);
   };
 
-  const open = async (req: InteractiveOpenRequest): Promise<{ sessionId: string; created: boolean }> => {
-    const key = SessionStore.threadKey(req.channelId, req.threadRootId);
-
-    // ── 분기 ①·② — 이미 도는 턴이 있으면 새 PTY 를 띄우지 않는다.
-    const running = deps.registry.get(key);
-    if (running) {
-      if (running.sessionId === null) {
-        // 멘션 턴이 릴레이 없이 돌고 있다 — attach 할 세션이 없다. 조용히 새 PTY 를
-        // 띄우면 한 하네스 세션을 두 프로세스가 밟으므로, 사실을 말하고 거절한다.
-        throw new Error('이 스레드에 멘션 턴이 진행 중이지만 관찰 릴레이가 없다 — 턴이 끝난 뒤 다시 열어라');
-      }
-      return { sessionId: running.sessionId, created: false };
-    }
-
-    // ── 분기 ③ — 세션을 확보하고 인터랙티브 PTY 를 띄운다.
+  /**
+   * ── 분기 ③ — 세션을 확보하고 인터랙티브 PTY 를 띄운다.
+   *
+   * `open` 의 분기 ③과 이어받기 대기(#384)가 **같은 이 함수**를 쓴다. 갈라 두면 대기로 뜬
+   * 턴만 고아 회수나 lastFedSeq 클램프를 빠뜨리는 식으로 어긋나고, 그 어긋남은 사람이
+   * 기다린 뒤에야 드러난다.
+   */
+  const spawn = async (key: string, req: InteractiveOpenRequest): Promise<InteractiveOpenResult> => {
     // 정의는 매번 새로 읽는다(멘션 턴과 같은 이유 — 하네스·모델이 UI 에서 바뀐다).
     const def = await deps.murmur.definition();
+    // 기다리는 사이에 하네스가 codex 로 바뀌었을 수 있다(정의는 UI 에서 바뀐다). 그때
+    // 조용히 열면 사람이 "이어받았다"고 믿는 화면에서 다른 대화가 시작된다 — `open` 의
+    // 누른-순간 검사와 **같은 판정**을 여기서 한 번 더 한다.
+    if (req.handoff && def.harness === 'codex') throw new Error(CODEX_HANDOFF_REJECTION);
 
     let rec = deps.store.get(key);
     if (rec && rec.harness !== def.harness) {
@@ -219,9 +273,9 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
     const raced = deps.registry.get(key);
     if (raced) {
       if (raced.sessionId === null) {
-        throw new Error('이 스레드에 멘션 턴이 진행 중이지만 관찰 릴레이가 없다 — 턴이 끝난 뒤 다시 열어라');
+        throw new Error(NO_RELAY_REJECTION);
       }
-      return { sessionId: raced.sessionId, created: false };
+      return { sessionId: raced.sessionId, created: false, waiting: false };
     }
 
     const state: { controls: PtyControls | null; exited: boolean; cancelOrphan: (() => void) | null; cancelKill: (() => void) | null } = {
@@ -255,6 +309,9 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
     });
 
     deps.registry.register(key, { kind: 'interactive', sessionId: session.sessionId, openedByHandle: req.openedByHandle });
+    // 예약이 이 턴으로 이행됐다(#384). **register 직후**에 지운다: 유예 판정이 예약과 턴
+    // 둘 중 하나만 보면 되고(controlOf), 이 순서면 그 사이에 유예가 비는 순간이 없다.
+    deps.registry.clearHandoff(key);
     liveTurns.set(key, state);
 
     // spawn 확인용 — onSpawn 이 불리면 PTY 가 실제로 떴다는 뜻이다. exit 은 기다리지 않는다.
@@ -367,13 +424,92 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       }),
     ]);
 
-    return { sessionId: session.sessionId, created: true };
+    return { sessionId: session.sessionId, created: true, waiting: false };
+  };
+
+  /**
+   * 이어받기의 두 번째 반쪽(#384) — 예약된 인터랙티브 턴을 띄운다. **멘션 턴이 완전히
+   * 끝난 뒤** main 루프가 부른다(그 자리인 이유는 turnRegistry.ts 의 `handoffs` 주석).
+   *
+   * 예약이 없으면 아무 일도 없다 — 모든 멘션 턴 뒤에 불리는 함수이므로 그 침묵이 기본이다.
+   * 실패하면 예약을 지운다: 남겨 두면 그 스레드의 멘션이 영원히 유예돼, 사람은 터미널도
+   * 못 열고 부름도 안 닿는 스레드를 갖게 된다.
+   */
+  const resumeHandoff = async (key: string): Promise<void> => {
+    const reserved = deps.registry.handoff(key);
+    if (!reserved) return;
+    // 러너가 물러나는 중이면 띄우지 않는다. SIGTERM 은 진행 중인 배치를 끝내게 하므로
+    // (main.ts) 그 배치의 마지막 멘션 턴 뒤에 이 함수가 불릴 수 있는데, 그때 새 PTY 를
+    // 띄우면 방금 회수한 것을 다시 만들고 그것을 닫아 줄 릴레이는 이미 없다.
+    if (retreating) { deps.registry.clearHandoff(key); return; }
+    // 그 사이 다른 경로가 이 스레드에 턴을 띄웠으면(사람이 다시 눌렀다) 예약은 이미
+    // 이행된 것이다 — 두 번 띄우면 한 하네스 세션을 두 프로세스가 밟는다.
+    if (deps.registry.get(key)) { deps.registry.clearHandoff(key); return; }
+    try {
+      await spawn(key, {
+        channelId: reserved.channelId,
+        threadRootId: reserved.threadRootId,
+        openedByHandle: reserved.openedByHandle,
+        // 이 턴이 **곧 그 이어받기다.** true 로 넘기는 이유는 두 가지다: 예약은 이미
+        // 소비됐으므로(아래 clearHandoff·register) 다시 예약될 일이 없고, spawn 의 codex
+        // 판정이 이 값을 읽는다 — 기다리는 사이 하네스가 바뀐 경우를 그것이 잡는다.
+        handoff: true,
+        cols: reserved.cols,
+        rows: reserved.rows,
+      });
+    } catch (err) {
+      deps.registry.clearHandoff(key);
+      console.error(`[interactiveTurn] ${key}: 이어받기 턴을 띄우지 못했다 — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const open = async (req: InteractiveOpenRequest): Promise<InteractiveOpenResult> => {
+    const key = SessionStore.threadKey(req.channelId, req.threadRootId);
+
+    // 이어받기는 하네스를 **먼저** 본다(#384). 거절이 나올 요청이면 그 이유가 누른 순간
+    // 사람에게 가야 한다 — 예약해 두고 26초를 기다린 뒤에 거절하면, 그 기다림이 통째로
+    // 헛것이 되고 거절 문구는 러너 로그에만 남는다(사람은 이유 없이 안 열리는 화면을 본다).
+    if (req.handoff && (await deps.murmur.definition()).harness === 'codex') {
+      throw new Error(CODEX_HANDOFF_REJECTION);
+    }
+
+    // ── 분기 ①·② — 이미 도는 턴이 있으면 새 PTY 를 띄우지 않는다.
+    const running = deps.registry.get(key);
+    if (running) {
+      if (running.sessionId === null) {
+        // 멘션 턴이 릴레이 없이 돌고 있다 — attach 할 세션도, 이어받는 동안 볼 화면도
+        // 없다. 조용히 새 PTY 를 띄우면 한 하네스 세션을 두 프로세스가 밟는다.
+        throw new Error(NO_RELAY_REJECTION);
+      }
+      // ── 이어받기(#384) — 진행 중인 멘션 턴을 **멈추지 않고** 끝나기를 기다린다.
+      // 기다림은 "같은 세션 id 로 두 프로세스가 뜨지 않는다"는 보호를 지키는 방법이고,
+      // 뚫는 방법이 아니다. 예약해 두면 그 턴이 끝나는 순간 위 startReservedHandoff 가 띄운다.
+      if (running.kind === 'mention' && req.handoff) {
+        deps.registry.reserveHandoff(key, {
+          openedByHandle: req.openedByHandle,
+          channelId: req.channelId,
+          threadRootId: req.threadRootId,
+          cols: req.cols,
+          rows: req.rows,
+        });
+        return { sessionId: running.sessionId, created: false, waiting: true };
+      }
+      return { sessionId: running.sessionId, created: false, waiting: false };
+    }
+
+    // ── 분기 ③ — 아무 턴도 없다. 이어받기로 왔더라도 기다릴 것이 없으므로 지금 연다
+    // (누르는 사이에 멘션 턴이 끝난 경우다 — 26초짜리 턴에서 흔하다).
+    return spawn(key, req);
   };
 
   return {
     open,
+    resumeHandoff,
 
     shutdown() {
+      // 물러나는 중임을 먼저 남긴다 — 그 뒤에 불리는 resumeHandoff 가 새 PTY 를 띄우지
+      // 않는다(#384). 예약 자체는 프로세스와 함께 사라진다(레지스트리는 인메모리다).
+      retreating = true;
       // 러너 SIGTERM — 진행 중 인터랙티브 PTY 전부를 고아 회수와 같은 경로로 끝낸다.
       // 멘션 턴은 main 루프가 배치를 마치고 스스로 물러나지만, 인터랙티브 턴은 사람이
       // 닫아 줄 때까지 기다릴 대상이 없다(러너가 죽으면 릴레이도 함께 끊긴다).

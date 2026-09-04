@@ -167,17 +167,26 @@ export async function registerAgentRelayRoutes(
    * 스레드를 가리키는 것은 세션 id 가 아니라 (agentAccountId, channelId, threadRootId)
    * 셋이다 — 세션은 아직 없을 수 있고, 그때 만드는 것이 이 라우트의 존재 이유다.
    */
-  app.post<{ Body: { agentAccountId?: unknown; channelId?: unknown; threadRootId?: unknown } }>(
+  app.post<{
+    Body: { agentAccountId?: unknown; channelId?: unknown; threadRootId?: unknown; handoff?: unknown };
+  }>(
     '/agent-sessions/interactive',
     { preHandler: app.requireAccount },
     async (req, reply) => {
       const account = req.account!;
-      const { agentAccountId, channelId, threadRootId } = req.body ?? {};
+      const { agentAccountId, channelId, threadRootId, handoff } = req.body ?? {};
       if (typeof agentAccountId !== 'string' || typeof channelId !== 'string' || typeof threadRootId !== 'string') {
         return reply.code(400).send({
           error: { code: 'bad_request', message: 'agentAccountId, channelId, threadRootId 가 모두 필요하다' },
         });
       }
+      // #384: [이어받기] 인가 [터미널 열기] 인가. 옛 화면은 이 필드를 안 싣는다 — 없으면
+      // 이어받기가 아니다(사람이 부탁하지 않은 턴을 띄우지 않는다). 값이 있으면 boolean
+      // 이어야 한다: 문자열 'false' 가 참으로 읽히는 길을 열어 두지 않는다.
+      if (handoff !== undefined && typeof handoff !== 'boolean') {
+        return reply.code(400).send({ error: { code: 'bad_request', message: 'handoff 는 boolean 이어야 한다' } });
+      }
+      const wantsHandoff = handoff === true;
 
       const verdict = await checkOwnerOrAdmin(pool, account, agentAccountId);
       if (!verdict.ok) {
@@ -186,7 +195,7 @@ export async function registerAgentRelayRoutes(
 
       const outcome = await hub.openInteractive(
         agentAccountId,
-        { channelId, threadRootId, openedByHandle: account.handle },
+        { channelId, threadRootId, openedByHandle: account.handle, handoff: wantsHandoff },
         { timeoutMs: deps.interactiveOpenTimeoutMs },
       );
       if (!outcome.ok) {
@@ -199,7 +208,15 @@ export async function registerAgentRelayRoutes(
             });
           case 'runner_outdated':
             return reply.code(409).send({
-              error: { code: 'runner_outdated', message: '러너가 인터랙티브 열기를 지원하지 않는 버전이다 — 러너를 업데이트해라' },
+              error: {
+                code: 'runner_outdated',
+                // 무엇을 못 하는 버전인지 말한다(#384) — 이어받기를 눌렀는데 "인터랙티브
+                // 열기를 지원하지 않는다"가 뜨면, 방금 되던 [터미널 열기]와 모순돼 보인다.
+                // 판정이 아니라 **내가 방금 무엇을 요청했는가**이므로 이 자리가 맞다.
+                message: wantsHandoff
+                  ? '러너가 이어받기를 지원하지 않는 버전이다 — 러너를 업데이트해라'
+                  : '러너가 인터랙티브 열기를 지원하지 않는 버전이다 — 러너를 업데이트해라',
+              },
             });
           case 'runner_rejected':
             return reply.code(409).send({
@@ -223,14 +240,21 @@ export async function registerAgentRelayRoutes(
       }
 
       // 셸을 여는 것은 관찰보다 강한 행위다 — attach 와 별도 액션으로 남긴다(§5-2 결정 4).
+      // 이어받기 예약은 **아직 열린 것이 아니다**(#384) — 액션을 갈라 남긴다.
       await recordAudit(pool, {
-        action: 'agent.interactive.opened',
+        action: outcome.waiting ? 'agent.interactive.handoffReserved' : 'agent.interactive.opened',
         ...actorOf(req),
         target: agentAccountId,
         detail: { sessionId: session.sessionId, channelId, threadRootId, created: outcome.created },
       }, req);
 
       // 티켓 발급은 attach 와 동일 경로 — 인가를 이미 지났고, 소켓은 이 결정을 소모만 한다.
+      //
+      // `waiting`(#384)이 true 면 이 티켓·세션은 **지금 도는 멘션 턴**의 것이다: 화면은 그
+      // 화면을 계속 보면서 "턴이 끝나면 엽니다"를 적고, 그 턴이 끝나면(status ended) 같은
+      // 요청을 한 번 더 보내 인터랙티브 세션의 티켓을 받는다. 여기서 새 세션을 기다렸다
+      // 주지 않는 이유: 러너 응답 한도는 10초인데 실측된 멘션 턴 길이가 26초쯤이라,
+      // 기다리면 사람에게 원인 없는 504 가 간다.
       return {
         ticket: attachTickets.issue({
           accountId: account.id,
@@ -238,6 +262,7 @@ export async function registerAgentRelayRoutes(
           sessionId: session.sessionId,
         }),
         session,
+        waiting: outcome.waiting,
       };
     },
   );

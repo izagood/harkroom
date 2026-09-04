@@ -75,7 +75,12 @@ export type AuditAction =
   // "열었다"를 액션 하나로 골라낼 수 있어야 한다. detail 은 {sessionId, channelId,
   // threadRootId, created} — created 가 false 면 이미 돌던 턴에 합류한 것이다. 본문도
   // 바이트도 없다(위 규칙 그대로).
-  | 'agent.interactive.opened';
+  | 'agent.interactive.opened'
+  // #384: 사람이 진행 중인 멘션 턴을 **이어받겠다고 예약**했다. `opened` 와 별도 액션인
+  // 이유는 같은 결이다: 아직 셸이 열리지 않았고, 그 턴이 끝난 뒤에 열린다. 하나로 뭉치면
+  // 감사가 "열었다"고 말하는데 그 시각에는 아직 아무 PTY 도 없다. detail 은 {sessionId,
+  // channelId, threadRootId} — sessionId 는 그 순간 도는 **멘션 턴**의 것이다.
+  | 'agent.interactive.handoffReserved';
 
 export interface AuditEntry {
   action: AuditAction;
