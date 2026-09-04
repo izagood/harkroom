@@ -132,3 +132,20 @@ if (mode === 'stdin-file-probe') {
     process.exit(0);
   }, Number(process.env.FAKE_PROBE_WAIT_MS ?? '1500'));
 }
+// #380 1단계 실측: claude -p·codex exec 는 stdin 이 tty(PTY) 면 프롬프트 위치인자가 없는 한
+// **stdin 을 아예 읽지 않고 즉시 실패한다**(실측: `Input must be provided either through
+// stdin or as a prompt argument when using --print`, `No prompt provided. Either specify
+// one as an argument or pipe the prompt into stdin.`). spawn 직후 동기적으로 write() 해도
+// 결과가 같았다 — race 가 아니라 `isatty(0)` 판정이다. 이 모드는 그 실제 하네스 동작을
+// 흉내낸다: `process.stdin.isTTY` 를 확인해서 참이면 즉시 에러를 찍고 죽는다. 이 모드가
+// 초록이면 "pty.write() 로 보낸 프롬프트가 하네스에 닿는다"는 이 이슈의 전제가 실제
+// 하네스에서 성립하지 않는다는 뜻이다.
+if (mode === 'isatty-reject') {
+  if (process.stdin.isTTY) {
+    process.stdout.write('Error: Input must be provided either through stdin or as a prompt argument when using --print\n');
+    process.exit(1);
+  }
+  const data = readFileSync(0, 'utf8');
+  process.stdout.write(`prompt-received:${data.trim()}\n`);
+  process.exit(0);
+}

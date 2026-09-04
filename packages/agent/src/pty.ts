@@ -43,6 +43,22 @@ function shellQuote(arg: string): string {
  * - **명령·인자·파일 경로를 모두 인용한다.** 하나라도 빠지면 공백이 든 경로에서 깨진다.
  *
  * `stdinFile` 이 `null` 이면 감싸지 않는다 — 인터랙티브·resume 턴은 stdin 이 PTY 여야 한다.
+ *
+ * **이 래핑을 없애지 않은 이유(#380 1단계 실측).** #380 은 프롬프트를 `pty.write()` 로
+ * 보내 이 `sh -c` 래핑을 통째로 없애자고 제안했다. 실물 CLI 로 직접 확인했다(macOS,
+ * claude 2.1.237 `-p`, codex-cli 0.153.2 `exec`): **두 하네스 모두 stdin 이 tty(PTY) 면
+ * 프롬프트 위치인자 없이는 stdin 을 아예 읽지 않고 즉시 실패한다** —
+ * `Input must be provided either through stdin or as a prompt argument when using --print`,
+ * `No prompt provided. Either specify one as an argument or pipe the prompt into stdin.`
+ * spawn 직후 동기적으로 `write()` 해도 결과가 같았다 — race 가 아니라 `isatty(0)` 판정이다.
+ * 즉 `stdinFile` 을 없애고 `pty.write()` 로 프롬프트를 보내는 순간, 프로덕션이 실제로 쓰는
+ * 두 하네스 모두에서 턴이 통째로 실패한다. 부가적으로, 그렇게 보낸 프롬프트는 PTY 가 그대로
+ * 에코해 tail 앞부분에 남는다(관측: `MY_SECRET_PROMPT_MARKER_XYZ\r\n...`) — `policy.ts::
+ * isCredentialFailure` 가 tail 만으로 판정하므로, 프롬프트 본문에 그 함수가 찾는 문구
+ * (`x-api-key`, `authentication_error`, `could not resolve authentication` 등)가 들어가면
+ * 무관한 실패가 자격증명 실패로 오판된다(재현: `test/policy.test.ts` "#380 1단계 실측").
+ * 이 두 사실 중 첫째만으로도 이 래핑을 없애면 안 된다는 결론에 이른다 — 그래서 `stdinFile`
+ * 경로는 남겨 뒀다. 회귀 고정: `test/pty.test.ts` "#380 1단계 실측".
  */
 export function composeSpawn(plan: TurnPlan): { command: string; args: string[] } {
   if (!plan.stdinFile) return { command: plan.command, args: plan.args };
