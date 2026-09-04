@@ -286,6 +286,9 @@ export class Controller {
         store.upsertMessages(e.message.channelId, [e.message]);
         this.bumpUnread(e.message.channelId, e.message.authorId);
         this.swallow(this.announceNewMessage(e.message));
+        if (e.message.threadRootId) {
+          store.incrementReplyCount(e.message.channelId, e.message.threadRootId);
+        }
         // 서버는 기동 시 투영용 system 계정을 만든다 — 그보다 먼저 부트스트랩한 클라이언트는
         // 그 계정을 모르고, 작성자가 '…'로 표시된다. 디렉터리는 정적이 아니다.
         if (!store.accounts[e.message.authorId]) this.swallow(this.refreshAccounts());
