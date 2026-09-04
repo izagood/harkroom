@@ -1,5 +1,5 @@
 /**
- * `main.ts` 의 자격증명 판정 **호출 자리** 회귀선(#250).
+ * `main.ts` 의 "재시도로 낫지 않는 실패" 판정 **호출 자리** 회귀선(#250, #340).
  *
  * 왜 소스를 읽는 검사인가, 그리고 이것이 무엇을 보증하지 **못하는가**를 먼저 적는다:
  * `main.ts` 는 top-level await 로 서버 접속·설정 파일 쓰기를 곧바로 일으켜 테스트가 import
@@ -25,22 +25,22 @@ const guardedNear = (anchor: string, within = 12): boolean => {
   const at = source.indexOf(anchor);
   if (at < 0) throw new Error(`앵커를 못 찾았다(코드가 바뀌었으면 이 테스트를 고쳐라): ${anchor}`);
   const window = source.slice(at, at + source.slice(at).split('\n').slice(0, within).join('\n').length);
-  return window.includes('exitIfCredentialRejected(err)');
+  return window.includes('exitIfUnrecoverable(err)');
 };
 
-describe('자격증명 판정이 세 자리에 다 걸려 있다', () => {
+describe('종료 판정이 세 자리에 다 걸려 있다', () => {
   it('기동의 첫 호출(me/guide)', () => {
     expect(guardedNear('return [await murmur.me(), await murmur.guide()] as const;')).toBe(true);
   });
 
   it('멘션 턴의 catch', () => {
-    expect(guardedNear('// 자격증명 실패는 재시도로 낫지 않는다.')).toBe(true);
+    expect(guardedNear('// 재시도로 낫지 않는 실패는 여기서 걸러')).toBe(true);
   });
 
   it('폴 루프의 catch — 재접속으로 삼키기 **전에** 본다', () => {
     const pollCatch = source.indexOf("console.error('poll 루프 오류, 재접속:'");
     expect(pollCatch).toBeGreaterThan(0);
-    const guard = source.lastIndexOf('exitIfCredentialRejected(err)', pollCatch);
+    const guard = source.lastIndexOf('exitIfUnrecoverable(err)', pollCatch);
     // 판정이 그 로그보다 **앞**에 있어야 한다. 뒤에 있으면 이미 재시도로 넘어간 뒤다.
     expect(guard).toBeGreaterThan(0);
     expect(pollCatch - guard).toBeLessThan(500);
@@ -49,5 +49,31 @@ describe('자격증명 판정이 세 자리에 다 걸려 있다', () => {
   it('판정은 `exit.ts` 의 것 하나뿐이다 — 자리마다 다시 짜지 않는다', () => {
     expect(source).toContain("from './exit.js'");
     expect(source.match(/process\.exit\(78\)/g)).toBeNull();
+  });
+
+  // #340 — 자리에 있는 것만으로는 부족하다. 멘션 턴의 catch 에서 판정이 **재시도 회계보다
+  // 뒤에** 있으면, 러너는 죽기는 하되 그 전에 `attempts` 를 올리고 `failed` 를 세운 뒤다.
+  // 그러면 "재시도 0회"라는 이 이슈의 요구가 조용히 깨진다(3회 재시도 뒤에 죽어도 "종료했다"는
+  // 단언은 여전히 초록이다). 그래서 **순서**를 따로 고정한다.
+  it('멘션 catch 에서 판정이 재시도 회계보다 앞이다 — 실패 계상 전에 죽는다', () => {
+    // **멘션 catch 안**에서만 잰다. 파일 앞쪽에도 같은 이름이 있으므로(기동 자리, import 줄)
+    // 첫 등장으로 재면 순서 비교가 언제나 참이 되어 아무것도 지키지 못한다.
+    const at = source.indexOf('// 재시도로 낫지 않는 실패는 여기서 걸러');
+    expect(at).toBeGreaterThan(0);
+    const guard = source.indexOf('exitIfUnrecoverable(err);', at);
+    const accounting = source.indexOf('failed = true;', at);
+    const notice = source.indexOf('await murmur.post(mention.channelId, FAILURE_NOTICE', at);
+    expect(guard).toBeGreaterThan(0);
+    expect(accounting).toBeGreaterThan(guard);
+    expect(notice).toBeGreaterThan(guard);
+  });
+
+  // 항목 시도 횟수는 turn 을 부르기 **전에** 올라간다(`attempts.set(entry.id, tried)`). 그래서
+  // 첫 시도는 1 로 세어지고, 위 순서가 지켜지면 그 뒤로 **더 세어지지 않는다** — 이 이슈가
+  // 말하는 "재시도 0회"의 실제 모양이다. 회계 자체가 사라지면(다른 실패까지 안 세면) 이 단언이
+  // 빨개진다.
+  it('항목 시도 회계는 그대로 있다 — 이번 변경이 재시도 전반을 죽이지 않았다', () => {
+    expect(source).toContain('attempts.set(entry.id, tried)');
+    expect(source).toContain('if (exhausted(tried))');
   });
 });

@@ -14,7 +14,10 @@
 // 1.1.0 은 macOS 프리빌드의 spawn-helper 실행 비트가 빠져 pnpm 설치 직후 즉시 깨진다,
 // microsoft/node-pty#850). **node-pty 가 #850 을 포함한 1.2.0 stable 을 내면 이 핀을
 // 내려라** — 그때 가서 다시 beta 를 쓸 이유가 없다.
+import { accessSync, constants } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import pty from 'node-pty';
+import { ExecutableNotFoundError } from './policy.js';
 import type { TurnPlan } from './turn.js';
 
 /**
@@ -113,6 +116,25 @@ function decodeTailText(buf: Buffer): string {
  */
 export interface PtyWriter {
   write(chunk: Buffer): void;
+  /**
+   * PTY 창 크기를 바꾼다(#335). **새 프로세스를 띄우지 않는다** — node-pty 의 `resize`
+   * 가 살아 있는 PTY 에 ioctl(TIOCSWINSZ)을 걸고 SIGWINCH 를 보내므로, 하네스는 자기가
+   * 그리던 화면을 유지한 채 폭만 다시 계산한다.
+   *
+   * `write` 와 **같은 이유로 던지지 않는다**: 프로세스가 끝난 뒤의 resize 도 사람이 아직
+   * 마지막 화면을 보며 창을 끄는 정상 상황이다.
+   */
+  resize(cols: number, rows: number): void;
+}
+
+/**
+ * PTY 조작 손잡이(#337) — `PtyWriter`(입력·크기)에 **종료**를 더한 것. 인터랙티브 턴의
+ * 고아 회수(viewer 0 → 유예 → SIGTERM→SIGKILL)와 러너 SIGTERM 회수가 `kill` 을 쓴다.
+ * 전부 **exit 후에는 no-op** — 이미 끝난 PTY 를 조작하는 것은 사람이 마지막 화면에서
+ * 한 번 더 움직였거나 회수 타이머가 자연 종료와 경합한 정상 상황이지 오류가 아니다.
+ */
+export interface PtyControls extends PtyWriter {
+  kill(signal?: 'SIGTERM' | 'SIGKILL'): void;
 }
 
 export interface TurnResult {
@@ -124,7 +146,16 @@ export interface TurnResult {
 
 export interface RunPtyTurnOptions {
   cwd: string;
+  /**
+   * 턴 시간 한도. **`0` 은 무기한이다**(#337 — 인터랙티브 전용): 사람이 앉아 있는 턴에는
+   * 시계가 없고, 그 턴의 끝은 exit(사람이 하네스를 닫음) 또는 고아 회수(viewer 0 → 유예 →
+   * SIGTERM, interactiveTurn.ts)다. 0 을 그냥 setTimeout 에 넣으면 타이머가 **즉시** 발화해
+   * 인터랙티브 턴이 뜨자마자 SIGTERM 을 맞는다 — 그래서 0 이면 타이머 자체를 걸지 않는다.
+   */
   timeoutMs: number;
+  /** PTY 초기 크기. 생략하면 비대화형 기본 120x40(스펙 §5)이다. */
+  cols?: number;
+  rows?: number;
   /** Phase 2 가 onData 로 확장해 라이브 중계에 쓴다. 없어도 tail 계약에는 영향 없다. */
   ring?: RingBuffer;
   /**
@@ -155,7 +186,7 @@ export interface RunPtyTurnOptions {
    * 프리셋)은 이 함수에 들어오기 전에 이미 조립돼 있다 — 입력을 여는 것이 턴 모드를
    * 바꾸는 것이 아니라는 사실이 이 순서로 성립한다(스펙 §6, #141 회귀선의 새 형태).
    */
-  onSpawn?: (writer: PtyWriter) => void;
+  onSpawn?: (controls: PtyControls) => void;
   /**
    * SIGTERM → SIGKILL 유예(ms). 생략하면 프로덕션 기본값(SIGKILL_GRACE_MS, 5초)을 그대로
    * 쓴다 — 테스트가 SIGKILL 승격 경로를 확인하려고 5초를 통째로 기다리지 않게 여는 구멍이지,
@@ -165,26 +196,93 @@ export interface RunPtyTurnOptions {
 }
 
 /**
- * PTY 안에서 plan 을 한 턴 실행하고 종료를 기다린다. 이 함수는 절대 reject 하지 않는다 —
- * 하네스가 어떻게 죽든(정상, 비정상, 타임아웃) exitCode/timedOut/tail 로 표현 가능한 결과이지,
- * 호출자가 catch 를 따로 준비해야 하는 예외 상황이 아니다.
+ * `plan.command` 를 `plan.env.PATH` 로 풀어 실행 가능한 절대경로를 돌려준다. 못 찾으면 null.
+ *
+ * **왜 spawn 예외를 기다리지 않고 미리 재는가.** 실측(macOS, node-pty 1.2.0-beta.15):
+ * 없는 실행 파일로 `pty.spawn` 을 불러도 **던지지 않는다** — forkpty 는 성공하고 자식의
+ * execvp 가 실패해, 출력 한 바이트 없이 `exitCode 1` 로 끝난다. 게다가 프로덕션 턴은
+ * `stdinFile` 때문에 `sh -c 'exec <하네스> ... < 파일'` 로 감싸여 spawn 대상이 `sh` 라,
+ * 하네스가 없어도 spawn 은 언제나 성공하고 sh 가 127 로 죽을 뿐이다. 즉 "spawn 이 ENOENT 를
+ * 던진다"에만 기대면 이 결함은 **프로덕션 경로에서 한 번도 잡히지 않는다**.
+ *
+ * 그래서 spawn 전에 직접 잰다. 종료 코드(1 이나 127)로 뒤늦게 추론하지 않는 이유: 하네스가
+ * 자기 사정으로 1 이나 127 로 죽는 것과 구별할 수 없고, 그 혼동의 대가가 "러너를 죽인다"라
+ * 너무 비싸다.
+ *
+ * PATH 검색은 `execvp` 규칙을 따른다: 이름에 `/` 가 있으면 PATH 를 안 뒤지고 그 경로만 본다.
+ */
+export function resolveExecutable(command: string, path: string | undefined): string | null {
+  const executable = (candidate: string): boolean => {
+    try {
+      accessSync(candidate, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  if (command.includes('/')) return executable(command) ? command : null;
+
+  // PATH 가 비었으면 execvp 는 아무 데도 안 뒤진다 — 여기서도 그렇게 취급한다(빈 PATH 로
+  // 뜬 러너가 바로 이 결함의 원인이므로, 이 경우를 "못 찾았다"로 보는 것이 정답이다).
+  for (const dir of (path ?? '').split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, command);
+    if (executable(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * PTY 안에서 plan 을 한 턴 실행하고 종료를 기다린다. 하네스가 **어떻게 죽든**(정상, 비정상,
+ * 타임아웃) reject 하지 않는다 — 그건 exitCode/timedOut/tail 로 표현 가능한 결과이지, 호출자가
+ * catch 를 따로 준비해야 하는 예외 상황이 아니다.
+ *
+ * **단 하나의 예외가 실행 파일 부재다**(#340, 스펙 §8 1행). 그때는 `ExecutableNotFoundError`
+ * 로 reject 한다 — 턴이 실패한 것이 아니라 **러너가 잘못 세워진 것**이고, 재시도로 낫지 않아
+ * 결과값으로 돌려주면 일반 실패와 섞여 멘션 3건을 태운 뒤에야 흔적을 남긴다. 러너는 이걸 받아
+ * 즉시 물러난다(`main.ts` → `exit.ts::runnerExitPlan`).
  *
  * stdinFile 이 있으면 `sh -c 'exec ... < 파일'` 로 감싸서 PTY 안에서 stdin 리다이렉션한다.
  * `exec` 가 없으면 최종 프로세스가 sh 가 되어 시그널이 하네스에 닿지 않는다.
  * stdinFile 이 null 이면 PTY stdin 을 그대로 쓴다(인터랙티브·resume 턴용).
  */
 export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<TurnResult> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const tail = new RingBuffer(TAIL_CAP_BYTES);
+
+    // **감싸기 전에** 하네스 자체를 본다. `composeSpawn` 이 `sh` 로 감싸고 나면 "없는 것은
+    // 하네스"라는 사실이 sh 의 종료 코드 뒤로 숨는다(위 `resolveExecutable` 주석).
+    if (resolveExecutable(plan.command, plan.env.PATH) === null) {
+      reject(new ExecutableNotFoundError(plan.command, plan.env.PATH));
+      return;
+    }
 
     const { command, args } = composeSpawn(plan);
 
-    const proc = pty.spawn(command, args, {
-      cwd: opts.cwd,
-      env: plan.env,
-      cols: 120,
-      rows: 40,
-    });
+    let proc: pty.IPty;
+    try {
+      proc = pty.spawn(command, args, {
+        cwd: opts.cwd,
+        env: plan.env,
+        // 기본 120x40 은 **아무도 안 붙었을 때의 값**이다(스펙 §5). 인터랙티브 턴(#337)은
+        // 여는 사람의 패널 크기를 받아 그 크기로 뜨고, attach 뒤에는 writer 의 resize 가
+        // 이어서 덮는다 — 처음부터 맞는 크기로 뜨면 첫 화면이 한 번 접혔다 펴지지 않는다.
+        cols: opts.cols ?? 120,
+        rows: opts.rows ?? 40,
+      });
+    } catch (spawnErr) {
+      // 위의 사전 검사를 통과하고도 spawn 이 ENOENT 를 던지는 경우가 남는다: 검사와 spawn
+      // 사이에 파일이 사라졌거나(경쟁), node-pty 가 던지는 플랫폼이거나, `sh` 자체가 없거나.
+      // 결론은 같으므로 같은 타입으로 승격한다 — 판정은 문구가 아니라 `code` 로 한다.
+      const err = spawnErr as NodeJS.ErrnoException;
+      if (err.code === 'ENOENT') {
+        reject(new ExecutableNotFoundError(plan.command, plan.env.PATH));
+        return;
+      }
+      reject(spawnErr);
+      return;
+    }
 
     // exit 리스너를 spawn 직후, 다른 어떤 준비 작업보다도 먼저 건다 — 그 사이에 무언가 던지면
     // 이미 fork 된 자식이 아무도 안 지켜보는 채로 남아 좀비가 된다(spec §10 축소판). 이
@@ -199,7 +297,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       // 정리·리스너 해제를 건너뛸 이유는 없다) — settled 가드로 정리 경로를 한 번만 태운다.
       if (settled) return;
       settled = true;
-      clearTimeout(timeoutTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       if (killTimer) clearTimeout(killTimer);
       dataListener.dispose();
       exitListener.dispose();
@@ -218,7 +316,21 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       write(chunk) {
         // 프로세스가 끝난 뒤의 쓰기는 EIO 로 던진다 — 사람이 마지막 화면에서 엔터를 한 번
         // 더 친 정상 상황이므로, 그것으로 러너를 죽이지 않는다(`PtyWriter` 주석).
+        if (settled) return;
         try { proc.write(chunk.toString('utf8')); } catch { /* 이미 끝난 PTY 는 조용히 버린다 */ }
+      },
+      resize(cols, rows) {
+        // 위 spawn 크기(기본 120x40)는 **아무도 안 붙었을 때의 값**이고, writer 패널이
+        // 붙으면 그 크기가 이것으로 덮어쓴다(#335 — 자식에 SIGWINCH 로 닿는다, 스파이크
+        // 실측: 계획 문서 "스파이크 결과" §3).
+        if (settled) return;
+        try { proc.resize(cols, rows); } catch { /* 끝난 PTY 의 크기는 의미가 없다 */ }
+      },
+      kill(signal) {
+        // 고아 회수(#337)의 손잡이다. exit 후 no-op — 회수 타이머와 자연 종료가 경합해도
+        // 이미 끝난 프로세스에 시그널을 또 쏘지 않는다.
+        if (settled) return;
+        try { proc.kill(signal ?? 'SIGTERM'); } catch { /* 이미 끝났으면 회수할 것도 없다 */ }
       },
     });
 
@@ -229,7 +341,10 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       opts.onData?.(buf);
     });
 
-    const timeoutTimer = setTimeout(() => {
+    // `timeoutMs: 0` 은 무기한이다(인터랙티브 턴, #337) — 타이머를 아예 걸지 않는다.
+    // 0 을 setTimeout 에 그대로 넣으면 즉시 발화해, 인터랙티브 턴이 뜨자마자 SIGTERM 을
+    // 맞는다(옵션 주석). 그 턴의 끝은 exit 또는 고아 회수(interactiveTurn.ts)다.
+    const timeoutTimer = opts.timeoutMs === 0 ? null : setTimeout(() => {
       timedOut = true;
       // 하네스가 모델 요청 중일 수 있다 — SIGKILL 을 먼저 쏘면 정리할 기회를 뺏는다.
       // SIGTERM 으로 먼저 부탁하고, grace 안에 안 죽으면 그때 확실히 끝낸다.

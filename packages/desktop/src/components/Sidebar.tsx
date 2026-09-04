@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { sidebarStorage, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../lib/prefs';
-import { isMacOS, MAC_TRAFFIC_LIGHT_PL } from '../lib/platform';
+import { isMacOS, MAC_TRAFFIC_LIGHT_PL, TOP_BAR_H } from '../lib/platform';
 import { LeasePanel } from './LeasePanel';
 import { Menu } from './Menu';
 import { StatusMark } from './Identity';
@@ -1020,7 +1020,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
         <div
           data-testid="sidebar-brand"
           data-tauri-drag-region
-          className={`flex items-center gap-2 border-b border-border py-3 pr-3 font-bold ${
+          className={`flex ${TOP_BAR_H} items-center gap-2 border-b border-border pr-3 font-bold ${
             macTrafficLightRoom ? MAC_TRAFFIC_LIGHT_PL : 'pl-3'
           }`}
         >

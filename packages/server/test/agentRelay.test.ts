@@ -373,7 +373,9 @@ describe('#141-5 PTY 바이트는 DB 에 남지 않는다', () => {
      */
     const allowed: Record<string, string[]> = {
       'agent.attached': ['sessionId', 'channelId'],
-      'agent.detached': ['sessionId'],
+      // inputBytes 는 **수**다 — 개입 사실의 합산(#346, 스펙 §5-2 결정 3)이지 바이트
+      // 내용이 아니다. 내용이 안 새는 것은 아래 바이트열 검색이 계속 지킨다.
+      'agent.detached': ['sessionId', 'inputBytes'],
     };
     for (const row of audit.rows) {
       const keys = allowed[row.action];
