@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { composeSpawn, ExecutableNotFoundError, RingBuffer, runPtyTurn } from '../src/pty.js';
+import { composeSpawn, ExecutableNotFoundError, RingBuffer, runPtyTurn, type PtyWriter } from '../src/pty.js';
 
 const fake = join(dirname(fileURLToPath(import.meta.url)), 'helpers/fake-harness.mjs');
 // **부모 env 를 펼치지 않는다 — 프로덕션 plan 의 실제 모양과 같아야 한다.** 예전엔
@@ -197,6 +197,34 @@ describe('#315 runPtyTurn — attach 한 사람의 입력이 PTY stdin 에 닿�
     expect(echoed).toContain('got:');
     expect(echoed).toContain(Buffer.from('\x1b[Ayes', 'binary').toString('hex'));
   });
+});
+
+describe('#335-1 runPtyTurn — 소유자의 패널 크기가 PTY 창 크기가 된다', () => {
+  let writer: PtyWriter | null = null;
+  beforeEach(() => { writer = null; });
+
+  it('onSpawn 통로의 resize 가 하네스에 SIGWINCH 와 새 크기로 도착한다', async () => {
+    const ring = new RingBuffer(256 * 1024);
+
+    const r = await runPtyTurn(plan('winsize'), {
+      cwd: process.cwd(), timeoutMs: 10_000, ring,
+      // spawn 직후에 바로 부르면 하네스가 아직 SIGWINCH 핸들러를 걸기 전이다 —
+      // 시그널을 놓치고 8초 뒤 12 로 죽는다. 첫 출력('start:')을 보고 나서 부른다.
+      onData: (chunk) => {
+        if (chunk.toString('utf8').includes('start:')) writer?.resize(100, 30);
+      },
+      onSpawn: (w) => { writer = w; },
+    });
+
+    // **프레임을 센 것이 아니라 하네스가 스스로 말한 크기다.** 숫자가 러너까지 왔다는
+    // 것과 PTY 크기가 바뀌었다는 것은 다른 사실이고, 여기서 보는 것은 뒤쪽이다.
+    expect(r.exitCode).toBe(0);
+    const printed = ring.snapshot().toString('utf8');
+    // spawn 기본값(120x40)과 **다른** 값으로 바꿨다는 것까지 본다 — 같은 값으로 확인하면
+    // resize 를 아예 안 불러도 통과한다.
+    expect(printed).toContain('start:120x40');
+    expect(printed).toContain('winch:100x30');
+  }, 15_000);
 });
 
 describe('runPtyTurn — stdin 파일 리다이렉션(#117)', () => {

@@ -1827,7 +1827,9 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     const arrived: Buffer[] = [];
     runTurn.script = async (_plan, opts) => {
       // 프로덕션에서는 pty.ts 가 spawn 직후 이 통로를 넘긴다.
-      opts.onSpawn?.({ write: (chunk) => { arrived.push(chunk); } });
+      // `resize` 는 이 테스트의 관심사가 아니지만 통로의 계약이다(#335) — 넘기지 않으면
+      // 배선이 반쪽이 된 것을 타입이 못 잡는다.
+      opts.onSpawn?.({ write: (chunk) => { arrived.push(chunk); }, resize: () => {} });
       r.type(typed);
       return { exitCode: 0, timedOut: false, tail: '' };
     };
@@ -1854,7 +1856,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
       const { deps, plans, runTurn } = await makeDeps(fake, r ? { relay: r.relay } : {});
       if (r) {
         runTurn.script = async (_plan, opts) => {
-          opts.onSpawn?.({ write: () => { typedCount += 1; } });
+          opts.onSpawn?.({ write: () => { typedCount += 1; }, resize: () => {} });
           r.type(Buffer.from('yes\r', 'utf8'));
           return { exitCode: 0, timedOut: false, tail: '' };
         };
