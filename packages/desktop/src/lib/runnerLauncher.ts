@@ -95,6 +95,21 @@ export interface RunnerApi {
   revokePat(accountId: string, label: string): Promise<{ revoked: number }>;
 }
 
+/**
+ * murmur 전용 전역 체크아웃을 마련하는 표면(#425). **경로는 이 표면이 계산하고 돌려준다** —
+ * 실행기는 그 문자열을 받아서 쓸 뿐이다(`resolveRepoPath` 참고). 인터페이스로 뽑는 이유는
+ * `RunnerSecretStore`·`RunnerSpawner`와 같다: 이 클래스가 Tauri invoke 를 직접 부르면
+ * "clone 이 실패했을 때 사유가 사람에게 보이는가"의 회귀선을 걸 자리가 없다.
+ */
+export interface RunnerRepoProvisioner {
+  /**
+   * 없으면 clone 하고, 있으면 그대로 그 경로를 돌려준다(갱신 정책은 `#425` 보고 참고 —
+   * 매 기동마다 pull 하지 않는다). 실패하면 사람이 읽을 사유를 그대로 올린다(`#368`) —
+   * 네트워크 없음·권한 없음·git 미설치를 이 표면이 판정해 대신 말하지 않는다.
+   */
+  ensure(): Promise<{ ok: true; path: string } | { ok: false; error: string }>;
+}
+
 /** 실행기가 대상 판정에 쓰는 에이전트의 사실만. `AgentView` 전체를 요구하지 않는다. */
 export interface LaunchableAgent {
   id: string;
@@ -261,6 +276,13 @@ export class RunnerLauncher {
     private loginPath: LoginPathReader = tauriLoginPathReader,
     /** 회전 라벨에 들어가는 시각. 테스트가 고정할 수 있게 주입한다. */
     private now: () => number = () => Date.now(),
+    /**
+     * murmur 전용 전역 체크아웃을 마련하는 표면(#425). **선택값이다**: 넘기지 않으면
+     * 예전처럼 `repoPath` 가 비어 있는 것을 그대로 `REPO_PATH_MISSING` 으로 실패시킨다 —
+     * 이 표면이 없는 환경(브라우저 개발·이 표면을 안 쓰는 테스트)에서 조용히 clone 을
+     * 시도하면 그 환경에 없는 부작용이 생긴다.
+     */
+    private provisioner?: RunnerRepoProvisioner,
   ) {}
 
   setOnStateChange(cb: (states: RunnerState[]) => void): void {
@@ -382,14 +404,42 @@ export class RunnerLauncher {
       return;
     }
 
-    if (!input.repoPath) {
-      this.setState(agent.id, { status: 'failed', exitCode: null, message: REPO_PATH_MISSING });
-      return;
-    }
+    const repoPath = await this.resolveRepoPath(agent.id, input.repoPath);
+    if (!repoPath || this.disposed) return; // 사유는 resolveRepoPath 가 상태에 남겼다.
 
     const pat = await this.ensurePat(agent.id);
     if (!pat || this.disposed) return; // 사유는 ensurePat 이 상태에 남겼다.
-    await this.spawnRunner(agent, pat.token, input.repoPath, input.runnerCommand);
+    await this.spawnRunner(agent, pat.token, repoPath, input.runnerCommand);
+  }
+
+  /**
+   * 저장소 경로를 정한다(#425). **사람이 넣은 값이 있으면 그것이 무조건 이긴다** — 그 값이
+   * 가리키는 곳이 사라졌어도 전역 경로로 조용히 바꾸지 않는다. 조용히 바꾸면 "왜 다른
+   * 코드가 도나"가 사람 눈에 안 보이게 되고, 그것은 이 파일이 지금까지 지켜 온 "기본값을
+   * 지어내지 않는다"와 같은 원칙이다 — 사람이 명시적으로 고른 값도 마찬가지로 존중한다.
+   * 그 경로가 진짜 존재하는지는 여기서 확인하지 않는다: 없으면 자식 스폰이 그대로
+   * `os error 2` 로 실패하고, 그 사유가 그대로 사람에게 올라간다(`handleExit`) — 이 앱이
+   * 판정을 대신하지 않는다.
+   *
+   * **비어 있을 때만** 전역 경로로 넘어간다(`RunnerRepoProvisioner`). 그 표면이 없는
+   * 환경(주입하지 않은 테스트, 브라우저 개발)에서는 예전처럼 `REPO_PATH_MISSING` 으로
+   * 실패한다 — 없는 표면을 부르면 죽는다.
+   */
+  private async resolveRepoPath(agentId: string, configured: string): Promise<string | null> {
+    if (configured) return configured;
+
+    if (!this.provisioner) {
+      this.setState(agentId, { status: 'failed', exitCode: null, message: REPO_PATH_MISSING });
+      return null;
+    }
+
+    const result = await this.provisioner.ensure();
+    if (this.disposed) return null;
+    if (!result.ok) {
+      this.setState(agentId, { status: 'failed', exitCode: null, message: result.error });
+      return null;
+    }
+    return result.path;
   }
 
   /**
@@ -524,10 +574,8 @@ export class RunnerLauncher {
     target: { agent: LaunchableAgent; repoPath: string; runnerCommand: string },
   ): Promise<void> {
     const agentId = target.agent.id;
-    if (!target.repoPath) {
-      this.setState(agentId, { status: 'failed', exitCode: null, message: REPO_PATH_MISSING });
-      return;
-    }
+    const repoPath = await this.resolveRepoPath(agentId, target.repoPath);
+    if (!repoPath || this.disposed) return; // 사유는 resolveRepoPath 가 상태에 남겼다.
 
     const read = await this.secrets.read(agentId);
     if (!read.ok) {
@@ -567,7 +615,7 @@ export class RunnerLauncher {
     }
 
     await this.stop(agentId);
-    await this.spawnRunner(target.agent, token, target.repoPath, target.runnerCommand);
+    await this.spawnRunner(target.agent, token, repoPath, target.runnerCommand);
     if (revokeError) {
       this.setState(agentId, {
         status: 'running', exitCode: null,
@@ -743,6 +791,34 @@ export const tauriLoginPathReader: LoginPathReader = {
       return value || null;
     } catch {
       return null;
+    }
+  },
+};
+
+/**
+ * murmur 전용 전역 체크아웃을 마련한다(#425). **`invoke` 뒤로 git 자체를 감춘다** — Tauri
+ * shell 스코프의 인자는 리터럴 배열이어야 하는데(`RUNNER_SCOPE_NAME` 주석), clone 목적지는
+ * 사람마다 다른 홈 디렉터리 아래라 리터럴로 못박을 수 없다. 정규식 인자(`Var{validator}`)로
+ * 그 자리를 열면 그것이 곧 웹뷰가 인자를 고르는 길이 되므로 쓰지 않는다. 대신 Rust
+ * 커맨드(`src-tauri/src/main.rs::runner_provision_global_repo`)가 URL·경로·인자 전부를
+ * 스스로 고정하고, 웹뷰는 파라미터 없는 이 호출 하나만 할 수 있다.
+ */
+export const tauriRunnerProvisioner: RunnerRepoProvisioner = {
+  async ensure() {
+    const invoke = tauriInvoke();
+    if (!invoke) {
+      // 브라우저 개발에서는 자식 프로세스도 못 띄우니(RunnerSecretStore 폴백 주석과 같은
+      // 사정) 여기서도 clone 을 시도할 수 없다 — 그 사실을 그대로 사유로 올린다.
+      return { ok: false, error: '이 환경에서는 murmur 를 자동으로 내려받을 수 없다 — 설정 → 연결에서 저장소 경로를 직접 지정하라' };
+    }
+    try {
+      const path = await invoke('runner_provision_global_repo');
+      if (typeof path !== 'string' || !path) {
+        return { ok: false, error: '전역 저장소 경로를 받지 못했다' };
+      }
+      return { ok: true, path };
+    } catch (err) {
+      return { ok: false, error: errText(err) };
     }
   },
 };

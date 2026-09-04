@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import {
-  RunnerLauncher, patLabelPrefix,
+  RunnerLauncher, patLabelPrefix, REPO_PATH_MISSING,
   type LaunchableAgent, type RunnerProcess, type RunnerSecretStore, type RunnerSpawner,
   type LoginPathReader, type SpawnRequest, type StoredRunnerPat,
 } from '../src/lib/runnerLauncher';
@@ -415,6 +415,91 @@ describe('8. 저장소 경로', () => {
     const state = launcher.getStates()[0]!;
     expect(state.status).toBe('failed');
     expect(state.message).toContain('저장소 경로');
+  });
+});
+
+/**
+ * murmur 전용 전역 체크아웃(#425). `RunnerRepoProvisioner` 는 **선택 인자**다 — 넘기지
+ * 않는 위 스위트 전부가 예전처럼 빈 경로를 실패로 다루는 것으로 그 하위호환을 지킨다.
+ * 여기서는 그 표면을 넘겼을 때만 확인한다.
+ */
+describe('10. 전역 저장소(#425) — 경로가 비었을 때만, 있으면 넘기지 않는다', () => {
+  function fakeProvisioner(result: { ok: true; path: string } | { ok: false; error: string }) {
+    return { ensure: vi.fn(async () => result) };
+  }
+
+  it('첫 실행: 경로가 비어 있고 provisioner 가 있으면 그것으로 채워 띄운다', async () => {
+    const { api, secrets, spawner, loginPath } = make();
+    const provisioner = fakeProvisioner({ ok: true, path: '/Users/me/.murmur/runner' });
+    const launcher = new RunnerLauncher(api, secrets, spawner, loginPath, undefined, provisioner);
+
+    await launcher.startAll({
+      agents: [agent('a')], myAccountId: 'me', liveAccountIds: new Set(),
+      repoPath: '', runnerCommand: '',
+    });
+
+    expect(provisioner.ensure).toHaveBeenCalledTimes(1);
+    expect(spawner.spawns[0]!.cwd).toBe('/Users/me/.murmur/runner');
+    expect(launcher.getStates()[0]!.status).toBe('running');
+  });
+
+  it('clone 이 실패하면 그 사유가 그대로 사람에게 올라간다 — 조용히 실패하지 않는다(#368)', async () => {
+    const { api, secrets, spawner, loginPath } = make();
+    const provisioner = fakeProvisioner({
+      ok: false, error: 'git clone 이 실패했다: Could not resolve host: github.com',
+    });
+    const launcher = new RunnerLauncher(api, secrets, spawner, loginPath, undefined, provisioner);
+
+    await launcher.startAll({
+      agents: [agent('a')], myAccountId: 'me', liveAccountIds: new Set(),
+      repoPath: '', runnerCommand: '',
+    });
+
+    expect(spawner.spawn).not.toHaveBeenCalled();
+    const state = launcher.getStates()[0]!;
+    expect(state.status).toBe('failed');
+    expect(state.message).toBe('git clone 이 실패했다: Could not resolve host: github.com');
+  });
+
+  it('사람이 넣은 경로가 있으면 provisioner 를 부르지 않는다 — 사람 값이 언제나 이긴다', async () => {
+    const { api, secrets, spawner, loginPath } = make();
+    const provisioner = fakeProvisioner({ ok: true, path: '/should/not/be/used' });
+    const launcher = new RunnerLauncher(api, secrets, spawner, loginPath, undefined, provisioner);
+
+    await launcher.startAll({
+      agents: [agent('a')], myAccountId: 'me', liveAccountIds: new Set(),
+      repoPath: '/Users/me/dev/murmur', runnerCommand: '',
+    });
+
+    expect(provisioner.ensure).not.toHaveBeenCalled();
+    expect(spawner.spawns[0]!.cwd).toBe('/Users/me/dev/murmur');
+  });
+
+  it('사람이 넣은 경로가 사라졌어도 전역 경로로 폴백하지 않는다 — 자식 스폰이 그 사유를 그대로 올린다', async () => {
+    // 이 실행기는 경로의 존재를 확인하지 않는다(#425 판단): 존재 확인까지 앱이 떠안으면
+    // "경로가 있다/없다"를 판정하는 코드가 하나 더 생기고, 그 판정이 틀리면 실제로는
+    // 살아 있는 경로를 전역 경로로 몰래 바꿔치기할 수 있다. 대신 자식 스폰 자체가
+    // `os error 2` 로 실패하고 그 사유가 `handleExit` 를 거쳐 그대로 사람에게 올라간다 —
+    // 여기서는 최소한 "조용히 다른 경로로 안 바꾼다"만 고정한다.
+    const { api, secrets, spawner, loginPath } = make();
+    const provisioner = fakeProvisioner({ ok: true, path: '/Users/me/.murmur/runner' });
+    const launcher = new RunnerLauncher(api, secrets, spawner, loginPath, undefined, provisioner);
+
+    await launcher.startAll({
+      agents: [agent('a')], myAccountId: 'me', liveAccountIds: new Set(),
+      repoPath: '/Users/me/dev/murmur-deleted-workspace', runnerCommand: '',
+    });
+
+    expect(provisioner.ensure).not.toHaveBeenCalled();
+    expect(spawner.spawns[0]!.cwd).toBe('/Users/me/dev/murmur-deleted-workspace');
+  });
+
+  it('provisioner 를 넘기지 않으면 예전처럼 REPO_PATH_MISSING 으로 실패한다(하위호환)', async () => {
+    const { launcher, spawner } = make();
+    await startAll(launcher, [agent('a')], { repoPath: '' });
+
+    expect(spawner.spawn).not.toHaveBeenCalled();
+    expect(launcher.getStates()[0]!.message).toBe(REPO_PATH_MISSING);
   });
 });
 
