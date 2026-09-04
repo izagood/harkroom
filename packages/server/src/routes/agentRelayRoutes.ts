@@ -83,6 +83,18 @@ function createInputAuditGate(windowMs: number, now: () => number = Date.now) {
   };
 }
 
+/**
+ * PTY 창 크기로 받아들일 수 있는 값인가(#335). 여기서 막지 않으면 이 숫자가 러너의
+ * `resize` 를 지나 ioctl 로 그대로 내려간다 — 0·음수·NaN·정수 아닌 값은 node-pty 가
+ * 던지고, 터무니없이 큰 값은 러너가 그 크기의 화면 버퍼를 잡는다.
+ *
+ * 상한을 1000 으로 둔 이유: 실제 모니터에서 나올 수 있는 폭·높이보다 넉넉히 크면서,
+ * 잘못된 값이 러너 메모리를 물어뜯지는 못하는 자리다.
+ */
+function isPtySize(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 1000;
+}
+
 export interface AgentRelayDeps {
   /** attach 티켓 수명(ms). 미지정이면 `/ws` 티켓과 같은 기본값(30초). */
   attachTicketTtlMs?: number;
@@ -226,10 +238,24 @@ export async function registerAgentRelayRoutes(
       // 뷰어는 무엇이든 보낼 수 있다 — 파싱 실패로 소켓을 죽이지 않는다.
       let frame: AttachClientFrame;
       try { frame = JSON.parse(String(raw)) as AttachClientFrame; } catch { return; }
-      if (frame?.type !== 'input' || typeof frame.data !== 'string') return;
+      if (frame?.type !== 'input' && frame?.type !== 'resize') return;
       // **admin 은 여기서 멈춘다.** 화면이 입력을 안 그리는 것만으로는 게이트가 아니다 —
       // 소켓은 누구나 직접 열 수 있으므로, 진짜 게이트는 이 한 줄이다.
+      //
+      // **#335 의 `resize` 도 이 한 줄이 막는다.** 프레임 종류만 늘었지 판정은 늘지 않았다 —
+      // 판정을 복제하면 한쪽만 고치는 사고가 나고, 인가에서 그것은 조용히 열리는 쪽으로
+      // 어긋난다(파일 머리 주석의 같은 규율).
       if (!claim.canInput) return;
+
+      if (frame.type === 'resize') {
+        if (!isPtySize(frame.cols) || !isPtySize(frame.rows)) return;
+        hub.sendResize(claim.sessionId, frame.cols, frame.rows);
+        // **감사에 남기지 않는다**(shared 의 `AttachClientFrame` 주석). 창 크기 조절은
+        // 개입이 아니라 보기이고, 드래그 한 번에 수십 번 오므로 남기면 감사가 폭증한다.
+        return;
+      }
+
+      if (typeof frame.data !== 'string') return;
       // 바이트는 열지 않고 그대로 러너에게 넘긴다(허브 주석).
       if (!hub.sendInput(claim.sessionId, frame.data)) return;
       if (!shouldAuditInput()) return;

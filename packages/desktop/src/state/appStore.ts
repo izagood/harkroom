@@ -33,11 +33,16 @@ export interface AppState {
   dividerSeq: Record<string, number>;
   online: string[];
   /**
-   * 지금 터미널 패널이 붙어 있는 에이전트 계정 id(#141). `null` 은 패널이 닫혀 있다는
-   * 뜻이다 — 세션 id 가 아니라 **에이전트** id 인 이유: 칩은 에이전트별로 뜨고(스펙 §5,
-   * 한 스레드에 세션이 N개일 수 있다), 어느 세션에 붙을지는 패널이 목록을 받아 정한다.
+   * 지금 터미널 패널이 보고 있는 대상(#141, #339). `null` 은 패널이 닫혀 있다는 뜻이다.
+   *
+   * 세션 id 가 아닌 이유: 칩은 메시지 행에서 뜨고, 세션 id 는 러너만 안다 — 어느 세션에
+   * 붙을지는 패널이 목록을 받아 정한다. 에이전트 id **하나만으로도 안 되는** 이유(#339):
+   * 세션은 (에이전트, 스레드)당 하나라(스펙 §5), 같은 에이전트가 스레드 여럿에서 동시에
+   * 턴을 돌면 에이전트 id 만으로는 임의의 첫 세션에 붙는다. 그래서 칩을 누른 메시지의
+   * 채널·스레드까지 함께 든다. `threadRootId` 는 #98 앵커식으로 항상 채워진 문자열이다 —
+   * 채널 최상위 멘션은 그 멘션 메시지 자신이 루트다.
    */
-  terminalAgentId: string | null;
+  terminalTarget: { agentAccountId: string; channelId: string; threadRootId: string } | null;
   leases: LeaseRow[];
   connected: boolean;
   /**
@@ -182,7 +187,7 @@ export interface AppState {
 const initial = {
   me: null, accounts: {}, groups: [], channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
-  online: [], terminalAgentId: null, leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
+  online: [], terminalTarget: null, leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
   expandedMessageIds: {}, runnerStates: {}, savedIds: [], savedCount: 0,

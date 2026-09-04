@@ -79,6 +79,18 @@ export interface RelayHub {
    * false 다: 인가는 라우트가 이미 했으므로 여기서 거절하는 것은 "러너가 없다" 뿐이다.
    */
   sendInput(sessionId: string, data: string): boolean;
+
+  /**
+   * 소유자 패널의 크기를 그 세션의 PTY 에 반영한다(#335). `sendInput` 과 같은 자리에
+   * 두는 이유는 같은 소켓·같은 게이트를 타기 때문이다(라우트가 판정한다).
+   *
+   * **`sendInput` 과 다른 점이 하나 있다: 붙은 뷰어가 없으면 false 다.** 입력은 뷰어
+   * 소켓에서만 들어오므로 "아무도 안 붙어 있다"가 구조적으로 불가능하지만, 크기는
+   * 마지막 뷰어가 떠난 뒤에 늦게 도착한 프레임으로도 올 수 있다 — 아무도 보고 있지
+   * 않은 PTY 의 크기를 바꿀 이유는 없고, 바꾸면 그 뒤에 붙는 사람이 남의 창 크기를
+   * 물려받는다.
+   */
+  sendResize(sessionId: string, cols: number, rows: number): boolean;
 }
 
 export function createRelayHub(): RelayHub {
@@ -225,6 +237,16 @@ export function createRelayHub(): RelayHub {
       // ★ `data` 를 **그대로** 옮긴다. 되돌렸다 싣거나 문자열로 디코드하면 사람이 친
       //   제어 바이트(Ctrl-C, 화살표, 붙여 넣은 멀티바이트)가 깨진다.
       sendToRunner(runner, { type: 'input', sessionId, data });
+      return true;
+    },
+
+    sendResize(sessionId, cols, rows) {
+      // **아무도 안 붙어 있으면 아무 일도 안 일어난다**(위 인터페이스 주석).
+      if (!viewers.get(sessionId)?.size) return false;
+      const agentAccountId = ownerOf.get(sessionId);
+      const runner = agentAccountId ? runners.get(agentAccountId) : undefined;
+      if (!runner) return false;
+      sendToRunner(runner, { type: 'resize', sessionId, cols, rows });
       return true;
     },
 

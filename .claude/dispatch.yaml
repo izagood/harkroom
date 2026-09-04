@@ -1,0 +1,51 @@
+# murmur/.claude/dispatch.yaml
+# parallel-dispatch 스킬이 로드될 때 읽는 프로젝트 고유값. 스킬 본문에는 이 값들이 없다.
+# 저장소와 함께 버전 관리되므로 다른 세션·다른 사람도 같은 값을 본다.
+
+project: murmur
+repo: izagood/murmur            # gh 가 쓰는 owner/repo
+default_branch: main
+
+remote:                         # 기본 목적지. 없으면 로컬만 쓴다
+  host: jaebin-worker           # ssh 타겟
+  orca_repo_id: 25598126-3d2f-443a-8334-6400dd203d0c
+  path: /home/jaebin/dev/my-workspace/murmur
+  agent: opencode
+  worktree_dir: .worktrees      # 워커 격리 디렉터리 (.git/info/exclude 에 넣어 둔다)
+  can_push: false               # false 면 bundle 로 회수
+  gateway:                      # 원격 모델 게이트웨이 진단용
+    config_path: ~/.config/opencode/opencode.json
+    models_url: https://gateway.rebelro-cluster.udc.rbln.in/v1/models
+    work_model: rro/MiniMaxAI/MiniMax-M2.5
+    diagnostic_model: openai/gpt-oss-120b   # 작업용 아님 — 게이트웨이/모델 문제를 가르는 데만
+
+local:
+  orca_repo_id: 39561925-f32c-4210-b082-62fabc377f49
+  agent: claude
+  workspaces_root: /Users/jaebin/orca/workspaces/murmur
+  max_parallel: 3               # 사용자의 기계다 — testcontainers 동시 기동 상한
+
+verify:
+  typecheck: pnpm typecheck                        # 반드시 저장소 전체
+  test: pnpm --filter @murmur/{pkg} test           # {pkg} 는 바뀐 패키지
+  packages: [shared, server, agent, desktop]
+
+migrations:
+  dir: packages/server/src/db/migrations
+  next_free: 37                 # 코디네이터가 배정하고 갱신한다. 워커가 계산하게 두지 마라
+
+conflict_zones:                 # 같은 영역의 이슈는 순차(선행 브랜치 위에서 시작)
+  desktop-shell: [packages/desktop/src/components/Sidebar.tsx, packages/desktop/src/state/controller.ts, packages/desktop/src/state/appStore.ts, packages/desktop/src/lib/api.ts]
+  shared-types: [packages/shared/src/index.ts]
+  channels-server: [packages/server/src/services/channels.ts, packages/server/src/routes/channelRoutes.ts, packages/server/src/services/messages.ts, packages/server/src/services/readPositions.ts]
+  message-render: [packages/desktop/src/components/MessageBody.tsx, packages/desktop/src/components/MessageItem.tsx]
+  mcp: [packages/server/src/mcp/mcpPlugin.ts]
+  agent-terminal: [packages/desktop/src/components/TerminalPanel.tsx, packages/desktop/src/lib/agentTerminal.ts, packages/desktop/src/lib/terminalSink.ts, packages/server/src/routes/agentRelayRoutes.ts, packages/server/src/ws/relay.ts, packages/agent/src/pty.ts, packages/agent/src/relay.ts]
+
+conventions:
+  comment_language: ko          # 주석·커밋 제목. 한글 아닌 CJK 금지
+  commit_title: "type(scope): 설명 (#번호)"
+  gh_account: izagood           # export GH_TOKEN=$(gh auth token --user <이것>)
+  do_not_touch: ["서버 :3400", "rusalka-postgres-1", "돌고 있는 러너"]   # 도그푸딩 스택
+
+avcs: false                     # true 면 코디네이터가 워커 스코프를 avcs_lease_request 로도 선점한다

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { sidebarStorage } from '../lib/prefs';
-import { isMacOS, MAC_TRAFFIC_LIGHT_PL } from '../lib/platform';
+import { isMacOS, MAC_TRAFFIC_LIGHT_PL, TOP_BAR_H } from '../lib/platform';
 import { CommunityRail } from './CommunityRail';
 import { Sidebar } from './Sidebar';
 import { ChannelPane } from './ChannelPane';
@@ -23,7 +23,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
   onOpenSettings: (section?: SectionId, targetId?: string) => void;
 }) {
   const threadRootId = useActiveStore((s) => s.threadRootId);
-  const terminalAgentId = useActiveStore((s) => s.terminalAgentId);
+  const terminalTarget = useActiveStore((s) => s.terminalTarget);
   const history = useActiveStore((s) => s.history);
   const historyIndex = useActiveStore((s) => s.historyIndex);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -140,7 +140,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
         <div
           data-testid="app-header"
           data-tauri-drag-region
-          className={`flex items-center gap-2 border-b border-border bg-surface-raised py-1 pr-2 ${
+          className={`flex ${TOP_BAR_H} items-center gap-2 border-b border-border bg-surface-raised pr-2 ${
             headerNeedsTrafficLightRoom ? MAC_TRAFFIC_LIGHT_PL : 'pl-2'
           }`}
         >
@@ -201,7 +201,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
           {/* #141: 터미널은 스레드 패널과 **같은 자리**를 쓰고 둘이 나란히 열린다.
               채널 레이아웃 안에 심지 않는다 — `#189`(앱 안 터미널 패널이 어디서 도는가)가
               열려 있어서, 지금 심으면 그 결정이 코드로 먼저 굳는다. */}
-          {terminalAgentId && <TerminalPanel />}
+          {terminalTarget && <TerminalPanel />}
         </div>
       </div>
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} initialScoped={searchInitialScoped} />
