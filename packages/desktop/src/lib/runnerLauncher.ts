@@ -170,7 +170,7 @@ export const RUNNER_COMMAND_SUFFIX = '/pnpm';
  */
 export const SYSTEM_PATH_FALLBACK = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
 
-const REPO_PATH_MISSING =
+export const REPO_PATH_MISSING =
   '러너를 돌릴 murmur 저장소 경로가 설정되지 않았다 — 설정 → 연결에서 지정한다';
 
 /**
