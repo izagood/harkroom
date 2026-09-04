@@ -177,6 +177,28 @@ describe('RingBuffer', () => {
   });
 });
 
+describe('#315 runPtyTurn — attach 한 사람의 입력이 PTY stdin 에 닿는다', () => {
+  it('onSpawn 이 준 통로로 넣은 바이트가 하네스의 stdin 에 그대로 도착한다', async () => {
+    const ring = new RingBuffer(256 * 1024);
+    // 제어 바이트(위 화살표)를 섞는다 — 글자만 보내는 테스트는 문자열 왕복으로도 통과해
+    // "바이트 그대로"를 지키지 못한다.
+    const typed = Buffer.from('\x1b[Ayes\r', 'binary');
+
+    const r = await runPtyTurn(plan('stdin-live'), {
+      cwd: process.cwd(), timeoutMs: 10_000, ring,
+      onSpawn: (writer) => writer.write(typed),
+    });
+
+    // 하네스가 stdin 에서 읽은 것을 hex 로 되뱉는다. 개행은 PTY 의 라인 디서플린이
+    // \r → \n 으로 바꾸므로 마지막 바이트는 비교에서 뺀다 — 그 변환은 터미널의 정상
+    // 동작이고, 이 테스트가 지키는 것은 **그 앞의 바이트가 하나도 안 변했다**는 것이다.
+    expect(r.exitCode).toBe(0);
+    const echoed = ring.snapshot().toString('utf8');
+    expect(echoed).toContain('got:');
+    expect(echoed).toContain(Buffer.from('\x1b[Ayes', 'binary').toString('hex'));
+  });
+});
+
 describe('runPtyTurn — stdin 파일 리다이렉션(#117)', () => {
   let dir: string;
 

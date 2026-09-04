@@ -72,6 +72,13 @@ export interface RelayHub {
    * 붙는 즉시 상태를 보내고, 러너가 살아 있으면 ring buffer 재생을 요청한다.
    */
   addViewer(sessionId: string, socket: RelaySocket): () => void;
+
+  /**
+   * 사람이 친 바이트를 그 세션의 러너에게 넘긴다(#315). `data` 는 base64 이고, 여기서도
+   * **열지 않는다** — 출력과 같은 규율이다(파일 머리 주석). 러너가 없거나 세션을 모르면
+   * false 다: 인가는 라우트가 이미 했으므로 여기서 거절하는 것은 "러너가 없다" 뿐이다.
+   */
+  sendInput(sessionId: string, data: string): boolean;
 }
 
 export function createRelayHub(): RelayHub {
@@ -209,6 +216,16 @@ export function createRelayHub(): RelayHub {
       const agentAccountId = ownerOf.get(sessionId);
       if (!agentAccountId) return null;
       return runners.get(agentAccountId)?.sessions.get(sessionId) ?? null;
+    },
+
+    sendInput(sessionId, data) {
+      const agentAccountId = ownerOf.get(sessionId);
+      const runner = agentAccountId ? runners.get(agentAccountId) : undefined;
+      if (!runner) return false;
+      // ★ `data` 를 **그대로** 옮긴다. 되돌렸다 싣거나 문자열로 디코드하면 사람이 친
+      //   제어 바이트(Ctrl-C, 화살표, 붙여 넣은 멀티바이트)가 깨진다.
+      sendToRunner(runner, { type: 'input', sessionId, data });
+      return true;
     },
 
     addViewer(sessionId, socket) {

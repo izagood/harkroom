@@ -79,6 +79,15 @@ export function createTicketStore(opts: { ttlMs?: number } = {}): TicketStore {
 export interface AttachTicketClaim extends TicketClaim {
   /** 이 티켓이 붙을 수 있는 **유일한** 세션. 핸드셰이크는 쿼리의 세션 id 를 믿지 않는다. */
   sessionId: string;
+  /**
+   * 이 티켓으로 그 PTY 에 **쓸 수 있는가**(#315). 소유자면 true, 소유자가 아닌 admin 이면
+   * false 다(admin 을 겸한 소유자는 true — `auth/plugin.ts::OwnerVerdict.via`).
+   *
+   * 세션 id 와 **같은 이유로** 티켓이 운반한다: 인가는 Bearer 로 인증된 REST 에서 한 번
+   * 끝나고, 소켓은 그 결정을 소모하기만 한다. 핸드셰이크가 계정을 다시 조회해 판정하면
+   * 같은 질문에 답하는 코드가 두 곳이 되고, 인가에서 그것은 조용히 열리는 쪽으로 어긋난다.
+   */
+  canInput: boolean;
 }
 
 export interface AttachTicketStore {
