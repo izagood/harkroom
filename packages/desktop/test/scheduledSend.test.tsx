@@ -152,4 +152,34 @@ describe('예약 발송 컴포저 (#222)', () => {
     render(<Composer onSend={vi.fn()} scopeKey="c1" />);
     expect(screen.queryByRole('button', { name: '나중에 보내기' })).toBeNull();
   });
+
+  // (#398) min 제약이 있어 모달을 연 시점 이후만 고를 수 있어야 한다.
+  it('입력에 min 속성이 있다', async () => {
+    mount({});
+    render(<Composer onSend={vi.fn()} scopeKey="c1" channelId="c1" />);
+
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '예약 메시지' } });
+    fireEvent.click(screen.getByRole('button', { name: '나중에 보내기' }));
+    const at = screen.getByLabelText('예약 시각') as HTMLInputElement;
+
+    expect(at.min).not.toBe('');
+    expect(new Date(at.min).getTime()).toBeGreaterThan(0);
+  });
+
+  // (#398) 과거 시각은 브라우저가 직접 막거나, 예약 버튼이 동작하지 않아야 한다.
+  it('과거 시각을 넣으면 예약 버튼이 동작하지 않는다', async () => {
+    const api = mount({});
+    render(<Composer onSend={vi.fn()} scopeKey="c1" channelId="c1" />);
+
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '과거 예약' } });
+    fireEvent.click(screen.getByRole('button', { name: '나중에 보내기' }));
+
+    const at = screen.getByLabelText('예약 시각') as HTMLInputElement;
+    const pastValue = new Date(Date.now() - 3600_000).toISOString().slice(0, 16);
+    fireEvent.change(at, { target: { value: pastValue } });
+
+    fireEvent.click(screen.getByRole('button', { name: '예약' }));
+
+    await vi.waitFor(() => expect(api.scheduleMessage).not.toHaveBeenCalled());
+  });
 });
