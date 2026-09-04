@@ -63,6 +63,15 @@ export class ExecutableNotFoundError extends Error {
  *
  * `authentication_error` 는 밑줄이 있는 **API 에러 코드**다 — 공백으로 오인해 `\s+` 로
  * 바꾸면 이 신호를 통째로 잃는다(실제로 그 실수를 한 번 했다).
+ *
+ * **이 문구들은 사람의 프롬프트에도 나올 수 있다(#380 1단계 실측).** tail 이 하네스 자신의
+ * 출력만 담는다는 전제는, 프롬프트를 `pty.write()` 로 PTY stdin 에 흘려보내는 순간 깨진다 —
+ * PTY 가 입력을 그대로 에코해 tail 앞부분에 남기 때문이다(실측: `pty.ts::composeSpawn` 위
+ * 주석). 사람이 "x-api-key 헤더를 어떻게 검증하나요?" 같은 지극히 정상적인 질문을 하면 그
+ * 문구가 tail 에 나타나 무관한 실패를 자격증명 실패로 오판한다(재현: `test/policy.test.ts`
+ * "#380 1단계 실측"). 현재 프로덕션 경로(`pty.ts::composeSpawn` 의 `sh -c ... < 파일`
+ * stdin 리다이렉션)는 프롬프트를 PTY 에 흘리지 않으므로 이 오탐이 나지 않는다 — 이 판정을
+ * `pty.write()` 경로로 확장하려면 이 오탐부터 격리해야 한다.
  */
 const HARNESS_CREDENTIAL_PATTERNS = [
   /couldnotresolveauthentication/i,
