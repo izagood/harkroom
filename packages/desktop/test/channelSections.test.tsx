@@ -2,10 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { ChannelPrefRow, ChannelRow } from '@murmur/shared';
 import { sortChannelsBySection } from '@murmur/shared';
-import { useActiveStore as useAppStore } from '../src/state/communities';
-import { setController, type Controller } from '../src/state/controller';
+import { createAppStore, useActiveStore as useAppStore } from '../src/state/communities';
+import { Controller, setController } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
-import { acc, chan } from './helpers/fakeApi';
+import { Workspace } from '../src/components/Workspace';
+import { acc, chan, fakeApi } from './helpers/fakeApi';
 
 /**
  * 채널 섹션(#157).
@@ -105,6 +106,7 @@ const fakeController = (overrides: Record<string, unknown> = {}) => {
     createChannel: vi.fn(), updateChannel: vi.fn(),
     setChannelNotifyLevel: vi.fn(), toggleChannelStar: vi.fn(),
     setChannelSection: vi.fn(async () => undefined),
+    renameSection: vi.fn(async () => undefined),
     reorderChannels: vi.fn(async () => undefined),
     ...overrides,
   };
@@ -344,5 +346,227 @@ describe('사이드바의 섹션 (#157)', () => {
     openMenuFor('ay');
     expect(screen.queryByRole('menuitem', { name: '위로' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: '아래로' })).toBeNull();
+  });
+
+  describe('섹션 이름 바꾸기 (#323)', () => {
+    it('5. 섹션 헤더 우클릭으로 컨텍스트 메뉴가 열리고 "이름 바꾸기"가 있다', () => {
+      const c = fakeController();
+      useAppStore.getState().set({
+        channels: [chan('c1', 'ay'), chan('c2', 'bee')],
+        channelPrefs: {
+          c1: pref('c1', { section: 'Work' }),
+          c2: pref('c2', { section: 'Work' }),
+        },
+      });
+      mount();
+
+      const sectionHeader = screen.getByTestId('section-header-Work');
+      fireEvent.contextMenu(sectionHeader);
+
+      expect(screen.getByRole('menuitem', { name: '이름 바꾸기' })).toBeTruthy();
+    });
+
+    it('"이름 바꾸기" 를 선택하면 인라인 입력창이 나타난다', () => {
+      fakeController();
+      useAppStore.getState().set({
+        channels: [chan('c1', 'ay'), chan('c2', 'bee')],
+        channelPrefs: {
+          c1: pref('c1', { section: 'Work' }),
+          c2: pref('c2', { section: 'Work' }),
+        },
+      });
+      mount();
+
+      const sectionHeader = screen.getByTestId('section-header-Work');
+      fireEvent.contextMenu(sectionHeader);
+      fireEvent.click(screen.getByRole('menuitem', { name: '이름 바꾸기' }));
+
+      expect(screen.getByLabelText('섹션 새 이름')).toBeTruthy();
+      expect(screen.getByDisplayValue('Work')).toBeTruthy();
+    });
+
+    it('인라인 입력에서 Enter 를 치면 renameSection 이 호출되고 입력창이 닫힌다', async () => {
+      const c = fakeController();
+      useAppStore.getState().set({
+        channels: [chan('c1', 'ay'), chan('c2', 'bee')],
+        channelPrefs: {
+          c1: pref('c1', { section: 'Work' }),
+          c2: pref('c2', { section: 'Work' }),
+        },
+      });
+      mount();
+
+      const sectionHeader = screen.getByTestId('section-header-Work');
+      fireEvent.contextMenu(sectionHeader);
+      fireEvent.click(screen.getByRole('menuitem', { name: '이름 바꾸기' }));
+
+      const input = screen.getByLabelText('섹션 새 이름');
+      fireEvent.change(input, { target: { value: 'NewName' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      expect(c.renameSection).toHaveBeenCalledWith('Work', 'NewName');
+      expect(screen.queryByLabelText('섹션 새 이름')).toBeNull();
+    });
+
+    it('"바꾸기" 버튼을 눌러도 renameSection 이 호출된다', () => {
+      const c = fakeController();
+      useAppStore.getState().set({
+        channels: [chan('c1', 'ay'), chan('c2', 'bee')],
+        channelPrefs: {
+          c1: pref('c1', { section: 'Work' }),
+          c2: pref('c2', { section: 'Work' }),
+        },
+      });
+      mount();
+
+      const sectionHeader = screen.getByTestId('section-header-Work');
+      fireEvent.contextMenu(sectionHeader);
+      fireEvent.click(screen.getByRole('menuitem', { name: '이름 바꾸기' }));
+
+      const input = screen.getByLabelText('섹션 새 이름');
+      fireEvent.change(input, { target: { value: 'NewName' } });
+      fireEvent.click(screen.getByRole('button', { name: '바꾸기' }));
+
+      expect(c.renameSection).toHaveBeenCalledWith('Work', 'NewName');
+    });
+
+    it('"취소" 버튼을 누르면 입력창이 닫히고 renameSection 은 호출되지 않는다', () => {
+      const c = fakeController();
+      useAppStore.getState().set({
+        channels: [chan('c1', 'ay'), chan('c2', 'bee')],
+        channelPrefs: {
+          c1: pref('c1', { section: 'Work' }),
+          c2: pref('c2', { section: 'Work' }),
+        },
+      });
+      mount();
+
+      const sectionHeader = screen.getByTestId('section-header-Work');
+      fireEvent.contextMenu(sectionHeader);
+      fireEvent.click(screen.getByRole('menuitem', { name: '이름 바꾸기' }));
+
+      const input = screen.getByLabelText('섹션 새 이름');
+      fireEvent.change(input, { target: { value: 'NewName' } });
+      fireEvent.click(screen.getByRole('button', { name: '취소' }));
+
+      expect(c.renameSection).not.toHaveBeenCalled();
+      expect(screen.queryByLabelText('섹션 새 이름')).toBeNull();
+    });
+
+    it('빈 이름으로 바꾸면 섹션이 제거된다(null)', () => {
+      const c = fakeController();
+      useAppStore.getState().set({
+        channels: [chan('c1', 'ay'), chan('c2', 'bee')],
+        channelPrefs: {
+          c1: pref('c1', { section: 'Work' }),
+          c2: pref('c2', { section: 'Work' }),
+        },
+      });
+      mount();
+
+      const sectionHeader = screen.getByTestId('section-header-Work');
+      fireEvent.contextMenu(sectionHeader);
+      fireEvent.click(screen.getByRole('menuitem', { name: '이름 바꾸기' }));
+
+      const input = screen.getByLabelText('섹션 새 이름');
+      fireEvent.change(input, { target: { value: '' } });
+      fireEvent.click(screen.getByRole('button', { name: '바꾸기' }));
+
+      expect(c.renameSection).toHaveBeenCalledWith('Work', null);
+    });
+  });
+});
+
+/**
+ * 5. 배선 — `Workspace` 를 통째로 띄우고 **진짜 `Controller`** 로 돈다.
+ *
+ * 위의 화면 테스트들은 컨트롤러를 목으로 끼운다. 그러면 `Sidebar` → `Controller` →
+ * `ApiClient` 중 어느 한 마디가 끊겨 있어도 전부 초록이다 — #166 회수에서 실제로
+ * 회귀선 1043 건이 전부 초록인 채 배선이 죽어 있었다. 여기서는 목을 **api 한 겹**에만
+ * 두고, 그 위의 배선은 프로덕션 코드를 그대로 지나가게 한다.
+ */
+describe('섹션 이름 바꾸기 배선 (#323 요구 5)', () => {
+  const seedTwoChannelSection = () => {
+    useAppStore.getState().set({
+      channels: [chan('c1', 'ay'), chan('c2', 'bee')],
+      dms: [],
+      channelPrefs: {
+        c1: pref('c1', { section: 'Work', sortOrder: 0 }),
+        c2: pref('c2', { section: 'Work', sortOrder: 1 }),
+      },
+      activeChannelId: 'c1',
+    });
+  };
+
+  it('헤더 메뉴 → 인라인 입력 → 서버 응답이 목록에 반영된다', async () => {
+    // 서버는 새로고침된 선호 전체를 돌려준다(#323 의 응답 계약). 목은 그 계약만 흉내 낸다.
+    const renameSection = vi.fn(async (_oldName: string, newName: string | null) => ({
+      prefs: [
+        pref('c1', { section: newName, sortOrder: 0 }),
+        pref('c2', { section: newName, sortOrder: 1 }),
+      ],
+    }));
+    const api = fakeApi({ renameSection } as never);
+    setController(new Controller(api));
+    seedTwoChannelSection();
+
+    render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+    expect(visibleOrder()).toEqual(['Work', '#ay', '#bee']);
+
+    fireEvent.contextMenu(screen.getByTestId('section-header-Work'));
+    fireEvent.click(screen.getByRole('menuitem', { name: '이름 바꾸기' }));
+
+    const input = screen.getByLabelText('섹션 새 이름');
+    fireEvent.change(input, { target: { value: 'Focus' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    // 목은 api 한 겹뿐이다 — 여기까지 왔다는 것은 화면부터 클라이언트까지 이어져 있다는 뜻이다.
+    expect(renameSection).toHaveBeenCalledWith('Work', 'Focus');
+
+    // 개수가 아니라 **DOM 순서**로 본다. 헤더 글자만 바꾸고 채널을 두고 오면 여기서 갈린다.
+    await waitFor(() => expect(visibleOrder()).toEqual(['Focus', '#ay', '#bee']));
+    expect(screen.queryByTestId('section-header-Work')).toBeNull();
+    // 입력은 닫힌다 — 열린 채로 남으면 다음 클릭이 헤더가 아니라 입력으로 간다.
+    expect(screen.queryByLabelText('섹션 새 이름')).toBeNull();
+  });
+
+  /**
+   * 커뮤니티 경계(#166). 두 커뮤니티가 열려 있을 때 컨트롤러가 **활성** 스토어를 직접
+   * 읽으면, 보고 있지 않은 커뮤니티의 이름 바꾸기가 활성 커뮤니티의 목록을 덮어쓴다.
+   * 커뮤니티가 하나뿐인 화면 테스트로는 그 차이가 보이지 않는다 — 두 스토어를 세워야
+   * 비로소 갈린다. `#166` 병합에서 실제로 이 한 줄이 전역 싱글턴으로 되돌아가 있었다.
+   */
+  it('이름 바꾸기는 이 컨트롤러가 들고 있는 커뮤니티 스토어에만 쓴다', async () => {
+    const other = createAppStore();
+    const renameSection = vi.fn(async () => ({ prefs: [pref('c9', { section: 'Moved', sortOrder: 0 })] }));
+    const api = fakeApi({ renameSection } as never);
+    // 8번째 인자가 이 컨트롤러의 스토어다. 인자 자리가 밀리면 타입은 통과하고 값만 어긋난다.
+    const c = new Controller(api, undefined, undefined, undefined, undefined, undefined, undefined, other);
+
+    await c.renameSection('Work', 'Moved');
+
+    expect(other.getState().channelPrefs.c9?.section).toBe('Moved');
+    // 활성 스토어는 손대지 않는다.
+    expect(useAppStore.getState().channelPrefs.c9).toBeUndefined();
+  });
+
+  it('빈 이름이면 섹션이 사라지고 채널은 남는다 — 진짜 배선으로', async () => {
+    const renameSection = vi.fn(async () => ({
+      prefs: [pref('c1', { section: null }), pref('c2', { section: null })],
+    }));
+    const api = fakeApi({ renameSection } as never);
+    setController(new Controller(api));
+    seedTwoChannelSection();
+
+    render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    fireEvent.contextMenu(screen.getByTestId('section-header-Work'));
+    fireEvent.click(screen.getByRole('menuitem', { name: '이름 바꾸기' }));
+    fireEvent.change(screen.getByLabelText('섹션 새 이름'), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: '바꾸기' }));
+
+    // 공백뿐인 이름은 명시적 null 로 간다 — `undefined` 로 보내면 서버가 키를 못 본다.
+    expect(renameSection).toHaveBeenCalledWith('Work', null);
+    await waitFor(() => expect(visibleOrder()).toEqual(['#ay', '#bee']));
   });
 });

@@ -172,6 +172,13 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     // 기본은 **진행 중인 턴이 없는** 상태다 — 세션이 있는 화면은 각 테스트가 덮어쓴다.
     agentSessions: vi.fn(async (): Promise<AgentSessionView[]> => []),
     attachAgentSession: vi.fn(async (sessionId: string) => ({ ticket: 'murt_base', session: sess({ sessionId }) })),
+    // #157/#323: 채널 선호를 쓰는 표면. 베이스가 덮어야 사이드바를 띄운 배선 테스트가
+    // 실제 배선(Sidebar → Controller → ApiClient)을 그대로 지나가고, "부르지 않았다" 도
+    // 단언할 수 있다. 여기가 비어 있으면 프로덕션이 끊겨 있어도 목이 대신 초록을 낸다.
+    updateChannelPref: vi.fn(async (channelId: string, patch: { section?: string | null; sortOrder?: number | null }) =>
+      ({ accountId: 'u1', channelId, mutedAt: null, starredAt: null, notifyLevel: 'all' as const,
+        section: patch.section ?? null, sortOrder: patch.sortOrder ?? null })),
+    renameSection: vi.fn(async (_oldName: string, _newName: string | null) => ({ prefs: [] })),
     ...overrides,
   };
   return base as unknown as ApiClient;
