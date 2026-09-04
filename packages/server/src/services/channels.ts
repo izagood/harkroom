@@ -397,12 +397,12 @@ export async function updateChannelPref(
    * 방금 옮겨 넣은 섹션에서 빠져나왔다. 옵셔널 필드에 `?? null` 을 물리면 "안 보냈다"와
    * "지워라"가 같은 뜻이 된다(docs/design.md 4절).
    *
-   * `section` 의 값 가공(앞뒤 공백 제거, 빈 문자열은 null)은 여기서 한다 — 길이 검증만
-   * 라우트의 zod 가 맡는다.
+   * `section` 의 값 가공(앞뒤 공백 제거, 빈 문자열은 null)은 `normalizeSectionName` 하나가
+   * 한다 — 이름 바꾸기(#323)도 **같은 함수**를 쓴다. 복제하면 한쪽만 고쳐져 "만들 때는 되는데
+   * 이름을 바꾸면 안 되는" 이름이 생긴다. 길이 검증만 라우트의 zod 가 맡는다.
    */
   if (patch.section !== undefined) {
-    const trimmed = patch.section === null ? null : patch.section.trim();
-    const sectionValue: string | null = trimmed === '' ? null : trimmed;
+    const sectionValue = normalizeSectionName(patch.section);
     await pool.query(
       `insert into channel_pref (account_id, channel_id, section)
        values ($1, $2, $3)
@@ -441,6 +441,117 @@ export async function listChannelPrefs(pool: Pool, accountId: string): Promise<C
     [accountId],
   );
   return res.rows;
+}
+
+/**
+ * 섹션 이름의 값 가공(#157) — 앞뒤 공백을 떼고, 빈 값은 null(섹션 없음)이다.
+ *
+ * 생성(`updateChannelPref`)과 이름 바꾸기(`renameSection`)가 **이 함수 하나**를 쓴다.
+ * 두 곳에 복제해 두면 한쪽만 고쳐져 "만들 때는 되는데 이름을 바꾸면 안 되는" 이름이 생긴다.
+ * 길이 검증(1..40)은 라우트의 zod 가 맡는다.
+ */
+export function normalizeSectionName(value: string | null): string | null {
+  const trimmed = value === null ? null : value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * 한 섹션의 채널을 받은 순서 그대로 `sort_order` 0..n-1 로 다시 매긴다.
+ *
+ * **일부만 매기지 않는 이유**는 클라이언트의 재정렬(#157, `controller.reorderChannels`)과 같다 —
+ * `sort_order` 가 null 인 행은 값이 있는 것들보다 뒤로 가므로, 절반만 매기면 나머지가 아래로
+ * 쏟아진다. 합치기(#323)가 이 함수를 쓴다.
+ */
+async function renumberSection(
+  client: Queryable, accountId: string, section: string | null, orderedChannelIds: string[],
+): Promise<void> {
+  for (const [index, channelId] of orderedChannelIds.entries()) {
+    await client.query(
+      `update channel_pref set section = $3, sort_order = $4
+       where account_id = $1 and channel_id = $2`,
+      [accountId, channelId, section, index],
+    );
+  }
+}
+
+/**
+ * 섹션 이름 바꾸기(#323). 요청자의 `channel_pref` 중 `section = 옛이름` 인 행을 전부
+ * 새 이름으로 한 트랜잭션에서 갱신한다. **요청자의 행만** 바뀐다 — 모든 문장이
+ * `account_id` 로 걸러진다. 그 필터가 빠지면 같은 이름을 쓴 남의 섹션까지 따라 바뀐다.
+ *
+ * 새 이름이 이미 존재하면 **합친다** — 거절하면 사용자가 채널을 하나씩 옮겨야 한다.
+ * 합칠 때는 두 섹션의 `sort_order` 가 겹치므로 묶음 전체에 `renumberSection` 으로
+ * 0..n-1 을 다시 매긴다. 받는 쪽이 앞, 합쳐지는 쪽이 뒤다.
+ *
+ * 이름 규칙은 생성 경로와 **같은 함수**(`normalizeSectionName`)다.
+ *
+ * @param oldName 바꿀 섹션 이름. 빈 값은 "섹션 없음"이 아니고 오류다.
+ * @param newName 새 이름. 빈 값은 null(섹션 없음)로 저장 — "섹션에서 빼기"와 같은 뜻이다.
+ * @returns 새로고침된 전체 선호 목록.
+ */
+export async function renameSection(
+  pool: Pool, accountId: string, oldName: string | null, newName: string | null,
+): Promise<ChannelPrefRow[]> {
+  const newSection = normalizeSectionName(newName);
+  const oldSection = normalizeSectionName(oldName);
+  if (oldSection === null) {
+    throw new Error('old name cannot be empty');
+  }
+  if (oldSection === newSection) {
+    return listChannelPrefs(pool, accountId);
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+
+    /**
+     * 합치는 순서를 정하려면 읽는 순서가 정해져 있어야 한다 — `order by` 가 없으면
+     * Postgres 가 돌려주는 순서는 보장이 없어 같은 입력이 매번 다른 결과를 낸다.
+     * 정렬 기준은 화면(`sortChannelsBySection`)과 같다: 값이 있는 것이 먼저.
+     */
+    const ordered = `select channel_id as "channelId" from channel_pref
+       where account_id = $1 and section = $2
+       order by sort_order nulls last, channel_id`;
+
+    const oldPrefs = await client.query<{ channelId: string }>(ordered, [accountId, oldSection]);
+    if (!oldPrefs.rowCount) {
+      // 그런 섹션이 없으면 바꿀 것도 없다. 아무것도 쓰지 않았으니 그대로 닫는다.
+      await client.query('rollback');
+      return listChannelPrefs(pool, accountId);
+    }
+
+    if (newSection === null) {
+      // "섹션에서 빼기"와 같은 뜻이다. `sort_order` 는 건드리지 않는다 — #157 의
+      // 빼기도 순서 값을 남긴다(섹션 안에서만 뜻이 있으니 다시 넣으면 되살아난다).
+      await client.query(
+        `update channel_pref set section = null where account_id = $1 and section = $2`,
+        [accountId, oldSection],
+      );
+    } else {
+      const existing = await client.query<{ channelId: string }>(ordered, [accountId, newSection]);
+      if (existing.rowCount) {
+        await renumberSection(
+          client, accountId, newSection,
+          [...existing.rows, ...oldPrefs.rows].map((r) => r.channelId),
+        );
+      } else {
+        // 받는 쪽이 없으면 겹칠 `sort_order` 도 없다 — 이름만 갈아 끼우고 순서는 그대로 둔다.
+        await client.query(
+          `update channel_pref set section = $3 where account_id = $1 and section = $2`,
+          [accountId, oldSection, newSection],
+        );
+      }
+    }
+
+    await client.query('commit');
+    return listChannelPrefs(pool, accountId);
+  } catch (e) {
+    await client.query('rollback');
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 /**
