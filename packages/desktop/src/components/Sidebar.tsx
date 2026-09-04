@@ -1284,6 +1284,45 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
             ))
           )}
         </div>
+        {/* #368: 에이전트별 러너 상태. **DM 이 없어도** 이 섹션에서 러너 실패 사유를 읽을
+            수 있다 — 이슈 이전에는 사유가 닿는 유일한 사이드바 자리가 DM 목록의 점이었고,
+            그 점은 DM 이 먼저 있어야 보였다(새로 설치한 사람에게는 DM 이 없다).
+            이미 DM 이 있는 에이전트는 DMs 섹션에 `RunnerStatusDot` 이 함께 서므로 여기서
+            뺀다 — 같은 에이전트가 두 줄로 서면 어느 줄이 최신인지 알 수 없다.
+            실패한 러너는 사유를 **글자로** 펼친다: 점의 `title` 만으로는 마우스를 올려 본
+            사람에게만 보이고, 이 결함의 본질이 "사유가 사람이 안 보는 곳에만 있다" 였다. */}
+        {(() => {
+          const dmAgentIds = new Set(dms.map((dm) => dm.memberIds.find((id) => accounts[id]?.kind === 'agent')).filter(Boolean) as string[]);
+          const agents = Object.values(accounts).filter((a) => a.kind === 'agent' && !dmAgentIds.has(a.id));
+          if (agents.length === 0) return null;
+          return (
+            <>
+              <div className="flex items-center px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
+                Agents
+              </div>
+              <div className="mb-1">
+                {agents.map((a) => {
+                  const rs = runnerStates[a.id];
+                  const failure = rs?.status === 'failed' ? rs.message : null;
+                  return (
+                    <button key={a.id} className={`${row(false)} flex-col items-start`}
+                      onClick={() => void getController().startDm(a.id)}>
+                      <span className="flex items-center gap-1">
+                        <RunnerStatusDot agentId={a.id} state={rs} />
+                        <span>@{a.handle}</span>
+                      </span>
+                      {failure && (
+                        <span data-testid={`runner-reason-${a.id}`} className="whitespace-normal text-left text-[10px] text-danger">
+                          기동 실패 — {failure}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          );
+        })()}
         <LeasePanel />
         </nav>
         <div className="relative flex items-center gap-2 border-t border-border p-3 text-xs">
