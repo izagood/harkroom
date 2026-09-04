@@ -7,6 +7,7 @@ import { TypingLine } from './TypingLine';
 import { ChannelFiles } from './ChannelFiles';
 import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
+import { RunnerStatusLine } from './RunnerStatus';
 import { dayLabel, localDayKey } from '../lib/day';
 import { displayBody } from '../lib/mention';
 import type { SectionId } from './settings/sections';
@@ -30,7 +31,7 @@ interface ChannelPaneProps {
 }
 
 export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: ChannelPaneProps) {
-  const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins } = useActiveStore();
+  const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins, runnerStates, channelAutoMentions } = useActiveStore();
   const bottomRef = useRef<HTMLDivElement>(null);
   // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
   // 열림 상태도 채널 화면이 들고 있고, 채널이 바뀌면 `key` 로 패널이 다시 만들어진다.
@@ -57,6 +58,33 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       : null;
   // DM은 채널이 아니다 — '#'을 붙이면 존재하지 않는 채널 이름을 가리키게 된다.
   const composerTarget = channel ? `#${channel.name}` : (title ?? '');
+
+  // #368: 채널에서 에이전트 멘션 시 러너 실패 사유 표시. 자동 멘션된 에이전트 또는 DM对方的 에이전트만 표시한다.
+  const runnerStatusInChannel = useMemo(() => {
+    if (!activeChannelId) return null;
+    const autoMentions = channelAutoMentions[activeChannelId];
+    const agentIds = new Set<string>();
+    if (autoMentions) {
+      for (const m of autoMentions) {
+        agentIds.add(m.agentAccountId);
+      }
+    }
+    if (dm) {
+      for (const memberId of dm.memberIds) {
+        const account = accounts[memberId];
+        if (account?.kind === 'agent') {
+          agentIds.add(memberId);
+        }
+      }
+    }
+    for (const agentId of agentIds) {
+      const state = runnerStates[agentId];
+      if (state?.status === 'failed') {
+        return { agentId, state };
+      }
+    }
+    return null;
+  }, [activeChannelId, channelAutoMentions, dm, accounts, runnerStates]);
 
   const roots = useMemo(
     () => (activeChannelId ? (messages[activeChannelId] ?? []).filter((m) => m.threadRootId === null || m.alsoInChannel) : []),
@@ -95,6 +123,10 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         {channel?.topic && <span className="truncate text-xs text-fg-subtle">{channel.topic}</span>}
         {channel?.repo && <span className="rounded bg-surface-sunken px-1.5 text-[11px] text-fg-muted">{channel.repo}</span>}
         {isArchived && <span className="rounded bg-surface-hover px-1.5 text-[11px] text-fg-muted">보관됨</span>}
+        {/* #368: 채널에서 에이전트 멘션 시 러너 실패 사유. 에이전트가 멘션되었고 그 러너가 실패한 경우에만 표시한다. */}
+        {runnerStatusInChannel && (
+          <RunnerStatusLine state={runnerStatusInChannel.state} />
+        )}
         {/* 문서는 채널에 붙는다(#188) — DM 에는 없다. `channel` 이 없을 때 버튼을 그리면
             눌러도 아무 일이 없는 죽은 버튼이 된다(패널 쪽 조건과 같은 조건이어야 한다). */}
         {channel && (
