@@ -18,6 +18,7 @@ import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemProm
 import { acceptsPtyInput } from './pty.js';
 import type { PtyWriter, TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
+import { codexSessionsDir } from './codexHome.js';
 import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
 
@@ -119,6 +120,8 @@ export interface MentionTurnDeps {
    * (bypassPermissions)인 에이전트가 자기 지시문을 읽고 고칠 수 있게 된다.
    */
   stateDir: string;
+  /** 이 러너 전용 CODEX_HOME. 세션 발견과 자식 env 가 같은 루트를 봐야 한다. */
+  codexHome: string;
   murmurUrl: string;
   pat: string;
   turnTimeoutMs: number;
@@ -276,8 +279,10 @@ export async function syncSkills(
   // 하네스별 스킬 디렉터리. claude 는 `.claude/skills/<slug>/SKILL.md` 를 읽는다.
   const harnessDirs = [
     join(workspaceDir, '.claude', 'skills'),
-    join(workspaceDir, '.codex', 'skills'),
+    // Codex 공식 repo-scope 경로. `.codex/skills` 는 스캔 대상이 아니다.
+    join(workspaceDir, '.agents', 'skills'),
   ];
+  const legacyCodexDir = join(workspaceDir, '.codex', 'skills');
 
   try {
     const skills = await listSkills();
@@ -296,6 +301,9 @@ export async function syncSkills(
     for (const dir of harnessDirs) {
       await removeStaleLinks(dir, skillsDir, wanted);
     }
+    // 예전 구현이 만든 잘못된 경로의 **우리 링크만** 걷는다. 활성 스킬 링크도 공식
+    // `.agents/skills`로 옮겨졌으므로 이 경로에는 하나도 남기지 않는다.
+    await removeStaleLinks(legacyCodexDir, skillsDir, new Set());
 
     for (const skill of skills) {
       const skillPath = join(skillsDir, skill.slug);
@@ -497,6 +505,7 @@ export async function runMentionTurn(
     mcpConfigPath: deps.mcpConfigPath,
     pat: deps.pat,
     murmurUrl: deps.murmurUrl,
+    codexHome: deps.codexHome,
   });
 
   // #126: 턴 시작 로그 (어느 채널·스레드·하네스·워크스페이스에서 PTY 를 띄우는가)
@@ -610,7 +619,7 @@ export async function runMentionTurn(
     // 시작한다(spec §8, isFirstTurn 계산이 sessionId===null 도 보므로 실제로 그렇게 된다).
     // 그래도 원인 없이 반복되면 "왜 이 스레드는 매번 새로 시작하지"를 아무도 알 수 없으니
     // 러너 로그에는 남긴다(spec §8 "+ 러너 로그 경고").
-    const discovered = await findCodexSessionId(undefined, { cwd: rec.workspaceDir, sinceMs });
+    const discovered = await findCodexSessionId(codexSessionsDir(deps.codexHome), { cwd: rec.workspaceDir, sinceMs });
     if (discovered === null) {
       console.warn(
         `[mentionTurn] ${key}: codex 세션 발견 실패 (cwd=${rec.workspaceDir}, sinceMs=${sinceMs}) — 다음 턴은 새 세션으로 다시 시작한다`,
@@ -639,7 +648,7 @@ export async function runMentionTurn(
       // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
       const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
       // #144: progress 메시지는 결과 발화로 세지 않는다 — 에이전트가 message.progress 로 올린
-      // 진행 설명은.kind='progress'로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
+      // 진행 설명은 .kind='progress'로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
       // 따라서 "progress 메시지만 있고 결과가 없는 턴"은 NO_REPLY_NOTICE 로 처리된다.
       const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
       // 실패한 턴에서도 중복 발화는 일어난다(답을 두 번 올리고 나서 죽는다) — 성공 경로와
@@ -674,7 +683,7 @@ export async function runMentionTurn(
     // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
     const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
     // #144: progress 메시지는 결과 발화로 세지 않는다 — 에이전트가 message.progress 로 올린
-    // 진행 설명은.kind='progress'로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
+    // 진행 설명은 .kind='progress'로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
     // 따라서 "progress 메시지만 있고 결과가 없는 턴"은 NO_REPLY_NOTICE 로 처리된다.
     const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
     warnOnDuplicatePosts(key, postCount);

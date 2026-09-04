@@ -15,7 +15,7 @@ import { mentionAnchor, runMentionTurn, syncSkills, type MentionTurnDeps, type M
 import { NO_REPLY_NOTICE } from '../src/prompt.js';
 import { MurmurAgentClient } from '../src/murmur.js';
 import { SessionStore } from '../src/sessions.js';
-import type { Exec } from '../src/workspace.js';
+import { workspaceName, type Exec } from '../src/workspace.js';
 import type { TurnPlan } from '../src/turn.js';
 import { composeSpawn, runPtyTurn } from '../src/pty.js';
 import type { PtyWriter, TurnResult } from '../src/pty.js';
@@ -239,6 +239,7 @@ async function makeDeps(fake: FakeMurmur, overrides: Partial<MentionTurnDeps> = 
     workspaceBaseDir,
     mcpConfigPath: '/fake/mcp.json',
     stateDir,
+    codexHome: join(stateDir, 'codex-home'),
     murmurUrl: 'http://localhost:3400',
     pat: 'murp_test',
     turnTimeoutMs: 10_000,
@@ -1534,7 +1535,7 @@ describe('runMentionTurn: 스킬 동기화(#140)', () => {
     expect(seenDuringTurn).toBe(BODY);
   });
 
-  it('codex 하네스 디렉터리에도 같은 링크가 걸린다', async () => {
+  it('Codex 공식 .agents/skills 디렉터리에도 같은 링크가 걸린다', async () => {
     const fake = new FakeMurmur(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     fake.skills = [{ slug: 'deploy-runbook', body: BODY }];
@@ -1542,8 +1543,27 @@ describe('runMentionTurn: 스킬 동기화(#140)', () => {
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
-    const link = join(workspaceOf(execCalls), '.codex', 'skills', 'deploy-runbook');
+    const link = join(workspaceOf(execCalls), '.agents', 'skills', 'deploy-runbook');
     expect((await lstat(link)).isSymbolicLink()).toBe(true);
+  });
+
+  it('예전의 잘못된 .codex/skills 링크는 공식 경로로 옮기며 사용자 파일은 건드리지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.skills = [{ slug: 'deploy-runbook', body: BODY }];
+    fake.seedFrom('human-1', '@forge 배포');
+    const { deps } = await makeDeps(fake);
+    const ws = join(deps.workspaceBaseDir, workspaceName(ME.handle, SessionStore.threadKey(CHANNEL, null)));
+    const skillPath = join(deps.stateDir, 'skills', 'deploy-runbook');
+    await mkdir(skillPath, { recursive: true });
+    await mkdir(join(ws, '.codex', 'skills'), { recursive: true });
+    await symlink(skillPath, join(ws, '.codex', 'skills', 'deploy-runbook'));
+    await writeFile(join(ws, '.codex', 'skills', 'mine'), '사용자 파일', 'utf8');
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(await lstat(join(ws, '.codex', 'skills', 'deploy-runbook')).then(() => true, () => false)).toBe(false);
+    expect(await readFile(join(ws, '.codex', 'skills', 'mine'), 'utf8')).toBe('사용자 파일');
+    expect((await lstat(join(ws, '.agents', 'skills', 'deploy-runbook'))).isSymbolicLink()).toBe(true);
   });
 
   // 요구 7.
@@ -1565,7 +1585,7 @@ describe('runMentionTurn: 스킬 동기화(#140)', () => {
     // 상태 디렉터리의 파일도, 워크스페이스의 링크도 없어야 한다.
     expect(await stat(join(deps.stateDir, 'skills', 'drop-me')).then(() => true, () => false)).toBe(false);
     expect(await lstat(join(ws, '.claude', 'skills', 'drop-me')).then(() => true, () => false)).toBe(false);
-    expect(await lstat(join(ws, '.codex', 'skills', 'drop-me')).then(() => true, () => false)).toBe(false);
+    expect(await lstat(join(ws, '.agents', 'skills', 'drop-me')).then(() => true, () => false)).toBe(false);
     // 남은 것은 그대로다.
     expect((await lstat(join(ws, '.claude', 'skills', 'keep-me'))).isSymbolicLink()).toBe(true);
   });

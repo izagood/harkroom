@@ -348,6 +348,11 @@ Phase 2 는 **관찰까지만** 착지했다(#141, PR #308): 릴레이·소유�
    운영자 config.toml(개인 MCP 포함)을 상속하는 경로를 열지 않는다. gemini 의 "없는 것을
    있다고 표시하지 않는다" 판례와 같은 결.
 
+   **2026-09-04 후속 결정:** codex-cli 0.153.2에서도 실제 파서는 그 플래그를 거부했지만,
+   러너별 `CODEX_HOME`에 기존 auth만 연결하면 개인 config/MCP 없이 대화형 resume이
+   완주했다. 따라서 게이트의 보안 조건을 이 격리로 충족하고 codex 인터랙티브를 연다.
+   상세 증거와 수용 기준은 `docs/plans/2026-09-04-codex-harness-activation.md`에 있다.
+
 ### §5-3. 결정 1 은 폐기됐다 — 멘션 턴은 관찰 전용이다 (#369, 2026-09-04)
 
 결정 1("멘션 턴에 입력을 허용한다")은 **전제가 틀렸다.** 그 결정은 "사람이 그 턴의 프롬프트에
@@ -534,8 +539,9 @@ Phase 1 만으로 배포 가능하고 Phase 2 는 순수 추가라 롤백 반경
 6. `codex resume --help` 에 `--ignore-user-config` 가 있는가. `turn.ts` 주석은 "못 받는다"
    로 적어 뒀지만(codex-cli 0.148.0 에서 `--skip-git-repo-check` 부재는 실측, 이 플래그는
    추정) 버전이 갱신됐을 수 있다 — 있으면 인터랙티브 턴에 붙이고, 없으면 §5-2 결정 8대로
-   codex 인터랙티브를 거절한다. `CODEX_HOME` 격리 대안은 기각 — `auth.json` 과
-   `~/.codex/sessions`(resume 대상 rollout)가 같은 디렉터리라 로그인과 resume 이 함께 깨진다
+   codex 인터랙티브를 거절한다. 당시 `CODEX_HOME` 격리 대안은 auth와 sessions가 함께
+   바뀐다는 이유로 기각했으나, 2026-09-04 후속 실측에서 auth 링크 + 격리 sessions 조합이
+   동작해 §5-2 결정 8의 후속 결정으로 대체됐다.
 7. claude 인터랙티브 **첫** 턴: `claude --session-id <uuid>`(`-p` 없음)가 인터랙티브로 뜨고
    그 uuid 로 이후 `-r` resume 이 되는가 — "세션 없는 스레드에서 [▶ 터미널]"의 전제
 8. node-pty `resize()` 가 자식에게 SIGWINCH 로 전달되는가 (fake-harness 로)
