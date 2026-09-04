@@ -192,10 +192,12 @@ const CODEX_PRESET: HarnessPreset = {
     return ['exec', 'resume', sessionId];
   },
   allowsNullSessionOnFirstTurn: true,
-  // `message.post` 는 쓰기 MCP라 Codex 기본 `approval_mode="auto"` 에서는 승인 요청이 난다.
+  // `message.post` 는 쓰기 MCP라 Codex 기본 도구 승인 모드에서는 승인 요청이 난다.
   // 멘션 턴은 비대화형이고 approval policy가 never라 그 요청을 받을 사람이 없어, 답을
   // 모두 만든 뒤에도 발화만 실패한다(#404 실물 재현). auto 권한에서는 **murmur 서버만**
-  // 승인 없이 실행한다. 전체 sandbox/승인을 우회하는
+  // 승인 없이 실행한다. 공식 Codex 설정 키는 서버별 `default_tools_approval_mode` 이고,
+  // `approve` 가 이 서버의 도구를 사전 승인한다. `approval_mode="never"` 는 서버 설정 키가
+  // 아니므로 조용히 무시된다(#404 실앱 재검증). 전체 sandbox/승인을 우회하는
   // `--dangerously-bypass-approvals-and-sandbox` 와 달리 workspace-write 경계는 그대로고,
   // 운영자 개인 MCP도 `--ignore-user-config` 로 여전히 빠진다.
   //
@@ -209,7 +211,7 @@ const CODEX_PRESET: HarnessPreset = {
   permission: {
     auto: [
       '-c', 'sandbox_mode="workspace-write"',
-      '-c', 'mcp_servers.murmur.approval_mode="never"',
+      '-c', 'mcp_servers.murmur.default_tools_approval_mode="approve"',
     ],
     readonly: ['-c', 'sandbox_mode="read-only"'],
   },
