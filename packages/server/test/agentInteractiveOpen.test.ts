@@ -67,6 +67,9 @@ function session(sessionId: string, mode: 'mention' | 'interactive'): AgentSessi
   return {
     sessionId, agentAccountId: agentId, channelId: 'chan-1', threadRootId: 'root-1',
     harness: 'claude-code', startedAt: '2026-09-04T00:00:00.000Z', mode,
+    // #369: 러너는 `mode` 가 아니라 그 턴의 계획(stdinFile)에서 이 값을 읽는다. 이 파일은
+    // open 협상만 보므로 두 모드 모두 같은 값으로 두고, 둘의 차이는 agentInput 쪽이 잰다.
+    acceptsInput: mode === 'interactive',
   };
 }
 
