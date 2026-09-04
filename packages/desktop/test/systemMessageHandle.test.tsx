@@ -3,12 +3,17 @@
 //
 // 서버 쪽 회귀선은 `server/test/memberSystemMessage.test.ts` 에 있다(본문에 이름이 없다,
 // meta 에 대상이 실린다, 멘션 알림이 없다, 감사 detail 이 새지 않는다).
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
-import { SYSTEM_ACCOUNT_PLACEHOLDER } from '@murmur/shared';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { SYSTEM_ACCOUNT_PLACEHOLDER, type ChannelPrefRow, type SavedMessageRow } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { Controller, setController } from '../src/state/controller';
+import { usePrefsStore } from '../src/state/prefsStore';
+import { DEFAULT_PREFS } from '../src/lib/prefs';
 import { MessageItem } from '../src/components/MessageItem';
-import { acc, msg } from './helpers/fakeApi';
+import { ChannelPane } from '../src/components/ChannelPane';
+import { SavedMessages } from '../src/components/SavedMessages';
+import { acc, accountsResult, chan, fakeApi, fakeWsFactory, msg, pin, scheduledApiStub } from './helpers/fakeApi';
 
 const TARGET_ID = '33333333-3333-4333-8333-333333333333';
 const ADDED = `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에 추가되었습니다.`;
@@ -110,5 +115,92 @@ describe('#329 시스템 메시지가 현재 handle 로 그려진다', () => {
     // `MessageBody` 가 멘션 조각에만 붙이는 표식이다(`data-testid="mention-<handle>"`).
     expect(container.querySelector('[data-testid="mention-targetuser"]')).toBeNull();
     expect(screen.queryByText(/@targetuser/)).toBeNull();
+  });
+
+  /**
+   * 배선. 메시지 행만 고치면 본문을 보여 주는 **다른 자리**에 자리표시자가 그대로 남는다 —
+   * 이 브랜치의 초판이 실제로 그랬다(담아 둔 목록·고정 미리보기·OS 알림 셋). 그래서
+   * 진짜 컴포넌트를 띄워 본다. `displayBody` 를 부르는 단위 테스트로는 이 결함이 안 보인다.
+   */
+  it('8. 고정 미리보기도 현재 handle 로 그린다 — 자리표시자가 목록에 남지 않는다', () => {
+    setController({
+      send: vi.fn(async () => undefined),
+      openThread: vi.fn(async () => undefined),
+      openMessage: vi.fn(async () => undefined),
+      editMessage: vi.fn(async () => undefined),
+      deleteMessage: vi.fn(async () => undefined),
+      loadOlder: vi.fn(async () => undefined),
+      pinMessage: vi.fn(async () => undefined),
+      unpinMessage: vi.fn(async () => undefined),
+      api: scheduledApiStub(),
+    } as unknown as Controller);
+
+    const system = msg('sys1', 'c1', 1, ADDED, 'u1', { kind: 'system', meta: { accountId: TARGET_ID } });
+    useAppStore.getState().set({
+      channels: [chan('c1', 'general')],
+      activeChannelId: 'c1',
+      messages: { c1: [system] },
+      pins: { c1: [pin('sys1', 'c1', 'u1', system)] },
+    });
+
+    render(<ChannelPane />);
+    fireEvent.click(screen.getByRole('button', { name: /1 pinned/ }));
+
+    expect(screen.getByRole('button', { name: /targetuser님이 채널에 추가되었습니다/ })).toBeTruthy();
+    expect(screen.queryByText(new RegExp(SYSTEM_ACCOUNT_PLACEHOLDER.replace(/[{}]/g, '\\$&')))).toBeNull();
+  });
+
+  it('9. 담아 둔 목록도 현재 handle 로 그린다', async () => {
+    const system = msg('sys1', 'c1', 1, ADDED, 'u1', { kind: 'system', meta: { accountId: TARGET_ID } });
+    const saved: SavedMessageRow = {
+      messageId: 'sys1', channelId: 'c1', state: 'open',
+      createdAt: '2026-09-01T10:00:00.000Z', doneAt: null, deleted: false, message: system,
+    };
+    setController({
+      loadSavedMessages: vi.fn(async () => [saved]),
+      loadSavedSummary: vi.fn(async () => ({ openCount: 1, messageIds: ['sys1'] })),
+      updateSavedMessageState: vi.fn(async () => undefined),
+      openMessage: vi.fn(async () => undefined),
+      api: scheduledApiStub(),
+    } as unknown as Controller);
+    useAppStore.getState().set({ channels: [chan('c1', 'general')] });
+
+    render(<SavedMessages open onClose={() => undefined} />);
+
+    expect(await screen.findByText('targetuser님이 채널에 추가되었습니다.')).toBeTruthy();
+    expect(screen.queryByText(new RegExp(SYSTEM_ACCOUNT_PLACEHOLDER.replace(/[{}]/g, '\\$&')))).toBeNull();
+  });
+
+  it("10. OS 알림 본문도 현재 handle 로 그린다 ('all' 채널의 시스템 메시지)", async () => {
+    // 알림 수준이 'all' 인 채널이면 평범한 새 메시지가 그대로 알림이 된다 — 시스템 메시지도
+    // 그 경로를 탄다(`announceNewMessage`). 자리표시자가 그대로 실리면 OS 알림 창에만
+    // `{account}` 가 뜬다.
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    usePrefsStore.setState({ notifications: { ...DEFAULT_PREFS.notifications } });
+    const sent: { title: string; body: string }[] = [];
+    const api = fakeApi({
+      channels: vi.fn(async () => [chan('c1', 'general')]),
+      accounts: vi.fn(async () => accountsResult([acc('u1', 'admin'), acc(TARGET_ID, 'targetuser')])),
+      channelPrefs: vi.fn(async (): Promise<ChannelPrefRow[]> => [{
+        accountId: TARGET_ID, channelId: 'c1', mutedAt: null, starredAt: null,
+        notifyLevel: 'all', section: null, sortOrder: null,
+      }]),
+    });
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(api, makeWs, {
+      notify: vi.fn(async (n: { title: string; body: string }) => { sent.push(n); }),
+    });
+    await c.start();
+    // 작성자는 admin 이고 나는 다른 사람이어야 알림이 나간다 — 내 발화는 알리지 않는다.
+    useAppStore.getState().set({ me: acc(TARGET_ID, 'targetuser') });
+
+    callbacks.current!.onEvent({
+      type: 'message.created',
+      message: msg('sys1', 'c1', 1, ADDED, 'u1', { kind: 'system', meta: { accountId: TARGET_ID } }),
+      audience: 'all',
+    });
+
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.body).toBe('targetuser님이 채널에 추가되었습니다.');
   });
 });

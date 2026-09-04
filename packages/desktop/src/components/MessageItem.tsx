@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { fillSystemAccount, messagePermalink, type MessageRow } from '@murmur/shared';
+import { messagePermalink, type MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageBody } from './MessageBody';
@@ -8,7 +8,7 @@ import { Identity, StatusMark } from './Identity';
 import { TerminalChip } from './TerminalChip';
 import { Attachments } from './Attachments';
 import { Menu } from './Menu';
-import { bodyAsHandles } from '../lib/mention';
+import { bodyAsHandles, displayBody } from '../lib/mention';
 import type { SectionId } from './settings/sections';
 
 export function MessageItem({ message, inThread = false, onOpenDirectory, onOpenSettings }: {
@@ -36,25 +36,16 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
 
   const isSystem = message.kind === 'system';
   /**
-   * 시스템 메시지가 말하는 대상 계정(#329). 본문에는 이름이 없고 자리표시자만 있다 —
-   * 여기서 `#271` 이 멘션을 그릴 때 보는 것과 **같은 스토어 맵**(`accounts`)으로 지금의
-   * handle 을 찾아 채운다. 그래서 이름을 바꾸면 과거의 입·퇴장 메시지도 새 이름이 된다.
+   * 그릴 본문(#329). 시스템 메시지는 본문에 이름이 없고 자리표시자만 있으므로,
+   * `displayBody` 가 `meta.accountId` 로 지금의 handle 을 찾아 채운다 — 본문을 보여 주는
+   * 네 자리가 **같은 함수**를 지난다(`lib/mention.ts` 주석 참고).
    *
    * **이름줄이 아니라 본문에 채운다.** 이름줄은 이 메시지를 **쓴 사람**의 자리이고, 바로
    * 옆의 아바타·배지·상태 표시(`Identity`·`StatusMark`·`TerminalChip`)가 전부 `author` 를
    * 그린다. 거기에 대상의 이름을 넣으면 admin 이 내보낸 메시지가 내보내진 사람의 말처럼
    * 보이고, 한 줄 안에서 이름과 아바타가 서로 다른 사람을 가리킨다.
-   *
-   * `meta.accountId` 가 없는 옛 메시지(`#322` 가 이미 만든 것)는 본문에 이름이 박혀 있고
-   * 자리표시자가 없다 — 치환할 것이 없으므로 본문이 그대로 나온다. 기존 메시지를 다시
-   * 쓰지 않는 것이 이 이슈의 결정이다.
    */
-  const systemAccountId = isSystem && typeof message.meta.accountId === 'string'
-    ? message.meta.accountId
-    : null;
-  const displayBody = systemAccountId
-    ? fillSystemAccount(message.body, accounts[systemAccountId]?.handle ?? null)
-    : message.body;
+  const shownBody = displayBody(message, accounts);
   const avcsType = typeof message.meta.avcsType === 'string' ? message.meta.avcsType : null;
   /**
    * 스킬 제안 알림에서 승인 화면으로 가는 진입점(#311 요구 5).
@@ -220,7 +211,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
 
         {draft === null ? (
           <>
-            {displayBody.trim() && <MessageBody body={displayBody} messageId={message.id} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
+            {shownBody.trim() && <MessageBody body={shownBody} messageId={message.id} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
             {skillSlug && onOpenSettings && (
               <button
                 className="mt-1 rounded-lg border border-border px-2 py-1 text-[11px] font-medium
