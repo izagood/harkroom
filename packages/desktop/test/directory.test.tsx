@@ -69,6 +69,38 @@ describe('Directory (#226)', () => {
     expect(within(agents).getByText('@alice')).toBeTruthy();
   });
 
+  /**
+   * #365: 사람의 `badge` 가 아무것도 그리지 않게 되면서 **디렉터리 사람 행의 아바타도
+   * 사라졌다.** 그 사라짐을 여기서 못 박는다 — 회귀선이 없으면 아무도 모르는 변화가 된다.
+   *
+   * **이 자리를 `variant="avatar"` 로 바꾸면 안 된다.** 같은 한 호출이 에이전트에게는
+   * 소유자 표시(#181·#226)를 내는 자리라, avatar 로 바꾸면 소유자가 통째로 사라진다.
+   * 그래서 두 사실을 **한 테스트에서 함께** 본다: 한쪽만 단언하면 다른 쪽을 바꿔도 초록이다.
+   */
+  it('#365 사람 행에는 아바타가 없고, 같은 자리가 에이전트에게는 소유자를 낸다', async () => {
+    put(
+      // 사진을 **걸어 둔** 사람이다 — 사진이 없어서 안 보이는 것과 자리가 없어서 안 보이는
+      // 것을 가른다. 사진이 있는데도 상자가 없어야 이 자리가 정말 비었다는 뜻이다.
+      acc('u1', 'alice', 'human', false, { avatarAttachmentId: 'att-1' }),
+      { ...agentWithSecrets('a1', 'scribe'), ownerAccountId: 'u1' },
+    );
+    open();
+
+    const people = await waitFor(() => screen.getByRole('region', { name: 'People' }));
+    const row = within(people).getByTestId('directory-row-u1');
+    expect(row.querySelector('[data-testid="identity-avatar"]')).toBeNull();
+    // 이니셜 폴백도 없다. displayName·handle 은 'alice' 라 대문자 한 글자와 섞이지 않는다.
+    expect(within(row).queryByText('A')).toBeNull();
+    // 정보는 사라지지 않았다 — 핸들·표시 이름·kind 배지가 그대로 남아 행을 설명한다.
+    expect(within(row).getByText('@alice')).toBeTruthy();
+    expect(within(row).getByTestId('directory-kind-u1')).toBeTruthy();
+
+    // 같은 `variant="badge"` 호출이 에이전트 행에서는 소유자를 낸다. 이것이 이 자리를
+    // avatar 로 바꾸지 않은 이유다.
+    const agents = screen.getByRole('region', { name: 'Agents' });
+    expect(within(agents).getByText('@alice')).toBeTruthy();
+  });
+
   // 섹션이 갈려 있어야 "이 handle 이 사람인가 에이전트인가"를 화면이 답한다. 한 목록에
   // 섞어 두면 이름만 보고는 구분할 수 없다.
   it('사람과 에이전트가 구분돼 보인다', async () => {
