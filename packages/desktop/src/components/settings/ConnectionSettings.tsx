@@ -65,14 +65,20 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
         </div>
         {/* 저장소 경로만 설정에서 받는다 — **명령 자체는 받지 않는다.** 사람이 편집할 수
             있는 명령은 곧 Tauri shell 스코프를 와일드카드로 열어야 한다는 뜻이고, 그것이
-            임의 명령 실행 표면이 된다(runnerLauncher.ts::RUNNER_SCOPE_NAME 주석). */}
+            임의 명령 실행 표면이 된다(runnerLauncher.ts::RUNNER_SCOPE_NAME 주석).
+
+            #425: 비워 두면 더 이상 "안 띄운다"가 아니다 — 앱이 murmur 전용 전역 경로
+            (`~/.murmur/runner`)에 스스로 clone 해 그것으로 띄운다. 이 칸은 그 기본값을
+            자기 체크아웃으로 덮어쓰고 싶은 사람(주로 개발자)을 위한 것이다. */}
         <div className="px-4 py-3">
           <label className="block font-medium text-fg" htmlFor="runner-repo-path">
             murmur repository path
           </label>
           <span className="mt-0.5 block text-fg-subtle">
             Runners start with <code className="font-mono">pnpm --filter @murmur/agent start</code>
-            {' '}in this directory. Leave empty to not start any.
+            {' '}in this directory. Leave empty to use a murmur checkout the app manages for you
+            {' '}(<code className="font-mono">~/.murmur/runner</code>) — set this only to point
+            runners at your own checkout instead.
           </span>
           <input
             id="runner-repo-path"
