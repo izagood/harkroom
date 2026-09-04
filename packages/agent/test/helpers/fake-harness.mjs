@@ -45,6 +45,31 @@ if (mode === 'hang-ignore-sigterm') {
 // 받은 바이트를 **hex 로** 되뱉는다 — 문자열로 찍으면 제어 바이트(ESC, Ctrl-C)가 화면
 // 제어로 해석돼 ring 에서 사라지고, 그러면 "닿았다"를 바이트로 단언할 수 없다.
 // 줄이 끝나면(개행 어느 쪽이든 — PTY 의 라인 디서플린이 \r 을 \n 으로 바꾼다) 끝낸다.
+// #337: 인터랙티브 턴 흉내 — stdin 을 **계속** 읽어 에코하고, 스스로 끝나지 않는다
+// (사람이 앉아 있는 하네스처럼). 끝은 시그널(고아 회수)이거나 "exit\r" 입력뿐이다.
+// 'stdin-live' 와 다른 점: 그쪽은 한 줄 받고 종료(입력 왕복 1회 검증용)이고, 이쪽은
+// 무기한 턴(timeoutMs 0)·회수 경로 검증용이다.
+if (mode === 'echo-stdin-live') {
+  process.stdout.write('interactive-ready\n');
+  let buf = '';
+  process.stdin.on('data', (d) => {
+    buf += String(d);
+    process.stdout.write(`echo:${String(d)}`);
+    if (buf.includes('exit')) process.exit(0);
+  });
+  setInterval(() => {}, 1_000);
+}
+// #337: node-pty resize() 가 SIGWINCH 로 닿는지 확인한다(스파이크 §3을 회귀선으로 고정).
+// 준비 신호를 먼저 찍고, SIGWINCH 를 받으면 그 시점의 크기를 찍고 끝낸다.
+if (mode === 'report-winch') {
+  process.stdout.write(`ready ${process.stdout.columns}x${process.stdout.rows}\n`);
+  process.on('SIGWINCH', () => {
+    process.stdout.write(`winch ${process.stdout.columns}x${process.stdout.rows}\n`);
+    process.exit(0);
+  });
+  // 신호가 영영 안 오면 매달리지 않는다 — 이 종료 코드가 원인을 말해 준다.
+  setTimeout(() => { process.stdout.write('no-winch\n'); process.exit(12); }, 8_000);
+}
 if (mode === 'stdin-live') {
   const chunks = [];
   process.stdin.on('data', (d) => {

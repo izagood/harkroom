@@ -115,6 +115,18 @@ export interface PtyWriter {
   write(chunk: Buffer): void;
 }
 
+/**
+ * PTY 조작 손잡이(#337) — `PtyWriter`(입력)에 크기와 종료를 더한 것. 인터랙티브 턴이
+ * 필요로 한다: 고아 회수(viewer 0 → 유예 → SIGTERM)가 `kill` 을, attach 한 창의 크기
+ * 반영이 `resize` 를 쓴다. 셋 다 **exit 후에는 no-op** — 이미 끝난 PTY 를 조작하는 것은
+ * 사람이 마지막 화면에서 한 번 더 움직인 정상 상황이지 오류가 아니다.
+ */
+export interface PtyControls extends PtyWriter {
+  /** node-pty resize → 자식에 SIGWINCH 로 닿는다(스파이크 실측). 값은 호출자가 검증한다. */
+  resize(cols: number, rows: number): void;
+  kill(signal?: 'SIGTERM' | 'SIGKILL'): void;
+}
+
 export interface TurnResult {
   exitCode: number;
   timedOut: boolean;
@@ -124,7 +136,16 @@ export interface TurnResult {
 
 export interface RunPtyTurnOptions {
   cwd: string;
+  /**
+   * 턴 시간 한도. **`0` 은 무기한이다**(#337 — 인터랙티브 전용): 사람이 앉아 있는 턴에는
+   * 시계가 없고, 그 턴의 끝은 exit(사람이 하네스를 닫음) 또는 고아 회수(viewer 0 → 유예 →
+   * SIGTERM, interactiveTurn.ts)다. 0 을 그냥 setTimeout 에 넣으면 타이머가 **즉시** 발화해
+   * 인터랙티브 턴이 뜨자마자 SIGTERM 을 맞는다 — 그래서 0 이면 타이머 자체를 걸지 않는다.
+   */
   timeoutMs: number;
+  /** PTY 초기 크기. 생략하면 비대화형 기본 120x40(스펙 §5)이다. */
+  cols?: number;
+  rows?: number;
   /** Phase 2 가 onData 로 확장해 라이브 중계에 쓴다. 없어도 tail 계약에는 영향 없다. */
   ring?: RingBuffer;
   /**
@@ -155,7 +176,7 @@ export interface RunPtyTurnOptions {
    * 프리셋)은 이 함수에 들어오기 전에 이미 조립돼 있다 — 입력을 여는 것이 턴 모드를
    * 바꾸는 것이 아니라는 사실이 이 순서로 성립한다(스펙 §6, #141 회귀선의 새 형태).
    */
-  onSpawn?: (writer: PtyWriter) => void;
+  onSpawn?: (controls: PtyControls) => void;
   /**
    * SIGTERM → SIGKILL 유예(ms). 생략하면 프로덕션 기본값(SIGKILL_GRACE_MS, 5초)을 그대로
    * 쓴다 — 테스트가 SIGKILL 승격 경로를 확인하려고 5초를 통째로 기다리지 않게 여는 구멍이지,
@@ -182,8 +203,8 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
     const proc = pty.spawn(command, args, {
       cwd: opts.cwd,
       env: plan.env,
-      cols: 120,
-      rows: 40,
+      cols: opts.cols ?? 120,
+      rows: opts.rows ?? 40,
     });
 
     // exit 리스너를 spawn 직후, 다른 어떤 준비 작업보다도 먼저 건다 — 그 사이에 무언가 던지면
@@ -199,7 +220,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       // 정리·리스너 해제를 건너뛸 이유는 없다) — settled 가드로 정리 경로를 한 번만 태운다.
       if (settled) return;
       settled = true;
-      clearTimeout(timeoutTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       if (killTimer) clearTimeout(killTimer);
       dataListener.dispose();
       exitListener.dispose();
@@ -218,7 +239,19 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       write(chunk) {
         // 프로세스가 끝난 뒤의 쓰기는 EIO 로 던진다 — 사람이 마지막 화면에서 엔터를 한 번
         // 더 친 정상 상황이므로, 그것으로 러너를 죽이지 않는다(`PtyWriter` 주석).
+        if (settled) return;
         try { proc.write(chunk.toString('utf8')); } catch { /* 이미 끝난 PTY 는 조용히 버린다 */ }
+      },
+      resize(cols, rows) {
+        // 자식에 SIGWINCH 로 닿는다(스파이크 실측 — 계획 문서 "스파이크 결과" §3).
+        if (settled) return;
+        try { proc.resize(cols, rows); } catch { /* 끝난 PTY 의 크기는 의미가 없다 */ }
+      },
+      kill(signal) {
+        // 고아 회수(#337)의 손잡이다. exit 후 no-op — 회수 타이머와 자연 종료가 경합해도
+        // 이미 끝난 프로세스에 시그널을 또 쏘지 않는다.
+        if (settled) return;
+        try { proc.kill(signal ?? 'SIGTERM'); } catch { /* 이미 끝났으면 회수할 것도 없다 */ }
       },
     });
 
@@ -229,7 +262,10 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       opts.onData?.(buf);
     });
 
-    const timeoutTimer = setTimeout(() => {
+    // `timeoutMs: 0` 은 무기한이다(인터랙티브 턴, #337) — 타이머를 아예 걸지 않는다.
+    // 0 을 setTimeout 에 그대로 넣으면 즉시 발화해, 인터랙티브 턴이 뜨자마자 SIGTERM 을
+    // 맞는다(옵션 주석). 그 턴의 끝은 exit 또는 고아 회수(interactiveTurn.ts)다.
+    const timeoutTimer = opts.timeoutMs === 0 ? null : setTimeout(() => {
       timedOut = true;
       // 하네스가 모델 요청 중일 수 있다 — SIGKILL 을 먼저 쏘면 정리할 기회를 뺏는다.
       // SIGTERM 으로 먼저 부탁하고, grace 안에 안 죽으면 그때 확실히 끝낸다.

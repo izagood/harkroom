@@ -49,6 +49,12 @@ export interface RunnerConfig {
   stateDir: string;
   /** 에이전트 인스턴스 ID. 같은 에이전트를 여러 개 돌릴 때 구분한다 (#174). */
   agentInstance: string | undefined;
+  /**
+   * 인터랙티브 턴의 고아 유예(#337, 스펙 §5-2 결정 5): 프로세스가 안 끝났는데 viewer 가
+   * 0 이 된 뒤 이 시간이 지나면 SIGTERM 으로 회수한다. 패널 닫힘·소켓 단절·앱 강제종료가
+   * 전부 "viewer 소멸" 하나로 수렴하고, 세션은 디스크라 kill 로 잃는 것이 없다.
+   */
+  interactiveOrphanMs: number;
 }
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
@@ -69,5 +75,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
     turnTimeoutMs: Number(env.AGENT_TURN_TIMEOUT_MS ?? 30 * 60_000),
     stateDir: env.AGENT_STATE_DIR ?? join(homedir(), '.murmur-agent'),
     agentInstance: validateInstance(env.MURMUR_AGENT_INSTANCE),
+    // 60초 — 사람이 티켓을 받고 attach 하기까지, 또는 잠깐 끊긴 소켓이 재-attach 하기까지의
+    // 여유다. 더 짧으면 네트워크 순단이 곧 턴 종료가 되고, 더 길면 닫은 터미널이 그만큼 산다.
+    interactiveOrphanMs: Number(env.AGENT_INTERACTIVE_ORPHAN_MS ?? 60_000),
   };
 }
