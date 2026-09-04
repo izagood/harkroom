@@ -5,7 +5,7 @@ import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type Notifier } from '../lib/notify';
 import { displayBody } from '../lib/mention';
-import { RunnerLauncher, tauriLoginPathReader, tauriSecretStore, tauriSpawner, type LoginPathReader, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
+import { RunnerLauncher, tauriLoginPathReader, tauriRunnerProvisioner, tauriSecretStore, tauriSpawner, type LoginPathReader, type RunnerRepoProvisioner, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
 import type { AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
@@ -48,6 +48,13 @@ export class Controller {
     /** 로그인 셸 `PATH` 조회(#305). 테스트가 조회 실패를 만들 수 있게 주입한다. */
     loginPath: LoginPathReader = tauriLoginPathReader,
     /**
+     * murmur 전용 전역 체크아웃 마련(#425). **기본값을 주지 않는다** — 이 클래스를 세우는
+     * 100여 개의 기존 테스트는 이 자리를 넘기지 않고, 여기 `tauriRunnerProvisioner` 를
+     * 기본값으로 두면 그 테스트 전부가 (vitest 환경에서 `invoke` 가 없어 실패하는) 이
+     * 표면을 조용히 새로 타게 된다. 실제 앱은 `startCommunitySession` 이 명시적으로 넘긴다.
+     */
+    provisioner?: RunnerRepoProvisioner,
+    /**
      * 이 컨트롤러가 쓰는 커뮤니티의 스토어(#166). 예전에는 모듈 최상위 싱글턴을 직접
      * 읽었다 — 그러면 보고 있지 않은 커뮤니티의 이벤트가 **활성 커뮤니티의 스토어**로
      * 들어가, A 의 메시지가 B 의 채널에 조용히 붙는다. 인스턴스를 들고 있으면 그 사고가
@@ -69,6 +76,8 @@ export class Controller {
       secrets,
       spawner,
       loginPath,
+      undefined, // now — 재발급 라벨의 시각. 기본값(Date.now)을 그대로 쓴다.
+      provisioner,
     );
     this.runnerLauncher.setOnStateChange((states) => {
       this.store.getState().set({
@@ -1635,6 +1644,7 @@ export async function startCommunitySession(opts: {
     undefined,
     undefined,
     undefined,
+    tauriRunnerProvisioner, // #425: 실제 앱만 전역 체크아웃을 스스로 마련한다.
     entry.store,
   );
   useCommunityRegistry.getState().attachController(entry.id, controller);
