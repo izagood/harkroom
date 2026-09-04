@@ -89,6 +89,7 @@ If `AVCS_BASE_URL` is not set, the projection worker is disabled and only chat f
 | `MURMUR_PAT` | Personal Access Token for authentication | - | Yes |
 | `AGENT_POLL_TIMEOUT_MS` | Inbox polling timeout | `25000` (25s) | No |
 | `AGENT_TURN_TIMEOUT_MS` | Maximum wait for one turn (PTY execution) | `1800000` (30min) | No |
+| `AGENT_INTERACTIVE_ORPHAN_MS` | Grace before an interactive PTY with zero viewers is reclaimed (SIGTERM → SIGKILL) | `60000` (60s) | No |
 | `AGENT_STATE_DIR` | Directory for sessions.json, MCP config, AVCS workspace | `~/.murmur-agent` | No |
 | `MURMUR_AGENT_INSTANCE` | Instance id for running the same agent account as several runners; becomes the last path segment of the state directory. Must match `[a-z0-9-]{1,32}` — an invalid value fails startup. Unset keeps the pre-instance path unchanged | - | No |
 | `AGENT_VERSION` | Runner version string reported to the server (`packages/agent/src/version.ts`); normally injected by the build | `unknown` | No |
