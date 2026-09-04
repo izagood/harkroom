@@ -192,7 +192,7 @@ describe('#315-1 writer 뷰어가 친 바이트가 러너 PTY 로 간다', () =>
   it('혼자 붙은 뷰어는 writer 통지를 받고, 그 input 이 러너에게 바이트 그대로 도착한다', async () => {
     const sessionId = 'sess-input-1';
     const runner = await connectRunner(agentPat);
-    runner.send({ type: 'announce', sessions: [session(sessionId)] });
+    runner.send({ type: 'announce', sessions: [session(sessionId)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
     const viewer = await attach(ownerToken, sessionId);
@@ -217,7 +217,7 @@ describe('#315-4 writer 가 아닌 뷰어는 소켓에 직접 써도 러너에 �
   it('두 번째 attach 가 첫 번째를 강등시키고, 강등된 창의 input 은 버려진다', async () => {
     const sessionId = 'sess-input-nonwriter';
     const runner = await connectRunner(agentPat);
-    runner.send({ type: 'announce', sessions: [session(sessionId)] });
+    runner.send({ type: 'announce', sessions: [session(sessionId)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
     const first = await attach(ownerToken, sessionId);
@@ -247,7 +247,7 @@ describe('#315-4 writer 가 아닌 뷰어는 소켓에 직접 써도 러너에 �
   it('writer 가 떠나면 가장 최근에 붙은 남은 뷰어가 승계한다', async () => {
     const sessionId = 'sess-input-succession';
     const runner = await connectRunner(agentPat);
-    runner.send({ type: 'announce', sessions: [session(sessionId)] });
+    runner.send({ type: 'announce', sessions: [session(sessionId)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
     // 각 승격·강등을 **기다린 뒤** 다음으로 간다 — 안 기다리면 second 의 attach 시점
@@ -281,7 +281,7 @@ describe('#315-6 소유자도 admin 도 아니면 읽기도 못 한다 (#141 게
   it('제3자는 attach 인가에서 403 이고 티켓 자체를 못 받는다', async () => {
     const sessionId = 'sess-input-stranger';
     const runner = await connectRunner(agentPat);
-    runner.send({ type: 'announce', sessions: [session(sessionId)] });
+    runner.send({ type: 'announce', sessions: [session(sessionId)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
     const res = await app.inject({
@@ -302,7 +302,7 @@ describe('#315-7 감사에 누가·언제·몇 바이트만 남고 내용은 남
     const sessionId = 'sess-input-audit';
     const secret = 'sk-live-0123456789abcdef';
     const runner = await connectRunner(agentPat);
-    runner.send({ type: 'announce', sessions: [session(sessionId)] });
+    runner.send({ type: 'announce', sessions: [session(sessionId)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
     const viewer = await attach(ownerToken, sessionId);
@@ -334,7 +334,7 @@ describe('#315-8 연타가 감사 행을 폭증시키지 않는다', () => {
   it('한 attach 소켓의 입력 전부가 detach 행 하나의 합산으로 남는다', async () => {
     const sessionId = 'sess-input-burst';
     const runner = await connectRunner(agentPat);
-    runner.send({ type: 'announce', sessions: [session(sessionId)] });
+    runner.send({ type: 'announce', sessions: [session(sessionId)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
     const viewer = await attach(ownerToken, sessionId);
@@ -364,7 +364,7 @@ describe('#315-8 연타가 감사 행을 폭증시키지 않는다', () => {
   it('아무것도 안 친 뷰어의 detach 행은 inputBytes 0 이다 — 관찰과 개입이 구분된다', async () => {
     const sessionId = 'sess-input-zero';
     const runner = await connectRunner(agentPat);
-    runner.send({ type: 'announce', sessions: [session(sessionId)] });
+    runner.send({ type: 'announce', sessions: [session(sessionId)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
     const viewer = await attach(ownerToken, sessionId);
@@ -393,6 +393,7 @@ describe('#315-9 소유자가 admin 이어도 자기 에이전트에는 칠 수 
     runner.send({
       type: 'announce',
       sessions: [{ ...session(sessionId), agentAccountId: adminOwnedAgentId }],
+      caps: ['input', 'interactive'],
     });
     await waitForAsync(async () => {
       const res = await app.inject({ method: 'GET', url: '/agent-sessions', headers: auth(adminToken) });
@@ -407,6 +408,36 @@ describe('#315-9 소유자가 admin 이어도 자기 에이전트에는 칠 수 
     expect(inputBytes(runner)[0]!.equals(TYPED)).toBe(true);
 
     viewer.close();
+    await runner.close();
+  });
+});
+
+describe('#346 caps 없는 구 러너에는 입력이 조용히 사라지지 않는다', () => {
+  it('caps 를 선언하지 않은 러너의 세션에서는 writer:false 만 오고, 그래도 친 input 은 포워딩되지 않는다', async () => {
+    const sessionId = 'sess-input-nocaps';
+    const runner = await connectRunner(agentPat);
+    // 구 러너 흉내 — caps 필드 자체가 없다. 이 러너는 input 프레임을 받아도 버린다.
+    runner.send({ type: 'announce', sessions: [session(sessionId)] });
+    await waitForSession(sessionId);
+
+    const viewer = await attach(ownerToken, sessionId);
+    // 차례를 주는 대신 읽기 전용임을 바로 알린다 — 차례를 주면 사람은 쳤다고 믿는데
+    // 러너가 조용히 버린다: "안 되는 것"이 고장처럼 보이는 정확히 그 모양이다.
+    await waitFor(() => viewer.writer() === false);
+
+    // 화면 가드를 우회해 소켓에 직접 쓴다 — 서버가 포워딩하지 않아야 한다.
+    viewer.type(TYPED);
+    // "영영 안 온다"를 확인하려고 반대 방향 신호를 세울 수 없으므로(구 러너는 아무
+    // 능력도 없다) 여기서만 예외적으로 짧은 고정 대기를 쓴다.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(inputBytes(runner)).toEqual([]);
+
+    // 개입이 없었으므로 detach 감사의 합산도 0 이어야 한다 — 포워딩 안 된 바이트를
+    // 세면 감사가 "개입했다"고 거짓말한다.
+    viewer.close();
+    await waitForAsync(async () => (await detachedAuditRows(sessionId)).length > 0);
+    expect((await detachedAuditRows(sessionId))[0]!.detail.inputBytes).toBe(0);
+
     await runner.close();
   });
 });
