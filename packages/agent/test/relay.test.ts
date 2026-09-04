@@ -83,7 +83,7 @@ describe('#141 러너 릴레이 — 접속과 announce', () => {
     // "세션이 없다"를 구분할 수 없다.
     // caps 도 함께 간다(#346): 선언이 없으면 서버는 이 러너를 구버전(입력·인터랙티브
     // 불가)으로 읽고, 뷰어에 writer 차례를 주지 않는다 — 선언이 곧 기능의 존재 증명이다.
-    expect(d.sent[0]).toEqual({ type: 'announce', sessions: [], caps: ['input', 'interactive'] });
+    expect(d.sent[0]).toEqual({ type: 'announce', sessions: [], caps: ['input', 'interactive', 'handoff'] });
 
     const session = client.openSession({ ...SESSION });
     expect(d.sent[1]).toMatchObject({ type: 'session.started' });
@@ -388,8 +388,8 @@ describe('#337 interactive.open 왕복', () => {
     const client = createRelayClient({
       murmurUrl: 'http://x', pat: 'p', dial: d.dial,
       onInteractiveOpen: async (req) => {
-        expect(req).toEqual({ channelId: 'c1', threadRootId: 'm1', openedByHandle: 'jaebin', cols: 100, rows: 30 });
-        return { sessionId: 'sess-i', created: true };
+        expect(req).toEqual({ channelId: 'c1', threadRootId: 'm1', openedByHandle: 'jaebin', handoff: false, cols: 100, rows: 30 });
+        return { sessionId: 'sess-i', created: true, waiting: false };
       },
     });
     client.start();

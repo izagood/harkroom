@@ -223,14 +223,17 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
             )}
             <Attachments attachments={message.attachments} />
             <Reactions message={message} />
-            {/* #254: 답글 컨트롤을 **본문 열**에 둔다 — 리액션 칩 바로 뒤, 왼쪽 정렬.
-                우상단 열에는 툴바만 남으므로 `right-full`("내 우측 = 답글 컨트롤의 좌측")은
-                가리킬 대상이 없어져 뜻을 잃는다. 그래서 툴바는 행 기준 `right-2 top-1` 로
-                앵커한다. 답글 컨트롤과 툴바가 **다른 컨테이너**에 있어 구조적으로 겹칠 수
-                없으므로, #143 이 풀던 "호버 툴바가 답글 pill 을 덮어 스레드 진입이 막힌다"는
-                더 이상 발생할 수 없다 — 앵커를 행으로 되돌려도 마찬가지다. 이 사실을 적어
-                두는 이유는, 답글 컨트롤을 다시 오른쪽 열로 올리는 순간 #143 이 그대로
-                되살아나기 때문이다. */}
+            {/* #254: 답글이 **있을 때**의 상시 pill 은 **본문 열**에 둔다 — 리액션 칩 바로 뒤,
+                왼쪽 정렬. 우상단 열에는 툴바만 남으므로 `right-full`("내 우측 = 답글 컨트롤의
+                좌측")은 가리킬 대상이 없어져 뜻을 잃는다. 그래서 툴바는 행 기준
+                `right-2 top-1` 로 앵커한다. 이 pill 과 툴바가 **다른 컨테이너**에 있어
+                구조적으로 겹칠 수 없으므로, #143 이 풀던 "호버 툴바가 답글 pill 을 덮어
+                스레드 진입이 막힌다"는 더 이상 발생할 수 없다 — 앵커를 행으로 되돌려도
+                마찬가지다. 이 사실을 적어 두는 이유는, **이 pill 을** 다시 오른쪽 열(툴바)로
+                올리는 순간 #143 이 그대로 되살아나기 때문이다.
+                (#396: 답글이 **없을 때**의 진입점은 애초에 호버에서만 보이는 툴바 아이콘이라
+                조건이 툴바와 같다 — 같은 조건끼리는 서로 덮을 대상이 없으므로 이 경고는
+                적용되지 않는다. pill 은 여전히 절대 툴바로 올리지 않는다.) */}
             {!inThread && message.replyCount !== null && (
               <button
                 // 답글이 달린 메시지는 호버 없이도 그 사실이 보여야 한다(#161). 답글이 없을
@@ -269,14 +272,10 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 </span>
               </button>
             )}
-            {!inThread && message.replyCount === null && (
-              <button
-                className={`mt-1 self-start rounded border px-1.5 text-[11px] border-border text-fg-muted ${hoverOnly}`}
-                onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
-              >
-                Reply in thread
-              </button>
-            )}
+            {/* #396: 답글이 없을 때는 본문 아래에 버튼을 두지 않는다 — 답글이 달린 뒤의
+                pill(위 블록)과 같은 자리·같은 모양이라 "아직 아무 일도 없는 메시지"가
+                "뭔가 달린 메시지"처럼 보였다. 진입점은 호버 툴바의 아이콘으로 옮겼다
+                (아래 우상단 열, message toolbar 안). */}
             {/* #231: alsoInChannel 메시지는 채널에도 보이므로 스레드에서 왔을 때가 아니라
                 채널에서 볼 때 이 버튼이 필요하다. "View in thread" 로 표시한다. */}
             {!inThread && message.alsoInChannel && message.threadRootId && (
@@ -317,6 +316,22 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
           <div role="group" aria-label="message toolbar" className={`absolute right-2 top-1 flex items-center gap-0.5 rounded border border-border bg-surface-raised px-1 py-0.5 shadow-sm ${hoverOnly}`}>
             <InlineReactionButtons message={message} />
             <ReactionPicker message={message} />
+            {/* #396: 답글이 아직 없는 메시지(replyCount === null)의 스레드 진입점.
+                답글이 달리면 본문 열의 pill(위쪽, #161)이 상시 노출로 이 역할을 대신하므로
+                그때는 여기 그리지 않는다 — 같은 진입을 두 곳에 두지 않는다. inThread 에서는
+                스레드 안에서 또 스레드를 열 수 없으므로 아예 그리지 않는다(바깥 조건이 막는다).
+                아이콘은 💬 를 쓰지 않는다 — 그건 에이전트 상태 신호 이모지라(#144,
+                STATUS_SIGNAL_EMOJI) 사람이 누르는 버튼에 쓰면 신호의 뜻이 무너진다. */}
+            {!inThread && message.replyCount === null && (
+              <button
+                className={iconBtn}
+                title="스레드에 답글 달기"
+                aria-label="스레드에 답글 달기"
+                onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
+              >
+                ↩
+              </button>
+            )}
             {confirmingDelete ? (
               // 삭제는 되돌릴 수 없으니 한 번 더 묻는다. 확인은 **메뉴 밖**에 둔다 — 메뉴 안에
               // 두면 항목을 누르는 순간 메뉴가 닫히면서 확인 단계가 사라진다.

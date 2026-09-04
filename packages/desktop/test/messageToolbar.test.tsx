@@ -46,15 +46,17 @@ describe('message toolbar', () => {
     expect(within(toolbar).getByRole('button', { name: /Add reaction|＋/ })).toBeTruthy();
   });
 
+  // #396: 답글이 없는 메시지의 스레드 진입점은 본문 아래 버튼이 아니라 호버 툴바의
+  // 아이콘이다 — 접근 가능한 이름은 aria-label(그리고 같은 문구의 title)로 남는다.
   it('shows thread trigger in toolbar on hover', () => {
     const c = fakeController();
     useAppStore.getState().set({ messages: { c1: withReplies(0) } });
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2')} />);
 
-    const message = screen.getByText('root').closest('.group') as HTMLElement;
-    fireEvent.mouseEnter(message);
+    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    fireEvent.mouseEnter(toolbar);
 
-    expect(within(message).getByRole('button', { name: 'Reply in thread' })).toBeTruthy();
+    expect(within(toolbar).getByRole('button', { name: '스레드에 답글 달기' })).toBeTruthy();
   });
 
   it('shows overflow menu trigger on hover', () => {
@@ -174,15 +176,51 @@ describe('reply count visibility', () => {
     expect(screen.getByRole('button', { name: '2 replies' })).toBeTruthy();
   });
 
-  // replyCount 가 null 이면(루트가 아니거나 답글 없는 루트) 답글 컨트롤이 안 나온다.
-  it('shows Reply in thread on hover when replyCount is null', () => {
+  // replyCount 가 null 이면(루트가 아니거나 답글 없는 루트) 본문 아래 pill 은 안 나오고,
+  // 대신 호버 툴바에 스레드 진입 아이콘이 뜬다(#396).
+  it('shows thread entry icon in toolbar on hover when replyCount is null', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: null })} />);
 
-    const message = screen.getByText('root').closest('.group')!;
-    fireEvent.mouseEnter(message);
+    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    fireEvent.mouseEnter(toolbar);
 
-    expect(screen.getByRole('button', { name: 'Reply in thread' })).toBeTruthy();
+    expect(within(toolbar).getByRole('button', { name: '스레드에 답글 달기' })).toBeTruthy();
+  });
+
+  // #396 회귀선: 답글이 없는 메시지는 본문 아래에 'Reply in thread' 테두리 버튼이 없다 —
+  // 답글이 달린 뒤의 pill 과 같은 자리·같은 모양으로 보이던 문제를 없앤 것이 이 이슈의 핵심이다.
+  it('does not show a below-body Reply in thread button when replyCount is null', () => {
+    const c = fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: null })} />);
+
+    expect(screen.queryByRole('button', { name: 'Reply in thread' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^\d+ repl(y|ies)/ })).toBeNull();
+  });
+
+  // #396 회귀선: 답글이 있는 메시지의 pill 은 손대지 않는다 — 툴바로 올라가지 않고
+  // 본문 아래에 그대로 상시 노출된다(#161 2단계).
+  it('keeps the below-body pill for messages with replies (unchanged, not moved to toolbar)', () => {
+    const c = fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 3 })} />);
+
+    const pillBtn = screen.getByRole('button', { name: /3 replies/ });
+    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    expect(toolbar.contains(pillBtn)).toBe(false);
+    expect(within(toolbar).queryByRole('button', { name: '스레드에 답글 달기' })).toBeNull();
+  });
+
+  // #396: inThread 에서는 스레드 안에서 또 스레드를 열 수 없으므로 pill 도, 툴바 아이콘도
+  // 둘 다 그려지지 않는다.
+  it('shows neither the pill nor the toolbar thread icon when inThread', () => {
+    const c = fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, '답글', 'u1', { replyCount: null })} inThread />);
+
+    expect(screen.queryByRole('button', { name: 'Reply in thread' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '스레드에 답글 달기' })).toBeNull();
+
+    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    expect(within(toolbar).queryByRole('button', { name: '스레드에 답글 달기' })).toBeNull();
   });
 });
 

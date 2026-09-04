@@ -31,7 +31,7 @@ export const RING_CAP_BYTES = 256 * 1024;
  * input 을 흘리거나 인터랙티브 open 을 기다리다 타임아웃 나는 일을 막는다 — 능력을
  * 선언하지 않으면 서버는 없는 것으로 읽는다(없는 것을 있다고 표시하지 않는다).
  */
-export const RUNNER_CAPS: readonly RunnerCap[] = ['input', 'interactive'];
+export const RUNNER_CAPS: readonly RunnerCap[] = ['input', 'interactive', 'handoff'];
 
 /** 소켓의 최소 표면. 프로덕션은 `ws`, 테스트는 가짜다. */
 export interface RelayTransport {
@@ -95,9 +95,14 @@ export type InteractiveOpenHandler = (req: {
   channelId: string;
   threadRootId: string;
   openedByHandle: string;
+  /**
+   * 이어받기 요청인가(#384). **필수다** — 프레임의 옵셔널 필드(구 서버는 모른다)를 여기서
+   * 한 번 정규화하고, 그 뒤로는 아무도 다시 판정하지 않는다.
+   */
+  handoff: boolean;
   cols?: number;
   rows?: number;
-}) => Promise<{ sessionId: string; created: boolean }>;
+}) => Promise<{ sessionId: string; created: boolean; waiting: boolean }>;
 
 /**
  * 열린 세션의 호출자 쪽 손잡이. 턴을 도는 코드(`mentionTurn.ts`)는 이것만 안다 —
@@ -177,6 +182,7 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
     channelId: string;
     threadRootId: string;
     openedByHandle: string;
+    handoff?: boolean;
     cols?: number;
     rows?: number;
   }): Promise<void> => {
@@ -194,9 +200,18 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         channelId: frame.channelId,
         threadRootId: frame.threadRootId,
         openedByHandle: frame.openedByHandle,
+        // 구 서버는 이 필드를 모른다 — 없으면 이어받기가 아니다(shared 의 프레임 주석).
+        handoff: frame.handoff === true,
         cols: frame.cols,
         rows: frame.rows,
       });
+      if (opened.waiting) {
+        // 이어받기 예약(#384). "열렸다"로 답하지 않는다 — 사람은 아직 못 친다. 이 프레임이
+        // 서버를 지나 화면의 "턴이 끝나면 엽니다"가 된다: 기다림이 화면에 없으면
+        // "눌렀는데 아무 일이 없다"이고, 그것이 이 저장소가 오늘 반복해서 고친 결함이다.
+        send({ type: 'interactive.reserved', requestId: frame.requestId, sessionId: opened.sessionId });
+        return;
+      }
       send({ type: 'interactive.opened', requestId: frame.requestId, sessionId: opened.sessionId, created: opened.created });
     } catch (err) {
       send({

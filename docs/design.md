@@ -377,6 +377,7 @@ Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지
 | 이벤트 버스 | `events.ts` (`EventEmitter`) | **가장 근본이다.** A에 발화한 메시지가 B에 붙은 소켓에 영원히 도착하지 않는다 — 사용자가 서로 다른 세상을 본다 |
 | presence 카운터 | `ws/wsPlugin.ts` `connections` | 각 인스턴스가 자기 소켓만 안다. `presence.snapshot`이 부분 진실이 된다 |
 | WS 티켓 | `ws/tickets.ts` `live` | A가 발급한 티켓으로 B에 연결하면 `4401`이다. **연결 자체가 안 된다** |
+| 터미널 릴레이 허브 | `ws/relay.ts` (`runners`, `ownerOf`, `viewers`, `writerOf`), `ws/tickets.ts` attach 티켓 | A 인스턴스에 러너가 붙어 있는데 사람이 B에 attach 하면 그 세션이 아예 안 보인다. #354 가 이 항목을 포함하지만 의도적으로 미뤄져 있다 — 측정한 적 없는 Scaling에서 얻는 것이 rolling 재시작인데 소켓은 여전히 끊기고, presence·타이핑만으로도 현재 수준의 근사가 가능하기 때문이다. 다중 인스턴스 처리 방식은 아직 정하지 않았으며, sticky 라우팅이 가장 단순한 후보다(세션 바이트는 근사가 불가능하다). |
 | 타이핑 상태 | `ws/typing.ts` `byChannel` | presence와 같다 — 인스턴스별로 다른 사람이 입력 중으로 보인다 |
 
 **B. 깨지지는 않지만 조용히 약해지는 것**

@@ -18,6 +18,23 @@ describe('Controller', () => {
     expect(useAppStore.getState().connected).toBe(true);
   });
 
+  it('stop 된 비동기 start 는 늦게 끝나도 WS 를 되살리지 않는다', async () => {
+    let releaseMe!: (value: ReturnType<typeof acc>) => void;
+    const api = fakeApi({
+      me: vi.fn(() => new Promise<ReturnType<typeof acc>>((resolve) => { releaseMe = resolve; })),
+    });
+    const ws = fakeWsFactory();
+    const makeWs = vi.fn(ws.makeWs);
+    const c = new Controller(api, makeWs);
+
+    const starting = c.start();
+    c.stop();
+    releaseMe(acc('u1', 'admin'));
+    await starting;
+
+    expect(makeWs).not.toHaveBeenCalled();
+  });
+
   it('openChannel fetches since maxSeq and marks channel inbox read', async () => {
     const api = fakeApi({
       messages: vi.fn(async () => ({ messages: [msg('m1', 'c1', 1, 'a'), msg('m2', 'c1', 2, 'b')], hasMore: false })),
