@@ -23,6 +23,14 @@
 - 구/신 버전 조합 4방향(러너×서버×데스크탑)이 전부 안전해야 한다 (spec §5-2 결정 2)
 - Task 는 각각 독립 머지 가능해야 한다. Task 2~6 은 "보내는 쪽이 없는" 죽은 코드 상태로 머지되고, Task 7 이 처음으로 경로를 관통하며, Task 9 가 사람에게 연다
 
+**현황 (2026-09-04): PR #338 이 input 절반을 먼저 구현 중이다.** `RelayServerFrame.input` ·
+`AttachClientFrame.input` · PTY write 경로 · 데스크탑 onData — Task 2·3·4·5·9 의 input 부분이
+그 PR 로 닫힌다. 단 세 곳이 스펙 §5-2 와 다르게 착지했고 **스펙이 우선이다**(운영자 확정,
+PR #338 코멘트 참조): ① writer 규칙(스펙: 마지막 attach 가 writer + `writer` 통지 / PR:
+소유자만·티켓 `canInput`) ② 감사(스펙: detach 시 `inputBytes` 합산 1회 / PR: `agent.input`
+60초 창) ③ `caps` announce 부재. 이 셋의 조정이 Task 2·5 의 남은 일이 되고, resize 는
+#335, 나머지 Task 는 그대로다. 각 Task 시작 전에 #338 의 머지 여부를 확인하라.
+
 ---
 
 ### Task 1: 실측 스파이크 (spec §13.6–8) — 코드보다 먼저
