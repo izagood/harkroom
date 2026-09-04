@@ -99,16 +99,13 @@ function extractFilenameUuid(filePath: string): string | null {
 /**
  * session_meta.payload 에서 돌려줄 세션 id 를 고른다.
  *
- * **여기가 함정이다.** payload 에는 `id` 와 `session_id` 가 둘 다 있고, 실측한 한 파일에서는
- * 둘이 같았다 — 아무 필드나 골라도 그 테스트는 통과한다. 그래서 57개 실제 rollout 파일
- * 전체를 훑어 확인했다(2026-09-01): `codex resume` 으로 이어진 세션은 이 둘이 어긋난다.
- * `session_id` 는 최초 조상 세션에 고정된 채 이후 모든 resume 파일에 그대로 반복되고,
- * `id` 만 rollout 파일마다 새로 발급된다. 그리고 파일명에 박힌 uuid 는 57개 전부에서
- * 예외 없이 `id` 와 일치했다 — 파일명은 codex 자신이 그 파일을 만들 때 지은 이름이므로
- * 가장 강한 교차검증이다.
+ * **여기가 함정이다.** payload 에는 `id` 와 `session_id` 가 둘 다 있다. 2026-09-01 당시
+ * rollout 사슬에서는 둘이 어긋나는 파일이 있었고 파일명 uuid 는 `id` 와 일치했다. 최신
+ * codex-cli 0.153.2 실측에서는 `exec resume` 이 같은 id·같은 rollout 파일에 이어 쓰지만,
+ * 과거 형식도 읽어야 하므로 파일명과 `id` 를 교차검증하는 규칙은 유지한다.
  *
- * 그래서 `id` 를 채택한다. `session_id` 를 썼다면, resume 사슬로 이어진 여러 rollout
- * 파일(서로 다른 세션들)이 전부 같은 값으로 뭉개져 엉뚱한(더 오래된) 세션을 이어받게 된다.
+ * 그래서 `id` 를 채택한다. 구버전 파일에서 `session_id` 를 쓰면 resume 사슬의 조상 값으로
+ * 되돌아갈 수 있다.
  *
  * 혹시 `id` 와 파일명이 서로 다른 값이면(관측된 적은 없다) 파일명 쪽을 신뢰한다 —
  * 파일명은 codex 프로세스가 그 순간 지은 이름이라 payload 내용보다 조작·손상 여지가 적다.
