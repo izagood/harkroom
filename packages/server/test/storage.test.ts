@@ -3,6 +3,7 @@ import { mkdtemp, rm, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
+import { createRequire } from 'node:module';
 import { createLocalStorage, StorageLimitError, AttachmentMissingError } from '../src/storage/local.js';
 
 let root: string;
@@ -59,6 +60,39 @@ describe('the size limit', () => {
 
     await storage.write(tooBig).catch(() => {});
 
+    const files = await readdir(root, { recursive: true, withFileTypes: true });
+    expect(files.filter((f) => f.isFile())).toHaveLength(0);
+  });
+
+  // 거절이 끝났다는 것은 파일 핸들도 끝났다는 뜻이어야 한다. pipeline 은 소스가 던지는
+  // 순간 reject 하므로, 그때 dest 의 open 이 아직 진행 중이면 rm 이 그것을 앞지르고
+  // 뒤늦게 끝난 open('w') 이 0 바이트 파일을 되살린다 — 아무도 지우지 않는 쓰레기다(#370).
+  // 남은 파일이 나타나기를 시간으로 기다리는 대신, open 이 끝났다는 **관측 가능한 상태**를
+  // 단언한다. 지연은 경합을 결정적으로 만들기 위한 것이고 판정 근거는 시간이 아니다.
+  it('does not settle while the destination file is still being opened', async () => {
+    const nodeFs = createRequire(import.meta.url)('fs') as { open: (...args: unknown[]) => void };
+    const realOpen = nodeFs.open;
+    let opens = 0;
+    let openFinished = false;
+    nodeFs.open = (...args: unknown[]) => {
+      opens += 1;
+      const cb = args[args.length - 1] as (...r: unknown[]) => void;
+      const rest = args.slice(0, -1);
+      setTimeout(() => realOpen.apply(nodeFs, [...rest, (...r: unknown[]) => {
+        openFinished = true;
+        cb(...r);
+      }]), 25);
+    };
+
+    try {
+      await storage.write(stream([...Array(20)].map(() => 'x'.repeat(100)))).catch(() => {});
+    } finally {
+      nodeFs.open = realOpen;
+    }
+
+    // open 을 한 번도 거치지 않았다면 이 테스트는 아무것도 관측하지 못한 것이다.
+    expect(opens).toBeGreaterThan(0);
+    expect(openFinished).toBe(true);
     const files = await readdir(root, { recursive: true, withFileTypes: true });
     expect(files.filter((f) => f.isFile())).toHaveLength(0);
   });
