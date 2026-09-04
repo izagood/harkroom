@@ -27,6 +27,8 @@ export class Controller {
   private runnerLauncher: RunnerLauncher;
   /** 이번 `start()` 에서 러너 자동 기동을 이미 했는가(#250). */
   private runnerAutoStartDone = false;
+  /** 설정 구독 해지(#373). `start()` 에서 걸고 `stop()` 에서 뗀다. */
+  private prefsUnsub: (() => void) | null = null;
 
   constructor(
     public api: ApiClient,
@@ -115,6 +117,35 @@ export class Controller {
   }
 
   /**
+   * 저장소 경로가 **비어 있다가 채워지는 전이**에서 자동 기동을 다시 시도한다(#373).
+   *
+   * 전이만 보는 이유: 저장이 일어날 때마다 `startRunners()` 를 부르면 이미 도는 러너 옆에
+   * 두 번째를 띄우거나 정상 상태를 흔든다. 기동을 막은 조건은 `!repoPath` 하나이므로
+   * (`RunnerLauncher.startOne`), 그 조건이 뒤집히는 순간만이 재시도가 새 정보를 만드는
+   * 순간이다. '비어 있다'의 기준도 실행기와 같은 것(빈 문자열)을 쓴다 — 두 자리가 다른
+   * 기준을 쓰면 재시도가 안 도는 값이 생긴다.
+   *
+   * 타이머로 돌리지 않는 이유: 경로 미설정은 **사람이 채워야** 풀리는 실패다. 주기 재시도는
+   * 사람이 채우기 전에는 아무것도 낫게 하지 않으면서 실패를 조용하게 만든다(#340). 사람의
+   * 그 저장 행동이 곧 트리거다.
+   *
+   * `runnerAutoStartDone` 을 조건에 넣는 이유: 첫 기동은 presence 를 받은 뒤여야 한다
+   * (`presence.snapshot` 절 주석). presence 전에 경로가 채워졌다면 여기서 손대지 않고
+   * 그 절이 제 시점에 띄운다 — 그러지 않으면 중복 러너가 생긴다.
+   */
+  private watchRepoPathForRetry(): void {
+    this.prefsUnsub?.();
+    this.prefsUnsub = usePrefsStore.subscribe((next, prev) => {
+      if (prev.runnerRepoPath || !next.runnerRepoPath) return;
+      if (!this.runnerAutoStartDone) return;
+      // 경로가 채워진 순간 옛 사유는 거짓이 된다. 재시도가 다른 이유로 실패해도
+      // "설정되지 않았다"가 남지 않게 **먼저** 지운다.
+      this.runnerLauncher.clearRepoPathFailures();
+      this.swallow(this.startRunners());
+    });
+  }
+
+  /**
    * 알림 제목에 붙일 커뮤니티 꼬리표(#166 §6). 커뮤니티가 **하나뿐이면 빈 문자열**이다 —
    * 하나뿐인데 이름을 붙이면 오늘 보던 알림이 달라진다(이 이슈의 성공 기준은 사용자 눈에
    * 보이는 변화가 0 인 것이다). 둘 이상이면 어느 커뮤니티에서 온 것인지 드러내야 한다:
@@ -175,9 +206,12 @@ export class Controller {
     // 아직 빈 배열이라 이미 붙어 있는 러너 옆에 두 번째를 띄운다(handleEvent 의
     // `presence.snapshot` 절 참고). 이 플래그는 start() 마다 초기화된다.
     this.runnerAutoStartDone = false;
+    this.watchRepoPathForRetry();
   }
 
   stop(): void {
+    this.prefsUnsub?.();
+    this.prefsUnsub = null;
     this.runnerLauncher.dispose();
     this.ws?.close();
     this.ws = null;
@@ -291,6 +325,8 @@ export class Controller {
         // #250: 러너 자동 기동은 **여기서** 시작한다. presence 가 도착한 이 순간이
         // "누가 이미 붙어 있는가"를 처음 아는 시점이고, 그것을 모른 채 띄우면 중복 러너가
         // 생긴다. 재접속마다 다시 하지 않는다(플래그) — 재접속은 러너의 생사와 무관하다.
+        // 그 판단은 재접속에 대해서만 맞았다: **설정 변경**은 기동의 입력을 바꾼다.
+        // 그래서 경로가 비어 있다가 채워지는 전이는 `watchRepoPathForRetry` 가 본다(#373).
         if (!this.runnerAutoStartDone) {
           this.runnerAutoStartDone = true;
           this.swallow(this.startRunners());
