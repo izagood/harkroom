@@ -81,6 +81,23 @@ export function TerminalPanel() {
    * 자기 클로저를 여기 걸어 둔다. 열기 경로를 밖에 따로 만들면 소켓·sink 정리가 두 벌이 된다.
    */
   const openRef = useRef<(() => void) | null>(null);
+  /**
+   * [이어받기](#384)의 진행 상태. **'waiting' 이 화면에 나와야 한다** — 진행 중인 멘션 턴은
+   * 멈추지 않고 끝나기를 기다리므로(운영자 결정 A), 이 값이 화면에 없으면 사람에게는
+   * "눌렀는데 아무 일이 없다"가 된다. 그것이 이 저장소가 오늘 반복해서 고친 결함이다
+   * (#368 러너 사유, #369 attach 입력, #381 work.link — 전부 조용히 삼켜지는 것이었다).
+   */
+  const [handoff, setHandoff] = useState<'none' | 'requesting' | 'waiting'>('none');
+  /**
+   * 이어받기가 **거절된** 이유. 서버 문구를 그대로 든다 — codex 거절·구 러너·러너 오프라인이
+   * 여기로 온다. `phase='error'` 로 뭉치지 않는 이유: 그러면 보고 있던 멘션 턴의 화면이
+   * 사라진다. 거절은 이 스레드를 못 보게 된 사건이 아니다.
+   */
+  const [handoffError, setHandoffError] = useState<string | null>(null);
+  /** `onStatus` 콜백이 읽는 최신 이어받기 상태(writerRef 와 같은 이유 — 클로저가 얼어붙는다). */
+  const handoffRef = useRef<'none' | 'requesting' | 'waiting'>('none');
+  /** 멘션 턴이 끝나면 인터랙티브 세션으로 갈아탄다(#384). effect 가 자기 클로저를 걸어 둔다. */
+  const handoffRequestRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!target) return;
@@ -89,63 +106,84 @@ export function TerminalPanel() {
     let sink: TerminalSink | null = null;
     const api = getController().api;
 
-    /** 티켓 획득 → xterm 배선 → attach 소켓. attach 와 인터랙티브 열기가 이 하나로 수렴한다. */
+    /**
+     * xterm 배선 → attach 소켓. attach·[터미널 열기]·[이어받기] 가 이 하나로 수렴한다 —
+     * 갈라 두면 소켓·sink 정리가 여러 벌이 되고, 한 벌만 고치는 사고가 난다.
+     */
+    const attachTo = (ticket: string): void => {
+      // **다시** 붙는 경로가 생겼다(#384: 이어받기가 멘션 세션 → 인터랙티브 세션으로
+      // 갈아탄다) — 앞의 소켓과 화면을 먼저 놓는다. 남겨 두면 끝난 멘션 세션의 바이트가
+      // 계속 흘러들고, sink 가 둘이면 같은 host 에 xterm 이 두 번 붙어 화면이 겹친다.
+      attach?.close();
+      attach = null;
+      sink?.dispose();
+      sink = null;
+      const host = hostRef.current;
+      if (!host) { setPhase('error'); setError('터미널을 붙일 자리가 없다'); return; }
+      // 입력은 항상 배선하되 **writer 일 때만 흘린다.** 차례는 attach 뒤에도 오간다
+      // (다른 창이 붙으면 강등, 그 창이 닫히면 승계) — sink 를 그때마다 다시 만들면
+      // 화면이 통째로 리셋되므로, 배선은 한 번 하고 가드가 최신 차례(writerRef)를 읽는다.
+      // writer 가 아닐 때 친 것은 여기서 버려진다: xterm 은 로컬 에코가 없어 글자도
+      // 찍히지 않고, 왜 안 찍히는지는 패널이 배지로 적는다.
+      sink = getTerminalSinkFactory()(host, {
+        onInput: (data) => {
+          if (!writerRef.current) return;
+          attach?.sendInput(new TextEncoder().encode(data));
+        },
+        // 크기는 **입력과 다른 가드를 탄다**(#369). `#335`+`#346` 은 둘을 한 가드에 묶었고
+        // 그 근거는 "읽기 전용 창의 크기가 흘러가면 그 창은 더 이상 읽기 전용이 아니다"
+        // 였다 — 그 문장은 *다른 창이 치고 있을 때* 참이다. 관찰 전용 세션(#369)에는 칠
+        // 사람이 아예 없어 침범할 작업 환경이 없고, 폭은 stdin 과 무관하게 ioctl 로 자식에
+        // 그대로 닿는다. 그래서 여기만 `resizeRef` 를 읽는다.
+        onResize: (cols, rows) => {
+          if (!resizeRef.current) return;
+          attach?.sendResize(cols, rows);
+        },
+      });
+      // **차례를 받기 전에는 접어 둔다**(#369). sink 는 `onInput` 이 배선돼 있어 xterm 의
+      // stdin 이 켜진 채로 뜨는데, 서버의 첫 `writer` 프레임은 소켓이 붙은 **뒤에** 온다 —
+      // 그 사이 커서가 깜빡여 "칠 수 있다"고 말한다. 이 결함이 정확히 그 거짓말이다.
+      // 프레임이 영영 안 와도(구 서버) 읽기 전용으로 남는 규칙과도 같은 방향이다.
+      sink.setReadOnly?.(true);
+      setPhase('attached');
+      attach = connectAgentAttach(api.baseUrl, ticket, {
+        onOutput: (bytes) => sink?.write(bytes),
+        onStatus: (next) => {
+          setState(next);
+          // #384: 이어받기를 기다리는 중이었고 그 턴이 방금 끝났다 → 인터랙티브 세션으로
+          // 갈아탄다. 러너는 이미 예약대로 그 턴을 띄웠거나 띄우는 중이고, 이 요청이
+          // 그 세션의 티켓을 받아 온다. **끝났다는 사실은 이미 오는 프레임이 알려 준다** —
+          // 폴링을 새로 만들지 않는다.
+          if (next === 'ended' && handoffRef.current === 'waiting') handoffRequestRef.current?.();
+        },
+        onWriter: (turn) => {
+          writerRef.current = turn.writer;
+          resizeRef.current = turn.resize;
+          setWriter(turn.writer);
+          setWriterReason(turn.reason);
+          // 화면도 함께 접는다(#369): 가드가 바이트를 버리는 것만으로는 커서가 계속
+          // 깜빡여 "칠 수 있다"로 보인다. xterm 의 stdin 자체를 끄면 화면이 스스로
+          // 읽기 전용임을 말하고, **왜**는 아래 배지가 글로 적는다.
+          sink?.setReadOnly?.(!turn.writer);
+          // 폭 주인이 된 직후 자기 크기를 한 번 보고한다(스펙 §5 "attach 시 writer 의
+          // 크기로 resize"). 그 전의 fit 은 위 가드가 버렸으므로, 여기서 다시 재지 않으면
+          // PTY 가 이전 주인(또는 spawn 기본값)의 크기로 남는다. **`writer` 가 아니라
+          // `resize` 를 본다**(#369) — 관찰 전용 창도 폭의 주인이다.
+          if (turn.resize) sink?.refit?.();
+        },
+        // 재접속하지 않는다(agentTerminal.ts 머리 주석) — 끊긴 사실만 그린다.
+        onClosed: () => setState('runner-offline'),
+      });
+    };
+
+    /** 티켓 획득 → 배선. 실패는 서버가 쓴 문구를 그대로 올린다. */
     const begin = async (issueTicket: () => Promise<{ ticket: string }>): Promise<void> => {
       try {
         const { ticket } = await issueTicket();
         // 티켓을 받은 사이에 패널이 닫혔을 수 있다. 여기서 안 막으면 닫은 뒤에 소켓이
         // 열리고, 그 소켓은 아무도 닫지 않는다(`ws.ts` 의 같은 가드와 같은 이유다).
         if (disposed) return;
-
-        const host = hostRef.current;
-        if (!host) { setPhase('error'); setError('터미널을 붙일 자리가 없다'); return; }
-        // 입력은 항상 배선하되 **writer 일 때만 흘린다.** 차례는 attach 뒤에도 오간다
-        // (다른 창이 붙으면 강등, 그 창이 닫히면 승계) — sink 를 그때마다 다시 만들면
-        // 화면이 통째로 리셋되므로, 배선은 한 번 하고 가드가 최신 차례(writerRef)를 읽는다.
-        // writer 가 아닐 때 친 것은 여기서 버려진다: xterm 은 로컬 에코가 없어 글자도
-        // 찍히지 않고, 왜 안 찍히는지는 패널이 배지로 적는다.
-        sink = getTerminalSinkFactory()(host, {
-          onInput: (data) => {
-            if (!writerRef.current) return;
-            attach?.sendInput(new TextEncoder().encode(data));
-          },
-          // 크기는 **입력과 다른 가드를 탄다**(#369). `#335`+`#346` 은 둘을 한 가드에 묶었고
-          // 그 근거는 "읽기 전용 창의 크기가 흘러가면 그 창은 더 이상 읽기 전용이 아니다"
-          // 였다 — 그 문장은 *다른 창이 치고 있을 때* 참이다. 관찰 전용 세션(#369)에는 칠
-          // 사람이 아예 없어 침범할 작업 환경이 없고, 폭은 stdin 과 무관하게 ioctl 로 자식에
-          // 그대로 닿는다. 그래서 여기만 `resizeRef` 를 읽는다.
-          onResize: (cols, rows) => {
-            if (!resizeRef.current) return;
-            attach?.sendResize(cols, rows);
-          },
-        });
-        // **차례를 받기 전에는 접어 둔다**(#369). sink 는 `onInput` 이 배선돼 있어 xterm 의
-        // stdin 이 켜진 채로 뜨는데, 서버의 첫 `writer` 프레임은 소켓이 붙은 **뒤에** 온다 —
-        // 그 사이 커서가 깜빡여 "칠 수 있다"고 말한다. 이 결함이 정확히 그 거짓말이다.
-        // 프레임이 영영 안 와도(구 서버) 읽기 전용으로 남는 규칙과도 같은 방향이다.
-        sink.setReadOnly?.(true);
-        setPhase('attached');
-        attach = connectAgentAttach(api.baseUrl, ticket, {
-          onOutput: (bytes) => sink?.write(bytes),
-          onStatus: setState,
-          onWriter: (turn) => {
-            writerRef.current = turn.writer;
-            resizeRef.current = turn.resize;
-            setWriter(turn.writer);
-            setWriterReason(turn.reason);
-            // 화면도 함께 접는다(#369): 가드가 바이트를 버리는 것만으로는 커서가 계속
-            // 깜빡여 "칠 수 있다"로 보인다. xterm 의 stdin 자체를 끄면 화면이 스스로
-            // 읽기 전용임을 말하고, **왜**는 아래 배지가 글로 적는다.
-            sink?.setReadOnly?.(!turn.writer);
-            // 폭 주인이 된 직후 자기 크기를 한 번 보고한다(스펙 §5 "attach 시 writer 의
-            // 크기로 resize"). 그 전의 fit 은 위 가드가 버렸으므로, 여기서 다시 재지 않으면
-            // PTY 가 이전 주인(또는 spawn 기본값)의 크기로 남는다. **`writer` 가 아니라
-            // `resize` 를 본다**(#369) — 관찰 전용 창도 폭의 주인이다.
-            if (turn.resize) sink?.refit?.();
-          },
-          // 재접속하지 않는다(agentTerminal.ts 머리 주석) — 끊긴 사실만 그린다.
-          onClosed: () => setState('runner-offline'),
-        });
+        attachTo(ticket);
       } catch (err) {
         if (disposed) return;
         // 러너 오프라인(404)·구버전(409)·codex 거절(409)·타임아웃(504)의 서버 문구가
@@ -156,11 +194,53 @@ export function TerminalPanel() {
     };
 
     // [터미널 열기](#337) — 진행 중인 턴이 없어도 러너가 세션을 확보해 인터랙티브 PTY 를
-    // 띄우고, 그 티켓으로 위와 같은 attach 흐름에 합류한다.
+    // 띄우고, 그 티켓으로 위와 같은 attach 흐름에 합류한다. `handoff:false` — 기다릴 턴이
+    // 없는 자리이고, 이어받기와 요청을 갈라 보내야 러너가 무엇을 부탁받았는지 안다.
     openRef.current = () => {
       setPhase('loading');
-      void begin(() => api.openInteractiveSession(target.agentAccountId, target.channelId, target.threadRootId));
+      void begin(() => api.openInteractiveSession(target.agentAccountId, target.channelId, target.threadRootId, false));
     };
+
+    /**
+     * [이어받기](#384) — 진행 중인 멘션 턴을 이어받는다. 두 번 불린다:
+     * ① 사람이 누를 때 → 러너가 예약하고 `waiting` 으로 답한다(멘션 턴은 계속 돈다).
+     * ② 그 턴이 끝났을 때(`status: ended`) → 같은 요청이 이제 인터랙티브 세션의 티켓을
+     *    받아 온다. 그 세션은 `stdinFile: null` 이라 #369 의 판정만으로 writer 가 열린다.
+     *
+     * 러너 응답 한도(10초)보다 턴이 길므로(실측 26초쯤) 서버가 기다렸다 주는 길은 없다 —
+     * 기다림은 화면이 들고, 끝나는 시점은 이미 오는 프레임(`status`)이 알려 준다.
+     */
+    const requestHandoff = (): void => {
+      handoffRef.current = 'requesting';
+      setHandoff('requesting');
+      setHandoffError(null);
+      void (async () => {
+        try {
+          const res = await api.openInteractiveSession(
+            target.agentAccountId, target.channelId, target.threadRootId, true,
+          );
+          if (disposed) return;
+          if (res.waiting) {
+            handoffRef.current = 'waiting';
+            setHandoff('waiting');
+            return;
+          }
+          // 열렸다 — 누르는 사이에 턴이 끝났거나(26초짜리 턴에서 흔하다), 기다린 턴이
+          // 방금 끝난 뒤의 두 번째 호출이다. 그 세션으로 갈아탄다.
+          handoffRef.current = 'none';
+          setHandoff('none');
+          attachTo(res.ticket);
+        } catch (err) {
+          if (disposed) return;
+          // 거절 문구는 서버가 쓴 것을 그대로 올린다(codex 거절·구 러너·러너 오프라인).
+          // 화면이 원인을 지어내지 않는다 — #369 가 세운 규칙 그대로다.
+          handoffRef.current = 'none';
+          setHandoff('none');
+          setHandoffError(err instanceof Error ? err.message : String(err));
+        }
+      })();
+    };
+    handoffRequestRef.current = requestHandoff;
 
     void (async () => {
       try {
@@ -189,6 +269,10 @@ export function TerminalPanel() {
       // 흘러들고, 그것은 사람이 보지 않는 화면으로 비밀이 계속 오간다는 뜻이다.
       disposed = true;
       openRef.current = null;
+      // 대기 중이었다면 그 대기도 이 창의 것이다(#384) — 패널을 닫으면 사라진다. 러너의
+      // 예약은 남아 그 턴이 뜨는데, 아무도 안 붙으면 고아 회수가 걷어 간다(스펙 §5-2 결정 5).
+      handoffRequestRef.current = null;
+      handoffRef.current = 'none';
       attach?.close();
       sink?.dispose();
     };
@@ -251,14 +335,40 @@ export function TerminalPanel() {
         </p>
       )}
       {phase === 'attached' && writer === false && (
-        <p
-          className="px-3 py-2 text-xs text-fg-subtle"
-          role="note"
-          data-testid="writer-note"
-          data-writer-reason={writerReason ?? 'unknown'}
-        >
-          {writerDeniedText(writerReason)}
-        </p>
+        <div className="px-3 py-2 text-xs text-fg-subtle">
+          <p role="note" data-testid="writer-note" data-writer-reason={writerReason ?? 'unknown'}>
+            {writerDeniedText(writerReason)}
+          </p>
+          {/* #384: 관찰 전용의 **이유가 진행 중인 멘션 턴일 때만** 이어받을 것이 있다.
+              다른 창이 차례를 가져간 경우(other-writer)는 그 창을 닫으면 되고, 구 러너
+              (runner-outdated)는 러너를 올려야 한다 — 거기에 이 버튼을 두면 눌러도 아무
+              일이 없다. 버튼의 존재 조건이 곧 "이어받을 턴이 있다"여야 한다. */}
+          {writerReason === 'observe-only' && handoff === 'none' && !handoffError && (
+            <button
+              onClick={() => handoffRequestRef.current?.()}
+              className="mt-2 rounded bg-surface-raised px-2 py-1 text-fg hover:bg-surface-hover"
+              data-testid="handoff-button"
+            >
+              이어받기
+            </button>
+          )}
+          {handoff === 'requesting' && (
+            <p className="mt-2" role="status" data-testid="handoff-note">이어받기를 요청하는 중…</p>
+          )}
+          {/* **기다린다는 사실이 화면에 있다**(#384 의 정직성 전부). 진행 중인 턴을 멈추지
+              않으므로(운영자 결정 A) 누른 뒤 26초쯤은 아무것도 안 바뀐 것처럼 보인다 —
+              그 침묵을 이 한 줄이 메운다. */}
+          {handoff === 'waiting' && (
+            <p className="mt-2 text-fg" role="status" data-testid="handoff-note">
+              이어받기를 예약했다 — 진행 중인 멘션 턴이 끝나면 엽니다. 그때 이 터미널이 그 대화를 이어받는다.
+            </p>
+          )}
+          {handoffError && (
+            <p className="mt-2 text-warning" role="note" data-testid="handoff-error">
+              이어받지 못했다: {handoffError}
+            </p>
+          )}
+        </div>
       )}
       {/* 이 자리는 항상 렌더한다 — 조건부로 만들면 세션을 찾은 순간 ref 가 아직 null 이라
           xterm 을 붙일 곳이 없다. */}
