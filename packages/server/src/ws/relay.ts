@@ -116,13 +116,30 @@ export interface RelayHub {
    */
   openInteractive(
     agentAccountId: string,
-    req: { channelId: string; threadRootId: string; openedByHandle: string; cols?: number; rows?: number },
+    req: {
+      channelId: string;
+      threadRootId: string;
+      openedByHandle: string;
+      /**
+       * 진행 중인 멘션 턴을 이어받으러 온 요청인가(#384). caps 에 'handoff' 가 없으면
+       * `'interactive'` 와 같은 결로 **기다리지 않고** `runner_outdated` 다: 구 러너는 이
+       * 플래그를 모르고 멘션 턴의 세션을 그대로 돌려주므로, 사람은 [이어받기] 를 눌러 놓고
+       * 여전히 관찰 전용인 화면을 보게 된다.
+       */
+      handoff: boolean;
+      cols?: number;
+      rows?: number;
+    },
     opts?: { timeoutMs?: number },
   ): Promise<InteractiveOpenOutcome>;
 }
 
 export type InteractiveOpenOutcome =
-  | { ok: true; sessionId: string; created: boolean }
+  /**
+   * `waiting` 이 true 면 **아직 안 열렸다**(#384) — 이어받기가 예약됐고, `sessionId` 는
+   * 지금 도는 멘션 턴의 것이다. 사람은 그 화면을 계속 보면서 기다린다.
+   */
+  | { ok: true; sessionId: string; created: boolean; waiting: boolean }
   /** `message` 는 `runner_rejected` 일 때 러너가 보낸 사람용 문구다(codex 거절 등). */
   | { ok: false; reason: 'no_runner' | 'runner_outdated' | 'runner_timeout' | 'runner_rejected'; message?: string };
 
@@ -329,6 +346,7 @@ export function createRelayHub(): RelayHub {
           dropSession(agentAccountId, frame.sessionId);
           return;
         case 'interactive.opened':
+        case 'interactive.reserved':
         case 'interactive.error': {
           if (typeof frame.requestId !== 'string') return;
           const pending = pendingOpens.get(frame.requestId);
@@ -340,7 +358,13 @@ export function createRelayHub(): RelayHub {
           clearTimeout(pending.timer);
           if (frame.type === 'interactive.opened') {
             if (typeof frame.sessionId !== 'string') return;
-            pending.resolve({ ok: true, sessionId: frame.sessionId, created: frame.created === true });
+            pending.resolve({ ok: true, sessionId: frame.sessionId, created: frame.created === true, waiting: false });
+          } else if (frame.type === 'interactive.reserved') {
+            // 이어받기 예약(#384). **성공이지만 열린 것은 아니다** — created 는 false 이고
+            // (새 PTY 를 띄우지 않았다) sessionId 는 지금 도는 멘션 턴의 것이다. 이 구분이
+            // 화면의 "턴이 끝나면 엽니다"가 된다.
+            if (typeof frame.sessionId !== 'string') return;
+            pending.resolve({ ok: true, sessionId: frame.sessionId, created: false, waiting: true });
           } else {
             pending.resolve({
               ok: false,
@@ -500,6 +524,12 @@ export function createRelayHub(): RelayHub {
         // **즉시** 거절한다(#346 caps 의 존재 이유).
         return Promise.resolve({ ok: false, reason: 'runner_outdated' });
       }
+      if (req.handoff && !runner.caps.has('handoff')) {
+        // #384: 이 러너는 `handoff` 플래그를 모른다 — 보내면 멘션 턴의 세션을 그대로
+        // 돌려주고, 사람은 눌렀는데 여전히 관찰 전용인 화면을 본다. 없는 능력을 있다고
+        // 표시하지 않는다(#346 과 같은 판정, 같은 자리).
+        return Promise.resolve({ ok: false, reason: 'runner_outdated' });
+      }
       return new Promise((resolve) => {
         const requestId = randomUUID();
         const timer = setTimeout(() => {
@@ -514,6 +544,7 @@ export function createRelayHub(): RelayHub {
           channelId: req.channelId,
           threadRootId: req.threadRootId,
           openedByHandle: req.openedByHandle,
+          handoff: req.handoff,
           cols: req.cols,
           rows: req.rows,
         });
