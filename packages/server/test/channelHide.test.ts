@@ -38,6 +38,18 @@ async function messageCount(id: string): Promise<number> {
   return Number(res.rows[0]!.n);
 }
 
+/**
+ * 바꾼 프로덕션 파일(`postMessage`)로 직접 게시하고 **불린 사람들**을 돌려준다.
+ *
+ * 합 타입을 여기서 한 번 좁힌다 — 첨부 거절 분기에는 `notified` 가 없으므로, 좁히지 않으면
+ * 각 테스트가 `!` 로 뭉개게 되고 게시가 조용히 실패한 채 초록이 될 자리가 생긴다.
+ */
+async function post(authorId: string, body: string): Promise<string[]> {
+  const res = await postMessage(pool, { channelId, authorId, body });
+  if (!res.message) throw new Error(`게시가 거절됐다: ${JSON.stringify(res.failure)}`);
+  return res.notified;
+}
+
 async function memberCount(id: string, accountId: string): Promise<number> {
   const res = await pool.query<{ n: string }>(
     `select count(*)::text as n from channel_member where channel_id = $1 and account_id = $2`,
@@ -136,10 +148,8 @@ describe('채널 숨기기(#376)', () => {
 
     // 게시는 바꾼 프로덕션 파일(`postMessage`)을 직접 부른다 — 부름 판정 자체를 보는 자리라
     // 라우트의 게이트를 통과했는지와 섞이면 무엇이 빨간지 알 수 없다.
-    const posted = await postMessage(pool, {
-      channelId, authorId: adminId, body: '<@' + meId + '> 이것 좀 봐 주세요',
-    });
-    expect(posted.notified).toContain(meId);
+    const notified = await post(adminId, '<@' + meId + '> 이것 좀 봐 주세요');
+    expect(notified).toContain(meId);
 
     // 숨김이 **풀렸다.** 사이드바는 이 값만 보므로 이것이 곧 "다시 나타난다"다.
     expect(await hiddenAtOf(meId, channelId)).toBeNull();
@@ -147,10 +157,7 @@ describe('채널 숨기기(#376)', () => {
 
   it('4b — `@channel` 로 불려도 다시 나타난다(부름 경로가 넷이다)', async () => {
     expect(await setHidden(meToken, channelId, true)).toBe(200);
-    const posted = await postMessage(pool, {
-      channelId, authorId: adminId, body: '@channel 배포 시작합니다',
-    });
-    expect(posted.notified).toContain(meId);
+    expect(await post(adminId, '@channel 배포 시작합니다')).toContain(meId);
     expect(await hiddenAtOf(meId, channelId)).toBeNull();
   });
 
@@ -160,12 +167,9 @@ describe('채널 숨기기(#376)', () => {
     expect(hiddenBefore).not.toBeNull();
 
     // 평범한 메시지 — 아무도 부르지 않는다.
-    await postMessage(pool, { channelId, authorId: adminId, body: '오늘 점심 뭐 먹지' });
+    await post(adminId, '오늘 점심 뭐 먹지');
     // 남을 부르는 멘션 — 나는 불리지 않았다. 이것이 없으면 "멘션 토큰이 있으면 풀린다"도 초록이다.
-    const other = await postMessage(pool, {
-      channelId, authorId: adminId, body: '<@' + adminId + '> 자기 자신을 부른다',
-    });
-    expect(other.notified).not.toContain(meId);
+    expect(await post(adminId, '<@' + adminId + '> 자기 자신을 부른다')).not.toContain(meId);
 
     // **숨김은 그대로다.** 시각까지 같은지 본다 — 지웠다 다시 적는 구현도 걸러진다.
     // `toEqual` 인 이유: pg 가 timestamptz 를 Date 로 준다(타입 선언은 string 이지만
