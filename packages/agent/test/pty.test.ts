@@ -354,6 +354,36 @@ describe('runPtyTurn — stdin 파일 리다이렉션(#117)', () => {
   });
 });
 
+// #380 1단계 실측 — pty.write() 로 프롬프트를 보내는 접근이 왜 3·4단계(sh -c 래핑 제거)로
+// 진행되지 않았는지의 증거. 실측(macOS, claude 2.1.237 -p, codex-cli 0.153.2 exec, 둘 다
+// 실제 CLI 로 직접 확인): 두 하네스 모두 stdin 이 tty(PTY) 면 프롬프트 위치인자 없이는
+// **stdin 을 읽지 않고 즉시 실패한다** — spawn 직후 동기적으로 write() 해도 결과가 같아서
+// race 가 아니라 `isatty(0)` 판정이다. 즉 stdinFile 을 없애고 `pty.write()` 로 프롬프트를
+// 보내는 순간, 프로덕션이 실제로 쓰는 claude -p·codex exec 양쪽에서 턴이 통째로 실패한다.
+// 이 블록은 그 실제 동작을 흉내낸 가짜 하네스(`isatty-reject` 모드)로 고정한다 — 이
+// 테스트가 초록인 한, "stdinFile 을 제거해도 된다"는 전제가 성립하지 않는다는 뜻이다.
+describe('#380 1단계 실측 — PTY stdin 이 tty 인 하네스는 write() 로 보낸 프롬프트를 못 받는다', () => {
+  it('stdinFile 없이(PTY stdin 그대로) write() 로 보낸 프롬프트는 하네스에 닿지 못하고 즉시 실패한다', async () => {
+    const ring = new RingBuffer(64 * 1024);
+    const r = await runPtyTurn(
+      { command: process.execPath, args: [fake], env: { FAKE_MODE: 'isatty-reject' } as Record<string, string>, stdinFile: null },
+      {
+        cwd: process.cwd(), timeoutMs: 10_000, ring,
+        onSpawn: (writer) => writer.write(Buffer.from('MY_SECRET_PROMPT_MARKER_XYZ\n')),
+      },
+    );
+    // 하네스는 프롬프트를 받지 못하고 tty 판정만으로 즉시 실패한다.
+    expect(r.exitCode).toBe(1);
+    const out = ring.snapshot().toString('utf8');
+    expect(out).toContain('Input must be provided either through stdin');
+    expect(out).not.toContain('prompt-received:');
+    // **그런데 write() 로 보낸 프롬프트 자체는 PTY 가 그대로 에코한다** — 이것이 이슈가
+    // 우려한 "tail 에 프롬프트가 섞인다"는 결함이 실제로 재현되는 지점이다. 하네스가 실패해서
+    // 프롬프트를 못 쓰는 것과, 그 프롬프트가 tail 에 남는 것은 별개의 사실이다.
+    expect(out).toContain('MY_SECRET_PROMPT_MARKER_XYZ');
+  });
+});
+
 // composeSpawn 은 순수 함수라 조립된 문자열을 직접 단정할 수 있다. runPtyTurn 안에
 // 갇혀 있었을 때는 테스트가 "종료 코드가 0이다" 로 갈음했고, 그건 exec 가 없어도
 // 통과했다 — 아무것도 지키지 않는 테스트였다.
