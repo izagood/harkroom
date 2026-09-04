@@ -180,8 +180,14 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     attachAgentSession: vi.fn(async (sessionId: string) => ({ ticket: 'murt_base', session: sess({ sessionId }) })),
     // #337: [터미널 열기] — 진행 중인 턴이 없어도 러너가 세션을 만들어 티켓을 준다.
     // 베이스가 덮어야 "부르지 않았다"도 단언할 수 있다.
-    openInteractiveSession: vi.fn(async (agentAccountId: string, channelId: string, threadRootId: string) =>
-      ({ ticket: 'murt_interactive', session: sess({ sessionId: 'sess-interactive', agentAccountId, channelId, threadRootId }) })),
+    // #384: `handoff` 를 받고 `waiting` 을 답한다 — 기본은 "열렸다"다. 기다림(예약)을
+    // 검증하는 테스트가 이 목을 그때만 덮는다.
+    openInteractiveSession: vi.fn(async (agentAccountId: string, channelId: string, threadRootId: string, _handoff: boolean) =>
+      ({
+        ticket: 'murt_interactive',
+        session: sess({ sessionId: 'sess-interactive', agentAccountId, channelId, threadRootId }),
+        waiting: false,
+      })),
     // #157/#323: 채널 선호를 쓰는 표면. 베이스가 덮어야 사이드바를 띄운 배선 테스트가
     // 실제 배선(Sidebar → Controller → ApiClient)을 그대로 지나가고, "부르지 않았다" 도
     // 단언할 수 있다. 여기가 비어 있으면 프로덕션이 끊겨 있어도 목이 대신 초록을 낸다.
