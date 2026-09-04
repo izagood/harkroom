@@ -13,9 +13,16 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 /** xterm 자체는 이 파일의 관심이 아니다 — 크기를 받는 쪽으로만 세운다. */
 const resizes: [number, number][] = [];
 let disposed = false;
+/** 마지막으로 만들어진 가짜 xterm(#369). `setReadOnly` 가 닿는 자리를 여기서 읽는다. */
+let lastTerm: { options: { disableStdin?: boolean } } | null = null;
 vi.mock('@xterm/xterm/css/xterm.css', () => ({ default: '' }));
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
+    // #369: `options` 를 진짜 xterm 처럼 **생성자 인자에서 그대로 들고 있는다.** 이것이
+    // 없으면 `setReadOnly` 가 건드리는 자리 자체가 이 파일에 존재하지 않아, 그 구현을
+    // 통째로 지워도 초록이 된다(실측했다).
+    options: { disableStdin?: boolean };
+    constructor(opts: { disableStdin?: boolean }) { this.options = { ...opts }; lastTerm = this; }
     open(): void { /* jsdom 에는 캔버스가 없다 */ }
     write(): void { /* 이 파일은 바이트를 안 본다 */ }
     onData(): void { /* 같음 */ }
@@ -68,6 +75,7 @@ let rectSpy: ReturnType<typeof vi.spyOn> | null = null;
 beforeEach(() => {
   resizes.length = 0;
   disposed = false;
+  lastTerm = null;
   fireResize = null;
   observing = false;
   vi.stubGlobal('ResizeObserver', FakeResizeObserver);
@@ -161,6 +169,41 @@ describe('#335 sink 는 컨테이너를 실제로 재서 그 크기를 알린다
     await settle();
 
     expect(resizes).toEqual([[80, 30]]);
+    sink.dispose();
+  });
+});
+
+/**
+ * #369 — **진짜 `xtermSink` 의** 읽기 전용 토글. 위 파일 머리 주석과 같은 이유로 여기 산다:
+ * `agentTerminal.test.tsx` 의 가짜 sink 는 `setReadOnly` 가 **불렸는지**까지만 재고, 그 호출이
+ * xterm 에 실제로 닿는지는 한 줄도 안 돈다 — 그 구현을 통째로 지워도 데스크탑 전 건이 초록이었다.
+ *
+ * 이 토글이 이 결함 수정의 사람 쪽 절반이다: 서버가 바이트를 버리는 것만으로는 커서가 계속
+ * 깜빡여 화면이 여전히 "칠 수 있다"고 말한다.
+ */
+describe('#369 sink 는 뜬 뒤에도 stdin 을 껐다 켤 수 있다', () => {
+  it('setReadOnly 가 xterm 의 disableStdin 을 실제로 바꾼다 — 차례는 attach 뒤에 오간다', async () => {
+    const el = host(640, 480);
+    // 칠 수 있는 창으로 띄운다(onInput 이 있으면 생성자에서 stdin 이 켜진다).
+    const sink = getTerminalSinkFactory()(el, { onInput: () => {} });
+    await settle();
+    expect(lastTerm!.options.disableStdin).toBe(false);
+
+    // 서버가 관찰 전용이라고 알려 왔다(#369) — 또는 다른 창에 차례를 뺏겼다(#346).
+    sink.setReadOnly!(true);
+    expect(lastTerm!.options.disableStdin).toBe(true);
+
+    // 되돌아오는 방향도 같은 자리를 탄다 — 한쪽만 되면 승격된 창이 영영 못 친다.
+    sink.setReadOnly!(false);
+    expect(lastTerm!.options.disableStdin).toBe(false);
+    sink.dispose();
+  });
+
+  it('xterm 이 아직 안 떴으면 아무 일도 안 일어난다 — 그때는 생성자의 disableStdin 이 맞는 값이다', () => {
+    const el = host(640, 480);
+    // `await settle()` 을 하지 않는다 — 동적 import 가 아직 안 풀린 시점이 이 케이스다.
+    const sink = getTerminalSinkFactory()(el, { onInput: () => {} });
+    expect(() => sink.setReadOnly!(true)).not.toThrow();
     sink.dispose();
   });
 });

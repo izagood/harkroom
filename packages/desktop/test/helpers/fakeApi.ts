@@ -62,7 +62,10 @@ export const pin = (messageId: string, channelId: string, pinnedBy = 'u1', messa
  */
 export const sess = (overrides: Partial<AgentSessionView> = {}): AgentSessionView =>
   ({ sessionId: 'sess-1', agentAccountId: 'a1', channelId: 'c1', threadRootId: null,
-    harness: 'claude-code', startedAt: '2026-09-04T00:00:00.000Z', ...overrides });
+    harness: 'claude-code', startedAt: '2026-09-04T00:00:00.000Z',
+    // #369: 기본은 입력이 닿는 세션(인터랙티브 턴)이다 — 멘션 턴을 흉내내는 테스트가
+    // `acceptsInput: false` 를 명시적으로 넘긴다.
+    acceptsInput: true, ...overrides });
 
 // override 를 ApiClient 의 실제 시그니처로 받는다. 이전에는 값 타입이 `unknown` 이어서
 // 반환 형태가 어긋난 fake 를 tsc 가 통과시켰다 — 실제로 api.messages() 가 배열에서
