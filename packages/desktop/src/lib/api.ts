@@ -364,6 +364,11 @@ export class ApiClient {
     return this.req('PATCH', `/channels/${channelId}/pref`, patch);
   }
 
+  /** 섹션 이름 바꾸기(#323). 새 이름이 이미 존재하면 합친다. */
+  renameSection(oldName: string, newName: string | null): Promise<{ prefs: ChannelPrefRow[] }> {
+    return this.req('PATCH', `/channels/sections/${encodeURIComponent(oldName)}`, { name: newName });
+  }
+
   /**
    * #171: 새 에이전트의 기본값. admin 전용이다.
    * 실패를 여기서 삼키지 않는다 — 호출부가 "못 읽었다" 를 사람에게 보여야 한다.
@@ -584,9 +589,12 @@ export class ApiClient {
    *
    * 라우트는 **배열을 그대로** 돌려준다 — `{ skills: [...] }` 로 감싸지 않는다.
    * (초판이 `.skills` 를 꺼내려다 `undefined` 를 받아 화면이 통째로 죽었다.)
+   *
+   * #325 — `state` 파라미터로 필터링한다. 없으면 전부다.
    */
-  listSkills(): Promise<WorkspaceSkillView[]> {
-    return this.req('GET', '/skills');
+  listSkills(state?: 'pending' | 'approved' | 'disabled'): Promise<WorkspaceSkillView[]> {
+    const query = state ? `?state=${state}` : '';
+    return this.req('GET', `/skills${query}`);
   }
 
   /** 스킬 상세. 본문은 곧 시스템 프롬프트이므로 인증이 필요하다. */
