@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { createNotifier } from './lib/notify';
 import { sessionStore, type StoredCommunity } from './lib/session';
 import { useColorMode } from './lib/useColorMode';
+import { getActiveEntry } from './state/communities';
 import { getController, startCommunitySession } from './state/controller';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { Workspace } from './components/Workspace';
@@ -11,28 +12,28 @@ import type { SectionId } from './components/settings/sections';
 /**
  * #166: 세션을 레지스트리를 거쳐 띄운다. `active: true` 는 "화면이 이 커뮤니티를 본다" 는
  * 뜻이고, 그 커뮤니티의 스토어·컨트롤러 인스턴스가 활성 엔트리에 꽂힌다. 두 번째 커뮤니티를
- * 붙이는 경로(`active: false`)는 여기서 부르지 않는다 — 등록·전환 UI 는 #165 의 몫이다.
+ * 붙이는 경로(`active: false`)는 여기가 아니라 `CommunitySettings` 의 추가 흐름이다(#165) —
+ * 그 흐름은 `phase` 를 건드리지 않는다.
  */
 async function startSession(
   community: StoredCommunity,
   onSessionLost: (message: string, accountId: string) => void,
-): Promise<{ accountId: string }> {
+): Promise<void> {
   await startCommunitySession({
     baseUrl: community.baseUrl,
     token: community.token,
+    accountId: community.accountId,
+    label: community.label,
     active: true,
     notifier: createNotifier(),
     onSessionLost: (message: string, accountId: string) => onSessionLost(message, accountId),
   });
-  return { accountId: community.accountId };
 }
 
 export default function App() {
   useColorMode();
   const [phase, setPhase] = useState<'boot' | 'connect' | 'ready'>('boot');
   // 설정은 세션 상태(phase)가 아니라 뷰다 — 그래서 별도 상태로 둔다.
-  // #164: 활성 커뮤니티의 계정 id. 세션 손실이 **활성** 커뮤니티의 것인지 가르는 데 쓴다.
-  const [activeId, setActiveId] = useState<string | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
   // #279: `targetId` 는 "설정을 이 대상이 선택된 상태로" 라는 뜻이다. 디렉터리는 여기에
   // 두지 않는다 — `Workspace` 가 자기 안에서 열고 닫는 겹창이고, 여기에 상태를 또 두면
@@ -46,9 +47,14 @@ export default function App() {
   // #164: 다만 **활성 커뮤니티일 때만** 화면을 바꾼다. 커뮤니티 셋 중 하나의 PAT 가
   // 폐기됐을 때 나머지 둘이 멀쩡한데 앱 전체가 로그인 화면으로 가는 것은 오답이다.
   // 활성이 아닌 것은 보관소에서 빠지고(controller 가 그 커뮤니티만 지운다) 화면은 그대로다 —
-  // 그것을 "재로그인 필요" 로 **보여주는 것**은 #165(커뮤니티 전환 UI)의 몫이다.
+  // 그것이 화면에 보이는 자리는 전환기 레일의 타일 상태 표시다(#165).
+  //
+  // #165: 활성 커뮤니티의 계정 id 를 **레지스트리에서 읽는다**. 예전에는 App 의 지역
+  // state 였는데, 이 콜백은 `useEffect([])` 안에서 한 번 넘겨지므로 첫 렌더의 값(null)에
+  // 잡혀 있었고, 전환기가 활성을 바꾸면 그 낡음이 그대로 오답이 된다. 같은 사실을 두 곳에
+  // 두지 않는 것이 이 저장소의 규칙이기도 하다.
   const handleSessionLost = (message: string, accountId: string) => {
-    if (accountId === activeId) {
+    if (accountId === getActiveEntry().accountId) {
       setConnectError(message);
       setPhase('connect');
     }
@@ -73,8 +79,7 @@ export default function App() {
       }
 
       try {
-        const { accountId } = await startSession(active, handleSessionLost);
-        setActiveId(accountId);
+        await startSession(active, handleSessionLost);
         setPhase('ready');
       } catch {
         await sessionStore.clear();
@@ -93,15 +98,16 @@ export default function App() {
           const stored = (await sessionStore.load()) ?? { active: null, communities: [] };
           const existing = stored.communities.findIndex((c) => c.accountId === accountId);
           if (existing >= 0) {
-            stored.communities[existing] = { accountId, baseUrl, token, handle };
+            // 이름은 **살려 둔다**(#165). 재로그인이 사람이 붙인 꼬리표를 지우면, 이름을
+            // 붙인 이유(같은 화면의 서버 둘을 구분한다)가 로그인 한 번에 사라진다.
+            stored.communities[existing] = { accountId, baseUrl, token, handle, label: stored.communities[existing]!.label };
           } else {
-            stored.communities.push({ accountId, baseUrl, token, handle });
+            stored.communities.push({ accountId, baseUrl, token, handle, label: null });
           }
           stored.active = accountId;
           await sessionStore.save(stored);
           try {
-            const { accountId: newActiveId } = await startSession(stored.communities.find((c) => c.accountId === accountId)!, handleSessionLost);
-            setActiveId(newActiveId);
+            await startSession(stored.communities.find((c) => c.accountId === accountId)!, handleSessionLost);
             setPhase('ready');
           } catch {
             // 세션을 조용히 지우고 로그인 화면만 띄우면 사용자에겐 이유 없는 로그아웃이 된다.
@@ -127,6 +133,9 @@ export default function App() {
         targetId={settings.targetId}
         onBack={() => setSettings(null)}
         onSignOut={signOut}
+        // #165: 마지막 커뮤니티를 뺐다 — 그때는 정말 세션이 없으므로 접속 화면으로 돌아간다.
+        // 커뮤니티 제거가 이 경로 말고는 `phase` 를 건드리지 않는다.
+        onCommunitiesEmpty={() => { setSettings(null); setPhase('connect'); }}
       />
     );
   }
