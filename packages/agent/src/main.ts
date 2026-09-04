@@ -263,9 +263,12 @@ while (running) {
       // 시도 횟수를 갉아먹어, 오래 조종할수록 그 멘션이 MAX_ATTEMPTS 로 조용히 버려진다.
       // 유예 대상은 인터랙티브 턴뿐이다 — 멘션 턴에 사람이 attach 만 한 경우 그 턴은
       // 어차피 돌고 있으므로 막지 않는다.
+      // #384: 판정은 `controlOf` 하나다 — 도는 인터랙티브 턴과 **이어받기 예약**을 함께
+      // 본다. 예약 구간(사람이 [이어받기] 를 누르고 멘션 턴이 끝나기를 기다리는 26초)에서
+      // 유예가 빠지면 그 사이에 시작된 멘션 턴이 사람이 기다린 자리를 가져간다.
       const threadKey = SessionStore.threadKey(mention.channelId, anchor);
-      const controlling = registry.get(threadKey);
-      if (controlling?.kind === 'interactive') {
+      const controlling = registry.controlOf(threadKey);
+      if (controlling) {
         deferred += 1;
         const { shouldNotify, pending } = mentionQueue.defer(threadKey, entry.id, mention.seq);
         if (shouldNotify) {
@@ -348,6 +351,13 @@ while (running) {
           done.push(entry.id);
           attempts.delete(entry.id);
         }
+      } finally {
+        // #384: 이 스레드에 이어받기 예약이 있으면 **지금** 인터랙티브 턴이 뜬다. 이 자리인
+        // 이유는 세션 상태(turnsRun·codex 세션 id)가 방금 저장됐기 때문이다 — 레지스트리
+        // 해제 시점(턴의 finally)은 그 저장보다 앞이라, 그때 띄우면 이어받기 턴이 옛
+        // 레코드를 읽어 같은 세션을 새로 시작하려 든다(turnRegistry.ts 의 handoffs 주석).
+        // 실패 경로에도 있어야 한다: 예약을 남기면 그 스레드의 멘션이 영원히 유예된다.
+        await interactive?.resumeHandoff(threadKey);
       }
     }
     await murmur.markRead(done);

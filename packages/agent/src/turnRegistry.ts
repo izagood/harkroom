@@ -31,6 +31,15 @@ export interface TurnRecord {
 export interface HandoffReservation {
   /** [이어받기] 를 누른 사람의 handle. 멘션 유예 통지 문구에 들어간다(진행 중인 턴과 같은 문구). */
   openedByHandle: string;
+  channelId: string;
+  threadRootId: string;
+  /**
+   * 누른 사람이 보고 있는 화면 크기. 예약에 함께 두는 이유: 대기 뒤에 뜨는 PTY 는 그
+   * 사람의 창으로 떠야 하고, 이 값을 매니저의 별도 맵에 두면 예약과 그 payload 가 두
+   * 곳으로 갈라져 한쪽만 지워지는 상태가 생긴다(그러면 유예가 영원히 풀리지 않는다).
+   */
+  cols?: number;
+  rows?: number;
 }
 
 /**
@@ -43,10 +52,16 @@ export interface ThreadControl {
 
 export class TurnRegistry {
   private turns = new Map<string, TurnRecord>();
-  /** 이어받기 예약(#384). 인터랙티브 턴이 실제로 등록되는 순간 사라진다. */
+  /**
+   * 이어받기 예약(#384). 인터랙티브 턴이 실제로 등록되는 순간 사라진다.
+   *
+   * **예약을 푸는 쪽은 이 레지스트리가 아니다.** 해제 통지(`release` 구독)로 띄우고 싶은
+   * 유혹이 있지만, 멘션 턴은 `finally` 에서 **먼저** 해제하고 세션 상태(`turnsRun`·codex
+   * 세션 id)를 **그 뒤에** 저장한다 — 그 순간에 이어받기 턴을 조립하면 옛 레코드를 읽어
+   * 같은 세션을 `--session-id` 로 새로 시작하려 든다("Session ID already in use").
+   * 그래서 푸는 순간은 턴이 완전히 정착한 뒤, main 루프가 정한다(`interactive.resumeHandoff`).
+   */
   private handoffs = new Map<string, HandoffReservation>();
-  /** 턴이 풀리는 순간의 관측자들. 이어받기가 이 통지로 대기하던 턴을 띄운다(#384). */
-  private releaseListeners = new Set<(threadKey: string) => void>();
 
   /**
    * 턴 시작에 등록한다. 같은 스레드에 이미 턴이 있으면 **크게 던진다** — 조용히
@@ -68,25 +83,6 @@ export class TurnRegistry {
   /** 턴의 finally 가 부른다. 없는 키를 지우는 것은 무해하다(이미 끝난 턴의 중복 정리). */
   release(threadKey: string): void {
     this.turns.delete(threadKey);
-    // 관측자 예외를 삼킨다 — 이어받기 기동이 실패해도 **턴의 finally 는 끝나야 한다**.
-    // 여기서 던지면 멘션 턴의 정리(세션 닫기·markRead)가 중간에 멈춘다.
-    for (const listener of this.releaseListeners) {
-      try { listener(threadKey); } catch (err) {
-        console.error(`[turnRegistry] ${threadKey}: 해제 통지 실패 — ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-  }
-
-  /**
-   * 턴 해제를 구독한다(#384). 반환값이 해지 함수다.
-   *
-   * 이어받기가 이것을 쓰는 이유: 대기 중인 인터랙티브 턴을 띄울 **정확한 순간**은 멘션
-   * 턴이 레지스트리를 놓는 순간이다. 폴링으로 재면 그 사이에 다음 멘션 턴이 먼저 들어와
-   * 사람이 기다린 자리를 빼앗는다.
-   */
-  onRelease(listener: (threadKey: string) => void): () => void {
-    this.releaseListeners.add(listener);
-    return () => { this.releaseListeners.delete(listener); };
   }
 
   /** 이어받기를 예약한다(#384). 먼저 누른 사람을 유지한다 — 예약은 턴 하나이고 그 턴은 하나뿐이다. */
