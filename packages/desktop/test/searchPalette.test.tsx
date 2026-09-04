@@ -168,10 +168,28 @@ describe('SearchPalette', () => {
     }, { timeout: 1000 });
   });
 
+  /**
+   * #221 — 화살표로 옮기고 Enter 로 연다.
+   *
+   * 두 결과를 **서로 다른 채널**에 둔다. 둘 다 `c1` 이면 마지막 단언이 이동과 무관하게
+   * 통과해서, 화살표가 아무것도 하지 않아도 초록이 된다 — 이동을 확인한다는 이 테스트의
+   * 이름이 거짓이 된다.
+   *
+   * 대기가 왜 이 모양인가(#333): 이 팔레트의 keydown 리스너는 `results`·`activeIndex` 가
+   * 바뀔 때마다 다시 등록되는 passive effect 다. RTL 의 `waitFor` 는 도는 동안 act 환경을
+   * 꺼 두므로, 결과가 DOM 에 보이는 시점에도 등록된 리스너는 아직 `results: []` ·
+   * `activeIndex: -1` 이던 렌더의 것일 수 있다. 그 리스너는 화살표도 Enter 도 그냥
+   * 흘려보낸다. 부하가 크면 스케줄러가 밀려 이 창이 넓어지고, CI 에서 여기가 샜다.
+   *
+   * 그래서 시간을 재지 않는다 — `setTimeout` 을 끼우면 창이 좁아질 뿐 없어지지 않는다.
+   * **키가 실제로 먹었다는 관측 가능한 상태**가 나올 때까지 키를 보낸다: 선택 표시
+   * (`aria-selected`)가 두 번째 항목으로 옮겨 간 것. 한 번 먹은 뒤부터는 `fireEvent` 가
+   * act 안에서 렌더와 이펙트를 동기로 밀어내므로 다음 키는 기다릴 것이 없다.
+   */
   it('키보드로 결과를 이동·선택할 수 있다', async () => {
     (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([
       msg('m1', 'c1', 1, 'First', 'u1'),
-      msg('m2', 'c1', 2, 'Second', 'u2'),
+      msg('m2', 'c2', 2, 'Second', 'u2'),
     ]);
 
     render(<SearchPalette open={true} onClose={vi.fn()} />);
@@ -184,13 +202,24 @@ describe('SearchPalette', () => {
       expect(screen.getByText('Second')).toBeTruthy();
     }, { timeout: 1000 });
 
-    fireEvent.keyDown(document, { key: 'ArrowDown' });
-    fireEvent.keyDown(document, { key: 'ArrowDown' });
+    // 검색이 끝나면 첫 항목이 선택된 채로 시작한다 — 이동의 출발점을 먼저 못박는다.
+    await waitFor(() => {
+      expect(screen.getAllByRole('option')[0]?.getAttribute('aria-selected')).toBe('true');
+    }, { timeout: 1000 });
+
+    // ↓ 한 번이면 두 번째 항목으로 옮겨 간다. 리스너가 아직 옛 렌더의 것이면 이 키는
+    // 사라지므로, 선택 표시가 실제로 옮겨 갈 때까지 보낸다.
+    await waitFor(() => {
+      fireEvent.keyDown(document, { key: 'ArrowDown' });
+      expect(screen.getAllByRole('option')[1]?.getAttribute('aria-selected')).toBe('true');
+    }, { timeout: 1000 });
+
     fireEvent.keyDown(document, { key: 'Enter' });
 
+    // 열린 채널이 `c2` 여야 한다 — 화살표가 실제로 두 번째 결과로 옮겨 갔다는 뜻이다.
     await waitFor(() => {
-      expect(mockController.openChannel).toHaveBeenCalledWith('c1');
-    });
+      expect(mockController.openChannel).toHaveBeenCalledWith('c2');
+    }, { timeout: 1000 });
   });
 
   it('입력마다 서버를 때리지 않는다(디바운스)', async () => {
