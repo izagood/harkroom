@@ -69,7 +69,13 @@ export type AuditAction =
   // 초기 구현(`agent.input`)은 행 타임스탬프가 곧 키 입력의 리듬이라 그 자체가 부채널이었다
   // — 묶어도 남는 것이 "언제 쳤는가"라면 덜 남긴 것이 아니다. 내용은 여전히 없다:
   // 바이트 **수**는 base64 길이 산술로만 세고, 서버는 그 base64 를 열지 않는다.
-  | 'agent.attached' | 'agent.detached';
+  | 'agent.attached' | 'agent.detached'
+  // #337: 사람이 스스로 에이전트의 인터랙티브 터미널을 열었다(스펙 §5-2 결정 4). attach
+  // (관찰)와 별도 액션이다 — 셸을 여는 것은 관찰보다 강한 행위라, 감사 조회가 "봤다"와
+  // "열었다"를 액션 하나로 골라낼 수 있어야 한다. detail 은 {sessionId, channelId,
+  // threadRootId, created} — created 가 false 면 이미 돌던 턴에 합류한 것이다. 본문도
+  // 바이트도 없다(위 규칙 그대로).
+  | 'agent.interactive.opened';
 
 export interface AuditEntry {
   action: AuditAction;

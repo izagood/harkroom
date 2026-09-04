@@ -17,6 +17,7 @@
 // 세션 바이트를 흘리면 워크스페이스의 모든 소켓이 PTY 출력을 받는다. 릴레이는 여기의
 // 전용 맵으로 러너 소켓과 뷰어 소켓을 직결한다.
 
+import { randomUUID } from 'node:crypto';
 import type {
   AgentSessionState,
   AgentSessionView,
@@ -104,7 +105,25 @@ export interface RelayHub {
    * 곳(허브)에 두지 않으면 "누가 지금 쓰는가"의 진실이 라우트와 허브로 갈라진다.
    */
   addViewer(sessionId: string, socket: RelaySocket): ViewerHandle;
+
+  /**
+   * 러너에게 "이 스레드를 인터랙티브로 열어라"를 요청하고 응답을 기다린다(#337,
+   * 스펙 §5-2 결정 4). requestId 로 `interactive.opened`/`interactive.error` 와 상관되고,
+   * `timeoutMs`(기본 10초) 안에 응답이 없으면 `runner_timeout` 이다. 러너가 없으면
+   * `no_runner`, caps 에 'interactive' 가 없으면 **기다리지 않고 즉시** `runner_outdated` —
+   * 구 러너는 이 프레임을 버리므로 기다리는 것은 곧 원인 없는 타임아웃이다.
+   */
+  openInteractive(
+    agentAccountId: string,
+    req: { channelId: string; threadRootId: string; openedByHandle: string; cols?: number; rows?: number },
+    opts?: { timeoutMs?: number },
+  ): Promise<InteractiveOpenOutcome>;
 }
+
+export type InteractiveOpenOutcome =
+  | { ok: true; sessionId: string; created: boolean }
+  /** `message` 는 `runner_rejected` 일 때 러너가 보낸 사람용 문구다(codex 거절 등). */
+  | { ok: false; reason: 'no_runner' | 'runner_outdated' | 'runner_timeout' | 'runner_rejected'; message?: string };
 
 /**
  * base64 문자열이 담은 바이트 수 — **디코드 없이** 길이 산술로만 구한다. 감사에 남길
@@ -116,8 +135,21 @@ export function base64ByteLength(data: string): number {
   return Math.max(0, Math.floor((data.length * 3) / 4) - padding);
 }
 
+/** interactive.open 응답 대기의 기본 한도. 러너는 로컬 spawn 뿐이라 10초면 충분히 길다. */
+const INTERACTIVE_OPEN_TIMEOUT_MS = 10_000;
+
 export function createRelayHub(): RelayHub {
   const runners = new Map<string, Runner>();
+  /**
+   * interactive.open 의 미결 요청(#337). agentAccountId 를 함께 든다 — 응답 프레임이
+   * **그 러너의 소켓에서** 왔는지 확인해, 다른 에이전트의 러너가 requestId 를 위조해
+   * 남의 열기 요청을 가로채는 길을 막는다(output 의 ownerOf 검사와 같은 결).
+   */
+  const pendingOpens = new Map<string, {
+    agentAccountId: string;
+    resolve: (outcome: InteractiveOpenOutcome) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
   /** sessionId → 그 세션을 가진 에이전트 계정. 세션 조회를 러너 순회 없이 하려고 둔다. */
   const ownerOf = new Map<string, string>();
   /** 배열이다 — 삽입 순서가 곧 attach 순서이고, writer 승계가 그 순서의 끝을 읽는다. */
@@ -165,6 +197,24 @@ export function createRelayHub(): RelayHub {
     ownerOf.set(session.sessionId, agentAccountId);
   };
 
+  /** 이 에이전트의 미결 open 요청을 전부 실패로 끝낸다 — 러너가 죽었는데 타임아웃까지 기다릴 이유가 없다. */
+  const failPendingOpens = (agentAccountId: string, outcome: InteractiveOpenOutcome): void => {
+    for (const [requestId, pending] of pendingOpens) {
+      if (pending.agentAccountId !== agentAccountId) continue;
+      pendingOpens.delete(requestId);
+      clearTimeout(pending.timer);
+      pending.resolve(outcome);
+    }
+  };
+
+  /** 뷰어 수 변동을 러너에게 알린다(#337). 구 러너는 이 프레임을 조용히 버린다 — 무해하다. */
+  const notifyViewerCount = (sessionId: string): void => {
+    const agentAccountId = ownerOf.get(sessionId);
+    const runner = agentAccountId ? runners.get(agentAccountId) : undefined;
+    if (!runner) return;
+    sendToRunner(runner, { type: 'viewer.count', sessionId, count: viewers.get(sessionId)?.length ?? 0 });
+  };
+
   const dropSession = (agentAccountId: string, sessionId: string): void => {
     runners.get(agentAccountId)?.sessions.delete(sessionId);
     // 세션이 끝나도 뷰어 소켓은 열려 있다 — 사람이 마지막 화면을 계속 보고 있을 수 있다.
@@ -197,6 +247,8 @@ export function createRelayHub(): RelayHub {
           broadcastStatus(sessionId, 'runner-offline');
           ownerOf.delete(sessionId);
         }
+        // 미결 open 은 타임아웃까지 끌지 않는다 — 답할 러너가 이미 없다.
+        failPendingOpens(agentAccountId, { ok: false, reason: 'no_runner' });
       };
     },
 
@@ -231,6 +283,28 @@ export function createRelayHub(): RelayHub {
           if (typeof frame.sessionId !== 'string') return;
           dropSession(agentAccountId, frame.sessionId);
           return;
+        case 'interactive.opened':
+        case 'interactive.error': {
+          if (typeof frame.requestId !== 'string') return;
+          const pending = pendingOpens.get(frame.requestId);
+          // 응답은 **요청을 보냈던 그 러너**의 소켓에서만 받는다 — output 의 ownerOf
+          // 검사와 같은 결: 다른 에이전트의 러너가 requestId 를 위조해 남의 열기 요청을
+          // 가로채지 못한다.
+          if (!pending || pending.agentAccountId !== agentAccountId) return;
+          pendingOpens.delete(frame.requestId);
+          clearTimeout(pending.timer);
+          if (frame.type === 'interactive.opened') {
+            if (typeof frame.sessionId !== 'string') return;
+            pending.resolve({ ok: true, sessionId: frame.sessionId, created: frame.created === true });
+          } else {
+            pending.resolve({
+              ok: false,
+              reason: 'runner_rejected',
+              message: typeof frame.message === 'string' ? frame.message : undefined,
+            });
+          }
+          return;
+        }
         case 'output': {
           if (typeof frame.sessionId !== 'string' || typeof frame.data !== 'string') return;
           // 이 세션이 정말 이 러너의 것인지 확인한다 — 안 하면 러너 하나가 남의 세션
@@ -306,6 +380,10 @@ export function createRelayHub(): RelayHub {
         sendTo(viewer, { type: 'writer', writer: false });
       }
 
+      // 러너의 인터랙티브 고아 회수(#337)가 이 수를 본다 — 늘어난 쪽도 알린다(0→1 이
+      // 유예 타이머 취소다).
+      notifyViewerCount(sessionId);
+
       return {
         close() {
           const current = viewers.get(sessionId);
@@ -318,6 +396,7 @@ export function createRelayHub(): RelayHub {
             // 가장 최근에 붙은 남은 뷰어가 승계한다 — 배열 끝이 곧 그 사람이다.
             setWriter(sessionId, current.at(-1) ?? null);
           }
+          notifyViewerCount(sessionId);
         },
 
         handleMessage(raw) {
@@ -344,6 +423,34 @@ export function createRelayHub(): RelayHub {
 
         inputBytes: () => viewer.inputBytes,
       };
+    },
+
+    openInteractive(agentAccountId, req, opts) {
+      const runner = runners.get(agentAccountId);
+      if (!runner) return Promise.resolve({ ok: false, reason: 'no_runner' });
+      if (!runner.caps.has('interactive')) {
+        // 구 러너는 이 프레임을 조용히 버린다 — 기다리는 것은 곧 원인 없는 타임아웃이므로
+        // **즉시** 거절한다(#346 caps 의 존재 이유).
+        return Promise.resolve({ ok: false, reason: 'runner_outdated' });
+      }
+      return new Promise((resolve) => {
+        const requestId = randomUUID();
+        const timer = setTimeout(() => {
+          pendingOpens.delete(requestId);
+          resolve({ ok: false, reason: 'runner_timeout' });
+        }, opts?.timeoutMs ?? INTERACTIVE_OPEN_TIMEOUT_MS);
+        timer.unref?.();
+        pendingOpens.set(requestId, { agentAccountId, resolve, timer });
+        sendToRunner(runner, {
+          type: 'interactive.open',
+          requestId,
+          channelId: req.channelId,
+          threadRootId: req.threadRootId,
+          openedByHandle: req.openedByHandle,
+          cols: req.cols,
+          rows: req.rows,
+        });
+      });
     },
   };
 }
