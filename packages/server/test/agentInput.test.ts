@@ -63,10 +63,15 @@ async function connectRunner(pat: string): Promise<FakeRunner> {
   };
 }
 
-function session(sessionId: string): AgentSessionView {
+/**
+ * `acceptsInput` 을 **인자로 받는다**(#369). 기본값을 주지 않는 이유: 이 값이 곧 writer
+ * 차례의 판정이라, 기본값을 두면 어느 쪽 턴을 흉내내는 테스트인지가 호출부에서 안 보인다.
+ * `true` 는 인터랙티브 턴(stdin 이 PTY), `false` 는 진행 중인 멘션 턴(stdin 이 프롬프트 파일).
+ */
+function session(sessionId: string, acceptsInput: boolean): AgentSessionView {
   return {
     sessionId, agentAccountId: agentId, channelId: 'chan-1', threadRootId: 'root-1',
-    harness: 'claude-code', startedAt: '2026-09-04T00:00:00.000Z',
+    harness: 'claude-code', startedAt: '2026-09-04T00:00:00.000Z', acceptsInput,
   };
 }
 
@@ -192,7 +197,7 @@ describe('#315-1 writer 뷰어가 친 바이트가 러너 PTY 로 간다', () =>
   it('혼자 붙은 뷰어는 writer 통지를 받고, 그 input 이 러너에게 바이트 그대로 도착한다', async () => {
     const sessionId = 'sess-input-1';
     const runner = await connectRunner(agentPat);
-    runner.send({ type: 'announce', sessions: [session(sessionId)], caps: ['input', 'interactive'] });
+    runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
     const viewer = await attach(ownerToken, sessionId);
@@ -217,7 +222,7 @@ describe('#315-4 writer 가 아닌 뷰어는 소켓에 직접 써도 러너에 �
   it('두 번째 attach 가 첫 번째를 강등시키고, 강등된 창의 input 은 버려진다', async () => {
     const sessionId = 'sess-input-nonwriter';
     const runner = await connectRunner(agentPat);
-    runner.send({ type: 'announce', sessions: [session(sessionId)], caps: ['input', 'interactive'] });
+    runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
     const first = await attach(ownerToken, sessionId);
@@ -247,7 +252,7 @@ describe('#315-4 writer 가 아닌 뷰어는 소켓에 직접 써도 러너에 �
   it('writer 가 떠나면 가장 최근에 붙은 남은 뷰어가 승계한다', async () => {
     const sessionId = 'sess-input-succession';
     const runner = await connectRunner(agentPat);
-    runner.send({ type: 'announce', sessions: [session(sessionId)], caps: ['input', 'interactive'] });
+    runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
     // 각 승격·강등을 **기다린 뒤** 다음으로 간다 — 안 기다리면 second 의 attach 시점
@@ -281,7 +286,7 @@ describe('#315-6 소유자도 admin 도 아니면 읽기도 못 한다 (#141 게
   it('제3자는 attach 인가에서 403 이고 티켓 자체를 못 받는다', async () => {
     const sessionId = 'sess-input-stranger';
     const runner = await connectRunner(agentPat);
-    runner.send({ type: 'announce', sessions: [session(sessionId)], caps: ['input', 'interactive'] });
+    runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
     const res = await app.inject({
@@ -302,7 +307,7 @@ describe('#315-7 감사에 누가·언제·몇 바이트만 남고 내용은 남
     const sessionId = 'sess-input-audit';
     const secret = 'sk-live-0123456789abcdef';
     const runner = await connectRunner(agentPat);
-    runner.send({ type: 'announce', sessions: [session(sessionId)], caps: ['input', 'interactive'] });
+    runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
     const viewer = await attach(ownerToken, sessionId);
@@ -334,7 +339,7 @@ describe('#315-8 연타가 감사 행을 폭증시키지 않는다', () => {
   it('한 attach 소켓의 입력 전부가 detach 행 하나의 합산으로 남는다', async () => {
     const sessionId = 'sess-input-burst';
     const runner = await connectRunner(agentPat);
-    runner.send({ type: 'announce', sessions: [session(sessionId)], caps: ['input', 'interactive'] });
+    runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
     const viewer = await attach(ownerToken, sessionId);
@@ -364,7 +369,7 @@ describe('#315-8 연타가 감사 행을 폭증시키지 않는다', () => {
   it('아무것도 안 친 뷰어의 detach 행은 inputBytes 0 이다 — 관찰과 개입이 구분된다', async () => {
     const sessionId = 'sess-input-zero';
     const runner = await connectRunner(agentPat);
-    runner.send({ type: 'announce', sessions: [session(sessionId)], caps: ['input', 'interactive'] });
+    runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
     const viewer = await attach(ownerToken, sessionId);
@@ -392,7 +397,7 @@ describe('#315-9 소유자가 admin 이어도 자기 에이전트에는 칠 수 
     const runner = await connectRunner(adminOwnedAgentPat);
     runner.send({
       type: 'announce',
-      sessions: [{ ...session(sessionId), agentAccountId: adminOwnedAgentId }],
+      sessions: [{ ...session(sessionId, true), agentAccountId: adminOwnedAgentId }],
       caps: ['input', 'interactive'],
     });
     await waitForAsync(async () => {
@@ -417,7 +422,7 @@ describe('#346 caps 없는 구 러너에는 입력이 조용히 사라지지 않
     const sessionId = 'sess-input-nocaps';
     const runner = await connectRunner(agentPat);
     // 구 러너 흉내 — caps 필드 자체가 없다. 이 러너는 input 프레임을 받아도 버린다.
-    runner.send({ type: 'announce', sessions: [session(sessionId)] });
+    runner.send({ type: 'announce', sessions: [session(sessionId, true)] });
     await waitForSession(sessionId);
 
     const viewer = await attach(ownerToken, sessionId);

@@ -86,6 +86,8 @@ export interface TurnRelay {
     channelId: string;
     threadRootId: string | null;
     harness: AgentHarness;
+    /** 이 세션의 PTY 에 사람이 입력할 수 있는가(#369). 멘션 턴은 항상 false 다 — stdin 이 프롬프트 파일이다. */
+    acceptsInput: boolean;
   }): {
     sessionId: string;
     push(chunk: Buffer): void;

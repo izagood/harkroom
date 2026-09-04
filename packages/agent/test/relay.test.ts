@@ -51,7 +51,8 @@ function fakeSchedule() {
   };
 }
 
-const SESSION = { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1', harness: 'claude-code' } as const;
+// `acceptsInput` 은 필수다(#369) — 기본 픽스처는 멘션 턴(stdin 이 프롬프트 파일)이라 false 다.
+const SESSION = { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1', harness: 'claude-code', acceptsInput: false } as const;
 
 /** ANSI + 잘린 UTF-8. 어디서든 문자열로 뜨면 U+FFFD 로 치환돼 되돌릴 수 없다. */
 const RAW = Buffer.concat([Buffer.from('\x1b[31mERR\x1b[0m', 'binary'), Buffer.from([0xed, 0x95])]);

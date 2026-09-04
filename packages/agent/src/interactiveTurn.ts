@@ -50,6 +50,8 @@ export interface InteractiveRelay {
     threadRootId: string | null;
     harness: AgentHarness;
     mode?: 'mention' | 'interactive';
+    /** 이 세션의 PTY 에 사람이 입력할 수 있는가(#369). 인터랙티브 턴은 stdinFile 이 없어 true 다. */
+    acceptsInput: boolean;
     onViewerCount?: (count: number) => void;
   }): {
     sessionId: string;

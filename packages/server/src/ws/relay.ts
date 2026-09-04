@@ -25,6 +25,7 @@ import type {
   AttachServerFrame,
   RelayRunnerFrame,
   RelayServerFrame,
+  WriterDeniedReason,
 } from '@murmur/shared';
 
 /**
@@ -193,13 +194,36 @@ export function createRelayHub(): RelayHub {
   const setWriter = (sessionId: string, next: Viewer | null): void => {
     const prev = writerOf.get(sessionId) ?? null;
     if (prev === next) return;
-    if (prev) sendTo(prev, { type: 'writer', writer: false });
+    // 강등의 이유는 언제나 하나다 — 더 최근에 붙은 창이 차례를 가져갔다(#369: 이유를
+    // 함께 실어야 화면이 그것을 지어내지 않는다). 능력·stdin 때문에 못 주는 경우는
+    // 애초에 여기 오지 않는다(`writerDenial` 이 addViewer 에서 걸러 낸다).
+    if (prev) sendTo(prev, { type: 'writer', writer: false, reason: 'other-writer' });
     if (next) {
       writerOf.set(sessionId, next);
-      sendTo(next, { type: 'writer', writer: true });
+      sendTo(next, { type: 'writer', writer: true, reason: null });
     } else {
       writerOf.delete(sessionId);
     }
+  };
+
+  /**
+   * 이 세션에 쓰기 차례를 **줄 수 있는가**(#346 + #369). `null` 이면 줄 수 있고, 아니면
+   * 못 주는 이유다.
+   *
+   * 판정을 한 곳에 모은 이유: attach 시점과 승계 시점이 각자 조건을 다시 쓰면 한쪽만
+   * 고쳐져 "붙을 때는 읽기 전용인데 앞 창이 닫히면 갑자기 writer 가 되는" 상태가 생긴다.
+   */
+  const writerDenial = (sessionId: string): WriterDeniedReason | null => {
+    const agentAccountId = ownerOf.get(sessionId);
+    const runner = agentAccountId ? runners.get(agentAccountId) : undefined;
+    // 러너가 없거나 `input` 능력을 선언하지 않았으면(구 러너, #346) 그 러너로 흘린 input 은
+    // 조용히 버려진다 — 차례를 주는 것이 곧 "쳤는데 아무 데도 안 닿는 입력창"을 만드는 일이다.
+    if (!runner?.caps.has('input')) return 'runner-outdated';
+    // #369: 이 턴의 stdin 이 프롬프트 파일이면(진행 중인 멘션 턴) PTY master 로 쓴 바이트가
+    // 자식의 fd 0 에 닿지 않는다. **하네스 종류로 재지 않는다** — 러너가 자기 계획에서 읽어
+    // 실어 보낸 사실 하나를 그대로 쓴다(`AgentSessionView.acceptsInput`).
+    if (!runner.sessions.get(sessionId)?.acceptsInput) return 'observe-only';
+    return null;
   };
 
   const registerSession = (agentAccountId: string, session: AgentSessionView): void => {
@@ -381,15 +405,15 @@ export function createRelayHub(): RelayHub {
         sendToRunner(runner, { type: 'replay.request', sessionId });
       }
 
-      if (runner?.caps.has('input')) {
-        // 마지막 attach 가 writer 다(스펙 §5-2 결정 2). 러너가 없거나 `input` 능력을
-        // 선언하지 않았으면(구 러너, #346) 차례를 주지 않고 읽기 전용임을 바로 알린다 —
-        // 그 러너로 흘린 input 은 조용히 버려지므로, 차례를 주는 것이 곧 "쳤는데 아무
-        // 데도 안 닿는 입력창"을 만드는 일이다. "안 되는 것"은 고장이 아니라 안 열림으로
-        // 보여야 한다.
+      // 마지막 attach 가 writer 다(스펙 §5-2 결정 2) — 단, 그 세션이 입력을 받을 수 있을
+      // 때만이다. 못 주는 경우에는 **이유를 함께** 내려 읽기 전용임을 바로 알린다:
+      // "안 되는 것"은 고장이 아니라 안 열림으로 보여야 하고(#346), 왜 안 열렸는지까지
+      // 말해야 사람이 다른 길을 찾는다(#369).
+      const denial = writerDenial(sessionId);
+      if (denial === null) {
         setWriter(sessionId, viewer);
       } else {
-        sendTo(viewer, { type: 'writer', writer: false });
+        sendTo(viewer, { type: 'writer', writer: false, reason: denial });
       }
 
       // 러너의 인터랙티브 고아 회수(#337)가 이 수를 본다 — 늘어난 쪽도 알린다(0→1 이
