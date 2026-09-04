@@ -66,6 +66,7 @@ async function boot(agents: AgentView[], online: string[] = []) {
       ...agents.map((a) => acc(a.id, a.handle, 'agent')),
     ])),
     listAgents: vi.fn(async () => agents),
+    createAgent: vi.fn(async () => agentView('created-codex', { harness: 'codex' })),
   });
   const { makeWs, callbacks } = fakeWsFactory();
   const c = new Controller(api, makeWs, undefined, undefined, secrets, spawner, fakeLoginPath());
@@ -127,6 +128,22 @@ describe('컨트롤러 → 실행기 배선', () => {
     await Promise.resolve();
     expect(spawner.spawn).not.toHaveBeenCalled();
     expect(useAppStore.getState().runnerStates).toEqual({});
+  });
+
+  it('앱이 이미 실행 중이어도 새로 만든 Codex 에이전트의 PAT 를 저장하고 즉시 띄운다', async () => {
+    const { api, secrets, spawner, c } = await boot([agentView('forge')]);
+
+    const result = await c.createAgent({
+      handle: 'codex', displayName: 'Codex', harness: 'codex',
+    });
+
+    expect(api.createAgent).toHaveBeenCalledWith(expect.objectContaining({ harness: 'codex' }));
+    expect(result.agent.id).toBe('created-codex');
+    expect(secrets.map.get('created-codex')).toEqual({ label: 'runner', token: result.pat });
+    expect(spawner.spawns).toHaveLength(2);
+    expect(spawner.spawns[1]!.env.MURMUR_PAT).toBe(result.pat);
+    expect(spawner.spawns[1]!.env.MURMUR_PAT).not.toBe(spawner.spawns[0]!.env.MURMUR_PAT);
+    expect(useAppStore.getState().runnerStates['created-codex']!.status).toBe('running');
   });
 });
 

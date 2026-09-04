@@ -129,6 +129,18 @@ export interface StartAllInput {
   runnerCommand: string;
 }
 
+/** 방금 만든 에이전트와 발급 순간에만 볼 수 있는 PAT 를 앱 실행기에 넘기는 입력. */
+export interface StartCreatedInput {
+  agent: LaunchableAgent;
+  pat: StoredRunnerPat;
+  /** 연결 설정의 자동 기동 토글. 꺼져 있어도 PAT 는 키체인에 보관한다. */
+  autoStart: boolean;
+  /** 현재 presence 사실. 새 계정이어도 연결이 끊긴 상태에서 무작정 띄우지는 않는다. */
+  liveAccountIds: Set<string> | null;
+  repoPath: string;
+  runnerCommand: string;
+}
+
 /** 살아 있는 PAT 라벨의 접두사. 회전 라벨(`desktop:<id>#<epoch>`)도 이 접두사를 갖는다. */
 export const patLabelPrefix = (deviceId: string): string => `desktop:${deviceId}`;
 
@@ -222,6 +234,10 @@ export function runnerCommandDir(value: string): string | null {
 export class RunnerLauncher {
   /** 이 앱이 띄운 자식만. 외부 러너는 여기 없다(앱은 그것을 죽일 수도, 죽여서도 안 된다). */
   private runners = new Map<string, RunnerProcess>();
+  /** `startOne` 의 비동기 구간까지 포함한 에이전트별 잠금. */
+  private starting = new Map<string, Promise<void>>();
+  /** dispose 뒤 완료된 비동기 준비가 자식을 다시 띄우지 못하게 하는 수명 경계. */
+  private disposed = false;
   private states = new Map<string, RunnerState>();
   private onStateChange?: (states: RunnerState[]) => void;
 
@@ -298,7 +314,52 @@ export class RunnerLauncher {
     }
   }
 
-  private async startOne(agent: LaunchableAgent, input: StartAllInput): Promise<void> {
+  /**
+   * 설정 화면에서 만든 에이전트를 앱 재시작 없이 바로 실행 가능하게 만든다.
+   *
+   * 서버는 PAT 원문을 다시 주지 않으므로 생성 API 가 방금 돌려준 **그 PAT** 를 먼저
+   * 키체인에 저장한다. 저장에 실패하면 계정 생성 자체를 실패한 척하지 않고 러너 상태에
+   * 복구 가능한 이유를 남기며, 원문은 호출자가 생성 결과 화면에 계속 보여줄 수 있다.
+   */
+  async startCreated(input: StartCreatedInput): Promise<void> {
+    try {
+      await this.secrets.write(input.agent.id, input.pat);
+    } catch (err) {
+      this.setState(input.agent.id, {
+        status: 'failed',
+        exitCode: null,
+        message: `에이전트는 생성됐지만 PAT 를 키체인에 저장하지 못해 러너를 띄우지 않았다: ${errText(err)}`,
+      });
+      return;
+    }
+    if (!input.autoStart || this.disposed) return;
+
+    await this.startOne(input.agent, {
+      agents: [input.agent],
+      myAccountId: input.agent.ownerAccountId ?? '',
+      liveAccountIds: input.liveAccountIds,
+      repoPath: input.repoPath,
+      runnerCommand: input.runnerCommand,
+    }).catch((err) => {
+      this.setState(input.agent.id, {
+        status: 'failed', exitCode: null, message: `기동 실패: ${errText(err)}`,
+      });
+    });
+  }
+
+  private startOne(agent: LaunchableAgent, input: StartAllInput): Promise<void> {
+    const pending = this.starting.get(agent.id);
+    if (pending) return pending;
+
+    const started = this.doStartOne(agent, input).finally(() => {
+      if (this.starting.get(agent.id) === started) this.starting.delete(agent.id);
+    });
+    this.starting.set(agent.id, started);
+    return started;
+  }
+
+  private async doStartOne(agent: LaunchableAgent, input: StartAllInput): Promise<void> {
+    if (this.disposed) return;
     // 이 앱이 이미 띄웠으면 그대로 둔다.
     if (this.runners.has(agent.id)) return;
 
@@ -322,7 +383,7 @@ export class RunnerLauncher {
     }
 
     const pat = await this.ensurePat(agent.id);
-    if (!pat) return; // 사유는 ensurePat 이 상태에 남겼다.
+    if (!pat || this.disposed) return; // 사유는 ensurePat 이 상태에 남겼다.
     await this.spawnRunner(agent, pat.token, input.repoPath, input.runnerCommand);
   }
 
@@ -388,7 +449,9 @@ export class RunnerLauncher {
   private async spawnRunner(
     agent: LaunchableAgent, token: string, repoPath: string, runnerCommand: string,
   ): Promise<void> {
+    if (this.disposed) return;
     const path = await this.resolveChildPath(runnerCommand);
+    if (this.disposed) return;
     if (!path.ok) {
       this.setState(agent.id, { status: 'failed', exitCode: null, message: path.error });
       return;
@@ -398,6 +461,11 @@ export class RunnerLauncher {
       env: { MURMUR_PAT: token, MURMUR_URL: this.api.baseUrl, PATH: path.path },
       onExit: (code) => this.handleExit(agent.id, code),
     });
+    // spawn IPC 도 비동기다. 그 사이 앱/세션이 닫혔다면 방금 생긴 자식을 즉시 거둔다.
+    if (this.disposed) {
+      try { await child.kill(); } catch { /* 이미 끝난 자식 */ }
+      return;
+    }
     this.runners.set(agent.id, child);
     this.setState(agent.id, { status: 'running', exitCode: null, message: null });
   }
@@ -502,6 +570,7 @@ export class RunnerLauncher {
 
   /** 앱이 닫힌다 — 띄운 자식도 같이 끝낸다. 상태는 지우지 않는다(창이 다시 열리면 보여야 한다). */
   dispose(): void {
+    this.disposed = true;
     for (const child of this.runners.values()) void child.kill().catch(() => {});
     this.runners.clear();
   }
