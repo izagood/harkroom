@@ -1,4 +1,4 @@
-import { CHANNEL_MENTION_HANDLE, denormalizeMentions, MENTION_PATTERN, MENTION_TOKEN_PATTERN, mentionedHandles, renderMentions, stripCodeSpans } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, denormalizeMentions, fillSystemAccount, MENTION_PATTERN, MENTION_TOKEN_PATTERN, mentionedHandles, type MessageRow, renderMentions, stripCodeSpans } from '@murmur/shared';
 
 // 멘션 문법은 @murmur/shared 에 있다 — 서버의 알림 발송과 같은 규칙을 봐야 한다. 갈라지면
 // 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(me@x.com), 강조된
@@ -172,4 +172,28 @@ export function bodyAsHandles(body: string, accounts: Record<string, { id: strin
   const idToHandle = new Map<string, string>();
   for (const a of Object.values(accounts)) idToHandle.set(a.id, a.handle);
   return denormalizeMentions(body, idToHandle);
+}
+
+/**
+ * 사람에게 보여 줄 본문(#329). 시스템 메시지는 본문에 이름을 담지 않고 자리표시자만
+ * 가지므로, `meta.accountId` 로 **지금의** handle 을 찾아 그것을 채운다. 그래서 이름을
+ * 바꾸면 과거의 입·퇴장 메시지도 새 이름으로 그려진다.
+ *
+ * **본문을 사람에게 보여 주는 자리는 전부 이 함수를 지난다** — 메시지 행(`MessageItem`),
+ * 담아 둔 목록(`SavedMessages`), 고정 미리보기(`ChannelPane`), OS 알림 둘(`controller` 의
+ * `announceNewMessage`·`announceNewMentions`). 한 곳이라도 원본 `body` 를 그대로 쓰면 그
+ * 자리에만 `{account}` 라는 글자가 남는다 — 이 브랜치의 초판이 메시지 행만 고쳐 그랬다.
+ *
+ * 수정·복사는 이 함수를 지나지 **않는다**(`bodyAsHandles` 를 쓴다). 그 둘은 다시 저장하거나
+ * 다른 곳에 붙여넣을 문자열을 만들고, 시스템 메시지는 애초에 수정할 수 없다(`canEdit`).
+ *
+ * `meta.accountId` 가 없는 옛 메시지(`#322` 가 이미 만든 것)는 본문에 이름이 박혀 있고
+ * 자리표시자가 없다 — 치환할 것이 없으므로 본문이 그대로 돌아온다.
+ */
+export function displayBody(
+  message: Pick<MessageRow, 'body' | 'kind' | 'meta'>,
+  accounts: Record<string, { handle: string }>,
+): string {
+  if (message.kind !== 'system' || typeof message.meta.accountId !== 'string') return message.body;
+  return fillSystemAccount(message.body, accounts[message.meta.accountId]?.handle ?? null);
 }

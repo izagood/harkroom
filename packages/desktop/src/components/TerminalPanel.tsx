@@ -22,12 +22,24 @@ import { getTerminalSinkFactory, type TerminalSink } from '../lib/terminalSink';
  * 바이트를 넣을 수 있는 주체뿐이다. 이 패널이 그 값을 읽기 시작하면 그때부터 화면이
  * 모드에 관여할 길이 생긴다.
  *
- * **쓰기는 소유자만이다.** admin 은 보이되 칠 수 없고, 화면은 그 사실을 글로 적는다 —
- * 눌러도 아무 일이 없는 입력창이 최악이다.
+ * **쓰기는 소유자만이다.** 소유자가 아닌 admin 은 보이되 칠 수 없고, 화면은 그 사실을
+ * 글로 적는다 — 눌러도 아무 일이 없는 입력창이 최악이다.
  */
 export function TerminalPanel() {
-  const agentId = useActiveStore((s) => s.terminalAgentId);
-  const agent = useActiveStore((s) => (s.terminalAgentId ? s.accounts[s.terminalAgentId] : undefined));
+  const target = useActiveStore((s) => s.terminalTarget);
+  const agent = useActiveStore((s) => (s.terminalTarget ? s.accounts[s.terminalTarget.agentAccountId] : undefined));
+  const channel = useActiveStore((s) =>
+    (s.terminalTarget ? s.channels.find((c) => c.id === s.terminalTarget!.channelId) : undefined));
+  /**
+   * 스레드 루트 메시지 — 헤더의 스레드 표기에 쓴다(#339). 스토어에 **이미 있으면** 본문
+   * 한 줄을 보여 주고, 없으면(스크롤 밖·다른 채널) 스레드라는 사실만 적는다. 이 표기
+   * 하나 때문에 메시지를 새로 받아오지는 않는다 — 헤더는 방향 표지판이지 본문이 아니다.
+   */
+  const threadRoot = useActiveStore((s) => {
+    const t = s.terminalTarget;
+    if (!t) return undefined;
+    return s.messages[t.channelId]?.find((m) => m.id === t.threadRootId);
+  });
   const set = useActiveStore((s) => s.set);
   const hostRef = useRef<HTMLDivElement | null>(null);
   /**
@@ -46,7 +58,7 @@ export function TerminalPanel() {
   const [canInput, setCanInput] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (!agentId) return;
+    if (!target) return;
     let disposed = false;
     let attach: AttachHandle | null = null;
     let sink: TerminalSink | null = null;
@@ -55,7 +67,15 @@ export function TerminalPanel() {
       const api = getController().api;
       try {
         const sessions = await api.agentSessions();
-        const session = sessions.find((s) => s.agentAccountId === agentId);
+        // 세 필드 **전부** 일치해야 한다(#339). 에이전트만 보면 같은 에이전트가 스레드
+        // 여럿에서 돌 때 임의의 첫 세션에 붙는다 — A 스레드에서 눌렀는데 B 스레드의
+        // PTY 가 열리는 결함이 이것이었다. 세션의 threadRootId 가 null 이면 러너가 어느
+        // 스레드의 것인지 말하지 않은 것이므로 붙지 않는다 — target.threadRootId 는
+        // 항상 문자열이라(#98 앵커식) 엄격 비교가 그 거절을 그대로 담는다.
+        const session = sessions.find((s) =>
+          s.agentAccountId === target.agentAccountId
+          && s.channelId === target.channelId
+          && s.threadRootId === target.threadRootId);
         if (disposed) return;
         if (!session) { setPhase('no-session'); return; }
 
@@ -102,9 +122,11 @@ export function TerminalPanel() {
       attach?.close();
       sink?.dispose();
     };
-  }, [agentId]);
+    // 객체가 아니라 필드 셋을 의존성으로 둔다 — 칩을 누를 때마다 target 은 새 객체인데,
+    // 같은 대상을 다시 눌렀다는 이유로 attach 를 끊고 다시 여는 것은 낭비이자 화면 깜빡임이다.
+  }, [target?.agentAccountId, target?.channelId, target?.threadRootId]);
 
-  if (!agentId) return null;
+  if (!target) return null;
 
   return (
     <aside
@@ -113,10 +135,18 @@ export function TerminalPanel() {
     >
       <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs text-fg-muted">
         <span className="font-semibold">터미널</span>
-        <span className="text-fg-subtle">@{agent?.handle ?? agentId}</span>
+        <span className="text-fg-subtle">@{agent?.handle ?? target.agentAccountId}</span>
+        {/* 어느 채널·스레드의 터미널인지 항상 적는다(#339). 같은 에이전트의 세션이 여럿일
+            수 있는데 이 표기가 없으면 사람은 지금 보는 화면이 어느 스레드의 것인지 알 길이
+            없다 — 스코프를 고치고도 화면이 침묵하면 결함이 반쯤 남는 셈이다. */}
+        <span className="min-w-0 truncate text-fg-subtle" data-testid="terminal-scope">
+          {channel?.name ? `#${channel.name}` : 'DM'}
+          {' · '}
+          {threadRoot ? threadExcerpt(threadRoot.body) : '스레드'}
+        </span>
         {state && <span className="rounded bg-surface-raised px-1.5 py-0.5">{STATE_LABEL[state]}</span>}
         <button
-          onClick={() => set({ terminalAgentId: null })}
+          onClick={() => set({ terminalTarget: null })}
           className="ml-auto rounded px-2 py-0.5 text-fg-muted hover:bg-surface-raised"
           aria-label="터미널 닫기"
         >
@@ -145,6 +175,15 @@ export function TerminalPanel() {
       <div ref={hostRef} data-testid="terminal-host" className="min-h-0 flex-1 overflow-hidden" />
     </aside>
   );
+}
+
+/**
+ * 헤더에 넣을 스레드 루트 본문 한 줄(#339). 줄바꿈을 접고 앞머리만 남긴다 —
+ * 헤더는 방향 표지판이라, 긴 본문이 그대로 오면 상태 배지와 닫기 버튼을 밀어낸다.
+ */
+function threadExcerpt(body: string): string {
+  const flat = body.replace(/\s+/g, ' ').trim();
+  return flat.length > 24 ? `${flat.slice(0, 24)}…` : flat;
 }
 
 /** 상태 문구. 'runner-offline' 을 '끝났다'로 쓰지 않는다 — 다른 사실이다. */

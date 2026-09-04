@@ -1,4 +1,4 @@
-import type { AccountView } from '@murmur/shared';
+import type { AccountView, MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 
 /**
@@ -16,7 +16,15 @@ import { useActiveStore } from '../state/communities';
  * 소유자가 `null` 인 에이전트에는 admin 에게만 뜬다: `008` 마이그레이션이 backfill 을
  * 넣지 않은 것은 의도였고(#181), 그래서 `null` 은 "아무나"가 아니라 "아직 아무도"다.
  */
-export function TerminalChip({ account }: { account: AccountView | undefined }) {
+export function TerminalChip({ account, message }: {
+  account: AccountView | undefined;
+  /**
+   * 칩이 붙어 있는 메시지(#339). 에이전트 id 만으로는 부족하다 — 세션은 (에이전트,
+   * 스레드)당 하나라, 같은 에이전트가 스레드 여럿에서 돌면 어느 스레드의 터미널을
+   * 보려는 것인지는 **눌린 메시지**만이 안다.
+   */
+  message: MessageRow;
+}) {
   const me = useActiveStore((s) => s.me);
   const set = useActiveStore((s) => s.set);
 
@@ -29,7 +37,16 @@ export function TerminalChip({ account }: { account: AccountView | undefined }) 
 
   return (
     <button
-      onClick={() => set({ terminalAgentId: account.id })}
+      onClick={() => set({
+        terminalTarget: {
+          agentAccountId: account.id,
+          channelId: message.channelId,
+          // #98 앵커식: 채널 최상위 멘션(threadRootId 가 null)은 그 메시지 자신이 스레드
+          // 루트다. 러너(agent/main.ts)가 같은 식으로 세션의 스레드 키를 만들므로,
+          // 여기서 다른 식을 쓰면 패널이 그 세션을 영영 못 찾는다.
+          threadRootId: message.threadRootId ?? message.id,
+        },
+      })}
       className="rounded bg-surface-raised px-1.5 py-0.5 text-[10px] text-fg hover:bg-surface-hover"
       title={`@${account.handle} 의 진행 중인 터미널을 본다`}
     >

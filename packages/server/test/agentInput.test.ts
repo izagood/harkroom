@@ -17,6 +17,10 @@ let app: FastifyInstance;
 let pool: Pool;
 let stop: () => Promise<void>;
 let adminToken: string;
+let adminId: string;
+/** admin 이 **직접 소유한** 에이전트. `POST /accounts/agents` 가 만드는 기본 상태다. */
+let adminOwnedAgentId: string;
+let adminOwnedAgentPat: string;
 let ownerToken: string;
 let ownerId: string;
 let strangerToken: string;
@@ -138,7 +142,7 @@ beforeAll(async () => {
   // 감사 묶임 간격을 짧게 준다 — 기본 60초로는 "묶인다"는 확인만 되고 "간격이 지나면
   // 다시 남는다"는 확인이 테스트를 1분 멈춘다.
   app = await buildServer({ pool: pool as Pool, inputAuditWindowMs: 300 });
-  ({ token: adminToken } = await bootstrapAdmin(app));
+  ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
 
   const register = async (handle: string) => {
     const inv = await app.inject({ method: 'POST', url: '/invites', headers: auth(adminToken) });
@@ -163,6 +167,11 @@ beforeAll(async () => {
     payload: { ownerAccountId: ownerId },
   });
   expect(patched.statusCode).toBe(200);
+
+  // 소유자를 옮기지 **않은** 에이전트. `POST /accounts/agents` 는 admin 전용이고 만든
+  // 사람을 그대로 owner_account_id 에 넣으므로(services/agents.ts::createAgentAccount),
+  // 이것이 새로 만든 에이전트의 **기본 상태**다 — 소유자가 곧 admin 인 상태.
+  ({ accountId: adminOwnedAgentId, pat: adminOwnedAgentPat } = await createAgent(app, adminToken, 'selfowned'));
 
   await app.listen({ port: 0, host: '127.0.0.1' });
   const addr = app.server.address();
@@ -295,6 +304,40 @@ describe('#315-8 연타가 감사 행을 폭증시키지 않는다', () => {
     viewer.type(Buffer.from('x', 'utf8'));
     await waitForAsync(async () => (await inputAuditRows(sessionId)).length === 2);
     expect(await inputAuditRows(sessionId)).toHaveLength(2);
+
+    viewer.close();
+    await runner.close();
+  });
+});
+
+describe('#315-9 소유자가 admin 이어도 자기 에이전트에는 칠 수 있다', () => {
+  it('admin 이면서 그 에이전트의 소유자인 사람은 canInput 이고 바이트가 러너에 도착한다', async () => {
+    // **이 조합이 기본값이다.** 에이전트를 만들 수 있는 것은 admin 뿐이고
+    // (`POST /accounts/agents` 는 `requireAdmin`), 만든 사람이 그대로 소유자가 된다.
+    // 그래서 "소유자가 admin 이기도 하다"는 예외가 아니라 새 에이전트의 **출발 상태**다.
+    //
+    // 여기를 admin 이라는 이유로 읽기 전용으로 만들면, 그 에이전트에 칠 수 있는 사람이
+    // 한 명도 남지 않는다 — 운영자 결정("쓰기는 소유자만")이 지키려던 사람이 바로 그
+    // 소유자인데, "admin 은 읽기 전용"이 그 사람을 덮어 버리는 것이다. 소유권을 다른
+    // 사람에게 넘긴 뒤에야 기능이 살아나는 것은 결정이 아니라 사고다.
+    const sessionId = 'sess-input-adminowner';
+    const runner = await connectRunner(adminOwnedAgentPat);
+    runner.send({
+      type: 'announce',
+      sessions: [{ ...session(sessionId), agentAccountId: adminOwnedAgentId }],
+    });
+    await waitForAsync(async () => {
+      const res = await app.inject({ method: 'GET', url: '/agent-sessions', headers: auth(adminToken) });
+      return (res.json().sessions as AgentSessionView[]).some((s) => s.sessionId === sessionId);
+    });
+
+    const viewer = await attach(adminToken, sessionId);
+    // 서버가 스스로 "쓸 수 있다"고 답해야 한다 — 화면은 이 값만 보고 입력을 연다.
+    expect(viewer.canInput).toBe(true);
+
+    viewer.type(TYPED);
+    await waitFor(() => inputBytes(runner).length === 1);
+    expect(inputBytes(runner)[0]!.equals(TYPED)).toBe(true);
 
     viewer.close();
     await runner.close();
