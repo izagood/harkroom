@@ -21,6 +21,9 @@ export const MURMUR_ERROR_SOURCE = 'murmur-client';
 /** 자격증명 실패의 출처. 'other' 는 자격증명 실패가 아니라는 뜻이다. */
 export type CredentialFailureType = 'harness-credential' | 'murmur-credential' | 'other';
 
+/** 실행 파일 부재 실패의 출처. */
+export type ExecutableNotFoundType = 'executable-not-found' | 'other';
+
 /**
  * 자격증명 실패 문구. **공백을 전부 지운 문자열**에 대고 맞춘다 — 그래서 아래 패턴들에도
  * 공백이 없다.
@@ -64,6 +67,20 @@ export function isCredentialFailure(err: unknown): CredentialFailureType {
   if (status === 401 || status === 403) return 'harness-credential';
   const squashed = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, '');
   return HARNESS_CREDENTIAL_PATTERNS.some((re) => re.test(squashed)) ? 'harness-credential' : 'other';
+}
+
+/**
+ * 실행 파일을 찾지 못한 실패인가. pty.spawn 의 ENOENT 를 승격한 것으로, 문자열 매칭이 아니라
+ * 오류 클래스의 이름으로 판정한다(문자열 매칭은 이 저장소에서 결함으로 잡힌 적이 있다).
+ *
+ * 이 실패는 재시도로 낫지 않으므로 — launchd KeepAlive 가 재기동해도 같은 이유로 즉시 죽는다 —
+ * 러너는 즉시 크게 실패해야 한다. 운영자가 로그에서 원인을 바로 볼 수 있게 한다.
+ */
+export function isExecutableNotFound(err: unknown): ExecutableNotFoundType {
+  if (err instanceof Error && err.name === 'ExecutableNotFoundError') {
+    return 'executable-not-found';
+  }
+  return 'other';
 }
 
 export function nextBackoffMs(current: number): number {

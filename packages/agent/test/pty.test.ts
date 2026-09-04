@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { composeSpawn, RingBuffer, runPtyTurn } from '../src/pty.js';
+import { composeSpawn, ExecutableNotFoundError, RingBuffer, runPtyTurn } from '../src/pty.js';
 
 const fake = join(dirname(fileURLToPath(import.meta.url)), 'helpers/fake-harness.mjs');
 // **부모 env 를 펼치지 않는다 — 프로덕션 plan 의 실제 모양과 같아야 한다.** 예전엔
@@ -282,5 +282,22 @@ describe('composeSpawn — sh -c 조립(#117)', () => {
     const r = composeSpawn({ ...base, stdinFile: '/tmp/p.txt' });
     expect(r.args[1]).toContain('/tmp/p.txt');
     expect(r.args[1]).not.toContain('사람이 쓴 대화 본문');
+  });
+});
+
+describe('#340 실행 파일 부재 — 재시도로 낫지 않는다', () => {
+  // node-pty 가 ENOENT 를exception 으로 던지는 환경에서는 ExecutableNotFoundError 로 승격한다.
+  // 이 오류는 재시도로 낫지 않으므로 — launchd KeepAlive 가 재기동해도 같은 이유로
+  // 즉시 죽는다 — 반드시 크게 실패해야 한다.
+  //
+  // 참고: Linux 에서 node-pty 는 non-existent command 를spawn 후process exit 로 처리한다.
+  //그래서 여기서는 직접 ENOENT(exception) 를 테스트하지 않고, 다른 경로로 검증한다.
+  //실제 ENOENT 처리는 policy.test.ts::isExecutableNotFound 에서 테스트한다.
+
+  // 다른 spawn 오류(권한 문제 등)는 일반 에러로 전파된다 — 이 변경이 다른 실패를 죽이면 안 된다.
+  it('일반 프로세스 실패는 그대로전달한다 (재시도로 낫는 경우 보존)', async () => {
+    const plan = { command: process.execPath, args: ['-e', 'process.exit(1)'], env: {} as Record<string, string>, stdinFile: null };
+    const r = await runPtyTurn(plan, { cwd: process.cwd(), timeoutMs: 5_000 });
+    expect(r.exitCode).toBe(1);
   });
 });

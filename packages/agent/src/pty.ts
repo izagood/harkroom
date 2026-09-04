@@ -173,18 +173,48 @@ export interface RunPtyTurnOptions {
  * `exec` 가 없으면 최종 프로세스가 sh 가 되어 시그널이 하네스에 닿지 않는다.
  * stdinFile 이 null 이면 PTY stdin 을 그대로 쓴다(인터랙티브·resume 턴용).
  */
+/**
+ * 실행 파일을 찾지 못한 오류. pty.spawn 의 ENOENT 를 승격한 것으로, 문자열 매칭이 아니라
+ * 오류 코드로 판정한다(문구 매칭은 이 저장소에서 결함으로 잡힌 적이 있다).
+ */
+export class ExecutableNotFoundError extends Error {
+  readonly code = 'ENOENT';
+  constructor(
+    readonly command: string,
+    readonly path: string | undefined,
+  ) {
+    super(`실행 파일을 찾을 수 없음: ${command} (PATH: ${path ?? '(empty)'})`);
+    this.name = 'ExecutableNotFoundError';
+  }
+}
+
 export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<TurnResult> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const tail = new RingBuffer(TAIL_CAP_BYTES);
 
     const { command, args } = composeSpawn(plan);
 
-    const proc = pty.spawn(command, args, {
+    let proc: pty.IPty;
+    try {
+      proc = pty.spawn(command, args, {
       cwd: opts.cwd,
       env: plan.env,
       cols: 120,
       rows: 40,
     });
+    } catch (spawnErr) {
+      // pty.spawn 은 실행 파일이 없으면 ENOENT 로 던진다. 이 오류는 재시도로 낫지 않으므로 —
+      // launchd KeepAlive 가 재기동해도 같은 이유로 즉시 죽는다 — 반드시 크게 실패해야 한다.
+      // 그래서 일반 항목 실패와 구분 가능한 타입으로 승격한다(문자열 매칭은 이 저장소에서
+      // 결함으로 잡힌 적이 있다).
+      const err = spawnErr as NodeJS.ErrnoException;
+      if (err.code === 'ENOENT') {
+        reject(new ExecutableNotFoundError(command, process.env.PATH));
+        return;
+      }
+      reject(spawnErr);
+      return;
+    }
 
     // exit 리스너를 spawn 직후, 다른 어떤 준비 작업보다도 먼저 건다 — 그 사이에 무언가 던지면
     // 이미 fork 된 자식이 아무도 안 지켜보는 채로 남아 좀비가 된다(spec §10 축소판). 이
