@@ -356,6 +356,13 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       opts.onData?.(buf);
     });
 
+    // **시계는 `onSpawn` 이 돌아온 뒤에 감긴다 — 이 순서가 계약이다**(#391). 스폰 직후에
+    // 하네스가 뜨기를 확인해야 하는 호출자(테스트가 SIGKILL 승격 경로를 태우려면 하네스가
+    // 이미 SIGTERM 을 무시하고 있어야 한다)는 `onSpawn` 안에서 그 상태를 기다려 시계를 늦출
+    // 수 있다. 실측(#391): 이 순서가 없으면 부하 아래에서 하네스가 부팅을 마치기 전에
+    // SIGTERM 을 맞아 기본 처분으로 죽고, 승격 경로는 한 번도 안 탄다. 타이머 등록을 이
+    // 콜백보다 위로 올리지 마라 — 그 순간 그 대기가 조용히 무력해진다.
+    //
     // `timeoutMs: 0` 은 무기한이다(인터랙티브 턴, #337) — 타이머를 아예 걸지 않는다.
     // 0 을 setTimeout 에 그대로 넣으면 즉시 발화해, 인터랙티브 턴이 뜨자마자 SIGTERM 을
     // 맞는다(옵션 주석). 그 턴의 끝은 exit 또는 고아 회수(interactiveTurn.ts)다.
