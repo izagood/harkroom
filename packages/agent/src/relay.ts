@@ -19,12 +19,19 @@
 // 하네스가 화면에 그린 모든 것(토큰, 환경변수, 사람이 붙여 넣은 비밀)이 들어간다. 프로세스가
 // 죽으면 스크롤백도 같이 사라지는 것이 이 설계의 결과이고, 그것이 의도다.
 import { randomUUID } from 'node:crypto';
-import type { AgentHarness, AgentSessionView, RelayRunnerFrame, RelayServerFrame } from '@murmur/shared';
+import type { AgentHarness, AgentSessionView, RelayRunnerFrame, RelayServerFrame, RunnerCap } from '@murmur/shared';
 import { RingBuffer, type PtyWriter } from './pty.js';
 import { nextBackoffMs } from './policy.js';
 
 /** 세션당 스크롤백 용량(스펙 §5). 러너 메모리에만 산다. */
 export const RING_CAP_BYTES = 256 * 1024;
+
+/**
+ * 이 러너가 다룰 줄 아는 개입 능력(#346). announce 에 실려, 서버가 구 러너(caps 부재)로
+ * input 을 흘리거나 인터랙티브 open 을 기다리다 타임아웃 나는 일을 막는다 — 능력을
+ * 선언하지 않으면 서버는 없는 것으로 읽는다(없는 것을 있다고 표시하지 않는다).
+ */
+export const RUNNER_CAPS: readonly RunnerCap[] = ['input', 'interactive'];
 
 /** 소켓의 최소 표면. 프로덕션은 `ws`, 테스트는 가짜다. */
 export interface RelayTransport {
@@ -165,7 +172,7 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         // 재접속마다 다시 보낸다. 서버는 소켓이 끊기면 이 러너의 세션 레지스트리를
         // 버리므로(살아 있는지 알 방법이 없다), announce 가 없으면 진행 중인 턴이
         // 서버 쪽에서 영구히 사라진다 — attach 가 재접속을 못 넘긴다.
-        send({ type: 'announce', sessions: [...sessions.values()].map((s) => s.info) });
+        send({ type: 'announce', sessions: [...sessions.values()].map((s) => s.info), caps: RUNNER_CAPS });
       },
       onMessage: onServerFrame,
       onClose: () => {

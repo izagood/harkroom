@@ -80,7 +80,9 @@ describe('#141 러너 릴레이 — 접속과 announce', () => {
     d.open();
     // 접속 시점에 세션이 없으면 빈 announce 다 — 안 보내면 서버가 "아직 못 받았다"와
     // "세션이 없다"를 구분할 수 없다.
-    expect(d.sent[0]).toEqual({ type: 'announce', sessions: [] });
+    // caps 도 함께 간다(#346): 선언이 없으면 서버는 이 러너를 구버전(입력·인터랙티브
+    // 불가)으로 읽고, 뷰어에 writer 차례를 주지 않는다 — 선언이 곧 기능의 존재 증명이다.
+    expect(d.sent[0]).toEqual({ type: 'announce', sessions: [], caps: ['input', 'interactive'] });
 
     const session = client.openSession({ ...SESSION });
     expect(d.sent[1]).toMatchObject({ type: 'session.started' });

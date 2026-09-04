@@ -57,6 +57,12 @@ interface Runner {
   socket: RelaySocket;
   /** 이 러너가 announce 한 세션들. 소켓이 끊기면 통째로 버린다. */
   sessions: Map<string, AgentSessionView>;
+  /**
+   * announce 가 선언한 개입 능력(#346). 선언이 없으면(구 러너) 빈 집합이다 — 그 러너로
+   * `input` 을 흘리면 프레임이 조용히 버려져 사람은 쳤다고 믿는데 아무 데도 닿지 않는다.
+   * 그래서 능력이 없으면 뷰어에 writer 차례 자체를 주지 않는다(`addViewer`).
+   */
+  caps: Set<string>;
 }
 
 /**
@@ -177,7 +183,7 @@ export function createRelayHub(): RelayHub {
         }
         previous.socket.close(4409, 'replaced by a newer runner connection');
       }
-      const runner: Runner = { socket, sessions: new Map() };
+      const runner: Runner = { socket, sessions: new Map(), caps: new Set() };
       runners.set(agentAccountId, runner);
 
       return () => {
@@ -211,6 +217,9 @@ export function createRelayHub(): RelayHub {
           for (const sessionId of runner.sessions.keys()) ownerOf.delete(sessionId);
           runner.sessions.clear();
           for (const session of frame.sessions) registerSession(agentAccountId, session);
+          // 능력도 announce 가 진실의 원천이다 — 선언이 없으면(구 러너) 빈 집합으로
+          // **교체**한다. 남겨 두면 다운그레이드된 러너가 옛 능력을 계속 주장한다.
+          runner.caps = new Set(Array.isArray(frame.caps) ? frame.caps : []);
           return;
         }
         case 'session.started':
@@ -286,10 +295,12 @@ export function createRelayHub(): RelayHub {
         sendToRunner(runner, { type: 'replay.request', sessionId });
       }
 
-      if (runner) {
-        // 마지막 attach 가 writer 다(스펙 §5-2 결정 2). 러너가 없으면 입력이 갈 곳이
-        // 없으므로 차례를 주지 않고 읽기 전용임을 바로 알린다 — 프레임이 안 오는 것
-        // (구 서버)과 "차례가 아니다"를 뷰어가 구분할 필요는 없다: 어느 쪽이든 안 쓴다.
+      if (runner?.caps.has('input')) {
+        // 마지막 attach 가 writer 다(스펙 §5-2 결정 2). 러너가 없거나 `input` 능력을
+        // 선언하지 않았으면(구 러너, #346) 차례를 주지 않고 읽기 전용임을 바로 알린다 —
+        // 그 러너로 흘린 input 은 조용히 버려지므로, 차례를 주는 것이 곧 "쳤는데 아무
+        // 데도 안 닿는 입력창"을 만드는 일이다. "안 되는 것"은 고장이 아니라 안 열림으로
+        // 보여야 한다.
         setWriter(sessionId, viewer);
       } else {
         sendTo(viewer, { type: 'writer', writer: false });
@@ -320,7 +331,10 @@ export function createRelayHub(): RelayHub {
           if (writerOf.get(sessionId) !== viewer) return false;
           const owner = ownerOf.get(sessionId);
           const target = owner ? runners.get(owner) : undefined;
-          if (!target) return false;
+          // caps 를 여기서도 본다(#346) — writer 배정이 이미 caps 를 봤지만, 배정 뒤
+          // 러너가 능력 없는 버전으로 재접속·재announce 하는 창이 있다. 그때의 input 은
+          // 러너가 조용히 버릴 프레임이므로 애초에 보내지 않는다.
+          if (!target?.caps.has('input')) return false;
           // ★ `data` 를 **그대로** 옮긴다. 되돌렸다 싣거나 문자열로 디코드하면 사람이 친
           //   제어 바이트(Ctrl-C, 화살표, 붙여 넣은 멀티바이트)가 깨진다.
           sendToRunner(target, { type: 'input', sessionId, data: frame.data });

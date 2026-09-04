@@ -1063,6 +1063,16 @@ export interface AgentSessionView {
 export type AgentSessionState = 'running' | 'ended' | 'runner-offline';
 
 /**
+ * 러너가 다룰 줄 아는 개입 능력(#346, 스펙 §5-2 결정 2). `announce` 에 실려 서버가
+ * 구/신 러너를 가른다:
+ * - `'input'` 이 없으면 서버는 그 러너로 `input` 을 포워딩하지 않고 뷰어에 `writer:false`
+ *   만 내린다 — 구 러너에서 타이핑이 "고장"이 아니라 "안 열림"으로 보이게.
+ * - `'interactive'` 가 없으면 인터랙티브 open 요청이 타임아웃 대기 없이 즉시
+ *   `runner_outdated` 로 거절된다.
+ */
+export type RunnerCap = 'input' | 'interactive';
+
+/**
  * 러너 → 서버 프레임. `GET /agent-relay` 소켓에 실린다.
  *
  * `announce` 가 재접속마다 다시 오는 것이 중요하다 — 서버는 소켓이 끊기면 그 러너의
@@ -1070,7 +1080,8 @@ export type AgentSessionState = 'running' | 'ended' | 'runner-offline';
  * 없으면 진행 중인 턴이 서버 쪽에서 영구히 사라진다.
  */
 export type RelayRunnerFrame =
-  | { type: 'announce'; sessions: AgentSessionView[] }
+  /** `caps` 가 없으면(구 러너) 능력이 하나도 없는 것으로 읽는다 — 없는 것을 있다고 표시하지 않는다. */
+  | { type: 'announce'; sessions: AgentSessionView[]; caps?: readonly RunnerCap[] }
   | { type: 'session.started'; session: AgentSessionView }
   | { type: 'session.ended'; sessionId: string }
   /** 라이브 PTY 바이트. `data` 는 base64 이고 서버는 열지 않는다. */
