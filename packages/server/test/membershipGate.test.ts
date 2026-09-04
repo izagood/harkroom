@@ -147,8 +147,11 @@ describe('보관 채널·DM 멤버십 게이트 (#328)', () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('channel_is_dm');
-    expect(await memberCount(dmId)).toBe(before);
+    // inbox 를 **멤버 수보다 먼저** 본다. 뒤에 두면 게이트를 시스템 메시지 뒤로 옮기는
+    // 되돌리기에서 멤버 수 단언이 먼저 터져, 정작 이 이슈가 말하는 사실(`reason='dm'` 행이
+    // 생긴다)을 이 절이 한 번도 관찰하지 못한다 — 있으나 마나 한 단언이 된다.
     expect(await dmInboxCount(dmId)).toBe(0);
+    expect(await memberCount(dmId)).toBe(before);
     // 판정 자체도 DM 이라고 답한다 — 라우트의 사유와 게이트의 뜻이 같은 자리에서 나온다.
     expect(await channelMembershipGate(pool, dmId)).toBe('dm');
   });
@@ -195,5 +198,31 @@ describe('보관 채널·DM 멤버십 게이트 (#328)', () => {
       `select 1 from channel_member where channel_id = $1 and account_id = $2`, [channelId, agentId],
     );
     expect(rows.rowCount).toBe(0);
+  });
+
+  it("7. 팀을 DM 에 넣으면 사유가 'channel_is_dm' 이다 — 'channel_is_public' 이 아니다", async () => {
+    // DM 은 `visibility` 를 지정하지 않고 만들어지므로 기본값 'public' 을 갖는다
+    // (`021_channel_visibility.sql`). 그래서 팀 라우트에서 게이트가 public 판정 **뒤**로
+    // 밀리면 DM 이 "public 채널에는 멤버십이 없다"로 거절된다 — 400 이라 상태 코드만 보는
+    // 단언은 초록이고, 사유만 사실과 어긋난다. 순서를 여기서 못 박는다.
+    const team = await app.inject({
+      method: 'POST', url: '/teams', headers: auth(adminToken), payload: { name: 'gateteamdm' },
+    });
+    const teamId = team.json().id as string;
+
+    const dm = await app.inject({
+      method: 'POST', url: '/dms', headers: auth(adminToken), payload: { accountIds: [otherId] },
+    });
+    expect(dm.statusCode).toBe(201);
+    const dmId = dm.json().id as string;
+    const before = await memberCount(dmId);
+
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${dmId}/teams/${teamId}/add`, headers: auth(adminToken),
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('channel_is_dm');
+    expect(await memberCount(dmId)).toBe(before);
   });
 });
