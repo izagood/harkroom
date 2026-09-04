@@ -16,7 +16,7 @@ import { acc, chan, fakeApi } from './helpers/fakeApi';
  */
 const pref = (channelId: string, o: Partial<ChannelPrefRow> = {}): ChannelPrefRow => ({
   accountId: 'u1', channelId,
-  mutedAt: null, starredAt: null, notifyLevel: 'all',
+  mutedAt: null, starredAt: null, hiddenAt: null, notifyLevel: 'all',
   section: null, sortOrder: null, ...o,
 });
 

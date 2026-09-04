@@ -376,7 +376,11 @@ export class ApiClient {
   /** `muted` 는 없다 — `notifyLevel` 이 대체했다(#224). */
   updateChannelPref(
     channelId: string,
-    patch: { notifyLevel?: NotifyLevel; starred?: boolean; section?: string | null; sortOrder?: number | null },
+    patch: {
+      notifyLevel?: NotifyLevel; starred?: boolean; section?: string | null; sortOrder?: number | null;
+      /** 사이드바에서 치우기(#376). 시각이 아니라 불리언 — "언제 숨겼나"는 서버가 정한다. */
+      hidden?: boolean;
+    },
   ): Promise<ChannelPrefRow> {
     return this.req('PATCH', `/channels/${channelId}/pref`, patch);
   }
