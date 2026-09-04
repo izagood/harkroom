@@ -12,6 +12,13 @@
 export interface TerminalSink {
   /** PTY raw 바이트. 디코드는 xterm 의 상태 기계가 한다. */
   write(bytes: Uint8Array): void;
+  /**
+   * 지금 크기를 다시 재서 **바뀌지 않았어도** `onResize` 로 알린다(#346). writer 승격
+   * 직후를 위한 것이다 — 승격 전의 fit 은 패널 가드가 버렸으므로, 여기서 다시 알리지
+   * 않으면 마지막으로 "보낸" 크기와 실제 크기가 같아 ResizeObserver 도 침묵하고 PTY 는
+   * 이전 writer 의 크기로 남는다. 옵셔널: 가짜 sink(테스트)는 구현하지 않아도 된다.
+   */
+  refit?(): void;
   dispose(): void;
 }
 
@@ -27,8 +34,8 @@ export interface TerminalSinkOptions {
    * 이 터미널이 지금 **몇 칸인가**(#335). 컨테이너가 바뀔 때마다 온다.
    *
    * `onInput` 과 같은 자리에 같은 모양으로 둔다 — 없으면 크기를 아무 데도 안 보낸다.
-   * admin 패널이 이 옵션을 안 넘기는 것이 화면 쪽 절반이고, 서버 쪽 절반은 attach
-   * 티켓의 `canInput` 이다(진짜 게이트는 그쪽이다).
+   * writer 가 아닐 때 값을 버리는 것이 화면 쪽 절반이고(TerminalPanel 의 가드),
+   * 서버 쪽 절반은 허브의 writer 판정이다(#346 — 진짜 게이트는 그쪽이다).
    */
   onResize?: (cols: number, rows: number) => void;
 }
@@ -139,6 +146,12 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
     write(bytes) {
       if (term) term.write(bytes);
       else pending.push(bytes);
+    },
+    refit() {
+      // "마지막으로 보낸 크기"를 지워 applyFit 의 중복 억제를 한 번 우회한다 — writer
+      // 승격 직후에는 크기가 안 바뀌었어도 알려야 한다(승격 전의 보고는 버려졌다, #346).
+      sent = null;
+      applyFit();
     },
     dispose() {
       disposed = true;

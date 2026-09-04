@@ -273,14 +273,25 @@ export class ApiClient {
    * 세션 하나에 attach 한다. 인가는 **여기서** 끝난다 — 돌려받는 티켓은 그 세션 하나에만
    * 쓸 수 있는 1회용이고, WS 핸드셰이크는 그 티켓만 소모한다.
    *
-   * `canInput` 은 그 터미널에 **쓸 수 있는가**(#315) — 소유자면 true, 소유자가 아닌
-   * admin 이면 false 다.
-   * 화면이 스스로 계산하지 않고 서버에서 받는다: 판정을 클라이언트에도 두면 두 벌이 되고,
-   * 화면 쪽이 더 넓어지면 사람은 눌러도 아무 일이 없는 입력창을 얻는다(이 저장소에서
-   * "눌러도 아무 일이 없는 버튼"이 반복해서 결함으로 잡혔다).
+   * 쓰기 차례는 이 응답에 없다 — attach 뒤 서버가 소켓으로 `writer` 프레임을 보내 알린다
+   * (스펙 §5-2 결정 2, `agentTerminal.ts::AttachCallbacks.onWriter`). 응답에 실으면 attach
+   * 시점의 판정이 얼어붙어, 다른 창이 붙고 떠나며 차례가 오가는 사실을 담지 못한다.
    */
-  attachAgentSession(sessionId: string): Promise<{ ticket: string; session: AgentSessionView; canInput: boolean }> {
+  attachAgentSession(sessionId: string): Promise<{ ticket: string; session: AgentSessionView }> {
     return this.req('POST', `/agent-sessions/${sessionId}/attach`);
+  }
+
+  /**
+   * 진행 중인 턴이 없어도 스스로 인터랙티브 터미널을 연다(#337, 스펙 §5-2 결정 4).
+   * 세션이 아니라 **스레드**를 가리킨다 — 러너가 세션을 확보(없으면 생성)해 인터랙티브
+   * PTY 를 띄우고, 응답의 티켓은 attach 와 같은 1회용이라 기존 attach 흐름에 그대로
+   * 합류한다. 실패(러너 오프라인 404 / 구버전 409 / codex 거절 409 / 응답 없음 504)는
+   * 서버 문구 그대로 ApiError 로 던진다 — 화면이 그 문구를 그대로 보여준다.
+   */
+  openInteractiveSession(
+    agentAccountId: string, channelId: string, threadRootId: string,
+  ): Promise<{ ticket: string; session: AgentSessionView }> {
+    return this.req('POST', '/agent-sessions/interactive', { agentAccountId, channelId, threadRootId });
   }
 
   /** WS 핸드셰이크용 단기 1회용 티켓. 연결 시도마다 새로 받는다. */

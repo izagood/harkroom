@@ -93,6 +93,20 @@ describe('buildTurnCommand — claude', () => {
     expect(p.args).toEqual(expect.arrayContaining(['-r', 'uuid-1']));
   });
 
+  // #337: "세션 없는 스레드에서 [터미널 열기]" — 인터랙티브에도 첫 턴이 생겼다. resume(-r)
+  // 으로 조립하면 존재한 적 없는 세션을 이어받으려다 "No conversation found" 로 죽고,
+  // 반대로 이미 대화한 세션에 --session-id 를 다시 주면 "Session ID already in use" 로
+  // 죽는다(둘 다 스파이크 실측) — isFirstTurn 이 두 갈래를 가르는 유일한 신호다.
+  it('인터랙티브 첫 턴: --session-id <id> (비-p) — resume 이 아니다 (#337)', () => {
+    const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'interactive', sessionId: 'uuid-1', isFirstTurn: true });
+    expect(p.args).toEqual(expect.arrayContaining(['--session-id', 'uuid-1']));
+    expect(p.args).not.toContain('-p');
+    expect(p.args).not.toContain('-r');
+    expect(p.args).not.toContain('--permission-mode');
+    // 첫 턴도 PTY stdin 은 사람의 것이다 — stdin 파일 리다이렉션이 붙으면 안 된다.
+    expect(p.stdinFile).toBeNull();
+  });
+
   it('영구 설정을 바꾸는 플래그가 절대 없다 (spec §6)', () => {
     const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 's', isFirstTurn: false });
     expect(p.args).not.toContain('--dangerously-skip-permissions');
@@ -174,13 +188,17 @@ describe('buildTurnCommand — codex', () => {
     expect(p.args).toContain('--skip-git-repo-check');
   });
 
-  // 실물 확인(codex-cli 0.148.0): `codex exec`/`codex exec resume` 에는 이 플래그가 있지만
-  // `codex resume`(인터랙티브)에는 **없다** — 넘기면 `error: unexpected argument` 로 파싱이
-  // 깨져 인터랙티브 턴이 통째로 안 뜬다. `-s` 가 exec 에만 있고 exec resume 에는 없던 것과
-  // 같은 모양의 비대칭이라, 그때처럼 실물이 깨뜨리기 전에 여기서 막는다.
-  it('인터랙티브 턴 argv 에는 --skip-git-repo-check 가 들어가지 않는다 — codex resume 은 이 플래그를 안 받는다', () => {
-    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'interactive', sessionId: 's', isFirstTurn: false });
-    expect(p.args).not.toContain('--skip-git-repo-check');
+  // #337 스파이크(codex-cli 0.147.0 실측): `codex resume` 은 `--ignore-user-config` 를
+  // 파싱 단계에서 거부한다 — 그 플래그 없이 열면 운영자 ~/.codex/config.toml 의 개인
+  // MCP(Slack·Gmail·Drive)를 통째로 상속해, §7 이 멘션 턴에서 막은 구멍이 인터랙티브로
+  // 다시 열린다. 그래서 codex 인터랙티브는 **명확한 에러로 거절한다**(스펙 §5-2 결정 8).
+  // 이 거절이 "미구현" 으로 읽히지 않게 에러 문구가 이유(플래그·config 상속)를 말해야 한다.
+  it('codex 인터랙티브 턴은 명확한 에러로 거절한다 — resume 이 --ignore-user-config 를 못 받는다 (§5-2 결정 8)', () => {
+    expect(() => buildTurnCommand({ ...base, harness: 'codex', mode: 'interactive', sessionId: 's', isFirstTurn: false }))
+      .toThrow(/--ignore-user-config.*config\.toml/s);
+    // 첫 턴(세션 없음)도 같은 거절이다 — 맨 `codex` 로 여는 경로도 config 상속은 같다.
+    expect(() => buildTurnCommand({ ...base, harness: 'codex', mode: 'interactive', sessionId: null, isFirstTurn: true }))
+      .toThrow(/인터랙티브 턴은 지원하지 않는다/);
   });
 
   // --ignore-user-config 는 claude 의 --strict-mcp-config 와 같은 목적이다: 운영자의
@@ -198,28 +216,11 @@ describe('buildTurnCommand — codex', () => {
     expect(p.args).toContain('--ignore-user-config');
   });
 
-  it('인터랙티브 턴 argv 에는 --ignore-user-config 가 들어가지 않는다 — codex resume 은 이 플래그를 안 받는다', () => {
-    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'interactive', sessionId: 's', isFirstTurn: false });
-    expect(p.args).not.toContain('--ignore-user-config');
-  });
-
   // claude 는 자체 --strict-mcp-config 로 처리하므로 codex 용 --ignore-user-config 가
   // claude argv 에 새면 안 된다 — 없는 플래그를 붙여 턴이 깨지는 것을 방지한다.
   it('claude argv 에는 --ignore-user-config 가 절대 들어가지 않는다 — claude 는 다른 플래그다', () => {
     const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 's', isFirstTurn: false });
     expect(p.args).not.toContain('--ignore-user-config');
-  });
-
-  // 인터랙티브 턴은 화면 앞에 사람이 있다 — exec 서브커맨드도, sandbox 오버라이드도, 프롬프트
-  // 위치인자도 없어야 한다(spec §4·§6). 이 조각들을 빠뜨리면 codex resume 이 비대화형처럼
-  // 동작하거나(sandbox_mode 가 남아 승인 흐름이 안 뜸), 사람이 입력할 자리에 옛 프롬프트가 끼어든다.
-  it('인터랙티브 턴은 exec·sandbox·프롬프트 위치인자를 전부 생략한다 — 순수 resume', () => {
-    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'interactive', sessionId: 'sid-1', isFirstTurn: false });
-    expect(p.args[0]).toBe('resume');
-    expect(p.args[1]).toBe('sid-1');
-    expect(p.args).not.toContain('exec');
-    expect(p.args.join(' ')).not.toContain('sandbox_mode');
-    expect(p.args.join(' ')).not.toContain('CTX'); // promptCtx 는 mention 전용(브리프 인터페이스 주석)
   });
 
   // 러너는 더 이상 하네스 출력을 파싱하지 않는다 — 에이전트가 답하는 유일한 경로가 murmur
@@ -275,8 +276,11 @@ describe('buildTurnCommand — 잘못된 호출 상태', () => {
     expect(() => buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: null, isFirstTurn: true })).toThrow();
   });
 
-  it('인터랙티브 턴은 codex 라도 sessionId 가 null 이면 던진다 — 이어받을 세션이 없다', () => {
-    expect(() => buildTurnCommand({ ...base, harness: 'codex', mode: 'interactive', sessionId: null, isFirstTurn: true })).toThrow();
+  // #337: 인터랙티브 **첫 턴**이 생기면서 "인터랙티브 + null id" 를 통째로 거르던 초판
+  // 불변식은 완화됐다 — 대신 resume(isFirstTurn=false)인데 id 가 없는 조합은 모드와
+  // 무관하게 여전히 결함이다.
+  it('인터랙티브 resume 인데 sessionId 가 null 이면 던진다 — 이어받을 세션이 없다', () => {
+    expect(() => buildTurnCommand({ ...base, harness: 'claude-code', mode: 'interactive', sessionId: null, isFirstTurn: false })).toThrow(/세션 id/);
   });
 });
 

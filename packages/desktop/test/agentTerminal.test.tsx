@@ -116,9 +116,7 @@ describe('#141-8 패널을 닫으면 구독이 끊긴다', () => {
     const api = {
       baseUrl: 'http://localhost:8080',
       agentSessions: vi.fn(async () => sessions),
-      // 이 describe 의 주인공은 소유자다 — #315 이후로는 그 사실을 명시해야 패널이
-      // 입력을 연다(안 적으면 읽기 전용으로 떠서 무엇을 검증하는지 흐려진다).
-      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: sessions[0]!, canInput: true })),
+      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: sessions[0]! })),
     };
     setController({ api } as unknown as Controller);
     useAppStore.getState().set({
@@ -166,15 +164,86 @@ describe('#141-8 패널을 닫으면 구독이 끊긴다', () => {
 });
 
 /**
- * #315 — 사람이 이 패널에 타이핑한다. 두 가지를 가른다:
- *   1(클라이언트 절반). 소유자가 친 것이 attach 소켓으로 나간다.
- *   5. admin 에게는 **입력 자체가 열리지 않고**, 왜인지가 화면에 있다.
- *
- * sink 팩토리가 받은 옵션을 붙잡는다 — 여기가 "입력이 열렸는가"의 실제 경계다.
- * 화면에 문구만 확인하면, 문구는 맞는데 xterm 은 입력을 받는 상태로도 초록이 된다.
+ * #337 — 진행 중인 턴이 없어도 사람이 스스로 연다. no-session 화면의 [터미널 열기]가
+ * REST 로 러너에 인터랙티브 PTY 를 띄우게 하고, 돌아온 티켓으로 **기존 attach 흐름에
+ * 합류한다** — 열기 전용 소켓 경로를 따로 만들지 않는 것이 이 배선의 요점이다.
  */
-describe('#315 소유자는 치고 admin 은 못 친다', () => {
-  const mountPanel = async (canInput: boolean) => {
+describe('#337 [터미널 열기] — 세션이 없어도 스스로 연다', () => {
+  const mountNoSession = async (api: Record<string, unknown>) => {
+    setTerminalSinkFactory(() => ({ write: () => { /* 배선만 본다 */ }, dispose: () => {} }));
+    setController({ api } as unknown as Controller);
+    useAppStore.getState().set({
+      me: acc('u1', 'owner'),
+      accounts: { a1: agent('a1', 'forge', 'u1') },
+      terminalTarget: { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1' },
+    });
+    render(<TerminalPanel />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  };
+
+  it('버튼이 스토어의 target 세 필드로 REST 를 부르고, 받은 티켓으로 attach 소켓이 열린다', async () => {
+    const api = {
+      baseUrl: 'http://localhost:8080',
+      agentSessions: vi.fn(async () => []),
+      attachAgentSession: vi.fn(),
+      openInteractiveSession: vi.fn(async () => ({ ticket: 'murt_opened', session: session() })),
+    };
+    await mountNoSession(api);
+    expect(FakeSocket.last).toBeNull();
+
+    await act(async () => { screen.getByText('터미널 열기').click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    // 스레드 스코프 그대로 — 세션이 없으므로 세션 id 가 아니라 (에이전트, 채널, 스레드)다.
+    expect(api.openInteractiveSession).toHaveBeenCalledWith('a1', 'c1', 'm1');
+    // 기존 attach 경로에 합류했다 — 별도 소켓 경로가 아니라 같은 티켓 소켓이다.
+    expect(FakeSocket.last).not.toBeNull();
+    expect(FakeSocket.last!.url).toContain('murt_opened');
+    // attach REST 는 부르지 않는다 — 인터랙티브 open 의 응답이 이미 티켓이다.
+    expect(api.attachAgentSession).not.toHaveBeenCalled();
+  });
+
+  it('열기 실패(러너 오프라인·구버전·codex 거절)는 서버 문구 그대로 error 화면에 온다', async () => {
+    const api = {
+      baseUrl: 'http://localhost:8080',
+      agentSessions: vi.fn(async () => []),
+      openInteractiveSession: vi.fn(async () => {
+        throw new Error('codex 인터랙티브 턴은 지원하지 않는다');
+      }),
+    };
+    await mountNoSession(api);
+
+    await act(async () => { screen.getByText('터미널 열기').click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    // 화면이 문구를 다시 쓰지 않는다 — 원인을 아는 것은 서버(러너)다.
+    expect(screen.getByText(/codex 인터랙티브 턴은 지원하지 않는다/)).toBeTruthy();
+    expect(FakeSocket.last).toBeNull();
+  });
+
+  it('세션이 이미 있으면 열기 버튼 없이 곧장 붙는다 — 열기는 no-session 의 것이다', async () => {
+    const api = {
+      baseUrl: 'http://localhost:8080',
+      agentSessions: vi.fn(async () => [session()]),
+      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: session() })),
+      openInteractiveSession: vi.fn(),
+    };
+    await mountNoSession(api);
+    expect(screen.queryByText('터미널 열기')).toBeNull();
+    expect(api.openInteractiveSession).not.toHaveBeenCalled();
+    expect(api.attachAgentSession).toHaveBeenCalledWith('sess-1');
+  });
+});
+
+/**
+ * #315·#346 — 사람이 이 패널에 타이핑한다. 쓰기 차례는 서버의 `writer` 프레임이 정한다
+ * (스펙 §5-2 결정 2 — 마지막 attach 가 writer). 화면 쪽이 지켜야 하는 것 세 가지:
+ *   1. writer 통지를 받은 창의 타이핑만 소켓으로 나간다.
+ *   2. 통지가 **한 번도 안 오면**(구 서버) 아무것도 보내지 않는다 — 4방향 호환의 절반.
+ *   3. 강등(writer:false)이 오면 그 순간부터 다시 보내지 않고, 왜인지가 화면에 있다.
+ */
+describe('#315 writer 인 창만 친다 — 차례는 서버가 정한다', () => {
+  const mountPanel = async () => {
     let opts: { onInput?: (data: string) => void } | undefined;
     setTerminalSinkFactory((_el, o) => {
       opts = o;
@@ -183,7 +252,7 @@ describe('#315 소유자는 치고 admin 은 못 친다', () => {
     const api = {
       baseUrl: 'http://localhost:8080',
       agentSessions: vi.fn(async () => [session()]),
-      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: session(), canInput })),
+      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: session() })),
     };
     setController({ api } as unknown as Controller);
     useAppStore.getState().set({
@@ -196,10 +265,9 @@ describe('#315 소유자는 치고 admin 은 못 친다', () => {
     return { sinkOpts: () => opts };
   };
 
-  it('소유자가 친 것이 attach 소켓에 input 프레임으로 나간다', async () => {
-    const { sinkOpts } = await mountPanel(true);
-    // 입력이 열려 있다 — 열려 있지 않으면 아래 호출 자체가 불가능하다.
-    expect(sinkOpts()?.onInput).toBeTypeOf('function');
+  it('writer 통지를 받은 창의 타이핑이 input 프레임으로 나간다', async () => {
+    const { sinkOpts } = await mountPanel();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true }); });
 
     // xterm 이 키를 넘기는 것을 흉내낸다. 제어 시퀀스를 섞는다 — 글자만 보내면
     // 인코딩이 깨져도 통과한다.
@@ -209,42 +277,60 @@ describe('#315 소유자는 치고 admin 은 못 친다', () => {
     const frame = JSON.parse(FakeSocket.last!.sent[0]!) as { type: string; data: string };
     expect(frame.type).toBe('input');
     expect(Buffer.from(frame.data, 'base64').toString('utf8')).toBe('\x1b[Ayes\r');
+    // 차례가 있다는 사실도 화면에 있다 — 두 창을 쓰는 사람이 어느 쪽이 살아 있는지
+    // 여기서 읽는다.
+    expect(screen.getByTestId('writer-note').textContent).toContain('입력 가능');
   });
 
-  it('admin 에게는 입력이 열리지 않고 왜인지가 화면에 있다', async () => {
-    const { sinkOpts } = await mountPanel(false);
-
-    // **입력창이 없다.** sink 에 onInput 이 안 가면 terminalSink 가 xterm 의 stdin 자체를
-    // 끈다 — 여기가 "눌러도 아무 일이 없는 입력창"을 막는 자리다.
-    expect(sinkOpts()?.onInput).toBeUndefined();
-    // 그리고 이유가 보인다. 비활성만 하고 이유를 안 적으면 사람은 고장으로 읽는다.
-    expect(screen.getByText(/읽기 전용/)).toBeTruthy();
-    expect(screen.getByText(/소유자/)).toBeTruthy();
-    // 소켓으로도 아무것도 나가지 않았다 — 화면 문구만 보면 못 잡는 절반이다.
+  it('writer 프레임이 한 번도 안 오면(구 서버) 아무것도 보내지 않는다', async () => {
+    const { sinkOpts } = await mountPanel();
+    // 통지 없이 바로 친다 — 구 서버는 writer 프레임을 모르고, 그때 보낸 input 은 서버가
+    // 해석하지 못한다. 보내지 않는 것이 "자연스러운 읽기 전용 저하"다(스펙 §5-2 결정 2).
+    await act(async () => { sinkOpts()!.onInput!('hello\r'); });
     expect(FakeSocket.last!.sent).toEqual([]);
+  });
+
+  it('강등(writer:false)이 오면 그 뒤의 타이핑은 나가지 않고 이유가 화면에 있다', async () => {
+    const { sinkOpts } = await mountPanel();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true }); });
+    await act(async () => { sinkOpts()!.onInput!('a'); });
+    expect(FakeSocket.last!.sent).toHaveLength(1);
+
+    // 다른 창이 attach 해 서버가 이 창을 강등시켰다.
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: false }); });
+    await act(async () => { sinkOpts()!.onInput!('b'); });
+
+    // 강등 뒤에 친 것은 나가지 않는다 — state 가 아니라 ref 가 가드해야 이 순간이 잡힌다.
+    expect(FakeSocket.last!.sent).toHaveLength(1);
+    // 이유가 보인다. 비활성만 하고 이유를 안 적으면 사람은 고장으로 읽는다.
+    expect(screen.getByTestId('writer-note').textContent).toContain('읽기 전용');
+    expect(screen.getByTestId('writer-note').textContent).toContain('다른 창');
   });
 });
 
 /**
  * #335 — 패널 크기가 PTY 크기가 된다. 화면 쪽 절반이다:
- *   1(클라이언트 절반). 소유자 패널의 크기가 attach 소켓으로 나간다.
- *   3. **admin 패널의 크기는 소유자에게 전파되지 않는다** — 화면이 그 길을 안 연다.
+ *   1(클라이언트 절반). writer 패널의 크기가 attach 소켓으로 나간다.
+ *   3. **writer 가 아닌 패널의 크기는 아무것도 안 바꾼다** — 화면이 그 값을 버린다.
  *
- * 이것만으로 3 을 단언했다고 하면 안 된다(`#315` 에서 실측된 함정). admin 브라우저가
- * 소켓에 직접 프레임을 보내는 경로는 이 테스트가 못 지나고, 그 절반은 서버 쪽
- * `agentResize.test.ts` 의 `#335-2` 가 실제 소켓으로 잰다.
+ * #346(writer 규칙) 이후 판정 주체가 canInput(attach 시점 고정)에서 writer 통지(차례)로
+ * 옮겨졌다 — "읽기 전용은 아무것도 바꾸지 않는다"는 원 근거는 그대로다. 이것만으로 3 을
+ * 단언했다고 하면 안 된다(`#315` 에서 실측된 함정). 브라우저가 소켓에 직접 프레임을
+ * 보내는 경로는 이 테스트가 못 지나고, 그 절반은 서버 쪽 `agentResize.test.ts` 의
+ * `#335-2` 가 실제 소켓으로 잰다.
  */
-describe('#335 소유자의 폭이 PTY 폭이 되고, admin 의 폭은 아무것도 안 바꾼다', () => {
-  const mountPanel = async (canInput: boolean) => {
+describe('#335 writer 의 폭이 PTY 폭이 되고, 읽기 전용 창의 폭은 아무것도 안 바꾼다', () => {
+  const mountPanel = async () => {
     let opts: TerminalSinkOptions | undefined;
+    const refit = vi.fn();
     setTerminalSinkFactory((_el, o) => {
       opts = o;
-      return { write: () => { /* 이 describe 는 출력이 아니라 크기를 본다 */ }, dispose: () => {} };
+      return { write: () => { /* 이 describe 는 출력이 아니라 크기를 본다 */ }, refit, dispose: () => {} };
     });
     const api = {
       baseUrl: 'http://localhost:8080',
       agentSessions: vi.fn(async () => [session()]),
-      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: session(), canInput })),
+      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: session() })),
     };
     setController({ api } as unknown as Controller);
     useAppStore.getState().set({
@@ -255,13 +341,12 @@ describe('#335 소유자의 폭이 PTY 폭이 되고, admin 의 폭은 아무것
     });
     render(<TerminalPanel />);
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    return { sinkOpts: () => opts };
+    return { sinkOpts: () => opts, refit };
   };
 
-  it('소유자 패널의 크기가 attach 소켓에 resize 프레임으로 나간다', async () => {
-    const { sinkOpts } = await mountPanel(true);
-    // 크기 보고가 열려 있다 — 열려 있지 않으면 아래 호출 자체가 불가능하다.
-    expect(sinkOpts()?.onResize).toBeTypeOf('function');
+  it('writer 패널의 크기가 attach 소켓에 resize 프레임으로 나간다', async () => {
+    const { sinkOpts } = await mountPanel();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true }); });
 
     // 터미널이 컨테이너에 맞춘 결과를 알려 오는 것을 흉내낸다.
     await act(async () => { sinkOpts()!.onResize!(100, 30); });
@@ -271,14 +356,26 @@ describe('#335 소유자의 폭이 PTY 폭이 되고, admin 의 폭은 아무것
     expect(frame).toEqual({ type: 'resize', cols: 100, rows: 30 });
   });
 
-  it('admin 패널은 크기를 아예 보고하지 않는다 — 소유자의 화면이 안 좁아진다', async () => {
-    const { sinkOpts } = await mountPanel(false);
+  it('writer 통지가 없으면(구 서버 포함) 크기를 아무 데도 보내지 않는다', async () => {
+    const { sinkOpts } = await mountPanel();
 
-    // **크기 보고의 길이 없다.** sink 에 onResize 가 안 가면 그 터미널은 자기 폭을
-    // 어디에도 말하지 않는다 — 읽기 전용은 아무것도 바꾸지 않는다(운영자 결정 A).
-    expect(sinkOpts()?.onResize).toBeUndefined();
-    // 소켓으로도 아무것도 나가지 않았다.
+    // **가드가 값을 버린다.** writer 규칙에서는 배선 자체는 항상 있고(차례가 언제든
+    // 올 수 있다) 가드가 최신 차례를 읽는다 — 읽기 전용은 아무것도 바꾸지 않는다.
+    await act(async () => { sinkOpts()!.onResize!(40, 10); });
+    // 소켓으로 아무것도 나가지 않았다.
     expect(FakeSocket.last!.sent).toEqual([]);
+  });
+
+  it('승격 직후 refit 으로 자기 크기를 한 번 보고한다 — 승격 전의 보고는 버려졌다', async () => {
+    const { refit } = await mountPanel();
+    expect(refit).not.toHaveBeenCalled();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true }); });
+    // 스펙 §5 "attach 시 writer 의 크기로 resize" — 이 재보고가 없으면 PTY 가 이전
+    // writer(또는 spawn 기본값)의 크기로 남는다.
+    expect(refit).toHaveBeenCalledTimes(1);
+    // 강등은 재보고할 것이 없다.
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: false }); });
+    expect(refit).toHaveBeenCalledTimes(1);
   });
 });
 
