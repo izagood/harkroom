@@ -192,3 +192,9 @@ codex resume 00000000-0000-0000-0000-000000000000 --ignore-user-config
 80x24 로 spawn 한 자식(node 스크립트)에 `p.resize(100, 50)` → 자식이 SIGWINCH 를 받고
 `process.stdout.columns/rows` 가 100x50 으로 갱신됨을 실측. `pty.ts` 에 resize 통로를
 열면 xterm fit 크기가 하네스 TUI 리플로우까지 닿는다.
+
+### 부기: CLI 버전 재확인 (2026-09-05)
+
+2026-09-05 확인 시 `codex-cli` 는 **0.153.2** 였다(위 스파이크가 측정한 0.147.0 과 다르다).
+`claude` 는 2.1.237 로 일치했다. 스파이크 결과가 특정 버전 동작(특히 §1 의 `codex resume
+--help` 표면)에 기대고 있다면 재확인이 필요하다. 위 측정값 자체는 덮어쓰지 않는다.
