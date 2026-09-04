@@ -374,11 +374,19 @@ export interface ChannelPrefRow {
    * 섹션 안에서의 수동 순서(#157). null 이면 이름순 뒤에 붙는다.
    */
   sortOrder: number | null;
+  /**
+   * 이 채널을 사이드바에서 치운 시각(#376). null 이면 보인다. 보관·나가기와 어떻게 다른지는
+   * `@murmur/shared` 의 같은 이름 필드 주석에 있다 — 여기 옮겨 적으면 한쪽만 고쳐진다.
+   */
+  hiddenAt: string | null;
 }
 
 export async function updateChannelPref(
   pool: Pool, accountId: string, channelId: string,
-  patch: { notifyLevel?: NotifyLevel; starred?: boolean; section?: string | null; sortOrder?: number | null },
+  patch: {
+    notifyLevel?: NotifyLevel; starred?: boolean; section?: string | null; sortOrder?: number | null;
+    hidden?: boolean;
+  },
 ): Promise<ChannelPrefRow | null> {
   const channel = await pool.query(`select id, kind from channel where id = $1`, [channelId]);
   if (!channel.rowCount) return null;
@@ -422,6 +430,20 @@ export async function updateChannelPref(
       [accountId, channelId, sectionValue],
     );
   }
+  /**
+   * 숨기기(#376). 시각으로 저장한다 — 012 의 관용구다("언제 숨겼나"가 기록으로 남는다).
+   *
+   * `starred` 와 같은 모양으로 **자기 컬럼만** 쓴다. 섹션·순서와 한 문장에 묶으면 숨기기가
+   * 방금 정한 섹션을 지운다(위 `section` 주석의 실측 사고와 같은 모양이다).
+   */
+  if (patch.hidden !== undefined) {
+    await pool.query(
+      `insert into channel_pref (account_id, channel_id, hidden_at)
+       values ($1, $2, $3)
+       on conflict (account_id, channel_id) do update set hidden_at = $3`,
+      [accountId, channelId, patch.hidden ? new Date() : null],
+    );
+  }
   if (patch.sortOrder !== undefined) {
     await pool.query(
       `insert into channel_pref (account_id, channel_id, sort_order)
@@ -438,7 +460,8 @@ export async function getChannelPref(
 ): Promise<ChannelPrefRow | null> {
   const res = await pool.query(
     `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt", starred_at as "starredAt",
-            notify_level as "notifyLevel", section, sort_order as "sortOrder"
+            notify_level as "notifyLevel", section, sort_order as "sortOrder",
+            hidden_at as "hiddenAt"
      from channel_pref where account_id = $1 and channel_id = $2`,
     [accountId, channelId],
   );
@@ -448,7 +471,8 @@ export async function getChannelPref(
 export async function listChannelPrefs(pool: Pool, accountId: string): Promise<ChannelPrefRow[]> {
   const res = await pool.query(
     `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt", starred_at as "starredAt",
-            notify_level as "notifyLevel", section, sort_order as "sortOrder"
+            notify_level as "notifyLevel", section, sort_order as "sortOrder",
+            hidden_at as "hiddenAt"
      from channel_pref where account_id = $1`,
     [accountId],
   );

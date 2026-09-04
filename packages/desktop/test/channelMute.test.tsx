@@ -25,7 +25,7 @@ const pref = (channelId: string, muted: boolean): ChannelPrefRow =>
   ({
     accountId: 'u1', channelId,
     mutedAt: muted ? '2026-09-03T00:00:00.000Z' : null,
-    starredAt: null,
+    starredAt: null, hiddenAt: null,
     notifyLevel: muted ? 'none' : 'all',
     section: null,
     sortOrder: null,

@@ -435,7 +435,7 @@ describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
   const pref = (channelId: string, o: { muted?: boolean; starred?: boolean }): ChannelPrefRow => ({
     accountId: 'u1', channelId,
     mutedAt: o.muted ? '2026-09-03T00:00:00.000Z' : null,
-    starredAt: o.starred ? '2026-09-03T00:00:00.000Z' : null,
+    starredAt: o.starred ? '2026-09-03T00:00:00.000Z' : null, hiddenAt: null,
     // #224 이후 음소거는 수준 `none` 이다.
     notifyLevel: o.muted ? 'none' : 'all',
     section: null,

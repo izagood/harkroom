@@ -143,6 +143,8 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
   const [deleteCount, setDeleteCount] = useState<number | 'error' | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
+  // 숨긴 채널 묶음(#376)도 접혀 있는 채로 시작한다 — 치운 것이 열린 채로 보이면 치운 뜻이 없다.
+  const [hiddenOpen, setHiddenOpen] = useState(false);
 
   const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
   const [editTopic, setEditTopic] = useState('');
@@ -457,10 +459,18 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
   const row = (active: boolean) =>
     `flex w-full items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-surface-raised ${active ? 'bg-surface-raised' : ''}`;
 
+  /**
+   * 이 채널을 내가 치웠는가(#376). **판정이 이 함수 하나다** — 채널 묶음 셋(보이는 것·보관·
+   * 숨김)이 같은 답을 봐야 한 채널이 두 묶음에 동시에 나타나거나 어디에도 없어지지 않는다.
+   */
+  const isHidden = (channelId: string) => !!channelPrefs[channelId]?.hiddenAt;
+
   // 섹션으로 그룹화된 채널 목록을 구한다(#157).
   // 정렬: 섹션(이름순, null 은 맨 아래) → 별표 → sortOrder → 이름.
   const groupedChannels = useMemo(() => {
-    const standardChannels = channels.filter((ch) => ch.kind === 'standard' && !ch.archivedAt);
+    const standardChannels = channels.filter(
+      (ch) => ch.kind === 'standard' && !ch.archivedAt && !isHidden(ch.id),
+    );
     const withPref = standardChannels.map((ch) => ({ channel: ch, pref: channelPrefs[ch.id] as ChannelPrefRow | null }));
     const sorted = sortChannelsBySection(withPref);
 
@@ -513,9 +523,23 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
 
   const archivedChannels = useMemo(() => {
     return channels
-      .filter((ch) => ch.kind === 'standard' && ch.archivedAt)
+      .filter((ch) => ch.kind === 'standard' && ch.archivedAt && !isHidden(ch.id))
       .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
-  }, [channels]);
+  }, [channels, channelPrefs]);
+
+  /**
+   * 내가 치운 채널들(#376). **보관 여부를 보지 않는다** — 보관은 채널 전체의 상태이고 숨김은
+   * 내 상태라 독립이다(둘을 곱해 네 칸을 만들면 보관된 채널을 숨겼을 때 어느 묶음에 넣을지
+   * 답이 없다). 숨긴 것은 위 두 묶음에서 빠지고 **여기 하나로만** 모인다.
+   *
+   * 목록을 아예 감추지 않고 접힌 묶음으로 두는 이유: 되돌리는 길이 화면에 있어야 숨김이
+   * 나가기와 다른 것이 된다(스스로 되돌린다). 감춰 두면 "치웠는데 어디로 갔나"가 된다.
+   */
+  const hiddenChannels = useMemo(() => {
+    return channels
+      .filter((ch) => ch.kind === 'standard' && isHidden(ch.id))
+      .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
+  }, [channels, channelPrefs]);
 
   const channelRow = (ch: ChannelRow) => {
     // pref 는 **배지를 그리기 전에** 구한다. 예전에는 이 계산이 배지 아래에 있어서
@@ -894,6 +918,15 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
       ...(ch.visibility === 'public' || knownMember
         ? [{ label: '초대', onSelect: () => void openMembers(ch.id) }] : []),
       ...(knownMember ? [{ label: '나가기', onSelect: () => void requestLeave(ch.id) }] : []),
+      /*
+       * 숨기기(#376). **나가기 바로 옆에 둔다** — 두 항목이 같은 자리에 있어야 "관심 없다"를
+       * 표현하는 길이 나가기 하나뿐이 아니라는 것이 보인다. 멤버십을 보지 않는다: 멤버가
+       * 아닌 public 채널도 사이드바에 있으므로 치울 수 있어야 하고, 숨김은 멤버십을 건드리지
+       * 않으므로 게이트가 필요 없다. 확인 절차도 없다 — 되돌리는 값이 클릭 한 번이다.
+       */
+      isHidden(ch.id)
+        ? { label: '숨김 해제', onSelect: () => void getController().setChannelHidden(ch.id, false) }
+        : { label: '숨기기', onSelect: () => void getController().setChannelHidden(ch.id, true) },
       { label: '채널명 복사', onSelect: copyChannelName },
       { label: '채널 ID 복사', onSelect: copyChannelId },
       // 음소거 토글 하나가 아니라 세 수준을 나란히 둔다(#224). 켬/끔 스위치와 수준을 같이
@@ -1224,6 +1257,20 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
               Archived ({archivedChannels.length})
             </button>
             {archivedOpen && archivedChannels.map(channelRow)}
+          </div>
+        )}
+        {/* 숨긴 채널(#376). 보관 묶음과 나란히 둔다 — 같은 성질(사이드바에서 치워진 것)이고,
+            펼치면 '숨김 해제'가 있는 같은 메뉴가 나온다. */}
+        {hiddenChannels.length > 0 && (
+          <div>
+            <button
+              className="flex w-full items-center gap-1 px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle hover:text-fg-muted"
+              onClick={() => setHiddenOpen((v) => !v)}
+            >
+              <span>{hiddenOpen ? '▼' : '▶'}</span>
+              Hidden ({hiddenChannels.length})
+            </button>
+            {hiddenOpen && hiddenChannels.map(channelRow)}
           </div>
         )}
         <div>
