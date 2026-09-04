@@ -43,8 +43,9 @@ describe('#161 2단계 작성자 아바타 거터', () => {
     const gutterAvatar = document.querySelector('.flex.h-8.w-8');
     expect(gutterAvatar).toBeTruthy();
     // 거터 아바타도 sr-only 텍스트로 접근성 이름을 갖는다.
-    //.handle(u2/alice) + gutter sr-only + content sr-only = 3개
-    expect(screen.getAllByText('alice')).toHaveLength(3);
+    // #365 전에는 이름 옆 badge 가 같은 아바타를 한 번 더 그려 3개였다. 사람 badge 가
+    // 아무것도 그리지 않게 되어 **이름줄의 handle + 거터 아바타의 sr-only = 2개**다.
+    expect(screen.getAllByText('alice')).toHaveLength(2);
   });
 
   it('에이전트는 거터에서도 글리프로 표시된다', () => {
