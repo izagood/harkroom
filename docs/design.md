@@ -7,7 +7,7 @@
 ## 1. 정의
 
 **murmur**는 사람과 에이전트가 채널에서 함께 일하는 오픈소스 워크스페이스다.
-코드 협업 기층이 git이 아니라 **avcs**이며, 셀프호스트 시 docker compose 하나로 뜬다.
+코드 협업 기층이 git이 아니라 **avcs**이며, 셀프호스트 시 docker compose 2서비스(server + postgres)로 띄우고 AVCS 서버는 별도 프로세스로 연결한다.
 
 - MVP 핵심 경험: **채팅 워크스페이스** — 채널/스레드/DM이 1차 표면이고, avcs
   이벤트(작업)가 그 안으로 흘러든다
@@ -451,7 +451,7 @@ Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지
 
 ### 배포·운영
 
-- self-host: docker compose 3서비스(`server` + `postgres` + `avcs-server`).
+- self-host: docker compose 2서비스(`server` + `postgres`) — AVCS 서버는 별도 프로세스로 실행하고 `AVCS_BASE_URL` 로 연결한다. 미설정 시 투영 워커가 구동하지 않아 AVCS 이벤트 투영이 비활성화되고 채팅만 동작한다.
 - **백업·복구 절차는 [`operations.md`](operations.md)**. 요지: 필수 대상은 `pgdata` 하나이고
   (인메모리 상태는 재구성된다), 복구는 `server`를 멈춘 뒤 하고, **murmur만 되돌리는 것은
   안전하지만**(투영이 멱등) **avcs를 murmur 커서보다 뒤로 되돌리면 그 사이 객체가 조용히
