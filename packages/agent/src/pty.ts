@@ -14,7 +14,10 @@
 // 1.1.0 은 macOS 프리빌드의 spawn-helper 실행 비트가 빠져 pnpm 설치 직후 즉시 깨진다,
 // microsoft/node-pty#850). **node-pty 가 #850 을 포함한 1.2.0 stable 을 내면 이 핀을
 // 내려라** — 그때 가서 다시 beta 를 쓸 이유가 없다.
+import { accessSync, constants } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import pty from 'node-pty';
+import { ExecutableNotFoundError } from './policy.js';
 import type { TurnPlan } from './turn.js';
 
 /**
@@ -174,51 +177,85 @@ export interface RunPtyTurnOptions {
 }
 
 /**
- * PTY 안에서 plan 을 한 턴 실행하고 종료를 기다린다. 이 함수는 절대 reject 하지 않는다 —
- * 하네스가 어떻게 죽든(정상, 비정상, 타임아웃) exitCode/timedOut/tail 로 표현 가능한 결과이지,
- * 호출자가 catch 를 따로 준비해야 하는 예외 상황이 아니다.
+ * `plan.command` 를 `plan.env.PATH` 로 풀어 실행 가능한 절대경로를 돌려준다. 못 찾으면 null.
+ *
+ * **왜 spawn 예외를 기다리지 않고 미리 재는가.** 실측(macOS, node-pty 1.2.0-beta.15):
+ * 없는 실행 파일로 `pty.spawn` 을 불러도 **던지지 않는다** — forkpty 는 성공하고 자식의
+ * execvp 가 실패해, 출력 한 바이트 없이 `exitCode 1` 로 끝난다. 게다가 프로덕션 턴은
+ * `stdinFile` 때문에 `sh -c 'exec <하네스> ... < 파일'` 로 감싸여 spawn 대상이 `sh` 라,
+ * 하네스가 없어도 spawn 은 언제나 성공하고 sh 가 127 로 죽을 뿐이다. 즉 "spawn 이 ENOENT 를
+ * 던진다"에만 기대면 이 결함은 **프로덕션 경로에서 한 번도 잡히지 않는다**.
+ *
+ * 그래서 spawn 전에 직접 잰다. 종료 코드(1 이나 127)로 뒤늦게 추론하지 않는 이유: 하네스가
+ * 자기 사정으로 1 이나 127 로 죽는 것과 구별할 수 없고, 그 혼동의 대가가 "러너를 죽인다"라
+ * 너무 비싸다.
+ *
+ * PATH 검색은 `execvp` 규칙을 따른다: 이름에 `/` 가 있으면 PATH 를 안 뒤지고 그 경로만 본다.
+ */
+export function resolveExecutable(command: string, path: string | undefined): string | null {
+  const executable = (candidate: string): boolean => {
+    try {
+      accessSync(candidate, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  if (command.includes('/')) return executable(command) ? command : null;
+
+  // PATH 가 비었으면 execvp 는 아무 데도 안 뒤진다 — 여기서도 그렇게 취급한다(빈 PATH 로
+  // 뜬 러너가 바로 이 결함의 원인이므로, 이 경우를 "못 찾았다"로 보는 것이 정답이다).
+  for (const dir of (path ?? '').split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, command);
+    if (executable(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * PTY 안에서 plan 을 한 턴 실행하고 종료를 기다린다. 하네스가 **어떻게 죽든**(정상, 비정상,
+ * 타임아웃) reject 하지 않는다 — 그건 exitCode/timedOut/tail 로 표현 가능한 결과이지, 호출자가
+ * catch 를 따로 준비해야 하는 예외 상황이 아니다.
+ *
+ * **단 하나의 예외가 실행 파일 부재다**(#340, 스펙 §8 1행). 그때는 `ExecutableNotFoundError`
+ * 로 reject 한다 — 턴이 실패한 것이 아니라 **러너가 잘못 세워진 것**이고, 재시도로 낫지 않아
+ * 결과값으로 돌려주면 일반 실패와 섞여 멘션 3건을 태운 뒤에야 흔적을 남긴다. 러너는 이걸 받아
+ * 즉시 물러난다(`main.ts` → `exit.ts::runnerExitPlan`).
  *
  * stdinFile 이 있으면 `sh -c 'exec ... < 파일'` 로 감싸서 PTY 안에서 stdin 리다이렉션한다.
  * `exec` 가 없으면 최종 프로세스가 sh 가 되어 시그널이 하네스에 닿지 않는다.
  * stdinFile 이 null 이면 PTY stdin 을 그대로 쓴다(인터랙티브·resume 턴용).
  */
-/**
- * 실행 파일을 찾지 못한 오류. pty.spawn 의 ENOENT 를 승격한 것으로, 문자열 매칭이 아니라
- * 오류 코드로 판정한다(문구 매칭은 이 저장소에서 결함으로 잡힌 적이 있다).
- */
-export class ExecutableNotFoundError extends Error {
-  readonly code = 'ENOENT';
-  constructor(
-    readonly command: string,
-    readonly path: string | undefined,
-  ) {
-    super(`실행 파일을 찾을 수 없음: ${command} (PATH: ${path ?? '(empty)'})`);
-    this.name = 'ExecutableNotFoundError';
-  }
-}
-
 export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<TurnResult> {
   return new Promise((resolve, reject) => {
     const tail = new RingBuffer(TAIL_CAP_BYTES);
+
+    // **감싸기 전에** 하네스 자체를 본다. `composeSpawn` 이 `sh` 로 감싸고 나면 "없는 것은
+    // 하네스"라는 사실이 sh 의 종료 코드 뒤로 숨는다(위 `resolveExecutable` 주석).
+    if (resolveExecutable(plan.command, plan.env.PATH) === null) {
+      reject(new ExecutableNotFoundError(plan.command, plan.env.PATH));
+      return;
+    }
 
     const { command, args } = composeSpawn(plan);
 
     let proc: pty.IPty;
     try {
       proc = pty.spawn(command, args, {
-      cwd: opts.cwd,
-      env: plan.env,
-      cols: 120,
-      rows: 40,
-    });
+        cwd: opts.cwd,
+        env: plan.env,
+        cols: 120,
+        rows: 40,
+      });
     } catch (spawnErr) {
-      // pty.spawn 은 실행 파일이 없으면 ENOENT 로 던진다. 이 오류는 재시도로 낫지 않으므로 —
-      // launchd KeepAlive 가 재기동해도 같은 이유로 즉시 죽는다 — 반드시 크게 실패해야 한다.
-      // 그래서 일반 항목 실패와 구분 가능한 타입으로 승격한다(문자열 매칭은 이 저장소에서
-      // 결함으로 잡힌 적이 있다).
+      // 위의 사전 검사를 통과하고도 spawn 이 ENOENT 를 던지는 경우가 남는다: 검사와 spawn
+      // 사이에 파일이 사라졌거나(경쟁), node-pty 가 던지는 플랫폼이거나, `sh` 자체가 없거나.
+      // 결론은 같으므로 같은 타입으로 승격한다 — 판정은 문구가 아니라 `code` 로 한다.
       const err = spawnErr as NodeJS.ErrnoException;
       if (err.code === 'ENOENT') {
-        reject(new ExecutableNotFoundError(command, process.env.PATH));
+        reject(new ExecutableNotFoundError(plan.command, plan.env.PATH));
         return;
       }
       reject(spawnErr);

@@ -21,8 +21,32 @@ export const MURMUR_ERROR_SOURCE = 'murmur-client';
 /** 자격증명 실패의 출처. 'other' 는 자격증명 실패가 아니라는 뜻이다. */
 export type CredentialFailureType = 'harness-credential' | 'murmur-credential' | 'other';
 
-/** 실행 파일 부재 실패의 출처. */
+/** 실행 파일 부재 실패의 출처. 'other' 는 실행 파일 부재가 아니라는 뜻이다. */
 export type ExecutableNotFoundType = 'executable-not-found' | 'other';
+
+/**
+ * 하네스 실행 파일을 찾지 못했다(#340). `pty.ts::runPtyTurn` 이 던지고, 바로 아래
+ * `isExecutableNotFound` 가 받는다.
+ *
+ * **던지는 곳(pty.ts)이 아니라 여기 있는 이유**: 이 파일 머리의 규칙대로 policy 는 아무것도
+ * import 하지 않는다. 판정을 던지는 쪽에 두면 policy 가 node-pty(네이티브 모듈)까지 물게 되고,
+ * 그러면 "순수 함수라 루프 없이 검증된다"가 깨진다. 타입은 판정과 같은 곳에 있어야 판정이
+ * 문구나 이름 매칭으로 후퇴하지 않는다.
+ *
+ * `path` 는 러너 자신의 PATH 가 아니라 **자식에게 넘길 PATH**(`plan.env.PATH`)다. 이 결함이
+ * 실제로 나는 경우가 정확히 그 둘이 다른 경우이기 때문이다 — launchd 는 로그인 셸의 PATH 를
+ * 물려주지 않는다.
+ */
+export class ExecutableNotFoundError extends Error {
+  readonly code = 'ENOENT';
+  constructor(
+    readonly command: string,
+    readonly path: string | undefined,
+  ) {
+    super(`실행 파일을 찾을 수 없음: ${command} (PATH: ${path ?? '(empty)'})`);
+    this.name = 'ExecutableNotFoundError';
+  }
+}
 
 /**
  * 자격증명 실패 문구. **공백을 전부 지운 문자열**에 대고 맞춘다 — 그래서 아래 패턴들에도
@@ -70,17 +94,22 @@ export function isCredentialFailure(err: unknown): CredentialFailureType {
 }
 
 /**
- * 실행 파일을 찾지 못한 실패인가. pty.spawn 의 ENOENT 를 승격한 것으로, 문자열 매칭이 아니라
- * 오류 클래스의 이름으로 판정한다(문자열 매칭은 이 저장소에서 결함으로 잡힌 적이 있다).
+ * 하네스 실행 파일 부재인가(#340). `isCredentialFailure` 바로 옆에 두는 이유는 둘이 같은
+ * 부류이기 때문이다 — **재시도로 낫지 않는 실패**. `main.ts` 는 두 판정을 한 자리
+ * (`exit.ts::runnerExitPlan`)에서 본다.
  *
- * 이 실패는 재시도로 낫지 않으므로 — launchd KeepAlive 가 재기동해도 같은 이유로 즉시 죽는다 —
- * 러너는 즉시 크게 실패해야 한다. 운영자가 로그에서 원인을 바로 볼 수 있게 한다.
+ * **문구도 이름도 아니라 클래스로 판정한다.** `isCredentialFailure` 는 하네스가 뱉은 남의
+ * 출력을 읽어야 해서 문구 매칭 말고는 방법이 없지만, 이쪽은 우리가 직접 던진 오류라 그럴
+ * 이유가 없다 — 메시지가 바뀌어도, `err.name` 을 누가 덮어써도 이 판정은 안 흔들린다.
+ * `code === 'ENOENT'` 만 보는 것도 안 된다: `fs` 어디서든 나는 흔한 코드라, 그것으로 재면
+ * 설정 파일 하나 없는 것에도 러너가 죽는다.
+ *
+ * 왜 죽는 것이 맞나: PATH 나 설치 상태가 그대로인 한 다음 시도도 같은 자리에서 실패한다.
+ * launchd `KeepAlive` 가 다시 띄워도 마찬가지라 로그에 같은 줄이 계속 쌓이고, 운영자는
+ * 원인을 바로 본다. 조용히 살아서 멘션을 3건씩 삼키는 쪽이 훨씬 나쁘다.
  */
 export function isExecutableNotFound(err: unknown): ExecutableNotFoundType {
-  if (err instanceof Error && err.name === 'ExecutableNotFoundError') {
-    return 'executable-not-found';
-  }
-  return 'other';
+  return err instanceof ExecutableNotFoundError ? 'executable-not-found' : 'other';
 }
 
 export function nextBackoffMs(current: number): number {

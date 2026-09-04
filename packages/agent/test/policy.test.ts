@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { isCredentialFailure, isExecutableNotFound, nextBackoffMs, MAX_ATTEMPTS, exhausted } from '../src/policy.js';
+import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound, nextBackoffMs, MAX_ATTEMPTS, exhausted } from '../src/policy.js';
 import { MURMUR_ERROR_SOURCE } from '../src/policy.js';
 import { MurmurAgentClient } from '../src/murmur.js';
-import { ExecutableNotFoundError } from '../src/pty.js';
 
 describe('isCredentialFailure', () => {
   // 자격증명 오류는 재시도로 낫지 않는다 — 운영자가 키를 넣어야 한다. 무한 재시도로 감추면
@@ -140,11 +139,25 @@ describe('#340 isExecutableNotFound', () => {
     expect(isExecutableNotFound(err)).toBe('executable-not-found');
   });
 
-  // 에러 이름으로 판정한다 — 문자열 매칭은 이 저장소에서 결함으로 잡힌 적이 있다.
-  it('문자열 매칭이 아니라 에러 이름으로 판정한다', () => {
-    const err = new Error('실행 파일을 찾을 수 없음: /nonexistent/harness');
+  // 문구도 이름도 보지 않는다. 이 둘이 통과하면 판정이 문자열 매칭으로 후퇴한 것이다 —
+  // 그 후퇴가 위험한 이유는 **잘못 참**이 되는 쪽이기 때문이다: 아무 라이브러리가 name 을
+  // 그렇게 세워 던지면 러너가 통째로 죽는다.
+  it('메시지가 같아도 클래스가 아니면 other 다', () => {
+    expect(isExecutableNotFound(new Error('실행 파일을 찾을 수 없음: /nonexistent/harness')))
+      .toBe('other');
+  });
+
+  it('name 을 흉내 내도 other 다 — 이름 매칭이 아니다', () => {
+    const err = new Error('무엇이든');
     err.name = 'ExecutableNotFoundError';
-    expect(isExecutableNotFound(err)).toBe('executable-not-found');
+    expect(isExecutableNotFound(err)).toBe('other');
+  });
+
+  // `code === 'ENOENT'` 만 보면 안 되는 이유. fs 어디서든 나는 흔한 코드라, 그것으로 재면
+  // 설정 파일 하나 없는 것에도 러너가 죽는다.
+  it('아무 ENOENT 나 러너를 죽이지 않는다', () => {
+    expect(isExecutableNotFound(Object.assign(new Error('open failed'), { code: 'ENOENT' })))
+      .toBe('other');
   });
 
   // 다른 에러는 other 다 — 자격증명 실패나 네트워크 오류는 여전히 재시도해야 한다.
@@ -153,5 +166,15 @@ describe('#340 isExecutableNotFound', () => {
     expect(isExecutableNotFound(new Error('could not resolve authentication'))).toBe('other');
     expect(isExecutableNotFound(null)).toBe('other');
     expect(isExecutableNotFound(undefined)).toBe('other');
+  });
+
+  // 두 판정이 서로를 먹지 않는다 — 같은 자리(`exit.ts`)에서 나란히 보므로, 한쪽이 다른 쪽의
+  // 입력을 물면 안내문이 뒤바뀐다.
+  it('두 판정은 서로 배타적이다', () => {
+    const notFound = new ExecutableNotFoundError('claude', '/usr/bin');
+    expect(isCredentialFailure(notFound)).toBe('other');
+    const cred = new Error('could not resolve authentication');
+    expect(isExecutableNotFound(cred)).toBe('other');
+    expect(isCredentialFailure(cred)).toBe('harness-credential');
   });
 });
