@@ -19,7 +19,7 @@ import {
 } from '../services/scheduledMessages.js';
 // 이름 규칙은 데스크탑의 채널 생성 입력(Sidebar.tsx)과 **같은 것**이어야 한다 — 그래서
 // 정규식을 여기 리터럴로 두지 않고 shared 의 상수를 쓴다.
-import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS } from '@murmur/shared';
+import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, SYSTEM_ACCOUNT_PLACEHOLDER } from '@murmur/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { postMessage } from '../services/messages.js';
@@ -33,6 +33,29 @@ import { postMessage } from '../services/messages.js';
  * 여기서는 길이만 본다.
  */
 const sectionName = z.string().max(40).nullable();
+
+/**
+ * 멤버 입·퇴장 시스템 메시지의 본문과 `meta`(#329). **둘을 함께 돌려주는 것이 요점이다.**
+ *
+ * 자리표시자만 있는 본문과 그것을 채울 `meta.accountId` 는 한쪽만 있으면 뜻이 없다. 그런데
+ * `postMessage` 의 `meta` 는 옵셔널이므로(`services/messages.ts`), 호출부가 본문만 적고
+ * `meta` 를 빠뜨려도 타입 검사를 통과한다 — 그 상태로 남는 메시지는 화면에서 자리표시자를
+ * 글자 그대로 그린다. 여기서 쌍으로 묶으면 그 실수가 아예 표현되지 않는다.
+ *
+ * `event` 로 문구를 고르는 이유: 나감(`left`)과 내보냄(`removed`)은 라우트가 `isSelf` 로
+ * 이미 갈라 권한을 다르게 판정하는 **실재하는 구분**이다(#322). 하나로 합치면 화면이 없는
+ * 구분을 지우는 것이 아니라 있는 구분을 뭉갠다.
+ */
+function memberSystemMessage(
+  event: 'added' | 'left' | 'removed', accountId: string,
+): { body: string; kind: 'system'; meta: { accountId: string } } {
+  const body = {
+    added: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에 추가되었습니다.`,
+    left: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에서 나갔습니다.`,
+    removed: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에서 제거되었습니다.`,
+  }[event];
+  return { body, kind: 'system', meta: { accountId } };
+}
 
 export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, storage?: StorageBackend): Promise<void> {
   app.post('/channels', { preHandler: app.requireAdmin }, async (req, reply) => {
@@ -214,16 +237,14 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     }
     // 존재하지 않는 계정은 FK 위반으로 500 이 된다 — 잘못된 입력을 서버 오류로 답하면
     // 호출부가 재시도할 대상인지 아닌지 구분하지 못한다.
-    // handle 까지 여기서 읽는다 — 아래 시스템 메시지(#322)가 쓸 값이고, 존재 확인과 같은
-    // 질문이다. 뒤에서 다시 조회하면 그 사이에 지워진 계정에 대해 "없다"를 두 번 다르게
-    // 판정하는 자리가 생기고, 없을 때 조용히 메시지를 건너뛰는 분기가 필요해진다.
-    const account = await pool.query<{ handle: string }>(
-      `select handle from account where id = $1`, [accountId],
-    );
+    // handle 은 더 이상 읽지 않는다(#329): 시스템 메시지 본문이 이름을 담지 않으므로 이
+    // 자리에서 지금의 이름을 알 필요가 없어졌다. `#322` 가 handle 을 이 질의에 합쳤던
+    // 이유("존재 확인과 같은 질문이라 두 번 조회하면 판정이 갈린다")는 그대로 유효하지만,
+    // 이제 그 질문의 답이 필요 없다 — 남길 것은 존재 확인뿐이다.
+    const account = await pool.query(`select 1 from account where id = $1`, [accountId]);
     if (!account.rowCount) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
     }
-    const targetHandle = account.rows[0]!.handle;
     await addChannelMember(pool, id, accountId);
     await recordAudit(pool, {
       action: 'channel.member.added', actorId: req.account!.id, actorHandle: req.account!.handle,
@@ -242,25 +263,25 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     // `ChannelRow` 가 실려 나가고, 받는 화면의 "생성순" 정렬이 조용히 깨진다.
     const channel = await getChannelRow(pool, id);
     if (channel) emitEvent({ type: 'channel.created', channel, audience: [accountId] });
-/**
-       * 시스템 메시지(#322). **삽입이 커밋된 뒤**다 — 위 이벤트들과 같은 자리에 두는 이유가
-       * 그것이다. 앞으로 옮기면 `audienceFor` 가 아직 멤버가 아닌 사람을 빼고 계산해,
-       * 초대된 본인이 자기 초대를 알리는 메시지를 실시간으로 받지 못한다.
-       *
-       * 본문에 `@` 를 붙이지 않는다: `postMessage` 는 kind 와 무관하게 본문의 멘션을
-       * 판정하므로, `@handle` 로 적으면 그 사람의 inbox 에mention 행이 생긴다.
-       * 시스템 메시지는 사실을 남기는 것이지 부르는 것이 아니다.
-       *
-       * #329: 본문에 이름을 박지 않는다 — 표시 시점에 meta.accountId 로 현재 handle 를
-       * 찾아 그린다. 이렇게 하면 handle 변경 시 과거 메시지도 새 이름으로 갱신된다.
-       */
-      const added = await postMessage(pool, {
-        channelId: id,
-        authorId: req.account!.id,
-        body: '계정이 채널에 추가되었습니다.',
-        kind: 'system',
-        meta: { accountId },
-      });
+    /**
+     * 시스템 메시지(#322). **삽입이 커밋된 뒤**다 — 위 이벤트들과 같은 자리에 두는 이유가
+     * 그것이다. 앞으로 옮기면 `audienceFor` 가 아직 멤버가 아닌 사람을 빼고 계산해,
+     * 초대된 본인이 자기 초대를 알리는 메시지를 실시간으로 받지 못한다.
+     *
+     * 본문에 `@` 를 붙이지 않는다: `postMessage` 는 kind 와 무관하게 본문의 멘션을
+     * 판정하므로, `@handle` 로 적으면 그 사람의 inbox 에 mention 행이 생긴다.
+     * 시스템 메시지는 사실을 남기는 것이지 부르는 것이 아니다.
+     *
+     * 본문에 handle 도 박지 않는다(#329) — 자리표시자만 남기고 대상은 `meta.accountId`
+     * 로 싣는다. 그래야 `#271` 이후 이름을 바꾸면 과거 메시지도 새 이름으로 그려진다.
+     * 본문과 `meta` 를 이 파일 위쪽의 `memberSystemMessage` 가 **함께** 만든다 — 왜
+     * 쌍으로 묶어야 하는지는 그 주석에 있다.
+     */
+    const added = await postMessage(pool, {
+      channelId: id,
+      authorId: req.account!.id,
+      ...memberSystemMessage('added', accountId),
+    });
     // 메시지 이벤트의 수신자는 메시지 층의 `audienceFor` 다 — 위 목록 이벤트의
     // `channelListAudience` 를 여기 쓰면 private 채널의 본문이 비멤버 admin 에게 흘러간다.
     if (added.message) {
@@ -329,28 +350,24 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
           audience: [accountId],
         });
       }
-/**
-        * 시스템 메시지(#322). 삭제가 커밋된 뒤다 — 초대 쪽과 같은 이유.
-        *
-        * **문구를 둘로 둔다.** 이 라우트는 위에서 이미 `isSelf` 로 두 경우를 갈라
-        * 권한을 다르게 판정한다 — 나간 것과 내보낸 것은 여기서 실재하는 구분이므로
-        * 화면이 그대로 말해도 거짓 신호가 아니다(구분이 없었다면 문구도 하나여야 했다).
-        *
-        * 계정 행은 방금 지운 `channel_member` 의 FK 가 보장한다 — 없으면 그것은 결함이지
-        * "메시지를 남기지 않을 사유"가 아니므로 조용히 건너뛰지 않는다.
-        * 본문에 `@` 를 붙이지 않는 이유는 초대 쪽과 같다.
-        *
-        * #329: 본문에 이름을 박지 않는다 — 표시 시점에 meta.accountId 로 현재 handle 를
-        * 찾아 그린다. 이렇게 하면 handle 변경 시 과거 메시지도 새 이름으로 갱신된다.
-        */
+      /**
+       * 시스템 메시지(#322). 삭제가 커밋된 뒤다 — 초대 쪽과 같은 이유.
+       *
+       * **문구를 둘로 둔다.** 이 라우트는 위에서 이미 `isSelf` 로 두 경우를 갈라
+       * 권한을 다르게 판정한다 — 나간 것과 내보낸 것은 여기서 실재하는 구분이므로
+       * 화면이 그대로 말해도 거짓 신호가 아니다(구분이 없었다면 문구도 하나여야 했다).
+       * `#329` 로 이름이 본문에서 빠진 뒤에도 그 구분은 문장에 그대로 남는다.
+       *
+       * 계정 행 조회가 사라진 것은 `#329` 때문이다: 본문에 handle 을 박지 않으므로 이
+       * 자리에서 지금의 이름을 알 필요가 없다. 대상은 `meta.accountId` 로 싣고, 화면이
+       * 표시 시점에 그것으로 현재 handle 을 찾는다(그래서 이름을 바꾸면 과거 메시지도
+       * 새 이름으로 그려진다). "FK 가 계정 행을 보장한다"는 근거는 이제 쓸 곳이 없다.
+       * 본문에 `@` 를 붙이지 않는 이유는 초대 쪽과 같다.
+       */
       const posted = await postMessage(pool, {
         channelId: id,
         authorId: req.account!.id,
-        body: isSelf
-          ? '계정이 채널에서 나갔습니다.'
-          : '계정이 채널에서 제거되었습니다.',
-        kind: 'system',
-        meta: { accountId },
+        ...memberSystemMessage(isSelf ? 'left' : 'removed', accountId),
       });
       // 초대 쪽과 같이 메시지 층의 `audienceFor` 를 쓴다.
       if (posted.message) {

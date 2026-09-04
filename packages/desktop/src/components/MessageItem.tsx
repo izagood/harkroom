@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { messagePermalink, type MessageRow } from '@murmur/shared';
+import { fillSystemAccount, messagePermalink, type MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageBody } from './MessageBody';
@@ -35,16 +35,26 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   useEffect(() => { if (highlighted) rowRef.current?.scrollIntoView?.(); }, [highlighted]);
 
   const isSystem = message.kind === 'system';
-  // #329: 시스템 메시지에서 meta.accountId 로 현재 handle 를 찾아 표시한다.
-  // 이렇게 하면 handle 변경 시 과거 메시지도 새 이름으로 그려진다.
-  // Old messages without meta.accountId fall back to author.handle.
-  const targetAccountId = isSystem && typeof message.meta.accountId === 'string'
+  /**
+   * 시스템 메시지가 말하는 대상 계정(#329). 본문에는 이름이 없고 자리표시자만 있다 —
+   * 여기서 `#271` 이 멘션을 그릴 때 보는 것과 **같은 스토어 맵**(`accounts`)으로 지금의
+   * handle 을 찾아 채운다. 그래서 이름을 바꾸면 과거의 입·퇴장 메시지도 새 이름이 된다.
+   *
+   * **이름줄이 아니라 본문에 채운다.** 이름줄은 이 메시지를 **쓴 사람**의 자리이고, 바로
+   * 옆의 아바타·배지·상태 표시(`Identity`·`StatusMark`·`TerminalChip`)가 전부 `author` 를
+   * 그린다. 거기에 대상의 이름을 넣으면 admin 이 내보낸 메시지가 내보내진 사람의 말처럼
+   * 보이고, 한 줄 안에서 이름과 아바타가 서로 다른 사람을 가리킨다.
+   *
+   * `meta.accountId` 가 없는 옛 메시지(`#322` 가 이미 만든 것)는 본문에 이름이 박혀 있고
+   * 자리표시자가 없다 — 치환할 것이 없으므로 본문이 그대로 나온다. 기존 메시지를 다시
+   * 쓰지 않는 것이 이 이슈의 결정이다.
+   */
+  const systemAccountId = isSystem && typeof message.meta.accountId === 'string'
     ? message.meta.accountId
     : null;
-  const targetHandle = targetAccountId
-    ? accounts[targetAccountId]?.handle ?? null
-    : null;
-  const displayHandle = targetHandle ?? author?.handle ?? '…';
+  const displayBody = systemAccountId
+    ? fillSystemAccount(message.body, accounts[systemAccountId]?.handle ?? null)
+    : message.body;
   const avcsType = typeof message.meta.avcsType === 'string' ? message.meta.avcsType : null;
   /**
    * 스킬 제안 알림에서 승인 화면으로 가는 진입점(#311 요구 5).
@@ -190,7 +200,11 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span className="font-semibold">{displayHandle}</span>
+          {/* `data-testid` 를 두는 이유는 위 `author-gutter` 와 같다: 이 자리가 **작성자**의
+              것이라는 사실을 회귀선이 클래스 문자열로 더듬지 않게 한다. 아바타(`Identity`)도
+              handle 을 sr-only 로 내보내므로 글자로 찾으면 두 곳이 걸려, 이름줄이 다른
+              사람을 가리키게 되어도 테스트가 무엇을 봤는지 말하지 못한다(#329). */}
+          <span data-testid="author-name" className="font-semibold">{author?.handle ?? '…'}</span>
           <Identity account={author} variant="badge" />
           {/* 작성 시점이 아니라 **지금**의 상태다 — 이 줄이 답하는 질문은 "이 사람에게
               지금 물어봐도 되는가"이지 "그때 무슨 상태였나"가 아니다(#186). */}
@@ -206,7 +220,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
 
         {draft === null ? (
           <>
-            {message.body.trim() && <MessageBody body={message.body} messageId={message.id} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
+            {displayBody.trim() && <MessageBody body={displayBody} messageId={message.id} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
             {skillSlug && onOpenSettings && (
               <button
                 className="mt-1 rounded-lg border border-border px-2 py-1 text-[11px] font-medium
