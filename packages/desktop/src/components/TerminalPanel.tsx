@@ -63,30 +63,24 @@ export function TerminalPanel() {
    * 값이 얼어붙어, 승격·강등이 입력 가드에 반영되지 않는다.
    */
   const writerRef = useRef(false);
+  /**
+   * [터미널 열기](#337)의 손잡이. effect 안의 attach 경로를 버튼이 재사용해야 해서
+   * (인터랙티브 open 도 결국 티켓 하나로 수렴한다 — 서버가 그렇게 설계됐다) effect 가
+   * 자기 클로저를 여기 걸어 둔다. 열기 경로를 밖에 따로 만들면 소켓·sink 정리가 두 벌이 된다.
+   */
+  const openRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!target) return;
     let disposed = false;
     let attach: AttachHandle | null = null;
     let sink: TerminalSink | null = null;
+    const api = getController().api;
 
-    void (async () => {
-      const api = getController().api;
+    /** 티켓 획득 → xterm 배선 → attach 소켓. attach 와 인터랙티브 열기가 이 하나로 수렴한다. */
+    const begin = async (issueTicket: () => Promise<{ ticket: string }>): Promise<void> => {
       try {
-        const sessions = await api.agentSessions();
-        // 세 필드 **전부** 일치해야 한다(#339). 에이전트만 보면 같은 에이전트가 스레드
-        // 여럿에서 돌 때 임의의 첫 세션에 붙는다 — A 스레드에서 눌렀는데 B 스레드의
-        // PTY 가 열리는 결함이 이것이었다. 세션의 threadRootId 가 null 이면 러너가 어느
-        // 스레드의 것인지 말하지 않은 것이므로 붙지 않는다 — target.threadRootId 는
-        // 항상 문자열이라(#98 앵커식) 엄격 비교가 그 거절을 그대로 담는다.
-        const session = sessions.find((s) =>
-          s.agentAccountId === target.agentAccountId
-          && s.channelId === target.channelId
-          && s.threadRootId === target.threadRootId);
-        if (disposed) return;
-        if (!session) { setPhase('no-session'); return; }
-
-        const { ticket } = await api.attachAgentSession(session.sessionId);
+        const { ticket } = await issueTicket();
         // 티켓을 받은 사이에 패널이 닫혔을 수 있다. 여기서 안 막으면 닫은 뒤에 소켓이
         // 열리고, 그 소켓은 아무도 닫지 않는다(`ws.ts` 의 같은 가드와 같은 이유다).
         if (disposed) return;
@@ -114,6 +108,37 @@ export function TerminalPanel() {
         });
       } catch (err) {
         if (disposed) return;
+        // 러너 오프라인(404)·구버전(409)·codex 거절(409)·타임아웃(504)의 서버 문구가
+        // 그대로 온다(api.ts) — 화면이 다시 쓰지 않는다: 서버가 원인을 정확히 안다.
+        setPhase('error');
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    };
+
+    // [터미널 열기](#337) — 진행 중인 턴이 없어도 러너가 세션을 확보해 인터랙티브 PTY 를
+    // 띄우고, 그 티켓으로 위와 같은 attach 흐름에 합류한다.
+    openRef.current = () => {
+      setPhase('loading');
+      void begin(() => api.openInteractiveSession(target.agentAccountId, target.channelId, target.threadRootId));
+    };
+
+    void (async () => {
+      try {
+        const sessions = await api.agentSessions();
+        // 세 필드 **전부** 일치해야 한다(#339). 에이전트만 보면 같은 에이전트가 스레드
+        // 여럿에서 돌 때 임의의 첫 세션에 붙는다 — A 스레드에서 눌렀는데 B 스레드의
+        // PTY 가 열리는 결함이 이것이었다. 세션의 threadRootId 가 null 이면 러너가 어느
+        // 스레드의 것인지 말하지 않은 것이므로 붙지 않는다 — target.threadRootId 는
+        // 항상 문자열이라(#98 앵커식) 엄격 비교가 그 거절을 그대로 담는다.
+        const session = sessions.find((s) =>
+          s.agentAccountId === target.agentAccountId
+          && s.channelId === target.channelId
+          && s.threadRootId === target.threadRootId);
+        if (disposed) return;
+        if (!session) { setPhase('no-session'); return; }
+        await begin(() => api.attachAgentSession(session.sessionId));
+      } catch (err) {
+        if (disposed) return;
         setPhase('error');
         setError(err instanceof Error ? err.message : String(err));
       }
@@ -123,6 +148,7 @@ export function TerminalPanel() {
       // 패널을 닫으면 **구독을 끊는다.** 소켓을 열어 둔 채 두면 PTY 바이트가 계속
       // 흘러들고, 그것은 사람이 보지 않는 화면으로 비밀이 계속 오간다는 뜻이다.
       disposed = true;
+      openRef.current = null;
       attach?.close();
       sink?.dispose();
     };
@@ -159,9 +185,18 @@ export function TerminalPanel() {
       </div>
       {phase === 'loading' && <p className="px-3 py-2 text-xs text-fg-subtle">세션을 확인하는 중…</p>}
       {phase === 'no-session' && (
-        <p className="px-3 py-2 text-xs text-fg-subtle">
-          진행 중인 턴이 없다 — 이 에이전트를 부르면 그 턴에 붙을 수 있다.
-        </p>
+        <div className="px-3 py-2 text-xs text-fg-subtle">
+          <p>진행 중인 턴이 없다 — 직접 열거나, 이 에이전트를 부르면 그 턴에 붙을 수 있다.</p>
+          {/* #337: 세션이 없어도 사람이 스스로 연다. 러너가 이 스레드의 세션을 확보해
+              (없으면 생성) 인터랙티브 PTY 를 띄우고, 같은 attach 흐름으로 합류한다.
+              실패(러너 오프라인·구버전·codex 거절)는 서버 문구가 그대로 error 로 온다. */}
+          <button
+            onClick={() => openRef.current?.()}
+            className="mt-2 rounded bg-surface-raised px-2 py-1 text-fg hover:bg-surface-hover"
+          >
+            터미널 열기
+          </button>
+        </div>
       )}
       {phase === 'error' && (
         <p className="px-3 py-2 text-xs text-warning">터미널을 열지 못했다: {error}</p>
