@@ -147,23 +147,24 @@ describe('AgentsSettings', () => {
     const options = (await screen.findByLabelText('Agent harness')).querySelectorAll('option');
     const enabled = [...options].filter((o) => !(o as HTMLOptionElement).disabled);
 
-    expect(enabled).toHaveLength(1);
-    expect(enabled[0]!.textContent).toContain('claude-code');
+    expect(enabled).toHaveLength(2);
+    expect(enabled.some((o) => o.textContent?.includes('claude-code'))).toBe(true);
+    expect(enabled.some((o) => o.textContent?.includes('codex'))).toBe(true);
     expect([...options].some((o) => o.textContent?.includes('지원 예정'))).toBe(true);
   });
 
   // AGENT_HARNESSES(타입이 아는 이름)와 RUNNABLE_HARNESSES(러너가 실제로 돌릴 수 있는 부분집합)가
-  // 갈라질 수 있다 — codex 가 타입 목록에는 들어왔지만 아직 러너가 못 돌린다. 옵션 자체는 보이되
+  // 갈라질 수 있다 — gemini 는 타입 목록에는 들어왔지만 아직 러너가 못 돌린다. 옵션 자체는 보이되
   // disabled 여야 한다. 다음 harness 가 타입에 먼저 들어오고 UI 가 안 따라가는 재발을 막는 회귀 테스트.
   it('shows a harness the type list knows but the runner cannot yet run — as a disabled option', async () => {
     fakeController();
     render(<AgentsSettings />);
 
     const options = [...(await screen.findByLabelText('Agent harness')).querySelectorAll('option')];
-    const codex = options.find((o) => o.textContent?.includes('codex'));
+    const gemini = options.find((o) => o.textContent?.includes('gemini'));
 
-    expect(codex).toBeTruthy();
-    expect((codex as HTMLOptionElement).disabled).toBe(true);
+    expect(gemini).toBeTruthy();
+    expect((gemini as HTMLOptionElement).disabled).toBe(true);
   });
 
   it('lists the agents that already exist', async () => {

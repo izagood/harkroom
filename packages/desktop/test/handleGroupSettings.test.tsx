@@ -71,7 +71,16 @@ describe('핸들 집합 설정 화면 (#285)', () => {
     // 수는 추측(±1)이 아니라 라우트가 준 명단의 길이다.
     await waitFor(() => expect(useAppStore.getState().groups[0]!.memberCount).toBe(2));
 
-    fireEvent.click(screen.getByLabelText('구성원 제거: alice'));
+    // 추가가 끝난 것과 '제거' 가 다시 눌리는 것은 다른 사실이다. 제거 버튼은 `saving`
+    // 동안 disabled 이고, 라우트 호출·스토어 갱신을 확인한 시점에도 `saving=false` 로
+    // 되돌리는 렌더가 아직 안 붙었을 수 있다 — disabled 인 버튼을 누르면 아무 일도
+    // 일어나지 않고 아래 대기가 `Number of calls: 0` 으로 터진다(#367). 그래서 시간이
+    // 아니라 **버튼이 실제로 눌릴 수 있는 상태**를 기다린 뒤에 누른다.
+    const removeAlice = (): HTMLButtonElement =>
+      screen.getByLabelText('구성원 제거: alice') as HTMLButtonElement;
+    await waitFor(() => expect(removeAlice().disabled).toBe(false));
+
+    fireEvent.click(removeAlice());
     await waitFor(() => expect(api.removeHandleGroupMembers).toHaveBeenCalledWith('g1', ['u2']));
     await waitFor(() => expect(useAppStore.getState().groups[0]!.memberCount).toBe(0));
   });

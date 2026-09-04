@@ -106,7 +106,7 @@ export interface AppState {
    */
   drafts: Record<string, string>;
   /** 뒤로/앞으로 탐색용 이력 스택. 채널·스레드만 담고 스크롤 위치는 담지 않는다.
-   * 뒤로/앞으로 이동 시에는push하지 않는다 — 그렇게 하면 뒤로 갈 때마다 스택이 자라
+   * 뒤로/앞으로 이동 시에는 push 하지 않는다 — 그렇게 하면 뒤로 갈 때마다 스택이 자라
    * 영원히 빠져나오지 못한다. openChannel/openThread 에서만 새 항목을 밀어 넣는다.
    * 세션 한정 인메모리다 — localStorage 에 넣지 않는다. */
   history: HistoryEntry[];

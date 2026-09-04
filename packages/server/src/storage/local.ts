@@ -3,7 +3,7 @@ import { mkdir, rm, stat } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
-import type { Readable } from 'node:stream';
+import type { Readable, Writable } from 'node:stream';
 
 /** 제한을 넘었다. 라우트가 413 으로 바꿔 응답한다. */
 export class StorageLimitError extends Error {
@@ -44,6 +44,18 @@ function pathFor(root: string, key: string): string {
 }
 
 /**
+ * 스트림이 완전히 닫힐 때까지 기다린다. **'error' 로는 reject 하지 않는다** — 이 함수를
+ * 부르는 곳은 이미 원래 오류를 손에 들고 있고, 정리 도중의 두 번째 오류로 그것을
+ * 덮어써서는 안 된다. 기다리는 것은 fd 가 닫혔다는 사실 하나다.
+ */
+function closedFor(stream: Writable): Promise<void> {
+  if (stream.closed) return Promise.resolve();
+  stream.destroy();
+  if (stream.closed) return Promise.resolve();
+  return new Promise((done) => stream.once('close', () => done()));
+}
+
+/**
  * 로컬 볼륨 스토리지. S3 호환으로 바꿀 때는 이 파일만 갈아 끼운다 —
  * 나머지 코드는 `StorageBackend` 만 본다.
  */
@@ -69,10 +81,17 @@ export function createLocalStorage(opts: { root: string; maxBytes: number }): St
         }
       }
 
+      const out = createWriteStream(dest);
       try {
-        await pipeline(limited(), createWriteStream(dest));
+        await pipeline(limited(), out);
       } catch (err) {
         // 거절하면서 반쯤 쓴 파일을 남기면 디스크가 조용히 찬다.
+        //
+        // 지우기 전에 destination 이 닫히기를 기다린다: pipeline 은 소스가 던지는 순간
+        // reject 하고, 그때 dest 의 open 은 아직 진행 중일 수 있다. 그대로 rm 하면
+        // 뒤늦게 끝난 open('w') 이 방금 지운 파일을 0 바이트로 되살리고, 그 파일은
+        // 아무도 지우지 않는다 — 용량을 초과한 업로드가 디스크에 쓰레기를 남긴다(#370).
+        await closedFor(out);
         await rm(dest, { force: true });
         throw err;
       }
