@@ -1,5 +1,6 @@
 import { tmpdir } from 'node:os';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { basename, delimiter, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -120,7 +121,31 @@ describe('runPtyTurn', () => {
     try {
       const p = plan('hang-ignore-sigterm');
       p.env.FAKE_PID_FILE = pidFile;
-      const r = await runPtyTurn(p, { cwd: process.cwd(), timeoutMs: 200, killGraceMs: 200 });
+      // 하네스가 **준비됐는지**를 기다린다 — 시간이 아니라 상태다(#391). `runPtyTurn` 은
+      // 타임아웃 타이머를 `onSpawn` 이 돌아온 **뒤에** 건다(pty.ts 의 그 자리 주석이 이 순서를
+      // 계약으로 적어 뒀다). 그래서 여기서 동기적으로 막고 있는 동안은 시계가 아직 안 감기고,
+      // `timeoutMs` 를 한 ms 도 늘리지 않으면서 "준비된 하네스에게서 200ms" 를 만든다.
+      // 부하가 더 커지면 준비를 더 기다릴 뿐이라 다시 새지 않는다.
+      //
+      // 재우면서 기다리는 이유(`Atomics.wait`): busy loop 으로 돌면 이 스레드가 자식과 CPU 를
+      // 다투어 준비를 **더** 늦춘다 — 부하가 원인인 결함에 부하를 더 얹는 대기는 쓸 수 없다.
+      let ready = false;
+      const idle = new Int32Array(new SharedArrayBuffer(4));
+      const r = await runPtyTurn(p, {
+        cwd: process.cwd(), timeoutMs: 200, killGraceMs: 200,
+        onSpawn: () => {
+          const until = Date.now() + 15_000;
+          while (!existsSync(pidFile)) {
+            // 영영 안 생기면 여기서 매달리지 않는다 — 그때는 아래 단언이 원인을 말해 준다.
+            if (Date.now() > until) return;
+            Atomics.wait(idle, 0, 0, 10);
+          }
+          ready = true;
+        },
+      });
+      // 준비 확인이 **먼저다.** 이것이 거짓이면 아래 단언들은 승격 경로가 아니라 다른 사건을
+      // 재고 있다(#391 실측: 하네스가 SIGTERM 기본 처분으로 죽고 승격이 안 탔다).
+      expect(ready).toBe(true);
       expect(r.timedOut).toBe(true);
 
       const pid = Number(await readFile(pidFile, 'utf8'));
