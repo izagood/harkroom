@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { emitEvent } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
-import { deleteMessage, editMessage, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
+import { deleteMessage, editMessage, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -128,6 +128,41 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
       ? false
       : messages.length > 0 && (await hasOlderMessages(pool, id, messages[0]!.seq));
     return { messages, hasMore };
+  });
+
+  /**
+   * 선택 요청에 답한다(Task 3). **답 자체가 답글 메시지가 되지는 않는다** — 원본의
+   * `meta.ask` 에 기록하고 `message.updated` 로 알린다. 답글까지 만들면 스레드에
+   * "새 마이그레이션 009" 같은 한 줄이 쌓여 규칙 02(로그가 아니라 사람의 말)를 어긴다.
+   *
+   * 낙관적 갱신을 하지 않으므로 화면은 이 응답과 이벤트로만 바뀐다 — 리액션의 선례다.
+   */
+  app.post('/channels/:id/messages/:messageId/ask-answer', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id, messageId } = z.object({
+      id: z.string().uuid(), messageId: z.string().uuid(),
+    }).parse(req.params);
+    const { optionId } = z.object({ optionId: z.string().min(1).max(64) }).parse(req.body);
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+
+    const result = await recordAskAnswer(pool, { messageId, actorId: req.account!.id, optionId });
+    if (result === 'not_found') {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such choice request' } });
+    }
+    if (result === 'forbidden') {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'this choice is addressed to someone else' } });
+    }
+    if (result === 'unknown_option') {
+      return reply.code(400).send({ error: { code: 'unknown_option', message: 'no such option in this request' } });
+    }
+    // 경합에서 진 것은 오류가 아니라 정상 경로다 — 409 로 구별해 화면이 "이미 정해졌다"를
+    // 말할 수 있게 한다.
+    if (result === 'already_answered') {
+      return reply.code(409).send({ error: { code: 'already_answered', message: 'this choice is already answered' } });
+    }
+    emitEvent({ type: 'message.updated', message: result, audience: await audienceFor(pool, id) });
+    return result;
   });
 
   /** 리액션 경로의 공통 검증. 이모지 판정과 채널 접근을 두 핸들러가 똑같이 해야 한다. */
