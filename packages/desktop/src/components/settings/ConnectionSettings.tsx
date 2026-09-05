@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useActiveStore } from '../../state/communities';
 import { getController } from '../../state/controller';
 import { usePrefsStore } from '../../state/prefsStore';
@@ -8,14 +7,6 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
   const connected = useActiveStore((s) => s.connected);
   const runnerAutoStart = usePrefsStore((s) => s.runnerAutoStart);
   const setRunnerAutoStart = usePrefsStore((s) => s.setRunnerAutoStart);
-  const runnerRepoPath = usePrefsStore((s) => s.runnerRepoPath);
-  const setRunnerRepoPath = usePrefsStore((s) => s.setRunnerRepoPath);
-  const runnerCommand = usePrefsStore((s) => s.runnerCommand);
-  const setRunnerCommand = usePrefsStore((s) => s.setRunnerCommand);
-  // 입력 중인 값과 저장된 값을 나눈다 — 타이핑 도중의 `/opt/homeb` 를 거절 문구로 덮으면
-  // 사람은 글자를 하나도 넣을 수 없다. 거절은 저장 시점에만 말한다.
-  const [commandDraft, setCommandDraft] = useState(runnerCommand);
-  const [commandError, setCommandError] = useState<string | null>(null);
   // 보관된 값이 아니라 **지금 붙어 있는** 주소를 보여준다. 키체인 읽기가 비동기가 되면서
   // 렌더 중에 읽을 수 없게 됐고, 어차피 사용자가 알고 싶은 것은 실제 연결 대상이다.
   const baseUrl = getController().api.baseUrl || '—';
@@ -63,57 +54,10 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
             />
           </button>
         </div>
-        {/* 저장소 경로만 설정에서 받는다 — **명령 자체는 받지 않는다.** 사람이 편집할 수
-            있는 명령은 곧 Tauri shell 스코프를 와일드카드로 열어야 한다는 뜻이고, 그것이
-            임의 명령 실행 표면이 된다(runnerLauncher.ts::RUNNER_SCOPE_NAME 주석).
-
-            #425: 비워 두면 더 이상 "안 띄운다"가 아니다 — 앱이 murmur 전용 전역 경로
-            (`~/.murmur/runner`)에 스스로 clone 해 그것으로 띄운다. 이 칸은 그 기본값을
-            자기 체크아웃으로 덮어쓰고 싶은 사람(주로 개발자)을 위한 것이다. */}
-        <div className="px-4 py-3">
-          <label className="block font-medium text-fg" htmlFor="runner-repo-path">
-            murmur repository path
-          </label>
-          <span className="mt-0.5 block text-fg-subtle">
-            Runners start with <code className="font-mono">pnpm --filter @murmur/agent start</code>
-            {' '}in this directory. Leave empty to use a murmur checkout the app manages for you
-            {' '}(<code className="font-mono">~/.murmur/runner</code>) — set this only to point
-            runners at your own checkout instead.
-          </span>
-          <input
-            id="runner-repo-path"
-            className="mt-2 w-full rounded border border-border bg-field px-2 py-1 font-mono text-xs"
-            placeholder="/Users/me/dev/murmur"
-            value={runnerRepoPath}
-            onChange={(e) => setRunnerRepoPath(e.target.value)}
-          />
-        </div>
-        {/* #305: Dock/Finder 로 띄운 앱은 로그인 셸의 `PATH` 를 물려받지 않아 `pnpm` 을 못
-            찾는다(docs/operations.md §8-1 의 같은 함정). 앱이 먼저 로그인 셸의 `PATH` 를
-            한 번 읽어 쓰고, 그것이 안 되는 기기에서 **사람이 고치는 길**이 이 칸이다.
-            **`pnpm` 실행 파일의 절대 경로만** 받는다 — 명령 전체를 받으면 그것이 임의 실행
-            표면이고, 인자는 앱이 고정한다(runnerLauncher.ts::validateRunnerCommand). */}
-        <div className="px-4 py-3">
-          <label className="block font-medium text-fg" htmlFor="runner-command">
-            pnpm path (optional)
-          </label>
-          <span className="mt-0.5 block text-fg-subtle">
-            Absolute path to the <code className="font-mono">pnpm</code> executable, used when the
-            app cannot read your login shell&apos;s PATH. Must end with
-            {' '}<code className="font-mono">/pnpm</code>. Arguments are fixed by the app.
-          </span>
-          <input
-            id="runner-command"
-            className="mt-2 w-full rounded border border-border bg-field px-2 py-1 font-mono text-xs"
-            placeholder="/opt/homebrew/bin/pnpm"
-            value={commandDraft}
-            onChange={(e) => { setCommandDraft(e.target.value); setCommandError(null); }}
-            onBlur={() => setCommandError(setRunnerCommand(commandDraft))}
-          />
-          {commandError && (
-            <span className="mt-1 block text-danger" role="alert">{commandError}</span>
-          )}
-        </div>
+        {/* 저장소 경로·pnpm 경로 칸은 `#431` 1단계에서 없앴다 — 러너가 Tauri sidecar 로
+            바뀌면서 "murmur 소스가 어디 있나"·"pnpm 이 어디 있나"라는 물음 자체가
+            사라졌다(sidecar 는 자기 위치를 스스로 알고 pnpm 을 거치지 않는다). 에이전트가
+            **일할 저장소**는 에이전트 설정의 `workingDir` 이 맡는다 — 이 화면의 것이 아니다. */}
       </SettingsGroup>
 
       <SettingsGroup>
