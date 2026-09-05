@@ -16,6 +16,11 @@ tauri-plugin-shell = "2"
 # apple-native / windows-native / linux-native-sync-persistent 로 각 OS 의 기본 저장소를 쓴다.
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 
+[target.'cfg(unix)'.dependencies]
+# 러너 자식을 자기 프로세스 그룹으로 분리하는 `setsid` 호출에만 쓴다(#431 1단계 A).
+# `pre_exec` 안에서 부른다 — `tauri-plugin-shell` 은 이 제어를 노출하지 않는다.
+libc = "0.2"
+
 [[bin]]
 name = "murmur-desktop"
 path = "src/main.rs"

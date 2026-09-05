@@ -82,7 +82,7 @@ async function boot(agents: AgentView[], online: string[] = []) {
 
 beforeEach(() => {
   useAppStore.getState().reset();
-  usePrefsStore.setState({ runnerAutoStart: true, runnerRepoPath: '/repo', runnerCommand: '' });
+  usePrefsStore.setState({ runnerAutoStart: true });
 });
 afterEach(cleanup);
 
@@ -91,7 +91,7 @@ describe('컨트롤러 → 실행기 배선', () => {
     const { spawner } = await boot([agentView('rusalka'), agentView('theirs', { ownerAccountId: 'u9' })]);
 
     expect(spawner.spawns).toHaveLength(1);
-    expect(spawner.spawns[0]!.cwd).toBe('/repo');
+    expect(spawner.spawns[0]!.env.MURMUR_PAT).toBeTruthy();
     expect(useAppStore.getState().runnerStates.rusalka!.status).toBe('running');
   });
 
@@ -199,7 +199,7 @@ describe('설정 → 에이전트 상세가 그 상태를 그린다', () => {
   it('자동 기동을 껐어도 재발급 버튼이 실제로 동작한다 — 눌러도 아무 일 없는 버튼이 아니다', async () => {
     // 실행기가 자동 기동 때 본 것을 기억해 두고 그것에 기대면, 자동 기동을 끄고 쓰는
     // 사람에게는 이 버튼이 영원히 죽어 있다. 컨트롤러가 대상을 그 자리에서 다시 조회한다.
-    usePrefsStore.setState({ runnerAutoStart: false, runnerRepoPath: '/repo', runnerCommand: '' });
+    usePrefsStore.setState({ runnerAutoStart: false });
     const secrets = fakeSecrets();
     const spawner = fakeSpawner();
     const api = fakeApi({
@@ -245,53 +245,18 @@ describe('설정 → 에이전트 상세가 그 상태를 그린다', () => {
   });
 });
 
-describe('설정 → 연결이 저장소 경로를 받는다', () => {
-  it('경로를 입력하면 설정에 저장된다 — 실행기가 그것을 cwd 로 쓴다', async () => {
+/**
+ * `#431` 1단계에서 저장소 경로·pnpm 경로 입력 칸이 없어졌다(러너가 sidecar 로 바뀌며
+ * `runnerRepoPath`·`runnerCommand` 자체가 사라졌다 — `ConnectionSettings.tsx` 참고). 남는
+ * 것은 자동 기동 토글 하나뿐이라 그 회귀선만 남긴다.
+ */
+describe('설정 → 연결의 자동 기동 토글', () => {
+  it('토글을 누르면 설정에 반영된다', async () => {
     setController(new Controller(fakeApi(), fakeWsFactory().makeWs));
-    render(<ConnectionSettings onSignOut={() => {}} />);
-
-    fireEvent.change(screen.getByLabelText('murmur repository path'), {
-      target: { value: '/Users/me/dev/murmur' },
-    });
-
-    expect(usePrefsStore.getState().runnerRepoPath).toBe('/Users/me/dev/murmur');
-  });
-
-  // #305: Dock 으로 띄운 앱이 로그인 셸의 `PATH` 를 못 읽는 기기에서 사람이 고치는 길이다.
-  // 칸이 스토어에 닿지 않으면 사람은 값을 넣었다고 믿는데 러너는 영원히 안 뜬다.
-  it('pnpm 절대 경로를 입력하면 설정에 저장된다 — 실행기가 그 디렉터리를 PATH 로 쓴다', async () => {
-    setController(new Controller(fakeApi(), fakeWsFactory().makeWs));
-    render(<ConnectionSettings onSignOut={() => {}} />);
-
-    const input = screen.getByLabelText('pnpm path (optional)');
-    fireEvent.change(input, { target: { value: '/opt/homebrew/bin/pnpm' } });
-    fireEvent.blur(input);
-
-    expect(usePrefsStore.getState().runnerCommand).toBe('/opt/homebrew/bin/pnpm');
-    expect(screen.queryByRole('alert')).toBeNull();
-  });
-
-  it('`.../pnpm` 이 아니면 거절 사유가 화면에 보이고 저장되지 않는다', async () => {
-    setController(new Controller(fakeApi(), fakeWsFactory().makeWs));
-    render(<ConnectionSettings onSignOut={() => {}} />);
-
-    const input = screen.getByLabelText('pnpm path (optional)');
-    fireEvent.change(input, { target: { value: '/usr/bin/npm' } });
-    fireEvent.blur(input);
-
-    // 조용히 저장해 두고 기동 때 거절하면, 사람은 설정 화면에서 아무 문제도 못 본다.
-    expect(usePrefsStore.getState().runnerCommand).toBe('');
-    expect(screen.getByRole('alert').textContent).toContain('pnpm');
-  });
-
-  it('자동 기동 토글을 꺼도 다른 설정이 되돌아가지 않는다', async () => {
-    setController(new Controller(fakeApi(), fakeWsFactory().makeWs));
-    usePrefsStore.getState().setRunnerRepoPath('/keep/me');
     render(<ConnectionSettings onSignOut={() => {}} />);
 
     fireEvent.click(screen.getByRole('switch', { name: '러너 자동 기동' }));
 
     expect(usePrefsStore.getState().runnerAutoStart).toBe(false);
-    expect(usePrefsStore.getState().runnerRepoPath).toBe('/keep/me');
   });
 });

@@ -1,5 +1,12 @@
 // 사용자 설정 보관 지점 — sessionStore 와 같은 모양의 단일 표면. 저장 매체(localStorage)를
 // 이 파일 밖으로 드러내지 않아서, 나중에 Tauri store 로 갈아끼울 때 여기만 고치면 된다.
+//
+// `runnerRepoPath`·`runnerCommand`(#250·#305·#425)는 `#431` 1단계에서 없앴다. 러너가
+// 소스 체크아웃을 `pnpm --filter @murmur/agent start` 로 실행하던 시절엔 "그 소스가 어디
+// 있나"(`runnerRepoPath`)와 "`pnpm` 이 어디 있나"(`runnerCommand`)를 앱이 알아야 했다.
+// 러너가 Tauri sidecar 로 배포되면서 그 물음 자체가 사라졌다 — sidecar 는 자기 위치를
+// 스스로 알고 `pnpm` 을 거치지 않는다. 에이전트가 **일할 저장소**는 이 값들과 다른
+// 것이었고(`workingDir`, DB, 에이전트별) 그대로 남는다.
 
 export interface NotificationPrefs {
   enabled: boolean;
@@ -19,24 +26,6 @@ export interface Prefs {
   colorMode: ColorMode;
   /** 앱 시작 시 내가 소유한 에이전트의 러너를 자동으로 띄울지(#250). */
   runnerAutoStart: boolean;
-  /**
-   * 러너를 돌릴 murmur 저장소 경로(#250). 빈 문자열은 '아직 정하지 않았다'다.
-   *
-   * **기본값을 지어내지 않는다.** 앱은 자기가 어느 디렉터리에 체크아웃돼 있는지 알 수
-   * 없고(번들된 앱의 cwd 는 `/` 다), 짐작한 경로로 자식을 띄우면 "왜 러너가 안 뜨지"의
-   * 원인이 사람이 볼 수 없는 곳에 숨는다. 비어 있으면 띄우지 않고 그 사실을 말한다.
-   */
-  runnerRepoPath: string;
-  /**
-   * `pnpm` 실행 파일의 절대 경로(#305). 빈 문자열은 '정하지 않았다'다 — 그때는 로그인
-   * 셸에서 읽은 `PATH` 로 `pnpm` 을 찾는다.
-   *
-   * **왜 명령 전체가 아니라 `pnpm` 의 경로인가:** 명령 전체를 사람이 정하게 하면 그것이
-   * 곧 임의 실행 표면이다(#250 이 명령을 설정에서 받지 않기로 한 이유). 인자는 앱이
-   * 고정하고(`RUNNER_ARGS`), 이 값은 `.../pnpm` 으로 끝나는 절대 경로만 받는다 —
-   * `validateRunnerCommand` 를 통과하지 못한 값은 저장하지 않는다.
-   */
-  runnerCommand: string;
 }
 
 const KEY = 'murmur.prefs';
@@ -67,8 +56,6 @@ export const DEFAULT_PREFS: Prefs = {
   sidebarCollapsed: false,
   colorMode: 'system',
   runnerAutoStart: true,
-  runnerRepoPath: '',
-  runnerCommand: '',
 };
 
 export const prefsStorage = {
@@ -85,8 +72,6 @@ export const prefsStorage = {
         sidebarCollapsed: parsed.sidebarCollapsed ?? DEFAULT_PREFS.sidebarCollapsed,
         colorMode: parsed.colorMode ?? DEFAULT_PREFS.colorMode,
         runnerAutoStart: parsed.runnerAutoStart ?? DEFAULT_PREFS.runnerAutoStart,
-        runnerRepoPath: parsed.runnerRepoPath ?? DEFAULT_PREFS.runnerRepoPath,
-        runnerCommand: parsed.runnerCommand ?? DEFAULT_PREFS.runnerCommand,
       };
     } catch {
       return DEFAULT_PREFS;

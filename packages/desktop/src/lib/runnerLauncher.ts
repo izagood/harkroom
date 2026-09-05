@@ -16,10 +16,27 @@
  *
  * ## Tauri 표면을 왜 주입하는가
  *
- * 키체인(`secret_*` invoke)과 자식 프로세스(`@tauri-apps/plugin-shell`)를 이 클래스가 직접
- * 부르면 회귀선을 걸 자리가 없다 — 테스트가 확인할 수 있는 것이 "목을 손으로 넘긴 값"뿐이
- * 되고, 앱에서 죽은 배선이 초록으로 통과한다. 두 표면을 인터페이스로 뽑고 기본 구현을 이
- * 파일 아래쪽에 둔다.
+ * 키체인(`secret_*` invoke)과 자식 프로세스(`runner_spawn`/`runner_wait_exit`/`runner_kill`
+ * invoke)를 이 클래스가 직접 부르면 회귀선을 걸 자리가 없다 — 테스트가 확인할 수 있는 것이
+ * "목을 손으로 넘긴 값"뿐이 되고, 앱에서 죽은 배선이 초록으로 통과한다. 두 표면을
+ * 인터페이스로 뽑고 기본 구현을 이 파일 아래쪽에 둔다.
+ *
+ * ## `#431` 1단계 — 프로세스 그룹 분리·사이드카 배포로 바뀐 것
+ *
+ * 러너는 더 이상 `@tauri-apps/plugin-shell` 의 `Command.create` 로 뜨지 않는다. 그 API 는
+ * 프로세스 그룹 제어를 노출하지 않아서 러너가 앱의 프로세스 그룹에 묶인 채로 떴고, 실측
+ * (2026-09-05) 결과 `kill -TERM -<앱 PGID>` 한 번에 러너 전부가 죽었다 — 앱이 죽어도 러너가
+ * 살아남는 것은 아무도 그 그룹에 시그널을 안 보내서일 뿐이었다. 그래서 spawn 자체를
+ * Rust invoke 커맨드(`runner_spawn`)로 옮겼다 — `#425` 가 만든 패턴(웹뷰는 파라미터를 넘기지
+ * 않고 실행 대상·인자가 Rust 안에 고정되는 invoke)을 그대로 재사용한다. Rust 쪽이 자식을
+ * `setsid`(Unix)로 자기 세션/프로세스 그룹으로 분리한다.
+ *
+ * 또한 러너는 더 이상 `pnpm --filter @murmur/agent start` 로 소스를 실행하지 않는다 —
+ * 단일 번들로 만들어 Tauri sidecar(`externalBin`)로 앱과 함께 배포한다. 그래서
+ * `runnerRepoPath`(murmur 소스가 어디 있나) 자체가 사라졌다 — 그 역할은 이미 에이전트별
+ * `workingDir`(DB)이 한다. `cwd` 도 이 실행기 표면에서 사라졌다: sidecar 는 자기 위치를
+ * 스스로 알고, 러너가 일할 저장소는 `mentionTurn.ts` 가 `workingDir` 로 따로 정한다
+ * (`process.cwd()`는 애초에 그 판단에 쓰인 적이 없다).
  */
 import { Command } from '@tauri-apps/plugin-shell';
 
@@ -67,7 +84,6 @@ export interface RunnerProcess {
 }
 
 export interface SpawnRequest {
-  cwd: string;
   env: Record<string, string>;
   /** 자식이 끝나면 정확히 한 번 불린다. `code` 가 `null` 이면 시그널로 죽은 것이다. */
   onExit(code: number | null): void;
@@ -95,21 +111,6 @@ export interface RunnerApi {
   revokePat(accountId: string, label: string): Promise<{ revoked: number }>;
 }
 
-/**
- * murmur 전용 전역 체크아웃을 마련하는 표면(#425). **경로는 이 표면이 계산하고 돌려준다** —
- * 실행기는 그 문자열을 받아서 쓸 뿐이다(`resolveRepoPath` 참고). 인터페이스로 뽑는 이유는
- * `RunnerSecretStore`·`RunnerSpawner`와 같다: 이 클래스가 Tauri invoke 를 직접 부르면
- * "clone 이 실패했을 때 사유가 사람에게 보이는가"의 회귀선을 걸 자리가 없다.
- */
-export interface RunnerRepoProvisioner {
-  /**
-   * 없으면 clone 하고, 있으면 그대로 그 경로를 돌려준다(갱신 정책은 `#425` 보고 참고 —
-   * 매 기동마다 pull 하지 않는다). 실패하면 사람이 읽을 사유를 그대로 올린다(`#368`) —
-   * 네트워크 없음·권한 없음·git 미설치를 이 표면이 판정해 대신 말하지 않는다.
-   */
-  ensure(): Promise<{ ok: true; path: string } | { ok: false; error: string }>;
-}
-
 /** 실행기가 대상 판정에 쓰는 에이전트의 사실만. `AgentView` 전체를 요구하지 않는다. */
 export interface LaunchableAgent {
   id: string;
@@ -135,13 +136,6 @@ export interface StartAllInput {
    * '외부에서 실행 중'이 되어 앱이 아무것도 띄우지 않는다.
    */
   liveAccountIds: Set<string> | null;
-  /** 러너를 돌릴 murmur 저장소 경로. 비어 있으면 띄우지 않고 사람에게 설정하라고 말한다. */
-  repoPath: string;
-  /**
-   * 설정이 지정한 `pnpm` 실행 파일의 **절대 경로**(#305). 빈 문자열은 '정하지 않았다'다.
-   * `validateRunnerCommand` 를 통과한 값만 여기 들어온다.
-   */
-  runnerCommand: string;
 }
 
 /** 방금 만든 에이전트와 발급 순간에만 볼 수 있는 PAT 를 앱 실행기에 넘기는 입력. */
@@ -152,24 +146,10 @@ export interface StartCreatedInput {
   autoStart: boolean;
   /** 현재 presence 사실. 새 계정이어도 연결이 끊긴 상태에서 무작정 띄우지는 않는다. */
   liveAccountIds: Set<string> | null;
-  repoPath: string;
-  runnerCommand: string;
 }
 
 /** 살아 있는 PAT 라벨의 접두사. 회전 라벨(`desktop:<id>#<epoch>`)도 이 접두사를 갖는다. */
 export const patLabelPrefix = (deviceId: string): string => `desktop:${deviceId}`;
-
-/**
- * `MURMUR_PAT=... pnpm --filter @murmur/agent start` 를 그대로 옮긴 것. **명령은 설정에서
- * 읽지 않는다** — 사람이 편집할 수 있는 명령은 곧 `src-tauri/capabilities` 의 shell 스코프를
- * 와일드카드로 열어야 한다는 뜻이고(임의 명령 실행 표면), 그것이 이 기능에서 가장 큰 위험이다.
- * 대신 **cwd(저장소 경로)만** 설정에서 받는다: cwd 는 스코프 검사 대상이 아니라 그 명령이
- * 어디서 도는지만 바꾼다. 명령을 바꿔야 할 사람은 지금까지처럼 손으로 러너를 띄우면 되고
- * (설정 → 에이전트의 "러너 실행" 명령 틀, #177), 그 러너는 presence 로 '외부에서 실행 중'
- * 으로 보인다.
- */
-export const RUNNER_SCOPE_NAME = 'murmur-runner';
-export const RUNNER_ARGS = ['--filter', '@murmur/agent', 'start'];
 
 /**
  * 로그인 셸의 `PATH` 를 얻는 스코프 항목(#305). **인자가 배열 리터럴로 못박혀 있다** —
@@ -184,67 +164,14 @@ export const RUNNER_ARGS = ['--filter', '@murmur/agent', 'start'];
 export const LOGIN_PATH_SCOPE_NAME = 'login-path';
 export const LOGIN_PATH_ARGS = ['-lc', 'echo $PATH'];
 
-/** 설정이 받는 값의 끝. 이것으로 끝나지 않으면 저장을 거절한다. */
-export const RUNNER_COMMAND_SUFFIX = '/pnpm';
-
 /**
- * 로그인 셸의 `PATH` 를 못 읽었을 때 설정 경로 뒤에 붙이는 기본 디렉터리들(#305).
+ * 로그인 셸의 `PATH` 를 못 읽었을 때 자식에 넘기는 기본 디렉터리들(#305).
  *
- * **디렉터리 하나만 남기면 안 된다.** 자식 `PATH` 는 앱의 것을 덮어쓰므로, 설정이 준
- * `/opt/homebrew/bin` 만 넘기면 `pnpm` 은 떠도 그것이 부르는 `node`·`git`·`sh` 가
- * `PATH` 에 없는 기기가 생긴다 — 러너가 뜬 직후 알 수 없는 이유로 죽는 모습이 된다.
- * 로그인 셸 값을 얻었을 때는 그것이 이 자리를 대신하므로 붙이지 않는다.
+ * **디렉터리 하나만 남기면 안 된다.** 러너(사이드카)가 실행 중에 부르는 `claude`·`codex`·
+ * `avcs`·`git` 이 이 `PATH` 안에서 발견돼야 한다 — 하나라도 없으면 턴이 알 수 없는 이유로
+ * 실패하는 모습이 된다. 로그인 셸 값을 얻었을 때는 그것이 이 자리를 대신하므로 쓰지 않는다.
  */
 export const SYSTEM_PATH_FALLBACK = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
-
-export const REPO_PATH_MISSING =
-  '러너를 돌릴 murmur 저장소 경로가 설정되지 않았다 — 설정 → 연결에서 지정한다';
-
-/**
- * `PATH` 를 얻지도 못했고 설정도 비어 있을 때 사람이 보는 문장(#305).
- *
- * **무엇을 하라는 말이 들어 있어야 한다.** '기동 실패' 만 남기면 사람이 할 수 있는 일이
- * 없고, 그것이 `docs/design.md` §4 가 금지하는 거짓 신호다. 이 문장은 화면의 보이는
- * 자리에 붙는다(`RunnerStatusLine`) — `sr-only` 나 콘솔이 아니다.
- */
-export const RUNNER_COMMAND_MISSING =
-  '러너 명령을 찾을 수 없다 — 로그인 셸의 PATH 를 읽지 못했다. 설정 → 연결에서 pnpm 의 절대 경로를 지정하라';
-
-/**
- * 설정이 받는 러너 명령을 검사한다(#305). 문제가 없으면 `null`, 있으면 사람이 읽는 사유.
- *
- * **`pnpm` 실행 파일의 절대 경로만 받는다.** 명령 전체(프로그램 + 인자)를 사용자가 정하게
- * 하면 그것이 곧 임의 실행 표면이다 — `#250` 이 명령을 설정에서 받지 않기로 한 이유가
- * 그것이고, 여기서도 인자는 앱이 고정한다(`RUNNER_ARGS`).
- *
- * 이 경로는 **프로그램으로 넘어가지 않는다**: Tauri 의 shell 스코프에서 `cmd` 는 설정
- * 파일이 정하고 JS 는 항목 **이름**만 고를 수 있다(`Command.create` 의 첫 인자). 그래서
- * 이 값은 디렉터리로 쪼개져 자식 `PATH` 에 들어가고, 스코프의 `cmd: "pnpm"` 이 그것으로
- * 해석된다 — 스코프는 한 글자도 넓어지지 않는다.
- */
-export function validateRunnerCommand(value: string): string | null {
-  const v = value.trim();
-  if (!v) return null; // 비어 있음은 '정하지 않았다'다 — 오류가 아니다.
-  if (!v.startsWith('/')) {
-    return '절대 경로여야 한다 — `/` 로 시작해야 한다';
-  }
-  // `..` 를 막는 이유: `/opt/homebrew/bin/../../../usr/bin/pnpm` 처럼 끝만 맞춘 경로가
-  // 실제로 가리키는 디렉터리를 사람이 읽어서 알 수 없게 된다.
-  if (v.split('/').includes('..')) {
-    return '`..` 가 들어간 경로는 받지 않는다 — 실제로 가리키는 곳이 보이지 않는다';
-  }
-  if (!v.endsWith(RUNNER_COMMAND_SUFFIX)) {
-    return `pnpm 실행 파일의 절대 경로여야 한다 — \`...${RUNNER_COMMAND_SUFFIX}\` 로 끝나야 한다`;
-  }
-  return null;
-}
-
-/** 설정의 절대 경로에서 자식 `PATH` 에 넣을 디렉터리를 뽑는다. 값이 없거나 틀렸으면 `null`. */
-export function runnerCommandDir(value: string): string | null {
-  const v = value.trim();
-  if (!v || validateRunnerCommand(v) !== null) return null;
-  return v.slice(0, v.length - RUNNER_COMMAND_SUFFIX.length) || '/';
-}
 
 export class RunnerLauncher {
   /** 이 앱이 띄운 자식만. 외부 러너는 여기 없다(앱은 그것을 죽일 수도, 죽여서도 안 된다). */
@@ -276,13 +203,6 @@ export class RunnerLauncher {
     private loginPath: LoginPathReader = tauriLoginPathReader,
     /** 회전 라벨에 들어가는 시각. 테스트가 고정할 수 있게 주입한다. */
     private now: () => number = () => Date.now(),
-    /**
-     * murmur 전용 전역 체크아웃을 마련하는 표면(#425). **선택값이다**: 넘기지 않으면
-     * 예전처럼 `repoPath` 가 비어 있는 것을 그대로 `REPO_PATH_MISSING` 으로 실패시킨다 —
-     * 이 표면이 없는 환경(브라우저 개발·이 표면을 안 쓰는 테스트)에서 조용히 clone 을
-     * 시도하면 그 환경에 없는 부작용이 생긴다.
-     */
-    private provisioner?: RunnerRepoProvisioner,
   ) {}
 
   setOnStateChange(cb: (states: RunnerState[]) => void): void {
@@ -296,27 +216,6 @@ export class RunnerLauncher {
   private setState(agentId: string, patch: Omit<RunnerState, 'agentId'>): void {
     this.states.set(agentId, { agentId, ...patch });
     this.onStateChange?.(this.getStates());
-  }
-
-  /**
-   * 옛 "저장소 경로가 설정되지 않았다" 실패를 지운다(#373).
-   *
-   * 경로가 채워진 순간 그 사유는 **이미 거짓**이다. 재시도가 성공하면 상태가 덮이므로
-   * 저절로 사라지지만, 재시도가 그 에이전트에 닿지 못하면(목록 조회 실패, 대상에서 빠짐)
-   * 사람은 경로를 채운 뒤에도 "설정되지 않았다"를 계속 읽는다 — 그것이 #373 의 증상
-   * 전부다. 그래서 재시도를 **시작하는 자리에서** 먼저 지운다.
-   *
-   * `failed` 를 남기고 문구만 비우지 않는다: 이유 없는 '실패'는 사람이 할 수 있는 일이
-   * 없는 신호다(`RunnerState.message` 주석). 새 사유는 곧 재시도가 채운다.
-   */
-  clearRepoPathFailures(): void {
-    let cleared = false;
-    for (const [agentId, state] of this.states) {
-      if (state.status !== 'failed' || state.message !== REPO_PATH_MISSING) continue;
-      this.states.set(agentId, { agentId, status: 'stopped', exitCode: null, message: null });
-      cleared = true;
-    }
-    if (cleared) this.onStateChange?.(this.getStates());
   }
 
   /**
@@ -365,8 +264,6 @@ export class RunnerLauncher {
       agents: [input.agent],
       myAccountId: input.agent.ownerAccountId ?? '',
       liveAccountIds: input.liveAccountIds,
-      repoPath: input.repoPath,
-      runnerCommand: input.runnerCommand,
     }).catch((err) => {
       this.setState(input.agent.id, {
         status: 'failed', exitCode: null, message: `기동 실패: ${errText(err)}`,
@@ -404,42 +301,9 @@ export class RunnerLauncher {
       return;
     }
 
-    const repoPath = await this.resolveRepoPath(agent.id, input.repoPath);
-    if (!repoPath || this.disposed) return; // 사유는 resolveRepoPath 가 상태에 남겼다.
-
     const pat = await this.ensurePat(agent.id);
     if (!pat || this.disposed) return; // 사유는 ensurePat 이 상태에 남겼다.
-    await this.spawnRunner(agent, pat.token, repoPath, input.runnerCommand);
-  }
-
-  /**
-   * 저장소 경로를 정한다(#425). **사람이 넣은 값이 있으면 그것이 무조건 이긴다** — 그 값이
-   * 가리키는 곳이 사라졌어도 전역 경로로 조용히 바꾸지 않는다. 조용히 바꾸면 "왜 다른
-   * 코드가 도나"가 사람 눈에 안 보이게 되고, 그것은 이 파일이 지금까지 지켜 온 "기본값을
-   * 지어내지 않는다"와 같은 원칙이다 — 사람이 명시적으로 고른 값도 마찬가지로 존중한다.
-   * 그 경로가 진짜 존재하는지는 여기서 확인하지 않는다: 없으면 자식 스폰이 그대로
-   * `os error 2` 로 실패하고, 그 사유가 그대로 사람에게 올라간다(`handleExit`) — 이 앱이
-   * 판정을 대신하지 않는다.
-   *
-   * **비어 있을 때만** 전역 경로로 넘어간다(`RunnerRepoProvisioner`). 그 표면이 없는
-   * 환경(주입하지 않은 테스트, 브라우저 개발)에서는 예전처럼 `REPO_PATH_MISSING` 으로
-   * 실패한다 — 없는 표면을 부르면 죽는다.
-   */
-  private async resolveRepoPath(agentId: string, configured: string): Promise<string | null> {
-    if (configured) return configured;
-
-    if (!this.provisioner) {
-      this.setState(agentId, { status: 'failed', exitCode: null, message: REPO_PATH_MISSING });
-      return null;
-    }
-
-    const result = await this.provisioner.ensure();
-    if (this.disposed) return null;
-    if (!result.ok) {
-      this.setState(agentId, { status: 'failed', exitCode: null, message: result.error });
-      return null;
-    }
-    return result.path;
+    await this.spawnRunner(agent, pat.token);
   }
 
   /**
@@ -477,47 +341,34 @@ export class RunnerLauncher {
   }
 
   /**
-   * 자식이 쓸 `PATH` 를 정한다(#305). 순서가 곧 결정이다:
+   * 자식이 쓸 `PATH` 를 정한다(#305, `#431` 1단계에서 `pnpm` 경로 설정이 빠지며 단순해졌다).
    *
-   * 1. 로그인 셸의 `PATH` 를 **한 번** 읽어 캐시한다.
-   * 2. 설정에 `pnpm` 의 절대 경로가 있으면 그 **디렉터리를 앞에** 붙인다 — 사람이 고른
-   *    것이 이기되, 로그인 셸의 나머지는 버리지 않는다(`pnpm` 은 `node` 를 `PATH` 에서
-   *    찾는다. 디렉터리 하나만 남기면 그 다음이 안 뜬다).
-   * 3. 둘 다 없으면 **띄우지 않고 사유를 남긴다.** 여기서 조용히 앱의 `PATH` 로 시도하는
-   *    것이 지금의 실패 모습이다 — Dock 으로 띄운 앱의 `PATH` 에는 `pnpm` 이 없다
-   *    (`docs/operations.md` §8-1 의 같은 함정).
+   * 1. 로그인 셸의 `PATH` 를 **한 번** 읽어 캐시한다 — 러너(사이드카)가 실행 중에 부르는
+   *    `claude`·`codex`·`avcs`·`git` 이 그 안에 있어야 한다.
+   * 2. 못 읽었으면 `SYSTEM_PATH_FALLBACK` 으로 물러난다. **여기서는 실패하지 않는다** —
+   *    사이드카 자신은 `pnpm`처럼 `PATH` 에서 찾아야 하는 대상이 아니라(Rust 가 그 경로를
+   *    직접 알고 있다, `sidecar_path()`), 이 값이 없다고 사이드카 실행 자체가 막히지는
+   *    않는다. 다만 그 안에서 도는 하네스 CLI 를 못 찾으면 그 턴이 실패하고, 그 사유는
+   *    이 앱이 지어내지 않고 러너 자신의 출력이 그대로 사람에게 보인다(`#368`).
    */
-  private async resolveChildPath(
-    runnerCommand: string,
-  ): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+  private async resolveChildPath(): Promise<string> {
     this.loginPathOnce ??= this.loginPath.read()
       .then((p) => (p && p.trim() ? p.trim() : null))
       .catch(() => null);
     const login = await this.loginPathOnce;
-    const dir = runnerCommandDir(runnerCommand);
-
-    if (dir) return { ok: true, path: `${dir}:${login ?? SYSTEM_PATH_FALLBACK}` };
-    if (login) return { ok: true, path: login };
-    return { ok: false, error: RUNNER_COMMAND_MISSING };
+    return login ?? SYSTEM_PATH_FALLBACK;
   }
 
-  private async spawnRunner(
-    agent: LaunchableAgent, token: string, repoPath: string, runnerCommand: string,
-  ): Promise<void> {
+  private async spawnRunner(agent: LaunchableAgent, token: string): Promise<void> {
     if (this.disposed) return;
-    const path = await this.resolveChildPath(runnerCommand);
+    const path = await this.resolveChildPath();
     if (this.disposed) return;
-    if (!path.ok) {
-      this.setState(agent.id, { status: 'failed', exitCode: null, message: path.error });
-      return;
-    }
     const runToken = Symbol(agent.id);
     this.runTokens.set(agent.id, runToken);
     let child: RunnerProcess;
     try {
       child = await this.spawner.spawn({
-        cwd: repoPath,
-        env: { MURMUR_PAT: token, MURMUR_URL: this.api.baseUrl, PATH: path.path },
+        env: { MURMUR_PAT: token, MURMUR_URL: this.api.baseUrl, PATH: path },
         onExit: (code) => this.handleExit(agent.id, runToken, code),
       });
     } catch (err) {
@@ -570,12 +421,9 @@ export class RunnerLauncher {
    * 시각을 붙여 새 라벨로 발급하고 곧바로 옛 라벨을 폐기한다 — 두 개가 함께 사는 시간은
    * 그 사이뿐이다.
    */
-  async reissue(
-    target: { agent: LaunchableAgent; repoPath: string; runnerCommand: string },
-  ): Promise<void> {
+  async reissue(target: { agent: LaunchableAgent }): Promise<void> {
     const agentId = target.agent.id;
-    const repoPath = await this.resolveRepoPath(agentId, target.repoPath);
-    if (!repoPath || this.disposed) return; // 사유는 resolveRepoPath 가 상태에 남겼다.
+    if (this.disposed) return;
 
     const read = await this.secrets.read(agentId);
     if (!read.ok) {
@@ -615,7 +463,7 @@ export class RunnerLauncher {
     }
 
     await this.stop(agentId);
-    await this.spawnRunner(target.agent, token, repoPath, target.runnerCommand);
+    await this.spawnRunner(target.agent, token);
     if (revokeError) {
       this.setState(agentId, {
         status: 'running', exitCode: null,
@@ -740,32 +588,51 @@ export const tauriSecretStore: RunnerSecretStore = {
 };
 
 /**
- * `@tauri-apps/plugin-shell` 로 자식을 띄운다.
+ * 러너를 Rust invoke 커맨드로 띄운다(`#431` 1단계 A). **`@tauri-apps/plugin-shell` 을 거치지
+ * 않는다** — 그 플러그인의 `Command.create` 는 프로세스 그룹 제어를 노출하지 않고, 이 기능의
+ * 핵은 자식을 앱의 프로세스 그룹에서 떼는 것이다(`src-tauri/src/main.rs::runner_spawn` 의
+ * `setsid` 주석 참고). 웹뷰는 `env` 값 두 개만 넘긴다 — 실행할 프로그램(사이드카 경로)은
+ * Rust 가 스스로 찾는다(`sidecar_path()`).
  *
- * 종료는 **`close` 이벤트로만** 안다. 폴링으로 `kill()` 을 시도해 "아직 살아 있나"를 보는
- * 식으로는 알 수 없고(그 호출이 곧 자식을 죽인다), 무엇보다 종료 **코드**를 잃는다 — 78 과
- * 그 밖을 가리는 것이 이 기능의 전부다.
- *
- * `RUNNER_SCOPE_NAME` 은 `src-tauri/capabilities/default.json` 의 shell 스코프 항목 이름이다:
- * 프로그램 이름을 JS 가 정하는 것이 아니라, 미리 허용된 그 한 명령을 가리킬 뿐이다.
+ * 종료는 `runner_wait_exit` 의 Promise 해소로 안다 — spawn 직후 fire-and-forget 으로 불러
+ * 그 결과를 `onExit` 으로 그대로 넘긴다. `#419` 의 세대 토큰 판정(`RunnerLauncher.handleExit`)
+ * 은 이 콜백이 **언제** 오든 똑같이 적용된다 — spawn 이 Rust 로 바뀌어도 그 판정이 보는 것은
+ * 여전히 "이 콜백이 지금 세대의 것인가"뿐이다.
  */
 export const tauriSpawner: RunnerSpawner = {
   async spawn(req) {
-    const cmd = Command.create(RUNNER_SCOPE_NAME, RUNNER_ARGS, {
-      cwd: req.cwd,
-      env: req.env,
+    const invoke = tauriInvoke();
+    if (!invoke) {
+      // 브라우저 개발에서는 자식 프로세스 자체를 띄울 수 없다(`RunnerSecretStore` 폴백
+      // 주석과 같은 사정) — 그 사실을 그대로 실패로 올린다.
+      throw new Error('이 환경에서는 러너를 띄울 수 없다 — Tauri invoke 표면이 없다');
+    }
+    const pid = await invoke('runner_spawn', {
+      murmurPat: req.env.MURMUR_PAT,
+      murmurUrl: req.env.MURMUR_URL,
+      path: req.env.PATH,
     });
+    if (typeof pid !== 'number') {
+      throw new Error('러너 spawn 이 pid 를 돌려주지 않았다');
+    }
     let notified = false;
     const once = (code: number | null) => {
       if (notified) return;
       notified = true;
       req.onExit(code);
     };
-    cmd.on('close', (payload) => once(payload.code ?? null));
-    // spawn 자체가 성공했는데 플러그인이 오류를 흘리면 자식은 이미 없다 — 그것도 종료다.
-    cmd.on('error', () => once(null));
-    const child = await cmd.spawn();
-    return { kill: () => child.kill() };
+    // fire-and-forget — 이 Promise 는 자식이 끝날 때까지(길게는 몇 시간) 안 풀린다.
+    // `.catch` 는 IPC 자체가 끊긴 경우(앱 재시작 등)에 대비한 방어일 뿐, 정상 종료는
+    // 항상 resolve 로 온다.
+    void invoke('runner_wait_exit', { pid }).then(
+      (code) => once(typeof code === 'number' ? code : null),
+      () => once(null),
+    );
+    return {
+      kill: async () => {
+        await invoke('runner_kill', { pid });
+      },
+    };
   },
 };
 
@@ -780,7 +647,7 @@ export const tauriSpawner: RunnerSpawner = {
  * 전부다. `spawn` 으로 띄우면 종료를 기다리며 이벤트를 모아야 하는데, 얻는 것이 같다.
  *
  * 실패는 `null` 로 올라간다 — 셸이 없거나(윈도우) 스코프가 막았거나 비어 있으면 호출자가
- * 설정의 절대 경로로 넘어간다.
+ * `SYSTEM_PATH_FALLBACK` 으로 넘어간다.
  */
 export const tauriLoginPathReader: LoginPathReader = {
   async read() {
@@ -791,34 +658,6 @@ export const tauriLoginPathReader: LoginPathReader = {
       return value || null;
     } catch {
       return null;
-    }
-  },
-};
-
-/**
- * murmur 전용 전역 체크아웃을 마련한다(#425). **`invoke` 뒤로 git 자체를 감춘다** — Tauri
- * shell 스코프의 인자는 리터럴 배열이어야 하는데(`RUNNER_SCOPE_NAME` 주석), clone 목적지는
- * 사람마다 다른 홈 디렉터리 아래라 리터럴로 못박을 수 없다. 정규식 인자(`Var{validator}`)로
- * 그 자리를 열면 그것이 곧 웹뷰가 인자를 고르는 길이 되므로 쓰지 않는다. 대신 Rust
- * 커맨드(`src-tauri/src/main.rs::runner_provision_global_repo`)가 URL·경로·인자 전부를
- * 스스로 고정하고, 웹뷰는 파라미터 없는 이 호출 하나만 할 수 있다.
- */
-export const tauriRunnerProvisioner: RunnerRepoProvisioner = {
-  async ensure() {
-    const invoke = tauriInvoke();
-    if (!invoke) {
-      // 브라우저 개발에서는 자식 프로세스도 못 띄우니(RunnerSecretStore 폴백 주석과 같은
-      // 사정) 여기서도 clone 을 시도할 수 없다 — 그 사실을 그대로 사유로 올린다.
-      return { ok: false, error: '이 환경에서는 murmur 를 자동으로 내려받을 수 없다 — 설정 → 연결에서 저장소 경로를 직접 지정하라' };
-    }
-    try {
-      const path = await invoke('runner_provision_global_repo');
-      if (typeof path !== 'string' || !path) {
-        return { ok: false, error: '전역 저장소 경로를 받지 못했다' };
-      }
-      return { ok: true, path };
-    } catch (err) {
-      return { ok: false, error: errText(err) };
     }
   },
 };
