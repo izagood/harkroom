@@ -36,17 +36,21 @@ describe('#181 에이전트 소유자 표시', () => {
     render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
 
     // 거터(variant=avatar)와 작성자 옆(variant=badge), 두 곳 다 Identity 를 통과한다.
+    // **Task 12** 이후 거터는 사람과 같은 아바타라 "에이전트"라고 말하지 않는다 —
+    // 그래서 이름줄 배지 하나만 남는다. 거터는 핸들로 찾는다.
     const badges = screen.getAllByText('에이전트').map((el) => el.parentElement!);
-    expect(badges).toHaveLength(2);
+    expect(badges).toHaveLength(1);
+    expect(screen.getByTestId('author-gutter').textContent).toContain('bot');
     // #277: 소유자 표시는 이름줄(badge)에서만 나온다. 거터(avatar)에는 안 나온다 —
     // 32px 고정폭 열이라 배지가 들어가면 넘쳤다. **표시가 틀렸던 게 아니라 자리가 틀렸다.**
     const shown = screen.getAllByText('@owner');
     expect(shown).toHaveLength(1);
     // 그 하나가 이름줄 배지 안에 있다. 개수만 세면 "거터에만 남은" 경우도 초록이다.
-    const nameLineBadge = badges[1]!; // DOM 순서상 거터가 먼저, 이름줄이 두 번째다.
+    const nameLineBadge = badges[0]!; // 이제 배지는 이름줄 하나뿐이다(Task 12).
     expect(nameLineBadge.contains(shown[0]!)).toBe(true);
-    // 거터 쪽 배지에는 없다.
-    expect(badges[0]!.textContent).not.toContain('@owner');
+    // 거터에는 없다 — 32px 열을 넘치기 때문이다(#277). 이제 거터에는 배지가 아니라
+    // 아바타가 서므로 배지 배열이 아니라 **거터 자체**를 본다.
+    expect(screen.getByTestId('author-gutter').textContent).not.toContain('@owner');
   });
 
   it('Identity 를 단독으로 그려도 같은 표시가 나온다', () => {

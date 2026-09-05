@@ -149,12 +149,29 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
     // 에이전트가 섞여 서는 자리(거터·참여자 띠)라 둘이 다른 크기면 열이 들쭉날쭉해진다.
     // `overflow-hidden` 이 이 자리의 계약이다 — 무엇이 들어와도 상자를 넘지 않는다.
     if (variant === 'avatar') {
+      /**
+       * **대화에서는 "이건 에이전트다"라고 말하지 않는다**(design doc 2, #455).
+       * 사람과 **같은 아바타**로 서고, 구별은 색과 이름이 한다 — 종류·소유자·하네스는
+       * 프로필을 열었을 때 나온다.
+       *
+       * 이 분기가 `handleColor()` 를 부르지 않아 alpha·beta·gamma 가 **배경색 없는 🤖 하나**
+       * 를 공유했다. 참여자 줄(Task 8)이 아바타 셋을 나란히 세우면서 그 결함이 정면으로
+       * 드러났다 — 같은 그림 셋이 서서 누가 누구인지 구별되지 않았다.
+       *
+       * 아래 사람 분기와 **같은 마크업**을 쓴다. 한 열에 사람과 에이전트가 섞여 서는
+       * 자리(거터·참여자 띠)이므로 둘이 다르면 열이 들쭉날쭉해진다. 사진도 같은 규칙으로
+       * 받는다: 에이전트에게 얼굴을 주는 것이 이 문서의 요지다.
+       */
       return (
         <span
-          className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] ${className}`}
+          className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-fg-on-strong ${avatarUrl ? 'bg-surface-hover' : handleColor(account.handle)} ${className}`}
         >
-          <span aria-hidden="true">🤖</span>
-          <span className="sr-only">에이전트</span>
+          {avatarUrl ? (
+            <img data-testid="identity-avatar" src={avatarUrl} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <span aria-hidden="true">{account.handle.charAt(0).toUpperCase()}</span>
+          )}
+          <span className="sr-only">{account.handle}</span>
         </span>
       );
     }
