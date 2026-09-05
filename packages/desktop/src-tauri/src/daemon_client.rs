@@ -159,6 +159,10 @@ pub struct EndpointPaths {
 pub fn endpoint_paths(app_data_dir: &Path) -> EndpointPaths {
     let dir = app_data_dir.join("daemon");
     let base = format!("daemon-v{DAEMON_PROTOCOL_VERSION}");
+    // 앱 클라이언트 로그도 **같은 디렉터리**에 둔다 — 사람이 daemon 로그와 한자리에서
+    // 대조한다(`log_line` 주석, `#456`). 경로를 여기서 정하는 것이 요점이다: 웹뷰는
+    // 이 함수를 부르지 못하므로 임의 파일을 앱 권한으로 덮어쓸 수 없다.
+    let _ = CLIENT_LOG.set(dir.join(format!("{base}-client.log")));
     EndpointPaths {
         socket: dir.join(format!("{base}.sock")),
         pid: dir.join(format!("{base}.pid")),
@@ -707,8 +711,56 @@ fn new_nonce() -> String {
     format!("{now:x}-{:x}", std::process::id())
 }
 
+/// 앱 클라이언트 로그의 파일 경로. **`endpoint_paths()` 가 한 번 세운다.**
+///
+/// 웹뷰가 고르지 못하게 하는 것이 요점이다(모듈 주석의 표) — 그래서 `OnceLock` 이고,
+/// 값을 넣는 곳이 경로를 계산하는 그 자리 하나뿐이다.
+static CLIENT_LOG: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// 앱이 daemon 을 어떻게 다뤘는지 남긴다. **stderr 와 파일 양쪽에 쓴다.**
+///
+/// ## 왜 `eprintln!` 만으로는 부족한가 (`#456`)
+///
+/// **`open` 으로 띄운 앱은 stderr 가 버려진다.** 그리고 그것이 사용자의 실사용 조건이다
+/// (Dock·Finder 클릭). 그래서 daemon 이 안 떴을 때 아래 줄들이 전부 사라진다:
+///
+/// - `"daemon 에 붙지 못했다(띄워 본다)"` — **붙기를 시도했다가 실패한 것**과
+///   **애초에 시도조차 안 한 것**을 가르는 유일한 단서다
+/// - `"daemon 을 띄웠다: pid …"` / `"daemon 에 붙었다: …"`
+///
+/// 실측(2026-09-06): 실사용 조건에서 daemon 이 안 뜬 채 145초가 지났는데 **아무 단서도
+/// 없었다.** 원인을 가른 것은 daemon 을 손으로 띄워 본 것이었고, 그것은 개발자만 할 수 있다.
+///
+/// **`eprintln!` 을 지우지 않는다** — 개발 중 터미널 실행에서는 즉시 보이는 쪽이 편하다.
+/// 파일은 그 대체가 아니라 추가다.
+///
+/// ## 실패해도 조용히 넘어간다
+///
+/// 로그를 못 남기는 것이 앱 기동을 막을 이유는 아니다. 다만 그 사실 자체는 stderr 에
+/// 남긴다 — 터미널 실행에서는 보인다.
 fn log_line(line: &str) {
     eprintln!("[daemon-client] {line}");
+
+    let Some(path) = CLIENT_LOG.get() else { return };
+    // **디렉터리를 여기서 만든다.** daemon 기동 경로(`spawn_daemon`)도 만들지만 그것은
+    // 이 로그보다 **뒤**다 — 가장 중요한 줄("daemon 에 붙지 못했다(띄워 본다)")이
+    // 그 앞에서 나오므로, 여기서 안 만들면 정확히 그 줄이 파일에 안 남는다.
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    use std::io::Write;
+    let opened = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path);
+    match opened {
+        Ok(mut f) => {
+            if let Err(e) = writeln!(f, "[daemon-client] {line}") {
+                eprintln!("[daemon-client] 로그 파일에 쓰지 못했다: {e}");
+            }
+        }
+        Err(e) => eprintln!("[daemon-client] 로그 파일을 열지 못했다: {e}"),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -757,6 +809,45 @@ mod tests {
     ///
     /// `bind` 를 실제로 부르지 않고 잰다. 부르면 재는 것이 "커널이 EINVAL 을 낸다"가 되고,
     /// 그것은 이미 아는 사실이다 — 여기서 재야 할 것은 **우리가 그 원인을 말하는가**다.
+    /// `#456`: 앱 클라이언트 로그가 **파일에도** 남는지 잰다.
+    ///
+    /// `eprintln!` 만 있으면 `open` 으로 띄운 앱에서 전부 사라진다 — 그리고 그것이
+    /// 사용자의 실사용 조건이다. **이 테스트가 없으면 누가 파일 쓰기를 지워도
+    /// 아무것도 안 깨진다**(로그는 실패해도 조용히 넘어가므로).
+    ///
+    /// 재는 것은 "`log_line` 이 파일에 쓴다"이지 "무엇을 쓴다"가 아니다 — 문구는 바뀔 수
+    /// 있고, 바뀌어도 이 성질은 유지돼야 한다.
+    #[test]
+    fn 클라이언트_로그가_파일에도_남는다() {
+        let dir = std::env::temp_dir().join(format!("mmr-log-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let paths = endpoint_paths(&dir);
+
+        // `CLIENT_LOG` 는 `OnceLock` 이라 프로세스당 한 번만 세워진다. 다른 테스트가
+        // 먼저 세웠다면 그 경로를 쓴다 — 어느 쪽이든 **파일에 남는가**를 재면 된다.
+        let target = CLIENT_LOG
+            .get()
+            .cloned()
+            .unwrap_or_else(|| paths.dir.join("fallback.log"));
+        let before = std::fs::read_to_string(&target).unwrap_or_default();
+
+        log_line("회귀선 표식");
+
+        let after = std::fs::read_to_string(&target).unwrap_or_else(|e| {
+            panic!(
+                "클라이언트 로그 파일을 읽지 못했다({}): {e}",
+                target.display()
+            )
+        });
+        assert!(
+            after.len() > before.len() && after.contains("회귀선 표식"),
+            "log_line 이 파일에 남기지 않았다 — `{}` 에 표식이 없다",
+            target.display()
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn 소켓_경로가_상한을_넘으면_길이를_사유로_말한다() {
         let long = PathBuf::from(format!("/tmp/{}/daemon-v1.sock", "a".repeat(120)));
