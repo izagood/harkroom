@@ -452,8 +452,12 @@ Phase 2 를 이어가기 전에 세웠다.
   고정, 상세는 프로필·실행·권한 세 묶음. `primitives.tsx` 에 Field·Select·Segmented·Button 을
   세우고 `AgentsSettings.tsx`(1,166줄)를 그리드 + 상세로 나눈다.
   **서버 변경:** 사진 업로드 `PUT /accounts/:id/avatar`
-- **Task 16: 워크스페이스 기본값 분리** — 지금 Add agent 폼 안에 있는 "새 에이전트 기본값"을
-  설정 목차의 별도 항목으로. 문서가 "이 화면 위계 혼란의 대부분이 여기서 나온다"고 적었다
+- **Task 16: 워크스페이스 기본값 분리 — 완료(2026-09-06).**
+  Add agent 폼 안에 있던 "새 에이전트 기본값"을 설정 목차의 `Agent defaults` 로 옮겼다
+  (`AgentDefaultsSettings.tsx` 신설, Agents 바로 뒤). **읽기는 `AgentsSettings` 에 남는다** —
+  새 에이전트 초안(`emptyDraft`)을 채우는 서식이기 때문이다. 옮긴 것은 편집 UI 뿐이다.
+  덤으로 고친 것: 기본값을 못 읽은 상태에 `role="alert"` 가 없어 스크린리더가 그 오류를
+  읽지 못했다(편집 절이 그 역할을 대신 지고 있었다)
 
 ### 이 화면들이 지켜야 하는 것
 
