@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Overlay } from './Overlay';
 import type { SavedMessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -140,17 +141,7 @@ export function SavedMessages({ open, onClose }: Props) {
   };
 
   return (
-    <div
-      className="fixed inset-0 z-40 flex items-start justify-center bg-black/60 p-8"
-      onClick={onClose}
-    >
-      <div
-        role="dialog"
-        aria-label="저장된 메시지"
-        className="flex max-h-full w-[42rem] flex-col overflow-hidden rounded-lg border border-border bg-surface-raised text-sm text-fg"
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
-      >
+    <Overlay label="저장된 메시지" onClose={onClose}>
         <div className="flex items-center gap-2 border-b border-border p-3">
           <span className="font-bold">Saved</span>
           <button
@@ -196,7 +187,6 @@ export function SavedMessages({ open, onClose }: Props) {
           )}
           {load.kind === 'ready' && entries.length > 0 && <ul>{entries.map(entryRow)}</ul>}
         </div>
-      </div>
-    </div>
+    </Overlay>
   );
 }

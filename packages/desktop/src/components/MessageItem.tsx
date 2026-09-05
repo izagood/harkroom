@@ -205,7 +205,13 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
       <div data-testid="author-gutter" className="flex h-8 w-8 shrink-0 items-center justify-center">
         <Identity account={author} className="h-8 w-8 text-sm" variant="avatar" />
       </div>
-      <div className="min-w-0 flex-1">
+      {/*
+        본문 최대폭(계획 Task 10 Step 4). 넓은 창에서 보고문이 한 줄 100자를 넘어 읽기가
+        무너진다 — 읽히는 말(완료 보고)이 이 열에 살기 때문에 `ch` 로 상한을 둔다.
+        `min-w-0` 은 그대로 둔다: 긴 코드·URL 이 flex 열을 밀어내는 것을 막는 것이 그 일이고,
+        최대폭과는 다른 문제다.
+      */}
+      <div className="min-w-0 max-w-[70ch] flex-1">
         <div className="flex items-baseline gap-2">
           {/* `data-testid` 를 두는 이유는 위 `author-gutter` 와 같다: 이 자리가 **작성자**의
               것이라는 사실을 회귀선이 클래스 문자열로 더듬지 않게 한다. 아바타(`Identity`)도

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Overlay } from './Overlay';
 import type { AccountView } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -153,17 +154,7 @@ export function Directory({ open, onClose, accountId }: Props) {
   );
 
   return (
-    <div
-      className="fixed inset-0 z-40 flex items-start justify-center bg-black/60 p-8"
-      onClick={onClose}
-    >
-      <div
-        role="dialog"
-        aria-label="디렉터리"
-        className="flex max-h-full w-[42rem] flex-col overflow-hidden rounded-lg border border-border bg-surface-raised text-sm text-fg"
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
-      >
+    <Overlay label="디렉터리" onClose={onClose}>
         <div className="flex items-center gap-2 border-b border-border p-3">
           <span className="font-bold">Directory</span>
           <button
@@ -212,7 +203,6 @@ export function Directory({ open, onClose, accountId }: Props) {
             </>
           )}
         </div>
-      </div>
-    </div>
+    </Overlay>
   );
 }

@@ -55,8 +55,11 @@ export function ReportCard({ message, inThread = false }: {
             <button
               key={n.id}
               data-testid={`report-next-${n.id}`}
-              className="rounded border border-border bg-surface-raised px-2 py-0.5 text-[11px]
-                         text-fg hover:bg-surface-hover"
+              // **본문 크기로 그린다**(13px). 이 카드에서 유일하게 누르는 물건인데 보조
+              // 텍스트(11px)보다 작으면 안 된다 — 읽고 고르는 것이므로 `AskCard` 의 옵션과
+              // 같은 크기여야 한다. 세로 여백도 함께 키워 손가락·커서가 닿을 자리를 준다.
+              className="rounded-md border border-border bg-surface-raised px-3 py-1.5 text-[13px]
+                         font-medium text-fg hover:border-fg-subtle hover:bg-surface-hover"
               onClick={() => setDraft(scope, n.label)}
             >
               {n.label}
