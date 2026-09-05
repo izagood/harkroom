@@ -682,6 +682,55 @@ export function readAskMeta(meta: Record<string, unknown> | null | undefined): A
   return ask;
 }
 
+/**
+ * 실패(`message.fail`) — 에이전트가 **스스로 못 끝냈다**.
+ *
+ * 여덟 가지 말 중 유일하게 **에이전트가 먼저 사람을 부르는** 말이다. 넘겨받은 에이전트가
+ * 실패해도 결국 사람에게 온다 — 사슬의 끝은 언제나 사람이다.
+ *
+ * **`to` 가 없다.** `AskMeta` 와 달리 수신자를 싣지 않는 것이 이 어휘의 요점이다:
+ * 실패의 수신자는 언제나 사람이므로 필드로 둘 것이 없다. 두면 "에이전트에게 간 실패"라는
+ * 표현할 수 없는 상태가 타입에 생기고, 화면은 그것을 그릴 방법이 없다.
+ *
+ * **고치는 경로를 함께 싣는다**(`retryable`). 디자인 문서가 "고치는 경로가 같은 자리에"라고
+ * 적은 요구다 — 실패를 알리기만 하고 다음 수를 사람이 찾아 헤매게 하면 개입 비용이 올라간다.
+ */
+export interface FailureMeta {
+  kind: 'failure';
+  failure: {
+    /** 무엇을 하려다 실패했는가. 한 줄. 본문에 이미 있으면 생략한다. */
+    what?: string;
+    /**
+     * 왜 못 끝냈는가. **사람이 읽는 말**이지 스택트레이스가 아니다 — 자세한 것은 터미널이
+     * 답한다(규칙 06). 없을 수도 있다: 러너가 죽으면 이유를 남길 자가 없다.
+     */
+    reason?: string;
+    /**
+     * 다시 부르면 될 일인가. `false` 는 "다시 불러도 같은 결과"라는 뜻이므로 화면이
+     * '다시 부르기'를 그리지 않는다 — 눌러도 안 되는 버튼은 없는 문을 그리는 것이다(규칙 06).
+     */
+    retryable: boolean;
+  };
+}
+
+/**
+ * `meta` 가 실패인지 판정한다. `readAskMeta` 와 같은 규약이다 — **모르는 `meta` 는 평문으로
+ * 흘린다**가 전 구간의 불변식이므로, 형식을 못 알아보면 `null` 을 주고 화면은 본문만 그린다.
+ *
+ * `retryable` 이 boolean 이 아니면 못 알아본 것으로 친다. 기본값을 정해 주지 않는 이유:
+ * `true` 로 치면 다시 불러도 소용없는 실패에 버튼이 생기고, `false` 로 치면 고칠 수 있는
+ * 실패의 경로가 사라진다. 둘 다 거짓 신호이므로 **보내는 쪽이 반드시 정하게 한다.**
+ */
+export function readFailureMeta(
+  meta: Record<string, unknown> | null | undefined,
+): FailureMeta['failure'] | null {
+  if (!meta || meta.kind !== 'failure') return null;
+  const failure = meta.failure as FailureMeta['failure'] | undefined;
+  if (!failure || typeof failure !== 'object') return null;
+  if (typeof failure.retryable !== 'boolean') return null;
+  return failure;
+}
+
 export interface ChannelRow {
   id: string;
   name: string | null;
