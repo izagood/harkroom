@@ -299,16 +299,19 @@ Fastify + Postgres / MCP Streamable HTTP
 **대상:** `packages/shared/src/index.ts` · `packages/server/src/mcp/mcpPlugin.ts` ·
 `packages/desktop/src/components/ReportCard.tsx`(신규)
 
-- [ ] **Step 1: `ReportMeta`** — `{ kind: 'report'; report: { checks: string[]; files?: string[];
+- [x] **Step 1: `ReportMeta`** — `{ kind: 'report'; report: { checks: string[]; files?: string[];
       remaining?: string[]; durationMs?: number; next?: { id: string; label: string }[] } }`.
       MCP `message.report` 로 싣는다
-- [ ] **Step 2: 읽기 조판** — 확인 목록 + 바뀐 파일 + 남은 것. **강조색을 쓰지 않는다** —
+- [x] **Step 2: 읽기 조판** — 확인 목록 + 바뀐 파일 + 남은 것. **강조색을 쓰지 않는다** —
       읽히는 말이지 막는 말이 아니다. 본문 크기, 넉넉한 행간
-- [ ] **Step 3: 다음 제안 칩** — 누르면 **그 스레드에 새 부탁이 들어간다**(사람이 다시 타이핑하지
+- [x] **Step 3: 다음 제안 칩** — 누르면 **그 스레드에 새 부탁이 들어간다**(사람이 다시 타이핑하지
       않는다). 칩은 보내기 전 작성창을 채우는 방식으로 둔다 — 한 번의 확인을 남긴다
-- [ ] **Step 4: 형식을 안 지키면 사라진다** — `checks` 가 비면 카드를 그리지 않고 본문만 보여 준다.
+- [x] **Step 4: 형식을 안 지키면 사라진다** — `checks` 가 비면 카드를 그리지 않고 본문만 보여 준다.
       빈 상자는 거짓 신호다
-- [ ] **검증:** 형식 있음/없음 두 경로 · 칩이 작성창을 채우는지
+- [x] **검증:** `reportCard.test.tsx` 5케이스 + `mcp.test.ts` 4케이스. 전체 2,659개 통과.
+      **RED 확인** — 빈 `checks` 를 허용하면 "카드를 그리지 않는다"가 실제로 실패한다.
+      계획에 없던 것: **빈 배열은 `meta` 에 아예 싣지 않는다**(`files: []` → 필드 부재) —
+      화면이 "없음"과 "빈 목록"을 구별할 필요가 없어진다
 
 ### Task 10: 공통 위생
 

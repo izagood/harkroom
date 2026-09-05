@@ -5,7 +5,8 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import {
   ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, PROJECTION_UNCONFIGURED_NOTICE,
-  type AccountView, type AskAudience, type AskMeta, type FailureMeta,
+  REPORT_MAX_ITEMS, REPORT_MAX_NEXT,
+  type AccountView, type AskAudience, type AskMeta, type FailureMeta, type ReportMeta,
 } from '@murmur/shared';
 import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
 import { emitEvent, onEvent } from '../events.js';
@@ -247,6 +248,58 @@ function buildMcpServer(
     const meta: FailureMeta = {
       kind: 'failure',
       failure: { retryable, ...(what ? { what } : {}), ...(reason ? { reason } : {}) },
+    };
+    const posted = await postMessage(pool, {
+      channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
+      meta: meta as unknown as Record<string, unknown>,
+    });
+    if (posted.failure) {
+      return jsonResult({ error: { code: 'bad_attachment', message: 'attachments must be your own, unused uploads' } });
+    }
+    const { message, notified, replayed } = posted;
+    if (!replayed) {
+      const channelAudience = await audienceFor(pool, channelId);
+      emitEvent({ type: 'message.created', message, audience: channelAudience });
+      for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+    }
+    return jsonResult({ message });
+  });
+
+  /**
+   * 완료 보고 — 무엇을 했고, 무엇이 바뀌었고, 무엇이 남았는가(규칙 03: 읽히는 말).
+   *
+   * 이 스레드에서 **가장 오래 남고 가장 많이 다시 읽히는 말**이므로 자유 문장이 아니라
+   * 형식으로 받는다. `checks` 만 필수다 — 바꾼 파일이 없는 작업은 있어도, 무엇을 확인했는지
+   * 없는 보고는 보고가 아니다.
+   */
+  server.registerTool('message.report', {
+    description: '완료 보고(확인한 것 · 바뀐 파일 · 남은 것 · 다음 제안). checks 는 필수',
+    inputSchema: {
+      channelId: z.string().uuid(),
+      body: z.string().min(1).max(8000),
+      threadRootId: z.string().uuid().optional(),
+      checks: z.array(z.string().min(1).max(300)).min(1).max(REPORT_MAX_ITEMS),
+      files: z.array(z.string().min(1).max(400)).max(REPORT_MAX_ITEMS).optional(),
+      remaining: z.array(z.string().min(1).max(300)).max(REPORT_MAX_ITEMS).optional(),
+      durationMs: z.number().int().nonnegative().optional(),
+      next: z.array(z.object({
+        id: z.string().min(1).max(64),
+        label: z.string().min(1).max(200),
+      })).max(REPORT_MAX_NEXT).optional(),
+    },
+  }, async ({ channelId, body, threadRootId, checks, files, remaining, durationMs, next }) => {
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    const meta: ReportMeta = {
+      kind: 'report',
+      report: {
+        checks,
+        ...(files?.length ? { files } : {}),
+        ...(remaining?.length ? { remaining } : {}),
+        ...(durationMs != null ? { durationMs } : {}),
+        ...(next?.length ? { next } : {}),
+      },
     };
     const posted = await postMessage(pool, {
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
