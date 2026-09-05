@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
+import { ProgressRow } from './ProgressRow';
+import { groupProgress } from '../lib/progressGroup';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
 import type { SectionId } from './settings/sections';
@@ -33,14 +35,20 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
         </button>
       </header>
       <div className="flex-1 overflow-y-auto py-2">
-        {thread.map((m) => (
-          <MessageItem
-            key={m.id}
-            message={m}
-            inThread
-            onOpenDirectory={onOpenDirectory}
-            onOpenSettings={onOpenSettings}
-          />
+        {/* 채널과 **같은 함수**로 접는다 — 두 곳이 다른 판정을 쓰면 같은 대화가 자리마다
+            다르게 보인다(`lib/progressGroup`). */}
+        {groupProgress(thread).map((slot) => (
+          slot.kind === 'progress'
+            ? <ProgressRow key={slot.messages[0]!.id} messages={slot.messages} />
+            : (
+              <MessageItem
+                key={slot.message.id}
+                message={slot.message}
+                inThread
+                onOpenDirectory={onOpenDirectory}
+                onOpenSettings={onOpenSettings}
+              />
+            )
         ))}
       </div>
       <TypingLine />
