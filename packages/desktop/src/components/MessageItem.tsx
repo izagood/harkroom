@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { messagePermalink, type MessageRow } from '@murmur/shared';
+import { messagePermalink, readAskMeta, type MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
+import { AskCard } from './AskCard';
 import { MessageBody } from './MessageBody';
 import { ReactionPicker, Reactions, InlineReactionButtons } from './Reactions';
 import { Identity, StatusMark } from './Identity';
@@ -213,6 +214,10 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
           {/* 작성 시점이 아니라 **지금**의 상태다 — 이 줄이 답하는 질문은 "이 사람에게
               지금 물어봐도 되는가"이지 "그때 무슨 상태였나"가 아니다(#186). */}
           <StatusMark account={author} />
+          {/* 수신자 배지(규칙 04) — 이 말이 **누구에게 갔는지**. `→ 나` 만 강조색을 받고
+              남에게 간 것은 무채색이다. 지금은 선택 요청만 수신자를 싣지만 배지 자체는
+              되물음·실패도 쓸 것이므로 `AskCard` 밖(이름줄)에 둔다. */}
+          <AudienceBadge message={message} />
           {/* #141: 진행 중인 터미널 진입점. 소유자·admin 이 아니면 렌더 자체가 없다
               (TerminalChip 이 판정한다) — 이름줄에 두는 이유는 소유자 배지와 같다:
               32px 거터에 넣으면 넘친다(#277). */}
@@ -225,6 +230,9 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
         {draft === null ? (
           <>
             {shownBody.trim() && <MessageBody body={shownBody} messageId={message.id} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
+            {/* 선택지는 본문 **바로 아래**에 붙는다 — 답할 자리가 말 옆에 있어야 한다(규칙 05).
+                형식을 못 알아보면 `AskCard` 가 스스로 아무것도 그리지 않는다. */}
+            <AskCard message={message} />
             {skillSlug && onOpenSettings && (
               <button
                 className="mt-1 rounded-lg border border-border px-2 py-1 text-[11px] font-medium
@@ -392,5 +400,35 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * `→ 나` / `→ forge`. **강조는 나에게 온 것에만 간다**(규칙 04) — 이 배지 하나로 팀
+ * 스레드의 "무엇이 내 일인가"가 풀린다.
+ *
+ * 이미 답이 있으면 그리지 않는다: 끝난 물음의 수신자는 더 이상 아무도 기다리게 하지 않고,
+ * 남겨 두면 끝난 스레드가 계속 나를 부른다.
+ */
+function AudienceBadge({ message }: { message: MessageRow }) {
+  const myId = useActiveStore((s) => s.me?.id ?? null);
+  const accounts = useActiveStore((s) => s.accounts);
+  const ask = readAskMeta(message.meta);
+  if (!ask || ask.answeredWith != null) return null;
+
+  const forMe = ask.to.kind === 'human' ? myId != null : ask.to.accountId === myId;
+  const label = forMe
+    ? '\u2192 나'
+    : `\u2192 ${ask.to.kind === 'account' ? (accounts[ask.to.accountId]?.handle ?? '다른 에이전트') : '사람'}`;
+  return (
+    <span
+      data-testid="audience-badge"
+      data-for-me={forMe}
+      className={`rounded px-1 text-[10px] font-medium ${
+        forMe ? 'bg-accent-surface text-state-turn' : 'text-fg-agent'
+      }`}
+    >
+      {label}
+    </span>
   );
 }

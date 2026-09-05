@@ -191,6 +191,13 @@ export class ApiClient {
       },
       idempotencyKey ? { 'idempotency-key': idempotencyKey } : undefined);
   }
+  /**
+   * 선택 요청에 답한다. 답은 원본의 `meta.ask` 에 기록되므로 갱신된 **그 메시지**가 돌아온다.
+   * 이미 답이 있으면 서버가 409 를 준다 — 먼저 누른 쪽이 이긴다.
+   */
+  answerAsk(channelId: string, messageId: string, optionId: string): Promise<MessageRow> {
+    return this.req('POST', `/channels/${channelId}/messages/${messageId}/ask-answer`, { optionId });
+  }
   async inboxUnread(): Promise<InboxEntry[]> {
     return (await this.req<{ entries: InboxEntry[] }>('GET', '/inbox?unread=1')).entries;
   }
