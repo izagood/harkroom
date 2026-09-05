@@ -108,6 +108,39 @@ fn sidecar_path() -> Result<std::path::PathBuf, String> {
 ///
 /// 개발 빌드에서는 두 경로가 이미 같아 `node_modules` 가 사이드카 옆에 그대로 있으므로
 /// (`build:sidecar` 가 거기 둔다) 이 함수는 아무 것도 하지 않고 조용히 돌아온다.
+///
+/// ## 실물로 확인한 것 (`tauri build --bundles app`, 2026-09-05)
+///
+/// 위 배치 주장은 소스 읽기가 아니라 **실제로 만든 `.app` 으로 확인했다**:
+///
+/// ```text
+/// murmur.app/Contents/MacOS/murmur-runner          ← externalBin
+/// murmur.app/Contents/Resources/node_modules/…     ← bundle.resources (구조 보존됨)
+/// ```
+///
+/// 그 번들에 이 함수가 만드는 링크를 손으로 걸어 보면 `node-pty/prebuilds/darwin-arm64` 가
+/// 정상으로 해석된다 — 즉 이 방식은 **동작한다**.
+///
+/// ## 알려진 한계 — 릴리스 서명이 붙는 순간 깨진다
+///
+/// **번들 안에 파일을 만드는 것은 코드 서명을 무효화한다.** 같은 번들을 `codesign --force
+/// --sign - --deep` 로 봉인한 뒤 이 링크를 만들고 검증하면 그대로 실패한다(실측):
+///
+/// ```text
+/// murmur.app: a sealed resource is missing or invalid
+/// file added: …/murmur.app/Contents/MacOS/node_modules
+/// ```
+///
+/// 지금은 문제가 되지 않는다 — `docs/roadmap.md` 가 **서명·공증을 명시적으로 보류**했고
+/// (2026-09-01 사용자 결정) 현재 배포는 ad-hoc 서명 dev 빌드를 `/Applications` 에 복사하는
+/// 방식이라 봉인된 리소스가 없다(`Sealed Resources=none`). 하지만 **릴리스 파이프라인
+/// (서명·공증)이 들어오는 시점에는 이 함수를 반드시 걷어내야 한다** — 그때는 번들에 쓰지
+/// 않는 방법(사이드카가 리소스 경로에서 `node-pty` 를 직접 해석하도록 로더를 넣거나,
+/// 러너를 단일 실행 파일로 만드는 `#431` 2단계 안)으로 바꿔야 한다.
+///
+/// 읽기 전용 위치(DMG 에서 바로 실행, Gatekeeper 의 App Translocation)에서도 링크 생성이
+/// 실패한다 — 그 경우는 조용히 넘어가지 않고 `runner_spawn` 의 `Err` 로 올라가 화면에
+/// "기동 실패: …" 로 사유가 그대로 보인다(`#368` 의 요구).
 fn ensure_node_pty_alongside_sidecar(
     app: &tauri::AppHandle,
     sidecar_dir: &std::path::Path,
@@ -118,7 +151,22 @@ fn ensure_node_pty_alongside_sidecar(
     if dest.exists() {
         // 개발 빌드: `build:sidecar` 가 이미 사이드카 옆에 둔 것 — 손대지 않는다.
         // 또는 이전 실행에서 이미 링크를 만들어 뒀다 — 다시 만들 필요가 없다.
+        // **이미 있는 것은 절대 지우거나 덮어쓰지 않는다** — 이 함수가 만드는 것은
+        // "없을 때의 링크" 하나뿐이다.
         return Ok(());
+    }
+    // `Path::exists()` 는 링크를 **따라간다** — 그래서 대상이 사라진 끊어진 링크는 위에서
+    // `false` 로 빠져나와 아래 `symlink()` 이 `EEXIST` 로 죽는다. 앱을 옮기면(이 함수가
+    // 만드는 링크는 절대 경로다) 정확히 그 상태가 되므로, 링크 **자신**이 있는지를
+    // `symlink_metadata` 로 따로 보고 끊어진 것만 걷어낸다. 실제 디렉터리·정상 링크는
+    // 위 `exists()` 에서 이미 돌아갔으므로 여기 오는 것은 끊어진 링크뿐이다.
+    if dest.symlink_metadata().is_ok() {
+        std::fs::remove_file(&dest).map_err(|e| {
+            format!(
+                "끊어진 `node_modules` 링크를 걷어내지 못했다: `{}`: {e}",
+                dest.display()
+            )
+        })?;
     }
 
     let resource_dir = app
