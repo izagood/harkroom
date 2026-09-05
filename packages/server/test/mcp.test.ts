@@ -7,12 +7,14 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 import { onEvent } from '../src/events.js';
-import { PROJECTION_UNCONFIGURED_NOTICE } from '@murmur/shared';
+import { PROJECTION_UNCONFIGURED_NOTICE, readAskMeta } from '@murmur/shared';
+import { recordAskAnswer } from '../src/services/messages.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
 let pool: Pool;
 let adminToken: string;
+let adminAccountId: string;
 let botPat: string;
 let channelId: string;
 let mcpUrl: string;
@@ -22,7 +24,7 @@ beforeAll(async () => {
   stop = db.stop;
   pool = db.pool;
   app = await buildServer({ pool: db.pool });
-  ({ token: adminToken } = await bootstrapAdmin(app));
+  ({ token: adminToken, accountId: adminAccountId } = await bootstrapAdmin(app));
   ({ pat: botPat } = await createAgent(app, adminToken, 'mcpbot'));
   const ch = await app.inject({
     method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
@@ -105,7 +107,7 @@ describe('mcp surface', () => {
     expect(names).toEqual([
       'account.me', 'channel.doc', 'channel.list', 'inbox.poll', 'inbox.read',
       'memory.get', 'memory.list', 'memory.set',
-      'message.post', 'message.progress', 'message.react', 'message.read', 'message.search', 'message.unreact',
+      'message.ask', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.search', 'message.unreact',
       'skill.propose', 'work.link', 'workspace.guide',
     ]);
 
@@ -407,5 +409,173 @@ describe('#381 work.link 은 투영이 꺼진 것을 말하되 거절하지 않�
     } finally {
       await client.close();
     }
+  });
+});
+
+/**
+ * 선택 요청(`message.ask`) — 이 계획의 단일 최우선 항목이다. 발행·답·중복 거절과,
+ * **모르는 meta 는 평문으로 흘린다**는 불변식을 고정한다.
+ */
+describe('message.ask — 선택 요청의 계약', () => {
+  it('선택지를 발행하고 수신자를 meta 에 싣는다', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      const posted = text(await client.callTool({
+        name: 'message.ask',
+        arguments: {
+          channelId, body: '008 이 이미 배포됐는지 내가 모른다',
+          options: [
+            { id: 'new', label: '새 마이그레이션 009', hint: '되돌리기 쉽다' },
+            { id: 'edit', label: '008 을 고친다' },
+          ],
+        },
+      })) as { message: { id: string; meta: Record<string, unknown> } };
+
+      const ask = readAskMeta(posted.message.meta);
+      expect(ask).not.toBeNull();
+      expect(ask!.options.map((o) => o.id)).toEqual(['new', 'edit']);
+      // to 를 비우면 '사람 아무나'다 — 옵셔널이 아니라 기본값이 있는 것이다.
+      expect(ask!.to).toEqual({ kind: 'human' });
+      expect(ask!.answeredWith).toBeUndefined();
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('to 로 handle 을 주면 그 계정으로 풀고, 없는 handle 은 거절한다', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      const { accountId: forgeId } = await createAgent(app, adminToken, 'askforge');
+      const posted = text(await client.callTool({
+        name: 'message.ask',
+        arguments: {
+          channelId, body: '스키마는 네가 정해라', to: '@askforge',
+          options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }],
+        },
+      })) as { message: { meta: Record<string, unknown> } };
+      expect(readAskMeta(posted.message.meta)!.to).toEqual({ kind: 'account', accountId: forgeId });
+
+      // 아무도 답할 수 없는 물음을 저장하는 것은 조용한 실패다.
+      const bad = text(await client.callTool({
+        name: 'message.ask',
+        arguments: {
+          channelId, body: '없는 대상', to: '@nobody-here',
+          options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }],
+        },
+      })) as { error?: { code: string } };
+      expect(bad.error?.code).toBe('unknown_handle');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('옵션 수와 중복 id 를 발행 시점에 거절한다', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      // 하나면 선택이 아니다 — zod 스키마가 막는다. SDK 는 던지지 않고 `isError` 결과를
+      // 돌려주므로(실측) 그 형태로 고정한다.
+      const tooFew = await client.callTool({
+        name: 'message.ask',
+        arguments: { channelId, body: '하나', options: [{ id: 'a', label: 'A' }] },
+      });
+      expect(tooFew.isError).toBe(true);
+      expect(JSON.stringify(tooFew.content)).toContain('at least 2');
+
+      const dup = text(await client.callTool({
+        name: 'message.ask',
+        arguments: {
+          channelId, body: '겹친 id',
+          options: [{ id: 'same', label: 'A' }, { id: 'same', label: 'B' }],
+        },
+      })) as { error?: { code: string } };
+      expect(dup.error?.code).toBe('duplicate_option');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('답을 기록하고, 두 번째 답은 거절한다 (먼저 온 것이 이긴다)', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      const posted = text(await client.callTool({
+        name: 'message.ask',
+        arguments: {
+          channelId, body: '골라 줘',
+          options: [{ id: 'new', label: '새 마이그레이션' }, { id: 'edit', label: '008 수정' }],
+        },
+      })) as { message: { id: string } };
+
+      const answered = await recordAskAnswer(pool, {
+        messageId: posted.message.id, actorId: adminAccountId, optionId: 'new',
+      });
+      expect(typeof answered).not.toBe('string');
+      const ask = readAskMeta((answered as { meta: Record<string, unknown> }).meta)!;
+      expect(ask.answeredWith).toBe('new');
+      expect(ask.answeredBy).toBe(adminAccountId);
+      expect(ask.answeredAt).toBeTruthy();
+
+      // 두 번째 답은 경합에서 진 것이다 — 원본을 덮어쓰지 않는다.
+      expect(await recordAskAnswer(pool, {
+        messageId: posted.message.id, actorId: adminAccountId, optionId: 'edit',
+      })).toBe('already_answered');
+
+      // 없는 옵션으로 답할 수는 없다.
+      const other = text(await client.callTool({
+        name: 'message.ask',
+        arguments: { channelId, body: '다른 것', options: [{ id: 'x', label: 'X' }, { id: 'y', label: 'Y' }] },
+      })) as { message: { id: string } };
+      expect(await recordAskAnswer(pool, {
+        messageId: other.message.id, actorId: adminAccountId, optionId: 'zzz',
+      })).toBe('unknown_option');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('수신자가 정해진 물음은 그 계정만 답한다', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      const { accountId: otherId } = await createAgent(app, adminToken, 'askother');
+      const posted = text(await client.callTool({
+        name: 'message.ask',
+        arguments: {
+          channelId, body: '네가 골라라', to: '@askother',
+          options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }],
+        },
+      })) as { message: { id: string } };
+
+      // 남에게 간 물음을 가로채면 `to` 를 실은 뜻이 사라진다.
+      expect(await recordAskAnswer(pool, {
+        messageId: posted.message.id, actorId: adminAccountId, optionId: 'a',
+      })).toBe('forbidden');
+
+      const ok = await recordAskAnswer(pool, {
+        messageId: posted.message.id, actorId: otherId, optionId: 'a',
+      });
+      expect(typeof ok).not.toBe('string');
+    } finally {
+      await client.close();
+    }
+  });
+
+  /**
+   * **회귀선: 모르는 meta 는 평문으로 흘린다.** 구/신 버전 조합(러너 × 서버 × 데스크탑)의
+   * 안전은 이 성질에 달려 있다 — 형식을 못 알아보면 상자를 그리지 않고 본문만 보여 준다.
+   */
+  it('형식이 깨진 ask meta 는 못 알아본 것으로 취급한다', async () => {
+    expect(readAskMeta(undefined)).toBeNull();
+    expect(readAskMeta({})).toBeNull();
+    expect(readAskMeta({ kind: 'ask' })).toBeNull();
+    // 옵션이 하나면 선택이 아니다 — 읽는 쪽에서도 경계를 지킨다.
+    expect(readAskMeta({ kind: 'ask', ask: { options: [{ id: 'a', label: 'A' }], to: { kind: 'human' } } })).toBeNull();
+    // 수신자를 못 읽으면 그리지 않는다: '사람 아무나'로 넘기면 남의 물음이 내 화면에서 강조된다.
+    expect(readAskMeta({ kind: 'ask', ask: { options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] } })).toBeNull();
+    expect(readAskMeta({
+      kind: 'ask', ask: { options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], to: { kind: 'nope' } },
+    })).toBeNull();
+    // 알아보는 최소 형태.
+    expect(readAskMeta({
+      kind: 'ask', ask: { options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], to: { kind: 'human' } },
+    })).not.toBeNull();
   });
 });
