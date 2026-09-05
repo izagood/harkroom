@@ -1,4 +1,4 @@
-import { readAskMeta, type MessageRow } from '@murmur/shared';
+import { readAskMeta, readFailureMeta, type MessageRow } from '@murmur/shared';
 import type { Slot } from './progressGroup';
 
 /**
@@ -34,10 +34,9 @@ type IsAgent = (accountId: string) => boolean;
  * 그것은 에이전트끼리의 대화가 아니라 사람을 부르는 말이고, 접으면 "내 차례"가 접힌 줄
  * 뒤로 사라진다 — 규칙 04 가 지키려는 것과 정반대다.
  *
- * 계획서는 이 예외를 "실패가 있으면 접지 않는다"로 적었다. **실패는 아직 어휘가 없다**
- * (`kind` 는 `user|system|progress` 뿐이고 `FailureMeta` 도 없다). 그래서 지금 표현할 수
- * 있는 같은 성질 — *사람에게 온 막는 말* — 로 예외를 세워 둔다. 실패 어휘가 생기면
- * `blocksHuman` 에 한 줄 더하면 되고, 그 자리를 여기 한 곳으로 모아 둔 것이 요점이다.
+ * **실패도 같은 예외에 든다**(`FailureMeta`). 실패는 언제나 사람에게 오는 말이므로 접으면
+ * 사람이 그것을 못 본다 — 에이전트가 먼저 사람을 부르는 유일한 경우다. 두 판정을
+ * `blocksHuman` 한 곳에 모아 두어 "사람을 막는가"라는 하나의 질문으로 답하게 한다.
  */
 export function groupAgentExchanges(slots: Slot[], isAgent: IsAgent): ExchangeSlot[] {
   const out: ExchangeSlot[] = [];
@@ -79,6 +78,8 @@ export function groupAgentExchanges(slots: Slot[], isAgent: IsAgent): ExchangeSl
  * 실패 어휘가 생기면 여기 한 줄이 는다(위 주석 참고).
  */
 function blocksHuman(m: MessageRow): boolean {
+  // 실패는 언제나 사람에게 오는 말이다 — 접으면 사람이 그것을 못 본다.
+  if (readFailureMeta(m.meta) != null) return true;
   const ask = readAskMeta(m.meta);
   // 이미 답한 선택은 더 이상 아무도 막지 않는다 — 기록일 뿐이므로 접혀도 된다.
   return ask != null && ask.answeredWith == null && ask.to.kind === 'human';
