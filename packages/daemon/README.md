@@ -2,20 +2,48 @@
 
 murmur daemon. 앱이 아니라 이쪽이 러너를 소유하게 만드는 상주 프로세스다(`#431` 2단계).
 
-이 패키지는 지금 **소켓을 열고, 토큰으로 인증하고, 러너를 소유한다**(`#431` 2단계-b).
-배포 경로(Tauri 사이드카 `murmur-daemon`)는 2단계-a 가 이미 깔았다.
+이 패키지는 지금 **소켓을 열고, 토큰으로 인증하고, 러너를 소유하고, 앞선 daemon 이 남긴
+고아 러너를 다시 소유한다**(`#431` 2단계-b·c). 배포 경로(Tauri 사이드카 `murmur-daemon`)는
+2단계-a 가 이미 깔았다.
 
 ## 무엇을 하는가
 
 | 요청 | 하는 일 |
 |---|---|
-| `spawnRunner` | 러너 사이드카를 **자기 프로세스 그룹으로**(`detached`=`setsid`) 띄우고 `incarnationId` 를 발급한다 |
+| `spawnRunner` | 러너 사이드카를 **자기 프로세스 그룹으로**(`detached`=`setsid`) 띄우고 `incarnationId` 를 발급한다. **이미 살아 있으면 새로 안 띄운다** |
 | `killRunner` | **SIGTERM 을 보내고 기다린다.** 승격 타이머가 없다 — 아래 참조 |
-| `listRunners` | `alive`(= `kill(pid, 0)`)와 `termSentAtMs` 를 그대로 준다 |
+| `listRunners` | `alive`(= `kill(pid, 0)`)·`termSentAtMs`·`adopted` 를 그대로 준다 |
+| `adoptRunner` | 장부를 다시 훑어 고아를 소유한다. **payload 를 안 받는다** — 아래 참조 |
 | `ping` | `nowMs` |
 
 러너가 끝나면 `runnerExit` 이벤트가 **`incarnationId` 를 달고** 나간다 — 늦게 도착한 exit 이
 새 세대를 죽이지 않게 하는 축이다(`#419` 의 `runTokens` 와 같은 성격).
+
+## 고아 재발견 — 무엇으로 찾고 왜 그것인가 (`#431` 2단계-c)
+
+daemon 이 죽어도 러너는 산다(성질 2). 그러면 새 daemon 은 그 러너를 모르고, 앱이
+`spawnRunner` 를 부르면 **중복 러너가 생긴다** — `#430` 이 관측한 것이 그것이다.
+
+**후보의 출처는 `<appDataDir>/daemon/runners-v<N>.json` 장부 하나이고, 그 writer 는 daemon
+하나다.** presence 도 프로세스 목록 훑기도 쓰지 않는다:
+
+| 안 | 왜 아닌가 |
+|---|---|
+| presence(서버) | **pid 를 모른다** — `killRunner` 를 걸 수 없다. 그리고 실측에서 러너 0개인데 online 이 나왔다(`#430`) |
+| 프로세스 목록 훑기 | 고아는 정의상 `ppid=1` 이라 `ppid` 로 못 거르고, 다른 워크트리의 러너가 **실행 경로까지 같다**(실측 2026-09-06: 이 기계에 6개). `agentId` 는 env 에만 있는데 macOS 는 남의 env 를 못 읽는다 |
+| **장부(채택)** | pid·`agentId` 를 함께 남기는 유일한 방법이고 writer 가 하나다(D5) |
+
+**남의 러너를 채택할 수 있는가 — 없다.** 장부에는 이 daemon 계보가 자기 손으로 spawn 한
+pid 만 오르고, 다른 워크트리·다른 빌드는 다른 `appDataDir` 를 쓴다. 채택은 곧
+`killRunner` 의 대상이 된다는 뜻이라 이 경계가 이 설계에서 가장 중요하다.
+
+**pid 재사용**은 커널이 아는 프로세스 시작 시각(`ps -o lstart`)으로 가른다. 남는 한계
+(1초 해상도 · Windows 미대응)는 `src/adopt.ts` 모듈 주석에 적혀 있다. **확실하지 않으면
+채택하지 않는다** — 안 채택하면 중복 러너가 생기지만(복구 가능), 잘못 채택하면 무관한
+프로세스를 죽인다(되돌릴 수 없다).
+
+`adoptRunner` 요청에 **pid 를 실어 보낼 수 없다.** 받으면 소켓에 붙은 누구든 임의의 pid 를
+daemon 의 표에 올려 죽일 수 있다(`#250` 의 경계).
 
 ## 이 패키지가 지키는 세 성질
 
@@ -34,18 +62,40 @@ daemon 이 SIGKILL 로 죽어도 결과가 같다.
 
 ## 아직 없는 것
 
-- **고아 재발견**(`adoptRunner`) — 2-c. daemon 이 재시작하면 이전 러너를 못 알아본다.
-  그때까지 그 정리는 **사람이** 한다
 - **수명 관리**(채택 타임아웃·은퇴 플래그·크래시 루프 차단) — 2-d
-- **앱 클라이언트 전환** — 2-b 3/3. 지금 이 소켓에 붙는 앱은 아직 없다
+- **`external` 판정을 앱에서 daemon 으로 옮기는 것** — 2-e. 이 단계는 daemon 이 고아를
+  알아보는 데까지다. 화면 문구는 `#443` 이다
 
-`adoptRunner`·`shutdownIfIdle` 은 지금 `unknown-request` 로 거절된다(회귀선으로 고정).
+`shutdownIfIdle` 은 지금 `unknown-request` 로 거절된다(회귀선으로 고정).
 
 ## `sessions.json` 은 여기 없다 (`#431` D5)
 
 daemon 이 소유하는 것은 **프로세스**이지 세션이 아니다. 세션 상태의 원자성은 "쓰는 주체가
 하나(러너)"에서 나오고, daemon 이 두 번째 writer 가 되면 lost update 가 — 그것도 조용히 —
-난다. 그래서 러너 표는 **프로세스 사실만** 담고 메모리에만 있다.
+난다.
+
+2-c 가 디스크에 파일 하나(장부)를 더하지만 **그 파일도 writer 가 daemon 하나**이고,
+`<appDataDir>/daemon/` 안에 산다 — 러너의 상태 디렉터리(`~/.murmur-agent/…`)를 열지
+않는다. 스펙 D5 가 제안한 자리가 그 트리였는데 채택하지 않은 근거는
+`src/runnerLedger.ts` 모듈 주석에 있다. 회귀선(`test/adopt.test.ts`)이 daemon 소스에
+`sessions.json`·`SessionStore`·`.murmur-agent` 가 나타나지 않는 것을 고정한다.
+
+## 로그 — 판정을 남긴다 (`#456` ②)
+
+daemon 은 stdout 에 적고, 앱이 그것을 `daemon-v<N>.log` 로 돌린다(`daemon_client.rs`).
+**미묘한 판정일수록 반드시 남긴다:**
+
+- 엔드포인트를 새로 잡았는가 / **잔해를 강탈했는가**(직전 소유자 pid·nonce·근거까지) /
+  물러났는가(점유 중인 pid) / 판정 불가인가
+- 고아를 몇 건 채택했고, **안 한 것은 왜 안 했는가**(죽은 pid / pid 재사용 / 확인 불가)
+- `spawnRunner` 가 **띄운 것인지 이미 있던 것을 돌려준 것인지**
+
+실측(2026-09-06)이 이 항목을 만들었다: 잔해 강탈에 **성공했는데** 로그에 아무것도 없었다.
+성공이 안 남으면 실패는 더더욱 안 남는다.
+
+> daemon 을 셸에서 직접 띄우면 이 줄들은 **터미널로 간다** — 로그 파일로 돌리는 것은
+> 앱의 spawn 경로이고 daemon 자신은 `--log-file` 인자를 받지 않는다(그 판단의 근거는
+> `daemon_client.rs::EndpointPaths::log` 주석).
 
 ## 왜 `packages/agent/` 안이 아니라 별도 패키지인가
 

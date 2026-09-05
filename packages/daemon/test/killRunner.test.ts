@@ -24,6 +24,8 @@ function 안죽는러너호스트(): { host: RunnerHost; signals: (NodeJS.Signal
       return true; // **끝까지 살아 있다.**
     },
     now: () => 1000,
+    // 회귀선은 pid 재사용을 안 잰다 — 그것은 `adopt.test.ts` 의 몫이다.
+    bootTimeSec: () => Promise.resolve(null),
   };
   return { host, signals };
 }
@@ -38,12 +40,12 @@ describe('killRunner — 회수가 아니다 (#431 2단계-b)', () => {
    * 되돌려 RED: `RunnerRegistry.killRunner` 에
    * `setTimeout(() => this.host.kill(pid, 'SIGKILL'), 5000)` 을 넣으면 빨개진다.
    */
-  it('SIGTERM 뒤 아무리 기다려도 SIGKILL 을 보내지 않는다', () => {
+  it('SIGTERM 뒤 아무리 기다려도 SIGKILL 을 보내지 않는다', async () => {
     vi.useFakeTimers();
     try {
       const { host, signals } = 안죽는러너호스트();
       const registry = new RunnerRegistry({ command: '/bin/true', args: [] }, host);
-      registry.spawnRunner('a1', {});
+      await registry.spawnRunner('a1', {});
       registry.killRunner('a1');
 
       // 유예 타이머가 있었다면 이 안에 반드시 터진다(한 시간).
@@ -64,10 +66,10 @@ describe('killRunner — 회수가 아니다 (#431 2단계-b)', () => {
    * "한 번 더 요청했으니 이번엔 강제로"는 자연스러워 보이는 다음 수순이고, 그래서 막는다.
    * 사람이 두 번 눌렀다는 사실이 러너가 지금 무엇을 들고 있는지를 바꾸지는 않는다.
    */
-  it('kill 을 여러 번 보내도 SIGTERM 만 반복한다', () => {
+  it('kill 을 여러 번 보내도 SIGTERM 만 반복한다', async () => {
     const { host, signals } = 안죽는러너호스트();
     const registry = new RunnerRegistry({ command: '/bin/true', args: [] }, host);
-    registry.spawnRunner('a1', {});
+    await registry.spawnRunner('a1', {});
     registry.killRunner('a1');
     registry.killRunner('a1');
     registry.killRunner('a1');
@@ -82,7 +84,7 @@ describe('killRunner — 회수가 아니다 (#431 2단계-b)', () => {
    * 사람이 승격을 판단할 근거가 사라진다 — daemon 이 판단하지 않기로 한 대신 사람에게
    * 넘긴 그 정보다.
    */
-  it('termSentAtMs 는 처음 SIGTERM 을 보낸 때로 고정된다', () => {
+  it('termSentAtMs 는 처음 SIGTERM 을 보낸 때로 고정된다', async () => {
     const signals: (NodeJS.Signals | 0)[] = [];
     let now = 1000;
     const host: RunnerHost = {
@@ -92,9 +94,11 @@ describe('killRunner — 회수가 아니다 (#431 2단계-b)', () => {
         return true;
       },
       now: () => now,
+      // 회귀선은 pid 재사용을 안 잰다 — 그것은 `adopt.test.ts` 의 몫이다.
+      bootTimeSec: () => Promise.resolve(null),
     };
     const registry = new RunnerRegistry({ command: '/bin/true', args: [] }, host);
-    registry.spawnRunner('a1', {});
+    await registry.spawnRunner('a1', {});
     registry.killRunner('a1');
     now = 99_000;
     registry.killRunner('a1');
@@ -103,10 +107,10 @@ describe('killRunner — 회수가 아니다 (#431 2단계-b)', () => {
   });
 
   /** 세대가 어긋난 kill 은 **지금 러너를 데려가지 않는다**(늦게 도착한 명령). */
-  it('세대가 다른 kill 은 지금 러너에 시그널을 보내지 않는다', () => {
+  it('세대가 다른 kill 은 지금 러너에 시그널을 보내지 않는다', async () => {
     const { host, signals } = 안죽는러너호스트();
     const registry = new RunnerRegistry({ command: '/bin/true', args: [] }, host);
-    registry.spawnRunner('a1', {});
+    await registry.spawnRunner('a1', {});
 
     expect(registry.killRunner('a1', '옛-세대')).toBeNull();
     expect(signals.filter((s) => s !== 0)).toEqual([]);

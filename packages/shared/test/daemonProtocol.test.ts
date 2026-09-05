@@ -260,17 +260,18 @@ describe('incarnationId — 늦게 온 exit 을 버린다', () => {
   });
 });
 
-describe('요청 종류 — 2단계-b 의 범위', () => {
-  it('네 종류만 받는다', () => {
-    for (const type of ['spawnRunner', 'killRunner', 'listRunners', 'ping']) {
+describe('요청 종류 — 2단계-c 의 범위', () => {
+  /** 2-c 가 `adoptRunner` 를 더해 다섯이다. 2-b 의 넷은 그대로 산다. */
+  it('다섯 종류를 받는다 — adoptRunner 가 2-c 에서 더해졌다', () => {
+    for (const type of ['spawnRunner', 'killRunner', 'listRunners', 'ping', 'adoptRunner']) {
       const parsed = parseRequest({ id: '1', type });
       expect(parsed).toMatchObject({ id: '1', type });
     }
   });
 
-  it('adoptRunner·shutdownIfIdle 은 아직 없다 — unknown-request 다', () => {
-    // 2-c·2-d 의 것이다. 지금 받아 주면 그 계약이 정해지기 전에 앱이 의존한다.
-    for (const type of ['adoptRunner', 'shutdownIfIdle', 'getState']) {
+  it('shutdownIfIdle 은 아직 없다 — unknown-request 다', () => {
+    // 2-d 의 것이다. 지금 받아 주면 그 계약이 정해지기 전에 앱이 의존한다.
+    for (const type of ['shutdownIfIdle', 'getState']) {
       expect(parseRequest({ id: '1', type })).toMatchObject({ code: 'unknown-request' });
     }
   });

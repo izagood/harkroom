@@ -21,9 +21,22 @@
  * 그리고 조용히 난다 — 에러도 크래시도 없이 중복 답변·누락으로 나타나 daemon 과 무관해
  * 보인다.
  *
- * 그래서 이 표는 **프로세스 사실만** 담고 메모리에만 있다. daemon 이 죽으면 표는
- * 사라지지만 러너는 산다 — 그 러너를 다시 알아보는 것은 2-c(고아 재발견)의 일이고,
- * 그 단계도 세션 파일이 아니라 별도 기록/presence 로 푼다.
+ * 그래서 이 표는 **프로세스 사실만** 담는다. daemon 이 죽으면 표는 사라지지만 러너는
+ * 산다 — 그 러너를 다시 알아보는 것이 2-c(고아 재발견)이고, 그것도 세션 파일이 아니라
+ * **별도 장부**(`runnerLedger.ts`)로 푼다. 그 장부의 writer 도 daemon 하나뿐이다.
+ *
+ * ## 2-c 가 더한 것 — 표에 두 종류의 러너가 있다
+ *
+ * | | 내가 띄운 것 | **채택한 것**(2-c) |
+ * |---|---|---|
+ * | `child` | 있다 | **`null`** — 내 자식이 아니다 |
+ * | 종료를 어떻게 아나 | `child.on('exit')` | **`kill(pid, 0)` 폴링** |
+ * | `killRunner` | 된다 | **된다** (pid 만 있으면 SIGTERM 은 보낸다) |
+ *
+ * `child` 가 `null` 인 경로를 두는 것이 이 표의 유일한 구조 변경이다. 그 자리에 가짜
+ * 핸들을 세우지 않는 이유: 가짜는 `exit` 을 영영 안 보내므로 "핸들이 있다"는 사실이
+ * **거짓말**이 되고, 종료 통지 경로가 조용히 끊긴다. `null` 이면 타입이 그 갈래를
+ * 강제로 다루게 만든다.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 
@@ -33,6 +46,8 @@ import {
   type RunnerInfo,
 } from '@murmur/shared/daemonProtocol';
 
+import { psIdentityProbe } from './adopt.js';
+
 /** 러너 하나에 대해 daemon 이 들고 있는 사실. **전부 프로세스 수준이다.** */
 export interface RunnerRecord {
   agentId: string;
@@ -41,10 +56,19 @@ export interface RunnerRecord {
   startedAtMs: number;
   /** SIGTERM 을 보낸 때. 안 보냈으면 `null`. **관측이지 판단이 아니다.** */
   termSentAtMs: number | null;
-  /** 자식 핸들. 종료 통지의 출처다. */
-  child: ChildProcess;
+  /**
+   * 자식 핸들. 종료 통지의 출처다.
+   *
+   * **채택한 러너는 `null` 이다** — 앞선 daemon 의 자식이었으므로 이 프로세스에는
+   * 핸들이 없다. 그 러너의 종료는 `pollAdopted()` 가 `kill(pid, 0)` 으로 관측한다.
+   */
+  child: ChildProcess | null;
   /** 종료를 이미 관측했는가. 늦은 이벤트를 두 번 보내지 않기 위한 것. */
   exited: boolean;
+  /** 이 세대의 커널 시작 시각(초). 장부에 실려 pid 재사용 방어의 축이 된다(`adopt.ts`). */
+  bootTimeSec: number | null;
+  /** 채택된 러너인가. `child === null` 과 같은 뜻이지만 **뜻이 다르므로** 따로 둔다. */
+  adopted: boolean;
 }
 
 export interface RunnerExitNotice {
@@ -67,6 +91,15 @@ export interface RunnerHost {
    */
   kill(pid: number, signal: NodeJS.Signals | 0): boolean;
   now(): number;
+  /**
+   * 그 pid 의 **커널 시작 시각**(초 단위 epoch). 못 읽으면 `null`.
+   *
+   * 장부에 실려 다음 daemon 의 pid 재사용 방어가 된다(`adopt.ts` 모듈 주석).
+   * 여기 있는 이유는 회귀선이 이 값을 마음대로 세워 "pid 는 살아 있는데 시작 시각이
+   * 다르다"는 상황을 실제로 만들 수 있어야 하기 때문이다 — 그 상황은 실물로는 pid 가
+   * 한 바퀴 돌아야 나온다.
+   */
+  bootTimeSec(pid: number): Promise<number | null>;
 }
 
 export const nodeRunnerHost: RunnerHost = {
@@ -110,6 +143,9 @@ export const nodeRunnerHost: RunnerHost = {
   now() {
     return Date.now();
   },
+  // `ps -o lstart` 한 줄. 구현과 그 한계는 `adopt.ts` 의 `psIdentityProbe` 가 갖는다 —
+  // 두 곳에 두면 한쪽만 고쳐지는 날이 온다.
+  bootTimeSec: (pid) => psIdentityProbe.bootTimeSec(pid),
 };
 
 /** 러너를 띄울 때 쓸 고정값. **웹뷰나 클라이언트가 프로그램·인자를 고르지 못한다.** */
@@ -118,6 +154,16 @@ export interface RunnerLaunchSpec {
   command: string;
   /** 인자. **리터럴로 못박는다**(`#250` 의 경계) — 지금은 비어 있다. */
   args: readonly string[];
+}
+
+/**
+ * 장부를 잇는 자리(`#431` 2-c). **주입으로 받는다** — 표가 파일 경로를 직접 알면
+ * 회귀선이 이 로직을 재려고 매번 디스크를 마련해야 하고, 더 나쁘게는 표가
+ * "어디에 쓰는가"까지 정하게 되어 D5 의 writer 경계가 두 곳으로 흩어진다.
+ */
+export interface LedgerSink {
+  /** 표가 바뀔 때마다 불린다. 지금 표 전체가 실려 온다 — 증분이 아니라 스냅샷이다. */
+  save(records: readonly RunnerRecord[]): void;
 }
 
 export class RunnerRegistry {
@@ -129,7 +175,18 @@ export class RunnerRegistry {
     private readonly host: RunnerHost = nodeRunnerHost,
     /** 러너가 끝났을 때 불린다. `incarnationId` 가 실려 나간다. */
     private readonly onExit: (notice: RunnerExitNotice) => void = () => undefined,
+    /** 장부에 흘려 보낼 자리. 없으면 안 쓴다 — 회귀선 대부분은 장부가 필요 없다. */
+    private readonly ledger: LedgerSink | null = null,
   ) {}
+
+  /** 지금 표 전체. 장부에 쓰기 위해서만 쓰인다. */
+  private records(): RunnerRecord[] {
+    return [...this.byAgent.values()];
+  }
+
+  private saveLedger(): void {
+    this.ledger?.save(this.records());
+  }
 
   /**
    * 러너를 띄운다.
@@ -138,9 +195,16 @@ export class RunnerRegistry {
    * 같은 에이전트에 러너가 둘이면 서버의 멘션을 나눠 집어 가고, 그러면 답이 반쪽씩
    * 갈린다(`#431` D5 의 중복 러너 금지와 같은 자리).
    */
-  spawnRunner(agentId: string, env: Record<string, string>): RunnerRecord {
+  async spawnRunner(agentId: string, env: Record<string, string>): Promise<RunnerRecord> {
     const existing = this.byAgent.get(agentId);
     if (existing && !existing.exited && this.host.kill(existing.pid, 0)) {
+      // ── 중복을 안 띄운다 — **채택한 러너도 여기서 걸린다**(`#431` 2-c) ──────────
+      // 이 판정이 보는 것은 `byAgent` 하나뿐이고, 채택된 러너도 거기 있다. 그래서
+      // "daemon 이 재시작한 뒤 앱이 spawnRunner 를 불렀다"는 경로에서 중복이 안 생긴다.
+      // 그 전에는 표가 비어 있어 매번 새로 떴고, 그것이 `#430` 이 관측한 중복이다.
+      //
+      // 회귀선: `test/adopt.test.ts` 의 "채택한 에이전트에 spawnRunner 가 와도 새로
+      // 띄우지 않는다".
       return existing;
     }
 
@@ -157,6 +221,10 @@ export class RunnerRegistry {
       termSentAtMs: null,
       child,
       exited: false,
+      // 아래에서 커널에게 물어 채운다. 못 채우면 `null` 이고, 그러면 다음 daemon 이
+      // 이 러너를 **채택하지 않는다**(`adopt.ts` 의 `unverifiable`).
+      bootTimeSec: null,
+      adopted: false,
     };
     this.byAgent.set(agentId, record);
 
@@ -166,6 +234,11 @@ export class RunnerRegistry {
       // **표에서 지금 세대일 때만 뺀다.** 늦게 온 exit 이 그 사이 새로 뜬 러너의 자리를
       // 비우면, 앱은 살아 있는 러너를 죽은 것으로 보고 또 하나를 띄운다.
       if (this.byAgent.get(agentId) === record) this.byAgent.delete(agentId);
+      // 장부도 함께 줄인다 — 안 그러면 정상 종료한 러너가 다음 daemon 의 후보로 남는다.
+      // 그 후보는 `kill(pid, 0)` 에 걸려 `dead` 로 버려지므로 위험하진 않지만, pid 가
+      // 재사용되면 그때는 `pid-reused` 판정에 의존하게 된다 — 방어를 하나 더 쌓는 것보다
+      // 후보에서 지우는 것이 싸다.
+      this.saveLedger();
       this.onExit({
         agentId,
         incarnationId: record.incarnationId,
@@ -176,7 +249,98 @@ export class RunnerRegistry {
     // `unref` 는 하지 않는다 — daemon 이 이 자식의 종료를 관측해야 `runnerExit` 을 보낼
     // 수 있고, 그것이 이 표의 존재 이유다. 프로세스 그룹 분리는 `detached` 가 이미 했다.
 
+    // ── 커널 시작 시각을 **여기서** 읽는다 — 장부에 적기 전에 ────────────────────
+    // 나중에 읽으면 그 사이에 러너가 죽고 pid 가 재사용될 수 있고, 그러면 **무관한
+    // 프로세스의 시작 시각을 우리 러너의 것으로 장부에 적는다.** 그 장부는 다음 daemon 을
+    // 정확히 잘못된 채택으로 이끈다. spawn 직후가 그 창이 가장 좁은 자리다.
+    record.bootTimeSec = await this.host.bootTimeSec(pid);
+    if (record.exited) {
+      // 읽는 사이에 끝났다 — exit 핸들러가 이미 표와 장부를 정리했다. 여기서 다시 쓰면
+      // 방금 지운 줄을 되살린다.
+      return record;
+    }
+    this.saveLedger();
     return record;
+  }
+
+  /**
+   * 앞선 daemon 이 남긴 고아 러너를 **표에 올린다** — `#431` 2-c 의 핵심 한 걸음.
+   *
+   * 신원 확인은 여기서 하지 않는다. `adopt.ts` 의 `planAdoption` 이 이미 했고, 이 함수는
+   * 그 판정을 믿는다 — 판정을 두 곳에 두면 한쪽만 강화되는 날이 온다.
+   *
+   * **`incarnationId` 를 새로 만들지 않는다.** 장부의 것을 그대로 쓴다. 새로 만들면
+   * 앱이 알고 있는 세대와 daemon 의 것이 갈리고, 그 러너에 대한 `killRunner` 가
+   * "세대가 어긋난 kill" 로 조용히 거절된다 — 앱은 종료 명령을 보냈는데 아무 일도 안
+   * 일어나는 상태가 된다.
+   *
+   * 이미 그 `agentId` 에 살아 있는 표가 있으면 **채택하지 않는다.** 채택이 지금 도는
+   * 러너를 표에서 밀어내면 그 러너가 아무도 모르는 고아가 된다 — 고아를 없애려는 함수가
+   * 고아를 만드는 셈이다.
+   */
+  adopt(entry: {
+    agentId: string;
+    pid: number;
+    incarnationId: IncarnationId;
+    startedAtMs: number;
+    bootTimeSec: number | null;
+  }): RunnerRecord | null {
+    const existing = this.byAgent.get(entry.agentId);
+    if (existing && !existing.exited && this.host.kill(existing.pid, 0)) return null;
+
+    const record: RunnerRecord = {
+      agentId: entry.agentId,
+      pid: entry.pid,
+      incarnationId: entry.incarnationId,
+      startedAtMs: entry.startedAtMs,
+      // **`null` 이다** — 이 daemon 은 그 러너에 SIGTERM 을 보낸 적이 없다. 앞선 daemon 이
+      // 보냈을 수는 있지만 그 사실은 어디에도 안 남는다(장부는 spawn 순간만 담는다).
+      // 여기에 추측으로 값을 넣으면 화면이 "N초 전에 보냈다"고 거짓말한다.
+      termSentAtMs: null,
+      child: null, // 내 자식이 아니다 — 위 `RunnerRecord.child` 주석 참조.
+      exited: false,
+      bootTimeSec: entry.bootTimeSec,
+      adopted: true,
+    };
+    this.byAgent.set(entry.agentId, record);
+    this.saveLedger();
+    return record;
+  }
+
+  /**
+   * 채택한 러너들의 생사를 **폴링해서** 확인하고, 끝난 것을 표에서 뺀다.
+   *
+   * ## 왜 폴링인가 — 다른 방법이 없다
+   *
+   * 내가 띄운 자식은 커널이 `SIGCHLD` 로 알려 준다. **채택한 러너는 내 자식이 아니라
+   * 그 통지가 오지 않는다.** POSIX 에 "남의 프로세스가 죽으면 알려 달라"는 표면이 없다
+   * (Linux 의 `pidfd`, macOS 의 `kqueue EVFILT_PROC` 이 있지만 Node 가 노출하지 않는다).
+   * 그래서 물어보는 수밖에 없고, 이 함수가 그 자리다.
+   *
+   * **주기를 여기서 정하지 않는다** — 부르는 쪽이 정한다. 이 함수가 타이머를 들면
+   * 회귀선이 실제 시간을 기다려야 하고, 무엇보다 `killRunner` 에 타이머를 걸지 않는다는
+   * 이 모듈의 성질이 "여기엔 타이머가 있다"와 나란히 놓여 다음 사람을 헷갈리게 한다.
+   *
+   * 죽은 것을 발견하면 `onExit` 을 부른다 — **코드도 시그널도 모른다**(`null`). 지어내지
+   * 않는다(`#368`): 우리가 아는 것은 "그 pid 가 이제 없다"뿐이다.
+   */
+  pollAdopted(): void {
+    let changed = false;
+    for (const record of [...this.byAgent.values()]) {
+      if (!record.adopted || record.exited) continue;
+      if (this.host.kill(record.pid, 0)) continue;
+      record.exited = true;
+      if (this.byAgent.get(record.agentId) === record) this.byAgent.delete(record.agentId);
+      changed = true;
+      this.onExit({
+        agentId: record.agentId,
+        incarnationId: record.incarnationId,
+        // 채택한 러너의 종료 코드는 **알 수 없다** — 내 자식이 아니라 wait 할 수 없다.
+        code: null,
+        signal: null,
+      });
+    }
+    if (changed) this.saveLedger();
   }
 
   /**
@@ -263,6 +427,7 @@ export class RunnerRegistry {
         startedAtMs: record.startedAtMs,
         alive: this.host.kill(record.pid, 0),
         termSentAtMs: record.termSentAtMs,
+        adopted: record.adopted,
       });
     }
     return out;
