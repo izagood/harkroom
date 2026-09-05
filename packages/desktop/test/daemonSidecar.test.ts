@@ -1,14 +1,20 @@
 // daemon 사이드카 빌드 경로의 회귀선(#431 2단계-a).
 //
-// 여기서 재는 것은 **배포 형태**뿐이다 — daemon 이 무엇을 하는지는 2단계-b 의 일이고,
-// 이 단계가 닫는 것은 "daemon 이 앱과 함께 나가는 실행 가능한 사이드카가 된다"는 것 하나다.
+// 여기서 재는 것은 **배포 형태**뿐이다 — daemon 이 무엇을 하는지(소켓·인증·러너 소유)는
+// `packages/daemon` 의 회귀선이 재고, 이 파일이 닫는 것은 "daemon 이 앱과 함께 나가는
+// 실행 가능한 사이드카가 된다"는 것 하나다.
+//
+// 2단계-b 에서 **daemon 이 상주 프로세스가 됐다.** 그래서 실행 회귀선이 종료를 기다리던
+// 방식(`execFileSync`)에서 첫 줄만 읽고 거두는 방식으로 바뀌었다 — 재는 대상은 그대로다
+// (아래 그 자리의 주석 참조).
 //
 // 무거운 빌드(esbuild + rustc)는 매 테스트 실행에서 돌리지 않는다. 그래서 이 파일은
 // **산출물이 이미 있으면** 그 실물을 재고, 없으면 사람이 알아볼 이유로 건너뛴다
 // (`src-tauri/src/main.rs` 의 사이드카 통합 테스트가 쓰는 것과 같은 방식이다).
 import { describe, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 
 const SRC_TAURI_DIR = path.resolve(__dirname, '../src-tauri');
@@ -64,7 +70,7 @@ describe('daemon 사이드카 산출물 (#431 2단계-a)', () => {
    * 인자까지 함께 넘겨 파싱 결과가 stdout 에 나오는지 본다 — 번들에 엔트리가 제대로
    * 들어갔는지(빈 번들·엉뚱한 엔트리)를 같은 실행 하나로 가른다.
    */
-  it('셔뱅 + 실행 비트로 그대로 실행되고 인자를 판다', () => {
+  it('셔뱅 + 실행 비트로 그대로 실행되고 인자를 판다', async () => {
     const sidecar = findSidecar('murmur-daemon');
     if (!sidecar) {
       console.warn(`건너뜀: daemon 사이드카가 ${BINARIES_DIR} 에 없다 — ${SKIP_HINT}`);
@@ -74,13 +80,49 @@ describe('daemon 사이드카 산출물 (#431 2단계-a)', () => {
     // 실행 비트가 실제로 서 있는가(소유자 x).
     expect(statSync(sidecar).mode & 0o100, '소유자 실행 비트').toBe(0o100);
 
-    const out = execFileSync(sidecar, [
-      '--socket', '/tmp/murmur-test/daemon-v1.sock',
-      '--app-version', '9.9.9',
-    ], { encoding: 'utf8' });
+    // ── 2단계-b 에서 바뀐 것: **daemon 은 이제 안 끝난다** ────────────────────
+    // 2단계-a 의 daemon 은 인자를 적고 즉시 종료했고, 그래서 이 회귀선은 `execFileSync`
+    // 로 종료를 기다려 stdout 을 통째로 받았다. 지금 daemon 은 엔드포인트를 잡고
+    // **소켓을 서비스하며 상주한다** — 그것이 2단계-b 의 목적이므로, 종료를 기다리는
+    // 방식 자체가 더 이상 성립하지 않는다.
+    //
+    // 이 회귀선이 재려는 것은 그대로다: **파일 하나가 커널의 exec 를 통과하고, 번들에
+    // 엔트리가 제대로 들어갔는가.** 그래서 spawn 으로 띄워 **첫 줄이 나오는 즉시** 거둔다.
+    // 첫 줄(`murmur daemon 기동 …`)이 인자 파싱 결과를 담으므로 재는 대상은 같다.
+    //
+    // 엔드포인트를 실제로 잡지 않도록 **임시 디렉터리**를 준다 — 그러지 않으면 이
+    // 테스트가 사람의 진짜 daemon 소켓을 건드린다.
+    const tempDir = mkdtempSync(path.join(tmpdir(), 'murmur-daemon-sidecar-'));
+    const socketPath = path.join(tempDir, 'daemon', 'daemon-v1.sock');
+    const child = spawn(sidecar, ['--socket', socketPath, '--app-version', '9.9.9']);
+    try {
+      const firstLine = await new Promise<string>((resolve, reject) => {
+        let buf = '';
+        const timer = setTimeout(() => reject(new Error(`첫 줄이 안 나왔다: ${buf}`)), 15_000);
+        const onChunk = (chunk: Buffer): void => {
+          buf += chunk.toString('utf8');
+          const nl = buf.indexOf('\n');
+          if (nl !== -1) {
+            clearTimeout(timer);
+            resolve(buf.slice(0, nl));
+          }
+        };
+        child.stdout.on('data', onChunk);
+        child.stderr.on('data', onChunk);
+        child.on('error', (err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+      });
 
-    expect(out).toContain('--socket=/tmp/murmur-test/daemon-v1.sock');
-    expect(out).toContain('--app-version=9.9.9');
+      expect(firstLine).toContain(`--socket=${socketPath}`);
+      expect(firstLine).toContain('--app-version=9.9.9');
+    } finally {
+      // **SIGKILL 이다** — 이 자리는 러너 종료가 아니라 테스트가 띄운 daemon 을 거두는
+      // 것이고, daemon 은 러너를 안 들고 있으므로 잃을 답이 없다.
+      child.kill('SIGKILL');
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   /**
