@@ -7,7 +7,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 import { onEvent } from '../src/events.js';
-import { PROJECTION_UNCONFIGURED_NOTICE, readAskMeta } from '@murmur/shared';
+import { PROJECTION_UNCONFIGURED_NOTICE, readAskMeta, readFailureMeta } from '@murmur/shared';
 import { recordAskAnswer } from '../src/services/messages.js';
 
 let app: FastifyInstance;
@@ -107,7 +107,7 @@ describe('mcp surface', () => {
     expect(names).toEqual([
       'account.me', 'channel.doc', 'channel.list', 'inbox.poll', 'inbox.read',
       'memory.get', 'memory.list', 'memory.set',
-      'message.ask', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.search', 'message.unreact',
+      'message.ask', 'message.fail', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.search', 'message.unreact',
       'skill.propose', 'work.link', 'workspace.guide',
     ]);
 
@@ -577,5 +577,71 @@ describe('message.ask — 선택 요청의 계약', () => {
     expect(readAskMeta({
       kind: 'ask', ask: { options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], to: { kind: 'human' } },
     })).not.toBeNull();
+  });
+});
+
+/**
+ * 실패(`message.fail`) — 여덟 가지 말 중 유일하게 **에이전트가 먼저 사람을 부르는** 말이다.
+ * 수신자를 싣지 않는 것이 이 어휘의 요점이므로, 그 사실을 계약으로 고정한다.
+ */
+describe('message.fail — 실패의 계약', () => {
+  it('실패를 싣고 retryable 을 기록한다', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      const posted = text(await client.callTool({
+        name: 'message.fail',
+        arguments: {
+          channelId, body: '마이그레이션을 끝내지 못했다',
+          what: '008 적용', reason: '스테이징 DB 에 붙지 못했다', retryable: true,
+        },
+      })) as { message: { meta: Record<string, unknown> } };
+
+      const failure = readFailureMeta(posted.message.meta);
+      expect(failure).not.toBeNull();
+      expect(failure!.retryable).toBe(true);
+      expect(failure!.what).toBe('008 적용');
+      expect(failure!.reason).toBe('스테이징 DB 에 붙지 못했다');
+      // **수신자 필드가 없다** — 실패의 수신자는 언제나 사람이므로 실을 것이 없다.
+      expect((failure as unknown as { to?: unknown }).to).toBeUndefined();
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('retryable 을 빠뜨리면 거절한다 — 서버가 기본값을 정하지 않는다', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      // true 로 치면 소용없는 실패에 버튼이 생기고, false 로 치면 고칠 수 있는 실패의
+      // 경로가 사라진다. 둘 다 거짓 신호이므로 보내는 쪽이 반드시 정해야 한다.
+      const res = await client.callTool({
+        name: 'message.fail', arguments: { channelId, body: '실패했다' },
+      });
+      expect(res.isError).toBe(true);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('what·reason 없이도 성립한다 — 러너가 죽으면 이유를 남길 자가 없다', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      const posted = text(await client.callTool({
+        name: 'message.fail', arguments: { channelId, body: '러너가 죽었다', retryable: false },
+      })) as { message: { meta: Record<string, unknown> } };
+      const failure = readFailureMeta(posted.message.meta)!;
+      expect(failure.retryable).toBe(false);
+      expect(failure.what).toBeUndefined();
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('형식이 깨진 failure meta 는 못 알아본 것으로 취급한다', () => {
+    expect(readFailureMeta(undefined)).toBeNull();
+    expect(readFailureMeta({ kind: 'failure' })).toBeNull();
+    // retryable 이 boolean 이 아니면 기본값을 정해 주지 않고 못 알아본 것으로 친다.
+    expect(readFailureMeta({ kind: 'failure', failure: {} })).toBeNull();
+    expect(readFailureMeta({ kind: 'failure', failure: { retryable: 'yes' } })).toBeNull();
+    expect(readFailureMeta({ kind: 'failure', failure: { retryable: true } })).not.toBeNull();
   });
 });
