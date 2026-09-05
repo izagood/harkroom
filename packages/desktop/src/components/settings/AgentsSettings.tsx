@@ -171,6 +171,39 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   useEffect(reload, []);
 
   /**
+   * #428: 종료 요청 뒤 **수령**(`stopAckedAt`)을 화면에 반영한다.
+   *
+   * `requestStop` 이 받는 응답은 요청을 건 그 순간의 스냅샷이라 `stopAckedAt` 이 항상
+   * `null` 이다 — 러너가 그 값을 채우는 것은 요청을 읽어 간 **그 뒤**(실측 4초)이기
+   * 때문이다. 그런데 지금까지는 그 뒤를 다시 읽는 경로가 하나도 없었다: `agents` 는
+   * 마운트 시 한 번만 읽고(바로 위 `useEffect(reload, [])`), 사이드바에서 같은 에이전트를
+   * 다시 골라도(`pick`) `agents` 안의 그 stale 항목을 그대로 쓴다 — "화면을 다시 열면
+   * 새로 읽는가"도 확인해 보니 안 됐다.
+   *
+   * **폴링 범위를 "요청했지만 아직 못 받음" 상태로 좁힌다.** 세 상태 중 이 하나만 시간이
+   * 지나면 값이 바뀔 수 있는 상태다(요청 전은 사람이 버튼을 눌러야 바뀌고, 이미 받아 간
+   * 뒤로는 더 바뀔 값이 없다) — 그래서 이 상태를 벗어나는 순간 스스로 멈춘다.
+   *
+   * **간격 5초.** 실측 수령까지 4초였다 — 25초 프레즌스 폴(#124)만큼 성기면 몇 번의
+   * 확인 전에는 "아직 못 봤다"만 보인다. 그렇다고 1초처럼 짧게 하면 이 화면을 열어 둔
+   * 사람 수만큼 목록 조회가 늘어 서버 부하만 커지고, 실측 수령 시간(4초)보다 촘촘해 봐야
+   * 체감 차이가 없다. `listAgents()` 는 초기 로드에도 쓰는 가벼운 목록 조회라 새 엔드포인트
+   * 없이 재사용한다 — 소켓 이벤트(`agent.updated` 류)가 없는 지금, 새로 만드는 것은 이
+   * 이슈 범위를 넘는다.
+   */
+  useEffect(() => {
+    if (!selected || !selected.stopRequestedAt || selected.stopAckedAt) return;
+    const id = selected.id;
+    const timer = window.setInterval(() => {
+      void getController().listAgents().then((next) => {
+        setAgents(next);
+        setSelected((prev) => (prev && prev.id === id ? next.find((a) => a.id === id) ?? prev : prev));
+      }).catch(() => { /* 다음 tick 이 다시 시도한다 — 폴링 실패를 화면 오류로 띄우지 않는다 */ });
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [selected?.id, selected?.stopRequestedAt, selected?.stopAckedAt]);
+
+  /**
    * 멘션에서 이 화면으로 왔다면 그 에이전트를 고른 상태로 시작한다(#279).
    *
    * **한 targetId 에 한 번만** 고른다. `agents` 는 저장·재조회마다 새 배열이라 그것만 보고
