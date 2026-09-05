@@ -192,15 +192,22 @@ Fastify + Postgres / MCP Streamable HTTP
 `packages/desktop/src/components/MessageItem.tsx` · `packages/desktop/src/components/Sidebar.tsx` ·
 `packages/desktop/test/threadState.test.ts`(신규)
 
-- [ ] **Step 1: 판정 함수** — `threadState(messages, me, accounts)` →
+- [x] **Step 1: 판정 함수** — `threadState(messages, me, accounts)` →
       `'running' | 'my-turn' | 'waiting' | 'done' | 'stuck'`. **순수 함수로 분리한다** —
       이 판정이 화면 여러 곳(채널 요약 · 사이드바 · 스레드 목록)에서 같아야 하고, 컴포넌트 안에 두면
       세 곳이 조용히 갈라진다
-- [ ] **Step 2: 채널 요약 줄 확장** — 지금의 답글 요약(#424 텍스트 링크) 아래/옆에 상태를 한 줄 더.
-      `내 차례 — forge 가 범위를 묻는다 · 2분째`. **`→ 나` 인 막는 말이 있을 때만 강조색**
-- [ ] **Step 3: 사이드바 세 덩이** — `내 차례` / `남을 기다림` / `도는 중`. 채널 목록 **위**에 둔다 —
-      앱을 열었을 때 먼저 보여야 하는 것이 그것이다
-- [ ] **Step 4: 러너 생존과 묶는다 — 두 축을 모두 읽는다(결정 4).** `running` 은 러너가 살아
+- [ ] **Step 2: 채널 요약 줄 확장 — 보류. 서버 변경이 먼저다(2026-09-06 실측).**
+      **지금 데이터로는 그릴 수 없다**: 답글은 스레드를 열 때만 로드된다
+      (`controller.openThread` 가 `?thread=` 로 받아 온다). 채널에 있는 것은 루트뿐이라
+      지금 판정을 걸면 **열어 보지 않은 스레드가 전부 '끝남'으로 보인다** — 계획서가
+      경계한 바로 그 거짓말이다.
+      **필요한 것:** 서버가 스레드 목록에 상태를 함께 실어 준다(`replyCount`·`lastReplyAt` 을
+      싣는 그 자리 — `messages.ts::LIST_COLS` 의 `thread_stats`). 미답 ask 의 수신자와 실패
+      유무를 집계하면 되므로 `meta` 를 읽는 SQL 한 벌이다
+- [ ] **Step 3: 사이드바 세 덩이 — 보류. Step 2 와 같은 이유.**
+      사이드바는 채널 목록보다 더 넓은 범위(모든 채널의 모든 스레드)를 요약해야 하므로
+      서버 집계 없이는 더 그릴 수 없다. Step 2 가 서면 그 데이터를 그대로 쓴다
+- [x] **Step 4: 러너 생존과 묶는다 — 두 축을 모두 읽는다(결정 4).** `running` 은 러너가 살아
       있을 때만이다. 생존 신호가 없으면 `stuck` 으로 떨어뜨린다.
       **죽었는데 "도는 중"이면 사람은 영원히 기다린다** — 이 안의 유일한 치명적 실패 모드다.
       - **생존** = `mcp/presence.ts` 의 인메모리 presence(#124). `inbox.poll` 이 오면 온라인,
@@ -209,7 +216,17 @@ Fastify + Postgres / MCP Streamable HTTP
         `020_agent_last_turn.sql` 이 그것을 금한다(폴은 할 일이 없어도 25초마다 돈다).
         경과 표시("3분째")는 이 값에서 낸다
       - `last_turn_at` 이 `null` 이면 '아직 턴 없음'이지 '죽음'이 아니다 — 그렇게만 그린다
-- [ ] **검증:** 5상태 각각의 판정 테이블 테스트 · 생존 신호가 끊기면 `running → stuck` 으로 넘어가는지
+- [x] **검증:** `threadState.test.ts` 17케이스 — 5상태 판정표 · **우선순위 4케이스** ·
+      러너 생존 4케이스 · 강조 판정. 전체 2,599개 통과.
+      **RED 확인** — 생존 판정을 지우면 "죽은 러너를 도는 중으로 그리지 않는다"가 실제로 실패한다.
+      계획에 없던 것 둘:
+      (1) **`Liveness = Set | null`** — `null` 은 '아무도 없다'가 아니라 **'모른다'** 다.
+      소켓이 끊긴 동안 도는 스레드를 전부 붉게 칠하는 것도 같은 종류의 거짓말이므로,
+      모를 때는 마지막으로 알던 사실(`running`)을 유지한다.
+      `controller.startRunners` 의 `liveAccountIds` 가 이미 같은 규약을 쓴다.
+      (2) **우선순위를 명시했다** — `my-turn` > `stuck` > `waiting` > `running` > `done`.
+      `my-turn` 이 `stuck` 을 이기는 이유는 답 한 번으로 풀리는 것이 개입 비용이 낮기 때문이다
+- [x] **붙은 자리:** 스레드 패널 헤더(`ThreadStateBadge`). **답글이 전부 로드된 유일한 자리**다
 
 ### Task 7: 대기 사슬과 교착
 
