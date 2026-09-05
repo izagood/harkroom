@@ -5,7 +5,7 @@ import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type Notifier } from '../lib/notify';
 import { displayBody } from '../lib/mention';
-import { RunnerLauncher, tauriLoginPathReader, tauriSecretStore, tauriSpawner, type LoginPathReader, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
+import { RunnerLauncher, tauriLoginPathReader, tauriSecretStore, daemonSpawner, type LoginPathReader, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
 import type { AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
@@ -42,7 +42,7 @@ export class Controller {
     private onSessionLost: (message: string, accountId: string) => void = () => {},
     /** 테스트가 키체인·자식 프로세스를 목으로 바꿔 끼우는 자리(#250). */
     secrets: RunnerSecretStore = tauriSecretStore,
-    spawner: RunnerSpawner = tauriSpawner,
+    spawner: RunnerSpawner = daemonSpawner,
     /** 로그인 셸 `PATH` 조회(#305). 테스트가 조회 실패를 만들 수 있게 주입한다. */
     loginPath: LoginPathReader = tauriLoginPathReader,
     /**
