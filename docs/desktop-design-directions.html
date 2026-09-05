@@ -1,0 +1,1417 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+  /* 저장소 사본용 최소 리셋 — 아티팩트 호스트가 넣어 주던 것과 같다. */
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+<title>murmur 디자인 방향</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap">
+
+<style>
+  :root {
+    --paper:#FBF9F7; --paper-2:#F3F0EB; --card:#FFFFFF;
+    --line:#E3DCD2; --line-soft:#EFEAE2;
+    --ink:#1B1815; --ink-2:#4C453D; --ink-3:#7E7568;
+    --accent:#E8613C; --accent-2:#B8431F; --accent-soft:#FAE8E1;
+    --teal:#0D8E82; --slate:#4E5A56;
+    --sans:"IBM Plex Sans KR", ui-sans-serif, system-ui, "Apple SD Gothic Neo", sans-serif;
+    --disp:"Bricolage Grotesque","IBM Plex Sans KR", ui-sans-serif, system-ui, sans-serif;
+    --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --wrap:920px; --bleed:1180px;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:#141210; --paper-2:#1C1917; --card:#1D1A17;
+      --line:#322C26; --line-soft:#262220;
+      --ink:#F1ECE5; --ink-2:#B9B0A4; --ink-3:#877E71;
+      --accent:#FF7B54; --accent-2:#FF9E7F; --accent-soft:#3A2119;
+      --teal:#2FB3A4; --slate:#8FA39D; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:#141210; --paper-2:#1C1917; --card:#1D1A17;
+    --line:#322C26; --line-soft:#262220;
+    --ink:#F1ECE5; --ink-2:#B9B0A4; --ink-3:#877E71;
+    --accent:#FF7B54; --accent-2:#FF9E7F; --accent-soft:#3A2119;
+    --teal:#2FB3A4; --slate:#8FA39D; color-scheme: dark;
+  }
+
+  * { box-sizing:border-box; }
+  body { background:var(--paper); color:var(--ink); font-family:var(--sans); font-size:16px; line-height:1.72; -webkit-font-smoothing:antialiased; padding-bottom:6rem; }
+  .wrap { width:min(100% - 2.5rem, var(--wrap)); margin-inline:auto; }
+  .bleed { width:min(100% - 2rem, var(--bleed)); margin-inline:auto; }
+
+  .nav { position:sticky; top:0; z-index:40; background:color-mix(in srgb, var(--paper) 88%, transparent); backdrop-filter:blur(10px); border-bottom:1px solid var(--line-soft); }
+  .nav__in { display:flex; align-items:center; gap:1.2rem; padding:.55rem 0; font-family:var(--mono); font-size:11.5px; letter-spacing:.04em; }
+  .nav__mark { display:flex; align-items:center; gap:.5rem; color:var(--ink); }
+  .nav__mark b { font-family:var(--disp); font-weight:800; font-size:14px; letter-spacing:-.01em; }
+  .nav a { color:var(--ink-3); text-decoration:none; padding:.15rem 0; border-bottom:1px solid transparent; }
+  .nav a:hover, .nav a:focus-visible { color:var(--ink); border-bottom-color:var(--accent); }
+  .nav .spacer { margin-left:auto; }
+  @media (max-width: 860px) { .nav__links { display:none !important; } }
+
+  .mast { padding:4.5rem 0 2.4rem; }
+  .mast__logo { color:var(--ink); margin-bottom:1.75rem; display:block; }
+  .mast h1 { font-family:var(--disp); font-weight:800; font-size:clamp(2.3rem,5.3vw,3.75rem); line-height:1.04; letter-spacing:-.03em; margin:0 0 1.1rem; text-wrap:balance; }
+  .mast h1 em { font-style:normal; color:var(--accent); }
+  .mast__lede { font-size:1.13rem; color:var(--ink-2); max-width:64ch; margin:0 0 2rem; line-height:1.68; }
+  .meta { display:flex; flex-wrap:wrap; gap:.4rem 1.6rem; font-family:var(--mono); font-size:11.5px; letter-spacing:.03em; color:var(--ink-3); text-transform:uppercase; border-top:1px solid var(--line); padding-top:.85rem; }
+  .meta b { color:var(--ink-2); font-weight:500; }
+
+  /* summary card */
+  .tldr { margin-top:2.6rem; border:1px solid var(--line); border-radius:8px; background:var(--card); overflow:hidden; }
+  .tldr__h { padding:.6rem 1.3rem; border-bottom:1px solid var(--line-soft); font-family:var(--mono); font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); background:var(--paper-2); }
+  .tldr__b { display:grid; }
+  @media (min-width: 780px) { .tldr__b { grid-template-columns:1fr 1fr; } }
+  .tldr__i { padding:1.05rem 1.3rem; border-bottom:1px solid var(--line-soft); }
+  @media (min-width: 780px) { .tldr__i:nth-child(odd) { border-right:1px solid var(--line-soft); } .tldr__i:nth-last-child(-n+2) { border-bottom:0; } }
+  @media (max-width: 779px) { .tldr__i:last-child { border-bottom:0; } }
+  .tldr__k { font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--accent); margin-bottom:.25rem; }
+  .tldr__v { font-size:.95rem; color:var(--ink-2); line-height:1.6; }
+  .tldr__v b { color:var(--ink); font-weight:600; }
+
+  section { padding:3.4rem 0 0; }
+  .eyebrow { font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--accent); display:flex; align-items:center; gap:.7rem; margin-bottom:.8rem; }
+  .eyebrow::after { content:""; height:1px; flex:1; background:var(--line); }
+  h2 { font-family:var(--disp); font-weight:700; font-size:clamp(1.55rem,3.2vw,2.1rem); line-height:1.14; letter-spacing:-.02em; margin:0 0 .9rem; text-wrap:balance; }
+  h3 { font-family:var(--disp); font-weight:700; font-size:1.14rem; letter-spacing:-.01em; margin:2.2rem 0 .55rem; }
+  h4 { font-family:var(--mono); font-weight:600; font-size:11px; letter-spacing:.13em; text-transform:uppercase; color:var(--ink-3); margin:0 0 .5rem; }
+  p { margin:0 0 1rem; max-width:72ch; }
+  .lede { font-size:1.05rem; color:var(--ink-2); max-width:68ch; }
+  strong, b { font-weight:600; }
+  code { font-family:var(--mono); font-size:.87em; background:var(--paper-2); border:1px solid var(--line-soft); padding:.05em .35em; border-radius:3px; color:var(--ink-2); }
+
+  /* rules */
+  .rules { display:grid; gap:0; margin-top:1.6rem; border-top:1px solid var(--line); }
+  .rule { display:grid; gap:.3rem 1.6rem; padding:1.15rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width: 780px) { .rule { grid-template-columns:2.4rem 1fr; } }
+  .rule__n { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--accent); padding-top:.2rem; }
+  .rule__t { font-family:var(--disp); font-weight:700; font-size:1.1rem; letter-spacing:-.01em; margin:0 0 .3rem; }
+  .rule__b { font-size:.95rem; color:var(--ink-2); margin:0; max-width:68ch; line-height:1.65; }
+  .rule__src { display:block; margin-top:.5rem; font-family:var(--mono); font-size:10.5px; color:var(--ink-3); line-height:1.6; }
+  .rule__src b { color:var(--ink-2); font-weight:500; }
+
+  .callout { margin-top:1.8rem; border:1px solid var(--line); border-left:3px solid var(--accent-2); border-radius:4px; background:var(--card); padding:1.05rem 1.25rem; }
+  .callout p { font-size:.95rem; color:var(--ink-2); margin:0; }
+  .callout p + p { margin-top:.55rem; }
+
+  /* acts */
+  .acts { display:grid; gap:0; margin-top:1.5rem; border-top:1px solid var(--line); }
+  .act { display:grid; gap:.25rem 1.4rem; padding:1rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width: 820px) { .act { grid-template-columns:9.5rem 1fr 11.5rem; align-items:start; } }
+  .act__n { font-family:var(--disp); font-weight:700; font-size:1.02rem; letter-spacing:-.01em; display:flex; align-items:center; gap:.5rem; }
+  .act__n i { width:9px; height:9px; border-radius:2px; display:block; flex:none; background:var(--ink-3); }
+  .act__n.block i { background:var(--accent); }
+  .act__n.read i { background:var(--teal); }
+  .act__n.chain i { background:var(--slate); }
+  .act__n.mute i { background:var(--line); border:1px solid var(--ink-3); }
+  .act__to { font-family:var(--mono); font-size:9.5px; letter-spacing:.05em; color:var(--ink-3); margin-top:.15rem; }
+  .act__d { font-size:.94rem; color:var(--ink-2); line-height:1.6; }
+  .act__d em { font-style:normal; color:var(--ink); font-weight:600; }
+  .act__t { font-family:var(--mono); font-size:10.5px; line-height:1.6; color:var(--ink-3); letter-spacing:.02em; }
+  .act__t b { color:var(--ink-2); font-weight:500; }
+  .legend { display:flex; flex-wrap:wrap; gap:.35rem 1.4rem; margin-top:1rem; font-family:var(--mono); font-size:10.5px; color:var(--ink-3); letter-spacing:.03em; }
+  .legend span { display:flex; align-items:center; gap:.4rem; }
+  .legend i { width:9px; height:9px; border-radius:2px; display:block; }
+
+  /* chain */
+  .chain { display:flex; align-items:stretch; margin:1.4rem 0 0; flex-wrap:wrap; border:1px solid var(--line); border-radius:6px; background:var(--card); overflow:hidden; }
+  .chain__n { padding:.85rem 1.1rem; flex:1 1 160px; min-width:160px; border-right:1px solid var(--line-soft); }
+  .chain__n:last-child { border-right:0; }
+  .chain__n .w { font-family:var(--mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); }
+  .chain__n .t { font-weight:600; font-size:.95rem; margin-top:.15rem; }
+  .chain__n .s { font-size:.85rem; color:var(--ink-2); margin-top:.15rem; line-height:1.5; }
+  .chain__n.me { background:var(--accent-soft); }
+  .chain__n.me .w { color:var(--accent-2); }
+  .chain__arrow { display:flex; align-items:center; padding:0 .35rem; color:var(--ink-3); font-family:var(--mono); font-size:13px; }
+  .note { font-size:.9rem; color:var(--ink-3); margin-top:.6rem; max-width:70ch; }
+
+  /* findings */
+  .findings { display:grid; gap:1.7rem; margin-top:1.4rem; }
+  @media (min-width: 760px) { .findings { grid-template-columns:1fr 1fr; gap:1.7rem 2.4rem; } }
+  .fgroup h4 { color:var(--ink); }
+  .fgroup ul { list-style:none; padding:0; margin:0; display:grid; gap:.65rem; }
+  .fgroup li { padding-left:1.05rem; position:relative; font-size:.93rem; line-height:1.58; color:var(--ink-2); }
+  .fgroup li::before { content:""; position:absolute; left:0; top:.6em; width:5px; height:5px; background:var(--accent); border-radius:1px; }
+  .fgroup li b { color:var(--ink); font-weight:600; }
+  .keep { margin-top:2rem; border-left:2px solid var(--teal); padding:.1rem 0 .1rem 1.1rem; }
+  .keep p { font-size:.93rem; color:var(--ink-2); margin-bottom:.45rem; }
+  .keep p:last-child { margin-bottom:0; }
+
+  /* base — clustered */
+  .cluster { margin-top:1.9rem; }
+  .cluster > h4 { color:var(--ink); font-size:11.5px; }
+  .base { display:grid; gap:0; border-top:1px solid var(--line); }
+  .base__row { display:grid; gap:.15rem 1.4rem; padding:.85rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width: 700px) { .base__row { grid-template-columns:12.5rem 1fr; } }
+  .base__k { font-family:var(--mono); font-size:11.5px; color:var(--ink); font-weight:500; }
+  .base__v { font-size:.93rem; color:var(--ink-2); line-height:1.6; }
+
+  /* concepts */
+  .concept { padding-top:3.5rem; }
+  .concept__head { display:flex; align-items:baseline; gap:.9rem; flex-wrap:wrap; margin-bottom:.3rem; }
+  .concept__tag { font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--paper); background:var(--ink); padding:.2rem .5rem; border-radius:3px; }
+  .concept__en { font-family:var(--mono); font-size:12px; color:var(--ink-3); letter-spacing:.04em; }
+  .concept h2 { margin-bottom:.5rem; }
+  .thesis { font-family:var(--disp); font-weight:500; font-size:clamp(1.15rem,2.3vw,1.36rem); line-height:1.4; letter-spacing:-.015em; color:var(--ink); border-left:3px solid var(--accent); padding-left:1rem; margin:0 0 1.4rem; max-width:44ch; }
+  .cols { display:grid; gap:1.8rem; margin-top:1.8rem; }
+  @media (min-width: 820px) { .cols { grid-template-columns:1fr 1fr; gap:2rem 2.6rem; } }
+  .cols ul { list-style:none; padding:0; margin:0; display:grid; gap:.55rem; }
+  .cols li { font-size:.92rem; line-height:1.56; color:var(--ink-2); padding-left:1rem; position:relative; }
+  .cols li::before { content:"—"; position:absolute; left:0; color:var(--ink-3); font-family:var(--mono); font-size:.8em; }
+  .cols li b { color:var(--ink); font-weight:600; }
+  .swatches { display:flex; flex-wrap:wrap; gap:.5rem; margin:.2rem 0 0; }
+  .sw { width:78px; }
+  .sw i { display:block; height:42px; border-radius:3px; border:1px solid var(--line); }
+  .sw span { display:block; font-family:var(--mono); font-size:9.5px; color:var(--ink-3); margin-top:.3rem; }
+  .pair { display:grid; gap:1rem; margin-top:1.5rem; }
+  @media (min-width: 780px) { .pair { grid-template-columns:1fr 1fr; gap:1.6rem; } }
+  .team { border-left:2px solid var(--slate); padding:.1rem 0 .1rem 1.05rem; }
+  .team h4 { color:var(--slate); }
+  .team p { font-size:.92rem; color:var(--ink-2); margin:0; }
+  .risk { background:var(--paper-2); border:1px solid var(--line-soft); border-radius:4px; padding:.9rem 1.05rem; }
+  .risk h4 { color:var(--accent-2); margin-bottom:.35rem; }
+  .risk p { font-size:.91rem; color:var(--ink-2); margin:0; max-width:none; }
+
+  /* ---- mockups ---- */
+  figure { margin:2rem 0 0; }
+  .mkcap { display:flex; gap:.8rem; align-items:baseline; flex-wrap:wrap; font-family:var(--mono); font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-3); margin-bottom:.65rem; }
+  .mkcap b { color:var(--ink); font-weight:600; }
+  .mkscroll { overflow-x:auto; padding-bottom:.4rem; }
+
+  .mk {
+    --bg:#fff; --side:#F5F5F4; --raised:#fff; --ln:#E4E3E0;
+    --fg:#1A1917; --mut:#5C5951; --sub:#93908A;
+    --acc:#E8613C; --accs:#FBEAE3; --ag:#4E5A56; --ok:#5E8A6E;
+    min-width:760px; border:1px solid var(--line); border-radius:8px; overflow:hidden;
+    background:var(--bg); color:var(--fg); font-family:var(--sans); font-size:12px; line-height:1.55;
+    box-shadow:0 1px 2px rgba(0,0,0,.05), 0 12px 28px -18px rgba(0,0,0,.35);
+  }
+  .mk__bar { display:flex; align-items:center; gap:.45rem; padding:7px 10px; background:var(--side); border-bottom:1px solid var(--ln); font-size:10.5px; color:var(--mut); }
+  .mk__dots { display:flex; gap:5px; margin-right:.4rem; }
+  .mk__dots i { width:8px; height:8px; border-radius:50%; background:var(--ln); display:block; }
+  .mk__title { font-weight:600; color:var(--fg); }
+  .mk__bar .right { margin-left:auto; font-size:9.5px; color:var(--sub); }
+  .mk__body { display:grid; min-height:360px; }
+  .mk__side { background:var(--side); border-right:1px solid var(--ln); padding:9px 7px; }
+  .mk__lab { font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--sub); padding:0 5px; margin:11px 0 4px; }
+  .mk__lab:first-child { margin-top:0; }
+  .mk__item { display:flex; align-items:center; gap:5px; padding:5px; border-radius:4px; color:var(--mut); }
+  .mk__item.on { background:var(--bg); color:var(--fg); font-weight:600; }
+  .mk__item.turn { color:var(--acc); font-weight:600; }
+  .mk__hash { color:var(--sub); }
+  .mk__dot { width:6px; height:6px; border-radius:50%; background:#5E8A6E; flex:none; }
+  .mk__sq { width:7px; height:7px; border-radius:2px; background:var(--ag); flex:none; display:block; }
+  .mk__count { margin-left:auto; font-family:var(--mono); font-size:9px; color:var(--sub); }
+  .mk__main { display:flex; flex-direction:column; background:var(--bg); min-width:0; }
+  .mk__hdr { display:flex; align-items:center; gap:7px; padding:9px 12px; border-bottom:1px solid var(--ln); font-weight:600; }
+  .mk__hdr .sub { font-weight:400; font-size:10px; color:var(--sub); }
+  .mk__hdr .right { margin-left:auto; display:flex; gap:5px; align-items:center; }
+  .mk__btn { font-size:9px; padding:2px 6px; border:1px solid var(--ln); border-radius:3px; color:var(--mut); }
+  .mk__msgs { padding:8px 0; display:flex; flex-direction:column; gap:3px; flex:1; }
+  .mk__msg { display:flex; gap:8px; padding:4px 14px; align-items:flex-start; }
+  .mk__av { width:22px; height:22px; border-radius:50%; flex:none; background:#3C3A35; color:#fff; font-size:9.5px; font-weight:600; display:flex; align-items:center; justify-content:center; }
+  .mk__av.agent { border-radius:6px; background:var(--ag); }
+  .mk__av.ag2 { border-radius:6px; background:#6B6357; }
+  .mk__mid { min-width:0; flex:1; }
+  .mk__who { display:flex; align-items:baseline; gap:6px; flex-wrap:wrap; }
+  .mk__who b { font-weight:600; }
+  .mk__time { font-family:var(--mono); font-size:9.5px; color:var(--sub); }
+  .mk__badge { font-size:8.5px; color:var(--ag); border:1px solid #D3DBD8; background:#F2F6F5; border-radius:3px; padding:0 3px; }
+  .mk__to { font-size:8.5px; font-family:var(--mono); color:var(--sub); border:1px solid var(--ln); border-radius:3px; padding:0 3px; }
+  .mk__to.me { color:#B8431F; border-color:#E8C4B7; background:var(--accs); }
+  .mk__grp { font-size:8.5px; color:#4A5A73; border:1px solid #C8D3E2; background:#EEF3F9; border-radius:3px; padding:0 3px; }
+  .mk__mine { color:#B8431F; background:var(--accs); border-radius:3px; padding:0 3px; font-weight:600; }
+  .mk__quiet { font-size:10px; color:var(--sub); margin-top:3px; }
+  .mk__lnk { border-bottom:1px solid var(--ln); color:var(--mut); }
+  .mk__sep { display:flex; align-items:center; gap:7px; padding:5px 14px; }
+  .mk__sep i { height:1px; flex:1; background:var(--ln); }
+  .mk__sep span { font-size:9px; color:var(--sub); font-family:var(--mono); }
+  .mk__comp { margin:0 14px 12px; border:1px solid var(--ln); border-radius:5px; padding:8px 9px; color:var(--sub); background:var(--raised); }
+  .mk__sys { padding:3px 14px; font-size:10px; color:var(--sub); display:flex; gap:5px; align-items:center; }
+
+  .sa__run { display:flex; align-items:center; gap:5px; font-size:10px; color:var(--sub); margin-top:2px; }
+  .sa__run i { width:5px; height:5px; border-radius:50%; background:var(--ag); display:block; }
+  .sa__opts { margin-top:6px; border:1px solid var(--acc); border-radius:6px; overflow:hidden; background:#fff; max-width:27em; }
+  .sa__opts.a2a { border-color:#C9CFCE; }
+  .sa__opts .h { padding:4px 9px; background:var(--accs); font-size:9.5px; letter-spacing:.05em; text-transform:uppercase; color:#B8431F; font-family:var(--mono); }
+  .sa__opts.a2a .h { background:#F1F4F3; color:#4E5A56; }
+  .sa__opt { display:flex; gap:7px; padding:6px 9px; border-top:1px solid #F0E6E1; align-items:flex-start; }
+  .sa__opts.a2a .sa__opt { border-top-color:#EAEDEC; }
+  .sa__opt i { width:11px; height:11px; border-radius:50%; border:1.5px solid #D8C6BE; display:block; flex:none; margin-top:2px; }
+  .sa__opts.a2a .sa__opt i { border-color:#CBD2D0; }
+  .sa__opt .k { font-family:var(--mono); font-size:9px; color:var(--sub); }
+  .sa__fold { margin-top:5px; display:flex; align-items:center; gap:6px; font-size:10px; color:var(--sub); border:1px dashed var(--ln); border-radius:5px; padding:4px 8px; max-width:27em; background:#FAFAF9; }
+  .sa__fold b { color:var(--mut); font-weight:500; }
+  .sa__fold .x { margin-left:auto; font-family:var(--mono); font-size:9px; }
+  .sa__rep ul { list-style:none; padding:0; margin:4px 0 0; display:grid; gap:2px; }
+  .sa__rep li { padding-left:14px; position:relative; font-size:11px; color:var(--mut); }
+  .sa__rep li::before { content:"✓"; position:absolute; left:0; color:var(--ok); font-size:10px; }
+  .sa__files { margin-top:5px; font-family:var(--mono); font-size:9.5px; color:var(--sub); }
+  .sa__next { display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+  .sa__next span { font-size:10px; border:1px solid var(--ln); border-radius:12px; padding:2px 8px; color:var(--mut); background:var(--raised); }
+  .sa__chain { margin-top:5px; font-size:10px; color:var(--mut); font-family:var(--mono); border-left:2px solid var(--ag); padding:2px 0 2px 7px; }
+  .sa__chain b { color:#B8431F; }
+
+  .mk--multi .mk__body { grid-template-columns:150px 1fr; }
+  .mk--multi .mk__mid { max-width:46em; }
+  .mk--multi .mk__turnrow { border-left:2px solid var(--acc); margin-left:-2px; padding-left:12px; background:#FFFCFB; }
+
+  .mk--a .mk__body { grid-template-columns:158px 1fr 250px; }
+  .mk--a .mk__pane { border-left:1px solid var(--ln); background:#FBFBFA; display:flex; flex-direction:column; }
+  .mk--a .mk__pane .h { display:flex; align-items:center; gap:6px; padding:9px 10px; border-bottom:1px solid var(--ln); font-weight:600; font-size:11px; }
+  .mk--a .mk__pane .h .t { margin-left:auto; font-family:var(--mono); font-size:8.5px; border:1px solid #D5D3CE; border-radius:3px; padding:1px 4px; color:#5C5951; background:#fff; }
+  .mk--a .mk__pane .b { padding:9px 10px; display:flex; flex-direction:column; gap:10px; }
+  .mk--a .mk__turn { border-left:2px solid var(--acc); padding-left:7px; margin-left:-9px; }
+  .mk--a .mk__avs { display:flex; gap:3px; padding:6px 10px; border-bottom:1px solid var(--ln); align-items:center; }
+  .mk--a .mk__avs i { width:16px; height:16px; border-radius:4px; background:var(--ag); color:#fff; font-size:8px; display:flex; align-items:center; justify-content:center; font-style:normal; }
+  .mk--a .mk__avs i.off { background:#D5D3CE; color:#8A867E; }
+  .mk--a .mk__avs span { font-size:9px; color:var(--sub); margin-left:2px; }
+
+  .mk--b { --bg:#FCFBF8; --side:#F3F1EA; --ln:#E7E1D6; --fg:#1E1B17; --mut:#6C655A; --sub:#9A9282; border-color:#E7E1D6; min-width:820px; }
+  .mk--b .mk__body { grid-template-columns:150px 1fr; }
+  .mk--b .mk__sum { margin:12px 22px 0; border:1px solid #E7E1D6; border-radius:6px; background:#fff; padding:10px 12px; max-width:45em; }
+  .mk--b .mk__sum .t { font-family:var(--mono); font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:#9A9282; margin-bottom:4px; }
+  .mk--b .mk__sum .g { font-weight:600; font-size:13px; }
+  .mk--b .mk__sum dl { margin:7px 0 0; display:grid; grid-template-columns:5.4rem 1fr; gap:3px 10px; font-size:10.5px; }
+  .mk--b .mk__sum dt { color:#9A9282; font-family:var(--mono); font-size:9.5px; }
+  .mk--b .mk__sum dd { margin:0; color:#4A443B; }
+  .mk--b .mk__msg { padding:6px 22px; }
+  .mk--b .mk__mid { max-width:45em; }
+  .mk--b .mk__comp { margin:0 22px 14px; }
+  .mk--b .mk__hdr { padding:10px 22px; }
+  .mk--b .mk__av { background:#DBD4C5; color:#5B5346; }
+  .mk--b .mk__av.agent, .mk--b .mk__av.ag2 { color:#fff; }
+
+  .mk--c { --bg:#FFFFFF; --side:#F4F5F6; --ln:#E2E4E6; --fg:#16181C; --mut:#5A6068; --sub:#949AA1; border-color:#E2E4E6; min-width:1000px; }
+  .mk--c .mk__body { grid-template-columns:136px 190px 1fr 250px; }
+  .mk--c .mk__list { background:#FAFAFB; border-right:1px solid var(--ln); }
+  .mk--c .mk__lrow { padding:8px 10px; border-bottom:1px solid #EDEEF0; }
+  .mk--c .mk__lrow.on { background:#fff; box-shadow:inset 2px 0 0 var(--acc); }
+  .mk--c .mk__lrow .t { font-size:11px; font-weight:600; }
+  .mk--c .mk__lrow .s { font-size:9.5px; color:var(--sub); margin-top:2px; display:flex; align-items:center; gap:4px; }
+  .mk--c .mk__lrow .s i { width:5px; height:5px; border-radius:50%; display:block; background:#C6CBD1; }
+  .mk--c .mk__lrow.on .s { color:#B8431F; }
+  .mk--c .mk__lrow.on .s i { background:var(--acc); }
+  .mk--c .mk__tabs { display:flex; border-bottom:1px solid #1E2326; }
+  .mk--c .mk__tabs span { padding:6px 9px; font-family:var(--mono); font-size:9px; color:#6E7C84; border-right:1px solid #1E2326; }
+  .mk--c .mk__tabs span.on { color:#E8613C; background:#15191B; }
+  .mk--c .mk__term { background:#0C0E10; color:#C9D4CE; display:flex; flex-direction:column; font-family:var(--mono); font-size:9px; line-height:1.65; border-left:1px solid #000; }
+  .mk--c .mk__term .b { padding:8px 10px; white-space:pre-wrap; }
+  .mk--c .mk__term .g { color:#6E7C84; }
+  .mk--c .mk__term .ok { color:#6FBF9B; }
+
+  .mk--now { --acc:#4f46e5; --accs:#eef2ff; min-width:730px; }
+  .mk--now .mk__body { grid-template-columns:168px 1fr; }
+  .mk--now .mk__av { background:#e11d48; }
+  .mk--now .mk__nb { width:12px; height:12px; border-radius:50%; background:#e11d48; color:#fff; font-size:7px; display:inline-flex; align-items:center; justify-content:center; }
+  .mk--now .mk__pill { display:inline-flex; margin-top:4px; font-size:9.5px; padding:1px 6px; border:1px solid #4f46e5; color:#4f46e5; background:#eef2ff; border-radius:4px; }
+  .mk--now .mk__rx { display:inline-flex; margin-top:3px; font-size:9px; padding:0 5px; border:1px solid #e4e4e7; border-radius:9px; color:#52525b; }
+  .mk--now .mk__at { color:#4f46e5; background:#eef2ff; border-radius:3px; padding:0 2px; }
+
+  .tblwrap { overflow-x:auto; margin-top:1.5rem; }
+  table { border-collapse:collapse; width:100%; min-width:700px; font-size:.89rem; }
+  th, td { text-align:left; padding:.68rem .9rem; border-bottom:1px solid var(--line-soft); vertical-align:top; }
+  thead th { font-family:var(--mono); font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-3); border-bottom:1px solid var(--line); font-weight:600; }
+  tbody th { font-family:var(--mono); font-size:11.5px; font-weight:500; color:var(--ink); width:8.5rem; }
+  td { color:var(--ink-2); }
+
+  .rec { margin-top:1.6rem; border:1px solid var(--line); border-radius:6px; background:var(--card); padding:1.4rem 1.5rem; }
+  .rec h3 { margin-top:0; }
+  .rec p:last-child { margin-bottom:0; }
+
+  .steps { list-style:none; padding:0; margin:1.4rem 0 0; counter-reset:s; display:grid; gap:.1rem; }
+  .steps li { counter-increment:s; display:grid; gap:.1rem 1rem; padding:.85rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width: 700px) { .steps li { grid-template-columns:2.6rem 1fr; } }
+  .steps li::before { content:counter(s, decimal-leading-zero); font-family:var(--mono); font-size:12px; color:var(--accent); font-weight:600; }
+  .steps b { display:block; font-weight:600; color:var(--ink); }
+  .steps span { font-size:.91rem; color:var(--ink-2); line-height:1.58; }
+
+  .asks { display:grid; gap:.8rem; margin-top:1.2rem; }
+  .ask { border-left:2px solid var(--line); padding-left:1rem; }
+  .ask b { display:block; font-size:.95rem; }
+  .ask span { font-size:.9rem; color:var(--ink-2); }
+
+  footer { margin-top:4rem; padding-top:1.2rem; border-top:1px solid var(--line); font-family:var(--mono); font-size:11px; letter-spacing:.04em; color:var(--ink-3); text-transform:uppercase; }
+  a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  @media (prefers-reduced-motion: reduce) { * { animation:none !important; transition:none !important; } }
+</style>
+</head>
+<body>
+<nav class="nav">
+  <div class="wrap nav__in">
+    <span class="nav__mark">
+      <svg viewBox="0 0 128 128" width="17" height="17" aria-hidden="true">
+        <path d="M20 52V76" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+        <path d="M35 42V86" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+        <path d="M50 31V97" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+        <path d="M65 18V110" stroke="#E8613C" stroke-width="9" stroke-linecap="round"/>
+        <path d="M80 33V95" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+        <path d="M95 45V83" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+        <path d="M110 53V75" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+      </svg>
+      <b>murmur</b>
+    </span>
+    <span class="nav__links" style="display:flex;gap:1.05rem;margin-left:1rem">
+      <a href="#rules">규칙</a>
+      <a href="#lang">어휘</a>
+      <a href="#now">진단</a>
+      <a href="#base">공통 기반</a>
+      <a href="#ways">세 방향</a>
+      <a href="#pick">선택</a>
+    </span>
+    <span class="spacer"></span>
+    <span style="color:var(--ink-3)">2026.09</span>
+  </div>
+</nav>
+
+<header class="mast wrap">
+  <svg class="mast__logo" viewBox="0 0 128 128" width="46" height="46" role="img" aria-label="murmur">
+    <path d="M20 52V76" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+    <path d="M35 42V86" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+    <path d="M50 31V97" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+    <path d="M65 18V110" stroke="#E8613C" stroke-width="9" stroke-linecap="round"/>
+    <path d="M80 33V95" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+    <path d="M95 45V83" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+    <path d="M110 53V75" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+  </svg>
+  <h1>말의 종류와<br><em>말의 수신자</em></h1>
+  <p class="mast__lede">
+    murmur 의 에이전트는 침묵하지 않는다. 모르는 것을 되묻고, 판단이 필요하면 선택지를 내놓고, 필요 없으면
+    혼자 진행하고, 끝나면 정리해 보고하고 다음을 제안한다. 안 쓰는 것은 도구 호출과 로그뿐이다.
+    그리고 그 말들이 항상 사람을 향하지는 않는다 — 집합 하나로 여럿을 부르고, 팀으로 묶여 함께 일하며,
+    스레드 안의 선택을 <strong>다른 에이전트가 답해야 할 때</strong>도 있다.
+    그러므로 디자인의 과제는 두 가지다 — <strong>말의 종류마다 다른 대접</strong>, 그리고
+    <strong>수신자에 따른 다른 무게</strong>.
+  </p>
+
+  <div class="meta">
+    <span><b>대상</b> packages/desktop · Tauri 2 + React</span>
+    <span><b>근거</b> 실행 중인 앱 직접 탐색 + 저장소 코드</span>
+  </div>
+
+  <div class="tldr">
+    <div class="tldr__h">한눈에</div>
+    <div class="tldr__b">
+      <div class="tldr__i">
+        <div class="tldr__k">문제</div>
+        <div class="tldr__v">지금 화면은 <b>여덟 가지 말을 같은 말풍선</b>으로 그린다. 선택지를 표현할 컴포넌트가 없고, 말이 누구에게 갔는지 화면이 모른다.</div>
+      </div>
+      <div class="tldr__i">
+        <div class="tldr__k">해법의 축</div>
+        <div class="tldr__v">두 축으로 대접을 가른다 — <b>막는 말 / 읽히는 말 / 배경이 되는 말</b>, 그리고 <b>나에게 온 것 / 남에게 간 것</b>.</div>
+      </div>
+      <div class="tldr__i">
+        <div class="tldr__k">추천</div>
+        <div class="tldr__v"><b>A 차례</b>를 골격으로, <b>B 작업 노트</b>의 배정표를 스레드 안에 흡수, <b>C 짝 작업</b>은 집중 모드로.</div>
+      </div>
+      <div class="tldr__i">
+        <div class="tldr__k">첫 PR</div>
+        <div class="tldr__v"><b>선택지 컴포넌트</b> — 수신자 필드를 처음부터 포함. 이것 없이는 “Claude Code 처럼”이 성립하지 않는다.</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== 규칙 ===================== -->
+<section id="rules">
+  <div class="wrap">
+    <p class="eyebrow">컨셉 — 움직이지 않는 것</p>
+    <h2>디자인이 지켜야 할 여섯 가지</h2>
+    <p class="lede">
+      취향이 아니라 제품 결정이다. 세 방향 중 무엇을 고르든 이 여섯은 그대로 남고, 이것을 어기는 디자인은
+      예뻐도 틀린 디자인이다. 넷은 이미 저장소 코드의 주석에 적혀 있다 —
+      <b>코드가 컨셉을 아는데 화면이 아직 모르는 상태</b>다.
+    </p>
+
+    <div class="rules">
+      <div class="rule">
+        <span class="rule__n">01</span>
+        <div>
+          <p class="rule__t">하나의 부탁은 하나의 스레드에서 끝난다</p>
+          <p class="rule__b">
+            되물음 · 선택 · 넘김 · 진행 · 보고 · 제안이 전부 그 스레드 안에서 오간다. 여럿을 불러도 마찬가지다 —
+            <b>집합을 부르면 스레드 하나에 여럿이 들어온다.</b> 채널로 올라가는 것은 답이 아니라 그 스레드가 지금
+            어떤 상태인지다.
+          </p>
+          <span class="rule__src">코드 — <b>ThreadPanel</b> 의 “채널에도 올리기”가 기본 <b>꺼짐</b> · 채널이 부르는 에이전트는 스레드 답글에서도 자동으로 불린다 (#173)</span>
+        </div>
+      </div>
+      <div class="rule">
+        <span class="rule__n">02</span>
+        <div>
+          <p class="rule__t">에이전트는 로그가 아니라 사람의 말로 말한다</p>
+          <p class="rule__b">
+            도구 호출 서른 번은 문장 하나가 된다. 침묵이 아니라 <b>번역</b>이다. 화면이 늘려야 할 것은
+            <b>말의 품질</b>이고, 줄여야 할 것은 <b>과정의 노출</b>이다.
+          </p>
+          <span class="rule__src">코드 — <b>TerminalChip</b> 주석: “에이전트 작업은 기본은 안 보여야 맞다” (#141 Phase 2, 스펙 §5)</span>
+        </div>
+      </div>
+      <div class="rule">
+        <span class="rule__n">03</span>
+        <div>
+          <p class="rule__t">막는 말과 읽히는 말을 다르게 대접한다</p>
+          <p class="rule__b">
+            되물음 · 선택 · 실패는 답해야 진행된다 — 화면의 강조는 여기에만 간다. 보고 · 제안은 읽히면 되므로
+            강조 대신 <b>읽기 품질</b>을 받는다. 진행은 상태 한 줄이다. 강조가 셋에 고르게 뿌려지는 순간
+            “내 차례”라는 신호가 죽는다.
+          </p>
+        </div>
+      </div>
+      <div class="rule">
+        <span class="rule__n">04</span>
+        <div>
+          <p class="rule__t">모든 말에는 수신자가 있고, 강조는 나에게 온 것에만 간다</p>
+          <p class="rule__b">
+            에이전트끼리의 선택도 진행을 막지만 <b>나를</b> 막지는 않는다. 그것은 강조가 아니라
+            <b>대기 사슬</b>로 표시하고, 주고받기 자체는 <b>기본으로 접는다</b>. 이 구별이 없으면 에이전트 셋이 도는
+            스레드는 상시 빨갛고, 빨강은 그 순간 신호이기를 멈춘다. 사슬이 아무 데도 닿지 않으면
+            <b>교착</b>이고, 교착은 사람만이 풀 수 있으므로 <b>실패와 같은 대접</b>을 받는다.
+          </p>
+        </div>
+      </div>
+      <div class="rule">
+        <span class="rule__n">05</span>
+        <div>
+          <p class="rule__t">답할 자리가 말 옆에 있다</p>
+          <p class="rule__b">
+            선택지는 <b>고를 수 있어야</b> 하고, 제안은 <b>눌러서 이어져야</b> 하고, 되물음 아래에는 <b>답 쓰는 자리</b>가
+            있어야 한다. 스크롤해서 작성창을 찾게 만드는 순간 왕복 비용이 올라가고, 사람은 스레드 대신 터미널로
+            도망간다. <b>개입 비용이 이 제품의 승부처</b>다.
+          </p>
+        </div>
+      </div>
+      <div class="rule">
+        <span class="rule__n">06</span>
+        <div>
+          <p class="rule__t">시시콜콜은 터미널이 답하고, 없는 문은 그리지 않는다</p>
+          <p class="rule__b">
+            세션은 <b>(에이전트, 스레드) 당 하나</b>이므로 문은 스레드에 달리고, 여럿이 일하면 <b>문도 여럿</b>이라
+            손잡이는 선택자가 된다. 소유자·admin 이 아닌 에이전트는 그 목록에 <b>아예 없다</b> — 0 인 것,
+            할 수 없는 것, 아직 없는 것은 자리를 차지하지 않는다.
+          </p>
+          <span class="rule__src">코드 — <b>terminalTarget</b> = agentAccountId · channelId · threadRootId (#98) · 소유자가 아니면 렌더 자체를 하지 않는다</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout">
+      <p><b>이 여섯이 부정하는 것.</b> 진행 로그를 대화로 흘리는 스트리밍, 도구 호출을 펼쳐 보이는 작업 카드,
+      모든 선택을 똑같이 강조하는 것, 에이전트 전용 대시보드가 채널의 자리를 차지하는 것.</p>
+      <p style="color:var(--ink-3)">반대로 <b>선택지 · 완료 보고 · 대기 사슬</b>은 제대로 만들어야 하는 1급 컴포넌트다.
+      “과묵하다”는 말을 적게 한다는 뜻이 아니라 <b>로그를 쓰지 않는다</b>는 뜻이기 때문이다.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== 어휘 ===================== -->
+<section id="lang">
+  <div class="wrap">
+    <p class="eyebrow">디자인 어휘</p>
+    <h2>여덟 가지 말, 두 가지 수신자</h2>
+    <p class="lede">
+      이 디자인의 실질이다. 지금 화면은 이 여덟을 전부 같은 말풍선으로 그리기 때문에, 사람은
+      <b>자기가 답해야 하는 순간</b>과 <b>그냥 읽으면 되는 순간</b>을 구별하지 못한다.
+      그리고 여럿이 일하면 <b>그 말이 누구에게 갔는가</b>가 종류만큼 중요해진다.
+    </p>
+
+    <div class="acts">
+      <div class="act">
+        <div><div class="act__n mute"><i></i>부탁</div><div class="act__to">사람 → 에이전트</div></div>
+        <div class="act__d">사람이 던지는 말. “<em>@release 릴리스 전에 각자 맡은 데 훑어 줘</em>” — 스레드의 뿌리. 집합 하나로 <b>여럿을 한 번에</b> 부를 수 있다.</div>
+        <div class="act__t"><b>대접</b> 스레드의 제목이 된다 · 집합이면 누가 받았는지 펼칠 수 있다</div>
+      </div>
+      <div class="act">
+        <div><div class="act__n block"><i></i>되물음</div><div class="act__to">→ 사람 또는 에이전트</div></div>
+        <div class="act__d">모르는 것을 묻는다. “<em>지금 하트비트는 30초 ping 구조인데, 어디까지 볼까?</em>” — <b>수신자가 답해야 진행된다.</b></div>
+        <div class="act__t"><b>대접</b> 나에게 온 것만 강조 · 답 자리가 말 아래 · 남에게 간 것은 사슬로만</div>
+      </div>
+      <div class="act">
+        <div><div class="act__n block"><i></i>선택</div><div class="act__to">→ 사람 또는 에이전트</div></div>
+        <div class="act__d">갈림길에서 선택지를 내놓는다. Claude Code 가 하듯. <b>고르면 그 즉시 진행된다.</b> 답하는 쪽이 에이전트일 수도 있다.</div>
+        <div class="act__t"><b>대접</b> 대화 안의 유일한 “상자” · 나에게 온 것만 강조색 · 에이전트끼리면 무채색 + 접힘</div>
+      </div>
+      <div class="act">
+        <div><div class="act__n chain"><i></i>넘김</div><div class="act__to">에이전트 → 에이전트</div></div>
+        <div class="act__d">일의 일부를 다른 에이전트에게 맡긴다. “<em>@codex 스키마 쪽은 네가 더 잘 알 텐데 봐 줄래</em>” — 팀 작업의 시작점이자 <b>새로운 소음원</b>이다.</div>
+        <div class="act__t"><b>대접</b> 기본 접힘 · 배정표에는 남는다 · 강조하지 않는다</div>
+      </div>
+      <div class="act">
+        <div><div class="act__n mute"><i></i>진행</div><div class="act__to">수신자 없음</div></div>
+        <div class="act__d">답이 필요 없는 구간. 도구를 부르고 파일을 고친다 — <b>그 과정은 대화에 쓰지 않는다.</b></div>
+        <div class="act__t"><b>대접</b> 문장이 아니라 상태 한 줄(작업 중 · 3분째) · 자세히는 터미널</div>
+      </div>
+      <div class="act">
+        <div><div class="act__n read"><i></i>보고</div><div class="act__to">→ 사람</div></div>
+        <div class="act__d">완료 정리. <em>무엇을 했고, 어떻게 했고, 무엇이 바뀌었는지.</em> 이 스레드에서 가장 오래 남고 가장 많이 다시 읽히는 말이다.</div>
+        <div class="act__t"><b>대접</b> 읽기 좋게 · 확인 목록 + 바뀐 파일 · 강조색은 쓰지 않는다</div>
+      </div>
+      <div class="act">
+        <div><div class="act__n read"><i></i>제안</div><div class="act__to">→ 사람</div></div>
+        <div class="act__d">“다음으로 이걸 할까?” 사람을 막지는 않지만 <b>눌러서 이어질 수 있어야</b> 한다.</div>
+        <div class="act__t"><b>대접</b> 보고 아래 칩 몇 개 · 누르면 새 부탁이 된다</div>
+      </div>
+      <div class="act">
+        <div><div class="act__n block"><i></i>실패</div><div class="act__to">→ 사람 (항상)</div></div>
+        <div class="act__d">스스로 못 끝냈다. 넘겨받은 에이전트가 실패해도 <b>결국 사람에게 온다</b> — 사슬의 끝은 언제나 사람이다.</div>
+        <div class="act__t"><b>대접</b> 강조 · 고치는 경로(터미널 · 다시 부르기)가 같은 자리에</div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span><i style="background:var(--accent)"></i> 막는 말 — 수신자가 나일 때만 강조</span>
+      <span><i style="background:var(--teal)"></i> 읽히는 말 — 읽기 품질이 전부다</span>
+      <span><i style="background:var(--slate)"></i> 에이전트끼리의 말 — 기본 접힘</span>
+      <span><i style="background:var(--line);border:1px solid var(--ink-3)"></i> 배경이 되는 말 — 상태 한 줄</span>
+    </div>
+
+    <h3>대기 사슬 — 내가 한 번 답하면 몇 개가 풀리는가</h3>
+    <p>
+      에이전트끼리 주고받는 물음도 진행을 막는다. 다만 나를 막지는 않으므로 강조가 아니라 <b>사슬</b>로 표시한다.
+      사람이 “왜 아무것도 안 움직이지”를 묻지 않게 하는 것이 이 표시의 목적이다.
+    </p>
+    <div class="chain">
+      <div class="chain__n"><div class="w">막힘</div><div class="t">codex</div><div class="s">forge 의 답을 기다린다 · 4분</div></div>
+      <div class="chain__arrow">→</div>
+      <div class="chain__n"><div class="w">막힘</div><div class="t">forge</div><div class="s">내 선택을 기다린다 · 2분</div></div>
+      <div class="chain__arrow">→</div>
+      <div class="chain__n me"><div class="w">내 차례</div><div class="t">나</div><div class="s">여기서 한 번 고르면 둘 다 풀린다</div></div>
+    </div>
+    <p class="note">사슬의 끝이 아무 데도 닿지 않으면 <b>교착</b>이다 — 서로를 기다리거나, 죽은 러너를 기다린다.</p>
+
+    <h3>접힘 · 터미널 여럿 · 집합 호출</h3>
+    <p>
+      규칙 04 가 화면에서 만드는 세 가지 결과다.
+      <b>접힘</b> — 에이전트 둘 사이의 주고받기는 기본으로 접히고 “<code>forge ↔ codex · 4번 주고받음</code>” 한 줄만 남는다.
+      접지 않으면 스레드는 정확히 우리가 피하려던 그 로그가 된다.
+      <b>터미널 여럿</b> — 세션이 (에이전트, 스레드)당 하나이므로 셋이 일하면 터미널도 셋이고, 헤더의 손잡이는
+      버튼이 아니라 <b>선택자</b>여야 한다. 내가 소유자가 아닌 에이전트는 그 목록에 아예 없다.
+      <b>집합 호출</b> — 보내기 전엔 몇 명인지, 보낸 뒤엔 누가 깼는지. 셋을 불렀는데 둘만 깨어난 것은
+      <b>조용한 실패</b>이고, 지금 화면은 그것을 말할 자리가 없다.
+    </p>
+    <p class="note">
+      코드 — 핸들 집합(#230)은 계정·팀과 <b>같은 네임스페이스</b>를 쓰고, <code>HandleGroupRow.memberCount</code> 는
+      “자동완성 후보가 <code>@release</code> 를 부르기 직전에 그것이 한 사람인지 스무 사람인지 보여야 하는 유일한 자리”라고
+      주석이 요구를 이미 적어 두었다. 에이전트 팀(#172)은 <code>addTeamToChannel</code> 로 채널에 팀 단위로 들어가고,
+      비활성 에이전트는 <code>skipped</code> 로 갈린다.
+    </p>
+  </div>
+
+  <div class="bleed">
+    <figure>
+      <figcaption class="mkcap"><b>어휘 참조</b> <span>한 스레드에 여덟 가지 말이 어떻게 앉는가</span></figcaption>
+      <div class="mkscroll">
+        <div class="mk mk--multi">
+          <div class="mk__bar"><span class="mk__dots"><i></i><i></i><i></i></span><span class="mk__title">murmur</span><span class="right">#general › 릴리스 전 점검</span></div>
+          <div class="mk__body">
+            <div class="mk__side">
+              <div class="mk__lab">내 차례</div>
+              <div class="mk__item turn">forge · 선택 대기 <span class="mk__count" style="color:#B8431F">1</span></div>
+              <div class="mk__lab">막혀 있는 것</div>
+              <div class="mk__item" style="color:#93908A">codex → forge · 4분</div>
+              <div class="mk__lab">도는 중</div>
+              <div class="mk__item" style="color:#93908A"><span class="mk__sq"></span> 투영 백오프 · 6분</div>
+              <div class="mk__lab">팀</div>
+              <div class="mk__item"><span class="mk__grp">집합</span> release <span class="mk__count">3</span></div>
+              <div class="mk__item"><span class="mk__sq"></span> forge</div>
+              <div class="mk__item"><span class="mk__sq" style="background:#6B6357"></span> codex</div>
+              <div class="mk__item" style="color:#93908A"><span class="mk__sq" style="background:#D5D3CE"></span> lint</div>
+            </div>
+            <div class="mk__main">
+              <div class="mk__hdr">릴리스 전 점검
+                <span class="sub">#general · 3명 참여</span>
+                <span class="right"><span class="mk__btn">터미널 ▾ forge</span></span>
+              </div>
+              <div class="mk__msgs">
+                <div class="mk__msg">
+                  <span class="mk__av">J</span>
+                  <div class="mk__mid">
+                    <div class="mk__who"><b>jaebin</b> <span class="mk__time">오후 4:02</span></div>
+                    <div><span class="mk__mine">@release</span> 릴리스 전에 각자 맡은 데 한 번씩 훑어 줘</div>
+                  </div>
+                </div>
+                <div class="mk__sys">
+                  <span class="mk__grp">집합</span> release 3명을 불렀다 — forge · codex 는 깼고 <b style="color:#8A3B22">lint 는 응답이 없다</b> · <span class="mk__lnk">다시 부르기</span>
+                </div>
+
+                <div class="mk__msg">
+                  <span class="mk__av agent">F</span>
+                  <div class="mk__mid">
+                    <div class="mk__who"><b>forge</b> <span class="mk__badge">에이전트</span> <span class="mk__time">오후 4:04</span></div>
+                    <div>ws 와 투영 쪽을 맡았다. 스키마 변경분은 codex 에게 넘긴다.</div>
+                    <div class="sa__fold"><span class="mk__sq"></span> <b>forge ↔ codex</b> · 4번 주고받음 · 마지막 4:09 <span class="x">펼치기</span></div>
+                    <div class="sa__chain">codex 가 forge 의 답을 기다린다 · 4분</div>
+                  </div>
+                </div>
+
+                <div class="mk__msg">
+                  <span class="mk__av ag2">C</span>
+                  <div class="mk__mid">
+                    <div class="mk__who"><b>codex</b> <span class="mk__badge">에이전트</span> <span class="mk__to">→ forge</span> <span class="mk__time">오후 4:09</span></div>
+                    <div style="color:#5C5951">마이그레이션을 <code style="font-family:var(--mono);font-size:10px">009</code> 로 넣을까, 기존 <code style="font-family:var(--mono);font-size:10px">008</code> 을 고칠까?</div>
+                    <div class="sa__opts a2a">
+                      <div class="h">forge 가 고른다 · 사람은 지켜만 본다</div>
+                      <div class="sa__opt"><i></i><div><div style="color:#5C5951">새 마이그레이션 009</div><div class="k">되돌리기 쉽다</div></div></div>
+                      <div class="sa__opt"><i></i><div><div style="color:#5C5951">008 을 고친다</div><div class="k">이미 배포됐다면 위험</div></div></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mk__msg mk__turnrow">
+                  <span class="mk__av agent">F</span>
+                  <div class="mk__mid">
+                    <div class="mk__who"><b>forge</b> <span class="mk__badge">에이전트</span> <span class="mk__to me">→ 나</span> <span class="mk__time">오후 4:11</span></div>
+                    <div>008 이 이미 배포됐는지는 내가 모른다. 이걸 정해 줘야 codex 도 움직인다.</div>
+                    <div class="sa__opts">
+                      <div class="h">골라 줘 — 답하면 codex 도 풀린다</div>
+                      <div class="sa__opt"><i></i><div><div>이미 배포됐다 — 새 마이그레이션으로</div><div class="k">codex 가 009 로 진행</div></div></div>
+                      <div class="sa__opt"><i></i><div><div>아직 아니다 — 008 을 고쳐도 된다</div><div class="k">파일 하나로 끝난다</div></div></div>
+                      <div class="sa__opt"><i></i><div><div>내가 직접 확인하고 답할게</div><div class="k">터미널에서 본다</div></div></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="mk__comp">답글 쓰기 — 채널에도 올리기 ☐</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </figure>
+  </div>
+</section>
+
+<!-- ===================== 진단 ===================== -->
+<section id="now">
+  <div class="wrap">
+    <p class="eyebrow">진단</p>
+    <h2>지금 화면에는 말의 종류도, 수신자도 없다</h2>
+    <p class="lede">
+      앱을 열어 채널 · 스레드 · 설정 · 디렉터리까지 돌아본 결과다. 구조는 맞다 — 에이전트는 실제로 스레드
+      안에서 답하고 있었다. 없는 것은 <b>여덟 가지 말을 구별하는 장치</b>와 <b>그 말이 누구에게 갔는지</b>다.
+    </p>
+  </div>
+
+  <div class="bleed">
+    <figure>
+      <figcaption class="mkcap"><b>지금</b> <span>#general · 실제 화면을 그대로 옮긴 것</span></figcaption>
+      <div class="mkscroll">
+        <div class="mk mk--now">
+          <div class="mk__bar"><span class="mk__dots"><i></i><i></i><i></i></span><span class="mk__title">murmur</span> <span class="mk__dot"></span><span class="right">미읽음 훑기</span></div>
+          <div class="mk__body">
+            <div class="mk__side">
+              <div class="mk__lab">Channels 🔍</div>
+              <div class="mk__item on"><span class="mk__hash">#</span> general <span style="margin-left:auto;color:#a1a1aa">⋯</span></div>
+              <div class="mk__item">+ Create channel</div>
+              <div style="height:10px"></div>
+              <div class="mk__item">Inbox</div>
+              <div class="mk__item">Saved</div>
+              <div class="mk__item">Directory</div>
+              <div class="mk__item">+ Add or edit agents</div>
+              <div class="mk__lab">Direct messages <span style="float:right">+ New</span></div>
+              <div class="mk__lab">Active work</div>
+              <div style="padding:0 5px">
+                <div style="color:#b45309;font-size:9.5px">투영이 설정되지 않았다</div>
+                <div style="font-size:9.5px;color:#71717a">AVCS_BASE_URL 로 켠다</div>
+              </div>
+            </div>
+            <div class="mk__main">
+              <div class="mk__hdr"># general <span class="right"><span class="mk__btn">문서</span><span class="mk__btn">파일</span><span class="mk__btn">검색</span></span></div>
+              <div class="mk__msgs">
+                <div class="mk__sep"><i></i><span>오늘</span><i></i></div>
+                <div class="mk__msg">
+                  <span class="mk__av">J</span>
+                  <div class="mk__mid">
+                    <div class="mk__who"><b>jaebin</b> <span class="mk__nb">J</span> <span class="mk__time">오후 01:09</span></div>
+                    <div><span class="mk__at">@forge</span> 안녕</div>
+                    <div><span class="mk__rx">👀 1</span></div>
+                    <div><span class="mk__pill">3 replies 오후 01:35</span></div>
+                  </div>
+                </div>
+                <div class="mk__msg">
+                  <span class="mk__av">J</span>
+                  <div class="mk__mid">
+                    <div class="mk__who"><b>jaebin</b> <span class="mk__nb">J</span> <span class="mk__time">오후 06:48</span></div>
+                    <div>○ ○</div>
+                    <div><span class="mk__pill">0 replies</span></div>
+                  </div>
+                </div>
+                <div class="mk__msg">
+                  <span class="mk__av">J</span>
+                  <div class="mk__mid">
+                    <div class="mk__who"><b>jaebin</b> <span class="mk__nb">J</span> <span class="mk__time">오후 06:54</span></div>
+                    <div><span class="mk__at">@codex</span> 안녕</div>
+                    <div><span class="mk__pill">0 replies</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="mk__comp">Message #general <span style="float:right;font-size:9px;border:1px solid #e4e4e7;padding:1px 5px;border-radius:3px">전송</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </figure>
+  </div>
+
+  <div class="wrap">
+    <div class="findings">
+      <div class="fgroup">
+        <h4>막는 말이 보이지 않는다</h4>
+        <ul>
+          <li><b>선택지를 표현할 컴포넌트가 없다.</b> 갈림길을 만나도 “1번 아니면 2번”을 <b>평문으로</b> 쓸 수밖에 없고, 사람은 다시 타이핑해서 답해야 한다.</li>
+          <li><b>되물음이 잡담과 같은 모양이다.</b> 답해야 진행되는 말인데 아무 무게도 받지 않는다.</li>
+          <li><b>“내 차례”가 채널에 올라오지 않는다.</b> <code>3 replies</code> 는 답글 수만 말할 뿐 나를 기다리는지는 열어야 안다.</li>
+          <li><b>실패가 평범한 말풍선이다.</b> 에이전트가 먼저 사람을 부르는 유일한 경우인데 무게가 같다.</li>
+        </ul>
+      </div>
+      <div class="fgroup">
+        <h4>수신자 개념이 아예 없다</h4>
+        <ul>
+          <li><b>말이 누구에게 갔는지 화면이 모른다.</b> 팀이 돌면 <b>무엇이 내 일인지</b>를 사람이 매번 읽어서 판단해야 한다.</li>
+          <li><b>접힘이 없다.</b> forge ↔ codex 가 열 번 주고받으면 그 열 번이 그대로 흐른다 — 피하려던 로그가 다른 형태로 돌아온다.</li>
+          <li><b>대기 사슬이 없다.</b> 교착과 “그냥 오래 걸리는 중”이 구별되지 않는다.</li>
+          <li><b>집합 호출의 결과가 안 보인다.</b> 셋을 불러 둘만 깨어나도 화면은 아무 말도 하지 않는다.</li>
+        </ul>
+      </div>
+      <div class="fgroup">
+        <h4>읽히는 말이 읽히지 않는다</h4>
+        <ul>
+          <li><b>완료 보고를 담을 형식이 없다.</b> 가장 오래 남는 말이 한 문단 회색 텍스트로 흘러간다.</li>
+          <li><b>다음 제안이 이어지지 않는다.</b> 읽고 다시 손으로 부탁을 써야 한다.</li>
+          <li><b>스레드 패널이 386px 고정</b>이라 보고문·코드·선택지가 들어갈 자리가 없다. 작업이 사는 곳인데 화면에서 가장 좁다.</li>
+          <li><b>본문 최대폭이 없다.</b> 넓은 창에서 보고문이 한 줄 100자를 넘는다.</li>
+        </ul>
+      </div>
+      <div class="fgroup">
+        <h4>진행 · 터미널 · 위생</h4>
+        <ul>
+          <li><b>“지금 돌고 있다”가 화면에 없다.</b> 일하는 중인지, 죽었는지, 아직 안 깼는지 구별할 자리가 없다.</li>
+          <li><b>터미널 손잡이가 메시지마다 흩어진다.</b> 세션은 스레드당 하나인데 진입은 메시지에 붙어 있어, 여럿이 일하면 어느 메시지를 눌러야 하는지가 문제가 된다.</li>
+          <li><b>메시지 한 개가 3층</b>이라(본문 · 리액션 · 답글 pill) 정작 <b>필요한 상자</b>(선택지)를 쓸 예산이 남지 않는다.</li>
+          <li><b>강조색이 셋인데 로고색은 없고</b>(아바타 빨강 · pill 남색 · 경고 주황, <code>#E8613C</code> 는 미사용), <b>글자 크기가 사실상 두 단</b>이며, <b>언어와 기호가 섞이고</b>, <b>모달이 규칙 없이 뜬다</b>(Directory 는 Esc 로 안 닫힌다).</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="keep">
+      <h4 style="color:var(--teal)">이미 맞게 되어 있는 것</h4>
+      <p><b>구조는 컨셉대로다.</b> 에이전트는 스레드에서 답하고, “채널에도 올리기”는 기본 꺼짐이며, 터미널 칩은 소유자에게만 뜬다. 바꿀 것은 동작이 아니라 <b>그 구조를 화면이 알아보게 하는 일</b>이다.</p>
+      <p><b>팀의 뼈대가 이미 있다.</b> 핸들 집합(#230)은 <code>@release</code> 하나로 여럿을 부르고 <code>memberCount</code> 를 실어 준다. 에이전트 팀(#172)은 채널에 팀 단위로 들어가고 비활성 구성원을 갈라 준다 — <b>화면이 이 데이터를 아직 안 쓸 뿐이다.</b></p>
+      <p><b>시맨틱 토큰 한 벌이 있고</b>(<code>index.css</code>, #112) 화면 코드가 역할만 부르므로 값 교체 비용이 낮다. 같은 방향의 작업도 이미 돌고 있다 — <code>#424</code> 답글 요약 상자 벗기기, <code>#396</code> 답글 없는 메시지 정리.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== 공통 기반 ===================== -->
+<section id="base">
+  <div class="wrap">
+    <p class="eyebrow">공통 기반</p>
+    <h2>어느 방향을 골라도 먼저 만들어야 하는 것</h2>
+    <p class="lede">
+      여덟 가지 말과 두 수신자를 화면이 구별할 수 있게 하는 최소 장치다. 컨셉 선택을 기다릴 필요 없이
+      지금 시작할 수 있고, 어느 안을 골라도 버려지지 않는다.
+    </p>
+
+    <div class="cluster">
+      <h4>말 — 없는 것을 만든다</h4>
+      <div class="base">
+        <div class="base__row"><div class="base__k">선택지</div><div class="base__v">단일 최우선 항목. 옵션 N 개가 <b>고를 수 있는 형태</b>로 렌더되고 클릭 한 번이 곧 답장이 된다. <b>수신자 필드를 처음부터 넣는다</b> — 사람이면 강조, 에이전트면 무채색.</div></div>
+        <div class="base__row"><div class="base__k">수신자 배지</div><div class="base__v">모든 막는 말에 <code>→ 나</code> / <code>→ forge</code>. 강조색은 <b><code>→ 나</code> 에만</b>. 이것 하나로 팀 스레드의 “무엇이 내 일인가”가 풀린다.</div></div>
+        <div class="base__row"><div class="base__k">완료 보고 형식</div><div class="base__v">확인 목록 + 바뀐 파일 + 남은 것. 자유 문장이 아니라 <b>형식</b>이어야 나중에 읽힌다. 안 지키면 조용히 평문으로 흘린다.</div></div>
+        <div class="base__row"><div class="base__k">다음 제안 칩</div><div class="base__v">보고 아래 칩 몇 개. 누르면 <b>그 스레드에 새 부탁이 들어간다</b> — 사람이 다시 타이핑하지 않는다.</div></div>
+        <div class="base__row"><div class="base__k">답 쓰는 자리</div><div class="base__v">되물음 바로 아래에 답 입력이 붙는다. 스레드 하단 작성창으로 스크롤하게 만들지 않는다.</div></div>
+      </div>
+    </div>
+
+    <div class="cluster">
+      <h4>상태 — 여럿이 일하는 것을 화면이 안다</h4>
+      <div class="base">
+        <div class="base__row"><div class="base__k">스레드 상태 5단</div><div class="base__v"><b>진행 중 · 내 차례 · 남을 기다림 · 끝남 · 실패/교착</b>. 채널 요약 줄과 사이드바가 같은 어휘를 쓴다. 러너 생존 신호와 반드시 묶는다.</div></div>
+        <div class="base__row"><div class="base__k">대기 사슬</div><div class="base__v">누가 누구를 기다리는지 한 줄. 사슬 끝이 나면 “내 차례”, 아무 데도 안 닿으면 교착.</div></div>
+        <div class="base__row"><div class="base__k">에이전트 간 접힘</div><div class="base__v">에이전트 둘 사이의 주고받기는 기본 접힘 — “<code>forge ↔ codex · 4번 주고받음 · 펼치기</code>”. 사람이 낀 말과 결론만 펼쳐진 채로 흐른다.</div></div>
+        <div class="base__row"><div class="base__k">집합 호출의 결과</div><div class="base__v">보내기 전엔 자동완성에 <b>구성원 수</b>(<code>memberCount</code> 는 이미 온다), 보낸 뒤엔 “누가 깼는지 · 누가 응답 없는지” 한 줄 + 다시 부르기.</div></div>
+        <div class="base__row"><div class="base__k">참여자 줄</div><div class="base__v">스레드 헤더에 참여 중인 에이전트 아바타 줄. 도는 자는 진하게, 막힌 자는 옅게, 응답 없는 자는 회색.</div></div>
+        <div class="base__row"><div class="base__k">터미널 선택자</div><div class="base__v">헤더의 손잡이를 <b>드롭다운</b>으로. 참여 중인 에이전트 중 <b>내가 소유자인 것만</b> 목록에 든다. 없으면 손잡이 자체가 없다.</div></div>
+      </div>
+    </div>
+
+    <div class="cluster">
+      <h4>위생 — 자리를 비운다</h4>
+      <div class="base">
+        <div class="base__row"><div class="base__k">상자 예산</div><div class="base__v">한 메시지에 테두리 상자는 <b>최대 1개</b>, 그 하나는 <b>선택지</b>가 쓴다. 답글·리액션 pill 은 텍스트로 내린다.</div></div>
+        <div class="base__row"><div class="base__k">0은 그리지 않는다</div><div class="base__v"><code>0 replies</code>, 빈 리액션 줄, 권한 없는 동작 — 규칙 06 을 화면 전체에 적용한 것이다.</div></div>
+        <div class="base__row"><div class="base__k">스레드 폭</div><div class="base__v">고정 386px 을 버리고 <b>가변 + 최소 480px</b>. 선택지·보고문·사슬이 들어갈 자리가 필요하다.</div></div>
+        <div class="base__row"><div class="base__k">타이포·색</div><div class="base__v">타이포 4단(19 / 14 / 12 / 11) · 회색 3단 · 강조 1색(<code>#E8613C</code>)으로 통일. 상태색은 강조색과 분리한다.</div></div>
+        <div class="base__row"><div class="base__k">아이콘·언어·오버레이</div><div class="base__v">라인 아이콘 1종(이모지는 리액션 <b>내용</b>에만) · UI 문자열 한쪽 언어로 · 스크림 + Esc + 포커스 트랩 규칙 하나를 Directory·Inbox·Saved·검색이 공유.</div></div>
+        <div class="base__row"><div class="base__k">참여자 목록</div><div class="base__v">사이드바에 사람과 에이전트를 한 목록으로. <code>+ Add or edit agents</code> 는 그 목록의 마지막 줄로 — 설정은 목록의 부속이지 대체가 아니다.</div></div>
+        <div class="base__row"><div class="base__k">컴포넌트 갤러리</div><div class="base__v">숨은 라우트에 <b>여덟 가지 말 × 두 수신자</b>를 한 화면에. 이후 기능이 “기존 디자인을 따라간다”가 가능해지는 지점이다.</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== 세 방향 ===================== -->
+<section id="ways">
+  <div class="wrap">
+    <p class="eyebrow">세 방향</p>
+    <h2>스레드의 무엇을 화면의 중심에 둘까</h2>
+    <p class="lede">
+      공통 기반 위에 무엇을 얹을지의 선택이다. 세 안은 서로 배타적이지 않지만, <b>무엇이 1순위인가</b>는
+      하나만 고를 수 있다 — 그 선택이 폭 배분과 강조와 기본 화면을 결정한다.
+    </p>
+  </div>
+</section>
+
+<section class="concept" id="a">
+  <div class="wrap">
+    <div class="concept__head"><span class="concept__tag">안 A</span><span class="concept__en">Turn</span></div>
+    <h2>차례</h2>
+    <p class="thesis">화면 전체가 한 가지 질문에 답한다 — <b>지금 나를 기다리는 것은 무엇인가.</b></p>
+    <p>
+      에이전트가 알아서 진행하는 시간이 길어질수록 사람이 하는 일은 <b>차례가 왔을 때 답하는 것</b>으로 좁아진다.
+      그래서 사이드바 · 채널 · 스레드가 전부 같은 상태 어휘를 쓰고, 강조는 “내 차례”에만 간다.
+      팀이 커질수록 이 안이 강해진다 — <b>무엇이 내 일인가</b>가 유일하게 중요한 질문이 되기 때문이다.
+    </p>
+    <div class="cols">
+      <div>
+        <h4>원칙</h4>
+        <ul>
+          <li><b>강조는 하나뿐.</b> 내 차례가 아닌 것은 전부 무채색으로 내려간다.</li>
+          <li><b>상태는 한 벌.</b> 사이드바·채널·스레드가 같은 5단 어휘를 쓴다.</li>
+          <li><b>물음이 채널까지 올라온다.</b> 답이 아니라 물음의 요지가.</li>
+          <li><b>남을 기다리는 것도 자리를 갖는다.</b> 다만 강조 없이, 사슬로.</li>
+        </ul>
+      </div>
+      <div>
+        <h4>팔레트 · 타이포</h4>
+        <div class="swatches">
+          <div class="sw"><i style="background:#FFFFFF"></i><span>#FFFFFF<br>surface</span></div>
+          <div class="sw"><i style="background:#F5F5F4"></i><span>#F5F5F4<br>sunken</span></div>
+          <div class="sw"><i style="background:#E8613C"></i><span>#E8613C<br>내 차례</span></div>
+          <div class="sw"><i style="background:#4E5A56"></i><span>#4E5A56<br>에이전트</span></div>
+          <div class="sw"><i style="background:#5E8A6E"></i><span>#5E8A6E<br>끝남</span></div>
+          <div class="sw"><i style="background:#93908A"></i><span>#93908A<br>기다림</span></div>
+        </div>
+        <ul style="margin-top:1rem">
+          <li>본문 <b>14px / 1.65</b> · 상태 라벨 11px 대문자</li>
+          <li>선택지 옵션은 본문 크기 — 읽고 골라야 하니까</li>
+          <li>수신자 배지는 10px 고정폭</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="bleed">
+    <figure>
+      <figcaption class="mkcap"><b>안 A</b> <span>사이드바가 “내 차례 / 막힘 / 도는 중”을 가른다</span></figcaption>
+      <div class="mkscroll">
+        <div class="mk mk--a">
+          <div class="mk__bar"><span class="mk__dots"><i></i><i></i><i></i></span><span class="mk__title">murmur</span> <span class="mk__dot"></span><span class="right">⌘K</span></div>
+          <div class="mk__body">
+            <div class="mk__side">
+              <div class="mk__lab">내 차례</div>
+              <div class="mk__item turn">릴리스 전 점검 <span class="mk__count" style="color:#B8431F">1</span></div>
+              <div class="mk__item turn">스레드 폭 <span class="mk__count" style="color:#B8431F">1</span></div>
+              <div class="mk__lab">남을 기다림</div>
+              <div class="mk__item" style="color:#93908A">codex → forge · 4분</div>
+              <div class="mk__lab">도는 중</div>
+              <div class="mk__item" style="color:#93908A"><span class="mk__sq"></span> 투영 백오프 · 6분</div>
+              <div class="mk__lab">채널</div>
+              <div class="mk__item on"><span class="mk__hash">#</span> general <span class="mk__count" style="color:#B8431F">●</span></div>
+              <div class="mk__item"><span class="mk__hash">#</span> avcs-core</div>
+              <div class="mk__lab">참여자</div>
+              <div class="mk__item"><span class="mk__dot"></span> jaebin</div>
+              <div class="mk__item"><span class="mk__grp">집합</span> release <span class="mk__count">3</span></div>
+            </div>
+
+            <div class="mk__main">
+              <div class="mk__hdr"># general <span class="sub">izagood/murmur</span><span class="right"><span class="mk__btn">문서</span><span class="mk__btn">파일</span></span></div>
+              <div class="mk__msgs">
+                <div class="mk__sep"><i></i><span>오늘</span><i></i></div>
+                <div class="mk__msg">
+                  <span class="mk__av">J</span>
+                  <div class="mk__mid">
+                    <div class="mk__who"><b>jaebin</b> <span class="mk__time">오후 4:02</span></div>
+                    <div><span class="mk__mine">@release</span> 릴리스 전에 각자 맡은 데 훑어 줘</div>
+                    <div class="mk__quiet" style="color:#B8431F;font-weight:600">내 차례 — forge 가 마이그레이션 방식을 묻는다 · 2분째</div>
+                    <div class="mk__quiet">codex 는 forge 를 기다린다 · lint 는 응답 없음</div>
+                  </div>
+                </div>
+                <div class="mk__msg">
+                  <span class="mk__av" style="background:#7A736A">S</span>
+                  <div class="mk__mid">
+                    <div class="mk__who"><b>seungho</b> <span class="mk__time">오후 4:15</span></div>
+                    <div>008 은 어제 스테이징에만 올라갔던 것 같은데</div>
+                  </div>
+                </div>
+                <div class="mk__msg">
+                  <span class="mk__av">J</span>
+                  <div class="mk__mid">
+                    <div class="mk__who"><b>jaebin</b> <span class="mk__time">어제</span></div>
+                    <div style="color:#93908A">스레드 패널 폭 좀 넓혀 줘</div>
+                    <div class="mk__quiet">끝남 · forge 가 정리했다 · 파일 2개</div>
+                  </div>
+                </div>
+              </div>
+              <div class="mk__comp">#general 에 쓴다 <span style="float:right;font-size:9px;background:#E8613C;color:#fff;padding:1px 7px;border-radius:3px">전송</span></div>
+            </div>
+
+            <div class="mk__pane">
+              <div class="h">릴리스 전 점검 <span class="t">터미널 ▾</span></div>
+              <div class="mk__avs">
+                <i>F</i><i style="background:#6B6357">C</i><i class="off">L</i>
+                <span>forge 도는 중 · codex 막힘 · lint 없음</span>
+              </div>
+              <div class="b">
+                <div>
+                  <div class="mk__who"><b>jaebin</b> <span class="mk__time">4:02</span></div>
+                  <div style="font-size:11px;color:#5C5951">릴리스 전에 각자 맡은 데 훑어 줘</div>
+                </div>
+                <div>
+                  <div class="mk__who"><b>forge</b> <span class="mk__time">4:04</span></div>
+                  <div style="font-size:11px;color:#5C5951">ws·투영을 맡고 스키마는 codex 에게 넘겼다</div>
+                  <div class="sa__fold" style="font-size:9.5px"><b>forge ↔ codex</b> · 4번 <span class="x">펼치기</span></div>
+                </div>
+                <div class="mk__turn">
+                  <div class="mk__who"><b>forge</b> <span class="mk__to me">→ 나</span> <span class="mk__time">4:11</span></div>
+                  <div style="font-size:11px">008 이 이미 배포됐는지 내가 모른다</div>
+                  <div class="sa__opts" style="max-width:none">
+                    <div class="h">골라 줘 — codex 도 풀린다</div>
+                    <div class="sa__opt"><i></i><div><div style="font-size:10.5px">배포됐다 · 새 마이그레이션</div></div></div>
+                    <div class="sa__opt"><i></i><div><div style="font-size:10.5px">아직 아니다 · 008 수정</div></div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </figure>
+  </div>
+
+  <div class="wrap">
+    <div class="cols">
+      <div>
+        <h4>달라지는 것</h4>
+        <ul>
+          <li>사이드바가 <b>내 차례 / 남을 기다림 / 도는 중</b> 세 덩이로 갈린다.</li>
+          <li>채널 요약 줄이 <b>상태 + 물음의 요지 + 사슬</b>을 말한다.</li>
+          <li>선택지가 <b>고르는 물건</b>이 되고, 수신자 배지가 내 일과 남의 일을 가른다.</li>
+          <li>스레드 헤더에 참여자 줄과 <b>터미널 선택자</b>가 생긴다.</li>
+        </ul>
+      </div>
+      <div>
+        <h4>어울리는 상황</h4>
+        <ul>
+          <li>에이전트를 <b>여럿 · 팀으로</b> 굴려 놓고 차례가 올 때만 붙는 방식</li>
+          <li>앱을 열었을 때 <b>스스로</b> 밀린 것을 파악하고 싶을 때</li>
+          <li>기존 레이아웃을 크게 바꾸지 않고 효과를 내고 싶을 때</li>
+        </ul>
+      </div>
+    </div>
+    <div class="pair">
+      <div class="team">
+        <h4>여럿일 때</h4>
+        <p>이 안이 <b>가장 크게 이득을 본다</b>. 팀이 커질수록 “무엇이 내 일인가”가 유일한 질문이 되고, 이 안은 그 질문에만 답하도록 만들어져 있다. 사이드바의 세 덩이가 그대로 팀 현황판이 된다.</p>
+      </div>
+      <div class="risk">
+        <h4>리스크</h4>
+        <p>상태가 <b>거짓말을 하면 전부 무너진다</b> — 러너가 죽었는데 “도는 중”이면 사람은 영원히 기다린다. 생존 신호(<code>inbox.poll</code>)와 교착 판정이 함께 있어야 한다. 그리고 “내 차례”를 강조하는 만큼 사람끼리의 대화가 배경으로 밀린다.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="concept" id="b">
+  <div class="wrap">
+    <div class="concept__head"><span class="concept__tag">안 B</span><span class="concept__en">Worklog</span></div>
+    <h2>작업 노트</h2>
+    <p class="thesis">스레드는 채팅 로그가 아니라 <b>자라나는 문서</b>다. 여럿이 붙을수록 그 문서가 유일한 공통 지반이 된다.</p>
+    <p>
+      에이전트가 “어떻게 완료했는지 정리해서 알려 준다”를 화면의 중심으로 삼은 안이다. 스레드 위에 <b>합의문</b>이
+      얹힌다 — 무엇을 하기로 했는가, <b>누가 무엇을 맡았는가</b>, 무엇이 정해졌는가, 무엇이 남았는가. 대화는 그 아래로
+      흐르고, 선택이 내려질 때마다 위가 갱신된다. 팀이 붙으면 이 배정표가 <b>대화를 읽지 않고도 현황을 아는 유일한 자리</b>가 된다.
+    </p>
+    <div class="cols">
+      <div>
+        <h4>원칙</h4>
+        <ul>
+          <li><b>결론이 위에 있다.</b> 스크롤 없이 “무엇이 정해졌나”를 읽는다.</li>
+          <li><b>배정이 기록된다.</b> 누가 무엇을 맡았고 지금 어디까지 왔는지.</li>
+          <li><b>결정에 주체가 남는다.</b> 사람이 골랐는지 에이전트가 골랐는지.</li>
+          <li><b>대화는 근거다.</b> 결론을 뒷받침하는 자리로 내려간다.</li>
+        </ul>
+      </div>
+      <div>
+        <h4>팔레트 · 타이포</h4>
+        <div class="swatches">
+          <div class="sw"><i style="background:#FCFBF8"></i><span>#FCFBF8<br>surface</span></div>
+          <div class="sw"><i style="background:#F3F1EA"></i><span>#F3F1EA<br>sunken</span></div>
+          <div class="sw"><i style="background:#FFFFFF"></i><span>#FFFFFF<br>합의문</span></div>
+          <div class="sw"><i style="background:#E7E1D6"></i><span>#E7E1D6<br>line</span></div>
+          <div class="sw"><i style="background:#5E8A6E"></i><span>#5E8A6E<br>확인됨</span></div>
+          <div class="sw"><i style="background:#E8613C"></i><span>#E8613C<br>내 차례</span></div>
+        </div>
+        <ul style="margin-top:1rem">
+          <li>본문 <b>15px / 1.72</b> · 폭 <code>68ch</code> — 읽기 우선</li>
+          <li>합의문·배정표는 정의 목록 형식</li>
+          <li>코드·파일 경로만 고정폭</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="bleed">
+    <figure>
+      <figcaption class="mkcap"><b>안 B</b> <span>합의문에 배정표가 들어간다 · 결정에 “누가 골랐는지”가 남는다</span></figcaption>
+      <div class="mkscroll">
+        <div class="mk mk--b">
+          <div class="mk__bar"><span class="mk__dots"><i></i><i></i><i></i></span><span class="mk__title">murmur</span><span class="right">#general › 릴리스 전 점검</span></div>
+          <div class="mk__body">
+            <div class="mk__side">
+              <div class="mk__lab">스레드</div>
+              <div class="mk__item on">릴리스 전 점검 <span class="mk__count" style="color:#B8431F">●</span></div>
+              <div class="mk__item">투영 백오프 <span class="mk__count">도는 중</span></div>
+              <div class="mk__item" style="color:#9A9282">스레드 폭 넓히기</div>
+              <div class="mk__lab">채널</div>
+              <div class="mk__item"><span class="mk__hash">#</span> general</div>
+              <div class="mk__item"><span class="mk__hash">#</span> avcs-core</div>
+              <div class="mk__lab">참여자</div>
+              <div class="mk__item"><span class="mk__dot"></span> jaebin</div>
+              <div class="mk__item"><span class="mk__grp">집합</span> release <span class="mk__count">3</span></div>
+            </div>
+            <div class="mk__main">
+              <div class="mk__hdr">릴리스 전 점검
+                <span class="sub">#general · @release 3명 · 4:02 시작</span>
+                <span class="right"><span class="mk__btn">터미널 ▾</span></span>
+              </div>
+
+              <div class="mk__sum">
+                <div class="t">지금까지 정해진 것</div>
+                <div class="g">릴리스 전 ws · 투영 · 스키마를 나눠 점검한다</div>
+                <dl>
+                  <dt>배정</dt><dd><b>forge</b> ws·투영 (도는 중) · <b>codex</b> 스키마 (forge 를 기다림) · <b>lint</b> 응답 없음</dd>
+                  <dt>결정</dt><dd>연속 미응답만 끊는 규칙까지 본다 — <span style="color:#9A9282">jaebin 이 4:06 에 선택</span></dd>
+                  <dt>결정</dt><dd>투영 백오프는 지수 유지 — <span style="color:#9A9282">forge 가 4:08 에 선택 (사람 확인 불필요)</span></dd>
+                  <dt>막힘</dt><dd style="color:#B8431F">마이그레이션을 009 로 넣을지 008 을 고칠지 — 내 답을 기다린다</dd>
+                  <dt>남은 것</dt><dd>lint 를 다시 부를지, 이번 릴리스는 건너뛸지</dd>
+                </dl>
+              </div>
+
+              <div class="mk__msgs">
+                <div class="mk__msg">
+                  <span class="mk__av">J</span>
+                  <div class="mk__mid">
+                    <div class="mk__who"><b>jaebin</b> <span class="mk__time">오후 4:02</span></div>
+                    <div><span class="mk__mine">@release</span> 릴리스 전에 각자 맡은 데 훑어 줘</div>
+                  </div>
+                </div>
+                <div class="mk__msg">
+                  <span class="mk__av agent">F</span>
+                  <div class="mk__mid">
+                    <div class="mk__who"><b>forge</b> <span class="mk__time">오후 4:35</span></div>
+                    <div>ws·투영 쪽은 끝났다.</div>
+                    <div class="sa__rep">
+                      <ul>
+                        <li>연속 미응답만 끊는다 — 회귀 테스트로 고정</li>
+                        <li>투영 커서가 재접속 후 따라잡는다</li>
+                        <li>백오프 상한은 그대로 둔다</li>
+                      </ul>
+                    </div>
+                    <div class="sa__files">+ ws/heartbeat.test.ts · ~ projection/worker.ts · 6분 40초</div>
+                    <div class="sa__fold" style="margin-top:6px"><span class="mk__sq"></span> <b>forge ↔ codex</b> · 4번 주고받음 <span class="x">펼치기</span></div>
+                    <div class="sa__next"><span>lint 다시 부르기</span><span>PR 로 올리기</span><span>터미널에서 보기</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="mk__comp">답글 쓰기 — 채널에도 올리기 ☐</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </figure>
+  </div>
+
+  <div class="wrap">
+    <div class="cols">
+      <div>
+        <h4>달라지는 것</h4>
+        <ul>
+          <li>스레드 위에 <b>합의문 + 배정표</b>가 생긴다 — 누가 무엇을 맡고 어디까지 왔는지.</li>
+          <li>결정에 <b>누가 골랐는지</b>가 남는다. 사람의 결정과 에이전트의 결정이 구별된다.</li>
+          <li>완료 보고가 <b>확인 목록 + 바뀐 파일</b> 형식을 갖는다.</li>
+          <li>에이전트끼리의 주고받기는 <b>접힌 한 줄</b>로 흘러간다.</li>
+        </ul>
+      </div>
+      <div>
+        <h4>어울리는 상황</h4>
+        <ul>
+          <li>스레드가 <b>나중에 다시 읽히는</b> 쓰임이 많을 때</li>
+          <li><b>여러 사람이 같은 스레드를 지켜볼</b> 때 — 팀 작업의 공통 지반</li>
+          <li><code>docs/design.md</code> 같은 톤을 앱 안에서도 갖고 싶을 때</li>
+        </ul>
+      </div>
+    </div>
+    <div class="pair">
+      <div class="team">
+        <h4>여럿일 때</h4>
+        <p>합의문이 <b>배정표</b>로 자라면서 값이 커진다. 다만 배정을 <b>누가 채우는가</b>가 문제다 — 에이전트가 스스로 선언하게 할지, 앱이 넘김·멘션에서 추론할지. 후자가 안전하다.</p>
+      </div>
+      <div class="risk">
+        <h4>리스크</h4>
+        <p>합의문의 품질에 화면이 <b>인질로 잡힌다</b>. 형식을 안 지키면 빈 상자만 남으므로 <b>지키지 않으면 조용히 사라지는 설계</b>가 필수다. 문서처럼 조판할수록 <b>지금 내 차례인지</b>는 덜 보인다.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="concept" id="c">
+  <div class="wrap">
+    <div class="concept__head"><span class="concept__tag">안 C</span><span class="concept__en">Pairing</span></div>
+    <h2>짝 작업</h2>
+    <p class="thesis">스레드는 곁창이 아니라 <b>작업하는 자리</b>다. 여럿이 붙으면 터미널도 여럿이므로, 그것을 담을 폭이 필요하다.</p>
+    <p>
+      채널을 왼쪽의 <b>얇은 목록</b>으로 접고, 가운데를 스레드가 넓게 쓰며, 오른쪽에 터미널이 <b>탭으로</b> 붙는다.
+      대화 · 선택지 · 보고 · 각 에이전트의 로그가 한 자리에 모인다. 규칙 05(개입 비용)를 가장 공격적으로 낮춘 안이고,
+      <b>“터미널이 여럿”을 유일하게 자연스럽게 담는 레이아웃</b>이다.
+    </p>
+    <div class="cols">
+      <div>
+        <h4>원칙</h4>
+        <ul>
+          <li><b>스레드가 가장 넓다.</b> 폭 배분이 곧 중요도 선언이다.</li>
+          <li><b>터미널은 탭이다.</b> 참여 에이전트 중 내가 소유자인 것만.</li>
+          <li><b>채널은 목록으로 접힌다.</b> 각 행이 상태 5단을 말한다.</li>
+          <li><b>층이 면으로 구분된다.</b> 목록 → 스레드 → 터미널로 갈수록 어두워진다.</li>
+        </ul>
+      </div>
+      <div>
+        <h4>팔레트 · 타이포</h4>
+        <div class="swatches">
+          <div class="sw"><i style="background:#FAFAFB"></i><span>#FAFAFB<br>목록</span></div>
+          <div class="sw"><i style="background:#FFFFFF"></i><span>#FFFFFF<br>스레드</span></div>
+          <div class="sw"><i style="background:#0C0E10"></i><span>#0C0E10<br>터미널</span></div>
+          <div class="sw"><i style="background:#4E5A56"></i><span>#4E5A56<br>에이전트</span></div>
+          <div class="sw"><i style="background:#E8613C"></i><span>#E8613C<br>내 차례</span></div>
+          <div class="sw"><i style="background:#5E8A6E"></i><span>#5E8A6E<br>끝남</span></div>
+        </div>
+        <ul style="margin-top:1rem">
+          <li>스레드 본문 <b>14px / 1.68</b>, 폭 <code>70ch</code></li>
+          <li>터미널 층만 고정폭 · 탭 라벨 9px</li>
+          <li>좁은 창에서는 터미널이 스레드를 <b>덮는다</b></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="bleed">
+    <figure>
+      <figcaption class="mkcap"><b>안 C</b> <span>스레드 목록 · 넓은 스레드 · 에이전트별 터미널 탭</span></figcaption>
+      <div class="mkscroll">
+        <div class="mk mk--c">
+          <div class="mk__bar"><span class="mk__dots"><i></i><i></i><i></i></span><span class="mk__title">murmur</span><span class="right">⌘K 검색 · ⌘⇧T 터미널</span></div>
+          <div class="mk__body">
+            <div class="mk__side">
+              <div class="mk__lab">채널</div>
+              <div class="mk__item on"><span class="mk__hash">#</span> general</div>
+              <div class="mk__item"><span class="mk__hash">#</span> avcs-core <span class="mk__count">1</span></div>
+              <div class="mk__item"><span class="mk__hash">#</span> desktop</div>
+              <div class="mk__lab">팀</div>
+              <div class="mk__item"><span class="mk__grp">집합</span> release <span class="mk__count">3</span></div>
+              <div class="mk__item"><span class="mk__sq"></span> forge</div>
+              <div class="mk__item"><span class="mk__sq" style="background:#6B6357"></span> codex</div>
+              <div class="mk__item" style="color:#949AA1"><span class="mk__sq" style="background:#D5D3CE"></span> lint</div>
+            </div>
+
+            <div class="mk__list">
+              <div style="padding:8px 10px;font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;color:#949AA1;border-bottom:1px solid #EDEEF0">#general · 스레드</div>
+              <div class="mk__lrow on">
+                <div class="t">릴리스 전 점검</div>
+                <div class="s"><i></i> 내 차례 · forge 가 묻는다</div>
+              </div>
+              <div class="mk__lrow">
+                <div class="t">투영 워커 백오프</div>
+                <div class="s"><i style="background:#4E5A56"></i> codex 도는 중 · 6분</div>
+              </div>
+              <div class="mk__lrow">
+                <div class="t">러너 재시작 스크립트</div>
+                <div class="s"><i style="background:#C46A4C"></i> 교착 · 아무도 안 돈다</div>
+              </div>
+              <div class="mk__lrow">
+                <div class="t">스레드 패널 폭</div>
+                <div class="s"><i style="background:#5E8A6E"></i> 끝남 · 파일 2개</div>
+              </div>
+              <div style="padding:8px 10px;font-size:9.5px;color:#949AA1;border-top:1px solid #EDEEF0">사람끼리의 대화 12</div>
+            </div>
+
+            <div class="mk__main">
+              <div class="mk__hdr">릴리스 전 점검
+                <span class="sub">@release 3명 · forge 도는 중</span>
+                <span class="right"><span class="mk__btn" style="border-color:#B9C0C6;color:#16181C">터미널 닫기</span></span>
+              </div>
+              <div class="mk__msgs">
+                <div class="mk__msg">
+                  <span class="mk__av">J</span>
+                  <div class="mk__mid">
+                    <div class="mk__who"><b>jaebin</b> <span class="mk__time">오후 4:02</span></div>
+                    <div><span class="mk__mine">@release</span> 릴리스 전에 각자 맡은 데 훑어 줘</div>
+                  </div>
+                </div>
+                <div class="mk__msg">
+                  <span class="mk__av agent">F</span>
+                  <div class="mk__mid">
+                    <div class="mk__who"><b>forge</b> <span class="mk__badge">에이전트</span> <span class="mk__time">오후 4:04</span></div>
+                    <div>ws 와 투영을 맡았다. 스키마는 codex 에게 넘긴다.</div>
+                    <div class="sa__fold"><span class="mk__sq"></span> <b>forge ↔ codex</b> · 4번 주고받음 <span class="x">펼치기</span></div>
+                    <div class="sa__chain">codex 가 forge 를 기다린다 · 4분</div>
+                  </div>
+                </div>
+                <div class="mk__msg">
+                  <span class="mk__av agent">F</span>
+                  <div class="mk__mid">
+                    <div class="mk__who"><b>forge</b> <span class="mk__to me">→ 나</span> <span class="mk__time">오후 4:11</span></div>
+                    <div>008 이 이미 배포됐는지는 내가 모른다. 정해 주면 codex 도 움직인다.</div>
+                    <div class="sa__opts">
+                      <div class="h">골라 줘 — 답하면 codex 도 풀린다</div>
+                      <div class="sa__opt"><i></i><div><div>이미 배포됐다 — 새 마이그레이션 009</div><div class="k">되돌리기 쉽다</div></div></div>
+                      <div class="sa__opt"><i></i><div><div>아직 아니다 — 008 을 고쳐도 된다</div><div class="k">파일 하나로 끝난다</div></div></div>
+                      <div class="sa__opt"><i></i><div><div>내가 확인하고 답할게</div><div class="k">오른쪽 터미널에서 본다</div></div></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="mk__comp">답글 쓰기 — 채널에도 올리기 ☐</div>
+            </div>
+
+            <div class="mk__term">
+              <div class="mk__tabs"><span class="on">forge</span><span>codex</span><span style="color:#3E464B">lint 없음</span></div>
+              <div class="b"><span class="g">$</span> git log --oneline -3 migrations/
+<span class="g">  008_agent_owner.sql  (2일 전)</span>
+<span class="g">  007_handle_group.sql</span>
+
+<span class="g">$</span> ssh staging -- "select * from schema_migrations"
+<span class="ok">  008  applied 2026-09-03</span>
+<span class="g">  → 스테이징에는 이미 올라가 있다</span>
+
+<span class="g">$</span> <span style="border-bottom:1px solid #3A4247">&nbsp;&nbsp;</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </figure>
+  </div>
+
+  <div class="wrap">
+    <div class="cols">
+      <div>
+        <h4>달라지는 것</h4>
+        <ul>
+          <li>채널이 <b>스레드 목록</b>으로 접히고 각 행이 상태 5단(교착 포함)을 말한다.</li>
+          <li>스레드가 중앙을 차지한다 — 선택지·보고문·사슬이 들어갈 폭이 생긴다.</li>
+          <li>터미널이 <b>에이전트별 탭</b>이 된다. 응답 없는 에이전트는 비활성 탭으로 보인다.</li>
+          <li>로그를 보면서 그 자리에서 선택지에 답할 수 있다.</li>
+        </ul>
+      </div>
+      <div>
+        <h4>어울리는 상황</h4>
+        <ul>
+          <li>한 작업에 <b>여러 에이전트가 붙고</b> 사람이 그 사이에서 판정할 때</li>
+          <li>터미널을 실제로 자주 보는 경우</li>
+          <li>제품의 성격을 스크린샷 한 장으로 설명해야 할 때</li>
+        </ul>
+      </div>
+    </div>
+    <div class="pair">
+      <div class="team">
+        <h4>여럿일 때</h4>
+        <p>세 안 중 <b>“터미널이 여럿”을 유일하게 자연스럽게 담는다</b>. 탭 하나로 세 에이전트의 셸을 오간다. 반대로 팀이 없을 때는 이 폭이 과잉이다 — 그래서 아래 추천에서는 상시 레이아웃이 아니라 모드로 둔다.</p>
+      </div>
+      <div class="risk">
+        <h4>리스크</h4>
+        <p>가장 큰 변화이고 가장 비싸다 — 채널이 목록이 되면서 <b>“팀 채팅”의 느낌을 잃는다</b>. 폭 요구도 커서 좁은 창 접힘 규칙이 필수고, 터미널을 이렇게 잘 보이게 두면 대화 대신 터미널로만 일하게 될 수도 있다.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== 선택 ===================== -->
+<section id="pick">
+  <div class="wrap">
+    <p class="eyebrow">선택과 순서</p>
+    <h2>무엇을 고르고 무엇부터 만들 것인가</h2>
+
+    <div class="tblwrap">
+      <table>
+        <thead><tr><th></th><th>A · 차례</th><th>B · 작업 노트</th><th>C · 짝 작업</th></tr></thead>
+        <tbody>
+          <tr><th>중심</th><td>지금 나를 기다리는 것</td><td>지금까지 정해진 것</td><td>지금 함께 하고 있는 것</td></tr>
+          <tr><th>시간축</th><td>현재 — 놓치지 않기</td><td>과거 — 다시 읽기</td><td>지금 — 함께 하기</td></tr>
+          <tr><th>여럿일 때</th><td><b>가장 강함</b> — 무엇이 내 일인가</td><td>배정표가 공통 지반</td><td><b>터미널 여럿</b>을 유일하게 담음</td></tr>
+          <tr><th>채널</th><td>상태가 붙은 팀 채팅</td><td>그대로</td><td>스레드 목록으로 접힘</td></tr>
+          <tr><th>터미널</th><td>헤더의 선택자</td><td>헤더 버튼</td><td>에이전트별 탭</td></tr>
+          <tr><th>구현 비용</th><td>중간 — 상태 5단 + 선택지</td><td>중간 — 형식 + 배정 추론</td><td>높음 — 레이아웃 재구성</td></tr>
+          <tr><th>서버 변경</th><td>생존 신호 · 교착 판정</td><td>보고·합의 형식(meta)</td><td>없음</td></tr>
+          <tr><th>실패 지점</th><td>상태가 거짓말하면 전부 무너짐</td><td>요약 품질에 화면이 인질</td><td>“팀 채팅”의 느낌을 잃음</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="rec">
+      <h3>추천 — A 를 골격으로, B 의 배정표를 스레드 안에, C 는 집중 모드로</h3>
+      <p>
+        여럿이 일하는 것이 전제이므로 사람이 답해야 하는 질문은 하나로 수렴한다 — <b>무엇이 내 일인가</b>.
+        A 는 그 질문에만 답하도록 만들어져 있고, 새로 필요해진 수신자 배지 · 대기 사슬 · 접힘이 전부 A 의
+        상태 어휘 안에 자연스럽게 앉는다. 기존 레이아웃을 크게 건드리지 않아 지금 도는 브랜치들과 충돌도 적다.
+      </p>
+      <p>
+        B 는 별도 안으로 두지 말고 <b>스레드 안의 형식</b>으로 흡수한다. 합의문은 팀에서 배정표가 되면서 값이 커진다 —
+        다만 배정을 에이전트가 선언하게 하지 말고 <b>넘김과 멘션에서 앱이 추론</b>하는 편이 안전하고,
+        형식이 비면 조용히 사라지게 만든다.
+      </p>
+      <p>
+        C 는 <b>모드</b>로 남긴다. 에이전트 셋이 붙은 스레드에 깊게 들어갈 때 채널을 접고 스레드를 넓히고
+        터미널 탭을 여는 “집중 모드”. 상시 레이아웃이 아니어야 “팀 채팅의 느낌을 잃는다”는 리스크가 사라지고,
+        터미널이 여럿이라는 문제도 그 모드 안에서만 풀면 된다.
+      </p>
+      <p style="margin-top:1rem;font-size:.93rem;color:var(--ink-3)">
+        다른 결정도 성립한다 — 여러 사람이 같은 스레드를 지켜보는 쓰임이 더 커진다면 <b>B 를 골격</b>으로 두는 편이 맞다.
+      </p>
+    </div>
+
+    <h3>진행 순서</h3>
+    <ol class="steps">
+      <li><b>선택지 컴포넌트 (수신자 포함)</b><span>단일 최우선 항목. 옵션 N 개 + 클릭 한 번이 답장. <b>수신자 필드를 처음부터</b> 넣는다 — 나중에 붙이면 모든 선택지가 강조를 받는 버전이 한 번은 배포된다.</span></li>
+      <li><b>수신자 배지 · 에이전트 간 접힘</b><span><code>→ 나</code> / <code>→ forge</code> 배지와, 에이전트 둘 사이 주고받기의 기본 접힘. 이 둘이 팀 스레드를 읽을 수 있게 만드는 최소치다.</span></li>
+      <li><b>스레드 상태 5단 + 대기 사슬</b><span>진행 중 · 내 차례 · 남을 기다림 · 끝남 · 실패/교착. 러너 생존 신호와 묶는다 — 죽었는데 “도는 중”이면 이 안이 무너진다.</span></li>
+      <li><b>집합 호출의 결과 + 터미널 선택자</b><span>“누가 깼는지” 한 줄과 다시 부르기 · 스레드 헤더의 터미널 드롭다운(소유자인 것만) · 참여자 아바타 줄.</span></li>
+      <li><b>완료 보고 + 다음 제안 + 배정표</b><span>확인 목록 · 바뀐 파일 · 남은 것 · 눌러서 이어지는 칩, 그리고 넘김에서 추론한 배정표.</span></li>
+      <li><b>공통 위생 + 스레드 폭</b><span>상자 예산 1개, 답글·리액션을 텍스트로, 타이포 4단, <code>0 replies</code> 제거, 386px 고정 폭 해제. 이미 도는 <code>#424</code>·<code>#396</code> 과 같은 방향이다.</span></li>
+      <li><b>컴포넌트 갤러리</b><span>여덟 가지 말 × 두 수신자를 한 화면에. 이후 기능이 “기존 디자인을 따라간다”가 가능해지는 지점이다.</span></li>
+    </ol>
+
+    <h3>먼저 정해야 하는 것</h3>
+    <div class="asks">
+      <div class="ask"><b>선택지의 계약과 수신자</b><span>선택 요청을 MCP 도구 하나(<code>ask.choose</code>)로 둘지 메시지 <code>meta</code> 규약으로 둘지, 그리고 <b>수신자를 어떻게 실을지</b>(handle? accountId? “사람 아무나”?). 화면 전체가 이 필드 하나에 달려 있다.</span></div>
+      <div class="ask"><b>집합 호출 = 스레드 하나인가 여럿인가</b><span><code>@release</code> 로 셋을 부르면 스레드 하나에 셋이 들어오는가, 각자 스레드가 생기는가. 이 문서는 <b>하나</b>를 전제로 그렸다 — 여럿이면 채널이 다시 시끄러워진다.</span></div>
+      <div class="ask"><b>에이전트 간 선택의 기본값</b><span>접어 두고 펼치게 할지, 아예 스레드에서 빼고 터미널에만 남길지. 후자면 스레드가 더 조용해지지만 “왜 이렇게 정해졌나”의 근거가 사라진다.</span></div>
+      <div class="ask"><b>“도는 중”과 교착의 근거</b><span>러너 생존을 무엇으로 판정할지(<code>inbox.poll</code> 연결? 마지막 발화?), 사슬이 아무 데도 안 닿는 것을 언제 교착으로 부를지. 이게 없으면 상태 5단이 거짓말을 한다.</span></div>
+      <div class="ask"><b>UI 언어와 정본 테마</b><span>영어 기본 + 한국어 번역인가, 한국어 단일인가 · 라이트 기준인가. 문자열과 토큰을 한 번에 정리하려면 먼저 정해져야 한다.</span></div>
+    </div>
+
+    <footer>
+      murmur · packages/desktop · 실행 중인 앱 직접 탐색 + 저장소 코드 확인 · 2026년 9월
+    </footer>
+  </div>
+</section>
+</body>
+</html>
