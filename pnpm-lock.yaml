@@ -40,10 +40,17 @@ importers:
         version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.23.13)(yaml@2.9.0)
 
   packages/daemon:
+    dependencies:
+      '@murmur/shared':
+        specifier: workspace:*
+        version: link:../shared
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.1
+      tsx:
+        specifier: ^4.19.0
+        version: 4.23.13
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
