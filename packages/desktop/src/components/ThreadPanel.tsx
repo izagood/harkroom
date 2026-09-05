@@ -4,6 +4,8 @@ import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
 import { ProgressRow } from './ProgressRow';
 import { groupProgress } from '../lib/progressGroup';
+import { AgentExchange } from './AgentExchange';
+import { groupAgentExchanges } from '../lib/agentExchange';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
 import type { SectionId } from './settings/sections';
@@ -13,7 +15,9 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
   onOpenDirectory?: (accountId: string | null) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 } = {}) {
-  const { activeChannelId, threadRootId, messages } = useActiveStore();
+  const { activeChannelId, threadRootId, messages, accounts } = useActiveStore();
+  /** 채널과 같은 판정을 쓴다 — 모르는 계정은 에이전트로 치지 않는다(`lib/agentExchange`). */
+  const isAgent = (id: string): boolean => accounts[id]?.kind === 'agent';
   const [alsoInChannel, setAlsoInChannel] = useState(false);
 
   const thread = useMemo(() => {
@@ -36,19 +40,30 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
       </header>
       <div className="flex-1 overflow-y-auto py-2">
         {/* 채널과 **같은 함수**로 접는다 — 두 곳이 다른 판정을 쓰면 같은 대화가 자리마다
-            다르게 보인다(`lib/progressGroup`). */}
-        {groupProgress(thread).map((slot) => (
+            다르게 보인다(`lib/progressGroup`·`lib/agentExchange`). 순서도 채널과 같아야 한다:
+            진행을 먼저 접고 그 위에 주고받기를 접는다. */}
+        {groupAgentExchanges(groupProgress(thread), isAgent).map((slot) => (
           slot.kind === 'progress'
             ? <ProgressRow key={slot.messages[0]!.id} messages={slot.messages} />
-            : (
-              <MessageItem
-                key={slot.message.id}
-                message={slot.message}
-                inThread
-                onOpenDirectory={onOpenDirectory}
-                onOpenSettings={onOpenSettings}
-              />
-            )
+            : slot.kind === 'exchange'
+              ? (
+                <AgentExchange
+                  key={slot.messages[0]!.id}
+                  messages={slot.messages}
+                  inThread
+                  onOpenDirectory={onOpenDirectory}
+                  onOpenSettings={onOpenSettings}
+                />
+              )
+              : (
+                <MessageItem
+                  key={slot.message.id}
+                  message={slot.message}
+                  inThread
+                  onOpenDirectory={onOpenDirectory}
+                  onOpenSettings={onOpenSettings}
+                />
+              )
         ))}
       </div>
       <TypingLine />
