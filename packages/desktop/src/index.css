@@ -48,9 +48,24 @@
   --app-fg: #18181b;              /* 본문 글자 */
   --app-fg-muted: #52525b;        /* 보조 글자 — 시각·타임스탬프·설명 */
   --app-fg-subtle: #71717a;       /* 더 약한 글자 — 라벨·플레이스홀더 */
-  --app-accent: #4f46e5;          /* 강조 — 주요 버튼·선택된 항목 */
-  --app-accent-hover: #4338ca;    /* 강조로 채운 면의 hover */
-  --app-accent-surface: #eef2ff;  /* 강조의 옅은 면 — 선택 배경·안내 상자 */
+  /*
+    강조 — 로고의 주황이다(디자인 문서의 `--accent`). 로고에만 있고 화면에는 없던 색을
+    화면의 유일한 강조로 올린다. 뜻은 하나로 좁힌다: **`→ 나` 로 온 막는 말**(되물음·선택·실패).
+
+    **면과 글자의 값이 다르다.** 브랜드 주황 `#E8613C` 는 흰 글자와 3.38:1 로 AA(4.5)에
+    못 미친다 — 채운 버튼에 그대로 쓰면 라벨이 읽히지 않는다(옛 인디고는 6.29 였다).
+    그래서 채우는 면은 한 단계 어두운 `#C4491F`(4.86)를 쓰고, 밝은 브랜드 주황은 따로
+    `--app-accent-brand` 에 남긴다. 문서의 `--accent-2` 축이 이 자리다.
+  */
+  --app-accent: #c4491f;          /* 강조로 채운 면 — 흰 글자와 4.86:1 */
+  --app-accent-hover: #a83d1a;    /* 그 면의 hover — 한 단계 더 어둡게 */
+  --app-accent-surface: #fdefe9;  /* 강조의 옅은 면 — 선택 배경·안내 상자 */
+  /*
+    브랜드 주황 그 자체. 글자를 얹지 않는 자리에만 쓴다 — 선(`border-accent-brand`),
+    상태 점, 로고. **글자·채운 버튼에는 쓰지 않는다**(위 대비 이유). 아직 쓰는 자리가
+    없고, 이 어휘를 처음 쓰는 것은 상태 점이 될 것이다.
+  */
+  --app-accent-brand: #e8613c;
   --app-danger: #dc2626;          /* 위험 — 삭제 버튼의 면, 오류 글자 */
   --app-danger-hover: #b91c1c;    /* 위험으로 채운 면의 hover */
   --app-danger-surface: #fef2f2;  /* 오류 상자의 면 */
@@ -67,6 +82,30 @@
     위에 얹혀 읽히지 않는다. 이름에 `accent` 를 넣지 않는 이유는 위험 버튼도 쓰기 때문이다.
   */
   --app-fg-on-strong: #ffffff;
+
+  /*
+    수신자 — 에이전트끼리 오간 말(디자인 문서의 `--slate` 축). **강조와 경쟁하지 않는 것이
+    이 토큰의 일**이다. 규칙 04: 에이전트끼리의 선택도 진행을 막지만 나를 막지는 않으므로
+    강조가 아니라 무채색으로 간다. 채도를 낮춘 청록을 쓰는 이유는 회색으로 두면 '비활성'으로
+    읽히기 때문이다 — 꺼진 것이 아니라 **남의 일**이다.
+  */
+  --app-fg-agent: #4e5a56;          /* 에이전트끼리의 말의 글자·라벨 */
+  --app-surface-agent: #f2f5f4;     /* 그 말이 앉는 아주 옅은 면 */
+  --app-border-agent: #d3dbd8;      /* 그 말의 선 — 접힌 줄의 테두리 */
+
+  /*
+    상태 5단(규칙 03·04). **`turn` 은 강조와 같은 값을 가리키되 이름을 따로 둔다** —
+    뜻이 둘이면 이름도 둘이어야 나중에 갈라놓을 수 있다. 지금은 같은 색이지만 "내 차례"와
+    "주요 버튼"이 영원히 같은 색이어야 할 이유는 없다.
+
+    `stuck`(교착·실패)은 danger 와 같은 축이다 — 사슬이 아무 데도 닿지 않으면 사람만이
+    풀 수 있고, 그것은 실패와 같은 대접을 받는다.
+  */
+  --app-state-turn: var(--app-accent);  /* 내 차례 — 화면에서 유일하게 강조받는 상태 */
+  --app-state-running: #4e5a56;         /* 도는 중 — 답이 필요 없는 구간 */
+  --app-state-waiting: #93908a;         /* 남을 기다림 — 사슬의 중간 */
+  --app-state-done: #5e8a6e;            /* 끝남 */
+  --app-state-stuck: var(--app-danger); /* 교착·실패 — 사람만이 푼다 */
 }
 
 /*
@@ -84,9 +123,14 @@
   --app-fg: #f4f4f5;
   --app-fg-muted: #a1a1aa;
   --app-fg-subtle: #71717a;
-  --app-accent: #6366f1;
-  --app-accent-hover: #4f46e5;
-  --app-accent-surface: #312e81;
+  /* 다크는 반대다 — 밝은 주황이 어두운 바닥에서 잘 읽힌다(#ff7b54 on #18181b = 6.93). */
+  --app-accent: #ff7b54;
+  --app-accent-hover: #ff9e7f;
+  --app-accent-surface: #3a2119;
+  --app-accent-brand: #ff7b54;
+  --app-fg-agent: #8fa39d;
+  --app-surface-agent: #1f2422;
+  --app-border-agent: #333c39;
   --app-danger: #dc2626;
   --app-danger-hover: #b91c1c;
   --app-danger-surface: #450a0a;
@@ -98,6 +142,12 @@
   --app-warning-border: #78350f;
   --app-success: #4ade80;
   --app-fg-on-strong: #ffffff;
+  /* 상태 5단 — 라이트의 짝. `turn`·`stuck` 은 위 정의를 가리키므로 그 아래 둔다. */
+  --app-state-turn: var(--app-accent);
+  --app-state-running: #8fa39d;
+  --app-state-waiting: #71717a;
+  --app-state-done: #6ea882;
+  --app-state-stuck: var(--app-danger);
 }
 
 @theme {
@@ -124,6 +174,15 @@
   --color-warning-border: var(--app-warning-border);
   --color-success: var(--app-success);
   --color-fg-on-strong: var(--app-fg-on-strong);
+  --color-accent-brand: var(--app-accent-brand);
+  --color-fg-agent: var(--app-fg-agent);
+  --color-surface-agent: var(--app-surface-agent);
+  --color-border-agent: var(--app-border-agent);
+  --color-state-turn: var(--app-state-turn);
+  --color-state-running: var(--app-state-running);
+  --color-state-waiting: var(--app-state-waiting);
+  --color-state-done: var(--app-state-done);
+  --color-state-stuck: var(--app-state-stuck);
 }
 
 /*
