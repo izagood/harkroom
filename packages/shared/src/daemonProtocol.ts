@@ -404,6 +404,27 @@ export interface RunnerInfo {
   pid: number;
   incarnationId: IncarnationId;
   startedAtMs: number;
+  /**
+   * **관측이지 판단이 아니다** — daemon 이 `kill(pid, 0)` 으로 **직접 확인한** 생사다.
+   *
+   * 서버는 러너가 말을 걸어올 때만 그 존재를 안다. 그래서 지금 화면은 정직하게
+   * "실제로 종료했는지는 murmur 가 알 수 없다"고 적어 둔다
+   * (`AgentsSettings.tsx`, `#428`). **daemon 은 자기가 spawn 했으므로 알 수 있고**,
+   * 이 필드가 그 사실이 화면까지 흐르는 통로다(`#443`).
+   *
+   * 이 필드를 두는 것은 daemon 에게 판단을 시키는 것이 **아니다.** daemon 은
+   * "정리해야 한다"고 말하지 않는다 — "이렇게 되어 있다"만 말하고, 무엇을 할지는
+   * 사람이 정한다(`#431` D5: 소유는 프로세스 수준, 판단은 사람의 몫).
+   */
+  alive: boolean;
+  /**
+   * 종료를 요청한 시각(SIGTERM 을 보낸 때). 요청한 적이 없으면 `null`.
+   *
+   * `alive` 와 함께 보면 **"보낸 지 N초 지났는데 아직 살아 있다"** 를 사람이 읽을 수 있다.
+   * daemon 이 그 N 을 보고 SIGKILL 로 승격하지는 **않는다** — 러너만이 자기 턴이 끝났는지
+   * 알고, daemon 은 모르니까 기다린다(`#431`, 회수와 종료의 구분).
+   */
+  termSentAtMs: number | null;
 }
 
 export interface ListRunnersResult {
