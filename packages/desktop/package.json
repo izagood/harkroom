@@ -9,7 +9,8 @@
     "build:sidecar": "node scripts/build-sidecars.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p .",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "sign": "node scripts/sign-app.mjs"
   },
   "dependencies": {
     "@murmur/shared": "workspace:*",
