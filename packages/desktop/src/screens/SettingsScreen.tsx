@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AgentsSettings } from '../components/settings/AgentsSettings';
 import { AgentDefaultsSettings } from '../components/settings/AgentDefaultsSettings';
+import { GallerySettings } from '../components/settings/GallerySettings';
 import { AppearanceSettings } from '../components/settings/AppearanceSettings';
 import { CommunitySettings } from '../components/settings/CommunitySettings';
 import { ConnectionSettings } from '../components/settings/ConnectionSettings';
@@ -84,6 +85,7 @@ export function SettingsScreen({ initialSection = 'profile', targetId, onBack, o
           {section === 'invite' && <InviteSettings />}
           {section === 'updates' && <UpdatesSettings />}
           {section === 'skills' && <SkillsSettings targetId={targetId} />}
+          {section === 'gallery' && <GallerySettings />}
         </main>
       </div>
     </div>
