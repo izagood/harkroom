@@ -94,6 +94,77 @@ fn sidecar_path() -> Result<std::path::PathBuf, String> {
     Ok(dir.join(name))
 }
 
+/// `node-pty` 로더(`lib/utils.js::loadNativeModule`)는 **사이드카 파일 기준 상대 경로**로
+/// `node_modules/node-pty/prebuilds/<platform>-<arch>` 를 찾는다(`build-runner-sidecar.mjs`
+/// 상단 주석 — 그 로더를 재구현하지 않는 것이 설계다). 그런데 Tauri 는 `externalBin` 하나만
+/// 사이드카 자리(macOS 배포에서는 `Contents/MacOS/`)로 복사하고, `bundle.resources` 는
+/// **다른 자리**(macOS 배포에서는 `Contents/Resources/`, `PathResolver::resource_dir()` 문서
+/// 참고)로 간다 — 개발 빌드(`target/debug/`)에서만 두 자리가 우연히 같다(`resource_dir()` 가
+/// "cargo output directory" 를 감지하면 `exe_dir` 을 그대로 돌려주기 때문, `tauri-utils`
+/// `platform::resource_dir_from` 참고). 그래서 **자리가 다른 배포 번들에서는 이 함수가
+/// resource 쪽 `node_modules` 를 사이드카 옆으로 심볼릭 링크한다** — 파일을 복사하지 않는
+/// 이유는 앱이 뜰 때마다 무거운 네이티브 addon 을 다시 복사하지 않기 위해서다(링크 생성은
+/// 한 번만 필요하고, 이미 있으면 아무 일도 하지 않는다).
+///
+/// 개발 빌드에서는 두 경로가 이미 같아 `node_modules` 가 사이드카 옆에 그대로 있으므로
+/// (`build:sidecar` 가 거기 둔다) 이 함수는 아무 것도 하지 않고 조용히 돌아온다.
+fn ensure_node_pty_alongside_sidecar(
+    app: &tauri::AppHandle,
+    sidecar_dir: &std::path::Path,
+) -> Result<(), String> {
+    use tauri::Manager;
+
+    let dest = sidecar_dir.join("node_modules");
+    if dest.exists() {
+        // 개발 빌드: `build:sidecar` 가 이미 사이드카 옆에 둔 것 — 손대지 않는다.
+        // 또는 이전 실행에서 이미 링크를 만들어 뒀다 — 다시 만들 필요가 없다.
+        return Ok(());
+    }
+
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("리소스 디렉터리를 찾지 못했다: {e}"))?;
+    let src = resource_dir.join("node_modules");
+    if !src.is_dir() {
+        return Err(format!(
+            "`node-pty` 리소스를 찾지 못했다: `{}` — `bundle.resources` 가 \
+             `binaries/node_modules/node-pty` 를 실었는지 확인하라",
+            src.display()
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&src, &dest)
+            .map_err(|e| format!("`node_modules` 심볼릭 링크를 만들지 못했다: {e}"))?;
+    }
+    #[cfg(windows)]
+    {
+        // 관리자 권한 없이는 디렉터리 심볼릭 링크가 실패할 수 있다 — 실제 복사로 물러난다.
+        copy_dir_recursive(&src, &dest)
+            .map_err(|e| format!("`node_modules` 를 복사하지 못했다: {e}"))?;
+    }
+
+    Ok(())
+}
+
+#[cfg(windows)]
+fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let dest_path = dest.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_recursive(&entry.path(), &dest_path)?;
+        } else {
+            std::fs::copy(entry.path(), dest_path)?;
+        }
+    }
+    Ok(())
+}
+
 /// 프로세스 그룹 분리를 건 `Command` 를 만든다. **`runner_spawn` 과 `tests::` 아래 회귀
 /// 테스트가 이 함수 하나를 공유한다** — 실물 커맨드 안에 인라인해 두면 테스트가
 /// `tauri::State`·`AppHandle` 없이는 이 로직을 부를 수 없고, 그러면 "PGID 가 자기 자신인지"
@@ -148,6 +219,7 @@ fn detached_command(program: &std::path::Path) -> std::process::Command {
 /// §5(앱 업데이트와 러너 생존이 무관하다)가 다시 우연이 된다.
 #[tauri::command]
 fn runner_spawn(
+    app: tauri::AppHandle,
     registry: tauri::State<RunnerRegistry>,
     murmur_pat: String,
     murmur_url: String,
@@ -162,6 +234,10 @@ fn runner_spawn(
             program.display()
         ));
     }
+    let sidecar_dir = program
+        .parent()
+        .ok_or_else(|| "사이드카 경로에 부모 디렉터리가 없다".to_string())?;
+    ensure_node_pty_alongside_sidecar(&app, sidecar_dir)?;
 
     let mut cmd = detached_command(&program);
     cmd.env("MURMUR_PAT", murmur_pat)
@@ -316,7 +392,7 @@ mod tests {
     //! 앱 프로세스 그룹 그대로였고, `kill -TERM -<그 그룹>` 한 번에 러너 전부가 죽었다.
     //! `setsid` 가 빠지면 이 테스트가 그 회귀를 그대로 재현한다 — "되돌려 RED" 절차가
     //! 확인하는 것이 정확히 이것이다.
-    use super::detached_command;
+    use super::{detached_command, RUNNER_SIDECAR_NAME};
     use std::process::Stdio;
     use std::{thread, time::Duration};
 
@@ -364,5 +440,81 @@ mod tests {
 
         let _ = child.kill();
         let _ = child.wait();
+    }
+
+    // -----------------------------------------------------------------------
+    // `#433` 회귀선 — **실행 위치**에서 `node-pty` 가 해석되는지를 잰다.
+    //
+    // `#431` 1단계가 이 결함을 놓친 이유가 "빌드 위치(`src-tauri/binaries/`)에서만
+    // 확인했다"이기 때문이다(이슈 본문 "왜 테스트가 못 잡았나" 참고). 그래서 이 테스트는
+    // **앱이 실제로 사이드카를 찾는 그 자리** — `cargo build`/`cargo test` 가 공유하는
+    // `target/<profile>/`(`sidecar_path()`가 `current_exe()`의 부모로 계산하는 것과 같은
+    // 디렉터리) — 에서 사이드카를 직접 spawn 해 `node-pty` 로딩이 성공하는지 확인한다.
+    // -----------------------------------------------------------------------
+
+    /// `cargo test` 가 만드는 테스트 바이너리는 `target/<profile>/deps/` 에 있어 그 부모를
+    /// 그대로 쓸 수 없다 — 대신 `CARGO_MANIFEST_DIR`(이 크레이트 루트) 기준으로 `target/`
+    /// 다음에 프로파일 이름을 붙인다. `cargo test`/`cargo build` 는 기본적으로 `debug`
+    /// 프로파일을 쓰고, 이 회귀선이 재려는 자리도 정확히 그 프로파일의 `target/debug/`다
+    /// (실물 확인 절차의 `target/debug/murmur-runner` 와 같은 자리).
+    fn target_debug_dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("debug")
+    }
+
+    #[test]
+    fn 사이드카_실행_위치에서_node_pty_가_해석된다() {
+        let dir = target_debug_dir();
+        let program = dir.join(RUNNER_SIDECAR_NAME);
+
+        // `build:sidecar` + `cargo build` 를 아직 안 돌렸으면 이 자리에 사이드카가 없다 —
+        // 이 테스트가 재려는 것은 "배치가 맞으면 통과"이지 "빌드를 대신 해준다"가 아니므로,
+        // 그 경우는 실패 대신 사람이 알아볼 수 있는 이유로 건너뛴다(CI 는 `build:sidecar` 를
+        // cargo 전에 반드시 돌리므로 정상 경로에서는 항상 존재한다).
+        if !program.is_file() {
+            eprintln!(
+                "건너뜀: 사이드카가 `{}` 에 없다 — 먼저 `pnpm --filter @murmur/desktop build:sidecar` \
+                 와 `cargo build` 를 돌려라",
+                program.display()
+            );
+            return;
+        }
+
+        // **되돌려 RED 로 확인한 배치 계약**: `node_modules` 가 사이드카와 같은 디렉터리에
+        // 없으면(`bundle.resources` 설정이 빠졌거나 `ensure_node_pty_alongside_sidecar` 가
+        // 깨졌으면) 아래 spawn 이 `ERR_MODULE_NOT_FOUND` 로 죽는다 — 이 assert 가 그 결함을
+        // "빌드 위치"가 아니라 "실행 위치"에서 그대로 재현한다.
+        assert!(
+            dir.join("node_modules").join("node-pty").is_dir(),
+            "`{}` 옆에 `node_modules/node-pty` 가 없다 — `tauri.conf.json` 의 \
+             `bundle.resources` 가 사이드카와 같은 자리로 배치되는지 확인하라",
+            program.display()
+        );
+
+        let child = std::process::Command::new(&program)
+            .env("MURMUR_PAT", "test-fake-pat")
+            // 접속하지 않는 포트 — node-pty 로딩 이후 단계(서버 접속)에서 무엇이 나든
+            // 이 테스트가 관심 있는 것은 그 전 단계(모듈 해석)뿐이다.
+            .env("MURMUR_URL", "http://127.0.0.1:1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("사이드카를 못 띄웠다");
+
+        let output = child
+            .wait_with_output()
+            .expect("사이드카 종료를 기다리지 못했다");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            !stderr.contains("ERR_MODULE_NOT_FOUND"),
+            "사이드카가 실행 위치(`{}`)에서 `node-pty` 를 못 찾았다 — Tauri 는 \
+             `externalBin` 파일 하나만 복사하고 옆의 `node_modules` 는 안 가져간다(#433). \
+             stderr:\n{}",
+            program.display(),
+            stderr,
+        );
     }
 }

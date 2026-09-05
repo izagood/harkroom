@@ -146,7 +146,11 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
     const match = mainRs.match(/fn runner_spawn\(([\s\S]*?)\)\s*->/);
     expect(match).not.toBeNull();
     const params = splitParams(match![1]!)
-      .filter((p) => !p.startsWith('registry:')); // Tauri State — 웹뷰의 입력이 아니다.
+      // `registry`(Tauri State)·`app`(Tauri AppHandle) 은 프레임워크가 채우는 값이지
+      // 웹뷰의 입력이 아니다(`#433` — `AppHandle` 은 `node-pty` 리소스 디렉터리를 찾는
+      // `ensure_node_pty_alongside_sidecar` 에 쓰인다. 아래 "webviewParams" 스위트가 같은
+      // 구분을 이미 쓰고 있다).
+      .filter((p) => !p.startsWith('registry:') && !p.startsWith('app:'));
     expect(params.sort()).toEqual([
       'murmur_pat: String',
       'murmur_url: String',
@@ -189,9 +193,15 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
    * 하나"라는 성질은 그대로다 — 새 자리가 생기면 이 스위트가 멈춘다.
    */
   describe('프로세스를 띄우는 자리가 정확히 하나다 — 옆문이 새로 나지 않는다', () => {
-    /** 파일 전체에서 `Command::new(...)` 이 나오는 자리와, 그 앞의 함수 이름. */
-    const processSpawns = [...mainRs.matchAll(/Command::new\((.*?)\)/g)].map((m) => {
-      const before = mainRs.slice(0, m.index!);
+    // `mod tests` 블록(`#[cfg(all(test, unix))]`)은 회귀 테스트 코드다 — `#433` 회귀선이
+    // 사이드카를 **실행 위치**에서 실제로 spawn 해 `node-pty` 로딩을 검증하려고 그 안에서
+    // `Command::new(&program)` 을 부르는데, 그것은 프로덕션 spawn 자리가 아니라 이 스위트가
+    // 지키려는 "옆문"과 무관하다. 그래서 프로덕션 소스만(그 블록 앞까지만) 훑는다.
+    const productionRs = mainRs.slice(0, mainRs.indexOf('#[cfg(all(test, unix))]'));
+
+    /** 프로덕션 소스에서 `Command::new(...)` 이 나오는 자리와, 그 앞의 함수 이름. */
+    const processSpawns = [...productionRs.matchAll(/Command::new\((.*?)\)/g)].map((m) => {
+      const before = productionRs.slice(0, m.index!);
       const fnName = [...before.matchAll(/fn\s+([A-Za-z0-9_]+)\s*\(/g)].pop()?.[1] ?? '<없음>';
       return { program: m[1]!.trim(), fn: fnName };
     });
