@@ -167,3 +167,33 @@ describe('WaitChainLine — 화면', () => {
     expect(screen.getByText(/응답이 없다/)).toBeTruthy();
   });
 });
+
+/**
+ * 조사 — 화면에 `forge 가 사람 의 답을 기다린다` 처럼 나오던 것을 고친 회귀선(실측).
+ * 이름 자리에 보통명사('사람')를 끼워 넣으면 조사가 어긋난다.
+ */
+describe('WaitChainLine — 한국어 조사', () => {
+  beforeEach(() => {
+    useAppStore.getState().reset();
+    useAppStore.getState().set({
+      accounts: {
+        [ME]: acc(ME, 'jaebin'),
+        [FORGE]: acc(FORGE, 'forge', 'agent'),
+        [CODEX]: acc(CODEX, 'codex', 'agent'),
+        'a-han': acc('a-han', '민수', 'agent'),
+      },
+    });
+  });
+
+  it("'사람 아무나'를 기다릴 때 조사가 어긋나지 않는다", () => {
+    render(<WaitChainLine chain={chain([ask('a1', 1, FORGE, null)])} />);
+    expect(screen.getByTestId('wait-chain').textContent).toContain('forge 가 사람의 답을 기다린다');
+  });
+
+  it('받침 있는 이름은 이, 없는 이름은 가', () => {
+    cleanup();
+    render(<WaitChainLine chain={chain([ask('a1', 1, 'a-han', CODEX)])} />);
+    // '민수' 는 받침이 없다 → 가.
+    expect(screen.getByTestId('wait-chain').textContent).toContain('민수가 codex의 답을');
+  });
+});
