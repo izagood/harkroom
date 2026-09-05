@@ -10,8 +10,16 @@
  * - **판단하지 않는다.** `listRunners` 는 관측을 그대로 준다. "정리해야 한다"고 말하지
  *   않는다(`#431`: daemon 은 판단하지 않는다, 관측을 노출한다)
  * - **세션을 모른다.** `sessions.json` 도 `SessionStore` 도 이 파일에 없다(D5)
- * - **고아를 재발견하지 않는다**(`adoptRunner` 는 2-c) · **스스로 물러나지 않는다**
- *   (`shutdownIfIdle` 은 2-d). 둘 다 `parseRequest` 가 `unknown-request` 로 거절한다
+ * - **스스로 물러나지 않는다**(`shutdownIfIdle` 은 2-d). `parseRequest` 가
+ *   `unknown-request` 로 거절한다
+ *
+ * ## 2-c 가 더한 것 — `adoptRunner`
+ *
+ * **클라이언트가 pid 를 못 넘긴다.** 그 요청에는 payload 자체가 없다. 넘길 수 있게 하면
+ * 소켓에 붙은 누구든 임의의 pid 를 daemon 의 표에 올릴 수 있고, 표에 오른 pid 는
+ * `killRunner` 의 대상이다 — 즉 임의의 프로세스를 죽이는 표면이 된다(`#250` 의 경계,
+ * `RunOptions.runnerCommand` 가 클라이언트에게 안 열린 것과 같은 이유).
+ * 후보의 출처는 언제나 daemon 자신의 장부다.
  */
 import { createServer, type Server, type Socket } from 'node:net';
 
@@ -24,6 +32,7 @@ import {
   makeResponse,
   NdjsonDecoder,
   parseRequest,
+  type AdoptRunnerResult,
   type DaemonError,
   type DaemonIdentity,
   type DaemonRequest,
@@ -47,6 +56,16 @@ export interface DaemonServerDeps {
   token: string;
   identity: DaemonIdentity;
   registry: RunnerRegistry;
+  /**
+   * 고아 재발견을 실제로 수행하는 자리(`#431` 2-c). **서버는 장부를 모른다** —
+   * 장부 경로를 알면 이 파일이 `appDataDir` 를 들고 다니게 되고, 그러면
+   * "소켓 위의 말"만 다룬다는 이 모듈의 경계가 흐려진다.
+   *
+   * 없으면 `adoptRunner` 는 **아무것도 채택하지 않았다**고 정직하게 답한다 — 요청을
+   * 모른다고 하지 않는다. 프로토콜이 아는 요청인데 이 daemon 이 못 하는 것이므로,
+   * `unknown-request` 로 답하면 앱이 "프로토콜 버전이 갈렸나"를 의심하게 된다.
+   */
+  adoptOrphans?: () => Promise<AdoptRunnerResult>;
   /** 로그 한 줄. 기본은 stdout — 앱이 사이드카 파이프로 그대로 본다. */
   log?: (line: string) => void;
 }
@@ -167,7 +186,10 @@ export class DaemonServer {
         this.handleHello(conn, line.value);
         continue;
       }
-      this.handleRequest(conn, line.value);
+      // **응답을 기다리지 않고 다음 줄로 간다.** NDJSON 응답에는 요청 `id` 가 실려
+      // 있으므로 순서가 계약이 아니고(`Pending` 이 id 로 짝짓는다), 여기서 await 하면
+      // `adoptRunner` 하나가 `ps` 를 부르는 동안 같은 청크의 뒤 요청들이 전부 막힌다.
+      void this.handleRequest(conn, line.value);
     }
   }
 
@@ -189,7 +211,7 @@ export class DaemonServer {
     conn.socket.write(encodeLine({ type: 'hello', ok: true, daemon: this.deps.identity }));
   }
 
-  private handleRequest(conn: Connection, value: unknown): void {
+  private async handleRequest(conn: Connection, value: unknown): Promise<void> {
     const parsed = parseRequest(value);
     if (!isRequest(parsed)) {
       // id 를 못 읽었을 수도 있으므로 응답의 id 는 값에서 최선으로 건진다.
@@ -197,7 +219,7 @@ export class DaemonServer {
       return;
     }
     try {
-      const payload = this.dispatch(parsed);
+      const payload = await this.dispatch(parsed);
       if (isDaemonError(payload)) {
         conn.socket.write(encodeLine(makeErrorResponse(parsed.id, payload)));
         return;
@@ -212,23 +234,54 @@ export class DaemonServer {
     }
   }
 
-  private dispatch(req: DaemonRequest): unknown | DaemonError {
+  private async dispatch(req: DaemonRequest): Promise<unknown | DaemonError> {
     switch (req.type) {
       case 'ping': {
         const result: PingResult = { nowMs: Date.now() };
         return result;
       }
+      case 'adoptRunner': {
+        // **payload 를 안 읽는다** — 읽을 것이 없다(모듈 주석의 경계).
+        const adopt = this.deps.adoptOrphans;
+        if (!adopt) {
+          const empty: AdoptRunnerResult = {
+            adopted: [],
+            rejected: ['이 daemon 에는 장부가 배선되지 않았다 — 채택할 후보가 없다'],
+          };
+          return empty;
+        }
+        const result = await adopt();
+        this.log(
+          `고아 재발견: 채택 ${result.adopted.length}건, 안 함 ${result.rejected.length}건`,
+        );
+        for (const line of result.rejected) this.log(`  ${line}`);
+        return result;
+      }
       case 'spawnRunner': {
         const params = readSpawnParams(req.payload);
         if (isDaemonError(params)) return params;
-        const record = this.deps.registry.spawnRunner(params.agentId, params.env);
+        // 표에 이미 있었는지를 **부르기 전에** 본다 — `spawnRunner` 는 그 경우 같은
+        // 레코드를 그대로 돌려주므로, 부른 뒤에는 두 경우가 구분되지 않는다.
+        const before = this.deps.registry.currentIncarnation(params.agentId);
+        const record = await this.deps.registry.spawnRunner(params.agentId, params.env);
+        const started = before === record.incarnationId ? null : record.pid;
         const result: SpawnRunnerResult = {
           agentId: record.agentId,
           pid: record.pid,
           incarnationId: record.incarnationId,
         };
         // **env 를 로그에 적지 않는다** — PAT 가 거기 실린다(`SpawnRunnerParams` 주석).
-        this.log(`러너 spawn: agent=${record.agentId} pid=${record.pid}`);
+        //
+        // **"띄웠다"와 "이미 있어서 그것을 돌려줬다"를 가른다**(`#456` ②). 실물 검증
+        // (2026-09-06)에서 채택한 러너를 그대로 돌려준 자리에 `러너 spawn` 이 찍혀,
+        // 로그만 보면 프로세스가 하나 더 뜬 것처럼 읽혔다 — 정확히 이 이슈가 없애려는
+        // 오독(`#430`: 화면이 아는 것보다 많이 말한다)을 로그가 다시 만드는 셈이다.
+        this.log(
+          started === record.pid
+            ? `러너 spawn: agent=${record.agentId} pid=${record.pid}`
+            : `러너가 이미 있다 — 새로 안 띄운다: agent=${record.agentId} pid=${record.pid}` +
+              `${record.adopted ? ' (채택한 러너다)' : ''}`,
+        );
         return result;
       }
       case 'killRunner': {

@@ -42,7 +42,7 @@ describe('spawnRunner — 프로세스 그룹 분리 (#431 D2)', () => {
    */
   it('spawn 한 러너는 자기 프로세스 그룹을 갖는다 (pgid === pid)', async () => {
     const registry = new RunnerRegistry(SLEEPER, nodeRunnerHost);
-    const record = registry.spawnRunner('a1', { PATH: process.env.PATH ?? '' });
+    const record = await registry.spawnRunner('a1', { PATH: process.env.PATH ?? '' });
     정리할pid.push(record.pid);
 
     expect(pgidOf(record.pid)).toBe(record.pid);
@@ -59,7 +59,7 @@ describe('spawnRunner — 프로세스 그룹 분리 (#431 D2)', () => {
    */
   it('alive 가 실제 생사를 반영한다 — 죽은 pid 에 false', async () => {
     const registry = new RunnerRegistry(SLEEPER, nodeRunnerHost);
-    const record = registry.spawnRunner('a1', { PATH: process.env.PATH ?? '' });
+    const record = await registry.spawnRunner('a1', { PATH: process.env.PATH ?? '' });
     정리할pid.push(record.pid);
 
     expect(registry.listRunners()[0]?.alive).toBe(true);
@@ -75,18 +75,20 @@ describe('spawnRunner — 프로세스 그룹 분리 (#431 D2)', () => {
       spawn: () => ({ pid: record.pid, on: () => undefined }) as never,
       kill: nodeRunnerHost.kill,
       now: () => 0,
+      // 회귀선은 pid 재사용을 안 잰다 — 그것은 `adopt.test.ts` 의 몫이다.
+      bootTimeSec: () => Promise.resolve(null),
     };
     const 정지표 = new RunnerRegistry(SLEEPER, 죽은호스트);
-    정지표.spawnRunner('a1', {});
+    await 정지표.spawnRunner('a1', {});
     expect(정지표.listRunners()[0]?.alive).toBe(false);
   });
 
   /** 같은 에이전트에 살아 있는 러너가 있으면 **새로 띄우지 않는다**(중복 러너 금지). */
-  it('살아 있는 러너가 있으면 같은 에이전트에 새로 띄우지 않는다', () => {
+  it('살아 있는 러너가 있으면 같은 에이전트에 새로 띄우지 않는다', async () => {
     const registry = new RunnerRegistry(SLEEPER, nodeRunnerHost);
-    const first = registry.spawnRunner('a1', { PATH: process.env.PATH ?? '' });
+    const first = await registry.spawnRunner('a1', { PATH: process.env.PATH ?? '' });
     정리할pid.push(first.pid);
-    const second = registry.spawnRunner('a1', { PATH: process.env.PATH ?? '' });
+    const second = await registry.spawnRunner('a1', { PATH: process.env.PATH ?? '' });
 
     expect(second.pid).toBe(first.pid);
     expect(second.incarnationId).toBe(first.incarnationId);
@@ -105,7 +107,7 @@ describe('runnerExit — 세대가 다른 exit (#431, #419)', () => {
    * 되돌려 RED: `runners.ts` 의 exit 핸들러에서
    * `if (this.byAgent.get(agentId) === record)` 조건을 빼면 빨개진다.
    */
-  it('늦게 도착한 옛 세대의 exit 이 새 세대를 표에서 지우지 않는다', () => {
+  it('늦게 도착한 옛 세대의 exit 이 새 세대를 표에서 지우지 않는다', async () => {
     const 핸들러: ((code: number | null, signal: NodeJS.Signals | null) => void)[] = [];
     let 다음pid = 100;
     const 죽인다: number[] = [];
@@ -121,13 +123,15 @@ describe('runnerExit — 세대가 다른 exit (#431, #419)', () => {
       },
       kill: (pid) => !죽인다.includes(pid),
       now: () => 0,
+      // 회귀선은 pid 재사용을 안 잰다 — 그것은 `adopt.test.ts` 의 몫이다.
+      bootTimeSec: () => Promise.resolve(null),
     };
     const 통지: { agentId: string; incarnationId: string }[] = [];
     const registry = new RunnerRegistry(SLEEPER, host, (n) => 통지.push(n));
 
-    const 옛세대 = registry.spawnRunner('a1', {});
+    const 옛세대 = await registry.spawnRunner('a1', {});
     죽인다.push(옛세대.pid); // 이제 죽은 것으로 보인다 — 새 spawn 이 허용된다.
-    const 새세대 = registry.spawnRunner('a1', {});
+    const 새세대 = await registry.spawnRunner('a1', {});
     expect(새세대.incarnationId).not.toBe(옛세대.incarnationId);
 
     // **이제** 옛 세대의 exit 이 도착한다.
@@ -151,7 +155,7 @@ describe('runnerExit — 세대가 다른 exit (#431, #419)', () => {
       nodeRunnerHost,
       (n) => 통지.push(n),
     );
-    const record = registry.spawnRunner('a1', {});
+    const record = await registry.spawnRunner('a1', {});
     정리할pid.push(record.pid);
 
     await 조건까지(() => 통지.length > 0);

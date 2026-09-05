@@ -84,6 +84,12 @@ function deps(bind: (p: string) => Promise<Server | void>) {
 /** 실제 unix 소켓을 임시 이름에 bind 하는 기본 주입. */
 const realBind = async (p: string): Promise<Server> => await listenAt(p);
 
+/** `trace` 를 모으는 주입. 판정이 로그에 남는지를 재는 자리다(`#456` ②). */
+function tracingDeps(bind: (p: string) => Promise<Server | void>) {
+  const lines: string[] = [];
+  return { deps: { ...deps(bind), trace: (l: string) => lines.push(l) }, lines };
+}
+
 describe('daemonEndpointPaths — 프로토콜 버전이 파일명에 박힌다', () => {
   // 세대 격리가 파일명에서 나온다. 프로토콜이 다르면 신·구 daemon 이 서로의 파일을
   // **아예 보지 못한다** — EEXIST 도 안 나고 잔해 회수 대상도 안 된다.
@@ -422,6 +428,98 @@ describe('회귀선 5 — `rename` 이 아니라 `link` 를 쓴다', () => {
       },
     });
     expect(out.kind).toBe('claimed');
+  });
+});
+
+/**
+ * `#456` ② — **판정 과정이 로그에 남는다.**
+ *
+ * 실측(2026-09-06): 잔해가 남은 상태에서 daemon 을 띄워 **강탈에 성공했는데** 로그에
+ * 그 사실이 없었다. 성공이 안 남으면 실패는 더더욱 안 남는다.
+ *
+ * `ClaimOutcome` 만으로는 부족하다는 것이 요점이다 — 같은 `claimed` 여도 "빈 이름을
+ * 그냥 잡았다"와 "죽은 daemon 의 잔해를 강탈했다"는 전혀 다른 사건이고, 뒤의 것은
+ * 3중 증거를 거치는 미묘한 판정이라 사람이 검증할 수 있어야 한다.
+ */
+describe('회귀선 — 엔드포인트 판정이 로그에 남는다 (#456 ②)', () => {
+  it('빈 이름을 잡으면 획득 사실을 pid·nonce 와 함께 남긴다', async () => {
+    const dir = await tempDir();
+    const { deps: d, lines } = tracingDeps(realBind);
+    const out = await claimDaemonEndpoint(dir, d);
+    expect(out.kind).toBe('claimed');
+    expect(lines.join('\n')).toMatch(/엔드포인트 획득/);
+    expect(lines.join('\n')).toContain(String(process.pid));
+  });
+
+  /**
+   * **이것이 실측이 지적한 자리다.** 잔해를 강탈하면 그 사실과 근거가 남아야 한다.
+   *
+   * 되돌려 RED: `daemonEndpoint.ts` 의 `resolveExistingName` 에서 잔해 회수 직전의
+   * `trace(...)` 를 빼면 빨개진다 — 강탈은 여전히 성공하지만 조용해진다.
+   */
+  it('잔해를 강탈하면 그 사실과 직전 소유자를 남긴다', async () => {
+    const dir = await tempDir();
+    const paths = daemonEndpointPaths(dir);
+    await mkdirp(paths.dir);
+    await killedSocketDebris(paths.socketPath);
+    // 죽은 daemon 의 pid 레코드도 남겨 둔다 — 실측과 같은 모양이다.
+    await writeFile(
+      paths.pidPath,
+      JSON.stringify({
+        pid: 999999, // 존재하지 않는 pid.
+        startedAtMs: 1,
+        entryPath: '/x',
+        appVersion: '0.0.1',
+        launchNonce: 'nonce-죽은놈',
+      }),
+    );
+
+    const { deps: d, lines } = tracingDeps(realBind);
+    const out = await claimDaemonEndpoint(dir, d);
+    expect(out.kind).toBe('claimed');
+
+    const 전문 = lines.join('\n');
+    expect(전문).toMatch(/잔해로 판정해 회수한다/);
+    // **직전 소유자가 누구였는지**가 남아야 사람이 그 판단을 검증할 수 있다.
+    expect(전문).toContain('999999');
+    expect(전문).toContain('nonce-죽은놈');
+    // 근거도 남는다 — 3중 증거를 거쳤다는 사실 자체가 검증 대상이다.
+    expect(전문).toMatch(/근거/);
+  });
+
+  /**
+   * 물러날 때는 **누가 점유 중인지**가 남아야 한다. "물러났다"만 남으면 사람이 어느
+   * 프로세스를 봐야 하는지 모른다.
+   */
+  it('물러날 때 점유 중인 pid 를 남긴다', async () => {
+    const dir = await tempDir();
+    const paths = daemonEndpointPaths(dir);
+    await mkdirp(paths.dir);
+    await listenAt(paths.socketPath);
+    await writeFile(
+      paths.pidPath,
+      JSON.stringify({
+        pid: process.pid,
+        startedAtMs: Date.now(),
+        entryPath: '/x',
+        appVersion: '9.9.9',
+        launchNonce: 'nonce-산놈',
+      }),
+    );
+
+    const { deps: d, lines } = tracingDeps(realBind);
+    expect((await claimDaemonEndpoint(dir, d)).kind).toBe('occupied');
+
+    const 전문 = lines.join('\n');
+    expect(전문).toMatch(/엔드포인트 점유 중/);
+    expect(전문).toContain(String(process.pid));
+    expect(전문).toContain('nonce-산놈');
+  });
+
+  /** `trace` 를 안 주는 호출자도 그대로 동작한다 — 로그는 진단이지 기동 조건이 아니다. */
+  it('trace 없이도 그대로 동작한다', async () => {
+    const dir = await tempDir();
+    expect((await claimDaemonEndpoint(dir, deps(realBind))).kind).toBe('claimed');
   });
 });
 
