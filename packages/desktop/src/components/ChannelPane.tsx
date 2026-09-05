@@ -2,6 +2,8 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
+import { ProgressRow } from './ProgressRow';
+import { groupProgress } from '../lib/progressGroup';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
 import { ChannelFiles } from './ChannelFiles';
@@ -114,6 +116,12 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     () => (activeChannelId ? (messages[activeChannelId] ?? []).filter((m) => m.threadRootId === null || m.alsoInChannel) : []),
     [messages, activeChannelId],
   );
+
+  /**
+   * 연속된 진행(progress)을 한 줄로 접는다(#144, 규칙 02). 판정은 `lib/progressGroup` 의
+   * 순수 함수가 하고, 스레드 패널도 **같은 함수**를 쓴다 — 두 곳에 두면 조용히 갈라진다.
+   */
+  const slots = useMemo(() => groupProgress(roots), [roots]);
 
   /**
    * 구분선을 그릴 메시지. **채널을 열 때 얼려 둔 위치**(`dividerSeq`)를 쓴다 — 라이브 읽음
@@ -231,10 +239,14 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         {roots.length === 0 && !hasMore[activeChannelId] && (
           <ChannelEmptyState channel={channel} isArchived={isArchived} />
         )}
-        {roots.map((m, i) => {
+        {slots.map((slot, i) => {
+          // 구분선·키는 그 자리의 **첫 메시지**를 기준으로 삼는다 — 접힌 묶음도 목록에서는
+          // 한 자리이고, 그 자리가 시작된 시각이 곧 그 자리의 날짜다.
+          const m = slot.kind === 'message' ? slot.message : slot.messages[0]!;
           // 앞 메시지와 로컬 날짜가 다르면 새 날이다. 목록의 첫 메시지도 새 날로 친다 —
           // 그 채널의 첫 날도 날이고, 여기에 선이 없으면 위쪽 메시지들의 날짜를 알 길이 없다.
-          const prev = roots[i - 1];
+          const prevSlot = slots[i - 1];
+          const prev = prevSlot && (prevSlot.kind === 'message' ? prevSlot.message : prevSlot.messages[0]!);
           const newDay = !prev || localDayKey(prev.createdAt) !== localDayKey(m.createdAt);
           return (
             <Fragment key={m.id}>
@@ -257,7 +269,9 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
                   <span className="h-px flex-1 bg-danger-border" />
                 </div>
               )}
-              <MessageItem message={m} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />
+              {slot.kind === 'progress'
+                ? <ProgressRow messages={slot.messages} />
+                : <MessageItem message={m} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
             </Fragment>
           );
         })}
