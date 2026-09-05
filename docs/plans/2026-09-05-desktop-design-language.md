@@ -142,14 +142,19 @@ Fastify + Postgres / MCP Streamable HTTP
 **대상:** `packages/desktop/src/components/MessageItem.tsx` ·
 `packages/desktop/src/components/ChannelPane.tsx` · `packages/desktop/test/progressRow.test.tsx`(신규)
 
-- [ ] **Step 1: 연속 progress 를 접는다** — 같은 저자의 연속된 `kind='progress'` 는 **마지막 하나만**
+- [x] **Step 1: 연속 progress 를 접는다** — 같은 저자의 연속된 `kind='progress'` 는 **마지막 하나만**
       상태 한 줄로 그린다(`● forge 작업 중 · 3분째`). 앞의 것들은 접힌 채로 남고 펼칠 수 있다
-- [ ] **Step 2: 상태 한 줄의 형식** — 점 + 저자 + 경과. 문장을 그대로 쓰지 않는다 —
+- [x] **Step 2: 상태 한 줄의 형식** — 점 + 저자 + 경과. 문장을 그대로 쓰지 않는다 —
       progress 본문은 요약의 재료이지 발화가 아니다
-- [ ] **Step 3: 터미널로 가는 길** — 상태 한 줄 끝에 `터미널`(소유자에게만 — `TerminalChip` 의
+- [x] **Step 3: 터미널로 가는 길** — 상태 한 줄 끝에 `터미널`(소유자에게만 — `TerminalChip` 의
       판정을 그대로 재사용한다). 여기가 규칙 06 의 실행이다
-- [ ] **검증:** progress 3개가 한 줄로 접히는지 · 사이에 `user` 발화가 끼면 그룹이 끊기는지 ·
-      소유자가 아니면 터미널 링크가 **없는지**(비활성이 아니라 부재)
+- [x] **검증:** `progressRow.test.tsx` 10케이스 — 접힘 · 발화가 끼면 끊김 · **저자가 바뀌면
+      끊김** · 펼치기 · 한 줄이면 펼치기 부재 · 소유자 아닐 때 터미널 부재. 전체 2,545개 통과.
+      **RED 확인** — 저자 판정을 지우면 "저자가 바뀌면 갈린다"가 실제로 실패한다.
+      계획에 없던 것 둘: (1) **저자가 바뀌어도 끊는다** — 둘이 동시에 일할 때 한 줄로 접으면
+      누가 무엇을 하는지가 사라진다. (2) 판정을 `lib/progressGroup.ts` 의 **순수 함수**로 뽑았다 —
+      채널과 스레드가 같은 묶음을 그려야 하고, 컴포넌트 안에 두면 두 곳이 조용히 갈라진다
+      (`threadState` 를 그렇게 두기로 한 것과 같은 이유)
 
 ---
 
