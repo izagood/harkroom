@@ -146,7 +146,11 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
     const match = mainRs.match(/fn runner_spawn\(([\s\S]*?)\)\s*->/);
     expect(match).not.toBeNull();
     const params = splitParams(match![1]!)
-      .filter((p) => !p.startsWith('registry:')); // Tauri State — 웹뷰의 입력이 아니다.
+      // `registry`(Tauri State)·`app`(Tauri AppHandle) 은 프레임워크가 채우는 값이지
+      // 웹뷰의 입력이 아니다(`#433` — `AppHandle` 은 `node-pty` 리소스 디렉터리를 찾는
+      // `ensure_node_pty_alongside_sidecar` 에 쓰인다. 아래 "webviewParams" 스위트가 같은
+      // 구분을 이미 쓰고 있다).
+      .filter((p) => !p.startsWith('registry:') && !p.startsWith('app:'));
     expect(params.sort()).toEqual([
       'murmur_pat: String',
       'murmur_url: String',
@@ -189,11 +193,57 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
    * 하나"라는 성질은 그대로다 — 새 자리가 생기면 이 스위트가 멈춘다.
    */
   describe('프로세스를 띄우는 자리가 정확히 하나다 — 옆문이 새로 나지 않는다', () => {
-    /** 파일 전체에서 `Command::new(...)` 이 나오는 자리와, 그 앞의 함수 이름. */
-    const processSpawns = [...mainRs.matchAll(/Command::new\((.*?)\)/g)].map((m) => {
-      const before = mainRs.slice(0, m.index!);
+    /**
+     * `#[cfg(test)]` 로 시작하는 테스트 모듈 **딱 그 블록만** 도려내고 나머지를 전부 돌려준다.
+     *
+     * **왜 "블록 앞까지만" 이 아닌가**(`#433` 회수에서 실측으로 발견): 스캔을 `mod tests`
+     * 앞까지로 자르면 **그 뒤에 프로덕션 코드를 붙이는 것만으로 이 스위트를 통과할 수 있다** —
+     * `#[tauri::command] fn back_door(p: String) { Command::new(p); }` 를 파일 맨 끝에 두고
+     * 돌려본 결과 스캔 결과가 `detached_command` 하나 그대로였다(초록). Rust 는 항목 순서를
+     * 가리지 않으므로 그것은 완전히 정상 동작하는 옆문이다. 그래서 도려내는 것은 테스트 모듈
+     * **하나의 범위**뿐이고, 그 뒤에 오는 것은 다시 스캔 대상이다.
+     *
+     * 중괄호를 세어 블록 끝을 찾는다(문자열 리터럴 안의 중괄호는 이 파일에 없다 — 있으면
+     * 아래 `모듈이 정확히 하나 도려내졌다` 단언이 개수로 걸린다).
+     */
+    function stripTestModule(src: string): { rest: string; found: boolean } {
+      const marker = src.match(/#\[cfg\((?:all\()?test\b[^\]]*\]\s*\nmod tests\s*\{/);
+      if (!marker) return { rest: src, found: false };
+      const bodyStart = marker.index! + marker[0].length;
+      let depth = 1;
+      let i = bodyStart;
+      for (; i < src.length && depth > 0; i++) {
+        if (src[i] === '{') depth++;
+        else if (src[i] === '}') depth--;
+      }
+      return { rest: src.slice(0, marker.index!) + src.slice(i), found: depth === 0 };
+    }
+
+    const stripped = stripTestModule(mainRs);
+
+    /** 프로덕션 소스에서 `Command::new(...)` 이 나오는 자리와, 그 앞의 함수 이름. */
+    const processSpawns = [...stripped.rest.matchAll(/Command::new\((.*?)\)/g)].map((m) => {
+      const before = stripped.rest.slice(0, m.index!);
       const fnName = [...before.matchAll(/fn\s+([A-Za-z0-9_]+)\s*\(/g)].pop()?.[1] ?? '<없음>';
       return { program: m[1]!.trim(), fn: fnName };
+    });
+
+    it('테스트 모듈을 실제로 찾아 도려냈다 — 못 찾으면 스캔 범위 판단 자체가 틀린 것이다', () => {
+      // 마커 문자열이 바뀌면(예: `unix` 조건이 빠지면) 조용히 "아무것도 못 도려냄"이 되거나,
+      // `indexOf(...) === -1` 을 `slice` 에 넘겨 엉뚱한 범위를 스캔하게 된다 — 둘 다 이
+      // 스위트가 지키는 것을 없앤다. 그래서 "찾았다"를 명시적으로 못박는다.
+      expect(stripped.found).toBe(true);
+      // 도려낸 뒤에도 `mod tests` 가 남아 있으면 테스트 모듈이 둘 이상이라는 뜻이다 —
+      // 그 경우 위 함수가 첫 번째만 도려내므로 이 스위트의 전제가 깨진다.
+      expect(stripped.rest).not.toContain('mod tests');
+    });
+
+    it('테스트 모듈 뒤에 붙인 프로덕션 spawn 도 잡힌다 — 스캔이 파일 끝까지 간다', () => {
+      // **되돌려 RED 절차의 고정**: `mod tests` 뒤는 안전지대가 아니다. 실제 소스를 건드리지
+      // 않고, 같은 스캔 로직을 "뒤에 옆문이 붙은 소스"에 돌려 그것이 잡히는지 확인한다.
+      const withBackDoor = `${mainRs}\n#[tauri::command]\nfn back_door(p: String) { std::process::Command::new(p); }\n`;
+      const rescanned = [...stripTestModule(withBackDoor).rest.matchAll(/Command::new\((.*?)\)/g)];
+      expect(rescanned.length).toBe(processSpawns.length + 1);
     });
 
     it('프로세스를 띄우는 자리가 정확히 하나고, 그것이 `detached_command` 다', () => {
