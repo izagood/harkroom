@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { AgentsSettings } from '../components/settings/AgentsSettings';
+import { AgentDefaultsSettings } from '../components/settings/AgentDefaultsSettings';
 import { AppearanceSettings } from '../components/settings/AppearanceSettings';
 import { CommunitySettings } from '../components/settings/CommunitySettings';
 import { ConnectionSettings } from '../components/settings/ConnectionSettings';
@@ -77,6 +78,7 @@ export function SettingsScreen({ initialSection = 'profile', targetId, onBack, o
           {section === 'communities' && <CommunitySettings onCommunitiesEmpty={onCommunitiesEmpty} />}
           {/* AgentsSettings 는 자체 2단 레이아웃이라 SettingsPage 여백을 쓰지 않는다. */}
           {section === 'agents' && <AgentsSettings targetId={targetId} />}
+          {section === 'agent-defaults' && <AgentDefaultsSettings />}
           {section === 'teams' && <TeamsSettings />}
           {section === 'handle-groups' && <HandleGroupsSettings />}
           {section === 'invite' && <InviteSettings />}
