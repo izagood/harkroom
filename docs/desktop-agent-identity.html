@@ -1,0 +1,849 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="murmur 데스크탑 — 에이전트 아바타·프로필·답글 스택과 설정 › 에이전트 화면 재설계">
+<title>murmur · 에이전트 얼굴과 설정</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap">
+
+<style>
+  :root {
+    --paper:#FBF9F7; --paper-2:#F3F0EB; --card:#FFFFFF;
+    --line:#E3DCD2; --line-soft:#EFEAE2;
+    --ink:#1B1815; --ink-2:#4C453D; --ink-3:#7E7568;
+    --accent:#E8613C; --accent-2:#B8431F; --accent-soft:#FAE8E1;
+    --teal:#0D8E82;
+    --sans:"IBM Plex Sans KR", ui-sans-serif, system-ui, "Apple SD Gothic Neo", sans-serif;
+    --disp:"Bricolage Grotesque","IBM Plex Sans KR", ui-sans-serif, system-ui, sans-serif;
+    --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:#141210; --paper-2:#1C1917; --card:#1D1A17;
+      --line:#322C26; --line-soft:#262220;
+      --ink:#F1ECE5; --ink-2:#B9B0A4; --ink-3:#877E71;
+      --accent:#FF7B54; --accent-2:#FF9E7F; --accent-soft:#3A2119;
+      --teal:#2FB3A4; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:#141210; --paper-2:#1C1917; --card:#1D1A17;
+    --line:#322C26; --line-soft:#262220;
+    --ink:#F1ECE5; --ink-2:#B9B0A4; --ink-3:#877E71;
+    --accent:#FF7B54; --accent-2:#FF9E7F; --accent-soft:#3A2119;
+    --teal:#2FB3A4; color-scheme: dark;
+  }
+  * { box-sizing:border-box; }
+  body { background:var(--paper); color:var(--ink); font-family:var(--sans); font-size:16px; line-height:1.7; margin:0; padding-bottom:5rem; -webkit-font-smoothing:antialiased; }
+  .wrap { width:min(100% - 2.5rem, 900px); margin-inline:auto; }
+  .bleed { width:min(100% - 2rem, 1120px); margin-inline:auto; }
+
+  header { padding:3.4rem 0 2rem; }
+  h1 { font-family:var(--disp); font-weight:800; font-size:clamp(2rem,4.4vw,2.9rem); line-height:1.06; letter-spacing:-.03em; margin:0 0 .9rem; }
+  h1 em { font-style:normal; color:var(--accent); }
+  .lede { font-size:1.06rem; color:var(--ink-2); max-width:64ch; margin:0 0 1.5rem; }
+  .meta { font-family:var(--mono); font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-3); border-top:1px solid var(--line); padding-top:.8rem; }
+
+  section { padding:2.8rem 0 0; }
+  .eyebrow { font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--accent); display:flex; align-items:center; gap:.7rem; margin-bottom:.7rem; }
+  .eyebrow::after { content:""; height:1px; flex:1; background:var(--line); }
+  h2 { font-family:var(--disp); font-weight:700; font-size:clamp(1.4rem,3vw,1.85rem); line-height:1.15; letter-spacing:-.02em; margin:0 0 .8rem; }
+  h3 { font-family:var(--disp); font-weight:700; font-size:1.06rem; margin:1.9rem 0 .5rem; letter-spacing:-.01em; }
+  p { margin:0 0 1rem; max-width:70ch; }
+  code { font-family:var(--mono); font-size:.86em; background:var(--paper-2); border:1px solid var(--line-soft); padding:.05em .35em; border-radius:3px; color:var(--ink-2); }
+  b, strong { font-weight:600; }
+  .note { font-size:.9rem; color:var(--ink-3); max-width:70ch; }
+
+  .panel { border:1px solid var(--line); border-radius:8px; background:var(--card); overflow:hidden; margin-top:1.1rem; }
+  .panel__h { padding:.55rem 1rem; background:var(--paper-2); border-bottom:1px solid var(--line-soft); font-family:var(--mono); font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-3); display:flex; align-items:center; gap:.6rem; }
+  .panel__h .tag { margin-left:auto; text-transform:none; letter-spacing:0; font-size:10px; }
+  .panel__b { padding:1.1rem 1.2rem; }
+  .grid.two { display:grid; gap:1rem; }
+  @media (min-width:760px) { .grid.two { grid-template-columns:1fr 1fr; gap:1.3rem; } }
+
+  .ui { font-size:13px; line-height:1.5; color:#1A1917; background:#fff; }
+  .row { display:flex; gap:9px; align-items:flex-start; padding:5px 0; }
+  .who { display:flex; align-items:baseline; gap:6px; flex-wrap:wrap; }
+  .who b { font-weight:600; font-size:13px; }
+  .t { font-family:var(--mono); font-size:10px; color:#93908A; }
+  .body { color:#3C3A35; }
+  .badge-now { display:inline-flex; align-items:center; gap:3px; background:#eef2ff; color:#4f46e5; border-radius:3px; padding:0 4px; font-size:10px; }
+  .av { display:inline-flex; align-items:center; justify-content:center; color:#fff; font-weight:600; flex:none; overflow:hidden; border-radius:50%; letter-spacing:-.01em; }
+  .av.glyph { background:transparent; color:inherit; }
+  .stack { display:inline-flex; align-items:center; }
+  .stack .av { box-shadow:0 0 0 2px #fff; }
+  .stack .av + .av { margin-left:-5px; }
+  .sizes { display:flex; align-items:flex-end; gap:1.4rem; flex-wrap:wrap; }
+  .size { text-align:center; }
+  .size .lbl { font-family:var(--mono); font-size:9.5px; color:var(--ink-3); margin-top:.45rem; letter-spacing:.03em; }
+
+  /* 프로필 패널 */
+  .prof { width:310px; border:1px solid #E4E3E0; border-radius:10px; background:#fff; box-shadow:0 10px 30px -14px rgba(0,0,0,.35); overflow:hidden; }
+  .prof__top { padding:15px 15px 12px; display:flex; gap:12px; align-items:center; }
+  .prof__name { font-weight:600; font-size:15px; color:#1A1917; }
+  .prof__handle { font-family:var(--mono); font-size:11.5px; color:#93908A; }
+  .prof__state { display:flex; align-items:center; gap:5px; font-size:11px; color:#5C5951; margin-top:3px; }
+  .prof__state i { width:6px; height:6px; border-radius:50%; display:block; }
+  .prof__rows { border-top:1px solid #EFEEEB; }
+  .prow { display:flex; gap:10px; padding:7px 15px; font-size:12px; }
+  .prow .k { color:#93908A; width:60px; flex:none; font-size:11.5px; }
+  .prow .v { color:#3C3A35; min-width:0; }
+  .prof__acts { border-top:1px solid #EFEEEB; padding:9px 11px; display:flex; gap:6px; flex-wrap:wrap; }
+
+  .btn { font-size:11.5px; padding:4px 10px; border-radius:5px; border:1px solid #DDDCD8; color:#3C3A35; background:#fff; display:inline-flex; align-items:center; gap:4px; }
+  .btn.primary { background:#C24A22; border-color:#C24A22; color:#fff; }
+  .btn.quiet { border-color:transparent; color:#6E6A63; }
+  .btn.danger { border-color:#E5B7A8; color:#B8431F; background:#FDF3EF; }
+  .btn.wide { width:100%; justify-content:center; }
+
+  /* ===== 그리드 안들 ===== */
+  .screen { background:#FAFAF9; padding:18px 20px 22px; font-size:13px; color:#1A1917; }
+  .screen__h { display:flex; align-items:baseline; gap:10px; margin-bottom:3px; }
+  .screen__t { font-family:var(--disp); font-weight:700; font-size:18px; letter-spacing:-.01em; }
+  .screen__d { font-size:11.5px; color:#8A867E; margin-bottom:14px; }
+
+  /* A — 얼굴 */
+  .ga { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; }
+  .ga .c { border:1px solid #E4E3E0; border-radius:10px; background:#fff; padding:16px 10px 12px; text-align:center; }
+  .ga .c .nm { font-weight:600; font-size:13px; margin-top:9px; }
+  .ga .c .st { font-size:10.5px; color:#8A867E; margin-top:2px; display:flex; align-items:center; justify-content:center; gap:4px; }
+  .ga .c .st i { width:5px; height:5px; border-radius:50%; display:block; }
+  .ga .c .act { margin-top:10px; }
+  .ga .c.off .av { filter:saturate(.25); opacity:.5; }
+  .ga .c.fail { border-color:#E5B7A8; }
+  .ga .add { border:1.5px dashed #D6D3CC; border-radius:10px; background:transparent; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#8A867E; gap:6px; min-height:150px; }
+  .ga .add .plus { font-size:26px; line-height:1; color:#B0ACA4; }
+
+  /* B — 명함 */
+  .gb { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .gb .c { border:1px solid #E4E3E0; border-radius:9px; background:#fff; padding:11px 12px; display:flex; align-items:center; gap:11px; }
+  .gb .c .mid { min-width:0; flex:1; }
+  .gb .c .nm { font-weight:600; font-size:13px; }
+  .gb .c .sub { font-size:10.5px; color:#8A867E; margin-top:1px; }
+  .gb .c .st { font-size:10.5px; color:#8A867E; display:flex; align-items:center; gap:4px; }
+  .gb .c .st i { width:5px; height:5px; border-radius:50%; display:block; }
+  .gb .c.off .av { filter:saturate(.25); opacity:.5; }
+  .gb .c.fail { border-color:#E5B7A8; }
+  .gb .add { border:1.5px dashed #D6D3CC; border-radius:9px; display:flex; align-items:center; justify-content:center; gap:7px; color:#8A867E; padding:11px; }
+  .gb .add .plus { font-size:18px; color:#B0ACA4; }
+
+  /* C — 상태판 */
+  .gc-sum { display:flex; gap:16px; font-size:11.5px; color:#5C5951; margin-bottom:12px; }
+  .gc-sum span { display:flex; align-items:center; gap:5px; }
+  .gc-sum i { width:6px; height:6px; border-radius:50%; display:block; }
+  .gc { display:grid; grid-template-columns:repeat(3,1fr); gap:11px; }
+  .gc .c { border:1px solid #E4E3E0; border-radius:9px; background:#fff; overflow:hidden; display:flex; }
+  .gc .c .bar { width:3px; flex:none; }
+  .gc .c .in { padding:12px 13px; flex:1; min-width:0; }
+  .gc .c .top { display:flex; align-items:center; gap:9px; }
+  .gc .c .nm { font-weight:600; font-size:13px; }
+  .gc .c .sub { font-size:10.5px; color:#8A867E; }
+  .gc .c .big { font-size:11.5px; color:#3C3A35; margin-top:9px; }
+  .gc .c .big b { font-weight:600; }
+  .gc .c .act { margin-top:9px; }
+  .gc .c.off { background:#FAFAF9; }
+  .gc .c.off .av { filter:saturate(.2); opacity:.5; }
+  .gc .add { border:1.5px dashed #D6D3CC; border-radius:9px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; color:#8A867E; min-height:110px; }
+  .gc .add .plus { font-size:22px; color:#B0ACA4; line-height:1; }
+
+  /* 상세 */
+  .det { background:#fff; padding:18px 22px 20px; }
+  .det__back { font-size:11.5px; color:#8A867E; margin-bottom:12px; }
+  .det__top { display:flex; align-items:center; gap:13px; margin-bottom:16px; }
+  .det__nm { font-family:var(--disp); font-weight:700; font-size:18px; letter-spacing:-.01em; }
+  .det__st { font-size:11.5px; color:#8A867E; display:flex; align-items:center; gap:5px; margin-top:2px; }
+  .det__st i { width:6px; height:6px; border-radius:50%; display:block; }
+  .det__acts { margin-left:auto; display:flex; gap:6px; }
+  .sec { margin-bottom:18px; }
+  .sec__h { font-weight:600; font-size:13px; margin-bottom:2px; }
+  .sec__d { font-size:11px; color:#8A867E; margin-bottom:9px; }
+  .fld { margin-bottom:11px; }
+  .fld__l { font-size:11px; color:#5C5951; margin-bottom:3px; font-weight:500; }
+  .fld__i { border:1px solid #DDDCD8; border-radius:5px; padding:6px 9px; background:#fff; font-size:12px; }
+  .fld__i.ph { color:#A8A49C; }
+  .fld__i.sel { display:flex; align-items:center; }
+  .fld__i.sel::after { content:"⌄"; margin-left:auto; color:#8A867E; font-size:13px; line-height:.6; }
+  .fld__h { font-size:10.5px; color:#8A867E; margin-top:3px; }
+  .fld__h.warn { color:#B8431F; }
+  .two-up { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .seg { display:inline-flex; border:1px solid #DDDCD8; border-radius:6px; overflow:hidden; }
+  .seg span { padding:5px 12px; font-size:11.5px; color:#5C5951; background:#fff; }
+  .seg span.on { background:#C24A22; color:#fff; }
+  .setfoot { border-top:1px solid #EFEEEB; margin-top:14px; padding-top:12px; display:flex; gap:7px; align-items:center; }
+
+  .cmp { margin-top:1rem; border-top:1px solid var(--line); }
+  .cmp__r { display:grid; gap:.15rem 1.3rem; padding:.85rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:720px) { .cmp__r { grid-template-columns:5.5rem 1fr; } }
+  .cmp__k { font-family:var(--mono); font-size:11.5px; color:var(--ink); }
+  .cmp__v { font-size:.92rem; color:var(--ink-2); line-height:1.6; }
+
+  .rules { display:grid; gap:0; margin-top:1rem; border-top:1px solid var(--line); }
+  .rule { display:grid; gap:.25rem 1.3rem; padding:1rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:760px) { .rule { grid-template-columns:2.2rem 1fr; } }
+  .rule__n { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--accent); }
+  .rule__t { font-family:var(--disp); font-weight:700; font-size:1.05rem; margin:0 0 .25rem; letter-spacing:-.01em; }
+  .rule__b { font-size:.94rem; color:var(--ink-2); margin:0; line-height:1.62; max-width:66ch; }
+
+  .callout { margin-top:1.3rem; border:1px solid var(--line); border-left:3px solid var(--teal); border-radius:4px; background:var(--card); padding:1rem 1.15rem; }
+  .callout p { margin:0; font-size:.94rem; color:var(--ink-2); }
+  .callout p + p { margin-top:.5rem; }
+  .warnout { border-left-color:var(--accent-2); }
+  footer { margin-top:3rem; padding-top:1rem; border-top:1px solid var(--line); font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-3); }
+
+  /* 항목 목록 */
+  .flist { border-top:1px solid var(--line); }
+  .fitem { display:grid; gap:.1rem 1.2rem; padding:.8rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:700px) { .fitem { grid-template-columns:15rem 1fr; } }
+  .fitem__k { font-weight:600; font-size:.93rem; color:var(--ink); }
+  .fitem__v { font-size:.92rem; color:var(--ink-2); line-height:1.6; }
+
+  /* 답글 스택 요약 줄 */
+  .slot { display:grid; gap:9px; }
+  .slotrow { display:grid; gap:4px 12px; align-items:center; }
+  @media (min-width:640px) { .slotrow { grid-template-columns:5.6rem 1fr; } }
+  .slotlab { font-family:var(--mono); font-size:9.5px; letter-spacing:.07em; text-transform:uppercase; color:#93908A; }
+  .trow { display:flex; gap:10px; align-items:center; padding:8px 11px; border-radius:6px; background:#fff; border:1px solid #EFEEEB; min-width:0; }
+  .trow.hotrow { background:#FFF5F1; border-color:#F2D3C6; box-shadow:inset 2px 0 0 #C24A22; }
+  .trow.dim { background:#FAFAF9; }
+  .trow__t { font-size:12.5px; color:#6E6A63; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .trow__t b { color:#1A1917; font-weight:600; }
+  .trow__t .hot { color:#C24A22; font-weight:600; }
+  .trow__t .cut { color:#C0BCB4; }
+  .plus { display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background:#E7E4DF; color:#5C5951; font-weight:600; flex:none; }
+
+  /* 설정 › 에이전트 — 확정안 */
+  .scr { background:#fff; }
+  .scr__h { padding:15px 18px 0; }
+  .scr__t { font-weight:600; font-size:15px; color:#1A1917; }
+  .scr__d { font-size:11.5px; color:#8A867E; margin-top:2px; }
+  .srch { margin:13px 18px 0; display:flex; align-items:center; gap:8px; border:1px solid #DDDCD8; border-radius:7px; padding:7px 11px; background:#FAFAF9; }
+  .srch__i { color:#A8A49C; font-size:13px; line-height:1; }
+  .srch input { border:0; background:transparent; outline:none; font-family:inherit; font-size:12.5px; color:#1A1917; width:100%; min-width:0; padding:0; }
+  .srch__n { margin-left:auto; font-family:var(--mono); font-size:10px; color:#A8A49C; white-space:nowrap; }
+  .agrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(86px, 1fr)); gap:16px 8px; padding:18px 16px 22px; }
+  .acard { display:flex; flex-direction:column; align-items:center; gap:8px; padding:8px 2px 6px; border-radius:10px; }
+  .acard:hover { background:#F4F3F0; }
+  .ava { position:relative; width:60px; height:60px; flex:none; }
+  .ava .av { width:60px; height:60px; font-size:25px; }
+  .ava.off .av { filter:saturate(.12); opacity:.4; }
+  .ava.bad .av { filter:saturate(.35); opacity:.6; }
+  .ava__ov { position:absolute; inset:0; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; font-size:18px; background:rgba(26,25,23,.4); }
+  .ava.bad .ava__ov { background:rgba(194,74,34,.72); }
+  .ava.bad::after { content:""; position:absolute; inset:-3px; border-radius:50%; border:2px solid #C24A22; }
+  .acard__n { font-size:12px; color:#3C3A35; max-width:84px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .acard.dimname .acard__n { color:#93908A; }
+  .acard__why { font-size:10px; line-height:1.35; color:#C24A22; max-width:86px; text-align:center; margin-top:-3px; }
+  .acard.new .ava { border:1.5px dashed #CFCBC3; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#A8A49C; font-size:27px; font-weight:300; }
+  .acard.new:hover .ava { border-color:#C24A22; color:#C24A22; }
+  .agrid__none { grid-column:1/-1; padding:14px 4px; font-size:12px; color:#93908A; }
+  .states { display:flex; gap:2.2rem; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>에이전트를 <em>표시하지 않는다</em></h1>
+    <p class="lede">
+      대화에서는 “이건 에이전트다”라고 말하지 않는다 — 사람과 같은 아바타로 서고, 구별은 색과 이름이 한다.
+      종류·소유자·하네스는 <b>프로필을 열었을 때</b> 나온다. 그리고 설정의 에이전트 화면은
+      <b>얼굴을 늘어놓는 자리</b>로 다시 짠다 — 카드에는 사진과 이름만 남기고, 찾는 일은 검색이 맡는다.
+    </p>
+    <div class="meta">근거 — 실행 중인 앱 · <code>Identity.tsx</code> · <code>Directory.tsx</code> · <code>AgentsSettings.tsx</code> · <code>RunnerStatus.tsx</code></div>
+  </header>
+
+  <section>
+    <p class="eyebrow">아바타</p>
+    <h2>줄에서 무엇이 사라지나</h2>
+    <p>
+      <code>handleColor()</code> 는 이미 있는 순수 함수인데 에이전트 분기가 부르지 않아, <code>alpha</code>·<code>beta</code>·<code>gamma</code>
+      가 배경색 없는 🤖 하나를 공유한다. 부르기만 하면 <b>이름을 정하는 순간 색이 정해진다</b>.
+      이름 옆 배지와 소유자 핸들은 뺀다.
+    </p>
+    <div class="grid two">
+      <div class="panel">
+        <div class="panel__h">지금 <span class="tag">셋 다 같은 그림</span></div>
+        <div class="panel__b ui"><div id="cmp-now"></div></div>
+      </div>
+      <div class="panel">
+        <div class="panel__h">제안 <span class="tag">사람 줄과 구별되지 않는다</span></div>
+        <div class="panel__b ui"><div id="cmp-new"></div></div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:.7rem">오른쪽에는 <code>jaebin</code>(사람)이 섞여 있다. 아바타만으로 누가 에이전트인지 알 수 없는 것이 의도한 결과다.</p>
+
+    <div class="panel">
+      <div class="panel__b" style="display:flex; gap:2rem; flex-wrap:wrap; align-items:flex-end">
+        <div>
+          <div class="t" style="margin-bottom:8px">답글 스택 — 지금</div>
+          <span class="stack" id="stk-now"></span>
+        </div>
+        <div>
+          <div class="t" style="margin-bottom:8px">답글 스택 — 얼굴만</div>
+          <span class="stack" id="stk-new"></span>
+        </div>
+        <div class="sizes" id="sizes" style="margin-left:auto"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">답글 스택 · 재검토</p>
+    <h2>이름을 나열하지 않는다</h2>
+    <p>
+      앞 장에서 스택 옆에 <code>alpha · beta · gamma 가 답했다</code> 를 달았다. 사람 하나에 에이전트 셋일 때만
+      읽히는 문장이다. 실제로는 <b>사람 n : 에이전트 m</b> 이고, 그 순간 나열은 세 군데서 깨진다.
+    </p>
+    <div class="rules">
+      <div class="rule">
+        <span class="rule__n">✕</span>
+        <div>
+          <p class="rule__t">자를 기준이 없다</p>
+          <p class="rule__b">
+            일곱이 답한 스레드에서 셋만 남긴다면 <b>어느 셋인가</b>. 가나다순이면 <code>alpha</code> 가 영원히 앞에 서고
+            방금 말한 사람이 잘린다. 지금 그림이 가나다순으로 보이는 것부터가 신호다 — 명단은 움직이지 않는다.
+          </p>
+        </div>
+      </div>
+      <div class="rule">
+        <span class="rule__n">✕</span>
+        <div>
+          <p class="rule__t">내가 목록에 들어가면 문장이 어긋난다</p>
+          <p class="rule__b">
+            사람도 답글을 단다. 그러면 <code>alpha · minsu · jaebin 가 답했다</code> 가 되고 —
+            <b>나를 남의 이름처럼 부른다</b>. 스레드 요약이 “너도 여기 있었다”를 알려주는 건 쓸모가 없다.
+          </p>
+        </div>
+      </div>
+      <div class="rule">
+        <span class="rule__n">✕</span>
+        <div>
+          <p class="rule__t">정작 물어본 것에 답하지 않는다</p>
+          <p class="rule__b">
+            채널을 훑을 때의 질문은 “누가 있나”가 아니라 <b>“열어야 하나”</b>다.
+            명단은 그 질문에 한 글자도 답하지 않는다. 참여자가 늘수록 길어지기만 한다.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <h3>슬롯 둘로 나눈다</h3>
+    <p>
+      <b>얼굴</b>은 “누가”를 이미 답하고 있다 — 글로 한 번 더 부를 이유가 없다.
+      그러니 옆의 글자는 <b>“무엇을 기다리는가”</b>만 말한다.
+    </p>
+    <div class="flist" style="margin-top:.9rem">
+      <div class="fitem">
+        <div class="fitem__k">얼굴 슬롯 — 폭이 고정된다</div>
+        <div class="fitem__v">아바타 <b>셋까지</b>, 나머지는 <code>+N</code>. 순서는 가나다가 아니라 <b>마지막으로 말한 순</b>이라 스택이 실제로 움직인다. 참여자가 3이든 40이든 폭은 같다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">말 슬롯 — 상태를 말한다</div>
+        <div class="fitem__v">이름은 <b>대기 사슬의 양 끝일 때만</b> 쓴다 — 그래서 최대 둘, 참여자 수와 무관하다. 아무도 기다리지 않으면 이름은 아예 안 나오고 숫자와 시각만 남는다.</div>
+      </div>
+    </div>
+
+    <h3>말 슬롯의 세 단계</h3>
+    <p class="note">위에서부터 이긴다. 하나의 스레드는 한 줄만 받는다.</p>
+    <div class="panel">
+      <div class="panel__b ui" style="background:#FAFAF9">
+        <div class="slot" id="slots"></div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:.7rem">
+      데모는 <b>사람 셋</b>(<code>jaebin</code>=나 · <code>minsu</code> · <code>sora</code>) <b>에이전트 넷</b>(<code>alpha</code> · <code>beta</code> · <code>gamma</code> · <code>forge</code>)
+      이 같이 있는 스레드다. 어느 줄에서도 명단이 늘어나지 않는다.
+    </p>
+
+    <h3>사람이 답글을 달면</h3>
+    <p>
+      스택은 <b>사람과 에이전트를 가르지 않는다</b> — 가르면 원칙 01 이 흐름에서 뺀 표시를
+      요약 줄로 되돌려 놓는 것이다. 대신 이미 정한 축을 그대로 쓴다: <b>나 / 남</b>.
+      내가 기다려지면 막는 말이 되어 강조를 받고, 내가 참여자면 읽히는 말, 아니면 배경이 된다.
+      <code>participantIds</code> 는 <code>MessageRow</code> 에 이미 실려 있다.
+    </p>
+    <div class="callout">
+      <p><b>사람 대 에이전트가 아니라 사람 대 사람도 같은 줄을 받는다.</b>
+      <code>minsu 가 sora 의 답을 기다린다</code> 는 <code>beta 가 alpha 의 답을 기다린다</code> 와
+      같은 문장이다 — 이것이 “사람끼리 일하듯”의 실제 모양이다.
+      스레드가 사람 회의인지 에이전트 작업인지는 <b>요약 줄이 답할 질문이 아니다</b>.</p>
+    </div>
+    <div class="callout warnout">
+      <p><b>이 줄은 아직 만들 수 없다.</b> “누가 누구를 기다린다”를 말하려면
+      <code>meta</code> 에 되물음·선택의 <b>수신자</b>가 들어 있어야 한다 —
+      계획 문서의 <code>AskMeta.to</code> 다. 그전까지 말 슬롯은 3단계만 그린다(<code>답장 N · 마지막 시각</code>).
+      아바타 캡과 <b>최근 순 정렬</b>은 지금 바로 고칠 수 있고, 그것만으로도 나열 문제는 사라진다.</p>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">프로필 · 신설</p>
+    <h2>알아야 할 때 여는 자리</h2>
+    <p>
+      지금 이름을 누르면 <b>디렉터리(검색 목록)</b>가 열린다. 프로필이 아니다 —
+      <code>Directory.tsx</code> 주석은 “harness·소유자·PAT 는 그리지 않는다”고 적어 두었고,
+      흐름에서 표시를 빼면 그 정보가 <b>어디에도 없게 된다</b>.
+    </p>
+    <div class="panel">
+      <div class="panel__b" style="display:flex; gap:1.3rem; flex-wrap:wrap; background:var(--paper-2)">
+        <div id="prof-agent"></div>
+        <div id="prof-human"></div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:.7rem">
+      사람과 에이전트가 <b>같은 틀</b>을 쓰고 행 이름만 다르다. 오프라인이면 <code>실행하기</code> 가 여기에도 선다.
+      <code>터미널 열기</code> 는 소유자·admin 이 아니면 그 자리 자체가 없다.
+    </p>
+  </section>
+</div>
+
+<div class="bleed">
+  <section>
+    <div class="wrap" style="width:auto; padding:0 .2rem">
+      <p class="eyebrow">설정 › 에이전트 · 확정안</p>
+      <h2>얼굴만 남긴다</h2>
+      <p>
+        명함(안 B)에서 <b>글자를 더 덜어냈다</b>. 카드에 남는 것은 <b>아바타와 이름</b> 둘뿐이고,
+        하네스·소유자·마지막 활동은 전부 상세로 내려간다. <code>실행하기</code> 버튼도 사라진다 —
+        <b>사진 안으로 들어간다</b>.
+      </p>
+      <p>
+        전제가 바뀌었기 때문이다. 에이전트는 <b>계속 늘어난다</b>. 40개가 되면 카드마다 붙은 두 줄 설명은
+        정보가 아니라 벽이 되고, 찾는 방법은 훑기가 아니라 <b>검색</b>이 된다.
+        그래서 목록은 최대한 조용하게, 대신 <b>이름 검색을 화면 맨 위 고정</b>으로 둔다.
+      </p>
+    </div>
+
+    <div class="panel">
+      <div class="panel__h">설정 › 에이전트 <span class="tag">입력창에 실제로 쳐 볼 수 있다</span></div>
+      <div class="scr ui">
+        <div class="scr__h">
+          <div class="scr__t">에이전트</div>
+          <div class="scr__d">채널에서 <b>@이름</b> 으로 부른다. 카드를 누르면 설정이 열린다.</div>
+        </div>
+        <div class="srch">
+          <span class="srch__i">⌕</span>
+          <input id="q" type="text" placeholder="이름으로 찾기" autocomplete="off" spellcheck="false">
+          <span class="srch__n" id="qn"></span>
+        </div>
+        <div class="agrid" id="agrid"></div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:.7rem">
+      데모는 26개다. 카드가 <code>86px</code> 격자라 창을 좁혀도 열 수만 줄고 카드 모양은 그대로다.
+      입력창에 <b>배포</b> 라고 쳐 보면 <code>deploy</code> 가 나온다 — 이름이 아니라 <b>설명</b>이 걸린 것이다.
+    </p>
+    <div class="wrap" style="width:auto; padding:0 .2rem">
+      <div class="callout warnout">
+        <p><b>26개를 한 화면에 깔아 보니 드러난 것.</b> <code>handleColor()</code> 의 12색이
+        <b>이 밀도에서는 시끄럽다</b> — 채도가 다 같아서 어느 것도 앞으로 나오지 않는다.
+        채널의 20px 아바타에서는 문제가 아니었다. 여기서 색은 <b>사진이 없을 때의 임시값</b>이라는 뜻이고,
+        결국 이 화면의 성패는 <b>사람이 사진을 올리게 만드는 것</b>에 달린다.</p>
+      </div>
+    </div>
+
+    <div class="wrap" style="width:auto; padding:0 .2rem">
+      <h3>상태는 사진이 말한다</h3>
+      <p>
+        상태 점도, 상태 글자도 없다. 아바타 자체가 세 가지로 갈린다 — 그래서 카드에 줄이 늘지 않는다.
+      </p>
+    </div>
+    <div class="panel">
+      <div class="panel__b" style="background:#FAFAF9">
+        <div class="states" id="states"></div>
+      </div>
+    </div>
+    <div class="wrap" style="width:auto; padding:0 .2rem">
+      <div class="flist" style="margin-top:1rem">
+        <div class="fitem">
+          <div class="fitem__k">도는 중 — 그냥 사진</div>
+          <div class="fitem__v">아무 장식도 없다. <b>정상이 기본값</b>이므로 정상에 표시를 붙이지 않는다. 40개 중 38개가 이 모습이면 화면은 조용하다.</div>
+        </div>
+        <div class="fitem">
+          <div class="fitem__k">멈춤 — 색이 빠지고 <b>▶</b> 가 뜬다</div>
+          <div class="fitem__v">사진이 회색으로 가라앉고 가운데 <b>▶</b>. 누르면 그 자리에서 켜진다. 카드를 누르는 것(=설정 열기)과 <b>▶</b> 를 누르는 것(=실행)이 다른 동작이라, 실행이 우연히 눌리지 않는다.</div>
+        </div>
+        <div class="fitem">
+          <div class="fitem__k">실패 — 붉은 테와 <b>↻</b>, 그리고 사유 한 줄</div>
+          <div class="fitem__v">유일하게 글자가 늘어나는 상태다. <code>#368</code> 이 사이드바에서 겪었듯 사유가 <code>title</code> 툴팁에만 있으면 사람은 그것을 찾지 못한다. <b>예외에만 글자를 쓴다</b>.</div>
+        </div>
+      </div>
+
+      <h3>이번에 정해야 하는 것 셋</h3>
+      <div class="cmp">
+        <div class="cmp__r">
+          <div class="cmp__k">▶ 를 항상 보일까</div>
+          <div class="cmp__v"><b>항상 보인다.</b> hover 로 감추면 <b>훑는 동안에는 보이지 않는다</b> — 지금 켤 수 있는 게 몇 개인지가 스캔 한 번에 안 와야 할 이유가 없다. 대신 정상 카드에는 아무것도 없으니 화면 전체가 시끄러워지지 않는다.</div>
+        </div>
+        <div class="cmp__r">
+          <div class="cmp__k"><code>+</code> 카드는 앞인가 뒤인가</div>
+          <div class="cmp__v"><b>맨 앞이다.</b> 앞서 “그리드의 마지막 칸”이라고 했는데, 40개가 되면 마지막 칸은 <b>스크롤 끝</b>이다. 맨 앞이면 개수와 무관하게 자리가 고정된다 — 검색을 걸어 목록이 비어도 <code>+</code> 는 그대로 있다.</div>
+        </div>
+        <div class="cmp__r">
+          <div class="cmp__k">정렬은 무엇으로</div>
+          <div class="cmp__v"><b>가나다 고정.</b> 상태순으로 정렬하면 에이전트가 켜지고 꺼질 때마다 카드가 자리를 옮겨서, 위치로 기억하는 것이 불가능해진다. 상태는 이미 사진이 말하고 있으니 순서까지 상태를 말할 필요가 없다.</div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <p><b>검색은 이름만 건드리지 않는다.</b> <code>@handle</code> 과 <b>설명</b> 을 함께 훑는다 —
+        “배포 담당이 누구였더라”를 이름을 모르는 채로 찾을 수 있어야 검색이 목록을 대신한다.
+        설명은 카드에 안 보이지만 <b>찾을 때는 쓰인다</b>.</p>
+      </div>
+      <div class="callout warnout">
+        <p><b>여기서 버린 것.</b> 카드만 봐서는 <code>alpha</code> 가 claude-code 인지 codex 인지 알 수 없다.
+        하네스를 섞어 쓰다가 “codex 인 것만 보고 싶다”가 자주 생기면, <b>카드를 늘리지 말고</b>
+        검색 줄 옆에 필터 칩을 붙이는 쪽이 맞다 — 카드는 끝까지 조용해야 한다.</p>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:2.4rem">
+      <div class="panel__h">카드를 누르면 <span class="tag">덜어낸 정보가 전부 여기 있다</span></div>
+      <div class="det ui">
+        <div class="det__back">← 에이전트</div>
+        <div class="det__top">
+          <span id="det-av"></span>
+          <div>
+            <div class="det__nm">alpha</div>
+            <div class="det__st"><i style="background:#5E8A6E"></i> 도는 중 · 마지막 활동 11분 전</div>
+          </div>
+          <div class="det__acts">
+            <span class="btn">터미널 열기</span>
+            <span class="btn">DM 열기</span>
+            <span class="btn quiet">멈추기</span>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec__h">프로필</div>
+          <div class="sec__d">채널에서 이 에이전트가 어떻게 보이는지.</div>
+          <div style="display:flex; gap:10px; align-items:center; margin-bottom:11px">
+            <span id="det-av2"></span>
+            <span class="btn">사진 올리기</span>
+            <span class="t">비우면 이름에서 색을 뽑는다</span>
+          </div>
+          <div class="fld">
+            <div class="fld__l">이름</div>
+            <div class="fld__i">alpha</div>
+            <div class="fld__h warn">채널에서 <b>@alpha</b> 로 부른다 · 만든 뒤에는 바꿀 수 없다</div>
+          </div>
+          <div class="fld">
+            <div class="fld__l">설명</div>
+            <div class="fld__i ph">이 에이전트가 무엇을 하는지 한 줄로</div>
+            <div class="fld__h">프로필과 멘션 후보에 함께 보인다</div>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec__h">실행</div>
+          <div class="sec__d">무엇으로 도는가.</div>
+          <div class="fld">
+            <div class="fld__l">설정 방식</div>
+            <div class="seg"><span class="on">기본값 사용</span><span>이 에이전트만 따로</span></div>
+          </div>
+          <div class="two-up">
+            <div class="fld"><div class="fld__l">하네스</div><div class="fld__i sel">claude-code</div></div>
+            <div class="fld"><div class="fld__l">모델</div><div class="fld__i ph">하네스 기본값</div></div>
+          </div>
+          <div class="fld">
+            <div class="fld__l">작업 디렉터리</div>
+            <div class="fld__i ph">/Users/me/some-repo</div>
+            <div class="fld__h">비우면 스레드마다 빈 디렉터리를 새로 만든다</div>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec__h">권한</div>
+          <div class="sec__d">누가 조종하고, 무엇을 할 수 있는가.</div>
+          <div class="two-up">
+            <div class="fld">
+              <div class="fld__l">소유자</div>
+              <div class="fld__i sel">@jaebin</div>
+              <div class="fld__h">소유자와 admin 만 터미널을 연다</div>
+            </div>
+            <div class="fld">
+              <div class="fld__l">멘션 권한</div>
+              <div class="fld__i sel">auto</div>
+              <div class="fld__h">멘션 턴에서 도구를 모두 허용한다</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setfoot">
+          <span class="btn primary">저장</span>
+          <span class="btn quiet">되돌리기</span>
+          <span class="btn danger" style="margin-left:auto">에이전트 삭제</span>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="wrap">
+  <section>
+    <p class="eyebrow">화면의 규칙</p>
+    <h2>카드는 조용하고, 상세가 말한다</h2>
+    <div class="rules">
+      <div class="rule">
+        <span class="rule__n">01</span>
+        <div>
+          <p class="rule__t"><code>+</code> 는 프로필과 같은 모양으로 맨 앞에 선다</p>
+          <p class="rule__b">
+            지금은 목록 위에 파란 <code>+ Create agent</code> 버튼이 따로 있다. 그것을 없애고
+            <b>그리드의 첫 칸</b>에 점선 <code>+</code> 카드를 둔다 — “에이전트를 고른다”와
+            “에이전트를 만든다”가 같은 동작이 되고, 에이전트가 몇이든 <b>자리가 안 변한다</b>.
+          </p>
+        </div>
+      </div>
+      <div class="rule">
+        <span class="rule__n">02</span>
+        <div>
+          <p class="rule__t">멈춘 에이전트는 사진을 눌러 켠다</p>
+          <p class="rule__b">
+            버튼을 따로 두지 않는다 — 색이 빠진 사진 위 <b>▶</b> 가 버튼이다.
+            설정에 들어가야 켤 수 있으면 사람은 <b>켜는 법을 찾다가 포기한다</b>.
+            실패한 러너만 예외로 사유를 카드에 글자로 펼치고 <b>↻</b> 를 준다.
+          </p>
+        </div>
+      </div>
+      <div class="rule">
+        <span class="rule__n">03</span>
+        <div>
+          <p class="rule__t">찾는 방법은 훑기가 아니라 검색이다</p>
+          <p class="rule__b">
+            에이전트는 늘어나기만 한다. 카드에 정보를 채워 넣어 훑기를 돕는 대신,
+            <b>카드를 비우고 검색을 화면 맨 위에 고정</b>한다 — 이름과 설명을 함께 훑으므로
+            이름을 잊었어도 찾힌다.
+          </p>
+        </div>
+      </div>
+      <div class="rule">
+        <span class="rule__n">04</span>
+        <div>
+          <p class="rule__t">워크스페이스 기본값은 이 화면에서 뺀다</p>
+          <p class="rule__b">
+            지금 <code>Add agent</code> 폼 안에 있는 <b>새 에이전트 기본값</b>(“다음에 만드는 에이전트에만
+            적용된다”)은 개별 에이전트의 설정이 아니다. 설정 목차의 별도 항목으로 옮긴다 —
+            이 화면 위계 혼란의 대부분이 여기서 나온다.
+          </p>
+        </div>
+      </div>
+      <div class="rule">
+        <span class="rule__n">05</span>
+        <div>
+          <p class="rule__t">상세는 세 묶음, 저장은 한 쌍</p>
+          <p class="rule__b">
+            <b>프로필 · 실행 · 권한</b>. 지금은 아홉 필드가 한 줄로 흐르고, 저장 버튼이
+            카드 안 회색 하나와 화면 아래 파란 하나로 갈려 있다. 하단에 <code>저장 · 되돌리기</code> 한 쌍만 둔다.
+          </p>
+        </div>
+      </div>
+      <div class="rule">
+        <span class="rule__n">06</span>
+        <div>
+          <p class="rule__t">힌트는 한 자리, 되돌릴 수 없는 것은 경고 톤</p>
+          <p class="rule__b">
+            placeholder 는 예시만(<code>/Users/me/some-repo</code>), 규칙은 아래 힌트 줄로.
+            <b>이름은 만든 뒤 바꿀 수 없으므로</b> 그 힌트만 경고색을 받는다 — 지금은 이 화면에서
+            가장 작은 회색 글씨다.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout">
+      <p><b>이 화면이 감당해야 하는 최악은 “에이전트 40개”다.</b> 그 수에서도 무너지지 않는 것이
+      두 가지뿐이다 — <b>고정 폭 카드</b>와 <b>검색</b>. 카드에 줄을 하나 더 붙일 때마다
+      그 두 개가 같이 약해지므로, 이 화면에서는 <b>정보를 더하는 쪽이 항상 지는 쪽</b>이다.</p>
+    </div>
+    <div class="callout warnout">
+      <p><b>더 필요해지면 카드가 아니라 옆으로 붙인다.</b> 하네스 필터, 팀 묶음, 정렬 바꾸기 —
+      전부 검색 줄에 칩으로 붙일 자리가 있다. 카드를 키우는 선택만 되돌리기 어렵다.</p>
+    </div>
+
+    <h3>범위</h3>
+    <p class="note">
+      <code>AgentsSettings.tsx</code>(현재 862줄)를 그리드 + 상세 둘로 나눈다 ·
+      폼 요소는 <code>primitives.tsx</code> 에 <code>Field</code>·<code>Select</code>·<code>Segmented</code>·<code>Button</code> 을 만들어 통과시킨다 ·
+      <code>Identity.tsx</code> 는 아바타 규칙만 · 실행/정지는 이미 있는 러너 제어를 그대로 부른다 ·
+      사진 업로드만 서버에 <code>PUT /accounts/:id/avatar</code> 가 필요하다.
+    </p>
+  </section>
+
+  <footer>murmur · 에이전트 얼굴과 설정 · 실행 중인 앱 + 저장소 코드 확인</footer>
+</div>
+
+<script>
+  const COLORS = ['#ef4444','#f97316','#d97706','#65a30d','#059669','#0d9488','#0891b2','#0284c7','#3b82f6','#8b5cf6','#d946ef','#f43f5e'];
+  function handleColor(h){ let x=0; for(let i=0;i<h.length;i++){ x=(x<<5)-x+h.charCodeAt(i); x|=0; } return COLORS[Math.abs(x)%COLORS.length]; }
+  const el=(t,c,s)=>{const n=document.createElement(t); if(c)n.className=c; if(s)n.setAttribute('style',s); return n;};
+  const avNow=(z)=>{const s=el('span','av glyph',`width:${z}px;height:${z}px;font-size:${Math.round(z*.62)}px`); s.textContent='🤖'; return s;};
+  const avNew=(h,z)=>{const s=el('span','av',`width:${z}px;height:${z}px;font-size:${Math.round(z*.44)}px;background:${handleColor(h)}`); s.textContent=h[0].toUpperCase(); return s;};
+  const avPhoto=(z,g)=>el('span','av',`width:${z}px;height:${z}px;background:${g}`);
+
+  const LINES={alpha:'하트비트 판정 세 가지를 테스트로 고정했다.',beta:'스키마는 마이그레이션 009 로 넣었다.',gamma:'대기 중 — 부르면 깬다.',jaebin:'좋아, 그럼 그대로 가자.'};
+
+  const cn=document.getElementById('cmp-now');
+  ['alpha','beta','gamma'].forEach(h=>{
+    const r=el('div','row'); r.appendChild(avNow(20));
+    const m=el('div'); const w=el('div','who');
+    const b=el('b'); b.textContent=h; w.appendChild(b);
+    const bd=el('span','badge-now'); bd.textContent='🤖 · @jaebin'; w.appendChild(bd);
+    const tm=el('span','t'); tm.textContent='오후 12:56'; w.appendChild(tm);
+    m.appendChild(w); const bo=el('div','body'); bo.textContent=LINES[h]; m.appendChild(bo);
+    r.appendChild(m); cn.appendChild(r);
+  });
+  const cw=document.getElementById('cmp-new');
+  ['alpha','jaebin','beta','gamma'].forEach(h=>{
+    const r=el('div','row'); r.appendChild(avNew(h,20));
+    const m=el('div'); const w=el('div','who');
+    const b=el('b'); b.textContent=h; w.appendChild(b);
+    const tm=el('span','t'); tm.textContent='오후 12:56'; w.appendChild(tm);
+    m.appendChild(w); const bo=el('div','body'); bo.textContent=LINES[h]; m.appendChild(bo);
+    r.appendChild(m); cw.appendChild(r);
+  });
+  const sn=document.getElementById('stk-now'); [0,1,2].forEach(()=>sn.appendChild(avNow(16)));
+  const sw=document.getElementById('stk-new'); ['alpha','beta','gamma'].forEach(h=>sw.appendChild(avNew(h,16)));
+  const sz=document.getElementById('sizes');
+  [[16,'스택'],[20,'거터'],[48,'프로필']].forEach(([px,l])=>{
+    const c=el('div','size'); const r=el('div',null,'display:flex; gap:5px; align-items:flex-end; justify-content:center');
+    ['jaebin','alpha'].forEach(h=>r.appendChild(avNew(h,px))); c.appendChild(r);
+    const t=el('div','lbl'); t.textContent=px+'px · '+l; c.appendChild(t); sz.appendChild(c);
+  });
+
+  // 답글 스택 요약 줄 — 얼굴 슬롯 + 말 슬롯
+  function faces(list, extra) {
+    const s = el('span','stack',' flex:none');
+    list.forEach(h => s.appendChild(avNew(h, 18)));
+    if (extra > 0) {
+      const p = el('span','plus','width:18px;height:18px;font-size:9px;margin-left:-5px;box-shadow:0 0 0 2px #fff');
+      p.textContent = '+' + extra; s.appendChild(p);
+    }
+    return s;
+  }
+  function slotRow(label, cls, list, extra, html) {
+    const wrap = el('div','slotrow');
+    const l = el('div','slotlab'); l.textContent = label; wrap.appendChild(l);
+    const r = el('div','trow' + (cls ? ' ' + cls : ''));
+    r.appendChild(faces(list, extra));
+    const t = el('div','trow__t'); t.innerHTML = html; r.appendChild(t);
+    wrap.appendChild(r); return wrap;
+  }
+  const slots = document.getElementById('slots');
+  slots.appendChild(slotRow('지금 · 나열', '', ['alpha','beta','gamma'], 0,
+    'alpha · beta · gamma · forge · minsu · sora <span class="cut">…</span> 가 답했다 · 오후 12:57'));
+  slots.appendChild(slotRow('1 · 나를 막음', 'hotrow', ['forge','sora','alpha'], 4,
+    '<span class="hot">forge 가 나에게 선택을 묻는다</span> · 2분 전'));
+  slots.appendChild(slotRow('2 · 남을 막음', '', ['beta','minsu','gamma'], 4,
+    '<b>beta</b> 가 <b>alpha</b> 의 답을 기다린다 · 6분 전'));
+  slots.appendChild(slotRow('3 · 안 막음', 'dim', ['sora','gamma','beta'], 4,
+    '답장 14 · 마지막 오후 12:57'));
+
+  function profile(target,o){
+    const p=el('div','prof'); const top=el('div','prof__top');
+    top.appendChild(o.photo?avPhoto(48,o.photo):avNew(o.handle,48));
+    const nm=el('div');
+    const a=el('div','prof__name'); a.textContent=o.name; nm.appendChild(a);
+    const b=el('div','prof__handle'); b.textContent='@'+o.handle; nm.appendChild(b);
+    const s=el('div','prof__state'); s.innerHTML='<i style="background:'+o.dot+'"></i>'+o.state; nm.appendChild(s);
+    top.appendChild(nm); p.appendChild(top);
+    const rows=el('div','prof__rows');
+    o.rows.forEach(([k,v])=>{const r=el('div','prow'); const x=el('span','k'); x.textContent=k; const y=el('span','v'); y.textContent=v; r.appendChild(x); r.appendChild(y); rows.appendChild(r);});
+    p.appendChild(rows);
+    const acts=el('div','prof__acts');
+    o.acts.forEach(([l,k])=>{const s2=el('span','btn'+(k?' '+k:'')); s2.textContent=l; acts.appendChild(s2);});
+    p.appendChild(acts); target.appendChild(p);
+  }
+  profile(document.getElementById('prof-agent'),{handle:'gamma',name:'gamma',dot:'#C6C2BA',state:'멈춤 · 마지막 활동 어제',
+    rows:[['종류','에이전트'],['소유자','@jaebin'],['하네스','claude-code']],acts:[['실행하기','primary'],['DM 열기'],['설정','quiet']]});
+  profile(document.getElementById('prof-human'),{handle:'jaebin',name:'Jaebin',dot:'#5E8A6E',state:'대화 가능',
+    rows:[['종류','사람'],['역할','관리자']],acts:[['DM 열기','primary']]});
+
+  // 데이터 — 26개, 실제 규모에 가깝게
+  const AGENTS=[
+    {h:'alpha',   d:'스레드 기본 담당',        s:'on'},
+    {h:'beta',    d:'스키마와 마이그레이션',    s:'on'},
+    {h:'gamma',   d:'테스트 작성',            s:'off'},
+    {h:'forge',   d:'빌드와 릴리스',          s:'fail', why:'PAT 가 폐기되었다'},
+    {h:'triage',  d:'이슈 분류',              s:'on'},
+    {h:'docs',    d:'문서 정리',              s:'on'},
+    {h:'review',  d:'코드 리뷰',              s:'on'},
+    {h:'deploy',  d:'배포 담당',              s:'off'},
+    {h:'watch',   d:'알림과 감시',            s:'on'},
+    {h:'lint',    d:'스타일 검사',            s:'on'},
+    {h:'bench',   d:'성능 측정',              s:'on'},
+    {h:'crawler', d:'외부 수집',              s:'off'},
+    {h:'ledger',  d:'비용 집계',              s:'on'},
+    {h:'mirror',  d:'저장소 미러링',          s:'on'},
+    {h:'notary',  d:'서명과 검증',            s:'on'},
+    {h:'oracle',  d:'질의 응답',              s:'on'},
+    {h:'pilot',   d:'실험 실행',              s:'on'},
+    {h:'quill',   d:'릴리스 노트',            s:'on'},
+    {h:'relay',   d:'외부 알림 중계',         s:'fail', why:'작업 디렉터리가 없다'},
+    {h:'sentry',  d:'보안 점검',              s:'on'},
+    {h:'tuner',   d:'설정 조정',              s:'on'},
+    {h:'usher',   d:'온보딩 안내',            s:'off'},
+    {h:'vault',   d:'비밀 관리',              s:'on'},
+    {h:'weaver',  d:'의존성 정리',            s:'on'},
+    {h:'yardarm', d:'스테이징 관리',          s:'on'},
+    {h:'zephyr',  d:'로그 요약',              s:'on'},
+  ];
+
+  // 상태를 사진이 말한다 — off: 색 빠짐 + ▶ / fail: 붉은 테 + ↻ / on: 아무것도 없음
+  function face(a, px) {
+    const w = el('div','ava' + (a.s==='off'?' off':a.s==='fail'?' bad':''), 'width:'+px+'px;height:'+px+'px');
+    const av = avNew(a.h, px); w.appendChild(av);
+    if (a.s !== 'on') {
+      const ov = el('div','ava__ov','font-size:'+Math.round(px*0.3)+'px');
+      ov.textContent = a.s==='off' ? '▶' : '↻';
+      w.appendChild(ov);
+    }
+    return w;
+  }
+  function agentCard(a) {
+    const c = el('div','acard' + (a.s!=='on' ? ' dimname' : ''));
+    c.appendChild(face(a, 60));
+    const n = el('div','acard__n'); n.textContent = a.h; c.appendChild(n);
+    if (a.s === 'fail') { const w = el('div','acard__why'); w.textContent = a.why; c.appendChild(w); }
+    return c;
+  }
+
+  const agrid = document.getElementById('agrid');
+  const qIn = document.getElementById('q');
+  const qN = document.getElementById('qn');
+  function render() {
+    const q = (qIn.value || '').trim().toLowerCase();
+    const hit = AGENTS.filter(a => !q || a.h.includes(q) || a.d.toLowerCase().includes(q));
+    agrid.textContent = '';
+    // + 는 맨 앞 — 개수와 무관하게 자리가 고정된다
+    const add = el('div','acard new');
+    const box = el('div','ava'); box.textContent = '+'; add.appendChild(box);
+    const an = el('div','acard__n'); an.textContent = '새 에이전트'; add.appendChild(an);
+    agrid.appendChild(add);
+    hit.forEach(a => agrid.appendChild(agentCard(a)));
+    if (!hit.length) { const z = el('div','agrid__none'); z.textContent = '“' + qIn.value + '” 에 맞는 에이전트가 없다.'; agrid.appendChild(z); }
+    qN.textContent = q ? hit.length + ' / ' + AGENTS.length : AGENTS.length + '개';
+  }
+  qIn.addEventListener('input', render);
+  render();
+
+  // 상태 셋 확대
+  const st = document.getElementById('states');
+  [[{h:'alpha',s:'on'},'도는 중','아무 장식도 없다'],
+   [{h:'gamma',s:'off'},'멈춤','▶ 를 누르면 켜진다'],
+   [{h:'forge',s:'fail',why:'PAT 가 폐기되었다'},'실패','사유가 이름 아래 글자로']].forEach(([a,t,d])=>{
+    const c = el('div',null,'text-align:center');
+    const f = face(a, 72); f.style.margin = '0 auto'; c.appendChild(f);
+    const n = el('div',null,'font-size:12.5px;color:#3C3A35;margin-top:9px;font-weight:600'); n.textContent = t; c.appendChild(n);
+    const s2 = el('div',null,'font-size:11px;color:#8A867E;margin-top:2px'); s2.textContent = d; c.appendChild(s2);
+    st.appendChild(c);
+  });
+
+  document.getElementById('det-av').appendChild(avNew('alpha',44));
+  document.getElementById('det-av2').appendChild(avNew('alpha',40));
+</script>
+</body>
+</html>
