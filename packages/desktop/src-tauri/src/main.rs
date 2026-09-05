@@ -8,8 +8,9 @@
 //! 물러난다(`lib/session.ts`). 그래서 여기서는 실패를 숨기지 않고 문자열로 돌려준다 —
 //! 조용히 성공한 척하면 프런트가 평문 경로로 내려갈 기회를 잃는다.
 
+mod daemon_client;
+
 use std::collections::HashMap;
-use std::sync::Mutex;
 
 const SERVICE: &str = "app.murmur.desktop";
 
@@ -17,37 +18,112 @@ fn entry(key: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(SERVICE, key).map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// 키체인 커맨드는 **절대 메인 스레드에서 돌면 안 된다** — `#450`
+//
+// ## 무엇이 일어났나 (실측 2026-09-06)
+//
+// 앱이 러너를 하나도 안 띄우고 멎었다. `sample` 로 5초를 떴더니 **3875/3875 샘플이 한
+// 지점**에 있었다:
+//
+// ```text
+// main-thread → tauri ipc → keyring::Entry::get_password
+//   → SecKeychainFindGenericPassword → CSSM_DecryptDataFinal
+// ```
+//
+// 그리고 같은 시각 `SecurityAgent`(macOS 의 키체인 승인 대화상자) 프로세스가 떠 있었다.
+//
+// **키체인 읽기가 사용자 승인을 요구할 수 있다.** 재빌드로 앱 서명이 바뀌면 키체인 ACL 이
+// 무효화돼 매번 물어보므로, 개발 중 반복 빌드 환경에서 특히 잘 난다.
+//
+// ## 왜 진단하기 어려운가 — 이것이 이 주석의 존재 이유다
+//
+// **앱이 죽지 않는다.** 크래시도, 에러 로그도, 예외도 없다. 프로세스는 살아 있고 창도
+// 그려져 있다. 겉으로 보이는 것은 "러너가 안 뜬다"뿐이라, 러너·사이드카·PATH·소켓을
+// 아무리 봐도 원인이 안 나온다(실제로 그 순서로 헤맸다). 접근성 트리조차 무응답이므로
+// UI 자동화로도 안 잡힌다. **`sample` 로 스택을 떠야만 보인다.**
+//
+// ## 왜 `spawn_blocking` 인가 — `async fn` 만으로는 부족하다
+//
+// 동기 `#[tauri::command]` 는 Tauri 가 **메인 스레드에서** 실행한다. 그래서 `async fn` 으로
+// 바꾸는 것이 첫 걸음이다. 그런데 `keyring` 자체가 동기라, `async fn` 안에서 그대로
+// 부르면 이번에는 **async 런타임의 워커 스레드**가 블록된다 — 메인 스레드는 살았지만 그
+// 워커를 쓰는 다른 커맨드들이 줄줄이 밀린다. 이 앱에서 그 줄에 서는 것이 바로
+// `daemon_spawn_runner` 다(러너 기동은 키체인 읽기 **다음** 순서다).
+//
+// `spawn_blocking` 은 그 목적으로 있는 자리다: 블로킹 작업 전용 풀에서 돌려 메인 스레드도
+// async 워커도 잡지 않는다.
+//
+// ## 타임아웃을 두지 않는다
+//
+// 승인 대화상자가 떠 있는 동안 이 호출은 **정상적으로** 오래 걸린다. 타임아웃은
+// "사람이 아직 안 눌렀다"와 "고장났다"를 구분하지 못하고, 앞의 것을 실패로 처리하면
+// 사람이 승인을 누른 뒤에도 앱은 이미 실패한 상태다 — 지금보다 나쁘다.
+// `#431` 이 러너 유예에 상한을 두지 않은 것과 같은 판단이다.
+//
+// ## `async` 를 떼도 **아무것도 안 깨진다** — 타입이 막아 주지 않는다
+//
+// "그래도 컴파일이나 타입이 잡아 주겠지"라고 생각하기 쉬운데, **못 잡는다.** 웹뷰 쪽
+// 호출은 `await invoke('secret_get', { key })`(`lib/runnerLauncher.ts`) 하나이고,
+// **`invoke` 는 Rust 가 `fn` 이든 `async fn` 이든 언제나 `Promise` 를 돌려준다.** 그래서
+// 누가 `async` 를 떼도 TS 는 그대로 통과하고, 조용히 메인 스레드로 돌아간다.
+//
+// 이것이 이 결함의 성질이기도 하다 — **처음 동기로 쓰였을 때도 아무 신호가 없었다.**
+//
+// ## 회귀선에 대해 — **증상을 재현하는 것은 없다**
+//
+// 키체인 승인 대화상자를 테스트에서 만들 방법이 없고, "메인 스레드가 안 막힌다"를 재려면
+// 그 대화상자가 필요하다. 그래서 `test/runnerShellScope.test.ts` 가 **소스를 읽어
+// `async fn` + `spawn_blocking` 이라는 성질만** 고정한다 — 위에서 본 대로 타입이 못 잡으니
+// 그것이라도 있어야 변경이 눈에 띈다. 동기로 되돌렸을 때 RED 가 되는 것은 그 검사뿐이다.
+//
+// ## 이 수정이 맞다는 증거 (실측 2026-09-06)
+//
+// 사용자가 대화상자에 응답하자 **앱을 재시작하지 않았는데 같은 프로세스가 그대로 풀리고
+// 러너 2개가 떴다.** 추정이 아니라 관측이다 — 앱은 고장난 것이 아니라 **기다리고 있었다.**
+// 그 기다림은 10분을 넘겼고, 그것이 정상 동작이었다. 타임아웃을 뒀다면 사실이 아닌
+// "실패"를 화면에 띄웠을 것이다.
+// ---------------------------------------------------------------------------
+
 /// 없으면 `None`. "없다"와 "읽을 수 없다"는 다르다 — 후자는 Err 로 올려야 프런트가
 /// 폴백할지 로그아웃할지 판단할 수 있다.
 #[tauri::command]
-fn secret_get(key: String) -> Result<Option<String>, String> {
-    match entry(&key)?.get_password() {
+async fn secret_get(key: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || match entry(&key)?.get_password() {
         Ok(v) => Ok(Some(v)),
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(e) => Err(e.to_string()),
-    }
+    })
+    .await
+    .map_err(|e| format!("키체인 조회 스레드가 끊겼다: {e}"))?
 }
 
 #[tauri::command]
-fn secret_set(key: String, value: String) -> Result<(), String> {
-    entry(&key)?.set_password(&value).map_err(|e| e.to_string())
+async fn secret_set(key: String, value: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        entry(&key)?.set_password(&value).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("키체인 저장 스레드가 끊겼다: {e}"))?
 }
 
 /// 없는 것을 지우는 것도 성공이다 — 결과 상태가 같으니 재시도가 안전하다.
 #[tauri::command]
-fn secret_delete(key: String) -> Result<(), String> {
-    match entry(&key)?.delete_credential() {
+async fn secret_delete(key: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || match entry(&key)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.to_string()),
-    }
+    })
+    .await
+    .map_err(|e| format!("키체인 삭제 스레드가 끊겼다: {e}"))?
 }
 
 // ---------------------------------------------------------------------------
-// 러너 프로세스 그룹 분리 spawn(#431 1단계 A).
+// 프로세스 그룹 분리 spawn(#431 1단계 A) — 이제 **daemon 을 띄우는 데** 쓴다.
 //
-// **왜 이것이 필요한가**(실측, 2026-09-05): 앱을 SIGKILL 해도 러너는 살아남았지만 PGID 가
-// 앱 프로세스 그룹 그대로였고, `kill -TERM -<그 그룹>` 한 번에 러너 전부가 죽었다. 즉
-// 러너가 살아남는 것은 "아무도 그 그룹에 시그널을 안 보내서"일 뿐이고, 앱 종료 훅에 누가
+// **왜 이것이 필요한가**(실측, 2026-09-05): 앱을 SIGKILL 해도 자식은 살아남았지만 PGID 가
+// 앱 프로세스 그룹 그대로였고, `kill -TERM -<그 그룹>` 한 번에 전부 죽었다. 즉 자식이
+// 살아남는 것은 "아무도 그 그룹에 시그널을 안 보내서"일 뿐이고, 앱 종료 훅에 누가
 // `dispose()`류 정리를 연결하거나 launcher(pnpm)·셸·OS 가 세션 종료로 그룹에 시그널을
 // 보내는 순간 이 우연한 생존은 사라진다. orca 는 daemon 을 자기 PGID 로 분리해 이 경로를
 // 원천 차단한다 — 이 spawn 이 같은 일을 한다: 자식을 **자기 세션/프로세스 그룹**으로 뗀다.
@@ -56,21 +132,21 @@ fn secret_delete(key: String) -> Result<(), String> {
 // `#425` 가 만든 패턴(웹뷰는 파라미터를 넘기지 않고 실행 대상·인자가 Rust 안에 고정되는
 // invoke 커맨드)을 그대로 재사용한다. `shell:allow-spawn` 스코프의 리터럴 인자 제약과
 // 같은 이유로, 여기서도 웹뷰가 프로그램·인자·옵션 중 어느 것도 고르지 못한다.
+//
+// ## `#431` 2단계-b 3/3 — 러너를 앱이 아니라 **daemon 이** 띄운다
+//
+// 이 파일에 있던 `runner_spawn`·`runner_wait_exit`·`runner_kill` 과 그 pid 표
+// (`RunnerRegistry`)가 **사라졌다.** 러너를 소유하는 것이 앱이 아니라 daemon 이 됐기
+// 때문이다 — 앱이 여전히 러너를 직접 띄울 수 있으면 "무엇이 러너를 소유하는가"가 둘로
+// 갈리고, 그 상태가 이 이슈가 없애려는 바로 그것이다.
+//
+// **그 자리는 폴백으로도 남기지 않았다.** 남기면 daemon 기동 실패가 조용히 옛 경로로
+// 흘러 "daemon 이 도는 줄 알았는데 아니었다"가 된다(`daemon_client.rs` 모듈 주석의
+// "왜 폴백이 없나"). 실패는 실패로 화면에 오른다(`#368`).
+//
+// `detached_command()` 는 그대로 남는다 — 이제 그것이 띄우는 것이 daemon 이고, 러너는
+// daemon 이 자기 쪽에서 같은 성질(`detached`)로 띄운다(`packages/daemon/src/runners.ts`).
 // ---------------------------------------------------------------------------
-
-/// 띄운 자식의 핸들. `wait()` 는 **한 번만** 성공한다(`std::process::Child::wait` 의 계약) —
-/// 그래서 종료를 기다리는 스레드가 끝난 뒤에는 exit code 를 여기 캐시해 두 번째 이후의
-/// `runner_wait_exit` 호출(느린 IPC 재시도 등)도 같은 값을 돌려준다.
-struct RunnerChild {
-    child: std::sync::Arc<Mutex<std::process::Child>>,
-    /// 종료 코드. `wait()` 가 끝나기 전에는 `None`. 시그널로 죽었으면 계속 `None`이다
-    /// (Unix 의 `ExitStatus::code()` 계약과 같다) — 그 경우 JS 쪽 `onExit(null)` 로 이어진다.
-    exit_code: std::sync::Arc<Mutex<Option<i32>>>,
-}
-
-/// 이 앱이 띄운 러너 전부. pid → 핸들. **이 앱이 띄운 것만** 담는다 — 외부 러너는 여기
-/// 없고, 이 표를 거치지 않는 pid 에 대한 kill·wait 요청은 전부 거절한다(`RunnerNotFound`).
-struct RunnerRegistry(Mutex<HashMap<u32, RunnerChild>>);
 
 /// 러너 사이드카의 스코프 이름. **`tauri.conf.json` 의 `bundle.externalBin` 항목 이름과
 /// 반드시 같아야 한다** — 다르면 번들 빌드가 그 이름으로 복사한 실행 파일을 여기서 못 찾는다.
@@ -81,17 +157,27 @@ const RUNNER_SIDECAR_NAME: &str = "murmur-runner";
 /// 복사한다(`tauri-build::copy_binaries`) — 그래서 `current_exe()` 의 부모 디렉터리를 그대로
 /// 쓴다. 개발 모드(`cargo run`)에서도 `cargo-tauri`가 빌드된 사이드카를 `target/debug/` 로
 /// 미리 복사해 두므로 같은 경로 규칙이 그대로 통한다.
-fn sidecar_path() -> Result<std::path::PathBuf, String> {
+///
+/// ## `name` 파라미터는 웹뷰의 입력이 아니다 (`#431` 2단계-b 3/3)
+///
+/// daemon 도 사이드카가 되면서 이 함수가 이름을 받게 됐다. **그 이름을 넘기는 자리는 둘
+/// 뿐이고 둘 다 Rust 안의 상수다** — `RUNNER_SIDECAR_NAME` 과 `DAEMON_SIDECAR_NAME`.
+/// 웹뷰가 이 함수에 닿는 경로는 없다: 커맨드 시그니처 어디에도 프로그램 이름을 받는
+/// 파라미터가 없고, 그 성질을 `test/runnerShellScope.test.ts` 가 소스를 읽어 못박는다.
+///
+/// 이름을 파라미터로 뺀 것이 경계를 넓히지 **않는** 이유가 그것이다 — 넓히는 것은
+/// "웹뷰가 값을 고를 수 있는가"이지 "함수가 인자를 받는가"가 아니다.
+fn sidecar_path(name: &str) -> Result<std::path::PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("실행 파일 경로를 얻지 못했다: {e}"))?;
     let dir = exe
         .parent()
         .ok_or_else(|| "실행 파일에 부모 디렉터리가 없다".to_string())?;
-    let name = if cfg!(windows) {
-        format!("{RUNNER_SIDECAR_NAME}.exe")
+    let file = if cfg!(windows) {
+        format!("{name}.exe")
     } else {
-        RUNNER_SIDECAR_NAME.to_string()
+        name.to_string()
     };
-    Ok(dir.join(name))
+    Ok(dir.join(file))
 }
 
 /// `node-pty` 로더(`lib/utils.js::loadNativeModule`)는 **사이드카 파일 기준 상대 경로**로
@@ -256,161 +342,94 @@ fn detached_command(program: &std::path::Path) -> std::process::Command {
     cmd
 }
 
-/// 러너를 자기 세션/프로세스 그룹으로 분리해 띄운다. **파라미터는 환경변수 값 두 개뿐이다**
-/// (PAT·서버 주소) — 실행할 프로그램 경로·인자는 `sidecar_path()`가 고정하고, 웹뷰는 그
-/// 프로그램의 이름도 인자도 고르지 못한다. `env` 는 값이지 실행 표면이 아니다(플러그인
-/// 셸 스코프의 인자 리터럴 제약과 다른 층위).
+// ---------------------------------------------------------------------------
+// daemon 커맨드(#431 2단계-b 3/3) — 앱이 daemon 을 통해 러너를 소유한다.
+//
+// **세 커맨드가 웹뷰에서 받는 것은 전부 값이다.** 프로그램 경로도, 소켓·토큰 경로도,
+// daemon 인자도 아니다 — 그것들은 `daemon_client` 가 `sidecar_path()`·`app_data_dir()`
+// 에서 계산한다(`daemon_client.rs` 모듈 주석의 표). 이것이 `runner_spawn` 이 지키던
+// 성질을 daemon 쪽으로 그대로 이은 자리다.
+// ---------------------------------------------------------------------------
+
+/// 웹뷰가 러너 exit 을 듣는 이벤트 이름. **`incarnationId` 를 그대로 실어 보낸다** —
+/// 세대를 가리는 것은 앱 쪽(`runnerLauncher.handleExit`)의 일이고, Rust 는 daemon 이
+/// 말한 사실을 옮기기만 한다(`#419` 의 계약이 소켓 너머로 이어지는 자리).
+const RUNNER_EXIT_EVENT: &str = "murmur://runner-exit";
+
+/// daemon 을 확보하고 러너를 띄우라고 시킨다.
 ///
-/// **회귀선이 재는 것**: `tests::setsid_로_띄운_자식의_pgid_는_자기_자신이다` 가 실제
-/// 프로세스를 `detached_command()` 로 띄워 그 PGID 가 **자기 자신과 같은지** 확인한다.
-/// 앱 PGID 와 같으면 `setsid` 가 빠졌거나 깨졌다는 뜻이고 그것이 곧 이 스폰의 실패다 —
-/// §5(앱 업데이트와 러너 생존이 무관하다)가 다시 우연이 된다.
+/// **daemon 이 없으면 띄우고 있으면 붙는다**(`ensure_daemon`). 실패하면 그대로 `Err` 다 —
+/// 앱이 직접 러너를 띄우는 폴백은 **없다**(이 파일 위쪽 "그 자리는 폴백으로도 남기지
+/// 않았다" 참조). 그 `Err` 문자열이 화면의 `failed` + `message` 로 그대로 올라간다.
 #[tauri::command]
-fn runner_spawn(
+fn daemon_spawn_runner(
     app: tauri::AppHandle,
-    registry: tauri::State<RunnerRegistry>,
+    state: tauri::State<daemon_client::DaemonState>,
+    agent_id: String,
     murmur_pat: String,
     murmur_url: String,
     path: String,
-) -> Result<u32, String> {
-    use std::process::Stdio;
+) -> Result<daemon_client::SpawnRunnerResult, String> {
+    use tauri::Emitter;
 
-    let program = sidecar_path()?;
-    if !program.is_file() {
-        return Err(format!(
-            "러너 사이드카를 찾지 못했다: `{}` — 빌드가 externalBin 을 이 이름으로 넣었는지 확인하라",
-            program.display()
-        ));
+    // 러너는 daemon 이 띄우지만 `node-pty` 는 여전히 사이드카 옆에서 해석돼야 한다
+    // (`#433`) — daemon 과 러너가 같은 디렉터리에 있으므로 그 배치 요구는 그대로다.
+    let runner = sidecar_path(RUNNER_SIDECAR_NAME)?;
+    if let Some(dir) = runner.parent() {
+        ensure_node_pty_alongside_sidecar(&app, dir)?;
     }
-    let sidecar_dir = program
-        .parent()
-        .ok_or_else(|| "사이드카 경로에 부모 디렉터리가 없다".to_string())?;
-    ensure_node_pty_alongside_sidecar(&app, sidecar_dir)?;
 
-    let mut cmd = detached_command(&program);
-    cmd.env("MURMUR_PAT", murmur_pat)
-        .env("MURMUR_URL", murmur_url)
-        .env("PATH", path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    let emitter = app.clone();
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state, move |event| {
+        // 여기서 세대를 가리지 않는다 — daemon 이 말한 사실을 그대로 올린다.
+        let _ = emitter.emit(RUNNER_EXIT_EVENT, event);
+    })?;
 
-    let child = cmd
-        .spawn()
-        .map_err(|e| format!("러너를 띄우지 못했다: {e}"))?;
-    let pid = child.id();
-
-    let mut map = registry
-        .0
-        .lock()
-        .map_err(|_| "레지스트리 락이 깨졌다".to_string())?;
-    map.insert(
-        pid,
-        RunnerChild {
-            child: std::sync::Arc::new(Mutex::new(child)),
-            exit_code: std::sync::Arc::new(Mutex::new(None)),
-        },
-    );
-
-    Ok(pid)
+    let mut env = HashMap::new();
+    env.insert("MURMUR_PAT".to_string(), murmur_pat);
+    env.insert("MURMUR_URL".to_string(), murmur_url);
+    env.insert("PATH".to_string(), path);
+    conn.spawn_runner(&agent_id, env)
 }
 
-/// 이 pid 의 종료를 기다린다. **자식보다 오래 걸릴 수 있으므로 블로킹 스레드로 돌린다** —
-/// `tauri::async_runtime::spawn_blocking` 이 그 자리다. JS 는 `runner_spawn` 직후 이
-/// 커맨드를 fire-and-forget 으로 불러 그 Promise 해소를 `onExit` 통지로 쓴다
-/// (`runnerLauncher.ts::tauriSpawner`) — `#419` 의 세대 토큰 판정은 여전히 JS 쪽
-/// `RunnerLauncher.handleExit` 이 맡는다. 여기는 "언젠가 끝났다"만 사실대로 전한다.
+/// **세대를 실어 보낸다** — 없으면 daemon 이 "지금 것"을 죽이고, 그 사이 새로 뜬 러너가
+/// 대신 죽을 수 있다(`daemon_client::DaemonConnection::kill_runner` 주석).
 ///
-/// **동시에 기다리는 호출자**는 캐시된 값을 즉시 돌려받는다 — `wait()` 는 한 번만 성공하는
-/// 계약이라, 다시 부르면 이미 사라진 자식을 기다리다 잘못된 값을 줄 수 있다. 표에서 항목을
-/// 빼기 전에 `Arc` 를 이미 복제해 두므로(아래 `entry` 블록), 종료 관측과 겹쳐 들어온 호출도
-/// 같은 `exit_code` 를 본다.
-///
-/// 종료를 관측한 **뒤에** 처음 부르면 표에 항목이 없어 `Err` 가 된다 — 그 pid 는 이 앱이
-/// 지금 들고 있는 자식이 아니기 때문이다(OS 가 그 번호를 이미 다른 프로세스에 줬을 수도
-/// 있다). JS 쪽은 spawn 직후 한 번만 부르므로(`tauriSpawner`) 이 경로로 들어오지 않고,
-/// 들어오더라도 `.catch` 가 `onExit(null)` 로 받아 세대 토큰이 그것을 거른다.
+/// **회수는 종료가 아니다**(`#337`). 여기서 하는 것은 daemon 에 SIGTERM 을 보내라고
+/// 말하는 것뿐이고, 유예를 자르거나 SIGKILL 로 승격하는 경로는 이쪽에도 daemon 쪽에도
+/// 없다 — 러너만이 자기 턴이 끝났는지 안다.
 #[tauri::command]
-async fn runner_wait_exit(
-    registry: tauri::State<'_, RunnerRegistry>,
-    pid: u32,
-) -> Result<Option<i32>, String> {
-    let entry = {
-        let map = registry
-            .0
-            .lock()
-            .map_err(|_| "레지스트리 락이 깨졌다".to_string())?;
-        map.get(&pid)
-            .map(|r| (r.child.clone(), r.exit_code.clone()))
-    };
-    let Some((child, exit_code)) = entry else {
-        return Err(format!("이 앱이 띄운 러너가 아니다: pid {pid}"));
-    };
-
-    if let Some(code) = *exit_code
-        .lock()
-        .map_err(|_| "종료 코드 락이 깨졌다".to_string())?
-    {
-        return Ok(Some(code));
-    }
-
-    let status = tauri::async_runtime::spawn_blocking(move || {
-        child
-            .lock()
-            .map_err(|_| "자식 락이 깨졌다".to_string())?
-            .wait()
-            .map_err(|e| format!("종료를 기다리는 중 오류: {e}"))
-    })
-    .await
-    .map_err(|e| format!("대기 스레드가 끊겼다: {e}"))??;
-
-    let code = status.code();
-    *exit_code
-        .lock()
-        .map_err(|_| "종료 코드 락이 깨졌다".to_string())? = code;
-
-    // 끝난 자식은 표에서 뺀다. 안 빼면 앱이 도는 내내 pid 마다 항목이 쌓이고, 무엇보다
-    // **OS 가 pid 를 재사용한다**는 사실과 어긋난 표가 남는다 — 죽은 pid 가 표에 살아 있으면
-    // `runner_kill` 이 그 pid 를 "이 앱 것"이라고 판정하는 창이 생긴다. 종료를 관측한 이 자리가
-    // 그 항목을 지울 유일하게 정확한 시점이다(`runner_kill` 의 "표에 없으면 성공" 논리는
-    // 이 제거가 있어야 비로소 사실이 된다).
-    //
-    // 종료 코드는 위에서 `exit_code`(Arc)에 이미 넣었고 이 함수가 그 값을 그대로 돌려주므로,
-    // 표에서 빠져도 지금 대기 중인 호출자들은 같은 값을 받는다.
-    if let Ok(mut map) = registry.0.lock() {
-        map.remove(&pid);
-    }
-    Ok(code)
+fn daemon_kill_runner(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    agent_id: String,
+    incarnation_id: Option<String>,
+) -> Result<(), String> {
+    let (conn, _) = daemon_client::ensure_daemon(&app, &state, |_| {})?;
+    conn.kill_runner(&agent_id, incarnation_id.as_deref())
 }
 
-/// 이 앱이 띄운 러너를 죽인다. **이 표에 없는 pid 는 거절한다** — 앱은 자기가 띄운 것만
-/// 죽일 수 있고, 죽여서도 안 된다(`RunnerLauncher.runners` 주석과 같은 경계).
+/// daemon 이 지금 들고 있는 러너들. **관측이지 판단이 아니다** — daemon 은
+/// "이렇게 되어 있다"만 말한다(`daemonProtocol.ts::RunnerInfo` 주석).
+///
+/// 응답에 daemon 자신의 사실(`daemonPid`·`attached`·경로들)을 함께 싣는다. 러너 목록만
+/// 주면 "러너가 0개다"와 "daemon 이 방금 떴다"를 구분할 수 없고, 그 구분이 없으면 사람이
+/// `ps` 로 밖에서 대조해야 한다 — 실물 검증이 "같은 pid 면 붙은 것"으로 재는 그 값이다.
 #[tauri::command]
-fn runner_kill(registry: tauri::State<RunnerRegistry>, pid: u32) -> Result<(), String> {
-    let map = registry
-        .0
-        .lock()
-        .map_err(|_| "레지스트리 락이 깨졌다".to_string())?;
-    let Some(entry) = map.get(&pid) else {
-        // 이미 종료를 관측해 `runner_wait_exit` 이 표에서 뺐거나, 애초에 이 앱 것이 아니다.
-        // 어느 쪽이든 **여기서 그 pid 에 시그널을 보내지 않는다** — 표에 없는 번호를 죽이면
-        // OS 가 그 번호를 재사용해 붙인 남의 프로세스를 죽일 수 있다. 이미 없는 것을 지우는
-        // 것과 같은 논리로(`secret_delete`) 성공으로 본다 — 재시도가 안전하다.
-        return Ok(());
-    };
-    let mut child = entry
-        .child
-        .lock()
-        .map_err(|_| "자식 락이 깨졌다".to_string())?;
-    // 이미 죽은 자식에 `kill()` 을 부르면 플랫폼에 따라 오류가 날 수 있다 — 그 상태 자체는
-    // "성공"과 같은 결과이므로(둘 다 "이제 안 산다"), `try_wait()` 로 먼저 확인해 늦은
-    // kill 이 사람에게 거짓 오류를 보이지 않게 한다(`secret_delete` 와 같은 재시도-안전 논리).
-    if matches!(child.try_wait(), Ok(Some(_))) {
-        return Ok(());
-    }
-    child
-        .kill()
-        .map_err(|e| format!("러너를 종료하지 못했다: {e}"))
+fn daemon_list_runners(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+) -> Result<serde_json::Value, String> {
+    let paths = daemon_client::resolve_endpoint_paths(&app)?;
+    let (conn, kind) = daemon_client::ensure_daemon(&app, &state, |_| {})?;
+    let runners = conn.list_runners()?;
+    Ok(serde_json::json!({
+        "daemonPid": conn.daemon_pid,
+        "attached": kind == daemon_client::EnsureKind::Attached,
+        "socketPath": paths.socket,
+        "logPath": paths.log,
+        "runners": runners.get("runners").cloned().unwrap_or(serde_json::Value::Null),
+    }))
 }
 
 fn main() {
@@ -419,14 +438,14 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         // 링크를 OS 로 넘기는 표면. 권한은 capabilities/default.json 에서 허용한다.
         .plugin(tauri_plugin_shell::init())
-        .manage(RunnerRegistry(Mutex::new(HashMap::new())))
+        .manage(daemon_client::DaemonState::new())
         .invoke_handler(tauri::generate_handler![
             secret_get,
             secret_set,
             secret_delete,
-            runner_spawn,
-            runner_wait_exit,
-            runner_kill,
+            daemon_spawn_runner,
+            daemon_kill_runner,
+            daemon_list_runners,
         ])
         .run(tauri::generate_context!())
         .expect("error while running murmur");
