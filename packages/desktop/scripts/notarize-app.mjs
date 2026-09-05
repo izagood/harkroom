@@ -48,7 +48,46 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const APP = join(here, '..', 'src-tauri', 'target', 'release', 'bundle', 'macos', 'murmur.app');
-const PROFILE = process.env.MURMUR_NOTARY_PROFILE ?? 'murmur';
+/**
+ * 공증 자격증명을 고른다. **로컬은 키체인, CI 는 환경변수.**
+ *
+ * ## 왜 두 경로인가 — CI 에는 키체인이 없다
+ *
+ * `--keychain-profile` 은 `notarytool store-credentials` 가 **macOS 키체인에** 저장한
+ * 항목을 읽는다. 새 CI 러너에는 그 항목이 없고, 만들려면 자격증명을 먼저 러너에
+ * 풀어놔야 하므로 **한 단계 도는 것**이 된다. `notarytool` 은 API 키를 직접도 받는다.
+ *
+ * CI 에서 줄 것(GitHub Secrets → 환경변수):
+ *   MURMUR_NOTARY_KEY      — `.p8` 파일 경로 (워크플로가 시크릿을 파일로 푼다)
+ *   MURMUR_NOTARY_KEY_ID   — Key ID
+ *   MURMUR_NOTARY_ISSUER   — Issuer UUID
+ *
+ * **`.p8` 내용을 환경변수로 받지 않는다** — `notarytool` 이 경로만 받고, 값을 프로세스
+ * 환경에 두면 `ps` 로 보일 수 있다. 워크플로가 임시 파일로 풀고 `if: always()` 로 지운다.
+ */
+function notaryArgs() {
+  const key = process.env.MURMUR_NOTARY_KEY;
+  const keyId = process.env.MURMUR_NOTARY_KEY_ID;
+  const issuer = process.env.MURMUR_NOTARY_ISSUER;
+
+  if (key || keyId || issuer) {
+    // **셋 다 있어야 한다.** 하나만 빠지면 `notarytool` 이 키체인으로 조용히 물러나
+    // "왜 로컬 프로필을 쓰지"가 되고, CI 에서는 그것이 곧 실패다.
+    const missing = [
+      ['MURMUR_NOTARY_KEY', key],
+      ['MURMUR_NOTARY_KEY_ID', keyId],
+      ['MURMUR_NOTARY_ISSUER', issuer],
+    ].filter(([, v]) => !v).map(([n]) => n);
+    if (missing.length > 0) {
+      throw new Error(`API 키 자격증명이 불완전하다 — 빠진 것: ${missing.join(', ')}`);
+    }
+    if (!existsSync(key)) throw new Error(`MURMUR_NOTARY_KEY 가 가리키는 파일이 없다: ${key}`);
+    return { args: ['--key', key, '--key-id', keyId, '--issuer', issuer], how: 'API 키(환경변수)' };
+  }
+
+  const profile = process.env.MURMUR_NOTARY_PROFILE ?? 'murmur';
+  return { args: ['--keychain-profile', profile], how: `키체인 프로필 ${profile}` };
+}
 
 if (process.platform !== 'darwin') {
   console.log('macOS 가 아니다 — 공증을 건너뛴다.');
@@ -72,18 +111,18 @@ if (!info.includes('flags=0x10000(runtime)')) {
   throw new Error('hardened runtime 이 없다 — 공증이 거절한다. `sign` 스크립트를 다시 돌려라.');
 }
 
+// **자격증명을 압축 전에 확인한다.** 불완전하면 어차피 실패하는데, 뒤에 두면 수십 MB 를
+// 압축한 뒤에 그것을 안다. CI 에서 시크릿 하나가 빠졌을 때 특히 그렇다.
+const { args: cred, how } = notaryArgs();
+
 const work = mkdtempSync(join(tmpdir(), 'murmur-notarize-'));
 const zip = join(work, 'murmur.zip');
 try {
   console.log('압축 중(ditto — 링크·권한 보존)…');
   execFileSync('ditto', ['-c', '-k', '--keepParent', APP, zip], { stdio: 'inherit' });
 
-  console.log(`Apple 에 올리는 중(프로필 ${PROFILE}) — 몇 분 걸린다…`);
-  execFileSync(
-    'xcrun',
-    ['notarytool', 'submit', zip, '--keychain-profile', PROFILE, '--wait'],
-    { stdio: 'inherit' },
-  );
+  console.log(`Apple 에 올리는 중(${how}) — 몇 분 걸린다…`);
+  execFileSync('xcrun', ['notarytool', 'submit', zip, ...cred, '--wait'], { stdio: 'inherit' });
 
   console.log('티켓을 앱에 박는 중(staple)…');
   execFileSync('xcrun', ['stapler', 'staple', APP], { stdio: 'inherit' });
