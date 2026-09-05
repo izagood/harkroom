@@ -4,6 +4,8 @@ import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
 import { ProgressRow } from './ProgressRow';
 import { groupProgress } from '../lib/progressGroup';
+import { AgentExchange } from './AgentExchange';
+import { groupAgentExchanges } from '../lib/agentExchange';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
 import { ChannelFiles } from './ChannelFiles';
@@ -121,7 +123,12 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 연속된 진행(progress)을 한 줄로 접는다(#144, 규칙 02). 판정은 `lib/progressGroup` 의
    * 순수 함수가 하고, 스레드 패널도 **같은 함수**를 쓴다 — 두 곳에 두면 조용히 갈라진다.
    */
-  const slots = useMemo(() => groupProgress(roots), [roots]);
+  const slots = useMemo(() => {
+    // **순서가 중요하다**: 진행을 먼저 접고, 그 위에 에이전트끼리의 주고받기를 접는다.
+    // 반대로 하면 진행 묶음이 주고받기 안으로 삼켜져 두 규칙이 한 줄에 뭉친다.
+    const isAgent = (id: string): boolean => accounts[id]?.kind === 'agent';
+    return groupAgentExchanges(groupProgress(roots), isAgent);
+  }, [roots, accounts]);
 
   /**
    * 구분선을 그릴 메시지. **채널을 열 때 얼려 둔 위치**(`dividerSeq`)를 쓴다 — 라이브 읽음
@@ -269,9 +276,10 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
                   <span className="h-px flex-1 bg-danger-border" />
                 </div>
               )}
-              {slot.kind === 'progress'
-                ? <ProgressRow messages={slot.messages} />
-                : <MessageItem message={m} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
+              {slot.kind === 'progress' ? <ProgressRow messages={slot.messages} />
+                : slot.kind === 'exchange'
+                  ? <AgentExchange messages={slot.messages} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />
+                  : <MessageItem message={m} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
             </Fragment>
           );
         })}
