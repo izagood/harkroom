@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, mentionedHandles, mentionedIds, normalizeMentions, stripCodeSpans, type InboxEntry, type MessageRow } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, mentionedHandles, mentionedIds, normalizeMentions, readAskMeta, stripCodeSpans, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { channelVisibleSql } from './channels.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
@@ -375,6 +375,55 @@ export async function editMessage(
     `update message set body = $2, edited_at = now() where id = $1 returning ${COLS}`,
     [args.messageId, normalizedBody],
   );
+  return updated.rows[0];
+}
+
+/**
+ * 선택 요청에 답을 기록한다. **원본을 고치는 것이 아니라 답을 덧붙이는 것**이므로
+ * `edited_at` 은 건드리지 않는다 — 사람이 글을 고친 것이 아니다.
+ *
+ * **중복 답 방지가 이 함수의 핵심이다.** 두 사람이 같은 순간에 누르면 먼저 도착한 것이
+ * 이긴다. 그 판정을 "읽고 나서 쓴다"로 하면 두 요청이 사이에 끼어 둘 다 통과하므로,
+ * `meta->'ask'->>'answeredWith' is null` 을 **UPDATE 의 조건에 넣어** 한 문장으로 끝낸다.
+ * 갱신된 행이 0개면 누군가 이미 답한 것이다.
+ *
+ * `already_answered` 를 `MutationRefusal` 에 섞지 않는 이유: 그 둘은 호출부가 다르게
+ * 대접해야 한다. 없는 메시지는 404 지만, 이미 답한 것은 **정상 경로의 경합**이다.
+ */
+export async function recordAskAnswer(
+  pool: Pool,
+  args: { messageId: string; actorId: string; optionId: string },
+): Promise<MessageRow | MutationRefusal | 'already_answered' | 'unknown_option'> {
+  const found = await pool.query(
+    `select meta from message where id = $1 and deleted_at is null`, [args.messageId],
+  );
+  if (!found.rowCount) return 'not_found';
+  const ask = readAskMeta(found.rows[0].meta as Record<string, unknown>);
+  // 선택 요청이 아닌 메시지에 답을 달 수는 없다. 형식을 못 알아보는 것도 여기 걸린다 —
+  // `readAskMeta` 가 그 판정의 유일한 자리다(shared 에 두어 화면과 같은 판정을 쓴다).
+  if (!ask) return 'not_found';
+  if (!ask.options.some((o) => o.id === args.optionId)) return 'unknown_option';
+
+  /**
+   * 수신자가 정해져 있으면 그 계정만 답할 수 있다. 이것이 없으면 남에게 간 물음을
+   * 아무나 가로채 답할 수 있고, 그러면 `to` 를 실은 뜻이 사라진다.
+   */
+  if (ask.to.kind === 'account' && ask.to.accountId !== args.actorId) return 'forbidden';
+
+  const updated = await pool.query(
+    `update message
+        set meta = jsonb_set(
+              jsonb_set(
+                jsonb_set(meta::jsonb, '{ask,answeredWith}', to_jsonb($2::text)),
+                '{ask,answeredBy}', to_jsonb($3::text)),
+              '{ask,answeredAt}', to_jsonb(now()))
+      where id = $1
+        and deleted_at is null
+        and meta->'ask'->>'answeredWith' is null
+      returning ${COLS}`,
+    [args.messageId, args.optionId, args.actorId],
+  );
+  if (!updated.rowCount) return 'already_answered';
   return updated.rows[0];
 }
 

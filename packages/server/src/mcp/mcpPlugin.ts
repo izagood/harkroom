@@ -3,7 +3,10 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { PROJECTION_UNCONFIGURED_NOTICE, type AccountView } from '@murmur/shared';
+import {
+  ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, PROJECTION_UNCONFIGURED_NOTICE,
+  type AccountView, type AskAudience, type AskMeta,
+} from '@murmur/shared';
 import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
 import { emitEvent, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
@@ -147,6 +150,71 @@ function buildMcpServer(
     if (!replayed) {
       const audience = await audienceFor(pool, channelId);
       emitEvent({ type: 'message.created', message, audience });
+      for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+    }
+    return jsonResult({ message });
+  });
+
+  /**
+   * 선택 요청 — 갈림길에서 선택지를 내놓는다. 고르면 그 즉시 진행되므로 사람이 다시
+   * 타이핑하지 않는다(디자인 문서 규칙 05: 답할 자리가 말 옆에 있다).
+   *
+   * **`message.post` 와 같은 삽입 경로를 쓴다** — `meta` 만 다르다(`message.progress` 의
+   * 선례). 도구를 따로 두는 이유는 발행 시점에 **옵션 수와 수신자 handle 을 서버가
+   * 검증**할 수 있기 때문이다. `meta` 규약으로 두면 깨진 카드가 저장된 뒤에 화면이
+   * 그것을 발견한다.
+   *
+   * `to` 는 handle 로 받는다 — 에이전트가 아는 것은 `@forge` 이고 accountId 가 아니다.
+   * 없는 handle 은 거절한다: 아무도 답할 수 없는 물음은 교착이고, 그것을 저장하는 것은
+   * 조용한 실패다.
+   */
+  server.registerTool('message.ask', {
+    description: '갈림길에서 선택지를 내놓는다(고르면 즉시 진행). to 는 사람이면 생략, 특정 대상이면 handle',
+    inputSchema: {
+      channelId: z.string().uuid(),
+      body: z.string().min(1).max(8000),
+      threadRootId: z.string().uuid().optional(),
+      options: z.array(z.object({
+        id: z.string().min(1).max(64),
+        label: z.string().min(1).max(200),
+        hint: z.string().min(1).max(200).optional(),
+      })).min(ASK_MIN_OPTIONS).max(ASK_MAX_OPTIONS),
+      /** 답할 대상의 handle. 비우면 '사람 아무나'다. */
+      to: z.string().min(1).max(64).optional(),
+      prompt: z.string().min(1).max(500).optional(),
+    },
+  }, async ({ channelId, body, threadRootId, options, to, prompt }) => {
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    // 옵션 id 가 겹치면 답을 기록할 때 어느 것을 고른 것인지 정할 수 없다.
+    const ids = new Set(options.map((o) => o.id));
+    if (ids.size !== options.length) {
+      return jsonResult({ error: { code: 'duplicate_option', message: 'option ids must be unique' } });
+    }
+    let audience: AskAudience = { kind: 'human' };
+    if (to) {
+      const handle = to.replace(/^@/, '').toLowerCase();
+      const found = (await pool.query(
+        `select id from account where lower(handle) = $1`, [handle],
+      )).rows as { id: string }[];
+      if (found.length === 0) {
+        return jsonResult({ error: { code: 'unknown_handle', message: `no account with handle @${handle}` } });
+      }
+      audience = { kind: 'account', accountId: found[0]!.id };
+    }
+    const meta: AskMeta = { kind: 'ask', ask: { options, to: audience, ...(prompt ? { prompt } : {}) } };
+    const posted = await postMessage(pool, {
+      channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
+      meta: meta as unknown as Record<string, unknown>,
+    });
+    if (posted.failure) {
+      return jsonResult({ error: { code: 'bad_attachment', message: 'attachments must be your own, unused uploads' } });
+    }
+    const { message, notified, replayed } = posted;
+    if (!replayed) {
+      const channelAudience = await audienceFor(pool, channelId);
+      emitEvent({ type: 'message.created', message, audience: channelAudience });
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
     return jsonResult({ message });

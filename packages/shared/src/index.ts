@@ -604,6 +604,84 @@ export interface MessageRow {
   alsoInChannel: boolean;
 }
 
+/**
+ * 선택 요청의 수신자 — **누가 답해야 진행되는가**.
+ *
+ * `'human'` 은 특정 사람이 아니라 **사람 아무나**다. 스레드에 사람이 여럿 있어도 먼저 고른
+ * 사람이 이기고, 그것이 이 제품의 규칙이다(누가 고를지 지정하는 것은 이 어휘가 답할 문제가
+ * 아니다 — 그렇게 하고 싶으면 `account` 로 사람의 accountId 를 싣는다).
+ *
+ * **왜 합 타입인가:** `accountId?: string` 하나로 두면 "없음"이 두 뜻이 된다 —
+ * '사람 아무나'와 '아직 안 정했다'. 화면은 그 둘을 다르게 그려야 하는데(전자는 강조,
+ * 후자는 그릴 수 없다) 필드 하나로는 구별이 안 된다.
+ */
+export type AskAudience =
+  | { kind: 'human' }
+  | { kind: 'account'; accountId: string };
+
+/** 선택지 하나. `id` 는 답을 기록할 때 쓰는 열쇠이므로 한 요청 안에서 유일해야 한다. */
+export interface AskOption {
+  id: string;
+  label: string;
+  /** 고르기 전에 읽는 한 줄 — "되돌리기 쉽다" 같은 판단 근거. 없어도 된다. */
+  hint?: string;
+}
+
+/**
+ * 선택 요청(`message.ask`). 에이전트가 갈림길에서 선택지를 내놓고, 수신자가 고르면 그 즉시
+ * 진행된다 — 사람이 다시 타이핑하지 않는 것이 이 어휘의 존재 이유다.
+ *
+ * **`to` 를 옵셔널로 두지 않는다.** 없는 수신자를 화면이 '사람 아무나'로 해석해야 하는데,
+ * 그 해석을 화면마다 반복하면 갈라진다. 보내는 쪽이 항상 정하게 한다 — 그래야 "모든 선택지가
+ * 강조를 받는" 버전이 한 번도 배포되지 않는다(규칙 04).
+ *
+ * **답은 원본을 고치지 않는다.** 고른 결과는 `answeredWith`/`By`/`At` 로 덧붙고, 본문과
+ * `editedAt` 은 그대로다 — 사람이 글을 고친 것이 아니기 때문이다.
+ */
+export interface AskMeta {
+  kind: 'ask';
+  ask: {
+    /** 무엇을 묻는지. 본문에 이미 적혀 있으면 생략한다 — 같은 말을 두 번 그리지 않는다. */
+    prompt?: string;
+    options: AskOption[];
+    to: AskAudience;
+    /** 고른 옵션의 `id`. 없으면 아직 아무도 답하지 않았다. */
+    answeredWith?: string;
+    /** 고른 계정. 사람일 수도 에이전트일 수도 있다. */
+    answeredBy?: string;
+    answeredAt?: string;
+  };
+}
+
+/** 선택지 개수의 경계. 하나면 선택이 아니고, 여섯이면 읽히지 않는다. */
+export const ASK_MIN_OPTIONS = 2;
+export const ASK_MAX_OPTIONS = 5;
+
+/**
+ * `meta` 가 선택 요청인지 판정한다. **모르는 `meta` 는 평문으로 흘린다**가 이 계획 전
+ * 구간의 불변식이므로, 형식을 못 알아보면 `null` 을 주고 화면은 본문만 그린다 — 빈 상자는
+ * "여기 뭔가 있다"는 거짓 신호다.
+ *
+ * 서버·화면이 같은 판정을 써야 하므로 shared 에 둔다. 한쪽에만 두면 구/신 버전 조합에서
+ * 두 판정이 갈린다.
+ */
+export function readAskMeta(meta: Record<string, unknown> | null | undefined): AskMeta['ask'] | null {
+  if (!meta || meta.kind !== 'ask') return null;
+  const ask = meta.ask as AskMeta['ask'] | undefined;
+  if (!ask || typeof ask !== 'object') return null;
+  if (!Array.isArray(ask.options)) return null;
+  // 개수 경계를 **읽는 쪽에서도** 지킨다: 옛 서버나 손으로 쓴 meta 가 1개짜리 선택지를
+  // 실어 보낼 수 있고, 그것은 선택이 아니라 통보다.
+  if (ask.options.length < ASK_MIN_OPTIONS || ask.options.length > ASK_MAX_OPTIONS) return null;
+  if (!ask.options.every((o) => o && typeof o.id === 'string' && typeof o.label === 'string')) return null;
+  // 수신자를 못 읽으면 그리지 않는다 — 이것을 '사람 아무나'로 넘겨 주면 남에게 간 물음이
+  // 내 화면에서 강조를 받는다. 그 사고를 타입이 아니라 이 줄이 막는다.
+  const to = ask.to;
+  if (!to || (to.kind !== 'human' && to.kind !== 'account')) return null;
+  if (to.kind === 'account' && typeof to.accountId !== 'string') return null;
+  return ask;
+}
+
 export interface ChannelRow {
   id: string;
   name: string | null;
