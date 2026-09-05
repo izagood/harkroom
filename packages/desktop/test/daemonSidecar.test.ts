@@ -146,17 +146,45 @@ describe('daemon 사이드카 산출물 (#431 2단계-a)', () => {
   });
 
   /**
-   * 대조군 — 러너 쪽은 **반대로** node-pty 를 요구해야 한다. 이것이 없으면 위 검사가
+   * 대조군 — 러너 쪽은 **반대로** `node-pty` 를 필요로 한다. 이것이 없으면 위 검사가
    * "빌드가 아무것도 안 해서 통과"하는 경우와 구분되지 않는다.
+   *
+   * ## 무엇을 재는지가 `#433` 을 닫으면서 바뀌었다
+   *
+   * 예전에는 러너 번들에 **정적 `import ... 'node-pty'`** 가 남는지를 봤다. 지금은 남지
+   * 않는다 — 그 import 가 배포 번들에서 해석되지 않는 것이 `#433` 의 결함 자체였고,
+   * 러너는 이제 런타임에 위치로 찾는다(`packages/agent/src/nodePtyLoader.ts`).
+   *
+   * 그래서 **로더가 번들에 들어갔는지**를 본다. 재려는 것(러너는 PTY 를 열고 daemon 은
+   * 열지 않는다)은 그대로이고, 그 사실이 번들에 남는 형태만 달라졌다. 옛 정규식을 그대로
+   * 두면 이 대조군은 영영 RED 다 — 실제로 그렇게 한 번 깨졌다(구현 중 실측).
    */
-  it('러너 번들은 여전히 node-pty 를 요구한다 (대조군)', () => {
+  it('러너 번들은 node-pty 로더를 싣는다 (대조군)', () => {
     const sidecar = findSidecar('murmur-runner');
     if (!sidecar) {
       console.warn(`건너뜀: 러너 사이드카가 ${BINARIES_DIR} 에 없다 — ${SKIP_HINT}`);
       return;
     }
     const source = readFileSync(sidecar, 'utf8');
-    expect(source).toMatch(/(?:from|require\(|import\()\s*["']node-pty["']/);
+    // 로더가 후보 경로를 조립하는 자리 — 번들에 그대로 남는다(문자열 리터럴이다).
+    expect(source, '러너 번들에 node-pty 해석 경로가 있어야 한다').toContain('"node-pty"');
+    expect(source, '배포 번들의 리소스 자리를 알아야 한다').toContain('Resources');
+  });
+
+  /**
+   * **정적 `import` 로 되돌아가면 RED.** 그것이 `#433` 의 결함이다 — 배포 번들에서
+   * `Contents/MacOS` 위로는 `node_modules` 가 없어 ESM 해석기가 그것을 못 찾고,
+   * 예전에는 그 간극을 심볼릭 링크가 메웠다(그리고 그 링크가 `staple` 을 막았다).
+   */
+  it('러너 번들에 정적 node-pty import 가 없다 (#433)', () => {
+    const sidecar = findSidecar('murmur-runner');
+    if (!sidecar) {
+      console.warn(`건너뜀: 러너 사이드카가 ${BINARIES_DIR} 에 없다 — ${SKIP_HINT}`);
+      return;
+    }
+    const source = readFileSync(sidecar, 'utf8');
+    expect(source, '정적 import 는 배포 번들에서 해석되지 않는다 — 런타임 해석이어야 한다')
+      .not.toMatch(/(?:^|\n)\s*import\s+[^;]*\s+from\s*["']node-pty["']/);
   });
 
   /**

@@ -150,6 +150,16 @@ async fn secret_delete(key: String) -> Result<(), String> {
 
 /// 러너 사이드카의 스코프 이름. **`tauri.conf.json` 의 `bundle.externalBin` 항목 이름과
 /// 반드시 같아야 한다** — 다르면 번들 빌드가 그 이름으로 복사한 실행 파일을 여기서 못 찾는다.
+///
+/// **`#[cfg(test)]` 인 이유**: `#433` 을 닫으면서 프로덕션 경로에서 이 이름을 쓰는 자리가
+/// 사라졌다. 러너를 실제로 띄우는 것은 daemon 이고, daemon 은 **자기 위치에서** 러너 경로를
+/// 계산한다(`packages/daemon/src/run.ts` — 같은 디렉터리에 있다는 계약을 daemon 쪽이 안다).
+/// 앱은 배치에 더 이상 관여하지 않는다.
+///
+/// 그래도 지우지 않는 이유는 회귀선이 이 이름으로 **실행 위치의 사이드카를 실물로 띄우기**
+/// 때문이다 — 그 테스트가 `#433` 이 재려던 것("빌드 위치가 아니라 실행 위치에서 해석되는가")
+/// 을 계속 잰다.
+#[cfg(test)]
 const RUNNER_SIDECAR_NAME: &str = "murmur-runner";
 
 /// 이 실행 파일(앱)과 같은 디렉터리에서 사이드카를 찾는다. Tauri 의 `externalBin` 번들링이
@@ -180,124 +190,37 @@ fn sidecar_path(name: &str) -> Result<std::path::PathBuf, String> {
     Ok(dir.join(file))
 }
 
-/// `node-pty` 로더(`lib/utils.js::loadNativeModule`)는 **사이드카 파일 기준 상대 경로**로
-/// `node_modules/node-pty/prebuilds/<platform>-<arch>` 를 찾는다(`build-runner-sidecar.mjs`
-/// 상단 주석 — 그 로더를 재구현하지 않는 것이 설계다). 그런데 Tauri 는 `externalBin` 하나만
-/// 사이드카 자리(macOS 배포에서는 `Contents/MacOS/`)로 복사하고, `bundle.resources` 는
-/// **다른 자리**(macOS 배포에서는 `Contents/Resources/`, `PathResolver::resource_dir()` 문서
-/// 참고)로 간다 — 개발 빌드(`target/debug/`)에서만 두 자리가 우연히 같다(`resource_dir()` 가
-/// "cargo output directory" 를 감지하면 `exe_dir` 을 그대로 돌려주기 때문, `tauri-utils`
-/// `platform::resource_dir_from` 참고). 그래서 **자리가 다른 배포 번들에서는 이 함수가
-/// resource 쪽 `node_modules` 를 사이드카 옆으로 심볼릭 링크한다** — 파일을 복사하지 않는
-/// 이유는 앱이 뜰 때마다 무거운 네이티브 addon 을 다시 복사하지 않기 위해서다(링크 생성은
-/// 한 번만 필요하고, 이미 있으면 아무 일도 하지 않는다).
-///
-/// 개발 빌드에서는 두 경로가 이미 같아 `node_modules` 가 사이드카 옆에 그대로 있으므로
-/// (`build:sidecar` 가 거기 둔다) 이 함수는 아무 것도 하지 않고 조용히 돌아온다.
-///
-/// ## 실물로 확인한 것 (`tauri build --bundles app`, 2026-09-05)
-///
-/// 위 배치 주장은 소스 읽기가 아니라 **실제로 만든 `.app` 으로 확인했다**:
-///
-/// ```text
-/// murmur.app/Contents/MacOS/murmur-runner          ← externalBin
-/// murmur.app/Contents/Resources/node_modules/…     ← bundle.resources (구조 보존됨)
-/// ```
-///
-/// 그 번들에 이 함수가 만드는 링크를 손으로 걸어 보면 `node-pty/prebuilds/darwin-arm64` 가
-/// 정상으로 해석된다 — 즉 이 방식은 **동작한다**.
-///
-/// ## 알려진 한계 — 릴리스 서명이 붙는 순간 깨진다
-///
-/// **번들 안에 파일을 만드는 것은 코드 서명을 무효화한다.** 같은 번들을 `codesign --force
-/// --sign - --deep` 로 봉인한 뒤 이 링크를 만들고 검증하면 그대로 실패한다(실측):
-///
-/// ```text
-/// murmur.app: a sealed resource is missing or invalid
-/// file added: …/murmur.app/Contents/MacOS/node_modules
-/// ```
-///
-/// 지금은 문제가 되지 않는다 — `docs/roadmap.md` 가 **서명·공증을 명시적으로 보류**했고
-/// (2026-09-01 사용자 결정) 현재 배포는 ad-hoc 서명 dev 빌드를 `/Applications` 에 복사하는
-/// 방식이라 봉인된 리소스가 없다(`Sealed Resources=none`). 하지만 **릴리스 파이프라인
-/// (서명·공증)이 들어오는 시점에는 이 함수를 반드시 걷어내야 한다** — 그때는 번들에 쓰지
-/// 않는 방법(사이드카가 리소스 경로에서 `node-pty` 를 직접 해석하도록 로더를 넣거나,
-/// 러너를 단일 실행 파일로 만드는 `#431` 2단계 안)으로 바꿔야 한다.
-///
-/// 읽기 전용 위치(DMG 에서 바로 실행, Gatekeeper 의 App Translocation)에서도 링크 생성이
-/// 실패한다 — 그 경우는 조용히 넘어가지 않고 `daemon_client` 의 기동 경로에서 `Err` 로
-/// 올라가 화면에 "기동 실패: …" 로 사유가 그대로 보인다(`#368` 의 요구).
-fn ensure_node_pty_alongside_sidecar(
-    app: &tauri::AppHandle,
-    sidecar_dir: &std::path::Path,
-) -> Result<(), String> {
-    use tauri::Manager;
-
-    let dest = sidecar_dir.join("node_modules");
-    if dest.exists() {
-        // 개발 빌드: `build:sidecar` 가 이미 사이드카 옆에 둔 것 — 손대지 않는다.
-        // 또는 이전 실행에서 이미 링크를 만들어 뒀다 — 다시 만들 필요가 없다.
-        // **이미 있는 것은 절대 지우거나 덮어쓰지 않는다** — 이 함수가 만드는 것은
-        // "없을 때의 링크" 하나뿐이다.
-        return Ok(());
-    }
-    // `Path::exists()` 는 링크를 **따라간다** — 그래서 대상이 사라진 끊어진 링크는 위에서
-    // `false` 로 빠져나와 아래 `symlink()` 이 `EEXIST` 로 죽는다. 앱을 옮기면(이 함수가
-    // 만드는 링크는 절대 경로다) 정확히 그 상태가 되므로, 링크 **자신**이 있는지를
-    // `symlink_metadata` 로 따로 보고 끊어진 것만 걷어낸다. 실제 디렉터리·정상 링크는
-    // 위 `exists()` 에서 이미 돌아갔으므로 여기 오는 것은 끊어진 링크뿐이다.
-    if dest.symlink_metadata().is_ok() {
-        std::fs::remove_file(&dest).map_err(|e| {
-            format!(
-                "끊어진 `node_modules` 링크를 걷어내지 못했다: `{}`: {e}",
-                dest.display()
-            )
-        })?;
-    }
-
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| format!("리소스 디렉터리를 찾지 못했다: {e}"))?;
-    let src = resource_dir.join("node_modules");
-    if !src.is_dir() {
-        return Err(format!(
-            "`node-pty` 리소스를 찾지 못했다: `{}` — `bundle.resources` 가 \
-             `binaries/node_modules/node-pty` 를 실었는지 확인하라",
-            src.display()
-        ));
-    }
-
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(&src, &dest)
-            .map_err(|e| format!("`node_modules` 심볼릭 링크를 만들지 못했다: {e}"))?;
-    }
-    #[cfg(windows)]
-    {
-        // 관리자 권한 없이는 디렉터리 심볼릭 링크가 실패할 수 있다 — 실제 복사로 물러난다.
-        copy_dir_recursive(&src, &dest)
-            .map_err(|e| format!("`node_modules` 를 복사하지 못했다: {e}"))?;
-    }
-
-    Ok(())
-}
-
-#[cfg(windows)]
-fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dest)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let ty = entry.file_type()?;
-        let dest_path = dest.join(entry.file_name());
-        if ty.is_dir() {
-            copy_dir_recursive(&entry.path(), &dest_path)?;
-        } else {
-            std::fs::copy(entry.path(), dest_path)?;
-        }
-    }
-    Ok(())
-}
+// ---------------------------------------------------------------------------
+// `#433` — **여기 있던 `ensure_node_pty_alongside_sidecar()` 는 걷어냈다.**
+//
+// 그 함수는 앱이 뜰 때 번들 안에 심볼릭 링크를 만들어 `externalBin` 자리와
+// `bundle.resources` 자리를 이었다:
+//
+//   Contents/MacOS/node_modules → <절대경로>/Contents/Resources/node_modules
+//
+// 그 함수의 주석이 **"릴리스 파이프라인(서명·공증)이 들어오는 시점에는 이 함수를 반드시
+// 걷어내야 한다"** 고 예고했고, 지금이 그 시점이다. 예고대로 두 가지가 실제로 터졌다(실측):
+//
+//   codesign --verify → a sealed resource is missing or invalid
+//                       file added: …/murmur.app/Contents/MacOS/node_modules
+//   xcrun stapler staple → rejected (invalid destination for symbolic link in bundle)
+//
+// 두 번째가 결정적이다. **공증 자체는 통과했다**(`notarytool submit` → `status: Accepted`).
+// 그런데 티켓을 앱에 박는 `stapler` 가 번들 바깥을 가리키는 절대 경로 링크를 거절한다.
+// 티켓이 안 박히면 오프라인에서 Gatekeeper 를 통과하지 못하므로, "공증은 됐다"만으로는
+// 배포가 성립하지 않는다.
+//
+// **대신 무엇을 하는가** — 예고 주석이 제시한 첫 번째 안 그대로다: 사이드카가 리소스
+// 경로에서 `node-pty` 를 직접 해석한다(`packages/agent/src/nodePtyLoader.ts`). 러너가 자기
+// 파일 위치에서 `../Resources/node_modules/node-pty` 를 계산해 `createRequire` 로 부른다.
+// **번들에 아무것도 쓰지 않으므로** 봉인도 링크 검사도 건드리지 않는다.
+//
+// 그래서 이 파일에는 이제 그 자리가 없다 — `daemon_spawn_runner` 도 러너를 띄우기 전에
+// 아무 배치 작업을 하지 않는다. 배치를 아는 것은 러너 자신뿐이다.
+//
+// 회귀선: `packages/desktop/test/bundleSignable.test.ts`(번들에 심볼릭 링크가 없다),
+// `packages/agent/test/nodePtyLoader.test.ts`(후보 경로와 해석).
+// ---------------------------------------------------------------------------
 
 /// 프로세스 그룹 분리를 건 `Command` 를 만든다. **`daemon_client::daemon_command()` 와
 /// `tests::` 아래 회귀 테스트가 이 함수 하나를 공유한다** — 실물 커맨드 안에 인라인해 두면
@@ -376,13 +299,9 @@ fn daemon_spawn_runner(
 ) -> Result<daemon_client::SpawnRunnerResult, String> {
     use tauri::Emitter;
 
-    // 러너는 daemon 이 띄우지만 `node-pty` 는 여전히 사이드카 옆에서 해석돼야 한다
-    // (`#433`) — daemon 과 러너가 같은 디렉터리에 있으므로 그 배치 요구는 그대로다.
-    let runner = sidecar_path(RUNNER_SIDECAR_NAME)?;
-    if let Some(dir) = runner.parent() {
-        ensure_node_pty_alongside_sidecar(&app, dir)?;
-    }
-
+    // **여기서 배치를 손보지 않는다**(`#433` — 위의 큰 주석). `node-pty` 를 찾는 것은
+    // 러너 자신의 일이 됐고(`nodePtyLoader.ts`), 그래서 이 커맨드는 daemon 을 확보해
+    // 러너를 띄우라고 말하는 것만 한다. 번들에 쓰는 자리가 없어야 서명·공증이 성립한다.
     let emitter = app.clone();
     let (conn, _kind) = daemon_client::ensure_daemon(&app, &state, move |event| {
         // 여기서 세대를 가리지 않는다 — daemon 이 말한 사실을 그대로 올린다.
@@ -552,10 +471,13 @@ mod tests {
             return;
         }
 
-        // **되돌려 RED 로 확인한 배치 계약**: `node_modules` 가 사이드카와 같은 디렉터리에
-        // 없으면(`bundle.resources` 설정이 빠졌거나 `ensure_node_pty_alongside_sidecar` 가
-        // 깨졌으면) 아래 spawn 이 `ERR_MODULE_NOT_FOUND` 로 죽는다 — 이 assert 가 그 결함을
-        // "빌드 위치"가 아니라 "실행 위치"에서 그대로 재현한다.
+        // **되돌려 RED 로 확인한 배치 계약**: 개발 빌드에서는 `node_modules` 가 사이드카와
+        // 같은 디렉터리에 있어야 한다 — 그것이 `nodePtyLoader.ts` 의 **첫 번째 후보**이고,
+        // 개발 빌드에는 `Contents/Resources` 라는 두 번째 후보가 아예 없다. 여기가 비면
+        // 아래 spawn 이 로더의 "node-pty 를 찾지 못했다" 로 죽는다.
+        //
+        // 배포 번들의 두 번째 후보는 이 자리에서 잴 수 없다(`.app` 이 있어야 한다) —
+        // 그쪽은 `test/bundleSignable.test.ts` 와 실물 검증 절차가 맡는다.
         assert!(
             dir.join("node_modules").join("node-pty").is_dir(),
             "`{}` 옆에 `node_modules/node-pty` 가 없다 — `tauri.conf.json` 의 \
@@ -579,8 +501,15 @@ mod tests {
             .expect("사이드카 종료를 기다리지 못했다");
         let stderr = String::from_utf8_lossy(&output.stderr);
 
+        // **무엇을 찾는지가 바뀌었다.** 예전에는 정적 `import` 가 실패해
+        // `ERR_MODULE_NOT_FOUND` 가 났다. 지금은 러너가 `createRequire` 로 직접 해석하므로
+        // (`nodePtyLoader.ts`) 그 오류 코드는 **영영 안 난다** — 그것만 계속 보고 있으면 이
+        // 회귀선은 배치가 깨져도 초록으로 남는다. 그래서 **로더 자신이 던지는 문구**를 잰다.
+        //
+        // `ERR_MODULE_NOT_FOUND` 도 함께 본다: 누군가 정적 `import pty from 'node-pty'` 로
+        // 되돌리면 배포 번들에서 그 오류가 되살아나고, 그것도 이 회귀선이 잡아야 하는 결함이다.
         assert!(
-            !stderr.contains("ERR_MODULE_NOT_FOUND"),
+            !stderr.contains("node-pty 를 찾지 못했다") && !stderr.contains("ERR_MODULE_NOT_FOUND"),
             "사이드카가 실행 위치(`{}`)에서 `node-pty` 를 못 찾았다 — Tauri 는 \
              `externalBin` 파일 하나만 복사하고 옆의 `node_modules` 는 안 가져간다(#433). \
              stderr:\n{}",

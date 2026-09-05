@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  앱 **본체**(`Contents/MacOS/murmur-desktop`)의 entitlements.
+
+  hardened runtime 은 기본적으로 여러 동작을 막는다. 공증은 hardened runtime 을 요구하므로
+  (`notarize-app.mjs` — 없으면 거절), 막힌 것 중 실제로 필요한 것만 여기서 다시 연다.
+  **여는 것은 하나뿐이다.** 넓게 열수록 공격 표면이 커지고, 그 대가는 이 앱이 아니라
+  사용자가 치른다.
+
+  ## 왜 `com.apple.security.cs.allow-jit` 인가
+
+  이 앱의 UI 는 **WKWebView** 안에서 돈다(Tauri 2 는 macOS 에서 `wry` → WKWebView 를 쓴다).
+  WKWebView 의 JavaScript 엔진(JavaScriptCore)은 **JIT 컴파일러**다 — 자바스크립트를
+  실행하면서 기계어를 만들어 메모리에 쓰고 그것을 실행한다. hardened runtime 은 정확히
+  그것(쓰기 가능한 메모리를 실행하는 것)을 막으므로, 이 entitlement 가 없으면 웹뷰가
+  제 성능을 못 내거나 아예 죽는다.
+
+  **실측으로 근거를 댔다**(2026-09-06, 이 기계에 설치된 앱들):
+
+    WKWebView 를 쓰는 앱  → allow-jit 이 있다
+      /Applications/cmux.app     : com.apple.security.cs.allow-jit = true
+      /Applications/ChatGPT.app  : com.apple.security.cs.allow-jit = true
+
+    웹뷰가 없는 네이티브 앱 → allow-jit 이 없다 (대조군)
+      /Applications/Ghostty.app  : allow-jit 없음
+
+  대조군이 있는 것이 요점이다 — "다들 넣으니까"가 아니라 **웹뷰가 있는 쪽에만 있다.**
+
+  ## 일부러 넣지 않은 것들
+
+  - **`com.apple.security.cs.allow-unsigned-executable-memory`** — 넣지 않는다.
+    `allow-jit` 의 **상위집합**이다. `allow-jit` 은 "JIT 용으로 제대로 매핑된
+    (`MAP_JIT`) 메모리"만 허용하는 반면 이것은 서명 안 된 실행 메모리를 통째로 허용한다.
+    JavaScriptCore 는 `MAP_JIT` 를 쓰므로 `allow-jit` 으로 충분하고, 이것을 더 넣으면
+    공격 표면만 넓어진다. (위 두 앱은 둘 다 켜 뒀지만 그것을 따라갈 이유가 없다 —
+    필요한 것만 여는 것이 이 파일의 원칙이다.)
+
+  - **`com.apple.security.get-task-allow`** — **절대 넣지 않는다.** 값이 참이면 공증이
+    그대로 거절한다("The executable requests the com.apple.security.get-task-allow
+    entitlement"). 다른 프로세스가 이 프로세스에 붙어 메모리를 읽고 코드를 주입할 수 있게
+    하는 디버깅용 값이고, 배포본에 있으면 그것이 그대로 공격 경로다.
+
+  - **`com.apple.security.cs.disable-library-validation`** — 넣지 않는다. 이 앱이 서명 주체가
+    다른 라이브러리를 `dlopen` 하지 않는다. `node-pty` 의 네이티브 애드온(`pty.node`)은
+    **번들 밖의 시스템 `node`** 가 로드하지 이 프로세스가 로드하지 않는다(아래 참조).
+
+  - **app-sandbox 관련 키 전부** — 넣지 않는다. 이 앱은 샌드박스 대상이 아니다
+    (App Store 배포가 아니라 `Developer ID` 직접 배포다). 샌드박스를 켜면 사용자가 고른
+    임의 워크스페이스에서 하네스를 돌리는 것 자체가 성립하지 않는다.
+
+  ## 왜 사이드카에는 entitlements 를 붙이지 않는가
+
+  사이드카(`murmur-runner`·`murmur-daemon`)는 **Mach-O 가 아니라 셔뱅 스크립트**다.
+  실측:
+
+    $ file -b murmur.app/Contents/MacOS/murmur-runner
+    a /usr/bin/env node script text executable, ASCII text
+
+  `codesign` 은 스크립트를 nested code 로 서명하지 않으므로 붙일 자리 자체가 없고,
+  `sign-app.mjs` 의 내용 기반 Mach-O 탐지가 이것들을 **올바르게 제외한다.**
+
+  그리고 JIT 를 하는 것은 그 스크립트를 실행하는 **시스템 `node`**(예:
+  `/opt/homebrew/bin/node`)다. 그것은 번들 밖의 별도 프로세스이고 자기 서명·자기
+  entitlements 로 돈다 — 우리가 줄 수도, 줄 필요도 없다.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+</dict>
+</plist>
