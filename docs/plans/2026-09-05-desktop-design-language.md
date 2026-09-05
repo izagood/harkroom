@@ -113,18 +113,25 @@ Fastify + Postgres / MCP Streamable HTTP
 `packages/desktop/src/components/MessageItem.tsx` · `packages/desktop/src/state/controller.ts` ·
 `packages/desktop/test/askCard.test.tsx`(신규)
 
-- [ ] **Step 1: `AskCard`** — `meta.kind === 'ask'` 일 때만 렌더. 옵션은 **본문 크기**로 그린다
+- [x] **Step 1: `AskCard`** — `meta.kind === 'ask'` 일 때만 렌더. 옵션은 **본문 크기**로 그린다
       (읽고 골라야 하니까). 답이 이미 있으면 고른 것만 남기고 나머지는 접는다 — 기록은 남되
       다시 누를 수는 없다
-- [ ] **Step 2: 수신자에 따른 두 얼굴** — `to.kind === 'human'` 이면 강조 테두리 + `--app-state-turn`
+- [x] **Step 2: 수신자에 따른 두 얼굴** — `to.kind === 'human'` 이면 강조 테두리 + `--app-state-turn`
       머리글("골라 줘"), 다른 에이전트에게 간 것이면 **무채색**(`--app-border-agent`) + 머리글에
       누가 고르는지("forge 가 고른다"). 옵션은 읽히되 **누를 수 없다**
-- [ ] **Step 3: 수신자 배지** — 이름줄에 `→ 나` / `→ forge`. `→ 나` 만 강조색.
+- [x] **Step 3: 수신자 배지** — 이름줄에 `→ 나` / `→ forge`. `→ 나` 만 강조색.
       배지는 `AskCard` 밖에도 쓰이므로 `MessageItem` 의 이름줄에 둔다(되물음·실패도 같은 배지를 쓴다)
-- [ ] **Step 4: 답 보내기** — 옵션 클릭 → `controller.answerAsk(messageId, optionId)` →
+- [x] **Step 4: 답 보내기** — 옵션 클릭 → `controller.answerAsk(messageId, optionId)` →
       답글 전송 + 낙관적 갱신 없이 서버 응답을 기다린다(#Reactions 의 선례: 화면은 언제나 서버와 같다)
-- [ ] **검증:** 사람에게 온 것/에이전트에게 간 것/이미 답한 것 3상태 스냅샷 · 클릭이 답글을 만드는지 ·
-      **에이전트에게 간 카드의 옵션에 `disabled` 가 붙는지**
+- [x] **검증:** `askCard.test.tsx` 4케이스(3상태 + 못 알아본 형식) · `askAnswer.test.ts` 4케이스
+      (REST 경로: 답 기록·409 경합·수신자 아닌 계정 403·400/404). 전체 2,512개 통과.
+      **RED 확인** — `canChoose` 에서 수신자 판정을 지우면 "에이전트에게 간 선택지" 케이스가
+      실제로 실패한다(테스트가 규칙 04 를 실제로 지킨다).
+      **데스크탑 앱으로 육안 확인** — MCP `message.ask` 로 발행한 실데이터로 두 얼굴·답한 뒤
+      상태·다크 모드까지 확인했다.
+      계획과 다르게 한 것: **답이 답글 메시지가 되지 않는다.** 답글을 만들면 스레드에 고른
+      옵션 라벨이 한 줄씩 쌓여 규칙 02(로그가 아니라 사람의 말)를 어긴다 — 원본 `meta.ask` 에
+      기록하고 `message.updated` 로 알린다. 그래서 답하는 문도 `reply` 가 아니라 전용 라우트다
 
 ### Task 4: 진행(progress)을 상태 한 줄로 접는다
 

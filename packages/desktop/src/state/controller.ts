@@ -704,6 +704,30 @@ export class Controller {
   }
 
   /**
+   * 선택지에서 하나를 고른다(Task 3).
+   *
+   * **낙관적 갱신을 하지 않는다** — 리액션의 선례다(화면은 언제나 서버와 같다). 두 사람이
+   * 동시에 누르면 먼저 도착한 쪽이 이기고, 진 쪽은 409 를 받는다. 낙관적으로 그려 두면
+   * 진 쪽 화면에 자기가 고른 것이 잠깐 보였다가 남의 답으로 바뀐다.
+   *
+   * 실패를 삼킨다: 답이 이미 있는 것은 오류가 아니라 경합의 정상 결과이고, 그 사실은
+   * `message.updated` 이벤트로 곧 화면에 온다.
+   */
+  async answerAsk(messageId: string, optionId: string, channelId?: string): Promise<void> {
+    const state = this.store.getState();
+    const target = channelId
+      ?? Object.values(state.messages).flat().find((m) => m.id === messageId)?.channelId
+      ?? state.activeChannelId;
+    if (!target) return;
+    try {
+      const m = await this.api.answerAsk(target, messageId, optionId);
+      this.store.getState().upsertMessages(target, [m]);
+    } catch {
+      // 진 경합·권한 없음 — 서버가 참이고, 화면은 이벤트로 따라온다.
+    }
+  }
+
+  /**
    * 입력 중임을 알린다. 소켓으로 보내는 유일한 방향이다(그 외는 서버 → 클라이언트 단방향).
    * 소켓이 없으면 조용히 넘긴다 — 입력 중 표시는 없어도 대화가 되는 기능이다.
    */
