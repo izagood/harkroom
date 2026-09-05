@@ -14,7 +14,7 @@
  *
  * ## 왜 자체 스키마인가 (JSON-RPC 가 아니라)
  *
- * 오가는 말이 네 종류(`spawnRunner`·`killRunner`·`listRunners`·`ping`)뿐이고, 양쪽 다
+ * 오가는 말이 다섯 종류(`spawnRunner`·`killRunner`·`listRunners`·`ping`·`adoptRunner`)뿐이고, 양쪽 다
  * 우리가 쓴다. JSON-RPC 의 값은 **모르는 상대와도 통한다**는 것인데 여기엔 모르는 상대가
  * 없다. 규격을 하나 더 들이면 그 규격의 에러 코드 체계와 우리 실패 갈래를 맞추는 일이
  * 새로 생긴다.
@@ -53,8 +53,25 @@ export { DAEMON_PROTOCOL_VERSION };
  */
 export const MAX_LINE_BYTES = 1024 * 1024;
 
-/** 요청 종류 — **2단계-b 는 이 넷뿐이다.** */
-export const REQUEST_TYPES = ['spawnRunner', 'killRunner', 'listRunners', 'ping'] as const;
+/**
+ * 요청 종류 — **2단계-c 에서 `adoptRunner` 가 더해져 다섯이다.**
+ *
+ * `adoptRunner` 는 daemon 에게 *"장부를 다시 훑어 고아를 소유하라"* 고 시킨다.
+ * **인자로 pid 를 받지 않는다** — 받으면 소켓에 붙은 누구든 임의의 pid 를 daemon 의
+ * 표에 올려 `killRunner` 로 죽일 수 있다(`#250` 의 경계). 후보의 출처는 언제나
+ * daemon 자신의 장부다.
+ *
+ * daemon 은 기동 시 자동으로 한 번 훑는다. 이 요청이 따로 있는 이유는 앱이 **자기가
+ * 붙은 뒤에** 다시 확인할 수 있어야 하기 때문이다 — 앱이 daemon 보다 늦게 뜨면 기동 시
+ * 훑기의 결과를 못 본 채로 시작한다.
+ */
+export const REQUEST_TYPES = [
+  'spawnRunner',
+  'killRunner',
+  'listRunners',
+  'ping',
+  'adoptRunner',
+] as const;
 export type DaemonRequestType = (typeof REQUEST_TYPES)[number];
 
 /**
@@ -451,10 +468,47 @@ export interface RunnerInfo {
    * 환경변수라 배포마다 다르고 **daemon 은 러너의 설정값을 모른다.**
    */
   termSentAtMs: number | null;
+  /**
+   * 이 daemon 이 **띄운** 것이 아니라 **채택한** 것인가(`#431` 2-c).
+   *
+   * ## 왜 이 사실을 노출하는가
+   *
+   * 채택한 러너에 대해 daemon 이 아는 것이 **더 적다**. 그 차이를 숨기면 화면이 아는
+   * 것보다 많이 말하게 된다:
+   *
+   * | | 띄운 러너 | 채택한 러너 |
+   * |---|---|---|
+   * | 종료 코드 | 안다(`child.on('exit')`) | **모른다** — 내 자식이 아니라 wait 할 수 없다 |
+   * | 종료를 아는 시점 | 즉시(`SIGCHLD`) | **폴링 주기만큼 늦다** |
+   * | `termSentAtMs` | 내가 보낸 것 전부 | **앞선 daemon 이 보낸 것은 모른다** |
+   *
+   * 그래서 `runnerExit` 이벤트의 `code` 가 채택한 러너에서는 언제나 `null` 이다.
+   * 이 필드가 없으면 화면은 그 `null` 을 "시그널로 죽었다"로 읽는다 — 그것이 지금
+   * `code: null` 의 뜻이기 때문이다(`RunnerExitEvent` 주석).
+   *
+   * **판단이 아니라 관측이다.** daemon 은 "채택한 러너를 더 믿지 마라"고 말하지 않는다.
+   * 무엇을 아는지와 무엇을 모르는지를 말할 뿐이고, 화면 문구는 `#443` 의 몫이다.
+   */
+  adopted: boolean;
 }
 
 export interface ListRunnersResult {
   runners: RunnerInfo[];
+}
+
+/**
+ * `adoptRunner` 의 답 — **얼마나 채택했고 무엇을 왜 안 했는가.**
+ *
+ * `rejected` 를 개수가 아니라 **사유 문장 목록**으로 주는 이유(`#368`): "3개 중 1개
+ * 채택"만으로는 나머지 둘이 정상적으로 끝난 러너인지, pid 가 재사용됐는지, 확인 자체를
+ * 못 했는지 알 수 없다. 그 셋은 사람이 할 일이 서로 다르다 — 앞의 것은 아무것도 안 해도
+ * 되고, 가운데는 넘어가도 되지만 잦으면 신호이며, 마지막은 이 기계에서 `ps` 가 막혔다는
+ * 뜻이라 조사가 필요하다.
+ */
+export interface AdoptRunnerResult {
+  adopted: RunnerInfo[];
+  /** 채택하지 않은 것들의 사유. 사람이 읽는 문장이다 — 코드가 파싱할 것이 아니다. */
+  rejected: string[];
 }
 
 export interface PingResult {
@@ -502,7 +556,8 @@ export function parseRequest(value: unknown): DaemonRequest | DaemonError {
   }
   if (typeof value.type !== 'string') return daemonError('bad-payload', 'type 이 없다');
   if (!(REQUEST_TYPES as readonly string[]).includes(value.type)) {
-    // **`adoptRunner`·`shutdownIfIdle` 은 2-c·2-d 다.** 지금 오면 모르는 요청이 맞다.
+    // **`shutdownIfIdle` 은 2-d 다.** 지금 오면 모르는 요청이 맞다.
+    // (`adoptRunner` 는 2-c 에서 `REQUEST_TYPES` 에 올라갔다.)
     return daemonError('unknown-request', `모르는 요청이다: ${value.type}`);
   }
   return { id: value.id, type: value.type as DaemonRequestType, payload: value.payload };

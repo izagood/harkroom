@@ -419,6 +419,24 @@ export interface ClaimDeps {
    * 때문이다(덮어쓴다). 검증 안 된 `rename` 경로가 코드에 있는 것 자체가 위험이다.
    */
   link?: (existingPath: string, newPath: string) => Promise<void>;
+  /**
+   * 판정 과정을 한 줄씩 흘려보내는 자리(`#456` ②). 없으면 아무것도 안 적는다.
+   *
+   * ## 왜 결과값만으로는 부족한가
+   *
+   * `ClaimOutcome` 은 **무엇이 됐는가**만 말한다(`claimed`·`occupied`·`inconclusive`).
+   * 그런데 이 모듈의 판정은 3중 증거를 거치는 미묘한 경로다 — 같은 `claimed` 여도
+   * **이름이 비어 있어서 그냥 잡은 것**과 **죽은 daemon 의 잔해를 강탈한 것**은 전혀
+   * 다른 사건이고, 뒤의 것은 사람이 알아야 한다.
+   *
+   * 실측(2026-09-06)이 그 자리를 보였다: 잔해가 남은 상태에서 daemon 을 띄워 **강탈에
+   * 성공했는데 그 사실이 어디에도 안 남았다.** 성공이 안 남으면 실패는 더더욱 안 남는다.
+   *
+   * **로거를 이 모듈이 소유하지 않는 이유**: 이 모듈은 `console` 도 파일도 모른다.
+   * 호출자(daemon 은 stdout, 앱은 다른 자리)가 자기 로거로 흘려보낸다 — 그래야 이
+   * 모듈이 브라우저 번들에서도 그대로 산다.
+   */
+  trace?: (line: string) => void;
 }
 
 /** `.p<random hex>` — orca 실측 형태(`.pcbfbcf902f`)를 그대로 따른다. */
@@ -452,6 +470,7 @@ export async function claimDaemonEndpoint(
   // 기본값은 진짜 `fs.link` 다 — 주입은 폴백 경로를 테스트가 밟기 위한 것이지
   // 운영에서 갈아 끼우라고 둔 자리가 아니다(`ClaimDeps.link` 주석 참조).
   const linkFn = deps.link ?? link;
+  const trace = deps.trace ?? ((): void => undefined);
 
   for (let attempt = 1; attempt <= MAX_CLAIM_ATTEMPTS; attempt += 1) {
     const tempPath = temporaryName(paths.dir);
@@ -468,7 +487,7 @@ export async function claimDaemonEndpoint(
     // 그대로 적용된다.
     await chmod(tempPath, 0o600).catch(() => undefined);
 
-    const linked = await tryPublishName(tempPath, paths, linkFn);
+    const linked = await tryPublishName(tempPath, paths, linkFn, trace);
     if (linked === 'won') {
       // 하드링크라 임시 이름을 지워도 소켓은 정규 이름으로 계속 산다 — 두 이름이 같은
       // inode 를 가리키고, 마지막 이름이 사라질 때만 실제로 없어진다.
@@ -478,19 +497,36 @@ export async function claimDaemonEndpoint(
         // pid·토큰 기록이 실패했다. **앞 단계를 되감는다** — 소켓만 남은 정규 이름은
         // "이름은 잡혔는데 아무도 서비스하지 않는다"라서, 되감지 않으면 다음 daemon 이
         // 3중 증거를 다 거쳐야만 치울 수 있는 잔해가 된다.
+        trace(`엔드포인트: pid·토큰 기록 실패로 소켓 이름을 되감았다 (${attempt}회차)`);
         await rollbackSocketName(paths, server);
         return { kind: 'inconclusive', paths, attempts: attempt };
       }
+      trace(
+        `엔드포인트 획득: ${paths.socketPath} (pid ${published.pidRecord.pid}, ` +
+        `nonce ${published.pidRecord.launchNonce}, ${attempt}회차)`,
+      );
       return { kind: 'claimed', paths, ...published };
     }
 
     // 졌거나 판정이 안 섰다 — 내가 bind 한 임시 소켓부터 치운다. 남기면 그것이 잔해다.
     closeServer(server);
     await rm(tempPath, { force: true });
-    if (linked === 'occupied') return { kind: 'occupied', paths };
+    if (linked === 'occupied') {
+      // **누가 점유 중인지도 적는다** — "물러났다"만 남으면 사람이 어느 프로세스를
+      // 봐야 하는지 모른다. pid 레코드가 없거나 깨졌으면 그 사실 자체가 정보다.
+      const rec = await readPidRecord(paths.pidPath);
+      trace(
+        rec === null
+          ? `엔드포인트 점유 중: ${paths.socketPath} — pid 레코드를 못 읽었다(누구인지 모른다)`
+          : `엔드포인트 점유 중: ${paths.socketPath} — pid ${rec.pid} ` +
+            `(앱 ${rec.appVersion || '(모름)'}, nonce ${rec.launchNonce})`,
+      );
+      return { kind: 'occupied', paths };
+    }
     // 'retry' — 잔해를 회수했거나 ABA 를 만났다. 다음 회차로 간다.
   }
 
+  trace(`엔드포인트 판정 불가: ${paths.socketPath} — ${MAX_CLAIM_ATTEMPTS}회 시도했다`);
   return { kind: 'inconclusive', paths, attempts: MAX_CLAIM_ATTEMPTS };
 }
 
@@ -501,6 +537,7 @@ async function tryPublishName(
   tempPath: string,
   paths: DaemonEndpointPaths,
   linkFn: (existingPath: string, newPath: string) => Promise<void>,
+  trace: (line: string) => void,
 ): Promise<PublishNameResult> {
   try {
     // ── 이 한 줄이 이 모듈의 전부다 ──────────────────────────────────────────
@@ -511,22 +548,41 @@ async function tryPublishName(
     return 'won';
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
-    if (e.code === 'EEXIST') return await resolveExistingName(paths);
-    if (isHardlinkUnsupported(e)) return await publishByRenameFallback(tempPath, paths);
+    if (e.code === 'EEXIST') return await resolveExistingName(paths, trace);
+    if (isHardlinkUnsupported(e)) {
+      trace(`엔드포인트: 하드링크 미지원(${e.code}) — rename 폴백으로 간다`);
+      return await publishByRenameFallback(tempPath, paths, trace);
+    }
     throw err;
   }
 }
 
 /** `EEXIST` — 이미 누가 그 이름을 갖고 있다. 3중 증거로 살았는지 죽었는지 가른다. */
-async function resolveExistingName(paths: DaemonEndpointPaths): Promise<PublishNameResult> {
+async function resolveExistingName(
+  paths: DaemonEndpointPaths,
+  trace: (line: string) => void,
+): Promise<PublishNameResult> {
   const dead = await tripleEvidenceSaysDead(paths);
   if (dead === false) return 'occupied';
   // `null`(ABA) 이면 회수하지 않고 그대로 재시도한다 — 지금 그 이름에 있는 것은 내가
   // 증거를 모은 그 파일이 아니다.
-  if (dead === null) return 'retry';
+  if (dead === null) {
+    trace('엔드포인트: 증거를 모으는 사이 소켓이 교체됐다(ABA) — 전부 무효화하고 재시도');
+    return 'retry';
+  }
 
   // 잔해로 확정됐다. 정규 이름을 rename-verify-unlink 로 치운다 — 곧장 unlink 하면
   // 증거를 세운 뒤 이 줄에 닿기까지의 사이에 들어온 새 소켓을 지울 수 있다.
+  //
+  // **이 사건을 반드시 남긴다**(`#456` ②): 죽은 daemon 의 잔해를 강탈하는 것은 3중
+  // 증거를 거친 미묘한 판정이고, 그 판정이 틀리면 살아 있는 daemon 의 소켓이 사라진다.
+  // 성공했을 때 안 남기면 사람이 그 판단을 검증할 수 없다.
+  const rec = await readPidRecord(paths.pidPath);
+  trace(
+    `엔드포인트: 잔해로 판정해 회수한다 — ${paths.socketPath} ` +
+    `(직전 소유자 ${rec === null ? 'pid 레코드 없음' : `pid ${rec.pid}, nonce ${rec.launchNonce}`}). ` +
+    '근거: connect 두 번 모두 refused + inode 불변 + 그 pid 가 죽었다',
+  );
   await reclaimSocketName(paths);
   return 'retry';
 }
@@ -576,12 +632,15 @@ async function reclaimSocketName(paths: DaemonEndpointPaths): Promise<void> {
 async function publishByRenameFallback(
   tempPath: string,
   paths: DaemonEndpointPaths,
+  trace: (line: string) => void,
 ): Promise<PublishNameResult> {
   const existing = await snapshotInode(paths.socketPath);
   if (existing !== null) {
     const dead = await tripleEvidenceSaysDead(paths);
     if (dead === false) return 'occupied';
     if (dead === null) return 'retry';
+    // 폴백 경로에서 남의 이름을 덮어쓰는 자리다 — 원자성이 없으므로 더더욱 남긴다.
+    trace(`엔드포인트: rename 폴백으로 잔해를 덮어쓴다 — ${paths.socketPath}`);
   }
   await rename(tempPath, paths.socketPath);
   return 'won';

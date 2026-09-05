@@ -56,6 +56,8 @@ describe('daemon 종료 — 러너를 데려가지 않는다 (#431)', () => {
         return true;
       },
       now: () => 0,
+      // 회귀선은 pid 재사용을 안 잰다 — 그것은 `adopt.test.ts` 의 몫이다.
+      bootTimeSec: () => Promise.resolve(null),
     };
     const paths = daemonEndpointPaths(dir);
     const outcome = await startDaemon({
@@ -65,7 +67,7 @@ describe('daemon 종료 — 러너를 데려가지 않는다 (#431)', () => {
       log: () => undefined,
     });
     if (outcome.kind !== 'running') throw new Error('daemon 이 안 떴다');
-    outcome.daemon.registry.spawnRunner('a1', {});
+    await outcome.daemon.registry.spawnRunner('a1', {});
     보낸시그널.length = 0; // spawn 중의 생사 확인(`kill(pid, 0)`)은 관심 밖이다.
 
     await outcome.daemon.shutdown();
@@ -80,7 +82,7 @@ describe('daemon 종료 — 러너를 데려가지 않는다 (#431)', () => {
     const paths = daemonEndpointPaths(dir);
     const outcome = await startDaemon({
       args: { socket: paths.socketPath, entryPath: join(dir, 'd'), appVersion: 't', unknown: [] },
-      host: { spawn: () => ({ pid: 1, on: () => undefined }) as never, kill: () => true, now: () => 0 },
+      host: { spawn: () => ({ pid: 1, on: () => undefined }) as never, kill: () => true, now: () => 0, bootTimeSec: () => Promise.resolve(null) },
       runnerCommand: '/bin/sh',
       log: () => undefined,
     });
@@ -127,7 +129,7 @@ describe('daemon 종료 — 러너를 데려가지 않는다 (#431)', () => {
         `});`,
         `if (outcome.kind !== 'running') { console.log('FAIL ' + outcome.kind); process.exit(1); }`,
         // 오래 자는 러너를 띄우고 pid 를 알린다.
-        `const rec = outcome.daemon.registry.spawnRunner('a1', { PATH: process.env.PATH });`,
+        `const rec = await outcome.daemon.registry.spawnRunner('a1', { PATH: process.env.PATH });`,
         `console.log('RUNNER ' + rec.pid);`,
         // **러너를 데려가지 않는 종료 경로**를 그대로 쓴다(main.ts 와 같은 것).
         `process.on('SIGTERM', () => { outcome.daemon.shutdown().then(() => process.exit(0)); });`,
