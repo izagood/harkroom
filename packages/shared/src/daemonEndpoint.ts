@@ -562,8 +562,16 @@ async function reclaimSocketName(paths: DaemonEndpointPaths): Promise<void> {
  * 하드링크 미지원 파일시스템에서만 도는 폴백.
  *
  * **3중 증거를 먼저 거친다.** `rename` 은 덮어쓰므로 증거 없이 쓰면 살아 있는 daemon 의
- * 소켓을 날린다 — 이 함수가 `link` 경로와 다른 점은 마지막 시스템콜뿐이고, 판정은
- * 오히려 더 엄격하다(`link` 는 부재를 커널이 확인해 주지만 여기서는 우리가 확인한다).
+ * 소켓을 날린다.
+ *
+ * **그럼에도 이 경로는 `link` 경로보다 약하다 — 원자성이 없다.** 증거를 세운 시점과
+ * 아래 `rename` 사이에 다른 daemon 이 그 이름을 잡으면 이 함수는 그것을 덮어쓴다.
+ * `link` 는 그 창을 커널이 닫아 주지만(`EEXIST`) 여기서는 닫을 방법이 없다 —
+ * 검사와 행위가 분리된 이상 TOCTOU 는 남는다. 창이 좁을 뿐 없는 것이 아니다.
+ *
+ * 그래서 이 폴백은 **하드링크를 정말 못 쓰는 파일시스템에서만** 돈다(`isHardlinkUnsupported`).
+ * "link 가 실패하면 rename 으로" 같은 넓은 조건으로 넓히지 마라 — 그 순간 이 약한 경로가
+ * 기본이 된다.
  */
 async function publishByRenameFallback(
   tempPath: string,
