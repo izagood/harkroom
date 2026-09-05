@@ -6,6 +6,8 @@ import { ProgressRow } from './ProgressRow';
 import { groupProgress } from '../lib/progressGroup';
 import { AgentExchange } from './AgentExchange';
 import { groupAgentExchanges } from '../lib/agentExchange';
+import { ThreadStateBadge } from './ThreadStateBadge';
+import { threadState } from '../lib/threadState';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
 import type { SectionId } from './settings/sections';
@@ -15,7 +17,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
   onOpenDirectory?: (accountId: string | null) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 } = {}) {
-  const { activeChannelId, threadRootId, messages, accounts } = useActiveStore();
+  const { activeChannelId, threadRootId, messages, accounts, me, online, connected } = useActiveStore();
   /** 채널과 같은 판정을 쓴다 — 모르는 계정은 에이전트로 치지 않는다(`lib/agentExchange`). */
   const isAgent = (id: string): boolean => accounts[id]?.kind === 'agent';
   const [alsoInChannel, setAlsoInChannel] = useState(false);
@@ -27,12 +29,28 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
       .sort((a, b) => a.seq - b.seq);
   }, [messages, activeChannelId, threadRootId]);
 
+  /**
+   * 이 스레드의 상태(Task 6). **스레드 패널에만 둔다** — 여기가 답글이 전부 로드된 유일한
+   * 자리이기 때문이다(`controller.openThread` 가 열 때 받아 온다). 채널 요약 줄에도 같은
+   * 줄을 달려면 서버가 스레드별 상태를 함께 실어 주어야 하고, 그것 없이 지금 데이터로
+   * 그리면 **열어 보지 않은 스레드가 전부 '끝남'으로 보인다** — 계획서가 경계한 그 거짓말이다.
+   */
+  const state = useMemo(() => threadState({
+    messages: thread,
+    myAccountId: me?.id ?? null,
+    isAgent: (id) => accounts[id]?.kind === 'agent',
+    // `connected` 가 false 면 presence 는 '모른다'다 — 빈 집합이 '아무도 없다'가 아니다
+    // (`controller.startRunners` 와 같은 규약).
+    live: connected ? new Set(online) : null,
+  }), [thread, me, accounts, connected, online]);
+
   if (!threadRootId) return null;
 
   return (
     <section className="flex w-96 flex-col border-l border-border bg-surface-raised">
       <header className="flex items-center border-b border-border px-4 py-2">
         <span className="font-bold">Thread</span>
+        <ThreadStateBadge state={state} className="ml-2" />
         <button className="ml-auto rounded px-2 text-fg-subtle hover:bg-surface-sunken"
           onClick={() => getController().closeThread()}>
           ×
