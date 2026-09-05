@@ -10,7 +10,8 @@
     "test": "vitest run",
     "typecheck": "tsc -p .",
     "tauri": "tauri",
-    "sign": "node scripts/sign-app.mjs"
+    "sign": "node scripts/sign-app.mjs",
+    "notarize": "node scripts/notarize-app.mjs"
   },
   "dependencies": {
     "@murmur/shared": "workspace:*",
