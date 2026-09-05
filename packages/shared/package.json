@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./daemonEndpoint": "./src/daemonEndpoint.ts"
+    "./daemonEndpoint": "./src/daemonEndpoint.ts",
+    "./daemonProtocol": "./src/daemonProtocol.ts"
   },
   "scripts": { "test": "vitest run", "typecheck": "tsc -p ." },
   "devDependencies": {
