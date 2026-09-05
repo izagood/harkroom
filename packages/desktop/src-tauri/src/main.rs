@@ -225,8 +225,8 @@ fn sidecar_path(name: &str) -> Result<std::path::PathBuf, String> {
 /// 러너를 단일 실행 파일로 만드는 `#431` 2단계 안)으로 바꿔야 한다.
 ///
 /// 읽기 전용 위치(DMG 에서 바로 실행, Gatekeeper 의 App Translocation)에서도 링크 생성이
-/// 실패한다 — 그 경우는 조용히 넘어가지 않고 `runner_spawn` 의 `Err` 로 올라가 화면에
-/// "기동 실패: …" 로 사유가 그대로 보인다(`#368` 의 요구).
+/// 실패한다 — 그 경우는 조용히 넘어가지 않고 `daemon_client` 의 기동 경로에서 `Err` 로
+/// 올라가 화면에 "기동 실패: …" 로 사유가 그대로 보인다(`#368` 의 요구).
 fn ensure_node_pty_alongside_sidecar(
     app: &tauri::AppHandle,
     sidecar_dir: &std::path::Path,
@@ -299,10 +299,14 @@ fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> std::io:
     Ok(())
 }
 
-/// 프로세스 그룹 분리를 건 `Command` 를 만든다. **`runner_spawn` 과 `tests::` 아래 회귀
-/// 테스트가 이 함수 하나를 공유한다** — 실물 커맨드 안에 인라인해 두면 테스트가
-/// `tauri::State`·`AppHandle` 없이는 이 로직을 부를 수 없고, 그러면 "PGID 가 자기 자신인지"
-/// 를 실제 프로세스로 재는 자리가 이 파일에 없어진다.
+/// 프로세스 그룹 분리를 건 `Command` 를 만든다. **`daemon_client::daemon_command()` 와
+/// `tests::` 아래 회귀 테스트가 이 함수 하나를 공유한다** — 실물 커맨드 안에 인라인해 두면
+/// 테스트가 `tauri::State`·`AppHandle` 없이는 이 로직을 부를 수 없고, 그러면 "PGID 가 자기
+/// 자신인지"를 실제 프로세스로 재는 자리가 이 파일에 없어진다.
+///
+/// **공유가 회귀선의 전제다.** 3/3 구현 중 실제로 겪었다: 테스트가 커맨드를 자기 손으로
+/// 다시 조립하던 동안에는 `detached_command` 를 걷어내도 **초록이었다** — 재는 대상과 도는
+/// 대상이 갈려 있었기 때문이다. 이 함수를 공유시킨 뒤에야 되돌려 RED 가 섰다.
 ///
 /// **핵심 한 줄**: 자식을 새 세션의 리더로 만든다 — `setsid(2)` 는 새 세션과 새 프로세스
 /// 그룹을 만들고 그 그룹의 PGID 를 자기 pid 로 세운다. `fork` 뒤·`exec` 전에 자식 프로세스
