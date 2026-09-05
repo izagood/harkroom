@@ -512,19 +512,6 @@ describe('새 에이전트 기본값', () => {
     expect((screen.getByRole('button', { name: 'Create agent' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('기본 model 을 비우면 명시적 null 을 보낸다 — 키를 빼면 서버가 손대지 않는다', async () => {
-    const c = fakeController();
-    c.agentDefaults.mockResolvedValue({ harness: 'claude-code', model: 'sonnet-x', effort: 'high' });
-    render(<AgentsSettings />);
-
-    fireEvent.change(await screen.findByLabelText('기본 model'), { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: '기본값 저장' }));
-
-    await waitFor(() => expect(c.updateAgentDefaults).toHaveBeenCalled());
-    const patch = c.updateAgentDefaults.mock.calls[0]![0];
-    expect(patch.model).toBeNull();
-    expect('model' in patch).toBe(true);
-  });
 
   // 복사본이므로 만들어진 뒤에는 '물려받았다'가 더 이상 참이 아니다 — 표시하면 거짓말이 된다.
   it('좌측 목록은 실제 harness 만 보여준다 — 물려받았다는 표시를 두지 않는다', async () => {

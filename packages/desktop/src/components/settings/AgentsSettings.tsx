@@ -116,8 +116,6 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   // 아래 PAT 로더가 실패를 `setPats([])` 로 삼켜 '없음'과 같은 화면을 만드는데, 그것을
   // 따라 하지 않는다. 실패는 사람에게 보인다.
   const [defaults, setDefaults] = useState<AgentDefaults | 'error' | null>(null);
-  // 기본값 편집 절의 입력 상태. 빈 문자열은 '지우기'로 해석해 저장할 때 null 로 보낸다.
-  const [defaultsForm, setDefaultsForm] = useState<{ harness: string; model: string; effort: string } | null>(null);
   // null 이면 'harness 기본값 사용'. 되돌릴 때 model·effort 를 명시적 null 로 비워야 한다.
   const [customized, setCustomized] = useState(false);
   const [pat, setPat] = useState<string | null>(null);
@@ -226,7 +224,6 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     void getController().agentDefaults()
       .then((d) => {
         setDefaults(d);
-        setDefaultsForm({ harness: d.harness, model: d.model ?? '', effort: d.effort ?? '' });
         // 처음 열린 화면은 '새 에이전트'다 — 그 초안을 지금 채운다. 이미 다른 에이전트를
         // 골랐다면 건드리지 않는다.
         setDraft((prev) => prev ?? emptyDraft(d));
@@ -339,32 +336,6 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       reload();
     } catch {
       setError('만들지 못했다 (이미 있는 이름일 수 있다)');
-    } finally { setBusy(false); }
-  };
-
-  /**
-   * 기본값을 저장한다. **이미 만들어진 에이전트는 하나도 바뀌지 않는다** — 이 값은
-   * 다음에 만들 것의 서식이다. 지금 타이핑 중인 초안도 건드리지 않는다: 저장 시점에
-   * 화면에 있던 값이 그대로 쓰이는 편이 예측 가능하고, 새 기본값은 다음에
-   * '+ Create agent' 를 누를 때부터 쓰인다.
-   */
-  const saveDefaults = async () => {
-    if (!defaultsForm) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const saved = await getController().updateAgentDefaults({
-        harness: defaultsForm.harness,
-        // 빈 문자열은 '지우기'다 — **명시적 null 로 보낸다.** undefined 로 보내면
-        // JSON.stringify 가 그 키를 통째로 버려 '손대지 않음'이 되고, 지우려는 조작이
-        // 조용히 무시된다.
-        model: defaultsForm.model || null,
-        effort: defaultsForm.effort || null,
-      });
-      setDefaults(saved);
-      setDefaultsForm({ harness: saved.harness, model: saved.model ?? '', effort: saved.effort ?? '' });
-    } catch {
-      setError('기본값을 저장하지 못했다');
     } finally { setBusy(false); }
   };
 
@@ -524,79 +495,19 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           </header>
 
           <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
-            {/* #171: 새 에이전트의 기본값. 여기서 정한 값은 **다음에 만들 에이전트**에
-                복사된다 — 이미 있는 에이전트는 하나도 바뀌지 않는다. 참조가 아니라 복사인
-                이유: harness 는 러너가 매 턴 읽어 프로세스를 띄우는 값이라, 참조로 두면
-                기본값을 고치는 순간 돌고 있는 에이전트의 하네스가 중간에 바뀐다.
-                그래서 좌측 목록에 '기본값을 물려받았다' 같은 표시도 두지 않는다 —
-                만들어진 뒤에는 더 이상 참이 아니어서 거짓말이 된다. */}
-            {isAdmin && !selected && (
-              <div className="rounded border border-border p-3">
-                <div className="text-xs font-medium text-fg-muted">새 에이전트 기본값</div>
-                {defaults === null && (
-                  <div className="mt-1 text-[11px] text-fg-muted">불러오는 중…</div>
-                )}
-                {defaults === 'error' && (
-                  <div role="alert" className="mt-1 text-[11px] text-danger">
-                    기본값을 불러오지 못했다
-                  </div>
-                )}
-                {defaultsForm && defaults !== 'error' && (
-                  <div className="mt-2 space-y-2">
-                    <label className={label}>
-                      기본 harness
-                      <select
-                        className={field}
-                        aria-label="기본 harness"
-                        value={defaultsForm.harness}
-                        onChange={(e) => setDefaultsForm({ ...defaultsForm, harness: e.target.value })}
-                      >
-                        {RUNNABLE_HARNESSES.map((h) => <option key={h} value={h}>{h}</option>)}
-                      </select>
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <label className={label}>
-                        기본 model
-                        <input
-                          className={field}
-                          aria-label="기본 model"
-                          placeholder="harness 기본값"
-                          value={defaultsForm.model}
-                          onChange={(e) => setDefaultsForm({ ...defaultsForm, model: e.target.value })}
-                        />
-                      </label>
-                      <label className={label}>
-                        기본 effort
-                        <select
-                          className={field}
-                          aria-label="기본 effort"
-                          value={defaultsForm.effort}
-                          onChange={(e) => setDefaultsForm({ ...defaultsForm, effort: e.target.value })}
-                        >
-                          <option value="">harness 기본값</option>
-                          {EFFORTS.map((e) => <option key={e} value={e}>{e}</option>)}
-                        </select>
-                      </label>
-                    </div>
-                    <button
-                      className="rounded bg-surface-sunken px-2 py-1 text-xs font-medium text-fg hover:bg-surface-hover disabled:opacity-50"
-                      disabled={busy}
-                      onClick={() => void saveDefaults()}
-                    >
-                      기본값 저장
-                    </button>
-                    <p className="text-[11px] text-fg-muted">
-                      다음에 만드는 에이전트에만 적용된다. 이미 있는 에이전트는 바뀌지 않는다.
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-
+            {/* #171 의 '새 에이전트 기본값' 편집 절은 **설정 › Agent defaults 로 옮겼다**
+                (identity 문서 원칙 04). 개별 에이전트를 고치는 이 화면에 워크스페이스 전체에
+                걸리는 값이 앉아 있으면 지금 무엇을 고치고 있는지가 사라진다.
+                읽기는 여기 남는다 — 새 에이전트 초안(`emptyDraft`)을 채우는 서식이기 때문이다. */}
             {draft === null ? (
-              <div className="rounded border border-border p-3 text-xs text-fg-subtle">
+              // 기본값을 못 읽은 것은 **오류**다 — `role="alert"` 로 알린다. 불러오는 중이거나
+              // 권한이 없는 것은 오류가 아니므로 같은 역할을 주지 않는다(붉은 글이 뜬다).
+              <div
+                role={defaults === 'error' ? 'alert' : undefined}
+                className={`rounded border border-border p-3 text-xs ${defaults === 'error' ? 'text-danger' : 'text-fg-subtle'}`}
+              >
                 {defaults === 'error'
-                  ? '기본값을 몰라 새 에이전트 초안을 만들 수 없다'
+                  ? '기본값을 불러오지 못했다 — 새 에이전트 초안을 만들 수 없다'
                   : (isAdmin ? '기본값을 불러오는 중…' : '에이전트를 만들 수 있는 것은 admin 뿐이다')}
               </div>
             ) : (
