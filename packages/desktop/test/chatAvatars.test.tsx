@@ -3,6 +3,7 @@ import { render, screen, cleanup } from '@testing-library/react';
 import type { MessageRow } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
+import { Identity } from '../src/components/Identity';
 import { MessageItem } from '../src/components/MessageItem';
 import { acc, msg } from './helpers/fakeApi';
 
@@ -48,7 +49,7 @@ describe('#161 2단계 작성자 아바타 거터', () => {
     expect(screen.getAllByText('alice')).toHaveLength(2);
   });
 
-  it('에이전트는 거터에서도 글리프로 표시된다', () => {
+  it('에이전트도 거터에서는 사람과 같은 아바타다 (Task 12)', () => {
     // 에이전트 계정을 여기서 만든다
     useAppStore.getState().set({
       accounts: {
@@ -58,8 +59,10 @@ describe('#161 2단계 작성자 아바타 거터', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'u2')} />);
 
-    // 거터와 작성자 옆 두 곳에서 에이전트 표시
-    expect(screen.getAllByText('에이전트')).toHaveLength(2);
+    // **Task 12**: 거터는 사람과 같은 아바타(이름 첫 글자 + 색)이고 접근성 이름도 핸들이다 —
+    // "대화에서는 에이전트라고 말하지 않는다"(design doc 2). 종류는 이름줄 배지가 말한다.
+    expect(screen.getAllByText('에이전트')).toHaveLength(1);
+    expect(screen.getByText('B')).toBeTruthy();
   });
 
   it('#181: 에이전트에 소유자가 있으면 소유자 표시가 나온다', () => {
@@ -72,8 +75,8 @@ describe('#161 2단계 작성자 아바타 거터', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
 
-    // 거터(variant=avatar)와 작성자 옆(variant=badge) 두 곳에서 에이전트 표시
-    expect(screen.getAllByText('에이전트')).toHaveLength(2);
+    // Task 12: 거터는 사람과 같은 아바타라 "에이전트"라고 말하지 않는다 — 배지 하나뿐이다.
+    expect(screen.getAllByText('에이전트')).toHaveLength(1);
     // #277: 소유자 표시가 이름 줄(badge)에서만 보인다 — 거터(avatar)에서는 넘침 방지
     expect(screen.getAllByText('@owner')).toHaveLength(1);
   });
@@ -87,8 +90,8 @@ describe('#161 2단계 작성자 아바타 거터', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
 
-    // 에이전트 표시만 있고 소유자 표시가 없다
-    expect(screen.getAllByText('에이전트')).toHaveLength(2);
+    // 에이전트 표시(이름줄 배지)만 있고 소유자 표시가 없다
+    expect(screen.getAllByText('에이전트')).toHaveLength(1);
     expect(screen.queryByText('@owner')).toBeNull();
     expect(screen.queryByText(/소유자/)).toBeNull();
   });
@@ -203,5 +206,48 @@ describe('#161 2단계 답글 컨트롤', () => {
     // replyCount 버튼만 있고 "Reply in thread"는 안 보인다.
     const replyButtons = screen.getAllByRole('button', { name: /repl(y|ies)/ });
     expect(replyButtons).toHaveLength(1);
+  });
+});
+
+/**
+ * Task 12 — **대화에서는 "이건 에이전트다"라고 말하지 않는다**(design doc 2, #455).
+ * 사람과 같은 아바타로 서고 **구별은 색과 이름**이 한다.
+ */
+describe('Task 12 에이전트 아바타는 사람과 같다', () => {
+  it('에이전트마다 다른 색을 받는다 — 같은 그림 셋이 서지 않는다', () => {
+    useAppStore.getState().set({
+      accounts: {
+        a1: acc('a1', 'alpha', 'agent'),
+        a2: acc('a2', 'beta', 'agent'),
+        a3: acc('a3', 'gamma', 'agent'),
+      },
+    });
+    const { container } = render(
+      <>
+        <Identity account={acc('a1', 'alpha', 'agent')} variant="avatar" />
+        <Identity account={acc('a2', 'beta', 'agent')} variant="avatar" />
+        <Identity account={acc('a3', 'gamma', 'agent')} variant="avatar" />
+      </>,
+    );
+    // 이름 첫 글자가 서로 다르게 보인다 — 이것이 없으면 흐림 여부만으로 구별해야 한다.
+    for (const ch of ['A', 'B', 'G']) expect(screen.getByText(ch)).toBeTruthy();
+
+    // **색도 서로 다르다.** `handleColor()` 를 안 부르면 셋이 같은 배경이 된다(그것이 결함이었다).
+    const classes = Array.from(container.querySelectorAll('span'))
+      .map((el) => Array.from(el.classList).find((c) => c.startsWith('bg-')))
+      .filter((c): c is string => c != null);
+    expect(new Set(classes).size).toBeGreaterThan(1);
+  });
+
+  it('사람과 같은 마크업이라 한 열에 섞여 서도 크기가 같다', () => {
+    const human = render(<Identity account={acc('u1', 'jaebin')} variant="avatar" />);
+    const box = (c: HTMLElement) => c.querySelector('span')!.className;
+    const humanBox = box(human.container);
+    cleanup();
+    const agentBox = box(render(<Identity account={acc('a1', 'alpha', 'agent')} variant="avatar" />).container);
+    for (const cls of ['h-5', 'w-5', 'rounded-full', 'overflow-hidden']) {
+      expect(humanBox).toContain(cls);
+      expect(agentBox).toContain(cls);
+    }
   });
 });

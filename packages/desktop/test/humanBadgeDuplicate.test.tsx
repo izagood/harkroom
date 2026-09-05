@@ -82,18 +82,22 @@ describe('#365 사람 메시지의 아바타 중복', () => {
 });
 
 describe('#365 에이전트 쪽은 그대로다', () => {
-  // 회귀 3: #277 이 고친 것이 되돌아가지 않았다. 거터에는 🤖 글리프만, 이름 옆에는
+  // 회귀 3: #277 이 고친 것이 되돌아가지 않았다. 거터에는 아바타만, 이름 옆에는
   // 🤖 + 소유자 핸들 — **둘 다 있어야** 한다. 한쪽만 보면 다른 쪽을 없애도 초록이다.
-  it('에이전트 메시지는 거터에 글리프, 이름줄에 글리프+소유자가 둘 다 있다', () => {
+  //
+  // **Task 12 로 거터가 바뀌었다**: 에이전트도 사람과 같은 아바타(이름 첫 글자 + 색)를 쓴다
+  // — "대화에서는 에이전트라고 말하지 않는다"(design doc 2). 🤖 는 이름줄 배지에만 남는다.
+  it('에이전트 메시지는 거터에 아바타, 이름줄에 글리프+소유자가 둘 다 있다', () => {
     useAppStore.getState().set({
       accounts: { u1: acc('u1', 'owner'), a1: agent('a1', 'bot', 'u1') },
     });
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
 
-    // 두 자리 모두에 글리프가 있으므로 화면에는 정확히 둘이다.
-    expect(screen.getAllByText('🤖')).toHaveLength(2);
-    expect(within(gutter()).getByText('🤖')).toBeTruthy();
+    // 글리프는 **이름줄에만** 남는다 — 거터는 사람과 같은 아바타다.
+    expect(screen.getAllByText('🤖')).toHaveLength(1);
+    expect(within(gutter()).getByText('B')).toBeTruthy();
+    expect(within(gutter()).queryByText('🤖')).toBeNull();
     expect(within(nameRow()).getByText('🤖')).toBeTruthy();
     // 소유자는 이름줄에만 — 거터에 들어가면 32px 열을 넘친다(그것이 #277 이었다).
     expect(within(nameRow()).getByText('@owner')).toBeTruthy();
@@ -102,12 +106,13 @@ describe('#365 에이전트 쪽은 그대로다', () => {
 
   // `Identity` 를 **직접** 그려 두 variant 를 마주 놓는다. `MessageItem` 만 거치면
   // 호출부가 variant 를 잘못 주는 것과 컴포넌트가 잘못 그리는 것이 구분되지 않는다.
-  it('에이전트의 두 variant 는 avatar=글리프만, badge=글리프+소유자로 갈린다', () => {
+  it('에이전트의 두 variant 는 avatar=아바타만, badge=글리프+소유자로 갈린다', () => {
     useAppStore.getState().set({ accounts: { u1: acc('u1', 'owner') } });
     const bot = agent('a1', 'bot', 'u1');
 
     const gut = render(<Identity account={bot} variant="avatar" />);
-    expect(within(gut.container).getByText('🤖')).toBeTruthy();
+    // Task 12: 사람과 같은 아바타 — 이름 첫 글자.
+    expect(within(gut.container).getByText('B')).toBeTruthy();
     expect(within(gut.container).queryByText('@owner')).toBeNull();
     cleanup();
 
