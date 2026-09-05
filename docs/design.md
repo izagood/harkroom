@@ -3,6 +3,7 @@
 - 날짜: 2026-08-31
 - 상태: 초안
 - 관련: avcs self-hosted 프로토콜 스펙 (별도 공개 예정, 이 설계의 외부 계약)
+- 데스크탑 디자인 언어: [`desktop-design-directions.html`](desktop-design-directions.html) — 말의 종류와 수신자, 세 방향. 구현 계획은 [`plans/2026-09-05-desktop-design-language.md`](plans/2026-09-05-desktop-design-language.md)
 
 ## 0. 이 문서가 말하는 시점 — 목표 설계와 현재 구현
 
