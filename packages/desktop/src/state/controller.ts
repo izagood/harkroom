@@ -5,7 +5,7 @@ import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type Notifier } from '../lib/notify';
 import { displayBody } from '../lib/mention';
-import { RunnerLauncher, tauriLoginPathReader, tauriRunnerProvisioner, tauriSecretStore, tauriSpawner, type LoginPathReader, type RunnerRepoProvisioner, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
+import { RunnerLauncher, tauriLoginPathReader, tauriSecretStore, tauriSpawner, type LoginPathReader, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
 import type { AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
@@ -29,8 +29,6 @@ export class Controller {
   private runnerAutoStartDone = false;
   /** 비동기 부트스트랩 도중 교체·해제된 컨트롤러가 뒤늦게 살아나는 것을 막는다. */
   private stopped = false;
-  /** 설정 구독 해지(#373). `start()` 에서 걸고 `stop()` 에서 뗀다. */
-  private prefsUnsub: (() => void) | null = null;
 
   constructor(
     public api: ApiClient,
@@ -47,13 +45,6 @@ export class Controller {
     spawner: RunnerSpawner = tauriSpawner,
     /** 로그인 셸 `PATH` 조회(#305). 테스트가 조회 실패를 만들 수 있게 주입한다. */
     loginPath: LoginPathReader = tauriLoginPathReader,
-    /**
-     * murmur 전용 전역 체크아웃 마련(#425). **기본값을 주지 않는다** — 이 클래스를 세우는
-     * 100여 개의 기존 테스트는 이 자리를 넘기지 않고, 여기 `tauriRunnerProvisioner` 를
-     * 기본값으로 두면 그 테스트 전부가 (vitest 환경에서 `invoke` 가 없어 실패하는) 이
-     * 표면을 조용히 새로 타게 된다. 실제 앱은 `startCommunitySession` 이 명시적으로 넘긴다.
-     */
-    provisioner?: RunnerRepoProvisioner,
     /**
      * 이 컨트롤러가 쓰는 커뮤니티의 스토어(#166). 예전에는 모듈 최상위 싱글턴을 직접
      * 읽었다 — 그러면 보고 있지 않은 커뮤니티의 이벤트가 **활성 커뮤니티의 스토어**로
@@ -77,7 +68,6 @@ export class Controller {
       spawner,
       loginPath,
       undefined, // now — 재발급 라벨의 시각. 기본값(Date.now)을 그대로 쓴다.
-      provisioner,
     );
     this.runnerLauncher.setOnStateChange((states) => {
       this.store.getState().set({
@@ -91,17 +81,13 @@ export class Controller {
    *
    * 대상을 **여기서 다시 조회한다** — 실행기가 자동 기동 때 본 것을 기억해 두고 그것에
    * 기대면, 자동 기동을 끄고 쓰는 사람에게는 이 버튼이 영원히 죽어 있다(누를 수는 있고
-   * 아무 일도 일어나지 않는다). 저장소 경로도 지금 값을 읽는다: 사람이 방금 경로를 고쳐
-   * 넣고 이 버튼을 누르는 것이 자연스러운 순서다.
+   * 아무 일도 일어나지 않는다).
    */
   async reissueRunnerPat(agentId: string): Promise<void> {
     const agents = await this.api.listAgents();
     const agent = agents.find((a) => a.id === agentId);
     if (!agent) throw new Error('에이전트를 찾지 못했다 — 목록을 다시 읽어라');
-    const prefs = usePrefsStore.getState();
-    await this.runnerLauncher.reissue({
-      agent, repoPath: prefs.runnerRepoPath, runnerCommand: prefs.runnerCommand,
-    });
+    await this.runnerLauncher.reissue({ agent });
   }
 
   /**
@@ -122,37 +108,6 @@ export class Controller {
       myAccountId: myId,
       // `connected` 가 false 면 presence 는 '모른다'다 — 빈 배열이 '아무도 없다'가 아니다.
       liveAccountIds: store.connected ? new Set(store.online) : null,
-      repoPath: prefs.runnerRepoPath,
-      runnerCommand: prefs.runnerCommand,
-    });
-  }
-
-  /**
-   * 저장소 경로가 **비어 있다가 채워지는 전이**에서 자동 기동을 다시 시도한다(#373).
-   *
-   * 전이만 보는 이유: 저장이 일어날 때마다 `startRunners()` 를 부르면 이미 도는 러너 옆에
-   * 두 번째를 띄우거나 정상 상태를 흔든다. 기동을 막은 조건은 `!repoPath` 하나이므로
-   * (`RunnerLauncher.startOne`), 그 조건이 뒤집히는 순간만이 재시도가 새 정보를 만드는
-   * 순간이다. '비어 있다'의 기준도 실행기와 같은 것(빈 문자열)을 쓴다 — 두 자리가 다른
-   * 기준을 쓰면 재시도가 안 도는 값이 생긴다.
-   *
-   * 타이머로 돌리지 않는 이유: 경로 미설정은 **사람이 채워야** 풀리는 실패다. 주기 재시도는
-   * 사람이 채우기 전에는 아무것도 낫게 하지 않으면서 실패를 조용하게 만든다(#340). 사람의
-   * 그 저장 행동이 곧 트리거다.
-   *
-   * `runnerAutoStartDone` 을 조건에 넣는 이유: 첫 기동은 presence 를 받은 뒤여야 한다
-   * (`presence.snapshot` 절 주석). presence 전에 경로가 채워졌다면 여기서 손대지 않고
-   * 그 절이 제 시점에 띄운다 — 그러지 않으면 중복 러너가 생긴다.
-   */
-  private watchRepoPathForRetry(): void {
-    this.prefsUnsub?.();
-    this.prefsUnsub = usePrefsStore.subscribe((next, prev) => {
-      if (prev.runnerRepoPath || !next.runnerRepoPath) return;
-      if (!this.runnerAutoStartDone) return;
-      // 경로가 채워진 순간 옛 사유는 거짓이 된다. 재시도가 다른 이유로 실패해도
-      // "설정되지 않았다"가 남지 않게 **먼저** 지운다.
-      this.runnerLauncher.clearRepoPathFailures();
-      this.swallow(this.startRunners());
     });
   }
 
@@ -218,13 +173,10 @@ export class Controller {
     // 아직 빈 배열이라 이미 붙어 있는 러너 옆에 두 번째를 띄운다(handleEvent 의
     // `presence.snapshot` 절 참고). 이 플래그는 start() 마다 초기화된다.
     this.runnerAutoStartDone = false;
-    this.watchRepoPathForRetry();
   }
 
   stop(): void {
     this.stopped = true;
-    this.prefsUnsub?.();
-    this.prefsUnsub = null;
     this.runnerLauncher.dispose();
     this.ws?.close();
     this.ws = null;
@@ -353,8 +305,6 @@ export class Controller {
         // #250: 러너 자동 기동은 **여기서** 시작한다. presence 가 도착한 이 순간이
         // "누가 이미 붙어 있는가"를 처음 아는 시점이고, 그것을 모른 채 띄우면 중복 러너가
         // 생긴다. 재접속마다 다시 하지 않는다(플래그) — 재접속은 러너의 생사와 무관하다.
-        // 그 판단은 재접속에 대해서만 맞았다: **설정 변경**은 기동의 입력을 바꾼다.
-        // 그래서 경로가 비어 있다가 채워지는 전이는 `watchRepoPathForRetry` 가 본다(#373).
         if (!this.runnerAutoStartDone) {
           this.runnerAutoStartDone = true;
           this.swallow(this.startRunners());
@@ -960,8 +910,6 @@ export class Controller {
       pat: { label: 'runner', token: pat },
       autoStart: prefs.runnerAutoStart,
       liveAccountIds: store.connected ? new Set(store.online) : null,
-      repoPath: prefs.runnerRepoPath,
-      runnerCommand: prefs.runnerCommand,
     });
     return { agent, pat };
   }
@@ -1644,7 +1592,6 @@ export async function startCommunitySession(opts: {
     undefined,
     undefined,
     undefined,
-    tauriRunnerProvisioner, // #425: 실제 앱만 전역 체크아웃을 스스로 마련한다.
     entry.store,
   );
   useCommunityRegistry.getState().attachController(entry.id, controller);

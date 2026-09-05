@@ -2155,6 +2155,7 @@ name = "murmur-desktop"
 version = "0.1.0"
 dependencies = [
  "keyring",
+ "libc",
  "tauri",
  "tauri-build",
  "tauri-plugin-notification",
