@@ -56,8 +56,9 @@ describe('#277 에이전트 거터 넘침 방지', () => {
     // 거터 **전체**를 본다 — 글리프의 부모만 보면 배지가 거터의 다른 자리로 옮겨 가도 초록이다.
     expect(gutter().textContent).not.toContain('@owner');
     expect(gutter().textContent).not.toContain('·');
-    // 봇 글리프 자체는 남는다 — 없애는 것이 아니라 소유자만 뺀 것이다.
-    expect(within(gutter()).getByText('🤖')).toBeTruthy();
+    // 거터가 **누구인지는 말한다** — 없애는 것이 아니라 소유자만 뺀 것이다.
+    // Task 12 이후 에이전트도 사람과 같은 아바타(이름 첫 글자 + 색)를 쓰므로 'B'(bot)다.
+    expect(within(gutter()).getByText('B')).toBeTruthy();
   });
 
   // 회귀 2: 사람 작성자의 거터는 지금과 같다(둥근 아바타, 이미지 있으면 이미지).
@@ -146,7 +147,9 @@ describe('#277 에이전트 거터 넘침 방지', () => {
 
     // 답변(에이전트)의 거터를 고른다 — 루트는 사람이라 거터가 둘이다.
     const gutters = screen.getAllByTestId('author-gutter');
-    const agentGutters = gutters.filter((g) => g.textContent?.includes('🤖'));
+    // 에이전트 거터를 sr-only 핸들로 고른다 — 글리프가 아니라 **누구인가**로 찾는다
+    // (Task 12: 에이전트도 사람과 같은 아바타를 쓴다).
+    const agentGutters = gutters.filter((g) => g.textContent?.includes('bot'));
     expect(agentGutters).toHaveLength(1);
     expect(agentGutters[0]!.textContent).not.toContain('@owner');
     // 소유자는 스레드 안에서도 이름줄에는 남아 있다(#181).
@@ -155,11 +158,12 @@ describe('#277 에이전트 거터 넘침 방지', () => {
 });
 
 describe('#277 Identity variant 구분', () => {
-  it('variant="avatar" 인 에이전트는 소유자 없이 글리프만 표시', () => {
+  it('variant="avatar" 인 에이전트는 소유자 없이 아바타만 표시', () => {
     useAppStore.getState().set({ accounts: { u1: acc('u1', 'owner') } });
     render(<Identity account={agent('a1', 'bot', 'u1')} variant="avatar" />);
 
-    expect(screen.getByText('🤖')).toBeTruthy();
+    // Task 12: 사람과 같은 아바타 — 이름 첫 글자. 소유자는 여전히 없다(#277).
+    expect(screen.getByText('B')).toBeTruthy();
     expect(screen.queryByText('@owner')).toBeNull();
   });
 
