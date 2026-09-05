@@ -83,23 +83,27 @@ Fastify + Postgres / MCP Streamable HTTP
 **대상:** `packages/shared/src/index.ts` · `packages/server/src/services/messages.ts` ·
 `packages/server/src/mcp/mcpPlugin.ts` · `packages/server/test/mcp.test.ts`
 
-- [ ] **Step 1: shared 타입** — `AskMeta` 신설.
+- [x] **Step 1: shared 타입** — `AskMeta` 신설.
       `{ kind: 'ask'; ask: { prompt?: string; options: { id: string; label: string; hint?: string }[];
       to: AskAudience; answeredWith?: string; answeredBy?: string; answeredAt?: string } }`,
       `AskAudience = { kind: 'human' } | { kind: 'account'; accountId: string }`.
       **`to` 를 옵셔널로 두지 않는다** — 없는 수신자는 "사람 아무나"로 해석되어야 하는데, 그 해석을
       화면마다 반복하면 갈라진다. 보내는 쪽이 항상 정하게 한다
-- [ ] **Step 2: MCP `message.ask` 도구** — `message.post` 와 같은 삽입 경로를 쓰되 `meta` 에
+- [x] **Step 2: MCP `message.ask` 도구** — `message.post` 와 같은 삽입 경로를 쓰되 `meta` 에
       `AskMeta` 를 싣는다. 옵션은 2~5개로 제한(하나면 선택이 아니고, 여섯이면 읽히지 않는다).
       `to` 는 handle 로 받아 accountId 로 해석한다 — 없는 handle 은 400
-- [ ] **Step 3: 답을 기록하는 경로** — 사람이 옵션을 고르면 그 자체가 **답글 메시지**가 되고
+- [x] **Step 3: 답을 기록하는 경로** — 사람이 옵션을 고르면 그 자체가 **답글 메시지**가 되고
       (본문 = 고른 옵션의 `label`), 서버가 원본 메시지의 `meta.ask.answeredWith/By/At` 을 갱신한다.
       갱신은 `message.updated` 이벤트로 나간다. **원본을 고치는 것이 아니라 답을 덧붙이는 것**이므로
       `editedAt` 은 건드리지 않는다(사람이 고친 것이 아니다)
-- [ ] **Step 4: 중복 답 방지** — 이미 `answeredWith` 가 있으면 두 번째 답은 400. 두 사람이 동시에
+- [x] **Step 4: 중복 답 방지** — 이미 `answeredWith` 가 있으면 두 번째 답은 400. 두 사람이 동시에
       누르면 먼저 도착한 것이 이긴다는 규칙을 테스트로 고정한다
-- [ ] **검증:** `packages/server/test/mcp.test.ts` 에 ask 발행·답·중복 거절 3케이스.
-      **모르는 meta 통과 회귀선** — 옛 데스크탑이 읽어도 본문만 보이면 된다는 것을 타입으로 고정
+- [x] **검증:** `mcp.test.ts` 에 6케이스 — 발행·수신자 해석·경계 거절·답 기록·중복 거절·
+      수신자 아닌 계정 거절, 그리고 **모르는 meta 회귀선**. 서버 880개 · 전체 2,504개 통과.
+      구현 중 안 것: 옵션 수 위반은 SDK 가 던지지 않고 `isError` 결과로 돌아온다(테스트에 실측 반영).
+      판정은 `readAskMeta` 하나로 모으고 **shared 에 두었다** — 서버와 화면이 같은 판정을 써야
+      구/신 버전 조합이 안전하다. 계획에 없던 `forbidden`(수신자 아닌 계정의 답)을 더했다:
+      없으면 남에게 간 물음을 아무나 가로채 `to` 를 실은 뜻이 사라진다
 
 ### Task 3: 선택지 컴포넌트 + 수신자 배지
 
