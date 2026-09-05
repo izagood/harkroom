@@ -1,2 +1,6 @@
 target/
 gen/
+# 러너 사이드카 빌드 산출물(#431 1단계 B) — `pnpm --filter @murmur/desktop build:sidecar`
+# 가 만든다. 플랫폼별 실행 파일 + node-pty prebuild 는 빌드마다 새로 나오는 것이지
+# 저장소에 넣을 소스가 아니다(esbuild 캐시·prebuilds 를 매번 커밋하면 diff 가 의미 없다).
+binaries/
