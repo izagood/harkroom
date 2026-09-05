@@ -66,7 +66,13 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
   if (!threadRootId) return null;
 
   return (
-    <section className="flex w-96 flex-col border-l border-border bg-surface-raised">
+    /**
+     * 폭: 고정 `w-96`(384px)을 버리고 **가변 + 최소 480px**(계획 Task 10 Step 3).
+     * 선택지 카드 · 완료 보고 · 대기 사슬이 들어갈 자리가 필요하다 — 작업이 사는 곳인데
+     * 화면에서 가장 좁았다(계획서 진단). `flex-1` 로 남는 폭을 나눠 갖되 채널 대화가
+     * 짓눌리지 않게 `max-w` 로 상한을 둔다.
+     */
+    <section className="flex min-w-[480px] max-w-[640px] flex-1 flex-col border-l border-border bg-surface-raised">
       <header className="flex items-center border-b border-border px-4 py-2">
         <span className="font-bold">Thread</span>
         <ThreadStateBadge state={state} className="ml-2" />
