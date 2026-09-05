@@ -16,8 +16,8 @@
  *
  * ## Tauri 표면을 왜 주입하는가
  *
- * 키체인(`secret_*` invoke)과 자식 프로세스(`runner_spawn`/`runner_wait_exit`/`runner_kill`
- * invoke)를 이 클래스가 직접 부르면 회귀선을 걸 자리가 없다 — 테스트가 확인할 수 있는 것이
+ * 키체인(`secret_*` invoke)과 러너 소유(`daemon_spawn_runner`/`daemon_kill_runner` invoke)를
+ * 이 클래스가 직접 부르면 회귀선을 걸 자리가 없다 — 테스트가 확인할 수 있는 것이
  * "목을 손으로 넘긴 값"뿐이 되고, 앱에서 죽은 배선이 초록으로 통과한다. 두 표면을
  * 인터페이스로 뽑고 기본 구현을 이 파일 아래쪽에 둔다.
  *
@@ -37,6 +37,27 @@
  * `workingDir`(DB)이 한다. `cwd` 도 이 실행기 표면에서 사라졌다: sidecar 는 자기 위치를
  * 스스로 알고, 러너가 일할 저장소는 `mentionTurn.ts` 가 `workingDir` 로 따로 정한다
  * (`process.cwd()`는 애초에 그 판단에 쓰인 적이 없다).
+ *
+ * ## `#431` 2단계-b 3/3 — **앱이 러너의 부모가 아니다**
+ *
+ * 러너는 이제 daemon 이 띄운다. 앱은 daemon 에 소켓으로 붙어 "이 에이전트의 러너를
+ * 띄워라"라고 말할 뿐이다(`daemonSpawner`). 그래서 이 파일의 첫 줄 — *"앱이 러너를
+ * 띄운다"* — 은 **한 겹 간접이 된다**: 러너를 띄우게 하는 것은 여전히 이 앱이지만,
+ * 그 프로세스의 부모는 daemon 이다.
+ *
+ * 바뀐 것과 바뀌지 않은 것:
+ *
+ * | | 그대로인가 |
+ * |---|---|
+ * | `RunnerSpawner` 인터페이스(`spawn → { kill }`) | **그대로** — 호출부가 안 바뀐다 |
+ * | `#419` 세대 토큰(`runTokens`) | **그대로** — 재는 것이 앱 안의 세대다 |
+ * | PAT 운영자 결정 1·2·3 (위) | **그대로** |
+ * | 러너 프로세스의 부모 | 앱 → **daemon** |
+ * | 종료 통지 경로 | `runner_wait_exit` → **소켓의 `runnerExit` 이벤트** |
+ * | 세대 구분자 | Symbol 하나 → **Symbol + `incarnationId`**(`daemonSpawner` 주석) |
+ *
+ * **`sessions.json`·`SessionStore` 는 여기서도 안 건드린다**(`#431` D5) — 이 파일이 아는
+ * 것은 프로세스와 PAT 뿐이고, 세션 상태의 writer 는 러너 하나여야 한다.
  */
 import { Command } from '@tauri-apps/plugin-shell';
 
@@ -84,6 +105,15 @@ export interface RunnerProcess {
 }
 
 export interface SpawnRequest {
+  /**
+   * 어느 에이전트의 러너인가(`#431` 2단계-b 3/3에서 추가됐다).
+   *
+   * **daemon 은 러너를 `agentId` 로 센다** — pid 가 아니다(`daemonProtocol.ts` 의
+   * `SpawnRunnerParams`·`KillRunnerParams` 가 전부 `agentId` 를 축으로 한다). 앱이 pid 를
+   * 들고 있던 시절에는 이 값이 필요 없었지만, 소유권이 daemon 으로 넘어가면서 "누구의
+   * 러너인가"를 소켓 너머로 말해야 한다.
+   */
+  agentId: string;
   env: Record<string, string>;
   /** 자식이 끝나면 정확히 한 번 불린다. `code` 가 `null` 이면 시그널로 죽은 것이다. */
   onExit(code: number | null): void;
@@ -368,6 +398,7 @@ export class RunnerLauncher {
     let child: RunnerProcess;
     try {
       child = await this.spawner.spawn({
+        agentId: agent.id,
         env: { MURMUR_PAT: token, MURMUR_URL: this.api.baseUrl, PATH: path },
         onExit: (code) => this.handleExit(agent.id, runToken, code),
       });
@@ -588,53 +619,128 @@ export const tauriSecretStore: RunnerSecretStore = {
 };
 
 /**
- * 러너를 Rust invoke 커맨드로 띄운다(`#431` 1단계 A). **`@tauri-apps/plugin-shell` 을 거치지
- * 않는다** — 그 플러그인의 `Command.create` 는 프로세스 그룹 제어를 노출하지 않고, 이 기능의
- * 핵은 자식을 앱의 프로세스 그룹에서 떼는 것이다(`src-tauri/src/main.rs::runner_spawn` 의
- * `setsid` 주석 참고). 웹뷰는 `env` 값 두 개만 넘긴다 — 실행할 프로그램(사이드카 경로)은
- * Rust 가 스스로 찾는다(`sidecar_path()`).
- *
- * 종료는 `runner_wait_exit` 의 Promise 해소로 안다 — spawn 직후 fire-and-forget 으로 불러
- * 그 결과를 `onExit` 으로 그대로 넘긴다. `#419` 의 세대 토큰 판정(`RunnerLauncher.handleExit`)
- * 은 이 콜백이 **언제** 오든 똑같이 적용된다 — spawn 이 Rust 로 바뀌어도 그 판정이 보는 것은
- * 여전히 "이 콜백이 지금 세대의 것인가"뿐이다.
+ * `runnerExit` 이벤트가 웹뷰로 오는 이름. **Rust 의 `RUNNER_EXIT_EVENT` 와 같아야 한다** —
+ * 다르면 exit 통지가 영영 안 와서 죽은 러너가 화면에 계속 `running` 으로 남는다.
  */
-export const tauriSpawner: RunnerSpawner = {
+export const RUNNER_EXIT_EVENT = 'murmur://runner-exit';
+
+/** daemon 이 보낸 exit 통지. **`incarnationId` 가 이 이벤트의 핵심 필드다.** */
+export interface DaemonRunnerExit {
+  agentId: string;
+  incarnationId: string;
+  code: number | null;
+  signal: string | null;
+}
+
+/**
+ * 러너를 **daemon 을 통해** 띄운다(`#431` 2단계-b 3/3).
+ *
+ * ## 무엇이 바뀌었나 — 앱은 더 이상 러너의 부모가 아니다
+ *
+ * 1단계·2/3 까지 이 자리는 `runner_spawn` 이었다: 앱이 사이드카를 직접 띄우고 pid 를
+ * 들고 있었다. 이제는 daemon 이 띄우고 daemon 이 들고 있다. 앱이 갖는 것은 소켓 하나다.
+ *
+ * **`RunnerSpawner` 인터페이스는 그대로다** — `spawn(req) → { kill() }`. 그래서
+ * `RunnerLauncher` 의 호출부는 `agentId` 한 줄 말고 바뀌지 않았고, `#419` 의 세대 토큰
+ * 판정(`handleExit`)도 그대로 선다.
+ *
+ * ## `incarnationId` 로 세대를 가린다 — **두 겹이다**
+ *
+ * `#419` 의 `runTokens`(Symbol)는 **앱 안의** 세대를 가린다. 그런데 소켓을 한 겹 더
+ * 거치면서 창이 넓어졌다: daemon 이 보낸 exit 이 앱에 닿기 전에 앱이 그 에이전트의
+ * 러너를 새로 띄울 수 있다. 그때 Symbol 은 **새 것**을 가리키고 있으므로 옛 exit 이
+ * 그대로 통과한다 — Symbol 은 "이 콜백이 지금 세대의 것인가"를 보지만, 소켓 너머에서
+ * 온 통지가 어느 세대의 것인지는 모른다.
+ *
+ * 그래서 이 자리가 **먼저** 거른다: 이벤트의 `incarnationId` 가 이 spawn 이 받은 것과
+ * 다르면 `onExit` 을 아예 안 부른다. 그러면 `handleExit` 의 Symbol 판정은 자기가 원래
+ * 재던 것(앱 안의 세대)만 재면 된다. 두 판정이 겹치는 것이 아니라 **다른 것을 재는** 것이다.
+ *
+ * ## 실패는 폴백하지 않는다
+ *
+ * daemon 기동에 실패하면 이 함수가 그대로 던진다 — `RunnerLauncher.startAll` 이 그것을
+ * 잡아 `failed` + `기동 실패: <사유>` 로 화면에 올린다. **앱이 직접 러너를 띄우는 경로는
+ * 이제 없다**(`src-tauri/src/main.rs` 에서 `runner_spawn` 자체가 사라졌다). 있으면
+ * "daemon 이 도는 줄 알았는데 아니었다"가 되고, 무엇이 러너를 소유하는지 아무도 모른다.
+ */
+export const daemonSpawner: RunnerSpawner = {
   async spawn(req) {
     const invoke = tauriInvoke();
     if (!invoke) {
-      // 브라우저 개발에서는 자식 프로세스 자체를 띄울 수 없다(`RunnerSecretStore` 폴백
+      // 브라우저 개발에서는 unix 소켓도 자식 프로세스도 없다(`RunnerSecretStore` 폴백
       // 주석과 같은 사정) — 그 사실을 그대로 실패로 올린다.
       throw new Error('이 환경에서는 러너를 띄울 수 없다 — Tauri invoke 표면이 없다');
     }
-    const pid = await invoke('runner_spawn', {
+    const result = await invoke('daemon_spawn_runner', {
+      agentId: req.agentId,
       murmurPat: req.env.MURMUR_PAT,
       murmurUrl: req.env.MURMUR_URL,
       path: req.env.PATH,
     });
-    if (typeof pid !== 'number') {
-      throw new Error('러너 spawn 이 pid 를 돌려주지 않았다');
+    const spawned = result as { agentId?: unknown; pid?: unknown; incarnationId?: unknown };
+    if (typeof spawned?.incarnationId !== 'string' || typeof spawned.pid !== 'number') {
+      // 지어내지 않는다 — 무엇이 왔는지 그대로 보인다(`#368`).
+      throw new Error(`daemon 의 spawnRunner 응답이 계약과 다르다: ${JSON.stringify(result)}`);
     }
+    const incarnationId = spawned.incarnationId;
+
     let notified = false;
-    const once = (code: number | null) => {
+    const unlisten = await listenRunnerExit(invoke, (event) => {
       if (notified) return;
+      if (event.agentId !== req.agentId) return;
+      // **세대가 다르면 버린다** — 위 "두 겹이다" 주석이 이 한 줄의 근거다.
+      if (event.incarnationId !== incarnationId) return;
       notified = true;
-      req.onExit(code);
+      void unlistenSafely();
+      req.onExit(event.code);
+    });
+    const unlistenSafely = async (): Promise<void> => {
+      try { await unlisten(); } catch { /* 이미 떼였다 */ }
     };
-    // fire-and-forget — 이 Promise 는 자식이 끝날 때까지(길게는 몇 시간) 안 풀린다.
-    // `.catch` 는 IPC 자체가 끊긴 경우(앱 재시작 등)에 대비한 방어일 뿐, 정상 종료는
-    // 항상 resolve 로 온다.
-    void invoke('runner_wait_exit', { pid }).then(
-      (code) => once(typeof code === 'number' ? code : null),
-      () => once(null),
-    );
+
     return {
       kill: async () => {
-        await invoke('runner_kill', { pid });
+        // **세대를 실어 보낸다** — 안 실으면 daemon 이 "지금 것"을 죽이고, 그 사이 새로
+        // 뜬 러너가 대신 죽을 수 있다(`daemonProtocol.ts::KillRunnerParams` 주석).
+        await invoke('daemon_kill_runner', { agentId: req.agentId, incarnationId });
       },
     };
   },
 };
+
+/**
+ * daemon 의 `runnerExit` 이벤트를 듣는다.
+ *
+ * `@tauri-apps/api` 를 의존으로 들이지 않고 이벤트 플러그인의 invoke 표면을 직접 쓴다 —
+ * 이 파일은 이미 `__TAURI_INTERNALS__.invoke` 하나로 키체인·프로세스 표면을 다루고
+ * 있고(`tauriInvoke`), 이벤트 하나 때문에 그 규칙을 깨면 표면이 둘로 갈린다.
+ */
+async function listenRunnerExit(
+  invoke: Invoke,
+  handler: (event: DaemonRunnerExit) => void,
+): Promise<() => Promise<void>> {
+  const internals = (globalThis as {
+    __TAURI_INTERNALS__?: { transformCallback?: (cb: (payload: unknown) => void) => number };
+  }).__TAURI_INTERNALS__;
+  if (typeof internals?.transformCallback !== 'function') {
+    throw new Error('이 환경에는 Tauri 이벤트 표면이 없다 — 러너 종료 통지를 들을 수 없다');
+  }
+  const handlerId = internals.transformCallback((payload) => {
+    const message = payload as { payload?: unknown };
+    const body = message?.payload as DaemonRunnerExit | undefined;
+    if (body && typeof body.agentId === 'string' && typeof body.incarnationId === 'string') {
+      handler(body);
+    }
+  });
+  const eventId = await invoke('plugin:event|listen', {
+    event: RUNNER_EXIT_EVENT,
+    target: { kind: 'Any' },
+    handler: handlerId,
+  });
+  return async () => {
+    await invoke('plugin:event|unlisten', { event: RUNNER_EXIT_EVENT, eventId });
+  };
+}
 
 /**
  * 로그인 셸의 `PATH` 를 한 번 읽는다(#305).
