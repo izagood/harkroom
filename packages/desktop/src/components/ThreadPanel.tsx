@@ -8,6 +8,8 @@ import { AgentExchange } from './AgentExchange';
 import { groupAgentExchanges } from '../lib/agentExchange';
 import { ThreadStateBadge } from './ThreadStateBadge';
 import { threadState } from '../lib/threadState';
+import { WaitChainLine } from './WaitChain';
+import { waitChain } from '../lib/waitChain';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
 import type { SectionId } from './settings/sections';
@@ -44,6 +46,16 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
     live: connected ? new Set(online) : null,
   }), [thread, me, accounts, connected, online]);
 
+  /**
+   * 대기 사슬(Task 7). 상태 배지가 "무엇인가"를 말한다면 이 줄은 **"왜"** 를 말한다 —
+   * 같은 `live` 규약을 쓴다(`null` 은 '모른다').
+   */
+  const chain = useMemo(() => waitChain({
+    messages: thread,
+    myAccountId: me?.id ?? null,
+    live: connected ? new Set(online) : null,
+  }), [thread, me, connected, online]);
+
   if (!threadRootId) return null;
 
   return (
@@ -56,6 +68,8 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
           ×
         </button>
       </header>
+      {/* 사슬은 헤더 **바로 아래**다 — "무엇을 기다리는가"는 대화를 읽기 전에 알아야 한다. */}
+      <WaitChainLine chain={chain} />
       <div className="flex-1 overflow-y-auto py-2">
         {/* 채널과 **같은 함수**로 접는다 — 두 곳이 다른 판정을 쓰면 같은 대화가 자리마다
             다르게 보인다(`lib/progressGroup`·`lib/agentExchange`). 순서도 채널과 같아야 한다:
