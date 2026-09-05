@@ -197,8 +197,15 @@ fn runner_spawn(
 /// (`runnerLauncher.ts::tauriSpawner`) — `#419` 의 세대 토큰 판정은 여전히 JS 쪽
 /// `RunnerLauncher.handleExit` 이 맡는다. 여기는 "언젠가 끝났다"만 사실대로 전한다.
 ///
-/// 두 번째 호출부터는 캐시된 값을 즉시 돌려준다 — `wait()` 는 한 번만 성공하는 계약이라,
-/// 다시 부르면 이미 사라진 자식을 기다리다 잘못된 값을 줄 수 있다.
+/// **동시에 기다리는 호출자**는 캐시된 값을 즉시 돌려받는다 — `wait()` 는 한 번만 성공하는
+/// 계약이라, 다시 부르면 이미 사라진 자식을 기다리다 잘못된 값을 줄 수 있다. 표에서 항목을
+/// 빼기 전에 `Arc` 를 이미 복제해 두므로(아래 `entry` 블록), 종료 관측과 겹쳐 들어온 호출도
+/// 같은 `exit_code` 를 본다.
+///
+/// 종료를 관측한 **뒤에** 처음 부르면 표에 항목이 없어 `Err` 가 된다 — 그 pid 는 이 앱이
+/// 지금 들고 있는 자식이 아니기 때문이다(OS 가 그 번호를 이미 다른 프로세스에 줬을 수도
+/// 있다). JS 쪽은 spawn 직후 한 번만 부르므로(`tauriSpawner`) 이 경로로 들어오지 않고,
+/// 들어오더라도 `.catch` 가 `onExit(null)` 로 받아 세대 토큰이 그것을 거른다.
 #[tauri::command]
 async fn runner_wait_exit(
     registry: tauri::State<'_, RunnerRegistry>,
@@ -237,6 +244,18 @@ async fn runner_wait_exit(
     *exit_code
         .lock()
         .map_err(|_| "종료 코드 락이 깨졌다".to_string())? = code;
+
+    // 끝난 자식은 표에서 뺀다. 안 빼면 앱이 도는 내내 pid 마다 항목이 쌓이고, 무엇보다
+    // **OS 가 pid 를 재사용한다**는 사실과 어긋난 표가 남는다 — 죽은 pid 가 표에 살아 있으면
+    // `runner_kill` 이 그 pid 를 "이 앱 것"이라고 판정하는 창이 생긴다. 종료를 관측한 이 자리가
+    // 그 항목을 지울 유일하게 정확한 시점이다(`runner_kill` 의 "표에 없으면 성공" 논리는
+    // 이 제거가 있어야 비로소 사실이 된다).
+    //
+    // 종료 코드는 위에서 `exit_code`(Arc)에 이미 넣었고 이 함수가 그 값을 그대로 돌려주므로,
+    // 표에서 빠져도 지금 대기 중인 호출자들은 같은 값을 받는다.
+    if let Ok(mut map) = registry.0.lock() {
+        map.remove(&pid);
+    }
     Ok(code)
 }
 
@@ -249,8 +268,10 @@ fn runner_kill(registry: tauri::State<RunnerRegistry>, pid: u32) -> Result<(), S
         .lock()
         .map_err(|_| "레지스트리 락이 깨졌다".to_string())?;
     let Some(entry) = map.get(&pid) else {
-        // 이미 종료를 관측해 표에서 뺐거나, 애초에 이 앱 것이 아니다. 이미 없는 것을
-        // 지우는 것과 같은 논리로(`secret_delete`) 성공으로 본다 — 재시도가 안전하다.
+        // 이미 종료를 관측해 `runner_wait_exit` 이 표에서 뺐거나, 애초에 이 앱 것이 아니다.
+        // 어느 쪽이든 **여기서 그 pid 에 시그널을 보내지 않는다** — 표에 없는 번호를 죽이면
+        // OS 가 그 번호를 재사용해 붙인 남의 프로세스를 죽일 수 있다. 이미 없는 것을 지우는
+        // 것과 같은 논리로(`secret_delete`) 성공으로 본다 — 재시도가 안전하다.
         return Ok(());
     };
     let mut child = entry
