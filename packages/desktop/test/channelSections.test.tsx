@@ -540,9 +540,10 @@ describe('섹션 이름 바꾸기 배선 (#323 요구 5)', () => {
     const other = createAppStore();
     const renameSection = vi.fn(async () => ({ prefs: [pref('c9', { section: 'Moved', sortOrder: 0 })] }));
     const api = fakeApi({ renameSection } as never);
-    // 9번째 인자가 이 컨트롤러의 스토어다(#425 로 provisioner 가 8번째에 끼어들며 밀렸다).
-    // 인자 자리가 밀리면 타입은 통과하고 값만 어긋난다.
-    const c = new Controller(api, undefined, undefined, undefined, undefined, undefined, undefined, undefined, other);
+    // 8번째 인자가 이 컨트롤러의 스토어다(`#431` 1단계가 `provisioner` 인자를 없애며
+    // 한 자리 당겨졌다 — #425 시절엔 9번째였다). 인자 자리가 밀리면 타입은 통과하고
+    // 값만 어긋난다.
+    const c = new Controller(api, undefined, undefined, undefined, undefined, undefined, undefined, other);
 
     await c.renameSection('Work', 'Moved');
 

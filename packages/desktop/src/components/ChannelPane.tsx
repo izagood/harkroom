@@ -64,7 +64,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * #368: 이 채널에서 **부른** 에이전트의 러너가 기동에 실패했으면 그 사유를 여기, 부른
    * 자리에 그린다. 사유 문구는 러너 실행기가 상태에 실어 준 `state.message` 를 그대로
    * 지나보낸다 — 화면이 문구를 새로 쓰면 설정 화면의 것과 갈라져 한쪽만 고치는 사고가
-   * 난다(`runnerLauncher.ts::REPO_PATH_MISSING` 이 유일한 출처다).
+   * 난다(`runnerLauncher.ts` 가 유일한 출처다).
    *
    * **'불렀다'의 판정은 채널 설정이 아니라 실제 본문이다.** 자동 멘션 설정
    * (`channelAutoMentions`, #173)만 보면 이슈가 적은 재현 — 일반 채널에서 사람이 손으로

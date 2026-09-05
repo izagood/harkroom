@@ -10,16 +10,6 @@
     "notification:default",
     "shell:allow-open",
     {
-      "identifier": "shell:allow-spawn",
-      "allow": [
-        {
-          "name": "murmur-runner",
-          "cmd": "pnpm",
-          "args": ["--filter", "@murmur/agent", "start"]
-        }
-      ]
-    },
-    {
       "identifier": "shell:allow-execute",
       "allow": [
         {
@@ -28,7 +18,6 @@
           "args": ["-lc", "echo $PATH"]
         }
       ]
-    },
-    "shell:allow-kill"
+    }
   ]
 }

@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import {
-  RunnerLauncher, patLabelPrefix, REPO_PATH_MISSING,
+  RunnerLauncher, patLabelPrefix,
   type LaunchableAgent, type RunnerProcess, type RunnerSecretStore, type RunnerSpawner,
   type LoginPathReader, type SpawnRequest, type StoredRunnerPat,
 } from '../src/lib/runnerLauncher';
@@ -85,13 +85,11 @@ const make = (
 
 const startAll = (
   l: RunnerLauncher, agents: LaunchableAgent[],
-  over: { live?: string[] | null; repoPath?: string; runnerCommand?: string } = {},
+  over: { live?: string[] | null } = {},
 ) => l.startAll({
   agents,
   myAccountId: 'me',
   liveAccountIds: over.live === null ? null : new Set(over.live ?? []),
-  repoPath: over.repoPath ?? '/repo',
-  runnerCommand: over.runnerCommand ?? '',
 });
 
 describe('1. 대상 선별', () => {
@@ -196,7 +194,7 @@ describe('4-1. 앱 실행 뒤 만든 에이전트', () => {
 
     await launcher.startCreated({
       agent: agent('codex'), pat: createdPat, autoStart: true,
-      liveAccountIds: new Set(), repoPath: '/repo', runnerCommand: '',
+      liveAccountIds: new Set(),
     });
 
     expect(secrets.map.get('codex')).toEqual(createdPat);
@@ -212,7 +210,7 @@ describe('4-1. 앱 실행 뒤 만든 에이전트', () => {
 
     await launcher.startCreated({
       agent: agent('codex'), pat: { label: 'runner', token: 'murp_created' }, autoStart: false,
-      liveAccountIds: new Set(), repoPath: '/repo', runnerCommand: '',
+      liveAccountIds: new Set(),
     });
 
     expect(secrets.map.get('codex')?.token).toBe('murp_created');
@@ -226,7 +224,7 @@ describe('4-1. 앱 실행 뒤 만든 에이전트', () => {
 
     await expect(launcher.startCreated({
       agent: agent('codex'), pat: { label: 'runner', token: 'murp_created' }, autoStart: true,
-      liveAccountIds: new Set(), repoPath: '/repo', runnerCommand: '',
+      liveAccountIds: new Set(),
     })).resolves.toBeUndefined();
 
     expect(spawner.spawn).not.toHaveBeenCalled();
@@ -243,7 +241,7 @@ describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
     await startAll(launcher, [agent('a')]);
     api.calls.length = 0;
 
-    await launcher.reissue({ agent: agent('a'), repoPath: '/repo', runnerCommand: '' });
+    await launcher.reissue({ agent: agent('a') });
 
     const newLabel = `${oldLabel}#1700000000000`;
     // 발급이 먼저다. 폐기가 먼저면 발급 실패 한 번에 쓸 수 있는 PAT 가 사라진다.
@@ -262,7 +260,7 @@ describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
     const { launcher, spawner } = make(fakeApi(), secrets);
     await startAll(launcher, [agent('a')]);
 
-    await launcher.reissue({ agent: agent('a'), repoPath: '/repo', runnerCommand: '' });
+    await launcher.reissue({ agent: agent('a') });
     expect(launcher.getStates()[0]!.status).toBe('running');
 
     // 실제 Tauri close 이벤트처럼 kill()이 끝난 뒤 옛 자식의 종료가 늦게 도착한다.
@@ -282,7 +280,7 @@ describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
     await startAll(launcher, [agent('a')]);
     api.mintPat = vi.fn(async () => { throw new Error('server down'); });
 
-    await launcher.reissue({ agent: agent('a'), repoPath: '/repo', runnerCommand: '' });
+    await launcher.reissue({ agent: agent('a') });
 
     expect(api.revokePat).not.toHaveBeenCalled();
     expect(spawner.kills).toEqual([]);
@@ -298,7 +296,7 @@ describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
     await startAll(launcher, [agent('a')]);
     api.revokePat = vi.fn(async () => { throw new Error('403'); });
 
-    await launcher.reissue({ agent: agent('a'), repoPath: '/repo', runnerCommand: '' });
+    await launcher.reissue({ agent: agent('a') });
 
     const state = launcher.getStates()[0]!;
     expect(state.status).toBe('running');
@@ -335,7 +333,7 @@ describe('6. 종료 코드', () => {
     await startAll(launcher, [agent('a')]);
     spawner.exit(78);
 
-    await launcher.reissue({ agent: agent('a'), repoPath: '/repo', runnerCommand: '' });
+    await launcher.reissue({ agent: agent('a') });
 
     expect(spawner.spawns).toHaveLength(2);
     expect(launcher.getStates()[0]!.status).toBe('running');
@@ -347,7 +345,7 @@ describe('6. 종료 코드', () => {
     const { launcher, spawner } = make(fakeApi(), secrets);
     await startAll(launcher, [agent('a')]);
 
-    await launcher.reissue({ agent: agent('a'), repoPath: '/repo', runnerCommand: '' });
+    await launcher.reissue({ agent: agent('a') });
     // 새 자식이 실제로 떴는지 먼저 못박는다 — 자식이 하나뿐인 상태로 통과하면
     // '옛 자식의 종료'라는 이 테스트의 전제 자체가 없는 것이다.
     expect(spawner.spawns).toHaveLength(2);
@@ -398,108 +396,22 @@ describe('7. 한 에이전트가 못 떠도 나머지는 뜬다', () => {
   });
 });
 
-describe('8. 저장소 경로', () => {
-  it('경로를 cwd 로 넘기고, MURMUR_URL 은 서버 주소다', async () => {
-    const { launcher, spawner } = make();
-    await startAll(launcher, [agent('a')], { repoPath: '/Users/me/dev/murmur' });
-
-    expect(spawner.spawns[0]!.cwd).toBe('/Users/me/dev/murmur');
-    expect(spawner.spawns[0]!.env.MURMUR_URL).toBe('https://murmur.example');
-  });
-
-  it('경로가 비어 있으면 띄우지 않고 그 사실을 말한다 — 기본값을 지어내지 않는다', async () => {
-    const { launcher, spawner } = make();
-    await startAll(launcher, [agent('a')], { repoPath: '' });
-
-    expect(spawner.spawn).not.toHaveBeenCalled();
-    const state = launcher.getStates()[0]!;
-    expect(state.status).toBe('failed');
-    expect(state.message).toContain('저장소 경로');
-  });
-});
-
 /**
- * murmur 전용 전역 체크아웃(#425). `RunnerRepoProvisioner` 는 **선택 인자**다 — 넘기지
- * 않는 위 스위트 전부가 예전처럼 빈 경로를 실패로 다루는 것으로 그 하위호환을 지킨다.
- * 여기서는 그 표면을 넘겼을 때만 확인한다.
+ * `#431` 1단계에서 `repoPath`(저장소 경로)·`runnerCommand`(pnpm 경로)와 그것을 채우던
+ * `RunnerRepoProvisioner`(#425 전역 체크아웃)가 통째로 사라졌다 — 러너가 Tauri sidecar 로
+ * 배포되면서 "murmur 소스가 어디 있나"라는 물음 자체가 없어졌기 때문이다(사이드카는 자기
+ * 위치를 스스로 안다, `main.rs::sidecar_path()`). 옛 "8. 저장소 경로"·
+ * "10. 전역 저장소(#425)" 스위트가 여기 있었다 — 이 자리는 그 제거의 흔적이다.
+ *
+ * 남는 것은 `MURMUR_URL`(서버 주소)뿐이고, 그것은 "3. 키체인의 PAT 를 재사용한다" 등
+ * 다른 스위트가 이미 `spawner.spawns[0]!.env` 로 확인하고 있다.
  */
-describe('10. 전역 저장소(#425) — 경로가 비었을 때만, 있으면 넘기지 않는다', () => {
-  function fakeProvisioner(result: { ok: true; path: string } | { ok: false; error: string }) {
-    return { ensure: vi.fn(async () => result) };
-  }
-
-  it('첫 실행: 경로가 비어 있고 provisioner 가 있으면 그것으로 채워 띄운다', async () => {
-    const { api, secrets, spawner, loginPath } = make();
-    const provisioner = fakeProvisioner({ ok: true, path: '/Users/me/.murmur/runner' });
-    const launcher = new RunnerLauncher(api, secrets, spawner, loginPath, undefined, provisioner);
-
-    await launcher.startAll({
-      agents: [agent('a')], myAccountId: 'me', liveAccountIds: new Set(),
-      repoPath: '', runnerCommand: '',
-    });
-
-    expect(provisioner.ensure).toHaveBeenCalledTimes(1);
-    expect(spawner.spawns[0]!.cwd).toBe('/Users/me/.murmur/runner');
-    expect(launcher.getStates()[0]!.status).toBe('running');
-  });
-
-  it('clone 이 실패하면 그 사유가 그대로 사람에게 올라간다 — 조용히 실패하지 않는다(#368)', async () => {
-    const { api, secrets, spawner, loginPath } = make();
-    const provisioner = fakeProvisioner({
-      ok: false, error: 'git clone 이 실패했다: Could not resolve host: github.com',
-    });
-    const launcher = new RunnerLauncher(api, secrets, spawner, loginPath, undefined, provisioner);
-
-    await launcher.startAll({
-      agents: [agent('a')], myAccountId: 'me', liveAccountIds: new Set(),
-      repoPath: '', runnerCommand: '',
-    });
-
-    expect(spawner.spawn).not.toHaveBeenCalled();
-    const state = launcher.getStates()[0]!;
-    expect(state.status).toBe('failed');
-    expect(state.message).toBe('git clone 이 실패했다: Could not resolve host: github.com');
-  });
-
-  it('사람이 넣은 경로가 있으면 provisioner 를 부르지 않는다 — 사람 값이 언제나 이긴다', async () => {
-    const { api, secrets, spawner, loginPath } = make();
-    const provisioner = fakeProvisioner({ ok: true, path: '/should/not/be/used' });
-    const launcher = new RunnerLauncher(api, secrets, spawner, loginPath, undefined, provisioner);
-
-    await launcher.startAll({
-      agents: [agent('a')], myAccountId: 'me', liveAccountIds: new Set(),
-      repoPath: '/Users/me/dev/murmur', runnerCommand: '',
-    });
-
-    expect(provisioner.ensure).not.toHaveBeenCalled();
-    expect(spawner.spawns[0]!.cwd).toBe('/Users/me/dev/murmur');
-  });
-
-  it('사람이 넣은 경로가 사라졌어도 전역 경로로 폴백하지 않는다 — 자식 스폰이 그 사유를 그대로 올린다', async () => {
-    // 이 실행기는 경로의 존재를 확인하지 않는다(#425 판단): 존재 확인까지 앱이 떠안으면
-    // "경로가 있다/없다"를 판정하는 코드가 하나 더 생기고, 그 판정이 틀리면 실제로는
-    // 살아 있는 경로를 전역 경로로 몰래 바꿔치기할 수 있다. 대신 자식 스폰 자체가
-    // `os error 2` 로 실패하고 그 사유가 `handleExit` 를 거쳐 그대로 사람에게 올라간다 —
-    // 여기서는 최소한 "조용히 다른 경로로 안 바꾼다"만 고정한다.
-    const { api, secrets, spawner, loginPath } = make();
-    const provisioner = fakeProvisioner({ ok: true, path: '/Users/me/.murmur/runner' });
-    const launcher = new RunnerLauncher(api, secrets, spawner, loginPath, undefined, provisioner);
-
-    await launcher.startAll({
-      agents: [agent('a')], myAccountId: 'me', liveAccountIds: new Set(),
-      repoPath: '/Users/me/dev/murmur-deleted-workspace', runnerCommand: '',
-    });
-
-    expect(provisioner.ensure).not.toHaveBeenCalled();
-    expect(spawner.spawns[0]!.cwd).toBe('/Users/me/dev/murmur-deleted-workspace');
-  });
-
-  it('provisioner 를 넘기지 않으면 예전처럼 REPO_PATH_MISSING 으로 실패한다(하위호환)', async () => {
+describe('8. MURMUR_URL 은 서버 주소 그대로 넘어간다', () => {
+  it('env.MURMUR_URL 이 api.baseUrl 과 같다', async () => {
     const { launcher, spawner } = make();
-    await startAll(launcher, [agent('a')], { repoPath: '' });
+    await startAll(launcher, [agent('a')]);
 
-    expect(spawner.spawn).not.toHaveBeenCalled();
-    expect(launcher.getStates()[0]!.message).toBe(REPO_PATH_MISSING);
+    expect(spawner.spawns[0]!.env.MURMUR_URL).toBe('https://murmur.example');
   });
 });
 

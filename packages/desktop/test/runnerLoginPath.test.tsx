@@ -2,11 +2,16 @@
  * Dock 으로 띄운 앱의 `PATH` 회귀선(#305).
  *
  * 무엇을 지키는가: macOS 에서 Finder/Dock 으로 띄운 앱은 로그인 셸의 `PATH` 를 물려받지
- * 않아 `pnpm` 을 못 찾는다(`docs/operations.md` §8-1 이 launchd 감독에서 같은 함정을 이미
- * 적어 뒀다). 그 자리를 앱이 두 겹으로 메운다 — 로그인 셸의 `PATH` 를 **한 번** 읽어 쓰고,
- * 그것이 안 되면 설정의 `pnpm` 절대 경로를 쓰고, 둘 다 없으면 **무엇을 하라는 말과 함께**
- * 화면에 실패로 남는다. 조용히 기존 `PATH` 로 시도하는 것이 지금의 실패 모습이라, 그
- * 경로를 여기서 막는다.
+ * 않는다(`docs/operations.md` §8-1 이 launchd 감독에서 같은 함정을 이미 적어 뒀다). 러너
+ * (사이드카) 자신은 앱이 그 경로를 알아서 뜨지만, 그 안에서 도는 `claude`·`codex`·`avcs`·
+ * `git` 은 여전히 `PATH` 로 찾아야 한다. 그래서 앱은 로그인 셸의 `PATH` 를 **한 번** 읽어
+ * 자식 `env.PATH` 로 넘기고, 못 얻으면 `SYSTEM_PATH_FALLBACK` 으로 물러난다.
+ *
+ * (`#431` 1단계 이전에는 여기에 "설정의 `pnpm` 절대 경로" 라는 세 번째 자리가 있었다 —
+ * 러너를 `pnpm --filter @murmur/agent start` 로 띄우던 시절엔 `pnpm` 자체를 `PATH` 에서
+ * 찾아야 했기 때문이다. 사이드카 spawn 은 그 프로그램을 Rust 가 직접 찾으므로
+ * (`main.rs::sidecar_path()`) 그 자리와 `validateRunnerCommand`·`runnerCommandDir`·
+ * `RUNNER_COMMAND_MISSING` 이 통째로 사라졌다.)
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
@@ -16,13 +21,11 @@ const shell = vi.hoisted(() => ({ create: vi.fn(), execute: vi.fn() }));
 vi.mock('@tauri-apps/plugin-shell', () => ({ Command: { create: shell.create } }));
 
 import {
-  RunnerLauncher, RUNNER_COMMAND_MISSING, runnerCommandDir, SYSTEM_PATH_FALLBACK,
-  tauriLoginPathReader, validateRunnerCommand,
-  type LaunchableAgent, type LoginPathReader, type RunnerProcess, type SpawnRequest,
-  type StoredRunnerPat,
+  RunnerLauncher, SYSTEM_PATH_FALLBACK, tauriLoginPathReader,
+  type LaunchableAgent, type LoginPathReader, type RunnerProcess, type RunnerState,
+  type SpawnRequest, type StoredRunnerPat,
 } from '../src/lib/runnerLauncher';
 import { RunnerStatusLine } from '../src/components/RunnerStatus';
-import { usePrefsStore } from '../src/state/prefsStore';
 
 const agent = (id: string): LaunchableAgent => ({
   id, handle: id, ownerAccountId: 'me', disabled: false, stopRequestedAt: null,
@@ -60,17 +63,13 @@ const fakeApi = () => ({
 const fakeLoginPath = (value: string | null): LoginPathReader & { read: ReturnType<typeof vi.fn> } =>
   ({ read: vi.fn(async () => value) });
 
-async function start(
-  loginPath: LoginPathReader, runnerCommand: string,
-) {
+async function start(loginPath: LoginPathReader) {
   const spawner = fakeSpawner();
   const launcher = new RunnerLauncher(fakeApi(), fakeSecrets(), spawner, loginPath, () => 0);
   await launcher.startAll({
     agents: [agent('a')],
     myAccountId: 'me',
     liveAccountIds: new Set<string>(),
-    repoPath: '/repo',
-    runnerCommand,
   });
   return { launcher, spawner };
 }
@@ -79,7 +78,6 @@ beforeEach(() => {
   shell.create.mockReset();
   shell.execute.mockReset();
   shell.create.mockReturnValue({ execute: shell.execute });
-  usePrefsStore.setState({ runnerCommand: '' });
 });
 afterEach(cleanup);
 
@@ -110,7 +108,7 @@ describe('1. PATH 조회는 고정 인자로만 부른다', () => {
 describe('2. 얻은 PATH 가 자식 env 에 들어간다', () => {
   it('로그인 셸의 PATH 를 그대로 자식에게 넘긴다', async () => {
     const login = '/opt/homebrew/bin:/usr/local/bin:/usr/bin';
-    const { spawner } = await start(fakeLoginPath(login), '');
+    const { spawner } = await start(fakeLoginPath(login));
 
     expect(spawner.spawns).toHaveLength(1);
     expect(spawner.spawns[0]!.env.PATH).toBe(login);
@@ -122,9 +120,7 @@ describe('2. 얻은 PATH 가 자식 env 에 들어간다', () => {
     const loginPath = fakeLoginPath('/login/bin');
     const spawner = fakeSpawner();
     const launcher = new RunnerLauncher(fakeApi(), fakeSecrets(), spawner, loginPath, () => 0);
-    const input = {
-      myAccountId: 'me', liveAccountIds: new Set<string>(), repoPath: '/repo', runnerCommand: '',
-    };
+    const input = { myAccountId: 'me', liveAccountIds: new Set<string>() };
     await launcher.startAll({ agents: [agent('a'), agent('b')], ...input });
     await launcher.startAll({ agents: [agent('c')], ...input });
 
@@ -133,72 +129,23 @@ describe('2. 얻은 PATH 가 자식 env 에 들어간다', () => {
   });
 });
 
-describe('3. 조회가 실패하면 설정의 절대 경로를 쓴다', () => {
-  it('PATH 를 못 얻어도 설정이 있으면 그 디렉터리로 띄운다', async () => {
-    const { spawner, launcher } = await start(fakeLoginPath(null), '/opt/homebrew/bin/pnpm');
+describe('3. 조회가 실패하면 SYSTEM_PATH_FALLBACK 을 쓴다 — 조용히 시도하지 않되, 안 뜨지도 않는다', () => {
+  it('PATH 를 못 얻으면 SYSTEM_PATH_FALLBACK 으로 띄운다', async () => {
+    const { spawner, launcher } = await start(fakeLoginPath(null));
 
     expect(spawner.spawns).toHaveLength(1);
-    // 디렉터리 **하나만** 남기지 않는다. 자식 PATH 는 앱의 것을 덮어쓰므로, `pnpm` 이
-    // 부르는 `node`·`git` 이 사라진 PATH 를 물려주면 러너가 뜬 직후 죽는다.
-    expect(spawner.spawns[0]!.env.PATH).toBe(`/opt/homebrew/bin:${SYSTEM_PATH_FALLBACK}`);
+    // 디렉터리 하나가 아니라 여러 표준 경로를 준다 — 사이드카가 부르는 `claude`·`codex`·
+    // `avcs`·`git` 이 그 안에서 발견돼야 한다.
+    expect(spawner.spawns[0]!.env.PATH).toBe(SYSTEM_PATH_FALLBACK);
     expect(spawner.spawns[0]!.env.PATH!.split(':')).toContain('/usr/bin');
     expect(launcher.getStates()[0]!.status).toBe('running');
   });
 
-  it('둘 다 있으면 설정이 앞에 온다 — 사람이 고른 것이 이긴다', async () => {
-    const { spawner } = await start(fakeLoginPath('/usr/bin'), '/opt/homebrew/bin/pnpm');
+  it('PATH 를 얻으면 그 값이 SYSTEM_PATH_FALLBACK 을 대신한다 — 겹쳐 붙이지 않는다', async () => {
+    const { spawner } = await start(fakeLoginPath('/usr/bin'));
 
-    // 로그인 셸의 나머지를 버리지 않는다: `pnpm` 은 `node` 를 PATH 에서 찾는다.
-    // 로그인 셸 값을 얻었으면 그것이 기본 목록을 대신한다 — 둘을 겹쳐 붙이지 않는다.
-    expect(spawner.spawns[0]!.env.PATH).toBe('/opt/homebrew/bin:/usr/bin');
+    expect(spawner.spawns[0]!.env.PATH).toBe('/usr/bin');
     expect(spawner.spawns[0]!.env.PATH).not.toContain(SYSTEM_PATH_FALLBACK);
-  });
-
-  it('둘 다 없으면 **띄우지 않고** 기동 실패와 사유를 남긴다 — 조용히 시도하지 않는다', async () => {
-    const { spawner, launcher } = await start(fakeLoginPath(null), '');
-
-    // 조용히 앱의 PATH 로 시도하는 것이 지금의 실패 모습이다. 그 경로를 여기서 막는다.
-    expect(spawner.spawn).not.toHaveBeenCalled();
-    const state = launcher.getStates()[0]!;
-    expect(state.status).toBe('failed');
-    expect(state.message).toBe(RUNNER_COMMAND_MISSING);
-  });
-});
-
-describe('4. 설정은 `pnpm` 의 절대 경로만 받는다', () => {
-  it('`.../pnpm` 이 아니거나 절대 경로가 아니면 거절한다', () => {
-    expect(validateRunnerCommand('/usr/local/bin/pnpm')).toBeNull();
-    expect(validateRunnerCommand('')).toBeNull(); // 비어 있음은 '정하지 않았다'다
-
-    // 다른 프로그램. 명령 전체를 사람이 정하게 하면 그것이 임의 실행 표면이다.
-    expect(validateRunnerCommand('/usr/bin/npm')).toContain('pnpm');
-    expect(validateRunnerCommand('/bin/sh')).toContain('pnpm');
-    // 인자를 붙여 넣는 길도 막힌다 — 인자는 앱이 고정한다.
-    expect(validateRunnerCommand('/usr/local/bin/pnpm --filter x start')).toContain('pnpm');
-    // 상대 경로.
-    expect(validateRunnerCommand('pnpm')).toContain('절대 경로');
-    expect(validateRunnerCommand('~/bin/pnpm')).toContain('절대 경로');
-    // `..` 로 실제 위치를 가린 경로.
-    expect(validateRunnerCommand('/opt/bin/../../usr/bin/pnpm')).toContain('..');
-  });
-
-  it('거절된 값은 설정에 저장되지 않는다 — 기동 때가 아니라 여기서 막는다', () => {
-    const store = usePrefsStore.getState();
-
-    expect(store.setRunnerCommand('/opt/homebrew/bin/pnpm')).toBeNull();
-    expect(usePrefsStore.getState().runnerCommand).toBe('/opt/homebrew/bin/pnpm');
-
-    const error = store.setRunnerCommand('/usr/bin/npm');
-    expect(error).toContain('pnpm');
-    // 저장돼 버리면 사람은 설정 화면에서 아무 문제도 못 보고 러너만 안 뜬다.
-    expect(usePrefsStore.getState().runnerCommand).toBe('/opt/homebrew/bin/pnpm');
-  });
-
-  it('거절된 값에서는 디렉터리를 뽑지 않는다', () => {
-    expect(runnerCommandDir('/opt/homebrew/bin/pnpm')).toBe('/opt/homebrew/bin');
-    expect(runnerCommandDir('/pnpm')).toBe('/');
-    expect(runnerCommandDir('/usr/bin/npm')).toBeNull();
-    expect(runnerCommandDir('')).toBeNull();
   });
 });
 
@@ -210,21 +157,21 @@ function hiddenFromSight(el: HTMLElement): boolean {
   return false;
 }
 
-describe('6. 사유가 무엇을 하라는 말이고, 보이는 자리에 있다', () => {
-  it('사유에 할 일이 들어 있다 — "기동 실패"만 남기지 않는다', () => {
-    expect(RUNNER_COMMAND_MISSING).toContain('설정');
-    expect(RUNNER_COMMAND_MISSING).toContain('pnpm');
-    expect(RUNNER_COMMAND_MISSING).toContain('절대 경로');
-    expect(RUNNER_COMMAND_MISSING).toMatch(/지정하라/);
-  });
+/**
+ * `#368` 의 원칙 — 실패 사유가 화면의 보이는 자리에 있다 — 은 사유가 무엇이든 지켜야
+ * 한다. `RUNNER_COMMAND_MISSING` 이 사라졌으므로 여기서는 이 파일에 남아 있는 실제 실패
+ * 사유(로그인 PATH 조회 자체의 예외, `#419` 의 78 종료 등과 같은 층위)를 하나 골라 같은
+ * 성질을 확인한다.
+ */
+describe('6. 사유가 보이는 자리에 있다', () => {
+  const REASON = '키체인을 읽지 못했다 — 돌고 있는 러너를 죽일 수 있어 새로 발급하지 않았다: boom';
 
   it('그 사유가 화면에 그려지고 `sr-only` 가 아니다', () => {
-    render(<RunnerStatusLine state={{
-      agentId: 'a', status: 'failed', exitCode: null, message: RUNNER_COMMAND_MISSING,
-    }} />);
+    const state: RunnerState = { agentId: 'a', status: 'failed', exitCode: null, message: REASON };
+    render(<RunnerStatusLine state={state} />);
 
     expect(screen.getByText('기동 실패')).toBeTruthy();
-    const reason = screen.getByText(new RegExp(RUNNER_COMMAND_MISSING.slice(0, 20)));
+    const reason = screen.getByText(new RegExp(REASON.slice(0, 20)));
     expect(hiddenFromSight(reason)).toBe(false);
   });
 });
