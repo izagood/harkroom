@@ -10,6 +10,7 @@ import { ThreadStateBadge } from './ThreadStateBadge';
 import { threadState } from '../lib/threadState';
 import { WaitChainLine } from './WaitChain';
 import { waitChain } from '../lib/waitChain';
+import { ThreadParticipants } from './ThreadParticipants';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
 import type { SectionId } from './settings/sections';
@@ -37,14 +38,20 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
    * 줄을 달려면 서버가 스레드별 상태를 함께 실어 주어야 하고, 그것 없이 지금 데이터로
    * 그리면 **열어 보지 않은 스레드가 전부 '끝남'으로 보인다** — 계획서가 경계한 그 거짓말이다.
    */
+  /**
+   * 생존 신호를 **한 번만 계산해** 상태 배지 · 사슬 · 참여자 줄이 같은 값을 쓰게 한다.
+   * 셋이 따로 계산하면 한 화면 안에서 서로 다른 사실을 말할 수 있다.
+   * `connected` 가 false 면 presence 는 '모른다'다 — 빈 집합이 '아무도 없다'가 아니다
+   * (`controller.startRunners` 와 같은 규약).
+   */
+  const live = useMemo(() => (connected ? new Set(online) : null), [connected, online]);
+
   const state = useMemo(() => threadState({
     messages: thread,
     myAccountId: me?.id ?? null,
     isAgent: (id) => accounts[id]?.kind === 'agent',
-    // `connected` 가 false 면 presence 는 '모른다'다 — 빈 집합이 '아무도 없다'가 아니다
-    // (`controller.startRunners` 와 같은 규약).
-    live: connected ? new Set(online) : null,
-  }), [thread, me, accounts, connected, online]);
+    live,
+  }), [thread, me, accounts, live]);
 
   /**
    * 대기 사슬(Task 7). 상태 배지가 "무엇인가"를 말한다면 이 줄은 **"왜"** 를 말한다 —
@@ -53,8 +60,8 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
   const chain = useMemo(() => waitChain({
     messages: thread,
     myAccountId: me?.id ?? null,
-    live: connected ? new Set(online) : null,
-  }), [thread, me, connected, online]);
+    live,
+  }), [thread, me, live]);
 
   if (!threadRootId) return null;
 
@@ -63,7 +70,12 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
       <header className="flex items-center border-b border-border px-4 py-2">
         <span className="font-bold">Thread</span>
         <ThreadStateBadge state={state} className="ml-2" />
-        <button className="ml-auto rounded px-2 text-fg-subtle hover:bg-surface-sunken"
+        {/* 참여자 줄과 터미널 선택자는 **헤더**다 — 세션이 (에이전트, 스레드)당 하나이므로
+            문이 달릴 자리가 여기다(규칙 06). */}
+        <div className="ml-auto flex items-center gap-2">
+          <ThreadParticipants messages={thread} live={live} />
+        </div>
+        <button className="ml-2 rounded px-2 text-fg-subtle hover:bg-surface-sunken"
           onClick={() => getController().closeThread()}>
           ×
         </button>
