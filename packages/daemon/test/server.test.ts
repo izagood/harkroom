@@ -47,6 +47,8 @@ function 가짜호스트(): RunnerHost {
     spawn: () => ({ pid: (pid += 1), on: () => undefined }) as never,
     kill: () => true,
     now: () => 1000,
+    // 회귀선은 pid 재사용을 안 잰다 — 그것은 `adopt.test.ts` 의 몫이다.
+    bootTimeSec: () => Promise.resolve(null),
   };
 }
 
@@ -100,6 +102,26 @@ class 테스트클라이언트 {
       await new Promise((r) => setTimeout(r, 10));
     }
     throw new Error(`응답 ${index} 이 오지 않았다`);
+  }
+
+  /**
+   * 조건에 맞는 줄을 **순서와 무관하게** 찾는다.
+   *
+   * NDJSON 에서 응답은 `id` 로 짝짓고 이벤트는 그 사이에 낀다 — 즉 프로토콜이 순서를
+   * 계약으로 두지 않는다. 인덱스로 집는 `받는다` 는 편하지만, 둘이 섞일 수 있는 자리에
+   * 쓰면 회귀선이 타이밍에 따라 뒤집힌다(실제로 겪었다, 2026-09-06).
+   */
+  async 찾는다(
+    pred: (m: Record<string, unknown>) => boolean,
+    timeoutMs = 5000,
+  ): Promise<Record<string, unknown>> {
+    const 끝 = Date.now() + timeoutMs;
+    while (Date.now() < 끝) {
+      const hit = (this.받은 as Record<string, unknown>[]).find(pred);
+      if (hit) return hit;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    throw new Error(`조건에 맞는 줄이 오지 않았다: ${JSON.stringify(this.받은)}`);
   }
 
   닫는다(): void {
@@ -287,17 +309,41 @@ describe('요청 넷 (#431 2단계-b 범위)', () => {
     client.닫는다();
   });
 
-  /** 2-c·2-d 의 요청은 아직 **모르는 요청**이다. 범위를 넘지 않았다는 고정. */
-  it('adoptRunner·shutdownIfIdle 은 unknown-request 로 거절한다', async () => {
+  /** 2-d 의 요청은 아직 **모르는 요청**이다. 범위를 넘지 않았다는 고정. */
+  it('shutdownIfIdle 은 unknown-request 로 거절한다', async () => {
     const dir = await 임시앱디렉터리();
     const outcome = await daemon띄우기(dir);
     if (outcome.kind !== 'running') throw new Error('daemon 이 안 떴다');
     const client = await 인증된클라이언트(dir, outcome.daemon.paths.socketPath);
 
-    client.보낸다({ id: 'x1', type: 'adoptRunner' });
-    expect(((await client.받는다(1)).error as { code: string }).code).toBe('unknown-request');
     client.보낸다({ id: 'x2', type: 'shutdownIfIdle' });
-    expect(((await client.받는다(2)).error as { code: string }).code).toBe('unknown-request');
+    expect(((await client.받는다(1)).error as { code: string }).code).toBe('unknown-request');
+    client.닫는다();
+  });
+
+  /**
+   * `adoptRunner` 는 이제 **아는 요청**이다(2-c). 장부가 비어 있으면 채택 0건으로 답한다 —
+   * 에러가 아니다. "고아가 없다"는 정상 상태이기 때문이다.
+   *
+   * **payload 를 안 받는다**는 것도 여기서 고정한다: pid 를 실어 보내도 무시된다.
+   * 받아 주면 소켓에 붙은 누구든 임의의 pid 를 표에 올려 `killRunner` 로 죽일 수 있다.
+   */
+  it('adoptRunner 는 아는 요청이고, 실어 보낸 pid 를 무시한다', async () => {
+    const dir = await 임시앱디렉터리();
+    const outcome = await daemon띄우기(dir);
+    if (outcome.kind !== 'running') throw new Error('daemon 이 안 떴다');
+    const client = await 인증된클라이언트(dir, outcome.daemon.paths.socketPath);
+
+    // 이 프로세스의 pid 를 실어 보낸다 — 채택되면 vitest 자신이 `killRunner` 대상이 된다.
+    client.보낸다({ id: 'a1', type: 'adoptRunner', payload: { pid: process.pid, agentId: '남의것' } });
+    const res = await client.받는다(1);
+    expect(res.ok).toBe(true);
+    expect((res.payload as { adopted: unknown[] }).adopted).toEqual([]);
+
+    // 표가 그대로 비어 있다 — 실어 보낸 pid 가 어디에도 안 올랐다.
+    client.보낸다({ id: 'l1', type: 'listRunners' });
+    const listed = await client.받는다(2);
+    expect((listed.payload as { runners: unknown[] }).runners).toEqual([]);
     client.닫는다();
   });
 
@@ -321,13 +367,22 @@ describe('요청 넷 (#431 2단계-b 범위)', () => {
     const client = await 인증된클라이언트(dir, paths.socketPath);
 
     client.보낸다({ id: 's1', type: 'spawnRunner', payload: { agentId: 'a1', env: {} } });
-    const spawned = await client.받는다(1);
+
+    // ── **줄 순서를 가정하지 않는다** ────────────────────────────────────────────
+    // `/bin/sh` 를 인자 없이 stdio ignore 로 띄우면 stdin 이 즉시 EOF 라 스스로 끝난다.
+    // 그 종료가 **`spawnRunner` 응답보다 먼저** 소켓에 실릴 수 있다 — 2-c 에서 spawn 이
+    // 커널 시작 시각을 읽느라(`ps`) 한 틱 더 걸리게 됐고, 그 사이 자식이 끝나면 exit
+    // 이벤트가 앞선다. 프로토콜은 애초에 순서를 계약으로 두지 않는다(응답은 `id` 로
+    // 짝짓고 이벤트는 그 사이에 낀다 — `daemon_client.rs::Pending` 주석).
+    //
+    // 그래서 **응답과 이벤트를 각각 찾아서** 본다. 인덱스로 집으면 이 회귀선이
+    // 타이밍에 따라 빨개졌다 초록이 됐다 한다(전체 테스트 병렬 실행에서 실제로 겪었다,
+    // 2026-09-06).
+    const spawned = await client.찾는다((m) => m.id === 's1');
     const result = spawned.payload as { pid: number; incarnationId: string };
     정리할pid.push(result.pid);
 
-    // `/bin/sh` 를 인자 없이 stdio ignore 로 띄우면 stdin 이 즉시 EOF 라 스스로 끝난다.
-    const event = await client.받는다(2);
-    expect(event.type).toBe('event');
+    const event = await client.찾는다((m) => m.type === 'event');
     expect(event.event).toBe('runnerExit');
     expect((event.payload as { incarnationId: string }).incarnationId).toBe(result.incarnationId);
     client.닫는다();
