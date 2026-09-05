@@ -7,7 +7,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 import { onEvent } from '../src/events.js';
-import { PROJECTION_UNCONFIGURED_NOTICE, readAskMeta, readFailureMeta } from '@murmur/shared';
+import { PROJECTION_UNCONFIGURED_NOTICE, readAskMeta, readFailureMeta, readReportMeta } from '@murmur/shared';
 import { recordAskAnswer } from '../src/services/messages.js';
 
 let app: FastifyInstance;
@@ -107,7 +107,7 @@ describe('mcp surface', () => {
     expect(names).toEqual([
       'account.me', 'channel.doc', 'channel.list', 'inbox.poll', 'inbox.read',
       'memory.get', 'memory.list', 'memory.set',
-      'message.ask', 'message.fail', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.search', 'message.unreact',
+      'message.ask', 'message.fail', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.report', 'message.search', 'message.unreact',
       'skill.propose', 'work.link', 'workspace.guide',
     ]);
 
@@ -643,5 +643,72 @@ describe('message.fail — 실패의 계약', () => {
     expect(readFailureMeta({ kind: 'failure', failure: {} })).toBeNull();
     expect(readFailureMeta({ kind: 'failure', failure: { retryable: 'yes' } })).toBeNull();
     expect(readFailureMeta({ kind: 'failure', failure: { retryable: true } })).not.toBeNull();
+  });
+});
+
+/**
+ * 완료 보고(`message.report`) — 읽히는 말(규칙 03). `checks` 만 필수인 것이 이 계약의
+ * 요점이다: 무엇을 확인했는지 없는 보고는 보고가 아니다.
+ */
+describe('message.report — 완료 보고의 계약', () => {
+  it('확인·파일·남은 것·다음 제안을 싣는다', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      const posted = text(await client.callTool({
+        name: 'message.report',
+        arguments: {
+          channelId, body: 'ws 쪽을 끝냈다',
+          checks: ['연속 미응답만 끊는다', '회귀 테스트로 고정'],
+          files: ['ws/heartbeat.test.ts'],
+          remaining: ['lint 를 다시 부를지'],
+          durationMs: 400000,
+          next: [{ id: 'lint', label: 'lint 를 다시 불러 줘' }],
+        },
+      })) as { message: { meta: Record<string, unknown> } };
+
+      const report = readReportMeta(posted.message.meta);
+      expect(report).not.toBeNull();
+      expect(report!.checks).toHaveLength(2);
+      expect(report!.files).toEqual(['ws/heartbeat.test.ts']);
+      expect(report!.next).toEqual([{ id: 'lint', label: 'lint 를 다시 불러 줘' }]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('checks 없이는 발행되지 않는다 — 확인 없는 보고는 보고가 아니다', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      const res = await client.callTool({
+        name: 'message.report', arguments: { channelId, body: '끝났다' },
+      });
+      expect(res.isError).toBe(true);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('빈 묶음은 meta 에 싣지 않는다 — 없는 것은 자리를 차지하지 않는다', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      const posted = text(await client.callTool({
+        name: 'message.report',
+        arguments: { channelId, body: '끝', checks: ['하나'], files: [], next: [] },
+      })) as { message: { meta: Record<string, unknown> } };
+      const report = readReportMeta(posted.message.meta)!;
+      expect(report.files).toBeUndefined();
+      expect(report.next).toBeUndefined();
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('형식이 깨진 report meta 는 못 알아본 것으로 취급한다', () => {
+    expect(readReportMeta(undefined)).toBeNull();
+    expect(readReportMeta({ kind: 'report' })).toBeNull();
+    // checks 가 비면 조용히 사라진다 — 빈 상자는 거짓 신호다.
+    expect(readReportMeta({ kind: 'report', report: { checks: [] } })).toBeNull();
+    expect(readReportMeta({ kind: 'report', report: { files: ['a.ts'] } })).toBeNull();
+    expect(readReportMeta({ kind: 'report', report: { checks: ['하나'] } })).not.toBeNull();
   });
 });

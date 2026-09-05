@@ -731,6 +731,62 @@ export function readFailureMeta(
   return failure;
 }
 
+/** 완료 보고 뒤에 붙는 다음 제안 하나. 누르면 새 부탁이 된다. */
+export interface ReportNext {
+  id: string;
+  label: string;
+}
+
+/**
+ * 완료 보고(`message.report`) — 무엇을 했고, 무엇이 바뀌었고, 무엇이 남았는가.
+ *
+ * **이 스레드에서 가장 오래 남고 가장 많이 다시 읽히는 말이다.** 그래서 자유 문장이 아니라
+ * 형식이어야 한다 — 형식이 있어야 나중에 훑어 읽힌다.
+ *
+ * **강조색을 쓰지 않는다.** 읽히는 말이지 막는 말이 아니다(규칙 03) — 보고에 강조를 주면
+ * "내 차례"라는 신호가 그만큼 흐려진다.
+ *
+ * `checks` 만 필수인 이유: 나머지는 없을 수 있지만(바꾼 파일이 없는 작업도 있다) **무엇을
+ * 확인했는지 없는 보고는 보고가 아니다.** 그것이 비면 화면은 카드를 그리지 않고 본문만 보여
+ * 준다 — 빈 상자는 "여기 뭔가 있다"는 거짓 신호다.
+ */
+export interface ReportMeta {
+  kind: 'report';
+  report: {
+    /** 확인한 것들. 비면 형식을 못 갖춘 것으로 친다. */
+    checks: string[];
+    /** 바뀐 파일. 없는 작업도 있다. */
+    files?: string[];
+    /** 남은 것 — 이 보고가 닫지 못한 것. */
+    remaining?: string[];
+    durationMs?: number;
+    /** "다음으로 이걸 할까?" 누르면 새 부탁이 된다. */
+    next?: ReportNext[];
+  };
+}
+
+/** 보고의 경계. 하나도 없으면 보고가 아니고, 너무 많으면 읽히지 않는다. */
+export const REPORT_MAX_ITEMS = 20;
+export const REPORT_MAX_NEXT = 4;
+
+/**
+ * `meta` 가 완료 보고인지 판정한다. `readAskMeta`·`readFailureMeta` 와 같은 규약이다 —
+ * **모르는 `meta` 는 평문으로 흘린다.**
+ *
+ * `checks` 가 비면 `null` 이다: 형식을 안 지킨 보고는 **조용히 사라져** 본문만 남는다.
+ * 계획서가 "형식을 안 지키면 조용히 사라지는 설계가 필수"라고 적은 그 자리다.
+ */
+export function readReportMeta(
+  meta: Record<string, unknown> | null | undefined,
+): ReportMeta['report'] | null {
+  if (!meta || meta.kind !== 'report') return null;
+  const report = meta.report as ReportMeta['report'] | undefined;
+  if (!report || typeof report !== 'object') return null;
+  if (!Array.isArray(report.checks) || report.checks.length === 0) return null;
+  if (!report.checks.every((c) => typeof c === 'string' && c.length > 0)) return null;
+  return report;
+}
+
 export interface ChannelRow {
   id: string;
   name: string | null;
