@@ -70,7 +70,7 @@ function pickIdentity() {
   // `  1) <HASH> "Developer ID Application: …"` 에서 따옴표 안을 집는다.
   const name = line.match(/"([^"]+)"/)?.[1];
   return name
-    ? { id: name, kind: 'Developer ID (다른 기계에서도 열린다)' }
+    ? { id: name, kind: 'Developer ID (공증까지 하면 다른 기계에서도 열린다)' }
     : { id: '-', kind: 'ad-hoc (Developer ID 를 찾았지만 이름을 못 읽었다)' };
 }
 
@@ -86,10 +86,18 @@ if (!existsSync(APP)) {
 }
 
 const { id, kind } = pickIdentity();
+const adhoc = id === '-';
 console.log(`서명 주체: ${kind}`);
-execFileSync('codesign', ['--force', '--deep', '--sign', id, '--identifier', IDENTIFIER, APP], {
-  stdio: 'inherit',
-});
+
+// **`Developer ID` 로 서명할 때는 hardened runtime 과 타임스탬프가 필요하다.**
+// 공증(notarization)이 그 둘을 요구하고, 없으면 업로드 단계에서 거절된다 — 서명은
+// 성공한 뒤라 원인이 멀어진다. ad-hoc 에는 둘 다 의미가 없다(공증 대상이 아니다).
+const extra = adhoc ? [] : ['--options', 'runtime', '--timestamp'];
+execFileSync(
+  'codesign',
+  ['--force', '--deep', '--sign', id, '--identifier', IDENTIFIER, ...extra, APP],
+  { stdio: 'inherit' },
+);
 
 // **확인까지 한다** — `codesign` 이 성공해도 identifier 가 안 바뀌면 이 스크립트는 목적을
 // 달성하지 못한 것이다. 조용히 넘어가면 다음 사람이 "돌렸는데 왜 또 묻지"를 겪는다.
@@ -103,4 +111,12 @@ const line = out.split('\n').find((l) => l.startsWith('Identifier='));
 if (line !== `Identifier=${IDENTIFIER}`) {
   throw new Error(`재서명은 됐는데 identifier 가 기대와 다르다: ${line ?? '(없음)'}`);
 }
-console.log(`재서명 완료 — Identifier=${IDENTIFIER} (ad-hoc, 키체인 ACL 이 유지된다)`);
+console.log(`재서명 완료 — Identifier=${IDENTIFIER} (키체인 ACL 이 유지된다)`);
+if (!adhoc) {
+  // **서명만으로는 Gatekeeper 를 통과하지 못한다.** 실측(2026-09-06):
+  //   spctl -a -vvv -t exec murmur.app
+  //   → rejected / source=Unnotarized Developer ID
+  // 공증은 Apple 에 올려 검사받는 별도 절차이고 자격증명(App Store Connect API 키 등)이
+  // 더 필요하다. **여기서 조용히 넘어가면 "서명했으니 배포된다"고 오해한다.**
+  console.log('※ 공증(notarization)은 아직이다 — 다른 기계에서는 Gatekeeper 가 막는다.');
+}
