@@ -5,7 +5,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import {
   ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, PROJECTION_UNCONFIGURED_NOTICE,
-  type AccountView, type AskAudience, type AskMeta,
+  type AccountView, type AskAudience, type AskMeta, type FailureMeta,
 } from '@murmur/shared';
 import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
 import { emitEvent, onEvent } from '../events.js';
@@ -204,6 +204,50 @@ function buildMcpServer(
       audience = { kind: 'account', accountId: found[0]!.id };
     }
     const meta: AskMeta = { kind: 'ask', ask: { options, to: audience, ...(prompt ? { prompt } : {}) } };
+    const posted = await postMessage(pool, {
+      channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
+      meta: meta as unknown as Record<string, unknown>,
+    });
+    if (posted.failure) {
+      return jsonResult({ error: { code: 'bad_attachment', message: 'attachments must be your own, unused uploads' } });
+    }
+    const { message, notified, replayed } = posted;
+    if (!replayed) {
+      const channelAudience = await audienceFor(pool, channelId);
+      emitEvent({ type: 'message.created', message, audience: channelAudience });
+      for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+    }
+    return jsonResult({ message });
+  });
+
+  /**
+   * 실패 — 스스로 못 끝냈다고 사람에게 알린다(규칙 03: 막는 말).
+   *
+   * `message.ask` 와 같은 삽입 경로를 쓰되 **수신자를 받지 않는다**: 실패의 수신자는 언제나
+   * 사람이다. 넘겨받은 에이전트가 실패해도 결국 사람에게 온다 — 사슬의 끝은 언제나 사람이다.
+   *
+   * `retryable` 을 옵셔널로 두지 않는다. 기본값을 서버가 정하면 "다시 불러도 소용없는
+   * 실패"에 버튼이 생기거나 "고칠 수 있는 실패"의 경로가 사라진다. 둘 다 거짓 신호이므로
+   * 보내는 쪽이 반드시 정하게 한다.
+   */
+  server.registerTool('message.fail', {
+    description: '스스로 못 끝냈음을 알린다(수신자는 언제나 사람). retryable 로 다시 부를 수 있는지 밝힌다',
+    inputSchema: {
+      channelId: z.string().uuid(),
+      body: z.string().min(1).max(8000),
+      threadRootId: z.string().uuid().optional(),
+      what: z.string().min(1).max(500).optional(),
+      reason: z.string().min(1).max(1000).optional(),
+      retryable: z.boolean(),
+    },
+  }, async ({ channelId, body, threadRootId, what, reason, retryable }) => {
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    const meta: FailureMeta = {
+      kind: 'failure',
+      failure: { retryable, ...(what ? { what } : {}), ...(reason ? { reason } : {}) },
+    };
     const posted = await postMessage(pool, {
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,

@@ -3,6 +3,7 @@ import { messagePermalink, readAskMeta, type MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { AskCard } from './AskCard';
+import { FailureCard } from './FailureCard';
 import { MessageBody } from './MessageBody';
 import { ReactionPicker, Reactions, InlineReactionButtons } from './Reactions';
 import { Identity, StatusMark } from './Identity';
@@ -233,6 +234,8 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
             {/* 선택지는 본문 **바로 아래**에 붙는다 — 답할 자리가 말 옆에 있어야 한다(규칙 05).
                 형식을 못 알아보면 `AskCard` 가 스스로 아무것도 그리지 않는다. */}
             <AskCard message={message} />
+            {/* 실패도 본문 바로 아래다 — 고치는 경로가 말 옆에 있어야 한다(규칙 05). */}
+            <FailureCard message={message} inThread={inThread} />
             {skillSlug && onOpenSettings && (
               <button
                 className="mt-1 rounded-lg border border-border px-2 py-1 text-[11px] font-medium
