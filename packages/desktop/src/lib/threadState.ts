@@ -75,15 +75,78 @@ export function threadState(input: ThreadStateInput): ThreadState {
     }
   }
 
-  if (myTurn) return 'my-turn';
-  if (failed) return 'stuck';
-  if (othersTurn) return 'waiting';
+  const last = messages[messages.length - 1]!;
+  return decide({
+    myTurn,
+    othersTurn,
+    failed,
+    lastIsProgress: last.kind === 'progress' && isAgent(last.authorId),
+    lastAuthorId: last.authorId,
+    live,
+  });
+}
+
+/**
+ * 서버가 실어 준 집계로 같은 판정을 낸다(#484 · Task 6 Step 2).
+ *
+ * **채널 목록에는 루트만 있다** — 답글은 스레드를 열 때만 로드되므로 위 `threadState()` 에
+ * 그 배열을 넘기면 열어 보지 않은 스레드가 전부 '끝남'이 된다. 서버가 그 구멍을 메우는
+ * 재료를 싣고(`openAskHumanCount`·`openAskAccountIds`·`failureCount`·`lastKind`·`lastAuthorId`),
+ * 여기서 **같은 `decide()`** 를 지난다.
+ *
+ * 두 입구가 같은 함수를 지나는 것이 요점이다: 판정이 두 벌이면 채널에서 본 상태와 스레드를
+ * 열어 본 상태가 갈라지고, 사람은 어느 쪽을 믿어야 하는지 알 수 없다.
+ *
+ * 재료가 없으면(`null` — 답글 행이거나 옛 서버) `null` 을 준다. **'끝남'으로 떨어뜨리지
+ * 않는다**: 모르는 것을 안다고 말하는 것이 이 Task 가 고치려던 바로 그 거짓말이다.
+ */
+export function threadStateFromFacts(input: {
+  row: Pick<MessageRow,
+    'openAskHumanCount' | 'openAskAccountIds' | 'failureCount' | 'lastKind' | 'lastAuthorId'>;
+  myAccountId: string | null;
+  isAgent: (accountId: string) => boolean;
+  live: Liveness;
+}): ThreadState | null {
+  const { row, myAccountId, isAgent, live } = input;
+  // 다섯이 함께 오거나 함께 없다 — 하나라도 없으면 요약할 자리가 아니다.
+  if (row.openAskHumanCount === null || row.openAskAccountIds === null || row.failureCount === null) {
+    return null;
+  }
+
+  const toMe = row.openAskAccountIds.some((id) => id === myAccountId);
+  // '사람 아무나'는 내가 사람이면 내 차례다(위와 같은 판정).
+  const humanTurn = row.openAskHumanCount > 0 && myAccountId != null;
+
+  return decide({
+    myTurn: toMe || humanTurn,
+    othersTurn: row.openAskAccountIds.some((id) => id !== myAccountId),
+    failed: row.failureCount > 0,
+    lastIsProgress: row.lastKind === 'progress' && row.lastAuthorId != null && isAgent(row.lastAuthorId),
+    lastAuthorId: row.lastAuthorId,
+    live,
+  });
+}
+
+/**
+ * **우선순위를 한 자리에서 낸다.** 두 입구(메시지 배열 / 서버 집계)가 반드시 같은 답을
+ * 내야 하므로, 그 규칙을 함수 하나에 둔다 — 복사하면 언젠가 한쪽만 바뀐다.
+ */
+function decide(f: {
+  myTurn: boolean;
+  othersTurn: boolean;
+  failed: boolean;
+  lastIsProgress: boolean;
+  lastAuthorId: string | null;
+  live: Liveness;
+}): ThreadState {
+  if (f.myTurn) return 'my-turn';
+  if (f.failed) return 'stuck';
+  if (f.othersTurn) return 'waiting';
 
   // 마지막 말이 진행이면 그 에이전트가 지금도 도는지가 상태를 정한다.
-  const last = messages[messages.length - 1]!;
-  if (last.kind === 'progress' && isAgent(last.authorId)) {
-    if (live === null) return 'running';        // 모른다 — 마지막으로 알던 사실을 유지한다
-    return live.has(last.authorId) ? 'running' : 'stuck';
+  if (f.lastIsProgress && f.lastAuthorId) {
+    if (f.live === null) return 'running';      // 모른다 — 마지막으로 알던 사실을 유지한다
+    return f.live.has(f.lastAuthorId) ? 'running' : 'stuck';
   }
   return 'done';
 }
