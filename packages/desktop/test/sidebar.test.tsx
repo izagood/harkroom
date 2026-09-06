@@ -48,7 +48,7 @@ describe('Sidebar', () => {
     it('admin 이 아니면 생성 수단이 보이지 않는다', () => {
       fakeController();
       render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
-      expect(screen.queryByText('+ Create channel')).toBeNull();
+      expect(screen.queryByTestId('add-channel')).toBeNull();
     });
 
     it('admin 이면 이름을 넣어 채널을 만들 수 있다', async () => {
@@ -57,7 +57,7 @@ describe('Sidebar', () => {
       asAdmin();
       render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-      fireEvent.click(screen.getByText('+ Create channel'));
+      fireEvent.click(screen.getByTestId('add-channel'));
       fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'design' } });
       fireEvent.click(screen.getByText('만들기'));
 
@@ -74,7 +74,7 @@ describe('Sidebar', () => {
       asAdmin();
       render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-      fireEvent.click(screen.getByText('+ Create channel'));
+      fireEvent.click(screen.getByTestId('add-channel'));
       fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'general' } });
       fireEvent.click(screen.getByText('만들기'));
 
@@ -88,7 +88,7 @@ describe('Sidebar', () => {
       asAdmin();
       render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-      fireEvent.click(screen.getByText('+ Create channel'));
+      fireEvent.click(screen.getByTestId('add-channel'));
       fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'Design Team' } });
       fireEvent.click(screen.getByText('만들기'));
 
@@ -295,23 +295,20 @@ describe('Sidebar', () => {
   it('starts a new dm from account picker', () => {
     const c = fakeController();
     render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: '+ New' }));
+    fireEvent.click(screen.getByTestId('add-dm'));
     fireEvent.click(screen.getByRole('button', { name: /bot/ }));
     expect(c.startDm).toHaveBeenCalledWith('u2');
   });
 
-  it('opens settings, and jumps straight to agents from the agents link', () => {
+  it('계정 메뉴가 설정을 연다 — 섹션을 지목하지 않고', () => {
     fakeController();
     const onOpenSettings = vi.fn();
     render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={onOpenSettings} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /@admin/ }));
+    fireEvent.click(screen.getByTestId('me-row'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Settings' }));
     // 섹션을 지목하지 않고 연다 — 설정 화면이 기본 섹션을 고른다.
     expect(onOpenSettings).toHaveBeenCalledWith();
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Add or edit agents' }));
-    expect(onOpenSettings).toHaveBeenLastCalledWith('agents');
   });
 
   describe('계정 메뉴', () => {
@@ -319,7 +316,7 @@ describe('Sidebar', () => {
       fakeController();
       render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-      const trigger = screen.getByRole('button', { name: /@admin/ });
+      const trigger = screen.getByTestId('me-row');
       // ARIA 1.1 의 값은 'menu' 다 — 'true' 는 레거시 별칭이라 어느 종류의 팝업인지 말하지 못한다.
       expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
       expect(trigger.getAttribute('aria-expanded')).toBe('false');
@@ -329,7 +326,7 @@ describe('Sidebar', () => {
       fakeController();
       render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-      const trigger = screen.getByRole('button', { name: /@admin/ });
+      const trigger = screen.getByTestId('me-row');
       fireEvent.click(trigger);
 
       expect(trigger.getAttribute('aria-expanded')).toBe('true');
@@ -341,7 +338,7 @@ describe('Sidebar', () => {
       const onOpenSettings = vi.fn();
       render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={onOpenSettings} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-      const trigger = screen.getByRole('button', { name: /@admin/ });
+      const trigger = screen.getByTestId('me-row');
       fireEvent.click(trigger);
 
       fireEvent.click(screen.getByRole('menuitem', { name: 'Settings' }));
@@ -353,7 +350,7 @@ describe('Sidebar', () => {
       const onLogout = vi.fn();
       render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={onLogout} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-      const trigger = screen.getByRole('button', { name: /@admin/ });
+      const trigger = screen.getByTestId('me-row');
       fireEvent.click(trigger);
 
       fireEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }));
@@ -365,7 +362,7 @@ describe('Sidebar', () => {
       fakeController();
       render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-      const trigger = screen.getByRole('button', { name: /@admin/ });
+      const trigger = screen.getByTestId('me-row');
       fireEvent.click(trigger);
       expect(screen.getByRole('menu')).toBeTruthy();
 
@@ -378,7 +375,7 @@ describe('Sidebar', () => {
       fakeController();
       render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-      const trigger = screen.getByRole('button', { name: /@admin/ });
+      const trigger = screen.getByTestId('me-row');
       fireEvent.click(trigger);
       expect(screen.getByRole('menu')).toBeTruthy();
 
@@ -391,17 +388,19 @@ describe('Sidebar', () => {
       fakeController();
       render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-      const trigger = screen.getByRole('button', { name: /@admin/ });
+      const trigger = screen.getByTestId('me-row');
       fireEvent.click(trigger);
 
-      const settings = screen.getByRole('menuitem', { name: 'Settings' });
-      const signout = screen.getByRole('menuitem', { name: 'Sign out' });
+      // 첫 항목은 **내 프로필**이다(#488 A1) — 아바타를 눌러도 이 메뉴가 열리므로,
+      // "아바타를 누르면 프로필"이라는 앱의 다른 규칙이 여기서는 메뉴의 첫 항목으로 산다.
+      const profile = screen.getByRole('menuitem', { name: '내 프로필' });
+      const status = screen.getByRole('menuitem', { name: '상태 바꾸기' });
 
-      await waitFor(() => expect(document.activeElement).toBe(settings));
-      fireEvent.keyDown(settings, { key: 'ArrowDown' });
-      expect(document.activeElement).toBe(signout);
-      fireEvent.keyDown(signout, { key: 'ArrowUp' });
-      expect(document.activeElement).toBe(settings);
+      await waitFor(() => expect(document.activeElement).toBe(profile));
+      fireEvent.keyDown(profile, { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(status);
+      fireEvent.keyDown(status, { key: 'ArrowUp' });
+      expect(document.activeElement).toBe(profile);
     });
 
     it('메뉴가 닫혀 있을 때는 role="menu" 가 문서에 없다', () => {
@@ -420,7 +419,7 @@ describe('Sidebar', () => {
       const onLogout = vi.fn();
       render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={onLogout} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-      fireEvent.click(screen.getByRole('button', { name: /@admin/ }));
+      fireEvent.click(screen.getByTestId('me-row'));
       fireEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }));
 
       expect(c.logout).toHaveBeenCalledTimes(1);

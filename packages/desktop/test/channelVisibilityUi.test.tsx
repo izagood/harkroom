@@ -120,7 +120,7 @@ describe('private 채널 UI (#182)', () => {
     const c = fakeController([]);
     sidebar();
 
-    fireEvent.click(screen.getByText('+ Create channel'));
+    fireEvent.click(screen.getByTestId('add-channel'));
     fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'newchan' } });
     fireEvent.click(screen.getByLabelText('비공개 (멤버만 볼 수 있다)'));
     fireEvent.click(screen.getByText('만들기'));

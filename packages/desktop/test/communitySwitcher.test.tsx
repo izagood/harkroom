@@ -131,7 +131,10 @@ const renderWorkspace = () => render(
 async function openCommunitySettingsInApp(handle: string) {
   render(<App />);
   expect(await screen.findByTestId('app-header')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: `@${handle}` }));
+  // 내 자리는 `@` 없이 이름만 적는다(#488 A1). 핸들로 행을 고르지 않고 testid 로 집는다 —
+  // 이 테스트가 확인하려는 것은 "설정까지 눌러 간다"이지 그 행의 문구가 아니다.
+  expect(screen.getByTestId('me-row').textContent).toContain(handle);
+  fireEvent.click(screen.getByTestId('me-row'));
   fireEvent.click(await screen.findByText('Settings'));
   fireEvent.click(await screen.findByRole('button', { name: 'Communities' }));
   expect(await screen.findByRole('heading', { name: 'Communities' })).toBeTruthy();
