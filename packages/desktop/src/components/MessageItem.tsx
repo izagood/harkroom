@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { messagePermalink, readAskMeta, type MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { AskCard } from './AskCard';
+import { ThreadStateBadge } from './ThreadStateBadge';
+import { threadStateFromFacts, isBlocking } from '../lib/threadState';
 import { FailureCard } from './FailureCard';
 import { ReportCard } from './ReportCard';
 import { MessageBody } from './MessageBody';
@@ -32,6 +34,9 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
   const myId = useActiveStore((s) => s.me?.id ?? null);
   const accounts = useActiveStore((s) => s.accounts);
+  // 생존 판정의 두 축 — `connected` 가 false 면 `online` 은 '아무도 없다'가 아니라 '모른다'다.
+  const online = useActiveStore((s) => s.online);
+  const connected = useActiveStore((s) => s.connected);
   const [draft, setDraft] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   // 링크로 방금 온 메시지인가. **스토어의 화면 상태**를 보고 그린다 — 이 사실을 message 에
@@ -91,6 +96,20 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    * 모양이 같다. 서버가 **마지막으로 말한 순**으로 주므로(`THREAD_STATS`) 앞에서 자르면
    * 방금 말한 사람이 항상 보인다 — 명단이 실제로 움직인다.
    */
+  /**
+   * 채널 요약 줄의 상태(Task 6 Step 2). 서버가 실어 준 집계로 판정한다 — 답글은 스레드를
+   * 열 때만 로드되므로 여기서 메시지 배열로 판정하면 **열어 보지 않은 스레드가 전부
+   * '끝남'** 이 된다(계획서가 경계한 거짓말).
+   *
+   * 생존은 `connected` 가 false 면 '모른다'다 — `ThreadPanel` 과 같은 규약.
+   */
+  const summaryState = useMemo(() => threadStateFromFacts({
+    row: message,
+    myAccountId: myId,
+    isAgent: (id) => accounts[id]?.kind === 'agent',
+    live: connected ? new Set(online) : null,
+  }), [message, myId, accounts, connected, online]);
+
   const participantList = message.participantIds ?? [];
   const displayedParticipants = participantList.slice(0, FACE_SLOTS);
   const remainingCount = participantList.length - FACE_SLOTS;
@@ -326,7 +345,17 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                   채널을 훑을 때의 질문은 "누가 있나"가 아니라 "열어야 하나"이고, 명단은
                   그 질문에 한 글자도 답하지 않는다.
                 */}
-                <span className="font-medium text-accent">
+                {/*
+                  **상태가 먼저다**(Task 6 Step 2). 채널을 훑을 때의 질문은 "몇 개 달렸나"가
+                  아니라 **"열어야 하나"** 이고, 답장 수는 그 질문에 답하지 않는다.
+                  서버가 집계를 실어 주므로(#484) 열어 보지 않은 스레드도 판정할 수 있다 —
+                  그 재료가 없으면(옛 서버·답글 행) 배지를 그리지 않고 답장 수만 남는다.
+                */}
+                {summaryState && <ThreadStateBadge state={summaryState} />}
+                <span className={summaryState && isBlocking(summaryState)
+                  ? 'text-fg-subtle'
+                  : 'font-medium text-accent'}
+                >
                   {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
                 </span>
                 {lastReplyTime && <span className="text-fg-subtle">{lastReplyTime}</span>}
