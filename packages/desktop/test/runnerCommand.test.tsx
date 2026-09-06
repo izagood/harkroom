@@ -54,8 +54,9 @@ const MINTED_SECTION = /이 토큰은 지금만 보인다/;
 
 /** 상세를 열어 상시 "러너 실행" 절이 그려질 때까지 기다린다. */
 const openAgent = async (handle: string) => {
-  await screen.findByText(handle);
-  fireEvent.click(screen.getByText(handle));
+  // 카드를 **테스트 id** 로 고른다 — 아바타의 sr-only 핸들과 카드 라벨이 둘 다 이름을
+  // 내므로 텍스트로 고르면 모호하다(Task 15-2).
+  fireEvent.click(await screen.findByTestId(`agent-card-${handle}`));
   await screen.findByText(RUNNER_SECTION);
 };
 

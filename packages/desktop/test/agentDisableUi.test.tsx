@@ -59,7 +59,7 @@ describe('#251 비활성화 컨트롤은 admin 에게만 보인다', () => {
     fakeController([agent('rusalka')]);
     render(<AgentsSettings />);
 
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     expect(screen.queryByRole('button', { name: '에이전트 비활성화' })).toBeNull();
     expect(screen.queryByRole('button', { name: '에이전트 활성화' })).toBeNull();
@@ -70,7 +70,7 @@ describe('#251 비활성화 컨트롤은 admin 에게만 보인다', () => {
     fakeController([agent('rusalka')]);
     render(<AgentsSettings />);
 
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     expect(screen.getByRole('button', { name: '에이전트 비활성화' })).toBeTruthy();
   });
@@ -83,7 +83,7 @@ describe('#251 끄기는 확인 단계를 거친다', () => {
   it('첫 클릭은 요청을 보내지 않고 확인 문구를 띄운다', async () => {
     const c = fakeController([agent('rusalka')]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     fireEvent.click(screen.getByRole('button', { name: '에이전트 비활성화' }));
 
@@ -100,7 +100,7 @@ describe('#251 끄기는 확인 단계를 거친다', () => {
   it('확인을 누르면 그때 비활성화 요청이 나간다', async () => {
     const c = fakeController([agent('rusalka')]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     fireEvent.click(screen.getByRole('button', { name: '에이전트 비활성화' }));
     fireEvent.click(screen.getByRole('button', { name: '정말 비활성화' }));
@@ -111,7 +111,7 @@ describe('#251 끄기는 확인 단계를 거친다', () => {
   it('취소하면 요청이 나가지 않고 확인 단계가 닫힌다', async () => {
     const c = fakeController([agent('rusalka')]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     fireEvent.click(screen.getByRole('button', { name: '에이전트 비활성화' }));
     fireEvent.click(screen.getByRole('button', { name: '취소' }));
@@ -126,7 +126,7 @@ describe('#251 끄기는 확인 단계를 거친다', () => {
   it('다시 켜기는 확인 없이 바로 요청한다', async () => {
     const c = fakeController([agent('rusalka', { disabled: true })]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     fireEvent.click(screen.getByRole('button', { name: '에이전트 활성화' }));
 
@@ -141,7 +141,7 @@ describe('#251 다시 켠 직후 PAT 가 0개임이 드러난다', () => {
   it('켠 뒤 PAT 목록이 비어 있으면 재발급이 필요하다고 안내한다', async () => {
     const c = fakeController([agent('rusalka', { disabled: true })], []);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     // 꺼진 동안에는 0개가 정상이라 권하지 않는다.
     await waitFor(() => expect(screen.getByText('PAT 가 없다')).toBeTruthy());
@@ -159,7 +159,7 @@ describe('#251 다시 켠 직후 PAT 가 0개임이 드러난다', () => {
     const c = fakeController([agent('rusalka')]);
     c.listPats.mockImplementation(async () => { throw new Error('끊겼다'); });
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     expect((await screen.findByRole('alert')).textContent).toContain('PAT 목록을 읽지 못했다');
     expect(screen.queryByText(/새로 발급해야 한다/)).toBeNull();
@@ -221,7 +221,7 @@ describe('#251 끈 결과가 스토어를 거쳐 다른 화면에 닿는다', ()
     expect(screen.queryByTestId('directory-disabled-id-rusalka')).toBeNull();
 
     fireEvent.change(box, { target: { value: '', selectionStart: 0 } });
-    fireEvent.click(await settings.findByText('rusalka'));
+    fireEvent.click(await settings.findByTestId('agent-card-rusalka'));
     fireEvent.click(settings.getByRole('button', { name: '에이전트 비활성화' }));
     fireEvent.click(settings.getByRole('button', { name: '정말 비활성화' }));
 

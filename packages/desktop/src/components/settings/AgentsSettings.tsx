@@ -6,6 +6,7 @@ import {
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { RunnerStatusLine } from '../RunnerStatus';
+import { AgentGrid } from './AgentGrid';
 
 /** #177: 클립보드가 없거나 거부되면 **조용히 실패하지 않는다** — 화면에 있는 그 명령
  *  텍스트를 선택 상태로 만들어 사람이 ⌘C 할 수 있게 하고, 오류를 눈에 보이게 남긴다.
@@ -418,80 +419,83 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
   return (
     <div className="flex h-full min-h-0 bg-surface-raised">
-        <aside className="w-56 shrink-0 border-r border-border p-3">
-          <button
-            className="mb-3 w-full rounded bg-accent px-3 py-2 text-left text-fg-on-strong hover:bg-accent-hover"
-            onClick={startNew}
-          >
-            + Create agent
-          </button>
-          <div className="text-[11px] uppercase tracking-wide text-fg-subtle">Agents</div>
-          {agents.length === 0 && <div className="px-1 py-2 text-fg-muted">아직 없다</div>}
-{agents.map((a) => {
-              const owner = a.ownerAccountId ? accounts[a.ownerAccountId]?.handle : null;
-              return (
-                <button
-                  key={a.id}
-                  className={`w-full rounded px-2 py-1.5 text-left ${selected?.id === a.id ? 'bg-surface-sunken' : 'hover:bg-surface'}`}
-                  onClick={() => pick(a)}
-                >
-                  {a.handle}
-                  <span className="ml-1 text-[10px] text-fg-muted">{a.harness}</span>
-                  {/* 세 경우다: 소유자가 없다 / 있고 디렉터리에 있다 / 있는데 디렉터리에
-                      없다. 마지막을 빈 칸으로 그리면 "없다"와 구분되지 않는다 —
-                      docs/design.md 4절이 금지하는 형태의 거울상이다. */}
-                  <span className={`ml-1 text-[10px] ${owner ? 'text-accent' : 'text-fg-muted'}`}>
-                    {a.ownerAccountId === null ? '없음' : (owner ?? '알 수 없는 계정')}
-                  </span>
-                  {/* #176: 생존과 마지막 활동을 **나란히** 그린다. 하나로 합치면 #124 가 닫은
-                      결함(러너 없는 에이전트가 정상으로 보임)이 되살아난다 — 온라인인데
-                      마지막 활동이 두 시간 전인 것은 정상이고(아무도 부르지 않았다), 그
-                      반대(활동 기록은 있는데 지금 붙어 있지 않다)도 봐야 하는 사실이다.
-                      색 점만 두지 않고 글자를 함께 두는 이유: 색은 스크린리더에 아무 말도
-                      하지 않고, 두 사실 중 하나가 사라졌는지 테스트도 볼 수 없다. */}
-                  <span className="mt-0.5 block text-[10px]">
-                    <span
-                      data-testid={`agent-presence-${a.id}`}
-                      data-online={connected ? String(online.includes(a.id)) : 'unknown'}
-                      className={connected
-                        ? (online.includes(a.id) ? 'text-success' : 'text-fg-muted')
-                        : 'text-fg-muted'}
-                    >
-                      {connected ? (online.includes(a.id) ? '온라인' : '오프라인') : '연결 끊김 — 알 수 없음'}
-                    </span>
-                    <span
-                      data-testid={`agent-last-turn-${a.id}`}
-                      title={a.lastTurnAt ? new Date(a.lastTurnAt).toLocaleString() : undefined}
-                      className="ml-1 text-fg-subtle"
-                    >
-                      {lastTurnLabel(a.lastTurnAt)}
-                    </span>
-                    {/* #368: 러너 기동이 실패했으면 이 줄을 **presence 문구로 끝내지 않는다.**
-                        `오프라인 · 활동 없음` 은 틀린 말은 아니지만 사람을 잘못된 방향으로
-                        보낸다 — 읽는 사람은 "잠깐 자리를 비웠나(곧 오겠지)"로 이해하고 기다린다.
-                        실제로는 이 앱이 러너를 못 띄우고 있고, 그것은 **사람이 할 일이 있다는
-                        뜻**이다. presence 를 덮어쓰지 않고 옆에 더하는 이유는 위 #176 주석과
-                        같다: 생존·마지막 활동·러너는 서로 다른 사실이고, 뭉치면 #124 가 닫은
-                        결함(러너 없는 에이전트가 정상으로 보임)이 되살아난다.
-                        문구는 `state.message` 를 그대로 쓴다 — 이 화면이 따로 쓰면
-                        `runnerLauncher.ts` 의 사유와 갈라진다. */}
-                    {runnerStates[a.id]?.status === 'failed' && (
-                      <span
-                        data-testid={`agent-runner-failed-${a.id}`}
-                        className="ml-1 block whitespace-normal text-danger"
-                      >
-                        기동 실패{runnerStates[a.id]?.message ? ` — ${runnerStates[a.id]!.message}` : ''}
-                      </span>
-                    )}
-                  </span>
-                </button>
-              );
-            })}
+        {/*
+          그리드 + 검색(identity 문서 Task 15-2). 전에는 세로 목록의 각 줄이 하네스·소유자·
+          presence·마지막 활동·기동 실패를 전부 지고 있었다 — 문서가 "40개가 되면 두 줄 설명은
+          정보가 아니라 벽이 된다"고 지적한 그 상태다. 카드는 아바타와 이름만 남기고 나머지는
+          오른쪽 상세가 말한다.
+        */}
+        <aside className="flex w-72 shrink-0 flex-col border-r border-border p-3">
+          <AgentGrid
+            agents={agents}
+            selectedId={selected?.id ?? null}
+            runnerStates={runnerStates}
+            online={online}
+            connected={connected}
+            onPick={pick}
+            onCreate={startNew}
+            canCreate={isAdmin}
+            /*
+              ▶·↻ 는 **PAT 를 다시 발급하고 러너를 띄우는** 기존 경로를 그대로 부른다
+              (`reissueRunnerPat`). 새 제어를 만들지 않는다 — 만들면 두 경로가 갈라지고,
+              그중 하나만 옛 PAT 폐기를 잊는다. 소유자·admin 이 아니면 서버가 거절하므로
+              그 사람에게는 이 문 자체를 그리지 않는다.
+            */
+            onRelaunch={(a) => {
+              const canRun = isAdmin || (a.ownerAccountId !== null && a.ownerAccountId === myId);
+              if (!canRun) return;
+              void getController().reissueRunnerPat(a.id).catch((err: unknown) => setError(
+                `러너를 띄우지 못했다: ${err instanceof Error ? err.message : String(err)}`,
+              ));
+            }}
+          />
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex items-center border-b border-border px-5 py-3">
+          <header className="flex items-center gap-3 border-b border-border px-5 py-3">
             <h2 className="text-base font-bold">{selected ? `Edit ${selected.handle}` : 'Add agent'}</h2>
+            {/*
+              **생존·마지막 활동·러너 실패는 여기로 내려온다**(Task 15-2). 카드에서는 뺐지만
+              (문서: "카드는 조용하다") **없애면 안 되는 사실들**이다 — #124 는 러너 없는
+              에이전트가 정상으로 보이던 것을, #176 은 생존과 활동이 서로를 대체하던 것을,
+              #368 은 기동 실패가 presence 문구에 묻히던 것을 각각 닫았다. 셋을 나란히 둔다.
+            */}
+            {selected && (
+              <span className="flex flex-wrap items-center gap-2 text-[11px]">
+                <span
+                  data-testid={`agent-presence-${selected.id}`}
+                  data-online={connected ? String(online.includes(selected.id)) : 'unknown'}
+                  className={connected && online.includes(selected.id) ? 'text-success' : 'text-fg-muted'}
+                >
+                  {connected ? (online.includes(selected.id) ? '온라인' : '오프라인') : '연결 끊김 — 알 수 없음'}
+                </span>
+                {/*
+                  #181 소유자. **세 경우를 구별한다** — 없다 / 있고 디렉터리에 있다 / 있는데
+                  디렉터리에 없다. 마지막을 빈 칸으로 그리면 "없다"와 구분되지 않고,
+                  그것이 design.md 4절이 금지하는 형태의 거울상이다.
+                */}
+                <span className={accounts[selected.ownerAccountId ?? '']?.handle ? 'text-accent' : 'text-fg-muted'}>
+                  {selected.ownerAccountId === null
+                    ? '없음'
+                    : (accounts[selected.ownerAccountId]?.handle ?? '알 수 없는 계정')}
+                </span>
+                <span
+                  data-testid={`agent-last-turn-${selected.id}`}
+                  title={selected.lastTurnAt ? new Date(selected.lastTurnAt).toLocaleString() : undefined}
+                  className="text-fg-subtle"
+                >
+                  {lastTurnLabel(selected.lastTurnAt)}
+                </span>
+                {runnerStates[selected.id]?.status === 'failed' && (
+                  <span
+                    data-testid={`agent-runner-failed-${selected.id}`}
+                    className="whitespace-normal text-danger"
+                  >
+                    기동 실패{runnerStates[selected.id]?.message ? ` — ${runnerStates[selected.id]!.message}` : ''}
+                  </span>
+                )}
+              </span>
+            )}
           </header>
 
           <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
