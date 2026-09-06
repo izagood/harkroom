@@ -4,6 +4,18 @@ export interface MenuItem {
   label: string;
   onSelect: () => void;
   disabled?: boolean;
+  /**
+   * 이 항목과 같은 일을 하는 단축키(#488 A1). 오른쪽 끝에 흐리게 선다.
+   *
+   * **아이콘 슬롯은 두지 않았다.** #488 문서가 계정 메뉴에서 12px 글리프를 "정보가 아니라
+   * 장식"이라고 명시해 뺐고, 남긴 것은 `⌘,` 하나다 — 그것은 장식이 아니라 **가르치는
+   * 정보**이기 때문이다(메뉴는 단축키를 가르치는 자리다). 그래서 프리미티브에도 가르치는
+   * 쪽만 슬롯으로 낸다.
+   *
+   * 접근성 이름에서는 **빠진다** — `aria-hidden` 이다. 항목의 이름은 `Settings` 이지
+   * `Settings ⌘,` 가 아니고, 스크린리더는 글리프를 "커맨드 콤마"로 읽지 못한다.
+   */
+  shortcut?: string;
 }
 
 /**
@@ -52,10 +64,18 @@ interface MenuProps {
    * 플래그로 적어야 읽는 사람이 속지 않는다.
    */
   openOnContextMenu?: boolean;
+  /**
+   * 항목 위에 서는 머리(#488 A1). 계정 메뉴가 "지금 이게 누구인가"를 말해야 해서 생겼다 —
+   * 얼굴 · 이름 · `@handle` · 어느 워크스페이스인지.
+   *
+   * **항목이 아니다.** `MenuItem` 으로 넣으면 눌리는 것이 되고 화살표 이동에도 걸린다 —
+   * 머리는 읽는 것이지 고르는 것이 아니다. 그래서 `role="menuitem"` 밖에 둔다.
+   */
+  header?: ReactNode;
   className?: string;
 }
 
-export function Menu({ renderTrigger, items, placement = 'top', openOnContextMenu = false, className = '' }: MenuProps) {
+export function Menu({ renderTrigger, items, placement = 'top', openOnContextMenu = false, header, className = '' }: MenuProps) {
   const [open, setOpen] = useState(false);
   const [openAt, setOpenAt] = useState<MenuPosition | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -147,7 +167,9 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
   const EDGE_GAP = 8;
   const menuStyle = openAt
     ? (() => {
-        const height = items.length * 28 + 8;
+        // 머리가 있으면 그만큼 더 높다(약 44px). 좌표로 여는 소비자(#111)는 아직 머리를
+        // 쓰지 않지만, 어림값을 항목 수에만 매어 두면 다음 소비자가 조용히 화면 밖으로 나간다.
+        const height = items.length * 28 + (header ? 44 : 0) + 8;
         const x = Math.max(EDGE_GAP, Math.min(openAt.x, window.innerWidth - MENU_WIDTH - EDGE_GAP));
         const y = Math.max(EDGE_GAP, Math.min(openAt.y, window.innerHeight - height - EDGE_GAP));
         return { position: 'fixed' as const, left: x, top: y };
@@ -165,6 +187,9 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
           className={`${openAt ? '' : `absolute ${placement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 min-w-32 rounded border border-border bg-surface-raised py-1 shadow-lg ${className}`}
           style={menuStyle}
         >
+          {header && (
+            <div className="border-b border-border px-3 pb-2 pt-1">{header}</div>
+          )}
           {items.map((item, index) => (
             <button
               key={item.label}
@@ -173,11 +198,14 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
               disabled={item.disabled}
               onClick={() => { if (!item.disabled) { item.onSelect(); close(); } }}
               onKeyDown={(e) => onMenuKeyDown(e, index)}
-              className={`flex w-full px-3 py-1.5 text-left text-sm ${
+              className={`flex w-full items-center gap-4 px-3 py-1.5 text-left text-sm ${
                 item.disabled ? 'cursor-not-allowed text-fg-subtle' : 'text-fg-muted hover:bg-surface-hover hover:text-fg'
               }`}
             >
-              {item.label}
+              <span>{item.label}</span>
+              {item.shortcut && (
+                <span aria-hidden="true" className="ml-auto text-[11px] text-fg-subtle">{item.shortcut}</span>
+              )}
             </button>
           ))}
         </div>
