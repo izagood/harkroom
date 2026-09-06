@@ -5,7 +5,11 @@ import {
 } from '@murmur/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
-import { RunnerStatusLine } from '../RunnerStatus';
+// `runnerStatusLabel` 을 **설명 문구에도** 쓴다 — 상태 이름을 이 파일이 제 손으로 적으면
+// `RunnerStatus.tsx` 가 바뀔 때 여기만 낡는다. `external` → `adopted`(`#482`) 가 정확히
+// 그렇게 어긋났다.
+import { RunnerStatusLine, runnerStatusLabel } from '../RunnerStatus';
+import { PAT_PLACEHOLDER, runnerCommandClipboardText } from '../../lib/runnerCommand';
 import { AgentGrid } from './AgentGrid';
 import { Identity } from '../Identity';
 import { Button } from './primitives';
@@ -1150,15 +1154,23 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 <code className="mt-1 block break-all rounded bg-surface-raised p-2 text-[11px]">{pat}</code>
                 {/* #125: 이 명령의 토큰을 자르고 말줄임표를 붙여 두면, 그대로 복사해 실행했을 때
                     인증이 실패한다 — "완성된 명령"처럼 보이는데 아니었다. 전체 토큰을 싣는다.
-                    바로 위 코드 블록에 이미 전체 토큰이 있으므로 중복 노출이 새 위험은 아니다. */}
-                <div className="mt-2 flex items-center gap-2 break-all font-mono text-[11px] text-warning">
-                  <span ref={fullCommandRef}>MURMUR_PAT={pat} pnpm --filter @murmur/agent start</span>
+                    바로 위 코드 블록에 이미 전체 토큰이 있으므로 중복 노출이 새 위험은 아니다.
+
+                    **명령 자체는 `runnerCommand.ts` 가 만든다**(`#431` 1단계·`#494`). 여기서
+                    문자열을 짓지 않는 이유는 이 자리가 정확히 그렇게 낡았기 때문이다 — 러너가
+                    사이드카 배포로 바뀌었는데 화면에는 `pnpm --filter @murmur/agent start` 가
+                    남아, 저장소를 클론하지 않은 사람에게 **붙여넣는 순간 실패하는 명령**을
+                    복사시키고 있었다. 근거 전문은 그 파일 머리말에 있다. */}
+                <div className="mt-2 flex flex-col gap-1 break-all font-mono text-[11px] text-warning">
+                  <span ref={fullCommandRef} className="whitespace-pre-wrap">
+                    {runnerCommandClipboardText(pat)}
+                  </span>
                   <button
-                    className="shrink-0 rounded border border-warning-border bg-warning-surface-strong px-1.5 py-0.5 text-[10px] text-warning hover:bg-warning-border"
+                    className="self-start shrink-0 rounded border border-warning-border bg-warning-surface-strong px-1.5 py-0.5 text-[10px] text-warning hover:bg-warning-border"
                     aria-label="명령 복사"
                     onClick={async () => {
                       // #125: 토큰을 자르거나 말줄임표를 붙이지 않는다 — 클립보드에도 명령 전체가 들어간다.
-                      const cmd = `MURMUR_PAT=${pat} pnpm --filter @murmur/agent start`;
+                      const cmd = runnerCommandClipboardText(pat);
                       setError(null);
                       const ok = await copyToClipboard(cmd, fullCommandRef.current, setError);
                       if (ok) {
@@ -1179,12 +1191,16 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     러너를 띄우지 않는다")를 그대로 두면 아래의 "러너 (이 앱)" 절과 정면으로
                     어긋나고, 어느 쪽을 믿어야 할지 사람이 알 수 없다. 서버는 여전히 러너를
                     띄우지 않는다(design.md §1 외부 접속형) — 띄우는 것은 앱이다. */}
+                {/* 마지막 문장이 낡아 있었다: *"murmur 저장소를 체크아웃한 머신에서
+                    실행한다"* 는 러너가 소스로 돌던 시절의 조건이다. 사이드카 배포
+                    (`#431` 1단계·`#494`) 뒤로는 **앱이 설치된 머신**이면 된다 —
+                    저장소는 개발 갈래에서만 필요하다. */}
                 <p className="mt-2 text-[11px] text-warning">
                   murmur <strong>서버</strong>는 러너를 띄우지 않는다. 이 데스크탑 앱은
                   <strong> 내가 소유한</strong> 에이전트만 띄운다 — 남이 소유했거나 소유자가
                   없는 에이전트는 <strong>위 명령을 직접 실행해 러너를 붙이기 전까지 멘션에
-                  답하지 않는다</strong>(멘션은 쌓이기만 한다). murmur 저장소를 체크아웃한
-                  머신에서 실행한다.
+                  답하지 않는다</strong>(멘션은 쌓이기만 한다). 러너는 앱과 함께 배포되므로
+                  murmur 앱이 설치된 머신이면 된다 — 저장소는 아래 개발용 갈래에만 필요하다.
                 </p>
               </div>
             )}
@@ -1195,14 +1211,39 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
                 이 절은 위 "러너 실행" 명령 틀(#177)과 **둘 다** 남는다: 앱이 띄우는 것은
                 내가 소유한 에이전트뿐이고, 남의 머신에서 손으로 띄우는 길은 그대로 있다.
-                그렇게 뜬 러너는 여기서 '외부에서 실행 중'으로 보인다. */}
+
+                **앞 판본은 여기에 "그렇게 뜬 러너는 '외부에서 실행 중'으로 보인다"고
+                적어 뒀었다. 두 군데가 틀렸다**(`#482`, `#430`):
+
+                1. `external` 이라는 상태가 없어졌다 — 지금 값은 `adopted` 이고 화면 문구는
+                   `RunnerStatus.tsx::runnerStatusLabel` 이 정한다.
+                2. 더 중요하게, **손으로 띄운 러너는 그렇게 보이지 않는다.** `adopted` 는
+                   *"이 daemon 의 장부에 있고 `kill(pid, 0)` 으로 살아 있음을 확인했다"* 이고,
+                   장부에는 **이 daemon 이 spawn 한 것만** 들어간다. 남이 띄운 러너는 장부에
+                   없으므로 daemon 은 그 존재를 모른다 — 서버 presence 에 보이면 그 어긋남을
+                   사유 한 줄로 말할 뿐 상태로 삼지 않는다(`runnerLauncher.ts::STRANGER_ATTACHED`).
+                   판정을 presence 추측에서 daemon 관측으로 옮긴 것이 `#430` 의 핵심이었다. */}
             {selected && (isAdmin || (myId !== undefined && selected.ownerAccountId === myId)) && (
               <div className="rounded border border-border p-3">
                 <div className="text-xs font-medium text-fg-muted">러너 (이 앱)</div>
+                {/* 상태 문구를 여기 하드코딩하지 않는다 — `runnerStatusLabel` 에서 받아 온다.
+                    이 설명이 낡았던 이유가 정확히 그 하드코딩이었다: `#482` 가 `external` 을
+                    `adopted` 로 바꾸며 `RunnerStatus.tsx` 의 문구를 고쳤는데, 같은 말을 제 손으로
+                    적어 둔 이 문장은 따라오지 않아 화면 두 자리가 서로 다른 말을 했다.
+                    같은 출처에서 내면 다음 개명도 저절로 따라온다. */}
                 <p className="mt-1 text-[11px] text-fg-subtle">
-                  이 앱은 <strong>내가 소유한</strong> 에이전트의 러너를 띄운다. 러너가 이미
-                  붙어 있으면(누가 띄웠든) 띄우지 않고 '외부에서 실행 중'으로 표시한다 —
-                  같은 에이전트에 러너가 둘이면 멘션을 두 러너가 나눠 집어 간다.
+                  이 앱은 <strong>내가 소유한</strong> 에이전트의 러너를 띄운다.{' '}
+                  <strong>daemon 이 이미 들고 있는</strong> 러너가 살아 있으면 새로 띄우지 않고
+                  &apos;{runnerStatusLabel({ agentId: '', status: 'adopted', exitCode: null, message: null })}&apos;
+                  으로 표시한다 — 같은 에이전트에 러너가 둘이면 멘션을 두 러너가 나눠 집어 간다.
+                </p>
+                {/* 남이 띄운 러너를 이 화면이 못 본다는 것은 **한계 고백**이라 따로 적는다.
+                    앞 문장에 "누가 띄웠든"으로 뭉쳐 두면 사람은 손으로 띄운 러너도 여기
+                    나타날 것으로 읽고, 안 나타나면 앱이 고장 났다고 판단한다. */}
+                <p className="mt-1 text-[11px] text-fg-subtle">
+                  daemon 은 <strong>자기가 띄운 러너만</strong> 안다. 다른 머신이나 손으로 띄운
+                  러너는 이 목록에 없어서 여기 나타나지 않는다 — 그때는 서버에 붙어 있다는
+                  사실만 사유로 붙고, 이 앱은 자기 러너를 그대로 띄운다.
                 </p>
                 <div className="mt-2">
                   <RunnerStatusLine state={runnerStates[selected.id]} />
@@ -1238,18 +1279,26 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 토큰은 해시만 저장하므로 재노출이 불가능하다(design.md §4). 그래서 여기서는
                 자리표시가 든 틀만 보이고, 전체 토큰이 든 명령은 위의 발급 직후 화면에만 있다.
                 PAT 개수로 이 절을 가리지 않는다: PAT 가 0 개인 에이전트야말로 "무엇을 실행해야
-                하는가"를 알아야 하고, 틀에는 비밀이 없다. */}
+                하는가"를 알아야 하고, 틀에는 비밀이 없다.
+
+                **이 절은 남는다** — `#482` 로 앱이 daemon 을 먼저 세우고 러너를 spawn 하게
+                됐지만, 앱이 띄우는 대상은 `ownerAccountId` 가 내 계정인 에이전트뿐이다.
+                남이 소유했거나 소유자가 없는 에이전트, 그리고 이 앱이 안 도는 머신에 붙일
+                러너는 지금도 사람이 띄운다. 낡은 것은 절의 존재 이유가 아니라 **명령**이었다
+                (`runnerCommand.ts` 머리말). */}
             {selected && (isAdmin || isOwner) && (
               <div className="rounded border border-border p-3">
                 <div className="text-xs font-medium text-fg-muted">러너 실행</div>
-                <div className="mt-2 flex items-center gap-2 break-all font-mono text-[11px] text-fg">
-                  <span ref={templateCommandRef}>MURMUR_PAT=&lt;발급한 토큰&gt; pnpm --filter @murmur/agent start</span>
+                <div className="mt-2 flex flex-col gap-1 break-all font-mono text-[11px] text-fg">
+                  <span ref={templateCommandRef} className="whitespace-pre-wrap">
+                    {runnerCommandClipboardText(PAT_PLACEHOLDER)}
+                  </span>
                   <button
-                    className="shrink-0 rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg hover:bg-surface-sunken"
+                    className="self-start shrink-0 rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg hover:bg-surface-sunken"
                     aria-label="명령 복사"
                     onClick={async () => {
                       // 틀은 자리표시까지 통째로 복사한다 — 사람이 그 자리만 토큰으로 바꿔 쓴다.
-                      const cmd = 'MURMUR_PAT=<발급한 토큰> pnpm --filter @murmur/agent start';
+                      const cmd = runnerCommandClipboardText(PAT_PLACEHOLDER);
                       setError(null);
                       const ok = await copyToClipboard(cmd, templateCommandRef.current, setError);
                       if (ok) {
