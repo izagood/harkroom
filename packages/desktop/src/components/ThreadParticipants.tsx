@@ -61,7 +61,8 @@ export function ThreadParticipants({ messages, live }: { messages: MessageRow[];
             data-testid={`participant-${a.handle}`}
             // 모를 때는 흐리게 하지 않는다(위 주석).
             data-alive={live === null ? 'unknown' : live.has(a.id)}
-            className={`ring-1 ring-surface-raised ${live !== null && !live.has(a.id) ? 'opacity-40' : ''}`}
+            // #471: `rounded-full` 이 없으면 링이 사각형으로 그려져 겹친 자리에 세로선이 생긴다.
+            className={`rounded-full ring-1 ring-surface-raised ${live !== null && !live.has(a.id) ? 'opacity-40' : ''}`}
           >
             <Identity account={a} className="h-5 w-5 text-[9px]" variant="avatar" />
           </span>
