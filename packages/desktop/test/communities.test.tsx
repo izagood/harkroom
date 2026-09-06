@@ -88,7 +88,7 @@ async function communityWithMention(baseUrl: string, active: boolean, notifier: 
     accounts: vi.fn(async () => accountsResult([acc('u1', 'admin'), acc('u2', 'bot', 'agent')])),
     inboxUnread: vi.fn(async () => (++calls === 1
       ? []
-      : [{ id: 1, messageId: 'm1', reason: 'mention' as const, readAt: null, channelId: 'c1' }])),
+      : [{ id: 1, messageId: 'm1', reason: 'mention' as const, readAt: null, channelId: 'c1' , authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null}])),
   });
   const ws = countingWsFactory();
   const entry = await startCommunitySession({

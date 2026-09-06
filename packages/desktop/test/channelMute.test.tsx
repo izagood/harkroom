@@ -16,7 +16,7 @@ import { acc, accountsResult, chan, fakeApi, fakeWsFactory, msg } from './helper
 
 const entry = (id: number, messageId: string, channelId = 'c1',
   reason: InboxEntry['reason'] = 'mention'): InboxEntry =>
-  ({ id, messageId, reason, readAt: null, channelId });
+  ({ id, messageId, reason, readAt: null, channelId, authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null });
 
 // #224 이후 음소거는 `notifyLevel: 'none'` 이다. `mutedAt` 도 같이 두는 것은 서버가 기록으로
 // 계속 적기 때문이고, 판정은 `notifyLevel` 만 본다 — 여기 두 값을 나란히 둔 채로 초록이어야
@@ -146,8 +146,8 @@ describe('음소거된 채널의 미읽음 배지', () => {
       channels: [chan('c1', 'general'), chan('c2', 'dev')],
       dms: [],
       unread: [
-        { id: 1, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c1' },
-        { id: 2, messageId: 'm2', reason: 'mention', readAt: null, channelId: 'c2' },
+        { id: 1, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c1' , authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null},
+        { id: 2, messageId: 'm2', reason: 'mention', readAt: null, channelId: 'c2' , authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null},
       ],
       channelPrefs: { c1: pref('c1', true) },
       connected: true,

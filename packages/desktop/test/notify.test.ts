@@ -7,7 +7,7 @@ import { DEFAULT_PREFS } from '../src/lib/prefs';
 import { acc, accountsResult, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 const entry = (id: number, messageId: string, reason: InboxEntry['reason'] = 'mention'): InboxEntry =>
-  ({ id, messageId, reason, readAt: null, channelId: 'c1' });
+  ({ id, messageId, reason, readAt: null, channelId: 'c1' , authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null});
 
 function fakeNotifier() {
   const sent: { title: string; body: string }[] = [];
