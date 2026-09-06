@@ -19,6 +19,11 @@ export type AuditAction =
   // #129: 러너 종료 요청. 남의 러너를 멈추는 조작이라 남는 기록이 있어야 한다.
   // detail 에는 handle 만 남긴다 — 지시문도 대화 본문도 넣지 않는다(같은 파일 위 규칙).
   | 'agent.stop.requested'
+  // #427: 그 요청을 되돌린 조작. 요청과 **따로** 남긴다 — 요청 기록만 있으면 감사가
+  // "이 러너는 세워졌다"에서 멈추고, 실제로는 다시 돌게 만든 사람이 있다는 사실이 사라진다.
+  // detail 에는 `handle` 과 함께 되돌린 대상 요청 시각(`stopRequestedAt`)을 남긴다:
+  // 그 값이 곧 정의에서 지워지므로, 지운 뒤에는 감사만이 "무엇을 되돌렸나"를 답할 수 있다.
+  | 'agent.stop.undone'
   | 'pat.issued' | 'pat.revoked'
   | 'password.changed'
   | 'channel.created' | 'channel.updated' | 'channel.archived' | 'channel.unarchived' | 'channel.deleted' | 'message.deleted'
