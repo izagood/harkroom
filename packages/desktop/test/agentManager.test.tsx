@@ -61,6 +61,8 @@ describe('AgentsSettings', () => {
   it('creates an agent from the name and instructions the operator typed', async () => {
     const c = fakeController();
     render(<AgentsSettings />);
+    // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
+    fireEvent.click(await screen.findByTestId('agent-create'));
 
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
     fireEvent.change(screen.getByLabelText('Agent instructions'), {
@@ -78,6 +80,8 @@ describe('AgentsSettings', () => {
   it('shows the new PAT once so the operator can start the runner', async () => {
     fakeController();
     render(<AgentsSettings />);
+    // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
+    fireEvent.click(await screen.findByTestId('agent-create'));
 
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
@@ -90,6 +94,8 @@ describe('AgentsSettings', () => {
   it('does not show broken token hint with ellipsis after partial token', async () => {
     fakeController();
     render(<AgentsSettings />);
+    // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
+    fireEvent.click(await screen.findByTestId('agent-create'));
 
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
@@ -104,6 +110,8 @@ describe('AgentsSettings', () => {
   it('shows the full token in the command hint so it can be copy-pasted', async () => {
     fakeController();
     render(<AgentsSettings />);
+    // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
+    fireEvent.click(await screen.findByTestId('agent-create'));
 
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
@@ -118,6 +126,8 @@ describe('AgentsSettings', () => {
   it('shows a hint that runner is required for the agent to respond', async () => {
     fakeController();
     render(<AgentsSettings />);
+    // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
+    fireEvent.click(await screen.findByTestId('agent-create'));
 
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
@@ -132,6 +142,8 @@ describe('AgentsSettings', () => {
   it('refuses to submit without a name', async () => {
     const c = fakeController();
     render(<AgentsSettings />);
+    // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
+    fireEvent.click(await screen.findByTestId('agent-create'));
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
 
@@ -143,6 +155,8 @@ describe('AgentsSettings', () => {
   it('offers only the harness murmur can actually run', async () => {
     fakeController();
     render(<AgentsSettings />);
+    // Task 15: 그리드가 먼저 뜬다 — 폼은 `+` 를 눌러야 열린다.
+    fireEvent.click(await screen.findByTestId('agent-create'));
 
     const options = (await screen.findByLabelText('Agent harness')).querySelectorAll('option');
     const enabled = [...options].filter((o) => !(o as HTMLOptionElement).disabled);
@@ -159,6 +173,8 @@ describe('AgentsSettings', () => {
   it('shows a harness the type list knows but the runner cannot yet run — as a disabled option', async () => {
     fakeController();
     render(<AgentsSettings />);
+    // Task 15: 그리드가 먼저 뜬다 — 폼은 `+` 를 눌러야 열린다.
+    fireEvent.click(await screen.findByTestId('agent-create'));
 
     const options = [...(await screen.findByLabelText('Agent harness')).querySelectorAll('option')];
     const gemini = options.find((o) => o.textContent?.includes('gemini'));
@@ -493,6 +509,8 @@ describe('새 에이전트 기본값', () => {
     const c = fakeController();
     c.agentDefaults.mockResolvedValue({ harness: 'claude-code', model: 'sonnet-x', effort: 'high' });
     render(<AgentsSettings />);
+    // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
+    fireEvent.click(await screen.findByTestId('agent-create'));
 
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
@@ -512,6 +530,8 @@ describe('새 에이전트 기본값', () => {
     const c = fakeController();
     c.agentDefaults.mockRejectedValue(new Error('boom'));
     render(<AgentsSettings />);
+    // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
+    fireEvent.click(await screen.findByTestId('agent-create'));
 
     expect((await screen.findByRole('alert')).textContent).toContain('기본값을 불러오지 못했다');
     // 조용한 기본값이 아니다 — 초안 자체가 없으므로 harness 를 고르는 자리도 없다.
@@ -661,6 +681,8 @@ describe('상세는 세 묶음, 저장은 한 쌍 (Task 15-3)', () => {
   it('새 에이전트 화면에는 되돌리기가 없다 — 돌아갈 서버 값이 없다', async () => {
     fakeController([]);
     render(<AgentsSettings />);
+    // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
+    fireEvent.click(await screen.findByTestId('agent-create'));
     await screen.findByRole('button', { name: 'Create agent' });
     expect(screen.queryByRole('button', { name: '되돌리기' })).toBeNull();
   });
@@ -732,5 +754,50 @@ describe('에이전트 사진 (Task 15-4)', () => {
     fireEvent.change(await screen.findByTestId('agent-avatar-file'), { target: { files: [file] } });
 
     expect((await screen.findByRole('alert')).textContent).toContain('이미지 파일만');
+  });
+});
+
+/**
+ * **한 번에 한 화면이다**(identity 문서). 문서의 목업이 그리드에는 곁창을 그리지 않았고,
+ * 상세에는 `← 에이전트` 로 돌아가는 길을 그렸다 — 나란히 두면 상세의 폭이 좁아져 문서가
+ * 세운 세 묶음이 다시 한 줄로 흐른다.
+ */
+describe('그리드와 상세는 한 번에 하나만 (Task 15)', () => {
+  it('처음에는 그리드만 보인다 — 곁창이 없다', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+
+    expect(await screen.findByTestId('agent-grid')).toBeTruthy();
+    // 아무도 안 골랐으므로 상세가 없다.
+    expect(screen.queryByLabelText('Agent instructions')).toBeNull();
+    expect(screen.queryByTestId('agent-back')).toBeNull();
+  });
+
+  it('카드를 누르면 상세로 가고 그리드는 덮인다', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    expect(await screen.findByLabelText('Agent instructions')).toBeTruthy();
+    expect(screen.queryByTestId('agent-grid')).toBeNull();
+  });
+
+  it('← 에이전트 로 돌아온다 — 없으면 나올 방법이 없다', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    fireEvent.click(await screen.findByTestId('agent-back'));
+    expect(await screen.findByTestId('agent-grid')).toBeTruthy();
+    expect(screen.queryByLabelText('Agent instructions')).toBeNull();
+  });
+
+  it('+ 도 상세(새 에이전트)로 간다', async () => {
+    fakeController([]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-create'));
+
+    expect(await screen.findByRole('button', { name: 'Create agent' })).toBeTruthy();
+    expect(screen.queryByTestId('agent-grid')).toBeNull();
   });
 });

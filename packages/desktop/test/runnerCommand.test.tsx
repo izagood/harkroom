@@ -117,6 +117,8 @@ describe('러너 실행 명령 (#177)', () => {
   it('4. 발급 직후 화면에서는 전체 토큰이 든 명령이 복사된다', async () => {
     fakeController([], []);
     render(<AgentsSettings />);
+    // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
+    fireEvent.click(await screen.findByTestId('agent-create'));
 
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'newagent' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));

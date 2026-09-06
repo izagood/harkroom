@@ -112,6 +112,17 @@ const draftOf = (a: AgentView): Draft => ({
 export function AgentsSettings({ targetId }: { targetId?: string }) {
   const [agents, setAgents] = useState<AgentView[]>([]);
   const [selected, setSelected] = useState<AgentView | null>(null);
+  /**
+   * 지금 무엇을 보고 있는가 — **그리드냐 상세냐**(identity 문서 Task 15).
+   *
+   * `selected` 로는 이 질문에 답할 수 없다: `null` 이 '아무것도 안 골랐다'와 '새 에이전트를
+   * 만드는 중'을 겸하기 때문이다. 그래서 화면 상태를 따로 든다.
+   *
+   * **두 화면을 나란히 두지 않는 이유**: 문서의 목업이 그리드에는 곁창을 그리지 않았고,
+   * 상세에는 `← 에이전트` 로 돌아가는 길을 그렸다 — 즉 **한 번에 한 화면**이다. 나란히 두면
+   * 상세의 폭이 좁아져 문서가 세운 세 묶음이 다시 한 줄로 흐른다.
+   */
+  const [view, setView] = useState<'grid' | 'detail'>('grid');
   // 초안이 null 인 것은 '무엇을 기본으로 둘지 아직 모른다'는 뜻이다 — 기본값을 못 읽었는데
   // 조용히 채워 넣으면 화면이 거짓을 말한다(docs/design.md 4절).
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -295,6 +306,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
   const pick = (a: AgentView) => {
     setSelected(a);
+    setView('detail');
     setDraft(draftOf(a));
     setCustomized(a.model !== null || a.effort !== null);
     setPat(null);
@@ -309,6 +321,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
   const startNew = () => {
     setSelected(null);
+    setView('detail');
     // 기본값을 모르면 초안도 만들지 않는다 — 지어낸 값으로 채우면 그것이 운영자가 정한
     // 기본값인지 구분할 수 없다.
     const known = defaults !== null && defaults !== 'error' ? defaults : null;
@@ -447,42 +460,59 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const field = 'w-full rounded border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
   const label = 'block text-xs font-medium text-fg-muted';
 
+  /**
+   * **한 번에 한 화면이다**(identity 문서). 그리드를 보거나 상세를 보거나 — 나란히 두지
+   * 않는다. 문서의 목업이 그리드에는 곁창을 그리지 않았고 상세에는 `← 에이전트` 로 돌아가는
+   * 길을 그렸다. 나란히 두면 상세의 폭이 좁아져 세 묶음이 다시 한 줄로 흐른다.
+   */
+  if (view === 'grid') {
+    return (
+      <div className="flex h-full min-h-0 flex-col bg-surface-raised p-5">
+        <div className="mb-4">
+          <h2 className="text-base font-bold">에이전트</h2>
+          <p className="text-[11px] text-fg-subtle">
+            채널에서 @이름 으로 부른다. 카드를 누르면 설정이 열린다.
+          </p>
+        </div>
+        {error && <p role="alert" className="mb-2 text-[11px] text-danger">{error}</p>}
+        <AgentGrid
+          agents={agents}
+          selectedId={null}
+          runnerStates={runnerStates}
+          online={online}
+          connected={connected}
+          onPick={pick}
+          onCreate={startNew}
+          canCreate={isAdmin}
+          onRelaunch={(a) => {
+            const canRun = isAdmin || (a.ownerAccountId !== null && a.ownerAccountId === myId);
+            if (!canRun) return;
+            void getController().reissueRunnerPat(a.id).catch((err: unknown) => setError(
+              `러너를 띄우지 못했다: ${err instanceof Error ? err.message : String(err)}`,
+            ));
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 bg-surface-raised">
-        {/*
-          그리드 + 검색(identity 문서 Task 15-2). 전에는 세로 목록의 각 줄이 하네스·소유자·
-          presence·마지막 활동·기동 실패를 전부 지고 있었다 — 문서가 "40개가 되면 두 줄 설명은
-          정보가 아니라 벽이 된다"고 지적한 그 상태다. 카드는 아바타와 이름만 남기고 나머지는
-          오른쪽 상세가 말한다.
-        */}
-        <aside className="flex w-72 shrink-0 flex-col border-r border-border p-3">
-          <AgentGrid
-            agents={agents}
-            selectedId={selected?.id ?? null}
-            runnerStates={runnerStates}
-            online={online}
-            connected={connected}
-            onPick={pick}
-            onCreate={startNew}
-            canCreate={isAdmin}
-            /*
-              ▶·↻ 는 **PAT 를 다시 발급하고 러너를 띄우는** 기존 경로를 그대로 부른다
-              (`reissueRunnerPat`). 새 제어를 만들지 않는다 — 만들면 두 경로가 갈라지고,
-              그중 하나만 옛 PAT 폐기를 잊는다. 소유자·admin 이 아니면 서버가 거절하므로
-              그 사람에게는 이 문 자체를 그리지 않는다.
-            */
-            onRelaunch={(a) => {
-              const canRun = isAdmin || (a.ownerAccountId !== null && a.ownerAccountId === myId);
-              if (!canRun) return;
-              void getController().reissueRunnerPat(a.id).catch((err: unknown) => setError(
-                `러너를 띄우지 못했다: ${err instanceof Error ? err.message : String(err)}`,
-              ));
-            }}
-          />
-        </aside>
+
 
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="flex items-center gap-3 border-b border-border px-5 py-3">
+            {/*
+              **돌아가는 길**(문서의 목업이 `← 에이전트` 로 그린 것). 한 번에 한 화면이므로
+              이것이 없으면 상세에 들어간 사람이 목록으로 나올 방법이 없다.
+            */}
+            <button
+              data-testid="agent-back"
+              className="rounded px-1.5 py-0.5 text-[13px] text-fg-muted hover:bg-surface-hover"
+              onClick={() => { setView('grid'); setSelected(null); setError(null); }}
+            >
+              ← 에이전트
+            </button>
             <h2 className="text-base font-bold">{selected ? `Edit ${selected.handle}` : 'Add agent'}</h2>
             {/*
               **생존·마지막 활동·러너 실패는 여기로 내려온다**(Task 15-2). 카드에서는 뺐지만
