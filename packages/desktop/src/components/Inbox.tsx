@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Overlay } from './Overlay';
+import { Identity } from './Identity';
 import type { InboxEntry } from '@murmur/shared';
+import { inboxRow, matchesFilter, type InboxFilter } from '../lib/inboxRow';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 
@@ -16,14 +18,9 @@ interface Props {
  */
 type LoadState = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string };
 
-/** '전체'는 필터가 꺼진 상태다. 나머지 셋은 `InboxEntry['reason']` 과 같은 값이어야 한다. */
-type ReasonFilter = 'all' | InboxEntry['reason'];
-
-const REASON_LABEL: Record<InboxEntry['reason'], string> = {
-  mention: '멘션',
-  thread_reply: '스레드 답글',
-  dm: 'DM',
-};
+// `ReasonFilter`·`REASON_LABEL` 이 여기 있었다(#488 C2 에서 지웠다). `reason` 은 값이
+// 셋뿐이라 **무엇을 그려도 네 줄이 갈리지 않았고**, 그것이 문서가 지적한 결함이었다.
+// 말의 종류는 이제 `lib/inboxRow` 가 `meta` 에서 읽는다.
 
 const THREAD_PREFIX = 'thread:';
 
@@ -61,12 +58,33 @@ export function Inbox({ open, onClose }: Props) {
   const accounts = useActiveStore((s) => s.accounts);
   const me = useActiveStore((s) => s.me);
   const drafts = useActiveStore((s) => s.drafts);
+  const myId = me?.id ?? null;
+  /** 지금 답을 보내는 중인 항목. 두 번 눌러 두 번 보내지 않게 한다. */
+  const [answering, setAnswering] = useState<number | null>(null);
+
+  /**
+   * **줄에서 바로 답한다**(#488 C2). 스레드를 열지 않는다 — 문서: *"스레드를 열어야만
+   * 답할 수 있으면 인박스는 알림 목록일 뿐"* 이다.
+   *
+   * 답한 뒤 목록을 다시 읽는다: 그 물음은 더 이상 나를 막지 않으므로 줄의 종류와
+   * 순서가 함께 바뀐다.
+   */
+  const answer = async (e: InboxEntry, optionId: string): Promise<void> => {
+    setAnswering(e.id);
+    try {
+      await getController().answerAsk(e.messageId, optionId, e.channelId);
+      reload();
+    } finally { setAnswering(null); }
+  };
   const messages = useActiveStore((s) => s.messages);
 
   const [entries, setEntries] = useState<InboxEntry[]>([]);
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
-  const [reason, setReason] = useState<ReasonFilter>('all');
-  const [unreadOnly, setUnreadOnly] = useState(false);
+  /**
+   * **칩 하나가 정렬 축을 그대로 쓴다**(#488 C2·B3). 네이티브 `select` 둘과 체크박스가
+   * 사라진 자리다 — 고르는 축과 보이는 순서가 어긋나지 않는다.
+   */
+  const [filter, setFilter] = useState<InboxFilter>('all');
   const [channelFilter, setChannelFilter] = useState('all');
 
   const reload = useCallback((): (() => void) => {
@@ -87,8 +105,7 @@ export function Inbox({ open, onClose }: Props) {
 
   useEffect(() => {
     if (!open) return;
-    setReason('all');
-    setUnreadOnly(false);
+    setFilter('all');
     setChannelFilter('all');
     return reload();
   }, [open, reload]);
@@ -122,30 +139,33 @@ export function Inbox({ open, onClose }: Props) {
       return { scopeKey, body, threadRootId, channelId };
     }), [drafts, messages]);
 
-  /** 필터 드롭다운에 낼 채널들. 지금 목록에 실제로 등장하는 채널만 낸다. */
-  const channelOptions = useMemo(() => {
-    const ids = new Set<string>(entries.map((e) => e.channelId));
-    for (const d of draftItems) if (d.channelId) ids.add(d.channelId);
-    return [...ids].map((id) => ({ id, label: channelLabel(id) }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [entries, draftItems, channelLabel]);
-
-  const shownEntries = useMemo(() => entries.filter((e) => {
-    if (reason !== 'all' && e.reason !== reason) return false;
-    if (unreadOnly && e.readAt !== null) return false;
-    if (channelFilter !== 'all' && e.channelId !== channelFilter) return false;
-    return true;
-  }), [entries, reason, unreadOnly, channelFilter]);
+  /**
+   * **정렬은 막는 순이다**(#488 C2). 문서: *"시간순이 아니라 나를 막는 것 → 읽을 것 →
+   * 배경. 필터 칩이 그 순서를 그대로 쓴다."*
+   *
+   * 시간은 `rank` 가 같을 때만 본다 — 그 안에서는 **최근이 위**다. 시간을 첫 축으로
+   * 두면 방금 온 답글 하나가 어제부터 나를 막고 있던 물음을 아래로 밀어낸다.
+   */
+  const shownEntries = useMemo(() => entries
+    .map((e) => ({ e, row: inboxRow(e, myId) }))
+    .filter(({ e, row }) => {
+      if (!matchesFilter(row, filter)) return false;
+      if (channelFilter !== 'all' && e.channelId !== channelFilter) return false;
+      return true;
+    })
+    .sort((a, b) => a.row.rank - b.row.rank
+      || Date.parse(b.e.createdAt) - Date.parse(a.e.createdAt))
+    .map(({ e }) => e),
+  [entries, filter, channelFilter, myId]);
 
   const shownDrafts = useMemo(() => draftItems.filter((d) => {
-    // 종류로 좁히면 초안은 빠진다. 초안은 멘션도 답글도 DM 도 아니다 — 남이 나를 부른 것이
-    // 아니라 내가 쓰다 만 것이다. "멘션만" 이라고 물었는데 초안이 남아 있으면 그 목록은
-    // 자기가 무엇인지 답하지 못한다. '안 읽음만' 에서는 남는다: 쓰다 만 초안은 언제나
-    // 아직 처리하지 않은 것이라 그 물음에 대한 답이 늘 참이다.
-    if (reason !== 'all') return false;
+    // **칩으로 좁히면 초안은 빠진다.** 초안은 남이 나를 부른 것이 아니라 내가 쓰다 만
+    // 것이라 '나를 막는 것'도 '읽을 것'도 아니다. "막는 것만" 이라고 물었는데 초안이
+    // 남아 있으면 그 목록은 자기가 무엇인지 답하지 못한다.
+    if (filter !== 'all') return false;
     if (channelFilter !== 'all' && d.channelId !== channelFilter) return false;
     return true;
-  }), [draftItems, reason, channelFilter]);
+  }), [draftItems, filter, channelFilter]);
 
   if (!open) return null;
 
@@ -164,33 +184,87 @@ export function Inbox({ open, onClose }: Props) {
     onClose();
   };
 
-  const entryRow = (e: InboxEntry) => (
+  /**
+   * 인박스 줄 하나 — **네 가지를 말한다**(#488 C2): 누가(얼굴) · 무슨 말 · 무엇을(본문
+   * 한 줄) · 언제·어디.
+   *
+   * 전에는 `[스레드 답글] #general` 뿐이라 **네 줄이 글자까지 똑같았다.** 그 셋은
+   * "어떻게 나에게 왔는가"를 말하지 "무슨 말인가"를 말하지 않는다 — 종류는 `meta` 가
+   * 답하고(`lib/inboxRow`), 나머지 재료는 서버가 실어 준다.
+   */
+  const entryRow = (e: InboxEntry) => {
+    const row = inboxRow(e, myId);
+    return (
     <li key={e.id}>
       <button
         data-testid={`inbox-entry-${e.id}`}
+        data-kind={row.kind}
+        data-rank={row.rank}
         onClick={() => openEntry(e)}
-        className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-surface-hover"
+        className="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-surface-hover"
       >
-        <span
-          data-testid={`inbox-reason-${e.id}`}
-          className="rounded bg-surface-sunken px-1 text-[10px] uppercase tracking-wide text-fg-muted"
-        >
-          {REASON_LABEL[e.reason]}
-        </span>
-        <span className="text-fg-muted">{channelLabel(e.channelId)}</span>
+        {/* **누가** — 얼굴이 이름을 대신한다(identity 문서와 같은 규칙). */}
+        {e.authorId && (
+          <Identity account={accounts[e.authorId]} className="mt-0.5 h-5 w-5 text-[10px]" variant="avatar" />
+        )}
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="flex items-center gap-1.5">
+            {/*
+              **무슨 말.** 나를 막는 것만 강조를 받는다(규칙 04) — 강조가 여러 줄에
+              뿌려지면 "내 차례"라는 신호가 죽고, 인박스는 그 신호가 가장 진해야 하는
+              자리다.
+            */}
+            <span
+              data-testid={`inbox-reason-${e.id}`}
+              className={`rounded px-1 text-[10px] ${row.rank === 0
+                ? 'bg-accent-surface font-medium text-state-turn'
+                : 'bg-surface-sunken text-fg-muted'}`}
+            >
+              {row.label}
+            </span>
+            {/* **무엇을** — 본문 한 줄. 자르는 폭은 화면이 정한다(서버는 안 자른다). */}
+            <span className="truncate text-fg">{e.body}</span>
+          </span>
+          <span className="flex items-center gap-1.5 text-[11px] text-fg-subtle">
+            {/* **언제·어디.** */}
+            <span>{channelLabel(e.channelId)}</span>
+            {e.threadRootId && <span>· 스레드</span>}
+            <span>· {new Date(e.createdAt).toLocaleString()}</span>
         {/* 안 읽음은 표시가 있어야 한다. 필터로 걸러 볼 수 있는 것이 목록에서는 안 보이면
             "안 읽음만" 을 껐을 때 무엇이 안 읽은 것인지 알 수 없다. */}
-        {e.readAt === null && (
-          <span
-            data-testid={`inbox-unread-${e.id}`}
-            className="rounded bg-sky-900 px-1 text-[10px] text-sky-200"
-          >
-            안 읽음
+            {e.readAt === null && (
+              <span data-testid={`inbox-unread-${e.id}`} className="text-accent">· 안 읽음</span>
+            )}
           </span>
-        )}
+        </span>
       </button>
+      {/*
+        **선택은 줄에서 끝난다**(문서). *"선택지가 둘뿐이면 인박스에서 바로 누른다.
+        스레드를 열어야만 답할 수 있으면 인박스는 알림 목록일 뿐이고, 컨셉이 말한
+        '막는 말을 푸는 자리'가 되지 못한다."*
+
+        버튼을 줄 **바깥**에 두는 이유: 안에 넣으면 `<button>` 안의 `<button>` 이 되어
+        HTML 이 허용하지 않고, 고르려다 스레드가 열린다.
+      */}
+      {row.options && (
+        <div className="flex gap-1 px-2 pb-1.5 pl-9">
+          {row.options.map((o) => (
+            <button
+              key={o.id}
+              data-testid={`inbox-answer-${e.id}-${o.id}`}
+              disabled={answering === e.id}
+              onClick={() => void answer(e, o.id)}
+              className="rounded border border-border px-2 py-0.5 text-[11px] text-fg
+                         hover:bg-surface-hover disabled:opacity-50"
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
     </li>
-  );
+    );
+  };
 
   const draftRow = (d: DraftItem) => (
     <li key={d.scopeKey}>
@@ -228,44 +302,34 @@ export function Inbox({ open, onClose }: Props) {
             ✕
           </button>
         </div>
-        <div className="flex flex-wrap items-center gap-3 border-b border-border p-3">
-          <label className="flex items-center gap-1">
-            <span className="text-xs text-fg-subtle">종류</span>
-            <select
-              aria-label="종류 필터"
-              className="rounded border border-border bg-field px-2 py-1 text-fg"
-              value={reason}
-              onChange={(e) => setReason(e.target.value as ReasonFilter)}
+        {/*
+          **필터 칩이 정렬 순서를 그대로 쓴다**(#488 C2). 네이티브 `select` 둘과
+          체크박스가 사라진 자리다(B3) — 고르는 축과 보이는 순서가 어긋나지 않는다.
+        */}
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-border p-3">
+          {([
+            ['blocking', '나를 막는 것'],
+            ['reading', '읽을 것'],
+            ['all', '전부'],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              data-testid={`inbox-filter-${value}`}
+              data-selected={filter === value}
+              aria-pressed={filter === value}
+              onClick={() => setFilter(value)}
+              className={`rounded-full border px-2.5 py-0.5 text-xs ${filter === value
+                ? 'border-border bg-surface-sunken font-medium text-fg'
+                : 'border-border text-fg-muted hover:bg-surface-hover'}`}
             >
-              <option value="all">전체</option>
-              <option value="mention">{REASON_LABEL.mention}</option>
-              <option value="thread_reply">{REASON_LABEL.thread_reply}</option>
-              <option value="dm">{REASON_LABEL.dm}</option>
-            </select>
-          </label>
-          <label className="flex items-center gap-1">
-            <span className="text-xs text-fg-subtle">채널</span>
-            <select
-              aria-label="채널 필터"
-              className="rounded border border-border bg-field px-2 py-1 text-fg"
-              value={channelFilter}
-              onChange={(e) => setChannelFilter(e.target.value)}
-            >
-              <option value="all">전체</option>
-              {channelOptions.map((c) => (
-                <option key={c.id} value={c.id}>{c.label}</option>
-              ))}
-            </select>
-          </label>
-          <label className="flex items-center gap-1">
-            <input
-              type="checkbox"
-              aria-label="안 읽음만"
-              checked={unreadOnly}
-              onChange={(e) => setUnreadOnly(e.target.checked)}
-            />
-            <span className="text-xs text-fg-muted">안 읽음만</span>
-          </label>
+              {label}
+              {value !== 'all' && (
+                <span className="ml-1 text-fg-subtle">
+                  {entries.filter((e) => matchesFilter(inboxRow(e, myId), value)).length}
+                </span>
+              )}
+            </button>
+          ))}
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {/* 실패는 목록 위에 남긴다. 실패했는데 빈 목록만 보이면 사람은 "아무도 나를
