@@ -8,6 +8,7 @@
  * 전부 통과했다). 여기서는 키체인과 자식 프로세스만 목이고 판정은 전부 실물이다.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { CREDENTIAL_REJECTED_LINE } from '@murmur/shared';
 import {
   RunnerLauncher, patLabelPrefix,
   type LaunchableAgent, type RunnerProcess, type RunnerSecretStore, type RunnerSpawner,
@@ -51,8 +52,15 @@ function fakeSpawner() {
       const index = spawns.push(req) - 1;
       return { kill: async () => { kills.push(index); } };
     }),
-    /** 마지막으로 띄운 자식이 `code` 로 끝났다고 알린다. */
-    exit(code: number | null, index = spawns.length - 1) { spawns[index]!.onExit(code); },
+    /**
+     * 마지막으로 띄운 자식이 `code` 로 끝났다고 알린다.
+     *
+     * `tailLines` 는 daemon 이 exit 통지에 싣는 **러너 로그의 꼬리**다(`#473`).
+     * 안 주면 `undefined` — 옛 daemon 이거나 로그를 못 읽은 경우와 같다.
+     */
+    exit(code: number | null, index = spawns.length - 1, tailLines?: string[]) {
+      spawns[index]!.onExit(code, tailLines);
+    },
   };
   return spawner;
 }
@@ -305,14 +313,43 @@ describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
   });
 });
 
+/**
+ * 러너가 자격증명 거부로 물러날 때 로그에 남기는 구분자(`#473`).
+ *
+ * **`#434` 이전에는 이 값이 필요 없었다** — 앱이 78 을 보면 무조건 자격증명 거부로
+ * 단정했기 때문이다. 그 단정이 하네스가 없는 사람에게 재발급을 시켰고(`#473`), 이제
+ * 앱은 **로그의 이 줄**을 보고 가른다. 그래서 이 픽스처가 생겼다.
+ *
+ * 문자열을 손으로 적지 않고 `@murmur/shared` 의 상수를 쓴다 — 사본을 들면 상수가
+ * 바뀔 때 이 파일만 초록으로 남고, 그때 앱은 다시 사유를 못 가린다.
+ */
+const 자격증명거부꼬리 = [CREDENTIAL_REJECTED_LINE];
+
 describe('6. 종료 코드', () => {
-  it('78 이면 "재발급 필요"가 된다', async () => {
+  it('78 + 자격증명 거부 구분자면 "재발급 필요"가 된다', async () => {
+    const { launcher, spawner } = make();
+    await startAll(launcher, [agent('a')]);
+    spawner.exit(78, undefined, 자격증명거부꼬리);
+
+    const state = launcher.getStates()[0]!;
+    expect(state.status).toBe('needs_reissue');
+    expect(state.exitCode).toBe(78);
+  });
+
+  /**
+   * **78 만으로는 재발급을 말하지 않는다** — `#473` 이 고친 것이 이것이다.
+   *
+   * 자세한 갈래는 `runnerHarnessMissing.test.tsx` 가 잰다. 여기 한 줄을 두는 이유는
+   * 이 파일이 종료 코드 판정의 자리이고, 누가 78 분기를 "꼬리를 안 봐도 되게" 되돌리면
+   * 여기서도 걸려야 하기 때문이다.
+   */
+  it('구분자 없는 78 은 재발급을 말하지 않는다 — 사유를 지어내지 않는다', async () => {
     const { launcher, spawner } = make();
     await startAll(launcher, [agent('a')]);
     spawner.exit(78);
 
     const state = launcher.getStates()[0]!;
-    expect(state.status).toBe('needs_reissue');
+    expect(state.status).not.toBe('needs_reissue');
     expect(state.exitCode).toBe(78);
   });
 
@@ -353,14 +390,16 @@ describe('6. 종료 코드', () => {
 
     // 재발급 순서(결정 3: 새 발급 → 옛 폐기 → 재실행)상 옛 자식은 폐기된 PAT 로 401 을
     // 받고 78 로 죽는 것이 정상 경로다 — 그 통지가 새 자식을 'needs_reissue' 로 덮으면 안 된다.
-    spawner.exit(78, 0);
+    // 꼬리까지 실려 온다(`#473`) — **꼬리가 있어도 세대 판정이 먼저 거른다**는 것이
+    // 이 단언이 함께 지키는 성질이다.
+    spawner.exit(78, 0, 자격증명거부꼬리);
 
     expect(launcher.getStates()[0]!).toMatchObject({ status: 'running', exitCode: null });
 
     // 그리고 78 이 죽은 것이 아님을 같은 자리에서 못박는다: **지금 자식**이 78 로 끝나면
     // 여전히 '재발급 필요'가 된다. 이 대조가 없으면 위 단언은 세대 판정만 재고 78 자체는
     // 재지 않아, 78 분기를 통째로 지워도 초록으로 남는다.
-    spawner.exit(78, 1);
+    spawner.exit(78, 1, 자격증명거부꼬리);
 
     expect(launcher.getStates()[0]!).toMatchObject({ status: 'needs_reissue', exitCode: 78 });
   });
@@ -469,7 +508,7 @@ describe('9. 중복 방지·정리', () => {
     const seen: string[] = [];
     launcher.setOnStateChange((states) => seen.push(states.map((s) => s.status).join(',')));
     await startAll(launcher, [agent('a')]);
-    spawner.exit(78);
+    spawner.exit(78, undefined, 자격증명거부꼬리);
 
     expect(seen).toEqual(['running', 'needs_reissue']);
   });

@@ -235,6 +235,8 @@ describe('incarnationId — 늦게 온 exit 을 버린다', () => {
     incarnationId,
     code: 1,
     signal: null,
+    // 세대 판정은 꼬리와 무관하다 — 비워 둔다(`#473` 이 더한 필드).
+    tailLines: [],
   });
 
   it('세대가 다른 exit 이벤트를 무시한다', () => {

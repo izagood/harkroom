@@ -10,7 +10,11 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import type { AgentView } from '@murmur/shared';
+import {
+  CREDENTIAL_REJECTED_LINE,
+  EXECUTABLE_NOT_FOUND_LINE,
+  type AgentView,
+} from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController } from '../src/state/controller';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -156,15 +160,33 @@ describe('설정 → 에이전트 상세가 그 상태를 그린다', () => {
     expect(await screen.findByText('실행 중')).toBeTruthy();
   });
 
-  it('자식이 78 로 죽으면 "재발급 필요"가 화면에 보인다', async () => {
+  it('자식이 78 + 자격증명 거부 구분자로 죽으면 "재발급 필요"가 화면에 보인다', async () => {
     const { spawner } = await boot([agentView('rusalka')]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByText('rusalka'));
     await screen.findByText('실행 중');
 
-    spawner.spawns[0]!.onExit(78);
+    // **꼬리를 함께 넘긴다**(`#473`). 78 만으로는 어느 사유인지 모른다 — 자격증명 거부와
+    // 하네스 부재가 그 코드를 공유하고, 러너는 이 줄로 그 둘을 가른다.
+    spawner.spawns[0]!.onExit(78, [CREDENTIAL_REJECTED_LINE]);
 
     expect(await screen.findByText(/78: 자격증명 폐기/)).toBeTruthy();
+  });
+
+  /**
+   * 대조군(`#473`) — **하네스 부재가 자격증명 문구로 나오지 않는다.** 같은 화면 자리를
+   * 쓰므로 여기서 나란히 잰다: 78 이 두 사유를 공유한다는 사실이 화면까지 반영됐는가.
+   */
+  it('자식이 78 + 하네스 부재 구분자로 죽으면 설치를 말한다', async () => {
+    const { spawner } = await boot([agentView('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByText('rusalka'));
+    await screen.findByText('실행 중');
+
+    spawner.spawns[0]!.onExit(78, [EXECUTABLE_NOT_FOUND_LINE]);
+
+    expect(await screen.findByText(/78: 하네스를 찾을 수 없음/)).toBeTruthy();
+    expect(screen.queryByText(/자격증명 폐기/)).toBeNull();
   });
 
   it('다른 코드로 죽으면 그 코드가 화면에 보인다', async () => {

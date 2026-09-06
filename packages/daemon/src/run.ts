@@ -25,7 +25,8 @@ import {
   writeRunnerLedger,
   type RunnerLedgerEntry,
 } from './runnerLedger.js';
-import { RunnerRegistry, nodeRunnerHost, type RunnerHost } from './runners.js';
+import { openRunnerLog, readRunnerLogTail, runnerLogPath } from './runnerLog.js';
+import { RunnerRegistry, nodeRunnerHost, type RunnerHost, type RunnerLogSink } from './runners.js';
 import { DaemonServer } from './server.js';
 
 /**
@@ -77,6 +78,14 @@ export interface RunOptions {
    */
   runnerArgs?: readonly string[];
   host?: RunnerHost;
+  /**
+   * 러너 로그 표면(`#434`). 안 주면 `<appDataDir>/daemon/runner-<agentId>.log` 다.
+   *
+   * `null` 을 명시하면 **로그를 안 남긴다** — 회귀선이 "로그 없이도 러너는 뜬다"를
+   * 재는 자리이고, 그것이 이 장치의 실패가 기동을 막지 않는다는 성질이다.
+   * **소켓 클라이언트는 이 값을 못 정한다**(`runnerCommand` 와 같은 이유).
+   */
+  logs?: RunnerLogSink | null;
   /**
    * 프로세스 신원 확인 표면(`#431` 2-c). 기본은 `ps -o lstart`.
    *
@@ -195,6 +204,21 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     },
   };
 
+  // ── 러너 로그 — **경로를 daemon 이 정한다**(`#434`) ────────────────────────────
+  // `appDataDir` 는 `--socket` 에서 되짚은 값이고(위 `appDataDirFromSocket`), 러너는
+  // 이 경로를 **인자로 받지 않는다.** 받게 하면 소켓에 붙은 누구든 daemon 권한으로
+  // 임의 파일에 append 하고(그리고 회전 경로에서 `rename`·`unlink` 까지) 할 수 있다 —
+  // `RunOptions.runnerCommand` 를 클라이언트에게 안 연 것과 같은 경계다(`#250`).
+  //
+  // 소켓·pid·토큰·장부와 **같은 디렉터리**(`<appDataDir>/daemon/`)에 둔다. 사람이
+  // daemon 로그(`daemon-v1.log`)와 러너 로그를 한자리에서 대조하기 위해서다 —
+  // "daemon 은 떴는데 러너가 죽었다"를 두 파일을 나란히 놓고 읽는 것이 진단의 첫 걸음이다.
+  const logSink: RunnerLogSink = {
+    open: (agentId) => openRunnerLog(appDataDir, agentId, { log }),
+    pathFor: (agentId) => runnerLogPath(appDataDir, agentId),
+    tail: (path) => readRunnerLogTail(path),
+  };
+
   const registry = new RunnerRegistry(
     {
       command: options.runnerCommand ?? defaultRunnerCommand(entryPath),
@@ -203,6 +227,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     options.host ?? nodeRunnerHost,
     (notice) => serverRef.current?.broadcastRunnerExit(notice),
     ledgerSink,
+    options.logs === undefined ? logSink : options.logs,
   );
 
   /**
