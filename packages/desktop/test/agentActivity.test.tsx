@@ -79,7 +79,9 @@ describe('마지막 활동 표시 (#176)', () => {
 
     // 붙어 있는데 오래 쉰 것 / 방금까지 일했는데 지금 없는 것 — 한 필드로 뭉갠 화면은
     // 이 둘을 같은 표시로 그린다. 그래서 이 조합이 곧 "합치지 않았다"의 증거다.
-    fireEvent.click(screen.getByTestId(`agent-card-${gone.handle}`));
+    // 상세가 그리드를 덮으므로 다른 카드를 고르려면 **먼저 돌아간다**(Task 15: 한 번에 한 화면).
+    fireEvent.click(screen.getByTestId('agent-back'));
+    fireEvent.click(await screen.findByTestId(`agent-card-${gone.handle}`));
     const gonePresence = await screen.findByTestId(`agent-presence-${gone.id}`);
     expect(gonePresence.dataset.online).toBe('false');
     expect(gonePresence.textContent).toBe('오프라인');
@@ -111,13 +113,15 @@ describe('마지막 활동 표시 (#176)', () => {
     useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true), online: [], connected: false });
 
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByTestId(`agent-card-${bot.handle}`));
+    // 카드는 **그리드에서** 본다 — 상세로 들어가면 그리드가 덮인다(Task 15: 한 번에 한 화면).
+    // '모른다'를 회색으로 단정하지 않는다: 소켓이 끊긴 동안 40개가 전부 가라앉으면 그것도
+    // 거짓말이다(`faceState` 의 규약).
+    const card = await screen.findByTestId(`agent-card-${bot.handle}`);
+    expect(card.dataset.face).toBe('ok');
 
+    fireEvent.click(card);
     const presence = await screen.findByTestId(`agent-presence-${bot.id}`);
     expect(presence.dataset.online).toBe('unknown');
-    // 카드도 '모른다'를 회색으로 단정하지 않는다 — 소켓이 끊긴 동안 40개가 전부 가라앉으면
-    // 그것도 거짓말이다(`faceState` 의 규약).
-    expect(screen.getByTestId(`agent-card-${bot.handle}`).dataset.face).toBe('ok');
     expect(presence.textContent).toContain('알 수 없음');
     // 마지막 활동은 서버가 준 값이라 소켓과 무관하게 그대로 보인다.
     expect(screen.getByTestId(`agent-last-turn-${bot.id}`).textContent).toBe('마지막 활동: 5분 전');
