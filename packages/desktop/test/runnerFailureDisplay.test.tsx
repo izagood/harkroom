@@ -285,37 +285,48 @@ describe('#368 사이드바 — DM 이 없어도 사유를 읽을 수 있다', (
 });
 
 describe('#368 설정 → Agents 목록 — presence 문구로 끝내지 않는다', () => {
-  it('러너가 failed 면 오프라인 옆에 사유가 함께 선다', async () => {
+  it('러너가 failed 면 카드가 붉은 테와 ↻ 를 받고 사유가 목록 아래에 선다', async () => {
     const forge = agentView('forge', 'forge');
     settingsController([forge]);
     useAppStore.getState().set({
       me: acc('u1', 'admin', 'human', true),
-      online: [], connected: true,
-      runnerStates: { forge: failedState('forge', FAILURE_MESSAGE) },
+      accounts: { u1: acc('u1', 'admin', 'human', true), forge },
+      connected: true,
+      online: [],
+      runnerStates: { forge: { agentId: 'forge', status: 'failed', exitCode: 1, message: '노드를 찾지 못했다' } },
     });
 
     render(<AgentsSettings />);
 
-    // presence 는 그대로 남는다 — #176 이 닫은 결함(생존·마지막 활동·러너를 한 칸에 뭉치면
-    // 러너 없는 에이전트가 정상으로 보인다)을 되살리지 않는다.
-    const presence = await screen.findByTestId('agent-presence-forge');
-    expect(presence.textContent).toBe('오프라인');
-    // 그리고 그 줄이 presence 로 **끝나지 않는다**: 사람이 할 일이 있다는 신호가 붙는다.
-    expect(screen.getByTestId('agent-runner-failed-forge').textContent).toContain(FAILURE_MESSAGE);
+    /**
+     * **Task 15-2 로 자리가 바뀌었다.** 카드는 조용해야 하므로(문서) presence 글자는 상세로
+     * 내려갔지만, **#368 이 지키는 것은 "사유가 닿는 자리"** 다 — 그래서 목록에서 여전히
+     * 보여야 한다. 사진이 상태를 말하고(붉은 테 + ↻) 사유만 글자로 남는다.
+     */
+    const card = await screen.findByTestId('agent-card-forge');
+    expect(card.dataset.face).toBe('failed');
+    expect(screen.getByTestId('agent-relaunch-forge')).toBeTruthy();
+    // 사유는 여전히 **목록에서** 읽힌다 — 툴팁이 아니라 글자다.
+    expect(screen.getByTestId('agent-runner-failed-forge').textContent).toContain('노드를 찾지 못했다');
   });
 
-  it('러너가 정상이면 그 신호는 없다 — 오프라인은 그냥 오프라인이다', async () => {
+  it('러너가 정상이면 아무 장식도 없다 — 정상이 기본값이다', async () => {
     const forge = agentView('forge', 'forge');
     settingsController([forge]);
     useAppStore.getState().set({
       me: acc('u1', 'admin', 'human', true),
-      online: [], connected: true,
-      runnerStates: { forge: { agentId: 'forge', status: 'running', exitCode: null, message: null } },
+      accounts: { u1: acc('u1', 'admin', 'human', true), forge },
+      connected: true,
+      online: ['forge'],
+      runnerStates: {},
     });
 
     render(<AgentsSettings />);
 
-    await screen.findByTestId('agent-presence-forge');
+    const card = await screen.findByTestId('agent-card-forge');
+    expect(card.dataset.face).toBe('ok');
+    // 40개 중 38개가 이 모습이면 화면이 조용하다 — 정상에는 표시를 붙이지 않는다.
+    expect(screen.queryByTestId('agent-relaunch-forge')).toBeNull();
     expect(screen.queryByTestId('agent-runner-failed-forge')).toBeNull();
   });
 });

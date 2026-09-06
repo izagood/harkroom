@@ -54,8 +54,8 @@ const openAsOwner = async (overrides: Record<string, unknown> = {}) => {
   });
   const c = fakeController(overrides);
   render(<AgentsSettings />);
-  await screen.findByText('mybot');
-  fireEvent.click(screen.getByText('mybot'));
+  await screen.findByTestId('agent-card-mybot');
+  fireEvent.click(screen.getByTestId('agent-card-mybot'));
   await screen.findByLabelText('Working directory');
   return c;
 };
@@ -131,8 +131,8 @@ describe('소유자의 에이전트 설정 화면 (#299)', () => {
     });
     const c = fakeController({ agentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })) });
     render(<AgentsSettings />);
-    await screen.findByText('mybot');
-    fireEvent.click(screen.getByText('mybot'));
+    await screen.findByTestId('agent-card-mybot');
+    fireEvent.click(screen.getByTestId('agent-card-mybot'));
     await screen.findByLabelText('Mention permission');
 
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));

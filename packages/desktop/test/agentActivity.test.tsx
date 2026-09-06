@@ -9,7 +9,7 @@
 // '활동 없음'이고 '죽었다'가 아니며, 오래된 값도 '멈췄다'가 아니다. murmur 는 러너 프로세스를
 // 보지 못한다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
 import type { AgentConfig, AgentDefaults, AgentView, PatView } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
@@ -66,12 +66,21 @@ describe('마지막 활동 표시 (#176)', () => {
 
     render(<AgentsSettings />);
 
+    /**
+     * **Task 15-2 로 자리가 바뀌었다.** 두 사실은 카드가 아니라 **상세 헤더**에 나란히 선다
+     * (문서: "카드는 조용하다"). 지키는 것은 자리가 아니라 **둘이 서로를 대체하지 않는다**
+     * 이므로, 하나씩 골라 두 조합을 모두 확인한다.
+     */
+    fireEvent.click(await screen.findByTestId(`agent-card-${idle.handle}`));
     const idlePresence = await screen.findByTestId(`agent-presence-${idle.id}`);
     expect(idlePresence.dataset.online).toBe('true');
     expect(idlePresence.textContent).toBe('온라인');
     expect(screen.getByTestId(`agent-last-turn-${idle.id}`).textContent).toBe('마지막 활동: 2시간 전');
 
-    const gonePresence = screen.getByTestId(`agent-presence-${gone.id}`);
+    // 붙어 있는데 오래 쉰 것 / 방금까지 일했는데 지금 없는 것 — 한 필드로 뭉갠 화면은
+    // 이 둘을 같은 표시로 그린다. 그래서 이 조합이 곧 "합치지 않았다"의 증거다.
+    fireEvent.click(screen.getByTestId(`agent-card-${gone.handle}`));
+    const gonePresence = await screen.findByTestId(`agent-presence-${gone.id}`);
     expect(gonePresence.dataset.online).toBe('false');
     expect(gonePresence.textContent).toBe('오프라인');
     expect(screen.getByTestId(`agent-last-turn-${gone.id}`).textContent).toBe('마지막 활동: 3분 전');
@@ -83,6 +92,7 @@ describe('마지막 활동 표시 (#176)', () => {
     connectedWith([fresh.id]);
 
     render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId(`agent-card-${fresh.handle}`));
 
     expect((await screen.findByTestId(`agent-last-turn-${fresh.id}`)).textContent).toBe('활동 없음');
     // 온라인 표시는 그대로 살아 있다 — 활동 기록이 없는 것이 러너가 없다는 뜻은 아니다.
@@ -101,9 +111,13 @@ describe('마지막 활동 표시 (#176)', () => {
     useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true), online: [], connected: false });
 
     render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId(`agent-card-${bot.handle}`));
 
     const presence = await screen.findByTestId(`agent-presence-${bot.id}`);
     expect(presence.dataset.online).toBe('unknown');
+    // 카드도 '모른다'를 회색으로 단정하지 않는다 — 소켓이 끊긴 동안 40개가 전부 가라앉으면
+    // 그것도 거짓말이다(`faceState` 의 규약).
+    expect(screen.getByTestId(`agent-card-${bot.handle}`).dataset.face).toBe('ok');
     expect(presence.textContent).toContain('알 수 없음');
     // 마지막 활동은 서버가 준 값이라 소켓과 무관하게 그대로 보인다.
     expect(screen.getByTestId(`agent-last-turn-${bot.id}`).textContent).toBe('마지막 활동: 5분 전');

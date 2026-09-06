@@ -171,14 +171,14 @@ describe('AgentsSettings', () => {
     fakeController([agent('rusalka', { instructions: '기존 지시문' })]);
     render(<AgentsSettings />);
 
-    expect(await screen.findByText('rusalka')).toBeTruthy();
+    expect(await screen.findByTestId('agent-card-rusalka')).toBeTruthy();
   });
 
   it('loads an existing agent into the form for editing', async () => {
     fakeController([agent('rusalka', { instructions: '기존 지시문' })]);
     render(<AgentsSettings />);
 
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     expect((screen.getByLabelText('Agent instructions') as HTMLTextAreaElement).value).toBe('기존 지시문');
   });
@@ -187,7 +187,7 @@ describe('AgentsSettings', () => {
   it('saves the whole definition when an edit is submitted', async () => {
     const c = fakeController([agent('rusalka', { instructions: '기존 지시문' })]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     fireEvent.change(screen.getByLabelText('Agent instructions'), { target: { value: '고친 지시문' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -203,7 +203,7 @@ describe('AgentsSettings', () => {
   it('clears model and effort when the operator returns to harness defaults', async () => {
     const c = fakeController([agent('rusalka', { model: 'claude-opus-5', effort: 'high' })]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     fireEvent.click(screen.getByRole('button', { name: 'Use harness defaults' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -217,7 +217,7 @@ describe('AgentsSettings', () => {
   it('renders mention permission as auto by default and sends readonly when chosen', async () => {
     const c = fakeController([agent('rusalka')]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     expect((screen.getByLabelText('Mention permission') as HTMLSelectElement).value).toBe('auto');
 
@@ -233,7 +233,7 @@ describe('AgentsSettings', () => {
   it('shows readonly when reopening an agent already set to readonly', async () => {
     fakeController([agent('rusalka', { mentionPermission: 'readonly' })]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     expect((screen.getByLabelText('Mention permission') as HTMLSelectElement).value).toBe('readonly');
   });
@@ -249,7 +249,7 @@ describe('AgentsSettings', () => {
       const c = fakeController([agent('rusalka')]);
       (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByText('rusalka'));
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
       expect(await screen.findByText('PAT (Personal Access Token)')).toBeTruthy();
     });
@@ -258,7 +258,7 @@ describe('AgentsSettings', () => {
       useAppStore.getState().set({ me: acc('u1', 'user', 'human', false) });
       fakeController([agent('rusalka')]);
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByText('rusalka'));
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
       expect(screen.queryByText('PAT (Personal Access Token)')).toBeNull();
     });
@@ -268,7 +268,7 @@ describe('AgentsSettings', () => {
       const c = fakeController([agent('rusalka')]);
       (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByText('rusalka'));
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
       expect(await screen.findByText('runner')).toBeTruthy();
       expect(await screen.findByText('backup')).toBeTruthy();
@@ -279,7 +279,7 @@ describe('AgentsSettings', () => {
       const c = fakeController([agent('rusalka')]);
       (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByText('rusalka'));
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
       expect(await screen.findByText('(폐기됨)')).toBeTruthy();
     });
@@ -290,7 +290,7 @@ describe('AgentsSettings', () => {
       (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
       (c.revokePat as ReturnType<typeof vi.fn>).mockResolvedValue({ revoked: 1 });
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByText('rusalka'));
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
       const revokeBtn = await screen.findByText('Revoke');
       fireEvent.click(revokeBtn);
@@ -306,7 +306,7 @@ describe('AgentsSettings', () => {
       (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       (c.mintPat as ReturnType<typeof vi.fn>).mockResolvedValue('murp_new_token');
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByText('rusalka'));
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
       const newPatBtn = await screen.findByRole('button', { name: '+ New PAT' });
       fireEvent.click(newPatBtn);
@@ -331,7 +331,10 @@ describe('AgentsSettings', () => {
       fakeController([agent('rusalka', { ownerAccountId: 'u2' })]);
       render(<AgentsSettings />);
 
-      expect(await screen.findByText('alice')).toBeTruthy();
+      // Task 15-2: 소유자는 카드가 아니라 **상세**가 말한다 — 먼저 고른다.
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+      // 소유자는 **핸들**로 그린다 — id 가 새면 사람이 읽을 수 없는 값이 화면에 남는다.
+      expect((await screen.findAllByText('alice')).length).toBeGreaterThan(0);
       expect(screen.queryByText('u2')).toBeNull();
     });
 
@@ -339,6 +342,8 @@ describe('AgentsSettings', () => {
       fakeController([agent('rusalka', { ownerAccountId: null })]);
       render(<AgentsSettings />);
 
+      // Task 15-2: 소유자는 카드가 아니라 **상세**가 말한다 — 먼저 고른다.
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
       expect(await screen.findByText('없음')).toBeTruthy();
     });
 
@@ -348,6 +353,8 @@ describe('AgentsSettings', () => {
       fakeController([agent('rusalka', { ownerAccountId: 'ghost-account' })]);
       render(<AgentsSettings />);
 
+      // Task 15-2: 소유자는 카드가 아니라 **상세**가 말한다 — 먼저 고른다.
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
       expect(await screen.findByText('알 수 없는 계정')).toBeTruthy();
       expect(screen.queryByText('없음')).toBeNull();
     });
@@ -356,7 +363,7 @@ describe('AgentsSettings', () => {
       useAppStore.getState().set({ me: acc('u2', 'alice', 'human', false) });
       fakeController([agent('rusalka', { ownerAccountId: 'u2' })]);
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByText('rusalka'));
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
       expect(screen.queryByLabelText('Owner')).toBeNull();
       expect(await screen.findByText(/소유자: @alice/)).toBeTruthy();
@@ -366,7 +373,7 @@ describe('AgentsSettings', () => {
       useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
       fakeController([agent('rusalka', { ownerAccountId: 'u2' })]);
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByText('rusalka'));
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
       expect(await screen.findByLabelText('Owner')).toBeTruthy();
     });
@@ -375,7 +382,7 @@ describe('AgentsSettings', () => {
       useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
       const c = fakeController([agent('rusalka', { ownerAccountId: null })]);
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByText('rusalka'));
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
       fireEvent.change(screen.getByLabelText('Owner'), { target: { value: 'u2' } });
       fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -388,7 +395,7 @@ describe('AgentsSettings', () => {
       useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
       const c = fakeController([agent('rusalka', { ownerAccountId: 'u2' })]);
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByText('rusalka'));
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
       fireEvent.change(screen.getByLabelText('Owner'), { target: { value: '' } });
       fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -401,7 +408,7 @@ describe('AgentsSettings', () => {
       useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
       fakeController([agent('rusalka', { ownerAccountId: null })]);
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByText('rusalka'));
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
       const ownerSelect = await screen.findByLabelText('Owner');
       const options = ownerSelect.querySelectorAll('option');
@@ -421,7 +428,7 @@ describe('에이전트 기억 (#139 3단계)', () => {
     const c = fakeController([agent('rusalka')]);
     c.agentMemory.mockResolvedValue([mem('core', '재빈은 러너를 담당한다')]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     expect(await screen.findByText('core')).toBeTruthy();
     expect(screen.getByText('재빈은 러너를 담당한다')).toBeTruthy();
@@ -433,7 +440,7 @@ describe('에이전트 기억 (#139 3단계)', () => {
     const c = fakeController([agent('rusalka')]);
     c.agentMemory.mockResolvedValue([]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     expect(await screen.findByText('기억이 없다')).toBeTruthy();
   });
@@ -444,7 +451,7 @@ describe('에이전트 기억 (#139 3단계)', () => {
     const c = fakeController([agent('rusalka')]);
     c.agentMemory.mockRejectedValue(new Error('boom'));
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     expect(await screen.findByRole('alert')).toBeTruthy();
     expect(screen.queryByText('기억이 없다')).toBeNull();
@@ -455,7 +462,7 @@ describe('에이전트 기억 (#139 3단계)', () => {
     const c = fakeController([agent('rusalka')]);
     c.agentMemory.mockResolvedValue([mem('mem/deploy', '배포는 redeploy.sh')]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     fireEvent.click(await screen.findByRole('button', { name: 'mem/deploy 기억 지우기' }));
     expect(c.deleteAgentMemory).not.toHaveBeenCalled();
@@ -471,7 +478,7 @@ describe('에이전트 기억 (#139 3단계)', () => {
     const c = fakeController([agent('rusalka')]);
     c.agentMemory.mockResolvedValue([mem('core', '값')]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
     await screen.findByText('core');
 
     expect(screen.queryByLabelText(/기억.*편집|edit.*memory/i)).toBeNull();
@@ -514,13 +521,23 @@ describe('새 에이전트 기본값', () => {
 
 
   // 복사본이므로 만들어진 뒤에는 '물려받았다'가 더 이상 참이 아니다 — 표시하면 거짓말이 된다.
-  it('좌측 목록은 실제 harness 만 보여준다 — 물려받았다는 표시를 두지 않는다', async () => {
+  it('실제 harness 만 보여준다 — 물려받았다는 표시를 두지 않는다', async () => {
     fakeController([agent('rusalka', { harness: 'claude-code' })]);
     render(<AgentsSettings />);
 
-    const row = await screen.findByText('rusalka');
-    expect(row.textContent).toContain('claude-code');
-    expect(row.textContent).not.toMatch(/기본값|inherit/i);
+    /**
+     * **Task 15-2 로 자리가 바뀌었다**: harness 는 카드가 아니라 상세가 말한다
+     * (문서: "카드에 남는 것은 아바타와 이름 둘뿐"). 이 테스트가 지키는 것은 자리가 아니라
+     * **'물려받았다' 표시를 두지 않는다**이다 — 기본값은 복사본이므로 만들어진 뒤에는
+     * 더 이상 참이 아니고, 표시하면 거짓말이 된다.
+     */
+    const card = await screen.findByTestId('agent-card-rusalka');
+    expect(card.textContent).not.toMatch(/기본값|inherit/i);
+
+    fireEvent.click(card);
+    const harness = await screen.findByLabelText('Agent harness');
+    expect((harness as HTMLSelectElement).value).toBe('claude-code');
+    expect(harness.closest('label')?.textContent).not.toMatch(/기본값|inherit/i);
   });
 });
 
@@ -541,7 +558,7 @@ describe('러너 종료 요청 (#129)', () => {
   it('요청 전에는 요청이 없다고만 말하고, 누르면 아직 읽어 가지 않았음을 보여준다', async () => {
     const c = fakeController([agent('rusalka')]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     expect((await stopPanel()).textContent).toContain('종료를 요청한 적이 없다');
 
@@ -559,7 +576,7 @@ describe('러너 종료 요청 (#129)', () => {
       stopAckedAt: '2026-09-03T10:00:20.000Z',
     })]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     const panel = await stopPanel();
     expect(panel.textContent).toContain('러너가 요청을 읽어 갔다');
@@ -577,7 +594,7 @@ describe('러너 종료 요청 (#129)', () => {
     for (const state of states) {
       fakeController([agent('rusalka', state)]);
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByText('rusalka'));
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
       const text = (await stopPanel()).textContent ?? '';
 
       // 프로세스의 생사를 단정하는 문구, 그리고 murmur 가 하지 않는 일(재시작)의 약속.
@@ -594,7 +611,7 @@ describe('러너 종료 요청 (#129)', () => {
       stopAckedAt: '2026-09-03T10:00:20.000Z',
     })]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     expect((await stopPanel()).textContent).toContain('실제로 종료했는지는 murmur 가 알 수 없다');
   });
