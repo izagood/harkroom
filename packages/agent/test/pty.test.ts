@@ -51,15 +51,91 @@ describe('runPtyTurn', () => {
   // 많이 쓰고 끝나는 하네스: tail 은 2KB 로 고정이라 앞부분(line 0)은 잘리고 끝부분
   // (line 9999)은 남아야 한다 — "앞이 잘린다"가 아니라 "끝이 남는다"를 확인하는 것이 핵심이다.
   // ring 은 사양대로 256KB 라 전체(총 10,000 줄, 대략 6~90KB)가 다 들어가야 한다.
+  //
+  // ## 이 테스트가 CI 에서 간헐적으로 빨개졌던 이유 (#416)
+  //
+  // 예전 픽스처는 10,000 줄을 다 쓴 **직후 곧장** `process.exit(0)` 했다. 그런데 PTY 는
+  // slave 쪽 fd 가 전부 닫히는 순간 **아직 안 읽힌 출력 큐를 커널이 버린다** — 부모가
+  // 그때까지 읽지 못한 만큼은 영영 사라지고, master 에서는 남은 데이터가 아니라 EIO 가
+  // 온다. 즉 이 테스트는 **PTY 가 보장하지 않는 것**(109KB 를 최고 속도로 쏟고 곧바로 죽어도
+  // 전부 읽힌다)을 단언하고 있었다. 부하가 없는 개발기에서는 부모가 자식을 따라잡아
+  // 늘 초록이었고, 2코어 CI 에서 다른 패키지 테스트와 CPU 를 다투면 못 따라잡아 빨개졌다.
+  //
+  // 실측(#416, Linux/2코어, chatty 6개 동시 + 버너 6개): **180회 중 14회** 실패했고 전부
+  // 자식은 다 쓴 뒤였다(exitCode 0 + 자식이 남긴 표식 파일). 잘린 자리가 `"lin"` 처럼 토큰
+  // 중간이었던 것이 "커널이 큐를 버렸다"의 증거다. 관측된 CI 실패 2건도 같은 모양이었다 —
+  // ring 은 `line 0` 로 시작하는데(=256KB 캡에 안 걸렸다) 끝의 `line 9999` 만 없었다.
+  //
+  // **고친 방식은 시간이 아니라 사건이다.** 픽스처가 종료 전 `setTimeout` 으로 머무르게
+  // 해도 통했지만(300ms 로 90회 중 0회), 그것은 느린 러너에서 다시 새는 종류의 해법이다
+  // (#391 이 같은 계열에서 고친 실수). 대신 픽스처가 **부모의 확인을 기다렸다** 죽게 했다:
+  // 여기서 `line 9999` 를 본 순간 PTY stdin 으로 한 바이트를 보내고, 그것이 닿아야 픽스처가
+  // 종료한다. 그러면 "다 읽었다"가 성립한 뒤에만 slave 가 닫히므로 버려질 잔량이 없다.
+  // 실측: 같은 부하에서 **180회 중 0회**.
+  //
+  // 타임아웃(10초)도 재시도도 늘리지 않았다 — 늘렸어도 원인이 시간이 아니라서 안 나았다.
   it('출력이 많은 하네스: ring 은 전체를 담고, tail 은 끝 2KB 만 남는다', async () => {
     const ring = new RingBuffer(256 * 1024);
-    const r = await runPtyTurn(plan('chatty'), { cwd: process.cwd(), timeoutMs: 10_000, ring });
+    // 마지막 줄을 본 순간 픽스처에게 "다 읽었다"를 알린다. **ring 이 아니라 onData 로
+    // 판정한다** — ring 은 캡이 걸리면 앞을 버리므로 "봤다"의 근거로 쓰면 캡 설정에 따라
+    // 조용히 깨진다. 여기서는 흘러온 청크만 이어 붙여 마지막 줄을 찾는다. 청크 경계에서
+    // `line 9999` 가 쪼개질 수 있어 누적 문자열에서 찾는다.
+    let controls: import('../src/pty.js').PtyControls | null = null;
+    let seen = '';
+    let acked = false;
+    const r = await runPtyTurn(plan('chatty'), {
+      cwd: process.cwd(), timeoutMs: 10_000, ring,
+      onSpawn: (c) => { controls = c; },
+      onData: (chunk) => {
+        if (acked) return;
+        seen += chunk.toString('utf8');
+        if (!seen.includes('line 9999')) return;
+        acked = true;
+        controls?.write(Buffer.from('\r'));
+      },
+    });
+    // ack 를 못 보냈다면 아래 단언들은 이 계약이 아니라 다른 사건을 재고 있다 — 픽스처는
+    // 20초 안전망(종료 코드 22)으로 죽었을 것이다(#391 의 `ready` 단언과 같은 규율).
+    expect(acked).toBe(true);
     expect(r.exitCode).toBe(0);
     expect(ring.snapshot().toString()).toContain('line 0');
     expect(ring.snapshot().toString()).toContain('line 9999');
     expect(r.tail).not.toContain('line 0');
     expect(r.tail).toContain('line 9999');
   });
+
+  // ## 회귀선 (#416) — 위 테스트를 지켜 주는 성질을 따로 고정한다
+  //
+  // 위 테스트는 픽스처가 **ack 를 기다렸다 죽는다**는 성질 위에 서 있다. 그 성질이 사라지면
+  // (누가 `chatty` 를 예전처럼 `for(...) console.log(); process.exit(0)` 로 되돌리면) 위
+  // 테스트는 **부하가 없는 개발기에서 여전히 초록**이고, 몇 주 뒤 남의 PR 을 빨갛게 만들 때
+  // 비로소 드러난다 — #416 이 정확히 그렇게 살아남았다. 그래서 그 성질 자체를 여기서 잰다.
+  //
+  // 재는 방법: **ack 를 일부러 안 보낸다.** 픽스처가 기다리고 있다면 스스로 안 죽으므로
+  // `timeoutMs` 가 걸려 `timedOut: true` 로 끝난다. 예전 픽스처였다면 다 쓰자마자 죽어서
+  // `timedOut: false` 에 `exitCode 0` 이 된다 — 그 차이가 이 단언이 잡는 것이다.
+  //
+  // **이 테스트는 부하와 무관하게 결정적이다.** 픽스처가 기다리는 한 절대 안 죽고, 안
+  // 기다리면 절대 timedOut 이 안 된다 — 어느 쪽이든 러너 속도가 답을 바꾸지 않는다.
+  // `timeoutMs` 는 "출력을 다 뿜을 시간"이 아니라 "안 죽는 것을 확인할 시간"이라 짧아도 된다.
+  it('#416 회귀선: chatty 는 ack 없이는 스스로 죽지 않는다 — 끝을 잃던 경쟁이 되살아나면 여기서 잡힌다', async () => {
+    let sawLastLine = false;
+    let seen = '';
+    const r = await runPtyTurn(plan('chatty'), {
+      cwd: process.cwd(), timeoutMs: 1_500, killGraceMs: 200,
+      // ack 를 **안 보낸다**. 다 뿜은 것은 확인하되(그래야 "아직 뿜는 중이라 안 죽은 것"과
+      // 구별된다), 종료 허가는 주지 않는다.
+      onData: (chunk) => {
+        if (sawLastLine) return;
+        seen += chunk.toString('utf8');
+        if (seen.includes('line 9999')) sawLastLine = true;
+      },
+    });
+    // 마지막 줄까지 뿜고도 살아 있었다 — 즉 픽스처는 출력이 끝나서 죽은 것이 아니라
+    // 우리가 안 죽였기 때문에 타임아웃으로 죽었다.
+    expect(sawLastLine).toBe(true);
+    expect(r.timedOut).toBe(true);
+  }, 15_000);
 
   // 출력을 한 바이트도 안 남기고 바로 죽는 하네스 — tail/ring 이 빈 상태에서도 죽지 않고
   // exitCode 를 그대로 돌려줘야 한다. 이 케이스가 실제로 나오는 이유: 인자 파싱 실패 등으로
