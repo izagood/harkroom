@@ -16,7 +16,9 @@
   "dependencies": {
     "@murmur/shared": "workspace:*",
     "@tauri-apps/plugin-notification": "^2.4.0",
+    "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-shell": "^2.3.6",
+    "@tauri-apps/plugin-updater": "^2.11.0",
     "@xterm/xterm": "^5.5.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

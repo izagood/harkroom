@@ -15,9 +15,18 @@
     ],
     "security": { "csp": null }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcwNTU2QTc5QzEyM0U5MzEKUldReDZTUEJlV3BWY0pEUjZJUXZRQXBONk93T3RESzFQYy96Yzd5N0dZNmNYR0x6Z01pWXFURG4K",
+      "endpoints": [
+        "https://github.com/izagood/murmur/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
+    "createUpdaterArtifacts": true,
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
     "externalBin": ["binaries/murmur-runner", "binaries/murmur-daemon"],
     "resources": {
