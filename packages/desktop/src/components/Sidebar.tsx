@@ -9,6 +9,7 @@ import { Menu } from './Menu';
 import { Identity, StatusMark } from './Identity';
 import { StatusPicker } from './StatusPicker';
 import { RunnerStatusDot } from './RunnerStatus';
+import { anyPresenceView, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from '../lib/presenceView';
 import type { SectionId } from './settings/sections';
 import type {
   AddTeamToChannelResult, AgentTeamRow, ChannelPrefRow, ChannelRow, NotifyLevel,
@@ -473,7 +474,10 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
       return {
         id: dm.id,
         label: peers.map((id) => accounts[id]?.handle ?? '…').join(', ') || 'just me',
-        online: peers.some((id) => online.includes(id)),
+        // `#443`: `some()` 하나로 갈리던 자리다. 소켓이 끊기면 `online` 은 마지막으로 들은
+        // 낡은 배열이라 `some` 이 그 위에서 `true` 를 내고 초록이 남았다 — 실측(2026-09-06)
+        // 에서 서버가 죽었는데 에이전트 여섯이 전부 초록이었던 자리가 여기다.
+        presence: anyPresenceView(peers, online, connected),
         // 1:1 DM 에서만 상태를 그린다. 여러 사람이면 누구의 상태인지 표시가 답하지 못한다.
         peer: peers.length === 1 ? accounts[peers[0]!] : undefined,
         // #250: 이 앱이 띄운 러너의 상태. 1:1 에이전트 DM 에서만 뜻이 있다 — 사람에게는
@@ -483,7 +487,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
         // 알림 수준을 보지 못하는 자리에 놓이기 쉽다(#229 가 채널 쪽에서 그랬다).
         notifyLevel: notifyLevelOf(channelPrefs[dm.id]),
       };
-    }), [dms, accounts, me, online, channelPrefs]);
+    }), [dms, accounts, me, online, connected, channelPrefs]);
 
   const others = Object.values(accounts).filter((a) => a.id !== me?.id);
 
@@ -1156,8 +1160,13 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
             <Logo size={16} decorative />
           </span>
           murmur
-          <span className={`h-2 w-2 rounded-full ${connected ? 'bg-success' : 'bg-danger'}`}
-            title={connected ? 'connected' : 'disconnected'} />
+          {/* `#443`: 이 점은 실측에서 **유일하게 맞았던** 표시다(끊긴 순간 빨강). 고치는 것은
+              색이 아니라 **말**이다 — `disconnected` 한 단어는 그 뒤에 따라오는 사실
+              (아래 점들이 전부 '알 수 없음'이 된다)을 말하지 않는다. 사람이 아래에서 보게 될
+              것을 여기서 미리 말해 둔다. */}
+          <span data-testid="connection-dot" data-connected={String(connected)}
+            className={`h-2 w-2 rounded-full ${connected ? 'bg-success' : 'bg-danger'}`}
+            title={connected ? '서버에 연결됨' : '서버와 끊김 — 다시 붙을 때까지 아래 목록의 생사는 알 수 없다'} />
           <button
             onClick={onToggleCollapse}
             className="ml-auto rounded p-1 hover:bg-surface-raised"
@@ -1393,8 +1402,12 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
                 {/* 연결 점과 상태 표시는 **둘 다** 남는다. 점은 소켓이 붙어 있는가(기계가
                     파생), 상태는 지금 말을 걸어도 되는가(사람이 선언)다 — 하나로 합치면
                     "연결이 끊긴 사람"과 "방해 금지인 사람"이 뭉친다(#186). */}
-                <span data-testid={`presence-${dm.id}`} data-online={String(dm.online)}
-                  className={`h-2 w-2 rounded-full ${dm.online ? 'bg-success' : 'bg-fg-subtle'}`} />
+                {/* `#443`: 값이 셋이다 — 끊긴 동안은 초록도 회색도 아니다.
+                    `title` 로 같은 말을 글자로도 낸다: 색은 스크린리더에 아무 말도 안 하고,
+                    이 이슈는 "화면이 사람에게 말하지 않는다"이지 "색이 틀렸다"가 아니다. */}
+                <span data-testid={`presence-${dm.id}`} data-online={dm.presence}
+                  title={PRESENCE_LABEL[dm.presence]}
+                  className={`h-2 w-2 rounded-full ${PRESENCE_DOT_CLASS[dm.presence]}`} />
                 <StatusMark account={dm.peer} />
                 {/* #250: 러너 상태는 presence 와 **또 다른 사실**이다 — presence 는 "러너가
                     붙어 있나"(누가 띄웠든)이고, 이것은 "이 앱이 띄운 자식이 어떤 상태인가"다.

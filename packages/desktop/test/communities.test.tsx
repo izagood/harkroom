@@ -186,14 +186,17 @@ describe('커뮤니티마다 스토어·컨트롤러 인스턴스 (#166)', () =>
     ]);
 
     renderSidebar();
-    expect(screen.getByTitle('connected')).toBeTruthy();
+    // `#443`: 이 점의 `title` 이 영어 한 단어에서 한국어 문장이 됐다(끊김이 무엇을
+    // 뜻하는지 말한다). 재는 것은 문구가 아니라 **커뮤니티별로 값이 갈리는가** 이므로
+    // 문구에 안 매이는 `data-connected` 로 옮긴다 — 문구가 또 바뀌어도 이 회귀선은 산다.
+    expect(screen.getByTestId('connection-dot').dataset.connected).toBe('true');
 
     cleanup();
     useCommunityRegistry.getState().setActive(b.id);
     renderSidebar();
 
     // 전역 플래그 하나로 합치면 "셋 중 하나가 끊겼다" 가 "끊김" 으로 뭉쳐 거짓말이 된다.
-    expect(screen.getByTitle('disconnected')).toBeTruthy();
+    expect(screen.getByTestId('connection-dot').dataset.connected).toBe('false');
   });
 
   it('8. me 가 커뮤니티마다 다를 때 화면은 활성 커뮤니티의 것을 보인다', async () => {

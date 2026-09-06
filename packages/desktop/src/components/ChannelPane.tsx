@@ -107,9 +107,23 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     }
     for (const agentId of called) {
       const state = runnerStates[agentId];
-      // failed 일 때만이다. 정상인 러너의 상태를 늘 띄우면 그것은 안내가 아니라 소음이고,
-      // 소음이 되면 진짜 실패도 같이 안 읽힌다.
-      if (state?.status === 'failed') return { agentId, state };
+      // 정상인 러너의 상태를 늘 띄우면 그것은 안내가 아니라 소음이고, 소음이 되면 진짜
+      // 실패도 같이 안 읽힌다. 그래서 **사람이 할 일이 있는 상태**만 여기 선다.
+      //
+      // `needs_harness` 가 `#476` 이 더한 것이다. 앞 판본은 `failed` 하나만 봤는데,
+      // 하네스가 없어 물러난 러너는 `needs_harness` 라서 **이 띠가 서지 않았다** —
+      // 사람은 멘션을 보내고 답을 기다리다 포기했고, 사유는 사이드바 점의 `title` 에만
+      // 있었다. `#368` 이 고쳤다던 실패 방식("보내고 기다리다 포기했다")이 새 상태에서
+      // 그대로 되살아나 있었던 것이다.
+      //
+      // **새 사용자의 기본 상태가 이것**이라 더 중요하다(`claude`·`codex` 는 사용자가
+      // 직접 설치한다, 2026-09-06 방침). 처음 멘션한 사람이 가장 먼저 만나는 상태가
+      // 화면에서 가장 조용했다.
+      //
+      // `needs_reissue` 는 **넣지 않는다.** 그쪽은 설정 화면에 재발급 버튼이 서고,
+      // 그 버튼 없이 여기서 사유만 읽어도 사람이 할 수 있는 일이 없다 — 그리고 그것은
+      // `#473` 이전부터 이 띠에 없었으므로 이 이슈가 바꿀 자리가 아니다.
+      if (state?.status === 'failed' || state?.status === 'needs_harness') return { agentId, state };
     }
     return null;
   }, [activeChannelId, dm, accounts, messages, runnerStates]);
@@ -290,14 +304,28 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           두면 답을 기다리며 보는 곳(작성창 위)에서 눈이 닿지 않는다 — 이슈가 적은 실패
           방식이 정확히 "보내고 기다리다 포기했다" 였다. `TypingLine`(누가 입력 중) 옆에
           서는 것도 같은 이유다: 둘 다 "지금 답이 오는 중인가"에 답하는 줄이다. */}
-      {runnerFailureInChannel && (
-        <div data-testid="channel-runner-failure" className="border-t border-danger-border bg-surface-sunken px-4 py-1.5">
-          <span className="text-[11px] font-medium text-danger">
-            @{accounts[runnerFailureInChannel.agentId]?.handle ?? '에이전트'} 는 지금 응답하지 않는다
-          </span>
-          <RunnerStatusLine state={runnerFailureInChannel.state} />
-        </div>
-      )}
+      {runnerFailureInChannel && (() => {
+        // `#476`: 하네스 부재는 **고장이 아니라 설치가 아직 안 된 것**이다. `RunnerStatus.tsx`
+        // 의 `TONE` 이 같은 판단을 이미 적어 뒀다("러너는 떴는데 사람이 한 단계를 해야
+        // 한다"). 붉은 띠로 세우면 사람은 앱이 망가진 줄 알고 사유 줄을 안 읽는다 —
+        // 그런데 **사람이 할 일은 정확히 그 줄에만 있다**(무엇을 어디서 설치하는가).
+        const harness = runnerFailureInChannel.state.status === 'needs_harness';
+        return (
+          <div
+            data-testid="channel-runner-failure"
+            data-runner-status={runnerFailureInChannel.state.status}
+            className={`border-t bg-surface-sunken px-4 py-1.5 ${harness ? 'border-warning-border' : 'border-danger-border'}`}
+          >
+            <span className={`text-[11px] font-medium ${harness ? 'text-warning' : 'text-danger'}`}>
+              @{accounts[runnerFailureInChannel.agentId]?.handle ?? '에이전트'} 는 지금 응답하지 않는다
+            </span>
+            {/* 사유·설치 안내는 **이 줄이 들고 있다**(`RunnerStatusLine` → `state.message`).
+                띠가 자기 문구를 새로 쓰지 않는 것이 규율이다 — 쓰는 순간 실행기가 만든
+                문구(설치 주소가 그 안에 있다)가 화면에서 사라진다. */}
+            <RunnerStatusLine state={runnerFailureInChannel.state} />
+          </div>
+        );
+      })()}
       <div className="border-t border-border p-3">
         {isArchived ? (
           <div className="rounded bg-surface-sunken p-2 text-center text-sm text-fg-subtle">

@@ -106,8 +106,32 @@ const readLegacyPlain = (): { baseUrl: string; token: string } | null => {
   } catch { return null; }
 };
 
+/**
+ * `load()` 가 **지금 키체인을 두드리고 있다**고 알리는 자리(`#460`).
+ *
+ * ## 왜 필요한가 — 화면이 사유를 지어내지 않으려면 사실이 필요하다
+ *
+ * 실측(2026-09-05): 키체인 승인 대기가 **36분** 이어지는 동안 화면은 `Connecting…` 한 줄
+ * 이었다. 그 문구는 두 가지로 틀렸다 — 서버에 접속하고 있지 않았고(아직 세션도 못 읽었다),
+ * 사람이 무엇을 해야 하는지 말하지 않았다(시스템 대화상자가 떠 있었다).
+ *
+ * `#450` 이 고친 것은 **앱이 멎는 것**이고, 이 신호가 고치는 것은 **말하지 않는 것**이다.
+ * 둘은 다른 문제다.
+ *
+ * ## 왜 타이머가 아니라 콜백인가 — **재는 대상이 다르다**
+ *
+ * 화면 쪽에서 "부팅이 오래 걸리면 키체인이겠지"로 추측할 수도 있다. **그것이 사유를
+ * 지어내는 것이다.** 폴백 경로(`localStorage`)는 키체인을 아예 안 두드리고, 그때 느린
+ * 것은 다른 사정이다. 이 콜백은 `invoke('secret_get')` 을 **부르기 직전에만** 불린다 —
+ * 즉 화면이 아는 것은 추측이 아니라 관측이다.
+ *
+ * 언제 **말할지**(몇 초 뒤부터 문구를 세울지)는 화면의 판단이고 여기 있지 않다.
+ * 이 층은 사실만 올린다(`#431` 의 "판단하지 않는다. 관측을 노출한다"와 같은 선).
+ */
+export type KeychainWaitObserver = () => void;
+
 export const sessionStore = {
-  async load(): Promise<StoredSessions | null> {
+  async load(onKeychainWait?: KeychainWaitObserver): Promise<StoredSessions | null> {
     const invoke = tauriInvoke();
     if (!invoke) {
       const newFormat = readPlain();
@@ -123,6 +147,9 @@ export const sessionStore = {
       return migrated;
     }
     try {
+      // **두드리기 직전에 알린다.** 이 한 줄이 화면이 "키체인을 기다린다"고 말할 수 있는
+      // 유일한 근거다 — 폴백 경로는 여기 오지 않으므로 그쪽에서는 그 문구가 안 선다.
+      onKeychainWait?.();
       const fromKeychain = parse(await invoke('secret_get', { key: KEY }));
       if (fromKeychain) return fromKeychain;
       const legacy = readLegacyPlain();

@@ -214,6 +214,81 @@ describe('#368 채널 — 부른 자리에서 사유가 보인다', () => {
     expect(onScreen()).not.toContain(FAILURE_MESSAGE);
   });
 
+  /**
+   * **`#476`** — 하네스가 없어 물러난 러너는 이 띠가 **서지 않았다.**
+   *
+   * 판정이 `state?.status === 'failed'` 하나였고, `#473` 이 만든 `needs_harness` 는
+   * 거기 안 들었다. 그래서 사람은 멘션을 보내고 답을 기다리다 포기했다 —
+   * 이 파일 머리말이 적은 실패 방식("보내고 기다리다 포기했다")이 새 상태에서 그대로
+   * 되살아나 있었다.
+   *
+   * **새 사용자의 기본 상태가 이것**이라 더 나쁘다(`claude`·`codex` 는 사용자가 직접
+   * 설치한다, 2026-09-06 방침). 처음 멘션한 사람이 가장 먼저 만나는 상태가 화면에서
+   * 가장 조용했다.
+   *
+   * **되돌려 RED**: `ChannelPane` 의 `|| state?.status === 'needs_harness'` 를 지우면
+   * 띠가 통째로 사라져 빨개진다. 실제로 되돌려 실행해 확인했다.
+   */
+  it('하네스가 없어 물러난 러너도 부른 자리에서 사유와 설치처를 말한다 (#476)', async () => {
+    channelController();
+    const message =
+      '`claude` 를 찾을 수 없다 — 설치하고 PATH 에 있는지 확인하라. Claude Code 를 설치하면 함께 깔린다: https://claude.com/product/claude-code';
+    setUpChannel('@forge 안녕', {
+      agentId: 'forge', status: 'needs_harness', exitCode: 78, message,
+    });
+
+    render(<ChannelPane />);
+
+    const strip = screen.getByTestId('channel-runner-failure');
+    expect(strip.dataset.runnerStatus).toBe('needs_harness');
+    // **설치처가 글자로 온다.** `title` 툴팁에만 있으면 아무도 안 읽는다(이 파일의 규율).
+    expect(onScreen()).toContain(message);
+    expect(onScreen()).toContain('https://claude.com/product/claude-code');
+    // 고장이 아니라 **설치가 아직 안 된 것**이다 — 붉은 띠로 세우면 사람은 앱이 망가진
+    // 줄 알고 사유 줄을 안 읽는데, 할 일은 정확히 그 줄에만 있다.
+    expect(strip.className).toContain('border-warning-border');
+    expect(strip.className).not.toContain('border-danger-border');
+  });
+
+  /**
+   * **대조군 — 다른 사유는 다른 띠다.**
+   *
+   * 없으면 위 회귀선은 "모든 상태에 띠를 세우는" 구현으로도 통과한다(그러면 정상인
+   * 러너에도 뜨고, 그것은 안내가 아니라 소음이다). 그리고 `failed` 쪽이 여전히 붉은지도
+   * 함께 잰다 — 두 상태가 같은 모습이 되면 사람이 할 일이 다시 뭉친다.
+   */
+  it('대조군 — 기동 실패는 여전히 붉은 띠이고 설치 이야기를 하지 않는다 (#476)', async () => {
+    const state = await launchWithRealFailure();
+    channelController();
+    setUpChannel('@forge 안녕', state);
+
+    render(<ChannelPane />);
+
+    const strip = screen.getByTestId('channel-runner-failure');
+    expect(strip.dataset.runnerStatus).toBe('failed');
+    expect(strip.className).toContain('border-danger-border');
+    expect(onScreen()).not.toContain('https://');
+  });
+
+  /**
+   * **대조군 — `needs_reissue` 는 이 띠에 넣지 않았다.**
+   *
+   * 그쪽은 설정 화면에 재발급 버튼이 서고, 그 버튼 없이 여기서 사유만 읽어도 사람이 할
+   * 수 있는 일이 없다. 그리고 `#473` 이전부터 이 띠에 없었으므로 이 이슈가 바꿀 자리가
+   * 아니다 — **범위를 넘지 않았다는 것 자체를 고정한다.**
+   */
+  it('대조군 — 자격증명 재발급 상태는 이 띠를 세우지 않는다 (#476 범위)', async () => {
+    channelController();
+    setUpChannel('@forge 안녕', {
+      agentId: 'forge', status: 'needs_reissue', exitCode: 78,
+      message: 'PAT 가 폐기·회전됐다 — 재발급하면 다시 뜬다',
+    });
+
+    render(<ChannelPane />);
+
+    expect(screen.queryByTestId('channel-runner-failure')).toBeNull();
+  });
+
   it('DM 은 멘션이 없어도 뜬다 — 보낸 글은 전부 그 에이전트에게 간 것이다', async () => {
     channelController();
     useAppStore.getState().set({

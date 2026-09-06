@@ -114,10 +114,14 @@ describe('마지막 활동 표시 (#176)', () => {
 
     render(<AgentsSettings />);
     // 카드는 **그리드에서** 본다 — 상세로 들어가면 그리드가 덮인다(Task 15: 한 번에 한 화면).
-    // '모른다'를 회색으로 단정하지 않는다: 소켓이 끊긴 동안 40개가 전부 가라앉으면 그것도
-    // 거짓말이다(`faceState` 의 규약).
+    //
+    // `#443` 이 이 단언을 `'ok'` 에서 바꿨다. '모른다'를 회색으로 단정하지 않는 것은
+    // 그대로 옳지만(끊긴 동안 40개가 전부 가라앉으면 그것도 거짓말이다), **초록으로
+    // 단정하는 것도 같은 크기의 거짓말**이었다 — 실측(2026-09-06)에서 서버가 죽었는데
+    // 에이전트 여섯이 전부 초록이었다. 바로 아래 상세 표시가 이미 `'unknown'` 을 말하고
+    // 있었으므로, 같은 화면의 두 자리가 서로 다른 말을 하고 있었던 셈이다.
     const card = await screen.findByTestId(`agent-card-${bot.handle}`);
-    expect(card.dataset.face).toBe('ok');
+    expect(card.dataset.face).toBe('unknown');
 
     fireEvent.click(card);
     const presence = await screen.findByTestId(`agent-presence-${bot.id}`);

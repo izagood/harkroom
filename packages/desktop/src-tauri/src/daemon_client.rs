@@ -1010,13 +1010,54 @@ fn spawn_daemon(app: &tauri::AppHandle, paths: &EndpointPaths) -> Result<(), Str
     // `wait()` 뿐이고 러너에는 아무 영향도 주지 않는다.
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("daemon 을 띄우지 못했다: {e}"))?;
+        .map_err(|e| spawn_failure_reason(&program, &e))?;
     let pid = child.id();
     log_line(&format!("daemon 을 띄웠다: pid {pid}"));
     std::thread::spawn(move || {
         let _ = child.wait();
     });
     Ok(())
+}
+
+/// daemon 사이드카를 못 띄운 사유를 **사람이 읽을 말로** 바꾼다(`#476`).
+///
+/// ## 무엇이 문제였나 — 파일이 있는데 "파일이 없다"고 했다
+///
+/// 앞 판본은 이랬다:
+///
+/// ```text
+/// daemon 을 띄우지 못했다: No such file or directory (os error 2)
+/// ```
+///
+/// **이 문구를 받은 사람은 사이드카를 찾으러 간다. 그리고 사이드카는 거기 있다.**
+/// 바로 위 `is_file()` 검사가 이미 통과했기 때문이다.
+///
+/// 없는 것은 **인터프리터**다. 사이드카는 셔뱅으로 시작하고
+/// (`#!/usr/bin/env node` — `build-sidecars.mjs` 가 그렇게 낸다), 셔뱅 스크립트를
+/// `execve` 할 때 커널은 **해석기를 못 찾아도 `ENOENT`** 를 돌려준다. 즉 이 자리의
+/// `ENOENT` 는 두 가지 뜻을 갖는데, 앞의 것(사이드카 부재)은 이미 배제돼 있으므로
+/// **남은 뜻은 하나다.**
+///
+/// murmur 는 `node` 를 동봉하지 않는다(2026-09-06 방침: *"자기 것만 배포하고 남의 것은
+/// 사용자가 설치한다"*). 그래서 **`.dmg` 를 받은 사람의 기본 상태가 이것**일 수 있고,
+/// 그때 화면이 아무 말도 안 하면 사람이 할 수 있는 일이 없다.
+///
+/// ## 사유를 지어내지 않는다
+///
+/// `ENOENT` 가 아닌 오류는 **그대로 올린다.** 권한(`EACCES`)·실행 형식(`ENOEXEC`) 등은
+/// 다른 이야기이고, 그것들까지 "node 가 없다"로 접으면 이 함수가 곧 `#368` 이 된다.
+/// `ENOENT` 일 때도 원문(`{e}`)을 지우지 않고 함께 남긴다 — 판정이 틀렸을 때 사람이
+/// 그것을 알아볼 수 있어야 한다.
+fn spawn_failure_reason(program: &Path, e: &std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        return format!(
+            "daemon 을 띄우지 못했다 — 사이드카(`{}`)는 있는데 그것을 실행할 `node` 를 찾지 못했다. \
+             murmur 는 Node.js 를 동봉하지 않는다. \
+             Node.js 를 설치하라(LTS 판이면 된다): https://nodejs.org/en/download (원문: {e})",
+            program.display()
+        );
+    }
+    format!("daemon 을 띄우지 못했다: {e}")
 }
 
 /// daemon 을 띄울 `Command` 를 조립한다 — **프로그램·인자·리다이렉션이 전부 여기서 정해진다.**
@@ -1955,6 +1996,41 @@ mod tests {
             same_entry_path("/tmp/mmr-a/./murmur-daemon", mine),
             "정규화 전 표기가 다르다고 갈렸다"
         );
+    }
+
+    /// **`#476` 회귀선 — `node` 가 없을 때 화면이 무슨 일인지 말한다.**
+    ///
+    /// 앞 판본은 `daemon 을 띄우지 못했다: No such file or directory (os error 2)` 였고,
+    /// 그 문구를 받은 사람은 사이드카를 찾으러 갔다. **사이드카는 거기 있다** — 바로 위
+    /// `is_file()` 검사가 이미 통과했기 때문이다. 없는 것은 셔뱅이 가리키는 `node` 이고,
+    /// murmur 는 그것을 동봉하지 않는다(2026-09-06 방침).
+    ///
+    /// 되돌려 RED: `spawn_failure_reason` 의 `NotFound` 분기를 지우면 설치 주소가 사라져
+    /// 빨개진다.
+    #[test]
+    fn node_가_없으면_어디서_받는지까지_말한다() {
+        let e = std::io::Error::new(std::io::ErrorKind::NotFound, "os error 2");
+        let msg = spawn_failure_reason(Path::new("/A/murmur-daemon"), &e);
+        assert!(msg.contains("node"), "무엇이 없는지 말해야 한다: {msg}");
+        assert!(
+            msg.contains("https://nodejs.org/en/download"),
+            "**어디서 받는지**가 이 이슈의 답이다: {msg}"
+        );
+        // 원문을 삼키지 않는다 — 판정이 틀렸을 때 사람이 알아볼 수 있어야 한다(`#368`).
+        assert!(msg.contains("os error 2"), "원문이 남아 있어야 한다: {msg}");
+    }
+
+    /// **대조군 — 다른 사유는 다른 문구다(`#476`).**
+    ///
+    /// 없으면 위 회귀선은 "모든 spawn 실패에 Node 설치를 권하는" 구현으로도 통과한다.
+    /// 권한 오류인 사람이 Node 를 다시 설치하러 가는 것은 `#473` 이 고친 결함과 같은
+    /// 종류다 — 사유가 다르면 사람이 할 일도 다르다.
+    #[test]
+    fn enoent_가_아닌_실패에는_node_이야기를_붙이지_않는다() {
+        let e = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let msg = spawn_failure_reason(Path::new("/A/murmur-daemon"), &e);
+        assert!(!msg.contains("nodejs.org"), "지어내지 않는다: {msg}");
+        assert!(msg.contains("denied"), "원문은 그대로 올린다: {msg}");
     }
 
     /// **회귀선 5 — 앱이 죽어도 daemon 이 산다: `setsid` 가 걸렸는가.**
