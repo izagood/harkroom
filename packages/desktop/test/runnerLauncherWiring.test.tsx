@@ -180,7 +180,7 @@ describe('설정 → 에이전트 상세가 그 상태를 그린다', () => {
   it('자식이 78 + 하네스 부재 구분자로 죽으면 설치를 말한다', async () => {
     const { spawner } = await boot([agentView('rusalka')]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
     await screen.findByText('실행 중');
 
     spawner.spawns[0]!.onExit(78, [EXECUTABLE_NOT_FOUND_LINE]);
