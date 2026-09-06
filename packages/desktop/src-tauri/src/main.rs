@@ -367,6 +367,12 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         // 링크를 OS 로 넘기는 표면. 권한은 capabilities/default.json 에서 허용한다.
         .plugin(tauri_plugin_shell::init())
+        // 앱 내부 업데이트. 화면(설정 → Updates)이 확인·설치를 부르고, 설치가 끝나면
+        // `process` 플러그인의 relaunch 로 새 버전으로 다시 뜬다. 두 플러그인이 한 벌이다 —
+        // 재시작 표면이 없으면 사람이 손으로 앱을 껐다 켜야 하고, 그동안 설치된 것과
+        // 돌고 있는 것이 갈린다.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(daemon_client::DaemonState::new())
         .invoke_handler(tauri::generate_handler![
             secret_get,

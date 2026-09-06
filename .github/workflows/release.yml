@@ -51,6 +51,22 @@
 # **API 키를 쓰는 이유**: 앱 암호(Apple ID + 앱 암호)와 달리 만료·2FA 의 영향을 받지 않는다
 # (`notarize-app.mjs` 주석). CI 에서 사람이 개입해야 하는 자격증명은 언젠가 반드시 끊긴다.
 #
+# ## 업데이터 서명 키 — 위 여섯 개와 **다른 한 벌**이다
+#
+#   TAURI_SIGNING_PRIVATE_KEY           `tauri signer generate` 가 만든 minisign 개인키
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  그 키의 암호(없으면 빈 문자열로 등록한다)
+#
+# 짝이 되는 **공개키는 `tauri.conf.json` 의 `plugins.updater.pubkey`** 에 그대로 박혀 있다.
+# 그것은 공개해도 되는 값이다 — 그것으로 서명을 **검증**만 할 수 있지 만들 수는 없다.
+# 개인키는 저장소 어디에도 두지 않는다.
+#
+# **왜 `gate` 의 판정에 넣지 않았는가**: `gate` 는 "서명·공증 없이 릴리즈가 나가는 것"을
+# 막는 장치다. 업데이터 키가 없는 것은 그와 다른 종류의 결함이라 다른 자리에서 막는다 —
+# `build` 의 "updater 산출물을 다시 만든다" 단계가 `.sig` 가 안 만들어지면 **그 자리에서
+# 실패하고**, `finalize` 의 검증 목록도 `.app.tar.gz`·`.sig`·`latest.json` 을 요구한다.
+# 즉 **키가 없으면 릴리즈는 draft 에서 멎고 공개되지 않으며, `cleanup` 이 그것을 치운다.**
+# 조용히 "업데이터만 빠진 릴리즈"가 나가는 경로는 없다.
+#
 # **`.p12`·`.p8` 을 저장소에 두지 마라.** 시크릿에만 있고, 러너에서는 임시 파일로 풀린 뒤
 # `if: always()` 로 지워진다.
 #
@@ -299,11 +315,27 @@ jobs:
           MURMUR_RUNNER_TARGET_TRIPLE: ${{ matrix.triple }}
         run: pnpm --filter @murmur/desktop build:sidecar
 
-      # `bundle.targets` 는 `["app", "dmg"]` 로 좁혀 뒀다(`tauri.conf.json`).
-      # `.app` 은 서명·공증이 물어야 할 대상이고 `.dmg` 는 사람이 받아 갈 것이다.
-      # **updater 산출물(`.app.tar.gz`·`latest.json`)은 만들지 않는다** — murmur 에는 updater 가
-      # 없다(설정 화면이 "Automatic updates: Not available" 이라고 적고 있고, 저장소 어디에도
-      # `plugin-updater` 설정이 없다). 쓰지 않는 것을 만들면 릴리즈에 잡음만 는다.
+      # ## `bundle.targets` 는 `["app", "dmg"]` 그대로다 — **넓힐 자리가 아니었다**
+      #
+      # `#494` 가 좁힌 근거는 **"murmur 에는 updater 가 없다"** 였고(그때 설정 화면이
+      # "Automatic updates: Not available" 이라고 적고 있었다), **그 전제는 지금 바뀌었다** —
+      # 앱에 `tauri-plugin-updater` 가 들어갔고 설정 화면이 확인·설치·재시작을 한다.
+      #
+      # 그런데 **바뀐 전제가 `targets` 를 건드리지는 않는다.** `"updater"` 는 `targets` 에
+      # 넣을 수 있는 값이 아니다 — `tauri-utils` 의 `BundleType` 열거형에 그런 변형이 없고
+      # (`deb`·`rpm`·`appimage`·`msi`·`nsis`·`app`·`dmg`), 넣으면 빌드가
+      # `data did not match any variant of untagged enum BundleTargetInner` 로 **죽는다**
+      # (실측 2026-09-07: 실제로 이렇게 죽는 것을 보고 되돌렸다).
+      #
+      # updater 산출물을 켜는 스위치는 **`bundle.createUpdaterArtifacts: true`** 하나뿐이고,
+      # 그것을 `tauri.conf.json` 에 켰다. 번들러는 `.app` 을 만든 **뒤** 그것을 tar 로 떠서
+      # `.app.tar.gz` 를 내놓는다.
+      #
+      # 그러니 지금 둘의 역할은 `#494` 때와 같다:
+      #   `app`  서명·공증이 물어야 할 대상. 아래 모든 단계의 입력이다.
+      #   `dmg`  사람이 처음 받아 갈 것 (다만 아래에서 **다시 만든다** — `#500`)
+      # 그리고 `.app.tar.gz` 는 `createUpdaterArtifacts` 가 곁들여 내놓되, 아래에서
+      # **다시 만든다** — `.dmg` 와 똑같은 공증 순서 문제가 있다.
       - name: 앱을 빌드한다
         run: pnpm --filter @murmur/desktop tauri build --target ${{ matrix.triple }}
 
@@ -450,13 +482,78 @@ jobs:
           xcrun stapler staple "$DMG"
           xcrun stapler validate "$DMG"
 
+      # ## `.app.tar.gz` 도 다시 만든다 — **`.dmg` 와 정확히 같은 순서 문제다**
+      #
+      # `tauri build` 가 만든 `.app.tar.gz` 안에는 **서명·공증 전의 `.app`** 이 들어 있다.
+      # 근거(tauri-bundler 소스, `tauri-cli-v2.11.2`):
+      #
+      #   `bundle/settings.rs` 의 `PackageType::priority` 가 `MacOsBundle=0 → Dmg=1 →
+      #   Updater=2` 로 순서를 정하고, `bundle/updater_bundle.rs` 의 `bundle_update_macos`
+      #   가 **이미 만들어진 `.app` 디렉터리를 그대로 tar+gzip 한다**:
+      #     `create_tar(source_path, &osx_archived_path)`
+      #   그 `source_path` 는 `MacOsBundle` 이 내놓은 경로다. 즉 **`tauri build` 안에서
+      #   찍히는 스냅숏**이고, 그 뒤 우리가 `.app` 을 서명·공증해도 이미 쓰인 아카이브는
+      #   그대로다.
+      #
+      # tauri 자신도 `bundle/macos/app.rs` 안에서 서명·공증할 수 있지만 그 경로는
+      # **꺼져 있다**: `sign.rs` 의 `keychain()` 은 `APPLE_CERTIFICATE` 계열이 없으면
+      # `Ok(None)` 을 돌려주고 서명 블록을 통째로 건너뛴다. 우리는 그 변수들을
+      # `tauri build` 단계에 넘기지 않는다 — `sign-app.mjs` 가 `--deep` 을 피해
+      # inside-out 으로 서명하는 이유(그 파일 상단의 1 차 공증 거절 실측)가 있어서,
+      # 서명은 우리 스크립트가 쥔다.
+      #
+      # 그래서 **공증이 끝난 `.app` 으로 tar 를 다시 뜨고, minisign 서명도 다시 만든다.**
+      # 안 그러면 이미 깔린 앱이 받아 가는 것이 공증 안 된 앱이 되고, 그것은
+      # `notarize-app.mjs` 상단의 `rejected / source=Unnotarized Developer ID` 상태다.
+      - name: 공증된 앱으로 updater 산출물을 다시 만든다
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          app="packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/murmur.app"
+          arch="$(echo "${{ matrix.triple }}" | cut -d- -f1)"
+          out="$RUNNER_TEMP/murmur_${arch}.app.tar.gz"
+
+          # **여기서도 티켓을 먼저 본다.** `.dmg` 단계와 같은 이유다 — 공증이 조용히
+          # 건너뛰어진 경우에도 아카이브는 만들어지기 때문이다.
+          xcrun stapler validate "$app"
+
+          # `tauri build` 가 남긴 낡은 아카이브를 **지우고** 시작한다. 남겨 두면 아래
+          # 업로드가 어느 쪽을 집었는지 산출물을 열어 봐야만 알게 된다.
+          rm -f "$app.tar.gz" "$app.tar.gz.sig"
+
+          # ## tar 는 **최상위 디렉터리 하나로 감싼다** — 플러그인이 그것을 벗긴다
+          #
+          # `tauri-plugin-updater` 의 macOS 설치 경로는 아카이브의 각 항목에서
+          # **첫 경로 요소를 버린다**:
+          #   `let collected_path: PathBuf = entry.path()?.iter().skip(1).collect();`
+          #   (`tauri-plugin-updater-2.11.0/src/updater.rs`)
+          # 그리고 그 결과를 통째로 기존 `.app` 자리에 옮긴다. 그러므로 아카이브는
+          # `murmur.app/Contents/...` 처럼 **감싸는 이름이 정확히 하나** 있어야 하고,
+          # 그 이름 자체는 무엇이든 상관없다(어차피 버려진다). 감싸지 않고 `Contents/` 를
+          # 최상위에 두면 `Contents` 가 벗겨져 앱이 빈 껍데기가 된다.
+          #
+          # `-C` 로 부모에서 이름만 담아 그 한 겹을 만든다.
+          tar -czf "$out" -C "$(dirname "$app")" "$(basename "$app")"
+
+          # minisign 서명. 키가 없으면 여기서 **실패한다** — 서명 없는 업데이터 산출물은
+          # 앱이 거부하므로(공개키가 `tauri.conf.json` 에 박혀 있다) 올려 봐야 쓸모가 없고,
+          # 조용히 넘기면 그 사실이 릴리즈가 나간 뒤에야 드러난다.
+          pnpm --filter @murmur/desktop exec tauri signer sign "$out"
+          test -f "$out.sig" || { echo "::error::updater 서명(.sig)이 만들어지지 않았다"; exit 1; }
+
+          echo "UPDATER_TARBALL=$out" >> "$GITHUB_ENV"
+          echo "UPDATER_SIG=$out.sig" >> "$GITHUB_ENV"
+
       - name: draft 릴리즈에 올린다
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # `--clobber` 로 덮어쓴다 — 같은 태그로 재시도할 때 "이미 있다"로 실패하지 않는다.
-          gh release upload "${{ needs.prepare.outputs.tag }}" "$DMG" --clobber
+          gh release upload "${{ needs.prepare.outputs.tag }}" \
+            "$DMG" "$UPDATER_TARBALL" "$UPDATER_SIG" --clobber
 
   finalize:
     name: 산출물을 검증하고 공개한다
@@ -484,14 +581,59 @@ jobs:
 
           assets=$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '.assets[].name')
 
-          # **지금 있는 플랫폼만 검증한다.** 없는 것을 넣으면 영영 공개되지 않는다
-          # (위 `build` 매트릭스 주석과 짝이다 — 매트릭스를 늘리면 여기도 함께 늘린다).
-          expected="murmur_${version}_aarch64.dmg"
-          if ! grep -Fxq "$expected" <<< "$assets"; then
-            echo "::error::필수 자산이 없다: $expected"
+          # ## `latest.json` 을 만든다 — **업데이터가 읽는 유일한 파일이다**
+          #
+          # `tauri-action` 을 쓰는 저장소는 이것을 액션이 만들어 준다. murmur 는 공증
+          # 순서 때문에 산출물을 손으로 다시 만들므로(위 `build` 잡 주석), 이 매니페스트도
+          # 여기서 만든다.
+          #
+          # **`build` 가 아니라 여기서 만드는 이유**: 매트릭스가 늘면 플랫폼마다 항목이
+          # 하나씩 붙는데, 그것을 합칠 수 있는 자리는 모든 빌드가 끝난 뒤뿐이다. 각
+          # 빌드가 자기 것을 올리면 마지막에 끝난 빌드가 남의 항목을 지운다.
+          #
+          # `signature` 는 `.sig` 파일의 **내용**이다(경로가 아니다). 앱은 이 값과
+          # `tauri.conf.json` 의 공개키로 tarball 을 검증한 뒤에만 설치한다.
+          tarball="murmur_aarch64.app.tar.gz"
+          sig_asset_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            --jq ".assets[] | select(.name == \"$tarball.sig\") | .id")
+          if [ -z "$sig_asset_id" ]; then
+            echo "::error::updater 서명이 없다: $tarball.sig"
             echo "지금 올라온 것:"; printf '%s\n' "$assets"
             exit 1
           fi
+          # asset 의 **내용**을 받으려면 `Accept: application/octet-stream` 이어야 한다.
+          # 안 주면 asset 의 JSON 메타데이터가 온다.
+          signature=$(gh api -H "Accept: application/octet-stream" \
+            "repos/$GITHUB_REPOSITORY/releases/assets/$sig_asset_id")
+
+          notes_url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$tarball"
+          jq -n --arg v "$version" --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                --arg sig "$signature" --arg url "$notes_url" \
+            '{version: $v, pub_date: $d, platforms: {"darwin-aarch64": {signature: $sig, url: $url}}}' \
+            > "$RUNNER_TEMP/latest.json"
+          gh release upload "$TAG" "$RUNNER_TEMP/latest.json" --clobber
+          # 방금 올린 것이 목록에 반영되도록 다시 읽는다.
+          assets=$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '.assets[].name')
+
+          # **지금 있는 플랫폼만 검증한다.** 없는 것을 넣으면 영영 공개되지 않는다
+          # (위 `build` 매트릭스 주석과 짝이다 — 매트릭스를 늘리면 여기도 함께 늘린다).
+          #
+          # **`.dmg` 만 보면 안 된다**: 업데이터 산출물이 통째로 빠져도 릴리즈가 공개되고,
+          # 그러면 이미 깔린 앱이 `latest.json` 을 못 찾아 "확인 실패"만 반복한다.
+          # 사람은 앱이 고장 났다고 생각하지 릴리즈에 파일이 빠졌다고 생각하지 않는다.
+          expected=(
+            "murmur_${version}_aarch64.dmg"
+            "$tarball"
+            "$tarball.sig"
+            "latest.json"
+          )
+          for asset in "${expected[@]}"; do
+            if ! grep -Fxq "$asset" <<< "$assets"; then
+              echo "::error::필수 자산이 없다: $asset"
+              echo "지금 올라온 것:"; printf '%s\n' "$assets"
+              exit 1
+            fi
+          done
 
           # 변경 내역은 GitHub 이 직전 릴리즈 이후 머지된 PR 로 만든다. 첫 릴리즈나
           # 일시 오류로 실패해도 안내만으로 공개되도록 빈 값으로 흡수한다.
