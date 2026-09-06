@@ -14,11 +14,34 @@
 // 1.1.0 은 macOS 프리빌드의 spawn-helper 실행 비트가 빠져 pnpm 설치 직후 즉시 깨진다,
 // microsoft/node-pty#850). **node-pty 가 #850 을 포함한 1.2.0 stable 을 내면 이 핀을
 // 내려라** — 그때 가서 다시 beta 를 쓸 이유가 없다.
+//
+// **`node-pty` 를 정적으로 import 하지 않는다.** 배포 번들에서 러너(`Contents/MacOS`)와
+// `node-pty`(`Contents/Resources`)가 서로 다른 자리에 놓이고, ESM 해석기는 러너 파일 기준
+// 으로만 `node_modules` 를 걸어 올라가므로 정적 import 는 거기서 해석되지 않는다. 이전에는
+// Rust 가 번들 안에 심볼릭 링크를 만들어 이었지만 **`stapler` 가 그 링크를 거부한다**
+// (`invalid destination for symbolic link in bundle`) — 자세한 근거와 실측은
+// `nodePtyLoader.ts` 모듈 주석에 있다.
 import { accessSync, constants } from 'node:fs';
 import { delimiter, join } from 'node:path';
-import pty from 'node-pty';
+import type * as NodePty from 'node-pty';
+import { loadNodePty, sidecarDirFromModule } from './nodePtyLoader.js';
 import { ExecutableNotFoundError } from './policy.js';
 import type { TurnPlan } from './turn.js';
+
+/**
+ * 해석된 `node-pty`. **처음 쓸 때 한 번만 해석하고 그 뒤로는 재사용한다.**
+ *
+ * 모듈 최상단에서 즉시 해석하지 않는 이유: 이 모듈을 import 하는 것만으로 네이티브 애드온을
+ * `dlopen` 하게 되고, 그러면 PTY 를 전혀 쓰지 않는 경로(테스트가 `composeSpawn` 같은 순수
+ * 함수만 부르는 경우, `--version` 같은 인자 처리)까지 `node-pty` 의 존재를 요구한다.
+ * `policy.ts` 가 `node-pty` 를 안 물게 떼어 둔 것과 같은 이유다.
+ */
+let cached: typeof NodePty | null = null;
+
+function nodePty(): typeof NodePty {
+  cached ??= loadNodePty(sidecarDirFromModule(import.meta.url));
+  return cached;
+}
 
 /**
  * 셸 인용 — 단일 인자를 안전한 셸 문자열로 만든다.
@@ -291,9 +314,9 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
 
     const { command, args } = composeSpawn(plan);
 
-    let proc: pty.IPty;
+    let proc: NodePty.IPty;
     try {
-      proc = pty.spawn(command, args, {
+      proc = nodePty().spawn(command, args, {
         cwd: opts.cwd,
         env: plan.env,
         // 기본 120x40 은 **아무도 안 붙었을 때의 값**이다(스펙 §5). 인터랙티브 턴(#337)은

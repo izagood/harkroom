@@ -33,7 +33,9 @@ Existing tools separate human chat from agent execution. Git-based code collabor
 
 ## Requirements
 
-- **Node.js**: >=22 (`engines.node` in the root `package.json`)
+- **Node.js**: >=22 (`engines.node` in the root `package.json`). Also required **at runtime**
+  on any machine that runs **agents** in the desktop app (chat alone needs nothing) — see
+  [What you need installed to run the app](#what-you-need-installed-to-run-the-app).
 - **pnpm**: 11.x (the version CI installs; the lockfile is `lockfileVersion: 9.0`)
 - **Docker**: For running the compose stack and tests
 - **Rust toolchain**: Only required for building the desktop app (`pnpm --filter @murmur/desktop tauri build`)
@@ -173,6 +175,78 @@ pnpm --filter @murmur/desktop tauri build  # Distributable binary
 ```
 
 On first launch, enter your server URL and sign in (or create the first admin account on a fresh server).
+
+### What you need installed to run the app
+
+**If you only chat with other people, you need nothing.** Download the app, point it at a
+server, sign in. Channels, threads, DMs, attachments and real-time updates all work with
+no other software on your machine.
+
+Requirements appear only when you run **agents**, and they depend on what you turn on:
+
+| What you use | What must be on your `PATH` |
+| --- | --- |
+| Chat between people only | *(nothing)* |
+| Running agents | `node` **+ the CLI for the harness you configured** |
+| AVCS work projection / dogfooding | the above **+ `avcs`** |
+
+#### `node` — required for any agent
+
+The app ships two sidecars (`murmur-runner`, `murmur-daemon`) that run the agent turns.
+They are bundled JavaScript with a `#!/usr/bin/env node` shebang, not native binaries, so
+the system `node` on your `PATH` is what actually executes them:
+
+```
+$ file -b murmur.app/Contents/MacOS/murmur-runner
+a /usr/bin/env node script text executable, ASCII text
+```
+
+**Which version: >=22**, the same floor as the rest of the repo (`engines.node` in the root
+`package.json`). The sidecars are compiled by esbuild with `target: 'node22'`
+(`packages/desktop/scripts/sidecar.mjs`), so the emitted syntax assumes that runtime — an
+older `node` can fail to parse the bundle outright.
+
+#### The harness CLI — depends on the agent you configure
+
+Each agent is created with a **harness**, and that choice decides which CLI it shells out
+to (`packages/agent/src/turn.ts`). You only need the one(s) you actually configure:
+
+| Harness | Command it runs |
+| --- | --- |
+| `claude-code` | `claude` |
+| `codex` | `codex` |
+
+These CLIs are published by other vendors on their own schedules, so this repo does not
+pin versions for them — install whichever version those projects currently ship.
+
+#### `avcs` — only for AVCS work projection
+
+The runner registers `avcs` as an MCP server and the workspace helper shells out to it.
+Needed only if you use the AVCS integration.
+
+#### What happens when something is missing
+
+**The app still opens and chat still works** — the gap shows up only when an agent tries to
+take a turn. The runner checks the executable *before* spawning (`pty.ts::resolveExecutable`,
+`#340`), then stops rather than retrying, printing the reason to its log:
+
+```
+harness 실행 파일을 찾을 수 없다. 러너를 멈춘다.
+  실행 파일: claude
+  자식에게 넘긴 PATH: …
+murmur-agent: harness executable not found; exiting
+```
+
+**One caveat worth knowing.** That exit uses code `78`, the same code the runner uses when a
+PAT is revoked — and the app currently labels every `78` as
+`PAT 가 폐기·회전됐다` ("the PAT was revoked or rotated",
+`packages/desktop/src/lib/runnerLauncher.ts::handleExit`). So a missing CLI can surface in
+the UI as a credential problem. **The last line of the runner log is what actually
+distinguishes the two** (`harness executable not found` vs `credential rejected`).
+
+Install Node from [nodejs.org](https://nodejs.org/) or a version manager
+(`brew install node`, `nvm`, `mise`, …). Any install that puts the command on the `PATH`
+the app inherits will do.
 
 ## Documentation
 
