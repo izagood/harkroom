@@ -281,13 +281,18 @@ fn detached_command(program: &std::path::Path) -> std::process::Command {
 /// 웹뷰가 러너 exit 을 듣는 이벤트 이름. **`incarnationId` 를 그대로 실어 보낸다** —
 /// 세대를 가리는 것은 앱 쪽(`runnerLauncher.handleExit`)의 일이고, Rust 는 daemon 이
 /// 말한 사실을 옮기기만 한다(`#419` 의 계약이 소켓 너머로 이어지는 자리).
-const RUNNER_EXIT_EVENT: &str = "murmur://runner-exit";
+pub const RUNNER_EXIT_EVENT: &str = "murmur://runner-exit";
 
 /// daemon 을 확보하고 러너를 띄우라고 시킨다.
 ///
 /// **daemon 이 없으면 띄우고 있으면 붙는다**(`ensure_daemon`). 실패하면 그대로 `Err` 다 —
 /// 앱이 직접 러너를 띄우는 폴백은 **없다**(이 파일 위쪽 "그 자리는 폴백으로도 남기지
 /// 않았다" 참조). 그 `Err` 문자열이 화면의 `failed` + `message` 로 그대로 올라간다.
+///
+/// **exit 통지 콜백을 여기서 안 넘긴다**(`#431` 2단계 A). 넘기던 시절에는 이 커맨드가
+/// 언제나 `ensure_daemon` 의 첫 호출자여서 우연히 맞았지만, 이제 `daemon_ensure` 가 앱
+/// 기동 직후 먼저 붙는다 — 콜백은 `ensure_daemon` 안에서 하나로 조립된다
+/// (`daemon_client::runner_exit_emitter`).
 #[tauri::command]
 fn daemon_spawn_runner(
     app: tauri::AppHandle,
@@ -297,16 +302,10 @@ fn daemon_spawn_runner(
     murmur_url: String,
     path: String,
 ) -> Result<daemon_client::SpawnRunnerResult, String> {
-    use tauri::Emitter;
-
     // **여기서 배치를 손보지 않는다**(`#433` — 위의 큰 주석). `node-pty` 를 찾는 것은
     // 러너 자신의 일이 됐고(`nodePtyLoader.ts`), 그래서 이 커맨드는 daemon 을 확보해
     // 러너를 띄우라고 말하는 것만 한다. 번들에 쓰는 자리가 없어야 서명·공증이 성립한다.
-    let emitter = app.clone();
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state, move |event| {
-        // 여기서 세대를 가리지 않는다 — daemon 이 말한 사실을 그대로 올린다.
-        let _ = emitter.emit(RUNNER_EXIT_EVENT, event);
-    })?;
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
 
     let mut env = HashMap::new();
     env.insert("MURMUR_PAT".to_string(), murmur_pat);
@@ -328,7 +327,7 @@ fn daemon_kill_runner(
     agent_id: String,
     incarnation_id: Option<String>,
 ) -> Result<(), String> {
-    let (conn, _) = daemon_client::ensure_daemon(&app, &state, |_| {})?;
+    let (conn, _) = daemon_client::ensure_daemon(&app, &state)?;
     conn.kill_runner(&agent_id, incarnation_id.as_deref())
 }
 
@@ -338,13 +337,20 @@ fn daemon_kill_runner(
 /// 응답에 daemon 자신의 사실(`daemonPid`·`attached`·경로들)을 함께 싣는다. 러너 목록만
 /// 주면 "러너가 0개다"와 "daemon 이 방금 떴다"를 구분할 수 없고, 그 구분이 없으면 사람이
 /// `ps` 로 밖에서 대조해야 한다 — 실물 검증이 "같은 pid 면 붙은 것"으로 재는 그 값이다.
+///
+/// ## `#431` 2단계 A — 이것이 **앱 기동 시 daemon 을 세우는 자리**다
+///
+/// `ensure_daemon` 을 부르므로 이 커맨드 하나로 "daemon 을 세우고 무엇이 도는지 묻는다"가
+/// 함께 일어난다. 앱은 러너를 하나도 안 띄울 상황에서도 이것을 먼저 부른다 —
+/// **daemon 은 러너의 부산물이 아니라 상주 프로세스다**(`runnerLauncher.ts::observeDaemon`
+/// 주석의 순환 참조).
 #[tauri::command]
 fn daemon_list_runners(
     app: tauri::AppHandle,
     state: tauri::State<daemon_client::DaemonState>,
 ) -> Result<serde_json::Value, String> {
     let paths = daemon_client::resolve_endpoint_paths(&app)?;
-    let (conn, kind) = daemon_client::ensure_daemon(&app, &state, |_| {})?;
+    let (conn, kind) = daemon_client::ensure_daemon(&app, &state)?;
     let runners = conn.list_runners()?;
     Ok(serde_json::json!({
         "daemonPid": conn.daemon_pid,

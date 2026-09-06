@@ -23,7 +23,11 @@ export function runnerStatusLabel(state: RunnerState | undefined): string {
   if (!state) return '꺼짐';
   switch (state.status) {
     case 'running': return '실행 중';
-    case 'external': return '외부에서 실행 중';
+    // `#431` 2단계 A: `external`(presence 추측)이 사라지고 `adopted` 가 들어왔다.
+    // **daemon 이 `kill(pid, 0)` 으로 확인한 러너**라서 생사를 단언할 수 있다 — 앞
+    // 이름은 "이 앱이 안 띄웠다"는 뜻이었는데 "실행 중"으로 읽혔고, 그 오독이 `#430` 이다.
+    // **문구 재정의는 `#443` 범위다** — 여기서는 상태값이 가리키는 사실만 바로잡는다.
+    case 'adopted': return 'daemon 이 들고 있음';
     case 'needs_reissue': return '종료 (78: 자격증명 폐기 — 재발급 필요)';
     case 'needs_harness': return '종료 (78: 하네스를 찾을 수 없음 — 설치 필요)';
     case 'stopped':
@@ -36,7 +40,7 @@ export function runnerStatusLabel(state: RunnerState | undefined): string {
 
 const TONE: Record<RunnerStatus, string> = {
   running: 'text-success',
-  external: 'text-accent',
+  adopted: 'text-accent',
   needs_reissue: 'text-warning',
   // 자격증명 폐기와 같은 톤이다 — 둘 다 "러너는 떴는데 사람이 한 단계를 해야 한다"이고,
   // 그것은 실패(`danger`)가 아니다. 무엇을 해야 하는지가 문구로 갈린다.
@@ -48,7 +52,7 @@ const TONE: Record<RunnerStatus, string> = {
 /** 사이드바의 점. presence 점과 **다른 사실**이라 나란히 산다(Sidebar 의 주석 참고). */
 const DOT: Record<RunnerStatus, string> = {
   running: 'bg-success',
-  external: 'bg-accent',
+  adopted: 'bg-accent',
   needs_reissue: 'bg-warning',
   needs_harness: 'bg-warning',
   stopped: 'bg-fg-subtle',

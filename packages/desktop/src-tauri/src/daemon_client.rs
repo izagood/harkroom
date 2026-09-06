@@ -447,11 +447,82 @@ pub struct PidRecord {
     pub launch_nonce: String,
     #[serde(rename = "appVersion", default)]
     pub app_version: String,
+    /// 그 daemon **실행 파일의 경로**. `#431` 2단계 A 가 판정에 쓰기 시작한 필드다.
+    ///
+    /// daemon 이 자기 기동 인자(`--entry-path`)로 받아 pid 파일에 적는다
+    /// (`daemonEndpoint.ts::DaemonPidRecord.entryPath`). 옛 daemon 은 안 적을 수 있어
+    /// `default` 다 — 빈 문자열은 "모른다"이고, 아래 `same_entry_path` 가 그것을
+    /// **다른 것으로** 다룬다.
+    #[serde(rename = "entryPath", default)]
+    pub entry_path: String,
 }
 
 pub fn read_pid_record(path: &Path) -> Option<PidRecord> {
     let raw = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&raw).ok()
+}
+
+/// 소켓을 쥐고 있는 daemon 이 **내 빌드의 것인가** — `#431` 2단계 A 가 추가한 관문.
+///
+/// ## 왜 이 검사가 필요해졌나 — 소켓이 워크트리를 가로지른다
+///
+/// `resolve_endpoint_paths` 는 `app.path().app_data_dir()` 에서 경로를 계산하고, 그 값은
+/// **번들 식별자**로 정해진다(`app.murmur.desktop`). **워크트리 성분이 없다.** 그래서
+/// 같은 기계의 모든 체크아웃·모든 빌드가 소켓 **하나**를 공유한다:
+///
+/// ```text
+/// ~/Library/Application Support/app.murmur.desktop/daemon/daemon-v1.sock
+/// ```
+///
+/// **실측(2026-09-06)**: 릴리즈 앱이 다른 워크트리의 **debug** daemon(pid 35721,
+/// `entryPath = …/permit/…/target/debug/murmur-daemon`)에 그대로 붙었다. 토큰도 같은
+/// 파일을 공유하니 인증은 자동으로 통과한다.
+///
+/// ## 무엇이 위험한가 — `#250` 과 **층이 다르다**
+///
+/// daemon 은 러너 경로를 클라이언트에게 받지 않고 **자기 옆에서** 찾는다:
+///
+/// ```ts
+/// // packages/daemon/src/run.ts
+/// export function defaultRunnerCommand(entryPath: string): string {
+///   return resolve(dirname(resolve(entryPath)), 'murmur-runner');
+/// }
+/// ```
+///
+/// 그 주석이 이유를 적어 뒀다 — *"경로를 클라이언트에게 받지 않는다. 받으면 소켓에 붙은
+/// 누구든 임의의 실행 파일을 띄울 수 있다(`#250` 의 경계)"*. **그 판단은 지금도 옳다.**
+/// 다만 그때는 daemon 이 하나라는 전제가 성립했다:
+///
+/// | | 막는 것 |
+/// |---|---|
+/// | `#250` | 클라이언트가 **요청 내용**으로 실행 파일을 고르는 것 |
+/// | **이 검사** | 클라이언트가 **연결 상대**를 통해 실행 파일을 고르는 것 |
+///
+/// 소켓 공유가 두 번째 층을 새로 만들었다. `#250` 이 부실했던 것이 아니다.
+///
+/// ## 이것은 **신뢰 경계가 아니다** — 오배치 감지다
+///
+/// **`entryPath` 는 pid 파일을 쓸 수 있는 주체면 위조할 수 있다.** 같은 uid 면 쓸 수 있고,
+/// 소켓 권한(0600)과 토큰이 막는 것은 **다른 사용자**이지 같은 사용자의 다른 빌드가
+/// 아니다. 즉 이 검사가 잡는 것은 *사고*(개발 빌드와 릴리즈가 섞였다)이지 *공격*이 아니다.
+/// 나중에 이 함수를 보안 장치로 오해하지 마라 — 그 격리는 소켓 경로를 갈라야 성립하고,
+/// 그것은 2-e 의 다른 선택지다.
+///
+/// ## 비교 방법 — 정규화한다
+///
+/// 같은 파일이 다른 표기로 적힐 수 있다(심링크·`.` 성분·`/private` 접두). 그래서
+/// `canonicalize` 로 양쪽을 실체 경로로 만든 뒤 비교한다. 실패하면(파일이 이미 사라졌다)
+/// 원문 문자열로 떨어진다 — 거기서 다르다고 단정하지 않고, **모르는 것은 다른 것으로**
+/// 다룬다(안 붙는다). 안 붙어도 잃는 것은 없다: 그 뒤 우리 daemon 을 띄우면 된다.
+fn same_entry_path(record_entry: &str, mine: &Path) -> bool {
+    if record_entry.is_empty() {
+        // 옛 daemon 이라 안 적었다. **같다고 단정하지 않는다** — 그 daemon 이 어느 빌드의
+        // 러너를 띄울지 알 수 없고, 모르는 채로 붙는 것이 이 검사가 없애려는 상태다.
+        return false;
+    }
+    let theirs = Path::new(record_entry);
+    let norm = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    norm(theirs) == norm(mine)
 }
 
 // ---------------------------------------------------------------------------
@@ -470,8 +541,9 @@ pub enum EnsureKind {
 
 /// 앱이 들고 있는 daemon 연결. `tauri::State` 로 관리된다.
 ///
-/// **`Option` 인 이유**: 앱이 뜨자마자 daemon 이 필요한 것은 아니다 — 러너를 처음
-/// 띄우려 할 때 확보한다. 그때까지는 소켓도, 프로세스도 없다.
+/// **`Option` 인 이유**: 연결은 **처음 필요해진 순간**에 만들어진다. `#431` 2단계 A 이후
+/// 그 순간은 앱 기동 직후(`daemon_ensure`)이지 러너를 띄우려 할 때가 아니다 — 그러나
+/// 이 타입 자체는 그 시점을 모른다. 아직 안 붙었으면 `None` 이다.
 pub struct DaemonState {
     pub inner: Mutex<Option<Arc<DaemonConnection>>>,
 }
@@ -497,10 +569,33 @@ impl DaemonState {
 ///
 /// 어느 단계에서 실패하든 `Err` 로 올라간다. 앱이 직접 러너를 띄우는 옛 경로로
 /// 물러나지 않는다 — 모듈 주석의 "왜 폴백이 없나" 참조.
+///
+/// ## `on_event` 를 **호출자가 못 고른다** — `#431` 2단계 A 가 고친 자리
+///
+/// 앞 판본은 `on_event` 를 파라미터로 받았다. 그런데 **읽기 스레드는 연결당 한 번만
+/// 뜨고**(`open_connection` → `start_reader`), 연결은 `DaemonState` 에 캐시된다. 즉
+/// **먼저 부른 쪽의 콜백이 이긴다.** 뒤에 오는 호출은 자기 콜백을 넘겨도 조용히 버려진다.
+///
+/// 앞 판본에서 그 승부는 이랬다:
+///
+/// | 호출자 | 넘기던 콜백 |
+/// |---|---|
+/// | `daemon_spawn_runner` | 웹뷰로 exit 을 올리는 emitter |
+/// | `daemon_kill_runner` | `\|_\| {}` |
+/// | `daemon_list_runners` | `\|_\| {}` |
+///
+/// 러너를 띄우는 쪽이 언제나 먼저 불렸기 때문에 우연히 맞았다. **2단계 A 는 그 순서를
+/// 뒤집는다** — 앱이 기동하자마자 `daemon_ensure`(→ 목록 조회)로 daemon 을 먼저 세우기
+/// 때문이다. 그러면 빈 콜백이 먼저 자리를 잡고, 그 뒤 `daemon_spawn_runner` 가 넘기는
+/// emitter 는 버려진다. **exit 이벤트가 앱에 영영 안 온다** — 죽은 러너가 화면에 계속
+/// `running` 으로 남고, `#419`·`#473` 의 판정이 전부 굶는다.
+///
+/// 그래서 콜백을 파라미터에서 **없앴다.** 이 함수가 `AppHandle` 로 emitter 를 직접
+/// 조립한다 — 호출자가 셋이든 열이든 붙는 콜백은 언제나 같은 하나다. "누가 먼저
+/// 부르느냐"가 동작을 바꾸지 못하게 만드는 것이 이 변경의 전부다.
 pub fn ensure_daemon(
     app: &tauri::AppHandle,
     state: &DaemonState,
-    on_event: impl Fn(RunnerExitEvent) + Send + Clone + 'static,
 ) -> Result<(Arc<DaemonConnection>, EnsureKind), String> {
     let mut guard = state
         .inner
@@ -517,13 +612,31 @@ pub fn ensure_daemon(
     }
 
     let paths = resolve_endpoint_paths(app)?;
+    // **내 빌드의 daemon 실행 파일.** 소켓을 쥔 daemon 이 이것과 다른 것이면 안 붙는다
+    // (`same_entry_path` 주석: 소켓이 워크트리를 가로질러 공유된다).
+    let my_entry = crate::sidecar_path(DAEMON_SIDECAR_NAME)?;
     let launch_app = app.clone();
     let launch_paths = paths.clone();
-    let (conn, kind) = ensure_at(&paths, on_event, move || {
+    let (conn, kind) = ensure_at(&paths, &my_entry, runner_exit_emitter(app), move || {
         spawn_daemon(&launch_app, &launch_paths)
     })?;
     *guard = Some(conn.clone());
     Ok((conn, kind))
+}
+
+/// 러너 exit 을 웹뷰로 올리는 **유일한** 콜백.
+///
+/// 여기서 세대를 가리지 않는다 — daemon 이 말한 사실을 그대로 올리고, `incarnationId` 로
+/// 세대를 가리는 것은 웹뷰(`runnerLauncher.ts::daemonSpawner`)의 일이다(`#419` 의 계약이
+/// 소켓 너머로 이어지는 자리).
+fn runner_exit_emitter(
+    app: &tauri::AppHandle,
+) -> impl Fn(RunnerExitEvent) + Send + Clone + 'static {
+    let emitter = app.clone();
+    move |event| {
+        use tauri::Emitter;
+        let _ = emitter.emit(crate::RUNNER_EXIT_EVENT, event);
+    }
 }
 
 /// `ensure_daemon` 의 **판단 부분**. `AppHandle` 을 모른다.
@@ -537,20 +650,46 @@ pub fn ensure_daemon(
 ///
 /// `launch` 를 클로저로 받는 것도 같은 이유다 — 회귀선이 "띄우는 자리가 **불리지 않았다**"를
 /// 직접 셀 수 있어야 한다. 프로덕션에서 그 클로저 안에 들어가는 것은 `spawn_daemon` 하나뿐이다.
+///
+/// `my_entry` 는 **내 빌드의 daemon 실행 파일 경로**다(`same_entry_path` 주석 참조).
+/// 프로덕션에서는 `sidecar_path(DAEMON_SIDECAR_NAME)` 하나뿐이고, 회귀선이 "남의 경로"를
+/// 만들 수 있어야 해서 파라미터로 받는다.
 fn ensure_at(
     paths: &EndpointPaths,
+    my_entry: &Path,
     on_event: impl Fn(RunnerExitEvent) + Send + Clone + 'static,
     launch: impl FnOnce() -> Result<(), String>,
 ) -> Result<(Arc<DaemonConnection>, EnsureKind), String> {
-    // ── 1. 붙어 본다 ────────────────────────────────────────────────────────
+    // ── 1. 붙어 본다 — 다만 **내 빌드의 daemon 에만** ──────────────────────────
     if paths.socket.exists() && paths.token.exists() {
-        match open_connection(paths, on_event.clone()) {
-            Ok(conn) => return Ok((conn, EnsureKind::Attached)),
-            Err(err) => {
-                // 붙지 못했다 — 잔해일 수 있다. daemon 을 띄우면 그쪽이 3중 증거로
-                // 판정해 회수하거나 물러난다(`claimDaemonEndpoint`). 여기서 소켓 파일을
-                // 지우지 않는 것이 요점이다: 살아 있는 daemon 의 소켓을 앱이 날릴 수 있다.
-                log_line(&format!("daemon 에 붙지 못했다(띄워 본다): {err}"));
+        // **붙기 전에 pid 레코드를 읽는다.** 소켓·토큰은 워크트리를 가로질러 공유되므로
+        // (`same_entry_path` 주석의 실측) 파일이 있다는 것만으로는 "내 daemon" 이 아니다.
+        //
+        // 여기서 **아무것도 회수하지 않는다.** 남의 daemon 은 살아 있는 채로 두고 우리는
+        // 우리 것을 띄우려 한다 — 그 뒤 daemon 쪽 `claimDaemonEndpoint` 의 3중 증거가
+        // "붙었다 → 점유 중이다"를 보고 **물러난다**(`EXIT_OCCUPIED`). 즉 살아 있는 남의
+        // daemon 을 죽이는 경로는 이 변경으로 생기지 않는다.
+        let record = read_pid_record(&paths.pid);
+        let theirs = record.as_ref().map(|r| r.entry_path.as_str()).unwrap_or("");
+        if !same_entry_path(theirs, my_entry) {
+            // **사유를 값으로 남긴다. 화면 문구는 만들지 않는다**(`#443`·`#460` 범위).
+            // 로그에 두 경로를 함께 찍는 이유: 이 로그 파일은 지금 여러 빌드가 공유하고
+            // 있어 누가 쓴 줄인지 모른다(별건). `entryPath` 가 그 줄의 출처를 말해 준다.
+            log_line(&format!(
+                "소켓을 쥔 daemon 이 다른 빌드의 것이라 붙지 않았다: 그쪽 entryPath=`{theirs}` \
+                 내 entryPath=`{}` (pid {})",
+                my_entry.display(),
+                record.as_ref().map(|r| r.pid).unwrap_or(0),
+            ));
+        } else {
+            match open_connection(paths, on_event.clone()) {
+                Ok(conn) => return Ok((conn, EnsureKind::Attached)),
+                Err(err) => {
+                    // 붙지 못했다 — 잔해일 수 있다. daemon 을 띄우면 그쪽이 3중 증거로
+                    // 판정해 회수하거나 물러난다(`claimDaemonEndpoint`). 여기서 소켓 파일을
+                    // 지우지 않는 것이 요점이다: 살아 있는 daemon 의 소켓을 앱이 날릴 수 있다.
+                    log_line(&format!("daemon 에 붙지 못했다(띄워 본다): {err}"));
+                }
             }
         }
     }
@@ -564,9 +703,23 @@ fn ensure_at(
     let mut last_err = "daemon 이 소켓을 올리지 않았다".to_string();
     while std::time::Instant::now() < deadline {
         if paths.socket.exists() && paths.token.exists() {
-            match open_connection(paths, on_event.clone()) {
-                Ok(conn) => return Ok((conn, EnsureKind::Spawned)),
-                Err(err) => last_err = err,
+            // **여기서도 같은 관문을 지난다.** 우리가 띄운 daemon 이 소켓을 잡기 전에
+            // 남의 daemon 이 아직 쥐고 있을 수 있고(우리 것이 `EXIT_OCCUPIED` 로 물러났다면
+            // 계속 그렇다), 그때 붙으면 1번 관문을 통과한 것과 같은 상태가 된다.
+            let theirs = read_pid_record(&paths.pid)
+                .map(|r| r.entry_path)
+                .unwrap_or_default();
+            if same_entry_path(&theirs, my_entry) {
+                match open_connection(paths, on_event.clone()) {
+                    Ok(conn) => return Ok((conn, EnsureKind::Spawned)),
+                    Err(err) => last_err = err,
+                }
+            } else {
+                last_err = format!(
+                    "소켓을 다른 빌드의 daemon 이 쥐고 있다: 그쪽 entryPath=`{theirs}` \
+                     내 entryPath=`{}`",
+                    my_entry.display(),
+                );
             }
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -1038,6 +1191,7 @@ mod tests {
         let launched = std::sync::atomic::AtomicBool::new(false);
         let (conn, kind) = ensure_at(
             &paths,
+            &program,
             |_| {},
             || {
                 launched.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -1095,6 +1249,7 @@ mod tests {
         let child = std::sync::Mutex::new(None::<std::process::Child>);
         let outcome = ensure_at(
             &paths,
+            &program,
             |_| {},
             || {
                 *child.lock().unwrap() = Some(launch_daemon(&program, &paths, "nonce-spawn"));
@@ -1112,6 +1267,262 @@ mod tests {
         assert_eq!(kind, EnsureKind::Spawned, "없는데 붙었다고 한다");
         assert!(conn.daemon_pid > 0, "붙은 daemon 의 pid 를 못 읽었다");
         conn.request("ping", json!({})).expect("ping 이 안 돌았다");
+    }
+
+    /// **회귀선 5 — exit 이벤트가 앱까지 온다** (`#431` 2단계 A 가 밟을 뻔한 자리).
+    ///
+    /// ## 이 테스트가 없으면 무엇이 조용히 깨지나
+    ///
+    /// 읽기 스레드는 **연결당 한 번만** 뜨고(`open_connection` → `start_reader`), 연결은
+    /// `DaemonState` 에 캐시된다. 즉 **`ensure_daemon` 을 먼저 부른 쪽의 콜백이 이긴다.**
+    ///
+    /// 앞 판본에서는 그 승부가 우연히 맞았다 — `daemon_spawn_runner`(emitter 를 넘긴다)가
+    /// 언제나 첫 호출자였기 때문이다. **2단계 A 가 그 순서를 뒤집는다**: 앱 기동 직후
+    /// `daemon_list_runners` 가 먼저 붙는데, 그쪽은 `|_| {}` 를 넘기고 있었다. 그러면
+    /// 빈 콜백이 자리를 잡고 exit 통지가 **영영 앱에 안 온다** — 죽은 러너가 화면에 계속
+    /// `running` 으로 남고 `#419`·`#473` 의 판정이 전부 굶는다.
+    ///
+    /// 고친 방법은 콜백을 파라미터에서 없앤 것이다(`ensure_daemon` 주석). 이 테스트는
+    /// 그 성질을 **실물 daemon 과 실물 러너로** 잰다: `ensure_at` 이 세운 콜백 하나가
+    /// spawn → exit 을 끝까지 실어 나르는가.
+    ///
+    /// ## 왜 `listRunners` 를 먼저 부르나
+    ///
+    /// 그것이 2단계 A 의 실제 순서이기 때문이다. 콜백을 다시 파라미터로 되돌리고
+    /// 목록 조회에 `|_| {}` 를 넘기면 이 테스트가 빨개진다 — 그것이 되돌려 RED 다.
+    #[test]
+    fn exit_이벤트가_목록조회를_먼저_해도_앱에_온다() {
+        let Some(program) = daemon_sidecar() else {
+            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @murmur/desktop build:sidecar` 먼저");
+            return;
+        };
+        let dir = temp_app_data_dir("exit-event");
+        let paths = endpoint_paths(&dir);
+        std::fs::create_dir_all(&paths.dir).unwrap();
+
+        let _guard = DaemonGuard {
+            child: launch_daemon(&program, &paths, "nonce-exit"),
+            dir: dir.clone(),
+        };
+        assert!(
+            wait_for_endpoint(&paths),
+            "daemon 이 엔드포인트를 올리지 않았다"
+        );
+
+        // **콜백은 여기서 한 번 세워진다** — 프로덕션의 `runner_exit_emitter` 자리다.
+        let seen: Arc<Mutex<Vec<RunnerExitEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let (conn, _) = ensure_at(
+            &paths,
+            &program,
+            move |ev| {
+                if let Ok(mut v) = sink.lock() {
+                    v.push(ev);
+                }
+            },
+            || Err("띄우면 안 된다 — 이미 있다".to_string()),
+        )
+        .expect("daemon 에 붙지 못했다");
+
+        // **2단계 A 의 순서를 그대로 밟는다**: 목록 조회가 먼저다.
+        conn.list_runners().expect("listRunners 가 안 돌았다");
+
+        // 그 다음 러너를 띄운다. PAT·URL 은 아무 값이어도 된다 — 이 테스트가 재는 것은
+        // 러너가 무엇을 하는가가 아니라 **그 종료가 여기까지 오는가**다. 자격증명이
+        // 틀렸으니 러너는 곧 스스로 물러나고, 그 종료가 곧 우리가 기다리는 이벤트다.
+        let mut env = HashMap::new();
+        env.insert("MURMUR_PAT".to_string(), "murp_회귀선".to_string());
+        env.insert(
+            "MURMUR_URL".to_string(),
+            "http://127.0.0.1:1/".to_string(), // 아무도 안 듣는 포트 — 러너가 빨리 물러난다
+        );
+        env.insert(
+            "PATH".to_string(),
+            "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string(),
+        );
+        let spawned = match conn.spawn_runner("regress-exit", env) {
+            Ok(s) => s,
+            Err(err) => {
+                // 러너 사이드카가 없으면 daemon 이 띄우지 못한다 — 이 기계의 배치 문제이지
+                // 이 회귀선이 재는 성질이 아니다. **초록으로 위장하지 않고 건너뛴다.**
+                eprintln!("건너뜀: daemon 이 러너를 띄우지 못했다 — {err}");
+                return;
+            }
+        };
+
+        // 러너가 물러날 때까지 기다린다. 고정 `sleep` 이 아니라 폴링이다 — 기기마다 다르다.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while std::time::Instant::now() < deadline {
+            if seen.lock().map(|v| !v.is_empty()).unwrap_or(false) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let events = seen.lock().expect("이벤트 락이 깨졌다");
+        assert!(
+            !events.is_empty(),
+            "러너가 끝났는데 exit 이벤트가 콜백에 오지 않았다 — \
+             목록 조회가 먼저 붙으면서 빈 콜백이 자리를 잡은 그 회귀다"
+        );
+        assert_eq!(
+            events[0].agent_id, "regress-exit",
+            "다른 러너의 exit 이 왔다"
+        );
+        assert_eq!(
+            events[0].incarnation_id, spawned.incarnation_id,
+            "exit 이벤트의 세대가 spawn 이 돌려준 것과 다르다 — `#419` 의 판정이 굶는다"
+        );
+    }
+
+    /// **회귀선 6 — 다른 빌드의 daemon 에는 붙지 않는다.**
+    ///
+    /// ## 무엇을 재는가
+    ///
+    /// 소켓·토큰·pid 는 **번들 식별자**로 정해지는 한 자리를 모든 워크트리가 공유한다
+    /// (`same_entry_path` 주석). 실측(2026-09-06): 릴리즈 앱이 다른 워크트리의 debug
+    /// daemon(pid 35721)에 그대로 붙었고, 토큰도 같은 파일이라 인증이 자동으로 통과했다.
+    ///
+    /// 그 daemon 은 **자기 옆에서** 러너를 찾는다(`daemon/src/run.ts::defaultRunnerCommand`).
+    /// 즉 붙는 순간 이 앱의 러너가 아니라 그쪽 빌드의 러너가 뜬다.
+    ///
+    /// ## 실물 daemon 을 띄운다 — 그것이 요점이다
+    ///
+    /// pid 파일만 손으로 써 두고 재면 "붙지 않는다"가 **소켓이 없어서**인지 판정 때문인지
+    /// 못 가린다. 그래서 진짜 daemon 을 띄워 진짜 소켓이 서비스 중인 상태를 만들고,
+    /// 그 상태에서 `my_entry` 만 남의 경로로 준다.
+    ///
+    /// 되돌려 RED: `ensure_at` 의 `same_entry_path` 관문을 지우면 붙어 버려서 빨개진다.
+    #[test]
+    fn 다른_entry_path_의_daemon_에는_붙지_않는다() {
+        let Some(program) = daemon_sidecar() else {
+            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @murmur/desktop build:sidecar` 먼저");
+            return;
+        };
+        let dir = temp_app_data_dir("entry-mismatch");
+        let paths = endpoint_paths(&dir);
+        std::fs::create_dir_all(&paths.dir).unwrap();
+
+        let guard = DaemonGuard {
+            child: launch_daemon(&program, &paths, "nonce-entry"),
+            dir: dir.clone(),
+        };
+        assert!(
+            wait_for_endpoint(&paths),
+            "daemon 이 엔드포인트를 올리지 않았다"
+        );
+        let their_pid = guard.child.id();
+
+        // **내 빌드의 daemon 은 다른 자리에 있다고 말한다** — 다른 워크트리의 체크아웃이
+        // 이 자리에 오는 그 상황이다. 파일이 실재하지 않아도 된다: 판정은 경로 비교이고,
+        // `canonicalize` 실패는 원문 비교로 떨어진다(`same_entry_path` 주석).
+        let my_entry = dir.join("other-build").join(DAEMON_SIDECAR_NAME);
+
+        // 붙지 못하면 그 다음은 "띄운다"인데, 여기서는 띄우지 않고 **불렸는지만** 센다 —
+        // 살아 있는 남의 daemon 을 건드리지 않는 것이 이 회귀선의 절반이다.
+        let launched = std::sync::atomic::AtomicBool::new(false);
+        let outcome = ensure_at(
+            &paths,
+            &my_entry,
+            |_| {},
+            || {
+                launched.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            },
+        );
+
+        assert!(
+            launched.load(std::sync::atomic::Ordering::SeqCst),
+            "남의 빌드 daemon 에 그대로 붙었다 — 띄우는 자리에 닿지도 않았다"
+        );
+        assert!(
+            outcome.is_err(),
+            "남의 daemon 이 소켓을 쥐고 있는데 붙었다고 한다"
+        );
+
+        // **회귀선 8 — 강탈하지 않는다.** 안 붙었다고 남의 daemon 을 죽이거나 소켓을
+        // 날리지 않는다. 그쪽은 그대로 살아 있어야 한다.
+        assert_eq!(
+            read_pid_record(&paths.pid).map(|r| r.pid),
+            Some(their_pid),
+            "안 붙은 뒤 남의 daemon 의 pid 레코드가 사라지거나 바뀌었다 — 강탈했다"
+        );
+        assert_eq!(
+            unsafe { libc::kill(their_pid as libc::pid_t, 0) },
+            0,
+            "안 붙은 뒤 남의 daemon 이 죽었다 — 살아 있는 daemon 을 죽이는 경로가 생겼다"
+        );
+        assert!(paths.socket.exists(), "남의 소켓 파일을 지웠다");
+    }
+
+    /// **회귀선 7 — 대조군: 같은 `entryPath` 면 붙는다.**
+    ///
+    /// **이것이 없으면 회귀선 6 은 무의미하다.** `same_entry_path` 가 언제나 `false` 를
+    /// 돌려줘도 6은 초록이기 때문이다 — "아무것도 안 붙는다"로도 통과한다.
+    ///
+    /// 위 `이미_있는_daemon_에는_붙고_새로_띄우지_않는다` 와 겹쳐 보이지만 **재는 것이
+    /// 다르다**: 그쪽은 "붙기를 먼저 시도한다"를, 이쪽은 "경로 관문이 내 것을 막지
+    /// 않는다"를 잰다. 관문을 `false` 로 고정하면 이쪽만 빨개진다.
+    #[test]
+    fn 같은_entry_path_의_daemon_에는_붙는다() {
+        let Some(program) = daemon_sidecar() else {
+            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @murmur/desktop build:sidecar` 먼저");
+            return;
+        };
+        let dir = temp_app_data_dir("entry-match");
+        let paths = endpoint_paths(&dir);
+        std::fs::create_dir_all(&paths.dir).unwrap();
+
+        let _guard = DaemonGuard {
+            child: launch_daemon(&program, &paths, "nonce-match"),
+            dir: dir.clone(),
+        };
+        assert!(
+            wait_for_endpoint(&paths),
+            "daemon 이 엔드포인트를 올리지 않았다"
+        );
+
+        let launched = std::sync::atomic::AtomicBool::new(false);
+        let (conn, kind) = ensure_at(
+            &paths,
+            &program,
+            |_| {},
+            || {
+                launched.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .expect("내 빌드의 daemon 인데 붙지 못했다");
+
+        assert_eq!(kind, EnsureKind::Attached, "같은 빌드인데 안 붙었다");
+        assert!(
+            !launched.load(std::sync::atomic::Ordering::SeqCst),
+            "같은 빌드의 daemon 이 도는데 새로 띄웠다"
+        );
+        conn.request("ping", json!({})).expect("ping 이 안 돌았다");
+    }
+
+    /// 경로 판정 자체의 성질 — 프로세스 없이 잰다.
+    ///
+    /// **빈 문자열이 `false` 인 것이 의도다.** 옛 daemon 은 `entryPath` 를 안 적을 수 있고,
+    /// 그때 "같다고 단정"하면 이 관문이 옛 daemon 앞에서 통째로 열린다.
+    #[test]
+    fn entry_path_비교는_모르는_것을_다른_것으로_다룬다() {
+        let mine = Path::new("/tmp/mmr-a/murmur-daemon");
+        assert!(!same_entry_path("", mine), "빈 entryPath 를 같다고 했다");
+        assert!(
+            !same_entry_path("/tmp/mmr-b/murmur-daemon", mine),
+            "다른 경로를 같다고 했다"
+        );
+        assert!(
+            same_entry_path("/tmp/mmr-a/murmur-daemon", mine),
+            "같은 경로를 다르다고 했다"
+        );
+        // `.` 성분이 낀 표기도 같은 파일이다 — 정규화가 그것을 흡수한다.
+        assert!(
+            same_entry_path("/tmp/mmr-a/./murmur-daemon", mine),
+            "정규화 전 표기가 다르다고 갈렸다"
+        );
     }
 
     /// **회귀선 5 — 앱이 죽어도 daemon 이 산다: `setsid` 가 걸렸는가.**
