@@ -107,7 +107,32 @@ jobs:
 
       # `--bundles app` — `.app` 만 만든다. dmg 는 이 잡의 질문("빌드가 되는가")에 아무것도
       # 더하지 않으면서 시간만 쓴다.
-      - run: pnpm --filter @murmur/desktop tauri build --bundles app
+      #
+      # ## `--config` 로 updater 산출물을 **이 잡에서만** 끈다
+      #
+      # `tauri.conf.json` 에 `bundle.createUpdaterArtifacts: true` 가 켜져 있다(앱 내부
+      # 업데이트). 그런데 그 플래그는 **`--bundles app` 으로도 `.app.tar.gz` 를 만들고**,
+      # 만들고 나면 서명하려 들어 개인키를 요구한다 — 실측(2026-09-07)으로 이 잡이
+      # 정확히 이렇게 죽었다:
+      #   `Error A public key has been found, but no private key.`
+      #   `Make sure to set TAURI_SIGNING_PRIVATE_KEY environment variable.`
+      # (`--bundles` 는 `targets` 를 고를 뿐이고, updater 산출물의 스위치는 그것과 별개인
+      #  `createUpdaterArtifacts` 이기 때문이다.)
+      #
+      # **개인키를 이 잡에 넘기지 않는다.** 이 잡이 답하는 질문은 "빌드가 되는가"이고
+      # 거기에 배포용 키가 필요할 이유가 없다. 넘기면 그 키가 닿는 표면만 넓어지고,
+      # **fork PR 에는 시크릿이 가지 않으므로** 외부 기여자의 PR 마다 이 잡이 빨간 X 가 된다.
+      # 더미 키를 즉석 생성하는 방법도 되지만, 아무도 안 쓸 서명을 만드느라 단계를 늘리는
+      # 것보다 **애초에 만들지 않는 쪽**이 이 잡의 질문에 더 가깝다.
+      #
+      # `--config` 는 설정 파일 위에 얹는 JSON 이라 `tauri.conf.json` 을 건드리지 않는다 —
+      # 릴리즈(`release.yml`)는 그 파일을 그대로 읽어 진짜 키로 서명한다.
+      #
+      # **이 잡의 검증은 그대로 산다**: 위 오류는 `.app` 번들링이 **끝난 뒤** 나던 것이라
+      # 끄더라도 아래 산출물 검사(#441 사이드카 · #470 심볼릭 링크)의 입력은 달라지지 않는다.
+      - run: >
+          pnpm --filter @murmur/desktop tauri build --bundles app
+          --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       # ## exit 0 으로 끝내지 않는다 — 산출물을 연다
       #

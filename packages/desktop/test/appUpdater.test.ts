@@ -25,6 +25,8 @@ const workflow = readFileSync(
   'utf8',
 );
 
+const ci = readFileSync(resolve(process.cwd(), '../../.github/workflows/ci.yml'), 'utf8');
+
 describe('업데이터 설정(tauri.conf.json)', () => {
   /**
    * 공개키가 없으면 플러그인이 서명을 **검증할 수단이 없다**. tauri 는 이 값이 비면
@@ -141,5 +143,73 @@ describe('릴리즈 워크플로(release.yml)', () => {
     // 담기 전에 티켓이 실제로 박혀 있는지 보는 자리가 있어야 한다.
     const step = workflow.slice(rebuild, workflow.indexOf("- name: draft 릴리즈에 올린다", rebuild));
     expect(step).toContain('stapler validate');
+  });
+});
+
+/**
+ * ## PR 검증 빌드는 **서명 개인키 없이도** 통과해야 한다
+ *
+ * `ci.yml` 의 `macos-build` 는 "macOS 에서 앱이 실제로 빌드되는가"만 묻고 시크릿을
+ * 받지 않는다. 그런데 `tauri.conf.json` 에 `createUpdaterArtifacts` 를 켜자 그 잡이
+ * 죽었다(실측 2026-09-07):
+ *
+ *   `Error A public key has been found, but no private key.`
+ *
+ * `--bundles app` 으로 `.app` 만 만들라고 해도 그 플래그는 `.app.tar.gz` 를 만들고,
+ * 만들고 나면 서명하려 들기 때문이다. **`--bundles` 와 `createUpdaterArtifacts` 는
+ * 서로 다른 스위치다.**
+ *
+ * ## 왜 `actionlint` 로는 안 잡히는가
+ *
+ * 이것은 문법 오류가 아니라 **두 파일의 합의**다 — `tauri.conf.json` 이 켠 것을
+ * `ci.yml` 이 꺼야 한다는 약속이고, 어느 쪽 파일도 혼자서는 틀리지 않았다.
+ * `#500` 에서 같은 교훈이 있었고 그때도 워크플로 파일을 읽는 테스트로 내렸다.
+ *
+ * **개인키를 그 잡에 넘기는 것으로 고치지 않는다**: fork PR 에는 시크릿이 가지 않아
+ * 외부 기여자마다 빨간 X 가 되고, 배포용 키가 닿는 표면만 넓어진다. 그래서 이
+ * 회귀선은 "키를 넘겼는가"가 아니라 **"키가 필요 없는 상태를 유지하는가"** 를 잰다.
+ */
+describe('PR 검증 빌드(ci.yml)는 서명 키를 요구하지 않는다', () => {
+  it('updater 산출물을 꺼서 빌드한다', () => {
+    // `>` 블록으로 줄이 이어질 수 있으므로 명령 근처를 통째로 본다.
+    const at = ci.indexOf('tauri build --bundles app');
+    expect(at, 'macos-build 의 tauri build 호출을 찾지 못했다').toBeGreaterThan(-1);
+    const command = ci.slice(at, at + 300);
+
+    // `--config` 로 얹어서 끈다. `tauri.conf.json` 자체는 켠 채로 둬야 한다 —
+    // 릴리즈는 그 파일을 그대로 읽어 진짜 키로 서명한다.
+    expect(command).toMatch(/"createUpdaterArtifacts"\s*:\s*false/);
+  });
+
+  /**
+   * **대조군.** 위 테스트만 있으면 "`ci.yml` 에서 서명 키를 넘기도록 고쳤다"로도
+   * 통과할 여지가 생긴다(그러면 fork PR 이 깨진다). 그 잡에 개인키가 흘러들지
+   * 않았는지 함께 잰다.
+   */
+  it('그 잡에 서명 개인키를 넘기지 않는다', () => {
+    // **낱말이 아니라 `secrets.` 참조를 잰다.** 그냥 `TAURI_SIGNING_PRIVATE_KEY` 를
+    // 찾으면 위 주석이 인용한 **오류 메시지 원문**에 걸려 빨개진다(실측 2026-09-07 —
+    // 이 회귀선을 처음 쓸 때 실제로 그렇게 걸렸다). 키가 실제로 흘러드는 모양은
+    // `${{ secrets.… }}` 이므로 그것을 본다. 주석이 오류를 인용하는 것은 오히려
+    // 남겨야 할 근거다.
+    const secretRefs = ci.match(/secrets\.[A-Z_]+/g) ?? [];
+    expect(secretRefs.filter((r) => r.includes('SIGNING'))).toEqual([]);
+    expect(ci).not.toMatch(/TAURI_SIGNING_PRIVATE_KEY:\s*\$\{\{/);
+  });
+
+  /**
+   * `#441`(사이드카 순서)·`#470`(심볼릭 링크 0개) 검증은 이 잡이 닫은 자리다.
+   * updater 를 끄는 것과 무관하게 **계속 돌아야 한다** — 위 오류가 `.app` 번들링이
+   * 끝난 뒤에 나던 것이라, 꺼도 이 검사들의 입력은 달라지지 않는다.
+   */
+  it('사이드카·심볼릭 링크 검증은 그대로 남아 있다', () => {
+    // #441: 사이드카가 빌드보다 먼저다
+    expect(ci).toContain('build:sidecar');
+    expect(ci.indexOf('build:sidecar')).toBeLessThan(ci.indexOf('tauri build'));
+    // #441: 번들 안에 사이드카 둘이 들어갔는지 본다
+    expect(ci).toContain('Contents/MacOS/murmur-runner');
+    expect(ci).toContain('Contents/MacOS/murmur-daemon');
+    // #470: node-pty 는 Resources 에 있고, 번들에 링크를 만들지 않는다
+    expect(ci).toContain('Contents/Resources/node_modules/node-pty');
   });
 });
