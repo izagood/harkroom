@@ -963,6 +963,27 @@ export interface InboxEntry {
   reason: 'mention' | 'thread_reply' | 'dm';
   readAt: string | null;
   channelId: string;
+  /**
+   * 줄이 **네 가지를 말하기 위한 재료**(#488 C2). 문서: *"줄은 네 가지를 말한다 —
+   * 누가(얼굴) · 무슨 말(되물음·선택·보고·넘김) · 무엇을(본문 한 줄) · 언제·어디.
+   * 지금 줄에는 이 중 어느 것도 없다."*
+   *
+   * **`reason` 으로는 못 만든다.** 그 값은 셋뿐이라(`mention`·`thread_reply`·`dm`)
+   * 네 줄이 글자까지 똑같아진다 — 문서가 지적한 그 화면이다. 말의 종류는 `meta` 에
+   * 있고(`AskMeta`·`FailureMeta`·`ReportMeta`), 그것을 실어야 줄이 갈린다.
+   *
+   * 문서가 이 화면을 "말의 종류가 `meta` 에 들어간 다음 제 모습이 된다"고 적었는데,
+   * 그 문턱은 이미 넘었다 — 여기서 하는 일은 **그 사실을 인박스까지 나르는 것**이다.
+   */
+  authorId: string | null;
+  /** 본문 한 줄. 서버가 자르지 않는다 — 자르는 폭은 화면이 안다. */
+  body: string;
+  /** 말의 종류를 담은 그 `meta`. 모르는 `meta` 는 평문으로 흐른다(불변 규약). */
+  meta: Record<string, unknown>;
+  /** 언제. 인박스 항목이 아니라 **그 말이 오간** 시각이다. */
+  createdAt: string;
+  /** 어디 — 스레드 안이면 그 뿌리. 채널 바로 밑이면 null 이다. */
+  threadRootId: string | null;
 }
 
 export interface DmView {

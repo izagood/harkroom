@@ -19,7 +19,7 @@ import { acc, accountsResult, chan, fakeApi, fakeWsFactory, msg } from './helper
 
 const entry = (id: number, messageId: string, channelId = 'c1',
   reason: InboxEntry['reason'] = 'mention'): InboxEntry =>
-  ({ id, messageId, reason, readAt: null, channelId });
+  ({ id, messageId, reason, readAt: null, channelId, authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null });
 
 /**
  * `mutedAt` 을 **항상 채워 둔다.** 판정이 `notifyLevel` 만 본다는 것을 fixture 자체가
@@ -251,9 +251,9 @@ describe('채널 알림 수준 — 미읽음 배지', () => {
       channels: [chan('c1', 'quiet'), chan('c2', 'partly'), chan('c3', 'loud')],
       dms: [],
       unread: [
-        { id: 1, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c1' },
-        { id: 2, messageId: 'm2', reason: 'mention', readAt: null, channelId: 'c2' },
-        { id: 3, messageId: 'm3', reason: 'mention', readAt: null, channelId: 'c3' },
+        { id: 1, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c1' , authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null},
+        { id: 2, messageId: 'm2', reason: 'mention', readAt: null, channelId: 'c2' , authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null},
+        { id: 3, messageId: 'm3', reason: 'mention', readAt: null, channelId: 'c3' , authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null},
       ],
       channelPrefs: {
         c1: pref('c1', 'none'),

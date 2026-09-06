@@ -650,9 +650,16 @@ export async function listInbox(
 ): Promise<InboxEntry[]> {
   const res = await pool.query(
     `select i.id::int as id, i.message_id as "messageId", i.reason, i.read_at as "readAt",
-            m.channel_id as "channelId"
+            m.channel_id as "channelId",
+            -- 줄이 네 가지를 말할 재료(#488 C2): 누가 · 무슨 말 · 무엇을 · 언제·어디.
+            -- 이미 message 를 join 하고 있었으므로 컬럼만 더한다 — 새 왕복이 없다.
+            m.author_id as "authorId", m.body, m.meta,
+            m.created_at as "createdAt", m.thread_root_id as "threadRootId"
      from inbox i join message m on m.id = i.message_id
-     where i.account_id = $1 ${opts.unreadOnly ? 'and i.read_at is null' : ''}
+     -- 지워진 말은 인박스에도 남지 않는다. 본문을 싣기 시작했으므로 이 조건이 없으면
+     -- 지운 글이 인박스 줄에 그대로 보인다(전에는 id 만 실어 보이지 않았다).
+     where i.account_id = $1 and m.deleted_at is null
+       ${opts.unreadOnly ? 'and i.read_at is null' : ''}
      order by i.id`,
     [accountId],
   );
