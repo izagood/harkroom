@@ -1,12 +1,12 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
-import { useActiveStore } from '../state/communities';
+import { communityLabel, useActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
 import { sidebarStorage, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../lib/prefs';
 import { isMacOS, MAC_TRAFFIC_LIGHT_PL, TOP_BAR_H } from '../lib/platform';
 import { LeasePanel } from './LeasePanel';
 import { SidebarWaitChain } from './SidebarWaitChain';
 import { Menu } from './Menu';
-import { StatusMark } from './Identity';
+import { Identity, StatusMark } from './Identity';
 import { StatusPicker } from './StatusPicker';
 import { RunnerStatusDot } from './RunnerStatus';
 import type { SectionId } from './settings/sections';
@@ -110,6 +110,20 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
    */
   const macTrafficLightRoom = useMemo(() => isMacOS() && !collapsed, [collapsed]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  /**
+   * 상태 고르기 패널이 열려 있는가(#488 A1). 계정 메뉴의 항목이 이것을 켜고, 패널 자신은
+   * 열림 여부를 모른다 — 여는 쪽이 닫는 쪽이라야 메뉴 항목의 이름과 패널의 존재가 갈리지
+   * 않는다(`StatusPicker` 주석).
+   */
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+  /**
+   * 지금 내가 있는 워크스페이스의 이름. 계정 메뉴 머리에 선다 — 앱이 지금까지
+   * **어디서도 말하지 않던 사실**이다(#488 A1).
+   */
+  const workspaceLabel = useCommunityRegistry((r) => {
+    const entry = r.entries.find((e) => e.id === r.activeId);
+    return entry ? communityLabel(entry) : '';
+  });
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
   const [newChannelPrivate, setNewChannelPrivate] = useState(false);
@@ -151,6 +165,29 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
   const [editTopic, setEditTopic] = useState('');
   const [editRepo, setEditRepo] = useState('');
   const [editError, setEditError] = useState<string | null>(null);
+
+  /**
+   * `⌘,` 로 설정을 연다(#488 A1). **단축키가 실제로 없었다** — 문서의 "설정에 가는 길이
+   * 정말로 하나다"는 실측과 맞았다(`Workspace` 의 전역 keydown 에 `⌘K`·`⌘[`·`⌘]`·`⌘\`
+   * 넷뿐이고 쉼표가 없다).
+   *
+   * 메뉴에 `⌘,` 를 적기로 한 이상 그 글자가 참이어야 한다 — **가르치는 정보가 거짓이면
+   * 장식보다 나쁘다.** 그래서 여는 자리(계정 메뉴)와 같은 컴포넌트에 배선을 둔다.
+   *
+   * `Workspace` 의 전역 핸들러와 같은 규칙을 따른다: 입력 요소에 포커스가 있으면 가로채지
+   * 않는다(쉼표는 사람이 실제로 타이핑하는 글자라 이 예외가 특히 중요하다).
+   */
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (!(e.metaKey || e.ctrlKey) || e.key !== ',') return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      e.preventDefault();
+      onOpenSettings();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [onOpenSettings]);
 
   const [width, setWidth] = useState(() => sidebarStorage.loadWidth());
   const isDragging = useRef(false);
@@ -459,6 +496,27 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
 
   const row = (active: boolean) =>
     `flex w-full items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-surface-raised ${active ? 'bg-surface-raised' : ''}`;
+
+  /**
+   * 목록에 하나 더하는 `+`(#488 A2). **네 자리가 같은 모양·같은 자리를 쓴다** — 여기 둘
+   * (`채널`·`DM`), 설정 › 에이전트의 `+` 카드(`AgentGrid.tsx`), 그리고 그 카드가 여는 폼.
+   *
+   * 문서의 진단: "`+` 가 다섯 모양". 실측으로도 셋이 서로 달랐다 — 채널은 목록 **끝**의
+   * 본문 행, DM 은 섹션 **머리**의 작은 버튼, 에이전트는 nav 한복판의 본문 행이었다.
+   *
+   * 규칙은 `AgentGrid` 가 이미 세워 둔 것을 그대로 쓴다: **목록의 첫 칸**이다. 끝에 두면
+   * 항목이 늘어날수록 자리가 밀려 매번 찾아가야 하고, 검색·필터로 목록이 비면 사라진다.
+   * 첫 칸이면 개수와 무관하게 자리가 고정된다.
+   *
+   * `+` 는 `aria-hidden` 이다 — 접근성 이름은 `label` 이 진다. 스크린리더가 "플러스 새
+   * 채널"로 읽으면 글리프가 이름의 일부가 되어 버린다.
+   */
+  const addRow = (label: string, onClick: () => void, testId: string) => (
+    <button data-testid={testId} className={`${row(false)} text-fg-muted`} onClick={onClick}>
+      <span aria-hidden="true" className="text-fg-subtle">+</span>
+      {label}
+    </button>
+  );
 
   /**
    * 이 채널을 내가 치웠는가(#376). **판정이 이 함수 하나다** — 채널 묶음 셋(보이는 것·보관·
@@ -1122,6 +1180,56 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
               🔍
             </button>
           </div>
+          {/*
+            `+` 는 목록의 **첫 칸**이다(#488 A2) — 예전에는 채널 목록 **끝**이라 채널이
+            스무 개면 스크롤 끝까지 내려가야 닿았고, 보관·숨김 묶음이 그 아래 또 붙어
+            자리가 계속 밀렸다. 설정 › 에이전트의 `+` 카드와 같은 규칙이다.
+          */}
+          {me?.isAdmin && (
+            createChannelOpen ? (
+              <div className="mb-1 rounded border border-border bg-surface-raised p-1">
+                <input
+                  type="text"
+                  aria-label="New channel name"
+                  className="mb-1 w-full rounded border border-border bg-field px-2 py-1 text-sm text-fg placeholder-fg-subtle"
+                  placeholder="channel-name"
+                  value={newChannelName}
+                  onChange={(e) => { setNewChannelName(e.target.value); setCreateError(null); }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void submitNewChannel();
+                    if (e.key === 'Escape') closeCreate();
+                  }}
+                  autoFocus
+                />
+                {/* 공개 범위는 **만들 때** 고른다. 만든 뒤 admin 이 바꿀 수 있지만, private
+                    으로 시작해야 할 채널을 public 으로 만들면 그 사이에 오간 말은 이미
+                    전원이 봤다 — 나중에 닫아도 되돌릴 수 없다. */}
+                <label className="mb-1 flex items-center gap-1 text-[11px] text-fg-muted">
+                  <input
+                    type="checkbox"
+                    checked={newChannelPrivate}
+                    onChange={(e) => setNewChannelPrivate(e.target.checked)}
+                  />
+                  비공개 (멤버만 볼 수 있다)
+                </label>
+                {createError && <p role="alert" className="mb-1 text-[10px] text-danger">{createError}</p>}
+                <div className="flex gap-1">
+                  <button
+className="rounded bg-accent px-2 py-0.5 text-xs text-fg-on-strong hover:bg-accent-hover"
+                    onClick={() => void submitNewChannel()}
+                  >
+                    만들기
+                  </button>
+                  <button
+className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
+                    onClick={closeCreate}
+                  >
+                    취소
+                  </button>
+                </div>
+              </div>
+            ) : addRow('Create channel', () => setCreateChannelOpen(true), 'add-channel')
+          )}
           {/* 섹션(#157)으로 묶어 그린다. 섹션 없는 것들은 맨 아래 무제목 묶음이다. */}
           {groupedChannels.map((group) => {
             const sectionName = group.section;
@@ -1198,55 +1306,6 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
               </div>
             );
           })}
-          {me?.isAdmin && (
-            createChannelOpen ? (
-              <div className="mt-1 rounded border border-border bg-surface-raised p-1">
-                <input
-                  type="text"
-                  aria-label="New channel name"
-                  className="mb-1 w-full rounded border border-border bg-field px-2 py-1 text-sm text-fg placeholder-fg-subtle"
-                  placeholder="channel-name"
-                  value={newChannelName}
-                  onChange={(e) => { setNewChannelName(e.target.value); setCreateError(null); }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void submitNewChannel();
-                    if (e.key === 'Escape') closeCreate();
-                  }}
-                  autoFocus
-                />
-                {/* 공개 범위는 **만들 때** 고른다. 만든 뒤 admin 이 바꿀 수 있지만, private
-                    으로 시작해야 할 채널을 public 으로 만들면 그 사이에 오간 말은 이미
-                    전원이 봤다 — 나중에 닫아도 되돌릴 수 없다. */}
-                <label className="mb-1 flex items-center gap-1 text-[11px] text-fg-muted">
-                  <input
-                    type="checkbox"
-                    checked={newChannelPrivate}
-                    onChange={(e) => setNewChannelPrivate(e.target.checked)}
-                  />
-                  비공개 (멤버만 볼 수 있다)
-                </label>
-                {createError && <p role="alert" className="mb-1 text-[10px] text-danger">{createError}</p>}
-                <div className="flex gap-1">
-                  <button
-className="rounded bg-accent px-2 py-0.5 text-xs text-fg-on-strong hover:bg-accent-hover"
-                    onClick={() => void submitNewChannel()}
-                  >
-                    만들기
-                  </button>
-                  <button
-className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
-                    onClick={closeCreate}
-                  >
-                    취소
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button className={`${row(false)} text-fg-muted`} onClick={() => setCreateChannelOpen(true)}>
-                + Create channel
-              </button>
-            )
-          )}
         </div>
         {archivedChannels.length > 0 && (
           <div>
@@ -1299,17 +1358,24 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
           <button className={`${row(false)} text-fg-muted`} onClick={onOpenDirectory}>
             Directory
           </button>
-          <button className={`${row(false)} text-fg-muted`} onClick={() => onOpenSettings('agents')}>
-            + Add or edit agents
-          </button>
+          {/*
+            `+ Add or edit agents` 가 여기 있었다(#488 A2). **뺐다** — 이 묶음은 *이동*
+            (Inbox · Saved · Directory)인데 그 한 줄만 *설정*이라, 이동 사이에 설정이 끼어
+            있었다. 설정으로 가는 길은 아래 계정 메뉴가 갖는다(A1) — 그 메뉴에 `⌘,` 까지
+            함께 서면서 길이 둘이 됐고, 그래서 이 줄이 없어져도 잃는 것이 없다.
+            에이전트를 더하는 `+` 는 설정 › 에이전트의 `+` 카드가 이미 갖고 있다.
+          */}
         </div>
         <div>
           <div className="flex items-center px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
             Direct messages
-            <button className="ml-auto rounded px-1 hover:bg-surface-raised" onClick={() => setPickerOpen((v) => !v)}>
-              + New
-            </button>
           </div>
+          {/*
+            DM 의 `+` 도 목록의 **첫 칸**이다(#488 A2). 예전에는 섹션 머리 오른쪽 끝의 작은
+            버튼이라 채널의 `+` 와 모양도 자리도 달랐다 — 같은 일을 하는 것이 목록마다 다르게
+            생기면 사람은 매번 새로 찾는다.
+          */}
+          {addRow('New', () => setPickerOpen((v) => !v), 'add-dm')}
           {pickerOpen ? (
             <div className="mb-1 rounded border border-border bg-surface-raised p-1">
               {others.map((a) => (
@@ -1388,22 +1454,92 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
         <SidebarWaitChain />
         <LeasePanel />
         </nav>
-        <div className="relative flex items-center gap-2 border-t border-border p-3 text-xs">
-          {/* 계정 행 자체가 진입점이다 — gear 아이콘이 아니라(#113). 트리거 요소는 소비자가
-              만들고 접근성 속성·ref 는 Menu 가 준다(그래야 #111 이 우클릭 트리거로 같은
-              프리미티브를 쓸 수 있다). */}
+        {/*
+          내 자리(#488 A1). 계정 행 자체가 진입점이라는 결정(#113)은 그대로다 — 바뀐 것은
+          그 행이 **무엇으로 보이는가**이고, 문서의 진단이 "얼굴이 없고 눌리는 줄인지 알 수
+          없다"였다.
+
+          - 아바타 24px + 이름. **`@` 를 뗀다** — 앱 어디서도 내 핸들을 `@` 로 부르지 않는다.
+            `@` 는 남을 지목할 때의 표기다(멘션·DM 후보 목록).
+          - 행 높이 44px, **행 전체가 하나의 트리거**다. 아바타도 이 버튼 안이라 눌러도 같은
+            메뉴가 열린다 — 문서가 요구한 예외다("다른 곳에서는 아바타가 프로필을 열지만
+            여기서만 예외다. 내 프로필은 메뉴의 첫 항목이다"). 같은 줄의 왼쪽·오른쪽이 서로
+            다른 곳으로 가면 어느 쪽을 눌렀는지 매번 신경 써야 한다.
+          - **미니 톱니도 `⌄` 화살표도 붙이지 않는다.** 문서가 앞 그림의 12px 톱니를 스스로
+            물렀다 — "행 전체가 버튼"이라 해 놓고 미니 톱니를 또 그리면 앞뒤가 안 맞는다.
+            눌린다는 신호는 hover 면과 커서로 충분하고, 그게 위의 채널 줄이 이미 쓰는 방식이다.
+          - **`대화 가능` 이 행에서 사라졌다.** 이 앱의 네 번째 상태 어휘였고, `StatusMark`
+            가 이미 세워 둔 "기본값에는 표시를 붙이지 않는다"는 규칙에도 어긋났다. 상태를
+            고르는 일은 메뉴 안으로 옮겼다 — 행에 붙어 있을 때는 **바꿀 수 없는 글자**였는데
+            메뉴로 옮기니 실제로 바꿀 수 있는 것이 된다.
+        */}
+        <div className="relative border-t border-border p-1 text-xs">
           <Menu
+            className="left-1 right-1"
+            /*
+              메뉴 머리가 "나"를 말한다 — 얼굴 · 이름 · `@handle` · **어느 워크스페이스인지**.
+              마지막 것이 새로 생긴 사실이다: 지금까지 앱은 내가 어느 워크스페이스에 있는지
+              어디서도 말하지 않았다(타이틀바의 `murmur` 는 앱 이름이지 워크스페이스가 아니다).
+              값은 `communityLabel()` 하나에서 낸다 — 커뮤니티 레일·설정이 이미 그것을 쓴다.
+
+              여기서는 `@` 를 **붙인다**. 행에서 뗀 것과 모순이 아니다: 행의 것은 표시 이름이고
+              머리의 것은 "남들이 나를 부를 때 쓰는 문자열"이라, 그 자리에서는 `@` 가 값의 일부다.
+            */
+            header={(
+              <div className="flex items-center gap-2">
+                <Identity account={me ?? undefined} variant="avatar" className="h-8 w-8 shrink-0" />
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-fg">{me?.handle}</div>
+                  <div className="truncate text-[11px] text-fg-subtle">
+                    @{me?.handle} · {workspaceLabel}
+                  </div>
+                </div>
+              </div>
+            )}
             renderTrigger={(props) => (
-              <button {...props} className="font-medium">
-                @{me?.handle}
+              <button
+                {...props}
+                data-testid="me-row"
+                className="flex h-11 w-full items-center gap-2 rounded px-2 text-left hover:bg-surface-raised"
+              >
+                <Identity account={me ?? undefined} variant="avatar" className="h-6 w-6 shrink-0" />
+                <span className="truncate font-medium text-fg">{me?.handle}</span>
+                {/*
+                  자리를 비웠을 때만 글자가 선다. `StatusMark` 가 `available` 에 `null` 을
+                  주므로 정상 상태에서는 아무것도 그려지지 않는다 — 이 한 줄이 "정상 상태에는
+                  표시를 붙이지 않는다"와 "자리를 비운 동안에는 행에 글자가 선다"를 동시에
+                  만족한다. 판정을 여기서 복제하지 않는 것이 요점이다.
+                */}
+                <StatusMark account={me ?? undefined} className="ml-auto shrink-0" />
               </button>
             )}
             items={[
-              { label: 'Settings', onSelect: () => onOpenSettings() },
+              /*
+                내 프로필이 첫 항목이다. 설정의 `profile` 절로 보낸다 — 남의 프로필을 여는
+                `Profile` 패널은 읽기 화면이고, 내 것은 **고치는 화면**이라 답하는 물음이
+                다르다(이름·사진을 바꾸는 자리가 거기다).
+              */
+              { label: '내 프로필', onSelect: () => onOpenSettings('profile') },
+              /*
+                상태는 여기서 고른다 — 행에 붙어 있던 라벨이 동작이 된 자리다. `⌘,` 는
+                `Settings` 에만 적는다: 메뉴는 단축키를 가르치는 자리이고, 없는 단축키를
+                적으면 가르치는 것이 아니라 속이는 것이다.
+              */
+              { label: '상태 바꾸기', onSelect: () => setStatusMenuOpen(true) },
+              { label: 'Settings', shortcut: '⌘,', onSelect: () => onOpenSettings() },
               { label: 'Sign out', onSelect: () => { getController().logout(); onLogout(); } },
             ]}
           />
-          <StatusPicker />
+          {/*
+            상태 고르기는 메뉴 항목이 **여는 것**이지 메뉴 안에 인라인으로 사는 것이 아니다 —
+            문구 입력과 저장·지우기 버튼이 있어 한 줄짜리 `MenuItem` 에 들어가지 않는다.
+            열려 있는 동안에만 그린다: 없는 것은 자리를 차지하지 않는다.
+          */}
+          {statusMenuOpen && (
+            <div className="px-2 pb-1">
+              <StatusPicker onDone={() => setStatusMenuOpen(false)} />
+            </div>
+          )}
         </div>
       </div>
     </aside>
