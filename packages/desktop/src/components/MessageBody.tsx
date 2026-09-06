@@ -160,14 +160,22 @@ export function MessageBody({
       ? `${account.handle} 에이전트 설정 열기`
       : `${account.handle} 프로필 열기`);
 
-    // 나를 부른 멘션은 더 강하게. 색만으로 구분하지 않는다(배경 + 굵기).
-    // 집합은 다른 색(teal)으로 구분한다.
+    /**
+     * **멘션 칩은 배경과 굵기로 구별한다 — 색이 아니다**(#488 B2).
+     *
+     * 문서: *"본문에 여러 번 나오는 것은 색이 아니라 옅은 배경으로 구별한다."*
+     * 남을 부른 멘션까지 강조색을 쓰면 한 화면에 강조가 열 개씩 서고, 그러면 정작
+     * **나를 막는 말**에 색을 칠해도 눈에 띄지 않는다(규칙 04).
+     *
+     * 나를 부른 것은 그대로 주의색을 받는다 — 그것은 실제로 내 차례를 만든다.
+     * 집합은 다른 색(teal)으로 구분한다.
+     */
     const className = `rounded px-0.5 font-medium ${
       isGroup
         ? 'bg-teal-50 text-teal-700'
         : isSelf
           ? 'bg-warning-surface-strong text-warning'
-          : 'bg-accent-surface text-accent'
+          : 'bg-surface-sunken text-fg'
     }`;
     // 표시는 한 곳에서 나온다 — 누를 수 있는 것과 없는 것을 따로 그리면 색·배지가 갈라진다.
     const shared = {
