@@ -5,6 +5,8 @@ import { getController } from '../state/controller';
 import { AskCard } from './AskCard';
 import { ThreadStateBadge } from './ThreadStateBadge';
 import { threadStateFromFacts, isBlocking, THREAD_STATE_LABEL } from '../lib/threadState';
+import { waitChainFromLinks, chainEnds } from '../lib/waitChain';
+import { subjectParticle } from '../lib/particle';
 import { FailureCard } from './FailureCard';
 import { ReportCard } from './ReportCard';
 import { MessageBody } from './MessageBody';
@@ -109,6 +111,33 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
     isAgent: (id) => accounts[id]?.kind === 'agent',
     live: connected ? new Set(online) : null,
   }), [message, myId, accounts, connected, online]);
+
+  /**
+   * **말 슬롯**(identity 문서 Task 13) — "누가 누구를 기다린다".
+   *
+   * 문서가 이 줄을 "아직 만들 수 없다"고 적어 두었다: *"meta 에 되물음·선택의 수신자가
+   * 들어 있어야 한다."* 그 전제는 `AskMeta.to` 로 충족됐고, **채널 목록에서 사슬을
+   * 만드는 것**은 `openAskLinks`(#490)가 열었다.
+   *
+   * 이름은 **양 끝만** 쓴다(`chainEnds`) — 일곱이 답한 스레드에서도 이름은 둘이다.
+   */
+  const ends = useMemo(() => {
+    const chain = waitChainFromLinks({
+      links: message.openAskLinks ?? null,
+      myAccountId: myId,
+      live: connected ? new Set(online) : null,
+    });
+    const e = chain ? chainEnds(chain) : null;
+    /**
+     * **강조는 이 사슬 자신이 정한다.** `summaryState` 에서 읽지 않는 이유: 그것은
+     * `openAskAccountIds` 를 보고 이 줄은 `openAskLinks` 를 보므로, 둘이 어긋나면
+     * 화면이 **자기가 그린 문장과 다른 강조**를 준다. 같은 재료에서 나온 판정을 쓴다.
+     */
+    return e && chain ? { ...e, mine: chain.end === 'me' } : null;
+  }, [message.openAskLinks, myId, connected, online]);
+
+  /** 이름을 부르는 유일한 자리. 모르면 `…` 다 — 없는 이름을 지어내지 않는다. */
+  const nameOf = (id: string): string => accounts[id]?.handle ?? '…';
 
   const participantList = message.participantIds ?? [];
   const displayedParticipants = participantList.slice(0, FACE_SLOTS);
@@ -368,7 +397,23 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                   서버가 집계를 실어 주므로(#484) 열어 보지 않은 스레드도 판정할 수 있다 —
                   그 재료가 없으면(옛 서버·답글 행) 배지를 그리지 않고 답장 수만 남는다.
                 */}
-                {summaryState && <ThreadStateBadge state={summaryState} />}
+                {/*
+                  **위에서부터 이긴다 — 하나의 스레드는 한 줄만 받는다**(문서).
+                  사슬이 있으면 그것이 배지보다 구체적인 말이다: 배지는 "내 차례"까지만
+                  말하고, 이 줄은 **누구를 기다리는지**까지 말한다.
+                */}
+                {ends ? (
+                  <span
+                    data-testid="speech-slot"
+                    data-mine={ends.mine}
+                    className={ends.mine ? 'font-medium text-state-turn' : 'text-fg-muted'}
+                  >
+                    {ends.blockedBy === null
+                      // '사람 아무나'는 이름 자리에 보통명사를 끼우면 조사가 어긋난다.
+                      ? `${nameOf(ends.waiter)}${subjectParticle(nameOf(ends.waiter))} 사람의 답을 기다린다`
+                      : `${nameOf(ends.waiter)}${subjectParticle(nameOf(ends.waiter))} ${nameOf(ends.blockedBy)}의 답을 기다린다`}
+                  </span>
+                ) : summaryState && <ThreadStateBadge state={summaryState} />}
                 {/*
                   **답장 수는 강조색을 받지 않는다**(#488 B2). 문서: *"N replies 는
                   '현재 상태'이지 '급한 것'이 아니다."* 강조색은 나를 막는 말에만 쓴다 —

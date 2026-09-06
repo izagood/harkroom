@@ -191,3 +191,30 @@ function walk(links: WaitLink[], myAccountId: string | null, live: Liveness): Wa
   // 사슬 끝이 아무것도 안 기다린다 — 그 사람이/에이전트가 답할 차례다(나는 아니다).
   return { links: chain, end: 'other', unblocks: 0 };
 }
+
+/**
+ * 사슬을 **한 문장**으로 — 채널 요약 줄의 말 슬롯(identity 문서 Task 13).
+ *
+ * ## 왜 `WaitChainLine` 을 그대로 쓰지 않는가
+ *
+ * 그 컴포넌트는 마디를 **전부** 이어 붙인다(`codex 가 forge의 답을 기다린다 ·
+ * forge 가 사람의 답을 기다린다`). 스레드를 열어 놓고 보는 자리에서는 그것이 맞지만,
+ * 채널 요약에서는 **문서가 금지한 명단**이 된다: *"이름은 대기 사슬의 양 끝일 때만
+ * 쓴다 — 그래서 최대 둘, 참여자 수와 무관하다."*
+ *
+ * 일곱이 답한 스레드에서도 이 줄은 이름 **둘**만 쓴다. 얼굴이 "누가"를 이미 답하고
+ * 있으므로 글자는 **"무엇을 기다리는가"** 만 말한다.
+ *
+ * ## 아무도 기다리지 않으면 이름이 아예 안 나온다
+ *
+ * 문서: *"아무도 기다리지 않으면 이름은 아예 안 나오고 숫자와 시각만 남는다."*
+ * 그래서 `null` 을 낸다.
+ */
+export function chainEnds(chain: WaitChain): { waiter: string; blockedBy: string | null } | null {
+  if (chain.end === 'none' || chain.links.length === 0) return null;
+  // **양 끝**이다: 사슬을 시작한 쪽과, 마지막으로 답을 기다려지는 쪽.
+  // 가운데 마디들은 이름을 받지 않는다 — 그것이 명단이 되는 지점이다.
+  const first = chain.links[0]!;
+  const last = chain.links[chain.links.length - 1]!;
+  return { waiter: first.waiter, blockedBy: last.blockedBy };
+}
