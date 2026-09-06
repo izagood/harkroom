@@ -60,19 +60,26 @@ export function AgentGrid({
   return (
     <div className="flex min-h-0 flex-col">
       {/* 검색은 **화면 맨 위 고정**이다 — 목록이 길어져도 찾는 수단이 스크롤 밖으로 나가지 않는다. */}
-      <div className="sticky top-0 z-10 bg-surface-raised pb-3">
-        <input
-          data-testid="agent-search"
-          aria-label="에이전트 검색"
-          className="w-full rounded border border-border bg-field px-3 py-2 text-sm
-                     text-fg placeholder-fg-subtle"
-          placeholder="이름이나 하는 일로 찾는다"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+      <div className="sticky top-0 z-10 bg-surface-raised pb-4">
+        <div className="relative">
+          <span aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-fg-subtle">⌕</span>
+          <input
+            data-testid="agent-search"
+            aria-label="에이전트 검색"
+            className="w-full rounded-lg border border-border bg-field py-2 pl-8 pr-14 text-sm
+                       text-fg placeholder-fg-subtle"
+            placeholder="이름으로 찾기"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {/* 개수는 **검색창 안**이다(목업) — 몇 개를 뒤지고 있는지가 찾기 전에 보여야 한다. */}
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-fg-subtle">
+            {shown.length}개
+          </span>
+        </div>
       </div>
 
-      <div data-testid="agent-grid" className="grid grid-cols-[repeat(auto-fill,86px)] gap-3 overflow-y-auto">
+      <div data-testid="agent-grid" className="grid grid-cols-[repeat(auto-fill,86px)] gap-x-6 gap-y-5 overflow-y-auto">
         {/*
           `+` 는 **맨 앞**이다. "그리드의 마지막 칸"으로 두면 40개일 때 그 칸이 스크롤 끝이라
           찾아가야 한다. 맨 앞이면 개수와 무관하게 자리가 고정되고, 검색으로 목록이 비어도
@@ -81,38 +88,60 @@ export function AgentGrid({
         {canCreate && (
           <button
             data-testid="agent-create"
-            className="flex h-[86px] w-[86px] flex-col items-center justify-center gap-1 rounded-lg
-                       border border-dashed border-border text-fg-subtle hover:border-fg-subtle hover:text-fg"
+            className="group flex w-[86px] flex-col items-center gap-2"
             onClick={onCreate}
           >
-            <span aria-hidden="true" className="text-lg leading-none">+</span>
-            <span className="text-[11px]">새 에이전트</span>
+            {/* 목업처럼 **점선도 원**이다 — 사각 점선은 옆의 둥근 얼굴들과 다른 종류로 읽힌다. */}
+            <span
+              className="flex h-14 w-14 items-center justify-center rounded-full border border-dashed
+                         border-border text-fg-subtle group-hover:border-fg-subtle group-hover:text-fg"
+            >
+              <span aria-hidden="true" className="text-lg leading-none">+</span>
+            </span>
+            <span className="text-[11px] text-fg-muted">새 에이전트</span>
           </button>
         )}
 
         {shown.map((a) => {
           const face = faceState(a.id, runnerStates, online, connected);
           return (
-            <div key={a.id} className="relative">
+            <div key={a.id} className="group relative flex flex-col items-center">
               <button
                 data-testid={`agent-card-${a.handle}`}
                 data-selected={selectedId === a.id}
                 data-face={face}
-                className={`flex h-[86px] w-[86px] flex-col items-center justify-center gap-1.5 rounded-lg
-                            border p-1 ${selectedId === a.id
-                              ? 'border-accent bg-accent-surface'
-                              : 'border-transparent hover:bg-surface-hover'}`}
+                // **얼굴이 주인공이다**(문서: "얼굴만 남긴다"). 카드 상자를 그리지 않는다 —
+                // 목업에는 테두리도 면도 없고 **원과 이름**만 있다. 상자를 두면 26개가 깔릴 때
+                // 격자 선이 얼굴보다 먼저 눈에 들어온다.
+                className="group flex w-[86px] flex-col items-center gap-2"
                 onClick={() => onPick(a)}
               >
                 <span
-                  className={`relative ${face === 'failed' ? 'rounded-full ring-2 ring-state-stuck' : ''}`}
+                  className={`relative block rounded-full ${
+                    face === 'failed' ? 'ring-2 ring-state-stuck' : ''
+                  } ${selectedId === a.id ? 'ring-2 ring-accent ring-offset-2 ring-offset-surface-raised' : ''}`}
                 >
-                  {/* 멈춘 사진은 **색이 빠진다** — 장식을 더하는 것이 아니라 덜어 낸다. */}
-                  <span className={face === 'stopped' ? 'block grayscale opacity-60' : 'block'}>
-                    <Identity account={a} className="h-10 w-10 text-sm" variant="avatar" />
+                  {/*
+                    멈춘 사진은 **색이 빠진다** — 장식을 더하는 것이 아니라 덜어 낸다.
+                    `grayscale` 만으로는 부족하다: 어두운 색(예: blue-500)은 회색조로 바꿔도
+                    **거의 검정**이 되어 목업의 중간 회색과 달라지고, 흰 글리프가 그 위에서
+                    과하게 도드라진다. 그래서 밝기를 함께 올려 **중간 회색**으로 모은다.
+                  */}
+                  <span
+                    className={face === 'stopped'
+                      ? 'block grayscale brightness-[1.7] contrast-[0.55] opacity-90'
+                      : 'block'}
+                  >
+                    <Identity account={a} className="h-14 w-14 text-lg" variant="avatar" />
                   </span>
                 </span>
-                <span className="w-full truncate text-center text-[11px] text-fg">{a.handle}</span>
+                <span
+                  className={`w-full truncate text-center text-[11px] ${
+                    face === 'ok' ? 'text-fg' : 'text-fg-subtle'
+                  }`}
+                >
+                  {a.handle}
+                </span>
               </button>
 
               {/*
@@ -122,13 +151,23 @@ export function AgentGrid({
                 붙이지 않는다(40개 중 38개가 그 모습이면 화면이 조용하다).
               */}
               {onRelaunch && face !== 'ok' && (
+                /*
+                  **글리프는 사진 안에 있다**(문서: "실행하기 버튼도 사라진다 — 사진 안으로
+                  들어간다"). 그래서 뱃지가 아니라 얼굴을 덮는 원이고, 평소에는 **옅게** 얹혀
+                  사진을 가리지 않는다. 마우스를 올리면 또렷해진다 — 누를 수 있다는 것이
+                  그때 분명해지면 충분하고, 26개가 깔린 화면에서 26개의 진한 글리프는 소음이다.
+
+                  카드와 **다른 동작**이라는 것은 그대로다: 카드를 누르면 설정이 열리고
+                  이것을 누르면 러너가 뜬다.
+                */
                 <button
                   data-testid={`agent-relaunch-${a.handle}`}
                   aria-label={`${a.handle} ${face === 'failed' ? '다시 띄우기' : '실행하기'}`}
-                  className={`absolute left-1/2 top-[26px] -translate-x-1/2 rounded-full px-1.5
-                              text-[13px] leading-5 ${face === 'failed'
-                                ? 'bg-state-stuck text-fg-on-strong'
-                                : 'bg-fg text-surface-raised'}`}
+                  className={`absolute left-1/2 top-0 flex h-14 w-14 -translate-x-1/2 items-center
+                              justify-center rounded-full text-xl leading-none opacity-50 transition
+                              group-hover:opacity-100 focus-visible:opacity-100 ${
+                                face === 'failed' ? 'text-state-stuck' : 'text-fg'
+                              }`}
                   onClick={(e) => { e.stopPropagation(); onRelaunch(a); }}
                 >
                   <span aria-hidden="true">{face === 'failed' ? '\u21bb' : '\u25b6'}</span>
