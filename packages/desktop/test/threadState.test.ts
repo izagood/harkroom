@@ -4,7 +4,7 @@
 // 그리고 그 반대편의 거짓말 — 소켓이 끊겼다고 도는 스레드를 전부 붉게 칠하는 것 — 도 함께 막는다.
 import { describe, it, expect } from 'vitest';
 import type { AskMeta, FailureMeta, MessageRow } from '@murmur/shared';
-import { threadState, isBlocking, THREAD_STATE_LABEL, type Liveness, type ThreadState } from '../src/lib/threadState';
+import { threadState, threadStateFromFacts, isBlocking, THREAD_STATE_LABEL, type Liveness, type ThreadState } from '../src/lib/threadState';
 import { msg } from './helpers/fakeApi';
 
 const ME = 'u-me';
@@ -134,5 +134,73 @@ describe('isBlocking — 강조를 받는 상태', () => {
     expect(isBlocking('waiting')).toBe(false);
     expect(isBlocking('running')).toBe(false);
     expect(isBlocking('done')).toBe(false);
+  });
+});
+
+/**
+ * **서버 집계로 내는 같은 판정**(#484 · Task 6 Step 2).
+ *
+ * 채널 목록에는 루트만 있다 — 답글은 스레드를 열 때만 로드된다. 그 배열로 판정하면
+ * **열어 보지 않은 스레드가 전부 '끝남'** 이 되고, 그것이 이 Task 가 고치려던 거짓말이다.
+ */
+describe('threadStateFromFacts — 채널 요약의 판정', () => {
+  const facts = (over: Partial<Parameters<typeof threadStateFromFacts>[0]['row']> = {}) => ({
+    openAskHumanCount: 0, openAskAccountIds: [], failureCount: 0,
+    lastKind: 'user' as const, lastAuthorId: ME, ...over,
+  });
+  const from = (row: ReturnType<typeof facts>, live: Liveness = new Set([FORGE, CODEX])) =>
+    threadStateFromFacts({ row, myAccountId: ME, isAgent, live });
+
+  it('재료가 없으면 null 이다 — 모르는 것을 끝남이라 하지 않는다', () => {
+    // 답글 행이거나 옛 서버다. '끝남'으로 떨어뜨리는 것이 바로 그 거짓말이다.
+    expect(threadStateFromFacts({
+      row: { openAskHumanCount: null, openAskAccountIds: null, failureCount: null, lastKind: null, lastAuthorId: null },
+      myAccountId: ME, isAgent, live: null,
+    })).toBeNull();
+  });
+
+  it('사람에게 온 미답 물음 → 내 차례', () => {
+    expect(from(facts({ openAskHumanCount: 1 }))).toBe('my-turn');
+  });
+
+  it('나를 지목한 물음 → 내 차례', () => {
+    expect(from(facts({ openAskAccountIds: [ME] }))).toBe('my-turn');
+  });
+
+  it('남을 지목한 물음 → 남을 기다림', () => {
+    expect(from(facts({ openAskAccountIds: [CODEX] }))).toBe('waiting');
+  });
+
+  it('실패가 있으면 막힘', () => {
+    expect(from(facts({ failureCount: 1 }))).toBe('stuck');
+  });
+
+  it('마지막이 진행이고 러너가 살아 있으면 도는 중', () => {
+    expect(from(facts({ lastKind: 'progress', lastAuthorId: FORGE }))).toBe('running');
+  });
+
+  it('죽은 러너를 도는 중으로 그리지 않는다', () => {
+    expect(from(facts({ lastKind: 'progress', lastAuthorId: FORGE }), new Set([CODEX]))).toBe('stuck');
+  });
+
+  it('생존을 모르면 붉게 칠하지 않는다', () => {
+    expect(from(facts({ lastKind: 'progress', lastAuthorId: FORGE }), null)).toBe('running');
+  });
+
+  /**
+   * **두 입구가 같은 답을 내야 한다.** 채널에서 본 상태와 스레드를 열어 본 상태가 갈라지면
+   * 사람은 어느 쪽을 믿어야 하는지 알 수 없다 — 그래서 둘이 같은 `decide()` 를 지난다.
+   */
+  it('메시지 배열로 낸 판정과 집계로 낸 판정이 같다', () => {
+    const cases: [MessageRow[], ReturnType<typeof facts>][] = [
+      [[ask('a1', { kind: 'human' })], facts({ openAskHumanCount: 1 })],
+      [[ask('a1', { kind: 'account', accountId: CODEX })], facts({ openAskAccountIds: [CODEX] })],
+      [[fail('f1')], facts({ failureCount: 1 })],
+      [[progress('p1', FORGE)], facts({ lastKind: 'progress', lastAuthorId: FORGE })],
+      [[msg('u1', 'c1', 1, '끝', ME)], facts()],
+    ];
+    for (const [messages, row] of cases) {
+      expect(from(row)).toBe(state(messages));
+    }
   });
 });
