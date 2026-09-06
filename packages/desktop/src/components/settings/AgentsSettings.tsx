@@ -384,8 +384,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   };
 
   /**
-   * 러너에게 종료를 요청한다(#129). **재시작 버튼이 아니다** — murmur 는 러너를 띄우지
-   * 않으므로 여기서 할 수 있는 것은 "지금 턴을 끝내고 물러나 달라"는 요청까지다.
+   * 화면의 **중지** 버튼(#129, 어휘는 #493). 러너를 지금 끊는 것이 아니라 "진행 중인 턴을
+   * 끝내고 스스로 물러나 달라"는 요청이고, 서버 API 도 그대로 `requestAgentStop` 이다 —
+   * 바뀐 것은 버튼에 쓰인 말뿐이다.
    *
    * 목록 전체를 다시 받지 않고 응답으로 온 정의만 갈아끼운다 — 방금 누른 사람이 자기
    * 조작의 결과(요청 시각)를 곧바로 봐야 한다.
@@ -404,12 +405,17 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   };
 
   /**
-   * 그 요청을 되돌린다(#427). **러너를 지금 띄우는 것이 아니다** — 서버 정의에서 시각 둘을
-   * 지울 뿐이고, 그러면 `startAll` 이 다음에 도는 순간 이 에이전트를 다시 고른다.
+   * 화면의 **실행** 버튼(#427, 어휘는 #493). 서버 API 는 그대로 `undoAgentStopRequest` 다 —
+   * 서버 정의에서 시각 둘을 지우면 `startAll` 이 다음에 도는 순간 이 에이전트를 다시 고르고,
+   * `#431` 2단계 뒤로는 그 뒤를 daemon 이 실제로 spawn 한다(#482). 그래서 화면에 "실행"이라고
+   * 써도 거짓이 아니다 — 자세한 근거는 아래 UI 절의 `#129 → #427 → #493` 주석에 있다.
+   *
+   * **이 함수가 지금 프로세스를 띄우지는 않는다.** 하는 일은 "자동 기동 대상에 다시 넣는다"
+   * 까지이고, 그래서 화면 문구도 "다음 기동부터"라고 적는다.
    *
    * `requestStop` 과 같은 이유로 응답으로 온 정의만 갈아끼운다 — 누른 사람이 자기 조작의
-   * 결과(요청이 사라졌다)를 곧바로 봐야 한다. 그리고 그 갱신이 위 폴링(#428)도 멈춘다:
-   * 폴은 "요청했으나 아직 못 받음" 상태에서만 도는데 되돌리기가 그 상태를 벗어나게 한다.
+   * 결과(중지가 풀렸다)를 곧바로 봐야 한다. 그리고 그 갱신이 위 폴링(#428)도 멈춘다:
+   * 폴은 "중지했으나 러너가 아직 못 받음" 상태에서만 도는데 이 조작이 그 상태를 벗어나게 한다.
    */
   const undoStopRequest = async () => {
     if (!selected) return;
@@ -922,74 +928,123 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
             {selected && isAdmin && (
               <div className="rounded border border-border p-3">
-                {/* #129: "재시작"이라고 쓰지 않는다. murmur 는 러너를 띄우지 않으므로
-                    재시작은 murmur 가 할 수 있는 일이 아니고, 할 수 없는 일을 버튼 이름으로
-                    약속하면 그것이 곧 거짓 신호다(docs/design.md 4절). */}
-                <div className="text-xs font-medium text-fg-muted">러너 종료 요청</div>
-                {/* #427: 문구를 고쳤다. 앞 판본은 *"다시 띄우는 것은 사람(또는 그 머신의
-                    launchd/systemd 감독)의 몫이고, 감독이 없으면 이 요청은 정지로 끝난다"*
-                    고 말했다. 그때는 참이었다 — 그러나 `#431` 2단계에서 **이 앱이 daemon 을
-                    통해 그 감독이 됐다.** 남겨 두면 화면이 "여기서는 되돌릴 수 없다"고
-                    거짓을 말하고, 사람은 바로 아래 있는 되돌리기 버튼을 못 본 채 DB 를
-                    고치러 간다(#427 이 실제로 밟힌 경로다).
+                {/* #129 → #427 → #493: "재시작"을 금지한 원칙은 그대로 살아 있고, **사실관계만
+                    바뀌었다.** 지우지 말고 이 이력을 읽어라 — 그러지 않으면 다음 사람이 이
+                    자리를 또 뒤집는다.
 
-                    **여기서 daemon 의 생사를 말하지는 않는다** — 그것은 `#443` 이 다룰
-                    자리이고, 이 문단이 답해야 하는 것은 "이 요청을 되돌릴 수 있는가"다. */}
+                    `#129`(2026-08) 이 못박은 것: *"재시작"이라고 쓰지 않는다. murmur 는 러너를
+                    띄우지 않으므로 재시작은 murmur 가 할 수 있는 일이 아니고, **할 수 없는 일을
+                    버튼 이름으로 약속하면 그것이 곧 거짓 신호다**(docs/design.md 4절).*
+                    그때는 참이었다 — murmur 는 "외부 접속형"이었고 러너를 띄우는 것은 사람과
+                    그 머신의 launchd/systemd 감독의 몫이었다.
+
+                    **무엇이 바뀌었나**: `#431` 2단계에서 **daemon 이 러너의 오퍼레이터가 됐고,
+                    이 앱이 그 daemon 을 통해 실제로 러너를 띄운다**(`#482`).
+                    `controller.startRunners` → `runnerLauncher.startAll` → `daemon_spawn_runner`
+                    → daemon 의 `spawn(detached)` 까지 실제 경로가 있다. 그래서 "실행"은 이제
+                    이 앱이 못 하는 일을 약속하는 말이 아니다. `#129` 의 원칙(할 수 없는 일을
+                    이름으로 약속하지 마라)은 그대로 지켜지고, 그 원칙이 걸러 내던 대상이
+                    사라졌을 뿐이다.
+
+                    **다만 이 버튼이 프로세스를 지금 띄우지는 않는다.** `startAll` 은 앱 기동 뒤
+                    첫 `presence.snapshot` 에서 한 번만 돈다(`controller.ts` 의
+                    `runnerAutoStartDone` 플래그) — 주기 타이머가 아니다. 이 버튼이 하는 일은
+                    "자동 기동 대상에 다시 넣는다"까지고, 실제 spawn 은 **다음 기동**이다.
+                    그래서 아래 문구도 "다음 기동에서 뜬다"라고 쓴다 — "지금 뜬다"라고 쓰면
+                    `#129` 가 금지한 그 거짓 신호를 이름만 바꿔 되살리는 셈이 된다.
+
+                    **그래도 여전히 금지인 것**: "멈췄다"·"종료됨" 류의 **생사 단정**. 러너가
+                    종료하면 다음 GET /agent/config 자체가 오지 않아 서버는 프로세스가 실제로
+                    죽었는지 영원히 모른다(019_agent_stop_request.sql). daemon 이 생사를 아는
+                    문제는 `#443` 의 자리이고, 이 절이 답하는 질문이 아니다 — 이 절은
+                    "이 에이전트가 자동 기동 대상에 들어와 있는가"에만 답한다. */}
+                <div className="text-xs font-medium text-fg-muted">러너 실행 · 중지</div>
+                {/* #493: 버튼이 "종료 요청"/"요청 되돌리기" 둘에서 **한 자리 토글**로 접혔다.
+                    "요청"·"되돌리기"는 서버 API 의 대칭(`stop` ↔ `stop/undo`)에서 온 **내부
+                    어휘**였다. 사람은 "내가 보낸 요청을 취소한다"고 생각하지 않는다 —
+                    "이 에이전트를 다시 켠다"고 생각한다.
+
+                    버튼 이름이 짧아진 만큼 **잃으면 안 되는 뉘앙스가 이 문단으로 왔다**:
+                    중지는 즉시 죽이는 것이 아니라 **진행 중인 턴을 마친 뒤 스스로 물러나는**
+                    것이고, 턴 중간에 끊기지 않는다. 버튼만 보면 "중지 = 지금 끊긴다"로 읽히므로
+                    이 사실은 반드시 글로 남아 있어야 한다.
+
+                    **여기서 daemon 의 생사를 말하지는 않는다** — `#443` 의 자리다. */}
                 <p className="mt-1 text-[11px] text-fg-subtle">
-                  러너에게 <strong>진행 중인 턴을 마친 뒤 스스로 종료</strong>해 달라고 요청한다.
-                  턴 중간에 끊지 않는다 — 사람이 기다리는 답을 잃지 않기 위해서다.
-                  요청이 남아 있는 동안 이 에이전트는 <strong>자동 기동에서 빠진다</strong>.
-                  <strong>되돌릴 수 있다</strong> — 되돌리면 다음 기동부터 다시 대상에 들어온다.
+                  <strong>중지</strong>는 러너를 지금 끊지 않는다 — 러너가
+                  <strong> 진행 중인 턴을 마친 뒤 스스로 종료</strong>한다. 턴 중간에 끊지 않는 것은
+                  사람이 기다리는 답을 잃지 않기 위해서다. 중지해 둔 동안 이 에이전트는
+                  <strong> 자동 기동에서 빠진다</strong>. <strong>실행</strong>을 누르면 다시 대상에
+                  들어와 <strong>다음 기동에서 러너가 뜬다</strong> — 지금 이 자리에서 띄우지는
+                  않는다. 둘 다 언제든 되돌릴 수 있는 조작이다.
                 </p>
-                {/* 세 상태를 구분해 그린다: 요청 없음 / 요청했으나 러너가 아직 못 봄 /
-                    러너가 읽어 감. **'멈췄다'고 쓰지 않는다** — 러너가 종료하면 다음
-                    GET /agent/config 자체가 오지 않아, murmur 는 프로세스의 생사를 모른다. */}
+                {/* #493: **세 상태를 버튼이 아니라 이 상태 표시로 옮겼다.**
+
+                    버튼 자리는 하나여야 한다 — 사람이 답해야 하는 질문은 "지금 켤까 끌까" 하나뿐이고,
+                    그 질문에 버튼 둘을 내밀면 어느 쪽이 지금 상태인지를 사람이 역산해야 한다.
+                    그러나 **세 상태는 접으면 안 된다.** 특히 `stopAckedAt` 이 없는 동안은
+                    "중지를 걸었는데 그 요청이 아직 러너에게 닿지 않았다"는 뜻이고, 이것은 사람이
+                    알아야 할 사실이다 — 러너가 붙어 있지 않으면 읽어 갈 쪽이 없어 요청은 계속
+                    미수령으로 남는다. 접어 버리면 사람은 "눌렀는데 왜 안 멈추지"를 알 길이 없다.
+
+                    그래서 **버튼은 이분(실행/중지), 상태 표시는 삼분**으로 나눈다. 둘은 같은 값을
+                    다른 해상도로 읽는다: 버튼은 `stopRequestedAt` 의 유무만, 상태 표시는 거기에
+                    `stopAckedAt` 을 더해 셋을 가른다.
+
+                    **'멈췄다'고 쓰지 않는다** — 위 주석과 019 마이그레이션이 그 이유를 적었다. */}
                 <div className="mt-2 text-[11px]" role="status">
                   {!selected.stopRequestedAt && (
-                    <span className="text-fg-muted">종료를 요청한 적이 없다</span>
+                    <span className="text-fg-muted">
+                      자동 기동 대상이다 — 중지를 걸어 둔 적이 없다.
+                    </span>
                   )}
                   {selected.stopRequestedAt && !selected.stopAckedAt && (
                     <span className="text-warning">
-                      종료 요청함 ({new Date(selected.stopRequestedAt).toLocaleString()}) —
-                      러너가 아직 읽어 가지 않았다. 러너가 붙어 있지 않으면 읽어 갈 사람도 없다.
+                      중지함 ({new Date(selected.stopRequestedAt).toLocaleString()}) —
+                      러너가 아직 읽어 가지 않았다. 러너가 붙어 있지 않으면 읽어 갈 쪽도 없다.
                     </span>
                   )}
                   {selected.stopRequestedAt && selected.stopAckedAt && (
                     <span className="text-fg-muted">
-                      러너가 요청을 읽어 갔다 (요청 {new Date(selected.stopRequestedAt).toLocaleString()}
+                      러너가 요청을 읽어 갔다 (중지 {new Date(selected.stopRequestedAt).toLocaleString()}
                       {' '}· 수령 {new Date(selected.stopAckedAt).toLocaleString()}).
                       진행 중이던 턴을 마치고 종료한다 — 실제로 종료했는지는 murmur 가 알 수 없다.
-                      {/* #427: 여기서도 되돌릴 수 있다는 것을 말한다. 러너가 이미 읽어 간 뒤가
-                          오히려 되돌리기가 필요해지는 자리다 — 그 뒤로는 자동 기동이 이
-                          에이전트를 영영 건너뛴다. 되돌린다고 이미 물러난 러너가 돌아오지는
-                          않으므로 '다음 기동부터'라고 쓴다. */}
-                      {' '}되돌리면 다음 기동부터 다시 자동 기동 대상이 된다.
+                      {/* #427 → #493: 러너가 이미 읽어 간 뒤가 오히려 다시 켤 필요가 생기는
+                          자리다 — 그 뒤로는 자동 기동이 이 에이전트를 영영 건너뛴다. 실행을
+                          누른다고 이미 물러난 러너가 그 자리에서 되살아나지는 않으므로
+                          '다음 기동부터'라고 쓴다. */}
+                      {' '}실행을 누르면 다음 기동부터 다시 자동 기동 대상이 된다.
                     </span>
                   )}
                 </div>
-                {/* #427: 되돌리는 길을 **요청과 같은 자리**에 둔다. 다른 화면이나 다른
-                    섹션으로 보내면 "설정에서 껐으니 설정에서 켜겠지"로 읽는 사람이 그것을
-                    못 찾고, 못 찾으면 DB 를 고치러 간다.
+                {/* #493: 켜는 길과 끄는 길을 **한 자리**에 겹쳐 둔다. `#427` 이 "되돌리는 길을
+                    요청과 같은 자리에 둔다"고 한 것을 한 걸음 더 민 것이다 — 다른 자리로 보내면
+                    "설정에서 껐으니 설정에서 켜겠지"로 읽는 사람이 그것을 못 찾고, 못 찾으면
+                    DB 를 고치러 간다(#427 이 실제로 밟힌 경로다).
 
-                    요청이 있을 때만 보인다 — 요청이 없는 상태에서 되돌리기 버튼을 그리면
-                    누를 것이 없는 버튼이 되고, 화면이 있지도 않은 요청을 암시한다. */}
+                    한 자리이므로 "누를 것이 없는 버튼"이 애초에 생기지 않는다 — 이 자리에는
+                    항상 지금 할 수 있는 조작 하나만 서 있다.
+
+                    서버 API 는 그대로다 — 실행은 `undoAgentStopRequest`, 중지는 `requestAgentStop`.
+                    화면 어휘만 사람의 어휘로 바꿨고 장부·라우트는 건드리지 않았다. */}
                 <div className="mt-2 flex gap-2">
-                  <button
-                    className="rounded border border-warning-border bg-warning-surface px-2 py-1 text-xs font-medium text-warning hover:bg-warning-surface-strong disabled:opacity-50"
-                    aria-label="러너 종료 요청"
-                    disabled={busy}
-                    onClick={() => void requestStop()}
-                  >
-                    종료 요청
-                  </button>
-                  {selected.stopRequestedAt && (
+                  {selected.stopRequestedAt ? (
                     <button
-                      className="rounded border border-border px-2 py-1 text-xs font-medium text-fg-muted hover:bg-surface-sunken disabled:opacity-50"
-                      aria-label="종료 요청 되돌리기"
+                      className="rounded border border-border px-2 py-1 text-xs font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
+                      aria-label="러너 실행"
                       disabled={busy}
                       onClick={() => void undoStopRequest()}
                     >
-                      요청 되돌리기
+                      실행
+                    </button>
+                  ) : (
+                    <button
+                      className="rounded border border-warning-border bg-warning-surface px-2 py-1 text-xs font-medium text-warning hover:bg-warning-surface-strong disabled:opacity-50"
+                      aria-label="러너 중지"
+                      disabled={busy}
+                      onClick={() => void requestStop()}
+                    >
+                      중지
                     </button>
                   )}
                 </div>
