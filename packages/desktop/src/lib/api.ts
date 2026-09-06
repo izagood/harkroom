@@ -268,6 +268,21 @@ export class ApiClient {
   }
 
   /**
+   * 그 종료 요청을 **되돌린다**(#427). `requestAgentStop` 의 대칭이다.
+   *
+   * 러너를 지금 띄우는 것이 아니다 — 지우는 것은 정의의 시각 둘이고, 그러면 **다음 기동
+   * 때** 자동 기동 대상에 다시 들어온다(`runnerLauncher.startAll` 의 `!a.stopRequestedAt`
+   * 필터). 그래서 이름이 `startAgent` 가 아니다.
+   *
+   * 요청이 없던 에이전트에 불러도 200 이다 — 부르는 쪽이 원한 상태가 이미 성립해 있는
+   * 것이라 실패가 아니다(서버 `undoAgentStopRequest` 주석). 응답은 요청과 마찬가지로
+   * 갱신된 정의라, 목록을 다시 받지 않고도 지워진 사실을 바로 그린다.
+   */
+  undoAgentStopRequest(agentId: string): Promise<AgentView> {
+    return this.req('POST', `/accounts/agents/${agentId}/stop/undo`);
+  }
+
+  /**
    * 진행 중인 에이전트 PTY 세션 목록(#141). **내가 볼 수 있는 것만 온다** — 소유하지
    * 않은 에이전트의 세션은 목록에 아예 없다(403 이 아니라 부재다).
    */

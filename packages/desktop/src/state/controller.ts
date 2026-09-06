@@ -986,6 +986,19 @@ export class Controller {
   }
 
   /**
+   * #427: 그 요청을 되돌린다. 위와 같은 이유로 실패를 삼키지 않는다.
+   *
+   * **여기서 러너를 띄우지 않는다.** 되돌리기는 서버 정의에서 시각을 지울 뿐이고, 그 뒤
+   * `startAll` 이 도는 순간(다음 기동·자동 기동 토글) 필터가 그 에이전트를 다시 고른다.
+   * 여기서 `runnerLauncher.startOne` 을 부르고 싶어지지만 그러면 안 된다 — 이 조작의 뜻은
+   * "지금 띄워라"가 아니라 "더 이상 막지 마라"이고, 둘을 섞으면 서버 정의와 앱 동작이
+   * 갈릴 때(예: 되돌리기는 성공했는데 기동은 실패) 화면이 무엇을 말해야 할지 모른다.
+   */
+  undoAgentStopRequest(agentId: string): Promise<import('@murmur/shared').AgentView> {
+    return this.api.undoAgentStopRequest(agentId);
+  }
+
+  /**
    * #251: 에이전트 비활성화/재활성화. 설정 저장(`updateAgent`)과 별도 경로인 이유는
    * `api.setAgentDisabled` 주석에 있다.
    *

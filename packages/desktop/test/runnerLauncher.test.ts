@@ -116,6 +116,49 @@ describe('1. 대상 선별', () => {
     expect(spawner.spawns).toHaveLength(1);
     expect(launcher.getStates().map((s) => s.agentId)).toEqual(['mine']);
   });
+
+  /**
+   * #427: **종료 요청을 되돌리면 자동 기동 대상에 다시 들어온다.** 이것이 그 이슈의 핵심이다.
+   *
+   * 되돌리기 자체는 서버가 한다(`POST /accounts/agents/:id/stop/undo` 가
+   * `stop_requested_at` 을 null 로 되돌린다) — 앱이 재는 것은 **그 결과를 여기가 어떻게
+   * 먹는가**다. 그래서 서버 왕복을 흉내내지 않고 필터가 실제로 보는 값
+   * (`stopRequestedAt`)의 전후를 그대로 준다.
+   *
+   * 되돌리기 전후를 **한 테스트 안에서** 잰다. 대조군(아래)이 따로 있지만, 같은 에이전트가
+   * "빠졌다 → 들어왔다"로 움직이는 것을 한자리에서 보이지 않으면 두 단언이 서로 다른
+   * 이유로도 통과할 수 있다.
+   */
+  it('종료 요청을 되돌리면(stopRequestedAt = null) 다시 대상이 된다', async () => {
+    const { launcher, spawner } = make();
+
+    // 되돌리기 전 — 서버 정의에 요청이 남아 있다.
+    await startAll(launcher, [agent('undone', { stopRequestedAt: '2026-09-01T00:00:00Z' })]);
+    expect(spawner.spawns).toHaveLength(0);
+    expect(launcher.getStates()).toHaveLength(0);
+
+    // 되돌린 뒤 — 서버가 그 값을 지웠고, 다음 기동이 같은 에이전트를 고른다.
+    await startAll(launcher, [agent('undone', { stopRequestedAt: null })]);
+    expect(spawner.spawns).toHaveLength(1);
+    expect(launcher.getStates().map((s) => s.agentId)).toEqual(['undone']);
+  });
+
+  /**
+   * #427 대조군. **이것이 없으면 위 회귀선은 "필터가 아예 없다"로도 통과한다** — 요청이
+   * 남아 있는 에이전트를 여전히 걸러 내는지가 그 회귀선의 전제다.
+   *
+   * 위 첫 테스트의 `stopping` 과 겹쳐 보이지만 겹치지 않는다: 저기서는 다섯 마리를 섞어
+   * "뽑히는 것이 하나"를 재고, 여기서는 요청이 남은 **한 마리만** 줘서 그 한 마리가
+   * 걸러지는 것 자체를 잰다. 저 단언은 다른 필터(소유·비활성) 중 하나만 살아 있어도
+   * 통과할 수 있다.
+   */
+  it('대조군: 되돌리지 않으면 여전히 제외된다', async () => {
+    const { launcher, spawner } = make();
+    await startAll(launcher, [agent('still-stopping', { stopRequestedAt: '2026-09-01T00:00:00Z' })]);
+
+    expect(spawner.spawn).not.toHaveBeenCalled();
+    expect(launcher.getStates()).toHaveLength(0);
+  });
 });
 
 /**

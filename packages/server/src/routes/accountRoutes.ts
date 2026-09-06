@@ -6,7 +6,7 @@ import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { ACCOUNT_STATUSES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@murmur/shared';
 import {
   ackAgentStop, createAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
-  revokeAllPats, updateAgent,
+  revokeAllPats, undoAgentStopRequest, updateAgent,
 } from '../services/agents.js';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
@@ -364,6 +364,55 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     return updated;
   });
 
+  /**
+   * 그 종료 요청을 **되돌린다**(#427). 위 `POST .../stop` 의 대칭이다.
+   *
+   * ## 왜 필요한가
+   *
+   * 한 번 누른 요청을 되돌리는 길이 UI 에도 API 에도 없어서, 그 에이전트는 앱 자동 기동
+   * 대상에서 **영구히** 빠졌다(`runnerLauncher.startAll` 의 `!a.stopRequestedAt` 필터).
+   * 사람이 DB 를 손으로 고쳐야 풀렸고, 그 우회는 감사에 아무것도 남기지 않는다.
+   *
+   * ## 되살리는 것이 아니라 **의도를 지우는 것**이다
+   *
+   * 이 라우트도 러너를 띄우지 않는다 — 그 점에서 `019` 주석의 원칙은 그대로다. 하는 일은
+   * 정의에서 시각 둘을 지우는 것뿐이고, 그러면 **다음 기동 때 daemon 이 그 에이전트를 다시
+   * 고른다**(`#431` 2단계에서 운영자가 daemon 이 됐다). 지금 도는 앱을 즉시 움직이지는
+   * 않는다 — 이름을 'start' 나 'restart' 로 짓지 않은 이유가 그것이다(§4).
+   *
+   * ## 가드가 `requireAdmin` 인 이유 — **되돌리기는 요청보다 느슨하면 안 된다**
+   *
+   * 위 요청과 **같은 관문**이다. 되돌리기를 소유자에게까지 열면, 관리자가 세운 러너를
+   * 소유자가 되살릴 수 있게 되어 종료 요청이 남에게 강제할 수 없는 부탁으로 바뀐다.
+   * 어느 쪽이 더 위험한 조작인지를 따질 자리가 아니라 **한 쌍이 같은 문을 써야 하는**
+   * 자리다 — 문이 갈리면 그 쌍은 더 이상 대칭이 아니다.
+   */
+  app.post('/accounts/agents/:id/stop/undo', { preHandler: app.requireAdmin }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    // 되돌린 뒤에는 정의에서 사라지므로 **먼저** 읽는다 — 감사에 "무엇을 되돌렸나"를
+    // 남길 수 있는 마지막 순간이다.
+    const before = await getAgent(pool, id);
+    const updated = await undoAgentStopRequest(pool, id, req.account!.id);
+    // 존재 확인은 서비스가 한다(위 요청 라우트와 같은 이유).
+    if (!updated) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+    }
+    // **요청이 없었으면 감사에 남기지 않는다.** 되돌릴 것이 없었으므로 아무 일도 일어나지
+    // 않았고(서비스의 조건절이 행을 건드리지도 않는다), 그런 호출까지 쌓으면 감사가
+    // "이 러너를 누가 다시 돌게 했나"를 답하지 못하는 잡음이 된다 — PATCH 가 값이 실제로
+    // 바뀐 것만 남기는 것과 같은 규칙이다. 응답은 그래도 200 이다: 부르는 쪽이 원한 상태가
+    // 이미 성립해 있는 것이라 실패가 아니다(`undoAgentStopRequest` 주석).
+    if (before?.stopRequestedAt) {
+      await recordAudit(pool, {
+        // 요청 기록과 같은 규칙 — 지시문도 대화 본문도 넣지 않는다. 되돌린 대상 요청
+        // 시각만 함께 남긴다: 그 값은 이 조작으로 정의에서 사라졌다.
+        action: 'agent.stop.undone', actorId: req.account!.id, actorHandle: req.account!.handle,
+        target: id, detail: { handle: updated.handle, stopRequestedAt: before.stopRequestedAt },
+      }, req);
+    }
+    return updated;
+  });
+
   // 러너가 자기 정의를 읽는 자리. 이것이 없으면 UI 수정이 도는 러너에 도달하지 않는다.
   app.get('/agent/config', { preHandler: app.requireAccount }, async (req, reply) => {
     if (req.account!.kind !== 'agent') {
@@ -377,6 +426,13 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     // 이미 매 턴 여기를 읽는다). 읽어 간 사실을 지금 남긴다: 러너가 종료하면 그 다음
     // 요청 자체가 오지 않으므로, 서버가 관측할 수 있는 마지막 사실이 이 수령이다.
     // 응답에도 그 값을 실어 준다 — 러너와 화면이 같은 뷰를 봐야 한다.
+    //
+    // #427: 되돌린 뒤에는 이 분기가 **거짓**이다 — 되돌리기가 두 시각을 함께 지우므로
+    // `stopRequestedAt` 이 null 이고, 따라서 수령도 찍히지 않는다. 이것이 맞는 동작이다:
+    // 되돌린 뒤에 수령이 찍히면 요청 없이 수령만 있는 행이 되어 화면이 어느 상태에도
+    // 속하지 않는 값을 받는다. `ackAgentStop` 의 `stop_requested_at is not null` 조건이
+    // 같은 것을 한 겹 더 막는다 — 이 분기와 그 조건이 되돌리기를 사이에 둔 경합(러너가
+    // 요청을 읽는 순간 사람이 되돌리는 경우)에서도 서로를 지킨다.
     if (self.stopRequestedAt && !self.stopAckedAt) {
       const ackedAt = await ackAgentStop(pool, req.account!.id);
       if (ackedAt) {
