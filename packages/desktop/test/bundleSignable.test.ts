@@ -99,7 +99,20 @@ describe('번들에 심볼릭 링크가 없다 (#433 — `staple` 이 그것을 
   });
 });
 
-describe('Mach-O 를 내용으로 찾는다 (`--deep` 이 놓친 것)', () => {
+/**
+ * **macOS 에서만 도는 검사들.** Mach-O 도 `plutil` 도 macOS 고유다.
+ *
+ * CI 는 `ubuntu-latest` 이므로 여기서 건너뛴다 — `/bin/sh` 가 리눅스에서는 ELF 라
+ * "내용으로 보면 Mach-O 다"가 성립하지 않고, `plutil` 은 아예 없다. 실측(2026-09-06):
+ * 가드 없이 올렸다가 CI 에서 세 건이 빨개졌다.
+ *
+ * **건너뛰는 것이 약점이 아니다** — 이 검사들이 지키는 대상(서명·공증)이 macOS 전용이다.
+ * 다만 **소스 검사**(`--deep` 부재·`symlink` 부재)는 플랫폼과 무관하므로 CI 에서도 돈다.
+ * 그쪽이 더 강한 회귀선인 이유이기도 하다.
+ */
+const macOS = process.platform === 'darwin';
+
+describe.skipIf(!macOS)('Mach-O 를 내용으로 찾는다 (`--deep` 이 놓친 것)', () => {
   /**
    * **확장자가 없는 Mach-O 를 만들어 잰다.** 이것이 이 회귀선의 핵심이다.
    *
@@ -222,7 +235,9 @@ describe('entitlements — 본체에만, 필요한 것만', () => {
    * `Embedded entitlements are invalid` 로 거절하고, macOS 10.15.4+ 에서는 아예 실행되지
    * 않는다. 문자열로 XML 을 흉내내 재면 그 두 결함을 못 잡는다 — `plutil` 이 정본이다.
    */
-  it('유효한 plist 다', () => {
+  // **`plutil` 만 macOS 전용이다.** 나머지 검사는 파일 내용만 보므로 CI(리눅스)에서도
+  // 돈다 — 특히 `get-task-allow` 부재는 공증 거절 사유라 어디서든 지켜야 한다.
+  it.skipIf(!macOS)('유효한 plist 다', () => {
     expect(existsSync(ENTITLEMENTS), `${ENTITLEMENTS} 가 있어야 한다`).toBe(true);
     // 실패하면 던진다 — 그 자체가 이 테스트의 판정이다.
     execFileSync('plutil', ['-lint', ENTITLEMENTS]);
