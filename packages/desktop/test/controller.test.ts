@@ -40,7 +40,7 @@ describe('Controller', () => {
       messages: vi.fn(async () => ({ messages: [msg('m1', 'c1', 1, 'a'), msg('m2', 'c1', 2, 'b')], hasMore: false })),
       inboxUnread: vi.fn(async () => [
         // as const 없이는 reason 이 string 으로 추론돼 InboxEntry 의 union 과 어긋난다.
-        { id: 7, messageId: 'm1', reason: 'mention' as const, readAt: null, channelId: 'c1' },
+        { id: 7, messageId: 'm1', reason: 'mention' as const, readAt: null, channelId: 'c1' , authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null},
       ]),
     });
     const { makeWs } = fakeWsFactory();
@@ -235,7 +235,7 @@ describe('Controller', () => {
   });
 
   it('refreshUnread ignores a stale response that arrives after a newer one', async () => {
-    const entries2 = [{ id: 2, messageId: 'm2', reason: 'mention' as const, readAt: null, channelId: 'c1' }];
+    const entries2 = [{ id: 2, messageId: 'm2', reason: 'mention' as const, readAt: null, channelId: 'c1' , authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null}];
     let resolveStale: ((v: typeof entries2) => void) | null = null;
     let call = 0;
     const api = fakeApi({
@@ -256,7 +256,7 @@ describe('Controller', () => {
     await Promise.resolve();
     expect(useAppStore.getState().unread).toEqual(entries2);
 
-    resolveStale!([{ id: 1, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c1' }]);
+    resolveStale!([{ id: 1, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c1' , authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null}]);
     await Promise.resolve();
     await Promise.resolve();
     expect(useAppStore.getState().unread).toEqual(entries2); // stale 응답이 최신 값을 덮지 않는다

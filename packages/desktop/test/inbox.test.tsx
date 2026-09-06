@@ -9,7 +9,7 @@ import { acc, chan, msg } from './helpers/fakeApi';
 
 const entry = (
   id: number, reason: InboxEntry['reason'], channelId: string, readAt: string | null = null,
-): InboxEntry => ({ id, messageId: `m${id}`, reason, readAt, channelId });
+): InboxEntry => ({ id, messageId: `m${id}`, reason, readAt, channelId, authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null });
 
 /**
  * 이 화면은 스토어의 `unread` 가 아니라 `api.inbox()` 를 직접 부른다 — 그 배열은 `?unread=1`
