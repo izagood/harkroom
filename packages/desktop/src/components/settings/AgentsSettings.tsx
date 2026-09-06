@@ -7,6 +7,7 @@ import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { RunnerStatusLine } from '../RunnerStatus';
 import { AgentGrid } from './AgentGrid';
+import { Button } from './primitives';
 
 /** #177: 클립보드가 없거나 거부되면 **조용히 실패하지 않는다** — 화면에 있는 그 명령
  *  텍스트를 선택 상태로 만들어 사람이 ⌘C 할 수 있게 하고, 오류를 눈에 보이게 남긴다.
@@ -263,6 +264,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       .catch(() => setMemories('error'));
   };
 
+  /**
+   * 고친 것이 있는가. **서버가 준 값과 지금 초안을 견준다** — 별도 플래그를 두면 어느
+   * 시점에 내려야 하는지가 저장·재조회·전환 세 곳에 흩어지고, 그중 하나를 잊는다.
+   */
+  const dirty = selected !== null && draft !== null
+    && JSON.stringify(draft) !== JSON.stringify(draftOf(selected));
+
   const pick = (a: AgentView) => {
     setSelected(a);
     setDraft(draftOf(a));
@@ -516,6 +524,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               </div>
             ) : (
             <>
+            {/*
+              **상세는 세 묶음이다**(identity 문서 Task 15-3): 프로필 · 실행 · 권한.
+              전에는 아홉 필드가 한 줄로 흘러 무엇이 무엇과 묶이는지 알 수 없었다.
+            */}
+            <FieldGroup title="프로필" note="채널에서 어떻게 보이고 무엇을 하는가.">
             <label className={label}>
               Agent name
               <input
@@ -541,6 +554,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               />
             </label>
 
+            </FieldGroup>
+
+            <FieldGroup title="실행" note="무엇으로 도는가.">
             <div>
               <div className={label}>AI configuration</div>
               <div className="mt-1 flex gap-1">
@@ -578,6 +594,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               </select>
             </label>
 
+            </FieldGroup>
+
+            <FieldGroup title="권한" note="누가 조종하고 무엇을 할 수 있는가.">
             {/* #253 의 표에서 `mentionPermission` 은 **admin 전용**이다. 소유자에게는 비활성
                 입력이 아니라 **아예 그리지 않는다** — 눌러도 안 되는 것을 보여 주면 사람은
                 자기가 뭘 잘못했다고 생각한다(#299). 값 자체는 아래 읽기 전용 칸에 적는다. */}
@@ -672,6 +691,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               </div>
             )}
 
+            </FieldGroup>
             </>
             )}
 
@@ -1066,16 +1086,54 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             )}
           </div>
 
-          <footer className="w-full max-w-2xl border-t border-border px-5 py-3">
-            <button
-              className="w-full rounded bg-accent py-2 font-medium text-fg-on-strong disabled:opacity-50"
+          {/*
+            **저장은 한 쌍이다**(문서 원칙 05). 전에는 저장 버튼이 카드 안 회색 하나와 화면
+            아래 파란 하나로 갈려 있었다 — 어느 것이 무엇을 저장하는지 알 수 없었다.
+            회색 쪽(워크스페이스 기본값)은 Task 16 이 다른 화면으로 뺐고, 여기 남은 하나에
+            **되돌리기**를 짝지어 하단에만 둔다.
+          */}
+          <footer className="flex w-full max-w-2xl gap-2 border-t border-border px-5 py-3">
+            <Button
+              variant="primary"
               disabled={busy || draft === null}
               onClick={() => void submit()}
             >
               {selected ? 'Save changes' : 'Create agent'}
-            </button>
+            </Button>
+            {/* 되돌리기는 **고친 것이 있을 때만** 선다 — 누를 것이 없는 버튼을 그리지 않는다.
+                고른 에이전트를 다시 고르면 서버 값으로 초안이 다시 채워진다(`pick`). */}
+            {selected && dirty && (
+              <Button
+                variant="secondary"
+                disabled={busy}
+                onClick={() => pick(selected)}
+              >
+                되돌리기
+              </Button>
+            )}
           </footer>
         </div>
     </div>
+  );
+}
+
+/**
+ * 상세의 한 묶음(identity 문서 Task 15-3). 프로필 · 실행 · 권한 셋뿐이다.
+ *
+ * 전에는 아홉 필드가 한 줄로 흘러 **무엇이 무엇과 묶이는지** 알 수 없었다 — 문서가
+ * "이 화면 위계 혼란"이라고 부른 것의 절반이 여기서 나온다(나머지 절반이 워크스페이스
+ * 기본값이었고 그것은 Task 16 이 뺐다).
+ */
+function FieldGroup({ title, note, children }: {
+  title: string; note: string; children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-[13px] font-semibold text-fg">{title}</h3>
+        <p className="text-[11px] text-fg-subtle">{note}</p>
+      </div>
+      {children}
+    </section>
   );
 }
