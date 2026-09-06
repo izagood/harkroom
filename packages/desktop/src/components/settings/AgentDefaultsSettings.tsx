@@ -2,14 +2,11 @@ import { useEffect, useState } from 'react';
 import type { AgentDefaults } from '@murmur/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
-import { SettingsGroup, SettingsPage } from './primitives';
+import { Button, Field, Segmented, Select, SettingsGroup, SettingsPage, TextInput } from './primitives';
 
 /** 러너가 실제로 띄울 수 있는 하네스. `AgentsSettings` 와 같은 목록이어야 한다. */
 const RUNNABLE_HARNESSES = ['claude-code', 'codex'] as const;
 const EFFORTS = ['low', 'medium', 'high'] as const;
-
-const label = 'block text-xs font-medium text-fg-muted';
-const field = 'mt-1 w-full rounded border border-border bg-field px-2 py-1 text-sm';
 
 /**
  * 워크스페이스의 **새 에이전트 기본값**(#171 · identity 문서 원칙 04).
@@ -83,50 +80,37 @@ export function AgentDefaultsSettings() {
         )}
         {isAdmin && form && defaults !== 'error' && (
           <div className="max-w-md space-y-3">
-            <label className={label}>
-              기본 harness
-              <select
-                className={field}
-                aria-label="기본 harness"
+            {/* 하네스는 둘뿐이라 펼치지 않고 전부 보인다 — 고르기 전에 무엇이 있는지 안다. */}
+            <Field label="기본 harness">
+              <Segmented
+                label="기본 harness"
                 value={form.harness}
-                onChange={(e) => { setForm({ ...form, harness: e.target.value }); setSaved(false); }}
-              >
-                {RUNNABLE_HARNESSES.map((h) => <option key={h} value={h}>{h}</option>)}
-              </select>
-            </label>
+                onChange={(v) => { setForm({ ...form, harness: v }); setSaved(false); }}
+                options={RUNNABLE_HARNESSES.map((h) => ({ value: h, label: h }))}
+              />
+            </Field>
             <div className="grid grid-cols-2 gap-3">
-              <label className={label}>
-                기본 model
-                <input
-                  className={field}
-                  aria-label="기본 model"
+              <Field label="기본 model" hint="비우면 하네스 기본값">
+                <TextInput
+                  ariaLabel="기본 model"
                   placeholder="harness 기본값"
                   value={form.model}
-                  onChange={(e) => { setForm({ ...form, model: e.target.value }); setSaved(false); }}
+                  onChange={(v) => { setForm({ ...form, model: v }); setSaved(false); }}
                 />
-              </label>
-              <label className={label}>
-                기본 effort
-                <select
-                  className={field}
-                  aria-label="기본 effort"
+              </Field>
+              <Field label="기본 effort">
+                <Select
+                  ariaLabel="기본 effort"
                   value={form.effort}
-                  onChange={(e) => { setForm({ ...form, effort: e.target.value }); setSaved(false); }}
-                >
-                  <option value="">harness 기본값</option>
-                  {EFFORTS.map((e) => <option key={e} value={e}>{e}</option>)}
-                </select>
-              </label>
+                  onChange={(v) => { setForm({ ...form, effort: v }); setSaved(false); }}
+                  options={[{ value: '', label: 'harness 기본값' }, ...EFFORTS.map((e) => ({ value: e, label: e }))]}
+                />
+              </Field>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                className="rounded bg-accent px-3 py-1 text-xs font-medium text-fg-on-strong
-                           hover:bg-accent-hover disabled:opacity-50"
-                disabled={busy}
-                onClick={() => void save()}
-              >
+              <Button variant="primary" disabled={busy} onClick={() => void save()}>
                 기본값 저장
-              </button>
+              </Button>
               {saved && <span className="text-[11px] text-success">저장했다</span>}
               {error && <span role="alert" className="text-[11px] text-danger">{error}</span>}
             </div>

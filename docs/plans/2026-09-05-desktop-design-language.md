@@ -483,10 +483,13 @@ Phase 2 를 이어가기 전에 세웠다.
   보이고 그 외에는 행이 아예 없다(빈 행은 "값이 없다"로 읽히는데 실제로는 "내가 못 본다"다).
   **터미널 열기는 넣지 않았다** — 프로필은 (에이전트, 스레드) 문맥이 없어 세션 키를 낼 수 없다.
   그 문은 스레드 헤더(Task 8)가 이미 갖고 있다
-- **Task 15: 설정 › 에이전트 재구성** — 가장 큰 덩어리. 카드는 아바타+이름만, 검색을 맨 위
-  고정, 상세는 프로필·실행·권한 세 묶음. `primitives.tsx` 에 Field·Select·Segmented·Button 을
-  세우고 `AgentsSettings.tsx`(1,166줄)를 그리드 + 상세로 나눈다.
-  **서버 변경:** 사진 업로드 `PUT /accounts/:id/avatar`
+- **Task 15: 설정 › 에이전트 재구성 — 넷으로 쪼갠다(2026-09-06).** 한 PR 로는 리뷰가 안 된다.
+  1. **폼 프리미티브** — `Field`·`TextInput`·`Select`·`Segmented`·`Button`. **완료.**
+     `const field = '...'` 문자열이 파일마다 따로 살았고 **값이 이미 갈라져 있었다**
+     (`px-3 py-2` / `px-2 py-1` / `mt-1`). 다른 셋의 토대라 이것이 먼저다
+  2. **그리드 + 검색** — 카드는 아바타+이름만, 검색을 맨 위 고정
+  3. **상세 세 묶음** — `AgentsSettings.tsx`(1,166줄)를 그리드 + 상세로 나눈다
+  4. **아바타 업로드** — 서버 변경 `PUT /accounts/:id/avatar`
 - **Task 16: 워크스페이스 기본값 분리 — 완료(2026-09-06).**
   Add agent 폼 안에 있던 "새 에이전트 기본값"을 설정 목차의 `Agent defaults` 로 옮겼다
   (`AgentDefaultsSettings.tsx` 신설, Agents 바로 뒤). **읽기는 `AgentsSettings` 에 남는다** —
