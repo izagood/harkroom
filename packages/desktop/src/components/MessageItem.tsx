@@ -14,6 +14,12 @@ import { Menu } from './Menu';
 import { bodyAsHandles, displayBody } from '../lib/mention';
 import type { SectionId } from './settings/sections';
 
+/**
+ * 얼굴 슬롯의 칸 수. **폭이 고정되는 것이 이 숫자의 일**이다 — 참여자가 늘어도 요약 줄이
+ * 길어지지 않아야 채널을 훑을 수 있다(identity 문서).
+ */
+const FACE_SLOTS = 3;
+
 export function MessageItem({ message, inThread = false, onOpenDirectory, onOpenSettings }: {
   message: MessageRow;
   inThread?: boolean;
@@ -78,9 +84,16 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   const lastReplyTime = message.lastReplyAt
     ? new Date(message.lastReplyAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : null;
+  /**
+   * 얼굴 슬롯 — **아바타 셋까지, 나머지는 `+N`**(identity 문서 Task 13).
+   *
+   * 다섯이던 것을 셋으로 줄인다: **폭이 고정되어야** 참여자가 3이든 40이든 요약 줄의
+   * 모양이 같다. 서버가 **마지막으로 말한 순**으로 주므로(`THREAD_STATS`) 앞에서 자르면
+   * 방금 말한 사람이 항상 보인다 — 명단이 실제로 움직인다.
+   */
   const participantList = message.participantIds ?? [];
-  const displayedParticipants = participantList.slice(0, 5);
-  const remainingCount = participantList.length - 5;
+  const displayedParticipants = participantList.slice(0, FACE_SLOTS);
+  const remainingCount = participantList.length - FACE_SLOTS;
   // system 메시지는 avcs 투영의 산물이라 사람이 고칠 수 없다 — 서버도 거절한다.
   const canEdit = isMine && !isSystem;
   // 삭제는 작성자 또는 admin — 서버가 그렇게 허용한다. UI가 작성자만 내주면 잘못 올라간
@@ -289,11 +302,15 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
                 aria-label={`${message.replyCount} ${message.replyCount === 1 ? 'reply' : 'replies'}${lastReplyTime ? `, last reply ${lastReplyTime}` : ''}`}
               >
-                {/* 참여자 아바타 — 최대 5개, 나머지는 +N 으로 접는다. 장식 용도라 스크린리더가
+                {/* 참여자 아바타 — 최대 셋, 나머지는 +N 으로 접는다. 장식 용도라 스크린리더가
                     읽지 않도록 aria-hidden 처리하고 sr-only 도 안 준다. #277: variant="avatar" */}
                 <span className="flex -space-x-1" aria-hidden="true">
                   {displayedParticipants.map((id) => (
-                    <span key={id} className="ring-1 ring-surface">
+                    // #471: 래퍼에 `rounded-full` 이 **있어야 한다**. 링을 그리는 것은 안쪽
+                    // 아바타가 아니라 이 래퍼라, 곡률이 없으면 링이 사각형으로 그려지고
+                    // 겹친 자리에서 그 세로 변이 앞 아바타 위에 선처럼 얹힌다. 링의 목적은
+                    // 겹친 원들을 떼어 놓는 것인데 사각 링은 반대로 경계를 만든다.
+                    <span key={id} className="rounded-full ring-1 ring-surface">
                       <Identity account={accounts[id]} className="h-4 w-4 text-[8px]" variant="avatar" />
                     </span>
                   ))}
@@ -303,6 +320,12 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                     </span>
                   )}
                 </span>
+                {/*
+                  말 슬롯 — **이름을 나열하지 않는다**(identity 문서 Task 13). 얼굴이 "누가"를
+                  이미 답하고 있으므로 글자는 **"무엇을 기다리는가"**만 말한다.
+                  채널을 훑을 때의 질문은 "누가 있나"가 아니라 "열어야 하나"이고, 명단은
+                  그 질문에 한 글자도 답하지 않는다.
+                */}
                 <span className="font-medium text-accent">
                   {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
                 </span>

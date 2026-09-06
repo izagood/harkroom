@@ -178,15 +178,39 @@ describe('#161 2단계 답글 컨트롤', () => {
     expect(screen.queryByText(/\+[\d]/)).toBeNull();
   });
 
-  it('참여자가 5명을 넘으면 5개만 보이고 +N 으로 접힌다', () => {
+  /**
+   * **Task 13(identity 문서)**: 다섯이던 얼굴 슬롯을 **셋**으로 줄였다. 폭이 고정되어야
+   * 참여자가 3이든 40이든 요약 줄의 모양이 같고, 그래야 채널을 훑을 수 있다.
+   */
+  it('참여자가 셋을 넘으면 셋만 보이고 +N 으로 접힌다', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', {
       replyCount: 7,
       participantIds: ['u2', 'u3', 'u4', 'u5', 'u6', 'u7'],
     })} />);
 
-    // 5개 아바타 + +1 표시 (텍스트가 분리되어 있을 수 있으므로 부분 일치)
-    expect(screen.getByText((content) => content.includes('+1'))).toBeTruthy();
+    // 여섯 중 셋만 서므로 +3 이다.
+    expect(screen.getByText((content) => content.includes('+3'))).toBeTruthy();
+  });
+
+  it('앞에서부터 셋을 취한다 — 서버가 마지막으로 말한 순으로 준다', () => {
+    fakeController();
+    useAppStore.getState().set({
+      accounts: {
+        u2: acc('u2', 'alpha', 'agent'), u3: acc('u3', 'beta', 'agent'),
+        u4: acc('u4', 'gamma', 'agent'), u5: acc('u5', 'delta', 'agent'),
+      },
+    });
+    render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', {
+      replyCount: 4,
+      // 서버가 최근 발화 순으로 준 배열이다(`THREAD_STATS`).
+      participantIds: ['u5', 'u4', 'u3', 'u2'],
+    })} />);
+
+    // 방금 말한 delta 가 서고, 가장 오래된 alpha 가 잘린다 — 명단이 움직인다는 뜻이다.
+    const summary = screen.getByRole('button', { name: /replies/ });
+    expect(summary.textContent).toContain('delta');
+    expect(summary.textContent).not.toContain('alpha');
   });
 
   // 접근성: 참여자 얼굴은 장식이다 — 키보드·스크린리더 경로에 5개의 정지점을 만들지 않는다.
@@ -249,5 +273,27 @@ describe('Task 12 에이전트 아바타는 사람과 같다', () => {
       expect(humanBox).toContain(cls);
       expect(agentBox).toContain(cls);
     }
+  });
+});
+
+/**
+ * #471 — 겹친 아바타 사이에 **세로선**이 보이던 결함.
+ *
+ * 링을 그리는 것은 안쪽 아바타가 아니라 **바깥 래퍼**다. 래퍼에 곡률이 없으면 링이
+ * 사각형으로 그려지고, `-space-x-1` 로 겹쳤을 때 그 사각형의 세로 변이 앞 아바타 위에
+ * 선처럼 얹힌다. 링의 목적은 겹친 원들을 떼어 놓는 것인데 사각 링은 반대로 경계를 만든다.
+ */
+describe('#471 겹친 아바타의 링은 원이어야 한다', () => {
+  it('답글 스택의 아바타 래퍼가 rounded-full 을 갖는다', () => {
+    fakeController();
+    const { container } = render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', {
+      replyCount: 2, participantIds: ['u2', 'u3'],
+    })} />);
+
+    const ringed = Array.from(container.querySelectorAll('span'))
+      .filter((el) => el.className.includes('ring-1') && el.className.includes('ring-surface'));
+    expect(ringed.length).toBeGreaterThan(0);
+    // 링을 두른 래퍼는 전부 원이어야 한다 — 하나라도 사각이면 그 자리에 선이 생긴다.
+    for (const el of ringed) expect(el.className).toContain('rounded-full');
   });
 });
