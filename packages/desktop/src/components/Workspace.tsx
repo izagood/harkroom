@@ -7,6 +7,7 @@ import { CommunityRail } from './CommunityRail';
 import { Sidebar } from './Sidebar';
 import { ChannelPane } from './ChannelPane';
 import { Notice } from './Notice';
+import { ProjectionBanner } from './ProjectionBanner';
 import { ThreadPanel } from './ThreadPanel';
 import { TerminalPanel } from './TerminalPanel';
 import { SearchPalette } from './SearchPalette';
@@ -196,6 +197,12 @@ export function Workspace({ onLogout, onOpenSettings }: {
         {/* 알림은 헤더 바로 아래, 대화 위에 둔다 — 채널 안에 그리면 채널을 못 연 실패를
             보여 줄 자리 자체가 없다. */}
         <Notice />
+        {/*
+          투영 고장은 **여기**서 말한다(#488 A3-a). 전에는 사이드바 `ACTIVE WORK` 안에
+          있었는데, 그 칸은 "지금 무슨 일이 벌어지는가"를 말하는 자리라 **고장이 일처럼**
+          보였고 고치는 문(설정 열기)도 그 좁은 칸에 들어가지 못했다.
+        */}
+        <ProjectionBanner onOpenSettings={onOpenSettings} />
         <div className="flex flex-1 overflow-hidden">
           {/* 멘션 이동(#279)의 배선은 **여기**다. 초판이 이 두 줄을 빼먹어 앱에서 모든
               멘션이 눌러도 아무 일이 없는 버튼이었다 — 단위 테스트는 props 를 손으로
