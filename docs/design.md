@@ -5,6 +5,7 @@
 - 관련: avcs self-hosted 프로토콜 스펙 (별도 공개 예정, 이 설계의 외부 계약)
 - 데스크탑 디자인 언어: [`desktop-design-directions.html`](desktop-design-directions.html) ([PDF](desktop-design-directions.pdf)) — 말의 종류와 수신자, 세 방향. 구현 계획은 [`plans/2026-09-05-desktop-design-language.md`](plans/2026-09-05-desktop-design-language.md)
 - 에이전트 얼굴과 설정: [`desktop-agent-identity.html`](desktop-agent-identity.html) ([PDF](desktop-agent-identity.pdf)) — 아바타·프로필·답글 스택과 설정 › 에이전트 재설계
+- 나머지 여덟 곳: [`desktop-remaining-gaps.html`](desktop-remaining-gaps.html) ([PDF](desktop-remaining-gaps.pdf)) — 위 두 문서를 적용한 뒤 남는 사이드바 · 앱 전체 규칙 · 화면 제안
 
 ## 0. 이 문서가 말하는 시점 — 목표 설계와 현재 구현
 
