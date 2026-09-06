@@ -201,9 +201,10 @@ describe('커뮤니티마다 스토어·컨트롤러 인스턴스 (#166)', () =>
     seed(a, 'alice', true);
     seed(b, 'bob', true);
 
+    // 내 자리는 이제 `@` 없이 이름만 적는다(#488 A1) — `@` 는 남을 지목할 때의 표기다.
     renderSidebar();
-    expect(screen.getByText('@alice')).toBeTruthy();
-    expect(screen.queryByText('@bob')).toBeNull();
+    expect(screen.getByTestId('me-row').textContent).toContain('alice');
+    expect(screen.getByTestId('me-row').textContent).not.toContain('bob');
 
     cleanup();
     useCommunityRegistry.getState().setActive(b.id);
@@ -211,8 +212,8 @@ describe('커뮤니티마다 스토어·컨트롤러 인스턴스 (#166)', () =>
 
     // 같은 사람이 커뮤니티마다 다른 handle 을 쓴다. 활성이 아닌 쪽의 handle 을 보이면
     // 사용자는 자기가 누구로 말하고 있는지 잘못 안다.
-    expect(screen.getByText('@bob')).toBeTruthy();
-    expect(screen.queryByText('@alice')).toBeNull();
+    expect(screen.getByTestId('me-row').textContent).toContain('bob');
+    expect(screen.getByTestId('me-row').textContent).not.toContain('alice');
   });
 
   it('§6. 커뮤니티가 하나뿐이면 알림 제목이 오늘과 같다', async () => {

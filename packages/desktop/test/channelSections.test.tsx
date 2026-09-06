@@ -127,13 +127,18 @@ const mount = () => render(
  * 사이드바에 그려진 채널·섹션 헤더를 **DOM 순서 그대로** 뽑는다.
  *
  * 개수만 세면 정렬을 지워도 통과한다 — 이 목록의 **순서**가 곧 요구 6·8 이다.
+ *
+ * `data-testid` **가 있다는 것만으로** 항목을 세지 않는다(#488 A2). 예전 판은
+ * `testid.replace('section-header-', '')` 라, 섹션 헤더가 아닌 testid 가 사이드바에 하나라도
+ * 생기면 그 이름이 통째로 순서 배열에 끼어들었다 — `add-dm` 이 실제로 그렇게 끼어들었다.
+ * 이 목록이 답하는 물음은 "섹션과 채널이 어떤 순서로 서는가"이므로 섹션 헤더만 세야 한다.
  */
 const visibleOrder = (): string[] => {
   const nav = document.querySelector('nav')!;
   return [...nav.querySelectorAll('[data-testid^="section-header-"], button')]
     .flatMap((el) => {
       const testid = el.getAttribute('data-testid');
-      if (testid) return [testid.replace('section-header-', '')];
+      if (testid?.startsWith('section-header-')) return [testid.replace('section-header-', '')];
       if (el.tagName !== 'BUTTON') return [];
       const text = (el.textContent ?? '').trim();
       return text.startsWith('#') ? [text.replace(/⋯$/, '').trim()] : [];
