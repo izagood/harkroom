@@ -4,7 +4,7 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { AskCard } from './AskCard';
 import { ThreadStateBadge } from './ThreadStateBadge';
-import { threadStateFromFacts, isBlocking } from '../lib/threadState';
+import { threadStateFromFacts, isBlocking, THREAD_STATE_LABEL } from '../lib/threadState';
 import { FailureCard } from './FailureCard';
 import { ReportCard } from './ReportCard';
 import { MessageBody } from './MessageBody';
@@ -319,7 +319,13 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 className="mt-0.5 self-start -mx-1 flex items-center gap-1.5 rounded px-1 py-0.5
                            text-[11px] hover:bg-surface-hover"
                 onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
-                aria-label={`${message.replyCount} ${message.replyCount === 1 ? 'reply' : 'replies'}${lastReplyTime ? `, last reply ${lastReplyTime}` : ''}`}
+                /*
+                  **상태를 라벨에도 싣는다.** `aria-label` 은 자식 글자를 **덮어쓰므로**,
+                  뱃지가 화면에 보여도 이 문자열에 없으면 스크린리더에는 존재하지 않는다 —
+                  "열어야 하나"에 답하지 못하는 것은 눈으로 읽든 귀로 듣든 같은 결함이다.
+                  화면과 같은 순서(상태 → 답장 수)로 둔다.
+                */
+                aria-label={`${summaryState ? `${THREAD_STATE_LABEL[summaryState]}, ` : ''}${message.replyCount} ${message.replyCount === 1 ? 'reply' : 'replies'}${lastReplyTime ? `, last reply ${lastReplyTime}` : ''}`}
               >
                 {/* 참여자 아바타 — 최대 셋, 나머지는 +N 으로 접는다. 장식 용도라 스크린리더가
                     읽지 않도록 aria-hidden 처리하고 sr-only 도 안 준다. #277: variant="avatar" */}
