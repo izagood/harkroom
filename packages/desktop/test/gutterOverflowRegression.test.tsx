@@ -94,19 +94,34 @@ describe('#277 에이전트 거터 넘침 방지', () => {
     expect(img.getAttribute('src')).toMatch(/^blob:/);
   });
 
-  // 회귀 3: 이름 옆 배지에는 여전히 @소유자가 있다(#181 유지).
-  it('이름 옆 배지에 소유자 핸들이 있다', () => {
+  // 회귀 3: 소유자 핸들이 **메시지 어디에도** 없다.
+  //
+  // **identity 문서로 뒤집혔다.** 초판은 "이름 옆 배지에 소유자 핸들이 있다"였고 근거는
+  // "거터에서 뺐으니 이름줄에는 남아야 한다"였다 — #277 이 고친 것은 **자리**였지 표시가
+  // 아니었기 때문이다. 그 근거는 아바타가 사람과 같아지기 전(#465) 이야기다: 지금은
+  // 종류·소유자·하네스를 프로필(#475)이 답하고, identity 문서가 *"이름 옆 배지와 소유자
+  // 핸들은 뺀다"* 로 못 박았다. 그래서 이름줄 쪽 단언만 뒤집는다.
+  //
+  // **거터 쪽 단언은 그대로 남는다** — 이 파일이 지키는 것은 "소유자 핸들이 32px 고정폭
+  // 열을 넘치는가"이고, 배지를 이름줄에서 뺐다고 그 결함이 사라지는 것이 아니다. 누군가
+  // 소유자를 거터로 되돌리면 #277 이 그대로 재현된다.
+  //
+  // 소유자 표시 자체(#181)는 **디렉터리·자동완성에서 계속 살아 있다** — 그 두 자리를
+  // `directory.test.tsx`·`composer.test.tsx` 의 badge 회귀선이 잰다. 여기서 그것을 다시
+  // 재지 않는 이유는 이 파일이 보는 것이 **메시지 행의 거터 넘침**이기 때문이다.
+  it('메시지 어디에도 소유자 핸들이 없다', () => {
     useAppStore.getState().set({
       accounts: { u1: acc('u1', 'owner'), a1: agent('a1', 'bot', 'u1') },
     });
     fakeController();
-    render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
+    const { container } = render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
 
-    // 소유자는 화면에 정확히 한 번 — 거터에서 빠졌고 이름줄에는 남았다.
-    const shown = screen.getAllByText('@owner');
-    expect(shown).toHaveLength(1);
-    // 그 하나가 거터 **밖**에 있다. 개수만 세면 "거터에만 남고 이름줄에서 사라진" 경우도 초록이다.
-    expect(gutter().contains(shown[0]!)).toBe(false);
+    // 거터에 없다 — 이것이 #277 의 원래 단언이고 여전히 유효하다.
+    expect(gutter().textContent).not.toContain('@owner');
+    // 이름줄에도 없다 — identity 문서로 뒤집힌 쪽이다.
+    expect(screen.queryByText('@owner')).toBeNull();
+    // 행 전체를 본다: 배지를 다른 자리로 옮기는 것으로는 이 단언을 만족시킬 수 없다.
+    expect(container.textContent).not.toContain('@owner');
   });
 
   // 회귀 4: 거터 요소에 overflow-hidden 이 있고 flex-wrap 이 없다.
@@ -143,7 +158,7 @@ describe('#277 에이전트 거터 넘침 방지', () => {
       },
     });
     fakeController();
-    render(<ThreadPanel />);
+    const { container } = render(<ThreadPanel />);
 
     // 답변(에이전트)의 거터를 고른다 — 루트는 사람이라 거터가 둘이다.
     const gutters = screen.getAllByTestId('author-gutter');
@@ -152,8 +167,14 @@ describe('#277 에이전트 거터 넘침 방지', () => {
     const agentGutters = gutters.filter((g) => g.textContent?.includes('bot'));
     expect(agentGutters).toHaveLength(1);
     expect(agentGutters[0]!.textContent).not.toContain('@owner');
-    // 소유자는 스레드 안에서도 이름줄에는 남아 있다(#181).
-    expect(screen.getAllByText('@owner')).toHaveLength(1);
+    // 초판은 여기서 "소유자는 스레드 안에서도 이름줄에는 남아 있다(#181)" 를 쟀다.
+    // **identity 문서로 뒤집혔다** — 이름줄 배지가 사라졌으므로 스레드에도 없다. 거터
+    // 단언(위)이 이 테스트의 본론이고, 그것은 그대로다. 이름줄 쪽은 "없다"로 뒤집어
+    // 재는데, 지우면 소유자가 스레드 어딘가로 되돌아와도 아무도 모르기 때문이다.
+    //
+    // 루트 작성자의 핸들이 'owner' 라 `@owner` 가 우연히 나올 수 있다 — 그래서 배지
+    // 전용 문자열이 아니라 행 전체 텍스트로 본다. 이름줄은 `@` 없이 핸들만 낸다.
+    expect(container.textContent).not.toContain('@owner');
   });
 });
 

@@ -250,7 +250,18 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               handle 을 sr-only 로 내보내므로 글자로 찾으면 두 곳이 걸려, 이름줄이 다른
               사람을 가리키게 되어도 테스트가 무엇을 봤는지 말하지 못한다(#329). */}
           <span data-testid="author-name" className="font-semibold">{author?.handle ?? '…'}</span>
-          <Identity account={author} variant="badge" />
+          {/*
+            **여기에 배지가 있었다**(🤖 + 소유자 핸들). 뺐다 — identity 문서:
+            *"이름 옆 배지와 소유자 핸들은 뺀다. 아바타만으로 누가 에이전트인지 알 수
+            없는 것이 **의도한 결과**다."*
+
+            아바타가 사람과 같아진 뒤(#465)로 🤖 는 같은 말을 두 번 하는 것이었고,
+            종류·소유자·하네스는 프로필(#475)이 답한다 — 그 자리가 생기기 전까지
+            이 배지를 붙잡아 뒀던 이유가 그것이었다(계획서 Task 12 의 유예).
+
+            덤으로 강조색도 하나 회수된다(#488 B2): 이 배지는 `bg-accent-surface
+            text-accent` 라 **에이전트 이름마다 강조가 하나씩** 서 있었다.
+          */}
           {/* 작성 시점이 아니라 **지금**의 상태다 — 이 줄이 답하는 질문은 "이 사람에게
               지금 물어봐도 되는가"이지 "그때 무슨 상태였나"가 아니다(#186). */}
           <StatusMark account={author} />
@@ -382,8 +393,11 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               <button
                 // #424: 답글 요약과 같은 자리에 서는 링크이므로 상자도 함께 벗긴다 —
                 // 한쪽만 상자면 두 진입점이 다른 종류처럼 보인다.
+                // #488 B2: 답글 요약과 **같은 처리**를 받는다 — 스레드로 가는 링크이지
+                // 나를 막는 말이 아니다. 색 대신 점선 밑줄이 링크임을 말한다.
                 className="mt-0.5 self-start -mx-1 rounded px-1 py-0.5 text-[11px] font-medium
-                           text-accent hover:bg-surface-hover"
+                           text-fg-muted underline decoration-dotted underline-offset-2
+                           hover:bg-surface-hover"
                 onClick={() => void getController().openThread(message.threadRootId!)}
               >
                 View in thread

@@ -57,43 +57,53 @@ describe('#161 2단계 작성자 아바타 거터', () => {
       },
     });
     fakeController();
-    render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'u2')} />);
+    const { container } = render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'u2')} />);
 
     // **Task 12**: 거터는 사람과 같은 아바타(이름 첫 글자 + 색)이고 접근성 이름도 핸들이다 —
-    // "대화에서는 에이전트라고 말하지 않는다"(design doc 2). 종류는 이름줄 배지가 말한다.
-    expect(screen.getAllByText('에이전트')).toHaveLength(1);
+    // "대화에서는 에이전트라고 말하지 않는다"(design doc 2).
     expect(screen.getByText('B')).toBeTruthy();
+    // 초판은 여기에 `getAllByText('에이전트')).toHaveLength(1)` 이 있었고 주석은 "종류는
+    // 이름줄 배지가 말한다"였다. **identity 문서로 뒤집혔다** — 이름줄 배지도 뺐으므로
+    // 대화 화면의 어느 자리도 종류를 말하지 않는다. 이것이 이 테스트가 원래 지키려던
+    // 방향(거터는 종류를 말하지 않는다)이 **끝까지 간** 모습이고, 그래서 단언을 지우는
+    // 대신 0 으로 뒤집는다: 지우면 배지가 조용히 되돌아와도 아무도 모른다.
+    expect(container.textContent).not.toContain('에이전트');
   });
 
-  it('#181: 에이전트에 소유자가 있으면 소유자 표시가 나온다', () => {
+  /**
+   * 초판 둘("소유자가 있으면 나온다"/"없으면 안 나온다")은 소유자 표시의 **유무 대조**를
+   * 메시지 화면에서 쟀다. **identity 문서로 뒤집혔다** — 대화 화면에는 소유자가 없으므로
+   * 이 화면에서는 두 경우가 구분되지 않고, 대조 자체가 여기서 성립하지 않는다.
+   *
+   * 대조가 **무효가 된 것은 아니다.** 소유자 유무는 여전히 화면이 답하는 물음이고, 그
+   * 답이 나오는 자리가 디렉터리·자동완성으로 옮겨 갔다 — `agentOwner.test.tsx`·
+   * `directory.test.tsx`·`composer.test.tsx` 가 그 자리를 잰다(소유자가 `null` 인 정상
+   * 상태에 "운영자 미상" 같은 문구를 넣지 않는다는 쪽도 `agentOwner.test.tsx` 에 있다).
+   *
+   * 그래서 두 테스트를 하나로 합친다: 이 파일이 계속 재야 하는 것은 **소유자가 있든
+   * 없든 거터가 같다**는 것 하나다. 두 경우를 나란히 놓지 않으면 소유자가 있는 에이전트만
+   * 거터에 소유자를 흘리는 결함(그것이 #277 이었다)이 그대로 통과한다.
+   */
+  it('#181/#277: 소유자가 있든 없든 거터 아바타가 같고 소유자는 어디에도 없다', () => {
     useAppStore.getState().set({
       accounts: {
         u1: acc('u1', 'owner'),
         a1: { ...acc('a1', 'bot', 'agent'), ownerAccountId: 'u1' },
+        a2: { ...acc('a2', 'bot', 'agent'), ownerAccountId: null },
       },
     });
     fakeController();
-    render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
 
-    // Task 12: 거터는 사람과 같은 아바타라 "에이전트"라고 말하지 않는다 — 배지 하나뿐이다.
-    expect(screen.getAllByText('에이전트')).toHaveLength(1);
-    // #277: 소유자 표시가 이름 줄(badge)에서만 보인다 — 거터(avatar)에서는 넘침 방지
-    expect(screen.getAllByText('@owner')).toHaveLength(1);
-  });
+    const withOwner = render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
+    const owned = screen.getByTestId('author-gutter').innerHTML;
+    // 소유자가 있어도 거터·이름줄 어디에도 소유자가 없다.
+    expect(withOwner.container.textContent).not.toContain('@owner');
+    expect(withOwner.container.textContent).not.toContain('소유자');
+    cleanup();
 
-  it('#181: 에이전트에 소유자가 없으면 소유자 표시가 안 나온다', () => {
-    useAppStore.getState().set({
-      accounts: {
-        a1: { ...acc('a1', 'bot', 'agent'), ownerAccountId: null },
-      },
-    });
-    fakeController();
-    render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
-
-    // 에이전트 표시(이름줄 배지)만 있고 소유자 표시가 없다
-    expect(screen.getAllByText('에이전트')).toHaveLength(1);
-    expect(screen.queryByText('@owner')).toBeNull();
-    expect(screen.queryByText(/소유자/)).toBeNull();
+    render(<MessageItem message={msg('m2', 'c1', 2, '안녕', 'a2')} />);
+    // 소유자 유무가 거터 마크업을 **한 글자도** 바꾸지 않는다.
+    expect(screen.getByTestId('author-gutter').innerHTML).toBe(owned);
   });
 
   it('#181: 사람 계정에는 소유자 표시가 안 나온다', () => {
@@ -114,8 +124,11 @@ describe('#161 2단계 작성자 아바타 거터', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'unknown')} />);
 
-    // 거터와 작성자 옆 두 곳에서 "알 수 없는 계정"이 표시된다.
-    expect(screen.getAllByText('알 수 없는 계정')).toHaveLength(2);
+    // 초판은 **2** 였다("거터와 작성자 옆 두 곳"). 이름 옆 호출이 사라져 하나가 됐다.
+    // 이 회귀선이 지키는 것은 개수가 아니라 **거터가 빈 칸이 되지 않는 것**이다 —
+    // 제목이 말하는 "거터에서도"가 그 뜻이고, 그 사실은 그대로다.
+    expect(screen.getAllByText('알 수 없는 계정')).toHaveLength(1);
+    expect(screen.getByTestId('author-gutter').textContent).toContain('알 수 없는 계정');
   });
 });
 
