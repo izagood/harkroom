@@ -578,6 +578,20 @@ export interface ChannelFileRow extends AttachmentRow {
   createdAt: string;
 }
 
+/**
+ * 미답 물음 한 마디 — **누가 누구를 기다리는가**(#488 A3-b).
+ *
+ * 화면의 `waitChain()` 이 이것들을 이어 붙여 `codex → forge → 나` 를 만든다.
+ */
+export interface OpenAskLink {
+  /** 기다리는 쪽 — 그 물음을 낸 계정. */
+  waiter: string;
+  /** 답해야 하는 쪽. **`null` 은 '사람 아무나'** 다. */
+  blockedBy: string | null;
+  /** 이 마디가 생긴 시각. 경과("3분째")를 말하는 데 쓴다. */
+  askedAt: string;
+}
+
 export interface MessageRow {
   id: string;
   seq: number;
@@ -621,6 +635,25 @@ export interface MessageRow {
   openAskHumanCount: number | null;
   /** 미답 물음 중 특정 계정에게 간 것들의 수신자 id. 중복 없음. */
   openAskAccountIds: string[] | null;
+  /**
+   * 미답 물음의 **마디들** — `누가 → 누구를` 기다리는가(#488 A3-b).
+   *
+   * **왜 `openAskAccountIds` 로는 부족한가:** 그 배열은 '답해야 하는 쪽'만 모은 집합이라
+   * **누가 물었는지가 지워진다.** 대기 사슬은 `codex → forge → 나` 처럼 마디를 이어
+   * 붙이는 것이라 짝이 필요하다 — 집합만으로는 어느 물음이 어느 물음에 이어지는지
+   * 복원할 수 없다.
+   *
+   * **왜 메시지를 통째로 싣지 않는가:** 화면이 이 사슬에서 실제로 쓰는 것은 셋뿐이다 —
+   * 두 계정과 **가장 오래된 마디의 시각**(경과를 말하는 자리). 답글 본문까지 실으면
+   * 채널 목록 응답이 스레드 수만큼 부풀고, 그 대부분은 그려지지 않는다.
+   *
+   * `blockedBy` 가 `null` 인 것은 **'사람 아무나'** 다 — `openAskHumanCount` 와 같은
+   * 구별이며, 같은 이유로 계정 id 로 대신 채우지 않는다.
+   *
+   * 순서는 **낸 순**(`seq`)이다. 사슬은 가장 최근 물음에서 출발하므로 화면이 뒤에서
+   * 집는다.
+   */
+  openAskLinks: OpenAskLink[] | null;
   /** 이 스레드에 실패(`meta.kind === 'failure'`)가 몇 개 있는가. 0 이면 없다. */
   failureCount: number | null;
   /**

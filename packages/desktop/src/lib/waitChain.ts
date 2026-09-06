@@ -1,4 +1,4 @@
-import { readAskMeta, type MessageRow } from '@murmur/shared';
+import { readAskMeta, type MessageRow, type OpenAskLink } from '@murmur/shared';
 import type { Liveness } from './threadState';
 
 /**
@@ -12,8 +12,13 @@ export interface WaitLink {
   waiter: string;
   /** 답해야 하는 쪽. `null` 은 '사람 아무나'. */
   blockedBy: string | null;
-  /** 이 마디를 만든 미답 ask. 경과와 본문이 필요할 때 쓴다. */
-  message: MessageRow;
+  /**
+   * 이 마디를 만든 미답 ask. **집계로 만든 사슬에는 없다**(#488 A3-b) — 채널 목록은
+   * 답글을 싣지 않으므로 서버가 두 계정과 시각만 준다. 그래서 옵셔널이다.
+   */
+  message?: MessageRow;
+  /** 이 마디가 생긴 시각(ISO). 메시지가 없어도 경과를 말할 수 있어야 한다. */
+  askedAt: string;
 }
 
 /**
@@ -70,11 +75,6 @@ export interface WaitChainInput {
  */
 export function waitChain(input: WaitChainInput): WaitChain {
   const { messages, myAccountId, live } = input;
-
-  /** 계정 → 그 계정이 지금 내고 답을 못 받은 물음. 뒤엣것이 이긴다(가장 최근 물음). */
-  const pendingByWaiter = new Map<string, WaitLink>();
-  /** 답해야 하는 쪽 → 그를 기다리는 마디들. **사슬을 거꾸로 타기 위한 색인이다.** */
-  const waitersOf = new Map<string, WaitLink[]>();
   const links: WaitLink[] = [];
 
   for (const m of messages) {
@@ -84,14 +84,56 @@ export function waitChain(input: WaitChainInput): WaitChain {
       waiter: m.authorId,
       blockedBy: ask.to.kind === 'human' ? null : ask.to.accountId,
       message: m,
+      askedAt: m.createdAt,
     };
-    pendingByWaiter.set(m.authorId, link);
+    links.push(link);
+  }
+
+  return walk(links, myAccountId, live);
+}
+
+/**
+ * **집계로 만든 사슬**(#488 A3-b) — 스레드를 열지 않고도 낸다.
+ *
+ * `waitChain()` 은 답글 메시지를 훑어 마디를 만드는데, **채널 목록에는 답글이 없다**
+ * (`controller.openThread` 로 스레드를 열 때만 로드된다). 그래서 서버가 마디를 미리
+ * 만들어 실어 준다(`openAskLinks`).
+ *
+ * **판정은 여기서 갈리지 않는다** — 두 진입점이 같은 `walk()` 를 지난다. 슬라이스 1 의
+ * `threadStateFromFacts` 와 같은 구조이고, 같은 이유다: 사슬이 스레드 안과 사이드바에서
+ * 다른 말을 하면 어느 쪽을 믿어야 할지 알 수 없다.
+ *
+ * 재료가 없으면(옛 서버·답글 행) `null` 이다 — **'기다리는 것이 없다'가 아니다.**
+ * 모르는 것을 안다고 말하지 않는다.
+ */
+export function waitChainFromLinks(input: {
+  links: OpenAskLink[] | null;
+  myAccountId: string | null;
+  live: Liveness;
+}): WaitChain | null {
+  if (input.links === null) return null;
+  return walk(
+    input.links.map((l) => ({ waiter: l.waiter, blockedBy: l.blockedBy, askedAt: l.askedAt })),
+    input.myAccountId,
+    input.live,
+  );
+}
+
+/**
+ * 마디들을 이어 사슬 하나를 낸다. **두 진입점이 공유하는 유일한 판정**이다.
+ */
+function walk(links: WaitLink[], myAccountId: string | null, live: Liveness): WaitChain {
+  /** 계정 → 그 계정이 지금 내고 답을 못 받은 물음. 뒤엣것이 이긴다(가장 최근 물음). */
+  const pendingByWaiter = new Map<string, WaitLink>();
+  /** 답해야 하는 쪽 → 그를 기다리는 마디들. **사슬을 거꾸로 타기 위한 색인이다.** */
+  const waitersOf = new Map<string, WaitLink[]>();
+  for (const link of links) {
+    pendingByWaiter.set(link.waiter, link);
     if (link.blockedBy !== null) {
       const bucket = waitersOf.get(link.blockedBy) ?? [];
       bucket.push(link);
       waitersOf.set(link.blockedBy, bucket);
     }
-    links.push(link);
   }
 
   if (links.length === 0) return { links: [], end: 'none', unblocks: 0 };
