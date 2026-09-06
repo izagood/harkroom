@@ -616,3 +616,52 @@ describe('러너 종료 요청 (#129)', () => {
     expect((await stopPanel()).textContent).toContain('실제로 종료했는지는 murmur 가 알 수 없다');
   });
 });
+
+/**
+ * Task 15-3(identity 문서) — 상세는 세 묶음, 저장은 한 쌍.
+ *
+ * 전에는 아홉 필드가 한 줄로 흘러 무엇이 무엇과 묶이는지 알 수 없었고, 저장 버튼이 카드 안
+ * 회색 하나와 화면 아래 파란 하나로 갈려 있었다.
+ */
+describe('상세는 세 묶음, 저장은 한 쌍 (Task 15-3)', () => {
+  it('프로필 · 실행 · 권한 세 묶음으로 선다', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    for (const title of ['프로필', '실행', '권한']) {
+      expect(await screen.findByRole('heading', { name: title })).toBeTruthy();
+    }
+  });
+
+  it('고치기 전에는 되돌리기가 없다 — 누를 것이 없는 버튼을 그리지 않는다', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    await screen.findByRole('button', { name: 'Save changes' });
+    expect(screen.queryByRole('button', { name: '되돌리기' })).toBeNull();
+  });
+
+  it('고치면 되돌리기가 서고, 누르면 서버 값으로 돌아간다', async () => {
+    fakeController([agent('rusalka', { workingDir: '/repo' })]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    const dir = await screen.findByLabelText('Working directory');
+    fireEvent.change(dir, { target: { value: '/other' } });
+    expect((dir as HTMLInputElement).value).toBe('/other');
+
+    fireEvent.click(await screen.findByRole('button', { name: '되돌리기' }));
+    expect((screen.getByLabelText('Working directory') as HTMLInputElement).value).toBe('/repo');
+    // 되돌린 뒤에는 다시 사라진다 — 고친 것이 없으므로.
+    expect(screen.queryByRole('button', { name: '되돌리기' })).toBeNull();
+  });
+
+  it('새 에이전트 화면에는 되돌리기가 없다 — 돌아갈 서버 값이 없다', async () => {
+    fakeController([]);
+    render(<AgentsSettings />);
+    await screen.findByRole('button', { name: 'Create agent' });
+    expect(screen.queryByRole('button', { name: '되돌리기' })).toBeNull();
+  });
+});
