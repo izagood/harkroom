@@ -9,9 +9,19 @@
  * 대상·인자가 Rust 안에 고정되는 invoke 커맨드 — 를 재사용한다). 그래서 `capabilities/
  * default.json` 에는 이제 `shell:allow-spawn` 항목 자체가 없다 — **없는 것이 맞다.**
  *
- * 남은 것은 `login-path`(`shell:allow-execute`, #305) 하나뿐이다. 그 경계는 그대로다:
- * 인자가 리터럴 배열로 못박혀 있어야 하고, `args: true` 나 셸(`sh -c`)로 무엇이든 실행하는
- * 길이 열리면 안 된다.
+ * ## `#513` 이 그 마지막 하나마저 없앴다
+ *
+ * `#431` 뒤 남아 있던 것은 `login-path`(`shell:allow-execute`, `#305`) 하나뿐이었다 —
+ * `sh` 를 허용하되 `['-lc', 'echo $PATH']` 그 한 줄만 허용하는 항목이었다.
+ *
+ * `#513` 에서 그 셸 호출이 Rust 로 옮겨갔다(`src-tauri/src/login_path.rs`). daemon 이
+ * 웹뷰보다 먼저 뜨므로 웹뷰가 캐낸 값을 못 쓰고, Rust 가 캐내면서 웹뷰까지 자기 셸을
+ * 계속 부르면 **출처가 둘**이 되기 때문이다. 웹뷰는 이제 값을 만들지 않고 묻는다
+ * (`login_path` invoke — 파라미터가 없다).
+ *
+ * **그래서 `shell:allow-execute` 항목이 0개다.** 웹뷰에서 프로그램을 실행할 수 있는
+ * 표면이 이제 아예 없다 — `#250`·`#305` 가 좁혀 온 경계의 끝이고, 이 파일은 그것이
+ * **다시 열리지 않는지**를 지킨다.
  *
  * ## `#425` 회수에서 발견된 "옆문" 교훈을 새 spawn 커맨드에도 적용한다
  *
@@ -25,7 +35,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { LOGIN_PATH_ARGS, LOGIN_PATH_SCOPE_NAME } from '../src/lib/runnerLauncher';
+import { LOGIN_PATH_COMMAND } from '../src/lib/runnerLauncher';
 
 /**
  * Rust 함수 파라미터 목록을 쉼표로 쪼갠다 — 단, `<...>` 안의 쉼표(`tauri::State<'_, T>`
@@ -89,33 +99,45 @@ describe('러너 spawn 은 이제 shell 플러그인을 거치지 않는다(#431
 });
 
 /**
- * `PATH` 조회 스코프(#305) — `#431` 이후에도 유일하게 남은 shell 플러그인 표면이다.
- * `sh` 를 허용하되 **그 한 줄만** 허용하므로 와일드카드가 아니다.
+ * **`#513` — 웹뷰가 프로그램을 실행할 수 있는 표면이 0개다.**
+ *
+ * `#305` 가 남겨 뒀던 `login-path` 항목이 사라졌다. 셸을 부르는 일은 Rust 로 갔고
+ * (`src-tauri/src/login_path.rs`), 웹뷰는 그 값을 **파라미터 없는 invoke** 로 묻기만 한다.
+ *
+ * 되돌려 RED: `capabilities/default.json` 에 `shell:allow-execute` 항목을 도로 넣으면
+ * 이 스위트가 빨개진다.
  */
-describe('로그인 PATH 조회 스코프는 그 한 줄만 허용한다', () => {
-  it('스코프 없는 `shell:allow-execute` 문자열이 없고, 허용 항목이 정확히 하나다', () => {
+describe('웹뷰가 프로그램을 실행할 수 있는 표면이 없다 (#513)', () => {
+  it('`shell:allow-execute` 가 문자열로도 객체로도 없다', () => {
     expect(capabilities.permissions).not.toContain('shell:allow-execute');
-    expect(executePermissions).toHaveLength(1);
-    expect(executePermissions[0]!.allow).toHaveLength(1);
-    expect(executePermissions[0]!.allow![0]!.name).toBe(LOGIN_PATH_SCOPE_NAME);
+    expect(executePermissions).toHaveLength(0);
   });
 
-  it('인자가 `["-lc", "echo $PATH"]` 리터럴이다 — 변수도 `true` 도 아니다', () => {
-    const entry = executePermissions[0]!.allow![0]!;
-    expect(entry.cmd).toBe('sh');
-    // 리터럴로 적는다. 여기서 `LOGIN_PATH_ARGS` 만 비교하면 구현이 인자를 무엇으로 바꾸든
-    // 둘이 함께 움직여 초록이 된다 — 그러면 이 테스트가 지키는 것이 없다.
-    expect(entry.args).toEqual(['-lc', 'echo $PATH']);
-    expect(entry.args).not.toBe(true);
-    expect(entry.sidecar).toBeUndefined();
-    // 실행기가 부르는 값과 설정이 어긋나면 앱에서 `ProgramNotAllowed` 로 죽는다.
-    expect(LOGIN_PATH_ARGS).toEqual(['-lc', 'echo $PATH']);
+  it('`shell:allow-open` 말고는 shell 권한이 없다 — 그것은 브라우저를 여는 것이지 실행이 아니다', () => {
+    const shellPermissions = capabilities.permissions
+      .map((p) => (typeof p === 'string' ? p : p.identifier))
+      .filter((id) => id.startsWith('shell:'));
+    // `shell:allow-open` 은 OS 기본 앱으로 URL·파일을 여는 것이고, 프로그램과 인자를
+    // 고르는 표면이 아니다(`#250` 이 처음부터 이것만 남겼다).
+    expect(shellPermissions).toEqual(['shell:allow-open']);
+  });
+
+  it('`PATH` 를 묻는 것은 invoke 커맨드다 — 셸 이름도 인자도 없다', () => {
+    expect(LOGIN_PATH_COMMAND).toBe('login_path');
+    // 실행기가 부르는 이름과 Rust 가 등록한 이름이 어긋나면 앱에서만 죽는다.
+    const mainRs = readFileSync(
+      path.resolve(__dirname, '../src-tauri/src/main.rs'), 'utf8',
+    );
+    expect(mainRs).toMatch(/#\[tauri::command\]\s*\n\s*fn login_path\(\)\s*->\s*String/);
+    expect(mainRs).toMatch(/generate_handler!\[[\s\S]*?\blogin_path\b[\s\S]*?\]/);
   });
 });
 
 describe('어떤 스코프 항목에도 와일드카드가 없다', () => {
   it('모든 항목의 인자가 고정 문자열 배열이다 — `true` 도, 정규식 인자도 없다', () => {
-    expect(allScopeEntries.length).toBeGreaterThan(0);
+    // **항목이 0개인 것이 지금의 정답이다**(`#513`). 그래서 개수를 요구하지 않는다 —
+    // 앞 판본은 `toBeGreaterThan(0)` 이었고, 그것을 그대로 두면 표면을 없앤 것이
+    // 회귀선을 깨는 모순이 된다. 지키는 성질은 *"있다면 고정 리터럴이어야 한다"* 다.
     for (const entry of allScopeEntries) {
       // `args: true` 는 "무엇이든" 이다. `args: [{ validator: '...' }]` 는 정규식 인자로,
       // `.*` 하나면 그 프로그램에 임의 인자를 넘길 수 있다. 둘 다 여기서 막는다.
@@ -148,6 +170,14 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
    */
   const daemonRs = readFileSync(
     path.resolve(__dirname, '../src-tauri/src/daemon_client.rs'), 'utf8',
+  );
+  /**
+   * `#513` 에서 로그인 셸 `PATH` 조회가 웹뷰에서 이 파일로 들어왔다. **프로세스를
+   * 띄우는 자리가 여기 생겼으므로 스캔 대상이다** — 안 그러면 옆문을 이 파일에 놓으면
+   * 그만이고, 그것이 `#425` 회수에서 발견된 그 빈틈이다.
+   */
+  const loginPathRs = readFileSync(
+    path.resolve(__dirname, '../src-tauri/src/login_path.rs'), 'utf8',
   );
 
   it('`daemon_spawn_runner` 가 받는 파라미터가 agentId + env 값 세 개뿐이다 — 프로그램 경로·인자·cwd 가 아니다', () => {
@@ -339,6 +369,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
      * 같은 모양이다. 크레이트 안의 **모든** 프로덕션 소스를 봐야 한다.
      */
     const daemonStripped = stripTestModule(daemonRs);
+    const loginPathStripped = stripTestModule(loginPathRs);
 
     /** 프로덕션 소스에서 `Command::new(...)` 이 나오는 자리와, 그 앞의 함수 이름. */
     function scanSpawns(src: string, file: string): { program: string; fn: string; file: string }[] {
@@ -352,6 +383,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
     const processSpawns = [
       ...scanSpawns(stripped.rest, 'main.rs'),
       ...scanSpawns(daemonStripped.rest, 'daemon_client.rs'),
+      ...scanSpawns(loginPathStripped.rest, 'login_path.rs'),
     ];
 
     /**
@@ -423,11 +455,56 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
      *
      * **늘려야 할 이유가 진짜 생기면** 이 단언을 고치면서 그 새 자리도 웹뷰가 프로그램·인자를
      * 못 고른다는 것을 같이 못박아야 한다 — 위 표처럼 무엇이 늘었는지 근거를 남기고서.
+     *
+     * ## `#513` 에서 **하나가 늘었다** — 그 근거
+     *
+     * 이제 둘이다. 위 문단이 요구한 대로 무엇이 왜 늘었는지 여기 적는다.
+     *
+     * | 자리 | 무엇을 띄우나 | 프로그램을 누가 고르나 |
+     * |---|---|---|
+     * | `main.rs::detached_command` | 사이드카(daemon) | `sidecar_path(<상수>)` — Rust |
+     * | **`login_path.rs::run_login_shell`** | **로그인 셸** | **`$SHELL` 또는 `/bin/sh` — Rust** |
+     *
+     * **왜 늘려야 했나**: `#513` 에서 GUI 로 띄운 앱의 daemon 이 셔뱅의 `node` 를 못 찾아
+     * 모든 에이전트가 실패했다. 로그인 셸의 `PATH` 를 캐내야 하는데, daemon 은 웹뷰보다
+     * 먼저 뜨므로(`#431` 2단계 A) 웹뷰가 캐낸 값을 기다릴 수 없다 — Rust 가 캐낼 수밖에 없다.
+     *
+     * **경계가 넓어지지 않은 이유**(이것이 요점이다):
+     *
+     * 1. **웹뷰는 이 자리에 아무것도 못 넘긴다.** `run_login_shell` 은 `&str` 하나를 받고
+     *    그 값을 만드는 것은 `shell_program()`(`$SHELL` 환경변수 또는 `/bin/sh` 리터럴)이다.
+     *    `login_path` invoke 커맨드는 **파라미터가 없다**(위 스위트가 시그니처로 못박는다).
+     * 2. **인자가 리터럴이다.** `LOGIN_SHELL_ARGS = ["-lc", "echo $PATH"]` — `#305` 의
+     *    shell 스코프가 허용하던 것과 **같은 한 줄**이다.
+     * 3. **총합은 오히려 줄었다.** 이 변경으로 `capabilities/default.json` 의
+     *    `shell:allow-execute` 항목이 사라졌다 — 웹뷰가 실행할 수 있는 프로그램이
+     *    `sh` 하나에서 **0개**가 됐다. 셸을 부르는 일이 Rust 로 **옮겨간** 것이지
+     *    새로 생긴 것이 아니다.
      */
-    it('프로세스를 띄우는 자리가 정확히 하나고, 그것이 `detached_command` 다', () => {
+    it('프로세스를 띄우는 자리가 정확히 둘이고, 둘 다 프로그램을 Rust 가 고른다', () => {
       expect(processSpawns).toEqual([
         { program: 'program', fn: 'detached_command', file: 'main.rs' },
+        { program: 'shell', fn: 'run_login_shell', file: 'login_path.rs' },
       ]);
+    });
+
+    /**
+     * **`#513` — 늘어난 그 자리가 임의 명령을 실행하지 않는다.**
+     *
+     * 위 표의 2번을 소스로 못박는다. 인자가 리터럴 배열이 아니게 되는 순간(예:
+     * `format!` 로 조립하거나 파라미터로 받거나) 그것은 `#250` 이 처음부터 막아 온
+     * 와일드카드이고, 그때 이 단언이 멈춘다.
+     */
+    it('로그인 셸 조회의 인자가 리터럴이고 프로그램을 웹뷰가 못 고른다 (#513)', () => {
+      expect(loginPathRs).toContain(
+        'pub const LOGIN_SHELL_ARGS: [&str; 2] = ["-lc", "echo $PATH"];',
+      );
+      // 셸을 부르는 함수가 받는 것은 셸 경로 하나뿐이고, 그 값은 `shell_program()` 이 만든다.
+      const sig = loginPathRs.match(/fn run_login_shell\(([\s\S]*?)\)\s*->/);
+      expect(splitParams(sig![1]!)).toEqual(['shell: &str']);
+      expect(loginPathRs).toMatch(/fn shell_program\(\)\s*->\s*String/);
+      // 인자를 조립하는 자리가 없다 — `args(LOGIN_SHELL_ARGS)` 그대로 넘긴다.
+      expect(loginPathRs).toContain('.args(LOGIN_SHELL_ARGS)');
     });
 
     it('`detached_command` 를 부르는 자리는 daemon 커맨드 조립 하나뿐이다 — 러너는 daemon 이 띄운다', () => {
