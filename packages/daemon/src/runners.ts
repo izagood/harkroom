@@ -69,6 +69,15 @@ export interface RunnerRecord {
   bootTimeSec: number | null;
   /** 채택된 러너인가. `child === null` 과 같은 뜻이지만 **뜻이 다르므로** 따로 둔다. */
   adopted: boolean;
+  /**
+   * 이 러너의 출력이 가는 파일(`#434`). 못 열었으면 `null` — 그때도 러너는 뜬다.
+   *
+   * **채택한 러너도 이 값을 갖는다.** 경로가 `agentId` 하나로 정해지므로(`runnerLog.ts`),
+   * 앞선 daemon 이 띄운 러너가 쓰고 있는 파일이 어디인지 이 daemon 도 안다 — 표를
+   * 물려받지 않아도 경로 규칙이 그것을 복원한다. 그래서 채택한 러너가 죽어도 꼬리를
+   * 읽어 앱에 보낼 수 있다(`pollAdopted`).
+   */
+  logPath: string | null;
 }
 
 export interface RunnerExitNotice {
@@ -76,6 +85,47 @@ export interface RunnerExitNotice {
   incarnationId: IncarnationId;
   code: number | null;
   signal: string | null;
+  /**
+   * 러너 로그의 **마지막 몇 줄, 그대로**(`#473`).
+   *
+   * ## 왜 이것이 exit 통지에 실리는가
+   *
+   * 종료 코드 78 은 두 사유가 공유한다 — 자격증명 거부(`#250`)와 하네스 부재(`#340`).
+   * 러너는 그 둘을 **로그의 마지막 줄**로 가르고, `packages/agent/src/exit.ts` 가 그
+   * 설계를 명시한다: *"종료 코드(78)가 같으므로 그 줄이 유일한 구분자다."*
+   *
+   * 그 줄이 앱에 닿는 경로가 없어서 앱이 78 을 전부 "PAT 가 폐기됐다"로 단정했고,
+   * 하네스가 없는 사람에게 재발급을 시켰다(`#473`). 이 필드가 그 경로다.
+   *
+   * ## 이것이 "daemon 이 판단한다"가 아닌 이유
+   *
+   * daemon 은 이 줄들을 **읽지 않는다**. `EXECUTABLE_NOT_FOUND_LINE` 도
+   * `CREDENTIAL_REJECTED_LINE` 도 이 패키지에는 등장하지 않는다(`runnerLog.ts` 가 그
+   * 상수를 import 조차 하지 않는다). 파일의 꼬리를 그대로 옮길 뿐이고, 그것은 관측이지
+   * 해석이 아니다 — `listRunners` 가 `alive` 를 그대로 주는 것과 같은 성질이다.
+   *
+   * 여기서 daemon 이 `reason: 'harness-missing'` 같은 값을 만들어 보내면 그때는 판단이
+   * 된다. 그리고 그 판단은 낡는다: 러너의 문구가 바뀌면 daemon 을 고쳐야 하는데 daemon 과
+   * 러너의 배포 주기가 같다는 보장이 없다.
+   *
+   * ## 왜 앱이 파일을 직접 읽지 않는가
+   *
+   * 대안은 "앱이 `<appDataDir>/daemon/runner-<agentId>.log` 를 읽는다"였다. 셋 때문에
+   * 채택하지 않았다:
+   *
+   * 1. **경로를 아는 주체가 늘어난다.** 지금 그 규칙은 `runnerLog.ts` 하나에 있다.
+   *    앱이 읽으려면 Rust 나 웹뷰가 같은 규칙을 다시 조립해야 하고, 두 규칙이 갈리면
+   *    앱은 존재하지 않는 파일을 조용히 읽는다(= 꼬리가 항상 비어 `#473` 이 되돌아온다)
+   * 2. **웹뷰에 파일 읽기 표면을 새로 여는 일이다.** 지금 웹뷰는 파일을 못 읽는다.
+   *    경로를 웹뷰가 고르게 하면 임의 파일을 앱 권한으로 읽는 표면이 되고, 그것이
+   *    `#431` 3/3 이 세운 경계다(`#250`)
+   * 3. **경합이 있다.** 러너가 죽은 뒤 앱이 읽으러 가는 사이 그 러너가 다시 떠서 회전이
+   *    일어날 수 있다. exit 순간에 daemon 이 읽으면 그 창이 없다 — 읽는 시점이 사건에
+   *    가장 가깝다
+   *
+   * 실을 것이 없으면 빈 배열이다. **지어내지 않는다**(`#368`).
+   */
+  tailLines: string[];
 }
 
 /** 프로세스 표면 주입 — 회귀선이 진짜 러너 바이너리 없이 이 로직을 밟게 한다. */
@@ -83,8 +133,17 @@ export interface RunnerHost {
   /**
    * 러너를 띄운다. **`detached: true` 가 이 함수의 존재 이유다** — 아래 `spawnRunner`
    * 주석의 "왜 setsid 인가" 참조.
+   *
+   * `logFd` 는 자식의 stdout·stderr 가 갈 파일 디스크립터다. `null` 이면 버린다 —
+   * 로그 파일을 못 열었다는 뜻이고, 그것이 러너를 못 띄울 이유는 아니다
+   * (`runnerLog.ts::openRunnerLog` 주석).
    */
-  spawn(command: string, args: readonly string[], env: Record<string, string>): ChildProcess;
+  spawn(
+    command: string,
+    args: readonly string[],
+    env: Record<string, string>,
+    logFd: number | null,
+  ): ChildProcess;
   /**
    * `kill(pid, sig)`. `sig` 가 `0` 이면 시그널을 안 보내고 **존재만 확인**한다 —
    * `alive` 가 추측이 아니라 커널에게 물은 답인 이유다.
@@ -103,7 +162,7 @@ export interface RunnerHost {
 }
 
 export const nodeRunnerHost: RunnerHost = {
-  spawn(command, args, env) {
+  spawn(command, args, env, logFd) {
     return spawn(command, [...args], {
       env,
       // ── 왜 `detached: true` 인가 (= `setsid`) ────────────────────────────
@@ -123,9 +182,30 @@ export const nodeRunnerHost: RunnerHost = {
       // 회귀선: `test/runners.test.ts` 의 "spawn 한 러너는 자기 프로세스 그룹을 갖는다"
       // 가 실제 프로세스를 띄워 `pgid === pid` 를 확인한다. `detached` 를 빼면 빨개진다.
       detached: true,
-      // 러너의 stdio 는 daemon 에 매달지 않는다. 매달면 daemon 이 죽을 때 파이프가 닫혀
-      // 러너가 EPIPE 로 죽을 수 있다 — "daemon 이 죽어도 러너는 산다"가 깨진다.
-      stdio: 'ignore',
+      // ── 왜 파이프가 아니라 **파일**인가 (`#434`) ──────────────────────────────
+      // 러너의 stdio 는 daemon 에 **파이프로** 매달지 않는다. 매달면 daemon 이 죽을 때
+      // 파이프의 읽는 끝이 닫히고, 그 뒤 러너가 한 줄이라도 쓰면 EPIPE 로 죽는다 —
+      // "daemon 이 죽어도 러너는 산다"(`#431` 의 목적 자체)가 깨진다. daemon 이 살아
+      // 있어도 안 읽으면 파이프 버퍼가 차서 러너의 write 가 블록된다.
+      //
+      // **그렇다고 버리지도 않는다.** `stdio: 'ignore'` 였을 때 러너가 왜 죽었는지
+      // 사람이 알 방법이 종료 코드 하나뿐이었고, `#433` 진단이 그 대가를 치렀다.
+      //
+      // 파일 디스크립터는 spawn 순간 자식에게 **복제**되고 그 뒤로 daemon 과 무관하다.
+      // daemon 이 SIGKILL 로 죽어도 자식의 fd 는 그대로 유효하고, 커널은 파일 쓰기를
+      // 블록하지 않는다. 즉 파일은 EPIPE 도 블록도 없이 출력을 남긴다.
+      //
+      // 앱이 daemon 자신에게 이미 같은 것을 한다(`daemon_client.rs::daemon_command` 의
+      // `Stdio::from(file)`) — 여기는 그 한 단계를 러너에 적용한 것이다.
+      //
+      // `logFd` 가 `null` 이면(파일을 못 열었다) 버린다. 로그는 진단 수단이지 기동
+      // 조건이 아니다(`runnerLog.ts::openRunnerLog` 주석).
+      //
+      // 회귀선: `test/runnerLog.test.ts` 의 "러너가 쓴 것이 로그 파일에 남는다" 가
+      // 실제 자식을 띄워 파일 내용을 확인한다. `'ignore'` 로 되돌리면 빨개진다.
+      // 같은 파일의 "stdio 에 파이프를 매달지 않는다" 가 `['ignore','pipe','pipe']` 로
+      // 바꾸는 것을 막는다 — 자식 핸들에 `stdout`/`stderr` 스트림이 생기면 빨개진다.
+      stdio: logFd === null ? 'ignore' : ['ignore', logFd, logFd],
     });
   },
   kill(pid, signal) {
@@ -166,6 +246,29 @@ export interface LedgerSink {
   save(records: readonly RunnerRecord[]): void;
 }
 
+/**
+ * 러너 로그를 여는 자리(`#434`). **장부와 같은 이유로 주입이다** — 표가 `appDataDir` 를
+ * 직접 알면 회귀선이 이 로직을 재려고 매번 디스크 트리를 마련해야 하고, 더 나쁘게는
+ * "어디에 쓰는가"를 표가 정하게 되어 경로 규칙이 두 곳(`runnerLog.ts` 와 여기)으로
+ * 흩어진다.
+ *
+ * **`null` 을 돌려주는 것이 정상 경로다** — 파일을 못 열었다는 뜻이고, 그때 러너는
+ * 출력을 버린 채 그대로 뜬다(`openRunnerLog` 주석).
+ */
+export interface RunnerLogSink {
+  /** 이 에이전트의 러너에게 물려줄 로그를 연다. 못 열면 `null`. */
+  open(agentId: string): { fd: number; path: string; close(): void } | null;
+  /**
+   * 이 에이전트의 로그가 있을 자리. **열지 않고 경로만** 말한다.
+   *
+   * 채택한 러너(`adopt`)를 위해 있다 — 그 러너는 앞선 daemon 이 열었으므로 이 daemon 에
+   * 핸들이 없다. 그래도 경로가 `agentId` 하나로 정해지므로 어디를 읽어야 하는지는 안다.
+   */
+  pathFor(agentId: string): string;
+  /** 그 로그의 마지막 몇 줄. exit 통지에 **그대로** 실린다 — 해석하지 않는다. */
+  tail(path: string): Promise<string[]>;
+}
+
 export class RunnerRegistry {
   /** `agentId` → 지금 세대. **에이전트당 하나**다 — 둘이면 멘션을 나눠 집어 간다. */
   private readonly byAgent = new Map<string, RunnerRecord>();
@@ -177,6 +280,11 @@ export class RunnerRegistry {
     private readonly onExit: (notice: RunnerExitNotice) => void = () => undefined,
     /** 장부에 흘려 보낼 자리. 없으면 안 쓴다 — 회귀선 대부분은 장부가 필요 없다. */
     private readonly ledger: LedgerSink | null = null,
+    /**
+     * 러너 로그를 여는 자리(`#434`). 없으면 출력을 버린다 — 회귀선 대부분은 로그가
+     * 필요 없고, 없다고 러너가 안 뜨면 그것이 이 장치가 만든 사고다.
+     */
+    private readonly logs: RunnerLogSink | null = null,
   ) {}
 
   /** 지금 표 전체. 장부에 쓰기 위해서만 쓰인다. */
@@ -186,6 +294,23 @@ export class RunnerRegistry {
 
   private saveLedger(): void {
     this.ledger?.save(this.records());
+  }
+
+  /**
+   * 로그의 꼬리. **못 읽으면 빈 배열이다 — 던지지 않는다**(`#434`·`#473`).
+   *
+   * 여기서 던지면 exit 통지가 통째로 안 나간다. 그러면 앱은 죽은 러너를 영원히
+   * `running` 으로 표시한다 — 진단을 돕겠다는 장치가 상태 표시를 망가뜨리는 것이다.
+   * 로그를 못 읽는 것은 "실을 것이 없다"이고, 그것은 `#368` 이 말하는 *"모르는 것을
+   * 모른다고 말한다"* 에 그대로 해당한다.
+   */
+  private async tailOf(logPath: string | null): Promise<string[]> {
+    if (logPath === null || this.logs === null) return [];
+    try {
+      return await this.logs.tail(logPath);
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -208,7 +333,24 @@ export class RunnerRegistry {
       return existing;
     }
 
-    const child = this.host.spawn(this.launch.command, this.launch.args, env);
+    // ── 로그를 **spawn 보다 먼저** 연다 (`#434`) ─────────────────────────────────
+    // fd 가 있어야 `stdio` 를 세울 수 있으므로 순서는 강제된다. 그리고 `openRunnerLog`
+    // 가 회전을 이 순간에 하는 것도 이 순서 덕이다 — 러너가 아직 파일을 안 열었으므로
+    // 이름을 바꿔도 안전하다(`runnerLog.ts` 의 회전 표).
+    const logHandle = this.logs?.open(agentId) ?? null;
+
+    let child: ChildProcess;
+    try {
+      child = this.host.spawn(this.launch.command, this.launch.args, env, logHandle?.fd ?? null);
+    } finally {
+      // **daemon 쪽 사본은 즉시 닫는다.** 자식은 spawn 순간 자기 복제본을 받았으므로
+      // 여기서 닫아도 자식의 출력은 계속 파일로 간다. 안 닫으면 러너를 띄울 때마다
+      // daemon 안에 fd 가 하나씩 쌓여 결국 `EMFILE` 로 **아무 러너도 못 띄우게** 된다 —
+      // 로그를 남기려던 장치가 daemon 을 못 쓰게 만드는 것이다.
+      //
+      // `finally` 인 이유: spawn 이 던져도(프로그램이 없다 등) fd 는 새야 한다.
+      logHandle?.close();
+    }
     const pid = child.pid;
     if (typeof pid !== 'number') {
       throw new Error('러너를 띄웠는데 pid 가 없다');
@@ -225,6 +367,7 @@ export class RunnerRegistry {
       // 이 러너를 **채택하지 않는다**(`adopt.ts` 의 `unverifiable`).
       bootTimeSec: null,
       adopted: false,
+      logPath: logHandle?.path ?? null,
     };
     this.byAgent.set(agentId, record);
 
@@ -239,11 +382,22 @@ export class RunnerRegistry {
       // 재사용되면 그때는 `pid-reused` 판정에 의존하게 된다 — 방어를 하나 더 쌓는 것보다
       // 후보에서 지우는 것이 싸다.
       this.saveLedger();
-      this.onExit({
-        agentId,
-        incarnationId: record.incarnationId,
-        code: code ?? null,
-        signal: signal ?? null,
+      // ── 꼬리를 읽고 나서 통지한다 (`#473`) ────────────────────────────────────
+      // 읽기가 비동기라 통지가 그만큼 늦는다. 그래도 **먼저 보내고 나중에 꼬리를
+      // 덧붙이지 않는** 이유: 앱은 통지 하나로 화면 문구를 정한다. 코드만 실린 통지가
+      // 먼저 가면 앱은 그 순간 "78 = PAT 폐기"로 단정하고, 뒤늦게 온 꼬리는 이미
+      // 사람이 읽은 문구를 못 되돌린다 — 정확히 `#473` 의 증상이다.
+      //
+      // 늦는 폭은 64KiB 한 번의 읽기다. 그 사이 러너가 다시 뜨는 것은 앱이 새
+      // `spawnRunner` 를 보내야 가능하고, 앱은 exit 을 받기 전에는 안 보낸다.
+      void this.tailOf(record.logPath).then((tailLines) => {
+        this.onExit({
+          agentId,
+          incarnationId: record.incarnationId,
+          code: code ?? null,
+          signal: signal ?? null,
+          tailLines,
+        });
       });
     });
     // `unref` 는 하지 않는다 — daemon 이 이 자식의 종료를 관측해야 `runnerExit` 을 보낼
@@ -301,6 +455,10 @@ export class RunnerRegistry {
       exited: false,
       bootTimeSec: entry.bootTimeSec,
       adopted: true,
+      // 열지 않고 **경로만** 안다 — 그 파일은 앞선 daemon 이 열었고 러너가 지금도
+      // 쓰고 있다. 여기서 다시 열면 fd 하나가 아무 이유 없이 늘 뿐이다. 필요한 것은
+      // 이 러너가 죽을 때 어디를 읽느냐 하나이고, 경로 규칙이 그 답을 준다.
+      logPath: this.logs?.pathFor(entry.agentId) ?? null,
     };
     this.byAgent.set(entry.agentId, record);
     this.saveLedger();
@@ -332,12 +490,17 @@ export class RunnerRegistry {
       record.exited = true;
       if (this.byAgent.get(record.agentId) === record) this.byAgent.delete(record.agentId);
       changed = true;
-      this.onExit({
-        agentId: record.agentId,
-        incarnationId: record.incarnationId,
-        // 채택한 러너의 종료 코드는 **알 수 없다** — 내 자식이 아니라 wait 할 수 없다.
-        code: null,
-        signal: null,
+      // 꼬리는 **채택한 러너에서 더 중요하다.** 코드를 모르므로(`code: null`) 사람에게
+      // 남는 단서가 로그뿐이다 — 그 러너가 78 로 죽었는지조차 이 daemon 은 모른다.
+      void this.tailOf(record.logPath).then((tailLines) => {
+        this.onExit({
+          agentId: record.agentId,
+          incarnationId: record.incarnationId,
+          // 채택한 러너의 종료 코드는 **알 수 없다** — 내 자식이 아니라 wait 할 수 없다.
+          code: null,
+          signal: null,
+          tailLines,
+        });
       });
     }
     if (changed) this.saveLedger();

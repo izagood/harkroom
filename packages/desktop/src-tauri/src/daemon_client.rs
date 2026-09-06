@@ -213,6 +213,26 @@ pub struct RunnerExitEvent {
     pub incarnation_id: IncarnationId,
     pub code: Option<i32>,
     pub signal: Option<String>,
+    /// 러너 로그의 마지막 몇 줄, **그대로**(`#473`).
+    ///
+    /// ## 왜 이 줄들이 필요한가 — 78 이 두 사유를 공유한다
+    ///
+    /// 종료 코드 78(`EX_CONFIG`)은 자격증명 거부(`#250`)와 하네스 부재(`#340`)가 같이
+    /// 쓴다. 러너는 그 둘을 **로그의 마지막 줄**로만 가르고
+    /// (`packages/agent/src/exit.ts`: *"그 줄이 유일한 구분자다"*), 그 줄이 앱에 닿는
+    /// 경로가 없어서 앱이 78 을 전부 "PAT 가 폐기됐다"로 단정했다.
+    ///
+    /// ## Rust 는 이 줄들을 읽지 않는다
+    ///
+    /// 여기서 하는 일은 daemon 이 보낸 것을 웹뷰로 **그대로 옮기는 것**뿐이다. 문구
+    /// 판정은 웹뷰(`runnerLauncher.ts::handleExit`)가 한다 — 화면 문구를 아는 곳이
+    /// 거기이고, 판정을 두 곳에 두면 한쪽만 고쳐지는 날이 온다.
+    ///
+    /// `#[serde(default)]` 인 이유: **버전이 갈린 daemon 이 이 필드를 안 보낼 수 있다.**
+    /// 없으면 exit 통지 전체를 못 읽는 것보다 꼬리만 비는 편이 낫다 — 그러면 앱은 코드만
+    /// 보여 준다(`#368`: 모르는 것을 모른다고 말한다).
+    #[serde(rename = "tailLines", default)]
+    pub tail_lines: Vec<String>,
 }
 
 /// `spawnRunner` 의 답.

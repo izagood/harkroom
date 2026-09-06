@@ -137,13 +137,24 @@ describe('runnerExit — 세대가 다른 exit (#431, #419)', () => {
     // **이제** 옛 세대의 exit 이 도착한다.
     핸들러[0]?.(0, null);
 
-    // 표에는 새 세대가 그대로 남아 있어야 한다.
+    // 표는 **동기적으로** 정리된다. 그 순서가 이 회귀선의 요점이다 — 통지가 늦어도
+    // 표는 이미 옳아야 한다.
     expect(registry.currentIncarnation('a1')).toBe(새세대.incarnationId);
     expect(registry.listRunners()).toHaveLength(1);
+
     // 통지 자체는 나간다 — 거르는 것은 받는 쪽(`acceptRunnerExit`)의 일이고, 그 통지에
     // **어느 세대의 사실인지**가 실려 있어야 거를 수 있다.
+    //
+    // **기다리는 이유**: `#434` 이후 exit 통지는 로그 꼬리를 읽고 나서 나간다(비동기).
+    // 먼저 보내고 꼬리를 나중에 덧붙이지 않는 것이 의도다 — 앱은 통지 하나로 화면
+    // 문구를 정하므로, 코드만 실린 통지가 먼저 가면 앱이 그 순간 78 을 단정한다
+    // (`runners.ts` 의 exit 핸들러 주석).
+    //
+    // `tailLines` 는 빈 배열이다 — 이 회귀선은 로그 sink 를 안 준다. 그 자리가 비어도
+    // 세대 판정은 그대로 서야 한다는 것이 이 단언이 함께 지키는 성질이다.
+    await 조건까지(() => 통지.length > 0);
     expect(통지).toEqual([
-      { agentId: 'a1', incarnationId: 옛세대.incarnationId, code: 0, signal: null },
+      { agentId: 'a1', incarnationId: 옛세대.incarnationId, code: 0, signal: null, tailLines: [] },
     ]);
   });
 
