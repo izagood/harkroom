@@ -562,32 +562,35 @@ describe('새 에이전트 기본값', () => {
 });
 
 /**
- * 러너 종료 요청(#129). 화면이 말할 수 있는 것은 **세 가지**뿐이다:
- * 요청 없음 / 요청했고 러너가 아직 못 봄 / 러너가 읽어 감.
+ * 러너 실행·중지(#129, 어휘는 #493). 화면이 말할 수 있는 것은 **세 가지**뿐이다:
+ * 중지 없음 / 중지했고 러너가 아직 못 봄 / 러너가 읽어 감.
  * 넷째("멈췄다")는 murmur 가 알 수 없는 사실이라 절대 쓰지 않는다 — 러너가 종료하면
  * 다음 GET /agent/config 자체가 오지 않으므로 서버는 프로세스의 생사를 관측하지 못한다.
+ *
+ * `#493` 이 버튼 자리를 하나로 접었어도 **이 세 상태는 그대로 그린다** — 접힌 것은 버튼이지
+ * 상태가 아니다. 그래서 아래 단언들도 이름만 갈고 그대로 둔다.
  */
-describe('러너 종료 요청 (#129)', () => {
-  /** 종료 요청 절만 떼어 본다 — 다른 절의 문구가 단언에 섞이지 않게 한다. */
-  const stopPanel = async () => (await screen.findByText('러너 종료 요청')).parentElement!;
+describe('러너 실행·중지 (#129, #493)', () => {
+  /** 이 절만 떼어 본다 — 다른 절의 문구가 단언에 섞이지 않게 한다. */
+  const stopPanel = async () => (await screen.findByText('러너 실행 · 중지')).parentElement!;
 
   beforeEach(() => {
     useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
   });
 
-  it('요청 전에는 요청이 없다고만 말하고, 누르면 아직 읽어 가지 않았음을 보여준다', async () => {
+  it('중지 전에는 자동 기동 대상이라고만 말하고, 누르면 아직 읽어 가지 않았음을 보여준다', async () => {
     const c = fakeController([agent('rusalka')]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-    expect((await stopPanel()).textContent).toContain('종료를 요청한 적이 없다');
+    expect((await stopPanel()).textContent).toContain('중지를 걸어 둔 적이 없다');
 
-    fireEvent.click(screen.getByRole('button', { name: '러너 종료 요청' }));
+    fireEvent.click(screen.getByRole('button', { name: '러너 중지' }));
     await waitFor(() => expect(c.requestAgentStop).toHaveBeenCalledWith('id-rusalka'));
 
     const panel = await stopPanel();
     await waitFor(() => expect(panel.textContent).toContain('아직 읽어 가지 않았다'));
-    expect(panel.textContent).not.toContain('종료를 요청한 적이 없다');
+    expect(panel.textContent).not.toContain('중지를 걸어 둔 적이 없다');
   });
 
   it('러너가 읽어 간 상태는 요청만 한 상태와 다르게 보인다', async () => {
@@ -601,7 +604,7 @@ describe('러너 종료 요청 (#129)', () => {
     const panel = await stopPanel();
     expect(panel.textContent).toContain('러너가 요청을 읽어 갔다');
     expect(panel.textContent).not.toContain('아직 읽어 가지 않았다');
-    expect(panel.textContent).not.toContain('종료를 요청한 적이 없다');
+    expect(panel.textContent).not.toContain('중지를 걸어 둔 적이 없다');
   });
 
   it('어느 상태에서도 멈췄다고 단정하지 않는다', async () => {
@@ -617,25 +620,41 @@ describe('러너 종료 요청 (#129)', () => {
       fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
       const text = (await stopPanel()).textContent ?? '';
 
-      // 프로세스의 생사를 단정하는 문구, 그리고 murmur 가 하지 않는 일(재시작)의 약속.
-      // **이 가드는 그대로다** — 되돌리기가 생겨도 murmur 는 여전히 프로세스의 생사를
-      // 모르고, 되돌리기 버튼이 러너를 지금 띄우지도 않는다.
+      /**
+       * 프로세스의 생사를 단정하는 문구를 막는다. **이 가드는 `#493` 뒤에도 그대로다** —
+       * 버튼이 "중지"가 되어도 murmur 는 여전히 프로세스의 생사를 모른다(러너가 종료하면
+       * 다음 GET /agent/config 자체가 오지 않는다).
+       *
+       * `재시작` 은 계속 막는다. `#493` 이 허용한 것은 **"실행"** 이지 "재시작"이 아니다 —
+       * 실행은 "자동 기동 대상에 넣는다 → 다음 기동에서 뜬다"라는, 이 앱이 daemon 을 통해
+       * 실제로 하는 일의 이름이다(#431 2단계·#482). "재시작"은 여전히 지금 이 자리에서
+       * 프로세스를 다시 세운다는 약속이고, 그건 `startAll` 이 앱 기동 시 한 번만 도는 지금
+       * 참이 아니다. `중지됨`·`종료됨` 같은 **완료형**도 그대로 막는다 — 진행형("중지")은
+       * 사람의 의도이지만 완료형은 관측 못 한 사실의 단정이다.
+       */
       expect(text).not.toMatch(/멈췄|멈춤|중지됨|종료됨|정지됨|재시작/);
       /**
-       * #427: 반드시 있어야 하는 사실이 **바뀌었다.**
+       * #427 → #493: 반드시 있어야 하는 **사실**이 두 번 바뀌었다. 그 이력을 여기 남긴다.
        *
-       * 앞 판본은 `'다시 띄우는 것은 사람'` 을 요구했다. 그때는 참이었다 — 앱이 러너를
-       * 다시 띄우는 길이 없었고, 종료 요청은 사람이 launchd/systemd 감독을 두지 않는 한
-       * 정지로 끝났다. `#431` 2단계에서 **앱이 daemon 을 통해 그 감독이 됐고**, 되돌리는
-       * 길이 바로 이 화면에 생겼다. 옛 문구를 남겨 두면 화면이 "여기서는 되돌릴 수 없다"고
-       * 거짓을 말하고, 사람은 아래 있는 버튼을 못 본 채 DB 를 고치러 간다(#427 이 실제로
-       * 밟힌 경로다).
+       * 첫 판본(#129)은 `'다시 띄우는 것은 사람'` 을 요구했다. 그때는 참이었다 — 앱이 러너를
+       * 다시 띄우는 길이 없었다. `#431` 2단계에서 **앱이 daemon 을 통해 그 감독이 됐고**,
+       * `#427` 이 그 자리를 `'되돌리'` 로 갈았다.
        *
-       * 그래서 요구하는 사실을 그 자리에 갈아끼운다 — 세 상태 어디서 봐도 **되돌릴 수 있다는
-       * 것**이 보여야 한다. 단언을 지우지 않고 바꾸는 이유: 지우면 이 자리가 아무 사실도
-       * 요구하지 않게 되어, 문구가 통째로 사라져도 초록이 된다.
+       * `#493` 은 한 걸음 더 간다. `'되돌리'` 는 **서버 API 의 어휘**(stop ↔ stop/undo)라,
+       * 그것만 요구하면 화면이 "내가 보낸 요청을 취소한다"고 말해도 초록이 된다. 사람이
+       * 알아야 하는 사실은 그게 아니라 **"이 에이전트를 다시 켤 수 있다"** 이다. 그래서
+       * 세 상태 어디서 봐도 `실행` 이라는 조작이 있다는 것이 보여야 한다.
+       *
+       * 그리고 **버튼 이름이 짧아지며 잃을 뻔한 사실**을 함께 못박는다: 중지는 즉시 끊는 것이
+       * 아니라 **진행 중인 턴을 마친 뒤** 스스로 물러나는 것이다. 버튼만 보면 "중지 = 지금
+       * 끊긴다"로 읽히므로 이 뉘앙스는 반드시 글로 남아 있어야 한다 — 사라지면 사람이
+       * 턴 중간에 답을 잃는다고 오해하고 누르기를 주저한다.
+       *
+       * 단언을 지우지 않고 바꾸는 이유(세 번 다 같다): 지우면 이 자리가 아무 사실도 요구하지
+       * 않게 되어, 문구가 통째로 사라져도 초록이 된다.
        */
-      expect(text).toContain('되돌리');
+      expect(text).toContain('실행');
+      expect(text).toContain('진행 중인 턴을 마친 뒤');
       cleanup();
     }
   });
