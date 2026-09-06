@@ -4,7 +4,6 @@ import { getController } from '../state/controller';
 import { sidebarStorage, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../lib/prefs';
 import { isMacOS, MAC_TRAFFIC_LIGHT_PL, TOP_BAR_H } from '../lib/platform';
 import { LeasePanel } from './LeasePanel';
-import { SidebarWaitChain } from './SidebarWaitChain';
 import { Menu } from './Menu';
 import { Identity, StatusMark } from './Identity';
 import { StatusPicker } from './StatusPicker';
@@ -1460,11 +1459,11 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
           );
         })()}
         {/*
-          **오류가 비운 자리**(#488 A3-a → A3-b). 투영 고장은 화면 위쪽 띠로 떠났고,
-          그 자리에 문서가 말한 것이 들어온다 — "지금 누가 누구를 기다리는가".
-          컨셉의 대기 사슬이 스레드를 열지 않고 보이는 첫 자리다.
+          **대기 사슬이 여기 있었다**(#488 A3-b). 인박스로 옮겼다 — 이 `nav` 는
+          `overflow-y-auto` 이고 이 자리는 채널·DM·에이전트 **다음**이라, 채널이 몇 개만
+          늘어도 스크롤 밖으로 밀린다. "지금 무엇이 막혀 있는가"를 말하는 구획이
+          **정작 그것을 알아야 할 때 안 보이는** 자리였다.
         */}
-        <SidebarWaitChain />
         <LeasePanel />
         </nav>
         {/*

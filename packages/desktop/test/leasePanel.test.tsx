@@ -68,10 +68,16 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
     });
     render(<LeasePanel />);
     expect(screen.getByTestId('projection-unconfigured')).toBeTruthy();
-    // 상수를 가져와 대조한다 — `Sidebar` 의 repo 폼(#381)이 같은 상수를 쓰므로, 여기서
-    // 상수를 지키면 두 자리가 갈라지지 않는다.
-    expect(screen.getByText(PROJECTION_UNCONFIGURED_HEADLINE)).toBeTruthy();
-    expect(screen.getByText(PROJECTION_UNCONFIGURED_DETAIL)).toBeTruthy();
+    /**
+     * **문구가 띠로 옮겨졌다**(#489 후속). 고장 자체(`PROJECTION_UNCONFIGURED_HEADLINE`)는
+     * 이제 화면 위쪽 띠가 말하고, 이 줄은 **그것이 이 목록에 뜻하는 것**을 말한다.
+     * 두 자리가 같은 문구를 세우면 중복이고, 사용자가 화면에서 그것을 먼저 발견했다.
+     *
+     * 이 회귀선이 지키던 것("꺼진 것을 말한다")은 그대로다 — 말하는 문장만 달라졌다.
+     */
+    expect(screen.getByTestId('projection-unconfigured').textContent).toContain('꺼져 있어');
+    // 띠가 말하는 문구를 여기서 되풀이하지 않는다.
+    expect(screen.queryByText(PROJECTION_UNCONFIGURED_HEADLINE)).toBeNull();
     // 꺼져 있는 것을 "없다"로 말하지 않는다.
     expect(screen.queryByText('No active work')).toBeNull();
   });
@@ -83,8 +89,10 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
       }),
     });
     render(<LeasePanel />);
-    expect(screen.getByText(/투영이 6분 전부터 멈춰 있다/)).toBeTruthy();
-    expect(screen.getByText('connection refused')).toBeTruthy();
+    // 멈춘 시점은 이 줄도 말한다 — 목록이 **언제부터** 낡았는지가 곧 그 목록의 신뢰도다.
+    expect(screen.getByTestId('projection-stalled').textContent).toContain('6분 전부터');
+    // 에러 원문은 띠가 말한다(`detail`). 여기서 되풀이하면 좁은 칸이 다시 길어진다.
+    expect(screen.queryByText('connection refused')).toBeNull();
     expect(screen.queryByText('No active work')).toBeNull();
   });
 
@@ -93,7 +101,7 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
       projectionStatus: status({ state: 'stalled', lastPolledAt: Date.now() - 6 * 60 * 1000, lastError: null }),
     });
     render(<LeasePanel />);
-    expect(screen.getByText(/멈춰 있다/)).toBeTruthy();
+    expect(screen.getByTestId('projection-stalled').textContent).toContain('멈춰');
     expect(screen.queryByText('connection refused')).toBeNull();
   });
 
@@ -142,8 +150,8 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
     useAppStore.getState().set({ projectionStatusError: 'Failed to fetch' });
     render(<LeasePanel />);
     expect(screen.getByTestId('projection-unreadable')).toBeTruthy();
-    expect(screen.getByText(/읽지 못했다/)).toBeTruthy();
-    expect(screen.getByText('Failed to fetch')).toBeTruthy();
+    expect(screen.getByTestId('projection-unreadable').textContent).toContain('못 읽어');
+    // 에러 원문(`Failed to fetch`)은 **띠**가 말한다 — 이 좁은 칸에서 되풀이하지 않는다.
     expect(screen.queryByText('No active work')).toBeNull();
   });
 
@@ -176,7 +184,12 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
       leases: [{ repo: 'org/repo', path: 'src/a.ts', actorKeyId: 'wk1', expiresAt: 'x' }],
     });
     render(<LeasePanel />);
-    expect(screen.getByText(/멈춰 있다/)).toBeTruthy();
+    /**
+     * **이 회귀선의 본론은 그대로다**: 멈춘 동안 남아 있던 리스를 그리되, 그것이 지금
+     * 사실이 아닐 수 있다는 말을 **함께** 세운다. 말없이 '활성 작업'으로 보여 주면
+     * 화면이 오래된 사실을 지금 사실로 주장한다. 문구만 띠와 갈라졌다.
+     */
+    expect(screen.getByTestId('projection-stalled').textContent).toContain('멈춰');
     expect(screen.getByText(/src\/a\.ts/)).toBeTruthy();
   });
 });
