@@ -23,6 +23,7 @@ import { ConnectionSettings } from '../src/components/settings/ConnectionSetting
 import type {
   LoginPathReader, RunnerProcess, RunnerSecretStore, RunnerSpawner, SpawnRequest, StoredRunnerPat,
 } from '../src/lib/runnerLauncher';
+import { fakeDaemon, liveRunner } from './helpers/fakeDaemon';
 import { acc, accountsResult, fakeApi, fakeWsFactory } from './helpers/fakeApi';
 
 const agentView = (id: string, extra: Partial<AgentView> = {}): AgentView => ({
@@ -60,7 +61,11 @@ const fakeLoginPath = (value: string | null = '/login/bin'): LoginPathReader =>
   ({ read: vi.fn(async () => value) });
 
 /** 컨트롤러를 실제로 기동하고 presence 스냅샷까지 흘린다 — 앱이 지나는 그 경로다. */
-async function boot(agents: AgentView[], online: string[] = []) {
+async function boot(
+  agents: AgentView[],
+  online: string[] = [],
+  daemon = fakeDaemon(),
+) {
   const secrets = fakeSecrets();
   const spawner = fakeSpawner();
   const api = fakeApi({
@@ -73,7 +78,9 @@ async function boot(agents: AgentView[], online: string[] = []) {
     createAgent: vi.fn(async () => agentView('created-codex', { harness: 'codex' })),
   });
   const { makeWs, callbacks } = fakeWsFactory();
-  const c = new Controller(api, makeWs, undefined, undefined, secrets, spawner, fakeLoginPath());
+  const c = new Controller(
+    api, makeWs, undefined, undefined, secrets, spawner, fakeLoginPath(), undefined, daemon,
+  );
   setController(c);
   await c.start();
   callbacks.current!.onOpen();
@@ -81,7 +88,7 @@ async function boot(agents: AgentView[], online: string[] = []) {
   // 자동 기동은 fire-and-forget 이라 상태가 스토어에 닿을 때까지 기다린다.
   await waitFor(() => expect(Object.keys(useAppStore.getState().runnerStates).length)
     .toBeGreaterThan(0));
-  return { api, secrets, spawner, c };
+  return { api, secrets, spawner, c, daemon };
 }
 
 beforeEach(() => {
@@ -99,11 +106,27 @@ describe('컨트롤러 → 실행기 배선', () => {
     expect(useAppStore.getState().runnerStates.rusalka!.status).toBe('running');
   });
 
-  it('이미 붙어 있는 러너는 띄우지 않는다 — 중복 러너를 만들지 않는다', async () => {
-    const { spawner } = await boot([agentView('rusalka')], ['rusalka']);
+  it('daemon 이 그 러너를 들고 있으면 띄우지 않는다 — 중복 러너를 만들지 않는다', async () => {
+    const { spawner } = await boot(
+      [agentView('rusalka')], ['rusalka'], fakeDaemon([liveRunner('rusalka')]),
+    );
 
     expect(spawner.spawn).not.toHaveBeenCalled();
-    expect(useAppStore.getState().runnerStates.rusalka!.status).toBe('external');
+    expect(useAppStore.getState().runnerStates.rusalka!.status).toBe('adopted');
+  });
+
+  /**
+   * **배선 쪽 핵심 회귀선**(`#431` 2단계 A). 실측(2026-09-06, 두 번)이 재현하는 상황:
+   * 다른 워크트리의 러너가 서버 presence 에 올라와 있고 내 daemon 장부에는 없다.
+   *
+   * 앞 판본은 여기서 `external` 로 물러나 **아무것도 안 띄웠고**, 그래서
+   * `daemonSpawner.spawn()` 도 안 불려 daemon 자체가 안 떴다 — 순환의 첫 화살표다.
+   */
+  it('장부에 없는 러너가 presence 에 있어도 앱이 자기 에이전트를 띄운다', async () => {
+    const { spawner } = await boot([agentView('rusalka')], ['rusalka'], fakeDaemon([]));
+
+    expect(spawner.spawns).toHaveLength(1);
+    expect(useAppStore.getState().runnerStates.rusalka!.status).toBe('running');
   });
 
   it('`runnerVersion` 이 있어도 presence 가 없으면 띄운다 — 그 값은 liveness 가 아니다', async () => {
@@ -114,6 +137,39 @@ describe('컨트롤러 → 실행기 배선', () => {
     expect(spawner.spawns).toHaveLength(1);
   });
 
+  /**
+   * **회귀선 ① — 앱이 뜨면 daemon 이 뜬다.** 띄울 러너가 하나도 없어도.
+   *
+   * `daemon` 은 러너의 부산물이 아니다. 이 성질이 없으면 "무엇이 돌고 있나"를 물을 상대가
+   * 없고, 그때 판정은 다시 presence 하나로 돌아간다(`DaemonObserver` 주석의 순환).
+   *
+   * 되돌려 RED: `controller.start()` 의 `ensureDaemon()` 줄을 지우면 빨개진다.
+   */
+  it('띄울 러너가 하나도 없어도 앱 기동이 daemon 을 세운다', async () => {
+    const daemon = fakeDaemon();
+    const secrets = fakeSecrets();
+    const spawner = fakeSpawner();
+    const api = fakeApi({
+      me: vi.fn(async () => acc('u1', 'admin', 'human', true)),
+      listAgents: vi.fn(async () => []),
+    });
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(
+      api, makeWs, undefined, undefined, secrets, spawner, fakeLoginPath(), undefined, daemon,
+    );
+    setController(c);
+    await c.start();
+    callbacks.current!.onOpen();
+
+    // presence 조차 오기 전에 이미 daemon 이 서 있어야 한다.
+    await waitFor(() => expect(daemon.observeCalls).toBeGreaterThan(0));
+    expect(spawner.spawn).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 자동 기동 토글이 꺼져 있어도 daemon 은 뜬다 — **daemon 은 그냥 떠 있는 것**이다
+   * (사용자 결정). 토글이 정하는 것은 *러너*를 띄우는가이지 daemon 이 아니다.
+   */
   it('자동 기동을 끄면 아무것도 띄우지 않는다', async () => {
     usePrefsStore.setState({ runnerAutoStart: false });
     const secrets = fakeSecrets();
@@ -123,7 +179,9 @@ describe('컨트롤러 → 실행기 배선', () => {
       listAgents: vi.fn(async () => [agentView('rusalka')]),
     });
     const { makeWs, callbacks } = fakeWsFactory();
-    const c = new Controller(api, makeWs, undefined, undefined, secrets, spawner, fakeLoginPath());
+    const c = new Controller(
+      api, makeWs, undefined, undefined, secrets, spawner, fakeLoginPath(), undefined, fakeDaemon(),
+    );
     setController(c);
     await c.start();
     callbacks.current!.onOpen();
@@ -252,7 +310,9 @@ describe('설정 → 에이전트 상세가 그 상태를 그린다', () => {
       accounts: vi.fn(async () => accountsResult([acc('u1', 'owner'), acc('rusalka', 'rusalka', 'agent')])),
     });
     const { makeWs, callbacks } = fakeWsFactory();
-    const c = new Controller(api, makeWs, undefined, undefined, secrets, spawner, fakeLoginPath());
+    const c = new Controller(
+      api, makeWs, undefined, undefined, secrets, spawner, fakeLoginPath(), undefined, fakeDaemon(),
+    );
     setController(c);
     await c.start();
     callbacks.current!.onOpen();

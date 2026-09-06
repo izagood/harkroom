@@ -5,7 +5,7 @@ import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type Notifier } from '../lib/notify';
 import { displayBody } from '../lib/mention';
-import { RunnerLauncher, tauriLoginPathReader, tauriSecretStore, daemonSpawner, type LoginPathReader, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
+import { RunnerLauncher, tauriDaemonObserver, tauriLoginPathReader, tauriSecretStore, daemonSpawner, type DaemonObserver, type LoginPathReader, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
 import type { AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
@@ -56,6 +56,11 @@ export class Controller {
      * (`startCommunitySession`)는 언제나 명시적으로 넘긴다.
      */
     private store: AppStore = getActiveStore(),
+    /**
+     * daemon 에게 "무엇이 돌고 있나"를 묻는 표면(`#431` 2단계 A). 테스트가 장부를
+     * 만들 수 있게 주입한다 — `spawner`·`secrets` 와 같은 이유다.
+     */
+    daemonObserver: DaemonObserver = tauriDaemonObserver,
   ) {
     this.runnerLauncher = new RunnerLauncher(
       {
@@ -68,6 +73,7 @@ export class Controller {
       spawner,
       loginPath,
       undefined, // now — 재발급 라벨의 시각. 기본값(Date.now)을 그대로 쓴다.
+      daemonObserver,
     );
     this.runnerLauncher.setOnStateChange((states) => {
       this.store.getState().set({
@@ -169,9 +175,26 @@ export class Controller {
       onDown: (reason) => this.handleDown(reason),
     });
 
+    // **daemon 은 여기서 세운다** — 러너를 띄울지 정하기 **전에**(`#431` 2단계 A).
+    //
+    // 러너가 하나도 없어도, 자동 기동 토글이 꺼져 있어도 부른다. daemon 은 러너의
+    // 부산물이 아니라 상주 프로세스이고(사용자 결정: *"daemon 은 그냥 떠 있는 것"*),
+    // 무엇보다 **daemon 이 떠 있어야 "무엇이 돌고 있나"를 물을 상대가 생긴다.**
+    //
+    // 앞 판본에는 이 줄이 없었고, daemon 에 닿는 자리는 `daemonSpawner.spawn()` 하나뿐이었다.
+    // 그런데 그 앞단이 presence 를 보고 `external` 로 판정하면 `spawn()` 이 안 불려서
+    // daemon 도 안 떴다 — 장부에 없는 남의 러너가 살아 있기만 해도 앱이 아무것도 못 띄우고,
+    // 사람이 `ps` 로 찾아 죽여야 풀렸다(실측 2026-09-06, 두 번). 이 한 줄이 그 고리를 끊는다.
+    //
+    // fire-and-forget 인 이유: daemon 확보는 기동의 **전제가 아니다.** 실패해도 앱은 떠야
+    // 하고(채팅은 daemon 없이도 된다), 그 실패는 러너를 띄우려 할 때 러너 상태에 사유로
+    // 오른다(`RunnerLauncher.startAll`). 여기서 await 하면 소켓 왕복이 창 표시를 늦춘다.
+    this.swallow(this.runnerLauncher.ensureDaemon());
+
     // 러너 자동 기동은 **presence 를 받은 뒤**에 한다 — 여기서 바로 부르면 `online` 이
-    // 아직 빈 배열이라 이미 붙어 있는 러너 옆에 두 번째를 띄운다(handleEvent 의
-    // `presence.snapshot` 절 참고). 이 플래그는 start() 마다 초기화된다.
+    // 아직 빈 배열이고, presence 는 이제 판정을 안 하지만 어긋남을 말하는 데 쓰인다
+    // (`StartAllInput.liveAccountIds`). 중복 기동을 막는 것은 daemon 장부다.
+    // 이 플래그는 start() 마다 초기화된다.
     this.runnerAutoStartDone = false;
   }
 

@@ -73,11 +73,26 @@ import { EX_CONFIG, harnessBinaryName, runnerExitReason } from '@murmur/shared';
  * `failed`(기동 자체가 안 됐다)와도 따로 둔다: `needs_harness` 는 러너가 **떴고**
  * 하네스를 찾다 물러난 상태다. 사람이 할 일이 다르다 — 앞은 앱·daemon 을 봐야 하고
  * 뒤는 하네스를 설치하면 된다.
+ *
+ * ## `external` 이 사라지고 `adopted` 가 들어왔다 (`#431` 2단계 A, `#430`)
+ *
+ * `external` 은 **presence 로 지은 이름**이었다: "서버가 이 계정이 붙어 있다고 한다 →
+ * 누군가 띄웠나 보다". 그 판정이 무엇을 못 봤는지는 `doStartOne` 주석에 실측과 함께
+ * 적어 뒀다 — 요지는 **서버는 "누가 붙어 있나"만 알고 "그게 내 것인가"를 모른다**는
+ * 것이다. 그래서 `#430` 의 두 실측이 정반대 방향으로 어긋났다(러너 0개인데 `external`,
+ * 러너 2개인데 우연히 맞음).
+ *
+ * `adopted` 는 **daemon 이 아는 사실**이다: 이 daemon 의 장부에 있고
+ * `kill(pid, 0)` 으로 살아 있음을 방금 확인했지만 이번 앱 세션이 띄운 것은 아니다
+ * (`RunnerInfo.adopted`). 즉 생사를 **단언한다** — `external` 이 못 하던 것이다.
+ *
+ * **문구는 여기서 정하지 않는다**(`#443` 범위). 이 타입이 정하는 것은 상태값과 그
+ * 의미뿐이고, `RunnerStatus.tsx` 는 최소한으로만 따라온다.
  */
 export type RunnerStatus =
   | 'stopped'
   | 'running'
-  | 'external'
+  | 'adopted'
   | 'needs_reissue'
   | 'needs_harness'
   | 'failed';
@@ -149,6 +164,59 @@ export interface RunnerSpawner {
 }
 
 /**
+ * daemon 이 **지금 무엇을 들고 있는지** 묻는 표면 — `#431` 2단계 A 가 만든 것.
+ *
+ * ## 이 표면이 곧 "daemon 을 먼저 세운다"이다
+ *
+ * `observe()` 는 조회처럼 보이지만 **부작용이 요점이다**: Rust 쪽 `daemon_list_runners`
+ * 가 `ensure_daemon` 을 부르므로, 이 한 번의 호출로 daemon 이 없으면 뜨고 있으면 붙는다.
+ * 그래서 앱은 **띄울 러너가 하나도 없어도** 기동 직후 이것을 부른다.
+ *
+ * ## 왜 그 순서여야 하나 — 순환을 끊는다
+ *
+ * 앞 판본에서 daemon 에 닿는 자리는 `daemonSpawner.spawn()` **하나뿐**이었다. 그런데
+ * 그 앞단(`doStartOne`)이 presence 를 보고 `external` 로 판정하면 `spawn()` 을 안
+ * 부른다. 그래서 이런 고리가 생긴다:
+ *
+ * ```
+ * 내 장부에 없는 러너가 서버 presence 에 있다
+ *   → 앱이 external 로 판정한다 → spawn() 을 안 부른다
+ *   → daemon 이 안 뜬다 → 무엇이 도는지 물을 상대가 없다
+ *   → 판정은 영영 presence 뿐이다
+ * ```
+ *
+ * **실측(2026-09-06, 두 번)**: 다른 워크트리의 러너들이 살아 있기만 해도 이 앱이
+ * 아무것도 못 띄웠고, 사람이 `ps` 로 찾아 죽여야 풀렸다. 두 번째 실측에서 그중 2개는
+ * **고아가 아니라 남의 살아 있는 daemon(pid 35721)의 자식**이었다 — 즉 사람이 고아를
+ * 지워도 안 풀린다. **"고아를 정리하면 되는 문제"가 아니라 판정 주체가 틀린 문제다.**
+ *
+ * `observe()` 를 먼저 부르는 것이 그 고리의 첫 화살표를 끊는다.
+ */
+export interface DaemonObserver {
+  /**
+   * daemon 을 확보하고 그 장부를 읽는다. 실패는 **던진다** — 삼키면 "daemon 이 도는 줄
+   * 알았는데 아니었다"가 되고, 그 상태가 `#431` 이 없애려는 바로 그것이다.
+   */
+  observe(): Promise<DaemonObservation>;
+}
+
+/** daemon 이 말한 사실. **관측이지 판단이 아니다**(`daemonProtocol.ts::RunnerInfo`). */
+export interface DaemonObservation {
+  daemonPid: number;
+  /** 이미 서비스 중인 daemon 에 붙었는가(`false` 면 이번에 띄웠다). */
+  attached: boolean;
+  runners: ObservedRunner[];
+}
+
+export interface ObservedRunner {
+  agentId: string;
+  /** daemon 이 `kill(pid, 0)` 으로 **직접 확인한** 생사. 서버 추측이 아니다. */
+  alive: boolean;
+  /** 띄운 것이 아니라 채택한 것인가(`#431` 2-c). */
+  adopted: boolean;
+}
+
+/**
  * 로그인 셸의 `PATH` 를 읽는 표면(#305). 자식 프로세스와 마찬가지로 **주입한다** —
  * 테스트가 "조회에 실패했다"를 만들 수 없으면 그 경로의 회귀선을 걸 자리가 없다.
  *
@@ -191,15 +259,46 @@ export interface StartAllInput {
   /** 나(사람) 계정 id. 소유 판정의 기준이다. */
   myAccountId: string;
   /**
-   * **지금 폴을 걸고 있는** 계정 id 들(#124 presence). `null` 은 '모른다'다 — 소켓이
-   * 끊겨 있으면 `online` 은 그냥 빈 배열이고, 그것을 '아무도 안 붙어 있다'로 읽으면 잘
-   * 돌고 있는 러너 옆에 두 번째 러너를 띄운다(중복 러너 금지가 이것을 막는다).
+   * **지금 폴을 걸고 있는** 계정 id 들(#124 presence). `null` 은 '모른다'다(소켓이 끊겨
+   * 있으면 `online` 은 그냥 빈 배열이고, 그것은 '아무도 없다'가 아니다).
+   *
+   * ## 이 값은 더 이상 **판정하지 않는다** — `#431` 2단계 A 의 결정
+   *
+   * 앞 판본은 이 집합에 에이전트가 있으면 `external` 로 두고 러너를 안 띄웠다. 그리고
+   * `null` 이면(연결 끊김) 아예 아무것도 안 띄웠다. **둘 다 없앴다.**
+   *
+   * **왜 — presence 는 다른 질문의 답이다.** 서버가 아는 것은 *"이 계정으로 지금 누가
+   * 폴을 걸고 있다"* 뿐이고, *"그게 이 기계의, 이 daemon 이 띄운 러너인가"* 는 모른다.
+   * `#430` 의 두 실측이 그 간극을 양방향으로 보여 준다:
+   *
+   * | 실제 러너 | presence | 앞 판본의 판정 | 맞았나 |
+   * |---|---|---|---|
+   * | 0개 | online | `external` → 안 띄움 | **틀렸다** — 아무도 없는데 안 띄웠다 |
+   * | 2개(내 것) | online | `external` → 안 띄움 | 맞다 — 그러나 **우연히** 맞다 |
+   *
+   * 두 번째 줄이 우연인 이유: 같은 `online` 이 남의 기계·남의 워크트리 러너에서도
+   * 똑같이 나온다. 실측(2026-09-06)에서 정확히 그것이 났다 — 다른 워크트리의 러너
+   * 8개(고아 6 + **살아 있는 남의 daemon 의 자식 2**)가 presence 에 올라와 있기만 해도
+   * 이 앱이 자기 에이전트를 하나도 못 띄웠다.
+   *
+   * **daemon 은 그 질문에 답할 수 있다**: 장부(`runners-v1.json`)에는 **이 daemon 계보가
+   * 자기 손으로 spawn 하거나 채택한 것만** 오르고, 생사는 `kill(pid, 0)` 으로 직접
+   * 확인한다(`adopt.ts` 의 "남의 러너를 채택할 수 있는가" 절). 추측과 관측 중 관측이 이긴다.
+   *
+   * ## 그럼 왜 남겨 두나 — 교차 검증 때문이다
+   *
+   * 버리지 않은 이유는 **어긋남 자체가 사람에게 의미 있는 사실**이어서다. daemon 장부에
+   * 없는데 presence 에 있으면 *"내가 모르는 러너가 이 계정으로 붙어 있다"* 이고, 그것은
+   * 실제로 일어나는 일이다(위 실측). 그 사실을 `message` 로 남기되 **기동은 막지 않는다** —
+   * 막는 것이 정확히 이 이슈가 없애는 것이다.
+   *
+   * `null`(연결 끊김)도 이제 기동을 막지 않는다. 막을 이유였던 것은 "중복 러너가 생길까
+   * 봐"였는데, 중복을 막는 것은 이제 daemon 장부이지 presence 가 아니다.
    *
    * **`runnerVersion` 은 이 신호가 아니다.** 그 값은 "마지막으로 붙었던 러너의 빌드
    * 버전"이고 러너가 죽어도 지워지지 않는다(013_agent_runner_version.sql 이 그렇게 적어
    * 뒀다: "지금 붙어 있나는 이 테이블이 답하지 않는다. #124 의 인메모리 presence 가
-   * 답한다"). 그것으로 판정하면 한 번이라도 러너가 붙었던 에이전트는 영원히
-   * '외부에서 실행 중'이 되어 앱이 아무것도 띄우지 않는다.
+   * 답한다").
    */
   liveAccountIds: Set<string> | null;
 }
@@ -239,6 +338,21 @@ export const LOGIN_PATH_ARGS = ['-lc', 'echo $PATH'];
  */
 export const SYSTEM_PATH_FALLBACK = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
 
+/**
+ * daemon 장부에는 없는데 서버 presence 에는 있는 상태를 사람에게 말하는 한 줄
+ * (`#431` 2단계 A).
+ *
+ * **이것은 실패가 아니다.** 러너는 떴고 상태는 `running` 이다 — 이 문장이 붙는 이유는
+ * 오직 하나, *"이 계정으로 내가 모르는 러너가 하나 더 붙어 있을 수 있다"* 가 사람이
+ * 알아야 할 사실이기 때문이다. 앞 판본은 같은 상황에서 **아무것도 안 띄우고** 화면에는
+ * `외부에서 실행 중` 이라고 적었다 — 그것이 `#430` 이 기록한 오독이다.
+ *
+ * **문구를 여기서 크게 손대지 마라** — 화면 문구 재정의는 `#443` 범위다. 이 상수는
+ * "그런 상태가 있다"를 표시할 최소한의 자리만 잡는다.
+ */
+export const STRANGER_ATTACHED =
+  '이 계정으로 붙어 있는 러너가 서버에 보이지만 이 daemon 의 장부에는 없다 — 내 러너는 새로 띄웠다';
+
 export class RunnerLauncher {
   /** 이 앱이 띄운 자식만. 외부 러너는 여기 없다(앱은 그것을 죽일 수도, 죽여서도 안 된다). */
   private runners = new Map<string, RunnerProcess>();
@@ -269,7 +383,33 @@ export class RunnerLauncher {
     private loginPath: LoginPathReader = tauriLoginPathReader,
     /** 회전 라벨에 들어가는 시각. 테스트가 고정할 수 있게 주입한다. */
     private now: () => number = () => Date.now(),
+    /**
+     * daemon 에게 "무엇이 돌고 있나"를 묻는 표면(`#431` 2단계 A). 주입하는 이유는
+     * `spawner`·`secrets` 와 같다 — 회귀선이 "장부에 무엇이 있다"를 만들 수 있어야 한다.
+     */
+    private daemon: DaemonObserver = tauriDaemonObserver,
   ) {}
+
+  /**
+   * **앱이 뜨면 daemon 을 세운다** — 띄울 러너가 하나도 없어도(`#431` 2단계 A).
+   *
+   * 러너 자동 기동 토글이 꺼져 있어도, 소유한 에이전트가 없어도 이것은 돈다.
+   * **daemon 은 러너의 부산물이 아니라 상주 프로세스다**(사용자 결정: *"daemon 은 그냥
+   * 떠 있는 것"*). 그리고 daemon 이 떠 있어야 비로소 "무엇이 도는가"를 물을 상대가 생긴다
+   * — `DaemonObserver` 주석의 순환이 그것 없이는 안 끊긴다.
+   *
+   * **실패를 던지지 않는다.** 호출자(`controller.start`)는 기동 경로이고, 여기서 던지면
+   * daemon 이 없다는 이유로 앱 자체가 안 뜬다. 대신 관측 결과를 `null` 로 돌려 주고,
+   * 뒤이은 `startAll` 이 그때 다시 시도하며 그 실패는 러너 상태에 사유로 오른다(`#368`).
+   */
+  async ensureDaemon(): Promise<DaemonObservation | null> {
+    if (this.disposed) return null;
+    try {
+      return await this.daemon.observe();
+    } catch {
+      return null;
+    }
+  }
 
   setOnStateChange(cb: (states: RunnerState[]) => void): void {
     this.onStateChange = cb;
@@ -287,15 +427,40 @@ export class RunnerLauncher {
   /**
    * 대상 전부를 띄운다. **한 에이전트가 못 떠도 나머지는 뜬다** — 하나의 throw 가 루프를
    * 끊으면 목록 뒤쪽 에이전트들은 이유도 없이 안 뜬다.
+   *
+   * ## daemon 에게 **먼저 묻는다** — 그리고 한 번만 묻는다(`#431` 2단계 A)
+   *
+   * 관측을 루프 밖에서 한 번 하는 것이 의도다. 에이전트마다 물으면 목록 열 개짜리
+   * 워크스페이스에서 소켓 왕복이 열 번 나고, 더 나쁘게는 **루프 도중 장부가 바뀐다** —
+   * 앞에서 띄운 러너가 뒤 에이전트의 판정에 끼어든다. 이 앱이 이번 세션에 띄운 것은
+   * `this.runners` 가 이미 알고 있으므로(`doStartOne` 첫 줄) 그 창은 필요 없다.
+   *
+   * 관측에 실패하면 `null` 이고, 그때 **띄우지 않는다** — daemon 이 없으면 러너를 띄울
+   * 상대 자체가 없다(폴백 경로는 없앴다, `daemonSpawner` 주석). 사유는 각 에이전트의
+   * 상태에 그대로 오른다.
    */
   async startAll(input: StartAllInput): Promise<void> {
     const targets = input.agents.filter((a) =>
       a.ownerAccountId === input.myAccountId && !a.disabled && !a.stopRequestedAt,
     );
 
+    let observation: DaemonObservation;
+    try {
+      observation = await this.daemon.observe();
+    } catch (err) {
+      for (const agent of targets) {
+        this.setState(agent.id, {
+          status: 'failed',
+          exitCode: null,
+          message: `daemon 에 닿지 못해 러너를 띄우지 않았다: ${errText(err)}`,
+        });
+      }
+      return;
+    }
+
     for (const agent of targets) {
       try {
-        await this.startOne(agent, input);
+        await this.startOne(agent, input, observation);
       } catch (err) {
         this.setState(agent.id, {
           status: 'failed',
@@ -326,50 +491,108 @@ export class RunnerLauncher {
     }
     if (!input.autoStart || this.disposed) return;
 
+    // 방금 만든 에이전트라도 daemon 을 먼저 확보한다 — 여기가 `startAll` 을 안 거치는
+    // 유일한 기동 경로이고, 관측 없이 띄우면 daemon 이 이미 그 에이전트의 러너를 들고
+    // 있는 경우(앱을 다시 띄운 직후 같은 핸들을 다시 만들었다면)를 못 본다.
+    let observation: DaemonObservation;
+    try {
+      observation = await this.daemon.observe();
+    } catch (err) {
+      this.setState(input.agent.id, {
+        status: 'failed', exitCode: null,
+        message: `daemon 에 닿지 못해 러너를 띄우지 않았다: ${errText(err)}`,
+      });
+      return;
+    }
+
     await this.startOne(input.agent, {
       agents: [input.agent],
       myAccountId: input.agent.ownerAccountId ?? '',
       liveAccountIds: input.liveAccountIds,
-    }).catch((err) => {
+    }, observation).catch((err) => {
       this.setState(input.agent.id, {
         status: 'failed', exitCode: null, message: `기동 실패: ${errText(err)}`,
       });
     });
   }
 
-  private startOne(agent: LaunchableAgent, input: StartAllInput): Promise<void> {
+  private startOne(
+    agent: LaunchableAgent,
+    input: StartAllInput,
+    observation: DaemonObservation,
+  ): Promise<void> {
     const pending = this.starting.get(agent.id);
     if (pending) return pending;
 
-    const started = this.doStartOne(agent, input).finally(() => {
+    const started = this.doStartOne(agent, input, observation).finally(() => {
       if (this.starting.get(agent.id) === started) this.starting.delete(agent.id);
     });
     this.starting.set(agent.id, started);
     return started;
   }
 
-  private async doStartOne(agent: LaunchableAgent, input: StartAllInput): Promise<void> {
+  /**
+   * 한 에이전트를 띄울지 정한다. **판정의 주체가 daemon 이다**(`#431` 2단계 A).
+   *
+   * ## 무엇이 사라졌나 — presence 로 하던 `external` 판정
+   *
+   * 앞 판본은 이 자리에서 두 번 물러났다:
+   *
+   * ```ts
+   * if (input.liveAccountIds === null) return;              // 연결 끊김 → 안 띄움
+   * if (input.liveAccountIds.has(agent.id)) { external }     // presence → 안 띄움
+   * ```
+   *
+   * **둘 다 없앴다.** 근거는 `StartAllInput.liveAccountIds` 주석에 실측과 함께 적어 뒀다 —
+   * 요지는 서버가 *"이 계정으로 누가 붙어 있다"* 만 알고 *"그게 내 daemon 이 띄운
+   * 것인가"* 를 모른다는 것이다. 그 둘을 같게 다루면 **남의 워크트리 러너가 내 앱을
+   * 마비시킨다**(실측 2026-09-06, 두 번).
+   *
+   * ## 무엇이 대신 들어왔나 — 장부에 있고 살아 있는가
+   *
+   * daemon 은 자기 장부(`runners-v1.json`)에 있는 pid 에 `kill(pid, 0)` 을 직접 걸어
+   * 생사를 안다. 그래서 판정이 이렇게 좁아진다:
+   *
+   * | daemon 장부 | 이 앱의 행동 |
+   * |---|---|
+   * | 있고 `alive` | 안 띄운다 — **중복 금지**(2-c 가 만든 성질) |
+   * | 있지만 죽었다 | 띄운다 — 장부는 이력이지 현재가 아니다 |
+   * | 없다 | 띄운다 — **presence 에 무엇이 있든** |
+   *
+   * 세 번째 줄이 이 이슈의 핵심이다. **장부에 없는 러너는 내 것이 아니고**, 남의 것 때문에
+   * 내 에이전트를 못 띄울 이유가 없다. 그것이 고아든(`ppid=1`) 남의 살아 있는 daemon 의
+   * 자식이든 구분하지 않는다 — 실측에서 8개 중 2개가 후자였고, 판정 기준이 presence 하나일
+   * 때는 **둘이 똑같이 앱을 막았다.**
+   *
+   * ## presence 는 남아서 무엇을 하나 — 말은 하되 막지는 않는다
+   *
+   * 장부에 없는데 presence 에 있으면 *"내가 모르는 러너가 이 계정으로 붙어 있다"* 이고,
+   * 그것은 사람이 알아야 할 사실이다. `message` 로 남기고 **띄우기는 그대로 진행한다.**
+   */
+  private async doStartOne(
+    agent: LaunchableAgent,
+    input: StartAllInput,
+    observation: DaemonObservation,
+  ): Promise<void> {
     if (this.disposed) return;
     // 이 앱이 이미 띄웠으면 그대로 둔다.
     if (this.runners.has(agent.id)) return;
 
-    // presence 를 모르면 띄우지 않는다 — 중복 러너보다 안 띄우는 쪽이 복구 가능하다.
-    if (input.liveAccountIds === null) {
-      this.setState(agent.id, {
-        status: 'stopped',
-        exitCode: null,
-        message: '서버 연결이 끊겨 있어 러너가 붙어 있는지 알 수 없다 — 띄우지 않았다',
-      });
-      return;
-    }
-    if (input.liveAccountIds.has(agent.id)) {
-      this.setState(agent.id, { status: 'external', exitCode: null, message: null });
+    const known = observation.runners.find((r) => r.agentId === agent.id && r.alive);
+    if (known) {
+      // daemon 이 들고 있고 살아 있다 — 새로 띄우지 않는다. `adopted` 는 "이 daemon 이
+      // 채택했다"이고, 그렇지 않으면 이 daemon 이 (다른 앱 세션에서) 직접 띄운 것이다.
+      // 어느 쪽이든 **daemon 이 소유하고 있고 살아 있다**는 사실은 같다.
+      this.setState(agent.id, { status: 'adopted', exitCode: null, message: null });
       return;
     }
 
+    // 장부에 없는데 presence 에 있다 — 어긋남을 사람에게 말하되 **막지는 않는다**.
+    const strangerAttached = input.liveAccountIds?.has(agent.id) === true;
+
     const pat = await this.ensurePat(agent.id);
     if (!pat || this.disposed) return; // 사유는 ensurePat 이 상태에 남겼다.
-    await this.spawnRunner(agent, pat.token);
+    await this.spawnRunner(agent, pat.token, strangerAttached ? STRANGER_ATTACHED : null);
   }
 
   /**
@@ -425,7 +648,16 @@ export class RunnerLauncher {
     return login ?? SYSTEM_PATH_FALLBACK;
   }
 
-  private async spawnRunner(agent: LaunchableAgent, token: string): Promise<void> {
+  /**
+   * `note` 는 **띄우는 것을 막지 않은 어긋남**을 사람에게 남기는 자리다(`#431` 2단계 A).
+   * 지금 넘어오는 것은 `STRANGER_ATTACHED` 하나뿐이고, 없으면 `null` 이다 — 없는 사실을
+   * 문장으로 만들지 않는다(`#368`).
+   */
+  private async spawnRunner(
+    agent: LaunchableAgent,
+    token: string,
+    note: string | null = null,
+  ): Promise<void> {
     if (this.disposed) return;
     const path = await this.resolveChildPath();
     if (this.disposed) return;
@@ -450,7 +682,7 @@ export class RunnerLauncher {
       return;
     }
     this.runners.set(agent.id, child);
-    this.setState(agent.id, { status: 'running', exitCode: null, message: null });
+    this.setState(agent.id, { status: 'running', exitCode: null, message: note });
   }
 
   /**
@@ -854,6 +1086,61 @@ export const daemonSpawner: RunnerSpawner = {
         await invoke('daemon_kill_runner', { agentId: req.agentId, incarnationId });
       },
     };
+  },
+};
+
+/**
+ * daemon 을 **세우고** 그 장부를 읽는다(`#431` 2단계 A).
+ *
+ * ## 조회처럼 보이지만 부작용이 요점이다
+ *
+ * `daemon_list_runners` 는 Rust 쪽에서 `ensure_daemon` 을 부른다 — 즉 이 한 번의 invoke
+ * 로 **daemon 이 없으면 뜨고 있으면 붙는다.** 앱이 기동 직후 이것을 부르는 이유가 그것이고,
+ * `DaemonObserver` 주석의 순환은 이 호출로만 끊긴다.
+ *
+ * ## 실패를 삼키지 않는다
+ *
+ * daemon 이 안 뜨면 러너를 띄울 상대가 없다. 여기서 빈 목록으로 물러나면 호출자는
+ * "daemon 은 도는데 러너가 없다"로 읽고 러너를 띄우려 들며, 그 spawn 이 다시 같은
+ * 이유로 실패한다 — 사람이 보는 것은 두 번째 실패의 사유뿐이다. 첫 사유를 그대로 올린다.
+ *
+ * 응답 형태가 계약과 다르면 그것도 실패다. 지어내지 않고 온 것을 그대로 보인다(`#368`).
+ */
+export const tauriDaemonObserver: DaemonObserver = {
+  async observe() {
+    const invoke = tauriInvoke();
+    if (!invoke) {
+      // 브라우저 개발에는 unix 소켓도 자식 프로세스도 없다(`daemonSpawner` 와 같은 사정).
+      throw new Error('이 환경에서는 daemon 을 세울 수 없다 — Tauri invoke 표면이 없다');
+    }
+    const result = await invoke('daemon_list_runners');
+    const body = result as {
+      daemonPid?: unknown;
+      attached?: unknown;
+      runners?: unknown;
+    };
+    if (typeof body?.daemonPid !== 'number' || typeof body.attached !== 'boolean') {
+      throw new Error(`daemon 의 listRunners 응답이 계약과 다르다: ${JSON.stringify(result)}`);
+    }
+    // `runners` 가 배열이 아닌 것은 daemon 이 목록을 못 만들었다는 뜻이지 "0개"가 아니다.
+    // 그 둘을 같게 다루면 "장부에 없다 → 띄운다"가 중복 러너를 만든다.
+    if (!Array.isArray(body.runners)) {
+      throw new Error(`daemon 이 러너 목록을 주지 않았다: ${JSON.stringify(result)}`);
+    }
+    const runners: ObservedRunner[] = [];
+    for (const raw of body.runners) {
+      const r = raw as { agentId?: unknown; alive?: unknown; adopted?: unknown };
+      if (typeof r?.agentId !== 'string') continue;
+      runners.push({
+        agentId: r.agentId,
+        // 옛 daemon 은 이 필드를 안 보낼 수 있다. 그때 **살아 있다고 본다** — 장부에
+        // 이름이 올라 있다는 것 자체가 daemon 이 소유를 주장하는 것이고, 모르는 채로
+        // 두 번째 러너를 띄우는 쪽이 더 나쁘다.
+        alive: r.alive !== false,
+        adopted: r.adopted === true,
+      });
+    }
+    return { daemonPid: body.daemonPid, attached: body.attached, runners };
   },
 };
 

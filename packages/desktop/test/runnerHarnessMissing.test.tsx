@@ -42,6 +42,7 @@ import {
   type SpawnRequest,
   type StoredRunnerPat,
 } from '../src/lib/runnerLauncher';
+import { fakeDaemon } from './helpers/fakeDaemon';
 import { RunnerStatusLine, runnerStatusLabel } from '../src/components/RunnerStatus';
 
 afterEach(cleanup);
@@ -100,7 +101,7 @@ const loginPath: LoginPathReader = { read: async () => '/login/bin' };
 
 async function 띄운다(a: LaunchableAgent) {
   const spawner = fakeSpawner();
-  const launcher = new RunnerLauncher(fakeApi(), fakeSecrets(), spawner, loginPath, () => 0);
+  const launcher = new RunnerLauncher(fakeApi(), fakeSecrets(), spawner, loginPath, () => 0, fakeDaemon());
   await launcher.startAll({
     agents: [a],
     myAccountId: 'me',
