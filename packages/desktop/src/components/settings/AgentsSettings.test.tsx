@@ -122,3 +122,82 @@ describe('AgentsSettings — 종료 요청 수령 반영(#428)', () => {
     expect(screen.queryByText(/러너가 아직 읽어 가지 않았다/)).toBeNull();
   });
 });
+
+/**
+ * #427: 되돌리는 길이 **요청과 같은 자리**에 있는지.
+ *
+ * 이 이슈의 증상은 "되돌릴 수 없다"가 아니라 "되돌리는 길을 찾을 수 없다"였다 — 사람이
+ * "설정에서 껐으니 설정에서 켜겠지"로 읽고 그 자리를 봤는데 없었고, 그래서 DB 를 고치러
+ * 갔다. 그러니 재야 할 것은 컨트롤러 호출만이 아니라 **그 버튼이 이 자리에 보이는가**다.
+ */
+describe('AgentsSettings — 종료 요청 되돌리기(#427)', () => {
+  beforeEach(() => {
+    resetCommunityRegistry();
+    useActiveStore.setState({ me: ME, accounts: { [ME_ID]: ME } });
+  });
+
+  afterEach(() => {
+    cleanup();
+    setController(null);
+  });
+
+  const mount = async (agent: AgentView, extra: Partial<Controller> = {}) => {
+    const undoAgentStopRequest = vi.fn(async () => ({ ...agent, stopRequestedAt: null, stopAckedAt: null }));
+    setController({
+      listAgents: vi.fn(async () => [agent]),
+      requestAgentStop: vi.fn(async () => agent),
+      undoAgentStopRequest,
+      listPats: vi.fn(async () => []),
+      agentMemory: vi.fn(async () => []),
+      agentDefaults: vi.fn(async () => ({ harness: 'claude', model: null, effort: null })),
+      ...extra,
+    } as unknown as Controller);
+
+    render(<AgentsSettings />);
+    const pickButton = await screen.findByRole('button', { name: /alpha/ });
+    pickButton.click();
+    await waitFor(() => expect(screen.getByRole('button', { name: '러너 종료 요청' })).toBeTruthy());
+    return { undoAgentStopRequest };
+  };
+
+  it('요청이 없으면 되돌리기 버튼이 없다 — 누를 것이 없는 버튼은 있지도 않은 요청을 암시한다', async () => {
+    await mount(makeAgent());
+    expect(screen.queryByRole('button', { name: '종료 요청 되돌리기' })).toBeNull();
+  });
+
+  it('요청이 있으면 종료 요청과 같은 자리에 되돌리기 버튼이 뜨고, 누르면 값이 지워진다', async () => {
+    const requested = makeAgent({ stopRequestedAt: '2026-09-05T04:01:11.003Z', stopAckedAt: null });
+    const { undoAgentStopRequest } = await mount(requested);
+
+    const undoButton = screen.getByRole('button', { name: '종료 요청 되돌리기' });
+    undoButton.click();
+
+    await waitFor(() => expect(undoAgentStopRequest).toHaveBeenCalledWith(AGENT_ID));
+    // 응답으로 온 정의를 그대로 갈아끼우므로 화면이 곧바로 첫 상태로 돌아간다 —
+    // 누른 사람이 자기 조작의 결과를 목록 재조회 없이 봐야 한다.
+    await waitFor(() => expect(screen.getByText(/종료를 요청한 적이 없다/)).toBeTruthy());
+    expect(screen.queryByRole('button', { name: '종료 요청 되돌리기' })).toBeNull();
+  });
+
+  it('러너가 읽어 간 뒤에도 되돌릴 수 있다 — 그 뒤가 오히려 되돌리기가 필요한 자리다', async () => {
+    // 수령까지 끝난 상태로 두면 자동 기동이 이 에이전트를 영영 건너뛴다.
+    await mount(makeAgent({
+      stopRequestedAt: '2026-09-05T04:01:11.003Z', stopAckedAt: '2026-09-05T04:01:15.245Z',
+    }));
+    expect(screen.getByRole('button', { name: '종료 요청 되돌리기' })).toBeTruthy();
+  });
+
+  it('되돌리지 못하면 사유를 말한다 — 실패를 삼키고 지워진 척하지 않는다', async () => {
+    const requested = makeAgent({ stopRequestedAt: '2026-09-05T04:01:11.003Z', stopAckedAt: null });
+    await mount(requested, {
+      undoAgentStopRequest: vi.fn(async () => { throw new Error('boom'); }),
+    } as unknown as Partial<Controller>);
+
+    screen.getByRole('button', { name: '종료 요청 되돌리기' }).click();
+
+    await waitFor(() => expect(screen.getByText(/종료 요청을 되돌리지 못했다/)).toBeTruthy());
+    // 실패했으므로 요청은 그대로 있어야 한다 — 화면이 지워진 척하면 사람은 다시 눌러 볼
+    // 생각을 못 한다.
+    expect(screen.getByRole('button', { name: '종료 요청 되돌리기' })).toBeTruthy();
+  });
+});
