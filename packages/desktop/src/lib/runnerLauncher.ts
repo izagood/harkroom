@@ -60,7 +60,7 @@
  * 것은 프로세스와 PAT 뿐이고, 세션 상태의 writer 는 러너 하나여야 한다.
  */
 import { Command } from '@tauri-apps/plugin-shell';
-import { EX_CONFIG, harnessBinaryName, runnerExitReason } from '@murmur/shared';
+import { EX_CONFIG, harnessBinaryName, installHint, runnerExitReason } from '@murmur/shared';
 
 /**
  * 러너의 지금 상태.
@@ -871,11 +871,18 @@ function exitStateFor78(
     // 에이전트마다 다르다(`claude-code` → `claude`, `codex` → `codex`).
     const binary = harnessBinaryName(agent.harness);
     const what = binary ? `\`${binary}\`` : `이 에이전트의 하네스(${agent.harness ?? '알 수 없음'})`;
+    // **어떻게 설치하는지까지 말한다**(`#476`). `#473` 이 이름을 넣어 "무엇이 없는가"는
+    // 답했지만 "어떻게 채우는가"는 여전히 사람이 검색해야 했다. murmur 는 하네스를
+    // 동봉하지 않기로 했으므로(2026-09-06 방침) **어디서 받는지 알려 주는 것이
+    // 이 앱이 할 수 있는 전부**다 — 그것마저 안 하면 사람이 할 수 있는 일이 없다.
+    //
+    // 모르는 하네스면 `null` 이고 그때는 붙이지 않는다 — 지어내지 않는다(`#368`).
+    const hint = installHint(binary);
     return {
       status: 'needs_harness',
       // 러너가 로그에 적은 것(넘긴 PATH 원문 등)이 그대로 뒤에 붙는다 — 앱이 다시
       // 설명하지 않고 러너가 한 말을 보인다(`#368`).
-      message: `${what} 를 찾을 수 없다 — 설치하고 PATH 에 있는지 확인하라`,
+      message: `${what} 를 찾을 수 없다 — 설치하고 PATH 에 있는지 확인하라${hint ? `. ${hint}` : ''}`,
     };
   }
 
