@@ -5,6 +5,10 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { acc } from './helpers/fakeApi';
+import {
+  PAT_PLACEHOLDER, RUNNER_DEV_COMMAND, RUNNER_SIDECAR_PATH, runnerCommandClipboardText,
+} from '../src/lib/runnerCommand';
+import { runnerStatusLabel } from '../src/components/RunnerStatus';
 
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
@@ -109,7 +113,7 @@ describe('러너 실행 명령 (#177)', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
     // 명령 전체다: 앞의 환경변수 지정부터 뒤의 `start` 까지. 말줄임표가 있으면 잘린 것이다.
     const copied = String(writeText.mock.calls[0]?.[0]);
-    expect(copied).toBe('MURMUR_PAT=<발급한 토큰> pnpm --filter @murmur/agent start');
+    expect(copied).toBe(runnerCommandClipboardText(PAT_PLACEHOLDER));
     expect(copied).not.toContain('…');
     expect(copied).not.toContain('...');
   });
@@ -127,7 +131,7 @@ describe('러너 실행 명령 (#177)', () => {
     fireEvent.click(within(sectionOf(MINTED_SECTION)).getByRole('button', { name: '명령 복사' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
     // 토큰이 통째로 실린다 — 접두사만 맞는지가 아니라 정확히 같은지를 본다.
-    expect(String(writeText.mock.calls[0]?.[0])).toBe('MURMUR_PAT=murp_secret pnpm --filter @murmur/agent start');
+    expect(String(writeText.mock.calls[0]?.[0])).toBe(runnerCommandClipboardText('murp_secret'));
     // 버튼 문구가 잠깐 "복사됨"으로 바뀐다.
     await screen.findByText('복사됨');
   });
@@ -168,5 +172,70 @@ describe('러너 실행 명령 (#177)', () => {
     expect(selection?.rangeCount).toBe(1);
     expect(command.contains(selection!.getRangeAt(0).startContainer)).toBe(true);
     expect(selection?.toString()).toContain('MURMUR_PAT');
+  });
+});
+
+/**
+ * 낡은 문구 회귀선 — **화면이 없는 것을 안내하지 않는다.**
+ *
+ * 이 네 줄이 막는 것은 각각 다르다:
+ *
+ * - ①② 는 **사라진 것**을 단언한다(사이드카 배포에서 안 도는 명령, 없어진 상태 이름).
+ * - ③ 은 **두 자리가 갈리는 것**을 막는다 — 이 결함의 원인이 그 갈라짐이었다.
+ * - ④ 는 **대조군**이다. ①②만 있으면 "그 절을 통째로 지웠다"로도 초록이 된다.
+ */
+describe('낡은 문구 회귀선 (#431 1단계 사이드카 배포 · #482 adopted)', () => {
+  const openBoth = async () => {
+    fakeController([agent('test-agent')], [{ label: 'runner', createdAt: '2026-01-01', revokedAt: null }]);
+    render(<AgentsSettings />);
+    await openAgent('test-agent');
+  };
+
+  it('① `pnpm --filter @murmur/agent start` 를 단독 명령으로 내밀지 않는다', async () => {
+    await openBoth();
+    const body = document.body.textContent ?? '';
+    // 개발용 갈래로는 남아 있어도 된다 — 저장소 안에서는 지금도 도는 명령이다.
+    // 막는 것은 **조건 없이 그것 하나만** 내미는 것이다: 그러면 저장소가 없는 사람이
+    // 붙여넣는 순간 실패한다. 그래서 dev 명령이 보이면 사이드카 갈래도 **반드시** 있어야 한다.
+    if (body.includes(RUNNER_DEV_COMMAND)) {
+      expect(body).toContain(RUNNER_SIDECAR_PATH);
+    }
+    // 클립보드에 들어가는 값도 같은 계약이다 — 사람이 실제로 붙여넣는 것은 이쪽이다.
+    fireEvent.click(within(sectionOf(RUNNER_SECTION)).getByRole('button', { name: '명령 복사' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    expect(String(writeText.mock.calls[0]?.[0])).toContain(RUNNER_SIDECAR_PATH);
+  });
+
+  it('② 화면에 사라진 상태 이름 `외부에서 실행 중` 이 없다', async () => {
+    await openBoth();
+    // `#482` 가 `external` 을 없앴다. 그 이름이 화면에 남아 있으면 사람은 존재하지 않는
+    // 상태를 기다린다 — 그것이 `#430` 이 기록한 오독이다.
+    expect(document.body.textContent ?? '').not.toContain('외부에서 실행 중');
+  });
+
+  it('③ 설명의 상태 문구가 `RunnerStatus.tsx` 와 같은 출처에서 나온다', async () => {
+    await openBoth();
+    // 이 파일이 `runnerStatusLabel` 을 불러 기대값을 만든다 — 그래서 `RunnerStatus.tsx` 가
+    // 다음에 개명되면 **설명도 따라오거나, 안 따라오면 여기서 빨개진다.**
+    const adopted = runnerStatusLabel({
+      agentId: '', status: 'adopted', exitCode: null, message: null,
+    });
+    expect(document.body.textContent ?? '').toContain(adopted);
+  });
+
+  it('④ 대조군 — 지금도 유효한 안내는 그대로 남아 있다', async () => {
+    await openBoth();
+    const body = document.body.textContent ?? '';
+    // 절 자체가 산다. 손으로 띄우는 길이 여전히 있으므로(앱은 내가 소유한 것만 띄운다)
+    // "통째로 지웠다"는 이 이슈의 답이 아니다.
+    expect(screen.getByText(RUNNER_SECTION)).toBeTruthy();
+    // 그리고 그 안에 **실행 가능한 명령**이 있다: PAT 자리표시 + 사이드카 절대 경로.
+    expect(body).toContain(PAT_PLACEHOLDER);
+    expect(body).toContain(RUNNER_SIDECAR_PATH);
+    // 러너 상태 절도 산다 — 상태를 읽는 자리가 없으면 ②는 "그 절을 지웠다"로도 통과한다.
+    expect(screen.getByText('러너 (이 앱)')).toBeTruthy();
+    // daemon 이 자기가 띄운 것만 안다는 한계 고백이 남아 있다(옛 "누가 띄웠든"의 자리).
+    expect(body).toContain('자기가 띄운 러너만');
+    expect(body).not.toContain('누가 띄웠든');
   });
 });
