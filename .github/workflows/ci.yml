@@ -154,6 +154,23 @@ jobs:
             missing=1
           fi
 
+          # 번들 안에 심볼릭 링크가 없어야 한다(`#470`).
+          #
+          # `#433` 이 만들던 `Contents/MacOS/node_modules` 링크가 공증의 `staple` 을
+          # 거절시켰다(`invalid destination for symbolic link in bundle`). 지금은 러너가
+          # 자기 위치에서 `../Resources` 를 계산해 해석하므로 링크가 필요 없다.
+          #
+          # **위 `-d` 검사만으로는 이 회귀를 못 잡는다** — `-d` 는 심볼릭 링크를 따라가서,
+          # 링크로 되돌아가도 통과한다. 그래서 링크 자체를 따로 센다.
+          links=$(find "$app" -type l | wc -l | tr -d ' ')
+          if [ "$links" = "0" ]; then
+            echo "ok  심볼릭 링크 0개"
+          else
+            echo "::error::번들에 심볼릭 링크가 $links 개 있다 — staple 이 거절한다(#470)"
+            find "$app" -type l
+            missing=1
+          fi
+
           if [ "$missing" -ne 0 ]; then
             echo "--- 번들 안을 펼친다 ---"
             find "$app/Contents" -maxdepth 3 -print
