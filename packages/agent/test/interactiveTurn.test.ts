@@ -34,7 +34,9 @@ function msg(seq: number): MessageRow {
   return {
     id: `m${seq}`, seq, channelId: CHANNEL, threadRootId: ROOT, authorId: 'human-1', body: `msg ${seq}`,
     kind: 'user', meta: {}, createdAt: new Date(2026, 8, 4, 0, 0, seq).toISOString(), editedAt: null,
-    reactions: [], attachments: [], replyCount: null, lastReplyAt: null, participantIds: null, alsoInChannel: false,
+    reactions: [], attachments: [], replyCount: null, lastReplyAt: null, participantIds: null,
+    openAskHumanCount: null, openAskAccountIds: null, failureCount: null,
+    lastKind: null, lastAuthorId: null, alsoInChannel: false,
   };
 }
 
