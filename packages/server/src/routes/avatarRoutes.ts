@@ -62,6 +62,58 @@ export async function registerAvatarRoutes(
     return { avatarAttachmentId: source.id };
   });
 
+  /**
+   * 에이전트의 사진(identity 문서 Task 15-4).
+   *
+   * 위 `me` 라우트의 주석은 "남의 아바타를 바꾸는 경로는 만들지 않는다"고 적었고, 그것은
+   * **사람 계정에 대해서는 여전히 참이다.** 에이전트는 다르다 — 자기 사진을 올릴 손이 없고,
+   * 소유자가 대신 올려 주지 않으면 영원히 색 하나로 남는다.
+   *
+   * 문서가 이 화면의 성패를 여기에 걸었다: *"결국 이 화면의 성패는 사람이 사진을 올리게
+   * 만드는 것에 달린다."* `handleColor()` 의 12색은 26개 밀도에서 이미 시끄럽고, 색은
+   * **사진이 없을 때의 임시값**이라는 뜻이기 때문이다.
+   *
+   * **인가 술어를 새로 만들지 않는다.** `requireOwnerOrAdmin` 이 그 판정의 유일한 자리이고
+   * (`auth/plugin.ts`), 여기서 다시 쓰면 판정이 두 벌이 된다 — 이 저장소에서 판정 복제가
+   * 반복해서 결함을 만들었다(#253·#299·#315).
+   *
+   * 업로더 검사는 그대로 **요청자 자신**으로 좁힌다: 소유자가 자기 업로드를 자기 에이전트에
+   * 거는 것이지, 남의 업로드를 가져다 거는 것이 아니다.
+   */
+  app.put('/accounts/agents/:id/avatar', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z.object({
+      // `me` 라우트와 같은 이유로 **필수**다 — 지우기를 `undefined` 로 표현하면
+      // `JSON.stringify` 가 그 키를 버려 조작이 조용히 무시된다.
+      attachmentId: z.string().uuid().nullable(),
+    }).parse(req.body);
+    const me = req.account!;
+
+    if (body.attachmentId === null) {
+      await setAccountAvatar(pool, id, null);
+      emitEvent({ type: 'avatar.changed', accountId: id, avatarAttachmentId: null });
+      return { avatarAttachmentId: null };
+    }
+
+    const source = await findAvatarSource(pool, body.attachmentId, me.id);
+    if (!source) {
+      return reply.code(404).send({
+        error: { code: 'not_found', message: 'no unattached upload of yours with that id' },
+      });
+    }
+
+    const type = sniffImageType(await readHead(storage, source.storageKey, IMAGE_HEAD_BYTES));
+    if (!type) {
+      return reply.code(400).send({
+        error: { code: 'not_an_image', message: 'avatar must be a png, jpeg, gif, webp, or avif image' },
+      });
+    }
+
+    await setAccountAvatar(pool, id, { attachmentId: source.id, contentType: type });
+    emitEvent({ type: 'avatar.changed', accountId: id, avatarAttachmentId: source.id });
+    return { avatarAttachmentId: source.id };
+  });
+
   app.get('/accounts/:id/avatar', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const target = await findAvatarTarget(pool, id);

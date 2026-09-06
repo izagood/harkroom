@@ -767,6 +767,19 @@ export class Controller {
   }
 
   /**
+   * 에이전트의 사진을 건다(identity 문서 Task 15-4). `setAvatar` 와 같은 두 걸음이다 —
+   * 업로드는 기존 `POST /uploads` 를 쓰고, 여기서는 그 업로드 하나를 계정에 잇는다.
+   *
+   * 스토어의 계정 표를 함께 갱신한다: 그러지 않으면 방금 올린 사진이 설정 화면에만 보이고
+   * 대화·그리드의 아바타는 옛 색으로 남는다.
+   */
+  async setAgentAvatar(agentId: string, file: File | null): Promise<void> {
+    const attachmentId = file ? (await this.api.upload(file)).id : null;
+    const { avatarAttachmentId } = await this.api.setAgentAvatar(agentId, attachmentId);
+    this.store.getState().applyAvatar(agentId, avatarAttachmentId);
+  }
+
+  /**
    * 첨부를 사용자 디스크에 저장한다. objectURL + `download` 앵커를 쓴다 — 토큰을 URL 에
    * 넣지 않으려면 바이트를 먼저 받아야 하고, 받은 다음에는 이것이 가장 단순한 저장 경로다.
    * 실패하면 Notice 로 사람 앞에 세운다.

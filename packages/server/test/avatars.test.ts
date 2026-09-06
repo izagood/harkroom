@@ -175,3 +175,113 @@ describe('#159 계정 프로필 사진', () => {
     expect((await setAvatar(adminToken, {})).statusCode).toBe(400);
   });
 });
+
+/**
+ * 에이전트의 사진(identity 문서 Task 15-4). 에이전트는 **자기 사진을 올릴 손이 없다** —
+ * 소유자가 대신 올려 주지 않으면 영원히 색 하나로 남는다.
+ *
+ * 여기서 지키는 것은 **인가 경계**다: 소유자·admin 만 걸 수 있고, 그 판정은
+ * `requireOwnerOrAdmin` 하나가 낸다(판정 복제가 이 저장소에서 반복해 결함을 만들었다).
+ */
+describe('에이전트 아바타 (Task 15-4)', () => {
+  let agentId: string;
+
+  beforeAll(async () => {
+    const created = await app.inject({
+      method: 'POST', url: '/accounts/agents', headers: auth(adminToken),
+      payload: { handle: 'facebot', displayName: 'facebot' },
+    });
+    agentId = created.json().id as string;
+    // 소유자를 `other` 로 둔다 — admin 이 아닌 사람이 통과하는 것을 봐야 하기 때문이다.
+    await app.inject({
+      method: 'PATCH', url: `/accounts/agents/${agentId}`, headers: auth(adminToken),
+      payload: { ownerAccountId: otherId },
+    });
+  });
+
+  it('소유자가 자기 에이전트에 사진을 건다', async () => {
+    const id = await upload(otherToken, 'bot.png', PNG, 'image/png');
+    const res = await app.inject({
+      method: 'PUT', url: `/accounts/agents/${agentId}/avatar`,
+      headers: auth(otherToken), payload: { attachmentId: id },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().avatarAttachmentId).toBe(id);
+
+    // 걸린 사진은 **모두에게** 보인다 — 자기에게만 보이는 아바타는 기능이 아니다.
+    const got = await app.inject({
+      method: 'GET', url: `/accounts/${agentId}/avatar`, headers: auth(adminToken),
+    });
+    expect(got.statusCode).toBe(200);
+  });
+
+  it('admin 도 걸 수 있다 — 서버의 판정 하나를 그대로 쓴다', async () => {
+    const id = await upload(adminToken, 'a.png', PNG, 'image/png');
+    const res = await app.inject({
+      method: 'PUT', url: `/accounts/agents/${agentId}/avatar`,
+      headers: auth(adminToken), payload: { attachmentId: id },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('소유자도 admin 도 아니면 거절한다', async () => {
+    const inv = await app.inject({
+      method: 'POST', url: '/invites', headers: auth(adminToken),
+    });
+    await app.inject({
+      method: 'POST', url: '/auth/register',
+      payload: {
+        handle: 'stranger', loginId: 'stranger', displayName: 'S', password: 'pw123456',
+        inviteToken: inv.json().token as string,
+      },
+    });
+    // 등록은 id 만 준다 — 토큰은 로그인에서 온다(위 `other` 준비와 같은 경로).
+    const login = await app.inject({
+      method: 'POST', url: '/auth/login', payload: { loginId: 'stranger', password: 'pw123456' },
+    });
+    const strangerToken = login.json().token as string;
+    const id = await upload(strangerToken, 's.png', PNG, 'image/png');
+
+    const res = await app.inject({
+      method: 'PUT', url: `/accounts/agents/${agentId}/avatar`,
+      headers: auth(strangerToken), payload: { attachmentId: id },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('이미지가 아니면 걸지 않는다 — `me` 와 같은 판정이다', async () => {
+    const id = await upload(otherToken, 'evil.png', HTML, 'image/png');
+    const res = await app.inject({
+      method: 'PUT', url: `/accounts/agents/${agentId}/avatar`,
+      headers: auth(otherToken), payload: { attachmentId: id },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('not_an_image');
+  });
+
+  it('남의 업로드를 가져다 걸 수 없다', async () => {
+    // admin 이 올린 업로드를 소유자가 자기 에이전트에 걸려고 한다.
+    const theirs = await upload(adminToken, 'theirs.png', PNG, 'image/png');
+    const res = await app.inject({
+      method: 'PUT', url: `/accounts/agents/${agentId}/avatar`,
+      headers: auth(otherToken), payload: { attachmentId: theirs },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('명시적 null 로 지운다 — 키가 없으면 400 이다', async () => {
+    const cleared = await app.inject({
+      method: 'PUT', url: `/accounts/agents/${agentId}/avatar`,
+      headers: auth(otherToken), payload: { attachmentId: null },
+    });
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.json().avatarAttachmentId).toBeNull();
+
+    // 키를 빼면 `JSON.stringify` 가 버려 조작이 조용히 무시된다 — 그래서 400 이다.
+    const missing = await app.inject({
+      method: 'PUT', url: `/accounts/agents/${agentId}/avatar`,
+      headers: auth(otherToken), payload: {},
+    });
+    expect(missing.statusCode).toBe(400);
+  });
+});

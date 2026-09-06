@@ -374,6 +374,15 @@ export class ApiClient {
   setAvatar(attachmentId: string | null): Promise<{ avatarAttachmentId: string | null }> {
     return this.req('PUT', '/accounts/me/avatar', { attachmentId });
   }
+  /**
+   * 에이전트의 사진. **자기 사진을 올릴 손이 없으므로** 소유자·admin 이 대신 건다
+   * (서버가 `requireOwnerOrAdmin` 으로 판정한다).
+   */
+  setAgentAvatar(
+    agentId: string, attachmentId: string | null,
+  ): Promise<{ avatarAttachmentId: string | null }> {
+    return this.req('PUT', `/accounts/agents/${agentId}/avatar`, { attachmentId });
+  }
 
   markRead(ids: number[]): Promise<void> { return this.req('POST', '/inbox/read', { ids }); }
   createDm(accountIds: string[]): Promise<ChannelRow> { return this.req('POST', '/dms', { accountIds }); }

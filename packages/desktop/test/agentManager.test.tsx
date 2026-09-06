@@ -665,3 +665,72 @@ describe('상세는 세 묶음, 저장은 한 쌍 (Task 15-3)', () => {
     expect(screen.queryByRole('button', { name: '되돌리기' })).toBeNull();
   });
 });
+
+/**
+ * Task 15-4(identity 문서) — 에이전트 사진.
+ *
+ * **에이전트는 자기 사진을 올릴 손이 없다** — 소유자가 대신 올려 주지 않으면 영원히 색
+ * 하나로 남는다. 문서가 이 화면의 성패를 여기에 걸었다.
+ */
+describe('에이전트 사진 (Task 15-4)', () => {
+  it('고른 에이전트에만 사진 자리가 있다 — 새 에이전트는 걸 대상이 없다', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+
+    // 처음 화면은 '새 에이전트'다 — 아직 계정이 없다.
+    expect(screen.queryByTestId('agent-avatar-file')).toBeNull();
+
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    expect(await screen.findByTestId('agent-avatar-file')).toBeTruthy();
+  });
+
+  it('파일을 고르면 그 에이전트에 건다', async () => {
+    const c = fakeController([agent('rusalka')]);
+    (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar =
+      vi.fn(async () => undefined);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'bot.png', { type: 'image/png' });
+    fireEvent.change(await screen.findByTestId('agent-avatar-file'), { target: { files: [file] } });
+
+    await waitFor(() => expect(
+      (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar,
+    ).toHaveBeenCalledWith('id-rusalka', file));
+  });
+
+  it('사진이 없으면 지우기가 없다 — 지울 것이 없는 버튼을 그리지 않는다', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    await screen.findByTestId('agent-avatar-file');
+    expect(screen.queryByRole('button', { name: '지우기' })).toBeNull();
+  });
+
+  it('사진이 있으면 지울 수 있다', async () => {
+    const c = fakeController([agent('rusalka', { avatarAttachmentId: 'att-1' })]);
+    (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar =
+      vi.fn(async () => undefined);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    fireEvent.click(await screen.findByRole('button', { name: '지우기' }));
+    await waitFor(() => expect(
+      (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar,
+    ).toHaveBeenCalledWith('id-rusalka', null));
+  });
+
+  it('거절되면 조용히 실패하지 않는다 — 이미지가 아닌 파일이 가장 흔하다', async () => {
+    const c = fakeController([agent('rusalka')]);
+    (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar =
+      vi.fn(async () => { throw new Error('not_an_image'); });
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    const file = new File([new Uint8Array([1])], 'evil.png', { type: 'image/png' });
+    fireEvent.change(await screen.findByTestId('agent-avatar-file'), { target: { files: [file] } });
+
+    expect((await screen.findByRole('alert')).textContent).toContain('이미지 파일만');
+  });
+});
