@@ -50,7 +50,7 @@ export function GallerySettings() {
     createdAt: new Date(Date.now() - 8 * 60_000).toISOString(),
     editedAt: null, reactions: [], attachments: [],
     replyCount: null, lastReplyAt: null, participantIds: null,
-    openAskHumanCount: null, openAskAccountIds: null, failureCount: null,
+    openAskHumanCount: null, openAskAccountIds: null, openAskLinks: null, failureCount: null,
     lastKind: null, lastAuthorId: null, alsoInChannel: false,
     ...over,
   });
