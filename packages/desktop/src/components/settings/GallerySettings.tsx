@@ -49,7 +49,9 @@ export function GallerySettings() {
     authorId: a1?.id ?? myId, body: '', kind: 'user', meta: {},
     createdAt: new Date(Date.now() - 8 * 60_000).toISOString(),
     editedAt: null, reactions: [], attachments: [],
-    replyCount: null, lastReplyAt: null, participantIds: null, alsoInChannel: false,
+    replyCount: null, lastReplyAt: null, participantIds: null,
+    openAskHumanCount: null, openAskAccountIds: null, failureCount: null,
+    lastKind: null, lastAuthorId: null, alsoInChannel: false,
     ...over,
   });
 

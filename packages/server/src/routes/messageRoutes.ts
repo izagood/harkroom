@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
+import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@murmur/shared';
 import { emitEvent } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { deleteMessage, editMessage, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
@@ -52,6 +53,22 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
       const urls = extractUrls(body.body);
       for (const url of urls) {
         queueLinkPreviewFetch(pool, url).catch(() => {});
+      }
+    }
+    // 누구를 불렀는지 부른 사람에게 돌려준다(Task 8 Step 2) — 집합·`@channel` 을 펼친 결과는
+    // 서버만 알고, 그것 없이는 화면이 "셋을 불러 둘만 깼다"를 말할 수 없다. 헤더인 이유는
+    // `NOTIFIED_HEADER` 주석에 있다: 이 응답의 본문은 `MessageRow` 그 자체이고 데스크탑이
+    // 그대로 스토어에 넣으므로, 형제 키를 얹으면 WebSocket 으로 온 같은 메시지와 모양이 갈린다.
+    //
+    // **재생(idempotency)일 때는 아예 싣지 않는다.** `postMessage` 는 재생 경로에서
+    // `notified: []` 를 준다 — 그 요청이 새로 부른 사람이 없다는 뜻이지 "아무도 안 불렸다"가
+    // 아니다(첫 요청이 이미 불렀고 inbox 행도 그때 생겼다). 그 빈 배열을 그대로 헤더로 실으면
+    // 화면이 "아무도 안 깼다"고 말한다 — 헤더가 **없는 것**은 '모른다'이고 `0` 은 '없다'라서,
+    // 둘을 구분해 두어야 화면이 모르는 것을 아는 척하지 않는다.
+    if (!replayed) {
+      reply.header(NOTIFIED_COUNT_HEADER, String(notified.length));
+      if (notified.length > 0) {
+        reply.header(NOTIFIED_HEADER, notified.slice(0, NOTIFIED_HEADER_MAX_IDS).join(','));
       }
     }
     return reply.code(replayed ? 200 : 201).send(message);

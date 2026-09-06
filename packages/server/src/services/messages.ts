@@ -52,11 +52,82 @@ const ATTACHMENTS = `coalesce((
 
 // #218: 핀 목록도 이 컬럼 집합으로 메시지를 내주기 때문에 export 다. 핀 전용으로 컬럼을
 // 다시 적으면 위에 적은 "네 갈래" 가 다섯이 되고, 리액션·첨부가 그 응답에서만 빠진다.
+//
+// 스레드 상태 재료(`openAsk*`·`failureCount`·`last*`)도 `replyCount` 와 **같은 처지**로
+// null 이다. 이 컬럼 집합을 쓰는 경로(POST·PATCH·링크·핀·담기)는 스레드를 요약하는 자리가
+// 아니라 **방금 그 한 줄**을 답하는 자리다. 여기서 굳이 집계하면 메시지를 하나 쓸 때마다
+// 스레드 전체를 훑는 비용이 붙는데, 정작 화면이 그 값을 쓰는 곳(채널 목록·사이드바)은
+// `LIST_COLS` 로 온다. 그래도 컬럼 자체는 있어야 한다 — 빠지면 같은 `MessageRow` 가 경로에
+// 따라 키를 갖다 안 갖다 해서, 화면이 'null(모른다)'과 '키 없음'을 구분할 수 없다.
 export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
   author_id as "authorId", body, kind, meta, created_at as "createdAt",
   edited_at as "editedAt", ${REACTIONS}, ${ATTACHMENTS},
   null::int as "replyCount", null::text as "lastReplyAt", null::text[] as "participantIds",
+  null::int as "openAskHumanCount", null::text[] as "openAskAccountIds",
+  null::int as "failureCount", null::text as "lastKind", null::text as "lastAuthorId",
   also_in_channel as "alsoInChannel"`;
+
+/**
+ * 스레드 상태 판정의 **재료**(Task 6 Step 2). 판정 자체는 여기서 하지 않는다.
+ *
+ * **왜 재료만 싣는가:** 판정은 이미 화면의 순수 함수 `threadState()`(desktop/src/lib/threadState.ts)에
+ * 있고, 그 함수의 마지막 축인 **러너 생존(presence)은 클라이언트만 안다** — 서버는 소켓이
+ * 끊겼는지("모른다")와 정말 죽었는지를 구분해 줄 수 없다. 서버가 상태를 계산해 실어 보내면
+ * 같은 5단 판정이 두 벌이 되고, 둘은 반드시 갈라진다. 그래서 서버는 **SQL 로만 알 수 있는
+ * 사실**(누구에게 미답 물음이 갔는가 · 실패가 있는가 · 마지막 말이 진행인가)만 낸다.
+ *
+ * **왜 루트를 포함하는가:** 아래의 `thread_stats` 는 `thread_root_id = m.id` 라서 **루트 자신을
+ * 세지 않는다** — 답글 수의 정의가 그렇기 때문이다. 그러나 상태의 정의는 다르다:
+ * `threadState()` 는 루트를 포함한 스레드 전체를 훑고, 실제로 물음·실패·진행은 **루트에서
+ * 시작되는 것이 보통**이다(에이전트가 채널에 물음을 던지고 답글이 아직 없는 경우). 루트를
+ * 빼면 답글 없는 물음이 전부 '끝남'으로 보인다 — 이 작업이 고치려던 바로 그 거짓말이다.
+ * 그래서 `(id = m.id OR thread_root_id = m.id)` 로 루트와 답글을 함께 훑는다.
+ *
+ * **왜 `openAskHumanCount` 와 `openAskAccountIds` 를 나누는가:** `ask.to` 가 합 타입이기
+ * 때문이다(`AskAudience`). `{kind:'human'}` 은 특정 계정이 아니라 **'사람 아무나'** 라서
+ * 계정 배열에 담을 id 가 없고, 담을 수 없다고 빠뜨리면 사람에게 온 물음이 화면에서 사라진다.
+ * 반대로 '사람 아무나'를 아무 계정 id 로 대신 채우면 그 사람만 강조를 받는다. 둘 다 거짓이라
+ * 사실을 있는 그대로 두 필드로 나눈다 — 화면의 `threadState()` 가 쓰는 분기와 같은 모양이다.
+ *
+ * **왜 `answeredWith is null` 인가:** 답한 물음은 더 이상 아무도 막지 않는다. `readAskMeta`
+ * 를 쓰는 `threadState()` 가 `answeredWith != null` 인 것을 건너뛰는 것과 같은 규칙이다.
+ *
+ * `kind = 'ask'` / `'failure'` 를 관문으로 보는 것은 shared 의 `readAskMeta`·`readFailureMeta`
+ * 가 똑같이 `meta.kind` 를 먼저 보기 때문이다. 그 판정과 어긋나면 서버가 실은 재료를 화면이
+ * 못 쓴다. 다만 shared 의 판정은 옵션 수·`retryable` 타입까지 검사하므로 이쪽이 **조금 더
+ * 너그럽다** — 그래도 안전한 방향이다: 재료가 남는 것은 화면이 걸러 내지만, 모자라면 화면은
+ * 없는 사실을 만들어 낼 수 없다.
+ *
+ * 마지막 말은 `seq` 로 고른다 — `created_at` 은 같은 밀리초에 둘이 들어오면 순서가 갈리지만
+ * `seq` 는 채널 안에서 단조 증가라 언제나 하나로 정해진다.
+ */
+const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
+  SELECT
+    -- 사람 아무나에게 간 미답 물음의 수. 누구인지 물을 수 없으므로 수로만 낸다.
+    COUNT(*) FILTER (
+      WHERE t.meta->>'kind' = 'ask'
+        AND t.meta->'ask'->>'answeredWith' IS NULL
+        AND t.meta->'ask'->'to'->>'kind' = 'human'
+    )::int as open_ask_human_count,
+    -- 특정 계정에게 간 미답 물음의 수신자들. 화면이 "이것이 내 차례인가"를 여기서 가른다.
+    COALESCE(ARRAY_AGG(DISTINCT t.meta->'ask'->'to'->>'accountId') FILTER (
+      WHERE t.meta->>'kind' = 'ask'
+        AND t.meta->'ask'->>'answeredWith' IS NULL
+        AND t.meta->'ask'->'to'->>'kind' = 'account'
+        AND t.meta->'ask'->'to'->>'accountId' IS NOT NULL
+    ), '{}'::text[]) as open_ask_account_ids,
+    COUNT(*) FILTER (WHERE t.meta->>'kind' = 'failure')::int as failure_count
+  FROM message t
+  WHERE (t.id = m.id OR t.thread_root_id = m.id) AND t.deleted_at IS NULL
+) thread_state ON true
+LEFT JOIN LATERAL (
+  -- 마지막 말 하나. 그것이 진행이고 저자가 살아 있는 에이전트일 때만 '도는 중'이므로,
+  -- 화면은 이 둘(kind·저자)에 자기가 아는 생존을 곱해 판정한다.
+  SELECT t.kind as last_kind, t.author_id::text as last_author_id
+  FROM message t
+  WHERE (t.id = m.id OR t.thread_root_id = m.id) AND t.deleted_at IS NULL
+  ORDER BY t.seq DESC LIMIT 1
+) thread_last ON true`;
 
 // 스레드 메타데이터: 루트 메시지에만 계산. LATERAL join으로 같은 쿼리에서 계산한다 (N+1 방지).
 // 진행 설명(kind='progress')도 답글 수에 포함한다. 사용자가 "답글 3개"를 보고 열었을 때
@@ -82,7 +153,8 @@ const THREAD_STATS = `LEFT JOIN LATERAL (
       ) recent
     ), '{}'::uuid[]) as participant_ids
   FROM message WHERE thread_root_id = m.id AND deleted_at IS NULL
-) thread_stats ON true`;
+) thread_stats ON true
+${THREAD_STATE_FACTS}`;
 
 // listMessages 에서 사용하는 컬럼: 루트면 메타데이터 있음, 답글이면 null.
 const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
@@ -91,6 +163,11 @@ const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.threa
   case when m.thread_root_id is null then thread_stats.reply_count end as "replyCount",
   case when m.thread_root_id is null then thread_stats.last_reply_at end as "lastReplyAt",
   case when m.thread_root_id is null then thread_stats.participant_ids end as "participantIds",
+  case when m.thread_root_id is null then thread_state.open_ask_human_count end as "openAskHumanCount",
+  case when m.thread_root_id is null then thread_state.open_ask_account_ids end as "openAskAccountIds",
+  case when m.thread_root_id is null then thread_state.failure_count end as "failureCount",
+  case when m.thread_root_id is null then thread_last.last_kind end as "lastKind",
+  case when m.thread_root_id is null then thread_last.last_author_id end as "lastAuthorId",
   m.also_in_channel as "alsoInChannel"`;
 
 /**

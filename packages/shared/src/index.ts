@@ -600,9 +600,81 @@ export interface MessageRow {
   lastReplyAt: string | null;
   /** 스레드 루트에만 있음. 답글 작성자 목록 (중복 없음). */
   participantIds: string[] | null;
+  /**
+   * 스레드 상태의 **재료**(Task 6 Step 2). 다섯 필드가 한 덩이로 움직인다 — 서버가 판정하지
+   * 않고 사실만 싣는다.
+   *
+   * **왜 판정이 아니라 재료인가:** 판정은 화면의 순수 함수 `threadState()` 하나가 하고,
+   * 그 함수의 축 하나인 **러너 생존은 클라이언트만 안다**(소켓이 끊긴 '모른다'와 정말 죽은
+   * 것을 서버는 구분해 줄 수 없다). 서버가 상태를 계산해 실으면 같은 5단이 두 벌이 되고,
+   * 둘은 반드시 갈라진다.
+   *
+   * **왜 이것이 필요한가:** 답글은 스레드를 열 때만 로드되므로 채널 목록에는 루트만 있다.
+   * 그 상태로 판정을 걸면 **열어 보지 않은 스레드가 전부 '끝남'으로 보인다** — 화면이
+   * 사람에게 하는 거짓말이다. 이 다섯 필드가 그 구멍을 메운다.
+   *
+   * `replyCount` 와 같은 규약으로 **스레드 루트에만 있고 답글에서는 null** 이다. 또한 메시지
+   * 하나를 내주는 경로(POST·PATCH·링크·핀·검색)에서도 null 이다 — 그 자리들은 스레드를
+   * 요약하는 자리가 아니다.
+   */
+  /** 미답 물음 중 '사람 아무나'(`ask.to.kind === 'human'`)에게 간 것의 수. */
+  openAskHumanCount: number | null;
+  /** 미답 물음 중 특정 계정에게 간 것들의 수신자 id. 중복 없음. */
+  openAskAccountIds: string[] | null;
+  /** 이 스레드에 실패(`meta.kind === 'failure'`)가 몇 개 있는가. 0 이면 없다. */
+  failureCount: number | null;
+  /**
+   * 스레드의 **마지막 말**의 종류. `'progress'` 일 때만 '도는 중'일 수 있다 —
+   * 실제로 도는지는 `lastAuthorId` 의 생존을 아는 클라이언트가 판정한다.
+   */
+  lastKind: 'user' | 'system' | 'progress' | null;
+  /** 그 마지막 말의 저자. 생존을 물어볼 대상이다. */
+  lastAuthorId: string | null;
   /** 스레드 답을 채널에도 함께 올린다(#231). threadRootId 가 없으면 이 값은 항상 false 다. */
   alsoInChannel: boolean;
 }
+
+/**
+ * 부름의 결과를 싣는 응답 헤더(Task 8 Step 2) — **누구를 불렀는가**.
+ *
+ * 서버는 `postMessage` 에서 `notified` 를 이미 계산하지만 지금까지 inbox 이벤트를 쏘는 데만
+ * 쓰고 버렸다. 그래서 `@channel` 이나 집합을 부른 사람이 "셋을 불러 둘만 깼다"를 말할 자료가
+ * 화면에 없었다.
+ *
+ * **왜 본문이 아니라 헤더인가.** `POST /channels/:id/messages` 의 응답 본문은 `MessageRow`
+ * **그 자체**이고, 데스크탑은 그것을 그대로 `upsertMessages` 로 스토어에 넣는다
+ * (`controller.ts::send`). 본문에 `notified` 를 형제 키로 얹으면 그 값이 스토어의
+ * `MessageRow` 로 흘러들어, WebSocket 으로 오는 같은 메시지(그 키가 없다)와 모양이 달라진다 —
+ * 같은 한 줄이 어느 경로로 왔느냐에 따라 다른 값을 갖는 것은 조용한 결함의 씨앗이다.
+ * 반대로 응답을 `{ message, notified }` 봉투로 바꾸는 것은 기존 응답 모양을 깨는 일이라
+ * 서버 테스트 41 개와 클라이언트가 함께 무너진다.
+ *
+ * 헤더는 **본문 밖**이라 둘 다 피한다: `MessageRow` 는 한 글자도 넓어지지 않고, 지금 본문만
+ * 읽는 호출부는 그대로 돈다. `attachmentRoutes`·`avatarRoutes` 가 이미 응답의 부수 사실을
+ * 헤더로 싣는 선례다.
+ *
+ * MCP 쪽은 응답이 이미 `{ message }` **봉투**라 사정이 다르다 — 거기서는 `notified` 를
+ * 형제 키로 둔다(`MessageRow` 를 오염시키지 않으면서 JSON 하나로 끝난다).
+ */
+export const NOTIFIED_HEADER = 'x-murmur-notified';
+
+/**
+ * 부른 사람의 **총수**를 싣는 헤더. `NOTIFIED_HEADER` 가 잘렸을 때 화면이 "외 N 명"을 말할
+ * 수 있게 한다.
+ *
+ * **왜 수를 따로 싣는가:** `@channel` 은 그 채널을 볼 수 있는 계정 **전부**를 부를 수 있어
+ * 명단에 상한이 없다. 그런데 HTTP 헤더는 전체가 16KB(Node 기본값)를 넘으면 응답 자체가
+ * 깨지고, uuid 하나가 37 바이트라 수백 명이면 그 선에 닿는다. **명단을 자르되 수는 정확히**
+ * 두는 것이 이 두 헤더의 분업이다 — 잘린 명단만 있으면 화면이 조용히 적은 수를 말한다.
+ */
+export const NOTIFIED_COUNT_HEADER = 'x-murmur-notified-count';
+
+/**
+ * `NOTIFIED_HEADER` 에 실을 id 의 최대 개수. 37 바이트 × 100 ≈ 3.7KB 로, 다른 헤더와 합쳐도
+ * 16KB 한계에 여유가 있다. 화면이 이름을 그리는 것은 어차피 앞의 몇 명뿐이고 나머지는
+ * `NOTIFIED_COUNT_HEADER` 의 수로 말한다.
+ */
+export const NOTIFIED_HEADER_MAX_IDS = 100;
 
 /**
  * 선택 요청의 수신자 — **누가 답해야 진행되는가**.
