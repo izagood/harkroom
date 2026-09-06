@@ -100,8 +100,9 @@ export interface RunnerExitNotice {
    * ## 이것이 "daemon 이 판단한다"가 아닌 이유
    *
    * daemon 은 이 줄들을 **읽지 않는다**. `EXECUTABLE_NOT_FOUND_LINE` 도
-   * `CREDENTIAL_REJECTED_LINE` 도 이 패키지에는 등장하지 않는다(`runnerLog.ts` 가 그
-   * 상수를 import 조차 하지 않는다). 파일의 꼬리를 그대로 옮길 뿐이고, 그것은 관측이지
+   * `CREDENTIAL_REJECTED_LINE` 도 이 패키지가 **import 하지 않는다** — 코드에 그 상수가
+   * 없다(이 주석이 이름을 말하는 것은 설명이지 참조가 아니다). 파일의 꼬리를 그대로
+   * 옮길 뿐이고, 그것은 관측이지
    * 해석이 아니다 — `listRunners` 가 `alive` 를 그대로 주는 것과 같은 성질이다.
    *
    * 여기서 daemon 이 `reason: 'harness-missing'` 같은 값을 만들어 보내면 그때는 판단이
