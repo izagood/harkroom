@@ -1,5 +1,6 @@
 import { vi } from 'vitest';
-import type { AccountView, AgentSessionView, ChannelRow, HandleGroupRow, MessageRow, PinRow } from '@murmur/shared';
+import type {
+  InboxEntry, AccountView, AgentSessionView, ChannelRow, HandleGroupRow, MessageRow, PinRow } from '@murmur/shared';
 import type { ApiClient } from '../../src/lib/api';
 
 // #186: 상태는 옵셔널이 아니라 **필수 필드**다 — fixture 도 그것을 적어야 한다.
@@ -41,6 +42,18 @@ export const chan = (
 ): ChannelRow =>
   ({ id, name, topic: '', kind: 'standard', repo, archivedAt: null, visibility,
     createdAt: '2024-01-01T00:00:00.000Z', ...extra });
+
+/**
+ * 인박스 항목 하나. **네 가지 재료**(#488 C2)를 기본값으로 채운다 — 줄이 "누가 ·
+ * 무슨 말 · 무엇을 · 언제·어디"를 말하려면 이 다섯 필드가 있어야 한다.
+ */
+export const inboxEntry = (
+  id: number, messageId: string, reason: InboxEntry['reason'],
+  extra: Partial<InboxEntry> = {},
+): InboxEntry =>
+  ({ id, messageId, reason, readAt: null, channelId: 'c1',
+    authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z',
+    threadRootId: null, ...extra });
 
 export const msg = (id: string, channelId: string, seq: number, body: string, authorId = 'u1',
   extra: Partial<MessageRow> = {}): MessageRow =>

@@ -24,8 +24,8 @@ beforeEach(() => {
     channels: [chan('c1', 'general'), chan('c2', 'dev', 'main-repo')],
     dms: [{ id: 'd1', memberIds: ['u1', 'u2'] }],
     unread: [
-      { id: 1, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c2' },
-      { id: 2, messageId: 'm2', reason: 'dm', readAt: null, channelId: 'd1' },
+      { id: 1, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c2' , authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null},
+      { id: 2, messageId: 'm2', reason: 'dm', readAt: null, channelId: 'd1' , authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null},
     ],
     online: ['u2'],
     connected: true,
