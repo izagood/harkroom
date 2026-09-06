@@ -61,3 +61,148 @@ export function Toggle({ label, description, checked, disabled, onChange }: {
     </label>
   );
 }
+
+/*
+ * ── 폼 프리미티브(identity 문서 · Task 15) ──────────────────────────────────
+ *
+ * 지금은 `const field = 'w-full rounded border ...'` 같은 문자열이 파일마다 따로 산다.
+ * 세 곳을 비교해 보면 **이미 값이 갈라져 있다** — 하나는 `px-3 py-2`, 하나는 `px-2 py-1`,
+ * 하나는 `mt-1` 이 붙어 있다. 같은 자리가 화면마다 다르게 생겼다는 뜻이다.
+ *
+ * 여기로 모으면 그 갈라짐이 없어지고, `AgentsSettings` 를 쪼갤 때 상세 화면이 **따라갈 것**이
+ * 생긴다(그것이 이 Task 의 순서상 이 조각이 먼저인 이유다).
+ */
+
+/** 입력 칸의 공통 모양. 라벨과 힌트를 함께 세우는 것이 이 프리미티브의 일이다. */
+const FIELD_BOX = 'w-full rounded border border-border bg-field px-3 py-2 text-sm text-fg placeholder-fg-subtle';
+const FIELD_LABEL = 'block text-xs font-medium text-fg-muted';
+
+/**
+ * 라벨 + 입력 + 힌트 한 벌.
+ *
+ * **힌트는 한 자리에만 둔다**(문서 원칙 06): `placeholder` 는 예시만 담고 규칙은 아래 힌트
+ * 줄로 내린다 — 두 곳에 나뉘면 사람이 규칙을 놓친다. 되돌릴 수 없는 것(이름 등)은
+ * `tone="warning"` 으로 경고색을 받는다: "만든 뒤에는 바꿀 수 없다"가 화면에서 가장 작은
+ * 회색 글씨면 아무도 읽지 않는다.
+ */
+export function Field({ label, hint, tone = 'muted', children }: {
+  label: string;
+  hint?: string;
+  tone?: 'muted' | 'warning';
+  children: ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className={FIELD_LABEL}>{label}</span>
+      <span className="mt-1 block">{children}</span>
+      {hint && (
+        <span className={`mt-1 block text-[11px] ${tone === 'warning' ? 'text-warning' : 'text-fg-subtle'}`}>
+          {hint}
+        </span>
+      )}
+    </label>
+  );
+}
+
+/** `Field` 안에 들어가는 한 줄 입력. 바깥에서 쓰려면 `Field` 로 감싼다. */
+export function TextInput({ value, onChange, placeholder, disabled, ariaLabel }: {
+  value: string;
+  onChange(next: string): void;
+  placeholder?: string;
+  disabled?: boolean;
+  /** `Field` 의 라벨과 연결되지 않는 자리(그리드 안 등)에서만 쓴다. */
+  ariaLabel?: string;
+}) {
+  return (
+    <input
+      className={FIELD_BOX}
+      value={value}
+      placeholder={placeholder}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
+
+/** 고르는 값. 옵션이 둘~셋이면 `Segmented` 가 낫다 — 펼치지 않고 전부 보인다. */
+export function Select({ value, onChange, options, disabled, ariaLabel }: {
+  value: string;
+  onChange(next: string): void;
+  options: { value: string; label: string }[];
+  disabled?: boolean;
+  ariaLabel?: string;
+}) {
+  return (
+    <select
+      className={FIELD_BOX}
+      value={value}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  );
+}
+
+/**
+ * 서로 배타적인 몇 개 중 하나. **`radiogroup` 이다** — 보이는 것이 버튼 무리라도 스크린리더에
+ * 게는 "여럿 중 하나"로 읽혀야 하고, 그래야 화살표 키가 자연스럽다.
+ */
+export function Segmented({ value, onChange, options, label }: {
+  value: string;
+  onChange(next: string): void;
+  options: { value: string; label: string }[];
+  label: string;
+}) {
+  return (
+    <div role="radiogroup" aria-label={label} className="flex gap-1 rounded-lg bg-surface-sunken p-1">
+      {options.map((o) => {
+        const on = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            className={`flex-1 rounded-md px-3 py-1.5 text-[13px] font-medium ${
+              on ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:bg-surface-hover'
+            }`}
+            onClick={() => onChange(o.value)}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * 버튼 한 벌. **`danger` 를 따로 두는 것이 요점**이다 — 되돌릴 수 없는 조작이 보통 버튼과
+ * 같게 생기면 사람이 그것을 구별할 수단이 색밖에 없고, 색은 테마에 따라 흐려진다.
+ */
+export function Button({ children, onClick, variant = 'secondary', disabled, type = 'button' }: {
+  children: ReactNode;
+  onClick?(): void;
+  variant?: 'primary' | 'secondary' | 'danger';
+  disabled?: boolean;
+  type?: 'button' | 'submit';
+}) {
+  const tone = {
+    primary: 'bg-accent text-fg-on-strong hover:bg-accent-hover',
+    secondary: 'border border-border bg-surface-raised text-fg hover:bg-surface-hover',
+    danger: 'border border-danger-border text-danger hover:bg-danger-surface',
+  }[variant];
+  return (
+    <button
+      type={type}
+      disabled={disabled}
+      onClick={onClick}
+      className={`rounded px-3 py-1.5 text-[13px] font-medium disabled:opacity-50 ${tone}`}
+    >
+      {children}
+    </button>
+  );
+}
