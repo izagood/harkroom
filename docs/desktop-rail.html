@@ -1,0 +1,683 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="murmur 데스크탑 — 사이드바 옆에 레일을 내고 DM·에이전트를 옮긴다">
+<title>murmur · 레일</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap">
+
+<style>
+  :root {
+    --paper:#FBF9F7; --paper-2:#F3F0EB; --card:#FFFFFF;
+    --line:#E3DCD2; --line-soft:#EFEAE2;
+    --ink:#1B1815; --ink-2:#4C453D; --ink-3:#7E7568;
+    --accent:#E8613C; --accent-2:#B8431F; --accent-soft:#FAE8E1;
+    --teal:#0D8E82;
+    --sans:"IBM Plex Sans KR", ui-sans-serif, system-ui, "Apple SD Gothic Neo", sans-serif;
+    --disp:"Bricolage Grotesque","IBM Plex Sans KR", ui-sans-serif, system-ui, sans-serif;
+    --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:#141210; --paper-2:#1C1917; --card:#1D1A17;
+      --line:#322C26; --line-soft:#262220;
+      --ink:#F1ECE5; --ink-2:#B9B0A4; --ink-3:#877E71;
+      --accent:#FF7B54; --accent-2:#FF9E7F; --accent-soft:#3A2119;
+      --teal:#2FB3A4; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:#141210; --paper-2:#1C1917; --card:#1D1A17;
+    --line:#322C26; --line-soft:#262220;
+    --ink:#F1ECE5; --ink-2:#B9B0A4; --ink-3:#877E71;
+    --accent:#FF7B54; --accent-2:#FF9E7F; --accent-soft:#3A2119;
+    --teal:#2FB3A4; color-scheme: dark;
+  }
+  * { box-sizing:border-box; }
+  body { background:var(--paper); color:var(--ink); font-family:var(--sans); font-size:16px; line-height:1.7; margin:0; padding-bottom:5rem; -webkit-font-smoothing:antialiased; }
+  .wrap { width:min(100% - 2.5rem, 900px); margin-inline:auto; }
+  .bleed { width:min(100% - 2rem, 1120px); margin-inline:auto; }
+
+  header { padding:3.4rem 0 2rem; }
+  h1 { font-family:var(--disp); font-weight:800; font-size:clamp(2rem,4.4vw,2.9rem); line-height:1.06; letter-spacing:-.03em; margin:0 0 .9rem; }
+  h1 em { font-style:normal; color:var(--accent); }
+  .lede { font-size:1.06rem; color:var(--ink-2); max-width:64ch; margin:0 0 1.5rem; }
+  .meta { font-family:var(--mono); font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-3); border-top:1px solid var(--line); padding-top:.8rem; }
+
+  section { padding:2.8rem 0 0; }
+  .eyebrow { font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--accent); display:flex; align-items:center; gap:.7rem; margin-bottom:.7rem; }
+  .eyebrow::after { content:""; height:1px; flex:1; background:var(--line); }
+  h2 { font-family:var(--disp); font-weight:700; font-size:clamp(1.4rem,3vw,1.85rem); line-height:1.15; letter-spacing:-.02em; margin:0 0 .8rem; }
+  h3 { font-family:var(--disp); font-weight:700; font-size:1.06rem; margin:1.9rem 0 .5rem; letter-spacing:-.01em; }
+  p { margin:0 0 1rem; max-width:70ch; }
+  code { font-family:var(--mono); font-size:.86em; background:var(--paper-2); border:1px solid var(--line-soft); padding:.05em .35em; border-radius:3px; color:var(--ink-2); }
+  b, strong { font-weight:600; }
+  .note { font-size:.9rem; color:var(--ink-3); max-width:70ch; }
+
+  .panel { border:1px solid var(--line); border-radius:8px; background:var(--card); overflow:hidden; margin-top:1.1rem; }
+  .panel__h { padding:.55rem 1rem; background:var(--paper-2); border-bottom:1px solid var(--line-soft); font-family:var(--mono); font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-3); display:flex; align-items:center; gap:.6rem; }
+  .panel__h .tag { margin-left:auto; text-transform:none; letter-spacing:0; font-size:10px; }
+  .panel__b { padding:1.1rem 1.2rem; }
+  .grid.two { display:grid; gap:1rem; }
+  @media (min-width:760px) { .grid.two { grid-template-columns:1fr 1fr; gap:1.3rem; } }
+
+  .ui { font-size:13px; line-height:1.5; color:#1A1917; background:#fff; }
+  .row { display:flex; gap:9px; align-items:flex-start; padding:5px 0; }
+  .who { display:flex; align-items:baseline; gap:6px; flex-wrap:wrap; }
+  .who b { font-weight:600; font-size:13px; }
+  .t { font-family:var(--mono); font-size:10px; color:#93908A; }
+  .body { color:#3C3A35; }
+  .badge-now { display:inline-flex; align-items:center; gap:3px; background:#eef2ff; color:#4f46e5; border-radius:3px; padding:0 4px; font-size:10px; }
+  .av { display:inline-flex; align-items:center; justify-content:center; color:#fff; font-weight:600; flex:none; overflow:hidden; border-radius:50%; letter-spacing:-.01em; }
+  .av.glyph { background:transparent; color:inherit; }
+  .stack { display:inline-flex; align-items:center; }
+  .stack .av { box-shadow:0 0 0 2px #fff; }
+  .stack .av + .av { margin-left:-5px; }
+  .sizes { display:flex; align-items:flex-end; gap:1.4rem; flex-wrap:wrap; }
+  .size { text-align:center; }
+  .size .lbl { font-family:var(--mono); font-size:9.5px; color:var(--ink-3); margin-top:.45rem; letter-spacing:.03em; }
+
+  /* 프로필 패널 */
+  .prof { width:310px; border:1px solid #E4E3E0; border-radius:10px; background:#fff; box-shadow:0 10px 30px -14px rgba(0,0,0,.35); overflow:hidden; }
+  .prof__top { padding:15px 15px 12px; display:flex; gap:12px; align-items:center; }
+  .prof__name { font-weight:600; font-size:15px; color:#1A1917; }
+  .prof__handle { font-family:var(--mono); font-size:11.5px; color:#93908A; }
+  .prof__state { display:flex; align-items:center; gap:5px; font-size:11px; color:#5C5951; margin-top:3px; }
+  .prof__state i { width:6px; height:6px; border-radius:50%; display:block; }
+  .prof__rows { border-top:1px solid #EFEEEB; }
+  .prow { display:flex; gap:10px; padding:7px 15px; font-size:12px; }
+  .prow .k { color:#93908A; width:60px; flex:none; font-size:11.5px; }
+  .prow .v { color:#3C3A35; min-width:0; }
+  .prof__acts { border-top:1px solid #EFEEEB; padding:9px 11px; display:flex; gap:6px; flex-wrap:wrap; }
+
+  .btn { font-size:11.5px; padding:4px 10px; border-radius:5px; border:1px solid #DDDCD8; color:#3C3A35; background:#fff; display:inline-flex; align-items:center; gap:4px; }
+  .btn.primary { background:#C24A22; border-color:#C24A22; color:#fff; }
+  .btn.quiet { border-color:transparent; color:#6E6A63; }
+  .btn.danger { border-color:#E5B7A8; color:#B8431F; background:#FDF3EF; }
+  .btn.wide { width:100%; justify-content:center; }
+
+  /* ===== 그리드 안들 ===== */
+  .screen { background:#FAFAF9; padding:18px 20px 22px; font-size:13px; color:#1A1917; }
+  .screen__h { display:flex; align-items:baseline; gap:10px; margin-bottom:3px; }
+  .screen__t { font-family:var(--disp); font-weight:700; font-size:18px; letter-spacing:-.01em; }
+  .screen__d { font-size:11.5px; color:#8A867E; margin-bottom:14px; }
+
+  /* A — 얼굴 */
+  .ga { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; }
+  .ga .c { border:1px solid #E4E3E0; border-radius:10px; background:#fff; padding:16px 10px 12px; text-align:center; }
+  .ga .c .nm { font-weight:600; font-size:13px; margin-top:9px; }
+  .ga .c .st { font-size:10.5px; color:#8A867E; margin-top:2px; display:flex; align-items:center; justify-content:center; gap:4px; }
+  .ga .c .st i { width:5px; height:5px; border-radius:50%; display:block; }
+  .ga .c .act { margin-top:10px; }
+  .ga .c.off .av { filter:saturate(.25); opacity:.5; }
+  .ga .c.fail { border-color:#E5B7A8; }
+  .ga .add { border:1.5px dashed #D6D3CC; border-radius:10px; background:transparent; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#8A867E; gap:6px; min-height:150px; }
+  .ga .add .plus { font-size:26px; line-height:1; color:#B0ACA4; }
+
+  /* B — 명함 */
+  .gb { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .gb .c { border:1px solid #E4E3E0; border-radius:9px; background:#fff; padding:11px 12px; display:flex; align-items:center; gap:11px; }
+  .gb .c .mid { min-width:0; flex:1; }
+  .gb .c .nm { font-weight:600; font-size:13px; }
+  .gb .c .sub { font-size:10.5px; color:#8A867E; margin-top:1px; }
+  .gb .c .st { font-size:10.5px; color:#8A867E; display:flex; align-items:center; gap:4px; }
+  .gb .c .st i { width:5px; height:5px; border-radius:50%; display:block; }
+  .gb .c.off .av { filter:saturate(.25); opacity:.5; }
+  .gb .c.fail { border-color:#E5B7A8; }
+  .gb .add { border:1.5px dashed #D6D3CC; border-radius:9px; display:flex; align-items:center; justify-content:center; gap:7px; color:#8A867E; padding:11px; }
+  .gb .add .plus { font-size:18px; color:#B0ACA4; }
+
+  /* C — 상태판 */
+  .gc-sum { display:flex; gap:16px; font-size:11.5px; color:#5C5951; margin-bottom:12px; }
+  .gc-sum span { display:flex; align-items:center; gap:5px; }
+  .gc-sum i { width:6px; height:6px; border-radius:50%; display:block; }
+  .gc { display:grid; grid-template-columns:repeat(3,1fr); gap:11px; }
+  .gc .c { border:1px solid #E4E3E0; border-radius:9px; background:#fff; overflow:hidden; display:flex; }
+  .gc .c .bar { width:3px; flex:none; }
+  .gc .c .in { padding:12px 13px; flex:1; min-width:0; }
+  .gc .c .top { display:flex; align-items:center; gap:9px; }
+  .gc .c .nm { font-weight:600; font-size:13px; }
+  .gc .c .sub { font-size:10.5px; color:#8A867E; }
+  .gc .c .big { font-size:11.5px; color:#3C3A35; margin-top:9px; }
+  .gc .c .big b { font-weight:600; }
+  .gc .c .act { margin-top:9px; }
+  .gc .c.off { background:#FAFAF9; }
+  .gc .c.off .av { filter:saturate(.2); opacity:.5; }
+  .gc .add { border:1.5px dashed #D6D3CC; border-radius:9px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; color:#8A867E; min-height:110px; }
+  .gc .add .plus { font-size:22px; color:#B0ACA4; line-height:1; }
+
+  /* 상세 */
+  .det { background:#fff; padding:18px 22px 20px; }
+  .det__back { font-size:11.5px; color:#8A867E; margin-bottom:12px; }
+  .det__top { display:flex; align-items:center; gap:13px; margin-bottom:16px; }
+  .det__nm { font-family:var(--disp); font-weight:700; font-size:18px; letter-spacing:-.01em; }
+  .det__st { font-size:11.5px; color:#8A867E; display:flex; align-items:center; gap:5px; margin-top:2px; }
+  .det__st i { width:6px; height:6px; border-radius:50%; display:block; }
+  .det__acts { margin-left:auto; display:flex; gap:6px; }
+  .sec { margin-bottom:18px; }
+  .sec__h { font-weight:600; font-size:13px; margin-bottom:2px; }
+  .sec__d { font-size:11px; color:#8A867E; margin-bottom:9px; }
+  .fld { margin-bottom:11px; }
+  .fld__l { font-size:11px; color:#5C5951; margin-bottom:3px; font-weight:500; }
+  .fld__i { border:1px solid #DDDCD8; border-radius:5px; padding:6px 9px; background:#fff; font-size:12px; }
+  .fld__i.ph { color:#A8A49C; }
+  .fld__i.sel { display:flex; align-items:center; }
+  .fld__i.sel::after { content:"⌄"; margin-left:auto; color:#8A867E; font-size:13px; line-height:.6; }
+  .fld__h { font-size:10.5px; color:#8A867E; margin-top:3px; }
+  .fld__h.warn { color:#B8431F; }
+  .two-up { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .seg { display:inline-flex; border:1px solid #DDDCD8; border-radius:6px; overflow:hidden; }
+  .seg span { padding:5px 12px; font-size:11.5px; color:#5C5951; background:#fff; }
+  .seg span.on { background:#C24A22; color:#fff; }
+  .setfoot { border-top:1px solid #EFEEEB; margin-top:14px; padding-top:12px; display:flex; gap:7px; align-items:center; }
+
+  .cmp { margin-top:1rem; border-top:1px solid var(--line); }
+  .cmp__r { display:grid; gap:.15rem 1.3rem; padding:.85rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:720px) { .cmp__r { grid-template-columns:5.5rem 1fr; } }
+  .cmp__k { font-family:var(--mono); font-size:11.5px; color:var(--ink); }
+  .cmp__v { font-size:.92rem; color:var(--ink-2); line-height:1.6; }
+
+  .rules { display:grid; gap:0; margin-top:1rem; border-top:1px solid var(--line); }
+  .rule { display:grid; gap:.25rem 1.3rem; padding:1rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:760px) { .rule { grid-template-columns:2.2rem 1fr; } }
+  .rule__n { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--accent); }
+  .rule__t { font-family:var(--disp); font-weight:700; font-size:1.05rem; margin:0 0 .25rem; letter-spacing:-.01em; }
+  .rule__b { font-size:.94rem; color:var(--ink-2); margin:0; line-height:1.62; max-width:66ch; }
+
+  .callout { margin-top:1.3rem; border:1px solid var(--line); border-left:3px solid var(--teal); border-radius:4px; background:var(--card); padding:1rem 1.15rem; }
+  .callout p { margin:0; font-size:.94rem; color:var(--ink-2); }
+  .callout p + p { margin-top:.5rem; }
+  .warnout { border-left-color:var(--accent-2); }
+  footer { margin-top:3rem; padding-top:1rem; border-top:1px solid var(--line); font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-3); }
+
+  /* 항목 목록 */
+  .flist { border-top:1px solid var(--line); }
+  .fitem { display:grid; gap:.1rem 1.2rem; padding:.8rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:700px) { .fitem { grid-template-columns:15rem 1fr; } }
+  .fitem__k { font-weight:600; font-size:.93rem; color:var(--ink); }
+  .fitem__v { font-size:.92rem; color:var(--ink-2); line-height:1.6; }
+
+  /* 답글 스택 요약 줄 */
+  .slot { display:grid; gap:9px; }
+  .slotrow { display:grid; gap:4px 12px; align-items:center; }
+  @media (min-width:640px) { .slotrow { grid-template-columns:5.6rem 1fr; } }
+  .slotlab { font-family:var(--mono); font-size:9.5px; letter-spacing:.07em; text-transform:uppercase; color:#93908A; }
+  .trow { display:flex; gap:10px; align-items:center; padding:8px 11px; border-radius:6px; background:#fff; border:1px solid #EFEEEB; min-width:0; }
+  .trow.hotrow { background:#FFF5F1; border-color:#F2D3C6; box-shadow:inset 2px 0 0 #C24A22; }
+  .trow.dim { background:#FAFAF9; }
+  .trow__t { font-size:12.5px; color:#6E6A63; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .trow__t b { color:#1A1917; font-weight:600; }
+  .trow__t .hot { color:#C24A22; font-weight:600; }
+  .trow__t .cut { color:#C0BCB4; }
+  .plus { display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background:#E7E4DF; color:#5C5951; font-weight:600; flex:none; }
+
+  /* 설정 › 에이전트 — 확정안 */
+  .scr { background:#fff; }
+  .scr__h { padding:15px 18px 0; }
+  .scr__t { font-weight:600; font-size:15px; color:#1A1917; }
+  .scr__d { font-size:11.5px; color:#8A867E; margin-top:2px; }
+  .srch { margin:13px 18px 0; display:flex; align-items:center; gap:8px; border:1px solid #DDDCD8; border-radius:7px; padding:7px 11px; background:#FAFAF9; }
+  .srch__i { color:#A8A49C; font-size:13px; line-height:1; }
+  .srch input { border:0; background:transparent; outline:none; font-family:inherit; font-size:12.5px; color:#1A1917; width:100%; min-width:0; padding:0; }
+  .srch__n { margin-left:auto; font-family:var(--mono); font-size:10px; color:#A8A49C; white-space:nowrap; }
+  .agrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(86px, 1fr)); gap:16px 8px; padding:18px 16px 22px; }
+  .acard { display:flex; flex-direction:column; align-items:center; gap:8px; padding:8px 2px 6px; border-radius:10px; }
+  .acard:hover { background:#F4F3F0; }
+  .ava { position:relative; width:60px; height:60px; flex:none; }
+  .ava .av { width:60px; height:60px; font-size:25px; }
+  .ava.off .av { filter:saturate(.12); opacity:.4; }
+  .ava.bad .av { filter:saturate(.35); opacity:.6; }
+  .ava__ov { position:absolute; inset:0; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; font-size:18px; background:rgba(26,25,23,.4); }
+  .ava.bad .ava__ov { background:rgba(194,74,34,.72); }
+  .ava.bad::after { content:""; position:absolute; inset:-3px; border-radius:50%; border:2px solid #C24A22; }
+  .acard__n { font-size:12px; color:#3C3A35; max-width:84px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .acard.dimname .acard__n { color:#93908A; }
+  .acard__why { font-size:10px; line-height:1.35; color:#C24A22; max-width:86px; text-align:center; margin-top:-3px; }
+  .acard.new .ava { border:1.5px dashed #CFCBC3; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#A8A49C; font-size:27px; font-weight:300; }
+  .acard.new:hover .ava { border-color:#C24A22; color:#C24A22; }
+  .agrid__none { grid-column:1/-1; padding:14px 4px; font-size:12px; color:#93908A; }
+  .states { display:flex; gap:2.2rem; flex-wrap:wrap; }
+</style>
+<style>
+  /* 레일 + 패널 */
+  .rw { display:flex; border:1px solid #E4E3E0; border-radius:10px; overflow:hidden; background:#FAFAF9; width:274px; flex:none; }
+  .rail { width:62px; flex:none; background:#F1EFEB; border-right:1px solid #E4E3E0; display:flex; flex-direction:column; align-items:center; padding:9px 0 8px; gap:2px; }
+  .rail__ws { width:30px; height:30px; border-radius:9px; background:#C24A22; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; margin-bottom:9px; }
+  .ri { width:50px; padding:5px 0 4px; border-radius:8px; display:flex; flex-direction:column; align-items:center; gap:2px; color:#6E6A63; cursor:pointer; position:relative; }
+  .ri:hover { background:#E8E5E0; }
+  .ri.on { background:#fff; color:#1A1917; box-shadow:0 1px 2px rgba(0,0,0,.05); }
+  .ri .gl { font-size:15px; line-height:1.1; }
+  .ri .lb { font-size:9px; letter-spacing:-.01em; }
+  .ri .bd { position:absolute; top:2px; right:6px; min-width:15px; height:15px; border-radius:8px; background:#C24A22; color:#fff; font-size:9.5px; font-weight:600; display:flex; align-items:center; justify-content:center; padding:0 4px; }
+  .rail__sp { flex:1; }
+  .rail__me { cursor:pointer; border-radius:50%; padding:3px; }
+  .rail__me:hover { background:#E8E5E0; }
+  .pane { flex:1; min-width:0; display:flex; flex-direction:column; }
+  .pane__h { display:flex; align-items:center; gap:6px; padding:11px 11px 7px; }
+  .pane__t { font-weight:600; font-size:13px; color:#1A1917; }
+  .pane__a { margin-left:auto; color:#8A867E; font-size:13px; }
+  .pane__s { margin:0 9px 6px; display:flex; align-items:center; gap:6px; border:1px solid #E0DDD8; border-radius:6px; padding:4px 8px; background:#fff; color:#A8A49C; font-size:11px; }
+  .pane__sec { font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:#93908A; padding:8px 11px 3px; }
+  .pl { display:flex; align-items:center; gap:7px; padding:5px 11px; font-size:12px; color:#1A1917; }
+  .pl.on { background:#fff; box-shadow:inset 2px 0 0 #C24A22; font-weight:600; }
+  .pl .sub { margin-left:auto; font-size:10px; color:#A8A49C; }
+  .pl .sub.hot { background:#C24A22; color:#fff; border-radius:9px; min-width:16px; height:16px; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:600; padding:0 5px; font-family:var(--sans); }
+  .pl .g { color:#8A867E; width:15px; justify-content:center; flex:none; }
+  .pgrid { display:grid; grid-template-columns:repeat(2,1fr); gap:10px 6px; padding:8px 9px 12px; }
+  .pc { display:flex; flex-direction:column; align-items:center; gap:5px; padding:6px 2px; border-radius:8px; }
+  .pc:hover { background:#F0EEEA; }
+  .pc .nm2 { font-size:11px; color:#3C3A35; }
+  .pc.dim .nm2 { color:#93908A; }
+  .pc.new .ava { border:1.5px dashed #CFCBC3; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#A8A49C; font-size:20px; }
+  .railcap { font-size:11px; color:var(--ink-3); margin-top:.6rem; line-height:1.55; max-width:274px; }
+
+  /* 문서 전용 */
+  .flist { border-top:1px solid var(--line); }
+  .fitem { display:grid; gap:.1rem 1.2rem; padding:.85rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:700px){ .fitem { grid-template-columns:16rem 1fr; } }
+  .fitem__k { font-weight:600; font-size:.93rem; color:var(--ink); }
+  .fitem__v { font-size:.92rem; color:var(--ink-2); line-height:1.62; }
+  .says { display:grid; gap:0; margin-top:1rem; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+  .sayr { display:grid; gap:.15rem .9rem; padding:.75rem 1rem; border-bottom:1px solid var(--line-soft); background:var(--card); }
+  .sayr:last-child { border-bottom:0; }
+  @media (min-width:700px){ .sayr { grid-template-columns:8rem 1fr; align-items:baseline; } }
+  .sayk { font-family:var(--mono); font-size:10px; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-3); }
+  .sayv { font-size:.93rem; color:var(--ink-2); }
+  .sbwrap { display:flex; gap:1.4rem; flex-wrap:wrap; align-items:flex-start; }
+  .gap { border-top:1px solid var(--line); margin-top:1.1rem; }
+  .gapr { display:grid; gap:.2rem 1.3rem; padding:.95rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:760px){ .gapr { grid-template-columns:2.3rem 1fr; } }
+  .gapn { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--accent); }
+  .gapt { font-family:var(--disp); font-weight:700; font-size:1.05rem; margin:0 0 .3rem; letter-spacing:-.01em; }
+  .gapb { font-size:.94rem; color:var(--ink-2); margin:0; line-height:1.62; max-width:68ch; }
+  /* 지금 사이드바 (넘침 시연) */
+  .sb { width:206px; flex:none; border:1px solid #E4E3E0; border-radius:9px; overflow:hidden; background:#FAFAF9; font-size:12px; color:#1A1917; position:relative; }
+  .sb__sec { font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:#93908A; padding:9px 11px 3px; }
+  .sb__i { display:flex; align-items:center; gap:7px; padding:5px 11px; }
+  .sb__i.on { background:#fff; box-shadow:inset 2px 0 0 #C24A22; font-weight:600; }
+  .sb__cut { position:absolute; left:0; right:0; bottom:0; height:74px; background:linear-gradient(rgba(250,250,249,0), #FAFAF9 62%); display:flex; align-items:flex-end; justify-content:center; padding-bottom:9px; }
+  .sb__cut span { font-size:10.5px; color:#B8431F; background:#FFF5F1; border:1px solid #F2D3C6; border-radius:20px; padding:2px 10px; }
+</style>
+<style>
+  .avdot { position:relative; flex:none; }
+  .avdot .ov { position:absolute; inset:0; border-radius:50%; display:flex; align-items:center; justify-content:center; background:rgba(26,25,23,.4); color:#fff; font-size:8px; }
+  .avdot.off .av { filter:saturate(.12); opacity:.4; }
+  .av { display:inline-flex; align-items:center; justify-content:center; color:#fff; font-weight:600; flex:none; overflow:hidden; border-radius:50%; }
+  .t { font-family:var(--mono); font-size:10px; color:#93908A; }
+  /* 커뮤니티 메뉴 */
+  .cmenu { width:246px; border:1px solid #E0DDD8; border-radius:10px; background:#fff; box-shadow:0 12px 30px -12px rgba(0,0,0,.32); overflow:hidden; padding:5px 0; }
+  .cm__i { display:flex; align-items:center; gap:9px; padding:7px 11px; cursor:pointer; }
+  .cm__i:hover { background:#F0EEEA; }
+  .cm__i.cur { background:#F6F4F1; }
+  .cm__n { font-weight:600; font-size:12.5px; color:#1A1917; line-height:1.3; }
+  .cm__a { font-family:var(--mono); font-size:10px; color:#93908A; }
+  .cm__k { margin-left:auto; font-family:var(--mono); font-size:10.5px; color:#A8A49C; flex:none; }
+  .cm__k.bd2 { font-family:var(--sans); background:#C24A22; color:#fff; border-radius:9px; min-width:16px; height:16px; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:600; padding:0 5px; }
+  .cm__hr { height:1px; background:#F0EFEC; margin:5px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>레일 — <em>축을 하나 더</em></h1>
+    <p class="lede">
+      지금은 <b>커뮤니티 · 채널 · 이동 · DM · 에이전트 · 기다리는 것 · 나</b> 일곱 가지가
+      한 열에 세로로 쌓인다. 채널이 셋일 때는 다 보이지만 서른이 되면
+      <b>그 아래 있는 것은 전부 밀려서 사라진다</b> — 그리고 밀려나는 쪽이 하필
+      <b>DM 과 에이전트</b>다. 이 앱에서 가장 밀리면 안 되는 둘이다.
+    </p>
+    <div class="meta">근거 — 실행 중인 앱 사이드바 · 설정 목차(Communities) · 앞선 세 디자인 문서의 규칙</div>
+  </header>
+
+  <section>
+    <p class="eyebrow">문제</p>
+    <h2>세로 하나로는 안 된다</h2>
+    <p>
+      한 열에 쌓는 구조는 <b>목록이 하나일 때만</b> 성립한다. murmur 는 목록이 셋이다 —
+      채널 · DM · 에이전트. 셋 중 하나가 길어지면 나머지 둘이 화면 밖으로 나가고,
+      <b>스크롤해야 보이는 것은 없는 것과 같다</b>.
+    </p>
+    <div class="panel">
+      <div class="panel__b" style="background:var(--paper-2)">
+        <div class="sbwrap">
+          <div>
+            <div class="t" style="margin-bottom:7px">채널 셋일 때 — 지금</div>
+            <div class="sb" id="sb-few"></div>
+          </div>
+          <div>
+            <div class="t" style="margin-bottom:7px">채널 서른일 때 — 같은 구조</div>
+            <div class="sb" id="sb-many"></div>
+          </div>
+          <div style="flex:1; min-width:230px">
+            <p class="note" style="margin:0">
+              오른쪽에서 사라진 것은 <code>DM</code> · <code>에이전트</code> · <code>기다리는 것</code> 이다.
+              접기·정렬·즐겨찾기로 미룰 수는 있지만 그것들은 전부
+              <b>사람에게 관리를 시키는 방법</b>이고, 한 열이라는 제약은 그대로다.
+            </p>
+            <p class="note" style="margin-top:.8rem">
+              에이전트는 <b>늘어나는 것을 전제로</b> 만들고 있다 — 설정 › 에이전트를
+              검색 중심으로 짠 이유와 같다. 늘어난 다음에 축을 만들면
+              <b>이미 밀려난 것들을 사람이 잊은 뒤</b>다.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">해법</p>
+    <h2>왼쪽에 좁은 레일, 오른쪽에 하나의 목록</h2>
+    <p>
+      레일에서 고른 <b>하나만</b> 넓은 패널이 보여준다. 각 목록이 세로를 다 쓰므로
+      채널이 몇 개든 DM 과 에이전트가 밀려나지 않는다.
+      칸은 넷 — <b>홈 · DM · 에이전트 · 북마크</b>.
+    </p>
+    <div class="panel">
+      <div class="panel__b" style="background:var(--paper-2)">
+        <div class="sbwrap" id="rails"></div>
+      </div>
+    </div>
+
+    <div class="flist" style="margin-top:1.2rem">
+      <div class="fitem">
+        <div class="fitem__k">첫 칸은 <b>채널이 아니라 홈</b>이다</div>
+        <div class="fitem__v">그 자리에는 채널이 아닌 것도 들어간다 — 디렉터리가 그렇고 앞으로 생길 것들도 그렇다. 칸 이름을 <code>채널</code> 로 못 박으면 그때마다 갈 곳이 없어져서 <b>다시 아래로 매다는 짓</b>을 반복하게 된다. 지금 사이드바가 정확히 그렇게 된 것이다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">즐겨찾기가 채널 <b>위에</b> 선다</div>
+        <div class="fitem__v">채널이 서른이면 <b>매일 보는 셋과 반년째 안 본 스물일곱이 같은 무게로 줄 서 있다</b>. 즐겨찾기 묶음을 채널 위에 두면 자주 보는 것이 늘 같은 자리에 고정되고, 그 아래는 <b>가끔 뒤지는 서랍</b>이 된다 — 서랍이 길어지는 것은 더 이상 문제가 아니다. 비어 있으면 묶음 자체를 그리지 않는다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">DM 은 사람과 에이전트를 <b>안 가른다</b></div>
+        <div class="fitem__v">한 목록에 최근순으로 섞이고 줄 모양이 같다 — 목록만 봐서는 누가 에이전트인지 알 수 없다. “사람끼리 일하듯”이 컨셉이면 <b>대화 목록이 그것을 가장 먼저 보여주는 자리</b>다. 지금은 <code>DIRECT MESSAGES</code> 와 <code>AGENTS</code> 두 묶음으로 갈라져 있다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">에이전트는 <b>대화가 아니라 인력</b>이다</div>
+        <div class="fitem__v">그래서 목록이 아니라 <b>얼굴 그리드</b> — 설정 › 에이전트와 <b>같은 카드 컴포넌트</b>를 쓴다. 아직 DM 이 없는 에이전트도 여기서는 자리를 갖고, 멈춘 것은 <b>▶ 로 여기서 바로 켠다</b>. 지금은 DM 이 있는 쪽만 상태가 보이고 없는 쪽은 아무 표시도 못 받는데, 그 비대칭이 사라진다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">Inbox 는 <b>홈 맨 위</b>에 산다</div>
+        <div class="fitem__v">Inbox 는 목록이 아니라 <b>하나의 화면</b>이라 레일 한 칸을 통째로 쓸 만큼 크지 않다. 홈 패널 맨 위 한 줄로 두고, <b>배지는 홈 칸이 대신 받는다</b> — 어느 칸에 있든 “나를 기다리는 것 2개”가 계속 보인다. 북마크는 반대로 <b>레일에만 둔다</b> — 자기 칸이 있는데 홈에도 한 줄을 세우면 <b>같은 것으로 가는 길이 둘</b>이 되고, 그때부터 사람은 어느 쪽이 맞는지 매번 고른다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">배지는 <b>나를 막는 것</b>만 센다</div>
+        <div class="fitem__v">홈의 <b>2</b> 는 안 읽은 개수가 아니라 <b>내 답을 기다리는 개수</b>다. 안 읽음까지 세면 배지가 늘 켜져 있어서 아무 말도 하지 않게 된다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">아이콘에 <b>글자를 붙인다</b></div>
+        <div class="fitem__v">Slack 도 아이콘만 두지 않는다 — 하물며 <code>에이전트</code> 는 이 앱이 처음 쓰는 말이라 그림만으로는 배울 수 없다. 9px 글자 한 줄이면 되고, 그 대신 <b>레일에는 그 밖에 아무것도 두지 않는다</b>. <span style="color:var(--ink-3)">(DM 말풍선 · 북마크 · Inbox 트레이는 그려 뒀고, 홈과 에이전트는 아직 자리만 잡은 글리프다.)</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">레일 맨 위</p>
+    <h2>커뮤니티</h2>
+    <p>
+      설정 목차에 <code>Communities</code> 가 이미 있는데, <b>앱 화면 어디에도 지금 어느 커뮤니티에 있는지 나오지 않는다</b> —
+      타이틀바의 <code>murmur</code> 는 앱 이름이지 커뮤니티가 아니다.
+      레일 맨 위 마크가 그 답이고, 누르면 <b>옮겨 다니는 자리</b>가 된다.
+    </p>
+    <div class="panel">
+      <div class="panel__b" style="background:var(--paper-2)">
+        <div class="sbwrap" style="align-items:flex-start">
+          <div>
+            <div class="t" style="margin-bottom:7px">평소 — 마크 하나</div>
+            <div class="rw" id="rw-one" style="width:62px"></div>
+          </div>
+          <div>
+            <div class="t" style="margin-bottom:7px">눌렀을 때만</div>
+            <div class="cmenu" id="cmenu"></div>
+          </div>
+          <div style="flex:1; min-width:230px">
+            <p class="note" style="margin:0">
+              커뮤니티가 몇 개든 <b>마크는 언제나 하나</b>다 — 지금 있는 곳.
+              전환은 <b>눌러서 하는 일</b>이지 늘 보고 있을 일이 아니다.
+            </p>
+            <p class="note" style="margin-top:.8rem">
+              마크를 쌓지 않는 이유가 하나 더 있다 — <b>쌓으면 네 칸을 아래로 민다</b>.
+              그건 이 문서가 고치려는 문제 그 자체다. 레일에서 세로를 쓰는 것은
+              <b>네 칸뿐</b>이어야 한다.
+            </p>
+            <p class="note" style="margin-top:.8rem">
+              추가·관리도 <b>마크를 눌러 나오는 목록</b>에서만 한다. 설정 목차의
+              <code>Communities</code> 는 남지만, <b>커뮤니티를 옮겨 다니는 일은 설정에 들어가서 할 일이 아니다</b>.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="says">
+      <div class="sayr"><div class="sayk">현재</div><div class="sayv">마크 + 이름 + 주소, 그리고 <code>⌘1</code>. 숫자 단축키가 순서를 그대로 따른다.</div></div>
+      <div class="sayr"><div class="sayk">다른 곳</div><div class="sayv">나를 막는 말이 있는 커뮤니티만 <b>배지를 받는다</b> — 레일 배지와 같은 규칙이다.</div></div>
+      <div class="sayr"><div class="sayk">추가</div><div class="sayv">목록 맨 아래 <code>+ 커뮤니티 추가</code>. <b><code>+</code> 는 그 목록의 칸</b>이라는 규칙을 여기서도 지킨다.</div></div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">레일 맨 아래</p>
+    <h2>나</h2>
+    <p>
+      내 얼굴이 레일 맨 아래로 내려온다. 눌리면 메뉴 — <b>내 프로필 · 자리 비움으로 표시 · 설정 <code>⌘,</code> · 로그아웃</b>.
+      화살표도 톱니도 두지 않고, hover 면과 커서가 눌린다는 신호다.
+      <b>커뮤니티와 나는 패널이 무엇을 보여주든 자리가 안 변한다</b> — 레일에서 그 둘만 고정이다.
+    </p>
+    <div class="callout">
+      <p>메뉴 자체의 설계는 <b>「나머지 여덟 곳」 A1</b> 에 있다. 여기서 달라지는 것은 <b>자리</b>뿐이다 —
+      사이드바 맨 아래에서 <b>레일 맨 아래</b>로.</p>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">따져 볼 것</p>
+    <h2>치르는 값</h2>
+    <div class="says">
+      <div class="sayr"><div class="sayk">한 번 더 누름</div><div class="sayv">목록 하나를 보려면 레일을 눌러야 한다 — 지금은 채널과 DM 이 한눈에 같이 보인다. <b>에이전트가 서넛뿐인 지금은 이게 손해다.</b> 늘어난 뒤에 이득으로 뒤집힌다.</div></div>
+      <div class="sayr"><div class="sayk">가로 62px</div><div class="sayv">본문이 그만큼 좁아진다. 좁은 창에서는 레일만 남기고 <b>패널을 접는</b> 단계가 하나 더 필요하다.</div></div>
+      <div class="sayr"><div class="sayk">되돌리기 쉬움</div><div class="sayv">각 패널은 <b>지금 사이드바의 묶음을 그대로 옮긴 것</b>이라, 아니라고 판단되면 다시 한 열로 합치는 비용이 작다. 바뀌는 것은 <b>껍데기</b>다.</div></div>
+    </div>
+    <div class="callout warnout">
+      <p><b>「나머지 여덟 곳」 A3 이 저절로 풀린다.</b> <code>ACTIVE WORK</code> 자리에 무엇을 넣을지가 문제였는데,
+      레일이 생기면 <b>대기 사슬은 Inbox 의 것</b>이 된다 — 나를 막는 말이 모이는 자리가 이미 있으니
+      사이드바 하단에 따로 둘 이유가 없다. 설정 오류는 띠로 나가고, 그 구역은 <b>그냥 없어진다</b>.</p>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">순서</p>
+    <h2>무엇부터</h2>
+    <div class="gap">
+      <div class="gapr"><span class="gapn">1</span><div>
+        <p class="gapt">레일과 패널 껍데기</p>
+        <p class="gapb">네 칸 · 커뮤니티 마크 · 내 얼굴. 내용은 지금 사이드바의 묶음을 <b>그대로 옮기기만</b> 한다. 여기까지가 이 문서의 전부다.</p></div></div>
+      <div class="gapr"><span class="gapn">2</span><div>
+        <p class="gapt">DM 목록 합치기</p>
+        <p class="gapb"><code>DIRECT MESSAGES</code> 와 <code>AGENTS</code> 두 묶음을 <b>최근순 한 목록</b>으로. 상태 표현은 아바타 규칙을 그대로 쓴다(「나머지 여덟 곳」 B1).</p></div></div>
+      <div class="gapr"><span class="gapn">3</span><div>
+        <p class="gapt">에이전트 패널 = 설정의 그리드 재사용</p>
+        <p class="gapb">설정 › 에이전트 재설계가 먼저 들어가야 <b>카드 컴포넌트를 두 번 그리지 않는다</b>.</p></div></div>
+      <div class="gapr"><span class="gapn">4</span><div>
+        <p class="gapt">커뮤니티 스위처</p>
+        <p class="gapb">커뮤니티가 <b>둘 이상이 될 때</b> 필요해진다. 하나뿐이면 마크만 두고 목록은 나중이다.</p></div></div>
+    </div>
+  </section>
+
+  <footer>murmur · 레일 · 실행 중인 앱 사이드바 확인</footer>
+</div>
+
+<script>
+  const COLORS = ['#ef4444','#f97316','#d97706','#65a30d','#059669','#0d9488','#0891b2','#0284c7','#3b82f6','#8b5cf6','#d946ef','#f43f5e'];
+  function handleColor(h){ let x=0; for(let i=0;i<h.length;i++){ x=(x<<5)-x+h.charCodeAt(i); x|=0; } return COLORS[Math.abs(x)%COLORS.length]; }
+  const el=(t,c,s)=>{const n=document.createElement(t); if(c)n.className=c; if(s)n.setAttribute('style',s); return n;};
+  const av=(h,px)=>{const s=el('span','av',`width:${px}px;height:${px}px;font-size:${Math.round(px*0.44)}px;background:${handleColor(h)}`); s.textContent=h[0].toUpperCase(); return s;};
+  function faceOf(h,px,state){
+    const w=el('span','avdot'+(state==='off'?' off':''),`width:${px}px;height:${px}px;display:inline-block`);
+    w.appendChild(av(h,px));
+    if(state==='off'){ const o=el('span','ov'); o.textContent='▶'; w.appendChild(o); }
+    return w;
+  }
+
+  /* --- 지금 사이드바: 채널 셋 vs 서른 --- */
+  function oldSidebar(target, channels, cut){
+    const sb=document.getElementById(target);
+    function sec(t){ const d=el('div','sb__sec'); d.textContent=t; sb.appendChild(d); }
+    function item(label, on, face){
+      const r=el('div','sb__i'+(on?' on':''));
+      if(face) r.appendChild(face);
+      const n=el('span'); n.innerHTML=label; r.appendChild(n); sb.appendChild(r);
+    }
+    sec('커뮤니티'); item('murmur');
+    sec('채널');
+    channels.forEach((c,i)=>item('# '+c, i===0));
+    item('<span style="color:#8A867E">+ 새 채널</span>');
+    sec('이동'); item('Inbox'); item('Saved'); item('Directory');
+    sec('대화');
+    ['beta','minsu','gamma'].forEach(h=>item(h, false, faceOf(h,18,'on')));
+    sec('에이전트');
+    ['alpha','forge'].forEach(h=>item(h, false, faceOf(h,18,'off')));
+    sec('기다리는 것'); item('<span style="color:#B8431F;font-size:11px">forge 가 나에게 묻는다</span>');
+    const f=el('div','sb__i','border-top:1px solid #EAE8E4;margin-top:6px;min-height:40px');
+    f.appendChild(faceOf('jaebin',22,'on'));
+    const n=el('span',null,'font-weight:600'); n.textContent='Jaebin'; f.appendChild(n); sb.appendChild(f);
+    if(cut){
+      sb.style.height='430px'; sb.style.overflow='hidden';
+      const c=el('div','sb__cut'); c.innerHTML='<span>여기부터 화면 밖 — DM · 에이전트 · 기다리는 것 · 나</span>';
+      sb.appendChild(c);
+    }
+  }
+  oldSidebar('sb-few', ['general','dev','design'], false);
+  oldSidebar('sb-many', ['general','dev','design','release','infra','ops','notice','fsw-cloud','fsw-infra','cloud_infra','noti_rebelro','playground','token-poor','standup','private','triage'], true);
+
+  /* --- 레일 --- */
+  const BUBBLE='<svg width="17" height="17" viewBox="0 0 16 16" fill="none" aria-hidden="true">'
+    +'<path d="M4.6 2.3H11.4A2.7 2.7 0 0 1 14.1 5V8.3A2.7 2.7 0 0 1 11.4 11H9.35L7.95 14.2L6.55 11H4.6'
+    +'A2.7 2.7 0 0 1 1.9 8.3V5A2.7 2.7 0 0 1 4.6 2.3Z" stroke="currentColor" stroke-width="1.3"'
+    +' stroke-linejoin="round" stroke-linecap="round"/></svg>';
+  const INBOXICON='<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">'
+    +'<path d="M1.9 8.7V11.5A2.3 2.3 0 0 0 4.2 13.8H11.8A2.3 2.3 0 0 0 14.1 11.5V8.7H10.7L10 10.2'
+    +'A1.5 1.5 0 0 1 8.65 11.05H7.35A1.5 1.5 0 0 1 6 10.2L5.3 8.7Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>'
+    +'<path d="M1.9 8.7L4.05 4.55A1.9 1.9 0 0 1 5.75 3.6H6.9 M14.1 8.7L11.95 4.55A1.9 1.9 0 0 0 10.25 3.6H9.1"'
+    +' stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>'
+    +'<path d="M8 1.7V7.4 M5.85 5.35L8 7.5L10.15 5.35" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+  const MARKICON='<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">'
+    +'<path d="M4.1 2.7h7.8v10.6L8 10.4l-3.9 2.9z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/></svg>';
+  const RAIL=[
+    {k:'ho', gl:'⌂', lb:'홈', badge:'2'},
+    {k:'dm', gl:BUBBLE, lb:'DM', svg:true},
+    {k:'ag', gl:'◍', lb:'에이전트'},
+    {k:'sv', gl:MARKICON, lb:'북마크', svg:true},
+  ];
+  function comMark(letter, color, extra){
+    const w=el('div','rail__ws', extra||''); w.style.background=color; w.textContent=letter; return w;
+  }
+  function rail(active){
+    const r=el('div','rail');
+    r.appendChild(comMark('M','#C24A22','margin-bottom:9px'));
+    RAIL.forEach(it=>{
+      const d=el('div','ri'+(it.k===active?' on':''));
+      const g=el('div','gl'); if(it.svg){ g.innerHTML=it.gl; g.style.display='flex'; } else { g.textContent=it.gl; } d.appendChild(g);
+      const l=el('div','lb'); l.textContent=it.lb; d.appendChild(l);
+      if(it.badge){ const b=el('div','bd'); b.textContent=it.badge; d.appendChild(b); }
+      r.appendChild(d);
+    });
+    r.appendChild(el('div','rail__sp'));
+    const me=el('div','rail__me'); me.appendChild(faceOf('jaebin',26,'on')); r.appendChild(me);
+    return r;
+  }
+  function head(p,title,action){
+    const h=el('div','pane__h');
+    const t=el('div','pane__t'); t.textContent=title; h.appendChild(t);
+    if(action){ const a=el('div','pane__a'); a.textContent=action; h.appendChild(a); }
+    p.appendChild(h);
+  }
+  function search(p,ph){ const q=el('div','pane__s'); q.innerHTML='<span>⌕</span><span>'+ph+'</span>'; p.appendChild(q); }
+  function line(p,o){
+    const r=el('div','pl'+(o.on?' on':''));
+    if(o.face) r.appendChild(o.face);
+    if(o.glyph){ const g=el('span','g'); if(o.svg){ g.innerHTML=o.glyph; g.style.display='inline-flex'; } else { g.textContent=o.glyph; } r.appendChild(g); }
+    const n=el('span'); n.textContent=o.label; r.appendChild(n);
+    if(o.sub){ const su=el('span','sub'+(o.hot?' hot':'')); su.textContent=o.sub; r.appendChild(su); }
+    p.appendChild(r);
+  }
+  function psec(p,t){ const d=el('div','pane__sec'); d.textContent=t; p.appendChild(d); }
+
+  const wrap=document.getElementById('rails');
+  function make(active, build, cap){
+    const col=el('div');
+    const lab=el('div','t','margin-bottom:7px'); lab.textContent=cap[0]; col.appendChild(lab);
+    const box=el('div','rw');
+    box.appendChild(rail(active));
+    const pane=el('div','pane'); build(pane); box.appendChild(pane);
+    col.appendChild(box);
+    const c=el('p','railcap'); c.innerHTML=cap[1]; col.appendChild(c);
+    wrap.appendChild(col);
+  }
+  make('ho', p=>{
+    head(p,'홈','');
+    search(p,'채널 · 사람 · 에이전트 찾기');
+    line(p,{glyph:INBOXICON,svg:true,label:'Inbox',sub:'2',hot:true});
+    line(p,{glyph:'⌸',label:'디렉터리'});
+    psec(p,'즐겨찾기');
+    line(p,{glyph:'#',label:'general',on:true});
+    line(p,{glyph:'#',label:'release'});
+    psec(p,'채널');
+    line(p,{glyph:'+',label:'새 채널'});
+    ['dev','design','infra','ops','notice'].forEach(n=>line(p,{glyph:'#',label:n}));
+    line(p,{glyph:'#',label:'…'});
+  }, ['홈','<b>Inbox 가 맨 위</b>, 그다음 <b>즐겨찾기</b>. 채널이 서른이어도 자주 보는 것이 위에 고정된다.']);
+  make('dm', p=>{
+    head(p,'DM','+');
+    search(p,'사람 · 에이전트 찾기');
+    line(p,{face:faceOf('beta',20,'on'),label:'beta',sub:'10분'});
+    line(p,{face:faceOf('minsu',20,'on'),label:'minsu',sub:'1시간'});
+    line(p,{face:faceOf('gamma',20,'on'),label:'gamma',sub:'어제'});
+    line(p,{face:faceOf('sora',20,'on'),label:'sora',sub:'어제'});
+    line(p,{face:faceOf('alpha',20,'off'),label:'alpha',sub:'3일'});
+  }, ['DM','사람과 에이전트가 <b>한 목록에 최근순으로 섞인다</b>. 줄 모양이 같아서 목록만 봐서는 누가 에이전트인지 알 수 없다 — 의도한 결과다.']);
+  make('ag', p=>{
+    head(p,'에이전트','');
+    search(p,'이름 · 설명으로 찾기');
+    const g=el('div','pgrid');
+    const add=el('div','pc new');
+    const b=el('div','ava','width:44px;height:44px'); b.textContent='+'; add.appendChild(b);
+    const an=el('div','nm2'); an.textContent='새로'; add.appendChild(an); g.appendChild(add);
+    [['alpha','off'],['beta','on'],['gamma','on'],['forge','off'],['triage','on']].forEach(([h,st])=>{
+      const c=el('div','pc'+(st==='off'?' dim':''));
+      c.appendChild(faceOf(h,44,st));
+      const n=el('div','nm2'); n.textContent=h; c.appendChild(n); g.appendChild(c);
+    });
+    p.appendChild(g);
+  }, ['에이전트','목록이 아니라 <b>얼굴 그리드</b> — 설정 › 에이전트와 같은 카드다. 멈춘 것은 <b>▶ 로 여기서 바로 켠다</b>.']);
+
+  /* --- 커뮤니티 --- */
+  document.getElementById('rw-one').appendChild(rail('ho'));
+
+  const cm=document.getElementById('cmenu');
+  function cmRow(letter,color,name,addr,right,cur){
+    const r=el('div','cm__i'+(cur?' cur':''));
+    const m=comMark(letter,color,'width:26px;height:26px;border-radius:7px;font-size:11px;margin:0');
+    r.appendChild(m);
+    const b=el('div',null,'min-width:0');
+    const n=el('div','cm__n'); n.textContent=name; b.appendChild(n);
+    if(addr){ const a=el('div','cm__a'); a.textContent=addr; b.appendChild(a); }
+    r.appendChild(b);
+    if(right){ const k=el('span','cm__k'+(right.badge?' bd2':'')); k.textContent=right.text; r.appendChild(k); }
+    cm.appendChild(r);
+  }
+  cmRow('M','#C24A22','murmur','murmur.dev',{text:'⌘1'},true);
+  cmRow('A','#2F6F5E','avcs','avcs.murmur.dev',{text:'3',badge:true});
+  cmRow('S','#3B5BA5','side-project','',{text:'⌘3'});
+  cm.appendChild(el('div','cm__hr'));
+  const add=el('div','cm__i');
+  const pl=el('div',null,'width:26px;height:26px;border-radius:7px;border:1.5px dashed #CFCBC3;color:#8A867E;display:flex;align-items:center;justify-content:center;font-size:15px;flex:none');
+  pl.textContent='+'; add.appendChild(pl);
+  const at=el('div','cm__n'); at.textContent='커뮤니티 추가'; add.appendChild(at);
+  cm.appendChild(add);
+</script>
+</body>
+</html>
