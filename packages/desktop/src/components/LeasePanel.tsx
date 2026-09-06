@@ -1,15 +1,9 @@
 import { useMemo } from 'react';
-import { PROJECTION_UNCONFIGURED_DETAIL, PROJECTION_UNCONFIGURED_HEADLINE } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
+import { BANNER_TEXT_TONE, projectionBanner } from '../lib/projectionBanner';
+import { minutesAgo } from '../lib/minutesAgo';
 
 const shortActor = (keyId: string) => (keyId.length > 12 ? `${keyId.slice(0, 12)}…` : keyId);
-
-/** "N분 전". 1분 미만은 '방금' 이다 — "0분 전"은 사람이 쓰지 않는 말이다. */
-function minutesAgo(timestamp: number): string {
-  const minutes = Math.floor((Date.now() - timestamp) / 60_000);
-  if (minutes < 1) return '방금';
-  return `${minutes}분 전`;
-}
 
 /**
  * ACTIVE WORK 영역(#267).
@@ -44,57 +38,27 @@ export function LeasePanel() {
   /**
    * 비정상 상태를 말하는 한 줄. 정상(`ok`)이면 `null` 이다.
    *
-   * 순서가 뜻을 정한다: **못 읽은 것이 먼저다.** 마지막으로 성공한 상태가 남아 있어도
-   * 그것은 지금의 사실이 아니므로, 지금 못 읽고 있다는 것을 먼저 말한다.
+   * **판정은 `lib/projectionBanner` 하나가 한다** — 같은 사실을 위쪽 띠
+   * (`ProjectionBanner`)도 말하기 때문이다(#488 A3-a). 두 자리가 각자 판정하면
+   * 반드시 갈라진다.
+   *
+   * 문서가 오류를 사이드바에서 띠로 옮기라고 했는데도 이 경고가 **여기 남는** 이유:
+   * 투영이 멈춘 동안 남아 있던 리스는 지금 벌어지는 일이 아닐 수 있고, 그것을 말없이
+   * '활성 작업'으로 보여 주면 화면이 오래된 사실을 지금 사실로 주장한다. 띠는 고장을
+   * 말하고, 이 줄은 **이 목록을 믿을 수 없다**를 말한다 — 다른 두 사실이다.
    */
-  const banner = (() => {
-    if (projectionStatusError !== null) {
-      return {
-        testid: 'projection-unreadable',
-        tone: 'text-danger',
-        text: '투영 상태를 읽지 못했다',
-        detail: projectionStatusError,
-      };
-    }
-    // 아직 첫 응답이 오지 않았다. "없다"가 아니라 "아직 모른다"다.
-    if (projectionStatus === null) {
-      return {
-        testid: 'projection-unknown',
-        tone: 'text-fg-subtle',
-        text: '투영 상태를 확인하는 중…',
-        detail: null,
-      };
-    }
-    if (projectionStatus.state === 'unconfigured') {
-      return {
-        testid: 'projection-unconfigured',
-        tone: 'text-warning',
-        text: PROJECTION_UNCONFIGURED_HEADLINE,
-        detail: PROJECTION_UNCONFIGURED_DETAIL,
-      };
-    }
-    if (projectionStatus.state === 'stalled') {
-      // 폴링을 한 번도 못 했으면 "N분 전"이라고 말할 수 없다 — 모르는 것을 숫자로
-      // 꾸미지 않는다.
-      const since = projectionStatus.lastPolledAt === null
-        ? '언제부터인지 알 수 없지만'
-        : `${minutesAgo(projectionStatus.lastPolledAt)}부터`;
-      return {
-        testid: 'projection-stalled',
-        tone: 'text-warning',
-        text: `투영이 ${since} 멈춰 있다`,
-        detail: projectionStatus.lastError,
-      };
-    }
-    return null;
-  })();
+  const banner = projectionBanner({
+    status: projectionStatus,
+    error: projectionStatusError,
+    minutesAgo,
+  });
 
   return (
     <div>
       <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">Active work</div>
       {banner && (
         <div data-testid={banner.testid} className="space-y-0.5 px-2 pb-1">
-          <div className={`text-xs ${banner.tone}`}>{banner.text}</div>
+          <div className={`text-xs ${BANNER_TEXT_TONE[banner.tone]}`}>{banner.text}</div>
           {banner.detail && (
             // 에러 원문은 길 수 있다. 잘라서 보여 주되 `title` 로 전문을 남긴다 —
             // 잘린 채로만 두면 무엇이 잘못됐는지 화면에서 알 수 없다.

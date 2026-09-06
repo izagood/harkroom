@@ -118,6 +118,16 @@ export interface AppState {
    */
   notice: string | null;
   /**
+   * 투영 고장 띠를 **어느 사정에 대해** 닫았는가(#488 A3-a). 닫지 않았으면 null 이다.
+   *
+   * 불리언이 아닌 이유: 투영이 꺼진 것을 닫아 뒀는데 그 뒤 투영이 **멈추면** 그것은
+   * 다른 사실이므로 띠가 다시 서야 한다. 한 번 닫은 것으로 이후의 모든 고장을 덮으면
+   * 닫기가 곧 **알림 끄기**가 된다.
+   *
+   * 화면 상태이므로 영속하지 않는다 — 앱을 다시 켜면 고장은 다시 말해야 한다.
+   */
+  projectionBannerDismissed: string | null;
+  /**
    * 링크로 방금 이동한 메시지(#178). **메시지 데이터가 아니라 화면 상태다** — 여기 두지
    * 않고 `MessageRow` 에 넣으면 서버에서 온 사실과 지금 화면의 사정이 한 값에 섞인다.
    * 다음 이동 때 갈아탄다(`openChannel` 이 지우고 `openMessage` 가 다시 건다).
@@ -190,7 +200,8 @@ const initial = {
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], terminalTarget: null, leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {},
-  history: [], historyIndex: -1, notice: null, highlightedMessageId: null,
+  history: [], historyIndex: -1, notice: null, projectionBannerDismissed: null,
+  highlightedMessageId: null,
   expandedMessageIds: {}, runnerStates: {}, savedIds: [], savedCount: 0,
   linkPreviewReadyAt: {}, skillsRevision: 0,
 };
