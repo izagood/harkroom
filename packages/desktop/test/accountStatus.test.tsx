@@ -42,7 +42,9 @@ describe('사람이 정한 상태 (#186)', () => {
 
     const dot = screen.getByTestId('presence-d1');
     expect(dot).toBeTruthy();
-    expect(dot.getAttribute('data-online')).toBe('true');
+    // `#443`: 값이 셋이라 문자열이 `'online'` 이다 — `'true'` 는 "끊긴 동안 낡은 값"을
+    // 담지 못했다. 여기 기대값은 붙어 있을 때이므로 뜻이 바뀌지 않는다.
+    expect(dot.getAttribute('data-online')).toBe('online');
 
     const mark = screen.getByTestId('status-u2');
     expect(mark).toBeTruthy();
@@ -78,6 +80,6 @@ describe('사람이 정한 상태 (#186)', () => {
     expect(mark.getAttribute('data-status')).toBe('away');
     expect(mark.textContent).toContain('회의 중');
     // 상태가 바뀌어도 연결 표시는 그대로다 — 두 사실이 서로를 흔들지 않는다.
-    expect(screen.getByTestId('presence-d1').getAttribute('data-online')).toBe('true');
+    expect(screen.getByTestId('presence-d1').getAttribute('data-online')).toBe('online');
   });
 });

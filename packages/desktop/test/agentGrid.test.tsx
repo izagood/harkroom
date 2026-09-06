@@ -118,9 +118,95 @@ describe('AgentGrid — 아바타 세 얼굴', () => {
     expect(screen.getByTestId('agent-runner-failed-id-alpha').textContent).toContain('노드를 못 찾았다');
   });
 
-  it('생존을 모르면 가라앉히지 않는다 — 40개가 전부 회색이 되면 그것도 거짓말이다', () => {
+  /**
+   * **`#443` 이 이 단언을 뒤집었다.**
+   *
+   * 앞 판본은 `toBe('ok')` 였고, 그 근거가 이 이름에 남아 있다 — *"40개가 전부 회색이
+   * 되면 그것도 거짓말이다"*. **그 문장은 여전히 옳다.** 틀린 것은 그 다음 걸음이다:
+   * 회색이 거짓말이라고 해서 `ok`(정상 얼굴)가 참이 되지는 않는다.
+   *
+   * 실측(2026-09-06, 릴리즈 `.app`)이 그 대가를 보여 줬다 — 서버가 죽어 타이틀 옆 점이
+   * 빨강인 그 순간, 에이전트 여섯이 **전부 초록**이었다. 사람은 화면 두 곳에서 서로
+   * 반대되는 말을 듣고 아래쪽을 믿었다.
+   *
+   * 그래서 값이 하나 늘었다. 두 거짓말 중 하나를 고르는 문제가 아니라 **모른다고 말할
+   * 값이 없었던 것**이 문제였다(`#368` 의 규율).
+   */
+  it('생존을 모르면 초록도 회색도 아니다 — 모른다고 말한다 (#443)', () => {
     grid({ agents: [agent('alpha')], online: [], connected: false, onRelaunch: vi.fn() });
+    expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('unknown');
+    // 얼굴 색만 바꾸면 사람은 `stopped`(꺼짐)와 구분하지 못한다. **글자로도 말한다.**
+    expect(screen.getByTestId('agent-presence-unknown').textContent).toContain('알 수 없다');
+    // **▶ 를 달지 않는다.** 지금 도는지 모르는 것을 켜라고 권하면 `#430` 의 중복이 된다.
+    expect(screen.queryByTestId('agent-relaunch-alpha')).toBeNull();
+  });
+
+  /**
+   * **대조군.** 위 회귀선만 있으면 `faceState` 가 무조건 `unknown` 을 돌려줘도 초록이다 —
+   * 즉 "붙어 있어도 모른다고 말하는" 화면으로 이 이슈를 '고칠' 수 있다. 그것은 고친 것이
+   * 아니라 정보를 통째로 없앤 것이다.
+   *
+   * 이 저장소가 반복해서 겪은 실패 모드라 명시한다(`#482` 의 회귀선 ⑦과 같은 자리).
+   */
+  it('대조군 — 붙어 있으면 초록이다 (#443)', () => {
+    grid({ agents: [agent('alpha')], online: ['id-alpha'], connected: true, onRelaunch: vi.fn() });
     expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('ok');
+    // 모른다는 줄이 서지 않는다 — 그 줄이 늘 있으면 사람이 곧 읽지 않게 된다.
+    expect(screen.queryByTestId('agent-presence-unknown')).toBeNull();
+  });
+
+  /**
+   * **daemon 이 서버보다 먼저다**(`#443` 의 판단, `#482` 위에 얹는다).
+   *
+   * 소켓이 끊겨도 daemon 은 안 끊긴다 — daemon 은 이 앱 옆에 있고 서버는 네트워크 너머에
+   * 있다. 그리고 daemon 의 `running`·`adopted` 는 `kill(pid, 0)` 로 **직접 관측한** 것이라
+   * presence 의 보고보다 강하다. 끊긴 동안 유일하게 남아 있는 사실이 이것이다.
+   *
+   * 되돌려 RED: `faceState` 의 `if (st === 'running' || st === 'adopted') return 'ok'` 를
+   * 지우면 이 단언이 `unknown` 을 받아 빨개진다.
+   */
+  it('끊겨도 daemon 이 아는 러너는 초록이다 — daemon 이 서버보다 먼저다 (#443)', () => {
+    for (const status of ['running', 'adopted'] as const) {
+      grid({
+        agents: [agent('alpha')],
+        online: [],
+        connected: false,
+        runnerStates: { 'id-alpha': { agentId: 'id-alpha', status, exitCode: null, message: null } },
+        onRelaunch: vi.fn(),
+      });
+      expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('ok');
+      cleanup();
+    }
+  });
+
+  /**
+   * **`#476`** — 하네스가 없어 물러난 러너가 격자에서 멀쩡한 얼굴이었다.
+   *
+   * `#473` 이 `needs_harness` 를 만들었는데 이 화면의 `faceState` 는 `failed` 와
+   * `needs_reissue` 만 봤다. **새 사용자의 기본 상태가 이것**이라(`claude`·`codex` 는
+   * 사용자가 직접 설치한다, 2026-09-06 방침) 가장 흔한 상태가 화면에서 가장 조용했다.
+   *
+   * 되돌려 RED: `faceState` 의 `|| st === 'needs_harness'` 를 지우면 얼굴이 `stopped` 가
+   * 되고 아래 글자 줄도 사라진다.
+   */
+  it('하네스가 없어 죽은 러너는 멀쩡한 얼굴이 아니다 — 사유가 글자로 온다 (#476)', () => {
+    grid({
+      agents: [agent('alpha')],
+      online: ['id-alpha'],
+      connected: true,
+      runnerStates: {
+        'id-alpha': {
+          agentId: 'id-alpha', status: 'needs_harness', exitCode: 78,
+          message: '`claude` 를 찾을 수 없다 — 설치하고 PATH 에 있는지 확인하라. Claude Code 를 설치하면 함께 깔린다: https://claude.com/product/claude-code',
+        },
+      },
+      onRelaunch: vi.fn(),
+    });
+    expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('failed');
+    // **설치 주소가 화면에 글자로 온다.** 이름만으로는 사람이 무엇을 어떻게 할지 모른다.
+    const line = screen.getByTestId('agent-runner-harness-id-alpha');
+    expect(line.textContent).toContain('claude');
+    expect(line.textContent).toContain('https://claude.com/product/claude-code');
   });
 
   it('띄울 수 없는 사람에게는 ▶ 자체가 없다', () => {

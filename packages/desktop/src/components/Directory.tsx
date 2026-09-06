@@ -4,6 +4,7 @@ import type { AccountView } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { Identity, StatusMark } from './Identity';
+import { presenceView, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from '../lib/presenceView';
 
 interface Props {
   open: boolean;
@@ -37,6 +38,10 @@ type LoadState = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; mess
 export function Directory({ open, onClose, accountId }: Props) {
   const accounts = useActiveStore((s) => s.accounts);
   const online = useActiveStore((s) => s.online);
+  // `#443`: presence 는 **서버가 주는 것**이라 소켓이 끊기면 낡는다. `online` 만 읽으면
+  // 끊긴 뒤에도 마지막으로 들은 값이 지금 사실처럼 그려진다(실측 2026-09-06: 서버가 죽었는데
+  // 에이전트 6개가 전부 초록이었다). `connected` 가 그 낡음을 아는 유일한 문지기다.
+  const connected = useActiveStore((s) => s.connected);
   const [query, setQuery] = useState('');
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
 
@@ -93,6 +98,7 @@ export function Directory({ open, onClose, accountId }: Props) {
 
   const row = (a: AccountView) => {
     const isSelected = accountId === a.id;
+    const presence = presenceView(a.id, online, connected);
     return (
       <li
         key={a.id}
@@ -108,11 +114,17 @@ export function Directory({ open, onClose, accountId }: Props) {
           인라인 칸이고, 디렉터리는 소유자를 보여 주는 것이 일이다(#181·#226). badge 로 둔다. */}
       <Identity account={a} variant="badge" />
       {/* 연결 점은 소켓이 붙어 있는가다. 사람이 고른 상태(StatusMark)와 나란히 둔다 —
-          합치면 "연결이 끊긴 사람"과 "방해 금지인 사람"이 한 표시로 뭉친다(#186). */}
+          합치면 "연결이 끊긴 사람"과 "방해 금지인 사람"이 한 표시로 뭉친다(#186).
+
+          `#443`: 값이 **셋**이다. 앞 판본은 `online.includes()` 하나로 갈라 끊긴 동안에도
+          낡은 배열이 초록을 그렸다. 색이 스크린리더에 아무 말도 안 하므로 `title` 로도
+          같은 말을 낸다 — 이 이슈의 본질이 "화면이 사람에게 말하지 않는다"이고,
+          점만 바꾸고 글자를 안 주면 그 절반이 남는다. */}
       <span
         data-testid={`directory-presence-${a.id}`}
-        data-online={String(online.includes(a.id))}
-        className={`h-2 w-2 shrink-0 rounded-full ${online.includes(a.id) ? 'bg-success' : 'bg-fg-subtle'}`}
+        data-online={presence}
+        title={PRESENCE_LABEL[presence]}
+        className={`h-2 w-2 shrink-0 rounded-full ${PRESENCE_DOT_CLASS[presence]}`}
       />
       <span className="font-medium text-fg">{a.displayName}</span>
       <span className="text-fg-muted">@{a.handle}</span>

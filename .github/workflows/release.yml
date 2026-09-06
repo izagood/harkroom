@@ -1,0 +1,549 @@
+# main 에 머지되면 `.dmg` 를 만들어 GitHub Releases 에 올린다.
+#
+# ## 이 워크플로가 지금 무엇을 하는가 — **머지만으로는 릴리즈가 나가지 않는다**
+#
+# 아래 `gate` 잡이 **서명 시크릿이 다 있는지 먼저 본다.** 없으면 태그도 커밋도 만들지 않고
+# 그대로 끝난다. 실측(2026-09-06): 이 저장소에 등록된 시크릿은 **0 개**이고 태그도 **0 개**다.
+# 그래서 이 파일이 머지되는 순간에는 아무 일도 일어나지 않는다.
+#
+# **그 안전장치를 걷어내지 마라.** 이유는 이렇다:
+#
+#   murmur 는 `Developer ID Application` 인증서로 서명하고 공증까지 **실물로 통과한**
+#   프로젝트다(2026-09-06: `accepted / source=Notarized Developer ID`). 서명 없는 `.dmg` 를
+#   공개 릴리즈로 내보내는 것은 이미 넘어선 수준으로 되돌아가는 것이고, 그것을 받은 사람은
+#   Gatekeeper 에 막혀 우클릭→열기 같은 우회를 해야 한다. **릴리즈는 나가면 되돌리기 어렵다**
+#   — 이미 받아 간 사람의 손에 있는 것을 회수할 방법이 없다.
+#
+#   그래서 이 워크플로의 기본값은 "서명 못 하면 **안 낸다**"이다. 서명 없이 빌드만 되는지
+#   보는 것은 `ci.yml` 의 `macos-build` 잡이 이미 매 PR 에서 하고 있다 — 그 질문은 거기서
+#   이미 답한다.
+#
+# ## 사람이 자동 릴리즈를 켜는 절차
+#
+#   1. 아래 "시크릿" 절의 여섯 개를 전부 등록한다
+#   2. **`workflow_dispatch` 로 한 번 손수 돌려 본다** — 첫 릴리즈를 눈으로 확인하는 자리다
+#   3. 그 결과가 맞으면 아래 `push:` 두 줄의 주석을 풀어 자동을 켠다
+#
+# 2 번을 건너뛰지 마라. 첫 릴리즈는 서명·공증이 CI 환경에서 처음 도는 자리이고, 로컬에서
+# 통과한 것과 러너에서 통과하는 것은 다른 명제다(러너에는 키체인이 없다 —
+# `notarize-app.mjs` 주석의 "CI 에는 키체인이 없다" 절).
+#
+# ## 시크릿 — 이름과, 사람이 만드는 법
+#
+# **여섯 개가 한 벌이다. 하나라도 없으면 릴리즈 자체를 건너뛴다.** 일부만 있는 상태로
+# 릴리즈하면 서명은 됐는데 공증이 안 된 `.dmg` 가 나가고, 그것은 Gatekeeper 에 막힌다 —
+# `notarize-app.mjs` 상단의 `rejected / source=Unnotarized Developer ID` 실측이 정확히 그 상태다.
+# 서명만 된 것은 안 된 것보다 나쁘다: 사람이 "서명했으니 배포된다"고 믿게 된다.
+#
+#   APPLE_CERTIFICATE           `Developer ID Application` 인증서의 `.p12` 를 base64 로.
+#                               키체인 접근.app 에서 인증서+개인키를 함께 내보낸 뒤:
+#                                 base64 -i murmur-developer-id.p12 | pbcopy
+#   APPLE_CERTIFICATE_PASSWORD  위 `.p12` 를 내보낼 때 정한 암호
+#   APPLE_SIGNING_IDENTITY      서명 주체 문자열. 정확히 이 형식이어야 한다:
+#                                 Developer ID Application: <이름> (<TeamID>)
+#                               `security find-identity -v -p codesigning` 로 확인한다
+#   APPLE_NOTARY_KEY            공증용 App Store Connect API 키(`.p8`)를 base64 로.
+#                               App Store Connect → 사용자 및 액세스 → 통합 → 키에서
+#                               **한 번만 내려받을 수 있다**. base64 -i AuthKey_XXXX.p8 | pbcopy
+#   APPLE_NOTARY_KEY_ID         위 키의 Key ID (파일 이름의 `AuthKey_` 뒤 부분)
+#   APPLE_NOTARY_ISSUER         같은 화면의 Issuer ID (UUID)
+#
+# **API 키를 쓰는 이유**: 앱 암호(Apple ID + 앱 암호)와 달리 만료·2FA 의 영향을 받지 않는다
+# (`notarize-app.mjs` 주석). CI 에서 사람이 개입해야 하는 자격증명은 언젠가 반드시 끊긴다.
+#
+# **`.p12`·`.p8` 을 저장소에 두지 마라.** 시크릿에만 있고, 러너에서는 임시 파일로 풀린 뒤
+# `if: always()` 로 지워진다.
+#
+# ## 왜 태그 푸시가 아니라 한 워크플로 안에서 다 하는가
+#
+# `GITHUB_TOKEN` 으로 푸시한 태그는 **다른 워크플로를 트리거하지 않는다**(GitHub 의 재귀
+# 방지 정책). 그래서 "태그를 밀면 릴리즈 워크플로가 돈다" 식으로 짜면 조용히 아무 일도
+# 안 일어난다. 같은 이유로 버전 bump 커밋이 이 워크플로를 다시 불러 무한 루프가 되지도
+# 않는다 — 그 성질에 기대고 있으므로 토큰을 PAT 로 바꾸면 루프가 생긴다는 뜻이기도 하다.
+#
+# ## 식별자는 ASCII 다
+#
+# 주석과 `name:` 은 한국어지만 **잡 ID·스텝 ID·출력 이름·셸 변수는 ASCII** 여야 한다 —
+# GitHub 이 그 자리에 `[A-Za-z_][A-Za-z0-9_-]*` 만 받고, 셸 변수도 마찬가지다. `ci.yml` 이
+# 같은 규칙을 따르고 있고, `actionlint` 가 이것을 검사한다.
+name: 릴리즈
+
+on:
+  # **자동 릴리즈는 아직 꺼져 있다.** 위 "사람이 자동 릴리즈를 켜는 절차" 3 번에서
+  # 이 두 줄의 주석을 푼다. 시크릿이 없는 동안에는 주석을 풀어도 `gate` 가 막지만,
+  # 그 전에 사람이 첫 릴리즈를 눈으로 보는 단계를 건너뛰지 않기 위해 꺼 둔다.
+  # push:
+  #   branches: [main]
+  workflow_dispatch:
+
+# 버전 bump 커밋과 태그를 밀고, 릴리즈를 만든다.
+permissions:
+  contents: write
+
+# 연속 머지 시 릴리즈가 겹치지 않게 **전역으로** 직렬화한다. 빌드까지 이 워크플로 안에
+# 있으므로 릴리즈 하나가 통째로 직렬화된다.
+#
+# `cancel-in-progress: false` 가 핵심이다. 참이면 뒤에 들어온 머지가 앞의 릴리즈를 중간에
+# 끊는데, 그 시점에 이미 태그와 draft 가 만들어져 있을 수 있다 — 잔해가 남는다.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # ## 이 잡이 이 파일의 안전장치다
+  #
+  # 시크릿을 **읽지 않고 있는지만 본다.** 값은 로그에 절대 나가면 안 되므로 길이만 재고
+  # 이름만 찍는다.
+  #
+  # **왜 잡이 따로 있는가**: 잡 수준 `if:` 에는 `secrets` 컨텍스트가 오지 않는다. 그래서
+  # 스텝 안에서 env 로 받아 판정하고, 그 결과를 출력으로 내보내 아래 잡들이 그것을 본다.
+  gate:
+    name: 릴리즈해도 되는가
+    runs-on: ubuntu-latest
+    outputs:
+      signable: ${{ steps.check.outputs.signable }}
+    steps:
+      - name: 서명·공증 시크릿이 모두 있는지 본다
+        id: check
+        env:
+          # **값을 쓰지 않는다 — 있는지만 본다.**
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+                      APPLE_NOTARY_KEY APPLE_NOTARY_KEY_ID APPLE_NOTARY_ISSUER; do
+            # 간접 참조로 값을 **보지 않고** 길이만 잰다.
+            if [ -z "${!name:-}" ]; then missing="$missing $name"; fi
+          done
+
+          if [ -z "$missing" ]; then
+            echo "signable=true" >> "$GITHUB_OUTPUT"
+            echo "서명·공증 시크릿이 모두 있다 — 릴리즈를 진행한다."
+            exit 0
+          fi
+
+          echo "signable=false" >> "$GITHUB_OUTPUT"
+          {
+            echo "### 릴리즈를 건너뛴다 — 서명 시크릿이 없다"
+            echo
+            echo "빠진 시크릿:\`$missing\`"
+            echo
+            echo "서명·공증 없이 나간 \`.dmg\` 는 받는 사람의 Gatekeeper 에 막힌다."
+            echo "murmur 는 이미 정식 공증 경로를 실물로 통과한 프로젝트이므로,"
+            echo "서명하지 못할 때는 **릴리즈하지 않는 쪽**이 맞다."
+            echo
+            echo "등록 방법은 \`.github/workflows/release.yml\` 상단 \"시크릿\" 절에 있다."
+          } >> "$GITHUB_STEP_SUMMARY"
+          # **실패로 만들지 않는다.** 시크릿이 없는 것은 고장이 아니라 아직 준비가 안 된
+          # 상태다. 빨간 X 를 남기면 그것이 일상이 되어 진짜 실패를 가린다.
+          echo "::notice::서명 시크릿이 없어 릴리즈를 건너뛴다 (빠진 것:$missing)"
+
+  prepare:
+    name: 버전을 올리고 태그와 draft 를 만든다
+    needs: gate
+    if: needs.gate.outputs.signable == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0 # 태그를 조회해야 한다 — 얕은 클론에는 태그가 없다
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      # 버전 정본은 `tauri.conf.json` 이다. **왜 루트 `package.json` 이 아닌지는
+      # `packages/desktop/scripts/sync-version.mjs` 상단에 근거와 함께 적혀 있다**
+      # (요약: `vite.config.ts` 가 이미 그렇게 정해 뒀고, 화면에 뜨는 버전이 거기서 나온다).
+      - name: 다음 버전을 정한다
+        id: version
+        run: |
+          set -euo pipefail
+          current=$(node packages/desktop/scripts/sync-version.mjs)
+          if git rev-parse -q --verify "refs/tags/v$current" >/dev/null; then
+            # 이미 그 버전으로 릴리즈했다 — patch 를 올린다.
+            next=$(node -p "const [a,b,c]='$current'.split('.'); [a,b,+c+1].join('.')")
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          else
+            # PR 에서 이미 버전을 올려 뒀다 — 그 값 그대로 낸다.
+            # (minor/major 릴리즈는 이렇게 한다: PR 에서 sync-version.mjs 로 올리고 머지)
+            next=$current
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+          echo "릴리즈 버전: v$next"
+
+      - name: 버전 파일 셋을 맞추고 커밋한다
+        if: steps.version.outputs.bumped == 'true'
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.next }}"
+          # **셋을 한 번에 맞춘다.** 여기서 `sed` 를 흩어 놓지 않는 이유는 그것을 잴 수
+          # 없기 때문이다 — 스크립트로 두면 `test/syncVersion.test.ts` 가 실제로 돌려 본다.
+          node packages/desktop/scripts/sync-version.mjs "$version"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(release): v$version"
+
+          # push 직전에 다른 PR 이 머지되면 non-fast-forward 로 실패한다 — rebase 후 재시도.
+          for attempt in 1 2 3; do
+            if git push origin main; then exit 0; fi
+            echo "push 실패 ($attempt/3) — 새 커밋과 경합했다. rebase 후 재시도한다."
+            git pull --rebase origin main || {
+              git rebase --abort
+              echo "::warning::rebase 충돌 — 경합한 머지도 버전 파일을 건드렸다. 이번 릴리즈는 건너뛴다."
+              echo "다음 릴리즈 런이 두 변경을 함께 낸다."
+              exit 1
+            }
+          done
+          echo "::error::push 를 3 회 실패했다 — 다음 런이 처리한다"
+          exit 1
+
+      - name: 태그를 밀고 draft 릴리즈를 만든다
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v${{ steps.version.outputs.next }}"
+          git tag "$tag"
+          git push origin "$tag"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "릴리즈가 이미 있다: $tag"
+          else
+            # **draft 로 만든다.** 산출물이 다 올라오고 검증까지 끝난 뒤에야 `finalize` 가
+            # 공개한다 — 반쯤 올라간 릴리즈를 사람이 받아 가는 일을 없앤다.
+            gh release create "$tag" \
+              --title "murmur $tag" \
+              --notes "준비 중이다 — 산출물 검증이 끝나면 이 본문이 바뀐다." \
+              --draft \
+              --verify-tag
+            echo "draft 릴리즈를 만들었다: $tag"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: .dmg 를 만들고 서명·공증한다
+    needs: prepare
+    if: needs.prepare.outputs.tag != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # **지금은 Apple Silicon 하나뿐이다.** murmur 의 사이드카는 셔뱅 스크립트라
+          # Windows 에서 실행되지 않고(`scripts/sidecar.mjs` 의 `resolveTarget` 이 그
+          # 갈래에서 명시적으로 멈춘다), Intel 은 아직 대상이 아니다.
+          #
+          # **매트릭스 구조는 남겨 둔다** — 나중에 `x86_64-apple-darwin` 을 한 줄 더하는
+          # 것으로 늘릴 수 있다. 다만 **지금 없는 플랫폼을 아래 `finalize` 의 검증 목록에
+          # 넣지 마라**: 영영 나오지 않을 자산을 기다리다 릴리즈가 공개되지 않는다.
+          - os: macos-14
+            triple: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60 # 공증 왕복(수 분)이 있어 `ci.yml` 의 20 분보다 넉넉히 잡는다
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # **태그를 체크아웃한다.** `main` 을 받으면 그 사이에 머지된 것이 섞여 들어와
+          # 태그가 가리키는 것과 다른 산출물이 나온다.
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # 캐시 키는 `Cargo.lock` 해시 기반이고 `restore-keys` 가 없다 — 이유는 `ci.yml` 의
+      # 같은 자리에 적혀 있다(다른 lock 으로 만든 target 을 끌어오면 검증한다고 주장하는
+      # 의존과 실제로 링크된 것이 갈린다).
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            packages/desktop/src-tauri/target
+          key: release-cargo-${{ matrix.triple }}-${{ hashFiles('packages/desktop/src-tauri/Cargo.lock') }}
+
+      - run: pnpm install --frozen-lockfile
+
+      # ## 사이드카가 `tauri build` 보다 **반드시 앞이다** (`#441`)
+      #
+      # `tauri.conf.json` 의 `externalBin` 이 `binaries/murmur-runner`·`binaries/murmur-daemon`
+      # 둘 다 요구한다. 없으면 번들 단계가 `resource path … doesn't exist` 로 죽는다.
+      # `#441` 이 "사람이 기억해야 한다"고 지적한 자리이고, 실제로 사람이 손으로 돌려 왔다.
+      # `ci.yml` 이 PR 경로에서 이 순서를 못박았고, **릴리즈 경로에서도 같아야 한다** —
+      # 한쪽만 자동이면 릴리즈에서 사이드카 없는 앱이 나간다.
+      #
+      # `MURMUR_RUNNER_TARGET_TRIPLE` 을 명시하는 이유: 이 값이 `node-pty` 의 **어느 아키텍처
+      # prebuild 를 곁들일지**를 정한다(`scripts/sidecar.mjs` 가 `prebuilds/<platform>-<arch>`
+      # 중 이것 하나만 남긴다). 지정하지 않으면 `rustc` 의 host 를 쓰는데, 그것이 아래
+      # `tauri build --target` 과 갈리는 순간 **아키텍처가 안 맞는 `pty.node` 가 실린다**.
+      # 지금은 러너도 타깃도 arm64 라 우연히 같지만, 매트릭스를 늘리는 순간 갈린다.
+      - name: 사이드카를 먼저 만든다 (#441)
+        env:
+          MURMUR_RUNNER_TARGET_TRIPLE: ${{ matrix.triple }}
+        run: pnpm --filter @murmur/desktop build:sidecar
+
+      # `bundle.targets` 는 `["app", "dmg"]` 로 좁혀 뒀다(`tauri.conf.json`).
+      # `.app` 은 서명·공증이 물어야 할 대상이고 `.dmg` 는 사람이 받아 갈 것이다.
+      # **updater 산출물(`.app.tar.gz`·`latest.json`)은 만들지 않는다** — murmur 에는 updater 가
+      # 없다(설정 화면이 "Automatic updates: Not available" 이라고 적고 있고, 저장소 어디에도
+      # `plugin-updater` 설정이 없다). 쓰지 않는 것을 만들면 릴리즈에 잡음만 는다.
+      - name: 앱을 빌드한다
+        run: pnpm --filter @murmur/desktop tauri build --target ${{ matrix.triple }}
+
+      # ## 서명 — 이미 실물로 통과한 스크립트를 부른다
+      #
+      # `scripts/sign-app.mjs` 는 inside-out 으로 하나씩 서명하고 `--deep` 을 쓰지 않는다.
+      # 그 근거(1 차 공증 거절 실측 포함)가 그 파일 상단에 길게 있다. **여기서 다시 쓰지
+      # 않고 부르기만 한다** — 서명하는 자리가 둘이 되면 어느 쪽이 최종인지 산출물을 봐야만
+      # 알게 된다.
+      - name: 서명용 키체인을 만든다
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          cert="$RUNNER_TEMP/developer-id.p12"
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          # 키체인 암호는 이 런에서만 쓰고 버린다 — 시크릿으로 둘 이유가 없다.
+          keychain_pw="$(openssl rand -hex 16)"
+
+          (umask 077; echo "$APPLE_CERTIFICATE" | base64 --decode > "$cert")
+
+          security create-keychain -p "$keychain_pw" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_pw" "$keychain"
+          security import "$cert" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          # 이것이 없으면 `codesign` 이 키를 쓸 때마다 UI 로 물어보고, CI 에서는 그대로 멎는다.
+          security set-key-partition-list -S "apple-tool:,apple:,codesign:" \
+            -s -k "$keychain_pw" "$keychain" > /dev/null
+          # 검색 목록 **맨 앞**에 둔다. 기존 목록을 지우지 않고 앞에 붙인다 —
+          # 시스템 키체인을 밀어내면 인증서 체인 검증이 깨진다.
+          # shellcheck disable=SC2046  # 목록을 단어로 쪼개 넘기는 것이 의도다
+          security list-keychains -d user -s "$keychain" \
+            $(security list-keychains -d user | sed 's/["[:space:]]//g')
+
+          # **인증서가 실제로 쓸 수 있는 상태인지 지금 확인한다.** 여기서 안 잡으면
+          # 서명 단계에서 "identity 를 못 찾는다"로 실패하는데, 그때는 원인이 멀어진다.
+          if ! security find-identity -v -p codesigning "$keychain" \
+              | grep -qF "$APPLE_SIGNING_IDENTITY"; then
+            echo "::error::APPLE_SIGNING_IDENTITY 와 맞는 서명 주체가 키체인에 없다"
+            # **이름은 찍지 않는다** — 시크릿이다. 따옴표 안을 가린 형태로만 보여 준다.
+            security find-identity -p codesigning "$keychain" | sed 's/".*"/"(가려짐)"/'
+            exit 1
+          fi
+          rm -f "$cert"
+
+      # 스크립트는 `MURMUR_SIGN_IDENTITY` 로 서명 주체를 강제받는다. 키체인을 뒤지게 두면
+      # 러너에 인증서가 여러 개일 때 엉뚱한 것을 고를 수 있다.
+      - name: 앱을 서명한다
+        env:
+          MURMUR_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: pnpm --filter @murmur/desktop sign
+
+      # ## 공증 — `.p8` 을 **파일로** 푼다
+      #
+      # `notarize-app.mjs` 는 키 **경로**를 받지 내용을 받지 않는다(그 파일 주석: 값을 프로세스
+      # 환경에 두면 `ps` 로 보일 수 있다). 그래서 여기서 임시 파일로 풀고, 아래에서 지운다.
+      - name: 앱을 공증한다
+        env:
+          APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          MURMUR_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          MURMUR_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/notary-key.p8"
+          # `umask` 로 만들어지자마자 남이 못 읽게 한다.
+          (umask 077; echo "$APPLE_NOTARY_KEY" | base64 --decode > "$key")
+          MURMUR_NOTARY_KEY="$key" pnpm --filter @murmur/desktop notarize
+
+      - name: 공증 키를 지운다
+        # **`always()`** — 공증이 실패해도 키는 지운다. 이 단계가 조건부면 실패 경로에서
+        # 키가 러너에 남는다.
+        if: always()
+        run: rm -f "$RUNNER_TEMP/notary-key.p8"
+
+      # ## `.dmg` 를 다시 만든다 — **공증된 `.app` 을 담기 위해서다**
+      #
+      # 순서가 이 단계의 전부다. `tauri build` 가 만든 `.dmg` 안에는 **서명·공증 전의 `.app`**
+      # 이 들어 있다. 그 뒤에 우리가 `.app` 을 서명하고 staple 했지만, 그것은 `.dmg` 바깥의
+      # 파일이다 — 이미 만들어진 `.dmg` 는 그대로다. 그것을 그냥 올리면 **공증 안 된 앱이
+      # 담긴 `.dmg`** 가 나간다.
+      #
+      # Tauri 의 dmg 번들러를 다시 부르는 대신 `hdiutil` 로 직접 만든다: 번들러를 다시 돌리면
+      # `.app` 을 다시 빌드해 방금 박은 티켓이 날아간다.
+      - name: 공증된 앱으로 dmg 를 만든다
+        run: |
+          set -euo pipefail
+          tag="${{ needs.prepare.outputs.tag }}"
+          version="${tag#v}"
+          app="packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/murmur.app"
+          # `aarch64-apple-darwin` → `aarch64`. `.dmg` 이름에 들어갈 아키텍처 토큰이고,
+          # 아래 `finalize` 의 검증 목록이 같은 이름을 기대한다.
+          arch="$(echo "${{ matrix.triple }}" | cut -d- -f1)"
+          out="$RUNNER_TEMP/murmur_${version}_${arch}.dmg"
+
+          test -d "$app" || { echo "::error::.app 이 없다: $app"; exit 1; }
+
+          # **담기 전에 티켓이 실제로 박혀 있는지 본다.** 여기서 안 보면 공증이 조용히
+          # 건너뛰어진 경우에도 `.dmg` 가 만들어져 그대로 나간다.
+          xcrun stapler validate "$app"
+
+          staging="$RUNNER_TEMP/dmg-staging"
+          rm -rf "$staging"; mkdir -p "$staging"
+          # `ditto` 로 옮긴다 — `cp` 는 확장 속성(서명이 거기 붙는다)을 떨어뜨릴 수 있다.
+          ditto "$app" "$staging/murmur.app"
+          ln -s /Applications "$staging/Applications"
+
+          hdiutil create -volname "murmur" -srcfolder "$staging" -ov -format UDZO "$out"
+          echo "DMG=$out" >> "$GITHUB_ENV"
+
+      # `.dmg` 자체도 서명·공증한다. 안에 든 앱이 공증됐어도 `.dmg` 는 별개의 배포 컨테이너이고,
+      # 서명·티켓이 없으면 다운로드 직후 그 파일에 대해 경고가 뜬다.
+      - name: dmg 를 서명하고 공증한다
+        env:
+          SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/notary-key-dmg.p8"
+          # `trap` 으로 지운다 — 아래 어느 단계에서 실패해도 키가 남지 않는다.
+          trap 'rm -f "$key"' EXIT
+          (umask 077; echo "$APPLE_NOTARY_KEY" | base64 --decode > "$key")
+
+          codesign --force --sign "$SIGN_IDENTITY" --timestamp "$DMG"
+          # `--wait` 로 결과까지 기다린다 — 통과를 확인하지 않으면 staple 이 실패한다.
+          xcrun notarytool submit "$DMG" \
+            --key "$key" --key-id "$KEY_ID" --issuer "$ISSUER" --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+
+      - name: draft 릴리즈에 올린다
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # `--clobber` 로 덮어쓴다 — 같은 태그로 재시도할 때 "이미 있다"로 실패하지 않는다.
+          gh release upload "${{ needs.prepare.outputs.tag }}" "$DMG" --clobber
+
+  finalize:
+    name: 산출물을 검증하고 공개한다
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 검증 후 공개
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+
+          # **REST 의 get-by-tag 는 draft 를 돌려주지 않는다(404).** 이 단계가 하는 일이
+          # 바로 그 draft 를 공개하는 것이므로, draft 도 포함하는 목록 엔드포인트에서
+          # `tag_name` 으로 찾는다. (이 잡은 checkout 이 없어 git 저장소가 없다 —
+          # 리모트를 추론하는 `gh release view` 대신 repo 를 명시하는 `gh api` 만 쓸 수 있다.)
+          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq "first(.[] | select(.tag_name == \"$TAG\")) | .id")
+          if [ -z "$release_id" ]; then
+            echo "::error::릴리즈를 찾지 못했다: $TAG"
+            exit 1
+          fi
+
+          assets=$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '.assets[].name')
+
+          # **지금 있는 플랫폼만 검증한다.** 없는 것을 넣으면 영영 공개되지 않는다
+          # (위 `build` 매트릭스 주석과 짝이다 — 매트릭스를 늘리면 여기도 함께 늘린다).
+          expected="murmur_${version}_aarch64.dmg"
+          if ! grep -Fxq "$expected" <<< "$assets"; then
+            echo "::error::필수 자산이 없다: $expected"
+            echo "지금 올라온 것:"; printf '%s\n' "$assets"
+            exit 1
+          fi
+
+          # 변경 내역은 GitHub 이 직전 릴리즈 이후 머지된 PR 로 만든다. 첫 릴리즈나
+          # 일시 오류로 실패해도 안내만으로 공개되도록 빈 값으로 흡수한다.
+          changelog=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$TAG" --jq .body 2>/dev/null) || changelog=""
+
+          notes="$RUNNER_TEMP/notes.md"
+          cat > "$notes" <<'EOF'
+          murmur 데스크톱 설치 파일이다.
+
+          - macOS (Apple Silicon · M1 이상): `_aarch64.dmg` 를 받아라.
+
+          서명·공증된 빌드다 — 받아서 바로 열 수 있다.
+          EOF
+          if [ -n "$changelog" ]; then printf '\n%s\n' "$changelog" >> "$notes"; fi
+
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -F draft=false -F prerelease=false \
+            -f "body=$(cat "$notes")" >/dev/null
+          echo "릴리즈를 공개했다: $TAG"
+
+          # ## `latest` 는 생성 **순서** 기준이라 뒤집힐 수 있다
+          #
+          # 재시도나 병렬 릴리즈로 순서가 어긋나면 구버전이 latest 가 된다.
+          # 그래서 **이 태그가 semver 최고 버전일 때만** latest 로 못박는다.
+          highest=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select((.draft or .prerelease) | not) | .tag_name' | sort -V | tail -1)
+          if [ "$TAG" = "$highest" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+              -f make_latest=true >/dev/null
+            echo "latest → $TAG"
+          else
+            echo "최고 버전($highest)이 아니므로 latest 는 그대로 둔다"
+          fi
+
+  cleanup:
+    name: 실패·취소 시 잔해를 치운다
+    needs: [prepare, build, finalize]
+    # **`failure()` 는 `cancelled()` 를 포함하지 않는다 — 둘 다 적어야 한다.**
+    # `prepare` 가 커밋·태그·draft 를 만든 뒤 런이 취소되면(수동·타임아웃) 미완료 draft 가 남는다.
+    if: (failure() || cancelled()) && needs.prepare.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: 미완료 draft 와 태그를 지운다
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # **draft 인 것만 고른다.** 이미 `finalize` 가 공개한 릴리즈는 절대 건드리지 않는다 —
+          # 그것은 사람이 받아 가고 있을 수 있다.
+          draft_id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq "first(.[] | select(.tag_name == \"$TAG\" and .draft)) | .id")
+          if [ -z "$draft_id" ]; then
+            echo "공개된 릴리즈이거나 draft 를 찾지 못했다 — 치우지 않는다: $TAG"
+            exit 0
+          fi
+
+          echo "미완료 draft 를 치운다: $TAG (id=$draft_id)"
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$draft_id"
+
+          # **태그도 지운다.** 버전 bump 커밋은 main 에 남으므로, 다음 런이 같은 버전을
+          # "태그 없는 상태"로 보고 그대로 재시도한다 — 버전 번호가 건너뛰어지지 않는다.
+          if gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" >/dev/null 2>&1; then
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG"
+            echo "태그를 지웠다: $TAG (다음 런이 같은 버전으로 재시도한다)"
+          fi

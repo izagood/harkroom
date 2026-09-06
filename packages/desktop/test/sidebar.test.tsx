@@ -288,7 +288,7 @@ describe('Sidebar', () => {
     fakeController();
     render(<Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
     expect(screen.getByText('bot')).toBeTruthy();
-    expect(screen.getByTestId('presence-d1').dataset.online).toBe('true');
+    expect(screen.getByTestId('presence-d1').dataset.online).toBe('online');
     expect(screen.getByTestId('unread-d1').textContent).toBe('1');
   });
 

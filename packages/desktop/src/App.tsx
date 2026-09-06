@@ -8,6 +8,7 @@ import { ConnectScreen } from './screens/ConnectScreen';
 import { Workspace } from './components/Workspace';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { WindowDragStrip } from './components/WindowDragStrip';
+import { BootNotice, type BootWait } from './components/BootNotice';
 import type { SectionId } from './components/settings/sections';
 
 /**
@@ -41,6 +42,13 @@ export default function App() {
   // 두지 않는다 — `Workspace` 가 자기 안에서 열고 닫는 겹창이고, 여기에 상태를 또 두면
   // 같은 사실이 두 곳에 생긴다(초판이 그렇게 두고 한쪽을 읽지 않았다).
   const [settings, setSettings] = useState<{ section?: SectionId; targetId?: string } | null>(null);
+  /**
+   * 부팅이 **무엇을 기다리는가**(`#460`). `unknown` 이 기본이고, 그 자리에서 사유를
+   * 지어내지 않는다 — `keychain` 은 `sessionStore.load` 가 실제로 키체인을 두드렸을 때만
+   * 온다(그 콜백이 유일한 근거다). 그리고 `load` 가 끝나면 **되돌린다**: 대기가 끝났는데
+   * 문구가 남아 있으면 그것도 거짓말이고, 사람은 다음 화면을 기다리며 또 헤맨다.
+   */
+  const [bootWait, setBootWait] = useState<BootWait>('unknown');
 
   // 세션이 실행 중에 죽는 경로(다른 기기에서 로그아웃·PAT 폐기·세션 만료)를 부팅 실패와
   // 같은 표면으로 보낸다. 이것이 없으면 사이드바 빨간 점과 영구 재연결만 보이고 이유를
@@ -67,8 +75,16 @@ export default function App() {
     let startedController: Controller | null = null;
 
     void (async () => {
-      // 키체인 접근은 IPC 뒤라 비동기다(lib/session.ts). 부팅 화면이 그 사이를 덮는다.
-      const stored = await sessionStore.load();
+      // 키체인 접근은 IPC 뒤라 비동기다(lib/session.ts). 부팅 화면이 그 사이를 덮는데,
+      // **그 화면이 무엇을 덮고 있는지 말하지 않는 것**이 `#460` 이다(실측 36분).
+      // 콜백은 `secret_get` 을 부르기 직전에 온다 — 폴백(`localStorage`) 경로에서는 안 온다.
+      const stored = await sessionStore.load(() => {
+        if (cancelled) return;
+        setBootWait('keychain');
+      });
+      // **대기가 끝났으면 되돌린다.** 아래 `cancelled` 문지기보다 앞이다: 여기를 지나면
+      // 키체인은 이미 답했고, 그 뒤에도 문구가 서 있으면 사람은 없는 대화상자를 찾는다.
+      setBootWait('unknown');
       // 개발 모드의 StrictMode 는 effect 를 한 번 정리한 뒤 다시 실행한다. 첫 실행의 IPC가
       // 늦게 끝났다면 여기서 멈춰야 두 번째 세션을 다시 교체하지 않는다.
       if (cancelled) return;
@@ -121,7 +137,7 @@ export default function App() {
     </div>
   );
 
-  if (phase === 'boot') return withDragStrip(<div className="p-4 text-fg-muted">Connecting…</div>);
+  if (phase === 'boot') return withDragStrip(<BootNotice wait={bootWait} />);
   if (phase === 'connect') {
     return withDragStrip(
       <ConnectScreen
