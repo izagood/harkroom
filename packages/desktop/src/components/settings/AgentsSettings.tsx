@@ -7,6 +7,7 @@ import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { RunnerStatusLine } from '../RunnerStatus';
 import { AgentGrid } from './AgentGrid';
+import { Identity } from '../Identity';
 import { Button } from './primitives';
 
 /** #177: 클립보드가 없거나 거부되면 **조용히 실패하지 않는다** — 화면에 있는 그 명령
@@ -271,6 +272,27 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const dirty = selected !== null && draft !== null
     && JSON.stringify(draft) !== JSON.stringify(draftOf(selected));
 
+  const avatarPick = useRef<HTMLInputElement>(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+
+  /** 사진을 걸거나(파일) 지운다(null). `ProfileSettings` 의 선례와 같은 모양이다. */
+  const applyAvatar = async (file: File | null): Promise<void> => {
+    if (!selected) return;
+    setAvatarBusy(true);
+    setError(null);
+    try {
+      await getController().setAgentAvatar(selected.id, file);
+    } catch {
+      // 서버가 거절하는 가장 흔한 경우는 이미지가 아닌 파일이다(매직 바이트로 판정한다) —
+      // 확장자를 믿지 않으므로 `.png` 라는 이름만으로는 통과하지 못한다.
+      setError('이미지 파일만 사진으로 쓸 수 있다');
+    } finally {
+      setAvatarBusy(false);
+      // 같은 파일을 다시 고를 수 있게 비운다 — 안 비우면 change 가 안 난다.
+      if (avatarPick.current) avatarPick.current.value = '';
+    }
+  };
+
   const pick = (a: AgentView) => {
     setSelected(a);
     setDraft(draftOf(a));
@@ -529,6 +551,37 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               전에는 아홉 필드가 한 줄로 흘러 무엇이 무엇과 묶이는지 알 수 없었다.
             */}
             <FieldGroup title="프로필" note="채널에서 어떻게 보이고 무엇을 하는가.">
+            {/*
+              사진(identity 문서 Task 15-4). **에이전트는 자기 사진을 올릴 손이 없다** —
+              소유자가 대신 올려 주지 않으면 영원히 색 하나로 남는다. 문서가 이 화면의 성패를
+              여기에 걸었다: "결국 이 화면의 성패는 사람이 사진을 올리게 만드는 것에 달린다."
+              (`handleColor()` 의 12색은 26개 밀도에서 이미 시끄럽고, 색은 **사진이 없을 때의
+              임시값**이라는 뜻이다.)
+
+              새 에이전트에는 그리지 않는다 — 아직 계정이 없어 걸 대상이 없다.
+            */}
+            {selected && (
+              <div className="flex items-center gap-3">
+                <Identity account={selected} className="h-12 w-12 text-base" variant="avatar" />
+                <input
+                  ref={avatarPick}
+                  type="file"
+                  data-testid="agent-avatar-file"
+                  accept="image/png,image/jpeg,image/gif,image/webp,image/avif"
+                  className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) void applyAvatar(f); }}
+                />
+                <Button disabled={avatarBusy} onClick={() => avatarPick.current?.click()}>
+                  사진 올리기
+                </Button>
+                {selected.avatarAttachmentId && (
+                  <Button variant="danger" disabled={avatarBusy} onClick={() => void applyAvatar(null)}>
+                    지우기
+                  </Button>
+                )}
+                <span className="text-[11px] text-fg-subtle">비우면 이름에서 색을 뽑는다</span>
+              </div>
+            )}
             <label className={label}>
               Agent name
               <input
