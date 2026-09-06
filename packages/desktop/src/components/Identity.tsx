@@ -188,8 +188,11 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
     // 이모지"를 읽고 이전에 있던 `agent` 정보가 사라진다. `role="img"` + `aria-label` 도
     // 방법이지만 **질의 표면을 전역으로 바꾼다** — 이 저장소에는 `queryByRole('img')` 로
     // "SVG 미리보기가 없다"를 확인하는 보안 테스트가 있고, 장식 배지가 그것을 오염시킨다.
+    // **강조색을 쓰지 않는다**(#488 B2). 이 배지는 이제 디렉터리와 자동완성에만 남는데,
+    // 둘 다 답하는 물음이 "누가 있나 / 누구 것인가"이지 **나를 막는 것**이 아니다
+    // (규칙 04). 강조색은 그 자리에만 쓰는 색이다.
     return (
-      <span className={`inline-flex flex-wrap items-center gap-1 rounded bg-accent-surface px-1 text-[10px] text-accent ${className}`}>
+      <span className={`inline-flex flex-wrap items-center gap-1 rounded bg-surface-sunken px-1 text-[10px] text-fg-muted ${className}`}>
         <span aria-hidden="true">🤖</span>
         <span className="sr-only">에이전트</span>
         {owner && (
