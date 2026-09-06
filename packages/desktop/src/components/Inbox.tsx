@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Overlay } from './Overlay';
 import { Identity } from './Identity';
+import { WaitChainSection } from './WaitChainSection';
 import type { InboxEntry } from '@murmur/shared';
 import { inboxRow, matchesFilter, type InboxFilter } from '../lib/inboxRow';
 import { useActiveStore } from '../state/communities';
@@ -363,6 +364,16 @@ export function Inbox({ open, onClose }: Props) {
 
           {/* 초안은 나란한 **별도 구획**이다. 하나는 서버 진실이고 하나는 로컬 상태라
               정렬 기준(시간)을 공유하지 않는다 — 한 목록에 섞으면 순서가 거짓말이 된다. */}
+          {/*
+            **나에게 오지 않았지만 무언가를 멈추고 있는 것**(#488 A3-b). 위 구획은
+            나를 부른 것만 담으므로 `codex → forge → alpha` 처럼 나와 무관하게 얽힌
+            사슬은 어디에도 안 보인다 — 인박스가 "막는 말이 모이는 자리"이려면 그것도
+            여기 있어야 한다.
+          */}
+          <section aria-label="기다리는 것" className="mb-4">
+            <WaitChainSection />
+          </section>
+
           <section aria-label="쓰다 만 초안">
             <h3 className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
               쓰다 만 초안 ({shownDrafts.length})

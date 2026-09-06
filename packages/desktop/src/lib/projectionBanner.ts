@@ -40,6 +40,15 @@ export interface ProjectionBanner {
    * 잠깐 뜨는 띠는 정보가 아니라 깜빡임이고, 그 사이 화면이 한 줄 밀린다.
    */
   strip: boolean;
+  /**
+   * **리스 목록 옆에 설 짧은 말**(#489 후속). 띠가 "고장났다"를 말하는 동안 이 줄은
+   * **그 고장이 이 목록에 뜻하는 것**을 말한다 — 같은 문구를 두 자리에 세우면 중복이고,
+   * 사용자가 화면에서 그것을 먼저 발견했다(실측 2026-09-07).
+   *
+   * **사정마다 다른 말이어야 한다.** `#267` 이 그것을 회귀선으로 못 박았다: 꺼진 것과
+   * 멈춘 것과 정상+빈 목록이 같은 문구면 화면이 셋을 구별하지 못한다.
+   */
+  listNote: string;
 }
 
 export function projectionBanner(input: {
@@ -60,6 +69,7 @@ export function projectionBanner(input: {
       text: '투영 상태를 읽지 못했다',
       detail: error,
       strip: true,
+      listNote: '지금 상태를 못 읽어 이 목록을 믿을 수 없다',
     };
   }
 
@@ -71,6 +81,8 @@ export function projectionBanner(input: {
       text: '투영 상태를 확인하는 중…',
       detail: null,
       strip: false,
+      // 띠가 안 서는 유일한 사정이라 이 줄이 그 사정을 말하는 **유일한 자리**다.
+      listNote: '투영 상태를 확인하는 중…',
     };
   }
 
@@ -81,6 +93,7 @@ export function projectionBanner(input: {
       text: PROJECTION_UNCONFIGURED_HEADLINE,
       detail: PROJECTION_UNCONFIGURED_DETAIL,
       strip: true,
+      listNote: '투영이 꺼져 있어 이 목록은 채워지지 않는다',
     };
   }
 
@@ -96,6 +109,7 @@ export function projectionBanner(input: {
       text: `투영이 ${since} 멈춰 있다`,
       detail: status.lastError,
       strip: true,
+      listNote: `투영이 ${since} 멈춰 이 목록은 지금 사실이 아닐 수 있다`,
     };
   }
 

@@ -5,29 +5,25 @@ import { waitChainFromLinks, type WaitChain } from '../lib/waitChain';
 import { elapsedLabel } from '../lib/progressGroup';
 
 /**
- * **지금 누가 누구를 기다리는가**(#488 A3-a·A3-b).
+ * **지금 누가 누구를 기다리는가** — 인박스의 한 구획(#488 A3-b → C2).
  *
- * 오류가 비운 자리에 들어간다. 문서: *"컨셉의 대기 사슬이 처음으로 화면에 보이는
- * 곳이다."* 지금까지 사슬은 **스레드를 열어야만** 보였다 — 그런데 "무엇이 멈춰
- * 있는가"는 스레드를 열기 **전에** 묻는 질문이다.
+ * ## 사이드바를 떠난 이유
  *
- * ## 왜 이제 가능한가
+ * 문서는 이것을 사이드바의 `ACTIVE WORK` 자리에 두라고 했다. 만들어 놓고 보니 그
+ * 자리가 **틀렸다**: 사이드바의 `nav` 는 `overflow-y-auto` 이고 이 구획은 채널·DM·
+ * 에이전트 **다음**이라, 채널이 몇 개만 늘어도 스크롤 밖으로 밀린다. "지금 무엇이
+ * 막혀 있는가"를 말하는 자리가 **정작 그것을 알아야 할 때 안 보인다.**
  *
- * 채널 목록에는 루트만 있고 답글은 스레드를 열 때만 로드된다. 그래서 화면이 사슬을
- * 만들 수 없었다. `openAskLinks`(#490)가 그 구멍을 메운다 — 서버가 마디를
- * `누가 → 누구를` 짝으로 실어 준다.
+ * 인박스가 그 물음에 답하는 자리다 — 문서 자신이 *"'나를 막는 말'이 모이는 유일한
+ * 자리"* 라고 적었다. 사슬은 그 목록이 답하지 못하는 것 하나를 더한다: **나에게 오지
+ * 않았지만 무언가를 멈추고 있는 것**(`codex → forge → alpha`).
  *
- * ## 기다리는 것이 없으면 조용히 비어 있는다
+ * ## 내 차례는 위 구획이 이미 말한다
  *
- * 문서가 그렇게 적었다. 여기서 "없다"를 크게 말하면, 아무 일도 없는 것이 화면에서
- * 가장 큰 목소리가 된다 — 규칙 06(없는 문은 그리지 않는다)과 같은 결이다.
- *
- * ## 내 것을 먼저 센다
- *
- * 사슬이 여럿일 때 **나를 막는 것**이 위로 온다(규칙 03·04). 그 다음이 교착이고,
- * 남을 기다리는 것은 맨 아래다 — 내가 지금 할 수 있는 일이 맨 위에 있어야 한다.
+ * 그래서 여기서는 **정렬만** 남기고 강조는 옅게 간다 — 같은 사실을 두 구획이 같은
+ * 세기로 말하면 어느 쪽을 봐야 하는지 알 수 없다.
  */
-export function SidebarWaitChain() {
+export function WaitChainSection() {
   const channels = useActiveStore((s) => s.channels);
   const messages = useActiveStore((s) => s.messages);
   const accounts = useActiveStore((s) => s.accounts);
@@ -72,8 +68,15 @@ export function SidebarWaitChain() {
   const name = (id: string | null): string => (id === null ? '사람' : accounts[id]?.handle ?? '…');
 
   return (
-    <div data-testid="sidebar-wait-chain">
-      <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">기다리는 것</div>
+    <div data-testid="wait-chain-section">
+      <h3 className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
+        {/*
+          **모를 때는 수를 말하지 않는다**(실측 2026-09-07, 사용자가 화면에서 발견).
+          제목이 `(0)` 이고 본문이 "아직 다 보지 못했다"이면 **한 구획이 서로 반대되는
+          두 말**을 한다 — 본문은 정직한데 제목이 안 본 것을 0으로 단정한다.
+        */}
+        기다리는 것{unseen ? '' : ` (${rows.length})`}
+      </h3>
       {rows.length === 0 ? (
         // **한 줄로 조용히**(문서). 아무 일도 없는 것이 가장 큰 목소리가 되면 안 된다.
         // 다만 **"없다"와 "아직 안 봤다"는 다른 사실**이다(`docs/design.md` §4) —
