@@ -331,4 +331,26 @@ describe('entitlements — 본체에만, 필요한 것만', () => {
         .toMatch(/'target',\s*'release',\s*'bundle',\s*'macos',\s*'murmur\.app'/);
     }
   });
+
+  /**
+   * **워크플로가 넘기는 경로는 절대 경로여야 한다.**
+   *
+   * `pnpm --filter` 는 그 패키지 디렉터리에서 스크립트를 돌린다 — cwd 가
+   * `packages/desktop` 이므로 상대 경로는 거기에 다시 이어붙는다. 실측(2026-09-06):
+   * 첫 시도는 경로를 아예 안 넘겨서, 두 번째는 넘겼지만 상대라서 죽었다.
+   *
+   * **되돌려 RED**: `${{ github.workspace }}/` 를 지우면 빨개진다.
+   */
+  it('릴리즈 워크플로가 MURMUR_APP_PATH 를 절대 경로로 넘긴다', () => {
+    const wf = readFileSync(
+      path.join(DESKTOP_DIR, '..', '..', '.github', 'workflows', 'release.yml'),
+      'utf8',
+    );
+    const uses = wf.match(/MURMUR_APP_PATH[:=]"?([^\n"\\]+)/g) ?? [];
+    expect(uses.length, 'MURMUR_APP_PATH 를 넘기는 자리가 사라졌다').toBeGreaterThan(0);
+    for (const u of uses) {
+      expect(u, `상대 경로다 — pnpm --filter 의 cwd 에서 안 풀린다: ${u}`)
+        .toContain('github.workspace');
+    }
+  });
 });
