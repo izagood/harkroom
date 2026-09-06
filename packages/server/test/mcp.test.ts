@@ -129,6 +129,25 @@ describe('mcp surface', () => {
     await client.close();
   });
 
+  /**
+   * Task 8 Step 2 — 발화 도구는 누구를 불렀는지 함께 준다.
+   *
+   * REST 는 같은 사실을 **헤더**로 싣는데(`NOTIFIED_HEADER`) 여기는 형제 키다. 모양이 다른
+   * 이유는 응답의 모양이 다르기 때문이다: REST 의 POST 응답 본문은 `MessageRow` 그 자체라
+   * 형제 키가 그 타입을 오염시키지만, MCP 는 이미 `{ message }` 봉투라 곁에 키를 더해도
+   * `MessageRow` 는 그대로다. 그 '그대로'를 아래 마지막 단언이 지킨다.
+   */
+  it('발화 도구가 notified 를 함께 준다 — message 는 오염되지 않는다', async () => {
+    const client = await mcpClient(botPat);
+    const posted = text(await client.callTool({
+      name: 'message.post', arguments: { channelId, body: '<@' + adminAccountId + '> 좀 봐 줘' },
+    })) as { message: Record<string, unknown>; notified: string[] };
+    expect(posted.notified).toEqual([adminAccountId]);
+    // 봉투에만 실린다 — 메시지 자체는 한 글자도 넓어지지 않는다.
+    expect(posted.message).not.toHaveProperty('notified');
+    await client.close();
+  });
+
   it('work.link rejects a thread root that belongs to a different channel (감사 ②)', async () => {
     const otherCh = await app.inject({
       method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },

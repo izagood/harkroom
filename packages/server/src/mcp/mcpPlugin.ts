@@ -125,7 +125,18 @@ function buildMcpServer(
       emitEvent({ type: 'message.created', message, audience });
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
-    return jsonResult({ message });
+    /**
+     * 누구를 불렀는지 함께 준다(Task 8 Step 2). 발화하는 다섯 도구가 **모두 같은 모양**이다 —
+     * 하나만 빠지면 그 도구로 부른 에이전트만 결과를 모른다.
+     *
+     * REST 쪽은 같은 사실을 **헤더**로 싣는다(`NOTIFIED_HEADER`). 모양이 다른 이유는 응답의
+     * 모양이 다르기 때문이다: REST 의 POST 응답 본문은 `MessageRow` 그 자체라 형제 키를
+     * 얹으면 그 타입이 오염되지만, MCP 는 이미 `{ message }` **봉투**라 곁에 키 하나를 더해도
+     * `MessageRow` 는 그대로다. 두 표면이 같은 사실을 각자의 관습으로 싣는다.
+     *
+     * 재생(idempotency)이면 빈 배열이다 — 그 요청이 새로 부른 사람이 없다는 뜻이다.
+     */
+    return jsonResult({ message, notified });
   });
 
   // #144: 진행 설명 메시지 — 결과 발화로 세지 않고, 사용자가 읽을 수 있어야 뜻이 있다.
@@ -153,7 +164,7 @@ function buildMcpServer(
       emitEvent({ type: 'message.created', message, audience });
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
-    return jsonResult({ message });
+    return jsonResult({ message, notified });
   });
 
   /**
@@ -218,7 +229,7 @@ function buildMcpServer(
       emitEvent({ type: 'message.created', message, audience: channelAudience });
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
-    return jsonResult({ message });
+    return jsonResult({ message, notified });
   });
 
   /**
@@ -262,7 +273,7 @@ function buildMcpServer(
       emitEvent({ type: 'message.created', message, audience: channelAudience });
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
-    return jsonResult({ message });
+    return jsonResult({ message, notified });
   });
 
   /**
@@ -314,7 +325,7 @@ function buildMcpServer(
       emitEvent({ type: 'message.created', message, audience: channelAudience });
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
-    return jsonResult({ message });
+    return jsonResult({ message, notified });
   });
 
   server.registerTool('message.react', {

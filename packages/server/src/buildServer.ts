@@ -4,7 +4,7 @@ import fastifyMultipart from '@fastify/multipart';
 import type { Pool } from 'pg';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { projectionState, type ProjectionRuntime, type ProjectionStatus } from '@murmur/shared';
+import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, projectionState, type ProjectionRuntime, type ProjectionStatus } from '@murmur/shared';
 import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
@@ -173,6 +173,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     origin: deps.corsOrigins ?? true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['content-type', 'authorization', 'idempotency-key'],
+    // 브라우저는 **기본적으로 응답 헤더를 스크립트에 넘기지 않는다** — 안전 목록
+    // (content-type 등) 밖의 헤더는 여기에 적어야 `fetch` 가 읽을 수 있다. 부름의 결과를
+    // 헤더로 싣기로 한 이상(`NOTIFIED_HEADER`) 이 줄이 없으면 데스크탑에서는 그 헤더가
+    // 존재하지 않는 것과 같다 — 서버는 보냈다고 믿고 화면은 못 받는 조용한 실패다.
+    exposedHeaders: [NOTIFIED_HEADER, NOTIFIED_COUNT_HEADER],
   });
 
   app.get('/healthz', async () => ({
