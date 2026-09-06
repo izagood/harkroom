@@ -118,6 +118,214 @@ pub fn check_socket_path_length(socket_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// 개발 빌드 구획 — 워크트리마다 앱 데이터 뿌리를 가른다
+// ---------------------------------------------------------------------------
+
+/// 개발 빌드에서만 듣는 탈출구. 값이 있으면 그것이 곧 앱 데이터 뿌리가 된다.
+///
+/// ## 왜 릴리즈에서는 안 듣나 — 공격 표면이기 때문이다
+///
+/// 이 뿌리 밑에 있는 것을 보라: 소켓·**토큰**·pid·장부·로그. 환경변수로 뿌리를 옮길 수
+/// 있으면, 앱을 띄우는 자리에 변수 하나를 심은 쪽이 **자기가 준비한 토큰 파일과 소켓**을
+/// 앱에게 보게 만들 수 있다. 그러면 앱은 그쪽을 daemon 으로 알고 붙고, `spawnRunner` 에
+/// 실리는 `MURMUR_PAT` 가 그리로 간다.
+///
+/// 이것은 모듈 주석의 표가 **"소켓·토큰·pid 경로는 Rust 가 정한다"**로 못박은 그 성질을
+/// 정확히 뒤집는 것이다 — 그 표가 웹뷰를 막은 이유("자기가 아는 토큰이 든 파일을 가리키면
+/// 인증이 무의미해진다")가 환경변수에도 그대로 적용된다. 웹뷰만 막고 환경변수를 열면
+/// 같은 문을 옆으로 낸 셈이다.
+///
+/// 개발 빌드에서는 다르다. 그 앱을 띄우는 사람이 곧 그 빌드를 만든 사람이고, 환경변수를
+/// 심을 수 있는 쪽은 이미 `target/debug/` 의 실행 파일 자체를 바꿀 수 있다 — 새로 여는
+/// 문이 없다. 그래서 `cfg!(debug_assertions)` 로 가른다. **런타임 플래그가 아니라 컴파일
+/// 타임 갈래인 것이 요점이다**: 릴리즈 바이너리에는 이 변수를 읽는 코드가 아예 없다.
+const DEV_DATA_DIR_ENV: &str = "MURMUR_DEV_DATA_DIR";
+
+/// 개발 구획 디렉터리 이름에 붙는 해시의 길이(16진 문자 수).
+///
+/// ## 왜 8인가 — 104바이트 예산에서 역산했다 (실측 2026-09-06)
+///
+/// ```text
+/// 릴리즈: …/app.murmur.desktop/daemon/daemon-v1.sock              = 82바이트 (여유 22)
+/// 개발  : …/app.murmur.desktop/dev-XXXXXXXX/daemon/daemon-v1.sock = 95바이트 (여유 9)
+/// ```
+///
+/// `dev-` 4자 + 해시 8자 + `/` 1자 = **13바이트**를 그 22에서 갉는다. 남는 9바이트가
+/// 사용자 이름의 여유이므로 **`jaebin`(6자) 기준으로 이름이 15자까지 통과한다**
+/// (릴리즈에서는 28자였다).
+///
+/// 12자로 늘리면 99바이트가 되어 이름 여유가 11자로 준다. **개발 빌드만 쓰는 구획이라
+/// 충돌 확률보다 예산이 더 비싸다** — 한 사람의 기계에 동시에 존재하는 워크트리는 많아야
+/// 수십 개이고, 32비트 공간에서 그 정도의 생일 충돌 확률은 백만분의 일 수준이다.
+/// 충돌해도 잃는 것은 "두 워크트리가 한 구획을 공유한다" 뿐이고, 그것은 이 변경 **이전의
+/// 상태**다 — 즉 더 나빠지지 않는다.
+///
+/// 이 값을 늘리려는 다음 사람에게: `check_socket_path_length` 가 실제 경로를 만들 때마다
+/// 재고 있으니 **재 보고 정하라.** 그 검사를 우회하면 실패가 `EINVAL` 로 되돌아간다.
+const DEV_HASH_HEX_LEN: usize = 8;
+
+/// 개발 구획 이름의 접두어. 사람이 `ls` 로 봤을 때 **이것이 개발 부스러기임을 알아야
+/// 한다** — 릴리즈 데이터(`daemon/`)와 나란히 놓이므로, 지워도 되는 것과 지우면 안 되는
+/// 것이 이름으로 갈려야 한다.
+const DEV_DIR_PREFIX: &str = "dev-";
+
+/// 해시 입력 — **이 크레이트의 소스 루트**(`<워크트리>/packages/desktop/src-tauri`).
+///
+/// ## 왜 이것으로 갈랐나
+///
+/// 후보가 셋 있었고 각각 다른 이유로 떨어진다.
+///
+/// | 후보 | 왜 아닌가 |
+/// |---|---|
+/// | 프로세스 cwd | **워크트리 안 어디서 띄우느냐에 따라 달라진다.** 하위 디렉터리에서 띄우면 다른 구획이 된다 — 같은 빌드가 같은 자리를 봐야 한다는 성질이 곧바로 깨진다 |
+/// | `git worktree` 루트를 런타임에 조회 | `git` 을 실행해야 하고, 그 결과가 cwd 에 다시 의존한다. 그리고 `.app` 으로 배포된 개발 빌드에는 저장소가 옆에 없을 수도 있다 |
+/// | **`CARGO_MANIFEST_DIR`(채택)** | — |
+///
+/// `env!("CARGO_MANIFEST_DIR")` 은 **컴파일 타임 상수**다. 그래서:
+///
+/// - **cwd 와 무관하다.** 워크트리 안 어느 디렉터리에서 `pnpm tauri dev` 를 띄워도 같다
+/// - **바이너리에 박힌다.** 그 실행 파일을 어디로 옮겨 실행해도 자기를 만든 워크트리를
+///   가리킨다 — 즉 "이 빌드가 어느 체크아웃에서 나왔나"라는 물음의 답 그 자체다
+/// - **`git` 을 안 부른다.** 워크트리인지 일반 클론인지 묻지 않는다. 다른 경로에서
+///   컴파일했으면 다른 구획이고, 그것이 우리가 원하는 바다
+///
+/// **같은 경로를 재사용하면 같은 구획이 된다.** 워크트리를 지우고 같은 자리에 새로
+/// 만들면 앞선 장부를 물려받는다 — 이것은 함정이 아니라 의도다. 그 자리의 daemon 이
+/// 남긴 러너를 그 자리의 다음 daemon 이 채택하는 것이 `#431` 2-c 의 고아 재발견이고,
+/// 매번 새 구획을 주면 그 재발견이 영영 성립하지 않는다.
+///
+/// ## `entryPath` 관문과의 관계 — **층이 다르다. 관문을 지우지 마라**
+///
+/// `same_entry_path` 주석이 자기 한계를 이미 적어 뒀다: *"진짜 격리는 소켓 경로를 갈라야
+/// 하고 그건 2-e 다"*. 이 함수가 그 2-e 다. 그러면 관문이 필요 없어지는가 — **아니다.**
+///
+/// | | 무엇을 하나 |
+/// |---|---|
+/// | **이 구획**(경로 분리) | 실수 자체를 없앤다. 두 빌드가 애초에 같은 소켓을 보지 않는다 |
+/// | **`entryPath` 관문** | 그래도 같은 소켓을 보게 됐을 때 **그 사실을 드러낸다** |
+///
+/// 구획이 안 갈리는 경로가 실제로 남아 있다:
+///
+/// - **릴리즈 빌드끼리는 여전히 뿌리를 공유한다** — 의도다(사용자 환경에는 앱이 하나뿐이다).
+///   그러나 사람이 릴리즈 앱 두 판본을 나란히 띄우는 일은 일어나고, 그때 이 구획은 아무
+///   도움이 안 된다
+/// - **`MURMUR_DEV_DATA_DIR` 를 두 워크트리에 같은 값으로 주면 합쳐진다** — 그것이 그
+///   변수의 용도이기도 하다(둘을 일부러 한자리에 모으는 것)
+/// - **같은 워크트리를 지우고 같은 경로에 다시 만들면 같은 구획이다** — 위 "같은 경로를
+///   재사용하면"이 그것이고, 그때 앞선 빌드의 daemon 이 남아 있으면 그대로 만난다
+///
+/// 그 전부에서 관문이 마지막 관측 장치다. **격리를 넣었으니 감지를 뺀다**는 것은,
+/// 격리가 완전하다는 것을 증명 없이 믿는 것이다.
+fn dev_partition_source() -> &'static str {
+    env!("CARGO_MANIFEST_DIR")
+}
+
+/// FNV-1a 64비트. **암호학적 해시가 아니고, 그럴 필요도 없다.**
+///
+/// 이 값이 하는 일은 서로 다른 소스 루트를 서로 다른 디렉터리 이름으로 옮기는 것뿐이다 —
+/// 아무것도 인증하지 않고, 이것을 위조해도 얻는 것이 없다(자기 구획을 남의 것과 같은
+/// 이름으로 만들 수 있을 뿐이고, 그것은 경로를 직접 주는 것과 다르지 않다).
+///
+/// 그래서 의존성을 하나도 안 늘리는 쪽을 골랐다. `sha2` 를 끌어오면 **릴리즈 바이너리에도**
+/// 들어가는데, 릴리즈는 이 코드를 아예 안 밟는다.
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bytes {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// 소스 루트 하나를 구획 디렉터리 이름(`dev-<해시>`)으로 옮긴다.
+pub fn dev_partition_name(source: &str) -> String {
+    let hex = format!("{:016x}", fnv1a64(source.as_bytes()));
+    format!("{DEV_DIR_PREFIX}{}", &hex[..DEV_HASH_HEX_LEN])
+}
+
+/// 앱 데이터 **뿌리**를 정한다 — 이 밑의 모든 것이 함께 갈린다.
+///
+/// ## 소켓만 가르면 절반이다
+///
+/// 뿌리를 가르는 이유는 소켓이 아니라 **뿌리를 공유하는 것 전부**다:
+///
+/// ```text
+/// <뿌리>/daemon/daemon-v1.sock          소켓
+/// <뿌리>/daemon/daemon-v1.token         토큰
+/// <뿌리>/daemon/daemon-v1.pid           pid 레코드
+/// <뿌리>/daemon/daemon-v1.log           daemon 로그
+/// <뿌리>/daemon/daemon-v1-client.log    앱 클라이언트 로그
+/// <뿌리>/daemon/runners-v1.json         장부
+/// <뿌리>/daemon/runner-<agentId>.log    러너 로그
+/// ```
+///
+/// **장부가 특히 그렇다.** 소켓만 갈라 두 daemon 이 각자 뜨는데 장부가 하나면, 나중에 뜬
+/// 쪽이 앞선 쪽의 표를 지우고(`writeRunnerLedger` 는 통째로 덮어쓴다) 그 러너들은 영영
+/// 채택되지 못하는 고아가 된다 — **갈리기 전보다 나쁘다.**
+///
+/// **로그도 그렇다.** 실측(2026-09-06): `daemon-v1-client.log` 하나를 두 앱이 쓰는데
+/// 어느 줄이 누구 것인지 구분할 수단이 없어 **두 세션이 서로의 로그를 자기 것으로 읽고
+/// 원인을 반대로 진단했다.**
+///
+/// 그 전부가 여기 한 자리에서 갈리는 이유는 daemon 이 `appDataDir` 를 **소켓 경로에서
+/// 되짚기** 때문이다(`run.ts::appDataDirFromSocket`, 두 단계 위). 앱이
+/// `<뿌리>/daemon/daemon-v1.sock` 를 넘기면 daemon 은 `<뿌리>` 를 얻고, 장부·러너 로그를
+/// 전부 거기에 놓는다. **되짚기 규칙은 안 고쳐도 성립한다** — 되짚기는 "두 단계 위"라는
+/// 상대 규칙이고, 우리가 바꾼 것은 그 위의 절대 위치뿐이다.
+///
+/// ## 릴리즈는 그대로다 — 바꿀 이유가 없고, 바꾸면 잃는다
+///
+/// 사용자 환경에는 앱이 하나뿐이라 가를 것이 없다. 그리고 뿌리를 옮기면 **이미 설치된
+/// 앱의 장부와 설정이 옛 자리에 남아** 보이지 않게 된다. 그래서 `cfg!(debug_assertions)`
+/// 아래에서만 갈린다.
+pub fn app_data_root(app_data_dir: &Path) -> PathBuf {
+    // **릴리즈 빌드는 여기서 끝난다.** `cfg!` 라 아래 블록은 릴리즈 바이너리에 아예
+    // 남지 않는다 — 즉 릴리즈에서 `MURMUR_DEV_DATA_DIR` 를 읽는 코드 자체가 없다.
+    if !cfg!(debug_assertions) {
+        return app_data_dir.to_path_buf();
+    }
+    dev_app_data_root(
+        app_data_dir,
+        dev_partition_source(),
+        std::env::var_os(DEV_DATA_DIR_ENV),
+    )
+}
+
+/// `app_data_root` 의 개발 갈래.
+///
+/// ## 왜 `source` 와 `override_dir` 를 파라미터로 뺐나 — 회귀선이 실물을 밟게 하려고
+///
+/// 둘 다 프로덕션에서는 **부르는 자리가 하나뿐**이다(`app_data_root` 위). 그런데 둘 다
+/// 회귀선이 안에서 못 바꾸는 값이다:
+///
+/// - `source` 는 `env!` 라 **컴파일 타임 상수**다. 한 프로세스 안에서 두 워크트리를
+///   흉내 낼 방법이 없다
+/// - `override_dir` 는 프로세스 전역 환경이라, 테스트가 실제로 설정하면 병렬로 도는
+///   다른 테스트를 밟는다
+///
+/// 파라미터로 빼지 않으면 회귀선은 `dev_partition_name` 같은 **조각**을 직접 부르게 되고,
+/// 그러면 조각을 이어 붙이는 이 함수를 통째로 지워도 초록이다 — 되돌려 RED 절차에서
+/// 실제로 그렇게 통과했다(2026-09-06). 지금은 두 "빌드"가 **같은 이 함수**를 지나므로
+/// 이 함수가 구획을 안 붙이면 곧바로 빨개진다.
+///
+/// 경계가 넓어지지는 않는다: `source` 를 넘기는 자리는 여전히 Rust 안의 컴파일 타임
+/// 상수 하나뿐이고, 웹뷰가 이 함수에 닿는 경로는 없다(모듈 주석의 표).
+fn dev_app_data_root(
+    app_data_dir: &Path,
+    source: &str,
+    override_dir: Option<std::ffi::OsString>,
+) -> PathBuf {
+    if let Some(raw) = override_dir {
+        // **빈 값은 안 준 것으로 친다.** `MURMUR_DEV_DATA_DIR=` 로 지운 흔적이 남았을 때
+        // 뿌리가 `""` 가 되어 상대 경로로 떨어지는 것을 막는다.
+        if !raw.is_empty() {
+            return PathBuf::from(raw);
+        }
+    }
+    app_data_dir.join(dev_partition_name(source))
+}
+
 /// `<appDataDir>/daemon/daemon-v<N>.{sock,pid,token}` 세 경로.
 ///
 /// **조립 규칙이 `@murmur/shared/daemonEndpoint::daemonEndpointPaths` 와 같아야 한다** —
@@ -751,13 +959,17 @@ fn open_connection(
 /// `app_data_dir()` 는 macOS 에서 `$HOME/Library/Application Support/<identifier>` 다
 /// (`dirs::data_dir()` + `tauri.conf.json` 의 `identifier`). 이 디렉터리는 앱이 처음
 /// 쓰는 것이므로 여기서 만든다 — 없으면 daemon 이 소켓을 열 자리가 없다.
+///
+/// **개발 빌드에서는 그 밑의 워크트리 구획이 뿌리가 된다**(`app_data_root`). `identifier`
+/// 는 안 건드린다 — dev/prod 앱을 나란히 띄우는 것은 별개 가치이고, 그것까지 이 변경에
+/// 얹으면 릴리즈 설치의 데이터 자리가 함께 움직인다.
 pub fn resolve_endpoint_paths(app: &tauri::AppHandle) -> Result<EndpointPaths, String> {
     use tauri::Manager;
     let app_data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("앱 데이터 디렉터리를 찾지 못했다: {e}"))?;
-    let paths = endpoint_paths(&app_data_dir);
+    let paths = endpoint_paths(&app_data_root(&app_data_dir));
     // **길이를 여기서 잰다.** 넘으면 daemon 쪽에서 `EINVAL` 로 나는데 그 이름에는
     // "길이"라는 말이 없다(위 `SOCKET_PATH_MAX` 주석의 실측 참조).
     check_socket_path_length(&paths.socket)?;
@@ -1070,6 +1282,226 @@ mod tests {
             paths.log,
             PathBuf::from("/tmp/appdata/daemon/daemon-v1.log")
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // 개발 구획 회귀선 — 워크트리마다 앱 데이터 뿌리가 갈린다
+    //
+    // 여기서 재는 것은 **경로 계산**이다. 그 밑의 daemon 이 그 뿌리를 실제로 쓰는지는
+    // `packages/daemon` 의 회귀선(`appDataDirFromSocket` 되짚기)과 아래 실물 daemon
+    // 회귀선이 잰다.
+    // -----------------------------------------------------------------------
+
+    /// 실측 기준의 앱 데이터 디렉터리. 문자열을 그대로 쓰는 이유는 이 파일의 다른
+    /// 길이 회귀선(`상한_안의_경로는_통과한다`)과 같은 기준을 쓰기 위해서다.
+    const REAL_APP_DATA_DIR: &str = "/Users/jaebin/Library/Application Support/app.murmur.desktop";
+
+    /// **회귀선 ① — 워크트리가 다르면 경로가 다르다.**
+    ///
+    /// 이 변경 전에는 두 워크트리가 `app_data_dir()` 하나를 공유했고, 실측(2026-09-06)에서
+    /// 한 워크트리의 앱이 다른 워크트리의 daemon 에 그대로 붙었다.
+    #[test]
+    fn 개발_빌드에서_워크트리가_다르면_뿌리가_다르다() {
+        let root = Path::new(REAL_APP_DATA_DIR);
+
+        // ── 두 워크트리의 빌드를 **같은 프로덕션 함수**로 흉내 낸다 ────────────────
+        // `dev_partition_source()` 가 컴파일 타임 상수라 한 프로세스 안에서 두 워크트리를
+        // 실제로 만들 수는 없다. 그래서 그 상수가 들어가는 자리를 파라미터로 열어 두고
+        // (`dev_app_data_root` 주석의 "왜 파라미터로 뺐나"), 두 소스 루트를 각각 넣는다.
+        //
+        // **경로 조립 전체를 밟는 것이 요점이다.** `dev_partition_name` 만 두 번 부르면
+        // 구획을 붙이는 자리를 통째로 지워도 이 회귀선은 초록이다 — 되돌려 RED 절차에서
+        // 실제로 그렇게 통과했다(2026-09-06).
+        let 알파 = dev_app_data_root(root, "/Users/x/wt/alpha/packages/desktop/src-tauri", None);
+        let 베타 = dev_app_data_root(root, "/Users/x/wt/beta/packages/desktop/src-tauri", None);
+
+        assert_ne!(
+            알파, 베타,
+            "다른 워크트리의 빌드가 같은 뿌리를 얻었다 — 소켓·장부·로그가 그대로 공유된다"
+        );
+        assert_ne!(endpoint_paths(&알파).socket, endpoint_paths(&베타).socket);
+
+        // 그리고 **둘 다 `app_data_dir` 밖으로 안 나간다** — 구획은 그 밑 한 단계다.
+        for r in [&알파, &베타] {
+            assert_eq!(r.parent(), Some(root));
+        }
+    }
+
+    /// **회귀선 ② — 같은 워크트리면 같은 경로다. ①의 대조군이다.**
+    ///
+    /// 이것이 없으면 ①은 "매번 랜덤한 이름을 준다"로도 통과한다. 그리고 매번 랜덤이면
+    /// 앱을 다시 띄울 때마다 새 구획이 생겨 **자기가 앞서 띄운 daemon 에도 못 붙는다** —
+    /// 장부의 고아 재발견(`#431` 2-c)이 영영 성립하지 않는다.
+    #[test]
+    fn 같은_워크트리면_같은_뿌리다_대조군() {
+        let base = Path::new(REAL_APP_DATA_DIR);
+
+        // 같은 빌드가 두 번 물으면 같은 답이다.
+        assert_eq!(
+            app_data_root(base),
+            app_data_root(base),
+            "같은 빌드가 두 번 물었는데 다른 뿌리를 얻었다"
+        );
+
+        // ── 하위 디렉터리에서 띄워도 같아야 한다 ────────────────────────────────
+        //
+        // **cwd 를 실제로 바꿔 재지 않는다.** `set_current_dir` 은 프로세스 전역이라
+        // 이 바이너리의 다른 테스트(실물 daemon 을 띄운다)와 병렬로 돌면 서로를 밟고,
+        // 그 실패는 재현이 안 되는 형태로 나온다.
+        //
+        // 대신 **해시 입력이 이 크레이트의 소스 루트임을 직접 못박는다.**
+        // `dev_partition_source` 가 `env!("CARGO_MANIFEST_DIR")` 인 한 프로세스의 cwd 는
+        // 이 값에 닿을 수 없다 — 컴파일 타임에 바이너리 안으로 들어간 문자열이기 때문이다.
+        //
+        // **`cargo test` 는 cwd 가 곧 이 소스 루트라서 "cwd 와 다르다"로는 못 가른다**
+        // (구현 중 실측 — 그렇게 쓴 단언이 곧바로 빨개졌다). 그래서 "무엇이 아닌가"가
+        // 아니라 **"무엇인가"**를 잰다: 이 값이 소스 루트를 가리키는 한, 어느 하위
+        // 디렉터리에서 앱을 띄워도 같은 구획이 나온다.
+        let src = dev_partition_source();
+        assert!(
+            src.ends_with("packages/desktop/src-tauri"),
+            "해시 입력이 이 크레이트의 소스 루트가 아니다 — cwd 나 다른 런타임 값으로 \
+             바뀌었나: {src}"
+        );
+        assert!(
+            Path::new(src).is_absolute(),
+            "해시 입력이 상대 경로다 — 부르는 자리에 따라 달라진다: {src}"
+        );
+
+        // 같은 입력은 언제나 같은 이름이다(랜덤이 아니다). 랜덤이면 앱을 다시 띄울 때마다
+        // 새 구획이 생겨 **자기가 앞서 띄운 daemon 에도 못 붙는다.**
+        let src = "/Users/x/wt/alpha/packages/desktop/src-tauri";
+        assert_eq!(dev_partition_name(src), dev_partition_name(src));
+    }
+
+    /// **회귀선 ③ — 릴리즈 빌드의 경로는 안 바뀐다.**
+    ///
+    /// 이 PR 이 사용자 환경을 안 건드렸음을 고정한다. 뿌리를 옮기면 이미 설치된 앱의
+    /// 장부·설정이 옛 자리에 남아 보이지 않게 된다.
+    ///
+    /// **`cfg!(debug_assertions)` 로 단언을 가른다** — `cargo test` 는 debug 로 도니
+    /// 여기서 릴리즈 갈래를 실행할 수는 없다. 대신 `app_data_root` 가 릴리즈에서
+    /// 돌려주는 값이 무엇인지를 **컴파일 타임 갈래 그대로** 잰다: debug 에서는 구획이
+    /// 붙고, 릴리즈에서는 안 붙는다. 두 단언 중 하나는 언제나 실행된다.
+    #[test]
+    fn 릴리즈_빌드의_뿌리는_안_바뀐다() {
+        let base = Path::new(REAL_APP_DATA_DIR);
+        let got = app_data_root(base);
+        if cfg!(debug_assertions) {
+            assert_ne!(got, base, "개발 빌드인데 구획이 안 붙었다");
+            assert_eq!(
+                got.parent(),
+                Some(base),
+                "구획은 앱 데이터 디렉터리 **바로 밑** 한 단계여야 한다 — \
+                 더 깊어지면 104바이트 예산이 그만큼 준다"
+            );
+            let name = got.file_name().unwrap().to_string_lossy().into_owned();
+            assert!(
+                name.starts_with(DEV_DIR_PREFIX),
+                "구획 이름이 `{DEV_DIR_PREFIX}` 로 시작해야 사람이 지워도 되는 것을 안다: {name}"
+            );
+        } else {
+            assert_eq!(
+                got, base,
+                "릴리즈 빌드가 뿌리를 옮겼다 — 기존 설치의 장부·설정을 잃는다"
+            );
+        }
+    }
+
+    /// **회귀선 ④ — 구획을 넣고도 소켓 길이가 상한 안이다.**
+    ///
+    /// `DEV_HASH_HEX_LEN` 을 늘리는 사람이 예산을 밟으면 여기서 빨개진다. 그 실패는
+    /// 실물에서 `EINVAL` 로 나고 그 문자열에는 "길이"라는 말이 없다.
+    #[test]
+    fn 구획을_넣어도_소켓이_상한_안이다() {
+        let root = Path::new(REAL_APP_DATA_DIR).join(dev_partition_name(
+            "/Users/x/wt/alpha/packages/desktop/src-tauri",
+        ));
+        let socket = endpoint_paths(&root).socket;
+        let bytes = socket.as_os_str().as_encoded_bytes().len();
+        assert_eq!(bytes, 95, "실측 값이 바뀌었다: {}", socket.display());
+        check_socket_path_length(&socket).expect("구획을 넣었더니 상한을 넘었다");
+        // 릴리즈 82바이트에서 **13바이트**를 갉는다(`dev-` 4 + 해시 8 + `/` 1).
+        assert_eq!(bytes - 82, 13);
+    }
+
+    /// **회귀선 ⑤ — 장부·로그가 소켓과 **함께** 갈린다.**
+    ///
+    /// 소켓만 갈리고 장부가 공유되면 갈리기 전보다 나쁘다: 두 daemon 이 각자 뜨는데
+    /// 나중에 뜬 쪽이 장부를 통째로 덮어써(`writeRunnerLedger`) 앞선 쪽의 러너를
+    /// 영영 못 찾는 고아로 만든다.
+    ///
+    /// 여기서 재는 것은 **뿌리 밑에 함께 있는가**다. 장부·러너 로그의 실제 경로 계산은
+    /// daemon 쪽(`runnerLedgerPath`·`runnerLogPath`)에 있고 그것은 소켓에서 되짚은
+    /// `appDataDir` 를 쓴다 — 즉 뿌리가 갈리면 자동으로 함께 갈린다. 그 "자동"이
+    /// 성립하려면 **소켓이 뿌리 밑 정확히 두 단계**여야 하고, 그것을 못박는다.
+    #[test]
+    fn 장부와_로그가_소켓과_함께_갈린다() {
+        let root = Path::new(REAL_APP_DATA_DIR).join(dev_partition_name(
+            "/Users/x/wt/alpha/packages/desktop/src-tauri",
+        ));
+        let paths = endpoint_paths(&root);
+
+        // daemon 의 되짚기(`run.ts::appDataDirFromSocket`)와 **같은 규칙**으로 되짚는다.
+        // 이 단언이 깨지면 daemon 은 앱이 의도한 것과 다른 자리에 장부·러너 로그를 놓는다.
+        let back = paths.socket.parent().and_then(|p| p.parent());
+        assert_eq!(
+            back,
+            Some(root.as_path()),
+            "소켓에서 두 단계 위를 되짚었더니 뿌리가 안 나왔다 — \
+             daemon 이 장부를 엉뚱한 자리에 놓는다"
+        );
+
+        // 뿌리를 공유하는 것 전부가 그 밑에 있다.
+        for p in [&paths.socket, &paths.pid, &paths.token, &paths.log] {
+            assert!(p.starts_with(&root), "{} 가 구획 밖에 있다", p.display());
+        }
+        // 앱 클라이언트 로그도 같은 자리다(`#456` 의 오독이 이 파일에서 났다).
+        assert_eq!(paths.dir, root.join("daemon"));
+    }
+
+    /// **환경변수 탈출구** — 개발 빌드에서 주면 그것이 뿌리가 된다.
+    ///
+    /// 실제 환경변수를 설정하지 않는다. 프로세스 전역 상태라 병렬 테스트가 서로를 밟고,
+    /// 그 실패는 재현이 안 되는 형태로 나온다.
+    #[test]
+    fn 환경변수가_있으면_그것이_뿌리다() {
+        let base = Path::new(REAL_APP_DATA_DIR);
+        let got = dev_app_data_root(
+            base,
+            dev_partition_source(),
+            Some("/tmp/mmr-elsewhere".into()),
+        );
+        assert_eq!(got, PathBuf::from("/tmp/mmr-elsewhere"));
+    }
+
+    /// 빈 값은 **안 준 것**이다. `MURMUR_DEV_DATA_DIR=` 로 지운 흔적이 남았을 때
+    /// 뿌리가 `""` 가 되어 상대 경로로 떨어지는 것을 막는다.
+    #[test]
+    fn 빈_환경변수는_안_준_것으로_친다() {
+        let base = Path::new(REAL_APP_DATA_DIR);
+        assert_eq!(
+            dev_app_data_root(base, dev_partition_source(), Some("".into())),
+            dev_app_data_root(base, dev_partition_source(), None),
+        );
+    }
+
+    /// **릴리즈 바이너리는 환경변수를 아예 안 읽는다.**
+    ///
+    /// `app_data_root` 가 `cfg!(debug_assertions)` 에서 곧바로 돌아가므로 릴리즈에서는
+    /// `dev_app_data_root` 에 닿는 경로가 없다. 그 성질을 릴리즈 빌드에서 직접 잰다 —
+    /// debug 에서는 재려 해도 잴 것이 없으므로 갈래를 나눈다.
+    #[test]
+    fn 릴리즈에서는_환경변수가_안_듣는다() {
+        if cfg!(debug_assertions) {
+            return; // 개발 빌드다 — `릴리즈_빌드의_뿌리는_안_바뀐다` 가 그쪽을 잰다.
+        }
+        let base = Path::new(REAL_APP_DATA_DIR);
+        // 릴리즈 갈래에서는 환경변수를 실제로 심어도 값이 안 바뀐다.
+        std::env::set_var(DEV_DATA_DIR_ENV, "/tmp/mmr-should-be-ignored");
+        let got = app_data_root(base);
+        std::env::remove_var(DEV_DATA_DIR_ENV);
+        assert_eq!(got, base, "릴리즈가 환경변수로 데이터 위치를 옮겼다");
     }
 
     // -----------------------------------------------------------------------

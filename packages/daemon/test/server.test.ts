@@ -16,6 +16,8 @@ import { DAEMON_PROTOCOL_VERSION, daemonEndpointPaths } from '@murmur/shared/dae
 import { NdjsonDecoder, encodeLine } from '@murmur/shared/daemonProtocol';
 
 import { startDaemon, EXIT_OCCUPIED, appDataDirFromSocket } from '../src/run.js';
+import { runnerLedgerPath } from '../src/runnerLedger.js';
+import { runnerLogPath } from '../src/runnerLog.js';
 import type { RunnerHost } from '../src/runners.js';
 
 const 임시들: string[] = [];
@@ -190,6 +192,171 @@ describe('daemon 서버 기동 (#431 2단계-b)', () => {
   it('소켓 경로에서 앱 데이터 디렉터리를 되짚는다', () => {
     const paths = daemonEndpointPaths('/somewhere/appdata');
     expect(appDataDirFromSocket(paths.socketPath)).toBe('/somewhere/appdata');
+  });
+
+  /**
+   * **개발 구획을 얹어도 되짚기가 그대로 성립한다** — 앱 쪽 변경이 daemon 쪽 규칙을
+   * 고치지 않아도 되는 근거다.
+   *
+   * 앱은 개발 빌드에서 `<app_data_dir>/dev-<해시>` 를 뿌리로 준다
+   * (`daemon_client.rs::app_data_root`). daemon 은 그 사실을 모르고 **소켓에서 두 단계
+   * 위**만 되짚는다 — 상대 규칙이라 절대 위치가 어디로 가든 같은 값이 나온다.
+   *
+   * 이 단언이 깨지면 daemon 이 장부와 러너 로그를 앱이 보지 않는 자리에 놓는다.
+   */
+  it('개발 구획을 얹어도 되짚기가 뿌리를 그대로 준다', () => {
+    const 뿌리 = '/somewhere/appdata/dev-1a2b3c4d';
+    const paths = daemonEndpointPaths(뿌리);
+    expect(appDataDirFromSocket(paths.socketPath)).toBe(뿌리);
+  });
+});
+
+/**
+ * **개발 구획 회귀선** — 뿌리가 갈리면 daemon 도, 장부도, 로그도 함께 갈린다.
+ *
+ * 앱 쪽 경로 계산은 `daemon_client.rs` 의 회귀선이 잰다. 여기서 재는 것은 **그 계산의
+ * 결과가 실물에서 실제로 격리를 만드는가**다 — 서로 다른 뿌리로 daemon 을 각각 띄웠을 때
+ * 둘 다 뜨고(하나가 물러나지 않고), 서로의 장부를 안 건드리는가.
+ */
+describe('개발 구획 — 뿌리가 다르면 서로 안 보인다 (#431 2-e)', () => {
+  /**
+   * **`app_data_dir()` 하나를 흉내 낸다.** 이 디렉터리가 곧 번들 식별자가 정하는
+   * 그 자리이고, 구획 전에는 모든 워크트리가 이것 하나를 공유했다.
+   *
+   * ## 호출마다 새 디렉터리를 주면 안 된다
+   *
+   * 그러면 격리를 만드는 것이 구획이 아니라 `mkdtemp` 가 되어, 구획을 없애도 회귀선이
+   * 초록이다 — **되돌려 RED 절차에서 실제로 그렇게 통과했다**(2026-09-06). 두 뿌리는
+   * 반드시 **같은 이 디렉터리 밑**에서 갈려야 하고, 그래야 둘의 차이가 구획 하나뿐이다.
+   *
+   * ## 왜 `os.tmpdir()` 가 아니라 `/tmp` 인가 — 104바이트
+   *
+   * macOS 의 `os.tmpdir()` 는 74바이트짜리
+   * `/var/folders/…/T/murmur-daemon-test-XXXXXX` 를 준다. 거기에 구획 13바이트
+   * (`dev-XXXXXXXX/`)를 얹으면 소켓이 104바이트를 넘어 `listen EINVAL` 로 죽는다 —
+   * **구현 중 실제로 밟았다**(107바이트). 앱 쪽에는 `check_socket_path_length` 가 있어
+   * 그 실패가 사유로 나오지만(`daemon_client.rs`), daemon 쪽은 커널 에러를 그대로 받는다.
+   *
+   * 즉 여기서 짧게 만드는 것은 **테스트 사정이지 운영 경로의 성질이 아니다.** 운영
+   * 경로가 예산 안이라는 것은 `daemon_client.rs::구획을_넣어도_소켓이_상한_안이다` 가
+   * 실측 값(95바이트)으로 못박는다.
+   */
+  async function 공유앱데이터디렉터리(): Promise<string> {
+    const base = await mkdtemp('/tmp/mmr-p-');
+    임시들.push(base);
+    return base;
+  }
+
+  /**
+   * **이것이 핵심이다.** 구획 전에는 두 워크트리가 뿌리 하나를 공유했고, 그래서 둘째
+   * daemon 은 언제나 `occupied` 로 물러났다(바로 위 "둘째는 물러난다" 회귀선이 그
+   * 성질을 잰다). 뿌리가 갈리면 **둘 다 떠야 한다.**
+   *
+   * 대조군이 바로 위에 있다: **같은** 뿌리면 둘째가 물러난다. 그 둘이 함께 있어야
+   * "그냥 언제나 뜬다"와 구분된다.
+   *
+   * 되돌려 RED: 아래 두 줄에서 구획(`dev-…`)을 빼면 두 daemon 이 같은 뿌리를 보고
+   * 둘째가 `occupied` 로 물러난다 — 그것이 이 변경 **이전의 상태**다.
+   */
+  it('서로 다른 뿌리의 daemon 둘이 함께 뜬다', async () => {
+    const 앱데이터 = await 공유앱데이터디렉터리();
+    const 알파 = join(앱데이터, 'dev-aaaaaaaa');
+    const 베타 = join(앱데이터, 'dev-bbbbbbbb');
+
+    const 첫째 = await daemon띄우기(알파);
+    const 둘째 = await daemon띄우기(베타);
+
+    expect(첫째.kind, '알파 daemon 이 안 떴다').toBe('running');
+    expect(둘째.kind, '베타 daemon 이 물러났다 — 뿌리가 안 갈렸다').toBe('running');
+    if (첫째.kind !== 'running' || 둘째.kind !== 'running') return;
+
+    // 서로 다른 소켓을 쥐고 있다 — 앱이 어느 쪽에 붙는지가 타이밍에 안 달린다.
+    expect(첫째.daemon.paths.socketPath).not.toBe(둘째.daemon.paths.socketPath);
+
+    // 둘 다 실제로 서비스 중이다. 파일만 있고 아무도 안 듣는 상태와 구분한다.
+    for (const d of [첫째.daemon, 둘째.daemon]) {
+      const client = await 테스트클라이언트.접속(d.paths.socketPath);
+      client.닫는다();
+    }
+  });
+
+  /**
+   * **대조군 — 같은 뿌리면 둘째가 물러난다.** 위 회귀선과 **같은 `app_data_dir` 밑**에서
+   * 재는 것이 요점이다: 둘의 차이가 구획 하나뿐이어야 위 회귀선이 "구획 덕분에 둘 다
+   * 떴다"를 말한다. 이것이 없으면 위 회귀선은 "daemon 은 언제나 뜬다"로도 통과한다.
+   *
+   * 그리고 이것이 **구획 전의 상태**다 — 모든 워크트리가 이 자리 하나를 공유했다.
+   */
+  it('같은 뿌리면 둘째는 여전히 물러난다 (대조군)', async () => {
+    const 앱데이터 = await 공유앱데이터디렉터리();
+    const 뿌리 = join(앱데이터, 'dev-dddddddd');
+
+    const 첫째 = await daemon띄우기(뿌리);
+    const 둘째 = await daemon띄우기(뿌리);
+
+    expect(첫째.kind).toBe('running');
+    expect(둘째.kind, '같은 뿌리인데 둘 다 떴다 — 엔드포인트 획득이 깨졌다').toBe('occupied');
+  });
+
+  /**
+   * **소켓만 갈리고 장부가 공유되면 갈리기 전보다 나쁘다.**
+   *
+   * 두 daemon 이 각자 뜨는데 장부가 하나면, 나중에 쓴 쪽이 앞선 쪽의 표를 통째로
+   * 덮어쓴다(`writeRunnerLedger` 는 전체 교체다) — 그 러너들은 다음 daemon 이 채택할
+   * 근거를 잃고 영영 고아가 된다.
+   *
+   * 장부·러너 로그의 경로는 daemon 이 **소켓에서 되짚은 뿌리** 밑에 조립하므로
+   * (`run.ts` 의 `ledgerSink`·`logSink`), 뿌리가 갈리면 자동으로 함께 갈린다.
+   * 그 "자동"을 여기서 못박는다.
+   */
+  it('장부와 러너 로그가 뿌리와 함께 갈린다', () => {
+    const 알파 = '/somewhere/appdata/dev-aaaaaaaa';
+    const 베타 = '/somewhere/appdata/dev-bbbbbbbb';
+
+    expect(runnerLedgerPath(알파)).not.toBe(runnerLedgerPath(베타));
+    expect(runnerLogPath(알파, 'agent-1')).not.toBe(runnerLogPath(베타, 'agent-1'));
+
+    // 그리고 각자 자기 뿌리 **안**에 있다 — 밖으로 새면 갈린 의미가 없다.
+    expect(runnerLedgerPath(알파).startsWith(`${알파}/`)).toBe(true);
+    expect(runnerLogPath(알파, 'agent-1').startsWith(`${알파}/`)).toBe(true);
+
+    // 소켓과 **같은 디렉터리**다 — 사람이 한자리에서 대조한다(`run.ts::logSink` 주석).
+    const paths = daemonEndpointPaths(알파);
+    expect(runnerLedgerPath(알파).startsWith(`${paths.dir}/`)).toBe(true);
+    expect(runnerLogPath(알파, 'agent-1').startsWith(`${paths.dir}/`)).toBe(true);
+  });
+
+  /**
+   * **장부가 실물에서도 구획 안에 떨어진다.** 위 회귀선은 경로 계산을 잰다 — 이것은
+   * 러너를 실제로 띄워 파일이 그 자리에 생기는지를 잰다.
+   */
+  it('실물 daemon 이 장부를 자기 구획 안에 쓴다', async () => {
+    const 뿌리 = join(await 공유앱데이터디렉터리(), 'dev-cccccccc');
+    const outcome = await daemon띄우기(뿌리);
+    if (outcome.kind !== 'running') throw new Error('daemon 이 안 떴다');
+
+    const client = await 테스트클라이언트.접속(outcome.daemon.paths.socketPath);
+    client.보낸다({
+      type: 'hello',
+      version: DAEMON_PROTOCOL_VERSION,
+      token: await 토큰읽기(뿌리),
+      role: 'app',
+    });
+    expect((await client.받는다()).ok).toBe(true);
+
+    client.보낸다({ id: 's1', type: 'spawnRunner', payload: { agentId: 'a1', env: {} } });
+    const reply = await client.찾는다((m) => m.id === 's1');
+    expect(reply.ok, `spawnRunner 가 실패했다: ${JSON.stringify(reply)}`).toBe(true);
+
+    // 장부 쓰기는 응답을 기다리지 않는다(`run.ts::ledgerSink` — "기다리지 않는다").
+    // 그래서 파일이 나타날 때까지 짧게 기다린다.
+    const 장부 = runnerLedgerPath(뿌리);
+    for (let i = 0; i < 100 && !(await stat(장부).catch(() => null)); i += 1) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(await stat(장부).catch(() => null), `장부가 구획 안에 안 생겼다: ${장부}`).not.toBeNull();
+
+    client.닫는다();
   });
 });
 
