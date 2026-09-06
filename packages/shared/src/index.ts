@@ -1645,3 +1645,119 @@ export function extractPreviewUrls(body: string, max = 3): string[] {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// 러너 종료 사유 — **앱과 러너가 같은 문자열을 봐야 한다** (#473)
+// ---------------------------------------------------------------------------
+
+/**
+ * `sysexits.h` 의 `EX_CONFIG`. "설정이 틀렸다 — 재시도로 낫지 않는다"는 뜻이다.
+ *
+ * **여기 있는 이유**: 러너가 이 코드로 물러나고(`packages/agent/src/exit.ts`), 앱이 이
+ * 코드를 보고 화면 문구를 정한다(`runnerLauncher.ts::handleExit`). 두 곳이 각자 `78` 을
+ * 리터럴로 적으면 한쪽만 바뀌는 날이 온다.
+ */
+export const EX_CONFIG = 78;
+
+/**
+ * 자격증명 거부(#250)로 러너가 물러날 때 stderr 의 **마지막 줄**.
+ *
+ * ## 왜 이 문자열이 계약인가
+ *
+ * `EX_CONFIG`(78)를 **두 사유가 공유한다** — 자격증명 거부(#250)와 하네스 실행 파일
+ * 부재(#340). 종료 코드로는 그 둘이 구분되지 않고, 사람이 할 일은 정반대다:
+ *
+ * | 마지막 줄 | 사람이 할 일 |
+ * |---|---|
+ * | 이 줄 | PAT 를 재발급한다 |
+ * | `EXECUTABLE_NOT_FOUND_LINE` | 하네스를 설치하고 `PATH` 를 고친다 |
+ *
+ * **그래서 이 줄이 유일한 구분자다.** 문구를 바꾸면 사람의 판정과 앱의 판정이 함께
+ * 깨진다 — 앱이 이 상수를 그대로 비교하므로(`runnerExitReason`), 러너와 앱이 서로 다른
+ * 사본을 들면 앱은 영원히 "구분자를 못 봤다"로 떨어지고 `#473` 이 되돌아온다.
+ *
+ * ## 왜 `@murmur/agent` 가 아니라 여기인가
+ *
+ * `@murmur/agent` 는 데스크탑의 **devDependency** 다 — 테스트는 그것을 import 할 수
+ * 있지만 웹뷰 번들은 못 한다(그리고 그 패키지는 `node-pty` 같은 네이티브 의존을 끌고
+ * 온다). 이 파일은 Node 의존이 없는 순수 타입·상수이고 웹뷰가 이미 import 한다.
+ * `packages/agent/src/exit.ts` 는 이제 여기서 다시 낸다 — **값은 하나뿐이다.**
+ */
+export const CREDENTIAL_REJECTED_LINE =
+  'murmur-agent: credential rejected (revoked or rotated); exiting';
+
+/**
+ * 하네스 실행 파일 부재(#340)로 러너가 물러날 때 stderr 의 **마지막 줄**.
+ * 위 `CREDENTIAL_REJECTED_LINE` 과 같은 규율이다 — 그 주석의 표를 보라.
+ */
+export const EXECUTABLE_NOT_FOUND_LINE =
+  'murmur-agent: harness executable not found; exiting';
+
+/** 78 로 죽은 러너가 로그로 밝힌 사유. 못 가리면 `null` 이다 — 지어내지 않는다. */
+export type RunnerExitReason = 'credential-rejected' | 'executable-not-found';
+
+/**
+ * 78 로 죽은 러너의 로그 꼬리를 보고 **어느 사유인가**를 가른다(#473).
+ *
+ * ## 왜 함수인가 — 판정이 한 곳에만 있어야 한다
+ *
+ * 이 판정은 `includes` 두 번이다. 그래도 함수로 두는 이유는 `acceptRunnerExit` 이
+ * 함수인 것과 같다: 호출부마다 다시 쓰이면 한 곳에서 두 상수가 뒤바뀌어도 아무도
+ * 모른다. 그리고 그 사고의 결과가 정확히 `#473` 이다 — 하네스가 없는 사람에게 PAT 를
+ * 재발급하라고 말하는 것.
+ *
+ * ## 왜 마지막 줄이 아니라 꼬리 전체를 훑는가
+ *
+ * 러너의 stdout·stderr 가 **같은 파일**로 간다(`#434` 의 리다이렉션). 그래서 러너가
+ * 물러나는 순간 다른 경로가 한 줄 더 찍으면 구분자가 마지막 줄이 아니게 된다.
+ * `at(-1)` 로 재면 그 한 줄에 판정이 뒤집히고, 그 실패는 조용하다 — 앱은 다시 사유를
+ * 지어내는 상태로 돌아간다. 꼬리 안에 **있는가**를 보면 그 창이 없다.
+ *
+ * 둘 다 있으면 **`null` 이다.** 실제로는 러너가 하나만 찍으므로(`runnerExitPlan` 이
+ * 두 갈래 중 하나를 고른다) 이 경우는 회전 직후 옛 세대의 꼬리가 섞였다는 뜻이고,
+ * 그때 하나를 골라 단정하면 그것이 바로 이 이슈가 막으려는 짓이다.
+ */
+export function runnerExitReason(
+  tailLines: readonly string[] | undefined,
+): RunnerExitReason | null {
+  if (!tailLines || tailLines.length === 0) return null;
+  const credential = tailLines.some((line) => line.includes(CREDENTIAL_REJECTED_LINE));
+  const notFound = tailLines.some((line) => line.includes(EXECUTABLE_NOT_FOUND_LINE));
+  // 둘 다 보이면 모른다고 한다 — 지어내지 않는다(#368).
+  if (credential && notFound) return null;
+  if (notFound) return 'executable-not-found';
+  if (credential) return 'credential-rejected';
+  return null;
+}
+
+/**
+ * 이 하네스가 `PATH` 에서 찾는 **실행 파일 이름**(#473).
+ *
+ * ## 왜 필요한가 — "하네스를 설치해라"는 사람이 실행할 수 없는 말이다
+ *
+ * 무엇을 설치할지는 에이전트마다 다르다. 화면이 이름을 말해야 사람이 그것을 설치한다.
+ *
+ * ## 왜 `turn.ts` 의 `PRESETS` 를 안 쓰는가
+ *
+ * 그 표가 진실의 원천인 것은 맞다 — 러너가 실제로 실행하는 명령이 거기서 나온다.
+ * 그런데 그것은 `@murmur/agent` 안에 있고 웹뷰는 그 패키지를 못 들인다(위
+ * `CREDENTIAL_REJECTED_LINE` 주석의 같은 사정). 그래서 **이름만** 여기 둔다.
+ *
+ * 두 곳이 갈릴 위험은 있다. 그 위험을 회귀선으로 막는다 —
+ * `packages/agent/test/harnessBinary.test.ts` 가 `PRESETS` 의 실제 명령과 이 표를
+ * 대조한다. 갈리면 빨개진다.
+ *
+ * 모르는 하네스면 `null` — **지어내지 않는다**(`#368`). 그때 문구는 이름 없이 나간다.
+ */
+export function harnessBinaryName(harness: string | undefined | null): string | null {
+  switch (harness) {
+    case 'claude-code':
+      return 'claude';
+    case 'codex':
+      return 'codex';
+    // `gemini` 는 `RUNNABLE_HARNESSES` 에 없어 러너가 실행하지 않는다(`PRESETS.gemini
+    // === 'unsupported'`). 실행하지 않는 것의 실행 파일 이름을 말할 이유가 없다.
+    default:
+      return null;
+  }
+}

@@ -523,6 +523,46 @@ export interface RunnerExitEvent {
   /** `null` 이면 시그널로 죽은 것이다(`RunnerProcess.onExit` 의 계약과 같다). */
   code: number | null;
   signal: string | null;
+  /**
+   * 러너 로그의 **마지막 몇 줄, 그대로**(`#473`). 실을 것이 없으면 빈 배열.
+   *
+   * ## 왜 종료 코드만으로는 부족한가
+   *
+   * 종료 코드 78(`EX_CONFIG`)을 **두 사유가 공유한다**:
+   *
+   * | 사유 | 사람이 할 일 |
+   * |---|---|
+   * | 자격증명 거부(`#250`) | PAT 를 재발급한다 |
+   * | 하네스 실행 파일 부재(`#340`) | `claude`/`codex` 를 설치하고 `PATH` 를 고친다 |
+   *
+   * 러너는 그 둘을 로그의 마지막 줄로 가른다 — `packages/agent/src/exit.ts` 의
+   * `CREDENTIAL_REJECTED_LINE` 과 `EXECUTABLE_NOT_FOUND_LINE` 이고, 그 주석이
+   * *"종료 코드(78)가 같으므로 그 줄이 유일한 구분자다"* 라고 적어 뒀다.
+   *
+   * 그 줄이 앱에 닿는 경로가 없었다. 러너의 stderr 가 버려졌고(`#434`), 앱은 78 을 전부
+   * "PAT 가 폐기됐다"로 단정했다 — 하네스가 없는 사람이 재발급을 눌러도 안 고쳐진다
+   * (`#473`). 이 필드가 그 구분자를 앱까지 나른다.
+   *
+   * ## 이것이 "daemon 이 해석한다"가 아닌 이유 (`#431` 의 경계)
+   *
+   * daemon 은 이 줄들을 **읽지 않는다.** 위 두 상수는 daemon 패키지에 등장하지 않는다.
+   * 파일의 꼬리를 그대로 옮길 뿐이고, 그것은 `listRunners` 가 `alive` 를 그대로 주는
+   * 것과 같은 성질의 관측이다 — *daemon 은 판단하지 않는다, 관측을 노출한다.*
+   *
+   * 판정은 받는 쪽(앱의 `runnerLauncher.ts::handleExit`)이 한다. 그 자리가 옳은 이유:
+   * 판정의 결과가 **화면 문구**이고, 그것은 daemon 이 아는 것이 아니다. daemon 이
+   * `reason: 'harness-missing'` 같은 값을 지어 보내면 러너의 문구가 바뀔 때 daemon 을
+   * 고쳐야 하는데, daemon 과 러너의 배포 주기가 같다는 보장이 없다 — 그 순간 앱은
+   * daemon 이 지어낸 낡은 판정을 믿는다.
+   *
+   * ## 왜 줄 수에 상한이 있는가
+   *
+   * 이 이벤트도 NDJSON 한 줄이고 `MAX_LINE_BYTES`(1MiB)를 넘으면 `encodeLine` 이
+   * 던진다 — 즉 **꼬리가 너무 크면 exit 통지 자체가 사라진다.** 로그를 보이려다 종료
+   * 통지를 잃는 것이 가장 나쁘므로, daemon 쪽에서 줄 수(`RUNNER_EXIT_TAIL_LINES`)와
+   * 읽는 바이트(`RUNNER_TAIL_READ_BYTES`) 양쪽에 상한을 둔다.
+   */
+  tailLines: string[];
 }
 
 /**

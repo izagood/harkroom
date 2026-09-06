@@ -123,8 +123,35 @@ describe('daemonSpawner 는 daemon 에게 러너를 띄우라고 시킨다 (#431
     expect(onExit).not.toHaveBeenCalled();
 
     // 같은 세대면 그대로 통과한다 — 거르기만 하고 막지는 않는다.
-    tauri.emit({ agentId: 'agent-1', incarnationId: 'inc-NEW', code: 78, signal: null });
-    expect(onExit).toHaveBeenCalledWith(78);
+    // **꼬리도 함께 넘어간다**(`#473`): 78 은 두 사유가 공유하므로 코드만 넘기면 받는
+    // 쪽이 사유를 가릴 수 없다. 여기서 해석하지 않고 그대로 흘리는 것이 요점이다.
+    tauri.emit({
+      agentId: 'agent-1',
+      incarnationId: 'inc-NEW',
+      code: 78,
+      signal: null,
+      tailLines: ['murmur-agent: harness executable not found; exiting'],
+    });
+    expect(onExit).toHaveBeenCalledWith(78, [
+      'murmur-agent: harness executable not found; exiting',
+    ]);
+  });
+
+  /**
+   * 옛 daemon 은 `tailLines` 를 안 보낸다 — 그때도 exit 통지 자체는 통과해야 한다.
+   * 꼬리가 없다고 통지를 버리면 죽은 러너가 화면에 영원히 `running` 으로 남는다.
+   */
+  it('꼬리가 없는 exit 도 그대로 통과한다 — undefined 를 빈 배열로 바꾸지 않는다', async () => {
+    tauri.spawnResult = { agentId: 'agent-1', pid: 1, incarnationId: 'inc-1' };
+    const onExit = vi.fn();
+    await daemonSpawner.spawn({
+      agentId: 'agent-1', env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin' }, onExit,
+    });
+
+    tauri.emit({ agentId: 'agent-1', incarnationId: 'inc-1', code: 78, signal: null });
+
+    // "안 왔다"를 "빈 배열이 왔다"로 바꾸면 판정하는 쪽이 그 둘을 못 가린다.
+    expect(onExit).toHaveBeenCalledWith(78, undefined);
   });
 
   it('다른 에이전트의 exit 도 부르지 않는다', async () => {

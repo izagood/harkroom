@@ -60,8 +60,27 @@
  * 것은 프로세스와 PAT 뿐이고, 세션 상태의 writer 는 러너 하나여야 한다.
  */
 import { Command } from '@tauri-apps/plugin-shell';
+import { EX_CONFIG, harnessBinaryName, runnerExitReason } from '@murmur/shared';
 
-export type RunnerStatus = 'stopped' | 'running' | 'external' | 'needs_reissue' | 'failed';
+/**
+ * 러너의 지금 상태.
+ *
+ * **`needs_harness` 가 `#473` 이 더한 것이다.** 그 전에는 78 로 죽은 러너가 전부
+ * `needs_reissue` 였고, 화면은 "PAT 를 재발급하라"고만 말했다 — 하네스가 없어서 죽은
+ * 러너에게도. 사람이 할 일이 정반대인 두 상태를 하나로 뭉치면 화면이 사람을 틀린
+ * 방향으로 보낸다(`docs/design.md` §4 의 거짓 신호).
+ *
+ * `failed`(기동 자체가 안 됐다)와도 따로 둔다: `needs_harness` 는 러너가 **떴고**
+ * 하네스를 찾다 물러난 상태다. 사람이 할 일이 다르다 — 앞은 앱·daemon 을 봐야 하고
+ * 뒤는 하네스를 설치하면 된다.
+ */
+export type RunnerStatus =
+  | 'stopped'
+  | 'running'
+  | 'external'
+  | 'needs_reissue'
+  | 'needs_harness'
+  | 'failed';
 
 export interface RunnerState {
   agentId: string;
@@ -115,8 +134,14 @@ export interface SpawnRequest {
    */
   agentId: string;
   env: Record<string, string>;
-  /** 자식이 끝나면 정확히 한 번 불린다. `code` 가 `null` 이면 시그널로 죽은 것이다. */
-  onExit(code: number | null): void;
+  /**
+   * 자식이 끝나면 정확히 한 번 불린다. `code` 가 `null` 이면 시그널로 죽은 것이다.
+   *
+   * `tailLines` 는 러너 로그의 마지막 몇 줄이다(`#473`). **선택적인 것이 의도다** —
+   * 옛 daemon 은 안 보내고, 로그를 못 열었거나 못 읽었으면 daemon 이 빈 배열을 보낸다.
+   * 그 셋 전부에서 "구분자를 못 봤다"가 답이고, 그때 앱은 사유를 지어내지 않는다.
+   */
+  onExit(code: number | null, tailLines?: string[]): void;
 }
 
 export interface RunnerSpawner {
@@ -148,6 +173,17 @@ export interface LaunchableAgent {
   ownerAccountId: string | null;
   disabled: boolean;
   stopRequestedAt: string | null;
+  /**
+   * 이 에이전트가 쓰는 하네스(`#473`). **문구에 실행 파일 이름을 넣기 위해 있다.**
+   *
+   * "하네스를 설치해라"만으로는 사람이 무엇을 설치할지 모른다 — 에이전트마다 다르다
+   * (`claude-code` → `claude`, `codex` → `codex`). 그 이름은 이 값에서만 나온다.
+   *
+   * **선택적이다.** `AgentView` 는 언제나 이 값을 갖지만(`AgentConfig` 를 상속한다),
+   * 이 인터페이스는 그보다 좁게 만들어져 있고 호출부가 부분 객체를 넘길 수 있다.
+   * 없으면 문구가 실행 파일 이름 없이 나간다 — 지어내는 것보다 낫다(`#368`).
+   */
+  harness?: string;
 }
 
 export interface StartAllInput {
@@ -400,7 +436,7 @@ export class RunnerLauncher {
       child = await this.spawner.spawn({
         agentId: agent.id,
         env: { MURMUR_PAT: token, MURMUR_URL: this.api.baseUrl, PATH: path },
-        onExit: (code) => this.handleExit(agent.id, runToken, code),
+        onExit: (code, tailLines) => this.handleExit(agent, runToken, code, tailLines),
       });
     } catch (err) {
       if (this.runTokens.get(agent.id) === runToken) this.runTokens.delete(agent.id);
@@ -418,21 +454,58 @@ export class RunnerLauncher {
   }
 
   /**
-   * 자식이 끝났다. **78 은 다른 종료와 다른 이야기다** — 자격증명이 폐기·회전됐다는 뜻이고
-   * 사람이 할 일은 "PAT 재발급"이다. 그 외의 코드는 코드를 그대로 보여 준다: 앱이 원인을
-   * 지어내면 사람은 로그를 볼 이유를 잃는다.
+   * 자식이 끝났다. **78 은 다른 종료와 다른 이야기다 — 그리고 그 안이 또 갈린다**(`#473`).
+   *
+   * ## 78 이 하나가 아니었다
+   *
+   * 이 함수의 앞 판본은 이랬다:
+   *
+   * ```ts
+   * if (code === 78) { … message: 'PAT 가 폐기·회전됐다 — 재발급하면 다시 뜬다' }
+   * ```
+   *
+   * **단정이다. 그리고 절반은 틀렸다.** 78(`EX_CONFIG`)을 두 사유가 공유한다:
+   *
+   * | 사유 | 사람이 할 일 |
+   * |---|---|
+   * | 자격증명 거부(`#250`) | PAT 를 재발급한다 |
+   * | 하네스 실행 파일 부재(`#340`) | `claude`/`codex` 를 설치하고 `PATH` 를 고친다 |
+   *
+   * `claude`·`codex` 는 사용자가 직접 설치한다(2026-09-06 결정) — 즉 **"하네스가 없다"는
+   * 예외가 아니라 새 사용자의 기본 상태다.** `.dmg` 를 받아 처음 여는 사람은 멘션 →
+   * 무응답 → "PAT 가 폐기됐다" → 재발급 → 여전히 무응답을 겪었다. 틀린 안내가 사람을
+   * 틀린 방향으로 보낸 것이다.
+   *
+   * ## 무엇으로 가르는가 — 로그의 그 줄
+   *
+   * 러너는 두 사유를 로그의 마지막 줄로 가른다(`@murmur/shared` 의
+   * `CREDENTIAL_REJECTED_LINE`·`EXECUTABLE_NOT_FOUND_LINE`). 그 줄이 여기 닿지 못한
+   * 이유는 러너의 stderr 가 `/dev/null` 로 버려졌기 때문이고(`#434`), 그것을 파일로
+   * 돌려(`daemon/src/runnerLog.ts`) daemon 이 exit 통지에 꼬리를 실으면서 닿게 됐다.
+   *
+   * **판정은 여기서 한다. daemon 이 아니라.** daemon 은 꼬리를 그대로 옮길 뿐이고
+   * (`RunnerExitEvent.tailLines` 주석), 판정의 결과는 화면 문구다 — 그것을 아는 곳은
+   * 여기뿐이다.
+   *
+   * ## 셋째 갈래 — **둘 다 아닌 78**
+   *
+   * 꼬리가 비었거나(로그를 못 열었다·옛 daemon 이다) 두 줄 다 없으면 **모른다고 한다.**
+   * 지어내지 않는다(`#368`): 코드와 로그 꼬리를 그대로 보여 주는 쪽이 낫다. 앞 판본이
+   * 이 자리에서 "PAT" 를 말했고 그것이 이 이슈다.
    */
-  private handleExit(agentId: string, runToken: symbol, code: number | null): void {
+  private handleExit(
+    agent: LaunchableAgent,
+    runToken: symbol,
+    code: number | null,
+    tailLines?: string[],
+  ): void {
+    const agentId = agent.id;
     // PAT 재발급으로 대체된 옛 자식의 늦은 종료 통지는 최신 자식의 사실이 아니다.
     if (this.runTokens.get(agentId) !== runToken) return;
     this.runTokens.delete(agentId);
     this.runners.delete(agentId);
-    if (code === 78) {
-      this.setState(agentId, {
-        status: 'needs_reissue',
-        exitCode: code,
-        message: 'PAT 가 폐기·회전됐다 — 재발급하면 다시 뜬다',
-      });
+    if (code === EX_CONFIG) {
+      this.setState(agentId, { exitCode: code, ...exitStateFor78(agent, tailLines) });
       return;
     }
     // 사유를 따로 적지 않는다 — 코드가 곧 사유이고, `runnerStatusLabel` 이 그것을 문장으로
@@ -530,6 +603,71 @@ export class RunnerLauncher {
 }
 
 const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/**
+ * exit 통지에 실려 온 꼬리에서 사람이 볼 몇 줄을 고른다(`#473`).
+ *
+ * **가공하지 않는다** — 자르지도 요약하지도 않고, 빈 줄만 걸러 마지막 `max` 줄을 잇는다.
+ * 여기서 무엇을 다듬기 시작하면 그것이 곧 앱이 사유를 지어내는 자리가 된다(`#368`).
+ *
+ * `max` 를 두는 이유: 이 문구가 목록 한 줄 옆에도 붙는다(`RunnerStatusLine`). 꼬리
+ * 스무 줄을 통째로 붙이면 그 줄이 화면을 밀어낸다. 전문은 러너 로그 파일에 있다.
+ */
+function tailExcerpt(tailLines: readonly string[] | undefined, max = 3): string | null {
+  if (!tailLines || tailLines.length === 0) return null;
+  const picked = tailLines.map((l) => l.trim()).filter((l) => l.length > 0).slice(-max);
+  return picked.length > 0 ? picked.join(' / ') : null;
+}
+
+/**
+ * 78 로 죽은 러너의 **상태와 문구**를 정한다 — `#473` 의 핵심 판정.
+ *
+ * `handleExit` 에서 떼어낸 이유는 회귀선이 이 판정을 상태 기계 없이 직접 부를 수 있어야
+ * 하기 때문이다. 그리고 이 함수가 순수하다는 사실 자체가 성질이다: 입력은 꼬리와
+ * 하네스 이름뿐이고, 그 둘 말고 판정에 영향을 주는 것이 없다.
+ *
+ * 세 갈래다. **셋째("모른다")가 이 이슈가 만든 것이다.**
+ */
+function exitStateFor78(
+  agent: LaunchableAgent,
+  tailLines: string[] | undefined,
+): { status: RunnerStatus; message: string } {
+  const reason = runnerExitReason(tailLines);
+
+  if (reason === 'executable-not-found') {
+    // **이름을 말한다.** "하네스를 설치해라"로는 사람이 무엇을 설치할지 모른다 —
+    // 에이전트마다 다르다(`claude-code` → `claude`, `codex` → `codex`).
+    const binary = harnessBinaryName(agent.harness);
+    const what = binary ? `\`${binary}\`` : `이 에이전트의 하네스(${agent.harness ?? '알 수 없음'})`;
+    return {
+      status: 'needs_harness',
+      // 러너가 로그에 적은 것(넘긴 PATH 원문 등)이 그대로 뒤에 붙는다 — 앱이 다시
+      // 설명하지 않고 러너가 한 말을 보인다(`#368`).
+      message: `${what} 를 찾을 수 없다 — 설치하고 PATH 에 있는지 확인하라`,
+    };
+  }
+
+  if (reason === 'credential-rejected') {
+    // **대조군이다.** 이 갈래는 앞 판본과 문구가 같다 — 이 이슈가 고친 것은 78 을
+    // 전부 이쪽으로 보내던 것이지, 이쪽 자체가 아니다.
+    return { status: 'needs_reissue', message: 'PAT 가 폐기·회전됐다 — 재발급하면 다시 뜬다' };
+  }
+
+  // ── 둘 다 아닌 78 — **지어내지 않는다** ────────────────────────────────────
+  // 꼬리가 비었거나(daemon 이 로그를 못 열었다·옛 daemon 이라 안 보낸다) 두 구분자가
+  // 다 없는 경우다. 여기서 한쪽을 골라 단정하는 것이 정확히 `#473` 의 결함이다.
+  //
+  // `stopped` 로 두는 이유: `needs_reissue` 는 화면에 "재발급" 버튼을 세우는 상태이고,
+  // 사유를 모르는데 그 버튼을 세우면 사람은 다시 틀린 일을 한다. 코드와 꼬리를 그대로
+  // 보이고 사람이 판단하게 둔다.
+  const excerpt = tailExcerpt(tailLines);
+  return {
+    status: 'stopped',
+    message: excerpt
+      ? `설정 문제로 물러났다(78) — 사유를 가리지 못했다. 러너 로그 마지막 줄: ${excerpt}`
+      : '설정 문제로 물러났다(78) — 사유를 가리지 못했다. 러너 로그를 확인하라',
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Tauri 기본 구현. 위 클래스는 이것을 몰라도 되고, 테스트는 이것을 쓰지 않는다.
@@ -630,6 +768,14 @@ export interface DaemonRunnerExit {
   incarnationId: string;
   code: number | null;
   signal: string | null;
+  /**
+   * 러너 로그의 마지막 몇 줄(`#473`). 옛 daemon 은 안 보낸다 — 그때 `undefined` 다.
+   *
+   * **`undefined` 를 빈 배열로 조용히 바꾸지 않는 것이 이 타입의 요점이다.** 아래
+   * `SpawnRequest.onExit` 이 그 값을 그대로 넘기고, `handleExit` 이 "꼬리가 없다"를
+   * "구분자를 못 봤다"로 다룬다 — 없는 것을 봤다고 하지 않는다.
+   */
+  tailLines?: string[];
 }
 
 /**
@@ -692,7 +838,10 @@ export const daemonSpawner: RunnerSpawner = {
       if (event.incarnationId !== incarnationId) return;
       notified = true;
       void unlistenSafely();
-      req.onExit(event.code);
+      // 꼬리를 **그대로** 넘긴다(`#473`). 여기서 해석하지 않는 이유는 daemon 이 해석하지
+      // 않는 이유와 같다 — 판정은 `handleExit` 한 곳에만 있어야 한다. 옛 daemon 이 안
+      // 보내면 `undefined` 이고, 그것을 빈 배열로 바꾸지 않는다.
+      req.onExit(event.code, event.tailLines);
     });
     const unlistenSafely = async (): Promise<void> => {
       try { await unlisten(); } catch { /* 이미 떼였다 */ }

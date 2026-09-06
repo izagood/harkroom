@@ -7,26 +7,35 @@
  * (러너↔앱 통신 채널은 만들지 않기로 했으므로, 옛 PAT 로 돌던 러너를 물러나게 하는 것은
  * 서버의 401 과 이 종료 코드뿐이다).
  */
+import {
+  CREDENTIAL_REJECTED_LINE,
+  EX_CONFIG,
+  EXECUTABLE_NOT_FOUND_LINE,
+} from '@murmur/shared';
+
 import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound } from './policy.js';
 
-/** `sysexits.h` 의 `EX_CONFIG`. "설정이 틀렸다 — 재시도로 낫지 않는다"는 뜻이다. */
-export const EX_CONFIG = 78;
-
 /**
- * 앱(그리고 사람)이 이 한 줄을 찾는다. 문구를 바꾸면 앱의 로그 판정이 아니라 **사람의
- * 판정**이 깨진다 — 앱은 종료 코드로 판정하므로 여기 의존하지 않는다(의도적이다:
- * stdout 파싱은 언어·로케일에 흔들린다).
+ * ## 이 셋은 이제 `@murmur/shared` 에 산다 — **앱도 읽기 때문이다** (`#473`)
+ *
+ * 초판의 주석은 이렇게 적혀 있었다:
+ *
+ * > 앱은 종료 코드로 판정하므로 여기 의존하지 않는다(의도적이다: stdout 파싱은 언어·
+ * > 로케일에 흔들린다).
+ *
+ * **그 전제가 틀렸다는 것이 `#473` 이다.** 종료 코드 78 을 두 사유가 공유하므로
+ * (자격증명 거부 `#250`, 하네스 부재 `#340`) 코드만으로는 앱이 갈 수 없고, 실제로
+ * 앱은 78 을 전부 "PAT 가 폐기됐다"로 단정해 하네스가 없는 사람에게 재발급을 시켰다.
+ * 아래 `RunnerExitPlan.lines` 주석이 이미 옳게 적어 뒀다 — *"그 줄이 유일한 구분자다."*
+ *
+ * "로케일에 흔들린다"는 걱정은 이 두 줄에는 해당하지 않는다: **영어 리터럴이고 절대
+ * 번역하지 않는다.** 그것이 이 상수들이 다른 안내문과 달리 한국어가 아닌 이유다.
+ *
+ * 그래서 값을 `@murmur/shared` 로 옮기고 여기서 **다시 낸다.** 러너와 앱이 각자 사본을
+ * 들면 한쪽만 바뀌는 날이 오고, 그날 앱은 조용히 "구분자를 못 봤다"로 떨어진다.
+ * `packages/agent/*` 의 기존 import 는 그대로 둔다 — 이 재수출이 그 경로를 유지한다.
  */
-export const CREDENTIAL_REJECTED_LINE =
-  'murmur-agent: credential rejected (revoked or rotated); exiting';
-
-/**
- * 하네스 실행 파일 부재(#340)의 마지막 줄. 위 `CREDENTIAL_REJECTED_LINE` 과 같은 규율이다 —
- * 사람이 로그에서 이 한 줄을 찾는다. 종료 코드는 둘 다 78 이라 로그의 이 줄만이 "PAT 를
- * 재발급해라"와 "PATH 를 고쳐라"를 갈라 준다.
- */
-export const EXECUTABLE_NOT_FOUND_LINE =
-  'murmur-agent: harness executable not found; exiting';
+export { CREDENTIAL_REJECTED_LINE, EX_CONFIG, EXECUTABLE_NOT_FOUND_LINE };
 
 export interface RunnerExitPlan {
   code: typeof EX_CONFIG;
