@@ -188,13 +188,22 @@ describe('#424 답글 요약은 상자가 아니라 텍스트 링크다', () => 
     expect(replyBtn.className).not.toMatch(/(^|\s)border(\s|-)/);
   });
 
-  it('답글 개수는 강조색 텍스트로 남는다', () => {
+  /**
+   * **#488 B2 로 뒤집혔다.** 초판은 이 자리를 `text-accent` 로 못 박았고 그 근거는
+   * "링크임을 알려 주는 단서가 색뿐"이라는 것이었다. 근거는 맞았지만 **해법이
+   * 틀렸다** — 강조색은 나를 막는 말에만 쓰는 색이고(규칙 04), 답장 수는
+   * "현재 상태"이지 "급한 것"이 아니다(문서 B2).
+   *
+   * 그래서 색을 빼되 **링크라는 단서는 남긴다** — 점선 밑줄이 그 일을 한다.
+   * 단서를 통째로 없애면 초판이 걱정한 "그냥 회색 잡음"이 실제로 된다.
+   */
+  it('답글 개수는 강조색 대신 밑줄로 링크임을 말한다', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
 
-    // 링크임을 알려 주는 단서가 색뿐이므로, 색을 잃으면 그냥 회색 잡음이 된다.
     const count = screen.getByText(/2 replies/);
-    expect(count.className).toMatch(/\btext-accent\b/);
+    expect(count.className).not.toMatch(/\btext-accent\b/);
+    expect(count.className).toMatch(/\bunderline\b/);
   });
 
   it('클릭하면 여전히 스레드가 열린다', () => {

@@ -109,7 +109,7 @@ export function InlineReactionButtons({ message }: { message: MessageRow }) {
             aria-label={`React with ${emoji}`}
             aria-pressed={mine}
             className={`rounded px-1 text-[11px] ${
-              mine ? 'bg-accent-surface text-accent' : 'text-fg-subtle hover:bg-surface-sunken'
+              mine ? 'bg-surface-sunken font-medium text-fg' : 'text-fg-subtle hover:bg-surface-sunken'
             }`}
             onClick={() => toggle(emoji, !mine)}
           >
@@ -144,8 +144,14 @@ export function Reactions({ message }: { message: MessageRow }) {
             // 이모지 문자만으로는 스크린리더가 무엇인지 읽을 수 없다 — 누가 눌렀는지 함께 준다.
             aria-label={`${r.emoji} — ${r.accountIds.map(nameOf).join(', ')}`}
             aria-pressed={mine}
-            className={`flex items-center gap-1 rounded-full border px-1.5 text-[11px] ${
-              mine ? 'border-accent bg-accent-surface text-accent' : 'border-border bg-surface text-fg-muted'
+            /*
+              **내가 단 것은 면과 굵기로 구별한다 — 강조색이 아니다**(#488 B2).
+              문서: 리액션은 "현재 상태"이지 "급한 것"이 아니다. 테두리는 양쪽이 같다 —
+              선까지 갈라 두면 칩이 셋만 붙어도 줄이 시끄러워지고, 눌린 상태는
+              `aria-pressed` 가 이미 정확히 말한다.
+            */
+            className={`flex items-center gap-1 rounded-full border border-border px-1.5 text-[11px] ${
+              mine ? 'bg-surface-sunken font-medium text-fg' : 'bg-surface text-fg-muted'
             }`}
             onClick={() => toggle(r.emoji, !mine)}
           >
