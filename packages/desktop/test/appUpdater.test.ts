@@ -130,6 +130,27 @@ describe('릴리즈 워크플로(release.yml)', () => {
    * `bundle_update_macos` 가 `.app` 디렉터리를 그대로 tar 한다). `.dmg` 가 `#500` 에서
    * 겪은 것과 같은 순서 문제라, 공증 뒤에 다시 만들어야 한다.
    */
+  /**
+   * ## 빌드 단계에도 서명 키가 필요하다 (실측 2026-09-06, `v0.1.1` 실패)
+   *
+   * `createUpdaterArtifacts: true` 라 `tauri build` 가 `.app.tar.gz` 를 만들고 **그 자리에서
+   * 바로 서명한다.** 공개키만 있고 개인키가 없으면 번들링을 마친 직후
+   * `A public key has been found, but no private key` 로 죽는다.
+   *
+   * 아래 tarball 재서명 단계에도 같은 키가 있지만 **그것으로는 늦다** — 빌드가 먼저
+   * 실패한다. 첫 자동 릴리즈가 정확히 그렇게 죽었다.
+   *
+   * **되돌려 RED**: 빌드 단계의 `env:` 블록을 지우면 빨개진다.
+   */
+  it('빌드 단계에 업데이터 서명 키를 넘긴다', () => {
+    // `- name:` 부터 **다음 `- name:`** 까지를 그 단계로 본다 — `run:` 까지만 자르면
+    // 그 앞에 오는 `env:` 블록이 잘려 나가 정작 재려던 것을 못 본다.
+    const build = workflow.match(/- name: 앱을 빌드한다[\s\S]*?(?=\n\s+(?:#|- name:))/)?.[0] ?? '';
+    expect(build, '빌드 단계를 찾지 못했다').not.toBe('');
+    expect(build, '빌드가 .app.tar.gz 를 서명하려는데 키가 없으면 그 자리에서 죽는다')
+      .toContain('TAURI_SIGNING_PRIVATE_KEY');
+  });
+
   it('공증 뒤에 updater 산출물을 다시 만든다', () => {
     // **`- name:` 으로 짚는다.** 그냥 문구를 찾으면 이 파일 위쪽 설명 주석이 먼저
     // 걸려서, 실제 단계가 어디 있든 통과해 버린다(이 회귀선을 처음 쓸 때 실제로
