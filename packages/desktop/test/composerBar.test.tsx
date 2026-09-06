@@ -89,11 +89,28 @@ describe('아이덴티티 컴포넌트가 유일한 경로다 (#146)', () => {
     expect(screen.getByText('에이전트')).toBeTruthy();
   });
 
-  it('메시지 작성자 옆에서도 같은 표시가 쓰인다', () => {
-    render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'u2')} />);
-    // #161 2단계는 거터·이름줄 두 곳이었다. **Task 12** 로 거터가 사람과 같은 아바타가
-    // 되면서 "에이전트"는 이름줄 배지에만 남는다 — 거터는 핸들로 자신을 말한다.
-    expect(screen.getAllByText('에이전트')).toHaveLength(1);
+  /**
+   * 초판은 "메시지 작성자 옆에서도 같은 표시가 쓰인다" 였고, `에이전트` 배지가 메시지
+   * 화면에 나오는 것으로 그것을 쟀다.
+   *
+   * **identity 문서로 뒤집혔다** — 메시지 대화 화면에는 그 배지가 없다. 그런데 #146 이
+   * 지키는 것은 *"같은 배지가 두 곳에 하드코딩돼 있었다"* 이고, **배지가 사라진 자리에
+   * 누군가 손으로 🤖·@소유자를 그려 넣는 것**이 바로 이 회귀선이 막아야 하는 것이다.
+   * 그래서 재는 방향을 뒤집는다: 메시지 화면에 `Identity` 를 거치지 않은 종류·소유자
+   * 표기가 **하나도 없다**.
+   *
+   * 컴포저 쪽(위 회귀선)이 배지가 실제로 살아 있음을 계속 재므로, 이 단언이 "배지
+   * 컴포넌트를 통째로 지워서" 만족되는 것이 아니다 — 두 회귀선이 함께 그것을 가른다.
+   */
+  it('메시지 화면에 손으로 그린 종류·소유자 표기가 없다', () => {
+    const { container } = render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'u2')} />);
+    // 거터는 `Identity` 를 통과한 아바타 하나뿐이다 — 핸들로 자신을 말한다.
+    expect(screen.getByTestId('author-gutter').textContent).toContain('bot');
+    // 배지 마크업의 조각들이 어디에도 없다. 문자열로 보는 이유는 컴포넌트가 아니라
+    // **손으로 적어 넣은 리터럴**을 잡는 것이 이 회귀선의 일이기 때문이다.
+    expect(container.textContent).not.toContain('🤖');
+    expect(container.textContent).not.toContain('에이전트');
+    expect(container.textContent).not.toContain('@');
   });
 
   it('사람과 에이전트가 다르게 표시된다', () => {
@@ -110,7 +127,14 @@ describe('아이덴티티 컴포넌트가 유일한 경로다 (#146)', () => {
   // 아니다"로 읽힌다 — 초판이 null 을 반환했다.
   it('계정 디렉터리에 없으면 빈 칸이 아니라 명시적으로 표시한다', () => {
     render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'ghost')} />);
-    // #161 2단계: 거터와 작성자 옆 두 곳에서 "알 수 없는 계정"이 표시된다.
-    expect(screen.getAllByText('알 수 없는 계정')).toHaveLength(2);
+    // 초판은 **2** 였다 — "#161 2단계: 거터와 작성자 옆 두 곳". 이름 옆 호출이 사라져
+    // 하나가 됐다. 그러나 이 회귀선이 지키는 것은 개수가 아니라 *"없다와 모른다는
+    // 다르다"* 다(초판 주석: 빈 칸으로 그리면 "에이전트가 아니다"로 읽힌다). 그 사실은
+    // 그대로 유효하므로 **남은 한 자리에서 계속** 잰다.
+    expect(screen.getAllByText('알 수 없는 계정')).toHaveLength(1);
+    // 그 하나가 거터의 것이다. 개수만 세면 거터가 조용히 비어도 초록이다.
+    expect(screen.getByTestId('author-gutter').textContent).toContain('알 수 없는 계정');
+    // 이름줄은 핸들을 모를 때 '…' 로 자리를 지킨다 — 빈 칸이 아니다.
+    expect(screen.getByTestId('author-name').textContent).toBe('…');
   });
 });

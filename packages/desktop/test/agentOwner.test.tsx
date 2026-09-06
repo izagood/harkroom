@@ -1,19 +1,25 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, within, fireEvent } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Identity } from '../src/components/Identity';
 import { MessageItem } from '../src/components/MessageItem';
+import { Directory } from '../src/components/Directory';
+import { Composer } from '../src/components/Composer';
 import { acc, msg } from './helpers/fakeApi';
 
 // #181: 소유자 표시는 `Identity` 한 곳에서만 나온다. `#146` 이 아이덴티티 표시를 공유
-// 컴포넌트로 모았는데 `MessageItem` 이 따로 그리면 같은 사실이 세 곳에 살게 된다.
+// 컴포넌트로 모았는데 호출자가 따로 그리면 같은 사실이 세 곳에 살게 된다.
 const fakeController = () => {
   const c = {
     toggleReaction: vi.fn(async () => undefined),
     openThread: vi.fn(async () => undefined),
     editMessage: vi.fn(async () => undefined),
     deleteMessage: vi.fn(async () => undefined),
+    // 디렉터리·컴포저가 마운트되며 부른다 — 없으면 렌더 도중 터진다.
+    refreshAccounts: vi.fn(async () => undefined),
+    typing: vi.fn(),
+    upload: vi.fn(),
   };
   setController(c as unknown as Controller);
   return c;
@@ -28,29 +34,62 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('#181 에이전트 소유자 표시', () => {
-  it('소유자 표시는 Identity 배지 안에서만 나온다', () => {
+  /**
+   * 초판은 이 사실을 **메시지 화면**에서 쟀다: "거터에는 없고 이름줄 배지 안에 있다".
+   * 근거는 #277 이었다 — 소유자 표시가 틀린 게 아니라 **자리**가 틀렸으니 32px 거터에서
+   * 빼고 이름 옆으로 옮긴다.
+   *
+   * **identity 문서로 뒤집혔다.** 메시지 대화 화면에서는 이름 옆 배지도 뺐다 — 아바타가
+   * 사람과 같아진 뒤(#465)로 🤖 는 중복이고, 종류·소유자는 프로필(#475)이 답한다.
+   *
+   * 그러나 **#181 이 지키는 사실 자체는 무효가 되지 않았다.** "이 에이전트는 누구 것인가"
+   * 는 여전히 화면이 답해야 하는 물음이고, 답하는 자리가 대화 화면에서 **디렉터리와
+   * 자동완성**으로 옮겨 갔을 뿐이다("누가 있나 / 누구 것인가"·"누구의 에이전트를 부르는가").
+   * 그래서 같은 사실을 그 두 자리에서 계속 잰다 — 무효가 된 것은 **측정 장소**뿐이다.
+   *
+   * 두 화면을 한 파일에서 함께 보는 이유는 초판과 같다: 한 자리만 재면 다른 자리를
+   * 없애도 초록이고, #181 은 "소유자를 볼 수 있다"이지 "디렉터리에서 볼 수 있다"가 아니다.
+   */
+  it('소유자 표시는 디렉터리와 자동완성 후보의 Identity 배지에서 나온다', async () => {
     useAppStore.getState().set({
       accounts: { u1: acc('u1', 'owner'), a1: agent('a1', 'bot', 'u1') },
     });
     fakeController();
-    render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
 
-    // 거터(variant=avatar)와 작성자 옆(variant=badge), 두 곳 다 Identity 를 통과한다.
-    // **Task 12** 이후 거터는 사람과 같은 아바타라 "에이전트"라고 말하지 않는다 —
-    // 그래서 이름줄 배지 하나만 남는다. 거터는 핸들로 찾는다.
-    const badges = screen.getAllByText('에이전트').map((el) => el.parentElement!);
-    expect(badges).toHaveLength(1);
-    expect(screen.getByTestId('author-gutter').textContent).toContain('bot');
-    // #277: 소유자 표시는 이름줄(badge)에서만 나온다. 거터(avatar)에는 안 나온다 —
-    // 32px 고정폭 열이라 배지가 들어가면 넘쳤다. **표시가 틀렸던 게 아니라 자리가 틀렸다.**
-    const shown = screen.getAllByText('@owner');
-    expect(shown).toHaveLength(1);
-    // 그 하나가 이름줄 배지 안에 있다. 개수만 세면 "거터에만 남은" 경우도 초록이다.
-    const nameLineBadge = badges[0]!; // 이제 배지는 이름줄 하나뿐이다(Task 12).
-    expect(nameLineBadge.contains(shown[0]!)).toBe(true);
-    // 거터에는 없다 — 32px 열을 넘치기 때문이다(#277). 이제 거터에는 배지가 아니라
-    // 아바타가 서므로 배지 배열이 아니라 **거터 자체**를 본다.
+    render(<Directory open onClose={vi.fn()} />);
+    const agents = await screen.findByRole('region', { name: 'Agents' });
+    // 소유자는 에이전트 행의 배지 **안**에서 나온다. 행만 보면 디렉터리가 소유자를
+    // 자기 손으로 그려도 초록이다 — 배지를 짚어 `Identity` 를 통과했음을 못 박는다.
+    const badge = within(agents).getByText('에이전트').parentElement!;
+    expect(badge.textContent).toContain('@owner');
+    cleanup();
+
+    // 자동완성 후보에서도 같은 사실이 나온다 — 부르기 직전이 "누구의 에이전트인가"가
+    // 가장 필요한 순간이다.
+    render(<Composer onSend={vi.fn()} scopeKey="c1" />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '@bot' } });
+    expect(screen.getByRole('option', { name: /bot/ }).textContent).toContain('@owner');
+  });
+
+  /**
+   * **대화 화면에서는 소유자를 말하지 않는다**(identity 문서). 위 회귀선의 거울상이고,
+   * 둘이 함께 있어야 "옮겼다"가 "지웠다"나 "안 옮겼다"와 구분된다.
+   *
+   * #277 의 거터 단언이 여기 남는다 — 소유자가 32px 열로 되돌아가는 것을 막는 선은
+   * 배지를 이름줄에서 뺐다고 사라지지 않는다(`gutterOverflowRegression.test.tsx` 도 잰다).
+   */
+  it('메시지 행에서는 종류도 소유자도 말하지 않는다', () => {
+    useAppStore.getState().set({
+      accounts: { u1: acc('u1', 'owner'), a1: agent('a1', 'bot', 'u1') },
+    });
+    fakeController();
+    const { container } = render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
+
+    expect(screen.queryByText('에이전트')).toBeNull();
+    expect(container.textContent).not.toContain('@owner');
     expect(screen.getByTestId('author-gutter').textContent).not.toContain('@owner');
+    // 거터는 **누구인지는 말한다** — 없앤 것이 아니라 종류·소유자만 뺀 것이다.
+    expect(screen.getByTestId('author-gutter').textContent).toContain('bot');
   });
 
   it('Identity 를 단독으로 그려도 같은 표시가 나온다', () => {
