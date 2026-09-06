@@ -152,3 +152,42 @@ describe('고치는 문과 닫기', () => {
     expect(screen.getByTestId('strip-projection-stalled')).toBeTruthy();
   });
 });
+
+/**
+ * **띠와 사이드바가 같은 말을 두 번 하지 않는다**(#489 의 결함, 실측 2026-09-07).
+ *
+ * `projectionBanner` 가 `strip` 을 내는데 `LeasePanel` 이 그 값을 안 봐서, 화면 위쪽
+ * 띠와 사이드바가 **글자까지 같은 문구**를 함께 세우고 있었다. 사용자가 화면에서
+ * 먼저 발견했다 — 판정 함수를 공유해 놓고 그 결과의 한 필드를 안 쓴 것이라 어느
+ * 테스트도 잡지 못했다.
+ *
+ * 지우는 것은 답이 아니다. 두 자리가 말해야 하는 것이 **다른 사실**이다:
+ * 띠는 "고장났다"를, 이 줄은 "이 목록을 믿을 수 없다"를 말한다.
+ */
+describe('띠와 사이드바가 다른 말을 한다', () => {
+  it('띠로 서는 사정은 사이드바에서 같은 문구를 되풀이하지 않는다', async () => {
+    const { LeasePanel } = await import('../src/components/LeasePanel');
+    useActiveStore.getState().set({
+      projectionStatus: status({ state: 'unconfigured', configured: false }),
+    });
+    render(<LeasePanel />);
+    const line = screen.getByTestId('projection-unconfigured');
+    // 띠가 말하는 문구가 여기 또 있으면 중복이다.
+    expect(line.textContent).not.toContain('투영이 꺼져 있다');
+    // 대신 **이 목록에 대한 사실**을 말한다. 문구는 사정마다 다르다(#267) — 여기서
+    // 하나로 뭉치면 꺼짐·멈춤·정상+빈 목록을 화면이 구별하지 못한다.
+    expect(line.textContent).toContain('꺼져 있어');
+    expect(line.textContent).toContain('목록');
+  });
+
+  /**
+   * **띠가 안 서는 사정은 여기서만 말한다.** '확인하는 중'은 띠로 세우지 않으므로
+   * (`strip: false`) 이 줄이 유일한 자리다 — 여기서도 뭉개면 그 사정이 화면에서 사라진다.
+   */
+  it("'확인하는 중'은 사이드바가 원래대로 말한다", async () => {
+    const { LeasePanel } = await import('../src/components/LeasePanel');
+    useActiveStore.getState().set({ projectionStatus: null, projectionStatusError: null });
+    render(<LeasePanel />);
+    expect(screen.getByTestId('projection-unknown').textContent).toContain('확인하는 중');
+  });
+});

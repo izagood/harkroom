@@ -56,10 +56,29 @@ export function LeasePanel() {
   return (
     <div>
       <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">Active work</div>
+      {/*
+        **띠가 말하는 것을 여기서 되풀이하지 않는다**(#489 의 결함). `projectionBanner`
+        가 `strip` 을 내는데 이 자리가 그 값을 안 봐서, 위쪽 띠와 사이드바가 **같은
+        문구를 두 번** 말하고 있었다(실측 2026-09-07, 사용자가 화면에서 발견).
+
+        그렇다고 지울 수도 없다 — 두 자리가 말해야 하는 것이 **다른 사실**이기 때문이다:
+
+          띠   → "투영이 고장났다"        (사정 자체 · 고치는 문이 붙는다)
+          여기 → "이 목록을 믿을 수 없다"  (그 고장이 **이 목록에** 뜻하는 것)
+
+        투영이 멈춘 동안 남아 있던 리스는 지금 벌어지는 일이 아닐 수 있고, 그것을 말없이
+        '활성 작업'으로 보여 주면 화면이 오래된 사실을 지금 사실로 주장한다.
+
+        그래서 **문구를 가른다**(`listNote`). 다만 사정끼리도 갈라야 한다 — `#267` 이
+        "꺼짐·멈춤·정상+빈 목록이 서로 다른 문구여야 한다"를 회귀선으로 못 박았고,
+        여기서 한 문구로 뭉치면 화면이 셋을 구별하지 못한다.
+      */}
       {banner && (
         <div data-testid={banner.testid} className="space-y-0.5 px-2 pb-1">
-          <div className={`text-xs ${BANNER_TEXT_TONE[banner.tone]}`}>{banner.text}</div>
-          {banner.detail && (
+          <div className={`text-xs ${BANNER_TEXT_TONE[banner.tone]}`}>
+            {banner.listNote}
+          </div>
+          {!banner.strip && banner.detail && (
             // 에러 원문은 길 수 있다. 잘라서 보여 주되 `title` 로 전문을 남긴다 —
             // 잘린 채로만 두면 무엇이 잘못됐는지 화면에서 알 수 없다.
             <div className="truncate text-xs text-fg-subtle" title={banner.detail}>
