@@ -120,9 +120,12 @@ jobs:
       #   Contents/MacOS/murmur-daemon            ← externalBin (러너를 spawn 한다)
       #   Contents/Resources/node_modules/node-pty ← bundle.resources (러너가 PTY 를 연다)
       #
-      # 마지막 항목이 `Resources/` 인 것은 Tauri 가 `bundle.resources` 를 거기 두기 때문이고,
-      # 런타임에 `ensure_node_pty_alongside_sidecar` 가 그것을 사이드카 옆으로 링크한다
-      # (src-tauri/src/main.rs). 그러니 여기서 볼 자리는 `MacOS/` 가 아니라 `Resources/` 다.
+      # 마지막 항목이 `Resources/` 인 것은 Tauri 가 `bundle.resources` 를 거기 두기 때문이다.
+      # 러너는 자기 위치에서 `../Resources/node_modules/node-pty` 를 계산해 해석한다
+      # (`packages/agent/src/nodePtyLoader.ts`) — **번들에 링크를 만들지 않는다**(`#470`).
+      # 예전에는 `ensure_node_pty_alongside_sidecar()` 가 사이드카 옆으로 링크했는데,
+      # 그 링크가 `staple` 을 거절시켜(`invalid destination for symbolic link in bundle`)
+      # 걷어냈다. 그러니 여기서 볼 자리는 `MacOS/` 가 아니라 `Resources/` 다.
       - name: 번들 산출물을 검증한다
         run: |
           set -euo pipefail
