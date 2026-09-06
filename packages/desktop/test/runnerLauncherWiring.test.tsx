@@ -155,7 +155,7 @@ describe('설정 → 에이전트 상세가 그 상태를 그린다', () => {
   it('실행 중이면 화면에 "실행 중"이 보인다 — 스토어에 있는 값이 화면에 닿는다', async () => {
     await boot([agentView('rusalka')]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     expect(await screen.findByText('실행 중')).toBeTruthy();
   });
@@ -163,7 +163,7 @@ describe('설정 → 에이전트 상세가 그 상태를 그린다', () => {
   it('자식이 78 + 자격증명 거부 구분자로 죽으면 "재발급 필요"가 화면에 보인다', async () => {
     const { spawner } = await boot([agentView('rusalka')]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
     await screen.findByText('실행 중');
 
     // **꼬리를 함께 넘긴다**(`#473`). 78 만으로는 어느 사유인지 모른다 — 자격증명 거부와
@@ -180,7 +180,7 @@ describe('설정 → 에이전트 상세가 그 상태를 그린다', () => {
   it('자식이 78 + 하네스 부재 구분자로 죽으면 설치를 말한다', async () => {
     const { spawner } = await boot([agentView('rusalka')]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
     await screen.findByText('실행 중');
 
     spawner.spawns[0]!.onExit(78, [EXECUTABLE_NOT_FOUND_LINE]);
@@ -192,7 +192,7 @@ describe('설정 → 에이전트 상세가 그 상태를 그린다', () => {
   it('다른 코드로 죽으면 그 코드가 화면에 보인다', async () => {
     const { spawner } = await boot([agentView('rusalka')]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
     await screen.findByText('실행 중');
 
     spawner.spawns[0]!.onExit(137);
@@ -203,7 +203,7 @@ describe('설정 → 에이전트 상세가 그 상태를 그린다', () => {
   it('"PAT 재발급" 버튼이 새 발급 → 옛 폐기 → 재실행을 실제로 일으킨다', async () => {
     const { api, spawner } = await boot([agentView('rusalka')]);
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
     await screen.findByText('실행 중');
     const mint = api.mintPat as ReturnType<typeof vi.fn>;
     const revoke = api.revokePat as ReturnType<typeof vi.fn>;
@@ -236,7 +236,7 @@ describe('설정 → 에이전트 상세가 그 상태를 그린다', () => {
     await c.start();
 
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
     fireEvent.click(await screen.findByRole('button', { name: 'PAT 재발급' }));
 
     await waitFor(() => expect(spawner.spawns).toHaveLength(1));
@@ -260,7 +260,7 @@ describe('설정 → 에이전트 상세가 그 상태를 그린다', () => {
     await waitFor(() => expect(useAppStore.getState().runnerStates.rusalka).toBeTruthy());
 
     render(<AgentsSettings />);
-    fireEvent.click(await screen.findByText('rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     expect(await screen.findByText('러너 (이 앱)')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'PAT 재발급' })).toBeTruthy();
