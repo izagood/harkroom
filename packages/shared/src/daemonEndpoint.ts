@@ -158,6 +158,21 @@ export interface DaemonEndpointPaths {
  *
  * 호출자가 각자 이어 붙이면 하나를 옛 이름으로 두는 실수가 조용히 지나간다 — 그러면
  * 소켓은 v2 인데 pid 는 v1 을 보는 상태가 되어 세대 격리가 무너진다.
+ *
+ * ## `appDataDir` 는 **뿌리이지 번들 데이터 디렉터리가 아니다**
+ *
+ * 이 함수는 받은 값 밑에 `daemon/` 을 붙일 뿐, 그 값이 무엇인지 묻지 않는다. 개발 빌드의
+ * 앱은 여기에 **워크트리 구획을 이미 얹은 값**을 준다:
+ *
+ * ```text
+ * 릴리즈: <app_data_dir>/daemon/daemon-v1.sock
+ * 개발  : <app_data_dir>/dev-<해시>/daemon/daemon-v1.sock
+ * ```
+ *
+ * 구획을 얹는 자리는 앱 쪽 하나뿐이다(`daemon_client.rs::app_data_root`) — daemon 은
+ * 자기가 받은 소켓 경로에서 뿌리를 되짚으므로(`run.ts::appDataDirFromSocket`, 두 단계 위)
+ * **이 조립 규칙도 되짚기 규칙도 안 고쳐야 성립한다.** 둘 다 상대 규칙이고, 바뀐 것은
+ * 그 위의 절대 위치뿐이다. 여기에 구획 지식을 얹으면 규칙이 두 곳으로 갈린다.
  */
 export function daemonEndpointPaths(
   appDataDir: string,
