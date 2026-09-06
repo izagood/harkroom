@@ -61,10 +61,26 @@ export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root
 // 스레드 메타데이터: 루트 메시지에만 계산. LATERAL join으로 같은 쿼리에서 계산한다 (N+1 방지).
 // 진행 설명(kind='progress')도 답글 수에 포함한다. 사용자가 "답글 3개"를 보고 열었을 때
 // 진행 설명도 포함되어 있으면 그 수를 이해할 수 있다. 제외하면 개수가 안 맞는 것처럼 보여서 혼란스러운데.
+//
+// **참여자 순서는 '마지막으로 말한 순'이다**(identity 문서 · Task 13). 원래는
+// `ARRAY_AGG(DISTINCT author_id)` 였는데, `DISTINCT` 가 uuid 로 정렬해 버려 **순서가 사실상
+// 무작위이고 영원히 움직이지 않았다.** 화면이 앞에서 셋만 남기면 방금 말한 사람이 잘리고
+// 같은 얼굴이 계속 서 있는다 — 문서가 "명단은 움직이지 않는다"고 지적한 그 상태다.
+//
+// 그래서 저자별 최근 발화 시각으로 정렬한 뒤 배열로 만든다. 화면은 **앞에서부터** 셋을
+// 취하므로 방금 말한 사람이 항상 보인다.
 const THREAD_STATS = `LEFT JOIN LATERAL (
   SELECT COUNT(*)::int as reply_count,
     MAX(created_at)::text as last_reply_at,
-    COALESCE(ARRAY_AGG(DISTINCT author_id) FILTER (WHERE author_id IS NOT NULL), '{}'::uuid[]) as participant_ids
+    COALESCE((
+      SELECT ARRAY_AGG(author_id ORDER BY last_at DESC)
+      FROM (
+        SELECT author_id, MAX(created_at) as last_at
+        FROM message
+        WHERE thread_root_id = m.id AND deleted_at IS NULL AND author_id IS NOT NULL
+        GROUP BY author_id
+      ) recent
+    ), '{}'::uuid[]) as participant_ids
   FROM message WHERE thread_root_id = m.id AND deleted_at IS NULL
 ) thread_stats ON true`;
 

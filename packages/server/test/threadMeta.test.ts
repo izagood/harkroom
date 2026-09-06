@@ -85,6 +85,30 @@ describe('thread metadata', () => {
     expect(found!.participantIds).toContain(botAccountId);
   });
 
+  /**
+   * **참여자 순서는 '마지막으로 말한 순'이다**(identity 문서 · Task 13).
+   *
+   * 원래는 `ARRAY_AGG(DISTINCT author_id)` 라 uuid 순으로 정렬됐고 — 즉 순서가 사실상
+   * 무작위이면서 **영원히 움직이지 않았다.** 화면이 앞에서 셋만 남기면 방금 말한 사람이
+   * 잘리고 같은 얼굴이 계속 서 있는다.
+   */
+  it('참여자는 마지막으로 말한 순이다 — 명단이 실제로 움직인다', async () => {
+    const root = await post(adminToken, 'root');
+    const rootId = root.json().id as string;
+
+    await post(adminToken, 'admin 먼저', { threadRootId: rootId });
+    await post(botPat, 'bot 이 나중', { threadRootId: rootId });
+
+    let found = (await listMessages(pool, channelId, { limit: 10 })).find((m) => m.id === rootId)!;
+    // 방금 말한 bot 이 앞이다.
+    expect(found.participantIds).toEqual([botAccountId, adminAccountId]);
+
+    // admin 이 다시 말하면 **순서가 뒤집힌다** — 이것이 "명단이 움직인다"의 실물이다.
+    await post(adminToken, 'admin 이 다시', { threadRootId: rootId });
+    found = (await listMessages(pool, channelId, { limit: 10 })).find((m) => m.id === rootId)!;
+    expect(found.participantIds).toEqual([adminAccountId, botAccountId]);
+  });
+
   it('reply rows have null metadata', async () => {
     const root = await post(adminToken, 'root');
     const rootId = root.json().id as string;
