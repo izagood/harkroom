@@ -57,9 +57,15 @@ describe('ConnectionSettings', () => {
 });
 
 describe('UpdatesSettings', () => {
-  // updater 가 아직 없다. 없는 것을 없다고 적는 편이, 메뉴를 뒤지다 포기하는 것보다 낫다.
-  it('states plainly that automatic updates do not exist yet', () => {
+  // 이 자리는 "updater 가 아직 없다 — 없는 것을 없다고 적는다"를 재고 있었다.
+  // **그 전제가 바뀌었다**: 앱에 `tauri-plugin-updater` 가 들어갔고 화면이 확인·설치를
+  // 한다. 그러므로 "Not available" 은 이제 참이 아니라 거짓말이다.
+  //
+  // 확인 실패·최신·새 버전 발견·설치 실패 같은 흐름 전체의 회귀선은
+  // `src/components/settings/UpdatesSettings.test.tsx` 에 있다(업데이트 표면을
+  // 갈아끼워야 해서 그쪽에 모았다). 여기서는 이 섹션이 여전히 뜬다는 것만 잰다.
+  it('states plainly that automatic updates are available', () => {
     render(<UpdatesSettings />);
-    expect(screen.getByText('Not available')).toBeTruthy();
+    expect(screen.getByText('Available')).toBeTruthy();
   });
 });
