@@ -75,6 +75,31 @@ interface MenuProps {
   className?: string;
 }
 
+/**
+ * 항목의 포커스 표시(#488 B3). 정본 문서가 "시스템 파란 포커스 링"을 결함으로 적었고
+ * 고친 모습을 **"포커스 링은 앱의 강조색이다"** 라고 못박았다.
+ *
+ * **`outline-none` 만 두면 안 된다.** 그것은 파란 링을 지우는 동시에 키보드로 옮기는
+ * 사람에게서 "지금 어디에 있는지"를 통째로 빼앗는다 — 메뉴는 ↑/↓ 로 도는 자리라
+ * 그 표시가 없으면 쓸 수 없는 것이 된다. 그래서 기본 링은 끄고 **`focus-visible` 에만**
+ * 우리 링을 다시 켠다: 브라우저가 "이 포커스는 키보드에서 왔다"고 판정한 경우에만
+ * 그리는 의사 클래스라, 마우스 클릭 뒤에 남던 사각형은 사라지고 화살표 이동에서는 선다.
+ * `focus` 가 아니라 `focus-visible` 인 것이 이 결함의 핵심이다.
+ *
+ * 링은 안쪽에 그린다(`-outline-offset-1`). 항목은 메뉴 테두리에 가로로 꽉 차서, 바깥으로
+ * 밀어낸 링은 메뉴 밖으로 잘려 나가고 위아래 항목끼리 겹친다.
+ *
+ * 색은 토큰(`outline-accent` → `--color-accent`)이다. 하드코딩한 색을 쓰면 라이트에서
+ * 고른 값이 다크에서 안 맞는다 — 이 저장소가 색 이름을 화면 코드에서 없앤 이유가 그것이다.
+ *
+ * **`focus-visible:outline-solid` 가 왜 붙어 있는가**(빼면 링이 안 그려진다): Tailwind v4 의
+ * `outline-none` 은 `--tw-outline-style: none` 을 남기고, `outline-2` 는 굵기만 정하면서
+ * 스타일을 `outline-style: var(--tw-outline-style)` 로 그 변수에서 읽는다. 그래서 둘만
+ * 쓰면 `focus-visible` 에서도 스타일이 `none` 으로 계산되어 2px 가 보이지 않는다.
+ * 변수를 `solid` 로 되돌리는 한 클래스가 있어야 링이 실제로 선다.
+ */
+const MENU_ITEM_FOCUS = 'outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1';
+
 export function Menu({ renderTrigger, items, placement = 'top', openOnContextMenu = false, header, className = '' }: MenuProps) {
   const [open, setOpen] = useState(false);
   const [openAt, setOpenAt] = useState<MenuPosition | null>(null);
@@ -187,6 +212,14 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
           className={`${openAt ? '' : `absolute ${placement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 min-w-32 rounded border border-border bg-surface-raised py-1 shadow-lg ${className}`}
           style={menuStyle}
         >
+          {/*
+            머리와 항목은 **같은 가로 축**에 선다 — 둘 다 `px-3` 이다. 항목만 넓히면
+            (예: `px-4`) 이름이 머리의 이름보다 오른쪽으로 밀려 두 줄이 어긋나 보인다.
+            좁아 보이던 것은 가로가 아니라 **세로**였다: 항목이 `py-1.5`(6px) 라 줄 높이가
+            29px 밖에 안 됐고, 그래서 글자가 테두리에 눌린 것처럼 왼쪽 위로 쏠려 읽혔다.
+            `py-2`(8px) 로 올려 33px 을 준다 — 머리(`pb-2 pt-1`)와 같은 8px 축을 쓰고,
+            줄끼리 붙지 않으면서 네 줄짜리 메뉴가 길어지지도 않는 최소치다.
+          */}
           {header && (
             <div className="border-b border-border px-3 pb-2 pt-1">{header}</div>
           )}
@@ -198,7 +231,7 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
               disabled={item.disabled}
               onClick={() => { if (!item.disabled) { item.onSelect(); close(); } }}
               onKeyDown={(e) => onMenuKeyDown(e, index)}
-              className={`flex w-full items-center gap-4 px-3 py-1.5 text-left text-sm ${
+              className={`flex w-full items-center gap-4 px-3 py-2 text-left text-sm ${MENU_ITEM_FOCUS} ${
                 item.disabled ? 'cursor-not-allowed text-fg-subtle' : 'text-fg-muted hover:bg-surface-hover hover:text-fg'
               }`}
             >
