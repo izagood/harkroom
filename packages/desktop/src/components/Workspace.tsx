@@ -12,6 +12,7 @@ import { TerminalPanel } from './TerminalPanel';
 import { SearchPalette } from './SearchPalette';
 import { Sweep } from './Sweep';
 import { Directory } from './Directory';
+import { Profile } from './Profile';
 import { ChannelDirectory } from './ChannelDirectory';
 import { Inbox } from './Inbox';
 import { SavedMessages } from './SavedMessages';
@@ -32,6 +33,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [channelDirectoryOpen, setChannelDirectoryOpen] = useState(false);
   const [directoryAccountId, setDirectoryAccountId] = useState<string | null>(null);
+  const [profileAccountId, setProfileAccountId] = useState<string | null>(null);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sidebarStorage.loadCollapsed());
@@ -60,8 +62,17 @@ export function Workspace({ onLogout, onOpenSettings }: {
     await getController().goForward();
   }, []);
 
+  /**
+   * 이름을 누르면 **프로필**이 열리고, 아무도 지목하지 않으면 디렉터리(검색 목록)가 열린다
+   * (identity 문서 · Task 14).
+   *
+   * 지금까지는 둘 다 디렉터리였다 — `MessageBody` 는 접근성 이름을 이미 "프로필 열기"로
+   * 부르고 있었으므로 **그 이름이 거짓이었다.** 디렉터리는 "누가 있나"에 답하는 검색이고,
+   * 프로필은 "이 사람이 무엇인가"에 답한다: 물음이 다르므로 화면도 다르다.
+   */
   const handleOpenDirectory = useCallback((accountId: string | null = null) => {
-    setDirectoryAccountId(accountId);
+    if (accountId) { setProfileAccountId(accountId); return; }
+    setDirectoryAccountId(null);
     setDirectoryOpen(true);
   }, []);
 
@@ -207,6 +218,13 @@ export function Workspace({ onLogout, onOpenSettings }: {
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} initialScoped={searchInitialScoped} />
       <Sweep open={sweepOpen} onClose={() => setSweepOpen(false)} />
       <Directory open={directoryOpen} onClose={() => { setDirectoryOpen(false); setDirectoryAccountId(null); }} accountId={directoryAccountId} />
+      {profileAccountId && (
+        <Profile
+          accountId={profileAccountId}
+          onClose={() => setProfileAccountId(null)}
+          onOpenSettings={onOpenSettings}
+        />
+      )}
       <ChannelDirectory open={channelDirectoryOpen} onClose={() => setChannelDirectoryOpen(false)} />
       <Inbox open={inboxOpen} onClose={() => setInboxOpen(false)} />
       <SavedMessages open={savedOpen} onClose={() => setSavedOpen(false)} />
