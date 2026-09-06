@@ -160,3 +160,37 @@ describe('생존을 모를 때', () => {
     expect(screen.getByTestId('wait-chain-r1').dataset.end).not.toBe('deadlock');
   });
 });
+
+describe('"없다"와 "아직 안 봤다"는 다른 사실이다', () => {
+  /**
+   * **실측으로 찾은 결함**(2026-09-06). `store.messages` 는 **연 채널만** 채워지므로
+   * 앱을 막 켰을 때는 거의 비어 있다. 그 상태에서 "기다리는 것이 없다"를 띄우면,
+   * 서버가 마디를 네 개 실어 보내는데도 화면이 없다고 말한다 — 이 작업이 없애려던
+   * 바로 그 거짓말(열어 보지 않은 것을 없다고 단정하는 것)과 같은 모양이다.
+   */
+  it('아직 안 본 채널이 있으면 없다고 단정하지 않는다', () => {
+    useActiveStore.getState().set({
+      me: acc(ME, 'me'),
+      accounts: { [ME]: acc(ME, 'me') },
+      channels: [chan('c1', 'general'), chan('c2', 'design')],
+      messages: { c1: [] },   // c2 는 아직 안 열었다 — undefined 다.
+      online: [],
+      connected: true,
+    });
+    render(<SidebarWaitChain />);
+    expect(screen.getByText('아직 다 보지 못했다')).toBeTruthy();
+  });
+
+  it('다 봤고 정말 없으면 없다고 말한다', () => {
+    useActiveStore.getState().set({
+      me: acc(ME, 'me'),
+      accounts: { [ME]: acc(ME, 'me') },
+      channels: [chan('c1', 'general')],
+      messages: { c1: [] },
+      online: [],
+      connected: true,
+    });
+    render(<SidebarWaitChain />);
+    expect(screen.getByText('기다리는 것이 없다')).toBeTruthy();
+  });
+});
