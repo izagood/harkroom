@@ -29,6 +29,7 @@ const APP = path.join(
   'src-tauri', 'target', 'release', 'bundle', 'macos', 'murmur.app',
 );
 const SIGN_SCRIPT = path.join(DESKTOP_DIR, 'scripts', 'sign-app.mjs');
+const NOTARIZE_SCRIPT = path.join(DESKTOP_DIR, 'scripts', 'notarize-app.mjs');
 const MAIN_RS = path.join(DESKTOP_DIR, 'src-tauri', 'src', 'main.rs');
 const ENTITLEMENTS = path.join(DESKTOP_DIR, 'src-tauri', 'entitlements.plist');
 
@@ -300,5 +301,34 @@ describe('entitlements — 본체에만, 필요한 것만', () => {
     const nestedCall = source.match(/for \(const path of nested\)[\s\S]*?\n  \}/)?.[0] ?? '';
     expect(nestedCall, '안쪽 Mach-O 에는 entitlements 를 붙이지 않는다')
       .not.toContain('entitlements');
+  });
+
+  /**
+   * ## `--target` 을 준 빌드의 산출물 자리 (실측 2026-09-06, 첫 릴리즈 실패)
+   *
+   * `tauri build --target <triple>` 은 산출물을 `target/release/` 가 아니라
+   * **`target/<triple>/release/`** 에 놓는다. 서명·공증 스크립트의 경로가 고정이면
+   * CI 에서 `서명할 .app 이 없다` 로 죽는다 — 첫 릴리즈가 정확히 그 자리에서 실패했다.
+   *
+   * **되돌려 RED**: `MURMUR_APP_PATH` 갈래를 지우면 이 둘이 빨개진다.
+   */
+  it('서명·공증 스크립트가 MURMUR_APP_PATH 로 경로를 덮을 수 있다', () => {
+    for (const script of [SIGN_SCRIPT, NOTARIZE_SCRIPT]) {
+      const source = readFileSync(script, 'utf8');
+      expect(source, `${script}: --target 빌드의 자리를 받을 수 없다`)
+        .toContain('process.env.MURMUR_APP_PATH');
+    }
+  });
+
+  /**
+   * **대조군.** 위 것만 있으면 "환경변수만 읽고 기본값이 없다"로도 통과한다 —
+   * 그러면 로컬에서 `pnpm tauri build` 뒤 `pnpm sign` 이 안 돈다.
+   */
+  it('대조군 — 안 주면 기존 자리를 그대로 쓴다', () => {
+    for (const script of [SIGN_SCRIPT, NOTARIZE_SCRIPT]) {
+      const source = readFileSync(script, 'utf8');
+      expect(source, `${script}: 기본 경로가 사라졌다`)
+        .toMatch(/'target',\s*'release',\s*'bundle',\s*'macos',\s*'murmur\.app'/);
+    }
   });
 });
