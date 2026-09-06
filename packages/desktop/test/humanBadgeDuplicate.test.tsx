@@ -81,27 +81,34 @@ describe('#365 사람 메시지의 아바타 중복', () => {
   });
 });
 
-describe('#365 에이전트 쪽은 그대로다', () => {
-  // 회귀 3: #277 이 고친 것이 되돌아가지 않았다. 거터에는 아바타만, 이름 옆에는
-  // 🤖 + 소유자 핸들 — **둘 다 있어야** 한다. 한쪽만 보면 다른 쪽을 없애도 초록이다.
+describe('#365 에이전트 쪽도 같아졌다', () => {
+  // 회귀 3.
   //
-  // **Task 12 로 거터가 바뀌었다**: 에이전트도 사람과 같은 아바타(이름 첫 글자 + 색)를 쓴다
-  // — "대화에서는 에이전트라고 말하지 않는다"(design doc 2). 🤖 는 이름줄 배지에만 남는다.
-  it('에이전트 메시지는 거터에 아바타, 이름줄에 글리프+소유자가 둘 다 있다', () => {
+  // **identity 문서로 뒤집혔다.** 초판은 "거터에는 아바타만, 이름 옆에는 🤖 + 소유자 —
+  // **둘 다 있어야** 한다"였고, 근거는 "#277 이 거터에서 뺐으니 이름줄에는 남아야 한다"
+  // 였다. 그 근거는 아바타가 사람과 같아지기 전(#465) 이야기다 — 지금은 아바타가 사람과
+  // 같은 마크업이라 🤖 는 같은 말을 두 번 하는 것이고, 종류·소유자는 프로필(#475)이
+  // 답한다. identity 문서: *"아바타만으로 누가 에이전트인지 알 수 없는 것이 의도한 결과다."*
+  //
+  // **뒤집힌 것은 이름줄 쪽뿐이다.** 거터 단언은 그대로 남는다 — 🤖·소유자가 32px 열로
+  // 되돌아가는 것을 막는 것이 #277 이고, 이름줄에서 뺐다고 그 위험이 사라지지 않는다.
+  it('에이전트 메시지의 거터는 사람과 같은 아바타이고 🤖·소유자는 어디에도 없다', () => {
     useAppStore.getState().set({
       accounts: { u1: acc('u1', 'owner'), a1: agent('a1', 'bot', 'u1') },
     });
     fakeController();
-    render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
+    const { container } = render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
 
-    // 글리프는 **이름줄에만** 남는다 — 거터는 사람과 같은 아바타다.
-    expect(screen.getAllByText('🤖')).toHaveLength(1);
+    // 거터는 사람과 같은 아바타다 — 이름 첫 글자(Task 12).
     expect(within(gutter()).getByText('B')).toBeTruthy();
+    // 🤖 는 거터에도, 이름줄에도, 행 어디에도 없다. 행 전체를 보는 이유는 배지를 다른
+    // 자리로 옮기는 것만으로 초록이 되지 않게 하기 위해서다.
     expect(within(gutter()).queryByText('🤖')).toBeNull();
-    expect(within(nameRow()).getByText('🤖')).toBeTruthy();
-    // 소유자는 이름줄에만 — 거터에 들어가면 32px 열을 넘친다(그것이 #277 이었다).
-    expect(within(nameRow()).getByText('@owner')).toBeTruthy();
+    expect(within(nameRow()).queryByText('🤖')).toBeNull();
+    expect(container.textContent).not.toContain('🤖');
+    // 소유자도 마찬가지다. 거터 쪽은 #277 이 계속 지키는 선이다.
     expect(gutter().textContent).not.toContain('@owner');
+    expect(container.textContent).not.toContain('@owner');
   });
 
   // `Identity` 를 **직접** 그려 두 variant 를 마주 놓는다. `MessageItem` 만 거치면
@@ -170,9 +177,20 @@ describe('#365 배지가 없는 이름줄', () => {
     expect(nameRow().className).toMatch(/\bgap-2\b/);
   });
 
-  // 에이전트 이름줄은 배지가 **있는** 쪽이다. 같은 잣대를 대 두면 "빈 자식이 없다"가
-  // 배지를 통째로 없애서 만족되는 것이 아님이 드러난다.
-  it('에이전트 이름줄에는 배지가 남아 있고 역시 빈 자리가 없다', () => {
+  /**
+   * 초판은 여기서 "에이전트 이름줄에는 배지가 **남아 있고** 역시 빈 자리가 없다"를 쟀다.
+   * 근거는 *"같은 잣대를 대 두면 '빈 자식이 없다'가 배지를 통째로 없애서 만족되는 것이
+   * 아님이 드러난다"* 였다 — 그때는 에이전트가 배지를 갖는 쪽이었으므로 이 대조가 성립했다.
+   *
+   * **identity 문서로 뒤집혔다.** 이제 에이전트도 사람과 같은 상태다: 이름줄에 배지
+   * 자리가 **아예 없다**. 그래서 이 대조는 사라지지만, #365 가 지키려던 것 — "빈 배지
+   * 자리가 남지 않는다" — 는 사라지지 않고 **에이전트로 확장**된다. 사람 쪽만 재면
+   * 에이전트 자리에 빈 상자를 되돌려도 초록이기 때문이다.
+   *
+   * 초판이 걱정한 "배지를 없애서 만족되는 것" 은 이제 걱정이 아니라 **의도**이고,
+   * 배지가 정말 없다는 사실은 바로 위 `#365 에이전트 쪽도 같아졌다` 가 따로 잰다.
+   */
+  it('에이전트 이름줄에도 빈 배지 자리가 남지 않는다', () => {
     useAppStore.getState().set({
       accounts: { u1: acc('u1', 'owner'), a1: agent('a1', 'bot', 'u1') },
     });
@@ -180,7 +198,11 @@ describe('#365 배지가 없는 이름줄', () => {
     render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'a1')} />);
 
     const children = Array.from(nameRow().children) as HTMLElement[];
+    // 사람 쪽과 **같은 잣대**다: 빈 자식이 없고, 여백은 컨테이너의 gap 에서 난다.
     expect(children.filter((el) => el.textContent?.trim() === '')).toEqual([]);
-    expect(children.some((el) => el.textContent?.includes('🤖'))).toBe(true);
+    expect(children.filter((el) => /\bm[lrxe]-/.test(el.className))).toEqual([]);
+    expect(nameRow().className).toMatch(/\bgap-2\b/);
+    // 이름줄이 답하는 것은 이제 **누가 말했나** 하나뿐이다 — 사람과 같다.
+    expect(within(nameRow()).getByTestId('author-name').textContent).toBe('bot');
   });
 });
