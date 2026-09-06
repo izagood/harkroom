@@ -25,6 +25,7 @@ import {
   type LaunchableAgent, type LoginPathReader, type RunnerProcess, type RunnerState,
   type SpawnRequest, type StoredRunnerPat,
 } from '../src/lib/runnerLauncher';
+import { fakeDaemon } from './helpers/fakeDaemon';
 import { RunnerStatusLine } from '../src/components/RunnerStatus';
 
 const agent = (id: string): LaunchableAgent => ({
@@ -65,7 +66,7 @@ const fakeLoginPath = (value: string | null): LoginPathReader & { read: ReturnTy
 
 async function start(loginPath: LoginPathReader) {
   const spawner = fakeSpawner();
-  const launcher = new RunnerLauncher(fakeApi(), fakeSecrets(), spawner, loginPath, () => 0);
+  const launcher = new RunnerLauncher(fakeApi(), fakeSecrets(), spawner, loginPath, () => 0, fakeDaemon());
   await launcher.startAll({
     agents: [agent('a')],
     myAccountId: 'me',
@@ -119,7 +120,7 @@ describe('2. 얻은 PATH 가 자식 env 에 들어간다', () => {
   it('프로세스 생애 동안 한 번만 읽는다 — 러너 수만큼 셸을 띄우지 않는다', async () => {
     const loginPath = fakeLoginPath('/login/bin');
     const spawner = fakeSpawner();
-    const launcher = new RunnerLauncher(fakeApi(), fakeSecrets(), spawner, loginPath, () => 0);
+    const launcher = new RunnerLauncher(fakeApi(), fakeSecrets(), spawner, loginPath, () => 0, fakeDaemon());
     const input = { myAccountId: 'me', liveAccountIds: new Set<string>() };
     await launcher.startAll({ agents: [agent('a'), agent('b')], ...input });
     await launcher.startAll({ agents: [agent('c')], ...input });

@@ -37,6 +37,7 @@ import {
   RunnerLauncher,
   type LoginPathReader, type RunnerApi, type RunnerSecretStore, type RunnerSpawner, type RunnerState,
 } from '../src/lib/runnerLauncher';
+import { fakeDaemon } from './helpers/fakeDaemon';
 import { DEFAULT_PREFS, undoSendStorage } from '../src/lib/prefs';
 import { acc, chan, msg, scheduledApiStub } from './helpers/fakeApi';
 
@@ -76,7 +77,7 @@ async function launchWithRealFailure(): Promise<RunnerState> {
   };
   const spawner: RunnerSpawner = { spawn: vi.fn() };
   const loginPath: LoginPathReader = { read: vi.fn(async () => '/login/bin') };
-  const launcher = new RunnerLauncher(api, secrets, spawner, loginPath, () => 1_700_000_000_000);
+  const launcher = new RunnerLauncher(api, secrets, spawner, loginPath, () => 1_700_000_000_000, fakeDaemon());
 
   // 자동 기동이 기본으로 켜져 있다는 것이 이 결함의 전제다 — 꺼져 있으면 실행기는 아예
   // 불리지 않고 실패 상태도 안 생긴다(controller.ts::startRunners).

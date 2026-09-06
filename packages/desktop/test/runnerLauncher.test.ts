@@ -10,10 +10,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { CREDENTIAL_REJECTED_LINE } from '@murmur/shared';
 import {
-  RunnerLauncher, patLabelPrefix,
+  RunnerLauncher, patLabelPrefix, STRANGER_ATTACHED,
   type LaunchableAgent, type RunnerProcess, type RunnerSecretStore, type RunnerSpawner,
   type LoginPathReader, type SpawnRequest, type StoredRunnerPat,
 } from '../src/lib/runnerLauncher';
+import { fakeDaemon, liveRunner } from './helpers/fakeDaemon';
 
 const agent = (id: string, extra: Partial<LaunchableAgent> = {}): LaunchableAgent => ({
   id, handle: id, ownerAccountId: 'me', disabled: false, stopRequestedAt: null, ...extra,
@@ -86,9 +87,10 @@ function fakeApi(calls: string[] = []) {
 const make = (
   api = fakeApi(), secrets = fakeSecrets(), spawner = fakeSpawner(),
   loginPath = fakeLoginPath(), now = () => 1_700_000_000_000,
+  daemon = fakeDaemon(),
 ) => ({
-  api, secrets, spawner, loginPath,
-  launcher: new RunnerLauncher(api, secrets, spawner, loginPath, now),
+  api, secrets, spawner, loginPath, daemon,
+  launcher: new RunnerLauncher(api, secrets, spawner, loginPath, now, daemon),
 });
 
 const startAll = (
@@ -116,21 +118,132 @@ describe('1. 대상 선별', () => {
   });
 });
 
-describe('2. liveness', () => {
-  it('러너가 이미 붙어 있으면 띄우지 않고 "외부에서 실행 중"이다', async () => {
-    const { launcher, spawner } = make();
-    await startAll(launcher, [agent('a')], { live: ['a'] });
+/**
+ * `#431` 2단계 A — **판정의 주체가 presence 에서 daemon 으로 옮겨갔다.**
+ *
+ * 앞 판본의 이 자리는 `liveAccountIds` 를 재고 있었다: presence 에 있으면 `external`,
+ * `null` 이면 아예 안 띄움. 그 둘이 정확히 이 이슈가 없앤 것이다.
+ */
+describe('2. liveness — daemon 장부가 판정한다', () => {
+  it('daemon 장부에 있고 살아 있으면 띄우지 않는다 — 중복 러너를 만들지 않는다', async () => {
+    const { launcher, spawner } = make(
+      fakeApi(), fakeSecrets(), fakeSpawner(), fakeLoginPath(), () => 0,
+      fakeDaemon([liveRunner('a')]),
+    );
+    await startAll(launcher, [agent('a')]);
 
     expect(spawner.spawn).not.toHaveBeenCalled();
-    expect(launcher.getStates()[0]!.status).toBe('external');
+    expect(launcher.getStates()[0]!.status).toBe('adopted');
   });
 
-  it('presence 를 모르면(소켓 끊김) 띄우지 않는다 — 빈 목록을 "아무도 없다"로 읽지 않는다', async () => {
-    const { launcher, spawner } = make();
+  /**
+   * **이 파일의 핵심 회귀선이다.**
+   *
+   * 실측(2026-09-06, 두 번): 다른 워크트리의 러너 8개 — 고아 6개(`ppid=1`)와 **살아 있는
+   * 남의 daemon(pid 35721)의 자식 2개** — 가 서버 presence 에 올라와 있기만 해도 이 앱이
+   * 자기 에이전트를 하나도 못 띄웠다. 고아를 사람이 지워도 나머지 2개 때문에 안 풀렸다.
+   *
+   * 즉 원인은 "고아"가 아니라 **판정 기준이 presence 하나였다는 것**이다. 장부에 없는
+   * 러너는 그것이 고아든 남의 daemon 의 자식이든 **내 것이 아니고**, 내 에이전트를
+   * 막을 이유가 없다.
+   *
+   * 되돌려 RED: `doStartOne` 에 `if (input.liveAccountIds?.has(agent.id)) return;` 를
+   * 되살리면 이 테스트가 빨개진다.
+   */
+  it('장부에 없는 러너가 서버 presence 에 있어도 내 에이전트는 뜬다', async () => {
+    const { launcher, spawner } = make(
+      fakeApi(), fakeSecrets(), fakeSpawner(), fakeLoginPath(), () => 0,
+      fakeDaemon([]), // 장부는 비어 있다 — 그 러너는 남의 daemon 것이다
+    );
+    await startAll(launcher, [agent('a')], { live: ['a'] });
+
+    expect(spawner.spawn).toHaveBeenCalledTimes(1);
+    expect(launcher.getStates()[0]!.status).toBe('running');
+  });
+
+  it('그 어긋남을 사람에게 말한다 — 막지는 않되 침묵하지도 않는다', async () => {
+    const { launcher } = make(
+      fakeApi(), fakeSecrets(), fakeSpawner(), fakeLoginPath(), () => 0, fakeDaemon([]),
+    );
+    await startAll(launcher, [agent('a')], { live: ['a'] });
+
+    expect(launcher.getStates()[0]!.message).toBe(STRANGER_ATTACHED);
+  });
+
+  it('presence 를 몰라도(소켓 끊김) 띄운다 — 중복을 막는 것은 이제 장부다', async () => {
+    const { launcher, spawner } = make(
+      fakeApi(), fakeSecrets(), fakeSpawner(), fakeLoginPath(), () => 0, fakeDaemon([]),
+    );
     await startAll(launcher, [agent('a')], { live: null });
 
+    expect(spawner.spawn).toHaveBeenCalledTimes(1);
+    // 어긋남이 없으므로 사유도 없다 — 없는 사실을 문장으로 만들지 않는다(`#368`).
+    expect(launcher.getStates()[0]!.message).toBeNull();
+  });
+
+  it('장부에 있지만 죽었으면 띄운다 — 장부는 이력이지 현재가 아니다', async () => {
+    const { launcher, spawner } = make(
+      fakeApi(), fakeSecrets(), fakeSpawner(), fakeLoginPath(), () => 0,
+      fakeDaemon([{ agentId: 'a', alive: false, adopted: false }]),
+    );
+    await startAll(launcher, [agent('a')]);
+
+    expect(spawner.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('`external` 상태는 더 이상 없다 — presence 만으로 건너뛰지 않는다', async () => {
+    const { launcher } = make(
+      fakeApi(), fakeSecrets(), fakeSpawner(), fakeLoginPath(), () => 0, fakeDaemon([]),
+    );
+    await startAll(launcher, [agent('a')], { live: ['a'] });
+
+    expect(launcher.getStates().map((s) => s.status)).not.toContain('external');
+  });
+});
+
+/**
+ * `#431` 2단계 A — **daemon 은 러너의 부산물이 아니다.**
+ *
+ * 앞 판본에서 daemon 에 닿는 자리는 `spawn()` 하나뿐이었고, 그 앞단이 안 띄우기로 하면
+ * daemon 도 안 떴다. 그것이 순환의 첫 화살표다(`DaemonObserver` 주석).
+ */
+describe('2-A. daemon 을 먼저 세운다', () => {
+  it('띄울 러너가 하나도 없어도 daemon 을 세운다', async () => {
+    const { launcher, daemon, spawner } = make();
+    await launcher.ensureDaemon();
+
+    expect(daemon.observeCalls).toBe(1);
     expect(spawner.spawn).not.toHaveBeenCalled();
-    expect(launcher.getStates()[0]!.message).toContain('알 수 없다');
+  });
+
+  it('대상이 0개여도 daemon 에 묻는다 — 물어야 순환이 끊긴다', async () => {
+    const { launcher, daemon } = make();
+    await startAll(launcher, []);
+
+    expect(daemon.observeCalls).toBe(1);
+  });
+
+  it('daemon 확보에 실패하면 던지지 않고 null 로 돌아온다 — 앱은 떠야 한다', async () => {
+    const { launcher, daemon } = make();
+    daemon.error = new Error('소켓 없음');
+
+    await expect(launcher.ensureDaemon()).resolves.toBeNull();
+  });
+
+  it('daemon 에 못 닿으면 러너를 안 띄우고 그 사유를 남긴다 — 폴백은 없다', async () => {
+    const { launcher, daemon, spawner } = make();
+    daemon.error = new Error('소켓 없음');
+    await startAll(launcher, [agent('a')]);
+
+    expect(spawner.spawn).not.toHaveBeenCalled();
+    expect(launcher.getStates()[0]!.message).toContain('소켓 없음');
+  });
+
+  it('에이전트가 여럿이어도 한 번만 묻는다 — 루프 도중 장부가 바뀌지 않는다', async () => {
+    const { launcher, daemon } = make();
+    await startAll(launcher, [agent('a'), agent('b'), agent('c')]);
+
+    expect(daemon.observeCalls).toBe(1);
   });
 });
 
@@ -491,7 +604,9 @@ describe('9. 중복 방지·정리', () => {
         finishSpawn = () => resolve({ kill });
       })),
     };
-    const launcher = new RunnerLauncher(fakeApi(), fakeSecrets(), spawner, fakeLoginPath());
+    const launcher = new RunnerLauncher(
+      fakeApi(), fakeSecrets(), spawner, fakeLoginPath(), () => 0, fakeDaemon(),
+    );
 
     const starting = startAll(launcher, [agent('a')]);
     await vi.waitFor(() => expect(spawner.spawn).toHaveBeenCalledOnce());
