@@ -129,3 +129,31 @@ describe('AgentGrid — 아바타 세 얼굴', () => {
     expect(screen.queryByTestId('agent-relaunch-alpha')).toBeNull();
   });
 });
+
+/**
+ * 목업과 맞춘 것들(2026-09-06 화면 확인). 문서의 목업은 **원과 이름만** 있는 격자이고,
+ * 실행 글리프는 "사진 안으로 들어간다".
+ */
+describe('AgentGrid — 목업의 모양', () => {
+  it('카드에 상자가 없다 — 26개가 깔릴 때 격자 선이 얼굴보다 먼저 보이면 안 된다', () => {
+    grid({ agents: [agent('alpha')], online: ['id-alpha'] });
+    const card = screen.getByTestId('agent-card-alpha');
+    expect(card.className).not.toMatch(/border-border|bg-surface-hover/);
+  });
+
+  it('실행 글리프는 평소 옅고 호버에서 또렷해진다', () => {
+    grid({ agents: [agent('alpha')], online: [], onRelaunch: vi.fn() });
+    const glyph = screen.getByTestId('agent-relaunch-alpha');
+    // 26개가 깔린 화면에서 26개의 진한 글리프는 소음이다.
+    expect(glyph.className).toContain('opacity-50');
+    expect(glyph.className).toContain('group-hover:opacity-100');
+  });
+
+  it('검색창이 몇 개를 뒤지는지 말한다', () => {
+    grid({ agents: [agent('alpha'), agent('beta')] });
+    expect(screen.getByText('2개')).toBeTruthy();
+    // 걸러지면 그 수도 따라간다 — 뒤지고 있는 범위가 곧 이 숫자다.
+    fireEvent.change(screen.getByTestId('agent-search'), { target: { value: 'alp' } });
+    expect(screen.getByText('1개')).toBeTruthy();
+  });
+});
