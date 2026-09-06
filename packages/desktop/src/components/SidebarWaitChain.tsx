@@ -35,6 +35,19 @@ export function SidebarWaitChain() {
   const online = useActiveStore((s) => s.online);
   const connected = useActiveStore((s) => s.connected);
 
+  /**
+   * **아직 안 본 채널이 있는가.** `store.messages` 는 **연 채널만** 채워진다
+   * (`controller.openChannel`) — 앱을 막 켰을 때는 거의 비어 있다.
+   *
+   * 이 구별이 없으면 사슬이 있는데도 "기다리는 것이 없다"가 뜬다(실측 2026-09-06:
+   * 서버가 마디를 네 개 실어 보내는데 화면은 없다고 말했다). 그것은 이 작업이 없애려던
+   * 바로 그 거짓말 — **열어 보지 않은 것을 없다고 단정하는 것** — 과 같은 모양이다.
+   */
+  const unseen = useMemo(
+    () => channels.some((ch) => messages[ch.id] === undefined),
+    [channels, messages],
+  );
+
   const rows = useMemo(() => {
     // 생존은 클라이언트만 안다. 소켓이 끊겼으면 '아무도 없다'가 아니라 **'모른다'** 다
     // (`threadState`·`waitChain` 과 같은 규약) — 그 동안 교착이라 부르지 않는다.
@@ -63,7 +76,11 @@ export function SidebarWaitChain() {
       <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">기다리는 것</div>
       {rows.length === 0 ? (
         // **한 줄로 조용히**(문서). 아무 일도 없는 것이 가장 큰 목소리가 되면 안 된다.
-        <p className="px-2 text-xs text-fg-muted">기다리는 것이 없다</p>
+        // 다만 **"없다"와 "아직 안 봤다"는 다른 사실**이다(`docs/design.md` §4) —
+        // 안 본 채널이 남아 있으면 없다고 단정하지 않는다.
+        <p className="px-2 text-xs text-fg-muted">
+          {unseen ? '아직 다 보지 못했다' : '기다리는 것이 없다'}
+        </p>
       ) : (
         rows.map((r) => {
           const head = r.chain.links[0]!;
