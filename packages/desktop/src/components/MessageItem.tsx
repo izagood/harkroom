@@ -358,9 +358,14 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                   그 재료가 없으면(옛 서버·답글 행) 배지를 그리지 않고 답장 수만 남는다.
                 */}
                 {summaryState && <ThreadStateBadge state={summaryState} />}
+                {/*
+                  **답장 수는 강조색을 받지 않는다**(#488 B2). 문서: *"N replies 는
+                  '현재 상태'이지 '급한 것'이 아니다."* 강조색은 나를 막는 말에만 쓴다 —
+                  막는 것은 이미 왼쪽의 배지가 말하고 있다.
+                */}
                 <span className={summaryState && isBlocking(summaryState)
                   ? 'text-fg-subtle'
-                  : 'font-medium text-accent'}
+                  : 'font-medium text-fg-muted underline decoration-dotted underline-offset-2'}
                 >
                   {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
                 </span>
