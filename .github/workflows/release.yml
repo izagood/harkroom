@@ -355,13 +355,18 @@ jobs:
       # 스크립트는 `MURMUR_SIGN_IDENTITY` 로 서명 주체를 강제받는다. 키체인을 뒤지게 두면
       # 러너에 인증서가 여러 개일 때 엉뚱한 것을 고를 수 있다.
       #
+      # **절대 경로여야 한다.** `pnpm --filter` 는 그 패키지 디렉터리에서 스크립트를 돌리므로
+      # cwd 가 `packages/desktop` 이 된다 — 상대 경로를 넘기면 거기에 다시 이어붙어
+      # `packages/desktop/packages/desktop/...` 을 찾는다(실측 2026-09-06, 두 번째 시도).
+      # 첫 시도는 경로가 아예 안 넘어가서, 두 번째는 넘겼지만 상대라서 죽었다.
+      #
       # `MURMUR_APP_PATH` 를 넘기는 이유: `--target` 을 준 빌드는 산출물을
       # `target/<triple>/release/` 에 놓는데 스크립트의 기본 경로는 `target/release/` 다.
       # 안 넘기면 **`서명할 .app 이 없다`** 로 죽는다(실측 2026-09-06, 첫 릴리즈).
       - name: 앱을 서명한다
         env:
           MURMUR_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          MURMUR_APP_PATH: packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/murmur.app
+          MURMUR_APP_PATH: ${{ github.workspace }}/packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/murmur.app
         run: pnpm --filter @murmur/desktop sign
 
       # ## 공증 — `.p8` 을 **파일로** 푼다
@@ -379,7 +384,7 @@ jobs:
           # `umask` 로 만들어지자마자 남이 못 읽게 한다.
           (umask 077; echo "$APPLE_NOTARY_KEY" | base64 --decode > "$key")
           MURMUR_NOTARY_KEY="$key" \
-            MURMUR_APP_PATH="packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/murmur.app" \
+            MURMUR_APP_PATH="${{ github.workspace }}/packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/murmur.app" \
             pnpm --filter @murmur/desktop notarize
 
       - name: 공증 키를 지운다
