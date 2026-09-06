@@ -4,6 +4,20 @@ on:
   pull_request:
   push:
     branches: [main]
+  # macOS 잡을 이 브랜치에서 실제로 돌려 보기 위한 수동 트리거. PR 없이도 검증할 수 있어야 한다.
+  workflow_dispatch:
+
+# macOS 러너는 리눅스보다 비싸다(과금 배수가 붙는다) — 같은 PR 에 새 커밋이 올라오면 옛 실행을
+# 취소하는 것이 합리적이다. 다만 **main 푸시는 취소하면 안 된다**: main 의 빌드는 "이 커밋이
+# 실제로 빌드되는가"의 유일한 기록이고, 연달아 머지될 때 앞 커밋의 실행이 취소되면 그 커밋에서
+# 들어온 회귀가 아무 데도 안 잡힌 채 지나간다. 그래서 group 은 ref 별로 나누되
+# cancel-in-progress 는 push 이벤트에서만 끈다.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+permissions:
+  contents: read
 
 jobs:
   check:
@@ -11,13 +25,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      # 액션은 40자 커밋 SHA 로 핀한다. 태그(`@v4`)는 옮길 수 있는 포인터라 같은 워크플로가
+      # 어느 날 다른 코드를 돌린다 — 공급망 사고의 표준 경로다. 뒤의 주석이 사람이 읽을
+      # 버전이고, 핀 자체는 **지금 `@v4` 가 가리키던 바로 그 커밋**이다(버전은 안 바뀐다).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 11
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -28,3 +45,112 @@ jobs:
       - run: pnpm typecheck
 
       - run: pnpm test
+
+  macos-build:
+    # ## 왜 이 잡이 있는가 — `cargo check` 도 `pnpm test` 도 못 잡는 것이 있다
+    #
+    # 위 `check` 잡은 리눅스에서 typecheck + 테스트만 돈다. 그것으로 안 잡히고 **릴리스
+    # 번들을 실제로 말아야만** 드러나는 고장이 이미 여러 번 나왔다:
+    #
+    # - `tauri-plugin-notification` 의 크레이트/JS 버전 불일치(#440) — `cargo check` 는 통과했다.
+    # - `build:sidecar` 를 잊으면 `resource path 'binaries/murmur-runner-…' doesn't exist`(#441).
+    # - macOS 에서만 통과하는 테스트(반대 방향도 마찬가지다).
+    #
+    # 그래서 이 잡의 질문은 하나다: **"macOS 에서 앱이 실제로 빌드되고, 그 안에 들어갈 것이
+    # 다 들어갔는가."** 서명·공증은 하지 않는다 — 그것은 시크릿이 필요하고 릴리스 워크플로의
+    # 일이다. `sign-app.mjs`/`notarize-app.mjs` 를 부르지 않는 것이 그 경계다(인증서가 없으면
+    # ad-hoc 으로 물러나므로, 부르면 "서명했다"는 착시만 남는다).
+    #
+    # `macos-latest` 를 쓴다. GitHub 이 이 라벨을 옮길 때 함께 옮겨 가는 것이 목적에 맞다 —
+    # 이 잡은 특정 SDK 버전을 재현하는 것이 아니라 "최신 macOS 에서 빌드가 깨지지 않는가"를
+    # 묻는다. 릴리스 워크플로는 반대로 러너를 고정해야 하지만 그것은 별도의 일이다.
+    runs-on: macos-latest
+    # 리눅스 `check`(20분)보다 넉넉히 잡는다. Rust 릴리스 빌드는 캐시가 비면 의존 크레이트를
+    # 전부 컴파일해야 하고(tauri + wry + keyring), 거기에 pnpm install·프런트엔드 빌드·
+    # 사이드카 번들이 앞뒤로 붙는다. 40분은 콜드 캐시 실측을 담고도 남는 선이고, 그래도
+    # 무한정 매달리지는 않는다.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Rust 릴리스 빌드가 이 잡의 대부분이다. 캐시 키는 **`Cargo.lock` 해시 기반이고
+      # `restore-keys` 가 없다**. restore-keys 를 두면 키가 빗나갔을 때 *다른 lock* 으로
+      # 만들어진 target 디렉터리를 끌어와 얹는다 — 그러면 이 잡이 검증한다고 주장하는 의존
+      # 버전과 실제로 링크된 것이 갈릴 수 있다. #440 이 정확히 버전 불일치였다. 캐시가
+      # 안 맞으면 그냥 처음부터 빌드하는 것이 맞다: 느린 것은 문제지만 틀린 것은 사고다.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            packages/desktop/src-tauri/target
+          key: macos-cargo-${{ hashFiles('packages/desktop/src-tauri/Cargo.lock') }}
+
+      - run: pnpm install --frozen-lockfile
+
+      # **사이드카가 `tauri build` 보다 반드시 앞이다.** `tauri.conf.json` 의 `externalBin` 이
+      # `binaries/murmur-runner`·`binaries/murmur-daemon` 둘 다 요구하고, 없으면 번들 단계가
+      # `resource path … doesn't exist` 로 죽는다(#441). 사람이 기억해야 하는 순서를 여기에
+      # 못박는 것이 이 잡이 #441 을 닫는 방식이다.
+      - run: pnpm --filter @murmur/desktop build:sidecar
+
+      # `--bundles app` — `.app` 만 만든다. dmg 는 이 잡의 질문("빌드가 되는가")에 아무것도
+      # 더하지 않으면서 시간만 쓴다.
+      - run: pnpm --filter @murmur/desktop tauri build --bundles app
+
+      # ## exit 0 으로 끝내지 않는다 — 산출물을 연다
+      #
+      # `tauri build` 가 성공했다는 것과 배포 가능한 `.app` 이 나왔다는 것은 다른 명제다.
+      # #441 류의 고장은 "빌드는 됐는데 앱 안에 사이드카가 없다"는 모양으로 나타난다.
+      # 그래서 번들을 열어 **실제로 들어가야 할 넷**을 확인한다:
+      #
+      #   Contents/MacOS/murmur-desktop           ← 본체
+      #   Contents/MacOS/murmur-runner            ← externalBin (하네스를 돌린다)
+      #   Contents/MacOS/murmur-daemon            ← externalBin (러너를 spawn 한다)
+      #   Contents/Resources/node_modules/node-pty ← bundle.resources (러너가 PTY 를 연다)
+      #
+      # 마지막 항목이 `Resources/` 인 것은 Tauri 가 `bundle.resources` 를 거기 두기 때문이고,
+      # 런타임에 `ensure_node_pty_alongside_sidecar` 가 그것을 사이드카 옆으로 링크한다
+      # (src-tauri/src/main.rs). 그러니 여기서 볼 자리는 `MacOS/` 가 아니라 `Resources/` 다.
+      - name: 번들 산출물을 검증한다
+        run: |
+          set -euo pipefail
+          app="packages/desktop/src-tauri/target/release/bundle/macos/murmur.app"
+          test -d "$app" || { echo "::error::.app 이 없다: $app"; exit 1; }
+
+          missing=0
+          for f in \
+            "$app/Contents/MacOS/murmur-desktop" \
+            "$app/Contents/MacOS/murmur-runner" \
+            "$app/Contents/MacOS/murmur-daemon"
+          do
+            if [ -x "$f" ]; then
+              echo "ok  $f"
+            else
+              echo "::error::실행 가능한 파일이 없다: $f"
+              missing=1
+            fi
+          done
+
+          pty="$app/Contents/Resources/node_modules/node-pty"
+          if [ -d "$pty" ]; then
+            echo "ok  $pty"
+          else
+            echo "::error::node-pty 리소스가 없다: $pty"
+            missing=1
+          fi
+
+          if [ "$missing" -ne 0 ]; then
+            echo "--- 번들 안을 펼친다 ---"
+            find "$app/Contents" -maxdepth 3 -print
+            exit 1
+          fi
