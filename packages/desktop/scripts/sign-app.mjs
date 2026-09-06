@@ -110,7 +110,23 @@ import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const APP = join(here, '..', 'src-tauri', 'target', 'release', 'bundle', 'macos', 'murmur.app');
+/**
+ * 서명할 `.app`. **`MURMUR_APP_PATH` 로 덮을 수 있다.**
+ *
+ * ## 왜 덮을 수 있어야 하나 — `--target` 이 경로를 옮긴다
+ *
+ * `cargo`/`tauri build` 는 `--target <triple>` 을 주는 순간 산출물을
+ * `target/release/` 가 아니라 **`target/<triple>/release/`** 에 놓는다. 릴리즈
+ * 워크플로는 아키텍처를 명시하려고 `--target` 을 쓰므로(`release.yml`), 이 경로가
+ * 고정이면 CI 에서 **`서명할 .app 이 없다`** 로 죽는다 — 실측(2026-09-06, 첫 릴리즈).
+ *
+ * 로컬에서 `pnpm tauri build` 를 그냥 돌리면 `--target` 이 없어 예전 자리에 나오므로
+ * **기본값은 그대로 둔다.** 부르는 쪽이 아는 사실(어느 트리플로 빌드했나)을 부르는 쪽이
+ * 넘기는 것이고, 스크립트가 그것을 추측하지 않는다.
+ */
+const APP =
+  process.env.MURMUR_APP_PATH ||
+  join(here, '..', 'src-tauri', 'target', 'release', 'bundle', 'macos', 'murmur.app');
 /** `tauri.conf.json` 의 `identifier` 와 **같아야 한다** — 그것이 번들 ID 다. */
 const IDENTIFIER = 'app.murmur.desktop';
 /**
