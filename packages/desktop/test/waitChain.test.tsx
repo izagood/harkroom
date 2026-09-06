@@ -4,8 +4,8 @@
 // 가장 위험한 부분은 순환이다 — 방문 집합이 없으면 렌더에서 무한 루프가 터진다.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import type { AskMeta, MessageRow } from '@murmur/shared';
-import { waitChain } from '../src/lib/waitChain';
+import type { AskMeta, MessageRow, OpenAskLink } from '@murmur/shared';
+import { waitChain, waitChainFromLinks } from '../src/lib/waitChain';
 import type { Liveness } from '../src/lib/threadState';
 import { msg, acc } from './helpers/fakeApi';
 import { useActiveStore as useAppStore } from '../src/state/communities';
@@ -195,5 +195,94 @@ describe('WaitChainLine — 한국어 조사', () => {
     render(<WaitChainLine chain={chain([ask('a1', 1, 'a-han', CODEX)])} />);
     // '민수' 는 받침이 없다 → 가.
     expect(screen.getByTestId('wait-chain').textContent).toContain('민수가 codex의 답을');
+  });
+});
+
+/**
+ * **집계로 만든 사슬**(#488 A3-b).
+ *
+ * 채널 목록에는 답글이 없으므로(`controller.openThread` 로 열 때만 로드된다) 서버가
+ * 마디를 미리 만들어 실어 준다. 이 묶음이 지키는 것은 **두 진입점이 같은 말을 하는
+ * 것**이다 — 사슬이 스레드 안과 사이드바에서 다르면 어느 쪽을 믿어야 할지 알 수 없다.
+ */
+describe('waitChainFromLinks — 스레드를 열지 않고 낸다', () => {
+  const link = (waiter: string, blockedBy: string | null): OpenAskLink =>
+    ({ waiter, blockedBy, askedAt: '2024-01-01T00:00:00.000Z' });
+
+  const from = (links: OpenAskLink[] | null, live: Liveness = ALIVE) =>
+    waitChainFromLinks({ links, myAccountId: ME, live });
+
+  /**
+   * **모르는 것을 안다고 말하지 않는다.** 재료가 없는 것(옛 서버·답글 행)과 기다리는
+   * 것이 없는 것은 다른 사실이다 — 슬라이스 1 의 `threadStateFromFacts` 와 같은 규약.
+   */
+  it('재료가 없으면 null 이다 — 기다리는 것이 없다가 아니다', () => {
+    expect(from(null)).toBeNull();
+    // 빈 배열은 정말로 없는 것이다.
+    expect(from([])!.end).toBe('none');
+  });
+
+  it('내 차례를 가려낸다', () => {
+    const c = from([link(FORGE, ME)])!;
+    expect(c.end).toBe('me');
+  });
+
+  /**
+   * **사슬은 가장 최근 물음에서 출발한다.** "지금 무엇이 멈춰 있는가"를 묻는 것이므로
+   * 마지막에 난 물음이 시작점이고, 나에게 닿으면 거기서 멈춘다. 그래서 마디는 하나다 —
+   * codex 는 사슬에 없지만 `unblocks` 가 그를 센다(내가 답하면 함께 풀린다).
+   * 메시지 경로도 똑같이 낸다(실측으로 확인했고, 아래 동치 검사가 그것을 고정한다).
+   */
+  it('나에게 닿으면 거기서 멈춘다 — 뒤엣것은 unblocks 가 센다', () => {
+    const c = from([link(CODEX, FORGE), link(FORGE, ME)])!;
+    expect(c.end).toBe('me');
+    expect(c.links.map((l) => l.waiter)).toEqual([FORGE]);
+    expect(c.unblocks).toBe(2);
+  });
+
+  it('순환을 끊는다 — 없으면 렌더에서 무한 루프가 터진다', () => {
+    const c = from([link(FORGE, CODEX), link(CODEX, FORGE)])!;
+    expect(c.end).toBe('deadlock');
+    expect(c.deadlockReason).toBe('cycle');
+  });
+
+  it('죽은 러너를 기다리는 것도 교착이다', () => {
+    const c = from([link(FORGE, LINT)], new Set([FORGE]))!;
+    expect(c.end).toBe('deadlock');
+    expect(c.deadlockReason).toBe('dead-runner');
+  });
+
+  it('생존을 모르면 교착이라 부르지 않는다', () => {
+    expect(from([link(FORGE, LINT)], null)!.end).not.toBe('deadlock');
+  });
+
+  it('경과를 말할 시각이 마디에 있다 — 메시지가 없어도', () => {
+    const c = from([link(FORGE, ME)])!;
+    expect(c.links[0]!.askedAt).toBe('2024-01-01T00:00:00.000Z');
+    expect(c.links[0]!.message).toBeUndefined();
+  });
+
+  /**
+   * **이 파일에서 가장 중요한 검사.** 두 진입점이 같은 `walk()` 를 지나는지를 결과로
+   * 묻는다 — 구현이 갈라지면 여기서 먼저 터진다.
+   */
+  it('메시지로 낸 사슬과 집계로 낸 사슬이 같다', () => {
+    const messages = [ask('m1', 1, CODEX, FORGE), ask('m2', 2, FORGE, ME)];
+    const fromMessages = chain(messages);
+    const fromFacts = from([link(CODEX, FORGE), link(FORGE, ME)])!;
+
+    expect(fromFacts.end).toBe(fromMessages.end);
+    expect(fromFacts.unblocks).toBe(fromMessages.unblocks);
+    expect(fromFacts.links.map((l) => [l.waiter, l.blockedBy]))
+      .toEqual(fromMessages.links.map((l) => [l.waiter, l.blockedBy]));
+    // 사슬이 하나로 멈추는 것까지 같다 — 길이가 갈리면 여기서 잡힌다.
+    expect(fromFacts.links).toHaveLength(fromMessages.links.length);
+  });
+
+  it('내가 답하면 몇 개가 풀리는지도 같은 방식으로 센다', () => {
+    // codex 와 lint 가 둘 다 forge 를 기다리고, forge 는 나를 기다린다.
+    const c = from([link(CODEX, FORGE), link(LINT, FORGE), link(FORGE, ME)])!;
+    expect(c.end).toBe('me');
+    expect(c.unblocks).toBe(3);
   });
 });

@@ -63,7 +63,7 @@ export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root
   author_id as "authorId", body, kind, meta, created_at as "createdAt",
   edited_at as "editedAt", ${REACTIONS}, ${ATTACHMENTS},
   null::int as "replyCount", null::text as "lastReplyAt", null::text[] as "participantIds",
-  null::int as "openAskHumanCount", null::text[] as "openAskAccountIds",
+  null::int as "openAskHumanCount", null::text[] as "openAskAccountIds", null::jsonb as "openAskLinks",
   null::int as "failureCount", null::text as "lastKind", null::text as "lastAuthorId",
   also_in_channel as "alsoInChannel"`;
 
@@ -116,7 +116,33 @@ const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
         AND t.meta->'ask'->'to'->>'kind' = 'account'
         AND t.meta->'ask'->'to'->>'accountId' IS NOT NULL
     ), '{}'::text[]) as open_ask_account_ids,
-    COUNT(*) FILTER (WHERE t.meta->>'kind' = 'failure')::int as failure_count
+    COUNT(*) FILTER (WHERE t.meta->>'kind' = 'failure')::int as failure_count,
+    -- 마디들: 누가 → 누구를 기다리는가(#488 A3-b). 위의 두 집계로는 부족하다 —
+    -- open_ask_account_ids 는 '답해야 하는 쪽'만 모은 집합이라 누가 물었는지가
+    -- 지워지고, 사슬을 이으려면 짝이 필요하다.
+    --
+    -- ARRAY_AGG 가 아니라 JSONB_AGG 인 이유가 그것이다: 두 값을 한 행으로 묶어
+    -- 내보내야 짝이 유지된다. 배열 둘로 내면 순서가 같다는 보장이 없다.
+    --
+    -- 'human' 은 blockedBy = null 로 낸다 — 계정 id 로 대신 채우면 그 사람만
+    -- 기다리는 것처럼 보인다(open_ask_human_count 를 따로 둔 것과 같은 이유).
+    COALESCE(JSONB_AGG(
+      JSONB_BUILD_OBJECT(
+        'waiter', t.author_id::text,
+        'blockedBy', CASE WHEN t.meta->'ask'->'to'->>'kind' = 'account'
+          THEN t.meta->'ask'->'to'->>'accountId' END,
+        'askedAt', t.created_at
+      ) ORDER BY t.seq
+    ) FILTER (
+      WHERE t.meta->>'kind' = 'ask'
+        AND t.meta->'ask'->>'answeredWith' IS NULL
+        AND t.author_id IS NOT NULL
+        -- 사람 아무나(human)와 특정 계정(account) 둘 다 마디가 된다. 그 밖의
+        -- to.kind 는 화면이 이을 수 없으므로 넣지 않는다.
+        AND (t.meta->'ask'->'to'->>'kind' = 'human'
+          OR (t.meta->'ask'->'to'->>'kind' = 'account'
+            AND t.meta->'ask'->'to'->>'accountId' IS NOT NULL))
+    ), '[]'::jsonb) as open_ask_links
   FROM message t
   WHERE (t.id = m.id OR t.thread_root_id = m.id) AND t.deleted_at IS NULL
 ) thread_state ON true
@@ -166,6 +192,7 @@ const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.threa
   case when m.thread_root_id is null then thread_state.open_ask_human_count end as "openAskHumanCount",
   case when m.thread_root_id is null then thread_state.open_ask_account_ids end as "openAskAccountIds",
   case when m.thread_root_id is null then thread_state.failure_count end as "failureCount",
+  case when m.thread_root_id is null then thread_state.open_ask_links end as "openAskLinks",
   case when m.thread_root_id is null then thread_last.last_kind end as "lastKind",
   case when m.thread_root_id is null then thread_last.last_author_id end as "lastAuthorId",
   m.also_in_channel as "alsoInChannel"`;

@@ -307,3 +307,94 @@ describe('POST 응답의 notified — 누구를 불렀는가', () => {
     expect(again.headers[NOTIFIED_HEADER]).toBeUndefined();
   });
 });
+
+/**
+ * **마디들**(#488 A3-b) — 누가 누구를 기다리는가.
+ *
+ * `openAskAccountIds` 로는 사슬을 못 만든다. 그 배열은 '답해야 하는 쪽'만 모은 집합이라
+ * **누가 물었는지가 지워지기** 때문이다. 사슬은 `codex → forge → 나` 처럼 마디를 이어
+ * 붙이는 것이라 **짝**이 필요하다.
+ *
+ * 이 재료가 한 번에 세 자리를 연다: 사이드바 대기 사슬(A3-b) · 답글 스택의 말 슬롯 ·
+ * 채널 요약의 "누가 누구를 기다린다". 셋이 같은 하나에 막혀 있었다.
+ */
+describe('미답 물음의 마디들 — 짝이 유지된다', () => {
+  it('물음이 없으면 빈 배열이다 — null 이 아니다', async () => {
+    const id = await root('마디 없음');
+    expect((await rootRow(id)).openAskLinks).toEqual([]);
+  });
+
+  it('누가 물었는지가 남는다 — 집합만으로는 복원할 수 없던 것', async () => {
+    const id = await root('한 마디');
+    await seed(botId, '골라 줘', ask({ kind: 'account', accountId: adminId }), id);
+    const r = await rootRow(id);
+    expect(r.openAskLinks).toHaveLength(1);
+    expect(r.openAskLinks![0]!.waiter).toBe(botId);
+    expect(r.openAskLinks![0]!.blockedBy).toBe(adminId);
+    // 같은 사실을 낸 옛 필드는 '답할 사람'만 안다 — 그래서 이 필드가 필요했다.
+    expect(r.openAskAccountIds).toEqual([adminId]);
+  });
+
+  /**
+   * **'사람 아무나'는 `blockedBy: null` 이다.** 계정 id 로 대신 채우면 그 사람만
+   * 기다리는 것처럼 보인다 — `openAskHumanCount` 를 따로 둔 것과 같은 이유다.
+   */
+  it("'사람 아무나'는 blockedBy 가 null 이고, 그래도 마디로 남는다", async () => {
+    const id = await root('사람 아무나');
+    await seed(botId, '누구든', ask({ kind: 'human' }), id);
+    const r = await rootRow(id);
+    expect(r.openAskLinks).toHaveLength(1);
+    expect(r.openAskLinks![0]!.blockedBy).toBeNull();
+    expect(r.openAskLinks![0]!.waiter).toBe(botId);
+    // 계정 배열에는 담길 수 없는 사실이다.
+    expect(r.openAskAccountIds).toEqual([]);
+    expect(r.openAskHumanCount).toBe(1);
+  });
+
+  it('답한 물음은 마디가 아니다 — 아무도 막지 않는다', async () => {
+    const id = await root('이미 답함');
+    await seed(botId, '골랐다', ask({ kind: 'account', accountId: adminId }, 'a'), id);
+    expect((await rootRow(id)).openAskLinks).toEqual([]);
+  });
+
+  /**
+   * **짝이 섞이면 안 된다.** 배열 둘(`waiter[]`·`blockedBy[]`)로 냈다면 순서가 같다는
+   * 보장이 없어 이 검사를 세울 수 없다 — 그래서 `JSONB_AGG` 로 한 행씩 묶는다.
+   */
+  it('마디가 여럿이어도 짝이 섞이지 않는다', async () => {
+    const id = await root('두 마디');
+    await seed(botId, 'bot 이 admin 을', ask({ kind: 'account', accountId: adminId }), id);
+    await seed(adminId, 'admin 이 bot 을', ask({ kind: 'account', accountId: botId }), id);
+    const links = (await rootRow(id)).openAskLinks!;
+    expect(links).toHaveLength(2);
+    const pairs = links.map((l) => `${l.waiter}->${l.blockedBy}`);
+    expect(pairs).toContain(`${botId}->${adminId}`);
+    expect(pairs).toContain(`${adminId}->${botId}`);
+  });
+
+  /** 사슬은 **가장 최근 물음**에서 출발하므로 화면이 뒤에서 집는다 — 낸 순이어야 한다. */
+  it('낸 순으로 온다', async () => {
+    const id = await root('순서');
+    await seed(botId, '먼저', ask({ kind: 'account', accountId: adminId }), id);
+    await seed(adminId, '나중', ask({ kind: 'account', accountId: botId }), id);
+    const links = (await rootRow(id)).openAskLinks!;
+    expect(links[0]!.waiter).toBe(botId);
+    expect(links[1]!.waiter).toBe(adminId);
+  });
+
+  it('경과를 말할 시각이 함께 온다', async () => {
+    const id = await root('시각');
+    await seed(botId, '언제부터', ask({ kind: 'account', accountId: adminId }), id);
+    const at = (await rootRow(id)).openAskLinks![0]!.askedAt;
+    expect(at).toBeTruthy();
+    expect(Number.isNaN(Date.parse(at))).toBe(false);
+  });
+
+  /** 답글 행에는 없다 — 스레드를 요약하는 자리가 아니다(`replyCount` 와 같은 규약). */
+  it('답글 행에서는 null 이다', async () => {
+    const id = await root('규약');
+    const replyId = await seed(botId, '답글', ask({ kind: 'account', accountId: adminId }), id);
+    const rows = await listMessages(pool, channelId, { limit: 200 });
+    expect(rows.find((m) => m.id === replyId)!.openAskLinks).toBeNull();
+  });
+});
