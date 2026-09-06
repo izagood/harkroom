@@ -641,7 +641,12 @@ jobs:
                 --arg sig "$signature" --arg url "$notes_url" \
             '{version: $v, pub_date: $d, platforms: {"darwin-aarch64": {signature: $sig, url: $url}}}' \
             > "$RUNNER_TEMP/latest.json"
-          gh release upload "$TAG" "$RUNNER_TEMP/latest.json" --clobber
+          # **`--repo` 가 반드시 있어야 한다.** 이 잡에는 checkout 이 없어 git 저장소가
+          # 없고, 그러면 `gh release` 는 리모트를 추론하다 `fatal: not a git repository`
+          # 로 죽는다(실측 2026-09-06, v0.1.1). 위 `gh api` 들이 `$GITHUB_REPOSITORY` 를
+          # 명시하는 것과 같은 이유다 — 이 줄만 그 규칙에서 빠져 있었다.
+          gh release upload "$TAG" "$RUNNER_TEMP/latest.json" \
+            --repo "$GITHUB_REPOSITORY" --clobber
           # 방금 올린 것이 목록에 반영되도록 다시 읽는다.
           assets=$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '.assets[].name')
 

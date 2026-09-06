@@ -151,6 +151,34 @@ describe('릴리즈 워크플로(release.yml)', () => {
       .toContain('TAURI_SIGNING_PRIVATE_KEY');
   });
 
+  /**
+   * ## checkout 없는 잡에서 `gh` 는 저장소를 추론하지 못한다 (실측 2026-09-06, `v0.1.1`)
+   *
+   * `finalize` 에는 `actions/checkout` 이 없다 — 산출물을 열지 않고 API 만 쓰기 때문이다.
+   * 그래서 git 저장소가 없고, `gh release ...` 는 리모트를 추론하다
+   * `fatal: not a git repository` 로 죽는다.
+   *
+   * 그 잡의 `gh api` 들은 `$GITHUB_REPOSITORY` 를 명시해 이 함정을 피한다. 새로 추가되는
+   * `gh` 호출도 같은 규칙을 따라야 하는데, `latest.json` 업로드 줄이 그것을 빠뜨려
+   * 빌드·서명·공증을 다 통과한 릴리즈가 **마지막 단계에서** 죽었다.
+   *
+   * **되돌려 RED**: `--repo` 를 지우면 빨개진다.
+   */
+  it('finalize 의 gh 호출이 저장소를 명시한다', () => {
+    const fin = workflow.match(/^  finalize:[\s\S]*$/m)?.[0] ?? '';
+    expect(fin, 'finalize 잡을 찾지 못했다').not.toBe('');
+    // `gh release` 호출을 하나씩 잘라 **각각** `--repo` 를 갖는지 본다.
+    // 부정 전방탐색으로 한 번에 재려다 실패했다 — 여러 줄에 걸친 호출에서 경계가 흐려져
+    // 멀쩡한 코드에도 걸린다. 세는 쪽이 무엇을 재는지 분명하다.
+    // **주석 줄을 먼저 걷어낸다.** 이 워크플로는 근거를 길게 적어서 주석 안에도
+    // `gh release` 가 등장한다 — 그것까지 세면 "설명한 것"이 "실행하는 것"으로 잡힌다.
+    const code = fin.replace(/^\s*#.*$/gm, '');
+    const calls = code.match(/gh release[\s\S]*?(?=\n\s*(?:[a-z_]+=|gh |echo |fi\b|if\b))/g) ?? [];
+    for (const c of calls) {
+      expect(c, `--repo 가 없다: ${c.slice(0, 60)}`).toContain('--repo');
+    }
+  });
+
   it('공증 뒤에 updater 산출물을 다시 만든다', () => {
     // **`- name:` 으로 짚는다.** 그냥 문구를 찾으면 이 파일 위쪽 설명 주석이 먼저
     // 걸려서, 실제 단계가 어디 있든 통과해 버린다(이 회귀선을 처음 쓸 때 실제로
