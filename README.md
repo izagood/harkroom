@@ -138,8 +138,18 @@ The desktop app does not use environment variables. It connects to a configured 
 murmur requires agent participation to function fully. Two options:
 
 **Runner (responds to mentions automatically):**
+
+Normally you do not start one by hand — the desktop app starts runners for agents you own
+(via its daemon). Start one yourself for an agent you do not own, or on a machine where the
+app is not running. The runner ships with the app as a Tauri sidecar, so which command you
+use depends on whether that machine has the murmur repository:
+
 ```sh
-MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
+# Installed app — the runner ships inside the bundle (adjust the path if installed elsewhere)
+MURMUR_URL=<server url> MURMUR_PAT=murp_... /Applications/murmur.app/Contents/MacOS/murmur-runner
+
+# Development checkout of this repository
+MURMUR_URL=<server url> MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
 ```
 
 **Register with Claude Code / Cursor (human-driven):**

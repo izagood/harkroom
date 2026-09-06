@@ -11,13 +11,31 @@ Claude Code나 Cursor는 사람이 프롬프트할 때만 움직이기 때문이
 
 ## 실행
 
+**대개는 손으로 띄우지 않는다.** murmur 데스크탑 앱이 **내가 소유한** 에이전트의 러너를
+daemon 을 통해 띄운다(`#431` 2단계, [`docs/operations.md`](../../docs/operations.md) §8-0).
+아래는 그것이 닿지 않는 경우 — 남이 소유한 에이전트, 소유자가 없는 에이전트, **이 앱이 안
+도는 머신** — 에 사람이 밟는 절차다.
+
 1. **murmur 데스크탑 앱에서 에이전트를 만든다** — 사이드바의 `+ Add or edit agents`.
    이름·지시문·harness를 넣으면 PAT가 한 번 표시된다.
-2. **러너를 띄운다:**
+2. **러너를 띄운다.** 두 갈래이고, 고르는 기준은 **murmur 저장소가 그 머신에 있는가**다:
 
 ```sh
-MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
+# 앱을 설치해 쓰는 경우 — 러너는 앱과 함께 배포된다 (설치 위치가 다르면 경로를 바꾼다)
+MURMUR_URL=<서버 주소> MURMUR_PAT=murp_... /Applications/murmur.app/Contents/MacOS/murmur-runner
+
+# 이 저장소를 클론한 개발 환경
+MURMUR_URL=<서버 주소> MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
 ```
+
+위쪽이 있는 이유: `#431` 1단계가 러너를 **단일 번들**로 만들어 Tauri 사이드카
+(`externalBin`)로 앱과 함께 배포한다. 앱을 설치해 쓰는 사람은 이 저장소를 클론하지 않으므로
+`pnpm` 명령이 그 머신에서는 실행할 소스도 워크스페이스도 없다. 아래쪽(pnpm)은 **죽은 명령이
+아니라 개발 환경 전용**이다 — `package.json` 의 `start` 는 그대로 있다.
+
+사람에게 보여 줄 명령의 정본은 `packages/desktop/src/lib/runnerCommand.ts` 이고, 설정 →
+에이전트 화면이 PAT 를 채워 그대로 복사할 수 있게 내민다. 아래 예시들은 짧게 쓰려고
+개발 갈래(`pnpm`)로 적었다 — 배포판에서는 그 자리에 사이드카 경로를 넣는다.
 
 이제 murmur에서 `@이름 이거 봐줘`라고 쓰면 답이 온다.
 
@@ -38,8 +56,8 @@ MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
 API 키는 필요 없다 — 모든 harness가 사람의 로컬 로그인(claude: Keychain, codex: `~/.codex/auth.json`)을 쓴다.
 
 **에이전트를 여러 대 운영하려면 러너도 여러 프로세스다.** 러너 하나는 자기 PAT의 계정 하나로만
-붙는다 — 두 에이전트를 동시에 돌리려면 각자 다른 `MURMUR_PAT`로 `pnpm --filter @murmur/agent
-start`를 두 번 띄운다. `AGENT_STATE_DIR`은 **같아도 된다** — 상태 경로 전체가 `me.handle`로
+붙는다 — 두 에이전트를 동시에 돌리려면 각자 다른 `MURMUR_PAT`로 **위 명령을 두 번** 띄운다
+(어느 갈래든 상관없다). `AGENT_STATE_DIR`은 **같아도 된다** — 상태 경로 전체가 `me.handle`로
 스코프되므로(아래 "상태 디렉터리") 같은 머신·같은 `AGENT_STATE_DIR`에서 동시에 떠도 서로의
 세션·workspace가 겹치지 않는다.
 
