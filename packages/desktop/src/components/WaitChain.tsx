@@ -22,7 +22,9 @@ export function WaitChainLine({ chain }: { chain: Chain }) {
 
   const name = (id: string | null): string => (id === null ? '사람' : accounts[id]?.handle ?? '…');
   const head = chain.links[0]!;
-  const elapsed = elapsedLabel(head.message.createdAt, Date.now());
+  // **`askedAt` 을 쓴다** — 집계로 만든 사슬에는 메시지가 없다(#488 A3-b). 채널 목록은
+  // 답글을 싣지 않으므로 서버가 두 계정과 시각만 준다.
+  const elapsed = elapsedLabel(head.askedAt, Date.now());
 
   if (chain.end === 'deadlock') {
     return (
