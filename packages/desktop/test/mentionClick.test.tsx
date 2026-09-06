@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
@@ -252,19 +252,22 @@ describe('멘션 클릭 배선 — Workspace 를 통째로 (#279)', () => {
 
   beforeEach(() => { localStorage.clear(); });
 
-  it('사람 멘션을 누르면 디렉터리가 그 계정이 강조된 상태로 열린다', async () => {
+  /**
+   * **Task 14(identity 문서)**: 이름을 누르면 **프로필**이 열린다. 전에는 디렉터리(검색
+   * 목록)가 열렸는데, `MessageBody` 는 접근성 이름을 이미 "프로필 열기"로 부르고 있었으므로
+   * **그 이름이 거짓이었다.** 디렉터리는 "누가 있나"에, 프로필은 "이 사람이 무엇인가"에
+   * 답한다 — 물음이 다르므로 화면도 다르다.
+   */
+  it('사람 멘션을 누르면 그 사람의 프로필이 열린다', async () => {
     mount('@someone 안녕');
 
     const mention = screen.getByTestId('mention-someone');
     expect(mention.tagName).toBe('BUTTON');
     fireEvent.click(mention);
 
-    const dialog = await screen.findByRole('dialog', { name: '디렉터리' });
+    const dialog = await screen.findByRole('dialog', { name: 'someone 프로필' });
     expect(dialog).toBeTruthy();
-    await waitFor(() =>
-      expect(screen.getByTestId('directory-row-u2').getAttribute('data-selected')).toBe('true'));
-    // 다른 행은 강조되지 않는다 — "그 계정으로 열렸다" 가 아무 행에나 붙으면 뜻이 없다.
-    expect(screen.getByTestId('directory-row-u2')).toBeTruthy();
+    // 검색 목록이 아니다 — 지목한 한 사람만 그린다.
     expect(screen.queryByTestId('directory-row-u1')).toBeNull();
   });
 
@@ -277,17 +280,16 @@ describe('멘션 클릭 배선 — Workspace 를 통째로 (#279)', () => {
   });
 
   // 비활성 계정도 열린다 — 디렉터리가 `비활성` 배지를 그린다(#94·#251).
-  it('비활성 계정 멘션도 열리고 디렉터리에 비활성 배지가 보인다', async () => {
+  it('비활성 계정 멘션도 열리고 프로필이 비활성이라고 말한다', async () => {
     mount('@ghost 아직 있나');
 
     const mention = screen.getByTestId('mention-ghost');
     expect(mention.tagName).toBe('BUTTON');
     fireEvent.click(mention);
 
-    await screen.findByRole('dialog', { name: '디렉터리' });
-    await waitFor(() =>
-      expect(screen.getByTestId('directory-row-u4').getAttribute('data-selected')).toBe('true'));
-    expect(screen.getByTestId('directory-disabled-u4').textContent).toContain('비활성');
+    const dialog = await screen.findByRole('dialog', { name: 'ghost 프로필' });
+    // 비활성은 **행으로** 말한다 — 없는 행을 그리지 않는 것과 같은 규칙이다.
+    expect(dialog.textContent).toContain('비활성');
   });
 
   /**
@@ -307,13 +309,16 @@ describe('멘션 클릭 배선 — Workspace 를 통째로 (#279)', () => {
     expect(onOpenSettings).toHaveBeenCalledWith('agents', 'a2');
   });
 
-  it('소유자도 admin 도 아니면 통째 배선에서도 디렉터리로 간다', async () => {
+  it('소유자도 admin 도 아니면 프로필까지만 간다 — 설정은 열리지 않는다', async () => {
     mount('@buzz 이거 봐줘', { me: acc('u3', 'stranger', 'human', false) });
 
     fireEvent.click(screen.getByTestId('mention-buzz'));
 
-    await screen.findByRole('dialog', { name: '디렉터리' });
+    // Task 14 로 목적지가 디렉터리 → 프로필로 바뀌었지만 **경계는 그대로다.**
+    const dialog = await screen.findByRole('dialog', { name: 'buzz 프로필' });
     expect(onOpenSettings).not.toHaveBeenCalled();
+    // 남의 에이전트라 설정 진입점도 없다 — 갈 수 없는 곳으로 가는 문은 그리지 않는다.
+    expect(within(dialog).queryByTestId('profile-settings')).toBeNull();
   });
 
   it('스레드 패널의 멘션도 같게 동작한다', () => {
