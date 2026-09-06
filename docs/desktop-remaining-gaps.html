@@ -1,0 +1,883 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="murmur 데스크탑 — 앞선 두 디자인 문서를 적용한 뒤 남는 여덟 곳의 제안">
+<title>murmur · 나머지 여덟 곳</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap">
+
+<style>
+  :root {
+    --paper:#FBF9F7; --paper-2:#F3F0EB; --card:#FFFFFF;
+    --line:#E3DCD2; --line-soft:#EFEAE2;
+    --ink:#1B1815; --ink-2:#4C453D; --ink-3:#7E7568;
+    --accent:#E8613C; --accent-2:#B8431F; --accent-soft:#FAE8E1;
+    --teal:#0D8E82;
+    --sans:"IBM Plex Sans KR", ui-sans-serif, system-ui, "Apple SD Gothic Neo", sans-serif;
+    --disp:"Bricolage Grotesque","IBM Plex Sans KR", ui-sans-serif, system-ui, sans-serif;
+    --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:#141210; --paper-2:#1C1917; --card:#1D1A17;
+      --line:#322C26; --line-soft:#262220;
+      --ink:#F1ECE5; --ink-2:#B9B0A4; --ink-3:#877E71;
+      --accent:#FF7B54; --accent-2:#FF9E7F; --accent-soft:#3A2119;
+      --teal:#2FB3A4; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:#141210; --paper-2:#1C1917; --card:#1D1A17;
+    --line:#322C26; --line-soft:#262220;
+    --ink:#F1ECE5; --ink-2:#B9B0A4; --ink-3:#877E71;
+    --accent:#FF7B54; --accent-2:#FF9E7F; --accent-soft:#3A2119;
+    --teal:#2FB3A4; color-scheme: dark;
+  }
+  * { box-sizing:border-box; }
+  body { background:var(--paper); color:var(--ink); font-family:var(--sans); font-size:16px; line-height:1.7; margin:0; padding-bottom:5rem; -webkit-font-smoothing:antialiased; }
+  .wrap { width:min(100% - 2.5rem, 900px); margin-inline:auto; }
+  .bleed { width:min(100% - 2rem, 1120px); margin-inline:auto; }
+
+  header { padding:3.4rem 0 2rem; }
+  h1 { font-family:var(--disp); font-weight:800; font-size:clamp(2rem,4.4vw,2.9rem); line-height:1.06; letter-spacing:-.03em; margin:0 0 .9rem; }
+  h1 em { font-style:normal; color:var(--accent); }
+  .lede { font-size:1.06rem; color:var(--ink-2); max-width:64ch; margin:0 0 1.5rem; }
+  .meta { font-family:var(--mono); font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-3); border-top:1px solid var(--line); padding-top:.8rem; }
+
+  section { padding:2.8rem 0 0; }
+  .eyebrow { font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--accent); display:flex; align-items:center; gap:.7rem; margin-bottom:.7rem; }
+  .eyebrow::after { content:""; height:1px; flex:1; background:var(--line); }
+  h2 { font-family:var(--disp); font-weight:700; font-size:clamp(1.4rem,3vw,1.85rem); line-height:1.15; letter-spacing:-.02em; margin:0 0 .8rem; }
+  h3 { font-family:var(--disp); font-weight:700; font-size:1.06rem; margin:1.9rem 0 .5rem; letter-spacing:-.01em; }
+  p { margin:0 0 1rem; max-width:70ch; }
+  code { font-family:var(--mono); font-size:.86em; background:var(--paper-2); border:1px solid var(--line-soft); padding:.05em .35em; border-radius:3px; color:var(--ink-2); }
+  b, strong { font-weight:600; }
+  .note { font-size:.9rem; color:var(--ink-3); max-width:70ch; }
+
+  .panel { border:1px solid var(--line); border-radius:8px; background:var(--card); overflow:hidden; margin-top:1.1rem; }
+  .panel__h { padding:.55rem 1rem; background:var(--paper-2); border-bottom:1px solid var(--line-soft); font-family:var(--mono); font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-3); display:flex; align-items:center; gap:.6rem; }
+  .panel__h .tag { margin-left:auto; text-transform:none; letter-spacing:0; font-size:10px; }
+  .panel__b { padding:1.1rem 1.2rem; }
+  .grid.two { display:grid; gap:1rem; }
+  @media (min-width:760px) { .grid.two { grid-template-columns:1fr 1fr; gap:1.3rem; } }
+
+  .ui { font-size:13px; line-height:1.5; color:#1A1917; background:#fff; }
+  .row { display:flex; gap:9px; align-items:flex-start; padding:5px 0; }
+  .who { display:flex; align-items:baseline; gap:6px; flex-wrap:wrap; }
+  .who b { font-weight:600; font-size:13px; }
+  .t { font-family:var(--mono); font-size:10px; color:#93908A; }
+  .body { color:#3C3A35; }
+  .badge-now { display:inline-flex; align-items:center; gap:3px; background:#eef2ff; color:#4f46e5; border-radius:3px; padding:0 4px; font-size:10px; }
+  .av { display:inline-flex; align-items:center; justify-content:center; color:#fff; font-weight:600; flex:none; overflow:hidden; border-radius:50%; letter-spacing:-.01em; }
+  .av.glyph { background:transparent; color:inherit; }
+  .stack { display:inline-flex; align-items:center; }
+  .stack .av { box-shadow:0 0 0 2px #fff; }
+  .stack .av + .av { margin-left:-5px; }
+  .sizes { display:flex; align-items:flex-end; gap:1.4rem; flex-wrap:wrap; }
+  .size { text-align:center; }
+  .size .lbl { font-family:var(--mono); font-size:9.5px; color:var(--ink-3); margin-top:.45rem; letter-spacing:.03em; }
+
+  /* 프로필 패널 */
+  .prof { width:310px; border:1px solid #E4E3E0; border-radius:10px; background:#fff; box-shadow:0 10px 30px -14px rgba(0,0,0,.35); overflow:hidden; }
+  .prof__top { padding:15px 15px 12px; display:flex; gap:12px; align-items:center; }
+  .prof__name { font-weight:600; font-size:15px; color:#1A1917; }
+  .prof__handle { font-family:var(--mono); font-size:11.5px; color:#93908A; }
+  .prof__state { display:flex; align-items:center; gap:5px; font-size:11px; color:#5C5951; margin-top:3px; }
+  .prof__state i { width:6px; height:6px; border-radius:50%; display:block; }
+  .prof__rows { border-top:1px solid #EFEEEB; }
+  .prow { display:flex; gap:10px; padding:7px 15px; font-size:12px; }
+  .prow .k { color:#93908A; width:60px; flex:none; font-size:11.5px; }
+  .prow .v { color:#3C3A35; min-width:0; }
+  .prof__acts { border-top:1px solid #EFEEEB; padding:9px 11px; display:flex; gap:6px; flex-wrap:wrap; }
+
+  .btn { font-size:11.5px; padding:4px 10px; border-radius:5px; border:1px solid #DDDCD8; color:#3C3A35; background:#fff; display:inline-flex; align-items:center; gap:4px; }
+  .btn.primary { background:#C24A22; border-color:#C24A22; color:#fff; }
+  .btn.quiet { border-color:transparent; color:#6E6A63; }
+  .btn.danger { border-color:#E5B7A8; color:#B8431F; background:#FDF3EF; }
+  .btn.wide { width:100%; justify-content:center; }
+
+  /* ===== 그리드 안들 ===== */
+  .screen { background:#FAFAF9; padding:18px 20px 22px; font-size:13px; color:#1A1917; }
+  .screen__h { display:flex; align-items:baseline; gap:10px; margin-bottom:3px; }
+  .screen__t { font-family:var(--disp); font-weight:700; font-size:18px; letter-spacing:-.01em; }
+  .screen__d { font-size:11.5px; color:#8A867E; margin-bottom:14px; }
+
+  /* A — 얼굴 */
+  .ga { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; }
+  .ga .c { border:1px solid #E4E3E0; border-radius:10px; background:#fff; padding:16px 10px 12px; text-align:center; }
+  .ga .c .nm { font-weight:600; font-size:13px; margin-top:9px; }
+  .ga .c .st { font-size:10.5px; color:#8A867E; margin-top:2px; display:flex; align-items:center; justify-content:center; gap:4px; }
+  .ga .c .st i { width:5px; height:5px; border-radius:50%; display:block; }
+  .ga .c .act { margin-top:10px; }
+  .ga .c.off .av { filter:saturate(.25); opacity:.5; }
+  .ga .c.fail { border-color:#E5B7A8; }
+  .ga .add { border:1.5px dashed #D6D3CC; border-radius:10px; background:transparent; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#8A867E; gap:6px; min-height:150px; }
+  .ga .add .plus { font-size:26px; line-height:1; color:#B0ACA4; }
+
+  /* B — 명함 */
+  .gb { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .gb .c { border:1px solid #E4E3E0; border-radius:9px; background:#fff; padding:11px 12px; display:flex; align-items:center; gap:11px; }
+  .gb .c .mid { min-width:0; flex:1; }
+  .gb .c .nm { font-weight:600; font-size:13px; }
+  .gb .c .sub { font-size:10.5px; color:#8A867E; margin-top:1px; }
+  .gb .c .st { font-size:10.5px; color:#8A867E; display:flex; align-items:center; gap:4px; }
+  .gb .c .st i { width:5px; height:5px; border-radius:50%; display:block; }
+  .gb .c.off .av { filter:saturate(.25); opacity:.5; }
+  .gb .c.fail { border-color:#E5B7A8; }
+  .gb .add { border:1.5px dashed #D6D3CC; border-radius:9px; display:flex; align-items:center; justify-content:center; gap:7px; color:#8A867E; padding:11px; }
+  .gb .add .plus { font-size:18px; color:#B0ACA4; }
+
+  /* C — 상태판 */
+  .gc-sum { display:flex; gap:16px; font-size:11.5px; color:#5C5951; margin-bottom:12px; }
+  .gc-sum span { display:flex; align-items:center; gap:5px; }
+  .gc-sum i { width:6px; height:6px; border-radius:50%; display:block; }
+  .gc { display:grid; grid-template-columns:repeat(3,1fr); gap:11px; }
+  .gc .c { border:1px solid #E4E3E0; border-radius:9px; background:#fff; overflow:hidden; display:flex; }
+  .gc .c .bar { width:3px; flex:none; }
+  .gc .c .in { padding:12px 13px; flex:1; min-width:0; }
+  .gc .c .top { display:flex; align-items:center; gap:9px; }
+  .gc .c .nm { font-weight:600; font-size:13px; }
+  .gc .c .sub { font-size:10.5px; color:#8A867E; }
+  .gc .c .big { font-size:11.5px; color:#3C3A35; margin-top:9px; }
+  .gc .c .big b { font-weight:600; }
+  .gc .c .act { margin-top:9px; }
+  .gc .c.off { background:#FAFAF9; }
+  .gc .c.off .av { filter:saturate(.2); opacity:.5; }
+  .gc .add { border:1.5px dashed #D6D3CC; border-radius:9px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; color:#8A867E; min-height:110px; }
+  .gc .add .plus { font-size:22px; color:#B0ACA4; line-height:1; }
+
+  /* 상세 */
+  .det { background:#fff; padding:18px 22px 20px; }
+  .det__back { font-size:11.5px; color:#8A867E; margin-bottom:12px; }
+  .det__top { display:flex; align-items:center; gap:13px; margin-bottom:16px; }
+  .det__nm { font-family:var(--disp); font-weight:700; font-size:18px; letter-spacing:-.01em; }
+  .det__st { font-size:11.5px; color:#8A867E; display:flex; align-items:center; gap:5px; margin-top:2px; }
+  .det__st i { width:6px; height:6px; border-radius:50%; display:block; }
+  .det__acts { margin-left:auto; display:flex; gap:6px; }
+  .sec { margin-bottom:18px; }
+  .sec__h { font-weight:600; font-size:13px; margin-bottom:2px; }
+  .sec__d { font-size:11px; color:#8A867E; margin-bottom:9px; }
+  .fld { margin-bottom:11px; }
+  .fld__l { font-size:11px; color:#5C5951; margin-bottom:3px; font-weight:500; }
+  .fld__i { border:1px solid #DDDCD8; border-radius:5px; padding:6px 9px; background:#fff; font-size:12px; }
+  .fld__i.ph { color:#A8A49C; }
+  .fld__i.sel { display:flex; align-items:center; }
+  .fld__i.sel::after { content:"⌄"; margin-left:auto; color:#8A867E; font-size:13px; line-height:.6; }
+  .fld__h { font-size:10.5px; color:#8A867E; margin-top:3px; }
+  .fld__h.warn { color:#B8431F; }
+  .two-up { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .seg { display:inline-flex; border:1px solid #DDDCD8; border-radius:6px; overflow:hidden; }
+  .seg span { padding:5px 12px; font-size:11.5px; color:#5C5951; background:#fff; }
+  .seg span.on { background:#C24A22; color:#fff; }
+  .setfoot { border-top:1px solid #EFEEEB; margin-top:14px; padding-top:12px; display:flex; gap:7px; align-items:center; }
+
+  .cmp { margin-top:1rem; border-top:1px solid var(--line); }
+  .cmp__r { display:grid; gap:.15rem 1.3rem; padding:.85rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:720px) { .cmp__r { grid-template-columns:5.5rem 1fr; } }
+  .cmp__k { font-family:var(--mono); font-size:11.5px; color:var(--ink); }
+  .cmp__v { font-size:.92rem; color:var(--ink-2); line-height:1.6; }
+
+  .rules { display:grid; gap:0; margin-top:1rem; border-top:1px solid var(--line); }
+  .rule { display:grid; gap:.25rem 1.3rem; padding:1rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:760px) { .rule { grid-template-columns:2.2rem 1fr; } }
+  .rule__n { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--accent); }
+  .rule__t { font-family:var(--disp); font-weight:700; font-size:1.05rem; margin:0 0 .25rem; letter-spacing:-.01em; }
+  .rule__b { font-size:.94rem; color:var(--ink-2); margin:0; line-height:1.62; max-width:66ch; }
+
+  .callout { margin-top:1.3rem; border:1px solid var(--line); border-left:3px solid var(--teal); border-radius:4px; background:var(--card); padding:1rem 1.15rem; }
+  .callout p { margin:0; font-size:.94rem; color:var(--ink-2); }
+  .callout p + p { margin-top:.5rem; }
+  .warnout { border-left-color:var(--accent-2); }
+  footer { margin-top:3rem; padding-top:1rem; border-top:1px solid var(--line); font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-3); }
+
+  /* 항목 목록 */
+  .flist { border-top:1px solid var(--line); }
+  .fitem { display:grid; gap:.1rem 1.2rem; padding:.8rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:700px) { .fitem { grid-template-columns:15rem 1fr; } }
+  .fitem__k { font-weight:600; font-size:.93rem; color:var(--ink); }
+  .fitem__v { font-size:.92rem; color:var(--ink-2); line-height:1.6; }
+
+  /* 답글 스택 요약 줄 */
+  .slot { display:grid; gap:9px; }
+  .slotrow { display:grid; gap:4px 12px; align-items:center; }
+  @media (min-width:640px) { .slotrow { grid-template-columns:5.6rem 1fr; } }
+  .slotlab { font-family:var(--mono); font-size:9.5px; letter-spacing:.07em; text-transform:uppercase; color:#93908A; }
+  .trow { display:flex; gap:10px; align-items:center; padding:8px 11px; border-radius:6px; background:#fff; border:1px solid #EFEEEB; min-width:0; }
+  .trow.hotrow { background:#FFF5F1; border-color:#F2D3C6; box-shadow:inset 2px 0 0 #C24A22; }
+  .trow.dim { background:#FAFAF9; }
+  .trow__t { font-size:12.5px; color:#6E6A63; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .trow__t b { color:#1A1917; font-weight:600; }
+  .trow__t .hot { color:#C24A22; font-weight:600; }
+  .trow__t .cut { color:#C0BCB4; }
+  .plus { display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background:#E7E4DF; color:#5C5951; font-weight:600; flex:none; }
+
+  /* 설정 › 에이전트 — 확정안 */
+  .scr { background:#fff; }
+  .scr__h { padding:15px 18px 0; }
+  .scr__t { font-weight:600; font-size:15px; color:#1A1917; }
+  .scr__d { font-size:11.5px; color:#8A867E; margin-top:2px; }
+  .srch { margin:13px 18px 0; display:flex; align-items:center; gap:8px; border:1px solid #DDDCD8; border-radius:7px; padding:7px 11px; background:#FAFAF9; }
+  .srch__i { color:#A8A49C; font-size:13px; line-height:1; }
+  .srch input { border:0; background:transparent; outline:none; font-family:inherit; font-size:12.5px; color:#1A1917; width:100%; min-width:0; padding:0; }
+  .srch__n { margin-left:auto; font-family:var(--mono); font-size:10px; color:#A8A49C; white-space:nowrap; }
+  .agrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(86px, 1fr)); gap:16px 8px; padding:18px 16px 22px; }
+  .acard { display:flex; flex-direction:column; align-items:center; gap:8px; padding:8px 2px 6px; border-radius:10px; }
+  .acard:hover { background:#F4F3F0; }
+  .ava { position:relative; width:60px; height:60px; flex:none; }
+  .ava .av { width:60px; height:60px; font-size:25px; }
+  .ava.off .av { filter:saturate(.12); opacity:.4; }
+  .ava.bad .av { filter:saturate(.35); opacity:.6; }
+  .ava__ov { position:absolute; inset:0; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; font-size:18px; background:rgba(26,25,23,.4); }
+  .ava.bad .ava__ov { background:rgba(194,74,34,.72); }
+  .ava.bad::after { content:""; position:absolute; inset:-3px; border-radius:50%; border:2px solid #C24A22; }
+  .acard__n { font-size:12px; color:#3C3A35; max-width:84px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .acard.dimname .acard__n { color:#93908A; }
+  .acard__why { font-size:10px; line-height:1.35; color:#C24A22; max-width:86px; text-align:center; margin-top:-3px; }
+  .acard.new .ava { border:1.5px dashed #CFCBC3; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#A8A49C; font-size:27px; font-weight:300; }
+  .acard.new:hover .ava { border-color:#C24A22; color:#C24A22; }
+  .agrid__none { grid-column:1/-1; padding:14px 4px; font-size:12px; color:#93908A; }
+  .states { display:flex; gap:2.2rem; flex-wrap:wrap; }
+</style>
+<style>
+  /* 이 문서 전용 */
+  .gap { border-top:1px solid var(--line); margin-top:1.1rem; }
+  .gapr { display:grid; gap:.2rem 1.3rem; padding:1rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:760px){ .gapr { grid-template-columns:2.3rem 1fr; } }
+  .gapn { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--accent); }
+  .gapt { font-family:var(--disp); font-weight:700; font-size:1.05rem; margin:0 0 .3rem; letter-spacing:-.01em; }
+  .gapb { font-size:.94rem; color:var(--ink-2); margin:0; line-height:1.62; max-width:68ch; }
+  .says { display:grid; gap:0; margin-top:1rem; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+  .sayr { display:grid; gap:.15rem .9rem; padding:.7rem 1rem; border-bottom:1px solid var(--line-soft); background:var(--card); }
+  .sayr:last-child { border-bottom:0; }
+  @media (min-width:700px){ .sayr { grid-template-columns:8rem 1fr; align-items:baseline; } }
+  .sayk { font-family:var(--mono); font-size:10px; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-3); }
+  .sayv { font-size:.93rem; color:var(--ink-2); }
+  .sayr.c { background:var(--paper-2); }
+  .sayr.c .sayv { color:var(--ink); }
+  .ba { display:grid; gap:1rem; margin-top:1.1rem; }
+  @media (min-width:820px){ .ba { grid-template-columns:1fr 1fr; gap:1.2rem; } }
+
+  /* 목차 */
+  .toc { display:grid; gap:0; margin-top:1.1rem; border-top:1px solid var(--line); }
+  .toci { display:grid; gap:.1rem 1rem; padding:.7rem 0; border-bottom:1px solid var(--line-soft); align-items:baseline; }
+  @media (min-width:640px){ .toci { grid-template-columns:2rem 11rem 1fr; } }
+  .tocn { font-family:var(--mono); font-size:11px; color:var(--accent); font-weight:600; }
+  .tock { font-weight:600; font-size:.93rem; color:var(--ink); }
+  .tocv { font-size:.9rem; color:var(--ink-3); }
+
+  /* 사이드바 목업 */
+  .sbwrap { display:flex; gap:1.1rem; flex-wrap:wrap; align-items:flex-start; }
+  .sb { width:212px; flex:none; border:1px solid #E4E3E0; border-radius:9px; overflow:hidden; background:#FAFAF9; font-size:12px; color:#1A1917; }
+  .sb.dark0 { background:#F6F5F3; }
+  .sb__sec { font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:#93908A; padding:10px 11px 4px; }
+  .sb__i { display:flex; align-items:center; gap:7px; padding:5px 11px; }
+  .sb__i.on { background:#fff; box-shadow:inset 2px 0 0 #C24A22; font-weight:600; }
+  .sb__i .g { color:#8A867E; font-size:11px; }
+  .sb__n { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sb__r { margin-left:auto; font-size:10px; color:#93908A; font-family:var(--mono); }
+  .sb__r.hot { background:#C24A22; color:#fff; border-radius:9px; padding:0 5px; font-family:var(--sans); font-size:10px; font-weight:600; }
+  .sb__hr { height:1px; background:#EAE8E4; margin:7px 0; }
+  .sb__foot { border-top:1px solid #EAE8E4; padding:8px 11px; min-height:44px; display:flex; align-items:center; gap:9px; background:#fff; }
+  .sb__foot.now { background:#FAFAF9; }
+  .sb__err { margin:0 8px 8px; font-size:10.5px; line-height:1.4; color:#B8431F; }
+  .sb__srch { margin:9px 9px 4px; display:flex; align-items:center; gap:6px; border:1px solid #E0DDD8; border-radius:6px; padding:4px 8px; background:#fff; color:#A8A49C; font-size:11.5px; }
+  .sb__wait { margin:0 9px 8px; border:1px solid #F2D3C6; background:#FFF5F1; border-radius:6px; padding:6px 8px; font-size:10.5px; line-height:1.45; color:#8A3A1C; }
+  .sb__wait b { color:#B8431F; }
+  .sb__quiet { margin:0 11px 9px; font-size:10.5px; color:#A8A49C; }
+  .gear { margin-left:auto; color:#93908A; font-size:12px; }
+  /* 하단 행 + 메뉴 */
+  .ftv { display:flex; gap:1.8rem; flex-wrap:wrap; align-items:flex-end; }
+  .ftbox { width:212px; flex:none; border:1px solid #E4E3E0; border-radius:9px; background:#fff; overflow:hidden; }
+  .ftbox .cap0 { border-bottom:1px solid #EAE8E4; background:#FAFAF9; height:26px; }
+  .ftrow { display:flex; align-items:center; gap:9px; padding:9px 11px; min-height:44px; }
+  .ftrow.act { cursor:pointer; }
+  .ftrow.act:hover, .ftrow.hover { background:#F0EEEA; }
+  .ftrow.act:active { background:#E8E5E0; }
+  .ftrow .nm { font-weight:600; font-size:12.5px; color:#1A1917; }
+  .ftcap { font-size:11px; color:var(--ink-3); margin-top:.55rem; line-height:1.55; max-width:212px; }
+  .ftlab { font-family:var(--mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); margin-bottom:.45rem; }
+  .ftlab b { color:var(--accent); font-family:var(--sans); letter-spacing:0; text-transform:none; font-size:11px; }
+  /* 팝업 메뉴 */
+  .menu { width:212px; border:1px solid #E0DDD8; border-radius:9px; background:#fff; box-shadow:0 12px 30px -12px rgba(0,0,0,.32); overflow:hidden; }
+  .menu__h { display:flex; gap:9px; align-items:center; padding:11px 12px; border-bottom:1px solid #F0EFEC; }
+  .menu__n { font-weight:600; font-size:12.5px; color:#1A1917; line-height:1.3; }
+  .menu__s { font-family:var(--mono); font-size:10.5px; color:#93908A; }
+  .menu__i { display:flex; align-items:center; gap:9px; padding:8px 13px; font-size:12.5px; color:#3C3A35; min-height:34px; cursor:pointer; }
+  .menu__i:hover { background:#F0EEEA; }
+  .menu__i.hl { background:#F4F3F0; }
+  .menu__i .k { margin-left:auto; font-family:var(--mono); font-size:10.5px; color:#A8A49C; }
+  .menu__hr { height:1px; background:#F0EFEC; margin:4px 0; }
+  .menu__i.danger { color:#B8431F; }
+  .avdot { position:relative; flex:none; }
+  .avdot .ov { position:absolute; inset:0; border-radius:50%; display:flex; align-items:center; justify-content:center; background:rgba(26,25,23,.4); color:#fff; font-size:8px; }
+  .avdot.off .av { filter:saturate(.12); opacity:.4; }
+
+  /* 오류 띠 */
+  .strip { display:flex; align-items:center; gap:9px; border:1px solid #F0D7A8; background:#FDF6E7; border-radius:7px; padding:8px 11px; font-size:12px; color:#7A5A1E; }
+  .strip b { color:#5E4514; }
+  .strip .x { margin-left:auto; color:#A08A5E; }
+  .strip .act { border:1px solid #E0CFA4; background:#fff; border-radius:5px; padding:3px 10px; font-size:11px; color:#5E4514; white-space:nowrap; flex:none; }
+  .strip > span:nth-child(2) { min-width:0; }
+
+  /* 인박스 */
+  .ibx { font-size:12.5px; color:#1A1917; }
+  .ibx__h { display:flex; align-items:baseline; gap:9px; padding:0 0 9px; }
+  .ibx__t { font-weight:600; font-size:14px; }
+  .ibx__n { font-family:var(--mono); font-size:10px; color:#93908A; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:11px; }
+  .chip { font-size:11px; padding:3px 9px; border-radius:20px; border:1px solid #DDDCD8; color:#5C5951; background:#fff; }
+  .chip.on { background:#1A1917; border-color:#1A1917; color:#fff; }
+  .selnat { display:inline-flex; align-items:center; gap:5px; font-size:11.5px; border:1px solid #C9C6C0; border-radius:5px; padding:3px 7px; background:linear-gradient(#fff,#F2F1EE); color:#1A1917; }
+  .selnat::after { content:"⌃⌄"; font-size:8px; line-height:1; color:#6E6A63; letter-spacing:-1px; }
+  .oldrow { display:flex; align-items:center; gap:8px; padding:7px 2px; border-bottom:1px solid #F0EFEC; }
+  .oldtag { font-size:10px; background:#EDEBE7; color:#6E6A63; border-radius:3px; padding:1px 5px; }
+  .newrow { display:flex; gap:9px; padding:9px 10px; border-radius:7px; background:#fff; border:1px solid #EFEEEB; margin-bottom:7px; }
+  .newrow.block { background:#FFF5F1; border-color:#F2D3C6; box-shadow:inset 2px 0 0 #C24A22; }
+  .newrow.bg { background:#FAFAF9; }
+  .nr__b { min-width:0; flex:1; }
+  .nr__1 { display:flex; align-items:baseline; gap:6px; flex-wrap:wrap; }
+  .nr__k { font-size:10px; border-radius:3px; padding:1px 5px; background:#EDEBE7; color:#5C5951; }
+  .nr__k.hot { background:#C24A22; color:#fff; }
+  .nr__w { font-size:12.5px; color:#1A1917; }
+  .nr__2 { font-size:10.5px; color:#93908A; margin-top:2px; }
+  .nr__opts { display:flex; gap:5px; margin-top:6px; }
+  .nr__o { font-size:11px; border:1px solid #DDDCD8; border-radius:5px; padding:2px 9px; background:#fff; color:#3C3A35; }
+
+  .st4 { display:flex; gap:1.6rem; flex-wrap:wrap; }
+  .st4 > div { text-align:center; min-width:112px; }
+  .st4 .box { height:44px; display:flex; align-items:center; justify-content:center; gap:5px; font-size:12.5px; color:#1A1917; }
+  .st4 .cap { font-family:var(--mono); font-size:9.5px; color:var(--ink-3); letter-spacing:.03em; }
+  .dot { width:7px; height:7px; border-radius:50%; display:inline-block; }
+  .swat { display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.6rem; }
+  .swat span { font-size:11.5px; border-radius:5px; padding:3px 9px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>나머지 <em>여덟 곳</em></h1>
+    <p class="lede">
+      아바타·프로필·설정 화면이 정해진 다음, 같은 규칙을 <b>앱의 나머지</b>에 옮긴다.
+      사이드바 셋 · 앱 전체 규칙 셋 · 화면 둘. 위에서 아래로 갈수록 크고,
+      <b>앞의 여섯은 새 계약 없이 지금 바로 된다</b>.
+    </p>
+    <div class="meta">근거 — 실행 중인 앱 9화면 직접 확인 · 앞선 두 문서의 규칙을 그대로 적용</div>
+  </header>
+
+  <section>
+    <p class="eyebrow">기준</p>
+    <h2>세 문장으로 줄인 컨셉</h2>
+    <div class="says">
+      <div class="sayr c"><div class="sayk">말</div><div class="sayv">에이전트는 스레드 안에서 <b>여덟 가지 말</b>을 한다 — 부탁 · 되물음 · 선택 · 넘김 · 진행 · 보고 · 제안 · 실패.</div></div>
+      <div class="sayr c"><div class="sayk">수신자</div><div class="sayv">모든 말은 <b>나에게</b> 오거나 <b>남에게</b> 간다. 나를 막는 말만 강조를 받는다.</div></div>
+      <div class="sayr c"><div class="sayk">얼굴</div><div class="sayv">사람과 에이전트는 <b>같은 아바타로 서고</b>, 상태는 사진이 말하고, 정보를 더하는 쪽이 지는 쪽이다.</div></div>
+    </div>
+
+    <h3>고칠 여덟</h3>
+    <div class="toc">
+      <div class="toci"><span class="tocn">A1</span><span class="tock">내 자리</span><span class="tocv">사이드바 맨 아래 <code>@jaebin 대화 가능</code> — 얼굴도 없고 눌리지도 않는다</span></div>
+      <div class="toci"><span class="tocn">A2</span><span class="tock">입구</span><span class="tocv"><code>+</code> 가 다섯 모양, 설정 가는 길은 nav 한복판 한 줄</span></div>
+      <div class="toci"><span class="tocn">A3</span><span class="tock">기다리는 것</span><span class="tocv"><code>ACTIVE WORK</code> 가 설정 오류를 작업으로 그린다</span></div>
+      <div class="toci"><span class="tocn">B1</span><span class="tock">상태</span><span class="tocv">같은 사실이 화면마다 네 가지로 그려진다</span></div>
+      <div class="toci"><span class="tocn">B2</span><span class="tock">강조색</span><span class="tocv">주황이 아홉 군데 — 그중 나를 막는 것은 없다</span></div>
+      <div class="toci"><span class="tocn">B3</span><span class="tock">컨트롤</span><span class="tocv">세그먼트 3종 · 네이티브 select · 시스템 파란 포커스 링</span></div>
+      <div class="toci"><span class="tocn">C1</span><span class="tock">접힘</span><span class="tocv">이미 있는데 결과 대신 <b>횟수</b>를 말한다</span></div>
+      <div class="toci"><span class="tocn">C2</span><span class="tock">인박스</span><span class="tocv">컨셉의 심장인데 네 줄이 글자까지 똑같다</span></div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">A · 사이드바</p>
+    <h2>셋을 한 번에 고친다</h2>
+    <p>
+      A1·A2·A3 은 전부 사이드바에 있고 서로 맞물린다 — 설정 입구가 없어서 nav 한복판에
+      <code>+ Add or edit agents</code> 가 있고, 그 줄이 있어서 <code>+</code> 가 셋으로 갈렸다.
+      맨 아래 <b>내 자리</b>가 눌리기만 하면 둘 다 풀린다.
+    </p>
+    <div class="panel">
+      <div class="panel__b" style="background:var(--paper-2)">
+        <div class="sbwrap">
+          <div>
+            <div class="t" style="margin-bottom:7px">지금</div>
+            <div class="sb" id="sb-now"></div>
+          </div>
+          <div>
+            <div class="t" style="margin-bottom:7px">제안</div>
+            <div class="sb" id="sb-new"></div>
+          </div>
+          <div style="flex:1; min-width:230px">
+            <div class="t" style="margin-bottom:7px">오류는 사이드바를 떠난다</div>
+            <div class="strip">
+              <span>⚠</span>
+              <span><b>투영이 꺼져 있다</b> — <code>AVCS_BASE_URL</code> 을 설정하면 켜진다</span>
+              <span class="act">설정 열기</span>
+              <span class="x">✕</span>
+            </div>
+            <p class="note" style="margin-top:.8rem; font-size:.88rem">
+              화면 위쪽 띠로 옮기고 <b>닫을 수 있게</b> 한다. 고치는 동작이 띠 안에 붙는다.
+              색은 강조색이 아니라 <b>주의색</b>이다 — 급한 일과 고장이 같은 색이면 둘 다 안 보인다.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flist" style="margin-top:1.1rem">
+      <div class="fitem">
+        <div class="fitem__k">A1 · 내 자리가 얼굴을 갖고 눌린다</div>
+        <div class="fitem__v">아바타 + 이름. <code>@</code> 는 뗀다(앱 어디서도 내 핸들을 <code>@</code> 로 부르지 않는다). <code>대화 가능</code> 은 지운다 — 이 앱의 <b>네 번째 상태 어휘</b>이고, 정상 상태에는 표시를 붙이지 않는다는 규칙에도 어긋난다. 자리를 비웠을 때만 글자가 선다. <b>설정으로 가는 손잡이는 아래에서 따로 정한다.</b></div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">A2 · <code>+</code> 는 그 목록의 첫 칸에 산다</div>
+        <div class="fitem__v"><code>+ Create channel</code> · <code>+ New</code> · <code>+ Add or edit agents</code> · 설정 안 <code>+ Create agent</code> 넷이 <b>같은 모양·같은 자리</b>가 된다 — 에이전트 문서의 <code>+</code> 카드와 같은 규칙이다. 설정으로 가는 <code>+ Add or edit agents</code> 는 <b>nav 에서 사라진다</b>(이동 사이에 설정이 끼어 있었다).</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">A3 · 그 자리에 진짜 들어갈 것</div>
+        <div class="fitem__v">오류가 비운 자리에 <b>지금 누가 누구를 기다리는가</b>가 들어간다 — 컨셉의 대기 사슬이 처음으로 화면에 보이는 곳이다. 기다리는 것이 없으면 <b>한 줄로 조용히 비어 있는다</b>.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">찾기가 맨 위로</div>
+        <div class="fitem__v">지금은 <code>CHANNELS</code> 라벨 옆 <b>10px 돋보기</b> 하나다. 에이전트 설정에서 검색을 목록보다 위에 고정한 것과 같은 이유로, 사이드바에서도 찾기가 먼저다 — 채널·사람·에이전트가 한 입력으로 걸린다.</div>
+      </div>
+    </div>
+
+    <h3>A1 다시 — 행은 메뉴를 연다</h3>
+    <p>
+      앞 그림의 톱니는 <b>12px 아이콘에 히트 영역도 그만큼</b>이었고, “행 전체가 버튼”이라고 해 놓고
+      미니 톱니를 또 그린 것이라 앞뒤가 안 맞았다. 손잡이를 따로 빼지 않는다 —
+      <b>행을 누르면 메뉴가 열리는 지금 방식을 그대로 두고</b>, 행과 메뉴를 컨셉에 맞춘다.
+    </p>
+    <div class="panel">
+      <div class="panel__b ui" style="background:var(--paper-2)">
+        <div class="ftv">
+          <div>
+            <div class="ftlab">지금</div>
+            <div class="ftbox"><div class="cap0"></div><div class="ftrow" id="ft-now"></div></div>
+            <p class="ftcap">얼굴이 없고, <b>눌리는 줄인지 알 수 없다</b>. <code>대화 가능</code> 이 이 앱의 네 번째 상태 어휘로 그 자리를 쓰고 있다.</p>
+          </div>
+          <div>
+            <div class="ftlab">제안 · 행</div>
+            <div class="ftbox"><div class="cap0"></div><div class="ftrow act" id="ft-new"></div></div>
+            <p class="ftcap">아바타 <b>24px</b> + 이름, 그게 전부다. 높이 <b>44px</b>, 행 전체가 하나의 트리거라 <b>히트 영역 문제가 아예 없어진다</b>. 눌린다는 것은 <b>글자가 아니라 손이 말한다</b> — 올리면 면이 깔리고 커서가 손가락이 된다. <span class="hoveronly" style="color:var(--accent)">↑ 위 행에 마우스를 올려 보면 된다.</span></p>
+          </div>
+          <div>
+            <div class="ftlab">제안 · 열었을 때</div>
+            <div class="menu" id="ft-menu"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flist" style="margin-top:1.1rem">
+      <div class="fitem">
+        <div class="fitem__k">상태는 라벨이 아니라 <b>메뉴 안의 동작</b>이 된다</div>
+        <div class="fitem__v"><code>대화 가능</code> 은 지금 <b>바꿀 수 없는 글자</b>로 행에 붙어 있다. 그것을 메뉴로 옮기면 실제로 <b>바꿀 수 있는 것</b>이 되고, 행은 “정상 상태에는 표시를 붙이지 않는다”는 규칙을 지킨다. 자리를 비운 동안에만 행에 글자가 선다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">메뉴 머리가 “나”를 말한다</div>
+        <div class="fitem__v">얼굴 · 이름 · <code>@handle</code> · <b>어느 워크스페이스인지</b>. 지금 앱은 내가 어느 워크스페이스에 있는지 <b>어디서도 말하지 않는다</b> — 타이틀바의 <code>murmur</code> 는 앱 이름이지 워크스페이스가 아니다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k"><code>설정</code> 옆에 <code>⌘,</code> 를 적는다</div>
+        <div class="fitem__v">메뉴는 <b>단축키를 가르치는 자리</b>다. 한 번 보면 다음부터 메뉴를 안 거친다. 지금은 <code>⌘,</code> 자체가 없어서 설정에 가는 길이 <b>정말로 하나</b>다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">아바타를 눌러도 메뉴가 열린다</div>
+        <div class="fitem__v">다른 곳에서는 아바타를 누르면 프로필이 열리는데, <b>여기서만 예외</b>다 — 내 프로필은 메뉴의 첫 항목이다. 같은 줄에서 왼쪽·오른쪽이 다른 곳으로 가면 어느 쪽을 눌렀는지 매번 신경 써야 한다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">메뉴에 아이콘을 두지 않는다</div>
+        <div class="fitem__v">한 줄짜리 항목 다섯 개에 붙는 12px 글리프는 <b>정보가 아니라 장식</b>이다 — 읽는 것은 글자이고, 아이콘은 글자를 오른쪽으로 밀 뿐이다. 키우면 이번엔 메뉴가 시끄러워진다. <b>빼는 쪽이 이 문서의 규칙과 맞는다</b>(정보를 더하는 쪽이 지는 쪽). 오른쪽 <code>⌘,</code> 만 남는데, 그건 장식이 아니라 <b>가르치는 정보</b>다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">화살표도 두지 않는다</div>
+        <div class="fitem__v"><code>⌄</code> 를 붙이면 “저 글리프를 눌러야 하나”를 한 번 생각하게 만든다 — 톱니를 뺀 이유와 같다. 눌린다는 신호는 <b>hover 면과 커서</b>로 충분하고, 그게 사이드바의 다른 줄(<code>#general</code>·<code>beta</code>)이 이미 쓰는 방식이다. <b>마지막 줄만 예외일 이유가 없다.</b></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">B1</p>
+    <h2>상태를 한 어휘로</h2>
+    <p>
+      <code>alpha</code> 하나의 상태를 앱이 <b>네 가지 방식</b>으로 그린다. 어느 것도 틀리지 않았는데,
+      넷을 같이 보면 무엇을 믿어야 할지 모른다.
+    </p>
+    <div class="panel">
+      <div class="panel__b ui" style="background:#FAFAF9">
+        <div class="st4" id="st4"></div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:.7rem">
+      <b>사이드바 DM 의 점 두 개</b>는 서로 다른 두 가지를 뜻하는데 생김새가 같다.
+      그리고 DM 이 없는 <code>@alpha</code> 는 <b>아무 표시도 못 받는다</b> — 대화가 안 보이는 쪽이
+      상태를 더 알아야 하는데 거꾸로다.
+    </p>
+    <div class="callout">
+      <p><b>규칙은 이미 정해 놨다.</b> 에이전트 문서에서 상태를 <b>아바타가 말하게</b> 했다 —
+      <b>그냥 사진</b>(도는 중) / <b>색이 빠지고 ▶</b>(멈춤) / <b>붉은 테와 ↻</b>(실패).
+      그것을 사이드바·디렉터리·설정에 그대로 쓰면 <b>네 표현이 하나가 된다</b>.
+      점은 <b>사람에게만</b> 남고, 색 있는 글자(<code>온라인</code>·<code>오프라인</code>)와
+      <code>AGENT</code> 태그와 <code>🤖</code> 배지는 전부 사라진다.</p>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">B2</p>
+    <h2>강조색을 회수한다</h2>
+    <p>
+      컨셉은 <b>나를 막는 것만 강조를 받는다</b>고 정했다. 실제로는 같은 주황이 아홉 군데에 쓰이고,
+      <b>그중 나를 막는 것은 하나도 없다</b>. 강조가 이미 포화라서, 다음 단계에서 막는 말에
+      색을 칠해도 눈에 띄지 않는다 — 그래서 이것이 인박스보다 먼저다.
+    </p>
+    <div class="panel">
+      <div class="panel__b" style="background:var(--paper-2)">
+        <div class="swat" id="swat"></div>
+      </div>
+    </div>
+    <div class="says" style="margin-top:1rem">
+      <div class="sayr"><div class="sayk">강조 유지</div><div class="sayv"><b>나를 막는 것</b>(되물음·선택·실패) 과 <b>화면당 주 동작 버튼 하나</b>. 그 둘뿐이다.</div></div>
+      <div class="sayr"><div class="sayk">회색으로</div><div class="sayv">소유자 <code>@jaebin</code> — 디렉터리에서 <b>줄의 맨 앞·가장 진한 색</b>인데 셋 다 같은 값이라 구별에 아무 기여도 하지 않는다.</div></div>
+      <div class="sayr"><div class="sayk">주의색으로</div><div class="sayv">설정 오류(A3) — 급한 일과 고장이 같은 색이면 둘 다 안 보인다.</div></div>
+      <div class="sayr"><div class="sayk">배경·굵기로</div><div class="sayv">멘션 칩 <code>@alpha</code> — 본문에 여러 번 나오는 것은 색이 아니라 <b>옅은 배경</b>으로 구별한다.</div></div>
+      <div class="sayr"><div class="sayk">중립으로</div><div class="sayv"><code>N replies</code> · <code>할 것</code> 탭 · 선택된 세그먼트 — 전부 “현재 상태”이지 “급한 것”이 아니다.</div></div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">B3</p>
+    <h2>같은 컨트롤은 같은 모양으로</h2>
+    <p>세그먼트 하나가 세 가지 모양이고, 셋 다 “선택됨”의 뜻이 다르다.</p>
+    <div class="panel">
+      <div class="panel__b ui" style="display:flex; gap:2rem; flex-wrap:wrap; align-items:flex-end">
+        <div><div class="t" style="margin-bottom:7px">설정 › Appearance</div>
+          <div class="seg"><span class="on">System</span><span>Light</span><span>Dark</span></div>
+          <div class="t" style="margin-top:5px">선택된 쪽이 채워진다</div></div>
+        <div><div class="t" style="margin-bottom:7px">설정 › Agents</div>
+          <div class="seg" style="border-color:#DDDCD8"><span style="background:#fff">기본값 사용</span><span style="background:#EDEBE7">따로</span></div>
+          <div class="t" style="margin-top:5px">선택 안 된 쪽이 채워진다</div></div>
+        <div><div class="t" style="margin-bottom:7px">저장됨</div>
+          <div style="display:inline-flex; gap:8px; align-items:center"><span style="background:#C24A22;color:#fff;border-radius:5px;padding:4px 11px;font-size:11.5px">할 것</span><span style="font-size:11.5px;color:#5C5951">완료</span></div>
+          <div class="t" style="margin-top:5px">테두리 자체가 없다</div></div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:.7rem">
+      여기에 네이티브 <code>select</code>(인박스·설정 두 곳, macOS 기본 <code>⌃⌄</code> 그대로),
+      네이티브 체크박스, 그리고 디렉터리 검색창의 <b>시스템 파란 포커스 링</b>이 더해진다 —
+      앱의 색이 아닌 파랑이 화면에 들어오는 유일한 곳이다.
+    </p>
+    <div class="callout">
+      <p>에이전트 문서에서 이미 <code>primitives.tsx</code> 에 <code>Field</code>·<code>Select</code>·<code>Segmented</code>·<code>Button</code> 을
+      만들자고 했다. <b>그 하나로 이 항목 전체가 닫힌다.</b> 규칙은 둘이면 된다 —
+      <b>선택된 쪽이 채워지고, 포커스 링은 앱의 강조색이다.</b></p>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">C1</p>
+    <h2>접힌 줄이 결과를 말한다</h2>
+    <p>
+      스레드 패널에 <b>접힌 줄이 이미 있다</b> — <code>alpha ↔ beta · 2번 주고받음 · 마지막 오후 12:57 · 펼치기</code>.
+      컨셉의 “접힘”이 구현돼 있는 셈인데, 말하는 것은 <b>횟수</b>뿐이다.
+      답글 스택에서 이름 나열을 버린 이유와 같은 문제다 — <b>“열어야 하나”에 답하지 않는다</b>.
+    </p>
+    <div class="panel">
+      <div class="panel__b ui">
+        <div id="fold"></div>
+      </div>
+    </div>
+    <div class="flist" style="margin-top:1rem">
+      <div class="fitem">
+        <div class="fitem__k">접힌 줄은 <b>결론</b>을 담는다</div>
+        <div class="fitem__v">둘이 주고받아 <b>무엇이 정해졌는지</b>가 접힘의 값이다. 횟수는 그 뒤에 붙는 부수적인 숫자다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k"><code>펼치기</code> 는 줄 전체다</div>
+        <div class="fitem__v">지금은 긴 메타 줄 <b>맨 끝의 세 글자</b>가 유일한 손잡이다. 줄 전체가 hover 로 밝아지는데 눌러도 반응이 없어서, 어디를 눌러야 하는지 배우기 전에 포기한다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">막힌 대화는 접지 않는다</div>
+        <div class="fitem__v">둘이 주고받다가 <b>사람을 기다리게 됐다면</b> 그것은 배경이 아니라 막는 말이다. 접힘은 <b>끝난 이야기에만</b> 쓴다.</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">C2 · 가장 큰 것</p>
+    <h2>인박스를 자리로 만든다</h2>
+    <p>
+      인박스는 <b>“나를 막는 말”이 모이는 유일한 자리</b>다. 컨셉 전체가 여기서 승부가 난다.
+      그런데 지금 네 줄이 <b>글자 하나까지 똑같다</b> — <code>스레드 답글 #general</code> 넷.
+      누가 무엇을 원하는지, 언제인지, 어느 스레드인지 아무것도 없다.
+    </p>
+    <div class="ba">
+      <div class="panel">
+        <div class="panel__h">지금 <span class="tag">네 줄이 구별되지 않는다</span></div>
+        <div class="panel__b ibx">
+          <div class="ibx__h"><span class="ibx__t">Inbox</span></div>
+          <div style="display:flex; gap:9px; align-items:center; margin-bottom:10px; flex-wrap:wrap">
+            <span style="font-size:11px;color:#5C5951">종류</span><span class="selnat">전체</span>
+            <span style="font-size:11px;color:#5C5951">채널</span><span class="selnat">전체</span>
+            <span style="font-size:11px;color:#5C5951">☐ 안 읽음만</span>
+          </div>
+          <div style="font-size:11px;color:#6E6A63;margin-bottom:4px">나를 부른 것 (4)</div>
+          <div class="oldrow"><span class="oldtag">스레드 답글</span><span>#general</span></div>
+          <div class="oldrow"><span class="oldtag">스레드 답글</span><span>#general</span></div>
+          <div class="oldrow"><span class="oldtag">스레드 답글</span><span>#general</span></div>
+          <div class="oldrow"><span class="oldtag">스레드 답글</span><span>#general</span></div>
+          <div style="font-size:11px;color:#6E6A63;margin-top:9px">쓰다 만 초안 (0)</div>
+          <div style="font-size:11px;color:#A8A49C">쓰다 만 초안이 없다</div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel__h">제안 <span class="tag">줄이 무엇을 원하는지 말한다</span></div>
+        <div class="panel__b ibx">
+          <div class="ibx__h"><span class="ibx__t">받은 말</span><span class="ibx__n" id="ibx-n"></span></div>
+          <div class="chips">
+            <span class="chip on">나를 막는 것 2</span>
+            <span class="chip">읽을 것 2</span>
+            <span class="chip">전부</span>
+          </div>
+          <div id="ibx-rows"></div>
+        </div>
+      </div>
+    </div>
+    <div class="flist" style="margin-top:1.1rem">
+      <div class="fitem">
+        <div class="fitem__k">줄은 네 가지를 말한다</div>
+        <div class="fitem__v"><b>누가</b>(얼굴) · <b>무슨 말</b>(되물음·선택·보고·넘김) · <b>무엇을</b>(본문 한 줄) · <b>언제·어디</b>. 지금 줄에는 이 중 어느 것도 없다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">선택은 줄에서 끝난다</div>
+        <div class="fitem__v">선택지가 둘뿐이면 <b>인박스에서 바로 누른다</b>. 스레드를 열어야만 답할 수 있으면 인박스는 알림 목록일 뿐이고, 컨셉이 말한 “막는 말을 푸는 자리”가 되지 못한다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">정렬은 막는 순</div>
+        <div class="fitem__v">시간순이 아니라 <b>나를 막는 것 → 읽을 것 → 배경</b>. 필터 칩이 그 순서를 그대로 쓴다. 네이티브 <code>select</code> 두 개와 체크박스는 사라진다(B3).</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">모달이 아니라 자리</div>
+        <div class="fitem__v">지금은 채널 위에 뜨는 <b>모달</b>이라 스레드를 보면서 열어 둘 수 없다. 막는 말을 확인하면서 그 스레드를 여는 것이 기본 동작인데, 모달이 그걸 막는다.</div>
+      </div>
+    </div>
+    <div class="callout warnout">
+      <p><b>지금 비어 있는 이유는 데이터가 없어서가 아니다.</b> 스레드 답글이라는 사실 말고는
+      <b>말의 종류를 담을 곳이 없다</b> — 그것이 계획 문서의 <code>AskMeta</code> 다.
+      인박스는 <b>말의 종류가 <code>meta</code> 에 들어간 다음</b> 제 모습이 되고,
+      그전까지는 무엇을 그려도 네 줄이 똑같다. C1 도 같은 문턱을 넘어야 한다.</p>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">순서</p>
+    <h2>무엇부터</h2>
+    <div class="gap">
+      <div class="gapr"><span class="gapn">1</span><div>
+        <p class="gapt">A · 사이드바 셋 <span class="t">— 한 PR</span></p>
+        <p class="gapb">내 자리 · 입구 · 오류 띠. 서로 맞물려 있어서 따로 하면 오히려 손이 더 간다. 새 계약도 서버도 없다.</p></div></div>
+      <div class="gapr"><span class="gapn">2</span><div>
+        <p class="gapt">B1 · 상태 표현 하나로</p>
+        <p class="gapb">이미 정한 아바타 규칙을 옮기는 일이라 <b>새 결정이 없다</b>. 네 표현이 하나가 되고, 사이드바 점 두 개와 <code>AGENT</code> 태그가 같이 사라진다.</p></div></div>
+      <div class="gapr"><span class="gapn">3</span><div>
+        <p class="gapt">B2 · 강조색 회수</p>
+        <p class="gapb">아홉 중 일곱을 중립·주의·배경으로 돌린다. <b>C2 보다 반드시 먼저다</b> — 강조가 포화인 채로 막는 말을 칠하면 묻힌다.</p></div></div>
+      <div class="gapr"><span class="gapn">4</span><div>
+        <p class="gapt">B3 · 폼 프리미티브 <span class="t">— 에이전트 설정과 같은 PR</span></p>
+        <p class="gapb">세그먼트 3종 · 네이티브 select · 파란 포커스 링이 한 번에 닫힌다.</p></div></div>
+      <div class="gapr"><span class="gapn">5</span><div>
+        <p class="gapt"><code>meta</code> 에 말의 종류 <span class="t">— 계획 문서 Task 2 · 문턱</span></p>
+        <p class="gapb">C1 과 C2 가 <b>둘 다 여기서 막혀 있다</b>. 1–4 는 이것 없이 되고, C 는 하나도 안 된다.</p></div></div>
+      <div class="gapr"><span class="gapn">6</span><div>
+        <p class="gapt">C1 접힘 → C2 인박스</p>
+        <p class="gapb">접힘이 먼저다 — 접힌 줄 하나를 제대로 쓰면 인박스 줄의 문장이 그대로 나온다. <b>컨셉이 쓸모가 되는 지점</b>이 C2 다.</p></div></div>
+    </div>
+  </section>
+
+  <footer>murmur · 나머지 여덟 곳 · 실행 중인 앱 9화면 직접 확인</footer>
+</div>
+
+<script>
+  const COLORS = ['#ef4444','#f97316','#d97706','#65a30d','#059669','#0d9488','#0891b2','#0284c7','#3b82f6','#8b5cf6','#d946ef','#f43f5e'];
+  function handleColor(h){ let x=0; for(let i=0;i<h.length;i++){ x=(x<<5)-x+h.charCodeAt(i); x|=0; } return COLORS[Math.abs(x)%COLORS.length]; }
+  const el=(t,c,s)=>{const n=document.createElement(t); if(c)n.className=c; if(s)n.setAttribute('style',s); return n;};
+  const av=(h,px)=>{const s=el('span','av',`width:${px}px;height:${px}px;font-size:${Math.round(px*0.44)}px;background:${handleColor(h)}`); s.textContent=h[0].toUpperCase(); return s;};
+  function faceOf(h,px,state){
+    const w=el('span','avdot'+(state==='off'?' off':''),`width:${px}px;height:${px}px;display:inline-block`);
+    w.appendChild(av(h,px));
+    if(state==='off'){ const o=el('span','ov'); o.textContent='▶'; w.appendChild(o); }
+    return w;
+  }
+  function sbSec(p,t){ const d=el('div','sb__sec'); d.textContent=t; p.appendChild(d); }
+  function sbItem(p,opts){
+    const r=el('div','sb__i'+(opts.on?' on':''));
+    if(opts.face) r.appendChild(opts.face);
+    if(opts.glyph){ const g=el('span','g'); g.textContent=opts.glyph; r.appendChild(g); }
+    const n=el('span','sb__n'); n.innerHTML=opts.label; r.appendChild(n);
+    if(opts.right){ const s=el('span','sb__r'+(opts.hot?' hot':'')); s.textContent=opts.right; r.appendChild(s); }
+    p.appendChild(r); return r;
+  }
+  function hr(p){ p.appendChild(el('div','sb__hr')); }
+
+  /* --- 지금 사이드바 --- */
+  const now=document.getElementById('sb-now');
+  sbSec(now,'CHANNELS  ⌕');
+  sbItem(now,{label:'# general', on:true, right:'···'});
+  sbItem(now,{label:'+ Create channel'});
+  now.appendChild(el('div',null,'height:6px'));
+  sbItem(now,{label:'Inbox'});
+  sbItem(now,{label:'Saved'});
+  sbItem(now,{label:'Directory'});
+  sbItem(now,{label:'+ Add or edit agents'});
+  const dmh=el('div','sb__sec','display:flex;align-items:center');
+  dmh.innerHTML='DIRECT MESSAGES <span style="margin-left:auto;text-transform:none;letter-spacing:0;color:#93908A">+ New</span>';
+  now.appendChild(dmh);
+  ['beta','gamma'].forEach(h=>{
+    const r=el('div','sb__i');
+    r.innerHTML='<i class="dot" style="background:#3FA35F"></i><i class="dot" style="background:#3FA35F"></i>';
+    const n=el('span','sb__n',' font-weight:600'); n.textContent=h; r.appendChild(n);
+    now.appendChild(r);
+  });
+  sbSec(now,'AGENTS');
+  sbItem(now,{label:'@alpha'});
+  sbSec(now,'ACTIVE WORK');
+  const er=el('div','sb__err'); er.innerHTML='투영이 설정되지 않았다<br><span style="color:#93908A">AVCS_BASE_URL 로 켠다</span>'; now.appendChild(er);
+  now.appendChild(el('div',null,'height:40px'));
+  const f1=el('div','sb__foot now');
+  f1.innerHTML='<span style="font-weight:600;font-size:12px">@jaebin</span><span style="font-size:11px;color:#93908A">대화 가능</span>';
+  now.appendChild(f1);
+
+  /* --- 제안 사이드바 --- */
+  const nw=document.getElementById('sb-new');
+  const sr=el('div','sb__srch'); sr.innerHTML='<span>⌕</span><span>채널 · 사람 · 에이전트 찾기</span>'; nw.appendChild(sr);
+  sbItem(nw,{label:'받은 말', glyph:'✉', right:'2', hot:true});
+  sbItem(nw,{label:'저장됨', glyph:'★'});
+  sbItem(nw,{label:'사람과 에이전트', glyph:'⌸'});
+  hr(nw);
+  sbSec(nw,'채널');
+  sbItem(nw,{label:'<span style="color:#8A867E">+</span>&nbsp; 새 채널'});
+  sbItem(nw,{label:'# general', on:true});
+  sbSec(nw,'대화');
+  sbItem(nw,{label:'<span style="color:#8A867E">+</span>&nbsp; 새 대화'});
+  ['beta','gamma'].forEach(h=>sbItem(nw,{face:faceOf(h,18,'on'), label:h}));
+  sbSec(nw,'에이전트');
+  sbItem(nw,{face:faceOf('alpha',18,'off'), label:'<span style="color:#93908A">alpha</span>'});
+  sbSec(nw,'기다리는 것');
+  const wt=el('div','sb__wait'); wt.innerHTML='<b>forge</b> 가 나에게<br>선택을 묻는다 · 2분 전'; nw.appendChild(wt);
+  const q=el('div','sb__quiet'); q.textContent='그 밖에 기다리는 것 없음'; nw.appendChild(q);
+  const f2=el('div','sb__foot');
+  f2.appendChild(faceOf('jaebin',22,'on'));
+  const nm=el('span',null,'font-weight:600;font-size:12px'); nm.textContent='Jaebin'; f2.appendChild(nm);
+  nw.appendChild(f2);
+
+  /* --- A1 하단 행 + 메뉴 --- */
+  (function(){
+    const now=document.getElementById('ft-now');
+    now.innerHTML='<span style="font-weight:600;font-size:12.5px">@jaebin</span><span style="font-size:11px;color:#93908A">대화 가능</span>';
+    const nw=document.getElementById('ft-new');
+    nw.appendChild(faceOf('jaebin',24,'on'));
+    const n=el('span','nm'); n.textContent='Jaebin'; nw.appendChild(n);
+
+    const m=document.getElementById('ft-menu');
+    const h=el('div','menu__h');
+    h.appendChild(faceOf('jaebin',30,'on'));
+    const hb=el('div');
+    const h1=el('div','menu__n'); h1.textContent='Jaebin'; hb.appendChild(h1);
+    const h2=el('div','menu__s'); h2.textContent='@jaebin · murmur-dev'; hb.appendChild(h2);
+    h.appendChild(hb); m.appendChild(h);
+    const items=[
+      ['내 프로필','',''],
+      ['자리 비움으로 표시','',''],
+      ['hr'],
+      ['설정','⌘,','hl'],
+      ['사람과 에이전트 관리','',''],
+      ['hr'],
+      ['로그아웃','','danger'],
+    ];
+    items.forEach(it=>{
+      if(it[0]==='hr'){ m.appendChild(el('div','menu__hr')); return; }
+      const r=el('div','menu__i'+(it[2]?' '+it[2]:''));
+      const t=el('span'); t.textContent=it[0]; r.appendChild(t);
+      if(it[1]){ const k=el('span','k'); k.textContent=it[1]; r.appendChild(k); }
+      m.appendChild(r);
+    });
+  })();
+
+  /* --- B1 상태 네 가지 --- */
+  const S=document.getElementById('st4');
+  [['사이드바 · AGENTS', ()=>{const d=el('span',null,'font-size:12.5px'); d.textContent='@alpha'; return d;}, '표시 없음'],
+   ['사이드바 · DM', ()=>{const w=el('span',null,'display:inline-flex;gap:4px;align-items:center');
+      w.innerHTML='<i class="dot" style="background:#3FA35F"></i><i class="dot" style="background:#3FA35F"></i>';
+      const t=el('span',null,'font-size:12.5px;font-weight:600;margin-left:3px'); t.textContent='beta'; w.appendChild(t); return w;}, '점 두 개 · 뜻은 둘'],
+   ['디렉터리', ()=>{const w=el('span',null,'display:inline-flex;gap:5px;align-items:center');
+      w.innerHTML='<i class="dot" style="background:#B4B0A8"></i>';
+      const t=el('span',null,'font-size:12.5px;font-weight:600'); t.textContent='alpha'; w.appendChild(t);
+      const g=el('span',null,'font-size:9px;background:#EDEBE7;color:#6E6A63;border-radius:3px;padding:1px 4px'); g.textContent='AGENT'; w.appendChild(g); return w;}, '회색 점 + 태그'],
+   ['설정 · Agents', ()=>{const w=el('span',null,'text-align:left;display:inline-block');
+      w.innerHTML='<div style="font-size:12.5px;font-weight:600">alpha</div><div style="font-size:10.5px;color:#B8431F">오프라인 <span style="color:#93908A">14시간 전</span></div>'; return w;}, '색 있는 글자'],
+   ['제안 · 어디서나', ()=>{const w=el('span',null,'display:inline-flex;gap:6px;align-items:center');
+      w.appendChild(faceOf('alpha',24,'off'));
+      const t=el('span',null,'font-size:12.5px;color:#93908A'); t.textContent='alpha'; w.appendChild(t); return w;}, '사진이 말한다']
+  ].forEach(([lab,mk,cap])=>{
+    const c=el('div');
+    const bx=el('div','box'); bx.appendChild(mk()); c.appendChild(bx);
+    const l=el('div',null,'font-size:11px;color:#3C3A35;font-weight:600'); l.textContent=lab; c.appendChild(l);
+    const p=el('div','cap'); p.textContent=cap; c.appendChild(p);
+    S.appendChild(c);
+  });
+
+  /* --- B2 강조색 --- */
+  const sw=document.getElementById('swat');
+  [['@alpha','#FAE8E1','#B8431F'],['2 replies','transparent','#C24A22'],['0 replies','transparent','#C24A22'],
+   ['투영이 설정되지 않았다','transparent','#C24A22'],['🤖 · @jaebin','#FAE8E1','#B8431F'],
+   ['jaebin (소유자)','transparent','#C24A22'],['+ Create agent','#C24A22','#fff'],
+   ['할 것','#C24A22','#fff'],['System','#C24A22','#fff']].forEach(([t,bg,fg])=>{
+    const s=el('span',null,`background:${bg};color:${fg};`+(bg==='transparent'?'padding:3px 4px;':'')); s.textContent=t; sw.appendChild(s);
+  });
+
+  /* --- C1 접힘 --- */
+  const fd=document.getElementById('fold');
+  function foldRow(target,label,html,styled){
+    const w=el('div',null,'margin-bottom:12px');
+    const l=el('div','t','margin-bottom:5px'); l.textContent=label; w.appendChild(l);
+    const r=el('div',null, styled
+      ? 'display:flex;gap:8px;align-items:center;border:1px solid #EFEEEB;background:#FAFAF9;border-radius:6px;padding:7px 10px'
+      : 'display:flex;gap:8px;align-items:center;padding:4px 2px');
+    r.innerHTML=html; w.appendChild(r); target.appendChild(w);
+  }
+  foldRow(fd,'지금','<span class="dot" style="background:#C6C2BA"></span><span style="font-size:12px;color:#93908A">alpha ↔ beta · 2번 주고받음 · 마지막 오후 12:57 · <span style="text-decoration:underline">펼치기</span></span>', false);
+  foldRow(fd,'제안','<span id="fo-faces" class="stack"></span><span style="font-size:12.5px;color:#3C3A35"><b>alpha</b> 가 <b>beta</b> 에게 확인하고 진행했다 <span style="color:#93908A">· 2번 · 오후 12:57</span></span><span style="margin-left:auto;font-size:11px;color:#6E6A63">펼치기 ⌄</span>', true);
+  ['alpha','beta'].forEach(h=>document.getElementById('fo-faces').appendChild(av(h,18)));
+
+  /* --- C2 인박스 --- */
+  const ROWS=[
+    {cls:'block', who:'forge', k:'선택', hot:true,
+     w:'<b>마이그레이션 순서</b>를 어느 쪽으로 갈지 물었다', m:'#general · 스레드 “스키마 정리” · 2분 전',
+     opts:['009 먼저','014 먼저','스레드에서 답하기']},
+    {cls:'block', who:'alpha', k:'되물음', hot:true,
+     w:'<b>“한 줄”이 무슨 뜻인지</b> 되물었다', m:'#general · 4시간 전', opts:['스레드 열기']},
+    {cls:'', who:'beta', k:'보고',
+     w:'하네스 이름을 답하고 <b>끝냈다</b>', m:'#general · 어제 오후 2:19'},
+    {cls:'bg', who:'gamma', k:'넘김',
+     w:'<b>alpha 에게</b> 넘겼다 — 내 답은 필요 없다', m:'#general · 어제 오후 12:57'},
+  ];
+  const box=document.getElementById('ibx-rows');
+  ROWS.forEach(r=>{
+    const n=el('div','newrow'+(r.cls?' '+r.cls:''));
+    n.appendChild(av(r.who,22));
+    const b=el('div','nr__b');
+    const l1=el('div','nr__1');
+    const k=el('span','nr__k'+(r.hot?' hot':'')); k.textContent=r.k; l1.appendChild(k);
+    const w=el('span','nr__w'); w.innerHTML='<b>'+r.who+'</b> 가 '+r.w; l1.appendChild(w);
+    b.appendChild(l1);
+    const l2=el('div','nr__2'); l2.textContent=r.m; b.appendChild(l2);
+    if(r.opts){ const o=el('div','nr__opts'); r.opts.forEach(t=>{const s=el('span','nr__o'); s.textContent=t; o.appendChild(s);}); b.appendChild(o); }
+    n.appendChild(b); box.appendChild(n);
+  });
+  document.getElementById('ibx-n').textContent='막는 것 2 · 읽을 것 2';
+</script>
+</body>
+</html>
