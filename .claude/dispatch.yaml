@@ -8,7 +8,7 @@ default_branch: main
 
 remote:                         # 기본 목적지. 없으면 로컬만 쓴다
   host: jaebin-worker           # ssh 타겟
-  orca_repo_id: 25598126-3d2f-443a-8334-6400dd203d0c
+  orca_repo_id: 488ac8ff-b836-4875-8943-1d776e28b21b
   path: /home/jaebin/dev/my-workspace/murmur
   agent: opencode
   worktree_dir: .worktrees      # 워커 격리 디렉터리 (.git/info/exclude 에 넣어 둔다)
@@ -20,7 +20,7 @@ remote:                         # 기본 목적지. 없으면 로컬만 쓴다
     diagnostic_model: openai/gpt-oss-120b   # 작업용 아님 — 게이트웨이/모델 문제를 가르는 데만
 
 local:
-  orca_repo_id: 39561925-f32c-4210-b082-62fabc377f49
+  orca_repo_id: c7747f97-9557-4a2c-a068-34a07fa90f93
   agent: claude
   workspaces_root: /Users/jaebin/orca/workspaces/murmur
   max_parallel: 3               # 사용자의 기계다 — testcontainers 동시 기동 상한
