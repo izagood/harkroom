@@ -1,0 +1,22 @@
+# 개발 빌드를 **실행 직전에 서명한다**(`scripts/sign-dev.sh`).
+#
+# ## 왜 여기인가 — 다른 자리는 전부 너무 이르다
+#
+# 서명은 링크가 끝난 **뒤**에 해야 하는데, 후보 자리들이 전부 그 앞이다:
+#
+#   beforeDevCommand  — cargo 가 돌기 전이다. 서명할 파일이 아직 없다.
+#   build.rs          — 링크 전에 돈다. 마찬가지로 없다.
+#
+# `runner` 는 cargo 가 **빌드를 마치고 실행할 때** 그 사이에 끼는 자리라, 재빌드마다
+# 반드시 지나간다 — `tauri dev` 가 파일 변경으로 자동 재빌드할 때도 그렇다.
+#
+# ## 왜 서명해야 하는가
+#
+# 러너 기동은 에이전트마다 PAT 를 따로 읽으므로(`murmur.runner.pat.<agentId>`),
+# 키체인 승인이 다시 걸리면 **러너 수만큼** 대화상자가 뜬다. 그리고 링커의 ad-hoc
+# 서명은 designated requirement 가 **내용 해시**라 재빌드마다 반드시 바뀐다.
+# 자세한 것은 `scripts/sign-dev.sh` 주석에 있다.
+#
+# 인증서가 없는 기계에서는 스크립트가 조용히 넘어가므로 아무것도 달라지지 않는다.
+[target.aarch64-apple-darwin]
+runner = ["sh", "../scripts/sign-dev-and-run.sh"]
