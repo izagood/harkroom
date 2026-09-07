@@ -1868,6 +1868,25 @@ export const EX_CONFIG = 78;
  * 온다). 이 파일은 Node 의존이 없는 순수 타입·상수이고 웹뷰가 이미 import 한다.
  * `packages/agent/src/exit.ts` 는 이제 여기서 다시 낸다 — **값은 하나뿐이다.**
  */
+/**
+ * `retiring` 사유가 **Rust 를 지나 앱까지 오는 접합면**(2026-09-07 후속).
+ *
+ * daemon 은 이 사유를 JSON 에 `code: 'retiring'` 으로 싣지만(`daemonProtocol.ts` 의
+ * `DaemonErrorCode`), Tauri 커맨드의 경계가 `Result<_, String>` 이라 코드가 타입으로
+ * 건너오지 못한다. Rust 는 그것을 `format!("{}: {}", e.code, e.message)` 로 문자열에
+ * 담고(`daemon_client.rs`), 그래서 앱이 볼 수 있는 것은 그 문자열뿐이다.
+ *
+ * 문구를 손으로 뒤지지 않도록 **코드 토큰을 상수로 고정한다** — 아래
+ * `CREDENTIAL_REJECTED_LINE` 이 러너와 앱 사이에서 하는 일과 같은 판례이고, 같은 이유로
+ * `daemonProtocol.ts` 가 아니라 여기 산다: **웹뷰가 import 하는 파일은 이것이다.**
+ * (실제로 그쪽에 뒀다가 루트 재수출이 없어 `undefined` 가 되고, `includes(undefined)` 가
+ * 조용히 false 여서 앱이 기다리지 않고 실패로 칠했다.)
+ *
+ * 값이 두 곳에 사본으로 생기면 한쪽만 바뀌는 날 앱은 다시 "기다릴 줄 모르는" 상태로
+ * 돌아간다 — 그리고 그 실패는 조용하다.
+ */
+export const DAEMON_RETIRING_TOKEN = 'retiring:';
+
 export const CREDENTIAL_REJECTED_LINE =
   'murmur-agent: credential rejected (revoked or rotated); exiting';
 

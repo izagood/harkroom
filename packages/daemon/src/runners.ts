@@ -322,6 +322,14 @@ export class RunnerRegistry {
     private readonly logs: RunnerLogSink | null = null,
   ) {}
 
+  /**
+   * 회수를 보낸(=`SIGTERM` 을 받은) 앞 세대 러너. `agentId → pid`.
+   *
+   * 표(`byAgent`)와 **다른 자리**인 이유는 `retire` 주석에 있다. 프로세스가 사라지면
+   * `retiringAlive` 가 지운다 — 그때부터 교체가 허용된다.
+   */
+  private readonly retiring = new Map<string, number>();
+
   /** 지금 표 전체. 장부에 쓰기 위해서만 쓰인다. */
   /**
    * 표에 올리지 **않고** 러너를 회수한다 — 낡은 세대의 고아에게만 쓴다(2026-09-07).
@@ -338,8 +346,27 @@ export class RunnerRegistry {
    * `SIGTERM` 이고 `SIGKILL` 이 아니다: 러너는 이 시그널을 받아 진행 중인 턴을 마무리할
    * 기회를 갖는다. 회수는 업데이트 직후 한 번뿐이므로 여기서 굳이 서두를 이유가 없다.
    */
-  retire(pid: number): boolean {
+  retire(agentId: string, pid: number): boolean {
+    // **표가 아니라 별도 자리에 적는다.** `byAgent` 에 넣으면 앱에게 "이 에이전트는
+    // 러너가 있다"로 보여 교체가 아예 안 일어나고, 물러난 뒤에도 아무도 새로 띄우지
+    // 않는다(앱의 자동 기동은 세션당 한 번이다). 여기 적는 것은 **순서를 지키기 위한
+    // 사실**이고, 그 사실을 `spawnRunner` 가 읽는다.
+    this.retiring.set(agentId, pid);
     return this.host.kill(pid, 'SIGTERM');
+  }
+
+  /**
+   * 그 에이전트에 **아직 물러나지 않은** 앞 세대 러너가 있는가. 있으면 그 pid.
+   *
+   * 죽은 것은 지운다 — 남겨 두면 그 에이전트는 영원히 교체를 거절받고, 기다림이
+   * 영구 거절이 되는 순간 에이전트는 돌아오지 않는다.
+   */
+  private retiringAlive(agentId: string): number | null {
+    const pid = this.retiring.get(agentId);
+    if (pid === undefined) return null;
+    if (this.host.kill(pid, 0)) return pid;
+    this.retiring.delete(agentId);
+    return null;
   }
 
   private records(): RunnerRecord[] {
@@ -385,6 +412,24 @@ export class RunnerRegistry {
       // 회귀선: `test/adopt.test.ts` 의 "채택한 에이전트에 spawnRunner 가 와도 새로
       // 띄우지 않는다".
       return existing;
+    }
+
+    // ── 앞 세대가 아직 물러나는 중이면 띄우지 않는다 (2026-09-07 후속) ──────────
+    // 러너는 `SIGTERM` 을 드레인으로 받는다 — 진행 중 배치를 끝내고 `markRead` 까지 한 뒤
+    // 나간다(`agent/src/main.ts`). 그 사이에 교체를 띄우면 둘이 같은 inbox 를 폴하고,
+    // 아직 읽음 처리 안 된 그 멘션을 **둘 다 답한다**(`#430`·`#174` 의 중복).
+    //
+    // 던지는 이유: 조용히 `existing` 을 돌려주면 앱은 "떴다"고 믿고 다시 부르지 않는다.
+    // 이것은 실패가 아니라 **순서**이므로, 앱이 그것을 알고 기다릴 수 있어야 한다.
+    const 물러나는중 = this.retiringAlive(agentId);
+    if (물러나는중 !== null) {
+      throw Object.assign(
+        new Error(
+          `retiring: 앞 세대 러너(pid ${물러나는중})가 아직 물러나는 중이다 — ` +
+            '진행 중인 턴을 끝내면 자리를 비운다',
+        ),
+        { code: 'retiring' as const },
+      );
     }
 
     // ── 로그를 **spawn 보다 먼저** 연다 (`#434`) ─────────────────────────────────
