@@ -207,9 +207,12 @@ const DEV_DIR_PREFIX: &str = "dev-";
 ///
 /// 구획이 안 갈리는 경로가 실제로 남아 있다:
 ///
-/// - **릴리즈 빌드끼리는 여전히 뿌리를 공유한다** — 의도다(사용자 환경에는 앱이 하나뿐이다).
-///   그러나 사람이 릴리즈 앱 두 판본을 나란히 띄우는 일은 일어나고, 그때 이 구획은 아무
-///   도움이 안 된다
+/// - **설치본 두 판본을 나란히 띄우면 뿌리를 공유한다** — `/Applications/murmur.app` 을
+///   두 벌 둘 수는 없으니 실제로는 드물지만, 남는다. (앞 판본은 여기에 *"릴리즈
+///   빌드끼리는 여전히 공유한다 — 의도다"* 라고 적혀 있었고, 그 문장이 이 저장소가 실제로
+///   부딪힌 결함을 미리 적어 둔 자리였다: 로컬 `tauri build` 번들과 설치본이 소켓 하나를
+///   만나 `EXIT_OCCUPIED`(10) 교착이 났다(2026-09-07). 그래서 갈래를 프로파일에서
+///   **설치 자리**로 옮겼다 — `BuildSite::is_installed`)
 /// - **`MURMUR_DEV_DATA_DIR` 를 두 워크트리에 같은 값으로 주면 합쳐진다** — 그것이 그
 ///   변수의 용도이기도 하다(둘을 일부러 한자리에 모으는 것)
 /// - **같은 워크트리를 지우고 같은 경로에 다시 만들면 같은 구획이다** — 위 "같은 경로를
@@ -244,6 +247,82 @@ pub fn dev_partition_name(source: &str) -> String {
     format!("{DEV_DIR_PREFIX}{}", &hex[..DEV_HASH_HEX_LEN])
 }
 
+/// **이 빌드가 어디에 놓여 있나** — 공유 뿌리·공유 키체인을 쓸 자격을 정하는 값들.
+///
+/// ## 왜 `cfg!(debug_assertions)` 만으로는 안 되나 — 축이 틀렸다
+///
+/// `#486`(뿌리)과 `#515`(키체인)가 가른 축은 **빌드 프로파일**이다. 그런데 실제로 부딪히는
+/// 축은 **역할**이다 — 프로덕션 설치본이냐, 로컬에서 테스트로 띄운 것이냐.
+///
+/// **실측(2026-09-07)**: `/Applications/murmur.app`(앱 0.1.6)과 워크트리에서 `tauri build`
+/// 한 `…/hamlet/…/target/release/bundle/macos/murmur.app`(앱 0.1.7)이 소켓 하나를 공유했다.
+/// 둘 다 릴리즈 프로파일이라 옛 축에서 **같은 쪽**에 떨어졌다. 그 뒤 `entryPath` 관문이
+/// 붙기를 막고(제 일을 했다) 우리 daemon 은 `EXIT_OCCUPIED`(10)로 물러나 — **붙지도
+/// 띄우지도 못하는 교착**이 됐다(`ensure_at`·`same_entry_path` 주석).
+///
+/// 그 자리에서 두 앱은 **바이너리로 구별할 수 없다**: `docs/roadmap.md` 의 결정대로 설치본도
+/// 같은 `tauri build` 산출물을 `/Applications` 에 복사한 것이라 identifier·프로파일·서명이
+/// 전부 같다. 다른 것은 **놓인 자리** 하나뿐이고, 그래서 그것으로 판정한다.
+///
+/// ## 왜 환경변수가 아니라 실행 파일 경로인가
+///
+/// `MURMUR_DEV_DATA_DIR` 를 릴리즈에서 막은 이유(그 주석: 변수를 심은 쪽이 **자기가 준비한
+/// 토큰 파일과 소켓**을 앱에게 보게 만들 수 있다)가 여기에는 없다. 실행 파일 경로는
+/// **프로세스가 스스로 아는 값**이고 웹뷰가 못 고치며, 그 경로를 바꿀 수 있는 쪽은 이미
+/// 그 실행 파일 자체를 바꿀 수 있다 — 새로 여는 문이 없다.
+///
+/// ## 왜 값을 파라미터로 받나
+///
+/// `dev_app_data_root` 주석의 "왜 파라미터로 뺐나"와 같은 이유다. `current_exe()` 와
+/// `cfg!` 는 한 프로세스 안에서 **두 자리를 흉내 낼 수 없는 값**이라, 열어 두지 않으면
+/// 회귀선이 조각을 직접 부르게 되고 그러면 조립하는 자리를 통째로 지워도 초록이다.
+#[derive(Clone, Copy, Debug)]
+struct BuildSite<'a> {
+    /// 이 프로세스의 실행 파일(`std::env::current_exe`). `None` 은 **못 읽었다**다.
+    exe: Option<&'a Path>,
+    /// 사용자 홈. `~/Applications` 설치도 설치로 세기 위해 필요하다.
+    home: Option<&'a Path>,
+    /// 릴리즈 프로파일인가(`!cfg!(debug_assertions)`).
+    release: bool,
+}
+
+impl BuildSite<'_> {
+    /// **설치된 프로덕션 앱인가** — 공유 뿌리와 공유 키체인을 쓸 유일한 자격.
+    ///
+    /// 두 조건을 **둘 다** 요구한다. 프로파일만 보면 이 이슈(로컬 릴리즈 번들이 설치본의
+    /// 소켓을 만난다)가 나고, 자리만 보면 `#515`(`/Applications` 에 복사해 둔 개발 빌드가
+    /// 공유 세션·PAT 를 읽는다)가 난다.
+    fn is_installed(&self) -> bool {
+        if !self.release {
+            // 개발 프로파일은 **어디에 놓여 있어도** 자격이 없다.
+            return false;
+        }
+        // **실행 파일을 못 읽었으면 공유 쪽으로 떨어진다.** 두 오답의 무게가 다르다:
+        // 로컬 빌드가 공유 쪽으로 가면 이 이슈의 교착이 나는데 그것은 로그에 남아 진단이
+        // 된다. 반대로 설치본이 구획 쪽으로 가면 **배포된 사용자의 장부·세션이 옛 자리에
+        // 남아 보이지 않게** 되고, 사람은 데이터가 사라진 것으로 본다 — 원인에 닿을 길이 없다.
+        let Some(exe) = self.exe else {
+            return true;
+        };
+        installed_roots(self.home)
+            .iter()
+            .any(|root| exe.starts_with(root))
+    }
+}
+
+/// 설치 자리로 인정하는 디렉터리.
+///
+/// macOS 설치 자리는 두 곳이다 — 시스템 전역 `/Applications` 와 사용자별 `~/Applications`.
+/// **정규화하지 않는다**(`same_entry_path` 와 다른 점이다): 여기서 재는 것은 "같은 파일인가"가
+/// 아니라 "**어느 디렉터리 밑인가**"이고, 그 판정은 `starts_with` 로 끝난다.
+fn installed_roots(home: Option<&Path>) -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::from("/Applications")];
+    if let Some(home) = home {
+        roots.push(home.join("Applications"));
+    }
+    roots
+}
+
 /// 앱 데이터 **뿌리**를 정한다 — 이 밑의 모든 것이 함께 갈린다.
 ///
 /// ## 소켓만 가르면 절반이다
@@ -274,22 +353,55 @@ pub fn dev_partition_name(source: &str) -> String {
 /// 전부 거기에 놓는다. **되짚기 규칙은 안 고쳐도 성립한다** — 되짚기는 "두 단계 위"라는
 /// 상대 규칙이고, 우리가 바꾼 것은 그 위의 절대 위치뿐이다.
 ///
-/// ## 릴리즈는 그대로다 — 바꿀 이유가 없고, 바꾸면 잃는다
+/// ## 설치본은 그대로다 — 바꿀 이유가 없고, 바꾸면 잃는다
 ///
-/// 사용자 환경에는 앱이 하나뿐이라 가를 것이 없다. 그리고 뿌리를 옮기면 **이미 설치된
-/// 앱의 장부와 설정이 옛 자리에 남아** 보이지 않게 된다. 그래서 `cfg!(debug_assertions)`
-/// 아래에서만 갈린다.
+/// 설치된 앱의 뿌리를 옮기면 **이미 쌓인 장부와 설정이 옛 자리에 남아** 보이지 않게 된다.
+/// 그래서 공유 뿌리를 쓰는 자격은 `BuildSite::is_installed` 하나로 좁혀 두고, 그 자격이
+/// 없는 빌드에만 구획을 붙인다.
+///
+/// **갈래가 프로파일이 아니라 설치 자리인 이유**는 `BuildSite` 주석에 있다 — 요약하면,
+/// 로컬 `tauri build` 번들도 릴리즈 프로파일이라 프로파일로는 설치본과 갈리지 않았고,
+/// 그 둘이 소켓 하나를 만나 교착이 났다(2026-09-07 실측).
 pub fn app_data_root(app_data_dir: &Path) -> PathBuf {
-    // **릴리즈 빌드는 여기서 끝난다.** `cfg!` 라 아래 블록은 릴리즈 바이너리에 아예
-    // 남지 않는다 — 즉 릴리즈에서 `MURMUR_DEV_DATA_DIR` 를 읽는 코드 자체가 없다.
-    if !cfg!(debug_assertions) {
+    let exe = std::env::current_exe().ok();
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    resolve_app_data_root(
+        app_data_dir,
+        BuildSite {
+            exe: exe.as_deref(),
+            home: home.as_deref(),
+            release: !cfg!(debug_assertions),
+        },
+        dev_partition_source(),
+        dev_data_dir_override(),
+    )
+}
+
+/// `app_data_root` 의 판정 — 자격이 있으면 공유 뿌리, 없으면 구획.
+fn resolve_app_data_root(
+    app_data_dir: &Path,
+    site: BuildSite<'_>,
+    source: &str,
+    override_dir: Option<std::ffi::OsString>,
+) -> PathBuf {
+    if site.is_installed() {
         return app_data_dir.to_path_buf();
     }
-    dev_app_data_root(
-        app_data_dir,
-        dev_partition_source(),
-        std::env::var_os(DEV_DATA_DIR_ENV),
-    )
+    dev_app_data_root(app_data_dir, source, override_dir)
+}
+
+/// `MURMUR_DEV_DATA_DIR` 는 **개발 프로파일에서만** 읽는다.
+///
+/// 이 게이트가 `app_data_root` 의 갈래와 **분리돼 있어야 한다.** 앞 판본은 갈래 자체가
+/// `cfg!(debug_assertions)` 라 변수 읽기도 자동으로 개발 전용이었다. 갈래가 설치 자리로
+/// 바뀐 지금 이 게이트를 명시하지 않으면 **설치되지 않은 릴리즈 번들이 변수를 읽게 된다** —
+/// `DEV_DATA_DIR_ENV` 주석이 막으려던 표면(변수 하나로 토큰·소켓을 갈아끼우는 것)이
+/// 그대로 열린다. `cfg!` 인 것도 그대로다: 릴리즈 바이너리에는 아래 줄이 안 남는다.
+fn dev_data_dir_override() -> Option<std::ffi::OsString> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    std::env::var_os(DEV_DATA_DIR_ENV)
 }
 
 /// `app_data_root` 의 개발 갈래.
@@ -345,9 +457,11 @@ const KEYCHAIN_SERVICE_RELEASE: &str = "app.murmur.desktop";
 /// 키체인 서비스 이름을 정한다 — `app_data_root` 와 **같은 자리에서 같은 구획으로** 갈린다.
 ///
 /// ```text
-/// 릴리즈  app.murmur.desktop
-/// 개발    app.murmur.desktop.dev-<해시8>
+/// 설치본   app.murmur.desktop
+/// 그 밖    app.murmur.desktop.dev-<해시8>
 /// ```
+///
+/// "설치본"의 정의는 `BuildSite::is_installed` 하나에 있다 — 뿌리와 **같은 판정**을 쓴다.
 ///
 /// ## 왜 여기 있나 — `#486` 이 절반만 갈랐고, 두 곳이 따로 정하면 그 절반이 또 난다
 ///
@@ -405,12 +519,26 @@ const KEYCHAIN_SERVICE_RELEASE: &str = "app.murmur.desktop";
 /// 만든 항목을 골라 지운다.** `security find-generic-password -s app.murmur.desktop`
 /// 으로 목록을 볼 수 있다. 어느 것이 개발 부스러기인지는 그것을 만든 사람만 안다.
 pub fn keychain_service_name() -> String {
-    // **릴리즈 빌드는 여기서 끝난다.** `app_data_root` 와 같은 컴파일 타임 갈래다 —
-    // 릴리즈 바이너리에는 아래 줄이 아예 남지 않는다.
-    if !cfg!(debug_assertions) {
-        return KEYCHAIN_SERVICE_RELEASE.to_string();
+    let exe = std::env::current_exe().ok();
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    resolve_keychain_service_name(
+        KEYCHAIN_SERVICE_RELEASE,
+        BuildSite {
+            exe: exe.as_deref(),
+            home: home.as_deref(),
+            release: !cfg!(debug_assertions),
+        },
+        dev_partition_source(),
+    )
+}
+
+/// `keychain_service_name` 의 판정. **`app_data_root` 와 같은 `BuildSite::is_installed` 를
+/// 쓴다** — 두 곳이 각자 판정하면 `#515` 의 "절반만 갈렸다"가 그대로 재발한다.
+fn resolve_keychain_service_name(base: &str, site: BuildSite<'_>, source: &str) -> String {
+    if site.is_installed() {
+        return base.to_string();
     }
-    dev_keychain_service_name(KEYCHAIN_SERVICE_RELEASE, dev_partition_source())
+    dev_keychain_service_name(base, source)
 }
 
 /// `keychain_service_name` 의 개발 갈래.
@@ -827,7 +955,23 @@ pub fn read_pid_record(path: &Path) -> Option<PidRecord> {
 /// 같은 파일이 다른 표기로 적힐 수 있다(심링크·`.` 성분·`/private` 접두). 그래서
 /// `canonicalize` 로 양쪽을 실체 경로로 만든 뒤 비교한다. 실패하면(파일이 이미 사라졌다)
 /// 원문 문자열로 떨어진다 — 거기서 다르다고 단정하지 않고, **모르는 것은 다른 것으로**
-/// 다룬다(안 붙는다). 안 붙어도 잃는 것은 없다: 그 뒤 우리 daemon 을 띄우면 된다.
+/// 다룬다(안 붙는다).
+///
+/// ## "안 붙어도 잃는 것은 없다" — **그것이 틀렸다**
+///
+/// 앞 판본은 여기에 *"안 붙어도 잃는 것은 없다: 그 뒤 우리 daemon 을 띄우면 된다"* 라고
+/// 적혀 있었다. 점유자가 **살아 있는 다른 빌드**일 때는 성립하지 않는다 — 띄운 daemon 이
+/// 예외 없이 `EXIT_OCCUPIED`(10)로 물러나므로(`claimDaemonEndpoint`), 앱은 붙지도 띄우지도
+/// 못한다. 실측(2026-09-07): 로컬 `tauri build` 번들이 `/Applications` 설치본의 소켓을
+/// 만나 그 교착에 빠졌고, 화면에는 *"러너를 띄우지 못했다 … 종료 코드 10"* 만 왔다.
+///
+/// 그 자리는 `BuildSite::is_installed` 가 뿌리를 갈라 없앴다 — 두 빌드가 애초에 같은
+/// 소켓을 보지 않는다. **그래도 이 관문은 남는다**: 구획이 안 갈리는 경로가 여전히 있고
+/// (`dev_partition_source` 주석의 목록), 이 관문이 거기서 마지막 관측 장치다.
+///
+/// 남은 그 경로들에서는 지금도 같은 교착이 난다. 그때 사람에게 무엇을 하라고 말할지는
+/// **아직 정해지지 않았다** — `ensure_at` 은 "붙는다/띄운다" 두 갈래만 알고, 종료 코드
+/// 10 을 그대로 문구에 실을 뿐 점유자가 누구인지(pid 레코드에 있다) 말하지 않는다.
 fn same_entry_path(record_entry: &str, mine: &Path) -> bool {
     if record_entry.is_empty() {
         // 옛 daemon 이라 안 적었다. **같다고 단정하지 않는다** — 그 daemon 이 어느 빌드의
@@ -1079,9 +1223,9 @@ fn open_connection(
 /// (`dirs::data_dir()` + `tauri.conf.json` 의 `identifier`). 이 디렉터리는 앱이 처음
 /// 쓰는 것이므로 여기서 만든다 — 없으면 daemon 이 소켓을 열 자리가 없다.
 ///
-/// **개발 빌드에서는 그 밑의 워크트리 구획이 뿌리가 된다**(`app_data_root`). `identifier`
-/// 는 안 건드린다 — dev/prod 앱을 나란히 띄우는 것은 별개 가치이고, 그것까지 이 변경에
-/// 얹으면 릴리즈 설치의 데이터 자리가 함께 움직인다.
+/// **설치되지 않은 빌드에서는 그 밑의 워크트리 구획이 뿌리가 된다**(`app_data_root`).
+/// `identifier` 는 안 건드린다 — 그 값은 키체인 서비스 이름과 묶여 있어(`#515`) 건드리면
+/// 배포된 사용자의 세션이 끊긴다. 격리는 identifier **아래**, 이 뿌리에서 갈린다.
 pub fn resolve_endpoint_paths(app: &tauri::AppHandle) -> Result<EndpointPaths, String> {
     use tauri::Manager;
     let app_data_dir = app
@@ -1675,6 +1819,24 @@ mod tests {
     /// 길이 회귀선(`상한_안의_경로는_통과한다`)과 같은 기준을 쓰기 위해서다.
     const REAL_APP_DATA_DIR: &str = "/Users/alice2/Library/Application Support/app.murmur.desktop";
 
+    /// 실측(2026-09-07)이 밟은 **두 자리** 그대로다. 이 두 문자열이 이 이슈다:
+    /// 앞은 `/Applications` 의 설치본(앱 0.1.6), 뒤는 워크트리에서 `tauri build` 한
+    /// 로컬 번들(앱 0.1.7). 둘이 소켓 하나를 공유해 `EXIT_OCCUPIED`(10) 교착이 났다.
+    const INSTALLED_EXE: &str = "/Applications/murmur.app/Contents/MacOS/murmur-desktop";
+    const LOCAL_BUNDLE_EXE: &str = "/Users/alice2/wt/hamlet/packages/desktop/src-tauri/\
+target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
+    const REAL_HOME: &str = "/Users/alice2";
+
+    /// `exe` 자리에 놓인 빌드. **프로덕션과 같은 `BuildSite` 를 만든다** — 회귀선이
+    /// 판정 조각(`is_installed`)을 직접 부르지 않고 조립 자리를 지나게 하려는 것이다.
+    fn 자리(exe: &'static str, release: bool) -> BuildSite<'static> {
+        BuildSite {
+            exe: Some(Path::new(exe)),
+            home: Some(Path::new(REAL_HOME)),
+            release,
+        }
+    }
+
     /// **회귀선 ① — 워크트리가 다르면 경로가 다르다.**
     ///
     /// 이 변경 전에는 두 워크트리가 `app_data_dir()` 하나를 공유했고, 실측(2026-09-06)에서
@@ -1753,38 +1915,114 @@ mod tests {
         assert_eq!(dev_partition_name(src), dev_partition_name(src));
     }
 
-    /// **회귀선 ③ — 릴리즈 빌드의 경로는 안 바뀐다.**
+    /// **회귀선 ③ — 설치된 앱의 경로는 안 바뀐다.**
     ///
-    /// 이 PR 이 사용자 환경을 안 건드렸음을 고정한다. 뿌리를 옮기면 이미 설치된 앱의
+    /// 이 변경이 사용자 환경을 안 건드렸음을 고정한다. 뿌리를 옮기면 이미 설치된 앱의
     /// 장부·설정이 옛 자리에 남아 보이지 않게 된다.
     ///
-    /// **`cfg!(debug_assertions)` 로 단언을 가른다** — `cargo test` 는 debug 로 도니
-    /// 여기서 릴리즈 갈래를 실행할 수는 없다. 대신 `app_data_root` 가 릴리즈에서
-    /// 돌려주는 값이 무엇인지를 **컴파일 타임 갈래 그대로** 잰다: debug 에서는 구획이
-    /// 붙고, 릴리즈에서는 안 붙는다. 두 단언 중 하나는 언제나 실행된다.
+    /// **`cfg!` 갈래가 사라졌다.** 앞 판본은 `cargo test` 가 debug 로 도는 탓에 릴리즈
+    /// 갈래를 실행할 수 없어 단언 자체를 `cfg!` 로 갈랐다(즉 한 판에서 절반만 재고 있었다).
+    /// 프로파일이 `BuildSite` 의 필드가 된 지금은 **한 판 안에서 두 프로파일을 다 밟는다.**
     #[test]
     fn 릴리즈_빌드의_뿌리는_안_바뀐다() {
         let base = Path::new(REAL_APP_DATA_DIR);
-        let got = app_data_root(base);
-        if cfg!(debug_assertions) {
-            assert_ne!(got, base, "개발 빌드인데 구획이 안 붙었다");
-            assert_eq!(
-                got.parent(),
-                Some(base),
-                "구획은 앱 데이터 디렉터리 **바로 밑** 한 단계여야 한다 — \
-                 더 깊어지면 104바이트 예산이 그만큼 준다"
-            );
-            let name = got.file_name().unwrap().to_string_lossy().into_owned();
-            assert!(
-                name.starts_with(DEV_DIR_PREFIX),
-                "구획 이름이 `{DEV_DIR_PREFIX}` 로 시작해야 사람이 지워도 되는 것을 안다: {name}"
-            );
-        } else {
-            assert_eq!(
-                got, base,
-                "릴리즈 빌드가 뿌리를 옮겼다 — 기존 설치의 장부·설정을 잃는다"
-            );
-        }
+        let src = "/Users/x/wt/alpha/packages/desktop/src-tauri";
+
+        assert_eq!(
+            resolve_app_data_root(base, 자리(INSTALLED_EXE, true), src, None),
+            base,
+            "릴리즈 빌드가 뿌리를 옮겼다 — 기존 설치의 장부·설정을 잃는다"
+        );
+
+        // 그 밖의 자리에는 구획이 붙고, **그 이름이 지워도 되는 것임을 말한다.**
+        let got = resolve_app_data_root(base, 자리(LOCAL_BUNDLE_EXE, true), src, None);
+        assert_eq!(
+            got.parent(),
+            Some(base),
+            "구획은 앱 데이터 디렉터리 **바로 밑** 한 단계여야 한다 — \
+             더 깊어지면 104바이트 예산이 그만큼 준다"
+        );
+        let name = got.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(
+            name.starts_with(DEV_DIR_PREFIX),
+            "구획 이름이 `{DEV_DIR_PREFIX}` 로 시작해야 사람이 지워도 되는 것을 안다: {name}"
+        );
+    }
+
+    /// **회귀선 ⑥ — 로컬 릴리즈 번들은 설치본과 뿌리가 갈린다.**
+    ///
+    /// **이 이슈 자체다.** 실측(2026-09-07): `/Applications/murmur.app`(앱 0.1.6)이 소켓을
+    /// 쥔 상태에서 워크트리의 `target/release/bundle/…/murmur.app`(앱 0.1.7)을 띄웠다.
+    /// 둘 다 릴리즈 프로파일이라 옛 축(`cfg!(debug_assertions)`)에서 같은 쪽에 떨어졌고,
+    /// 소켓 경로가 같아서 `entryPath` 관문이 붙기를 막은 뒤 우리 daemon 은
+    /// `EXIT_OCCUPIED`(10)로 물러났다 — 붙지도 띄우지도 못하는 교착.
+    ///
+    /// 재는 것이 "구획이 붙는다"가 아니라 **"두 자리의 소켓이 다르다"**인 것이 요점이다.
+    /// 교착을 만든 것은 구획의 유무가 아니라 **소켓 하나를 공유한 사실**이다.
+    #[test]
+    fn 로컬_릴리즈_번들은_설치본과_뿌리가_갈린다() {
+        let base = Path::new(REAL_APP_DATA_DIR);
+        let src = "/Users/x/wt/hamlet/packages/desktop/src-tauri";
+
+        let 설치본 = resolve_app_data_root(base, 자리(INSTALLED_EXE, true), src, None);
+        let 로컬 = resolve_app_data_root(base, 자리(LOCAL_BUNDLE_EXE, true), src, None);
+
+        // **대조군이 먼저다.** 이것이 없으면 아래 단언은 "둘 다 옮겼다"로도 통과한다.
+        assert_eq!(
+            설치본, base,
+            "설치된 앱의 뿌리가 움직였다 — 배포된 사용자의 장부·세션이 옛 자리에 남아 안 보인다"
+        );
+        assert_ne!(
+            로컬, 설치본,
+            "로컬 릴리즈 번들이 설치본과 같은 뿌리를 얻었다 — 소켓 하나를 두고 \
+             EXIT_OCCUPIED(10) 교착이 난다"
+        );
+        assert_ne!(
+            endpoint_paths(&로컬).socket,
+            endpoint_paths(&설치본).socket,
+            "뿌리는 갈렸는데 소켓이 같다 — 교착을 만든 것은 그 소켓이다"
+        );
+    }
+
+    /// **회귀선 ⑦ — 공유 자격은 프로파일과 설치 위치를 *둘 다* 요구한다.**
+    ///
+    /// 세 갈래를 한자리에서 잰다. 셋 다 "어느 쪽으로 떨어지는가"의 무게가 다른 자리다.
+    #[test]
+    fn 공유_자격은_릴리즈_프로파일과_설치_위치를_둘_다_요구한다() {
+        let base = Path::new(REAL_APP_DATA_DIR);
+        let src = "/Users/x/wt/alpha/packages/desktop/src-tauri";
+
+        // ① 사용자별 설치 자리(`~/Applications`)도 설치다.
+        const HOME_INSTALLED_EXE: &str =
+            "/Users/alice2/Applications/murmur.app/Contents/MacOS/murmur-desktop";
+        assert_eq!(
+            resolve_app_data_root(base, 자리(HOME_INSTALLED_EXE, true), src, None),
+            base,
+            "`~/Applications` 설치를 로컬 빌드로 봤다 — 그 사용자는 자기 세션·장부를 잃는다"
+        );
+
+        // ② 개발 프로파일은 **어디에 놓여 있어도** 자격이 없다. `/Applications` 에 debug
+        //    빌드를 복사해 둔 상태가 정확히 `#515` 가 문제 삼은 사고다(설치한 앱이 개발
+        //    중 쌓인 세션·PAT 를 읽었다).
+        assert_ne!(
+            resolve_app_data_root(base, 자리(INSTALLED_EXE, false), src, None),
+            base,
+            "`/Applications` 에 놓인 개발 빌드가 공유 뿌리를 얻었다 — `#515` 가 재발한다"
+        );
+
+        // ③ 실행 파일을 못 읽었으면 **공유 쪽**이다. 두 오답의 무게가 다르다: 로컬 빌드가
+        //    공유 쪽으로 떨어지면 교착이 로그에 남아 진단이 되고, 설치본이 구획 쪽으로
+        //    떨어지면 **사람이 원인을 알 수 없다**(데이터가 조용히 사라진 것처럼 보인다).
+        let 모름 = BuildSite {
+            exe: None,
+            home: Some(Path::new(REAL_HOME)),
+            release: true,
+        };
+        assert_eq!(
+            resolve_app_data_root(base, 모름, src, None),
+            base,
+            "실행 파일을 못 읽었다고 설치본의 뿌리를 옮겼다 — 무게가 가벼운 쪽으로 안 떨어졌다"
+        );
     }
 
     /// **회귀선 ④ — 구획을 넣고도 소켓 길이가 상한 안이다.**
@@ -1936,18 +2174,70 @@ mod tests {
              세션과 러너 PAT 를 앱이 못 읽게 된다"
         );
 
-        let got = keychain_service_name();
-        if cfg!(debug_assertions) {
-            assert_ne!(
-                got, KEYCHAIN_SERVICE_RELEASE,
-                "개발 빌드인데 릴리즈 이름을 쓴다"
-            );
-        } else {
-            assert_eq!(
-                got, KEYCHAIN_SERVICE_RELEASE,
-                "릴리즈 빌드가 키체인 이름을 옮겼다 — 배포된 사용자의 세션이 끊긴다"
-            );
-        }
+        // **`cfg!` 갈래가 사라졌다** — `릴리즈_빌드의_뿌리는_안_바뀐다` 와 같은 이유다.
+        let src = "/Users/x/wt/alpha/packages/desktop/src-tauri";
+        assert_eq!(
+            resolve_keychain_service_name(KEYCHAIN_SERVICE_RELEASE, 자리(INSTALLED_EXE, true), src),
+            KEYCHAIN_SERVICE_RELEASE,
+            "설치된 앱이 키체인 이름을 옮겼다 — 배포된 사용자의 세션이 끊긴다"
+        );
+        assert_ne!(
+            resolve_keychain_service_name(
+                KEYCHAIN_SERVICE_RELEASE,
+                자리(INSTALLED_EXE, false),
+                src
+            ),
+            KEYCHAIN_SERVICE_RELEASE,
+            "`/Applications` 에 놓인 개발 빌드가 릴리즈 키체인 이름을 쓴다 — `#515` 다"
+        );
+    }
+
+    /// **회귀선 ⑤ — 로컬 릴리즈 번들은 설치본과 키체인이 갈린다.**
+    ///
+    /// 뿌리를 가르면서 키체인을 안 가르면 `#515` 의 "절반만 갈렸다"가 이 축에서 재발한다 —
+    /// 로컬 테스트 앱이 **프로덕션 세션 토큰과 러너 PAT** 를 읽고 덮어쓸 수 있다.
+    ///
+    /// 마지막 단언이 이 회귀선의 핵심이다: 두 곳이 **같은 판정**을 쓰는지를 문자 단위로
+    /// 잰다. 누가 한쪽만 고치면(예: 키체인은 `cfg!` 로 되돌리면) 곧바로 빨개진다.
+    #[test]
+    fn 로컬_릴리즈_번들은_설치본과_키체인이_갈린다() {
+        let src = "/Users/x/wt/hamlet/packages/desktop/src-tauri";
+        let 설치본 =
+            resolve_keychain_service_name(KEYCHAIN_SERVICE_RELEASE, 자리(INSTALLED_EXE, true), src);
+        let 로컬 = resolve_keychain_service_name(
+            KEYCHAIN_SERVICE_RELEASE,
+            자리(LOCAL_BUNDLE_EXE, true),
+            src,
+        );
+
+        assert_eq!(
+            설치본, KEYCHAIN_SERVICE_RELEASE,
+            "대조군: 설치본은 릴리즈 이름 그대로다"
+        );
+        assert_ne!(
+            로컬, 설치본,
+            "로컬 릴리즈 번들이 설치본과 같은 키체인을 쓴다 — 테스트가 프로덕션 세션 토큰과 \
+             러너 PAT 를 읽고 덮어쓸 수 있다"
+        );
+
+        // 뿌리와 **같은 구획**이어야 한다 — 두 판정이 갈리면 그것이 `#515` 다.
+        let 뿌리_구획 = resolve_app_data_root(
+            Path::new(REAL_APP_DATA_DIR),
+            자리(LOCAL_BUNDLE_EXE, true),
+            src,
+            None,
+        )
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+        let 키체인_구획 = 로컬
+            .strip_prefix(&format!("{KEYCHAIN_SERVICE_RELEASE}."))
+            .unwrap_or_else(|| panic!("키체인 이름이 릴리즈 이름 + `.` 꼴이 아니다: {로컬}"));
+        assert_eq!(
+            키체인_구획, 뿌리_구획,
+            "키체인 구획과 뿌리 구획이 다르다 — 두 곳이 각자 판정하고 있다"
+        );
     }
 
     /// **회귀선 ③ — 같은 워크트리면 같은 이름이다. ①의 대조군이다.**
@@ -2015,11 +2305,19 @@ mod tests {
             return; // 개발 빌드다 — `릴리즈_빌드의_뿌리는_안_바뀐다` 가 그쪽을 잰다.
         }
         let base = Path::new(REAL_APP_DATA_DIR);
-        // 릴리즈 갈래에서는 환경변수를 실제로 심어도 값이 안 바뀐다.
+        // **`base` 와 비교하지 않는다.** 이 테스트 바이너리는 `/Applications` 밖에 있어
+        // 릴리즈 프로파일에서도 구획이 붙는다(그것이 맞는 동작이다). 재는 것은 뿌리의
+        // 절대 위치가 아니라 **환경변수가 그 값을 움직이지 못한다**는 성질이다.
+        let 심기_전 = app_data_root(base);
         std::env::set_var(DEV_DATA_DIR_ENV, "/tmp/mmr-should-be-ignored");
         let got = app_data_root(base);
         std::env::remove_var(DEV_DATA_DIR_ENV);
-        assert_eq!(got, base, "릴리즈가 환경변수로 데이터 위치를 옮겼다");
+        assert_eq!(got, 심기_전, "릴리즈가 환경변수로 데이터 위치를 옮겼다");
+        assert_ne!(
+            got,
+            Path::new("/tmp/mmr-should-be-ignored"),
+            "릴리즈가 환경변수 값을 그대로 뿌리로 썼다 — `dev_data_dir_override` 게이트가 뚫렸다"
+        );
     }
 
     // -----------------------------------------------------------------------
