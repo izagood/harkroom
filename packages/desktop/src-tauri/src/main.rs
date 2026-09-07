@@ -13,10 +13,21 @@ mod login_path;
 
 use std::collections::HashMap;
 
-const SERVICE: &str = "app.murmur.desktop";
-
+/// 키체인 서비스 이름은 **`daemon_client` 가 정한다** — 상수가 여기 없는 것이 요점이다.
+///
+/// `#515`: 이름이 번들 ID 하나(`app.murmur.desktop`)뿐이라 개발 빌드와 설치된 `.app` 이
+/// 같은 항목을 봤다. 릴리즈 `v0.1.0` 을 처음 설치한 사람이 로그인 화면 없이 개발 서버의
+/// 계정으로 들어갔다(실측 2026-09-06).
+///
+/// `#486` 이 앱 데이터 **뿌리**를 워크트리별로 갈랐지만 키체인은 그 뿌리를 안 썼다 —
+/// 이 자리에 상수가 따로 있었기 때문이다. 그래서 상수를 지우고 **뿌리를 정하는 그
+/// 모듈에서 같은 구획으로 파생시킨다**(`daemon_client::keychain_service_name` 주석의
+/// "한 출처"). 두 곳이 따로 정하는 상태로 되돌리면 같은 버그가 그대로 재발한다.
+///
+/// 매 호출마다 문자열을 새로 만든다. 키체인 호출은 어차피 IPC 를 건너 OS 로 가고
+/// (승인 대화상자까지 뜬다 — `#450`), 그 옆에서 짧은 `format!` 하나는 재는 값이 아니다.
 fn entry(key: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(SERVICE, key).map_err(|e| e.to_string())
+    keyring::Entry::new(&daemon_client::keychain_service_name(), key).map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
