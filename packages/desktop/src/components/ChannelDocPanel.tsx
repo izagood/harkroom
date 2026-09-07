@@ -161,7 +161,6 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
               <div className="text-sm text-fg">
                 <MessageBody
                   body={doc.body}
-                  messageId={`channel-doc:${channelId}`}
                   onOpenDirectory={onOpenDirectory}
                   onOpenSettings={onOpenSettings}
                 />

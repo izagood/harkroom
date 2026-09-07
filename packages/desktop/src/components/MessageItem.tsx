@@ -309,7 +309,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
 
         {draft === null ? (
           <>
-            {shownBody.trim() && <MessageBody body={shownBody} messageId={message.id} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
+            {shownBody.trim() && <MessageBody body={shownBody} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
             {/* 선택지는 본문 **바로 아래**에 붙는다 — 답할 자리가 말 옆에 있어야 한다(규칙 05).
                 형식을 못 알아보면 `AskCard` 가 스스로 아무것도 그리지 않는다. */}
             <AskCard message={message} />

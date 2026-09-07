@@ -502,7 +502,7 @@ describe('부를 상대 미리보기 (#278)', () => {
       // `MessageBody` 가 실제로 칠한 handle 들. 단위 함수를 직접 부르지 않는 이유: 컴포저와
       // 본문이 **같은 인자**를 넘기는지까지 봐야 한다. 같은 함수를 써도 인자가 다르면
       // (자기 계정을 빼거나 `@channel` 을 빼면) 판정은 갈라진다.
-      const body1 = render(<MessageBody body={body} messageId="m1" />);
+      const body1 = render(<MessageBody body={body} />);
       const painted = [...document.querySelectorAll('[data-testid^="mention-"]')]
         .map((el) => el.getAttribute('data-testid')!.replace('mention-', ''));
       body1.unmount();
@@ -520,7 +520,7 @@ describe('부를 상대 미리보기 (#278)', () => {
   });
 
   it('자기 멘션은 본문에서는 칠해지고 이 줄에는 없다 (서버가 작성자를 알림에서 뺀다)', () => {
-    const body1 = render(<MessageBody body="@me 나에게" messageId="m1" />);
+    const body1 = render(<MessageBody body="@me 나에게" />);
     expect(document.querySelector('[data-testid="mention-me"]')).toBeTruthy();
     body1.unmount();
 

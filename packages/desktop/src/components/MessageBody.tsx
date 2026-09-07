@@ -4,7 +4,6 @@ import { splitMentions } from '../lib/mention';
 import { splitLinks, type LinkTarget, type BodyPart } from '../lib/link';
 import { extractPreviewUrls } from '@murmur/shared';
 import { splitCode } from '../lib/code';
-import { shouldCollapse, COLLAPSED_MAX_PX } from '../lib/collapse';
 import { getExternalOpener } from '../lib/openExternal';
 import { getController } from '../state/controller';
 import { LinkPreview } from './LinkPreview';
@@ -62,25 +61,15 @@ interface MentionOpeners {
 
 export function MessageBody({
   body,
-  messageId,
   onOpenDirectory,
   onOpenSettings,
 }: {
   body: string;
-  messageId: string;
 } & MentionOpeners) {
   const accounts = useActiveStore((s) => s.accounts);
   const groups = useActiveStore((s) => s.groups);
   const me = useActiveStore((s) => s.me);
   const myHandle = me?.handle?.toLowerCase() ?? null;
-  // 접기 판정은 본문만 본다 — 작성자가 누구인지 보지 않는다. 자기가 쓴 긴 메시지도 남의
-  // 대화를 밀어내는 것은 똑같고, 예외를 두면 "왜 이건 접히고 저건 안 접히지" 를 사람이
-  // 매번 판단해야 한다(#217).
-  const collapsible = useMemo(() => shouldCollapse(body), [body]);
-  const expanded = useActiveStore((s) => s.expandedMessageIds[messageId] === true);
-  const toggleExpanded = useActiveStore((s) => s.toggleExpanded);
-  const collapsed = collapsible && !expanded;
-
   const segments = useMemo(() => splitCode(body), [body]);
   const handles = useMemo(() => Object.values(accounts).map((a) => a.handle), [accounts]);
   const accountsMap = useMemo(() => {
@@ -255,37 +244,9 @@ return splitLinks(splitMentions(seg.text, handles, groupHandles, accountsMap)).m
     </>
   );
 
-  // 접을 대상이 아니면 상자도 버튼도 만들지 않는다. **자르기와 "더 보기" 는 같은 조건
-  // 하나에서 나온다** — 둘을 따로 판단하면 버튼 없이 잘린 상태가 생길 수 있고, 그것은
-  // 정보가 사라진 것이다.
-  if (!collapsible) return content;
-
-  return (
-    <div data-testid="collapsible-body" data-collapsed={String(collapsed)}>
-      <div
-        data-testid="body-clip"
-        // 접을 때 본문을 DOM 에서 빼지 않는다 — `display:none` 이면 브라우저 찾기·복사·
-        // 스크린리더가 본문에 도달하지 못하고, 그건 내용을 지운 것과 다르지 않다.
-        // 그래서 자르는 수단은 `max-height` + `overflow:hidden` 이다.
-        className={collapsed ? 'overflow-hidden' : undefined}
-        // 값을 클래스 문자열로 적지 않고 상수에서 가져온다 — 판정에 쓴 높이와 실제로 자른
-        // 높이가 두 곳에 적히면 한쪽만 고쳐질 때 소리 없이 어긋난다.
-        style={collapsed ? { maxHeight: `${COLLAPSED_MAX_PX}px` } : undefined}
-      >
-        {content}
-      </div>
-      {/* 버튼은 **본문 흐름 아래**에 둔다. 왼쪽 아바타 거터(#161 2단계)의 고정폭 예산에
-          끼워 넣지 않는다 — 거기는 이미 아바타가 쓰고 있고, 호버 툴바(#143)와 답글
-          컨트롤(#145)이 가로 예산을 다투는 자리다. */}
-      <button
-        data-testid="expand-body"
-        // 상태를 색이나 글자로만 알리지 않는다 — disclosure 는 aria-expanded 가 상태다.
-        aria-expanded={expanded}
-        className="mt-0.5 rounded border border-border px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-sunken"
-        onClick={() => toggleExpanded(messageId)}
-      >
-        {collapsed ? 'Show more' : 'Show less'}
-      </button>
-    </div>
-  );
+  // 길이와 무관하게 본문을 **그대로** 돌려준다(#539). 예전에는 여기서 높이를 추정해
+  // `max-height` 로 자르고 "Show more" 를 달았지만(#217), 접힘이 줄여 준 것은 스크롤이지
+  // 읽어야 할 양이 아니었다 — 어차피 다 읽으므로 메시지마다 클릭 한 단계만 늘었다.
+  // 자르는 수단이 없으면 "버튼 없이 잘린 본문" 같은 상태도 원천적으로 생기지 않는다.
+  return content;
 }

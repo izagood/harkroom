@@ -36,7 +36,7 @@ describe('멘션 칩 — 색이 아니라 배경으로 구별한다', () => {
    * 나를 막는 말에 색을 칠해도 눈에 띄지 않는다.
    */
   it('남을 부른 멘션은 강조색을 받지 않는다', () => {
-    render(<MessageBody body="@alpha 이것 좀 봐" messageId="m1" />);
+    render(<MessageBody body="@alpha 이것 좀 봐" />);
     const chip = screen.getByTestId('mention-alpha');
     expect(chip.className).not.toContain('text-accent');
     // 구별 자체는 남아 있어야 한다 — 배경과 굵기가 그 일을 한다.
@@ -46,7 +46,7 @@ describe('멘션 칩 — 색이 아니라 배경으로 구별한다', () => {
 
   /** **나를 부른 것은 다르다** — 그것은 실제로 내 차례를 만든다. */
   it('나를 부른 멘션은 그대로 눈에 띈다', () => {
-    render(<MessageBody body="@me 확인해 줘" messageId="m1" />);
+    render(<MessageBody body="@me 확인해 줘" />);
     const chip = screen.getByTestId('mention-me');
     expect(chip.dataset.self).toBe('true');
     expect(chip.className).toContain('warning');
