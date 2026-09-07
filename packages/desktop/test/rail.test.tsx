@@ -561,3 +561,44 @@ describe('Inbox 는 홈 맨 위, 북마크는 레일에만', () => {
     expect(screen.queryByText('Saved')).toBeNull();
   });
 });
+
+/**
+ * **메뉴 머리의 굵은 줄은 `displayName` 이다**(실측 2026-09-07, 사용자가 화면에서 발견).
+ *
+ * 두 줄이 **똑같이 `handle` 을 쓰고 있어** `jaebin / @jaebin · murmur` 처럼 같은 값이
+ * 두 번 섰다. 필드는 이미 있었고(`AccountView.displayName`) 화면이 안 쓴 것이다 —
+ * "이름이 없어서"가 아니었다.
+ *
+ * fixture 의 `acc()` 가 `displayName: handle` 을 기본으로 주므로, 이 회귀선은 **다른
+ * 값을 심어야** 갈림을 잴 수 있다. 같은 값으로는 고치기 전에도 통과한다.
+ */
+describe('계정 메뉴 머리가 이름과 핸들을 가른다', () => {
+  it('굵은 줄은 이름, 아래 줄은 핸들이다', async () => {
+    useAppStore.getState().set({
+      me: { ...acc('u1', 'jaebin', 'human', true), displayName: '재빈' },
+      accounts: { u1: { ...acc('u1', 'jaebin', 'human', true), displayName: '재빈' } },
+    });
+    mountRail({ panel: 'home' });
+    fireEvent.click(screen.getByRole('button', { name: /내 계정 메뉴/ }));
+
+    // 이름이 굵은 줄에 선다.
+    expect(await screen.findByText('재빈')).toBeTruthy();
+    // 핸들은 아래 줄에 `@` 와 워크스페이스와 함께 선다 — 이름을 되풀이하지 않는다.
+    expect(screen.getByText(/@jaebin/)).toBeTruthy();
+  });
+
+  /** `displayName` 이 비면 `handle` 로 떨어진다 — 굵은 줄이 사라지면 안 된다. */
+  it('이름이 비어 있으면 핸들로 떨어진다', async () => {
+    useAppStore.getState().set({
+      me: { ...acc('u1', 'jaebin', 'human', true), displayName: '' },
+      accounts: { u1: { ...acc('u1', 'jaebin', 'human', true), displayName: '' } },
+    });
+    mountRail({ panel: 'home' });
+    fireEvent.click(screen.getByRole('button', { name: /내 계정 메뉴/ }));
+
+    // `jaebin` 은 굵은 줄·`@jaebin`·버튼 라벨 여러 곳에 나온다 — **굵은 줄만** 집는다.
+    const bold = await screen.findByText((t, el) =>
+      t === 'jaebin' && el?.className.includes('font-medium') === true);
+    expect(bold).toBeTruthy();
+  });
+});

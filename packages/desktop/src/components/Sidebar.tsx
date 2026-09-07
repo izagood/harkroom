@@ -1385,10 +1385,22 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
           className={`flex ${TOP_BAR_H} select-none items-center gap-2 border-b border-border
                       pl-3 pr-3 font-bold`}
         >
+          {/*
+            **글자를 뺐다**(실측 2026-09-07, 사용자가 화면에서 지적). 레일에 이미 커뮤니티
+            마크가 서 있어(`Rail.tsx`) 앱 이름을 여기서 또 적으면 같은 자리에 두 번 말하는
+            셈이다 — 로고 하나로 충분하고, 그러면 이 줄이 조용해진다.
+
+            **로고는 장식으로 둔다.** 글자를 빼면서 `decorative` 도 떼어 봤더니
+            `#191` 의 회귀선이 **이름 2개**를 잡았다(실측) — `aria-label` 을 든 `<svg>` 와
+            그 부모가 따로 세어진다. 그 회귀선이 지키는 것은 *"접근 가능한 이름 murmur 는
+            하나뿐"* 이고, 스크린리더가 앱 이름을 두 번 읽는 것을 막는다.
+
+            이 줄에 이름이 필요 없는 이유: 옆 `nav` 가 `aria-label="채널 목록"` 을 들고,
+            레일이 `주 목록` 과 커뮤니티 마크를 든다 — 랜드마크 구별은 이미 되어 있다.
+          */}
           <span data-tauri-drag-region className="flex items-center">
-            <Logo size={16} decorative />
+            <Logo size={16} />
           </span>
-          murmur
           {/* `#443`: 이 점은 실측에서 **유일하게 맞았던** 표시다(끊긴 순간 빨강). 고치는 것은
               색이 아니라 **말**이다 — `disconnected` 한 단어는 그 뒤에 따라오는 사실
               (아래 점들이 전부 '알 수 없음'이 된다)을 말하지 않는다. 사람이 아래에서 보게 될
