@@ -23,13 +23,30 @@
 //
 // 이 파일은 그 창을 실제 Postgres 트랜잭션 둘로 열어 재현한다. 앱도 러너도 띄우지
 // 않는다 — 커서 규칙은 전부 서버가 정하기 때문이다.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// **#523 에서 고쳐졌다. 이 파일은 이제 특성화가 아니라 회귀선이다.**
+//
+// 고침은 `postMessage` 가 `begin` 직후 **insert 보다 앞에서** 채널 단위 advisory lock
+// (`pg_advisory_xact_lock('mseq', hashtext(channel_id))`)을 잡는 것이다. seq 를 받은
+// 트랜잭션이 커밋할 때까지 같은 채널의 다음 트랜잭션이 seq 를 못 받으므로 **발급 순서와
+// 커밋 순서가 같아진다.** 그러면 위에 적은 역전 자체가 성립하지 않는다.
+//
+// 그래서 아래 ①②의 단언 **방향이 뒤집혔다**:
+//   ① 이제 두 게시가 겹쳐도 낮은 seq 가 먼저 커밋된다 — 역전이 관측되지 않는다.
+//   ② 그 결과 커서를 전진시켜도 동료의 발화를 건너뛰지 않는다.
+// ③(대조군)은 **그대로 두었다** — 고침이 순차 경로를 깨지 않았음을 잰다.
+//
+// ①②는 `postMessage` 를 통과해야 한다. 날 `insert into message` 로는 락을 안 잡으므로
+// (예전 판이 그랬다) 결함이 그대로 재현되고, 그것은 제품 경로가 아니다.
+// ─────────────────────────────────────────────────────────────────────────────
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
-import { listMessages, postMessage } from '../src/services/messages.js';
+import { listMessages, lockChannelForSeq, postMessage } from '../src/services/messages.js';
 
 let app: FastifyInstance;
 let pool: Pool;
@@ -68,94 +85,168 @@ const readThread = (since: number): Promise<number[]> =>
   listMessages(pool, channelId, { threadRootId: rootId, since })
     .then((rows) => rows.map((r) => Number(r.seq)));
 
+/**
+ * **동시 게시를 결정적으로 재현한다.**
+ *
+ * 그냥 `Promise.all([postMessage, postMessage])` 로는 이 결함을 못 잰다 — 실측했다.
+ * 두 트랜잭션이 워낙 짧아 대개 줄줄이 끝나 버리고, 고침을 빼도 테스트가 초록으로 남는다
+ * (그러면 아무것도 재지 않는 테스트다). 창을 **손으로 벌려야** 한다.
+ *
+ * 그래서 `postMessage` 의 트랜잭션 모양을 그대로 흉내 낸다:
+ *   begin → (고침) 채널 락 → insert(=seq 발급) → **느린 뒷일** → commit
+ * 여기서 '느린 뒷일'이 실제의 첨부·멱등성·멘션 팬아웃 구간이다. A 에게만 그 지연을 주면
+ * "낮은 seq 가 늦게 커밋된다"가 확정적으로 만들어진다.
+ *
+ * `useLock` 을 끄면 고침 이전의 코드가 된다 — 되돌려 RED 를 이 스위치로 잰다.
+ */
+const postLikeProduction = async (
+  authorId: string, body: string, holdMs: number, useLock: boolean,
+): Promise<number> => {
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    if (useLock) await lockChannelForSeq(client, channelId);
+    const res = await client.query(
+      `insert into message (channel_id, thread_root_id, author_id, body, kind)
+       values ($1, $2, $3, $4, 'user') returning seq`,
+      [channelId, rootId, authorId, body],
+    );
+    if (holdMs) await new Promise((r) => setTimeout(r, holdMs));
+    await client.query('commit');
+    return Number(res.rows[0].seq);
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * A(느림) 와 B(빠름) 를 겹친다. 먼저 커밋된 seq 를 `firstCommitted`, 나중 것을
+ * `secondCommitted` 로 낸다 — 배열 인덱스로 내면 호출부마다 undefined 를 걷어내야 한다.
+ */
+const raceTwoPosts = async (useLock: boolean, tag: string): Promise<{
+  firstCommitted: number; secondCommitted: number; seqA: number; seqB: number;
+}> => {
+  const commitOrder: number[] = [];
+  const pa = postLikeProduction(agentA, `A ${tag}`, 300, useLock)
+    .then((s) => { commitOrder.push(s); return s; });
+  // A 가 먼저 seq 를 잡도록 조금 기다렸다 B 를 띄운다.
+  await new Promise((r) => setTimeout(r, 50));
+  const pb = postLikeProduction(agentB, `B ${tag}`, 0, useLock)
+    .then((s) => { commitOrder.push(s); return s; });
+  const [seqA, seqB] = await Promise.all([pa, pb]);
+  const [firstCommitted, secondCommitted] = commitOrder;
+  if (firstCommitted === undefined || secondCommitted === undefined) {
+    throw new Error('두 게시가 모두 커밋되지 않았다 — 이 테스트의 전제가 깨졌다');
+  }
+  return { firstCommitted, secondCommitted, seqA, seqB };
+};
+
 describe('#347 기준 10 — 한 스레드에 에이전트 둘이 동시에 답한다', () => {
-  it('seq 는 커밋 순서가 아니라 삽입 시도 순서로 발급된다 — 낮은 seq 가 늦게 보일 수 있다', async () => {
-    // 트랜잭션 둘을 실제로 겹친다. A 가 먼저 seq 를 뽑고, B 가 그다음을 뽑는다.
-    const a = await pool.connect();
-    const b = await pool.connect();
-    try {
-      await a.query('begin');
-      await b.query('begin');
+  it('겹쳐 게시해도 seq 순서와 커밋 순서가 일치한다 — 낮은 seq 가 늦게 보이지 않는다', async () => {
+    const { firstCommitted, secondCommitted } = await raceTwoPosts(true, '의 답');
 
-      const ra = await a.query(
-        `insert into message (channel_id, thread_root_id, author_id, body, kind)
-         values ($1, $2, $3, 'A 의 답', 'user') returning seq`,
-        [channelId, rootId, agentA],
-      );
-      const rb = await b.query(
-        `insert into message (channel_id, thread_root_id, author_id, body, kind)
-         values ($1, $2, $3, 'B 의 답', 'user') returning seq`,
-        [channelId, rootId, agentB],
-      );
-      const seqA = Number(ra.rows[0].seq);
-      const seqB = Number(rb.rows[0].seq);
-
-      // 발급 순서는 A < B 다.
-      expect(seqA).toBeLessThan(seqB);
-
-      // 그런데 **B 가 먼저 커밋한다**. 여기가 §14-10 의 창이다 — A 의 fan-out 이
-      // 아직 안 끝났을 뿐인데, 스레드에는 B 만 보인다.
-      await b.query('commit');
-
-      const midway = await readThread(0);
-      expect(midway).toContain(seqB);
-      expect(midway).not.toContain(seqA);
-
-      await a.query('commit');
-    } finally {
-      a.release();
-      b.release();
-    }
+    // **커밋 순서 == seq 오름차순.** 이것이 #523 고침의 본질이다.
+    // 고침 전에는 여기서 [높은 seq, 낮은 seq] 가 나왔다 — 역전이다.
+    expect(firstCommitted).toBeLessThan(secondCommitted);
   });
 
-  it('그 창에서 커서를 전진시키면 동료의 발화를 영원히 건너뛴다 — 기준 10 이 여기서 깨진다', async () => {
-    const a = await pool.connect();
-    const b = await pool.connect();
-    let seqA = 0;
-    let seqB = 0;
-    try {
-      await a.query('begin');
-      await b.query('begin');
-      seqA = Number((await a.query(
-        `insert into message (channel_id, thread_root_id, author_id, body, kind)
-         values ($1, $2, $3, 'A 의 두 번째 답', 'user') returning seq`,
-        [channelId, rootId, agentA],
-      )).rows[0].seq);
-      seqB = Number((await b.query(
-        `insert into message (channel_id, thread_root_id, author_id, body, kind)
-         values ($1, $2, $3, 'B 의 두 번째 답', 'user') returning seq`,
-        [channelId, rootId, agentB],
-      )).rows[0].seq);
+  it('동시에 답해도 커서가 동료의 발화를 건너뛰지 않는다 — 기준 10 이 여기서 성립한다', async () => {
+    const before = (await readThread(0)).reduce((max, s) => Math.max(max, s), 0);
 
-      await b.query('commit');
+    // 러너 둘이 동시에 답하는 그 순간. A 는 느리고 B 는 빠르다.
+    const { firstCommitted, secondCommitted, seqA, seqB } = await raceTwoPosts(true, '의 두 번째 답');
 
-      // 러너가 **바로 이 순간** 폴한다. 커서는 B 까지 전진한다 — 그것이 스레드의
-      // 끝으로 보이기 때문이다. 러너는 A 가 존재한다는 것조차 모른다.
-      const seen = await readThread(0);
-      const cursor = seen.reduce((max, s) => Math.max(max, s), 0);
-      expect(cursor).toBe(seqB);
-      // 이 순간 A 는 보이지 않는다 — 커서가 A 를 "이미 지난 것"으로 오해하는 근거다.
-      expect(seen).not.toContain(seqA);
+    // 먼저 커밋된 쪽이 보이는 순간 러너가 폴한다고 하자. 그때의 커서는 이것이다.
+    // 락이 있으면 먼저 커밋되는 것은 **더 낮은 seq** 이므로, 이 커서는 아직 다른
+    // 쪽을 지나치지 않았다.
+    const cursorAtPoll = firstCommitted;
 
-      await a.query('commit');
-    } finally {
-      a.release();
-      b.release();
-    }
+    // 둘 다 커밋된 뒤, 그 커서로 다음 턴이 읽는다.
+    const next = await readThread(cursorAtPoll);
 
-    // A 가 커밋됐다. 이제 다음 턴이 그 커서로 읽는다.
-    const next = await readThread(seqB);
+    // **고쳐진 지점.** 예전에는 늦게 커밋된 낮은 seq 가 델타에서 영영 빠졌다.
+    // 이제 나머지 하나가 반드시 온다.
+    expect(next).toContain(secondCommitted);
 
-    // **이것이 결함이다.** A 의 발화는 커밋됐고 스레드에 있는데, 커서보다 seq 가
-    // 작아서 다음 턴의 델타에 들어오지 않는다. `#347` 기준 10 의 "다음 턴에 서로의
-    // 발화를 알고 있다"가 성립하지 않는다.
-    expect(next).not.toContain(seqA);
-
-    // 전체 조회에는 분명히 있다 — 소실이 아니라 **커서가 지나친 것**이다.
-    // (둘을 혼동하면 "데이터가 없다"를 찾다가 원인을 못 만난다.)
+    // 그리고 스레드 전체에는 당연히 둘 다 있다 — 소실이 아니었음을 계속 가른다.
     const all = await readThread(0);
     expect(all).toContain(seqA);
     expect(all).toContain(seqB);
+
+    // 커서가 뒤로 가지 않는다: 델타 끝까지 올리면 남는 것이 없다(회귀선 3).
+    const cursor = next.reduce((max, s) => Math.max(max, s), cursorAtPoll);
+    expect(await readThread(cursor)).toEqual([]);
+  });
+
+  it('되돌려 RED — 락을 빼면 같은 창에서 역전이 실제로 관측된다', async () => {
+    // 이 테스트가 위 둘의 **증거**다. 고침을 뺀 경로(`useLock: false`)로 같은 창을
+    // 열면 커밋 순서가 뒤집히고, 그 순간 커서를 올리면 낮은 seq 를 지나친다.
+    // 위 둘이 초록인 것이 "창이 안 열려서"가 아니라 "고침이 닫아서"임을 여기서 잰다.
+    const before = (await readThread(0)).reduce((max, s) => Math.max(max, s), 0);
+    const { firstCommitted, seqA, seqB } = await raceTwoPosts(false, '락 없이');
+
+    // 락이 없으면 B(높은 seq)가 먼저 커밋된다 — 역전이다.
+    expect(seqA).toBeLessThan(seqB);
+    expect(firstCommitted).toBe(seqB);
+
+    // 그 순간 폴한 러너의 커서는 B 다. 그 커서로 읽으면 A 는 영영 안 온다.
+    const next = await readThread(seqB);
+    expect(next).not.toContain(seqA);
+
+    // 그러나 스레드에는 있다 — 소실이 아니라 커서가 지나친 것이다.
+    const all = await readThread(before);
+    expect(all).toContain(seqA);
+  });
+
+  it('postMessage 가 실제로 그 락을 잡는다 — 위 둘은 헬퍼를 재므로 제품 경로를 따로 잰다', async () => {
+    // ①② 는 `postLikeProduction` 이 락을 잡는다. 그것만으로는 **제품 코드가 락을 잡는지**
+    // 를 재지 못한다 — `postMessage` 에서 락 한 줄을 지워도 ①② 는 초록으로 남는다(실측).
+    // 그래서 제품 경로가 그 채널 락을 정말 쥐는지 여기서 직접 본다.
+    //
+    // 방법: 우리가 먼저 그 락을 잡고 `postMessage` 를 띄운다. 제품이 같은 락을 잡으려
+    // 한다면 **막혀서 끝나지 않는다.** 우리가 풀어 준 뒤에야 끝난다.
+    const holder = await pool.connect();
+    let finished = false;
+    try {
+      await holder.query('begin');
+      await lockChannelForSeq(holder, channelId);
+
+      const posting = postMessage(pool, {
+        channelId, authorId: agentB, body: '락을 기다린다', threadRootId: rootId,
+      }).then((r) => { finished = true; return r; });
+
+      // 락을 쥐고 있는 동안에는 끝나지 못해야 한다.
+      await new Promise((r) => setTimeout(r, 250));
+      expect(finished).toBe(false);
+
+      // 풀어 주면 곧 끝난다.
+      await holder.query('commit');
+      const result = await posting;
+      expect(result.message).toBeDefined();
+      expect(finished).toBe(true);
+    } finally {
+      holder.release();
+    }
+  });
+
+  it('채널 조회도 같은 보장을 받는다 — 스레드만 고치면 반쪽이다(messages.ts:629)', async () => {
+    // `listMessages` 는 스레드(:591)와 채널(:629) 두 갈래로 `seq > $since` 를 쓴다.
+    // 락은 채널 단위이므로 두 갈래가 같이 고쳐지지만, 그것을 **재 두지 않으면**
+    // 다음 사람이 한쪽만 보고 안심한다.
+    const readChannel = (since: number): Promise<number[]> =>
+      listMessages(pool, channelId, { since }).then((rows) => rows.map((r) => Number(r.seq)));
+
+    const before = (await readChannel(0)).reduce((max, s) => Math.max(max, s), 0);
+
+    // 스레드가 아니라 **채널 최상위**로 동시에 올린다(threadRootId 없음).
+    const posted = await Promise.all([
+      postMessage(pool, { channelId, authorId: agentA, body: 'A 가 채널에 올린다', threadRootId: null }),
+      postMessage(pool, { channelId, authorId: agentB, body: 'B 가 채널에 올린다', threadRootId: null }),
+    ]);
+    const seqs = posted.map((p) => Number(p.message!.seq));
+
+    const delta = await readChannel(before);
+    for (const s of seqs) expect(delta).toContain(s);
   });
 
   it('순차로 답하면 이 문제가 없다 — 2026-09-02 에 닫힌 것이 이쪽이다(roadmap §5)', async () => {
