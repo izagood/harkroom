@@ -1442,6 +1442,20 @@ export type WsServerEvent =
   | { type: 'channel.member_removed'; channelId: string; accountId: string; audience: 'all' | string[] }
   // 핸들 집합 변경(#300). 로그인한 전원에게 간다.
   | { type: 'handle_group.changed'; groupId: string; audience: 'all' | string[] }
+  /**
+   * 에이전트 팀 변경(#172). 집합의 `handle_group.changed` 와 **같은 모양**이고 같은 이유다:
+   * 팀을 부를 수 있게 된 뒤로 팀 이름은 자동완성 후보이고, 팀원 수는 "몇 명을 불렀는가"의
+   * 유일한 출처다(`AgentTeamRow.memberCount`). 새 팀이 생겨도 알리지 않으면 그 이름은
+   * **다음 새로고침까지 아무의 자동완성에도 나타나지 않고**, 팀원이 바뀌어도 화면은 옛 수로
+   * 조용한 실패를 판정한다.
+   *
+   * 로그인한 전원에게 간다 — 팀 이름은 누구나 부를 수 있으므로(라우트 `GET /teams` 도
+   * `requireAccount` 다) 수신자를 좁힐 근거가 없다.
+   *
+   * `teamId` 만 보낸다: 목록은 서버에 하나뿐이고, 여기서 한 건만 끼워 넣으면 그 사이 다른
+   * admin 이 한 변경이 화면에서 사라진다(스킬 이벤트의 같은 판단).
+   */
+  | { type: 'agent_team.changed'; teamId: string; audience: 'all' | string[] }
   // 담기/해제/상태 변경(#219). 본인의 소켓에만 온다.
   | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string }
   /**
@@ -1753,13 +1767,34 @@ export type AttachClientFrame =
  * 멀티셀렉트가 아니라, 이름을 붙여 남기는 운영자의 의도 기록이다.
  *
  * `name` 은 계정 handle 과 **같은 네임스페이스**를 쓴다(집합 #230 과 같은 결정) —
- * 나중에 `@팀` 멘션을 열 여지를 남기기 위한 예약이고, 멘션 해석은 아직 하지 않는다.
+ * 그 예약을 이제 쓴다: `@팀` 을 부르면 팀원 전원이 깬다(`services/messages.ts`).
  */
 export interface AgentTeamRow {
   id: string;
   name: string;
   createdBy: string;
   createdAt: string;
+  /**
+   * 지금 이 팀에 든 에이전트 수. **옵셔널이 아니라 필수다** — 근거는
+   * `HandleGroupRow.memberCount`(#285)의 주석과 **같은 것**이다: 이 값을 안 실어 주는
+   * 경로가 하나라도 있으면 화면은 "몇 명인지 모른다"를 그릴 방법이 없고, 결국 수를 아예
+   * 안 보이는 쪽으로 떨어진다.
+   *
+   * 팀에서 이 수가 특히 필요한 이유는 `#230` 이 팀 멘션을 유보한 사유 그 자체다:
+   * *"턴 셋이 동시에 시작되고" 조용히 실패한다.* 그 조용한 실패를 화면이 말하는 장치가
+   * `lib/notified.ts`(`calledGroups`·`notifiedSummary`)이고, 그것은 **"몇 명을
+   * 불렀는가"를 이 필드에서만** 얻는다. 멘션만 열고 이 수를 안 주면 팀은 부를 수 있지만
+   * 덜 깬 것을 아무도 말하지 않는 상태가 된다 — `#230` 이 막으려던 바로 그 상태다.
+   *
+   * 파생값이므로 저장하지 않고 조회할 때 센다 — 저장하면 팀원 추가·제거마다 두 곳을
+   * 맞춰야 하고, 한쪽만 틀린 수가 화면에 남는다(`services/teams.ts` 의 `COLS`).
+   *
+   * **비활성 팀원도 센다.** 비활성화는 팀원을 지우지 않는다(`036_agent_team.sql`) —
+   * 명단의 크기는 운영자의 의도 기록이고, 그 중 몇이 실제로 깨는지는 별개의 사실이다.
+   * 그래서 이 수와 실제로 깬 수가 어긋날 수 있고, 그 어긋남을 말하는 것이 위 장치가
+   * 하는 일이다(`AgentTeamMemberRow.disabled` 가 사유를 따로 말한다).
+   */
+  memberCount: number;
 }
 
 /**

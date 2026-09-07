@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { listHandleGroups } from '../services/handleGroups.js';
+import { listTeams } from '../services/teams.js';
 
 export async function registerDirectoryRoutes(
   app: FastifyInstance,
@@ -33,7 +34,24 @@ export async function registerDirectoryRoutes(
     // 집합 행에 필드를 하나 더할 때(구성원 수가 그것이었다) 이쪽만 낡아, 같은 `groups` 를
     // 두 라우트가 **다른 모양**으로 주게 된다 — 화면은 어느 쪽을 받았는지 모른다.
     const groups = await listHandleGroups(pool);
-    return { accounts: res.rows, groups };
+    /**
+     * 팀 목록도 **같은 응답에** 싣는다(#172 의 멘션).
+     *
+     * 왜 여기인가 — 이 응답이 **자동완성 후보의 원천**이다. 팀을 부를 수 있게 되었으니
+     * 팀도 후보에 서야 하고, 그러지 않으면 사람은 그 이름을 배울 방법이 없다
+     * (`AgentTeamRow.memberCount` 주석이 지목한 자리다). `GET /teams` 가 이미 있지만
+     * 그것은 설정 화면이 열릴 때 한 번 부르는 라우트라 스토어에 남지 않는다 — 작성창이
+     * 글자마다 그것을 부를 수는 없다.
+     *
+     * `listTeams` 하나가 낸다 — 여기에 질의 사본을 두면 팀 행에 필드를 하나 더할 때
+     * (`memberCount` 가 그것이었다) 이쪽만 낡아, 같은 `teams` 를 두 라우트가 **다른
+     * 모양**으로 주게 된다. 집합에 대해 #285 가 배운 것과 같은 이유다(위 주석).
+     *
+     * **비활성 팀원을 세는 수가 그대로 온다.** 이 응답은 명단이 아니라 이름과 규모를
+     * 주고, 그 중 몇이 실제로 깨는지는 부른 뒤에 헤더가 말한다(`NOTIFIED_COUNT_HEADER`).
+     */
+    const teams = await listTeams(pool);
+    return { accounts: res.rows, groups, teams };
   });
 
   app.get('/dms', { preHandler: app.requireAccount }, async (req) => {

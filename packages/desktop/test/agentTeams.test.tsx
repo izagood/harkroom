@@ -22,8 +22,11 @@ import { acc, chan, fakeApi, fakeWsFactory } from './helpers/fakeApi';
  * - 비활성 팀원은 팀에 **남고** 채널에 넣을 때 걸러진다 → 화면이 그 둘을 다 말해야 한다.
  */
 
+// `memberCount` 는 이 파일이 재는 사실이 아니지만 **필수 필드**다(#172 의 멘션이 그렇게
+// 정했다 — 그 수가 조용한 실패 판정의 유일한 출처다). 인자로 받아 기본값을 두면 이 파일의
+// 모든 호출부가 그것을 적어야 하므로, 여기서는 0 으로 고정한다.
 const team = (id: string, name: string): AgentTeamRow =>
-  ({ id, name, createdBy: 'u1', createdAt: '2024-01-01T00:00:00.000Z' });
+  ({ id, name, createdBy: 'u1', createdAt: '2024-01-01T00:00:00.000Z', memberCount: 0 });
 
 const member = (accountId: string, handle: string, disabled = false): AgentTeamMemberRow =>
   ({ accountId, handle, disabled });

@@ -109,8 +109,17 @@ export class ApiClient {
   markChannelUnread(channelId: string, seq: number | null): Promise<void> {
     return this.req('PUT', `/channels/${channelId}/unread`, { seq });
   }
-  async accounts(): Promise<{ accounts: AccountView[]; groups: HandleGroupRow[] }> {
-    return this.req<{ accounts: AccountView[]; groups: HandleGroupRow[] }>('GET', '/accounts');
+  /**
+   * 디렉터리 한 번. 계정·집합·팀이 **한 응답에** 온다 — 셋 다 멘션 자동완성의 후보이고,
+   * 후보 목록을 세 요청으로 나누면 그 중 하나만 실패했을 때 부를 수 있는 이름의 일부만
+   * 보이는 화면이 된다.
+   *
+   * `teams` 가 옵셔널인 이유는 옛 서버다 — `AgentTeamRow.memberCount` 는 필수지만 이
+   * 필드 자체는 팀 멘션(#172) 이전 서버에는 없다. 없으면 팀이 후보에 안 서는 것이 맞다:
+   * 그 서버는 팀을 부르지 못하므로 후보에 세우면 아무도 안 깨는 이름을 가르치게 된다.
+   */
+  async accounts(): Promise<{ accounts: AccountView[]; groups: HandleGroupRow[]; teams?: AgentTeamRow[] }> {
+    return this.req<{ accounts: AccountView[]; groups: HandleGroupRow[]; teams?: AgentTeamRow[] }>('GET', '/accounts');
   }
   async channels(): Promise<ChannelRow[]> {
     return (await this.req<{ channels: ChannelRow[] }>('GET', '/channels')).channels;

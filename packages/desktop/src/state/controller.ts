@@ -246,7 +246,7 @@ export class Controller {
 
   async start(): Promise<void> {
     const store = this.store.getState();
-    const [me, { accounts, groups }, channels, dms, leases, unread, reads] = await Promise.all([
+    const [me, { accounts, groups, teams }, channels, dms, leases, unread, reads] = await Promise.all([
       this.api.me(), this.api.accounts(), this.api.channels(),
       this.api.dms(), this.api.leases(), this.api.inboxUnread(), this.api.reads(),
     ]);
@@ -257,6 +257,10 @@ export class Controller {
       me, channels, dms, leases, unread,
       accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
       groups,
+      // 옛 서버는 `teams` 를 안 싣는다 — 그 서버는 팀을 부르지도 못하므로 빈 목록이
+      // 맞다(`ApiClient.accounts` 주석). `?? []` 로 뭉개면 안 되는 값이 아니다:
+      // 여기서 `undefined` 를 스토어에 넣으면 후보 목록이 순회에서 터진다.
+      teams: teams ?? [],
       reads: Object.fromEntries(reads.map((r) => [r.channelId, { lastReadSeq: r.lastReadSeq, unread: r.unread }])),
     });
     // 초안은 기기 로컬에 있으므로 서버 왕복이 없다 — 크리티컬 패스에 둬도 비용이 없다.
@@ -507,6 +511,12 @@ export class Controller {
         // 집합 목록과 구성원 수를 갱신한다(#300).
         this.swallow(this.refreshAccounts({ force: true }));
         break;
+      case 'agent_team.changed':
+        // 팀 목록과 팀원 수를 갱신한다(#172). 집합과 **같은 경로**를 탄다 — 둘이 한
+        // 응답에 오므로(`GET /accounts`) 여기서 따로 부를 것이 없고, 따로 부르면 두
+        // 조회가 서로 다른 순간의 디렉터리를 보고 스토어를 반쪽씩 덮는다.
+        this.swallow(this.refreshAccounts({ force: true }));
+        break;
       case 'link_preview.ready':
         // 카드가 준비됐다는 신호만 남긴다(#215). 내용은 그 URL 을 그리는 컴포넌트가
         // 스스로 읽는다 — 지금 화면에 없는 URL 의 카드를 미리 받아 둘 이유가 없다.
@@ -563,10 +573,11 @@ export class Controller {
     this.lastAccountsRefresh = now;
     this.accountsInFlight ??= this.api
       .accounts()
-      .then(({ accounts, groups }) => {
+      .then(({ accounts, groups, teams }) => {
         this.store.getState().set({
           accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
           groups,
+          teams: teams ?? [],
         });
       })
       .finally(() => { this.accountsInFlight = null; });
@@ -852,13 +863,17 @@ export class Controller {
   private recordNotifiedGap(messageId: string, body: string, notified: NotifiedResult): void {
     const state = this.store.getState();
     const groups = state.groups;
+    const teams = state.teams;
     const recipients = bodyRecipients(
       body,
       Object.values(state.accounts).map((a) => a.handle),
-      groups.map((g) => g.handle),
+      // 집합과 팀을 **한 배열로** 준다 — `Composer.tsx` 의 `groupHandleList` 와 같은
+      // 인자여야 한다. 여기서 팀을 빼면 보내기 전 목록에는 팀이 서고 보낸 뒤 판정은
+      // 그것을 못 세어, 팀의 조용한 실패가 통째로 삼켜진다.
+      [...groups.map((g) => g.handle), ...teams.map((t) => t.name)],
       state.me?.handle ?? null,
     );
-    const summary = notifiedSummary(notified, calledGroups(recipients, groups));
+    const summary = notifiedSummary(notified, calledGroups(recipients, groups, teams));
     if (!summary) return;
     this.store.getState().set({
       notifiedGaps: { ...this.store.getState().notifiedGaps, [messageId]: summary },
