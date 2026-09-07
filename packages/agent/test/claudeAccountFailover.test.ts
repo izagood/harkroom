@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { switchesAccount, withAccountFailover } from '../src/claudeAccounts.js';
@@ -130,5 +132,33 @@ describe('withAccountFailover', () => {
   it('빈 배열은 호출자 결함이다 — 조용히 성공하지 않는다', async () => {
     // 조용히 undefined 를 돌려주면 답하지 않은 멘션이 답한 것으로 처리된다.
     await expect(withAccountFailover([], async () => 'ok')).rejects.toThrow(/계정 축/);
+  });
+});
+
+// main.ts 는 top-level await 로 서버에 붙으므로 테스트가 import 할 수 없다. 판정 자체는
+// `claudeAccounts.test.ts` 가 실물로 확인하고, 여기서는 **배선이 그 자리에 있는지**만 본다 —
+// `mainCredentialSites.test.ts` 와 같은 종류의 약한 검사이고, 같은 이유로 필요하다:
+// 이 기능이 깨지는 방식이 정확히 "함수는 있는데 기동부가 안 부른다"다.
+describe('main.ts 의 풀 배선', () => {
+  const source = readFileSync(path.resolve(__dirname, '../src/main.ts'), 'utf8');
+
+  it('풀 해석 함수를 쓴다 — 평평한 목록 함수를 기동부에서 직접 부르지 않는다', () => {
+    expect(source).toContain('loadClaudeAccountLane(');
+    // 기동부에서 평평한 목록을 직접 부르면 풀 축이 통째로 빠진다.
+    expect(source).not.toContain('await loadClaudeAccounts(');
+  });
+
+  it('풀 결정 키가 me.id 다 — handle 이 아니다', () => {
+    // handle 은 바뀔 수 있고 서로 다른 서버의 같은 handle 은 다른 계정이다.
+    expect(source).toContain('agentId: me.id');
+  });
+
+  it('강제 지정과 순서를 env 에서 읽는다', () => {
+    expect(source).toContain('MURMUR_CLAUDE_POOL');
+    expect(source).toContain('MURMUR_CLAUDE_ACCOUNTS');
+  });
+
+  it('기동 로그에 풀 이름이 실린다 — 어느 풀로 도는지 운영자가 알아야 한다', () => {
+    expect(source).toContain('풀:');
   });
 });
