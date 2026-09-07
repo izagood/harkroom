@@ -448,13 +448,24 @@ describe('축이 실제로 하나 늘었다 — 밀려나던 둘이 세로를 �
     expect(screen.queryByTestId('add-channel')).toBeNull();
   });
 
+  /**
+   * **재는 것은 그대로고 찾는 방법만 바뀌었다**(`docs/desktop-rail.html` 3단계).
+   *
+   * 앞 판본은 `getByText('@codex')` 였다 — 그 칸이 `@handle` 목록이던 때의 모양이다.
+   * 3단계가 그것을 얼굴 그리드로 바꾸면서 카드의 이름줄은 `@` 없는 핸들이 됐고(설정 ›
+   * 에이전트의 카드와 같은 컴포넌트다), 그래서 카드의 `data-testid` 로 찾는다.
+   *
+   * 앞 판본 주석의 *"DM 이 없는 에이전트(codex)"* 라는 한정도 지웠다: 3단계가
+   * `dmAgentIds` 필터를 없애서 **DM 이 있는 bot 도 이 칸에 선다.** 그 비대칭을 없애는 것이
+   * 3단계의 핵이고, 그것 자체는 `agentsPanelGrid.test.tsx` 가 잠근다. 여기가 재는 것은
+   * 문서의 1단계 — *"채널이 서른이어도 에이전트가 밀려나지 않는다"* — 하나다.
+   */
   it('채널이 서른이어도 에이전트 칸은 에이전트만 그린다', () => {
     fakeController();
     useAppStore.getState().set({ channels: thirtyChannels() });
     mountSidebar('agents');
 
-    // DM 이 없는 에이전트(codex)가 자기 칸에서 선다.
-    expect(screen.getByText('@codex')).toBeTruthy();
+    expect(screen.getByTestId('agent-card-codex')).toBeTruthy();
     expect(screen.queryByText('ch-00')).toBeNull();
   });
 
@@ -464,7 +475,9 @@ describe('축이 실제로 하나 늘었다 — 밀려나던 둘이 세로를 �
 
     expect(screen.getByText('general')).toBeTruthy();
     expect(screen.queryByTestId('add-dm')).toBeNull();
-    expect(screen.queryByText('@codex')).toBeNull();
+    // 위와 같은 이유로 카드 이름으로 찾는다 — `@codex` 는 이제 어느 칸에도 없어서
+    // 이 단언이 **무엇을 봐도 통과하는** 단언이 된다.
+    expect(screen.queryByTestId('agent-card-codex')).toBeNull();
   });
 });
 

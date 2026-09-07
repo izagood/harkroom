@@ -349,6 +349,24 @@ describe('#368 사이드바 — DM 이 없어도 사유를 읽을 수 있다', (
     });
   };
 
+  /**
+   * **이 이슈가 지키는 것은 "사유가 닿는 자리"이고 그것은 그대로다**
+   * (`docs/desktop-rail.html` 3단계로 자리의 **모양**만 바뀌었다).
+   *
+   * 앞 판본은 `@forge` 라는 글자와 `runner-reason-forge` 라는 이름을 찾았다 — 그 칸이
+   * `@handle` + 네모난 러너 점 목록이던 때의 모양이다. 3단계가 그것을 설정 › 에이전트와
+   * **같은 얼굴 그리드**로 바꿨으므로 두 이름이 함께 옮겨졌다:
+   *
+   * | 재는 것 | 앞 판본 | 지금 |
+   * |---|---|---|
+   * | 그 에이전트가 이 칸에 선다 | `getByText('@forge')` | `agent-card-forge` |
+   * | 사유가 **글자로** 보인다 | `runner-reason-forge` | `agent-runner-failed-forge` |
+   *
+   * **단언을 뒤집은 것이 아니다** — 둘 다 여전히 "이름만 있는 것으로는 안 된다"를 재고,
+   * 사유가 `title` 툴팁이 아니라 글자로 화면에 있다는 것을 잰다. 이름이 바뀐 이유는
+   * `Sidebar` 의 3단계 주석에 있다: `runner-reason-{id}` 는 `dmRow` 의 것이고, 두 칸이
+   * 같은 이름을 쓰면 시험이 두 칸을 구별할 수 없다.
+   */
   it('DM 이 하나도 없어도 사유가 글자로 보인다', async () => {
     const state = await launchWithRealFailure();
     channelController();
@@ -357,8 +375,8 @@ describe('#368 사이드바 — DM 이 없어도 사유를 읽을 수 있다', (
     render(<Sidebar panel="agents" {...sidebarProps} />);
 
     // 이름만 있는 것으로는 안 된다 — 이 결함의 본질이 "사유가 사람이 안 보는 곳에만 있다" 였다.
-    expect(screen.getByText('@forge')).toBeTruthy();
-    expect(screen.getByTestId('runner-reason-forge').textContent).toContain(state.message);
+    expect(screen.getByTestId('agent-card-forge')).toBeTruthy();
+    expect(screen.getByTestId('agent-runner-failed-forge').textContent).toContain(state.message);
     expect(state.message).toBe(FAILURE_MESSAGE);
   });
 
@@ -368,11 +386,24 @@ describe('#368 사이드바 — DM 이 없어도 사유를 읽을 수 있다', (
 
     render(<Sidebar panel="agents" {...sidebarProps} />);
 
-    expect(screen.getByText('@forge')).toBeTruthy();
+    expect(screen.getByTestId('agent-card-forge')).toBeTruthy();
+    expect(screen.queryByTestId('agent-runner-failed-forge')).toBeNull();
+    // 옛 이름으로도 서지 않는다 — 두 칸이 이름을 나눠 쓴다는 것 자체를 잠근다.
     expect(screen.queryByTestId('runner-reason-forge')).toBeNull();
   });
 
-  it('에이전트가 없으면 Agents 섹션 자체가 없다', () => {
+  /**
+   * **`Agents` 머리글이 사라졌다**(3단계). 격자는 제 이름을 적지 않는다 — 레일의
+   * `Agents` 칸이 이미 그 말을 하고 있고, 2단계가 `DIRECT MESSAGES` 머리글을 없앤 것과
+   * 같은 판단이다(*"묶음이 하나면 이름은 아무것도 구분하지 않는다"*).
+   *
+   * 그래서 이 테스트가 재던 것 — *"에이전트가 없으면 섹션 자체가 없다"* — 은 **머리글로는
+   * 잴 수 없게 됐다.** 의도는 남는다: 빈 칸에 거짓 신호(*"여기 뭔가 있다"*)를 두지 않는
+   * 것이다. 그래서 재는 대상을 카드로 옮기고, 그 자리에 문서가 요구한 문구가 서는 것까지
+   * 함께 잠근다(문서 「치르는 값 · 한 번 더 누름」: 한 번 더 누른 대가가 아무것도 아니면
+   * 레일이 손해만 남긴다).
+   */
+  it('에이전트가 없으면 카드가 하나도 서지 않고 그 사실을 글자로 말한다', () => {
     channelController();
     useAppStore.getState().set({
       me: acc('u1', 'admin', 'human', true),
@@ -383,7 +414,8 @@ describe('#368 사이드바 — DM 이 없어도 사유를 읽을 수 있다', (
 
     render(<Sidebar panel="agents" {...sidebarProps} />);
 
-    expect(screen.queryByText('Agents')).toBeNull();
+    expect(document.querySelector('[data-testid^="agent-card-"]')).toBeNull();
+    expect(screen.getByText('아직 에이전트가 없다')).toBeTruthy();
   });
 });
 
