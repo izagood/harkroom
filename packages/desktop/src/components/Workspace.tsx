@@ -11,6 +11,7 @@ import { SidebarToggleIcon } from './SidebarToggleIcon';
 import { ChannelPane } from './ChannelPane';
 import { Notice } from './Notice';
 import { ProjectionBanner } from './ProjectionBanner';
+import { UpdateToast } from './UpdateToast';
 import { ThreadPanel } from './ThreadPanel';
 import { TerminalPanel } from './TerminalPanel';
 import { SearchPalette } from './SearchPalette';
@@ -139,6 +140,10 @@ export function Workspace({ onLogout, onOpenSettings }: {
 
   return (
     <div className="flex h-screen text-sm">
+      {/* 업데이트 팝업은 `fixed` 라 이 자리에 두어도 레이아웃을 밀지 않는다. 상단 띠
+          (`Notice`·`ProjectionBanner`)와 달리 작업 흐름을 비켜서 우측 하단에 선다 —
+          업데이트는 지금 하던 일을 멈출 이유가 아니다. */}
+      <UpdateToast />
       {/* 전환기 레일은 **사이드바 밖**에 둔다(#165). 사이드바 안에 넣으면 사이드바를 접는
           순간(폭 0) 전환기까지 함께 사라져, 커뮤니티를 바꾸려면 먼저 사이드바를 펴야 한다.
           커뮤니티가 하나면 이 컴포넌트는 아무것도 그리지 않으므로 오늘 화면과 같다. */}
