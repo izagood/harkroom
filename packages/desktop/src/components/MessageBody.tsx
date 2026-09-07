@@ -71,6 +71,7 @@ export function MessageBody({
 } & MentionOpeners) {
   const accounts = useActiveStore((s) => s.accounts);
   const groups = useActiveStore((s) => s.groups);
+  const teams = useActiveStore((s) => s.teams);
   const me = useActiveStore((s) => s.me);
   const myHandle = me?.handle?.toLowerCase() ?? null;
   // 접기 판정은 본문만 본다 — 작성자가 누구인지 보지 않는다. 자기가 쓴 긴 메시지도 남의
@@ -90,7 +91,17 @@ export function MessageBody({
     }
     return map;
   }, [accounts]);
-  const groupHandles = useMemo(() => groups.map((g) => g.handle), [groups]);
+  /**
+   * `splitMentions` 이 "여럿을 부르는 이름" 으로 칠할 목록 — 집합과 팀(#172)을 함께 준다.
+   *
+   * 팀을 빼면 이 파일 머리의 경계가 깨진다: *"강조되지 않은 것이 몰래 알림을 보낸다"*.
+   * 서버는 `@release` 를 팀으로 펼쳐 다섯을 깨우는데(`services/messages.ts`) 화면은
+   * 평범한 글자로 그리고, 그러면 읽는 사람은 그 발화가 아무도 부르지 않았다고 읽는다.
+   */
+  const groupHandles = useMemo(
+    () => [...groups.map((g) => g.handle), ...teams.map((t) => t.name)],
+    [groups, teams],
+  );
   // 미리보기 대상 URL(#215). **서버와 같은 함수**를 쓴다 — 각자 정규식을 두면 서버가
   // 저장한 키와 여기서 조회하는 키가 갈라져 카드가 영원히 404 다(초판이 그랬다: 여기는
   // 후행 문장부호를 떼지 않아 `…/b.` 로 조회했다).

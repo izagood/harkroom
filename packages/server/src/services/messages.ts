@@ -3,6 +3,7 @@ import { CHANNEL_MENTION_HANDLE, mentionedHandles, mentionedIds, normalizeMentio
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { channelVisibleSql } from './channels.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
+import { getTeamByName, listTeamMembers } from './teams.js';
 
 /**
  * 채널 안에서 `seq` 발급을 직렬화하는 advisory lock 의 classid(#523).
@@ -460,27 +461,99 @@ export async function postMessage(
       await fanOutMention(client, { ...input, messageId: message.id }, null, notified);
     }
 
-    // 집합(#230) — 저장된 명단을 펼친다. 본문은 손대지 않는다: `@team` 은 원문에 그대로
-    // 남고 서버는 inbox 항목만 펼쳐 넣는다(`@channel` 과 같은 이유다).
-    //
-    // **계정이 이긴다.** `@foo` 가 계정이면 위에서 이미 평범한 멘션으로 처리됐고 여기서는
-    // 건너뛴다. 서버가 양방향 충돌을 막으므로 정상 경로에서는 겹치지 않지만, 026 이전에
-    // 만들어진 행이나 동시 생성 경합으로 겹칠 수 있다 — 그때 사람의 이름이 집합에 밀리면
-    // 그 사람은 영영 불릴 수 없다.
-    //
-    // 조회를 `client` 로 하는 이유: 트랜잭션 클라이언트를 쥔 채 `pool` 에서 또 다른 연결을
-    // 얻으면 풀이 포화된 순간 자기 자신을 기다리는 교착이 된다. 같은 트랜잭션 스냅샷을
-    // 보는 것도 이쪽이 맞다.
+    /**
+     * 집합(#230)과 팀(#172) — 저장된 명단을 펼친다. 본문은 손대지 않는다: `@release` 는
+     * 원문에 그대로 남고 서버는 inbox 항목만 펼쳐 넣는다(`@channel` 과 같은 이유다).
+     *
+     * **한 자리에서 둘을 본다.** 팀을 위한 새 루프를 만들지 않는 이유: 이 루프가 이미
+     * "이 handle 은 계정이 아니다 → 저장된 명단인가?" 를 묻고 있고, 팀은 그 물음의
+     * 두 번째 답일 뿐이다. 루프를 하나 더 두면 `notified` 중복 제거가 두 루프에 걸쳐
+     * 살고, `CHANNEL_MENTION_HANDLE`·`accountHandles` 예외를 양쪽에 베껴야 한다 —
+     * 한쪽만 고치는 날 `@channel` 이라는 이름의 팀이 채널 전체를 두 번 부른다.
+     *
+     * **가시성과 중복 제거를 여기서 다시 쓰지 않는다.** 대상 목록만 만들어
+     * `fanOutMention` 에 넘긴다 — 그 함수 하나가 `channelVisibleSql` 로 볼 수 있는
+     * 사람만 남기고, 작성자를 빼고, `notified` 에 이미 든 사람을 건너뛴다. 집합이 하는
+     * 것과 **똑같이** 한다.
+     *
+     * ## 해석 순서: 계정 → 집합 → 팀
+     *
+     * **계정이 이긴다.** `@foo` 가 계정이면 위에서 이미 평범한 멘션으로 처리됐고 여기서는
+     * 건너뛴다. 서버가 양방향 충돌을 막으므로 정상 경로에서는 겹치지 않지만, 026 이전에
+     * 만들어진 행이나 동시 생성 경합으로 겹칠 수 있다 — 그때 사람의 이름이 집합에 밀리면
+     * 그 사람은 영영 불릴 수 없다.
+     *
+     * **집합과 팀 사이의 순서는 실측하면 결과를 바꿀 수 있다.** `createTeam` 은 세 겹침을
+     * 모두 확인하지만(계정·집합·팀) 반대 방향은 그렇지 않다 — `createHandleGroup` 은
+     * `account` 만 보고 `agent_team` 을 안 보며, 계정 생성(`authRoutes.ts` 의 register,
+     * `services/agents.ts` 의 에이전트 생성)도 `handle_group` 만 본다. 즉 팀 이름과 같은
+     * 집합·계정을 **나중에 만들 수 있고**, 그러면 한 handle 이 두 대상을 가리킨다.
+     * `036_agent_team.sql` 은 *"유일성도 멘션 해석과 같은 기준이어야 한다"* 고 적었지만
+     * 그 기준을 지키는 문장은 팀 쪽에만 있다.
+     *
+     * 그 구멍을 여기서 메우지 않는다 — 계정·집합 생성 경로에 검사를 더하는 것은 그
+     * 라우트들의 사실이고, 이 함수는 **이미 겹쳐 있는 데이터에도 답을 하나로 정해야**
+     * 한다. 그래서 순서를 못 박는다: **집합이 팀을 이긴다.** 집합은 사람이고 팀은
+     * 에이전트다(`addHandleGroupMembers` 는 `kind = 'human'`, 팀 라우트는
+     * `not_an_agent` 로 거절한다) — 사람의 부름이 에이전트의 부름에 밀리면 그 사람들은
+     * 영영 불릴 수 없고, 그것은 계정이 집합을 이기는 것과 같은 판단이다.
+     *
+     * 집합을 찾은 뒤 `continue` 로 **이 handle 을 끝내는 것**이 그 순서를 실행에 옮기는
+     * 자리다(다음 handle 로 넘어간다). 겹침이 없는 정상 경로에서는 어느 쪽이 먼저든
+     * 결과가 같지만, 겹친 데이터에서 두 명단이 **둘 다** 펼쳐지는 것이 가장 나쁘다:
+     * `@foo` 가 사람 집합인지 에이전트 팀인지 부른 사람이 모르게 된다.
+     *
+     * 조회를 `client` 로 하는 이유: 트랜잭션 클라이언트를 쥔 채 `pool` 에서 또 다른 연결을
+     * 얻으면 풀이 포화된 순간 자기 자신을 기다리는 교착이 된다. 같은 트랜잭션 스냅샷을
+     * 보는 것도 이쪽이 맞다.
+     */
     for (const handle of bodyHandles) {
       if (handle === CHANNEL_MENTION_HANDLE) continue;
       if (accountHandles.has(handle)) continue;
 
       const group = await getHandleGroupByHandle(client, handle);
-      if (!group) continue;
+      if (group) {
+        const members = await listHandleGroupMembers(client, group.id);
+        await fanOutMention(
+          client, { ...input, messageId: message.id }, members.map((m) => m.accountId), notified,
+        );
+        continue;
+      }
 
-      const members = await listHandleGroupMembers(client, group.id);
+      /**
+       * 에이전트 팀(#172). `036_agent_team.sql` 이 *"나중에 `@팀` 멘션을 열 여지를
+       * 남기기 위한 예약"* 이라고 적어 둔 그 여지를 여기서 쓴다.
+       *
+       * **비활성 팀원은 부르지 않는다.** `036` 은 *"비활성화는 팀원을 지우지 않는다 …
+       * 걸러지는 자리는 채널에 넣는 시점 하나다"* 라고 적었고, 이 줄은 그 문장에 자리를
+       * 하나 더한다. 그 결정을 뒤집는 것이 아니라 **같은 결정을 새로 생긴 경로에
+       * 적용하는 것**이다: 그 문장이 지킨 것은 "명단을 지우지 않는다"이고, 걸러는
+       * "닿게 하지 않는다"다. 멘션은 채널에 넣기와 나란히 **닿게 하는 두 번째 경로**라
+       * 같은 필터가 필요하다 — `AddTeamToChannelResult.skipped` 가 이미 그 개념을 갖고 있다.
+       *
+       * 왜 부르지 않는가 — 비활성 에이전트는 **깰 수 없다**. inbox 항목은 러너가 턴을
+       * 시작하는 신호이고(`agentWake`), 비활성 계정은 그 턴을 시작하지 않는다. 그것을
+       * 넣으면 아무도 읽지 않는 항목이 쌓이고, 그 계정을 다시 켜는 날 몇 주 전의 부름이
+       * 한꺼번에 되살아난다 — 그때 시작되는 턴은 이미 끝난 일에 대한 것이다.
+       *
+       * **가시성 필터로는 이것을 대신할 수 없다.** 비활성 에이전트도 채널 멤버로 남으므로
+       * (`disabled` 는 멤버십을 지우지 않는다) `channelVisibleSql` 을 통과한다 — 서버
+       * 테스트가 그 조합을 지킨다(`teamMention.test.ts` 3: 비활성이면서 채널 멤버).
+       * 그래서 `fanOutMention` 안이 아니라 **후보를 만드는 이 자리**가 필터의 자리다:
+       * 그 함수는 채널 가시성의 규칙이고 계정 상태의 규칙이 아니다.
+       *
+       * 반면 `memberCount` 는 비활성 팀원도 센다(`AgentTeamRow.memberCount`). 그
+       * 어긋남은 결함이 아니라 화면이 말해야 하는 사실이다 — 넷을 불러 셋이 깼다면
+       * 하나는 꺼져 있거나 채널을 못 본다.
+       */
+      const team = await getTeamByName(client, handle);
+      if (!team) continue;
+
+      const teamMembers = await listTeamMembers(client, team.id);
       await fanOutMention(
-        client, { ...input, messageId: message.id }, members.map((m) => m.accountId), notified,
+        client, { ...input, messageId: message.id },
+        teamMembers.filter((m) => !m.disabled).map((m) => m.accountId),
+        notified,
       );
     }
 
