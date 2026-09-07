@@ -139,6 +139,33 @@ export async function buildSidecar({ name, entry, resolveFrom, nativeDeps = [], 
     external: [...nativeDeps],
     // `.node` 확장자 파일 등을 오인해 번들에 끌어들이지 않게 확실히 한다.
     loader: { '.node': 'copy' },
+    /**
+     * **ESM 산출물에 `require` 를 되돌려 준다.** 이것이 없으면 번들 안으로 끌어들인 CJS
+     * 의존이 로드 시점에 부르는 `require("events")` 가 esbuild 의 셔뱅(`__require`)으로
+     * 바뀌고, 그 셔뱅은 스코프에 `require` 가 없으면 **던진다**:
+     *
+     *     Error: Dynamic require of "events" is not supported
+     *
+     * 이것이 배포된 러너에서 **relay 를 통째로 죽여 놓았다.** `ws` 는 CJS 이고 로드 시점에
+     * `events`·`net`·`tls`·`stream`·`crypto` 를 require 하므로, `nodeWsDialer` 의
+     * `await import('ws')` 가 네트워크에 나가기 전에 실패했다 — 그래서 서버 로그에
+     * `/agent-relay` 요청이 **한 건도** 없었고, 러너 로그에도 흔적이 없었다(dialer 가
+     * 예외를 삼켰다). 터미널 관찰·입력·이어받기가 함께 죽어 있었다.
+     *
+     * esbuild 의 `__require` 는 스코프에 `require` 가 **있으면 그것을 쓴다** — 그래서
+     * 배너로 하나 만들어 주면 셔뱅이 던지는 경로 자체가 사라진다.
+     *
+     * `nodePtyLoader.ts` 가 `createRequire(import.meta.url)` 를 쓰는 것이 같은 함정을
+     * **한 사례만** 우회한 것이다. 여기서는 그 부류를 닫는다 — 다음에 들어오는 CJS
+     * 의존이 같은 곳에서 조용히 죽지 않게.
+     *
+     * 이름에 `__` 를 붙이는 이유: 번들된 사용자 코드에 `_cr` 같은 짧은 이름이 이미 있으면
+     * 겹칠 수 있다. `require` 자체는 CJS 코드가 기대하는 그 이름이어야 한다.
+     */
+    banner: {
+      js: "import { createRequire as __sidecarCreateRequire } from 'node:module';\n"
+        + 'const require = __sidecarCreateRequire(import.meta.url);',
+    },
   });
 
   // 셔뱅을 붙이고 하나의 실행 가능한 파일로 만든다. esbuild 출력은 셔뱅이 없다.

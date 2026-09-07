@@ -58,6 +58,15 @@ if (__delayMs > 0) {
   }
 }
 
+// 아래는 **브라우저 환경 전용 스텁**이다. 이 setup 은 모든 테스트 파일에 걸리는데, 그중
+// 몇은 `@vitest-environment node` 다(번들러·사이드카 회귀선 — esbuild 는 jsdom 에서 못 돈다).
+// 그 파일에서는 `window` 가 없으므로 여기서 비켜 준다 — 안 비키면 node 환경 테스트가
+// 자기 코드에 닿기도 전에 `window is not defined` 로 죽는다.
+if (typeof window !== 'undefined') {
+  setUpBrowserStubs();
+}
+
+function setUpBrowserStubs(): void {
 // jsdom에는 matchMedia가 없다 — 컴포넌트가 미디어쿼리를 만져도 죽지 않게 스텁.
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
@@ -78,3 +87,4 @@ Object.defineProperty(window, 'matchMedia', {
 let objectUrlSeq = 0;
 URL.createObjectURL = () => `blob:murmur/${++objectUrlSeq}`;
 URL.revokeObjectURL = () => {};
+}
