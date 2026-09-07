@@ -139,6 +139,32 @@ describe('PUT /settings/projection', () => {
     expect((await put({ url: '   ' })).statusCode).toBe(400);
   });
 
+  /**
+   * Minor 3 회귀선. 쿼리·프래그먼트·userinfo 는 정규화로 지우지 않고 거절한다 — 셋 다 키를
+   * 쪼갤 수 있고(`http://a?x=1`과 `http://a`가 겉보기와 달리 같은 서버를 가리킬 수 있다),
+   * userinfo 는 그 자체로 자격증명 유출 경로다.
+   */
+  it('쿼리·프래그먼트·userinfo 가 있으면 400 이다', async () => {
+    expect((await put({ url: 'http://avcs.example?x=1' })).statusCode).toBe(400);
+    expect((await put({ url: 'http://avcs.example#frag' })).statusCode).toBe(400);
+    expect((await put({ url: 'http://user:pass@avcs.example' })).statusCode).toBe(400);
+    expect((await get()).json().appUrl).toBeNull(); // 셋 다 저장되지 않았다
+  });
+
+  /**
+   * Minor 3 회귀선. URL 이 (repo 와 함께) DB 키가 된 지금, 겉보기만 다른 두 문자열이 다른
+   * 행을 뜻하면 안 된다 — 저장 값에도 `canonicalAvcsBaseUrl` 을 적용해 후행 슬래시를 자른다.
+   * 되돌리기 실험: PUT 이 원문을 그대로 저장하면 `appUrl` 에 슬래시가 남는다.
+   */
+  it('후행 슬래시가 붙은 URL 을 표준형으로 저장한다', async () => {
+    const res = await put({ url: 'http://app.example:5000/' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ url: 'http://app.example:5000', appUrl: 'http://app.example:5000' });
+    expect(reconfigure).toHaveBeenCalledWith('http://app.example:5000');
+    expect((await get()).json().appUrl).toBe('http://app.example:5000');
+  });
+
   it('admin 이 아니면 403 이고 값도 바뀌지 않는다', async () => {
     const res = await put({ url: 'http://intruder.example' }, { authorization: `Bearer ${plainToken}` });
 

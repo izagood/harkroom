@@ -74,8 +74,8 @@ docker compose start server        # 부팅 시 누락 마이그레이션이 적
 ### 3-A. murmur만 되돌린 경우 — 안전하다
 
 투영 커서가 과거로 가고, 워커가 이미 접었던 구간을 다시 읽는다. 같은 구간을 다시 접어도
-`active_lease` 는 `(repo, path, actor_key_id)` upsert 라서 행이 늘지 않고, 커서 전진이 그
-upsert 와 같은 트랜잭션에 있다. → 워커가 조용히 따라잡고 끝난다.
+`active_lease` 는 `(repo, avcs_base_url, path, actor_key_id)` upsert(042) 라서 행이 늘지
+않고, 커서 전진이 그 upsert 와 같은 트랜잭션에 있다. → 워커가 조용히 따라잡고 끝난다.
 
 멱등성의 근거가 **`(repo, oid)` UNIQUE 인덱스였던 시절이 있다.** 그때는 워커가 avcs 객체를
 시스템 메시지로 만들었고 리플레이가 그 메시지를 두 번 만들지 못하게 막는 것이 관심사였다.
@@ -97,10 +97,14 @@ lease upsert 하나다.
 근거(테스트): `projection.test.ts` → *"stalls without crashing when the cursor is ahead of the avcs log"*.
 
 **대처**: avcs를 되돌렸다면 해당 repo의 커서를 그 지점 이하로 맞춘다. 재투영은 멱등이므로
-0으로 내려도 안전하다.
+0으로 내려도 안전하다. **`avcs_base_url`을 반드시 함께 지정한다** — 커서는 이제
+`(repo, avcs_base_url)`로 키가 잡히므로(042), 조건 없이 `repo`만으로 돌리면 그 repo의
+**다른 모든 서버 행(레거시 `''` 행 포함)**이 함께 0이 된다. 되돌아간 그 서버 하나만
+맞추려는 것이라면 그 서버의 실제 URL을 적어야 한다.
 
 ```sql
-update projection_cursor set last_log_index = 0 where repo = 'org/repo';
+update projection_cursor set last_log_index = 0
+  where repo = 'org/repo' and avcs_base_url = 'http://되돌아간-그-avcs-서버';
 ```
 
 **avcs 데이터가 아예 사라진 경우도 같다.** 개발·도그푸딩에서 avcs 서버의 데이터 디렉터리가
