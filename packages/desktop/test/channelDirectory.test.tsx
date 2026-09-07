@@ -59,20 +59,43 @@ describe('ChannelDirectory (#180)', () => {
     });
   };
 
-  describe('1. 사이드바에 채널 찾기 버튼이 있고 누르면 모달이 뜬다', () => {
-    it('사이드바 헤더에 채널 찾기 버튼이 있다', () => {
+  /**
+   * **입구가 옮겨졌다**(#488 A · 찾기가 맨 위로). 이 묶음이 지키려던 것은 "10px 돋보기가
+   * 있다"가 아니라 **사이드바에서 디렉터리로 가는 길이 있고 그것이 배선돼 있다**였다 —
+   * 그 요구는 그대로 남고, 길이 `Channels` 라벨 옆 돋보기에서 맨 위 찾기 줄의
+   * "모든 채널에서 찾기"로 갔다. 그래서 단언을 뒤집지 않고 **같은 사실을 새 자리에서**
+   * 다시 잰다.
+   *
+   * 그 줄은 글자를 친 뒤에만 선다(`SidebarFind` 주석: 평소에도 세워 두면 없앤 돋보기를
+   * 이름만 바꿔 되살린다). 그래서 여기 헬퍼가 먼저 찾아본다.
+   */
+  const openDirectoryFromSidebar = () => {
+    fireEvent.change(screen.getByTestId('sidebar-find'), { target: { value: 'gen' } });
+    fireEvent.click(screen.getByTestId('sidebar-find-all-channels'));
+  };
+
+  describe('1. 사이드바에서 디렉터리로 가는 길이 있고 누르면 모달이 뜬다', () => {
+    it('찾기 줄 안에 디렉터리로 가는 길이 있다', () => {
       fakeController();
       setup([chan('c1', 'general')]);
       render(<Sidebar panel="home" {...sidebarProps} />);
-      expect(screen.getByLabelText('채널 찾기')).toBeTruthy();
+      fireEvent.change(screen.getByTestId('sidebar-find'), { target: { value: 'gen' } });
+      expect(screen.getByTestId('sidebar-find-all-channels')).toBeTruthy();
     });
 
-    it('채널 찾기 버튼이 넘겨받은 콜백을 부른다', () => {
+    it('없어진 것은 10px 돋보기다 — 찾기를 시작하는 자리가 둘이 되지 않는다', () => {
+      fakeController();
+      setup([chan('c1', 'general')]);
+      render(<Sidebar panel="home" {...sidebarProps} />);
+      expect(screen.queryByRole('button', { name: '채널 찾기' })).toBeNull();
+    });
+
+    it('그 길이 넘겨받은 콜백을 부른다', () => {
       const onOpenChannelDirectory = vi.fn();
       fakeController();
       setup([chan('c1', 'general')]);
       render(<Sidebar panel="home" {...sidebarProps} onOpenChannelDirectory={onOpenChannelDirectory} />);
-      fireEvent.click(screen.getByLabelText('채널 찾기'));
+      openDirectoryFromSidebar();
       expect(onOpenChannelDirectory).toHaveBeenCalled();
     });
 
@@ -282,7 +305,7 @@ describe('ChannelDirectory (#180)', () => {
  * 배선. 위의 것들은 `ChannelDirectory` 와 `Sidebar` 를 따로 띄우고 prop 을 **손으로** 넘긴다 —
  * 그 상태로는 `Workspace` 가 두 조각을 잇는 것을 잊어도 전부 초록이다(눌러도 아무 일이 없는
  * 버튼이 앱에 남는다). 그래서 여기서는 `Workspace` 를 통째로 띄우고 진짜 `Controller` 를 쓴다:
- * 사이드바 버튼 → 모달 → 행 클릭 → 채널이 실제로 열리고 모달이 닫히는 한 줄을 끝까지 본다.
+ * 사이드바의 길 → 모달 → 행 클릭 → 채널이 실제로 열리고 모달이 닫히는 한 줄을 끝까지 본다.
  */
 describe('채널 디렉터리 — Workspace 배선 (#180)', () => {
   const realController = () => {
@@ -308,14 +331,23 @@ describe('채널 디렉터리 — Workspace 배선 (#180)', () => {
     });
   });
 
-  it('사이드바 버튼이 모달을 열고, 행을 누르면 그 채널이 열리며 모달이 닫힌다', async () => {
+  /**
+   * 사이드바에서 디렉터리를 여는 그 길. **자리가 옮겨졌다**(#488 A) — 위 묶음의 같은
+   * 이름 헬퍼와 같은 이유이고, 근거는 그쪽 주석에 있다.
+   */
+  const openDirectoryFromSidebar = () => {
+    fireEvent.change(screen.getByTestId('sidebar-find'), { target: { value: 'gen' } });
+    fireEvent.click(screen.getByTestId('sidebar-find-all-channels'));
+  };
+
+  it('사이드바의 길이 모달을 열고, 행을 누르면 그 채널이 열리며 모달이 닫힌다', async () => {
     const { api } = realController();
     render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
     // 처음에는 모달이 없다.
     expect(screen.queryByRole('dialog', { name: '채널 디렉터리' })).toBeNull();
 
-    fireEvent.click(screen.getByLabelText('채널 찾기'));
+    openDirectoryFromSidebar();
     const dialog = await screen.findByRole('dialog', { name: '채널 디렉터리' });
 
     fireEvent.click(within(dialog).getByTestId('channel-row-c2'));
@@ -331,7 +363,7 @@ describe('채널 디렉터리 — Workspace 배선 (#180)', () => {
     realController();
     render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
-    fireEvent.click(screen.getByLabelText('채널 찾기'));
+    openDirectoryFromSidebar();
     await screen.findByRole('dialog', { name: '채널 디렉터리' });
 
     fireEvent.click(screen.getByLabelText('채널 디렉터리 닫기'));
