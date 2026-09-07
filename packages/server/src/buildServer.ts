@@ -67,6 +67,22 @@ export interface ServerDeps {
    * 투영을 물어봤는데 아무도 답할 수 없는 상태가 곧 "설정되지 않았다"다.
    */
   getProjectionStatus?: () => ProjectionRuntime;
+  /**
+   * 투영 **설정** 표면(`/settings/projection`). 상태(`getProjectionStatus`)와 다른 질문에
+   * 답한다: 무엇을 바라볼 것인가.
+   *
+   * supervisor 인스턴스를 통째로 받지 않는 이유: 라우트가 필요한 것은 env 값과 갈아 끼우는
+   * 동작 둘뿐이다. 클래스를 받으면 이 파일과 라우트 테스트가 그것에 매이고, 가짜를 만들려면
+   * 쓰지도 않는 `stop()`·`status()` 까지 함께 구현해야 한다.
+   *
+   * 미지정이면 두 라우트를 **등록하지 않는다**. 등록해 두고 500 을 내는 것보다 404 가
+   * 정직하다 — 500 은 "고장났다" 는 뜻이고, 여기서 참인 것은 "그 표면이 없다" 다.
+   */
+  projection?: {
+    /** `AVCS_BASE_URL`. 응답의 `envUrl` 이자 `resolveProjectionUrl` 의 첫 인자다. */
+    envBaseUrl: string | null;
+    reconfigure(url: string | null): Promise<void>;
+  };
   /** 종료 시 in-flight long-poll을 정상 마감시키는 창구. main이 SIGTERM에서 beginDrain을 부른다. */
   lifecycle?: Lifecycle;
   /** null·미지정이면 모든 origin 을 반영한다. 목록이면 CORS 와 WS 핸드셰이크에 함께 적용된다. */
@@ -328,7 +344,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerAvatarRoutes(app, deps.pool, storage);
   await registerDirectoryRoutes(app, deps.pool);
   await registerAuditRoutes(app, deps.pool);
-  await registerSettingsRoutes(app, deps.pool);
+  await registerSettingsRoutes(app, deps.pool, deps.projection);
   await registerHandleGroupRoutes(app, deps.pool);
   await registerLinkPreviewRoutes(app, deps.pool);
   await registerSkillRoutes(app, deps.pool);
