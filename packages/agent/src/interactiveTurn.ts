@@ -265,6 +265,8 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       pat: deps.pat,
       murmurUrl: deps.murmurUrl,
       codexHome: deps.codexHome,
+      // Task 5·6 이 deps 의 계정 값으로 바꾼다. 지금은 계정 지정 없음(기존 동작).
+      claudeConfigDir: null,
     });
 
     // definition() 을 기다리는 사이 멘션 턴이 시작됐을 수 있다 — 등록 직전에 다시 본다.

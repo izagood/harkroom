@@ -518,6 +518,8 @@ export async function runMentionTurn(
     pat: deps.pat,
     murmurUrl: deps.murmurUrl,
     codexHome: deps.codexHome,
+    // Task 5·6 이 deps 의 계정 값으로 바꾼다. 지금은 계정 지정 없음(기존 동작).
+    claudeConfigDir: null,
   });
 
   // #126: 턴 시작 로그 (어느 채널·스레드·하네스·워크스페이스에서 PTY 를 띄우는가)
