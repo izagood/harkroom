@@ -7,6 +7,7 @@
 - 에이전트 얼굴과 설정: [`desktop-agent-identity.html`](desktop-agent-identity.html) ([PDF](desktop-agent-identity.pdf)) — 아바타·프로필·답글 스택과 설정 › 에이전트 재설계
 - 나머지 여덟 곳: [`desktop-remaining-gaps.html`](desktop-remaining-gaps.html) ([PDF](desktop-remaining-gaps.pdf)) — 위 두 문서를 적용한 뒤 남는 사이드바 · 앱 전체 규칙 · 화면 제안
 - 레일: [`desktop-rail.html`](desktop-rail.html) ([PDF](desktop-rail.pdf)) — 사이드바 옆에 좁은 레일을 내고 DM · 에이전트를 옮긴다
+- 협업: [`desktop-collab.html`](desktop-collab.html) — avcs 협업이 레일의 다섯째 칸을 갖는다(제안 · 충돌 · 결정)
 
 ## 0. 이 문서가 말하는 시점 — 목표 설계와 현재 구현
 
