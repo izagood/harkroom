@@ -1,6 +1,13 @@
 import { useActiveStore } from '../state/communities';
+import type { SectionId } from './settings/sections';
 import { projectionBanner } from '../lib/projectionBanner';
 import { minutesAgo } from '../lib/minutesAgo';
+
+/**
+ * 고치는 문이 **지목하는 자리**. 투영은 "이 앱이 말을 거는 서버" 가 avcs 를 향해 돌리는
+ * 것이므로 `Connection` 이 그 방이다(`sections.ts` 의 배치 이유와 같은 결).
+ */
+const PROJECTION_SECTION: SectionId = 'connection';
 
 /**
  * 투영이 정상이 아니라는 것을 **화면 위쪽 띠**로 말한다(#488 A3-a).
@@ -30,7 +37,15 @@ import { minutesAgo } from '../lib/minutesAgo';
  * 앱을 켤 때마다 잠깐 뜨는 띠는 정보가 아니라 깜빡임이고, 그 사이 화면이 한 줄 밀린다.
  * 그 사정은 `LeasePanel` 안에서만 말한다(`strip: false`).
  */
-export function ProjectionBanner({ onOpenSettings }: { onOpenSettings?: () => void }) {
+export function ProjectionBanner({ onOpenSettings }: {
+  /**
+   * **섹션을 받는 시그니처여야 한다.** `() => void` 로 두면 인자를 더 받는 실제 배선
+   * (`App` 의 `(section, targetId) => …`)을 대입해도 타입이 통과하고, 그 뒤
+   * `onClick={onOpenSettings}` 가 `MouseEvent` 를 섹션 자리에 흘려도 아무도 못 잡는다 —
+   * 실제로 그렇게 새서 설정 화면이 통째로 비었다(실측 2026-09-07).
+   */
+  onOpenSettings?: (section?: SectionId) => void;
+}) {
   const status = useActiveStore((s) => s.projectionStatus);
   const error = useActiveStore((s) => s.projectionStatusError);
   const dismissed = useActiveStore((s) => s.projectionBannerDismissed);
@@ -65,7 +80,8 @@ export function ProjectionBanner({ onOpenSettings }: { onOpenSettings?: () => vo
         <button
           data-testid="projection-open-settings"
           className="shrink-0 rounded px-2 py-0.5 underline hover:bg-warning-surface-strong"
-          onClick={onOpenSettings}
+          // 함수를 그대로 넘기지 않는다 — React 가 첫 인자로 `MouseEvent` 를 준다.
+          onClick={() => onOpenSettings?.(PROJECTION_SECTION)}
         >
           설정 열기
         </button>

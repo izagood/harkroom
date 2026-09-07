@@ -39,3 +39,20 @@ export const SETTINGS_GROUPS: { title: string; items: { id: SectionId; label: st
     ],
   },
 ];
+
+/**
+ * 문자열이 **정말 목차의 항목인가**. 밖에서 온 값(딴 화면의 배선, 저장된 설정)을
+ * 섹션 자리에 앉히기 전에 이것을 통과해야 한다 — 통과 못 한 값이 그대로 앉으면
+ * `SettingsScreen` 의 모든 분기가 거짓이 되어 본문이 통째로 빈다(실측 2026-09-07:
+ * 투영 띠가 `MouseEvent` 를 흘려 설정 화면에 아무것도 안 나왔다).
+ *
+ * 목차(`SETTINGS_GROUPS`)를 진실로 삼는다 — 유니온을 손으로 한 벌 더 적으면 항목을
+ * 더할 때 한쪽만 고쳐진다.
+ */
+export function isSectionId(value: unknown): value is SectionId {
+  return typeof value === 'string'
+    && SETTINGS_GROUPS.some((g) => g.items.some((i) => i.id === value));
+}
+
+/** 아무 말도 없을 때 서는 자리. `SettingsScreen` 의 기본값과 **같은 한 벌**이다. */
+export const DEFAULT_SECTION: SectionId = 'profile';
