@@ -231,7 +231,7 @@ function CommunityRow(props: {
           <span className="flex items-center gap-2 font-medium text-fg">
             {label}
             {active && (
-              <span className="rounded bg-accent-surface px-1 text-[10px] text-accent">Viewing</span>
+              <span className="rounded bg-accent-surface px-1 text-[11px] text-accent">Viewing</span>
             )}
           </span>
           <span className="mt-0.5 flex items-center gap-2 text-fg-subtle">

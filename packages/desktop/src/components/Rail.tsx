@@ -338,12 +338,27 @@ function RailButton({ cell, active, badge, countInName, onClick }: {
       }`}
     >
       <span aria-hidden="true" className="text-base leading-none">{cell.glyph}</span>
-      <span aria-hidden="true" className="text-[9px] leading-none">{cell.label}</span>
+      {/*
+        라벨은 타이포 4단의 맨 아랫단(11px)이다. 9px 이었고, 62px 레일에서 잘릴까가
+        이 자리의 유일한 걱정이었다 — **재고 올렸다.** 버튼 내부 폭은 54px 이고 좌우
+        패딩이 없다. SF(시스템 폰트)의 실제 전진폭으로 가장 긴 라벨 `Agents` 가 11px 에서
+        32.89px 이라 21px 이 남는다(`Home` 28.00 · `Saved` 29.08 · `DM` 16.61).
+        라벨은 이 배열이 정하는 닫힌 집합이라, 여기에 긴 이름을 새로 더할 때만 다시 재면
+        된다. `truncate` 를 달지 않는 이유도 그것이다 — 잘릴 수 없는 폭이면 말줄임은
+        일어나지 않을 코드이고, 있으면 "잘려도 된다"로 읽힌다.
+      */}
+      <span aria-hidden="true" className="text-[11px] leading-none">{cell.label}</span>
       {badge > 0 && (
+        /*
+          배지도 11px 로 올린다. 이것이 커지면 글리프를 덮을까가 걱정이지만 — `right-1` 로
+          오른쪽이 고정이고 왼쪽으로 자라므로 레일 밖으로는 나가지 않는다. 실측으로 세 자리
+          (`128`)에서도 오른쪽 끝에서 27px 이라 버튼 54px 의 절반이고, 두 자리(`99`)는 23px 이다.
+          9px 대비 늘어난 폭은 두 자리에서 2.7px 뿐이다.
+        */
         <span
           aria-hidden="true"
           data-testid={`${cell.testId}-badge`}
-          className="absolute right-1 top-0.5 rounded-full bg-accent px-1 text-[9px] font-bold text-fg-on-strong"
+          className="absolute right-1 top-0.5 rounded-full bg-accent px-1 text-[11px] font-bold text-fg-on-strong"
         >
           {badge}
         </span>

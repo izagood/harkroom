@@ -859,7 +859,7 @@ export function Composer({
                     {/* 집합에는 표시 이름을 함께 보인다 — `@release` 만으로는 그것이 무엇을
                         묶은 것인지 알 수 없고, 부르기 직전이 그것을 확인하는 자리다. 계정에는
                         붙이지 않는다: 사람·에이전트는 핸들이 곧 이름으로 통한다. */}
-                    <span className="ml-1 truncate text-[10px] text-fg-subtle">{item.group.displayName}</span>
+                    <span className="ml-1 truncate text-[11px] text-fg-subtle">{item.group.displayName}</span>
                   </>
                 ) : (
                   <>
@@ -887,7 +887,7 @@ export function Composer({
               className="flex items-center gap-1 rounded border border-accent bg-accent-surface px-1.5 py-0.5 text-xs font-medium text-accent"
             >
               <span>@{h}</span>
-              <span className="rounded bg-accent px-1 text-[10px] font-normal text-fg-on-strong">자동</span>
+              <span className="rounded bg-accent px-1 text-[11px] font-normal text-fg-on-strong">자동</span>
               <button
                 type="button"
                 aria-label={`Skip @${h} this time`}
