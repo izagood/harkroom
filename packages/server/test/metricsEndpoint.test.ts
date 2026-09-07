@@ -227,10 +227,19 @@ describe('백로그 게이지는 답할 의무가 있는 에이전트만 센다'
     expect(seriesFor(text, 'runnablebot')).toBe(true);
   });
 
-  // avcs 투영용 시스템 계정. 투영 워커가 만들고 러너는 없다.
-  it('leaves out the avcs projection system account', async () => {
-    const { ensureSystemAccount } = await import('../src/avcs/projection.js');
-    await ensureSystemAccount(pool);
+  /**
+   * 러너가 붙지 않는 agent 계정은 지표에서 빠진다.
+   *
+   * 예전에는 `ensureSystemAccount()` 로 avcs 투영용 `murmur` 계정을 만들어 이 성질을
+   * 확인했다. 스레드 투영을 걷어내며 그 함수가 사라졌고, 지키려던 성질은 그 계정에
+   * 대한 것이 아니라 **러너 없는 agent 계정 전부**에 대한 것이었으므로 계정만 직접
+   * 만들어 같은 것을 본다 — 성질에 `murmur` 라는 이름이 필요하지 않았다.
+   */
+  it('leaves out an agent account that has no runner', async () => {
+    await pool.query(
+      `insert into account (handle, display_name, kind) values ('murmur', 'murmur', 'agent')
+       on conflict (handle) do nothing`,
+    );
     await callInChannel('murmur');
 
     expect(seriesFor(await scrape(), 'murmur')).toBe(false);

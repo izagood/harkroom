@@ -734,16 +734,21 @@ export async function updateChannelDoc(
  *   - `channel_doc`      (channel_id)                  명시적 삭제 — cascade 없음(#188)
  *   - `inbox`            (message_id)                  명시적 삭제 — cascade 없음
  *   - `idempotency_key`  (message_id, channel_id)      명시적 삭제 — cascade 없음
- *   - `work_thread`      (thread_root_message_id)      명시적 삭제 — cascade 없음
  *   - `saved_message`    (message_id)                  명시적 삭제 — cascade 없음(#219)
  *   - `message_reaction` (message_id, cascade)         message 삭제로 함께 사라진다
  *   - `attachment`       (message_id, cascade)         message 삭제로 함께 사라진다
  *   - `message`          (channel_id, thread_root_id)  명시적 삭제
  *   - `channel`          (자신)                        마지막
  *
- * `inbox`·`idempotency_key`·`work_thread` 를 빠뜨리면 **멘션이 하나라도 있거나 재시도 키가
- * 하나라도 붙은 채널**의 삭제가 FK 위반으로 터진다. 처음 판이 그랬고, 회귀선이 API 로 볼 수
- * 있는 것만 확인해서 초록이었다.
+ * `inbox`·`idempotency_key` 를 빠뜨리면 **멘션이 하나라도 있거나 재시도 키가 하나라도 붙은
+ * 채널**의 삭제가 FK 위반으로 터진다. 처음 판이 그랬고, 회귀선이 API 로 볼 수 있는 것만
+ * 확인해서 초록이었다.
+ *
+ * `work_thread` 가 이 목록에 있었다(avcs 스레드 투영이 만들던 매핑). 스레드 투영을 걷어낼 때
+ * 테이블째 사라졌고(`040_drop_thread_projection.sql`), 참조가 없으므로 지울 것도 없다.
+ * 목록에서 뺀 것이 누락이 아니라는 근거는 아래 `channelDelete.test.ts` 의 스키마 대조
+ * 테스트다 — `information_schema` 로 실제 FK 를 다시 세므로, 테이블이 아직 있는데 목록에서
+ * 빠졌다면 그 테스트가 빨개진다.
  *
  * FK 를 `on delete cascade` 로 바꾸지 않는 이유: cascade 를 스키마에 박으면 무엇이 함께
  * 사라지는지가 코드 어디에도 안 적힌다 — 나중에 새 테이블이 `channel_id` 를 참조할 때 그
@@ -832,12 +837,6 @@ export async function deleteChannel(
     // idempotency_key: message_id·channel_id 둘 다 참조, cascade 없음. channel_id 로 지우면
     // 둘 다 정리된다(같은 채널의 메시지만 가리킨다).
     await client.query(`delete from idempotency_key where channel_id = $1`, [channelId]);
-    // work_thread: thread_root_message_id 참조, cascade 없음. avcs 투영이 만든다.
-    await client.query(
-      `delete from work_thread
-       where thread_root_message_id in (select id from message where channel_id = $1)`,
-      [channelId],
-    );
     // saved_message: message_id 참조, cascade 없음(#219). 채널이 사라지면 담아 둔 자리도
     // 사라진다 — "삭제됨"으로 남기는 것은 **메시지** 삭제이고(#219 결정 3), 채널 삭제는
     // 그 채널이 있었다는 사실 자체를 지우는 별개의 작업이다(#155).

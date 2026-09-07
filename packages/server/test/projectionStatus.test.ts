@@ -7,7 +7,7 @@ import { createFakeAvcs } from './helpers/fakeAvcs.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin } from './helpers/fixtures.js';
 import {
-  ProjectionWorker, ensureSystemAccount, warnIfProjectionDisabled,
+  ProjectionWorker, warnIfProjectionDisabled,
 } from '../src/avcs/projection.js';
 import { createChannel } from '../src/services/channels.js';
 import type { AvcsServerClient } from '../src/avcs/client.js';
@@ -129,11 +129,9 @@ describe('GET /projection/status (#267)', () => {
 describe('#267 투영 워커가 상태를 실제로 갱신한다', () => {
   let pool: Pool;
   let stop: () => Promise<void>;
-  let systemAccountId: string;
 
   beforeAll(async () => {
     ({ pool, stop } = await startTestDb());
-    systemAccountId = await ensureSystemAccount(pool);
   });
   afterAll(async () => { await stop(); });
 
@@ -141,7 +139,7 @@ describe('#267 투영 워커가 상태를 실제로 갱신한다', () => {
     const fake = createFakeAvcs();
     const repo = 'wired-repo';
     const channelId = (await createChannel(pool, { name: 'wired', repo })).id;
-    const worker = new ProjectionWorker({ pool, avcs: fake.client, systemAccountId });
+    const worker = new ProjectionWorker({ pool, avcs: fake.client });
 
     expect(worker.status().lastPolledAt).toBeNull();
     worker.start(50);
@@ -167,9 +165,7 @@ describe('#267 투영 워커가 상태를 실제로 갱신한다', () => {
     const { pool: emptyPool, stop: stopEmpty } = await startTestDb();
     try {
       const fake = createFakeAvcs();
-      const worker = new ProjectionWorker({
-        pool: emptyPool, avcs: fake.client, systemAccountId: await ensureSystemAccount(emptyPool),
-      });
+      const worker = new ProjectionWorker({ pool: emptyPool, avcs: fake.client });
       worker.start(50);
       try {
         await waitFor(() => worker.status().lastPolledAt !== null);
@@ -196,7 +192,7 @@ describe('#267 투영 워커가 상태를 실제로 갱신한다', () => {
       fetchSince: (r, since) =>
         failing ? Promise.reject(new Error('injected avcs failure')) : fake.client.fetchSince(r, since),
     };
-    const worker = new ProjectionWorker({ pool, avcs: flaky, systemAccountId });
+    const worker = new ProjectionWorker({ pool, avcs: flaky });
     worker.start(50);
     try {
       await waitFor(() => worker.status().lastError !== null);
@@ -219,7 +215,6 @@ describe('#267 투영 워커가 상태를 실제로 갱신한다', () => {
         waitForChange: () => Promise.reject(new Error(long)),
         fetchSince: () => Promise.reject(new Error(long)),
       },
-      systemAccountId,
     });
     worker.start(50);
     try {
