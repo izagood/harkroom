@@ -18,6 +18,7 @@ import type {
 } from '@murmur/shared';
 import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, PROJECTION_UNCONFIGURED_NOTICE, notifyLevelOf, sortChannelsBySection } from '@murmur/shared';
 import { Logo } from './Logo';
+import { SidebarToggleIcon } from './SidebarToggleIcon';
 
 /** 메뉴에 그리는 이름. 값(`all`/`mentions`/`none`)은 저장·전송용이라 번역하지 않는다. */
 const NOTIFY_LEVEL_LABEL: Record<NotifyLevel, string> = {
@@ -1161,7 +1162,14 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
         <div
           data-testid="sidebar-brand"
           data-tauri-drag-region
-          className={`flex ${TOP_BAR_H} items-center gap-2 border-b border-border pl-3 pr-3 font-bold`}
+          /*
+            **`select-none` 이 있어야 한다**(실측 2026-09-07). 이 줄은 창을 끄는 손잡이
+            (`data-tauri-drag-region`)인데, 안의 `murmur` 는 그냥 텍스트 노드라 끌면
+            **창이 움직이는 대신 글자가 선택**됐다. 손잡이로 쓰는 자리의 글자는 고를
+            대상이 아니다 — 복사할 값이 아니라 앱 이름이다.
+          */
+          className={`flex ${TOP_BAR_H} select-none items-center gap-2 border-b border-border
+                      pl-3 pr-3 font-bold`}
         >
           <span data-tauri-drag-region className="flex items-center">
             <Logo size={16} decorative />
@@ -1180,7 +1188,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
             aria-label="사이드바 접기"
             title="사이드바 접기"
           >
-            ←
+            <SidebarToggleIcon />
           </button>
         </div>
       <nav className="flex-1 space-y-4 overflow-y-auto p-2">

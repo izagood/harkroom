@@ -379,3 +379,40 @@ describe('#359 띠 높이', () => {
     expect(MAC_TITLEBAR_H).toBe('h-[28px]');
   });
 });
+
+/**
+ * **손잡이 위의 글자는 고를 대상이 아니다**(실측 2026-09-07, 사용자가 화면에서 발견).
+ *
+ * `sidebar-brand` 는 창을 끄는 손잡이(`data-tauri-drag-region`)인데 안의 `murmur` 는
+ * 그냥 텍스트 노드라, 끌면 **창이 움직이는 대신 글자가 선택**됐다. 복사할 값이 아니라
+ * 앱 이름이므로 고를 이유가 없다.
+ */
+describe('창 손잡이 위의 글자', () => {
+  it('브랜드 줄의 글자는 드래그로 선택되지 않는다', () => {
+    renderWorkspace({ sidebarCollapsed: false });
+    expect(screen.getByTestId('sidebar-brand').className).toContain('select-none');
+  });
+});
+
+/**
+ * **사이드바를 여닫는 두 버튼이 같은 모양이다**(실측 2026-09-07).
+ *
+ * 전에는 접기가 `←`, 펼치기가 `☰` 로 서로 달랐다. 같은 하나를 여닫는 버튼이 다르게
+ * 생기면 사람이 둘을 다른 기능으로 읽고, 특히 `←` 는 앱 안에서 이미 **뒤로 가기**가
+ * 쓰는 글리프라(같은 헤더에 나란히 있다) 한 줄에서 두 뜻으로 쓰였다.
+ */
+describe('사이드바 토글 아이콘', () => {
+  it('접기 버튼이 화살표가 아니라 패널 아이콘을 쓴다', () => {
+    const { container } = renderWorkspace({ sidebarCollapsed: false });
+    const collapse = container.querySelector('[aria-label="사이드바 접기"]')!;
+    expect(collapse.textContent).not.toContain('←');
+    expect(collapse.querySelector('svg')).toBeTruthy();
+  });
+
+  /** 그림에 이름을 또 주면 스크린리더가 같은 것을 두 번 읽는다 — 버튼이 이미 말한다. */
+  it('아이콘은 접근성 이름을 갖지 않는다', () => {
+    const { container } = renderWorkspace({ sidebarCollapsed: false });
+    const svg = container.querySelector('[aria-label="사이드바 접기"] svg')!;
+    expect(svg.getAttribute('aria-hidden')).toBe('true');
+  });
+});
