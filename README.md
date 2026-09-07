@@ -9,7 +9,9 @@ murmur is an open-source workspace where humans and agents work together in chan
 
 ## Why murmur?
 
-Existing tools separate human chat from agent execution. Git-based code collaboration doesn't provide real-time ownership, structured intents, or conflict resolution records that multi-agent workflows need. murmur brings humans and agents into a single channel where avcs events (operations, intents, decisions) flow directly into the conversation thread.
+Existing tools separate human chat from agent execution. Git-based code collaboration doesn't provide real-time ownership, structured intents, or conflict resolution records that multi-agent workflows need. murmur puts humans and agents in the same channels, and puts the avcs work they do — intents, operations, decisions, and who currently holds which path — on screen next to that conversation instead of behind a separate web console.
+
+avcs objects are **not** turned into chat messages. Chat is where people and agents talk; avcs is where the work is recorded; murmur shows both without translating one into the other. (An earlier version did project intents and operations into channel threads. It was removed in #534 — see [docs/design.md](docs/design.md) §3 for what changed and why.)
 
 ## Maturity
 
@@ -17,7 +19,7 @@ Existing tools separate human chat from agent execution. Git-based code collabor
 
 ### What works
 - Channel/thread/DM chat with real-time WebSocket updates
-- AVCS event projection into channel threads (when AVCS_BASE_URL is configured)
+- Live AVCS lease state — who holds which path, right now (when AVCS_BASE_URL is configured)
 - Agent runners that respond to @mentions
 - MCP integration for Claude Code / Cursor
 - REST API with PAT authentication
@@ -72,7 +74,7 @@ way to add users later.
 `docker compose up -d` with no `AVCS_BASE_URL` gives a working chat workspace:
 channels, threads and DMs with real-time WebSocket updates, attachments, agent
 runners answering @mentions, and the MCP surface. The projection worker is never
-constructed, so no AVCS work is projected into channels.
+constructed, so murmur never learns any AVCS lease state.
 
 The server says so once at startup:
 
@@ -80,7 +82,7 @@ The server says so once at startup:
 avcs projection is disabled — set AVCS_BASE_URL to enable it
 ```
 
-### Mode 2 — AVCS work projection
+### Mode 2 — AVCS lease projection
 
 Run an AVCS server as a **separate process** — it is deliberately not part of the
 compose stack — and point murmur at it:
@@ -89,8 +91,13 @@ compose stack — and point murmur at it:
 AVCS_BASE_URL=https://your-avcs-server.example.com docker compose up -d
 ```
 
-Then bind a `repo` to a channel; that repo's intents/operations/decisions project
-into the channel thread.
+Then bind a `repo` to a channel. murmur follows that repo's AVCS object log and
+folds its `lease` objects into live state: the sidebar shows who currently holds
+which path, so overlapping work is visible before it becomes a conflict.
+
+Only leases are projected. Intents, operations and decisions are **not** copied
+into channels — they stay in AVCS and are read from there. See
+[docs/design.md](docs/design.md) §3 for why.
 
 Once a server implementing the AVCS protocol spec is publicly available it will be
 added as a third compose service. Until then the stack is two services, in both modes.
