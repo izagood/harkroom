@@ -61,6 +61,11 @@ const fakeController = (baseUrl: string) => ({
   openChannel: vi.fn(), startDm: vi.fn(), logout: vi.fn(), stop: vi.fn(),
   createChannel: vi.fn(), updateChannel: vi.fn(), goBack: vi.fn(), goForward: vi.fn(),
   setChannelNotifyLevel: vi.fn(), toggleChannelStar: vi.fn(),
+  // `ConnectionSettings` 가 `ProjectionUrl`(admin 전용)을 함께 그린다 — 이 스위트의
+  // 시드 계정이 admin 이라 조회가 실제로 일어난다.
+  projectionConfig: vi.fn(async () => ({ url: null, source: null, appUrl: null, envUrl: null })),
+  setProjectionConfig: vi.fn(async () => ({ url: null, source: null, appUrl: null, envUrl: null })),
+  refreshProjection: vi.fn(async () => {}),
 }) as unknown as Controller;
 
 /** 화면이 서려면 필요한 최소 상태. 커뮤니티마다 다른 handle·연결 상태를 준다. */

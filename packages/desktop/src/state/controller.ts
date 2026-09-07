@@ -1195,6 +1195,31 @@ export class Controller {
     return this.api.updateAgentDefaults(patch);
   }
 
+  /** 투영 설정. admin 전용이라 실패를 삼키지 않는다 — 화면이 실패를 그려야 한다. */
+  projectionConfig(): Promise<import('@murmur/shared').ProjectionConfigView> {
+    return this.api.projectionConfig();
+  }
+
+  setProjectionConfig(
+    url: string | null,
+  ): Promise<import('@murmur/shared').ProjectionConfigView> {
+    return this.api.setProjectionConfig(url);
+  }
+
+  /**
+   * 투영 상태를 **지금** 다시 읽는다. 저장 직후에 쓴다.
+   *
+   * 정기 갱신은 60 초 주기다(`projectionRefreshInterval`). 그 주기에 맡기면 방금 켠 투영이
+   * 최대 1 분 동안 꺼진 것처럼 보이고 사용자는 저장이 실패했다고 읽는다.
+   *
+   * 화면이 `api.projectionStatus()` 를 직접 부르지 않는 이유: `refreshProjectionStatus` 가
+   * 지키는 규칙(**실패를 삼키지 않고 `projectionStatusError` 로 올린다**)을 한 벌 더
+   * 적지 않기 위해서다.
+   */
+  refreshProjection(): Promise<void> {
+    return this.refreshProjectionStatus();
+  }
+
   /** #139: 에이전트 메모리. 실패를 삼키지 않는다 — 호출부가 "없다" 와 "못 읽었다" 를 가른다. */
   agentMemory(agentId: string): Promise<{ slug: string; value: string; updatedAt: string }[]> {
     return this.api.agentMemory(agentId);

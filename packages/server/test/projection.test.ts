@@ -45,6 +45,9 @@ let fake: FakeAvcs;
 let worker: ProjectionWorker;
 let channelId: string;
 const REPO = 'proj-repo';
+// 이 파일의 모든 워커가 같은 서버를 본다고 가정한다 — `baseUrl` 이 필요해졌을 뿐,
+// 여러 avcs 서버를 구별하는 것은 이 파일의 관심사가 아니다(그건 projectionServerScope.test.ts).
+const BASE_URL = 'http://avcs.test';
 
 /** 만료가 넉넉한 lease 엔트리 한 건. 시각 비교가 아니라 존재 여부를 보는 테스트들이 쓴다. */
 const leaseEntry = (oid: string, path: string, released = false, actorKeyId: string | null = 'k9') => ({
@@ -55,7 +58,7 @@ const leaseEntry = (oid: string, path: string, released = false, actorKeyId: str
 beforeAll(async () => {
   ({ pool, stop } = await startTestDb());
   fake = createFakeAvcs();
-  worker = new ProjectionWorker({ pool, avcs: fake.client });
+  worker = new ProjectionWorker({ pool, avcs: fake.client, baseUrl: BASE_URL });
   channelId = (await createChannel(pool, { name: 'proj', repo: REPO })).id;
 });
 afterAll(async () => { await stop(); });
@@ -102,7 +105,7 @@ describe('projection', () => {
       waitForChange: async () => true,
       fetchSince: async (_r, since) => ({ entries: [], next: since + 3 }),
     };
-    const w = new ProjectionWorker({ pool, avcs: silent });
+    const w = new ProjectionWorker({ pool, avcs: silent, baseUrl: BASE_URL });
 
     await w.runOnce(repo);
 
@@ -117,7 +120,7 @@ describe('projection', () => {
       waitForChange: async () => false,
       fetchSince: async (_r, since) => ({ entries: [], next: since }),
     };
-    const w = new ProjectionWorker({ pool, avcs: idle });
+    const w = new ProjectionWorker({ pool, avcs: idle, baseUrl: BASE_URL });
 
     await w.runOnce(repo);
 
@@ -132,9 +135,10 @@ describe('projection', () => {
    *
    * **멱등성의 근거가 바뀌었다.** 예전에는 `message_avcs_oid` 유니크 인덱스(투영 전용)가
    * 같은 oid 의 메시지를 두 번 넣지 못하게 막았다. 그 인덱스는 040 에서 사라졌고, 이제
-   * 근거는 `active_lease` 의 upsert 다 — `(repo, path, actor_key_id)` 가 기본키라서 같은
-   * 구간을 몇 번 접어도 결과가 같다. 즉 멱등성은 **인덱스가 막아서**가 아니라 **연산이
-   * 멱등해서** 성립한다. 인덱스 없이도 성립한다는 것을 확인하는 것이 이 테스트다.
+   * 근거는 `active_lease` 의 upsert 다 — `(repo, avcs_base_url, path, actor_key_id)` 가
+   * 기본키라서(042) 같은 구간을 몇 번 접어도 결과가 같다. 즉 멱등성은 **인덱스가 막아서**가
+   * 아니라 **연산이 멱등해서** 성립한다. 인덱스 없이도 성립한다는 것을 확인하는 것이 이
+   * 테스트다.
    */
   it('is idempotent: rerun from cursor 0 does not duplicate', async () => {
     fake.push(REPO, leaseEntry('l-idem', 'src/idem.ts'));
@@ -156,7 +160,7 @@ describe('projection', () => {
     const repo = 'avcs-rollback-repo';
     await createChannel(pool, { name: 'avcs-rollback', repo });
     const rolled = createFakeAvcs();
-    const w = new ProjectionWorker({ pool, avcs: rolled.client });
+    const w = new ProjectionWorker({ pool, avcs: rolled.client, baseUrl: BASE_URL });
     rolled.push(repo, leaseEntry('r1', 'src/before.ts'));
     expect(await w.runOnce(repo)).toBe(1);
     expect(await leasePaths(repo)).toEqual(['src/before.ts']);
@@ -176,7 +180,7 @@ describe('projection', () => {
     const repo = 'lease-repo';
     await createChannel(pool, { name: 'lease-ch', repo });
     const leases = createFakeAvcs();
-    const w = new ProjectionWorker({ pool, avcs: leases.client });
+    const w = new ProjectionWorker({ pool, avcs: leases.client, baseUrl: BASE_URL });
 
     leases.push(repo, leaseEntry('l1', 'src/x.ts'));
     await w.runOnce(repo);
@@ -194,7 +198,7 @@ describe('projection', () => {
     const repo = 'lease-conflict-repo';
     await createChannel(pool, { name: 'lease-conflict', repo });
     const conflict = createFakeAvcs();
-    const w = new ProjectionWorker({ pool, avcs: conflict.client });
+    const w = new ProjectionWorker({ pool, avcs: conflict.client, baseUrl: BASE_URL });
 
     conflict.push(repo, leaseEntry('ca', 'src/hot.ts', false, 'key-a'));
     conflict.push(repo, leaseEntry('cb', 'src/hot.ts', false, 'key-b'));
@@ -253,7 +257,7 @@ describe('projection start() loop', () => {
         failing ? Promise.reject(new Error('injected avcs failure')) : real.fetchSince(r, since),
     };
 
-    const worker2 = new ProjectionWorker({ pool: pool2, avcs: flaky });
+    const worker2 = new ProjectionWorker({ pool: pool2, avcs: flaky, baseUrl: BASE_URL });
     worker2.start(50);
     try {
       await waitFor(() => worker2.status().connected === true); // 최초 성공: true
@@ -287,7 +291,7 @@ describe('projection start() loop', () => {
     fake2.push(goodRepo, leaseEntry('gl1', 'src/good.ts'));
     fake2.push(badRepo, leaseEntry('bl1', 'src/bad.ts'));
 
-    const worker3 = new ProjectionWorker({ pool: pool2, avcs: mixed });
+    const worker3 = new ProjectionWorker({ pool: pool2, avcs: mixed, baseUrl: BASE_URL });
     worker3.start(50);
     try {
       // bad-repo가 영원히 실패해도 good-repo는 계속 투영된다

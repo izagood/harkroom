@@ -4,6 +4,7 @@ import { usePrefsStore } from '../../state/prefsStore';
 import { BANNER_TEXT_TONE, projectionBanner } from '../../lib/projectionBanner';
 import { minutesAgo } from '../../lib/minutesAgo';
 import { ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
+import { ProjectionUrl } from './ProjectionUrl';
 
 /**
  * 투영이 지금 어떤 사정인가를 **이 화면에서** 말한다.
@@ -61,6 +62,8 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
         <ReadonlyRow label="Server" value={baseUrl} />
         {/* #488 A3-a 후속: 투영 띠의 `설정 열기` 가 지목하는 자리다. */}
         <ProjectionRow />
+        {/* 무엇을 바라볼 것인가. admin 이 아니면 이 조각이 스스로 null 을 그린다. */}
+        <ProjectionUrl />
         <ReadonlyRow
           label="Realtime connection"
           value={
