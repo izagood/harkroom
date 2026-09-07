@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { ApiClient, ApiError } from '../lib/api';
 import { Logo } from '../components/Logo';
+import { ConnectUpdateBanner } from '../components/ConnectUpdateBanner';
 
 /** 로그인이 성공했을 때 위로 올려 보내는 것. 두 모드가 같은 값을 다른 곳으로 보낸다. */
 type Credentials = (baseUrl: string, token: string, accountId: string, handle: string) => void | Promise<void>;
@@ -95,6 +96,12 @@ export function ConnectScreen(props: ConnectScreenProps) {
               이미 murmur 안에 있는 사람에게 아무것도 알려 주지 않는다. */}
           <h1 className="text-lg font-bold">{adding ? 'Sign in to another community' : 'murmur'}</h1>
         </div>
+        {/* 로그인 **전**에도 업데이트할 수 있어야 한다(실측 2026-09-07): 서버에 못 붙는
+            버전이면 업데이트가 필요한데, 업데이트가 로그인 뒤에만 있으면 빠져나갈 길이 없다.
+
+            `add` 는 겹창이고 그 사람은 이미 들어와 있다 — Settings 가 열려 있으므로 이
+            배너가 푸는 고리가 없다. 겹창에 업데이트 안내를 겹쳐 놓지 않는다. */}
+        {!adding && <ConnectUpdateBanner />}
         <label className="block text-xs font-medium">
           Server URL
           <input className={field} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
