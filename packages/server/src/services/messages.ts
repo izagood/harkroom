@@ -5,6 +5,28 @@ import { channelVisibleSql } from './channels.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
 
 /**
+ * 채널 안에서 `seq` 발급을 직렬화하는 advisory lock 의 classid(#523).
+ *
+ * 두 인자 형태(`classid, objid`)를 쓰는 이유: 한 인자 형태는 64비트 공간 하나를
+ * 통째로 쓰므로 migrate.ts 의 `0x6d726d72`·testDb.ts 의 `0x6d726d73` 과 같은 방에
+ * 산다. 채널 uuid 를 해시해 넣으면 그 상수들과 우연히 겹칠 수 있고, 겹치는 날
+ * 마이그레이션이 게시를 기다리거나 그 반대가 된다. classid 를 따로 두면 그 방이
+ * 아예 갈라져 충돌이 원리적으로 불가능하다.
+ */
+const SEQ_LOCK_CLASS = 0x6d736571; // 'mseq'
+
+/**
+ * 채널 하나를 가리키는 32비트 objid. `hashtext` 로 uuid 를 접는다 — Postgres 내장이라
+ * 서버가 여러 대여도 같은 값이 나온다(애플리케이션에서 해시하면 구현이 갈릴 수 있다).
+ *
+ * 해시 충돌은 안전하다. 서로 다른 두 채널이 같은 락을 잡으면 **불필요하게 직렬화될 뿐**
+ * 정확성은 그대로다 — 락은 성능 장치이지 가시성 판정이 아니다. 반대 방향(같은 채널이
+ * 다른 락을 잡는 것)은 일어날 수 없으므로 결함이 되살아나지 않는다.
+ */
+export const lockChannelForSeq = (client: PoolClient, channelId: string): Promise<unknown> =>
+  client.query('select pg_advisory_xact_lock($1, hashtext($2))', [SEQ_LOCK_CLASS, channelId]);
+
+/**
  * 게시 결과. 첨부 연결이 거절되면 메시지 자체가 만들어지지 않는다(트랜잭션 롤백) —
  * 그래서 성공/실패가 배타적인 합 타입이다. 둘을 optional 필드로 섞으면 호출부가
  * 실패를 확인하지 않고 `message` 를 만질 수 있다.
@@ -291,6 +313,45 @@ export async function postMessage(
   const client = await pool.connect();
   try {
     await client.query('begin');
+
+    /**
+     * `seq` 발급을 채널 단위로 직렬화한다(#523).
+     *
+     * **왜 여기인가.** `seq` 는 `generated always as identity`(001_init.sql:57)라
+     * 시퀀스에서 나오고, 시퀀스는 트랜잭션 밖에서 값을 준다. 그래서 낮은 seq 를 받은
+     * 트랜잭션이 늦게 커밋할 수 있다 — 발급 순서와 커밋(가시성) 순서가 갈라진다.
+     * 커서가 `seq > $since` 인 이상(listMessages) 그 갈라짐은 곧 **건너뛴 메시지**다:
+     * B(높은 seq)가 먼저 커밋된 순간 리더가 폴하면 커서가 B 로 가고, 뒤늦게 커밋되는
+     * A 는 `seq > B` 에 영영 안 걸린다.
+     *
+     * 락을 `begin` 직후, **insert 보다 앞에** 잡는 것이 핵심이다. insert 뒤에 잡으면
+     * 이미 seq 가 나간 뒤라 아무것도 막지 못한다. 여기서 잡으면 "seq 를 받은 트랜잭션은
+     * 커밋할 때까지 다음 트랜잭션이 seq 를 못 받는다"가 되어 두 순서가 **같아진다**.
+     *
+     * `xact` 형태를 쓰므로 커밋이든 롤백이든 자동으로 풀린다. 첨부 거절 경로가
+     * `rollback` 으로 빠져나가는데(아래), 수동 해제였다면 그 경로마다 해제를 빠뜨릴
+     * 위험이 있고 한 번 빠뜨리면 그 채널의 게시가 통째로 멈춘다.
+     *
+     * **왜 채널 단위인가.** seq 는 전역이지만 커서는 채널·스레드 단위다. 다른 채널의
+     * 미커밋 seq 가 이 채널 커서를 지나칠 수는 없다 — 그 seq 는 이 채널 델타의
+     * `where channel_id = $1` 에 애초에 걸리지 않기 때문이다(실측 확인). 전역으로
+     * 잠그면 무관한 채널끼리 줄을 서게 되어 처치가 병보다 나빠진다.
+     *
+     * **버린 후보들.** ① 읽기 시점에 미커밋 구간을 피하기 — 불가능하다. 미커밋 행은
+     * 리더에게 **보이지 않으므로** 그 seq 를 알아낼 질의가 없다. `pg_sequence_last_value`
+     * 도 못 쓴다: 이 결함의 창에서는 B 가 가장 큰 seq 를 가져가 커밋하므로
+     * `last_value == max(보이는 seq)` 가 되어 구멍이 신호에 안 잡힌다(실측).
+     * ② "안 보이는 발급분" 을 구멍으로 보고 클램프 — 롤백이 **영구 구멍**을 남기므로
+     * (실측) 커서가 첫 롤백에서 영원히 멈춘다. postMessage 자신이 첨부 거절 때
+     * 롤백하므로 흔한 경로다. ③ `xmin` 을 커서로 — xid 는 커밋 순서가 아니라 시작
+     * 순서라 같은 결함이 그대로 있고, 순환(wraparound)까지 떠안는다. ④ 델타를 "안 본
+     * 것" 집합으로 — 커서가 스칼라 하나라는 클라이언트 계약(러너의 `lastFedSeq`,
+     * 데스크톱의 `since`)을 전부 바꿔야 한다.
+     *
+     * **읽기에 더한 비용은 없다.** 이 고침은 전부 쓰기 경로에 있고 `listMessages` 의
+     * 질의는 한 글자도 바뀌지 않는다 — "읽기가 흔하다"는 제약에 맞춘 선택이다.
+     */
+    await lockChannelForSeq(client, input.channelId);
 
     if (input.idempotencyKey) {
       // key는 클라이언트가 고르는 값이라 전역 유일하지 않다. 재생은 같은 author가 같은 채널로
