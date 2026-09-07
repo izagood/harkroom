@@ -30,8 +30,13 @@ const DAEMON_RS = read('../src-tauri/src/daemon_client.rs');
 /** 한 자리에서만 찾는다 — 여러 번 적혀 있으면 그것 자체가 결함이다. */
 const only = (source: string, re: RegExp, what: string): string => {
   const hits = [...source.matchAll(re)];
+  // 한 자리여야 한다 — 여러 번 적혀 있으면 그것 자체가 이 회귀선이 막으려는 상태다.
   expect(hits, `${what} 를 정확히 한 자리에서 찾지 못했다`).toHaveLength(1);
-  return hits[0][1];
+  const captured = hits[0]?.[1];
+  if (captured === undefined) {
+    throw new Error(`${what} 의 숫자를 못 읽었다 — 상수 선언 모양이 바뀌었나`);
+  }
+  return captured;
 };
 
 describe('daemon 종료 코드 계약', () => {
