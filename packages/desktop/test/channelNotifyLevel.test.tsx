@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import type { ChannelPrefRow, InboxEntry, NotifyLevel } from '@murmur/shared';
-import { useActiveStore as useAppStore } from '../src/state/communities';
+import { useActiveStore as useAppStore, useCommunityRegistry } from '../src/state/communities';
 import { Controller, setController } from '../src/state/controller';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { DEFAULT_PREFS } from '../src/lib/prefs';
+import type { Notification } from '../src/lib/notify';
 import { Sidebar } from '../src/components/Sidebar';
 import { acc, accountsResult, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
@@ -30,8 +31,8 @@ const pref = (channelId: string, notifyLevel: NotifyLevel): ChannelPrefRow =>
   ({ accountId: 'u1', channelId, mutedAt: '2026-09-03T00:00:00.000Z', starredAt: null, hiddenAt: null, notifyLevel, section: null, sortOrder: null });
 
 function fakeNotifier() {
-  const sent: { title: string; body: string }[] = [];
-  return { sent, notify: vi.fn(async (n: { title: string; body: string }) => { sent.push(n); }) };
+  const sent: Notification[] = [];
+  return { sent, notify: vi.fn(async (n: Notification) => { sent.push(n); }) };
 }
 
 /** 창이 배경에 있어야 알림 경로가 돈다 — 포커스 분기는 그 앞에서 전부 삼킨다. */
@@ -95,6 +96,22 @@ describe('채널 알림 수준 — 알림', () => {
 
     expect(n.sent).toHaveLength(1);
     expect(n.sent[0]!.body).toBe('점심 뭐 먹지');
+  });
+
+  // #542: 일반 메시지 경로도 목적지를 싣는다. 멘션 경로와 재료가 달라(`InboxEntry` 아니라
+  // `MessageRow`) 한쪽만 배선하는 사고가 실제로 가능한 자리다.
+  it("'all' 로 온 일반 메시지도 목적지를 싣는다", async () => {
+    setFocus(false);
+    const n = fakeNotifier();
+    const { callbacks } = await started(n, [], [pref('c1', 'all')]);
+
+    callbacks.current!.onEvent({ type: 'message.created', message: msg('m9', 'c1', 9, '점심 뭐 먹지', 'u2'), audience: 'all' });
+    await drained();
+
+    expect(n.sent[0]!.target).toEqual({
+      communityId: useCommunityRegistry.getState().activeId,
+      messageId: 'm9',
+    });
   });
 
   // 요구 2. 'mentions' 는 나를 부른 것만 통과시킨다 — 이 둘이 같은 결과가 되면 수준이 셋이 아니다.

@@ -1,17 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { InboxEntry } from '@murmur/shared';
-import { useActiveStore as useAppStore } from '../src/state/communities';
+import { useActiveStore as useAppStore, useCommunityRegistry } from '../src/state/communities';
 import { Controller } from '../src/state/controller';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { DEFAULT_PREFS } from '../src/lib/prefs';
+import type { Notification } from '../src/lib/notify';
 import { acc, accountsResult, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 const entry = (id: number, messageId: string, reason: InboxEntry['reason'] = 'mention'): InboxEntry =>
   ({ id, messageId, reason, readAt: null, channelId: 'c1' , authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null});
 
 function fakeNotifier() {
-  const sent: { title: string; body: string }[] = [];
-  return { sent, notify: vi.fn(async (n: { title: string; body: string }) => { sent.push(n); }) };
+  const sent: Notification[] = [];
+  return { sent, notify: vi.fn(async (n: Notification) => { sent.push(n); }) };
 }
 
 /** 창이 포커스를 갖고 있는지 — 알림 여부를 가르는 조건이다. */
@@ -175,5 +176,29 @@ describe('mention notifications', () => {
     expect(n.sent[0]!.body).toBe('New mention');
     expect(n.sent[0]!.title).toContain('bot');
     expect(n.sent[0]!.title).toContain('general');
+  });
+
+  /**
+   * #542: 알림을 눌렀을 때 갈 곳을 알림 자신이 들고 있어야 한다. 제목의 `#general` 은
+   * 사람에게 읽히는 문자열이고, 거기서 채널을 되짚는 것은 같은 이름의 채널이 커뮤니티마다
+   * 있는 순간 틀린다 — 그래서 id 를 싣는다.
+   *
+   * `messageId` 하나로 채널·스레드·강조가 다 따라온다(`controller.openMessage`). 커뮤니티는
+   * 그 위에 따로 필요하다: 알림은 보고 있지 않은 커뮤니티에서도 오고, 메시지 id 만으로는
+   * 어느 서버에 물어볼지 정할 수 없다.
+   */
+  it('목적지(커뮤니티·메시지 id)를 알림에 싣는다', async () => {
+    setFocus(false);
+    const n = fakeNotifier();
+    const { callbacks } = await started(n, [entry(1, 'm1')]);
+    useAppStore.getState().upsertMessages('c1', [msg('m1', 'c1', 1, '이것 좀 봐줘', 'u2')]);
+
+    callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' });
+    await vi.waitFor(() => expect(n.sent).toHaveLength(1));
+
+    expect(n.sent[0]!.target).toEqual({
+      communityId: useCommunityRegistry.getState().activeId,
+      messageId: 'm1',
+    });
   });
 });
