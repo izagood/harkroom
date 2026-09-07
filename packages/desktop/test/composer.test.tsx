@@ -547,14 +547,23 @@ describe('부를 상대 미리보기 (#278)', () => {
     expect(listed()).toEqual(['fizz']);
   });
 
-  it('집합 handle 은 (집합) 표시와 함께 나온다', () => {
-    useAppStore.getState().set({ groups: [grp('g1', 'oncall', 'On-call')] });
+  /**
+   * **보내기 전엔 몇 명인지**(정본 문서 `docs/desktop-design-directions.html`: *"집합 호출 —
+   * 보내기 전엔 몇 명인지, 보낸 뒤엔 누가 깼는지"*).
+   *
+   * 옛 단언은 `(집합)` 이라는 **종류**만 봤다. 종류는 이미 `data-kind` 가 말하고 있고,
+   * 사람이 보내기 직전에 알아야 하는 것은 *"그것이 한 사람인지 스무 사람인지"* 다
+   * (`HandleGroupRow.memberCount` 주석이 이 자리를 이름으로 지목한다). 수를 재지 않으면
+   * `(집합)` 으로 되돌려도 초록이다.
+   */
+  it('집합 handle 은 구성원 수와 함께 나온다', () => {
+    useAppStore.getState().set({ groups: [grp('g1', 'oncall', 'On-call', 3)] });
     render(<Composer onSend={vi.fn()} />);
     typeInto('@oncall 서버 문제가 있어');
 
     const line = screen.getByTestId('body-mentions');
     expect(line.querySelector('[data-handle="oncall"]')!.getAttribute('data-kind')).toBe('group');
-    expect(line.textContent).toContain('(집합)');
+    expect(line.textContent).toContain('(3명)');
   });
 
   /**

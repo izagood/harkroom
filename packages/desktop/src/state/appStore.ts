@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
 import type { AccountStatus, AccountView, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus } from '@murmur/shared';
 import type { RunnerState } from '../lib/runnerLauncher';
+import type { NotifiedSummary } from '../lib/notified';
 
 export interface HistoryEntry {
   channelId: string;
@@ -118,6 +119,23 @@ export interface AppState {
    */
   notice: string | null;
   /**
+   * **조용한 실패로 끝난 집합 호출**(정본 문서: 집합 호출의 결과). messageId → 말할 한 줄.
+   *
+   * 왜 `MessageRow` 가 아니라 여기인가: 이 사실은 서버에서 **헤더로** 오고
+   * (`NOTIFIED_HEADER` 주석 — 본문은 `MessageRow` 그 자체로 남아야 한다) 그 요청을 보낸
+   * 사람에게만 온다. `MessageRow` 에 얹으면 같은 메시지가 WebSocket 으로 오는 다른 사람의
+   * 화면과 모양이 갈리고, 그것이 서버가 헤더를 고른 이유 그 자체다.
+   *
+   * **덜 깬 발화만 들어온다** — 셋을 불러 셋이 깨면 키가 생기지 않는다. 성공까지 담으면
+   * 화면이 "무엇을 그릴지"를 매 렌더에서 다시 판정하게 되고, 그 판정이 두 곳(채널·스레드)에
+   * 갈라진다. 판정은 `notifiedSummary` 한 자리에 있고 스토어는 그 결과만 든다.
+   *
+   * 화면 상태이므로 영속하지 않는다. 앱을 다시 켜면 사라진다 — 부름의 결과는 **보낸
+   * 직후**에 쓸모가 있는 사실이고(다시 부를지 정한다), 어제의 부름에 대해 오늘 이 줄이 서면
+   * 그것은 이미 지난 사정이다. 서버에서 다시 받을 길도 없다(헤더는 그 응답에만 있었다).
+   */
+  notifiedGaps: Record<string, NotifiedSummary>;
+  /**
    * 투영 고장 띠를 **어느 사정에 대해** 닫았는가(#488 A3-a). 닫지 않았으면 null 이다.
    *
    * 불리언이 아닌 이유: 투영이 꺼진 것을 닫아 뒀는데 그 뒤 투영이 **멈추면** 그것은
@@ -209,7 +227,7 @@ const initial = {
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], terminalTarget: null, leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {},
-  history: [], historyIndex: -1, notice: null, projectionBannerDismissed: null,
+  history: [], historyIndex: -1, notice: null, notifiedGaps: {}, projectionBannerDismissed: null,
   highlightedMessageId: null,
   expandedMessageIds: {}, runnerStates: {}, appVersion: null, savedIds: [], savedCount: 0,
   linkPreviewReadyAt: {}, skillsRevision: 0,

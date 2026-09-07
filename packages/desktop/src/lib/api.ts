@@ -1,4 +1,5 @@
 import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@murmur/shared';
+import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
 export class ApiError extends Error {
   /**
@@ -24,20 +25,38 @@ export class ApiClient {
 
   setToken(token: string | null): void { this.token = token; }
 
-  private async req<T>(method: string, path: string, body?: unknown, extra?: Record<string, string>): Promise<T> {
+  /**
+   * 본문과 **응답 헤더를 함께** 낸다.
+   *
+   * 이 통로가 필요한 이유: `req` 는 본문만 돌려주고 `Response` 를 그 자리에서 버린다.
+   * 그런데 서버는 응답의 **부수 사실**을 헤더로 싣는 관례가 있고(`NOTIFIED_HEADER` 주석 —
+   * 본문은 `MessageRow` 그 자체로 남아야 하므로 형제 키를 얹을 수 없다), 그 사실을 읽으려면
+   * 헤더가 버려지기 전에 붙잡아야 한다. `attachmentRoutes`·`avatarRoutes` 도 같은 관례를 쓴다.
+   *
+   * `req` 를 이 함수로 감싸고 **`req` 의 시그니처는 한 글자도 바꾸지 않는다**: 헤더가 필요한
+   * 호출부는 지금 하나뿐인데, 그것 때문에 100 곳이 넘는 나머지 호출부가 봉투를 벗기게 되면
+   * 헤더를 안 읽는 자리마다 `.body` 가 붙는다. 필요한 곳만 이쪽을 부른다.
+   */
+  private async reqWithHeaders<T>(
+    method: string, path: string, body?: unknown, extra?: Record<string, string>,
+  ): Promise<{ body: T; headers: Headers }> {
     const headers: Record<string, string> = { ...extra };
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (this.token) headers.authorization = `Bearer ${this.token}`;
     const res = await fetch(`${this.baseUrl}${path}`, {
       method, headers, body: body !== undefined ? JSON.stringify(body) : undefined,
     });
-    if (res.status === 204) return undefined as T;
+    if (res.status === 204) return { body: undefined as T, headers: res.headers };
     const json: unknown = await res.json().catch(() => null);
     if (!res.ok) {
       const err = (json as { error?: { code?: string; message?: string } } | null)?.error;
       throw new ApiError(res.status, err?.code ?? 'unknown', err?.message ?? `HTTP ${res.status}`, json);
     }
-    return json as T;
+    return { body: json as T, headers: res.headers };
+  }
+
+  private async req<T>(method: string, path: string, body?: unknown, extra?: Record<string, string>): Promise<T> {
+    return (await this.reqWithHeaders<T>(method, path, body, extra)).body;
   }
 
   login(loginId: string, password: string): Promise<{ token: string }> {
@@ -177,11 +196,24 @@ export class ApiClient {
   message(id: string): Promise<MessageRow> {
     return this.req('GET', `/messages/${id}`);
   }
-  postMessage(
+  /**
+   * 메시지를 보낸다. **본문과 함께 "누가 불렸는지"를 낸다**(계획 Task 8 Step 3).
+   *
+   * 왜 `MessageRow` 하나가 아니라 봉투인가: 집합·`@channel` 을 펼친 결과는 서버만 안다.
+   * 그리고 그 사실은 `MessageRow` 에 **없다** — 헤더로 오기 때문이고, 그것이 헤더인 이유는
+   * `NOTIFIED_HEADER` 주석에 있다(본문에 형제 키를 얹으면 WebSocket 으로 오는 같은 메시지와
+   * 모양이 갈린다). 여기서 헤더를 버리면 화면은 "셋을 불러 둘만 깼다"를 말할 재료가 없고,
+   * 그것이 정본 문서가 **조용한 실패**로 부르는 것이다.
+   *
+   * 호출부가 둘뿐이라(`controller.send`·`controller.reply`) 별도 메서드를 만들지 않고 이
+   * 메서드의 반환형을 넓혔다 — 두 메서드로 두면 한쪽만 고쳐지는 자리가 생기고, 그때 어느
+   * 경로로 보낸 메시지인지에 따라 부름의 결과가 보이거나 보이지 않는다.
+   */
+  async postMessage(
     channelId: string, body: string, threadRootId?: string, idempotencyKey?: string,
     attachmentIds: string[] = [], alsoInChannel?: boolean,
-  ): Promise<MessageRow> {
-    return this.req('POST', `/channels/${channelId}/messages`,
+  ): Promise<{ message: MessageRow; notified: NotifiedResult }> {
+    const res = await this.reqWithHeaders<MessageRow>('POST', `/channels/${channelId}/messages`,
       {
         body,
         ...(threadRootId ? { threadRootId } : {}),
@@ -190,6 +222,7 @@ export class ApiClient {
         ...(alsoInChannel ? { alsoInChannel } : {}),
       },
       idempotencyKey ? { 'idempotency-key': idempotencyKey } : undefined);
+    return { message: res.body, notified: readNotifiedHeaders(res.headers) };
   }
   /**
    * 선택 요청에 답한다. 답은 원본의 `meta.ask` 에 기록되므로 갱신된 **그 메시지**가 돌아온다.
