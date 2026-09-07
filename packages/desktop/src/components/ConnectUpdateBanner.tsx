@@ -44,7 +44,7 @@ export function ConnectUpdateBanner() {
         {/* 빨강(danger)을 쓰지 않는다 — 그 색은 이 화면에서 이미 로그인 실패가 쓴다.
             같은 색이면 '서버 문제'와 '업데이트 확인 문제'가 한 화면에서 구분되지 않는다. */}
         <p className="text-xs font-medium text-warning">Could not check for updates</p>
-        <p className="truncate font-mono text-[10px] text-fg-muted" title={status.message}>
+        <p className="truncate font-mono text-[11px] text-fg-muted" title={status.message}>
           {status.message}
         </p>
       </div>

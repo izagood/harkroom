@@ -113,6 +113,22 @@ function useAvatarUrl(accountId: string | null, attachmentId: string | null): st
   return url;
 }
 
+/**
+ * **아바타 안의 머리글자는 타이포 4단이 아니다 — 상자에 묶인 글리프다.**
+ *
+ * 4단(11 / 13 / 15 / 17)은 *읽는 글자*의 단이다. 아래 `avatar` 분기의 `text-[10px]` 은
+ * 읽는 글자가 아니라 `h-5 w-5` 원을 채우는 그림이고, 크기가 원의 지름에서 따라 나온다.
+ * 그래서 호출부도 상자와 글자를 **한 쌍으로** 넘긴다: `h-8`→`text-sm`, `h-5`→`text-[10px]`,
+ * `h-4`→`text-[8px]`. `AgentGrid` 의 `face`/`faceText` 가 같은 규칙을 표로 갖고 있다.
+ *
+ * 이 쌍을 4단으로 끌어올리면 지름은 그대로인데 글자만 커져 원 안에서 머리글자가 가장자리에
+ * 붙는다. 20px 원에 11px 글자는 줄높이 12.96px 로 넘치지는 않지만(실측), 넘치지 않는 것과
+ * 원 안에서 균형이 맞는 것은 다른 문제다 — 그리고 이 자리는 사람과 에이전트가 한 열에
+ * 섞여 서므로 균형이 깨지면 열 전체가 들쭉날쭉해진다(#471 이 같은 자리에서 이미 한 번
+ * 났다). 단을 지키려고 그림을 망가뜨리지 않는다.
+ *
+ * 회귀선은 `test/typeScale.test.ts` 이고, 이 자리들을 예외로 적어 뒀다.
+ */
 export function Identity({ account, className = '', variant = 'badge' }: IdentityProps) {
   // 에이전트에게만 사진을 받지 않는다 — 에이전트는 스스로 올릴 수단이 없고(#159 범위 밖),
   // 그 자리는 글리프가 지킨다. 훅은 조건부로 부를 수 없으므로 인자로 걸러 낸다.
@@ -192,7 +208,7 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
     // 둘 다 답하는 물음이 "누가 있나 / 누구 것인가"이지 **나를 막는 것**이 아니다
     // (규칙 04). 강조색은 그 자리에만 쓰는 색이다.
     return (
-      <span className={`inline-flex flex-wrap items-center gap-1 rounded bg-surface-sunken px-1 text-[10px] text-fg-muted ${className}`}>
+      <span className={`inline-flex flex-wrap items-center gap-1 rounded bg-surface-sunken px-1 text-[11px] text-fg-muted ${className}`}>
         <span aria-hidden="true">🤖</span>
         <span className="sr-only">에이전트</span>
         {owner && (
@@ -263,7 +279,7 @@ export function GroupBadge({ group, className = '' }: { group: HandleGroupRow; c
   return (
     <span
       data-testid={`group-badge-${group.handle}`}
-      className={`inline-flex items-center gap-1 rounded bg-warning-surface-strong px-1 text-[10px] text-warning ${className}`}
+      className={`inline-flex items-center gap-1 rounded bg-warning-surface-strong px-1 text-[11px] text-warning ${className}`}
     >
       <span aria-hidden="true">👥</span>
       <span className="sr-only">집합</span>
@@ -304,7 +320,7 @@ export function StatusMark({ account, className = '' }: {
       data-testid={`status-${account.id}`}
       data-status={account.status}
       title={name}
-      className={`inline-flex items-center text-[10px] leading-none ${className}`}
+      className={`inline-flex items-center text-[11px] leading-none ${className}`}
     >
       <span aria-hidden="true">{mark.glyph}</span>
       <span className="sr-only">{name}</span>

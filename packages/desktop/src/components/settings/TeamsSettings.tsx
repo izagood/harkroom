@@ -226,7 +226,7 @@ export function TeamsSettings() {
                     <div key={m.accountId} className="flex items-center justify-between rounded bg-surface px-2 py-1.5">
                       <span className="text-sm">
                         @{m.handle}
-                        {m.disabled && <span className="ml-1 text-[10px] text-fg-muted">(비활성)</span>}
+                        {m.disabled && <span className="ml-1 text-[11px] text-fg-muted">(비활성)</span>}
                       </span>
                       {isAdmin && (
                         <button

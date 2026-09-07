@@ -82,7 +82,7 @@ export function StatusPicker({ onDone }: {
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') void apply(me.status, text.trim() || null); }}
       />
-      {error && <p role="alert" className="mt-1 text-[10px] text-danger">{error}</p>}
+      {error && <p role="alert" className="mt-1 text-[11px] text-danger">{error}</p>}
       <div className="mt-1 flex gap-1">
         <button
           className="rounded bg-accent px-2 py-0.5 text-[11px] text-fg-on-strong hover:bg-accent-hover"
