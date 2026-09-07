@@ -11,12 +11,12 @@ murmur는 avcs, buzz는 Nostr다.
 
 ## 1. 실측 셋업 (재현 절차)
 
-최초 실측은 로컬 맥에서, 이후 `jaebin-worker` VM으로 이전했다(§2.6). 아래 값은 최초 실측 기준이다.
+최초 실측은 로컬 맥에서, 이후 원격 리눅스 VM으로 이전했다(§2.6). 아래 값은 최초 실측 기준이다.
 
 | 항목 | 값 |
 |---|---|
 | 릴레이 이미지 | `ghcr.io/block/buzz@sha256:aa5180ce…69f5` (digest 핀) |
-| 호스트 포트 | `3200` (3000=avcshub-web, 3100, 3400=murmur 점유 회피) |
+| 호스트 포트 | `3200` (3000·3100·3400 은 다른 로컬 서비스가 점유 중이라 회피) |
 | `RELAY_URL` | `ws://127.0.0.1:3200` |
 | 서비스 | relay(Rust/Axum) + postgres:17 + redis:7 + minio + minio-init |
 | 볼륨 | postgres / redis / minio / **git** |
@@ -187,7 +187,7 @@ murmur의 `message`는 단일 테이블이다.
 - **폐쇄형 릴레이의 거부가 사용자에게 보이지 않는다.** Desktop이 기기 신원으로 가입을
   시도했고 릴레이는 `403`을 반복 반환했는데(`/query`, `/events`), 앱은 아무 안내 없이
   조용히 재시도만 했다. `add-member`로 등록하자 즉시 진행됐다. 폐쇄형 멤버십의 UX 공백이다.
-- **Desktop은 커뮤니티를 다중 등록한다.** 기존 호스티드(`wss://jaebin.communities.buzz.xyz`)를
+- **Desktop은 커뮤니티를 다중 등록한다.** 기존 호스티드 커뮤니티(`wss://<핸들>.communities.buzz.xyz`)를
   유지한 채 로컬 릴레이가 별도 커뮤니티로 추가됐다. murmur 데스크탑은 서버 하나에 붙는다.
 - 지원 NIP: `1,2,10,11,16,17,23,25,29,33,38,42,50,56,43` + 확장 `nip-er`.
 - 릴레이 내부 포트: HTTP 3000, health 8080, Prometheus metrics 9102 (호스트 미노출).
