@@ -1,12 +1,15 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
-import { communityLabel, useActiveStore, useCommunityRegistry } from '../state/communities';
+import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { sidebarStorage, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../lib/prefs';
-import { isMacOS, MAC_TRAFFIC_LIGHT_PL, TOP_BAR_H } from '../lib/platform';
+// `isMacOS`·`MAC_TRAFFIC_LIGHT_PL` 이 여기 있었다 — 신호등 여백은 이제 레일이 진다(아래 주석).
+import { TOP_BAR_H } from '../lib/platform';
 import { LeasePanel } from './LeasePanel';
 import { Menu } from './Menu';
-import { Identity, StatusMark } from './Identity';
-import { StatusPicker } from './StatusPicker';
+// `Identity`·`StatusPicker` 가 여기 있었다 — 계정 행과 함께 `Rail.tsx` 로 갔다.
+// `StatusMark` 는 남는다: DM 목록의 상대 상태를 그리는 데 여전히 쓴다.
+import { StatusMark } from './Identity';
+import type { RailPanel } from './Rail';
 import { RunnerStatusDot } from './RunnerStatus';
 import { anyPresenceView, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from '../lib/presenceView';
 import type { SectionId } from './settings/sections';
@@ -83,9 +86,23 @@ const memberErrorText = (err: unknown, fallback: string): string => {
     : msg;
 };
 
-export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChannelDirectory, onOpenInbox, onOpenSaved, collapsed, onToggleCollapse }: {
-  onLogout: () => void;
-  onOpenSettings: (section?: SectionId) => void;
+export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpenInbox, collapsed, onToggleCollapse }: {
+  /**
+   * 레일이 고른 칸(정본 문서 `docs/desktop-rail.html` 1단계). 이 패널은 **그 칸의 묶음만**
+   * 그린다 — 문서의 해법이 "레일에서 고른 하나만 넓은 패널이 보여준다"이고, 그래야 각
+   * 목록이 세로를 다 쓴다.
+   *
+   * **옵셔널이 아니다.** 기본값(`'home'`)을 여기서 공급하면 레일을 배선하지 않은 화면도
+   * 타입을 통과하면서 DM·에이전트 목록이 **어디에서도 닿지 않는** 상태가 된다 — 이 저장소가
+   * 콜백 prop 에 기본값을 두지 않는 이유와 같다(design.md §4).
+   */
+  panel: RailPanel;
+  /*
+   * `onLogout`·`onOpenSettings` 가 여기 있었다. **레일로 갔다** — 그 둘을 쓰던 것은 맨 아래
+   * 계정 메뉴 하나뿐이고, 문서가 그 메뉴를 레일 맨 아래로 옮기라고 적었다("여기서 달라지는
+   * 것은 자리뿐이다"). `⌘,` 배선도 그 메뉴와 같은 컴포넌트에 있어야 하므로 함께 갔다:
+   * 메뉴에 적힌 단축키가 참이어야 한다는 규칙(#488 A1)이 그것을 요구한다.
+   */
   /** 워크스페이스 전체 디렉터리를 연다(#226). 채널 멤버 목록이 아니라 워크스페이스 전체다. */
   onOpenDirectory: () => void;
   /**
@@ -94,36 +111,24 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
    */
   onOpenChannelDirectory: () => void;
   onOpenInbox: () => void;
-  /**
-   * 담아 둔 메시지 패널을 연다(#219). **옵셔널이 아니다** — 기본값을 여기서 공급하면
-   * 배선을 잊은 화면에서도 버튼이 그려지고, 눌러도 아무 일이 없는 항목이 남는다(design.md §4).
+  /*
+   * `onOpenSaved` 가 여기 있었다. **레일의 북마크 칸으로 갔다** — 문서: "북마크는 레일에만
+   * 둔다. 자기 칸이 있는데 홈에도 한 줄을 세우면 같은 것으로 가는 길이 둘이 되고, 그때부터
+   * 사람은 어느 쪽이 맞는지 매번 고른다."
    */
-  onOpenSaved: () => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
-  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, channelAutoMentions, messages, savedCount, runnerStates, projectionStatus } = useActiveStore();
-  /**
-   * macOS 신호등 여백(#270). 사이드바가 펴져 있으면 브랜드 바가 창의 좌상단이라 여기가
-   * 여백을 진다. 접혀 있으면 사이드바는 폭 0 이고 `Workspace` 헤더가 좌상단이 되므로
-   * 여백도 그쪽으로 넘어간다 — 두 곳이 동시에 비우면 접었다 펼 때마다 78px 이 두 번 든다.
+  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, channelAutoMentions, messages, runnerStates, projectionStatus } = useActiveStore();
+  /*
+   * macOS 신호등 여백(#270)이 여기 있었다. **더 이상 이 바가 창의 좌상단이 아니다** —
+   * 레일이 항상 왼쪽에 서므로 좌상단은 레일이고, 여백은 레일이 진다(`Rail.tsx` 의
+   * `macTrafficLightRoom`, `CommunityRail` 이 이미 쓰던 방법과 같다).
+   *
+   * 여백을 여기에 남겨 두면 **78px 이 두 번 든다** — #270 이 접힘 여부로 판정을 갈랐던
+   * 이유가 정확히 그것이고, 이제 그 판정의 답이 늘 "레일"이 되었을 뿐이다.
    */
-  const macTrafficLightRoom = useMemo(() => isMacOS() && !collapsed, [collapsed]);
   const [pickerOpen, setPickerOpen] = useState(false);
-  /**
-   * 상태 고르기 패널이 열려 있는가(#488 A1). 계정 메뉴의 항목이 이것을 켜고, 패널 자신은
-   * 열림 여부를 모른다 — 여는 쪽이 닫는 쪽이라야 메뉴 항목의 이름과 패널의 존재가 갈리지
-   * 않는다(`StatusPicker` 주석).
-   */
-  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
-  /**
-   * 지금 내가 있는 워크스페이스의 이름. 계정 메뉴 머리에 선다 — 앱이 지금까지
-   * **어디서도 말하지 않던 사실**이다(#488 A1).
-   */
-  const workspaceLabel = useCommunityRegistry((r) => {
-    const entry = r.entries.find((e) => e.id === r.activeId);
-    return entry ? communityLabel(entry) : '';
-  });
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
   const [newChannelPrivate, setNewChannelPrivate] = useState(false);
@@ -166,28 +171,11 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
   const [editRepo, setEditRepo] = useState('');
   const [editError, setEditError] = useState<string | null>(null);
 
-  /**
-   * `⌘,` 로 설정을 연다(#488 A1). **단축키가 실제로 없었다** — 문서의 "설정에 가는 길이
-   * 정말로 하나다"는 실측과 맞았다(`Workspace` 의 전역 keydown 에 `⌘K`·`⌘[`·`⌘]`·`⌘\`
-   * 넷뿐이고 쉼표가 없다).
-   *
-   * 메뉴에 `⌘,` 를 적기로 한 이상 그 글자가 참이어야 한다 — **가르치는 정보가 거짓이면
-   * 장식보다 나쁘다.** 그래서 여는 자리(계정 메뉴)와 같은 컴포넌트에 배선을 둔다.
-   *
-   * `Workspace` 의 전역 핸들러와 같은 규칙을 따른다: 입력 요소에 포커스가 있으면 가로채지
-   * 않는다(쉼표는 사람이 실제로 타이핑하는 글자라 이 예외가 특히 중요하다).
+  /*
+   * `⌘,` 배선이 여기 있었다(#488 A1). **레일로 갔다** — 그 단축키를 가르치는 메뉴가
+   * 레일 맨 아래로 옮겨졌고, 여는 자리와 배선이 갈라지면 메뉴에 적힌 글자가 언제
+   * 거짓이 되는지 아무도 모른다.
    */
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent): void => {
-      if (!(e.metaKey || e.ctrlKey) || e.key !== ',') return;
-      const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
-      e.preventDefault();
-      onOpenSettings();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [onOpenSettings]);
 
   const [width, setWidth] = useState(() => sidebarStorage.loadWidth());
   const isDragging = useRef(false);
@@ -527,11 +515,33 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
    */
   const isHidden = (channelId: string) => !!channelPrefs[channelId]?.hiddenAt;
 
+  /**
+   * 즐겨찾기 묶음(정본 문서 「즐겨찾기가 채널 위에 선다」).
+   *
+   * 문서의 진단을 코드로 확인했다(2026-09-07): 별표는 **없던 것이 아니라 안 보이던 것**이다.
+   * `toggleChannelStar` 와 `pref.starredAt` 은 이미 있고, `sortChannelsBySection` 이 별표를
+   * "섹션 안에서 먼저"로 정렬한다(#152). 그래서 별표를 켠 채널이 **자기 섹션 안에서만**
+   * 위로 가고, 섹션이 여럿이면 즐겨찾기가 목록 곳곳에 흩어진다 — 문서가 요구한 "자주 보는
+   * 것이 늘 같은 자리에 고정된다"가 성립하지 않는다. 이 묶음이 그것을 고친다.
+   *
+   * **비어 있으면 묶음 자체를 그리지 않는다**(문서). 빈 머리글은 "여기 뭔가 있다"는 거짓
+   * 신호다. 정렬은 아래 목록과 같은 함수를 통과시킨다 — 두 곳에서 다르게 정렬하면 별표를
+   * 켜고 끌 때마다 채널이 예상 못 한 자리로 튄다.
+   */
+  const starredChannels = useMemo(() => {
+    const withPref = channels
+      .filter((ch) => ch.kind === 'standard' && !ch.archivedAt && !isHidden(ch.id) && !!channelPrefs[ch.id]?.starredAt)
+      .map((ch) => ({ channel: ch, pref: channelPrefs[ch.id] as ChannelPrefRow | null }));
+    return sortChannelsBySection(withPref);
+  }, [channels, channelPrefs]);
+
   // 섹션으로 그룹화된 채널 목록을 구한다(#157).
   // 정렬: 섹션(이름순, null 은 맨 아래) → 별표 → sortOrder → 이름.
   const groupedChannels = useMemo(() => {
     const standardChannels = channels.filter(
-      (ch) => ch.kind === 'standard' && !ch.archivedAt && !isHidden(ch.id),
+      // 별표를 켠 것은 **위 묶음에만** 선다 — 두 묶음에 동시에 나타나면 같은 채널이 두 줄이
+      // 되고, 어느 줄의 배지가 최신인지 화면이 답하지 못한다(숨김 묶음과 같은 규칙).
+      (ch) => ch.kind === 'standard' && !ch.archivedAt && !isHidden(ch.id) && !channelPrefs[ch.id]?.starredAt,
     );
     const withPref = standardChannels.map((ch) => ({ channel: ch, pref: channelPrefs[ch.id] as ChannelPrefRow | null }));
     const sorted = sortChannelsBySection(withPref);
@@ -1140,9 +1150,9 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
         />
       )}
       <div className="flex min-w-[180px] flex-1 flex-col overflow-hidden">
-        {/* 브랜드 바 = 사이드바가 펴져 있을 때 **창의 좌상단**이다(#270). macOS 신호등이
-            `titleBarStyle: "Overlay"` 로 콘텐츠 위에 뜨므로 여백을 비우는 자리도, 창을 끄는
-            손잡이가 되는 자리도 여기다.
+        {/* 브랜드 바(#270). **신호등 여백은 더 이상 여기가 아니다** — 레일이 항상 왼쪽에
+            서므로 창의 좌상단은 레일이다. 창을 끄는 손잡이는 그대로 남는다: 이 바는 여전히
+            타이틀바 높이의 빈 띠라 사람이 창을 옮길 때 잡는 자리다.
 
             `data-tauri-drag-region` 은 그 속성이 있는 요소 **자체**를 눌렀을 때만 드래그를
             시작한다 — 접기 버튼을 누르면 이벤트 대상이 버튼이라 창은 움직이지 않는다. 로고는
@@ -1151,9 +1161,7 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
         <div
           data-testid="sidebar-brand"
           data-tauri-drag-region
-          className={`flex ${TOP_BAR_H} items-center gap-2 border-b border-border pr-3 font-bold ${
-            macTrafficLightRoom ? MAC_TRAFFIC_LIGHT_PL : 'pl-3'
-          }`}
+          className={`flex ${TOP_BAR_H} items-center gap-2 border-b border-border pl-3 pr-3 font-bold`}
         >
           <span data-tauri-drag-region className="flex items-center">
             <Logo size={16} decorative />
@@ -1176,6 +1184,55 @@ export function Sidebar({ onLogout, onOpenSettings, onOpenDirectory, onOpenChann
           </button>
         </div>
       <nav className="flex-1 space-y-4 overflow-y-auto p-2">
+        {/*
+          **레일이 고른 칸의 묶음만 그린다**(정본 문서 1단계). 이 `nav` 는 여전히
+          `overflow-y-auto` 이지만, 이제 한 번에 한 목록만 담으므로 그 목록이 세로를 다 쓴다 —
+          문서의 진단이 "셋 중 하나가 길어지면 나머지 둘이 화면 밖으로 나간다"였고, 밀려나는
+          쪽이 하필 DM 과 에이전트였다.
+
+          **`hidden` 이 아니라 아예 그리지 않는다.** 폭 0 사이드바가 같은 실수를 이미 한 번
+          했다(이 파일 위쪽 `collapsed` 주석): DOM 에 남은 버튼은 탭 순서에 그대로 걸려
+          **화면에서 사라진 것을 키보드로 밟게 된다.**
+
+          Inbox 가 홈 **맨 위 한 줄**이다(문서). 배지는 여기 없다 — 레일의 홈 칸이 대신 받아
+          어느 칸에 있든 계속 보인다. 여기에도 숫자를 달면 같은 사실이 두 곳에 유지된다.
+        */}
+        {panel === 'home' && (
+        <>
+        <div>
+          {/* 디렉터리는 조회 전용이라 admin 여부를 보지 않는다 — 누가 이 워크스페이스에
+              있는지는 모두가 알아야 한다. 계정 관리는 설정 진입점(레일 맨 아래)의 몫이다.
+
+              인박스도 디렉터리와 **같은 방식으로** 연다(#185) — 사이드바 항목이 뷰를 열고,
+              뷰는 닫혀 있으면 아무것도 그리지 않는다. */}
+          <button className={`${row(false)} text-fg-muted`} onClick={onOpenInbox}>
+            Inbox
+          </button>
+          <button className={`${row(false)} text-fg-muted`} onClick={onOpenDirectory}>
+            Directory
+          </button>
+          {/*
+            `Saved` 한 줄이 여기 있었다. **레일의 북마크 칸으로 갔다** — 문서: "북마크는
+            레일에만 둔다. 자기 칸이 있는데 홈에도 한 줄을 세우면 같은 것으로 가는 길이
+            둘이 되고, 그때부터 사람은 어느 쪽이 맞는지 매번 고른다."
+
+            `+ Add or edit agents` 도 여기 있었다(#488 A2에서 뺐다) — 이 묶음은 *이동*인데
+            그 한 줄만 *설정*이었다. 설정으로 가는 길은 레일 맨 아래 계정 메뉴가 갖는다.
+          */}
+        </div>
+        {/*
+          즐겨찾기가 **채널 위**에 선다(문서). 채널이 서른이면 매일 보는 셋과 반년째 안 본
+          스물일곱이 같은 무게로 줄 서 있고, 이 묶음이 그것을 가른다 — 그 아래는 "가끔 뒤지는
+          서랍"이 되어 길어지는 것이 더 이상 문제가 아니다. 비어 있으면 그리지 않는다.
+        */}
+        {starredChannels.length > 0 && (
+          <div>
+            <div className="flex items-center gap-1 px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
+              Favorites
+            </div>
+            {starredChannels.map((item) => channelRow(item.channel))}
+          </div>
+        )}
         <div>
           <div className="flex items-center gap-1 px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
             Channels
@@ -1341,39 +1398,15 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
             {hiddenOpen && hiddenChannels.map(channelRow)}
           </div>
         )}
-        <div>
-          {/* 디렉터리는 조회 전용이라 admin 여부를 보지 않는다 — 누가 이 워크스페이스에
-              있는지는 모두가 알아야 한다. 계정 관리는 아래 설정 진입점의 몫이다. */}
-          {/* 인박스도 디렉터리와 **같은 방식으로** 연다(#185) — 사이드바 항목이 뷰를
-              열고, 뷰는 닫혀 있으면 아무것도 그리지 않는다. 화면마다 여는 방식이 다르면
-              세 번째 화면을 만들 때 어느 쪽을 따를지 알 수 없다. */}
-          <button className={`${row(false)} text-fg-muted`} onClick={onOpenInbox}>
-            Inbox
-          </button>
-          {/* #219: 담아 둔 메시지. 배지의 숫자는 **open 개수**다 — 완료로 옮긴 것까지 세면
-              다 처리한 뒤에도 숫자가 남아 할 일이 있다고 거짓을 말한다. */}
-          <button className={`${row(false)} text-fg-muted`} onClick={onOpenSaved}>
-            Saved
-            {savedCount > 0 && (
-              <span
-                aria-label={`담아 둔 메시지 ${savedCount}개`}
-                className="ml-auto rounded-full bg-accent px-1.5 text-[10px] font-bold text-fg-on-strong"
-              >
-                {savedCount}
-              </span>
-            )}
-          </button>
-          <button className={`${row(false)} text-fg-muted`} onClick={onOpenDirectory}>
-            Directory
-          </button>
-          {/*
-            `+ Add or edit agents` 가 여기 있었다(#488 A2). **뺐다** — 이 묶음은 *이동*
-            (Inbox · Saved · Directory)인데 그 한 줄만 *설정*이라, 이동 사이에 설정이 끼어
-            있었다. 설정으로 가는 길은 아래 계정 메뉴가 갖는다(A1) — 그 메뉴에 `⌘,` 까지
-            함께 서면서 길이 둘이 됐고, 그래서 이 줄이 없어져도 잃는 것이 없다.
-            에이전트를 더하는 `+` 는 설정 › 에이전트의 `+` 카드가 이미 갖고 있다.
-          */}
-        </div>
+        </>
+        )}
+        {/*
+          DM 묶음 — **지금 것을 그대로 옮겼다.** `DIRECT MESSAGES` 와 `AGENTS` 를 최근순
+          한 목록으로 합치는 것은 문서의 **2단계**이고, 이번 작업의 범위가 아니다. 문서가
+          1단계를 "내용은 지금 사이드바의 묶음을 그대로 옮기기만 한다"로 못 박았고, 그래서
+          되돌리는 비용도 작다("바뀌는 것은 껍데기다").
+        */}
+        {panel === 'dm' && (
         <div>
           <div className="flex items-center px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
             Direct messages
@@ -1419,17 +1452,32 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
             ))
           )}
         </div>
+        )}
         {/* #368: 에이전트별 러너 상태. **DM 이 없어도** 이 섹션에서 러너 실패 사유를 읽을
             수 있다 — 이슈 이전에는 사유가 닿는 유일한 사이드바 자리가 DM 목록의 점이었고,
             그 점은 DM 이 먼저 있어야 보였다(새로 설치한 사람에게는 DM 이 없다).
-            이미 DM 이 있는 에이전트는 DMs 섹션에 `RunnerStatusDot` 이 함께 서므로 여기서
-            뺀다 — 같은 에이전트가 두 줄로 서면 어느 줄이 최신인지 알 수 없다.
             실패한 러너는 사유를 **글자로** 펼친다: 점의 `title` 만으로는 마우스를 올려 본
-            사람에게만 보이고, 이 결함의 본질이 "사유가 사람이 안 보는 곳에만 있다" 였다. */}
-        {(() => {
+            사람에게만 보이고, 이 결함의 본질이 "사유가 사람이 안 보는 곳에만 있다" 였다.
+
+            **DM 이 있는 에이전트를 여기서 빼는 규칙을 그대로 뒀다.** 그 규칙의 원래 이유는
+            "같은 에이전트가 두 줄로 서면 어느 줄이 최신인지 알 수 없다"였고, 두 묶음이 한
+            열에 함께 서 있을 때의 이야기다 — 이제 칸이 갈라져 두 줄이 한 화면에 서는 일이
+            없으니 근거는 사라졌다. 그래도 지금 고치지 않는다: 이 패널을 **얼굴 그리드**로
+            바꾸면서 "아직 DM 이 없는 에이전트도 여기서는 자리를 갖는다"를 함께 세우는 것이
+            문서의 **3단계**이고, 여기서 필터만 먼저 떼면 목록이 늘어난 채로 3단계를 기다리게
+            된다. 1단계는 껍데기만 바꾼다. */}
+        {panel === 'agents' && (() => {
           const dmAgentIds = new Set(dms.map((dm) => dm.memberIds.find((id) => accounts[id]?.kind === 'agent')).filter(Boolean) as string[]);
           const agents = Object.values(accounts).filter((a) => a.kind === 'agent' && !dmAgentIds.has(a.id));
-          if (agents.length === 0) return null;
+          if (agents.length === 0) {
+            // 칸을 눌러 온 사람에게 **빈 화면을 주지 않는다** — 한 번 더 누른 대가가 아무것도
+            // 아니면 레일이 손해만 남긴다(문서 「치르는 값 · 한 번 더 누름」).
+            return (
+              <p className="px-2 text-[11px] text-fg-subtle">
+                러너 상태를 따로 볼 에이전트가 없다 — DM 이 있는 에이전트는 DM 칸에 선다.
+              </p>
+            );
+          }
           return (
             <>
               <div className="flex items-center px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
@@ -1467,92 +1515,16 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
         <LeasePanel />
         </nav>
         {/*
-          내 자리(#488 A1). 계정 행 자체가 진입점이라는 결정(#113)은 그대로다 — 바뀐 것은
-          그 행이 **무엇으로 보이는가**이고, 문서의 진단이 "얼굴이 없고 눌리는 줄인지 알 수
-          없다"였다.
+          **내 자리가 여기 있었다**(#488 A1). 레일 맨 아래로 갔다 — 정본 문서
+          `docs/desktop-rail.html` 「레일 맨 아래 · 나」: *"내 얼굴이 레일 맨 아래로 내려온다.
+          … 커뮤니티와 나는 패널이 무엇을 보여주든 자리가 안 변한다 — 레일에서 그 둘만
+          고정이다."* 그리고 *"여기서 달라지는 것은 자리뿐이다 — 사이드바 맨 아래에서
+          레일 맨 아래로."*
 
-          - 아바타 24px + 이름. **`@` 를 뗀다** — 앱 어디서도 내 핸들을 `@` 로 부르지 않는다.
-            `@` 는 남을 지목할 때의 표기다(멘션·DM 후보 목록).
-          - 행 높이 44px, **행 전체가 하나의 트리거**다. 아바타도 이 버튼 안이라 눌러도 같은
-            메뉴가 열린다 — 문서가 요구한 예외다("다른 곳에서는 아바타가 프로필을 열지만
-            여기서만 예외다. 내 프로필은 메뉴의 첫 항목이다"). 같은 줄의 왼쪽·오른쪽이 서로
-            다른 곳으로 가면 어느 쪽을 눌렀는지 매번 신경 써야 한다.
-          - **미니 톱니도 `⌄` 화살표도 붙이지 않는다.** 문서가 앞 그림의 12px 톱니를 스스로
-            물렀다 — "행 전체가 버튼"이라 해 놓고 미니 톱니를 또 그리면 앞뒤가 안 맞는다.
-            눌린다는 신호는 hover 면과 커서로 충분하고, 그게 위의 채널 줄이 이미 쓰는 방식이다.
-          - **`대화 가능` 이 행에서 사라졌다.** 이 앱의 네 번째 상태 어휘였고, `StatusMark`
-            가 이미 세워 둔 "기본값에는 표시를 붙이지 않는다"는 규칙에도 어긋났다. 상태를
-            고르는 일은 메뉴 안으로 옮겼다 — 행에 붙어 있을 때는 **바꿀 수 없는 글자**였는데
-            메뉴로 옮기니 실제로 바꿀 수 있는 것이 된다.
+          그래서 계정 행의 설계(#113 의 "행 자체가 진입점" · 톱니 없음 · 상태를 메뉴 안에서
+          고른다)는 `Rail.tsx` 로 **그대로** 옮겼고, 이 자리에는 아무것도 남기지 않는다.
+          두 곳에 얼굴을 세우면 "지금 이게 누구인가"가 두 곳에 유지된다.
         */}
-        <div className="relative border-t border-border p-1 text-xs">
-          <Menu
-            className="left-1 right-1"
-            /*
-              메뉴 머리가 "나"를 말한다 — 얼굴 · 이름 · `@handle` · **어느 워크스페이스인지**.
-              마지막 것이 새로 생긴 사실이다: 지금까지 앱은 내가 어느 워크스페이스에 있는지
-              어디서도 말하지 않았다(타이틀바의 `murmur` 는 앱 이름이지 워크스페이스가 아니다).
-              값은 `communityLabel()` 하나에서 낸다 — 커뮤니티 레일·설정이 이미 그것을 쓴다.
-
-              여기서는 `@` 를 **붙인다**. 행에서 뗀 것과 모순이 아니다: 행의 것은 표시 이름이고
-              머리의 것은 "남들이 나를 부를 때 쓰는 문자열"이라, 그 자리에서는 `@` 가 값의 일부다.
-            */
-            header={(
-              <div className="flex items-center gap-2">
-                <Identity account={me ?? undefined} variant="avatar" className="h-8 w-8 shrink-0" />
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-fg">{me?.handle}</div>
-                  <div className="truncate text-[11px] text-fg-subtle">
-                    @{me?.handle} · {workspaceLabel}
-                  </div>
-                </div>
-              </div>
-            )}
-            renderTrigger={(props) => (
-              <button
-                {...props}
-                data-testid="me-row"
-                className="flex h-11 w-full items-center gap-2 rounded px-2 text-left hover:bg-surface-raised"
-              >
-                <Identity account={me ?? undefined} variant="avatar" className="h-6 w-6 shrink-0" />
-                <span className="truncate font-medium text-fg">{me?.handle}</span>
-                {/*
-                  자리를 비웠을 때만 글자가 선다. `StatusMark` 가 `available` 에 `null` 을
-                  주므로 정상 상태에서는 아무것도 그려지지 않는다 — 이 한 줄이 "정상 상태에는
-                  표시를 붙이지 않는다"와 "자리를 비운 동안에는 행에 글자가 선다"를 동시에
-                  만족한다. 판정을 여기서 복제하지 않는 것이 요점이다.
-                */}
-                <StatusMark account={me ?? undefined} className="ml-auto shrink-0" />
-              </button>
-            )}
-            items={[
-              /*
-                내 프로필이 첫 항목이다. 설정의 `profile` 절로 보낸다 — 남의 프로필을 여는
-                `Profile` 패널은 읽기 화면이고, 내 것은 **고치는 화면**이라 답하는 물음이
-                다르다(이름·사진을 바꾸는 자리가 거기다).
-              */
-              { label: '내 프로필', onSelect: () => onOpenSettings('profile') },
-              /*
-                상태는 여기서 고른다 — 행에 붙어 있던 라벨이 동작이 된 자리다. `⌘,` 는
-                `Settings` 에만 적는다: 메뉴는 단축키를 가르치는 자리이고, 없는 단축키를
-                적으면 가르치는 것이 아니라 속이는 것이다.
-              */
-              { label: '상태 바꾸기', onSelect: () => setStatusMenuOpen(true) },
-              { label: 'Settings', shortcut: '⌘,', onSelect: () => onOpenSettings() },
-              { label: 'Sign out', onSelect: () => { getController().logout(); onLogout(); } },
-            ]}
-          />
-          {/*
-            상태 고르기는 메뉴 항목이 **여는 것**이지 메뉴 안에 인라인으로 사는 것이 아니다 —
-            문구 입력과 저장·지우기 버튼이 있어 한 줄짜리 `MenuItem` 에 들어가지 않는다.
-            열려 있는 동안에만 그린다: 없는 것은 자리를 차지하지 않는다.
-          */}
-          {statusMenuOpen && (
-            <div className="px-2 pb-1">
-              <StatusPicker onDone={() => setStatusMenuOpen(false)} />
-            </div>
-          )}
-        </div>
       </div>
     </aside>
   );

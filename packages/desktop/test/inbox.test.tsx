@@ -228,11 +228,9 @@ describe('Inbox (#185)', () => {
     useAppStore.getState().set({ me: acc('u1', 'alice') });
     const onOpenInbox = vi.fn();
     render(
-      <Sidebar
+      <Sidebar panel="home"
         onOpenDirectory={vi.fn()} onOpenChannelDirectory={vi.fn()}
-        onOpenInbox={onOpenInbox} onOpenSaved={() => {}}
-        onLogout={vi.fn()}
-        onOpenSettings={vi.fn()}
+        onOpenInbox={onOpenInbox}
         collapsed={false}
         onToggleCollapse={vi.fn()}
       />,
