@@ -61,10 +61,26 @@ describe('LeasePanel', () => {
   });
 });
 
+/**
+ * **문서 4 로 좁혀졌다**(실측 2026-09-07). 고장 자체는 화면 위쪽 띠가 말하고, 이 자리는
+ * **남은 리스가 있을 때만** 한 줄을 남긴다 — 문서 4: *"설정 오류는 띠로 나가고, 그
+ * 구역은 그냥 없어진다."*
+ *
+ * 사용자가 앱에서 본 것이 근거다: 문장을 갈라 놨어도 띠와 왼쪽 줄이 같은 주의색으로
+ * 나란히 서면 눈에는 **같은 경고 둘**이다.
+ *
+ * **이 묶음이 지키던 것은 그대로다.** ① 네 사정을 뭉개지 않는다 ② 고장 때 남은 리스를
+ * 말없이 '활성 작업'으로 보여 주지 않는다. 그래서 아래 케이스들은 **리스를 함께 심어**
+ * 그 조건에서 사정이 여전히 구별되는지 묻는다 — 리스가 없으면 주장할 데이터가 없으니
+ * 그 줄도 필요 없고, 그때가 중복이었다.
+ */
+const LEASE = [{ repo: 'org/repo', path: 'src/a.ts', actorKeyId: 'wk1', expiresAt: 'x' }];
+
 describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
   it('unconfigured 는 설정하라고 말하고 AVCS_BASE_URL 을 알려 준다', () => {
     useAppStore.getState().set({
       projectionStatus: status({ state: 'unconfigured', configured: false, repo: null, lastPolledAt: null }),
+      leases: LEASE,
     });
     render(<LeasePanel />);
     expect(screen.getByTestId('projection-unconfigured')).toBeTruthy();
@@ -87,6 +103,7 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
       projectionStatus: status({
         state: 'stalled', lastPolledAt: Date.now() - 6 * 60 * 1000, lastError: 'connection refused',
       }),
+      leases: LEASE,
     });
     render(<LeasePanel />);
     // 멈춘 시점은 이 줄도 말한다 — 목록이 **언제부터** 낡았는지가 곧 그 목록의 신뢰도다.
@@ -99,6 +116,7 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
   it('stalled 인데 에러가 없으면 에러 줄이 없다', () => {
     useAppStore.getState().set({
       projectionStatus: status({ state: 'stalled', lastPolledAt: Date.now() - 6 * 60 * 1000, lastError: null }),
+      leases: LEASE,
     });
     render(<LeasePanel />);
     expect(screen.getByTestId('projection-stalled').textContent).toContain('멈춰');
@@ -109,6 +127,7 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
   it('폴링 기록이 없으면 시각을 지어내지 않는다', () => {
     useAppStore.getState().set({
       projectionStatus: status({ state: 'stalled', lastPolledAt: null }),
+      leases: LEASE,
     });
     render(<LeasePanel />);
     const text = screen.getByTestId('projection-stalled').textContent ?? '';
@@ -124,21 +143,25 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
   it('unconfigured · stalled · ok+빈 목록 이 서로 다른 문구로 나온다', () => {
     useAppStore.getState().set({
       projectionStatus: status({ state: 'unconfigured', configured: false, lastPolledAt: null }),
+      leases: LEASE,
     });
     const unconfigured = panelText();
 
     useAppStore.getState().set({
       projectionStatus: status({ state: 'stalled', lastPolledAt: Date.now() - 6 * 60 * 1000 }),
+      leases: LEASE,
     });
     const stalled = panelText();
 
-    useAppStore.getState().set({ projectionStatus: status({ state: 'ok' }) });
+    // `ok` 는 리스가 있어도 경고 줄이 없다 — 그것이 이 셋을 가르는 세 번째 모습이다.
+    useAppStore.getState().set({ projectionStatus: status({ state: 'ok' }), leases: LEASE });
     const okEmpty = panelText();
 
     // 셋이 모두 서로 달라야 한다. 두 개만 비교하면 나머지 한 쌍이 같아도 통과한다.
     expect(new Set([unconfigured, stalled, okEmpty]).size).toBe(3);
-    // 그리고 문구가 실제로 비어 있지 않다 — 셋 다 빈 문자열이면 위 단언이 무너진다.
-    for (const t of [unconfigured, stalled, okEmpty]) expect(t.length).toBeGreaterThan(20);
+    // 고장 둘은 실제로 말을 한다(빈 문자열이면 위 단언이 무너진다). `ok` 는 경고 줄이
+    // 없는 것이 정상이라 길이를 묻지 않는다 — 그 침묵이 세 번째 모습이다.
+    for (const t of [unconfigured, stalled]) expect(t.length).toBeGreaterThan(20);
   });
 
   /**
@@ -147,7 +170,7 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
    * 투영이 끊긴 것을 화면이 평소와 똑같이 그려 아무도 모른다.
    */
   it('상태를 못 읽었으면 그렇게 말한다 — "No active work" 가 아니다', () => {
-    useAppStore.getState().set({ projectionStatusError: 'Failed to fetch' });
+    useAppStore.getState().set({ projectionStatusError: 'Failed to fetch', leases: LEASE });
     render(<LeasePanel />);
     expect(screen.getByTestId('projection-unreadable')).toBeTruthy();
     expect(screen.getByTestId('projection-unreadable').textContent).toContain('못 읽어');
@@ -167,6 +190,7 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
     useAppStore.getState().set({
       projectionStatus: status({ state: 'ok' }),
       projectionStatusError: 'Failed to fetch',
+      leases: LEASE,
     });
     render(<LeasePanel />);
     expect(screen.getByTestId('projection-unreadable')).toBeTruthy();
@@ -191,5 +215,51 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
      */
     expect(screen.getByTestId('projection-stalled').textContent).toContain('멈춰');
     expect(screen.getByText(/src\/a\.ts/)).toBeTruthy();
+  });
+});
+
+/**
+ * **빈 목록일 때 띠와 나란히 서지 않는다**(문서 4 · 실측 2026-09-07).
+ *
+ * 사용자가 앱에서 발견했다: 화면 위쪽 띠("투영이 설정되지 않았다")와 사이드바 줄
+ * ("투영이 꺼져 있어 이 목록은 채워지지 않는다")이 **같은 주의색으로 나란히** 서 있었다.
+ * 문장을 갈라 놨어도 눈에는 같은 경고 둘이다.
+ *
+ * **이 회귀선이 없어서 그 상태가 통과했다.** 기존 케이스들은 배너가 *있는지*만 물었고
+ * "리스가 없을 때는 없어야 한다"를 아무도 묻지 않았다 — 조건을 되돌려도 25개가 전부
+ * 초록이었다(실측). 그래서 여기서 그 자리를 못 박는다.
+ *
+ * 문서 4: *"설정 오류는 띠로 나가고, 그 구역은 그냥 없어진다."*
+ */
+describe('빈 목록에서는 고장을 되풀이하지 않는다', () => {
+  it('리스가 없으면 띠에 맡기고 아무 줄도 세우지 않는다', () => {
+    useAppStore.getState().set({
+      projectionStatus: status({ state: 'unconfigured', configured: false, lastPolledAt: null }),
+      leases: [],
+    });
+    render(<LeasePanel />);
+    expect(screen.queryByTestId('projection-unconfigured')).toBeNull();
+  });
+
+  /**
+   * **남은 리스가 있으면 예외다.** 이 파일의 존재 이유가 그것이다: 멈춘 동안 남아 있던
+   * 리스를 말없이 '활성 작업'으로 보여 주면 화면이 오래된 사실을 지금 사실로 주장한다.
+   * 띠는 "고장났다"만 말하고 **이 목록이 낡았다**는 말은 하지 않는다.
+   */
+  it('리스가 남아 있으면 그 목록이 낡았다는 것을 말한다', () => {
+    useAppStore.getState().set({
+      projectionStatus: status({ state: 'stalled', lastPolledAt: Date.now() - 6 * 60 * 1000 }),
+      leases: LEASE,
+    });
+    render(<LeasePanel />);
+    expect(screen.getByTestId('projection-stalled')).toBeTruthy();
+    expect(screen.getByText(/src\/a\.ts/)).toBeTruthy();
+  });
+
+  /** 띠가 세우지 않는 사정('확인하는 중')은 리스가 없어도 여기가 **유일한 자리**다. */
+  it("'확인하는 중'은 리스가 없어도 말한다", () => {
+    useAppStore.getState().set({ projectionStatus: null, projectionStatusError: null, leases: [] });
+    render(<LeasePanel />);
+    expect(screen.getByTestId('projection-unknown').textContent).toContain('확인하는 중');
   });
 });
