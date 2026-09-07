@@ -21,7 +21,7 @@
 // **목록의 진실은 디스크다.** 별도 설정 파일을 두지 않는다. 파일을 두면 파일과 디스크가
 // 갈리는 날이 오고, 그날 러너는 없는 계정을 가리킨다(`ensureCodexHome` 이 `auth.json` 의
 // 존재로 판정하는 것과 같은 규율).
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -69,10 +69,22 @@ export async function loadClaudeAccounts(
   // 사전순으로 고정한다 — 순서가 예측 불가능하면 로그를 읽어도 다음 계정을 알 수 없다.
   // 문법에 안 맞는 이름은 여기서 걸러 낸다: `.DS_Store` 나 `Lime Backup` 같은 것을 계정으로
   // 세면 러너가 없는 로그인을 가리키고, 계정 축이 한 칸 헛돈다.
-  const found = entries
-    .filter((e) => e.isDirectory() && CLAUDE_ACCOUNT_PATTERN.test(e.name))
+  //
+  // **`Dirent.isDirectory()` 로 재지 않는다 — 심볼릭 링크에 대해 거짓이다**(실물 검증에서
+  // 드러났다: `isDirectory=false, isSymbolicLink=true`). 디렉터리를 가리키는 링크를 계정으로
+  // 쓰는 것은 정당한 구성이다 — 이미 로그인된 config 디렉터리를 이름 붙여 풀에 넣는 방법이고,
+  // `codexHome.ts` 도 auth.json 을 링크로 재사용한다. 그래서 `stat`(링크를 따라간다)으로
+  // 다시 잰다. 끊어진 링크는 `stat` 이 던져 자동으로 걸러진다 — 가리키는 곳이 없으면 claude 가
+  // 그 경로에 새 설정을 만들어 미로그인으로 뜨고, 계정 축이 한 칸 헛돈다.
+  const named = entries
+    .filter((e) => CLAUDE_ACCOUNT_PATTERN.test(e.name))
     .map((e) => e.name)
     .sort();
+  const found: string[] = [];
+  for (const name of named) {
+    const st = await stat(join(root, name)).catch(() => null);
+    if (st?.isDirectory()) found.push(name);
+  }
 
   const order = (opts.order ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   if (!order.length) return found.map((name) => ({ name, configDir: join(root, name) }));
