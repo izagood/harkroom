@@ -135,9 +135,10 @@ describe('projection', () => {
    *
    * **멱등성의 근거가 바뀌었다.** 예전에는 `message_avcs_oid` 유니크 인덱스(투영 전용)가
    * 같은 oid 의 메시지를 두 번 넣지 못하게 막았다. 그 인덱스는 040 에서 사라졌고, 이제
-   * 근거는 `active_lease` 의 upsert 다 — `(repo, path, actor_key_id)` 가 기본키라서 같은
-   * 구간을 몇 번 접어도 결과가 같다. 즉 멱등성은 **인덱스가 막아서**가 아니라 **연산이
-   * 멱등해서** 성립한다. 인덱스 없이도 성립한다는 것을 확인하는 것이 이 테스트다.
+   * 근거는 `active_lease` 의 upsert 다 — `(repo, avcs_base_url, path, actor_key_id)` 가
+   * 기본키라서(042) 같은 구간을 몇 번 접어도 결과가 같다. 즉 멱등성은 **인덱스가 막아서**가
+   * 아니라 **연산이 멱등해서** 성립한다. 인덱스 없이도 성립한다는 것을 확인하는 것이 이
+   * 테스트다.
    */
   it('is idempotent: rerun from cursor 0 does not duplicate', async () => {
     fake.push(REPO, leaseEntry('l-idem', 'src/idem.ts'));

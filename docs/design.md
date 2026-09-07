@@ -199,9 +199,9 @@ avcs 로그를 처음부터 접어야 알 수 있는 **상태값**이고, 그 �
 커서 없이는 재기동마다 로그를 처음부터 다시 접는다.
 
 - **멱등성**: at-least-once + dedupe. 근거는 **`active_lease` upsert 가 멱등한 것**이다
-  (`on conflict (repo, path, actor_key_id) do update`), 커서 전진은 그 upsert 와 같은
-  트랜잭션. 예전 근거였던 시스템 메시지의 `(repo, oid)` UNIQUE 는 그 인덱스와 함께
-  사라졌다 — 메시지를 만들지 않으면 막을 중복이 없다.
+  (`on conflict (repo, avcs_base_url, path, actor_key_id) do update`, 042), 커서 전진은
+  그 upsert 와 같은 트랜잭션. 예전 근거였던 시스템 메시지의 `(repo, oid)` UNIQUE 는 그
+  인덱스와 함께 사라졌다 — 메시지를 만들지 않으면 막을 중복이 없다.
 - **커서는 투영할 게 없어도 전진한다**: 이 성질은 이제 예외가 아니라 통상이다. lease 가
   아닌 객체가 대다수이므로 `intent`·`operation`·`decision` 이 가득한 배치도 남기는 것
   없이 지나간다. `next === since` 여야 진짜 새 게 없는 것이다.
