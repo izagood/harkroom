@@ -99,6 +99,53 @@ The CI pipeline (see `.github/workflows/ci.yml`) runs:
 
 Both checks must pass for PRs to be merged.
 
+## Keychain prompts on every dev rebuild
+
+If macOS asks for your login-keychain password every time you rebuild the desktop app —
+once per runner, so six agents means six dialogs — the cause is the signature, not a
+missing one.
+
+On Apple silicon the linker ad-hoc signs the binary automatically, and **an ad-hoc
+signature's designated requirement is the content hash itself**:
+
+```
+$ codesign -d --requirements - src-tauri/target/debug/murmur-desktop
+designated => cdhash H"af98102fc08f1de24bfa18d2ddaf994d0a953b65"
+```
+
+Keychain ACLs are matched against that requirement, so a rebuild changes the hash and
+macOS treats it as a different app. Pinning an ad-hoc signature is impossible — the hash
+*is* the identity.
+
+Signing with a named certificate removes the hash from the requirement:
+
+```
+designated => identifier "app.murmur.desktop.dev" and anchor apple generic
+              and certificate leaf[subject.OU] = <TEAMID>
+```
+
+Two builds then match character for character, and one approval holds.
+
+`packages/desktop/scripts/sign-dev.sh` already does this — it runs as a cargo `runner`
+hook before the binary starts, and it **exits quietly when the identity is absent** so
+that machines without a certificate keep working exactly as before. It defaults to an
+identity named `murmur-dev`, which you would create yourself in Keychain Access; the
+private key cannot live in the repository.
+
+**You do not need to create one if you already have an Apple developer certificate.** Any
+codesigning identity produces a hash-free requirement. Point the script at it with the
+same environment variable the release signer uses:
+
+```sh
+security find-identity -v -p codesigning   # pick a name from the list
+export MURMUR_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+pnpm -C packages/desktop tauri dev
+```
+
+The first launch after switching signatures still prompts once, because the stored ACL
+holds the *old* requirement. Answer **"Always Allow"** (not "Allow") so the new
+requirement is recorded — subsequent rebuilds stay silent.
+
 ## Running Tests
 
 Tests require Docker because the server tests use testcontainers to spin up a PostgreSQL container:
