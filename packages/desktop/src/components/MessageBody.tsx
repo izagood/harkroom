@@ -1,9 +1,10 @@
-import { useMemo } from 'react';
+import { Fragment, useMemo, type ReactNode } from 'react';
 import { useActiveStore } from '../state/communities';
 import { splitMentions } from '../lib/mention';
 import { splitLinks, type LinkTarget, type BodyPart } from '../lib/link';
 import { extractPreviewUrls } from '@murmur/shared';
 import { splitCode } from '../lib/code';
+import { parseBlocks, type Block, type Emphasis, type Inline } from '../lib/markdown';
 import { shouldCollapse, COLLAPSED_MAX_PX } from '../lib/collapse';
 import { getExternalOpener } from '../lib/openExternal';
 import { getController } from '../state/controller';
@@ -19,6 +20,12 @@ import type { SectionId } from './settings/sections';
  *
  * 그 앞에 코드가 온다(#216). 코드가 먼저 나뉘므로 코드 안의 URL 과 @handle 은 링크도
  * 멘션도 되지 않는다 — 별도 예외 처리가 아니라 순서에서 따라오는 결과다.
+ *
+ * 코드와 멘션 사이에 마크다운 구조가 들어간다(#216). 제목·목록·인용·강조는 `lib/markdown`
+ * 이 **구조체**로 읽어 오고 여기서는 그것을 엘리먼트로만 바꾼다 — 이 파일에
+ * `dangerouslySetInnerHTML` 이 없는 것이 계약이다. 마크다운이 코드 뒤·멘션 앞에 오는
+ * 덕분에 "코드 블록 안의 `**` 는 굵어지지 않고, 굵은 글씨 안의 `@handle` 은 멘션으로
+ * 남는다" 가 예외 처리 없이 따라온다.
  *
  * 다 그린 결과를 마지막에 접는다(#217). 접기는 **그리는 방식을 바꾸지 않는다** — 위의
  * 인식 결과를 그대로 담은 뒤 담긴 상자의 높이만 자르므로, 접힌 상태에서도 코드는 코드로,
@@ -82,7 +89,8 @@ export function MessageBody({
   const toggleExpanded = useActiveStore((s) => s.toggleExpanded);
   const collapsed = collapsible && !expanded;
 
-  const segments = useMemo(() => splitCode(body), [body]);
+  // 코드 → 마크다운 구조 순서로 읽는다(#216). 이 순서가 곧 규칙이다 — `lib/markdown` 참고.
+  const blocks = useMemo(() => parseBlocks(splitCode(body)), [body]);
   const handles = useMemo(() => Object.values(accounts).map((a) => a.handle), [accounts]);
   const accountsMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -112,26 +120,30 @@ export function MessageBody({
     [accounts],
   );
 
+  /**
+   * 누를 수 있는 링크. 맨 URL(#214)과 `[글자](주소)`(#216)가 **같은 여기 하나**를 지난다 —
+   * 이동 경로가 신뢰 경계라서(외부 셸로 나가는 자리다) 두 벌로 두면 한쪽만 고쳐진다.
+   */
+  const anchor = (label: string, href: string, target: LinkTarget, key: string) => (
+    <a
+      key={key}
+      // href 를 두는 이유: 마우스를 올리면 어디로 가는지 보이고 키보드로도 잡힌다.
+      // 실제 이동은 우리가 한다 — 웹뷰가 스스로 따라가면 앱이 그 페이지로 바뀐다.
+      href={href}
+      rel="noreferrer noopener"
+      data-testid="body-link"
+      data-link-kind={target.kind}
+      className="text-accent underline underline-offset-2 hover:text-accent-hover"
+      onClick={(e) => { e.preventDefault(); void followLink(target); }}
+    >
+      {label}
+    </a>
+  );
+
   /** 코드가 아닌 구간만 멘션·링크 조각으로 나눠 그린다. */
   const renderPart = (p: BodyPart, key: string) => {
     if (p.kind === 'text') return <span key={key}>{p.text}</span>;
-    if (p.kind === 'link') {
-      return (
-        <a
-          key={key}
-          // href 를 두는 이유: 마우스를 올리면 어디로 가는지 보이고 키보드로도 잡힌다.
-          // 실제 이동은 우리가 한다 — 웹뷰가 스스로 따라가면 앱이 그 페이지로 바뀐다.
-          href={p.text}
-          rel="noreferrer noopener"
-          data-testid="body-link"
-          data-link-kind={p.target.kind}
-          className="text-accent underline underline-offset-2 hover:text-accent-hover"
-          onClick={(e) => { e.preventDefault(); void followLink(p.target); }}
-        >
-          {p.text}
-        </a>
-      );
-    }
+    if (p.kind === 'link') return anchor(p.text, p.text, p.target, key);
     const isSelf = p.handle === myHandle;
     const isGroup = (p as { isGroup?: boolean }).isGroup === true;
     const account = byHandle.get(p.handle);
@@ -213,47 +225,141 @@ export function MessageBody({
     );
   };
 
-  const bodyContent = (
-    <div className="whitespace-pre-wrap break-words" data-testid="message-body">
-      {segments.map((seg, i) => {
-        if (seg.kind === 'inlineCode') {
-          return (
-            <code
-              key={i}
-              data-testid="inline-code"
-              className="rounded bg-surface-sunken px-1 py-0.5 font-mono text-[0.9em] text-fg"
-            >
-              {seg.code}
-            </code>
-          );
-        }
-        if (seg.kind === 'codeBlock') {
-          return (
-            // 코드는 접히지 않는다 — 줄바꿈된 명령줄은 그대로 복사해도 실행되지 않는다.
-            // 대신 가로로 스크롤한다.
-            <div key={i} className="my-1 overflow-hidden rounded border border-border">
-              {seg.lang && (
-                // 언어는 **표시만** 한다. 문법 강조기를 들이면 의존성과 공격 표면이 같이 커진다.
-                <div
-                  data-testid="code-lang"
-                  className="border-b border-border bg-surface-sunken px-2 py-0.5 font-mono text-[0.75em] text-fg-subtle"
-                >
-                  {seg.lang}
-                </div>
-              )}
-              <pre
-                data-testid="code-block"
-                data-lang={seg.lang ?? ''}
-                className="overflow-x-auto bg-surface px-2 py-1 font-mono text-[0.9em] text-fg"
+  /**
+   * 강조를 겉에 씌운다. `<strong>`·`<em>`·`<s>` 는 **의미가 있는 태그**다 — 굵기만 필요하면
+   * `font-bold` 로 끝나지만 그러면 스크린리더에 아무것도 전달되지 않는다. 세 축이 독립이라
+   * 중첩(`**굵고 _기울고_**`)이 그대로 태그 중첩으로 나온다.
+   */
+  const withEmphasis = (node: ReactNode, e: Emphasis, key: string): ReactNode => {
+    let out = node;
+    if (e.strike) out = <s data-testid="md-strike">{out}</s>;
+    if (e.em) out = <em data-testid="md-em">{out}</em>;
+    if (e.strong) out = <strong className="font-semibold" data-testid="md-strong">{out}</strong>;
+    return <Fragment key={key}>{out}</Fragment>;
+  };
+
+  /** 인라인 코드. 코드 블록과 같은 배경을 쓴다 — "이건 그대로 복사할 것" 이라는 같은 신호다. */
+  const codeSpan = (code: string, key: string) => (
+    <code
+      key={key}
+      data-testid="inline-code"
+      className="rounded bg-surface-sunken px-1 py-0.5 font-mono text-[0.9em] text-fg"
+    >
+      {code}
+    </code>
+  );
+
+  /**
+   * 마크다운이 읽은 조각 하나. **글자 조각만** 멘션·링크 인식을 한 번 더 지난다 —
+   * 코드와 `[글자](주소)` 는 이미 확정된 것이라 다시 나누면 안 된다.
+   */
+  const renderInline = (span: Inline, key: string): ReactNode => {
+    if (span.kind === 'code') return codeSpan(span.code, key);
+    if (span.kind === 'link') {
+      return withEmphasis(anchor(span.text, span.href, span.target, `${key}-a`), span, key);
+    }
+    const parts = splitLinks(splitMentions(span.text, handles, groupHandles, accountsMap));
+    return withEmphasis(parts.map((p, j) => renderPart(p, `${key}-${j}`)), span, key);
+  };
+
+  const renderSpans = (spans: Inline[], key: string) =>
+    spans.map((s, i) => renderInline(s, `${key}-${i}`));
+
+  /**
+   * 블록 하나. 간격을 `space-y` 가 아니라 블록마다의 `mb-*`/`last:mb-0` 으로 주는 이유:
+   * 제목은 **위쪽** 간격이 더 필요하고(다음 절이 시작한다는 신호다) 컨테이너 하나의
+   * 균일 간격으로는 그 차이를 낼 수 없다.
+   */
+  const renderBlock = (block: Block, key: string): ReactNode => {
+    switch (block.kind) {
+      case 'heading': {
+        // 실제 `<h1>` 을 쓰지 않는다. 메시지는 대화 목록 **안**에 있어서 문서 개요의
+        // 자리를 주장하면 안 되고, 한 채널에 `<h1>` 이 스무 개 서면 개요가 거짓이 된다.
+        // 대신 `role=heading` + `aria-level` 로 **상대적** 깊이만 말한다.
+        const size = block.level <= 1 ? 'text-[1.15em]' : block.level === 2 ? 'text-[1.05em]' : 'text-[1em]';
+        return (
+          <div
+            key={key}
+            role="heading"
+            aria-level={Math.min(6, block.level + 2)}
+            data-testid="md-heading"
+            data-level={block.level}
+            className={`mt-3 mb-1 font-semibold text-fg first:mt-0 ${size}`}
+          >
+            {renderSpans(block.spans, key)}
+          </div>
+        );
+      }
+      case 'quote':
+        return (
+          <blockquote
+            key={key}
+            data-testid="md-quote"
+            className="mb-2 border-l-2 border-border pl-2 text-fg-muted last:mb-0"
+          >
+            {renderSpans(block.spans, key)}
+          </blockquote>
+        );
+      case 'rule':
+        return <hr key={key} data-testid="md-rule" className="my-2.5 border-border" />;
+      case 'list': {
+        const Tag = block.ordered ? 'ol' : 'ul';
+        return (
+          <Tag
+            key={key}
+            data-testid="md-list"
+            data-ordered={String(block.ordered)}
+            // `list-outside` + 왼쪽 여백: 감긴 둘째 줄이 글머리표 아래로 흘러들지 않는다.
+            start={block.ordered ? block.start : undefined}
+            className={`mb-2 ml-5 list-outside last:mb-0 ${block.ordered ? 'list-decimal' : 'list-disc'}`}
+          >
+            {block.items.map((item, i) => (
+              <li key={i} data-testid="md-list-item" className="my-0.5">
+                {renderSpans(item.spans, `${key}-${i}`)}
+                {item.children.map((c, j) => renderBlock(c, `${key}-${i}-${j}`))}
+              </li>
+            ))}
+          </Tag>
+        );
+      }
+      case 'code':
+        return (
+          // 코드는 접히지 않는다 — 줄바꿈된 명령줄은 그대로 복사해도 실행되지 않는다.
+          // 대신 가로로 스크롤한다.
+          <div key={key} className="my-2 overflow-hidden rounded border border-border last:mb-0">
+            {block.lang && (
+              // 언어는 **표시만** 한다. 문법 강조기를 들이면 의존성과 공격 표면이 같이 커진다.
+              <div
+                data-testid="code-lang"
+                className="border-b border-border bg-surface-sunken px-2 py-0.5 font-mono text-[0.75em] text-fg-subtle"
               >
-                <code>{seg.code}</code>
-              </pre>
-            </div>
-          );
-        }
-        // 코드가 아닌 구간에만 기존 인식이 얹힌다.
-return splitLinks(splitMentions(seg.text, handles, groupHandles, accountsMap)).map((p, j) => renderPart(p, `${i}-${j}`));
-      })}
+                {block.lang}
+              </div>
+            )}
+            <pre
+              data-testid="code-block"
+              data-lang={block.lang ?? ''}
+              className="overflow-x-auto bg-surface px-2 py-1 font-mono text-[0.9em] text-fg"
+            >
+              <code>{block.code}</code>
+            </pre>
+          </div>
+        );
+      default:
+        return (
+          <p key={key} data-testid="md-paragraph" className="mb-2 last:mb-0">
+            {renderSpans(block.spans, key)}
+          </p>
+        );
+    }
+  };
+
+  const bodyContent = (
+    // `whitespace-pre-wrap` 은 여기 그대로 둔다 — 문단 안의 한 줄바꿈은 마크다운에서는
+    // 사라지는 것이 표준이지만, 채팅에서 줄을 나눠 쓴 사람은 **그렇게 보이기를 기대한다.**
+    // 문법을 따르느라 사람이 쓴 줄바꿈을 지우면 렌더링이 내용을 바꾼 것이 된다.
+    <div className="whitespace-pre-wrap break-words" data-testid="message-body">
+      {blocks.map((b, i) => renderBlock(b, String(i)))}
     </div>
   );
 
