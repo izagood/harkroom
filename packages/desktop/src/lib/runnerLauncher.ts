@@ -62,7 +62,7 @@
 // **`@tauri-apps/plugin-shell` 을 더 이상 안 부른다**(`#513`). 마지막 남은 사용처가
 // 로그인 `PATH` 조회(`#305`)였고, 그것이 Rust 로 옮겨가며(`login_path.rs`) 이 파일에서
 // 웹뷰가 프로그램을 실행하는 자리가 하나도 안 남았다.
-import { EX_CONFIG, harnessBinaryName, installHint, runnerExitReason } from '@murmur/shared';
+import { DAEMON_RETIRING_TOKEN, EX_CONFIG, harnessBinaryName, installHint, runnerExitReason } from '@murmur/shared';
 
 /**
  * 러너의 지금 상태.
@@ -91,6 +91,14 @@ import { EX_CONFIG, harnessBinaryName, installHint, runnerExitReason } from '@mu
  * **문구는 여기서 정하지 않는다**(`#443` 범위). 이 타입이 정하는 것은 상태값과 그
  * 의미뿐이고, `RunnerStatus.tsx` 는 최소한으로만 따라온다.
  */
+/**
+ * 앞 세대 러너가 물러나기를 기다리는 간격(`waitForRetirement`).
+ *
+ * 15초인 이유: 사람이 화면을 보고 있을 수 있는 시간 안에 다시 시도하되(멈춘 것으로
+ * 읽히지 않게), 30분짜리 턴을 기다리는 동안 daemon 에 백 번씩 묻지도 않는 값이다.
+ */
+const RETIRE_WAIT_MS = 15_000;
+
 export type RunnerStatus =
   | 'stopped'
   | 'running'
@@ -481,6 +489,8 @@ export class RunnerLauncher {
    * "죽은 뒤 다시 띄우지 않는다" 하나다. 그 사실은 화면 문구가 말한다.
    */
   private restarting = new Set<string>();
+  /** 회수 대기 타이머(`waitForRetirement`). `dispose` 가 거둔다. */
+  private retireWaits = new Map<string, ReturnType<typeof setTimeout>>();
 
   /**
    * **앱이 뜨면 daemon 을 세운다** — 띄울 러너가 하나도 없어도(`#431` 2단계 A).
@@ -685,6 +695,37 @@ export class RunnerLauncher {
     const pat = await this.ensurePat(agent.id);
     if (!pat || this.disposed) return; // 사유는 ensurePat 이 상태에 남겼다.
     await this.spawnRunner(agent, pat.token, strangerAttached ? STRANGER_ATTACHED : null);
+  }
+
+  /**
+   * 앞 세대 러너가 물러나기를 기다렸다 **다시 띄운다**(2026-09-07 후속).
+   *
+   * 간격을 고정으로 두는 이유: 기다리는 대상이 "진행 중인 턴 하나"이고 그 길이는
+   * 러너의 턴 예산(기본 30분)까지 갈 수 있다. 지수 백오프를 걸면 늦게 끝난 턴 뒤에
+   * 자리가 비어 있는데도 한참 안 뜨고, 그 사이 그 에이전트는 아무 멘션도 못 받는다.
+   *
+   * 상한을 두지 않는 이유: 상한을 넘기면 남는 선택은 "실패로 칠한다"인데, 그것은 사실이
+   * 아니다(앞 세대는 여전히 물러나는 중이다). 앱이 닫히면(`dispose`) 함께 사라지므로
+   * 무한히 도는 타이머도 아니다.
+   */
+  private waitForRetirement(agent: LaunchableAgent, token: string, note: string | null): void {
+    if (this.disposed) return;
+    this.setState(agent.id, {
+      status: 'restarting',
+      exitCode: null,
+      message: '앞 세대 러너가 진행 중인 턴을 끝내고 물러나는 중이다 — 끝나면 새로 띄운다',
+    });
+    const timer = setTimeout(() => {
+      this.retireWaits.delete(agent.id);
+      if (this.disposed) return;
+      // 실패는 여기서 삼킨다 — 이 경로는 이미 예약이고, 던져도 받을 호출자가 없다.
+      // `spawnRunner` 가 다시 `retiring` 을 만나면 스스로 또 예약한다.
+      void this.spawnRunner(agent, token, note).catch((err: unknown) => {
+        this.setState(agent.id, { status: 'failed', exitCode: null, message: errText(err) });
+      });
+    }, RETIRE_WAIT_MS);
+    // 앱이 닫힐 때 거둘 수 있게 들고 있는다 — 안 그러면 dispose 뒤에 러너가 하나 뜬다.
+    this.retireWaits.set(agent.id, timer);
   }
 
   /**
@@ -905,6 +946,17 @@ export class RunnerLauncher {
       });
     } catch (err) {
       if (this.runTokens.get(agent.id) === runToken) this.runTokens.delete(agent.id);
+      // ── 앞 세대가 아직 물러나는 중이다 — 실패가 아니라 **순서**다 ────────────────
+      // daemon 이 낡은 세대의 러너에 SIGTERM 을 보냈고(#551), 러너는 그것을 드레인으로
+      // 받아 진행 중인 턴을 끝내고 나간다(`agent/src/main.ts`). 그 전에 교체를 띄우면
+      // 둘이 같은 inbox 를 폴해 같은 멘션을 두 번 답한다(`#430`·`#174`).
+      //
+      // `failed` 로 칠하지 않는 이유: 그러면 사람은 멀쩡한 회수를 고장으로 읽고, 화면에
+      // 할 일이 없는 붉은 줄이 선다. 기다리는 것이 사실이므로 기다린다고 말한다.
+      if (errText(err).includes(DAEMON_RETIRING_TOKEN)) {
+        this.waitForRetirement(agent, token, note);
+        return;
+      }
       throw err;
     }
     // spawn IPC 도 비동기다. 그 사이 앱/세션이 닫혔다면 방금 생긴 자식을 즉시 거둔다.
@@ -1064,6 +1116,9 @@ export class RunnerLauncher {
 
   /** 앱이 닫힌다 — 띄운 자식도 같이 끝낸다. 상태는 지우지 않는다(창이 다시 열리면 보여야 한다). */
   dispose(): void {
+    // 회수 대기 타이머를 먼저 거둔다 — 남기면 앱이 닫힌 뒤에 러너가 하나 뜬다.
+    for (const timer of this.retireWaits.values()) clearTimeout(timer);
+    this.retireWaits.clear();
     this.disposed = true;
     for (const child of this.runners.values()) void child.kill().catch(() => {});
     this.runners.clear();

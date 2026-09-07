@@ -279,6 +279,74 @@ describe('2. liveness — daemon 장부가 판정한다', () => {
  * 앞 판본에서 daemon 에 닿는 자리는 `spawn()` 하나뿐이었고, 그 앞단이 안 띄우기로 하면
  * daemon 도 안 떴다. 그것이 순환의 첫 화살표다(`DaemonObserver` 주석).
  */
+/**
+ * **앞 세대 러너가 물러나기를 기다린다** (2026-09-07 후속).
+ *
+ * 낡은 세대의 daemon·러너를 회수하는 변경(#551) 뒤에 남은 겹침을 닫는다. 러너는
+ * `SIGTERM` 을 **드레인**으로 받아 진행 중인 턴을 끝내고 나가는데(`agent/src/main.ts` 의
+ * `running = false`), 그 사이에 교체 러너를 띄우면 둘이 같은 inbox 를 폴하고 아직
+ * `markRead` 안 된 그 멘션을 **둘 다 답한다** — `#430`·`#174` 가 싸운 중복이다.
+ *
+ * 그래서 daemon 이 `retiring` 으로 답하고(실패가 아니라 **순서**다), 앱은 기다렸다 다시
+ * 부른다. 이 테스트가 재는 것은 그 기다림이 **실제로 서는가**다 — 없으면 앱은 그
+ * 에이전트를 `failed` 로 칠하고 사람은 멀쩡한 회수를 고장으로 읽는다.
+ */
+describe('회수 대기 — 앞 세대가 물러난 뒤에 띄운다', () => {
+  const retiringError = () =>
+    new Error('daemon 이 `spawnRunner` 를 거절했다 — retiring: 앞 세대 러너(pid 4242)가 아직 물러나는 중이다');
+
+  it('retiring 이면 실패로 칠하지 않고 기다린다', async () => {
+    vi.useFakeTimers();
+    try {
+      const { launcher, spawner } = make();
+      spawner.failNext = retiringError();
+      await startAll(launcher, [agent('a')]);
+
+      const state = launcher.getStates()[0]!;
+      expect(state.status).toBe('restarting');
+      // 사유가 글자로 와야 한다 — 없으면 사람은 화면이 멈춘 줄로 읽는다.
+      expect(state.message).toContain('물러나');
+      expect(spawner.spawns).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('기다린 뒤 다시 부른다 — 그때는 뜬다', async () => {
+    vi.useFakeTimers();
+    try {
+      const { launcher, spawner } = make();
+      spawner.failNext = retiringError();
+      await startAll(launcher, [agent('a')]);
+      expect(spawner.spawns).toHaveLength(0);
+
+      // 앞 세대가 마지막 턴을 끝내고 나갔다 — 이제 자리가 비었다.
+      await vi.advanceTimersByTimeAsync(20_000);
+
+      expect(spawner.spawns).toHaveLength(1);
+      expect(launcher.getStates()[0]!.status).toBe('running');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retiring 이 아닌 실패는 그대로 실패다 — 기다림으로 뭉개지 않는다', async () => {
+    vi.useFakeTimers();
+    try {
+      const { launcher, spawner } = make();
+      spawner.failNext = new Error('daemon 이 `spawnRunner` 를 거절했다 — internal: 뭔가 터졌다');
+      await startAll(launcher, [agent('a')]);
+
+      const state = launcher.getStates()[0]!;
+      expect(state.status).toBe('failed');
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(spawner.spawns).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('2-A. daemon 을 먼저 세운다', () => {
   it('띄울 러너가 하나도 없어도 daemon 을 세운다', async () => {
     const { launcher, daemon, spawner } = make();
