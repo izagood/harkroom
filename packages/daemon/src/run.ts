@@ -197,6 +197,9 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
         startedAtMs: r.startedAtMs,
         bootTimeSec: r.bootTimeSec,
         spawnedByNonce: identity.launchNonce,
+        // 세대를 함께 적는다 — 다음 daemon 이 "내 세대의 러너인가"를 이 값으로 판정한다
+        // (`adopt.ts::planAdoption`). 없으면 그 판정 자체가 성립하지 않는다.
+        ...(args.appVersion === undefined ? {} : { spawnedByAppVersion: args.appVersion }),
       }));
       // **기다리지 않는다.** 장부 쓰기가 `spawnRunner` 응답을 늦추면 앱이 그만큼 멈춘다.
       // 실패해도 던지지 않고 로그로 올린다(`writeRunnerLedger` 주석).
@@ -236,7 +239,16 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
    */
   const adoptOrphans = async (): Promise<AdoptRunnerResult> => {
     const entries = await readRunnerLedger(appDataDir);
-    const plan = await planAdoption(entries, probe);
+    const plan = await planAdoption(entries, probe, args.appVersion ?? null);
+    // 낡은 세대의 러너는 **회수한다.** 안 채택하고 두면 앱이 새 러너를 띄워 같은
+    // 에이전트에 둘이 되고(`#430` 이 관측한 중복), 그 둘이 멘션을 나눠 집어 간다.
+    // 채택하지 않는 다른 사유들(죽음·pid 재사용)과 달리 여기서는 **우리 것이 확실하다** —
+    // 장부가 우리 계보의 spawn 만 담고(`adopt.ts` 모듈 주석) pid·커널 시작 시각 검사까지
+    // 통과한 러너다. 그래서 SIGTERM 을 보낼 근거가 선다.
+    for (const { entry, verdict } of plan.rejected) {
+      if (verdict.kind !== 'stale-generation') continue;
+      registry.retire(entry.pid);
+    }
     const adopted = [];
     for (const entry of plan.adopt) {
       const record = registry.adopt(entry);
