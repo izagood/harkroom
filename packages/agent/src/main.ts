@@ -420,18 +420,21 @@ while (running) {
           break;
         }
       } catch (err) {
+        // **여기 도달했다는 것은 계정 축이 이미 소진됐다는 뜻이다**(다중 계정).
+        // `withAccountFailover` 가 위에서 `runMentionTurn` 을 감싸고 있으므로, 풀에 아직
+        // 안 써 본 계정이 있으면 그 오류는 이 catch 에 오지 않는다. 그래서 아래 자격증명
+        // 판정이 러너를 죽이는 것은 **모든 계정의 로그인이 풀렸을 때**뿐이다 — "재시도로
+        // 낫지 않는다"는 `exit.ts` 의 근거가 그때 되살아난다.
+        //
+        // 이 문단이 아래 앵커 주석 **위**에 있는 이유: `test/mainCredentialSites.test.ts` 가
+        // 그 앵커에서 12줄 안에 `exitIfUnrecoverable(err)` 가 있는지 소스로 검사한다.
+        // 사이에 끼우면 그 창을 벌려 회귀선이 깨진다(실제로 한 번 깨뜨렸다).
         // 재시도로 낫지 않는 실패는 여기서 걸러 **재시도 회계에 들어가기 전에** 죽는다 —
         // `failed`·`attempts`·`FAILURE_NOTICE` 는 아래 한 줄부터 시작한다. 조용히 반복하면
         // "왜 답이 없지"의 원인이 묻힌다: 자격증명 실패는 폐기된 PAT 로 무한 재시도하고(#250),
         // 하네스 실행 파일 부재는 멘션 MAX_ATTEMPTS 건을 태운 뒤에야 흔적을 남긴다(#340).
         // 물러나기 **전에** 사람이 보는 자리에 말한다(2026-09-07) — 아래 판정은
         // `process.exit` 을 부르므로 순서가 계약이다.
-        //
-        // **여기 도달했다는 것은 계정 축이 이미 소진됐다는 뜻이다**(다중 계정).
-        // `withAccountFailover` 가 위에서 `runMentionTurn` 을 감싸고 있으므로, 풀에 아직
-        // 안 써 본 계정이 있으면 그 오류는 이 catch 에 오지 않는다. 그래서 자격증명 실패로
-        // 러너가 죽는 것은 **모든 계정의 로그인이 풀렸을 때**뿐이다 — "재시도로 낫지
-        // 않는다"는 `exit.ts` 의 근거가 그때 되살아난다.
         await noticeIfHarnessLogin(err, mention.channelId, anchor, entry.messageId);
         exitIfUnrecoverable(err);
 
