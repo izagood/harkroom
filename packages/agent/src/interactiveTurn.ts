@@ -108,6 +108,15 @@ export interface InteractiveTurnDeps {
   murmurUrl: string;
   pat: string;
   codexHome: string;
+  /**
+   * 이 턴을 돌릴 claude 계정의 `CLAUDE_CONFIG_DIR`(`claudeAccounts.ts`). `null` 은 계정
+   * 지정 없음(시스템 기본)이다.
+   *
+   * **자식 env 와 세션 실재 판정이 같은 값을 봐야 한다.** 갈리면 판정이 엉뚱한 디렉터리를
+   * 뒤져 첫 턴/resume 조립이 뒤집힌다(`codexHome` 이 세션 발견과 env 를 같은 루트로
+   * 묶는 것과 같은 이유).
+   */
+  claudeConfigDir: string | null;
   relay: InteractiveRelay;
   registry: TurnRegistry;
   queue: MentionQueue;
@@ -125,7 +134,7 @@ export interface InteractiveTurnDeps {
    * 그대로 둬 다음 턴이 다시 `--session-id` 로 시작하게 한다 — 어느 쪽을 틀려도 다음 턴이
    * 파싱·조회 오류로 죽는다("already in use" / "No conversation found").
    */
-  sessionMaterialized?: (harness: AgentHarness, sessionId: string) => Promise<boolean>;
+  sessionMaterialized?: (harness: AgentHarness, sessionId: string, claudeConfigDir: string | null) => Promise<boolean>;
 }
 
 export interface InteractiveOpenRequest {
@@ -174,8 +183,14 @@ const defaultSchedule = (fn: () => void, ms: number): (() => void) => {
   return () => clearTimeout(timer);
 };
 
-const defaultSessionMaterialized = (harness: AgentHarness, sessionId: string): Promise<boolean> => {
-  if (harness === 'claude-code') return claudeSessionFileExists(sessionId);
+const defaultSessionMaterialized = (
+  harness: AgentHarness,
+  sessionId: string,
+  claudeConfigDir: string | null,
+): Promise<boolean> => {
+  // 세션 파일은 `<CLAUDE_CONFIG_DIR>/projects` 아래 있다 — 계정을 쓰는 러너에서 홈을 보면
+  // 실재하는 세션을 "없음"으로 읽는다(claudeSessions.ts 주석).
+  if (harness === 'claude-code') return claudeSessionFileExists(sessionId, { configDir: claudeConfigDir });
   // codex sessionId 는 rollout 파일에서 발견한 값이라 그 자체로 디스크 실재의 증거다.
   return Promise.resolve(true);
 };
@@ -265,8 +280,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       pat: deps.pat,
       murmurUrl: deps.murmurUrl,
       codexHome: deps.codexHome,
-      // Task 5·6 이 deps 의 계정 값으로 바꾼다. 지금은 계정 지정 없음(기존 동작).
-      claudeConfigDir: null,
+      claudeConfigDir: deps.claudeConfigDir,
     });
 
     // definition() 을 기다리는 사이 멘션 턴이 시작됐을 수 있다 — 등록 직전에 다시 본다.
@@ -365,7 +379,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
         // 올려 다음 턴이 resume 으로 조립되게 하고, 그냥 닫았으면(파일 없음) 그대로 둬
         // 같은 uuid 로 첫 턴을 다시 시도하게 한다. 어느 쪽을 틀려도 다음 턴이 죽는다
         // ("Session ID already in use" / "No conversation found").
-        if (turnsRun === 0 && sessionId !== null && (await sessionMaterialized(def.harness, sessionId))) {
+        if (turnsRun === 0 && sessionId !== null && (await sessionMaterialized(def.harness, sessionId, deps.claudeConfigDir))) {
           turnsRun = 1;
         }
 

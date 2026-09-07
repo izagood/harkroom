@@ -22,4 +22,43 @@ describe('#337 claudeSessionFileExists', () => {
   it('projects 디렉터리 자체가 없으면 조용히 거짓이다 — claude 를 아직 안 돌린 머신의 정상 경로', async () => {
     expect(await claudeSessionFileExists(UUID, { projectsDir: '/nonexistent/claude/projects' })).toBe(false);
   });
+
+  // 다중 계정: 세션 파일도 `CLAUDE_CONFIG_DIR` 를 따라간다(2026-09-07 실측).
+  describe('계정별 config 디렉터리', () => {
+    it('configDir 가 있으면 그 아래 projects 를 본다', async () => {
+      // 이 판정이 계속 ~/.claude/projects 를 보면, 계정 디렉터리로 돌린 세션을 "없음"으로
+      // 읽어 다음 턴을 첫 턴으로 조립하고, claude 는 이미 쓰인 id 를 --session-id 로 다시
+      // 받아 `Session ID <uuid> is already in use.` 로 즉사한다.
+      const configDir = await mkdtemp(join(tmpdir(), 'murmur-cfg-'));
+      const projectDir = join(configDir, 'projects', '-tmp-work');
+      await mkdir(projectDir, { recursive: true });
+      await writeFile(join(projectDir, `${UUID}.jsonl`), '{"type":"session"}\n');
+
+      expect(await claudeSessionFileExists(UUID, { configDir })).toBe(true);
+      expect(await claudeSessionFileExists('00000000-0000-4000-8000-000000000000', { configDir }))
+        .toBe(false);
+    });
+
+    it('configDir 가 없으면 시스템 기본을 본다 — 계정 풀을 안 만든 러너의 경로', async () => {
+      // 아래 파일은 홈이 아니라 임시 디렉터리에 있다. configDir 를 안 주면 못 본다 —
+      // 이 동작이 바뀌면 하위 호환이 깨진다.
+      const configDir = await mkdtemp(join(tmpdir(), 'murmur-cfg-unused-'));
+      const projectDir = join(configDir, 'projects', '-tmp-work');
+      await mkdir(projectDir, { recursive: true });
+      await writeFile(join(projectDir, `${UUID}.jsonl`), '{"type":"session"}\n');
+
+      expect(await claudeSessionFileExists(UUID, {})).toBe(false);
+      expect(await claudeSessionFileExists(UUID, { configDir: null })).toBe(false);
+    });
+
+    it('projectsDir 가 configDir 보다 이긴다 — 기존 테스트의 직접 지정을 깨지 않는다', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'claude-projects-win-'));
+      const projectDir = join(root, '-x');
+      await mkdir(projectDir, { recursive: true });
+      await writeFile(join(projectDir, `${UUID}.jsonl`), '{}\n');
+
+      expect(await claudeSessionFileExists(UUID, { projectsDir: root, configDir: '/nope' }))
+        .toBe(true);
+    });
+  });
 });

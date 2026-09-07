@@ -124,6 +124,8 @@ async function makeHarness(overrides: Partial<InteractiveTurnDeps> = {}, def: Ag
     runTurn, me: ME, workspaceBaseDir,
     mcpConfigPath: '/tmp/mcp.json', murmurUrl: 'http://localhost:3400', pat: 'murp_fake',
     codexHome: join(stateDir, 'codex-home'),
+    // 이 스위트는 계정 지정 없음(시스템 기본)을 전제로 돈다.
+    claudeConfigDir: null,
     relay, registry, queue,
     orphanMs: 60_000, killGraceMs: 5_000,
     schedule: sched.schedule,

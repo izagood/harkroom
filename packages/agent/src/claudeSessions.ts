@@ -18,11 +18,21 @@ import { readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+/**
+ * **경로는 `CLAUDE_CONFIG_DIR` 를 따라간다(2026-09-07).** 계정별 config 디렉터리로 claude 를
+ * 띄우면 세션 파일도 `<configDir>/projects` 아래로 옮겨간다(실측). 이 판정이 계속 홈만 보면
+ * 계정 디렉터리의 세션을 "없음"으로 읽고, 다음 턴이 첫 턴으로 조립돼 claude 가 이미 쓰인
+ * 세션 id 를 `--session-id` 로 다시 받아 즉사한다 — 위 모듈 주석이 적은 바로 그 함정이다.
+ *
+ * 우선순위: `projectsDir`(직접 지정) → `configDir`(계정) → 시스템 기본. `projectsDir` 가
+ * 이기는 이유는 그것이 projects 디렉터리 **자체**를 가리키는 더 구체적인 지정이기 때문이다.
+ */
 export async function claudeSessionFileExists(
   sessionId: string,
-  opts: { projectsDir?: string } = {},
+  opts: { projectsDir?: string; configDir?: string | null } = {},
 ): Promise<boolean> {
-  const root = opts.projectsDir ?? join(homedir(), '.claude', 'projects');
+  const root = opts.projectsDir
+    ?? (opts.configDir ? join(opts.configDir, 'projects') : join(homedir(), '.claude', 'projects'));
   let projects;
   try {
     projects = await readdir(root, { withFileTypes: true });

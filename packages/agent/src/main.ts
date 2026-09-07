@@ -245,6 +245,8 @@ const mentionQueue = new MentionQueue();
 interactive = createInteractiveManager({
   murmur, store, exec, runTurn: runPtyTurn, me,
   workspaceBaseDir, mcpConfigPath, codexHome,
+  // Task 6 이 계정 풀의 첫 계정으로 바꾼다. 지금은 계정 지정 없음(기존 동작).
+  claudeConfigDir: null,
   murmurUrl: config.murmurUrl, pat: config.murmurPat,
   relay, registry, queue: mentionQueue,
   orphanMs: config.interactiveOrphanMs,
