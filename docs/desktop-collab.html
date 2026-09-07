@@ -394,7 +394,7 @@
         <thead><tr><th>구간</th><th>확인</th></tr></thead>
         <tbody>
           <tr><td>avcs 코어</td><td><code>reducer.ts:406</code> 의 <code>reduce()</code> 가 파생한다 — <code>statuses</code>·<code>conflicts</code>·<code>headOps</code> 를 한 번에 낸다</td></tr>
-          <tr><td>avcs-server</td><td><b>없다.</b> <code>/sync</code> 는 <code>{cursor, oids, refs}</code> 뿐이고 소스에 <code>OperationStatus</code> 라는 말이 <b>한 번도 안 나온다</b></td></tr>
+          <tr><td>avcs-server</td><td><b>준다</b>(0.7.0 · <code>GET /reduced</code>). 이 문서의 앞 판본이 "없다"고 적었고 그것이 맞았다 — <a href="https://github.com/izagood/avcs-server/issues/7">이슈</a>로 제기해 사양(<code>docs/26 §6-4</code>)·설계(<code>docs/27</code>)·참조 구현을 거쳐 들어왔다</td></tr>
           <tr><td>avcshub</td><td>자기 API 계층에서 처리한다(<code>reviewGate.ts</code>)</td></tr>
         </tbody>
       </table>
@@ -407,22 +407,64 @@
     상태는 저장되는 값이 아니라 <b>계산되는 값</b>이고, 그 계산은 정책에 달려 있다.
   </p>
 
-  <h3>그래서 murmur 는 <code>reduce()</code> 를 부른다</h3>
+  <h3>그래서 murmur 는 <code>GET /reduced</code> 를 읽는다</h3>
   <p>
-    murmur 서버가 <code>avcs</code> 를 의존해 <code>reduce()</code> 를 부르고, 그 결과를
-    <b>재료로</b> 화면에 싣는다. <code>#484</code>·<code>#490</code> 과 같은 모양이다 —
-    서버는 사실만 싣고 화면이 그린다.
+    이 문서의 앞 판본은 <b>murmur 서버가 <code>avcs</code> 를 의존해 <code>reduce()</code> 를
+    직접 부르는 것</b>을 1단계로 적고, avcs-server 에 엔드포인트를 두는 쪽이 더 옳지만
+    "스펙 변경이 선행이라 그때까지 임시 우회"라고 했다.
   </p>
+  <p>
+    <b>그 우회는 필요 없어졌다.</b> 이슈로 제기해 사양·참조 구현·서버까지 들어왔다:
+    <b>avcs 0.50.0</b>(<code>docs/26 §6-4</code> · 설계 <code>docs/27</code>) →
+    <b>avcs-server 0.7.0</b>(<code>GET /reduced</code> · <code>GET /reduced/blob/:oid</code> ·
+    <code>/version</code> 이 <code>reduced</code>·<code>materializer</code> 를 광고).
+  </p>
+
+  <div class="panel">
+    <div class="panel__h">GET /reduced?view=main<span class="tag">docs/27 §3.1</span></div>
+    <div class="panel__b">
+      <div class="ui">
+        <div class="row"><span class="body"><code>cursor</code> · <code>materializer</code> · <code>treeHash</code></span></div>
+        <div class="row"><span class="body"><code>statuses</code> — <code>{ "operation_ab12…": "accepted", "operation_cd34…": "needs_decision" }</code></span></div>
+        <div class="row"><span class="body"><code>headOps</code> · <code>conflicts</code> · <code>tree</code></span></div>
+      </div>
+    </div>
+  </div>
+
+  <p>
+    협업 탭이 필요한 것이 **그 응답에 다 있다** — 제안의 상태 · 무엇이 충돌했는지 ·
+    지금 머리가 무엇인지. murmur 서버는 그것을 <b>재료로</b> 실어 주고 화면이 그린다
+    (<code>#484</code>·<code>#490</code> 과 같은 모양이다).
+  </p>
+
+  <h3><code>reduce()</code> 를 직접 조립하지 않는다</h3>
   <p>
     <b>murmur 가 상태를 스스로 재구성하면 안 된다.</b> 같은 판정이 두 벌 생기고, 정책이
     바뀌면 한 벌만 고쳐져 화면과 avcs 가 다른 말을 한다 — 이 저장소가
     <code>projectionState</code> 를 shared 로 뺀 것과 같은 이유다.
   </p>
   <p class="note">
-    더 옳은 자리는 <b>avcs-server 에 파생 상태 엔드포인트를 두는 것</b>이다 — murmur 뿐
-    아니라 avcshub 도 얻는다. 다만 avcs-server 는 <code>docs/26</code> 의 clean-room
-    구현이라 <b>스펙 변경이 선행</b>이고, 그때까지 murmur 가 코어를 직접 부른다.
-    이것은 임시 우회이며 그 사실을 코드 주석에 남긴다.
+    앞 판본이 이 대목에서 든 <b>이유 하나가 틀렸다</b>(이슈 리뷰의 지적).
+    "정책이 바뀌면 클라이언트마다 따로 갱신해야 한다"고 적었지만, policy 는
+    <code>policy</code> ref 로 저장돼 <code>/refs</code> 로 배포되고 리듀서가
+    <em>"같은 객체 + 같은 정책 + 같은 머티리얼라이저 ⇒ 동일 트리"</em>를 보증한다.
+    복제본 사이의 어긋남은 <b>sync lag 뿐</b>이고, 그건 서버가 계산해도 응답이 도착할
+    즈음 똑같이 낡는다. <b>결론은 그대로다</b> — 두 번째 구현을 만들지 않는 것이 이유다.
+  </p>
+
+  <h3>이 응답은 권위가 아니다 — 얇은 클라이언트는 그대로 표시한다</h3>
+  <p>
+    <code>docs/27 §3.6</code> 이 못 박았다: <em>"이 응답은 어느 복제본이든 같은 입력에서
+    계산할 값이다. 서버는 그중 하나를 계산했을 뿐이다."</em>
+  </p>
+  <p>
+    복제하는 클라이언트는 자기 환원을 우선하고, <b>얇은 클라이언트는 이 응답을 그대로
+    표시한다 — 그것이 이 엔드포인트의 존재 이유다.</b> murmur 협업 탭이 바로 그 얇은
+    클라이언트다: op 그래프 전량을 들고 있지 않고, 들 이유도 없다.
+  </p>
+  <p class="note">
+    <code>cursor</code> 와 <code>materializer</code> 를 함께 그리는 이유가 여기 있다 —
+    화면이 "이 판정이 어느 시점의 것인가"를 말할 수 있어야 sync lag 을 고장으로 읽지 않는다.
   </p>
 </section>
 
@@ -507,10 +549,14 @@
       </tr>
       <tr>
         <td>1</td>
-        <td><b>제안 트리를 조립한다</b> — <code>intent → operations → evidence</code> +
-        <code>decisions</code>. <code>reduce()</code> 로 상태·충돌을 파생받아 <b>재료로</b>
-        싣는다</td>
-        <td>0</td>
+        <td><b>제안 트리를 조립하고 <code>/reduced</code> 를 읽는다</b> —
+        <code>intent → operations → evidence</code> + <code>decisions</code> 는 객체에서
+        조립하고, <b>상태·충돌·머리는 <code>GET /reduced</code> 가 준다</b>
+        (<code>statuses</code>·<code>conflicts</code>·<code>headOps</code>).
+        <code>reduce()</code> 를 직접 조립하지 않는다 — 그것이 두 번째 구현이다.
+        <code>cursor</code>·<code>materializer</code> 도 함께 실어 화면이 "어느 시점의
+        판정인가"를 말할 수 있게 한다</td>
+        <td>0 · avcs-server 0.7.0</td>
       </tr>
       <tr>
         <td>2</td>
