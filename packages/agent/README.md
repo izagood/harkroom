@@ -268,6 +268,52 @@ MCP 설정을 상속하지 않는다. 승인된 Codex 스킬은 공식 저장소
   전역 MCP 목록 전체(Slack·Gmail·Drive 등)를 상속한다 — 채널에서 `@handle`을 부를 수 있는
   사람이면 누구나 그 경로로 운영자 개인 계정에 도달한다. 러너가 생성하는 설정에는 murmur와
   avcs 둘만 넣는다.
+- **API 키·OAuth 토큰 env는 자식에게 넘어가지 않는다** — `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `AWS_BEARER_TOKEN_BEDROCK`. claude는
+  이것을 자격증명 저장소보다 먼저 보므로, 하나라도 상속되면 아래 계정 격리가 조용히
+  무력해진다. 러너는 데몬 env 전체를 상속하니 이 키가 어디서 들어올지 통제할 수 없다.
+
+## claude 다중 계정
+
+러너는 계정별 `CLAUDE_CONFIG_DIR`로 claude를 띄운다. 한도나 로그인 만료를 만나면 **같은
+멘션을** 다음 계정으로 다시 시도한다.
+
+**이 기능이 없던 동안 러너는 시스템 기본 계정(`~/.claude`)에 묶여 있었다.** 러너가
+`CLAUDE_CONFIG_DIR`를 설정하지 않았고, 계정 전환을 그 경로로 하는 도구(Orca 등)에서 사람이
+계정을 바꿔도 러너에 닿지 않았다. codex의 `CODEX_HOME` 격리에 대칭물이 없던 자리다.
+
+계정은 `~/.murmur-agent/claude-accounts/<name>/`에 산다. 이름 문법은 `[a-z0-9-]{1,32}`다.
+**이 디렉터리를 안 만들면 지금까지처럼 시스템 기본 로그인을 쓴다.**
+
+등록은 계정마다 한 번, 사람이 해야 한다 — OAuth는 브라우저를 요구한다.
+
+```sh
+mkdir -p ~/.murmur-agent/claude-accounts/lime
+CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/lime claude
+# 뜬 화면에서 /login → 브라우저에서 그 계정으로 로그인 → 닫는다
+```
+
+**두 번째 계정부터는 브라우저 시크릿 창을 써라.** 그러지 않으면 기존 세션 쿠키를 재사용해
+같은 계정으로 다시 로그인된다.
+
+확인:
+
+```sh
+CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/lime claude -p 'reply with OK'
+```
+
+- `MURMUR_CLAUDE_ACCOUNTS_DIR` — 뿌리를 옮긴다.
+- `MURMUR_CLAUDE_ACCOUNTS` — 쉼표로 순서와 부분집합을 정한다(예: `plum,lime`). 없는 이름을
+  적으면 **러너가 뜨지 않는다** — 조용히 무시하면 계정 B라고 믿고 띄운 러너가 A로 돈다.
+
+지정이 없으면 이름 사전순이다. 기동 로그에 계정 이름 목록이 남는다(이메일·토큰은 안 남는다).
+
+**계정을 바꾸면 그 스레드의 claude 세션은 버려진다.** 세션 파일이
+`<CLAUDE_CONFIG_DIR>/projects` 아래 있어 계정을 넘어가지 않기 때문이다. 스레드의 사실은
+다음 턴이 첫 턴으로 조립되어 전체를 다시 먹여 복원한다 — 잃는 것은 하네스 내부 컨텍스트다.
+
+**인터랙티브 턴은 페일오버하지 않는다.** 사람이 앉아 있는데 계정을 바꾸면 보던 세션이
+사라진다. 첫 계정에 고정하고, 그 계정의 한도를 그대로 보여 준다.
 
 ## 구조
 
@@ -282,6 +328,7 @@ MCP 설정을 상속하지 않는다. 승인된 Codex 스킬은 공식 저장소
 | `src/codexSessions.ts` | codex 전용 — 첫 턴이 끝난 뒤 rollout 파일에서 세션 id를 사후 발견한다 |
 | `src/prompt.ts` | 스레드 델타 → 턴 프롬프트, 발화 판정(`hasOwnPostSince`). **순수 로직이고 테스트 대상이다** |
 | `src/policy.ts` | 실패 정책(자격증명은 즉시 종료, 나머지는 백오프) |
+| `src/claudeAccounts.ts` | claude 계정 풀(계정 하나 = `CLAUDE_CONFIG_DIR` 하나) + 계정 축 페일오버. `policy.ts`의 세 판정을 조합하는 `switchesAccount`가 여기 있는 이유는 그 파일이 아무것도 import하지 않는다는 규율이다 |
 | `src/murmur.ts` | MCP 클라이언트 + `GET /agent/config`·`GET /accounts`(MCP에 없는 표면) |
 | `src/config.ts` | 환경변수 |
 
