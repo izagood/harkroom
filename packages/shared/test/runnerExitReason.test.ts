@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CREDENTIAL_REJECTED_LINE,
+  HARNESS_LOGIN_REQUIRED_LINE,
   EX_CONFIG,
   EXECUTABLE_NOT_FOUND_LINE,
   harnessBinaryName,
@@ -20,6 +21,22 @@ import {
 } from '../src/index.js';
 
 describe('runnerExitReason — 로그 꼬리가 78 의 두 사유를 가른다', () => {
+  /**
+   * 2026-09-07 16:09 실측이 만든 세 번째 사유. 그때까지 78 의 자격증명 갈래는 하나였고,
+   * 앱은 **하네스 로그인이 풀린 사람에게 "PAT 를 재발급하라"고 말했다** — `#473` 이 하네스
+   * 부재에서 고친 것과 정확히 같은 결함이 자격증명 안에서 되풀이됐다.
+   *
+   * `policy.ts` 는 이미 둘을 갈라 놓고 있었다(`murmur-credential`·`harness-credential`).
+   * 갈라지지 않은 곳은 **로그 마커**뿐이었고, 앱이 볼 수 있는 것은 그 마커뿐이다.
+   */
+  it('하네스 로그인 마커를 세 번째 사유로 가른다', () => {
+    expect(runnerExitReason([HARNESS_LOGIN_REQUIRED_LINE])).toBe('harness-login-required');
+  });
+
+  it('두 자격증명 마커가 함께 보이면 모른다고 한다 — 지어내지 않는다', () => {
+    expect(runnerExitReason([CREDENTIAL_REJECTED_LINE, HARNESS_LOGIN_REQUIRED_LINE])).toBeNull();
+  });
+
   it('두 구분자를 각각 알아본다', () => {
     expect(runnerExitReason([EXECUTABLE_NOT_FOUND_LINE])).toBe('executable-not-found');
     expect(runnerExitReason([CREDENTIAL_REJECTED_LINE])).toBe('credential-rejected');

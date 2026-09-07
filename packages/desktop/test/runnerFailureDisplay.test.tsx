@@ -251,6 +251,33 @@ describe('#368 채널 — 부른 자리에서 사유가 보인다', () => {
   });
 
   /**
+   * 2026-09-07 16:09 — `#476` 이 고친 실패 방식이 **또 다른 새 상태에서 되살아났다.**
+   *
+   * forge 의 claude 로그인이 만료되자 러너는 78 로 물러났고, 사람은 멘션을 두 번 보내고
+   * "(답변에 실패했습니다 — 운영자 확인이 필요합니다)" 두 줄을 받았다. 무엇을 확인해야
+   * 하는지는 어디에도 없었다. 사용자의 말이 정확히 이것이다: *"그럼 다시 로그인 할 수
+   * 있게 알려줬어야지"*.
+   *
+   * **되돌려 RED**: `ChannelPane` 의 `needs_login` 조건을 지우면 띠가 사라져 빨개진다.
+   */
+  it('하네스 로그인이 풀린 러너도 부른 자리에서 재로그인 방법을 말한다', async () => {
+    channelController();
+    const message = '`claude` 로그인이 풀렸다 — 터미널에서 `claude` 를 실행해 다시 로그인하면 살아난다';
+    setUpChannel('@forge 계획대로 구현 진행해', {
+      agentId: 'forge', status: 'needs_login', exitCode: 78, message,
+    });
+
+    render(<ChannelPane />);
+
+    const strip = screen.getByTestId('channel-runner-failure');
+    expect(strip.dataset.runnerStatus).toBe('needs_login');
+    expect(onScreen()).toContain(message);
+    // 고장이 아니라 **사람이 한 단계를 해야 하는 것**이다 — 하네스 부재와 같은 톤이다.
+    expect(strip.className).toContain('border-warning-border');
+    expect(strip.className).not.toContain('border-danger-border');
+  });
+
+  /**
    * **대조군 — 다른 사유는 다른 띠다.**
    *
    * 없으면 위 회귀선은 "모든 상태에 띠를 세우는" 구현으로도 통과한다(그러면 정상인

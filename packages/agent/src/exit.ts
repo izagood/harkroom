@@ -11,6 +11,7 @@ import {
   CREDENTIAL_REJECTED_LINE,
   EX_CONFIG,
   EXECUTABLE_NOT_FOUND_LINE,
+  HARNESS_LOGIN_REQUIRED_LINE,
 } from '@murmur/shared';
 
 import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound } from './policy.js';
@@ -35,7 +36,7 @@ import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound } fr
  * 들면 한쪽만 바뀌는 날이 오고, 그날 앱은 조용히 "구분자를 못 봤다"로 떨어진다.
  * `packages/agent/*` 의 기존 import 는 그대로 둔다 — 이 재수출이 그 경로를 유지한다.
  */
-export { CREDENTIAL_REJECTED_LINE, EX_CONFIG, EXECUTABLE_NOT_FOUND_LINE };
+export { CREDENTIAL_REJECTED_LINE, EX_CONFIG, EXECUTABLE_NOT_FOUND_LINE, HARNESS_LOGIN_REQUIRED_LINE };
 
 export interface RunnerExitPlan {
   code: typeof EX_CONFIG;
@@ -99,6 +100,9 @@ export function runnerExitPlan(err: unknown): RunnerExitPlan | null {
     lines.push('  claude-code harness 는 claude CLI 의 로그인을 쓴다 — `claude` 를 한 번 실행해 로그인해라.');
   }
   lines.push(`  원문: ${err instanceof Error ? err.message : String(err)}`);
-  lines.push(CREDENTIAL_REJECTED_LINE);
+  // 마커도 갈라진다 — 앱이 읽는 것은 이 한 줄뿐이고, 하나로 두면 안내문을 갈라 놓은
+  // 위의 분기가 러너 로그 안에서 끝난다(2026-09-07 16:09 실측: 하네스 로그인이 풀린
+  // 사람에게 앱이 "PAT 재발급"을 시켰다).
+  lines.push(credType === 'murmur-credential' ? CREDENTIAL_REJECTED_LINE : HARNESS_LOGIN_REQUIRED_LINE);
   return { code: EX_CONFIG, lines };
 }

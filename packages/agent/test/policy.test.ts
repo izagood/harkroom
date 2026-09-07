@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound, nextBackoffMs, MAX_ATTEMPTS, exhausted } from '../src/policy.js';
+import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound, isQuotaExhausted, nextBackoffMs, MAX_ATTEMPTS, exhausted } from '../src/policy.js';
 import { MURMUR_ERROR_SOURCE } from '../src/policy.js';
 import { MurmurAgentClient } from '../src/murmur.js';
 
@@ -51,6 +51,30 @@ describe('isCredentialFailure', () => {
   // #87: 이 함수는 main.ts 에서 턴 **전체**를 감싸는 catch 에 쓰이므로 murmur 호출 실패도
   // 같은 자리로 들어온다. 출처를 못 가리면 murmur PAT 만료를 "claude CLI 로 로그인해라"로
   // 안내한다 — 운영자가 엉뚱한 곳을 확인하러 간다.
+  /**
+   * 2026-09-07 16:06·16:09 실측(forge 러너 로그). claude CLI 가 실제로 낸 문구는
+   * `Failed to authenticate: OAuth session expired and could not be refreshed` 였고,
+   * 기존 패턴 셋(`couldnotresolveauthentication`·`x-api-key`·`authentication_error`)
+   * 어디에도 걸리지 않았다.
+   *
+   * 그래서 러너는 이것을 **일시 실패로 취급해** 3회 재시도를 태우고
+   * "(답변에 실패했습니다 — 운영자 확인이 필요합니다)"만 남겼다 — 사람은 무엇을
+   * 확인해야 하는지 알 수 없었고, 실제로 필요한 일은 `claude` 재로그인 하나였다.
+   */
+  describe('2026-09-07 실측 — claude CLI 의 OAuth 만료', () => {
+    it('OAuth 세션 만료를 harness 자격증명 실패로 감지한다', () => {
+      expect(isCredentialFailure(new Error(
+        'harness 종료 1: Failed to authenticate: OAuth session expired and could not be refreshed',
+      ))).toBe('harness-credential');
+    });
+
+    it('PTY 소프트 랩으로 접혀도 감지한다', () => {
+      expect(isCredentialFailure(new Error(
+        'harness 종료 1: Failed to authenticate: OAuth session expired and\ncould not be refreshed',
+      ))).toBe('harness-credential');
+    });
+  });
+
   describe('출처 구분 (#87)', () => {
     it('murmur 클라이언트의 401 은 murmur 자격증명 실패다', () => {
       const err = Object.assign(new Error('accounts 실패: 401'), { source: MURMUR_ERROR_SOURCE, status: 401 });
@@ -198,5 +222,32 @@ describe('#340 isExecutableNotFound', () => {
     const cred = new Error('could not resolve authentication');
     expect(isExecutableNotFound(cred)).toBe('other');
     expect(isCredentialFailure(cred)).toBe('harness-credential');
+  });
+});
+
+/**
+ * 사용량 한도(2026-09-07 16:05 실측: `You've hit your session limit · resets 4:10pm
+ * (Asia/Seoul)`). **자격증명 실패가 아니다** — 로그인은 멀쩡하고 시간이 지나면 낫는다.
+ * 그런데 재시도로도 안 낫는다: 3회가 5초 안에 끝나므로 한도가 풀릴 리 없다.
+ *
+ * 그래서 세 번째 갈래가 필요하다. 이 판정이 없으면 사람은 "운영자 확인이 필요합니다"를
+ * 보고 무엇을 확인할지 모른 채, 실제로는 **아무것도 하지 않고 기다리면 되는** 상황에서
+ * 로그인이나 PAT 를 뒤진다.
+ */
+describe('isQuotaExhausted', () => {
+  it('사용량 한도 문구에서 풀리는 시각을 읽어 준다', () => {
+    expect(isQuotaExhausted(new Error(
+      "harness 종료 1: You've hit your session limit · resets 4:10pm (Asia/Seoul)",
+    ))).toEqual({ resetsAt: '4:10pm (Asia/Seoul)' });
+  });
+
+  it('시각을 못 읽어도 한도인 것은 알아본다 — 한도라는 사실이 시각보다 크다', () => {
+    expect(isQuotaExhausted(new Error('harness 종료 1: You have hit your session limit')))
+      .toEqual({ resetsAt: null });
+  });
+
+  it('한도와 무관한 실패는 null 이다', () => {
+    expect(isQuotaExhausted(new Error('harness 종료 1: boom'))).toBeNull();
+    expect(isQuotaExhausted(new Error('Failed to authenticate: OAuth session expired'))).toBeNull();
   });
 });

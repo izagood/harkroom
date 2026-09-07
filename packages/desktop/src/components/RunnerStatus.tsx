@@ -30,6 +30,7 @@ export function runnerStatusLabel(state: RunnerState | undefined): string {
     case 'adopted': return 'daemon 이 들고 있음';
     case 'needs_reissue': return '종료 (78: 자격증명 폐기 — 재발급 필요)';
     case 'needs_harness': return '종료 (78: 하네스를 찾을 수 없음 — 설치 필요)';
+    case 'needs_login': return '종료 (78: 하네스 로그인 만료 — 재로그인 필요)';
     case 'stopped':
       return state.exitCode === null || state.exitCode === 0
         ? '꺼짐'
@@ -45,6 +46,8 @@ const TONE: Record<RunnerStatus, string> = {
   // 자격증명 폐기와 같은 톤이다 — 둘 다 "러너는 떴는데 사람이 한 단계를 해야 한다"이고,
   // 그것은 실패(`danger`)가 아니다. 무엇을 해야 하는지가 문구로 갈린다.
   needs_harness: 'text-warning',
+  // 로그인 만료도 같은 톤이다 — 사람이 한 단계(재로그인)를 하면 낫는다.
+  needs_login: 'text-warning',
   stopped: 'text-fg-subtle',
   failed: 'text-danger',
 };
@@ -55,6 +58,7 @@ const DOT: Record<RunnerStatus, string> = {
   adopted: 'bg-accent',
   needs_reissue: 'bg-warning',
   needs_harness: 'bg-warning',
+  needs_login: 'bg-warning',
   stopped: 'bg-fg-subtle',
   failed: 'bg-danger',
 };
@@ -85,7 +89,8 @@ export function RunnerStatusDot({ state, agentId }: { state: RunnerState | undef
   // 여전히 무엇을 설치할지 모른다. `needs_reissue` 는 빠져 있다 — 그쪽은 화면에 재발급
   // 버튼이 서므로 다음 행동이 문구 없이도 드러난다.
   const message =
-    state.status === 'failed' || state.status === 'needs_harness' ? state.message : null;
+    state.status === 'failed' || state.status === 'needs_harness' || state.status === 'needs_login'
+      ? state.message : null;
   return (
     <>
       <span
