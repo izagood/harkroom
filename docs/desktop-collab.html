@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="murmur 데스크탑 — 사이드바 옆에 레일을 내고 DM·에이전트를 옮긴다">
-<title>murmur · 협업</title>
+<title>murmur · 협업 탭</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap">
@@ -246,186 +246,242 @@
 <div class="wrap">
 
 <header>
-  <h1>협업이 <em>자기 칸</em>을 갖는다</h1>
+  <h1>murmur 가 <em>hub 자리</em>에 선다</h1>
   <p class="lede">
-    avcs 로 에이전트끼리 코드를 협업하는 것이 murmur 의 전제다. 그런데 지금 화면에서
-    그 협업이 보이는 자리는 <b>사이드바 하단의 파일 잠금 목록 하나</b>뿐이고, 정작
-    <b>무슨 제안이 떠 있고 무엇이 충돌했는지</b>는 어디에도 없다.
+    avcs 협업은 원래 웹 hub 에서 리뷰한다. murmur 의 컨셉은 <b>그 자리를 대신하는 것</b>이다 —
+    대화가 벌어지는 앱에서 제안을 보고 결정한다. 그런데 지금 코드는 반대로 하고 있다:
+    avcs 객체를 <b>채널 스레드로 투영</b>한다.
   </p>
-  <div class="meta">murmur · 협업 · 다섯째 문서 · avcs 객체 모델 실측 2026-09-07</div>
+  <div class="meta">murmur · 협업 탭 · 다섯째 문서(재작성) · avcs · avcs-server · avcshub 실측 2026-09-07</div>
 </header>
 
 <section>
-  <div class="eyebrow">지금</div>
-  <h2>협업의 절반이 대화로 흐르고, 절반은 안 보인다</h2>
+  <div class="eyebrow">지형</div>
+  <h2>murmur 는 세 구간의 어디에 서는가</h2>
 
-  <p>
-    avcs 거버넌스 객체는 <b>이미 murmur 채널로 투영되고 있다</b>
-    (<code>src/avcs/projection.ts</code>). 실측한 매핑은 이렇다.
-  </p>
+  <p>avcs 는 세 구간이다(avcs 스킬이 정한 지형).</p>
 
   <div class="panel">
-    <div class="panel__h">지금의 투영<span class="tag">projection.ts:124~</span></div>
+    <div class="panel__h">3구간</div>
     <div class="panel__b">
       <table>
-        <thead><tr><th>avcs 객체</th><th>murmur 에서</th><th>보이는가</th></tr></thead>
+        <thead><tr><th>구간</th><th>무엇</th><th>공개</th></tr></thead>
         <tbody>
-          <tr><td><code>intent</code></td><td>스레드 뿌리 + <code>work_thread</code> 매핑</td><td>채널에 섞여 흐른다</td></tr>
-          <tr><td><code>operation</code></td><td>그 스레드 아래 (배치 병합)</td><td>채널에 섞여 흐른다</td></tr>
-          <tr><td><code>decision</code>·<code>evidence</code></td><td>그 스레드 아래</td><td>채널에 섞여 흐른다</td></tr>
-          <tr><td><code>checkpoint</code>·<code>release</code>·<code>finalize</code></td><td>채널 바로 밑</td><td>채널에 섞여 흐른다</td></tr>
-          <tr><td><code>lease</code></td><td><code>active_lease</code> → <code>ACTIVE WORK</code></td><td><b>유일하게 자기 자리를 가졌다</b></td></tr>
+          <tr><td><b>avcs</b></td><td>CLI · 코어 엔진 · 객체 모델 · 정책 · 서명. <code>reduce()</code> 가 상태를 파생한다</td><td>공개</td></tr>
+          <tr><td><b>avcs-server</b></td><td>프로토콜의 self-hostable 서버. <b>객체 전송만</b> 한다</td><td>공개</td></tr>
+          <tr><td><b>avcshub</b></td><td>상용 hub — 웹 UI · 멀티테넌시 · 과금</td><td>비공개</td></tr>
         </tbody>
       </table>
     </div>
   </div>
 
-  <p>
-    <b>균형이 뒤집혀 있다.</b> 협업의 본체(무엇을 제안했고 무엇이 결정됐는가)는 대화에
-    섞여 스크롤과 함께 지나가고, 곁가지(어느 파일이 잠겼는가)만 고정된 칸을 가졌다.
-  </p>
-
-  <p class="note">
-    「나머지 여덟 곳」이 <code>ACTIVE WORK</code> 를 "설정 오류를 작업으로 그린다"고
-    지적했고, 「레일」이 "그 구역은 그냥 없어진다"고 적었다. 둘 다 맞지만 <b>그 자리에
-    무엇이 대신 와야 하는지</b>는 두 문서가 답하지 않았다 — 이 문서가 그 답이다.
-  </p>
-</section>
-
-<section>
-  <div class="eyebrow">전제</div>
-  <h2>협업 칸은 avcshub 웹이 하던 일을 가져온다</h2>
-
-  <p>
-    avcs 스킬이 작업 흐름을 이렇게 못 박았다:
-    <code>intent → session → lease → operation_propose → validate</code>.
-    그리고 리뷰는 <b>바깥에서</b> 한다 —
-    <em>"마일스톤마다 <code>avcs sync local</code> 로 push 하고, 웹에서 proposals·이슈·
-    audit 를 리뷰한다."</em>
-  </p>
-
-  <p>
-    murmur 가 <b>내부 avcshub</b> 가 된다는 것은 그 리뷰를 여기서 한다는 뜻이다.
-    대화가 벌어지는 자리와 코드 제안을 보는 자리가 같아야 "사람끼리 일하듯"이 성립한다 —
-    Slack 을 보다가 웹 콘솔을 여는 것은 그 컨셉의 반대다.
-  </p>
-
-  <h3>왜 이것이 급한가 — 실측된 사고</h3>
-  <p>
-    avcs 스킬에 기록된 것: <b>2026-08-27, 8개 병렬 세션이 lease 단계를 전부 건너뛴 결과
-    하루 21 PR · 반복 대형 충돌.</b> 최악은 브랜치 164파일 대 dev 192파일에 32파일이
-    겹친 것이었고, 같은 기간 <b>lease 객체는 0개</b>였다.
-  </p>
-  <p class="note">
-    스킬이 남긴 결론이 이 문서의 근거다: <em>"도구는 있었고 아무도 부르지 않았다."</em>
-    보이지 않는 규율은 지켜지지 않는다. 협업 칸은 그 규율을 <b>화면에 세우는 것</b>이다.
-  </p>
-</section>
-
-<section>
-  <div class="eyebrow">칸</div>
-  <h2>레일의 다섯째 칸 — 협업</h2>
-
-  <p>
-    「레일」이 네 칸(홈 · DM · 에이전트 · 북마크)을 정했다. 협업은 <b>다섯째 칸</b>이다.
-    북마크와 나란히 두지 않는 이유: 북마크는 내가 표시한 것이고 협업은 <b>남들이 만들어
-    내는 것</b>이라, 새 것이 생기면 배지를 받아야 한다.
-  </p>
+  <p>murmur 가 노리는 자리는 <b>세 번째</b>다.</p>
 
   <div class="panel">
-    <div class="panel__h">협업 칸<span class="tag">제안</span></div>
+    <div class="panel__h">컨셉</div>
     <div class="panel__b">
       <div class="ui">
-        <div class="row"><span class="body"><b>org/repo</b></span></div>
-        <div class="row"><span class="body">● 008 마이그레이션을 되돌린다 &nbsp;<span class="t">alpha · 3분 전</span></span></div>
-        <div class="row"><span class="body" style="padding-left:14px"><span class="badge-now">동작 바뀜</span> <span class="badge-now">공개 API 깨짐</span> <span class="t">검증 대기</span></span></div>
-        <div class="row"><span class="body">● 인덱스를 다시 깐다 &nbsp;<span class="t">beta · 1시간 전</span></span></div>
-        <div class="row"><span class="body" style="padding-left:14px"><span class="t">결정 필요 — codex 의 제안과 같은 파일</span></span></div>
-        <div class="row"><span class="body"><b>org/web</b></span></div>
-        <div class="row"><span class="body">● 사이드바 레일 &nbsp;<span class="t">나 · 어제 · 채택됨</span></span></div>
+        <div class="row"><span class="body">원래 &nbsp;&nbsp;<code>avcs</code> ↔ <code>avcs-server</code> ↔ <code>avcshub</code>(웹)</span></div>
+        <div class="row"><span class="body">murmur &nbsp;<code>avcs</code> ↔ <code>avcs-server</code> ↔ <b>murmur 협업 탭</b></span></div>
       </div>
     </div>
   </div>
 
-  <h3>줄이 말하는 넷</h3>
   <p>
-    인박스 줄과 <b>같은 규칙</b>이다: <b>누가</b>(얼굴) · <b>무슨 제안</b>
-    (<code>declaredPurpose</code>) · <b>무엇을 건드리나</b>(<code>effects</code>) ·
-    <b>언제·어느 저장소</b>. 같은 규칙을 쓰는 이유는 두 목록이 같은 종류의 물음
-    ("내가 무엇을 해야 하나")에 답하기 때문이다.
+    코드 관리·협업은 <b>avcs 를 통해서</b> 한다. murmur 는 그 결과를 <b>보고 결정하는
+    자리</b>다 — Slack 을 보다가 웹 콘솔을 여는 왕복이 없어지는 것이 이 컨셉의 값이다.
+  </p>
+</section>
+
+<section>
+  <div class="eyebrow">잘못된 것</div>
+  <h2>지금 코드는 avcs 를 스레드로 투영한다</h2>
+
+  <p>
+    <code>server/src/avcs/projection.ts</code> 가 avcs 거버넌스 객체를 murmur
+    <b>채널 메시지</b>로 만든다. 실측한 매핑:
   </p>
 
-  <h3>정렬은 막는 순이다</h3>
-  <p>
-    인박스와 같다. <b>결정 필요 → 검증 실패 → 검증 대기 → 채택·거부</b>. 시간은 그 안에서만
-    본다 — 방금 올라온 제안이 어제부터 결정을 기다리는 충돌을 밀어내면 안 된다.
-  </p>
+  <div class="panel">
+    <div class="panel__h">지금의 투영<span class="tag">걷어낸다</span></div>
+    <div class="panel__b">
+      <table>
+        <thead><tr><th>avcs 객체</th><th>murmur 에서</th></tr></thead>
+        <tbody>
+          <tr><td><code>intent</code></td><td>스레드 <b>뿌리</b>가 되고 <code>work_thread</code> 에 매핑된다</td></tr>
+          <tr><td><code>operation</code></td><td>그 스레드 아래 <b>답글</b>(배치 병합)</td></tr>
+          <tr><td><code>decision</code>·<code>evidence</code></td><td>그 스레드 아래 답글</td></tr>
+          <tr><td><code>checkpoint</code>·<code>release</code>·<code>finalize</code></td><td>채널 메시지</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
 
-  <h3>에이전트가 avcs 를 쓰고 있다는 표시는 없다</h3>
+  <h3>왜 이것이 컨셉과 어긋나는가</h3>
   <p>
-    파일 잠금 목록(<code>lease</code>)을 이 칸에 옮기지 <b>않는다.</b> "누가 어느 파일을
-    잡았다"는 <b>제안을 읽는 사람이 묻는 질문이 아니다</b> — 겹침이 실제로 문제가 되면
-    그것은 <b>결정 필요</b>로 나타나고, 그때 이 칸이 말한다. 도구가 돌고 있다는 사실
-    자체는 정보가 아니다.
+    hub 를 대신한다는 것은 <b>제안을 보는 화면</b>을 갖는 것인데, 투영은 제안을
+    <b>대화로 바꿔</b> 흘려보낸다. 셋이 어긋난다:
+  </p>
+  <p>
+    <b>① 스레드는 avcs 의 단위가 아니다.</b> avcs 의 단위는 <code>intent</code> 를 뿌리로 한
+    <b>제안 트리</b>(<code>intent → operations → evidence</code> + <code>decisions</code>)다.
+    스레드에 풀어 놓으면 그 구조가 평평한 답글 목록이 된다.
+  </p>
+  <p>
+    <b>② 지나가 버린다.</b> 제안은 결정될 때까지 <b>머물러야</b> 하는데, 채널 메시지는
+    스크롤과 함께 지나간다. "지금 무슨 제안이 떠 있나"를 한 자리에서 볼 수 없다.
+  </p>
+  <p>
+    <b>③ 상태가 없다.</b> 제안에는 상태가 있고(열림·승인됨·머지됨·거부됨) 그것으로
+    <b>거르고 정렬</b>해야 한다. 메시지에는 그 축이 없다.
   </p>
   <p class="note">
-    <code>lease</code> 투영은 서버에 그대로 남긴다 — 충돌 판정의 재료이고, 화면에 안
-    그리는 것과 데이터를 안 받는 것은 다르다.
+    사용자 확인(2026-09-07): <em>"스레드 같은게 avcs 에 연동되는 컨셉이 아니였어."</em>
+    투영은 컨셉을 잘못 구현한 것이므로 <b>걷어낸다.</b> 이미 투영된 <code>system</code>
+    메시지는 기록이라 남기고, <code>lease</code> 투영은 협업 탭이 쓸 재료라 남긴다.
+  </p>
+</section>
+
+<section>
+  <div class="eyebrow">모델</div>
+  <h2>제안은 트리다 — avcshub 가 이미 그렇게 조립한다</h2>
+
+  <p>
+    avcshub 의 <code>groupProposal()</code>(<code>@avcshub/shared</code>)이 객체 배열을
+    이 모양으로 묶는다:
+  </p>
+
+  <div class="panel">
+    <div class="panel__h">ProposalView<span class="tag">avcshub/shared/proposal.ts:29</span></div>
+    <div class="panel__b">
+      <div class="ui">
+        <div class="row"><span class="body"><b>intent</b> — "008 마이그레이션을 되돌린다"</span></div>
+        <div class="row"><span class="body" style="padding-left:16px">├ <b>operation</b> · <code>declaredPurpose</code> · <code>effects</code></span></div>
+        <div class="row"><span class="body" style="padding-left:32px">└ evidence — 검증 결과</span></div>
+        <div class="row"><span class="body" style="padding-left:16px">└ <b>operation</b> …</span></div>
+        <div class="row"><span class="body"><b>decision</b> — approve / reject · 어느 view · 머지된 head</span></div>
+      </div>
+    </div>
+  </div>
+
+  <p>
+    상태는 넷이다: <code>open</code> · <code>approved</code> · <code>merged</code> ·
+    <code>rejected</code>. 목록 위의 필터가 그 축을 그대로 쓴다.
+  </p>
+
+  <p class="note">
+    <b>murmur 가 이 조립을 다시 짜야 한다.</b> <code>@avcshub/shared</code> 는 비공개
+    저장소이므로 의존할 수 없다 — 같은 모양을 murmur 안에 세우되, <b>판정은 avcs 것을
+    쓴다</b>(아래).
   </p>
 </section>
 
 <section>
   <div class="eyebrow">막는 것</div>
-  <h2>서버가 <code>summary</code> 하나로 눌러 담는다</h2>
+  <h2>파생 상태는 avcs-server 가 주지 않는다</h2>
 
-  <p>
-    avcs 객체에는 필요한 것이 <b>다 있다</b>(<code>avcs/src/objects/types.ts</code> 실측):
-  </p>
+  <p>실측으로 세 구간을 다 확인했다.</p>
 
   <div class="panel">
-    <div class="panel__h">Operation — avcs 가 담는 것<span class="tag">types.ts:164</span></div>
+    <div class="panel__h">파생 상태(<code>OperationStatus</code>)는 어디 있나</div>
     <div class="panel__b">
       <table>
-        <thead><tr><th>필드</th><th>뜻</th><th>murmur 가 받나</th></tr></thead>
+        <thead><tr><th>구간</th><th>확인</th></tr></thead>
         <tbody>
-          <tr><td><code>declaredPurpose</code></td><td>제안의 목적</td><td><b>받는다</b> — <code>summary</code> 로</td></tr>
-          <tr><td><code>effects.changesBehavior</code></td><td>동작을 바꾸나</td><td>버려진다</td></tr>
-          <tr><td><code>effects.breaksPublicApi</code></td><td>공개 API 를 깨나</td><td>버려진다</td></tr>
-          <tr><td><code>effects.reads</code></td><td>읽은 스코프</td><td>버려진다</td></tr>
-          <tr><td><code>target</code>·<code>body</code></td><td>어느 파일에 무슨 종류</td><td>버려진다</td></tr>
-          <tr><td><code>causalDeps</code></td><td>선행 op</td><td>버려진다</td></tr>
+          <tr><td>avcs 코어</td><td><code>reducer.ts:406</code> 의 <code>reduce()</code> 가 파생한다 — <code>statuses</code>·<code>conflicts</code>·<code>headOps</code> 를 한 번에 낸다</td></tr>
+          <tr><td>avcs-server</td><td><b>없다.</b> <code>/sync</code> 는 <code>{cursor, oids, refs}</code> 뿐이고 소스에 <code>OperationStatus</code> 라는 말이 <b>한 번도 안 나온다</b></td></tr>
+          <tr><td>avcshub</td><td>자기 API 계층에서 처리한다(<code>reviewGate.ts</code>)</td></tr>
         </tbody>
       </table>
     </div>
   </div>
 
   <p>
-    <code>client.ts</code> 의 <code>toEntries()</code> 가 각 객체를
-    <code>{ logIndex, oid, type, actorKeyId, intentOid, summary }</code> 여섯 칸으로
-    눌러 담는다. <b>페치는 이미 전체 객체를 받아 온다</b> — 버리는 자리가 그 함수 하나다.
+    avcs 주석이 이유를 적었다: <em>"lifecycle status is <b>not</b> stored on the immutable
+    op. It is <b>derived</b> from evidence/decision + policy at materialization time."</em>
+    상태는 저장되는 값이 아니라 <b>계산되는 값</b>이고, 그 계산은 정책에 달려 있다.
   </p>
 
-  <h3>상태는 저장되지 않는다 — 파생된다</h3>
+  <h3>그래서 murmur 는 <code>reduce()</code> 를 부른다</h3>
   <p>
-    avcs 주석이 명시한다: <em>"Operation lifecycle status is <b>not</b> stored on the
-    immutable op. It is <b>derived</b> from the presence of evidence/decision objects +
-    policy at materialization time."</em>
+    murmur 서버가 <code>avcs</code> 를 의존해 <code>reduce()</code> 를 부르고, 그 결과를
+    <b>재료로</b> 화면에 싣는다. <code>#484</code>·<code>#490</code> 과 같은 모양이다 —
+    서버는 사실만 싣고 화면이 그린다.
   </p>
   <p>
-    일곱 상태다: <code>proposed</code> · <code>validating</code> ·
-    <code>accepted</code> · <code>rejected</code> · <code>superseded</code> ·
-    <code>needs_decision</code> · <code>quarantined</code>.
-  </p>
-  <p>
-    <b>그래서 murmur 가 상태를 스스로 계산하면 안 된다.</b> 같은 판정이 두 벌 생기고,
-    정책이 바뀌면 한 벌만 고쳐져 화면과 avcs 가 다른 말을 한다 — 이 저장소가
-    <code>projectionState</code> 를 shared 로 뺀 것과 같은 이유다. avcs 가 파생해 준
-    값을 <b>받아야</b> 한다.
+    <b>murmur 가 상태를 스스로 재구성하면 안 된다.</b> 같은 판정이 두 벌 생기고, 정책이
+    바뀌면 한 벌만 고쳐져 화면과 avcs 가 다른 말을 한다 — 이 저장소가
+    <code>projectionState</code> 를 shared 로 뺀 것과 같은 이유다.
   </p>
   <p class="note">
-    <b>이것이 이 문서의 유일한 미해결 지점이다.</b> avcs-server 의 sync 응답이 파생 상태를
-    함께 주는지, 아니면 murmur 가 <code>evidence</code>·<code>decision</code> 의 존재로
-    재구성해야 하는지 — 그 답에 따라 1단계의 크기가 갈린다.
+    더 옳은 자리는 <b>avcs-server 에 파생 상태 엔드포인트를 두는 것</b>이다 — murmur 뿐
+    아니라 avcshub 도 얻는다. 다만 avcs-server 는 <code>docs/26</code> 의 clean-room
+    구현이라 <b>스펙 변경이 선행</b>이고, 그때까지 murmur 가 코어를 직접 부른다.
+    이것은 임시 우회이며 그 사실을 코드 주석에 남긴다.
+  </p>
+</section>
+
+<section>
+  <div class="eyebrow">탭</div>
+  <h2>협업 탭 — 레일의 다섯째 칸</h2>
+
+  <p>
+    「레일」이 네 칸(홈 · DM · 에이전트 · 북마크)을 정했다. 협업은 <b>다섯째 칸</b>이고,
+    이 칸이 avcshub 웹의 <code>/[org]/[repo]/proposals</code> 를 대신한다.
+  </p>
+
+  <div class="panel">
+    <div class="panel__h">협업 탭<span class="tag">제안</span></div>
+    <div class="panel__b">
+      <div class="ui">
+        <div class="row"><span class="body"><span class="badge-now">열림 3</span> <span class="badge-now">승인됨 1</span> <span class="t">전부</span></span></div>
+        <div class="row"><span class="body"><b>org/repo</b></span></div>
+        <div class="row"><span class="body">● 008 마이그레이션을 되돌린다 &nbsp;<span class="t">alpha · 3분 전</span></span></div>
+        <div class="row"><span class="body" style="padding-left:14px"><span class="badge-now">동작 바뀜</span> <span class="badge-now">공개 API 깨짐</span> <span class="t">op 3 · 검증 대기</span></span></div>
+        <div class="row"><span class="body">● 인덱스를 다시 깐다 &nbsp;<span class="t">beta · 1시간 전</span></span></div>
+        <div class="row"><span class="body" style="padding-left:14px"><span class="t">결정 필요 — codex 의 제안과 같은 파일</span></span></div>
+      </div>
+    </div>
+  </div>
+
+  <h3>줄이 말하는 넷 — 인박스와 같은 규칙</h3>
+  <p>
+    <b>누가</b>(얼굴) · <b>무슨 제안</b>(<code>intent.title</code>) ·
+    <b>무엇을 건드리나</b>(<code>effects</code>) · <b>언제·어느 저장소</b>.
+    같은 규칙을 쓰는 이유는 두 목록이 같은 물음("내가 무엇을 해야 하나")에 답하기 때문이다.
+  </p>
+
+  <h3>정렬은 막는 순이다</h3>
+  <p>
+    인박스와 같다: <b>결정 필요 → 검증 실패 → 열림 → 승인·머지·거부</b>. 시간은 그 안에서만
+    본다 — 방금 올라온 제안이 어제부터 결정을 기다리는 충돌을 밀어내면 안 된다.
+  </p>
+
+  <h3>잠금은 그리지 않는다</h3>
+  <p>
+    "누가 어느 파일을 잡았다"(<code>lease</code>)는 제안을 읽는 사람이 묻는 질문이 아니다 —
+    겹침이 실제로 문제가 되면 <b>결정 필요</b>로 나타나고, 그때 이 탭이 말한다.
+    도구가 돌고 있다는 사실 자체는 정보가 아니다.
+  </p>
+  <p class="note">
+    <code>lease</code> 투영은 서버에 남긴다 — 충돌 판정의 재료이고, 화면에 안 그리는 것과
+    데이터를 안 받는 것은 다르다. 사이드바의 <code>ACTIVE WORK</code> 구역은 사라진다.
+  </p>
+</section>
+
+<section>
+  <div class="eyebrow">왜 급한가</div>
+  <h2>보이지 않는 규율은 지켜지지 않는다</h2>
+
+  <p>
+    avcs 스킬에 기록된 실측: <b>2026-08-27, 8개 병렬 세션이 lease 단계를 전부 건너뛴 결과
+    하루 21 PR · 반복 대형 충돌.</b> 최악은 브랜치 164파일 대 dev 192파일에 32파일이
+    겹친 것이었고, <b>같은 기간 lease 객체는 0개</b>였다.
+  </p>
+  <p>
+    스킬의 결론이 이 문서의 근거다: <em>"도구는 있었고 아무도 부르지 않았다."</em>
+    협업 탭은 그 규율을 <b>화면에 세우는 것</b>이다 — 웹 콘솔을 따로 열어야 하는 규율은
+    지켜지지 않는다.
   </p>
 </section>
 
@@ -437,27 +493,32 @@
     <thead><tr><th>#</th><th>무엇</th><th>선행</th></tr></thead>
     <tbody>
       <tr>
+        <td>0</td>
+        <td><b>스레드 투영을 걷어낸다</b> — <code>projection.ts</code> 의 메시지 생성,
+        <code>work_thread</code>, <code>message_avcs_oid</code>. 이미 투영된 메시지와
+        <code>lease</code>·<code>client.ts</code>·커서는 남긴다</td>
+        <td>—</td>
+      </tr>
+      <tr>
         <td>1</td>
-        <td><b><code>AvcsLogEntry</code> 를 넓힌다</b> — <code>effects</code>·
-        <code>target</code>·파생 상태. <code>#484</code>·<code>#490</code> 과 같은 모양이다:
-        서버는 <b>재료</b>만 싣고 판정은 화면이 한다</td>
-        <td>avcs-server 가 파생 상태를 주는지 확인</td>
+        <td><b>제안 트리를 조립한다</b> — <code>intent → operations → evidence</code> +
+        <code>decisions</code>. <code>reduce()</code> 로 상태·충돌을 파생받아 <b>재료로</b>
+        싣는다</td>
+        <td>0</td>
       </tr>
       <tr>
         <td>2</td>
-        <td><b>협업 칸 껍데기</b> — 레일 다섯째 칸 · 저장소별 묶음 · 줄 넷</td>
+        <td><b>협업 탭 껍데기</b> — 레일 다섯째 칸 · 저장소별 묶음 · 줄 넷 · 상태 필터</td>
         <td>1</td>
       </tr>
       <tr>
         <td>3</td>
-        <td><b>결정 필요를 배지로</b> — 새 충돌이 생기면 칸이 배지를 받는다.
-        인박스 배지와 같은 규칙(나를 막는 것만 센다)</td>
+        <td><b>결정 필요를 배지로</b> — 인박스 배지와 같은 규칙(나를 막는 것만 센다)</td>
         <td>2</td>
       </tr>
       <tr>
         <td>4</td>
-        <td><b><code>ACTIVE WORK</code> 를 없앤다</b> — 「레일」이 요구한 것.
-        협업 칸이 그 자리를 대신한 뒤에 지운다</td>
+        <td><b><code>ACTIVE WORK</code> 를 없앤다</b> — 협업 탭이 자리를 대신한 뒤에</td>
         <td>2</td>
       </tr>
     </tbody>
@@ -465,16 +526,16 @@
 
   <h3>이 문서가 정하지 않는 것</h3>
   <p>
-    <b>murmur 에서 제안을 만드는 것</b>은 범위 밖이다. 지금 murmur 는 avcs 를
-    <b>읽기만</b> 한다(<code>fetchSince</code>). 제안·결정을 여기서 만들려면 쓰기 경로가
-    필요하고, 그것은 avcs-server 쪽 표면 문제다 — 읽는 자리가 먼저 서야 무엇을 쓰고 싶은지
-    알 수 있다.
+    <b>murmur 에서 제안을 만들고 결정하는 것</b>은 범위 밖이다. 지금 murmur 는 avcs 를
+    <b>읽기만</b> 한다(<code>fetchSince</code>). 쓰기는 서명이 필요하고
+    (avcs 스킬: <em>"push 는 서명으로만 간다"</em>) 그것은 avcs-server 표면 문제다 —
+    읽는 자리가 먼저 서야 무엇을 쓰고 싶은지 안다.
   </p>
 </section>
 
 <footer class="wrap">
   <div class="meta">
-    murmur · 협업 · 앞선 넷: 여섯 규칙 · 아바타 · 남는 여덟 곳 · 레일
+    murmur · 협업 탭 · 앞선 넷: 여섯 규칙 · 아바타 · 남는 여덟 곳 · 레일
   </div>
 </footer>
 
