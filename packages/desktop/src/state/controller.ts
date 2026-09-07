@@ -1,11 +1,12 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@murmur/shared';
 import { notifyLevelOf } from '@murmur/shared';
 import { ApiClient, ApiError } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type NotificationTarget, type Notifier } from '../lib/notify';
 import { displayBody } from '../lib/mention';
-import { RunnerLauncher, tauriDaemonObserver, tauriLoginPathReader, tauriSecretStore, daemonSpawner, type DaemonObserver, type LoginPathReader, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
+import { RunnerLauncher, tauriDaemonObserver, tauriLoginPathReader, tauriSecretStore, daemonSpawner, tauriAppVersionReader, type AppVersionReader, type DaemonObserver, type LoginPathReader, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
+import { staleRunners } from '../lib/runnerVersions';
 import type { AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
@@ -61,6 +62,11 @@ export class Controller {
      * 만들 수 있게 주입한다 — `spawner`·`secrets` 와 같은 이유다.
      */
     daemonObserver: DaemonObserver = tauriDaemonObserver,
+    /**
+     * 이 앱 번들의 버전을 읽는 표면. 러너에 심는 `AGENT_VERSION` 과 뒤처짐 판정이
+     * **같은 값**을 써야 하므로 한 곳에서 읽는다(`AppVersionReader` 주석).
+     */
+    appVersion: AppVersionReader = tauriAppVersionReader,
   ) {
     this.runnerLauncher = new RunnerLauncher(
       {
@@ -74,7 +80,14 @@ export class Controller {
       loginPath,
       undefined, // now — 재발급 라벨의 시각. 기본값(Date.now)을 그대로 쓴다.
       daemonObserver,
+      appVersion,
     );
+    // 앱 버전을 **스토어로 밀어 넣는다** — 화면이 컨트롤러에게 묻지 않게(`appVersion`
+    // 필드 주석). 실패해도 앱은 떠야 하므로 fire-and-forget 이고, 못 얻으면 `null` 로
+    // 남아 화면이 "판정할 수 없다"고 말한다.
+    void this.runnerLauncher.currentAppVersion()
+      .then((v) => { this.store.getState().set({ appVersion: v }); })
+      .catch(() => {});
     this.runnerLauncher.setOnStateChange((states) => {
       this.store.getState().set({
         runnerStates: Object.fromEntries(states.map((s) => [s.agentId, s])),
@@ -105,16 +118,93 @@ export class Controller {
   private async startRunners(): Promise<void> {
     const prefs = usePrefsStore.getState();
     if (!prefs.runnerAutoStart) return;
+    const input = await this.launchInput();
+    if (!input) return;
+    await this.runnerLauncher.startAll(input);
+  }
+
+  /**
+   * 러너를 띄울 때 쓰는 입력. 자동 기동과 재기동이 **같은 판정**을 쓰게 한 곳에 둔다 —
+   * 갈라지면 "전체 재기동"이 고른 대상과 자동 기동이 고르는 대상이 어긋난다.
+   */
+  private async launchInput(): Promise<{
+    agents: AgentView[]; myAccountId: string; liveAccountIds: Set<string> | null;
+  } | null> {
     const store = this.store.getState();
     const myId = store.me?.id;
-    if (!myId) return;
+    if (!myId) return null;
     const agents = await this.api.listAgents();
-    await this.runnerLauncher.startAll({
+    return {
       agents,
       myAccountId: myId,
       // `connected` 가 false 면 presence 는 '모른다'다 — 빈 배열이 '아무도 없다'가 아니다.
       liveAccountIds: store.connected ? new Set(store.online) : null,
-    });
+    };
+  }
+
+  /** 이 앱 번들의 버전. 화면이 뒤처짐을 말할 때 쓰는 기준값. */
+  appVersion(): Promise<string | null> {
+    return this.runnerLauncher.currentAppVersion();
+  }
+
+  /**
+   * 이 에이전트의 러너를 **새 번들로 갈아 띄운다.** 실제 순서(죽이라고 말하고, 종료를
+   * 확인하고, 띄운다)는 실행기가 갖는다 — 컨트롤러가 하는 일은 대상과 입력을 대는 것뿐이다.
+   */
+  async restartRunner(agentId: string): Promise<void> {
+    const input = await this.launchInput();
+    if (!input) return;
+    const target = input.agents.find((a) => a.id === agentId);
+    // 서버 목록에 없는 에이전트는 재기동할 대상이 아니다 — 지어내지 않는다.
+    if (!target) return;
+    // 소유자만 띄운다(`startAll` 의 술어와 같다). admin 이라도 남의 러너를 이 기기로
+    // 가져오지 않는다 — 그것은 재기동이 아니라 소유 이전이다.
+    if (target.ownerAccountId !== input.myAccountId) return;
+    await this.runnerLauncher.restart(target, input);
+  }
+
+  /**
+   * 뒤처진 러너를 **전부** 새 번들로 갈아 띄운다. 고르는 것은
+   * `runnerVersions.ts::staleRunners` 하나이고(화면과 같은 판정), 돌려주는 것은
+   * 실제로 예약한 목록이다 — 화면이 "N대 재기동했다"를 지어내지 않게.
+   *
+   * **동시에 예약한다(순차가 아니다).** 순차로 돌면 첫 러너의 턴이 끝날 때까지 나머지는
+   * `running` 으로 남고, 사람은 "한 대만 재기동 중"으로 읽는다 — 실측 5분 넘는 턴도
+   * 있으므로 그 오독은 길다. 예약은 전부에게 **지금** 걸려야 하고, 그 뒤의 기다림은 각자의
+   * 턴 길이만큼이면 된다.
+   *
+   * 동시에 걸어도 안전한 이유: `observe()` 는 읽기이고, 종료 판정은 러너마다 자기
+   * `agentId` 만 본다(`awaitRunnerExit`). 서로의 확인을 헷갈릴 자리가 없다.
+   */
+  async restartStaleRunners(): Promise<string[]> {
+    const input = await this.launchInput();
+    if (!input) return [];
+    const appVersion = await this.appVersion();
+    const states = this.store.getState().runnerStates;
+    const live = new Set(
+      input.agents
+        .filter((a) => {
+          const status = states[a.id]?.status;
+          return status === 'running' || status === 'adopted';
+        })
+        .map((a) => a.id),
+    );
+    // `startAll` 과 **같은 술어**로 좁힌다 — 러너를 띄우는 것은 소유자의 일이고
+    // (`startAll` 의 대상 선별), 남의 에이전트를 재기동하면 그 러너의 PAT·소유가 이
+    // 기기로 옮겨 온다. 화면은 `runnerStates`(소유한 것만 든다)로 이미 좁혀져 있지만,
+    // 판정을 데이터의 우연에 맡기지 않는다.
+    const mine = input.agents.filter((a) => a.ownerAccountId === input.myAccountId);
+    const { stale } = staleRunners({ agents: mine, live, appVersion });
+    await Promise.all(stale.map((agentId) => {
+      const target = mine.find((a) => a.id === agentId);
+      return target ? this.runnerLauncher.restart(target, input) : Promise.resolve();
+    }));
+    return stale;
+  }
+
+  /** 재기동 예약을 취소한다 — **뜨는 것만** 취소된다(실행기 주석 참조). */
+  cancelRestart(agentId: string): void {
+    this.runnerLauncher.cancelRestart(agentId);
   }
 
   /**

@@ -5,6 +5,7 @@ import {
 } from '@murmur/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
+import { staleRunners } from '../../lib/runnerVersions';
 // `runnerStatusLabel` 을 **설명 문구에도** 쓴다 — 상태 이름을 이 파일이 제 손으로 적으면
 // `RunnerStatus.tsx` 가 바뀔 때 여기만 낡는다. `external` → `adopted`(`#482`) 가 정확히
 // 그렇게 어긋났다.
@@ -127,6 +128,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 상세의 폭이 좁아져 문서가 세운 세 묶음이 다시 한 줄로 흐른다.
    */
   const [view, setView] = useState<'grid' | 'detail'>('grid');
+
   // 초안이 null 인 것은 '무엇을 기본으로 둘지 아직 모른다'는 뜻이다 — 기본값을 못 읽었는데
   // 조용히 채워 넣으면 화면이 거짓을 말한다(docs/design.md 4절).
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -171,6 +173,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const myId = useActiveStore((s) => s.me?.id);
   // #250: 이 앱이 띄운 러너의 상태. 실행기가 스토어에 밀어 넣고 화면은 읽기만 한다.
   const runnerStates = useActiveStore((s) => s.runnerStates);
+  /** 뒤처진 러너를 세는 기준. 컨트롤러가 스토어에 밀어 넣은 값이다(`appStore.ts`). */
+  const appVersion = useActiveStore((s) => s.appVersion);
   const [reissuing, setReissuing] = useState(false);
   const accounts = useActiveStore((s) => s.accounts);
   // #176: 생존(presence)과 마지막 활동은 **다른 두 사실**이라 두 자리에서 온다 — presence 는
@@ -506,6 +510,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           </p>
         </div>
         {error && <p role="alert" className="mb-2 text-[11px] text-danger">{error}</p>}
+        <StaleRunnerBar
+          agents={agents}
+          runnerStates={runnerStates}
+          appVersion={appVersion}
+          onError={setError}
+        />
         <AgentGrid
           agents={agents}
           selectedId={null}
@@ -957,6 +967,14 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     그래서 아래 문구도 "다음 기동에서 뜬다"라고 쓴다 — "지금 뜬다"라고 쓰면
                     `#129` 가 금지한 그 거짓 신호를 이름만 바꿔 되살리는 셈이 된다.
 
+                    **`#141` 재기동이 그 위에 하나를 더 얹었다.** 그리드의 [뒤처진 러너 전체
+                    재기동]과 프로필의 [새 버전으로 재기동]은 **실제로 죽이고 다시 띄운다**
+                    (`RunnerLauncher.restart` → daemon 의 `killRunner` → 종료 확인 → spawn).
+                    이 절의 [실행]과 갈라 두는 이유: 그것은 "자동 기동 대상에 넣는다"이고
+                    저것은 "지금 도는 러너를 갈아 준다"다 — 하나로 뭉치면 어느 쪽도 정확히
+                    말하지 못한다. 그리고 **"새 버전으로"는 뒤처졌다고 확인된 때만** 쓴다:
+                    버전을 모르는 러너에는 그냥 [러너 재기동]이다(`runnerVersions.ts`).
+
                     **그래도 여전히 금지인 것**: "멈췄다"·"종료됨" 류의 **생사 단정**. 러너가
                     종료하면 다음 GET /agent/config 자체가 오지 않아 서버는 프로세스가 실제로
                     죽었는지 영원히 모른다(019_agent_stop_request.sql). daemon 이 생사를 아는
@@ -1375,5 +1393,93 @@ function FieldGroup({ title, note, children }: {
       </div>
       {children}
     </section>
+  );
+}
+
+/**
+ * 뒤처진 러너를 **한 번에** 새 번들로 갈아 띄우는 자리.
+ *
+ * ## 왜 이것이 필요한가
+ *
+ * 러너는 daemon 이 소유하고 앱의 수명을 넘어 산다(`#431`). 앱을 새로 설치해도 도는 러너는
+ * 옛 번들 그대로이고, `RunnerLauncher.doStartOne` 은 장부에 살아 있는 러너를 보면
+ * `adopted` 로 두고 새로 띄우지 않는다(중복 금지). 그래서 번들에 담긴 수정이 도는 러너에
+ * 닿는 길은 **그 러너를 한 번 종료시키는 것** 하나뿐이고, 에이전트가 여럿이면 그것을
+ * 하나씩 누르는 것이 곧 이 화면의 일이 된다.
+ *
+ * ## 개수를 이름에 넣는 이유
+ *
+ * "전체 재기동"만 적으면 몇 대가 끊길지 모르고 누른다. 그리고 이 조작은 진행 중인 턴을
+ * 기다리므로(SIGTERM 은 graceful 이다) 되돌리기 어렵다 — 개수가 곧 영향 범위다.
+ *
+ * ## 0 이어도 버튼을 없애지 않는다
+ *
+ * 사라지면 "이 기능이 없다"로 읽힌다. 비활성 버튼 + 이유가 "전부 최신이다"라는 **사실**을
+ * 말한다 — 없는 것과 할 일이 없는 것은 다르다(docs/design.md §4).
+ */
+function StaleRunnerBar({ agents, runnerStates, appVersion, onError }: {
+  agents: AgentView[];
+  runnerStates: Record<string, { status: string } | undefined>;
+  appVersion: string | null;
+  onError: (message: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  // 러너가 **있다고 보는** 에이전트만 대상이다. `runnerStates` 는 이 앱의 실행기가 관리하는
+  // (즉 소유한) 에이전트만 담으므로, 이 한 줄이 소유 판정도 겸한다 — 그래도 컨트롤러가
+  // 같은 술어를 한 번 더 본다(`restartStaleRunners`).
+  const live = new Set(
+    agents
+      .filter((a) => {
+        const status = runnerStates[a.id]?.status;
+        return status === 'running' || status === 'adopted';
+      })
+      .map((a) => a.id),
+  );
+  const { stale, unknown } = staleRunners({ agents, live, appVersion });
+
+  return (
+    <div className="mb-3 rounded border border-border p-3">
+      <div className="flex items-center gap-2">
+        <button
+          data-testid="restart-stale-runners"
+          disabled={stale.length === 0 || busy}
+          className="rounded border border-border px-2 py-1 text-xs text-fg
+                     hover:bg-surface-sunken disabled:opacity-50"
+          onClick={() => {
+            setBusy(true);
+            void getController().restartStaleRunners()
+              .catch((err: unknown) => onError(
+                `재기동하지 못했다: ${err instanceof Error ? err.message : String(err)}`,
+              ))
+              .finally(() => setBusy(false));
+          }}
+        >
+          뒤처진 러너 전체 재기동 ({stale.length})
+        </button>
+        {stale.length === 0 && (
+          <span className="text-[11px] text-fg-subtle">
+            {appVersion === null
+              // 앱 버전을 못 얻었으면 비교 기준이 없다. "전부 최신이다"로 적으면 확인하지
+              // 않은 것을 단정하는 셈이다.
+              ? '앱 버전을 얻지 못해 뒤처짐을 판정할 수 없다.'
+              : '도는 러너가 전부 이 번들이다.'}
+          </span>
+        )}
+      </div>
+      {/* **모르는 것을 뒤처졌다고 하지 않는다**(`runnerVersions.ts` 의 판정). 대신 그
+          사실을 적어 사람이 개별 재기동으로 값을 채우게 한다 — 재기동 한 번이면
+          `AGENT_VERSION` 이 심긴 러너가 뜨고 그 뒤로는 판정에 든다. */}
+      {unknown.length > 0 && (
+        <p className="mt-1 text-[11px] text-fg-subtle">
+          버전을 모르는 러너 {unknown.length}대 — 뒤처졌는지 알 수 없어 대상에서 뺐다.
+          한 번 재기동하면 그 뒤로는 버전이 보인다.
+        </p>
+      )}
+      {/* 진행 중인 턴을 끊지 않는다는 사실이 **누르기 전에** 있어야 한다. 이 조작은
+          예약이고, 실제 교체는 그 턴이 끝난 뒤다(실측 5분 넘는 턴도 있다). */}
+      <p className="mt-1 text-[11px] text-fg-subtle">
+        재기동은 <strong>진행 중인 턴을 끊지 않는다</strong> — 턴을 마친 뒤 새 번들로 다시 뜬다.
+      </p>
+    </div>
   );
 }

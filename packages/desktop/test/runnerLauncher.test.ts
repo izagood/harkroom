@@ -12,7 +12,7 @@ import { CREDENTIAL_REJECTED_LINE } from '@murmur/shared';
 import {
   RunnerLauncher, patLabelPrefix, STRANGER_ATTACHED,
   type LaunchableAgent, type RunnerProcess, type RunnerSecretStore, type RunnerSpawner,
-  type LoginPathReader, type SpawnRequest, type StoredRunnerPat,
+  type LoginPathReader, type SpawnRequest, type StoredRunnerPat, type AppVersionReader,
 } from '../src/lib/runnerLauncher';
 import { fakeDaemon, liveRunner } from './helpers/fakeDaemon';
 
@@ -74,6 +74,28 @@ function fakeLoginPath(value: string | null = '/login/bin'): LoginPathReader {
   return { read: vi.fn(async () => value) };
 }
 
+/**
+ * 이 앱 번들의 버전. 실제 값은 Rust 가 `app.package_info().version` 으로 안다 —
+ * 테스트는 그것을 흉내내는 대신 주입한 값이 **spawn env 까지 그대로 흐르는지**만 잰다.
+ */
+const APP_VERSION = '9.9.9';
+
+/** 앱 버전 조회 목. `null` 은 '얻지 못했다'다(`LoginPathReader` 와 같은 규율). */
+function fakeAppVersion(value: string | null = APP_VERSION): AppVersionReader {
+  return { read: vi.fn(async () => value) };
+}
+
+/**
+ * `restart()` 가 다시 띄울 때 쓰는 입력. `startAll` 이 받는 것과 같은 모양이다 —
+ * 재기동은 "죽였다가 **같은 판정으로** 다시 띄우는 것"이고, 판정을 새로 만들면
+ * 자동 기동과 재기동이 서로 다른 대상을 고르게 된다.
+ */
+const startInput = (ids: string[] = []) => ({
+  agents: ids.map((id) => agent(id)),
+  myAccountId: 'me',
+  liveAccountIds: new Set(ids),
+});
+
 function fakeApi(calls: string[] = []) {
   return {
     calls,
@@ -87,10 +109,17 @@ function fakeApi(calls: string[] = []) {
 const make = (
   api = fakeApi(), secrets = fakeSecrets(), spawner = fakeSpawner(),
   loginPath = fakeLoginPath(), now = () => 1_700_000_000_000,
-  daemon = fakeDaemon(),
+  daemon = fakeDaemon(), appVersion = fakeAppVersion(),
 ) => ({
-  api, secrets, spawner, loginPath, daemon,
-  launcher: new RunnerLauncher(api, secrets, spawner, loginPath, now, daemon),
+  api, secrets, spawner, loginPath, daemon, appVersion,
+  launcher: new RunnerLauncher(
+    api, secrets, spawner, loginPath, now, daemon, appVersion,
+    // 재기동은 러너의 **실제 종료**를 기다린다(SIGTERM 은 graceful 이다). 테스트는
+    // 그 기다림을 즉시 끝낸다 — 여기서 실제로 자면 회귀선이 분 단위로 느려진다.
+    // `timeoutMs: 0` 은 "한 번 보고 아직 살아 있으면 포기한다"다: 아직 안 죽은 경로를
+    // 재는 회귀선이 무한히 돌지 않게 하는 자리이고, 죽은 경로는 상한 검사 전에 빠진다.
+    { intervalMs: 0, wait: async () => {}, timeoutMs: 0 },
+  ),
 });
 
 const startAll = (
@@ -669,5 +698,94 @@ describe('9. 중복 방지·정리', () => {
     spawner.exit(78, undefined, 자격증명거부꼬리);
 
     expect(seen).toEqual(['running', 'needs_reissue']);
+  });
+});
+
+// ── 새 번들로 재기동 ──────────────────────────────────────────────────────────
+//
+// 러너는 daemon 이 소유하고 앱의 수명을 넘어 산다(`#431`). 그래서 앱을 새로 설치해도
+// 이미 도는 러너는 **옛 번들 그대로** 남고, `doStartOne` 은 장부에 살아 있는 러너를
+// 보면 `adopted` 로 두고 새로 띄우지 않는다(중복 금지). 번들에 담긴 수정이 도는 러너에
+// 닿는 길은 그 러너를 한 번 종료시키는 것 하나뿐이다 — 이 절이 그 길을 만든다.
+//
+// **SIGTERM 은 graceful 이고 SIGKILL 승격이 없다**(`packages/daemon/src/runners.ts` 의
+// "SIGTERM 하나. 여기서 끝이다" 와 그 회귀선). 러너는 진행 중인 턴을 마친 뒤에야 죽고,
+// 실측된 턴은 5분이 넘은 것도 있다. 그래서 재기동은 한 동작이 아니라 **예약**이다:
+// 죽이라고 말하고, 실제로 죽은 것을 확인한 뒤에 띄운다. 그 시차가 화면에 있어야 한다는
+// 것은 `#384` 이어받기가 이미 세운 규율이다.
+describe('7. 새 번들로 재기동', () => {
+  it('spawn env 에 AGENT_VERSION 이 실린다 — 이 값이 없으면 뒤처짐을 판정할 근거가 없다', async () => {
+    const { launcher, spawner } = make();
+
+    await startAll(launcher, [agent('a1')]);
+
+    expect(spawner.spawns[0]!.env.AGENT_VERSION).toBe(APP_VERSION);
+  });
+
+  it('죽이라고 말하지만, 종료가 확인되기 전에는 새로 띄우지 않는다', async () => {
+    const { launcher, spawner, daemon } = make();
+    await startAll(launcher, [agent('a1')]);
+    expect(spawner.spawns).toHaveLength(1);
+    // 러너는 진행 중인 턴을 마치는 중이다 — 장부에 아직 살아 있다.
+    daemon.runners = [liveRunner('a1')];
+
+    await launcher.restart(agent('a1'), startInput(['a1']));
+
+    expect(daemon.kills).toEqual(['a1']);
+    // 아직 죽지 않았다 — 진행 중인 턴을 마치는 중이다. 여기서 띄우면 러너가 둘이 된다.
+    expect(spawner.spawns).toHaveLength(1);
+    expect(launcher.getStates().find((s) => s.agentId === 'a1')?.status).toBe('restarting');
+  });
+
+  it('종료가 확인되면 새로 띄운다', async () => {
+    const { launcher, spawner, daemon } = make();
+    await startAll(launcher, [agent('a1')]);
+    daemon.runners = [liveRunner('a1')];
+
+    const done = launcher.restart(agent('a1'), startInput(['a1']));
+    daemon.died('a1');
+    await done;
+
+    expect(spawner.spawns).toHaveLength(2);
+    expect(launcher.getStates().find((s) => s.agentId === 'a1')?.status).toBe('running');
+  });
+
+  /**
+   * **이것이 실제로 흔한 경우다.** 앱을 다시 띄우면 이전 세션의 러너는 daemon 장부에
+   * 남아 `adopted` 로 판정되고, 이 앱 세션은 그 자식 핸들을 갖고 있지 않다. 그래서
+   * kill 을 자식 핸들로 하면 정확히 이 경우에 아무 일도 일어나지 않는다 —
+   * daemon 에게 agentId 로 말해야 한다(`killRunner(agentId, incarnationId?)` 는 세대를
+   * 생략하면 장부의 현 세대를 죽인다).
+   */
+  it('adopted 러너도 재기동한다 — 이 앱이 띄운 자식이 아니어도 된다', async () => {
+    const { launcher, spawner, daemon } = make();
+    daemon.runners = [liveRunner('a1', true)];
+    await startAll(launcher, [agent('a1')]);
+    // 장부에 살아 있으므로 이 앱은 띄우지 않았다.
+    expect(spawner.spawns).toHaveLength(0);
+    expect(launcher.getStates().find((s) => s.agentId === 'a1')?.status).toBe('adopted');
+
+    const done = launcher.restart(agent('a1'), startInput(['a1']));
+    daemon.died('a1');
+    await done;
+
+    expect(daemon.kills).toEqual(['a1']);
+    expect(spawner.spawns).toHaveLength(1);
+  });
+
+  it('예약을 취소하면 뜨는 것만 막는다 — 이미 보낸 SIGTERM 은 되돌리지 않는다', async () => {
+    const { launcher, spawner, daemon } = make();
+    await startAll(launcher, [agent('a1')]);
+    daemon.runners = [liveRunner('a1')];
+
+    const done = launcher.restart(agent('a1'), startInput(['a1']));
+    launcher.cancelRestart('a1');
+    daemon.died('a1');
+    await done;
+
+    // 죽이는 것은 이미 일어났다 — 그것은 취소 대상이 아니다.
+    expect(daemon.kills).toEqual(['a1']);
+    // 취소한 것은 **다시 띄우는 것**이다.
+    expect(spawner.spawns).toHaveLength(1);
   });
 });
