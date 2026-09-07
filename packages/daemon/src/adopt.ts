@@ -131,7 +131,12 @@ export type AdoptionVerdict =
   /** 장부에 커널 시작 시각이 없다. 대조할 축이 없으니 채택하지 않는다. */
   | { kind: 'unverifiable'; reason: string }
   /** 살아는 있는데 시작 시각이 다르다 — **pid 가 재사용됐다.** */
-  | { kind: 'pid-reused'; expected: number; actual: number | null };
+  | { kind: 'pid-reused'; expected: number; actual: number | null }
+  /**
+   * 우리 것은 맞는데 **다른 세대**가 띄웠다(2026-09-07). 채택하지 않고 회수한다 —
+   * `planAdoption` 주석이 이유를 적는다.
+   */
+  | { kind: 'stale-generation'; theirs: string | null; mine: string };
 
 /**
  * 후보 하나를 판정한다.
@@ -182,6 +187,24 @@ export interface AdoptionPlan {
 export async function planAdoption(
   entries: readonly RunnerLedgerEntry[],
   probe: ProcessIdentityProbe,
+  /**
+   * 지금 daemon 의 앱 버전(`--app-version`). **모르면 세대 판정을 하지 않는다** — 모르는
+   * 것을 근거로 러너를 죽이지 않는다(이 모듈의 규율, `#368`).
+   *
+   * ## 왜 세대를 보는가 (2026-09-07 실측)
+   *
+   * 채택은 "새로 띄우지 않는다"를 보장한다(`RunnerRegistry.adopt`·회귀선 2). 그래서 앱을
+   * 업데이트해 daemon 이 갈려도 옛 러너가 채택되면 **그 러너는 영원히 옛 코드로 돈다.**
+   * 이날 러너 env 결함을 고쳐 릴리스했는데도 forge 가 멘션마다 실패한 이유가 이것이다.
+   *
+   * `#431` 이 얻은 것("앱을 닫아도 러너가 산다")의 대가가 여기서도 나온다:
+   * **살아남는 것은 고쳐지지 않는다.**
+   *
+   * 장부에 세대가 **없으면** 낡은 것으로 본다 — 그 필드는 이 판정과 함께 생겼으므로,
+   * 없다는 것은 그 이전 세대가 쓴 줄이라는 뜻이다. 여기서 "모르니 둔다"를 고르면 업데이트
+   * 직후의 러너가 정확히 그 상태라서 이 판정이 처음부터 아무 일도 하지 않는다.
+   */
+  myAppVersion: string | null = null,
 ): Promise<AdoptionPlan> {
   const plan: AdoptionPlan = { adopt: [], rejected: [] };
   const 최신: Map<string, RunnerLedgerEntry> = new Map();
@@ -201,6 +224,21 @@ export async function planAdoption(
       continue;
     }
     const verdict = await judgeCandidate(entry, probe);
+    // 세대 판정은 **신원 판정 뒤**다. 죽은 pid 나 재사용된 pid 에 세대를 묻는 것은 뜻이
+    // 없고, 무엇보다 그 경우 `retire` 가 무관한 프로세스에 SIGTERM 을 보낼 수 있다 —
+    // 이 모듈이 가장 피하려는 사고다.
+    if (verdict.kind === 'adopt' && myAppVersion !== null
+        && (entry.spawnedByAppVersion ?? null) !== myAppVersion) {
+      plan.rejected.push({
+        entry,
+        verdict: {
+          kind: 'stale-generation',
+          theirs: entry.spawnedByAppVersion ?? null,
+          mine: myAppVersion,
+        },
+      });
+      continue;
+    }
     if (verdict.kind === 'adopt') plan.adopt.push(entry);
     else plan.rejected.push({ entry, verdict });
   }
@@ -222,6 +260,12 @@ export function describeVerdict(
       return (
         `${head} — **pid 가 재사용됐다.** 장부의 시작 시각 ${verdict.expected}, ` +
         `지금 그 pid 의 시작 시각 ${verdict.actual ?? '(못 읽음)'} — 무관한 프로세스다`
+      );
+    case 'stale-generation':
+      // "회수했다"까지 적는다 — 사유만 있으면 사람은 "왜 러너가 갈렸지"에 답을 못 찾는다.
+      return (
+        `${head} — 세대가 다르다(그 러너를 띄운 앱 ${verdict.theirs ?? '(안 적혀 있음)'}, ` +
+        `지금 앱 ${verdict.mine}) — 회수하고 앱이 새로 띄우게 둔다`
       );
   }
 }
