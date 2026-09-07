@@ -19,11 +19,21 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentHarness } from '@murmur/shared';
 
+/**
+ * **경로는 `CLAUDE_CONFIG_DIR` 를 따라간다(2026-09-07).** 계정별 config 디렉터리로 claude 를
+ * 띄우면 세션 파일도 `<configDir>/projects` 아래로 옮겨간다(실측). 이 판정이 계속 홈만 보면
+ * 계정 디렉터리의 세션을 "없음"으로 읽고, 다음 턴이 첫 턴으로 조립돼 claude 가 이미 쓰인
+ * 세션 id 를 `--session-id` 로 다시 받아 즉사한다 — 위 모듈 주석이 적은 바로 그 함정이다.
+ *
+ * 우선순위: `projectsDir`(직접 지정) → `configDir`(계정) → 시스템 기본. `projectsDir` 가
+ * 이기는 이유는 그것이 projects 디렉터리 **자체**를 가리키는 더 구체적인 지정이기 때문이다.
+ */
 export async function claudeSessionFileExists(
   sessionId: string,
-  opts: { projectsDir?: string } = {},
+  opts: { projectsDir?: string; configDir?: string | null } = {},
 ): Promise<boolean> {
-  const root = opts.projectsDir ?? join(homedir(), '.claude', 'projects');
+  const root = opts.projectsDir
+    ?? (opts.configDir ? join(opts.configDir, 'projects') : join(homedir(), '.claude', 'projects'));
   let projects;
   try {
     projects = await readdir(root, { withFileTypes: true });
@@ -54,7 +64,18 @@ export async function claudeSessionFileExists(
  * codex 가 무조건 참인 이유: codex 의 sessionId 는 러너가 발급한 값이 아니라 rollout
  * 파일에서 **발견한** 값이라(`codexSessions.ts`) 그 자체가 디스크 실재의 증거다.
  */
-export function claudeSessionMaterialized(harness: AgentHarness, sessionId: string): Promise<boolean> {
-  if (harness === 'claude-code') return claudeSessionFileExists(sessionId);
+export function claudeSessionMaterialized(
+  harness: AgentHarness,
+  sessionId: string,
+  claudeConfigDir: string | null = null,
+): Promise<boolean> {
+  // **계정 디렉터리를 받는다(다중 계정).** 세션 파일은 `<CLAUDE_CONFIG_DIR>/projects` 아래
+  // 있어, 계정을 쓰는 러너에서 홈만 보면 실재하는 세션을 "없음"으로 읽는다 — 그러면 다음
+  // 턴이 `--session-id` 로 조립돼 `already in use` 로 죽는다(위 함수 주석의 함정, 그리고
+  // `policy.ts::isSessionIdConflict` 가 그물로 받는 바로 그 실패).
+  //
+  // 기본값이 `null`(시스템 기본)인 이유: 계정 풀을 안 만든 러너와 이 인자를 모르는 옛
+  // 호출부가 지금 동작을 그대로 유지해야 한다.
+  if (harness === 'claude-code') return claudeSessionFileExists(sessionId, { configDir: claudeConfigDir });
   return Promise.resolve(true);
 }

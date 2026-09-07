@@ -87,6 +87,16 @@ const HARNESS_CREDENTIAL_PATTERNS = [
   // 원인을 안 밝히는 판본까지 잡고, `oauthsessionexpired` 는 접두어가 바뀐 판본을 잡는다.
   /failedtoauthenticate/i,
   /oauthsessionexpired/i,
+  // 2026-09-07 실측(claude 2.1.263): 계정별 `CLAUDE_CONFIG_DIR` 에 로그인이 없으면
+  // `Not logged in · Please run /login`, 종료 코드 1. 위 다섯 패턴 어디에도 안 걸려
+  // 러너는 이것을 일시 실패로 보고 3회를 태운 뒤 `FAILURE_NOTICE` 만 남겼다 —
+  // 정작 필요한 일은 그 디렉터리에서 로그인 한 번이었다.
+  //
+  // `/login` 이 아니라 `notloggedin` 으로 맞추는 이유: `/login` 은 사람의 프롬프트에도
+  // 흔히 나오는 짧은 토큰이다. 위 `#380` 절이 그 오탐 경로를 이미 적어 뒀다 — 지금
+  // 프로덕션 경로에서는 프롬프트가 tail 에 안 섞이지만, 짧은 패턴을 넣어 두면 그 보호가
+  // 사라지는 날 조용히 오탐한다.
+  /notloggedin/i,
 ];
 
 /**

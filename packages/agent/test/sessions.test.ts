@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -125,5 +125,34 @@ describe('SessionStore', () => {
     await b.load();
     expect(b.get('ch1/m1')).toEqual({ ...rec, lastFedSeq: 1 });
     expect(b.get('ch1/m2')).toEqual({ ...rec, lastFedSeq: 2 });
+  });
+
+  // 다중 계정: 세션 파일은 `<CLAUDE_CONFIG_DIR>/projects` 아래 있어 계정을 넘어가지 않는다.
+  // 어느 계정이 만든 세션인지 알아야 계정이 바뀐 것을 감지할 수 있다.
+  describe('claudeAccount', () => {
+    it('저장하고 다시 읽는다', async () => {
+      const file = join(await mkdtemp(join(tmpdir(), 'sessions-acct-')), 'sessions.json');
+      const a = new SessionStore(file);
+      await a.load();
+      await a.put('ch1/m1', { ...rec, claudeAccount: 'lime' });
+
+      const b = new SessionStore(file);
+      await b.load();
+      expect(b.get('ch1/m1')?.claudeAccount).toBe('lime');
+    });
+
+    it('이 필드가 없는 옛 레코드도 읽는다', async () => {
+      // 이 필드 이전에 쓰인 sessions.json 이 이미 디스크에 있다. 검증에서 떨어뜨리면
+      // 러너가 기동하면서 모든 스레드의 세션을 조용히 잃는다.
+      const file = join(await mkdtemp(join(tmpdir(), 'sessions-legacy-')), 'sessions.json');
+      await writeFile(file, JSON.stringify({
+        'ch1/m1': { workspaceDir: '/w', sessionId: 'abc', harness: 'claude-code', lastFedSeq: 3, turnsRun: 1 },
+      }));
+
+      const store = new SessionStore(file);
+      await store.load();
+      expect(store.get('ch1/m1')?.lastFedSeq).toBe(3);
+      expect(store.get('ch1/m1')?.claudeAccount ?? null).toBe(null);
+    });
   });
 });

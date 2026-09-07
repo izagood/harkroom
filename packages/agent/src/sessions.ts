@@ -36,6 +36,19 @@ export interface SessionRecord {
    * 직접 세어 두는 쪽이 맞다: 유도된 값이 아니라 사실 자체를 저장한다.
    */
   turnsRun: number;
+  /**
+   * 이 세션을 만든 claude 계정 이름(`claudeAccounts.ts`). `null`·`undefined` 는 '계정 지정
+   * 없음'(시스템 기본)이거나 **이 필드 이전에 쓰인 옛 레코드**다 — 두 상태를 구별할 필요가
+   * 없으므로 읽는 쪽은 `?? null` 로 정규화해 쓴다.
+   *
+   * **왜 세션에 적는가**: claude 세션 파일은 `<CLAUDE_CONFIG_DIR>/projects` 아래 있어 계정을
+   * 넘어가지 않는다. 계정이 바뀐 뒤 `-r <id>` 를 넘기면 없는 세션을 재개하려 든다.
+   * `harness` 를 적어 두는 것과 정확히 같은 이유이고, `mentionTurn.ts` 의 같은 분기에서
+   * 함께 쓰인다.
+   *
+   * 옵셔널로 둔 이유는 위 `isSessionRecord` 주석에 있다.
+   */
+  claudeAccount?: string | null;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -47,14 +60,18 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 // 단서가 하나도 안 남는다. 저장 전에 모양을 확인해서 여기서 걸러낸다.
 function isSessionRecord(value: unknown): value is SessionRecord {
   if (!isPlainObject(value)) return false;
-  const { workspaceDir, sessionId, harness, lastFedSeq, turnsRun } = value;
+  const { workspaceDir, sessionId, harness, lastFedSeq, turnsRun, claudeAccount } = value;
   return (
     typeof workspaceDir === 'string' &&
     (sessionId === null || typeof sessionId === 'string') &&
     typeof harness === 'string' &&
     (AGENT_HARNESSES as readonly string[]).includes(harness) &&
     typeof lastFedSeq === 'number' &&
-    typeof turnsRun === 'number'
+    typeof turnsRun === 'number' &&
+    // **옵셔널이다** — 이 필드 이전에 쓰인 sessions.json 이 이미 디스크에 있다. 필수로 하면
+    // 러너가 기동하면서 모든 스레드의 세션을 조용히 잃는다(위 함수 주석의 "레코드만 버린다"
+    // 경로를 전부 태운다).
+    (claudeAccount === undefined || claudeAccount === null || typeof claudeAccount === 'string')
   );
 }
 

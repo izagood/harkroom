@@ -108,6 +108,8 @@ async function makeHarness(def: AgentView = defOf()): Promise<Harness> {
     runTurn, me: ME, workspaceBaseDir,
     mcpConfigPath: '/tmp/mcp.json', murmurUrl: 'http://localhost:3400', pat: 'murp_fake',
     codexHome: join(stateDir, 'codex-home'),
+    // 이 스위트는 계정 지정 없음(시스템 기본)을 전제로 돈다.
+    claudeConfigDir: null,
     relay, registry, queue,
     orphanMs: 60_000, killGraceMs: 5_000,
     // 예약·기동만 재는 파일이다 — 유예 타이머를 실제로 걸지 않는다(고아 회수는 #337 이 지킨다).

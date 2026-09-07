@@ -152,6 +152,32 @@ describe('isCredentialFailure', () => {
       expect(isCredentialFailure(new Error(`harness 종료 1: ${tail}`))).toBe('harness-credential');
     });
   });
+
+  // 2026-09-07 실측(claude 2.1.263): 계정별 CLAUDE_CONFIG_DIR 에 로그인이 없으면
+  // `Not logged in · Please run /login` 을 내고 종료 코드 1 로 죽는다. 기존 패턴 다섯
+  // 개 중 어느 것도 이 문구를 잡지 못해, 러너는 3회 재시도를 태운 뒤 "운영자 확인이
+  // 필요합니다"라는 엉뚱한 안내를 남겼다 — 정작 필요한 일은 그 디렉터리에서 로그인
+  // 한 번이었다.
+  describe('미로그인 (다중 계정)', () => {
+    it('미로그인 문구를 harness 자격증명 실패로 본다', () => {
+      expect(isCredentialFailure(new Error('harness 종료 1: Not logged in · Please run /login')))
+        .toBe('harness-credential');
+    });
+
+    // PTY(cols 120) 소프트랩은 어느 자리에든 개행을 끼워 넣는다 — 공백을 전부 지우고
+    // 맞추는 이 파일의 규율이 이 문구에도 성립해야 한다.
+    it('소프트랩으로 개행이 낀 미로그인 문구도 잡는다', () => {
+      expect(isCredentialFailure(new Error('harness 종료 1: Not logged\r\nin · Please run /login')))
+        .toBe('harness-credential');
+    });
+
+    // 오탐 방어: 사람이 `/login` 을 입력하라고 안내하는 무관한 실패를 자격증명 실패로
+    // 오판하면, 러너가 멀쩡한 계정을 버리고 다음 계정으로 헛되이 넘어간다.
+    it('`/login` 만 있는 무관한 문구는 자격증명 실패가 아니다', () => {
+      expect(isCredentialFailure(new Error('harness 종료 1: try /login next time')))
+        .toBe('other');
+    });
+  });
 });
 
 describe('nextBackoffMs', () => {

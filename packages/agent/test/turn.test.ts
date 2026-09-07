@@ -19,6 +19,10 @@ const base = {
   systemPromptFile: '/state/system-prompt.txt',
   // stdinFile 도 필수 필드다 — 기본값은 null(인터랙티브·resume 경로).
   stdinFile: null,
+  // 계정 지정 없음 = 시스템 기본(`~/.claude`)이다. 기존 테스트 전체의 전제를 이 값으로
+  // 고정한다 — 여기에 실제 경로를 넣으면 "풀이 없을 때"를 아무도 안 재게 된다
+  // (그 경로는 아래 '계정별 CLAUDE_CONFIG_DIR 주입' describe 가 명시로 넘겨 잰다).
+  claudeConfigDir: null,
 };
 
 // 실물 검증에서 드러난 회귀 — pty.spawn 에 env 를 넘기면 node-pty 가 부모 env 와 **병합하지
@@ -553,5 +557,63 @@ describe('buildTurnCommand — 세션 저장을 끄는 마커는 자식에 물�
   // 알려 주는 신호는 따로 필요하다).
   it('denylist 에 실측된 마커가 들어 있다', () => {
     expect([...HARNESS_ENV_DENYLIST]).toContain('CLAUDE_CODE_CHILD_SESSION');
+  });
+});
+
+// 러너는 `CLAUDE_CONFIG_DIR` 를 설정하지 않아 언제나 시스템 기본 계정(`~/.claude`)을 썼다 —
+// 계정 전환을 그 경로로 하는 도구에서 사람이 계정을 바꿔도 러너에 닿지 않았다. codex 의
+// `CODEX_HOME` 격리에 대칭물이 없던 자리다.
+describe('계정별 CLAUDE_CONFIG_DIR 주입', () => {
+  it('claude 는 CLAUDE_CONFIG_DIR 를 받는다', () => {
+    const p = buildTurnCommand({
+      ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true,
+      claudeConfigDir: '/pool/lime',
+    });
+    expect(p.env.CLAUDE_CONFIG_DIR).toBe('/pool/lime');
+  });
+
+  it('풀이 없으면(null) 주입하지 않는다 — 시스템 기본을 쓴다', () => {
+    // 하위 호환이 이 한 줄에 걸려 있다. 빈 문자열을 넣으면 claude 가 그것을 경로로 읽어
+    // 엉뚱한 자리에 설정을 만든다 — "없음"은 반드시 **키의 부재**여야 한다.
+    const p = buildTurnCommand({
+      ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true,
+      claudeConfigDir: null,
+    });
+    expect('CLAUDE_CONFIG_DIR' in p.env).toBe(false);
+  });
+
+  it('codex 에는 주입하지 않는다', () => {
+    const p = buildTurnCommand({
+      ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true,
+      claudeConfigDir: '/pool/lime',
+    });
+    expect('CLAUDE_CONFIG_DIR' in p.env).toBe(false);
+    expect(p.env.CODEX_HOME).toBe('/state/codex-home');
+  });
+});
+
+// CLAUDE_CONFIG_DIR 격리는 이 키들 앞에서 무력하다 — claude 는 이것을 자격증명보다 먼저
+// 쓴다. 러너는 데몬 env 전체를 상속하므로(runnerLauncher 는 MURMUR_PAT·MURMUR_URL·PATH 만
+// 덮어쓴다) 이 키가 어디서 들어올지 통제할 수 없다. 계정을 바꿨는데 안 바뀌는 이번 결함의
+// 다른 얼굴이라 여기서 끊는다.
+describe('인증 주입 env 를 자식에게 넘기지 않는다', () => {
+  const KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'AWS_BEARER_TOKEN_BEDROCK'];
+
+  it.each(KEYS)('%s 를 지운다', (key) => {
+    const prev = process.env[key];
+    process.env[key] = 'leaked-value';
+    try {
+      const p = buildTurnCommand({
+        ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true,
+        claudeConfigDir: '/pool/lime',
+      });
+      expect(key in p.env).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env[key]; else process.env[key] = prev;
+    }
+  });
+
+  it('denylist 에 네 키가 모두 있다', () => {
+    for (const key of KEYS) expect(HARNESS_ENV_DENYLIST).toContain(key);
   });
 });
