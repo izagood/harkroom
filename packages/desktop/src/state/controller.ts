@@ -4,7 +4,8 @@ import { ApiClient, ApiError } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type NotificationTarget, type Notifier } from '../lib/notify';
-import { displayBody } from '../lib/mention';
+import { bodyRecipients, displayBody } from '../lib/mention';
+import { calledGroups, notifiedSummary, type NotifiedResult } from '../lib/notified';
 import { RunnerLauncher, tauriDaemonObserver, tauriLoginPathReader, tauriSecretStore, daemonSpawner, tauriAppVersionReader, type AppVersionReader, type DaemonObserver, type LoginPathReader, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
 import { staleRunners } from '../lib/runnerVersions';
 import type { AppStore } from './appStore';
@@ -829,8 +830,39 @@ export class Controller {
     const target = channelId ?? this.store.getState().activeChannelId;
     // 파일만 보내는 것은 자연스럽다 — 본문이 비었다고 막으면 첨부를 보낼 길이 없다.
     if (!target || (!body.trim() && !attachmentIds.length)) return;
-    const m = await this.api.postMessage(target, body, undefined, crypto.randomUUID(), attachmentIds);
-    this.store.getState().upsertMessages(target, [m]);
+    const { message, notified } = await this.api.postMessage(target, body, undefined, crypto.randomUUID(), attachmentIds);
+    this.store.getState().upsertMessages(target, [message]);
+    this.recordNotifiedGap(message.id, body, notified);
+  }
+
+  /**
+   * **조용한 실패로 끝난 집합 호출을 기록한다**(정본 문서: 집합 호출의 결과).
+   *
+   * 여기인 이유: 판정에 필요한 재료가 셋인데 그 셋이 모이는 자리가 여기뿐이다 —
+   * 서버가 준 결과(`notified`), 내가 쓴 본문(무슨 집합을 불렀나), 스토어의 집합 목록
+   * (`memberCount`). 화면 컴포넌트에서 판정하면 본문을 다시 파싱해야 하고, 그 파싱이
+   * `bodyRecipients`(보내기 전 목록)와 갈라지는 순간 보내기 전과 보낸 뒤가 다른 수를 말한다.
+   *
+   * **덜 깬 발화만 스토어에 넣는다** — `notifiedSummary` 가 `null` 을 주면 아무것도 하지
+   * 않는다. 셋을 불러 셋이 깨면 화면은 조용하다.
+   *
+   * 자기 자신은 `bodyRecipients` 가 이미 뺀다(그 함수의 `selfHandle` 인자) — 서버도 부른
+   * 사람을 알림에서 걸러 내므로(`fanOutMention` ②) 양쪽 셈이 같은 규칙을 본다.
+   */
+  private recordNotifiedGap(messageId: string, body: string, notified: NotifiedResult): void {
+    const state = this.store.getState();
+    const groups = state.groups;
+    const recipients = bodyRecipients(
+      body,
+      Object.values(state.accounts).map((a) => a.handle),
+      groups.map((g) => g.handle),
+      state.me?.handle ?? null,
+    );
+    const summary = notifiedSummary(notified, calledGroups(recipients, groups));
+    if (!summary) return;
+    this.store.getState().set({
+      notifiedGaps: { ...this.store.getState().notifiedGaps, [messageId]: summary },
+    });
   }
 
   /**
@@ -849,8 +881,12 @@ export class Controller {
     const target = channelId ?? state.activeChannelId;
     const root = threadRootId ?? state.threadRootId;
     if (!target || !root || (!body.trim() && !attachmentIds.length)) return;
-    const m = await this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel);
-    this.store.getState().upsertMessages(target, [m]);
+    const { message, notified } = await this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel);
+    this.store.getState().upsertMessages(target, [message]);
+    // 스레드 답글도 집합을 부를 수 있다 — 채널 최상위만 재면 스레드에서 부른 집합의
+    // 조용한 실패가 그대로 삼켜진다. 여기서 서버가 `thread_reply` 로 루트 작성자까지
+    // 같은 `notified` 에 담는다는 사실이 셈을 **보수적으로** 만든다(`notifiedSummary` 주석).
+    this.recordNotifiedGap(message.id, body, notified);
   }
 
   /**
