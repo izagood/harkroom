@@ -22,11 +22,11 @@ const POOLS_SNAPSHOT = {
     {
       name: 'work',
       accounts: [
-        { name: 'lime', status: { loggedIn: true, email: 'me@corp.com', orgName: 'Corp', subscriptionType: 'team' } },
+        { name: 'lime', status: { loggedIn: true, email: 'me@corp.example', orgName: 'Corp', subscriptionType: 'team' } },
         { name: 'plum', status: { loggedIn: false } },
       ],
     },
-    { name: 'personal', accounts: [{ name: 'gmail', status: { loggedIn: true, email: 'me@gmail.com', orgName: 'Personal', subscriptionType: 'max' } }] },
+    { name: 'personal', accounts: [{ name: 'gmail', status: { loggedIn: true, email: 'me@personal.example', orgName: 'Personal', subscriptionType: 'max' } }] },
   ],
   strays: [] as string[],
 };
@@ -67,7 +67,7 @@ describe('목록', () => {
     expect(screen.getByText('personal')).toBeTruthy();
     expect(screen.getByText('lime')).toBeTruthy();
     // 정체가 보여야 사용자가 어느 계정인지 안다 — 이름만으로는 자기가 붙인 별명일 뿐이다.
-    expect(screen.getByText(/me@corp\.com/)).toBeTruthy();
+    expect(screen.getByText(/me@corp\.example/)).toBeTruthy();
     expect(screen.getByText(/Corp/)).toBeTruthy();
   });
 
