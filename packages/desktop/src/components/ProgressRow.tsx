@@ -15,24 +15,48 @@ import { TerminalChip } from './TerminalChip';
  * 접힌 줄들이 보인다. 러너가 남긴 유일한 진행 기록이라 사라지면 "그때 무엇을 하고
  * 있었나"에 답할 것이 없어진다.
  */
-export function ProgressRow({ messages }: { messages: MessageRow[] }) {
+export function ProgressRow({ messages, endedAt = null }: {
+  messages: MessageRow[];
+  /**
+   * 이 진행이 끝난 시각(`progressGroup.ts::Slot` 참고). 있으면 **과거로 그린다** —
+   * 도는 점을 중립으로 바꾸고, 경과를 `Date.now()` 가 아니라 이 시각으로 잰다.
+   *
+   * 기본값이 `null` 인 이유: 이 컴포넌트를 쓰는 자리가 둘(채널·스레드)이고, 둘 다
+   * 슬롯에서 값을 받는다. 기본값은 옛 호출부를 위한 것이 아니라 **"모르면 도는 것으로
+   * 둔다"** 는 판정이다 — 끝났다고 단정하는 쪽이 더 나쁜 거짓이다.
+   */
+  endedAt?: string | null;
+}) {
   const [open, setOpen] = useState(false);
   const author = useActiveStore((s) => s.accounts[messages[0]!.authorId]);
   const first = messages[0]!;
   const last = messages[messages.length - 1]!;
 
-  // 경과는 **묶음의 시작**부터 잰다(`elapsedLabel` 주석 참고).
-  const elapsed = elapsedLabel(first.createdAt, Date.now());
+  // 경과는 **묶음의 시작**부터 잰다(`elapsedLabel` 주석 참고). 끝난 묶음은 그 끝까지만
+  // 잰다 — `Date.now()` 로 재면 15:08 에 끝난 진행이 15:15 에 "11분째" 로 보인다
+  // (2026-09-07 실측: 사용자가 그 화면을 보고 "죽었나 도나?" 를 물었다).
+  const ended = endedAt === null ? null : new Date(endedAt).getTime();
+  const elapsed = elapsedLabel(first.createdAt, ended === null || Number.isNaN(ended) ? Date.now() : ended);
   const name = author?.handle ?? '…';
+  const 끝났다 = ended !== null && !Number.isNaN(ended);
 
   return (
     <div data-testid="progress-row" className="px-4 py-0.5">
       <div className="flex items-center gap-1.5 text-[11px] text-fg-muted">
-        {/* 점은 `state-running` 이다 — 강조가 아니다. 도는 것은 나를 막지 않는다(규칙 03). */}
-        <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-state-running" />
+        {/* 점은 `state-running` 이다 — 강조가 아니다. 도는 것은 나를 막지 않는다(규칙 03).
+            끝난 묶음은 중립색이다: 색이 상태를 말하는 자리이므로, 끝난 것이 계속 도는
+            색으로 남으면 글자를 고쳐도 화면은 여전히 "돈다"고 말한다. */}
+        <span
+          aria-hidden="true"
+          className={`h-1.5 w-1.5 shrink-0 rounded-full ${끝났다 ? 'bg-fg-subtle' : 'bg-state-running'}`}
+        />
         <span className="font-medium text-fg-agent">{name}</span>
-        <span>작업 중</span>
-        {elapsed && <span className="text-fg-subtle">· {elapsed}</span>}
+        {/* 끝났으면 상태가 아니라 **기록**이다 — "작업 중" 은 지금을 말하는 말이다. */}
+        <span>{끝났다 ? '작업' : '작업 중'}</span>
+        {elapsed && (
+          // 끝난 묶음에서는 "째"(진행형)를 떼고 걸린 시간만 남긴다.
+          <span className="text-fg-subtle">· {끝났다 ? elapsed.replace(/째$/, '') : elapsed}</span>
+        )}
         {/*
           접힌 개수는 **둘 이상일 때만** 말한다. 하나뿐인데 "1줄"이라고 적으면 접힌 것이
           없는데 접혔다고 말하는 셈이고, 규칙 06(없는 것은 자리를 차지하지 않는다)에 걸린다.

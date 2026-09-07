@@ -12,7 +12,7 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { join } from 'node:path';
 import type { AgentHarness, AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
-import { buildSystemPrompt, buildTurnPrompt, type MemoryContext, countOwnPostsSince, hasOwnWakeSince, NO_REPLY_NOTICE } from './prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
 import { acceptsPtyInput } from './pty.js';
@@ -774,7 +774,20 @@ export async function runMentionTurn(
       // 여기는 정상 종료 경로뿐이다(실패는 위에서 던졌다). 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다
       // (쓸 말이 없었거나, 안전 거부(exit 0)이거나). 옛 reply.ts::extractReply 가 안전
       // 거부를 사실로 남기던 자리를 이 경로가 대신한다: 침묵을 침묵으로 남기지 않는다.
-      await deps.murmur.post(channelId, NO_REPLY_NOTICE, anchor);
+      // **버려지던 마지막 출력을 함께 싣는다**(2026-09-07 후속). 그날 사람이 본 것은
+      // 이 통지 한 줄이었고, `PR #533 을 올렸고 CI 가 도는 중입니다` 는 stdout 에만
+      // 남아 사라졌다 — 그 말은 이미 `result.tail` 안에 있었다.
+      //
+      // 해석이 아니라 **증거 첨부**다(`harnessTailNotice` 주석). 통지가 먼저 서는 순서도
+      // 뜻이 있다: 사실("발화가 없었다")이 먼저고, 출력은 그 사실의 정황이다.
+      const evidence = harnessTailNotice(result.tail, deps.pat);
+      const body = evidence === null
+        ? NO_REPLY_NOTICE
+        : `${NO_REPLY_NOTICE}\n\n하네스가 마지막에 남긴 출력:\n${evidence}`;
+      // 상한을 넘기면 서버가 거절해 **통지 자체가 사라진다** — 이 기능이 막으려던 것과
+      // 같은 결과다. `harnessTailNotice` 가 이미 1000자로 줄이지만, 상한 판정을 그 함수의
+      // 상수에 맡기지 않는다: 여기가 서버 계약을 아는 자리다.
+      await deps.murmur.post(channelId, body.slice(0, BODY_LIMIT), anchor);
     }
   } catch (err) {
     console.error(
