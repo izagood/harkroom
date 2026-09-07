@@ -12,7 +12,7 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { join } from 'node:path';
 import type { AgentHarness, AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
-import { buildSystemPrompt, buildTurnPrompt, type MemoryContext, countOwnPostsSince, NO_REPLY_NOTICE } from './prompt.js';
+import { buildSystemPrompt, buildTurnPrompt, type MemoryContext, countOwnPostsSince, hasOwnWakeSince, NO_REPLY_NOTICE } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
 import { acceptsPtyInput } from './pty.js';
@@ -214,6 +214,14 @@ export interface MentionTarget {
    * 조용히 들어온다.
    */
   mentionId: string;
+  /**
+   * 이 턴이 **깨어난 턴**이면 그 사유(마이그레이션 040). `main.ts` 가 inbox 항목의
+   * `reason === 'wake'` 일 때 그 대기 줄의 본문을 그대로 싣는다.
+   *
+   * 옵셔널인 이유: 평범한 멘션 턴에는 깨움이 없다. 그리고 값이 있으면 프롬프트 조립이
+   * 달라진다 — 깨움에는 부른 사람이 없어서 델타가 비고, 비면 하네스가 돌지 않는다.
+   */
+  wake?: { reason: string };
 }
 
 /**
@@ -427,6 +435,7 @@ export async function runMentionTurn(
     handles: deps.handles,
     channelId,
     threadRootId: anchor,
+    ...(target.wake ? { wake: target.wake } : {}),
   });
 
   if (!prompt) {
@@ -464,6 +473,9 @@ export async function runMentionTurn(
     instructions: def.instructions,
     guide: deps.guide,
     memory,
+    // 턴 예산은 러너만 아는 사실이다. 알려주지 않으면 에이전트가 "지금 기다려도 되는지"를
+    // 판단할 근거 없이 물러난다 — 2026-09-07 15:08 의 턴은 30분 중 4분만 쓰고 끝냈다.
+    turnBudgetMs: deps.turnTimeoutMs,
   });
 
   // 지시문은 argv 가 아니라 파일로 넘긴다(#92) — `ps` 로 다른 로컬 사용자에게 보이는 자리에
@@ -687,7 +699,13 @@ export async function runMentionTurn(
     // 따라서 "progress 메시지만 있고 결과가 없는 턴"은 NO_REPLY_NOTICE 로 처리된다.
     const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
     warnOnDuplicatePosts(key, postCount);
-    if (postCount === 0) {
+    // 이번 턴에 깨움을 걸었다면 침묵이 아니다 — 스레드에 대기 줄이 보이므로 사람은 무슨
+    // 일인지 안다. 여기에 NO_REPLY_NOTICE 까지 더하면 CI 를 10분 기다리는 사이 "발화 없음"
+    // 이 줄줄이 쌓이고, 그 소음이 정작 진짜 침묵을 가린다.
+    //
+    // 커서(lastFedSeq)는 **위에서 이미 전진**했다(발화가 있었든 없었든 성공한 턴은 전진한다) —
+    // 여기서 되돌리지 않는다. 되돌리면 깨어난 턴이 옛 멘션을 다시 먹는다.
+    if (postCount === 0 && !hasOwnWakeSince(after, deps.me.id, turnStartSeq)) {
       // 여기는 정상 종료 경로뿐이다(실패는 위에서 던졌다). 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다
       // (쓸 말이 없었거나, 안전 거부(exit 0)이거나). 옛 reply.ts::extractReply 가 안전
       // 거부를 사실로 남기던 자리를 이 경로가 대신한다: 침묵을 침묵으로 남기지 않는다.

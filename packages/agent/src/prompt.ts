@@ -31,6 +31,18 @@ export function controlledNotice(handle: string, pending: number): string {
 /** 진행 설명이 담긴 progress 메시지의 kind 값. */
 export const MESSAGE_KIND_PROGRESS = 'progress';
 
+/** 깨움 예약이 남기는 대기 줄의 kind 값(마이그레이션 040). */
+export const MESSAGE_KIND_WAKE = 'wake';
+
+/**
+ * **결과 발화로 세지 않는** 메시지 종류. `progress` 는 과정 설명이고 `wake` 는 기다림의
+ * 표시다 — 둘 다 "물어본 것에 답한 것"이 아니다.
+ *
+ * 집합으로 둔 이유: 세는 자리가 하나여야 한다(`countOwnPostsSince` 주석). 종류가 늘 때
+ * 필터 조건을 두 곳에서 고치면 한쪽만 고쳐지고, 그때 침묵한 턴이 발화한 것으로 판정된다.
+ */
+const NON_UTTERANCE_KINDS: ReadonlySet<string> = new Set([MESSAGE_KIND_PROGRESS, MESSAGE_KIND_WAKE]);
+
 /**
  * 매 턴 `--append-system-prompt` 로 하네스에 주입되는 시스템 프롬프트. 프로세스가 턴마다
  * 새로 뜨고 이 함수도 매번 다시 불리므로, UI 로 지시문(instructions)을 바꾸면 재시작 없이
@@ -92,8 +104,15 @@ export function buildSystemPrompt(opts: {
   guide: string;
   /** #139: 세 상태를 구분한다. `MemoryContext` 주석 참고. */
   memory: MemoryContext;
+  /**
+   * 이 턴이 살아있을 수 있는 시간(`config.turnTimeoutMs`). 옵셔널인 이유는 기본값을 여기서
+   * 정해도 좋기 때문이 **아니다** — 값을 지어내면 프롬프트가 거짓을 말한다. 없으면 예산
+   * 문장을 아예 빼고, 대신 "말을 멈추면 죽는다"는 사실만 말한다.
+   */
+  turnBudgetMs?: number;
 }): string {
-  const { handle, channelName, instructions, guide, memory } = opts;
+  const { handle, channelName, instructions, guide, memory, turnBudgetMs } = opts;
+  const budgetMinutes = turnBudgetMs === undefined ? null : Math.floor(turnBudgetMs / 60_000);
   return [
     `너는 murmur 워크스페이스의 에이전트 @${handle} 이고, 지금 #${channelName} 에서 말한다.`,
     '',
@@ -123,6 +142,23 @@ export function buildSystemPrompt(opts: {
     // 진행 설명 예시: "avcs intent 를 만들고 merge3 결함 재현 테스트부터 붙인다 — 서너 턴 걸린다"
     '긴 작업을 시작할 때는 먼저 `message.progress` MCP 도구로 짧게 무슨 작업인지 설명하고 들어간다. ',
     '이 진행 설명은 결과 발화로 세지 않으며, 사용자가 기다릴지 끊을지 판단할 근거를 준다.',
+    '',
+    // 2026-09-07 15:08: PR #533 을 올린 턴이 CI 대기 루프를 **백그라운드로** 띄우고
+    // "결과 나오면 머지하겠다"며 끝났다. 그 계획은 실행되지 않았다 — 프로세스가 죽었고
+    // 루프도 함께 죽었으며, 4분 뒤 초록이 된 CI 를 아무도 보지 않았다. 위의 지시는 "어디에
+    // 쓸지"만 말하고 **언제까지 살아있는지**를 말하지 않았고, 그 공백이 실행 불가능한
+    // 계획을 낳았다. 이 세 문장이 그 공백을 메운다.
+    '네가 말을 멈추면 이 프로세스는 그 자리에서 죽는다. "나중에", "결과가 나오면"은 실행되지',
+    '않는다 — 백그라운드로 띄운 명령도 프로세스와 함께 죽는다.',
+    '',
+    ...(budgetMinutes === null ? [] : [
+      `이 턴의 예산은 ${budgetMinutes}분이다. 그 안에 끝나는 기다림은 포그라운드에서 기다려도 된다.`,
+      '',
+    ]),
+    '더 기다려야 하면 **지금 아는 것을 `message.post` 로 남기고**, murmur MCP 의 `turn.wake` 로',
+    '다시 볼 시각을 예약하고 끝낸다(예: CI 결과 확인 — 5분 뒤). 예약은 스레드에 대기 줄로',
+    '보이고, 시각이 되면 **이 세션이 그대로 이어져** 다시 시작한다 — 조사한 것을 다시 조사할',
+    '필요가 없다. 예약을 건 턴은 결과 발화 없이 끝내도 된다.',
     '',
     `답변은 ${BODY_LIMIT}자를 넘길 수 없다(서버가 거절한다). 채팅이므로 짧고 구체적으로 쓴다.`,
     '모르는 것은 모른다고 말한다. 확인하지 않은 것을 확인한 것처럼 쓰지 않는다.',
@@ -161,8 +197,15 @@ export function buildTurnPrompt(opts: {
    * 아니다. 호출자가 이미 알고 있는 값을 두 번째 진실 원천으로 다시 만들지 않는다. */
   channelId: string;
   threadRootId: string | null;
+  /**
+   * 이 턴이 **깨어난 턴**이면 그 사유(마이그레이션 040). 있으면 사람의 새 발화가 없어도
+   * 프롬프트가 비지 않는다 — 깨움에는 부른 사람이 없고, 예약 줄을 쓴 것도 자기라서
+   * 아래 자기-발화 필터에 전부 걸린다. 그대로 두면 `mentionTurn` 이 하네스를 돌리지
+   * 않고 끝내, 걸어 둔 기다림이 조용히 사라진다.
+   */
+  wake?: { reason: string };
 }): { prompt: string; fedSeq: number } {
-  const { messages, lastFedSeq, meId, handles, channelId, threadRootId } = opts;
+  const { messages, lastFedSeq, meId, handles, channelId, threadRootId, wake } = opts;
   const isFirstTurn = lastFedSeq === 0;
 
   const newMessages = messages.filter((m) => m.seq > lastFedSeq);
@@ -172,7 +215,7 @@ export function buildTurnPrompt(opts: {
   const fedSeq = newMessages.reduce((max, m) => Math.max(max, m.seq), lastFedSeq);
 
   const toShow = newMessages.filter((m) => isFirstTurn || m.authorId !== meId);
-  if (!toShow.length) {
+  if (!toShow.length && wake === undefined) {
     // 새 메시지가 있었지만 전부 자기 발화라 걸러진 경우도 여기로 온다. 그래도 prompt 를
     // 비우고 fedSeq 는 이미 위에서 전진시킨 값을 그대로 쓴다 — 걸러냈다고 다음 턴에 같은
     // 메시지를 또 "새 것"으로 들이밀면 세션이 매번 자기 말을 다시 보고, 반대로 fedSeq 를
@@ -186,7 +229,11 @@ export function buildTurnPrompt(opts: {
   // 맞물리게 "채널 최상위(없음)"으로 표현한다(§4 발화 경로).
   const head = [`channelId: ${channelId}`, `threadRootId: ${threadRootId ?? '채널 최상위(없음)'}`].join('\n');
   const lines = toShow.map((m) => renderLine(m, handles));
-  const prompt = [head, '', ...lines].join('\n');
+  // 깨움 줄을 **사람의 발화처럼 렌더하지 않는다**(`renderLine` 을 쓰지 않는 이유다).
+  // "forge: CI 결과 확인" 으로 보이면 에이전트가 자기 옛 말을 새 요청으로 읽는다.
+  // 아래 델타에 사람의 새 발화가 함께 있을 수 있으므로 이 줄은 그것을 대체하지 않고 앞에 선다.
+  const wakeLines = wake === undefined ? [] : [`(예약된 후속 턴 — 사유: ${wake.reason})`, ''];
+  const prompt = [head, '', ...wakeLines, ...lines].join('\n');
 
   return { prompt, fedSeq };
 }
@@ -213,8 +260,25 @@ export function buildTurnPrompt(opts: {
  */
 export function countOwnPostsSince(messages: MessageRow[], meId: string, sinceSeq: number): number {
   return messages.filter(
-    (m) => m.authorId === meId && m.seq > sinceSeq && m.kind !== MESSAGE_KIND_PROGRESS,
+    (m) => m.authorId === meId && m.seq > sinceSeq && !NON_UTTERANCE_KINDS.has(m.kind),
   ).length;
+}
+
+/**
+ * "이 턴이 **기다림을 예약했나**". 발화 판정과 다른 질문이라 별도 함수이지만, 세는 규칙이
+ * 흩어지지 않게 같은 파일에 둔다.
+ *
+ * 기준선(`sinceSeq`)이 핵심이다: 스레드에 옛 대기 줄이 남아 있는 것은 흔한 일이고, 그것을
+ * 근거로 침묵을 허용하면 **한 번 예약한 스레드는 그 뒤로 영원히 조용해도 된다**가 된다.
+ * 이번 턴에 생긴 줄만이 "이번 턴은 기다리기로 했다"는 증거다.
+ *
+ * 저자를 보는 이유: 한 스레드에 여러 에이전트가 있을 수 있고, 동료의 대기 줄로 내 침묵을
+ * 정당화하면 내 턴은 아무 말 없이 사라진다.
+ */
+export function hasOwnWakeSince(messages: MessageRow[], meId: string, sinceSeq: number): boolean {
+  return messages.some(
+    (m) => m.authorId === meId && m.seq > sinceSeq && m.kind === MESSAGE_KIND_WAKE,
+  );
 }
 
 /**

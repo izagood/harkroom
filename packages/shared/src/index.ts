@@ -599,7 +599,12 @@ export interface MessageRow {
   threadRootId: string | null;
   authorId: string;
   body: string;
-  kind: 'user' | 'system' | 'progress';
+  /**
+   * `'wake'` 는 에이전트가 자기를 나중에 깨우려고 걸어 둔 **대기 줄**이다(#533 후속).
+   * 결과 발화가 아니므로 `progress` 와 같은 취급을 받는다 — 러너의 발화 판정에서
+   * 세지 않는다(agent/src/prompt.ts::countOwnPostsSince).
+   */
+  kind: 'user' | 'system' | 'progress' | 'wake';
   meta: Record<string, unknown>;
   createdAt: string;
   /** 수정된 적이 없으면 null. */
@@ -761,6 +766,31 @@ export interface AskMeta {
 /** 선택지 개수의 경계. 하나면 선택이 아니고, 여섯이면 읽히지 않는다. */
 export const ASK_MIN_OPTIONS = 2;
 export const ASK_MAX_OPTIONS = 5;
+
+/**
+ * 대기 줄(wake)의 meta — 에이전트가 걸어 둔 예약의 **시각**을 싣는다(마이그레이션 040).
+ *
+ * 왜 본문에 "15:20 에 다시 봅니다" 로 굽지 않는가: 그렇게 만든 문자열은 서버의 시간대에
+ * 고정되고, 다른 시간대에서 읽는 사람에게 거짓이 된다. 서버는 사실(ISO 시각)만 싣고
+ * 읽는 쪽이 자기 시간대로 읽는다 — 이 저장소가 판정과 표시를 나누는 방식 그대로다.
+ */
+export interface WakeMeta {
+  kind: 'wake';
+  wake: { wakeAt: string; reason?: string };
+}
+
+/**
+ * `meta` 가 대기 줄인지 판정한다. `readAskMeta` 와 같은 판례를 따른다 — 형식을 못 알아보면
+ * `null` 을 주고 화면은 본문만 그린다. 시각을 못 읽는다고 대기가 없던 일이 되지는 않으므로,
+ * 이 함수가 null 이어도 줄 자체는 `kind='wake'` 로 그려진다(호출부의 책임 경계다).
+ */
+export function readWakeMeta(meta: Record<string, unknown> | null | undefined): WakeMeta['wake'] | null {
+  if (!meta || meta.kind !== 'wake') return null;
+  const wake = meta.wake as WakeMeta['wake'] | undefined;
+  if (!wake || typeof wake !== 'object') return null;
+  if (typeof wake.wakeAt !== 'string') return null;
+  return wake;
+}
 
 /**
  * `meta` 가 선택 요청인지 판정한다. **모르는 `meta` 는 평문으로 흘린다**가 이 계획 전
@@ -960,7 +990,12 @@ export interface ChannelDoc {
 export interface InboxEntry {
   id: number;
   messageId: string;
-  reason: 'mention' | 'thread_reply' | 'dm';
+  /**
+   * `'wake'` 는 **자기가 걸어 둔 깨움**이 시각이 되어 자기를 부른 것이다. 사람의 부름과
+   * 갈라 두는 이유: 러너가 프롬프트를 다르게 조립해야 한다 — 깨움에는 새 사람 발화가
+   * 없어서 델타가 비고, 비면 하네스를 돌리지 않는다(agent/src/mentionTurn.ts).
+   */
+  reason: 'mention' | 'thread_reply' | 'dm' | 'wake';
   readAt: string | null;
   channelId: string;
   /**

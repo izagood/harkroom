@@ -453,6 +453,9 @@ describe('channel delete — 참조 테이블 전부 (#155)', () => {
       // #222: 예약 메시지. channel 과 message 를 모두 참조한다 — 예약이 하나라도 걸린
       // 채널은 이것이 없으면 삭제가 FK 위반으로 터진다.
       'scheduled_message',
+      // 마이그레이션 040: 깨움. channel 과 message 를 모두 참조한다 — 예약 발송과 같은
+      // 처지이고, 같은 이유로 message 보다 먼저 지워야 한다.
+      'agent_wake',
       'inbox', 'idempotency_key', 'saved_message', 'message', 'channel',
     ]);
 
