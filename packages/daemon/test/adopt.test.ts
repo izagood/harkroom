@@ -26,7 +26,7 @@ import { execFileSync, spawn as nodeSpawn, type ChildProcess } from 'node:child_
 import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { connect } from 'node:net';
 
@@ -171,6 +171,50 @@ describe('고아 재발견 — daemon 이 죽고 새로 떠도 그 러너를 안
    * - `runners.ts` 의 `spawnRunner` 에서 `this.saveLedger()` 를 빼도 같은 자리가 빨개진다
    *   (장부가 안 써지면 다음 daemon 에게 후보가 없다)
    */
+  /**
+   * **회귀선 — 낡은 세대의 러너는 채택하지 않고 회수한다** (2026-09-07).
+   *
+   * 왜 필요한가: 채택은 "새로 띄우지 않는다"를 보장한다(바로 아래 회귀선 2). 그래서
+   * 앱을 업데이트해 **daemon 이 갈려도** 옛 러너가 채택되면 그 러너는 영원히 옛 코드로
+   * 돈다 — 이날 실제로 그랬다: 러너에게 사용자 환경을 물려주지 않던 결함을 고쳐
+   * 릴리스했는데도, 채택된 러너가 계속 옛 env 로 돌아 forge 가 멘션마다 실패했다.
+   *
+   * `#431` 이 얻은 것("앱을 닫아도 러너가 산다")의 대가가 여기서도 나온다:
+   * **살아남는 것은 고쳐지지 않는다.** 세대가 바뀌면 회수하는 것이 그 대가를 갚는 길이다.
+   *
+   * 회수(TERM)까지 하는 이유: 안 채택하고 두면 앱이 새 러너를 띄워 **같은 에이전트에
+   * 둘**이 된다(`#430` 이 관측한 중복). `adopt.ts` 의 "확실하지 않으면 채택하지 않는다"는
+   * 남의 프로세스를 죽일 위험 때문인데, 여기서는 장부가 우리 것이라고 말하고 pid·커널
+   * 시작 시각 검사까지 통과한 러너다 — 즉 **확실하다.**
+   */
+  it('세대가 바뀌면 살아남은 러너를 채택하지 않고 회수한다', async () => {
+    const dir = await 임시앱디렉터리();
+
+    const 첫daemon = await daemon띄우기(dir, { args: {
+      socket: daemonEndpointPaths(dir).socketPath, launchNonce: 'test-nonce',
+      entryPath: join(dir, 'murmur-daemon'), appVersion: '0.1.26', unknown: [],
+    } });
+    if (첫daemon.kind !== 'running') throw new Error('daemon 이 안 떴다');
+    const 러너 = await 첫daemon.daemon.registry.spawnRunner('a1', { PATH: process.env.PATH ?? '' });
+    정리할pid.push(러너.pid);
+    await 조건까지장부(dir, 1);
+    await 첫daemon.daemon.shutdown();
+    expect(살아있나(러너.pid)).toBe(true);
+
+    // ── 새 세대 daemon ───────────────────────────────────────────────────────
+    const 새daemon = await daemon띄우기(dir, { args: {
+      socket: daemonEndpointPaths(dir).socketPath, launchNonce: 'test-nonce-2',
+      entryPath: join(dir, 'murmur-daemon'), appVersion: '0.1.27', unknown: [],
+    } });
+    if (새daemon.kind !== 'running') throw new Error('새 daemon 이 안 떴다');
+
+    expect(새daemon.daemon.adoptedAtStartup.adopted).toHaveLength(0);
+    // 사유를 사람이 읽을 수 있어야 한다 — 조용히 사라지면 "왜 러너가 갈렸지"에 답이 없다.
+    expect(새daemon.daemon.adoptedAtStartup.rejected.join(' ')).toContain('세대');
+    // 회수됐다 — 안 죽이면 앱이 새로 띄워 같은 에이전트에 둘이 된다.
+    await vi.waitFor(() => expect(살아있나(러너.pid)).toBe(false), { timeout: 5_000 });
+  }, 30_000);
+
   it('daemon 을 내리고 새로 띄우면 살아남은 러너를 채택한다', async () => {
     const dir = await 임시앱디렉터리();
 
@@ -411,6 +455,11 @@ describe('안전 경계 — 남의 러너를 채택하지 않는다 (#431 2-c)',
         startedAtMs: Date.now(),
         bootTimeSec: 시작시각초(내것.pid!),
         spawnedByNonce: 'n1',
+        // 이 테스트의 전제는 "daemon 이 **자기 손으로** 띄운 그 하나"다. 2026-09-07 부터
+        // 장부가 세대(`spawnedByAppVersion`)를 담고 채택이 그것을 대조하므로, 전제를
+        // 픽스처가 말해야 한다 — `daemon띄우기` 가 쓰는 값과 같게 둔다. 세대가 다를 때
+        // 무슨 일이 나는지는 별 회귀선("세대가 바뀌면 …")이 잰다.
+        spawnedByAppVersion: '0.0.0-test',
       },
     ]);
 
