@@ -70,7 +70,7 @@ compose 밖에서 따로 띄우고 `AVCS_BASE_URL` 로 가리킨다(§0, §5):
 ┌─ workspace-server (Node, Fastify) ───────────┐
 │  REST(채널·스레드·메시지·멤버십)             │
 │  WebSocket(알림 푸시) · MCP(에이전트 표면)   │
-│  avcs 이벤트 구독 → 채널 시스템 메시지 투영  │
+│  avcs 이벤트 구독 → lease 상태 투영          │
 │  PostgreSQL(채팅·멤버십·투영 커서)           │
 └──────────────┬───────────────────────────────┘
                │ avcs self-hosted 프로토콜 (HTTP)
@@ -129,7 +129,7 @@ compose 밖에서 따로 띄우고 `AVCS_BASE_URL` 로 가리킨다(§0, §5):
 
 ```
 murmur/
-  packages/server     # Fastify: REST + WS + MCP + avcs 이벤트 투영
+  packages/server     # Fastify: REST + WS + MCP + avcs lease 투영
   packages/agent      # 멘션 러너: PTY 안에서 harness CLI 를 돌린다
   packages/desktop    # Tauri 2 + React
   packages/shared     # 프로토콜 타입·스키마 (server/desktop 공유)
@@ -154,11 +154,15 @@ MVP 제외: cli, 모바일, 웹 UI, 상주 에이전트 러너.
 | `account_key` | account_id, ed25519 public key (SPKI PEM) | 주 용도는 인증이 아니라 **actor 매핑**(아래) |
 | `channel` | name, topic, `kind: standard\|dm`, `repo`(nullable) | `repo` 설정 시 avcs repo 바인딩 채널 |
 | `message` | channel_id, thread_root_id(자기참조), author_id, body, `kind: user\|system`, meta(jsonb), signature(nullable), created_at | 스레드 = 루트 메시지 앵커 방식 |
-| `work_thread` | (repo, intent_oid) → thread_root_message_id, UNIQUE | intent 하나 = 작업 스레드 하나 |
+| ~~`work_thread`~~ | (repo, intent_oid) → thread_root_message_id, UNIQUE | **없앴다**(#534, `040_drop_thread_projection.sql`). intent 하나를 작업 스레드 하나로 매핑하는 테이블이었고, 그 매핑 자체가 걷어내는 대상이었다 — 아래 「avcs 이벤트 투영 규칙」 참조 |
 | `inbox` | account_id, message_id, `reason: mention\|thread_reply\|dm`, read_at | 사람은 WS 배지, 에이전트는 MCP poll |
 
 보조 테이블: `projection_cursor(repo, last_log_index)`,
 `active_lease(repo, path, actor, expires_at)`.
+
+`message` 의 `(meta->>'repo', meta->>'oid')` 유니크 인덱스(`message_avcs_oid`)도 같은
+마이그레이션에서 사라졌다. 투영 멱등성 전용이었으므로 메시지를 만들지 않는 지금은 막을
+중복이 없다.
 
 메시지 저자성: 인증된 identity(세션/PAT) 귀속이 기본. `signature`(ed25519)는
 **선택** — MCP 도구 호출로 발화하는 에이전트에게 메시지별 클라이언트 서명은 진입
@@ -167,22 +171,51 @@ MVP 제외: cli, 모바일, 웹 UI, 상주 에이전트 러너.
 ### avcs 이벤트 투영 규칙
 
 repo 바인딩 채널마다 투영 워커가 avcs 서버의 object-log를 커서 기반으로
-구독(`/events` long-poll로 깨어나 `/sync?since=`로 당김)한다.
+구독(`/events` long-poll로 깨어나 `/sync?since=`로 당김)한다. 따라갈 repo 목록은
+계속 채널 바인딩에서 오지만, **워커가 남기는 것은 `lease` 상태 하나뿐이다.**
 
 | avcs 오브젝트 | 투영 결과 |
 |---|---|
-| `intent` 생성 | 채널 시스템 메시지 + 작업 스레드 자동 개설 (`work_thread` 등록) — 단 `work.link` 선점 시 생략 |
-| `operation` push | 해당 intent의 작업 스레드에 요약 시스템 메시지 — **sync 배치 단위 병합** (op당 메시지 금지) |
-| `decision` / `evidence` | 해당 intent의 작업 스레드에 기록 |
-| `integration` / `checkpoint` / `release` / finalize | 채널 레벨 공지 |
 | `lease` | 메시지가 아니라 **상태** — `active_lease` 갱신 → "지금 누가 어디 작업 중" 실시간 현황판 |
+| ~~`intent`~~ / ~~`operation`~~ / ~~`decision`~~ / ~~`evidence`~~ | **투영하지 않는다**(#534). intent 를 스레드 뿌리로 세우고 나머지를 그 아래 답글로 붙였다 |
+| ~~`integration`~~ / ~~`checkpoint`~~ / ~~`release`~~ / ~~finalize~~ | **투영하지 않는다**(#534). 채널 레벨 공지 메시지였다 |
 
-- **멱등성**: at-least-once + dedupe. 시스템 메시지에 `(repo, oid)` UNIQUE 제약,
-  커서 전진은 메시지 삽입과 같은 트랜잭션.
-- **actor 매핑**: avcs 오브젝트의 서명 키를 `account_key`로 역참조해 시스템
-  메시지에 워크스페이스 계정을 저자로 붙인다. 미등록 키는 "외부 작업자"로 표시.
-- **사람→avcs 방향은 MVP에 없음**: 작업 스레드의 사람 댓글은 채팅 DB에만 남는다.
-  채팅은 논의 층, avcs는 작업 층.
+**왜 걷어냈나.** murmur 의 자리는 `avcs ↔ avcs-server ↔ avcshub` 에서 **avcshub 자리**다
+(§2 결정 1 의 "관찰자 서버"가 곧 이 뜻이다). hub 를 대신한다는 것은 제안을 **보는 화면**을
+갖는 것인데, 위 투영은 제안을 **대화로 바꿔** 흘려보냈다. 셋이 어긋난다: ① 스레드는 avcs 의
+단위가 아니다(avcs 의 단위는 `intent` 를 뿌리로 한 제안 트리인데 스레드에 풀면 평평한 답글
+목록이 된다) ② 지나가 버린다(제안은 결정될 때까지 머물러야 하는데 채널 메시지는 스크롤과
+함께 사라진다) ③ 상태 축이 없다(제안에는 열림·승인됨·머지됨·거부됨이 있고 그것으로 거르고
+정렬해야 하는데 메시지에는 그 축이 없다). 이 객체들을 보는 자리는 **협업 탭**이고, 그 탭은
+avcs 로그를 `avcs/client.ts`(`fetchSince`·`waitForChange`)로 직접 읽는다 — 중간에 메시지로
+바꿔 두면 같은 사실이 두 곳에 다른 모양으로 있게 되고 채팅 쪽 사본이 원본을 가린다.
+정본은 [`desktop-collab.html`](desktop-collab.html) 이다.
+
+`lease` 만 남긴 이유도 같은 판단에서 나온다. 누가 어떤 경로를 언제까지 잡고 있는지는
+avcs 로그를 처음부터 접어야 알 수 있는 **상태값**이고, 그 접기를 서버에서 한 번 해 두는
+것이 이 워커가 남는 이유다(협업 탭의 충돌 판정 재료). `projection_cursor` 도 그래서 남는다 —
+커서 없이는 재기동마다 로그를 처음부터 다시 접는다.
+
+- **멱등성**: at-least-once + dedupe. 근거는 **`active_lease` upsert 가 멱등한 것**이다
+  (`on conflict (repo, path, actor_key_id) do update`), 커서 전진은 그 upsert 와 같은
+  트랜잭션. 예전 근거였던 시스템 메시지의 `(repo, oid)` UNIQUE 는 그 인덱스와 함께
+  사라졌다 — 메시지를 만들지 않으면 막을 중복이 없다.
+- **커서는 투영할 게 없어도 전진한다**: 이 성질은 이제 예외가 아니라 통상이다. lease 가
+  아닌 객체가 대다수이므로 `intent`·`operation`·`decision` 이 가득한 배치도 남기는 것
+  없이 지나간다. `next === since` 여야 진짜 새 게 없는 것이다.
+- ~~**actor 매핑**~~: 서명 키를 `account_key`로 역참조해 시스템 메시지에 저자를 붙이고
+  미등록 키를 "외부 작업자"로 적던 `actorLabel` 은 **함수째 사라졌다**(#534) — 메시지를
+  만들지 않으면 저자로 세울 것이 없다. 같은 이유로 `murmur` 핸들의 시스템 계정을 만들던
+  `ensureSystemAccount` 도 사라졌다(계정 **행**은 남는다 — 이 절 끝 참조).
+  `account_key` 의 남은 용도는 인증과 `active_lease.actor_key_id` 다.
+- **사람→avcs 방향은 MVP에 없음**: 채팅은 논의 층, avcs는 작업 층. 지금 murmur 는 avcs 를
+  **읽기만** 한다(`fetchSince`).
+
+**운영 중인 DB 에는 과거에 투영된 `system` 메시지가 그대로 남아 있다.** 한 행도 지우지
+않았다 — 잘못 만든 구조를 없애는 것과 그 구조가 만든 기록을 없애는 것은 다른 결정이고,
+#534 는 앞의 것만 했다. 그 메시지의 저자인 `murmur` 계정 행도 같은 이유로 남는다
+(`message.author_id` 가 `not null references account(id)` 라서 지우면 FK 위반이다).
+그래서 **채널에서 과거 투영 메시지를 보는 것은 투영이 아직 돌고 있다는 뜻이 아니다.**
 
 ### avcs 사용 경계 (원칙: avcs 오브젝트는 작업의 산물이지 대화의 기록이 아니다)
 
@@ -196,12 +229,22 @@ repo 바인딩 채널마다 투영 워커가 avcs 서버의 object-log를 커서
 반대쪽 — MCP `workspace.guide`에 이 규칙을 명시해 읽기 전용 요청에 intent를
 만드는 과잉을 막는다.
 
-### 스레드 분열 방지 — `work.link`
+### ~~스레드 분열 방지 — `work.link`~~ (없앴다)
 
-채팅 스레드에서 촉발된 작업은 에이전트가 intent 생성 직후 MCP 도구
-`work.link(intent_oid, thread)`를 호출해 **기존 대화 스레드를 작업 스레드로
-승격**시킨다(`work_thread`가 기존 스레드 루트를 가리킴). `work.link`가 안 불린
-intent(자발·외부 작업)만 투영 규칙대로 새 작업 스레드를 자동 개설한다(fallback).
+MCP 도구 `work.link(repo, intentOid, threadRootMessageId)` 는 채팅 스레드에서 촉발된 작업의
+intent 를 **기존 대화 스레드에 묶어** 그 스레드를 작업 스레드로 승격시켰다. 그 도구는
+**스레드 투영의 배선**이었다 — 존재 이유가 "이 intent 의 operation·decision 을 어느 스레드에
+붙일지 정한다"였고, 붙일 자리가 없어진 지금(위 투영 규칙) 남길 것이 없다. 쓰던
+`work_thread` 테이블도 같은 커밋에서 사라졌다(#534).
+
+**껍데기만 남겨 `{ ok: true }` 를 돌려주지 않았다.** 그렇게 하면 에이전트는 계속 호출하고
+계속 성공을 받는데 아무 일도 일어나지 않는다 — 그것이 이 도구가 애초에 고치려던 문제
+(#381: 실패가 아니라 침묵)와 정확히 같은 모양이다. 도구가 없으면 MCP 는 "그런 도구 없음"으로
+답하고, 그것이 정직한 답이다. `workspace.guide` 의 호출 지시도 함께 지웠다.
+
+대신 가이드는 **사람에게 알릴 것은 직접 채팅으로 쓰라**고 말한다. avcs 오브젝트를 만들어도
+채널에 메시지가 생기지 않으므로, 진행 상황은 요청받은 스레드에 직접 남기고 판단이 필요하면
+`ask` 를 쓴다. 오브젝트 자체는 협업 화면이 avcs 서버에서 직접 읽어 보여 준다.
 
 ## 4. 실시간 층·에이전트 표면·인증
 
@@ -212,7 +255,8 @@ intent(자발·외부 작업)만 투영 규칙대로 새 작업 스레드를 자
   `inbox.updated`, `lease.changed`, `presence.changed`, `presence.snapshot`.
 - 수정·삭제 권한은 비대칭이다. **수정은 작성자 본인만** — 남의 말을 고치는 것은 되돌릴 수 없는
   왜곡이라 admin 에게도 열지 않는다. **삭제는 작성자 또는 admin** — 원문을 왜곡하지 않고 가리는
-  일이라 운영에 필요하다. `kind='system'` 메시지는 avcs 투영의 산물이므로 사람이 고칠 수 없다.
+  일이라 운영에 필요하다. `kind='system'` 메시지는 사람이 쓴 것이 아니므로 고칠 수 없다
+  (스레드 투영을 걷어낸 뒤 새로 생기지는 않지만, 과거에 투영된 것이 DB 에 남아 있다).
   삭제는 `deleted_at` 소프트 삭제이고 `listMessages` 가 걸러낸다.
 - 재연결 시 `GET .../messages?since=`로 리컨실. WS는 진실의 원천이 아니다.
 - 히스토리 커서는 양방향이다. `since=`(전방)는 리컨실용이고, `before=`(역방향)는 최신 창 밖으로
@@ -284,10 +328,12 @@ Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지
 | `message.react` / `message.unreact` | 리액션 추가/제거 |
 | `inbox.poll` | 멘션·DM·답글 커서 poll, **long-poll 지원** — 에이전트가 물고 대기하다 멘션에 깨어남 |
 | `inbox.read` | inbox 항목 읽음 처리(자기 inbox 한정, entry id). **이것이 없으면 MCP 단독으로 에이전트 루프가 성립하지 않는다** — 미읽음을 소비할 수 없어 같은 멘션에 영원히 반복 응답한다 |
-| `work.link` | intent ↔ 스레드 승격 |
 | `account.me` | 자기 identity 확인 |
 | `memory.list` / `memory.get` / `memory.set` | 에이전트 메모리(slug → 값, set 의 value null 이 삭제) |
 | `skill.propose` | 워크스페이스 스킬 제안(미승인 상태로 올리고 채널에 알림) |
+
+이 목록에 **`work.link` 가 있었다**(intent ↔ 스레드 승격). 스레드 투영의 배선이었으므로
+#534 에서 함께 없앴다 — 위 §3 「~~스레드 분열 방지~~」 참조.
 
 에이전트는 murmur MCP(대화) + avcs MCP(작업) 두 개를 물고 들어온다. murmur는
 에이전트 런타임을 모른다.
@@ -482,7 +528,7 @@ Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지
   wire 드리프트를 잡지 못한다는 것을 실제로 겪었다(fake는 `204`/`{entries}`를 가정했고
   실제 서버는 `200 {oids, cursor}`를 준다).
 - 투영 워커: `AvcsServerClient`를 **인메모리로 주입**해 transport와 분리한 뒤 커서 전진,
-  `(repo,oid)` dedupe, 리플레이, 다운 후 복구를 검증한다 — 손으로 심은 DB 상태로
+  lease upsert 멱등성, 리플레이, 다운 후 복구를 검증한다 — 손으로 심은 DB 상태로
   통과시키지 않고 반드시 클라이언트 경계를 경유한다. wire는 위 어댑터 테스트가 전담한다.
 - 프로토콜 스펙 버전 핀은 어댑터 파일 상단에 둔다.
 - desktop: 컴포넌트 테스트(jsdom, matchMedia 스텁), E2E는 MVP 이후.
@@ -569,8 +615,10 @@ murmur 개발 워크스페이스를 murmur 자신으로 운영할 수 있다:
 1. 사람 1명 + 에이전트 2개 이상이 한 채널에 참여한다
 2. 사람이 스레드에서 에이전트를 멘션해 작업을 요청하면, 에이전트가
    `inbox.poll`로 깨어나 응답한다
-3. 코드 작업은 avcs로 진행되고, operation/decision이 해당 스레드에 투영된다
-   (`work.link` 경유)
+3. 코드 작업은 avcs로 진행되고, 그 진행을 에이전트가 스레드에 **직접 써서** 알린다.
+   (원래 기준은 "operation/decision이 해당 스레드에 **투영**된다(`work.link` 경유)"였다.
+   그 투영을 #534 에서 걷어냈으므로 — §3 참조 — 기준도 바뀐다: avcs 오브젝트를 보는 자리는
+   협업 탭이고, 채팅에 남는 것은 에이전트가 사람에게 하는 말이다.)
 4. 읽기 전용 요청은 avcs 흔적 없이 채팅으로만 끝난다
 5. 사이드바 현황판에서 에이전트들의 lease 점유가 실시간으로 보인다
 6. avcs 서버를 재시작해도 채팅은 끊기지 않고, 투영은 커서부터 따라잡는다
