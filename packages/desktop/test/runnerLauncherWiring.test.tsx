@@ -65,6 +65,8 @@ async function boot(
   agents: AgentView[],
   online: string[] = [],
   daemon = fakeDaemon(),
+  /** 이 앱 번들의 버전. 뒤처짐 판정의 기준이므로 재기동 회귀선이 명시적으로 준다. */
+  appVersion: string | null = null,
 ) {
   const secrets = fakeSecrets();
   const spawner = fakeSpawner();
@@ -80,6 +82,7 @@ async function boot(
   const { makeWs, callbacks } = fakeWsFactory();
   const c = new Controller(
     api, makeWs, undefined, undefined, secrets, spawner, fakeLoginPath(), undefined, daemon,
+    { read: vi.fn(async () => appVersion) },
   );
   setController(c);
   await c.start();
@@ -340,5 +343,121 @@ describe('설정 → 연결의 자동 기동 토글', () => {
     fireEvent.click(screen.getByRole('switch', { name: '러너 자동 기동' }));
 
     expect(usePrefsStore.getState().runnerAutoStart).toBe(false);
+  });
+});
+
+// ── 뒤처진 러너 전체 재기동 ───────────────────────────────────────────────────
+//
+// 러너는 daemon 이 소유하고 앱의 수명을 넘어 산다(`#431`). 앱을 새로 설치해도 도는 러너는
+// 옛 번들이고, `doStartOne` 은 장부에 살아 있는 러너를 새로 띄우지 않는다. 그래서 사람이
+// 갈아 줘야 한다 — 여기서 재는 것은 **누구를 고르는가**다.
+describe('7. 뒤처진 러너 전체 재기동', () => {
+  it('버전이 앱과 다른 러너만 고른다 — 최신인 것은 건드리지 않는다', async () => {
+    const daemon = fakeDaemon([liveRunner('old', true), liveRunner('fresh', true)]);
+    const { c } = await boot(
+      [agentView('old', { runnerVersion: '0.1.6' }), agentView('fresh', { runnerVersion: '0.1.15' })],
+      ['old', 'fresh'],
+      daemon,
+      '0.1.15',
+    );
+
+    // 재기동은 **실제 종료를 기다린다**(SIGTERM 은 graceful 이다). 그 시차가 이 기능의
+    // 설계 전부이므로 테스트가 죽는 시점을 직접 준다 — 여기서 즉시 죽는 가짜를 쓰면
+    // 기다림 자체가 회귀선에서 사라진다.
+    const pending = c.restartStaleRunners();
+    await waitFor(() => expect(daemon.kills).toEqual(['old']));
+    daemon.died('old');
+    const restarted = await pending;
+
+    expect(restarted).toEqual(['old']);
+    // 최신 러너는 건드리지 않았다.
+    expect(daemon.kills).toEqual(['old']);
+  });
+
+  it('버전을 모르는 러너는 고르지 않는다 — 모르는 것을 뒤처졌다고 하지 않는다', async () => {
+    const daemon = fakeDaemon([liveRunner('mystery', true)]);
+    const { c } = await boot(
+      [agentView('mystery', { runnerVersion: null })],
+      ['mystery'],
+      daemon,
+      '0.1.15',
+    );
+
+    const restarted = await c.restartStaleRunners();
+
+    expect(restarted).toEqual([]);
+    expect(daemon.kills).toEqual([]);
+  });
+
+  /**
+   * 앱이 자기 버전을 못 얻었으면 비교 기준이 없다. 그때 전부를 재기동하면 잘 돌던 러너를
+   * 이유 없이 끊는 것이고, 그 근거는 어디에도 없다.
+   */
+  it('앱 버전을 모르면 아무것도 재기동하지 않는다', async () => {
+    const daemon = fakeDaemon([liveRunner('old', true)]);
+    const { c } = await boot([agentView('old', { runnerVersion: '0.1.6' })], ['old'], daemon, null);
+
+    expect(await c.restartStaleRunners()).toEqual([]);
+    expect(daemon.kills).toEqual([]);
+  });
+});
+
+describe('8. 전체 재기동이 화면에 있다', () => {
+  it('뒤처진 러너 수를 세어 버튼에 적고, 누르면 그 러너만 갈린다', async () => {
+    const daemon = fakeDaemon([liveRunner('old', true), liveRunner('fresh', true)]);
+    await boot(
+      [agentView('old', { runnerVersion: '0.1.6' }), agentView('fresh', { runnerVersion: '0.1.15' })],
+      ['old', 'fresh'],
+      daemon,
+      '0.1.15',
+    );
+    render(<AgentsSettings />);
+
+    // 개수가 버튼에 있어야 한다 — "전체 재기동"만 적으면 몇 대가 끊길지 모르고 누른다.
+    const button = await screen.findByRole('button', { name: /뒤처진 러너 전체 재기동 \(1\)/ });
+    fireEvent.click(button);
+
+    await waitFor(() => expect(daemon.kills).toEqual(['old']));
+    daemon.died('old');
+  });
+
+  it('전부 최신이면 누를 것이 없다고 말한다 — 비활성 버튼에 이유를 붙인다', async () => {
+    const daemon = fakeDaemon([liveRunner('fresh', true)]);
+    await boot([agentView('fresh', { runnerVersion: '0.1.15' })], ['fresh'], daemon, '0.1.15');
+    render(<AgentsSettings />);
+
+    const button = await screen.findByRole('button', { name: /뒤처진 러너 전체 재기동 \(0\)/ });
+    expect(button.hasAttribute('disabled')).toBe(true);
+  });
+});
+
+describe('9. 전체 재기동은 기다리는 대상을 숨기지 않는다', () => {
+  /**
+   * **순차로 돌면 화면이 거짓을 말한다.** 첫 러너의 턴이 끝날 때까지(실측 5분 넘는 턴도
+   * 있다) 나머지는 `running` 으로 남아, 사람은 "한 대만 재기동 중"으로 읽는다. 예약은
+   * 전부에게 **지금** 걸려야 하고, 그 다음의 기다림은 각자의 턴 길이만큼이면 된다.
+   */
+  it('대상 전부에 지금 예약을 걸고, 기다림만 각자 진행한다', async () => {
+    const daemon = fakeDaemon([liveRunner('old1', true), liveRunner('old2', true)]);
+    const { c } = await boot(
+      [agentView('old1', { runnerVersion: '0.1.6' }), agentView('old2', { runnerVersion: '0.1.6' })],
+      ['old1', 'old2'],
+      daemon,
+      '0.1.15',
+    );
+
+    const pending = c.restartStaleRunners();
+
+    // 둘 다 **아직 죽지 않았는데도** 예약이 둘 다 걸려 있어야 한다.
+    await waitFor(() => expect([...daemon.kills].sort()).toEqual(['old1', 'old2']));
+    await waitFor(() => {
+      const states = useAppStore.getState().runnerStates;
+      expect(states.old1?.status).toBe('restarting');
+      expect(states.old2?.status).toBe('restarting');
+    });
+
+    daemon.died('old1');
+    daemon.died('old2');
+    expect([...(await pending)].sort()).toEqual(['old1', 'old2']);
   });
 });

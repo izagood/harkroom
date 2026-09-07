@@ -28,6 +28,10 @@ export function runnerStatusLabel(state: RunnerState | undefined): string {
     // 이름은 "이 앱이 안 띄웠다"는 뜻이었는데 "실행 중"으로 읽혔고, 그 오독이 `#430` 이다.
     // **문구 재정의는 `#443` 범위다** — 여기서는 상태값이 가리키는 사실만 바로잡는다.
     case 'adopted': return 'daemon 이 들고 있음';
+    // 재기동을 **예약했다**. 'running' 도 'stopped' 도 아닌 이유는 상태값 주석에 있다 —
+    // SIGTERM 은 graceful 이라 러너는 진행 중인 턴을 마친 뒤에야 죽고, 그 시차가 분
+    // 단위다. 무엇을 기다리는지는 `state.message` 가 말한다.
+    case 'restarting': return '재기동 대기 (진행 중인 턴을 마치는 중)';
     case 'needs_reissue': return '종료 (78: 자격증명 폐기 — 재발급 필요)';
     case 'needs_harness': return '종료 (78: 하네스를 찾을 수 없음 — 설치 필요)';
     case 'needs_login': return '종료 (78: 하네스 로그인 만료 — 재로그인 필요)';
@@ -48,6 +52,9 @@ const TONE: Record<RunnerStatus, string> = {
   needs_harness: 'text-warning',
   // 로그인 만료도 같은 톤이다 — 사람이 한 단계(재로그인)를 하면 낫는다.
   needs_login: 'text-warning',
+  // 실패가 아니라 **진행 중**이다 — 사람이 방금 누른 것이 돌고 있다는 뜻이므로
+  // 경고(warning)로 물들이지 않는다.
+  restarting: 'text-accent',
   stopped: 'text-fg-subtle',
   failed: 'text-danger',
 };
@@ -59,6 +66,7 @@ const DOT: Record<RunnerStatus, string> = {
   needs_reissue: 'bg-warning',
   needs_harness: 'bg-warning',
   needs_login: 'bg-warning',
+  restarting: 'bg-accent',
   stopped: 'bg-fg-subtle',
   failed: 'bg-danger',
 };

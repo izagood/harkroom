@@ -147,6 +147,15 @@ export interface AppState {
   /** 에이전트별 러너 실행 상태. agentId → state */
   runnerStates: Record<string, RunnerState>;
   /**
+   * 이 앱 번들의 버전. **컨트롤러가 기동 때 한 번 밀어 넣는다** — `runnerStates` 와 같은
+   * 방향이다(컨트롤러가 밀고 화면은 읽는다). 화면이 컨트롤러에게 직접 물으면 컨트롤러를
+   * 목으로 세우는 모든 테스트가 그 메서드를 알아야 하고, 실패는 렌더 도중의 예외가 된다.
+   *
+   * `null` 은 '아직 모른다' 또는 '얻지 못했다'다. 그때 화면은 뒤처짐을 판정하지 않는다 —
+   * 비교 기준 없이 단정하는 것이 docs/design.md §4 가 금지하는 거짓 신호다.
+   */
+  appVersion: string | null;
+  /**
    * 링크 미리보기가 준비된 시각. url → 타임스탬프(#215).
    *
    * 카드 **내용**을 여기 담지 않는 이유: 캐시는 서버에 하나뿐이고, 두 벌을 두면 어느 쪽이
@@ -202,7 +211,7 @@ const initial = {
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, projectionBannerDismissed: null,
   highlightedMessageId: null,
-  expandedMessageIds: {}, runnerStates: {}, savedIds: [], savedCount: 0,
+  expandedMessageIds: {}, runnerStates: {}, appVersion: null, savedIds: [], savedCount: 0,
   linkPreviewReadyAt: {}, skillsRevision: 0,
 };
 
