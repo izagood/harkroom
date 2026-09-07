@@ -89,6 +89,9 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
      * `minWidth` 아래로는 안 간다 — 전에 `min-w-[480px] flex-1` 이 하던 일과 같다.
      */
     <section
+      /* `ChannelPane` 과 같은 이유로 붙은 손잡이다(그 파일의 주석) — 인박스가 자리가 되면서
+         한 줄의 형제가 셋이 되었고, 그 순서를 재는 회귀선이 생겼다. */
+      data-testid="thread-pane"
       className="relative flex flex-col border-l border-border bg-surface-raised"
       style={{ width: threadWidth, minWidth: MIN_THREAD_WIDTH }}
     >
