@@ -25,7 +25,7 @@
 // 로그인 상태 판정은 실제 `claude auth status --json` 을 돌려야 한다. 테스트가 그것을 부르면
 // 그 머신의 로그인 상태에 달리고 CI 에는 로그인이 없다 — 그러면 "미로그인" 경로만 초록이
 // 된다. 구조를 읽고 쓰는 일은 상태와 무관하므로 그 경계를 갈라 둔다.
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -79,12 +79,49 @@ export interface ClaudeAccountsSnapshot {
   strays: string[];
 }
 
+/**
+ * 로그인 자식 프로세스의 **우리가 쓰는 표면만**. `ChildProcess` 전체를 요구하지 않는 이유는
+ * 테스트가 가짜를 끼우기 위해서다 — 실제 `claude auth login` 은 브라우저 OAuth 를 시작하고
+ * 사람을 기다리므로 테스트가 띄울 수 없다.
+ */
+export interface ClaudeLoginChild {
+  stdout: { on(ev: 'data', cb: (chunk: Buffer) => void): unknown } | null;
+  stdin: { write(s: string): unknown } | null;
+  on(ev: 'exit', cb: (code: number | null, signal: string | null) => void): unknown;
+  kill(signal?: NodeJS.Signals | number): boolean;
+}
+
+/**
+ * 로그인 진행 통지. 데몬이 소켓 이벤트로 흘리고 앱이 화면에 그린다.
+ *
+ * **원시 바이트를 흘리지 않는다.** `claude auth login` 의 출력은 OSC 8 하이퍼링크로 감싸여
+ * URL 이 두 번 나온다(실측) — 프론트가 그 파싱을 하면 하이퍼링크 규격을 프론트가 알아야 한다.
+ * 파싱은 한 곳에서 한다.
+ */
+export interface ClaudeLoginEvent {
+  loginId: string;
+  /** OAuth URL. 한 번만 온다. */
+  url?: string;
+  /** 끝났다. 성공·실패 모두 온다 — 통지가 없으면 UI 가 영원히 "로그인 중"을 그린다. */
+  done?: boolean;
+  /** 끝난 뒤 다시 잰 상태. `done` 과 함께 온다. */
+  status?: ClaudeAuthStatus;
+  /** 실패 사유(사람이 읽는 덧말). `done` 과 함께 온다. */
+  error?: string;
+}
+
 export interface ClaudeAccountsPort {
   list(): Promise<ClaudeAccountsSnapshot>;
   configure(cfg: ClaudePoolsConfig): Promise<void>;
   removeAccount(pool: string, account: string): Promise<void>;
   removePool(pool: string): Promise<void>;
   move(account: string, toPool: string): Promise<{ loggedIn: boolean }>;
+  loginStart(pool: string, account: string): Promise<{ loginId: string }>;
+  loginSubmit(loginId: string, code: string): Promise<void>;
+  loginCancel(loginId: string): Promise<void>;
+  /** 진행 중인 로그인을 전부 회수한다. 데몬 종료 경로가 부른다. */
+  shutdownLogins(): Promise<void>;
+  onLoginEvent(cb: (e: ClaudeLoginEvent) => void): void;
 }
 
 /** 계정 풀 뿌리. 러너의 `claudeAccountsRoot()` 와 **같은 값**이어야 한다. */
@@ -174,12 +211,46 @@ function readStatus(raw: unknown): ClaudeAuthStatus {
   };
 }
 
+/** SIGTERM → SIGKILL 유예. 러너 회수와 같은 이유로 먼저 부탁한다. */
+const LOGIN_KILL_GRACE_MS = 5_000;
+
+/** 기본 `spawnLogin` — 실제 `claude auth login` 을 그 계정 디렉터리로 띄운다. */
+function nodeSpawnLogin(configDir: string): ClaudeLoginChild {
+  // **PTY 가 아니라 파이프다.** 실측(claude 2.1.263): 파이프에서도 URL 을 찍고 stdin 에서
+  // 코드를 읽는다. PTY 를 쓰면 데몬이 node-pty 를 물게 되고 얻는 것이 없다.
+  return spawn('claude', ['auth', 'login', '--claudeai'], {
+    env: { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  }) as unknown as ClaudeLoginChild;
+}
+
 export function createClaudeAccountsPort(opts: {
   root?: string;
   runStatus?: (configDir: string) => Promise<unknown>;
+  spawnLogin?: (configDir: string) => ClaudeLoginChild;
+  killGraceMs?: number;
 } = {}): ClaudeAccountsPort {
   const root = opts.root ?? claudeAccountsRoot();
   const runStatus = opts.runStatus ?? nodeRunStatus;
+  const spawnLogin = opts.spawnLogin ?? nodeSpawnLogin;
+  const killGraceMs = opts.killGraceMs ?? LOGIN_KILL_GRACE_MS;
+
+  /** 진행 중인 로그인. 키는 `loginId`. */
+  const logins = new Map<string, {
+    child: ClaudeLoginChild;
+    configDir: string;
+    /** `<pool>/<account>` — 같은 계정에 둘이 붙는 것을 막는 키다. */
+    slot: string;
+    settled: boolean;
+    urlSent: boolean;
+    buffer: string;
+    killTimer: ReturnType<typeof setTimeout> | null;
+  }>();
+  const loginListeners: ((e: ClaudeLoginEvent) => void)[] = [];
+  const emit = (e: ClaudeLoginEvent): void => {
+    // 관찰 하나가 로그인을 죽이지 않는다 — 듣는 쪽이 던져도 삼킨다.
+    for (const cb of loginListeners) { try { cb(e); } catch { /* 관찰은 부작용이 아니다 */ } }
+  };
 
   /** `pools.json`. **없음(`null`)과 깨짐(빈 설정)을 가른다** — 존재가 모드 스위치다. */
   async function readConfig(): Promise<ClaudePoolsConfig | null> {
@@ -307,6 +378,106 @@ export function createClaudeAccountsPort(opts: {
       // 갓 로그인한 계정이 파일을 남기는지 Keychain 에만 남기는지는 로그인을 완주해야 알 수
       // 있고 그것은 사람만 할 수 있다 — 그래서 "성공했다"고 말하지 않고 사실을 돌려준다.
       return { loggedIn: readStatus(await runStatus(to)).loggedIn };
+    },
+
+    async loginStart(pool: string, account: string): Promise<{ loginId: string }> {
+      const configDir = under(root, pool, account);
+      const slot = `${pool}/${account}`;
+      // **같은 계정에 둘이 붙는 것을 막는다.** 둘이 같은 디렉터리를 밟으면 어느 쪽 자격증명이
+      // 남는지 알 수 없다.
+      for (const live of logins.values()) {
+        if (live.slot === slot && !live.settled) {
+          throw new Error(`이 계정에 로그인이 이미 진행 중이다: ${slot}`);
+        }
+      }
+      // 디렉터리를 **먼저** 만든다 — 없으면 claude 가 어디에 로그인해야 할지 모른다.
+      await mkdir(configDir, { recursive: true, mode: 0o700 });
+
+      const loginId = randomUUID();
+      const child = spawnLogin(configDir);
+      const state = {
+        child, configDir, slot,
+        settled: false, urlSent: false, buffer: '',
+        killTimer: null as ReturnType<typeof setTimeout> | null,
+      };
+      logins.set(loginId, state);
+
+      // exit 리스너를 **다른 준비보다 먼저** 건다 — 그 사이에 무언가 던지면 이미 fork 된
+      // 자식이 아무도 안 지켜보는 채로 남는다(`pty.ts` 의 같은 규율).
+      child.on('exit', (code) => {
+        if (state.settled) return;
+        state.settled = true;
+        if (state.killTimer) clearTimeout(state.killTimer);
+        // **끝난 뒤 상태를 다시 잰다.** 종료 코드만으로는 로그인 성공을 알 수 없다 —
+        // 사람이 브라우저를 닫아도 프로세스는 0 으로 끝날 수 있다.
+        void (async () => {
+          const status = readStatus(await runStatus(configDir));
+          emit({
+            loginId, done: true, status,
+            ...(status.loggedIn ? {} : {
+              error: `로그인이 끝나지 않았다 (종료 코드 ${code ?? '없음'}) — 다시 시도해라`,
+            }),
+          });
+          logins.delete(loginId);
+        })();
+      });
+
+      state.child.stdout?.on('data', (chunk: Buffer) => {
+        if (state.urlSent) return;
+        state.buffer += chunk.toString('utf8');
+        // **URL 이 끝났다는 증거가 있을 때만 낸다.** 청크는 URL 중간에서 잘릴 수 있고
+        // (테스트가 그것을 잰다), 그때 낸 URL 은 조용히 잘려 사람이 클릭해도 안 열린다.
+        //
+        // 끝의 증거는 **터미네이터**다: 공백, BEL(`\u0007`), ESC(`\u001b`) 중 하나. OSC 8 이
+        // `ESC ] 8 ; ; <uri> BEL` 이므로 실제 출력에는 BEL 이 온다. 터미네이터가 아직 없으면
+        // 더 기다린다 — 버퍼를 비우지 않는다.
+        const m = /https:\/\/([^\s\u0007\u001b]+)[\s\u0007\u001b]/.exec(state.buffer);
+        if (!m) return;
+        state.urlSent = true;
+        state.buffer = ''; // 더 모을 이유가 없다
+        emit({ loginId, url: `https://${m[1]}` });
+      });
+
+      return { loginId };
+    },
+
+    async loginSubmit(loginId: string, code: string): Promise<void> {
+      const state = logins.get(loginId);
+      // **조용히 무시하지 않는다.** 무시하면 UI 가 "코드를 보냈다"를 그리고 사람은 영원히
+      // 기다린다.
+      if (!state || state.settled) throw new Error(`진행 중인 로그인이 아니다: ${loginId}`);
+      // **첫 줄만 보낸다.** 붙여 넣기에 개행이 섞이면 그 뒤가 다음 프롬프트의 답으로 들어간다.
+      const line = code.split(/\r?\n/)[0] ?? '';
+      state.child.stdin?.write(`${line}\n`);
+    },
+
+    async loginCancel(loginId: string): Promise<void> {
+      const state = logins.get(loginId);
+      // **이미 끝난 것을 취소해도 던지지 않는다** — 사람이 브라우저를 닫는 것과 취소를 누르는
+      // 것이 경합하는 정상 상황이다.
+      if (!state || state.settled) return;
+      // SIGTERM 이 1차다. 유예 안에 안 죽으면 SIGKILL — 러너 회수와 같은 규율이다.
+      try { state.child.kill('SIGTERM'); } catch { /* 이미 죽었으면 회수할 것도 없다 */ }
+      state.killTimer = setTimeout(() => {
+        if (state.settled) return;
+        try { state.child.kill('SIGKILL'); } catch { /* 같은 이유 */ }
+      }, killGraceMs);
+      state.killTimer.unref?.();
+    },
+
+    async shutdownLogins(): Promise<void> {
+      // **러너와 달리 살려 두지 않는다.** 사람이 브라우저에서 완료해도 코드를 받을 프로세스가
+      // 없으므로, 남겨 두면 영원히 기다리는 고아가 된다.
+      for (const [, state] of logins) {
+        if (state.settled) continue;
+        try { state.child.kill('SIGTERM'); } catch { /* 이미 죽었다 */ }
+        try { state.child.kill('SIGKILL'); } catch { /* 확실히 끝낸다 */ }
+      }
+      logins.clear();
+    },
+
+    onLoginEvent(cb: (e: ClaudeLoginEvent) => void): void {
+      loginListeners.push(cb);
     },
   };
 }
