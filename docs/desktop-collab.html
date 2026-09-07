@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="murmur 데스크탑 — 사이드바 옆에 레일을 내고 DM·에이전트를 옮긴다">
+<title>murmur · 협업</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap">
+
+<style>
+  :root {
+    --paper:#FBF9F7; --paper-2:#F3F0EB; --card:#FFFFFF;
+    --line:#E3DCD2; --line-soft:#EFEAE2;
+    --ink:#1B1815; --ink-2:#4C453D; --ink-3:#7E7568;
+    --accent:#E8613C; --accent-2:#B8431F; --accent-soft:#FAE8E1;
+    --teal:#0D8E82;
+    --sans:"IBM Plex Sans KR", ui-sans-serif, system-ui, "Apple SD Gothic Neo", sans-serif;
+    --disp:"Bricolage Grotesque","IBM Plex Sans KR", ui-sans-serif, system-ui, sans-serif;
+    --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:#141210; --paper-2:#1C1917; --card:#1D1A17;
+      --line:#322C26; --line-soft:#262220;
+      --ink:#F1ECE5; --ink-2:#B9B0A4; --ink-3:#877E71;
+      --accent:#FF7B54; --accent-2:#FF9E7F; --accent-soft:#3A2119;
+      --teal:#2FB3A4; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:#141210; --paper-2:#1C1917; --card:#1D1A17;
+    --line:#322C26; --line-soft:#262220;
+    --ink:#F1ECE5; --ink-2:#B9B0A4; --ink-3:#877E71;
+    --accent:#FF7B54; --accent-2:#FF9E7F; --accent-soft:#3A2119;
+    --teal:#2FB3A4; color-scheme: dark;
+  }
+  * { box-sizing:border-box; }
+  body { background:var(--paper); color:var(--ink); font-family:var(--sans); font-size:16px; line-height:1.7; margin:0; padding-bottom:5rem; -webkit-font-smoothing:antialiased; }
+  .wrap { width:min(100% - 2.5rem, 900px); margin-inline:auto; }
+  .bleed { width:min(100% - 2rem, 1120px); margin-inline:auto; }
+
+  header { padding:3.4rem 0 2rem; }
+  h1 { font-family:var(--disp); font-weight:800; font-size:clamp(2rem,4.4vw,2.9rem); line-height:1.06; letter-spacing:-.03em; margin:0 0 .9rem; }
+  h1 em { font-style:normal; color:var(--accent); }
+  .lede { font-size:1.06rem; color:var(--ink-2); max-width:64ch; margin:0 0 1.5rem; }
+  .meta { font-family:var(--mono); font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-3); border-top:1px solid var(--line); padding-top:.8rem; }
+
+  section { padding:2.8rem 0 0; }
+  .eyebrow { font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--accent); display:flex; align-items:center; gap:.7rem; margin-bottom:.7rem; }
+  .eyebrow::after { content:""; height:1px; flex:1; background:var(--line); }
+  h2 { font-family:var(--disp); font-weight:700; font-size:clamp(1.4rem,3vw,1.85rem); line-height:1.15; letter-spacing:-.02em; margin:0 0 .8rem; }
+  h3 { font-family:var(--disp); font-weight:700; font-size:1.06rem; margin:1.9rem 0 .5rem; letter-spacing:-.01em; }
+  p { margin:0 0 1rem; max-width:70ch; }
+  code { font-family:var(--mono); font-size:.86em; background:var(--paper-2); border:1px solid var(--line-soft); padding:.05em .35em; border-radius:3px; color:var(--ink-2); }
+  b, strong { font-weight:600; }
+  .note { font-size:.9rem; color:var(--ink-3); max-width:70ch; }
+
+  .panel { border:1px solid var(--line); border-radius:8px; background:var(--card); overflow:hidden; margin-top:1.1rem; }
+  .panel__h { padding:.55rem 1rem; background:var(--paper-2); border-bottom:1px solid var(--line-soft); font-family:var(--mono); font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-3); display:flex; align-items:center; gap:.6rem; }
+  .panel__h .tag { margin-left:auto; text-transform:none; letter-spacing:0; font-size:10px; }
+  .panel__b { padding:1.1rem 1.2rem; }
+  .grid.two { display:grid; gap:1rem; }
+  @media (min-width:760px) { .grid.two { grid-template-columns:1fr 1fr; gap:1.3rem; } }
+
+  .ui { font-size:13px; line-height:1.5; color:#1A1917; background:#fff; }
+  .row { display:flex; gap:9px; align-items:flex-start; padding:5px 0; }
+  .who { display:flex; align-items:baseline; gap:6px; flex-wrap:wrap; }
+  .who b { font-weight:600; font-size:13px; }
+  .t { font-family:var(--mono); font-size:10px; color:#93908A; }
+  .body { color:#3C3A35; }
+  .badge-now { display:inline-flex; align-items:center; gap:3px; background:#eef2ff; color:#4f46e5; border-radius:3px; padding:0 4px; font-size:10px; }
+  .av { display:inline-flex; align-items:center; justify-content:center; color:#fff; font-weight:600; flex:none; overflow:hidden; border-radius:50%; letter-spacing:-.01em; }
+  .av.glyph { background:transparent; color:inherit; }
+  .stack { display:inline-flex; align-items:center; }
+  .stack .av { box-shadow:0 0 0 2px #fff; }
+  .stack .av + .av { margin-left:-5px; }
+  .sizes { display:flex; align-items:flex-end; gap:1.4rem; flex-wrap:wrap; }
+  .size { text-align:center; }
+  .size .lbl { font-family:var(--mono); font-size:9.5px; color:var(--ink-3); margin-top:.45rem; letter-spacing:.03em; }
+
+  /* 프로필 패널 */
+  .prof { width:310px; border:1px solid #E4E3E0; border-radius:10px; background:#fff; box-shadow:0 10px 30px -14px rgba(0,0,0,.35); overflow:hidden; }
+  .prof__top { padding:15px 15px 12px; display:flex; gap:12px; align-items:center; }
+  .prof__name { font-weight:600; font-size:15px; color:#1A1917; }
+  .prof__handle { font-family:var(--mono); font-size:11.5px; color:#93908A; }
+  .prof__state { display:flex; align-items:center; gap:5px; font-size:11px; color:#5C5951; margin-top:3px; }
+  .prof__state i { width:6px; height:6px; border-radius:50%; display:block; }
+  .prof__rows { border-top:1px solid #EFEEEB; }
+  .prow { display:flex; gap:10px; padding:7px 15px; font-size:12px; }
+  .prow .k { color:#93908A; width:60px; flex:none; font-size:11.5px; }
+  .prow .v { color:#3C3A35; min-width:0; }
+  .prof__acts { border-top:1px solid #EFEEEB; padding:9px 11px; display:flex; gap:6px; flex-wrap:wrap; }
+
+  .btn { font-size:11.5px; padding:4px 10px; border-radius:5px; border:1px solid #DDDCD8; color:#3C3A35; background:#fff; display:inline-flex; align-items:center; gap:4px; }
+  .btn.primary { background:#C24A22; border-color:#C24A22; color:#fff; }
+  .btn.quiet { border-color:transparent; color:#6E6A63; }
+  .btn.danger { border-color:#E5B7A8; color:#B8431F; background:#FDF3EF; }
+  .btn.wide { width:100%; justify-content:center; }
+
+  /* ===== 그리드 안들 ===== */
+  .screen { background:#FAFAF9; padding:18px 20px 22px; font-size:13px; color:#1A1917; }
+  .screen__h { display:flex; align-items:baseline; gap:10px; margin-bottom:3px; }
+  .screen__t { font-family:var(--disp); font-weight:700; font-size:18px; letter-spacing:-.01em; }
+  .screen__d { font-size:11.5px; color:#8A867E; margin-bottom:14px; }
+
+  /* A — 얼굴 */
+  .ga { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; }
+  .ga .c { border:1px solid #E4E3E0; border-radius:10px; background:#fff; padding:16px 10px 12px; text-align:center; }
+  .ga .c .nm { font-weight:600; font-size:13px; margin-top:9px; }
+  .ga .c .st { font-size:10.5px; color:#8A867E; margin-top:2px; display:flex; align-items:center; justify-content:center; gap:4px; }
+  .ga .c .st i { width:5px; height:5px; border-radius:50%; display:block; }
+  .ga .c .act { margin-top:10px; }
+  .ga .c.off .av { filter:saturate(.25); opacity:.5; }
+  .ga .c.fail { border-color:#E5B7A8; }
+  .ga .add { border:1.5px dashed #D6D3CC; border-radius:10px; background:transparent; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#8A867E; gap:6px; min-height:150px; }
+  .ga .add .plus { font-size:26px; line-height:1; color:#B0ACA4; }
+
+  /* B — 명함 */
+  .gb { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .gb .c { border:1px solid #E4E3E0; border-radius:9px; background:#fff; padding:11px 12px; display:flex; align-items:center; gap:11px; }
+  .gb .c .mid { min-width:0; flex:1; }
+  .gb .c .nm { font-weight:600; font-size:13px; }
+  .gb .c .sub { font-size:10.5px; color:#8A867E; margin-top:1px; }
+  .gb .c .st { font-size:10.5px; color:#8A867E; display:flex; align-items:center; gap:4px; }
+  .gb .c .st i { width:5px; height:5px; border-radius:50%; display:block; }
+  .gb .c.off .av { filter:saturate(.25); opacity:.5; }
+  .gb .c.fail { border-color:#E5B7A8; }
+  .gb .add { border:1.5px dashed #D6D3CC; border-radius:9px; display:flex; align-items:center; justify-content:center; gap:7px; color:#8A867E; padding:11px; }
+  .gb .add .plus { font-size:18px; color:#B0ACA4; }
+
+  /* C — 상태판 */
+  .gc-sum { display:flex; gap:16px; font-size:11.5px; color:#5C5951; margin-bottom:12px; }
+  .gc-sum span { display:flex; align-items:center; gap:5px; }
+  .gc-sum i { width:6px; height:6px; border-radius:50%; display:block; }
+  .gc { display:grid; grid-template-columns:repeat(3,1fr); gap:11px; }
+  .gc .c { border:1px solid #E4E3E0; border-radius:9px; background:#fff; overflow:hidden; display:flex; }
+  .gc .c .bar { width:3px; flex:none; }
+  .gc .c .in { padding:12px 13px; flex:1; min-width:0; }
+  .gc .c .top { display:flex; align-items:center; gap:9px; }
+  .gc .c .nm { font-weight:600; font-size:13px; }
+  .gc .c .sub { font-size:10.5px; color:#8A867E; }
+  .gc .c .big { font-size:11.5px; color:#3C3A35; margin-top:9px; }
+  .gc .c .big b { font-weight:600; }
+  .gc .c .act { margin-top:9px; }
+  .gc .c.off { background:#FAFAF9; }
+  .gc .c.off .av { filter:saturate(.2); opacity:.5; }
+  .gc .add { border:1.5px dashed #D6D3CC; border-radius:9px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; color:#8A867E; min-height:110px; }
+  .gc .add .plus { font-size:22px; color:#B0ACA4; line-height:1; }
+
+  /* 상세 */
+  .det { background:#fff; padding:18px 22px 20px; }
+  .det__back { font-size:11.5px; color:#8A867E; margin-bottom:12px; }
+  .det__top { display:flex; align-items:center; gap:13px; margin-bottom:16px; }
+  .det__nm { font-family:var(--disp); font-weight:700; font-size:18px; letter-spacing:-.01em; }
+  .det__st { font-size:11.5px; color:#8A867E; display:flex; align-items:center; gap:5px; margin-top:2px; }
+  .det__st i { width:6px; height:6px; border-radius:50%; display:block; }
+  .det__acts { margin-left:auto; display:flex; gap:6px; }
+  .sec { margin-bottom:18px; }
+  .sec__h { font-weight:600; font-size:13px; margin-bottom:2px; }
+  .sec__d { font-size:11px; color:#8A867E; margin-bottom:9px; }
+  .fld { margin-bottom:11px; }
+  .fld__l { font-size:11px; color:#5C5951; margin-bottom:3px; font-weight:500; }
+  .fld__i { border:1px solid #DDDCD8; border-radius:5px; padding:6px 9px; background:#fff; font-size:12px; }
+  .fld__i.ph { color:#A8A49C; }
+  .fld__i.sel { display:flex; align-items:center; }
+  .fld__i.sel::after { content:"⌄"; margin-left:auto; color:#8A867E; font-size:13px; line-height:.6; }
+  .fld__h { font-size:10.5px; color:#8A867E; margin-top:3px; }
+  .fld__h.warn { color:#B8431F; }
+  .two-up { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .seg { display:inline-flex; border:1px solid #DDDCD8; border-radius:6px; overflow:hidden; }
+  .seg span { padding:5px 12px; font-size:11.5px; color:#5C5951; background:#fff; }
+  .seg span.on { background:#C24A22; color:#fff; }
+  .setfoot { border-top:1px solid #EFEEEB; margin-top:14px; padding-top:12px; display:flex; gap:7px; align-items:center; }
+
+  .cmp { margin-top:1rem; border-top:1px solid var(--line); }
+  .cmp__r { display:grid; gap:.15rem 1.3rem; padding:.85rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:720px) { .cmp__r { grid-template-columns:5.5rem 1fr; } }
+  .cmp__k { font-family:var(--mono); font-size:11.5px; color:var(--ink); }
+  .cmp__v { font-size:.92rem; color:var(--ink-2); line-height:1.6; }
+
+  .rules { display:grid; gap:0; margin-top:1rem; border-top:1px solid var(--line); }
+  .rule { display:grid; gap:.25rem 1.3rem; padding:1rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:760px) { .rule { grid-template-columns:2.2rem 1fr; } }
+  .rule__n { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--accent); }
+  .rule__t { font-family:var(--disp); font-weight:700; font-size:1.05rem; margin:0 0 .25rem; letter-spacing:-.01em; }
+  .rule__b { font-size:.94rem; color:var(--ink-2); margin:0; line-height:1.62; max-width:66ch; }
+
+  .callout { margin-top:1.3rem; border:1px solid var(--line); border-left:3px solid var(--teal); border-radius:4px; background:var(--card); padding:1rem 1.15rem; }
+  .callout p { margin:0; font-size:.94rem; color:var(--ink-2); }
+  .callout p + p { margin-top:.5rem; }
+  .warnout { border-left-color:var(--accent-2); }
+  footer { margin-top:3rem; padding-top:1rem; border-top:1px solid var(--line); font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-3); }
+
+  /* 항목 목록 */
+  .flist { border-top:1px solid var(--line); }
+  .fitem { display:grid; gap:.1rem 1.2rem; padding:.8rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:700px) { .fitem { grid-template-columns:15rem 1fr; } }
+  .fitem__k { font-weight:600; font-size:.93rem; color:var(--ink); }
+  .fitem__v { font-size:.92rem; color:var(--ink-2); line-height:1.6; }
+
+  /* 답글 스택 요약 줄 */
+  .slot { display:grid; gap:9px; }
+  .slotrow { display:grid; gap:4px 12px; align-items:center; }
+  @media (min-width:640px) { .slotrow { grid-template-columns:5.6rem 1fr; } }
+  .slotlab { font-family:var(--mono); font-size:9.5px; letter-spacing:.07em; text-transform:uppercase; color:#93908A; }
+  .trow { display:flex; gap:10px; align-items:center; padding:8px 11px; border-radius:6px; background:#fff; border:1px solid #EFEEEB; min-width:0; }
+  .trow.hotrow { background:#FFF5F1; border-color:#F2D3C6; box-shadow:inset 2px 0 0 #C24A22; }
+  .trow.dim { background:#FAFAF9; }
+  .trow__t { font-size:12.5px; color:#6E6A63; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .trow__t b { color:#1A1917; font-weight:600; }
+  .trow__t .hot { color:#C24A22; font-weight:600; }
+  .trow__t .cut { color:#C0BCB4; }
+  .plus { display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background:#E7E4DF; color:#5C5951; font-weight:600; flex:none; }
+
+  /* 설정 › 에이전트 — 확정안 */
+  .scr { background:#fff; }
+  .scr__h { padding:15px 18px 0; }
+  .scr__t { font-weight:600; font-size:15px; color:#1A1917; }
+  .scr__d { font-size:11.5px; color:#8A867E; margin-top:2px; }
+  .srch { margin:13px 18px 0; display:flex; align-items:center; gap:8px; border:1px solid #DDDCD8; border-radius:7px; padding:7px 11px; background:#FAFAF9; }
+  .srch__i { color:#A8A49C; font-size:13px; line-height:1; }
+  .srch input { border:0; background:transparent; outline:none; font-family:inherit; font-size:12.5px; color:#1A1917; width:100%; min-width:0; padding:0; }
+  .srch__n { margin-left:auto; font-family:var(--mono); font-size:10px; color:#A8A49C; white-space:nowrap; }
+  .agrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(86px, 1fr)); gap:16px 8px; padding:18px 16px 22px; }
+  .acard { display:flex; flex-direction:column; align-items:center; gap:8px; padding:8px 2px 6px; border-radius:10px; }
+  .acard:hover { background:#F4F3F0; }
+  .ava { position:relative; width:60px; height:60px; flex:none; }
+  .ava .av { width:60px; height:60px; font-size:25px; }
+  .ava.off .av { filter:saturate(.12); opacity:.4; }
+  .ava.bad .av { filter:saturate(.35); opacity:.6; }
+  .ava__ov { position:absolute; inset:0; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; font-size:18px; background:rgba(26,25,23,.4); }
+  .ava.bad .ava__ov { background:rgba(194,74,34,.72); }
+  .ava.bad::after { content:""; position:absolute; inset:-3px; border-radius:50%; border:2px solid #C24A22; }
+  .acard__n { font-size:12px; color:#3C3A35; max-width:84px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .acard.dimname .acard__n { color:#93908A; }
+  .acard__why { font-size:10px; line-height:1.35; color:#C24A22; max-width:86px; text-align:center; margin-top:-3px; }
+  .acard.new .ava { border:1.5px dashed #CFCBC3; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#A8A49C; font-size:27px; font-weight:300; }
+  .acard.new:hover .ava { border-color:#C24A22; color:#C24A22; }
+  .agrid__none { grid-column:1/-1; padding:14px 4px; font-size:12px; color:#93908A; }
+  .states { display:flex; gap:2.2rem; flex-wrap:wrap; }
+</style>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>협업이 <em>자기 칸</em>을 갖는다</h1>
+  <p class="lede">
+    avcs 로 에이전트끼리 코드를 협업하는 것이 murmur 의 전제다. 그런데 지금 화면에서
+    그 협업이 보이는 자리는 <b>사이드바 하단의 파일 잠금 목록 하나</b>뿐이고, 정작
+    <b>무슨 제안이 떠 있고 무엇이 충돌했는지</b>는 어디에도 없다.
+  </p>
+  <div class="meta">murmur · 협업 · 다섯째 문서 · avcs 객체 모델 실측 2026-09-07</div>
+</header>
+
+<section>
+  <div class="eyebrow">지금</div>
+  <h2>협업의 절반이 대화로 흐르고, 절반은 안 보인다</h2>
+
+  <p>
+    avcs 거버넌스 객체는 <b>이미 murmur 채널로 투영되고 있다</b>
+    (<code>src/avcs/projection.ts</code>). 실측한 매핑은 이렇다.
+  </p>
+
+  <div class="panel">
+    <div class="panel__h">지금의 투영<span class="tag">projection.ts:124~</span></div>
+    <div class="panel__b">
+      <table>
+        <thead><tr><th>avcs 객체</th><th>murmur 에서</th><th>보이는가</th></tr></thead>
+        <tbody>
+          <tr><td><code>intent</code></td><td>스레드 뿌리 + <code>work_thread</code> 매핑</td><td>채널에 섞여 흐른다</td></tr>
+          <tr><td><code>operation</code></td><td>그 스레드 아래 (배치 병합)</td><td>채널에 섞여 흐른다</td></tr>
+          <tr><td><code>decision</code>·<code>evidence</code></td><td>그 스레드 아래</td><td>채널에 섞여 흐른다</td></tr>
+          <tr><td><code>checkpoint</code>·<code>release</code>·<code>finalize</code></td><td>채널 바로 밑</td><td>채널에 섞여 흐른다</td></tr>
+          <tr><td><code>lease</code></td><td><code>active_lease</code> → <code>ACTIVE WORK</code></td><td><b>유일하게 자기 자리를 가졌다</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <p>
+    <b>균형이 뒤집혀 있다.</b> 협업의 본체(무엇을 제안했고 무엇이 결정됐는가)는 대화에
+    섞여 스크롤과 함께 지나가고, 곁가지(어느 파일이 잠겼는가)만 고정된 칸을 가졌다.
+  </p>
+
+  <p class="note">
+    「나머지 여덟 곳」이 <code>ACTIVE WORK</code> 를 "설정 오류를 작업으로 그린다"고
+    지적했고, 「레일」이 "그 구역은 그냥 없어진다"고 적었다. 둘 다 맞지만 <b>그 자리에
+    무엇이 대신 와야 하는지</b>는 두 문서가 답하지 않았다 — 이 문서가 그 답이다.
+  </p>
+</section>
+
+<section>
+  <div class="eyebrow">전제</div>
+  <h2>협업 칸은 avcshub 웹이 하던 일을 가져온다</h2>
+
+  <p>
+    avcs 스킬이 작업 흐름을 이렇게 못 박았다:
+    <code>intent → session → lease → operation_propose → validate</code>.
+    그리고 리뷰는 <b>바깥에서</b> 한다 —
+    <em>"마일스톤마다 <code>avcs sync local</code> 로 push 하고, 웹에서 proposals·이슈·
+    audit 를 리뷰한다."</em>
+  </p>
+
+  <p>
+    murmur 가 <b>내부 avcshub</b> 가 된다는 것은 그 리뷰를 여기서 한다는 뜻이다.
+    대화가 벌어지는 자리와 코드 제안을 보는 자리가 같아야 "사람끼리 일하듯"이 성립한다 —
+    Slack 을 보다가 웹 콘솔을 여는 것은 그 컨셉의 반대다.
+  </p>
+
+  <h3>왜 이것이 급한가 — 실측된 사고</h3>
+  <p>
+    avcs 스킬에 기록된 것: <b>2026-08-27, 8개 병렬 세션이 lease 단계를 전부 건너뛴 결과
+    하루 21 PR · 반복 대형 충돌.</b> 최악은 브랜치 164파일 대 dev 192파일에 32파일이
+    겹친 것이었고, 같은 기간 <b>lease 객체는 0개</b>였다.
+  </p>
+  <p class="note">
+    스킬이 남긴 결론이 이 문서의 근거다: <em>"도구는 있었고 아무도 부르지 않았다."</em>
+    보이지 않는 규율은 지켜지지 않는다. 협업 칸은 그 규율을 <b>화면에 세우는 것</b>이다.
+  </p>
+</section>
+
+<section>
+  <div class="eyebrow">칸</div>
+  <h2>레일의 다섯째 칸 — 협업</h2>
+
+  <p>
+    「레일」이 네 칸(홈 · DM · 에이전트 · 북마크)을 정했다. 협업은 <b>다섯째 칸</b>이다.
+    북마크와 나란히 두지 않는 이유: 북마크는 내가 표시한 것이고 협업은 <b>남들이 만들어
+    내는 것</b>이라, 새 것이 생기면 배지를 받아야 한다.
+  </p>
+
+  <div class="panel">
+    <div class="panel__h">협업 칸<span class="tag">제안</span></div>
+    <div class="panel__b">
+      <div class="ui">
+        <div class="row"><span class="body"><b>org/repo</b></span></div>
+        <div class="row"><span class="body">● 008 마이그레이션을 되돌린다 &nbsp;<span class="t">alpha · 3분 전</span></span></div>
+        <div class="row"><span class="body" style="padding-left:14px"><span class="badge-now">동작 바뀜</span> <span class="badge-now">공개 API 깨짐</span> <span class="t">검증 대기</span></span></div>
+        <div class="row"><span class="body">● 인덱스를 다시 깐다 &nbsp;<span class="t">beta · 1시간 전</span></span></div>
+        <div class="row"><span class="body" style="padding-left:14px"><span class="t">결정 필요 — codex 의 제안과 같은 파일</span></span></div>
+        <div class="row"><span class="body"><b>org/web</b></span></div>
+        <div class="row"><span class="body">● 사이드바 레일 &nbsp;<span class="t">나 · 어제 · 채택됨</span></span></div>
+      </div>
+    </div>
+  </div>
+
+  <h3>줄이 말하는 넷</h3>
+  <p>
+    인박스 줄과 <b>같은 규칙</b>이다: <b>누가</b>(얼굴) · <b>무슨 제안</b>
+    (<code>declaredPurpose</code>) · <b>무엇을 건드리나</b>(<code>effects</code>) ·
+    <b>언제·어느 저장소</b>. 같은 규칙을 쓰는 이유는 두 목록이 같은 종류의 물음
+    ("내가 무엇을 해야 하나")에 답하기 때문이다.
+  </p>
+
+  <h3>정렬은 막는 순이다</h3>
+  <p>
+    인박스와 같다. <b>결정 필요 → 검증 실패 → 검증 대기 → 채택·거부</b>. 시간은 그 안에서만
+    본다 — 방금 올라온 제안이 어제부터 결정을 기다리는 충돌을 밀어내면 안 된다.
+  </p>
+
+  <h3>에이전트가 avcs 를 쓰고 있다는 표시는 없다</h3>
+  <p>
+    파일 잠금 목록(<code>lease</code>)을 이 칸에 옮기지 <b>않는다.</b> "누가 어느 파일을
+    잡았다"는 <b>제안을 읽는 사람이 묻는 질문이 아니다</b> — 겹침이 실제로 문제가 되면
+    그것은 <b>결정 필요</b>로 나타나고, 그때 이 칸이 말한다. 도구가 돌고 있다는 사실
+    자체는 정보가 아니다.
+  </p>
+  <p class="note">
+    <code>lease</code> 투영은 서버에 그대로 남긴다 — 충돌 판정의 재료이고, 화면에 안
+    그리는 것과 데이터를 안 받는 것은 다르다.
+  </p>
+</section>
+
+<section>
+  <div class="eyebrow">막는 것</div>
+  <h2>서버가 <code>summary</code> 하나로 눌러 담는다</h2>
+
+  <p>
+    avcs 객체에는 필요한 것이 <b>다 있다</b>(<code>avcs/src/objects/types.ts</code> 실측):
+  </p>
+
+  <div class="panel">
+    <div class="panel__h">Operation — avcs 가 담는 것<span class="tag">types.ts:164</span></div>
+    <div class="panel__b">
+      <table>
+        <thead><tr><th>필드</th><th>뜻</th><th>murmur 가 받나</th></tr></thead>
+        <tbody>
+          <tr><td><code>declaredPurpose</code></td><td>제안의 목적</td><td><b>받는다</b> — <code>summary</code> 로</td></tr>
+          <tr><td><code>effects.changesBehavior</code></td><td>동작을 바꾸나</td><td>버려진다</td></tr>
+          <tr><td><code>effects.breaksPublicApi</code></td><td>공개 API 를 깨나</td><td>버려진다</td></tr>
+          <tr><td><code>effects.reads</code></td><td>읽은 스코프</td><td>버려진다</td></tr>
+          <tr><td><code>target</code>·<code>body</code></td><td>어느 파일에 무슨 종류</td><td>버려진다</td></tr>
+          <tr><td><code>causalDeps</code></td><td>선행 op</td><td>버려진다</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <p>
+    <code>client.ts</code> 의 <code>toEntries()</code> 가 각 객체를
+    <code>{ logIndex, oid, type, actorKeyId, intentOid, summary }</code> 여섯 칸으로
+    눌러 담는다. <b>페치는 이미 전체 객체를 받아 온다</b> — 버리는 자리가 그 함수 하나다.
+  </p>
+
+  <h3>상태는 저장되지 않는다 — 파생된다</h3>
+  <p>
+    avcs 주석이 명시한다: <em>"Operation lifecycle status is <b>not</b> stored on the
+    immutable op. It is <b>derived</b> from the presence of evidence/decision objects +
+    policy at materialization time."</em>
+  </p>
+  <p>
+    일곱 상태다: <code>proposed</code> · <code>validating</code> ·
+    <code>accepted</code> · <code>rejected</code> · <code>superseded</code> ·
+    <code>needs_decision</code> · <code>quarantined</code>.
+  </p>
+  <p>
+    <b>그래서 murmur 가 상태를 스스로 계산하면 안 된다.</b> 같은 판정이 두 벌 생기고,
+    정책이 바뀌면 한 벌만 고쳐져 화면과 avcs 가 다른 말을 한다 — 이 저장소가
+    <code>projectionState</code> 를 shared 로 뺀 것과 같은 이유다. avcs 가 파생해 준
+    값을 <b>받아야</b> 한다.
+  </p>
+  <p class="note">
+    <b>이것이 이 문서의 유일한 미해결 지점이다.</b> avcs-server 의 sync 응답이 파생 상태를
+    함께 주는지, 아니면 murmur 가 <code>evidence</code>·<code>decision</code> 의 존재로
+    재구성해야 하는지 — 그 답에 따라 1단계의 크기가 갈린다.
+  </p>
+</section>
+
+<section>
+  <div class="eyebrow">순서</div>
+  <h2>무엇부터</h2>
+
+  <table>
+    <thead><tr><th>#</th><th>무엇</th><th>선행</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td><b><code>AvcsLogEntry</code> 를 넓힌다</b> — <code>effects</code>·
+        <code>target</code>·파생 상태. <code>#484</code>·<code>#490</code> 과 같은 모양이다:
+        서버는 <b>재료</b>만 싣고 판정은 화면이 한다</td>
+        <td>avcs-server 가 파생 상태를 주는지 확인</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td><b>협업 칸 껍데기</b> — 레일 다섯째 칸 · 저장소별 묶음 · 줄 넷</td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td><b>결정 필요를 배지로</b> — 새 충돌이 생기면 칸이 배지를 받는다.
+        인박스 배지와 같은 규칙(나를 막는 것만 센다)</td>
+        <td>2</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td><b><code>ACTIVE WORK</code> 를 없앤다</b> — 「레일」이 요구한 것.
+        협업 칸이 그 자리를 대신한 뒤에 지운다</td>
+        <td>2</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>이 문서가 정하지 않는 것</h3>
+  <p>
+    <b>murmur 에서 제안을 만드는 것</b>은 범위 밖이다. 지금 murmur 는 avcs 를
+    <b>읽기만</b> 한다(<code>fetchSince</code>). 제안·결정을 여기서 만들려면 쓰기 경로가
+    필요하고, 그것은 avcs-server 쪽 표면 문제다 — 읽는 자리가 먼저 서야 무엇을 쓰고 싶은지
+    알 수 있다.
+  </p>
+</section>
+
+<footer class="wrap">
+  <div class="meta">
+    murmur · 협업 · 앞선 넷: 여섯 규칙 · 아바타 · 남는 여덟 곳 · 레일
+  </div>
+</footer>
+
+</div>
+</body>
