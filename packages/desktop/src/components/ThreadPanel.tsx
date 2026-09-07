@@ -13,7 +13,7 @@ import { waitChain } from '../lib/waitChain';
 import { ThreadParticipants } from './ThreadParticipants';
 import { Composer } from './Composer';
 import { PaneResizer } from './PaneResizer';
-import { paneStorage, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH } from '../lib/prefs';
+import { paneStorage, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH, MIN_CHANNEL_WIDTH } from '../lib/prefs';
 import { TypingLine } from './TypingLine';
 import type { SectionId } from './settings/sections';
 
@@ -97,6 +97,8 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
         width={threadWidth}
         min={MIN_THREAD_WIDTH}
         max={MAX_THREAD_WIDTH}
+        /* 이 구분선 왼쪽에는 대화만 있다. */
+        minRoomLeft={MIN_CHANNEL_WIDTH}
         onWidth={setThreadWidth}
       />
       <header className="flex items-center border-b border-border px-4 py-2">

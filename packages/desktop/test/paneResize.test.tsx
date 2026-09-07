@@ -16,7 +16,7 @@ import {
   paneStorage,
   DEFAULT_THREAD_WIDTH, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH,
   DEFAULT_TERMINAL_WIDTH, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH,
-  MIN_ROOM_LEFT,
+  MIN_CHANNEL_WIDTH,
 } from '../src/lib/prefs';
 import { acc, msg } from './helpers/fakeApi';
 
@@ -115,17 +115,50 @@ describe('스레드 패널 너비 조절', () => {
    * jsdom 에는 레이아웃 엔진이 없어 모든 사각형이 0 이므로, 이 제약이 실제로 걸리는지는
    * 사각형을 손으로 세워서만 볼 수 있다.
    */
+  const stubRow = (label: string, row: { left: number; width: number }, pane: { left: number; width: number }): void => {
+    const paneEl = paneOf(label);
+    const rowEl = paneEl.parentElement as HTMLElement;
+    vi.spyOn(rowEl, 'getBoundingClientRect').mockReturnValue({ ...row, right: row.left + row.width } as DOMRect);
+    vi.spyOn(paneEl, 'getBoundingClientRect').mockReturnValue({ ...pane, right: pane.left + pane.width } as DOMRect);
+  };
+
   it('왼쪽 이웃을 0 으로 밀지 못한다', () => {
     render(<ThreadPanel />);
-    const pane = paneOf('스레드 너비 조절');
-    const row = pane.parentElement as HTMLElement;
     // 줄 전체 1000px, 스레드는 오른쪽 끝 480px → 대화가 쓰는 자리는 520px.
-    vi.spyOn(row, 'getBoundingClientRect').mockReturnValue({ left: 0, width: 1000, right: 1000 } as DOMRect);
-    vi.spyOn(pane, 'getBoundingClientRect').mockReturnValue({ left: 520, width: 480, right: 1000 } as DOMRect);
+    stubRow('스레드 너비 조절', { left: 0, width: 1000 }, { left: 520, width: 480 });
 
     drag('스레드 너비 조절', 520, 0);
-    // 480 + 520 - MIN_ROOM_LEFT = 대화에 MIN_ROOM_LEFT 를 남기는 최대 폭.
-    expect(paneOf('스레드 너비 조절').style.width).toBe(`${480 + 520 - MIN_ROOM_LEFT}px`);
+    // 480 + 520 - MIN_CHANNEL_WIDTH = 대화에 최소 폭을 남기는 최대치.
+    expect(paneOf('스레드 너비 조절').style.width).toBe(`${480 + 520 - MIN_CHANNEL_WIDTH}px`);
+  });
+
+  /*
+   * 스레드는 **일이 사는 곳**이라 화면에서 가장 커야 한다는 것이 실사용 판정이다
+   * (설치본 확인, 2026-09-07). 그래서 실질 상한은 우리가 고른 상수가 아니라 **대화에
+   * 남길 최소 폭**이어야 한다 — 상수가 먼저 걸리면 넓은 화면에서 남는 자리를 못 쓴다.
+   */
+  it('넓은 창에서는 상수가 아니라 대화 몫이 상한을 정한다', () => {
+    render(<ThreadPanel />);
+    // 줄 2000px, 스레드 640px → 대화 1360px. 대화에 최소 폭만 남기면 1800px 까지 간다.
+    stubRow('스레드 너비 조절', { left: 0, width: 2000 }, { left: 1360, width: 640 });
+
+    drag('스레드 너비 조절', 1360, -3000);
+    expect(paneOf('스레드 너비 조절').style.width).toBe(`${640 + 1360 - MIN_CHANNEL_WIDTH}px`);
+  });
+
+  /*
+   * 대화가 **이미** 약속한 폭보다 좁은 상태로 시작할 수 있다 — 기본값 셋(사이드바 240 +
+   * 스레드 640 + 터미널 608)이 16" 화면에서 이미 그렇다. 그때 기하 상한이 지금 폭보다
+   * 작아지는데, 그것을 그대로 상한으로 쓰면 **왼쪽으로 끌었는데 패널이 갑자기 줄어든다.**
+   * 제약의 일은 이웃을 더 침범하지 못하게 하는 것이지 지금 폭을 강제로 줄이는 것이 아니다.
+   */
+  it('대화가 이미 좁아진 상태에서 끌어도 갑자기 줄지 않는다', () => {
+    render(<ThreadPanel />);
+    // 줄 1000px, 스레드 640px 인데 왼쪽에 남은 자리는 150px 뿐이다(약속한 200 미만).
+    stubRow('스레드 너비 조절', { left: 0, width: 1000 }, { left: 150, width: 640 });
+
+    drag('스레드 너비 조절', 150, -500);
+    expect(paneOf('스레드 너비 조절').style.width).toBe(`${DEFAULT_THREAD_WIDTH}px`);
   });
 });
 
@@ -140,7 +173,8 @@ describe('터미널 패널 너비 조절', () => {
     startedAt: '2026-09-04T00:00:00.000Z',
   });
 
-  const mount = async () => {
+  /** `threadOpen` 은 **스레드 패널이 함께 떠 있는가**다 — 터미널이 남겨야 할 자리가 달라진다. */
+  const mount = async ({ threadOpen = false }: { threadOpen?: boolean } = {}) => {
     setTerminalSinkFactory(() => ({ write: () => {}, dispose: () => {} }));
     setController({
       api: {
@@ -153,6 +187,7 @@ describe('터미널 패널 너비 조절', () => {
       me: acc('u1', 'owner'),
       accounts: { a1: { ...acc('a1', 'forge', 'agent'), ownerAccountId: 'u1' } },
       terminalTarget: { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1' },
+      threadRootId: threadOpen ? 'm1' : null,
     });
     const view = render(<TerminalPanel />);
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
@@ -173,6 +208,34 @@ describe('터미널 패널 너비 조절', () => {
     expect(paneOf('터미널 너비 조절').style.width).toBe(`${MIN_TERMINAL_WIDTH}px`);
     drag('터미널 너비 조절', 900, -5000);
     expect(paneOf('터미널 너비 조절').style.width).toBe(`${MAX_TERMINAL_WIDTH}px`);
+  });
+
+  /*
+   * 터미널 왼쪽에는 대화**와 스레드**가 있다. 남길 자리를 대화 몫만으로 잡으면 스레드의
+   * `min-width` 와 부딪쳐 줄이 넘치고, 부모가 `overflow-hidden` 이라 그것이 **조용히
+   * 잘린다** — 화면은 아무 말도 하지 않는다. 그래서 각 구분선이 자기가 남길 자리를
+   * 스스로 말한다.
+   */
+  const stubTerminalRow = (row: number, left: number, width: number): void => {
+    const paneEl = paneOf('터미널 너비 조절');
+    const rowEl = paneEl.parentElement as HTMLElement;
+    vi.spyOn(rowEl, 'getBoundingClientRect').mockReturnValue({ left: 0, width: row, right: row } as DOMRect);
+    vi.spyOn(paneEl, 'getBoundingClientRect').mockReturnValue({ left, width, right: left + width } as DOMRect);
+  };
+
+  it('스레드가 열려 있으면 대화와 스레드 몫을 함께 남긴다', async () => {
+    await mount({ threadOpen: true });
+    stubTerminalRow(1200, 600, 400);
+    drag('터미널 너비 조절', 600, -3000);
+    expect(paneOf('터미널 너비 조절').style.width)
+      .toBe(`${400 + 600 - (MIN_CHANNEL_WIDTH + MIN_THREAD_WIDTH)}px`);
+  });
+
+  it('스레드가 닫혀 있으면 대화 몫만 남긴다', async () => {
+    await mount();
+    stubTerminalRow(1200, 600, 400);
+    drag('터미널 너비 조절', 600, -3000);
+    expect(paneOf('터미널 너비 조절').style.width).toBe(`${400 + 600 - MIN_CHANNEL_WIDTH}px`);
   });
 });
 

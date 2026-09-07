@@ -5,7 +5,7 @@ import { getController } from '../state/controller';
 import { connectAgentAttach, type AttachHandle } from '../lib/agentTerminal';
 import { getTerminalSinkFactory, type TerminalSink } from '../lib/terminalSink';
 import { PaneResizer } from './PaneResizer';
-import { paneStorage, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH } from '../lib/prefs';
+import { paneStorage, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH, MIN_CHANNEL_WIDTH, MIN_THREAD_WIDTH } from '../lib/prefs';
 
 /**
  * 진행 중인 에이전트 터미널 패널(#141 Phase 2, 스펙 §5).
@@ -54,6 +54,12 @@ export function TerminalPanel() {
     if (!t) return undefined;
     return s.messages[t.channelId]?.find((m) => m.id === t.threadRootId);
   });
+  /**
+   * 스레드 패널이 **함께 떠 있는가**(`Workspace` 가 `threadRootId` 로 판정해 그린다).
+   * `terminalTarget.threadRootId` 와 다른 물음이다 — 그것은 "이 터미널이 어느 스레드의
+   * 것인가"이고, 패널이 닫힌 채로도 값이 남는다.
+   */
+  const threadOpen = useActiveStore((s) => s.threadRootId !== null);
   const set = useActiveStore((s) => s.set);
   const hostRef = useRef<HTMLDivElement | null>(null);
   /**
@@ -316,6 +322,10 @@ export function TerminalPanel() {
         width={terminalWidth}
         min={MIN_TERMINAL_WIDTH}
         max={MAX_TERMINAL_WIDTH}
+        /* 이 구분선 왼쪽에는 대화**와 스레드**가 있다. 스레드는 `min-width` 아래로는
+           줄지 않으므로 그 몫까지 남겨야 한다 — 대화 몫만 남기면 요구한 폭이 실제로
+           안 나오고, 줄이 넘쳐 `overflow-hidden` 에 조용히 잘린다. */
+        minRoomLeft={MIN_CHANNEL_WIDTH + (threadOpen ? MIN_THREAD_WIDTH : 0)}
         onWidth={setTerminalWidth}
       />
       <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs text-fg-muted">
