@@ -11,6 +11,9 @@ import { Menu } from './Menu';
 // `StatusMark` 도 남는다 — presence 와 다른 사실이라 아바타가 대신할 수 없다.
 import { Identity, StatusMark } from './Identity';
 import type { RailPanel } from './Rail';
+// 찾기가 맨 위로 갔다(#488 A · 찾기가 맨 위로). 별도 파일인 이유: 이 줄은 **칸과 무관**한
+// 공용 껍데기에 사는 유일한 목록이라, 칸별 묶음을 그리는 이 파일의 본문과 섞을 것이 없다.
+import { SidebarFind } from './SidebarFind';
 // `RunnerStatusDot` 이 **앱에서 완전히 사라졌다**(`docs/desktop-rail.html` 3단계).
 // 2단계에서 DM 줄에서 빠지고 에이전트 칸에만 남아 있었는데, 3단계가 그 칸을 얼굴 그리드로
 // 바꾸면서 **마지막 호출자**가 없어졌다 — 그래서 컴포넌트 자체도 지웠다(`RunnerStatus.tsx`).
@@ -119,7 +122,11 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
   onOpenDirectory: () => void;
   /**
    * 채널 디렉터리 모달을 연다(#180). **옵셔널이 아니다** — 여기서 기본값을 공급하면
-   * 배선을 잊은 화면에서도 "채널 찾기" 버튼이 그려지고 눌러도 아무 일이 없다(design.md §4).
+   * 배선을 잊은 화면에서도 버튼이 그려지고 눌러도 아무 일이 없다(design.md §4).
+   *
+   * **부르는 자리가 바뀌었다**(#488 A · 찾기가 맨 위로): `Channels` 라벨 옆 10px 돋보기가
+   * 아니라 맨 위 찾기 줄의 "모든 채널에서 찾기" 다. prop 은 그대로 남는다 — 디렉터리가
+   * 하는 일(보관 채널 · 생성순 · 아직 안 들어간 채널)은 찾기 줄이 못 한다.
    */
   onOpenChannelDirectory: () => void;
   onOpenInbox: () => void;
@@ -1417,7 +1424,28 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
             <SidebarToggleIcon />
           </button>
         </div>
-      <nav className="flex-1 space-y-4 overflow-y-auto p-2">
+      {/*
+        찾기가 **맨 위**다(정본 문서 `docs/desktop-remaining-gaps.html` 「A · 찾기가 맨 위로」).
+
+        **칸 분기 밖이자 `nav` 밖이다.** 두 이유가 각각 문서의 한 문장에 대응한다:
+
+        - `nav` **밖** — 그 상자가 `overflow-y-auto` 다. 안에 두면 채널이 서른일 때 찾기가
+          스크롤 위로 사라지고, 그것이 #479 가 에이전트 설정에서 고친 결함이다.
+        - 칸 분기 **밖** — 문서는 *"채널·사람·에이전트가 한 입력으로"* 를 요구한다. 한
+          칸(예: 홈)에만 두면 DM 칸에서 사람을 찾으려고 홈으로 돌아가야 하고, 그 순간
+          "한 입력으로" 가 "칸을 옮긴 다음 한 입력으로" 가 된다.
+
+        왜 레일이 아니라 여기인지는 `SidebarFind.tsx` 주석에 있다(레일 문서가 다섯째 칸을
+        막았고, 찾기는 애초에 칸이 아니다).
+      */}
+      <SidebarFind onOpenChannelDirectory={onOpenChannelDirectory} />
+      {/*
+        `aria-label` 이 붙었다. 이 화면에는 이제 `nav` 가 둘이다(레일의 `주 목록`) — 이름
+        없는 랜드마크가 섞여 있으면 스크린리더의 랜드마크 목록에 "navigation" 이 두 개
+        나오고 어느 쪽이 무엇인지 알 수 없다. 찾기 줄이 이 상자 밖으로 나갔는지를 재는
+        시험도 이 이름으로 상자를 집는다.
+      */}
+      <nav aria-label="채널 목록" className="flex-1 space-y-4 overflow-y-auto p-2">
         {/*
           **레일이 고른 칸의 묶음만 그린다**(정본 문서 1단계). 이 `nav` 는 여전히
           `overflow-y-auto` 이지만, 이제 한 번에 한 목록만 담으므로 그 목록이 세로를 다 쓴다 —
@@ -1468,16 +1496,21 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
           </div>
         )}
         <div>
+          {/*
+            **10px 돋보기가 여기 있었다.** 문서가 그것을 결함으로 적었다: *"지금은 `CHANNELS`
+            라벨 옆 10px 돋보기 하나다."* 크기만 문제가 아니었다 — 그 버튼이 여는
+            `ChannelDirectory` 는 **채널만** 나오므로, 사이드바에서 사람·에이전트를 찾는 길이
+            아예 없었다.
+
+            찾기는 위의 `SidebarFind` 한 줄로 갔고, 디렉터리로 가는 길은 그 줄 **안**에
+            들어갔다(디렉터리는 지우지 않았다 — 보관·생성순·아직 안 들어간 채널은 그쪽만
+            할 수 있다). 그래서 여기에 돋보기를 남기지 않는다: 남기면 사이드바에서 찾기를
+            시작하는 자리가 둘이 되고, 문서가 북마크에서 이미 판정한 결함(*"같은 것으로
+            가는 길이 둘이 되고, 그때부터 사람은 어느 쪽이 맞는지 매번 고른다"*)을 찾기에서
+            되풀이한다.
+          */}
           <div className="flex items-center gap-1 px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
             Channels
-            <button
-              className="rounded px-1 text-[10px] hover:bg-surface-raised"
-              aria-label="채널 찾기"
-              title="채널 찾기"
-              onClick={onOpenChannelDirectory}
-            >
-              🔍
-            </button>
           </div>
           {/*
             `+` 는 목록의 **첫 칸**이다(#488 A2) — 예전에는 채널 목록 **끝**이라 채널이
