@@ -25,6 +25,8 @@ import { readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { isCredentialFailure, isExecutableNotFound, isQuotaExhausted } from './policy.js';
+
 /**
  * 계정 이름 문법. `config.ts::INSTANCE_PATTERN` 과 **같은 값**이고 같은 이유다 — 이 이름이
  * 경로 세그먼트가 되므로 `..` 나 `/` 가 들어올 여지를 문법에서 끊는다.
@@ -83,4 +85,71 @@ export async function loadClaudeAccounts(
     );
   }
   return order.map((name) => ({ name, configDir: join(root, name) }));
+}
+
+/**
+ * 이 오류에서 **계정을 바꿔 다시 해 볼 만한가**.
+ *
+ * `policy.ts` 가 아니라 여기 있는 이유: 그 파일은 아무것도 import 하지 않는다는 규율이
+ * 있고(파일 머리 주석), 이 판정은 그 파일의 세 판정을 **조합**한다. 조합을 거기 두면 그
+ * 규율이 깨지고, 여기 두면 "계정 축의 판단은 계정 모듈에 있다"가 성립한다.
+ *
+ * 참인 경우 둘:
+ * - **사용량 한도** — `policy.ts::isQuotaExhausted` 주석은 "여기서 할 일은 기다리는 것뿐"
+ *   이라 적었다. 계정이 여러 개면 그 말이 더는 참이 아니다 — 기다리지 않고 옮겨 탈 수 있다.
+ * - **harness 자격증명 실패** — 그 계정의 로그인이 만료·부재다. 다른 계정은 멀쩡할 수 있다.
+ *
+ * 거짓인 경우: murmur PAT 실패(계정과 무관하다 — 러너가 물러나야 한다, #250), 실행 파일
+ * 부재(PATH 문제다, #340), 그리고 평범한 실패(기존 재시도 회계로 간다).
+ *
+ * **실행 파일 부재를 먼저 보는 이유는 순서가 아니라 배타성이다.**
+ * `ExecutableNotFoundError` 의 메시지에는 자식에게 넘긴 PATH 가 그대로 실려 있어, 그 경로에
+ * `notloggedin` 같은 문구가 들어 있으면 아래 자격증명 판정이 문구 매칭으로 걸린다.
+ */
+export function switchesAccount(err: unknown): boolean {
+  if (isExecutableNotFound(err) === 'executable-not-found') return false;
+  if (isQuotaExhausted(err) !== null) return true;
+  return isCredentialFailure(err) === 'harness-credential';
+}
+
+/**
+ * 계정 축을 돌며 `attempt` 를 시도한다. 계정을 바꿔서 나을 실패(`switchesAccount`)면 다음
+ * 계정으로 **같은 일**을 다시 시도하고, 아니면 즉시 그 오류를 던진다.
+ *
+ * **별 함수로 뺀 이유는 제어 흐름이다.** `main.ts` 의 멘션 루프는 유예·종료요청·한도
+ * 분기에서 `continue`·`break` 를 쓴다. 계정 루프를 그 안에 인라인으로 넣으면 그 제어문이
+ * 계정 루프를 향하게 되어 조용히 멘션 루프를 못 벗어난다. 함수 경계로 끊고, 그 덕에 이
+ * 판단이 루프 없이 검증된다.
+ *
+ * **재시도 회계(`MAX_ATTEMPTS`)와 별개로 돈다.** 그 회계는 "같은 조건으로 또 해 봤다"를
+ * 세는 것이고, 계정을 바꾼 것은 조건이 달라진 것이다. 두 축을 곱하면 계정 3개 × 3회 = 9번을
+ * 태우게 되고 그중 8번은 이미 답을 아는 실패다. 그래서 한 계정에서는 **한 번만** 시도한다 —
+ * 방아쇠가 참이라는 것은 그 계정에서 재시도로 낫지 않는다는 판정이 이미 끝났다는 뜻이다.
+ *
+ * `accounts` 가 `[null]` 이면 한 번 돌고 기존 동작과 같아진다(계정 풀을 안 만든 러너).
+ * **빈 배열은 호출자 결함이다** — 조용히 성공값을 지어내면 답하지 않은 멘션이 답한 것으로
+ * 처리되므로 던진다.
+ */
+export async function withAccountFailover<T>(
+  accounts: readonly (ClaudeAccount | null)[],
+  attempt: (account: ClaudeAccount | null) => Promise<T>,
+  onSwitch?: (from: ClaudeAccount | null, to: ClaudeAccount | null) => void,
+): Promise<T> {
+  if (!accounts.length) {
+    throw new Error('withAccountFailover: 계정 축이 비어 있다 — 호출자는 최소 [null] 을 넘겨야 한다');
+  }
+  let last: unknown;
+  for (const [idx, account] of accounts.entries()) {
+    if (idx > 0) onSwitch?.(accounts[idx - 1] ?? null, account);
+    try {
+      return await attempt(account);
+    } catch (err) {
+      last = err;
+      // 계정을 바꿔서 나을 실패가 아니면 축을 헛돌지 않는다 — 호출자의 기존 실패 경로가
+      // 이 오류를 받아야 한다(재시도 회계, 러너 물러남, 실행 파일 부재 안내).
+      if (!switchesAccount(err)) throw err;
+    }
+  }
+  // 모든 계정이 방아쇠에 걸렸다. 마지막 오류를 던져 호출자의 한도·자격증명 경로가 받게 한다.
+  throw last;
 }
