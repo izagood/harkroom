@@ -74,8 +74,8 @@ docker compose start server        # 부팅 시 누락 마이그레이션이 적
 ### 3-A. murmur만 되돌린 경우 — 안전하다
 
 투영 커서가 과거로 가고, 워커가 이미 접었던 구간을 다시 읽는다. 같은 구간을 다시 접어도
-`active_lease` 는 `(repo, path, actor_key_id)` upsert 라서 행이 늘지 않고, 커서 전진이 그
-upsert 와 같은 트랜잭션에 있다. → 워커가 조용히 따라잡고 끝난다.
+`active_lease` 는 `(repo, avcs_base_url, path, actor_key_id)` upsert(042) 라서 행이 늘지
+않고, 커서 전진이 그 upsert 와 같은 트랜잭션에 있다. → 워커가 조용히 따라잡고 끝난다.
 
 멱등성의 근거가 **`(repo, oid)` UNIQUE 인덱스였던 시절이 있다.** 그때는 워커가 avcs 객체를
 시스템 메시지로 만들었고 리플레이가 그 메시지를 두 번 만들지 못하게 막는 것이 관심사였다.
@@ -97,10 +97,14 @@ lease upsert 하나다.
 근거(테스트): `projection.test.ts` → *"stalls without crashing when the cursor is ahead of the avcs log"*.
 
 **대처**: avcs를 되돌렸다면 해당 repo의 커서를 그 지점 이하로 맞춘다. 재투영은 멱등이므로
-0으로 내려도 안전하다.
+0으로 내려도 안전하다. **`avcs_base_url`을 반드시 함께 지정한다** — 커서는 이제
+`(repo, avcs_base_url)`로 키가 잡히므로(042), 조건 없이 `repo`만으로 돌리면 그 repo의
+**다른 모든 서버 행(레거시 `''` 행 포함)**이 함께 0이 된다. 되돌아간 그 서버 하나만
+맞추려는 것이라면 그 서버의 실제 URL을 적어야 한다.
 
 ```sql
-update projection_cursor set last_log_index = 0 where repo = 'org/repo';
+update projection_cursor set last_log_index = 0
+  where repo = 'org/repo' and avcs_base_url = 'http://되돌아간-그-avcs-서버';
 ```
 
 **avcs 데이터가 아예 사라진 경우도 같다.** 개발·도그푸딩에서 avcs 서버의 데이터 디렉터리가
@@ -137,16 +141,29 @@ update projection_cursor set last_log_index = 0 where repo = 'org/repo';
 
 ## 6. AVCS_BASE_URL — 투영 활성화와 그 상태 읽기
 
-murmur 는 avcs 서버를 폴링해 **`lease` 객체를 `active_lease` 상태로** 투영한다. 이 투영은
-기본적으로 **비활성**이고, 환경변수 하나로 켠다:
+murmur 는 avcs 서버를 폴링해 **`lease` 객체를 `active_lease` 상태로** 투영한다. 이 투영을
+켜는 값에는 **두 출처**가 있다: 데스크탑 앱 `설정 › Connection` 에서 admin 이 저장한 값과,
+환경변수 하나:
 
 ```bash
 AVCS_BASE_URL=https://your-avcs-server.example.com
 ```
 
-**`AVCS_BASE_URL` 이 없을 때 무엇이 꺼지는지는 이 절 하나에만 적는다**(#371).
+**앱에 저장된 값이 있으면 그것이 env 를 이긴다.** `[지우기]` 로 앱 값을 지우면 env 로
+복귀하고, 둘 다 없으면 투영은 꺼진다 — 판정은 `resolveProjectionUrl`
+(`packages/shared/src/index.ts`) 한 곳뿐이다.
+
+**두 출처 모두 없을 때 무엇이 꺼지는지는 이 절 하나에만 적는다**(#371).
 루트 `README.md` 와 `docs/design.md` 는 여기를 가리키기만 한다 — 같은 목록을 여러 곳에
 두면 한 곳만 낡고, 낡은 쪽을 읽은 사람이 손해를 본다.
+
+앱에서 켜고 끄는 것은 **서버 재시작 없이** 그 자리에서 적용된다 — `ProjectionSupervisor`
+(`packages/server/src/avcs/supervisor.ts`)가 워커를 그 자리에서 갈아 끼운다. 값을 바꿀 때마다
+`audit_log` 에 `projection.url.updated` 로 남는다(`before`·`after` 의 출처와 앱 값 포함) —
+"누가 서버의 아웃바운드 대상을 바꿨나" 를 나중에 확인할 자리다.
+
+투영 상태(커서·리스)는 `(repo, avcs 서버)` 로 키가 잡힌다 — avcs 서버를 바꾸면 그 서버에
+대해 커서가 0 에서 다시 시작하고(전재스캔 한 번, idempotent), 되돌아가면 이어서 따라간다.
 
 ### 먼저 알아야 할 것 — 채널에 보이는 avcs 시스템 메시지는 과거의 것이다
 
@@ -173,13 +190,16 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
 
 ### 꺼지는 것은 하나다 — 투영 워커
 
-`AVCS_BASE_URL` 을 읽는 자리는 코드 전체에 **셋**뿐이다:
+`AVCS_BASE_URL` 을 코드가 다루는 자리는 이제 하나가 아니다: `config.ts` 는 여전히 env 값
+하나만 읽고, 그 뒤를 판정과 배선이 잇는다.
 
 | 자리 | 하는 일 |
 |---|---|
 | `packages/server/src/config.ts` | `env.AVCS_BASE_URL ?? null` 을 `config.avcsBaseUrl` 로 읽는다 |
-| `packages/server/src/main.ts` | 값이 **있을 때만** `ProjectionWorker` 를 만들고 `start()` 한다 |
-| `packages/server/src/main.ts` | 없으면 기동 경고 한 줄을 남긴다(`warnIfProjectionDisabled`) |
+| `packages/server/src/main.ts` | `resolveProjectionUrl(config.avcsBaseUrl, 앱 저장값)` 으로 실제로 쓸 URL 을 정한다 |
+| `packages/server/src/main.ts` | 그 결과를 `ProjectionSupervisor.reconfigure(...)` 에 넘긴다 — URL 이 있을 때만 워커가 선다 |
+| `packages/server/src/main.ts` | 판정 결과가 없을 때만 기동 경고 한 줄을 남긴다(`warnIfProjectionDisabled`) — env 만 보지 않는다 |
+| `packages/server/src/main.ts` | 기동 로그에 어느 출처가 이겼는지 적는다(`via env`·`via app`) |
 
 그래서 꺼지는 것은 **투영 워커 하나**다. 없어지는 라우트도, 404 가 되는 경로도 없다 —
 전부 200 으로 답하고 **결과가 비어 있을 뿐**이다. 그것이 이 절이 필요한 이유다.
@@ -223,7 +243,7 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
 - 서버 기동 로그에 경고 한 줄: `avcs projection is disabled — set AVCS_BASE_URL to enable it`
   (`avcs/projection.ts` 의 `warnIfProjectionDisabled`)
 - `GET /projection/status` 가 `state: "unconfigured"` 를 준다
-- "투영이 설정되지 않았다 / AVCS_BASE_URL 로 켠다" 문구가 화면에 뜬다. **판정은
+- "투영이 설정되지 않았다 / 앱 설정이나 AVCS_BASE_URL 로 켠다" 문구가 화면에 뜬다. **판정은
   `desktop/src/lib/projectionBanner.ts` 한 곳이 하고**, 그리는 자리는 여럿이다
   (`ProjectionBanner.tsx` 의 상단 띠, `LeasePanel.tsx` 의 ACTIVE WORK 구역,
   `settings/ConnectionSettings.tsx`, 그리고 repo 바인딩 폼) — 사정을 가르는 코드가
@@ -241,7 +261,7 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
 | 필드 | 뜻 |
 |---|---|
 | `state` | `unconfigured` · `stalled` · `ok` |
-| `configured` | `AVCS_BASE_URL` 이 있어 워커가 떴는가 |
+| `configured` | 판정된 투영 URL(`resolveProjectionUrl` 의 결과)이 있어 워커가 떴는가 |
 | `repo` | 마지막으로 폴링한 저장소 |
 | `lastLogIndex` | 커서 위치 |
 | `lastPolledAt` | 마지막 폴링 시각(ms) — **살아 있음의 신호** |
@@ -250,7 +270,7 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
 
 `state` 판정:
 
-- `unconfigured` — `AVCS_BASE_URL` 이 없다
+- `unconfigured` — 앱 저장값도 `AVCS_BASE_URL` 도 없다
 - `stalled` — 켜져 있는데 `lastPolledAt` 이 없거나 **5분**보다 오래됐거나 `lastError` 가 있다
 - `ok` — 그 외
 
@@ -267,7 +287,7 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
 |---|---|
 | 상태를 못 읽었다(요청 실패) | "투영 상태를 읽지 못했다" + 사유 |
 | 아직 첫 응답 전 | "투영 상태를 확인하는 중…" |
-| `unconfigured` | "투영이 설정되지 않았다" + `AVCS_BASE_URL` |
+| `unconfigured` | "투영이 설정되지 않았다" + "앱 설정이나 `AVCS_BASE_URL` 로 켠다" |
 | `stalled` | "투영이 N분 전부터 멈춰 있다" (+ `lastError`) |
 | `ok` + 빈 목록 | "No active work" |
 | `ok` + 항목 | 저장소별 리스 목록 |
