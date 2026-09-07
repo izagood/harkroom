@@ -773,6 +773,91 @@ describe('runMentionTurn', () => {
     });
   });
 
+  // 사용량 한도로 실패한 턴은 세션 파일을 **남긴다**(2026-09-07 18:59 실측). claude 는
+  // 프롬프트를 다 받아 세션을 만든 뒤 답을 쓰려는 순간 한도에 걸려 죽는다 — 디스크에는
+  // 19줄이 적힌 `<uuid>.jsonl` 이 실재하고, 마지막 줄이 `You've hit your session limit` 이다.
+  //
+  // 그때 turnsRun 을 0 으로 두면 다음 턴이 `--session-id` 로 조립하고, claude 는 이미 있는
+  // id 를 거부한다(`Error: Session ID <uuid> is already in use.`). **그 실패도 turnsRun 을
+  // 올리지 않으므로 상태가 자기를 재생산한다** — 실측 로그에서 두 멘션이 각각 3회씩 176ms
+  // 만에 같은 자리에서 실패하고 스레드가 영구히 죽었다.
+  //
+  // 그래서 실패 경로도 인터랙티브 턴(`interactiveTurn.ts:366`)과 **같은 관측**을 해야 한다:
+  // 러너가 발급한 uuid 는 등록의 증거가 아니지만, 디스크의 세션 파일은 증거다.
+  describe('실패한 턴이 세션을 남겼으면 그 사실을 저장한다', () => {
+    /** 실측 tail(2026-09-07 18:59) — 한도에 걸린 claude 가 죽으면서 남긴 마지막 줄. */
+    const QUOTA_TAIL = "You've hit your session limit · resets 10:50pm (Asia/Seoul)";
+
+    it('세션 파일이 실재하면 실패해도 turnsRun 을 1 로 올린다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 안녕');
+      const { deps, runTurn } = await makeDeps(fake, { sessionMaterialized: async () => true });
+      runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: QUOTA_TAIL });
+
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
+        .rejects.toThrow(/harness 종료/);
+
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
+      expect(rec.turnsRun).toBe(1);
+    });
+
+    // turnsRun 과 lastFedSeq 는 서로 다른 사실이다. 세션은 실재하게 됐지만(turnsRun) 답은
+    // 못 했으므로(lastFedSeq) 다음 턴은 같은 델타를 다시 먹여야 한다 — 여기서 커서를 함께
+    // 전진시키면 사람의 질문이 답 없이 소실된다.
+    it('세션이 실재해도 답이 없었으면 lastFedSeq 는 전진하지 않는다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 안녕');
+      const { deps, runTurn } = await makeDeps(fake, { sessionMaterialized: async () => true });
+      runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: QUOTA_TAIL });
+
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
+        .rejects.toThrow(/harness 종료/);
+
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
+      expect(rec.lastFedSeq).toBe(0);
+    });
+
+    // 이 테스트가 실측 결함 자체다. 수정 전에는 두 번째 턴이 `--session-id` 로 조립되어
+    // claude 가 거부했다.
+    it('세션이 실재하면 다음 턴은 같은 id 로 resume 한다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 안녕');
+      const { deps, plans, runTurn } = await makeDeps(fake, { sessionMaterialized: async () => true });
+      let calls = 0;
+      runTurn.script = async () => {
+        calls += 1;
+        if (calls === 1) return { exitCode: 1, timedOut: false, tail: QUOTA_TAIL };
+        await fake.post(CHANNEL, '한도가 풀린 뒤의 답', null);
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
+        .rejects.toThrow(/harness 종료/);
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+      const sessionId = deps.store.get(SessionStore.threadKey(CHANNEL, null))!.sessionId;
+      expect(plans[1]!.args).toContain('-r');
+      expect(plans[1]!.args).toContain(sessionId);
+      expect(plans[1]!.args).not.toContain('--session-id');
+    });
+
+    // #81 의 원래 보증은 그대로 살아 있어야 한다. 갈림은 이제 "실패했는가"가 아니라
+    // "세션이 실재하는가"다 — 열었다 아무 말 없이 죽은 턴은 이어받을 것이 없으므로
+    // 같은 uuid 로 첫 턴을 다시 시도해야 한다.
+    it('세션 파일이 없으면 실패 턴은 turnsRun 을 올리지 않는다', async () => {
+      const fake = new FakeMurmur(defOf());
+      fake.seedFrom('human-1', '@forge 안녕');
+      const { deps, runTurn } = await makeDeps(fake, { sessionMaterialized: async () => false });
+      runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'boom' });
+
+      await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
+        .rejects.toThrow(/harness 종료/);
+
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
+      expect(rec.turnsRun).toBe(0);
+    });
+  });
+
   // task-9 브리프 수정 항목 — 프롬프트가 빈 턴을 건너뛴 뒤에도 다음 턴은 정확히 재개된다.
   // (분석: 이 구현에서 "건너뛴 턴"은 오직 이미 최소 한 번 실제 턴이 돈 뒤에만 일어날 수
   // 있다 — buildTurnPrompt 는 진짜 첫 턴에는 자기 발화 필터를 안 걸어 toShow 가 절대

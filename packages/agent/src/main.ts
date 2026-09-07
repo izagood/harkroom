@@ -26,11 +26,11 @@ import { SessionStore } from './sessions.js';
 import { resolveAgentStateDir } from './stateDir.js';
 import { assertHarnessContract, writeMcpConfigOnce } from './turn.js';
 import type { Exec } from './workspace.js';
-import { exhausted, isCredentialFailure, isQuotaExhausted, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
+import { exhausted, isCredentialFailure, isQuotaExhausted, isSessionIdConflict, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 import { harnessBinaryName } from '@murmur/shared';
 import { runnerExitPlan } from './exit.js';
 import { stopRequestedForRunner } from './stop.js';
-import { controlledNotice, FAILURE_NOTICE, harnessLoginNotice, quotaNotice } from './prompt.js';
+import { controlledNotice, FAILURE_NOTICE, harnessLoginNotice, quotaNotice, sessionConflictNotice } from './prompt.js';
 import { createRelayClient } from './relay.js';
 import { createInteractiveManager, type InteractiveManager } from './interactiveTurn.js';
 import { TurnRegistry } from './turnRegistry.js';
@@ -438,11 +438,40 @@ while (running) {
         // 멘션이 그대로 돌아간다.
         const quota = isQuotaExhausted(err);
         if (quota) {
-          console.error(`  ${entry.messageId} 사용량 한도 — 재시도하지 않는다 (풀림: ${quota.resetsAt ?? '알 수 없음'})`);
+          // tail 원문을 함께 찍는다: 2026-09-07 19:03 사건에서 이 줄은 "풀림: 알 수 없음"만
+          // 남겼고, 그래서 CLI 가 낸 문구(세션 파일에는 `resets 10:50pm (Asia/Seoul)` 이
+          // 있었다)와 판정 사이의 어디가 어긋났는지 알 수 없었다.
+          console.error(`  ${entry.messageId} 사용량 한도 — 재시도하지 않는다 (풀림: ${quota.resetsAt ?? '알 수 없음'}) tail: ${err instanceof Error ? err.message : String(err)}`);
           try {
             await murmur.post(mention.channelId, quotaNotice(quota.resetsAt), anchor);
           } catch (notifyErr) {
             console.error(`  ${entry.messageId} 한도 통지 발화 실패(읽음 처리 계속):`,
+              notifyErr instanceof Error ? notifyErr.message : notifyErr);
+          }
+          done.push(entry.id);
+          attempts.delete(entry.id);
+          continue;
+        }
+
+        // 세션 id 충돌(2026-09-07 19:03 실측)도 재시도로 낫지 않는다 — 3회가 176·185·278ms
+        // 만에 같은 자리에서 실패했다. 한도와 같은 자리에 두는 이유는 성질이 같아서다:
+        // 재시도는 무의미하고, 러너는 살아 있어야 하고, 사람은 스레드에서 사실을 알아야 한다.
+        //
+        // **자격증명처럼 죽이지 않는다.** 이것은 그 스레드 하나의 세션 상태 문제이고 다른
+        // 스레드는 멀쩡하다 — 죽으면 다른 스레드의 대기 멘션까지 함께 잃는다.
+        //
+        // 근본 원인은 `mentionTurn.ts` 의 세션 실재 관측이 막았다. 여기는 그 관측이 실패하는
+        // 경로에 남겨 두는 그물이라, tail 원문을 함께 찍는다 — 그물이 걷히는 날 운영자가
+        // 볼 것이 이 줄뿐이다(스레드 통지는 uuid 를 싣지 않는다).
+        if (isSessionIdConflict(err)) {
+          console.error(
+            `  ${entry.messageId} 하네스 세션 충돌 — 재시도하지 않는다 (러너의 세션 상태와 하네스 디스크가 어긋났다): `
+              + (err instanceof Error ? err.message : String(err)),
+          );
+          try {
+            await murmur.post(mention.channelId, sessionConflictNotice(), anchor);
+          } catch (notifyErr) {
+            console.error(`  ${entry.messageId} 세션 충돌 통지 발화 실패(읽음 처리 계속):`,
               notifyErr instanceof Error ? notifyErr.message : notifyErr);
           }
           done.push(entry.id);

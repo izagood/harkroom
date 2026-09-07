@@ -113,14 +113,49 @@ const HARNESS_CREDENTIAL_PATTERNS = [
  * 시각을 **파싱하지 않고 문자열로 두는** 이유: CLI 가 이미 사람이 읽는 형식으로
  * (그리고 사람의 시간대로) 적어 줬다. 우리가 Date 로 만들면 시간대를 다시 정해야 하고,
  * 그 판단은 여기서 할 수 있는 것이 아니다.
+ *
+ * **시각 추출이 문자열 끝을 앵커로 삼으면 안 된다(2026-09-07 19:03 실측).** 초판은
+ * `/resets\s+([^\n]+?)\s*$/` 였고, 그날 세션 파일에는 `resets 10:50pm (Asia/Seoul)` 이
+ * 분명히 있었는데 러너 로그는 "풀림: 알 수 없음"을 찍었다. tail 은 끝 2KB 링 버퍼이고,
+ * 한도에 걸린 claude 는 죽기 전에 화면을 다시 그린다 — 커서 복원·색 리셋 시퀀스가 그
+ * 문구 뒤에 붙어 `$` 가 맞지 않았다. tail 의 끝이 무엇인지는 우리가 정할 수 없으므로
+ * (`pty.ts` 는 raw 바이트를 그대로 담는다) 그 가정 자체를 버리고, 시각이 끝나는 자리를
+ * **줄 끝 또는 ESC**로 잡는다.
  */
 export function isQuotaExhausted(err: unknown): { resetsAt: string | null } | null {
   const text = err instanceof Error ? err.message : String(err ?? '');
   const squashed = text.replace(/\s+/g, '').toLowerCase();
   // `You've` 의 아포스트로피는 판본·터미널에 따라 `'` 와 `’` 가 다 나오므로 뺀 채로 본다.
   if (!/hityour(session|usage)limit/i.test(squashed.replace(/['’]/g, ''))) return null;
-  const resets = /resets\s+([^\n]+?)\s*$/i.exec(text.trim());
+  // `[^\n\u001b]` — 줄 끝이나 ESC 에서 멈춘다. 뒤에 무엇이 더 오든 상관하지 않는다.
+  const resets = /resets\s+([^\n\u001b]+)/i.exec(text);
   return { resetsAt: resets ? resets[1]!.trim() : null };
+}
+
+/**
+ * claude 가 이미 존재하는 세션 id 로 신규 시작을 거부했는가(2026-09-07 19:03 실측:
+ * `Error: Session ID 214242d8-... is already in use.`).
+ *
+ * **재시도로 절대 낫지 않는다** — 실측에서 3회가 176·185·278ms 만에 같은 자리에서
+ * 실패했다. 그런데도 재시도 회계에 들어가 3회를 태운 끝에 `FAILURE_NOTICE`("운영자 확인이
+ * 필요합니다")를 남겼고, 그것은 사람이 할 일을 잘못 가리켰다.
+ *
+ * **자격증명·실행 파일 부재와 달리 러너를 죽이지 않는다.** 이것은 그 스레드 하나의 세션
+ * 상태 문제이고 다른 스레드는 멀쩡하다. 그래서 사용량 한도와 같은 세 번째 갈래로 다룬다:
+ * 러너는 살고, 재시도는 하지 않고, 스레드에 사실을 남긴다.
+ *
+ * **근본 원인은 여기가 아니다.** 실패한 턴이 세션을 남겼는데 `turnsRun` 이 0 으로 남아
+ * 다음 턴이 `--session-id` 로 조립되는 것이 원인이고, `mentionTurn.ts` 의 세션 실재 관측이
+ * 그것을 막는다. 이 판정은 그 관측이 실패하는 경로(claude 가 세션 파일 위치 규칙을 바꾸는
+ * 등)에 남겨 두는 그물이다 — 그물이 걷히는 날에도 3회를 헛돌지는 않게 한다.
+ *
+ * 문구를 `sessionid` 없이 `isalreadyinuse` 로만 재는 이유: tail 은 끝 2KB 링 버퍼라 앞이
+ * 잘리고, 그때 uuid 와 접두어가 통째로 사라진다. 이 문구는 충분히 특이해서 하네스의 다른
+ * 실패와 겹치지 않는다.
+ */
+export function isSessionIdConflict(err: unknown): boolean {
+  const text = err instanceof Error ? err.message : String(err ?? '');
+  return /isalreadyinuse/i.test(text.replace(/\s+/g, ''));
 }
 
 /**
