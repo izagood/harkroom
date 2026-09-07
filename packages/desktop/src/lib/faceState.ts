@@ -7,6 +7,52 @@ import type { RunnerState } from './runnerLauncher';
 export type FaceState = 'ok' | 'stopped' | 'failed' | 'unknown';
 
 /**
+ * **종료 요청 중** — `stopRequestedAt` 은 있고 `stopAckedAt` 은 없는 동안이다
+ * (`docs/desktop-agent-cards.pdf` 2쪽 「종료 요청 중은 따로 말한다」: *"도는 것도 멈춘
+ * 것도 아니다"*).
+ *
+ * ## 왜 `FaceState` 유니온에 넣지 않았나 — **사이드바가 이 값을 받을 수 없다**
+ *
+ * 문서가 이 상태를 다섯 번째 얼굴로 그렸으니 유니온에 값을 하나 더 얹는 것이 자연스러워
+ * 보인다. 실측하면 그 길이 막혀 있다:
+ *
+ * | 자리 | 손에 든 것 | `stopRequestedAt`·`stopAckedAt` |
+ * |---|---|---|
+ * | 설정 › 에이전트 격자 | `AgentView`(= `AccountView` + `AgentConfig`) | **있다** |
+ * | 사이드바 DM 줄 | 스토어의 `AccountView` | **없다** — `AgentConfig` 소속이다 |
+ *
+ * 두 필드는 `AgentConfig` 에 있고 사이드바가 손에 든 것은 `AccountView` 다. 사이드바가
+ * 이 값을 얻는 길은 `listAgents()` 를 한 번 더 왕복하는 것뿐인데, `AgentCardSubject`
+ * 주석이 그 방향을 이미 거부했다 — *"그때부터 같은 목록이 두 곳에 유지된다."*
+ *
+ * 그래서 `FaceState` 에 넣으면 **어느 화면에서도 그 값이 안 나오는 자리가 생긴다**:
+ * 사이드바의 `const face: FaceState` 는 타입으로는 다섯 값을 받지만 실제로는 넷만 오고,
+ * 그 차이가 타입에 안 적힌다. `FaceState` 주석이 세운 계약(*"이 넷은 각각 그리는 방법이
+ * 다르고, 화면이 값마다 분기를 갖는다"*)이 그 순간 거짓이 된다 — 그리는 방법이 없는 값이
+ * 유니온에 앉는다.
+ *
+ * ## 그래서 별개의 축이다
+ *
+ * `faceState()` 의 시그니처를 건드리지 않고 **읽는 곳이 이 함수를 따로 부른다.** 사이드바는
+ * 이 함수를 부르지 않으므로 오늘과 한 픽셀도 다르지 않고, 격자는 `faceState()` 의 답 위에
+ * 이 축을 겹쳐 다섯 번째 얼굴을 만든다. 축이 둘이라 `AgentGrid` 안에서 곱해지는데, 그
+ * 곱셈이 정확히 문서가 그린 것이다 — 종료 요청 중은 **`ok` 위에만** 얹힌다(아래).
+ *
+ * 컴포넌트가 아니라 `lib/` 인 것은 `faceState`·`presenceView`·`threadState`·`waitChain`
+ * 과 같은 규율이다 — 순수 판정은 컴포넌트 밖에 둔다.
+ *
+ * @param agent 이 판정에 필요한 것 **딱 둘**. `AgentView` 를 요구하지 않는 이유는 위 표에
+ *   있다 — 이 두 필드를 가진 호출자만 부를 수 있으면 되고, 그 제약이 타입에 드러나 있어야
+ *   사이드바가 실수로 부르지 못한다.
+ */
+export function isStopping(agent: {
+  stopRequestedAt: string | null;
+  stopAckedAt: string | null;
+}): boolean {
+  return agent.stopRequestedAt !== null && agent.stopAckedAt === null;
+}
+
+/**
  * ## 이 함수가 `AgentGrid.tsx` 에서 여기로 나온 이유 (`docs/desktop-rail.html` 2단계)
  *
  * 문서 2단계가 DM 목록과 에이전트 목록을 한 목록으로 합치면서 *"상태 표현은 아바타 규칙을
