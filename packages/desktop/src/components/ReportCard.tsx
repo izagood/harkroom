@@ -80,10 +80,16 @@ function Section({ title, items, testid, mono = false, tone = 'text-fg-muted' }:
 }) {
   return (
     <div className="mb-1.5 last:mb-0">
-      <h4 className="text-[10px] font-semibold uppercase tracking-wide text-fg-subtle">{title}</h4>
+      <h4 className="text-[11px] font-semibold uppercase tracking-wide text-fg-subtle">{title}</h4>
       <ul data-testid={testid} className="mt-0.5 space-y-0.5">
         {items.map((it) => (
           // 넉넉한 행간 — 다시 읽히는 글이므로 읽기 품질이 전부다.
+          //
+          // `mono` 의 12px 은 4단(11/13/15/17) 밖이지만 **같은 본문단을 맞추기 위한 값**이다:
+          // 등폭 글꼴은 같은 pt 에서 산세리프보다 크게 보여(x-height·전진폭이 넓다) 13px 로
+          // 두면 옆줄의 13px 본문보다 한 단 커 보인다. 한 단 내려 광학적으로 같은 크기를
+          // 만든다 — 단을 어긴 것이 아니라 단을 지키기 위한 보정이다. `Profile.tsx` 의
+          // `Row` 가 같은 쌍(본문 13 / mono 12)을 쓴다.
           <li key={it} className={`text-[13px] leading-relaxed ${mono ? 'font-mono text-[12px]' : ''} ${tone}`}>
             {it}
           </li>

@@ -234,7 +234,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
                   {/* 누르면 그 메시지로 간다. `openMessage` 를 쓰는 이유: 답글이면 스레드
                       패널까지 열고 강조를 거는 일이 이미 거기 한 곳에 있다(#178). */}
                   <button
-                    className="flex w-full gap-2 px-6 py-0.5 text-left text-[12px] text-fg hover:bg-surface-sunken"
+                    className="flex w-full gap-2 px-6 py-0.5 text-left text-[13px] text-fg hover:bg-surface-sunken"
                     onClick={() => void getController().openMessage(p.messageId)}
                   >
                     <span className="shrink-0 font-semibold">{accounts[p.message.authorId]?.handle ?? '…'}</span>

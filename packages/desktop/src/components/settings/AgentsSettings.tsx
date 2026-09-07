@@ -1198,7 +1198,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     {runnerCommandClipboardText(pat)}
                   </span>
                   <button
-                    className="self-start shrink-0 rounded border border-warning-border bg-warning-surface-strong px-1.5 py-0.5 text-[10px] text-warning hover:bg-warning-border"
+                    className="self-start shrink-0 rounded border border-warning-border bg-warning-surface-strong px-1.5 py-0.5 text-[11px] text-warning hover:bg-warning-border"
                     aria-label="명령 복사"
                     onClick={async () => {
                       // #125: 토큰을 자르거나 말줄임표를 붙이지 않는다 — 클립보드에도 명령 전체가 들어간다.
@@ -1326,7 +1326,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     {runnerCommandClipboardText(PAT_PLACEHOLDER)}
                   </span>
                   <button
-                    className="self-start shrink-0 rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg hover:bg-surface-sunken"
+                    className="self-start shrink-0 rounded border border-border bg-surface px-1.5 py-0.5 text-[11px] text-fg hover:bg-surface-sunken"
                     aria-label="명령 복사"
                     onClick={async () => {
                       // 틀은 자리표시까지 통째로 복사한다 — 사람이 그 자리만 토큰으로 바꿔 쓴다.

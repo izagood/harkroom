@@ -212,6 +212,8 @@ function Row({ label, value, mono = false }: { label: string; value: string; mon
   return (
     <div className="flex gap-3 text-[13px]">
       <dt className="w-24 shrink-0 text-fg-subtle">{label}</dt>
+      {/* mono 12px 은 4단 밖이지만 본문단(13px)을 **광학적으로** 맞추는 보정이다 —
+          등폭 글꼴은 같은 pt 에서 크게 보인다. 근거는 `ReportCard.tsx` 에 적어 뒀다. */}
       <dd className={`min-w-0 break-words text-fg ${mono ? 'font-mono text-[12px]' : ''}`}>{value}</dd>
     </div>
   );

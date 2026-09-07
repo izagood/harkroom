@@ -317,7 +317,7 @@ export function Inbox({ open, onClose }: Props) {
             */}
             <span
               data-testid={`inbox-reason-${e.id}`}
-              className={`rounded px-1 text-[10px] ${row.rank === 0
+              className={`rounded px-1 text-[11px] ${row.rank === 0
                 ? 'bg-accent-surface font-medium text-state-turn'
                 : 'bg-surface-sunken text-fg-muted'}`}
             >
@@ -379,7 +379,7 @@ export function Inbox({ open, onClose }: Props) {
             색만으로는 부족해 글자 표를 함께 단다. */}
         <span
           data-testid={`inbox-draft-badge-${d.scopeKey}`}
-          className="rounded bg-warning-surface px-1 text-[10px] uppercase tracking-wide text-warning"
+          className="rounded bg-warning-surface px-1 text-[11px] uppercase tracking-wide text-warning"
         >
           초안
         </span>

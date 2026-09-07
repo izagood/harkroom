@@ -64,7 +64,10 @@ export function ThreadParticipants({ messages, live }: { messages: MessageRow[];
             // #471: `rounded-full` 이 없으면 링이 사각형으로 그려져 겹친 자리에 세로선이 생긴다.
             className={`rounded-full ring-1 ring-surface-raised ${live !== null && !live.has(a.id) ? 'opacity-40' : ''}`}
           >
-            <Identity account={a} className="h-5 w-5 text-[9px]" variant="avatar" />
+            {/* `h-5` 상자에는 10px 글리프가 짝이다(`Identity` 의 주석) — 이 자리만 9px 이라
+                같은 20px 원인데 인박스의 아바타보다 머리글자가 작았다. 4단과는 무관한
+                축이지만 **상자별로 하나여야** 하는 값이므로 짝을 맞춘다. */}
+            <Identity account={a} className="h-5 w-5 text-[10px]" variant="avatar" />
           </span>
         ))}
       </span>
@@ -74,7 +77,7 @@ export function ThreadParticipants({ messages, live }: { messages: MessageRow[];
           <button
             data-testid="terminal-picker"
             aria-expanded={open}
-            className="rounded px-1.5 py-0.5 text-[10px] text-fg-muted hover:bg-surface-hover"
+            className="rounded px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover"
             onClick={() => setOpen((v) => !v)}
           >
             터미널 ▾
