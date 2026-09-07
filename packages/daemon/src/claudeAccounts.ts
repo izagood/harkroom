@@ -26,6 +26,7 @@
 // 그 머신의 로그인 상태에 달리고 CI 에는 로그인이 없다 — 그러면 "미로그인" 경로만 초록이
 // 된다. 구조를 읽고 쓰는 일은 상태와 무관하므로 그 경계를 갈라 둔다.
 import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -178,24 +179,105 @@ async function looksLikeAccount(dir: string): Promise<boolean> {
   return false;
 }
 
-/** 기본 `runStatus` — 실제 `claude` 를 부른다. */
-function nodeRunStatus(configDir: string): Promise<unknown> {
+/**
+ * 이 config 디렉터리의 자격증명이 사는 Keychain 서비스 이름.
+ *
+ * claude 가 쓰는 규칙(실측): `Claude Code-credentials-<sha256(configDir) 앞 8자>`.
+ */
+function keychainService(configDir: string): string {
+  return `Claude Code-credentials-${createHash('sha256').update(configDir).digest('hex').slice(0, 8)}`;
+}
+
+/**
+ * 이 계정의 자격증명이 Keychain 에 있는가. **값을 읽지 않는다** — 존재만 본다.
+ *
+ * `-w`(값 출력)를 안 붙이는 것이 요점이다: 존재 판정에 토큰을 읽을 이유가 없고, 읽으면
+ * 그 바이트가 이 프로세스의 메모리와 파이프를 지난다.
+ */
+function nodeHasKeychainCredentials(configDir: string): Promise<boolean> {
+  if (process.platform !== 'darwin') return Promise.resolve(false);
   return new Promise((res) => {
     execFile(
-      'claude',
-      ['auth', 'status', '--json'],
-      { env: { ...process.env, CLAUDE_CONFIG_DIR: configDir }, timeout: 15_000 },
-      (_err, stdout) => {
-        // **종료 코드 1 을 정상으로 받는다** — 미로그인이 1 이다(실측). 그 코드로 실패를
-        // 판정하면 미로그인 계정이 "조회 실패"가 되어 UI 가 할 일을 못 가리킨다.
-        try {
-          res(JSON.parse(String(stdout)));
-        } catch {
-          res({ loggedIn: false });
-        }
-      },
+      'security',
+      ['find-generic-password', '-s', keychainService(configDir), '-a', process.env.USER ?? ''],
+      { timeout: 10_000 },
+      (err) => res(err === null),
     );
   });
+}
+
+/**
+ * 계정의 로그인 상태·정체를 **디스크에서** 읽는다.
+ *
+ * ## `claude auth status --json` 을 쓰지 않는 이유 — 2026-09-08 실측
+ *
+ * 그 명령은 **Keychain 에 있는 자격증명을 못 본다.** 사용자가 앱에서 계정 넷을 등록한 뒤:
+ *
+ * | 관측 | 결과 |
+ * |---|---|
+ * | `claude auth status --json` (넷 전부) | `loggedIn: false` |
+ * | Keychain `Claude Code-credentials-<sha8>` | 네 항목 모두 존재, 토큰 완전 |
+ * | `claude -p` 로 실제 턴 | 넷 다 `OK`, rc=0 |
+ *
+ * 런타임은 Keychain 을 읽고 `auth status` 는 파일만 읽는다. 앞선 실측(2026-09-07)이 이것을
+ * 놓친 이유: 심볼릭 링크 실험은 **파일이 있는** 경우였고 "Keychain 만 있는" 경우를 안 쟀다.
+ * 그 결과 설정 화면이 멀쩡한 계정 넷을 전부 "Not signed in" 으로 그렸다.
+ *
+ * ## 무엇을 읽는가
+ *
+ * - **정체**: `<configDir>/.claude.json` 의 `oauthAccount`. **비밀값이 아니다.** 미로그인
+ *   디렉터리에는 이 키가 **없다**(실측) — 존재 자체가 "이 디렉터리로 로그인한 적이 있다"다.
+ * - **자격증명**: 파일 또는 Keychain 항목의 **존재**. 토큰을 읽지 않는다.
+ *
+ * 부수 효과로 `claude`(Node 앱) 프로세스를 계정마다 하나씩 안 띄운다.
+ *
+ * ## 한계를 알고 쓴다
+ *
+ * "자격증명이 있다"는 "토큰이 아직 유효하다"가 **아니다.** refresh 토큰이 만료된 계정도
+ * 여기서는 로그인으로 보인다 — 그 사실은 턴을 돌려 봐야 안다. 그래서 러너가 턴 시각에
+ * 발견하고 다음 계정으로 넘어간다(`switchesAccount` 가 `oauthsessionexpired` 를 잡는다).
+ * 화면이 그 판정을 흉내내려고 토큰을 읽지는 않는다.
+ */
+export async function accountStatusFromDisk(
+  configDir: string,
+  hasKeychain: (configDir: string) => Promise<boolean> = nodeHasKeychainCredentials,
+): Promise<ClaudeAuthStatus> {
+  let oauth: Record<string, unknown> | null = null;
+  try {
+    const raw = JSON.parse(await readFile(join(configDir, '.claude.json'), 'utf8')) as unknown;
+    if (typeof raw === 'object' && raw !== null) {
+      const oa = (raw as Record<string, unknown>).oauthAccount;
+      if (typeof oa === 'object' && oa !== null) oauth = oa as Record<string, unknown>;
+    }
+  } catch {
+    // 없거나 깨졌다. **던지지 않는다** — 목록 하나가 못 읽혀 화면 전체가 실패하면
+    // 사용자는 자기 계정이 사라진 줄 안다.
+  }
+  if (!oauth) return { loggedIn: false };
+
+  const hasFile = await stat(join(configDir, '.credentials.json')).then(() => true, () => false);
+  // Keychain 조회가 던져도 파일 판정으로 떨어진다 — `security` 가 없거나 권한이 거부된
+  // 환경에서 목록 전체가 죽지 않아야 한다.
+  const inKeychain = hasFile ? false : await hasKeychain(configDir).catch(() => false);
+  if (!hasFile && !inKeychain) return { loggedIn: false };
+
+  const pick = (k: string): string | undefined =>
+    (typeof oauth[k] === 'string' ? (oauth[k] as string) : undefined);
+  return {
+    loggedIn: true,
+    ...(pick('emailAddress') !== undefined ? { email: pick('emailAddress')! } : {}),
+    ...(pick('organizationName') !== undefined ? { orgName: pick('organizationName')! } : {}),
+  };
+}
+
+/**
+ * 기본 `runStatus`. 위 `accountStatusFromDisk` 를 그대로 쓴다 — 주입 지점의 이름이
+ * `runStatus` 인 것은 앞 판본이 `claude` 를 **돌렸기** 때문이고 이제 돌리지 않는다.
+ * 이름을 그대로 둔 이유: 테스트가 이미 그 이름으로 주입하고 있고, 이름 변경은 이 결함
+ * 수정의 범위가 아니다.
+ */
+function nodeRunStatus(configDir: string): Promise<unknown> {
+  return accountStatusFromDisk(configDir);
 }
 
 function readStatus(raw: unknown): ClaudeAuthStatus {
