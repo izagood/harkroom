@@ -284,4 +284,34 @@ describe('상태는 아바타가 말한다 — B1 의 세 얼굴 (「나머지 �
     expect(face.dataset.face).toBe('stopped');
     expect(face.innerHTML).toContain('grayscale');
   });
+
+  /**
+   * **DM 줄은 다섯 번째 얼굴을 모른다 — 그리고 그것이 맞다.**
+   *
+   * `docs/desktop-agent-cards.pdf` 2쪽이 카드에 **멈추는 중**(`stopRequestedAt` 은 있고
+   * `stopAckedAt` 이 없는 동안)을 더했다. 그 판정을 `FaceState` 유니온에 넣지 않은 이유가
+   * `lib/faceState.ts` 의 `isStopping` 주석에 있다 — 두 필드는 `AgentConfig` 소속이고,
+   * 이 줄이 손에 든 것은 스토어의 `AccountView` 라 **거기에 없다.** 이 줄이 그 값을 얻는
+   * 길은 `listAgents()` 를 한 번 더 왕복하는 것뿐이고, `AgentCardSubject` 주석이 그
+   * 방향을 이미 거부했다(*"그때부터 같은 목록이 두 곳에 유지된다"*).
+   *
+   * 그래서 `faceState()` 의 **시그니처가 안 바뀌었다** — 인자는 여전히 넷이고 반환 유니온도
+   * 여전히 넷이다. 이 시험이 재는 것은 그 사실의 결과다: 카드 작업이 이 줄을 한 픽셀도
+   * 건드리지 않는다.
+   *
+   * 되돌려 RED: `faceState` 에 `'stopping'` 을 얹고 이 줄이 그것을 받게 만들면 `data-face`
+   * 가 `ok` 가 아니게 되고, `dm-face-*` 의 값 집합이 격자의 `data-face` 와 갈린다.
+   */
+  it('종료 요청 중이어도 DM 줄은 `ok` 다 — 그 판정이 이 줄에 오지 않는다', () => {
+    // 러너가 돌고 있고, 서버 쪽 정의에는 종료 요청이 걸려 있는 상황이다. 카드라면
+    // 점선 테 + `멈추는 중` 한 줄을 받지만, 이 줄은 그 두 필드를 애초에 갖지 않는다.
+    const face = 한줄({ forge: runner('running') });
+    expect(face.dataset.face).toBe('ok');
+    // 아바타가 흐려지지도, 점선 테가 붙지도 않는다.
+    expect(face.innerHTML).not.toContain('grayscale');
+    expect(face.className).not.toContain('border-dashed');
+    // 글자도 늘지 않는다 — 이 줄이 글자를 받는 것은 여전히 실패뿐이다.
+    expect(screen.getByTestId('dm-face-d-forge').closest('button')!.textContent)
+      .not.toContain('멈추는 중');
+  });
 });

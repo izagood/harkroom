@@ -290,12 +290,34 @@ describe('좁은 폭 — 62px 레일 옆의 패널은 설정 화면이 아니다
   });
 
   /**
-   * **설정 화면의 모양이 바뀌지 않는다.** 자리 축의 기본값이 `settings` 이므로 설정은
-   * 한 글자도 안 바뀐다 — 그것을 여기서 잠근다: 이 단언이 없으면 좁은 폭을 맞추다 설정을
-   * 함께 줄여도 아무도 모른다.
+   * **자리를 안 주면 설정의 그 격자다.** 자리 축의 기본값이 `settings` 이므로 이 단언이
+   * 없으면 좁은 폭을 맞추다 설정을 함께 줄여도 아무도 모른다. 이 회귀선이 지키는 것은
+   * **기본값이 사이드바 쪽으로 끌려가지 않는 것**이고, 그것은 지금도 그대로다.
    *
    * `AgentGrid` 를 **직접** 세운다(설정 화면 전체가 아니라). 재는 것이 이 컴포넌트의
    * 기본값이고, 설정 화면은 그 기본값을 쓰는 호출자 하나일 뿐이다.
+   *
+   * ## 숫자가 바뀌었다 — 트랙 86 → 140px · 얼굴 56 → 88px
+   *
+   * 앞 판본의 이 시험은 *"설정 화면의 모양이 바뀌지 않는다 … 한 글자도 안 바뀐다"* 고
+   * 적혀 있었다. **그 문장은 이 회귀선이 만들어질 때의 전제였고, 그 전제가 끝났다.**
+   * 앞 작업(레일 3단계)은 사이드바를 **더하는** 작업이었으므로 설정이 안 바뀌는 것이
+   * 계약이었다. 이 작업은 설정 카드 **자체를** 고치는 작업이라 설정이 바뀌는 것이 목적이다.
+   *
+   * 단정만 뒤집지 않는다 — **무엇이 왜 바뀌는지**를 여기 적는다. 두 숫자 다 목업에서 베낀
+   * 것이 아니라 **실측으로 정했고**(2026-09-08, 720px 설정 패널에 8장), 그 근거는
+   * `AgentGrid.tsx` 의 `PLACE.settings` 주석에 표로 있다:
+   *
+   * | 값 | 전 | 후 | 근거 요약 |
+   * |---|---|---|---|
+   * | 얼굴 | `h-14`(56px) | `h-[88px]` | *"사진을 올렸다는 것은 사진을 보겠다는 뜻"* + 손잡이 셋의 타격 면적. 96px 은 세 줄을 각주로 눌렀다 |
+   * | 트랙·카드 | 86px | 140px | 값 칸이 요구하는 폭이 **137px**(뒤처진 칩 93 + 라벨 36 + 간격 8). 168 은 31px 이 남으면서 한 열을 잃었다 |
+   *
+   * **사이드바 쪽은 한 픽셀도 안 바뀐다** — 이 파일의 위 시험들(트랙 64px · 아바타 40px ·
+   * `bg-surface-sunken`)이 전부 그대로 초록이다. 그리고 새 정보 블록이 사이드바로 새지
+   * 않는 것은 이 회귀선이 잡지 못한다(여기는 `place` 를 **안 주는** 경우를 재므로 정보
+   * 블록이 오히려 서 있어야 맞다) — 그 자리는 `agentGrid.test.tsx` 의 사이드바 격리
+   * 회귀선이 맡는다.
    */
   it('회귀선 — 자리를 안 주면 설정의 그 격자다', () => {
     const agent: AgentView = {
@@ -310,10 +332,16 @@ describe('좁은 폭 — 62px 레일 옆의 패널은 설정 화면이 아니다
     );
 
     const grid = screen.getByTestId('agent-grid');
-    expect(grid.className).toContain('repeat(auto-fill,86px)');
-    expect(grid.className).toContain('gap-x-6');
-    // 아바타도 그대로 56px 이다.
-    expect(screen.getByTestId('agent-card-forge').querySelector('.h-14')).toBeTruthy();
+    expect(grid.className).toContain('repeat(auto-fill,140px)');
+    expect(grid.className).toContain('gap-x-5');
+    // **사이드바 값이 아니다.** 기본값이 그쪽으로 끌려가는 것이 이 회귀선의 본래 대상이고,
+    // 숫자가 바뀌어도 그 대상은 그대로다.
+    expect(grid.className).not.toContain('repeat(auto-fill,64px)');
+    // 얼굴은 88px 이다(문서 목업). 56px 이던 `.h-14` 가 남아 있으면 안 옮겨진 것이다.
+    const card = screen.getByTestId('agent-card-forge');
+    expect(card.querySelector('.h-\\[88px\\]')).toBeTruthy();
+    expect(card.querySelector('.h-14')).toBeNull();
+    expect(card.querySelector('.h-10')).toBeNull();
     // 검색줄의 바닥도 그대로 카드 면이다.
     expect(screen.getByTestId('agent-search').closest('.sticky')!.className)
       .toContain('bg-surface-raised');
