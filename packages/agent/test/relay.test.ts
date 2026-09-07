@@ -1,6 +1,6 @@
 // #141 Phase 2 — 러너 쪽 릴레이 회귀선. 소켓 없이 검증한다(dialer 주입) — 재접속 순서와
 // 백오프 곡선은 네트워크를 태우면 "느리다"로만 보이고 무엇이 깨졌는지 알려 주지 않는다.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { RelayRunnerFrame } from '@murmur/shared';
 import { createRelayClient, relayUrl, RING_CAP_BYTES, type RelayHandlers, type RelayTransport } from '../src/relay.js';
 import { nextBackoffMs } from '../src/policy.js';
@@ -182,6 +182,9 @@ describe('#141-6 러너 재접속 (백오프 경로)', () => {
   });
 
   it('백오프는 policy.ts 의 곡선을 따르고, 붙으면 초기값으로 되돌아간다', () => {
+    // 이 테스트는 일부러 접속에 실패시킨다 — 그때 나오는 "붙지 못한다" 경고는 의도된
+    // 동작이다(relayVisibility.test.ts 가 그것을 잰다). 여기서는 곡선만 재므로 삼킨다.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     const d = fakeDialer();
     const s = fakeSchedule();
     const client = createRelayClient({
