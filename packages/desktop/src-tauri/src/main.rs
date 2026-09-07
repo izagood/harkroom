@@ -10,6 +10,7 @@
 
 mod daemon_client;
 mod login_path;
+mod notification;
 
 use std::collections::HashMap;
 
@@ -399,7 +400,9 @@ fn daemon_list_runners(
 
 fn main() {
     tauri::Builder::default()
-        // 멘션 알림 표면. 권한은 capabilities/default.json 에서 허용한다.
+        // 알림 표면. **발신은 `notification::notification_send` 가 한다** — 이 플러그인의
+        // 데스크탑 구현은 클릭을 알려줄 수 없어서다(`src/notification.rs` 머리 주석).
+        // 플러그인은 macOS 밖의 발신 경로로 남는다.
         .plugin(tauri_plugin_notification::init())
         // 링크를 OS 로 넘기는 표면. 권한은 capabilities/default.json 에서 허용한다.
         .plugin(tauri_plugin_shell::init())
@@ -410,6 +413,12 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(daemon_client::DaemonState::new())
+        // 알림 클릭을 받는 델리게이트를 세운다(`notification::install`). **기동 때 한 번**
+        // 이어야 한다 — 첫 알림을 보낼 때 세우면 그 알림의 클릭을 놓칠 수 있다.
+        .setup(|app| {
+            notification::install(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             secret_get,
             secret_set,
@@ -418,6 +427,7 @@ fn main() {
             daemon_kill_runner,
             daemon_list_runners,
             login_path,
+            notification::notification_send,
         ])
         .run(tauri::generate_context!())
         .expect("error while running murmur");
