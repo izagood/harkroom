@@ -122,6 +122,17 @@ export interface MentionTurnDeps {
   stateDir: string;
   /** 이 러너 전용 CODEX_HOME. 세션 발견과 자식 env 가 같은 루트를 봐야 한다. */
   codexHome: string;
+  /**
+   * 이 턴을 돌릴 claude 계정 이름(`claudeAccounts.ts`). `null` 은 계정 지정 없음(시스템
+   * 기본)이다. **세션 무효화 판정이 이 값을 쓴다** — 계정이 바뀌면 그 스레드의 claude
+   * 세션은 재개할 수 없다(세션 파일이 계정 디렉터리 안에 있다).
+   */
+  claudeAccount: string | null;
+  /**
+   * 그 계정의 `CLAUDE_CONFIG_DIR`. 자식 env 와 세션 실재 판정이 **같은 값**을 봐야 한다
+   * (`codexHome` 주석과 같은 이유).
+   */
+  claudeConfigDir: string | null;
   murmurUrl: string;
   pat: string;
   turnTimeoutMs: number;
@@ -386,7 +397,15 @@ export async function runMentionTurn(
 
   let rec = deps.store.get(key);
 
-  if (rec && rec.harness !== def.harness) {
+  // claude 계정도 같은 부류다(다중 계정): 세션 파일은 `<CLAUDE_CONFIG_DIR>/projects` 아래
+  // 있어 계정을 넘어가지 않는다. 남겨 두면 `-r <id>` 가 없는 세션을 재개하려 든다. 잃는 것이
+  // 적은 이유: `prompt.ts` 의 `isFirstTurn`(lastFedSeq 0)이 자기 발화를 포함한 스레드 전체를
+  // 다시 먹인다 — 하네스 내부 컨텍스트는 잃지만 스레드의 사실은 남는다.
+  //
+  // `?? null` 로 정규화해 비교하는 이유: 옛 레코드에는 이 필드가 `undefined` 다. 그것과
+  // "계정 지정 없음"(`null`)은 같은 상태이므로, 정규화 없이 비교하면 풀을 안 쓰는 러너가
+  // 스레드마다 세션을 헛되이 버린다.
+  if (rec && (rec.harness !== def.harness || (rec.claudeAccount ?? null) !== deps.claudeAccount)) {
     // harness 는 지시문·모델과 달리 플래그가 아니라 실행 바이너리다 — claude 가 발급한
     // session-id 를 codex 에 넘기면(또는 반대) resume 자체가 성립하지 않는다. 대화 기억
     // (세션 id·진행 상태)만 버리고 워크스페이스는 재사용한다: 그 안의 작업 산출물은
@@ -398,6 +417,7 @@ export async function runMentionTurn(
       harness: def.harness,
       lastFedSeq: 0,
       turnsRun: 0,
+      claudeAccount: deps.claudeAccount,
     };
   }
 
@@ -409,6 +429,7 @@ export async function runMentionTurn(
       harness: def.harness,
       lastFedSeq: 0,
       turnsRun: 0,
+      claudeAccount: deps.claudeAccount,
     };
   }
 
@@ -518,8 +539,7 @@ export async function runMentionTurn(
     pat: deps.pat,
     murmurUrl: deps.murmurUrl,
     codexHome: deps.codexHome,
-    // Task 5·6 이 deps 의 계정 값으로 바꾼다. 지금은 계정 지정 없음(기존 동작).
-    claudeConfigDir: null,
+    claudeConfigDir: deps.claudeConfigDir,
   });
 
   // #126: 턴 시작 로그 (어느 채널·스레드·하네스·워크스페이스에서 PTY 를 띄우는가)

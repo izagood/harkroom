@@ -242,6 +242,9 @@ async function makeDeps(fake: FakeMurmur, overrides: Partial<MentionTurnDeps> = 
     mcpConfigPath: '/fake/mcp.json',
     stateDir,
     codexHome: join(stateDir, 'codex-home'),
+    // 기본은 계정 지정 없음(시스템 기본) — 계정을 재는 테스트가 overrides 로 넘긴다.
+    claudeAccount: null,
+    claudeConfigDir: null,
     murmurUrl: 'http://localhost:3400',
     pat: 'murp_test',
     turnTimeoutMs: 10_000,
@@ -540,6 +543,94 @@ describe('runMentionTurn', () => {
     expect(secondPlanArgs[0]).toBe('exec'); // codex 첫 턴 — resume 이 아니다
     expect(secondPlanArgs).not.toContain('resume');
     expect(secondPlanArgs.join(' ')).not.toContain(String(claudeSessionId));
+  });
+
+  // 다중 계정: 세션 파일은 `<CLAUDE_CONFIG_DIR>/projects` 아래 있어 계정을 넘어가지
+  // 않는다. 남겨 두면 `-r <id>` 가 없는 세션을 재개하려 든다. 잃는 것이 적은 이유:
+  // prompt.ts 의 isFirstTurn(lastFedSeq 0)이 자기 발화를 포함한 스레드 전체를 다시
+  // 먹인다 — 하네스 내부 컨텍스트는 잃지만 스레드의 사실은 남는다.
+  it('계정이 바뀌면 세션을 버리고 첫 턴으로 다시 시작한다', async () => {
+    const fake = new FakeMurmur(defOf({ harness: 'claude-code' }));
+    fake.seedFrom('human-1', '첫 질문');
+    const { deps, execCalls, plans, runTurn } = await makeDeps(fake, {
+      claudeAccount: 'plum', claudeConfigDir: '/pool/plum',
+    });
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '첫 답', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    const key = SessionStore.threadKey(CHANNEL, null);
+    const firstSessionId = deps.store.get(key)!.sessionId;
+    const workspaceAfterFirst = deps.store.get(key)!.workspaceDir;
+    expect(deps.store.get(key)!.claudeAccount).toBe('plum');
+
+    // 한도에 걸려 러너가 다음 계정으로 옮겨 탔다.
+    fake.seedFrom('human-1', '두 번째 질문');
+    await runMentionTurn(
+      { ...deps, claudeAccount: 'lime', claudeConfigDir: '/pool/lime' },
+      { channelId: CHANNEL, threadRootId: null, mentionId: MENTION },
+    );
+
+    const rec = deps.store.get(key)!;
+    expect(rec.claudeAccount).toBe('lime');
+    expect(rec.sessionId).not.toBe(firstSessionId);
+    // 워크스페이스는 재사용한다 — 그 안의 산출물은 계정과 무관하다(harness 변경과 같다).
+    expect(rec.workspaceDir).toBe(workspaceAfterFirst);
+    expect(execCalls).toHaveLength(1);
+
+    // 첫 턴으로 조립됐다: resume(-r) 이 아니라 --session-id 다.
+    const secondArgs = plans[1]!.args;
+    expect(secondArgs).toContain('--session-id');
+    expect(secondArgs).not.toContain('-r');
+    expect(secondArgs.join(' ')).not.toContain(String(firstSessionId));
+  });
+
+  it('계정이 같으면 세션을 유지한다', async () => {
+    const fake = new FakeMurmur(defOf({ harness: 'claude-code' }));
+    fake.seedFrom('human-1', '첫 질문');
+    const { deps, plans, runTurn } = await makeDeps(fake, {
+      claudeAccount: 'lime', claudeConfigDir: '/pool/lime',
+    });
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '첫 답', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    const key = SessionStore.threadKey(CHANNEL, null);
+    const firstSessionId = deps.store.get(key)!.sessionId;
+
+    fake.seedFrom('human-1', '두 번째 질문');
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(deps.store.get(key)!.sessionId).toBe(firstSessionId);
+    expect(plans[1]!.args).toContain('-r'); // resume 으로 이어졌다
+  });
+
+  // 풀을 안 만든 러너(계정 지정 없음)가 이 필드 때문에 세션을 잃지 않아야 한다.
+  it('옛 레코드(계정 필드 없음)를 계정 지정 없는 러너가 읽어도 세션을 버리지 않는다', async () => {
+    const fake = new FakeMurmur(defOf({ harness: 'claude-code' }));
+    fake.seedFrom('human-1', '첫 질문');
+    const { deps, plans, runTurn } = await makeDeps(fake);
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '첫 답', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+    const key = SessionStore.threadKey(CHANNEL, null);
+    // 이 필드 이전에 쓰인 레코드를 그대로 심는다 — claudeAccount 가 undefined 다.
+    await deps.store.put(key, {
+      workspaceDir: join(deps.workspaceBaseDir, 'legacy'),
+      sessionId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      harness: 'claude-code', lastFedSeq: 1, turnsRun: 1,
+    });
+
+    fake.seedFrom('human-1', '두 번째 질문');
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(deps.store.get(key)!.sessionId).toBe('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    expect(plans[0]!.args).toContain('-r');
   });
 
   // #92: 지시문이 argv 로 새지 않는지는 **프로덕션 경로**에서 봐야 한다. buildTurnCommand 만
