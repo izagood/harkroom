@@ -10,16 +10,6 @@
     "notification:default",
     "shell:allow-open",
     "updater:default",
-    "process:allow-restart",
-    {
-      "identifier": "shell:allow-execute",
-      "allow": [
-        {
-          "name": "login-path",
-          "cmd": "sh",
-          "args": ["-lc", "echo $PATH"]
-        }
-      ]
-    }
+    "process:allow-restart"
   ]
 }

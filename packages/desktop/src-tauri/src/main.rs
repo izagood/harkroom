@@ -9,6 +9,7 @@
 //! 조용히 성공한 척하면 프런트가 평문 경로로 내려갈 기회를 잃는다.
 
 mod daemon_client;
+mod login_path;
 
 use std::collections::HashMap;
 
@@ -283,6 +284,30 @@ fn detached_command(program: &std::path::Path) -> std::process::Command {
 /// 말한 사실을 옮기기만 한다(`#419` 의 계약이 소켓 너머로 이어지는 자리).
 pub const RUNNER_EXIT_EVENT: &str = "murmur://runner-exit";
 
+/// 자식에게 넘길 `PATH` 를 웹뷰에 **알려 준다** — 만들어 주는 것이 아니다(`#513`).
+///
+/// ## 왜 이 커맨드가 생겼나 — 출처를 하나로 합치려고
+///
+/// 앞 판본에서 이 값을 만드는 자리는 웹뷰였다(`runnerLauncher.ts::tauriLoginPathReader`
+/// 가 shell 플러그인으로 `sh -lc 'echo $PATH'` 를 돌렸다). 그런데 `#513` 이 요구하는
+/// 것은 **daemon 도 그 값을 갖는 것**이고, daemon 은 웹뷰보다 먼저 뜬다(`#431` 2단계 A).
+/// 그래서 Rust 가 스스로 캐내게 됐고, 그러면 웹뷰의 셸 호출은 **두 번째 출처**가 된다.
+///
+/// 두 출처는 갈릴 수 있다 — 다른 셸, 다른 시점, 한쪽만 실패. 그래서 웹뷰 쪽 셸 호출을
+/// 없애고 이 커맨드로 바꿨다. **값은 하나, 캐시도 하나**(`login_path::LOGIN_PATH`).
+///
+/// **웹뷰가 넘기는 파라미터가 없다.** 고를 것이 없으므로 이 커맨드는 실행 표면을 넓히지
+/// 않는다 — 오히려 `capabilities/default.json` 에서 `shell:allow-execute` 항목이
+/// 통째로 사라졌다(웹뷰가 프로그램을 실행할 수 있는 표면이 0개가 됐다).
+///
+/// **실패하지 않는다.** `child_path()` 는 조회에 실패해도 폴백을 돌려준다 — 여기서
+/// `Err` 를 내면 웹뷰가 러너 spawn 자체를 포기하고, 그것은 이 이슈가 없애려는
+/// "PATH 때문에 아무것도 안 뜬다"를 다른 자리에 다시 만드는 것이다.
+#[tauri::command]
+fn login_path() -> String {
+    login_path::child_path()
+}
+
 /// daemon 을 확보하고 러너를 띄우라고 시킨다.
 ///
 /// **daemon 이 없으면 띄우고 있으면 붙는다**(`ensure_daemon`). 실패하면 그대로 `Err` 다 —
@@ -381,6 +406,7 @@ fn main() {
             daemon_spawn_runner,
             daemon_kill_runner,
             daemon_list_runners,
+            login_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running murmur");

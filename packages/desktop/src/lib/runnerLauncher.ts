@@ -59,7 +59,9 @@
  * **`sessions.json`·`SessionStore` 는 여기서도 안 건드린다**(`#431` D5) — 이 파일이 아는
  * 것은 프로세스와 PAT 뿐이고, 세션 상태의 writer 는 러너 하나여야 한다.
  */
-import { Command } from '@tauri-apps/plugin-shell';
+// **`@tauri-apps/plugin-shell` 을 더 이상 안 부른다**(`#513`). 마지막 남은 사용처가
+// 로그인 `PATH` 조회(`#305`)였고, 그것이 Rust 로 옮겨가며(`login_path.rs`) 이 파일에서
+// 웹뷰가 프로그램을 실행하는 자리가 하나도 안 남았다.
 import { EX_CONFIG, harnessBinaryName, installHint, runnerExitReason } from '@murmur/shared';
 
 /**
@@ -317,17 +319,31 @@ export interface StartCreatedInput {
 export const patLabelPrefix = (deviceId: string): string => `desktop:${deviceId}`;
 
 /**
- * 로그인 셸의 `PATH` 를 얻는 스코프 항목(#305). **인자가 배열 리터럴로 못박혀 있다** —
- * `sh` 를 허용하되 `['-lc', 'echo $PATH']` **그 한 줄만** 허용하므로 와일드카드가 아니다.
- * `args: true` 나 정규식 인자로 바꾸는 순간 웹뷰가 임의 명령을 실행할 수 있게 되고, 그것이
- * `#250` 의 보안 회귀선(`runnerShellScope.test.ts`)이 지키는 경계다.
+ * 자식이 쓸 `PATH` 를 Rust 에게 묻는 invoke 커맨드 이름(`#305` → `#513`).
  *
- * 왜 이것이 필요한가: macOS 에서 Dock/Finder 로 띄운 앱은 로그인 셸의 `PATH` 를 물려받지
- * 않는다(`/usr/bin:/bin:/usr/sbin:/sbin` 정도다). `docs/operations.md` §8-1 이 launchd
- * 감독에서 같은 함정을 이미 기록해 뒀다 — 같은 것을 다시 발견하지 마라.
+ * ## 이 자리에 있던 것 — 그리고 왜 사라졌나
+ *
+ * 앞 판본에는 여기에 shell 스코프 항목이 있었다:
+ *
+ * ```ts
+ * export const LOGIN_PATH_SCOPE_NAME = 'login-path';
+ * export const LOGIN_PATH_ARGS = ['-lc', 'echo $PATH'];
+ * ```
+ *
+ * 웹뷰가 `sh` 를 직접 부르되 **그 한 줄만** 부를 수 있게 좁힌 것이었다(`#305`).
+ * `#513` 에서 셸 호출이 Rust 로 옮겨가며 그 항목이 통째로 필요 없어졌고,
+ * `capabilities/default.json` 에서도 지웠다. 웹뷰가 프로그램을 실행할 수 있는 표면이
+ * 이제 **0개**다 — `#250` 부터 좁혀 온 경계의 끝이다.
+ *
+ * **왜 옮겼는가**(`login_path.rs` 모듈 주석에 자세히 있다): daemon 은 웹뷰보다 먼저
+ * 뜨므로 웹뷰가 캐낸 값을 못 쓴다. Rust 가 캐내되, 웹뷰까지 자기 셸을 계속 부르면
+ * 출처가 둘이 되어 갈릴 수 있다. 그래서 **하나로 합쳤다.**
+ *
+ * 왜 이 값이 애초에 필요한가: macOS 에서 Dock/Finder 로 띄운 앱은 로그인 셸의 `PATH` 를
+ * 물려받지 않는다(`/usr/bin:/bin:/usr/sbin:/sbin` 정도다). `docs/operations.md` §8-1 이
+ * launchd 감독에서 같은 함정을 이미 기록해 뒀다 — 같은 것을 다시 발견하지 마라.
  */
-export const LOGIN_PATH_SCOPE_NAME = 'login-path';
-export const LOGIN_PATH_ARGS = ['-lc', 'echo $PATH'];
+export const LOGIN_PATH_COMMAND = 'login_path';
 
 /**
  * 로그인 셸의 `PATH` 를 못 읽었을 때 자식에 넘기는 기본 디렉터리들(#305).
@@ -1186,25 +1202,42 @@ async function listenRunnerExit(
 }
 
 /**
- * 로그인 셸의 `PATH` 를 한 번 읽는다(#305).
+ * 자식이 쓸 `PATH` 를 **Rust 에게 묻는다**(`#305` → `#513`).
  *
- * `sh -lc 'echo $PATH'` 는 **`PATH` 를 얻기 위해서만** 돈다 — 러너를 이 셸로 띄우는 것이
- * 아니다. 스코프(`capabilities/default.json` 의 `login-path`)가 `sh` 에 그 인자 배열
- * 하나만 허용하므로, 웹뷰가 이 이름으로 부를 수 있는 것은 이 한 줄뿐이다.
+ * ## 앞 판본은 여기서 셸을 직접 불렀다 — 그리고 그것이 출처를 둘로 만들었다
  *
- * `execute()` 를 쓰는 이유: 이 명령은 자식으로 살아 있을 필요가 없고 **stdout 한 줄**이
- * 전부다. `spawn` 으로 띄우면 종료를 기다리며 이벤트를 모아야 하는데, 얻는 것이 같다.
+ * `#305` 판본은 이랬다:
  *
- * 실패는 `null` 로 올라간다 — 셸이 없거나(윈도우) 스코프가 막았거나 비어 있으면 호출자가
- * `SYSTEM_PATH_FALLBACK` 으로 넘어간다.
+ * ```ts
+ * const out = await Command.create('login-path', ['-lc', 'echo $PATH']).execute();
+ * ```
+ *
+ * shell 플러그인으로 셸을 직접 돌려 값을 만들었다. 그 값이 닿는 곳은 러너 env 하나였고,
+ * **daemon 은 그 값을 못 받았다** — daemon 은 웹뷰보다 먼저 뜨기 때문이다(`#431`
+ * 2단계 A: `controller.start` 가 러너를 띄울지 정하기 **전에** `ensureDaemon` 을 부른다).
+ * 그것이 `#513` 이다: 러너에 `PATH` 를 주는 코드가 정작 그 러너를 띄울 daemon 에는 안 닿았다.
+ *
+ * 그래서 Rust 가 스스로 캐내게 됐다(`src-tauri/src/login_path.rs`). 그런데 웹뷰가 자기
+ * 셸 호출을 그대로 들고 있으면 **출처가 둘**이 된다 — 다른 셸을 부를 수도, 다른 시점의
+ * 값을 볼 수도, 한쪽만 실패할 수도 있다. **그래서 이 자리를 조회에서 질의로 바꿨다.**
+ * 값을 만드는 곳은 Rust 하나이고, 캐시도 그쪽 하나다.
+ *
+ * ## 부수 효과 — 웹뷰의 실행 표면이 0개가 됐다
+ *
+ * `capabilities/default.json` 에서 `shell:allow-execute`(`login-path`) 항목이 통째로
+ * 사라졌다. `#250` 이 좁히고 `#305` 가 하나만 남겼던 그 경계가 이제 비었다 —
+ * **넓힌 것이 아니라 없앤 것이다**(`test/runnerShellScope.test.ts` 가 못박는다).
+ *
+ * 실패는 `null` 로 올라간다 — invoke 표면이 없는 환경(브라우저 개발)이나 커맨드가
+ * 실패한 경우다. 그때 호출자가 `SYSTEM_PATH_FALLBACK` 으로 넘어간다.
  */
 export const tauriLoginPathReader: LoginPathReader = {
   async read() {
+    const invoke = tauriInvoke();
+    if (!invoke) return null;
     try {
-      const out = await Command.create(LOGIN_PATH_SCOPE_NAME, LOGIN_PATH_ARGS).execute();
-      if (out.code !== 0) return null;
-      const value = out.stdout.trim();
-      return value || null;
+      const value = await invoke(LOGIN_PATH_COMMAND);
+      return typeof value === 'string' && value.trim() ? value.trim() : null;
     } catch {
       return null;
     }
