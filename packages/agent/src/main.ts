@@ -336,6 +336,9 @@ while (running) {
           // 고칠 수 있다.
           stateDir: agentStateDir,
           codexHome,
+          // Task 6 이 계정 축에서 계정별로 채운다. 지금은 계정 지정 없음(기존 동작).
+          claudeAccount: null,
+          claudeConfigDir: null,
           murmurUrl: config.murmurUrl, pat: config.murmurPat,
           turnTimeoutMs: config.turnTimeoutMs,
           relay,
