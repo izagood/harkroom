@@ -1,0 +1,822 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="murmur 데스크탑 — 설정 › 에이전트 카드와 팀">
+<title>murmur · 카드와 팀</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap">
+
+<style>
+  :root {
+    --paper:#FBF9F7; --paper-2:#F3F0EB; --card:#FFFFFF;
+    --line:#E3DCD2; --line-soft:#EFEAE2;
+    --ink:#1B1815; --ink-2:#4C453D; --ink-3:#7E7568;
+    --accent:#E8613C; --accent-2:#B8431F; --accent-soft:#FAE8E1;
+    --teal:#0D8E82;
+    --sans:"IBM Plex Sans KR", ui-sans-serif, system-ui, "Apple SD Gothic Neo", sans-serif;
+    --disp:"Bricolage Grotesque","IBM Plex Sans KR", ui-sans-serif, system-ui, sans-serif;
+    --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:#141210; --paper-2:#1C1917; --card:#1D1A17;
+      --line:#322C26; --line-soft:#262220;
+      --ink:#F1ECE5; --ink-2:#B9B0A4; --ink-3:#877E71;
+      --accent:#FF7B54; --accent-2:#FF9E7F; --accent-soft:#3A2119;
+      --teal:#2FB3A4; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:#141210; --paper-2:#1C1917; --card:#1D1A17;
+    --line:#322C26; --line-soft:#262220;
+    --ink:#F1ECE5; --ink-2:#B9B0A4; --ink-3:#877E71;
+    --accent:#FF7B54; --accent-2:#FF9E7F; --accent-soft:#3A2119;
+    --teal:#2FB3A4; color-scheme: dark;
+  }
+  * { box-sizing:border-box; }
+  body { background:var(--paper); color:var(--ink); font-family:var(--sans); font-size:16px; line-height:1.7; margin:0; padding-bottom:5rem; -webkit-font-smoothing:antialiased; }
+  .wrap { width:min(100% - 2.5rem, 900px); margin-inline:auto; }
+  .bleed { width:min(100% - 2rem, 1120px); margin-inline:auto; }
+
+  header { padding:3.4rem 0 2rem; }
+  h1 { font-family:var(--disp); font-weight:800; font-size:clamp(2rem,4.4vw,2.9rem); line-height:1.06; letter-spacing:-.03em; margin:0 0 .9rem; }
+  h1 em { font-style:normal; color:var(--accent); }
+  .lede { font-size:1.06rem; color:var(--ink-2); max-width:64ch; margin:0 0 1.5rem; }
+  .meta { font-family:var(--mono); font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-3); border-top:1px solid var(--line); padding-top:.8rem; }
+
+  section { padding:2.8rem 0 0; }
+  .eyebrow { font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--accent); display:flex; align-items:center; gap:.7rem; margin-bottom:.7rem; }
+  .eyebrow::after { content:""; height:1px; flex:1; background:var(--line); }
+  h2 { font-family:var(--disp); font-weight:700; font-size:clamp(1.4rem,3vw,1.85rem); line-height:1.15; letter-spacing:-.02em; margin:0 0 .8rem; }
+  h3 { font-family:var(--disp); font-weight:700; font-size:1.06rem; margin:1.9rem 0 .5rem; letter-spacing:-.01em; }
+  p { margin:0 0 1rem; max-width:70ch; }
+  code { font-family:var(--mono); font-size:.86em; background:var(--paper-2); border:1px solid var(--line-soft); padding:.05em .35em; border-radius:3px; color:var(--ink-2); }
+  b, strong { font-weight:600; }
+  .note { font-size:.9rem; color:var(--ink-3); max-width:70ch; }
+
+  .panel { border:1px solid var(--line); border-radius:8px; background:var(--card); overflow:hidden; margin-top:1.1rem; }
+  .panel__h { padding:.55rem 1rem; background:var(--paper-2); border-bottom:1px solid var(--line-soft); font-family:var(--mono); font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-3); display:flex; align-items:center; gap:.6rem; }
+  .panel__h .tag { margin-left:auto; text-transform:none; letter-spacing:0; font-size:10px; }
+  .panel__b { padding:1.1rem 1.2rem; }
+  .grid.two { display:grid; gap:1rem; }
+  @media (min-width:760px) { .grid.two { grid-template-columns:1fr 1fr; gap:1.3rem; } }
+
+  .ui { font-size:13px; line-height:1.5; color:#1A1917; background:#fff; }
+  .row { display:flex; gap:9px; align-items:flex-start; padding:5px 0; }
+  .who { display:flex; align-items:baseline; gap:6px; flex-wrap:wrap; }
+  .who b { font-weight:600; font-size:13px; }
+  .t { font-family:var(--mono); font-size:10px; color:#93908A; }
+  .body { color:#3C3A35; }
+  .badge-now { display:inline-flex; align-items:center; gap:3px; background:#eef2ff; color:#4f46e5; border-radius:3px; padding:0 4px; font-size:10px; }
+  .av { display:inline-flex; align-items:center; justify-content:center; color:#fff; font-weight:600; flex:none; overflow:hidden; border-radius:50%; letter-spacing:-.01em; }
+  .av.glyph { background:transparent; color:inherit; }
+  .stack { display:inline-flex; align-items:center; }
+  .stack .av { box-shadow:0 0 0 2px #fff; }
+  .stack .av + .av { margin-left:-5px; }
+  .sizes { display:flex; align-items:flex-end; gap:1.4rem; flex-wrap:wrap; }
+  .size { text-align:center; }
+  .size .lbl { font-family:var(--mono); font-size:9.5px; color:var(--ink-3); margin-top:.45rem; letter-spacing:.03em; }
+
+  /* 프로필 패널 */
+  .prof { width:310px; border:1px solid #E4E3E0; border-radius:10px; background:#fff; box-shadow:0 10px 30px -14px rgba(0,0,0,.35); overflow:hidden; }
+  .prof__top { padding:15px 15px 12px; display:flex; gap:12px; align-items:center; }
+  .prof__name { font-weight:600; font-size:15px; color:#1A1917; }
+  .prof__handle { font-family:var(--mono); font-size:11.5px; color:#93908A; }
+  .prof__state { display:flex; align-items:center; gap:5px; font-size:11px; color:#5C5951; margin-top:3px; }
+  .prof__state i { width:6px; height:6px; border-radius:50%; display:block; }
+  .prof__rows { border-top:1px solid #EFEEEB; }
+  .prow { display:flex; gap:10px; padding:7px 15px; font-size:12px; }
+  .prow .k { color:#93908A; width:60px; flex:none; font-size:11.5px; }
+  .prow .v { color:#3C3A35; min-width:0; }
+  .prof__acts { border-top:1px solid #EFEEEB; padding:9px 11px; display:flex; gap:6px; flex-wrap:wrap; }
+
+  .btn { font-size:11.5px; padding:4px 10px; border-radius:5px; border:1px solid #DDDCD8; color:#3C3A35; background:#fff; display:inline-flex; align-items:center; gap:4px; }
+  .btn.primary { background:#C24A22; border-color:#C24A22; color:#fff; }
+  .btn.quiet { border-color:transparent; color:#6E6A63; }
+  .btn.danger { border-color:#E5B7A8; color:#B8431F; background:#FDF3EF; }
+  .btn.wide { width:100%; justify-content:center; }
+
+  /* ===== 그리드 안들 ===== */
+  .screen { background:#FAFAF9; padding:18px 20px 22px; font-size:13px; color:#1A1917; }
+  .screen__h { display:flex; align-items:baseline; gap:10px; margin-bottom:3px; }
+  .screen__t { font-family:var(--disp); font-weight:700; font-size:18px; letter-spacing:-.01em; }
+  .screen__d { font-size:11.5px; color:#8A867E; margin-bottom:14px; }
+
+  /* A — 얼굴 */
+  .ga { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; }
+  .ga .c { border:1px solid #E4E3E0; border-radius:10px; background:#fff; padding:16px 10px 12px; text-align:center; }
+  .ga .c .nm { font-weight:600; font-size:13px; margin-top:9px; }
+  .ga .c .st { font-size:10.5px; color:#8A867E; margin-top:2px; display:flex; align-items:center; justify-content:center; gap:4px; }
+  .ga .c .st i { width:5px; height:5px; border-radius:50%; display:block; }
+  .ga .c .act { margin-top:10px; }
+  .ga .c.off .av { filter:saturate(.25); opacity:.5; }
+  .ga .c.fail { border-color:#E5B7A8; }
+  .ga .add { border:1.5px dashed #D6D3CC; border-radius:10px; background:transparent; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#8A867E; gap:6px; min-height:150px; }
+  .ga .add .plus { font-size:26px; line-height:1; color:#B0ACA4; }
+
+  /* B — 명함 */
+  .gb { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .gb .c { border:1px solid #E4E3E0; border-radius:9px; background:#fff; padding:11px 12px; display:flex; align-items:center; gap:11px; }
+  .gb .c .mid { min-width:0; flex:1; }
+  .gb .c .nm { font-weight:600; font-size:13px; }
+  .gb .c .sub { font-size:10.5px; color:#8A867E; margin-top:1px; }
+  .gb .c .st { font-size:10.5px; color:#8A867E; display:flex; align-items:center; gap:4px; }
+  .gb .c .st i { width:5px; height:5px; border-radius:50%; display:block; }
+  .gb .c.off .av { filter:saturate(.25); opacity:.5; }
+  .gb .c.fail { border-color:#E5B7A8; }
+  .gb .add { border:1.5px dashed #D6D3CC; border-radius:9px; display:flex; align-items:center; justify-content:center; gap:7px; color:#8A867E; padding:11px; }
+  .gb .add .plus { font-size:18px; color:#B0ACA4; }
+
+  /* C — 상태판 */
+  .gc-sum { display:flex; gap:16px; font-size:11.5px; color:#5C5951; margin-bottom:12px; }
+  .gc-sum span { display:flex; align-items:center; gap:5px; }
+  .gc-sum i { width:6px; height:6px; border-radius:50%; display:block; }
+  .gc { display:grid; grid-template-columns:repeat(3,1fr); gap:11px; }
+  .gc .c { border:1px solid #E4E3E0; border-radius:9px; background:#fff; overflow:hidden; display:flex; }
+  .gc .c .bar { width:3px; flex:none; }
+  .gc .c .in { padding:12px 13px; flex:1; min-width:0; }
+  .gc .c .top { display:flex; align-items:center; gap:9px; }
+  .gc .c .nm { font-weight:600; font-size:13px; }
+  .gc .c .sub { font-size:10.5px; color:#8A867E; }
+  .gc .c .big { font-size:11.5px; color:#3C3A35; margin-top:9px; }
+  .gc .c .big b { font-weight:600; }
+  .gc .c .act { margin-top:9px; }
+  .gc .c.off { background:#FAFAF9; }
+  .gc .c.off .av { filter:saturate(.2); opacity:.5; }
+  .gc .add { border:1.5px dashed #D6D3CC; border-radius:9px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; color:#8A867E; min-height:110px; }
+  .gc .add .plus { font-size:22px; color:#B0ACA4; line-height:1; }
+
+  /* 상세 */
+  .det { background:#fff; padding:18px 22px 20px; }
+  .det__back { font-size:11.5px; color:#8A867E; margin-bottom:12px; }
+  .det__top { display:flex; align-items:center; gap:13px; margin-bottom:16px; }
+  .det__nm { font-family:var(--disp); font-weight:700; font-size:18px; letter-spacing:-.01em; }
+  .det__st { font-size:11.5px; color:#8A867E; display:flex; align-items:center; gap:5px; margin-top:2px; }
+  .det__st i { width:6px; height:6px; border-radius:50%; display:block; }
+  .det__acts { margin-left:auto; display:flex; gap:6px; }
+  .sec { margin-bottom:18px; }
+  .sec__h { font-weight:600; font-size:13px; margin-bottom:2px; }
+  .sec__d { font-size:11px; color:#8A867E; margin-bottom:9px; }
+  .fld { margin-bottom:11px; }
+  .fld__l { font-size:11px; color:#5C5951; margin-bottom:3px; font-weight:500; }
+  .fld__i { border:1px solid #DDDCD8; border-radius:5px; padding:6px 9px; background:#fff; font-size:12px; }
+  .fld__i.ph { color:#A8A49C; }
+  .fld__i.sel { display:flex; align-items:center; }
+  .fld__i.sel::after { content:"⌄"; margin-left:auto; color:#8A867E; font-size:13px; line-height:.6; }
+  .fld__h { font-size:10.5px; color:#8A867E; margin-top:3px; }
+  .fld__h.warn { color:#B8431F; }
+  .two-up { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .seg { display:inline-flex; border:1px solid #DDDCD8; border-radius:6px; overflow:hidden; }
+  .seg span { padding:5px 12px; font-size:11.5px; color:#5C5951; background:#fff; }
+  .seg span.on { background:#C24A22; color:#fff; }
+  .setfoot { border-top:1px solid #EFEEEB; margin-top:14px; padding-top:12px; display:flex; gap:7px; align-items:center; }
+
+  .cmp { margin-top:1rem; border-top:1px solid var(--line); }
+  .cmp__r { display:grid; gap:.15rem 1.3rem; padding:.85rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:720px) { .cmp__r { grid-template-columns:5.5rem 1fr; } }
+  .cmp__k { font-family:var(--mono); font-size:11.5px; color:var(--ink); }
+  .cmp__v { font-size:.92rem; color:var(--ink-2); line-height:1.6; }
+
+  .rules { display:grid; gap:0; margin-top:1rem; border-top:1px solid var(--line); }
+  .rule { display:grid; gap:.25rem 1.3rem; padding:1rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:760px) { .rule { grid-template-columns:2.2rem 1fr; } }
+  .rule__n { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--accent); }
+  .rule__t { font-family:var(--disp); font-weight:700; font-size:1.05rem; margin:0 0 .25rem; letter-spacing:-.01em; }
+  .rule__b { font-size:.94rem; color:var(--ink-2); margin:0; line-height:1.62; max-width:66ch; }
+
+  .callout { margin-top:1.3rem; border:1px solid var(--line); border-left:3px solid var(--teal); border-radius:4px; background:var(--card); padding:1rem 1.15rem; }
+  .callout p { margin:0; font-size:.94rem; color:var(--ink-2); }
+  .callout p + p { margin-top:.5rem; }
+  .warnout { border-left-color:var(--accent-2); }
+  footer { margin-top:3rem; padding-top:1rem; border-top:1px solid var(--line); font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-3); }
+
+  /* 항목 목록 */
+  .flist { border-top:1px solid var(--line); }
+  .fitem { display:grid; gap:.1rem 1.2rem; padding:.8rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:700px) { .fitem { grid-template-columns:15rem 1fr; } }
+  .fitem__k { font-weight:600; font-size:.93rem; color:var(--ink); }
+  .fitem__v { font-size:.92rem; color:var(--ink-2); line-height:1.6; }
+
+  /* 답글 스택 요약 줄 */
+  .slot { display:grid; gap:9px; }
+  .slotrow { display:grid; gap:4px 12px; align-items:center; }
+  @media (min-width:640px) { .slotrow { grid-template-columns:5.6rem 1fr; } }
+  .slotlab { font-family:var(--mono); font-size:9.5px; letter-spacing:.07em; text-transform:uppercase; color:#93908A; }
+  .trow { display:flex; gap:10px; align-items:center; padding:8px 11px; border-radius:6px; background:#fff; border:1px solid #EFEEEB; min-width:0; }
+  .trow.hotrow { background:#FFF5F1; border-color:#F2D3C6; box-shadow:inset 2px 0 0 #C24A22; }
+  .trow.dim { background:#FAFAF9; }
+  .trow__t { font-size:12.5px; color:#6E6A63; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .trow__t b { color:#1A1917; font-weight:600; }
+  .trow__t .hot { color:#C24A22; font-weight:600; }
+  .trow__t .cut { color:#C0BCB4; }
+  .plus { display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background:#E7E4DF; color:#5C5951; font-weight:600; flex:none; }
+
+  /* 설정 › 에이전트 — 확정안 */
+  .scr { background:#fff; }
+  .scr__h { padding:15px 18px 0; }
+  .scr__t { font-weight:600; font-size:15px; color:#1A1917; }
+  .scr__d { font-size:11.5px; color:#8A867E; margin-top:2px; }
+  .srch { margin:13px 18px 0; display:flex; align-items:center; gap:8px; border:1px solid #DDDCD8; border-radius:7px; padding:7px 11px; background:#FAFAF9; }
+  .srch__i { color:#A8A49C; font-size:13px; line-height:1; }
+  .srch input { border:0; background:transparent; outline:none; font-family:inherit; font-size:12.5px; color:#1A1917; width:100%; min-width:0; padding:0; }
+  .srch__n { margin-left:auto; font-family:var(--mono); font-size:10px; color:#A8A49C; white-space:nowrap; }
+  .agrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(86px, 1fr)); gap:16px 8px; padding:18px 16px 22px; }
+  .acard { display:flex; flex-direction:column; align-items:center; gap:8px; padding:8px 2px 6px; border-radius:10px; }
+  .acard:hover { background:#F4F3F0; }
+  .ava { position:relative; width:60px; height:60px; flex:none; }
+  .ava .av { width:60px; height:60px; font-size:25px; }
+  .ava.off .av { filter:saturate(.12); opacity:.4; }
+  .ava.bad .av { filter:saturate(.35); opacity:.6; }
+  .ava__ov { position:absolute; inset:0; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; font-size:18px; background:rgba(26,25,23,.4); }
+  .ava.bad .ava__ov { background:rgba(194,74,34,.72); }
+  .ava.bad::after { content:""; position:absolute; inset:-3px; border-radius:50%; border:2px solid #C24A22; }
+  .acard__n { font-size:12px; color:#3C3A35; max-width:84px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .acard.dimname .acard__n { color:#93908A; }
+  .acard__why { font-size:10px; line-height:1.35; color:#C24A22; max-width:86px; text-align:center; margin-top:-3px; }
+  .acard.new .ava { border:1.5px dashed #CFCBC3; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#A8A49C; font-size:27px; font-weight:300; }
+  .acard.new:hover .ava { border-color:#C24A22; color:#C24A22; }
+  .agrid__none { grid-column:1/-1; padding:14px 4px; font-size:12px; color:#93908A; }
+  .states { display:flex; gap:2.2rem; flex-wrap:wrap; }
+</style>
+<style>
+  .flist { border-top:1px solid var(--line); }
+  .fitem { display:grid; gap:.1rem 1.2rem; padding:.85rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:700px){ .fitem { grid-template-columns:15rem 1fr; } }
+  .fitem__k { font-weight:600; font-size:.93rem; color:var(--ink); }
+  .fitem__v { font-size:.92rem; color:var(--ink-2); line-height:1.62; }
+  .says { display:grid; gap:0; margin-top:1rem; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+  .sayr { display:grid; gap:.15rem .9rem; padding:.75rem 1rem; border-bottom:1px solid var(--line-soft); background:var(--card); }
+  .sayr:last-child { border-bottom:0; }
+  @media (min-width:700px){ .sayr { grid-template-columns:8.5rem 1fr; align-items:baseline; } }
+  .sayk { font-family:var(--mono); font-size:10px; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-3); }
+  .sayv { font-size:.93rem; color:var(--ink-2); }
+  .sayr.c { background:var(--paper-2); }
+  .gap { border-top:1px solid var(--line); margin-top:1.1rem; }
+  .gapr { display:grid; gap:.2rem 1.3rem; padding:.95rem 0; border-bottom:1px solid var(--line-soft); }
+  @media (min-width:760px){ .gapr { grid-template-columns:2.3rem 1fr; } }
+  .gapn { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--accent); }
+  .gapt { font-family:var(--disp); font-weight:700; font-size:1.05rem; margin:0 0 .3rem; letter-spacing:-.01em; }
+  .gapb { font-size:.94rem; color:var(--ink-2); margin:0; line-height:1.62; max-width:68ch; }
+  .wrapflex { display:flex; gap:1.6rem; flex-wrap:wrap; align-items:flex-start; }
+
+  .av { display:inline-flex; align-items:center; justify-content:center; color:#fff; font-weight:600; flex:none; overflow:hidden; border-radius:50%; }
+  .avdot { position:relative; flex:none; display:inline-block; }
+  .avdot .ov { position:absolute; inset:0; border-radius:50%; display:flex; align-items:center; justify-content:center; background:rgba(26,25,23,.42); color:#fff; font-size:11px; }
+  .avdot.off .av { filter:saturate(.12); opacity:.42; }
+  .avdot.bad .av { filter:saturate(.35); opacity:.6; }
+  .avdot.bad .ov { background:rgba(194,74,34,.72); }
+  .avdot.bad::after { content:""; position:absolute; inset:-2.5px; border-radius:50%; border:2px solid #C24A22; }
+  .t { font-family:var(--mono); font-size:10px; color:#93908A; }
+
+  /* 지금 — 원형만 */
+  .oldgrid { display:grid; grid-template-columns:repeat(auto-fill,86px); gap:20px 24px; }
+  .oldc { display:flex; flex-direction:column; align-items:center; gap:7px; width:86px; }
+  .oldc .nm { font-size:12px; color:#3C3A35; max-width:84px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .oldc.dim .nm { color:#93908A; }
+  .oldc .why { font-size:10px; color:#C24A22; text-align:center; line-height:1.35; }
+
+  /* 제안 — 세로 카드 */
+  .cgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:14px; }
+  .card { border:1px solid #E4E3E0; border-radius:12px; background:#fff; padding:20px 14px 15px; display:flex; flex-direction:column; align-items:center; }
+  .card.off { background:#FAFAF9; }
+  .card.bad { border-color:#E9C3B4; }
+  .card__nm { font-weight:600; font-size:15px; color:#1A1917; line-height:1.25; margin-top:12px; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .card__h { font-family:var(--mono); font-size:11px; color:#93908A; margin-top:1px; }
+  .card.off .card__nm { color:#6E6A63; }
+  .card__meta { width:100%; display:grid; gap:5px; border-top:1px solid #F2F1EE; margin-top:14px; padding-top:11px; }
+  .mrow { display:flex; align-items:baseline; gap:8px; font-size:11.5px; min-width:0; }
+  .mrow .k { color:#A8A49C; width:34px; flex:none; font-size:10.5px; }
+  .mrow .v { color:#3C3A35; min-width:0; line-height:1.4; }
+  .mrow .v .sub { color:#8A867E; }
+  .vchip { font-family:var(--mono); font-size:10px; border-radius:4px; padding:1px 6px; background:#EFEDE9; color:#5C5951; display:inline-block; }
+  .vchip.stale { background:#FDF3EF; color:#B8431F; border:1px solid #EFD5C8; cursor:pointer; font-family:var(--sans); font-size:10.5px; display:inline-flex; align-items:center; gap:4px; padding:2px 7px; }
+  .vchip.stale:hover { background:#F8E7DF; }
+  .vchip.unk { background:transparent; color:#A8A49C; border:1px dashed #DDDCD8; }
+  .exc { width:100%; margin-top:10px; font-size:11px; line-height:1.45; color:#B8431F; text-align:center; }
+  .exc.quiet { color:#8A867E; }
+  .card.new { border-style:dashed; border-color:#D6D3CC; background:transparent; justify-content:center; color:#A8A49C; gap:8px; }
+  .card.new .p { font-size:30px; line-height:1; }
+  /* 얼굴 위 손잡이 */
+  .avdot .ov.hoverable { opacity:0; transition:opacity .12s; background:rgba(20,19,17,.55); }
+  /* 덮개가 뜨면 이니셜을 숨긴다 — 흰 글자와 흰 손잡이가 겹치면 둘 다 안 읽힌다 */
+  .avdot.stoppable .av { transition:color .12s; }
+  .card:hover .avdot.stoppable .av, .avdot.stoppable.shown .av { color:transparent; }
+  .card:hover .avdot .ov.hoverable, .avdot .ov.hoverable.shown { opacity:1; }
+  .avdot.wait::after { content:""; position:absolute; inset:-3px; border-radius:50%; border:2px dashed #C9C6C0; }
+  .avdot.wait .av { filter:saturate(.5); opacity:.72; }
+  .btn { font-size:11.5px; padding:5px 10px; border-radius:7px; border:1px solid #DDDCD8; color:#3C3A35; background:#fff; white-space:nowrap; text-align:center; }
+  .btn.primary { background:#C24A22; border-color:#C24A22; color:#fff; }
+  .btn.ml { margin-left:auto; }
+  /* 얼굴 다섯 */
+  .faces5 { display:flex; gap:1.7rem; flex-wrap:wrap; }
+  .faces5 > div { text-align:center; min-width:104px; }
+  .faces5 .bx { height:78px; display:flex; align-items:center; justify-content:center; }
+  .faces5 .n { font-size:12px; font-weight:600; color:#3C3A35; }
+  .faces5 .d { font-size:10.5px; color:#8A867E; margin-top:2px; line-height:1.4; }
+
+  /* 팀 */
+  .scr { background:#FAFAF9; border-radius:0; font-size:13px; color:#1A1917; }
+  .tabs { display:flex; gap:2px; border-bottom:1px solid #E4E3E0; padding:0 16px; }
+  .tab { font-size:12.5px; padding:9px 12px 8px; color:#6E6A63; border-bottom:2px solid transparent; }
+  .tab.on { color:#1A1917; font-weight:600; border-bottom-color:#C24A22; }
+  .tbody { padding:16px; }
+  .tgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:14px; }
+  .tcard { border:1px solid #E4E3E0; border-radius:12px; background:#fff; padding:16px 14px 15px; display:flex; flex-direction:column; align-items:center; }
+  .tcard.new { border-style:dashed; border-color:#D6D3CC; background:transparent; justify-content:center; color:#A8A49C; gap:8px; }
+  .tcard.new .p { font-size:30px; line-height:1; }
+  .tface { height:88px; display:flex; align-items:center; justify-content:center; }
+  .tface .avdot { box-shadow:0 0 0 3px #fff; border-radius:50%; position:relative; }
+  .tface .avdot + .avdot { margin-left:-13px; }
+  .tface .more { display:inline-flex; align-items:center; justify-content:center; width:44px; height:44px; border-radius:50%; background:#EDEBE7; color:#5C5951; font-size:12px; font-weight:600; box-shadow:0 0 0 3px #fff; margin-left:-13px; flex:none; }
+  .tcard__nm { font-weight:600; font-size:15px; color:#1A1917; margin-top:8px; }
+  .tcard__s { font-size:11px; color:#93908A; margin-top:1px; }
+  .tcard__meta { width:100%; display:grid; gap:5px; border-top:1px solid #F2F1EE; margin-top:13px; padding-top:11px; }
+
+  .picker { border:1px solid #E0DDD8; border-radius:10px; background:#fff; padding:12px 13px; box-shadow:0 10px 26px -14px rgba(0,0,0,.3); width:300px; }
+  .picker__s { display:flex; align-items:center; gap:6px; border:1px solid #E0DDD8; border-radius:6px; padding:4px 8px; color:#A8A49C; font-size:11.5px; margin-bottom:9px; }
+  .picker__g { display:grid; grid-template-columns:repeat(4,1fr); gap:12px 4px; }
+  .pcell { display:flex; flex-direction:column; align-items:center; gap:4px; padding:4px 2px; border-radius:8px; }
+  .pcell .nm2 { font-size:10.5px; color:#3C3A35; max-width:58px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pcell.sel { background:#FFF5F1; box-shadow:inset 0 0 0 1px #EFD5C8; }
+  .pcell .tick { position:absolute; right:-1px; bottom:-1px; width:16px; height:16px; border-radius:50%; background:#C24A22; color:#fff; font-size:9px; display:flex; align-items:center; justify-content:center; box-shadow:0 0 0 2px #fff; }
+  .oldteam { width:300px; border:1px solid #E4E3E0; border-radius:9px; overflow:hidden; background:#fff; font-size:12px; }
+  .oldteam__h { padding:8px 11px; border-bottom:1px solid #EFEEEB; font-weight:600; font-size:12.5px; }
+  .oldteam__b { padding:10px 11px; }
+  .oldrow2 { display:flex; align-items:center; justify-content:space-between; background:#FAFAF9; border-radius:5px; padding:5px 8px; margin-bottom:5px; }
+  .selnat { display:flex; align-items:center; gap:5px; font-size:11.5px; border:1px solid #C9C6C0; border-radius:5px; padding:4px 8px; background:linear-gradient(#fff,#F2F1EE); color:#6E6A63; }
+  .selnat::after { content:"⌃⌄"; margin-left:auto; font-size:8px; line-height:1; color:#6E6A63; letter-spacing:-1px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>설정 › 에이전트 — <em>카드와 팀</em></h1>
+    <p class="lede">
+      얼굴 그리드가 들어간 뒤 남은 셋. 카드가 <b>이름 말고는 아무것도 말하지 않고</b>,
+      러너가 <b>어느 버전으로 도는지</b>가 화면에 없고, 팀이 <b>다른 화면에서 옛날 모양</b>으로 남아 있다.
+      셋 다 <b>이미 있는 데이터</b>로 풀린다 — 새 필드가 필요한 곳이 하나도 없다.
+    </p>
+    <div class="meta">근거 — origin/main 소스 직접 확인 · AgentGrid.tsx · AgentsSettings.tsx · TeamsSettings.tsx · shared/index.ts · daemonProtocol.ts</div>
+  </header>
+
+  <section>
+    <p class="eyebrow">먼저</p>
+    <h2>“조용한 카드”는 사이드바의 규칙이지 설정의 규칙이 아니다</h2>
+    <p>
+      앞 문서에서 <b>정보를 더하는 쪽이 지는 쪽</b>이라고 적었다. 그 말이 겨눈 자리는
+      <b>사이드바 패널</b>이다 — 폭이 164~224px 이고, 훑는 것이 목적이고, 40개가 깔린다.
+      설정은 다르다. <b>설정은 바꾸러 오는 곳이고, 바꾸기 전에 확인하러 오는 곳</b>이다.
+    </p>
+    <p>
+      코드가 이미 그 구분을 갖고 있다 — <code>AgentGrid</code> 의
+      <code>place: 'settings' | 'sidebar'</code>. 지금은 크기와 바닥색만 갈리는데,
+      <b>담는 것도 그 축에서 갈린다</b>. 사이드바는 지금 그대로 두고 설정 자리만 얹는다.
+    </p>
+    <div class="callout">
+      <p><b>그래서 이 문서는 앞 규칙을 뒤집지 않는다.</b> 같은 컴포넌트가 두 자리에서
+      다르게 서는 것이고, 그 축은 이미 타입에 적혀 있다. 카드를 두 벌로 나누는 순간
+      <code>AgentGrid</code> 주석이 경고한 <b>같은 목록이 두 곳에 유지되는</b> 모양이 된다.</p>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">01</p>
+    <h2>카드가 말하게 한다</h2>
+    <div class="wrapflex">
+      <div>
+        <div class="t" style="margin-bottom:8px">지금 — 얼굴과 이름</div>
+        <div class="panel" style="margin:0"><div class="panel__b"><div class="oldgrid" id="old"></div></div></div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:.8rem">
+      상태는 얼굴이 말한다(그냥 사진 / 색 빠짐 + <b>▶</b> / 붉은 테 + <b>↻</b>). 잘 작동한다 —
+      다만 <b>고르기 전에 알아야 할 것</b>이 하나도 없다. 어느 하네스로 도는지, 어느 버전인지,
+      마지막으로 언제 일했는지 전부 눌러야 나온다. 에이전트가 열이면 <b>열 번 눌러야 비교가 된다</b>.
+    </p>
+
+    <h3>제안</h3>
+    <div class="panel">
+      <div class="panel__b" style="background:var(--paper-2)">
+        <div class="cgrid" id="cards"></div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:.7rem">
+      <b>카드 아래에 버튼이 없다.</b> 상태를 얼굴이 말하기로 한 이상, 그 아래 <code>도는 중</code> 이라고
+      한 번 더 적고 <code>멈추기</code> 를 세우면 <b>같은 사실을 두 번</b> 말하는 것이다.
+      얼굴이 곧 손잡이다 — 위 격자에서 카드에 마우스를 올려 보면 된다.
+    </p>
+
+    <h3>얼굴 하나가 상태와 손잡이를 겸한다</h3>
+    <div class="panel">
+      <div class="panel__b" style="background:#FAFAF9">
+        <div class="faces5" id="faces5"></div>
+      </div>
+    </div>
+
+    <div class="flist" style="margin-top:1.2rem">
+      <div class="fitem">
+        <div class="fitem__k">카드에 올리는 것은 <b>셋</b></div>
+        <div class="fitem__v"><b>하네스·모델</b>(<code>AgentConfig.harness</code>·<code>model</code>) · <b>러너 버전</b>(<code>runnerVersion</code>) · <b>마지막 활동</b>(<code>lastActivityAt</code>). 셋이다 — <b>상태는 얼굴이 말하므로 글자로 적지 않는다</b>. 카드는 세로로 길고, 얼굴이 <b>88px</b> 로 서고 셋이 그 아래 쌓인다. 셋 다 <b>여러 에이전트를 나란히 놓고 비교할 때만 뜻이 생기는 값</b>이다 — 그래서 카드에 있고, 하나만 볼 때 필요한 것(작업 디렉터리·소유자·멘션 권한·지시문)은 상세에 남는다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">소유자는 <b>여전히 안 올린다</b></div>
+        <div class="fitem__v">앞 문서에서 뺀 이유가 그대로다 — 한 사람이 다 만든 워크스페이스에서는 <b>모든 카드가 같은 값</b>이라 구별에 아무 기여도 하지 않는다. 값이 갈리기 시작하면 그때 올린다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">카드에 <b>버튼을 두지 않는다</b></div>
+        <div class="fitem__v">상태를 얼굴이 말하기로 정했으면 아래 줄은 <b>같은 말의 반복</b>이다. 손잡이도 얼굴이 겸한다 — 멈춘 것은 <b>▶</b>, 실패한 것은 <b>↻</b> 로 이미 그렇게 하고 있었고, <b>도는 것에 <span style="white-space:nowrap">■</span> 를 더하면 규칙이 완성된다</b>(평소엔 숨고 올리면 뜬다). 버튼 줄이 사라지면서 카드가 짧아지고, <b>남는 세로가 얼굴로 간다</b>.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">숨은 손잡이의 값과 대가</div>
+        <div class="fitem__v"><code>■</code> 만 hover 로 숨는 이유: <b>멈추기는 훑는 동작이 아니다</b>. 지금 켤 수 있는 것이 몇 개인지는 스캔 한 번에 와야 하지만(그래서 <code>▶</code> 는 늘 보인다), 멈출 것은 이미 고른 다음에 찾는다. 대가는 <b>마우스가 없으면 안 보이는 것</b> — 키보드는 <code>focus-visible</code> 에서 뜬다. 소스가 같은 이유로 이미 <code>GLYPH_FOCUS</code> 를 두고 있다(<i>"평소 <code>opacity-50</code> 으로 숨어 있다"</i>).</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">재기동은 <b>버전 칩이 갖는다</b></div>
+        <div class="fitem__v">뒤처진 러너를 다시 띄우는 이유가 <b>버전</b>이므로, 손잡이도 거기 붙는다 — <code>v0.1.1 · 뒤처짐 ↻</code> 자체가 눌린다. 얼굴에 붙이면 <code>↻</code> 가 <b>실패</b>와 <b>뒤처짐</b> 두 가지를 뜻하게 되고, 도는 것을 멈출 방법이 사라진다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">종료 요청 중은 <b>따로 말한다</b></div>
+        <div class="fitem__v"><code>stopRequestedAt</code> 은 있고 <code>stopAckedAt</code> 이 없는 동안은 <b>도는 것도 멈춘 것도 아니다</b> — 얼굴이 반쯤 빠지고 <b>점선 테</b>를 받고 <b>손잡이가 없다</b>(지금 할 수 있는 일이 기다리는 것뿐이다). 글자는 그때만 한 줄 선다. 소스가 이 셋을 접지 말라고 이미 적어 뒀는데(<code>AgentsSettings.tsx</code>) 그 구분이 <b>상세에만</b> 있어서, 격자에서 멀쩡히 도는 것처럼 보이면 사람은 멈추기를 한 번 더 누른다.</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">02</p>
+    <h2>러너 버전 — 숫자만으로는 아무 말도 아니다</h2>
+    <p>
+      <code>runnerVersion</code> 은 <b>이미 서버에서 내려온다</b>. 화면에도 이미 쓰이고 있는데,
+      쓰이는 자리가 격자 아래의 <b>일괄 재기동 띠</b> 하나다 —
+      <code>뒤처진 러너 3대</code>. 그래서 <b>어느 것이 뒤처졌는지는 안 보인다</b>.
+    </p>
+    <div class="panel">
+      <div class="panel__b ui" style="background:#FAFAF9; display:flex; gap:1.6rem; flex-wrap:wrap; align-items:flex-start" id="vers"></div>
+    </div>
+    <div class="says" style="margin-top:1.1rem">
+      <div class="sayr c"><div class="sayk">최신</div><div class="sayv">앱 버전과 같다. <b>회색 칩</b>으로 조용히 적는다 — 정상에는 표시를 붙이지 않는다는 규칙에서, 버전은 예외다. <b>“맞다”를 확인하러 오는 값</b>이라 없으면 매번 상세를 열어야 한다.</div></div>
+      <div class="sayr c"><div class="sayk">뒤처짐</div><div class="sayv">앱보다 낮다. 칩이 주의색을 받고 <b>그 카드에 <code>재기동</code> 이 선다</b>. 일괄 띠는 남되, 띠가 말하는 “3대”가 격자에서 <b>어느 셋인지 보인다</b>.</div></div>
+      <div class="sayr c"><div class="sayk">모름</div><div class="sayv">한 번도 접속하지 않았거나 버전을 안 보낸다. <b>점선 칩</b>. 소스가 이미 정한 규칙 그대로다 — <b>“모르는 것을 뒤처졌다고 하지 않는다”</b>(<code>runnerVersions.ts</code>).</div></div>
+    </div>
+    <h3>상세에는 daemon 이 아는 것까지</h3>
+    <p>
+      <code>RunnerInfo</code> 에 <code>pid</code> · <code>incarnationId</code> · <code>startedAtMs</code> ·
+      <code>alive</code> · <code>termSentAtMs</code> 가 있고, 이것은 <b>daemon 이 직접 확인한 사실</b>이다.
+      카드에 올릴 것은 아니지만 상세에는 있어야 한다 — 러너가 안 죽을 때 사람이 볼 것이 그것뿐이다.
+    </p>
+    <div class="panel">
+      <div class="panel__b ui"><div id="detail"></div></div>
+    </div>
+    <div class="callout warnout">
+      <p><b>요청한 쪽을 함께 적는다.</b> 종료 요청 경로가 둘인데(사람이 UI 에서 · daemon 이 시그널로)
+      각 필드는 자기 쪽만 안다. 나란히 놓으면 <code>종료 요청함 / alive · 시그널 안 보냄</code> 이
+      모순처럼 읽히는데 <b>둘 다 사실</b>이다 — <code>daemonProtocol.ts</code> 가 그 함정을 적어 뒀다.
+      화면이 <b>누가 요청했는지를 말하지 않으면</b> 사람은 둘 중 하나가 거짓이라고 읽는다.</p>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">03</p>
+    <h2>팀 — 하드코딩이 아니라 <span style="white-space:nowrap">목록 출처가 둘</span>이다</h2>
+    <p>
+      소스를 훑어봤는데 <code>forge</code> 가 박혀 있는 곳은 <b>없다</b>. 팀원도 후보도 전부
+      데이터에서 온다. 그런데 <b>후보를 어디서 가져오는지가 에이전트 화면과 다르다</b>.
+    </p>
+    <div class="says">
+      <div class="sayr"><div class="sayk">에이전트 화면</div><div class="sayv"><code>listAgents()</code> — 서버에 <b>등록된 에이전트 전부</b>.</div></div>
+      <div class="sayr"><div class="sayk">팀 화면</div><div class="sayv"><code>useActiveStore(s =&gt; s.accounts)</code> 에서 <code>kind === 'agent'</code> 필터 — <b>이 클라이언트가 이미 알게 된 계정만</b>. 스토어의 <code>accounts</code> 는 채널·DM·메시지를 보다가 채워진다.</div></div>
+    </div>
+    <p style="margin-top:1rem">
+      그래서 <b>채널에도 DM 에도 아직 나타난 적 없는 에이전트는 후보 목록에 안 뜬다</b>.
+      말을 걸어 본 적 있는 <code>forge</code> 만 보였다면 그것이 이유일 가능성이 크다 —
+      박혀 있는 것이 아니라 <b>목록이 덜 온 것</b>이다. 고치는 방법은 화면이 아니라 출처다:
+      <b>두 화면이 같은 <code>listAgents()</code> 를 본다</b>.
+    </p>
+
+    <h3>그리고 화면 자체가 옛 모양이다</h3>
+    <div class="wrapflex" style="margin-top:.4rem">
+      <div>
+        <div class="t" style="margin-bottom:8px">지금 — 설정 › Teams</div>
+        <div class="oldteam" id="oldteam"></div>
+      </div>
+      <div style="flex:1; min-width:250px">
+        <div class="flist" style="border-top:0">
+          <div class="fitem" style="grid-template-columns:9rem 1fr">
+            <div class="fitem__k">왼쪽 목록 · 오른쪽 상세</div>
+            <div class="fitem__v">에이전트 화면에서 <b>방금 걷어낸 그 모양</b>이 팀에 그대로 남아 있다.</div>
+          </div>
+          <div class="fitem" style="grid-template-columns:9rem 1fr">
+            <div class="fitem__k">팀원이 글자다</div>
+            <div class="fitem__v"><code>@handle</code> 텍스트 줄. 옆 화면은 얼굴 그리드인데 <b>같은 에이전트가 여기서는 얼굴이 없다</b>.</div>
+          </div>
+          <div class="fitem" style="grid-template-columns:9rem 1fr">
+            <div class="fitem__k">추가가 네이티브 select</div>
+            <div class="fitem__v">macOS 기본 <code>⌃⌄</code> 그대로. B3 에서 없애기로 한 바로 그것이고, <b>고르면서 얼굴을 볼 수 없다</b>.</div>
+          </div>
+          <div class="fitem" style="grid-template-columns:9rem 1fr">
+            <div class="fitem__k">이름의 뜻이 안 보인다</div>
+            <div class="fitem__v">팀 이름은 <code>HANDLE_PATTERN</code> 을 쓴다 — <b>계정과 같은 네임스페이스</b>다. 즉 <code>@release</code> 로 부르면 팀 전체가 깬다. 화면은 그 사실을 <b>한 글자도 말하지 않는다</b>.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3>제안 — 팀도 같은 카드다</h3>
+    <p>
+      팀은 <b>에이전트를 묶는 일</b>이다. 묶을 대상이 옆 화면에 있으면 사람은
+      <b>이름을 외워서 옮겨 적는다</b>. 설정 › 에이전트에 묶음 둘을 두고,
+      팀 카드는 <b>에이전트 카드와 같은 틀</b>을 쓴다 — 세로로 길고, 얼굴 자리가 88px 이고,
+      상태는 얼굴이 말하고, 글자는 예외에만 붙는다. 다른 것은 <b>얼굴 자리에 얼굴이 여럿</b>이라는 것뿐이다.
+    </p>
+    <div class="panel">
+      <div class="panel__b" style="padding:0; background:#FAFAF9">
+        <div class="scr">
+          <div class="tabs"><span class="tab on">에이전트</span><span class="tab">팀</span></div>
+          <div class="tbody"><div class="tgrid" id="teams"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:1.2rem">
+      <div class="panel__h">팀원 고르기 <span class="tag">에이전트 그리드와 같은 카드</span></div>
+      <div class="panel__b" style="background:var(--paper-2); display:flex; gap:1.5rem; flex-wrap:wrap; align-items:flex-start">
+        <div class="picker" id="picker"></div>
+        <p class="note" style="flex:1; min-width:220px; margin:0">
+          후보는 <code>listAgents()</code> 하나에서 온다 — <b>등록된 전부</b>가 여기 뜬다.
+          얼굴로 고르므로 이름을 외울 필요가 없고, 검색은 에이전트 격자와 <b>같은 검색</b>
+          (이름과 설명을 함께 훑는다). 멈춘 에이전트도 <b>고를 수 있다</b> —
+          팀에 넣는 것과 지금 도는 것은 다른 일이다.
+        </p>
+      </div>
+    </div>
+
+    <div class="flist" style="margin-top:1.2rem">
+      <div class="fitem">
+        <div class="fitem__k">얼굴 자리에 <b>얼굴들</b>이 온다</div>
+        <div class="fitem__v">팀에는 얼굴이 없지만 <b>팀원들의 얼굴이 곧 그 팀</b>이다. 88px 자리에 44px 얼굴 넷까지 겹쳐 세우고 나머지는 <code>+N</code>. 각 얼굴이 <b>자기 상태를 그대로</b> 지니므로, 팀 카드는 상태 글자 없이도 <b>“이 팀에 하나가 죽어 있다”</b>를 말한다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">겹치는 순서가 <b>고장난 것부터</b></div>
+        <div class="fitem__v">실패 → 멈춤 → 도는 중 순으로 왼쪽에 서고 왼쪽이 위로 겹친다. 이름순으로 겹치면 <b>붉은 테가 옆 얼굴에 잘려</b> 사라지고, 다섯 중 하나가 죽은 팀이 멀쩡한 팀과 같아 보인다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">카드가 말하는 것은 <b>채널</b> 하나</div>
+        <div class="fitem__v">팀원 수는 이름 아래 한 줄(<code>팀 · 5명</code>)이고, 유일한 메타 행은 <b>어느 채널에서 자동으로 불리는가</b>다 — 그것이 팀의 <b>쓸모</b>다. 팀원 이름을 글자로 나열하지 않는다: 얼굴이 이미 있고, 다섯을 적으면 카드가 목록이 된다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">비활성 팀원은 <b>예외 줄</b>로</div>
+        <div class="fitem__v">서버가 <code>disabled</code> 를 실어 보내고(<code>AgentTeamMemberRow</code>) 팀 호출에서 <code>skipped</code> 로 빠진다. 지우면 <b>왜 안 불렸는지</b>를 알 수 없으므로 얼굴은 남기고, 카드 맨 아래 <b>실패 사유와 같은 자리</b>에 한 줄을 준다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">팀 얼굴은 <b>손잡이가 아니다</b></div>
+        <div class="fitem__v">에이전트 카드는 얼굴이 <code>▶</code>·<code>■</code>·<code>↻</code> 를 겸하지만, 44px 얼굴 다섯에 각각 손잡이를 달면 <b>어느 것을 눌렀는지 알 수 없다</b>. 팀 카드는 <b>카드 전체가 상세로 가는 문</b>이고, 팀원을 켜고 끄는 일은 에이전트 묶음에서 한다.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k"><code>Handle Groups</code> 와의 관계를 정해야 한다</div>
+        <div class="fitem__v">둘 다 <b>여럿을 한 이름으로 부르는 장치</b>이고 같은 네임스페이스를 쓴다. 지금은 설정 목차에 <b>나란히 두 항목</b>으로 서 있어서, 사람은 <code>@release</code> 를 만들 때 어느 쪽으로 가야 하는지 알 수 없다. <b>이 문서가 정하지 않는 열린 결정</b>이다 — 합칠지, 갈라 두고 각 화면이 서로를 가리킬지.</div>
+      </div>
+      <div class="fitem">
+        <div class="fitem__k">삭제 확인은 <b>지금 것이 맞다</b></div>
+        <div class="fitem__v">인라인 확인(<code>정말 지우는가?</code>)은 Tauri 웹뷰에서 <code>window.confirm</code> 이 막힐 수 있어서 택한 방식이고 선례도 있다. <b>그대로 둔다</b> — 다만 버튼 모양만 프리미티브를 통과한다.</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">순서</p>
+    <h2>무엇부터</h2>
+    <div class="gap">
+      <div class="gapr"><span class="gapn">1</span><div>
+        <p class="gapt">팀 후보를 <code>listAgents()</code> 로 <span class="t">— 몇 줄</span></p>
+        <p class="gapb">화면을 하나도 안 고치고 <b>“왜 forge 만 보이나”가 먼저 사라진다</b>. 결함이지 디자인이 아니므로 디자인을 기다릴 이유가 없다.</p></div></div>
+      <div class="gapr"><span class="gapn">2</span><div>
+        <p class="gapt">카드에 셋을 얹는다 <span class="t">— place='settings' 만</span></p>
+        <p class="gapb">하네스·모델 · 버전 칩 · 마지막 활동. 얼굴에 <code>■</code> 를 더하고 버튼 줄은 두지 않는다. <code>AgentGrid</code> 의 <code>place</code> 축이 이미 있으니 <b>사이드바는 한 픽셀도 안 바뀐다</b>(회귀선이 그것을 지키고 있다).</p></div></div>
+      <div class="gapr"><span class="gapn">3</span><div>
+        <p class="gapt">상세에 daemon 사실을 붙인다</p>
+        <p class="gapb"><code>pid</code> · 세대 · 가동 시간 · <code>alive</code> · 종료 요청(<b>누가 했는지 함께</b>). 데이터는 이미 온다.</p></div></div>
+      <div class="gapr"><span class="gapn">4</span><div>
+        <p class="gapt">팀을 에이전트 화면 안으로</p>
+        <p class="gapb">묶음 둘 · 팀 카드 · 그리드로 고르기. 설정 목차의 <code>Teams</code> 는 사라진다. <code>Handle Groups</code> 를 어떻게 할지는 <b>이때 정해야 한다</b>.</p></div></div>
+    </div>
+    <div class="callout warnout">
+      <p><b>확인하지 못한 것.</b> 앱 창이 다른 데스크톱으로 가 있어 <b>화면을 직접 누르지는 못했고</b>,
+      이 문서는 <code>origin/main</code> 소스를 읽어 쓴 것이다. 데이터·구조에 대한 진술은 소스가 근거라
+      단단하지만, <b>지금 화면에 실제로 무엇이 보이는지</b>는 다를 수 있다 —
+      특히 격자 아래 일괄 재기동 띠의 지금 모양은 확인하지 못했다.</p>
+    </div>
+  </section>
+
+  <footer>murmur · 설정 › 에이전트 — 카드와 팀 · origin/main 소스 확인</footer>
+</div>
+
+<script>
+  const COLORS = ['#ef4444','#f97316','#d97706','#65a30d','#059669','#0d9488','#0891b2','#0284c7','#3b82f6','#8b5cf6','#d946ef','#f43f5e'];
+  function handleColor(h){ let x=0; for(let i=0;i<h.length;i++){ x=(x<<5)-x+h.charCodeAt(i); x|=0; } return COLORS[Math.abs(x)%COLORS.length]; }
+  const el=(t,c,s)=>{const n=document.createElement(t); if(c)n.className=c; if(s)n.setAttribute('style',s); return n;};
+  const av=(h,px)=>{const s=el('span','av',`width:${px}px;height:${px}px;font-size:${Math.round(px*0.44)}px;background:${handleColor(h)}`); s.textContent=h[0].toUpperCase(); return s;};
+  function face(h,px,st,opt){
+    opt = opt || {};
+    const cls = st==='off' ? ' off' : st==='bad' ? ' bad' : st==='wait' ? ' wait' : '';
+    const w=el('span','avdot'+cls,`width:${px}px;height:${px}px`);
+    w.appendChild(av(h,px));
+    const fs = `font-size:${Math.round(px*0.3)}px`;
+    if(st==='off'||st==='bad'){
+      const o=el('span','ov',fs); o.textContent = st==='off'?'▶':'↻'; w.appendChild(o);
+    } else if(st==='on' && opt.stop){
+      w.classList.add('stoppable');
+      if(opt.shown) w.classList.add('shown');
+      const o=el('span','ov hoverable'+(opt.shown?' shown':''),fs);
+      const sq=Math.max(8, Math.round(px*0.22));
+      o.appendChild(el('span',null,`width:${sq}px;height:${sq}px;border-radius:2px;background:#fff;display:block`));
+      w.appendChild(o);
+    }
+    return w;
+  }
+
+  const A=[
+    {h:'alpha', st:'on',  harness:'claude-code', model:'sonnet-4.6', ver:'0.1.3', app:'0.1.3', last:'11분 전', hoverDemo:true},
+    {h:'beta',  st:'on',  harness:'codex',       model:'하네스 기본값', ver:'0.1.1', app:'0.1.3', last:'2시간 전'},
+    {h:'gamma', st:'off', harness:'claude-code', model:'하네스 기본값', ver:null,    app:'0.1.3', last:'어제'},
+    {h:'forge', st:'bad', harness:'claude-code', model:'opus-4.6',    ver:'0.1.3', app:'0.1.3', last:'12분 전', why:'PAT 가 폐기되었다'},
+    {h:'triage',st:'on',  harness:'claude-code', model:'haiku-4.6',   ver:'0.1.3', app:'0.1.3', last:'방금', stopping:true},
+  ];
+
+  /* 지금 — 원형 */
+  const og=document.getElementById('old');
+  const add0=el('div','oldc');
+  const b0=el('div',null,'width:56px;height:56px;border:1.5px dashed #CFCBC3;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#A8A49C;font-size:24px'); b0.textContent='+';
+  add0.appendChild(b0); const n0=el('div','nm'); n0.textContent='새로'; add0.appendChild(n0); og.appendChild(add0);
+  A.forEach(a=>{
+    const c=el('div','oldc'+(a.st!=='on'?' dim':''));
+    c.appendChild(face(a.h,56,a.st));
+    const n=el('div','nm'); n.textContent=a.h; c.appendChild(n);
+    if(a.st==='bad'){ const w=el('div','why'); w.textContent=a.why; c.appendChild(w); }
+    og.appendChild(c);
+  });
+
+  /* 제안 — 네모 카드 */
+  function verChip(a){
+    if(!a.ver){ const s=el('span','vchip unk'); s.textContent='버전 모름'; return s; }
+    const stale = a.ver !== a.app;
+    const s=el('span','vchip'+(stale?' stale':''));
+    if(stale){ s.innerHTML='v'+a.ver+' · 뒤처짐 <span style="font-size:11px">↻</span>'; }
+    else s.textContent='v'+a.ver;
+    return s;
+  }
+  function metaRow(k,v,sub){
+    const r=el('div','mrow');
+    const a=el('span','k'); a.textContent=k; r.appendChild(a);
+    const b=el('span','v');
+    b.textContent=v;
+    if(sub){ b.appendChild(document.createElement('br')); const s2=el('span','sub'); s2.textContent=sub; b.appendChild(s2); }
+    r.appendChild(b);
+    return r;
+  }
+  const cg=document.getElementById('cards');
+  const addc=el('div','card new');
+  const p=el('div','p'); p.textContent='+'; addc.appendChild(p);
+  const at=el('div',null,'font-size:12.5px'); at.textContent='새 에이전트'; addc.appendChild(at); cg.appendChild(addc);
+  A.forEach(a=>{
+    const st = a.stopping ? 'wait' : a.st;
+    const c=el('div','card'+(st==='off'?' off':st==='bad'?' bad':''));
+    c.appendChild(face(a.h,88,st,{stop:true, shown:a.hoverDemo}));
+    const n1=el('div','card__nm'); n1.textContent=a.h; c.appendChild(n1);
+    const n2=el('div','card__h'); n2.textContent='@'+a.h; c.appendChild(n2);
+
+    const m=el('div','card__meta');
+    m.appendChild(metaRow('하네스', a.harness, a.model));
+    const vr=el('div','mrow');
+    const vk=el('span','k'); vk.textContent='러너'; vr.appendChild(vk);
+    const vv=el('span','v'); vv.appendChild(verChip(a)); vr.appendChild(vv);
+    m.appendChild(vr);
+    m.appendChild(metaRow('활동', a.last));
+    c.appendChild(m);
+
+    if(st==='bad'){ const e=el('div','exc'); e.textContent=a.why; c.appendChild(e); }
+    if(st==='wait'){ const e=el('div','exc quiet'); e.textContent='멈추는 중 · 러너가 아직 못 봤다'; c.appendChild(e); }
+    cg.appendChild(c);
+  });
+
+  /* 얼굴이 말하는 다섯 */
+  const F=document.getElementById('faces5');
+  [['alpha','on',{},'도는 중','장식 없음'],
+   ['alpha','on',{stop:true,shown:true},'도는 중 · 올렸을 때','■ 로 멈춘다'],
+   ['triage','wait',{},'멈추는 중','점선 · 손잡이 없음'],
+   ['gamma','off',{},'멈춤','▶ 로 켠다'],
+   ['forge','bad',{},'실패','↻ 로 다시 · 사유는 글자']
+  ].forEach(([h,st,opt,t,d])=>{
+    const c=el('div');
+    const bx=el('div','bx'); bx.appendChild(face(h,58,st,opt)); c.appendChild(bx);
+    const n=el('div','n'); n.textContent=t; c.appendChild(n);
+    const s2=el('div','d'); s2.textContent=d; c.appendChild(s2);
+    F.appendChild(c);
+  });
+
+  /* 버전 칩 세 가지 */
+  const vs=document.getElementById('vers');
+  [[{ver:'0.1.3',app:'0.1.3'},'최신','앱과 같다'],
+   [{ver:'0.1.1',app:'0.1.3'},'뒤처짐','그 카드에 재기동이 선다'],
+   [{ver:null},'모름','한 번도 접속하지 않았다']].forEach(([a,t,d])=>{
+    const c=el('div',null,'text-align:center;min-width:120px');
+    const box=el('div',null,'height:34px;display:flex;align-items:center;justify-content:center');
+    box.appendChild(verChip(a)); c.appendChild(box);
+    const n=el('div',null,'font-size:12px;font-weight:600;color:#3C3A35'); n.textContent=t; c.appendChild(n);
+    const s=el('div',null,'font-size:10.5px;color:#8A867E;margin-top:2px'); s.textContent=d; c.appendChild(s);
+    vs.appendChild(c);
+  });
+
+  /* 상세 — daemon 사실 */
+  const D=document.getElementById('detail');
+  const dt=el('div',null,'max-width:520px');
+  const h=el('div',null,'display:flex;gap:10px;align-items:center;margin-bottom:11px');
+  h.appendChild(face('forge',36,'bad'));
+  const hb=el('div');
+  const h1=el('div',null,'font-weight:600;font-size:13.5px'); h1.textContent='forge'; hb.appendChild(h1);
+  const h2=el('div',null,'font-size:11px;color:#B8431F'); h2.textContent='기동 실패 · PAT 가 폐기되었다'; hb.appendChild(h2);
+  h.appendChild(hb); dt.appendChild(h);
+  const sec=el('div',null,'font-size:11px;color:#8A867E;margin:0 0 6px');
+  sec.textContent='러너 — daemon 이 직접 확인한 것'; dt.appendChild(sec);
+  const tbl=el('div',null,'border:1px solid #EFEEEB;border-radius:8px;overflow:hidden');
+  [['버전','v0.1.3 · 앱과 같다'],
+   ['pid','48127 · 세대 3'],
+   ['가동','2026-09-07 16:05 부터 · 4시간 12분'],
+   ['생사','alive — kill(pid, 0) 확인'],
+   ['종료 요청','사람이 UI 에서 10:23 · 러너가 아직 못 읽음'],
+   ['시그널','daemon 은 안 보냈다']
+  ].forEach(([k,v],i)=>{
+    const r=el('div',null,'display:flex;gap:12px;padding:6px 11px;font-size:11.5px;'+(i%2?'background:#FAFAF9':'background:#fff'));
+    const a=el('span',null,'color:#93908A;width:66px;flex:none'); a.textContent=k; r.appendChild(a);
+    const b=el('span',null,'color:#3C3A35;font-family:var(--mono);font-size:10.5px'); b.textContent=v; r.appendChild(b);
+    tbl.appendChild(r);
+  });
+  dt.appendChild(tbl); D.appendChild(dt);
+
+  /* 지금 팀 화면 */
+  const ot=document.getElementById('oldteam');
+  ot.innerHTML='<div class="oldteam__h">Edit release</div>';
+  const ob=el('div','oldteam__b');
+  const lab=el('div',null,'font-size:11px;color:#8A867E;margin-bottom:6px'); lab.textContent='팀원'; ob.appendChild(lab);
+  ['forge'].forEach(h=>{
+    const r=el('div','oldrow2');
+    const s=el('span',null,'font-size:12.5px'); s.textContent='@'+h; r.appendChild(s);
+    const x=el('span',null,'font-size:11px;color:#B8431F'); x.textContent='빼기'; r.appendChild(x);
+    ob.appendChild(r);
+  });
+  const sel=el('div','selnat','margin-top:7px'); sel.textContent='에이전트 선택…'; ob.appendChild(sel);
+  const note=el('div',null,'font-size:10px;color:#B8431F;margin-top:7px;line-height:1.4');
+  note.textContent='후보가 스토어에서 온다 — 말을 걸어 본 적 없는 에이전트는 안 뜬다';
+  ob.appendChild(note);
+  ot.appendChild(ob);
+
+  /* 제안 — 팀 카드 (에이전트 카드와 같은 틀) */
+  const T=document.getElementById('teams');
+  function teamCard(name, members, channels, exc){
+    const c=el('div','tcard');
+    const fw=el('div','tface');
+    const rank={bad:0, off:1, wait:2, on:3};
+    const sorted=[...members].sort((x,y)=>rank[x[1]]-rank[y[1]]);
+    sorted.slice(0,4).forEach(([h,st],i)=>{
+      const f=face(h,44,st);
+      f.style.zIndex=String(10-i);   // 왼쪽이 위 — 실패한 얼굴의 붉은 테가 안 잘린다
+      fw.appendChild(f);
+    });
+    if(members.length>4){ const m=el('span','more','position:relative;z-index:5'); m.textContent='+'+(members.length-4); fw.appendChild(m); }
+    c.appendChild(fw);
+    const n=el('div','tcard__nm'); n.textContent='@'+name; c.appendChild(n);
+    const s2=el('div','tcard__s'); s2.textContent='팀 · '+members.length+'명'; c.appendChild(s2);
+    const m2=el('div','tcard__meta');
+    m2.appendChild(metaRow('채널', channels || '아직 없다'));
+    c.appendChild(m2);
+    if(exc){ const e=el('div','exc quiet'); e.textContent=exc; c.appendChild(e); }
+    T.appendChild(c);
+  }
+  const addt=el('div','tcard new');
+  const tp=el('div','p'); tp.textContent='+'; addt.appendChild(tp);
+  const tt=el('div',null,'font-size:12.5px'); tt.textContent='새 팀'; addt.appendChild(tt); T.appendChild(addt);
+
+  teamCard('release', [['forge','bad'],['triage','on'],['beta','on'],['alpha','on'],['docs','on']],
+           '#release · #deploy', 'beta 는 비활성 — 호출에서 빠진다');
+  teamCard('review', [['alpha','on'],['gamma','off']], '#dev');
+  teamCard('nightly', [['bench','on'],['relay','bad'],['watch','on']], null);
+
+  /* 팀원 고르기 */
+  const P=document.getElementById('picker');
+  const ps=el('div','picker__s'); ps.innerHTML='<span>⌕</span><span>이름 · 설명으로 찾기</span>'; P.appendChild(ps);
+  const pg=el('div','picker__g');
+  [['forge','bad',true],['triage','on',true],['beta','on',true],['alpha','on',false],
+   ['gamma','off',false],['docs','on',false],['bench','on',false],['relay','bad',false]].forEach(([h,st,sel])=>{
+    const c=el('div','pcell'+(sel?' sel':''));
+    const w=el('div',null,'position:relative;display:inline-block');
+    w.appendChild(face(h,46,st));
+    if(sel){ const t=el('span','tick'); t.textContent='✓'; w.appendChild(t); }
+    c.appendChild(w);
+    const n=el('div','nm2'); n.textContent=h; c.appendChild(n);
+    pg.appendChild(c);
+  });
+  P.appendChild(pg);
+</script>
+</body>
+</html>
