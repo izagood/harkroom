@@ -2,6 +2,9 @@ import { useMemo, useState } from 'react';
 import type { AgentView } from '@murmur/shared';
 import { Identity } from '../Identity';
 import type { RunnerState } from '../../lib/runnerLauncher';
+// B1 의 세 얼굴 규칙은 `lib/faceState.ts` 하나가 낸다 — DM 목록도 같은 판정을 쓴다
+// (`docs/desktop-rail.html` 2단계). 여기 사본을 두면 두 화면이 같은 러너를 다르게 그린다.
+import { faceState } from '../../lib/faceState';
 
 /**
  * 에이전트 그리드 + 검색(identity 문서 · Task 15-2).
@@ -250,85 +253,4 @@ export function AgentGrid({
       })()}
     </div>
   );
-}
-
-/**
- * 아바타가 갈리는 **네 가지**(문서: "상태는 사진이 말한다").
- *
- * - `ok`      그냥 사진. 정상이 기본값이므로 아무 장식도 없다
- * - `stopped` 색이 빠지고 ▶ — 누르면 그 자리에서 켜진다
- * - `failed`  붉은 테와 ↻, 그리고 **사유 한 줄**(유일하게 글자가 느는 상태)
- * - `unknown` **모른다** — `#443` 이 만든 것
- *
- * ## `unknown` 이 왜 생겼나 — `ok` 도 거짓말이었다 (실측 2026-09-06, 릴리즈 `.app`)
- *
- * 앞 판본의 주석은 이렇게 적혀 있었다:
- *
- * > **생존을 모르면 `ok` 로 둔다.** … 소켓이 잠깐 끊긴 동안 40개가 전부 회색으로
- * > 가라앉으면 그것도 거짓말이다.
- *
- * **뒤 문장은 옳고 앞 문장은 틀렸다.** 회색이 거짓말인 것과 똑같이 `ok`(그냥 사진, 초록)
- * 도 거짓말이다 — 서버가 죽은 순간 화면은 이랬다:
- *
- * ```
- * 타이틀 옆 점       🔴 빨강        ← 맞음
- * 에이전트 6개       전부 초록      ← 거짓. 실제로는 알 수 없음
- * ```
- *
- * 두 거짓말 사이에서 하나를 고를 이유가 없었다. **모른다고 말하는 값이 없었을 뿐이다.**
- * 그래서 `#368` 의 규율을 그대로 적용한다: 모르면 모른다고 한다.
- *
- * ## daemon 과 서버가 어긋날 때 — **daemon 이 이긴다. 다만 자기가 아는 것에 한해서**
- *
- * `#482` 이후 두 출처가 같은 질문에 답한다:
- *
- * | 출처 | 무엇을 아는가 | 어떻게 아는가 |
- * |---|---|---|
- * | **daemon** | **자기 장부의 러너**만 | `kill(pid, 0)` — 직접 관측 |
- * | 서버(presence) | 이 계정으로 붙은 러너 전부 | 소켓이 살아 있을 때의 보고 |
- *
- * daemon 은 **자기가 띄운 것만** 장부에 담는다(`#482`: "장부에는 자기가 spawn 한 것만
- * 있으므로 남의 러너에 영향받지 않는다"). 그래서 판정이 두 겹이다:
- *
- * - **내 러너**(`runnerStates` 에 있다) → **daemon 이 이긴다.** `kill(pid,0)` 은 관측이고
- *   presence 는 서버의 보고다. 그리고 결정적으로 **소켓이 끊겨도 daemon 은 안 끊긴다** —
- *   daemon 은 이 앱 옆에 있고 서버는 네트워크 너머에 있다. 끊긴 동안 유일하게 남아 있는
- *   사실이 daemon 의 것이다
- * - **남의 러너**(`runnerStates` 에 없다) → **서버만 안다.** daemon 의 침묵은
- *   "안 돈다"가 아니라 **"내 장부에 없다"** 이므로 그것으로 죽었다고 말할 수 없다.
- *   그래서 서버가 말을 못 하는 동안(`!connected`)은 `unknown` 이다
- *
- * 이 순서가 뒤집히면 `#430` 이 되돌아온다 — 그 이슈가 정확히 "presence 를 판정자로 썼다"
- * 였고, `#482` 가 그것을 daemon 관측으로 옮겼다. 화면만 옛 판정자로 남을 이유가 없다.
- *
- * ## 강조를 쓰지 않는다
- *
- * `unknown` 은 `stopped` 와 **같은 회색조**를 쓰되 ▶ 를 달지 않는다. 강조를 얹지 않는
- * 이유는 `#443` 코멘트에 있다: 연결 끊김은 타이틀 옆 빨간 점이 이미 불러 세우고,
- * 이 얼굴들은 그 사실의 파생이다. 같은 사실로 두 번 붙잡지 않는다.
- *
- * **▶ 를 안 다는 것이 요점이다.** `stopped` 의 ▶ 는 "눌러서 켜라"이고, 지금은 이미 돌고
- * 있을 수도 있는 것을 또 띄우자고 권하는 셈이 된다.
- */
-function faceState(
-  id: string,
-  runnerStates: Record<string, RunnerState>,
-  online: string[],
-  connected: boolean,
-): 'ok' | 'stopped' | 'failed' | 'unknown' {
-  const st = runnerStates[id]?.status;
-  // `needs_harness` 가 여기 든다(`#476`). 앞 판본에 빠져 있어서, 하네스가 없어 죽은 러너가
-  // 격자에서는 **멀쩡한 얼굴**로 보였다 — 사유가 닿는 자리가 사이드바 하나뿐이었다.
-  if (st === 'failed' || st === 'needs_reissue' || st === 'needs_harness') return 'failed';
-
-  // ── daemon 이 아는 것이 먼저다 ─────────────────────────────────────────────
-  // `running`·`adopted` 는 이 앱의 daemon 이 `kill(pid,0)` 로 확인한 것이고(`#482`),
-  // **서버와 끊겨도 그 사실은 안 끊긴다.** 그래서 `connected` 를 보지 않는다.
-  if (st === 'running' || st === 'adopted') return 'ok';
-
-  // ── daemon 이 모르는 것은 서버에 묻는다 ────────────────────────────────────
-  // 남의 기계에서 뜬 러너가 여기 든다(`design.md` §1 외부 접속형). daemon 의 침묵은
-  // "안 돈다"가 아니라 "내 장부에 없다"이므로 그것으로 생사를 말할 수 없다.
-  if (!connected) return 'unknown';
-  return online.includes(id) ? 'ok' : 'stopped';
 }

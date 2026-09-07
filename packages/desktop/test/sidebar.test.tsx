@@ -22,7 +22,7 @@ beforeEach(() => {
     me: acc('u1', 'admin'),
     accounts: { u1: acc('u1', 'admin'), u2: acc('u2', 'bot', 'agent') },
     channels: [chan('c1', 'general'), chan('c2', 'dev', 'main-repo')],
-    dms: [{ id: 'd1', memberIds: ['u1', 'u2'] }],
+    dms: [{ id: 'd1', memberIds: ['u1', 'u2'], lastMessageAt: null }],
     unread: [
       { id: 1, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c2' , authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null},
       { id: 2, messageId: 'm2', reason: 'dm', readAt: null, channelId: 'd1' , authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null},
@@ -284,11 +284,19 @@ describe('Sidebar', () => {
     expect(c.openChannel).toHaveBeenCalledWith('c2');
   });
 
-  it('shows dm with peer handle, presence dot, unread badge', () => {
+  it('shows dm with peer handle, state on the avatar, unread badge', () => {
+    // 상태를 담는 자리가 점에서 아바타로 옮겨갔다(`docs/desktop-rail.html` 2단계 ·
+    // `Sidebar.tsx` 의 `dmRow`). 여기서 `u2` 는 **에이전트**라 `faceState` 가 판정하고,
+    // 붙어 있고(`online`) 러너 기록이 없으므로 `ok` 다.
     fakeController();
     render(<Sidebar panel="dm" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
-    expect(screen.getByText('bot')).toBeTruthy();
-    expect(screen.getByTestId('presence-d1').dataset.online).toBe('online');
+    // `Identity` 가 핸들을 `sr-only` 로도 내므로 **보이는 이름 하나 + 아바타의 sr-only
+    // 하나 = 2** 다(`chatAvatars.test.tsx` 가 같은 셈을 적어 뒀다). 여기서 재려는 것은
+    // "줄에 상대 이름이 글자로 있다"이므로 **보이는 쪽**을 고른다 — `truncate` 가 그 자리다.
+    // `getByText` 로 뭉뚱그리면 아바타가 이름을 두 번 그려도 초록으로 남는다(`#365`).
+    const label = screen.getByText('bot', { selector: '.truncate' });
+    expect(label).toBeTruthy();
+    expect(screen.getByTestId('dm-face-d1').dataset.face).toBe('ok');
     expect(screen.getByTestId('unread-d1').textContent).toBe('1');
   });
 

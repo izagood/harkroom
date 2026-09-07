@@ -212,7 +212,7 @@ describe('ChannelPane', () => {
   it('addresses the composer to the person in a DM, without a channel prefix', () => {
     fakeController();
     useAppStore.getState().set({
-      dms: [{ id: 'd1', memberIds: ['u1', 'u2'] }],
+      dms: [{ id: 'd1', memberIds: ['u1', 'u2'], lastMessageAt: null }],
       activeChannelId: 'd1',
       messages: { d1: [] },
     });
