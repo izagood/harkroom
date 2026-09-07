@@ -195,7 +195,7 @@ export function HandleGroupsSettings() {
           >
             <span className="font-medium">@{g.handle}</span>
             <GroupBadge group={g} />
-            <span className="ml-1 truncate text-[10px] text-fg-subtle">{g.displayName}</span>
+            <span className="ml-1 truncate text-[11px] text-fg-subtle">{g.displayName}</span>
           </button>
         ))}
       </aside>

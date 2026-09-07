@@ -320,7 +320,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               (TerminalChip 이 판정한다) — 이름줄에 두는 이유는 소유자 배지와 같다:
               32px 거터에 넣으면 넘친다(#277). */}
           <TerminalChip account={author} message={message} />
-          {avcsType && <span className="rounded bg-warning-surface-strong px-1 text-[10px] text-warning">{avcsType}</span>}
+          {avcsType && <span className="rounded bg-warning-surface-strong px-1 text-[11px] text-warning">{avcsType}</span>}
           <span className="text-[11px] text-fg-muted">{time}</span>
           {message.editedAt && <span className="text-[11px] text-fg-muted">(edited)</span>}
         </div>
@@ -576,7 +576,7 @@ function AudienceBadge({ message }: { message: MessageRow }) {
     <span
       data-testid="audience-badge"
       data-for-me={forMe}
-      className={`rounded px-1 text-[10px] font-medium ${
+      className={`rounded px-1 text-[11px] font-medium ${
         forMe ? 'bg-accent-surface text-state-turn' : 'text-fg-agent'
       }`}
     >

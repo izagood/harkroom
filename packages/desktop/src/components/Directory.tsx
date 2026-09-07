@@ -130,12 +130,12 @@ export function Directory({ open, onClose, accountId }: Props) {
       <span className="text-fg-muted">@{a.handle}</span>
       <span
         data-testid={`directory-kind-${a.id}`}
-        className="rounded bg-surface-sunken px-1 text-[10px] uppercase tracking-wide text-fg-muted"
+        className="rounded bg-surface-sunken px-1 text-[11px] uppercase tracking-wide text-fg-muted"
       >
         {a.kind}
       </span>
       {a.isAdmin && (
-        <span className="rounded bg-warning-surface px-1 text-[10px] text-warning">admin</span>
+        <span className="rounded bg-warning-surface px-1 text-[11px] text-warning">admin</span>
       )}
       <StatusMark account={a} />
       {a.statusText && <span className="truncate text-[11px] text-fg-subtle">{a.statusText}</span>}
@@ -145,7 +145,7 @@ export function Directory({ open, onClose, accountId }: Props) {
       {a.disabled && (
         <span
           data-testid={`directory-disabled-${a.id}`}
-          className="rounded bg-surface-hover px-1 text-[10px] text-fg"
+          className="rounded bg-surface-hover px-1 text-[11px] text-fg"
         >
           비활성
         </span>
