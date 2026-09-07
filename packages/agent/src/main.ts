@@ -35,6 +35,7 @@ import { createRelayClient } from './relay.js';
 import { createInteractiveManager, type InteractiveManager } from './interactiveTurn.js';
 import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
+import { loadClaudeAccounts, withAccountFailover } from './claudeAccounts.js';
 import { ensureCodexHome } from './codexHome.js';
 
 const config = loadConfig();
@@ -163,6 +164,25 @@ const {
 // 물려주지 않으면서 기존 로그인은 재사용하도록 Murmur 전용 CODEX_HOME 을 준비한다.
 const codexHome = await ensureCodexHome(codexHomeDir);
 
+// claude 계정 풀. **비어 있는 것이 정상이다** — 그때는 `CLAUDE_CONFIG_DIR` 를 주입하지 않아
+// 자식이 시스템 기본(`~/.claude`)을 쓴다(기존 동작).
+//
+// 이것이 필요한 이유: 러너는 `CLAUDE_CONFIG_DIR` 를 설정하지 않아 언제나 시스템 기본 계정에
+// 묶여 있었고, 계정 전환을 그 경로로 하는 도구에서 사람이 계정을 바꿔도 러너에 닿지 않았다
+// (`claudeAccounts.ts` 모듈 주석).
+//
+// `MURMUR_CLAUDE_ACCOUNTS` 에 없는 계정이 오면 이 호출이 던지고 러너는 뜨지 않는다 —
+// 조용히 무시하면 운영자가 계정 B 라고 믿고 띄운 러너가 A 로 돈다.
+const claudeAccounts = await loadClaudeAccounts({ order: process.env.MURMUR_CLAUDE_ACCOUNTS });
+// **이름만 적는다** — 이메일·토큰·Keychain 서비스명은 적지 않는다(PAT 규율과 같다).
+console.log(claudeAccounts.length
+  ? `claude 계정 ${claudeAccounts.length}개: ${claudeAccounts.map((a) => a.name).join(', ')}`
+  : 'claude 계정 풀이 비어 있다 — 시스템 기본 로그인을 쓴다');
+
+// 계정 축에 넘길 배열. 풀이 비면 `[null]` — 루프가 정확히 한 번 돌아 기존 동작과 같아진다
+// (`withAccountFailover` 주석).
+const accountLane = claudeAccounts.length ? claudeAccounts : [null];
+
 // 서버별로 갈리기 전 경로가 남아 있으면 **경고만** 한다 — 자동으로 옮기지 않는다.
 // 코드는 그 디렉터리가 *어느 서버의* 이 handle 것인지 알 방법이 없다(아래 레거시
 // sessions.json 주석과 같은 논리다). 대신 운영자가 판단할 수 있게 명령을 그대로 준다.
@@ -245,8 +265,10 @@ const mentionQueue = new MentionQueue();
 interactive = createInteractiveManager({
   murmur, store, exec, runTurn: runPtyTurn, me,
   workspaceBaseDir, mcpConfigPath, codexHome,
-  // Task 6 이 계정 풀의 첫 계정으로 바꾼다. 지금은 계정 지정 없음(기존 동작).
-  claudeConfigDir: null,
+  // **인터랙티브 턴은 페일오버하지 않는다.** 사람이 앉아 있고, 계정을 바꾸면 그 사람이
+  // 보던 세션이 사라진다(세션 파일이 계정 디렉터리 안에 있다) — 관찰 도중에 화면을 갈아
+  // 치우는 것보다 그 계정의 한도를 그대로 보여 주는 편이 낫다. 그래서 첫 계정에 고정한다.
+  claudeConfigDir: accountLane[0]?.configDir ?? null,
   murmurUrl: config.murmurUrl, pat: config.murmurPat,
   relay, registry, queue: mentionQueue,
   orphanMs: config.interactiveOrphanMs,
@@ -327,7 +349,9 @@ while (running) {
       const tried = (attempts.get(entry.id) ?? 0) + 1;
       attempts.set(entry.id, tried);
       try {
-        const deps: MentionTurnDeps = {
+        // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —
+        // 나머지는 계정과 무관하므로 여기서 한 번만 만든다.
+        const depsBase = {
           murmur, store, exec, runTurn: runPtyTurn, me, guide,
           channelName: byId.get(mention.channelId) ?? 'dm',
           handles, workspaceBaseDir, mcpConfigPath,
@@ -336,9 +360,6 @@ while (running) {
           // 고칠 수 있다.
           stateDir: agentStateDir,
           codexHome,
-          // Task 6 이 계정 축에서 계정별로 채운다. 지금은 계정 지정 없음(기존 동작).
-          claudeAccount: null,
-          claudeConfigDir: null,
           murmurUrl: config.murmurUrl, pat: config.murmurPat,
           turnTimeoutMs: config.turnTimeoutMs,
           relay,
@@ -353,7 +374,7 @@ while (running) {
         // 두 곳에 적으면 나중에 한쪽만 고치는 사고가 난다.
         // mentionId 는 앵커와 **다르다**: 스레드 안 멘션의 앵커는 스레드 루트이고,
         // 리액션 대상은 방금 온 그 멘션이어야 한다.
-        const turn = await runMentionTurn(deps, {
+        const turnArgs = {
           channelId: mention.channelId,
           threadRootId: anchor,
           mentionId: mention.id,
@@ -365,7 +386,29 @@ while (running) {
           // 델타는 자기가 쓴 대기 줄뿐이고 자기 발화는 걸러지므로 프롬프트가 비어, 러너가
           // 하네스를 돌리지 않고 커서만 전진시킨다 — 기다림이 흔적 없이 사라진다.
           ...(entry.reason === 'wake' ? { wake: { reason: mention.body } } : {}),
-        });
+        };
+        // 계정 축(다중 계정). 한도·자격증명 실패를 만나면 **같은 멘션**을 다음 계정으로 다시
+        // 시도한다 — 읽음 처리로 버리지 않는다. 계정을 바꾼 목적이 정확히 그 멘션에 답하게
+        // 하는 것이기 때문이다. 재시도 회계와 별개로 도는 근거는 `withAccountFailover` 주석에
+        // 있다. 풀이 비면 한 번 돌고 아래 실패 경로가 지금과 똑같이 받는다.
+        //
+        // 세션은 `runMentionTurn` 이 계정 변경을 보고 스스로 버린다(`mentionTurn.ts` 의 무효화
+        // 분기) — 여기서 store 를 직접 만지지 않는다. 그 판단이 한 자리에 있어야 인터랙티브
+        // 턴도 같은 규칙을 따른다.
+        const turn = await withAccountFailover(
+          accountLane,
+          (account) => runMentionTurn(
+            {
+              ...depsBase,
+              claudeAccount: account?.name ?? null,
+              claudeConfigDir: account?.configDir ?? null,
+            } satisfies MentionTurnDeps,
+            turnArgs,
+          ),
+          (from, to) => console.error(
+            `  ${entry.messageId} 계정 전환: ${from?.name ?? '(기본)'} → ${to?.name ?? '(기본)'}`,
+          ),
+        );
         done.push(entry.id);
         attempts.delete(entry.id);
         // #129: 종료 요청은 **턴이 끝난 지금** 본다. runMentionTurn 은 턴 시작 직후에
