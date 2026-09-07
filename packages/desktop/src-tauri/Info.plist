@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  번들 Info.plist 에 얹는 항목. Tauri 가 이 파일을 `<productName>.app/Contents/Info.plist`
+  로 병합한다(공식 문서: Distribute > macOS Application Bundle).
+
+  ## 왜 ATS 예외가 필요한가 (실측 2026-09-07)
+
+  macOS App Transport Security 는 평문 http 를 기본으로 막고 **localhost 만 예외**로 둔다.
+  그래서 이 앱은 로컬 개발 서버(`http://localhost:3400`)에는 붙지만, 사용자가 사내에 세운
+  서버(`http://<사내호스트>:3400`)에는 붙지 못했다. 증상은 `ConnectScreen` 의
+  `Could not reach the server` 였는데 **서버 로그에는 요청 자체가 없었다** — OS 가 요청을
+  내보내지 않았기 때문이다:
+
+    com.apple.WebKit.Networking (CFNetwork)
+    NSURLErrorDomain Code=-1022 "…App Transport Security policy requires the use of
+    a secure connection."
+
+  이 앱은 self-host 를 전제로 한다. `docker compose up -d` 가 띄우는 것은 평문 http 3400
+  이고, 사내망에 세우는 서버는 TLS 를 앞에 두지 않는 경우가 흔하다. 그 구성에 붙지 못하면
+  self-host 이야기가 로컬 한 대에서 끝난다.
+
+  ## 왜 웹뷰 범위로만 여는가
+
+  `NSAllowsArbitraryLoadsInWebContent` 는 **웹뷰가 내는 요청**에 대해서만 ATS 를 끈다.
+  이 앱이 평문으로 말해야 하는 상대는 사용자가 세운 murmur 서버뿐이고, 그 통신은 전부
+  웹뷰에서 나간다(`src/lib/api.ts` 의 `fetch`, `src/state/controller.ts` 의 WebSocket).
+  네이티브 쪽에서 나가는 것은 업데이터의 GitHub 호출이고 그것은 https 다 — 그쪽 보호까지
+  걷어낼 이유가 없으므로 앱 전체를 여는 키(ArbitraryLoads 쪽)는 쓰지 않는다.
+  `test/appTransportSecurity.test.ts` 가 이 두 성질을 함께 고정한다.
+
+  ## 대가를 분명히 적는다
+
+  평문 http 로 붙으면 **Bearer 토큰과 메시지가 그대로 흐른다.** 이 예외는 그것을 막지
+  못하며, 막는 것은 서버 앞의 TLS 뿐이다. 그래서 이 키는 "http 로도 붙을 수 있다"를
+  뜻할 뿐이고, "http 로 붙어도 안전하다"를 뜻하지 않는다.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+	</dict>
+</dict>
+</plist>
