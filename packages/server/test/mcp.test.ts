@@ -7,7 +7,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 import { onEvent } from '../src/events.js';
-import { PROJECTION_UNCONFIGURED_NOTICE, readAskMeta, readFailureMeta, readReportMeta } from '@murmur/shared';
+import { readAskMeta, readFailureMeta, readReportMeta } from '@murmur/shared';
 import { recordAskAnswer } from '../src/services/messages.js';
 
 let app: FastifyInstance;
@@ -108,7 +108,7 @@ describe('mcp surface', () => {
       'account.me', 'channel.doc', 'channel.list', 'inbox.poll', 'inbox.read',
       'memory.get', 'memory.list', 'memory.set',
       'message.ask', 'message.fail', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.report', 'message.search', 'message.unreact',
-      'skill.propose', 'work.link', 'workspace.guide',
+      'skill.propose', 'workspace.guide',
     ]);
 
     const posted = text(await client.callTool({
@@ -118,14 +118,7 @@ describe('mcp surface', () => {
       name: 'message.read', arguments: { channelId },
     })) as { messages: { body: string }[] };
     expect(read.messages.some((m) => m.body === 'hello from mcp')).toBe(true);
-
-    const linked = text(await client.callTool({
-      name: 'work.link',
-      arguments: { repo: 'mcp-repo', intentOid: 'i-77', threadRootMessageId: posted.message.id },
-    }));
-    expect(linked).toEqual({
-      ok: true, projectionDisabled: true, warning: PROJECTION_UNCONFIGURED_NOTICE,
-    });
+    expect(posted.message.id).toBeTruthy();
     await client.close();
   });
 
@@ -145,38 +138,6 @@ describe('mcp surface', () => {
     expect(posted.notified).toEqual([adminAccountId]);
     // 봉투에만 실린다 — 메시지 자체는 한 글자도 넓어지지 않는다.
     expect(posted.message).not.toHaveProperty('notified');
-    await client.close();
-  });
-
-  it('work.link rejects a thread root that belongs to a different channel (감사 ②)', async () => {
-    const otherCh = await app.inject({
-      method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
-      payload: { name: 'other-ch' },
-    });
-    const otherChannelId = otherCh.json().id;
-    const otherMsg = await app.inject({
-      method: 'POST', url: `/channels/${otherChannelId}/messages`,
-      headers: { authorization: `Bearer ${adminToken}` },
-      payload: { body: 'root in a channel not bound to mcp-repo' },
-    });
-
-    const client = await mcpClient(botPat);
-    const mismatched = text(await client.callTool({
-      name: 'work.link',
-      arguments: { repo: 'mcp-repo', intentOid: 'i-wrong-channel', threadRootMessageId: otherMsg.json().id },
-    })) as { error?: { code: string } };
-    expect(mismatched.error?.code).toBe('invalid_thread');
-
-    const missing = text(await client.callTool({
-      name: 'work.link',
-      arguments: { repo: 'mcp-repo', intentOid: 'i-missing-root', threadRootMessageId: '00000000-0000-0000-0000-000000000000' },
-    })) as { error?: { code: string } };
-    expect(missing.error?.code).toBe('invalid_thread');
-
-    const wt = await pool.query(
-      `select 1 from work_thread where repo = 'mcp-repo' and intent_oid in ('i-wrong-channel', 'i-missing-root')`,
-    );
-    expect(wt.rowCount).toBe(0);
     await client.close();
   });
 
@@ -345,91 +306,23 @@ describe('MCP 리액션이 실시간 이벤트를 낸다', () => {
   });
 });
 
-/**
- * `#381` — 투영이 꺼져 있으면 `work.link` 가 말없이 성공했다.
+/*
+ * `#381` 회귀선(투영이 꺼진 것을 `work.link` 가 말하되 거절하지 않는다)을 걷어냈다.
+ * 지키던 도구가 사라졌으므로 지킬 성질도 없다 — 단언을 뒤집은 것이 아니라 대상이 없다.
  *
- * 결정은 "거절하지 않고 사실을 싣는다"이므로 회귀선도 **둘 다** 지켜야 한다: 사실이
- * 실리는 것과, **그럼에도 행이 쓰이는 것.** 응답만 보면 행을 안 쓰도록 바꿔도 초록이다
- * (실제로 그랬다 — 되돌림 실험에서 0건이었다).
+ * `work.link` 검증선 셋과 감사 ② 의 채널 불일치 거절선이 함께 사라졌다. 그것들은 모두
+ * "intent 를 어느 스레드에 묶는가"를 지켰다: 남의 채널 뿌리로는 못 묶는다, 없는 뿌리로는
+ * 못 묶는다, 투영이 꺼져 있어도 매핑 행은 남는다. 묶을 대상이 없어졌다.
+ *
+ * `#381` 이 세운 **진짜 성질**은 도구와 함께 사라지지 않았다: "투영이 꺼진 것을 사람에게
+ * 말한다." 그 자리는 화면 배너(`PROJECTION_UNCONFIGURED_NOTICE`)로 남아 있고
+ * `desktop/test/sidebar.test.tsx` 가 지킨다 — repo 를 채널에 붙이는 사람에게 그 상태를
+ * 말하는 자리다. 에이전트에게 말해 줄 이유가 사라진 것은 에이전트가 부를 도구가
+ * 없어졌기 때문이고, 그 사실은 MCP 가 "그런 도구 없음"으로 정직하게 답한다.
+ *
+ * 도구 목록 단언(`lists tools, posts and reads messages`)이 `work.link` 의 부재를
+ * 지킨다 — 껍데기로 되살아나면 그 단언이 빨개진다.
  */
-describe('#381 work.link 은 투영이 꺼진 것을 말하되 거절하지 않는다', () => {
-  const withAvcsBaseUrl = async <T>(value: string | undefined, fn: () => Promise<T>): Promise<T> => {
-    const before = process.env.AVCS_BASE_URL;
-    if (value === undefined) delete process.env.AVCS_BASE_URL;
-    else process.env.AVCS_BASE_URL = value;
-    try {
-      return await fn();
-    } finally {
-      if (before === undefined) delete process.env.AVCS_BASE_URL;
-      else process.env.AVCS_BASE_URL = before;
-    }
-  };
-
-  const postRoot = async (client: Client, body: string): Promise<string> => {
-    const posted = text(await client.callTool({
-      name: 'message.post', arguments: { channelId, body },
-    })) as { message: { id: string } };
-    return posted.message.id;
-  };
-
-  it('투영이 꺼져 있으면 응답이 그 사실을 싣는다 — 화면 배너와 같은 상수다', async () => {
-    const client = await mcpClient(botPat);
-    try {
-      const rootId = await postRoot(client, '#381 꺼짐 응답');
-      const linked = await withAvcsBaseUrl(undefined, async () => text(await client.callTool({
-        name: 'work.link',
-        arguments: { repo: 'mcp-repo', intentOid: 'i-381-off', threadRootMessageId: rootId },
-      }))) as { ok: boolean; projectionDisabled: boolean; warning: string };
-
-      expect(linked.projectionDisabled).toBe(true);
-      // 상수를 **가져와서** 대조한다. 같은 문자열을 여기 적어 두면 이 단언은 자기 사본과
-      // 자기를 비교하는 것이고, 화면 배너가 갈라져도 아무것도 안 지킨다.
-      expect(linked.warning).toBe(PROJECTION_UNCONFIGURED_NOTICE);
-    } finally {
-      await client.close();
-    }
-  });
-
-  it('투영이 꺼져 있어도 work_thread 행은 쓰인다 — 거절이 아니다', async () => {
-    const client = await mcpClient(botPat);
-    try {
-      const rootId = await postRoot(client, '#381 꺼짐 행');
-      const linked = await withAvcsBaseUrl(undefined, async () => text(await client.callTool({
-        name: 'work.link',
-        arguments: { repo: 'mcp-repo', intentOid: 'i-381-row', threadRootMessageId: rootId },
-      }))) as { ok?: boolean; error?: unknown };
-
-      // 거절이 아니다.
-      expect(linked.error).toBeUndefined();
-      expect(linked.ok).toBe(true);
-      // 그리고 행이 실제로 있다 — 투영을 나중에 켜면 이것이 읽힌다.
-      const row = await pool.query(
-        `select thread_root_message_id from work_thread where repo = $1 and intent_oid = $2`,
-        ['mcp-repo', 'i-381-row'],
-      );
-      expect(row.rowCount).toBe(1);
-      expect(row.rows[0].thread_root_message_id).toBe(rootId);
-    } finally {
-      await client.close();
-    }
-  });
-
-  it('투영이 켜져 있으면 문구를 싣지 않는다 — 늘 실으면 소음이다', async () => {
-    const client = await mcpClient(botPat);
-    try {
-      const rootId = await postRoot(client, '#381 켜짐 응답');
-      const linked = await withAvcsBaseUrl('http://127.0.0.1:1/avcs', async () => text(await client.callTool({
-        name: 'work.link',
-        arguments: { repo: 'mcp-repo', intentOid: 'i-381-on', threadRootMessageId: rootId },
-      }))) as Record<string, unknown>;
-
-      expect(linked).toEqual({ ok: true, projectionDisabled: false });
-      expect(Object.keys(linked)).not.toContain('warning');
-    } finally {
-      await client.close();
-    }
-  });
-});
 
 /**
  * 선택 요청(`message.ask`) — 이 계획의 단일 최우선 항목이다. 발행·답·중복 거절과,

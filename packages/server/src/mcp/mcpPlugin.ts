@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import {
-  ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, PROJECTION_UNCONFIGURED_NOTICE,
+  ASK_MAX_OPTIONS, ASK_MIN_OPTIONS,
   REPORT_MAX_ITEMS, REPORT_MAX_NEXT,
   type AccountView, type AskAudience, type AskMeta, type FailureMeta, type ReportMeta,
 } from '@murmur/shared';
@@ -463,52 +463,23 @@ function buildMcpServer(
     return jsonResult({ read });
   });
 
-  server.registerTool('work.link', {
-    description: 'intent를 기존 대화 스레드에 작업 스레드로 연결(명시 링크가 자동 개설을 이긴다)',
-    inputSchema: {
-      repo: z.string().min(1).max(128),
-      intentOid: z.string().min(1).max(128),
-      threadRootMessageId: z.string().uuid(),
-    },
-  }, async ({ repo, intentOid, threadRootMessageId }) => {
-    const msg = await pool.query(`select channel_id from message where id = $1`, [threadRootMessageId]);
-    if (!msg.rowCount) {
-      return jsonResult({ error: { code: 'invalid_thread', message: 'thread root message does not exist' } });
-    }
-    // repo -> 채널 조회에 **가시성 술어를 넣지 않는다.** 이건 avcs 투영의 배선이고,
-    // `listBoundRepos` 와 같은 판단이다: 투영은 사람이 아니라 서버가 하는 일이라 '보는
-    // 계정'이 없다. 여기에 멤버십을 걸면 private 채널에 바인딩된 repo 만 조용히 work_thread
-    // 연결을 잃는다. 결과가 새지 않는 이유는 그 다음 단계다 — 이 채널의 메시지를 실제로
-    // 읽는 것은 `message.read` 이고, 거기에는 술어가 걸려 있다. 즉 투영은 되고, 보이는
-    // 사람이 그 채널의 멤버로 제한된다.
-    const boundChannel = await pool.query(
-      `select id from channel where repo = $1 and kind = 'standard'`, [repo],
-    );
-    if (!boundChannel.rowCount || boundChannel.rows[0].id !== msg.rows[0].channel_id) {
-      return jsonResult({
-        error: { code: 'invalid_thread', message: 'thread root message does not belong to a channel bound to this repo' },
-      });
-    }
-    await pool.query(
-      `insert into work_thread (repo, intent_oid, thread_root_message_id) values ($1, $2, $3)
-       on conflict (repo, intent_oid) do update set thread_root_message_id = excluded.thread_root_message_id`,
-      [repo, intentOid, threadRootMessageId],
-    );
-    /**
-     * 행은 **쓰고 나서** 투영이 꺼졌는지 말한다(#381). 순서가 결정이다.
-     *
-     * 거절하지 않는 이유: 행 자체는 쓸모가 있다 — 투영을 나중에 켜면 그때 읽힌다. 그리고
-     * 투영이 꺼진 것은 **에이전트가 고칠 수 있는 일이 아니다.** 거절은 에이전트를 세우지만
-     * 세워 봤자 할 수 있는 일이 없다. 문제는 실패가 아니라 침묵이었다.
-     *
-     * `warning` 은 꺼져 있을 때만 싣는다. 늘 실으면 그 필드는 곧 배경 소음이 되고,
-     * 정말 꺼진 날에도 아무도 읽지 않는다. 문구는 화면 배너와 **같은 상수**다.
-     */
-    const projectionDisabled = !process.env.AVCS_BASE_URL;
-    return jsonResult(projectionDisabled
-      ? { ok: true, projectionDisabled, warning: PROJECTION_UNCONFIGURED_NOTICE }
-      : { ok: true, projectionDisabled });
-  });
+  /**
+   * `work.link` 를 걷어냈다 — intent 를 기존 대화 스레드에 묶어 그 스레드를 작업
+   * 스레드로 승격시키는 도구였다.
+   *
+   * 그 도구는 **스레드 투영의 배선**이었다. 존재 이유가 "이 intent 의 operation·decision
+   * 을 어느 스레드에 붙일지 정한다"였고, 붙일 자리가 없어진 지금 남길 것이 없다. 쓰던
+   * 테이블(`work_thread`)도 같은 커밋에서 사라진다.
+   *
+   * 대신 껍데기만 남겨 `{ ok: true }` 를 돌려주지 않았다. 그렇게 하면 에이전트는 계속
+   * 호출하고 계속 성공을 받는데 아무 일도 일어나지 않는다 — 그것이 이 도구가 처음
+   * 고치려던 문제(#381: 실패가 아니라 침묵)와 정확히 같은 모양이다. 도구가 없으면
+   * MCP 는 "그런 도구 없음"으로 답하고, 그것이 정직한 답이다. `workspace.guide` 에서도
+   * 이 호출 지시를 함께 지운다 — 가이드가 없는 도구를 부르라고 하면 그 가이드 전체의
+   * 신뢰가 깎인다.
+   *
+   * avcs 객체를 보는 자리는 협업 탭이고, 그 탭은 avcs 로그를 직접 읽는다.
+   */
 
   // memory.list — slug만 돌려주고 값은 주지 않는다(값이 새면 목록 조회가 곧 전체 주입이 된다).
   server.registerTool('memory.list', {
