@@ -17,15 +17,21 @@
   refcount 게이팅), 하트비트 기반 죽은 연결 정리
 - **avcs 투영 루프 end-to-end** — 실제 `@izagood/avcs-server`에
   intent → session → lease → operation ×3 → evidence → decision → lease 반납을 넣고,
-  채널에 시스템 메시지가 스레드 귀속까지 맞게 투영되고 작업 현황판에 lease가 뜨는 것 확인
+  채널에 시스템 메시지가 스레드 귀속까지 맞게 투영되고 작업 현황판에 lease가 뜨는 것 확인.
+  **이후 스레드 투영은 걷어냈다**(#534) — 지금 이 루프가 남기는 것은 lease 뿐이고,
+  시스템 메시지 부분은 이 항목의 기준일에만 유효한 기록이다
+  ([`design.md`](design.md) §3, [`desktop-collab.html`](desktop-collab.html))
 - **에이전트 런타임 end-to-end** — `packages/agent`가 MCP로 붙어 멘션에 답한다. UI로 만든
   에이전트가 UI에 입력한 지시문대로 답하고, 지시문을 고치면 **러너를 재시작하지 않고** 다음
   답변부터 반영된다(`GET /agent/config`를 답변마다 읽는다)
 - **UI로 에이전트 등록·수정** — 이름·지시문·harness·모델·effort·작업 디렉터리. PAT는 생성
   시 한 번만 보인다
 - Tauri 데스크탑 3컬럼 UI, 세션 복원, WS 재연결, 자격증명 만료 안내
-- MCP 도구 9종 — `workspace.guide` `account.me` `channel.list` `message.read`
-  `message.search` `message.post` `inbox.poll` `inbox.read` `work.link`
+- MCP 도구 — `workspace.guide` `account.me` `channel.list` `message.read`
+  `message.search` `message.post` `inbox.poll` `inbox.read` 를 기준일에 확인했다.
+  이 목록에 `work.link`(intent ↔ 스레드 승격)도 있었으나 스레드 투영과 함께 없앴다(#534).
+  **현재 도구 목록은 [`design.md`](design.md) §4 가 정본이다** — 그 뒤로 여럿 늘었고,
+  여기에 개수를 박아 두면 낡는다
 - 이모지 리액션 — 누가 눌렀는지까지. 마지막 사람이 떼면 칩이 사라진다
 - 파일·이미지 첨부 — 이미지는 미리 보인다. 업로드가 메시지보다 먼저 존재하고, 각 업로드
   안에서 파일을 먼저 쓰고 DB 행을 나중에 만든다(되돌릴 수 있는 실패를 고른다)
@@ -135,10 +141,15 @@
   생기는 폴백의 대가이지, 러너의 스레드 격리 설계 자체의 결함이 아니다. 대응은 폴백 진입 시
   경고를 한 줄 남기는 것이고, 이미 그렇게 하고 있다(`workspace.ts:73` — 운영자가 채팅 전용
   에이전트에 avcs 가 아닌 `workingDir` 을 준 것이 격리 포기라는 사실을 알게 한다).
-- **`work.link`** — 도구는 등록돼 있으나 intent ↔ 스레드 승격을 end-to-end로 확인하지 않았다
+- ~~**`work.link`**~~ — 도구는 등록돼 있으나 intent ↔ 스레드 승격을 end-to-end로 확인하지
+  않았다는 항목이었다. **2026-09-07 사라진 것으로 닫혔다**(#534): 그 도구는 스레드 투영의
+  배선이었고 투영을 걷어내면서 함께 없앴으므로 확인할 것이 남지 않았다. 끝까지 확인되지
+  않은 채로 없앤 것이 이 항목의 결말이다
 - **`/search` 품질** — 라우트가 있고 테스트가 통과한다는 것까지만 안다. 한국어 형태소 분석 없이
   `to_tsvector('simple', ...)`을 쓰므로 조사가 붙은 검색어의 재현율을 재 본 적이 없다
-- **투영 규모** — repo 1개 · 채널 1개 · 객체 20여 개 수준에서만 확인했다
+- **투영 규모** — repo 1개 · 채널 1개 · 객체 20여 개 수준에서만 확인했다. 스레드 투영을
+  걷어낸 뒤(#534) 이 항목이 묻는 것은 **lease 접기와 커서 전진**의 규모다 — 메시지 삽입이
+  빠져 트랜잭션은 훨씬 짧아졌지만, 여전히 재 본 적이 없다
 - ~~**에이전트 여러 대 동시 운영**~~ — **2026-09-02 실물로 닫혔다.** 러너 세션 재구축
   ([`docs/specs/2026-09-01-runner-sessions-pty-design.md`](specs/2026-09-01-runner-sessions-pty-design.md))
   Task 11 이 러너 2대(각자 다른 PAT·`AGENT_STATE_DIR`)를 동시에 띄워 한 스레드에 순차로

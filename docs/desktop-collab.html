@@ -249,10 +249,11 @@
   <h1>murmur 가 <em>hub 자리</em>에 선다</h1>
   <p class="lede">
     avcs 협업은 원래 웹 hub 에서 리뷰한다. murmur 의 컨셉은 <b>그 자리를 대신하는 것</b>이다 —
-    대화가 벌어지는 앱에서 제안을 보고 결정한다. 그런데 지금 코드는 반대로 하고 있다:
-    avcs 객체를 <b>채널 스레드로 투영</b>한다.
+    대화가 벌어지는 앱에서 제안을 보고 결정한다. 그런데 코드는 반대로 하고 있었다:
+    avcs 객체를 <b>채널 스레드로 투영</b>했다. 그 투영은 <b>걷어냈다</b>(#534) — 아래 「순서」의
+    0단계가 완료됐고, 이 문서의 나머지는 그 위에 세울 협업 탭의 설계다.
   </p>
-  <div class="meta">murmur · 협업 탭 · 다섯째 문서(재작성) · avcs · avcs-server · avcshub 실측 2026-09-07</div>
+  <div class="meta">murmur · 협업 탭 · 다섯째 문서(재작성) · avcs · avcs-server · avcshub 실측 2026-09-07 · 0단계 완료 반영 2026-09-07</div>
 </header>
 
 <section>
@@ -295,23 +296,25 @@
 
 <section>
   <div class="eyebrow">잘못된 것</div>
-  <h2>지금 코드는 avcs 를 스레드로 투영한다</h2>
+  <h2>코드는 avcs 를 스레드로 투영하고 있었다</h2>
 
   <p>
     <code>server/src/avcs/projection.ts</code> 가 avcs 거버넌스 객체를 murmur
-    <b>채널 메시지</b>로 만든다. 실측한 매핑:
+    <b>채널 메시지</b>로 만들었다. 실측한 매핑 — <b>#534 에서 전부 지웠고</b>, 아래 표는
+    무엇이 있었는지의 기록이다:
   </p>
 
   <div class="panel">
-    <div class="panel__h">지금의 투영<span class="tag">걷어낸다</span></div>
+    <div class="panel__h">걷어낸 투영<span class="tag">#534 · 지웠다</span></div>
     <div class="panel__b">
       <table>
         <thead><tr><th>avcs 객체</th><th>murmur 에서</th></tr></thead>
         <tbody>
-          <tr><td><code>intent</code></td><td>스레드 <b>뿌리</b>가 되고 <code>work_thread</code> 에 매핑된다</td></tr>
+          <tr><td><code>intent</code></td><td>스레드 <b>뿌리</b>가 되고 <code>work_thread</code> 에 매핑됐다</td></tr>
           <tr><td><code>operation</code></td><td>그 스레드 아래 <b>답글</b>(배치 병합)</td></tr>
           <tr><td><code>decision</code>·<code>evidence</code></td><td>그 스레드 아래 답글</td></tr>
           <tr><td><code>checkpoint</code>·<code>release</code>·<code>finalize</code></td><td>채널 메시지</td></tr>
+          <tr><td>MCP <code>work.link</code></td><td>intent 를 기존 대화 스레드에 묶는 도구 — 이 투영의 배선이었다</td></tr>
         </tbody>
       </table>
     </div>
@@ -337,8 +340,10 @@
   </p>
   <p class="note">
     사용자 확인(2026-09-07): <em>"스레드 같은게 avcs 에 연동되는 컨셉이 아니였어."</em>
-    투영은 컨셉을 잘못 구현한 것이므로 <b>걷어낸다.</b> 이미 투영된 <code>system</code>
-    메시지는 기록이라 남기고, <code>lease</code> 투영은 협업 탭이 쓸 재료라 남긴다.
+    투영은 컨셉을 잘못 구현한 것이므로 <b>걷어냈다</b>(#534). 이미 투영된 <code>system</code>
+    메시지는 기록이라 남겼고(한 행도 지우지 않았다), <code>lease</code> 투영은 협업 탭이 쓸
+    재료라 남겼다. <b>과거 메시지가 채널에 보이는 것은 투영이 아직 돈다는 뜻이 아니다</b> —
+    지금 워커가 남기는 것은 <code>active_lease</code> 뿐이다.
   </p>
 </section>
 
@@ -494,9 +499,10 @@
     <tbody>
       <tr>
         <td>0</td>
-        <td><b>스레드 투영을 걷어낸다</b> — <code>projection.ts</code> 의 메시지 생성,
-        <code>work_thread</code>, <code>message_avcs_oid</code>. 이미 투영된 메시지와
-        <code>lease</code>·<code>client.ts</code>·커서는 남긴다</td>
+        <td><b>스레드 투영을 걷어낸다 — 완료(#534)</b> —
+        <code>projection.ts</code> 의 메시지 생성, <code>work_thread</code>,
+        <code>message_avcs_oid</code>, MCP <code>work.link</code>. 이미 투영된 메시지와
+        <code>lease</code>·<code>client.ts</code>·커서는 남겼다</td>
         <td>—</td>
       </tr>
       <tr>

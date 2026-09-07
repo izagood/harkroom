@@ -19,7 +19,11 @@
 
 - WS 티켓, presence 카운터, 레이트 리밋 카운터: 전부 인메모리다. 재시작하면 리셋되고, 클라이언트 재연결이 presence를 다시 세운다.
 - 데스크탑의 토큰(`localStorage`): 재로그인으로 복구된다.
-- 투영된 시스템 메시지: `pgdata`에 있지만 **원본은 avcs 로그다.** 커서를 되돌리면 다시 만들어진다(§3-A).
+
+백업해야 하는 것에 **더해진 것이 하나 있다.** 예전에는 "투영된 시스템 메시지"를 백업하지
+않아도 됐다 — 원본이 avcs 로그였고 커서를 되돌리면 다시 만들어졌기 때문이다. 스레드 투영을
+걷어낸 뒤(§6) **그 메시지는 다시 만들어지지 않는다.** 과거에 투영된 것이 `pgdata` 에만 있고
+avcs 로그로부터 복원할 길이 없으므로, 그 기록을 지키는 것은 이제 `pgdata` 백업뿐이다.
 
 ## 2. 백업 절차
 
@@ -69,14 +73,20 @@ docker compose start server        # 부팅 시 누락 마이그레이션이 적
 
 ### 3-A. murmur만 되돌린 경우 — 안전하다
 
-투영 커서가 과거로 가고, 워커가 이미 투영했던 구간을 다시 읽는다. 시스템 메시지는
-`(repo, oid)` UNIQUE로 중복되지 않고, 커서 전진이 메시지 삽입과 같은 트랜잭션에 있다.
-→ 워커가 조용히 따라잡고 끝난다.
+투영 커서가 과거로 가고, 워커가 이미 접었던 구간을 다시 읽는다. 같은 구간을 다시 접어도
+`active_lease` 는 `(repo, path, actor_key_id)` upsert 라서 행이 늘지 않고, 커서 전진이 그
+upsert 와 같은 트랜잭션에 있다. → 워커가 조용히 따라잡고 끝난다.
+
+멱등성의 근거가 **`(repo, oid)` UNIQUE 인덱스였던 시절이 있다.** 그때는 워커가 avcs 객체를
+시스템 메시지로 만들었고 리플레이가 그 메시지를 두 번 만들지 못하게 막는 것이 관심사였다.
+스레드 투영을 걷어낸 뒤(§6) 만드는 메시지가 없으므로 그 인덱스도 사라졌고, 지금 근거는
+lease upsert 하나다.
 
 근거(테스트): `projection.test.ts` → *"is idempotent: rerun from cursor 0 does not duplicate"*.
 
 사람이 쓴 메시지는 avcs에 없으므로 **덤프 시점 이후의 대화는 돌아오지 않는다.** 그건 복구의
-성질이고 결함이 아니다.
+성질이고 결함이 아니다. 리플레이로 되돌아오지 않는 것이 하나 더 있다: **과거에 투영된
+시스템 메시지.** 커서를 0 으로 내려도 그것은 다시 만들어지지 않는다(§1 참조).
 
 ### 3-B. avcs를 murmur 커서보다 오래된 상태로 되돌린 경우 — 위험하다
 
@@ -121,12 +131,14 @@ update projection_cursor set last_log_index = 0 where repo = 'org/repo';
 - [ ] 복구본으로 서버를 띄우고 `GET /readyz` 200, `GET /healthz`의 `avcs.connected` 확인
 - [ ] 로그인 → 채널 목록 → 메시지 히스토리가 보이는지
 - [ ] 에이전트 PAT로 `inbox.poll` 1회가 정상 응답하는지
-- [ ] repo 바인딩 채널에서 새 avcs 객체가 투영되는지(커서가 전진하는지)
+- [ ] 바인딩된 repo 의 커서가 전진하는지(`GET /projection/status`) — 채널을 보고 판정하지
+      않는다: 투영이 남기는 것은 `lease` 뿐이라 채널에는 아무 일도 일어나지 않는다(§6)
+- [ ] `lease` 객체가 있는 repo 라면 사이드바 ACTIVE WORK 에 뜨는지
 
 ## 6. AVCS_BASE_URL — 투영 활성화와 그 상태 읽기
 
-murmur 는 avcs 서버를 폴링해 intent·operation·decision 같은 객체를 채널 메시지로
-투영한다. 이 투영은 기본적으로 **비활성**이고, 환경변수 하나로 켠다:
+murmur 는 avcs 서버를 폴링해 **`lease` 객체를 `active_lease` 상태로** 투영한다. 이 투영은
+기본적으로 **비활성**이고, 환경변수 하나로 켠다:
 
 ```bash
 AVCS_BASE_URL=https://your-avcs-server.example.com
@@ -136,53 +148,88 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
 루트 `README.md` 와 `docs/design.md` 는 여기를 가리키기만 한다 — 같은 목록을 여러 곳에
 두면 한 곳만 낡고, 낡은 쪽을 읽은 사람이 손해를 본다.
 
+### 먼저 알아야 할 것 — 채널에 보이는 avcs 시스템 메시지는 과거의 것이다
+
+**예전에는 이 워커가 avcs 객체를 채널 메시지로도 만들었다.** `intent` 를 스레드 뿌리로
+세우고 `operation`·`decision`·`evidence` 를 그 아래 답글로, `checkpoint`·`release`·finalize
+를 채널 메시지로 붙였다. #534 가 그것을 걷어냈다 — murmur 의 자리는 제안을 **보는 화면**
+(협업 탭)이고, 제안을 대화로 바꿔 흘려보내는 것은 그 자리가 아니었다. 근거는
+[`desktop-collab.html`](desktop-collab.html) 에 있다.
+
+운영자가 알아야 할 결과는 이것이다:
+
+- **이미 투영된 `system` 메시지는 DB 에 그대로 남아 있다.** 한 행도 지우지 않았다
+  (`040_drop_thread_projection.sql`). 그것은 기록이고, 지우면 그 메시지에 달린 리액션·
+  답글·inbox 항목이 FK 를 타고 연쇄로 사라진다.
+- **그래서 채널에서 avcs 시스템 메시지를 보는 것은 "투영이 아직 돈다"는 뜻이 아니다.**
+  새 avcs 객체가 채널 메시지가 되는 일은 더 이상 없다. 지금 워커가 돌고 있는지는
+  아래 `GET /projection/status` 와 `murmur_projection_cursor` 메트릭으로 판정한다.
+- 같은 이유로 `murmur` 시스템 계정 **행**도 운영 DB 에 남는다(과거 메시지의 저자다).
+  다만 새로 만드는 코드(`ensureSystemAccount`)는 사라졌으므로 **새로 붓는 DB 에는 애초에
+  생기지 않는다.** 둘 다 맞는 상태다.
+- 과거 투영 메시지의 `meta` 에 있던 `(repo, oid)` 유니크 인덱스(`message_avcs_oid`)도
+  같은 마이그레이션에서 사라졌다. 메시지는 계속 조회되고 계속 보이지만, 이제 아무도 그
+  유니크를 요구하지 않는다.
+
 ### 꺼지는 것은 하나다 — 투영 워커
 
 `AVCS_BASE_URL` 을 읽는 자리는 코드 전체에 **셋**뿐이다:
 
 | 자리 | 하는 일 |
 |---|---|
-| `packages/server/src/config.ts:27` | `env.AVCS_BASE_URL ?? null` 을 `config.avcsBaseUrl` 로 읽는다 |
-| `packages/server/src/main.ts:20` | 값이 **있을 때만** `ProjectionWorker` 를 만들고 `start()` 한다 |
-| `packages/server/src/main.ts:30` | 없으면 기동 경고 한 줄을 남긴다(`warnIfProjectionDisabled`) |
+| `packages/server/src/config.ts` | `env.AVCS_BASE_URL ?? null` 을 `config.avcsBaseUrl` 로 읽는다 |
+| `packages/server/src/main.ts` | 값이 **있을 때만** `ProjectionWorker` 를 만들고 `start()` 한다 |
+| `packages/server/src/main.ts` | 없으면 기동 경고 한 줄을 남긴다(`warnIfProjectionDisabled`) |
 
 그래서 꺼지는 것은 **투영 워커 하나**다. 없어지는 라우트도, 404 가 되는 경로도 없다 —
 전부 200 으로 답하고 **결과가 비어 있을 뿐**이다. 그것이 이 절이 필요한 이유다.
 
 | 기능 | 워커가 없을 때 | 그렇게 되는 근거 |
 |---|---|---|
-| avcs 객체 → 채널 시스템 메시지 투영 | 아무것도 들어오지 않는다 | 그 메시지의 유일한 작성자가 `avcs/projection.ts:94` |
-| 사이드바 ACTIVE WORK 의 리스 목록 | `GET /leases` 가 늘 `{leases: []}` | `active_lease` 의 유일한 작성자가 `projection.ts:156` |
-| `murmur_projection_cursor` 메트릭 | 시계열이 **아예 없다**(0 이 아니라 없음) | `projection_cursor` 의 유일한 작성자가 `projection.ts:184` |
-| `GET /healthz` 의 `avcs.connected` | 항상 `false` | `main.ts:38` 이 `DISABLED_PROJECTION_STATUS` 로 답한다 |
-| `murmur` 시스템 계정 | 만들어지지 않는다 | `ensureSystemAccount` 호출이 `main.ts:24`, 즉 `if` 블록 안이다 |
+| 사이드바 ACTIVE WORK 의 리스 목록 | `GET /leases` 가 늘 `{leases: []}` | `active_lease` 의 유일한 작성자가 `projection.ts` 의 `runOnce` |
+| `murmur_projection_cursor` 메트릭 | 시계열이 **아예 없다**(0 이 아니라 없음) | `projection_cursor` 의 유일한 작성자가 같은 `runOnce` |
+| `GET /healthz` 의 `avcs.connected` | 항상 `false` | `main.ts` 의 `getAvcsStatus` 가 `DISABLED_PROJECTION_STATUS` 로 답한다 |
 | 채팅 전부 — 채널·스레드·DM·검색·첨부·반응·WS·PAT·MCP·러너 릴레이 | **그대로 동작한다** | `buildServer.ts` 가 라우트 모듈에 avcs 클라이언트를 넘기지 않는다 |
 
-### 말없이 성공하는 자리 — 여기가 사람을 속인다
+이 표에 **두 줄이 더 있었다.** "avcs 객체 → 채널 시스템 메시지 투영"과 "`murmur` 시스템
+계정"이다. 둘 다 스레드 투영과 함께 사라졌으므로 이제 `AVCS_BASE_URL` 이 있어도 **켜지지
+않는다** — 즉 워커의 유무와 무관한 항목이 됐다. 위 「먼저 알아야 할 것」 참조.
 
-투영이 꺼져 있어도 **성공 응답을 주면서 아무 일도 하지 않는** 경로가 둘 있다. 둘 다
-화면에 표시가 없으므로 미리 알고 있어야 한다.
+### 말없이 성공하는 자리 — 둘 다 닫혔다
 
-- **MCP `work.link`** (`packages/server/src/mcp/mcpPlugin.ts:290`) — repo 가 바인딩된
-  채널만 있으면 `{ ok: true }` 를 주고 `work_thread` 행까지 쓴다. 그 행을 읽는 곳은
-  `projection.ts:109` 하나뿐이라 **투영이 꺼져 있으면 아무도 영원히 읽지 않는다.**
-  에이전트는 작업을 스레드에 묶었다고 믿는다.
+투영이 꺼져 있어도 **성공 응답을 주면서 아무 일도 하지 않는** 경로가 둘 있었다. 둘 다
+화면에 표시가 없어서 사람을 속였고, 둘 다 이제 코드로 닫혔다 — 이 절이 남는 이유는
+**어떻게 닫혔는지가 곧 판단이기 때문**이다.
+
 - **채널에 repo 바인딩** (`POST /channels` · `PATCH /channels/:id`, 데스크탑은
-  `Sidebar.tsx:529` 의 Repository 입력) — 값이 저장되고 사이드바와 채널 헤더에 배지까지
-  뜬다. 그 폼에는 아무 경고가 없다. 바인딩을 소비하는 곳은 `projection.ts:223` 뿐이다.
+  `Sidebar.tsx` 의 Repository 입력) — 값이 저장되고 사이드바와 채널 헤더에 배지까지 뜨는데
+  그 값을 읽는 곳은 투영 워커의 `listBoundRepos` 호출 뿐이다. **폼 안에 경고를 붙여
+  닫았다**(#381): 투영이 `unconfigured` 일 때만 `PROJECTION_UNCONFIGURED_NOTICE` 를
+  같은 폼에 띄운다(`Sidebar.tsx`). 문구는 사이드바 배너와 **같은 상수**다 — 사본을 만들면
+  둘이 갈라진다.
+- **MCP `work.link`** — repo 가 바인딩된 채널만 있으면 `{ ok: true }` 를 주고 `work_thread`
+  행까지 쓰는데, 그 행을 읽는 곳은 투영 워커 하나뿐이어서 투영이 꺼져 있으면 에이전트가
+  작업을 스레드에 묶었다고 믿은 채 아무도 그 행을 읽지 않았다. **도구 자체가 사라져
+  닫혔다**(#534): 그 도구는 스레드 투영의 배선이었으므로 투영을 걷어낼 때 함께 없앴다.
+  **껍데기를 남겨 계속 `{ ok: true }` 를 주지 않은 것이 그 판단이다** — 그러면 아무 일도
+  일어나지 않는데 성공을 받는 이 함정이 그대로 남는다. 없는 도구는 MCP 가 "그런 도구 없음"
+  으로 답하고, 그것이 정직하다.
 
-이 둘은 **문서가 아니라 코드로 닫을 일**이다(성공 응답에 경고를 싣거나, 폼 옆에 투영
-상태를 붙이거나). 지금 알아챌 수 있는 자리는 아래 사이드바 배너 하나뿐이다.
+원칙은 하나다: **말없는 성공은 문서가 아니라 코드로 닫는다.** 문서에만 적으면 그 문서를
+읽지 않은 사람이 정확히 같은 함정에 빠진다.
 
 ### 꺼져 있을 때 보이는 것
 
 - 서버 기동 로그에 경고 한 줄: `avcs projection is disabled — set AVCS_BASE_URL to enable it`
-  (`avcs/projection.ts:301`)
+  (`avcs/projection.ts` 의 `warnIfProjectionDisabled`)
 - `GET /projection/status` 가 `state: "unconfigured"` 를 준다
-- 사이드바 ACTIVE WORK 에 "투영이 설정되지 않았다 / AVCS_BASE_URL 로 켠다"
-  (`LeasePanel.tsx:67`, `Sidebar.tsx:1279` 에서 그려진다)
+- "투영이 설정되지 않았다 / AVCS_BASE_URL 로 켠다" 문구가 화면에 뜬다. **판정은
+  `desktop/src/lib/projectionBanner.ts` 한 곳이 하고**, 그리는 자리는 여럿이다
+  (`ProjectionBanner.tsx` 의 상단 띠, `LeasePanel.tsx` 의 ACTIVE WORK 구역,
+  `settings/ConnectionSettings.tsx`, 그리고 repo 바인딩 폼) — 사정을 가르는 코드가
+  한 벌이라 문구가 자리마다 갈라지지 않는다
 
-이 세 자리가 **모두 필요한 이유**: 예전에는 투영이 꺼져 있어도 화면이 평소와 똑같이
+이 자리들이 **모두 필요한 이유**: 예전에는 투영이 꺼져 있어도 화면이 평소와 똑같이
 "No active work" 였다. 아무 일도 안 일어나는 것과 아무도 보고 있지 않은 것이 같은
 그림이라 도그푸딩 중에 투영이 끊긴 것을 며칠 동안 아무도 몰랐다
 (`docs/design.md` §4: "없다"와 "못 읽었다"를 한 화면에 두지 않는다).
@@ -235,7 +282,7 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
 붙어 있어도 폴링이 멈출 수 있고, 잠깐 끊겨도 투영은 곧 따라잡는다.
 
 **`/healthz` 만으로는 "투영을 끈 것"과 "켰는데 못 붙은 것"을 구분할 수 없다** — 둘 다
-`connected: false` 다(`main.ts:38`). 그 구분은 `/projection/status` 의 `state` 가 한다:
+`connected: false` 다(`main.ts` 의 `getAvcsStatus`). 그 구분은 `/projection/status` 의 `state` 가 한다:
 끈 것은 `unconfigured`, 켰는데 안 도는 것은 `stalled` 다. 감시를 붙인다면 `/healthz` 가
 아니라 이쪽을 봐야 한다.
 
