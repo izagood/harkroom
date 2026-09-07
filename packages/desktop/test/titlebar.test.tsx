@@ -155,30 +155,46 @@ describe('#270 드래그 손잡이', () => {
   });
 });
 
+/**
+ * #270 신호등 여백 — **레일이 생기면서 답이 하나로 굳었다**(레일 문서 1단계).
+ *
+ * 원래 이 규칙은 "창의 좌상단에 실제로 있는 바가 여백을 진다"였고, 사이드바를 접느냐에
+ * 따라 그 자리가 브랜드 바와 헤더 사이를 오갔다. 이제 레일이 **항상** 왼쪽 첫 열이라
+ * 좌상단은 늘 레일이다 — 접든 펴든 다른 두 곳은 여백을 지지 않는다.
+ *
+ * 레일은 **세로**로 비운다(`pt-8`), 가로가 아니다. `CommunityRail` 이 그 이유를 적어 뒀다:
+ * 레일은 신호등 3개(78px)보다 좁아서 `pl-[78px]` 로는 피할 수 없다. 그래서 이 파일의
+ * 단언도 `MAC_TRAFFIC_LIGHT_PL` 이 **두 바에 없다**는 쪽으로 바뀐다.
+ */
 describe('#270 신호등 여백', () => {
-  it('macOS·사이드바 펼침 — 브랜드 바가 여백을 지고 헤더는 지지 않는다', () => {
+  it('macOS·사이드바 펼침 — 좌상단은 레일이라 브랜드 바도 헤더도 여백을 지지 않는다', () => {
     pretendMac();
     renderWorkspace({ sidebarCollapsed: false });
 
-    expect(screen.getByTestId('sidebar-brand').className).toContain(MAC_TRAFFIC_LIGHT_PL);
-    // 둘 다 비우면 접었다 펼 때마다 78px 이 두 번 든다.
+    expect(screen.getByTestId('sidebar-brand').className).not.toContain(MAC_TRAFFIC_LIGHT_PL);
     expect(screen.getByTestId('app-header').className).not.toContain(MAC_TRAFFIC_LIGHT_PL);
+    // 여백을 잃은 것이 아니라 옮긴 것이다 — 레일이 세로로 비운다.
+    expect(screen.getByTestId('rail').className).toContain('pt-8');
   });
 
-  it('macOS·사이드바 접힘 — 좌상단이 된 헤더가 여백을 진다', () => {
+  it('macOS·사이드바 접힘 — 레일이 남으므로 헤더가 좌상단이 되지 않는다', () => {
     pretendMac();
     renderWorkspace({ sidebarCollapsed: true });
 
-    expect(screen.getByTestId('app-header').className).toContain(MAC_TRAFFIC_LIGHT_PL);
-    // 접히면 사이드바는 내용을 아예 그리지 않는다.
+    expect(screen.getByTestId('app-header').className).not.toContain(MAC_TRAFFIC_LIGHT_PL);
+    // 접히면 사이드바는 내용을 아예 그리지 않는다. 레일은 그대로 남는다 —
+    // 문서가 요구한 "좁은 창에서는 레일만 남기고 패널을 접는" 단계가 이것이다.
     expect(screen.queryByTestId('sidebar-brand')).toBeNull();
+    expect(screen.getByTestId('rail')).toBeTruthy();
+    expect(screen.getByTestId('rail').className).toContain('pt-8');
   });
 
-  it('macOS 가 아니면 어느 상태에서도 여백이 없다', () => {
+  it('macOS 가 아니면 레일도 여백을 두지 않는다', () => {
     pretendWindows();
     renderWorkspace({ sidebarCollapsed: false });
     expect(screen.getByTestId('sidebar-brand').className).not.toContain(MAC_TRAFFIC_LIGHT_PL);
     expect(screen.getByTestId('app-header').className).not.toContain(MAC_TRAFFIC_LIGHT_PL);
+    expect(screen.getByTestId('rail').className).not.toContain('pt-8');
 
     cleanup();
 
@@ -219,8 +235,8 @@ describe('#270 헤더 버튼은 여전히 눌린다', () => {
     fireEvent.click(screen.getByRole('button', { name: '사이드바 펼치기' }));
 
     expect(screen.getByTestId('sidebar-brand')).toBeTruthy();
-    // 좌상단이 다시 사이드바로 넘어갔으므로 여백도 함께 넘어간다.
-    expect(screen.getByTestId('sidebar-brand').className).toContain(MAC_TRAFFIC_LIGHT_PL);
+    // 좌상단은 접든 펴든 레일이다 — 여백이 두 바 사이를 오가지 않는다(위 describe 주석).
+    expect(screen.getByTestId('sidebar-brand').className).not.toContain(MAC_TRAFFIC_LIGHT_PL);
     expect(screen.getByTestId('app-header').className).not.toContain(MAC_TRAFFIC_LIGHT_PL);
   });
 });
@@ -361,5 +377,42 @@ describe('#359 띠 높이', () => {
     const strip = document.querySelector('[data-testid="window-drag-strip"]')!;
     expect(strip.className).toContain(MAC_TITLEBAR_H);
     expect(MAC_TITLEBAR_H).toBe('h-[28px]');
+  });
+});
+
+/**
+ * **손잡이 위의 글자는 고를 대상이 아니다**(실측 2026-09-07, 사용자가 화면에서 발견).
+ *
+ * `sidebar-brand` 는 창을 끄는 손잡이(`data-tauri-drag-region`)인데 안의 `murmur` 는
+ * 그냥 텍스트 노드라, 끌면 **창이 움직이는 대신 글자가 선택**됐다. 복사할 값이 아니라
+ * 앱 이름이므로 고를 이유가 없다.
+ */
+describe('창 손잡이 위의 글자', () => {
+  it('브랜드 줄의 글자는 드래그로 선택되지 않는다', () => {
+    renderWorkspace({ sidebarCollapsed: false });
+    expect(screen.getByTestId('sidebar-brand').className).toContain('select-none');
+  });
+});
+
+/**
+ * **사이드바를 여닫는 두 버튼이 같은 모양이다**(실측 2026-09-07).
+ *
+ * 전에는 접기가 `←`, 펼치기가 `☰` 로 서로 달랐다. 같은 하나를 여닫는 버튼이 다르게
+ * 생기면 사람이 둘을 다른 기능으로 읽고, 특히 `←` 는 앱 안에서 이미 **뒤로 가기**가
+ * 쓰는 글리프라(같은 헤더에 나란히 있다) 한 줄에서 두 뜻으로 쓰였다.
+ */
+describe('사이드바 토글 아이콘', () => {
+  it('접기 버튼이 화살표가 아니라 패널 아이콘을 쓴다', () => {
+    const { container } = renderWorkspace({ sidebarCollapsed: false });
+    const collapse = container.querySelector('[aria-label="사이드바 접기"]')!;
+    expect(collapse.textContent).not.toContain('←');
+    expect(collapse.querySelector('svg')).toBeTruthy();
+  });
+
+  /** 그림에 이름을 또 주면 스크린리더가 같은 것을 두 번 읽는다 — 버튼이 이미 말한다. */
+  it('아이콘은 접근성 이름을 갖지 않는다', () => {
+    const { container } = renderWorkspace({ sidebarCollapsed: false });
+    const svg = container.querySelector('[aria-label="사이드바 접기"] svg')!;
+    expect(svg.getAttribute('aria-hidden')).toBe('true');
   });
 });

@@ -5,7 +5,7 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController, type Controller as ControllerType } from '../src/state/controller';
 import { SavedMessages } from '../src/components/SavedMessages';
 import { MessageItem } from '../src/components/MessageItem';
-import { Sidebar } from '../src/components/Sidebar';
+import { Rail } from '../src/components/Rail';
 import { Workspace } from '../src/components/Workspace';
 import { acc, chan, msg, fakeApi, scheduledApiStub } from './helpers/fakeApi';
 
@@ -164,30 +164,44 @@ describe('담아 둔 메시지 — 메뉴와 사이드바 (#219)', () => {
     expect(screen.getByText('Unsave')).toBeTruthy();
   });
 
-  it('7. 사이드바 "Saved" 배지가 open 개수다', () => {
+  /**
+   * **개수가 사이드바 배지에서 레일 칸의 이름으로 옮겼다**(레일 문서 1단계).
+   *
+   * 문서: *"북마크는 레일에만 둔다"* 그리고 *"배지는 나를 막는 것만 센다 — 안 읽음까지
+   * 세면 배지가 늘 켜져 있어서 아무 말도 하지 않게 된다."* 담아 둔 것은 내가 스스로 미뤄
+   * 둔 것이고 나를 막지 않으므로 강조색 배지를 받지 않는다.
+   *
+   * 그래도 **수치는 살아 있어야 한다** — 세는 규칙(`savedIds` 가 아니라 `savedCount`,
+   * 즉 완료를 뺀 open 개수)이 이 이슈의 요점이었고, 그 규칙이 조용히 사라지면 완료로 옮긴
+   * 것까지 세는 예전 결함이 아무 저항 없이 돌아온다. 그래서 칸의 접근 가능한 이름으로 잰다.
+   */
+  it('7. 레일 북마크 칸의 이름이 open 개수를 말한다 — 배지가 아니라', () => {
     fakeController();
     useAppStore.getState().set({ savedCount: 3, savedIds: ['m1', 'm2', 'm3', 'm4'] });
     render(
-      <Sidebar
-        onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}}
-        onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()}
+      <Rail
+        panel="home" onPanelChange={vi.fn()} onOpenSaved={vi.fn()}
+        onOpenSettings={vi.fn()} onOpenCommunityMark={vi.fn()} onLogout={vi.fn()}
       />,
     );
 
-    // savedIds 는 4개(완료 포함)지만 배지는 open 개수 3 이다.
-    expect(screen.getByLabelText('담아 둔 메시지 3개').textContent).toBe('3');
+    // savedIds 는 4개(완료 포함)지만 개수는 open 3 이다.
+    const cell = screen.getByTestId('rail-saved');
+    expect(cell.getAttribute('aria-label')).toContain('담아 둔 메시지 3개');
+    // 강조색 배지는 그리지 않는다 — 나를 막는 것이 아니다.
+    expect(screen.queryByTestId('rail-saved-badge')).toBeNull();
   });
 
-  it('배지는 0 이면 그리지 않는다', () => {
+  it('0 이면 개수를 말하지 않는다', () => {
     fakeController();
     useAppStore.getState().set({ savedCount: 0 });
     render(
-      <Sidebar
-        onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}}
-        onLogout={vi.fn()} onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()}
+      <Rail
+        panel="home" onPanelChange={vi.fn()} onOpenSaved={vi.fn()}
+        onOpenSettings={vi.fn()} onOpenCommunityMark={vi.fn()} onLogout={vi.fn()}
       />,
     );
-    expect(screen.queryByLabelText(/담아 둔 메시지/)).toBeNull();
+    expect(screen.getByTestId('rail-saved').getAttribute('aria-label')).not.toContain('담아 둔');
   });
 });
 
@@ -223,18 +237,20 @@ describe('담아 둔 메시지 — Workspace 배선 (#219)', () => {
     const { api } = realController();
     render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
-    // 담기 전에는 배지가 없다.
-    expect(screen.queryByLabelText(/담아 둔 메시지/)).toBeNull();
+    // 담기 전에는 개수를 말하지 않는다.
+    expect(screen.getByTestId('rail-saved').getAttribute('aria-label')).not.toContain('담아 둔');
 
     openMenu();
     fireEvent.click(screen.getByText('Save for later'));
 
     // 요청이 나가고, **그 결과가 사이드바까지 온다** — 배선이 끊기면 여기서 실패한다.
     await waitFor(() => expect(api.saveMessage).toHaveBeenCalledWith('m9'));
-    await waitFor(() => expect(screen.getByLabelText('담아 둔 메시지 1개').textContent).toBe('1'));
+    await waitFor(() => expect(
+      screen.getByTestId('rail-saved').getAttribute('aria-label'),
+    ).toContain('담아 둔 메시지 1개'));
 
-    // 사이드바 항목을 누르면 패널이 열리고 그 행이 있다.
-    fireEvent.click(screen.getByText('Saved'));
+    // 레일의 북마크 칸을 누르면 패널이 열리고 그 행이 있다.
+    fireEvent.click(screen.getByTestId('rail-saved'));
     const panel = await screen.findByRole('dialog', { name: '저장된 메시지' });
     await waitFor(() => expect(within(panel).getByTestId('saved-entry-m9')).toBeTruthy());
   });
@@ -245,7 +261,9 @@ describe('담아 둔 메시지 — Workspace 배선 (#219)', () => {
 
     openMenu();
     fireEvent.click(screen.getByText('Save for later'));
-    await waitFor(() => expect(screen.getByLabelText('담아 둔 메시지 1개')).toBeTruthy());
+    await waitFor(() => expect(
+      screen.getByTestId('rail-saved').getAttribute('aria-label'),
+    ).toContain('담아 둔 메시지 1개'));
 
     openMenu();
     expect(screen.queryByText('Save for later')).toBeNull();
