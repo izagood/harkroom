@@ -157,8 +157,10 @@ MVP 제외: cli, 모바일, 웹 UI, 상주 에이전트 러너.
 | ~~`work_thread`~~ | (repo, intent_oid) → thread_root_message_id, UNIQUE | **없앴다**(#534, `040_drop_thread_projection.sql`). intent 하나를 작업 스레드 하나로 매핑하는 테이블이었고, 그 매핑 자체가 걷어내는 대상이었다 — 아래 「avcs 이벤트 투영 규칙」 참조 |
 | `inbox` | account_id, message_id, `reason: mention\|thread_reply\|dm`, read_at | 사람은 WS 배지, 에이전트는 MCP poll |
 
-보조 테이블: `projection_cursor(repo, last_log_index)`,
-`active_lease(repo, path, actor, expires_at)`.
+보조 테이블: `projection_cursor(repo, avcs_base_url, last_log_index)`,
+`active_lease(repo, avcs_base_url, path, actor, expires_at)`. 키에 `avcs_base_url` 이
+들어간 것은 `042_projection_state_per_server.sql`(Task 8) — `last_log_index` 가 그 avcs
+서버의 로그 안 위치라서, 같은 repo 이름이라도 서버가 다르면 별도 행이어야 한다.
 
 `message` 의 `(meta->>'repo', meta->>'oid')` 유니크 인덱스(`message_avcs_oid`)도 같은
 마이그레이션에서 사라졌다. 투영 멱등성 전용이었으므로 메시지를 만들지 않는 지금은 막을
@@ -197,9 +199,9 @@ avcs 로그를 처음부터 접어야 알 수 있는 **상태값**이고, 그 �
 커서 없이는 재기동마다 로그를 처음부터 다시 접는다.
 
 - **멱등성**: at-least-once + dedupe. 근거는 **`active_lease` upsert 가 멱등한 것**이다
-  (`on conflict (repo, path, actor_key_id) do update`), 커서 전진은 그 upsert 와 같은
-  트랜잭션. 예전 근거였던 시스템 메시지의 `(repo, oid)` UNIQUE 는 그 인덱스와 함께
-  사라졌다 — 메시지를 만들지 않으면 막을 중복이 없다.
+  (`on conflict (repo, avcs_base_url, path, actor_key_id) do update`, 042), 커서 전진은
+  그 upsert 와 같은 트랜잭션. 예전 근거였던 시스템 메시지의 `(repo, oid)` UNIQUE 는 그
+  인덱스와 함께 사라졌다 — 메시지를 만들지 않으면 막을 중복이 없다.
 - **커서는 투영할 게 없어도 전진한다**: 이 성질은 이제 예외가 아니라 통상이다. lease 가
   아닌 객체가 대다수이므로 `intent`·`operation`·`decision` 이 가득한 배치도 남기는 것
   없이 지나간다. `next === since` 여야 진짜 새 게 없는 것이다.
@@ -538,10 +540,10 @@ Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지
 - **[현재]** self-host: docker compose **2서비스**(`server` + `postgres`). avcs 서버는
   compose 에 없다 — 별도 프로세스로 띄우고 `AVCS_BASE_URL` 로 가리킨다.
   **[목표]** 스펙 구현 서버가 공개되면 세 번째 서비스로 들어온다(§2 결정 5).
-- `AVCS_BASE_URL` 이 없으면 투영 워커가 **아예 만들어지지 않고**(`main.ts`) 채팅만
-  동작한다. **무엇이 꺼지는지와 그것을 화면에서 어떻게 알아보는지는 한 곳에만 적는다 —
-  [`operations.md`](operations.md) §6.** 여기서 그 목록을 되풀이하지 않는다: 두 곳에
-  적으면 한 곳만 낡는다.
+- 판정된 투영 URL(env 값과 앱에 저장된 값 중 `resolveProjectionUrl` 이 고른 것)이 없으면
+  투영 워커가 **아예 만들어지지 않고**(`main.ts`) 채팅만 동작한다. **무엇이 꺼지는지와
+  그것을 화면에서 어떻게 알아보는지는 한 곳에만 적는다 — [`operations.md`](operations.md)
+  §6.** 여기서 그 목록을 되풀이하지 않는다: 두 곳에 적으면 한 곳만 낡는다.
 - **백업·복구 절차는 [`operations.md`](operations.md)**. 요지: 필수 대상은 `pgdata` 하나이고
   (인메모리 상태는 재구성된다), 복구는 `server`를 멈춘 뒤 하고, **murmur만 되돌리는 것은
   안전하지만**(투영이 멱등) **avcs를 murmur 커서보다 뒤로 되돌리면 그 사이 객체가 조용히

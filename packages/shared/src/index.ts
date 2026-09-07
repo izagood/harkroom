@@ -1259,7 +1259,7 @@ export interface LeaseRow {
  * 한 벌만 고쳐지고 화면과 API 가 서로 다른 말을 한다.
  */
 export interface ProjectionRuntime {
-  /** `AVCS_BASE_URL` 이 있어서 워커가 아예 만들어졌는가. */
+  /** 투영 URL 이 있어서 워커가 아예 만들어졌는가(`resolveProjectionUrl` 의 결과). */
   configured: boolean;
   /** 마지막으로 폴링한 저장소. 조용한 저장소도 여기 남는다 — 폴링했다는 사실이므로. */
   repo: string | null;
@@ -1287,10 +1287,74 @@ export type ProjectionState = 'unconfigured' | 'stalled' | 'ok';
  */
 export const PROJECTION_UNCONFIGURED_HEADLINE = '투영이 설정되지 않았다';
 /** 무엇을 하면 되는지. 배너에서는 headline 아래 줄이다. */
-export const PROJECTION_UNCONFIGURED_DETAIL = 'AVCS_BASE_URL 로 켠다';
+export const PROJECTION_UNCONFIGURED_DETAIL = '앱 설정이나 AVCS_BASE_URL 로 켠다';
 /** 한 줄로 써야 하는 자리(좁은 폼, API 응답)용. 위 둘에서 **파생**한다 — 세 번째 사본이 아니다. */
 export const PROJECTION_UNCONFIGURED_NOTICE =
   `${PROJECTION_UNCONFIGURED_HEADLINE} — ${PROJECTION_UNCONFIGURED_DETAIL}`;
+
+/** 투영 URL 이 어디서 왔는가. 화면이 이것을 사람 말로 바꿔 적는다. */
+export type ProjectionUrlSource = 'app' | 'env';
+
+export interface ResolvedProjectionUrl {
+  url: string | null;
+  /** url 이 null 이면 source 도 null — 출처 없는 값에 출처를 붙이지 않는다. */
+  source: ProjectionUrlSource | null;
+}
+
+/**
+ * 투영 URL 의 **표준형**. 이 값이 `projection_cursor`·`active_lease` 의 키가 되므로
+ * (마이그레이션 042) 겉보기만 다른 두 문자열이 서로 다른 행을 뜻하면 안 된다 — 그러면
+ * 오타가 아닌 저장 한 번이 전재스캔과 그 사이의 빈 `/leases` 를 만든다.
+ *
+ * `httpAvcsClient` 의 슬래시 자르기와 다른 관심사다: 그것은 요청 URL 조립의 방어선이고
+ * 이것은 저장되는 키의 표준형이다.
+ *
+ * `new URL` 이 스킴·호스트 소문자화와 기본 포트 접기를 해 준다. 후행 슬래시는 오히려
+ * `pathname` 에 `'/'` 로 채워 넣으므로 직접 자른다. 경로 대소문자는 손대지 않는다 —
+ * 경로는 실제로 대소문자를 구분한다. 호스트의 후행 점도 자르지 않는다(그 나름의 함정이 있다).
+ */
+export function canonicalAvcsBaseUrl(raw: string): string | null {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * env 와 앱 설정 중 **무엇으로 투영을 돌리는가**.
+ *
+ * 앱(DB)이 이긴다. env 는 앱 값이 없을 때만 쓰는 기본값이다. 이 판정이 서버(부팅·재설정)와
+ * 라우트 응답 양쪽에 살면 화면과 API 가 같은 상태를 다른 말로 부른다 — `projectionState` 를
+ * 여기 둔 것과 같은 이유다.
+ *
+ * 빈 문자열을 값으로 세지 않는다. 세면 지우기와 오타 저장이 같은 값이 된다.
+ *
+ * **돌려주는 `url` 은 표준형이다.** URL 이 (repo 와 함께) DB 키가 된 지금(042), env 든
+ * 앱이든 여기를 거치지 않고 `baseUrl` 로 흘러가는 값이 없어야 한다 — 한쪽만 표준화하면
+ * `AVCS_BASE_URL=http://a:3000/` 로 뜬 서버와 앱에서 `http://a:3000` 을 저장한 서버가
+ * 여전히 다른 행을 쓴다. 표준형이 `null` 이면(값이 URL 형태가 아니면) 그 출처는 값이
+ * 없는 것으로 취급하고 다음 출처로 떨어진다.
+ */
+export function resolveProjectionUrl(
+  envUrl: string | null, appUrl: string | null,
+): ResolvedProjectionUrl {
+  const app = appUrl ? canonicalAvcsBaseUrl(appUrl) : null;
+  if (app) return { url: app, source: 'app' };
+  const env = envUrl ? canonicalAvcsBaseUrl(envUrl) : null;
+  if (env) return { url: env, source: 'env' };
+  return { url: null, source: null };
+}
+
+/** `GET`·`PUT /settings/projection` 의 응답. admin 전용 표면이다. */
+export interface ProjectionConfigView extends ResolvedProjectionUrl {
+  /** DB 에 저장된 값. null 이면 앱에서 정한 것이 없다. */
+  appUrl: string | null;
+  /** `AVCS_BASE_URL`. 지우기가 무엇으로 복귀하는지 화면이 말할 재료다. */
+  envUrl: string | null;
+}
 
 /**
  * 폴링이 이보다 오래 안 돌았으면 멈춘 것으로 본다. 폴링 주기(25초)의 몇 배로 잡아

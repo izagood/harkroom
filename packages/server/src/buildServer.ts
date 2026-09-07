@@ -67,6 +67,29 @@ export interface ServerDeps {
    * 투영을 물어봤는데 아무도 답할 수 없는 상태가 곧 "설정되지 않았다"다.
    */
   getProjectionStatus?: () => ProjectionRuntime;
+  /**
+   * 투영 **설정** 표면(`/settings/projection`). 상태(`getProjectionStatus`)와 다른 질문에
+   * 답한다: 무엇을 바라볼 것인가.
+   *
+   * supervisor 인스턴스를 통째로 받지 않는 이유: 라우트가 필요한 것은 env 값과 갈아 끼우는
+   * 동작 둘뿐이다. 클래스를 받으면 이 파일과 라우트 테스트가 그것에 매이고, 가짜를 만들려면
+   * 쓰지도 않는 `stop()`·`status()` 까지 함께 구현해야 한다.
+   *
+   * 미지정이면 두 라우트를 **등록하지 않는다**. 등록해 두고 500 을 내는 것보다 404 가
+   * 정직하다 — 500 은 "고장났다" 는 뜻이고, 여기서 참인 것은 "그 표면이 없다" 다.
+   */
+  projection?: {
+    /** `AVCS_BASE_URL`. 응답의 `envUrl` 이자 `resolveProjectionUrl` 의 첫 인자다. */
+    envBaseUrl: string | null;
+    reconfigure(url: string | null): Promise<void>;
+    /**
+     * 지금 투영이 보고 있는 avcs 서버. `/leases` 와 커서 메트릭이 이 값으로 거른다 —
+     * `projection_cursor`·`active_lease` 가 (repo, avcs_base_url)로 키가 잡히므로,
+     * 지금 서버가 아닌 행을 섞으면 다른 서버의 리스가 현재 작업인 것처럼 보이거나
+     * 메트릭이 같은 repo 라벨을 중복 출력한다.
+     */
+    currentUrl(): string | null;
+  };
   /** 종료 시 in-flight long-poll을 정상 마감시키는 창구. main이 SIGTERM에서 beginDrain을 부른다. */
   lifecycle?: Lifecycle;
   /** null·미지정이면 모든 origin 을 반영한다. 목록이면 CORS 와 WS 핸드셰이크에 함께 적용된다. */
@@ -200,7 +223,18 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   metrics.registerLabeledGauge(
     'murmur_projection_cursor', 'last projected avcs log index per repo', 'repo',
     async () => {
-      const res = await deps.pool.query(`select repo, last_log_index from projection_cursor`);
+      // `projection_cursor` 는 이제 (repo, avcs_base_url)로 키가 잡힌다 — 같은 repo 이름이
+      // 여러 avcs 서버 아래 있을 수 있어서다. 걸러 읽지 않으면 같은 repo 라벨의 행이
+      // 여러 개 나와 Prometheus 텍스트가 깨진다. 현재 서버로 좁힌다 — 이 게이지가 답하는
+      // 질문은 "지금 어디까지 봤나"이지 과거에 지나친 모든 서버가 아니다.
+      // 라벨에 URL 을 더하지 않는 이유: URL 은 카디널리티가 낮지만 비밀에 가까운 인프라
+      // 값이다.
+      const currentUrl = deps.projection?.currentUrl() ?? null;
+      if (currentUrl === null) return {};
+      const res = await deps.pool.query(
+        `select repo, last_log_index from projection_cursor where avcs_base_url = $1`,
+        [currentUrl],
+      );
       return Object.fromEntries(
         res.rows.map((r: { repo: string; last_log_index: string }) => [r.repo, Number(r.last_log_index)]),
       );
@@ -326,9 +360,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerAttachmentRoutes(app, deps.pool, storage);
   // 아바타는 같은 스토리지를 쓴다 — 파일 저장소를 하나로 유지하기 위해서다(avatarRoutes 주석).
   await registerAvatarRoutes(app, deps.pool, storage);
-  await registerDirectoryRoutes(app, deps.pool);
+  await registerDirectoryRoutes(app, deps.pool, deps.projection);
   await registerAuditRoutes(app, deps.pool);
-  await registerSettingsRoutes(app, deps.pool);
+  await registerSettingsRoutes(app, deps.pool, deps.projection);
   await registerHandleGroupRoutes(app, deps.pool);
   await registerLinkPreviewRoutes(app, deps.pool);
   await registerSkillRoutes(app, deps.pool);

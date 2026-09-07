@@ -13,11 +13,18 @@ let adminToken: string;
 let botPat: string;
 let baseUrl: string;
 
+// `murmur_projection_cursor` 가 지금 서버로 거르므로(042_projection_state_per_server.sql),
+// 커서 시드도 이 URL로 심어야 게이지에 보인다.
+const AVCS_URL = 'http://avcs.metrics-test';
+
 beforeAll(async () => {
   const db = await startTestDb();
   pool = db.pool;
   stop = db.stop;
-  app = await buildServer({ pool });
+  app = await buildServer({
+    pool,
+    projection: { envBaseUrl: null, reconfigure: async () => {}, currentUrl: () => AVCS_URL },
+  });
   ({ token: adminToken } = await bootstrapAdmin(app));
   ({ pat: botPat } = await createAgent(app, adminToken, 'metricsbot'));
   await app.listen({ port: 0, host: '127.0.0.1' });
@@ -98,8 +105,9 @@ describe('GET /metrics', () => {
   // 채널에는 아무 일도 없어 보이므로, 그 침묵이 숫자로 보여야 한다.
   it('exposes the projection cursor per repo so a silent stall is visible', async () => {
     await pool.query(
-      `insert into projection_cursor (repo, last_log_index) values ('metrics/repo', 42)
-       on conflict (repo) do update set last_log_index = 42`,
+      `insert into projection_cursor (repo, avcs_base_url, last_log_index) values ('metrics/repo', $1, 42)
+       on conflict (repo, avcs_base_url) do update set last_log_index = 42`,
+      [AVCS_URL],
     );
 
     expect(await scrape()).toContain('murmur_projection_cursor{repo="metrics/repo"} 42');

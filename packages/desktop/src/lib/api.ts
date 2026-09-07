@@ -1,4 +1,4 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionStatus, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@murmur/shared';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
 export class ApiError extends Error {
@@ -471,6 +471,21 @@ export class ApiClient {
   /** model·effort 를 지우는 것은 **명시적 null** 이다 — 키를 빼면 '손대지 않음'이 된다. */
   updateAgentDefaults(patch: Partial<AgentDefaults>): Promise<AgentDefaults> {
     return this.req('PUT', '/settings/agent-defaults', patch);
+  }
+
+  /**
+   * 투영 설정. **admin 전용 라우트다** — admin 이 아니면 403 이고, 호출부는 그것을 오류로
+   * 그리지 않는다(권한이 없는 것은 고장이 아니다).
+   *
+   * 실패를 여기서 삼키지 않는다 — 호출부가 "못 읽었다" 를 사람에게 보여야 한다.
+   */
+  projectionConfig(): Promise<ProjectionConfigView> {
+    return this.req('GET', '/settings/projection');
+  }
+
+  /** 지우기는 **명시적 null** 이다 — 키를 빼면 `JSON.stringify` 가 버려 '손대지 않음'이 된다. */
+  setProjectionConfig(url: string | null): Promise<ProjectionConfigView> {
+    return this.req('PUT', '/settings/projection', { url });
   }
 
   /** #139: 에이전트 메모리 조회. MCP 는 에이전트 전용이라 사람은 이 REST 를 쓴다. */
