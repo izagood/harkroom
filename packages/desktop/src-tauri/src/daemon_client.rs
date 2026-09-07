@@ -969,9 +969,10 @@ pub fn read_pid_record(path: &Path) -> Option<PidRecord> {
 /// 소켓을 보지 않는다. **그래도 이 관문은 남는다**: 구획이 안 갈리는 경로가 여전히 있고
 /// (`dev_partition_source` 주석의 목록), 이 관문이 거기서 마지막 관측 장치다.
 ///
-/// 남은 그 경로들에서는 지금도 같은 교착이 난다. 그때 사람에게 무엇을 하라고 말할지는
-/// **아직 정해지지 않았다** — `ensure_at` 은 "붙는다/띄운다" 두 갈래만 알고, 종료 코드
-/// 10 을 그대로 문구에 실을 뿐 점유자가 누구인지(pid 레코드에 있다) 말하지 않는다.
+/// 남은 그 경로들에서는 지금도 같은 교착이 난다. **그때 무엇을 하라고 말할지는 정해 뒀다** —
+/// `occupied_reason` 이 pid 레코드를 읽어 점유한 앱의 번들 경로·pid·버전과 "그 앱을
+/// 종료하고 다시 시도하라"를 문구에 싣는다. 교착 자체를 없애지는 못한다(그것은 위 구획의
+/// 몫이다). 이 관문이 하는 일은 그대로다: **사실을 드러내는 것.**
 fn same_entry_path(record_entry: &str, mine: &Path) -> bool {
     if record_entry.is_empty() {
         // 옛 daemon 이라 안 적었다. **같다고 단정하지 않는다** — 그 daemon 이 어느 빌드의
@@ -1282,7 +1283,7 @@ fn spawn_daemon(app: &tauri::AppHandle, paths: &EndpointPaths) -> Result<DaemonE
     // `node` 를 못 찾으면 daemon 은 127 로 **즉시** 끝나고, 그 사실을 아는 자리는 여기
     // 하나뿐이다(`spawn()` 은 성공한다 — 커널이 `execve` 한 것은 `/usr/bin/env` 이고
     // 그것은 있다).
-    let watch = DaemonExitWatch::new(program.clone());
+    let watch = DaemonExitWatch::new(program.clone(), paths.pid.clone());
     let slot = watch.slot.clone();
     let log_path = paths.log.clone();
     std::thread::spawn(move || {
@@ -1361,6 +1362,12 @@ fn log_tail(log: &Path) -> Option<String> {
 /// 날이 온다.
 pub struct DaemonExitWatch {
     program: PathBuf,
+    /// 점유로 물러났을 때 **누가 쥐고 있는지**를 읽을 자리(`EndpointPaths::pid`).
+    ///
+    /// 그 순간 이 파일은 **우리 것이 아니다.** 우리 daemon 은 점유를 보고 아무것도
+    /// claim 하지 않은 채 물러났으므로(`claimDaemonEndpoint`), 여기 적혀 있는 것은
+    /// 살아서 소켓을 쥐고 있는 쪽이다 — 그래서 그것을 사람에게 말할 수 있다.
+    pid_path: PathBuf,
     slot: Arc<Mutex<Option<DaemonExit>>>,
 }
 
@@ -1373,10 +1380,24 @@ struct DaemonExit {
 /// (실측: 위 `DaemonExitWatch` 주석의 `exit=127`).
 const EXIT_COMMAND_NOT_FOUND: i32 = 127;
 
+/// daemon 이 **점유를 보고 물러났다**는 종료 코드.
+///
+/// **출처는 `packages/daemon/src/run.ts` 의 `EXIT_OCCUPIED` 다.** 그 값이 이 상수와
+/// 갈리면 앱은 점유를 다른 사유로 읽고(또는 그 반대로) 사람에게 엉뚱한 말을 한다.
+/// 두 언어를 가로질러 값을 공유할 방법이 없으므로 **회귀선이 두 파일을 읽어 대조한다** —
+/// `packages/desktop/test/daemonExitCodes.test.ts`.
+///
+/// daemon 쪽에서 이 코드는 **실패가 아니다**(`daemon/src/main.ts`: *"앱은 그쪽에 붙으면
+/// 된다"*). 앱이 그 조언을 실행할 수 있는 자리에서는 애초에 여기까지 오지 않는다 —
+/// `ensure_at` 의 1번 관문이 먼저 붙는다. 여기 온 것은 **붙을 수 없는 상대**가 쥐고
+/// 있다는 뜻이고, 그때 사람이 할 일은 `occupied_reason` 이 말한다.
+const EXIT_OCCUPIED: i32 = 10;
+
 impl DaemonExitWatch {
-    fn new(program: PathBuf) -> Self {
+    fn new(program: PathBuf, pid_path: PathBuf) -> Self {
         DaemonExitWatch {
             program,
+            pid_path,
             slot: Arc::new(Mutex::new(None)),
         }
     }
@@ -1385,7 +1406,7 @@ impl DaemonExitWatch {
     /// 프로세스를 안 띄우는 테스트(붙기 분기만 재는 것들)가 이것을 돌려준다.
     #[cfg(test)]
     fn alive() -> Self {
-        DaemonExitWatch::new(PathBuf::from("<테스트>"))
+        DaemonExitWatch::new(PathBuf::from("<테스트>"), PathBuf::from("<테스트>.pid"))
     }
 
     /// **회귀선이 쓰는 생성자** — 자식을 실제로 띄우지 않고 "이렇게 죽었다"를 만든다.
@@ -1393,7 +1414,16 @@ impl DaemonExitWatch {
     /// 문구 판정은 이 값 하나로 잴 수 있어야 한다.
     #[cfg(test)]
     fn exited(program: &str, code: Option<i32>, tail: Option<&str>) -> Self {
-        let watch = DaemonExitWatch::new(PathBuf::from(program));
+        // pid 경로는 **없는 자리**를 준다 — 점유 사유가 아닌 갈래를 재는 생성자이고,
+        // 점유 갈래는 `exited_at` 이 실물 파일을 놓고 잰다.
+        Self::exited_at(program, PathBuf::from("<없는 pid 파일>"), code, tail)
+    }
+
+    /// **회귀선이 쓰는 생성자** — `exited` 에 pid 레코드 자리를 더한 것. 점유 사유
+    /// (`EXIT_OCCUPIED`)의 문구는 그 파일을 읽어야 나오므로 그 갈래는 이것으로 잰다.
+    #[cfg(test)]
+    fn exited_at(program: &str, pid_path: PathBuf, code: Option<i32>, tail: Option<&str>) -> Self {
+        let watch = DaemonExitWatch::new(PathBuf::from(program), pid_path);
         *watch.slot.lock().unwrap() = Some(DaemonExit {
             code,
             tail: tail.map(str::to_string),
@@ -1408,7 +1438,19 @@ impl DaemonExitWatch {
     fn death_reason(&self) -> Option<String> {
         let guard = self.slot.lock().ok()?;
         let exit = guard.as_ref()?;
-        Some(exit_reason(&self.program, exit.code, exit.tail.as_deref()))
+        // **점유 사유일 때만 pid 레코드를 읽는다.** 다른 사유에서는 그 파일이 우리
+        // 것일 수도 있고 아예 없을 수도 있어, 읽어 봐야 사람에게 할 말이 안 나온다.
+        let occupant = if exit.code == Some(EXIT_OCCUPIED) {
+            read_pid_record(&self.pid_path)
+        } else {
+            None
+        };
+        Some(exit_reason(
+            &self.program,
+            exit.code,
+            exit.tail.as_deref(),
+            occupant.as_ref(),
+        ))
     }
 }
 
@@ -1418,7 +1460,12 @@ impl DaemonExitWatch {
 /// 마지막 줄이 그 사실을 실제로 말할 때만이다. 둘 중 하나라도 어긋나면 코드와 로그
 /// 원문을 그대로 올린다. 사유를 지어내지 않는 것이 `#368` 이고, 여기서 넓게 잡으면
 /// "무엇이 죽어도 Node 를 설치하라고 한다"가 된다 — `#473` 이 고친 오진과 같은 종류다.
-fn exit_reason(program: &Path, code: Option<i32>, tail: Option<&str>) -> String {
+fn exit_reason(
+    program: &Path,
+    code: Option<i32>,
+    tail: Option<&str>,
+    occupant: Option<&PidRecord>,
+) -> String {
     if code == Some(EXIT_COMMAND_NOT_FOUND) {
         if let Some(line) = tail {
             if looks_like_missing_node(line) {
@@ -1430,12 +1477,78 @@ fn exit_reason(program: &Path, code: Option<i32>, tail: Option<&str>) -> String 
         Some(c) => format!("종료 코드 {c}"),
         None => "시그널".to_string(),
     };
-    match tail {
+    let 증거 = match tail {
         Some(line) => format!("daemon 이 뜨자마자 {what} 로 끝났다 — 로그 마지막 줄: {line}"),
         None => format!(
             "daemon 이 뜨자마자 {what} 로 끝났고 로그에 아무것도 안 남았다 — 사이드카 `{}`",
             program.display()
         ),
+    };
+    // **점유는 사유가 아니라 상태다.** 증거를 지우지 않고 그 앞에 사람이 할 일을 얹는다.
+    if code == Some(EXIT_OCCUPIED) {
+        return format!("{}. {증거}", occupied_reason(occupant));
+    }
+    증거
+}
+
+/// daemon 이 **점유로 물러났다**(`EXIT_OCCUPIED`)는 사유의 앞 문장.
+///
+/// ## 왜 종료 코드만으로는 못 쓰는 말이었나
+///
+/// 이 갈래가 없던 판본의 화면 문구는 이랬다(실측 2026-09-07):
+///
+/// ```text
+/// 러너를 띄우지 못했다: daemon 이 뜨자마자 종료 코드 10 로 끝났다 —
+/// 로그 마지막 줄: 이미 서비스 중인 daemon 이 있다: …/daemon-v1.sock — 물러난다
+/// ```
+///
+/// 사람이 여기서 할 수 있는 일이 없다. *"이미 서비스 중인 daemon"* 이 **어느 앱인지**
+/// 안 적혀 있고, 그 답은 pid 레코드에 이미 있었다. daemon 쪽에서 이 코드는 실패가
+/// 아니라 *"앱은 그쪽에 붙으면 된다"* 는 조언인데(`daemon/src/main.ts`), 앱이 그 조언을
+/// 실행할 수 없는 자리(`entryPath` 관문이 막은 뒤)에서 그대로 사람에게 올라왔다.
+///
+/// ## 무엇을 말하나 — **종료할 앱**이다
+///
+/// `entryPath` 는 daemon **실행 파일**이지만(`…/murmur.app/Contents/MacOS/murmur-daemon`),
+/// 사람이 종료할 수 있는 것은 `.app` 이다. 그래서 `app_bundle_of` 로 번들까지 줄여 말한다.
+///
+/// **모르는 것은 지어내지 않는다**(`#368`). 레코드를 못 읽었거나 `entryPath` 가 비어
+/// 있으면(옛 daemon) 그 사실을 말하고, 할 일만 남긴다.
+fn occupied_reason(occupant: Option<&PidRecord>) -> String {
+    let known = occupant.filter(|r| !r.entry_path.is_empty());
+    let Some(record) = known else {
+        return "이미 다른 daemon 이 엔드포인트를 쥐고 있다(pid 레코드를 못 읽어 어느 앱인지는 \
+                모른다) — 실행 중인 murmur 를 모두 종료하고 다시 시도하라"
+            .to_string();
+    };
+    // 앱 버전은 옛 daemon 이 안 적었을 수 있다 — 없으면 그 자리를 비운다.
+    let version = if record.app_version.is_empty() {
+        String::new()
+    } else {
+        format!(", 앱 {}", record.app_version)
+    };
+    format!(
+        "이미 다른 murmur 가 daemon 을 쥐고 있다: `{}` (pid {}{version}) — 그 앱을 \
+         종료하고 다시 시도하라",
+        app_bundle_of(&record.entry_path),
+        record.pid,
+    )
+}
+
+/// `.app` 번들 안의 실행 파일 경로를 **번들 경로**로 줄인다.
+///
+/// ```text
+/// /Applications/murmur.app/Contents/MacOS/murmur-daemon  →  /Applications/murmur.app
+/// ```
+///
+/// **모양이 안 맞으면 원문을 그대로 돌려준다.** `tauri dev` 로 띄운 빌드의 사이드카는
+/// 번들 안에 없다(`target/debug/murmur-daemon`) — 그때 억지로 자르면 없는 경로를
+/// 사람에게 말하게 된다.
+fn app_bundle_of(entry: &str) -> &str {
+    const INSIDE_BUNDLE: &str = "/Contents/MacOS/";
+    match entry.find(INSIDE_BUNDLE) {
+        Some(i) if entry[..i].ends_with(".app") => &entry[..i],
+        _ => entry,
     }
 }
 
@@ -2966,6 +3079,137 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
             !msg.contains("nodejs.org"),
             "모르는 것을 단정하지 않는다: {msg}"
         );
+    }
+
+    /// **점유 회귀선 ① — 누가 쥐고 있는지와 할 일을 말한다.**
+    ///
+    /// 앞 판본의 화면 문구는 종료 코드 10 과 로그 원문뿐이었고, 그 답(어느 앱인가)은
+    /// **pid 레코드에 이미 있었다.** 실측 2026-09-07: 사람이 할 수 있는 일이 없었다.
+    #[test]
+    fn 점유로_물러나면_누가_쥐고_있는지와_할_일을_말한다() {
+        let dir = temp_app_data_dir("occupied");
+        let pid_path = dir.join("daemon-v1.pid");
+        // **실측한 레코드 원문 그대로다.** 구조체를 만들어 직렬화하지 않는 이유는
+        // 필드 이름까지 daemon 이 쓴 그대로인지 함께 재기 위해서다.
+        std::fs::write(&pid_path, r#"{"pid":17109,"startedAtMs":1788754303745,"entryPath":"/Applications/murmur.app/Contents/MacOS/murmur-daemon","appVersion":"0.1.6","launchNonce":"ccf30441-045b-4497-b203-5835ededda34"}"#).unwrap();
+
+        let watch = DaemonExitWatch::exited_at(
+            "/A/murmur-daemon",
+            pid_path,
+            Some(EXIT_OCCUPIED),
+            Some("이미 서비스 중인 daemon 이 있다: /tmp/x/daemon-v1.sock — 물러난다"),
+        );
+        let msg = watch.death_reason().unwrap();
+
+        // ① 종료할 대상을 **번들 경로**로 말한다 — 사람이 종료할 수 있는 것이 그것이다.
+        assert!(
+            msg.contains("`/Applications/murmur.app`"),
+            "점유한 앱을 번들 경로로 말하지 않는다: {msg}"
+        );
+        assert!(
+            !msg.contains("/Contents/MacOS/"),
+            "실행 파일 경로를 그대로 말했다 — 사람이 종료할 대상이 아니다: {msg}"
+        );
+        // ② 누구인지 못박는다 — 같은 앱이 여러 개 떠 있을 때 pid 가 유일한 구분자다.
+        assert!(
+            msg.contains("17109") && msg.contains("0.1.6"),
+            "pid·앱 버전을 안 말한다: {msg}"
+        );
+        // ③ **할 일**이 있다. 이 문장이 없던 것이 이 후속 작업의 이유였다.
+        assert!(
+            msg.contains("종료하고 다시 시도"),
+            "사람이 할 일을 안 말한다: {msg}"
+        );
+        // ④ 증거를 지우지 않았다(`#368`) — 종료 코드와 로그 원문이 그대로 남는다.
+        assert!(msg.contains("10"), "종료 코드가 사라졌다: {msg}");
+        assert!(
+            msg.contains("이미 서비스 중인 daemon 이 있다"),
+            "로그 원문이 사라졌다: {msg}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **점유 회귀선 ② — 상대를 모르면 지어내지 않는다**(`#368`).
+    #[test]
+    fn 점유_상대를_모르면_지어내지_않는다() {
+        // pid 레코드가 없다 — 그 daemon 이 물러나며 지웠거나, 애초에 못 읽는다.
+        let 없음 = DaemonExitWatch::exited(
+            "/A/murmur-daemon",
+            Some(EXIT_OCCUPIED),
+            Some("이미 서비스 중인 daemon 이 있다"),
+        );
+        let msg = 없음.death_reason().unwrap();
+        assert!(
+            !msg.contains(".app"),
+            "레코드가 없는데 앱 경로를 말했다: {msg}"
+        );
+        assert!(msg.contains("모른다"), "모른다는 사실을 말해야 한다: {msg}");
+        assert!(msg.contains("모두 종료"), "그래도 할 일은 남는다: {msg}");
+
+        // `entryPath` 를 안 적는 **옛 daemon** 도 같다 — 빈 문자열을 경로로 말하지 않는다.
+        let dir = temp_app_data_dir("occupied-legacy");
+        let pid_path = dir.join("daemon-v1.pid");
+        std::fs::write(&pid_path, r#"{"pid":17109}"#).unwrap();
+        let 옛것 =
+            DaemonExitWatch::exited_at("/A/murmur-daemon", pid_path, Some(EXIT_OCCUPIED), None);
+        let msg = 옛것.death_reason().unwrap();
+        assert!(
+            msg.contains("모른다"),
+            "빈 `entryPath` 를 경로로 말했다: {msg}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **점유 회귀선 ③ — 대조군: 점유가 아니면 그 말을 안 한다.**
+    ///
+    /// 이것이 없으면 "무엇이 죽어도 다른 앱을 종료하라고 한다"가 된다 — `#473` 이 고친
+    /// 오진(하네스 부재를 PAT 문제로 말한 것)과 같은 종류다. 레코드가 **있어도** 사유가
+    /// 점유가 아니면 읽지 않는다는 것이 요점이다.
+    #[test]
+    fn 점유가_아니면_점유_문구를_안_붙인다() {
+        let dir = temp_app_data_dir("occupied-other");
+        let pid_path = dir.join("daemon-v1.pid");
+        std::fs::write(&pid_path, r#"{"pid":17109,"startedAtMs":1788754303745,"entryPath":"/Applications/murmur.app/Contents/MacOS/murmur-daemon","appVersion":"0.1.6","launchNonce":"ccf30441-045b-4497-b203-5835ededda34"}"#).unwrap();
+
+        let watch = DaemonExitWatch::exited_at(
+            "/A/murmur-daemon",
+            pid_path,
+            Some(78),
+            Some("자격증명을 거부했다"),
+        );
+        let msg = watch.death_reason().unwrap();
+        assert!(
+            !msg.contains("murmur.app"),
+            "점유가 아닌데 점유한 앱을 말했다: {msg}"
+        );
+        assert!(
+            !msg.contains("종료하고 다시 시도"),
+            "점유가 아닌데 앱을 종료하라고 한다: {msg}"
+        );
+        assert!(
+            msg.contains("78") && msg.contains("자격증명"),
+            "사유는 그대로 올라간다: {msg}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `app_bundle_of` 의 경계. **모양이 안 맞으면 원문 그대로다.**
+    #[test]
+    fn 번들_밖의_실행_파일은_경로를_그대로_말한다() {
+        assert_eq!(
+            app_bundle_of("/Applications/murmur.app/Contents/MacOS/murmur-daemon"),
+            "/Applications/murmur.app"
+        );
+
+        // `tauri dev` 빌드의 사이드카는 번들 안에 없다 — 억지로 자르면 **없는 경로**를
+        // 사람에게 말하게 된다.
+        let dev = "/Users/x/wt/a/packages/desktop/src-tauri/target/debug/murmur-daemon";
+        assert_eq!(app_bundle_of(dev), dev);
+
+        // `.app` 이 아닌 디렉터리가 `/Contents/MacOS/` 를 품고 있어도 안 자른다.
+        let 이상 = "/tmp/notabundle/Contents/MacOS/murmur-daemon";
+        assert_eq!(app_bundle_of(이상), 이상);
     }
 
     /// `looks_like_missing_node` 의 경계. **두 낱말을 다 요구한다** — 한쪽만 보면
