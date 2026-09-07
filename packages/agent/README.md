@@ -282,15 +282,79 @@ MCP 설정을 상속하지 않는다. 승인된 Codex 스킬은 공식 저장소
 `CLAUDE_CONFIG_DIR`를 설정하지 않았고, 계정 전환을 그 경로로 하는 도구(Orca 등)에서 사람이
 계정을 바꿔도 러너에 닿지 않았다. codex의 `CODEX_HOME` 격리에 대칭물이 없던 자리다.
 
-계정은 `~/.murmur-agent/claude-accounts/<name>/`에 산다. 이름 문법은 `[a-z0-9-]{1,32}`다.
+### 풀 — 계정의 그룹
+
+계정은 **풀** 안에 산다. 풀은 회사 계정과 개인 계정을 갈라 두는 단위이고, 러너 하나는
+풀 하나만 쓴다.
+
+```
+~/.murmur-agent/claude-accounts/
+  pools.json          기본 풀·순서·에이전트 배정
+  work/               풀
+    lime/             계정 = CLAUDE_CONFIG_DIR 하나
+    plum/
+  personal/           풀
+    gmail/
+```
+
+**`pools.json`의 존재가 스위치다.** 없으면 뿌리의 하위 디렉터리가 계정이고(평평한 구조,
+선행 판본 그대로), 있으면 풀이다. 디렉터리 모양을 추측하지 않는다 — 갓 만든 빈 풀과
+계정은 모양이 같아서 그 추측은 원리적으로 갈리지 않는다.
+
+**멤버십은 디스크가 진실이다.** `pools.json`에는 디스크가 표현할 수 없는 셋만 있다:
+
+```json
+{
+  "defaultPool": "work",
+  "order": { "work": ["lime", "plum"] },
+  "agents": { "<agent account id>": "personal" }
+}
+```
+
+러너가 쓸 풀은 이 순서로 정해진다.
+
+1. `MURMUR_CLAUDE_POOL` — 운영자 강제. 없는 풀이면 **기동 실패**다.
+2. `pools.json`의 `agents[<이 에이전트의 계정 id>]` — 에이전트별 지정.
+3. `pools.json`의 `defaultPool` — 기본 풀.
+4. 없으면 뿌리 자체(평평한 구조).
+5. 그래도 계정이 없으면 **계정 지정 없음** — 시스템 기본 `~/.claude`를 쓴다.
+
+**`pools.json`이 없는 풀을 가리키면 경고하고 무시한다.** 환경변수는 없는 이름에 기동을
+실패시키는데 이 파일은 그러지 않는다: 환경변수는 사람이 방금 타이핑한 의도지만, 이 파일은
+UI가 쓴 뒤 사람이 파인더에서 디렉터리를 지울 수 있고 그때 러너가 안 뜨면 **앱에서 고칠
+방법이 없다.**
+
+### 데스크탑 앱에서 관리한다
+
+설정 › Claude accounts 에서 풀을 만들고, 계정을 추가·삭제하고, 기본 풀을 지정한다.
+계정마다 로그인 상태와 정체(이메일·조직·구독)가 보인다. 에이전트별 풀은 설정 › Agents 의
+에이전트 상세, 실행 묶음에서 고른다.
+
+**러너는 풀을 기동 시 1회 읽는다.** 앱에서 계정을 바꾼 뒤에는 설정 › Agents 에서 러너를
+재시작해야 반영된다.
+
+**에이전트별 배정은 이 기기에만 저장된다.** 풀은 로컬 디렉터리이므로 서버에 두면 다른
+기기에서 없는 풀을 가리키게 된다.
+
+### 손으로 등록하기
+
+앱 없이도 된다. 이름 문법은 풀·계정 모두 `[a-z0-9-]{1,32}`다.
 **이 디렉터리를 안 만들면 지금까지처럼 시스템 기본 로그인을 쓴다.**
 
 등록은 계정마다 한 번, 사람이 해야 한다 — OAuth는 브라우저를 요구한다.
 
 ```sh
-mkdir -p ~/.murmur-agent/claude-accounts/lime
-CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/lime claude
-# 뜬 화면에서 /login → 브라우저에서 그 계정으로 로그인 → 닫는다
+mkdir -p ~/.murmur-agent/claude-accounts/work/lime
+CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/work/lime claude auth login
+# 뜬 URL 을 브라우저에서 열고 로그인 → 코드를 붙여 넣는다
+```
+
+풀을 쓰려면 `pools.json`도 만든다(앱이 대신 쓴다).
+
+```sh
+cat > ~/.murmur-agent/claude-accounts/pools.json <<'JSON'
+{ "defaultPool": "work", "order": {}, "agents": {} }
+JSON
 ```
 
 **두 번째 계정부터는 브라우저 시크릿 창을 써라.** 그러지 않으면 기존 세션 쿠키를 재사용해
@@ -299,10 +363,11 @@ CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/lime claude
 확인:
 
 ```sh
-CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/lime claude -p 'reply with OK'
+CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/work/lime claude auth status --json
 ```
 
 - `MURMUR_CLAUDE_ACCOUNTS_DIR` — 뿌리를 옮긴다.
+- `MURMUR_CLAUDE_POOL` — 쓸 풀을 강제한다(배정·기본 풀을 덮는다). 없는 풀이면 기동 실패다.
 - `MURMUR_CLAUDE_ACCOUNTS` — 쉼표로 순서와 부분집합을 정한다(예: `plum,lime`). 없는 이름을
   적으면 **러너가 뜨지 않는다** — 조용히 무시하면 계정 B라고 믿고 띄운 러너가 A로 돈다.
 
