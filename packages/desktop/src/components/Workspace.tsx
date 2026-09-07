@@ -7,6 +7,7 @@ import { TOP_BAR_H } from '../lib/platform';
 import { CommunityRail } from './CommunityRail';
 import { Rail, type RailPanel } from './Rail';
 import { Sidebar } from './Sidebar';
+import { SidebarToggleIcon } from './SidebarToggleIcon';
 import { ChannelPane } from './ChannelPane';
 import { Notice } from './Notice';
 import { ProjectionBanner } from './ProjectionBanner';
@@ -189,7 +190,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
               aria-label="사이드바 펼치기"
               title="사이드바 펼치기"
             >
-              ☰
+              <SidebarToggleIcon />
             </button>
           )}
           <button
