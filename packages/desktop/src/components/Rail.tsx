@@ -286,7 +286,17 @@ function MeMenuHeader() {
     <div className="flex items-center gap-2">
       <Identity account={me ?? undefined} variant="avatar" className="h-8 w-8 shrink-0" />
       <div className="min-w-0">
-        <div className="truncate text-sm font-medium text-fg">{me?.handle}</div>
+        {/*
+          **굵은 줄은 `displayName` 이다**(실측 2026-09-07, 사용자가 화면에서 발견).
+          두 줄이 **똑같이 `handle` 을 쓰고 있어** `jaebin / @jaebin` 처럼 같은 값이 두 번
+          섰다. 필드는 이미 있었고(`AccountView.displayName`) 화면이 안 쓴 것이다 —
+          이름을 `재빈` 으로 바꿔 두면 `재빈 / @jaebin` 으로 갈린다.
+
+          `displayName` 이 비어 있으면 `handle` 로 떨어진다: 서버가 기본값으로 `handle` 을
+          넣지만(빈 문자열이 오는 경로가 있다) 그때 굵은 줄이 사라지면 메뉴 머리가
+          "누구의 것인지" 말하지 못한다.
+        */}
+        <div className="truncate text-sm font-medium text-fg">{me?.displayName || me?.handle}</div>
         <div className="truncate text-[11px] text-fg-subtle">@{me?.handle} · {workspaceLabel}</div>
       </div>
     </div>

@@ -416,3 +416,44 @@ describe('사이드바 토글 아이콘', () => {
     expect(svg.getAttribute('aria-hidden')).toBe('true');
   });
 });
+
+/**
+ * **브랜드 줄에 앱 이름을 글자로 적지 않는다**(실측 2026-09-07, 사용자가 지적).
+ *
+ * 레일에 이미 커뮤니티 마크가 서 있어(`Rail.tsx`) 앱 이름을 여기서 또 적으면 같은
+ * 화면이 두 번 말하는 셈이다. 로고 하나로 충분하다.
+ *
+ * **다만 이름이 사라지면 안 된다** — 글자를 빼면서 로고의 `decorative` 도 떼어
+ * `role="img"` + `aria-label="murmur"` 가 그 자리를 잇는다. 둘 다 없으면 스크린리더가
+ * 이 줄을 무명 랜드마크로 만난다.
+ */
+describe('브랜드 줄은 로고만 둔다', () => {
+  /**
+   * **글자 노드만 본다.** `textContent` 로는 잴 수 없다 — 로고가 접근성 이름으로 내는
+   * `aria-label="murmur"` 가 jsdom 의 `textContent` 에 섞여 들어와, 글자를 뺐는데도
+   * 문자열이 잡힌다(실제로 그렇게 한 번 틀렸다). 그래서 **직접 자식 텍스트 노드**만 센다.
+   */
+  it('앱 이름을 글자로 적지 않는다', () => {
+    renderWorkspace({ sidebarCollapsed: false });
+    const brand = screen.getByTestId('sidebar-brand');
+    const ownText = [...brand.childNodes]
+      .filter((n) => n.nodeType === 3)
+      .map((n) => n.textContent ?? '')
+      .join('')
+      .trim();
+    expect(ownText).toBe('');
+  });
+
+  it('그래도 접근성 이름은 남는다 — 로고가 그것을 잇는다', () => {
+    const { container } = renderWorkspace({ sidebarCollapsed: false });
+    const brand = screen.getByTestId('sidebar-brand');
+    expect(brand.querySelector('[role="img"][aria-label="murmur"]')).toBeTruthy();
+    expect(container).toBeTruthy();
+  });
+
+  /** 연결 점은 남는다 — `#443` 이 "실측에서 유일하게 맞았던 표시"라 적은 자리다. */
+  it('연결 점은 그대로 있다', () => {
+    renderWorkspace({ sidebarCollapsed: false });
+    expect(screen.getByTestId('connection-dot')).toBeTruthy();
+  });
+});
