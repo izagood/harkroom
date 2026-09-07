@@ -41,8 +41,8 @@ const seed = (isAdmin: boolean) => {
 };
 
 const sidebar = () => render(
-  <Sidebar onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}} onLogout={vi.fn()}
-    onOpenSettings={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />,
+  <Sidebar panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}}
+    collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
 /** 보관 섹션을 펴고 그 채널의 ⋯ 메뉴를 연다. */

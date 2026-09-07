@@ -194,11 +194,9 @@ describe('Directory (#226)', () => {
     useAppStore.getState().set({ me: acc('u1', 'alice') });
     const onOpenDirectory = vi.fn();
     render(
-      <Sidebar
+      <Sidebar panel="home"
         onOpenDirectory={onOpenDirectory} onOpenChannelDirectory={vi.fn()}
-        onOpenInbox={vi.fn()} onOpenSaved={() => {}}
-        onLogout={vi.fn()}
-        onOpenSettings={vi.fn()}
+        onOpenInbox={vi.fn()}
         collapsed={false}
         onToggleCollapse={vi.fn()}
       />,

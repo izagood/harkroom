@@ -1,10 +1,13 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { sidebarStorage } from '../lib/prefs';
-import { isMacOS, MAC_TRAFFIC_LIGHT_PL, TOP_BAR_H } from '../lib/platform';
+// `isMacOS`·`MAC_TRAFFIC_LIGHT_PL` 이 여기 있었다 — 좌상단은 이제 늘 레일이다(아래 주석).
+import { TOP_BAR_H } from '../lib/platform';
 import { CommunityRail } from './CommunityRail';
+import { Rail, type RailPanel } from './Rail';
 import { Sidebar } from './Sidebar';
+import { SidebarToggleIcon } from './SidebarToggleIcon';
 import { ChannelPane } from './ChannelPane';
 import { Notice } from './Notice';
 import { ProjectionBanner } from './ProjectionBanner';
@@ -38,6 +41,16 @@ export function Workspace({ onLogout, onOpenSettings }: {
   const [inboxOpen, setInboxOpen] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sidebarStorage.loadCollapsed());
+  /**
+   * 레일이 고른 칸(정본 문서 `docs/desktop-rail.html` 1단계). **레일 안이 아니라 여기서
+   * 든다** — 레일과 사이드바가 같은 값을 봐야 하고, 둘 중 하나가 가지면 다른 쪽이 그것을
+   * 되받는 배선이 생긴다. 형제 둘의 공통 부모가 이 화면이다.
+   *
+   * **영속하지 않는다.** 다시 열었을 때 DM 칸에서 시작하면 "채널이 사라졌다"로 읽히고,
+   * 홈은 Inbox·즐겨찾기·채널이 모두 있는 칸이라 어디로 갈지 고르기에 가장 나은 출발점이다.
+   * 기억해 둘 값이라는 근거가 실제로 생기면 `prefs` 에 넣는다(지금 넣으면 추측이다).
+   */
+  const [railPanel, setRailPanel] = useState<RailPanel>('home');
 
   const canGoBack = historyIndex > 0;
   const canGoForward = historyIndex < history.length - 1;
@@ -117,13 +130,12 @@ export function Workspace({ onLogout, onOpenSettings }: {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [handleGoBack, handleGoForward, handleToggleSidebar]);
 
-  /**
-   * 신호등 여백은 **창의 좌상단에 실제로 있는 바**가 진다. 사이드바가 펴져 있으면 그 자리는
-   * 사이드바 브랜드 바(`Sidebar`)이고, 접었을 때만 이 헤더가 좌상단이 된다. 판정은 마운트마다
-   * 한 번이면 된다 — 앱이 도는 동안 OS 가 바뀌지는 않는다.
+  /*
+   * 신호등 여백은 **창의 좌상단에 실제로 있는 바**가 진다(#270). 그 자리가 이제 늘
+   * 레일이다 — 사이드바를 접어도 레일은 남으므로 이 헤더가 좌상단이 되는 경우가 없어졌다.
+   * 그래서 `headerNeedsTrafficLightRoom` 판정을 지웠다: 조건이 항상 거짓인 분기를 남겨
+   * 두면 다음 사람이 그 분기가 살아 있다고 읽는다.
    */
-  const isMac = useMemo(() => isMacOS(), []);
-  const headerNeedsTrafficLightRoom = isMac && sidebarCollapsed;
 
   return (
     <div className="flex h-screen text-sm">
@@ -131,13 +143,31 @@ export function Workspace({ onLogout, onOpenSettings }: {
           순간(폭 0) 전환기까지 함께 사라져, 커뮤니티를 바꾸려면 먼저 사이드바를 펴야 한다.
           커뮤니티가 하나면 이 컴포넌트는 아무것도 그리지 않으므로 오늘 화면과 같다. */}
       <CommunityRail />
-      <Sidebar
-        onLogout={onLogout}
+      {/*
+        레일도 **사이드바 밖**이다(정본 문서 1단계). `CommunityRail`(#165) 이 같은 이유로
+        이미 밖에 있다: 사이드바 안에 넣으면 사이드바를 접는 순간(폭 0) 레일까지 함께
+        사라져, 칸을 바꾸려면 먼저 사이드바를 펴야 한다.
+
+        문서가 스스로 적어 둔 손해가 여기서 갈린다 — *"좁은 창에서는 레일만 남기고 패널을
+        접는 단계가 하나 더 필요하다."* 그 단계가 이미 있다: `⌘\` 로 사이드바를 접으면
+        62px 레일만 남는다. 문서가 "필요하다"고 적은 것을 새로 만들지 않고 기존 접기에
+        얹은 것이 이 배치의 값이다.
+      */}
+      <Rail
+        panel={railPanel}
+        onPanelChange={setRailPanel}
+        onOpenSaved={() => setSavedOpen(true)}
         onOpenSettings={onOpenSettings}
+        /* 전환 목록은 문서의 4단계다. 그때까지 마크는 설정 › 커뮤니티로 보낸다 —
+           눌러도 아무 일이 없는 마크를 두지 않는다(design.md §4). */
+        onOpenCommunityMark={() => onOpenSettings('communities')}
+        onLogout={onLogout}
+      />
+      <Sidebar
+        panel={railPanel}
         onOpenDirectory={() => handleOpenDirectory(null)}
         onOpenChannelDirectory={() => setChannelDirectoryOpen(true)}
         onOpenInbox={() => setInboxOpen(true)}
-        onOpenSaved={() => setSavedOpen(true)}
         collapsed={sidebarCollapsed}
         onToggleCollapse={handleToggleSidebar}
       />
@@ -147,14 +177,11 @@ export function Workspace({ onLogout, onOpenSettings }: {
             시작한다 — 자식 버튼을 누르면 이벤트 대상이 버튼이므로 창은 움직이지 않고 버튼이
             그대로 눌린다. 그래서 손잡이는 루트에만 두고 버튼·입력에는 붙이지 않는다.
 
-            왼쪽 여백은 `pl-2`/`pl-[78px]` 를 **갈아 끼운다**. `px-2` 와 `pl-[78px]` 를 같이
-            두면 어느 쪽이 이기는지가 Tailwind 의 출력 순서에 달리므로 승부를 만들지 않는다. */}
+            신호등 여백은 여기가 지지 않는다 — 창의 좌상단은 늘 레일이다(위 주석). */}
         <div
           data-testid="app-header"
           data-tauri-drag-region
-          className={`flex ${TOP_BAR_H} items-center gap-2 border-b border-border bg-surface-raised pr-2 ${
-            headerNeedsTrafficLightRoom ? MAC_TRAFFIC_LIGHT_PL : 'pl-2'
-          }`}
+          className={`flex ${TOP_BAR_H} items-center gap-2 border-b border-border bg-surface-raised pl-2 pr-2`}
         >
           {sidebarCollapsed && (
             <button
@@ -163,7 +190,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
               aria-label="사이드바 펼치기"
               title="사이드바 펼치기"
             >
-              ☰
+              <SidebarToggleIcon />
             </button>
           )}
           <button
