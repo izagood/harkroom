@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, quotaNotice, type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, quotaNotice, sessionConflictNotice, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -308,5 +308,23 @@ describe('자격증명·한도 통지 (사람이 보는 자리)', () => {
 
   it('시각을 모르면 한도라는 사실만 말한다', () => {
     expect(quotaNotice(null)).toContain('한도');
+  });
+});
+
+// 세션 충돌은 사람이 기다려서 낫는 것도 아니고 로그인으로 낫는 것도 아니다 — 러너의 세션
+// 상태와 하네스의 디스크가 어긋난 것이다. 그래서 통지는 **무엇이 어긋났는지**와 **어디를
+// 볼지**를 말해야 한다. `FAILURE_NOTICE`("운영자 확인이 필요합니다")가 실패한 지점이
+// 정확히 이 자리다: 확인이 필요한 것은 맞는데 무엇을 확인할지 말하지 않았다.
+describe('sessionConflictNotice', () => {
+  it('세션 상태가 어긋났다는 사실을 말한다', () => {
+    expect(sessionConflictNotice()).toContain('세션');
+  });
+
+  it('기다리라고 하지 않는다 — 기다려서 낫는 실패가 아니다', () => {
+    expect(sessionConflictNotice()).not.toContain('다시 불러');
+  });
+
+  it('로그인을 뒤지게 하지 않는다', () => {
+    expect(sessionConflictNotice()).not.toContain('로그인');
   });
 });

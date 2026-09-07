@@ -17,6 +17,7 @@
 import { readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { AgentHarness } from '@murmur/shared';
 
 /**
  * **경로는 `CLAUDE_CONFIG_DIR` 를 따라간다(2026-09-07).** 계정별 config 디렉터리로 claude 를
@@ -49,4 +50,32 @@ export async function claudeSessionFileExists(
     } catch { /* 프로젝트 하나를 못 읽는 것이 나머지 탐색을 막지 않는다 */ }
   }
   return false;
+}
+
+/**
+ * 하네스 세션이 디스크에 실재하게 됐는가. `turnsRun === 0` 인 레코드를 만났을 때
+ * "러너가 uuid 를 발급만 한 것"과 "하네스가 그 세션을 실제로 만든 것"을 가른다.
+ *
+ * **양쪽 턴이 공유한다**(`interactiveTurn.ts`, `mentionTurn.ts`). 여기 사는 이유는 순환
+ * 참조다: `interactiveTurn.ts` 는 `mentionTurn.ts` 에서 `resolveWorkspaceDir` 를 가져오므로
+ * 반대 방향 import 가 안 되고, 이 파일은 파일시스템 세 개만 import 하는 양쪽의 공통
+ * 아래층이다.
+ *
+ * codex 가 무조건 참인 이유: codex 의 sessionId 는 러너가 발급한 값이 아니라 rollout
+ * 파일에서 **발견한** 값이라(`codexSessions.ts`) 그 자체가 디스크 실재의 증거다.
+ */
+export function claudeSessionMaterialized(
+  harness: AgentHarness,
+  sessionId: string,
+  claudeConfigDir: string | null = null,
+): Promise<boolean> {
+  // **계정 디렉터리를 받는다(다중 계정).** 세션 파일은 `<CLAUDE_CONFIG_DIR>/projects` 아래
+  // 있어, 계정을 쓰는 러너에서 홈만 보면 실재하는 세션을 "없음"으로 읽는다 — 그러면 다음
+  // 턴이 `--session-id` 로 조립돼 `already in use` 로 죽는다(위 함수 주석의 함정, 그리고
+  // `policy.ts::isSessionIdConflict` 가 그물로 받는 바로 그 실패).
+  //
+  // 기본값이 `null`(시스템 기본)인 이유: 계정 풀을 안 만든 러너와 이 인자를 모르는 옛
+  // 호출부가 지금 동작을 그대로 유지해야 한다.
+  if (harness === 'claude-code') return claudeSessionFileExists(sessionId, { configDir: claudeConfigDir });
+  return Promise.resolve(true);
 }

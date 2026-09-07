@@ -45,6 +45,15 @@ describe('계정 전환 방아쇠', () => {
       .toBe(false);
   });
 
+  // #556 과의 상호작용. 세션 id 충돌은 **같은 계정의** 세션 상태 어긋남이다 — 계정을
+  // 바꿔도 그 어긋남이 낫지 않고, #556 이 만든 전용 분기(재시도 없이 통지)가 받아야 한다.
+  // 여기서 참을 돌려주면 계정 축이 풀을 헛돌며 그 분기를 늦춘다.
+  it('세션 id 충돌은 계정을 바꾸지 않는다 — #556 의 전용 분기로 간다', () => {
+    expect(switchesAccount(new Error(
+      'harness 종료 1: Error: Session ID 214242d8-0000-4000-8000-000000000000 is already in use.',
+    ))).toBe(false);
+  });
+
   it('평범한 실패는 계정을 바꾸지 않는다 — 기존 재시도 회계로 간다', () => {
     expect(switchesAccount(new Error('harness 종료 1: something else went wrong'))).toBe(false);
   });

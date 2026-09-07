@@ -77,3 +77,50 @@ describe('종료 판정이 세 자리에 다 걸려 있다', () => {
     expect(source).toContain('if (exhausted(tried))');
   });
 });
+
+// 세션 id 충돌(2026-09-07 19:03 실측)도 재시도로 낫지 않는다 — 3회가 176·185·278ms 만에
+// 같은 자리에서 실패했다. 자격증명과 다른 점은 **러너가 살아 있어야 한다**는 것이다: 그
+// 스레드 하나의 상태 문제이고 다른 스레드는 멀쩡하다. 그래서 `exitIfUnrecoverable` 이
+// 아니라 사용량 한도와 같은 세 번째 갈래로 다루고, 여기서는 그것이 **재시도 회계보다
+// 앞에** 걸려 있는지만 본다 — 뒤에 있으면 3회를 태우는 옛 동작이 그대로 남는다.
+describe('세션 id 충돌은 재시도 회계에 들어가지 않는다', () => {
+  const mentionCatchAt = (): number => {
+    const at = source.indexOf('// 재시도로 낫지 않는 실패는 여기서 걸러');
+    expect(at).toBeGreaterThan(0);
+    return at;
+  };
+
+  it('멘션 catch 에서 세션 충돌을 판정한다', () => {
+    expect(source.indexOf('isSessionIdConflict(err)', mentionCatchAt())).toBeGreaterThan(0);
+  });
+
+  it('그 판정이 재시도 회계보다 앞이다', () => {
+    const at = mentionCatchAt();
+    const conflict = source.indexOf('isSessionIdConflict(err)', at);
+    const accounting = source.indexOf('failed = true;', at);
+    expect(conflict).toBeGreaterThan(0);
+    expect(accounting).toBeGreaterThan(conflict);
+  });
+
+  // 러너를 죽이면 안 된다. 판정이 `exitIfUnrecoverable` 을 타면 다른 스레드의 대기 멘션까지
+  // 함께 잃는다 — 이 실패에는 그럴 이유가 없다.
+  it('러너를 죽이지 않는다 — 판정은 exit 판정과 별개다', () => {
+    expect(source).toContain('sessionConflictNotice');
+    const conflict = source.indexOf('isSessionIdConflict(err)', mentionCatchAt());
+    const between = source.slice(conflict, source.indexOf('failed = true;', conflict));
+    expect(between).not.toContain('exitIfUnrecoverable');
+  });
+});
+
+// 한도 경로는 tail 을 로그에 남기지 않았다 — 그래서 2026-09-07 19:03 사건에서 러너가
+// "풀림: 알 수 없음"을 찍은 **이유**를 알 수 없었다. 세션 파일에는 CLI 가 낸 문구
+// (`resets 10:50pm (Asia/Seoul)`)가 분명히 있었는데 판정은 시각을 못 읽었다. 둘 사이에
+// tail 원문이 있어야 어디서 어긋났는지 보인다.
+describe('한도 판정은 tail 을 로그에 남긴다', () => {
+  it('시각을 못 읽었을 때 원문을 함께 찍는다', () => {
+    const at = source.indexOf('사용량 한도 — 재시도하지 않는다');
+    expect(at).toBeGreaterThan(0);
+    const line = source.slice(at, source.indexOf('\n', at));
+    expect(line).toContain('err instanceof Error');
+  });
+});
