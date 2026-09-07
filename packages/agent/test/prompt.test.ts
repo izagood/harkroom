@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, quotaNotice, sessionConflictNotice, type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, harnessTailNotice, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, quotaNotice, sessionConflictNotice, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -326,5 +326,70 @@ describe('sessionConflictNotice', () => {
 
   it('로그인을 뒤지게 하지 않는다', () => {
     expect(sessionConflictNotice()).not.toContain('로그인');
+  });
+});
+
+/**
+ * **발화 없이 끝난 턴에서 하네스의 마지막 출력을 살린다** (2026-09-07 후속).
+ *
+ * 그날 15:08 의 턴은 이렇게 끝났다 — stdout 에만 남고 스레드에는 안 온 말:
+ *
+ * > PR #533을 올렸고 CI 두 잡이 도는 중입니다. … 통과 시 `--merge --delete-branch` 로
+ * > 머지하고 결과를 스레드에 올리겠습니다.
+ *
+ * 사람이 스레드에서 본 것은 `(답 없이 턴을 끝냈습니다)` 한 줄이었다. **정보는 존재했고
+ * 러너가 버렸다** — `runTurn` 이 돌려주는 `tail`(끝 2KB)에 그 말이 담겨 있었는데 성공
+ * 경로가 그것을 쓰지 않았다.
+ *
+ * 러너가 하네스 출력을 **해석**하지는 않는다(`pty.ts` 의 금지선). 여기서 하는 것은 해석이
+ * 아니라 **증거 첨부**다 — 옛 `reply.ts::extractReply` 가 모델 응답을 파싱해 대신 올리던
+ * 것과 다르다: 무슨 뜻인지 판정하지 않고, 마지막에 무엇이 찍혔는지를 그대로 보인다.
+ */
+describe('harnessTailNotice — 버려지던 마지막 출력', () => {
+  it('마지막 출력을 통지에 붙인다', () => {
+    const n = harnessTailNotice('PR #533 을 올렸고 CI 가 도는 중입니다', 'murp_secret');
+    expect(n).toContain('PR #533');
+  });
+
+  it('ANSI 와 제어문자를 걷어낸다 — 터미널 제어열이 대화에 흐르면 읽을 수 없다', () => {
+    const n = harnessTailNotice('\x1B[32m초록\x1B[0m\x1B[?25h\r\n다음 줄', 'murp_secret');
+    expect(n).toContain('초록');
+    expect(n).toContain('다음 줄');
+    expect(n).not.toContain('\x1B');
+    expect(n).not.toContain('[32m');
+    expect(n).not.toContain('\r');
+  });
+
+  /**
+   * **이것이 없으면 이 기능을 넣을 수 없다.** PTY 안에서는 stdout·stderr 가 한 스트림으로
+   * 섞이고 프롬프트 에코까지 남는다(`pty.ts` 주석의 실측). 러너 env 에는 PAT 가 있으므로
+   * (`MURMUR_PAT`) 하네스가 `env` 를 찍는 순간 그것이 tail 에 들어온다 — 새니타이즈 없이
+   * 올리면 통지가 **비밀을 대화에 흘리는 경로**가 된다.
+   */
+  it('PAT 와 Bearer 토큰을 가린다', () => {
+    const n = harnessTailNotice('MURMUR_PAT=murp_secret_value 로 붙었다', 'murp_secret_value');
+    expect(n).not.toContain('murp_secret_value');
+    expect(n).toContain('(가림)');
+
+    const b = harnessTailNotice('authorization: Bearer abc.def.ghi', 'murp_x');
+    expect(b).not.toContain('abc.def.ghi');
+
+    // 러너 PAT 가 아닌 다른 murp_ 토큰도 가린다 — 그 모양 자체가 비밀이다.
+    const other = harnessTailNotice('murp_m_other_agent_token', 'murp_x');
+    expect(other).not.toContain('murp_m_other_agent_token');
+  });
+
+  it('길면 뒤를 남기고 잘렸음을 밝힌다 — 사람이 "이게 전부"로 읽으면 안 된다', () => {
+    const n = harnessTailNotice('가'.repeat(3000), 'murp_x')!;
+    expect(n.length).toBeLessThan(1500);
+    expect(n).toContain('…');
+    // 뒤를 남긴다 — 마지막에 무엇을 했는지가 이 통지의 값이다.
+    expect(n.endsWith('가')).toBe(true);
+  });
+
+  it('남길 것이 없으면 null 이다 — 빈 상자는 거짓 신호다', () => {
+    expect(harnessTailNotice('', 'murp_x')).toBeNull();
+    expect(harnessTailNotice('   \n\r\n  ', 'murp_x')).toBeNull();
+    expect(harnessTailNotice('\x1B[?25h\x1B[0m', 'murp_x')).toBeNull();
   });
 });
