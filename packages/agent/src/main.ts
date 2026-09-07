@@ -426,6 +426,12 @@ while (running) {
         // 하네스 실행 파일 부재는 멘션 MAX_ATTEMPTS 건을 태운 뒤에야 흔적을 남긴다(#340).
         // 물러나기 **전에** 사람이 보는 자리에 말한다(2026-09-07) — 아래 판정은
         // `process.exit` 을 부르므로 순서가 계약이다.
+        //
+        // **여기 도달했다는 것은 계정 축이 이미 소진됐다는 뜻이다**(다중 계정).
+        // `withAccountFailover` 가 위에서 `runMentionTurn` 을 감싸고 있으므로, 풀에 아직
+        // 안 써 본 계정이 있으면 그 오류는 이 catch 에 오지 않는다. 그래서 자격증명 실패로
+        // 러너가 죽는 것은 **모든 계정의 로그인이 풀렸을 때**뿐이다 — "재시도로 낫지
+        // 않는다"는 `exit.ts` 의 근거가 그때 되살아난다.
         await noticeIfHarnessLogin(err, mention.channelId, anchor, entry.messageId);
         exitIfUnrecoverable(err);
 
