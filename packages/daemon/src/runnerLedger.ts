@@ -115,6 +115,18 @@ export interface RunnerLedgerEntry {
   bootTimeSec: number | null;
   /** 이 러너를 띄운 daemon 의 `launchNonce`. 사람이 장부를 읽을 때의 출처 표시다. */
   spawnedByNonce: string;
+  /**
+   * 이 러너를 띄운 **앱 버전**(daemon 의 `--app-version`). 2026-09-07 에 더했다.
+   *
+   * 출처 표시가 아니라 **판정에 쓰인다**: 세대가 다른 러너는 채택하지 않고 회수한다
+   * (`adopt.ts::planAdoption`). 채택은 "새로 띄우지 않는다"를 보장하므로, 이 축이 없으면
+   * 앱을 업데이트해 daemon 이 갈려도 옛 러너가 그대로 채택되어 **영원히 옛 코드로 돈다** —
+   * 이날 forge 가 그랬다(러너 env 결함을 고쳐 릴리스했는데도 증상이 그대로였다).
+   *
+   * 옵셔널인 이유: 이 필드가 없던 daemon 이 쓴 장부가 디스크에 남아 있다. 없으면
+   * "그 이전 세대"라는 뜻이고, 판정은 그것을 낡은 것으로 본다(`planAdoption` 주석).
+   */
+  spawnedByAppVersion?: string;
 }
 
 interface LedgerFile {

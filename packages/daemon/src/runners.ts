@@ -323,6 +323,25 @@ export class RunnerRegistry {
   ) {}
 
   /** 지금 표 전체. 장부에 쓰기 위해서만 쓰인다. */
+  /**
+   * 표에 올리지 **않고** 러너를 회수한다 — 낡은 세대의 고아에게만 쓴다(2026-09-07).
+   *
+   * `killRunner` 와 다른 자리인 이유: 그쪽은 표에 있는 러너(세대 대조·incarnation 검사)를
+   * 다루고, 여기 오는 것은 **채택하지 않기로 판정한** 장부의 줄이다. 표에 없으니 그
+   * 경로를 태울 수 없고, 태우려고 표에 먼저 올리면 "채택하지 않는다"는 판정과 모순된다.
+   *
+   * 죽일 근거: 장부는 이 daemon 계보가 자기 손으로 spawn 한 pid 만 담고(`adopt.ts` 모듈
+   * 주석), 호출부는 `judgeCandidate` 의 생사·pid 재사용 검사를 통과한 줄만 넘긴다.
+   * 즉 **우리 러너가 확실하다** — 이 모듈이 가장 피하려는 "남의 프로세스에 SIGTERM" 이
+   * 아니다.
+   *
+   * `SIGTERM` 이고 `SIGKILL` 이 아니다: 러너는 이 시그널을 받아 진행 중인 턴을 마무리할
+   * 기회를 갖는다. 회수는 업데이트 직후 한 번뿐이므로 여기서 굳이 서두를 이유가 없다.
+   */
+  retire(pid: number): boolean {
+    return this.host.kill(pid, 'SIGTERM');
+  }
+
   private records(): RunnerRecord[] {
     return [...this.byAgent.values()];
   }

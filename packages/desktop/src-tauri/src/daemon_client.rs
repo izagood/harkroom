@@ -1113,6 +1113,108 @@ fn runner_exit_emitter(
 /// `my_entry` 는 **내 빌드의 daemon 실행 파일 경로**다(`same_entry_path` 주석 참조).
 /// 프로덕션에서는 `sidecar_path(DAEMON_SIDECAR_NAME)` 하나뿐이고, 회귀선이 "남의 경로"를
 /// 만들 수 있어야 해서 파라미터로 받는다.
+/// 붙은 daemon 을 **물러나게 해야 하는가** — 낡은 번들이 띄운 것인가(2026-09-07).
+///
+/// ## 왜 이 판정이 필요한가 (실측)
+///
+/// daemon 은 `setsid` 로 떠서 앱 종료에도 살아남는다(`#431` — 그것이 목적이다: 앱을
+/// 닫아도 에이전트가 일한다). 소켓·pid 파일명에는 **프로토콜 버전만** 들어가므로
+/// (`daemonEndpoint.ts`) 앱을 업데이트해도 새 앱은 옛 daemon 에 그냥 붙는다.
+///
+/// 이 기계에서 실제로 이랬다: `--app-version 0.1.6` daemon 이 13:11 부터 살아 있고,
+/// 앱은 16:50 에 **0.1.26** 으로 새로 떴는데도 그 daemon 에 붙어 있었다. 그날 daemon 쪽
+/// 결함(러너에게 사용자 환경을 물려주지 않던 것)을 고쳐 릴리스했지만, 사람이 터미널에서
+/// 프로세스를 손으로 죽이지 않으면 **고친 코드가 실행되지 않았다.**
+///
+/// `#431` 이 얻은 것("앱을 닫아도 러너가 산다")의 대가가 정확히 이것이다:
+/// **살아남는 것은 고쳐지지 않는다.** 이 함수가 그 대가를 갚는다.
+///
+/// ## 판정이 한쪽으로 기운다
+///
+/// `adopt.ts` 의 규율과 같다 — *"확실하지 않으면 채택하지 않는다."* 여기서는
+/// **확실하지 않으면 물러나게 하지 않는다**:
+///
+/// - 어느 쪽이든 버전을 못 읽으면 `false`. 옛 daemon 은 `appVersion` 을 아예 안 적었을
+///   수 있고(`occupied_reason` 이 그 경우를 이미 다룬다), 모르는 것을 낡았다고 단정하는
+///   것은 지어내는 것이다(`#368`).
+/// - 숫자가 아닌 조각(pre-release, `dev` 등)이 섞이면 `false`. 순서를 지어내는 것보다
+///   붙는 편이 안전하다.
+/// - 같은 버전이면 `false`. 여기서 물러나게 하면 앱을 열 때마다 daemon 이 갈리고, 그때
+///   러너까지 함께 회수되어 진행 중인 턴이 매번 죽는다.
+/// - 상대가 더 새것이면 `false`. 옛 번들이 새 daemon 을 죽이는 경로는 만들지 않는다.
+///
+/// **호출부의 경계도 함께 읽어라**: 이 판정은 `same_entry_path` 가 참인 가지 안에서만
+/// 쓰인다. 즉 **내 번들이 띄운 daemon** 에만 적용된다 — 남의 워크트리·다른 빌드의
+/// daemon 은 이 함수에 닿지 않는다.
+fn should_retire_daemon(theirs: &str, mine: &str) -> bool {
+    let (Some(theirs), Some(mine)) = (parse_version(theirs), parse_version(mine)) else {
+        return false;
+    };
+    let len = theirs.len().max(mine.len());
+    for i in 0..len {
+        // 없는 자리는 0 으로 읽는다 — `0.1` 과 `0.1.0` 은 같은 버전이다.
+        let a = theirs.get(i).copied().unwrap_or(0);
+        let b = mine.get(i).copied().unwrap_or(0);
+        if a != b {
+            return a < b;
+        }
+    }
+    false
+}
+
+/// `0.1.26` → `[0, 1, 26]`. 숫자가 아닌 조각이 하나라도 있으면 `None` —
+/// 순서를 지어내지 않는다(`should_retire_daemon` 주석).
+fn parse_version(text: &str) -> Option<Vec<u64>> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    text.split('.')
+        .map(|part| part.parse::<u64>().ok())
+        .collect()
+}
+
+/// 낡은 daemon 에게 `SIGTERM` 을 보내고 **엔드포인트가 비기를 기다린다.**
+///
+/// `SIGTERM` 인 이유: daemon 의 핸들러가 소켓·pid·토큰 세 파일을 걷어내고 물러난다
+/// (`daemon/src/main.ts` — *"`SIGTERM`/`SIGINT` 를 받으면 엔드포인트만 정리하고
+/// 물러난다"*). `SIGKILL` 은 그 잔해를 남긴다. 즉 이것은 강제 종료가 아니라 **설계된
+/// 퇴장 경로**다.
+///
+/// **러너에게는 아무 시그널도 가지 않는다**(daemon 의 shutdown 계약). 살아남은 러너는
+/// 새 daemon 이 장부로 판정한다 — 낡은 세대의 러너를 어떻게 다룰지는 그쪽의 결정이고
+/// (`adopt.ts`), 여기서 프로세스를 훑어 죽이면 그 판정을 앱이 가로채는 셈이 된다.
+///
+/// 비지 않으면 `false`. 그때도 호출부는 그대로 띄우러 간다 — 우리 daemon 이 뜨면
+/// `claimDaemonEndpoint` 의 3중 증거가 "점유 중"을 보고 `EXIT_OCCUPIED` 로 물러나고,
+/// 앱은 `occupied_reason` 으로 사람에게 누가 쥐고 있는지 말한다. 즉 실패도 **이미 있는
+/// 경로**로 흐른다.
+fn retire_daemon(paths: &EndpointPaths, pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    // SAFETY: pid 는 pid 레코드에서 읽은 값이고, 이 함수는 `same_entry_path` 가 참인
+    // 가지에서만 불린다 — 즉 내 번들이 띄운 daemon 이다.
+    let sent = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    if sent != 0 {
+        log_line(&format!("낡은 daemon 에 SIGTERM 을 못 보냈다: pid {pid}"));
+        return false;
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        // 세 파일 중 소켓·토큰이 사라지면 엔드포인트가 빈 것이다 — 그 둘이 붙기의 조건이다.
+        if !paths.socket.exists() && !paths.token.exists() {
+            log_line(&format!("낡은 daemon 이 물러났다: pid {pid}"));
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    log_line(&format!(
+        "낡은 daemon 이 5초 안에 물러나지 않았다: pid {pid} — 그대로 띄워 본다"
+    ));
+    false
+}
+
 fn ensure_at(
     paths: &EndpointPaths,
     my_entry: &Path,
@@ -1140,6 +1242,22 @@ fn ensure_at(
                 my_entry.display(),
                 record.as_ref().map(|r| r.pid).unwrap_or(0),
             ));
+        } else if should_retire_daemon(
+            record.as_ref().map(|r| r.app_version.as_str()).unwrap_or(""),
+            env!("CARGO_PKG_VERSION"),
+        ) {
+            // ── 낡은 번들이 띄운 daemon 이다 — 물러나게 하고 우리 것을 띄운다 ──────
+            //
+            // 이 가지가 없으면 daemon 쪽 수정은 릴리스를 타고도 사람에게 도달하지 않는다
+            // (`should_retire_daemon` 주석의 실측). 붙어 버리면 그 순간 옛 코드가 계속
+            // 러너를 띄우고, 앱은 그 사실을 로그 한 줄로만 남긴다.
+            let their_pid = record.as_ref().map(|r| r.pid).unwrap_or(0);
+            log_line(&format!(
+                "소켓을 쥔 daemon 이 낡은 번들의 것이다(앱 {} < 내 {}) — 물러나게 한다: pid {their_pid}",
+                record.as_ref().map(|r| r.app_version.as_str()).unwrap_or("?"),
+                env!("CARGO_PKG_VERSION"),
+            ));
+            retire_daemon(paths, their_pid);
         } else {
             match open_connection(paths, on_event.clone()) {
                 Ok(conn) => return Ok((conn, EnsureKind::Attached)),
@@ -1826,6 +1944,56 @@ impl DaemonConnection {
 mod tests {
     use super::*;
 
+    /// **회귀선 — 낡은 번들이 띄운 daemon 은 물러나게 한다** (2026-09-07).
+    ///
+    /// 왜 필요한가(실측): 이 기계에서 `--app-version 0.1.6` daemon 이 13:11 부터 살아
+    /// 있었고, 앱은 16:50 에 **0.1.26** 으로 새로 떴는데도 그 daemon 에 그냥 붙었다.
+    /// daemon 은 `setsid` 로 떠서 앱 종료에도 살아남고(`#431`), 소켓·pid 파일명에는
+    /// 프로토콜 버전만 들어가므로(`daemonEndpoint.ts`) 앱 버전은 **정보로만** 적혀 있었다.
+    ///
+    /// 그 결과가 이날의 forge 장애다: daemon 쪽 결함(`fix(daemon): 러너에게 사용자
+    /// 환경을 물려준다`)을 고쳐 릴리스했는데도, 사람이 터미널에서 프로세스를 손으로
+    /// 죽이지 않으면 **고친 코드가 실행되지 않았다.** 살아남는 것은 고쳐지지 않는다.
+    ///
+    /// 판정을 순수 함수로 뽑아 재는 이유: 이 결정의 어려움은 프로세스 조작이 아니라
+    /// **"언제 물러나게 해도 되는가"** 이고, 그 경계는 실물 daemon 없이 잴 수 있다.
+    #[test]
+    fn 낡은_버전이면_물러나게_한다() {
+        assert!(should_retire_daemon("0.1.6", "0.1.26"));
+        assert!(should_retire_daemon("0.1.26", "0.1.27"));
+        assert!(should_retire_daemon("0.1.9", "0.2.0"));
+    }
+
+    #[test]
+    fn 같거나_새_버전이면_그대로_붙는다() {
+        // 같은 버전 — 정상 경로다. 여기서 물러나게 하면 앱을 열 때마다 daemon 이 갈리고,
+        // 그 순간 러너가 함께 회수되어 진행 중인 턴이 매번 죽는다.
+        assert!(!should_retire_daemon("0.1.27", "0.1.27"));
+        // 상대가 더 새것 — 옛 번들이 새 daemon 을 죽이는 경로는 만들지 않는다.
+        // 다운그레이드 실행이나 두 빌드가 섞인 상태에서 최신 daemon 을 잃는다.
+        assert!(!should_retire_daemon("0.1.28", "0.1.27"));
+    }
+
+    #[test]
+    fn 버전을_못_읽으면_건드리지_않는다() {
+        // 옛 daemon 은 `appVersion` 을 아예 안 적었을 수 있다(`occupied_reason` 이 그
+        // 경우를 이미 다룬다). 모르는 것을 낡았다고 단정하지 않는다(`#368`).
+        assert!(!should_retire_daemon("", "0.1.27"));
+        assert!(!should_retire_daemon("0.1.6", ""));
+        // 숫자가 아닌 조각이 섞이면(pre-release 등) 비교를 포기한다 — 순서를 지어내는
+        // 것보다 붙는 편이 안전하다.
+        assert!(!should_retire_daemon("0.1.27-rc.1", "0.1.27"));
+        assert!(!should_retire_daemon("dev", "0.1.27"));
+    }
+
+    #[test]
+    fn 조각_수가_달라도_숫자로_비교한다() {
+        // `0.1.6` vs `0.1.6.1` 같은 조합. 없는 자리는 0 으로 읽는다.
+        assert!(should_retire_daemon("0.1", "0.1.1"));
+        assert!(!should_retire_daemon("0.1.1", "0.1"));
+        assert!(!should_retire_daemon("0.1", "0.1.0"));
+    }
+
     /// **회귀선 — 소켓 경로 길이 상한**(`#431` 2/3 이 밟은 자리).
     ///
     /// `bind` 를 실제로 부르지 않고 잰다. 부르면 재는 것이 "커널이 EINVAL 을 낸다"가 되고,
@@ -2495,7 +2663,19 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
     /// `detached_command` 를 빼도 이 테스트가 초록으로 통과한다(그 함수 주석 참고).
     /// `AppHandle` 이 필요한 것은 프로그램 경로와 앱 버전뿐이라 그 둘만 여기서 준다.
     fn launch_daemon(program: &Path, paths: &EndpointPaths, nonce: &str) -> std::process::Child {
-        daemon_command(program, paths, nonce, "test")
+        // `"test"` 는 **숫자가 아니라** `should_retire_daemon` 이 비교를 포기한다 — 그래서
+        // 기존 회귀선들은 버전 판정에 걸리지 않고 붙기·띄우기만 잰다. 판정을 재는 쪽은
+        // 아래 `launch_daemon_versioned` 로 버전을 명시한다.
+        launch_daemon_versioned(program, paths, nonce, "test")
+    }
+
+    fn launch_daemon_versioned(
+        program: &Path,
+        paths: &EndpointPaths,
+        nonce: &str,
+        app_version: &str,
+    ) -> std::process::Child {
+        daemon_command(program, paths, nonce, app_version)
             .spawn()
             .expect("daemon 을 못 띄웠다")
     }
@@ -2509,6 +2689,65 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
             std::thread::sleep(Duration::from_millis(50));
         }
         false
+    }
+
+    /// **회귀선 — 낡은 번들이 띄운 daemon 은 갈린다** (2026-09-07, 배선).
+    ///
+    /// 판정 자체는 `낡은_버전이면_물러나게_한다` 가 순수 함수로 재고, 여기서는 그 판정이
+    /// **실제로 서는가**를 진짜 daemon 으로 잰다: 낡은 버전으로 띄운 daemon 이 도는 중에
+    /// `ensure_at` 을 부르면 붙지 않고 **물러나게 한 뒤 우리 것을 띄운다.**
+    ///
+    /// 이 배선이 없으면(=`should_retire_daemon` 가지를 지우면) `EnsureKind::Attached` 가
+    /// 되어 이 단언이 빨개진다. 그것이 2026-09-07 의 상태였다: `--app-version 0.1.6`
+    /// daemon 에 0.1.26 앱이 붙어, 고쳐 릴리스한 daemon 코드가 실행되지 않았다.
+    #[test]
+    fn 낡은_버전의_daemon_은_갈린다() {
+        let Some(program) = daemon_sidecar() else {
+            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @murmur/desktop build:sidecar` 먼저");
+            return;
+        };
+        let dir = temp_app_data_dir("stale-version");
+        let paths = endpoint_paths(&dir);
+        std::fs::create_dir_all(&paths.dir).unwrap();
+
+        // 낡은 세대. `0.0.1` 은 어떤 실제 버전보다 낮다.
+        //
+        // **가드로 감싸는 것이 필수다.** 이 파일이 이미 배운 교훈이다(`DaemonGuard` 주석,
+        // 2026-09-06): 되돌려 RED 절차에서 아래 단언이 패닉하면 `wait()` 줄에 닿지 못하고,
+        // daemon 은 `setsid` 로 떠 있어 테스트 프로세스와 함께 죽지 않는다 — 실제로 이
+        // 테스트를 처음 쓸 때 `0.0.1` daemon 하나를 그렇게 남겼다(pid 79993).
+        //
+        // 물러나게 하는 데 성공하면 이 가드의 `kill` 은 이미 죽은 자식에게 가고 조용히
+        // 실패한다 — 그것이 맞는 동작이다.
+        let 낡은 = launch_daemon_versioned(&program, &paths, "nonce-stale", "0.0.1");
+        let 낡은_pid = 낡은.id();
+        let _낡은_가드 = DaemonGuard {
+            child: 낡은,
+            dir: dir.clone(),
+        };
+        assert!(wait_for_endpoint(&paths), "낡은 daemon 이 엔드포인트를 올리지 않았다");
+
+        let child = std::sync::Mutex::new(None::<std::process::Child>);
+        let outcome = ensure_at(
+            &paths,
+            &program,
+            |_| {},
+            || {
+                *child.lock().unwrap() = Some(launch_daemon(&program, &paths, "nonce-fresh"));
+                Ok(DaemonExitWatch::alive())
+            },
+        );
+        let _guard = child.lock().unwrap().take().map(|c| DaemonGuard {
+            child: c,
+            dir: dir.clone(),
+        });
+
+        let (conn, kind) = outcome.expect("낡은 daemon 을 갈고도 못 붙었다");
+        assert_eq!(kind, EnsureKind::Spawned, "낡은 daemon 에 그냥 붙었다");
+        assert!(
+            conn.daemon_pid > 0 && conn.daemon_pid != 낡은_pid,
+            "새 daemon 이 아니라 낡은 것(pid {낡은_pid})에 붙어 있다"
+        );
     }
 
     /// **회귀선 2 — daemon 이 이미 있으면 새로 안 띄운다.**
