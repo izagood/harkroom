@@ -146,7 +146,7 @@ describe('채널 헤더의 문서 진입점', () => {
       me: acc('u1', 'me'),
       accounts: { u1: acc('u1', 'me'), u2: acc('u2', 'peer') },
       channels: opts.dm ? [] : [chan('c1', 'general')],
-      dms: opts.dm ? [{ id: 'c1', memberIds: ['u1', 'u2'] }] : [],
+      dms: opts.dm ? [{ id: 'c1', memberIds: ['u1', 'u2'], lastMessageAt: null }] : [],
       activeChannelId: 'c1',
     });
     render(<ChannelPane />);

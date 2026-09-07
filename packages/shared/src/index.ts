@@ -989,6 +989,30 @@ export interface InboxEntry {
 export interface DmView {
   id: string;
   memberIds: string[];
+  /**
+   * 이 DM 에서 **마지막으로 말이 오간 시각**. 삭제된 메시지는 세지 않고, 말이 하나도 없으면
+   * `null` 이다.
+   *
+   * 정본 문서 `docs/desktop-rail.html` 2단계가 요구한 **"최근순 한 목록"** 의 근거다.
+   * 문서: *"`DIRECT MESSAGES` 와 `AGENTS` 두 묶음을 최근순 한 목록으로."* 그 정렬 근거가
+   * 화면에 없었다 — `DmView` 는 `{ id, memberIds }` 뿐이었고 서버는 `order by
+   * c.created_at`(**만들어진** 순서)을 줬다.
+   *
+   * **옵셔널이 아닌 이유**: 옵셔널로 두면 이 값을 안 싣는 응답이 조용히 통과하고, 화면의
+   * 비교 함수는 `undefined` 위에서 원래 순서를 그대로 둔다 — 사람에게는 "최근순이라는데
+   * 안 바뀐다"로 보인다. `ChannelRow.createdAt` 이 같은 이유로 필수인 것과 같다.
+   *
+   * **`null` 은 '없다'이지 '오래됐다'가 아니다.** 갓 만들어 아직 아무 말도 없는 DM 이
+   * 이 값을 갖는다 — 그것을 `0` 이나 채널 생성 시각으로 채우면 '대화한 적 없다'가
+   * '그때 대화했다'로 바뀐다. 이 저장소가 모르는 것을 아는 것처럼 쓰지 않는 규약
+   * (`threadState`·`waitChain`·`faceState`)과 같은 자리다. 정렬에서 어디에 둘지는
+   * 화면이 정한다.
+   *
+   * **왜 마지막 읽음이 아닌가**: 마지막 읽음은 '내가 어디까지 봤는가'라 아직 안 열어 본
+   * DM — 즉 가장 새 말이 와 있는 DM — 을 맨 아래로 가라앉힌다. 근거는
+   * `routes/directoryRoutes.ts` 의 `GET /dms` 주석에 있다.
+   */
+  lastMessageAt: string | null;
 }
 
 /**

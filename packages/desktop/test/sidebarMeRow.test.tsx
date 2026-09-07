@@ -341,7 +341,7 @@ describe('A2 · `+` 는 그 목록의 첫 칸에 산다', () => {
       **같은 클래스**를 쓰는 것으로 "같은 모양"을 잠근다 — 한쪽만 손대면 여기서 갈라진다.
     */
     fakeController();
-    useAppStore.getState().set({ dms: [{ id: 'd1', memberIds: ['u1', 'u2'] }] });
+    useAppStore.getState().set({ dms: [{ id: 'd1', memberIds: ['u1', 'u2'], lastMessageAt: null }] });
     // 두 `+` 가 서로 다른 칸에 살게 됐다 — 비교하려면 두 칸을 함께 세운다(위 주석).
     mountBothPanels();
 

@@ -270,7 +270,7 @@ describe('사이드바의 섹션 (#157)', () => {
   it('DM 에는 섹션 항목이 아예 없다 — 서버도 400 을 준다', () => {
     fakeController();
     useAppStore.getState().set({
-      channels: [], dms: [{ id: 'd1', memberIds: ['u1', 'u2'] }],
+      channels: [], dms: [{ id: 'd1', memberIds: ['u1', 'u2'], lastMessageAt: null }],
       accounts: { u1: acc('u1', 'admin'), u2: acc('u2', 'bot', 'agent') },
       channelPrefs: {},
     });

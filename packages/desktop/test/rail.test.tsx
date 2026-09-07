@@ -85,7 +85,7 @@ beforeEach(() => {
       u3: acc('u3', 'codex', 'agent'),
     },
     channels: [chan('c1', 'general'), chan('c2', 'dev')],
-    dms: [{ id: 'd1', memberIds: ['u1', 'u2'] }],
+    dms: [{ id: 'd1', memberIds: ['u1', 'u2'], lastMessageAt: null }],
     connected: true,
     activeChannelId: 'c1',
   });
