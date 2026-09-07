@@ -95,6 +95,15 @@ export type RunnerStatus =
   | 'stopped'
   | 'running'
   | 'adopted'
+  /**
+   * 재기동을 **예약했다** — 죽이라고 말했고, 실제 종료를 기다리는 중이다.
+   *
+   * 이 상태가 따로 있어야 하는 이유: SIGTERM 은 graceful 이고 SIGKILL 승격이 없으므로
+   * (`packages/daemon/src/runners.ts`) 러너는 진행 중인 턴을 마친 뒤에야 죽는다 —
+   * 실측 5분이 넘은 턴도 있다. 그동안 'running' 으로 두면 사람에게는 "눌렀는데 아무 일이
+   * 없다"이고, 'stopped' 로 두면 없는 종료를 단정한다. 둘 다 거짓 신호다(design.md §4).
+   */
+  | 'restarting'
   | 'needs_reissue'
   | 'needs_harness'
   /**
@@ -206,6 +215,54 @@ export interface DaemonObserver {
    * 알았는데 아니었다"가 되고, 그 상태가 `#431` 이 없애려는 바로 그것이다.
    */
   observe(): Promise<DaemonObservation>;
+  /**
+   * 이 에이전트의 러너를 **세대를 지정하지 않고** 끝낸다 — daemon 장부의 현 세대에
+   * SIGTERM 을 보낸다(`daemon/src/runners.ts::killRunner(agentId, incarnationId?)`).
+   *
+   * ## 왜 자식 핸들(`RunnerProcess.kill`)이 아닌가
+   *
+   * 그 핸들은 **이 앱 세션이 띄운 자식**만 갖는다. 앱을 다시 띄우면 이전 세션의 러너는
+   * 장부에 남아 `adopted` 로 판정되고 핸들은 없다 — 그런데 번들이 뒤처진 러너는 정확히
+   * 그 경우가 대부분이다. 자식 핸들로만 죽이면 이 기능이 가장 필요한 자리에서 아무 일도
+   * 일어나지 않는다.
+   *
+   * ## 왜 세대(`incarnationId`)를 싣지 않는가
+   *
+   * 세대를 싣는 이유는 "앱이 옛 세대를 죽이라고 보낸 명령이 그 사이 새로 뜬 러너를
+   * 데려가는 것"을 막기 위해서다(`RunnerProcess.kill` 주석). 재기동은 사람이 **지금**
+   * 누른 것이고 그 뜻은 "지금 도는 것을 새 번들로 갈아라"다 — 그 사이 세대가 바뀌었다면
+   * 이미 새로 뜬 것이므로 그것을 죽이는 것도 사람의 뜻에 맞다.
+   */
+  kill(agentId: string): Promise<void>;
+}
+
+/**
+ * 이 앱 번들의 버전을 읽는 표면. `LoginPathReader` 와 **같은 규율**이다 —
+ * `null` 은 '얻지 못했다'이고, 그때 조용히 아무 값으로 넘어가지 않는다.
+ *
+ * 이 값이 두 곳에 쓰인다: 러너의 `AGENT_VERSION`(러너가 서버에 자기 버전을 보고하는
+ * 근거)과 뒤처짐 판정의 기준(`runnerVersions.ts::staleRunners`). **한 곳에서 읽어 둘에
+ * 쓰는 것이 요점이다** — 따로 얻으면 "러너에 심은 버전"과 "비교에 쓰는 버전"이 갈릴 수
+ * 있고, 그러면 방금 재기동한 러너가 계속 뒤처진 것으로 보인다.
+ */
+export interface AppVersionReader {
+  read(): Promise<string | null>;
+}
+
+/**
+ * 재기동이 러너의 **실제 종료**를 기다리는 방식. 테스트가 즉시 끝내려고 주입한다 —
+ * 실제로 자면 회귀선이 분 단위로 느려진다.
+ */
+export interface RestartWaitOptions {
+  /** 장부를 다시 읽는 간격. */
+  intervalMs?: number;
+  wait?: (ms: number) => Promise<void>;
+  /**
+   * 기다림의 상한. 진행 중인 턴이 이보다 길면 예약을 포기하고 사유를 남긴다 —
+   * 무한히 기다리면 앱이 사는 동안 폴링이 영원히 남는다. 기본 15분은 실측된 가장 긴
+   * 턴(326초)의 두 배 이상이다.
+   */
+  timeoutMs?: number;
 }
 
 /** daemon 이 말한 사실. **관측이지 판단이 아니다**(`daemonProtocol.ts::RunnerInfo`). */
@@ -396,6 +453,8 @@ export class RunnerLauncher {
    * 실패도 캐시한다: 실패를 캐시하지 않으면 셸이 없는 환경에서 매번 다시 시도한다.
    */
   private loginPathOnce: Promise<string | null> | null = null;
+  /** 앱 버전을 한 번만 읽어 재사용한다(`loginPathOnce` 와 같은 규율). */
+  private appVersionOnce: Promise<string | null> | null = null;
 
   constructor(
     private api: RunnerApi,
@@ -410,7 +469,18 @@ export class RunnerLauncher {
      * `spawner`·`secrets` 와 같다 — 회귀선이 "장부에 무엇이 있다"를 만들 수 있어야 한다.
      */
     private daemon: DaemonObserver = tauriDaemonObserver,
+    /** 이 앱 번들의 버전. 러너에 심고, 뒤처짐 판정의 기준이 된다. */
+    private appVersion: AppVersionReader = tauriAppVersionReader,
+    /** 재기동이 실제 종료를 기다리는 방식. 기본은 2초 간격, 상한 15분. */
+    private restartWait: RestartWaitOptions = {},
   ) {}
+
+  /**
+   * 재기동을 예약해 둔 에이전트들. **취소는 이 집합에서 빼는 것이 전부다** — 이미 보낸
+   * SIGTERM 은 되돌릴 수 없으므로(시그널에는 취소가 없다) 취소가 뜻하는 것은
+   * "죽은 뒤 다시 띄우지 않는다" 하나다. 그 사실은 화면 문구가 말한다.
+   */
+  private restarting = new Set<string>();
 
   /**
    * **앱이 뜨면 daemon 을 세운다** — 띄울 러너가 하나도 없어도(`#431` 2단계 A).
@@ -671,6 +741,136 @@ export class RunnerLauncher {
   }
 
   /**
+   * 이 앱 번들의 버전. `resolveChildPath` 와 같은 규율으로 **한 번만 읽어 재사용한다** —
+   * 앱이 도는 동안 자기 버전이 바뀌는 일은 없고, spawn 마다 IPC 를 왕복할 이유도 없다.
+   *
+   * 실패는 `null` 이다(던지지 않는다). 버전을 못 얻은 것이 러너를 못 띄울 이유는 아니다 —
+   * 그때 잃는 것은 뒤처짐 판정뿐이고, 그 사실은 화면이 '모른다'로 말한다.
+   */
+  private async readAppVersion(): Promise<string | null> {
+    this.appVersionOnce ??= this.appVersion.read()
+      .then((v) => (v && v.trim() ? v.trim() : null))
+      .catch(() => null);
+    return this.appVersionOnce;
+  }
+
+  /** 화면이 뒤처짐을 판정할 때 쓰는 기준값. `readAppVersion` 과 **같은 값**이어야 한다. */
+  async currentAppVersion(): Promise<string | null> {
+    return this.readAppVersion();
+  }
+
+  /**
+   * 이 에이전트의 러너를 **새 번들로 갈아 띄운다.**
+   *
+   * ## 왜 한 동작이 아니라 예약인가
+   *
+   * SIGTERM 은 graceful 이고 SIGKILL 승격이 없다(`daemon/src/runners.ts` 의 "SIGTERM
+   * 하나. 여기서 끝이다"와 그 회귀선). 러너는 진행 중인 턴을 마친 뒤에야 죽는다 —
+   * 사람이 기다리는 답을 잃지 않기 위한 성질이고, 실측 5분이 넘은 턴도 있다. 그래서
+   * 여기서 하는 일은 셋이다: 죽이라고 말한다 → **실제로 죽은 것을 확인한다** → 띄운다.
+   *
+   * **종료 확인을 daemon 장부로 하는 이유**: 자식 핸들의 `onExit` 은 이 앱 세션이 띄운
+   * 러너에만 온다. 뒤처진 러너는 대부분 이전 세션의 것(`adopted`)이라 그 통지가 없다.
+   * 장부의 `alive` 는 daemon 이 `kill(pid, 0)` 으로 커널에 직접 물은 값이므로 두 경우를
+   * 한 경로로 덮는다.
+   *
+   * 상한에 걸리면 예약을 접고 사유를 남긴다 — 무한히 기다리면 앱이 사는 동안 폴링이
+   * 영원히 남는다. 그때도 SIGTERM 은 이미 갔으므로 러너는 결국 물러나고, 다음 앱 기동의
+   * `startAll` 이 새 번들로 띄운다(기존 동작으로 수렴한다).
+   */
+  async restart(agent: LaunchableAgent, input: StartAllInput): Promise<void> {
+    if (this.disposed) return;
+    this.restarting.add(agent.id);
+    this.setState(agent.id, { status: 'restarting', exitCode: null, message: null });
+
+    try {
+      await this.daemon.kill(agent.id);
+    } catch (err) {
+      this.restarting.delete(agent.id);
+      this.setState(agent.id, {
+        status: 'failed', exitCode: null,
+        message: `재기동하지 못했다 — daemon 에 종료를 전하지 못했다: ${errText(err)}`,
+      });
+      return;
+    }
+
+    // 이 앱이 들고 있던 자식 핸들은 이제 무효다. 남겨 두면 `dispose()` 가 이미 죽은
+    // 자식에게 kill 을 한 번 더 보낸다(무해하지만, 장부의 새 세대를 죽일 창이 생긴다).
+    this.runners.delete(agent.id);
+    this.runTokens.delete(agent.id);
+
+    const exited = await this.awaitRunnerExit(agent.id);
+    if (this.disposed) return;
+    if (!this.restarting.delete(agent.id)) {
+      // 사람이 예약을 취소했다. 종료는 이미 일어났거나 일어날 것이고, 우리는 띄우지 않는다.
+      return;
+    }
+    if (!exited) {
+      this.setState(agent.id, {
+        status: 'restarting', exitCode: null,
+        message: '러너가 아직 물러나지 않았다 — 진행 중인 턴이 길다.'
+          + ' 종료 요청은 이미 갔으므로 다음 기동에서 새 번들로 뜬다.',
+      });
+      return;
+    }
+
+    let observation: DaemonObservation;
+    try {
+      observation = await this.daemon.observe();
+    } catch (err) {
+      this.setState(agent.id, {
+        status: 'failed', exitCode: null,
+        message: `러너는 물러났지만 daemon 에 닿지 못해 다시 띄우지 못했다: ${errText(err)}`,
+      });
+      return;
+    }
+    await this.startOne(agent, input, observation);
+  }
+
+  /**
+   * 재기동 예약을 취소한다 — **뜨는 것만** 취소된다.
+   *
+   * 이미 보낸 SIGTERM 은 되돌릴 수 없다(시그널에는 취소가 없다). 그래서 이 메서드가
+   * 약속하는 것은 "죽은 뒤 다시 띄우지 않는다" 하나이고, 화면 문구도 그렇게 적어야
+   * 한다 — "취소했다"로만 적으면 사람은 러너가 계속 살아 있을 것이라 믿는다.
+   */
+  cancelRestart(agentId: string): void {
+    this.restarting.delete(agentId);
+  }
+
+  /** 재기동을 예약해 둔 에이전트인가. 화면이 버튼을 이중으로 누르지 않게 본다. */
+  isRestarting(agentId: string): boolean {
+    return this.restarting.has(agentId);
+  }
+
+  /**
+   * 장부에서 이 러너가 사라지거나 `alive: false` 가 될 때까지 기다린다.
+   * 상한에 걸리면 `false` — 거짓으로 "죽었다"고 하지 않는다.
+   */
+  private async awaitRunnerExit(agentId: string): Promise<boolean> {
+    const intervalMs = this.restartWait.intervalMs ?? 2_000;
+    const timeoutMs = this.restartWait.timeoutMs ?? 15 * 60_000;
+    const wait = this.restartWait.wait ?? ((ms: number) => new Promise<void>((r) => { setTimeout(r, ms); }));
+    const deadline = this.now() + timeoutMs;
+
+    for (;;) {
+      if (this.disposed || !this.restarting.has(agentId)) return false;
+      let alive: boolean;
+      try {
+        const observation = await this.daemon.observe();
+        alive = observation.runners.some((r) => r.agentId === agentId && r.alive);
+      } catch {
+        // 관측 실패는 "살아 있다"도 "죽었다"도 아니다. 다음 주기에 다시 묻는다 —
+        // 여기서 죽었다고 단정하면 살아 있는 러너 옆에 두 번째를 띄운다.
+        alive = true;
+      }
+      if (!alive) return true;
+      if (this.now() >= deadline) return false;
+      await wait(intervalMs);
+    }
+  }
+
+  /**
    * `note` 는 **띄우는 것을 막지 않은 어긋남**을 사람에게 남기는 자리다(`#431` 2단계 A).
    * 지금 넘어오는 것은 `STRANGER_ATTACHED` 하나뿐이고, 없으면 `null` 이다 — 없는 사실을
    * 문장으로 만들지 않는다(`#368`).
@@ -683,13 +883,24 @@ export class RunnerLauncher {
     if (this.disposed) return;
     const path = await this.resolveChildPath();
     if (this.disposed) return;
+    const version = await this.readAppVersion();
+    if (this.disposed) return;
     const runToken = Symbol(agent.id);
     this.runTokens.set(agent.id, runToken);
     let child: RunnerProcess;
     try {
       child = await this.spawner.spawn({
         agentId: agent.id,
-        env: { MURMUR_PAT: token, MURMUR_URL: this.api.baseUrl, PATH: path },
+        // `AGENT_VERSION` 이 없으면 러너는 자기 버전을 `'unknown'` 으로 보고하고
+        // (`packages/agent/src/version.ts`), 그러면 앱은 도는 러너가 옛 번들인지
+        // 영원히 알 수 없다 — 뒤처짐 판정 전체가 이 값에 걸려 있다. 얻지 못했으면
+        // **넣지 않는다**: 거짓 버전을 심는 것보다 '모른다'가 낫다(design.md §4).
+        env: {
+          MURMUR_PAT: token,
+          MURMUR_URL: this.api.baseUrl,
+          PATH: path,
+          ...(version === null ? {} : { AGENT_VERSION: version }),
+        },
         onExit: (code, tailLines) => this.handleExit(agent, runToken, code, tailLines),
       });
     } catch (err) {
@@ -762,6 +973,10 @@ export class RunnerLauncher {
       this.setState(agentId, { exitCode: code, ...exitStateFor78(agent, tailLines) });
       return;
     }
+    // 재기동을 예약해 둔 러너의 종료는 **끝이 아니라 중간**이다. 'stopped' 로 적으면
+    // 화면이 "멈췄다"로 바뀌고, 곧 새 러너가 뜨면 상태가 두 번 튄다 — 사람은 그 사이에
+    // 실패한 줄 안다. 예약을 든 `restart()` 가 다음 상태를 책임진다.
+    if (this.restarting.has(agentId)) return;
     // 사유를 따로 적지 않는다 — 코드가 곧 사유이고, `runnerStatusLabel` 이 그것을 문장으로
     // 만든다. 여기서 같은 말을 한 번 더 하면 화면에 같은 숫자가 두 번 뜬다.
     this.setState(agentId, { status: 'stopped', exitCode: code, message: null });
@@ -1184,6 +1399,14 @@ export const tauriDaemonObserver: DaemonObserver = {
     }
     return { daemonPid: body.daemonPid, attached: body.attached, runners };
   },
+
+  async kill(agentId: string) {
+    const invoke = tauriInvoke();
+    if (!invoke) throw new Error('이 환경에서는 러너를 끝낼 수 없다 — Tauri invoke 표면이 없다');
+    // `incarnationId` 를 **싣지 않는다** — 인터페이스 주석의 근거 그대로다: 사람이 지금
+    // 누른 뜻은 "지금 도는 것을 갈아라"이고, Rust 쪽 파라미터는 이미 `Option<String>` 이다.
+    await invoke('daemon_kill_runner', { agentId });
+  },
 };
 
 /**
@@ -1250,6 +1473,27 @@ async function listenRunnerExit(
  * 실패는 `null` 로 올라간다 — invoke 표면이 없는 환경(브라우저 개발)이나 커맨드가
  * 실패한 경우다. 그때 호출자가 `SYSTEM_PATH_FALLBACK` 으로 넘어간다.
  */
+/**
+ * 이 앱 번들의 버전. Rust 가 `app.package_info().version` 으로 아는 값을 그대로 받는다 —
+ * 러너 사이드카가 **그 Rust 앱과 같은 번들**에서 나오므로 그 값이 곧 러너의 버전이다.
+ *
+ * daemon 의 `--app-version` 을 쓰지 않는 이유: 상주 daemon 은 자기를 띄운 옛 앱 세대일
+ * 수 있다(실측 2026-09-07: daemon 0.1.6 이 소켓을 쥔 채 0.1.7 에게 물러나지 않았다).
+ * 그 값을 심으면 새 번들 러너에 옛 버전이 붙어, 재기동해도 계속 뒤처진 것으로 보인다.
+ */
+export const tauriAppVersionReader: AppVersionReader = {
+  async read() {
+    const invoke = tauriInvoke();
+    if (!invoke) return null;
+    try {
+      const value = await invoke('app_version');
+      return typeof value === 'string' && value.trim() ? value.trim() : null;
+    } catch {
+      return null;
+    }
+  },
+};
+
 export const tauriLoginPathReader: LoginPathReader = {
   async read() {
     const invoke = tauriInvoke();

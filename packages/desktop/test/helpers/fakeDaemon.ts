@@ -25,6 +25,15 @@ export interface FakeDaemon extends DaemonObserver {
   runners: ObservedRunner[];
   /** 관측 자체가 실패하는 상황(daemon 이 안 뜬다)을 만든다. */
   error: Error | null;
+  /** `kill()` 이 불린 agentId 들, 순서대로. 재기동 회귀선이 이 축을 본다. */
+  kills: string[];
+  /**
+   * 러너가 **실제로 종료했다**고 장부를 갈아 끼운다. `kill()` 이 자동으로 이것을 하지
+   * 않는 것이 의도다 — SIGTERM 은 graceful 이고 러너는 진행 중인 턴을 마친 뒤에야
+   * 죽는다(`packages/agent/src/main.ts::acceptStopRequest`). 그 시차가 이 기능의
+   * 설계 전부이므로, 테스트가 그 시점을 직접 정해야 한다.
+   */
+  died(agentId: string): void;
 }
 
 export function fakeDaemon(runners: ObservedRunner[] = []): FakeDaemon {
@@ -32,10 +41,17 @@ export function fakeDaemon(runners: ObservedRunner[] = []): FakeDaemon {
     observeCalls: 0,
     runners,
     error: null,
+    kills: [],
     async observe(): Promise<DaemonObservation> {
       daemon.observeCalls += 1;
       if (daemon.error) throw daemon.error;
       return { daemonPid: 4242, attached: true, runners: daemon.runners };
+    },
+    async kill(agentId: string): Promise<void> {
+      daemon.kills.push(agentId);
+    },
+    died(agentId: string): void {
+      daemon.runners = daemon.runners.filter((r) => r.agentId !== agentId);
     },
   };
   return daemon;

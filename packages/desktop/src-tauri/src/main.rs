@@ -320,6 +320,23 @@ fn login_path() -> String {
     login_path::child_path()
 }
 
+/// 이 앱 번들의 버전.
+///
+/// 웹뷰가 이 값을 두 곳에 쓴다: 러너에 심는 `AGENT_VERSION`(러너가 서버에 자기 버전을
+/// 보고하는 근거)과 **뒤처진 러너 판정**의 기준. 러너 사이드카는 이 앱과 같은 번들에서
+/// 나오므로 이 값이 곧 그 러너의 버전이다.
+///
+/// **daemon 의 `--app-version` 을 쓰면 안 되는 이유**가 이 커맨드의 존재 이유다. 상주
+/// daemon 은 자기를 띄운 **옛 앱 세대**일 수 있다(실측 2026-09-07: daemon 0.1.6 이
+/// 소켓을 쥔 채 0.1.7 에게 물러나지 않았다). 그 값을 심으면 새 번들로 뜬 러너에 옛
+/// 버전이 붙고, 재기동해도 화면에는 계속 뒤처진 것으로 보인다.
+///
+/// **실패하지 않는다.** `package_info()` 는 컴파일 시점에 박힌 값이다.
+#[tauri::command]
+fn app_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
 /// daemon 을 확보하고 러너를 띄우라고 시킨다.
 ///
 /// **daemon 이 없으면 띄우고 있으면 붙는다**(`ensure_daemon`). 실패하면 그대로 `Err` 다 —
@@ -428,6 +445,7 @@ fn main() {
             daemon_list_runners,
             login_path,
             notification::notification_send,
+            app_version,
         ])
         .run(tauri::generate_context!())
         .expect("error while running murmur");
