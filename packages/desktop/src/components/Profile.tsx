@@ -5,6 +5,7 @@ import { getController } from '../state/controller';
 import { Identity, StatusMark } from './Identity';
 import { Overlay } from './Overlay';
 import { lastTurnLabel } from './settings/AgentsSettings';
+import { staleRunners, UNKNOWN_RUNNER_VERSION } from '../lib/runnerVersions';
 import type { SectionId } from './settings/sections';
 
 /**
@@ -51,9 +52,39 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
       .catch(() => setAgent(null));
   }, [accountId, canSeeConfig]);
 
+  /**
+   * 이 앱 번들의 버전 — 뒤처짐 판정의 기준. 컨트롤러가 기동 때 스토어에 밀어 넣은 값을
+   * 읽는다(`appStore.ts::appVersion`). 러너에 심는 `AGENT_VERSION` 과 **같은 값**이므로,
+   * 방금 재기동한 러너가 계속 뒤처진 것으로 보이는 어긋남이 없다.
+   */
+  const appVersion = useActiveStore((st) => st.appVersion);
+
+  /** 이 앱이 아는 러너의 상태. 없으면 '모른다'다 — '꺼짐'이 아니다. */
+  const runnerState = useActiveStore((st) => st.runnerStates[accountId]);
+
   if (!account) return null;
 
   const owner = account.ownerAccountId ? accounts[account.ownerAccountId] : undefined;
+
+  /**
+   * 이 앱이 **러너가 있다고 보는가.** 없으면 재기동 자리 자체를 두지 않는다 — 갈아 줄
+   * 것이 없는데 버튼을 두면 눌러도 아무 일이 없고, 그것이 `#129` 가 금지한 거짓 신호다.
+   * 'restarting' 이 여기 드는 이유: 예약 중에도 러너는 아직 살아 있다(턴을 마치는 중).
+   */
+  const runnerPresent = runnerState?.status === 'running'
+    || runnerState?.status === 'adopted'
+    || runnerState?.status === 'restarting';
+
+  /**
+   * 뒤처졌다고 **확인됐는가.** 판정은 `staleRunners` 하나가 갖는다 — 설정의 전체 재기동이
+   * 쓰는 것과 같은 함수여야 한다: 갈라지면 프로필이 경고하는 대상과 전체 재기동이 고르는
+   * 대상이 어긋나고, 사람은 그 어긋남을 알 방법이 없다.
+   */
+  const isStale = staleRunners({
+    agents: agent ? [{ id: agent.id, runnerVersion: agent.runnerVersion }] : [],
+    live: runnerPresent ? new Set([accountId]) : new Set<string>(),
+    appVersion,
+  }).stale.length > 0;
   // 생존은 `threadState`·`waitChain` 과 같은 규약이다 — `connected` 가 false 면 '모른다'.
   const live = connected ? online.includes(account.id) : null;
 
@@ -92,9 +123,36 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
               <Row label="모델" value={agent.model ?? '하네스 기본값'} />
               <Row label="작업 디렉터리" value={agent.workingDir ?? '스레드마다 새로 만든다'} mono />
               <Row label="마지막 활동" value={lastTurnLabel(agent.lastTurnAt)} />
+              {/* 러너가 **어느 번들로** 돌고 있는가. 이 행이 없으면 아래 재기동 버튼은
+                  누를 이유를 알 수 없는 버튼이다. `unknown`·`null` 은 원인이 다르지만
+                  (환경변수를 못 받았다 / 보고가 한 번도 없었다) 사람이 할 일은 같으므로
+                  한 문장으로 적는다 — 없는 구분을 화면에 만들지 않는다. */}
+              <Row
+                label="러너 버전"
+                value={runnerVersionLabel(agent.runnerVersion, appVersion)}
+                mono={agent.runnerVersion !== null && agent.runnerVersion !== UNKNOWN_RUNNER_VERSION}
+              />
             </>
           )}
         </dl>
+
+        {canSeeConfig && agent && runnerPresent && (
+          <div className="mt-3 text-[11px]">
+            {isStale && (
+              <p className="text-warning" data-testid="runner-stale-note">
+                이 러너는 앱보다 <strong>뒤처진 번들</strong>로 돌고 있다 — 새 버전으로 재기동하면 갈아탄다.
+              </p>
+            )}
+            {/* **기다린다는 사실이 화면에 있어야 한다.** SIGTERM 은 graceful 이라 러너는
+                진행 중인 턴을 마친 뒤에야 죽고(실측 5분 넘는 턴도 있다), 그동안 표시가
+                없으면 사람에게는 "눌렀는데 아무 일이 없다"다 — `#384` 가 이미 고친 결함이다. */}
+            {runnerState?.status === 'restarting' && (
+              <p className="text-fg" role="status" data-testid="runner-restart-note">
+                재기동을 예약했다 — <strong>진행 중인 턴</strong>을 마치면 새 버전으로 뜬다. 턴을 끊지 않는다.
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="mt-4 flex flex-wrap gap-2">
           {/*
@@ -110,6 +168,29 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
             >
               에이전트 설정
             </button>
+          )}
+          {canSeeConfig && agent && runnerPresent && (
+            runnerState?.status === 'restarting' ? (
+              <button
+                data-testid="profile-runner-restart-cancel"
+                className="rounded border border-border px-3 py-1.5 text-[13px] font-medium
+                           text-fg hover:bg-surface-hover"
+                onClick={() => getController().cancelRestart(account.id)}
+              >
+                재기동 예약 취소
+              </button>
+            ) : (
+              /* 이름이 사실을 약속한다: 뒤처졌다고 **확인된** 때만 "새 버전으로"라고
+                 쓴다. 버전을 모르는데 그렇게 쓰면 지키지 못할 약속이 된다(design.md §4). */
+              <button
+                data-testid="profile-runner-restart"
+                className="rounded border border-border px-3 py-1.5 text-[13px] font-medium
+                           text-fg hover:bg-surface-hover"
+                onClick={() => { void getController().restartRunner(account.id); }}
+              >
+                {isStale ? '새 버전으로 재기동' : '러너 재기동'}
+              </button>
+            )
           )}
           {account.id !== me?.id && (
             <button
@@ -134,4 +215,17 @@ function Row({ label, value, mono = false }: { label: string; value: string; mon
       <dd className={`min-w-0 break-words text-fg ${mono ? 'font-mono text-[12px]' : ''}`}>{value}</dd>
     </div>
   );
+}
+
+/**
+ * 러너 버전 한 줄. 두 사실을 함께 적는다 — 러너의 버전과 **비교 대상**(앱의 버전).
+ * 앱 버전만 알거나 러너 버전만 알면 사람은 "뒤처졌다"를 스스로 확인할 수 없다.
+ */
+function runnerVersionLabel(runnerVersion: string | null, appVersion: string | null): string {
+  if (runnerVersion === null || runnerVersion === UNKNOWN_RUNNER_VERSION) {
+    // 원인은 둘(환경변수를 못 받았다 / 보고가 없었다)이지만 사람이 할 일은 하나다:
+    // 한 번 재기동하면 값이 채워진다. 그래서 구분을 화면에 만들지 않는다.
+    return '버전을 모른다 — 재기동하면 채워진다';
+  }
+  return appVersion === null ? runnerVersion : `${runnerVersion} (앱 ${appVersion})`;
 }
