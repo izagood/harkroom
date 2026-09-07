@@ -1,5 +1,5 @@
 import { mkdtempSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -50,6 +50,33 @@ describe('loadClaudeAccounts', () => {
     // 세면 러너가 없는 로그인을 가리키고, 그 실패는 계정 축을 한 칸 헛돌게 만든다.
     const root = await fixture(['lime', 'Lime Backup', '.hidden']);
     expect((await loadClaudeAccounts({ root })).map((a) => a.name)).toEqual(['lime']);
+  });
+
+  // 실물 검증(Task 8)에서 드러났다: `Dirent.isDirectory()` 는 **심볼릭 링크에 대해 거짓**
+  // 이다(실측: isDirectory=false, isSymbolicLink=true). 디렉터리를 가리키는 링크를 계정으로
+  // 쓰는 것은 정당한 구성이다 — 이미 로그인된 config 디렉터리를 이름 붙여 풀에 넣는 흔한
+  // 방법이고, `codexHome.ts` 도 auth.json 을 링크로 재사용한다.
+  it('디렉터리를 가리키는 심볼릭 링크도 계정이다', async () => {
+    const root = await fixture(['plum']);
+    const real = mkdtempSync(join(tmpdir(), 'murmur-real-account-'));
+    await symlink(real, join(root, 'lime'));
+    expect((await loadClaudeAccounts({ root })).map((a) => a.name)).toEqual(['lime', 'plum']);
+  });
+
+  it('끊어진 심볼릭 링크는 계정이 아니다', async () => {
+    // 가리키는 곳이 없으면 claude 가 그 경로에 새 설정을 만들어 미로그인으로 뜬다 —
+    // 계정 축이 한 칸 헛돈다. 링크가 살아 있는지까지 봐야 한다.
+    const root = await fixture(['plum']);
+    await symlink(join(tmpdir(), 'murmur-no-such-target-xyz'), join(root, 'lime'));
+    expect((await loadClaudeAccounts({ root })).map((a) => a.name)).toEqual(['plum']);
+  });
+
+  it('파일을 가리키는 심볼릭 링크는 계정이 아니다', async () => {
+    const root = await fixture(['plum']);
+    const file = join(mkdtempSync(join(tmpdir(), 'murmur-file-')), 'f.txt');
+    await writeFile(file, 'x');
+    await symlink(file, join(root, 'lime'));
+    expect((await loadClaudeAccounts({ root })).map((a) => a.name)).toEqual(['plum']);
   });
 
   it('MURMUR_CLAUDE_ACCOUNTS 가 순서와 부분집합을 정한다', async () => {
