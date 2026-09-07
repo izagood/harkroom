@@ -125,7 +125,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
             진행을 먼저 접고 그 위에 주고받기를 접는다. */}
         {groupAgentExchanges(groupProgress(thread), isAgent).map((slot) => (
           slot.kind === 'progress'
-            ? <ProgressRow key={slot.messages[0]!.id} messages={slot.messages} />
+            ? <ProgressRow key={slot.messages[0]!.id} messages={slot.messages} endedAt={slot.endedAt} />
             : slot.kind === 'exchange'
               ? (
                 <AgentExchange

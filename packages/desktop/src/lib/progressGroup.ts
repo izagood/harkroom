@@ -8,7 +8,24 @@ import type { MessageRow } from '@murmur/shared';
  */
 export type Slot =
   | { kind: 'message'; message: MessageRow }
-  | { kind: 'progress'; messages: MessageRow[] };
+  | {
+      kind: 'progress';
+      messages: MessageRow[];
+      /**
+       * 이 진행이 **끝난 시각**. 아직 도는 중이면 `null`(2026-09-07 후속).
+       *
+       * 왜 필요한가: 없을 때 `ProgressRow` 는 경과를 `Date.now()` 로 재서, **끝난 묶음도
+       * 영구히 "작업 중 · N분째" 로 그리고 그 숫자가 볼 때마다 커졌다.** 2026-09-07 15:15
+       * 에 사용자가 화면을 보고 물은 것이 "죽었나 도나?" 였다 — 15:08 에 끝난 턴의 진행
+       * 줄이 "11분째" 였기 때문이다.
+       *
+       * **같은 저자의 다음 발화**가 그 끝이다: 러너가 결과를 올렸거나(또는
+       * `NO_REPLY_NOTICE` 를 남겼거나) 대기 줄을 세운 시점이 그 진행이 멈춘 시점이다.
+       * 사람의 발화로는 끝나지 않는다 — 러너는 그 사이에도 계속 돌고 있고, 여기서
+       * 끝났다고 그리면 반대 방향의 거짓이 된다.
+       */
+      endedAt: string | null;
+    };
 
 /**
  * 연속된 `kind='progress'` 를 **저자별로** 한 묶음으로 접는다(#144, 규칙 02).
@@ -29,6 +46,13 @@ export function groupProgress(messages: MessageRow[]): Slot[] {
   const slots: Slot[] = [];
   for (const m of messages) {
     if (m.kind !== 'progress') {
+      // 이 발화가 **바로 앞 진행 묶음을 끝내는가**. 저자가 같아야 한다(`endedAt` 주석).
+      // 한 번만 찍는다 — 두 번째 발화가 시각을 덮으면 진행이 나중까지 이어진 것처럼 보인다.
+      const prev = slots[slots.length - 1];
+      if (prev?.kind === 'progress' && prev.endedAt === null
+          && prev.messages[0]!.authorId === m.authorId) {
+        prev.endedAt = m.createdAt;
+      }
       slots.push({ kind: 'message', message: m });
       continue;
     }
@@ -36,7 +60,7 @@ export function groupProgress(messages: MessageRow[]): Slot[] {
     if (last?.kind === 'progress' && last.messages[0]!.authorId === m.authorId) {
       last.messages.push(m);
     } else {
-      slots.push({ kind: 'progress', messages: [m] });
+      slots.push({ kind: 'progress', messages: [m], endedAt: null });
     }
   }
   return slots;

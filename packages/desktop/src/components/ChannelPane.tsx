@@ -300,7 +300,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
                   <span className="h-px flex-1 bg-danger-border" />
                 </div>
               )}
-              {slot.kind === 'progress' ? <ProgressRow messages={slot.messages} />
+              {slot.kind === 'progress' ? <ProgressRow messages={slot.messages} endedAt={slot.endedAt} />
                 : slot.kind === 'exchange'
                   ? <AgentExchange messages={slot.messages} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />
                   : <MessageItem message={m} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
