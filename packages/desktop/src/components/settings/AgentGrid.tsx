@@ -1,10 +1,118 @@
 import { useMemo, useState } from 'react';
-import type { AgentView } from '@murmur/shared';
+import type { AccountView } from '@murmur/shared';
 import { Identity } from '../Identity';
 import type { RunnerState } from '../../lib/runnerLauncher';
 // B1 의 세 얼굴 규칙은 `lib/faceState.ts` 하나가 낸다 — DM 목록도 같은 판정을 쓴다
 // (`docs/desktop-rail.html` 2단계). 여기 사본을 두면 두 화면이 같은 러너를 다르게 그린다.
 import { faceState } from '../../lib/faceState';
+
+/**
+ * 이 격자가 카드 하나를 그리는 데 **실제로 필요한 것**. `AgentView` 를 요구하지 않는 이유가
+ * `docs/desktop-rail.html` 3단계에 있다 — 사이드바의 에이전트 칸이 같은 카드를 쓰는데, 그
+ * 칸이 손에 든 것은 스토어의 `accounts`(`AccountView`)뿐이다. `AgentView` 를 요구하면
+ * 사이드바가 그 칸을 그리려고 `listAgents()` 를 한 번 더 왕복해야 하고, 그때부터 같은
+ * 에이전트 목록이 **두 곳에 유지된다** — 이 저장소가 반복 결함으로 지목한 그 모양이다.
+ *
+ * `instructions` 만 옵셔널이다: 검색이 역할 설명까지 훑는 것은 설정 화면의 값이고
+ * (*"배포 담당이 누구였더라"*), 스토어의 계정 목록에는 그 필드가 없다. 없으면 이름만
+ * 훑는다 — **기능이 조용히 줄어드는 것을 타입이 드러낸다**는 것이 옵셔널로 두는 이유다.
+ * `AgentView` 는 `AccountView` 를 확장하고 `instructions` 를 필수로 가지므로 설정 화면의
+ * 호출은 한 글자도 안 바뀐다.
+ */
+export type AgentCardSubject = AccountView & { instructions?: string };
+
+/**
+ * 이 격자가 서는 **자리**(`docs/desktop-rail.html` 3단계). 값이 둘인 것은 호출자가 둘이기
+ * 때문이고, 그 이상으로 늘릴 축이 아니다 — 늘어나기 시작하면 카드가 다시 두 벌이 된다.
+ *
+ * **기본값이 `settings` 인 것이 계약이다** — 설정 › 에이전트는 이 prop 을 넘기지 않고,
+ * 그래서 그 화면의 모양은 이 축이 생기기 전과 한 픽셀도 다르지 않다(회귀선:
+ * `agentsPanelGrid.test.tsx` 의 *"자리를 안 주면 설정의 그 격자다"*).
+ *
+ * ## 자리마다 갈리는 것은 둘 — 크기와 **바닥색**
+ *
+ * ### 크기 (실측 2026-09-07)
+ *
+ * 사이드바 패널의 폭은 `MIN_SIDEBAR_WIDTH`(180) ~ 기본 240px(`DEFAULT_PREFS.sidebarWidth`)
+ * 이고 `nav` 의 `p-2` 가 좌우 8px 씩 먹으므로 **내용 폭은 164 ~ 224px** 이다.
+ * `auto-fill` 이 채우는 열 수는 `트랙 × n + 간격 × (n-1) ≤ 내용 폭` 을 만족하는 최대 n 이다:
+ *
+ * | 내용 폭 | `settings`(86px 트랙 · 24px 간격) | `sidebar`(64px 트랙 · 12px 간격) |
+ * |---|---|---|
+ * | 164px (최소) | **1열** — 78px 이 남는다 | 2열 |
+ * | 224px (기본) | 2열 | 3열 |
+ * | 464px (최대 480 − 16) | 4열 | 6열 |
+ *
+ * 넘쳐서 깨지지는 않는다 — 카드가 고정 폭이고 이름은 `truncate` 다. 문제는 다른 것이다:
+ * **최소 폭에서 한 열이면 그것은 그리드가 아니라 목록**이고, 문서가 목록을 그리드로 바꾸라고
+ * 한 자리에서 목록이 되돌아온다.
+ *
+ * 트랙과 아바타를 **함께** 줄인다. 트랙만 줄이면 56px 아바타가 64px 칸에 갇혀 좌우 4px
+ * 밖에 안 남고, 그 폭에서는 `ring-2` 선택 테가 옆 카드에 닿는다. 40px 아바타 + 64px
+ * 트랙이면 좌우 12px 이 남는다.
+ *
+ * ### 바닥색
+ *
+ * 검색줄은 `sticky` 라 **자기 바닥을 직접 칠해야** 스크롤한 카드가 그 뒤로 지나간다.
+ * 그런데 두 자리의 바닥이 다르다 — 설정 화면은 `surface-raised`(카드 면)이고 사이드바는
+ * `surface-sunken`(`Sidebar` 의 `aside`)이다. 한쪽 값을 박아 두면 다른 쪽에서 **검색줄만
+ * 다른 색인 띠**가 되고, 그것은 하드코딩 색과 같은 종류의 결함이다: 토큰을 쓰고 있어도
+ * 자리와 맞지 않으면 틀린 색이다. 선택 테의 `ring-offset` 도 같은 이유로 함께 간다.
+ */
+export type AgentGridPlace = 'settings' | 'sidebar';
+
+/**
+ * 자리별 클래스. 한 곳에 모아 두는 이유: 네 자리(트랙·카드 폭·아바타·▶ 덮개)가 **맞물린
+ * 숫자**를 쓴다 — 하나만 고치면 글리프가 얼굴을 벗어나거나 이름이 옆 칸을 침범한다.
+ */
+const PLACE: Record<AgentGridPlace, {
+  /** 격자의 트랙과 간격 — 열 수를 정하는 숫자다. */
+  grid: string;
+  /** 카드 한 칸의 폭. 트랙과 **같아야** 한다: 다르면 이름이 옆 칸을 침범한다. */
+  card: string;
+  /** 아바타 상자(그리고 `+` 의 점선 원). */
+  face: string;
+  /** 아바타 안의 이니셜·글리프 크기. 상자만 줄이면 40px 원에 18px 글자가 갇힌다. */
+  faceText: string;
+  /** ▶ · ↻ 덮개. **아바타와 같은 크기**여야 얼굴을 정확히 덮는다. */
+  glyph: string;
+  /** `sticky` 검색줄의 바닥과 선택 테의 오프셋. 자리의 바닥색과 같아야 한다(위 주석). */
+  bg: string;
+  ringOffset: string;
+}> = {
+  settings: {
+    grid: 'grid-cols-[repeat(auto-fill,86px)] gap-x-6 gap-y-5',
+    card: 'w-[86px]',
+    face: 'h-14 w-14',
+    faceText: 'text-lg',
+    glyph: 'h-14 w-14 text-xl',
+    bg: 'bg-surface-raised',
+    ringOffset: 'ring-offset-surface-raised',
+  },
+  sidebar: {
+    grid: 'grid-cols-[repeat(auto-fill,64px)] gap-x-3 gap-y-4',
+    card: 'w-[64px]',
+    face: 'h-10 w-10',
+    faceText: 'text-sm',
+    glyph: 'h-10 w-10 text-base',
+    bg: 'bg-surface-sunken',
+    ringOffset: 'ring-offset-surface-sunken',
+  },
+};
+
+/**
+ * ▶ · ↻ 의 포커스 표시. **`Menu.tsx` 의 `MENU_ITEM_FOCUS`·`Rail.tsx` 의 `RAIL_FOCUS` 와
+ * 같은 조합이다** — 그 파일들이 Tailwind v4 의 함정을 적어 뒀다: `outline-none` 은
+ * `--tw-outline-style: none` 을 남기고 `outline-2` 는 굵기만 정하면서 스타일을 그 변수에서
+ * 읽으므로, 둘만 쓰면 `focus-visible` 에서도 링이 그려지지 않는다.
+ *
+ * 이 글리프가 특히 포커스 링을 필요로 하는 이유: **평소 `opacity-50` 으로 숨어 있다.**
+ * `focus-visible:opacity-100` 만으로는 "지금 이것이 눌린다"가 아니라 그냥 조금 진해진
+ * 글리프이고, 키보드로 격자를 훑는 사람은 카드와 이 버튼 중 어디에 서 있는지 알 수 없다.
+ * 링은 안쪽에 그린다 — 얼굴을 정확히 덮는 원이라 바깥으로 밀면 옆 카드와 겹친다.
+ */
+const GLYPH_FOCUS = 'outline-none focus-visible:opacity-100 focus-visible:outline-solid'
+  + ' focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2';
 
 /**
  * 에이전트 그리드 + 검색(identity 문서 · Task 15-2).
@@ -28,23 +136,47 @@ import { faceState } from '../../lib/faceState';
  * `@handle` 과 **역할 설명**(`instructions`)을 함께 훑는다 — "배포 담당이 누구였더라"를
  * 이름을 모르는 채로 찾을 수 있어야 검색이 목록을 대신한다. 설명은 카드에 안 보이지만
  * 찾을 때는 쓰인다.
+ *
+ * ## 두 자리가 이 컴포넌트를 쓴다 (`docs/desktop-rail.html` 3단계)
+ *
+ * 설정 › 에이전트와 **레일의 에이전트 칸**이다. 문서가 그 순서를 못 박았다: *"설정 ›
+ * 에이전트 재설계가 먼저 들어가야 카드 컴포넌트를 두 번 그리지 않는다."* 그래서 두 자리가
+ * 갈리는 곳은 넷뿐이고, 전부 **prop 으로 명시된다** — 자리(`place`: 크기와 바닥색), 카드를
+ * 누르면 무엇이 열리는가(`onPick`), 만들기 문을 여는가(`canCreate`), 누가 ▶ 를 받는가
+ * (`canRelaunch`). 나머지(가나다 순서 · 검색 · 세 얼굴 · 사유 글자)는 두 화면에서 같아야
+ * 하므로 여기 한 벌만 있다.
  */
-export function AgentGrid({
+export function AgentGrid<T extends AgentCardSubject>({
   agents, selectedId, runnerStates, online, connected, onPick, onCreate, canCreate, onRelaunch,
+  canRelaunch, place = 'settings',
 }: {
-  agents: AgentView[];
+  agents: T[];
   selectedId: string | null;
   runnerStates: Record<string, RunnerState>;
   /** 지금 붙어 있는 에이전트들. `connected` 가 false 면 이 목록은 '모른다'다. */
   online: string[];
   connected: boolean;
-  onPick(agent: AgentView): void;
+  onPick(agent: T): void;
   onCreate(): void;
   canCreate: boolean;
   /** ▶ · ↻ 가 부르는 것. 없으면 그 자리를 그리지 않는다(권한 없는 사람에게는 문이 없다). */
-  onRelaunch?(agent: AgentView): void;
+  onRelaunch?(agent: T): void;
+  /**
+   * **이 카드가 ▶ 를 받는가.** 없으면 `onRelaunch` 가 있는 모든 카드가 받는다 — 그것이
+   * 설정 화면의 오늘 동작이고 기본값으로 남는다.
+   *
+   * 왜 `onRelaunch` 의 유무만으로 안 되는가: 콜백은 격자 전체에 **하나뿐인 값**이라
+   * 카드마다 다르게 줄 수 없다. 그런데 띄울 권한은 카드마다 갈린다(관리자이거나 내가
+   * 소유한 에이전트). 이 술어가 없으면 하나라도 띄울 수 있는 사람에게는 **띄울 수 없는
+   * 카드에도 ▶ 가 그려지고**, `AgentGrid` 가 세운 규칙(*"권한 없는 사람에게는 문이
+   * 없다"*)이 "권한 없는 카드에는" 으로는 지켜지지 않는다.
+   */
+  canRelaunch?(agent: T): boolean;
+  /** 이 격자가 선 자리. 기본값 `settings` 가 설정 화면의 오늘 모양이다(`AgentGridPlace` 주석). */
+  place?: AgentGridPlace;
 }) {
   const [query, setQuery] = useState('');
+  const s = PLACE[place];
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -52,8 +184,9 @@ export function AgentGrid({
       ? agents.filter((a) =>
         a.handle.toLowerCase().includes(q)
         || a.displayName.toLowerCase().includes(q)
-        // 설명은 카드에 안 보이지만 찾을 때는 쓰인다(문서).
-        || a.instructions.toLowerCase().includes(q))
+        // 설명은 카드에 안 보이지만 찾을 때는 쓰인다(문서). 없는 자리(사이드바의 계정
+        // 목록)에서는 이름만 훑는다 — `AgentCardSubject` 주석에 그 이유가 있다.
+        || (a.instructions ?? '').toLowerCase().includes(q))
       : agents;
     // **가나다 고정**(문서가 정한 것). 상태순으로 정렬하면 켜지고 꺼질 때마다 카드가 자리를
     // 옮겨 위치로 기억하는 것이 불가능해진다 — 상태는 이미 사진이 말하고 있다.
@@ -63,7 +196,7 @@ export function AgentGrid({
   return (
     <div className="flex min-h-0 flex-col">
       {/* 검색은 **화면 맨 위 고정**이다 — 목록이 길어져도 찾는 수단이 스크롤 밖으로 나가지 않는다. */}
-      <div className="sticky top-0 z-10 bg-surface-raised pb-4">
+      <div className={`sticky top-0 z-10 ${s.bg} pb-4`}>
         <div className="relative">
           <span aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-fg-subtle">⌕</span>
           <input
@@ -82,7 +215,7 @@ export function AgentGrid({
         </div>
       </div>
 
-      <div data-testid="agent-grid" className="grid grid-cols-[repeat(auto-fill,86px)] gap-x-6 gap-y-5 overflow-y-auto">
+      <div data-testid="agent-grid" className={`grid ${s.grid} overflow-y-auto`}>
         {/*
           `+` 는 **맨 앞**이다. "그리드의 마지막 칸"으로 두면 40개일 때 그 칸이 스크롤 끝이라
           찾아가야 한다. 맨 앞이면 개수와 무관하게 자리가 고정되고, 검색으로 목록이 비어도
@@ -91,15 +224,15 @@ export function AgentGrid({
         {canCreate && (
           <button
             data-testid="agent-create"
-            className="group flex w-[86px] flex-col items-center gap-2"
+            className={`group flex ${s.card} flex-col items-center gap-2`}
             onClick={onCreate}
           >
             {/* 목업처럼 **점선도 원**이다 — 사각 점선은 옆의 둥근 얼굴들과 다른 종류로 읽힌다. */}
             <span
-              className="flex h-14 w-14 items-center justify-center rounded-full border border-dashed
-                         border-border text-fg-subtle group-hover:border-fg-subtle group-hover:text-fg"
+              className={`flex ${s.face} items-center justify-center rounded-full border border-dashed
+                         border-border text-fg-subtle group-hover:border-fg-subtle group-hover:text-fg`}
             >
-              <span aria-hidden="true" className="text-lg leading-none">+</span>
+              <span aria-hidden="true" className={`${s.faceText} leading-none`}>+</span>
             </span>
             <span className="text-[11px] text-fg-muted">새 에이전트</span>
           </button>
@@ -116,13 +249,13 @@ export function AgentGrid({
                 // **얼굴이 주인공이다**(문서: "얼굴만 남긴다"). 카드 상자를 그리지 않는다 —
                 // 목업에는 테두리도 면도 없고 **원과 이름**만 있다. 상자를 두면 26개가 깔릴 때
                 // 격자 선이 얼굴보다 먼저 눈에 들어온다.
-                className="group flex w-[86px] flex-col items-center gap-2"
+                className={`group flex ${s.card} flex-col items-center gap-2`}
                 onClick={() => onPick(a)}
               >
                 <span
                   className={`relative block rounded-full ${
                     face === 'failed' ? 'ring-2 ring-state-stuck' : ''
-                  } ${selectedId === a.id ? 'ring-2 ring-accent ring-offset-2 ring-offset-surface-raised' : ''}`}
+                  } ${selectedId === a.id ? `ring-2 ring-accent ring-offset-2 ${s.ringOffset}` : ''}`}
                 >
                   {/*
                     멈춘 사진은 **색이 빠진다** — 장식을 더하는 것이 아니라 덜어 낸다.
@@ -139,7 +272,7 @@ export function AgentGrid({
                       ? 'block grayscale brightness-[1.7] contrast-[0.55] opacity-90'
                       : 'block'}
                   >
-                    <Identity account={a} className="h-14 w-14 text-lg" variant="avatar" />
+                    <Identity account={a} className={`${s.face} ${s.faceText}`} variant="avatar" />
                   </span>
                 </span>
                 <span
@@ -161,7 +294,8 @@ export function AgentGrid({
                   지금 도는지 모르는 것을 켜라고 권하면 이미 도는 러너를 하나 더 띄우게
                   된다 — `#430` 의 중복이 바로 그 모양이었다. 모를 때 화면이 할 일은
                   행동을 권하는 것이 아니라 **모른다고 말하는 것**이다. */}
-              {onRelaunch && face !== 'ok' && face !== 'unknown' && (
+              {/* `canRelaunch` 를 안 준 호출자에게는 오늘 동작 그대로다(그 prop 주석). */}
+              {onRelaunch && (canRelaunch?.(a) ?? true) && face !== 'ok' && face !== 'unknown' && (
                 /*
                   **글리프는 사진 안에 있다**(문서: "실행하기 버튼도 사라진다 — 사진 안으로
                   들어간다"). 그래서 뱃지가 아니라 얼굴을 덮는 원이고, 평소에는 **옅게** 얹혀
@@ -174,9 +308,9 @@ export function AgentGrid({
                 <button
                   data-testid={`agent-relaunch-${a.handle}`}
                   aria-label={`${a.handle} ${face === 'failed' ? '다시 띄우기' : '실행하기'}`}
-                  className={`absolute left-1/2 top-0 flex h-14 w-14 -translate-x-1/2 items-center
-                              justify-center rounded-full text-xl leading-none opacity-50 transition
-                              group-hover:opacity-100 focus-visible:opacity-100 ${
+                  className={`absolute left-1/2 top-0 flex ${s.glyph} -translate-x-1/2 items-center
+                              justify-center rounded-full leading-none opacity-50 transition
+                              group-hover:opacity-100 ${GLYPH_FOCUS} ${
                                 face === 'failed' ? 'text-state-stuck' : 'text-fg'
                               }`}
                   onClick={(e) => { e.stopPropagation(); onRelaunch(a); }}

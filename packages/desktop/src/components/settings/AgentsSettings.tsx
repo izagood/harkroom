@@ -12,6 +12,9 @@ import { staleRunners } from '../../lib/runnerVersions';
 import { RunnerStatusLine, runnerStatusLabel } from '../RunnerStatus';
 import { PAT_PLACEHOLDER, runnerCommandClipboardText } from '../../lib/runnerCommand';
 import { AgentGrid } from './AgentGrid';
+// 띄울 권한 판정은 `lib/` 하나가 낸다 — 레일의 에이전트 칸이 같은 판정을 쓴다
+// (`docs/desktop-rail.html` 3단계). 사본을 두면 두 화면이 같은 사람에게 다르게 답한다.
+import { canRelaunchAgent } from '../../lib/relaunchGate';
 import { Identity } from '../Identity';
 import { Button } from './primitives';
 
@@ -526,8 +529,19 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           onCreate={startNew}
           canCreate={isAdmin}
           onRelaunch={(a) => {
-            const canRun = isAdmin || (a.ownerAccountId !== null && a.ownerAccountId === myId);
-            if (!canRun) return;
+            /*
+              **판정이 `lib/relaunchGate.ts` 하나다**(`docs/desktop-rail.html` 3단계).
+              3단계가 레일의 에이전트 칸에도 ▶ 를 세우면서 이 판정을 보는 화면이 둘이 됐다 —
+              여기 사본을 남기면 한쪽만 고치는 순간 같은 사람이 한 화면에서는 띄울 수 있고
+              다른 화면에서는 못 띄운다(`faceState` 가 나온 것과 같은 이유).
+
+              **이 화면의 모양은 그대로다.** 사이드바는 `canRelaunch` 술어로 권한 없는 카드의
+              ▶ 자체를 그리지 않는데, 여기서는 그 술어를 넘기지 않아 예전처럼 ▶ 가 서고
+              콜백이 조용히 물러난다. 그 차이를 지금 통일하지 않는 이유는 범위다 — 이 화면의
+              모양을 바꾸지 않는 것이 3단계의 전제이고(카드를 두 번 그리지 않기 위해 설정이
+              먼저 들어갔다), 여기 ▶ 를 없애는 것은 별개의 판단이다.
+            */
+            if (!canRelaunchAgent(a, myId ? { id: myId, isAdmin } : null)) return;
             void getController().reissueRunnerPat(a.id).catch((err: unknown) => setError(
               `러너를 띄우지 못했다: ${err instanceof Error ? err.message : String(err)}`,
             ));
