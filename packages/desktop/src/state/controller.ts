@@ -3,7 +3,7 @@ import { notifyLevelOf } from '@murmur/shared';
 import { ApiClient, ApiError } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
-import { silentNotifier, type Notifier } from '../lib/notify';
+import { silentNotifier, type NotificationTarget, type Notifier } from '../lib/notify';
 import { displayBody } from '../lib/mention';
 import { RunnerLauncher, tauriDaemonObserver, tauriLoginPathReader, tauriSecretStore, daemonSpawner, type DaemonObserver, type LoginPathReader, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
 import type { AppStore } from './appStore';
@@ -129,8 +129,24 @@ export class Controller {
   private communitySuffix(): string {
     const { entries } = useCommunityRegistry.getState();
     if (entries.length < 2) return '';
-    const mine = entries.find((e) => e.store === this.store);
+    const mine = this.communityEntry();
     return mine ? ` (${communityLabel(mine)})` : '';
+  }
+
+  /**
+   * 이 컨트롤러가 어느 커뮤니티의 것인지. 스토어 신원으로 찾는다 — 커뮤니티 id 를 따로
+   * 들고 다니면 레지스트리에서 빠진 뒤에도 남아 있는 값이 생긴다(`communitySuffix` 와
+   * 같은 이유이고, **같은 자리 하나**를 쓴다: 꼬리표와 알림 목적지가 서로 다른 커뮤니티를
+   * 가리키는 상태를 만들 방법이 없어야 한다).
+   */
+  private communityEntry() {
+    return useCommunityRegistry.getState().entries.find((e) => e.store === this.store);
+  }
+
+  /** 알림에 실을 목적지(#542). 레지스트리에서 자기를 못 찾으면 목적지 없이 알린다. */
+  private notificationTarget(messageId: string): NotificationTarget | undefined {
+    const mine = this.communityEntry();
+    return mine ? { communityId: mine.id, messageId } : undefined;
   }
 
   // fire-and-forget 호출의 unhandled rejection 방지 — 실패는 조용히 무시(다음 이벤트/리컨실이 자연 복구).
@@ -504,6 +520,8 @@ export class Controller {
       // 본문은 `displayBody` 를 지난다(#329) — 시스템 메시지는 자리표시자를 갖고 있어
       // 원본을 그대로 실으면 OS 알림에만 그 글자가 뜬다.
       body: prefs.showPreview ? displayBody(message, store.accounts) : 'New message',
+      // 눌렀을 때 갈 곳(#542). 제목의 `where` 는 사람이 읽는 문자열이고, 이동에는 id 를 쓴다.
+      target: this.notificationTarget(message.id),
     });
   }
 
@@ -573,6 +591,9 @@ export class Controller {
         // `displayBody` 를 지나는 이유는 `announceNewMessage` 와 같다(#329) — 본문을
         // 사람에게 보여 주는 자리는 예외 없이 같은 함수를 지나야 자리표시자가 새지 않는다.
         body: prefs.showPreview ? (row ? displayBody(row, accounts) : generic) : generic,
+        // 스레드 답글이면 `openMessage` 가 스레드 패널까지 연다 — 목적지에 담을 것은
+        // 그 메시지 id 하나뿐이고, 스레드 여부를 여기서 판단하지 않는다(#542).
+        target: this.notificationTarget(e.messageId),
       });
     }
   }
@@ -1725,6 +1746,34 @@ export async function switchCommunity(id: string): Promise<void> {
   const stored = await sessionStore.load();
   if (!stored) return;
   await sessionStore.save({ ...stored, active: entry.accountId });
+}
+
+/**
+ * OS 알림을 눌렀을 때 그 대화로 간다(#542).
+ *
+ * 이 함수가 화면 대신 여기 있는 이유: 이동은 커뮤니티 전환(`switchCommunity`)과 메시지 열기
+ * (`controller.openMessage`) 두 조작의 **순서**이고, 그 둘이 다 이 모듈의 것이다. 화면에
+ * 두면 알림 경로만 자기 순서를 따로 갖게 되고, 그것은 링크 클릭(#178)과 갈린다.
+ *
+ * **모르는 커뮤니티는 조용히 끝낸다.** 알림을 보낸 뒤 그 커뮤니티를 이 기기에서 뺄 수 있고
+ * (`removeCommunity`), 그때 id 는 아무것도 가리키지 않는다. `switchCommunity` 는 모르는 id
+ * 에 던지므로 그 예외가 이벤트 핸들러에서 터지게 두지 않는다 — 갈 곳이 없어진 것은 오류가
+ * 아니라 사용자가 한 일의 결과다.
+ *
+ * 못 여는 메시지(지워짐·권한 없음·연결 실패)를 사람에게 알리는 일은 `openMessage` 가 자기
+ * 자리에서 한다 — 여기서 한 번 더 판단하면 같은 사실에 두 문구가 생긴다.
+ */
+export async function openNotificationTarget(target: NotificationTarget): Promise<void> {
+  const registry = useCommunityRegistry.getState();
+  const entry = registry.entries.find((e) => e.id === target.communityId);
+  if (!entry) return;
+  // 화면을 먼저 옮긴다. 순서가 뒤바뀌면 메시지가 보이지 않는 스토어에 들어가고, 사용자는
+  // 아무 일도 안 난 것으로 본다.
+  if (registry.activeId !== entry.id) await switchCommunity(entry.id);
+  // 컨트롤러가 아직 안 꽂힌 순간이 실제로 있다(스토어는 있고 세션은 안 붙은 엔트리).
+  // 그때는 전환까지가 할 수 있는 전부다.
+  await useCommunityRegistry.getState().entries
+    .find((e) => e.id === entry.id)?.controller?.openMessage(target.messageId);
 }
 
 /**
