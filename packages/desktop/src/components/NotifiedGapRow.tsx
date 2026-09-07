@@ -72,6 +72,25 @@ import { useActiveStore } from '../state/communities';
  * 에 수가 없고"* 라고 적었는데 **그것은 지금 틀렸다**(#285 가 그 필드를 넣었다). 그 주석을
  * 함께 고쳤다.
  */
+/**
+ * 줄 머리의 이름. `mixed` 는 종류를 섞어 불러 아무 쪽도 주장할 수 없는 경우다 —
+ * 그때는 이름도 못 말하므로(`NotifiedSummary.groupHandle` 이 `null`) "부른 명단" 이
+ * 그 줄이 말할 수 있는 전부다.
+ */
+const LABEL = { group: '집합', team: '팀', mixed: '부른 명단' } as const;
+
+/**
+ * 사유 문장. **종류마다 다르다** — 근거는 아래 렌더 안의 주석에 있다.
+ *
+ * 상수로 뽑아 둔 이유: 세 문장을 JSX 안의 삼항으로 엮으면 어느 종류가 어느 문장을 받는지
+ * 읽을 수 없고, 종류가 하나 늘 때 조용히 빠뜨린다. 여기서는 키가 빠지면 컴파일이 깨진다.
+ */
+const REASON = {
+  group: '— 남은 사람은 이 채널을 볼 수 없다. 채널 멤버로 넣어야 부름이 닿는다.',
+  team: '— 남은 팀원은 비활성이거나 이 채널을 볼 수 없다. 팀 설정과 채널 멤버를 보라.',
+  mixed: '— 남은 상대에게 부름이 닿지 않았다.',
+} as const;
+
 export function NotifiedGapRow({ messageId }: { messageId: string }) {
   const gap = useActiveStore((s) => s.notifiedGaps[messageId]);
   if (!gap) return null;
@@ -81,23 +100,42 @@ export function NotifiedGapRow({ messageId }: { messageId: string }) {
       data-testid="notified-gap"
       data-called={gap.called}
       data-woke={gap.woke}
+      data-kind={gap.kind ?? ''}
       className="mt-0.5 flex flex-wrap items-baseline gap-1 text-[11px] text-warning"
     >
-      {/* 무엇에 대한 줄인지 먼저 말한다 — 문서의 목업이 "집합" 을 앞에 세웠다. */}
+      {/*
+        무엇에 대한 줄인지 먼저 말한다 — 문서의 목업이 "집합" 을 앞에 세웠다.
+
+        **팀(#172)이면 "팀" 이라고 말한다.** 이름이 하나뿐이라 사람은 그것이 집합인지 팀인지
+        본문에서 알 수 없고, 여기서 "집합" 이라고 부르면 팀 설정을 열어야 할 사람이 집합
+        설정을 뒤진다. 종류를 모르면(둘을 섞어 불렀다) 아무 쪽도 주장하지 않는다.
+      */}
       <span className="font-medium">
-        {gap.groupHandle === null ? '집합' : `집합 @${gap.groupHandle}`}
+        {LABEL[gap.kind ?? 'mixed']}{gap.groupHandle === null ? '' : ` @${gap.groupHandle}`}
       </span>
       <span>
         {gap.called}명을 불렀는데 {gap.woke}명만 깼다
       </span>
       {/*
         **사유를 함께 말한다.** 수만 말하면 사람이 다음에 무엇을 할지 모르고, 그러면 이 줄은
-        놀라게만 하고 끝난다(규칙 05 — 개입 비용). 사유가 하나뿐이라 단정해 말할 수 있다:
-        가시성 판정이 `channelVisibleSql` 하나이므로 다른 경로가 없다.
+        놀라게만 하고 끝난다(규칙 05 — 개입 비용).
+
+        **집합에서는 사유가 하나뿐이라 단정한다** — 가시성 판정이 `channelVisibleSql`
+        하나이므로 다른 경로가 없다.
+
+        **팀에서는 둘이다.** `services/messages.ts` 가 비활성 팀원을 부르지 않고
+        (*"비활성 에이전트는 깰 수 없다"*), `AgentTeamRow.memberCount` 는 그 팀원을 센다 —
+        그 어긋남이 이 줄이 뜨는 두 번째 경로다. 그래서 팀에는 집합의 문장을 쓰지 않는다:
+        꺼 둔 에이전트 때문에 뜬 줄이 "채널 멤버로 넣어야 한다"고 말하면 사람은 이미
+        멤버인 계정을 다시 넣으려 하고, 그것이 규칙 05 가 막는 헛된 개입이다.
+
+        팀 문장이 둘을 **나열하는 것으로 끝나는** 이유: 화면은 어느 쪽인지 가릴 수 없다.
+        명단을 주는 라우트는 `GET /teams/:id` 하나이고 그것이 `disabled` 를 싣지만, 그
+        조회는 이 줄이 살 값이 아니다 — 발화마다 팀 명단을 받아야 하고, 그래도 "안 깬 팀원"
+        은 여전히 못 짚는다(깬 사람의 id 는 헤더가 잘라 준다). 두 문을 다 보여 주고 사람이
+        고르게 하는 것이 없는 확신을 꾸미는 것보다 낫다(규칙 06 의 결).
       */}
-      <span className="text-fg-muted">
-        — 남은 사람은 이 채널을 볼 수 없다. 채널 멤버로 넣어야 부름이 닿는다.
-      </span>
+      <span className="text-fg-muted">{REASON[gap.kind ?? 'mixed']}</span>
     </div>
   );
 }

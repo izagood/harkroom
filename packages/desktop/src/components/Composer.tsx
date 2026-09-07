@@ -1,10 +1,10 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { parseMessagePermalink, type ScheduledMessageView } from '@murmur/shared';
-import type { AccountView, AttachmentRow, HandleGroupRow } from '@murmur/shared';
+import type { AccountView, AgentTeamRow, AttachmentRow, HandleGroupRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { ApiError } from '../lib/api';
-import { GroupBadge, Identity } from './Identity';
+import { GroupBadge, Identity, TeamBadge } from './Identity';
 import { formatSize } from './Attachments';
 import {
   mentionQueryAt, applyMention, withStickyMentions, keepMentioned, bodyRecipients,
@@ -80,13 +80,22 @@ export function nameClipboardFile(file: File, at: Date, seq = 0): File {
  */
 type Candidate =
   | { kind: 'account'; id: string; handle: string; account: AccountView }
-  | { kind: 'group'; id: string; handle: string; group: HandleGroupRow };
+  | { kind: 'group'; id: string; handle: string; group: HandleGroupRow }
+  // 에이전트 팀(#172). 집합과 나란히 선다 — 둘 다 "한 이름으로 여럿을 부른다"이고,
+  // 부를 수 있는 이름이 후보에 없으면 사람은 그것을 배울 방법이 없다.
+  | { kind: 'team'; id: string; handle: string; team: AgentTeamRow };
 
 const asAccountCandidates = (list: AccountView[]): Candidate[] =>
   list.map((a) => ({ kind: 'account', id: a.id, handle: a.handle, account: a }));
 
 const asGroupCandidates = (list: HandleGroupRow[]): Candidate[] =>
   list.map((g) => ({ kind: 'group', id: g.id, handle: g.handle, group: g }));
+
+// 팀은 `name` 을 handle 자리에 넣는다 — 서버가 그 이름을 계정 handle 과 **같은
+// 네임스페이스**에 두고 같은 문법으로 검사하므로(`teamRoutes.ts` 의 `HANDLE_PATTERN`),
+// 멘션으로 쓰이는 문자열은 이것 하나다.
+const asTeamCandidates = (list: AgentTeamRow[]): Candidate[] =>
+  list.map((t) => ({ kind: 'team', id: t.id, handle: t.name, team: t }));
 
 interface Props {
   /**
@@ -155,6 +164,7 @@ export function Composer({
 }: Props) {
   const accounts = useActiveStore((s) => s.accounts);
   const groups = useActiveStore((s) => s.groups);
+  const teams = useActiveStore((s) => s.teams);
   const myId = useActiveStore((s) => s.me?.id);
   // 채널이 자동으로 멘션하는 에이전트(#173). 키가 없으면 아직 못 받은 것이고 그때는 칩도 접두도 없다.
   const autoRows = useActiveStore((s) => (autoMentionChannelId ? s.channelAutoMentions[autoMentionChannelId] : undefined));
@@ -263,23 +273,47 @@ export function Composer({
       .filter((g) => g.handle.toLowerCase().startsWith(q))
       .sort((a, b) => a.handle.localeCompare(b.handle))
       .slice(0, MAX_GROUP_SUGGESTIONS);
+    /**
+     * 팀도 같은 예약 자리를 쓴다(#172). 집합과 **합쳐서** `MAX_GROUP_SUGGESTIONS` 개다 —
+     * 각자 세 자리를 주면 총량이 늘어 `MAX_GROUP_SUGGESTIONS` 주석의 약속(목록이 화면을
+     * 덮지 않는다)이 깨진다. 팀이 뒤 자리를 받는 것은 아래 정렬 순서와 같은 이유다.
+     *
+     * **이름이 집합과 겹치면 팀을 후보에서 뺀다.** 세 네임스페이스가 배타가 아니라는 것을
+     * 서버 테스트가 고정했고(`teamMention.test.ts`), 겹친 이름을 부르면 서버는 집합을
+     * 펼친다(`services/messages.ts` 의 해석 순서: 계정 → 집합 → 팀). 그때 후보에 팀이
+     * 서면 그것을 골라 보낸 사람은 자기가 부른 것과 다른 명단이 깨는 것을 본다 — 후보는
+     * 알림이 가는 쪽을 따라야 한다(`bodyRecipients` 의 같은 원칙).
+     */
+    const groupNames = new Set(groups.map((g) => g.handle.toLowerCase()));
+    const teamMatches = teams
+      .filter((t) => t.name.toLowerCase().startsWith(q) && !groupNames.has(t.name.toLowerCase()))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, MAX_GROUP_SUGGESTIONS - groupMatches.length);
+    const reserved = groupMatches.length + teamMatches.length;
     const accountMatches = Object.values(accounts)
       // 비활성 계정은 부를 수 없다 — 디렉터리에는 남아 있다(과거 메시지의 작성자 이름을
       // 풀어야 하므로). 후보에서 빼는 것이 이쪽 책임이다(shared 의 AccountView.disabled 주석).
       .filter((a) => a.id !== myId && !a.disabled && a.handle.toLowerCase().startsWith(q))
       .sort(rank)
-      .slice(0, MAX_SUGGESTIONS - groupMatches.length);
-    // 계정이 먼저, 집합이 뒤다 — 사람·에이전트를 부르는 것이 흔한 쪽이고, 집합은
-    // 목록 아래에 모여 있어야 "이 아래는 여러 사람"이라고 한눈에 읽힌다.
-    return [...asAccountCandidates(accountMatches), ...asGroupCandidates(groupMatches)];
-  }, [accounts, groups, myId, query]);
+      .slice(0, MAX_SUGGESTIONS - reserved);
+    // 계정이 먼저, 집합·팀이 뒤다 — 사람·에이전트를 부르는 것이 흔한 쪽이고, 여럿을
+    // 부르는 이름은 목록 아래에 모여 있어야 "이 아래는 여러 명"이라고 한눈에 읽힌다.
+    return [
+      ...asAccountCandidates(accountMatches),
+      ...asGroupCandidates(groupMatches),
+      ...asTeamCandidates(teamMatches),
+    ];
+  }, [accounts, groups, teams, myId, query]);
 
+  // 고정 칩이 살아남는 조건 — 없는 이름을 붙이면 멘션이 아니라 그냥 글자다. 팀도
+  // 부를 수 있으므로 여기 든다(#172).
   const known = useMemo(
     () => new Set([
       ...Object.values(accounts).filter((a) => a.id !== myId).map((a) => a.handle.toLowerCase()),
       ...groups.map((g) => g.handle.toLowerCase()),
+      ...teams.map((t) => t.name.toLowerCase()),
     ]),
-    [accounts, groups, myId],
+    [accounts, groups, teams, myId],
   );
 
   /**
@@ -311,7 +345,20 @@ export function Composer({
   // 아래 두 목록은 `MessageBody` 가 `splitMentions` 에 주는 것과 **같은 인자**다(#278).
   // 자기 계정도 뺀 것이 없다 — 인자가 달라지면 같은 함수를 써도 판정이 갈라진다.
   const allHandles = useMemo(() => Object.values(accounts).map((a) => a.handle), [accounts]);
-  const groupHandleList = useMemo(() => groups.map((g) => g.handle), [groups]);
+  /**
+   * `splitMentions`·`bodyRecipients` 가 "여럿을 부르는 이름" 으로 볼 목록. **집합과 팀을
+   * 한 배열로 준다**(#172).
+   *
+   * 인자를 하나 더 늘리지 않는 이유: 그 두 함수가 이 목록으로 하는 일은 *"이것은 한 사람이
+   * 아니다"* 하나다(`isGroup` → `kind: 'group'`). 팀에도 그 판정이 똑같이 맞으므로 종류를
+   * 나눠 넘기면 두 함수가 쓰지 않는 구분을 실어 다니게 되고, `splitMentions` 주석이 경고한
+   * "새 인자는 더한다, 끼우지 않는다" 를 지키느라 서명만 길어진다. 종류가 실제로 필요한
+   * 곳은 **수를 세는 자리**뿐이고, 거기서는 `calledGroups` 가 두 목록을 따로 받는다.
+   */
+  const groupHandleList = useMemo(
+    () => [...groups.map((g) => g.handle), ...teams.map((t) => t.name)],
+    [groups, teams],
+  );
 
   // 지금 본문이 부를 상대(#278). 판정은 `bodyRecipients` 하나에 있고 그것은 `MessageBody`
   // 와 같은 `splitMentions` 를 쓴다 — 여기에 조건을 더하면 그 단일 판정이 깨진다.
@@ -330,10 +377,16 @@ export function Composer({
    * 소문자 키로 두는 이유: `bodyRecipients` 는 handle 을 소문자로 낸다(`splitMentions` 이
    * 그렇게 판정한다). 원본 대소문자로 찾으면 `@Release` 를 쓴 사람의 집합에서 수가 사라진다.
    */
-  const groupMemberCounts = useMemo(
-    () => new Map(groups.map((g) => [g.handle.toLowerCase(), g.memberCount])),
-    [groups],
-  );
+  const groupMemberCounts = useMemo(() => {
+    // 집합을 먼저 넣고 팀이 **덮지 않게** 한다 — 이름이 겹치면 서버는 집합을 펼치므로
+    // (`services/messages.ts` 의 해석 순서) 화면도 집합의 수를 말해야 한다.
+    const m = new Map(groups.map((g) => [g.handle.toLowerCase(), g.memberCount]));
+    for (const t of teams) {
+      const key = t.name.toLowerCase();
+      if (!m.has(key)) m.set(key, t.memberCount);
+    }
+    return m;
+  }, [groups, teams]);
 
   // @ 버튼으로 여는 목록. 첫 줄을 보내기 전에도 상대를 정해 둘 수 있어야 한다.
   // 이미 고정된(또는 채널이 자동으로 부르는) 상대는 뺀다 — 다시 골라도 달라지는 것이 없다.
@@ -342,14 +395,26 @@ export function Composer({
       .filter((g) => !sticky.includes(g.handle.toLowerCase()))
       .sort((a, b) => a.handle.localeCompare(b.handle))
       .slice(0, MAX_GROUP_SUGGESTIONS);
+    // @ 버튼으로 여는 목록도 팀을 보여야 한다 — 이 목록은 **첫 줄을 보내기 전에** 상대를
+    // 정하는 자리이고, 팀이 여기 없으면 그것을 아는 사람만 손으로 칠 수 있다.
+    // 겹친 이름과 예약 자리의 규칙은 위 `matches` 와 같은 것 하나다.
+    const groupNames = new Set(groups.map((g) => g.handle.toLowerCase()));
+    const teamsList = teams
+      .filter((t) => !sticky.includes(t.name.toLowerCase()) && !groupNames.has(t.name.toLowerCase()))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, MAX_GROUP_SUGGESTIONS - groupsList.length);
     const accountsList = Object.values(accounts)
       .filter((a) => a.id !== myId
         && !sticky.includes(a.handle.toLowerCase())
         && !autoHandles.includes(a.handle.toLowerCase()))
       .sort(rank)
-      .slice(0, MAX_SUGGESTIONS - groupsList.length);
-    return [...asAccountCandidates(accountsList), ...asGroupCandidates(groupsList)];
-  }, [accounts, groups, myId, sticky, autoHandles]);
+      .slice(0, MAX_SUGGESTIONS - groupsList.length - teamsList.length);
+    return [
+      ...asAccountCandidates(accountsList),
+      ...asGroupCandidates(groupsList),
+      ...asTeamCandidates(teamsList),
+    ];
+  }, [accounts, groups, teams, myId, sticky, autoHandles]);
 
   // 두 목록은 한자리에 뜨고 키보드도 하나다 — 동시에 열리면 Enter 가 어디로 갈지 모른다.
   const options = picking ? pickable : matches;
@@ -854,8 +919,8 @@ export function Composer({
                 // 핸들을 속성으로 노출한다. 테스트가 textContent 에서 핸들을 뽑으면
                 // 장식(에이전트 표시 등)이 하나 늘 때마다 깨진다 — 실제로 그랬다.
                 data-handle={item.handle}
-                // 계정인지 집합인지도 속성으로 노출한다(#285). 같은 이유다: 배지 문구가
-                // 바뀌면 문구로 종류를 확인하던 테스트가 깨진다.
+                // 계정인지 집합인지 팀인지도 속성으로 노출한다(#285·#172). 같은 이유다:
+                // 배지 문구가 바뀌면 문구로 종류를 확인하던 테스트가 깨진다.
                 data-kind={item.kind}
                 className={`flex w-full items-center gap-2 px-3 py-1.5 text-left ${i === active ? 'bg-accent-surface' : ''}`}
                 // mousedown 을 막지 않으면 클릭 전에 textarea 가 blur 되어 커서 위치가 사라진다.
@@ -872,6 +937,13 @@ export function Composer({
                         붙이지 않는다: 사람·에이전트는 핸들이 곧 이름으로 통한다. */}
                     <span className="ml-1 truncate text-[11px] text-fg-subtle">{item.group.displayName}</span>
                   </>
+                ) : item.kind === 'team' ? (
+                  /**
+                   * 팀(#172)에는 배지만 붙인다 — 팀에는 표시 이름이 없다(`AgentTeamRow` 는
+                   * `name` 하나뿐이고, 그 이름이 곧 부르는 문자열이다). 없는 필드를 위해
+                   * 빈 칸을 두지 않는다(규칙 06).
+                   */
+                  <TeamBadge team={item.team} className="ml-1" />
                 ) : (
                   <>
                     {/* 거터가 아니라 **핸들 옆** 자리다(#277) — 여기서 소유자를 지우면 "누구의

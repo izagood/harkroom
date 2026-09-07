@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus } from '@murmur/shared';
+import type { AccountStatus, AccountView, AgentTeamRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus } from '@murmur/shared';
 import type { RunnerState } from '../lib/runnerLauncher';
 import type { NotifiedSummary } from '../lib/notified';
 
@@ -15,6 +15,15 @@ export interface AppState {
   me: AccountView | null;
   accounts: Record<string, AccountView>;
   groups: HandleGroupRow[];
+  /**
+   * 부를 수 있는 에이전트 팀(#172). `groups` 와 **나란히** 산다 — 둘 다 "한 이름으로
+   * 여럿을 부른다"는 같은 사실이고, 자동완성 후보와 조용한 실패 판정이 둘을 같은
+   * 자리에서 읽는다(`Composer.tsx`·`lib/notified.ts`).
+   *
+   * 명단은 여기 없다. 팀 명단을 주는 라우트는 `GET /teams/:id` 하나뿐이고, 후보를
+   * 그리는 데 필요한 것은 이름과 규모뿐이다(`AgentTeamRow.memberCount`).
+   */
+  teams: AgentTeamRow[];
   channels: ChannelRow[];
   dms: DmView[];
   activeChannelId: string | null;
@@ -223,7 +232,7 @@ export interface AppState {
 }
 
 const initial = {
-  me: null, accounts: {}, groups: [], channels: [], dms: [], activeChannelId: null, threadRootId: null,
+  me: null, accounts: {}, groups: [], teams: [], channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], terminalTarget: null, leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {},

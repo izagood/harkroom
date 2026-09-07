@@ -6,20 +6,36 @@ import { addChannelMember, isChannelMember } from './channels.js';
 /** `Pool` 과 `PoolClient` 가 함께 만족하는 최소 표면. 트랜잭션 안에서도 쓰라고 둔다. */
 type Queryable = Pick<Pool, 'query'>;
 
-const COLS = `id, name, created_by as "createdBy", created_at as "createdAt"`;
+/**
+ * 팀 행의 컬럼 목록. **`t` 별칭을 전제한다** — `memberCount` 가 상관 부질의라 테이블을
+ * 지목해야 하기 때문이다.
+ *
+ * `memberCount` 를 저장 컬럼이 아니라 여기서 세는 이유는 `AgentTeamRow.memberCount`
+ * 주석에 있고, 그 판단은 `handleGroups.ts` 의 `COLS`(#285)를 그대로 따른 것이다:
+ * 한 곳에 두면 이 목록을 쓰는 **모든 경로**(목록·조회·이름 조회·생성·수정·삭제)가 수를
+ * 함께 얻는다 — 빠뜨릴 자리가 없다. 갓 만든 팀의 `0` 도 여기서 나온다: 그 자리를 손으로
+ * 적는 순간 `COLS` 를 안 쓰는 경로가 하나 생긴다.
+ *
+ * `::int` 로 좁히는 이유도 같다 — `count(*)` 는 bigint 라 pg 드라이버가 **문자열**로
+ * 준다. 그대로 두면 화면에 `"3"` 이 실려 와서 타입은 통과하고 산술만 조용히 틀린다.
+ */
+const COLS = `t.id, t.name, t.created_by as "createdBy", t.created_at as "createdAt",
+  (select count(*) from agent_team_member m where m.team_id = t.id)::int as "memberCount"`;
 
 export async function listTeams(db: Queryable): Promise<AgentTeamRow[]> {
-  const res = await db.query(`select ${COLS} from agent_team order by name`);
+  const res = await db.query(`select ${COLS} from agent_team t order by t.name`);
   return res.rows;
 }
 
 export async function getTeam(db: Queryable, teamId: string): Promise<AgentTeamRow | null> {
-  const res = await db.query(`select ${COLS} from agent_team where id = $1`, [teamId]);
+  const res = await db.query(`select ${COLS} from agent_team t where t.id = $1`, [teamId]);
   return res.rows[0] ?? null;
 }
 
 export async function getTeamByName(db: Queryable, name: string): Promise<AgentTeamRow | null> {
-  const res = await db.query(`select ${COLS} from agent_team where lower(name) = lower($1)`, [name]);
+  const res = await db.query(
+    `select ${COLS} from agent_team t where lower(t.name) = lower($1)`, [name],
+  );
   return res.rows[0] ?? null;
 }
 
@@ -36,7 +52,10 @@ export async function createTeam(
   db: Queryable, name: string, creatorId: string,
 ): Promise<AgentTeamRow | null> {
   const res = await db.query(
-    `insert into agent_team (name, created_by)
+    // `as t` 는 `COLS` 가 그 별칭을 전제하기 때문이다 — 갓 만든 팀의 memberCount 는
+    // 언제나 0 이지만, 그 0 을 여기서 손으로 적으면 COLS 를 안 쓰는 경로가 하나 생긴다
+    // (`createHandleGroup` 의 같은 주석).
+    `insert into agent_team as t (name, created_by)
      select $1, $2
      where not exists (select 1 from account where lower(handle) = lower($1))
        and not exists (select 1 from handle_group where lower(handle) = lower($1))
@@ -58,8 +77,8 @@ export async function updateTeamName(
   db: Queryable, teamId: string, name: string,
 ): Promise<{ ok: true; team: AgentTeamRow } | { ok: false; reason: 'not_found' | 'name_taken' }> {
   const res = await db.query(
-    `update agent_team set name = $2
-     where id = $1
+    `update agent_team as t set name = $2
+     where t.id = $1
        and not exists (select 1 from account where lower(handle) = lower($2))
        and not exists (select 1 from handle_group where lower(handle) = lower($2))
        and not exists (select 1 from agent_team where lower(name) = lower($2) and id <> $1)
@@ -72,10 +91,21 @@ export async function updateTeamName(
   return { ok: false, reason: exists ? 'name_taken' : 'not_found' };
 }
 
-/** 지운 팀을 돌려준다 — 감사에 이름을 남겨야 하고, 지운 뒤에는 물어볼 곳이 없다. */
+/**
+ * 지운 팀을 돌려준다 — 감사에 이름을 남겨야 하고, 지운 뒤에는 물어볼 곳이 없다.
+ *
+ * **먼저 읽고 나서 지운다.** `delete ... returning ${COLS}` 로 한 문장에 끝내지 않는
+ * 이유는 `COLS` 의 `memberCount` 다: 그 상관 부질의가 삭제와 cascade 사이의 어느
+ * 시점을 보는지는 문장 하나로 표현되는 계약이 아니고, 그러면 지운 팀의 수가 `0` 인지
+ * 지우기 전 명단 크기인지가 구현 세부에 달린다. 읽은 값을 그대로 돌려주면 뜻이 하나다 —
+ * **지우기 직전의 팀**이다. 경합으로 그 사이에 사라지면 아래 `rowCount` 가 0 이 되어
+ * `null` 을 준다(호출부는 404 로 답한다).
+ */
 export async function deleteTeam(db: Queryable, teamId: string): Promise<AgentTeamRow | null> {
-  const res = await db.query(`delete from agent_team where id = $1 returning ${COLS}`, [teamId]);
-  return res.rows[0] ?? null;
+  const team = await getTeam(db, teamId);
+  if (!team) return null;
+  const res = await db.query(`delete from agent_team where id = $1`, [teamId]);
+  return res.rowCount ? team : null;
 }
 
 /**

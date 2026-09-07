@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 import type {
-  InboxEntry, AccountView, AgentSessionView, ChannelRow, HandleGroupRow, MessageRow, PinRow } from '@murmur/shared';
+  InboxEntry, AccountView, AgentSessionView, AgentTeamRow, ChannelRow, HandleGroupRow, MessageRow, PinRow } from '@murmur/shared';
 import type { ApiClient } from '../../src/lib/api';
 
 // #186: 상태는 옵셔널이 아니라 **필수 필드**다 — fixture 도 그것을 적어야 한다.
@@ -18,15 +18,28 @@ export const grp = (id: string, handle: string, displayName: string, memberCount
   ({ id, handle, displayName, createdAt: new Date().toISOString(), memberCount });
 
 /**
+ * 에이전트 팀(#172). `grp` 와 같은 모양으로 둔다 — 둘 다 "한 이름으로 여럿을 부른다"이고
+ * 그 수(`memberCount`)가 조용한 실패 판정의 유일한 출처다(`AgentTeamRow.memberCount`).
+ *
+ * 팀에는 표시 이름이 없다 — `name` 하나가 곧 부르는 문자열이다.
+ */
+export const tm = (id: string, name: string, memberCount = 0): AgentTeamRow =>
+  ({ id, name, createdBy: 'u1', createdAt: new Date().toISOString(), memberCount });
+
+/**
  * `GET /accounts` 의 응답 모양(#230). 계정 목록과 집합 목록을 함께 준다.
  *
  * 헬퍼로 두는 이유: 이 모양을 fake 마다 손으로 적으면 서버가 필드를 하나 더 줄 때
  * 고칠 자리가 테스트 파일 수만큼 생긴다 — 아래 `fakeApi` 주석이 경계하는 그 결함이다.
  */
 export function accountsResult(
-  accounts: AccountView[], groups: HandleGroupRow[] = [],
-): { accounts: AccountView[]; groups: HandleGroupRow[] } {
-  return { accounts, groups };
+  accounts: AccountView[], groups: HandleGroupRow[] = [], teams: AgentTeamRow[] = [],
+): { accounts: AccountView[]; groups: HandleGroupRow[]; teams: AgentTeamRow[] } {
+  // 팀 목록도 이 응답에 있다(#172) — 자동완성 후보의 원천이 하나여야 하기 때문이다
+  // (`directoryRoutes.ts`). 기본값이 빈 배열인 것은 대다수 테스트가 팀을 안 보기
+  // 때문이고, 그 경우에도 **필드는 있다**: 옛 서버(`teams` 없음)를 흉내내려면 이 헬퍼를
+  // 쓰지 않고 응답을 손으로 적어야 하고, 그 구분이 실수로 섞이지 않는다.
+  return { accounts, groups, teams };
 }
 
 // #182: 공개 범위도 **필수 필드**다 — fixture 가 그것을 적어야 한다. 기본값은 서버의

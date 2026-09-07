@@ -29,6 +29,9 @@ export type WorkspaceEvent =
   | { type: 'channel.member_removed'; channelId: string; accountId: string; audience: 'all' | string[] }
   // 핸들 집합 변경(#300). 로그인한 전원에게 간다.
   | { type: 'handle_group.changed'; groupId: string; audience: 'all' | string[] }
+  // 에이전트 팀 변경(#172). 집합과 같은 모양·같은 수신자다 — 팀 이름이 자동완성 후보이고
+  // 팀원 수가 조용한 실패 판정의 유일한 출처이므로, 알리지 않으면 둘 다 낡는다.
+  | { type: 'agent_team.changed'; teamId: string; audience: 'all' | string[] }
   // 담기/해제/상태 변경(#219). 본인의 소켓에만 간다.
   | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string }
   // 워크스페이스 스킬(#140). 제안·승인·비활성을 알린다.

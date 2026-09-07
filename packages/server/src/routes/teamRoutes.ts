@@ -7,6 +7,7 @@ import {
   listTeamMembers, addAgentToTeam, removeAgentFromTeam, addTeamToChannel,
 } from '../services/teams.js';
 import { recordAudit } from '../audit.js';
+import { emitEvent } from '../events.js';
 import { assertChannelVisible, channelMembershipGate } from '../services/channels.js';
 
 /**
@@ -54,6 +55,10 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
       action: 'team.created', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: team.id, detail: { handle: name },
     }, req);
+    // 팀이 생겼다 — 부를 수 있는 이름이 하나 늘었으므로 후보 목록에 붙어야 한다
+    // (`handle_group.changed` 가 #300 에서 배운 것: 알리지 않으면 새 이름은 다음
+    // 새로고침까지 아무의 자동완성에도 나타나지 않는다).
+    emitEvent({ type: 'agent_team.changed', teamId: team.id, audience: 'all' });
     return reply.code(201).send(team);
   });
 
@@ -74,6 +79,9 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
       action: 'team.updated', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: id, detail: { handle: name },
     }, req);
+    // 이름이 바뀌면 **옛 이름은 아무도 부를 수 없다.** 알리지 않으면 후보 목록에 사라진
+    // 이름이 남아, 그것을 골라 보낸 발화는 아무도 깨우지 않는다.
+    emitEvent({ type: 'agent_team.changed', teamId: id, audience: 'all' });
     return result.team;
   });
 
@@ -88,6 +96,7 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
       action: 'team.deleted', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: id, detail: { handle: deleted.name },
     }, req);
+    emitEvent({ type: 'agent_team.changed', teamId: id, audience: 'all' });
     return reply.code(204).send();
   });
 
@@ -124,6 +133,9 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
       action: 'team.member.added', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: id, detail: { handle: account.rows[0].handle },
     }, req);
+    // 팀원 수가 바뀌었다 — 그 수가 "몇 명을 불렀는가"의 유일한 출처이므로(#285 가 집합에
+    // 대해 정한 계약), 알리지 않으면 화면은 옛 수로 조용한 실패를 판정한다.
+    emitEvent({ type: 'agent_team.changed', teamId: id, audience: 'all' });
     return { members: await listTeamMembers(pool, id) };
   });
 
@@ -141,6 +153,7 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
         action: 'team.member.removed', actorId: req.account!.id, actorHandle: req.account!.handle,
         target: id, detail: { handle: account.rows[0]?.handle },
       }, req);
+      emitEvent({ type: 'agent_team.changed', teamId: id, audience: 'all' });
     }
     return { members: await listTeamMembers(pool, id) };
   });
