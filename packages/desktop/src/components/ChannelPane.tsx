@@ -123,7 +123,13 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       // `needs_reissue` 는 **넣지 않는다.** 그쪽은 설정 화면에 재발급 버튼이 서고,
       // 그 버튼 없이 여기서 사유만 읽어도 사람이 할 수 있는 일이 없다 — 그리고 그것은
       // `#473` 이전부터 이 띠에 없었으므로 이 이슈가 바꿀 자리가 아니다.
-      if (state?.status === 'failed' || state?.status === 'needs_harness') return { agentId, state };
+      // `needs_login` 도 같은 이유로 든다(2026-09-07): 하네스 로그인이 풀린 러너는
+      // 78 로 물러나는데, 이 띠가 안 서면 `#476` 이 고친 실패 방식이 그대로 되살아난다 —
+      // 사람은 멘션을 보내고 답을 기다리다 포기하고, 사유는 사이드바 점의 `title` 에만 남는다.
+      // 실측이 그것이었다: "(답변에 실패했습니다 — 운영자 확인이 필요합니다)" 두 줄뿐이었다.
+      if (state?.status === 'failed' || state?.status === 'needs_harness' || state?.status === 'needs_login') {
+        return { agentId, state };
+      }
     }
     return null;
   }, [activeChannelId, dm, accounts, messages, runnerStates]);
@@ -309,14 +315,18 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         // 의 `TONE` 이 같은 판단을 이미 적어 뒀다("러너는 떴는데 사람이 한 단계를 해야
         // 한다"). 붉은 띠로 세우면 사람은 앱이 망가진 줄 알고 사유 줄을 안 읽는다 —
         // 그런데 **사람이 할 일은 정확히 그 줄에만 있다**(무엇을 어디서 설치하는가).
-        const harness = runnerFailureInChannel.state.status === 'needs_harness';
+        // 하네스 부재와 로그인 만료는 **같은 톤**이다 — 둘 다 "고장이 아니라 사람이 한
+        // 단계를 해야 한다"이고, 할 일은 정확히 사유 줄에만 있다. 이름을 `harness` 에서
+        // 바꾸지 않는 이유: 이 변수가 재는 것은 하네스 여부가 아니라 **톤**이다.
+        const needsStep = runnerFailureInChannel.state.status === 'needs_harness'
+          || runnerFailureInChannel.state.status === 'needs_login';
         return (
           <div
             data-testid="channel-runner-failure"
             data-runner-status={runnerFailureInChannel.state.status}
-            className={`border-t bg-surface-sunken px-4 py-1.5 ${harness ? 'border-warning-border' : 'border-danger-border'}`}
+            className={`border-t bg-surface-sunken px-4 py-1.5 ${needsStep ? 'border-warning-border' : 'border-danger-border'}`}
           >
-            <span className={`text-[11px] font-medium ${harness ? 'text-warning' : 'text-danger'}`}>
+            <span className={`text-[11px] font-medium ${needsStep ? 'text-warning' : 'text-danger'}`}>
               @{accounts[runnerFailureInChannel.agentId]?.handle ?? '에이전트'} 는 지금 응답하지 않는다
             </span>
             {/* 사유·설치 안내는 **이 줄이 들고 있다**(`RunnerStatusLine` → `state.message`).

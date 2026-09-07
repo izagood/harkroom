@@ -1878,8 +1878,27 @@ export const CREDENTIAL_REJECTED_LINE =
 export const EXECUTABLE_NOT_FOUND_LINE =
   'murmur-agent: harness executable not found; exiting';
 
+/**
+ * **하네스 로그인**이 풀려(만료·폐기) 러너가 물러날 때 stderr 의 마지막 줄.
+ *
+ * 왜 `CREDENTIAL_REJECTED_LINE` 과 갈라야 하는가 — 2026-09-07 16:09 실측: claude CLI 의
+ * OAuth 세션이 만료되자 러너가 78 로 물러나며 `CREDENTIAL_REJECTED_LINE` 을 냈고, 앱은
+ * 그것을 보고 "PAT 가 폐기·회전됐다 — 재발급하면 다시 뜬다"를 띄웠다. 사람이 실제로
+ * 해야 할 일은 `claude` 를 한 번 실행해 다시 로그인하는 것이었다.
+ *
+ * `#473` 이 하네스 부재에서 고친 결함("하네스가 없는 사람에게 PAT 를 재발급하라고
+ * 말한다")과 **정확히 같은 모양**이 자격증명 안에서 되풀이된 것이다. `policy.ts` 는 이미
+ * 두 출처를 갈라 놓고 있었고(`murmur-credential`·`harness-credential`) 안내문도 갈라져
+ * 있었다 — 갈라지지 않은 곳은 앱이 읽을 수 있는 유일한 것, 이 마커뿐이었다.
+ */
+export const HARNESS_LOGIN_REQUIRED_LINE =
+  'murmur-agent: harness login required (expired or revoked); exiting';
+
 /** 78 로 죽은 러너가 로그로 밝힌 사유. 못 가리면 `null` 이다 — 지어내지 않는다. */
-export type RunnerExitReason = 'credential-rejected' | 'executable-not-found';
+export type RunnerExitReason =
+  | 'credential-rejected'
+  | 'harness-login-required'
+  | 'executable-not-found';
 
 /**
  * 78 로 죽은 러너의 로그 꼬리를 보고 **어느 사유인가**를 가른다(#473).
@@ -1907,12 +1926,16 @@ export function runnerExitReason(
 ): RunnerExitReason | null {
   if (!tailLines || tailLines.length === 0) return null;
   const credential = tailLines.some((line) => line.includes(CREDENTIAL_REJECTED_LINE));
+  const harnessLogin = tailLines.some((line) => line.includes(HARNESS_LOGIN_REQUIRED_LINE));
   const notFound = tailLines.some((line) => line.includes(EXECUTABLE_NOT_FOUND_LINE));
-  // 둘 다 보이면 모른다고 한다 — 지어내지 않는다(#368).
-  if (credential && notFound) return null;
+  // 둘 이상 보이면 모른다고 한다 — 지어내지 않는다(#368). 사유가 셋이 된 뒤에도 규칙은
+  // 같다: 하나만 보일 때만 단정한다. 세 갈래를 각각 짝지어 비교하는 대신 **개수를 센다** —
+  // 짝 비교는 사유가 늘 때마다 조합이 늘고, 그중 하나를 빼먹는 날 조용히 단정한다.
+  const seen = [credential, harnessLogin, notFound].filter(Boolean).length;
+  if (seen !== 1) return null;
   if (notFound) return 'executable-not-found';
-  if (credential) return 'credential-rejected';
-  return null;
+  if (harnessLogin) return 'harness-login-required';
+  return 'credential-rejected';
 }
 
 /**
