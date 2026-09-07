@@ -68,7 +68,7 @@ export type AgentCardSubject = AccountView & {
  * 그래서 그 화면의 모양은 이 축이 생기기 전과 한 픽셀도 다르지 않다(회귀선:
  * `agentsPanelGrid.test.tsx` 의 *"자리를 안 주면 설정의 그 격자다"*).
  *
- * ## 자리마다 갈리는 것은 둘 — 크기와 **바닥색**
+ * ## 자리마다 갈리는 것은 셋 — 크기 · **바닥색** · **상자**
  *
  * ### 크기 (실측 2026-09-07)
  *
@@ -97,6 +97,20 @@ export type AgentCardSubject = AccountView & {
  * `surface-sunken`(`Sidebar` 의 `aside`)이다. 한쪽 값을 박아 두면 다른 쪽에서 **검색줄만
  * 다른 색인 띠**가 되고, 그것은 하드코딩 색과 같은 종류의 결함이다: 토큰을 쓰고 있어도
  * 자리와 맞지 않으면 틀린 색이다. 선택 테의 `ring-offset` 도 같은 이유로 함께 간다.
+ *
+ * ### 상자 (2026-09-08 추가)
+ *
+ * 이 축의 세 번째 칸이고, 위 두 칸과 **같은 이유로** 여기 든다: 자리에 따라 값이 갈리고
+ * 한쪽 값을 박아 두면 다른 쪽이 틀린 모양이 된다.
+ *
+ * 설정의 카드는 흰 면 · 얇은 테두리 · 둥근 모서리 · 안쪽 여백을 받고, **사이드바는 아무것도
+ * 받지 않는다.** 갈리는 근거는 *담는 것*이다 — 설정의 카드는 정보 세 줄과 (예외로) 사유
+ * 한 줄까지 담는 **그릇**이라 경계가 없으면 그 줄들이 어느 얼굴의 것인지 눈으로 안 묶인다
+ * (실측 2026-09-08, 720px 패널 8장: `하네스/러너/활동` 세 줄이 얼굴들 사이에서 흘러다녔고
+ * 정보 묶음 위의 구분선만 남아 아무것도 가르지 않는 줄로 읽혔다). 사이드바의 카드가 담는
+ * 것은 얼굴과 이름 한 줄뿐이고, 그 자리에서는 상자가 잡음이다 — 얼굴이 이미 서로 떨어진
+ * 원이라 경계를 한 번 더 그릴 필요가 없고, 64px 트랙에서 안쪽 여백 12px 을 좌우로 먹으면
+ * 40px 얼굴이 들어갈 자리조차 없어진다.
  *
  * ## 정보 블록은 **축을 늘리지 않고** 이 축의 조건부로 얹는다
  *
@@ -136,6 +150,18 @@ const PLACE: Record<AgentGridPlace, {
   /** `sticky` 검색줄의 바닥과 선택 테의 오프셋. 자리의 바닥색과 같아야 한다(위 주석). */
   bg: string;
   ringOffset: string;
+  /**
+   * **카드 상자** — 흰 면 · 얇은 테두리 · 둥근 모서리 · 안쪽 여백 (`docs/desktop-agent-cards.pdf`
+   * 2쪽). 사이드바는 **빈 문자열**이다. 그 이유가 `AgentGridPlace` 주석의 세 번째 절에 있다.
+   */
+  box: string;
+  /**
+   * 격자 자체의 바닥. 설정은 한 단 가라앉아 흰 카드가 떠 보이고(목업), 사이드바는 이미
+   * 가라앉은 면 위에 서므로 **덧칠하지 않는다**(빈 문자열).
+   */
+  gridBg: string;
+  /** 상자가 없는 자리에서 `+` 칸이 쓰는 점선 원의 유무. 상자가 있으면 점선은 상자로 올라간다. */
+  createBox: string;
 }> = {
   /*
     ## 설정의 숫자가 바뀐 이유 — 얼굴 56 → **88px** · 트랙 86 → **140px**
@@ -176,10 +202,58 @@ const PLACE: Record<AgentGridPlace, {
     | **140** | **4열** | **60px** | 137 을 만족하는 가장 좁은 4단위 값 |
     | 128 | 4열 | 108px | 137 미달 — 뒤처진 칩이 매번 잘린다 |
 
-    그래서 140 이다. 얼굴 88px 좌우로 26px 씩 남아 `ring-2` 선택 테가 옆 카드에 닿지
+    그래서 140 이었다. 얼굴 88px 좌우로 26px 씩 남아 `ring-2` 선택 테가 옆 카드에 닿지
     않고(사이드바가 40/64 로 세운 것과 같은 여유 비율), **한 화면에 한 열이 더 들어온다** —
     *"여러 에이전트를 나란히 놓고 비교할 때만 뜻이 생기는 값"* 을 카드에 올린 것이므로
     한 번에 보이는 카드 수가 곧 이 정보의 값이다.
+
+    ### 트랙 140 → **164px** — 상자의 안쪽 여백이 그만큼을 먹는다 (실측 2026-09-08)
+
+    위 표의 137px 은 **내용이 요구하는 폭**이고, 상자가 생기면서 그 137 이 더 이상 트랙
+    전체를 쓰지 못한다. 상자가 좌우로 `p-3`(12px)씩과 테두리 1px 씩을 먹고 `box-border`
+    기본값 아래에서 둘 다 트랙 안쪽으로 들어가므로, 트랙에서 **26px 이 내용 밖으로 빠진다.**
+
+    140 을 그대로 두면 내용 폭이 114px 이다. 브라우저에서 되돌려 재 봤다(2026-09-08,
+    같은 720px 패널에서 트랙만 140 으로 바꿔):
+
+    | 트랙 | 상자 안 내용 폭 | 러너 값 칸 | 잘린 것 | 720px 열 수 |
+    |---|---|---|---|---|
+    | 140 | 114px | **70px** | 이름 두 줄(`@…agenthere` 137>114) · 칩이 94 를 70 에 눌린다 | 4열 |
+    | **164** | **138px** | **94px** | **없다** | **3열** |
+
+    (앞 두 줄은 브라우저에서 실제로 잰 값이다. 164 를 더 키우지 않은 이유는 계산으로
+    충분하다 — 176 이면 3열이 그대로인데 내용 폭만 12px 늘어난다.)
+
+    뒤처진 칩(`v0.1.1 · 뒤처짐 ↻`)의 `max-content` 는 **94px** 이고, 164 트랙의 값 칸이
+    정확히 그 94px 이다 — 라벨 36 + 간격 8 을 더한 138 이 위 표의 137 하한을 딱 만족한다.
+    140 에서는 값 칸이 70px 밖에 안 되어 그 칩이 눌리고, **이름 두 줄도 함께 잘린다**
+    (긴 핸들이 137px 을 요구한다). `truncate` 때문에 둘 다 **조용히** 잘리는, 위 표가
+    128px 을 기각한 그 결함이 그대로 돌아온다.
+
+    **한 열을 잃는 것을 받아들였다.** 위 문단이 *"한 번에 보이는 카드 수가 곧 이 정보의
+    값"* 이라고 적었으니 열을 잃는 것은 비용이다 — 그런데 잘린 값은 **값이 아니다.**
+    140 에서 4열이 서도 그 네 칸의 값이 잘려 있으면 비교할 것이 애초에 없다. 그리고
+    1000px 폭에서는 5열이라(실측), 넓은 창에서는 잃는 것이 없다.
+
+    137 하한은 그대로 살아 있다 — 회귀선(`agentGrid.test.tsx`)이 재는 대상이 트랙에서
+    **상자 여백 26px 을 뺀 값**으로 바뀌었을 뿐이다. 그 시험이 26 을 어디서 얻는지 함께
+    적어 뒀으니 상자 여백을 고치는 사람이 트랙도 같이 고치게 된다.
+
+    ## 상자 — `bg-surface-raised` · `border` · `rounded-lg` · `p-3`
+
+    `p-3`(12px)을 고른 근거는 **선택 링과의 거리**이고, 그것이 실측으로 확인된 값이다
+    (2026-09-08, 720px 패널 8장). 선택 링은 `ring-2` + `ring-offset-2` 로 얼굴 바깥
+    4px 을 쓰므로, 12px 여백은 링과 상자 테두리 사이에 **8px 을 남긴다** — 화면에서 보니
+    두 선이 서로 닿지 않고 각각 다른 것을 말하는 것으로 읽힌다. 이것이 요점이다: 링과
+    테두리를 겹치지 않게 한 것이 **자리**(얼굴 원 대 감싸개 사각)이고, 이 여백이 그 두
+    자리 사이의 실제 거리다.
+
+    여백을 늘리는 쪽은 트랙과 맞물려 있어 공짜가 아니다 — `p-4`(16px)로 키우면 위 표의
+    26px 이 34px 이 되어 트랙을 172px 로 밀어야 137 하한을 지킨다. 즉 이 값은 혼자
+    고를 수 없다. 회귀선이 26 을 명시적으로 계산하는 이유가 그것이다.
+
+    `rounded-lg`(8px)는 이 저장소가 이미 쓰는 카드 모서리다(검색 입력이 같은 값) — 새
+    반지름을 하나 더 만들지 않는다.
 
     ## `faceText`·`glyph` 가 타이포 4단이 아닌 이유
 
@@ -191,13 +265,21 @@ const PLACE: Record<AgentGridPlace, {
     두 어휘가 섞이고, 다음에 이 표를 고치는 사람이 어느 쪽을 따라야 하는지 알 수 없다.
   */
   settings: {
-    grid: 'grid-cols-[repeat(auto-fill,140px)] gap-x-5 gap-y-5',
-    card: 'w-[140px]',
+    grid: 'grid-cols-[repeat(auto-fill,164px)] gap-x-4 gap-y-4',
+    card: 'w-[164px]',
     face: 'h-[88px] w-[88px]',
     faceText: 'text-2xl',
     glyph: 'h-[88px] w-[88px] text-2xl',
     bg: 'bg-surface-raised',
     ringOffset: 'ring-offset-surface-raised',
+    /* **선 색은 여기 없다** — 실패한 카드가 그 칸만 갈아 끼우므로 호출부가 붙인다
+       (감싸개 `div` 의 주석). 색을 여기 박으면 실패 분기가 문자열 치환이 된다. */
+    box: 'rounded-lg border bg-surface-raised p-3',
+    /* 카드가 흰 면이므로 바닥이 한 단 내려가야 카드가 뜬다 — 설정 패널 자체가
+       `surface-raised` 다(`AgentsSettings.tsx`). `p-3` 은 가라앉은 면이 카드에 딱
+       붙지 않게 하는 여백이고, `-mx-1` 없이 패널의 `p-5` 안에서 자연히 선다. */
+    gridBg: 'rounded-lg bg-surface-sunken p-3',
+    createBox: 'rounded-lg border border-dashed border-border p-3',
   },
   sidebar: {
     grid: 'grid-cols-[repeat(auto-fill,64px)] gap-x-3 gap-y-4',
@@ -207,6 +289,11 @@ const PLACE: Record<AgentGridPlace, {
     glyph: 'h-10 w-10 text-base',
     bg: 'bg-surface-sunken',
     ringOffset: 'ring-offset-surface-sunken',
+    /* **상자가 없다** — 담는 것이 얼굴과 이름 한 줄뿐이면 상자는 잡음이다
+       (`AgentGridPlace` 주석). 64px 트랙에서 좌우 12px 을 먹으면 40px 얼굴 자리도 없다. */
+    box: '',
+    gridBg: '',
+    createBox: '',
   },
 };
 
@@ -337,8 +424,20 @@ function VersionChip({ handle, runnerVersion, appVersion, onRelaunch }: {
   // 뒤처짐. **칩 자체가 손잡이다**(위 「재기동이 왜 이 칩에」). 누를 수 없는 사람에게는
   // 같은 말을 손잡이 없이 준다 — 사실은 남고 문만 없어진다(design.md §4: 눌러도 아무 일이
   // 없는 버튼을 그리지 않는다).
-  const shape = 'inline-block rounded border border-warning-border bg-warning-surface'
-    + ' px-1.5 py-px text-[11px] text-warning';
+  /*
+    `whitespace-nowrap` 이 **실측으로 필요해진 것**이다 (2026-09-08, 상자가 생긴 뒤).
+
+    이 칩의 `max-content` 는 94px 이고 164px 트랙의 값 칸이 정확히 94px 이다 — 딱 맞는
+    것이 곧 위험이다. 브라우저에서 보니 **`v0.1.1 · 뒤 / 처짐 ↻` 로 두 줄이 됐다**:
+    소수점 아래 반올림 하나가 감싸임을 만들고, 그러면 그 카드만 키가 커져 한 줄의 카드
+    높이가 어긋난다(`h-full`+`mt-auto` 가 맞춰 놓은 그 정렬이다).
+
+    `truncate` 회귀선이 이것을 못 잡는다 — 감싸임은 잘림이 아니라 `scrollWidth` 가
+    `clientWidth` 를 넘지 않는다. 그래서 값 자체가 **한 줄임을 선언한다.** 이 칩은
+    쪼개지면 뜻이 흐려지는 원자값이다(버전 · 구분점 · 판정 · 손잡이가 한 덩어리다).
+  */
+  const shape = 'inline-block whitespace-nowrap rounded border border-warning-border'
+    + ' bg-warning-surface px-1.5 py-px text-[11px] text-warning';
   if (!onRelaunch) {
     return (
       <span data-testid={`agent-version-${handle}`} data-version="stale" className={shape}>
@@ -523,25 +622,61 @@ export function AgentGrid<T extends AgentCardSubject>({
         </div>
       </div>
 
-      <div data-testid="agent-grid" className={`grid ${s.grid} overflow-y-auto`}>
+      {/*
+        **격자 바닥이 한 단 가라앉는다**(목업 2쪽: 카드가 살짝 어두운 면 위에 떠 있다).
+        설정 패널 자체가 `surface-raised`(흰 면)이므로 흰 카드가 그 위에 서면 **테두리
+        하나로만** 갈리는데, 화면으로 확인하니(720px 8장) 그 선이 카드를 묶기엔 약했다 —
+        면 차이가 먼저 오고 테두리가 경계를 마무리하는 것이 목업의 순서다.
+
+        **검색줄은 이 바닥을 받지 않는다.** 그것은 이 격자의 형제이고 패널의 흰 면 위에
+        서므로 `PLACE.bg` 가 그 자리에서 여전히 `surface-raised` 다(그 칸의 계약: 자리의
+        바닥색과 같아야 한다). 가라앉는 것은 격자뿐이다.
+      */}
+      <div data-testid="agent-grid" className={`grid ${s.grid} ${s.gridBg} overflow-y-auto`}>
         {/*
           `+` 는 **맨 앞**이다. "그리드의 마지막 칸"으로 두면 40개일 때 그 칸이 스크롤 끝이라
           찾아가야 한다. 맨 앞이면 개수와 무관하게 자리가 고정되고, 검색으로 목록이 비어도
           `+` 는 그대로 있다.
         */}
         {canCreate && (
+          /*
+            ## 점선이 **원에서 상자로 올라간다** (목업 2쪽 첫 칸)
+
+            여기 있던 주석은 *"목업처럼 점선도 원이다 — 사각 점선은 옆의 둥근 얼굴들과
+            다른 종류로 읽힌다"* 였고, **상자가 없던 격자에서는 그것이 맞았다**: 옆 칸에
+            사각형이 하나도 없으니 사각 점선만 종류가 달랐다.
+
+            지금은 옆 칸이 전부 **실선 상자**다. 그러니 같은 형태(둥근 상자)를 점선으로 두는
+            것이 "여기는 아직 카드가 아니다"를 말하는 가장 싼 방법이고, 목업이 정확히 그렇게
+            했다. 원에 점선을 남기면서 상자에도 점선을 두면 점선이 카드 하나에 두 겹이 되어
+            빈 자리가 채워진 자리보다 시끄러워진다 — 그래서 **원의 점선은 걷어냈다.**
+
+            **면은 받지 않는다**(`createBox` 에 `bg-*` 가 없다): 흰 면을 주면 채워진 카드로
+            읽히고, 가라앉은 격자 바닥이 그대로 비쳐야 빈 자리다. `h-full` 로 그 줄의 카드와
+            키를 맞춘다 — 목업의 첫 칸도 옆 카드와 같은 높이로 선다.
+
+            **사이드바에서는 원의 점선이 그대로 남는다.** 그 자리에는 상자가 없으므로
+            (`createBox` 가 빈 문자열) 점선이 올라갈 곳이 없고, 위 문단의 근거 — *"옆 칸이
+            전부 실선 상자다"* — 가 성립하지 않는다. 즉 지워진 옛 주석의 판단이 **그 자리에서는
+            여전히 맞다**: 옆에 사각형이 없으니 점선은 원이어야 한다. 상자의 유무가 그 갈림을
+            그대로 낸다.
+          */
           <button
             data-testid="agent-create"
-            className={`group flex ${s.card} flex-col items-center gap-2`}
+            className={`group flex h-full ${s.card} ${s.createBox} flex-col items-center
+                        justify-center gap-2 text-fg-subtle hover:border-fg-subtle hover:text-fg`}
             onClick={onCreate}
           >
-            {/* 목업처럼 **점선도 원**이다 — 사각 점선은 옆의 둥근 얼굴들과 다른 종류로 읽힌다. */}
-            <span
-              className={`flex ${s.face} items-center justify-center rounded-full border border-dashed
-                         border-border text-fg-subtle group-hover:border-fg-subtle group-hover:text-fg`}
-            >
+            {s.createBox ? (
               <span aria-hidden="true" className={`${s.faceText} leading-none`}>+</span>
-            </span>
+            ) : (
+              <span
+                className={`flex ${s.face} items-center justify-center rounded-full border
+                            border-dashed border-border group-hover:border-fg-subtle`}
+              >
+                <span aria-hidden="true" className={`${s.faceText} leading-none`}>+</span>
+              </span>
+            )}
             <span className="text-[11px] text-fg-muted">새 에이전트</span>
           </button>
         )}
@@ -594,7 +729,50 @@ export function AgentGrid<T extends AgentCardSubject>({
             */
             /* `gap-2` 가 최소 간격이고 `mt-auto` 가 남는 만큼을 더 밀어낸다 — 여백이 0 인
                카드(그 줄에서 가장 키가 큰 것)에서도 구분선이 이름줄에 붙지 않는다. */
-            <div key={a.id} className="group relative flex h-full flex-col items-center gap-2">
+            /*
+              ## 상자는 **여기**에 선다 — `button` 이 아니라 감싸개다
+
+              정보 묶음이 카드 `button` **밖**이다(버전 칩이 `button` 이라 중첩이 안 된다 —
+              아래 그 블록의 주석). 상자를 `button` 에 두면 정보 세 줄과 사유 한 줄이 상자
+              **밖**에 남아, 상자를 그리기 전과 똑같이 흘러다닌다. 그래서 둘을 함께 감싸는
+              이 `div` 가 상자를 받는다.
+
+              **그 덕에 선택 링과 상자 테두리가 애초에 같은 선에 서지 않는다**(실측
+              2026-09-08): 링은 얼굴 원에 남고(반지름이 다르다) 테두리는 이 사각 상자에
+              선다. 둘 사이 거리는 상자 안쪽 여백 12px 에서 링 굵기 2px 과 오프셋 2px 을
+              뺀 8px 이고, 화면에서 확인하니 두 선이 닿지 않는다. 선택을 상자 테두리로
+              옮기면 그 카드는 "선택됐다"가 아니라 "테두리가 두꺼워졌다"로 읽힌다.
+
+              **실패는 이 테두리가 색을 받는다**(목업 2쪽 `forge`). 그리고 얼굴에 있던
+              `ring-2 ring-state-stuck` 은 **걷어냈다** — 화면으로 확인한 판단이다: 둘 다
+              칠하면 붉은 것이 카드 하나에 두 개가 되고, 그 카드가 격자에서 고장 그 자체보다
+              시끄러워진다(문서: *"정보를 더하는 쪽이 항상 지는 쪽"*). 상자를 남긴 이유는
+              그것이 **사유 글자까지 감싼다**는 것이다 — 실패는 이 격자에서 유일하게 글자가
+              늘어나는 상태이므로, 테두리가 얼굴과 그 글자를 한 묶음으로 잡아 주는 일이
+              얼굴만 두르는 것보다 많다. `↻` 손잡이는 얼굴에 남아 색을 갖는다.
+
+              `danger-border` 이고 `state-stuck` 이 아닌 이유: 이 자리는 **상자의 선**이고
+              그 역할의 토큰이 이미 있다(`--app-danger-border`, "오류 상자의 선"). 얼굴 링이
+              쓰던 `state-stuck` 은 면 색과 같은 무게라 1px 선에 쓰면 과했다 — 같은 축의
+              값이므로 뜻은 그대로다(`index.css`: `state-stuck` 은 `danger` 와 같은 축).
+
+              사이드바에서는 `s.box` 가 빈 문자열이라 이 `div` 는 오늘 그대로 아무 상자도
+              받지 않는다.
+            */
+            <div
+              key={a.id}
+              data-testid={`agent-box-${a.handle}`}
+              /* 폭이 **감싸개로 올라온다**: 상자가 트랙과 정확히 같은 폭이어야 하고
+                 (`PLACE.card` 의 계약: 다르면 이름이 옆 칸을 침범한다), `box-border` 기본값
+                 아래에서 `p-3` 과 테두리가 그 안쪽으로 들어간다. 상자가 없는 자리에서는
+                 이 폭이 오늘 카드 `button` 이 갖던 것과 같은 값이라 모양이 안 바뀐다. */
+              className={`group relative flex h-full ${s.card} flex-col items-center gap-2 ${s.box} ${
+                /* 상자가 없는 자리(사이드바)에서는 색칠할 선도 없다 — `s.box` 가 빈
+                   문자열이면 이 칸도 비운다. 그러지 않으면 테두리 없는 카드에
+                   `border-danger-border` 만 붙는, 아무것도 그리지 않는 클래스가 남는다. */
+                s.box ? (face === 'failed' ? 'border-danger-border' : 'border-border') : ''
+              }`}
+            >
               <button
                 data-testid={`agent-card-${a.handle}`}
                 data-selected={selectedId === a.id}
@@ -606,15 +784,52 @@ export function AgentGrid<T extends AgentCardSubject>({
                   이름으로 검사하던 규율(`Sidebar.tsx` 의 `data-face` 주석)이 깨진다.
                 */
                 data-stopping={stopping ? 'true' : undefined}
-                // **얼굴이 주인공이다**(문서: "얼굴만 남긴다"). 카드 상자를 그리지 않는다 —
-                // 목업에는 테두리도 면도 없고 **원과 이름**만 있다. 상자를 두면 26개가 깔릴 때
-                // 격자 선이 얼굴보다 먼저 눈에 들어온다.
-                className={`group flex ${s.card} flex-col items-center gap-2`}
+                /*
+                  ## 여기 있던 "상자를 그리지 않는다" 는 **판단이 바뀌었다** (2026-09-08)
+
+                  지워진 주석은 이렇게 적혀 있었다: *"**얼굴이 주인공이다**(문서: '얼굴만
+                  남긴다'). 카드 상자를 그리지 않는다 — 목업에는 테두리도 면도 없고 **원과
+                  이름**만 있다. 상자를 두면 26개가 깔릴 때 격자 선이 얼굴보다 먼저 눈에
+                  들어온다."*
+
+                  **그 판단이 틀린 것이 아니라, 그것이 인용한 목업이 앞 문서의 것이다.**
+                  `desktop-agent-identity` 의 얼굴 그리드에는 정말로 테두리도 면도 없었고,
+                  카드가 담는 것이 **얼굴과 이름 둘**뿐이었다. 그 조건에서 상자는 잡음이
+                  맞다 — 얼굴이 이미 서로 떨어진 원이라 경계를 한 번 더 그릴 필요가 없다.
+
+                  `docs/desktop-agent-cards.pdf` 2쪽이 그 조건을 바꿨다. 카드가 **네 종류를
+                  담는 그릇**이 됐다: 얼굴 · 이름 두 줄 · 정보 세 줄 · (예외로) 사유 한 줄.
+                  담는 것이 넷이 된 뒤에는 상자가 **필수**다. 화면으로 확인했다(720px 패널
+                  8장, 2026-09-08): 상자가 없으면 `하네스/러너/활동` 세 줄이 어느 얼굴의
+                  것인지 눈으로 안 묶이고, 정보 묶음 위의 구분선만 남아 카드를 가르는 선이
+                  아니라 아무것도 가르지 않는 줄로 읽힌다. 그 목업도 흰 면 · 얇은 테두리 ·
+                  둥근 모서리 · 안쪽 여백으로 카드를 갈라 놨다.
+
+                  즉 규칙이 뒤집힌 것이 아니라 **규칙이 겨누던 조건이 바뀌었다.** 그리고 그
+                  옛 판단은 지금도 살아 있다 — 담는 것이 여전히 얼굴과 이름뿐인
+                  **사이드바**에서다(`PLACE.sidebar.box` 가 빈 문자열인 이유).
+
+                  상자가 이 `button` 이 아니라 **감싸개 `div`** 에 서는 이유는 그쪽 주석에
+                  있다(정보 묶음이 이 `button` 밖이다). 그래서 여기서 갈리는 것은 폭뿐이다:
+                  상자가 안쪽 여백을 가졌으므로 이 `button` 은 고정 폭이 아니라 `w-full` 로
+                  상자를 채운다 — `s.card` 를 그대로 두면 164px 이 138px 상자 안을 넘친다.
+                */
+                className={`group flex ${s.box ? 'w-full' : s.card} flex-col items-center gap-2`}
                 onClick={() => onPick(a)}
               >
+                {/*
+                  **실패의 붉은 테는 여기 없다 — 상자 테두리로 옮겼다**(감싸개 `div` 의
+                  주석에 화면으로 확인한 근거가 있다). 여기 있던 `ring-2 ring-state-stuck`
+                  을 상자와 함께 두면 붉은 것이 카드 하나에 둘이 된다.
+
+                  **상자가 없는 자리에서는 얼굴이 그 일을 계속한다**: 사이드바는 `s.box` 가
+                  빈 문자열이라 색칠할 테두리가 없으므로, 실패를 말할 곳이 얼굴뿐이다.
+                  즉 붉은 테는 없어진 것이 아니라 **상자가 있는 자리에서만 상자로 올라갔다** —
+                  `+` 칸의 점선이 원에서 상자로 올라간 것과 같은 규율이다.
+                */}
                 <span
                   className={`relative block rounded-full ${
-                    face === 'failed' ? 'ring-2 ring-state-stuck' : ''
+                    !s.box && face === 'failed' ? 'ring-2 ring-state-stuck' : ''
                   } ${
                     /*
                       **멈추는 중은 점선 테다**(목업 2쪽 하단 세 번째 칸). 실선 테는 실패
@@ -696,7 +911,9 @@ export function AgentGrid<T extends AgentCardSubject>({
               */}
               {place === 'settings' && (
                 /* `mt-auto` 가 한 줄의 구분선을 같은 y 로 맞춘다 — 이유는 위 `h-full` 주석. */
-                <div className={`mt-auto w-full border-t border-border pt-2 ${s.card}`}>
+                /* 폭은 상자가 정한다 — `s.card` 를 여기 두면 164px 이 138px 상자 안을
+                   넘친다(카드 `button` 의 그 문단과 같은 이유). `w-full` 하나면 된다. */
+                <div className="mt-auto w-full border-t border-border pt-2">
                   {/* `harness` 가 없으면 그 줄을 안 그린다 — 없는 것을 있다고 하지 않는다
                       (design.md §4). 설정 화면은 `AgentView` 를 넘기므로 늘 있다. */}
                   {a.harness !== undefined && (
