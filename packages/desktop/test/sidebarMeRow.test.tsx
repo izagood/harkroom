@@ -5,14 +5,22 @@ import {
 } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
+import { Rail } from '../src/components/Rail';
+import type { SectionId } from '../src/components/settings/sections';
 import { acc, chan } from './helpers/fakeApi';
 
 /**
- * #488 문서(남는 여덟 곳) A1·A2 — 사이드바의 내 자리와 `+`.
+ * #488 문서(남는 여덟 곳) A1·A2 — 내 자리와 `+`.
  *
  * 문서가 둘을 **한 번에** 고치라고 적었다: 설정 입구가 없어서 nav 한복판에
  * `+ Add or edit agents` 가 있었고, 그 줄이 있어서 `+` 가 셋으로 갈렸다. 맨 아래 내 자리가
  * 눌리면 둘 다 풀린다 — 그래서 두 계약을 한 파일에 둔다.
+ *
+ * **내 자리가 레일로 갔다**(레일 문서 1단계 — 「레일 맨 아래 · 나」). A1 의 계약은 한 글자도
+ * 바뀌지 않았고 자리만 옮겼으므로, 이 파일은 **레일과 사이드바를 함께 세워** 그 계약을
+ * 계속 잰다 — `Workspace` 가 실제로 그 둘을 나란히 그린다. 계약을 지우는 것이 아니라
+ * 자리를 따라가는 것이 요점이다: 이 테스트들이 사라지면 "행 전체가 트리거"·"톱니 없음"·
+ * "`⌘,` 가 참이다" 같은 결정이 아무 곳에서도 지켜지지 않는다.
  */
 
 const fakeController = () => {
@@ -26,18 +34,47 @@ const fakeController = () => {
   return c;
 };
 
-const mount = (props: Partial<{ onOpenSettings: (s?: unknown) => void; onLogout: () => void }> = {}) =>
+const mount = (props: Partial<{ onOpenSettings: (section?: SectionId) => void; onLogout: () => void }> = {}) =>
   render(
-    <Sidebar
-      onOpenDirectory={() => {}}
-      onOpenChannelDirectory={() => {}}
-      onOpenInbox={() => {}}
-      onOpenSaved={() => {}}
-      onLogout={props.onLogout ?? vi.fn()}
-      onOpenSettings={(props.onOpenSettings ?? vi.fn()) as never}
-      collapsed={false}
-      onToggleCollapse={vi.fn()}
-    />,
+    <>
+      <Rail
+        panel="home"
+        onPanelChange={vi.fn()}
+        onOpenSaved={vi.fn()}
+        onOpenSettings={props.onOpenSettings ?? (() => {})}
+        onOpenCommunityMark={vi.fn()}
+        onLogout={props.onLogout ?? (() => {})}
+      />
+      <Sidebar panel="home"
+        onOpenDirectory={() => {}}
+        onOpenChannelDirectory={() => {}}
+        onOpenInbox={() => {}}
+        collapsed={false}
+        onToggleCollapse={vi.fn()}
+      />
+    </>,
+  );
+
+/**
+ * 한 화면에 **두 칸을 동시에** 세운다. `+` 의 모양·자리 규칙(A2)은 채널의 것과 DM 의 것을
+ * 나란히 놓고 비교해야 재어지는데, 레일이 생긴 뒤로 그 둘은 서로 다른 칸에 산다.
+ *
+ * 앱에서는 이렇게 보이지 않는다 — 그래서 **여기서만** 두 칸을 함께 세운다. 규칙 자체는
+ * 칸이 갈렸다고 사라지지 않는다: 두 `+` 가 여전히 같은 `addRow` 를 통과해야 사람이
+ * 칸을 옮겨 다닐 때 같은 것을 같은 모양으로 만난다.
+ */
+const mountBothPanels = () =>
+  render(
+    <>
+      <Sidebar panel="home"
+        onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}}
+        collapsed={false} onToggleCollapse={vi.fn()}
+      />
+      <Sidebar panel="dm"
+        onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}}
+        collapsed={false} onToggleCollapse={vi.fn()}
+      />
+    </>,
   );
 
 beforeEach(() => {
@@ -56,17 +93,26 @@ beforeEach(() => {
 afterEach(() => { cleanup(); });
 
 describe('A1 · 내 자리가 얼굴을 갖고 눌린다', () => {
-  it('아바타와 이름이 서고, 핸들에 `@` 를 붙이지 않는다', () => {
-    // 문서: "아바타 24px + 이름. `@` 를 뗀다 — 앱 어디서도 내 핸들을 `@` 로 부르지 않는다."
-    // `@` 는 남을 지목할 때의 표기(멘션·DM 후보)이고, 내 자리는 지목이 아니다.
+  it('얼굴이 서고, 그 자리에 `@` 를 붙이지 않는다', () => {
+    /*
+      원래 단언은 "아바타 + **이름**" 이었다. 레일 문서가 그 줄을 **얼굴만**으로 줄였다 —
+      "내 얼굴이 레일 맨 아래로 내려온다." 62px 에 핸들을 함께 세우면 이름이 잘리고,
+      잘린 이름은 없는 것보다 나쁘다(무엇으로 잘렸는지 사람이 알 수 없다).
+
+      이름을 **잃지는 않았다**: 아래 「메뉴 머리」 테스트가 이름·`@handle`·워크스페이스를
+      계속 잰다. `@` 를 붙이지 않는다는 규칙은 이 자리에서도 그대로다 — 내 자리는 남을
+      지목하는 자리가 아니다.
+    */
     fakeController();
     mount();
 
     const meRow = screen.getByTestId('me-row');
-    expect(meRow.textContent).toContain('jaebin');
     expect(meRow.textContent).not.toContain('@');
     // 얼굴이 실제로 선다 — `Identity` 의 avatar 자리가 이니셜을 그린다.
     expect(within(meRow).getByText('J')).toBeTruthy();
+    // 접근성 이름은 여전히 누구인지 말한다. 글자를 뗀 대가를 여기서 갚는다 —
+    // 스크린리더 사용자에게 "버튼" 하나만 남기지 않는다.
+    expect(meRow.getAttribute('aria-label')).toContain('jaebin');
   });
 
   it('행 전체가 하나의 트리거다 — 미니 톱니도 `⌄` 화살표도 없다', () => {
@@ -258,10 +304,20 @@ describe('A2 · `+` 는 그 목록의 첫 칸에 산다', () => {
     mount();
 
     expect(screen.queryByText(/Add or edit agents/)).toBeNull();
-    // 이동 셋은 그대로 있다 — 설정 한 줄을 뺀 것이지 묶음을 지운 것이 아니다.
-    expect(screen.getByText('Inbox')).toBeTruthy();
-    expect(screen.getByText('Saved')).toBeTruthy();
-    expect(screen.getByText('Directory')).toBeTruthy();
+    /*
+      이동 묶음은 그대로 있다 — 설정 한 줄을 뺀 것이지 묶음을 지운 것이 아니다.
+
+      **`Saved` 는 이제 여기 없다**(레일 문서): *"북마크는 레일에만 둔다 — 자기 칸이 있는데
+      홈에도 한 줄을 세우면 같은 것으로 가는 길이 둘이 되고, 그때부터 사람은 어느 쪽이
+      맞는지 매번 고른다."* 그래서 `nav` 안에서 찾아 없음을 확인하고, 레일에 그 칸이
+      **있다**는 것을 함께 잰다 — 뺀 것과 잃은 것을 구별하는 단언이다.
+    */
+    const nav = screen.getByRole('navigation', { name: '주 목록' });
+    const sidebarNav = document.querySelector('aside nav')!;
+    expect(within(sidebarNav as HTMLElement).getByText('Inbox')).toBeTruthy();
+    expect(within(sidebarNav as HTMLElement).getByText('Directory')).toBeTruthy();
+    expect(within(sidebarNav as HTMLElement).queryByText('Saved')).toBeNull();
+    expect(within(nav).getByTestId('rail-saved')).toBeTruthy();
   });
 
   it('채널의 `+` 가 목록의 **첫 칸**이다 — 끝이 아니라', () => {
@@ -286,7 +342,8 @@ describe('A2 · `+` 는 그 목록의 첫 칸에 산다', () => {
     */
     fakeController();
     useAppStore.getState().set({ dms: [{ id: 'd1', memberIds: ['u1', 'u2'] }] });
-    mount();
+    // 두 `+` 가 서로 다른 칸에 살게 됐다 — 비교하려면 두 칸을 함께 세운다(위 주석).
+    mountBothPanels();
 
     const addChannel = screen.getByTestId('add-channel');
     const addDm = screen.getByTestId('add-dm');
@@ -297,7 +354,7 @@ describe('A2 · `+` 는 그 목록의 첫 칸에 산다', () => {
     // 스크린리더가 "플러스 새 채널"로 읽으면 글리프가 이름의 일부가 된다. 이름은 `label` 이
     // 지고, `+` 는 눈에만 보인다.
     fakeController();
-    mount();
+    mountBothPanels();
 
     expect(screen.getByRole('button', { name: 'Create channel' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'New' })).toBeTruthy();
@@ -308,7 +365,7 @@ describe('A2 · `+` 는 그 목록의 첫 칸에 산다', () => {
     // 누구나 열 수 있으므로 그 `+` 는 자리를 지킨다 — 자리를 옮겼다고 권한이 바뀌지 않는다.
     fakeController();
     useAppStore.getState().set({ me: { ...acc('u1', 'jaebin'), isAdmin: false } });
-    mount();
+    mountBothPanels();
 
     expect(screen.queryByTestId('add-channel')).toBeNull();
     expect(screen.getByTestId('add-dm')).toBeTruthy();

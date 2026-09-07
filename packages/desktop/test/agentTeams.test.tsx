@@ -229,8 +229,8 @@ describe('멤버 패널 팀 추가 (#172)', () => {
   };
 
   const sidebar = () => render(
-    <Sidebar onLogout={vi.fn()} onOpenSettings={vi.fn()} onOpenDirectory={vi.fn()}
-      onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenSaved={vi.fn()}
+    <Sidebar panel="home" onOpenDirectory={vi.fn()}
+      onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()}
       collapsed={false} onToggleCollapse={vi.fn()} />,
   );
 

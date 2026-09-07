@@ -10,6 +10,7 @@ import {
 } from '../src/state/communities';
 import { getController, setController, startCommunitySession, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
+import { Rail } from '../src/components/Rail';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { DEFAULT_PREFS } from '../src/lib/prefs';
 import { acc, accountsResult, chan, fakeApi, msg } from './helpers/fakeApi';
@@ -66,10 +67,21 @@ function seed(entry: CommunityEntry, handle: string, connected: boolean) {
 }
 
 const renderSidebar = () => render(
-  <Sidebar
-    onLogout={() => {}} onOpenSettings={() => {}} onOpenDirectory={() => {}}
-    onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenSaved={() => {}}
+  <Sidebar panel="home"
+    onOpenDirectory={() => {}}
+    onOpenChannelDirectory={() => {}} onOpenInbox={() => {}}
     collapsed={false} onToggleCollapse={() => {}}
+  />,
+);
+
+/**
+ * 내 자리는 **레일**에 산다(레일 문서 1단계 — 「레일 맨 아래 · 나」). 그 자리가 활성
+ * 커뮤니티의 `me` 를 보는지가 이 파일의 관심이라, 사이드바가 아니라 레일을 세운다.
+ */
+const renderRail = () => render(
+  <Rail
+    panel="home" onPanelChange={() => {}} onOpenSaved={() => {}}
+    onOpenSettings={() => {}} onOpenCommunityMark={() => {}} onLogout={() => {}}
   />,
 );
 
@@ -204,19 +216,23 @@ describe('커뮤니티마다 스토어·컨트롤러 인스턴스 (#166)', () =>
     seed(a, 'alice', true);
     seed(b, 'bob', true);
 
-    // 내 자리는 이제 `@` 없이 이름만 적는다(#488 A1) — `@` 는 남을 지목할 때의 표기다.
-    renderSidebar();
-    expect(screen.getByTestId('me-row').textContent).toContain('alice');
-    expect(screen.getByTestId('me-row').textContent).not.toContain('bob');
+    /*
+      내 자리는 레일 맨 아래이고 **62px 에는 얼굴만 선다** — 이름은 접근 가능한 이름과
+      메뉴 머리가 진다. 그래서 handle 을 `aria-label` 로 잰다: 이 테스트가 지키려는 사실
+      ("활성 커뮤니티의 나를 보인다")은 자리가 옮겨도 그대로다.
+    */
+    renderRail();
+    expect(screen.getByTestId('me-row').getAttribute('aria-label')).toContain('alice');
+    expect(screen.getByTestId('me-row').getAttribute('aria-label')).not.toContain('bob');
 
     cleanup();
     useCommunityRegistry.getState().setActive(b.id);
-    renderSidebar();
+    renderRail();
 
     // 같은 사람이 커뮤니티마다 다른 handle 을 쓴다. 활성이 아닌 쪽의 handle 을 보이면
     // 사용자는 자기가 누구로 말하고 있는지 잘못 안다.
-    expect(screen.getByTestId('me-row').textContent).toContain('bob');
-    expect(screen.getByTestId('me-row').textContent).not.toContain('alice');
+    expect(screen.getByTestId('me-row').getAttribute('aria-label')).toContain('bob');
+    expect(screen.getByTestId('me-row').getAttribute('aria-label')).not.toContain('alice');
   });
 
   it('§6. 커뮤니티가 하나뿐이면 알림 제목이 오늘과 같다', async () => {

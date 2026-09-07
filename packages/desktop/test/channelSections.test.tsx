@@ -115,10 +115,9 @@ const fakeController = (overrides: Record<string, unknown> = {}) => {
 };
 
 const mount = () => render(
-  <Sidebar
+  <Sidebar panel="home"
     onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}}
-    onOpenInbox={() => {}} onOpenSaved={() => {}}
-    onLogout={vi.fn()} onOpenSettings={vi.fn()}
+    onOpenInbox={() => {}}
     collapsed={false} onToggleCollapse={vi.fn()}
   />,
 );
@@ -134,7 +133,13 @@ const mount = () => render(
  * 이 목록이 답하는 물음은 "섹션과 채널이 어떤 순서로 서는가"이므로 섹션 헤더만 세야 한다.
  */
 const visibleOrder = (): string[] => {
-  const nav = document.querySelector('nav')!;
+  /*
+    **사이드바의 `nav` 를 집는다.** 레일이 생긴 뒤로 문서의 첫 `<nav>` 는 레일이다(그것도
+    `<nav aria-label="주 목록">` 이다) — `querySelector('nav')` 로는 채널이 하나도 없는
+    빈 배열이 나오고, 그러면 이 헬퍼를 쓰는 모든 단언이 "목록이 비었다"로 조용히 통과하거나
+    엉뚱하게 실패한다. `aside` 안의 것이 채널 목록이다.
+  */
+  const nav = document.querySelector('aside nav')!;
   return [...nav.querySelectorAll('[data-testid^="section-header-"], button')]
     .flatMap((el) => {
       const testid = el.getAttribute('data-testid');

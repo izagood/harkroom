@@ -327,7 +327,7 @@ describe('#368 사이드바 — DM 이 없어도 사유를 읽을 수 있다', (
     channelController();
     setUpSidebar([], { forge: state });
 
-    render(<Sidebar {...sidebarProps} />);
+    render(<Sidebar panel="agents" {...sidebarProps} />);
 
     // 이름만 있는 것으로는 안 된다 — 이 결함의 본질이 "사유가 사람이 안 보는 곳에만 있다" 였다.
     expect(screen.getByText('@forge')).toBeTruthy();
@@ -339,7 +339,7 @@ describe('#368 사이드바 — DM 이 없어도 사유를 읽을 수 있다', (
     channelController();
     setUpSidebar([], { forge: { agentId: 'forge', status: 'running', exitCode: null, message: null } });
 
-    render(<Sidebar {...sidebarProps} />);
+    render(<Sidebar panel="agents" {...sidebarProps} />);
 
     expect(screen.getByText('@forge')).toBeTruthy();
     expect(screen.queryByTestId('runner-reason-forge')).toBeNull();
@@ -354,7 +354,7 @@ describe('#368 사이드바 — DM 이 없어도 사유를 읽을 수 있다', (
       dms: [], online: [], connected: true, activeChannelId: 'c1', runnerStates: {},
     });
 
-    render(<Sidebar {...sidebarProps} />);
+    render(<Sidebar panel="agents" {...sidebarProps} />);
 
     expect(screen.queryByText('Agents')).toBeNull();
   });

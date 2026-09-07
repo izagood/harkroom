@@ -63,7 +63,7 @@ describe('ChannelDirectory (#180)', () => {
     it('사이드바 헤더에 채널 찾기 버튼이 있다', () => {
       fakeController();
       setup([chan('c1', 'general')]);
-      render(<Sidebar {...sidebarProps} />);
+      render(<Sidebar panel="home" {...sidebarProps} />);
       expect(screen.getByLabelText('채널 찾기')).toBeTruthy();
     });
 
@@ -71,7 +71,7 @@ describe('ChannelDirectory (#180)', () => {
       const onOpenChannelDirectory = vi.fn();
       fakeController();
       setup([chan('c1', 'general')]);
-      render(<Sidebar {...sidebarProps} onOpenChannelDirectory={onOpenChannelDirectory} />);
+      render(<Sidebar panel="home" {...sidebarProps} onOpenChannelDirectory={onOpenChannelDirectory} />);
       fireEvent.click(screen.getByLabelText('채널 찾기'));
       expect(onOpenChannelDirectory).toHaveBeenCalled();
     });
