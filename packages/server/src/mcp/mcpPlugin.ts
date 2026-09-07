@@ -16,6 +16,7 @@ import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } f
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { getMemory, listMemory, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, setMemory } from '../services/memory.js';
 import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
+import { scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC } from '../services/agentWakes.js';
 import { GUIDE } from './guide.js';
 import { recordRunnerVersion } from '../services/runnerVersion.js';
 
@@ -539,6 +540,46 @@ function buildMcpServer(
     }
     const result = await proposeSkill(pool, { slug, body, proposedBy: account.id, channelId });
     return jsonResult(result);
+  });
+
+  /**
+   * 깨움(wake) — **나를 나중에 다시 부른다.**
+   *
+   * 이 도구가 없으면 "기다린다"를 표현할 방법이 백그라운드 프로세스뿐이고, 그것은 턴이
+   * 끝나는 순간 죽는다(2026-09-07 15:08 에 PR #533 의 CI 대기가 그렇게 사라졌다).
+   * 스레드별 하네스 세션은 이미 `-r` 로 재개되므로, 필요한 것은 시계 하나였다.
+   *
+   * `threadRootId` 가 필수인 이유: 그 값이 러너의 **세션 키**다(agent/src/mentionTurn.ts
+   * ::mentionAnchor). 비우면 깨어난 턴이 새 스레드로 시작해 지금까지의 맥락을 잃는다 —
+   * 멘션 턴의 프롬프트 머리에 항상 실제 앵커가 실려 오므로(채널 최상위 멘션이면 그 멘션
+   * 메시지 id) 에이전트는 이 값을 언제나 알고 있다.
+   *
+   * 하한을 zod 로 거절하는 이유(에러 코드가 아니라 예외): 60초보다 이른 예약은 정책 위반이
+   * 아니라 **잘못된 인자**다. 상한(연속 횟수)은 그 스레드의 상태에 따라 달라지므로 서비스가
+   * 판정해 `wake_limit` 으로 답한다 — 같은 거절이 아니다.
+   */
+  server.registerTool('turn.wake', {
+    description: '나를 나중에 다시 부른다(기다릴 것이 있을 때). 예약은 스레드에 대기 줄로 보인다',
+    inputSchema: {
+      channelId: z.string().uuid(),
+      threadRootId: z.string().uuid(),
+      notBeforeSec: z.number().int().min(WAKE_MIN_SEC).max(WAKE_MAX_SEC),
+      reason: z.string().min(1).max(200),
+    },
+  }, async ({ channelId, threadRootId, notBeforeSec, reason }) => {
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    const result = await scheduleWake(pool, {
+      accountId: account.id, channelId, threadRootId, notBeforeSec, reason,
+    });
+    if (result.refusal) return jsonResult({ error: result.refusal });
+
+    // 대기 줄은 **지금 보여야** 뜻이 있다 — 사람이 "죽었나 기다리나"를 아는 근거다.
+    // 그래서 일반 발화와 같은 이벤트를 태운다. inbox 는 만들지 않는다(자기 자신이다).
+    const audience = await audienceFor(pool, channelId);
+    emitEvent({ type: 'message.created', message: result.message, audience });
+    return jsonResult({ wake: result.wake, message: result.message });
   });
 
   return server;

@@ -13,6 +13,7 @@ import { MessageBody } from './MessageBody';
 import { ReactionPicker, Reactions, InlineReactionButtons } from './Reactions';
 import { Identity, StatusMark } from './Identity';
 import { TerminalChip } from './TerminalChip';
+import { WakeRow } from './WakeRow';
 import { Attachments } from './Attachments';
 import { Menu } from './Menu';
 import { bodyAsHandles, displayBody } from '../lib/mention';
@@ -211,6 +212,23 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    */
   const copyBody = () =>
     copyToClipboard(bodyAsHandles(message.body, accounts), 'Message copied.', 'Could not copy the message. Select it in the message and copy by hand.');
+
+  /**
+   * 대기 줄(마이그레이션 040)은 말풍선이 아니다 — 발화가 아니므로 리액션·툴바·스레드
+   * 컨트롤을 달지 않는다. 러너의 발화 판정도 이 종류를 세지 않으니
+   * (agent/src/prompt.ts::countOwnPostsSince) 화면과 러너가 같은 것을 같게 본다.
+   *
+   * 분기를 **여기** 두는 이유: 채널과 스레드 두 곳이 같은 슬롯 함수를 공유하고, 분기를
+   * 양쪽에 심으면 언젠가 한쪽만 고쳐진다. 종류로 갈리는 판정은 종류를 아는 한 곳에 둔다.
+   *
+   * 훅 뒤에 두는 것이 필수다 — 위의 훅들보다 앞에서 돌아서면 같은 컴포넌트가 렌더마다
+   * 다른 개수의 훅을 부른다.
+   *
+   * 남는 경계: 에이전트 둘이 한 스레드에서 주고받는 구간에 대기 줄이 끼면
+   * `groupAgentExchanges` 가 그것을 접힌 주고받기로 삼킬 수 있다. 그 자리에서는
+   * "에이전트끼리는 접는다"(규칙 04)가 이기고, 사람을 막는 말이 아니므로 그대로 둔다.
+   */
+  if (message.kind === 'wake') return <WakeRow message={message} />;
 
   const menuItems = [
     // 어떤 메시지든 가리킬 수 있다 — 남의 것도, system 메시지도 링크의 대상이다.

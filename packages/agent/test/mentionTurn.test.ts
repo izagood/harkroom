@@ -311,6 +311,95 @@ describe('runMentionTurn', () => {
     expect(fake.posts[0]!.body).toBe(NO_REPLY_NOTICE);
   });
 
+  /**
+   * 턴 예산은 러너만 아는 사실(`config.turnTimeoutMs`)이다. 에이전트에게 알려주지 않으면
+   * "지금 기다려도 되는지 / 예약해야 하는지"를 판단할 근거가 없다 — 2026-09-07 15:08 의
+   * 턴은 30분 중 4분만 쓰고 스스로 물러났다.
+   */
+  it('시스템 프롬프트에 턴 예산과 turn.wake 지시가 실려 간다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 오래 걸리는 일');
+    const { deps, plans } = await makeDeps(fake);
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    const flag = plans[0]!.args.indexOf('--append-system-prompt-file');
+    expect(flag).toBeGreaterThanOrEqual(0);
+    const systemPrompt = await readFile(plans[0]!.args[flag + 1]!, 'utf8');
+    expect(systemPrompt).toContain('turn.wake');
+    expect(systemPrompt).toContain(`${Math.floor(deps.turnTimeoutMs / 60_000)}분`);
+  });
+
+  /**
+   * 깨움(wake) — 2026-09-07 15:08 의 실패가 여기 걸린다. 그 턴은 PR 을 올리고 "CI 결과
+   * 나오면 머지하겠다"며 백그라운드 대기를 띄우고 끝났다. 이제 그 기다림은 `turn.wake`
+   * 예약으로 표현되고, **예약을 건 턴은 결과 발화가 없어도 침묵이 아니다** — 스레드에
+   * 대기 줄이 보이므로 사람은 무슨 일인지 안다. 거기에 NO_REPLY_NOTICE 까지 붙이면
+   * CI 를 10분 기다리는 동안 "발화 없음" 이 열 줄 쌓인다.
+   */
+  it('턴 중에 깨움을 예약했으면 NO_REPLY_NOTICE 를 내지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge PR 올리고 CI 통과하면 머지해');
+    const { deps, runTurn } = await makeDeps(fake);
+
+    // 하네스가 turn.wake 를 부른 것을 흉내낸다 — 러너는 이 도구를 부르지 않는다(에이전트가
+    // MCP 로 직접 부른다). 러너가 보는 것은 스레드에 생긴 kind='wake' 줄 하나뿐이다.
+    runTurn.script = async (plan) => {
+      const m = fake.seedFrom(deps.me.id, 'CI 결과 확인', null);
+      m.kind = 'wake';
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(fake.posts.filter((p) => p.body === NO_REPLY_NOTICE)).toHaveLength(0);
+  });
+
+  it('깨움 줄만 있고 예약이 아닌 침묵은 여전히 NO_REPLY_NOTICE 다 — 턴 시작 전의 옛 예약은 근거가 아니다', async () => {
+    const fake = new FakeMurmur(defOf());
+    // 턴이 시작되기 **전에** 이미 있던 깨움 줄. 이번 턴이 기다림을 표현한 것이 아니다.
+    const old = fake.seedFrom(ME.id, '옛 예약', null);
+    old.kind = 'wake';
+    fake.seedFrom('human-1', '@forge 이번엔 답해줘');
+    const { deps } = await makeDeps(fake); // 기본 스크립트: exit 0, 발화 없음
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(fake.posts.filter((p) => p.body === NO_REPLY_NOTICE)).toHaveLength(1);
+  });
+
+  /**
+   * 깨어난 턴 — 부른 사람이 없다. 델타에 남는 것은 자기가 쓴 대기 줄뿐이고, 자기 발화는
+   * 걸러지므로 프롬프트가 빈다. 그대로면 `if (!prompt)` 가 하네스를 돌리지 않고 끝내
+   * **걸어 둔 기다림이 조용히 사라진다** — 예약의 존재 이유가 무너지는 지점이다.
+   */
+  it('깨어난 턴은 사람의 새 발화가 없어도 하네스를 돌리고, 프롬프트에 사유가 실린다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge PR 올리고 CI 통과하면 머지해');
+    const { deps, runTurn, plans } = await makeDeps(fake);
+
+    // 1) 예약을 건 턴
+    runTurn.script = async () => {
+      const m = fake.seedFrom(deps.me.id, 'CI 결과 확인', null);
+      m.kind = 'wake';
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    const runsAfterFirst = plans.length;
+
+    // 2) 시각이 되어 깨어난 턴 — 새 사람 발화는 없다
+    runTurn.script = async () => ({ exitCode: 0, timedOut: false, tail: '' });
+    await runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+      wake: { reason: 'CI 결과 확인' },
+    });
+
+    expect(plans.length).toBe(runsAfterFirst + 1);
+    const prompt = await readFile(plans[plans.length - 1]!.stdinFile!, 'utf8');
+    expect(prompt).toContain('예약된 후속 턴');
+    expect(prompt).toContain('CI 결과 확인');
+  });
+
   // #90: 한 턴에서 두 번 이상 발화하면 경고가 나지만 채널에는 통보하지 않는다.
   it('한 턴에 두 번 이상 발화하면 경고가 나고, NO_REPLY_NOTICE 는 안 난다', async () => {
     const fake = new FakeMurmur(defOf());

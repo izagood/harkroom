@@ -862,6 +862,11 @@ export async function deleteChannel(
     // sweep 이 매번 없는 채널을 집어 든다. **message 보다 먼저** 지워야 한다:
     // `sent_message_id` 가 이 채널의 메시지를 가리키기 때문이다.
     await client.query(`delete from scheduled_message where channel_id = $1`, [channelId]);
+    // agent_wake: channel_id·message_id 참조, cascade 없음(마이그레이션 040). 걸려 있던
+    // 깨움도 함께 사라진다 — 깨울 스레드가 없어졌으니 깨어날 이유도 없고, 남겨 두면
+    // sweep 이 없는 메시지로 inbox 를 만들려 든다. **message 보다 먼저** 지운다:
+    // `message_id` 가 이 채널의 메시지를 가리킨다(scheduled_message 와 같은 이유다).
+    await client.query(`delete from agent_wake where channel_id = $1`, [channelId]);
     // message: channel_id 참조. attachment·message_reaction 은 cascade 로 함께 사라진다.
     // thread_root_id 자기 참조는 한 문장 안에서 부모·자식을 함께 지우므로 문제가 없다.
     await client.query(`delete from message where channel_id = $1`, [channelId]);
