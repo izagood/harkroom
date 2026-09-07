@@ -866,7 +866,7 @@ fn ensure_at(
     paths: &EndpointPaths,
     my_entry: &Path,
     on_event: impl Fn(RunnerExitEvent) + Send + Clone + 'static,
-    launch: impl FnOnce() -> Result<(), String>,
+    launch: impl FnOnce() -> Result<DaemonExitWatch, String>,
 ) -> Result<(Arc<DaemonConnection>, EnsureKind), String> {
     // ── 1. 붙어 본다 — 다만 **내 빌드의 daemon 에만** ──────────────────────────
     if paths.socket.exists() && paths.token.exists() {
@@ -903,13 +903,22 @@ fn ensure_at(
     }
 
     // ── 2. 띄운다 ───────────────────────────────────────────────────────────
-    launch()?;
+    let watch = launch()?;
 
     // daemon 이 소켓·토큰을 올릴 때까지 기다린다. **폴링이지 고정 대기가 아니다** —
     // 고정 `sleep` 은 느린 기기에서 모자라고 빠른 기기에서 낭비다.
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     let mut last_err = "daemon 이 소켓을 올리지 않았다".to_string();
     while std::time::Instant::now() < deadline {
+        // **자식이 이미 죽었으면 10초를 채우지 않는다**(`#513`).
+        //
+        // 셔뱅이 가리키는 `node` 를 못 찾으면 daemon 은 **즉시** 127 로 끝난다. 그때
+        // 남은 9초를 소켓이 생기기를 기다리며 보내는 것은 순전한 낭비이고, 무엇보다
+        // 그렇게 기다려 얻은 문구가 *"소켓을 올리지 않았다"* 였다 — 진짜 사유가 daemon
+        // 로그에만 남고 화면에는 안 오던 그 침묵이다(`#443`·`#476` 계열).
+        if let Some(reason) = watch.death_reason() {
+            return Err(reason);
+        }
         if paths.socket.exists() && paths.token.exists() {
             // **여기서도 같은 관문을 지난다.** 우리가 띄운 daemon 이 소켓을 잡기 전에
             // 남의 daemon 이 아직 쥐고 있을 수 있고(우리 것이 `EXIT_OCCUPIED` 로 물러났다면
@@ -931,6 +940,10 @@ fn ensure_at(
             }
         }
         std::thread::sleep(Duration::from_millis(100));
+    }
+    // 10초를 다 썼는데도 자식이 그 사이에 죽었을 수 있다(마지막 `sleep` 동안). 한 번 더 본다.
+    if let Some(reason) = watch.death_reason() {
+        return Err(reason);
     }
     Err(format!(
         "daemon 을 띄웠지만 10초 안에 붙지 못했다: {last_err} — 소켓 `{}`",
@@ -991,7 +1004,7 @@ pub fn resolve_endpoint_paths(app: &tauri::AppHandle) -> Result<EndpointPaths, S
 ///
 /// **인자는 전부 Rust 가 조립한다.** 웹뷰는 이 함수에 아무것도 못 넘긴다 —
 /// 프로그램 경로도, 소켓·토큰·pid 경로도, nonce 도 여기서 만든다.
-fn spawn_daemon(app: &tauri::AppHandle, paths: &EndpointPaths) -> Result<(), String> {
+fn spawn_daemon(app: &tauri::AppHandle, paths: &EndpointPaths) -> Result<DaemonExitWatch, String> {
     let program = crate::sidecar_path(DAEMON_SIDECAR_NAME)?;
     if !program.is_file() {
         return Err(format!(
@@ -1013,10 +1026,210 @@ fn spawn_daemon(app: &tauri::AppHandle, paths: &EndpointPaths) -> Result<(), Str
         .map_err(|e| spawn_failure_reason(&program, &e))?;
     let pid = child.id();
     log_line(&format!("daemon 을 띄웠다: pid {pid}"));
+
+    // **그 스레드가 이제 종료 코드를 남긴다**(`#513`). 앞 판본은 `let _ = child.wait();`
+    // 로 버렸는데, 그 버려진 값이 정확히 `ensure_at` 이 못 하던 말이었다 — 사이드카가
+    // `node` 를 못 찾으면 daemon 은 127 로 **즉시** 끝나고, 그 사실을 아는 자리는 여기
+    // 하나뿐이다(`spawn()` 은 성공한다 — 커널이 `execve` 한 것은 `/usr/bin/env` 이고
+    // 그것은 있다).
+    let watch = DaemonExitWatch::new(program.clone());
+    let slot = watch.slot.clone();
+    let log_path = paths.log.clone();
     std::thread::spawn(move || {
-        let _ = child.wait();
+        let status = child.wait();
+        if let Ok(mut guard) = slot.lock() {
+            *guard = Some(match status {
+                Ok(s) => DaemonExit {
+                    code: s.code(),
+                    tail: log_tail(&log_path),
+                },
+                // 거두지 못한 것은 죽은 것이 아니다 — 모르는 것을 죽었다고 말하지 않는다.
+                Err(_) => return,
+            });
+        }
     });
-    Ok(())
+    Ok(watch)
+}
+
+/// daemon 로그의 **마지막 비어 있지 않은 줄**. 없으면 `None` — 지어내지 않는다(`#368`).
+///
+/// ## 왜 로그를 읽나 — 종료 코드만으로는 사유를 못 가른다
+///
+/// 127 은 "명령을 못 찾았다"의 관례적 코드이지만 그것을 낸 것은 daemon 이 아니라
+/// `/usr/bin/env` 다. 그리고 daemon 자신도 자기 사정으로 죽으며 코드를 낼 수 있다
+/// (`EXIT_OCCUPIED`(10) 등). **그 줄을 읽는 것이 둘을 가르는 유일한 길**이고, 그것이
+/// 이미 `daemon_command` 가 stdout·stderr 를 이 파일로 돌려 둔 이유다(`#450`).
+///
+/// 한 줄만 가져온다 — 화면에 오르는 값이므로 로그 전체를 실을 수는 없고, `env` 가
+/// 뱉는 것도 정확히 한 줄이다(`env: node: No such file or directory`).
+fn log_tail(log: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(log).ok()?;
+    Some(
+        text.lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())?
+            .trim()
+            .to_string(),
+    )
+}
+
+/// daemon 자식이 **죽었는지, 죽었다면 왜인지**. `#513`.
+///
+/// ## 왜 이것이 필요했나 — 화면이 소켓 이야기만 했다
+///
+/// `.dmg` 를 설치하고 Finder 로 연 사람이 받던 문구가 이것이었다(실측 2026-09-06):
+///
+/// > daemon 을 띄웠지만 10초 안에 붙지 못했다: daemon 이 소켓을 올리지 않았다
+///
+/// **전부 사실이지만 사람이 할 수 있는 일이 하나도 없다.** 진짜 사유(`env: node: No such
+/// file or directory`)는 daemon 로그 파일에만 있었고, 그 파일이 어디 있는지는 개발자만
+/// 안다. `#443`·`#476` 이 반복해서 고쳐 온 침묵과 같은 모양이다.
+///
+/// ## 왜 `spawn_failure_reason` 만으로는 안 되나 — **`spawn` 이 성공한다**
+///
+/// `spawn_failure_reason` 은 이미 `NotFound` 를 다루고 설치 주소까지 말한다(`#476`).
+/// 그런데 그 분기는 **`#513` 의 조건에서 안 불린다.** 실측(2026-09-07):
+///
+/// ```text
+/// $ env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin ./셔뱅스크립트
+/// env: node: No such file or directory
+/// exit=127
+/// ```
+///
+/// 커널이 `execve` 하는 것은 셔뱅의 첫 낱말인 `/usr/bin/env` 이고 **그것은 있다.**
+/// 그래서 `spawn()` 은 성공하고, `node` 를 못 찾는 것은 그 뒤 `env` 가 자식 안에서
+/// 겪는 일이다. `ENOENT` 는 부모에게 안 온다.
+///
+/// 즉 같은 사유가 **두 자리**에서 서로 다른 모습으로 난다:
+///
+/// | 언제 | 어떻게 드러나나 | 누가 말하나 |
+/// |---|---|---|
+/// | 사이드카 자체를 exec 못 함 | `spawn()` 이 `ENOENT` | `spawn_failure_reason` (`#476`) |
+/// | **셔뱅의 `node` 를 못 찾음** | **자식이 127 로 종료** | **이 구조체** (`#513`) |
+///
+/// 문구는 **한 자리에서 만든다**(`node_missing_reason`) — 둘로 나뉘면 한쪽만 고쳐지는
+/// 날이 온다.
+pub struct DaemonExitWatch {
+    program: PathBuf,
+    slot: Arc<Mutex<Option<DaemonExit>>>,
+}
+
+struct DaemonExit {
+    code: Option<i32>,
+    tail: Option<String>,
+}
+
+/// 셸이 "명령을 못 찾았다"에 쓰는 관례적 종료 코드. `/usr/bin/env` 도 이것을 쓴다
+/// (실측: 위 `DaemonExitWatch` 주석의 `exit=127`).
+const EXIT_COMMAND_NOT_FOUND: i32 = 127;
+
+impl DaemonExitWatch {
+    fn new(program: PathBuf) -> Self {
+        DaemonExitWatch {
+            program,
+            slot: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// **회귀선이 쓰는 생성자** — "띄웠고 아직 살아 있다". `launch` 클로저가 진짜
+    /// 프로세스를 안 띄우는 테스트(붙기 분기만 재는 것들)가 이것을 돌려준다.
+    #[cfg(test)]
+    fn alive() -> Self {
+        DaemonExitWatch::new(PathBuf::from("<테스트>"))
+    }
+
+    /// **회귀선이 쓰는 생성자** — 자식을 실제로 띄우지 않고 "이렇게 죽었다"를 만든다.
+    /// 진짜 daemon 을 `node` 없는 `PATH` 로 띄워 재는 것은 통합 테스트의 몫이고,
+    /// 문구 판정은 이 값 하나로 잴 수 있어야 한다.
+    #[cfg(test)]
+    fn exited(program: &str, code: Option<i32>, tail: Option<&str>) -> Self {
+        let watch = DaemonExitWatch::new(PathBuf::from(program));
+        *watch.slot.lock().unwrap() = Some(DaemonExit {
+            code,
+            tail: tail.map(str::to_string),
+        });
+        watch
+    }
+
+    /// 자식이 죽었으면 그 사유를, 아직 살아 있으면 `None`.
+    ///
+    /// **아직 안 죽은 것을 죽었다고 하지 않는다** — 이 함수가 `Some` 을 내는 순간
+    /// `ensure_at` 이 기다리기를 그만두므로, 여기서 성급하면 정상 기동이 실패로 뒤집힌다.
+    fn death_reason(&self) -> Option<String> {
+        let guard = self.slot.lock().ok()?;
+        let exit = guard.as_ref()?;
+        Some(exit_reason(&self.program, exit.code, exit.tail.as_deref()))
+    }
+}
+
+/// daemon 이 **일찍 죽은** 사유를 사람이 읽을 말로 바꾼다(`#513`).
+///
+/// `node` 를 못 찾은 것으로 **단정하는 조건이 좁다** — 종료 코드가 127 이고, 로그의
+/// 마지막 줄이 그 사실을 실제로 말할 때만이다. 둘 중 하나라도 어긋나면 코드와 로그
+/// 원문을 그대로 올린다. 사유를 지어내지 않는 것이 `#368` 이고, 여기서 넓게 잡으면
+/// "무엇이 죽어도 Node 를 설치하라고 한다"가 된다 — `#473` 이 고친 오진과 같은 종류다.
+fn exit_reason(program: &Path, code: Option<i32>, tail: Option<&str>) -> String {
+    if code == Some(EXIT_COMMAND_NOT_FOUND) {
+        if let Some(line) = tail {
+            if looks_like_missing_node(line) {
+                return node_missing_reason(program, line);
+            }
+        }
+    }
+    let what = match code {
+        Some(c) => format!("종료 코드 {c}"),
+        None => "시그널".to_string(),
+    };
+    match tail {
+        Some(line) => format!("daemon 이 뜨자마자 {what} 로 끝났다 — 로그 마지막 줄: {line}"),
+        None => format!(
+            "daemon 이 뜨자마자 {what} 로 끝났고 로그에 아무것도 안 남았다 — 사이드카 `{}`",
+            program.display()
+        ),
+    }
+}
+
+/// 이 줄이 *"`node` 를 못 찾았다"* 인가.
+///
+/// **두 낱말을 다 요구한다.** `node` 만 보면 daemon 이 뱉은 다른 줄(모듈 이름·스택
+/// 트레이스에 `node` 가 흔하다)까지 걸리고, "못 찾았다"만 보면 daemon 이 **다른 것**을
+/// 못 찾은 경우까지 걸린다. 둘이 함께 있어야 이 판정이 성립한다.
+///
+/// `env` 가 내는 실제 문구가 근거다(실측 2026-09-07):
+///
+/// ```text
+/// env: node: No such file or directory
+/// ```
+///
+/// 셸이 셔뱅을 대신 해석하는 경로에서는 `node: command not found` 로도 난다. 둘 다 본다.
+fn looks_like_missing_node(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    if !lower.contains("node") {
+        return false;
+    }
+    lower.contains("no such file or directory") || lower.contains("not found")
+}
+
+/// **`node` 가 없다**는 사유의 문구. `spawn_failure_reason` 과 같은 말을 한다.
+///
+/// 설치 안내는 `@murmur/shared::installHint('node')` 가 이미 갖고 있는 그 문장이다
+/// (`#476`). 새로 만들지 않았다 — 다만 Rust 에서 그 TS 함수를 부를 수 없어 문자열이
+/// 두 벌 존재하고, `test/missingToolchainNotice.test.tsx` 가 이 파일을 읽어 둘이
+/// 같은 주소를 말하는지 대조한다.
+///
+/// **`PATH` 를 함께 적는다.** `#513` 을 고친 뒤에도 이 문구가 나온다면 그것은
+/// *"우리가 준 `PATH` 안에 정말로 `node` 가 없다"* 는 뜻이고, 그때 사람이 알아야 할
+/// 다음 사실이 바로 그 `PATH` 다. 값 없이 "설치하라"고만 하면, 이미 설치한 사람은
+/// 다시 설치하러 간다.
+fn node_missing_reason(program: &Path, tail: &str) -> String {
+    format!(
+        "daemon 이 뜨자마자 끝났다 — 사이드카(`{}`)는 있는데 그것을 실행할 `node` 를 찾지 못했다. \
+         murmur 는 Node.js 를 동봉하지 않는다. \
+         Node.js 를 설치하라(LTS 판이면 된다): https://nodejs.org/en/download \
+         (daemon 로그: {tail} / 이때 쓴 PATH: {})",
+        program.display(),
+        crate::login_path::child_path(),
+    )
 }
 
 /// daemon 사이드카를 못 띄운 사유를 **사람이 읽을 말로** 바꾼다(`#476`).
@@ -1081,6 +1294,25 @@ fn daemon_command(
     use std::process::Stdio;
 
     let mut cmd = crate::detached_command(program);
+
+    // **`PATH` 를 명시한다 — `#513` 이 고치는 한 줄이 이것이다.**
+    //
+    // daemon 사이드카는 셔뱅 스크립트(`#!/usr/bin/env node`)이고, Finder·Dock 으로 띄운
+    // 앱이 물려받는 `PATH` 는 `/usr/bin:/bin:/usr/sbin:/sbin` 정도다 — Homebrew 도
+    // nvm 도 거기 없다. 실측(2026-09-06)에서 daemon 로그의 마지막 줄이
+    // `env: node: No such file or directory` 였고, 그것이 "모든 에이전트가 기동 실패"의
+    // 유일한 원인이었다.
+    //
+    // **값은 웹뷰가 주지 않는다.** daemon 은 웹뷰보다 먼저 뜨므로(`#431` 2단계 A —
+    // `controller.start` 가 `ensureDaemon` 을 기동 직후 부른다) 웹뷰가 캐낸 값을 기다릴
+    // 수 없다. Rust 가 스스로 캐낸다 — 그 근거와 "출처가 둘이 되지 않게 한 방법"은
+    // `login_path.rs` 모듈 주석에 있다.
+    //
+    // **여기서 `env_clear()` 를 하지 않는다.** daemon 이 물려받아야 할 것이 `PATH` 만은
+    // 아니다(`HOME` 이 없으면 앱 데이터 자리를 못 찾고, `TMPDIR`·로케일도 그대로여야
+    // 한다). 고치는 것은 비어 있던 한 칸이지 환경 전체가 아니다.
+    cmd.env("PATH", crate::login_path::child_path());
+
     cmd.arg("--socket")
         .arg(&paths.socket)
         .arg("--token")
@@ -1164,7 +1396,7 @@ static CLIENT_LOG: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 ///
 /// 로그를 못 남기는 것이 앱 기동을 막을 이유는 아니다. 다만 그 사실 자체는 stderr 에
 /// 남긴다 — 터미널 실행에서는 보인다.
-fn log_line(line: &str) {
+pub fn log_line(line: &str) {
     eprintln!("[daemon-client] {line}");
 
     let Some(path) = CLIENT_LOG.get() else { return };
@@ -1668,7 +1900,7 @@ mod tests {
             |_| {},
             || {
                 launched.store(true, std::sync::atomic::Ordering::SeqCst);
-                Ok(())
+                Ok(DaemonExitWatch::alive())
             },
         )
         .expect("붙지 못했다");
@@ -1726,7 +1958,7 @@ mod tests {
             |_| {},
             || {
                 *child.lock().unwrap() = Some(launch_daemon(&program, &paths, "nonce-spawn"));
-                Ok(())
+                Ok(DaemonExitWatch::alive())
             },
         );
         // **단언보다 먼저 가드로 감싼다** — `ensure_at` 이 성공했든 아니든 띄운 daemon 은
@@ -1900,7 +2132,7 @@ mod tests {
             |_| {},
             || {
                 launched.store(true, std::sync::atomic::Ordering::SeqCst);
-                Ok(())
+                Ok(DaemonExitWatch::alive())
             },
         );
 
@@ -1962,7 +2194,7 @@ mod tests {
             |_| {},
             || {
                 launched.store(true, std::sync::atomic::Ordering::SeqCst);
-                Ok(())
+                Ok(DaemonExitWatch::alive())
             },
         )
         .expect("내 빌드의 daemon 인데 붙지 못했다");
@@ -2031,6 +2263,260 @@ mod tests {
         let msg = spawn_failure_reason(Path::new("/A/murmur-daemon"), &e);
         assert!(!msg.contains("nodejs.org"), "지어내지 않는다: {msg}");
         assert!(msg.contains("denied"), "원문은 그대로 올린다: {msg}");
+    }
+
+    // -----------------------------------------------------------------------
+    // `#513` — daemon 이 `node` 를 못 찾은 사유가 화면에 온다
+    // -----------------------------------------------------------------------
+
+    /// **회귀선 1 — `spawn_daemon` 이 `PATH` 를 env 로 넘긴다**(`#513`).
+    ///
+    /// 이것이 이 이슈의 한 줄이다. 빠지면 Finder 로 띄운 앱의 daemon 이
+    /// `/usr/bin:/bin:/usr/sbin:/sbin` 만 들고 뜨고, 셔뱅의 `node` 를 못 찾아
+    /// **모든 에이전트가** 기동에 실패한다(실측 2026-09-06).
+    ///
+    /// `daemon_command()` 가 조립한 실물 `Command` 를 잰다 — 커맨드를 손으로 다시
+    /// 조립하면 프로덕션 코드를 걷어내도 초록이 된다(이 파일이 반복해서 겪은 실패
+    /// 모드이고, `daemon_command` 를 떼어낸 이유가 그것이다).
+    ///
+    /// 되돌려 RED: `daemon_command` 의 `cmd.env("PATH", …)` 한 줄을 지우면 빨개진다.
+    #[test]
+    fn daemon_커맨드가_path_를_env_로_넘긴다() {
+        let dir = std::env::temp_dir().join(format!("mmr-env-{}", std::process::id()));
+        let paths = endpoint_paths(&dir);
+        let cmd = daemon_command(Path::new("/A/murmur-daemon"), &paths, "n", "0.0.0");
+
+        let path = cmd
+            .get_envs()
+            .find(|(k, _)| *k == std::ffi::OsStr::new("PATH"))
+            .and_then(|(_, v)| v)
+            .expect("daemon 커맨드에 PATH 가 없다 — 그러면 셔뱅의 `node` 를 못 찾는다");
+        let path = path.to_string_lossy();
+
+        // **회귀선 2 — 빈 PATH 를 넘기지 않는다.** 조회가 실패한 환경에서도 이 단언이
+        // 서야 한다: 빈 `PATH` 는 없는 것보다 나쁘다(`login_path::child_path` 주석).
+        assert!(!path.trim().is_empty(), "빈 PATH 를 넘겼다");
+        assert!(
+            path.split(':').any(|d| Path::new(d).is_absolute()),
+            "절대 경로가 하나도 없다: {path}"
+        );
+        // 조회가 실패했다면 폴백이어야 한다 — 그 둘 중 하나이지 제3의 값이 아니다.
+        let looks_like_fallback = path == crate::login_path::SYSTEM_PATH_FALLBACK;
+        let looks_like_login = crate::login_path::login_path().as_deref() == Some(path.as_ref());
+        assert!(
+            looks_like_fallback || looks_like_login,
+            "로그인 셸 값도 폴백도 아닌 값을 넘겼다: {path}"
+        );
+    }
+
+    /// **회귀선 2 — 로그인 셸 조회가 실패해도 폴백 `PATH` 가 나간다**(`#513`).
+    ///
+    /// `login_path.rs` 쪽에서도 같은 성질을 재지만(그쪽은 `child_path()` 자체),
+    /// **여기서 다시 재는 이유**는 재는 대상이 다르기 때문이다: 그 값이 실제로
+    /// daemon 커맨드까지 **닿는가**. 함수는 옳은 값을 돌려주는데 커맨드가 그것을 안
+    /// 쓰는 상태가 바로 `#513` 이전의 상태였다.
+    #[test]
+    fn 조회가_실패해도_daemon_은_폴백_path_로_뜬다() {
+        // 조회 실패를 이 프로세스에서 강제할 수는 없다(`OnceLock` 이고, 실패를 주입하면
+        // 그것은 캐시에 남아 다른 테스트를 오염시킨다). 대신 **폴백 값 자체**가 daemon 이
+        // 뜨는 데 쓸 수 있는 값인지 잰다 — 조회 실패 시 커맨드에 들어가는 것이 정확히
+        // 이 값이라는 것은 위 `daemon_커맨드가_path_를_env_로_넘긴다` 가 못박는다.
+        let fallback = crate::login_path::SYSTEM_PATH_FALLBACK;
+        assert!(!fallback.is_empty());
+        assert!(fallback.split(':').any(|d| d == "/usr/bin"));
+    }
+
+    /// **회귀선 3 — daemon 이 `node` 를 못 찾은 사유가 화면에 온다**(`#513`).
+    ///
+    /// 앞 판본이 사람에게 준 문구는 이것뿐이었다:
+    ///
+    /// > daemon 을 띄웠지만 10초 안에 붙지 못했다: daemon 이 소켓을 올리지 않았다
+    ///
+    /// 전부 사실이지만 **사람이 할 수 있는 일이 없다.** 진짜 사유는 daemon 로그에만
+    /// 있었고 그 파일이 어디 있는지는 개발자만 안다.
+    ///
+    /// `spawn_failure_reason` 이 이 자리를 못 메운 이유는 `DaemonExitWatch` 주석에
+    /// 있다 — 셔뱅 스크립트에서는 `spawn()` 이 **성공**한다(exec 된 것은 `/usr/bin/env`
+    /// 이고 그것은 있다). 실패는 자식의 종료 코드 127 로만 드러난다.
+    ///
+    /// 되돌려 RED: `exit_reason` 의 `looks_like_missing_node` 분기를 지우면 설치
+    /// 주소가 사라져 빨개진다.
+    #[test]
+    fn daemon_이_node_를_못_찾으면_그_사실이_사유로_나온다() {
+        let watch = DaemonExitWatch::exited(
+            "/A/murmur-daemon",
+            Some(127),
+            Some("env: node: No such file or directory"),
+        );
+        let msg = watch.death_reason().expect("죽었는데 사유가 없다");
+
+        assert!(msg.contains("node"), "무엇이 없는지 말해야 한다: {msg}");
+        assert!(
+            msg.contains("https://nodejs.org/en/download"),
+            "**어디서 받는지**가 `#476` 이 정한 답이다: {msg}"
+        );
+        // 소켓 이야기만 하지 않는다 — 그것이 이 회귀선의 이름이다.
+        assert!(
+            !msg.contains("소켓을 올리지 않았다"),
+            "소켓 이야기로 덮으면 안 된다: {msg}"
+        );
+        // 원문을 삼키지 않는다(`#368`).
+        assert!(msg.contains("env: node:"), "로그 원문이 남아야 한다: {msg}");
+        // 고친 뒤에도 이 문구가 나오면 사람이 알아야 할 다음 사실이 `PATH` 다.
+        assert!(msg.contains("PATH"), "이때 쓴 PATH 를 말해야 한다: {msg}");
+    }
+
+    /// **대조군 ① — 정상일 때는 그 문구가 안 뜬다**(`#513` 회귀선 4).
+    ///
+    /// **이것이 없으면 회귀선 3 은 "항상 Node 를 설치하라고 한다"로도 통과한다.**
+    /// 이 저장소가 반복해서 겪은 실패 모드다(`#476`·`#473` 이 같은 자리에서 걸렸다).
+    ///
+    /// daemon 이 살아 있으면 `death_reason()` 은 `None` 이고, 그러면 `ensure_at` 은
+    /// 평소대로 소켓을 기다린다.
+    #[test]
+    fn 살아_있는_daemon_에는_아무_사유도_안_붙는다() {
+        let watch = DaemonExitWatch::alive();
+        assert!(
+            watch.death_reason().is_none(),
+            "안 죽었는데 죽었다고 말하면 정상 기동이 실패로 뒤집힌다"
+        );
+    }
+
+    /// **대조군 ② — 다른 사유로 죽으면 Node 이야기를 안 한다**(`#513` 회귀선 4).
+    ///
+    /// daemon 은 자기 사정으로도 죽는다(`EXIT_OCCUPIED`(10) 등). 그때까지 "Node 를
+    /// 설치하라"고 하면 이미 설치한 사람이 다시 설치하러 가고, 그것은 `#473` 이 고친
+    /// 오진(하네스 부재를 PAT 문제로 말한 것)과 같은 종류다.
+    #[test]
+    fn 다른_사유로_죽으면_node_이야기를_안_한다() {
+        // 코드가 127 이 아니다.
+        let occupied = DaemonExitWatch::exited(
+            "/A/murmur-daemon",
+            Some(10),
+            Some("소켓을 다른 daemon 이 쥐고 있다"),
+        );
+        let msg = occupied.death_reason().unwrap();
+        assert!(!msg.contains("nodejs.org"), "지어내지 않는다: {msg}");
+        assert!(msg.contains("10"), "종료 코드를 그대로 말한다: {msg}");
+        assert!(
+            msg.contains("소켓을 다른 daemon"),
+            "로그 원문이 남는다: {msg}"
+        );
+
+        // **127 이어도 로그가 다른 이야기면 단정하지 않는다.** 코드만 보고 판정하면
+        // daemon 이 127 로 끝나는 다른 경우까지 전부 Node 탓이 된다.
+        let other127 = DaemonExitWatch::exited(
+            "/A/murmur-daemon",
+            Some(127),
+            Some("설정 파일을 읽지 못했다"),
+        );
+        let msg = other127.death_reason().unwrap();
+        assert!(
+            !msg.contains("nodejs.org"),
+            "127 만으로 단정하지 않는다: {msg}"
+        );
+
+        // 로그가 아예 없어도 마찬가지다.
+        let silent = DaemonExitWatch::exited("/A/murmur-daemon", Some(127), None);
+        let msg = silent.death_reason().unwrap();
+        assert!(
+            !msg.contains("nodejs.org"),
+            "모르는 것을 단정하지 않는다: {msg}"
+        );
+    }
+
+    /// `looks_like_missing_node` 의 경계. **두 낱말을 다 요구한다** — 한쪽만 보면
+    /// 대조군이 무너진다.
+    #[test]
+    fn node_부재_판정은_두_낱말을_다_본다() {
+        assert!(looks_like_missing_node(
+            "env: node: No such file or directory"
+        ));
+        assert!(looks_like_missing_node("node: command not found"));
+        // `node` 는 있는데 다른 것이 없다.
+        assert!(!looks_like_missing_node(
+            "env: python3: No such file or directory"
+        ));
+        // "못 찾았다"가 아니라 그냥 `node` 가 나오는 줄.
+        assert!(!looks_like_missing_node("node 모듈을 불러왔다"));
+    }
+
+    /// **`#513` 실물 회귀선 — `PATH` 를 비운 채 daemon 사이드카를 띄우면 127 로 죽는다.**
+    ///
+    /// 위 문구 테스트들은 전부 `DaemonExitWatch::exited` 로 만든 값을 잰다 — 즉
+    /// *"127 + 그 줄이 오면 이렇게 말한다"* 만 재고 **"실제로 그런 일이 나는가"** 는
+    /// 안 잰다. 이 테스트가 그 칸을 메운다: 진짜 사이드카를, GUI 가 주는 그 빈약한
+    /// `PATH` 로 띄워 본다.
+    ///
+    /// 실측(2026-09-07, 이 테스트를 만들며):
+    ///
+    /// ```text
+    /// $ env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin ./murmur-daemon-aarch64-apple-darwin --version
+    /// env: node: No such file or directory
+    /// exit=127
+    /// ```
+    ///
+    /// **이것이 `#513` 의 전부다.** 그리고 같은 사이드카를 로그인 셸 `PATH` 로 띄우면
+    /// 인자를 파싱하고 자기 말을 한다(아래 대조군).
+    #[test]
+    fn 빈약한_path_로는_사이드카가_뜨지_않고_충분한_path_로는_뜬다() {
+        let Some(program) = daemon_sidecar() else {
+            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @murmur/desktop build:sidecar` 먼저");
+            return;
+        };
+
+        // ── 고치기 전의 조건 — GUI 가 주는 PATH ────────────────────────────
+        let poor = std::process::Command::new(&program)
+            .arg("--version")
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+            .output()
+            .expect("사이드카를 띄우지 못했다");
+        // **`spawn` 자체는 성공한다** — 그것이 `spawn_failure_reason` 이 이 자리를 못
+        // 메우는 이유다(`DaemonExitWatch` 주석의 표).
+        assert_eq!(
+            poor.status.code(),
+            Some(EXIT_COMMAND_NOT_FOUND),
+            "GUI PATH 로도 떴다면 이 기계의 `/usr/bin` 에 node 가 있다는 뜻이다 — \
+             그러면 이 테스트가 재는 조건이 성립하지 않는다"
+        );
+        let stderr = String::from_utf8_lossy(&poor.stderr);
+        assert!(
+            looks_like_missing_node(stderr.trim()),
+            "실패 사유가 `node` 부재가 아니다: {stderr}"
+        );
+        // **그 줄에 우리 문구가 붙는가** — 회귀선 3 이 재는 판정을 실물 출력에 건다.
+        let watch = DaemonExitWatch::exited(
+            &program.to_string_lossy(),
+            poor.status.code(),
+            Some(stderr.trim()),
+        );
+        assert!(
+            watch
+                .death_reason()
+                .unwrap()
+                .contains("https://nodejs.org/en/download"),
+            "실물 실패에 안내가 안 붙었다"
+        );
+
+        // ── 대조군: 고친 뒤의 조건 — 앱이 넘기는 그 PATH ────────────────────
+        let rich = std::process::Command::new(&program)
+            .arg("--version")
+            .env_clear()
+            .env("PATH", crate::login_path::child_path())
+            .output()
+            .expect("사이드카를 띄우지 못했다");
+        if rich.status.code() == Some(EXIT_COMMAND_NOT_FOUND) {
+            // 이 기계에는 `node` 가 정말 없다 — `#513` 을 고쳐도 안 뜨는 그 경우이고,
+            // 그때 화면이 답하는 것이 회귀선 3 이다. 여기서 실패로 칠 일은 아니다.
+            eprintln!("건너뜀: 앱이 넘기는 PATH 안에도 node 가 없다 — 이 기계에는 node 가 없다");
+            return;
+        }
+        let err = String::from_utf8_lossy(&rich.stderr);
+        assert!(
+            !looks_like_missing_node(err.trim()),
+            "앱이 넘기는 PATH 로도 node 를 못 찾았다: {err}"
+        );
     }
 
     /// **회귀선 5 — 앱이 죽어도 daemon 이 산다: `setsid` 가 걸렸는가.**
