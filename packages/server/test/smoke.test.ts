@@ -14,11 +14,19 @@ let stop: () => Promise<void>;
 let fake: FakeAvcs;
 let worker: ProjectionWorker;
 
+// `/leases` 가 지금 투영이 보고 있는 서버로 거르므로(042_projection_state_per_server.sql),
+// 워커와 서버가 같은 URL 을 보고 있다고 알려 줘야 한다.
+const AVCS_URL = 'http://avcs.smoke-test';
+
 beforeAll(async () => {
   ({ pool, stop } = await startTestDb());
   fake = createFakeAvcs();
-  worker = new ProjectionWorker({ pool, avcs: fake.client });
-  app = await buildServer({ pool, getAvcsStatus: () => worker.status() });
+  worker = new ProjectionWorker({ pool, avcs: fake.client, baseUrl: AVCS_URL });
+  app = await buildServer({
+    pool,
+    getAvcsStatus: () => worker.status(),
+    projection: { envBaseUrl: null, reconfigure: async () => {}, currentUrl: () => AVCS_URL },
+  });
 });
 afterAll(async () => { await app.close(); await stop(); });
 

@@ -23,7 +23,9 @@ beforeAll(async () => {
   pool = db.pool;
   app = await buildServer({
     pool: db.pool,
-    projection: { envBaseUrl: 'http://env.example:4000', reconfigure },
+    // 이 파일은 `/settings/projection` 만 본다 — `/leases`·커서 메트릭이 쓰는 currentUrl 은
+    // 여기서 의미 있는 값이 없으므로 스텁만 둔다.
+    projection: { envBaseUrl: 'http://env.example:4000', reconfigure, currentUrl: () => null },
   });
   ({ token: adminToken } = await bootstrapAdmin(app));
 

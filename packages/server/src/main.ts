@@ -38,6 +38,7 @@ const app = await buildServer({
   projection: {
     envBaseUrl: config.avcsBaseUrl,
     reconfigure: (url) => supervisor.reconfigure(url),
+    currentUrl: () => supervisor.currentUrl(),
   },
   corsOrigins: config.corsOrigins,
   logLevel: config.logLevel,

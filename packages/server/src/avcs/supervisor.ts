@@ -58,6 +58,17 @@ export class ProjectionSupervisor {
     return this.worker?.status() ?? DISABLED_PROJECTION_STATUS;
   }
 
+  /**
+   * 지금 워커가 보고 있는 avcs 서버. `/leases` 와 커서 메트릭이 이 값으로 행을 거른다 —
+   * 리스·커서 행이 그 URL 아래 쓰였기 때문이다.
+   *
+   * DB 를 다시 resolve 하지 않고 이 값을 쓰는 이유: 저장과 교체 사이의 짧은 순간에 둘이
+   * 어긋날 수 있고, 그때 참인 것은 **워커가 실제로 쓰고 있는 URL** 이다.
+   */
+  currentUrl(): string | null {
+    return this.url;
+  }
+
   reconfigure(url: string | null): Promise<void> {
     const tail = this.chain.then(() => { this.swap(url); });
     // 거절이 체인에 남으면 이후 재설정이 조용히 no-op 이 되고(`.then` 이 다시는 안 불린다),
@@ -81,7 +92,7 @@ export class ProjectionSupervisor {
     const old = this.worker;
     const worker = url === null
       ? null
-      : this.makeWorker({ pool: this.deps.pool, avcs: this.makeClient(url) });
+      : this.makeWorker({ pool: this.deps.pool, avcs: this.makeClient(url), baseUrl: url });
     worker?.start();
     // 성공적으로 만든 뒤에야 반영한다. 먼저 반영하면 `makeWorker` 가 던졌을 때 `this.url` 은
     // 새 URL 을 가리키는데 `this.worker` 는 옛 워커로 남아, `status()` 가 옛 워커를 새

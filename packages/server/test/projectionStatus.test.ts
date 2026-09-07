@@ -139,7 +139,7 @@ describe('#267 투영 워커가 상태를 실제로 갱신한다', () => {
     const fake = createFakeAvcs();
     const repo = 'wired-repo';
     const channelId = (await createChannel(pool, { name: 'wired', repo })).id;
-    const worker = new ProjectionWorker({ pool, avcs: fake.client });
+    const worker = new ProjectionWorker({ pool, avcs: fake.client, baseUrl: 'http://avcs.status-test' });
 
     expect(worker.status().lastPolledAt).toBeNull();
     worker.start(50);
@@ -165,7 +165,7 @@ describe('#267 투영 워커가 상태를 실제로 갱신한다', () => {
     const { pool: emptyPool, stop: stopEmpty } = await startTestDb();
     try {
       const fake = createFakeAvcs();
-      const worker = new ProjectionWorker({ pool: emptyPool, avcs: fake.client });
+      const worker = new ProjectionWorker({ pool: emptyPool, avcs: fake.client, baseUrl: 'http://avcs.status-test' });
       worker.start(50);
       try {
         await waitFor(() => worker.status().lastPolledAt !== null);
@@ -192,7 +192,7 @@ describe('#267 투영 워커가 상태를 실제로 갱신한다', () => {
       fetchSince: (r, since) =>
         failing ? Promise.reject(new Error('injected avcs failure')) : fake.client.fetchSince(r, since),
     };
-    const worker = new ProjectionWorker({ pool, avcs: flaky });
+    const worker = new ProjectionWorker({ pool, avcs: flaky, baseUrl: 'http://avcs.status-test' });
     worker.start(50);
     try {
       await waitFor(() => worker.status().lastError !== null);
@@ -215,6 +215,7 @@ describe('#267 투영 워커가 상태를 실제로 갱신한다', () => {
         waitForChange: () => Promise.reject(new Error(long)),
         fetchSince: () => Promise.reject(new Error(long)),
       },
+      baseUrl: 'http://avcs.status-test',
     });
     worker.start(50);
     try {

@@ -17,6 +17,12 @@ export type ProjectionWorkerStatus = ProjectionRuntime & { connected: boolean };
 export interface ProjectionDeps {
   pool: Pool;
   avcs: AvcsServerClient;
+  /**
+   * 이 워커가 보고 있는 avcs 서버. `projection_cursor`·`active_lease` 는 이제 (repo,
+   * avcs_base_url)로 키가 잡힌다 — `last_log_index` 가 **그 서버의** 로그 안 위치라서,
+   * 서버가 바뀌면 같은 repo 이름이라도 다른 행이어야 한다(042_projection_state_per_server.sql).
+   */
+  baseUrl: string;
 }
 
 /**
@@ -93,11 +99,14 @@ export class ProjectionWorker {
    * 인자에 남아, 읽는 사람에게 lease 가 채널에 속한 것처럼 보인다.
    */
   async runOnce(repo: string): Promise<number> {
-    const { pool, avcs } = this.deps;
+    const { pool, avcs, baseUrl } = this.deps;
 
     // 아웃바운드 HTTP는 트랜잭션(및 그 안의 pool 커넥션 + row lock) 밖에서 수행한다.
     // avcs 서버가 느려도 채팅 API용 pool 커넥션을 굶기지 않기 위함.
-    const before = await pool.query(`select last_log_index from projection_cursor where repo = $1`, [repo]);
+    const before = await pool.query(
+      `select last_log_index from projection_cursor where repo = $1 and avcs_base_url = $2`,
+      [repo, baseUrl],
+    );
     const since: number = before.rowCount ? Number(before.rows[0].last_log_index) : 0;
     const { entries, next } = await avcs.fetchSince(repo, since);
     // 투영할 게 없어도 커서는 전진해야 한다. avcs 로그에는 투영 대상이 아닌 객체(blob·session·
@@ -115,7 +124,10 @@ export class ProjectionWorker {
       // insert 하므로"가 근거였는데, 스레드 투영을 걷어낸 뒤 이 경로는 **메시지를 만들지
       // 않는다** — `active_lease` upsert 뿐이라 seq 를 발급받을 일이 없다. 근거가 사라진
       // 락을 남기면 배치 하나를 처리하는 이 긴 트랜잭션이 채널 발화를 이유 없이 막는다.
-      const cur = await client.query(`select last_log_index from projection_cursor where repo = $1 for update`, [repo]);
+      const cur = await client.query(
+        `select last_log_index from projection_cursor where repo = $1 and avcs_base_url = $2 for update`,
+        [repo, baseUrl],
+      );
       const currentSince: number = cur.rowCount ? Number(cur.rows[0].last_log_index) : 0;
       if (currentSince !== since) {
         // 다른 실행이 이미 커서를 전진시켰다 — 이번 배치는 폐기하고 다음 폴에서 새 since로 재조회한다.
@@ -135,24 +147,24 @@ export class ProjectionWorker {
         if (entry.type !== 'lease' || !entry.lease) continue;
         if (entry.lease.released) {
           await client.query(
-            `delete from active_lease where repo = $1 and path = $2 and actor_key_id = $3`,
-            [repo, entry.lease.path, entry.actorKeyId ?? ''],
+            `delete from active_lease where repo = $1 and avcs_base_url = $2 and path = $3 and actor_key_id = $4`,
+            [repo, baseUrl, entry.lease.path, entry.actorKeyId ?? ''],
           );
         } else {
           await client.query(
-            `insert into active_lease (repo, path, actor_key_id, expires_at)
-             values ($1, $2, $3, $4)
-             on conflict (repo, path, actor_key_id) do update set expires_at = excluded.expires_at`,
-            [repo, entry.lease.path, entry.actorKeyId ?? '', entry.lease.expiresAt],
+            `insert into active_lease (repo, avcs_base_url, path, actor_key_id, expires_at)
+             values ($1, $2, $3, $4, $5)
+             on conflict (repo, avcs_base_url, path, actor_key_id) do update set expires_at = excluded.expires_at`,
+            [repo, baseUrl, entry.lease.path, entry.actorKeyId ?? '', entry.lease.expiresAt],
           );
         }
         leaseChanged = true;
       }
 
       await client.query(
-        `insert into projection_cursor (repo, last_log_index) values ($1, $2)
-         on conflict (repo) do update set last_log_index = excluded.last_log_index`,
-        [repo, next],
+        `insert into projection_cursor (repo, avcs_base_url, last_log_index) values ($1, $2, $3)
+         on conflict (repo, avcs_base_url) do update set last_log_index = excluded.last_log_index`,
+        [repo, baseUrl, next],
       );
       await client.query('commit');
 
@@ -201,7 +213,8 @@ export class ProjectionWorker {
               // 폴링한 저장소를 남긴다 — 커서가 안 움직여도(조용한 저장소) 물어봤다는 사실이다.
               this.runtime.repo = repo;
               const cur = await this.deps.pool.query(
-                `select last_log_index from projection_cursor where repo = $1`, [repo],
+                `select last_log_index from projection_cursor where repo = $1 and avcs_base_url = $2`,
+                [repo, this.deps.baseUrl],
               );
               const since = cur.rowCount ? Number(cur.rows[0].last_log_index) : 0;
               const changed = await this.deps.avcs.waitForChange(repo, since, pollMs);

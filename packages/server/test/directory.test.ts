@@ -13,9 +13,18 @@ let adminId: string;
 let botId: string;
 let botPat: string;
 
+/** `/leases` 가 이 값으로 행을 거른다(042_projection_state_per_server.sql) — 아래
+ * 시드도 같은 URL 로 심는다. */
+const AVCS_URL = 'http://avcs.test';
+
 beforeAll(async () => {
   ({ pool, stop } = await startTestDb());
-  app = await buildServer({ pool });
+  app = await buildServer({
+    pool,
+    // `/leases` 가 스코프를 갖게 됐으므로(투영이 보고 있는 서버로 거른다) 시임을 준다.
+    // env 값·reconfigure 는 이 테스트가 쓰지 않는다.
+    projection: { envBaseUrl: null, reconfigure: async () => {}, currentUrl: () => AVCS_URL },
+  });
   ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
   ({ accountId: botId, pat: botPat } = await createAgent(app, adminToken, 'dirbot'));
 });
@@ -51,9 +60,10 @@ describe('directory surfaces', () => {
 
   it('GET /leases returns only unexpired leases', async () => {
     await pool.query(
-      `insert into active_lease (repo, path, actor_key_id, expires_at)
-       values ('r1','src/a.ts','k1', now() + interval '1 minute'),
-              ('r1','src/b.ts','k1', now() - interval '1 minute')`,
+      `insert into active_lease (repo, avcs_base_url, path, actor_key_id, expires_at)
+       values ('r1',$1,'src/a.ts','k1', now() + interval '1 minute'),
+              ('r1',$1,'src/b.ts','k1', now() - interval '1 minute')`,
+      [AVCS_URL],
     );
     const res = await app.inject({ method: 'GET', url: '/leases', headers: auth(botPat) });
     expect(res.json().leases).toEqual([
