@@ -19,6 +19,39 @@ Thank you for your interest in contributing to murmur! This document outlines th
 
 5. After CI is green, merge the PR with a merge commit (`gh pr merge <n> --merge --delete-branch`). This repository keeps the branch history rather than squashing.
 
+### Waiting for CI before merging
+
+"CI is green" means *every registered check has a terminal, successful conclusion*. If you
+automate this wait, two states are easy to misread as success — both have actually caused
+premature merges in this repository:
+
+**An empty check list is not success.** Right after a push, `statusCheckRollup` is `[]`
+because the workflows have not registered yet. Require `total > 0` before you look at
+whether anything is pending.
+
+**`conclusion` arrives as an empty string, not `null`.** A running check looks like this:
+
+```json
+{ "name": "check", "conclusion": "", "status": "IN_PROGRESS" }
+```
+
+So `jq`'s alternative operator does the wrong thing: `.conclusion // .status` yields `""`,
+because `//` only falls through on `null` and `false` — not on `""`. Test the emptiness
+explicitly:
+
+```sh
+gh pr view <n> --json statusCheckRollup --jq '
+  [ (.statusCheckRollup // [])[]
+    | { n: .name,
+        v: (if (.conclusion // "") == "" then (.status // "PENDING") else .conclusion end) } ]
+  | { total:   length,
+      pending: [ .[] | select(.v | test("^(PENDING|IN_PROGRESS|QUEUED|WAITING|REQUESTED)$")) ] | length,
+      bad:     [ .[] | select(.v | test("^(FAILURE|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE)$")) ] | length }'
+```
+
+Merge only when `total > 0 && pending == 0 && bad == 0`. `gh run watch <run-id> --exit-status`
+is a simpler alternative when you already know the run id.
+
 ## Commit Message Format
 
 Use the format: `type(scope): description (#issueNumber)`
