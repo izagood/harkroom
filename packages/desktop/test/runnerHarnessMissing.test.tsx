@@ -30,6 +30,7 @@ import {
   CREDENTIAL_REJECTED_LINE,
   EX_CONFIG,
   EXECUTABLE_NOT_FOUND_LINE,
+  HARNESS_LOGIN_REQUIRED_LINE,
   harnessBinaryName,
 } from '@murmur/shared';
 import {
@@ -130,6 +131,44 @@ const 자격증명거부꼬리 = [
   '  Murmur API 의 PAT 가 만료·폐기됐는지 확인해라.',
   CREDENTIAL_REJECTED_LINE,
 ];
+
+const 하네스로그인꼬리 = [
+  'Harness 자격증명을 해결할 수 없다. 러너를 멈춘다.',
+  '  claude-code harness 는 claude CLI 의 로그인을 쓴다 — `claude` 를 한 번 실행해 로그인해라.',
+  HARNESS_LOGIN_REQUIRED_LINE,
+];
+
+/**
+ * 2026-09-07 16:09 실측 — `#473` 과 **같은 결함이 자격증명 안에서** 되풀이됐다.
+ *
+ * forge 러너의 claude CLI 가 `Failed to authenticate: OAuth session expired` 로 죽었고,
+ * 78 의 자격증명 갈래가 하나뿐이어서 앱은 "PAT 가 폐기·회전됐다 — 재발급하면 다시 뜬다"를
+ * 띄웠다. 사람이 실제로 해야 할 일은 `claude` 재로그인이었고, 재발급 버튼을 눌러도
+ * 아무것도 낫지 않는다.
+ */
+describe('회귀선 4 — 하네스 로그인 만료를 PAT 문제로 말하지 않는다', () => {
+  it('78 + HARNESS_LOGIN_REQUIRED_LINE 이면 재발급을 말하지 않는다', async () => {
+    const { launcher, spawner } = await 띄운다(agent('a'));
+    spawner.exit(EX_CONFIG, 하네스로그인꼬리);
+
+    const state = launcher.getStates()[0]!;
+    expect(state.exitCode).toBe(EX_CONFIG);
+    expect(state.status).not.toBe('needs_reissue');
+    expect(state.message).not.toContain('재발급');
+    expect(state.message).not.toMatch(/PAT(?!H)/);
+  });
+
+  it('무엇을 해야 하는지 말한다 — 하네스 이름과 로그인', async () => {
+    const { launcher, spawner } = await 띄운다(agent('a'));
+    spawner.exit(EX_CONFIG, 하네스로그인꼬리);
+
+    const { message, status } = launcher.getStates()[0]!;
+    expect(status).toBe('needs_login');
+    // 이름을 말한다 — 에이전트마다 다르다(`claude-code` → `claude`, `codex` → `codex`).
+    expect(message).toContain('claude');
+    expect(message).toContain('로그인');
+  });
+});
 
 describe('회귀선 3 — 하네스 부재를 PAT 문제로 말하지 않는다', () => {
   /**
