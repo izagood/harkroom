@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Overlay } from './Overlay';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Identity } from './Identity';
 import { WaitChainSection } from './WaitChainSection';
 import type { InboxEntry } from '@murmur/shared';
 import { inboxRow, matchesFilter, type InboxFilter } from '../lib/inboxRow';
+import { INBOX_PANE_WIDTH, MIN_INBOX_PANE_WIDTH } from '../lib/prefs';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 
@@ -37,6 +37,46 @@ interface DraftItem {
 
 /**
  * 나를 부른 것을 모아 걸러 보는 표면(#185).
+ *
+ * ## 모달이 아니라 **자리**다 (#488 C2)
+ *
+ * 정본 문서(`docs/desktop-remaining-gaps.html` C2): *"지금은 채널 위에 뜨는 모달이라
+ * 스레드를 보면서 열어 둘 수 없다. **막는 말을 확인하면서 그 스레드를 여는 것이 기본
+ * 동작**인데, 모달이 그걸 막는다."*
+ *
+ * 그래서 `Overlay` 를 벗었다. 여는 입구는 그대로다 — 사이드바 홈 **맨 위 한 줄**
+ * (`docs/desktop-rail.html`). 바뀐 것은 **열린 뒤**다.
+ *
+ * ### 어느 축인가 — 채널의 왼쪽
+ *
+ * 스레드가 채널의 오른쪽에 서고, 터미널이 **이미 그 자리를 스레드와 다툰다**(`#141`).
+ * 인박스를 그쪽에 세우면 셋째 경쟁자가 되고, 그러면 문서가 요구한 "인박스와 스레드가
+ * 동시에 보인다"가 창 폭에 따라 참이 되었다 거짓이 된다.
+ *
+ * 왼쪽에 세우면 **읽는 순서가 일이 흐르는 순서와 같아진다**: 인박스(나를 막는 것) → 채널
+ * → 스레드(내가 답하는 곳). 인박스에서 줄을 눌러 스레드가 열릴 때, 그 스레드는 인박스의
+ * 반대쪽 끝에서 열린다 — 방금 누른 줄이 화면에서 밀려나지 않는다.
+ *
+ * ### Esc·닫기·포커스 — `Overlay` 가 주던 것을 무엇으로 대신했나
+ *
+ * | `Overlay` 가 주던 것 | 자리가 된 뒤 |
+ * |---|---|
+ * | 스크림 | **버린다.** 덮지 않는 것이 이 작업의 요지다. |
+ * | 바깥 클릭으로 닫기 | **버린다.** 자리는 옆에 선 것이라 "바깥"이 곧 채널·스레드다 — 스레드를 읽으려 누른 클릭이 인박스를 닫으면 문서가 말한 기본 동작이 불가능해진다. |
+ * | Esc | **남긴다**(아래 `useEffect`). 뜻이 "덮은 것을 걷는다"에서 "이 자리를 접는다"로 바뀐다 — `⌘\` 와 같은 종류다. |
+ * | `role="dialog"` + 이름 | `role="complementary"`(`<aside>`) + `aria-label`. 랜드마크로 남아 스크린리더가 이 자리를 찾을 수 있다. |
+ * | 포커스 트랩 | **일부러 두지 않는다.** 트랩은 정확히 이 작업이 걷어내려는 것이다(스레드로 탭해 갈 수 없게 된다). 대신 **열 때 포커스를 이 자리로 옮긴다** — 열었는데 포커스가 사이드바에 남아 있으면 키보드 사용자에게는 아무 일도 일어나지 않은 것이다. |
+ *
+ * 닫는 길은 둘이다: Esc 와 닫기 버튼. 버튼은 `<button>` 이라 탭 순서와 Enter/Space 를
+ * 브라우저에서 받는다.
+ *
+ * ### 좁은 창
+ *
+ * 새 수단을 만들지 않았다. `docs/desktop-rail.html` 이 값을 이미 적어 뒀고 —
+ * *"좁은 창에서는 레일만 남기고 패널을 접는 단계가 하나 더 필요하다"* — `Workspace` 가
+ * 그 단계를 `⌘\`(사이드바 접기)로 이미 얹었다. 인박스가 Esc 를 document 에서 받으므로
+ * **`⌘\` 를 삼키지 않는 것**이 여기서 지켜야 할 것이고, `inboxPane.test.tsx` 가 그것을
+ * 잰다. 폭이 0 으로 무너지지 않게 `MIN_INBOX_PANE_WIDTH` 를 깐다(그 상수의 주석).
  *
  * **서버 표면을 새로 만들지 않는다** — `GET /inbox` 가 이미 전체를 준다. 필터는 전부
  * 클라이언트에서 한다. 없던 것은 질의 능력이 아니라 목록 자체였다.
@@ -168,21 +208,81 @@ export function Inbox({ open, onClose }: Props) {
     return true;
   }), [draftItems, filter, channelFilter]);
 
+  /** 이 자리의 뿌리. 열 때 포커스를 옮기는 곳이고, Esc 가 자기 것인지 재는 기준이다. */
+  const paneRef = useRef<HTMLElement | null>(null);
+
+  /**
+   * **Esc 로 접는다** — `Overlay` 를 벗고도 잃지 않아야 하는 것(위 표).
+   *
+   * `Overlay` 와 **같은 방식으로** document 리스너를 쓴다. 그 파일의 주석이 이유를 이미
+   * 실측해 뒀다: 패널 `onKeyDown` 은 포커스가 패널 안에 있을 때만 도는 핸들러라, 목록의
+   * 한 줄을 누르고 나면 **조용히 죽는다.** 자리는 모달보다 그 위험이 크다 — 옆의 채널·
+   * 스레드를 읽는 동안 포커스는 늘 인박스 밖에 있다.
+   *
+   * ## 오버레이에 Esc 를 양보한다
+   *
+   * `Overlay` 는 열린 순서를 모듈 스코프 스택으로 들고 맨 위만 닫는다. 자리는 그 스택의
+   * 일부가 아니고 **되어서도 안 된다**(오버레이가 아니므로). 대신 규칙 하나로 충분하다 —
+   * **오버레이가 하나라도 떠 있으면 Esc 는 내 것이 아니다.** 자리는 늘 오버레이보다
+   * 아래에 있으므로 이 판정은 언제나 옳다. 이것을 빼면 인박스 위에 뜬 디렉터리를 닫으려
+   * 누른 Esc 가 **보고 있지 않은 인박스까지** 함께 접는다.
+   *
+   * 판정은 DOM 을 직접 본다(`[role="dialog"]`). `Overlay.tsx` 를 고쳐 스택을 내보내게
+   * 하는 쪽이 더 정확해 보이지만, 그러면 그 프리미티브가 **자기 사용자가 아닌 것**(자리)의
+   * 사정을 알게 된다. 지금 필요한 것은 "위에 무언가 떠 있나" 한 가지이고, 그것은 열린
+   * 다이얼로그의 존재로 정확히 관찰된다.
+   *
+   * **`⌘\` 를 삼키지 않는다.** Escape 하나만 본다 — 좁은 창에서 빠져나오는 길이 그
+   * 단축키이므로, 인박스가 열려 있는 동안 그것이 막히면 문서가 적어 둔 좁은 창 대책이
+   * 사라진다(`inboxPane.test.tsx` 가 잰다).
+   */
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return;
+      if (document.querySelector('[role="dialog"]')) return;
+      e.preventDefault();
+      onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  /**
+   * **열면 포커스가 이 자리로 들어온다.** 모달의 포커스 트랩을 대신하는 것이 이것이다 —
+   * 트랩은 두지 않는다(위 표: 트랩이 있으면 스레드로 탭해 갈 수 없고, 그것이 이 작업이
+   * 없애려던 제약 그 자체다).
+   *
+   * 뿌리에 포커스를 준다(`tabIndex={-1}`). 첫 번째 항목이 아닌 이유: 목록은 조회가 끝난
+   * 뒤에 채워지므로 열자마자는 줄이 없고, 있다 해도 첫 줄에 포커스를 박으면 **누르지도
+   * 않은 것을 고른 것처럼** 보인다. 뿌리에 두면 스크린리더가 구획 이름("인박스")부터
+   * 읽고, 탭 한 번으로 첫 손잡이에 닿는다.
+   */
+  useEffect(() => {
+    if (!open) return;
+    paneRef.current?.focus();
+  }, [open]);
+
   if (!open) return null;
 
   const openEntry = (e: InboxEntry): void => {
     // #178·#228 이 이미 만든 이동 경로다. 채널을 열고, 답글이면 스레드까지 열고, 강조를
     // 건다. 실패도 그 안에서 사람에게 보인다.
+    //
+    // **여기서 닫지 않는다**(#488 C2). 모달 시절에는 `onClose()` 가 붙어 있었는데, 그것이
+    // 문서가 지적한 결함의 절반이었다 — *"막는 말을 확인하면서 그 스레드를 여는 것이 기본
+    // 동작"* 인데 여는 순간 확인하던 목록이 사라졌다. 자리가 된 지금은 남는 것이 맞고,
+    // 남기 때문에 다음 줄로 바로 넘어갈 수 있다(막는 말이 하나뿐인 경우는 드물다).
     void getController().openMessage(e.messageId);
-    onClose();
   };
 
   const openDraft = (d: DraftItem): void => {
     // 스레드 초안의 scopeKey 에 든 rootId 는 **메시지 id 다.** 그래서 채널을 몰라도
     // openMessage 가 알아서 채널을 열고 스레드를 편다 — 새 이동 경로를 만들 이유가 없다.
+    //
+    // 초안도 `openEntry` 와 같은 이유로 닫지 않는다 — 쓰다 만 것이 여럿이면 하나씩 훑는다.
     if (d.threadRootId) void getController().openMessage(d.threadRootId);
     else void getController().openChannel(d.scopeKey);
-    onClose();
   };
 
   /**
@@ -292,12 +392,41 @@ export function Inbox({ open, onClose }: Props) {
   );
 
   return (
-    <Overlay label="인박스" onClose={onClose}>
+    <aside
+      ref={paneRef}
+      data-testid="inbox-pane"
+      /*
+        `<aside>` 는 `role="complementary"` 를 스스로 준다 — `role="dialog"` 를 잃은 자리를
+        메우는 랜드마크다(위 표). 이름을 함께 달아 스크린리더가 **무엇의** 구획인지 말한다.
+
+        `tabIndex={-1}`: 탭 순서에는 들어가지 않고 스크립트로만 포커스를 받는다(열 때 한 번).
+        `0` 으로 두면 채널·스레드를 오가는 탭 경로에 뜻 없는 정류장이 하나 생긴다.
+
+        폭은 **고정**이고 최소 폭을 깐다 — 근거는 `prefs.ts` 의 `INBOX_PANE_WIDTH` 주석
+        (끌 수 있는 손잡이는 고를 것이 있다는 뜻이고, 목록에는 고를 것이 없다).
+        `border-r` 은 오른쪽이다: 이 자리는 채널의 **왼쪽**이라 경계선도 그쪽에 선다
+        (스레드·터미널의 `border-l` 과 대칭이다).
+
+        `outline-none` 뒤에 `focus-visible` 을 두는 것은 앱 전체 규칙이다(규칙 03: 포커스
+        링은 시스템 파랑이 아니라 앱의 강조색). 뿌리가 포커스를 받는 것은 **여는 순간**뿐이라
+        평소에는 아무 링도 보이지 않는다.
+      */
+      tabIndex={-1}
+      aria-label="인박스"
+      style={{ width: INBOX_PANE_WIDTH, minWidth: MIN_INBOX_PANE_WIDTH }}
+      className="flex flex-col overflow-hidden border-r border-border bg-surface-raised text-sm
+                 text-fg outline-none focus-visible:outline-solid focus-visible:outline-2
+                 focus-visible:outline-accent focus-visible:-outline-offset-2"
+    >
         <div className="flex items-center gap-2 border-b border-border p-3">
           <span className="font-bold">Inbox</span>
+          {/* 닫는 길 둘 중 마우스의 몫. Esc 는 위 `useEffect` 가 진다 — 마우스만 쓰는
+              사람에게 Esc 는 없는 길이고, 자리에는 걷어낼 스크림도 없다. */}
           <button
             onClick={onClose}
-            className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover"
+            className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover
+                       focus-visible:outline-solid focus-visible:outline-2
+                       focus-visible:outline-accent"
             aria-label="인박스 닫기"
           >
             ✕
@@ -383,6 +512,6 @@ export function Inbox({ open, onClose }: Props) {
               : <ul>{shownDrafts.map(draftRow)}</ul>}
           </section>
         </div>
-    </Overlay>
+    </aside>
   );
 }

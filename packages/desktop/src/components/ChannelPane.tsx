@@ -175,7 +175,11 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   const channelPins = pins[activeChannelId] ?? [];
 
   return (
-    <div className="flex min-w-0 flex-1">
+    /* `data-testid` 는 **자리를 재는 회귀선**의 손잡이다(`inboxPane.test.tsx`). 인박스가
+       자리가 되면서 한 가로줄에 서는 형제가 셋(인박스·채널·스레드)이 되었고, "누가 누구의
+       왼쪽인가"를 잴 방법이 필요해졌다 — 글자(`#general` 같은 제목)로 잡으면 채널 이름이
+       바뀔 때마다 그 회귀선이 함께 흔들린다. */
+    <div data-testid="channel-pane" className="flex min-w-0 flex-1">
     <main className="flex min-w-0 flex-1 flex-col bg-surface-raised">
       <header className="flex items-center gap-2 border-b border-border px-4 py-2">
         <span className="font-bold">{title}</span>
