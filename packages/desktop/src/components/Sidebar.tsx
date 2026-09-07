@@ -743,7 +743,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
     // 격자와 같은 판정이다: `failed` 와 `needs_harness` 만 사유를 글자로 펼친다.
     // `needs_reissue` 가 빠진 이유는 `RunnerStatusDot` 주석에 있다(재발급 버튼이 화면에
     // 서므로 다음 행동이 문구 없이도 드러난다).
-    const reason = runner && (runner.status === 'failed' || runner.status === 'needs_harness')
+    const reason = runner && (runner.status === 'failed' || runner.status === 'needs_harness' || runner.status === 'needs_login')
       ? runner.message
       : null;
     // 색은 스크린리더에 아무 말도 하지 않는다(`#443`). 아바타 한 칸에 상태를 실었으므로
@@ -804,8 +804,8 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
         {reason && (
           <span data-testid={`runner-reason-${dm.agentId}`}
             className={`whitespace-normal text-left text-[10px] ${
-              runner?.status === 'needs_harness' ? 'text-warning' : 'text-danger'}`}>
-            {runner?.status === 'needs_harness' ? reason : `기동 실패 — ${reason}`}
+              runner?.status === 'needs_harness' || runner?.status === 'needs_login' ? 'text-warning' : 'text-danger'}`}>
+            {runner?.status === 'needs_harness' || runner?.status === 'needs_login' ? reason : `기동 실패 — ${reason}`}
           </span>
         )}
       </button>

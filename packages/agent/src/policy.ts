@@ -77,7 +77,41 @@ const HARNESS_CREDENTIAL_PATTERNS = [
   /couldnotresolveauthentication/i,
   /x-api-key/i,
   /authentication_error/i,
+  // 2026-09-07 16:06 실측(forge 러너): claude CLI 가 실제로 낸 문구는
+  // `Failed to authenticate: OAuth session expired and could not be refreshed` 였다.
+  // 위 셋 어디에도 걸리지 않아 러너는 이것을 일시 실패로 보고 3회 재시도를 태운 뒤
+  // "(답변에 실패했습니다 — 운영자 확인이 필요합니다)"만 남겼다 — 정작 필요한 일은
+  // `claude` 재로그인 하나였고, 화면은 그것을 말하지 않았다.
+  //
+  // 두 조각으로 나눈 이유: CLI 문구는 판본마다 조금씩 바뀐다. `failedtoauthenticate` 는
+  // 원인을 안 밝히는 판본까지 잡고, `oauthsessionexpired` 는 접두어가 바뀐 판본을 잡는다.
+  /failedtoauthenticate/i,
+  /oauthsessionexpired/i,
 ];
+
+/**
+ * 사용량 한도(2026-09-07 16:05 실측: `You've hit your session limit · resets 4:10pm
+ * (Asia/Seoul)`).
+ *
+ * **자격증명 실패가 아니다.** 로그인은 멀쩡하고 시간이 지나면 낫는다. 그런데 재시도로도
+ * 낫지 않는다 — 3회가 5초 안에 끝나므로 한도가 풀릴 리 없다. 두 갈래(영구 실패 / 재시도로
+ * 낫는 실패) 어디에도 맞지 않아 세 번째 갈래가 필요하다.
+ *
+ * 시각을 함께 돌려주는 이유: "한도에 걸렸다"만으로는 사람이 언제 다시 부를지 모른다.
+ * 못 읽으면 `null` 이고, 그때도 한도라는 사실은 돌려준다 — 사실이 시각보다 크다.
+ *
+ * 시각을 **파싱하지 않고 문자열로 두는** 이유: CLI 가 이미 사람이 읽는 형식으로
+ * (그리고 사람의 시간대로) 적어 줬다. 우리가 Date 로 만들면 시간대를 다시 정해야 하고,
+ * 그 판단은 여기서 할 수 있는 것이 아니다.
+ */
+export function isQuotaExhausted(err: unknown): { resetsAt: string | null } | null {
+  const text = err instanceof Error ? err.message : String(err ?? '');
+  const squashed = text.replace(/\s+/g, '').toLowerCase();
+  // `You've` 의 아포스트로피는 판본·터미널에 따라 `'` 와 `’` 가 다 나오므로 뺀 채로 본다.
+  if (!/hityour(session|usage)limit/i.test(squashed.replace(/['’]/g, ''))) return null;
+  const resets = /resets\s+([^\n]+?)\s*$/i.exec(text.trim());
+  return { resetsAt: resets ? resets[1]!.trim() : null };
+}
 
 /**
  * 운영자가 개입해야 하는 실패인가(자격증명). 재시도로 낫지 않으므로 러너는 즉시 크게 실패해야

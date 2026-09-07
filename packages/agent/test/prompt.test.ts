@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, countOwnPostsSince, hasOwnPostSince, hasOwnWakeSince , type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, quotaNotice, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -276,5 +276,37 @@ describe('메모리 주입 (#139)', () => {
 
   it('slug 도 이스케이프된다', () => {
     expect(build({ core: null, slugs: ['mem/<script>'] })).toContain('&lt;script&gt;'.replace('&gt;', '>'));
+  });
+});
+
+/**
+ * 2026-09-07 16:06·16:09 — 사용자의 말: *"그럼 다시 로그인 할 수 있게 알려줬어야지"*.
+ *
+ * 그때 스레드에 남은 것은 `FAILURE_NOTICE`("운영자 확인이 필요합니다") 두 줄이었다.
+ * 러너 로그에는 "`claude` 를 한 번 실행해 로그인해라"가 이미 있었지만, 사람이 보고 있던
+ * 곳은 스레드다. **사람이 보는 자리에 실행 가능한 말이 있어야 한다.**
+ */
+describe('자격증명·한도 통지 (사람이 보는 자리)', () => {
+  it('하네스 로그인 만료는 실행할 명령을 말한다', () => {
+    const n = harnessLoginNotice('claude');
+    expect(n).toContain('claude');
+    expect(n).toContain('로그인');
+    // 재발급은 다른 문제다 — 섞으면 사람이 틀린 일을 한다(#473 의 교훈).
+    expect(n).not.toContain('재발급');
+  });
+
+  it('하네스 이름을 모르면 지어내지 않는다', () => {
+    expect(harnessLoginNotice(null)).toContain('로그인');
+    expect(harnessLoginNotice(null)).not.toContain('claude');
+  });
+
+  it('사용량 한도는 풀리는 시각을 말한다 — 사람이 할 일은 기다리는 것뿐이다', () => {
+    const n = quotaNotice('4:10pm (Asia/Seoul)');
+    expect(n).toContain('4:10pm (Asia/Seoul)');
+    expect(n).not.toContain('로그인');
+  });
+
+  it('시각을 모르면 한도라는 사실만 말한다', () => {
+    expect(quotaNotice(null)).toContain('한도');
   });
 });

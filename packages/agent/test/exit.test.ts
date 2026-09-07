@@ -6,7 +6,7 @@
  * 아니면 앱은 "그냥 죽었다"와 구분할 수 없고, 사람에게 "재발급하면 다시 뜬다"를 말할 수 없다.
  */
 import { describe, it, expect } from 'vitest';
-import { CREDENTIAL_REJECTED_LINE, EX_CONFIG, EXECUTABLE_NOT_FOUND_LINE, runnerExitPlan } from '../src/exit.js';
+import { CREDENTIAL_REJECTED_LINE, EX_CONFIG, EXECUTABLE_NOT_FOUND_LINE, HARNESS_LOGIN_REQUIRED_LINE, runnerExitPlan } from '../src/exit.js';
 import { ExecutableNotFoundError, MURMUR_ERROR_SOURCE } from '../src/policy.js';
 
 const murmurErr = (status: number) =>
@@ -34,6 +34,19 @@ describe('자격증명 실패는 78 로 물러난다', () => {
   it('murmur PAT 문제와 하네스 로그인 문제를 다르게 안내한다 — 볼 곳이 다르다', () => {
     expect(runnerExitPlan(murmurErr(401))!.lines.join('\n')).toContain('MURMUR_PAT');
     expect(runnerExitPlan(new Error('x-api-key'))!.lines.join('\n')).toContain('claude CLI');
+  });
+
+  /**
+   * 2026-09-07 16:09: 하네스 로그인이 풀린 러너가 `CREDENTIAL_REJECTED_LINE` 을 냈고,
+   * 앱은 그 마커를 보고 "PAT 가 폐기·회전됐다 — 재발급하면 다시 뜬다"를 띄웠다. 사람이
+   * 실제로 해야 할 일은 `claude` 재로그인이었다. 안내문(위 테스트)은 이미 갈라져
+   * 있었지만 **앱이 읽는 마커가 하나**여서 그 구분이 러너 로그 안에서 끝났다.
+   */
+  it('하네스 로그인 실패는 murmur PAT 와 다른 마커를 낸다 — 앱이 읽는 것은 마커뿐이다', () => {
+    const plan = runnerExitPlan(new Error('Failed to authenticate: OAuth session expired and could not be refreshed'));
+    expect(plan?.code).toBe(78);
+    expect(plan!.lines.at(-1)).toBe(HARNESS_LOGIN_REQUIRED_LINE);
+    expect(plan!.lines.at(-1)).not.toBe(CREDENTIAL_REJECTED_LINE);
   });
 
   it('앱이 띄운 러너에게는 재발급 버튼을 가리킨다 — 환경변수를 손으로 바꾸라는 안내만으로는 길이 없다', () => {
@@ -97,7 +110,12 @@ describe('#340 하네스 실행 파일 부재는 78 로 물러난다', () => {
   it('자격증명 실패는 그대로 자격증명 안내로 간다', () => {
     const plan = runnerExitPlan(new Error('could not resolve authentication'))!;
     expect(plan.code).toBe(EX_CONFIG);
-    expect(plan.lines.at(-1)).toBe(CREDENTIAL_REJECTED_LINE);
+    // 2026-09-07: 이 단정의 **마커가 바뀌었다.** 하네스 자격증명 실패는 이제
+    // `HARNESS_LOGIN_REQUIRED_LINE` 을 낸다 — 앱이 "PAT 재발급"과 "claude 재로그인"을
+    // 가르려면 마커가 갈라져야 한다(그 상수의 주석 참고). 이 테스트의 취지는 그대로다:
+    // 자격증명 실패가 **하네스 부재 갈래로 새지 않는다**.
+    expect(plan.lines.at(-1)).toBe(HARNESS_LOGIN_REQUIRED_LINE);
     expect(plan.lines.join('\n')).not.toContain(EXECUTABLE_NOT_FOUND_LINE);
+    expect(plan.lines.join('\n')).not.toContain(CREDENTIAL_REJECTED_LINE);
   });
 });

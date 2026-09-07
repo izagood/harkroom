@@ -26,10 +26,11 @@ import { SessionStore } from './sessions.js';
 import { resolveAgentStateDir } from './stateDir.js';
 import { assertHarnessContract, writeMcpConfigOnce } from './turn.js';
 import type { Exec } from './workspace.js';
-import { exhausted, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
+import { exhausted, isCredentialFailure, isQuotaExhausted, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
+import { harnessBinaryName } from '@murmur/shared';
 import { runnerExitPlan } from './exit.js';
 import { stopRequestedForRunner } from './stop.js';
-import { controlledNotice, FAILURE_NOTICE } from './prompt.js';
+import { controlledNotice, FAILURE_NOTICE, harnessLoginNotice, quotaNotice } from './prompt.js';
 import { createRelayClient } from './relay.js';
 import { createInteractiveManager, type InteractiveManager } from './interactiveTurn.js';
 import { TurnRegistry } from './turnRegistry.js';
@@ -89,6 +90,37 @@ function exitIfUnrecoverable(err: unknown): void {
   if (!plan) return;
   for (const line of plan.lines) console.error(line);
   process.exit(plan.code);
+}
+
+/**
+ * 하네스 로그인이 풀린 실패를 **사람이 보는 자리에** 남긴다(2026-09-07).
+ *
+ * 왜 러너 로그로 충분하지 않았나: 그날 forge 의 claude 로그인이 만료됐고 러너 로그에는
+ * "`claude` 를 한 번 실행해 로그인해라"가 이미 있었다. 그런데 사람이 보고 있던 곳은
+ * 스레드였고, 거기 남은 것은 "(답변에 실패했습니다 — 운영자 확인이 필요합니다)" 두
+ * 줄이었다. 사용자의 말이 그것이다: *"그럼 다시 로그인 할 수 있게 알려줬어야지"*.
+ *
+ * **함수로 뽑은 이유**: 이 통지는 `exitIfUnrecoverable` 바로 앞에 서야 하고
+ * (그 함수가 `process.exit` 을 부른다), 호출부에 열 줄 넘게 펼치면 판정과 그 자리가
+ * 멀어진다 — `mainCredentialSites.test.ts` 가 "판정이 그 자리에 붙어 있는가"를 재고,
+ * 그 회귀선이 실제로 이 변경을 잡았다.
+ *
+ * 던지지 않는다: 통지 실패로 물러남을 막으면 안 된다. 78 로 죽는 것이 앱이 상태를
+ * 갱신하는 유일한 계약이고(`exit.ts` 주석), 그 계약이 통지 성공에 매달릴 이유가 없다.
+ */
+async function noticeIfHarnessLogin(
+  err: unknown, channelId: string, anchor: string, messageId: string,
+): Promise<void> {
+  if (isCredentialFailure(err) !== 'harness-credential') return;
+  try {
+    // 하네스 이름은 정의에서 읽는다 — 지어내지 않는다(#368). 사람이 실행할 명령이
+    // 에이전트마다 다르므로(`claude-code` → `claude`) 이름이 없으면 문구가 명령을 뺀다.
+    const def = await murmur.definition();
+    await murmur.post(channelId, harnessLoginNotice(harnessBinaryName(def.harness)), anchor);
+  } catch (notifyErr) {
+    console.error(`  ${messageId} 로그인 통지 발화 실패(물러남은 계속):`,
+      notifyErr instanceof Error ? notifyErr.message : notifyErr);
+  }
 }
 
 /**
@@ -344,7 +376,32 @@ while (running) {
         // `failed`·`attempts`·`FAILURE_NOTICE` 는 아래 한 줄부터 시작한다. 조용히 반복하면
         // "왜 답이 없지"의 원인이 묻힌다: 자격증명 실패는 폐기된 PAT 로 무한 재시도하고(#250),
         // 하네스 실행 파일 부재는 멘션 MAX_ATTEMPTS 건을 태운 뒤에야 흔적을 남긴다(#340).
+        // 물러나기 **전에** 사람이 보는 자리에 말한다(2026-09-07) — 아래 판정은
+        // `process.exit` 을 부르므로 순서가 계약이다.
+        await noticeIfHarnessLogin(err, mention.channelId, anchor, entry.messageId);
         exitIfUnrecoverable(err);
+
+        // 사용량 한도(2026-09-07 16:05 실측: `You've hit your session limit · resets 4:10pm`).
+        // **재시도 회계에 넣지 않는다.** 3회가 5초 안에 끝나므로 한도가 풀릴 리 없고,
+        // 태운 끝에 남는 "(답변에 실패했습니다 — 운영자 확인이 필요합니다)"는 사람이
+        // 할 일을 잘못 가리킨다 — 여기서 할 일은 **기다리는 것**뿐이다.
+        //
+        // 자격증명과 달리 러너는 물러나지 않는다: 로그인은 멀쩡하고, 한도가 풀리면 다음
+        // 멘션이 그대로 돌아간다.
+        const quota = isQuotaExhausted(err);
+        if (quota) {
+          console.error(`  ${entry.messageId} 사용량 한도 — 재시도하지 않는다 (풀림: ${quota.resetsAt ?? '알 수 없음'})`);
+          try {
+            await murmur.post(mention.channelId, quotaNotice(quota.resetsAt), anchor);
+          } catch (notifyErr) {
+            console.error(`  ${entry.messageId} 한도 통지 발화 실패(읽음 처리 계속):`,
+              notifyErr instanceof Error ? notifyErr.message : notifyErr);
+          }
+          done.push(entry.id);
+          attempts.delete(entry.id);
+          continue;
+        }
+
         failed = true;
         console.error(`  ${entry.messageId} 답변 실패 (${tried}/${MAX_ATTEMPTS}):`,
           err instanceof Error ? err.message : err);

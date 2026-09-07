@@ -97,6 +97,12 @@ export type RunnerStatus =
   | 'adopted'
   | 'needs_reissue'
   | 'needs_harness'
+  /**
+   * 하네스 **로그인**이 풀렸다(2026-09-07). `needs_reissue` 와 갈라야 하는 이유: 그 상태는
+   * 화면에 PAT 재발급 버튼을 세우는데, 여기서 사람이 할 일은 터미널에서 `claude` 를 한 번
+   * 실행하는 것이다. 버튼을 눌러도 낫지 않는 일을 시키지 않는다(`#473` 과 같은 결).
+   */
+  | 'needs_login'
   | 'failed';
 
 export interface RunnerState {
@@ -899,6 +905,19 @@ function exitStateFor78(
       // 러너가 로그에 적은 것(넘긴 PATH 원문 등)이 그대로 뒤에 붙는다 — 앱이 다시
       // 설명하지 않고 러너가 한 말을 보인다(`#368`).
       message: `${what} 를 찾을 수 없다 — 설치하고 PATH 에 있는지 확인하라${hint ? `. ${hint}` : ''}`,
+    };
+  }
+
+  if (reason === 'harness-login-required') {
+    // **이름을 말하고, 무엇을 하는지 말한다**(`#473`·`#476` 과 같은 규율). "자격증명을
+    // 확인하라"로는 사람이 어디를 볼지 모른다 — 실제로 필요한 것은 한 줄짜리 명령이다.
+    const binary = harnessBinaryName(agent.harness);
+    const what = binary ? `\`${binary}\`` : `이 에이전트의 하네스(${agent.harness ?? '알 수 없음'})`;
+    return {
+      status: 'needs_login',
+      message: binary
+        ? `${what} 로그인이 풀렸다 — 터미널에서 \`${binary}\` 를 실행해 다시 로그인하면 살아난다`
+        : `${what} 의 로그인이 풀렸다 — 그 CLI 로 다시 로그인해라`,
     };
   }
 
