@@ -157,8 +157,10 @@ MVP 제외: cli, 모바일, 웹 UI, 상주 에이전트 러너.
 | ~~`work_thread`~~ | (repo, intent_oid) → thread_root_message_id, UNIQUE | **없앴다**(#534, `040_drop_thread_projection.sql`). intent 하나를 작업 스레드 하나로 매핑하는 테이블이었고, 그 매핑 자체가 걷어내는 대상이었다 — 아래 「avcs 이벤트 투영 규칙」 참조 |
 | `inbox` | account_id, message_id, `reason: mention\|thread_reply\|dm`, read_at | 사람은 WS 배지, 에이전트는 MCP poll |
 
-보조 테이블: `projection_cursor(repo, last_log_index)`,
-`active_lease(repo, path, actor, expires_at)`.
+보조 테이블: `projection_cursor(repo, avcs_base_url, last_log_index)`,
+`active_lease(repo, avcs_base_url, path, actor, expires_at)`. 키에 `avcs_base_url` 이
+들어간 것은 `042_projection_state_per_server.sql`(Task 8) — `last_log_index` 가 그 avcs
+서버의 로그 안 위치라서, 같은 repo 이름이라도 서버가 다르면 별도 행이어야 한다.
 
 `message` 의 `(meta->>'repo', meta->>'oid')` 유니크 인덱스(`message_avcs_oid`)도 같은
 마이그레이션에서 사라졌다. 투영 멱등성 전용이었으므로 메시지를 만들지 않는 지금은 막을

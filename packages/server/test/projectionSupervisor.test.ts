@@ -22,6 +22,14 @@ interface Fake {
   stopped: boolean;
   connected: boolean;
   stopCalls: number;
+  /**
+   * 이 워커가 받은 `baseUrl`(`ProjectionDeps.baseUrl`). `swap()` 이 `this.url`(교체 **전**
+   * 값)을 실수로 넘기면 A→B 전환에서 새 워커가 옛 URL 아래 커서·리스를 쓰게 된다 —
+   * `/leases`·게이지는 새 URL 로 거르므로 ACTIVE WORK 가 영구히 비고 새 URL 행은 생기지도
+   * 않는다(방금 고친 결함의 거울상). `_deps` 를 버리던 예전 harness 는 이 배선을 전혀
+   * 보지 못했다.
+   */
+  baseUrl: string;
 }
 
 /** 가짜 워커 + 만들어진 순서 기록. `stop()` 의 완료 시점을 시험이 쥔다. */
@@ -31,8 +39,8 @@ function harness(opts: { stopHangs?: boolean } = {}) {
 
   const makeClient = (baseUrl: string): AvcsServerClient => { urls.push(baseUrl); return client; };
 
-  const makeWorker = (_deps: ProjectionDeps): ProjectionWorker => {
-    const f: Fake = { started: false, stopped: false, connected: false, stopCalls: 0 };
+  const makeWorker = (deps: ProjectionDeps): ProjectionWorker => {
+    const f: Fake = { started: false, stopped: false, connected: false, stopCalls: 0, baseUrl: deps.baseUrl };
     made.push(f);
     return {
       start: () => { f.started = true; },
@@ -62,6 +70,37 @@ describe('ProjectionSupervisor', () => {
     expect(h.made[0]?.started).toBe(true);
     expect(h.urls).toEqual(['http://a']);
     expect(h.sup.status().configured).toBe(true);
+    // 워커가 자기 행을 찾으려면 자기가 보고 있는 서버를 알아야 한다(ProjectionDeps.baseUrl).
+    expect(h.made[0]?.baseUrl).toBe('http://a');
+    expect(h.sup.currentUrl()).toBe('http://a');
+  });
+
+  /**
+   * **Important A 회귀선.** 되돌리기 실험: `supervisor.ts` 의 `swap()` 에서
+   * `baseUrl: url`(교체 **후** 값)을 `baseUrl: this.url`(교체 **전** 값)로 바꾼다 — A→B
+   * 전환에서 새 워커가 옛 URL(A) 아래 커서·리스를 쓰게 되는데, `/leases`·커서 게이지는
+   * 새 URL(B)로 거르므로 ACTIVE WORK 가 영구히 비고 B 의 커서 행은 생기지도 않는다.
+   * 방금 고친 결함의 거울상이 재현되지만, `this.url`(스왑 전)과 인자 `url`(스왑 후)이
+   * 같은 값이 되는 단일 URL 시나리오(위 테스트들)는 이 차이를 가르지 못한다 — 반드시
+   * A→B 처럼 **둘이 다른** 전환에서 새 워커가 받은 `baseUrl` 이 새 URL 과 같은지 봐야 한다.
+   */
+  it('교체된 새 워커는 새 URL 을 baseUrl 로 받는다 (옛 URL 이 아니다)', async () => {
+    const h = harness();
+    await h.sup.reconfigure('http://a');
+    await h.sup.reconfigure('http://b');
+
+    expect(h.made).toHaveLength(2);
+    expect(h.made[0]?.baseUrl).toBe('http://a');
+    expect(h.made[1]?.baseUrl).toBe('http://b'); // this.url(교체 전) 이 아니라 새 URL
+    expect(h.sup.currentUrl()).toBe('http://b');
+
+    await h.sup.reconfigure(null);
+    expect(h.sup.currentUrl()).toBeNull();
+
+    await h.sup.reconfigure('http://c');
+    expect(h.sup.currentUrl()).toBe('http://c');
+    await h.sup.stop();
+    expect(h.sup.currentUrl()).toBeNull();
   });
 
   /** 워커가 없다는 것이 곧 '설정되지 않았다' 다 — 그 답을 supervisor 가 대신한다. */

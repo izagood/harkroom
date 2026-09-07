@@ -94,9 +94,10 @@ export class ProjectionWorker {
    * 투영한 것의 수가 아니다 — 대부분의 엔트리는 lease 가 아니라서 아무것도 남기지 않는다.
    *
    * 채널 인자를 받지 않는다. 예전에는 이 자리에서 메시지를 만들었기 때문에 어느 채널에
-   * 넣을지 알아야 했지만, `active_lease` 는 `(repo, path, actor_key_id)` 로만 키가 잡힌다.
-   * 채널을 계속 받으면 "repo 는 채널 하나에만 바인딩된다"는 제약이 필요 없어진 뒤에도
-   * 인자에 남아, 읽는 사람에게 lease 가 채널에 속한 것처럼 보인다.
+   * 넣을지 알아야 했지만, `active_lease` 는 `(repo, avcs_base_url, path, actor_key_id)` 로
+   * 키가 잡힌다(042) — 채널이 아니라 이 워커가 보고 있는 서버로 스코프된다. 채널을 계속
+   * 받으면 "repo 는 채널 하나에만 바인딩된다"는 제약이 필요 없어진 뒤에도 인자에 남아,
+   * 읽는 사람에게 lease 가 채널에 속한 것처럼 보인다.
    */
   async runOnce(repo: string): Promise<number> {
     const { pool, avcs, baseUrl } = this.deps;

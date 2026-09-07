@@ -1302,6 +1302,28 @@ export interface ResolvedProjectionUrl {
 }
 
 /**
+ * 투영 URL 의 **표준형**. 이 값이 `projection_cursor`·`active_lease` 의 키가 되므로
+ * (마이그레이션 042) 겉보기만 다른 두 문자열이 서로 다른 행을 뜻하면 안 된다 — 그러면
+ * 오타가 아닌 저장 한 번이 전재스캔과 그 사이의 빈 `/leases` 를 만든다.
+ *
+ * `httpAvcsClient` 의 슬래시 자르기와 다른 관심사다: 그것은 요청 URL 조립의 방어선이고
+ * 이것은 저장되는 키의 표준형이다.
+ *
+ * `new URL` 이 스킴·호스트 소문자화와 기본 포트 접기를 해 준다. 후행 슬래시는 오히려
+ * `pathname` 에 `'/'` 로 채워 넣으므로 직접 자른다. 경로 대소문자는 손대지 않는다 —
+ * 경로는 실제로 대소문자를 구분한다. 호스트의 후행 점도 자르지 않는다(그 나름의 함정이 있다).
+ */
+export function canonicalAvcsBaseUrl(raw: string): string | null {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * env 와 앱 설정 중 **무엇으로 투영을 돌리는가**.
  *
  * 앱(DB)이 이긴다. env 는 앱 값이 없을 때만 쓰는 기본값이다. 이 판정이 서버(부팅·재설정)와
@@ -1309,12 +1331,20 @@ export interface ResolvedProjectionUrl {
  * 여기 둔 것과 같은 이유다.
  *
  * 빈 문자열을 값으로 세지 않는다. 세면 지우기와 오타 저장이 같은 값이 된다.
+ *
+ * **돌려주는 `url` 은 표준형이다.** URL 이 (repo 와 함께) DB 키가 된 지금(042), env 든
+ * 앱이든 여기를 거치지 않고 `baseUrl` 로 흘러가는 값이 없어야 한다 — 한쪽만 표준화하면
+ * `AVCS_BASE_URL=http://a:3000/` 로 뜬 서버와 앱에서 `http://a:3000` 을 저장한 서버가
+ * 여전히 다른 행을 쓴다. 표준형이 `null` 이면(값이 URL 형태가 아니면) 그 출처는 값이
+ * 없는 것으로 취급하고 다음 출처로 떨어진다.
  */
 export function resolveProjectionUrl(
   envUrl: string | null, appUrl: string | null,
 ): ResolvedProjectionUrl {
-  if (appUrl) return { url: appUrl, source: 'app' };
-  if (envUrl) return { url: envUrl, source: 'env' };
+  const app = appUrl ? canonicalAvcsBaseUrl(appUrl) : null;
+  if (app) return { url: app, source: 'app' };
+  const env = envUrl ? canonicalAvcsBaseUrl(envUrl) : null;
+  if (env) return { url: env, source: 'env' };
   return { url: null, source: null };
 }
 
