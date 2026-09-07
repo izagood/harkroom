@@ -59,17 +59,31 @@ const TONE: Record<RunnerStatus, string> = {
   failed: 'text-danger',
 };
 
-/** 사이드바의 점. presence 점과 **다른 사실**이라 나란히 산다(Sidebar 의 주석 참고). */
-const DOT: Record<RunnerStatus, string> = {
-  running: 'bg-success',
-  adopted: 'bg-accent',
-  needs_reissue: 'bg-warning',
-  needs_harness: 'bg-warning',
-  needs_login: 'bg-warning',
-  restarting: 'bg-accent',
-  stopped: 'bg-fg-subtle',
-  failed: 'bg-danger',
-};
+/**
+ * **어떤 상태가 사유를 글자로 받는가.**
+ *
+ * ## 이 판정이 여기 있는 이유 (`docs/desktop-rail.html` 3단계)
+ *
+ * `RunnerStatusDot`(사이드바의 네모난 점)이 이 목록을 들고 있었고, 3단계가 에이전트 칸을
+ * 얼굴 그리드로 바꾸면서 그 컴포넌트의 마지막 호출자가 사라져 **함께 지웠다**. 목록은
+ * 남는다 — `dmRow` 가 그것을 보고 있고, 지우면 그 자리가 같은 표를 제 손으로 다시 적는다.
+ *
+ * ## 넷 중 셋이다
+ *
+ * `failed`·`needs_harness`·`needs_login` 이 사유를 받고 **`needs_reissue` 는 빠진다.**
+ * 그쪽은 화면에 재발급 버튼이 서므로 다음 행동이 문구 없이도 드러난다. 나머지 셋은
+ * 사람이 할 일이 **문구에만** 있다 — 어느 실행 파일을 설치할지(`#473`), 어디에 다시
+ * 로그인할지는 색으로 말할 수 없다.
+ *
+ * `#368` 이 세운 규율이 이 함수의 전제다: *"사유가 title 툴팁에만 있으면 사람은 그것을
+ * 찾지 못한다."* 그래서 이것을 부르는 자리는 반드시 **보이는 글자**로 펼친다.
+ */
+export function runnerReason(state: RunnerState | undefined): string | null {
+  if (!state) return null;
+  return state.status === 'failed' || state.status === 'needs_harness' || state.status === 'needs_login'
+    ? state.message
+    : null;
+}
 
 export function RunnerStatusLine({ state }: { state: RunnerState | undefined }) {
   const label = runnerStatusLabel(state);
@@ -84,34 +98,15 @@ export function RunnerStatusLine({ state }: { state: RunnerState | undefined }) 
   );
 }
 
-export function RunnerStatusDot({ state, agentId }: { state: RunnerState | undefined; agentId: string }) {
-  // 상태를 모르면 아무것도 그리지 않는다 — '알 수 없음'을 '꺼짐'으로 읽으면 사람이
-  // 아무 일도 안 하지만 러너는 이미 떠 있을 수 있다. 알고 있는 사실만 말한다.
-  if (!state) return null;
-  // failed 면 점 옆에 `!` 를 세우고 사유를 `title` 에 싣는다(#368). 이 자리는 목록 한 줄
-  // 안이라 문구를 통째로 펼칠 폭이 없다 — **사유 전문을 읽는 자리는 따로 있다**: 채널의
-  // 실패 줄(ChannelPane)과 사이드바 Agents 섹션이 같은 `state.message` 를 글자로 펼친다.
-  // 점 하나만 두지 않는 이유는 색이 스크린리더에 아무 말도 하지 않기 때문이다.
-  // `needs_harness` 도 여기 든다(`#473`) — 사람이 **할 일이 있는** 상태이고, 그 할 일이
-  // 무엇인지는 문구에만 있다(어느 실행 파일을 설치할지). 점 색만 보이면 그 사람은
-  // 여전히 무엇을 설치할지 모른다. `needs_reissue` 는 빠져 있다 — 그쪽은 화면에 재발급
-  // 버튼이 서므로 다음 행동이 문구 없이도 드러난다.
-  const message =
-    state.status === 'failed' || state.status === 'needs_harness' || state.status === 'needs_login'
-      ? state.message : null;
-  return (
-    <>
-      <span
-        data-testid={`runner-${agentId}`}
-        data-runner-status={state.status}
-        title={`러너: ${runnerStatusLabel(state)}${message ? ` — ${message}` : ''}`}
-        className={`h-2 w-2 rounded-sm ${DOT[state.status]}`}
-      />
-      {message && (
-        <span className="text-[10px] text-danger" title={message}>
-          !
-        </span>
-      )}
-    </>
-  );
-}
+/*
+ * **`RunnerStatusDot` 이 여기 있었다** — 지웠다(`docs/desktop-rail.html` 3단계).
+ *
+ * 사이드바 목록 한 줄 안의 네모난 점 + `!` 였고, 마지막 호출자는 에이전트 칸의 목록이었다.
+ * 3단계가 그 칸을 얼굴 그리드로 바꾸면서 러너 상태를 말하는 것이 **아바타 하나**가 됐다
+ * (`lib/faceState.ts`) — B1 의 요구가 그것이다: *"점은 사람에게만 남고 … 상태를 아바타가
+ * 말하게 한다."* 호출자가 없어진 컴포넌트를 남겨 두면 다음 사람이 그것을 새 자리에 세워
+ * B1 이 없앤 다섯 번째 어휘를 되살린다(design.md §4: 닿지 않는 것을 남기지 않는다).
+ *
+ * **들고 있던 판정은 잃지 않았다**: 어떤 상태가 사유를 글자로 받는지는 위
+ * `runnerReason` 이 이어받았고, `needs_reissue` 가 빠지는 이유도 그 주석에 있다.
+ */

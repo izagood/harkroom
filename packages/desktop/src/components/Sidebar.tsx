@@ -11,12 +11,16 @@ import { Menu } from './Menu';
 // `StatusMark` 도 남는다 — presence 와 다른 사실이라 아바타가 대신할 수 없다.
 import { Identity, StatusMark } from './Identity';
 import type { RailPanel } from './Rail';
-// `RunnerStatusDot` 은 **DM 줄에서 빠지고 에이전트 칸에만 남았다.** 그 네모난 점이
-// 에이전트에만 붙어서 "줄만 봐도 누가 에이전트인지 알 수 있다"를 만들고 있었다
-// (`dmRow` 주석의 표). 에이전트 칸은 전부 에이전트라 그 문제가 없다 — 거기서는 종류를
-// 드러내는 표시가 아니라 그냥 상태 표시다.
+// `RunnerStatusDot` 이 **앱에서 완전히 사라졌다**(`docs/desktop-rail.html` 3단계).
+// 2단계에서 DM 줄에서 빠지고 에이전트 칸에만 남아 있었는데, 3단계가 그 칸을 얼굴 그리드로
+// 바꾸면서 **마지막 호출자**가 없어졌다 — 그래서 컴포넌트 자체도 지웠다(`RunnerStatus.tsx`).
+// 이제 사이드바에서 러너 상태를 말하는 것은 **아바타 하나**다(`faceState`): B1 이 없애려던
+// "같은 사실이 화면마다 네 가지로 그려진다"가 사이드바 안에서는 이것으로 끝난다.
 // `runnerStatusLabel` 은 DM 줄이 쓴다 — 아바타에 실은 상태를 접근 이름으로도 내야 한다.
-import { RunnerStatusDot, runnerStatusLabel } from './RunnerStatus';
+import { runnerReason, runnerStatusLabel } from './RunnerStatus';
+import { AgentGrid } from './settings/AgentGrid';
+// 띄울 권한 판정은 `lib/` 하나가 낸다 — 설정 › 에이전트가 같은 판정을 쓴다.
+import { canRelaunchAgent } from '../lib/relaunchGate';
 import { faceState, type FaceState } from '../lib/faceState';
 import { anyPresenceView, PRESENCE_LABEL, type PresenceView } from '../lib/presenceView';
 import type { SectionId } from './settings/sections';
@@ -537,6 +541,20 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
 
   const others = Object.values(accounts).filter((a) => a.id !== me?.id);
 
+  /**
+   * 에이전트 칸이 세우는 얼굴들(`docs/desktop-rail.html` 3단계). **`useMemo` 인 이유**:
+   * `AgentGrid` 가 이 배열을 의존성으로 두고 가나다 정렬과 검색 필터를 기억한다
+   * (`useMemo([agents, query])`). 렌더마다 새 배열을 넘기면 그 기억이 매번 버려져
+   * 40개 격자에서 정렬이 렌더마다 다시 돈다 — 컴포넌트를 재사용하면서 그 안의 최적화를
+   * 호출부가 무효화하는 모양이다.
+   *
+   * **`dmAgentIds` 로 걸러내지 않는다** — 그것이 3단계가 없애는 비대칭이다(아래 주석).
+   */
+  const panelAgents = useMemo(
+    () => Object.values(accounts).filter((a) => a.kind === 'agent'),
+    [accounts],
+  );
+
   // "새 섹션…" 을 고른 채널과 입력 중인 이름(#157). `prompt()` 대신 인라인 입력이다.
   const [sectionEditFor, setSectionEditFor] = useState<string | null>(null);
   const [sectionDraft, setSectionDraft] = useState('');
@@ -740,12 +758,10 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
       ? faceState(dm.agentId, runnerStates, online, connected)
       : (dm.presence === 'online' ? 'ok' : dm.presence === 'offline' ? 'stopped' : 'unknown');
     const runner = dm.agentId ? runnerStates[dm.agentId] : undefined;
-    // 격자와 같은 판정이다: `failed` 와 `needs_harness` 만 사유를 글자로 펼친다.
-    // `needs_reissue` 가 빠진 이유는 `RunnerStatusDot` 주석에 있다(재발급 버튼이 화면에
-    // 서므로 다음 행동이 문구 없이도 드러난다).
-    const reason = runner && (runner.status === 'failed' || runner.status === 'needs_harness' || runner.status === 'needs_login')
-      ? runner.message
-      : null;
+    // 어떤 상태가 사유를 글자로 받는지는 `runnerReason` 하나가 정한다 — 이 표를 여기서
+    // 다시 적으면 상태가 하나 늘 때 이 줄만 조용히 낡는다(`#476` 이 그 모양이었다).
+    // `needs_reissue` 가 빠지는 이유도 그 함수 주석에 있다.
+    const reason = runnerReason(runner);
     // 색은 스크린리더에 아무 말도 하지 않는다(`#443`). 아바타 한 칸에 상태를 실었으므로
     // 그 칸이 글자로도 같은 말을 해야 한다 — 러너가 있으면 그쪽 문구가 더 구체적이다.
     const stateLabel = runner ? `러너: ${runnerStatusLabel(runner)}` : PRESENCE_LABEL[dm.presence];
@@ -1644,77 +1660,115 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
           )}
         </div>
         )}
-        {/* #368: 에이전트별 러너 상태. **DM 이 없어도** 이 섹션에서 러너 실패 사유를 읽을
-            수 있다 — 이슈 이전에는 사유가 닿는 유일한 사이드바 자리가 DM 목록의 점이었고,
-            그 점은 DM 이 먼저 있어야 보였다(새로 설치한 사람에게는 DM 이 없다).
-            실패한 러너는 사유를 **글자로** 펼친다: 점의 `title` 만으로는 마우스를 올려 본
-            사람에게만 보이고, 이 결함의 본질이 "사유가 사람이 안 보는 곳에만 있다" 였다.
+        {/*
+          **얼굴 그리드** — 정본 문서 `docs/desktop-rail.html` 3단계.
 
-            **DM 이 있는 에이전트를 여기서 빼는 규칙을 2단계에서 다시 따져 보고 그대로 뒀다.**
-            근거가 갈아치워졌으므로 적어 둔다.
+          문서: *"에이전트는 대화가 아니라 인력이다. 그래서 목록이 아니라 얼굴 그리드 —
+          설정 › 에이전트와 같은 카드 컴포넌트를 쓴다. 아직 DM 이 없는 에이전트도 여기서는
+          자리를 갖고, 멈춘 것은 ▶ 로 여기서 바로 켠다. 지금은 DM 이 있는 쪽만 상태가 보이고
+          없는 쪽은 아무 표시도 못 받는데, 그 비대칭이 사라진다."*
 
-            원래 이유는 *"같은 에이전트가 두 줄로 서면 어느 줄이 최신인지 알 수 없다"* 였다.
-            1단계 주석은 그 근거가 사라졌다고 적었다 — 칸이 갈라져 두 줄이 한 화면에 서지
-            않으니까. **그 관찰은 맞지만 결론이 달라진다.** 2단계가 DM 목록을 합치면서
-            에이전트를 **DM 칸의 제1시민**으로 만들었다: 그 칸에서 에이전트는 사람과 같은
-            줄 모양으로 최근순에 섞여 서고, 상태를 아바타로 말하며, 실패 사유까지 글자로
-            펼친다(`dmRow`). 그러니까 DM 이 있는 에이전트에게 **필요한 자리는 이미 다 있다**.
+          ## 진단을 코드로 확인한 결과 (실측 2026-09-07)
 
-            여기 다시 세우면 같은 에이전트가 두 칸에 살고, 두 칸이 그리는 모양은 서로
-            다르다(여기는 네모난 러너 점 + `@handle`, 저기는 아바타 얼굴). *"같은 것으로
-            가는 길이 둘이 되고, 그때부터 사람은 어느 쪽이 맞는지 매번 고른다"* — 문서가
-            북마크를 홈에 안 두는 이유로 적은 그 문장이 여기에도 그대로 걸린다.
+          문서의 세 문장 중 **하나가 코드와 어긋났다.** 남겨 둔다 — 이 저장소에서 문서가
+          코드보다 뒤처진 사례가 여러 번 있었다.
 
-            그래서 이 패널이 답하는 질문은 하나로 좁혀졌다: **"아직 DM 이 없는 에이전트의
-            러너는 어떤 상태인가"**(`#368` 이 만든 그 자리). 이 비대칭 자체를 없애는 것 —
-            *"아직 DM 이 없는 에이전트도 여기서 자리를 갖고, 멈춘 것은 ▶ 로 여기서 바로
-            켠다"* — 이 문서의 **3단계**(얼굴 그리드)이고 이번 범위가 아니다.
+          | 문서 | 코드 | |
+          |---|---|---|
+          | 목록이지 그리드가 아니다 | `row()` 버튼을 세로로 쌓았다 | 맞다 |
+          | *"아직 DM 이 없는 에이전트도 여기서는 자리를 갖고"* | **거꾸로였다** — `dmAgentIds` 필터가 DM 이 **있는** 쪽을 뺐다 | 어긋난다 |
+          | *"없는 쪽은 아무 표시도 못 받는다"* | `RunnerStatusDot` 이 `state` 가 없으면 `null` 을 낸다 | 맞다 |
 
-            **부수 효과로 `data-testid` 충돌이 없다.** `dmRow` 도 실패 사유에
-            `runner-reason-{agentId}` 를 쓰는데, 이 필터가 두 목록을 **서로소로** 유지하므로
-            한 에이전트의 사유 줄은 화면에 언제나 하나다. 필터를 떼면 같은 testid 가 둘이
-            되어 시험의 `getByTestId` 가 깨진다 — 3단계에서 이 자리를 그리드로 바꿀 때
-            함께 정리할 일이다. */}
-        {panel === 'agents' && (() => {
-          const dmAgentIds = new Set(dms.map((dm) => dm.memberIds.find((id) => accounts[id]?.kind === 'agent')).filter(Boolean) as string[]);
-          const agents = Object.values(accounts).filter((a) => a.kind === 'agent' && !dmAgentIds.has(a.id));
-          if (agents.length === 0) {
-            // 칸을 눌러 온 사람에게 **빈 화면을 주지 않는다** — 한 번 더 누른 대가가 아무것도
-            // 아니면 레일이 손해만 남긴다(문서 「치르는 값 · 한 번 더 누름」).
-            return (
-              <p className="px-2 text-[11px] text-fg-subtle">
-                러너 상태를 따로 볼 에이전트가 없다 — DM 이 있는 에이전트는 DM 칸에 선다.
-              </p>
-            );
-          }
-          return (
-            <>
-              <div className="flex items-center px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
-                Agents
-              </div>
-              <div className="mb-1">
-                {agents.map((a) => {
-                  const rs = runnerStates[a.id];
-                  const failure = rs?.status === 'failed' ? rs.message : null;
-                  return (
-                    <button key={a.id} className={`${row(false)} flex-col items-start`}
-                      onClick={() => void getController().startDm(a.id)}>
-                      <span className="flex items-center gap-1">
-                        <RunnerStatusDot agentId={a.id} state={rs} />
-                        <span>@{a.handle}</span>
-                      </span>
-                      {failure && (
-                        <span data-testid={`runner-reason-${a.id}`} className="whitespace-normal text-left text-[10px] text-danger">
-                          기동 실패 — {failure}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </>
-          );
-        })()}
+          문서가 그 문장을 쓴 시점(1단계 이전)에는 이 칸이 **모든** 에이전트를 세우면서
+          DM 이 없는 쪽에만 표시가 없었다. 2단계(#528)가 DM 목록을 합치면서 반대로 뒤집었다 —
+          DM 이 있는 쪽을 DM 칸으로 보내고 여기에는 없는 쪽만 남겼다. 그러니까 **비대칭의
+          방향이 바뀌었을 뿐 비대칭은 그대로 있었다**: 같은 워크스페이스의 에이전트가 두
+          칸에서 서로 다른 어휘로 그려졌고(여기는 네모난 러너 점 + `@handle`, DM 칸은 아바타
+          얼굴), 러너를 아직 한 번도 안 띄운 에이전트는 그 점조차 못 받았다.
+
+          이번에 사라지는 것이 그것이다. **`dmAgentIds` 필터가 없다** — 이 칸은 이제
+          `kind === 'agent'` 전부를 세운다.
+
+          ## DM 칸과 겹치는 것을 두려워하지 않는다
+
+          2단계 주석이 겹침을 근거로 필터를 남겼다: *"같은 것으로 가는 길이 둘이 되고,
+          그때부터 사람은 어느 쪽이 맞는지 매번 고른다."* **그 문장이 여기에 걸리지 않는
+          이유가 문서 안에 있다.** 두 칸이 답하는 질문이 다르다 — DM 칸은 *"최근에 누구와
+          무슨 말을 했나"*(대화)이고 이 칸은 *"우리 팀에 누가 있고 지금 일할 수 있나"*(인력)다.
+          문서가 이 칸을 만든 첫 문장이 정확히 그 구분이다. 북마크가 홈에 서면 안 되는 이유는
+          두 자리가 **같은 질문**에 답했기 때문이고, 여기는 아니다.
+
+          ## `runner-reason-{id}` 충돌이 없어진 방식
+
+          2단계 주석이 이 위험을 미리 적었다: *"필터를 떼면 같은 testid 가 둘이 되어 시험의
+          `getByTestId` 가 깨진다."* 그 이름을 **이 칸이 더 이상 쓰지 않는 것**으로 푼다 —
+          사유는 격자가 `agent-runner-failed-{id}` 로 내고, `dmRow` 의 이름과 겹치지 않는다.
+          한 번에 한 패널만 그려지므로 화면에서 부딪히는 일도 없지만, 이름이 갈려 있어야
+          시험이 두 칸을 구별할 수 있다.
+        */}
+        {panel === 'agents' && (
+          <AgentGrid
+            /*
+              **스토어의 계정 목록을 그대로 넘긴다.** `listAgents()` 를 여기서 다시 부르지
+              않는다 — 같은 에이전트 목록이 두 곳에 유지되기 시작하면 한쪽만 낡는다.
+              그 대가로 `instructions`(역할 설명)가 없어 검색이 이름만 훑는데, 그것은
+              `AgentGrid` 가 옵셔널로 받는다(`AgentCardSubject` 주석).
+
+              `disabled` 를 걸러내지 않는다: `AccountView.disabled` 주석이 *"디렉터리에서
+              빼지 않고 표시만 한다"* 고 정했고, 여기서 빼면 비활성 에이전트가 화면에서
+              통째로 사라져 되살릴 길이 설정뿐이 된다.
+            */
+            agents={panelAgents}
+            /*
+              **고른 것을 표시하지 않는다.** 설정에서 이 값은 "지금 상세를 열어 둔 카드"이고,
+              여기서는 상세를 열지 않는다(아래 `onPick`). 활성 DM 을 여기에 대입하면 강조가
+              두 곳에서 같은 사실을 말한다 — DM 칸이 이미 활성 줄을 면으로 표시한다.
+            */
+            selectedId={null}
+            runnerStates={runnerStates}
+            online={online}
+            connected={connected}
+            /*
+              **카드를 누르면 DM 이 열린다** — 설정에서는 상세를 열지만 여기서는 아니다.
+
+              근거 둘. ① 옛 목록이 이미 `startDm` 이었다: 이 칸에서 에이전트를 누르는 것의
+              뜻은 바뀌지 않았고 모양만 그리드가 됐다. ② 문서가 이 칸을 *"인력"* 이라고
+              적었다 — 사람을 눌러 말을 거는 것이 이 앱에서 기본 동작이고, 설정 화면으로
+              튀어나가면 레일을 한 번 더 누른 대가(문서 「치르는 값」)가 손해로 남는다.
+
+              설정으로 가는 길이 사라지는 것은 아니다: 레일 맨 아래 계정 메뉴와 `⌘,` 가
+              그 문이고(#488 A1), 거기서 에이전트를 고르면 상세가 열린다.
+            */
+            onPick={(a) => void getController().startDm(a.id)}
+            /*
+              **만들기 문을 이 칸에 두지 않는다.** A2 가 정한 것을 그대로 따른다:
+              *"설정으로 가는 `+ Add or edit agents` 는 nav 에서 사라진다(이동 사이에 설정이
+              끼어 있었다)."* 만들기는 설정의 일이고 그 문은 이미 `+ Create agent` 로 서
+              있다. 여기에 `+` 를 두면 A2 가 없앤 것 — 목록 사이에 낀 설정 진입점 — 이
+              모양만 카드로 바꿔 되돌아온다.
+
+              `onCreate` 는 `canCreate` 가 false 면 불릴 수 없지만 옵셔널이 아니다.
+              **눌러도 아무 일이 없는 함수를 넘기지 않는다**(design.md §4): 두 값이 갈리는
+              날 조용히 죽은 버튼이 생기는 대신 여기서 명시적으로 던진다.
+            */
+            onCreate={() => { throw new Error('사이드바에서는 에이전트를 만들지 않는다 — 설정의 일이다'); }}
+            canCreate={false}
+            /*
+              **멈춘 것은 ▶ 로 여기서 바로 켠다**(문서). 이 칸이 3단계에서 얻는 새 능력이다 —
+              옛 목록에서는 사유를 읽을 수는 있어도 켤 수는 없었다.
+
+              권한 판정은 **설정 화면과 같은 것**이다(`canRelaunchAgent`): 관리자이거나
+              내가 소유한 에이전트. 다만 그쪽은 콜백 **안에서** 걸러 눌러도 아무 일이 없게
+              두는데, 여기서는 `canRelaunch` 술어로 **그 자리를 아예 그리지 않는다** —
+              `AgentGrid` 주석이 정한 규칙이 그것이다(*"권한 없는 사람에게는 문이 없다"*).
+              누를 수 없는 것을 그리지 않는 쪽이 이 저장소의 규율이고(design.md §4),
+              설정 화면의 모양은 그 술어를 안 넘김으로써 그대로 둔다.
+            */
+            onRelaunch={(a) => void getController().reissueRunnerPat(a.id)}
+            canRelaunch={(a) => canRelaunchAgent(a, me)}
+            place="sidebar"
+          />
+        )}
         {/*
           **대기 사슬이 여기 있었다**(#488 A3-b). 인박스로 옮겼다 — 이 `nav` 는
           `overflow-y-auto` 이고 이 자리는 채널·DM·에이전트 **다음**이라, 채널이 몇 개만
