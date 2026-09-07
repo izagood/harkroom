@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from 'pg';
 import type { ProjectionRuntime } from '@murmur/shared';
 import { emitEvent } from '../events.js';
 import { listBoundRepos } from '../services/channels.js';
+import { lockChannelForSeq } from '../services/messages.js';
 import type { AvcsLogEntry, AvcsServerClient } from './client.js';
 
 /**
@@ -80,6 +81,11 @@ export class ProjectionWorker {
     const client = await pool.connect();
     try {
       await client.query('begin');
+      // 이 트랜잭션도 `message` 에 insert 하므로 seq 를 발급받는다(#523). postMessage 와
+      // **같은 락**을 잡아야 두 경로 사이에서도 발급 순서 == 커밋 순서가 유지된다.
+      // 여기를 빼면 사람의 발화와 avcs 투영이 겹치는 순간에 결함이 그대로 되살아난다 —
+      // 이 트랜잭션은 배치 하나를 통째로 처리하므로 특히 길다.
+      await lockChannelForSeq(client, channelId);
       const cur = await client.query(`select last_log_index from projection_cursor where repo = $1 for update`, [repo]);
       const currentSince: number = cur.rowCount ? Number(cur.rows[0].last_log_index) : 0;
       if (currentSince !== since) {
