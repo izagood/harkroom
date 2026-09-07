@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound, isQuotaExhausted, nextBackoffMs, MAX_ATTEMPTS, exhausted } from '../src/policy.js';
+import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound, isQuotaExhausted, isSessionIdConflict, nextBackoffMs, MAX_ATTEMPTS, exhausted } from '../src/policy.js';
 import { MURMUR_ERROR_SOURCE } from '../src/policy.js';
 import { MurmurAgentClient } from '../src/murmur.js';
 
@@ -249,5 +249,69 @@ describe('isQuotaExhausted', () => {
   it('한도와 무관한 실패는 null 이다', () => {
     expect(isQuotaExhausted(new Error('harness 종료 1: boom'))).toBeNull();
     expect(isQuotaExhausted(new Error('Failed to authenticate: OAuth session expired'))).toBeNull();
+  });
+});
+
+// 세션 id 충돌(2026-09-07 19:03 실측). claude 는 이미 존재하는 세션 id 로 `--session-id`
+// 신규 시작을 요구받으면 즉시 거부한다. **재시도로 절대 낫지 않는다** — 실측에서 3회가
+// 각각 176·185·278ms 만에 같은 자리에서 실패했다. 그런데도 재시도 회계에 들어가 3회를
+// 태우고 스레드에 "운영자 확인이 필요합니다"를 남겼고, 정작 필요한 일은 그것이 아니었다.
+//
+// 근본 원인은 `mentionTurn.ts` 의 세션 실재 관측이 막았다. 이 판정은 그 관측이 실패하는
+// 경로(claude 가 세션 파일 위치 규칙을 바꾸는 등)에 남겨 두는 그물이다.
+describe('isSessionIdConflict', () => {
+  /** 실측 tail 원문 — PTY 안에서 섞여 나온 ANSI 색 코드와 커서 복원 시퀀스까지 그대로다. */
+  const REAL_TAIL =
+    'harness 종료 1: \u001b[0m\u001b[31m\u001b[31mError: Session ID '
+    + '214242d8-2b17-4595-b350-8e8c28b5d5a5 is already in use.\u001b[39m\u001b[0m\n\u001b[?25h\n';
+
+  it('실측 tail 을 세션 충돌로 알아본다', () => {
+    expect(isSessionIdConflict(new Error(REAL_TAIL))).toBe(true);
+  });
+
+  // tail 은 끝 2KB 링 버퍼라 앞이 잘린다 — uuid 가 통째로 사라진 채 들어올 수 있다.
+  it('앞이 잘려 uuid 가 없어도 알아본다', () => {
+    expect(isSessionIdConflict(new Error('is already in use.'))).toBe(true);
+  });
+
+  // 소프트 랩이 어디에 개행을 끼워도 흔들리지 않아야 한다 — `isCredentialFailure` 와 같은
+  // 이유로 공백을 전부 지운 문자열에 대고 맞춘다.
+  it('줄바꿈이 문구 안에 끼어도 알아본다', () => {
+    expect(isSessionIdConflict(new Error('Session ID abc is already\nin use.'))).toBe(true);
+  });
+
+  it('무관한 실패는 false 다', () => {
+    expect(isSessionIdConflict(new Error('harness 종료 1: boom'))).toBe(false);
+    expect(isSessionIdConflict(new Error("You've hit your session limit"))).toBe(false);
+  });
+});
+
+// 2026-09-07 19:03 실측: 세션 파일에는 CLI 가 낸 `resets 10:50pm (Asia/Seoul)` 이 분명히
+// 있었는데 러너 로그는 "풀림: 알 수 없음"을 찍었다.
+//
+// 원인은 판정이 문자열 **끝** 앵커를 요구한 것이다. tail 은 끝 2KB 링 버퍼이고, 한도에
+// 걸린 claude 는 죽기 전에 화면을 다시 그린다 — 커서 복원·색 리셋 시퀀스가 그 문구
+// **뒤에** 붙는다(`pty.ts` 가 raw 바이트를 그대로 담는다). 그러면 `[^\n]+?` 는 그 줄을
+// 넘지 못하고 `$` 도 맞지 않아 시각을 통째로 잃는다.
+//
+// **그 뒤에 붙는 바이트가 정확히 무엇인지는 모른다** — 한도 경로가 tail 을 로그에 남기지
+// 않았기 때문이다(그 한 줄은 이번에 추가했다). 그래서 테스트를 미지의 바이트에 맞추지
+// 않고, 그것에 **의존하지 않는 계약**으로 쓴다: resets 뒤에 무엇이 오든 시각을 읽는다.
+describe('isQuotaExhausted — tail 끝에 무엇이 붙어도 시각을 읽는다 (2026-09-07 19:03)', () => {
+  const LIMIT = "You've hit your session limit · resets 10:50pm (Asia/Seoul)";
+
+  it('뒤에 커서 복원 시퀀스가 붙어도 읽는다', () => {
+    expect(isQuotaExhausted(new Error(`harness 종료 1: ${LIMIT}\n\u001b[?25h\n`)))
+      .toEqual({ resetsAt: '10:50pm (Asia/Seoul)' });
+  });
+
+  it('시각 바로 뒤에 색 리셋 코드가 붙어도 읽는다', () => {
+    expect(isQuotaExhausted(new Error(`harness 종료 1: ${LIMIT}\u001b[0m`)))
+      .toEqual({ resetsAt: '10:50pm (Asia/Seoul)' });
+  });
+
+  it('뒤에 다른 줄이 더 있어도 읽는다', () => {
+    expect(isQuotaExhausted(new Error(`harness 종료 1: ${LIMIT}\n프롬프트가 돌아왔다\n`)))
+      .toEqual({ resetsAt: '10:50pm (Asia/Seoul)' });
   });
 });

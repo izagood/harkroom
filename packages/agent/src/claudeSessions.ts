@@ -17,6 +17,7 @@
 import { readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { AgentHarness } from '@murmur/shared';
 
 export async function claudeSessionFileExists(
   sessionId: string,
@@ -39,4 +40,21 @@ export async function claudeSessionFileExists(
     } catch { /* 프로젝트 하나를 못 읽는 것이 나머지 탐색을 막지 않는다 */ }
   }
   return false;
+}
+
+/**
+ * 하네스 세션이 디스크에 실재하게 됐는가. `turnsRun === 0` 인 레코드를 만났을 때
+ * "러너가 uuid 를 발급만 한 것"과 "하네스가 그 세션을 실제로 만든 것"을 가른다.
+ *
+ * **양쪽 턴이 공유한다**(`interactiveTurn.ts`, `mentionTurn.ts`). 여기 사는 이유는 순환
+ * 참조다: `interactiveTurn.ts` 는 `mentionTurn.ts` 에서 `resolveWorkspaceDir` 를 가져오므로
+ * 반대 방향 import 가 안 되고, 이 파일은 파일시스템 세 개만 import 하는 양쪽의 공통
+ * 아래층이다.
+ *
+ * codex 가 무조건 참인 이유: codex 의 sessionId 는 러너가 발급한 값이 아니라 rollout
+ * 파일에서 **발견한** 값이라(`codexSessions.ts`) 그 자체가 디스크 실재의 증거다.
+ */
+export function claudeSessionMaterialized(harness: AgentHarness, sessionId: string): Promise<boolean> {
+  if (harness === 'claude-code') return claudeSessionFileExists(sessionId);
+  return Promise.resolve(true);
 }

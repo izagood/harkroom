@@ -28,7 +28,7 @@ import type { Exec } from './workspace.js';
 import { resolveWorkspaceDir } from './mentionTurn.js';
 import { findCodexSessionId } from './codexSessions.js';
 import { codexSessionsDir } from './codexHome.js';
-import { claudeSessionFileExists } from './claudeSessions.js';
+import { claudeSessionMaterialized } from './claudeSessions.js';
 import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
 
@@ -174,17 +174,11 @@ const defaultSchedule = (fn: () => void, ms: number): (() => void) => {
   return () => clearTimeout(timer);
 };
 
-const defaultSessionMaterialized = (harness: AgentHarness, sessionId: string): Promise<boolean> => {
-  if (harness === 'claude-code') return claudeSessionFileExists(sessionId);
-  // codex sessionId 는 rollout 파일에서 발견한 값이라 그 자체로 디스크 실재의 증거다.
-  return Promise.resolve(true);
-};
-
 export function createInteractiveManager(deps: InteractiveTurnDeps): InteractiveManager {
   const schedule = deps.schedule ?? defaultSchedule;
   const orphanMs = deps.orphanMs ?? 60_000;
   const killGraceMs = deps.killGraceMs ?? KILL_GRACE_MS;
-  const sessionMaterialized = deps.sessionMaterialized ?? defaultSessionMaterialized;
+  const sessionMaterialized = deps.sessionMaterialized ?? claudeSessionMaterialized;
 
   /** 러너가 물러나는 중인가(#384). shutdown 이 켠다 — 그 뒤로는 이어받기를 띄우지 않는다. */
   let retreating = false;

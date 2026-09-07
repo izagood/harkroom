@@ -18,6 +18,7 @@ import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemProm
 import { acceptsPtyInput } from './pty.js';
 import type { PtyWriter, TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
+import { claudeSessionMaterialized } from './claudeSessions.js';
 import { codexSessionsDir } from './codexHome.js';
 import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
@@ -136,6 +137,15 @@ export interface MentionTurnDeps {
    * relay 와 같다 — 기존 테스트·호출부가 관찰 없이 턴만 돌릴 수 있어야 한다.
    */
   registry?: TurnRegistry;
+  /**
+   * 하네스 세션이 디스크에 실재하는가(기본 `claudeSessionMaterialized`). 실패한 턴이
+   * 세션을 남겼는지 가리는 데만 쓴다 — 아래 실패 분기의 주석이 이유를 적었다.
+   *
+   * 주입 가능한 이유는 `interactiveTurn.ts` 의 같은 이름 옵션과 같다: 실제 판정은
+   * `~/.claude/projects` 를 훑으므로, 테스트가 그것을 세우지 않고 두 세계(실재/부재)를
+   * 다 재현할 수 있어야 한다.
+   */
+  sessionMaterialized?: (harness: AgentHarness, sessionId: string) => Promise<boolean>;
   /** 테스트가 sinceMs 캡처 시점을 결정론적으로 만들기 위한 시계 주입. 생략하면 Date.now. */
   now?: () => number;
 }
@@ -647,6 +657,19 @@ export async function runMentionTurn(
     // 같은 uuid 로 첫 턴(`--session-id`)을 다시 시도한다. workspaceDir 과 (codex 라면) 방금
     // 발견한 sessionId 는 저장한다 — 둘 다 이 시점에 디스크에 이미 실재하는 사실이다.
     //
+    // **다만 "발급만 했다"를 추측하지 않는다(2026-09-07 18:59 실측).** #81 의 판단은
+    // "실패한 턴은 세션을 만들지 않았다"를 암묵 전제로 깔았고, 사용량 한도가 그 전제를
+    // 정면으로 깬다: claude 는 프롬프트를 다 받아 세션을 만든 **뒤** 답을 쓰려는 순간
+    // 한도에 걸려 죽는다(디스크에 19줄이 적힌 `<uuid>.jsonl` 이 남았다). 그때 turnsRun 을
+    // 0 으로 두면 다음 턴이 `--session-id` 로 조립하고 claude 가 이미 있는 id 를 거부한다
+    // (`Error: Session ID <uuid> is already in use.`) — **그 실패도 turnsRun 을 올리지
+    // 않으므로 상태가 자기를 재생산해** 그 스레드가 영구히 죽는다(실측: 두 멘션이 각각
+    // 3회씩 176ms 만에 같은 자리에서 실패).
+    //
+    // 그래서 추측 대신 **디스크를 관측한다**. 이것은 인터랙티브 턴이 이미 하던 일이고
+    // (`interactiveTurn.ts` 의 같은 판정), 두 경로가 같은 하네스의 같은 세션 파일을
+    // 공유하므로 한쪽만 그 사실을 보는 비대칭이 결함이었다.
+    //
     // lastFedSeq 는 "이 턴에 발화가 있었나"로 정한다. 실패해도 발화는 이미 있었을 수 있고,
     // 대표적인 경우가 타임아웃이다(답을 올린 뒤 계속 일하다 시간이 다 되어 SIGTERM 을
     // 맞는다). 그때 커서를 되돌려 두면 재시도가 같은 메시지를 다시 먹여 **같은 질문에 두 번
@@ -673,7 +696,26 @@ export async function runMentionTurn(
         `[mentionTurn] ${key}: 실패 턴의 발화 확인 실패(커서를 전진시키지 않고 재시도로 넘긴다) — ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    await deps.store.put(key, answered ? { ...rec, lastFedSeq: fedSeq } : { ...rec });
+    // 관측이 던지면 올리지 않는다 — "다시 첫 턴을 시도한다"가 "없는 세션을 이어받는다"보다
+    // 회복 가능한 쪽이다(#81 이 고른 것과 같은 방향의 보수적 실패).
+    let materializedTurnsRun = rec.turnsRun;
+    if (rec.turnsRun === 0 && rec.sessionId !== null) {
+      const materialized = deps.sessionMaterialized ?? claudeSessionMaterialized;
+      try {
+        if (await materialized(def.harness, rec.sessionId)) materializedTurnsRun = 1;
+      } catch (err) {
+        console.error(
+          `[mentionTurn] ${key}: 세션 실재 관측 실패(turnsRun 을 올리지 않는다) — ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    // lastFedSeq 와 turnsRun 은 서로 다른 사실이다: 세션은 실재하게 됐지만(turnsRun) 답은
+    // 못 했으므로(lastFedSeq) 다음 턴이 같은 델타를 다시 먹여야 한다.
+    await deps.store.put(key, {
+      ...rec,
+      ...(answered ? { lastFedSeq: fedSeq } : {}),
+      turnsRun: materializedTurnsRun,
+    });
     // tail 을 반드시 포함한다 — PTY 안에서는 stdout/stderr 가 한 스트림으로 섞여 나오므로
     // policy.ts::isCredentialFailure 가 자격증명 실패를 판단할 근거가 이것뿐이다.
     throw new Error(
