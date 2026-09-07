@@ -80,7 +80,7 @@ pub const DAEMON_PROTOCOL_VERSION: u32 = 1;
 /// ## 여유가 얼마나 되나 — 실측 (2026-09-06)
 ///
 /// ```text
-/// /Users/jaebin/Library/Application Support/app.murmur.desktop/daemon/daemon-v1.sock
+/// /Users/alice2/Library/Application Support/app.murmur.desktop/daemon/daemon-v1.sock
 /// = 82바이트 (여유 22)
 /// ```
 ///
@@ -1629,7 +1629,7 @@ mod tests {
     #[test]
     fn 상한_안의_경로는_통과한다() {
         let ok = PathBuf::from(
-            "/Users/jaebin/Library/Application Support/app.murmur.desktop/daemon/daemon-v1.sock",
+            "/Users/alice2/Library/Application Support/app.murmur.desktop/daemon/daemon-v1.sock",
         );
         assert_eq!(
             ok.as_os_str().as_encoded_bytes().len(),
@@ -1673,7 +1673,7 @@ mod tests {
 
     /// 실측 기준의 앱 데이터 디렉터리. 문자열을 그대로 쓰는 이유는 이 파일의 다른
     /// 길이 회귀선(`상한_안의_경로는_통과한다`)과 같은 기준을 쓰기 위해서다.
-    const REAL_APP_DATA_DIR: &str = "/Users/jaebin/Library/Application Support/app.murmur.desktop";
+    const REAL_APP_DATA_DIR: &str = "/Users/alice2/Library/Application Support/app.murmur.desktop";
 
     /// **회귀선 ① — 워크트리가 다르면 경로가 다르다.**
     ///

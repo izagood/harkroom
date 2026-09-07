@@ -78,7 +78,7 @@ Expected: gemini 의 resume 인자 형식(uuid 직접 수용 여부)과 권한 �
 - [ ] **Step 5: `avcs workspace land` 의 미추적 파일 처리 확인 (§13.4)**
 
 ```bash
-cd ~/dev/my-workspace/avcs && avcs workspace project spike-test --out /tmp/ws-spike
+cd <avcs 체크아웃> && avcs workspace project spike-test --out /tmp/ws-spike
 touch /tmp/ws-spike/untracked-note.md
 avcs workspace land spike-test 2>&1 | tail -5   # 미추적 파일이 오브젝트로 들어가는지 관찰
 ```
@@ -475,7 +475,8 @@ describe('buildSystemPrompt', () => {
   ```
 
 `buildTurnCommand` 는 claude 에 **항상 `--strict-mcp-config` 를 함께 넘긴다**. 없으면
-하네스가 운영자의 전역 MCP 목록(실측: Slack·Gmail·Drive·avcshub·buddy)을 상속해,
+하네스가 운영자의 전역 MCP 목록(실측: 메신저·메일·드라이브 등 개인 계정에 붙은 서버
+다수)을 상속해,
 채널에서 에이전트를 부를 수 있는 사람이 운영자 개인 계정에 도달한다 (spec §7).
 
 - [ ] **Step 1: 실패하는 테스트**
@@ -980,7 +981,7 @@ resume 이 깨지지 않는다는 뜻이다(Task 7 의 workingDir 설계에 유�
 인터랙티브 TUI 는 스크립트로 조종할 수 없으므로(브리프 지침대로) **print 모드로
 동등 사실을 확인**했다 — TUI 자체의 검증은 아래처럼 열려 있는 채로 남긴다.
 
-로컬 스택 기동(포트 3400/5432 가 다른 워크트리(`rusalka`)에 이미 점유돼 있어
+로컬 스택 기동(포트 3400/5432 가 다른 워크트리에 이미 점유돼 있어
 `dorado` 전용 포트로 올렸다 — 아래는 이번 스파이크에서 실제로 쓴 절차):
 
 ```bash
@@ -1028,20 +1029,17 @@ $ MURMUR_PAT='murp_fake' claude -p --mcp-config /tmp/murmur-mcp.json \
 ## Available MCP Tools
 ### AVCS (38 tools)
 mcp__avcs__avcs_approval_record, mcp__avcs__avcs_blame, ... (38개 전부)
-### AVCSHub (8 tools)
-mcp__avcshub__check_report, mcp__avcshub__issue_create, ...
-### Buddy (13 tools)
-mcp__buddy__buddy_dream, mcp__buddy__buddy_forget, ...
-### Slack (18 tools)
-mcp__claude_ai_Slack__slack_add_reaction, ...
-### Chrome DevTools (32 tools)
-mcp__plugin_chrome-devtools-mcp_chrome-devtools__click, ...
+### <사내 서버 A> (8 tools)
+### <개인 도구 B> (13 tools)
+### <메신저> (18 tools)
+### <브라우저 제어> (32 tools)
 ### Requiring Authentication
-claude.ai Notion, claude.ai Gmail, claude.ai Google Drive, ...
+<문서 도구> · <메일> · <드라이브> ...
+(murmur 와 무관한 운영자 개인 서버라 이름은 옮기지 않는다 — 요점은 개수다)
 ```
 
-즉 이 세션 운영자의 `~/.claude.json` 전역 MCP 서버(avcs·avcshub·buddy·Slack·
-Chrome DevTools, 그리고 미인증 Notion/Gmail/Google Drive 등)가 `--mcp-config`
+즉 이 세션 운영자의 `~/.claude.json` 전역 MCP 서버(avcs 와, 개인 계정에 붙은 사내·
+메신저·브라우저·문서 서버 여섯 남짓)가 `--mcp-config`
 로 지정한 murmur 하나만 있을 때도 그대로 전부 딸려 나온다 — 예상대로였다,
 **이 발견으로 spec §7 이 뒤집혔다(커밋 8a116fb) — 아래는 그 결과이지 열린 질문이 아니다.**
 초판 §7 은 "avcs MCP 도 물어야 하므로 strict 를 쓰지 않는다"고 적었는데 거짓 전제였다:
@@ -1126,7 +1124,7 @@ id 를 "찾을" 필요가 없다. **Task 8 은 존재하지 않는 파일 스키
 
 ```bash
 $ ls -t ~/.codex/sessions/**/*.jsonl | head -1
-/Users/jaebin/.codex/sessions/2026/09/01/rollout-2026-09-01T23-00-31-01a05d45-....jsonl
+~/.codex/sessions/2026/09/01/rollout-2026-09-01T23-00-31-01a05d45-....jsonl
 $ head -1 <그 파일> | python3 -c '...payload.keys()...'
 payload keys: ['session_id', 'id', 'timestamp', 'cwd', 'originator', 'cli_version',
   'source', 'thread_source', 'model_provider', 'base_instructions', 'history_mode',
@@ -1207,7 +1205,7 @@ VERDICT: **DIFFERENT (resume 인자 형식 — 표를 반드시 고쳐야 한다
 ### Step 5: `avcs workspace land` 의 미추적 파일 처리
 
 ```bash
-cd ~/dev/my-workspace/avcs
+cd <avcs 체크아웃>
 avcs workspace project spike-test --out /tmp/ws-spike
 touch /tmp/ws-spike/untracked-note.md
 avcs workspace land spike-test
@@ -1241,7 +1239,7 @@ VERDICT: **NOT MEASURED — 권한 분류기가 실제 `land` 실행을 차단.*
   컨테이너)은 전부 내렸다 — `docker compose down` 완료, `dorado_pgdata` 볼륨만
   남아 있다(재기동 시 자동 재사용, 삭제해도 무방).
 - `/tmp/murmur-mcp.json`, `/tmp/ws-spike` 등 임시 파일은 삭제했다.
-- `~/dev/my-workspace/avcs` 에는 `avcs workspace project spike-test` 로 만든
+- `<avcs 체크아웃>` 에는 `avcs workspace project spike-test` 로 만든
   in-flight 워크스페이스가 **land 되지 않은 채 남아 있다**(land 가 차단됐으므로
   삭제 커맨드가 없다 — 다른 in-flight 브랜치들과 같은 성격이라 무해하게 방치).
   실수로 생긴 `--help` landed 워크스페이스도 내용이 없어 마찬가지로 방치했다.
