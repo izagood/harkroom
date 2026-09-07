@@ -326,6 +326,112 @@ fn dev_app_data_root(
     app_data_dir.join(dev_partition_name(source))
 }
 
+/// 키체인 서비스 이름의 **릴리즈 값**. 번들 식별자와 같다.
+///
+/// ## 이 문자열은 못 바꾼다 — 이미 배포된 사용자의 세션이 여기 들어 있다
+///
+/// `v0.1.0`·`v0.1.1` 을 설치한 사람의 macOS 키체인에는 이 이름(`svce`)으로 세션 토큰과
+/// 러너 PAT 가 들어 있다. 이름을 바꾸면 그 항목들은 **그 자리에 남은 채 앱이 못 읽는다** —
+/// 다음 실행에서 로그인 화면이 뜨고, 러너 PAT 는 고아가 된다. 마이그레이션 코드로
+/// 옮길 수도 있지만 그것은 **남의 자격증명을 읽어 옮기는 코드**이고, 키체인 읽기는
+/// 승인 대화상자를 띄운다(`main.rs` 의 `#450` 주석). 얻는 것이 없는 위험이다.
+///
+/// 그래서 **릴리즈 이름은 상수로 고정하고 회귀선으로 못박는다**
+/// (`릴리즈_빌드의_키체인_이름은_안_바뀐다`). 이 값을 고치려는 다음 사람에게:
+/// 그 회귀선이 빨개지는 것이 신호다 — 우회하지 말고 왜 배포된 사용자를 끊어도 되는지
+/// 먼저 답을 만들어라.
+const KEYCHAIN_SERVICE_RELEASE: &str = "app.murmur.desktop";
+
+/// 키체인 서비스 이름을 정한다 — `app_data_root` 와 **같은 자리에서 같은 구획으로** 갈린다.
+///
+/// ```text
+/// 릴리즈  app.murmur.desktop
+/// 개발    app.murmur.desktop.dev-<해시8>
+/// ```
+///
+/// ## 왜 여기 있나 — `#486` 이 절반만 갈랐고, 두 곳이 따로 정하면 그 절반이 또 난다
+///
+/// `#486` 은 앱 데이터 **뿌리**를 워크트리별로 갈랐다. 그 주석은 *"이 뿌리 밑에 있는 것을
+/// 보라: 소켓·토큰·pid·장부·로그"* 라고 적었고, 그것은 맞다 — **그 밑에 있는 것들은**
+/// 갈렸다. 그런데 키체인은 그 뿌리를 안 쓴다. `main.rs` 의 `SERVICE` 상수로 직접 갔다.
+///
+/// 실측(2026-09-06): 릴리즈 `v0.1.0` 을 `/Applications` 에 처음 설치하고 열었는데 로그인
+/// 화면 없이 워크스페이스가 떴고, 사이드바에 개발 서버(`:3401`)의 계정들이 있었다.
+/// 설치한 사람이 만든 적 없는 것들이다(`#515`).
+///
+/// ## 한 출처 — `dev_partition_name(dev_partition_source())`
+///
+/// **해시를 여기서 다시 만들지 않는다.** `app_data_root` 가 쓰는 그 함수를 그대로 부른다.
+/// 두 곳이 각자 해시를 만들면 한쪽만 고쳐지는 이 버그가 그대로 재발한다 — `#513`(daemon
+/// PATH)도 같은 모양이었고(러너에는 넘기는데 daemon 에는 안 넘겼다), 이 저장소에서
+/// "한쪽만 고쳐지고 다른 쪽이 안 따라온" 형태가 반복됐다.
+///
+/// 그 성질을 회귀선이 잰다(`키체인_이름이_데이터_뿌리와_같은_구획에서_나온다`): 뿌리의
+/// 마지막 한 단계와 이 이름의 접미사가 **문자 단위로 같아야** 한다. 누가 여기서 해시를
+/// 따로 만들면 곧바로 빨개진다.
+///
+/// ## `AppHandle` 이 필요 없다 — 그래서 키체인 커맨드가 그대로 쓸 수 있다
+///
+/// `app_data_root` 는 `AppHandle` 이 주는 `app_data_dir()` 를 **인자로 받아** 그 밑에
+/// 구획을 붙인다. 그런데 구획 **이름 자체**는 `env!("CARGO_MANIFEST_DIR")` 하나로
+/// 정해지는 컴파일 타임 값이라 `AppHandle` 이 필요 없다. 키체인에는 붙일 뿌리가 없고
+/// 이름 하나만 있으면 되므로, 이 함수는 인자 없이 성립한다.
+///
+/// `secret_get`/`secret_set`/`secret_delete` 는 `AppHandle` 을 안 받는다
+/// (`#450` 때문에 `spawn_blocking` 안에서 도는데, `AppHandle` 을 그 안으로 옮기면
+/// 시그니처가 넓어진다). 이 함수가 인자를 안 받으므로 **그 시그니처를 안 건드린다.**
+///
+/// ## 환경변수 탈출구가 여기엔 없다
+///
+/// `MURMUR_DEV_DATA_DIR` 는 뿌리를 통째로 옮기는 값이라 키체인 이름에 대응이 없다.
+/// 억지로 대응시키면(예: 그 경로를 해시) **같은 변수로 뿌리를 모은 두 빌드가 키체인은
+/// 각자 쓰는** 어긋남이 생긴다. 그 변수의 용도는 "둘을 일부러 한자리에 모으는 것"인데
+/// 키체인은 안 모이면 목적이 절반만 선다. 지금은 대응을 **안 만들어** 두 빌드가 같은
+/// 워크트리 경로에서 나왔을 때만 같은 키체인을 쓴다 — 필요해지면 그때 근거를 대고 넣어라.
+///
+/// ## 이미 쌓인 개발 항목 — **지우는 코드를 만들지 않았다**
+///
+/// 이 변경 뒤 `app.murmur.desktop` 아래 남는 `murmur.runner.pat.*`·`murmur.runner.device`
+/// 개발 항목들은 아무도 안 읽는 고아가 된다. 그것을 코드로 지우지 않는다:
+///
+/// - **같은 이름 아래에 배포된 사용자의 진짜 세션이 있다.** 개발 부스러기와 실제
+///   자격증명을 이름만 보고 가를 방법이 없다 — `murmur.runner.pat.<uuid>` 는 양쪽이
+///   같은 모양이다. 잘못 지우면 되돌릴 수 없다
+/// - **지우려면 먼저 읽어야 하고, 읽기는 승인 대화상자를 띄운다**(`#450`). 사람이
+///   자기가 만든 적 없는 것에 승인을 하게 되는데, 그것이 `#515` 가 문제 삼은 동작이다
+/// - 고아는 **자리만 차지한다.** 앱이 그 이름을 다시 안 보므로 새는 경로가 없다
+///
+/// 사람이 지우고 싶으면 **키체인 접근 앱에서 `app.murmur.desktop` 을 검색해 개발 중
+/// 만든 항목을 골라 지운다.** `security find-generic-password -s app.murmur.desktop`
+/// 으로 목록을 볼 수 있다. 어느 것이 개발 부스러기인지는 그것을 만든 사람만 안다.
+pub fn keychain_service_name() -> String {
+    // **릴리즈 빌드는 여기서 끝난다.** `app_data_root` 와 같은 컴파일 타임 갈래다 —
+    // 릴리즈 바이너리에는 아래 줄이 아예 남지 않는다.
+    if !cfg!(debug_assertions) {
+        return KEYCHAIN_SERVICE_RELEASE.to_string();
+    }
+    dev_keychain_service_name(KEYCHAIN_SERVICE_RELEASE, dev_partition_source())
+}
+
+/// `keychain_service_name` 의 개발 갈래.
+///
+/// ## 왜 파라미터로 뺐나 — `dev_app_data_root` 와 같은 이유다
+///
+/// `source` 는 `env!` 라 컴파일 타임 상수이고, 한 프로세스 안에서 두 워크트리를 흉내 낼
+/// 방법이 없다. 파라미터로 열지 않으면 회귀선은 `dev_partition_name` 이라는 **조각**을
+/// 직접 부르게 되고, 그러면 그 조각을 이어 붙이는 이 함수를 통째로 지워도 초록이다 —
+/// `#486` 이 되돌려 RED 절차에서 실제로 그렇게 통과했다(2026-09-06).
+///
+/// `base` 도 같이 열어 뒀다. 릴리즈 상수를 회귀선이 직접 넘겨야 "개발 이름은 릴리즈
+/// 이름으로 **시작한다**"를 재는 자리가 프로덕션 조립을 그대로 밟는다.
+fn dev_keychain_service_name(base: &str, source: &str) -> String {
+    // **`.` 로 잇는다.** 서비스 이름은 역DNS 꼴이고, 뿌리 쪽 구획(`dev-<해시>`)이
+    // 디렉터리 한 단계인 것과 같은 자리다. 접미사가 `dev-` 로 시작하므로 사람이
+    // 키체인 접근에서 봤을 때 **이것이 개발 부스러기임을 이름으로 안다** —
+    // `DEV_DIR_PREFIX` 가 `ls` 에서 하는 일과 같다.
+    format!("{base}.{}", dev_partition_name(source))
+}
+
 /// `<appDataDir>/daemon/daemon-v<N>.{sock,pid,token}` 세 경로.
 ///
 /// **조립 규칙이 `@murmur/shared/daemonEndpoint::daemonEndpointPaths` 와 같아야 한다** —
@@ -1756,6 +1862,145 @@ mod tests {
         assert_eq!(
             dev_app_data_root(base, dev_partition_source(), Some("".into())),
             dev_app_data_root(base, dev_partition_source(), None),
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 키체인 서비스 이름 회귀선 — `#515`
+    //
+    // `#486` 이 뿌리를 갈랐는데 키체인은 안 갈렸다. 여기서 재는 것은 **이름 계산**과
+    // 그것이 뿌리와 **같은 출처**에서 나오는가다.
+    // -----------------------------------------------------------------------
+
+    /// **회귀선 ① — 개발 빌드의 키체인 이름이 릴리즈와 다르다.**
+    ///
+    /// 이 변경 전에는 둘이 같은 `app.murmur.desktop` 이었고, 실측(2026-09-06)에서
+    /// 처음 설치한 릴리즈 `.app` 이 개발 중 쌓인 세션·PAT 를 그대로 읽었다.
+    ///
+    /// **두 "빌드"를 같은 프로덕션 함수로 흉내 낸다** — `dev_partition_name` 조각을
+    /// 직접 부르면 조립하는 함수를 통째로 지워도 초록이다(`#486` 실측).
+    #[test]
+    fn 개발_빌드의_키체인_이름이_릴리즈와_다르다() {
+        let 알파 = dev_keychain_service_name(
+            KEYCHAIN_SERVICE_RELEASE,
+            "/Users/x/wt/alpha/packages/desktop/src-tauri",
+        );
+        let 베타 = dev_keychain_service_name(
+            KEYCHAIN_SERVICE_RELEASE,
+            "/Users/x/wt/beta/packages/desktop/src-tauri",
+        );
+
+        assert_ne!(
+            알파, KEYCHAIN_SERVICE_RELEASE,
+            "개발 빌드가 릴리즈와 같은 키체인 이름을 쓴다 — 설치한 앱이 개발 세션·PAT 를 읽는다"
+        );
+        assert_ne!(
+            베타, KEYCHAIN_SERVICE_RELEASE,
+            "개발 빌드가 릴리즈와 같은 키체인 이름을 쓴다"
+        );
+        // 워크트리끼리도 갈린다 — 뿌리가 갈리는 그 단위와 같아야 한다.
+        assert_ne!(
+            알파, 베타,
+            "다른 워크트리의 개발 빌드가 같은 키체인 이름을 얻었다"
+        );
+
+        // 릴리즈 이름으로 **시작한다**: 사람이 키체인 접근에서 `app.murmur.desktop` 을
+        // 검색하면 개발 부스러기도 함께 보인다(고아를 사람이 지울 수 있는 근거다 —
+        // `keychain_service_name` 주석의 "이미 쌓인 개발 항목").
+        assert!(
+            알파.starts_with(KEYCHAIN_SERVICE_RELEASE),
+            "개발 이름이 릴리즈 이름으로 안 시작한다 — 사람이 한 번에 못 찾는다: {알파}"
+        );
+        // 그리고 `dev-` 로 이어져 **지워도 되는 것**임을 이름으로 안다.
+        assert!(
+            알파[KEYCHAIN_SERVICE_RELEASE.len()..].starts_with(&format!(".{DEV_DIR_PREFIX}")),
+            "개발 접미사가 `.{DEV_DIR_PREFIX}` 로 안 시작한다: {알파}"
+        );
+    }
+
+    /// **회귀선 ② — 대조군: 릴리즈 빌드의 이름은 `app.murmur.desktop` 그대로다.**
+    ///
+    /// **이것이 없으면 ①은 "둘 다 바뀌었다"로도 통과한다.** 그리고 릴리즈 이름이 바뀌면
+    /// 이미 배포된 `v0.1.0`·`v0.1.1` 사용자의 세션 토큰과 러너 PAT 를 앱이 못 읽는다 —
+    /// 다음 실행에서 로그인 화면이 뜨고 러너 PAT 는 고아가 된다.
+    ///
+    /// `릴리즈_빌드의_뿌리는_안_바뀐다` 와 같은 방식으로 **컴파일 타임 갈래 그대로** 잰다:
+    /// `cargo test` 는 debug 로 도니 여기서 릴리즈 갈래를 실행할 수 없다. 두 단언 중
+    /// 하나는 언제나 실행되고, `cargo test --release` 가 아래쪽을 실제로 밟는다.
+    #[test]
+    fn 릴리즈_빌드의_키체인_이름은_안_바뀐다() {
+        // 상수 자체를 못박는다 — 이 문자열이 배포된 사용자의 키체인에 들어 있는 `svce` 다.
+        assert_eq!(
+            KEYCHAIN_SERVICE_RELEASE, "app.murmur.desktop",
+            "릴리즈 키체인 서비스 이름이 바뀌었다 — 배포된 v0.1.0·v0.1.1 사용자의 \
+             세션과 러너 PAT 를 앱이 못 읽게 된다"
+        );
+
+        let got = keychain_service_name();
+        if cfg!(debug_assertions) {
+            assert_ne!(
+                got, KEYCHAIN_SERVICE_RELEASE,
+                "개발 빌드인데 릴리즈 이름을 쓴다"
+            );
+        } else {
+            assert_eq!(
+                got, KEYCHAIN_SERVICE_RELEASE,
+                "릴리즈 빌드가 키체인 이름을 옮겼다 — 배포된 사용자의 세션이 끊긴다"
+            );
+        }
+    }
+
+    /// **회귀선 ③ — 같은 워크트리면 같은 이름이다. ①의 대조군이다.**
+    ///
+    /// 이것이 없으면 ①은 "매번 랜덤한 이름을 준다"로도 통과한다. 매번 랜덤이면 앱을
+    /// 다시 띄울 때마다 새 서비스 이름이 되어 **개발 중에도 로그인이 안 유지된다** —
+    /// 그리고 키체인에 고아가 실행 횟수만큼 쌓인다.
+    #[test]
+    fn 같은_워크트리면_같은_키체인_이름이다_대조군() {
+        // 같은 빌드가 두 번 물으면 같은 답이다.
+        assert_eq!(
+            keychain_service_name(),
+            keychain_service_name(),
+            "같은 빌드가 두 번 물었는데 다른 키체인 이름을 얻었다 — 로그인이 안 유지된다"
+        );
+
+        // 같은 입력이면 언제나 같다.
+        let src = "/Users/x/wt/alpha/packages/desktop/src-tauri";
+        assert_eq!(
+            dev_keychain_service_name(KEYCHAIN_SERVICE_RELEASE, src),
+            dev_keychain_service_name(KEYCHAIN_SERVICE_RELEASE, src),
+        );
+    }
+
+    /// **회귀선 ④ — 키체인 이름이 데이터 뿌리와 *같은 출처*에서 나온다.**
+    ///
+    /// 이것이 `#515` 의 핵심이다. `#486` 은 뿌리를 갈랐는데 키체인은 `main.rs` 의 별도
+    /// 상수로 갔고, 그래서 절반만 갈렸다. 누가 여기서 해시를 **따로** 만들면(다른 입력,
+    /// 다른 길이, 다른 해시 함수) 그 절반이 그대로 재발한다.
+    ///
+    /// 그래서 재는 것이 "둘 다 갈린다"가 아니라 **"둘의 구획 이름이 문자 단위로 같다"**다.
+    #[test]
+    fn 키체인_이름이_데이터_뿌리와_같은_구획에서_나온다() {
+        let base = Path::new(REAL_APP_DATA_DIR);
+        let src = "/Users/x/wt/alpha/packages/desktop/src-tauri";
+
+        // 뿌리 쪽 구획 — `app_data_dir` 밑 마지막 한 단계.
+        let 뿌리_구획 = dev_app_data_root(base, src, None)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+
+        // 키체인 쪽 구획 — 릴리즈 이름 뒤의 `.` 다음.
+        let 이름 = dev_keychain_service_name(KEYCHAIN_SERVICE_RELEASE, src);
+        let 키체인_구획 = 이름
+            .strip_prefix(&format!("{KEYCHAIN_SERVICE_RELEASE}."))
+            .unwrap_or_else(|| panic!("개발 키체인 이름이 릴리즈 이름 + `.` 꼴이 아니다: {이름}"));
+
+        assert_eq!(
+            키체인_구획, 뿌리_구획,
+            "키체인 이름의 구획이 데이터 뿌리의 구획과 다르다 — 두 곳이 각자 해시를 \
+             만들고 있다. `#515` 가 바로 그 어긋남이었다(`#486` 이 뿌리만 갈랐다)"
         );
     }
 
