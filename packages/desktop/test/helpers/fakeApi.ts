@@ -114,7 +114,12 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     messages: vi.fn(async () => ({ messages: [], hasMore: false })),
     // #178: 링크가 가리키는 메시지 하나. 베이스가 이것을 덮어야 "부르지 않았다" 를 단언할 수 있다.
     message: vi.fn(async () => msg('m-link', 'c1', 1, 'linked')),
-    postMessage: vi.fn(async () => msg('m-post', 'c1', 99, 'sent')),
+    // 발화는 **봉투**를 돌려준다(계획 Task 8 Step 3) — 메시지와 "누가 불렸는지"를 함께.
+    // 기본값의 `notified` 가 `null`('모른다')인 이유: 헤더를 안 싣는 서버·재생 응답이 그
+    // 모양이고, 부름의 결과를 보는 테스트가 명시적으로 덮어써야 한다. 기본을 `count: 0` 으로
+    // 두면 집합을 부르지 않은 모든 발화가 "아무도 안 깼다"를 들고 다녀, 조용한 실패 판정이
+    // 우연히 초록이 되거나 우연히 빨개진다.
+    postMessage: vi.fn(async () => ({ message: msg('m-post', 'c1', 99, 'sent'), notified: null })),
     // #222: 예약 발송. 베이스가 덮어야 컴포저를 띄우는 화면 테스트가 실제 배선을
     // 그대로 재현한다 — 이것이 없으면 컴포저가 실제로 부르는 표면이 목에 없어,
     // 프로덕션 코드에 "없으면 건너뛴다" 를 넣어 초록을 사는 유혹이 생긴다.

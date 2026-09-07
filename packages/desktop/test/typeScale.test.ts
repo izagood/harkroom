@@ -113,13 +113,13 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
  * 지금 빨개진다. 숫자로 붙잡아 두면 **줄면 통과하고 늘면 빨개진다** — 그 사이에 누가
  * 10px 을 새로 들고 와도 잡힌다. 그 작업이 끝나면 이 항목을 지운다.
  */
-const PENDING: { file: string; count: number; why: string }[] = [
-  {
-    file: 'components/Sidebar.tsx',
-    count: 28,
-    why: '동시에 도는 다른 작업(찾기를 맨 위로)이 이 파일을 고치는 중이라 충돌을 피했다',
-  },
-];
+// **비어 있다 — 부채를 다 갚았다**(2026-09-07). `Sidebar.tsx` 의 10px 28곳이 여기 있었다.
+// 병렬 작업(찾기를 맨 위로)이 그 파일을 동시에 고치던 동안만 미뤄 둔 것이고, 그 작업이
+// 머지된 뒤 27곳(그 사이 돋보기 한 줄이 사라졌다)을 전부 11px 로 올렸다.
+//
+// 자리마다 무엇인지 보고 판단했다 — 전부 **읽는 글자**였다(오류 문구·안내·멤버 이름·
+// 저장소 이름·미읽음 개수). 아바타 원 안의 글리프처럼 상자에 묶인 크기는 없었다.
+const PENDING: { file: string; count: number; why: string }[] = [];
 
 function sourceFiles(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {

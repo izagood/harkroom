@@ -14,6 +14,7 @@ import { ReactionPicker, Reactions, InlineReactionButtons } from './Reactions';
 import { Identity, StatusMark } from './Identity';
 import { TerminalChip } from './TerminalChip';
 import { WakeRow } from './WakeRow';
+import { NotifiedGapRow } from './NotifiedGapRow';
 import { Attachments } from './Attachments';
 import { Menu } from './Menu';
 import { bodyAsHandles, displayBody } from '../lib/mention';
@@ -345,6 +346,13 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               </button>
             )}
             <Attachments attachments={message.attachments} />
+            {/*
+              **집합 호출의 결과**(정본 문서). 리액션·답글 요약보다 **앞**에 둔다: 이 줄은
+              내가 방금 부른 것의 결과라 본문에 붙어 읽혀야 하고, 아래의 둘은 그 뒤에 남들이
+              붙인 것이다. 덜 깼을 때만 스스로 렌더한다 — 조건을 여기 두지 않는 이유는
+              `WakeRow` 와 같다: 종류로 갈리는 판정은 그것을 아는 한 곳에 둔다.
+            */}
+            <NotifiedGapRow messageId={message.id} />
             <Reactions message={message} />
             {/* #254: 답글이 **있을 때**의 상시 답글 요약(#424 로 상자를 벗긴 텍스트 링크)은
                 **본문 열**에 둔다 — 리액션 칩 바로 뒤, 왼쪽 정렬. 우상단 열에는 툴바만 남으므로 `right-full`("내 우측 = 답글 컨트롤의
