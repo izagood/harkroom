@@ -1,5 +1,5 @@
 import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@murmur/shared';
-import type { HandleGroupRow } from '@murmur/shared';
+import type { AgentTeamRow, HandleGroupRow } from '@murmur/shared';
 import type { BodyRecipient } from './mention';
 
 /**
@@ -56,16 +56,29 @@ export function readNotifiedHeaders(headers: Headers): NotifiedResult {
 }
 
 /**
- * 한 번의 발화가 부른 집합. **`memberCount` 를 쓴다** — 그것이 이 수의 유일한 출처다
+ * 한 번의 발화가 부른 **저장된 명단 하나** — 집합(#230)이거나 팀(#172)이다.
+ * **`memberCount` 를 쓴다** — 그것이 이 수의 유일한 출처다
  * (`HandleGroupRow.memberCount` 주석: *"자동완성 후보가 `@release` 를 부르기 직전에 그것이
- * 한 사람인지 스무 사람인지 보여야 하는 유일한 자리"*).
+ * 한 사람인지 스무 사람인지 보여야 하는 유일한 자리"*. `AgentTeamRow.memberCount` 가 팀에
+ * 대해 같은 문장을 적어 뒀다).
+ *
+ * 타입 이름을 `CalledGroup` 으로 남긴다 — 이 판정에서 둘은 **같은 것**이다: 한 이름으로
+ * 여럿을 부르고, 화면은 그 규모만 알고 명단은 모른다. 이름을 갈라 놓으면 `expectedWakes`·
+ * `notifiedSummary` 가 두 벌이 되고, 그 두 벌이 갈라지는 날 집합과 팀이 같은 조용한 실패를
+ * 두고 다른 수를 말한다.
  */
 export interface CalledGroup {
   handle: string;
   /** 저장된 명단의 크기. 부른 사람 자신이 그 안에 있을 수 있다 — `expectedWakes` 가 그것을 뺀다. */
   memberCount: number;
-  /** 부른 사람 자신이 이 집합의 구성원인가. 모르면 `false` 로 둔다(아래 `calledGroups` 주석). */
+  /** 부른 사람 자신이 이 명단의 구성원인가. 모르면 `false` 로 둔다(아래 `calledGroups` 주석). */
   includesMe: boolean;
+  /**
+   * 집합인가 팀인가. **수 계산에는 쓰이지 않는다** — 둘은 같은 방식으로 세진다. 화면이
+   * 사유를 갈라 말하는 데만 쓴다(`NotifiedSummary.kind` 주석: 팀은 비활성이라는 두 번째
+   * 사유가 있다).
+   */
+  kind: 'group' | 'team';
 }
 
 /**
@@ -84,25 +97,63 @@ export interface CalledGroup {
  * 이유이고(*"보내기 전 목록과 보낸 뒤 강조가 서로 다른 규칙을 쓰면 이 기능이 막으려는
  * 착각을 오히려 만든다"*), 같은 이유가 여기에도 그대로 적용된다.
  *
- * **`includesMe` 를 화면이 알 수 없다.** 구성원 명단은 `GET /handle-groups/:id` 에만 있고
- * 그 라우트는 `requireAdmin` 이다(실측: `handleGroupRoutes.ts:61`) — 부른 사람이 admin 이
- * 아니면 404 가 아니라 403 을 받는다. 그래서 `false` 로 둔다. 그 방향으로 틀리는 것이
- * 안전하다: 내가 구성원인 집합을 부르면 기대치가 1 만큼 높게 잡혀 조용한 실패를 한 번
- * **더** 말하고, 반대로 두면 진짜 실패를 삼킨다. 문서의 규칙 06("없는 문은 그리지 않는다")
- * 은 없는 것을 그리지 말라는 것이고, 있는 실패를 숨기라는 것이 아니다.
+ * ## 집합의 `includesMe` 는 화면이 알 수 없다 — 팀은 다르다
+ *
+ * 집합의 구성원 명단은 `GET /handle-groups/:id` 에만 있고 그 라우트는 `requireAdmin` 이다
+ * (실측: `handleGroupRoutes.ts:61`) — 부른 사람이 admin 이 아니면 404 가 아니라 403 을
+ * 받는다. 그래서 `false` 로 둔다. 그 방향으로 틀리는 것이 안전하다: 내가 구성원인 집합을
+ * 부르면 기대치가 1 만큼 높게 잡혀 조용한 실패를 한 번 **더** 말하고, 반대로 두면 진짜
+ * 실패를 삼킨다. 문서의 규칙 06("없는 문은 그리지 않는다")은 없는 것을 그리지 말라는
+ * 것이고, 있는 실패를 숨기라는 것이 아니다.
+ *
+ * **팀에서는 그 모름이 없다.** 팀에는 에이전트만 들어간다 — 서버가 양쪽에서 강제한다
+ * (팀 라우트는 사람 계정을 `not_an_agent` 400 으로 거절하고, 집합은 거울처럼
+ * `addHandleGroupMembers` 가 `kind = 'human'` 으로 좁힌다). 그래서 팀을 부르는 **사람인
+ * 나는 그 팀의 구성원일 수 없고**, 명단을 몰라도 `includesMe` 는 확실히 `false` 다.
+ *
+ * 그런데 그 확실함이 계산을 바꾸지 않는다 — 집합에서도 `false` 를 쓰기 때문이다. 그래서
+ * 여기서 이용할 것이 없고, 팀 항목에도 `false` 를 그대로 둔다. **다만 뜻이 다르다**:
+ * 집합의 `false` 는 *"모르니까 이쪽으로 틀린다"* 이고 팀의 `false` 는 *"사실이다"* 다.
+ * 그 차이가 값에 안 나타나는 것은 우연이 아니라 집합 쪽이 안전한 방향을 골랐기 때문이고,
+ * 집합의 명단 라우트가 나중에 열리면 그 항목만 참값으로 바뀌고 팀은 그대로다 —
+ * **에이전트 팀에 사람인 내가 드는 날은 오지 않는다.**
+ *
+ * @param groups 집합 목록(`state.groups`).
+ * @param teams 팀 목록(`state.teams`). 옛 서버에서는 빈 배열이고, 그러면 팀 handle 은
+ *   아래에서 "후보에 없는 이름"으로 걸러진다 — 그 서버는 팀을 부르지도 못하므로 맞다.
  */
 export function calledGroups(
-  recipients: BodyRecipient[], groups: HandleGroupRow[],
+  recipients: BodyRecipient[], groups: HandleGroupRow[], teams: AgentTeamRow[] = [],
 ): CalledGroup[] {
-  const byHandle = new Map(groups.map((g) => [g.handle.toLowerCase(), g]));
+  /**
+   * 두 목록을 **한 맵으로 합친다.** 집합이 먼저 들어가고 팀이 뒤에 오면서
+   * `has` 로 막으므로 **집합이 이긴다** — 서버의 해석 순서와 같다
+   * (`services/messages.ts`: 계정 → 집합 → 팀). 세 네임스페이스가 배타가 아니라는 것을
+   * 서버 테스트가 고정했으므로(`teamMention.test.ts`: 팀 이름과 같은 집합을 나중에 만들
+   * 수 있다) 이 순서는 실제로 결과를 바꾼다. 여기서 팀을 이기게 두면 화면은 서버가 부르지
+   * 않은 명단의 수와 견주게 되고, 그러면 정상 발화가 조용한 실패로 보인다.
+   */
+  const byHandle = new Map<string, Omit<CalledGroup, 'includesMe'>>();
+  for (const g of groups) {
+    byHandle.set(g.handle.toLowerCase(), {
+      handle: g.handle, memberCount: g.memberCount, kind: 'group',
+    });
+  }
+  for (const t of teams) {
+    const key = t.name.toLowerCase();
+    if (!byHandle.has(key)) {
+      byHandle.set(key, { handle: t.name, memberCount: t.memberCount, kind: 'team' });
+    }
+  }
+
   const out: CalledGroup[] = [];
   for (const r of recipients) {
     if (r.kind !== 'group') continue;
-    const group = byHandle.get(r.handle.toLowerCase());
-    // 후보에 없는 집합 handle 은 셈에 넣지 않는다 — 수를 모르는 것을 0 으로 세면
+    const called = byHandle.get(r.handle.toLowerCase());
+    // 후보에 없는 handle 은 셈에 넣지 않는다 — 수를 모르는 것을 0 으로 세면
     // 모든 부름이 조용한 실패로 보인다.
-    if (!group) continue;
-    out.push({ handle: group.handle, memberCount: group.memberCount, includesMe: false });
+    if (!called) continue;
+    out.push({ ...called, includesMe: false });
   }
   return out;
 }
@@ -125,12 +176,28 @@ export function expectedWakes(called: CalledGroup[]): number | null {
 
 /** 화면이 그릴 한 줄. `null` 이면 그릴 것이 없다 — **조용한 실패가 아니면 조용하다**. */
 export interface NotifiedSummary {
-  /** 부른 사람 수(집합의 구성원 수 합). */
+  /** 부른 사람 수(부른 명단의 구성원 수 합). */
   called: number;
   /** 깬 사람 수. */
   woke: number;
-  /** 이름을 말할 수 있는 집합 하나. 집합을 둘 이상 불렀으면 `null` 이라 수만 말한다. */
+  /** 이름을 말할 수 있는 명단 하나. 둘 이상 불렀으면 `null` 이라 수만 말한다. */
   groupHandle: string | null;
+  /**
+   * 부른 것이 팀(#172)인가 집합(#230)인가. **줄의 사유가 갈리므로 필수다.**
+   *
+   * 집합이 덜 깨는 사유는 하나뿐이다 — 그 사람이 채널을 볼 수 없다(`NotifiedGapRow` 가
+   * 그 단정을 근거로 사유를 글자로 적는다). **팀은 사유가 둘이다**: 채널을 볼 수 없거나,
+   * 그 에이전트가 **비활성**이다(`services/messages.ts` 가 비활성 팀원을 부르지 않고,
+   * `memberCount` 는 그 팀원을 센다 — 그 어긋남이 이 줄이 뜨는 두 번째 경로다).
+   *
+   * 그래서 팀에 집합의 문장을 그대로 쓰면 **틀린 말을 단정한다**: 꺼 둔 에이전트 때문에
+   * 뜬 줄이 "채널 멤버로 넣어야 부름이 닿는다"고 말하고, 그러면 사람은 이미 멤버인 계정을
+   * 다시 넣으려 한다. 규칙 05(개입 비용)가 막는 것이 그것이다.
+   *
+   * `null` 은 "둘을 섞어 불렀다" — 그때는 어느 명단에서 빠졌는지 모르므로 사유도 단정할
+   * 수 없다(`groupHandle` 이 `null` 인 것과 같은 이유다).
+   */
+  kind: 'group' | 'team' | null;
 }
 
 /**
@@ -159,12 +226,16 @@ export function notifiedSummary(
   const expected = expectedWakes(called);
   if (expected === null || expected === 0) return null;
   if (notified.count >= expected) return null;
+  // 여러 개를 불렀어도 **종류가 하나면 사유는 단정할 수 있다** — 이름은 못 말해도
+  // (어느 것에서 빠졌는지 모른다) "이것들은 다 팀이다"는 사실은 그대로다.
+  const kinds = new Set(called.map((c) => c.kind));
   return {
     called: expected,
     woke: notified.count,
-    // 집합 하나면 이름을 말한다 — "release 3명 중 2명" 이 "3명 중 2명" 보다 무엇을 다시
-    // 부를지 정하는 데 쓸모가 있다. 둘 이상이면 어느 집합에서 빠졌는지 모르므로 수만 말한다.
+    // 하나면 이름을 말한다 — "release 3명 중 2명" 이 "3명 중 2명" 보다 무엇을 다시
+    // 부를지 정하는 데 쓸모가 있다. 둘 이상이면 어느 것에서 빠졌는지 모르므로 수만 말한다.
     groupHandle: called.length === 1 ? called[0]!.handle : null,
+    kind: kinds.size === 1 ? [...kinds][0]! : null,
   };
 }
 

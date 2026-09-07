@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useActiveStore } from '../state/communities';
-import type { AccountStatus, AccountView, HandleGroupRow } from '@murmur/shared';
+import type { AccountStatus, AccountView, AgentTeamRow, HandleGroupRow } from '@murmur/shared';
 import { getController } from '../state/controller';
 
 /**
@@ -284,6 +284,35 @@ export function GroupBadge({ group, className = '' }: { group: HandleGroupRow; c
       <span aria-hidden="true">👥</span>
       <span className="sr-only">집합</span>
       <span>{group.memberCount}명</span>
+    </span>
+  );
+}
+
+/**
+ * 에이전트 팀의 표시(#172). `GroupBadge` 와 **같은 자리·같은 크기**이고, 그 형제로 여기
+ * 산다 — 같은 마크업이 두 곳에 살면 한쪽만 바뀐다는 위의 이유가 그대로다.
+ *
+ * `GroupBadge` 에 `kind` 를 하나 더해 겸용하지 않는 이유: 두 배지의 **인자가 다르다**
+ * (`HandleGroupRow.handle`·`displayName` 대 `AgentTeamRow.name`). 한 컴포넌트가 둘을
+ * 받으려면 호출부가 모양을 맞춰 넘겨야 하고, 그 변환이 두 화면에 흩어진다.
+ *
+ * **색과 글리프를 집합과 다르게 둔다.** 계정·집합·팀이 한 목록에 섞여 서므로 셋이 서로
+ * 다른 것으로 읽혀야 한다(`GroupBadge` 가 에이전트 배지와 색을 다르게 둔 것과 같은
+ * 판단이다). 강조색은 쓰지 않는다 — 부를 수 있는 이름은 나를 막는 것이 아니다(규칙 04).
+ *
+ * **수를 함께 보인다.** 이름만 보이면 `@release` 가 하나인지 다섯인지 모르는 채로 부르게
+ * 된다 — `AgentTeamRow.memberCount` 주석이 이 자리를 지목한다. 그 수는 **비활성 팀원도
+ * 센다**: 명단의 크기는 운영자의 의도이고, 그 중 몇이 깨는지는 부른 뒤에 알 수 있다.
+ */
+export function TeamBadge({ team, className = '' }: { team: AgentTeamRow; className?: string }) {
+  return (
+    <span
+      data-testid={`team-badge-${team.name}`}
+      className={`inline-flex items-center gap-1 rounded bg-surface-hover px-1 text-[11px] text-fg-muted ${className}`}
+    >
+      <span aria-hidden="true">🤖</span>
+      <span className="sr-only">팀</span>
+      <span>{team.memberCount}명</span>
     </span>
   );
 }
