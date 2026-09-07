@@ -52,6 +52,87 @@ describe('repo hygiene', () => {
     });
   });
 
+  /**
+   * **실제 사람의 계정 정보가 저장소에 남지 않는다** (2026-09-08).
+   *
+   * 무엇이 있었나: 계정 풀 기능을 만들면서 실측 결과를 설계 문서에 적었고, 그 안에 개발
+   * 머신의 **실제 이메일과 조직 이름**이 들어갔다(`docs/specs/2026-09-08-...` 두 줄).
+   * PR 본문에도 같은 값이 실렸다. 사용자가 그것을 발견해 지적했다.
+   *
+   * 왜 회귀선이 필요한가: 그 실수는 **악의 없이, 정확히 좋은 의도에서** 났다 — "실측을
+   * 적어라"는 이 저장소의 규율이 값을 그대로 붙이게 만든다. 규율은 유지하고, 값만 못
+   * 들어오게 막는 자리가 여기다.
+   *
+   * 판정은 **도메인**으로 한다. 이름·핸들은 저장소 전체에 정당하게 등장하고(작성자, 브랜치,
+   * 커밋) 그것을 금지하면 이 테스트가 자기 근거 때문에 빨개진다. 반면 이메일 도메인과
+   * 조직 이름은 코드·문서에 있을 이유가 없다 — 예시가 필요하면 `example.com` 이 있다.
+   *
+   * 되돌려 RED: 아무 문서에 실제 이메일 한 줄을 넣으면 빨개진다.
+   */
+  describe('실제 계정 정보가 없다', () => {
+    /** 문서·소스에 있을 이유가 없는 것들. 예시는 `example.com`·`example.org` 를 쓴다. */
+    const 금지 = [
+      // 실제 이메일 도메인. `@example.com`·`@personal.example` 같은 예시 도메인은 통과한다.
+      /@(?:gmail|googlemail|naver|kakao|daum|outlook|hotmail|icloud|yahoo)\.com\b/i,
+      /@rebellions\.ai\b/i,
+      // 조직 이름(사내 네이밍이 드러난다).
+      /\bRebellions-[A-Za-z]+/,
+    ];
+
+    /**
+     * **이 파일 자신은 제외한다.** 금지 패턴과 자기 검사 문자열이 여기 살아 있어야 하고,
+     * 그러지 않으면 이 회귀선이 자기 근거 때문에 빨개진다(첫 실행에서 실제로 그랬다).
+     *
+     * 파일 하나를 통째로 면제하는 것은 보통 나쁜 신호지만, 여기서는 **면제 대상이 검사기
+     * 자신**이라 그 위험이 다르다: 이 파일에 실제 계정 정보를 넣는 유일한 경로는 금지
+     * 패턴을 늘리는 것이고, 그 변경은 이 파일을 읽는 사람 앞에 그대로 드러난다.
+     */
+    const 자기자신 = join(getRoot(), 'packages/server/test/repoHygiene.test.ts');
+
+    function 소스와문서(): string[] {
+      const out: string[] = [];
+      const walk = (dir: string): void => {
+        if (!existsSync(dir)) return;
+        for (const e of readdirSync(dir, { withFileTypes: true })) {
+          const full = join(dir, e.name);
+          if (e.isDirectory()) {
+            if (['node_modules', 'dist', 'target', '.git'].includes(e.name)) continue;
+            walk(full);
+          } else if (/\.(ts|tsx|rs|md|json)$/.test(e.name)) {
+            out.push(full);
+          }
+        }
+      };
+      walk(join(getRoot(), 'packages'));
+      walk(join(getRoot(), 'docs'));
+      out.push(join(getRoot(), 'README.md'));
+      return out;
+    }
+
+    it('소스·문서에 실제 이메일 도메인이나 조직 이름이 없다', () => {
+      const 걸린것: string[] = [];
+      for (const file of 소스와문서()) {
+        if (file === 자기자신) continue;
+        const text = readFileSync(file, 'utf-8');
+        for (const re of 금지) {
+          const m = re.exec(text);
+          if (m) 걸린것.push(`${file.slice(getRoot().length + 1)}: ${m[0]}`);
+        }
+      }
+      expect(걸린것, `실제 계정 정보가 저장소에 있다:\n${걸린것.join('\n')}`).toEqual([]);
+    });
+
+    it('이 회귀선이 실제로 잡는다 — 예시 도메인은 통과하고 실제 도메인은 걸린다', () => {
+      // 예외를 넣은 뒤 그 예외가 금지 전체를 열어 버리는 사고를 여기서 잰다.
+      const 걸리나 = (s: string): boolean => 금지.some((re) => re.test(s));
+      expect(걸리나('you@example.com')).toBe(false);
+      expect(걸리나('me@personal.example')).toBe(false);
+      expect(걸리나('someone@gmail.com')).toBe(true);
+      expect(걸리나('someone@rebellions.ai')).toBe(true);
+      expect(걸리나('org=Rebellions-Lychee')).toBe(true);
+    });
+  });
+
   describe('README environment variables table', () => {
     const configDir = join(getRoot(), 'packages');
 
