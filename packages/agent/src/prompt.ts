@@ -15,6 +15,60 @@ export const BODY_LIMIT = 8000;
 export const NO_REPLY_NOTICE = '(답 없이 턴을 끝냈습니다 — 프로세스는 정상 종료, 발화 없음)';
 
 
+/** 통지에 실을 하네스 출력의 상한. 이 길이를 넘으면 앞을 자르고 뒤를 남긴다. */
+const TAIL_NOTICE_MAX_CHARS = 1000;
+
+/**
+ * 발화 없이 끝난 턴에서 **하네스가 마지막에 남긴 출력**을 통지에 실을 형태로 만든다.
+ *
+ * ## 왜 있는가
+ *
+ * 2026-09-07 15:08 의 턴은 `PR #533 을 올렸고 CI 두 잡이 도는 중입니다 … 통과 시 머지하고
+ * 결과를 스레드에 올리겠습니다` 를 stdout 에 남기고 끝났다. 사람이 스레드에서 본 것은
+ * `(답 없이 턴을 끝냈습니다)` 한 줄이었다 — **정보는 존재했고 러너가 버렸다.** 그 말은
+ * `runTurn` 이 돌려주는 `tail`(끝 2KB) 안에 있었고, 성공 경로가 그것을 쓰지 않았을 뿐이다.
+ *
+ * ## 이것은 하네스 출력의 "해석" 이 아니다
+ *
+ * `pty.ts` 가 그은 금지선은 **출력을 해석해 답으로 삼는 것**이다(옛 `reply.ts::extractReply`
+ * 가 하던 일이고, 발화를 에이전트의 자율로 옮기며 걷어냈다). 여기서 하는 것은 판정이 아니라
+ * **증거 첨부**다: 무슨 뜻인지 정하지 않고, 마지막에 무엇이 찍혔는지를 그대로 보인다.
+ * 그래서 발화 판정(`countOwnPostsSince`)은 여전히 murmur 데이터만 본다.
+ *
+ * ## 새니타이즈가 선택이 아닌 이유
+ *
+ * PTY 안에서는 stdout·stderr 가 한 스트림으로 섞이고 프롬프트 에코까지 남는다(`pty.ts`
+ * 주석의 실측). 러너 env 에는 `MURMUR_PAT` 가 있으므로 하네스가 `env` 를 찍는 순간 그것이
+ * tail 에 들어온다 — 걸러내지 않으면 이 통지가 **비밀을 대화에 흘리는 경로**가 된다.
+ * 그래서 러너 자신의 PAT(정확한 문자열), `murp_` 모양의 다른 토큰, `Bearer <값>` 을 가린다.
+ *
+ * 남길 것이 없으면 `null` — 빈 상자는 "여기 뭔가 있다"는 거짓 신호다(`readAskMeta` 판례).
+ */
+export function harnessTailNotice(tail: string, pat: string): string | null {
+  let text = tail
+    // CSI/OSC 등 ANSI 이스케이프. 색·커서 제어가 그대로 흐르면 사람이 읽을 수 없다.
+    .replace(/\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)/g, '')
+    .replace(/\x1B[[\]()#;?]*[0-9;?]*[A-Za-z@-~]/g, '')
+    // PTY 는 줄바꿈을 `\r\n` 으로 낸다. `\r` 만 남으면 채팅에서 줄이 겹쳐 보인다.
+    .replace(/\r\n?/g, '\n')
+    // 남은 제어문자(벨 등). 개행·탭은 뜻이 있으므로 남긴다.
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+
+  // 비밀 가리기. **정확한 PAT 를 먼저** 지운다 — 아래 모양 규칙이 못 잡는 형태여도 이건 잡힌다.
+  if (pat.length > 0) text = text.split(pat).join('(가림)');
+  text = text
+    .replace(/murp_[A-Za-z0-9_-]+/g, '(가림)')
+    .replace(/(Bearer\s+)\S+/gi, '$1(가림)');
+
+  text = text.trim();
+  if (text.length === 0) return null;
+  // 뒤를 남긴다 — 마지막에 무엇을 했는지가 이 통지의 값이다. 자른 사실을 밝힌다:
+  // 밝히지 않으면 사람이 "이게 전부"로 읽는다.
+  return text.length > TAIL_NOTICE_MAX_CHARS
+    ? `…${text.slice(-TAIL_NOTICE_MAX_CHARS)}`
+    : text;
+}
+
 /** MAX_ATTEMPTS 를 소진했을 때 채널에 남기는 통지문구(#82). */
 export const FAILURE_NOTICE = '(답변에 실패했습니다 — 운영자 확인이 필요합니다)';
 

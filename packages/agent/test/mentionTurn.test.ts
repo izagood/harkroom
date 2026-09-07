@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentView, MessageRow } from '@murmur/shared';
 import { mentionAnchor, runMentionTurn, syncSkills, type MentionTurnDeps, type MentionTurnMurmur, type RunTurn } from '../src/mentionTurn.js';
-import { NO_REPLY_NOTICE } from '../src/prompt.js';
+import { BODY_LIMIT, NO_REPLY_NOTICE } from '../src/prompt.js';
 import { MurmurAgentClient } from '../src/murmur.js';
 import { SessionStore } from '../src/sessions.js';
 import { workspaceName, type Exec } from '../src/workspace.js';
@@ -401,6 +401,75 @@ describe('runMentionTurn', () => {
     const prompt = await readFile(plans[plans.length - 1]!.stdinFile!, 'utf8');
     expect(prompt).toContain('예약된 후속 턴');
     expect(prompt).toContain('CI 결과 확인');
+  });
+
+  /**
+   * **버려지던 마지막 출력이 통지에 붙는다** (2026-09-07 후속).
+   *
+   * 그날 사람이 스레드에서 본 것은 `(답 없이 턴을 끝냈습니다)` 한 줄이었고, `PR #533 을
+   * 올렸고 CI 가 도는 중입니다` 는 stdout 에만 남아 사라졌다. `tail` 은 이미 러너의 손에
+   * 있었다 — 성공 경로가 쓰지 않았을 뿐이다.
+   */
+  it('발화 없이 끝나면 하네스의 마지막 출력을 통지에 붙인다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge PR 올려줘');
+    const { deps, runTurn } = await makeDeps(fake);
+
+    runTurn.script = async () => ({
+      exitCode: 0,
+      timedOut: false,
+      tail: 'PR #533 을 올렸고 CI 두 잡이 도는 중입니다',
+    });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(fake.posts).toHaveLength(1);
+    // 통지는 그대로 앞에 선다 — "발화가 없었다"는 사실이 먼저다.
+    expect(fake.posts[0]!.body.startsWith(NO_REPLY_NOTICE)).toBe(true);
+    expect(fake.posts[0]!.body).toContain('PR #533');
+  });
+
+  it('남길 출력이 없으면 통지만 남는다 — 빈 상자를 덧붙이지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 뭐라도');
+    const { deps } = await makeDeps(fake); // 기본 스크립트: exit 0, tail ''
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(fake.posts[0]!.body).toBe(NO_REPLY_NOTICE);
+  });
+
+  /**
+   * 서버가 8000자를 넘는 본문을 거절한다(`BODY_LIMIT`). 넘겨 보내면 **통지 자체가 실패해**
+   * 침묵이 침묵으로 남는다 — 이 기능이 막으려던 것과 정확히 같은 결과다.
+   */
+  it('통지가 서버 상한을 넘지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 긴 출력');
+    const { deps, runTurn } = await makeDeps(fake);
+
+    runTurn.script = async () => ({ exitCode: 0, timedOut: false, tail: '나'.repeat(50_000) });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(fake.posts[0]!.body.length).toBeLessThanOrEqual(BODY_LIMIT);
+  });
+
+  it('PAT 가 tail 에 섞여 있어도 대화로 새지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge env 를 찍어봐');
+    const { deps, runTurn } = await makeDeps(fake);
+
+    runTurn.script = async (plan) => ({
+      exitCode: 0,
+      timedOut: false,
+      // 하네스가 자기 env 를 찍은 상황. PTY 는 stdout·stderr 를 한 스트림으로 낸다.
+      tail: `MURMUR_PAT=${plan.env.MURMUR_PAT} 로 붙었다`,
+    });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(fake.posts[0]!.body).not.toContain(deps.pat);
   });
 
   // #90: 한 턴에서 두 번 이상 발화하면 경고가 나지만 채널에는 통보하지 않는다.
