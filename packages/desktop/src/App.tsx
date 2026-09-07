@@ -2,8 +2,9 @@ import { useEffect, useState, type ReactElement } from 'react';
 import { createNotifier } from './lib/notify';
 import { sessionStore, type StoredCommunity } from './lib/session';
 import { useColorMode } from './lib/useColorMode';
+import { useNotificationOpen } from './lib/useNotificationOpen';
 import { getActiveEntry } from './state/communities';
-import { getController, startCommunitySession, type Controller } from './state/controller';
+import { getController, openNotificationTarget, startCommunitySession, type Controller } from './state/controller';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { Workspace } from './components/Workspace';
 import { SettingsScreen } from './screens/SettingsScreen';
@@ -35,6 +36,14 @@ async function startSession(
 
 export default function App() {
   useColorMode();
+  /**
+   * OS 알림을 누르면 그 대화로 간다(#542). `phase` 분기보다 **위**에 있는 것이 요점이다 —
+   * 알림은 부팅 중에도 오고, 리스너를 `ready` 안쪽에 두면 그때 누른 것이 사라진다.
+   *
+   * 무엇을 여는지는 `openNotificationTarget` 이 정한다(커뮤니티 전환 → 메시지 열기).
+   * 여기서 그 순서를 다시 쓰지 않는다 — 링크 클릭(#178)과 갈릴 자리를 만들지 않는다.
+   */
+  useNotificationOpen((target) => { void openNotificationTarget(target); });
   const [phase, setPhase] = useState<'boot' | 'connect' | 'ready'>('boot');
   // 설정은 세션 상태(phase)가 아니라 뷰다 — 그래서 별도 상태로 둔다.
   const [connectError, setConnectError] = useState<string | null>(null);

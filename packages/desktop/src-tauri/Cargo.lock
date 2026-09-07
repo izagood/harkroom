@@ -2239,6 +2239,9 @@ version = "0.1.24"
 dependencies = [
  "keyring",
  "libc",
+ "mac-notification-sys",
+ "objc2",
+ "objc2-foundation",
  "serde",
  "serde_json",
  "tauri",
