@@ -8,7 +8,7 @@
  *
  * DB 를 쓰지 않는다. supervisor 의 일은 생명주기이고, 가짜 워커로 그것을 전부 잴 수 있다.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import type { Pool } from 'pg';
 import type { AvcsServerClient } from '../src/avcs/client.js';
 import type { ProjectionDeps, ProjectionWorker } from '../src/avcs/projection.js';
@@ -108,13 +108,20 @@ describe('ProjectionSupervisor', () => {
     expect(h.made[0]?.stopped).toBe(true);
   });
 
-  /** 직렬화가 없으면 워커가 둘 살아남는다 — 같은 repo 를 둘이 영구히 폴링한다. */
-  it('동시에 재설정해도 살아 있는 워커는 하나다', async () => {
+  /**
+   * `swap` 은 동기 함수라 두 `reconfigure` 호출 사이에 끼어들 틈이 없다 — 그래서 결과는
+   * 항상 마지막으로 요청한 URL 로 수렴한다. 이 테스트는 그 수렴을 검증한다: 마지막
+   * 워커만 살아 있고 그 전 워커는 정지됐다.
+   */
+  it('연달아 재설정하면 마지막 워커만 살아남는다', async () => {
     const h = harness();
     const first = h.sup.reconfigure('http://b');
     const second = h.sup.reconfigure('http://c');
     await Promise.all([first, second]);
 
+    expect(h.made).toHaveLength(2);
+    expect(h.made[0]?.stopped).toBe(true);
+    expect(h.made[1]?.stopped).toBe(false);
     expect(h.alive()).toHaveLength(1);
     expect(h.urls).toEqual(['http://b', 'http://c']);
   });
@@ -127,14 +134,36 @@ describe('ProjectionSupervisor', () => {
     await h.sup.stop();
 
     expect(h.made[0]?.stopped).toBe(true);
+    // 한 번만 정지시킨다. 종료 래치를 잘못 놓으면 큐에 남은 swap 이 같은 워커를 또
+    // 정지시키는데, 카운트를 보지 않으면 그것이 테스트를 그냥 지나간다.
+    expect(h.made[0]?.stopCalls).toBe(1);
     expect(h.sup.status().configured).toBe(false);
   });
 
-  /** 교체가 진행 중일 때 종료되면 그 교체가 세운 워커가 남을 수 있다. */
+  /**
+   * `stop()` 에서 `await this.chain` 을 빼면, 아직 마이크로태스크로 남아 있는 `swap` 이
+   * `stop()` 이 `this.worker` 를 비운 **뒤**에 실행돼 새 워커를 세운다 — 그 워커는 아무도
+   * 정지시키지 않는다. `stop()` 이 체인을 먼저 기다리는 이유가 이것이다.
+   */
   it('진행 중인 교체를 마친 뒤 종료한다', async () => {
     const h = harness();
     void h.sup.reconfigure('http://a');
     await h.sup.stop();
     expect(h.alive()).toHaveLength(0);
+  });
+
+  /**
+   * 종료 뒤에 오는 재설정은 아무도 정지시킬 수 없는 워커를 만든다. `main.ts` 가
+   * `beginDrain()` 을 먼저 부르므로 drain 중 남은 PUT 이 이 경로를 실제로 만든다.
+   */
+  it('종료한 뒤의 재설정은 워커를 세우지 않는다', async () => {
+    const h = harness();
+    await h.sup.reconfigure('http://a');
+    await h.sup.stop();
+
+    await h.sup.reconfigure('http://b');
+
+    expect(h.alive()).toHaveLength(0);
+    expect(h.sup.status().configured).toBe(false);
   });
 });

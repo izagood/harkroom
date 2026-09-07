@@ -37,6 +37,14 @@ export class ProjectionSupervisor {
    * 영구히 둘이 폴링한다.
    */
   private chain: Promise<void> = Promise.resolve();
+  /**
+   * `stop()` 이 불린 뒤에 도착하는 `reconfigure` 를 막는 빗장. `stop()` 은 `this.chain` 을
+   * 기다린 뒤 워커를 지우지만, 그 사이(또는 그 뒤)에 새 `reconfigure` 가 체인에 올라타면
+   * `swap` 은 `this.url` 이 null 이 된 것만 보고 새 워커를 세운다 — SIGTERM 핸들러는 이미
+   * 반환했으니 그 워커를 아무도 정지시키지 않는다. `main.ts` 가 `beginDrain()` 을 먼저 불러
+   * in-flight 요청을 살려 두므로, drain 중 남은 PUT 이 이 경로를 실제로 밟는다.
+   */
+  private stopped = false;
   private readonly makeClient: (baseUrl: string) => AvcsServerClient;
   private readonly makeWorker: (deps: ProjectionDeps) => ProjectionWorker;
 
@@ -56,6 +64,10 @@ export class ProjectionSupervisor {
   }
 
   private swap(url: string | null): void {
+    // 종료 뒤에는 어떤 재설정도 워커를 세우지 않는다 — 세워도 그 워커를 정지시킬 자리가
+    // 이미 없다(`stop()` 은 반환했다).
+    if (this.stopped) return;
+
     // 같은 URL 로 교체하면 커서와 long-poll 이 다시 걸려, 아무것도 바꾸지 않은 저장이
     // 폴링을 한 번 끊는다. 화면에서는 그것이 "저장했더니 투영이 멈췄다" 로 보인다.
     if (url === this.url) return;
@@ -84,8 +96,12 @@ export class ProjectionSupervisor {
    * long-poll 이 정상 마감되지 않는다.
    *
    * 진행 중인 교체를 먼저 마치게 한다. 안 그러면 그 교체가 세운 워커가 남는다.
+   *
+   * `stopped` 는 `await this.chain` **전에** 세운다 — 늦게 도착해 체인에 올라타는
+   * `reconfigure` 도 `swap` 에서 즉시 되돌아가게 하려는 것이다.
    */
   async stop(): Promise<void> {
+    this.stopped = true;
     await this.chain;
     const w = this.worker;
     this.worker = null;
