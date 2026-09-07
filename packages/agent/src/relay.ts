@@ -42,8 +42,15 @@ export interface RelayTransport {
 export interface RelayHandlers {
   onOpen(transport: RelayTransport): void;
   onMessage(raw: string): void;
-  /** 열렸다 끊긴 것과 애초에 못 붙은 것을 구분하지 않는다 — 둘 다 재접속 대상이다. */
-  onClose(): void;
+  /**
+   * 열렸다 끊긴 것과 애초에 못 붙은 것을 **재접속 관점에서는** 구분하지 않는다 — 둘 다
+   * 재접속 대상이라 한 함수로 받는다.
+   *
+   * `reason` 을 받는 이유는 다르다: **사람에게 알릴 말**이 필요하다. 이 인자가 없던 동안
+   * 배포된 러너의 릴레이가 `ws` 를 로드하지 못해 영원히 재시도했고, 이유를 운반할 자리가
+   * 없어서 그 사실이 어느 로그에도 남지 않았다. 없을 수도 있다(정상 종료).
+   */
+  onClose(reason?: string): void;
 }
 
 /**
@@ -161,6 +168,10 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
 
   const sessions = new Map<string, LiveSession>();
   let transport: RelayTransport | null = null;
+  /** 지금 dial 이 한 번이라도 열렸는가. '끊겼다'와 '못 붙는다'를 가르는 유일한 재료다. */
+  let opened = false;
+  /** 이번 장애를 이미 알렸는가. 장애당 한 줄을 지키는 자리다. */
+  let outageReported = false;
   let stopped = false;
   let backoffMs = initialBackoffMs;
 
@@ -291,6 +302,9 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
     dial(relayUrl(opts.murmurUrl), opts.pat, {
       onOpen: (t) => {
         transport = t;
+        opened = true;
+        // 붙었으므로 다음 장애는 **새 장애**다 — 안 풀어 주면 평생 한 번만 외친다.
+        outageReported = false;
         backoffMs = initialBackoffMs;
         // 재접속마다 다시 보낸다. 서버는 소켓이 끊기면 이 러너의 세션 레지스트리를
         // 버리므로(살아 있는지 알 방법이 없다), announce 가 없으면 진행 중인 턴이
@@ -298,8 +312,22 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         send({ type: 'announce', sessions: [...sessions.values()].map((s) => s.info), caps: RUNNER_CAPS });
       },
       onMessage: onServerFrame,
-      onClose: () => {
+      onClose: (reason) => {
         transport = null;
+        /**
+         * **붙지 못하는 릴레이는 한 번 외친다.** 이 자리가 비어 있던 것이 배포된 러너에서
+         * 릴레이가 죽은 채로 몇 달을 버틴 이유다 — dial 이 매번 던지는데 아무 말도 없었다.
+         *
+         * '끊겼다'와 '못 붙는다'를 가른다: 끊긴 것은 대개 서버 재시작이라 곧 돌아오지만,
+         * 애초에 못 붙는 것은 배선이 틀렸다는 뜻이다. 그리고 **장애당 한 줄**이다 —
+         * 재시도마다 찍으면 그 줄은 다시 안 읽히는 말이 되고, 삼키는 것과 실질이 같아진다.
+         */
+        if (opened) {
+          opened = false;
+        } else if (!outageReported) {
+          outageReported = true;
+          console.error(`릴레이에 붙지 못한다 — 재시도한다(터미널 관찰·개입이 그동안 안 된다): ${reason ?? '이유 불명'}`);
+        }
         if (stopped) return;
         schedule(connect, backoffMs);
         backoffMs = nextBackoffMs(backoffMs);
@@ -379,14 +407,20 @@ const nodeWsDialer: RelayDialer = (url, pat, handlers) => {
     // 예약되고, 그 두 배가 매 실패마다 곱해져 몇 분 뒤에는 접속 폭풍이 된다. 이 dial 의
     // 끝을 한 번만 알린다 — 백오프가 곡선 하나로 남는다.
     let settled = false;
-    const settle = () => { if (!settled) { settled = true; handlers.onClose(); } };
+    const settle = (reason?: string) => {
+      if (!settled) { settled = true; handlers.onClose(reason); }
+    };
     socket.on('open', () => {
       handlers.onOpen({ send: (data) => socket.send(data), close: () => socket.close() });
     });
     socket.on('message', (raw: unknown) => handlers.onMessage(String(raw)));
-    socket.on('close', settle);
-    // 핸드셰이크 자체가 실패(401, 연결 거부)하면 여기로 온다. 삼키면 러너가 조용히
-    // 릴레이 없이 도는 상태로 남는다.
-    socket.on('error', settle);
-  })().catch(() => handlers.onClose());
+    socket.on('close', () => settle());
+    // 핸드셰이크 자체가 실패(401, 연결 거부)하면 여기로 온다. **이유를 넘긴다** —
+    // 삼키면 러너가 조용히 릴레이 없이 도는 상태로 남고, 실제로 그렇게 남아 있었다.
+    socket.on('error', (err: Error) => settle(err.message));
+  })().catch((err: unknown) => handlers.onClose(
+    // 모듈 로드 실패가 여기로 온다(`ws` 를 못 불러오는 번들이 정확히 그 경우였다).
+    // 이 경로가 이유를 버리던 것이 그 결함을 몇 달간 보이지 않게 만들었다.
+    err instanceof Error ? err.message : String(err),
+  ));
 };
