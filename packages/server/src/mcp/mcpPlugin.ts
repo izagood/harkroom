@@ -34,7 +34,6 @@ function buildMcpServer(
   pool: Pool,
   account: AccountView,
   lifecycle: Lifecycle,
-  presence: AgentPresence,
 ): McpServer {
   const server = new McpServer({ name: 'murmur', version: '0.1.0' });
 
@@ -391,10 +390,10 @@ function buildMcpServer(
     if (version) {
       await recordRunnerVersion(pool, account.id, version);
     }
-    // inbox.poll 은 에이전트의 유일한 주기 신호다. 폴이 오면 온라인으로 표시한다.
-    // presence 는 필수 인자다 — 옵셔널로 두면 배선이 끊겨도 컴파일이 통과하고
-    // presence 가 조용히 no-op 이 된다.
-    presence.mark(account.id);
+    // presence 를 여기서 표시하지 않는다 — `/mcp` 라우트가 요청마다 이미 했다.
+    // 예전에는 이 자리가 유일한 mark 였고, 그것이 **일하는 중인 에이전트를 죽었다고
+    // 말하는 버그**였다: 러너 루프는 단일 스레드라 턴이 도는 동안 폴이 나가지 않으므로
+    // 30초 TTL 이 만료됐다. 신호를 게이트로 올리면 도구 하나가 빠뜨릴 수 없다.
     const fetchUnread = async () => {
       const entries = await listInbox(pool, account.id, { unreadOnly: true });
       if (!entries.length) return { entries, messages: [] };
@@ -585,7 +584,18 @@ export async function registerMcp(
       return reply.code(req.account ? 403 : 401)
         .send({ error: { code: 'agent_only', message: 'MCP surface requires an agent PAT' } });
     }
-    const server = buildMcpServer(pool, req.account, lifecycle, agentPresence);
+    /**
+     * **이 요청 자체가 생존 신호다.** 예전에는 `inbox.poll` 안에서만 mark 했는데, 러너
+     * 루프는 단일 스레드라 **턴이 도는 동안 폴이 나가지 않는다** — 30초 TTL 이 만료돼
+     * 일하는 중인 에이전트가 `online` 에서 빠지고, 화면은 그것을 "마지막 말이 진행인데
+     * 저자가 살아 있지 않다"로 읽어 스레드를 **'막힘'** 으로 칠했다. 실패한 적이 없는데도.
+     *
+     * 그래서 게이트 바로 뒤에 둔다: 여기를 지난 요청은 **에이전트 PAT 로 온 것**이
+     * 확정이므로(위 분기), 도구 하나하나에 mark 를 흩는 것보다 정확하고 빠뜨릴 수 없다.
+     * 진행 메시지를 올리는 것도, 메모리를 읽는 것도 전부 "나 여기 있다"다.
+     */
+    agentPresence.mark(req.account.id);
+    const server = buildMcpServer(pool, req.account, lifecycle);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     reply.hijack();
     reply.raw.on('close', () => {
