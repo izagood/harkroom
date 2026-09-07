@@ -14,6 +14,7 @@ import type { AgentConfig, AgentDefaults, AgentView, PatView } from '@murmur/sha
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings, lastTurnLabel } from '../src/components/settings/AgentsSettings';
+import { lastTurnAgo } from '../src/lib/lastTurn';
 import { acc } from './helpers/fakeApi';
 
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
@@ -161,5 +162,27 @@ describe('lastTurnLabel', () => {
   it('미래 시각은 "N분 후" 같은 말을 만들지 않는다', () => {
     // 서버가 now() 를 찍으므로 정상적으로는 오지 않지만, 시계 보정으로 음수가 될 수 있다.
     expect(lastTurnLabel(new Date(NOW + 5 * 60_000).toISOString(), NOW)).toBe('마지막 활동: 방금');
+  });
+
+  /**
+   * **계산이 한 벌인 것을 잠근다** (`docs/desktop-agent-cards.pdf` 2쪽이 이 값을 카드에도
+   * 올렸다).
+   *
+   * 계산은 `lib/lastTurn.ts` 의 `lastTurnAgo` 로 나갔고 이 함수는 접두만 붙인다. 나눈
+   * 이유가 둘이다: ① 카드는 왼쪽에 `활동` 라벨을 이미 세워 두므로 접두가 붙으면 같은 말이
+   * 두 번이고, ② `settings/AgentGrid.tsx` 는 이 파일에서 함수를 가져올 수 없다(이 파일이
+   * `AgentGrid` 를 import 하므로 순환).
+   *
+   * 위 시험들이 문구를 그대로 지키므로 **이 시험은 두 함수가 갈라지지 않는 것**만 본다 —
+   * 사본을 하나 더 만들면 문구는 맞는데 계산이 어긋나는 날이 온다(`faceState`·
+   * `runnerVersions` 주석이 반복해서 경고한 그 모양이다).
+   */
+  it('접두를 뺀 것이 lastTurnAgo 다 — 계산이 두 벌이 아니다', () => {
+    for (const ms of [30_000, 60_000, 59 * 60_000, 60 * 60_000, 25 * 60 * 60_000]) {
+      expect(lastTurnLabel(ago(ms), NOW)).toBe(`마지막 활동: ${lastTurnAgo(ago(ms), NOW)}`);
+    }
+    // `null` 은 접두 규칙이 다르다 — `마지막 활동: 없음` 이 아니라 `활동 없음` 이다(`#176`).
+    expect(lastTurnAgo(null, NOW)).toBe('없음');
+    expect(lastTurnLabel(null, NOW)).toBe('활동 없음');
   });
 });
