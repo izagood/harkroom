@@ -282,7 +282,7 @@ payload 는 `{loginId, url?, prompt?, done?, error?}`. **원시 바이트를 그
 
 화면 구성:
 
-- 풀 목록. 각 풀에 계정과 로그인 상태. 상태는 `● jaebin@rebellions.ai · Rebellions-Lime · team`
+- 풀 목록. 각 풀에 계정과 로그인 상태. 상태는 `● you@example.com · Example Org` 꼴로
   또는 `○ 미로그인` 으로 그린다(§3 의 필드).
 - 기본 풀 표시와 변경.
 - 풀 안 계정 순서 변경(페일오버 순서).
@@ -361,7 +361,7 @@ Tauri 표면이 없는 환경(웹·테스트)에서는 **섹션이 "이 빌드�
 - 빈 뿌리에서 시작해 `configure` 로 풀 둘(`work`·`personal`)이 생겼다 — **설정 쓰기가 풀
   생성 경로**라는 §6 의 결정이 실제로 성립한다.
 - `mode` 가 `flat` 에서 `pools` 로 넘어갔다. `pools.json` 의 존재가 스위치라는 §4-3 그대로다.
-- 로그인된 계정의 정체를 읽었다: `work/lime loggedIn=true org=Rebellions-Lychee`.
+- 로그인된 계정의 정체(이메일·조직)를 정확히 읽었다. **실제 값은 여기 적지 않는다** — 이 문서는 저장소에 남고, 검증에 필요한 것은 '읽혔다'는 사실뿐이다.
   자격증명을 **복사하지 않고** 심볼릭 링크로 넣었고, 링크를 지운 뒤 원본
   (`~/.claude/.credentials.json`)이 그대로 남아 로그인도 유지됐다.
 - 미로그인 계정이 목록에 남았다(`personal/empty loggedIn=false`) — 숨기지 않는다는 §8-1 대로다.
