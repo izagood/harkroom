@@ -68,7 +68,7 @@ beforeEach(() => {
     me: acc('u1', 'admin'),
     accounts: { u1: acc('u1', 'admin'), u2: acc('u2', 'bot', 'agent') },
     channels: [chan('c1', 'general')],
-    dms: [{ id: 'd1', memberIds: ['u1', 'u2'] }],
+    dms: [{ id: 'd1', memberIds: ['u1', 'u2'], lastMessageAt: null }],
     online: ['u2'],
     connected: true,
     activeChannelId: 'c1',
@@ -125,31 +125,42 @@ describe('판정 — presenceView (#443)', () => {
   });
 });
 
-describe('사이드바 — DM 옆의 점 (#443)', () => {
+describe('사이드바 — DM 줄의 생존 표시 (#443)', () => {
   /**
+   * **표시가 점에서 아바타로 옮겨갔다**(`docs/desktop-rail.html` 2단계 · `Sidebar.tsx` 의
+   * `dmRow`). 따로 서 있던 점들이 에이전트에게만 하나 더 붙어서 "줄만 봐도 누가
+   * 에이전트인지 알 수 있다"를 만들고 있었기 때문이다.
+   *
+   * **이 이슈가 지키는 사실은 하나도 안 바뀐다**: 생존을 모르면 초록이 아니고, 색이 아니라
+   * 글자로도 그것을 말한다. 재는 자리만 `presence-*` → `dm-face-*` 다.
+   *
    * **되돌려 RED**: `dmPeers` 의 `anyPresenceView(peers, online, connected)` 를 앞 판본
-   * (`peers.some((id) => online.includes(id))`)으로 되돌리면 끊긴 뒤에도 `'true'` 가 나와
-   * 이 단언이 빨개진다. 실제로 되돌려 실행해 확인했다.
+   * (`peers.some((id) => online.includes(id))`)으로 되돌리면 끊긴 뒤에도 `'online'` 이
+   * 나오고 `dmRow` 가 그것을 `ok` 로 접어 이 단언이 빨개진다. 실제로 되돌려 확인했다.
    */
   it('끊기면 초록이 아니다', () => {
     fakeController();
     끊는다();
     renderSidebar();
 
-    const dot = screen.getByTestId('presence-d1');
-    expect(dot.dataset.online).toBe('unknown');
+    const face = screen.getByTestId('dm-face-d1');
+    // `unknown` 은 `stopped` 와 **같은 회색조**를 쓰되 뜻이 다르다 — 그 판단은
+    // `lib/faceState.ts` 가 이미 적어 뒀고, 여기서는 그것이 `ok` 가 **아님**을 지킨다.
+    expect(face.dataset.face).toBe('unknown');
     // 색만 바꾸면 스크린리더에는 아무 말도 안 한 것과 같다 — **글자로도 말한다.**
-    expect(dot.getAttribute('title')).toBe(PRESENCE_LABEL.unknown);
-    expect(dot.className).not.toContain('bg-success');
+    expect(face.getAttribute('title')).toBe(PRESENCE_LABEL.unknown);
+    // 색이 빠진다(격자와 같은 클래스). 초록이 남아 있지 않다는 것이 이 이슈의 요지다.
+    expect(face.innerHTML).toContain('grayscale');
   });
 
-  it('대조군 — 붙어 있으면 초록이다', () => {
+  it('대조군 — 붙어 있으면 또렷하다', () => {
     fakeController();
     renderSidebar();
 
-    const dot = screen.getByTestId('presence-d1');
-    expect(dot.dataset.online).toBe('online');
-    expect(dot.className).toContain('bg-success');
+    const face = screen.getByTestId('dm-face-d1');
+    expect(face.dataset.face).toBe('ok');
+    // 정상에는 아무 장식도 붙지 않는다 — 색이 빠지지 않는다(격자와 같은 규칙).
+    expect(face.innerHTML).not.toContain('grayscale');
   });
 
   /**

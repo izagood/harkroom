@@ -28,13 +28,48 @@ export async function registerDirectoryRoutes(app: FastifyInstance, pool: Pool):
 
   app.get('/dms', { preHandler: app.requireAccount }, async (req) => {
     const res = await pool.query(
-      `select c.id, array_agg(m.account_id order by m.account_id) as "memberIds"
+      /**
+       * `lastMessageAt` 을 함께 낸다 — 정본 문서 `docs/desktop-rail.html` 2단계가
+       * `DIRECT MESSAGES` 와 `AGENTS` 를 **"최근순 한 목록"** 으로 합치라고 했고,
+       * 그 "최근"의 근거가 이 응답에 없었다.
+       *
+       * **`order by c.created_at` 이었다.** 그것은 DM 이 **만들어진** 순서다 — 반년 전에
+       * 열고 오늘 대화한 DM 이 어제 열고 안 쓴 DM 보다 아래에 선다. 정렬만 여기서
+       * 바꾸는 것으로는 부족했다: 화면은 `message.created` 를 실시간으로 받아
+       * (`controller.ts` 의 `handleEvent`) 목록을 **다시 세워야** 하는데, 서버가 순서만
+       * 주고 근거를 안 주면 화면이 그 순간 비교할 값이 없다. 그래서 **시각 자체**를 싣고
+       * 정렬은 여기서도 하되(첫 화면이 바로 맞다) 최종 판단은 화면이 한다.
+       *
+       * **왜 마지막 메시지 시각인가**(마지막 읽음이 아니라): 마지막 읽음은 **내가 어디까지
+       * 봤는가**이고 대화가 언제 오갔는가와 다른 사실이다. 그것으로 정렬하면 아직 안 열어
+       * 본 DM — 즉 **가장 새 말이 와 있는 DM** — 이 목록 맨 아래로 가라앉는다. 문서가
+       * 원한 "최근순"의 반대다.
+       *
+       * **`max(seq)` 가 아니라 `max(created_at)` 인 이유**: `seq` 는 채널 안에서만 단조
+       * 증가하는 값이라(`001_init.sql` 의 identity) **채널끼리 비교할 수 없다**. 스레드
+       * 상태(`messages.ts` 의 `THREAD_STATE_FACTS`)가 `seq` 로 마지막 말을 고르는 것은
+       * 한 채널 안의 순서를 정하는 일이라 다르다. 여기서는 `THREAD_STATS` 가 답글의
+       * 마지막 시각을 `MAX(created_at)` 로 내는 것과 같은 모양을 쓴다.
+       *
+       * **삭제된 메시지는 세지 않는다**(`deleted_at is null`). 지운 말로 DM 이 위로 올라오면
+       * 목록이 "여기 새 말이 있다"고 말하는데 열어 보면 아무것도 없다.
+       *
+       * **말이 하나도 없는 DM 은 `null` 이다** — `c.created_at` 으로 채우지 않는다. 그것은
+       * '대화한 적 없다'를 '그때 대화했다'로 바꿔 쓰는 거짓이고, 화면이 두 경우를 달리
+       * 다루고 싶어도(예: 갓 만든 빈 DM 을 맨 위에 두기) 구분할 수가 없어진다.
+       * 정렬에서 빈 DM 을 어디에 둘지는 화면의 몫이다 — 여기서는 `nulls last` 로 첫
+       * 화면의 기본만 정한다.
+       */
+      `select c.id,
+              array_agg(m.account_id order by m.account_id) as "memberIds",
+              (select max(msg.created_at)::text from message msg
+                where msg.channel_id = c.id and msg.deleted_at is null) as "lastMessageAt"
        from channel c
        join channel_member m on m.channel_id = c.id
        where c.kind = 'dm'
          and exists (select 1 from channel_member me where me.channel_id = c.id and me.account_id = $1)
        group by c.id
-       order by c.created_at`,
+       order by "lastMessageAt" desc nulls last, c.created_at desc`,
       [req.account!.id],
     );
     return { dms: res.rows };
