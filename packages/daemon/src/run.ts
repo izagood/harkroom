@@ -247,7 +247,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     // 통과한 러너다. 그래서 SIGTERM 을 보낼 근거가 선다.
     for (const { entry, verdict } of plan.rejected) {
       if (verdict.kind !== 'stale-generation') continue;
-      registry.retire(entry.pid);
+      registry.retire(entry.agentId, entry.pid);
     }
     const adopted = [];
     for (const entry of plan.adopt) {

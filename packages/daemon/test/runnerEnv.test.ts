@@ -71,6 +71,58 @@ function 엿보는host(): { host: RunnerHost; envs: Record<string, string>[] } {
   return { host, envs };
 }
 
+/**
+ * **물러나는 중인 러너와 교체 러너가 겹치지 않는다** (2026-09-07 후속).
+ *
+ * 앞선 변경(`fix(desktop): 낡은 세대의 daemon 과 러너를 물러나게 한다`)이 낡은 세대의
+ * 러너에 `SIGTERM` 을 보낸다. 러너는 그 시그널을 **드레인**으로 받는다 — `main.ts` 의
+ * 핸들러가 `running = false` 만 끄고, 루프는 진행 중 배치를 끝내고 `markRead(done)` 까지
+ * 한 뒤 벗어난다. 즉 "도는 턴을 끝내고 물러나라"는 이미 성립한다.
+ *
+ * **겹침이 문제다.** 물러나는 러너가 마지막 턴을 끝내기 전에 앱이 교체 러너를 띄우면
+ * 둘이 같은 inbox 를 폴하고, 아직 `markRead` 안 된 그 멘션을 **둘 다 답한다** —
+ * `#430`·`#174` 가 싸운 중복이다. 창의 길이가 진행 중 턴 하나(최대 30분)라 좁지도 않다.
+ *
+ * 그래서 daemon 이 **아직 물러나는 중이라고 말한다.** 앱은 그 말을 듣고 기다린다 —
+ * 앞 러너가 사라진 뒤에 띄우는 것이 유일하게 중복이 없는 순서다.
+ */
+describe('회수 중에는 교체 러너를 띄우지 않는다', () => {
+  it('물러나는 러너가 아직 살아 있으면 spawnRunner 가 retiring 을 알린다', async () => {
+    const { host, envs } = 엿보는host();
+    const registry = new RunnerRegistry(SLEEPER, host);
+
+    // 살아 있는 낡은 러너를 회수한다 — 가짜 host 의 `kill(pid, 0)` 은 true 다(=살아 있다).
+    registry.retire('a1', 4242);
+
+    await expect(registry.spawnRunner('a1', { PATH: '/usr/bin' })).rejects.toThrow(/retiring/);
+    // **띄우지 않았다는 것이 요점이다.** 에러만 맞고 프로세스가 떴으면 중복이 그대로다.
+    expect(envs).toHaveLength(0);
+  });
+
+  it('물러난 뒤에는 띄운다 — 기다림이 영구 거절이 되면 에이전트가 안 돌아온다', async () => {
+    const { host, envs } = 엿보는host();
+    // 그 pid 는 이미 없다(`kill(pid, 0)` 이 false).
+    const 죽은host: RunnerHost = { ...host, kill: () => false } as unknown as RunnerHost;
+    const registry = new RunnerRegistry(SLEEPER, 죽은host);
+
+    registry.retire('a1', 4242);
+
+    const record = await registry.spawnRunner('a1', { PATH: '/usr/bin' });
+    expect(record.pid).toBe(4242); // 가짜 host 가 주는 pid
+    expect(envs).toHaveLength(1);
+  });
+
+  it('다른 에이전트는 막지 않는다 — 회수는 그 에이전트의 사정이다', async () => {
+    const { host, envs } = 엿보는host();
+    const registry = new RunnerRegistry(SLEEPER, host);
+
+    registry.retire('a1', 4242);
+
+    await registry.spawnRunner('a2', { PATH: '/usr/bin' });
+    expect(envs).toHaveLength(1);
+  });
+});
+
 describe('러너 환경 — daemon 의 사용자 환경을 물려준다', () => {
   /**
    * **되돌려 RED**: `runners.ts` 의 병합(`{ ...userEnv(), ...env }`)을 빼고 `env` 를 그대로

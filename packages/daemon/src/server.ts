@@ -228,8 +228,15 @@ export class DaemonServer {
     } catch (err) {
       // 실패 사유를 지어내지 않는다 — 원문 그대로 올린다(`#368`).
       const message = err instanceof Error ? err.message : String(err);
+      // **던진 쪽이 코드를 붙였으면 그것을 쓴다.** `retiring` 은 실패가 아니라 순서이고
+      // (`DaemonErrorCode` 주석), `internal` 로 뭉치면 앱은 기다릴 줄 모르고 그 에이전트를
+      // 실패로 표시한다 — 이 저장소가 반복해 고친 "사유를 뭉개서 사람이 틀린 일을 한다"다.
+      const code = (err as { code?: unknown } | null)?.code;
       conn.socket.write(
-        encodeLine(makeErrorResponse(parsed.id, daemonError('internal', message))),
+        encodeLine(makeErrorResponse(
+          parsed.id,
+          daemonError(code === 'retiring' ? 'retiring' : 'internal', message),
+        )),
       );
     }
   }
