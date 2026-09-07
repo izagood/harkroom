@@ -59,8 +59,14 @@ export class ProjectionSupervisor {
   }
 
   reconfigure(url: string | null): Promise<void> {
-    this.chain = this.chain.then(() => { this.swap(url); });
-    return this.chain;
+    const tail = this.chain.then(() => { this.swap(url); });
+    // 거절이 체인에 남으면 이후 재설정이 조용히 no-op 이 되고(`.then` 이 다시는 안 불린다),
+    // `stop()` 이 이 체인을 기다리므로 SIGTERM 핸들러가 던져 `app.close()`·`pool.end()`·
+    // `process.exit(0)` 에 닿지 못한다. 호출자에게는 실패를 그대로 주면서(`tail` 반환)
+    // 체인 자체는 이행하는 상태로 유지한다. 오늘의 실제 팩토리는 던지지 않지만(Fix 4 참고),
+    // 던지는 팩토리를 나중에 붙이거나 시험하는 자리를 여기서 미리 막아 둔다.
+    this.chain = tail.catch(() => { /* 체인을 오염시키지 않는다 — 실패는 tail 이 이미 전한다 */ });
+    return tail;
   }
 
   private swap(url: string | null): void {
@@ -73,11 +79,15 @@ export class ProjectionSupervisor {
     if (url === this.url) return;
 
     const old = this.worker;
-    this.url = url;
-    this.worker = url === null
+    const worker = url === null
       ? null
       : this.makeWorker({ pool: this.deps.pool, avcs: this.makeClient(url) });
-    this.worker?.start();
+    worker?.start();
+    // 성공적으로 만든 뒤에야 반영한다. 먼저 반영하면 `makeWorker` 가 던졌을 때 `this.url` 은
+    // 새 URL 을 가리키는데 `this.worker` 는 옛 워커로 남아, `status()` 가 옛 워커를 새
+    // URL 소유인 것처럼 답한다.
+    this.url = url;
+    this.worker = worker;
 
     /**
      * **정지를 기다리지 않는다.** `stop()` 은 루프를 await 하고 루프는
@@ -95,10 +105,18 @@ export class ProjectionSupervisor {
    * SIGTERM 경로. 여기서는 **기다린다** — 프로세스가 워커를 남기고 죽으면 in-flight
    * long-poll 이 정상 마감되지 않는다.
    *
-   * 진행 중인 교체를 먼저 마치게 한다. 안 그러면 그 교체가 세운 워커가 남는다.
+   * `stopped` 는 `await this.chain` **전에** 세운다 — `swap` 의 첫 줄이 그것을 검사하므로,
+   * 이 시점 이후 체인에서 실행되는 어떤 재설정도(이미 큐에 있었든 늦게 올라타든) 워커를
+   * **아예 만들지 않고** 되돌아간다. **워커가 새로 생겨 남는 것을 막는 것은 이제 이 빗장이지,
+   * 아래 `await this.chain` 이 아니다** — 빗장 없이 그 await 만 있던 시절에는 진행 중이던
+   * 교체가 워커를 마저 세우고 그 워커를 곧바로 멈추는 식으로 안전했지만, 지금은 그 교체
+   * 자체가 빗장에서 멈춘다.
    *
-   * `stopped` 는 `await this.chain` **전에** 세운다 — 늦게 도착해 체인에 올라타는
-   * `reconfigure` 도 `swap` 에서 즉시 되돌아가게 하려는 것이다.
+   * 그런데도 `this.chain` 을 기다리는 이유는 **드레인**이다: 이미 큐에 걸려 아직 실행되지
+   * 않은 재설정이 있다면(빗장에 걸려 결국 no-op 이 되더라도) 그 실행이 끝난 뒤에야 반환한다.
+   * 안 그러면 `stop()` 이 반환한 뒤에도 큐에 남은 항목이 뒤늦게 처리되어, 그 `reconfigure()`
+   * 호출자가 기다리는 프로미스가 그만큼 미뤄진다. 이 체인이 거절될 일은 없다 — `reconfigure`
+   * 가 체인에는 항상 이행하는 tail 만 남긴다(위 참고).
    */
   async stop(): Promise<void> {
     this.stopped = true;

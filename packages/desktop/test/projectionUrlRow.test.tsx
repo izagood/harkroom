@@ -61,6 +61,28 @@ describe('투영 URL 편집 줄', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('불러오지 못했다');
   });
 
+  /**
+   * **세 상태 중 첫 번째**: `config === null`(아직 응답 전). 첫 응답 전과 못 읽었을 때가
+   * 같은 빈 자리면 사용자는 그 둘을 구별할 수 없다 — 나머지 둘은 위에서 이미 잰다.
+   */
+  it('아직 응답 전에는 불러오는 중이라고 말한다', async () => {
+    useActiveStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+    let resolve!: (v: ProjectionConfigView) => void;
+    projectionConfig = vi.fn(() => new Promise<ProjectionConfigView>((r) => { resolve = r; }));
+    setProjectionConfig = vi.fn(async (url: string | null) => view({
+      url: url ?? 'http://env.example:4000', source: url ? 'app' : 'env', appUrl: url,
+    }));
+    refreshProjection = vi.fn(async () => { /* 이 시험은 저장을 하지 않는다 */ });
+    setController({ projectionConfig, setProjectionConfig, refreshProjection } as unknown as Controller);
+    render(<ProjectionUrl />);
+
+    expect(screen.getByText('투영 설정을 불러오는 중…')).toBeTruthy();
+
+    resolve(view());
+    await waitFor(() => expect(screen.queryByText('투영 설정을 불러오는 중…')).toBeNull());
+    expect(await screen.findByTestId('projection-source')).toBeTruthy();
+  });
+
   it('저장하면 입력한 URL 로 부른다', async () => {
     mount();
     fireEvent.click(await screen.findByRole('button', { name: '편집' }));

@@ -41,7 +41,9 @@ export function ProjectionUrl() {
   useEffect(() => {
     if (!isAdmin) return;
     void getController().projectionConfig()
-      .then((c) => { setConfig(c); setDraft(c.appUrl ?? c.envUrl ?? ''); })
+      // `c.url` 은 `resolveProjectionUrl` 이 이미 판정한 결과다 — 여기서 `appUrl ?? envUrl` 로
+      // 그 판정을 다시 짜면 우선순위 판정이 두 곳(서버·화면)에 살게 된다.
+      .then((c) => { setConfig(c); setDraft(c.url ?? ''); })
       .catch(() => setConfig('error'));
   }, [isAdmin]);
 
@@ -53,7 +55,7 @@ export function ProjectionUrl() {
     try {
       const next = await getController().setProjectionConfig(url);
       setConfig(next);
-      setDraft(next.appUrl ?? next.envUrl ?? '');
+      setDraft(next.url ?? '');
       setEditing(false);
       // 상태 줄이 따라오게 한다. 정기 갱신은 60 초 주기라, 그것에 맡기면 방금 켠 투영이
       // 최대 1 분 동안 꺼진 것처럼 보이고 사용자는 저장이 실패했다고 읽는다.

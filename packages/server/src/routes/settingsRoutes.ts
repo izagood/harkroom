@@ -11,9 +11,15 @@ import { recordAudit } from '../audit.js';
  * 두면 avcs 가 아닌 것을 투영하려 든다. 그래서 프로토콜까지 본다.
  *
  * 후행 슬래시는 정규화하지 않는다 — `httpAvcsClient` 가 이미 자른다(`client.ts:162`).
- * 두 곳에서 자르면 어느 쪽이 진실인지가 흐려진다.
+ * 두 곳에서 자르면 어느 쪽이 진실인지가 흐려진다. **공백은 다르다 — 공백은 URL 의 일부가
+ * 아니므로 이것을 자르는 것은 정규화가 아니라 입력 정제다.** `new URL()` 은 앞뒤 공백을
+ * 조용히 허용해 통과시키고 그대로 저장하며, 그 값을 그대로 받은 `httpAvcsClient` 의
+ * base 문자열은 매 폴링마다 URL 생성에 실패한다 — 화면에는 멀쩡해 보이는 URL 옆에
+ * `stalled` 만 뜨고 원인은 보이지 않는다. 터미널·Slack 에서 복사해 붙여넣는 것이 이
+ * URL 을 입력하는 보통의 경로이므로 실제로 벌어지는 일이다. `min(1)` 보다 앞서 잘라야
+ * 공백만 있는 값이 '값'이 아니라 거절로 떨어진다.
  */
-const PROJECTION_URL = z.string().min(1).max(512).refine((v) => {
+const PROJECTION_URL = z.string().trim().min(1).max(512).refine((v) => {
   try {
     const u = new URL(v);
     return u.protocol === 'http:' || u.protocol === 'https:';

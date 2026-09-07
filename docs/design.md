@@ -538,10 +538,10 @@ Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지
 - **[현재]** self-host: docker compose **2서비스**(`server` + `postgres`). avcs 서버는
   compose 에 없다 — 별도 프로세스로 띄우고 `AVCS_BASE_URL` 로 가리킨다.
   **[목표]** 스펙 구현 서버가 공개되면 세 번째 서비스로 들어온다(§2 결정 5).
-- `AVCS_BASE_URL` 이 없으면 투영 워커가 **아예 만들어지지 않고**(`main.ts`) 채팅만
-  동작한다. **무엇이 꺼지는지와 그것을 화면에서 어떻게 알아보는지는 한 곳에만 적는다 —
-  [`operations.md`](operations.md) §6.** 여기서 그 목록을 되풀이하지 않는다: 두 곳에
-  적으면 한 곳만 낡는다.
+- 판정된 투영 URL(env 값과 앱에 저장된 값 중 `resolveProjectionUrl` 이 고른 것)이 없으면
+  투영 워커가 **아예 만들어지지 않고**(`main.ts`) 채팅만 동작한다. **무엇이 꺼지는지와
+  그것을 화면에서 어떻게 알아보는지는 한 곳에만 적는다 — [`operations.md`](operations.md)
+  §6.** 여기서 그 목록을 되풀이하지 않는다: 두 곳에 적으면 한 곳만 낡는다.
 - **백업·복구 절차는 [`operations.md`](operations.md)**. 요지: 필수 대상은 `pgdata` 하나이고
   (인메모리 상태는 재구성된다), 복구는 `server`를 멈춘 뒤 하고, **murmur만 되돌리는 것은
   안전하지만**(투영이 멱등) **avcs를 murmur 커서보다 뒤로 되돌리면 그 사이 객체가 조용히

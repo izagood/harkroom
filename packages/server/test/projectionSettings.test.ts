@@ -117,6 +117,26 @@ describe('PUT /settings/projection', () => {
     expect((await put({ url: '' })).statusCode).toBe(400);
   });
 
+  /**
+   * 터미널·Slack 에서 복사해 붙여넣으면 앞뒤 공백이 흔히 딸려 온다. `new URL()` 은 그
+   * 공백을 조용히 허용하므로, 자르지 않으면 공백까지 저장되어 매 폴링마다
+   * `httpAvcsClient` 가 URL 생성에 실패한다 — 화면에는 멀쩡해 보이는 URL 옆에 `stalled` 만
+   * 뜨고 원인은 안 보인다.
+   */
+  it('앞뒤 공백은 잘라내고 저장한다', async () => {
+    const res = await put({ url: '  http://app.example:5000  ' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ url: 'http://app.example:5000', appUrl: 'http://app.example:5000' });
+    expect(reconfigure).toHaveBeenCalledWith('http://app.example:5000');
+    expect((await get()).json().appUrl).toBe('http://app.example:5000');
+  });
+
+  /** 공백만 있는 값은 트리밍 후 빈 문자열이 되어 지우기(null)와 섞이지 않게 거절한다. */
+  it('공백만 있는 값은 400 이다', async () => {
+    expect((await put({ url: '   ' })).statusCode).toBe(400);
+  });
+
   it('admin 이 아니면 403 이고 값도 바뀌지 않는다', async () => {
     const res = await put({ url: 'http://intruder.example' }, { authorization: `Bearer ${plainToken}` });
 
