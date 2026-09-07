@@ -52,6 +52,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * 이 파일은 인박스의 **내용**(줄 · 필터 칩 · 정렬 · 선택 버튼)을 잰다. **껍데기는 재지
+ * 않는다** — 인박스가 모달이 아니라 자리인 것(#488 C2)은 `inboxPane.test.tsx` 가 `Workspace`
+ * 를 통째로 띄워 지킨다. 여기서 단독으로 렌더해서는 "옆에 선 것을 덮지 않는가"를 증명할 수
+ * 없다: 모달이 막는 것은 자기 자신이 아니라 옆에 선 것이다.
+ */
 const open = () => render(<Inbox open onClose={vi.fn()} />);
 
 describe('Inbox (#185)', () => {

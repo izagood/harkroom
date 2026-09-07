@@ -22,9 +22,21 @@ describe('Overlay — Esc 는 포커스와 무관하게 닫는다', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * 이 케이스의 이름이 **`인박스` 였다.** 인박스는 `Overlay` 를 떠났다(#488 C2 — 모달이
+   * 아니라 자리) 이므로 그 이름은 더 이상 이 프리미티브를 쓰는 화면이 아니다.
+   *
+   * **단언은 그대로 둔다.** 이 케이스가 재는 것은 인박스가 아니라 *"포커스가 패널 안에
+   * 있을 때도 Esc 가 듣는가"* 이고, 그 규칙은 `Overlay` 를 계속 쓰는 화면들(디렉터리 ·
+   * 저장된 메시지 · 채널 디렉터리)에 여전히 필요하다. 이름만 살아 있는 화면으로 바꿨다 —
+   * 죽은 화면 이름을 남겨 두면 다음 사람이 인박스가 아직 모달이라고 읽는다.
+   *
+   * 인박스가 자리로서 지켜야 할 Esc 는 `inboxPane.test.tsx` 가 따로 잰다: **document 에서
+   * 받고, 위에 뜬 오버레이에는 양보한다.**
+   */
   it('패널 안에서 눌러도 닫힌다', () => {
     const onClose = vi.fn();
-    render(<Overlay label="인박스" onClose={onClose}><input aria-label="검색" /></Overlay>);
+    render(<Overlay label="채널 디렉터리" onClose={onClose}><input aria-label="검색" /></Overlay>);
     fireEvent.keyDown(screen.getByLabelText('검색'), { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
   });

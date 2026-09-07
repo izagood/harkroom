@@ -236,6 +236,24 @@ export function Workspace({ onLogout, onOpenSettings }: {
         */}
         <ProjectionBanner onOpenSettings={onOpenSettings} />
         <div className="flex flex-1 overflow-hidden">
+          {/*
+            인박스는 **모달이 아니라 자리**다(정본 문서 `docs/desktop-remaining-gaps.html`
+            C2). 그래서 화면 맨 아래 오버레이 묶음이 아니라 **이 가로줄의 형제**로 선다 —
+            아래 `SearchPalette`·`Directory` 들과 자리가 갈린 것이 이번 작업의 요지다.
+
+            **채널의 왼쪽이다.** 문서가 *"막는 말을 확인하면서 그 스레드를 여는 것이 기본
+            동작"* 이라 했으므로 인박스와 스레드가 **동시에** 보여야 하는데, 오른쪽은
+            `ThreadPanel` 과 `TerminalPanel` 이 이미 같은 자리를 다투는 곳이다(아래 #141
+            주석). 셋째를 그 자리에 넣으면 "동시에 보인다"가 창 폭에 따라 참이 되었다
+            거짓이 된다.
+
+            왼쪽에 세우면 **읽는 순서가 일의 순서와 같아진다**: 인박스(나를 막는 것) →
+            채널 → 스레드(내가 답하는 곳). 인박스에서 줄을 눌러 열린 스레드는 화면의 반대쪽
+            끝에 서므로, 방금 누른 줄이 밀려나지 않는다.
+
+            껍데기의 나머지 결정(Esc·닫기·포커스·좁은 창)은 `Inbox.tsx` 의 주석에 있다.
+          */}
+          <Inbox open={inboxOpen} onClose={() => setInboxOpen(false)} />
           {/* 멘션 이동(#279)의 배선은 **여기**다. 초판이 이 두 줄을 빼먹어 앱에서 모든
               멘션이 눌러도 아무 일이 없는 버튼이었다 — 단위 테스트는 props 를 손으로
               넘겨 그 사실을 볼 수 없었다. `test/mentionClick.test.tsx` 가 이 화면을
@@ -265,7 +283,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
         />
       )}
       <ChannelDirectory open={channelDirectoryOpen} onClose={() => setChannelDirectoryOpen(false)} />
-      <Inbox open={inboxOpen} onClose={() => setInboxOpen(false)} />
+      {/* `<Inbox>` 가 여기 있었다 — 이 묶음은 **화면을 덮는 것들**이고, 인박스는 이제
+          덮지 않는다(위 패널 줄의 주석). 나머지는 그대로 `Overlay` 를 쓴다. */}
       <SavedMessages open={savedOpen} onClose={() => setSavedOpen(false)} />
     </div>
   );
