@@ -279,7 +279,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // 에이전트 presence 레지스트리를 한 번 만들고 두 곳에 넘긴다.
   // - registerWs: presence.snapshot 에 에이전트를 합집합으로 얹는다.
-  // - registerMcp: inbox.poll 에서 mark() 를 부른다.
+  // - registerMcp: /mcp 요청마다 mark() 를 부른다(도구 하나가 아니라 게이트에서).
+  // - registerAgentRelayRoutes: 러너 프레임이 도착할 때마다 mark() 를 부른다.
   const agentPresence = createAgentPresence({
     ttlMs: deps.agentPresenceTtlMs ?? 30_000,
     now: deps.now,
@@ -337,6 +338,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // 쪽(PTY 바이트)이 더 느슨해진다.
     allowedOrigins: deps.corsOrigins ?? null,
     revalidateMs: deps.wsRevalidateMs,
+    // 러너 프레임도 생존 신호다 — 턴 중에는 이것이 **유일한** 신호다(폴이 안 나간다).
+    agentPresence,
   });
 
   // **registerAuth 뒤에 등록해야 한다.** `app.requireAccount` 는 registerAuth 가 데코레이트하므로,
