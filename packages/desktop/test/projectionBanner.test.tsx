@@ -165,19 +165,22 @@ describe('고치는 문과 닫기', () => {
  * 띠는 "고장났다"를, 이 줄은 "이 목록을 믿을 수 없다"를 말한다.
  */
 describe('띠와 사이드바가 다른 말을 한다', () => {
-  it('띠로 서는 사정은 사이드바에서 같은 문구를 되풀이하지 않는다', async () => {
+  /**
+   * **더 좁혀졌다**(문서 4 · 실측 2026-09-07). 처음에는 문장만 갈랐는데, 사용자가 앱에서
+   * 보니 **같은 주의색 경고 둘이 나란히** 서 있었다 — 문장이 다른 것은 읽어야 알고 눈에는
+   * 중복이다. 그래서 빈 목록에서는 그 줄을 **아예 세우지 않는다**.
+   *
+   * 남은 리스가 있을 때만 예외다: 띠는 "고장났다"만 말하고 **이 목록이 낡았다**는 말은
+   * 하지 않으므로, 그때는 한 줄이 필요하다(`leasePanel.test.tsx` 가 그 자리를 잰다).
+   */
+  it('띠가 말하는 사정은 빈 목록에서 되풀이하지 않는다', async () => {
     const { LeasePanel } = await import('../src/components/LeasePanel');
     useActiveStore.getState().set({
       projectionStatus: status({ state: 'unconfigured', configured: false }),
+      leases: [],
     });
     render(<LeasePanel />);
-    const line = screen.getByTestId('projection-unconfigured');
-    // 띠가 말하는 문구가 여기 또 있으면 중복이다.
-    expect(line.textContent).not.toContain('투영이 꺼져 있다');
-    // 대신 **이 목록에 대한 사실**을 말한다. 문구는 사정마다 다르다(#267) — 여기서
-    // 하나로 뭉치면 꺼짐·멈춤·정상+빈 목록을 화면이 구별하지 못한다.
-    expect(line.textContent).toContain('꺼져 있어');
-    expect(line.textContent).toContain('목록');
+    expect(screen.queryByTestId('projection-unconfigured')).toBeNull();
   });
 
   /**
