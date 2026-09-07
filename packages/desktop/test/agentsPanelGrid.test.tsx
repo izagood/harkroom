@@ -313,6 +313,23 @@ describe('좁은 폭 — 62px 레일 옆의 패널은 설정 화면이 아니다
    * | 얼굴 | `h-14`(56px) | `h-[88px]` | *"사진을 올렸다는 것은 사진을 보겠다는 뜻"* + 손잡이 셋의 타격 면적. 96px 은 세 줄을 각주로 눌렀다 |
    * | 트랙·카드 | 86px | 140px | 값 칸이 요구하는 폭이 **137px**(뒤처진 칩 93 + 라벨 36 + 간격 8). 168 은 31px 이 남으면서 한 열을 잃었다 |
    *
+   * ## 다시 바뀌었다 — 트랙 140 → **164px** · 격자 바닥이 **가라앉는다** (2026-09-08)
+   *
+   * 카드가 **상자**를 받았기 때문이다(`docs/desktop-agent-cards.pdf` 2쪽: 흰 면 · 얇은
+   * 테두리 · 둥근 모서리 · 안쪽 여백). 상자가 없어서 정보 세 줄이 어느 얼굴의 것인지
+   * 눈으로 안 묶이던 것이 이 변경이 고친 결함이고, 그 근거는 `AgentGrid.tsx` 의 카드
+   * `button` 주석과 `PLACE.settings` 주석에 표로 있다.
+   *
+   * | 값 | 전 | 후 | 근거 요약 |
+   * |---|---|---|---|
+   * | 트랙·카드 | 140px | **164px** | 상자가 `p-3`+테두리로 **26px** 을 먹는다. 140 이면 내용 폭이 114px 로 137 미달 — 값 칸이 70px 이 되어 뒤처진 칩과 긴 핸들이 잘린다 |
+   * | 간격 | `gap-*-5`(20px) | **`gap-*-4`(16px)** | 상자 테두리가 카드 경계를 이미 말하므로 간격이 그 일을 겹쳐 할 필요가 없다. 트랙이 24px 넓어진 것을 여기서 일부 되돌린다 |
+   * | 격자 바닥 | 없음 | **`bg-surface-sunken`** | 설정 패널이 `surface-raised` 라 흰 카드가 테두리 하나로만 갈렸다. 목업처럼 바닥을 한 단 내리면 면 차이가 먼저 오고 테두리가 경계를 마무리한다 |
+   *
+   * **검색줄의 바닥은 그대로 `surface-raised` 다** — 가라앉는 것은 격자뿐이고, 그것이
+   * `PLACE.bg` 의 계약(자리의 바닥색과 같아야 한다)을 지키는 방향이다. 아래 그 단언이
+   * 바뀌지 않은 것이 이 구분을 잠근다.
+   *
    * **사이드바 쪽은 한 픽셀도 안 바뀐다** — 이 파일의 위 시험들(트랙 64px · 아바타 40px ·
    * `bg-surface-sunken`)이 전부 그대로 초록이다. 그리고 새 정보 블록이 사이드바로 새지
    * 않는 것은 이 회귀선이 잡지 못한다(여기는 `place` 를 **안 주는** 경우를 재므로 정보
@@ -332,8 +349,10 @@ describe('좁은 폭 — 62px 레일 옆의 패널은 설정 화면이 아니다
     );
 
     const grid = screen.getByTestId('agent-grid');
-    expect(grid.className).toContain('repeat(auto-fill,140px)');
-    expect(grid.className).toContain('gap-x-5');
+    expect(grid.className).toContain('repeat(auto-fill,164px)');
+    expect(grid.className).toContain('gap-x-4');
+    // 격자 바닥이 한 단 가라앉는다 — 흰 카드가 그 위에 떠야 상자가 보인다.
+    expect(grid.className).toContain('bg-surface-sunken');
     // **사이드바 값이 아니다.** 기본값이 그쪽으로 끌려가는 것이 이 회귀선의 본래 대상이고,
     // 숫자가 바뀌어도 그 대상은 그대로다.
     expect(grid.className).not.toContain('repeat(auto-fill,64px)');
@@ -342,6 +361,8 @@ describe('좁은 폭 — 62px 레일 옆의 패널은 설정 화면이 아니다
     expect(card.querySelector('.h-\\[88px\\]')).toBeTruthy();
     expect(card.querySelector('.h-14')).toBeNull();
     expect(card.querySelector('.h-10')).toBeNull();
+    // 상자도 설정 값이다 — 기본값이 사이드바(상자 없음)로 끌려가면 여기서 멈춘다.
+    expect(screen.getByTestId('agent-box-forge').className).toContain('bg-surface-raised');
     // 검색줄의 바닥도 그대로 카드 면이다.
     expect(screen.getByTestId('agent-search').closest('.sticky')!.className)
       .toContain('bg-surface-raised');

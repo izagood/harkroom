@@ -221,14 +221,146 @@ describe('AgentGrid — 아바타 세 얼굴', () => {
 });
 
 /**
- * 목업과 맞춘 것들(2026-09-06 화면 확인). 문서의 목업은 **원과 이름만** 있는 격자이고,
- * 실행 글리프는 "사진 안으로 들어간다".
+ * 목업과 맞춘 것들(2026-09-06 화면 확인). 실행 글리프는 "사진 안으로 들어간다".
  */
 describe('AgentGrid — 목업의 모양', () => {
-  it('카드에 상자가 없다 — 26개가 깔릴 때 격자 선이 얼굴보다 먼저 보이면 안 된다', () => {
+  /**
+   * # **상자가 카드 감싸개에 선다** — 판단이 뒤집힌 자리다 (2026-09-08 화면 확인)
+   *
+   * ## 여기 있던 시험이 그 반대를 재고 있었다
+   *
+   * 지워진 단언은 *"카드에 상자가 없다 — 26개가 깔릴 때 격자 선이 얼굴보다 먼저 보이면
+   * 안 된다"* 였고, 그것이 겨눈 목업은 **앞 문서**(`desktop-agent-identity` 의 얼굴
+   * 그리드)다 — 그 격자의 카드에는 **얼굴과 이름밖에** 없었고, 담은 것이 그 둘뿐일 때
+   * 상자는 실제로 잡음이었다. 얼굴이 이미 서로 떨어진 원이라 경계를 한 번 더 그릴
+   * 필요가 없었다.
+   *
+   * `docs/desktop-agent-cards.pdf` 2쪽이 그 전제를 깼다. 카드가 **네 종류를 담는
+   * 그릇**이 됐다 — 얼굴 · 이름 두 줄 · 정보 세 줄 · (예외로) 사유 한 줄. 그러고 나면
+   * 상자가 없는 것이 곧 결함이다: 화면으로 확인했다(720px 패널에 8장) — **어느
+   * `하네스/러너/활동` 묶음이 어느 얼굴의 것인지 눈으로 안 묶인다.** 정보 묶음 위의
+   * 구분선만 남아서, 카드를 가르는 선이 아니라 아무것도 가르지 않는 줄로 읽힌다.
+   * 그 목업도 흰 면 · 얇은 테두리 · 둥근 모서리 · 안쪽 여백으로 카드를 갈라 놨다.
+   *
+   * 즉 규칙이 뒤집힌 것이 아니라 **규칙이 겨누던 조건이 바뀌었다** — 담는 것이 하나에서
+   * 넷으로 늘었다. 이 시험은 그 새 조건을 잠근다.
+   *
+   * ## 상자는 `button` 이 아니라 **감싸개**에 선다
+   *
+   * 정보 묶음이 카드 `button` **밖**이다(버전 칩이 `button` 이라 중첩이 안 된다 —
+   * `AgentGrid` 의 그 주석). 상자를 `button` 에 두면 정보 세 줄이 상자 **밖**에 남아
+   * 지금과 똑같이 흘러다닌다. 그래서 둘을 함께 감싸는 `div` 가 상자를 받는다.
+   *
+   * 되돌려 RED: 감싸개에서 `bg-surface-raised`·`border`·`rounded-lg`·`p-3` 중 하나만
+   * 지워도 이 단언이 빨개진다.
+   */
+  it('카드가 상자를 받는다 — 정보 세 줄이 어느 얼굴의 것인지 상자가 묶는다', () => {
     grid({ agents: [agent('alpha')], online: ['id-alpha'] });
-    const card = screen.getByTestId('agent-card-alpha');
-    expect(card.className).not.toMatch(/border-border|bg-surface-hover/);
+    const box = screen.getByTestId('agent-box-alpha');
+    // 흰 면 · 얇은 테두리 · 둥근 모서리 · 안쪽 여백(목업 2쪽).
+    expect(box.className).toContain('bg-surface-raised');
+    expect(box.className).toMatch(/\bborder\b/);
+    expect(box.className).toContain('border-border');
+    expect(box.className).toContain('rounded-lg');
+    expect(box.className).toContain('p-3');
+    // 상자가 **둘을 함께** 감싼다 — 얼굴·이름 묶음과 정보 묶음.
+    expect(box.querySelector('[data-testid="agent-card-alpha"]')).toBeTruthy();
+    expect(box.querySelector('.border-t')).toBeTruthy();
+  });
+
+  /**
+   * **격자 바닥이 한 단 가라앉는다**(목업 2쪽: 카드가 살짝 어두운 면 위에 떠 있다).
+   *
+   * 왜 필요한가 — 설정 패널 자체가 `surface-raised`(흰 면)다(`AgentsSettings.tsx`).
+   * 카드도 흰 면이면 **테두리 하나로만** 갈리고, 화면으로 확인하니 그 선이 카드를 묶기엔
+   * 너무 약했다. 바닥을 `surface-sunken` 으로 한 단 내리면 카드가 면 차이로 먼저 떠오르고
+   * 테두리는 그 경계를 마무리하는 역할이 된다 — 목업이 그렇게 했다.
+   *
+   * **검색줄은 이 바닥을 받지 않는다.** 그것은 격자 밖 형제이고 패널의 흰 면 위에 선다 —
+   * `sticky` 바닥색이 자리의 바닥과 같아야 한다는 `PLACE.bg` 의 계약이 그 자리에서는
+   * 여전히 `surface-raised` 다. 격자만 가라앉는다.
+   */
+  it('격자 바닥이 한 단 가라앉아 카드가 떠 보인다', () => {
+    grid({ agents: [agent('alpha')], online: ['id-alpha'] });
+    expect(screen.getByTestId('agent-grid').className).toContain('bg-surface-sunken');
+    // 검색줄은 패널의 흰 면 그대로다 — 격자 바닥이 그쪽으로 새면 띠가 생긴다.
+    expect(screen.getByTestId('agent-search').closest('.sticky')!.className)
+      .toContain('bg-surface-raised');
+  });
+
+  /**
+   * **`+ 새 에이전트` 는 점선 상자다**(목업 2쪽 첫 칸: 빈 자리라는 표시).
+   *
+   * 지금까지 점선은 **얼굴 자리의 원**에만 있었다. 상자가 생기면 그 어휘가 상자로
+   * 올라간다 — 옆 카드들이 실선 상자를 받았으니, 점선 상자가 "여기는 아직 카드가 아니다"를
+   * 말하는 가장 싼 방법이다. 면도 받지 않는다: 흰 면을 주면 채워진 카드로 읽힌다.
+   *
+   * 되돌려 RED: `+` 칸에서 `border-dashed` 를 지우거나 실선 카드와 같은 면을 주면 빨개진다.
+   */
+  it('+ 새 에이전트는 점선 상자다 — 빈 자리라는 표시다', () => {
+    grid({ agents: [agent('alpha')], online: ['id-alpha'] });
+    const create = screen.getByTestId('agent-create');
+    expect(create.className).toContain('border-dashed');
+    expect(create.className).toContain('rounded-lg');
+    // 채워진 카드의 흰 면을 받지 않는다 — 받으면 빈 자리로 안 읽힌다.
+    expect(create.className).not.toContain('bg-surface-raised');
+  });
+
+  /**
+   * **실패한 카드는 상자 테두리가 색을 받는다**(목업 2쪽 `forge`).
+   *
+   * 그리고 **얼굴의 링은 걷어낸다.** 화면으로 확인한 판단이다(720px, 8장) — 상자 테두리와
+   * 얼굴 링을 둘 다 칠하면 같은 사실을 두 겹으로 말하면서 붉은 것이 카드 하나에 두 개가
+   * 되고, 그 카드가 격자에서 **고장 그 자체보다 시끄러워졌다.** 문서가 격자에 세운 규율이
+   * 정확히 그 반대다(*"정보를 더하는 쪽이 항상 지는 쪽"*).
+   *
+   * 남기는 쪽을 상자로 고른 이유: 상자가 **사유 글자까지 감싼다.** 실패는 이 격자에서
+   * 유일하게 글자가 늘어나는 상태이므로(`AgentGrid` 주석), 테두리가 그 글자와 얼굴을 한
+   * 묶음으로 잡아 주는 것이 얼굴만 두르는 것보다 많은 일을 한다. `↻` 손잡이는 그대로
+   * 얼굴에 남아 색을 갖는다 — 무엇을 누르는지는 여전히 얼굴이 말한다.
+   *
+   * 되돌려 RED: 상자에서 `border-danger-border` 를 빼면 첫 단언이, 얼굴에
+   * `ring-state-stuck` 을 되돌리면 둘째 단언이 빨개진다.
+   */
+  it('실패는 상자 테두리가 색을 받고, 얼굴 링은 겹치지 않는다', () => {
+    grid({
+      agents: [agent('forge')],
+      online: [],
+      runnerStates: {
+        'id-forge': {
+          agentId: 'id-forge', status: 'failed', exitCode: 1, message: 'PAT 가 폐기되었다',
+        },
+      },
+      onRelaunch: vi.fn(),
+    });
+    const box = screen.getByTestId('agent-box-forge');
+    expect(box.className).toContain('border-danger-border');
+    expect(box.className).not.toContain('border-border');
+    // 붉은 것이 카드 하나에 둘이 되지 않는다 — 얼굴 링은 상자로 옮겨졌다.
+    expect(screen.getByTestId('agent-card-forge').querySelector('.ring-state-stuck')).toBeNull();
+    // 손잡이는 얼굴에 남고 색도 그대로다 — 무엇을 누르는지는 얼굴이 말한다.
+    expect(screen.getByTestId('agent-relaunch-forge').className).toContain('text-state-stuck');
+  });
+
+  /**
+   * **선택 링과 상자 테두리가 겹쳐 보이지 않는다** (화면 확인 2026-09-08).
+   *
+   * 둘이 같은 축에 있으면 선택한 카드에 선이 두 겹으로 서고, 그 카드는 "선택됐다"보다
+   * "테두리가 두꺼워졌다"로 읽힌다. 겹치지 않게 하는 방법을 **자리로 갈랐다**: 선택 링은
+   * 오늘처럼 **얼굴 원**에 남고(반지름이 다르고 상자 안쪽 여백만큼 떨어져 있다), 상자
+   * 테두리는 감싸개에 선다. 화면에서 확인하니 두 선이 서로 닿지 않는다 — 안쪽 여백
+   * 12px 과 링 오프셋 2px 이 그 간격을 만든다.
+   *
+   * 되돌려 RED: 선택 링을 상자로 옮기면(감싸개에 `ring-accent` 를 붙이면) 이 단언이
+   * 빨개진다.
+   */
+  it('선택 링은 얼굴에 남는다 — 상자 테두리와 같은 선에 서지 않는다', () => {
+    grid({ agents: [agent('alpha')], online: ['id-alpha'], selectedId: 'id-alpha' });
+    const box = screen.getByTestId('agent-box-alpha');
+    // 상자는 선택을 표시하지 않는다 — 그러면 테두리가 두꺼워진 것으로 읽힌다.
+    expect(box.className).not.toContain('ring-accent');
+    // 링은 얼굴 원에 있다(오늘 그대로).
+    expect(screen.getByTestId('agent-card-alpha').querySelector('.ring-accent')).toBeTruthy();
   });
 
   it('실행 글리프는 평소 옅고 호버에서 또렷해진다', () => {
@@ -394,13 +526,26 @@ describe('AgentGrid — 카드가 올리는 셋 (설정)', () => {
    * 때문에 **조용히** 잘린다 — 화면에 `v0.1.1 · 뒤처…` 가 뜨는 것을 아무도 모른다.
    * 숫자를 여기 박아 두면 줄이는 변경이 이 단언에서 멈춘다.
    */
-  it('트랙 폭이 뒤처진 칩이 요구하는 137px 을 만족한다', () => {
+  it('트랙에서 상자 여백을 뺀 폭이 뒤처진 칩이 요구하는 137px 을 만족한다', () => {
     grid({ agents: [agent('alpha')], online: ['id-alpha'] });
-    const track = screen.getByTestId('agent-grid').className
-      .match(/repeat\(auto-fill,(\d+)px\)/)![1];
-    expect(Number(track)).toBeGreaterThanOrEqual(137);
-    // 카드 폭과 트랙이 **같아야** 한다(`PLACE` 주석: 다르면 이름이 옆 칸을 침범한다).
-    expect(screen.getByTestId('agent-card-alpha').className).toContain(`w-[${track}px]`);
+    const track = Number(screen.getByTestId('agent-grid').className
+      .match(/repeat\(auto-fill,(\d+)px\)/)![1]);
+    /*
+      **상자가 트랙에서 26px 을 먹는다**(2026-09-08). `p-3` 이 좌우 12px 씩이고 테두리가
+      1px 씩이며, `box-border` 기본값 아래에서 둘 다 트랙 안쪽으로 들어간다. 그래서 값이
+      실제로 쓸 수 있는 폭은 트랙이 아니라 **트랙 − 26** 이다.
+
+      이 숫자를 여기 적어 두는 것이 요점이다: 누가 상자 여백을 `p-4` 로 넓히면 이 26 이
+      34 가 되고, 그때 트랙을 함께 올리지 않으면 이 단언이 멈춰 준다. 반대로 트랙만
+      140 으로 되돌려도 멈춘다 — 상자 이전의 그 값에서는 내용 폭이 114px 이라 뒤처진 칩이
+      `truncate` 로 **조용히** 잘린다.
+    */
+    const BOX_INSET = 12 * 2 + 1 * 2;
+    expect(track - BOX_INSET).toBeGreaterThanOrEqual(137);
+    // 상자 폭과 트랙이 **같아야** 한다(`PLACE` 주석: 다르면 이름이 옆 칸을 침범한다).
+    // 폭은 카드 `button` 이 아니라 **상자**가 갖는다 — 그 안쪽은 `w-full` 이다.
+    expect(screen.getByTestId('agent-box-alpha').className).toContain(`w-[${track}px]`);
+    expect(screen.getByTestId('agent-card-alpha').className).toContain('w-full');
   });
 
   it('카드 아래에 버튼 줄이 서지 않는다 — 손잡이는 얼굴과 버전 칩뿐이다', () => {
@@ -439,6 +584,28 @@ describe('AgentGrid — 러너 버전 칩 3종', () => {
     expect(chip.textContent).toContain('v0.1.3');
     // 갈아 끼울 것이 없으므로 문이 없다.
     expect(chip.tagName).toBe('SPAN');
+  });
+
+  /**
+   * **뒤처진 칩은 한 줄이다** (화면 확인 2026-09-08, 상자가 생긴 뒤).
+   *
+   * 이 칩의 `max-content` 는 94px 이고 164px 트랙의 값 칸이 정확히 94px 이라 **딱 맞는다.**
+   * 그 상태에서 브라우저를 보니 `v0.1.1 · 뒤 / 처짐 ↻` 로 두 줄이 됐다 — 반올림 하나가
+   * 감싸임을 만들고, 그 카드만 키가 커져 한 줄의 카드 높이가 어긋난다.
+   *
+   * `truncate` 를 재는 시험이 이것을 못 잡는다: 감싸임은 잘림이 아니어서 `scrollWidth` 가
+   * `clientWidth` 를 넘지 않는다. 그래서 **한 줄이라는 선언 자체**를 잰다.
+   *
+   * 되돌려 RED: `VersionChip` 의 `shape` 에서 `whitespace-nowrap` 을 지우면 빨개진다.
+   */
+  it('뒤처진 칩은 감싸이지 않는다 — 쪼개지면 뜻이 흐려지는 원자값이다', () => {
+    grid({
+      agents: [agent('alpha', { runnerVersion: 'v0.1.1' })],
+      appVersion: 'v0.1.3',
+      online: ['id-alpha'],
+      onRelaunch: vi.fn(),
+    });
+    expect(screen.getByTestId('agent-version-alpha').className).toContain('whitespace-nowrap');
   });
 
   /**
@@ -874,6 +1041,49 @@ describe('AgentGrid — 사이드바는 한 픽셀도 안 바뀐다', () => {
     const settingsCard = screen.getByTestId('agent-card-alpha');
     expect(settingsCard.querySelector('.text-\\[13px\\]')!.textContent).toBe('알파');
     expect(settingsCard.textContent).toContain('@alpha');
+  });
+
+  /**
+   * **상자가 사이드바로 새지 않는다** (2026-09-08).
+   *
+   * 상자는 `PLACE` 표의 새 칸(`box`)에서 나오고, 사이드바 칸은 그 자리를 **빈 문자열**로
+   * 둔다. `AgentGridPlace` 주석이 *"갈리는 것은 크기와 바닥색"* 이라고 적어 둔 그 축에
+   * 상자가 세 번째로 든다는 뜻이다.
+   *
+   * 왜 사이드바에는 필요 없는가 — 그 칸의 카드가 담는 것은 **얼굴과 이름 한 줄**뿐이다.
+   * 상자가 묶어 줄 정보 묶음이 애초에 없고(위 시험들이 그것을 잠근다), 폭이 164px 부터라
+   * 안쪽 여백 12px 을 좌우로 먹으면 64px 트랙에 40px 얼굴이 들어갈 자리가 없어진다.
+   * 지워진 옛 시험이 *"상자를 두면 격자 선이 얼굴보다 먼저 보인다"* 고 한 그 판단이
+   * **이 자리에서는 여전히 맞다** — 담는 것이 하나뿐이면 상자는 잡음이다.
+   *
+   * 되돌려 RED: `PLACE.sidebar.box` 에 설정의 상자 클래스를 넣거나, 감싸개에서
+   * `${s.box}` 대신 상자 클래스를 직접 박으면 이 단언이 빨개진다.
+   */
+  it('카드에 상자가 없다 — 담는 것이 얼굴과 이름뿐이면 상자는 잡음이다', () => {
+    sidebar();
+    const box = screen.getByTestId('agent-box-alpha');
+    expect(box.className).not.toContain('bg-surface-raised');
+    expect(box.className).not.toContain('border-border');
+    expect(box.className).not.toContain('rounded-lg');
+    // 안쪽 여백도 없다 — 64px 트랙에서 좌우 12px 을 먹으면 얼굴이 들어갈 자리가 없다.
+    expect(box.className).not.toMatch(/\bp-3\b/);
+    cleanup();
+
+    // **대조군** — 설정에서는 실제로 상자가 선다. 이 단언이 없으면 상자를 통째로
+    // 없애도 위 넷이 초록이고, 그것은 사이드바를 지킨 것이 아니라 고친 것을 되돌린 것이다.
+    grid({ agents: [agent('alpha')], online: ['id-alpha'] });
+    expect(screen.getByTestId('agent-box-alpha').className).toContain('bg-surface-raised');
+  });
+
+  /**
+   * **가라앉은 격자 바닥도 새지 않는다** — 사이드바는 이미 `surface-sunken` 위에 서므로
+   * (`Sidebar` 의 `aside`) 격자에 같은 색을 한 번 더 칠하면 아무 일도 안 하는 클래스가
+   * 붙는 것이고, 그것은 다음에 두 자리의 바닥을 고치는 사람에게 거짓 단서가 된다.
+   */
+  it('격자에 바닥색을 덧칠하지 않는다 — 사이드바는 이미 가라앉은 면 위다', () => {
+    sidebar();
+    // 격자 자체는 색을 안 칠한다. `sticky` 검색줄만 자기 바닥을 갖는다(아래 시험).
+    expect(screen.getByTestId('agent-grid').className).not.toMatch(/\bbg-/);
   });
 
   /** **크기와 바닥색도 그대로다** — 이 축이 원래 갈랐던 것이 안 바뀌는지 함께 잠근다. */
