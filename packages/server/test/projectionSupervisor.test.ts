@@ -141,15 +141,21 @@ describe('ProjectionSupervisor', () => {
   });
 
   /**
-   * `stop()` 에서 `await this.chain` 을 빼면, 아직 마이크로태스크로 남아 있는 `swap` 이
-   * `stop()` 이 `this.worker` 를 비운 **뒤**에 실행돼 새 워커를 세운다 — 그 워커는 아무도
-   * 정지시키지 않는다. `stop()` 이 체인을 먼저 기다리는 이유가 이것이다.
+   * `stopped` 빗장은 `swap` 의 첫 줄에서 검사되므로, stop() 이 시작된 뒤에 도착하는(또는
+   * 이미 큐에 있던) 재설정은 워커를 **아예 만들지 않고** 되돌아간다. `alive()`(정지되지
+   * 않은 가짜만 센다)로는 이것을 구별할 수 없다 — 빗장이 없어도 `await this.chain` 이
+   * 결국 그 워커를 만들고 `stop()` 이 곧바로 멈추므로 `alive()` 는 어느 쪽이든 0 이 된다.
+   * 그래서 **만들어진 적 자체가 있는지**(`h.made`)를 본다.
+   *
+   * 되돌리기 실험: `swap` 의 `if (this.stopped) return;` 을 지우면 이 테스트가 죽는다
+   * (`h.made` 가 1 이 된다 — 워커가 만들어졌다가 뒤이어 정지된다).
    */
-  it('진행 중인 교체를 마친 뒤 종료한다', async () => {
+  it('종료가 시작된 뒤에는 진행 중이던 교체가 워커를 만들지 않는다', async () => {
     const h = harness();
     void h.sup.reconfigure('http://a');
     await h.sup.stop();
-    expect(h.alive()).toHaveLength(0);
+    expect(h.made).toHaveLength(0);
+    expect(h.sup.status().configured).toBe(false);
   });
 
   /**
@@ -165,5 +171,36 @@ describe('ProjectionSupervisor', () => {
 
     expect(h.alive()).toHaveLength(0);
     expect(h.sup.status().configured).toBe(false);
+  });
+
+  /**
+   * `swap` 이 던지면(오늘의 실제 팩토리는 던지지 않지만, 언젠가 붙을 수 있다) 그 거절이
+   * `this.chain` 에 그대로 남으면 이후 모든 `reconfigure` 가 조용히 no-op 이 된다 —
+   * `.then` 은 앞선 프로미스가 거절되면 다시는 불리지 않는다. 되돌리기 실험:
+   * `reconfigure` 에서 `this.chain = tail.catch(...)` 을 `this.chain = tail` 로 바꾸면
+   * 이 테스트가 두 번째 `reconfigure` 의 거절로 죽는다.
+   */
+  it('한 번 던진 뒤에도 다음 재설정은 살아 있다', async () => {
+    let calls = 0;
+    const makeWorker = (): ProjectionWorker => {
+      calls += 1;
+      if (calls === 1) throw new Error('boom');
+      return {
+        start: () => {},
+        stop: () => Promise.resolve(),
+        status: () => ({
+          configured: true, connected: false, repo: null, lastLogIndex: 0,
+          lastPolledAt: null, lastAdvancedAt: null, lastError: null,
+        }),
+      } as unknown as ProjectionWorker;
+    };
+    const sup = new ProjectionSupervisor({ pool, makeClient: () => client, makeWorker });
+
+    await expect(sup.reconfigure('http://a')).rejects.toThrow('boom');
+    // 첫 시도가 던졌으니 워커도, URL 도 반영되지 않는다(Fix 5) — 둘 다 처음 그대로다.
+    expect(sup.status().configured).toBe(false);
+
+    await expect(sup.reconfigure('http://b')).resolves.toBeUndefined();
+    expect(sup.status().configured).toBe(true);
   });
 });
