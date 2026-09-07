@@ -27,7 +27,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import type { AgentConfig, AgentDefaults, AgentView, PatView } from '@murmur/shared';
+import type { AgentConfig, AgentDefaults, AgentView, DmView, PatView } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
@@ -295,7 +295,7 @@ describe('#368 채널 — 부른 자리에서 사유가 보인다', () => {
       me: acc('u1', 'admin'),
       accounts: { u1: acc('u1', 'admin'), forge: acc('forge', 'forge', 'agent') },
       channels: [],
-      dms: [{ id: 'd1', memberIds: ['u1', 'forge'] }],
+      dms: [{ id: 'd1', memberIds: ['u1', 'forge'], lastMessageAt: null }],
       activeChannelId: 'd1',
       messages: { d1: [msg('m1', 'd1', 1, '멘션 없이 그냥 인사', 'u1')] },
       runnerStates: { forge: failedState('forge', FAILURE_MESSAGE) },
@@ -309,7 +309,7 @@ describe('#368 채널 — 부른 자리에서 사유가 보인다', () => {
 });
 
 describe('#368 사이드바 — DM 이 없어도 사유를 읽을 수 있다', () => {
-  const setUpSidebar = (dms: { id: string; memberIds: string[] }[], runnerStates: Record<string, RunnerState>) => {
+  const setUpSidebar = (dms: DmView[], runnerStates: Record<string, RunnerState>) => {
     useAppStore.getState().set({
       me: acc('u1', 'admin', 'human', true),
       accounts: { u1: acc('u1', 'admin', 'human', true), forge: acc('forge', 'forge', 'agent') },

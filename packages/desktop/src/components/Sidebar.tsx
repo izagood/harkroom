@@ -6,15 +6,22 @@ import { sidebarStorage, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../lib/pre
 import { TOP_BAR_H } from '../lib/platform';
 import { LeasePanel } from './LeasePanel';
 import { Menu } from './Menu';
-// `Identity`·`StatusPicker` 가 여기 있었다 — 계정 행과 함께 `Rail.tsx` 로 갔다.
-// `StatusMark` 는 남는다: DM 목록의 상대 상태를 그리는 데 여전히 쓴다.
-import { StatusMark } from './Identity';
+// `StatusPicker` 가 여기 있었다 — 계정 행과 함께 `Rail.tsx` 로 갔다.
+// `Identity` 가 **돌아왔다**: 합쳐진 DM 목록의 상태를 아바타가 말한다(`dmRow` 주석).
+// `StatusMark` 도 남는다 — presence 와 다른 사실이라 아바타가 대신할 수 없다.
+import { Identity, StatusMark } from './Identity';
 import type { RailPanel } from './Rail';
-import { RunnerStatusDot } from './RunnerStatus';
-import { anyPresenceView, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from '../lib/presenceView';
+// `RunnerStatusDot` 은 **DM 줄에서 빠지고 에이전트 칸에만 남았다.** 그 네모난 점이
+// 에이전트에만 붙어서 "줄만 봐도 누가 에이전트인지 알 수 있다"를 만들고 있었다
+// (`dmRow` 주석의 표). 에이전트 칸은 전부 에이전트라 그 문제가 없다 — 거기서는 종류를
+// 드러내는 표시가 아니라 그냥 상태 표시다.
+// `runnerStatusLabel` 은 DM 줄이 쓴다 — 아바타에 실은 상태를 접근 이름으로도 내야 한다.
+import { RunnerStatusDot, runnerStatusLabel } from './RunnerStatus';
+import { faceState, type FaceState } from '../lib/faceState';
+import { anyPresenceView, PRESENCE_LABEL, type PresenceView } from '../lib/presenceView';
 import type { SectionId } from './settings/sections';
 import type {
-  AddTeamToChannelResult, AgentTeamRow, ChannelPrefRow, ChannelRow, NotifyLevel,
+  AccountView, AddTeamToChannelResult, AgentTeamRow, ChannelPrefRow, ChannelRow, NotifyLevel,
 } from '@murmur/shared';
 import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, PROJECTION_UNCONFIGURED_NOTICE, notifyLevelOf, sortChannelsBySection } from '@murmur/shared';
 import { Logo } from './Logo';
@@ -456,12 +463,55 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
     }
   };
 
+  /**
+   * DM 한 목록 — **사람과 에이전트를 안 가르고 최근순으로 섞는다**(정본 문서
+   * `docs/desktop-rail.html` 2단계).
+   *
+   * 문서: *"DM 은 사람과 에이전트를 안 가른다. 한 목록에 최근순으로 섞이고 줄 모양이 같다 —
+   * 목록만 봐서는 누가 에이전트인지 알 수 없다."* 여기서 하는 일은 그 **최근순**이다.
+   * 줄 모양은 아래 `dmRow` 하나가 진다.
+   *
+   * ## 정렬 근거는 `lastMessageAt` 이고, 화면이 그것을 실시간으로 고친다
+   *
+   * 서버가 이미 `lastMessageAt desc` 로 준다(`routes/directoryRoutes.ts`). 그런데 그
+   * 응답은 **부트스트랩과 `startDm` 때만 온다**(`controller.ts`) — 그 사이에 들어오는
+   * `message.created` 는 `dms` 를 갱신하지 않는다. 서버 순서만 믿으면 지금 대화 중인 DM 이
+   * 목록에서 안 올라오고, 그것이 이 화면의 존재 이유를 정면으로 부순다.
+   *
+   * 그래서 **서버가 준 시각과 스토어에 실제로 들어온 마지막 메시지 시각 중 더 늦은 것**을
+   * 쓴다. 스토어 쪽만 보면 안 되는 이유: `messages[channelId]` 는 열어 본 채널과 소켓으로
+   * 받은 채널에만 있고, 한 번도 안 열어 본 DM 은 비어 있다 — 그것만 보면 오래된 DM 전부가
+   * '기록 없음'으로 같은 자리에 뭉친다. 두 사실 중 늦은 쪽이 곧 '내가 아는 가장 최근'이다.
+   *
+   * `deleted_at`(서버) 과 `removeMessage`(화면) 가 각각 지운 것을 빼므로, 지운 말로 DM 이
+   * 위로 올라오는 일은 두 경로 모두에서 막힌다.
+   *
+   * ## 말이 없는 DM(`null`)은 맨 아래다 — **위가 아니다**
+   *
+   * `null` 은 '모른다'가 아니라 여기서는 **'대화한 적 없다'** 는 확정된 사실이다(서버가
+   * 세어 봤고 0이었다). 최근순 목록에서 대화가 없는 것이 있는 것보다 최근일 수는 없다.
+   *
+   * 그 대신 **갓 만든 DM 은 실제로 위에 선다** — `startDm` 이 `openChannel` 로 이어져
+   * 그 DM 이 활성이 되기 때문이다. 자리가 아니라 활성 표시가 그것을 말한다.
+   *
+   * 시각이 같을 때는 `id` 로 가른다. 안 그러면 `sort` 가 같은 값들의 순서를 보장하지 않아
+   * 렌더마다 줄이 서로 자리를 바꾼다.
+   */
   const dmPeers = useMemo(() =>
     dms.map((dm) => {
       const peers = dm.memberIds.filter((id) => id !== me?.id);
+      // 스토어에 들어와 있는 마지막 메시지. `upsertMessages` 가 `seq` 오름차순으로
+      // 정렬해 두므로 마지막 원소가 곧 가장 최근이다 — 여기서 다시 훑지 않는다.
+      const loaded = messages[dm.id];
+      const liveAt = loaded?.length ? loaded[loaded.length - 1]!.createdAt : null;
       return {
         id: dm.id,
         label: peers.map((id) => accounts[id]?.handle ?? '…').join(', ') || 'just me',
+        // 둘 중 **늦은 것**. 문자열 비교로 충분하다 — 둘 다 서버가 낸 ISO 8601 UTC 라
+        // 사전순이 곧 시간순이다(`Date` 로 감싸면 파싱 비용만 늘고 결과는 같다).
+        lastAt: dm.lastMessageAt && liveAt
+          ? (liveAt > dm.lastMessageAt ? liveAt : dm.lastMessageAt)
+          : (liveAt ?? dm.lastMessageAt),
         // `#443`: `some()` 하나로 갈리던 자리다. 소켓이 끊기면 `online` 은 마지막으로 들은
         // 낡은 배열이라 `some` 이 그 위에서 `true` 를 내고 초록이 남았다 — 실측(2026-09-06)
         // 에서 서버가 죽었는데 에이전트 여섯이 전부 초록이었던 자리가 여기다.
@@ -475,7 +525,15 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
         // 알림 수준을 보지 못하는 자리에 놓이기 쉽다(#229 가 채널 쪽에서 그랬다).
         notifyLevel: notifyLevelOf(channelPrefs[dm.id]),
       };
-    }), [dms, accounts, me, online, connected, channelPrefs]);
+    }).sort((a, b) => {
+      if (a.lastAt !== b.lastAt) {
+        // 말이 없는 쪽(`null`)이 맨 아래. 위 주석의 이유다.
+        if (!a.lastAt) return 1;
+        if (!b.lastAt) return -1;
+        return a.lastAt < b.lastAt ? 1 : -1;
+      }
+      return a.id.localeCompare(b.id);
+    }), [dms, accounts, me, online, connected, channelPrefs, messages]);
 
   const others = Object.values(accounts).filter((a) => a.id !== me?.id);
 
@@ -613,6 +671,146 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
       .filter((ch) => ch.kind === 'standard' && isHidden(ch.id))
       .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
   }, [channels, channelPrefs]);
+
+  /**
+   * DM 한 줄 — **사람이든 에이전트든 같은 모양이다**(정본 문서 `docs/desktop-rail.html`
+   * 2단계: *"한 목록에 최근순으로 섞이고 줄 모양이 같다 — 목록만 봐서는 누가 에이전트인지
+   * 알 수 없다"*).
+   *
+   * ## 세 표시가 하나로 줄었다 — 그것이 이 작업의 요점이다
+   *
+   * 합치기 전 이 줄에는 상태 표시가 **셋**이었고 그중 하나는 에이전트에만 붙었다:
+   *
+   * | 표시 | 무엇을 말했나 | 누구에게 붙었나 |
+   * |---|---|---|
+   * | presence 점 | 소켓이 붙어 있나 | 모두 |
+   * | `StatusMark` | 사람이 선언한 상태 | 사람만 (`kind !== 'human'` 이면 `null`) |
+   * | `RunnerStatusDot` | 이 앱이 띄운 러너의 상태 | **에이전트만** |
+   *
+   * 즉 **줄만 봐도 누가 에이전트인지 알 수 있었다** — 네모난 점이 하나 더 붙은 줄이 곧
+   * 에이전트였다. 두 묶음을 합쳐 놓고 이 표시를 그대로 두면 목록이 갈려 있던 때와
+   * 똑같이 읽히고, 문서가 고치려던 것이 하나도 안 고쳐진다.
+   *
+   * 그래서 문서가 정한 대로 **상태를 아바타 하나에 싣는다**(2단계: *"상태 표현은 아바타
+   * 규칙을 그대로 쓴다(「나머지 여덟 곳」 B1)"*). 표시는 아바타 **한 칸**이고, 그 칸의
+   * 겉모습은 사람과 에이전트가 같다 — `Identity variant="avatar"` 가 이미 둘을 같은
+   * `h-5 w-5 rounded-full` 로 그린다(그 컴포넌트 주석: *"대화에서는 '이건 에이전트다'라고
+   * 말하지 않는다"*, design doc 2 · #455). 같은 규율이 목록까지 온 것이다.
+   *
+   * ## 판정을 복제하지 않는다 — `faceState` 를 부른다
+   *
+   * 세 얼굴 규칙(정상/멈춤/실패, 그리고 `#443` 이 더한 '모른다')은 `lib/faceState.ts` 에
+   * 있고 설정 › 에이전트의 격자가 쓰는 그 함수다. 여기서 `runnerStates` 를 다시 훑어
+   * 색을 고르면 같은 러너가 두 화면에서 다른 얼굴이 된다 — `#476` 이 그 모양이었다.
+   *
+   * 회색조 필터도 격자와 **같은 클래스**를 쓴다(`grayscale brightness-[1.7]
+   * contrast-[0.55]`). 격자 주석이 그 숫자의 이유를 적어 뒀다: `grayscale` 만으로는
+   * 어두운 색이 거의 검정이 되어 중간 회색과 달라진다.
+   *
+   * ## 사람에게는 presence 가 그 자리를 쓴다
+   *
+   * 사람에게는 러너가 없다. 그렇다고 사람의 아바타를 늘 또렷하게 두면 **표시가 에이전트에만
+   * 있는 상태로 되돌아간다** — 위 표의 세 번째 줄과 같은 결함이다. 그래서 같은 칸에서
+   * 사람은 `presenceView` 로 갈린다: 붙어 있으면 또렷, 없으면 흐릿, **모르면**
+   * (`connected === false`) 흐릿하되 그 이유를 `title` 이 말한다.
+   *
+   * 두 판정이 같은 값 집합(`ok`/`stopped`/`unknown`)으로 만나는 것은 우연이 아니라 같은
+   * 규약이다 — 이 저장소는 생존을 모르는 것을 '없다'로 쓰지 않는다(`threadState`·
+   * `waitChain`·`faceState`·`presenceView` 가 전부 그렇게 한다).
+   *
+   * ## 실패 사유는 여전히 글자로 남는다
+   *
+   * `#368` 이 세운 것이다: *"사유가 title 툴팁에만 있으면 사람은 그것을 찾지 못한다."*
+   * 격자도 실패에만 글자를 붙인다(*"예외에만 글자를 쓴다"*). 그 규칙을 그대로 쓴다 —
+   * 실패한 줄만 두 번째 줄을 얻고, 나머지는 한 줄이다. **줄 모양이 같아야 한다는 것과
+   * 어긋나지 않는다**: 이것은 종류(사람/에이전트)가 아니라 **예외 상태**가 얻는 글자이고,
+   * 실패는 어차피 드물다.
+   */
+  const dmRow = (dm: {
+    id: string; label: string; presence: PresenceView; peer: AccountView | undefined;
+    agentId: string | undefined; notifyLevel: NotifyLevel;
+  }) => {
+    // 이 줄의 아바타가 무엇을 말할 것인가. **에이전트면 `faceState`, 사람이면
+    // `presenceView`** — 값 집합이 겹치므로 아래 그리는 코드는 하나다.
+    //
+    // 에이전트 쪽에 presence 를 섞지 않는 이유: `faceState` 가 이미 `online` 과
+    // `connected` 를 그 안에서 본다(그 함수 주석의 "daemon 이 아는 것이 먼저다"). 여기서
+    // 한 번 더 곱하면 daemon 이 확인한 러너를 소켓 상태로 덮어써 `#430` 이 되돌아온다.
+    const face: FaceState = dm.agentId
+      ? faceState(dm.agentId, runnerStates, online, connected)
+      : (dm.presence === 'online' ? 'ok' : dm.presence === 'offline' ? 'stopped' : 'unknown');
+    const runner = dm.agentId ? runnerStates[dm.agentId] : undefined;
+    // 격자와 같은 판정이다: `failed` 와 `needs_harness` 만 사유를 글자로 펼친다.
+    // `needs_reissue` 가 빠진 이유는 `RunnerStatusDot` 주석에 있다(재발급 버튼이 화면에
+    // 서므로 다음 행동이 문구 없이도 드러난다).
+    const reason = runner && (runner.status === 'failed' || runner.status === 'needs_harness')
+      ? runner.message
+      : null;
+    // 색은 스크린리더에 아무 말도 하지 않는다(`#443`). 아바타 한 칸에 상태를 실었으므로
+    // 그 칸이 글자로도 같은 말을 해야 한다 — 러너가 있으면 그쪽 문구가 더 구체적이다.
+    const stateLabel = runner ? `러너: ${runnerStatusLabel(runner)}` : PRESENCE_LABEL[dm.presence];
+    return (
+      <button key={dm.id} className={`${row(dm.id === activeChannelId)} ${reason ? 'flex-col items-start' : ''}`}
+        onClick={() => void getController().openChannel(dm.id)}>
+        <span className="flex min-w-0 items-center gap-1.5">
+          {/*
+            **상태를 말하는 칸은 이것 하나다.** `data-face` 로 시험이 판정을 읽는다 —
+            격자의 카드가 같은 속성을 쓰므로(`agent-card-*`) 두 화면을 같은 이름으로
+            검사할 수 있고, 한쪽만 고치면 시험이 갈린다.
+          */}
+          <span
+            data-testid={`dm-face-${dm.id}`}
+            data-face={face}
+            title={stateLabel}
+            className={`shrink-0 ${face === 'failed' ? 'rounded-full ring-2 ring-state-stuck' : ''}`}
+          >
+            {/* 회색조 숫자는 격자에서 그대로 가져온 것이다 — 이유는 그쪽 주석에 있다. */}
+            {/*
+              **`aria-hidden` 이다** — `#365` 가 세운 규율이다. `Identity` 는 접근 이름으로
+              `sr-only` 핸들을 낸다. 그것이 옳은 자리(거터·참여자 띠)에서는 이름이 옆에
+              없지만, 이 줄에서는 **바로 오른쪽에 같은 핸들이 글자로 서 있다** — 그대로
+              두면 스크린리더가 "bot bot" 을 읽는다. `#365` 가 메시지 한 줄에서 고친 것이
+              정확히 이 중복이다.
+              **상태는 사라지지 않는다**: 바깥 `span` 의 `title`(`stateLabel`)이 그 말을
+              하고, 그것은 색이 못 하는 일이라 반드시 글자로 남아야 한다(`#443`).
+            */}
+            <span aria-hidden="true" className={face === 'stopped' || face === 'unknown'
+              ? 'block grayscale brightness-[1.7] contrast-[0.55] opacity-90'
+              : 'block'}
+            >
+              {/*
+                `peer` 가 없는 자리(그룹 DM · 나 혼자인 DM)에도 `Identity` 를 세운다 —
+                `account` 가 `undefined` 면 그것이 "모른다"를 그리는 `?` 원이고(그 컴포넌트
+                주석), 칸을 아예 비우면 줄마다 왼쪽 정렬이 어긋난다.
+              */}
+              <Identity account={dm.peer} className="h-5 w-5" variant="avatar" />
+            </span>
+            {/*
+              **`title` 만으로는 부족하다.** 위 `span` 이 `aria-hidden` 이라 그 안의 접근
+              이름이 사라졌고, `title` 은 마우스를 올려 본 사람에게만 닿는다 — `#368` 이
+              사이드바에서 겪은 그 결함이다(*"사유가 사람이 안 보는 곳에만 있다"*).
+              그래서 같은 말을 `sr-only` 로도 낸다. 색은 스크린리더에 아무 말도 하지
+              않는다는 것이 `#443` 의 요지다.
+            */}
+            <span className="sr-only">{stateLabel}</span>
+          </span>
+          {/* 사람이 선언한 상태는 **남는다** — presence 와 다른 사실이다(#186): 앞은 기계가
+              파생한 "붙어 있나"이고 이것은 사람이 고른 "지금 말을 걸어도 되나"다. 아바타에
+              실은 것은 앞쪽뿐이라 이 표시를 지우면 사람이 적어 둔 말이 사라진다. */}
+          <StatusMark account={dm.peer} />
+          <span className="truncate">{dm.label}</span>
+          <UnreadBadge channelId={dm.id} notifyLevel={dm.notifyLevel} />
+        </span>
+        {reason && (
+          <span data-testid={`runner-reason-${dm.agentId}`}
+            className={`whitespace-normal text-left text-[10px] ${
+              runner?.status === 'needs_harness' ? 'text-warning' : 'text-danger'}`}>
+            {runner?.status === 'needs_harness' ? reason : `기동 실패 — ${reason}`}
+          </span>
+        )}
+      </button>
+    );
+  };
 
   const channelRow = (ch: ChannelRow) => {
     // pref 는 **배지를 그리기 전에** 구한다. 예전에는 이 계산이 배지 아래에 있어서
@@ -1409,16 +1607,22 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
         </>
         )}
         {/*
-          DM 묶음 — **지금 것을 그대로 옮겼다.** `DIRECT MESSAGES` 와 `AGENTS` 를 최근순
-          한 목록으로 합치는 것은 문서의 **2단계**이고, 이번 작업의 범위가 아니다. 문서가
-          1단계를 "내용은 지금 사이드바의 묶음을 그대로 옮기기만 한다"로 못 박았고, 그래서
-          되돌리는 비용도 작다("바뀌는 것은 껍데기다").
+          DM 한 목록 — **`DIRECT MESSAGES` 와 `AGENTS` 가 합쳐졌다**(정본 문서
+          `docs/desktop-rail.html` 2단계).
+
+          문서: *"DM 은 사람과 에이전트를 안 가른다. 한 목록에 최근순으로 섞이고 줄 모양이
+          같다 — 목록만 봐서는 누가 에이전트인지 알 수 없다. '사람끼리 일하듯'이 컨셉이면
+          대화 목록이 그것을 가장 먼저 보여주는 자리다."*
+
+          **머리글이 없어졌다.** `DIRECT MESSAGES` 라는 묶음 이름은 그 아래가 `AGENTS` 와
+          갈려 있을 때만 뜻이 있었다 — 묶음이 하나면 이름은 아무것도 구분하지 않고, 레일의
+          `DM` 칸이 이미 같은 말을 하고 있다. 같은 말을 두 번 하는 자리를 남기면 그것이
+          곧 문서가 없애려던 "두 묶음"의 흔적이다.
+
+          정렬은 `dmPeers` 가 하고(그 주석에 근거), 줄 모양은 `dmRow` 하나가 진다.
         */}
         {panel === 'dm' && (
         <div>
-          <div className="flex items-center px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
-            Direct messages
-          </div>
           {/*
             DM 의 `+` 도 목록의 **첫 칸**이다(#488 A2). 예전에는 섹션 머리 오른쪽 끝의 작은
             버튼이라 채널의 `+` 와 모양도 자리도 달랐다 — 같은 일을 하는 것이 목록마다 다르게
@@ -1436,28 +1640,7 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
               ))}
             </div>
           ) : (
-            dmPeers.map((dm) => (
-              <button key={dm.id} className={row(dm.id === activeChannelId)}
-                onClick={() => void getController().openChannel(dm.id)}>
-                {/* 연결 점과 상태 표시는 **둘 다** 남는다. 점은 소켓이 붙어 있는가(기계가
-                    파생), 상태는 지금 말을 걸어도 되는가(사람이 선언)다 — 하나로 합치면
-                    "연결이 끊긴 사람"과 "방해 금지인 사람"이 뭉친다(#186). */}
-                {/* `#443`: 값이 셋이다 — 끊긴 동안은 초록도 회색도 아니다.
-                    `title` 로 같은 말을 글자로도 낸다: 색은 스크린리더에 아무 말도 안 하고,
-                    이 이슈는 "화면이 사람에게 말하지 않는다"이지 "색이 틀렸다"가 아니다. */}
-                <span data-testid={`presence-${dm.id}`} data-online={dm.presence}
-                  title={PRESENCE_LABEL[dm.presence]}
-                  className={`h-2 w-2 rounded-full ${PRESENCE_DOT_CLASS[dm.presence]}`} />
-                <StatusMark account={dm.peer} />
-                {/* #250: 러너 상태는 presence 와 **또 다른 사실**이다 — presence 는 "러너가
-                    붙어 있나"(누가 띄웠든)이고, 이것은 "이 앱이 띄운 자식이 어떤 상태인가"다.
-                    78 로 죽은 러너는 presence 로도 사라지지만, 사람이 할 일(재발급)은
-                    이 표시만이 말해 준다. */}
-                {dm.agentId && <RunnerStatusDot agentId={dm.agentId} state={runnerStates[dm.agentId]} />}
-                {dm.label}
-                <UnreadBadge channelId={dm.id} notifyLevel={dm.notifyLevel} />
-              </button>
-            ))
+            dmPeers.map(dmRow)
           )}
         </div>
         )}
@@ -1467,13 +1650,31 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
             실패한 러너는 사유를 **글자로** 펼친다: 점의 `title` 만으로는 마우스를 올려 본
             사람에게만 보이고, 이 결함의 본질이 "사유가 사람이 안 보는 곳에만 있다" 였다.
 
-            **DM 이 있는 에이전트를 여기서 빼는 규칙을 그대로 뒀다.** 그 규칙의 원래 이유는
-            "같은 에이전트가 두 줄로 서면 어느 줄이 최신인지 알 수 없다"였고, 두 묶음이 한
-            열에 함께 서 있을 때의 이야기다 — 이제 칸이 갈라져 두 줄이 한 화면에 서는 일이
-            없으니 근거는 사라졌다. 그래도 지금 고치지 않는다: 이 패널을 **얼굴 그리드**로
-            바꾸면서 "아직 DM 이 없는 에이전트도 여기서는 자리를 갖는다"를 함께 세우는 것이
-            문서의 **3단계**이고, 여기서 필터만 먼저 떼면 목록이 늘어난 채로 3단계를 기다리게
-            된다. 1단계는 껍데기만 바꾼다. */}
+            **DM 이 있는 에이전트를 여기서 빼는 규칙을 2단계에서 다시 따져 보고 그대로 뒀다.**
+            근거가 갈아치워졌으므로 적어 둔다.
+
+            원래 이유는 *"같은 에이전트가 두 줄로 서면 어느 줄이 최신인지 알 수 없다"* 였다.
+            1단계 주석은 그 근거가 사라졌다고 적었다 — 칸이 갈라져 두 줄이 한 화면에 서지
+            않으니까. **그 관찰은 맞지만 결론이 달라진다.** 2단계가 DM 목록을 합치면서
+            에이전트를 **DM 칸의 제1시민**으로 만들었다: 그 칸에서 에이전트는 사람과 같은
+            줄 모양으로 최근순에 섞여 서고, 상태를 아바타로 말하며, 실패 사유까지 글자로
+            펼친다(`dmRow`). 그러니까 DM 이 있는 에이전트에게 **필요한 자리는 이미 다 있다**.
+
+            여기 다시 세우면 같은 에이전트가 두 칸에 살고, 두 칸이 그리는 모양은 서로
+            다르다(여기는 네모난 러너 점 + `@handle`, 저기는 아바타 얼굴). *"같은 것으로
+            가는 길이 둘이 되고, 그때부터 사람은 어느 쪽이 맞는지 매번 고른다"* — 문서가
+            북마크를 홈에 안 두는 이유로 적은 그 문장이 여기에도 그대로 걸린다.
+
+            그래서 이 패널이 답하는 질문은 하나로 좁혀졌다: **"아직 DM 이 없는 에이전트의
+            러너는 어떤 상태인가"**(`#368` 이 만든 그 자리). 이 비대칭 자체를 없애는 것 —
+            *"아직 DM 이 없는 에이전트도 여기서 자리를 갖고, 멈춘 것은 ▶ 로 여기서 바로
+            켠다"* — 이 문서의 **3단계**(얼굴 그리드)이고 이번 범위가 아니다.
+
+            **부수 효과로 `data-testid` 충돌이 없다.** `dmRow` 도 실패 사유에
+            `runner-reason-{agentId}` 를 쓰는데, 이 필터가 두 목록을 **서로소로** 유지하므로
+            한 에이전트의 사유 줄은 화면에 언제나 하나다. 필터를 떼면 같은 testid 가 둘이
+            되어 시험의 `getByTestId` 가 깨진다 — 3단계에서 이 자리를 그리드로 바꿀 때
+            함께 정리할 일이다. */}
         {panel === 'agents' && (() => {
           const dmAgentIds = new Set(dms.map((dm) => dm.memberIds.find((id) => accounts[id]?.kind === 'agent')).filter(Boolean) as string[]);
           const agents = Object.values(accounts).filter((a) => a.kind === 'agent' && !dmAgentIds.has(a.id));

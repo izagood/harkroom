@@ -39,7 +39,9 @@ describe('directory surfaces', () => {
     const dmId = dm.json().id as string;
     const mine = await app.inject({ method: 'GET', url: '/dms', headers: auth(adminToken) });
     expect(mine.json().dms).toEqual([
-      { id: dmId, memberIds: expect.arrayContaining([adminId, botId]) },
+      // 말이 하나도 없는 DM 의 `lastMessageAt` 은 **`null`** 이다 — 채널 생성 시각으로
+      // 채우지 않는다. '대화한 적 없다'와 '그때 대화했다'는 다른 사실이다(shared 의 주석).
+      { id: dmId, memberIds: expect.arrayContaining([adminId, botId]), lastMessageAt: null },
     ]);
     // 제3자(새 에이전트)에게는 보이지 않는다
     const { pat: otherPat } = await createAgent(app, adminToken, 'outsider');

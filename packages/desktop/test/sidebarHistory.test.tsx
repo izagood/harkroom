@@ -48,7 +48,7 @@ beforeEach(() => {
     me: acc('u1', 'admin'),
     accounts: { u1: acc('u1', 'admin'), u2: acc('u2', 'bot', 'agent') },
     channels: [chan('c1', 'general'), chan('c2', 'dev')],
-    dms: [{ id: 'd1', memberIds: ['u1', 'u2'] }],
+    dms: [{ id: 'd1', memberIds: ['u1', 'u2'], lastMessageAt: null }],
     online: ['u2'],
     connected: true,
     activeChannelId: 'c1',
