@@ -17,6 +17,7 @@ import { AgentGrid } from './AgentGrid';
 import { canRelaunchAgent } from '../../lib/relaunchGate';
 import { Identity } from '../Identity';
 import { Button } from './primitives';
+import { useAgentPool } from './useAgentPool';
 
 /** #177: 클립보드가 없거나 거부되면 **조용히 실패하지 않는다** — 화면에 있는 그 명령
  *  텍스트를 선택 상태로 만들어 사람이 ⌘C 할 수 있게 하고, 오류를 눈에 보이게 남긴다.
@@ -131,6 +132,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 상세의 폭이 좁아져 문서가 세운 세 묶음이 다시 한 줄로 흐른다.
    */
   const [view, setView] = useState<'grid' | 'detail'>('grid');
+  /** 에이전트별 계정 풀 배정(기기 로컬). 이 값은 서버로 가지 않는다 — `useAgentPool` 주석. */
+  const agentPool = useAgentPool(selected?.id ?? null);
 
   // 초안이 null 인 것은 '무엇을 기본으로 둘지 아직 모른다'는 뜻이다 — 기본값을 못 읽었는데
   // 조용히 채워 넣으면 화면이 거짓을 말한다(docs/design.md 4절).
@@ -731,6 +734,35 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 ))}
               </select>
             </label>
+
+            {/* 계정 풀 — **이 기기에만 저장된다.** 위 필드들과 저장 경로가 다르므로
+                (서버 PATCH 가 아니라 로컬 데몬) 고르는 즉시 쓰고, 그 사실을 적는다.
+                표면이 없으면 아예 그리지 않는다 — 그려 두면 고를 수 있는데 아무 일도 안 난다. */}
+            {agentPool.available && (
+              <label className={label}>
+                Account pool
+                <select
+                  className={field}
+                  aria-label="Account pool"
+                  value={agentPool.assigned}
+                  onChange={(e) => void agentPool.assign(e.target.value)}
+                >
+                  <option value="">
+                    {agentPool.defaultPool
+                      ? `Use the default pool (${agentPool.defaultPool})`
+                      : 'Use the default pool'}
+                  </option>
+                  {agentPool.pools.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+                <span className="mt-1 block text-[11px] text-fg-subtle">
+                  This machine only — pools are local directories, so this is not shared
+                  with other devices. Restart the runner for a change to take effect.
+                </span>
+                {agentPool.error && (
+                  <span className="mt-1 block text-[11px] text-danger">{agentPool.error}</span>
+                )}
+              </label>
+            )}
 
             </FieldGroup>
 

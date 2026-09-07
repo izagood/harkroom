@@ -261,3 +261,116 @@ describe('AgentsSettings — 러너 실행·중지 토글(#427, #493)', () => {
     expect(screen.getByRole('button', { name: '러너 실행' })).toBeTruthy();
   });
 });
+
+/**
+ * 에이전트별 계정 풀 지정.
+ *
+ * **이 값은 서버로 가지 않는다.** 풀은 이 기기에만 존재하는 자원이므로(디렉터리와 그 안의
+ * 자격증명) 서버에 두면 없는 풀을 가리키는 설정이 다른 기기로 전파된다 — 저장소에 같은
+ * 판례가 있다("설정값은 기기 로컬이 의미론적으로 맞다"). 그래서 `AgentConfig` 의 다른
+ * 필드들과 **저장 경로가 다르고**, 그 사실이 화면에 적혀 있어야 한다: 안 적으면 사용자는
+ * 다른 기기에서 안 보이는 것을 버그로 읽는다.
+ */
+describe('AgentsSettings — 에이전트별 계정 풀', () => {
+  const AGENT = makeAgent();
+  let invoked: { cmd: string; args?: Record<string, unknown> }[] = [];
+
+  beforeEach(() => {
+    resetCommunityRegistry();
+    useActiveStore.setState({ me: ME, accounts: { [ME_ID]: ME } });
+    invoked = [];
+    vi.stubGlobal('__TAURI_INTERNALS__', {
+      transformCallback: () => 1,
+      invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
+        invoked.push({ cmd, args });
+        if (cmd === 'claude_accounts_list') {
+          return {
+            root: '/r', mode: 'pools', defaultPool: 'work',
+            agents: {}, strays: [],
+            pools: [
+              { name: 'work', accounts: [] },
+              { name: 'personal', accounts: [] },
+            ],
+          };
+        }
+        return {};
+      }),
+    });
+    setController({
+      listAgents: vi.fn(async () => [AGENT]),
+      listPats: vi.fn(async () => []),
+      agentMemory: vi.fn(async () => ({ profile: null, entries: [] })),
+      agentDefaults: vi.fn(async () => ({ harness: 'claude', model: null, effort: null })),
+    } as unknown as Controller);
+  });
+
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+  async function openDetail(): Promise<void> {
+    render(<AgentsSettings />);
+    (await screen.findByRole('button', { name: /alpha/ })).click();
+  }
+
+  it('실행 묶음에 풀 선택이 있고 기본은 기본 풀 사용이다', async () => {
+    await openDetail();
+    const select = await screen.findByLabelText(/account pool/i);
+    // 배정이 없으면 빈 값 — "기본 풀 사용"이다. 그 상태가 표현되지 않으면 사용자가
+    // 배정을 지울 방법이 없다.
+    expect((select as HTMLSelectElement).value).toBe('');
+    expect(screen.getByText(/default pool/i)).toBeTruthy();
+  });
+
+  it('풀 목록을 계정 스냅샷에서 읽는다 — 지어내지 않는다', async () => {
+    await openDetail();
+    await screen.findByLabelText(/account pool/i);
+    const options = screen.getAllByRole('option').map((o) => (o as HTMLOptionElement).value);
+    expect(options).toContain('work');
+    expect(options).toContain('personal');
+  });
+
+  it('이 기기에만 저장된다는 사실을 적는다', async () => {
+    // 안 적으면 사용자는 다른 기기에서 안 보이는 것을 버그로 읽는다.
+    await openDetail();
+    await screen.findByLabelText(/account pool/i);
+    expect(screen.getByText(/this machine only/i)).toBeTruthy();
+  });
+
+  it('고르면 계정 설정 경로로 쓴다 — 에이전트 저장 버튼을 거치지 않는다', async () => {
+    // `AgentConfig` 의 다른 필드와 저장 경로가 다르다. 같은 저장 버튼에 묶으면 서버
+    // PATCH 에 이 값이 실려 가거나, 반대로 저장을 눌러야 반영되는 것으로 오해된다.
+    await openDetail();
+    const select = await screen.findByLabelText(/account pool/i);
+    const { fireEvent } = await import('@testing-library/react');
+    fireEvent.change(select, { target: { value: 'personal' } });
+
+    await waitFor(() => {
+      const call = invoked.find((c) => c.cmd === 'claude_accounts_configure');
+      const config = call?.args?.config as { agents?: Record<string, string> } | undefined;
+      expect(config?.agents).toEqual({ [AGENT.id]: 'personal' });
+    });
+  });
+
+  it('기본 풀 사용으로 되돌리면 배정을 지운다', async () => {
+    await openDetail();
+    const select = await screen.findByLabelText(/account pool/i);
+    const { fireEvent } = await import('@testing-library/react');
+    fireEvent.change(select, { target: { value: 'personal' } });
+    await waitFor(() => expect(invoked.some((c) => c.cmd === 'claude_accounts_configure')).toBe(true));
+    invoked = [];
+    fireEvent.change(select, { target: { value: '' } });
+
+    await waitFor(() => {
+      const call = invoked.find((c) => c.cmd === 'claude_accounts_configure');
+      const config = call?.args?.config as { agents?: Record<string, string> } | undefined;
+      expect(config?.agents).toEqual({});
+    });
+  });
+
+  it('Tauri 표면이 없으면 풀 선택을 그리지 않는다', async () => {
+    // 그려 두면 고를 수 있는데 아무 일도 안 난다.
+    vi.unstubAllGlobals();
+    await openDetail();
+    await screen.findByLabelText(/agent harness/i);
+    expect(screen.queryByLabelText(/account pool/i)).toBeNull();
+  });
+});
