@@ -2,7 +2,17 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { listHandleGroups } from '../services/handleGroups.js';
 
-export async function registerDirectoryRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
+export async function registerDirectoryRoutes(
+  app: FastifyInstance,
+  pool: Pool,
+  /**
+   * 투영이 지금 보고 있는 avcs 서버. `active_lease` 가 (repo, avcs_base_url)로 키가
+   * 잡히므로, 이 값 없이 전체를 긁으면 예전에 붙었던 다른 서버의 낡은 리스가 현재
+   * 활성 작업으로 섞여 나온다 — `#267`·`#488` 이 닫은 결함이 다른 모양으로 돌아오는
+   * 셈이다.
+   */
+  projection?: { currentUrl(): string | null },
+): Promise<void> {
   app.get('/accounts', { preHandler: app.requireAccount }, async () => {
     const res = await pool.query(
       // 비활성 계정도 **준다.** 이 목록은 멘션 자동완성의 원천이면서 작성자 이름을 푸는
@@ -76,9 +86,16 @@ export async function registerDirectoryRoutes(app: FastifyInstance, pool: Pool):
   });
 
   app.get('/leases', { preHandler: app.requireAccount }, async () => {
+    const currentUrl = projection?.currentUrl() ?? null;
+    // 투영이 꺼져 있으면(워커가 없거나 이 표면 자체가 없으면) "지금 잡혀 있는 리스"도
+    // 없다 — 보고 있는 서버가 없는데 리스만 남아 있다고 답하면 화면은 실제로는 아무도
+    // 갱신하지 않는 리스를 여전히 활성으로 그린다. `DISABLED_PROJECTION_STATUS` 와 같은
+    // 논리다.
+    if (currentUrl === null) return { leases: [] };
     const res = await pool.query(
       `select repo, path, actor_key_id as "actorKeyId", expires_at as "expiresAt"
-       from active_lease where expires_at > now() order by repo, path`,
+       from active_lease where expires_at > now() and avcs_base_url = $1 order by repo, path`,
+      [currentUrl],
     );
     return { leases: res.rows };
   });

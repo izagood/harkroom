@@ -158,6 +158,9 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
 `audit_log` 에 `projection.url.updated` 로 남는다(`before`·`after` 의 출처와 앱 값 포함) —
 "누가 서버의 아웃바운드 대상을 바꿨나" 를 나중에 확인할 자리다.
 
+투영 상태(커서·리스)는 `(repo, avcs 서버)` 로 키가 잡힌다 — avcs 서버를 바꾸면 그 서버에
+대해 커서가 0 에서 다시 시작하고(전재스캔 한 번, idempotent), 되돌아가면 이어서 따라간다.
+
 ### 먼저 알아야 할 것 — 채널에 보이는 avcs 시스템 메시지는 과거의 것이다
 
 **예전에는 이 워커가 avcs 객체를 채널 메시지로도 만들었다.** `intent` 를 스레드 뿌리로

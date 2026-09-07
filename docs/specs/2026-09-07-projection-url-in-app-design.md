@@ -94,6 +94,13 @@ insert into projection_config (id) values (true);
 `id boolean primary key check (id)` 는 `017_agent_defaults.sql` 관용구. 행이 둘이면
 "투영 URL 이 무엇인가"에 답이 둘이 된다. 확인 시점 원격 브랜치에 `041` 이상은 없다.
 
+## 4-1. 투영 상태는 (서버, repo)에 속한다
+
+`projection_cursor`·`active_lease` 는 `repo` 하나가 아니라 `(repo, avcs_base_url)` 로
+키가 잡힌다(`042_projection_state_per_server.sql`) — 로그 인덱스는 그 로그에 상대적이다.
+핫 스왑으로 URL 이 바뀌면 새 워커는 새 서버 아래의 자기 행을 보고, 옛 서버의 커서·리스는
+그대로 남는다.
+
 ## 5. API
 
 ```
@@ -197,13 +204,3 @@ VM 에 붙지 않고, 설치본 앱 `설정 › Connection` 에서 URL 을 넣�
   필요해지면 `AvcsServerClient` 계약 변경이라 별 작업
 - **`stop()` 인터럽트** — §2 의 85 초 겹침을 없애지만 커서 락이 이미 정확성을 지킨다
 - **repo 바인딩 UI** — repo 목록은 계속 채널 바인딩에서 온다(`listBoundRepos`)
-- **avcs 서버를 바꿔 타면 커서·리스가 옛 서버 것을 물려받는다.** `projection_cursor` 는
-  `repo` 하나만으로 행을 식별하고 `active_lease` 는 `(repo, path, actor_key_id)` 로 식별한다
-  (`001_init.sql`) — 둘 다 base URL 을 키에 넣지 않는다. 그래서 서버 A(커서가 5000)에서
-  서버 B(로그가 120건)로 URL 을 바꾸면, 새 워커는 B 에게 `waitForChange(repo, 5000)` 을
-  묻고 B 는 그 지점 이후로 아무것도 없다고 영원히 답한다 — 커서는 그대로 멈추는데
-  `lastPolledAt` 은 계속 갱신되므로 `state` 는 `ok` 로 남고 화면은 계속 "투영이 돌고 있다"
-  라고 말한다. 그 사이 A 의 옛 리스는 여전히 현재 작업인 것처럼 보인다. **처음 켤 때는
-  이 문제가 없다** — 그때는 커서 행 자체가 없으니 물려받을 값도 없다. 이것이 이대로
-  나가는 이유다. 고치려면 이 스펙이 아직 내리지 않은 결정이 필요하다: 다른 avcs 서버의
-  같은 repo 이름을 같은 repo 로 볼 것인가. 후속 과제로 남긴다.
