@@ -138,6 +138,7 @@ async function planFor(combo: Combo, dir: string): Promise<TurnPlan> {
     pat: 'murp_fake_never_sent',
     murmurUrl: 'http://localhost:3401',
     codexHome: join(dir, 'codex-home'),
+    claudeConfigDir: null,
   });
 }
 

@@ -135,6 +135,9 @@ between "no work" and "projection is off", is listed in one place:
 | `CODEX_HOME` | Source Codex home whose `auth.json` is linked into the runner-isolated Codex home; child Codex processes always use the isolated home under `AGENT_STATE_DIR` | `~/.codex` | No |
 | `MURMUR_AGENT_INSTANCE` | Instance id for running the same agent account as several runners; becomes the last path segment of the state directory. Must match `[a-z0-9-]{1,32}` — an invalid value fails startup. Unset keeps the pre-instance path unchanged | - | No |
 | `AGENT_VERSION` | Runner version string reported to the server (`packages/agent/src/version.ts`); normally injected by the build | `unknown` | No |
+| `MURMUR_CLAUDE_ACCOUNTS_DIR` | Root of the claude account pool; one subdirectory per account, each used as that account's `CLAUDE_CONFIG_DIR` | `~/.murmur-agent/claude-accounts` | No |
+| `MURMUR_CLAUDE_ACCOUNTS` | Comma-separated account names setting failover order and subset (e.g. `plum,lime`). A name missing from the pool fails startup. Unset means alphabetical order over the whole pool | - | No |
+| `CLAUDE_CONFIG_DIR` | Not read by the runner — **set on the child** `claude` process to the selected account's directory. Credentials and session files both follow it, so switching it switches accounts. Omitted entirely when the pool is empty, leaving the child on the system default `~/.claude` | - | No |
 
 ### Desktop
 
