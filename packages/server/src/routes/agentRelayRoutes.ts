@@ -32,6 +32,7 @@ import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { createAttachTicketStore } from '../ws/tickets.js';
 import { createRelayHub } from '../ws/relay.js';
+import type { AgentPresence } from '../mcp/presence.js';
 import { createCredentialSweep, DEFAULT_REVALIDATE_MS, originAllowed } from '../ws/socketLifetime.js';
 
 /**
@@ -71,10 +72,25 @@ export interface AgentRelayDeps {
   revalidateMs?: number;
   /** interactive.open 응답 대기 한도(ms, #337). 기본 10초 — 테스트가 짧게 준다. */
   interactiveOpenTimeoutMs?: number;
+  /**
+   * 에이전트 presence 장부. **러너 프레임이 도착할 때마다 갱신한다** — 턴을 도는 동안
+   * 러너는 `inbox.poll` 을 못 하지만(루프가 단일 스레드다) PTY 바이트는 초 단위로
+   * 흘려 보낸다. 그 프레임을 생존으로 읽지 않으면 일하는 중인 에이전트가 30초 TTL 에
+   * 만료돼 화면이 스레드를 '막힘'으로 칠한다.
+   *
+   * **'소켓 열림'이 아니라 '프레임 도착'이다.** 이 소켓은 heartbeat 추적을 받지 않으므로
+   * (`heartbeat` 는 `wsPlugin` 에만 배선돼 있다) 소켓 존재를 생존으로 읽으면 케이블이
+   * 뽑힌 러너가 영원히 온라인으로 남는다. 프레임을 신호로 잡으면 TTL 만료가 그대로
+   * wedge 감지가 된다.
+   *
+   * 옵셔널로 두지 않는다 — 배선이 끊겨도 컴파일이 통과하면 presence 가 조용히 no-op 이
+   * 되고, 그 조용한 no-op 이 정확히 이 버그의 모양이었다.
+   */
+  agentPresence: AgentPresence;
 }
 
 export async function registerAgentRelayRoutes(
-  app: FastifyInstance, pool: Pool, deps: AgentRelayDeps = {},
+  app: FastifyInstance, pool: Pool, deps: AgentRelayDeps,
 ): Promise<void> {
   const hub = createRelayHub();
   const attachTickets = createAttachTicketStore({ ttlMs: deps.attachTicketTtlMs });
@@ -101,7 +117,12 @@ export async function registerAgentRelayRoutes(
   }, (socket, req) => {
     const agentAccountId = req.account!.id;
     const detach = hub.addRunner(agentAccountId, socket);
-    socket.on('message', (raw) => hub.onRunnerMessage(agentAccountId, String(raw)));
+    socket.on('message', (raw) => {
+      // 프레임이 왔다 = 이 러너가 살아 있다. `hub` 앞에 두는 이유: 허브가 모르는
+      // 프레임 종류(구·신 러너의 차이)도 생존 증거로는 똑같이 유효하다.
+      deps.agentPresence.mark(agentAccountId);
+      hub.onRunnerMessage(agentAccountId, String(raw));
+    });
     socket.on('close', detach);
   });
 
