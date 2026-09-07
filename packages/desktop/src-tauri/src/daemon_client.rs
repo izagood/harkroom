@@ -789,7 +789,7 @@ impl DaemonConnection {
     fn start_reader(
         &self,
         mut reader: BufReader<UnixStream>,
-        on_event: impl Fn(RunnerExitEvent) + Send + 'static,
+        on_event: impl Fn(&str, Value) + Send + 'static,
     ) {
         let pending = self.pending.clone();
         std::thread::spawn(move || {
@@ -811,14 +811,15 @@ impl DaemonConnection {
                     continue;
                 };
                 if value.get("type").and_then(Value::as_str) == Some("event") {
-                    if value.get("event").and_then(Value::as_str) == Some("runnerExit") {
-                        if let Some(payload) = value.get("payload") {
-                            if let Ok(ev) =
-                                serde_json::from_value::<RunnerExitEvent>(payload.clone())
-                            {
-                                on_event(ev);
-                            }
-                        }
+                    // **이름으로 분기하지 않는다** — 이벤트가 둘이 되면서(러너 exit,
+                    // 계정 로그인 출력) 여기서 가르면 이벤트마다 이 루프를 고쳐야 한다.
+                    // 이름과 payload 를 그대로 올리고, 무엇으로 만들지는 emitter 가 정한다
+                    // (그쪽이 Tauri 를 아는 유일한 자리다).
+                    if let (Some(name), Some(payload)) = (
+                        value.get("event").and_then(Value::as_str),
+                        value.get("payload"),
+                    ) {
+                        on_event(name, payload.clone());
                     }
                     continue;
                 }
@@ -1090,11 +1091,28 @@ pub fn ensure_daemon(
 /// 소켓 너머로 이어지는 자리).
 fn runner_exit_emitter(
     app: &tauri::AppHandle,
-) -> impl Fn(RunnerExitEvent) + Send + Clone + 'static {
+) -> impl Fn(&str, Value) + Send + Clone + 'static {
     let emitter = app.clone();
-    move |event| {
+    move |name, payload| {
         use tauri::Emitter;
-        let _ = emitter.emit(crate::RUNNER_EXIT_EVENT, event);
+        match name {
+            "runnerExit" => {
+                // **모양을 여기서 확인한다.** `incarnationId` 가 없는 exit 통지는 앱의
+                // 세대 판정(`acceptRunnerExit`)이 쓸 수 없어, 올려 보내면 웹뷰가 그것을
+                // 버릴 뿐이다 — 버릴 것을 보내지 않는다.
+                if let Ok(ev) = serde_json::from_value::<RunnerExitEvent>(payload) {
+                    let _ = emitter.emit(crate::RUNNER_EXIT_EVENT, ev);
+                }
+            }
+            // 로그인 출력은 **모양을 재지 않고 그대로 올린다.** 필드가 상황마다 다르고
+            // (url 만, done+status, error) 판단은 화면이 한다 — Rust 가 그 모양을 알면
+            // 필드가 하나 늘 때마다 여기를 고쳐야 하고 그 고침은 아무것도 지켜 주지 않는다.
+            "claudeLoginOutput" => {
+                let _ = emitter.emit(crate::CLAUDE_LOGIN_EVENT, payload);
+            }
+            // 모르는 이벤트는 버린다 — 데몬이 우리보다 새 판본일 수 있다.
+            _ => {}
+        }
     }
 }
 
@@ -1218,7 +1236,7 @@ fn retire_daemon(paths: &EndpointPaths, pid: u32) -> bool {
 fn ensure_at(
     paths: &EndpointPaths,
     my_entry: &Path,
-    on_event: impl Fn(RunnerExitEvent) + Send + Clone + 'static,
+    on_event: impl Fn(&str, Value) + Send + Clone + 'static,
     launch: impl FnOnce() -> Result<DaemonExitWatch, String>,
 ) -> Result<(Arc<DaemonConnection>, EnsureKind), String> {
     // ── 1. 붙어 본다 — 다만 **내 빌드의 daemon 에만** ──────────────────────────
@@ -1322,7 +1340,7 @@ fn ensure_at(
 
 fn open_connection(
     paths: &EndpointPaths,
-    on_event: impl Fn(RunnerExitEvent) + Send + 'static,
+    on_event: impl Fn(&str, Value) + Send + 'static,
 ) -> Result<Arc<DaemonConnection>, String> {
     let conn = DaemonConnection::connect(paths)?;
     let reader = BufReader::new(
@@ -1907,6 +1925,61 @@ pub fn log_line(line: &str) {
 // ---------------------------------------------------------------------------
 
 impl DaemonConnection {
+    // ── claude 계정 풀(2026-09-08) ────────────────────────────────────────────
+    //
+    // **전부 소켓으로 넘기는 일만 한다.** 계정 풀은 로컬 디렉터리이고 로그인은 로컬
+    // 프로세스인데 그 실행은 데몬이 한다 — 웹뷰에 프로그램 실행 표면을 열지 않기
+    // 위해서다(`runnerShellScope.test.ts` 가 그 회귀선을 들고 있다).
+    //
+    // 응답을 `Value` 로 그대로 돌려주는 것들이 있다: 계정 목록은 필드가 많고 UI 만 읽으며,
+    // Rust 는 그 모양에 대해 아무 판단도 하지 않는다. 여기서 구조체로 받으면 필드가 하나
+    // 늘 때마다 Rust 를 고쳐야 하고, 그 고침은 아무것도 지켜 주지 않는다.
+    pub fn claude_accounts_list(&self) -> Result<Value, String> {
+        self.request("claudeAccountsList", json!({}))
+    }
+
+    pub fn claude_accounts_configure(&self, config: Value) -> Result<Value, String> {
+        self.request("claudeAccountsConfigure", config)
+    }
+
+    pub fn claude_account_login_start(&self, pool: &str, account: &str) -> Result<Value, String> {
+        self.request(
+            "claudeAccountLoginStart",
+            json!({ "pool": pool, "account": account }),
+        )
+    }
+
+    pub fn claude_account_login_submit(&self, login_id: &str, code: &str) -> Result<Value, String> {
+        // **코드를 로그에 적지 않는다.** `request` 는 payload 를 안 적는다(spawnRunner 가
+        // env 에 PAT 를 실어 보내는 것과 같은 이유) — 그 성질에 기댄다.
+        self.request(
+            "claudeAccountLoginSubmit",
+            json!({ "loginId": login_id, "code": code }),
+        )
+    }
+
+    pub fn claude_account_login_cancel(&self, login_id: &str) -> Result<Value, String> {
+        self.request("claudeAccountLoginCancel", json!({ "loginId": login_id }))
+    }
+
+    pub fn claude_account_remove(&self, pool: &str, account: &str) -> Result<Value, String> {
+        self.request(
+            "claudeAccountRemove",
+            json!({ "pool": pool, "account": account }),
+        )
+    }
+
+    pub fn claude_pool_remove(&self, pool: &str) -> Result<Value, String> {
+        self.request("claudePoolRemove", json!({ "pool": pool }))
+    }
+
+    pub fn claude_account_move(&self, account: &str, to_pool: &str) -> Result<Value, String> {
+        self.request(
+            "claudeAccountMove",
+            json!({ "account": account, "toPool": to_pool }),
+        )
+    }
+
     pub fn spawn_runner(
         &self,
         agent_id: &str,
@@ -2915,9 +2988,16 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
         let (conn, _) = ensure_at(
             &paths,
             &program,
-            move |ev| {
-                if let Ok(mut v) = sink.lock() {
-                    v.push(ev);
+            // 콜백이 `(name, payload)` 로 일반화됐다(이벤트가 둘이 됐다) — 이 테스트는
+            // 러너 exit 만 보므로 그 이름만 걸러 옛 단언을 그대로 유지한다.
+            move |name, payload| {
+                if name != "runnerExit" {
+                    return;
+                }
+                if let Ok(ev) = serde_json::from_value::<RunnerExitEvent>(payload) {
+                    if let Ok(mut v) = sink.lock() {
+                        v.push(ev);
+                    }
                 }
             },
             || Err("띄우면 안 된다 — 이미 있다".to_string()),
