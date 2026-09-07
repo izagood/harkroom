@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { claudeAccountsRoot, loadClaudeAccounts } from '../src/claudeAccounts.js';
+import { claudeAccountsRoot, loadClaudeAccountLane, loadClaudeAccounts } from '../src/claudeAccounts.js';
 
 async function fixture(names: string[]): Promise<string> {
   const root = mkdtempSync(join(tmpdir(), 'murmur-claude-accounts-'));
@@ -103,5 +103,115 @@ describe('loadClaudeAccounts', () => {
     const root = await fixture(['lime', 'plum']);
     expect((await loadClaudeAccounts({ root, order: '' })).map((a) => a.name))
       .toEqual(['lime', 'plum']);
+  });
+});
+
+/** 두 층 구조를 만든다. `cfg` 를 주면 `pools.json` 도 쓴다(그 존재가 풀 모드의 스위치다). */
+async function poolFixture(
+  pools: Record<string, string[]>,
+  cfg?: unknown,
+): Promise<string> {
+  const root = mkdtempSync(join(tmpdir(), 'murmur-pools-'));
+  for (const [pool, accounts] of Object.entries(pools)) {
+    await mkdir(join(root, pool), { recursive: true });
+    for (const a of accounts) await mkdir(join(root, pool, a), { recursive: true });
+  }
+  if (cfg !== undefined) await writeFile(join(root, 'pools.json'), JSON.stringify(cfg));
+  return root;
+}
+
+describe('loadClaudeAccountLane — 풀 축', () => {
+  it('pools.json 이 없으면 뿌리가 암묵 풀이다 — 어제 동작 그대로', async () => {
+    // 하위 호환이 이 한 줄에 걸려 있다. 술어는 파일의 존재 하나다.
+    const root = await fixture(['lime', 'plum']);
+    const lane = await loadClaudeAccountLane({ root, agentId: 'a1' });
+    expect(lane.pool).toBe(null);
+    expect(lane.accounts.map((a) => a.name)).toEqual(['lime', 'plum']);
+    expect(lane.accounts[0]!.configDir).toBe(join(root, 'lime'));
+  });
+
+  it('pools.json 이 있으면 하위 디렉터리가 풀이다', async () => {
+    const root = await poolFixture({ work: ['lime'], personal: ['gmail'] }, { defaultPool: 'work' });
+    const lane = await loadClaudeAccountLane({ root, agentId: 'a1' });
+    expect(lane.pool).toBe('work');
+    expect(lane.accounts.map((a) => a.name)).toEqual(['lime']);
+    expect(lane.accounts[0]!.configDir).toBe(join(root, 'work', 'lime'));
+  });
+
+  it('에이전트 배정이 기본 풀을 덮는다', async () => {
+    const root = await poolFixture(
+      { work: ['lime'], personal: ['gmail'] },
+      { defaultPool: 'work', agents: { a1: 'personal' } },
+    );
+    expect((await loadClaudeAccountLane({ root, agentId: 'a1' })).pool).toBe('personal');
+    expect((await loadClaudeAccountLane({ root, agentId: 'a2' })).pool).toBe('work');
+  });
+
+  it('MURMUR_CLAUDE_POOL 이 가장 세다', async () => {
+    const root = await poolFixture(
+      { work: ['lime'], personal: ['gmail'] },
+      { defaultPool: 'work', agents: { a1: 'work' } },
+    );
+    const lane = await loadClaudeAccountLane({ root, agentId: 'a1', forcedPool: 'personal' });
+    expect(lane.pool).toBe('personal');
+    expect(lane.accounts.map((a) => a.name)).toEqual(['gmail']);
+  });
+
+  it('MURMUR_CLAUDE_POOL 이 없는 풀을 가리키면 던진다 — 사람이 타이핑한 의도다', async () => {
+    const root = await poolFixture({ work: ['lime'] }, { defaultPool: 'work' });
+    await expect(loadClaudeAccountLane({ root, agentId: 'a1', forcedPool: 'ghost' }))
+      .rejects.toThrow(/ghost/);
+  });
+
+  it('pools.json 이 없는 풀을 가리키면 경고하고 무시한다 — 던지지 않는다', async () => {
+    // UI 가 쓴 뒤 사람이 디렉터리를 지울 수 있다. 던지면 러너가 안 뜨고 사용자는
+    // 앱에서 고칠 수 없다. 다음 단계로 떨어진다.
+    const root = await poolFixture({ work: ['lime'] }, { defaultPool: 'work', agents: { a1: 'gone' } });
+    const lane = await loadClaudeAccountLane({ root, agentId: 'a1' });
+    expect(lane.pool).toBe('work'); // 배정을 무시하고 기본 풀로 떨어졌다
+  });
+
+  it('기본 풀도 없으면 계정 지정 없음이다', async () => {
+    const root = await poolFixture({ work: ['lime'] }, { agents: { a1: 'gone' } });
+    const lane = await loadClaudeAccountLane({ root, agentId: 'a1' });
+    expect(lane.pool).toBe(null);
+    expect(lane.accounts).toEqual([]);
+  });
+
+  it('풀 안 순서를 pools.json 이 정한다', async () => {
+    const root = await poolFixture(
+      { work: ['lime', 'plum', 'zebra'] },
+      { defaultPool: 'work', order: { work: ['plum', 'lime'] } },
+    );
+    expect((await loadClaudeAccountLane({ root, agentId: 'a1' })).accounts.map((a) => a.name))
+      .toEqual(['plum', 'lime', 'zebra']);
+  });
+
+  it('MURMUR_CLAUDE_ACCOUNTS 가 풀 안 순서를 덮는다', async () => {
+    const root = await poolFixture(
+      { work: ['lime', 'plum'] },
+      { defaultPool: 'work', order: { work: ['lime', 'plum'] } },
+    );
+    const lane = await loadClaudeAccountLane({ root, agentId: 'a1', order: 'plum' });
+    expect(lane.accounts.map((a) => a.name)).toEqual(['plum']);
+  });
+
+  it('빈 풀은 계정 0개다 — 오류가 아니다', async () => {
+    const root = await poolFixture({ work: [] }, { defaultPool: 'work' });
+    const lane = await loadClaudeAccountLane({ root, agentId: 'a1' });
+    expect(lane.pool).toBe('work');
+    expect(lane.accounts).toEqual([]);
+  });
+
+  it('깨진 pools.json 은 없는 것이 아니라 빈 설정이다', async () => {
+    // **파일의 존재가 풀 모드의 스위치**이므로, 깨진 파일을 "없음"으로 읽으면 풀 모드였던
+    // 러너가 조용히 암묵 풀로 되돌아가 **계정을 풀로 읽는다.**
+    const root = mkdtempSync(join(tmpdir(), 'murmur-pools-broken-'));
+    await mkdir(join(root, 'lime'), { recursive: true });
+    await writeFile(join(root, 'pools.json'), '{ not json');
+    const lane = await loadClaudeAccountLane({ root, agentId: 'a1' });
+    // `lime` 은 풀로 읽히고 그 안에 계정이 없다 — 암묵 풀로 되돌아가지 않았다.
+    expect(lane.pool).toBe(null);
+    expect(lane.accounts).toEqual([]);
   });
 });

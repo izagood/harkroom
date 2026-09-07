@@ -180,6 +180,50 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
     path.resolve(__dirname, '../src-tauri/src/login_path.rs'), 'utf8',
   );
 
+  /**
+   * **계정 풀 명령의 웹뷰 파라미터(2026-09-08).** 이 스위트는 회귀선을 **확장**한다,
+   * 완화하지 않는다: 위의 `shell:allow-execute` 0개와 "프로세스를 실행하는 자리" 감시는
+   * 그대로 유지되고, 여기에 새 명령 여덟의 파라미터 단언이 더해진다.
+   *
+   * 성질은 하나다: **웹뷰는 이름·코드·id 만 넘기고 경로도 프로그램도 넘기지 않는다.**
+   * 계정 풀은 로컬 디렉터리이고 로그인은 로컬 프로세스인데, 그 실행은 전부 데몬이 한다 —
+   * 새 Rust 명령은 소켓으로 넘기는 일만 한다.
+   *
+   * 되돌려 RED: 아래 어느 명령에든 `dir: String` 이나 `command: String` 을 더하면 빨개진다.
+   */
+  const 계정명령파라미터: Record<string, string[]> = {
+    claude_accounts_list: [],
+    claude_accounts_configure: ['config: serde_json::Value'],
+    claude_account_login_start: ['account: String', 'pool: String'],
+    claude_account_login_submit: ['code: String', 'login_id: String'],
+    claude_account_login_cancel: ['login_id: String'],
+    claude_account_remove: ['account: String', 'pool: String'],
+    claude_pool_remove: ['pool: String'],
+    claude_account_move: ['account: String', 'to_pool: String'],
+  };
+
+  for (const [fn, expected] of Object.entries(계정명령파라미터)) {
+    it(`\`${fn}\` 의 웹뷰 파라미터에 경로·프로그램이 없다`, () => {
+      const match = mainRs.match(new RegExp(`fn ${fn}\\(([\\s\\S]*?)\\)\\s*->`));
+      expect(match, `${fn} 을 main.rs 에서 못 찾았다`).not.toBeNull();
+      const params = splitParams(match![1]!)
+        .filter((p) => !p.startsWith('state:') && !p.startsWith('app:'));
+      expect(params.sort()).toEqual(expected);
+    });
+  }
+
+  it('계정 명령 어디에도 경로·프로그램을 뜻하는 파라미터 이름이 없다', () => {
+    // 위 표는 정확한 목록을 고정하지만, 표를 고치면서 위험한 이름을 함께 넣는 실수를
+    // 막지는 못한다. 이름 자체를 금지해 그 실수를 잡는다.
+    for (const fn of Object.keys(계정명령파라미터)) {
+      const match = mainRs.match(new RegExp(`fn ${fn}\\(([\\s\\S]*?)\\)\\s*->`));
+      const params = splitParams(match![1]!).join(' ').toLowerCase();
+      for (const 금지 of ['dir:', 'path:', 'command:', 'args:', 'cwd:', 'program:', 'env:']) {
+        expect(params, `${fn} 에 ${금지} 가 있다`).not.toContain(금지);
+      }
+    }
+  });
+
   it('`daemon_spawn_runner` 가 받는 파라미터가 agentId + env 값 세 개뿐이다 — 프로그램 경로·인자·cwd 가 아니다', () => {
     const match = mainRs.match(/fn daemon_spawn_runner\(([\s\S]*?)\)\s*->/);
     expect(match).not.toBeNull();
@@ -526,9 +570,22 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
         return { fn: m[1]!, webviewParams: params };
       });
 
-      // `daemon_list_runners` 는 웹뷰에서 아무것도 안 받는다 — 목록을 묻는 것뿐이다.
+      // `daemon_list_runners`·`claude_accounts_list` 는 웹뷰에서 아무것도 안 받는다 —
+      // 목록을 묻는 것뿐이다.
+      //
+      // **이 목록은 늘어날 수 있지만 느슨해지면 안 된다.** 2026-09-08 에 계정 풀 명령
+      // 일곱이 더해졌다. 그때 옳은 변경은 **여기에 이름을 적는 것**이고, 틀린 변경은
+      // 필터로 `claude_*` 를 빼는 것이다 — 그러면 이 열거가 더는 전수가 아니게 되어
+      // 다음에 진짜 위험한 명령이 들어와도 조용히 통과한다.
+      //
+      // 이름을 적는 것만으로는 "그 파라미터가 안전한가"를 재지 못하므로, 위쪽
+      // '계정 명령의 웹뷰 파라미터' 스위트가 각 명령의 파라미터를 정확히 고정하고
+      // 경로·프로그램을 뜻하는 이름을 금지한다. 두 스위트가 함께여야 이 성질이 선다.
       expect(commands.filter((c) => c.webviewParams.length > 0).map((c) => c.fn).sort())
         .toEqual([
+          'claude_account_login_cancel', 'claude_account_login_start',
+          'claude_account_login_submit', 'claude_account_move',
+          'claude_account_remove', 'claude_accounts_configure', 'claude_pool_remove',
           'daemon_kill_runner', 'daemon_spawn_runner',
           'secret_delete', 'secret_get', 'secret_set',
         ]);

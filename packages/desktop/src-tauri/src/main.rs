@@ -296,6 +296,13 @@ fn detached_command(program: &std::path::Path) -> std::process::Command {
 /// 말한 사실을 옮기기만 한다(`#419` 의 계약이 소켓 너머로 이어지는 자리).
 pub const RUNNER_EXIT_EVENT: &str = "murmur://runner-exit";
 
+/// 계정 로그인 진행 통지(2026-09-08). **`RUNNER_EXIT_EVENT` 와 같은 길로 간다** — 데몬이
+/// 소켓에 이벤트를 쓰고, `daemon_client` 가 그것을 받아 이 이름으로 웹뷰에 emit 한다.
+///
+/// 응답이 아니라 이벤트인 이유: `claude auth login` 은 URL 을 찍고 사람이 브라우저를
+/// 다녀오는 동안 기다린다 — 요청 하나에 대한 답으로 담을 수 없는 길이의 시간이다.
+pub const CLAUDE_LOGIN_EVENT: &str = "murmur://claude-login";
+
 /// 자식에게 넘길 `PATH` 를 웹뷰에 **알려 준다** — 만들어 주는 것이 아니다(`#513`).
 ///
 /// ## 왜 이 커맨드가 생겼나 — 출처를 하나로 합치려고
@@ -343,6 +350,105 @@ fn app_version(app: tauri::AppHandle) -> String {
 /// 앱이 직접 러너를 띄우는 폴백은 **없다**(이 파일 위쪽 "그 자리는 폴백으로도 남기지
 /// 않았다" 참조). 그 `Err` 문자열이 화면의 `failed` + `message` 로 그대로 올라간다.
 ///
+// ── claude 계정 풀(2026-09-08) ────────────────────────────────────────────────
+//
+// **여덟 명령이 하는 일은 소켓으로 넘기는 것뿐이다.** 프로세스를 띄우지도, 파일을 읽지도
+// 않는다 — 그 실행은 데몬이 한다.
+//
+// 왜 그런 모양인가: 웹뷰에는 로컬 파일을 읽거나 프로그램을 띄울 표면이 **의도적으로**
+// 없다(`capabilities/default.json` 에 `shell:allow-execute` 가 0개, `#513` 이 지웠다).
+// 계정 풀은 로컬 디렉터리이고 로그인은 로컬 프로세스인데, 그 문을 다시 열지 않고
+// **이름 붙은 연산**을 데몬에 두는 것이 이 설계다. 웹뷰가 넘기는 것은 이름·코드·id 뿐이고
+// `runnerShellScope.test.ts` 가 그 사실을 파라미터 단위로 단언한다.
+//
+// 응답이 `serde_json::Value` 인 이유: 계정 목록은 필드가 많고 UI 만 읽으며 Rust 는 그 모양에
+// 대해 아무 판단도 하지 않는다. 구조체로 받으면 필드가 하나 늘 때마다 Rust 를 고쳐야 하고
+// 그 고침은 아무것도 지켜 주지 않는다.
+#[tauri::command]
+fn claude_accounts_list(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.claude_accounts_list()
+}
+
+#[tauri::command]
+fn claude_accounts_configure(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    config: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    // `config` 는 **경로가 아니라 이름들의 표**다(기본 풀·순서·배정). 이름 문법은 데몬이
+    // 잰다 — 여기서 재면 두 곳에 같은 규칙이 생기고 한쪽만 고쳐지는 날이 온다.
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.claude_accounts_configure(config)
+}
+
+#[tauri::command]
+fn claude_account_login_start(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    pool: String,
+    account: String,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.claude_account_login_start(&pool, &account)
+}
+
+#[tauri::command]
+fn claude_account_login_submit(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    login_id: String,
+    code: String,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.claude_account_login_submit(&login_id, &code)
+}
+
+#[tauri::command]
+fn claude_account_login_cancel(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    login_id: String,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.claude_account_login_cancel(&login_id)
+}
+
+#[tauri::command]
+fn claude_account_remove(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    pool: String,
+    account: String,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.claude_account_remove(&pool, &account)
+}
+
+#[tauri::command]
+fn claude_pool_remove(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    pool: String,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.claude_pool_remove(&pool)
+}
+
+#[tauri::command]
+fn claude_account_move(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    account: String,
+    to_pool: String,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.claude_account_move(&account, &to_pool)
+}
+
 /// **exit 통지 콜백을 여기서 안 넘긴다**(`#431` 2단계 A). 넘기던 시절에는 이 커맨드가
 /// 언제나 `ensure_daemon` 의 첫 호출자여서 우연히 맞았지만, 이제 `daemon_ensure` 가 앱
 /// 기동 직후 먼저 붙는다 — 콜백은 `ensure_daemon` 안에서 하나로 조립된다
@@ -446,6 +552,14 @@ fn main() {
             login_path,
             notification::notification_send,
             app_version,
+            claude_accounts_list,
+            claude_accounts_configure,
+            claude_account_login_start,
+            claude_account_login_submit,
+            claude_account_login_cancel,
+            claude_account_remove,
+            claude_pool_remove,
+            claude_account_move,
         ])
         .run(tauri::generate_context!())
         .expect("error while running murmur");

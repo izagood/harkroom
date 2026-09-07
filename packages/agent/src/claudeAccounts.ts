@@ -21,9 +21,15 @@
 // **목록의 진실은 디스크다.** 별도 설정 파일을 두지 않는다. 파일을 두면 파일과 디스크가
 // 갈리는 날이 오고, 그날 러너는 없는 계정을 가리킨다(`ensureCodexHome` 이 `auth.json` 의
 // 존재로 판정하는 것과 같은 규율).
-import { readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+import {
+  orderAccounts,
+  parseClaudePoolsConfig,
+  type ClaudePoolsConfig,
+} from '@murmur/shared/claudePools';
 
 import { isCredentialFailure, isExecutableNotFound, isQuotaExhausted } from './policy.js';
 
@@ -164,4 +170,115 @@ export async function withAccountFailover<T>(
   }
   // 모든 계정이 방아쇠에 걸렸다. 마지막 오류를 던져 호출자의 한도·자격증명 경로가 받게 한다.
   throw last;
+}
+
+/**
+ * `pools.json` 의 경로. 뿌리 바로 아래다 — 풀 이름 문법(`[a-z0-9-]`)이 `.` 를 안 받으므로
+ * 풀 디렉터리와 이름이 겹칠 수 없다.
+ */
+function poolsConfigPath(root: string): string {
+  return join(root, 'pools.json');
+}
+
+/**
+ * `pools.json` 을 읽는다. **없으면 `null`, 깨졌으면 빈 설정**이다.
+ *
+ * **이 둘을 가르는 것이 요점이다.** 파일의 **존재**가 풀 모드의 스위치이므로(spec §4-3),
+ * 깨진 파일을 "없음"으로 읽으면 풀 모드였던 러너가 조용히 암묵 풀 모드로 되돌아가
+ * **계정을 풀로 읽는다** — 그러면 계정이 하나도 없는 것처럼 보이거나, 더 나쁘게는 계정
+ * 디렉터리 안의 무언가를 계정으로 착각한다.
+ */
+async function readPoolsConfig(root: string): Promise<ClaudePoolsConfig | null> {
+  let text: string;
+  try {
+    text = await readFile(poolsConfigPath(root), 'utf8');
+  } catch {
+    return null; // 파일이 없다 = 암묵 풀 모드(선행 설계의 평평한 구조)
+  }
+  try {
+    return parseClaudePoolsConfig(JSON.parse(text));
+  } catch {
+    // 파싱 실패. **파일은 있으므로 풀 모드는 유지한다**(위 주석). 던지지 않는 이유는
+    // 이 파일을 UI 가 쓰고 사람이 손댈 수 있기 때문이다 — 던지면 러너가 안 뜨고
+    // 그때 사용자는 앱에서 고칠 방법이 없다.
+    console.warn(`[claudeAccounts] pools.json 을 읽을 수 없다 — 빈 설정으로 본다: ${poolsConfigPath(root)}`);
+    return parseClaudePoolsConfig(undefined);
+  }
+}
+
+/** 뿌리 아래 풀 이름. 판정 규율은 `loadClaudeAccounts` 와 같다(`stat` 으로 링크를 따라간다). */
+async function listPoolNames(root: string): Promise<string[]> {
+  return (await loadClaudeAccounts({ root })).map((p) => p.name);
+}
+
+/**
+ * 한 풀 안의 계정을 페일오버 순서로.
+ *
+ * `order`(= `MURMUR_CLAUDE_ACCOUNTS`)가 있으면 그것에 맡긴다 — 그 경로는 없는 이름에 던지고
+ * (사람이 타이핑한 의도다) 그 동작을 유지한다. 없으면 `pools.json` 의 순서를 쓴다.
+ */
+async function accountsIn(
+  root: string, pool: string, cfg: ClaudePoolsConfig, order: string | undefined,
+): Promise<ClaudeAccount[]> {
+  const dir = join(root, pool);
+  if (order && order.trim()) return loadClaudeAccounts({ root: dir, order });
+  const found = (await loadClaudeAccounts({ root: dir })).map((a) => a.name);
+  return orderAccounts(cfg, pool, found).map((name) => ({ name, configDir: join(dir, name) }));
+}
+
+/**
+ * 이 러너가 쓸 계정 목록(페일오버 순서)과 그 풀 이름.
+ *
+ * 해석 순서(spec §5): 강제(env) → 에이전트 배정 → 기본 풀 → 암묵 풀 → 없음.
+ *
+ * **관용성이 갈린다**(spec §5-1):
+ * - `forcedPool`(env)이 없는 풀을 가리키면 **던진다.** 사람이 방금 타이핑한 의도라, 조용히
+ *   무시하면 풀 B 라고 믿고 띄운 러너가 A 로 돈다(`config.ts::validateInstance` 판례).
+ * - `pools.json` 이 가리키면 **경고하고 다음 단계로 떨어진다.** UI 가 쓴 뒤 사람이 파인더에서
+ *   디렉터리를 지울 수 있고, 그때 러너가 뜨지 않으면 사용자는 앱에서 고칠 방법이 없다.
+ *
+ * `resolvePoolName`(shared)을 쓰지 않는 이유: 그 함수는 이름 하나를 고르고, 여기는 **없는 풀을
+ * 건너뛰어야** 한다. 건너뛰기를 그 반환값으로 표현할 수 없다.
+ */
+export async function loadClaudeAccountLane(opts: {
+  root?: string;
+  /** 에이전트 계정 id(UUID). handle 이 아닌 이유는 `stateDir.ts` 판단과 같다. */
+  agentId: string;
+  /** `MURMUR_CLAUDE_POOL`. */
+  forcedPool?: string | undefined;
+  /** `MURMUR_CLAUDE_ACCOUNTS`. */
+  order?: string | undefined;
+}): Promise<{ pool: string | null; accounts: ClaudeAccount[] }> {
+  const root = opts.root ?? claudeAccountsRoot();
+  const cfg = await readPoolsConfig(root);
+
+  // 파일이 없다 = 암묵 풀. 뿌리의 하위 디렉터리가 계정이다(선행 설계 그대로).
+  if (cfg === null) {
+    return { pool: null, accounts: await loadClaudeAccounts({ root, order: opts.order }) };
+  }
+
+  const pools = await listPoolNames(root);
+
+  if (opts.forcedPool) {
+    if (!pools.includes(opts.forcedPool)) {
+      throw new Error(
+        `MURMUR_CLAUDE_POOL 이 없는 풀을 가리킨다: ${opts.forcedPool}. ` +
+        `${root} 아래에 있는 풀은 ${pools.length ? pools.join(', ') : '(없음)'} 이다.`,
+      );
+    }
+    return { pool: opts.forcedPool, accounts: await accountsIn(root, opts.forcedPool, cfg, opts.order) };
+  }
+
+  for (const [label, candidate] of [
+    ['에이전트 배정', cfg.agents[opts.agentId]],
+    ['기본 풀', cfg.defaultPool],
+  ] as const) {
+    if (!candidate) continue;
+    if (!pools.includes(candidate)) {
+      console.warn(`[claudeAccounts] ${label}이 없는 풀을 가리킨다 — 무시한다: ${candidate}`);
+      continue;
+    }
+    return { pool: candidate, accounts: await accountsIn(root, candidate, cfg, opts.order) };
+  }
+  return { pool: null, accounts: [] };
 }

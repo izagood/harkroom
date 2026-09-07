@@ -28,6 +28,7 @@ import {
 import { openRunnerLog, readRunnerLogTail, runnerLogPath } from './runnerLog.js';
 import { RunnerRegistry, nodeRunnerHost, type RunnerHost, type RunnerLogSink } from './runners.js';
 import { DaemonServer } from './server.js';
+import { createClaudeAccountsPort } from './claudeAccounts.js';
 
 /**
  * 채택한 러너의 생사를 확인하는 주기(`#431` 2-c).
@@ -277,13 +278,22 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     };
   };
 
+  // claude 계정 풀(2026-09-08). 뿌리는 env 로 옮길 수 있고 기본은 홈 아래다 — 이 포트가
+  // 파일시스템을 아는 유일한 자리이고, 서버는 그것을 모른다(`DaemonServerDeps` 주석).
+  const claudeAccounts = createClaudeAccountsPort();
+
   const server = new DaemonServer({
     token: '', // claim 이 만든 값으로 아래에서 바꾼다 — 그 전에는 아무도 못 붙는다.
     identity,
     registry,
     adoptOrphans,
+    claudeAccounts,
     log,
   });
+
+  // 로그인 진행을 소켓 이벤트로 흘린다. **러너 종료 통지와 같은 길**이다 — 앱은 이미 그
+  // 경로로 이벤트를 받는다(`daemon_client.rs` 의 이벤트 분기).
+  claudeAccounts.onLoginEvent((e) => server.broadcastEvent('claudeLoginOutput', e));
   serverRef.current = server;
 
   // ── 서버를 **먼저 만들고** 그 bind 함수를 claim 에 넘긴다 ─────────────────
@@ -359,6 +369,12 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     adoptedAtStartup,
     async shutdown() {
       clearInterval(pollTimer);
+      // ── 러너는 살리지만 **로그인은 회수한다** ─────────────────────────────────
+      // 아래 문단이 적은 "러너는 산다"의 근거는 진행 중인 턴이 사람이 기다리는 답을
+      // 들고 있다는 것이다. 로그인은 그 반대다: 우리가 죽으면 코드를 받을 stdin 이
+      // 사라지므로, 살려 두면 사람이 브라우저에서 완료해도 아무 일도 일어나지 않는
+      // 고아가 된다.
+      await claudeAccounts.shutdownLogins().catch(() => undefined);
       // ── daemon 이 죽어도 러너는 산다 — `#431` 의 요점 ──────────────────────
       // 여기서 **러너에 시그널을 보내지 않는다.** 보내면 daemon 크래시·앱 업데이트·
       // 사람이 daemon 을 재시작하는 매 순간마다 진행 중인 턴이 끊긴다. 그리고 그 턴이

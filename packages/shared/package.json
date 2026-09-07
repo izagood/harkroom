@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./daemonEndpoint": "./src/daemonEndpoint.ts",
-    "./daemonProtocol": "./src/daemonProtocol.ts"
+    "./daemonProtocol": "./src/daemonProtocol.ts",
+    "./claudePools": "./src/claudePools.ts"
   },
   "scripts": { "test": "vitest run", "typecheck": "tsc -p ." },
   "devDependencies": {
