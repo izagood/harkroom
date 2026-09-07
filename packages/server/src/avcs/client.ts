@@ -142,7 +142,8 @@ function toEntries(
       const released = typeof obj.releasedAt === 'string' && obj.releasedAt.length > 0;
       const actorKeyId = actorId(obj.actor);
       const intentOid = str(obj.intentOid) || null;
-      // active_lease의 키는 (repo, path, actor_key_id)다 — 스코프마다 행이 하나씩 필요하다.
+      // active_lease의 키는 (repo, avcs_base_url, path, actor_key_id)다(042) — 스코프마다
+      // 행이 하나씩 필요하다.
       return strList(obj.writeScopes).map((path) => ({
         logIndex,
         oid,
