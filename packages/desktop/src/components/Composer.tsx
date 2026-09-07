@@ -48,6 +48,29 @@ function errorText(err: unknown, fallback: string): string {
 }
 
 /**
+ * 클립보드에서 온 파일에 이름을 붙인다.
+ *
+ * 스크린샷을 붙여넣으면 OS 는 이름 없는 바이트만 준다 — 웹뷰에 따라 전부 `image.png` 하나로
+ * 고정되기도 한다. 그대로 올리면 채널 파일 목록(#232)이 `image.png` 열 개가 되어 **어느 것이
+ * 어느 것인지 구분할 수 없다.** 올린 순간의 시각을 이름에 박아 그 구분을 되살린다.
+ *
+ * 시각은 **로컬 시각**이다. UTC 를 박으면 방금 붙여넣은 사람이 자기 시계와 다른 숫자를 보고
+ * 그 파일이 자기 것인지부터 의심한다 — 이름의 쓸모는 사람이 알아보는 데 있다.
+ */
+export function nameClipboardFile(file: File, at: Date, seq = 0): File {
+  // 사람이 진짜 파일을 복사해 붙여넣은 경우다 — 그 이름이 시각보다 언제나 낫다.
+  if (file.name && file.name !== 'image.png') return file;
+  const ext = file.type.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png';
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  const stamp = `${at.getFullYear()}${p2(at.getMonth() + 1)}${p2(at.getDate())}`
+    + `-${p2(at.getHours())}${p2(at.getMinutes())}${p2(at.getSeconds())}`;
+  // 한 번에 여러 장을 붙여넣으면 초까지 같다. 순번이 없으면 이름이 통째로 겹쳐서
+  // 목록에서 서로를 가린다 — 첫 장만 이름을 그대로 두고 나머지에 번호를 붙인다.
+  const tail = seq > 0 ? `-${seq + 1}` : '';
+  return new File([file], `screenshot-${stamp}${tail}.${ext}`, { type: file.type });
+}
+
+/**
  * 후보 하나. 계정과 집합이 **한 목록에 섞여 서고 키보드도 하나**이므로, 어느 쪽에서 온
  * 항목인지를 목록을 만들 때 태그로 붙인다.
  *
@@ -153,6 +176,17 @@ export function Composer({
   // 실패했을 때 본문까지 붙잡힌다.
   const [pending, setPending] = useState<AttachmentRow[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  /**
+   * 지금 파일이 컴포저 위에 떠 있는가. 놓을 자리를 그리는 데만 쓴다 — 표시가 없으면 사람은
+   * 여기가 받는 자리인지 모른 채 손을 놓고, 그 파일은 웹뷰가 열어 앱 화면을 갈아치운다.
+   */
+  const [dragging, setDragging] = useState(false);
+  /**
+   * `dragleave` 는 **자식 위로 옮겨갈 때도** 난다. 그 한 번으로 표시를 끄면 컴포저 안에서
+   * 손을 움직이는 동안 오버레이가 깜빡인다. 그래서 enter/leave 를 세어 0 이 될 때만 끈다 —
+   * 그때가 경계를 실제로 벗어난 순간이다.
+   */
+  const dragDepth = useRef(0);
   // 마지막으로 '입력 중'을 보낸 시각. 0 이면 지금 입력 중이 아니라는 뜻이다.
   const lastTypingAt = useRef(0);
   // 삽입 후 커서를 옮겨야 한다. React 는 value 만 되돌리므로 DOM 을 직접 만진다.
@@ -435,10 +469,15 @@ export function Composer({
     ref.current?.focus();
   };
 
-  const pickFiles = async (files: FileList | null) => {
-    if (!files?.length) return;
+  /**
+   * 파일을 올려 대기 목록에 붙인다. 📎 로 고르든, 붙여넣든, 끌어다 놓든 **이 함수 하나를**
+   * 지난다 — 경로가 셋으로 갈리면 실패 문구도, 대기 칩도, 크기 제한 안내도 셋으로 갈라지고
+   * 그중 하나만 고치는 날이 온다.
+   */
+  const uploadFiles = async (files: File[]) => {
+    if (!files.length) return;
     setUploadError(null);
-    for (const file of Array.from(files)) {
+    for (const file of files) {
       try {
         // 업로드는 파일을 고른 순간 끝난다. 전송 시점에 올리면 Enter 를 누르고 기다려야 하고,
         // 실패했을 때 본문까지 붙잡힌다.
@@ -449,8 +488,48 @@ export function Composer({
         setUploadError(`${file.name} 을 올리지 못했다 (크기 제한을 넘었을 수 있다)`);
       }
     }
+  };
+
+  const pickFiles = async (files: FileList | null) => {
+    await uploadFiles(files ? Array.from(files) : []);
     // 같은 파일을 다시 고를 수 있어야 한다 — value 를 비우지 않으면 change 가 안 난다.
     if (fileRef.current) fileRef.current.value = '';
+  };
+
+  /**
+   * 파일을 든 드래그인가. 글자나 멘션 칩을 끌 때까지 놓을 자리를 그리면, 컴포저 안에서
+   * 글자를 옮기는 평범한 동작마다 오버레이가 뜬다.
+   */
+  const draggingFiles = (dt: DataTransfer | null): boolean =>
+    Array.from(dt?.types ?? []).includes('Files');
+
+  const onDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!draggingFiles(e.dataTransfer)) return;
+    dragDepth.current += 1;
+    setDragging(true);
+  };
+
+  const onDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!draggingFiles(e.dataTransfer)) return;
+    // 막지 않으면 웹뷰가 기본 동작으로 **그 파일을 열어** 앱 화면을 통째로 갈아치운다.
+    // 그 순간 쓰던 초안도 함께 사라진다.
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  const onDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!draggingFiles(e.dataTransfer)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  };
+
+  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!draggingFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    // 깊이를 0 으로 되돌린다 — drop 뒤에는 leave 가 오지 않으므로 빼기만으로는 남는다.
+    dragDepth.current = 0;
+    setDragging(false);
+    void uploadFiles(Array.from(e.dataTransfer.files ?? []));
   };
 
   /** 대기를 끝낸다 — 타이머를 걷고 표시를 지운다. 보낼지 버릴지는 부르는 쪽이 정한다. */
@@ -582,7 +661,27 @@ export function Composer({
    * 없는 순간에 붙여넣은 글자만 사라지고 이동도 못 한다 — 둘 다 잃는 것이 가장 나쁘다.
    */
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const messageId = parseMessagePermalink(e.clipboardData.getData('text'));
+    const text = e.clipboardData.getData('text');
+    /**
+     * 클립보드에 파일이 들어 있으면 첨부로 올린다 — 스크린샷 붙여넣기가 이 길로 온다.
+     *
+     * **글자가 함께 있으면 손대지 않는다.** 표·문서·에디터에서 글을 복사하면 많은 앱이 같은
+     * 클립보드에 그림 표현(`image/png`)을 함께 싣는다. 파일이 있다는 이유만으로 가로채면
+     * 문장을 붙여넣으려던 사람이 난데없이 이미지 첨부를 받고 글은 들어가지 않는다 — 잃는
+     * 쪽이 훨씬 크다. 스크린샷 클립보드에는 글자가 없으므로 이 한 줄로 갈린다.
+     */
+    const files = Array.from(e.clipboardData.files ?? []);
+    if (files.length && !text.trim()) {
+      // 가로챘으면 기본 동작을 막는다. 애초에 들어갈 글자는 없지만, 웹뷰가 이미지를
+      // 제 나름대로 처리하려 드는 것까지 여기서 끊는다.
+      e.preventDefault();
+      // 시각은 **한 번만** 읽는다. 장마다 다시 읽으면 초 경계를 넘는 순간 한 붙여넣기가
+      // 두 시각으로 갈려서, 같이 온 것들이 목록에서 떨어져 보인다.
+      const at = new Date();
+      void uploadFiles(files.map((f, i) => nameClipboardFile(f, at, i)));
+      return;
+    }
+    const messageId = parseMessagePermalink(text);
     // 링크가 아니면 아무것도 하지 않는다 — 평범한 붙여넣기다.
     if (!messageId) return;
     let controller: ReturnType<typeof getController> | null = null;
@@ -707,7 +806,26 @@ export function Composer({
   const listId = 'mention-suggestions';
 
   return (
-    <div ref={containerRef} className="relative" onBlur={onContainerBlur}>
+    <div
+      ref={containerRef}
+      className="relative"
+      onBlur={onContainerBlur}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragging && (
+        <div
+          data-testid="drop-zone"
+          /* 오버레이는 **이벤트를 받지 않는다**(pointer-events-none). 받으면 손이 이 위로
+             들어서는 순간 컨테이너 기준으로 dragleave 가 나면서 표시가 꺼지고, 그 꺼진
+             자리에 drop 이 떨어진다 — 보이는 것과 받는 것이 갈린다. */
+          className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded border-2 border-dashed border-accent bg-accent-surface/90 text-sm font-medium text-accent"
+        >
+          여기에 놓으면 첨부된다
+        </div>
+      )}
       {open && (
         <ul
           id={listId}

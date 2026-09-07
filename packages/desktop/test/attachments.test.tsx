@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import * as path from 'node:path';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { AttachmentRow, MessageRow } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
@@ -7,6 +9,7 @@ import { MessageItem } from '../src/components/MessageItem';
 import { Composer } from '../src/components/Composer';
 import { Notice } from '../src/components/Notice';
 import { ApiError } from '../src/lib/api';
+import { nameClipboardFile } from '../src/components/Composer';
 import { acc, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
 
@@ -271,5 +274,127 @@ describe('attaching a file in the composer', () => {
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
 
     expect(onSend).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 스크린샷 붙여넣기(클립보드 → 첨부).
+ *
+ * 이 표면이 없으면 사람은 스크린샷을 파일로 한 번 저장하고, 📎 로 다시 찾아 고른다 —
+ * 채팅에서 그림을 보내는 가장 흔한 동작에 왕복 두 번이 붙는다.
+ */
+describe('pasting a screenshot into the composer', () => {
+  const paste = (opts: { files?: File[]; text?: string }) => {
+    fireEvent.paste(screen.getByRole('textbox'), {
+      clipboardData: {
+        files: opts.files ?? [],
+        getData: () => opts.text ?? '',
+      },
+    });
+  };
+
+  const png = (name = 'image.png') => new File(['bytes'], name, { type: 'image/png' });
+
+  it('uploads the image on the clipboard', async () => {
+    const c = fakeController({ upload: vi.fn(async () => att({ filename: 'screenshot.png' })) });
+    render(<Composer onSend={vi.fn()} />);
+
+    paste({ files: [png()] });
+
+    await waitFor(() => expect(c.upload).toHaveBeenCalled());
+    expect(await screen.findByText(/screenshot\.png/)).toBeTruthy();
+  });
+
+  /**
+   * 경계. 표·문서에서 글을 복사하면 많은 앱이 같은 클립보드에 그림 표현을 함께 싣는다.
+   * 파일이 있다는 이유만으로 가로채면 문장을 붙여넣으려던 사람이 이미지 첨부를 받고
+   * **글은 들어가지 않는다** — 이 줄이 그 사고를 막는다.
+   */
+  it('글자가 함께 있으면 평범한 텍스트 붙여넣기로 둔다', () => {
+    const c = fakeController();
+    render(<Composer onSend={vi.fn()} />);
+
+    paste({ files: [png()], text: '표에서 복사한 문장' });
+
+    expect(c.upload).not.toHaveBeenCalled();
+  });
+
+  it('이름 없는 스크린샷에는 시각을 박아 서로 구분되게 한다', () => {
+    const at = new Date(2026, 8, 7, 14, 45, 3);
+
+    const one = nameClipboardFile(png(), at);
+    const two = nameClipboardFile(png(), at, 1);
+
+    expect(one.name).toBe('screenshot-20260907-144503.png');
+    // 같은 붙여넣기에서 온 두 번째 장이 첫 장을 가리면 안 된다.
+    expect(two.name).toBe('screenshot-20260907-144503-2.png');
+  });
+
+  it('진짜 파일을 복사해 붙여넣었으면 그 이름을 그대로 쓴다', () => {
+    const named = new File(['bytes'], '설계도.png', { type: 'image/png' });
+
+    expect(nameClipboardFile(named, new Date()).name).toBe('설계도.png');
+  });
+});
+
+/**
+ * 파일을 끌어다 놓아 첨부하기.
+ *
+ * Tauri 는 기본값(`dragDropEnabled: true`)에서 웹뷰의 HTML5 drop 을 가로채고 파일 **경로**만
+ * 주는 자기 이벤트로 바꾼다. 그러면 같은 기능이 dev(브라우저)와 패키징 앱에서 서로 다른
+ * 코드로 갈리고, 브라우저에서 끌어온 이미지처럼 경로가 없는 것은 아예 받을 수 없다.
+ * 그래서 `tauri.conf.json` 에서 그 가로채기를 끈다 — 아래 회귀선이 그 설정을 붙잡는다.
+ */
+describe('dropping files on the composer', () => {
+  const filesTransfer = (files: File[]) => ({ files, types: ['Files'], dropEffect: 'none' });
+
+  it('uploads what was dropped', async () => {
+    const c = fakeController({ upload: vi.fn(async () => att({ filename: 'dropped.png' })) });
+    render(<Composer onSend={vi.fn()} />);
+    const box = screen.getByRole('textbox');
+
+    fireEvent.drop(box, { dataTransfer: filesTransfer([new File(['b'], 'dropped.png', { type: 'image/png' })]) });
+
+    await waitFor(() => expect(c.upload).toHaveBeenCalled());
+    expect(await screen.findByText(/dropped\.png/)).toBeTruthy();
+  });
+
+  // 놓을 자리가 보이지 않으면 사람은 여기가 받는 자리인지 모른 채 손을 놓는다.
+  it('shows where to drop while files hover', () => {
+    fakeController();
+    render(<Composer onSend={vi.fn()} />);
+    const box = screen.getByRole('textbox');
+
+    fireEvent.dragEnter(box, { dataTransfer: filesTransfer([]) });
+    expect(screen.getByTestId('drop-zone')).toBeTruthy();
+
+    fireEvent.dragLeave(box, { dataTransfer: filesTransfer([]) });
+    expect(screen.queryByTestId('drop-zone')).toBeNull();
+  });
+
+  // 컴포저 안에서 글자를 끌어 옮기는 것은 첨부가 아니다.
+  it('글자를 끄는 동안에는 놓을 자리를 그리지 않는다', () => {
+    fakeController();
+    render(<Composer onSend={vi.fn()} />);
+
+    fireEvent.dragEnter(screen.getByRole('textbox'), {
+      dataTransfer: { files: [], types: ['text/plain'], dropEffect: 'none' },
+    });
+
+    expect(screen.queryByTestId('drop-zone')).toBeNull();
+  });
+
+  /**
+   * 이 설정이 없으면 **패키징한 앱에서만** drop 이 조용히 죽는다. 브라우저 dev 에서는
+   * 계속 초록이라 아무도 모른다 — 그 거리를 테스트로 메운다.
+   */
+  it('tauri.conf.json 이 웹뷰의 드래그앤드롭을 가로채지 않는다', () => {
+    const conf = JSON.parse(
+      readFileSync(path.resolve(__dirname, '../src-tauri/tauri.conf.json'), 'utf8'),
+    );
+
+    for (const w of conf.app.windows) {
+      expect(w.dragDropEnabled, 'true(기본값)면 웹뷰의 drop 이벤트가 앱에 오지 않는다').toBe(false);
+    }
   });
 });
