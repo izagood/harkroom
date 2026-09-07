@@ -286,11 +286,11 @@ describe('channel delete (#155)', () => {
  *
  * 실제 참조를 센 방법: 마이그레이션 전체에서 `references channel(id)` 와
  * `references message(id)` 를 찾았다. 그 목록은 열이다 — channel_member,
- * message(channel_id·thread_root_id), work_thread(thread_root_message_id),
+ * message(channel_id·thread_root_id),
  * inbox(message_id), idempotency_key(message_id·channel_id), channel_read,
  * message_reaction, attachment, channel_pref, message_pin.
  *
- * 이 중 `inbox`·`idempotency_key`·`work_thread` 는 cascade 도 없고 서비스 함수도 지우지
+ * 이 중 `inbox`·`idempotency_key` 는 cascade 도 없고 서비스 함수도 지우지
  * 않아서, 멘션이 하나라도 있거나 재시도 키가 하나라도 붙은 채널은 삭제가 FK 위반으로
  * 터졌다. 6번이 초록이었던 이유는 fixture 가 그 셋을 만들지 않았기 때문이다.
  */
@@ -407,40 +407,17 @@ describe('channel delete — 참조 테이블 전부 (#155)', () => {
     expect(entry!.detail.attachmentCount).toBe(1);
   });
 
-  it('avcs 작업 스레드(work_thread)가 걸린 채널도 지워진다', async () => {
-    const created = await app.inject({
-      method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
-      payload: { name: 'delete-workthread-refs', topic: 'test' },
-    });
-    const channelId = created.json().id as string;
-
-    const root = await app.inject({
-      method: 'POST', url: `/channels/${channelId}/messages`,
-      headers: { authorization: `Bearer ${adminToken}` },
-      payload: { body: 'intent 루트' },
-    });
-    const rootId = root.json().id as string;
-
-    // avcs 투영이 만드는 행을 직접 심는다 — 투영 전체를 돌리지 않고도 같은 참조가 생긴다.
-    await pool.query(
-      `insert into work_thread (repo, intent_oid, thread_root_message_id) values ($1, $2, $3)`,
-      ['org/repo', 'oid-delete-refs', rootId],
-    );
-
-    await app.inject({
-      method: 'PATCH', url: `/channels/${channelId}`, headers: { authorization: `Bearer ${adminToken}` },
-      payload: { archived: true },
-    });
-
-    const deleted = await app.inject({
-      method: 'DELETE', url: `/channels/${channelId}`, headers: { authorization: `Bearer ${adminToken}` },
-    });
-    expect(deleted.statusCode).toBe(204);
-
-    const rows = await pool.query(
-      `select count(*)::int as cnt from work_thread where intent_oid = $1`, ['oid-delete-refs']);
-    expect(rows.rows[0].cnt).toBe(0);
-  });
+  /*
+   * `avcs 작업 스레드(work_thread)가 걸린 채널도 지워진다` 를 걷어냈다.
+   *
+   * 그 테스트는 `work_thread.thread_root_message_id` 라는 FK 가 있는데 `deleteChannel` 이
+   * 그것을 몰라서 삭제가 FK 위반으로 터지는 것을 막았다. 040 이 테이블째 지웠으므로 FK 도
+   * 없고, 지킬 것도 없다 — 이제 그 행을 심을 수조차 없다.
+   *
+   * 이 성질을 대신 지키는 자리는 아래 스키마 대조 테스트다. 그것은 목록을 손으로 적지 않고
+   * `information_schema` 로 실제 FK 를 다시 세므로, 어떤 이유로든 `work_thread` 가
+   * 되살아나면 처리 목록에 없다고 빨개진다. 즉 삭제 목록의 회귀선은 약해지지 않았다.
+   */
 
   /**
    * 스키마에 새 참조가 생겼는데 서비스 함수가 그것을 모르면, 그 테이블에 행이 있는 채널만
@@ -476,7 +453,7 @@ describe('channel delete — 참조 테이블 전부 (#155)', () => {
       // #222: 예약 메시지. channel 과 message 를 모두 참조한다 — 예약이 하나라도 걸린
       // 채널은 이것이 없으면 삭제가 FK 위반으로 터진다.
       'scheduled_message',
-      'inbox', 'idempotency_key', 'work_thread', 'saved_message', 'message', 'channel',
+      'inbox', 'idempotency_key', 'saved_message', 'message', 'channel',
     ]);
 
     const unhandled = refs.rows

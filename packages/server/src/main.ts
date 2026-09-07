@@ -4,7 +4,7 @@ import { createPool } from './db/pool.js';
 import { buildServer } from './buildServer.js';
 import { httpAvcsClient } from './avcs/client.js';
 import {
-  ProjectionWorker, ensureSystemAccount, warnIfProjectionDisabled, DISABLED_PROJECTION_STATUS,
+  ProjectionWorker, warnIfProjectionDisabled, DISABLED_PROJECTION_STATUS,
 } from './avcs/projection.js';
 import { Lifecycle } from './lifecycle.js';
 
@@ -21,7 +21,6 @@ if (config.avcsBaseUrl) {
   worker = new ProjectionWorker({
     pool,
     avcs: httpAvcsClient(config.avcsBaseUrl),
-    systemAccountId: await ensureSystemAccount(pool),
   });
   worker.start();
 }
