@@ -1,4 +1,4 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@murmur/shared';
 import { notifyLevelOf } from '@murmur/shared';
 import { ApiClient, ApiError } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
@@ -517,8 +517,24 @@ export class Controller {
     }
 
     const prefs = usePrefsStore.getState().notifications;
-    const label = { mention: 'mentioned you in', thread_reply: 'replied in a thread in', dm: 'messaged you in' };
-    const wanted = { mention: prefs.mention, thread_reply: prefs.threadReply, dm: prefs.dm };
+    /**
+     * 두 표는 **총체(total)여야 한다** — `Record<InboxEntry['reason'], …>` 로 못 박는 이유가
+     * 그것이다. 사유가 늘 때 표를 빠뜨리면 `wanted[reason]` 이 undefined(falsy)라 알림이
+     * 조용히 사라지거나, `label[reason]` 이 undefined 라 "undefined #ch" 가 나간다.
+     * 타입이 그 자리에서 컴파일을 세우면 새 사유를 넣는 사람이 이 결정을 마주한다.
+     *
+     * `wake` 는 에이전트가 **자기에게** 건 대기다(마이그레이션 040). 사람의 inbox 에는
+     * 오지 않지만, 온다 해도 알리지 않는다 — 사람에게 온 말이 아니고, 화면에는 이미
+     * 대기 줄로 보인다(WakeRow). 남의 기다림이 내 밤을 깨울 이유가 없다.
+     */
+    const label: Record<InboxEntry['reason'], string> = {
+      mention: 'mentioned you in', thread_reply: 'replied in a thread in', dm: 'messaged you in',
+      wake: 'is waiting in',
+    };
+    const wanted: Record<InboxEntry['reason'], boolean> = {
+      mention: prefs.mention, thread_reply: prefs.threadReply, dm: prefs.dm,
+      wake: false,
+    };
 
     for (const e of unread) {
       if (e.readAt || this.announced.has(e.id)) continue;
