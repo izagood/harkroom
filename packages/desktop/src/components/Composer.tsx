@@ -324,6 +324,17 @@ export function Composer({
     [draft, allHandles, groupHandleList, myHandle],
   );
 
+  /**
+   * handle → 구성원 수. "부를 상대" 줄이 집합 옆에 수를 적는 데 쓴다.
+   *
+   * 소문자 키로 두는 이유: `bodyRecipients` 는 handle 을 소문자로 낸다(`splitMentions` 이
+   * 그렇게 판정한다). 원본 대소문자로 찾으면 `@Release` 를 쓴 사람의 집합에서 수가 사라진다.
+   */
+  const groupMemberCounts = useMemo(
+    () => new Map(groups.map((g) => [g.handle.toLowerCase(), g.memberCount])),
+    [groups],
+  );
+
   // @ 버튼으로 여는 목록. 첫 줄을 보내기 전에도 상대를 정해 둘 수 있어야 한다.
   // 이미 고정된(또는 채널이 자동으로 부르는) 상대는 뺀다 — 다시 골라도 달라지는 것이 없다.
   const pickable = useMemo((): Candidate[] => {
@@ -953,11 +964,24 @@ export function Composer({
                 집합·채널 전체는 **사람 하나가 아니라는 것이 보여야 한다** — `@oncall` 이
                 사람 이름처럼 보이면 몇 명을 부르는지 모르고 보낸다.
 
-                구성원 수는 여기서 낼 수 없다: `HandleGroupRow` 에 수가 없고 데스크탑은
-                명단을 받지 않는다(`listHandleGroupMembers` 는 서버 전용). 글자마다 명단을
-                조회하는 것은 이 줄이 살 값이 아니다.
+                **구성원 수를 적는다.** 이 자리의 옛 주석은 *"`HandleGroupRow` 에 수가 없고"*
+                라고 적었는데 그것은 이제 틀렸다 — #285 가 `memberCount` 를 **옵셔널이 아닌
+                필수 필드**로 넣었고 `GET /accounts` 가 계정 목록과 함께 실어 준다. 그 필드의
+                주석이 이 자리를 이름으로 지목한다: *"자동완성 후보가 `@release` 를 부르기
+                직전에 그것이 한 사람인지 스무 사람인지 보여야 하는 유일한 자리"*.
+
+                정본 문서가 요구하는 것의 **앞 절반**이 이것이다 — *"집합 호출 — 보내기 전엔
+                몇 명인지, 보낸 뒤엔 누가 깼는지."* 뒤 절반은 `NotifiedGapRow` 가 맡는다.
+
+                여전히 **명단은 받지 않는다**: `GET /handle-groups/:id` 만 명단을 주고 그
+                라우트는 `requireAdmin` 이다(`handleGroupRoutes.ts:61`). 그래서 이름이 아니라
+                수만 말한다 — 글자마다 명단을 조회하는 것도 이 줄이 살 값이 아니다.
               */}
-              {r.kind === 'group' && <span className="text-fg-subtle">(집합)</span>}
+              {r.kind === 'group' && (
+                <span className="text-fg-subtle">
+                  ({groupMemberCounts.get(r.handle) ?? 0}명)
+                </span>
+              )}
               {r.kind === 'channel' && <span className="text-fg-subtle">(채널 전체)</span>}
             </li>
           ))}
