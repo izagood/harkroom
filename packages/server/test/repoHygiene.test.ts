@@ -56,7 +56,12 @@ describe('repo hygiene', () => {
     const configDir = join(getRoot(), 'packages');
 
     // 툴체인이 주는 변수는 README 의 murmur 설정 표에 적을 것이 아니다.
-    const TOOLCHAIN_VARS = new Set(['NODE_ENV', 'CI', 'PATH', 'HOME', 'TERM', 'SHELL']);
+    //
+    // `USER` 가 여기 있는 이유(2026-09-08): daemon 이 macOS Keychain 항목을 찾을 때
+    // 계정명으로 쓴다(`claude` 가 그 이름으로 저장한다 — 실측). `HOME`·`SHELL` 과 같은
+    // 부류로 **OS 가 주는 값이고 murmur 가 설정하는 값이 아니다** — 표에 적으면 사람이
+    // 그것을 우리가 읽는 설정 손잡이로 읽는다.
+    const TOOLCHAIN_VARS = new Set(['NODE_ENV', 'CI', 'PATH', 'HOME', 'TERM', 'SHELL', 'USER']);
 
     function collectSourceFiles(dir: string, out: string[]): void {
       if (!existsSync(dir)) return;
