@@ -35,7 +35,7 @@ import { createRelayClient } from './relay.js';
 import { createInteractiveManager, type InteractiveManager } from './interactiveTurn.js';
 import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
-import { loadClaudeAccounts, withAccountFailover } from './claudeAccounts.js';
+import { loadClaudeAccountLane, withAccountFailover } from './claudeAccounts.js';
 import { ensureCodexHome } from './codexHome.js';
 
 const config = loadConfig();
@@ -173,11 +173,25 @@ const codexHome = await ensureCodexHome(codexHomeDir);
 //
 // `MURMUR_CLAUDE_ACCOUNTS` 에 없는 계정이 오면 이 호출이 던지고 러너는 뜨지 않는다 —
 // 조용히 무시하면 운영자가 계정 B 라고 믿고 띄운 러너가 A 로 돈다.
-const claudeAccounts = await loadClaudeAccounts({ order: process.env.MURMUR_CLAUDE_ACCOUNTS });
+// 풀 축(다중 계정 2단계): 어느 풀을 쓸지는 `MURMUR_CLAUDE_POOL` → `pools.json` 의 이
+// 에이전트 배정 → 기본 풀 → 암묵 풀(뿌리 자체) 순으로 정해진다.
+//
+// **키는 `me.id`** 다 — handle 이 아닌 이유는 `stateDir.ts` 판단과 같다: handle 은 바뀔 수
+// 있고 서로 다른 서버의 같은 handle 은 다른 계정이다.
+//
+// **러너는 `pools.json` 을 쓰지 않는다.** 읽기만 한다 — 그 파일의 writer 는 데몬 하나이고,
+// 두 번째 writer 가 생기면 lost update 가 조용히 난다(`daemonProtocol.ts` 머리 주석이
+// `sessions.json` 에 대해 적은 것과 같은 근거).
+const lane = await loadClaudeAccountLane({
+  agentId: me.id,
+  forcedPool: process.env.MURMUR_CLAUDE_POOL,
+  order: process.env.MURMUR_CLAUDE_ACCOUNTS,
+});
+const claudeAccounts = lane.accounts;
 // **이름만 적는다** — 이메일·토큰·Keychain 서비스명은 적지 않는다(PAT 규율과 같다).
 console.log(claudeAccounts.length
-  ? `claude 계정 ${claudeAccounts.length}개: ${claudeAccounts.map((a) => a.name).join(', ')}`
-  : 'claude 계정 풀이 비어 있다 — 시스템 기본 로그인을 쓴다');
+  ? `claude 계정 ${claudeAccounts.length}개 (풀: ${lane.pool ?? '기본(뿌리)'}): ${claudeAccounts.map((a) => a.name).join(', ')}`
+  : `claude 계정 풀이 비어 있다 (풀: ${lane.pool ?? '지정 없음'}) — 시스템 기본 로그인을 쓴다`);
 
 // 계정 축에 넘길 배열. 풀이 비면 `[null]` — 루프가 정확히 한 번 돌아 기존 동작과 같아진다
 // (`withAccountFailover` 주석).

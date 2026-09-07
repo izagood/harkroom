@@ -42,9 +42,12 @@ import {
   type RunnerExitEvent,
   type SpawnRunnerParams,
   type SpawnRunnerResult,
+  type DaemonEventName,
 } from '@murmur/shared/daemonProtocol';
 
 import type { RunnerRegistry } from './runners.js';
+import type { ClaudeAccountsPort } from './claudeAccounts.js';
+import type { ClaudePoolsConfig } from '@murmur/shared/claudePools';
 
 export interface DaemonServerDeps {
   /**
@@ -66,6 +69,16 @@ export interface DaemonServerDeps {
    * `unknown-request` 로 답하면 앱이 "프로토콜 버전이 갈렸나"를 의심하게 된다.
    */
   adoptOrphans?: () => Promise<AdoptRunnerResult>;
+  /**
+   * claude 계정 풀 연산(2026-09-08). **없으면 그 요청들은 "이 daemon 에는 배선되지 않았다"고
+   * 정직하게 답한다** — `unknown-request` 로 답하지 않는다. 프로토콜이 아는 요청인데 이
+   * daemon 이 못 하는 것이므로, 모른다고 하면 앱이 프로토콜 버전을 의심한다
+   * (`adoptOrphans` 가 같은 판단을 한 자리다).
+   *
+   * 주입인 이유도 같다: **서버는 파일시스템을 모른다.** 뿌리 경로를 알면 이 파일이
+   * 계정 디렉터리 구조를 들고 다니게 되고, "소켓 위의 말"만 다룬다는 경계가 흐려진다.
+   */
+  claudeAccounts?: ClaudeAccountsPort;
   /** 로그 한 줄. 기본은 stdout — 앱이 사이드카 파이프로 그대로 본다. */
   log?: (line: string) => void;
 }
@@ -143,7 +156,19 @@ export class DaemonServer {
 
   /** 러너 exit 을 붙어 있는 모두에게 알린다. **`incarnationId` 가 실린다.** */
   broadcastRunnerExit(event: RunnerExitEvent): void {
-    const line = encodeLine(makeEvent('runnerExit', event));
+    this.broadcastEvent('runnerExit', event);
+  }
+
+  /**
+   * 이벤트를 붙어 있는 **인증된** 접속 전부에 흘린다.
+   *
+   * `broadcastRunnerExit` 에서 뽑아낸 것이다 — 이벤트가 둘이 되면서(계정 로그인 출력)
+   * 같은 루프를 두 번 적을 이유가 없어졌다. 이름을 `DaemonEventName` 으로 받으므로
+   * `EVENT_NAMES` 에 없는 이벤트는 타입에서 걸린다(앱의 `parseEvent` 가 버릴 이벤트를
+   * 보내는 일이 원리적으로 막힌다).
+   */
+  broadcastEvent(name: DaemonEventName, payload: unknown): void {
+    const line = encodeLine(makeEvent(name, payload));
     for (const conn of this.connections) {
       // 인증 못 한 접속에는 아무것도 흘리지 않는다 — 이벤트도 정보다.
       if (!conn.authenticated) continue;
@@ -304,7 +329,114 @@ export class DaemonServer {
         const result: ListRunnersResult = { runners: this.deps.registry.listRunners() };
         return result;
       }
+      // ── claude 계정 풀 ────────────────────────────────────────────────────────
+      //
+      // **로그에 이메일·코드를 적지 않는다.** 계정 이름만 적는다 — `spawnRunner` 가 env 를
+      // 안 적는 것과 같은 규율이다(PAT 가 거기 실린다).
+      case 'claudeAccountsList': {
+        const port = this.requireAccounts();
+        if (isDaemonError(port)) return port;
+        return await port.list();
+      }
+      case 'claudeAccountsConfigure': {
+        const port = this.requireAccounts();
+        if (isDaemonError(port)) return port;
+        const cfg = readPoolsConfigPayload(req.payload);
+        if (isDaemonError(cfg)) return cfg;
+        // 데몬이 이름 문법을 **다시** 잰다(포트 안에서). 여기서 걸러도 거기서 또 잰다 —
+        // 이 파일은 소켓 위의 말만 보고, 경로 안전은 그것을 쓰는 쪽의 책임이다.
+        try {
+          await port.configure(cfg);
+        } catch (err) {
+          return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
+        }
+        this.log(`계정 설정 갱신: 기본 풀=${cfg.defaultPool ?? '(없음)'}`);
+        return {};
+      }
+      case 'claudeAccountLoginStart': {
+        const port = this.requireAccounts();
+        if (isDaemonError(port)) return port;
+        const ref = readAccountRef(req.payload);
+        if (isDaemonError(ref)) return ref;
+        try {
+          const result = await port.loginStart(ref.pool, ref.account);
+          this.log(`계정 로그인 시작: ${ref.pool}/${ref.account}`);
+          return result;
+        } catch (err) {
+          return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'claudeAccountLoginSubmit': {
+        const port = this.requireAccounts();
+        if (isDaemonError(port)) return port;
+        const params = readLoginSubmit(req.payload);
+        if (isDaemonError(params)) return params;
+        try {
+          // **코드를 로그에 적지 않는다.** 그것으로 자격증명을 교환할 수 있다.
+          await port.loginSubmit(params.loginId, params.code);
+          return {};
+        } catch (err) {
+          return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'claudeAccountLoginCancel': {
+        const port = this.requireAccounts();
+        if (isDaemonError(port)) return port;
+        const ref = readLoginRef(req.payload);
+        if (isDaemonError(ref)) return ref;
+        await port.loginCancel(ref.loginId);
+        return {};
+      }
+      case 'claudeAccountRemove': {
+        const port = this.requireAccounts();
+        if (isDaemonError(port)) return port;
+        const ref = readAccountRef(req.payload);
+        if (isDaemonError(ref)) return ref;
+        try {
+          await port.removeAccount(ref.pool, ref.account);
+          this.log(`계정 삭제: ${ref.pool}/${ref.account}`);
+          return {};
+        } catch (err) {
+          return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'claudePoolRemove': {
+        const port = this.requireAccounts();
+        if (isDaemonError(port)) return port;
+        const ref = readPoolRef(req.payload);
+        if (isDaemonError(ref)) return ref;
+        try {
+          await port.removePool(ref.pool);
+          this.log(`풀 삭제: ${ref.pool}`);
+          return {};
+        } catch (err) {
+          return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'claudeAccountMove': {
+        const port = this.requireAccounts();
+        if (isDaemonError(port)) return port;
+        const params = readAccountMove(req.payload);
+        if (isDaemonError(params)) return params;
+        try {
+          const result = await port.move(params.account, params.toPool);
+          this.log(`계정 이전: ${params.account} → ${params.toPool}/${params.account} (로그인 유지=${result.loggedIn})`);
+          return result;
+        } catch (err) {
+          return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
+        }
+      }
     }
+  }
+
+  /**
+   * 계정 포트가 배선됐는가. 없으면 **`unknown-request` 가 아니라** "못 한다"로 답한다 —
+   * 프로토콜이 아는 요청이므로, 모른다고 하면 앱이 프로토콜 버전을 의심한다
+   * (`adoptRunner` 가 같은 판단을 한다).
+   */
+  private requireAccounts(): ClaudeAccountsPort | DaemonError {
+    return this.deps.claudeAccounts
+      ?? daemonError('no-such-runner', '이 daemon 에는 계정 풀이 배선되지 않았다');
   }
 
   private sendError(conn: Connection, id: string | null, error: DaemonError): void {
@@ -337,6 +469,107 @@ function readId(value: unknown): string | null {
     if (typeof id === 'string') return id;
   }
   return null;
+}
+
+/**
+ * 계정 풀 연산의 payload 검증자들. `readSpawnParams` 와 같은 모양이다 — **소켓 위의 말이
+ * 우리가 아는 모양인지만** 본다. 경로 안전(이름 문법, 뿌리 밖 탈출)은 이 파일의 일이 아니라
+ * `claudeAccounts.ts` 의 일이다. 두 곳에서 재는 것이 낭비로 보이지만, 여기 검사는
+ * "말이 통하는가"이고 거기 검사는 "이 경로로 `rm -rf` 를 돌려도 되는가"다 — 다른 질문이다.
+ */
+function readAccountRef(payload: unknown): { pool: string; account: string } | DaemonError {
+  if (typeof payload !== 'object' || payload === null) {
+    return daemonError('bad-payload', 'payload 가 객체가 아니다');
+  }
+  const { pool, account } = payload as { pool?: unknown; account?: unknown };
+  if (typeof pool !== 'string' || pool.length === 0) return daemonError('bad-payload', 'pool 이 없다');
+  if (typeof account !== 'string' || account.length === 0) {
+    return daemonError('bad-payload', 'account 가 없다');
+  }
+  return { pool, account };
+}
+
+function readPoolRef(payload: unknown): { pool: string } | DaemonError {
+  if (typeof payload !== 'object' || payload === null) {
+    return daemonError('bad-payload', 'payload 가 객체가 아니다');
+  }
+  const { pool } = payload as { pool?: unknown };
+  if (typeof pool !== 'string' || pool.length === 0) return daemonError('bad-payload', 'pool 이 없다');
+  return { pool };
+}
+
+function readLoginRef(payload: unknown): { loginId: string } | DaemonError {
+  if (typeof payload !== 'object' || payload === null) {
+    return daemonError('bad-payload', 'payload 가 객체가 아니다');
+  }
+  const { loginId } = payload as { loginId?: unknown };
+  if (typeof loginId !== 'string' || loginId.length === 0) {
+    return daemonError('bad-payload', 'loginId 가 없다');
+  }
+  return { loginId };
+}
+
+function readLoginSubmit(payload: unknown): { loginId: string; code: string } | DaemonError {
+  const ref = readLoginRef(payload);
+  if (isDaemonError(ref)) return ref;
+  const { code } = payload as { code?: unknown };
+  if (typeof code !== 'string' || code.length === 0) return daemonError('bad-payload', 'code 가 없다');
+  // **상한을 둔다.** 코드는 짧고, 긴 것이 오면 그것은 코드가 아니다 — stdin 에 통째로
+  // 붓기 전에 끊는다(프로토콜의 줄 상한과 같은 종류의 방어).
+  if (code.length > 4096) return daemonError('bad-payload', 'code 가 너무 길다');
+  return { loginId: ref.loginId, code };
+}
+
+function readAccountMove(payload: unknown): { account: string; toPool: string } | DaemonError {
+  if (typeof payload !== 'object' || payload === null) {
+    return daemonError('bad-payload', 'payload 가 객체가 아니다');
+  }
+  const { account, toPool } = payload as { account?: unknown; toPool?: unknown };
+  if (typeof account !== 'string' || account.length === 0) {
+    return daemonError('bad-payload', 'account 가 없다');
+  }
+  if (typeof toPool !== 'string' || toPool.length === 0) {
+    return daemonError('bad-payload', 'toPool 이 없다');
+  }
+  return { account, toPool };
+}
+
+/**
+ * `pools.json` 로 쓸 설정. **`parseClaudePoolsConfig` 로 정규화하지 않는다** — 그것은 포트가
+ * 한다. 여기서 정규화하면 웹뷰가 보낸 잘못된 이름이 조용히 버려져, 포트의 "이름이 떨어져
+ * 나가면 던진다"가 도달 불가능해진다(그 판정이 UI 와 디스크의 어긋남을 잡는 유일한 자리다).
+ */
+function readPoolsConfigPayload(payload: unknown): ClaudePoolsConfig | DaemonError {
+  if (typeof payload !== 'object' || payload === null) {
+    return daemonError('bad-payload', 'payload 가 객체가 아니다');
+  }
+  const { defaultPool, order, agents } = payload as {
+    defaultPool?: unknown; order?: unknown; agents?: unknown;
+  };
+  if (defaultPool !== null && typeof defaultPool !== 'string') {
+    return daemonError('bad-payload', 'defaultPool 이 문자열도 null 도 아니다');
+  }
+  if (typeof order !== 'object' || order === null || Array.isArray(order)) {
+    return daemonError('bad-payload', 'order 가 객체가 아니다');
+  }
+  if (typeof agents !== 'object' || agents === null || Array.isArray(agents)) {
+    return daemonError('bad-payload', 'agents 가 객체가 아니다');
+  }
+  const outOrder: Record<string, string[]> = {};
+  for (const [pool, list] of Object.entries(order as Record<string, unknown>)) {
+    if (!Array.isArray(list) || list.some((n) => typeof n !== 'string')) {
+      return daemonError('bad-payload', `order.${pool} 가 문자열 배열이 아니다`);
+    }
+    outOrder[pool] = list as string[];
+  }
+  const outAgents: Record<string, string> = {};
+  for (const [agentId, pool] of Object.entries(agents as Record<string, unknown>)) {
+    if (typeof pool !== 'string') {
+      return daemonError('bad-payload', `agents.${agentId} 가 문자열이 아니다`);
+    }
+    outAgents[agentId] = pool;
+  }
+  return { defaultPool: defaultPool ?? null, order: outOrder, agents: outAgents };
 }
 
 function readSpawnParams(payload: unknown): SpawnRunnerParams | DaemonError {

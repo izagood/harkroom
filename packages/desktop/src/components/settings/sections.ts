@@ -1,7 +1,7 @@
 /** 설정 화면의 목차. 새 섹션은 여기에 한 줄 더하고 SettingsScreen 의 렌더 분기에 한 줄 더하면 붙는다.
  *  타입이 화면(SettingsScreen)이 아니라 여기 사는 이유는, Sidebar·App 이 섹션을 지목하면서
  *  화면 컴포넌트를 import 하게 되면 의존 방향이 거꾸로 서기 때문이다. */
-export type SectionId = 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'teams' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'gallery';
+export type SectionId = 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'claude-accounts' | 'teams' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'gallery';
 
 export const SETTINGS_GROUPS: { title: string; items: { id: SectionId; label: string }[] }[] = [
   {
@@ -25,6 +25,11 @@ export const SETTINGS_GROUPS: { title: string; items: { id: SectionId; label: st
       // 고치는 화면 안에 워크스페이스 전체에 걸리는 값이 앉아 있으면 지금 무엇을 고치고
       // 있는지가 사라진다 — 그래서 목차의 별도 항목으로 두고 Agents 바로 뒤에 세운다.
       { id: 'agent-defaults', label: 'Agent defaults' },
+      // 계정 풀은 **기기 로컬 자원**이다 — 이 기기의 디렉터리와 그 안의 자격증명이고,
+      // 서버에도 다른 기기에도 없다. Agents 옆에 두는 이유는 러너가 그것을 쓰기 때문이고,
+      // Agents 안에 넣지 않는 이유는 개별 에이전트의 설정이 아니기 때문이다
+      // (`agent-defaults` 를 별 항목으로 세운 것과 같은 판단이다).
+      { id: 'claude-accounts', label: 'Claude accounts' },
       { id: 'teams', label: 'Teams' },
       { id: 'handle-groups', label: 'Handle Groups' },
       { id: 'invite', label: 'Invite' },

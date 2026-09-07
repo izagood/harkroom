@@ -71,6 +71,27 @@ export const REQUEST_TYPES = [
   'listRunners',
   'ping',
   'adoptRunner',
+  // ── claude 계정 풀(2026-09-08) ──────────────────────────────────────────────
+  //
+  // **왜 이 말들이 여기 있는가.** 웹뷰에는 로컬 파일을 읽거나 프로그램을 띄울 표면이
+  // 의도적으로 없다(`desktop/test/runnerShellScope.test.ts` 가 그 회귀선을 들고 있다).
+  // 그런데 계정 풀은 로컬 디렉터리이고 로그인은 로컬 프로세스다. 데몬은 **이미** 로컬
+  // 프로세스를 소유하는 경계이므로, 일반적인 실행 원시연산을 웹뷰에 열지 않고 여기에
+  // **이름 붙은 연산**을 둔다 — 웹뷰는 프로그램도 경로도 넘기지 않고 이름만 넘긴다.
+  //
+  // **모듈 머리의 "세션은 여기 없다" 규칙을 어기지 않는다.** 그 규칙의 근거는 단일
+  // writer 이고, `pools.json` 의 writer 는 데몬 하나뿐이며 러너는 읽기만 한다.
+  //
+  // 말이 다섯에서 열셋이 됐다. 머리 주석의 "다섯뿐이라 자체 스키마로 충분하다"는 근거는
+  // 개수가 아니라 **모르는 상대가 없다**는 것이었고 그것은 그대로다.
+  'claudeAccountsList',
+  'claudeAccountsConfigure',
+  'claudeAccountLoginStart',
+  'claudeAccountLoginSubmit',
+  'claudeAccountLoginCancel',
+  'claudeAccountRemove',
+  'claudePoolRemove',
+  'claudeAccountMove',
 ] as const;
 export type DaemonRequestType = (typeof REQUEST_TYPES)[number];
 
@@ -125,7 +146,13 @@ export interface DaemonEventMessage {
   payload: unknown;
 }
 
-export const EVENT_NAMES = ['runnerExit'] as const;
+/**
+ * daemon 이 먼저 말하는 것들. `runnerExit` 이 첫 번째였고 `claudeLoginOutput` 이 두 번째다.
+ *
+ * 로그인 출력이 **응답이 아니라 이벤트**인 이유: `claude auth login` 은 URL 을 찍고 사람이
+ * 브라우저를 다녀오는 동안 기다린다 — 요청 하나에 대한 답으로 담을 수 없는 길이의 시간이다.
+ */
+export const EVENT_NAMES = ['runnerExit', 'claudeLoginOutput'] as const;
 export type DaemonEventName = (typeof EVENT_NAMES)[number];
 
 /**
@@ -520,6 +547,38 @@ export interface AdoptRunnerResult {
   adopted: RunnerInfo[];
   /** 채택하지 않은 것들의 사유. 사람이 읽는 문장이다 — 코드가 파싱할 것이 아니다. */
   rejected: string[];
+}
+
+/**
+ * 계정 풀 연산의 파라미터. **경로도 프로그램도 없다** — 이름과 코드와 id 뿐이고, 그것이
+ * 이 표면이 좁다는 말의 실체다. 데몬이 이름 문법(`^[a-z0-9-]{1,32}$`)을 **다시** 잰다:
+ * 이 이름은 경로 세그먼트가 되고 데몬은 웹뷰를 신뢰하는 자리가 아니다.
+ */
+export interface ClaudeAccountRef {
+  pool: string;
+  account: string;
+}
+
+export interface ClaudePoolRef {
+  pool: string;
+}
+
+export interface ClaudeAccountMoveParams {
+  account: string;
+  toPool: string;
+}
+
+export interface ClaudeLoginSubmitParams {
+  loginId: string;
+  code: string;
+}
+
+export interface ClaudeLoginRef {
+  loginId: string;
+}
+
+export interface ClaudeLoginStartResult {
+  loginId: string;
 }
 
 export interface PingResult {
