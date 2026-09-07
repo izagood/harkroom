@@ -270,6 +270,40 @@ export interface RunnerLogSink {
   tail(path: string): Promise<string[]>;
 }
 
+/**
+ * 요청이 준 env 를 **daemon 자신의 환경 위에 덮는다** (2026-09-07 실측).
+ *
+ * ## 왜 합쳐야 하는가
+ *
+ * Node 의 `spawn` 은 `env` 를 주면 환경을 합치지 않고 **통째로 대체한다.** 앱이 넘기는
+ * 것은 `{ MURMUR_PAT, MURMUR_URL, PATH }` 세 개뿐이므로(`desktop/src/lib/runnerLauncher.ts`),
+ * 러너는 `USER`·`HOME`·`LANG` 조차 없는 환경에서 돌았다 — daemon 자신은 그것들을 갖고
+ * 있는데도.
+ *
+ * 그 결과가 2026-09-07 16:05~16:41 의 forge 장애다. claude CLI 는 `USER` 가 없으면
+ * 자기 자격증명을 찾지 못하고 **`Failed to authenticate: OAuth session expired and could
+ * not be refreshed` 로 보고한다.** 사람은 사실 멀쩡한 로그인을 두 번 다시 했고, 화면은
+ * 계속 "(답변에 실패했습니다)"만 남겼다. 원인이 자격증명이 아니라 **환경**이라는 단서는
+ * 어디에도 없었다.
+ *
+ * ## 왜 화이트리스트가 아닌가
+ *
+ * `agent/src/turn.ts::childEnv` 가 같은 질문에 이미 답해 뒀다 — *"화이트리스트(PATH·HOME만)가
+ * 아니라 전체 상속인 이유: 하네스가 정확히 무엇을 읽는지 우리가 모른다."* 이 장애는 그
+ * 약속이 **속 빈 약속**이었다는 사실이다: 부모가 세 개뿐이면 전부 물려줘도 세 개다.
+ * 여기서 다시 목록을 세우면 다음 하네스가 읽는 변수를 또 빠뜨린다.
+ *
+ * 요청 값이 **나중에** 오는 순서가 계약이다: PAT·URL·PATH 는 앱이 정하고(키체인에서 꺼낸
+ * PAT, 로그인 셸에서 얻은 PATH), daemon 자신의 값이 그것을 덮으면 안 된다.
+ */
+function withUserEnv(env: Record<string, string>): Record<string, string> {
+  const merged: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) merged[key] = value;
+  }
+  return { ...merged, ...env };
+}
+
 export class RunnerRegistry {
   /** `agentId` → 지금 세대. **에이전트당 하나**다 — 둘이면 멘션을 나눠 집어 간다. */
   private readonly byAgent = new Map<string, RunnerRecord>();
@@ -342,7 +376,9 @@ export class RunnerRegistry {
 
     let child: ChildProcess;
     try {
-      child = this.host.spawn(this.launch.command, this.launch.args, env, logHandle?.fd ?? null);
+      child = this.host.spawn(
+        this.launch.command, this.launch.args, withUserEnv(env), logHandle?.fd ?? null,
+      );
     } finally {
       // **daemon 쪽 사본은 즉시 닫는다.** 자식은 spawn 순간 자기 복제본을 받았으므로
       // 여기서 닫아도 자식의 출력은 계속 파일로 간다. 안 닫으면 러너를 띄울 때마다
