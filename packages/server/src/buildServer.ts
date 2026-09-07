@@ -29,6 +29,7 @@ import { loggerConfig } from './logging.js';
 import { createRateLimiter, type RateLimitRule } from './rateLimit.js';
 import { createMetrics } from './metrics.js';
 import { createScheduledMessageSweeper } from './services/scheduledMessages.js';
+import { createAgentWakeSweeper } from './services/agentWakes.js';
 
 /**
  * 인증 표면 기본 리밋.
@@ -289,6 +290,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   const scheduledSweeper = createScheduledMessageSweeper(deps.pool);
   scheduledSweeper.startSweep(app);
+
+  // 깨움(wake) sweeper — 예약 발송과 같은 모양의 시계다. 이것이 안 돌면 에이전트가 걸어 둔
+  // 대기가 영원히 깨어나지 않는다: 스레드에는 "기다린다"는 줄만 남고 후속은 오지 않는다.
+  const wakeSweeper = createAgentWakeSweeper(deps.pool);
+  wakeSweeper.startSweep(app);
 
   await registerWs(app, deps.pool, {
     onSocketCount: (read) => { socketCount = read; },

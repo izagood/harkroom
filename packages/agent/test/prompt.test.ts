@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, countOwnPostsSince, hasOwnPostSince , type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, countOwnPostsSince, hasOwnPostSince, hasOwnWakeSince , type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -115,6 +115,72 @@ describe('countOwnPostsSince', () => {
   });
 });
 
+describe('깨움(wake) — 기다림을 예약한다', () => {
+  const handles = { u1: 'jaebin', a1: 'forge' };
+
+  // 깨움 줄은 결과 발화가 아니다. 세면 "예약만 걸고 답은 없이 끝난 턴"이 발화한 것으로
+  // 판정되어 NO_REPLY_NOTICE 가 억제된다 — progress 를 세지 않는 것과 같은 이유(#144)다.
+  // "이번 턴이 기다림을 표현했나"는 발화 판정과 **다른 질문**이다. 세는 곳이 하나여야
+  // 하므로(countOwnPostsSince 주석) 이 판정도 같은 파일에 둔다.
+  it('턴 시작 이후에 걸린 자기 깨움만 인정한다 — 옛 예약은 근거가 아니다', () => {
+    const ms = [
+      msg(5, 'a1', '옛 예약', { kind: 'wake' }),
+      msg(9, 'u1', '질문'),
+      msg(10, 'a1', '새 예약', { kind: 'wake' }),
+    ];
+    expect(hasOwnWakeSince(ms, 'a1', 9)).toBe(true);
+    expect(hasOwnWakeSince(ms, 'a1', 10)).toBe(false);
+    // 남이 쓴 wake 줄(다른 에이전트의 대기)은 내 기다림이 아니다.
+    expect(hasOwnWakeSince([msg(10, 'a2', '남의 예약', { kind: 'wake' })], 'a1', 9)).toBe(false);
+    // 평범한 발화는 깨움이 아니다.
+    expect(hasOwnWakeSince([msg(10, 'a1', '답')], 'a1', 9)).toBe(false);
+  });
+
+  it('kind=wake 는 결과 발화로 세지 않는다', () => {
+    const ms = [
+      msg(9, 'u1', '질문'),
+      msg(10, 'a1', 'CI 결과 확인', { kind: 'wake' }),
+    ];
+    expect(countOwnPostsSince(ms, 'a1', 9)).toBe(0);
+    expect(hasOwnPostSince(ms, 'a1', 9)).toBe(false);
+  });
+
+  // 깨어난 턴에는 **새 사람 발화가 없다** — 예약을 건 것도, 그 줄을 쓴 것도 자기다.
+  // 자기 발화를 걸러내는 기존 규칙 그대로면 델타가 비고, 비면 러너는 하네스를 아예
+  // 돌리지 않는다(mentionTurn.ts 의 `if (!prompt)`). 그래서 깨움은 사유를 실어야 한다.
+  it('깨어난 턴은 넘길 사람 발화가 없어도 프롬프트가 비지 않는다', () => {
+    const r = buildTurnPrompt({
+      messages: [msg(10, 'a1', 'CI 결과 확인', { kind: 'wake' })],
+      lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
+      wake: { reason: 'CI 결과 확인' },
+    });
+    expect(r.prompt).not.toBe('');
+    expect(r.prompt).toContain('CI 결과 확인');
+    expect(r.fedSeq).toBe(10);
+  });
+
+  it('깨어난 턴임을 프롬프트가 밝힌다 — 사람이 새로 말한 것으로 착각하면 안 된다', () => {
+    const r = buildTurnPrompt({
+      messages: [], lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
+      wake: { reason: 'CI 결과 확인' },
+    });
+    expect(r.prompt).toContain('예약');
+    expect(r.prompt).not.toContain('jaebin:');
+  });
+
+  // 깨움과 함께 사람의 새 발화가 같이 와 있을 수 있다(기다리는 동안 사람이 말했다).
+  // 그때 사람의 말이 사라지면 에이전트가 그것을 못 본 채 CI 만 확인한다.
+  it('깨어난 턴에 사람의 새 발화가 있으면 둘 다 실린다', () => {
+    const r = buildTurnPrompt({
+      messages: [msg(10, 'u1', '아 그거 취소해'), msg(11, 'a1', 'CI 결과 확인', { kind: 'wake' })],
+      lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
+      wake: { reason: 'CI 결과 확인' },
+    });
+    expect(r.prompt).toContain('예약');
+    expect(r.prompt).toContain('jaebin: 아 그거 취소해');
+  });
+});
+
 describe('buildSystemPrompt', () => {
   it('지시문과 guide 를 싣고 8000자 규칙을 명시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '친절하게', guide: 'G규칙', memory: { core: null, slugs: [] } });
@@ -136,6 +202,28 @@ describe('buildSystemPrompt', () => {
   it('한 턴에 한 번만 발화하라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
     expect(s).toContain('한 번에');
+  });
+
+  /**
+   * 2026-09-07 15:08 의 실패가 이 문구들의 부재였다. 에이전트는 PR #533 을 올린 뒤 CI 대기
+   * 루프를 **백그라운드로 띄우고** "결과 나오면 머지하겠다"는 계획으로 턴을 끝냈다 —
+   * `claude -p` 에서는 모델이 말을 멈추는 순간이 프로세스 종료이므로 그 계획은 실행되지
+   * 않는다. 프롬프트는 "어디에 쓸지"는 말했지만 "언제까지 살아있는지"는 말하지 않았다.
+   */
+  it('말을 멈추면 프로세스가 죽는다는 사실을 알려준다', () => {
+    const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] }, turnBudgetMs: 30 * 60_000 });
+    expect(s).toContain('죽는다');
+    expect(s).toContain('백그라운드');
+  });
+
+  it('턴 예산을 분으로 알려준다 — 얼마나 기다릴 수 있는지 모르면 판단할 수 없다', () => {
+    const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] }, turnBudgetMs: 30 * 60_000 });
+    expect(s).toContain('30분');
+  });
+
+  it('기다릴 것이 있으면 turn.wake 로 예약하라고 지시한다', () => {
+    const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] }, turnBudgetMs: 30 * 60_000 });
+    expect(s).toContain('turn.wake');
   });
 });
 

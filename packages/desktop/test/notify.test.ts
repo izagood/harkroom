@@ -70,6 +70,25 @@ describe('mention notifications', () => {
     expect(n.sent).toHaveLength(0);
   });
 
+  /**
+   * 깨움(wake)은 **에이전트가 자기에게 건 것**이다(마이그레이션 040). 사람의 inbox 에는
+   * 원래 오지 않지만, 사유 타입이 넓어진 지금 이 자리는 총체(total)여야 한다 — 빠뜨리면
+   * `label[e.reason]` 이 undefined 가 되어 "undefined #ch" 같은 알림이 나간다.
+   *
+   * 알리지 않는 쪽을 고른 이유: 그 줄은 사람에게 온 말이 아니다. 화면에는 대기 줄로
+   * 이미 보이고(WakeRow), 알림까지 울리면 남의 기다림이 내 밤을 깨운다.
+   */
+  it('깨움(wake) 항목은 알림을 만들지 않는다', async () => {
+    setFocus(false);
+    const n = fakeNotifier();
+    const { callbacks } = await started(n, [entry(1, 'm1', 'wake')]);
+
+    callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(n.sent).toHaveLength(0);
+  });
+
   // 같은 항목이 여러 번 알려지면 알림이 쓸모없어진다.
   it('announces each inbox entry at most once', async () => {
     setFocus(false);

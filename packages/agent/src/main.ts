@@ -320,6 +320,14 @@ while (running) {
           channelId: mention.channelId,
           threadRootId: anchor,
           mentionId: mention.id,
+          // 깨움(마이그레이션 040): 자기가 걸어 둔 예약이 시각이 되어 자기를 부른 것이다.
+          // 사유는 그 대기 줄의 본문이다 — 서버가 거기 넣었고(agentWakes.ts::scheduleWake),
+          // 여기서 다시 지어내면 사람이 스레드에서 읽는 사유와 프롬프트의 사유가 갈라진다.
+          //
+          // 평범한 멘션으로 처리하면 안 되는 이유: 깨움에는 부른 사람의 새 발화가 없다.
+          // 델타는 자기가 쓴 대기 줄뿐이고 자기 발화는 걸러지므로 프롬프트가 비어, 러너가
+          // 하네스를 돌리지 않고 커서만 전진시킨다 — 기다림이 흔적 없이 사라진다.
+          ...(entry.reason === 'wake' ? { wake: { reason: mention.body } } : {}),
         });
         done.push(entry.id);
         attempts.delete(entry.id);
