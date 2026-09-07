@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentSessionState, WriterDeniedReason } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { connectAgentAttach, type AttachHandle } from '../lib/agentTerminal';
 import { getTerminalSinkFactory, type TerminalSink } from '../lib/terminalSink';
+import { PaneResizer } from './PaneResizer';
+import { paneStorage, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH } from '../lib/prefs';
 
 /**
  * 진행 중인 에이전트 터미널 패널(#141 Phase 2, 스펙 §5).
@@ -104,6 +106,13 @@ export function TerminalPanel() {
    * 사라진다. 거절은 이 스레드를 못 보게 된 사건이 아니다.
    */
   const [handoffError, setHandoffError] = useState<string | null>(null);
+
+  /** 패널 폭. 스레드 패널과 같은 규약이다 — 바꿀 때마다 기기 로컬에 적는다. */
+  const [terminalWidth, setWidth] = useState(() => paneStorage.loadTerminalWidth());
+  const setTerminalWidth = useCallback((next: number) => {
+    setWidth(next);
+    paneStorage.saveTerminalWidth(next);
+  }, []);
   /** `onStatus` 콜백이 읽는 최신 이어받기 상태(writerRef 와 같은 이유 — 클로저가 얼어붙는다). */
   const handoffRef = useRef<'none' | 'requesting' | 'waiting'>('none');
   /** 멘션 턴이 끝나면 인터랙티브 세션으로 갈아탄다(#384). effect 가 자기 클로저를 걸어 둔다. */
@@ -294,9 +303,21 @@ export function TerminalPanel() {
 
   return (
     <aside
-      className="flex w-[38rem] shrink-0 flex-col border-l border-border bg-surface-sunken"
+      /* `shrink-0` 은 남긴다: 터미널은 줄어들면 줄이 접히거나 잘려서 읽던 출력이 망가진다
+         — 스레드처럼 창 사정에 맞춰 양보할 대상이 아니다. 폭은 사람이 고른 값 그대로다.
+         xterm 은 `terminalSink` 의 `ResizeObserver` 가 스스로 다시 맞추고 새 크기를
+         PTY 에 알리므로, 여기서 refit 을 따로 부르지 않는다. */
+      className="relative flex shrink-0 flex-col border-l border-border bg-surface-sunken"
+      style={{ width: terminalWidth }}
       aria-label="에이전트 터미널"
     >
+      <PaneResizer
+        label="터미널 너비 조절"
+        width={terminalWidth}
+        min={MIN_TERMINAL_WIDTH}
+        max={MAX_TERMINAL_WIDTH}
+        onWidth={setTerminalWidth}
+      />
       <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs text-fg-muted">
         <span className="font-semibold">터미널</span>
         <span className="text-fg-subtle">@{agent?.handle ?? target.agentAccountId}</span>

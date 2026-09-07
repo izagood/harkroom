@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
@@ -12,6 +12,8 @@ import { WaitChainLine } from './WaitChain';
 import { waitChain } from '../lib/waitChain';
 import { ThreadParticipants } from './ThreadParticipants';
 import { Composer } from './Composer';
+import { PaneResizer } from './PaneResizer';
+import { paneStorage, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH } from '../lib/prefs';
 import { TypingLine } from './TypingLine';
 import type { SectionId } from './settings/sections';
 
@@ -24,6 +26,16 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
   /** 채널과 같은 판정을 쓴다 — 모르는 계정은 에이전트로 치지 않는다(`lib/agentExchange`). */
   const isAgent = (id: string): boolean => accounts[id]?.kind === 'agent';
   const [alsoInChannel, setAlsoInChannel] = useState(false);
+
+  /**
+   * 패널 폭. 사이드바와 같은 모양으로 **바꿀 때마다 저장**한다 — 드래그가 끝날 때
+   * 한 번만 저장하면 드래그 도중 창이 닫히거나 앱이 죽었을 때 고른 폭이 사라진다.
+   */
+  const [threadWidth, setWidth] = useState(() => paneStorage.loadThreadWidth());
+  const setThreadWidth = useCallback((next: number) => {
+    setWidth(next);
+    paneStorage.saveThreadWidth(next);
+  }, []);
 
   const thread = useMemo(() => {
     if (!activeChannelId || !threadRootId) return [];
@@ -67,12 +79,26 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
 
   return (
     /**
-     * 폭: 고정 `w-96`(384px)을 버리고 **가변 + 최소 480px**(계획 Task 10 Step 3).
-     * 선택지 카드 · 완료 보고 · 대기 사슬이 들어갈 자리가 필요하다 — 작업이 사는 곳인데
-     * 화면에서 가장 좁았다(계획서 진단). `flex-1` 로 남는 폭을 나눠 갖되 채널 대화가
-     * 짓눌리지 않게 `max-w` 로 상한을 둔다.
+     * 폭: 고정 `w-96`(384px) → **가변 + 최소 480px**(계획 Task 10 Step 3) → 이제 **사람이
+     * 끄는 값**이다. 선택지 카드 · 완료 보고 · 대기 사슬이 들어갈 자리가 필요한데 얼마나
+     * 필요한지는 화면 크기와 지금 하는 일에 달렸다 — `max-w-[640px]` 상한은 그 답을 우리가
+     * 대신 고른 것이었다.
+     *
+     * `flex-1` 을 버린 이유: `flex-1` 은 `flex-basis: 0%` 라 `width` 를 덮는다. 대신
+     * `flex-shrink` 기본값(1)을 그대로 둬서, 창이 좁아지면 고른 폭보다 줄어들되
+     * `minWidth` 아래로는 안 간다 — 전에 `min-w-[480px] flex-1` 이 하던 일과 같다.
      */
-    <section className="flex min-w-[480px] max-w-[640px] flex-1 flex-col border-l border-border bg-surface-raised">
+    <section
+      className="relative flex flex-col border-l border-border bg-surface-raised"
+      style={{ width: threadWidth, minWidth: MIN_THREAD_WIDTH }}
+    >
+      <PaneResizer
+        label="스레드 너비 조절"
+        width={threadWidth}
+        min={MIN_THREAD_WIDTH}
+        max={MAX_THREAD_WIDTH}
+        onWidth={setThreadWidth}
+      />
       <header className="flex items-center border-b border-border px-4 py-2">
         <span className="font-bold">Thread</span>
         <ThreadStateBadge state={state} className="ml-2" />

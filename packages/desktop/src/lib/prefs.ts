@@ -33,9 +33,36 @@ const DRAFTS_KEY = 'murmur.drafts';
 const SIDEBAR_WIDTH_KEY = 'murmur.sidebarWidth';
 const SIDEBAR_COLLAPSED_KEY = 'murmur.sidebarCollapsed';
 const UNDO_SEND_KEY = 'murmur.undoSendMs';
+const THREAD_WIDTH_KEY = 'murmur.threadWidth';
+const TERMINAL_WIDTH_KEY = 'murmur.terminalWidth';
 
 export const MIN_SIDEBAR_WIDTH = 180;
 export const MAX_SIDEBAR_WIDTH = 480;
+
+/*
+ * 스레드·터미널 패널의 폭. 사이드바 폭과 **같은 종류의 값**이라 같은 매체에
+ * 둔다 — 어느 패널을 얼마나 벌려 두는지는 이 기기에서 일하는 방식이고, 계정을 따라
+ * 다니면 화면 크기가 다른 기기에서 남의 창 설정을 물려받는다(`design.md`: 값은 전부
+ * 기기 로컬이다).
+ *
+ * 기본값은 **오늘 화면 그대로**다: 스레드는 `max-w-[640px]` 가 넓은 창에서 실제로
+ * 만들던 폭, 터미널은 `w-[38rem]`(608px). 기능이 들어오면서 레이아웃이 조용히 달라지면
+ * 사람은 폭 조절이 아니라 "화면이 망가졌다"를 먼저 본다.
+ */
+export const DEFAULT_THREAD_WIDTH = 640;
+export const MIN_THREAD_WIDTH = 360;
+export const MAX_THREAD_WIDTH = 900;
+export const DEFAULT_TERMINAL_WIDTH = 608;
+export const MIN_TERMINAL_WIDTH = 360;
+export const MAX_TERMINAL_WIDTH = 1000;
+
+/**
+ * 구분선 왼쪽에 반드시 남겨 두는 자리. 상한이 상수뿐이면 좁은 창에서 스레드와 터미널이
+ * 대화를 폭 0 으로 밀어낼 수 있고, 사람은 그것을 "채널이 사라졌다"로 읽는다 — 되돌릴
+ * 손잡이는 사라진 그 자리에 있으니 빠져나올 길도 없다. 그래서 끌 수 있는 최대는 상수와
+ * **남은 자리** 중 작은 쪽이다(`PaneResizer`).
+ */
+export const MIN_ROOM_LEFT = 320;
 
 /**
  * 보냄 취소 창의 기본 길이(#223, 기본값은 #274 에서 0 으로). **0 이라 기본 동작은 즉시
@@ -111,6 +138,46 @@ export const sidebarStorage = {
   },
   saveCollapsed(collapsed: boolean): void {
     try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed)); } catch { /* 저장 불가 환경 허용 */ }
+  },
+};
+
+/**
+ * 스레드·터미널 패널의 폭을 기기 로컬에 둔다.
+ *
+ * 읽을 때도 clamp 한다 — 상수를 나중에 좁히면 예전 기기에 남은 값이 범위 밖이 되는데,
+ * 그것을 그대로 style 에 넘기면 다음 사람은 "clamp 이 왜 안 걸리나"를 드래그 코드에서
+ * 찾는다. 깨진 값(NaN)은 기본값으로 되돌린다: `sidebarStorage` 와 같은 규약이다.
+ */
+const loadWidth = (key: string, fallback: number, min: number, max: number): number => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    const parsed = parseInt(raw, 10);
+    if (isNaN(parsed)) return fallback;
+    return Math.max(min, Math.min(max, parsed));
+  } catch {
+    return fallback;
+  }
+};
+
+const saveWidth = (key: string, width: number, min: number, max: number): void => {
+  try {
+    localStorage.setItem(key, String(Math.max(min, Math.min(max, width))));
+  } catch { /* 저장 불가 환경 허용 */ }
+};
+
+export const paneStorage = {
+  loadThreadWidth(): number {
+    return loadWidth(THREAD_WIDTH_KEY, DEFAULT_THREAD_WIDTH, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH);
+  },
+  saveThreadWidth(width: number): void {
+    saveWidth(THREAD_WIDTH_KEY, width, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH);
+  },
+  loadTerminalWidth(): number {
+    return loadWidth(TERMINAL_WIDTH_KEY, DEFAULT_TERMINAL_WIDTH, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH);
+  },
+  saveTerminalWidth(width: number): void {
+    saveWidth(TERMINAL_WIDTH_KEY, width, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH);
   },
 };
 
