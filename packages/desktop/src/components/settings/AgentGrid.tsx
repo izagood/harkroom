@@ -4,7 +4,15 @@ import { Identity } from '../Identity';
 import type { RunnerState } from '../../lib/runnerLauncher';
 // B1 의 세 얼굴 규칙은 `lib/faceState.ts` 하나가 낸다 — DM 목록도 같은 판정을 쓴다
 // (`docs/desktop-rail.html` 2단계). 여기 사본을 두면 두 화면이 같은 러너를 다르게 그린다.
-import { faceState } from '../../lib/faceState';
+// `isStopping` 은 **격자만** 부른다 — 사이드바가 그 값을 받을 수 없는 이유가 그 함수 주석에 있다.
+import { faceState, isStopping } from '../../lib/faceState';
+// 뒤처짐 판정도 **이미 있는 것을 그대로 쓴다**(`lib/runnerVersions.ts`). 그 규칙
+// (*"모르는 것을 뒤처졌다고 하지 않는다"*)을 칩에서 다시 적으면 일괄 재기동 띠와 카드가
+// 서로 다른 대상을 고르고, 그 어긋남은 조용하다 — 그 모듈 주석이 정확히 그것을 경고한다.
+import { staleRunners } from '../../lib/runnerVersions';
+// 경과 계산도 한 벌이다. `AgentsSettings.lastTurnLabel` 이 같은 함수 위에 접두만 붙인다 —
+// 이 파일이 그쪽에서 가져올 수 없는 이유(순환)가 `lib/lastTurn.ts` 주석에 있다.
+import { lastTurnAgo } from '../../lib/lastTurn';
 
 /**
  * 이 격자가 카드 하나를 그리는 데 **실제로 필요한 것**. `AgentView` 를 요구하지 않는 이유가
@@ -18,8 +26,39 @@ import { faceState } from '../../lib/faceState';
  * 훑는다 — **기능이 조용히 줄어드는 것을 타입이 드러낸다**는 것이 옵셔널로 두는 이유다.
  * `AgentView` 는 `AccountView` 를 확장하고 `instructions` 를 필수로 가지므로 설정 화면의
  * 호출은 한 글자도 안 바뀐다.
+ *
+ * ## 정보 필드도 같은 규율로 옵셔널이다 (`docs/desktop-agent-cards.pdf` 2쪽)
+ *
+ * 그 문서가 카드에 올리라고 한 셋(하네스·모델 · 러너 버전 · 마지막 활동)과 다섯 번째
+ * 얼굴이 쓰는 둘(`stopRequestedAt`·`stopAckedAt`)은 전부 `AgentConfig` 소속이다 —
+ * 스토어의 `AccountView` 에는 **하나도 없다.** 위 문단이 `instructions` 로 세운 판단이
+ * 그대로 적용된다: 필수로 올리면 사이드바가 `listAgents()` 를 왕복해야 하고 그때부터
+ * 같은 목록이 두 곳에 유지된다.
+ *
+ * **없으면 그 줄을 안 그린다.** 그리고 애초에 그 줄은 `place === 'settings'` 에서만
+ * 그린다(`AgentGridPlace` 주석) — 즉 이 옵셔널은 사이드바가 넘기지 않는다는 사실을
+ * 타입에 적어 둔 것이고, 실제 분기는 자리가 낸다. 두 겹인 것이 의도다: 타입만 두면
+ * 사이드바가 `AgentView` 를 얻는 날 정보 줄이 조용히 새고, 자리 분기만 두면 사이드바
+ * 호출부가 없는 필드를 넘기려 해서 컴파일이 막힌다.
  */
-export type AgentCardSubject = AccountView & { instructions?: string };
+export type AgentCardSubject = AccountView & {
+  instructions?: string;
+  /** 카드 첫 줄(`하네스`). 없으면 그 줄을 안 그린다. */
+  harness?: string;
+  /** 하네스 아래 줄. `null` 은 **'하네스 기본값'** 이다(`AgentConfig.model` 의 계약). */
+  model?: string | null;
+  /** 버전 칩의 값. `null`·`'unknown'` 둘 다 **모른다**다(`runnerVersions.ts` 의 판정). */
+  runnerVersion?: string | null;
+  /** 다섯 번째 얼굴(종료 요청 중)의 입력. 둘이 함께 와야 뜻이 생긴다 — `isStopping` 참고. */
+  stopRequestedAt?: string | null;
+  stopAckedAt?: string | null;
+  /**
+   * `활동` 줄의 값. **문서는 `lastActivityAt` 이라고 적었지만 그 필드는 없다** — 실측하니
+   * 서버가 내려 주는 이름은 `lastTurnAt` 이고(`AgentConfig.lastTurnAt`) 이미 목록에 실려
+   * 온다. 새 필드도 새 왕복도 필요 없었다.
+   */
+  lastTurnAt?: string | null;
+};
 
 /**
  * 이 격자가 서는 **자리**(`docs/desktop-rail.html` 3단계). 값이 둘인 것은 호출자가 둘이기
@@ -58,6 +97,24 @@ export type AgentCardSubject = AccountView & { instructions?: string };
  * `surface-sunken`(`Sidebar` 의 `aside`)이다. 한쪽 값을 박아 두면 다른 쪽에서 **검색줄만
  * 다른 색인 띠**가 되고, 그것은 하드코딩 색과 같은 종류의 결함이다: 토큰을 쓰고 있어도
  * 자리와 맞지 않으면 틀린 색이다. 선택 테의 `ring-offset` 도 같은 이유로 함께 간다.
+ *
+ * ## 정보 블록은 **축을 늘리지 않고** 이 축의 조건부로 얹는다
+ *
+ * `docs/desktop-agent-cards.pdf` 2쪽이 설정의 카드에 세 줄(하네스·모델 · 러너 · 활동)과
+ * 다섯 번째 얼굴을 얹었다. 그런데 위 문단이 못 박은 것 — *"그 이상으로 늘릴 축이 아니다 —
+ * 늘어나기 시작하면 카드가 다시 두 벌이 된다"* — 이 이 변경에 그대로 걸린다. `showInfo`
+ * 같은 prop 을 하나 더 두면 자리가 셋(`settings`·`sidebar`·`settings 인데 정보 없음`)이
+ * 되고, 그 셋을 유지하는 것이 카드 두 벌을 유지하는 것과 같아진다.
+ *
+ * 그래서 **새 축을 만들지 않는다.** 정보 블록은 `place === 'settings'` 조건부 렌더로
+ * 얹는다 — 자리 하나가 크기·바닥색에 이어 *"담는 것"* 까지 가른다는 뜻이고, 위 문단이
+ * *"담는 것도 그 축에서 갈린다"* 라고 이미 그 방향을 적어 뒀다(문서 「먼저」절).
+ *
+ * **실측(2026-09-08): 지금까지 `place` 로 갈리는 조건부 렌더가 하나도 없었다** — 두 자리가
+ * `PLACE` 표의 클래스 치환만으로 갈렸고 JSX 는 완전히 같았다. 그래서 기존 회귀선
+ * (`agentsPanelGrid.test.tsx` 의 *"자리를 안 주면 설정의 그 격자다"*)은 `place` 를 안 준
+ * 기본값만 재고, **새 블록이 사이드바로 새는 것을 잡지 못한다.** 조건부가 처음 생기는
+ * 이 변경과 함께 `agentGrid.test.tsx` 에 사이드바 격리 회귀선을 따로 세웠다.
  */
 export type AgentGridPlace = 'settings' | 'sidebar';
 
@@ -80,12 +137,65 @@ const PLACE: Record<AgentGridPlace, {
   bg: string;
   ringOffset: string;
 }> = {
+  /*
+    ## 설정의 숫자가 바뀐 이유 — 얼굴 56 → **88px** · 트랙 86 → **140px**
+
+    정본 `docs/desktop-agent-cards.pdf` 는 **원칙**이 정본이고 목업은 그 원칙의 한 가지
+    답이다. 그래서 이 두 숫자는 목업에서 베낀 것이 아니라 **실측으로 정했다**(2026-09-08,
+    720px 폭 설정 패널에 8장을 깔고 브라우저에서 잰 값). 근거를 아래에 남긴다.
+
+    ### 얼굴 88px — 원칙이 요구하는 최솟값이다
+
+    원칙 둘이 이 값을 밀어 올린다: *"사진을 올렸다는 것은 사진을 보겠다는 뜻"* 이고,
+    *"버튼 줄이 사라지면서 남는 세로가 얼굴로 간다"*. 지금까지 설정의 얼굴은 `h-14`(56px)
+    였다 — 문서가 인용한 *"40px 에서 키운다"* 는 **사이드바 값**이고(아래 `sidebar.face`
+    가 `h-10`), 설정은 56 이었다. 실제 증분은 56 → 88 이다.
+
+    88 을 고른 이유는 세 가지가 이 값에서 함께 맞기 때문이다:
+
+    1. **얼굴이 정보 세 줄보다 무거워야 한다.** 화면으로 확인했다 — 88px 에서 얼굴이
+       먼저 눈에 들어오고 세 줄이 그 아래 딸린 것으로 읽힌다. 그것이 *"상태는 얼굴이
+       말한다"* 가 성립하는 조건이다
+    2. **`▶`·`■`·`↻` 가 얼굴을 덮는 원**이라 지름이 곧 그 손잡이의 타격 면적이다. 56px
+       에서도 눌리긴 하지만, 손잡이를 세 개로 늘린 지금은 그 면적이 커지는 것이 이득이다
+    3. 96(`h-24`)까지 키우면 세 줄이 얼굴에 눌려 **정보가 각주처럼** 보였다
+
+    `h-22` 는 Tailwind 기본 척도에 없어(`h-20`=80 다음이 `h-24`=96) 임의값이다.
+    `text-*` 4단 회귀선(`test/typeScale.test.ts`)은 글자 크기만 재므로 대상이 아니다.
+
+    ### 트랙 140px — **내용이 요구하는 폭에서 나왔다**
+
+    처음에 168px 을 썼는데(목업의 비율을 눈으로 옮긴 값) 실측하니 **31px 이 남았다.**
+    브라우저에서 정보 줄의 값 칸을 `max-content` 로 재 보니 가장 넓은 것이 뒤처진 버전 칩
+    (`v0.1.1 · 뒤처짐 ↻`)의 **93px** 이고, 라벨 36 + 간격 8 을 더해 **137px** 이 카드가
+    실제로 필요한 폭이었다. `하네스  claude-code` 는 67px 로 그보다 좁다.
+
+    | 트랙 | 720px 패널에서 열 수 | 남는 폭 | 판단 |
+    |---|---|---|---|
+    | 168 | 3열 | 128px | 값이 요구하는 137 보다 31px 넓고 한 열을 잃는다 |
+    | **140** | **4열** | **60px** | 137 을 만족하는 가장 좁은 4단위 값 |
+    | 128 | 4열 | 108px | 137 미달 — 뒤처진 칩이 매번 잘린다 |
+
+    그래서 140 이다. 얼굴 88px 좌우로 26px 씩 남아 `ring-2` 선택 테가 옆 카드에 닿지
+    않고(사이드바가 40/64 로 세운 것과 같은 여유 비율), **한 화면에 한 열이 더 들어온다** —
+    *"여러 에이전트를 나란히 놓고 비교할 때만 뜻이 생기는 값"* 을 카드에 올린 것이므로
+    한 번에 보이는 카드 수가 곧 이 정보의 값이다.
+
+    ## `faceText`·`glyph` 가 타이포 4단이 아닌 이유
+
+    이 둘은 **상자에 묶인 글리프**다 — 원의 지름에서 크기가 따라 나온다. 얼굴이 56 →
+    88px 로 커졌으니 안의 머리글자도 함께 커져야 하고, 안 키우면 88px 원에 18px 글자가
+    떠 있는 모양이 된다. `test/typeScale.test.ts` 의 `ALLOWED` 가 `Identity.tsx` 에 대해
+    같은 판단을 이미 적어 뒀다(*"4단이 아니라 `h-*` 상자에 묶인 글리프다"*). 그래서 이 표의
+    다른 칸들과 같은 어휘(척도 이름)를 유지한다 — 여기만 임의값으로 바꾸면 표 안에서
+    두 어휘가 섞이고, 다음에 이 표를 고치는 사람이 어느 쪽을 따라야 하는지 알 수 없다.
+  */
   settings: {
-    grid: 'grid-cols-[repeat(auto-fill,86px)] gap-x-6 gap-y-5',
-    card: 'w-[86px]',
-    face: 'h-14 w-14',
-    faceText: 'text-lg',
-    glyph: 'h-14 w-14 text-xl',
+    grid: 'grid-cols-[repeat(auto-fill,140px)] gap-x-5 gap-y-5',
+    card: 'w-[140px]',
+    face: 'h-[88px] w-[88px]',
+    faceText: 'text-2xl',
+    glyph: 'h-[88px] w-[88px] text-2xl',
     bg: 'bg-surface-raised',
     ringOffset: 'ring-offset-surface-raised',
   },
@@ -115,21 +225,183 @@ const GLYPH_FOCUS = 'outline-none focus-visible:opacity-100 focus-visible:outlin
   + ' focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2';
 
 /**
+ * 카드 정보 한 줄.
+ *
+ * ## 왜 이 모양인가 — **이 저장소에 이미 있는 행 컴포넌트를 따른다**
+ *
+ * `Profile.tsx` 의 `Row` 가 같은 일을 하고 있고 모양이 이것이다: `flex` + **고정 폭
+ * 라벨**(`w-24 shrink-0 text-fg-subtle`) + `min-w-0` 값 칸. 새 어휘를 만들지 않고 그
+ * 형태를 그대로 가져왔다 — 상세(`Profile`)와 카드가 같은 세 값을 다른 모양으로 적으면,
+ * 카드에서 상세로 넘어간 사람이 같은 사실을 두 번 읽는 법을 배워야 한다.
+ *
+ * 갈리는 것은 숫자 둘뿐이고 둘 다 폭에서 나온다: 라벨이 `w-24`(96px) 대신 `w-9`(36px)
+ * 이고 글자가 13px 대신 11px 이다. 카드가 140px 이라 96px 라벨은 값 칸에 44px 만 남긴다.
+ *
+ * **라벨이 고정 폭인 것이 요점이다.** 세 줄의 값이 같은 x 에서 시작해야 여러 카드를
+ * 나란히 놓고 **세로로 훑는 비교**가 되고, 그것이 이 정보를 카드에 올린 이유다. 고정
+ * 폭이 아니면 `하네스`(3자)와 `러너`(2자) 때문에 값이 카드 안에서도 지그재그로 선다.
+ */
+function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline gap-2">
+      <span className="w-9 shrink-0 text-[11px] text-fg-subtle">{label}</span>
+      <span className="min-w-0 flex-1 text-[11px] text-fg-muted">{children}</span>
+    </div>
+  );
+}
+
+/**
+ * 러너 버전 칩 3종 (`docs/desktop-agent-cards.pdf` 3쪽).
+ *
+ * | 상태 | 모양 | 손잡이 |
+ * |---|---|---|
+ * | **최신** — 앱과 같다 | 회색 칩 `v0.1.3` | 없음 |
+ * | **뒤처짐** — 앱보다 낮다 | 주의색 칩 `v0.1.1 · 뒤처짐 ↻` | **칩 자체가 눌린다** |
+ * | **모름** — 접속 안 했거나 버전 안 보냄 | 점선 칩 `버전 모름` | 없음 |
+ *
+ * ## 판정을 새로 쓰지 않는다
+ *
+ * 셋을 가르는 규칙은 `lib/runnerVersions.ts` 의 `staleRunners()` 가 이미 갖고 있고, 그
+ * 규칙의 핵심이 *"모르는 것을 뒤처졌다고 하지 않는다"* 다 — `null`(한 번도 보고 없음)과
+ * `'unknown'`(보고는 왔지만 러너가 `AGENT_VERSION` 을 못 받음)은 원인이 다르지만 이
+ * 판정에는 같고, 앱 버전을 모르면(`appVersion === null`) **아무것도 뒤처졌다고 하지
+ * 않는다.** 그 모듈 주석이 두 번째 이유를 미리 적어 뒀다: *"읽는 곳이 둘이다(프로필 한
+ * 에이전트, 설정의 전체 재기동) — 한 곳에 두지 않으면 두 화면이 서로 다른 대상을 고르고,
+ * 그 어긋남은 조용하다."* 이제 읽는 곳이 셋이라 그 경고가 더 무겁다.
+ *
+ * `staleRunners` 는 목록 판정이라 카드 하나를 물으려면 한 원소 배열로 부른다. 그 대신
+ * 여기서 `!==` 비교를 손으로 적으면 **네 번째 규칙 사본**이 생긴다 — 배열 하나 만드는
+ * 값이 그것보다 싸다.
+ *
+ * `live` 에 이 에이전트를 **항상 넣는다**: `staleRunners` 의 `live` 는 *"재기동이 할 일인
+ * 대상인가"* 를 가르는 축인데(그 함수 주석: 러너가 없으면 재기동은 할 일이 아니다),
+ * 카드의 칩이 답하는 질문은 그것이 아니라 *"서버가 마지막으로 들은 버전이 무엇인가"* 다.
+ * 러너가 지금 안 도는 카드도 `runnerVersion` 이 남아 있으면 그 값을 말해야 한다 —
+ * 아래 `stale` 여부와 무관하게 칩은 늘 선다.
+ *
+ * ## 재기동이 왜 **얼굴이 아니라 이 칩**에 붙나 (문서)
+ *
+ * *"얼굴에 붙이면 `↻` 가 **실패**와 **뒤처짐** 두 가지를 뜻하게 되고, 도는 것을 멈출
+ * 방법이 사라진다."* 뒤처진 러너는 **잘 돌고 있다** — 얼굴은 `ok`(그냥 사진)이고, 거기에
+ * `↻` 를 얹으면 `■`(멈추기)가 설 자리가 없어진다. 다시 띄우는 이유가 버전이므로 손잡이도
+ * 버전 옆에 선다.
+ *
+ * ## 강조색이 아니라 **주의색**이다 (규칙 04)
+ *
+ * `test/accentBudget.test.tsx` 가 예산을 잰다: 강조는 *"나를 막는 것"* 에만 쓴다. 뒤처진
+ * 러너는 나를 막지 않는다 — 잘 돌고 있고, 갈아 끼우는 것은 내가 고를 일이다. 그래서
+ * `warning` 이고, 실패는 이미 `danger` 라 둘이 섞이지 않는다.
+ */
+function VersionChip({ handle, runnerVersion, appVersion, onRelaunch }: {
+  handle: string;
+  runnerVersion: string | null;
+  appVersion: string | null;
+  /** 없으면 뒤처진 칩도 안 눌린다 — *"권한 없는 사람에게는 문이 없다"*(`AgentGrid` 주석). */
+  onRelaunch?: () => void;
+}) {
+  const { stale, unknown } = staleRunners({
+    agents: [{ id: handle, runnerVersion }],
+    live: new Set([handle]),
+    appVersion,
+  });
+
+  // 점선 칩. `버전 모름` 이라고 **적는 것**이 요점이다 — 칩을 아예 안 그리면 "러너가 없다"와
+  // 구분되지 않고, 문서가 이 칩을 만든 이유가 정확히 그것이다(*"없으면 매번 상세를 열어야
+  // 한다"*). 점선은 `+` 카드가 이미 쓰는 어휘라 "아직 값이 없다"로 읽힌다.
+  if (unknown.length > 0) {
+    return (
+      <span
+        data-testid={`agent-version-${handle}`}
+        data-version="unknown"
+        className="inline-block rounded border border-dashed border-border px-1.5 py-px text-[11px] text-fg-subtle"
+      >
+        버전 모름
+      </span>
+    );
+  }
+
+  // 최신. **회색 칩으로 조용히 적는다** — 정상에는 표시를 붙이지 않는다는 규칙에서 버전은
+  // 예외다(문서: *"'맞다'를 확인하러 오는 값"*). 손잡이는 없다: 갈아 끼울 것이 없다.
+  if (stale.length === 0) {
+    return (
+      <span
+        data-testid={`agent-version-${handle}`}
+        data-version="current"
+        className="inline-block rounded bg-surface-sunken px-1.5 py-px text-[11px] text-fg-muted"
+      >
+        {runnerVersion}
+      </span>
+    );
+  }
+
+  // 뒤처짐. **칩 자체가 손잡이다**(위 「재기동이 왜 이 칩에」). 누를 수 없는 사람에게는
+  // 같은 말을 손잡이 없이 준다 — 사실은 남고 문만 없어진다(design.md §4: 눌러도 아무 일이
+  // 없는 버튼을 그리지 않는다).
+  const shape = 'inline-block rounded border border-warning-border bg-warning-surface'
+    + ' px-1.5 py-px text-[11px] text-warning';
+  if (!onRelaunch) {
+    return (
+      <span data-testid={`agent-version-${handle}`} data-version="stale" className={shape}>
+        {runnerVersion} · 뒤처짐
+      </span>
+    );
+  }
+  return (
+    <button
+      data-testid={`agent-version-${handle}`}
+      data-version="stale"
+      // 색은 스크린리더에 아무 말도 하지 않는다(`#443`). 칩 글자가 `↻` 로 끝나므로 그것이
+      // 무엇을 하는 것인지 접근 이름이 말해야 한다.
+      aria-label={`${handle} 러너 재기동 — ${runnerVersion} 은 앱보다 뒤처졌다`}
+      // 포커스 링을 따로 안 붙인다 — 전역 `:focus-visible`(`index.css`)이 준다. `GLYPH_FOCUS`
+      // 는 **얼굴 글리프 전용**이다: 그것들은 `opacity-50` 으로 숨어 있어 `opacity-100` 을
+      // 함께 켜야 하는데(그 상수 주석), 이 칩은 평소에도 또렷하므로 그 조합이 필요 없다.
+      className={`${shape} hover:bg-warning-surface-strong`}
+      onClick={(e) => { e.stopPropagation(); onRelaunch(); }}
+    >
+      {runnerVersion} · 뒤처짐 <span aria-hidden="true">{'↻'}</span>
+    </button>
+  );
+}
+
+/**
  * 에이전트 그리드 + 검색(identity 문서 · Task 15-2).
  *
- * ## 카드는 조용하다
+ * ## 카드는 조용하다 — **사이드바에서** (`docs/desktop-agent-cards.pdf` 「먼저」절)
  *
- * 남는 것은 **아바타와 이름 둘뿐**이다. 하네스·소유자·마지막 활동은 전부 상세로 내려간다.
- * 전제가 바뀌었기 때문이다 — **에이전트는 계속 늘어난다.** 40개가 되면 카드마다 붙은 두 줄
- * 설명은 정보가 아니라 **벽**이 되고, 찾는 방법은 훑기가 아니라 검색이 된다.
+ * 앞 문서가 세운 규칙이 이것이었다: *"이 화면에서는 정보를 더하는 쪽이 항상 지는 쪽이다."*
+ * 그래서 카드에는 아바타와 이름만 남고 하네스·소유자·마지막 활동이 전부 상세로 내려갔다.
  *
- * 문서의 마지막 경고를 그대로 지킨다: *"이 화면에서는 정보를 더하는 쪽이 항상 지는 쪽이다."*
+ * **카드 문서가 그 규칙의 겨누는 자리를 다시 읽었다.** 그 문장이 서 있던 자리는 **사이드바
+ * 패널**이다 — 폭이 164~224px 이고, 훑는 것이 목적이고, 40개가 깔린다. 설정은 다르다:
+ * *"설정은 바꾸러 오는 곳이고, 바꾸기 전에 확인하러 오는 곳이다."* 그래서 **앞 규칙을
+ * 뒤집는 것이 아니라** 같은 컴포넌트가 두 자리에서 다르게 서는 것이고, 그 축은 이미
+ * 타입에 적혀 있다(`AgentGridPlace`).
  *
- * ## 상태는 사진이 말한다
+ * 설정의 카드가 올리는 것은 **셋뿐이다**:
  *
- * 상태 점도 상태 글자도 없다 — **아바타 자체가 세 가지로 갈린다.** 그래서 카드에 줄이 늘지
- * 않는다. 정상이 기본값이므로 정상에는 아무 장식도 붙이지 않는다(40개 중 38개가 그 모습이면
- * 화면이 조용하다).
+ * ```
+ * 하네스   claude-code       ← AgentConfig.harness · model (null 이면 `하네스 기본값`)
+ *          sonnet-4.6
+ * 러너     v0.1.3            ← 버전 칩 3종 (VersionChip)
+ * 활동     11분 전            ← lastTurnAt (문서는 `lastActivityAt` 이라 적었다 — 없는 필드다)
+ * ```
+ *
+ * 셋의 공통점이 문서에 있다 — *"여러 에이전트를 나란히 놓고 비교할 때만 뜻이 생기는
+ * 값"* 이다. 하나만 볼 때 필요한 것(작업 디렉터리·소유자·멘션 권한·지시문)은 상세에
+ * 남는다. **소유자는 여전히 안 올린다**: 한 사람이 다 만든 워크스페이스에서는 모든 카드가
+ * 같은 값이라 구별에 아무 기여도 하지 않는다.
+ *
+ * ## 상태는 사진이 말한다 — **상태 글자는 여전히 없다**
+ *
+ * 상태 점도 상태 글자도 없다. 정보 세 줄이 늘었어도 그 규칙은 그대로다: 셋 중 어느 것도
+ * *"도는 중"* 이 아니다. 얼굴이 다섯 가지로 갈리고(아래), 글자를 받는 것은 **예외 둘**뿐이다 —
+ * 실패 사유(`PAT 가 폐기되었다`)와 종료 요청 중(`멈추는 중 · 러너가 아직 못 봤다`).
+ *
+ * **카드 아래 버튼 줄은 없다.** 문서가 *"걷어내라"* 고 적었지만 **실측(2026-09-08)하니
+ * 그 버튼이 애초에 없었다** — 이 격자에 있는 버튼은 검색 입력 · `+` 카드 · 카드 자체 ·
+ * 얼굴을 덮는 글리프 넷이고, 카드 아래에 서는 `실행하기`·`멈추기` 줄은 한 번도 만든 적이
+ * 없다. 문서가 겨눈 것은 앞 판본의 목업이었을 것이다. 즉 이 항목은 이미 지켜져 있다.
  *
  * ## 검색은 이름만 훑지 않는다
  *
@@ -143,12 +415,27 @@ const GLYPH_FOCUS = 'outline-none focus-visible:opacity-100 focus-visible:outlin
  * 에이전트 재설계가 먼저 들어가야 카드 컴포넌트를 두 번 그리지 않는다."* 그래서 두 자리가
  * 갈리는 곳은 넷뿐이고, 전부 **prop 으로 명시된다** — 자리(`place`: 크기와 바닥색), 카드를
  * 누르면 무엇이 열리는가(`onPick`), 만들기 문을 여는가(`canCreate`), 누가 ▶ 를 받는가
- * (`canRelaunch`). 나머지(가나다 순서 · 검색 · 세 얼굴 · 사유 글자)는 두 화면에서 같아야
+ * (`canRelaunch`). 나머지(가나다 순서 · 검색 · 다섯 얼굴 · 사유 글자)는 두 화면에서 같아야
  * 하므로 여기 한 벌만 있다.
+ *
+ * ## 얼굴 하나가 상태와 손잡이를 겸한다 (`docs/desktop-agent-cards.pdf` 2쪽 하단)
+ *
+ * | 상태 | 얼굴 | 손잡이 |
+ * |---|---|---|
+ * | 도는 중 | 그냥 사진 | 없음(평소) |
+ * | 도는 중 · 올렸을 때 | `■` | **`■` 로 멈춘다** |
+ * | **멈추는 중** | 점선 테 · 반쯤 빠짐 | **없다** |
+ * | 멈춤 | 색 빠짐 + `▶` | `▶` 로 켠다 |
+ * | 실패 | 붉은 테 + `↻` | `↻` 로 다시 · 사유는 글자 |
+ *
+ * **`■` 만 hover/focus 에서 뜨는 이유**(문서): *"멈추기는 훑는 동작이 아니다. 지금 켤 수
+ * 있는 것이 몇 개인지는 스캔 한 번에 와야 하지만(그래서 `▶` 는 늘 보인다), 멈출 것은 이미
+ * 고른 다음에 찾는다."* 그 대가는 마우스가 없으면 안 보이는 것이라, 키보드는
+ * `focus-visible` 에서 뜬다 — `GLYPH_FOCUS` 가 그 조합을 이미 갖고 있다.
  */
 export function AgentGrid<T extends AgentCardSubject>({
   agents, selectedId, runnerStates, online, connected, onPick, onCreate, canCreate, onRelaunch,
-  canRelaunch, place = 'settings',
+  canRelaunch, onStop, appVersion = null, place = 'settings',
 }: {
   agents: T[];
   selectedId: string | null;
@@ -161,6 +448,27 @@ export function AgentGrid<T extends AgentCardSubject>({
   canCreate: boolean;
   /** ▶ · ↻ 가 부르는 것. 없으면 그 자리를 그리지 않는다(권한 없는 사람에게는 문이 없다). */
   onRelaunch?(agent: T): void;
+  /**
+   * **`■` 가 부르는 것** — 도는 러너에게 종료를 요청한다. 없으면 `■` 를 안 그린다:
+   * `onRelaunch` 와 같은 규율이고(*"권한 없는 사람에게는 문이 없다"*), 사이드바는 이것을
+   * 넘기지 않으므로 그 칸에는 오늘처럼 `▶`·`↻` 만 있다.
+   *
+   * **`onRelaunch` 와 합치지 않는 이유**: 부르는 API 가 다르다(`requestStop` 대
+   * `reissueRunnerPat`)고, 무엇보다 **되돌리기 어려움이 다르다** — 멈추기는 진행 중인 턴을
+   * 기다렸다가 러너를 내리고, 다시 띄우기는 없는 것을 세운다. 한 콜백에 얼굴 상태로 분기를
+   * 심으면 그 판단이 호출자 쪽으로 새고, 호출자마다 다르게 적힌다.
+   */
+  onStop?(agent: T): void;
+  /**
+   * 버전 칩의 **기준값**. 이 앱 번들의 버전이고 스토어가 갖고 있다(`appStore.ts` 의
+   * `appVersion`, `AgentsSettings` 의 `StaleRunnerBar` 가 이미 같은 값을 읽는다).
+   *
+   * 기본값 `null` 이 계약이다 — `staleRunners` 가 `null` 을 **"아무것도 뒤처졌다고 하지
+   * 않는다"** 로 읽으므로(그 함수 주석), 이 prop 을 안 넘기는 호출자(사이드바)에게는
+   * 뒤처짐 판정이 애초에 일어나지 않는다. 비교 기준이 없는데 단정하는 것이
+   * `docs/design.md` §4 가 금지하는 거짓 신호다.
+   */
+  appVersion?: string | null;
   /**
    * **이 카드가 ▶ 를 받는가.** 없으면 `onRelaunch` 가 있는 모든 카드가 받는다 — 그것이
    * 설정 화면의 오늘 동작이고 기본값으로 남는다.
@@ -240,12 +548,64 @@ export function AgentGrid<T extends AgentCardSubject>({
 
         {shown.map((a) => {
           const face = faceState(a.id, runnerStates, online, connected);
+          /*
+            **다섯 번째 얼굴은 별개의 축이다** (`lib/faceState.ts` 의 `isStopping` 주석).
+
+            `FaceState` 유니온에 값을 더하지 않은 이유가 그 주석에 있다 — 두 필드는
+            `AgentConfig` 소속이라 사이드바가 손에 든 `AccountView` 에는 없고, 사이드바가
+            받을 수 없는 값을 유니온에 앉히면 *"이 넷은 각각 그리는 방법이 다르다"* 는
+            `FaceState` 의 계약이 거짓이 된다. 그래서 축이 둘이고 여기서 곱해진다.
+
+            **`ok` 위에만 얹는다.** 문서: *"`stopRequestedAt` 은 있고 `stopAckedAt` 이
+            없는 동안은 도는 것도 멈춘 것도 아니다."* 즉 이것은 **도는 중**의 변형이다 —
+            이미 `stopped`·`failed`·`unknown` 인 얼굴을 덮으면 더 강한 사실(러너가 죽었다 ·
+            생사를 모른다)을 약한 사실로 가린다. 특히 `unknown` 을 덮으면 서버와 끊긴 동안
+            "멈추는 중"이라고 단정하는 셈인데, 그것은 아무도 확인하지 않은 말이다.
+
+            사이드바에서는 `a.stopRequestedAt` 이 `undefined` 라 `isStopping` 이 false 를
+            낸다 — **필드가 없으면 이 축 자체가 서지 않는다.** 그리고 그 위에 자리 분기가
+            한 겹 더 있다(`AgentGridPlace` 주석의 두 겹 이유).
+          */
+          const stopping = place === 'settings' && face === 'ok' && isStopping({
+            stopRequestedAt: a.stopRequestedAt ?? null,
+            stopAckedAt: a.stopAckedAt ?? null,
+          });
+          /*
+            **`■` 를 누를 수 있는가.** 도는 중이고, 종료 요청이 아직 안 걸려 있고, 문이
+            있어야 한다. `stopping` 을 뺀 것이 요점이다 — 문서가 그 줄에 *"손잡이가 없다"*
+            고 적었다(*"지금 할 수 있는 일이 기다리는 것뿐이다"*). 이미 요청한 것을 한 번 더
+            요청하는 버튼은 아무 일도 하지 않으면서 사람에게 "안 먹었나" 를 묻게 만든다.
+          */
+          const canStop = place === 'settings' && onStop !== undefined && face === 'ok' && !stopping;
           return (
-            <div key={a.id} className="group relative flex flex-col items-center">
+            /*
+              **`h-full` + `mt-auto` 가 한 줄의 구분선을 맞춘다** (실측 2026-09-08, 720px
+              폭에서 8장을 깔아 확인).
+
+              처음에는 이것이 없었고, 화면을 보니 **같은 줄의 구분선이 서로 다른 높이에
+              떠 있었다** — 이름이 한 줄인 카드와 두 줄인 카드, 그리고 `멈추는 중` 글자를
+              얻은 카드가 각각 다른 높이를 가지니 그 아래 정보 묶음도 따라 밀렸다. 세 줄을
+              **나란히 놓고 비교하는 것**이 이 정보를 카드에 올린 이유인데, 값이 서로 다른
+              y 에 있으면 그 비교가 눈으로 안 된다.
+
+              그리드 칸은 기본으로 `stretch` 되므로 카드가 `h-full` 을 받고 정보 묶음이
+              `mt-auto` 로 바닥에 붙으면, 한 줄에서 가장 키가 큰 카드가 높이를 정하고 나머지
+              카드의 정보 묶음이 **그 높이에 맞춰 같은 y 로 내려온다.**
+            */
+            /* `gap-2` 가 최소 간격이고 `mt-auto` 가 남는 만큼을 더 밀어낸다 — 여백이 0 인
+               카드(그 줄에서 가장 키가 큰 것)에서도 구분선이 이름줄에 붙지 않는다. */
+            <div key={a.id} className="group relative flex h-full flex-col items-center gap-2">
               <button
                 data-testid={`agent-card-${a.handle}`}
                 data-selected={selectedId === a.id}
                 data-face={face}
+                /*
+                  **판정을 시험이 읽는 자리가 얼굴과 갈려 있다.** `data-face` 에 `stopping`
+                  을 섞지 않는 이유는 위 `stopping` 주석과 같다 — 그것은 `faceState` 의 답이
+                  아니고, 섞으면 사이드바의 `dm-face-*` 와 값 집합이 달라져 두 화면을 같은
+                  이름으로 검사하던 규율(`Sidebar.tsx` 의 `data-face` 주석)이 깨진다.
+                */
+                data-stopping={stopping ? 'true' : undefined}
                 // **얼굴이 주인공이다**(문서: "얼굴만 남긴다"). 카드 상자를 그리지 않는다 —
                 // 목업에는 테두리도 면도 없고 **원과 이름**만 있다. 상자를 두면 26개가 깔릴 때
                 // 격자 선이 얼굴보다 먼저 눈에 들어온다.
@@ -255,6 +615,15 @@ export function AgentGrid<T extends AgentCardSubject>({
                 <span
                   className={`relative block rounded-full ${
                     face === 'failed' ? 'ring-2 ring-state-stuck' : ''
+                  } ${
+                    /*
+                      **멈추는 중은 점선 테다**(목업 2쪽 하단 세 번째 칸). 실선 테는 실패
+                      (`ring-state-stuck`)와 선택(`ring-accent`)이 이미 쓰는 어휘이고, 점선은
+                      `+` 카드가 "아직 값이 없다"로 쓰는 어휘다 — 확정되지 않은 상태에 맞다.
+                      `ring-*` 에는 점선이 없어 `border-dashed` 를 쓰고, 테가 사진을 잘라
+                      먹지 않도록 `p-0.5` 로 한 겹 띄운다.
+                    */
+                    stopping ? 'border border-dashed border-fg-subtle p-0.5' : ''
                   } ${selectedId === a.id ? `ring-2 ring-accent ring-offset-2 ${s.ringOffset}` : ''}`}
                 >
                   {/*
@@ -267,28 +636,136 @@ export function AgentGrid<T extends AgentCardSubject>({
                       `stopped` 와 **같은 회색**인 것은 의도다: 다른 회색을 하나 더 만들면
                       사람이 두 회색을 구분해 외워야 하고, 그 부담은 이 정보의 무게보다 크다.
                       두 상태를 가르는 것은 색이 아니라 **▶ 의 유무와 글자**다(아래). */}
+                  {/* 멈추는 중은 **반쯤** 빠진다(목업). 완전히 빼면 `stopped` 와 같은 회색이
+                      되어 "이미 멈췄다"로 읽히는데, 그 러너는 아직 턴을 돌리고 있을 수 있다.
+                      같은 필터를 절반 세기로 쓴다 — 새 회색을 하나 더 만들지 않는다. */}
                   <span
                     className={face === 'stopped' || face === 'unknown'
                       ? 'block grayscale brightness-[1.7] contrast-[0.55] opacity-90'
-                      : 'block'}
+                      : stopping
+                        ? 'block grayscale-[0.5] brightness-[1.35] contrast-[0.78] opacity-95'
+                        : 'block'}
                   >
                     <Identity account={a} className={`${s.face} ${s.faceText}`} variant="avatar" />
                   </span>
                 </span>
-                <span
-                  className={`w-full truncate text-center text-[11px] ${
-                    face === 'ok' ? 'text-fg' : 'text-fg-subtle'
-                  }`}
-                >
-                  {a.handle}
-                </span>
+                {/*
+                  **이름과 `@handle` 이 갈린다**(목업 2쪽: 굵은 `alpha` 아래 옅은 `@alpha`).
+                  설정에서만이다 — 사이드바는 내용 폭이 164px 부터라 두 줄을 세울 자리가 없고,
+                  오늘처럼 `@handle` 한 줄이다.
+
+                  왜 설정에서는 둘인가: 이 화면은 **바꾸러 오는 곳**이라 사람이 부르는 이름
+                  (`displayName`)과 채널에서 부르는 이름(`handle`)이 다를 수 있고, 그 둘이
+                  다르다는 사실 자체가 확인하러 온 값이다. 사이드바는 말을 거는 곳이라
+                  부르는 이름 하나면 된다.
+                */}
+                {place === 'settings' ? (
+                  <span className="w-full">
+                    <span
+                      className={`block w-full truncate text-center text-[13px] font-semibold ${
+                        face === 'ok' ? 'text-fg' : 'text-fg-subtle'
+                      }`}
+                    >
+                      {a.displayName}
+                    </span>
+                    <span className="block w-full truncate text-center text-[11px] text-fg-subtle">
+                      @{a.handle}
+                    </span>
+                  </span>
+                ) : (
+                  <span
+                    className={`w-full truncate text-center text-[11px] ${
+                      face === 'ok' ? 'text-fg' : 'text-fg-subtle'
+                    }`}
+                  >
+                    {a.handle}
+                  </span>
+                )}
               </button>
 
               {/*
-                **▶ · ↻ 는 카드와 다른 동작이다.** 카드를 누르면 설정이 열리고 이것을 누르면
-                러너가 뜬다 — 겹쳐 두면 실행이 우연히 눌린다. 그래서 카드 위에 따로 얹는다.
-                정상(`running`·`external`)에는 아무것도 없다: 정상이 기본값이므로 표시를
-                붙이지 않는다(40개 중 38개가 그 모습이면 화면이 조용하다).
+                ## 정보 세 줄 — **설정에서만** (`AgentGridPlace` 주석)
+
+                이 블록이 이 컴포넌트의 **첫 `place` 조건부 렌더**다. 축을 늘리는 대신 자리
+                하나에 조건을 매다는 이유가 그 주석에 있고, 사이드바로 새지 않는 것을
+                `agentGrid.test.tsx` 의 사이드바 격리 회귀선이 잡는다.
+
+                카드 `button` **밖**이다: 안에 넣으면 버전 칩(뒤처짐일 때 `button`)이
+                `button` 안의 `button` 이 되어 HTML 이 깨진다. 그리고 구분선이 얼굴·이름
+                묶음과 정보 묶음을 가르는 것이 목업의 구조다.
+              */}
+              {place === 'settings' && (
+                /* `mt-auto` 가 한 줄의 구분선을 같은 y 로 맞춘다 — 이유는 위 `h-full` 주석. */
+                <div className={`mt-auto w-full border-t border-border pt-2 ${s.card}`}>
+                  {/* `harness` 가 없으면 그 줄을 안 그린다 — 없는 것을 있다고 하지 않는다
+                      (design.md §4). 설정 화면은 `AgentView` 를 넘기므로 늘 있다. */}
+                  {a.harness !== undefined && (
+                    <InfoRow label="하네스">
+                      <span className="block truncate">{a.harness}</span>
+                      {/* **모델이 `null` 이면 `하네스 기본값`**(`AgentConfig.model` 의 계약).
+                          빈 칸으로 두면 "모델을 모른다"로 읽히는데, `null` 은 모르는 것이
+                          아니라 **하네스가 고른다는 결정**이다. */}
+                      <span className="block truncate text-fg-subtle">
+                        {a.model ?? '하네스 기본값'}
+                      </span>
+                    </InfoRow>
+                  )}
+                  {a.runnerVersion !== undefined && (
+                    <InfoRow label="러너">
+                      <VersionChip
+                        handle={a.handle}
+                        runnerVersion={a.runnerVersion}
+                        appVersion={appVersion}
+                        /* 뒤처진 칩이 부르는 것은 `▶`·`↻` 와 **같은 콜백**이다 — 하는 일이
+                           같다(러너를 새 번들로 다시 띄운다). 권한 술어도 같은 것을 본다:
+                           문이 없어야 할 사람에게 버전 칩만 문이 되면 `canRelaunch` 가
+                           세운 규칙이 한 자리에서 새는 것이다. */
+                        onRelaunch={onRelaunch && (canRelaunch?.(a) ?? true)
+                          ? () => onRelaunch(a)
+                          : undefined}
+                      />
+                    </InfoRow>
+                  )}
+                  {a.lastTurnAt !== undefined && (
+                    <InfoRow label="활동">
+                      {/* 계산은 `lib/lastTurn.ts` 한 벌이다 — 상세의 `lastTurnLabel` 이 같은
+                          함수 위에 접두만 붙인다. 여기서 접두를 빼는 이유는 왼쪽 `활동`
+                          라벨이 이미 그 말을 하기 때문이다(그 모듈 주석). */}
+                      <span className="block truncate">{lastTurnAgo(a.lastTurnAt)}</span>
+                    </InfoRow>
+                  )}
+                  {/*
+                    **종료 요청 중만 글자를 하나 더 받는다**(문서: *"글자는 그때만 한 줄
+                    선다"*). 얼굴의 점선 테는 "확정되지 않았다"까지만 말하고, **무엇을
+                    기다리는 중인지**는 말하지 못한다. 그 사실이 `stopAckedAt` 이 아직
+                    `null` 이라는 것이라, 문구가 그것을 그대로 적는다 — 러너가 못 본 것이지
+                    요청이 실패한 것이 아니다.
+
+                    `warning` 인 이유: 나를 막지 않는다(강조색 예산, 규칙 04). 그리고 고장도
+                    아니다 — `danger` 로 두면 실패와 같은 무게로 읽힌다.
+                  */}
+                  {stopping && (
+                    <p
+                      data-testid={`agent-stopping-${a.handle}`}
+                      className="mt-1 whitespace-normal text-[11px] text-warning"
+                    >
+                      멈추는 중 · 러너가 아직 못 봤다
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/*
+                **▶ · ↻ · ■ 는 카드와 다른 동작이다.** 카드를 누르면 설정이 열리고 이것을
+                누르면 러너가 뜨거나 물러난다 — 겹쳐 두면 우연히 눌린다. 그래서 카드 위에
+                따로 얹는다. 정상(`running`·`adopted`)에는 **평소** 아무것도 없다: 정상이
+                기본값이므로 표시를 붙이지 않는다(40개 중 38개가 그 모습이면 화면이 조용하다).
+                아래 `■` 가 그 규칙을 지키면서 손잡이를 더하는 방법이다 — 평소 `opacity-0`.
+
+                **멈추는 중에는 아무 손잡이도 없다**(목업 2쪽 하단 세 번째 칸). 두 곳이 각자
+                그것을 아는 것이 아니라 위쪽 `stopping`·`canStop` 두 값이 한 번씩 정했다:
+                `face` 가 `ok` 라 아래 `▶`·`↻` 조건에 안 들고, `canStop` 이 `stopping` 을
+                빼므로 `■` 도 안 선다.
               */}
               {/* `#443`: `unknown` 에는 ▶ 를 **달지 않는다.** ▶ 는 "눌러서 켜라"인데,
                   지금 도는지 모르는 것을 켜라고 권하면 이미 도는 러너를 하나 더 띄우게
@@ -316,6 +793,36 @@ export function AgentGrid<T extends AgentCardSubject>({
                   onClick={(e) => { e.stopPropagation(); onRelaunch(a); }}
                 >
                   <span aria-hidden="true">{face === 'failed' ? '\u21bb' : '\u25b6'}</span>
+                </button>
+              )}
+
+              {/*
+                ## `■` — 평소에는 **없는 것과 같다** (목업 2쪽 하단 두 번째 칸)
+
+                문서가 이 비대칭에 값을 매겼다: *"멈추기는 훑는 동작이 아니다. 지금 켤 수
+                있는 것이 몇 개인지는 스캔 한 번에 와야 하지만(그래서 `▶` 는 늘 보인다),
+                멈출 것은 이미 고른 다음에 찾는다."* 그래서 `▶`·`↻` 가 쓰는 `opacity-50`
+                (평소 옅게 보임)이 아니라 **`opacity-0`**(평소 안 보임)이다.
+
+                **대가는 마우스가 없으면 안 보이는 것**이고, 그 대가를 키보드에서 치르지
+                않는다 — `GLYPH_FOCUS` 가 `focus-visible:opacity-100` 을 이미 갖고 있다.
+                그 상수가 만들어진 이유가 정확히 이것이었다(그 주석: *"평소 `opacity-50` 으로
+                숨어 있다 … 키보드로 격자를 훑는 사람은 카드와 이 버튼 중 어디에 서 있는지
+                알 수 없다"*). 여기서는 숨는 정도가 더 깊으니 그 필요도 더 크다.
+
+                `▶`·`↻` 와 배타적이다: 조건이 `face === 'ok'`(`canStop`)이고 그쪽은
+                `face !== 'ok'` 라 한 카드에 둘이 함께 서는 경우가 없다.
+              */}
+              {canStop && onStop && (
+                <button
+                  data-testid={`agent-stop-${a.handle}`}
+                  aria-label={`${a.handle} 멈추기`}
+                  className={`absolute left-1/2 top-0 flex ${s.glyph} -translate-x-1/2 items-center
+                              justify-center rounded-full leading-none text-fg opacity-0 transition
+                              group-hover:opacity-100 ${GLYPH_FOCUS}`}
+                  onClick={(e) => { e.stopPropagation(); onStop(a); }}
+                >
+                  <span aria-hidden="true">{'\u25a0'}</span>
                 </button>
               )}
             </div>

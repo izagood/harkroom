@@ -6,6 +6,9 @@ import {
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { staleRunners } from '../../lib/runnerVersions';
+// 경과 계산은 `lib/` 한 벌이다 — 카드도 같은 값을 쓰는데 그쪽은 이 파일을 import 할 수
+// 없다(순환). `lastTurnLabel` 은 그 위에 접두만 붙인다(아래 그 함수 주석).
+import { lastTurnAgo } from '../../lib/lastTurn';
 // `runnerStatusLabel` 을 **설명 문구에도** 쓴다 — 상태 이름을 이 파일이 제 손으로 적으면
 // `RunnerStatus.tsx` 가 바뀔 때 여기만 낡는다. `external` → `adopted`(`#482`) 가 정확히
 // 그렇게 어긋났다.
@@ -61,27 +64,21 @@ const PLANNED = ['cursor', 'goose', 'amp', 'devin'];
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 /**
- * "마지막 활동: N분 전"(#176). `null` 은 **'활동 없음'**이다 — '죽었다'가 아니다.
- * murmur 는 러너 프로세스를 보지 못하므로(docs/design.md §1 외부 접속형) 한 번도 턴을
- * 돌리지 않았다는 것과 죽었다는 것을 구분할 수단이 없고, 구분할 수 없는 것을 단정하면
- * 그것이 §4 가 금지하는 거짓 신호다. 오래된 값도 '멈췄다'가 아니다 — 아무도 부르지
- * 않았으면 활동이 없는 것이 정상이다.
+ * "마지막 활동: N분 전"(`#176`). **접두만 붙이는 껍데기다** — 계산과 규율(`null` 을
+ * '없음'으로 말하는 것, 미래 시각을 '방금'으로 뭉개는 것)은 `lib/lastTurn.ts` 에 있다.
  *
- * 절대 시각을 그대로 쓰지 않는 이유: 운영자가 알고 싶은 것은 "얼마나 됐나"이고, 그것을
- * 사람이 시계와 뺄셈으로 계산하게 만들 이유가 없다. 대신 title 로 절대 시각을 함께 준다.
+ * 왜 나눴나: `docs/desktop-agent-cards.pdf` 2쪽이 이 값을 **카드에도** 올렸는데, 카드는
+ * `활동` 라벨을 왼쪽 칸에 이미 세워 두므로 접두가 붙으면 `활동  마지막 활동: 11분 전` 이
+ * 된다. 그리고 `AgentGrid` 는 이 파일에서 함수를 가져올 수 없다 — 이 파일이 그것을
+ * import 하므로 순환이 된다. 그 두 이유가 `lib/lastTurn.ts` 주석에 적혀 있다.
+ *
+ * **이름과 반환값은 그대로 남긴다.** 읽는 곳이 셋이고(상세 · `Profile` · 회귀선
+ * `agentActivity.test.tsx`) 그 문구는 `#176` 이 정한 것이다 — 계산을 옮기면서 문구까지
+ * 바꾸면 이 변경이 만지지 않아야 할 두 화면을 함께 건드린다.
  */
 export function lastTurnLabel(iso: string | null, now: number = Date.now()): string {
-  if (iso === null) return '활동 없음';
-  const ms = now - new Date(iso).getTime();
-  // 미래 시각은 서버가 now() 로 찍으므로 정상적으로는 오지 않는다(러너가 보낸 값을 저장하지
-  // 않는 이유가 그것이다). 그래도 시계 보정이나 왕복 지연으로 음수가 될 수 있어, "N분 후"
-  // 같은 말을 만들지 않고 '방금'으로 뭉갠다.
-  const mins = Math.floor(ms / 60_000);
-  if (mins < 1) return '마지막 활동: 방금';
-  if (mins < 60) return `마지막 활동: ${mins}분 전`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `마지막 활동: ${hours}시간 전`;
-  return `마지막 활동: ${Math.floor(hours / 24)}일 전`;
+  const ago = lastTurnAgo(iso, now);
+  return iso === null ? '활동 없음' : `마지막 활동: ${ago}`;
 }
 
 interface Draft {
@@ -549,6 +546,35 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               `러너를 띄우지 못했다: ${err instanceof Error ? err.message : String(err)}`,
             ));
           }}
+          /*
+            **`■` 가 부르는 것**(`docs/desktop-agent-cards.pdf` 2쪽 하단). 상세의 `중지`
+            버튼과 **같은 API** 다(`requestAgentStop`) — 격자에서 누르는 것과 상세에서
+            누르는 것이 다른 일을 하면 사람이 어느 쪽을 믿을지 고르게 된다.
+
+            권한 술어는 `▶` 와 같은 것을 본다: 러너를 띄울 수 있는 사람이 멈출 수도 있다.
+            위 `onRelaunch` 와 같은 이유로 콜백 **안에서** 거른다 — 이 화면은 `canRelaunch`
+            를 넘기지 않는 것이 계약이고(그 prop 주석), 여기만 술어를 넘기면 이 변경이
+            건드리지 않아야 할 `▶` 의 모양까지 바꾼다.
+
+            **목록만 갈아끼운다.** 상세의 `requestStop` 은 응답을 `setSelected` 에도 넣는데
+            여기서는 상세를 안 열고 있다(`view === 'grid'`). 그리고 이 갱신이 위 폴링(`#428`)
+            을 켜지 않는다 — 그 폴은 `selected` 를 보고, 격자에서 멈춘 카드는 `selected` 가
+            아니다. 카드의 `멈추는 중` 표시는 이 응답이 담은 `stopRequestedAt` 하나로 서고,
+            수령 뒤 사라지는 것은 사람이 상세를 열거나 화면을 다시 열 때 갱신된다 — 격자
+            전체를 5초마다 다시 읽는 것은 이 변경의 범위가 아니다(`#428` 이 그 범위를 상세
+            하나로 좁힌 근거가 그 주석에 있다).
+          */
+          onStop={(a) => {
+            if (!canRelaunchAgent(a, myId ? { id: myId, isAdmin } : null)) return;
+            void getController().requestAgentStop(a.id)
+              .then((updated) => setAgents(
+                (prev) => prev.map((x) => (x.id === updated.id ? updated : x)),
+              ))
+              .catch(() => setError('종료를 요청하지 못했다'));
+          }}
+          /* 버전 칩의 기준값. `StaleRunnerBar` 가 읽는 그 값이다 — 띠와 카드가 같은 기준을
+             봐야 "3대"가 격자에서 어느 셋인지 맞는다(문서 2쪽 「러너 버전」). */
+          appVersion={appVersion}
         />
       </div>
     );
