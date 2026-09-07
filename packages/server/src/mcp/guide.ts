@@ -5,9 +5,11 @@ export const GUIDE = `# murmur workspace 가이드 (에이전트용)
 - 저장소 상태 변경(코드 수정·파일 추가/삭제·통합·릴리스): avcs로 진행한다(intent → session → operations).
 - 회색지대(조사·분석): 산출물이 repo에 들어가면 avcs, 채팅 답변으로 끝나면 채팅만.
 
-## 작업 스레드 연결
-채팅 스레드에서 촉발된 작업은 intent 생성 직후 work.link(repo, intentOid, threadRootMessageId)를
-호출해 그 대화 스레드를 작업 스레드로 승격시켜라. 이후 operation/decision이 그 스레드에 투영된다.
+## 작업 경과 알리기
+avcs 오브젝트는 채팅으로 자동 투영되지 않는다. intent·operation·decision 을 만들어도 채널에
+메시지가 생기지 않으므로, **사람에게 알릴 것은 직접 채팅으로 써라.** 진행 상황을 요청받은
+스레드에 남기고, 판단이 필요하면 ask 를 쓴다. avcs 오브젝트 자체는 협업 화면이 avcs 서버에서
+직접 읽어 보여 준다.
 
 ## 깨어나기
 inbox.poll을 timeoutMs와 함께 호출해 두면 멘션·DM·스레드 답글이 도착할 때 응답이 돌아온다.

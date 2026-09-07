@@ -1,9 +1,8 @@
-import type { Pool, PoolClient } from 'pg';
+import type { Pool } from 'pg';
 import type { ProjectionRuntime } from '@murmur/shared';
 import { emitEvent } from '../events.js';
 import { listBoundRepos } from '../services/channels.js';
-import { lockChannelForSeq } from '../services/messages.js';
-import type { AvcsLogEntry, AvcsServerClient } from './client.js';
+import type { AvcsServerClient } from './client.js';
 
 /**
  * 워커가 내보내는 상태(#267). `ProjectionRuntime`(공유 계약) + `connected`.
@@ -18,28 +17,47 @@ export type ProjectionWorkerStatus = ProjectionRuntime & { connected: boolean };
 export interface ProjectionDeps {
   pool: Pool;
   avcs: AvcsServerClient;
-  systemAccountId: string;
 }
 
-export async function ensureSystemAccount(pool: Pool): Promise<string> {
-  const res = await pool.query(
-    `insert into account (handle, display_name, kind) values ('murmur', 'murmur', 'agent')
-     on conflict (handle) do update set display_name = excluded.display_name
-     returning id`,
-  );
-  return res.rows[0].id;
-}
-
-async function actorLabel(client: PoolClient, keyId: string | null): Promise<string> {
-  // 서명자가 없는 객체(checkpoint·release 등)와 모르는 키로 서명된 객체는 다르다.
-  // 둘 다 '외부 작업자'로 적으면 "서명이 없다"가 "외부에서 왔다"는 주장으로 바뀐다.
-  if (!keyId) return '작성자 미상';
-  const res = await client.query(
-    `select a.handle from account_key k join account a on a.id = k.account_id where k.key_id = $1`,
-    [keyId],
-  );
-  return res.rowCount ? `@${res.rows[0].handle}` : `외부 작업자(${keyId})`;
-}
+/**
+ * ## 이 워커가 더 이상 하지 않는 일 — avcs 객체를 채널 메시지·스레드로 만드는 것
+ *
+ * murmur 의 자리는 `avcs ↔ avcs-server ↔ avcshub` 에서 avcshub 자리다. 코드 관리·협업은
+ * avcs 를 통해서 하고, murmur 는 그 제안·충돌·결정을 **보는 자리**다.
+ *
+ * 그런데 이 워커는 다른 것을 했다: `intent` 를 스레드 뿌리로 세우고 `operation`·`decision`·
+ * `evidence` 를 그 아래 답글로, `checkpoint`·`release`·`finalize` 를 채널 메시지로 붙였다.
+ * 즉 거버넌스 객체를 채팅 대화로 **번역**했고, 그것은 avcshub 를 대신하는 일이 아니었다.
+ * 스레드는 사람이 쓰는 자리이지 avcs 로그의 표현 형식이 아니다. 협업은 별도 탭이 맡고,
+ * 그 탭은 여기서 남긴 재료(`active_lease`)와 `client.ts`(`fetchSince`·`waitForChange`)를
+ * 직접 읽는다 — 중간에 메시지로 바꿔 놓는 단계가 필요하지 않다.
+ *
+ * **남긴 것과 그 이유:**
+ * - `active_lease` 투영 — 협업 탭이 충돌 판정에 쓸 재료다. 누가 어떤 경로를 언제까지
+ *   잡고 있는지는 avcs 로그를 처음부터 접어야 알 수 있는 상태값이고, 그 접기를 여기서
+ *   한 번 해 두는 것이 이 워커가 남는 이유다.
+ * - `projection_cursor` — 어디까지 봤는지. lease 를 접으려면 로그를 순서대로 한 번씩
+ *   봐야 하고, 커서 없이는 재기동마다 처음부터 다시 접는다.
+ * - 커서 전진 규칙·백오프·repo 단위 격리 — lease 만 남아도 그대로 필요하다. 특히
+ *   "투영할 게 없어도 커서는 전진한다"는 lease 아닌 객체가 대다수가 된 지금 더 중요하다.
+ *
+ * 되돌리려면 `work_thread` 테이블과 `message_avcs_oid` 유니크 인덱스를 되살려야 한다
+ * (`040_drop_thread_projection.sql` 이 지운다).
+ *
+ * **`ensureSystemAccount` 을 함께 지운 판단:** 그 함수는 `murmur` 핸들의 agent 계정을
+ * 만들어 투영 메시지의 `author_id` 로 쓰는 것이 유일한 용도였고, 다른 호출자는 없었다
+ * (유일하게 남은 언급은 `metricsEndpoint.test.ts` 인데, 그것은 "러너 없는 agent 계정은
+ * 지표에서 빠진다"를 확인하려고 마침 손에 있던 계정을 쓴 것이라 그 성질에 `murmur` 라는
+ * 이름이 필요하지 않다). 메시지를 만들지 않으면 작성자로 세울 것이 없으므로 계정을
+ * 만들 이유가 사라진다.
+ *
+ * 다만 **이미 만들어진 계정 행은 마이그레이션으로 지우지 않는다.** `message.author_id` 는
+ * `not null references account(id)` 라서, 과거에 투영된 `system` 메시지가 하나라도 있는
+ * DB 에서 그 계정을 지우면 FK 위반으로 터진다 — 그 메시지를 함께 지우는 것 말고는 길이
+ * 없고, 그것은 기록을 지우는 별개의 결정이다. 그래서 운영 중인 DB 에는 이 계정이 남고,
+ * 새 DB 에는 애초에 생기지 않는다. 둘 다 맞다: 계정은 과거 메시지의 작성자라는 뜻이고,
+ * 작성자가 필요한 과거가 없으면 계정도 필요 없다.
+ */
 
 export class ProjectionWorker {
   private running = false;
@@ -65,8 +83,17 @@ export class ProjectionWorker {
     return { ...this.runtime };
   }
 
-  async runOnce(repo: string, channelId: string): Promise<number> {
-    const { pool, avcs, systemAccountId } = this.deps;
+  /**
+   * `repo` 하나를 커서부터 따라잡는다. 돌려주는 수는 **읽은 로그 엔트리 수**이고
+   * 투영한 것의 수가 아니다 — 대부분의 엔트리는 lease 가 아니라서 아무것도 남기지 않는다.
+   *
+   * 채널 인자를 받지 않는다. 예전에는 이 자리에서 메시지를 만들었기 때문에 어느 채널에
+   * 넣을지 알아야 했지만, `active_lease` 는 `(repo, path, actor_key_id)` 로만 키가 잡힌다.
+   * 채널을 계속 받으면 "repo 는 채널 하나에만 바인딩된다"는 제약이 필요 없어진 뒤에도
+   * 인자에 남아, 읽는 사람에게 lease 가 채널에 속한 것처럼 보인다.
+   */
+  async runOnce(repo: string): Promise<number> {
+    const { pool, avcs } = this.deps;
 
     // 아웃바운드 HTTP는 트랜잭션(및 그 안의 pool 커넥션 + row lock) 밖에서 수행한다.
     // avcs 서버가 느려도 채팅 API용 pool 커넥션을 굶기지 않기 위함.
@@ -76,16 +103,18 @@ export class ProjectionWorker {
     // 투영할 게 없어도 커서는 전진해야 한다. avcs 로그에는 투영 대상이 아닌 객체(blob·session·
     // view …)가 섞여 있고, 그것들만 담긴 배치에서 커서를 세워두면 waitForChange가 영원히
     // "변경됨"을 돌려주며 백오프 없는 폴 루프가 된다. next === since면 진짜 새 게 없다.
+    //
+    // 스레드 투영을 걷어낸 뒤 이 성질은 **예외가 아니라 통상**이 됐다: 이제 lease 만
+    // 남기므로 intent·operation·decision 이 가득한 배치도 남기는 것 없이 지나간다.
     if (!entries.length && next <= since) return 0;
 
     const client = await pool.connect();
     try {
       await client.query('begin');
-      // 이 트랜잭션도 `message` 에 insert 하므로 seq 를 발급받는다(#523). postMessage 와
-      // **같은 락**을 잡아야 두 경로 사이에서도 발급 순서 == 커밋 순서가 유지된다.
-      // 여기를 빼면 사람의 발화와 avcs 투영이 겹치는 순간에 결함이 그대로 되살아난다 —
-      // 이 트랜잭션은 배치 하나를 통째로 처리하므로 특히 길다.
-      await lockChannelForSeq(client, channelId);
+      // **`#523` 의 seq 락은 여기서 필요 없다.** 그 락은 "이 트랜잭션도 `message` 에
+      // insert 하므로"가 근거였는데, 스레드 투영을 걷어낸 뒤 이 경로는 **메시지를 만들지
+      // 않는다** — `active_lease` upsert 뿐이라 seq 를 발급받을 일이 없다. 근거가 사라진
+      // 락을 남기면 배치 하나를 처리하는 이 긴 트랜잭션이 채널 발화를 이유 없이 막는다.
       const cur = await client.query(`select last_log_index from projection_cursor where repo = $1 for update`, [repo]);
       const currentSince: number = cur.rowCount ? Number(cur.rows[0].last_log_index) : 0;
       if (currentSince !== since) {
@@ -94,97 +123,30 @@ export class ProjectionWorker {
         return 0;
       }
 
-      const emitted: { message: import('@murmur/shared').MessageRow }[] = [];
       let leaseChanged = false;
 
-      const insertSystem = async (
-        body: string, oid: string, avcsType: string, threadRootId: string | null,
-      ): Promise<string | null> => {
-        const res = await client.query(
-          `insert into message (channel_id, thread_root_id, author_id, body, kind, meta)
-           values ($1, $2, $3, $4, 'system', $5)
-           on conflict do nothing
-           returning id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
-             author_id as "authorId", body, kind, meta, created_at as "createdAt"`,
-          [channelId, threadRootId, systemAccountId, body, JSON.stringify({ repo, oid, avcsType })],
-        );
-        if (res.rowCount) emitted.push({ message: res.rows[0] });
-        return res.rowCount ? res.rows[0].id : null;
-      };
-
-      const threadRootFor = async (intentOid: string | null): Promise<string | null> => {
-        if (!intentOid) return null;
-        const res = await client.query(
-          `select thread_root_message_id from work_thread where repo = $1 and intent_oid = $2`,
-          [repo, intentOid],
-        );
-        return res.rowCount ? res.rows[0].thread_root_message_id : null;
-      };
-
-      // operation은 배치 내 intentOid별 병합
-      const opGroups = new Map<string, AvcsLogEntry[]>();
-
+      // `lease` 만 접는다. `intent`·`operation`·`decision`·`evidence`·`integration`·
+      // `checkpoint`·`release`·`finalize` 는 **의도적으로 지나친다** — 그 객체들을 보는
+      // 자리는 협업 탭이고, 그 탭은 avcs 로그를 직접 읽는다. 여기서 메시지로 바꿔 두면
+      // 같은 사실이 두 곳에 다른 모양으로 있게 되고, 채팅 쪽 사본이 원본을 가린다.
+      // switch 를 남기지 않은 이유가 이것이다: 통과시킬 타입을 나열해 두면 다음 사람이
+      // "여기에 case 를 더하면 되는구나"로 읽고, 걷어낸 구조가 조용히 돌아온다.
       for (const entry of entries) {
-        const actor = await actorLabel(client, entry.actorKeyId);
-        switch (entry.type) {
-          case 'intent': {
-            const id = await insertSystem(`${actor} intent: ${entry.summary}`, entry.oid, 'intent', null);
-            if (id) {
-              await client.query(
-                `insert into work_thread (repo, intent_oid, thread_root_message_id)
-                 values ($1, $2, $3) on conflict (repo, intent_oid) do nothing`,
-                [repo, entry.intentOid ?? entry.oid, id],
-              );
-            }
-            break;
-          }
-          case 'operation': {
-            const key = entry.intentOid ?? '(none)';
-            opGroups.set(key, [...(opGroups.get(key) ?? []), entry]);
-            break;
-          }
-          case 'decision':
-          case 'evidence': {
-            const root = await threadRootFor(entry.intentOid);
-            await insertSystem(`${actor} ${entry.type}: ${entry.summary}`, entry.oid, entry.type, root);
-            break;
-          }
-          case 'integration':
-          case 'checkpoint':
-          case 'release':
-          case 'finalize': {
-            await insertSystem(`${actor} ${entry.type}: ${entry.summary}`, entry.oid, entry.type, null);
-            break;
-          }
-          case 'lease': {
-            if (!entry.lease) break;
-            if (entry.lease.released) {
-              await client.query(
-                `delete from active_lease where repo = $1 and path = $2 and actor_key_id = $3`,
-                [repo, entry.lease.path, entry.actorKeyId ?? ''],
-              );
-            } else {
-              await client.query(
-                `insert into active_lease (repo, path, actor_key_id, expires_at)
-                 values ($1, $2, $3, $4)
-                 on conflict (repo, path, actor_key_id) do update set expires_at = excluded.expires_at`,
-                [repo, entry.lease.path, entry.actorKeyId ?? '', entry.lease.expiresAt],
-              );
-            }
-            leaseChanged = true;
-            break;
-          }
+        if (entry.type !== 'lease' || !entry.lease) continue;
+        if (entry.lease.released) {
+          await client.query(
+            `delete from active_lease where repo = $1 and path = $2 and actor_key_id = $3`,
+            [repo, entry.lease.path, entry.actorKeyId ?? ''],
+          );
+        } else {
+          await client.query(
+            `insert into active_lease (repo, path, actor_key_id, expires_at)
+             values ($1, $2, $3, $4)
+             on conflict (repo, path, actor_key_id) do update set expires_at = excluded.expires_at`,
+            [repo, entry.lease.path, entry.actorKeyId ?? '', entry.lease.expiresAt],
+          );
         }
-      }
-
-      for (const [intentOid, ops] of opGroups) {
-        const actor = await actorLabel(client, ops[0]!.actorKeyId);
-        const root = await threadRootFor(intentOid === '(none)' ? null : intentOid);
-        const representative = ops[ops.length - 1]!.oid;
-        const body = ops.length === 1
-          ? `${actor} operation: ${ops[0]!.summary}`
-          : `${actor} ${ops.length} operations: ${ops.map((o) => o.summary).join(', ')}`;
-        await insertSystem(body, representative, 'operation', root);
+        leaseChanged = true;
       }
 
       await client.query(
@@ -199,7 +161,8 @@ export class ProjectionWorker {
       this.runtime.lastAdvancedAt = Date.now();
       this.runtime.lastLogIndex = next;
 
-      for (const { message } of emitted) emitEvent({ type: 'message.created', message, audience: 'all' });
+      // `message.created` 는 더 이상 여기서 나가지 않는다 — 만드는 메시지가 없다.
+      // 남는 이벤트는 `lease.changed` 뿐이고, 그것이 곧 협업 탭을 깨우는 신호다.
       if (leaseChanged) emitEvent({ type: 'lease.changed', repo });
       return entries.length;
     } catch (err) {
@@ -226,10 +189,14 @@ export class ProjectionWorker {
          */
         this.runtime.lastPolledAt = Date.now();
         try {
+          // 따라갈 repo 목록은 계속 채널 바인딩에서 온다. lease 를 채널에 넣지 않게 된
+          // 뒤에도 이 출처가 맞다 — "이 저장소를 여기서 본다"는 선언은 사람이 채널에
+          // repo 를 붙이는 행위이고, 그 선언이 없는 저장소를 서버가 멋대로 폴링할
+          // 이유가 없다. 다만 이제 `channelId` 는 쓰지 않는다(`runOnce` 주석 참조).
           const bound = await listBoundRepos(this.deps.pool);
           // repo 단위 try/catch — 한 repo가 연속 실패해도 같은 사이클의 나머지 repo 처리를
           // 막지 않는다(감사 ⑥). 백오프는 단순화를 위해 사이클 전체에 한 번만 적용한다.
-          for (const { repo, channelId } of bound) {
+          for (const { repo } of bound) {
             try {
               // 폴링한 저장소를 남긴다 — 커서가 안 움직여도(조용한 저장소) 물어봤다는 사실이다.
               this.runtime.repo = repo;
@@ -239,7 +206,7 @@ export class ProjectionWorker {
               const since = cur.rowCount ? Number(cur.rows[0].last_log_index) : 0;
               const changed = await this.deps.avcs.waitForChange(repo, since, pollMs);
               this.runtime.connected = true;
-              if (changed) await this.runOnce(repo, channelId);
+              if (changed) await this.runOnce(repo);
             } catch (err) {
               this.runtime.connected = false;
               hadFailure = true;

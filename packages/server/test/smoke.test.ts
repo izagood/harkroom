@@ -4,7 +4,7 @@ import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { createFakeAvcs, type FakeAvcs } from './helpers/fakeAvcs.js';
 import { buildServer } from '../src/buildServer.js';
-import { ProjectionWorker, ensureSystemAccount } from '../src/avcs/projection.js';
+import { ProjectionWorker } from '../src/avcs/projection.js';
 import { listBoundRepos, channelMemberIds } from '../src/services/channels.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 
@@ -17,14 +17,22 @@ let worker: ProjectionWorker;
 beforeAll(async () => {
   ({ pool, stop } = await startTestDb());
   fake = createFakeAvcs();
-  worker = new ProjectionWorker({
-    pool, avcs: fake.client, systemAccountId: await ensureSystemAccount(pool),
-  });
+  worker = new ProjectionWorker({ pool, avcs: fake.client });
   app = await buildServer({ pool, getAvcsStatus: () => worker.status() });
 });
 afterAll(async () => { await app.close(); await stop(); });
 
-describe('smoke: mention → work → projection into linked thread', () => {
+/**
+ * 통합선의 시나리오가 바뀌었다. 예전 이름은 `mention → work → projection into linked thread`
+ * 였고, 마지막 칸이 "avcs 객체가 그 스레드에 답글로 붙는다"였다. 그 칸이 없어졌으므로
+ * 남은 것을 이어 붙인다: 사람이 멘션으로 요청하고, repo 바인딩이 실제로 읽히고, avcs
+ * 로그의 lease 가 상태로 접히고, DM 이 inbox 를 채운다.
+ *
+ * **investment 를 줄이지 않고 옮겼다.** 이 파일이 지키는 것은 개별 함수가 아니라 "여러
+ * 조각이 한 서버에서 실제로 이어져 있는가"이고, 그 성질은 그대로다 — 이어지는 조각의
+ * 목록이 바뀌었을 뿐이다.
+ */
+describe('smoke: mention → work → lease state', () => {
   it('runs the whole loop', async () => {
     const { token: adminToken, accountId: adminId } = await bootstrapAdmin(app);
     const { pat, accountId } = await createAgent(app, adminToken, 'worker1');
@@ -45,35 +53,41 @@ describe('smoke: mention → work → projection into linked thread', () => {
       headers: { authorization: `Bearer ${adminToken}` },
       payload: { body: '@worker1 fix the flaky test' },
     });
-    const rootId = ask.json().id as string;
+    expect(ask.statusCode).toBe(201);
 
-    // 2) 에이전트가 intent를 만들고 work.link한 상황을 재현 (REST로 work_thread 직접 upsert 대신
-    //    MCP 경유는 mcp.test.ts에서 검증했으므로 여기선 DB upsert)
-    await pool.query(
-      `insert into work_thread (repo, intent_oid, thread_root_message_id) values ('smoke-repo','int-1',$1)`,
-      [rootId],
-    );
-
-    // listBoundRepos가 실제로 채널-repo 바인딩을 읽어오는지 검증
+    // 2) listBoundRepos가 실제로 채널-repo 바인딩을 읽어오는지 검증 — 워커가 어느 저장소를
+    //    따라갈지 정하는 유일한 출처다.
     const bound = await listBoundRepos(pool);
     expect(bound).toEqual([{ repo: 'smoke-repo', channelId }]);
 
-    // 3) avcs 서버에 작업 오브젝트 도착 → 투영이 그 스레드로
+    // 3) avcs 서버에 작업 오브젝트 도착. intent·operation 은 지나가고 lease 만 접힌다 —
+    //    거버넌스 객체를 채팅으로 번역하지 않는다는 결정이 서버 전체에서도 성립하는지 본다.
     fake.push('smoke-repo', { oid: 'int-1', type: 'intent', actorKeyId: 'wk1', intentOid: 'int-1', summary: 'fix flaky test' });
     fake.push('smoke-repo', { oid: 'op-1', type: 'operation', actorKeyId: 'wk1', intentOid: 'int-1', summary: 'put_file test/x' });
-    await worker.runOnce('smoke-repo', channelId);
+    fake.push('smoke-repo', { oid: 'ls-1', type: 'lease', actorKeyId: 'wk1', intentOid: null, summary: 'lease test/x',
+      lease: { path: 'test/x.ts', expiresAt: new Date(Date.now() + 60_000).toISOString(), released: false } });
+    expect(await worker.runOnce('smoke-repo')).toBe(3);
 
-    const thread = await app.inject({
-      method: 'GET', url: `/channels/${channelId}/messages?thread=${rootId}`,
+    // lease 는 라우트로 보인다 — 협업 탭이 읽을 표면이 실제로 값을 준다.
+    const leases = await app.inject({
+      method: 'GET', url: '/leases', headers: { authorization: `Bearer ${adminToken}` },
+    });
+    const smokeLeases = (leases.json().leases as { repo: string; path: string }[])
+      .filter((l) => l.repo === 'smoke-repo');
+    expect(smokeLeases.map((l) => l.path)).toEqual(['test/x.ts']);
+
+    // 채널에는 avcs 발 시스템 메시지가 없다 — 사람이 쓴 요청 하나뿐이다.
+    const listed = await app.inject({
+      method: 'GET', url: `/channels/${channelId}/messages`,
       headers: { authorization: `Bearer ${adminToken}` },
     });
-    const bodies = thread.json().messages.map((m: { body: string }) => m.body);
-    expect(bodies.some((b: string) => b.includes('@worker1') && b.includes('operation'))).toBe(true);
+    const kinds = listed.json().messages.map((m: { kind: string }) => m.kind);
+    expect(kinds).toEqual(['user']);
 
     // 4) 커서가 유지되어 이전 엔트리는 재적용되지 않음
     fake.push('smoke-repo', { oid: 'd-1', type: 'decision', actorKeyId: 'wk1', intentOid: 'int-1', summary: 'resolved L1' });
-    const applied = await worker.runOnce('smoke-repo', channelId);
-    expect(applied).toBe(1); // 이전 2개(int-1, op-1)는 재적용되지 않음
+    const applied = await worker.runOnce('smoke-repo');
+    expect(applied).toBe(1); // 이전 3개는 재적용되지 않는다
 
     // 5) admin↔agent DM 생성 후 channelMemberIds가 실제 두 계정을 반환하는지 검증
     const dm = await app.inject({
