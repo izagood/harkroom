@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { MIN_ROOM_LEFT } from '../lib/prefs';
 
 /** 화살표 한 번에 구분선이 움직이는 거리. 사이드바 손잡이와 같은 보폭이다. */
 const STEP = 10;
@@ -21,12 +20,19 @@ const STEP = 10;
  * `absolute left-0` 으로 선다. 폭 계산도 `parentElement` 를 부모 패널로 읽으므로,
  * 이 컴포넌트는 반드시 폭을 지는 그 요소의 **직계 자식**이어야 한다.
  */
-export function PaneResizer({ label, width, min, max, onWidth }: {
+export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth }: {
   /** 접근성 이름. "무엇의" 너비인지 사람이 읽을 수 있어야 한다. */
   label: string;
   width: number;
   min: number;
   max: number;
+  /**
+   * 이 구분선 **왼쪽**에 반드시 남겨 둘 폭. 부품이 상수를 직접 읽지 않고 받는 이유는
+   * 구분선마다 왼쪽에 있는 것이 다르기 때문이다 — 스레드 왼쪽에는 대화만, 터미널 왼쪽에는
+   * 대화와 스레드가 있다. 하나로 뭉치면 터미널을 끌 때 스레드가 더는 줄 수 없는 폭까지
+   * 요구해 줄이 넘치고, 부모가 `overflow-hidden` 이라 그것이 조용히 잘린다.
+   */
+  minRoomLeft: number;
   onWidth: (next: number) => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -35,7 +41,8 @@ export function PaneResizer({ label, width, min, max, onWidth }: {
 
   /**
    * 이 패널이 커질 수 있는 진짜 상한. 상수(`max`)와 **왼쪽에 남은 자리** 중 작은 쪽이다
-   * — `MIN_ROOM_LEFT` 의 근거는 `prefs.ts` 에 적어 뒀다.
+   * — `minRoomLeft` 의 근거는 `prefs.ts` 의 `MIN_CHANNEL_WIDTH` 에 적어 뒀다. 넓은
+   * 화면에서는 보통 이쪽이 상한을 정한다: `max` 는 마지막 난간일 뿐이다.
    *
    * jsdom 에는 레이아웃 엔진이 없어 모든 사각형이 0 이다. 그때 이 식을 그대로 쓰면 상한이
    * 음수가 되어 **모든 드래그가 최소 폭으로 붙는다** — 그래서 줄의 폭이 0 이면 기하
@@ -49,8 +56,15 @@ export function PaneResizer({ label, width, min, max, onWidth }: {
     if (rowRect.width === 0) return max;
     const paneRect = pane.getBoundingClientRect();
     const roomLeft = paneRect.left - rowRect.left;
-    return Math.min(max, Math.max(min, paneRect.width + roomLeft - MIN_ROOM_LEFT));
-  }, [max, min]);
+    /*
+     * `paneRect.width` 를 하한으로 깐다 — 왼쪽 이웃이 **이미** 약속한 폭보다 좁을 수
+     * 있고(기본값 셋이 좁은 화면에서 이미 그렇다), 그때 이 식은 지금 폭보다 작은 값을
+     * 낸다. 그것을 상한으로 쓰면 왼쪽으로 끌었는데 패널이 갑자기 줄어든다. 이 제약의
+     * 일은 이웃을 **더** 침범하지 못하게 하는 것이지 지금 폭을 되돌리는 것이 아니다.
+     */
+    const room = Math.max(paneRect.width, paneRect.width + roomLeft - minRoomLeft);
+    return Math.min(max, Math.max(min, room));
+  }, [max, min, minRoomLeft]);
 
   useEffect(() => {
     const onMove = (e: MouseEvent): void => {
