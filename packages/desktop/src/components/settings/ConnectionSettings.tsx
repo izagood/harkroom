@@ -1,7 +1,49 @@
 import { useActiveStore } from '../../state/communities';
 import { getController } from '../../state/controller';
 import { usePrefsStore } from '../../state/prefsStore';
+import { BANNER_TEXT_TONE, projectionBanner } from '../../lib/projectionBanner';
+import { minutesAgo } from '../../lib/minutesAgo';
 import { ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
+
+/**
+ * 투영이 지금 어떤 사정인가를 **이 화면에서** 말한다.
+ *
+ * ## 왜 여기인가
+ *
+ * 화면 위쪽 띠(`ProjectionBanner`)가 고장을 말하면서 `설정 열기` 를 내민다. 그 문 뒤에
+ * 투영에 대한 말이 한 마디도 없으면 문은 열리지만 **아무 일도 없는 항목**이 된다
+ * (`docs/design.md` §4). 실제로 그랬다(실측 2026-09-07): 띠를 눌러 들어온 설정 화면에
+ * 투영이라는 낱말이 없었다.
+ *
+ * `Connection` 이 그 방인 이유: 이 화면은 "이 앱이 말을 거는 서버 하나" 를 말하는
+ * 자리고, 투영은 **그 서버가 avcs 를 향해 돌리는 것**이다.
+ *
+ * ## 판정은 다시 하지 않는다
+ *
+ * 사정을 가르는 것은 `projectionBanner()` 한 벌이다(그 파일의 주석: 두 자리가 각자
+ * 판정하면 반드시 갈라진다). 이 행은 **세 번째 판정자가 아니라 세 번째 독자**다.
+ * `null` 은 "정상" 이라는 뜻이고, 그때만 이 행이 자기 문장을 쓴다 — 정상과 고장이 같은
+ * 말이면 이 행은 아무것도 알려 주지 않는다.
+ */
+function ProjectionRow() {
+  const status = useActiveStore((s) => s.projectionStatus);
+  const error = useActiveStore((s) => s.projectionStatusError);
+  const banner = projectionBanner({ status, error, minutesAgo });
+
+  // 정상이다. **무엇을 보고 있는지**를 말한다 — "Running" 만으로는 어느 저장소를 향해
+  // 돌고 있는지 알 수 없고, 엉뚱한 repo 를 보고 있는 것이 이 화면에서 안 보인다.
+  const value = banner === null
+    ? <span data-testid="projection-row">{status?.repo ?? '—'} · 투영이 돌고 있다</span>
+    : (
+      <span data-testid="projection-row" className={BANNER_TEXT_TONE[banner.tone]}>
+        {banner.text}
+        {/* 원문은 길 수 있다. 잘라 보여 주되 `title` 로 전문을 남긴다 — 띠와 같은 규칙. */}
+        {banner.detail && <span className="ml-2 opacity-80" title={banner.detail}>{banner.detail}</span>}
+      </span>
+    );
+
+  return <ReadonlyRow label="Projection" value={value} />;
+}
 
 export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
   const connected = useActiveStore((s) => s.connected);
@@ -17,6 +59,8 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
         {/* #165: 이 행은 계속 **활성 커뮤니티**를 보여 준다. 이 기기가 아는 서버 전부를
             보는 자리는 Communities 다 — 여기서 목록을 또 그리면 같은 사실이 두 곳에 산다. */}
         <ReadonlyRow label="Server" value={baseUrl} />
+        {/* #488 A3-a 후속: 투영 띠의 `설정 열기` 가 지목하는 자리다. */}
+        <ProjectionRow />
         <ReadonlyRow
           label="Realtime connection"
           value={

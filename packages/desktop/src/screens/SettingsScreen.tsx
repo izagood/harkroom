@@ -13,11 +13,11 @@ import { ProfileSettings } from '../components/settings/ProfileSettings';
 import { SkillsSettings } from '../components/settings/SkillsSettings';
 import { TeamsSettings } from '../components/settings/TeamsSettings';
 import { UpdatesSettings } from '../components/settings/UpdatesSettings';
-import { SETTINGS_GROUPS, type SectionId } from '../components/settings/sections';
+import { DEFAULT_SECTION, SETTINGS_GROUPS, isSectionId, type SectionId } from '../components/settings/sections';
 import { useActiveStore } from '../state/communities';
 import { WindowDragStrip } from '../components/WindowDragStrip';
 
-export function SettingsScreen({ initialSection = 'profile', targetId, onBack, onSignOut, onCommunitiesEmpty }: {
+export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onBack, onSignOut, onCommunitiesEmpty }: {
   initialSection?: SectionId;
   targetId?: string;
   onBack(): void;
@@ -29,7 +29,15 @@ export function SettingsScreen({ initialSection = 'profile', targetId, onBack, o
    */
   onCommunitiesEmpty(): void;
 }) {
-  const [section, setSection] = useState<SectionId>(initialSection);
+  /**
+   * **빈 화면은 답이 아니다.** 목차에 없는 값이 들어오면 아래 분기가 전부 거짓이 되어
+   * 본문이 통째로 빈다 — 사용자는 "설정이 안 열린다" 로 겪는다(실측 2026-09-07: 투영
+   * 띠가 섹션 자리에 `MouseEvent` 를 흘렸다). 부르는 쪽을 고치는 것으로는 **다음** 배선
+   * 실수를 막지 못하므로, 이 화면이 모르는 섹션을 기본 섹션으로 되돌린다.
+   */
+  const [section, setSection] = useState<SectionId>(
+    isSectionId(initialSection) ? initialSection : DEFAULT_SECTION,
+  );
   const me = useActiveStore((s) => s.me);
 
   return (

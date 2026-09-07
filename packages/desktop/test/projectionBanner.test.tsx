@@ -11,6 +11,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import type { ProjectionStatus } from '@murmur/shared';
 import { useActiveStore } from '../src/state/communities';
+import type { SectionId } from '../src/components/settings/sections';
 import { ProjectionBanner } from '../src/components/ProjectionBanner';
 import { projectionBanner } from '../src/lib/projectionBanner';
 
@@ -21,7 +22,7 @@ const status = (over: Partial<ProjectionStatus>): ProjectionStatus => ({
 beforeEach(() => useActiveStore.getState().reset());
 afterEach(() => cleanup());
 
-const mount = (props: { onOpenSettings?: () => void } = {}) =>
+const mount = (props: { onOpenSettings?: (section?: SectionId) => void } = {}) =>
   render(<ProjectionBanner onOpenSettings={props.onOpenSettings} />);
 
 describe('띠가 서는 사정', () => {
@@ -118,6 +119,20 @@ describe('고치는 문과 닫기', () => {
     mount({ onOpenSettings });
     fireEvent.click(screen.getByTestId('projection-open-settings'));
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * **띠는 갈 곳을 지목해야 한다.** `onClick={onOpenSettings}` 로 두면 React 가 첫 인자로
+   * `MouseEvent` 를 넘기고, 그 객체가 `App` 에서 `section` 자리에 앉아 설정 화면의 모든
+   * 분기를 거짓으로 만든다 — 사용자가 본 것이 그것이다: 설정을 열면 **아무것도 없다**.
+   * 그래서 이 회귀선은 "불렸다"가 아니라 **"무엇으로 불렸나"** 를 묻는다.
+   */
+  it('갈 곳을 지목해서 연다 — 이벤트 객체를 흘리지 않는다', () => {
+    const onOpenSettings = vi.fn();
+    useActiveStore.getState().set({ projectionStatus: status({ state: 'unconfigured', configured: false }) });
+    mount({ onOpenSettings });
+    fireEvent.click(screen.getByTestId('projection-open-settings'));
+    expect(onOpenSettings).toHaveBeenCalledWith('connection');
   });
 
   it('열 수 없는 사람에게는 그 문을 그리지 않는다', () => {
