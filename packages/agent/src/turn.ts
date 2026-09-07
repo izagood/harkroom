@@ -77,6 +77,15 @@ export interface BuildTurnCommandOptions {
   murmurUrl: string;
   /** 개인 config.toml/MCP 를 상속하지 않는 Murmur 전용 Codex 상태 루트. */
   codexHome: string;
+  /**
+   * 이 턴을 돌릴 claude 계정의 `CLAUDE_CONFIG_DIR`(`claudeAccounts.ts`). **`null` 은 '계정
+   * 지정 없음'** 이고, 그때 자식은 시스템 기본(`~/.claude`)을 쓴다 — 계정 풀을 안 만든
+   * 러너의 정상 경로다.
+   *
+   * `codexHome` 과 대칭이지만 타입이 다른 이유: `codexHome` 은 러너가 언제나 만들어 두므로
+   * 빈 문자열이 곧 결함이지만(아래 검사가 그것을 던진다), 계정은 **없는 것이 정상**이다.
+   */
+  claudeConfigDir: string | null;
 }
 
 /** 멘션 턴(화면 앞에 사람이 없다)의 권한 매핑. 인터랙티브 턴은 아예 플래그를 안 준다(spec §6). */
@@ -397,7 +406,10 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
   return {
     command: preset.command,
     args,
-    env: childEnv(opts.pat, opts.harness === 'codex' ? opts.codexHome : null),
+    env: childEnv(opts.pat, {
+      codexHome: opts.harness === 'codex' ? opts.codexHome : null,
+      claudeConfigDir: opts.harness === 'claude-code' ? opts.claudeConfigDir : null,
+    }),
     stdinFile: opts.stdinFile ?? null,
   };
 }
@@ -436,7 +448,31 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
  * 없다. 근거 없이 지우면 하네스가 정상 동작에 쓰는 것을 뺏을 수 있다 — 전체 상속을 택한
  * `childEnv` 주석의 논리가 여기에도 그대로 적용된다. 새로 넣을 키는 실측을 먼저 하라.
  */
-export const HARNESS_ENV_DENYLIST = ['CLAUDE_CODE_CHILD_SESSION'] as const;
+/**
+ * **인증 주입 키 넷(2026-09-07).** `ANTHROPIC_API_KEY`·`ANTHROPIC_AUTH_TOKEN`·
+ * `CLAUDE_CODE_OAUTH_TOKEN`·`AWS_BEARER_TOKEN_BEDROCK` 는 claude 가 자격증명 저장소보다
+ * **먼저** 보는 입력이다. 하나라도 부모 env 에 있으면 아래 `CLAUDE_CONFIG_DIR` 계정 격리가
+ * **조용히** 무력해진다 — 계정을 바꿨는데 안 바뀌는 이번 결함의 다른 얼굴이다.
+ *
+ * 러너는 데몬 env 전체를 상속하고(`desktop/src/lib/runnerLauncher.ts` 의
+ * `daemon_spawn_runner` 는 `MURMUR_PAT`·`MURMUR_URL`·`PATH` 만 넘긴다) 데몬은 자기를 띄운
+ * 셸의 env 를 상속한다 — 즉 이 키가 어디서 들어올지 우리가 통제할 수 없다. 그래서 상속을
+ * 막는 쪽이 맞다.
+ *
+ * 실측 근거: Orca 도 claude 를 계정별 `CLAUDE_CONFIG_DIR` 로 띄우면서 정확히 이 넷을
+ * 지운다(`stripAuthEnv`). 같은 목적에 같은 목록이 필요하다는 독립 확인이다.
+ *
+ * **API 키로 러너를 돌리던 사람에게는 파괴적 변경이다.** 그러나 `config.ts` 가 이미
+ * "claude-code harness 는 claude CLI 의 자격증명을 쓰므로 API 키도 필요 없다"고 적어 뒀다 —
+ * 지원한 적 없는 경로다.
+ */
+export const HARNESS_ENV_DENYLIST = [
+  'CLAUDE_CODE_CHILD_SESSION',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'AWS_BEARER_TOKEN_BEDROCK',
+] as const;
 
 /**
  * PTY 자식에 넘길 env. 부모(러너) 전체를 물려주고 `MURMUR_PAT` 만 덮어쓴다.
@@ -462,7 +498,10 @@ export const HARNESS_ENV_DENYLIST = ['CLAUDE_CODE_CHILD_SESSION'] as const;
  * **전체 상속에는 예외가 하나 있다(#374)**: `HARNESS_ENV_DENYLIST` 의 키는 넘기지 않는다.
  * 그 목록과 각 키를 빼는 근거는 위 상수의 주석에 있다 — 지우려거든 거기부터 읽어라.
  */
-function childEnv(pat: string, codexHome: string | null): Record<string, string> {
+function childEnv(
+  pat: string,
+  homes: { codexHome: string | null; claudeConfigDir: string | null },
+): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) env[key] = value;
@@ -471,7 +510,11 @@ function childEnv(pat: string, codexHome: string | null): Record<string, string>
   // 조건을 섞으면 '전체 상속'이라는 규칙과 그 예외가 한 줄에 엉켜 둘 다 읽기 어려워진다.
   for (const key of HARNESS_ENV_DENYLIST) delete env[key];
   env.MURMUR_PAT = pat;
-  if (codexHome !== null) env.CODEX_HOME = codexHome;
+  if (homes.codexHome !== null) env.CODEX_HOME = homes.codexHome;
+  // **`null` 이면 키 자체를 넣지 않는다.** 빈 문자열을 넣으면 claude 가 그것을 경로로 읽어
+  // 엉뚱한 자리에 설정을 만든다 — "계정 지정 없음"은 부재로 표현해야 시스템 기본으로 떨어진다.
+  // 계정 풀을 안 만든 러너의 하위 호환이 이 한 줄에 걸려 있다(`claudeAccounts.ts`).
+  if (homes.claudeConfigDir !== null) env.CLAUDE_CONFIG_DIR = homes.claudeConfigDir;
   return env;
 }
 

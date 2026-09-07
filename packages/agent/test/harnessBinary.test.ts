@@ -45,6 +45,7 @@ function 계획(harness: (typeof RUNNABLE_HARNESSES)[number]): string {
     pat: 'murp_x',
     murmurUrl: 'https://murmur.example',
     codexHome: '/tmp/codex-home',
+    claudeConfigDir: null,
   }).command;
 }
 
