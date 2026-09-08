@@ -47,7 +47,7 @@ export function ConfirmDialog({ title, detail, confirmLabel, cancelLabel = 'Canc
       <div className="flex flex-col gap-3 p-4">
         {/* 겹창 제목은 이름줄단 15px — 화면 제목단(17px)은 화면 하나를 여는 자리에만 준다
             (`Composer` 의 예약 겹창과 같은 규칙). */}
-        <p className="text-[15px] font-medium text-fg">{title}</p>
+        <p className="text-name font-medium text-fg">{title}</p>
         {/* 대상 미리보기. 넘치면 잘린다 — 확인창은 메시지를 읽는 자리가 아니라
             "이것 맞나"를 알아보는 자리다. */}
         {detail !== undefined && (

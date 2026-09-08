@@ -20,7 +20,7 @@ export function SettingsPage({ title, description, children }: {
         내려가 제목과 본문의 비가 1.71 → 1.31 이 아니라, 그 비를 굵기(`font-bold`)와
         여백(`mb-8`)이 이미 나눠 지고 있었다.
       */}
-      <h2 className="text-[17px] font-bold text-fg">{title}</h2>
+      <h2 className="text-title font-bold text-fg">{title}</h2>
       <p className="mt-1 mb-8 text-fg-subtle">{description ?? ''}</p>
       {children}
     </div>
@@ -31,7 +31,7 @@ export function SettingsPage({ title, description, children }: {
 export function SettingsGroup({ title, children }: { title?: string; children: ReactNode }) {
   return (
     <section className="mb-8">
-      {title && <h3 className="mb-2 text-[13px] font-semibold text-fg-subtle">{title}</h3>}
+      {title && <h3 className="mb-2 text-body font-semibold text-fg-subtle">{title}</h3>}
       <div className="divide-y divide-border rounded-xl border border-border bg-surface-raised">
         {children}
       </div>
@@ -95,7 +95,7 @@ export function Toggle({ label, description, checked, disabled, onChange }: {
  * 입력칸 규칙이다 — 방금 친 글자를 다시 읽는 자리다. 라벨은 12px 이었고 4단 밖이었다.
  */
 const FIELD_BOX = 'w-full rounded border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
-const FIELD_LABEL = 'block text-[11px] font-medium text-fg-muted';
+const FIELD_LABEL = 'block text-meta font-medium text-fg-muted';
 
 /**
  * 라벨 + 입력 + 힌트 한 벌.
@@ -116,7 +116,7 @@ export function Field({ label, hint, tone = 'muted', children }: {
       <span className={FIELD_LABEL}>{label}</span>
       <span className="mt-1 block">{children}</span>
       {hint && (
-        <span className={`mt-1 block text-[11px] ${tone === 'warning' ? 'text-warning' : 'text-fg-subtle'}`}>
+        <span className={`mt-1 block text-meta ${tone === 'warning' ? 'text-warning' : 'text-fg-subtle'}`}>
           {hint}
         </span>
       )}
@@ -186,7 +186,7 @@ export function Segmented({ value, onChange, options, label }: {
             type="button"
             role="radio"
             aria-checked={on}
-            className={`flex-1 rounded-md px-3 py-1.5 text-[13px] font-medium ${
+            className={`flex-1 rounded-md px-3 py-1.5 text-body font-medium ${
               on ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:bg-surface-hover'
             }`}
             onClick={() => onChange(o.value)}
@@ -220,7 +220,7 @@ export function Button({ children, onClick, variant = 'secondary', disabled, typ
       type={type}
       disabled={disabled}
       onClick={onClick}
-      className={`rounded px-3 py-1.5 text-[13px] font-medium disabled:opacity-50 ${tone}`}
+      className={`rounded px-3 py-1.5 text-body font-medium disabled:opacity-50 ${tone}`}
     >
       {children}
     </button>

@@ -194,7 +194,7 @@ export function SidebarFind({ onOpenChannelDirectory }: {
           {hits.length === 0 && (
             // 빈 목록과 "안 찾아봤다" 를 구별한다 — `Directory.tsx` 의 세 상태 구분과 같은
             // 이유다. 여기서는 물어보는 중이 없다(스토어에 이미 다 있다) 그래서 둘뿐이다.
-            <li className="px-2 py-1.5 text-[11px] text-fg-subtle">찾는 것이 없다</li>
+            <li className="px-2 py-1.5 text-meta text-fg-subtle">찾는 것이 없다</li>
           )}
           {hits.map((hit) => (
             <li key={`${hit.kind}-${hit.id}`}>
@@ -240,7 +240,7 @@ export function SidebarFind({ onOpenChannelDirectory }: {
             */}
             <button
               data-testid="sidebar-find-all-channels"
-              className="w-full rounded px-2 py-1 text-left text-[11px] text-fg-muted hover:bg-surface-raised"
+              className="w-full rounded px-2 py-1 text-left text-meta text-fg-muted hover:bg-surface-raised"
               onClick={() => pick(onOpenChannelDirectory)}
             >
               모든 채널에서 찾기
@@ -264,6 +264,6 @@ function KindTag({ kind }: { kind: Hit['kind'] }) {
   return (
     // 11px 다 — 4단의 가장 작은 단(#555). 이 글자는 **읽는 것**이라 아바타 원 안의
     // 머리글자처럼 예외가 아니다: 세 종류를 가려 주는 값이므로 읽히지 않으면 쓸모가 없다.
-    <span className="shrink-0 text-[11px] text-fg-subtle">{KIND_LABEL[kind]}</span>
+    <span className="shrink-0 text-meta text-fg-subtle">{KIND_LABEL[kind]}</span>
   );
 }

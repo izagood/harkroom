@@ -378,7 +378,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               아니라 두 단이 선다: **누가**(15)와 **곁정보**(11), 본문은 그 아래 13. */}
           <span
             data-testid="author-name"
-            className="text-[15px] font-semibold"
+            className="text-name font-semibold"
             title={model ? `모델 ${model.id}` : undefined}
           >{author?.handle ?? '…'}</span>
           {/* 설정과 어긋난 모델(#600). 배지가 아니라 **경고**다 — 이 자리에 무언가 서 있는
@@ -388,7 +388,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
           {model?.mismatch && (
             <span
               data-testid="model-mismatch"
-              className="text-[11px] text-warning"
+              className="text-meta text-warning"
               title={`설정된 모델과 다른 계열이다 — 이 말은 ${model.id} 로 했다`}
               aria-label={`설정된 모델과 다르다: ${model.id}`}
             >⚠️</span>
@@ -416,9 +416,9 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               (TerminalChip 이 판정한다) — 이름줄에 두는 이유는 소유자 배지와 같다:
               32px 거터에 넣으면 넘친다(#277). */}
           <TerminalChip account={author} message={message} />
-          {avcsType && <span className="rounded bg-warning-surface-strong px-1 text-[11px] text-warning">{avcsType}</span>}
-          <span className="text-[11px] text-fg-muted">{time}</span>
-          {message.editedAt && <span className="text-[11px] text-fg-muted">(edited)</span>}
+          {avcsType && <span className="rounded bg-warning-surface-strong px-1 text-meta text-warning">{avcsType}</span>}
+          <span className="text-meta text-fg-muted">{time}</span>
+          {message.editedAt && <span className="text-meta text-fg-muted">(edited)</span>}
         </div>
 
         {draft === null ? (
@@ -433,7 +433,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
             <ReportCard message={message} inThread={inThread} />
             {skillSlug && onOpenSettings && (
               <button
-                className="mt-1 rounded-lg border border-border px-2 py-1 text-[11px] font-medium
+                className="mt-1 rounded-lg border border-border px-2 py-1 text-meta font-medium
                            text-fg hover:bg-surface-hover"
                 onClick={() => onOpenSettings('skills', skillSlug)}
               >
@@ -480,7 +480,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 // 파란 상자가 줄줄이 서서 본문보다 먼저 눈에 띄었다. Slack 처럼 참여자 얼굴 +
                 // 강조색 텍스트 링크로만 두고, 면은 hover 에서만 옅게 깔아 클릭 대상임을 알린다.
                 className="mt-0.5 self-start -mx-1 flex items-center gap-1.5 rounded px-1 py-0.5
-                           text-[11px] hover:bg-surface-hover"
+                           text-meta hover:bg-surface-hover"
                 onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
                 /*
                   **상태를 라벨에도 싣는다.** `aria-label` 은 자식 글자를 **덮어쓰므로**,
@@ -563,7 +563,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 // 한쪽만 상자면 두 진입점이 다른 종류처럼 보인다.
                 // #488 B2: 답글 요약과 **같은 처리**를 받는다 — 스레드로 가는 링크이지
                 // 나를 막는 말이 아니다. 색 대신 점선 밑줄이 링크임을 말한다.
-                className="mt-0.5 self-start -mx-1 rounded px-1 py-0.5 text-[11px] font-medium
+                className="mt-0.5 self-start -mx-1 rounded px-1 py-0.5 text-meta font-medium
                            text-fg-muted underline decoration-dotted underline-offset-2
                            hover:bg-surface-hover"
                 onClick={() => void getController().openThread(message.threadRootId!)}
@@ -585,8 +585,8 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               }}
             />
             <div className="flex gap-1">
-              <button className="rounded border border-border px-1.5 text-[11px] text-fg-muted" onClick={save}>Save</button>
-              <button className="rounded border border-border px-1.5 text-[11px] text-fg-muted" onClick={() => setDraft(null)}>Cancel</button>
+              <button className="rounded border border-border px-1.5 text-meta text-fg-muted" onClick={save}>Save</button>
+              <button className="rounded border border-border px-1.5 text-meta text-fg-muted" onClick={() => setDraft(null)}>Cancel</button>
             </div>
           </div>
         )}
@@ -686,7 +686,7 @@ function AudienceBadge({ message }: { message: MessageRow }) {
     <span
       data-testid="audience-badge"
       data-for-me={forMe}
-      className={`rounded px-1 text-[11px] font-medium ${
+      className={`rounded px-1 text-meta font-medium ${
         forMe ? 'bg-accent-surface text-state-turn' : 'text-fg-agent'
       }`}
     >

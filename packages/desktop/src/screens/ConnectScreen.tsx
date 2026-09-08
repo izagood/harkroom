@@ -97,7 +97,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
           {/* **화면 제목단 17px.** 18px(`text-lg`)이었고 4단 중 아무것도 아니었다. 이 자리는
               화면 하나가 무엇을 하는 중인지 말하는 유일한 줄이라 맨 윗단이 맞다 —
               `SettingsPage` 의 제목과 같은 단이다(그 파일에 근거를 적어 뒀다). */}
-          <h1 className="text-[17px] font-bold">{adding ? 'Sign in to another community' : 'murmur'}</h1>
+          <h1 className="text-title font-bold">{adding ? 'Sign in to another community' : 'murmur'}</h1>
         </div>
         {/* 로그인 **전**에도 업데이트할 수 있어야 한다(실측 2026-09-07): 서버에 못 붙는
             버전이면 업데이트가 필요한데, 업데이트가 로그인 뒤에만 있으면 빠져나갈 길이 없다.
@@ -110,33 +110,33 @@ export function ConnectScreen(props: ConnectScreenProps) {
             (`settings/primitives.tsx` 의 `FIELD_LABEL`·`FIELD_BOX` 가 같은 짝이다).
             아래 '초대 토큰 있나' 같은 곁길 버튼도 같은 아랫단이다 — 폼을 채우는 사람이
             읽는 것은 라벨과 오류 한 줄이고, 그 오류만 본문단으로 올렸다. */}
-        <label className="block text-[11px] font-medium">
+        <label className="block text-meta font-medium">
           Server URL
           <input className={field} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
         </label>
         {authMode === 'signin' ? (
-          <label className="block text-[11px] font-medium">
+          <label className="block text-meta font-medium">
             Login ID
             <input className={field} value={loginId} onChange={(e) => setLoginId(e.target.value)} />
           </label>
         ) : (
           <>
-            <label className="block text-[11px] font-medium">
+            <label className="block text-meta font-medium">
               Login ID
               <input className={field} value={loginId} onChange={(e) => setLoginId(e.target.value)} />
             </label>
-            <label className="block text-[11px] font-medium">
+            <label className="block text-meta font-medium">
               Handle (@)
               <input className={field} value={handle} onChange={(e) => setHandle(e.target.value)} />
             </label>
-            <label className="block text-[11px] font-medium">
+            <label className="block text-meta font-medium">
               Display name
               <input className={field} value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
             </label>
           </>
         )}
         {authMode === 'register' && (
-          <label className="block text-[11px] font-medium">
+          <label className="block text-meta font-medium">
             Invite token
             <input
               className={field}
@@ -146,7 +146,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
             />
           </label>
         )}
-        <label className="block text-[11px] font-medium">
+        <label className="block text-meta font-medium">
           Password
           <input className={field} type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
         </label>
@@ -164,7 +164,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
           <div className="space-y-1">
             <button
               type="button"
-              className="w-full text-[11px] text-fg-subtle underline"
+              className="w-full text-meta text-fg-subtle underline"
               onClick={() => setAuthMode('register')}
             >
               Have an invite token? Join this workspace
@@ -175,7 +175,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
             {!adding && (
               <button
                 type="button"
-                className="w-full text-[11px] text-fg-subtle underline"
+                className="w-full text-meta text-fg-subtle underline"
                 onClick={() => setAuthMode('bootstrap')}
               >
                 First run? Create the admin account
@@ -185,7 +185,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
         ) : (
           <button
             type="button"
-            className="w-full text-[11px] text-fg-subtle underline"
+            className="w-full text-meta text-fg-subtle underline"
             onClick={() => { setAuthMode('signin'); setError(null); }}
           >
             Back to sign in
@@ -194,7 +194,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
         {props.mode === 'add' && (
           <button
             type="button"
-            className="w-full rounded border border-border py-1.5 text-[11px] font-medium hover:bg-surface"
+            className="w-full rounded border border-border py-1.5 text-meta font-medium hover:bg-surface"
             onClick={props.onCancel}
           >
             Cancel

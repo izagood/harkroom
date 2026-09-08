@@ -243,7 +243,7 @@ export function GroupBadge({ group, className = '' }: { group: HandleGroupRow; c
   return (
     <span
       data-testid={`group-badge-${group.handle}`}
-      className={`relative inline-flex items-center gap-1 rounded bg-warning-surface-strong px-1 text-[11px] text-warning ${className}`}
+      className={`relative inline-flex items-center gap-1 rounded bg-warning-surface-strong px-1 text-meta text-warning ${className}`}
     >
       <span aria-hidden="true">👥</span>
       <span className="sr-only">집합</span>
@@ -272,7 +272,7 @@ export function TeamBadge({ team, className = '' }: { team: AgentTeamRow; classN
   return (
     <span
       data-testid={`team-badge-${team.name}`}
-      className={`relative inline-flex items-center gap-1 rounded bg-surface-hover px-1 text-[11px] text-fg-muted ${className}`}
+      className={`relative inline-flex items-center gap-1 rounded bg-surface-hover px-1 text-meta text-fg-muted ${className}`}
     >
       <span aria-hidden="true">🤖</span>
       <span className="sr-only">팀</span>
@@ -313,7 +313,7 @@ export function StatusMark({ account, className = '' }: {
       data-testid={`status-${account.id}`}
       data-status={account.status}
       title={name}
-      className={`relative inline-flex items-center text-[11px] leading-none ${className}`}
+      className={`relative inline-flex items-center text-meta leading-none ${className}`}
     >
       <span aria-hidden="true">{mark.glyph}</span>
       <span className="sr-only">{name}</span>

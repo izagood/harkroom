@@ -935,7 +935,7 @@ export function Composer({
                     {/* 집합에는 표시 이름을 함께 보인다 — `@release` 만으로는 그것이 무엇을
                         묶은 것인지 알 수 없고, 부르기 직전이 그것을 확인하는 자리다. 계정에는
                         붙이지 않는다: 사람·에이전트는 핸들이 곧 이름으로 통한다. */}
-                    <span className="ml-1 truncate text-[11px] text-fg-subtle">{item.group.displayName}</span>
+                    <span className="ml-1 truncate text-meta text-fg-subtle">{item.group.displayName}</span>
                   </>
                 ) : item.kind === 'team' ? (
                   /**
@@ -972,10 +972,10 @@ export function Composer({
               // 본문단으로 두면 칩 하나 안에 두 단이 섰다. 아래 입력칸과 전송·첨부는
               // 본문단이다: 여기서 사람이 읽고 쓰는 것은 글이고, 칩은 그 글이 누구에게
               // 가는지 알려 주는 꼬리표다.
-              className="flex items-center gap-1 rounded border border-accent bg-accent-surface px-1.5 py-0.5 text-[11px] font-medium text-accent"
+              className="flex items-center gap-1 rounded border border-accent bg-accent-surface px-1.5 py-0.5 text-meta font-medium text-accent"
             >
               <span>@{h}</span>
-              <span className="rounded bg-accent px-1 text-[11px] font-normal text-fg-on-strong">자동</span>
+              <span className="rounded bg-accent px-1 text-meta font-normal text-fg-on-strong">자동</span>
               <button
                 type="button"
                 aria-label={`Skip @${h} this time`}
@@ -992,7 +992,7 @@ export function Composer({
               key={h}
               data-testid="sticky-mention"
               data-handle={h}
-              className="flex items-center gap-1 rounded bg-surface-sunken px-1.5 py-0.5 text-[11px] font-medium text-fg"
+              className="flex items-center gap-1 rounded bg-surface-sunken px-1.5 py-0.5 text-meta font-medium text-fg"
             >
               <span>@{h}</span>
               <button
@@ -1024,7 +1024,7 @@ export function Composer({
         <ul
           data-testid="body-mentions"
           aria-label="부를 상대"
-          className="mb-1 flex flex-wrap items-center gap-1 text-[11px] text-fg-muted"
+          className="mb-1 flex flex-wrap items-center gap-1 text-meta text-fg-muted"
         >
           <li>부를 상대:</li>
           {bodyMentionList.map((r) => (
@@ -1065,7 +1065,7 @@ export function Composer({
         </ul>
       )}
       {uploadError && (
-        <p role="alert" className="mb-1 text-[11px] text-danger">{uploadError}</p>
+        <p role="alert" className="mb-1 text-meta text-danger">{uploadError}</p>
       )}
 
       {pending.length > 0 && (
@@ -1077,7 +1077,7 @@ export function Composer({
                  서로 거의 같아서(`screenshot-20260908-151256.png`) 눈으로 가릴 수 없다.
                  그래서 이미지면 칩 안에 작은 그림을 세운다. 이 그림은 방금 올라간 **서버의
                  바이트**를 받아 그린다: 고른 파일이 아니라 실제로 붙은 것을 보여야 한다. */
-              className="inline-flex items-center gap-1 rounded border border-border bg-surface px-1.5 py-0.5 text-[11px] text-fg"
+              className="inline-flex items-center gap-1 rounded border border-border bg-surface px-1.5 py-0.5 text-meta text-fg"
             >
               <AttachmentThumb attachment={a} />
               {a.filename}
@@ -1102,7 +1102,7 @@ export function Composer({
         <div
           role="status"
           data-testid="undo-send"
-          className="mb-1 flex items-center gap-2 rounded bg-surface-sunken px-2 py-1 text-[11px] text-fg-muted"
+          className="mb-1 flex items-center gap-2 rounded bg-surface-sunken px-2 py-1 text-meta text-fg-muted"
         >
           <span className="min-w-0 flex-1 truncate">
             보내는 중… {held.typed || `첨부 ${held.attachments.length}개`}
@@ -1124,7 +1124,7 @@ export function Composer({
           실패만 있을 때 줄 전체가 사라지면, 작성자는 자기 글이 안 나갔다는 것을 영영
           모른다. 목록 조회·취소가 실패한 경우도 여기서 말한다. */}
       {(pendingScheduled.length > 0 || failedScheduled.length > 0 || listError) && (
-        <div className="mb-1 flex flex-col rounded bg-accent-surface px-2 py-1 text-[11px] text-accent">
+        <div className="mb-1 flex flex-col rounded bg-accent-surface px-2 py-1 text-meta text-accent">
           {listError && <p role="alert" className="text-danger">{listError}</p>}
           {(pendingScheduled.length > 0 || failedScheduled.length > 0) && (
             <button
@@ -1263,7 +1263,7 @@ export function Composer({
           <div className="w-80 rounded-lg bg-surface-raised p-4 shadow-lg">
             {/* 겹창 제목은 **이름줄단 15px** — 화면 제목단(17px)은 화면 하나를 여는 자리
                 (설정·로그인)에만 준다. 16px(`text-base`)이었고 4단 밖이었다. */}
-            <h3 className="mb-3 text-[15px] font-medium">예약 발송</h3>
+            <h3 className="mb-3 text-name font-medium">예약 발송</h3>
             <input
               type="datetime-local"
               aria-label="예약 시각"

@@ -239,7 +239,7 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
             >
               <span>{item.label}</span>
               {item.shortcut && (
-                <span aria-hidden="true" className="ml-auto text-[11px] text-fg-subtle">{item.shortcut}</span>
+                <span aria-hidden="true" className="ml-auto text-meta text-fg-subtle">{item.shortcut}</span>
               )}
             </button>
           ))}

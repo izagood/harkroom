@@ -104,11 +104,11 @@ export function SavedMessages({ open, onClose }: Props) {
             data-testid={`saved-entry-${e.messageId}`}
             className="flex flex-1 items-center gap-2 text-left"
           >
-            <span className="rounded bg-surface-sunken px-1 text-[11px] uppercase tracking-wide text-fg-muted">
+            <span className="rounded bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted">
               {channelLabel(e.channelId)}
             </span>
             <span className="flex-1 italic text-fg-subtle">삭제된 메시지</span>
-            <span className="text-[11px] text-fg-subtle">{time}</span>
+            <span className="text-meta text-fg-subtle">{time}</span>
           </span>
         ) : (
           <button
@@ -116,14 +116,14 @@ export function SavedMessages({ open, onClose }: Props) {
             onClick={() => openEntry(e)}
             className="flex min-w-0 flex-1 items-center gap-2 text-left"
           >
-            <span className="rounded bg-surface-sunken px-1 text-[11px] uppercase tracking-wide text-fg-muted">
+            <span className="rounded bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted">
               {channelLabel(e.channelId)}
             </span>
             <span className="text-fg-muted">@{accounts[e.message.authorId]?.handle ?? '…'}</span>
             <span className="min-w-0 flex-1 truncate text-fg-muted">
               {preview}
             </span>
-            <span className="text-[11px] text-fg-subtle">
+            <span className="text-meta text-fg-subtle">
               {new Date(e.message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
           </button>
@@ -132,7 +132,7 @@ export function SavedMessages({ open, onClose }: Props) {
           data-testid={`saved-toggle-${e.messageId}`}
           aria-label={e.state === 'open' ? '완료로 표시' : '할 것으로 되돌리기'}
           onClick={() => { void toggleState(e); }}
-          className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover"
+          className="shrink-0 rounded border border-border px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
         >
           {e.state === 'open' ? '✓' : '↺'}
         </button>

@@ -28,7 +28,7 @@ export function WakeRow({ message }: { message: MessageRow }) {
 
   return (
     <div data-testid="wake-row" className="px-4 py-0.5">
-      <div className="flex items-center gap-1.5 text-[11px] text-fg-muted">
+      <div className="flex items-center gap-1.5 text-meta text-fg-muted">
         {/* 시계는 강조가 아니다 — 기다리는 것은 나를 막지 않는다(규칙 03). */}
         <span aria-hidden="true" className="shrink-0">🕐</span>
         <span className="font-medium text-fg-agent">{author?.handle ?? '…'}</span>

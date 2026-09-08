@@ -1023,14 +1023,18 @@ describe('AgentGrid — 사이드바는 한 픽셀도 안 바뀐다', () => {
    * `textContent` 전체를 재지 않는 이유: `Identity` 가 머리글자(`A`)와 `sr-only` 핸들을
    * 함께 낸다(그 컴포넌트 주석) — 그것들은 이 변경과 무관하고, 함께 재면 `Identity` 를
    * 고치는 사람이 이 시험을 깨게 된다. `font-semibold` 도 못 쓴다: **실측하니 아바타 원의
-   * 머리글자가 이미 그 클래스를 쓴다.** 남는 것이 `text-[13px]` 이고, 그것은 이 격자에서
-   * 설정의 이름줄 하나만 쓴다(사이드바는 11px 한 줄이다).
+   * 머리글자가 이미 그 클래스를 쓴다.** 남는 것이 본문단 클래스이고, 그것은 이 격자에서
+   * 설정의 이름줄 하나만 쓴다(사이드바는 아랫단 한 줄이다).
+   *
+   * 그 클래스가 `text-[13px]` 에서 **`text-body` 로 바뀌었다** — 4단이 `@theme` 토큰이 된
+   * 판이다(`src/index.css`, 회귀선 `test/typeScale.test.ts`). 크기는 그대로 13px 이라 이
+   * 시험이 재는 것(두 줄이냐 한 줄이냐)은 안 바뀌고, 셀렉터만 새 이름을 가리킨다.
    */
   it('이름줄이 한 줄이다 — 두 줄로 늘지 않는다', () => {
     sidebar();
     const card = screen.getByTestId('agent-card-alpha');
     // 설정에서만 서는 `displayName` 줄(13px)이 없다.
-    expect(card.querySelector('.text-\\[13px\\]')).toBeNull();
+    expect(card.querySelector('.text-body')).toBeNull();
     // `@` 접두도 없다(오늘 모양).
     expect(card.textContent).not.toContain('@');
     cleanup();
@@ -1039,7 +1043,7 @@ describe('AgentGrid — 사이드바는 한 픽셀도 안 바뀐다', () => {
     // 위 두 단언이 초록이고, 그것은 사이드바를 지킨 것이 아니라 기능을 없앤 것이다.
     grid({ agents: [agent('alpha', { displayName: '알파' })], online: ['id-alpha'] });
     const settingsCard = screen.getByTestId('agent-card-alpha');
-    expect(settingsCard.querySelector('.text-\\[13px\\]')!.textContent).toBe('알파');
+    expect(settingsCard.querySelector('.text-body')!.textContent).toBe('알파');
     expect(settingsCard.textContent).toContain('@alpha');
   });
 

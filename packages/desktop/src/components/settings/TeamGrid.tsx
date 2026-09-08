@@ -109,9 +109,19 @@ const FRAME = {
  * `text-[15px]` 은 **상자에 묶인 글리프**다 — 4단의 이름줄이 아니라 44px 원의 지름에서
  * 따라 나온 값이다. `Identity.tsx` 와 `AgentGrid` 의 `faceText` 가 같은 규칙을 갖고 있고
  * (`h-12`→16px, `h-10`→16px, `h-8`→14px, `h-5`→10px), 44px 은 그 사다리에서 `h-12`(48px)
- * 바로 아래라 16px 과 같은 칸에 든다. 4단 회귀선(`test/typeScale.test.ts`)의 `ALLOWED` 에
- * 이 줄을 등록하지 않아도 되는 이유는 임의값이라 `SCALE_NAME` 에 안 걸리고, 그 파일이
- * 임의값에 대해서는 **4단 안의 값**만 요구하기 때문이다 — 15px 이 그 넷 중 하나다.
+ * 바로 아래라 16px 과 같은 칸에 든다.
+ *
+ * **그래서 토큰(`text-name`)으로 옮기지 않는다.** 4단이 `@theme` 토큰이 된 판에서 이 줄이
+ * 갈렸다: 값이 15px 로 같다고 `text-name` 을 부르면 "이 글자는 이름줄이다"라고 말하는
+ * 것이 되는데, 이 자리는 이름이 아니라 **원의 지름**이다. 44px 얼굴을 40px 로 줄이는 날
+ * 이 글자도 따라 줄어야 하고, 그때 `text-name` 을 쓰고 있으면 4단의 이름줄이 통째로
+ * 끌려간다. 토큰 이름을 역할로 지은 값이 여기서 나온다 — 크기가 같아도 **뜻이 다르면
+ * 다른 이름**이다.
+ *
+ * 값이 같다는 사실 때문에 앞 판까지는 회귀선이 이 줄을 그냥 통과시켰다(그 주석이 여기
+ * 있었다: *"임의값이라 `SCALE_NAME` 에 안 걸리고 15px 이 4단 중 하나다"*). 토큰이 정본이
+ * 된 지금은 임의값 자체가 위반이라, 이 줄은 `test/typeScale.test.ts` 의 `ALLOWED` 에
+ * 상자 글리프로 등록돼 있다.
  */
 const FACE = 'h-11 w-11 text-[15px]';
 
@@ -298,7 +308,7 @@ export function TeamGrid({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-fg-subtle">
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-meta text-fg-subtle">
             {shown.length}개
           </span>
         </div>
@@ -314,7 +324,7 @@ export function TeamGrid({
             onClick={onCreate}
           >
             <span aria-hidden="true" className="text-[15px] leading-none">+</span>
-            <span className="text-[11px] text-fg-muted">새 팀</span>
+            <span className="text-meta text-fg-muted">새 팀</span>
           </button>
         )}
 
@@ -371,7 +381,7 @@ export function TeamGrid({
                   팀 묶음 머리), 카드의 `@` 가 그 말을 카드마다 되짚는다 — 안내를 지나친
                   사람도 이름 모양에서 그것이 부를 수 있는 이름임을 본다.
                 */}
-                <span className="block w-full truncate text-center text-[13px] font-semibold text-fg">
+                <span className="block w-full truncate text-center text-body font-semibold text-fg">
                   @{t.name}
                 </span>
               </button>
@@ -395,7 +405,7 @@ export function TeamGrid({
                 크기인지 다른 무엇인지 카드 하나만 봐서는 알 수 없다.
               */}
               <div className="mt-auto w-full border-t border-border pt-2">
-                <p className="text-[11px] text-fg-muted">팀 · {t.memberCount}명</p>
+                <p className="text-meta text-fg-muted">팀 · {t.memberCount}명</p>
                 {/*
                   **비활성 팀원 한 줄.** `warning` 인 이유가 `AgentGrid` 의 `멈추는 중` 과
                   같다: 나를 막지 않으므로 강조가 아니고(규칙 04 · `accentBudget`), 고장도
@@ -410,7 +420,7 @@ export function TeamGrid({
                 {off.length > 0 && (
                   <p
                     data-testid={`team-disabled-${t.name}`}
-                    className="mt-1 whitespace-normal text-[11px] text-warning"
+                    className="mt-1 whitespace-normal text-meta text-warning"
                   >
                     {off.map((m) => m.handle).join(' · ')} 는 비활성 — 호출에서 빠진다
                   </p>

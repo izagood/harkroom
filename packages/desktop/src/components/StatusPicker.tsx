@@ -85,17 +85,17 @@ export function StatusPicker({ onDone }: {
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') void apply(me.status, text.trim() || null); }}
       />
-      {error && <p role="alert" className="mt-1 text-[11px] text-danger">{error}</p>}
+      {error && <p role="alert" className="mt-1 text-meta text-danger">{error}</p>}
       <div className="mt-1 flex gap-1">
         <button
-          className="rounded bg-accent px-2 py-0.5 text-[11px] text-fg-on-strong hover:bg-accent-hover"
+          className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
           onClick={() => void apply(me.status, text.trim() || null)}
         >
           저장
         </button>
         {statusText && (
           <button
-            className="rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover"
+            className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
             // 지우기는 **명시적 null** 이다. 빈 문자열로 지우면 "문구가 없다"와
             // "빈 문구가 있다"가 섞인다.
             onClick={() => void apply(me.status, null)}
@@ -109,7 +109,7 @@ export function StatusPicker({ onDone }: {
           사라진다. `Escape` 도 같은 곳으로 간다: 패널 안에서 취소를 기대하는 키다.
         */}
         <button
-          className="ml-auto rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover"
+          className="ml-auto rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
           onClick={onDone}
         >
           닫기

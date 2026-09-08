@@ -47,7 +47,7 @@ export function TerminalChip({ account, message }: {
           threadRootId: message.threadRootId ?? message.id,
         },
       })}
-      className="rounded bg-surface-raised px-1.5 py-0.5 text-[11px] text-fg hover:bg-surface-hover"
+      className="rounded bg-surface-raised px-1.5 py-0.5 text-meta text-fg hover:bg-surface-hover"
       title={`@${account.handle} 의 진행 중인 터미널을 본다`}
     >
       터미널 보기

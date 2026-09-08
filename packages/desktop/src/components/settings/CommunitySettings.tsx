@@ -231,11 +231,11 @@ function CommunityRow(props: {
           <span className="flex items-center gap-2 font-medium text-fg">
             {label}
             {active && (
-              <span className="rounded bg-accent-surface px-1 text-[11px] text-accent">Viewing</span>
+              <span className="rounded bg-accent-surface px-1 text-meta text-accent">Viewing</span>
             )}
           </span>
           <span className="mt-0.5 flex items-center gap-2 text-fg-subtle">
-            <span className="min-w-0 truncate font-mono text-[11px]">{entry.baseUrl || '—'}</span>
+            <span className="min-w-0 truncate font-mono text-meta">{entry.baseUrl || '—'}</span>
             <span className={`h-2 w-2 shrink-0 rounded-full ${connected ? 'bg-success' : 'bg-danger'}`} />
             <span data-testid={`community-state-${entry.id}`}>
               {connected ? 'Connected' : 'Disconnected'}

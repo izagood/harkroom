@@ -39,11 +39,11 @@ export function FailureCard({ message, inThread = false }: {
       className="mt-1.5 max-w-prose rounded-lg border border-state-stuck bg-danger-surface"
     >
       <div className="flex items-baseline gap-2 px-3 pt-2">
-        <span className="text-[11px] font-semibold text-state-stuck">끝내지 못했다</span>
-        {failure.what && <span className="text-[11px] text-fg-muted">{failure.what}</span>}
+        <span className="text-meta font-semibold text-state-stuck">끝내지 못했다</span>
+        {failure.what && <span className="text-meta text-fg-muted">{failure.what}</span>}
       </div>
       {/* 이유는 **사람이 읽는 말**이다 — 스택트레이스가 아니다. 자세한 것은 터미널이 답한다. */}
-      {failure.reason && <p className="px-3 pt-1 text-[13px] text-fg-muted">{failure.reason}</p>}
+      {failure.reason && <p className="px-3 pt-1 text-body text-fg-muted">{failure.reason}</p>}
 
       <div className="flex items-center gap-2 p-2 pt-1.5">
         <TerminalChip account={author} message={message} />
@@ -54,7 +54,7 @@ export function FailureCard({ message, inThread = false }: {
         {failure.retryable && author && (
           <button
             data-testid="failure-retry"
-            className="rounded border border-border bg-surface-raised px-2 py-0.5 text-[11px]
+            className="rounded border border-border bg-surface-raised px-2 py-0.5 text-meta
                        font-medium text-fg hover:bg-surface-hover"
             onClick={() => setDraft(
               // 작성창의 scope 는 채널이면 채널 id, 스레드면 `thread:<rootId>` 다

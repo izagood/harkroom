@@ -49,7 +49,7 @@ export function LinkPreview({ url }: { url: string }) {
           어디서 왔는지 알려 주는 꼬리표다. 제목은 크기를 안 적어 본문단 13px 을 물려받고,
           `font-semibold` 로만 도드라진다(같은 단 안에서 굵기로 위계를 낸다). */}
       {preview.siteName && (
-        <div className="text-[11px] text-fg-subtle">{preview.siteName}</div>
+        <div className="text-meta text-fg-subtle">{preview.siteName}</div>
       )}
       {preview.title && (
         <div className="font-semibold text-fg">{preview.title}</div>
@@ -60,7 +60,7 @@ export function LinkPreview({ url }: { url: string }) {
       <a
         href={preview.url}
         rel="noreferrer noopener"
-        className="mt-2 block truncate text-[11px] text-fg-subtle hover:text-fg"
+        className="mt-2 block truncate text-meta text-fg-subtle hover:text-fg"
       >
         {preview.url}
       </a>

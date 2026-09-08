@@ -89,7 +89,7 @@ export function ChannelDirectory({ open, onClose }: Props) {
           {/* 주제는 이름 아래 딸린 한 줄이다 — 아랫단 11px. 이름(위 줄)은 크기를 안 적어
               본문단 13px 이고, `font-medium` 으로만 도드라진다. */}
           {ch.topic && (
-            <div className="truncate text-[11px] text-fg-subtle">{ch.topic}</div>
+            <div className="truncate text-meta text-fg-subtle">{ch.topic}</div>
           )}
         </div>
       </button>
@@ -130,7 +130,7 @@ export function ChannelDirectory({ open, onClose }: Props) {
           />
           {/* 정렬 토글은 **아랫단 11px** — 옆의 검색 입력(본문단)이 이 줄의 주역이고 이
               둘은 그 결과를 어떻게 늘어놓을지 고르는 곁 조작이다. */}
-          <div className="flex rounded bg-surface-sunken text-[11px]">
+          <div className="flex rounded bg-surface-sunken text-meta">
             <button
               className={`rounded px-2 py-1 ${sortMode === 'name' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:text-fg'}`}
               aria-pressed={sortMode === 'name'}
@@ -158,7 +158,7 @@ export function ChannelDirectory({ open, onClose }: Props) {
           {filteredArchived.length > 0 && (
             <div className="mt-4 border-t border-border pt-2">
               <button
-                className="flex w-full items-center gap-1 px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle hover:text-fg-muted"
+                className="flex w-full items-center gap-1 px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle hover:text-fg-muted"
                 aria-expanded={archivedOpen}
                 onClick={() => setArchivedOpen((v) => !v)}
               >

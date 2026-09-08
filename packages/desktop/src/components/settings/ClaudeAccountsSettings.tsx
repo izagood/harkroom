@@ -174,7 +174,7 @@ export function ClaudeAccountsSettings() {
 
       {/* 러너 반영 안내 — 이 화면의 변경이 언제 효과를 내는지 말한다. */}
       <SettingsGroup>
-        <div className="px-4 py-3 text-[11px] text-fg-subtle">
+        <div className="px-4 py-3 text-meta text-fg-subtle">
           A runner reads its pool once at startup. After changing accounts here, restart the
           runner from Settings › Agents for the change to take effect.
         </div>
@@ -183,7 +183,7 @@ export function ClaudeAccountsSettings() {
       {/* 평평한 계정 이전 안내 — 풀 모드에서 목록에서 사라진 계정들이다. */}
       {snap && snap.strays.length > 0 && (
         <SettingsGroup title="Accounts outside any pool">
-          <div className="px-4 py-3 text-[11px] text-fg-subtle">
+          <div className="px-4 py-3 text-meta text-fg-subtle">
             These were created before pools existed. Move them into a pool so runners can
             use them. Signing in again may be required afterwards.
           </div>
@@ -207,7 +207,7 @@ export function ClaudeAccountsSettings() {
               </Button>
             </div>
           ))}
-          {moveNote && <div className="px-4 py-3 text-[11px] text-fg">{moveNote}</div>}
+          {moveNote && <div className="px-4 py-3 text-meta text-fg">{moveNote}</div>}
         </SettingsGroup>
       )}
 
@@ -219,7 +219,7 @@ export function ClaudeAccountsSettings() {
           <div className="flex items-center justify-between px-4 py-3">
             <div>
               <div className="font-medium text-fg">{pool.name || 'Ungrouped'}</div>
-              <div className="text-[11px] text-fg-subtle">
+              <div className="text-meta text-fg-subtle">
                 {snap.defaultPool === pool.name
                   ? 'Default pool — used by agents with no pool of their own'
                   : `${pool.accounts.length} account${pool.accounts.length === 1 ? '' : 's'}`}
@@ -250,7 +250,7 @@ export function ClaudeAccountsSettings() {
             <div key={a.name} className="flex items-center justify-between px-4 py-3">
               <div>
                 <div className="font-mono text-fg">{a.name}</div>
-                <div className={`text-[11px] ${a.status.loggedIn ? 'text-fg-subtle' : 'text-warning'}`}>
+                <div className={`text-meta ${a.status.loggedIn ? 'text-fg-subtle' : 'text-warning'}`}>
                   {statusLine(a.status)}
                 </div>
               </div>
@@ -334,7 +334,7 @@ export function ClaudeAccountsSettings() {
             <div className="px-4 py-3">
               {login.url ? (
                 <>
-                  <div className="text-[11px] text-fg-subtle">
+                  <div className="text-meta text-fg-subtle">
                     Open this link and sign in, then paste the code below.
                   </div>
                   <a
@@ -344,7 +344,7 @@ export function ClaudeAccountsSettings() {
                   >
                     {login.url}
                   </a>
-                  <div className="mt-2 text-[11px] text-warning">
+                  <div className="mt-2 text-meta text-warning">
                     Use a private (incognito) browser window when adding a second account.
                     Otherwise the existing session signs you into the same account again.
                   </div>

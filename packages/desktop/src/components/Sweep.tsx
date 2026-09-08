@@ -88,9 +88,9 @@ export function SweepShell({ items, loading, error, onRetry, onClose, onMarkRead
         <div className="flex items-center gap-2 border-b border-border p-3 text-fg">
           <span className="font-medium">미읽음 훑기</span>
           {!loading && !error && items.length > 0 && index < items.length && (
-            <span className="text-[11px] text-fg-subtle">{index + 1} / {items.length}</span>
+            <span className="text-meta text-fg-subtle">{index + 1} / {items.length}</span>
           )}
-          <button className="ml-auto rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover"
+          <button className="ml-auto rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
             onClick={onClose}>닫기</button>
         </div>
 
@@ -114,14 +114,14 @@ export function SweepShell({ items, loading, error, onRetry, onClose, onMarkRead
         {!loading && !error && current && (
           <>
             <div className="flex-1 overflow-y-auto p-3">
-              <div className="mb-2 text-[11px] text-fg-muted">
+              <div className="mb-2 text-meta text-fg-muted">
                 {current.label}
                 <span className="ml-2 text-fg-subtle">안 읽은 메시지 {current.messages.length}개</span>
               </div>
               <ul className="space-y-2">
                 {current.messages.map((m) => (
                   <li key={m.id} className="rounded bg-surface-sunken p-2 text-fg">
-                    <span className="mr-2 text-[11px] text-fg-subtle">@{accounts[m.authorId]?.handle ?? m.authorId}</span>
+                    <span className="mr-2 text-meta text-fg-subtle">@{accounts[m.authorId]?.handle ?? m.authorId}</span>
                     {/* `displayBody` — 훑기도 본문 렌더러를 지나지 않는다(`lib/mention` 주석). */}
                     {displayBody(m, accounts)}
                   </li>
