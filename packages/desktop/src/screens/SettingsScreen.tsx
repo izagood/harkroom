@@ -12,7 +12,6 @@ import { NotificationSettings } from '../components/settings/NotificationSetting
 import { MessageSettings } from '../components/settings/MessageSettings';
 import { ProfileSettings } from '../components/settings/ProfileSettings';
 import { SkillsSettings } from '../components/settings/SkillsSettings';
-import { TeamsSettings } from '../components/settings/TeamsSettings';
 import { UpdatesSettings } from '../components/settings/UpdatesSettings';
 import { DEFAULT_SECTION, SETTINGS_GROUPS, isSectionId, type SectionId } from '../components/settings/sections';
 import { useActiveStore } from '../state/communities';
@@ -93,7 +92,6 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           {section === 'agents' && <AgentsSettings targetId={targetId} />}
           {section === 'claude-accounts' && <ClaudeAccountsSettings />}
           {section === 'agent-defaults' && <AgentDefaultsSettings />}
-          {section === 'teams' && <TeamsSettings />}
           {section === 'handle-groups' && <HandleGroupsSettings />}
           {section === 'invite' && <InviteSettings />}
           {section === 'updates' && <UpdatesSettings />}
