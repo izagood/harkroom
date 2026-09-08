@@ -46,6 +46,8 @@ import { Profile } from '../src/components/Profile';
 import { AgentGrid } from '../src/components/settings/AgentGrid';
 import { Composer } from '../src/components/Composer';
 import { Inbox } from '../src/components/Inbox';
+import { SkillsSettings } from '../src/components/settings/SkillsSettings';
+import { AgentDefaultsSettings } from '../src/components/settings/AgentDefaultsSettings';
 import { fireEvent } from '@testing-library/react';
 import { waitChainFromLinks } from '../src/lib/waitChain';
 import { daemonFactRows } from '../src/lib/daemonFacts';
@@ -1652,5 +1654,110 @@ describe('인박스 — 두 언어로 뜬다', () => {
     render(<Inbox open onClose={() => {}} />);
     const region = await screen.findByRole('region', { name: 'Called you' });
     expect(region.querySelector('h3')?.textContent).toContain('(0)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. 설정 화면 넷 — **모듈 상수가 언어를 굳히지 않는다**
+//
+// 이 묶음이 가장 신경 쓰는 것은 `SkillsSettings` 에 실제로 있던 모양이다: 세 칸의
+// 이름이 **모듈 상수**여서, 모듈이 처음 읽힐 때의 언어로 굳고 그 뒤 언어를 바꿔도
+// 그 세 칸만 옛 언어로 남았다. 화면이 `t()` 를 지나도 그런 자리는 안 바뀐다는 것이
+// 이 파일 머리말의 경고이고, 여기가 그 실례다.
+//
+// **그래서 사전을 읽지 않고 화면을 렌더해 언어를 바꿔 본다.** 사전 대조만으로는
+// 굳은 상수를 절대 못 잡는다 — 사전은 갈려 있고 화면만 안 따라오기 때문이다.
+// ---------------------------------------------------------------------------
+
+describe('설정 화면 넷 — 언어를 바꾸면 따라온다', () => {
+  const asAdmin = () => {
+    useActiveStore.getState().set({
+      me: { ...acc(ME, 'me'), isAdmin: true },
+      accounts: { [ME]: { ...acc(ME, 'me'), isAdmin: true } },
+    });
+    setController({
+      listSkills: vi.fn(async () => []),
+      agentDefaults: vi.fn(async (): Promise<AgentDefaults> => (
+        { harness: 'claude-code', model: null, effort: null }
+      )),
+    } as unknown as Controller);
+  };
+
+  /**
+   * **모듈 상수였던 자리.** 세 칸의 이름이 언어를 따라오는지 본다 — 굳어 있으면
+   * 영어로 열어도 `대기 중` 이 남는다.
+   */
+  it('스킬 세 칸의 이름이 언어를 따라온다 — 모듈 상수로 굳지 않는다', async () => {
+    asAdmin();
+    render(<SkillsSettings />);
+    await waitFor(() => expect(screen.getByText(/^Pending \(/)).toBeTruthy());
+    expect(screen.getByText(/^Approved \(/)).toBeTruthy();
+    expect(screen.getByText(/^Disabled \(/)).toBeTruthy();
+    // 굳은 상수가 남아 있으면 이 줄이 잡는다.
+    expect(screen.queryByText(/^대기 중 \(/)).toBeNull();
+
+    cleanup();
+    speak('ko');
+    asAdmin();
+    render(<SkillsSettings />);
+    await waitFor(() => expect(screen.getByText(/^대기 중 \(/)).toBeTruthy());
+    expect(screen.queryByText(/^Pending \(/)).toBeNull();
+  });
+
+  /**
+   * 확인 문구 셋도 `export` 상수였다. **회귀선 열한 곳이 그것을 import 해서 쓰므로**
+   * 지우지 못하고 번역기를 인자로 받는 함수로 바꿨다(`lastTurnLabel` 의 선례).
+   *
+   * 그 셋이 **각각 다른 일**을 말하는 것도 함께 잰다(#325): 거부에는 파일 이야기가
+   * 없고 비활성화에는 있다 — 없는 일을 경고하면 확인 문구를 아무도 안 읽는다.
+   */
+  it('확인 문구 셋이 두 언어 모두 각각 다른 일을 말한다', () => {
+    expect(en['skills.confirm.reject']).not.toContain('file');
+    expect(en['skills.confirm.disable']).toContain('file');
+    expect(ko['skills.confirm.reject']).not.toContain('파일');
+    expect(ko['skills.confirm.disable']).toContain('파일');
+  });
+
+  it('에이전트 기본값 화면이 언어를 따라온다', async () => {
+    asAdmin();
+    render(<AgentDefaultsSettings />);
+    await waitFor(() => expect(screen.getAllByLabelText('Default harness').length).toBeGreaterThan(0));
+    expect(screen.getAllByLabelText('Default model').length).toBeGreaterThan(0);
+
+    cleanup();
+    speak('ko');
+    asAdmin();
+    render(<AgentDefaultsSettings />);
+    await waitFor(() => expect(screen.getAllByLabelText('기본 harness').length).toBeGreaterThan(0));
+  });
+
+  /**
+   * **`harness`·`model`·`effort` 는 두 언어 모두 그대로 선다.** API 필드 이름이자
+   * 설정 파일에 적히는 값이라, 화면이 다른 이름을 쓰면 사람이 둘을 못 잇는다
+   * (`sidebar.notify` 가 `all`/`mentions`/`none` 을 안 옮긴 것과 같은 규칙).
+   */
+  it('기본값 화면의 필드 이름은 두 언어 모두 안 옮긴다', () => {
+    for (const [key, word] of [
+      ['defaults.field.harness', 'harness'],
+      ['defaults.field.model', 'model'],
+      ['defaults.field.effort', 'effort'],
+    ] as [keyof typeof en, string][]) {
+      expect(en[key], `en.${key}`).toContain(word);
+      expect(ko[key], `ko.${key}`).toContain(word);
+    }
+  });
+
+  /**
+   * **어투를 `~다` 로 맞췄다.** 이 화면만 `~하세요`·`~습니다` 였고, 한 화면만
+   * 높임말이면 같은 앱이 사람을 두 가지로 대한다. 뜻은 그대로 두고 어투만 바꿨다.
+   */
+  it('이름 바꾸기 문구가 사전의 다른 한국어와 같은 어투다', () => {
+    for (const key of [
+      'profileName.empty', 'profileName.length', 'profileName.invalidChars',
+      'profileName.taken', 'profileName.unusable', 'profileName.failed',
+    ] as (keyof typeof en)[]) {
+      const v = ko[key] as string;
+      expect(v, `ko.${key}`).not.toMatch(/(습니다|하세요)\.?$/);
+    }
   });
 });

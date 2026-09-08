@@ -63,6 +63,110 @@ export const ko = {
   'gallery.thread.participantsNote': '응답 없는 자는 흐리다. 소유자 아닌 것은 목록에 없다.',
   'gallery.thread.states': '스레드 상태 5단',
   'gallery.thread.statesNote': '강조는 둘뿐이고 그 둘도 색이 다르다.',
+  // defaults — **키 순서는 `en.ts` 와 같다.** `harness`·`model`·`effort` 는 안 옮긴다.
+  // ---------------------------------------------------------------------------
+
+  'defaults.field.effort': '기본 effort',
+  'defaults.field.harness': '기본 harness',
+  'defaults.field.harnessDefault': 'harness 기본값',
+  'defaults.field.model': '기본 model',
+  'defaults.field.modelHint': '비우면 하네스가 고른다 — murmur 는 그 선택을 발화에 실린 모델로만 안다',
+  'defaults.field.applyScope': '다음에 만드는 에이전트에만 적용된다. 이미 있는 에이전트는 바뀌지 않는다.',
+  'defaults.field.loadFailed': '기본값을 불러오지 못했다',
+  'defaults.field.loading': '불러오는 중…',
+  'defaults.field.notAdmin': '기본값을 정할 수 있는 것은 admin 뿐이다.',
+  'defaults.field.save': '기본값 저장',
+  'defaults.field.saved': '저장했다',
+  'defaults.field.saveFailed': '기본값을 저장하지 못했다',
+  'defaults.field.subtitle': '새로 만드는 에이전트가 물려받을 값. 이미 있는 에이전트는 바뀌지 않는다.',
+
+  // ---------------------------------------------------------------------------
+  // groups — 한국어는 원래 쓰던 `집합` 을 그대로 둔다. 영어가 `group` 인 근거는
+  // `en.ts` 머리말에 있고, **낱말 선택은 언어마다 제 사정을 따른다.**
+  // ---------------------------------------------------------------------------
+
+  'groups.edit.addMember': '구성원 추가',
+  'groups.edit.addMemberFailed': '구성원을 추가하지 못했다',
+  'groups.edit.displayName': '표시 이름',
+  'groups.edit.memberAccountId': '계정 ID: {id}',
+  'groups.edit.membersFailed': '구성원 명단을 받지 못했다',
+  'groups.edit.newDisplayName': '새 표시 이름',
+  'groups.edit.pick': '집합을 고른다',
+  'groups.edit.removeMember': '구성원 제거: {name}',
+  'groups.edit.removeMemberFailed': '구성원을 제거하지 못했다',
+  'groups.edit.renameFailed': '이름을 저장하지 못했다',
+  'groups.list.empty': '아직 없다',
+  'groups.list.heading': '집합',
+  'groups.list.subtitle': '사람 여럿을 한 이름으로 부르는 장치다. 에이전트를 묶으려면 설정 › Agents 의 팀 묶음이다 — 이름 자리는 둘이 함께 쓴다.',
+  'groups.member.empty': '구성원이 없다',
+  'groups.member.pick': '계정 선택…',
+  'groups.member.remove': '제거',
+  'groups.new.badHandle': '집합 핸들은 계정 핸들과 같은 문법이어야 한다',
+  'groups.new.createFailed': '만들지 못했다 (이미 있는 이름일 수 있다)',
+  'groups.new.displayName': '집합 표시 이름',
+  'groups.new.handle': '집합 핸들',
+  'groups.new.readOnly': '집합을 만들고 고치는 것은 admin 만 할 수 있다',
+  'groups.new.create': '만들기',
+  'groups.new.heading': '새 집합',
+  'groups.remove.cancel': '취소',
+  'groups.remove.confirm': '정말 지운다',
+  'groups.remove.start': '집합 삭제',
+  'groups.rename.name': '이름',
+  'groups.rename.save': '저장',
+  'groups.rename.start': '이름 바꾸기',
+  'groups.remove.failed': '지우지 못했다',
+
+  // ---------------------------------------------------------------------------
+  // profileName — **어투를 `~다` 로 맞췄다**(근거는 `en.ts` 머리말). 뜻은 그대로다.
+  // ---------------------------------------------------------------------------
+
+  'profileAvatar.removeCancel': '취소',
+  'profileAvatar.removeConfirm': '정말 지우기',
+
+  'profileName.apply': '적용',
+  'profileName.empty': '새 이름을 적는다',
+  'profileName.cancel': '취소',
+  'profileName.confirm': '확인',
+  'profileName.effectPast': '과거 메시지의 멘션도 새 이름으로 보인다.',
+  'profileName.effectPermanent': '이 변경은 되돌릴 수 없다.',
+  'profileName.failed': '이름을 바꾸지 못했다',
+  'profileName.heading': '불리는 이름',
+  'profileName.input': '새 이름',
+  'profileName.start': '바꾸기',
+  'profileName.invalidChars': '소문자와 숫자, 밑줄, 하이픈만 쓸 수 있다',
+  'profileName.length': '2~32자여야 한다',
+  'profileName.taken': '이 이름은 이미 쓰고 있다',
+  'profileName.unusable': '쓸 수 없는 이름이다',
+
+  // ---------------------------------------------------------------------------
+  // skills — 확인 문구 셋이 **각각 다른 일**을 말한다(`en.ts` 머리말).
+  // ---------------------------------------------------------------------------
+
+  'skills.confirm.approve': '승인하면 모든 에이전트가 이 스킬을 시스템 프롬프트로 읽는다',
+  'skills.confirm.disable': '비활성화하면 모든 에이전트가 이 스킬의 파일과 링크를 삭제한다',
+  'skills.confirm.reject': '거부하면 이 스킬은 비활성으로 내려간다 — 되돌리려면 에이전트가 다시 제안해야 한다',
+  'skills.confirm.approveStart': '승인 확인',
+  'skills.confirm.cancel': '취소',
+  'skills.group.approved': '승인됨',
+  'skills.group.approvedEmpty': '승인된 스킬이 없다',
+  'skills.group.disabled': '비활성',
+  'skills.group.disabledEmpty': '비활성된 스킬이 없다',
+  'skills.group.pending': '대기 중',
+  'skills.group.pendingEmpty': '승인을 기다리는 스킬이 없다',
+  'skills.group.subtitle': '에이전트가 제안한 워크스페이스 스킬. 승인된 스킬의 본문은 모든 에이전트의 시스템 프롬프트에 들어간다.',
+  'skills.list.loadFailed': '스킬 목록을 불러오지 못했다',
+  'skills.list.loading': '불러오는 중…',
+  'skills.list.refresh': '새로고침',
+  'skills.row.approve': '승인',
+  'skills.row.approveFailed': '승인하지 못했다',
+  'skills.row.confirmDisable': '비활성화 확인',
+  'skills.row.confirmReject': '거부 확인',
+  'skills.row.disable': '비활성화',
+  'skills.row.disableFailed': '비활성화하지 못했다',
+  'skills.row.fold': '본문 접기',
+  'skills.row.reject': '거부',
+  'skills.row.rejectFailed': '거부하지 못했다',
+  'skills.row.unfold': '본문 보기',
 
   // ---------------------------------------------------------------------------
   // agents — **키 순서는 `en.ts` 와 같다**(덩어리 알파벳 → 그 안 키 알파벳).
