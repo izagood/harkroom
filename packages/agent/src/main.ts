@@ -330,7 +330,7 @@ const scheduler = createMentionScheduler({
   runMentionTurn,
   // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —
   // 나머지는 계정과 무관하므로 매번 같은 값이다.
-  buildTurnDeps: ({ ctx, mention, account }) => ({
+  buildTurnDeps: ({ ctx, mention, account, isLastAccount }) => ({
     murmur, store, exec, runTurn: runPtyTurn, me, guide,
     channelName: ctx.channelName(mention.channelId),
     handles: ctx.handles, workspaceBaseDir, mcpConfigPath,
@@ -344,7 +344,11 @@ const scheduler = createMentionScheduler({
     // 턴마다 새로 만들면 매번 "처음 부르는 계정"이 되어, 7개 스레드가 동시에 걸렸을 때
     // 창이 7개 뜬다. 관문은 계정 단위라 하나만 지나면 나머지가 함께 풀린다.
     accountLabel: account?.name ?? undefined,
-    attentionLedger,
+    // **사람 부르기는 축의 마지막에서만 열린다**(2026-09-08 실물 검증에서 드러났다).
+    // 앞 계정에서 부르면 준비된 계정이 뒤에 있는데도 사람을 깨우고, 게다가 그 턴이
+    // 살아남아 전환 자체가 일어나지 않는다 — 부르는 경로는 던지지 않기 때문이다.
+    attentionLedger: isLastAccount ? attentionLedger : undefined,
+    callsForHuman: isLastAccount,
     murmurUrl: config.murmurUrl, pat: config.murmurPat,
     turnTimeoutMs: config.turnTimeoutMs,
     relay,

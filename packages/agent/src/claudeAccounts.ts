@@ -161,7 +161,17 @@ export function switchesAccount(err: unknown): boolean {
  */
 export async function withAccountFailover<T>(
   accounts: readonly (ClaudeAccount | null)[],
-  attempt: (account: ClaudeAccount | null) => Promise<T>,
+  /**
+   * `isLast` 는 **물러설 곳이 남았는가**다(2026-09-08). 이 축이 필요해진 이유:
+   * 준비 실패는 계정 전환 방아쇠인데, 사람을 부르는 경로는 **던지지 않는다** — PTY 를
+   * 살려 둬야 사람이 그 화면을 볼 수 있기 때문이다. 그래서 "부른다"와 "전환한다"는
+   * 동시에 못 한다.
+   *
+   * 순서로 가른다: 앞 계정들은 던져서 전환을 태우고, **마지막에서만** 살려 두고 부른다.
+   * 그러려면 시도 함수가 자기가 마지막인지 알아야 한다. 계정이 하나뿐인 러너
+   * (풀 미구성 `[null]` 포함)는 첫 시도가 곧 마지막이다.
+   */
+  attempt: (account: ClaudeAccount | null, isLast: boolean) => Promise<T>,
   onSwitch?: (from: ClaudeAccount | null, to: ClaudeAccount | null) => void,
 ): Promise<T> {
   if (!accounts.length) {
@@ -171,7 +181,7 @@ export async function withAccountFailover<T>(
   for (const [idx, account] of accounts.entries()) {
     if (idx > 0) onSwitch?.(accounts[idx - 1] ?? null, account);
     try {
-      return await attempt(account);
+      return await attempt(account, idx === accounts.length - 1);
     } catch (err) {
       last = err;
       // 계정을 바꿔서 나을 실패가 아니면 축을 헛돌지 않는다 — 호출자의 기존 실패 경로가
