@@ -93,7 +93,7 @@ export function AgentDefaultsSettings() {
               />
             </Field>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="기본 model" hint="비우면 하네스 기본값">
+              <Field label="기본 model" hint="비우면 하네스가 고른다 — murmur 는 그 선택을 발화에 실린 모델로만 안다">
                 <TextInput
                   ariaLabel="기본 model"
                   placeholder="harness 기본값"

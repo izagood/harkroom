@@ -124,7 +124,15 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
           {canSeeConfig && agent && (
             <>
               <Row label="하네스" value={agent.harness} />
-              <Row label="모델" value={agent.model ?? '하네스 기본값'} />
+              {/* **`null` 은 '모델 없음'이 아니라 '이 설정이 정하지 않는다'다**(#600).
+                  그냥 `하네스 기본값` 이라고만 적으면 사람은 이 행을 "실제로 쓰는 모델"로
+                  읽는데, 그 경우 murmur 는 실제 모델을 **모른다** — 러너가 `--model` 을
+                  아예 붙이지 않아 하네스가 고르고, 러너는 하네스 출력을 해석하지 않는다.
+                  실제로 무엇이 답했는지는 발화 이름줄 hover 에 있다(`meta.model`). */}
+              <Row
+                label="모델"
+                value={agent.model ?? '하네스 기본값 — 실제 모델은 발화 이름줄 hover 로 본다'}
+              />
               <Row label="작업 디렉터리" value={agent.workingDir ?? '스레드마다 새로 만든다'} mono />
               <Row label="마지막 활동" value={lastTurnLabel(agent.lastTurnAt)} />
               {/* 러너가 **어느 번들로** 돌고 있는가. 이 행이 없으면 아래 재기동 버튼은
