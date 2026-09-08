@@ -20,7 +20,7 @@ import type { PtyControls, PtyWriter, TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
 import { claudeSessionMaterialized } from './claudeSessions.js';
 import { readLastApiError } from './harnessErrors.js';
-import { ensureWorkspaceTrusted } from './workspaceTrust.js';
+import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
 import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
@@ -743,6 +743,14 @@ export async function runMentionTurn(
     workspaceDir: rec.workspaceDir,
     claudeConfigDir: deps.claudeConfigDir,
     codexHome: deps.codexHome,
+  });
+  // 계정 단위 관문(2026-09-08). 위와 갈라 부르는 이유는 저장 위치와 범위가 다르기
+  // 때문이다 — 이쪽은 `settings.json` 이고, 한 번 적으면 그 계정의 모든 워크스페이스가
+  // 풀린다. 기본 설정의 모든 첫 턴이 이 관문을 만나므로(auto → bypassPermissions),
+  // 빠뜨리면 turn 이 1초 만에 `exit 1` 로 죽는다.
+  await ensureDangerousModeAccepted({
+    harness: def.harness,
+    claudeConfigDir: deps.claudeConfigDir,
   });
 
   let result: TurnResult;
