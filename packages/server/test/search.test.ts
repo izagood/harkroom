@@ -179,12 +179,84 @@ describe('search', () => {
   /**
    * 낱말이 하나도 안 나오는 질의다. 접두 tsquery 를 만들 때 여기에 `:*` 를 그냥 붙이면
    * `to_tsquery` 가 syntax error 로 터져 **500** 이 된다 — 사람이 칠 수 있는 글자다.
+   *
+   * **순서까지 보는 이유:** `!!!` 은 3글자라 tsquery 가 null 인 채로 like 갈래만 켜진다 —
+   * 정렬 키 둘(`search @@ q`, `ts_rank`)이 **전 행에서 균일하게 null** 이 되는 유일한 구간이고,
+   * 그래서 순서가 오직 `seq desc` 로 떨어진다. 아무도 안 보던 자리다(전에는 200 만 봤다).
+   * 매치되는 줄을 **둘** 넣는다 — 하나면 어떤 정렬에서도 통과한다.
+   *
+   * 재 보고 적어 둔다: `coalesce(…, ''::tsquery)` 로 되돌려도 이 순서는 **안 바뀐다**
+   * (키가 균일 `false` 로 바뀔 뿐이라 마찬가지로 `seq desc` 로 떨어진다 — 실측으로 확인했다).
+   * 그러니 이 테스트는 그 되돌림의 가드가 아니라, **정렬 키를 건드리는** 변경의 가드다.
+   * 되돌림을 잡는 것은 아래 notice 테스트다.
    */
-  it('answers a query that yields no lexemes instead of failing', async () => {
+  it('answers a query that yields no lexemes, newest first', async () => {
     const res = await app.inject({
       method: 'GET', url: '/search?q=%21%21%21', headers: { authorization: `Bearer ${adminToken}` },
     });
     expect(res.statusCode).toBe(200);
+
+    for (const body of ['먼저 쓴 줄 !!!', '나중에 쓴 줄 !!!']) {
+      await app.inject({
+        method: 'POST', url: `/channels/${channelId}/messages`,
+        headers: { authorization: `Bearer ${adminToken}` }, payload: { body },
+      });
+    }
+    const mine = ['먼저 쓴 줄 !!!', '나중에 쓴 줄 !!!'];
+    const rows = (await searchMessages(pool, adminId, '!!!')).messages
+      .filter((m) => mine.includes(m.body));
+    expect(rows.map((m) => m.body)).toEqual(['나중에 쓴 줄 !!!', '먼저 쓴 줄 !!!']);
+    expect(rows[0]!.seq).toBeGreaterThan(rows[1]!.seq);
+  });
+
+  /**
+   * **접두 히트가 like 중간일치-only 앞에 온다**는 계약을 본다. 순서만 다르고 결과 집합은
+   * 같으므로 다른 테스트로는 안 잡힌다. 먼저 쓴 줄이 접두 히트, 나중에 쓴 줄이 중간일치-only
+   * 라서, 순위가 사라져 `seq desc` 로만 떨어지면 **나중 것이 먼저** 와 뒤집힌다 — 이 검색이
+   * 원래 앓던 병(흔한 낱말이면 상위 N 이 전부 최근 것)이 바로 그 꼴이다.
+   *
+   * 어느 키가 그 일을 하는지도 재 봤다(200k 프로브 아님, 값 자체): 정렬 첫 키
+   * `(search @@ q) desc` 는 **두 번째 키 `ts_rank` 와 겹친다** — 매치되는 행의 ts_rank 는
+   * 0.0607927, 안 되는 행은 정확히 0 이라 rank 만으로도 이 둘이 갈린다. 그래서 첫 키만
+   * 빼서는 이 테스트가 안 빨개진다(확인함). 빨개지는 것은 **순위 자체를 잃을 때**다
+   * (`order by m.seq desc` 만 남기면 뒤집힌다 — 확인함). 첫 키는 의도를 적어 두는 값이지
+   * 이 테스트가 강제하는 대상이 아니다.
+   */
+  it('puts prefix hits ahead of middle-match-only rows', async () => {
+    for (const body of ['kumquatzz 라는 낱말', 'xkumquatzzy 는 중간일치만']) {
+      await app.inject({
+        method: 'POST', url: `/channels/${channelId}/messages`,
+        headers: { authorization: `Bearer ${adminToken}` }, payload: { body },
+      });
+    }
+    const rows = (await searchMessages(pool, adminId, 'kumquatzz')).messages;
+    expect(rows.map((m) => m.body)).toEqual(['kumquatzz 라는 낱말', 'xkumquatzzy 는 중간일치만']);
+    // 접두 히트가 더 **오래된** 줄이다 — 최신순만 남으면 이 순서가 뒤집힌다.
+    expect(rows[0]!.seq).toBeLessThan(rows[1]!.seq);
+  });
+
+  /**
+   * `PREFIX_TSQUERY` 를 `coalesce(…, ''::tsquery)` 로 받으면 **빈 tsquery 리터럴이 파싱 시점에
+   * 평가돼**, 낱말이 멀쩡히 있는 정상 질의에도 검색마다 pg 로그에 한 줄이 남는다
+   * (`text-search query doesn't contain lexemes: ""`). 로그를 읽는 사람에게 "이 질의엔 낱말이
+   * 없었다"로 보여 오해를 준다 — 결과에는 아무 흔적이 없어 다른 테스트로는 안 잡힌다.
+   *
+   * 풀이 아니라 **클라이언트 하나를 잡고** 듣는 이유: `notice` 는 연결 단위 이벤트라
+   * 풀에서는 어느 연결이 쿼리를 받을지 모른다. 잡은 그 연결로 검색을 돌려야 확실하다.
+   */
+  it('leaves no notice behind for an ordinary query', async () => {
+    const client = await pool.connect();
+    const notices: string[] = [];
+    client.on('notice', (n) => notices.push(n.message ?? ''));
+    try {
+      // 낱말이 있는 평범한 질의다 — 여기서 NOTICE 가 나면 그건 빈 리터럴이 낸 것이다.
+      const found = await searchMessages(client as unknown as Pool, adminId, 'pipeline');
+      expect(found.messages.length).toBeGreaterThan(0);
+    } finally {
+      client.removeAllListeners('notice');
+      client.release();
+    }
+    expect(notices).toEqual([]);
   });
 
   /**
