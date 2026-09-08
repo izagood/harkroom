@@ -100,9 +100,46 @@ interface MenuProps {
  */
 const MENU_ITEM_FOCUS = 'outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1';
 
+/**
+ * 이 요소를 실제로 **자르는** 위·아래 경계(뷰포트 좌표). 조상 중 세로로 잘라 내는
+ * 상자(`overflow-y` 가 visible 이 아닌 것)를 모두 훑어 가장 좁은 구간을 남긴다.
+ *
+ * **뷰포트만 보면 안 되는 이유**: 메시지 메뉴가 사는 곳은 스레드 패널의
+ * `flex-1 overflow-y-auto` 목록이고, 그 목록은 화면 바닥이 아니라 **작성칸 위**에서 끝난다.
+ * 창 안에 들어가는 메뉴도 목록 밖으로 넘으면 잘려 나간다 — 마지막 메시지의 `⋯` 메뉴가
+ * "Copy link" 중간에서 잘리던 것이 정확히 이 차이였다.
+ *
+ * `getBoundingClientRect` 를 못 쓰는 환경(jsdom 은 전부 0 을 준다)에서는 넘침이 계산되지
+ * 않아 아무것도 뒤집히지 않는다 — 지금 동작 그대로다.
+ */
+function clipBounds(el: HTMLElement): { top: number; bottom: number } {
+  let top = 0;
+  let bottom = window.innerHeight;
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const overflowY = getComputedStyle(p).overflowY;
+    if (overflowY === 'visible' || overflowY === '') continue;
+    const r = p.getBoundingClientRect();
+    top = Math.max(top, r.top);
+    bottom = Math.min(bottom, r.bottom);
+  }
+  return { top, bottom };
+}
+
 export function Menu({ renderTrigger, items, placement = 'top', openOnContextMenu = false, header, className = '' }: MenuProps) {
   const [open, setOpen] = useState(false);
   const [openAt, setOpenAt] = useState<MenuPosition | null>(null);
+  /**
+   * 요청한 방향이 잘려서 반대로 뒤집었나. **`placement` 를 덮어쓰지 않고 따로 둔다** —
+   * 소비자가 준 방향은 "자리가 있으면 이쪽"이라는 뜻이라 그대로 남아야 하고, 메뉴가
+   * 닫혔다 다시 열릴 때(다른 자리에서) 뒤집기는 처음부터 다시 재야 한다.
+   */
+  const [flipped, setFlipped] = useState(false);
+  /**
+   * 위아래 어느 쪽에도 안 들어갈 때 잘라 둘 높이(px). 넓은 쪽에 붙이고 남는 만큼만 보이게
+   * 한 뒤 **메뉴 안에서 굴리게** 한다 — 잘려 나간 항목은 있는 줄도 모르지만, 굴러가는
+   * 항목은 손이 닿는다. `null` 이면 제한 없음(대부분의 경우)이다.
+   */
+  const [maxHeight, setMaxHeight] = useState<number | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -110,6 +147,8 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
   const close = useCallback(() => {
     setOpen(false);
     setOpenAt(null);
+    setFlipped(false);
+    setMaxHeight(null);
     triggerRef.current?.focus();
   }, []);
 
@@ -123,6 +162,50 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
     // enabledIndexes 는 매 렌더 새 배열이라 의존성에 넣으면 매 렌더 재실행된다 — 열림 전이만 본다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  /**
+   * 잘리는 쪽으로 열렸으면 반대쪽으로 뒤집고, 양쪽 다 모자라면 넓은 쪽에 붙여 굴린다
+   * (하단 메시지의 `⋯` 메뉴가 목록 밑단에서 잘리던 결함).
+   *
+   * 그리기 **전**이 아니라 그린 **직후**에 잰다: 메뉴 높이는 항목 수·머리·번역 문구에
+   * 따라 다르다. 좌표로 여는 경로(#111)는 아직 렌더 전이라 항목당 28px 로 어림하지만,
+   * 여기서는 실제 상자를 쓸 수 있으니 어림하지 않는다. `useLayoutEffect` 라 페인트 전에
+   * 자리가 정해져 — 메뉴가 아래에 그려졌다 위로 튀는 것이 사람 눈에 보이지 않는다.
+   *
+   * **열림 전이에서만 돈다.** 그래서 재는 시점의 방향은 언제나 소비자가 준 방향이고
+   * (`close` 가 되돌린다), 뒤집은 뒤 다시 재지 않는다 — 다시 재면 양쪽 다 좁을 때
+   * 두 방향을 오가며 흔들린다.
+   *
+   * 좌표로 연 경우는 건드리지 않는다 — 그쪽은 이미 창 안으로 잘라 넣고 `position: fixed`
+   * 라 조상이 자르지도 않는다.
+   */
+  useLayoutEffect(() => {
+    if (!open || openAt) return;
+    const menu = menuRef.current;
+    const trigger = triggerRef.current;
+    if (!menu || !trigger) return;
+    const height = menu.getBoundingClientRect().height;
+    // jsdom 은 모든 상자를 0 으로 준다 — 높이가 0 이면 잰 것이 없는 것이라 손대지 않는다.
+    if (height === 0) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const clip = clipBounds(menu);
+    // `mb-1`/`mt-1` 과 같은 4px. 뒤집힌 자리를 재는 값이라 클래스와 어긋나면 안 된다.
+    const GAP = 4;
+    const roomBelow = clip.bottom - triggerRect.bottom - GAP;
+    const roomAbove = triggerRect.top - clip.top - GAP;
+    const preferDown = placement === 'bottom';
+    const preferred = preferDown ? roomBelow : roomAbove;
+    const other = preferDown ? roomAbove : roomBelow;
+    // 요청한 쪽에 들어가면 그대로 둔다 — 자리가 있는데 뒤집는 것은 소비자의 뜻을 어기는 것이다.
+    if (height <= preferred) return;
+    // 반대쪽에 들어가면 뒤집는다. 둘 다 모자라면 **넓은 쪽**으로 간다.
+    const flip = height <= other || other > preferred;
+    if (flip) setFlipped(true);
+    const room = flip ? other : preferred;
+    // 넓은 쪽에도 모자랄 때만 자른다. 너무 얇게 자르면 메뉴가 한 줄짜리 띠가 되므로
+    // 최소 한 화면(항목 넷 남짓)은 남긴다 — 그만큼도 없는 자리면 어차피 굴려야 한다.
+    if (height > room) setMaxHeight(Math.max(room, 132));
+  }, [open, openAt, placement, items.length]);
 
   // 바깥 클릭으로 닫는다. document 리스너라 **네이티브** MouseEvent 다 — React 의 합성
   // 이벤트 타입을 쓰면 캐스트로 타입을 속이게 된다(초판이 그랬다).
@@ -201,6 +284,11 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
       })()
     : undefined;
 
+  // 뒤집기는 세로 방향만 바꾼다 — 가로 정렬(클래스 없음 = 정적 위치)은 그대로다.
+  // 기존 소비자(#113 계정 메뉴, #121 메시지 툴바)가 잘리지 않는 자리에서는 `flipped` 가
+  // 계속 false 라 지금과 한 픽셀도 다르지 않다.
+  const effectivePlacement: 'top' | 'bottom' = flipped ? (placement === 'top' ? 'bottom' : 'top') : placement;
+
   return (
     <>
       {renderTrigger(triggerProps)}
@@ -209,8 +297,8 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
           ref={menuRef}
           role="menu"
           onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } }}
-          className={`${openAt ? '' : `absolute ${placement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 min-w-32 rounded border border-border bg-surface-raised py-1 shadow-lg ${className}`}
-          style={menuStyle}
+          className={`${openAt ? '' : `absolute ${effectivePlacement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 min-w-32 rounded border border-border bg-surface-raised py-1 shadow-lg ${className}`}
+          style={maxHeight == null ? menuStyle : { ...menuStyle, maxHeight, overflowY: 'auto' }}
         >
           {/*
             머리와 항목은 **같은 가로 축**에 선다 — 둘 다 `px-3` 이다. 항목만 넓히면

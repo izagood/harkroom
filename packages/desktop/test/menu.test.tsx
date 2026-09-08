@@ -117,3 +117,78 @@ describe('프리미티브의 다른 계약이 그대로다', () => {
     expect(screen.getByRole('menuitem', { name: 'Settings' })).toBeTruthy();
   });
 });
+
+/**
+ * 하단 메시지의 `⋯` 메뉴가 목록 밑단에서 잘리던 결함.
+ *
+ * 메뉴는 `absolute` 라 스레드 목록(`flex-1 overflow-y-auto`)이 자른다. 그 목록은 화면
+ * 바닥이 아니라 **작성칸 위**에서 끝나므로, 창 안에 들어가는 메뉴도 목록 밖으로 넘으면
+ * 잘린다 — 그래서 재는 경계가 `window.innerHeight` 가 아니라 자르는 조상의 상자다.
+ *
+ * jsdom 은 모든 상자를 0 으로 주고 레이아웃을 하지 않으므로 상자를 **직접 심는다**:
+ * 자르는 통(`overflow-y: auto`)과 트리거는 `data-rect` 로, 메뉴는 높이만 준다.
+ * 진짜 그리기를 재는 것이 아니라 **어느 상자를 보고 어느 방향을 고르는가**를 고정한다.
+ */
+describe('잘리는 쪽으로는 열지 않는다', () => {
+  const rectOf = (top: number, bottom: number): DOMRect =>
+    ({ top, bottom, left: 0, right: 0, width: 0, height: bottom - top, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+
+  /** `data-rect="top,bottom"` 을 심은 요소와 메뉴에만 상자를 준다. 나머지는 0(=안 잼). */
+  const stubLayout = (menuHeight: number): void => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.getAttribute('role') === 'menu') return rectOf(0, menuHeight);
+      const attr = this.getAttribute('data-rect');
+      if (attr) {
+        const [top, bottom] = attr.split(',').map(Number) as [number, number];
+        return rectOf(top, bottom);
+      }
+      return rectOf(0, 0);
+    });
+  };
+
+  /** 자르는 통 안에 메뉴를 놓고 연다. `listBottom` 이 목록이 끝나는 자리(작성칸 위)다. */
+  const openInList = (opts: { listBottom: number; triggerTop: number; menuHeight: number }) => {
+    stubLayout(opts.menuHeight);
+    render(
+      <div data-rect={`0,${opts.listBottom}`} style={{ overflowY: 'auto' }}>
+        <Menu
+          renderTrigger={(props) => <button {...props} data-rect={`${opts.triggerTop},${opts.triggerTop + 20}`}>me</button>}
+          items={items}
+          placement="bottom"
+        />
+      </div>,
+    );
+    fireEvent.click(screen.getByText('me'));
+    return screen.getByRole('menu');
+  };
+
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('아래에 자리가 있으면 소비자가 준 방향 그대로 아래로 연다', () => {
+    const menu = openInList({ listBottom: 400, triggerTop: 10, menuHeight: 300 });
+    expect(menu.className).toContain('top-full');
+    expect(menu.className).not.toContain('bottom-full');
+  });
+
+  it('목록 밑단에 걸리면 위로 뒤집는다 — 창 안이어도 목록 밖이면 잘린다', () => {
+    // 창(jsdom 기본 768)에는 들어가지만 목록(400)에는 안 들어가는 자리. 뷰포트만 보는
+    // 구현은 여기서 뒤집지 않고, 그것이 스크린샷의 결함이었다.
+    const menu = openInList({ listBottom: 400, triggerTop: 360, menuHeight: 300 });
+    expect(menu.className).toContain('bottom-full');
+    expect(menu.className).not.toContain('top-full');
+  });
+
+  it('위아래 어디에도 안 들어가면 넓은 쪽에 붙이고 메뉴 안에서 굴린다', () => {
+    // 아래 26px · 위 146px. 뒤집어도 300px 이 안 들어가므로 넓은 쪽을 골라 잘라 둔다 —
+    // 잘려 나간 항목은 있는 줄도 모르지만 굴러가는 항목은 손이 닿는다.
+    const menu = openInList({ listBottom: 200, triggerTop: 150, menuHeight: 300 });
+    expect(menu.className).toContain('bottom-full');
+    expect(menu.style.maxHeight).toBe('146px');
+    expect(menu.style.overflowY).toBe('auto');
+  });
+
+  it('자리가 넉넉하면 높이를 자르지 않는다', () => {
+    const menu = openInList({ listBottom: 400, triggerTop: 10, menuHeight: 300 });
+    expect(menu.style.maxHeight).toBe('');
+  });
+});
