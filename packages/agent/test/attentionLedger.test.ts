@@ -12,29 +12,29 @@ import { createAttentionLedger } from '../src/attentionLedger.js';
 describe('attention 원장', () => {
   it('같은 계정은 한 번만 부른다', () => {
     const l = createAttentionLedger();
-    expect(l.claim('lime', 's1')).toBe(true);
-    expect(l.claim('lime', 's2')).toBe(false);
+    expect(l.claim('aria', 's1')).toBe(true);
+    expect(l.claim('aria', 's2')).toBe(false);
   });
 
   it('계정이 다르면 각각 부른다 — 관문은 계정마다 따로다', () => {
     const l = createAttentionLedger();
-    expect(l.claim('lime', 's1')).toBe(true);
-    expect(l.claim('plum', 's2')).toBe(true);
+    expect(l.claim('aria', 's1')).toBe(true);
+    expect(l.claim('cedar', 's2')).toBe(true);
   });
 
   it('놓으면 다시 부를 수 있다 — 다음 관문은 또 사람이 필요하다', () => {
     const l = createAttentionLedger();
-    l.claim('lime', 's1');
-    l.release('lime');
-    expect(l.claim('lime', 's2')).toBe(true);
+    l.claim('aria', 's1');
+    l.release('aria');
+    expect(l.claim('aria', 's2')).toBe(true);
   });
 
   it('같은 세션이 두 번 불러도 한 번만 나간다 — 준비 실패와 주입 실패가 겹칠 수 있다', () => {
     // `pty.ts` 는 두 자리에서 부른다(준비 상한, 주입 확인 창). 한 턴이 둘 다 태우는
     // 경로는 없지만, 있더라도 사람에게 같은 말을 두 번 하지 않는다.
     const l = createAttentionLedger();
-    expect(l.claim('lime', 's1')).toBe(true);
-    expect(l.claim('lime', 's1')).toBe(false);
+    expect(l.claim('aria', 's1')).toBe(true);
+    expect(l.claim('aria', 's1')).toBe(false);
   });
 
   it('계정 이름이 없는 러너(풀 미구성)도 한 번은 부른다', () => {

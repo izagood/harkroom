@@ -22,8 +22,8 @@ const POOLS_SNAPSHOT = {
     {
       name: 'work',
       accounts: [
-        { name: 'lime', status: { loggedIn: true, email: 'me@corp.example', orgName: 'Corp', subscriptionType: 'team' } },
-        { name: 'plum', status: { loggedIn: false } },
+        { name: 'aria', status: { loggedIn: true, email: 'me@corp.example', orgName: 'Corp', subscriptionType: 'team' } },
+        { name: 'cedar', status: { loggedIn: false } },
       ],
     },
     { name: 'personal', accounts: [{ name: 'gmail', status: { loggedIn: true, email: 'me@personal.example', orgName: 'Personal', subscriptionType: 'max' } }] },
@@ -65,7 +65,7 @@ describe('목록', () => {
     render(<ClaudeAccountsSettings />);
     await screen.findByText('work');
     expect(screen.getByText('personal')).toBeTruthy();
-    expect(screen.getByText('lime')).toBeTruthy();
+    expect(screen.getByText('aria')).toBeTruthy();
     // 정체가 보여야 사용자가 어느 계정인지 안다 — 이름만으로는 자기가 붙인 별명일 뿐이다.
     expect(screen.getByText(/me@corp\.example/)).toBeTruthy();
     expect(screen.getByText(/Corp/)).toBeTruthy();
@@ -74,7 +74,7 @@ describe('목록', () => {
   it('미로그인 계정을 그 사실과 함께 남긴다 — 목록에서 숨기지 않는다', async () => {
     stubTauri();
     render(<ClaudeAccountsSettings />);
-    await screen.findByText('plum');
+    await screen.findByText('cedar');
     // 숨기면 사용자는 자기가 만든 계정이 사라진 줄 안다. 로그인해야 할 대상이다.
     expect(screen.getByText(/Not signed in/i)).toBeTruthy();
   });
@@ -120,8 +120,8 @@ describe('삭제', () => {
   it('계정 삭제에 확인 단계가 있다 — 자격증명이 사라진다', async () => {
     stubTauri();
     render(<ClaudeAccountsSettings />);
-    await screen.findByText('lime');
-    fireEvent.click(screen.getByRole('button', { name: /remove account lime/i }));
+    await screen.findByText('aria');
+    fireEvent.click(screen.getByRole('button', { name: /remove account aria/i }));
     // 한 번 눌러서는 안 지워진다.
     expect(calls.some((c) => c.cmd === 'claude_account_remove')).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: /confirm/i }));

@@ -93,11 +93,11 @@ describe('포트가 배선되지 않았을 때', () => {
 describe('payload 검증', () => {
   it('계정 참조에 pool·account 가 둘 다 있어야 한다', async () => {
     const { send } = server(fakePort());
-    for (const bad of [undefined, {}, { pool: 'work' }, { account: 'lime' }, { pool: 1, account: 'x' }]) {
+    for (const bad of [undefined, {}, { pool: 'work' }, { account: 'aria' }, { pool: 1, account: 'x' }]) {
       const res = await send('claudeAccountRemove', bad);
       expect(isError(res), JSON.stringify(bad)).toBe(true);
     }
-    expect(isError(await send('claudeAccountRemove', { pool: 'work', account: 'lime' }))).toBe(false);
+    expect(isError(await send('claudeAccountRemove', { pool: 'work', account: 'aria' }))).toBe(false);
   });
 
   it('로그인 코드 제출에 loginId·code 가 둘 다 있어야 한다', async () => {
@@ -127,7 +127,7 @@ describe('payload 검증', () => {
       expect(isError(await send('claudeAccountsConfigure', bad)), JSON.stringify(bad)).toBe(true);
     }
     expect(isError(await send('claudeAccountsConfigure', {
-      defaultPool: 'work', order: { work: ['lime'] }, agents: { a1: 'work' },
+      defaultPool: 'work', order: { work: ['aria'] }, agents: { a1: 'work' },
     }))).toBe(false);
   });
 
@@ -158,10 +158,10 @@ describe('로그', () => {
   it('계정 이름은 적고 코드는 적지 않는다', async () => {
     // 코드로 자격증명을 교환할 수 있다 — PAT 를 로그에 안 적는 규율과 같다.
     const { send, logs } = server(fakePort());
-    await send('claudeAccountLoginStart', { pool: 'work', account: 'lime' });
+    await send('claudeAccountLoginStart', { pool: 'work', account: 'aria' });
     await send('claudeAccountLoginSubmit', { loginId: 'lid', code: 'SECRET-CODE' });
     const joined = logs.join('\n');
-    expect(joined).toContain('work/lime');
+    expect(joined).toContain('work/aria');
     expect(joined).not.toContain('SECRET-CODE');
   });
 });

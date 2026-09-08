@@ -685,7 +685,7 @@ describe('runMentionTurn', () => {
     const fake = new FakeMurmur(defOf({ harness: 'claude-code' }));
     fake.seedFrom('human-1', '첫 질문');
     const { deps, execCalls, plans, runTurn, turnOpts } = await makeDeps(fake, {
-      claudeAccount: 'plum', claudeConfigDir: '/pool/plum',
+      claudeAccount: 'cedar', claudeConfigDir: '/pool/cedar',
     });
     runTurn.script = async () => {
       await fake.post(CHANNEL, '첫 답', null);
@@ -696,17 +696,17 @@ describe('runMentionTurn', () => {
     const key = SessionStore.threadKey(CHANNEL, null);
     const firstSessionId = deps.store.get(key)!.sessionId;
     const workspaceAfterFirst = deps.store.get(key)!.workspaceDir;
-    expect(deps.store.get(key)!.claudeAccount).toBe('plum');
+    expect(deps.store.get(key)!.claudeAccount).toBe('cedar');
 
     // 한도에 걸려 러너가 다음 계정으로 옮겨 탔다.
     fake.seedFrom('human-1', '두 번째 질문');
     await runMentionTurn(
-      { ...deps, claudeAccount: 'lime', claudeConfigDir: '/pool/lime' },
+      { ...deps, claudeAccount: 'aria', claudeConfigDir: '/pool/aria' },
       { channelId: CHANNEL, threadRootId: null, mentionId: MENTION },
     );
 
     const rec = deps.store.get(key)!;
-    expect(rec.claudeAccount).toBe('lime');
+    expect(rec.claudeAccount).toBe('aria');
     expect(rec.sessionId).not.toBe(firstSessionId);
     // 워크스페이스는 재사용한다 — 그 안의 산출물은 계정과 무관하다(harness 변경과 같다).
     expect(rec.workspaceDir).toBe(workspaceAfterFirst);
@@ -723,7 +723,7 @@ describe('runMentionTurn', () => {
     const fake = new FakeMurmur(defOf({ harness: 'claude-code' }));
     fake.seedFrom('human-1', '첫 질문');
     const { deps, plans, runTurn, turnOpts } = await makeDeps(fake, {
-      claudeAccount: 'lime', claudeConfigDir: '/pool/lime',
+      claudeAccount: 'aria', claudeConfigDir: '/pool/aria',
     });
     runTurn.script = async () => {
       await fake.post(CHANNEL, '첫 답', null);

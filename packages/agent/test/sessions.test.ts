@@ -134,11 +134,11 @@ describe('SessionStore', () => {
       const file = join(await mkdtemp(join(tmpdir(), 'sessions-acct-')), 'sessions.json');
       const a = new SessionStore(file);
       await a.load();
-      await a.put('ch1/m1', { ...rec, claudeAccount: 'lime' });
+      await a.put('ch1/m1', { ...rec, claudeAccount: 'aria' });
 
       const b = new SessionStore(file);
       await b.load();
-      expect(b.get('ch1/m1')?.claudeAccount).toBe('lime');
+      expect(b.get('ch1/m1')?.claudeAccount).toBe('aria');
     });
 
     it('이 필드가 없는 옛 레코드도 읽는다', async () => {

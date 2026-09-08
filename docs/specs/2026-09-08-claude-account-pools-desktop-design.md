@@ -64,8 +64,8 @@ stdin 한 줄**이다. 이것이 §2 의 "좁은 연산"을 실제로 좁게 만
 ~/.murmur-agent/claude-accounts/
   pools.json          디스크가 표현할 수 없는 것만
   work/               풀 = 디렉터리
-    lime/             계정 = CLAUDE_CONFIG_DIR 하나
-    plum/
+    aria/             계정 = CLAUDE_CONFIG_DIR 하나
+    cedar/
   personal/           풀
     gmail/
 ```
@@ -76,7 +76,7 @@ stdin 한 줄**이다. 이것이 §2 의 "좁은 연산"을 실제로 좁게 만
 ```json
 {
   "defaultPool": "work",
-  "order": { "work": ["lime", "plum"] },
+  "order": { "work": ["aria", "cedar"] },
   "agents": { "<agent account id>": "personal" }
 }
 ```
@@ -414,11 +414,11 @@ Tauri 표면이 없는 환경(웹·테스트)에서는 **섹션이 "이 빌드�
 
 ## 13. 자동 전환 검증 (2026-09-08, 사용자의 실제 풀)
 
-사용자가 등록한 풀(`work`: lime·lychee·plum / `jaebin`: max)로 확인했다.
+사용자가 등록한 풀(`work`: aria·basil·cedar / `jaebin`: max)로 확인했다.
 
 - 방아쇠 판정: 사용량 한도·OAuth 만료·미로그인 세 실측 문구 전부 `switchesAccount=true`.
-- 첫 계정 한도 → `lime→lychee` 전환 후 lychee 가 답했다.
-- 앞 둘 소진 → `lime, lychee, plum` 순서로 세 번째까지 갔다.
+- 첫 계정 한도 → `aria→basil` 전환 후 basil 가 답했다.
+- 앞 둘 소진 → `aria, basil, cedar` 순서로 세 번째까지 갔다.
 - 전부 소진 → 마지막 오류가 호출자에게 전달됐다(기존 한도 통지 경로).
 - 평범한 실패는 첫 계정에서 멈췄다 — 축을 헛돌지 않는다.
 

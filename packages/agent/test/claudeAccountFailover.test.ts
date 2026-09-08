@@ -88,51 +88,51 @@ describe('withAccountFailover', () => {
 
   it('첫 계정이 성공하면 나머지를 시도하지 않는다', async () => {
     const seen: (string | null)[] = [];
-    const result = await withAccountFailover([acct('lime'), acct('plum')], async (a) => {
+    const result = await withAccountFailover([acct('aria'), acct('cedar')], async (a) => {
       seen.push(a?.name ?? null);
       return 'ok';
     });
     expect(result).toBe('ok');
-    expect(seen).toEqual(['lime']);
+    expect(seen).toEqual(['aria']);
   });
 
   it('한도를 만나면 다음 계정으로 같은 일을 다시 시도한다', async () => {
     const seen: (string | null)[] = [];
-    const result = await withAccountFailover([acct('lime'), acct('plum')], async (a) => {
+    const result = await withAccountFailover([acct('aria'), acct('cedar')], async (a) => {
       seen.push(a?.name ?? null);
-      if (a?.name === 'lime') throw QUOTA();
+      if (a?.name === 'aria') throw QUOTA();
       return 'ok';
     });
     expect(result).toBe('ok');
-    expect(seen).toEqual(['lime', 'plum']);
+    expect(seen).toEqual(['aria', 'cedar']);
   });
 
   it('계정을 바꿔서 나을 실패가 아니면 즉시 그 오류를 던진다 — 축을 헛돌지 않는다', async () => {
     const seen: (string | null)[] = [];
-    await expect(withAccountFailover([acct('lime'), acct('plum')], async (a) => {
+    await expect(withAccountFailover([acct('aria'), acct('cedar')], async (a) => {
       seen.push(a?.name ?? null);
       throw OTHER();
     })).rejects.toThrow(/unrelated failure/);
     // 두 번째 계정을 건드리지 않았다 — 평범한 실패는 기존 재시도 회계의 몫이다.
-    expect(seen).toEqual(['lime']);
+    expect(seen).toEqual(['aria']);
   });
 
   it('모든 계정이 한도면 마지막 오류를 던진다', async () => {
     const seen: (string | null)[] = [];
-    await expect(withAccountFailover([acct('lime'), acct('plum')], async (a) => {
+    await expect(withAccountFailover([acct('aria'), acct('cedar')], async (a) => {
       seen.push(a?.name ?? null);
       throw QUOTA();
     })).rejects.toThrow(/session limit/);
-    expect(seen).toEqual(['lime', 'plum']);
+    expect(seen).toEqual(['aria', 'cedar']);
   });
 
   it('전환할 때만 onSwitch 를 부른다 — 첫 시도에는 부르지 않는다', async () => {
     const switches: string[] = [];
-    await withAccountFailover([acct('lime'), acct('plum')], async (a) => {
-      if (a?.name === 'lime') throw QUOTA();
+    await withAccountFailover([acct('aria'), acct('cedar')], async (a) => {
+      if (a?.name === 'aria') throw QUOTA();
       return 'ok';
     }, (from, to) => switches.push(`${from?.name ?? '(기본)'}→${to?.name ?? '(기본)'}`));
-    expect(switches).toEqual(['lime→plum']);
+    expect(switches).toEqual(['aria→cedar']);
   });
 
   it('풀이 비어 [null] 이면 한 번만 돌고 기존 동작과 같다', async () => {
@@ -194,14 +194,14 @@ describe('withAccountFailover 의 마지막 계정 표시', () => {
 
   it('마지막 계정에서만 isLast 가 참이다', async () => {
     const 본것: { name: string | null; isLast: boolean }[] = [];
-    await expect(withAccountFailover([acct('lime'), acct('plum'), acct('lychee')], async (a, isLast) => {
+    await expect(withAccountFailover([acct('aria'), acct('cedar'), acct('basil')], async (a, isLast) => {
       본것.push({ name: a?.name ?? null, isLast });
       throw QUOTA();
     })).rejects.toThrow(/session limit/);
     expect(본것).toEqual([
-      { name: 'lime', isLast: false },
-      { name: 'plum', isLast: false },
-      { name: 'lychee', isLast: true },
+      { name: 'aria', isLast: false },
+      { name: 'cedar', isLast: false },
+      { name: 'basil', isLast: true },
     ]);
   });
 
@@ -218,7 +218,7 @@ describe('withAccountFailover 의 마지막 계정 표시', () => {
 
   it('첫 계정이 성공하면 isLast 가 거짓인 채로 끝난다 — 뒤를 시도하지 않는다', async () => {
     const 본것: boolean[] = [];
-    const r = await withAccountFailover([acct('lime'), acct('plum')], async (_a, isLast) => {
+    const r = await withAccountFailover([acct('aria'), acct('cedar')], async (_a, isLast) => {
       본것.push(isLast);
       return 'ok';
     });
