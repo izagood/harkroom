@@ -31,8 +31,17 @@ import {
 } from '../../lib/claudeAccounts';
 
 export interface AgentPoolState {
-  /** 이 빌드에서 풀을 다룰 수 있는가. 거짓이면 화면이 선택을 **그리지 않는다.** */
+  /**
+   * 이 빌드에 Tauri 표면이 있고 볼 에이전트가 정해졌는가. 거짓이면 화면이 선택을
+   * **그리지 않는다.**
+   *
+   * **스냅샷을 아직 못 읽은 것은 여기 섞지 않는다.** 섞으면 조회가 실패했을 때 선택이
+   * 통째로 사라지고, 그러면 `error` 를 그릴 자리도 같이 없어져 사람은 "이 앱에는 그런
+   * 기능이 없다"고 읽는다 — 실제로 그렇게 읽힌 적이 있다. 못 읽은 것은 `ready` 가 말한다.
+   */
   available: boolean;
+  /** 스냅샷을 읽었는가. 거짓이면 화면은 선택을 **그리되 잠근다**(고를 것이 아직 없다). */
+  ready: boolean;
   /** 고를 수 있는 풀 이름. **스냅샷에서 온다** — 지어내지 않는다. */
   pools: string[];
   /** 지금 배정. `''` 은 배정 없음(기본 풀 사용)이다. */
@@ -81,7 +90,8 @@ export function useAgentPool(agentId: string | null): AgentPoolState {
   }, [snap, agentId]);
 
   return {
-    available: available && snap !== null,
+    available: available && agentId !== null,
+    ready: snap !== null,
     pools: (snap?.pools ?? []).map((p) => p.name).filter((n) => n !== ''),
     assigned: (agentId && snap?.agents[agentId]) || '',
     defaultPool: snap?.defaultPool ?? null,
