@@ -369,15 +369,13 @@ export class ApiClient {
    * 서버 문구 그대로 ApiError 로 던진다 — 화면이 그 문구를 그대로 보여준다.
    */
   /**
-   * 인터랙티브 터미널을 연다. `handoff` 가 **필수 인자**인 이유(#384): [터미널 열기] 와
-   * [이어받기] 는 서로 다른 부탁이고, 기본값을 두면 한쪽 호출부가 사람이 부탁하지 않은
-   * 것을 한다. 응답의 `waiting` 이 true 면 **아직 안 열렸다** — 진행 중인 멘션 턴이 끝난
-   * 뒤에 열리고, `session`·`ticket` 은 그 멘션 턴의 것이다(기다리는 동안 볼 화면).
+   * 인터랙티브 터미널을 연다(#337). 진행 중인 턴이 있으면 러너가 그 세션을 그대로 주고,
+   * 없으면 새 PTY 를 띄운다 — 어느 쪽이든 티켓 하나로 수렴한다.
    */
   openInteractiveSession(
-    agentAccountId: string, channelId: string, threadRootId: string, handoff: boolean,
+    agentAccountId: string, channelId: string, threadRootId: string,
   ): Promise<{ ticket: string; session: AgentSessionView; waiting: boolean }> {
-    return this.req('POST', '/agent-sessions/interactive', { agentAccountId, channelId, threadRootId, handoff });
+    return this.req('POST', '/agent-sessions/interactive', { agentAccountId, channelId, threadRootId });
   }
 
   /** WS 핸드셰이크용 단기 1회용 티켓. 연결 시도마다 새로 받는다. */

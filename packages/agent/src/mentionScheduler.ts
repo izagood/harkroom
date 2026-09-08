@@ -90,8 +90,6 @@ export interface MentionSchedulerDeps {
     isLastAccount: boolean;
   }): MentionTurnDeps;
   hooks: {
-    /** #384 이어받기 — 턴이 완전히 끝난 뒤 main 루프가 정한 자리에서 부른다. */
-    resumeHandoff(threadKey: string): Promise<void>;
     stopRequested(at: string): void;
     exitIfUnrecoverable(err: unknown): void;
     noticeHarnessLogin(err: unknown, channelId: string, anchor: string, messageId: string): Promise<void>;
@@ -215,12 +213,11 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       // 아직 시도가 남았다 — 다음 시도 시각을 찍는다. 이 entry 만 쉬고 나머지는 흐른다.
       attempts.set(entryId, { tried, notBefore: now() + backoffFor(tried) });
     } finally {
-      // **이 두 줄이 어떤 await 보다도 앞이어야 한다.** 아래 resumeHandoff 가 던지면 그 뒤가
-      // 실행되지 않아 스레드 키가 장부에 영구히 남고, 그 스레드는 영원히 blocked 가 된다 —
-      // 프로세스는 회수됐는데 장부만 남아 스레드가 죽는다(turnRegistry.ts 머리 주석의 인메모리판).
+      // **이 두 줄이 어떤 await 보다도 앞이어야 한다.** 뒤에 두면 그 사이 예외에 스레드
+      // 키가 장부에 영구히 남고, 그 스레드는 영원히 blocked 가 된다 — 프로세스는 회수됐는데
+      // 장부만 남아 스레드가 죽는다(turnRegistry.ts 머리 주석의 인메모리판).
       inFlightEntries.delete(entryId);
       inFlightThreads.delete(threadKey);
-      await deps.hooks.resumeHandoff(threadKey);
     }
   }
 

@@ -43,20 +43,6 @@ describe('#337 러너가 인터랙티브 경로를 실제로 배선한다', () =
    * 옛 레코드를 읽어 같은 세션을 새로 시작하려 든다. 그래서 main 루프가 그 자리를 갖고,
    * 이 회귀선이 그것을 지킨다: 이 호출이 사라지면 [이어받기] 는 영원히 기다리기만 한다.
    */
-  it('멘션 턴 뒤에 이어받기 예약을 푼다 — 성공·실패 어느 경로에서도(finally)', async () => {
-    // main.ts 는 훅으로 넘기고, 그 훅을 finally 에서 부르는 것은 스케줄러다.
-    const main = await readSrc('main.ts');
-    expect(main).toContain('interactive?.resumeHandoff(threadKey)');
-    const src = await readSrc('mentionScheduler.ts');
-    const resumeIdx = src.indexOf('deps.hooks.resumeHandoff(threadKey)');
-    expect(resumeIdx).toBeGreaterThan(-1);
-    // 턴 호출보다 뒤다(그 전에 부르면 예약이 도는 턴과 겹친다).
-    expect(src.indexOf('deps.runMentionTurn(')).toBeLessThan(resumeIdx);
-    // 실패 경로에도 있어야 한다 — 예약을 남기면 그 스레드의 멘션이 영원히 유예된다.
-    const finallyIdx = src.lastIndexOf('} finally {', resumeIdx);
-    expect(finallyIdx).toBeGreaterThan(-1);
-  });
-
   it('유예만 있고 완료가 없는 배치는 고정 5초를 쉰다 — 조종이 끝날 때까지 타이트 루프가 되면 안 된다', async () => {
     const main = await readSrc('main.ts');
     // 2026-09-08: 판정의 재료가 done/deferred 에서 AdmitOutcome 으로 바뀌었다. 지키는 것은
