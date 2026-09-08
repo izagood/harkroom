@@ -24,7 +24,7 @@
  * 파일 이름도 전부 `@murmur/shared` 의 진실 원천에서 가져온다 — 테스트가 자기 사본을
  * 들면 상수가 바뀔 때 이 파일만 초록으로 남고, 그때 앱은 다시 사유를 지어낸다.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import {
   CREDENTIAL_REJECTED_LINE,
@@ -53,8 +53,17 @@ import { translator } from '../src/i18n';
 const ko = translator('ko');
 
 import { RunnerStatusLine, runnerStatusLabel } from '../src/components/RunnerStatus';
+import { usePrefsStore } from '../src/state/prefsStore';
 
-afterEach(cleanup);
+// **앱 언어도 `ko` 로 고정한다.** 위 `ko` 는 판정 함수에 직접 넘기는 번역기이고, 이쪽은
+// `RunnerStatusLine` 이 `useT()` 로 스스로 고르는 언어다 — 둘이 갈리면 같은 시험 안에서
+// 화면과 기대값이 다른 언어를 말한다. 아래 축이 `state.message` 의 한국어 글자를 화면
+// 텍스트에서 찾으므로 그 갈림이 곧 빨간 줄이 된다.
+beforeEach(() => usePrefsStore.getState().setLocale('ko'));
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 const DEVICE = 'ab12cd34';
 
@@ -318,8 +327,8 @@ describe('화면 — 문구가 사람이 보는 자리에 닿는다', () => {
     expect(text).toContain(harnessBinaryName('claude-code')!);
     expect(text).toContain(state.message!);
     // 라벨도 자격증명 이야기를 하지 않는다.
-    expect(runnerStatusLabel(state)).not.toContain('자격증명');
-    expect(runnerStatusLabel(state)).toContain('하네스');
+    expect(runnerStatusLabel(state, ko)).not.toContain('자격증명');
+    expect(runnerStatusLabel(state, ko)).toContain('하네스');
     expect(screen.getByRole('status')).toBeTruthy();
   });
 });

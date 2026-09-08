@@ -2,7 +2,7 @@ import { useActiveStore } from '../../state/communities';
 import { getController } from '../../state/controller';
 import { usePrefsStore } from '../../state/prefsStore';
 import { BANNER_TEXT_TONE, projectionBanner } from '../../lib/projectionBanner';
-import { useAgo } from '../../i18n/useT';
+import { useAgo, useT } from '../../i18n/useT';
 import { ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
 import { ProjectionUrl } from './ProjectionUrl';
 
@@ -29,7 +29,7 @@ import { ProjectionUrl } from './ProjectionUrl';
 function ProjectionRow() {
   const status = useActiveStore((s) => s.projectionStatus);
   const error = useActiveStore((s) => s.projectionStatusError);
-  const banner = projectionBanner({ status, error, ago: useAgo() });
+  const banner = projectionBanner({ status, error, ago: useAgo(), t: useT() });
 
   // 정상이다. **무엇을 보고 있는지**를 말한다 — "Running" 만으로는 어느 저장소를 향해
   // 돌고 있는지 알 수 없고, 엉뚱한 repo 를 보고 있는 것이 이 화면에서 안 보인다.

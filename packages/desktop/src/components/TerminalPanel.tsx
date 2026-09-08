@@ -6,6 +6,8 @@ import { connectAgentAttach, type AttachHandle } from '../lib/agentTerminal';
 import { getTerminalSinkFactory, type TerminalSink } from '../lib/terminalSink';
 import { PaneResizer } from './PaneResizer';
 import { paneStorage, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH, MIN_CHANNEL_WIDTH, MIN_THREAD_WIDTH } from '../lib/prefs';
+import { useT } from '../i18n/useT';
+import type { MessageKey, Translate } from '../i18n';
 
 /**
  * 진행 중인 에이전트 터미널 패널(#141 Phase 2, 스펙 §5).
@@ -123,6 +125,8 @@ export function TerminalPanel() {
   const handoffRef = useRef<'none' | 'requesting' | 'waiting'>('none');
   /** 멘션 턴이 끝나면 인터랙티브 세션으로 갈아탄다(#384). effect 가 자기 클로저를 걸어 둔다. */
   const handoffRequestRef = useRef<(() => void) | null>(null);
+  // 훅은 아래 `if (!target) return null` 보다 먼저여야 한다.
+  const t = useT();
 
   useEffect(() => {
     if (!target) return;
@@ -144,7 +148,7 @@ export function TerminalPanel() {
       sink?.dispose();
       sink = null;
       const host = hostRef.current;
-      if (!host) { setPhase('error'); setError('터미널을 붙일 자리가 없다'); return; }
+      if (!host) { setPhase('error'); setError(t('terminal.session.noHost')); return; }
       // 입력은 항상 배선하되 **writer 일 때만 흘린다.** 차례는 attach 뒤에도 오간다
       // (다른 창이 붙으면 강등, 그 창이 닫히면 승계) — sink 를 그때마다 다시 만들면
       // 화면이 통째로 리셋되므로, 배선은 한 번 하고 가드가 최신 차례(writerRef)를 읽는다.
@@ -315,10 +319,10 @@ export function TerminalPanel() {
          PTY 에 알리므로, 여기서 refit 을 따로 부르지 않는다. */
       className="relative flex shrink-0 flex-col border-l border-border bg-surface-sunken"
       style={{ width: terminalWidth }}
-      aria-label="에이전트 터미널"
+      aria-label={t('terminal.header.panel')}
     >
       <PaneResizer
-        label="터미널 너비 조절"
+        label={t('terminal.header.resize')}
         width={terminalWidth}
         min={MIN_TERMINAL_WIDTH}
         max={MAX_TERMINAL_WIDTH}
@@ -332,7 +336,7 @@ export function TerminalPanel() {
           상태 칩·닫기). 아래 문구들은 반대로 본문단이다: 세션이 없거나 실패했을 때 사람이
           다음에 무엇을 할 수 있는지가 그 문장에만 적혀 있다. */}
       <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-meta text-fg-muted">
-        <span className="font-semibold">터미널</span>
+        <span className="font-semibold">{t('terminal.header.title')}</span>
         <span className="text-fg-subtle">@{agent?.handle ?? target.agentAccountId}</span>
         {/* 어느 채널·스레드의 터미널인지 항상 적는다(#339). 같은 에이전트의 세션이 여럿일
             수 있는데 이 표기가 없으면 사람은 지금 보는 화면이 어느 스레드의 것인지 알 길이
@@ -340,21 +344,21 @@ export function TerminalPanel() {
         <span className="min-w-0 truncate text-fg-subtle" data-testid="terminal-scope">
           {channel?.name ? `#${channel.name}` : 'DM'}
           {' · '}
-          {threadRoot ? threadExcerpt(threadRoot.body) : '스레드'}
+          {threadRoot ? threadExcerpt(threadRoot.body) : t('terminal.header.thread')}
         </span>
-        {state && <span className="rounded bg-surface-raised px-1.5 py-0.5">{STATE_LABEL[state]}</span>}
+        {state && <span className="rounded bg-surface-raised px-1.5 py-0.5">{t(STATE_LABEL[state])}</span>}
         <button
           onClick={() => set({ terminalTarget: null })}
           className="ml-auto rounded px-2 py-0.5 text-fg-muted hover:bg-surface-raised"
-          aria-label="터미널 닫기"
+          aria-label={t('terminal.header.closeAction')}
         >
-          닫기
+          {t('terminal.header.close')}
         </button>
       </div>
-      {phase === 'loading' && <p className="px-3 py-2 text-fg-subtle">세션을 확인하는 중…</p>}
+      {phase === 'loading' && <p className="px-3 py-2 text-fg-subtle">{t('terminal.session.checking')}</p>}
       {phase === 'no-session' && (
         <div className="px-3 py-2 text-fg-subtle">
-          <p>진행 중인 턴이 없다 — 직접 열거나, 이 에이전트를 부르면 그 턴에 붙을 수 있다.</p>
+          <p>{t('terminal.session.none')}</p>
           {/* #337: 세션이 없어도 사람이 스스로 연다. 러너가 이 스레드의 세션을 확보해
               (없으면 생성) 인터랙티브 PTY 를 띄우고, 같은 attach 흐름으로 합류한다.
               실패(러너 오프라인·구버전·codex 거절)는 서버 문구가 그대로 error 로 온다. */}
@@ -362,12 +366,12 @@ export function TerminalPanel() {
             onClick={() => openRef.current?.()}
             className="mt-2 rounded bg-surface-raised px-2 py-1 text-fg hover:bg-surface-hover"
           >
-            터미널 열기
+            {t('terminal.session.open')}
           </button>
         </div>
       )}
       {phase === 'error' && (
-        <p className="px-3 py-2 text-warning">터미널을 열지 못했다: {error}</p>
+        <p className="px-3 py-2 text-warning">{t('terminal.session.openFailed', { reason: error ?? '' })}</p>
       )}
       {/* **차례를 항상 적는다.** writer 통지가 온 뒤에만 그린다(null 이면 아직 모르거나
           구 서버다 — 그때 "다른 창이 입력 중"이라 적으면 없는 사람을 만들어 낸다).
@@ -375,13 +379,13 @@ export function TerminalPanel() {
           화면에서 알 수 없다. */}
       {phase === 'attached' && writer === true && (
         <p className="px-3 py-2 text-fg-subtle" role="note" data-testid="writer-note">
-          입력 가능 — 마지막으로 연 창이 입력을 가진다.
+          {t('terminal.writer.can')}
         </p>
       )}
       {phase === 'attached' && writer === false && (
         <div className="px-3 py-2 text-fg-subtle">
           <p role="note" data-testid="writer-note" data-writer-reason={writerReason ?? 'unknown'}>
-            {writerDeniedText(writerReason)}
+            {writerDeniedText(writerReason, t)}
           </p>
           {/* #384: 관찰 전용의 **이유가 진행 중인 멘션 턴일 때만** 이어받을 것이 있다.
               다른 창이 차례를 가져간 경우(other-writer)는 그 창을 닫으면 되고, 구 러너
@@ -393,23 +397,23 @@ export function TerminalPanel() {
               className="mt-2 rounded bg-surface-raised px-2 py-1 text-fg hover:bg-surface-hover"
               data-testid="handoff-button"
             >
-              이어받기
+              {t('terminal.handoff.request')}
             </button>
           )}
           {handoff === 'requesting' && (
-            <p className="mt-2" role="status" data-testid="handoff-note">이어받기를 요청하는 중…</p>
+            <p className="mt-2" role="status" data-testid="handoff-note">{t('terminal.handoff.requesting')}</p>
           )}
           {/* **기다린다는 사실이 화면에 있다**(#384 의 정직성 전부). 진행 중인 턴을 멈추지
               않으므로(운영자 결정 A) 누른 뒤 26초쯤은 아무것도 안 바뀐 것처럼 보인다 —
               그 침묵을 이 한 줄이 메운다. */}
           {handoff === 'waiting' && (
             <p className="mt-2 text-fg" role="status" data-testid="handoff-note">
-              이어받기를 예약했다 — 진행 중인 멘션 턴이 끝나면 엽니다. 그때 이 터미널이 그 대화를 이어받는다.
+              {t('terminal.handoff.queued')}
             </p>
           )}
           {handoffError && (
             <p className="mt-2 text-warning" role="note" data-testid="handoff-error">
-              이어받지 못했다: {handoffError}
+              {t('terminal.handoff.failed', { reason: handoffError })}
             </p>
           )}
         </div>
@@ -431,19 +435,30 @@ export function TerminalPanel() {
  * 멘션 턴 문구가 **원인을 그대로 말하는** 이유: "관찰 전용"만 적으면 임의의 제약으로
  * 읽혀 "왜 안 되냐"가 결함으로 다시 올라온다. 프롬프트를 파일로 받는다는 사실이 이
  * 제약의 전부이고, 그 사실을 아는 사람은 다른 길(터미널 열기)을 스스로 찾는다.
+ *
+ * ## `if` 사슬을 **표로 바꿨다** (`Sidebar::NOTIFY_LEVEL_KEY` 판례)
+ *
+ * 사전을 지나면서 넷이 전부 자리표시자 없는 상수 문구가 되어 표가 성립했고, 표가
+ * 사슬보다 낫다: **서버가 다섯 번째 사유를 만들면 여기서 컴파일이 막힌다.** `if` 사슬은
+ * 그것을 조용히 마지막 `return`(= "모른다")으로 흘려보내고, 그러면 이 함수가 지키려던
+ * *"원인마다 다음 행동이 다르다"* 가 그 사유 하나에 대해 거짓이 된다.
+ *
+ * `null` 은 표 밖에 남는다 — 구 서버가 이유를 **안 실은 것**이지 `WriterDeniedReason` 의
+ * 값이 아니다. 그 둘을 표 안에서 합치면 "서버가 모른다고 했다"와 "서버가 말을 안 했다"가
+ * 같은 칸이 된다.
  */
-function writerDeniedText(reason: WriterDeniedReason | null): string {
-  if (reason === 'observe-only') {
-    return '관찰 전용 — 진행 중인 멘션 턴은 프롬프트를 파일로 받으므로 이 터미널은 입력을 받을 수 없다. 직접 치려면 턴이 끝난 뒤 터미널을 열어라.';
-  }
-  if (reason === 'runner-outdated') {
-    return '읽기 전용 — 이 러너는 입력을 다룰 줄 모른다(구버전이거나 붙어 있지 않다).';
-  }
-  if (reason === 'other-writer') {
-    return '읽기 전용 — 다른 창이 입력 중이다. 이 창에 치면 아무 데도 가지 않는다.';
-  }
+const WRITER_DENIED_KEY: Record<WriterDeniedReason, MessageKey> = {
+  'observe-only': 'terminal.writer.observeOnly',
+  'other-writer': 'terminal.writer.otherWriter',
+  'runner-outdated': 'terminal.writer.runnerOutdated',
+};
+
+// **회귀선이 부를 수 있게 내보낸다.** 사전만 읽는 축은 이 표가 잘못 배선돼도(두 사유가
+// 같은 키를 가리켜도) 초록으로 남는다 — 실제로 RED 프로브에서 그것을 확인했다.
+// 지키려는 것은 사전에 문장 넷이 있다가 아니라 **네 사유가 서로 다른 말에 닿는다**이다.
+export function writerDeniedText(reason: WriterDeniedReason | null, t: Translate): string {
   // 구 서버는 이유를 안 싣는다 — 그때 원인을 지어내지 않고 "모른다"를 그대로 적는다.
-  return '읽기 전용 — 이 창의 입력은 러너에 닿지 않는다.';
+  return t(reason === null ? 'terminal.writer.unknown' : WRITER_DENIED_KEY[reason]);
 }
 
 /**
@@ -455,9 +470,16 @@ function threadExcerpt(body: string): string {
   return flat.length > 24 ? `${flat.slice(0, 24)}…` : flat;
 }
 
-/** 상태 문구. 'runner-offline' 을 '끝났다'로 쓰지 않는다 — 다른 사실이다. */
-const STATE_LABEL: Record<AgentSessionState, string> = {
-  running: '진행 중',
-  ended: '턴 종료',
-  'runner-offline': '러너 연결 끊김',
+/**
+ * 상태 문구. 'runner-offline' 을 '끝났다'로 쓰지 않는다 — 다른 사실이다.
+ *
+ * **값이 아니라 키를 든다**(위 `WRITER_DENIED_KEY` 와 같은 판례). 문구를 들면 모듈
+ * 로드 시점 언어로 굳어 `t()` 를 지나도 안 바뀐다 — 키는 언어를 안 지니므로 상수여도
+ * 안전하다. `AgentSessionState` 로 색인된 채로 두는 이유는 **네 번째 상태가 생기면
+ * 여기서 컴파일이 막히기** 때문이다.
+ */
+const STATE_LABEL: Record<AgentSessionState, MessageKey> = {
+  running: 'terminal.state.running',
+  ended: 'terminal.state.ended',
+  'runner-offline': 'terminal.state.runnerOffline',
 };

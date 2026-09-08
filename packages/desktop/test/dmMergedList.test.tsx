@@ -22,6 +22,8 @@ import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
 import { acc, chan, msg } from './helpers/fakeApi';
 import { PRESENCE_LABEL } from '../src/lib/presenceView';
+import { usePrefsStore } from '../src/state/prefsStore';
+import { translator } from '../src/i18n';
 import type { RunnerState } from '../src/lib/runnerLauncher';
 import type { DmView } from '@murmur/shared';
 
@@ -73,8 +75,11 @@ const 줄들 = () =>
   Array.from(document.querySelectorAll('[data-testid^="dm-face-"]'))
     .map((el) => el.getAttribute('data-testid')!.replace('dm-face-', ''));
 
-beforeEach(() => { useAppStore.getState().reset(); });
-afterEach(() => { cleanup(); });
+// **언어를 고정한다.** 아래 축이 `PRESENCE_LABEL` 의 **문구**를 화면에서 찾는데,
+// 그 표는 이제 키를 들고 화면이 `t()` 로 문구를 만든다 — 기대값과 화면이 같은 언어를
+// 말해야 둘이 실제로 맞붙는다. 재는 것은 언어가 아니라 *"색 말고 글자로도 말한다"* 다.
+beforeEach(() => { useAppStore.getState().reset(); usePrefsStore.getState().setLocale('ko'); });
+afterEach(() => { cleanup(); usePrefsStore.getState().setLocale('system'); });
 
 describe('최근순 한 목록 (docs/desktop-rail.html 2단계)', () => {
   it('사람과 에이전트가 한 목록에 최근순으로 섞인다 — 묶음이 없다', () => {
@@ -266,7 +271,7 @@ describe('상태는 아바타가 말한다 — B1 의 세 얼굴 (「나머지 �
     expect(face.innerHTML).toContain('grayscale');
     // 색은 스크린리더에 아무 말도 하지 않는다(`#443` 의 요지). 같은 말이 글자로도 있고,
     // 그 문구는 `PRESENCE_LABEL.unknown` 이다 — **"오프라인"이라고 쓰지 않는다**(아는 척).
-    expect(face.textContent).toContain(PRESENCE_LABEL.unknown);
+    expect(face.textContent).toContain(translator('ko')(PRESENCE_LABEL.unknown));
   });
 
   it('사람에게도 같은 칸이 상태를 말한다 — 표시가 에이전트에만 있지 않다', () => {
