@@ -1178,7 +1178,17 @@ export function Composer({
 
       <textarea
         ref={ref}
-        className="w-full resize-none rounded border border-border bg-field px-3 py-2"
+        /*
+         * 글자와 테두리 사이의 숨 쉴 공간. `py-2`(8px) + 줄높이 `normal` 이었고, 그
+         * 조합은 **두 군데서** 글자를 테두리에 붙였다: 세로 여백 자체가 8px 로 얕고,
+         * 줄높이가 좁아 half-leading 이 거의 0 이라 첫 줄 윗변·마지막 줄 밑변이 테두리를
+         * 스쳤다. 한글은 라틴보다 글자틀을 꽉 채워 이 압박이 더 크게 보인다.
+         *
+         * 그래서 둘을 같이 올린다 — 여백만 키우면 여러 줄을 쓸 때 **줄 사이**가 여전히
+         * 붙어 답답하고, 줄높이만 키우면 첫/마지막 줄과 테두리 간격이 그대로다.
+         * `rows` 는 줄 수를 세므로(높이를 못 박지 않는다) 칸이 줄높이만큼 함께 자란다.
+         */
+        className="w-full resize-none rounded border border-border bg-field px-3 py-2.5 leading-relaxed"
         rows={rows}
         autoFocus={autoFocus}
         placeholder={placeholder}

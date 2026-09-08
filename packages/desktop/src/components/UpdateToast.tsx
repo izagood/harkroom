@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { UPDATE_CHECK_INTERVAL_MS, useUpdateCheck } from '../lib/useUpdateCheck';
 
 /**
- * 앱을 쓰는 **중에** 새 버전이 나온 것을 말하는 우측 하단 팝업.
+ * 앱을 쓰는 **중에** 새 버전이 나온 것을 말하는 좌측 하단 팝업.
  *
  * 로그인 전 배너(#526)가 푼 것은 "붙지 못해 업데이트도 못 하는" 막다른 길이었다. 이쪽은
  * 다른 문제다: 이 앱은 하루 종일 켜 두는 창이라, 시작할 때 한 번 확인하고 끝내면 그 사이에
@@ -38,7 +38,20 @@ export function UpdateToast() {
     <div
       // `Notice` 의 `role="alert"` 보다 약하게 둔다 — 업데이트는 작업에 끼어들 일이 아니다.
       role="status"
-      className="fixed bottom-4 right-4 z-50 flex w-72 items-center gap-2 rounded-lg border border-accent-brand bg-surface-raised px-3 py-2 shadow-lg"
+      /*
+       * **우측 하단이 아니다.** 그 자리에는 컴포저의 `전송` 이 있었고, 이 팝업이 그것을
+       * 덮었다 — 업데이트는 급한 일이 아닌데 지금 쓰던 글을 보내는 것을 막았다. 우측
+       * 하단은 이 창에서 비어 있는 구석이 아니다.
+       *
+       * 그래서 사이드바 칸의 왼쪽 아래로 옮겼다. 그쪽은 칸 목록의 끝이라 대개 비어
+       * 있고, 무엇을 가리더라도 그것이 "지금 하던 일"인 경우가 없다.
+       *
+       * 좌표는 **`Workspace` 의 폭 0 앵커**(레일 바로 오른쪽)에 매단다. `fixed
+       * left-[…]` 로 레일 폭을 여기에 다시 적지 않는다 — 레일은 62px 이지만 커뮤니티가
+       * 둘 이상이면 그 왼쪽에 56px 이 하나 더 서므로(`CommunityRail`), 못 박은 숫자는
+       * 그 상태에서 팝업을 레일 위로 올려 놓는다. 흐름 안의 앵커는 두 경우 모두 맞다.
+       */
+      className="absolute bottom-4 left-3 z-50 flex w-72 items-center gap-2 rounded-lg border border-accent-brand bg-surface-raised px-3 py-2 shadow-lg"
     >
       <p className="min-w-0 flex-1 truncate text-body text-fg">
         {installing ? `Installing v${status.version}…` : `v${status.version} available`}
