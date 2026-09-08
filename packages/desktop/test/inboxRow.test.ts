@@ -131,4 +131,13 @@ describe('필터 칩이 정렬과 같은 축을 쓴다', () => {
   it("'전부' 는 배경까지 남긴다", () => {
     expect([blocking, reading, background].every((r) => matchesFilter(r, 'all'))).toBe(true);
   });
+
+  // 'unread' 만 rank 가 아니라 **호출부가 넘긴 읽음 상태**를 본다. 안 넘기면 아무것도
+  // 맞지 않는다 — 잊은 자리에서 조용히 전부 통과하면 "안 읽은 것"이 전부가 된다.
+  it('안 읽음 칩은 읽음 상태로 가른다', () => {
+    expect(matchesFilter(blocking, 'unread', true)).toBe(true);
+    expect(matchesFilter(blocking, 'unread', false)).toBe(false);
+    expect(matchesFilter(background, 'unread', true)).toBe(true);
+    expect(matchesFilter(blocking, 'unread')).toBe(false);
+  });
 });
