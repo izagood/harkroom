@@ -424,7 +424,14 @@ writer 를 여는 조건이 "stdinFile 이 없다"에서 "인터랙티브 턴이
 | `ESC` 단독으로 진행 중 작업 인터럽트 | **안 된다** — 계속 돌아 끝까지 갔다 |
 | **`Ctrl+C`(`\x03`) 로 인터럽트** | **된다** — 프로세스는 살아 있고 화면에 `Interrupted · What should Claude do instead?` 가 뜬다 |
 | 주입한 프롬프트의 PTY 에코 | **남는다** — 아래 위험 참고 |
-| codex `exec` 세션을 대화형 `resume` 이 이어받기 | **미측정**(프로브의 `CODEX_HOME` 에 인증이 없어 401 로 끝났다 — 설계가 아니라 측정 환경의 문제다) |
+| codex `exec` 세션을 대화형 `resume` 이 이어받기 | **된다** — 단 `resume <session-id>` 로 **id 를 명시**해야 한다(`--last` 는 다른 세션을 집었다). 부팅 화면에 옛 대화가 복원되고 모델이 앞 턴의 사실을 답했다 |
+| codex TUI 의 bracketed paste 주입 · 작업 중 `Ctrl+C` | **둘 다 된다** — 인터럽트 후 프로세스가 살아 있고 `Conversation interrupted - tell the model what to do differently.` 가 뜬다 |
+| codex TUI 부팅의 **디렉터리 신뢰 대화상자** | **뜬다** — `ensureCodexHome` 이 config 를 격리하므로 신뢰 상태가 상속되지 않는다. Enter 로 통과된다 |
+
+**`CODEX_HANDOFF_REJECTION` 의 근거가 사라졌다.** 그 거절 문구는 "멘션 턴(codex exec)이 만든
+세션을 대화형 codex resume 이 이어받는지가 **실측되지 않았다**" 였다. 위 표가 그것을 쟀고 답은
+"이어받는다" 다. 세션 id 는 `codexSessions.ts::findCodexSessionId` 가 이미 rollout 파일에서
+찾고 있으므로 넘길 값도 이미 손에 있다.
 
 **`#380` 의 결론은 `-p`/`exec` 모드에 한정된 것이다.** 그 실측("두 하네스 모두 stdin 이
 tty 면 프롬프트를 안 읽는다")은 `--print` 가 `isatty(0)` 을 보고 거절한다는 사실이고, TUI 에는
