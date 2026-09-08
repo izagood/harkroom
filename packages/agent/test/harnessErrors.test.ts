@@ -10,6 +10,11 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readLastApiError } from '../src/harnessErrors.js';
 
+/** `isApiErrorMessage` 레코드 한 줄. 실물 세션 파일의 모양을 그대로 쓴다. */
+const rec = (timestamp: string, text: string): string => JSON.stringify({
+  type: 'assistant', isApiErrorMessage: true, timestamp, message: { content: text },
+});
+
 const SID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 
 /** `<projects>/<프로젝트>/<sid>.jsonl` 을 만들고 그 projects 뿌리를 돌려준다. */
@@ -85,5 +90,64 @@ describe('readLastApiError', () => {
   it('codex 는 아직 null 이다 — rollout 형식은 P5 에서 다룬다', async () => {
     const projectsDir = await seed([apiErrorRecord('무엇이든')]);
     expect(await readLastApiError('codex', SID, { projectsDir })).toBeNull();
+  });
+});
+
+// ── 턴 도중에 읽는다(2026-09-09 프로덕션 관측)
+//
+// TUI 는 한도 에러를 받고도 **죽지 않는다** — 화면에 찍고 계속 산다. `-p` 시절에는
+// 프로세스 종료가 곧 신호였고 그 exit code 가 계정 전환을 태웠는데, 그 신호가 사라졌다.
+// 실측: 한도에 걸린 TUI 20여 개가 같은 계정으로 8분 넘게 살아 있었고 계정 전환은 0건.
+//
+// 그래서 러너가 **턴이 도는 동안** 이 파일을 본다. 그때 필요한 것이 `sinceMs` 다:
+// 세션 파일은 그 스레드의 전체 이력이라 **앞 턴의 한도 에러**가 그대로 남아 있고,
+// 그것을 지금 턴의 것으로 읽으면 멀쩡한 계정을 버리고 축을 헛돈다.
+describe('readLastApiError — sinceMs', () => {
+  it('그 시각 이후의 에러만 읽는다 — 앞 턴의 한도가 지금 턴을 죽이지 않는다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'since-'));
+    const proj = join(dir, 'projects', '-w');
+    await mkdir(proj, { recursive: true });
+    await writeFile(join(proj, 'S.jsonl'), [
+      rec('2026-09-09T00:00:00.000Z', '앞 턴의 한도'),
+      rec('2026-09-09T00:10:00.000Z', '지금 턴의 한도'),
+    ].join('\n'));
+
+    const 앞 = await readLastApiError('claude-code', 'S', {
+      configDir: dir, sinceMs: Date.parse('2026-09-09T00:05:00.000Z'),
+    });
+    expect(앞?.text).toBe('지금 턴의 한도');
+  });
+
+  it('그 시각 이후에 아무것도 없으면 null 이다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'since-'));
+    const proj = join(dir, 'projects', '-w');
+    await mkdir(proj, { recursive: true });
+    await writeFile(join(proj, 'S.jsonl'), rec('2026-09-09T00:00:00.000Z', '앞 턴의 한도'));
+
+    expect(await readLastApiError('claude-code', 'S', {
+      configDir: dir, sinceMs: Date.parse('2026-09-09T00:05:00.000Z'),
+    })).toBeNull();
+  });
+
+  it('sinceMs 가 없으면 지금까지처럼 마지막을 읽는다 — 기존 호출자는 그대로다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'since-'));
+    const proj = join(dir, 'projects', '-w');
+    await mkdir(proj, { recursive: true });
+    await writeFile(join(proj, 'S.jsonl'), rec('2026-09-09T00:00:00.000Z', '앞 턴의 한도'));
+
+    expect((await readLastApiError('claude-code', 'S', { configDir: dir }))?.text).toBe('앞 턴의 한도');
+  });
+
+  it('타임스탬프가 없는 레코드는 sinceMs 가 있으면 세지 않는다 — 시각을 모르면 지금 것이 아니다', async () => {
+    // 없는 것을 있다고 읽지 않는다. 시각 없는 레코드를 지금 턴의 것으로 세면, 앞 턴의
+    // 에러 하나가 그 스레드의 모든 계정을 차례로 버리게 만든다.
+    const dir = await mkdtemp(join(tmpdir(), 'since-'));
+    const proj = join(dir, 'projects', '-w');
+    await mkdir(proj, { recursive: true });
+    await writeFile(join(proj, 'S.jsonl'), JSON.stringify({
+      type: 'assistant', isApiErrorMessage: true, message: { content: '시각 없음' },
+    }));
+
+    expect(await readLastApiError('claude-code', 'S', { configDir: dir, sinceMs: 1 })).toBeNull();
   });
 });

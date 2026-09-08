@@ -224,6 +224,15 @@ export interface MentionTurnDeps {
    * 두 정책(죽이고 던진다 / 살리고 부른다)을 가르기 때문이다.
    */
   callsForHuman?: boolean;
+  /**
+   * 하네스가 자기 세션 파일에 남긴 API 에러를 읽는다(기본 `readLastApiError`).
+   * 주입 가능한 이유는 `sessionMaterialized` 와 같다 — 테스트가 디스크를 세우지 않고
+   * 두 세계(에러 있음/없음)를 태울 수 있어야 한다.
+   */
+  readApiError?: (
+    harness: AgentHarness, sessionId: string | null,
+    opts: { configDir?: string | null; sinceMs?: number },
+  ) => Promise<{ text: string } | null>;
 }
 
 /**
@@ -699,9 +708,12 @@ export async function runMentionTurn(
      * SIGTERM 이라 둘 다 143 이고, 하네스가 스스로 죽은 143 과도 같다.
      */
     reclaimed: boolean;
+    /** 턴이 도는 동안 관측한 하네스 API 에러(한도·자격증명). 있으면 이 턴은 실패다. */
+    apiError: string | null;
     cancelReclaim: (() => void) | null; cancelProbe: (() => void) | null; cancelSilence: (() => void) | null;
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
+    apiError: null,
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
   };
 
@@ -753,16 +765,41 @@ export async function runMentionTurn(
   //
   // codex 는 `exec` 이라 답하면 스스로 죽는다 — 폴링할 이유가 없다(P5 전까지).
   const probeMs = deps.utteranceProbeMs ?? 3_000;
+  /**
+   * **하네스가 한도·자격증명 에러를 냈는가**(2026-09-09). TUI 는 그 에러를 받고도 죽지
+   * 않으므로 — 실측: 431ms 만에 화면에 찍고 8분 넘게 살아 있었다 — 프로세스 종료를
+   * 기다리면 무발화 30분까지 간다. 그동안 멀쩡한 계정들이 논다.
+   *
+   * `sinceMs` 로 **이 턴의 것만** 본다: 세션 파일은 스레드의 전체 이력이라 앞 턴의 한도가
+   * 그대로 남아 있고, 그것을 지금 것으로 읽으면 멀쩡한 계정을 버리고 축을 헛돈다.
+   *
+   * 발화한 뒤에는 보지 않는다(위 `end.spoke` 가드) — 답을 올린 뒤 후속 작업에서 한도를
+   * 만나는 경우가 있고, 그 턴을 실패로 읽으면 재시도가 같은 질문에 두 번 답한다.
+   */
+  const probeApiError = async (): Promise<boolean> => {
+    const read = deps.readApiError ?? readLastApiError;
+    const err = await read(def.harness, sessionIdForProbe, {
+      configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
+    }).catch(() => null);
+    if (!err || end.exited || end.spoke) return false;
+    end.apiError = err.text;
+    console.error(`[mentionTurn] ${key}: 하네스가 API 에러를 냈다 — ${err.text}`);
+    reclaim();
+    return true;
+  };
+
   const probeUtterance = (): void => {
     if (end.exited || end.spoke) return;
     void deps.murmur.readThread(channelId, anchor, turnStartSeq)
-      .then((after) => {
+      .then(async (after) => {
         if (end.exited || end.spoke) return;
         if (countOwnPostsSince(after, deps.me.id, turnStartSeq) > 0) {
           end.spoke = true;
           reconsiderEnd();
           return;
         }
+        // 발화가 없다 — 하네스가 말을 못 하는 이유가 디스크에 있을 수 있다.
+        if (await probeApiError()) return;
         end.cancelProbe = schedule(probeUtterance, probeMs);
       })
       // 관측 실패로 턴을 죽이지 않는다 — 다음 주기에 다시 묻는다.
@@ -791,6 +828,12 @@ export async function runMentionTurn(
   // 아래 콜백들이 쓰는 값을 여기서 잡아 둔다 — 콜백 안에서는 `rec` 의 좁힌 타입이
   // 유지되지 않고(비동기 경계), 세션 id 는 첫 턴에도 이미 발급돼 있다.
   const sessionIdForProbe: string | null = rec.sessionId;
+  /**
+   * 이 턴이 시작된 벽시계 시각. 세션 파일의 `timestamp` 와 비교해 **이 턴의 에러만**
+   * 가른다(`probeApiError`). PTY 를 띄우기 **직전**이어야 한다 — 뒤에 찍으면 그 사이에
+   * 하네스가 쓴 에러를 놓친다.
+   */
+  const turnStartedAtMs = deps.now?.() ?? Date.now();
 
   let result: TurnResult;
   try {
@@ -949,7 +992,7 @@ export async function runMentionTurn(
   // 무발화 회수는 `spoke` 가 거짓이므로 아래 실패 경로에 그대로 남는다.
   const 회수로끝났다 = end.reclaimed && end.spoke && !end.silenced;
 
-  if (!회수로끝났다 && (result.exitCode !== 0 || result.timedOut || end.silenced)) {
+  if (!회수로끝났다 && (result.exitCode !== 0 || result.timedOut || end.silenced || end.apiError)) {
     // #81: 실패한 턴은 turnsRun 을 올리지 않는다. claude 의 세션 uuid 는 러너가 발급만 했을
     // 뿐 하네스에 등록됐다는 증거가 아니다 — 올리면 다음 턴이 isFirstTurn=false 로 판단해
     // `-r`(resume)로 조립하고, 존재한 적 없는 세션을 이어받으려다 또 실패한다. 0 으로 둬야
@@ -1035,11 +1078,18 @@ export async function runMentionTurn(
     // 그것이 판정 재료가 되면 사람이 본문 한 줄로 러너를 죽일 수 있다(설계 §3-4). 무발화는
     // 하네스가 아무 말도 안 했다는 사실이므로 tail 에서 얻을 것도 없다.
     const failure = new Error(
-      end.silenced
-        ? `harness 무발화 ${deps.turnTimeoutMs}ms — 답 없이 시간 한도를 넘겼다`
-        : `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
+      end.apiError
+        // 턴 도중에 관측한 에러가 있으면 그것이 원인이다(2026-09-09). tail 을 담지 않는
+        // 이유는 무발화와 같다 — TUI 에서는 주입한 프롬프트가 에코돼 tail 에 섞인다.
+        ? `harness API 에러: ${end.apiError}`
+        : end.silenced
+          ? `harness 무발화 ${deps.turnTimeoutMs}ms — 답 없이 시간 한도를 넘겼다`
+          : `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
     ) as Error & { harnessApiError?: string };
-    if (apiError) failure.harnessApiError = apiError.text;
+    // **턴 도중 관측이 우선이다.** 종료 뒤 읽기(`apiError`)는 sinceMs 가 없어 앞 턴의
+    // 에러를 집을 수 있다 — 지금 턴의 사실을 이미 손에 쥐었으면 그것을 쓴다.
+    if (end.apiError) failure.harnessApiError = end.apiError;
+    else if (apiError) failure.harnessApiError = apiError.text;
     throw failure;
   }
 
