@@ -1057,6 +1057,36 @@ export async function listMessages(
 ): Promise<MessageRow[]> {
   const limit = Math.min(opts.limit ?? 200, 500);
   if (opts.threadRootId) {
+    /**
+     * 스레드 **안**의 옛 답글로 점프하는 창(⌘F 의 스레드 스코프). 아래 기본 분기는 스레드의
+     * '최신 limit 개'를 주므로, 답글이 그보다 많은 스레드에서 옛 답글을 고르면 대상이 창에
+     * 없고 강조가 조용히 아무 일도 하지 않는다 — 스레드 패널에는 위로 더 읽는 길도 없어
+     * 그 말에 닿을 방법이 아예 없어진다. 채널 쪽 `around` 와 **같은 문장**이다.
+     */
+    if (opts.around !== undefined) {
+      const half = Math.max(1, Math.ceil(limit / 2));
+      const res = await pool.query(
+        `select * from (
+           (select ${LIST_COLS} from message m ${THREAD_STATS}
+            where m.channel_id = $1 and m.id = $2 and ${LIST_VISIBLE})
+           -- 루트는 아래 갈래(thread_root_id = $2)에 절대 걸리지 않으므로 중복이 없다.
+           -- union(중복 제거)은 json 컬럼에 등호가 없어 터진다 — union all 이어야 한다.
+           union all
+           (select * from (
+              (select ${LIST_COLS} from message m ${THREAD_STATS}
+               where m.channel_id = $1 and m.thread_root_id = $2 and m.seq <= $3 and ${LIST_VISIBLE}
+               order by m.seq desc limit $4)
+              union all
+              (select ${LIST_COLS} from message m ${THREAD_STATS}
+               where m.channel_id = $1 and m.thread_root_id = $2 and m.seq > $3 and ${LIST_VISIBLE}
+               order by m.seq limit $4)
+            ) thread_window)
+         ) window_rows
+         order by seq`,
+        [channelId, opts.threadRootId, opts.around, half],
+      );
+      return res.rows;
+    }
     // 스레드 조회에서는 루트를 항상 포함한다 — limit 와 관계없이.
     if (opts.since !== undefined && opts.since > 0) {
       const res = await pool.query(
@@ -1194,24 +1224,76 @@ export interface SearchPage {
 }
 
 /**
+ * offset 의 천장. 깊은 offset 은 서버가 그만큼을 세고 버리는 것이라 값이 커질수록 그냥
+ * 느려진다 — 그 자리까지 넘긴 사람은 검색어를 고치는 편이 낫다.
+ *
+ * **`hasMore` 가 이 값을 같이 알아야 한다.** 라우트만 막으면 마지막 페이지에서도 '더 보기'가
+ * 그려지고, 누른 순간 천장을 넘은 offset 이 나가 400 을 받는다 — 결과는 그대로인 채 에러 줄만
+ * 뜬다. 버튼이 아예 서지 않는 것이 맞다.
+ */
+export const SEARCH_MAX_OFFSET = 1000;
+
+/**
+ * `limit + 1` 을 떠 왔으므로 한 줄이 더 있으면 다음 페이지가 있다 — **천장 안쪽일 때만**.
+ * 천장을 넘어가는 offset 은 라우트가 400 으로 막으므로, 거기서 '더 있다'고 말하면 사람은
+ * 누를 수 있는 버튼을 받고 에러만 돌려받는다.
+ */
+export function searchHasMore(fetched: number, limit: number, offset: number): boolean {
+  return fetched > limit && offset + limit <= SEARCH_MAX_OFFSET;
+}
+
+/**
+ * **접두** tsquery. `simple` config 는 어간을 떼지 않아 한국어가 조사 하나에 걸린다
+ * (`'검색을' @@ '검색'` → false). 낱말마다 `:*` 를 붙이면 그 자리가 메워진다 —
+ * `'검색':*` 이 `검색을`·`검색이`를, `'searchpalette':*` 이 `SearchPalette.tsx` 를 잡는다.
+ *
+ * 만드는 법: `websearch_to_tsquery` 의 **text 꼴**에 `:*` 를 얹는다. 이미 낱말마다 따옴표가
+ * 쳐진 정본이라 URL(`'http' & '/x.com/a'`)·따옴표 든 낱말·구(`<->`)·부정(`!`)이 그대로
+ * 살아 다시 파싱된다. 낱말을 `tsvector_to_array` 로 날것으로 꺼내 이어 붙이면 그 넷이 깨진다
+ * (실측: `http://x.com/a` 가 엉뚱한 구 질의가 된다).
+ *
+ * 낱말이 하나도 안 나오는 질의(`!!!` 같은 것)는 text 꼴이 빈 문자열이고, 거기 `:*` 를 붙이면
+ * `to_tsquery` 가 **syntax error 로 터진다**(=500). 그래서 nullif 로 빈 것을 걸러 **NULL** 로
+ * 접는다 — `search @@ null` 은 null 이라 where 가 그 행을 버리고, order by 키도 전 행이 null
+ * 이라 순서가 그대로다. 아무 것도 맞지 않을 뿐이다.
+ *
+ * 여기서 `coalesce(…, ''::tsquery)` 로 받지 **않는** 이유: 빈 tsquery 리터럴은 파싱 시점에
+ * 평가돼서 **낱말이 멀쩡히 있는 정상 질의에도** 검색마다 pg 로그에 한 줄을 남긴다
+ * (`NOTICE: text-search query doesn't contain lexemes: ""`). 로그를 읽는 사람에게 "질의에
+ * 낱말이 없었다"로 보여 오해를 준다. 동작은 NULL 쪽과 같다.
+ */
+const PREFIX_TSQUERY = `nullif(
+      regexp_replace(websearch_to_tsquery('simple', $1)::text, '''(\\s|$)', ''':*\\1', 'g'), ''
+    )::tsquery`;
+
+/**
  * 한 낱말이 두 갈래로 걸린다.
  *
- * 1. `m.search @@ websearch_to_tsquery` — 정확하고 빠른 낱말 매치. 지금까지 있던 유일한 갈래다.
- * 2. `lower(body) like '%q%'` — **부분문자열**. `simple` config 는 어간을 떼지 않아 한국어가
- *    조사 하나에 걸린다(`'검색을' @@ '검색'` → false). 파일명(`SearchPalette.tsx` 안의
- *    `SearchPalette`)도 같은 이유로 1번에서 죽는다. 이 갈래가 그 둘을 살린다 —
- *    044 의 trigram GIN 이 받는 자리이고, 확장을 못 켠 배포에서는 느릴 뿐 답은 같다.
+ * 1. 접두 tsvector 매치(위) — 빠르고, 조사·파일명·부분 식별자를 잡는다.
+ * 2. `lower(body) like '%q%'` — **중간일치**. 접두로 못 잡는 나머지(`검색` 으로 `재검색`)를
+ *    이 갈래가 받는다. 044 의 trigram GIN 이 받는 자리이고, 확장을 못 켠 배포에서는 느릴 뿐
+ *    답은 같다.
  *
- * 짧은 질의(1글자)에는 2번을 걸지 않는다: trigram 인덱스가 3글자 미만을 못 받아 순차 스캔이
- * 되는데, 그렇게 긁어 온 결과는 어차피 "거의 전부"라 사람에게 쓸모가 없다.
+ * ## 2번을 **3글자 미만에 걸지 않는 이유** (실측 200k 행)
+ *
+ * `gin_trgm_ops` 는 2글자 패턴에서 트라이그램 키를 하나도 못 뽑는다. 그러면 OR 의 한쪽이
+ * 인덱스 불가가 되어 **BitmapOr 자체가 성립하지 않고, 1번의 tsvector 인덱스까지 함께 버려진다**
+ * — 계획 전체가 순차 스캔이 된다(채널 스코프도 구제하지 못한다. 스코프는 필터로만 붙는다).
+ *
+ *     2글자 질의, 200k 행:  like ≥2 → Parallel Seq Scan 42.9 ms
+ *                           like ≥3 → Bitmap Index Scan on m_search 0.067 ms
+ *     3글자 질의:           BitmapOr(m_search + trgm) 0.38 ms — 그대로 잘 돈다
+ *
+ * 잃는 것은 "**2글자로 중간일치**" 하나뿐이다(`검색` 으로 `재검색`). 조사·파일명·부분 식별자는
+ * 1번이 접두로 이미 잡는다.
  *
  * `%`·`_`·`\` 는 like 의 메타문자다. 사람이 친 그대로 찾도록 이스케이프한다 — 안 하면
  * `_` 한 글자가 "아무 글자 하나"가 되어 엉뚱한 것이 섞인다.
  */
 const SEARCH_MATCH = `(
-      m.search @@ websearch_to_tsquery('simple', $1)
+      m.search @@ ${PREFIX_TSQUERY}
       or (
-        char_length($1) >= 2
+        char_length($1) >= 3
         and lower(m.body) like '%' || replace(replace(replace(lower($1), '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%'
       )
     )`;
@@ -1252,12 +1334,12 @@ export async function searchMessages(
      --
      -- 페이지는 offset 이다(seq 커서가 아니다): 순서가 seq 가 아니라 rank 이므로 seq 커서는
      -- 이 정렬에서 뜻이 없다.
-     order by (m.search @@ websearch_to_tsquery('simple', $1)) desc,
-              ts_rank(m.search, websearch_to_tsquery('simple', $1)) desc,
+     order by (m.search @@ ${PREFIX_TSQUERY}) desc,
+              ts_rank(m.search, ${PREFIX_TSQUERY}) desc,
               m.seq desc
      limit $2 offset $6`,
     [query, limit + 1, requesterId, scope.channelId ?? null, scope.threadRootId ?? null, offset],
   );
   const rows = res.rows as MessageRow[];
-  return { messages: rows.slice(0, limit), hasMore: rows.length > limit };
+  return { messages: rows.slice(0, limit), hasMore: searchHasMore(rows.length, limit, offset) };
 }

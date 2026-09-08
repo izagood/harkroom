@@ -1,7 +1,12 @@
--- 검색 회수율(#): `simple` tsvector 는 어간을 떼지 않으므로 한국어가 조사 하나에 걸린다.
+-- 검색 회수율: `simple` tsvector 는 어간을 떼지 않으므로 한국어가 조사 하나에 걸린다.
 -- 실측: to_tsvector('simple','검색을 켜고') @@ websearch_to_tsquery('simple','검색') → false.
--- 파일명·부분일치도 같은 이유로 죽는다. 그래서 질의를 tsvector 매치 **또는** 부분문자열
--- (lower(body) like '%q%') 두 갈래로 두고, 두 번째를 이 인덱스가 받는다.
+-- 조사·파일명·부분 식별자는 **접두 tsquery**(`'검색':*`)가 기존 tsvector GIN 그대로 잡는다
+-- (services/messages.ts::PREFIX_TSQUERY). 그래도 남는 구멍이 **중간일치**다 — `검색` 으로
+-- `재검색`. 그 갈래(lower(body) like '%q%')를 이 인덱스가 받는다.
+--
+-- 이 인덱스는 **3글자 이상**에만 값을 낸다: gin_trgm_ops 는 2글자 패턴에서 트라이그램 키를
+-- 못 뽑아 순차 스캔이 되고, OR 로 묶이면 tsvector 인덱스까지 함께 버려진다. 그래서 like
+-- 갈래는 char_length >= 3 에서만 켠다(같은 파일의 SEARCH_MATCH 주석에 실측값이 있다).
 --
 -- pg16 에 한국어 text search config 이 없고(pg_bigm 도 이 이미지엔 없다) 그래서 trigram 이
 -- 현실적인 답이다.
