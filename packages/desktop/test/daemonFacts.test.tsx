@@ -30,6 +30,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import type { AgentConfig, AgentDefaults, AgentView, PatView } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { daemonFactRows as rawDaemonFactRows, elapsedLabel as rawElapsedLabel } from '../src/lib/daemonFacts';
@@ -109,8 +110,12 @@ async function openDetail(a: AgentView, daemonRunners: Record<string, ObservedRu
 const factValue = (key: string): string | null =>
   document.querySelector(`[data-fact-value="${key}"]`)?.textContent ?? null;
 
-beforeEach(() => { useAppStore.getState().reset(); });
-afterEach(() => cleanup());
+// **언어를 한국어로 고정한다.** 이 파일의 축들은 이 화면의 한국어 문구로 쓰여 있고,
+// 그 문구가 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다(`#619`·사이드바 PR 이
+// 세운 방식과 같다). 영어가 원본이 되면서 기본값이 영어가 됐으므로, 한국어를 재려면
+// 한국어라고 말해야 한다. 두 언어로 다 뜨는지는 `i18n.test.tsx` 가 잰다.
+beforeEach(() => { useAppStore.getState().reset(); usePrefsStore.getState().setLocale('ko'); });
+afterEach(() => { cleanup(); usePrefsStore.getState().setLocale('system'); });
 
 // ---------------------------------------------------------------------------
 // 1구간: 파싱 — 필드가 TS 로 **넘어온다**

@@ -94,11 +94,16 @@ async function boot(
   return { api, secrets, spawner, c, daemon };
 }
 
+// **언어를 한국어로 고정한다.** 이 파일의 축들은 이 화면의 한국어 문구로 쓰여 있고,
+// 그 문구가 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다(사이드바 PR 이 세운
+// 방식과 같다). 영어가 원본이 되면서 기본값이 영어가 됐으므로, 한국어를 재려면 한국어라고
+// 말해야 한다. 두 언어로 다 뜨는지는 `i18n.test.tsx` 가 잰다.
 beforeEach(() => {
   useAppStore.getState().reset();
   usePrefsStore.setState({ runnerAutoStart: true });
+  usePrefsStore.getState().setLocale('ko');
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); usePrefsStore.getState().setLocale('system'); });
 
 describe('컨트롤러 → 실행기 배선', () => {
   it('presence 를 받은 뒤 내가 소유한 에이전트의 러너를 띄운다', async () => {
