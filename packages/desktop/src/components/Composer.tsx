@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
-import { parseMessagePermalink, type ScheduledMessageView } from '@murmur/shared';
+import { messagePermalink, parseMessagePermalink, type ScheduledMessageView } from '@murmur/shared';
 import type { AccountView, AgentTeamRow, AttachmentRow, HandleGroupRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { NO_TEAMS } from '../state/appStore';
@@ -220,6 +220,12 @@ export function Composer({
   // 대기 중인 메시지. 화면에 그리려면 state 가, 타이머·정리 함수에서 최신 값을 보려면
   // ref 가 필요하다 — 둘은 같은 것을 가리킨다.
   const [held, setHeld] = useState<HeldMessage | null>(null);
+  /**
+   * 붙여넣은 퍼머링크. **이동 제안을 그리기 위한 것이고, 이동 그 자체는 아니다.**
+   * 붙여넣기가 곧 이동이었던 동안(#228) 링크를 인용하거나 이어서 물어보려던 사람은
+   * 붙여넣을 때마다 화면이 끌려가서, 링크를 채팅에 남기는 방법이 아예 없었다.
+   */
+  const [pastedLink, setPastedLink] = useState<string | null>(null);
   const heldRef = useRef<HeldMessage | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -254,6 +260,9 @@ export function Composer({
     setQuery(null);
     setPicking(false);
     setActive(0);
+    // 이동 제안은 초안과 달리 **복원하지 않는다** — 옮겨 온 채널의 초안에 없는 링크를
+    // 가리키는 버튼이 남으면, 누른 사람은 자기가 방금 붙여넣은 것으로 읽는다.
+    setPastedLink(null);
   }, [scopeKey]);
 
   // 예약 메시지 목록 조회(#222). 채널이 바뀔 때마다 새로 받는다.
@@ -734,16 +743,16 @@ export function Composer({
   };
 
   /**
-   * 붙여넣은 것이 **퍼머링크 하나뿐**이면 글자로 넣지 않고 그 메시지로 이동한다(#228).
-   * 이 자리가 없으면 "Copy link" 는 어디에도 쓸 수 없는 문자열만 만든다 — 누를 수 있고,
-   * 성공했다고 말하고, 결과물은 쓸 데가 없는 거짓 신호다(design.md §4).
+   * 붙여넣기는 **붙여넣기로 끝난다.** 퍼머링크 하나만 붙여넣어도 글자가 그대로 초안에
+   * 들어가고, 이동은 그 아래 제안 줄의 버튼을 누를 때만 일어난다.
    *
-   * 판정은 `parseMessagePermalink` 에 맡긴다. 그 함수는 **전체 일치만** 링크로 보므로
-   * 문장 속에 섞인 링크는 여기서 걸리지 않는다 — 그게 맞다. 인용하려고 문장째 붙여넣은
-   * 사람을 끌고 가면 쓰던 글을 잃는다.
+   * 왜 뒤집었나: #228 은 붙여넣기 자체를 이동으로 삼았다. 그래서 "이 스레드 이어서
+   * 보자"고 링크를 **채팅에 남기려는** 사람은 붙여넣을 때마다 화면이 끌려가고 글자는
+   * 들어가지 않아, 링크를 붙여넣는 것 자체가 불가능했다. 이동은 되지만 인용이 안 되면
+   * 링크는 반쪽이다 — 그리고 이동은 명시적인 행동일 때 잃는 것이 없다.
    *
-   * 컨트롤러를 **먼저** 잡고 나서 기본 동작을 막는다. 순서가 뒤바뀌면 아직 컨트롤러가
-   * 없는 순간에 붙여넣은 글자만 사라지고 이동도 못 한다 — 둘 다 잃는 것이 가장 나쁘다.
+   * 판정은 그대로 `parseMessagePermalink` 다. 그 함수는 **전체 일치만** 링크로 보므로
+   * 문장 속에 섞인 링크에는 제안이 서지 않는다 — 그 경우는 애초에 인용이다.
    */
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const text = e.clipboardData.getData('text');
@@ -769,11 +778,24 @@ export function Composer({
     const messageId = parseMessagePermalink(text);
     // 링크가 아니면 아무것도 하지 않는다 — 평범한 붙여넣기다.
     if (!messageId) return;
+    // **기본 동작을 막지 않는다.** 글자는 웹뷰가 넣고, 우리는 이동할 길만 열어 둔다.
+    setPastedLink(messageId);
+  };
+
+  /**
+   * 붙여넣은 링크로 **실제로** 이동한다. 이 자리를 부르는 것은 제안 줄의 버튼 하나뿐이다 —
+   * 이동이 일어나는 지점이 한 곳이어야 "내가 눌렀을 때만 간다"가 화면에서도 참이 된다.
+   *
+   * 초안은 **그대로 둔다.** 이동은 링크를 소비하는 것이 아니다 — 갔다 와서 그 링크를
+   * 인용해 글을 쓸 수도 있고, 지우는 것은 사람이 할 일이다.
+   */
+  const openPastedLink = (messageId: string): void => {
     let controller: ReturnType<typeof getController> | null = null;
-    try { controller = getController(); } catch { /* 아직 없다 — 평범한 붙여넣기로 둔다 */ }
+    try { controller = getController(); } catch { /* 아직 없다 — 누를 것도 없었던 셈이다 */ }
+    // 제안은 눌린 순간 역할이 끝난다. 이동에 실패해도 다시 세워 두지 않는다 —
+    // 사유는 아래에서 줄로 말하고, 남은 링크는 초안에 그대로 있다.
+    setPastedLink(null);
     if (!controller) return;
-    // 가로챘으면 초안에 넣지 않는다 — 이동하면서 남은 글자가 초안을 더럽힌다.
-    e.preventDefault();
     // 링크가 가리키는 메시지를 못 여는 사유(사라짐·볼 수 없음·연결 실패)는 openMessage 가
     // 스스로 사람 앞에 세운다. 여기서 남는 것은 그보다 뒤에서 터진 경우(채널·스레드를
     // 여는 중 연결이 끊김)뿐이고, 그것도 조용히 삼키면 링크를 누른 사람은 앱이 멈춘 줄 안다.
@@ -783,6 +805,12 @@ export function Composer({
       });
     });
   };
+
+  /**
+   * 이동 제안을 그릴 것인가. **초안에서 파생한다** — 붙여넣은 링크를 지운 사람에게
+   * 제안이 남아 있으면 그 버튼은 초안에 없는 것을 가리킨다.
+   */
+  const linkOffer = pastedLink && draft.includes(messagePermalink(pastedLink)) ? pastedLink : null;
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (open) {
@@ -1102,6 +1130,37 @@ export function Composer({
               </button>
             </span>
           ))}
+        </div>
+      )}
+
+      {linkOffer && (
+        /* 붙여넣은 링크는 **글자로 남고**, 이 줄이 이동할 길이다. 대기 줄(아래)과 같은
+           모양으로 두는 이유: 둘 다 "컴포저가 지금 무엇을 들고 있는가"를 말하는 줄이고,
+           사람은 한 자리를 익혀 두 가지를 읽는다. */
+        <div
+          role="status"
+          data-testid="pasted-link"
+          className="mb-1 flex items-center gap-2 rounded bg-surface-sunken px-2 py-1 text-meta text-fg-muted"
+        >
+          <span className="min-w-0 flex-1 truncate">{t('composer.link.pasted')}</span>
+          <button
+            type="button"
+            className="rounded px-1.5 py-0.5 font-medium text-accent hover:bg-surface-hover"
+            // 커서를 지킨다 — 누른 뒤에도 초안을 이어서 쓰는 사람이 있다(@·첨부 버튼과 같은 이유).
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => openPastedLink(linkOffer)}
+          >
+            {t('composer.link.open')}
+          </button>
+          <button
+            type="button"
+            aria-label="Dismiss pasted link"
+            className="rounded px-1 text-fg-muted hover:bg-surface-hover"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setPastedLink(null)}
+          >
+            ×
+          </button>
         </div>
       )}
 
