@@ -774,6 +774,14 @@ export const ko = {
    * 퍼머링크를 붙여넣었을 때 서는 줄. 붙여넣은 글자는 초안에 그대로 있고, 이 줄은
    * **이동할 수 있다**고만 말한다 — 이동은 옆 버튼을 누를 때만 일어난다.
    */
+  // 붙여넣기가 부르는 이름(2단계) — 근거는 `en.ts` 의 같은 묶음에 있다.
+  'composer.paste.calls': '붙여넣은 글이 {handles} 를 부른다',
+  'composer.paste.quote': '인용으로 바꾸기',
+  'composer.paste.keep': '그대로 두기',
+  'composer.paste.confirmTitle': '{count}명을 부를까?',
+  'composer.paste.confirmDetail': '이 메시지는 {handles} 를 부른다. 부른 수만큼 턴이 따로 뜬다.',
+  'composer.paste.confirmSend': '보내기',
+  'composer.paste.confirmCancel': '더 고치기',
   'composer.link.pasted': '메시지 링크를 붙여넣었다',
   'composer.link.open': '그 메시지로 이동',
 

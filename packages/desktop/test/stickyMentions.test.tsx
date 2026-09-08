@@ -12,11 +12,19 @@ const typeInto = (value: string) => {
   return box;
 };
 
-/** 한 번 쓰고 보낸다. 목록이 열려 있을 수 있으므로 Escape 로 닫고 Enter 를 친다. */
+/**
+ * 한 번 쓰고 보낸다. 목록이 열려 있을 수 있으므로 Escape 로 닫고 Enter 를 친다.
+ *
+ * **셋 이상을 부르면 확인 겹창이 선다**(2단계, `pasteCalls.ts::MANY_CALLS`) — 이 파일이
+ * 재는 것은 고정 멘션이므로 그 문은 통과시켜 준다. 겹창 자체는 `pasteMentions.test.tsx`
+ * 가 단독으로 지킨다(보냄 취소 창을 여기서 끄는 것과 같은 규율이다).
+ */
 const sendText = (value: string) => {
   const box = typeInto(value);
   fireEvent.keyDown(box, { key: 'Escape' });
   fireEvent.keyDown(box, { key: 'Enter' });
+  const confirm = screen.queryByTestId('confirm-ok') ?? screen.queryByText('Send');
+  if (confirm) fireEvent.click(confirm);
 };
 
 const chips = () =>
