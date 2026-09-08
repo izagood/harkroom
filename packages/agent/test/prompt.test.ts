@@ -3,7 +3,7 @@ import { BODY_LIMIT, buildSystemPrompt, harnessTailNotice, buildTurnPrompt, coun
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
-    seq, authorId, body, id: `m${seq}`, channelId: 'c', threadRootId: null, kind: 'user',
+    seq, authorId, body, id: `m${seq}`, channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400', kind: 'user',
     meta: {}, createdAt: '', editedAt: null, reactions: [], attachments: [], ...extra,
   }) as never;
 
@@ -13,7 +13,7 @@ describe('buildTurnPrompt', () => {
   it('첫 턴(lastFedSeq 0)은 자기 발화 포함 전체를 넘긴다', () => {
     const r = buildTurnPrompt({
       messages: [msg(1, 'u1', '안녕'), msg(2, 'a1', '넵')], lastFedSeq: 0, meId: 'a1', handles,
-      channelId: 'c', threadRootId: null,
+      channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400',
     });
     expect(r.prompt).toContain('jaebin: 안녕');
     expect(r.prompt).toContain('forge: 넵'); // 세션 이전 역사는 자기 것도 알려준다
@@ -23,7 +23,7 @@ describe('buildTurnPrompt', () => {
   it('resume 턴은 경계 이후만, 자기 발화는 뺀다 — 세션이 이미 아는 말', () => {
     const r = buildTurnPrompt({
       messages: [msg(1, 'u1', '옛말'), msg(2, 'a1', '내 답'), msg(3, 'a2', '동료가 한 일'), msg(4, 'u1', '@forge 이어서')],
-      lastFedSeq: 1, meId: 'a1', handles, channelId: 'c', threadRootId: null,
+      lastFedSeq: 1, meId: 'a1', handles, channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400',
     });
     expect(r.prompt).not.toContain('옛말');
     expect(r.prompt).not.toContain('내 답');
@@ -33,7 +33,7 @@ describe('buildTurnPrompt', () => {
 
   it('넘길 게 없으면(새 메시지가 전부 자기 발화) 빈 prompt — 그래도 fedSeq 는 전진한다', () => {
     const r = buildTurnPrompt({
-      messages: [msg(2, 'a1', '내 답')], lastFedSeq: 1, meId: 'a1', handles, channelId: 'c', threadRootId: null,
+      messages: [msg(2, 'a1', '내 답')], lastFedSeq: 1, meId: 'a1', handles, channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400',
     });
     expect(r.prompt).toBe('');
     expect(r.fedSeq).toBe(2);
@@ -45,7 +45,7 @@ describe('buildTurnPrompt', () => {
   // 코드 경로로 잘못 합쳐 놓고도 테스트가 통과해 버릴 수 있다.
   it('애초에 새 메시지가 없으면 fedSeq 는 그대로다 — 볼 것 자체가 없었으니 전진할 근거가 없다', () => {
     const r = buildTurnPrompt({
-      messages: [msg(1, 'u1', '예전 메시지')], lastFedSeq: 5, meId: 'a1', handles, channelId: 'c', threadRootId: null,
+      messages: [msg(1, 'u1', '예전 메시지')], lastFedSeq: 5, meId: 'a1', handles, channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400',
     });
     expect(r.prompt).toBe('');
     expect(r.fedSeq).toBe(5);
@@ -55,21 +55,55 @@ describe('buildTurnPrompt', () => {
   // 확인한다 — avcs 투영이 만드는 system 메시지의 작성자가 handles 에 없을 수 있다.
   it('handles 맵에 없는 작성자는 "알 수 없는 사용자" 로 표시한다', () => {
     const r = buildTurnPrompt({
-      messages: [msg(1, 'ghost', '누구세요')], lastFedSeq: 0, meId: 'a1', handles, channelId: 'c', threadRootId: null,
+      messages: [msg(1, 'ghost', '누구세요')], lastFedSeq: 0, meId: 'a1', handles, channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400',
     });
     expect(r.prompt).toContain('알 수 없는 사용자: 누구세요');
   });
 
-  // 첨부는 URL 도 미리보기도 없이 파일명만 있어도, 그 존재 자체를 모르는 것보다는 낫다 —
-  // 에이전트가 "스크린샷을 첨부하셨는데 내용은 볼 수 없다"고 사실대로 답할 여지를 준다.
-  it('첨부가 있는 메시지는 파일명을 함께 표시한다', () => {
+  // 2026-09-08 실측 회귀선: 파일명만 실려 있던 동안, 스크린샷을 받은 에이전트가 "첨부를
+  // 열지 못했습니다"라고 답한 뒤 코드만 보고 어느 화면인지 **추측해서** 고쳤다. 바이트는
+  // 그때도 `GET /attachments/:id` 로 닿을 수 있었고(하네스 env 에 MURMUR_PAT 이 있다),
+  // 빠져 있던 것은 그 열쇠인 **id** 와 통로 안내였다. 파일명만 재는 단언으로는 그 회귀가
+  // 다시 들어와도 통과하므로, id 를 함께 잰다.
+  it('첨부가 있는 메시지는 파일명과 함께 id·타입·크기를 싣는다 — id 가 바이트를 받는 유일한 열쇠다', () => {
     const withAttachment = msg(1, 'u1', '이거 봐줘', {
       attachments: [{ id: 'att1', filename: 'error.png', contentType: 'image/png', sizeBytes: 100 }],
     });
     const r = buildTurnPrompt({
-      messages: [withAttachment], lastFedSeq: 0, meId: 'a1', handles, channelId: 'c', threadRootId: null,
+      messages: [withAttachment], lastFedSeq: 0, meId: 'a1', handles, channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400',
     });
     expect(r.prompt).toContain('error.png');
+    expect(r.prompt).toContain('att1');
+    expect(r.prompt).toContain('image/png');
+    expect(r.prompt).toContain('100B');
+  });
+
+  // id 만 실어도 그것으로 무엇을 할 수 있는지 모르면 아무 일도 일어나지 않는다 — 통로를
+  // 함께 말해야 한다. URL 은 러너가 아는 실값이어야 한다: `$MURMUR_URL` 로 때우면 그 변수가
+  // 없는 러너(config.ts 가 기본값으로 넘어가는 경우)에서 curl 이 조용히 실패한다.
+  it('첨부가 있으면 바이트를 받는 방법을 실제 서버 URL 과 함께 알려준다', () => {
+    const r = buildTurnPrompt({
+      messages: [msg(1, 'u1', '이거 봐줘', {
+        attachments: [{ id: 'att1', filename: 'error.png', contentType: 'image/png', sizeBytes: 100 }],
+      })],
+      lastFedSeq: 0, meId: 'a1', handles, channelId: 'c', threadRootId: null,
+      murmurUrl: 'http://murmur.example:3400',
+    });
+    expect(r.prompt).toContain('http://murmur.example:3400/attachments/');
+    expect(r.prompt).toContain('$MURMUR_PAT');
+    // 토큰 실값은 프롬프트에 굽지 않는다 — env 이름만 적는다(#92·#117 과 같은 이유).
+    expect(r.prompt).not.toContain('Bearer eyJ');
+  });
+
+  // 대부분의 턴에는 첨부가 없다. 그때도 안내가 붙으면 매 턴 순전한 낭비이고, "첨부가 있다"는
+  // 잘못된 신호까지 준다.
+  it('첨부가 없는 턴에는 첨부 안내를 붙이지 않는다', () => {
+    const r = buildTurnPrompt({
+      messages: [msg(1, 'u1', '첨부 없음')], lastFedSeq: 0, meId: 'a1', handles,
+      channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400',
+    });
+    expect(r.prompt).not.toContain('/attachments/');
+    expect(r.prompt).not.toContain('curl');
   });
 
   // 호출자(main.ts)가 이미 계산해 둔 channelId·threadRootId 가 유일한 진실 원천이어야 한다.
@@ -79,7 +113,7 @@ describe('buildTurnPrompt', () => {
     const r = buildTurnPrompt({
       messages: [msg(1, 'u1', '메시지 자신의 threadRootId 는 null')],
       lastFedSeq: 0, meId: 'a1', handles,
-      channelId: 'real-channel', threadRootId: 'real-thread-root',
+      channelId: 'real-channel', threadRootId: 'real-thread-root', murmurUrl: 'http://localhost:3400',
     });
     expect(r.prompt).toContain('channelId: real-channel');
     expect(r.prompt).toContain('threadRootId: real-thread-root');
@@ -91,7 +125,7 @@ describe('buildTurnPrompt', () => {
   it('채널 최상위(threadRootId null)는 머리에 "null" 이 아니라 읽을 수 있는 문구로 실린다', () => {
     const r = buildTurnPrompt({
       messages: [msg(1, 'u1', '채널에 바로 씀')], lastFedSeq: 0, meId: 'a1', handles,
-      channelId: 'c', threadRootId: null,
+      channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400',
     });
     expect(r.prompt).not.toContain('threadRootId: null');
     expect(r.prompt).toContain('threadRootId: 채널 최상위(없음)');
@@ -151,7 +185,7 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
   it('깨어난 턴은 넘길 사람 발화가 없어도 프롬프트가 비지 않는다', () => {
     const r = buildTurnPrompt({
       messages: [msg(10, 'a1', 'CI 결과 확인', { kind: 'wake' })],
-      lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
+      lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't', murmurUrl: 'http://localhost:3400',
       wake: { reason: 'CI 결과 확인' },
     });
     expect(r.prompt).not.toBe('');
@@ -161,7 +195,7 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
 
   it('깨어난 턴임을 프롬프트가 밝힌다 — 사람이 새로 말한 것으로 착각하면 안 된다', () => {
     const r = buildTurnPrompt({
-      messages: [], lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
+      messages: [], lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't', murmurUrl: 'http://localhost:3400',
       wake: { reason: 'CI 결과 확인' },
     });
     expect(r.prompt).toContain('예약');
@@ -173,7 +207,7 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
   it('깨어난 턴에 사람의 새 발화가 있으면 둘 다 실린다', () => {
     const r = buildTurnPrompt({
       messages: [msg(10, 'u1', '아 그거 취소해'), msg(11, 'a1', 'CI 결과 확인', { kind: 'wake' })],
-      lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
+      lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't', murmurUrl: 'http://localhost:3400',
       wake: { reason: 'CI 결과 확인' },
     });
     expect(r.prompt).toContain('예약');

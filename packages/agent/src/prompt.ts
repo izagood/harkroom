@@ -288,13 +288,44 @@ export function buildSystemPrompt(opts: {
  * avcs 투영이 만드는 system 메시지 등, 호출 시점에 handles 맵이 못 따라온 작성자가 있을 수 있다. */
 function renderLine(m: MessageRow, handles: Record<string, string>): string {
   const handle = handles[m.authorId] ?? '알 수 없는 사용자';
-  // 첨부는 URL 도 미리보기도 없다(AttachmentRow 에 storageKey 가 없다 — @murmur/shared).
-  // 그래도 파일명만 알려주면 에이전트가 "내용은 못 보지만 뭔가 첨부됐다"고 사실대로 답할
-  // 여지가 생긴다. 존재를 통째로 숨기는 것보다 낫다.
+  // **id 를 함께 싣는다.** 파일명만 있으면 에이전트는 그 첨부를 열 방법이 없어 내용을
+  // 짐작하거나 못 봤다고 답한다(2026-09-08 실측 — 아래 attachmentHowTo 주석). id 는
+  // `GET /attachments/:id` 의 유일한 열쇠이고, AttachmentRow 는 그것을 이미 들고 있었다.
+  // contentType·sizeBytes 도 함께 준다 — 내려받기 전에 "열 수 있는 것인가, 얼마나 큰가"를
+  // 판단할 근거다(200MB 짜리를 무조건 받게 만들지 않는다).
   const attachmentNote = m.attachments.length
-    ? ` [첨부: ${m.attachments.map((a) => a.filename).join(', ')}]`
+    ? ` [첨부: ${m.attachments
+        .map((a) => `${a.filename} (id ${a.id}, ${a.contentType}, ${a.sizeBytes}B)`)
+        .join(', ')}]`
     : '';
   return `${handle}: ${m.body}${attachmentNote}`;
+}
+
+/**
+ * 첨부 바이트를 **실제로 여는 방법**. 이 절이 없던 동안 무슨 일이 있었나(2026-09-08 실측):
+ * 사람이 스크린샷을 붙여 "이 부분을 고쳐 달라"고 했고, 에이전트는 "첨부 스크린샷을 제가
+ * 열지 못했습니다(파일이 제 쪽 디스크에 없었습니다)"라고 답한 뒤 **코드만 보고 어느 화면인지
+ * 추측해** 고쳤다. 추측이 맞았지만 그것은 운이다.
+ *
+ * 정작 바이트는 그때도 닿을 수 있었다. 막힌 것은 통로가 아니라 **아는 것**이었다:
+ *   - 하네스는 러너 env 를 통째로 물려받아 `MURMUR_PAT` 을 들고 있다(turn.ts::childEnv).
+ *   - 서버에는 `GET /attachments/:id` 가 계정 인가로 열려 있다(attachmentRoutes.ts).
+ *   - 그런데 프롬프트는 파일명만 줬고(위 renderLine 의 옛 코드), 이 통로를 아무도 말해
+ *     주지 않았다. 셋 중 어느 하나가 아니라 **id + 통로 안내**가 빠져 있었다.
+ *
+ * 첨부가 있는 턴에만 붙인다 — 대부분의 턴은 첨부가 없고, 그때 이 여섯 줄은 순전한 낭비다.
+ *
+ * URL 은 러너가 아는 실값(`config.murmurUrl`)을 그대로 굽고 토큰은 **env 이름으로만** 적는다.
+ * 실값을 프롬프트 파일에 넣지 않는 이유는 #92·#117 과 같다 — 그 파일은 디스크에 남는다.
+ */
+function attachmentHowTo(murmurUrl: string): string[] {
+  return [
+    '',
+    '(위 `[첨부: …]` 의 id 로 첨부 바이트를 직접 받을 수 있다 — 파일명만 보고 내용을 짐작하지 마라:',
+    `  curl -fsS -H "Authorization: Bearer $MURMUR_PAT" ${murmurUrl}/attachments/<id> -o /tmp/<파일명>`,
+    '받은 파일을 열어서 봐라 — 이미지도 그대로 읽힌다. 받기가 실패했을 때만 "못 봤다"고 말하고,',
+    '못 본 것을 본 것처럼 쓰지 마라.)',
+  ];
 }
 
 /**
@@ -317,6 +348,16 @@ export function buildTurnPrompt(opts: {
   channelId: string;
   threadRootId: string | null;
   /**
+   * 서버 베이스 URL(`config.murmurUrl`). 첨부 안내에 실을 실값이다.
+   *
+   * 옵셔널이 아니라 필수인 이유: 여기서 `$MURMUR_URL` 같은 env 참조로 때우면 그 변수가
+   * 없는 러너(`config.ts` 는 없으면 기본값으로 넘어간다)에서 curl 이 조용히 실패한다.
+   * 러너는 자기가 붙은 URL 을 이미 알고 있으므로 그 값을 받는다 — 두 번째 진실 원천을
+   * 만들지 않는다. 첨부가 없는 턴에는 쓰이지 않지만 그렇다고 옵셔널로 두면 새 호출자가
+   * 잊었을 때 **첨부가 있는 턴에서만** 조용히 망가진다.
+   */
+  murmurUrl: string;
+  /**
    * 이 턴이 **깨어난 턴**이면 그 사유(마이그레이션 040). 있으면 사람의 새 발화가 없어도
    * 프롬프트가 비지 않는다 — 깨움에는 부른 사람이 없고, 예약 줄을 쓴 것도 자기라서
    * 아래 자기-발화 필터에 전부 걸린다. 그대로 두면 `mentionTurn` 이 하네스를 돌리지
@@ -324,7 +365,7 @@ export function buildTurnPrompt(opts: {
    */
   wake?: { reason: string };
 }): { prompt: string; fedSeq: number } {
-  const { messages, lastFedSeq, meId, handles, channelId, threadRootId, wake } = opts;
+  const { messages, lastFedSeq, meId, handles, channelId, threadRootId, murmurUrl, wake } = opts;
   const isFirstTurn = lastFedSeq === 0;
 
   const newMessages = messages.filter((m) => m.seq > lastFedSeq);
@@ -352,7 +393,10 @@ export function buildTurnPrompt(opts: {
   // "forge: CI 결과 확인" 으로 보이면 에이전트가 자기 옛 말을 새 요청으로 읽는다.
   // 아래 델타에 사람의 새 발화가 함께 있을 수 있으므로 이 줄은 그것을 대체하지 않고 앞에 선다.
   const wakeLines = wake === undefined ? [] : [`(예약된 후속 턴 — 사유: ${wake.reason})`, ''];
-  const prompt = [head, '', ...wakeLines, ...lines].join('\n');
+  // 안내는 첨부 줄 **뒤**에 선다 — 먼저 무엇이 왔는지 보고 그다음 어떻게 여는지 읽는 순서다.
+  // `toShow` 로 판정한다: 보여주지 않은 메시지의 첨부는 프롬프트에 id 가 없어 열 수도 없다.
+  const howTo = toShow.some((m) => m.attachments.length) ? attachmentHowTo(murmurUrl) : [];
+  const prompt = [head, '', ...wakeLines, ...lines, ...howTo].join('\n');
 
   return { prompt, fedSeq };
 }
