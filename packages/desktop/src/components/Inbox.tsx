@@ -3,6 +3,7 @@ import { Identity } from './Identity';
 import { WaitChainSection } from './WaitChainSection';
 import type { InboxEntry } from '@murmur/shared';
 import { inboxRow, matchesFilter, type InboxFilter } from '../lib/inboxRow';
+import { bodyWithHandles } from '../lib/mention';
 import { INBOX_PANE_WIDTH, MIN_INBOX_PANE_WIDTH } from '../lib/prefs';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -326,8 +327,12 @@ export function Inbox({ open, onClose }: Props) {
             >
               {row.label}
             </span>
-            {/* **무엇을** — 본문 한 줄. 자르는 폭은 화면이 정한다(서버는 안 자른다). */}
-            <span className="truncate text-fg">{e.body}</span>
+            {/* **무엇을** — 본문 한 줄. 자르는 폭은 화면이 정한다(서버는 안 자른다).
+
+                `bodyWithHandles` 를 지나는 이유: 서버가 싣는 본문은 정본 형식(`<@id>`)이고,
+                이 줄은 `MessageBody` 를 지나지 않아 그 치환을 스스로 해야 한다. 안 하면
+                줄마다 `<@2c8c1910-…>` 만 보이고 "무엇을" 이 사라진다(2026-09-08 실측). */}
+            <span className="truncate text-fg">{bodyWithHandles(e.body, accounts)}</span>
           </span>
           <span className="flex items-center gap-1.5 text-[11px] text-fg-subtle">
             {/* **언제·어디.** */}

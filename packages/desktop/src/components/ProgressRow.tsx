@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
+import { displayBody } from '../lib/mention';
 import { elapsedLabel } from '../lib/progressGroup';
 import { TerminalChip } from './TerminalChip';
 
@@ -29,6 +30,8 @@ export function ProgressRow({ messages, endedAt = null }: {
 }) {
   const [open, setOpen] = useState(false);
   const author = useActiveStore((s) => s.accounts[messages[0]!.authorId]);
+  // 진행 본문도 본문 렌더러를 지나지 않는다 — `<@id>` 를 여기서 푼다(`lib/mention` 주석).
+  const accounts = useActiveStore((s) => s.accounts);
   const first = messages[0]!;
   const last = messages[messages.length - 1]!;
 
@@ -81,7 +84,7 @@ export function ProgressRow({ messages, endedAt = null }: {
       {open && (
         <ul data-testid="progress-detail" className="mt-1 space-y-0.5 border-l border-border-agent pl-2">
           {messages.map((m) => (
-            <li key={m.id} className="text-[11px] text-fg-subtle">{m.body}</li>
+            <li key={m.id} className="text-[11px] text-fg-subtle">{displayBody(m, accounts)}</li>
           ))}
         </ul>
       )}
