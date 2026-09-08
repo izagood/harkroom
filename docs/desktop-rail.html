@@ -245,7 +245,7 @@
 <style>
   /* 레일 + 패널 */
   .rw { display:flex; border:1px solid #E4E3E0; border-radius:10px; overflow:hidden; background:#FAFAF9; width:274px; flex:none; }
-  .rail { width:62px; flex:none; background:#F1EFEB; border-right:1px solid #E4E3E0; display:flex; flex-direction:column; align-items:center; padding:9px 0 8px; gap:2px; }
+  .rail { width:72px; flex:none; background:#F1EFEB; border-right:1px solid #E4E3E0; display:flex; flex-direction:column; align-items:center; padding:9px 0 8px; gap:2px; }
   .rail__ws { width:30px; height:30px; border-radius:9px; background:#C24A22; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; margin-bottom:9px; }
   .ri { width:50px; padding:5px 0 4px; border-radius:8px; display:flex; flex-direction:column; align-items:center; gap:2px; color:#6E6A63; cursor:pointer; position:relative; }
   .ri:hover { background:#E8E5E0; }
@@ -428,7 +428,7 @@
         <div class="sbwrap" style="align-items:flex-start">
           <div>
             <div class="t" style="margin-bottom:7px">평소 — 마크 하나</div>
-            <div class="rw" id="rw-one" style="width:62px"></div>
+            <div class="rw" id="rw-one" style="width:72px"></div>
           </div>
           <div>
             <div class="t" style="margin-bottom:7px">눌렀을 때만</div>
@@ -478,7 +478,7 @@
     <h2>치르는 값</h2>
     <div class="says">
       <div class="sayr"><div class="sayk">한 번 더 누름</div><div class="sayv">목록 하나를 보려면 레일을 눌러야 한다 — 지금은 채널과 DM 이 한눈에 같이 보인다. <b>에이전트가 서넛뿐인 지금은 이게 손해다.</b> 늘어난 뒤에 이득으로 뒤집힌다.</div></div>
-      <div class="sayr"><div class="sayk">가로 62px</div><div class="sayv">본문이 그만큼 좁아진다. 좁은 창에서는 레일만 남기고 <b>패널을 접는</b> 단계가 하나 더 필요하다.</div></div>
+      <div class="sayr"><div class="sayk">가로 72px</div><div class="sayv">본문이 그만큼 좁아진다. 좁은 창에서는 레일만 남기고 <b>패널을 접는</b> 단계가 하나 더 필요하다.<br><b>62px 이었다</b>(2026-09-08 에 넓혔다). 그 숫자에는 <b>macOS 신호등</b>이 빠져 있었다 — 레일이 창의 첫 열이므로 신호등 3개(창 왼쪽에서 58px)가 레일 안에 놓이는데, 62px 에서는 맨 오른쪽 단추와 오른쪽 경계선 사이가 3px 밖에 안 남아 단추가 선에 붙어 보였다. 72px 은 그 간격을 14px 로 벌리면서 칸(54px) 좌우에 9px 씩 여백을 남기는 가장 작은 값이다.</div></div>
       <div class="sayr"><div class="sayk">되돌리기 쉬움</div><div class="sayv">각 패널은 <b>지금 사이드바의 묶음을 그대로 옮긴 것</b>이라, 아니라고 판단되면 다시 한 열로 합치는 비용이 작다. 바뀌는 것은 <b>껍데기</b>다.</div></div>
     </div>
     <div class="callout warnout">

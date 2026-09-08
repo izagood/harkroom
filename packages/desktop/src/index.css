@@ -37,6 +37,30 @@
   --app-surface-sunken: #f4f4f5;  /* 사이드바·목록 헤더. 바닥보다 한 단계 가라앉는다 */
   --app-surface-hover: #e4e4e7;   /* 눌릴 수 있는 줄에 마우스를 올렸을 때 */
   /*
+    **왼쪽에서 오른쪽으로 한 계단씩 떠오른다**(#5 의 요구: "레일별로 색상을 약간 다르게").
+    지금까지 전환기·레일·사이드바가 **전부 `sunken` 한 값**이었다 — 세 기둥이 나란히
+    서 있는데 색이 같으면 경계는 1px 선 하나뿐이고, 그 선이 없는 자리(타이틀바 아래)에서는
+    세 기둥이 한 덩어리로 보인다. 값이 아니라 **순서**가 이 셋의 뜻이다:
+
+        switcher < rail < panel < surface < raised
+
+    `surface-sunken` 은 그대로 남는다 — 목록 헤더처럼 "본문 위에서 한 단계 가라앉은 면"이
+    쓰는 이름이고, 기둥의 자리와는 다른 역할이다. 기둥이 그 이름을 함께 쓰고 있었기 때문에
+    셋을 따로 조절할 수가 없었다.
+  */
+  --app-surface-switcher: #eaeaec; /* 커뮤니티 전환기 — 가장 왼쪽, 가장 가라앉은 기둥 */
+  --app-surface-rail: #f0f0f1;     /* 아이콘 레일 — 전환기보다 한 단계 떠오른다 */
+  --app-surface-panel: #f6f6f7;    /* 사이드바 패널 — 레일보다 한 단계 더 */
+  /*
+    창 맨 위 한 줄(`TOP_BAR_H`)의 면. **세로 계단과 일부러 따로 둔다** — 이 줄은 기둥이
+    아니라 기둥들을 **가로로 가로지르는 띠**이고, 레일·사이드바·본문 위를 지난다. 각 기둥의
+    색을 그 자리에서 상속하면 한 줄이 세 조각으로 갈려 보인다(#4 의 요구: "타이틀바의 색상을
+    통일해줘" — 실측으로 헤더만 `raised` 였고 브랜드 바는 사이드바 색이었다).
+
+    본문보다 한 단계 가라앉힌다: 띠는 내용이 아니라 창의 테두리에 가까운 자리다.
+  */
+  --app-titlebar: #f2f2f4;
+  /*
     입력 칸의 면. **면 세 단계와 따로 두는 이유**: 입력 칸은 사이드바(sunken) 안에도,
     본문(surface) 위에도, 카드(raised) 안에도 앉는다. 어느 한 단계를 재사용하면 그 단계
     위에 놓일 때 칸의 경계가 사라진다(옛 화면은 사이드바 zinc-900 안에 zinc-800 입력을
@@ -118,6 +142,11 @@
   --app-surface-raised: #27272a;
   --app-surface-sunken: #09090b;
   --app-surface-hover: #3f3f46;
+  /* 같은 순서를 유지한다 — switcher < rail < panel < surface < raised. */
+  --app-surface-switcher: #040406;
+  --app-surface-rail: #0b0b0e;
+  --app-surface-panel: #131317;
+  --app-titlebar: #0f0f12;
   --app-field: #27272a;
   --app-border: #3f3f46;
   --app-fg: #f4f4f5;
@@ -155,6 +184,10 @@
   --color-surface-raised: var(--app-surface-raised);
   --color-surface-sunken: var(--app-surface-sunken);
   --color-surface-hover: var(--app-surface-hover);
+  --color-surface-switcher: var(--app-surface-switcher);
+  --color-surface-rail: var(--app-surface-rail);
+  --color-surface-panel: var(--app-surface-panel);
+  --color-titlebar: var(--app-titlebar);
   --color-field: var(--app-field);
   --color-border: var(--app-border);
   --color-fg: var(--app-fg);
@@ -291,7 +324,7 @@ body {
 
   `outline-offset: -2px`. 바깥으로 밀어낸 링은 `overflow-hidden` 컨테이너 안에서 잘린다 —
   `Menu.tsx` 가 `-outline-offset-1`, `Rail.tsx` 가 `-outline-offset-2` 를 쓴 이유가 그것이고
-  (항목이 메뉴 테두리에·칸이 62px 레일에 꽉 차서 바깥 링이 잘리고 서로 겹친다), 앱에는
+  (항목이 메뉴 테두리에·칸이 72px 레일에 꽉 차서 바깥 링이 잘리고 서로 겹친다), 앱에는
   그런 컨테이너가 흔하다. 전역 **기본값**은 어디에 놓일지 모르는 요소를 받으므로 잘릴 수
   없는 쪽으로 둔다. 바깥 링이 더 나은 특정 자리는 그 자리에서 유틸리티로 덮으면 된다.
 

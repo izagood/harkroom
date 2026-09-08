@@ -167,7 +167,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
 
         문서가 스스로 적어 둔 손해가 여기서 갈린다 — *"좁은 창에서는 레일만 남기고 패널을
         접는 단계가 하나 더 필요하다."* 그 단계가 이미 있다: `⌘\` 로 사이드바를 접으면
-        62px 레일만 남는다. 문서가 "필요하다"고 적은 것을 새로 만들지 않고 기존 접기에
+        72px 레일만 남는다. 문서가 "필요하다"고 적은 것을 새로 만들지 않고 기존 접기에
         얹은 것이 이 배치의 값이다.
       */}
       <Rail
@@ -186,7 +186,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
         `absolute` 로 서서 레이아웃을 밀지 않는다.
 
         원래는 팝업 자신이 `fixed bottom-4 right-4` 였고, 그 자리가 컴포저의 `전송` 을
-        덮었다. 왼쪽으로 옮기면서 `fixed left-[62px]` 로 레일 폭을 베낄 수도 있었지만,
+        덮었다. 왼쪽으로 옮기면서 `fixed left-[72px]` 로 레일 폭을 베낄 수도 있었지만,
         커뮤니티가 둘 이상일 때 `CommunityRail`(56px)이 하나 더 서므로 그 숫자는 곧
         틀린다. 폭을 아는 것은 레이아웃이니 자리도 레이아웃이 정하게 둔다.
 
@@ -222,7 +222,13 @@ export function Workspace({ onLogout, onOpenSettings }: {
         <div
           data-testid="app-header"
           data-tauri-drag-region
-          className={`flex ${TOP_BAR_H} items-center gap-2 border-b border-border bg-surface-raised pl-2 pr-2`}
+          /*
+            **`bg-surface-raised` 에서 `bg-titlebar` 로 바꿨다**(#4). 브랜드 바와 이 헤더는
+            `TOP_BAR_H` 로 높이를 맞춰 **한 줄처럼 붙어 있는데**(#359) 색이 달라서 그 한 줄이
+            중간에서 갈렸다 — 왼쪽은 사이드바 면, 오른쪽은 카드 면이었다. 높이를 한 상수가
+            정하는 것과 같은 이유로 색도 한 토큰이 정한다.
+          */
+          className={`flex ${TOP_BAR_H} items-center gap-2 border-b border-border bg-titlebar pl-2 pr-2`}
         >
           {sidebarCollapsed && (
             <button

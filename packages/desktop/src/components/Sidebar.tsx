@@ -1442,7 +1442,7 @@ export function Sidebar({
   if (collapsed) {
     return (
       <aside
-        className="overflow-hidden bg-surface-sunken"
+        className="overflow-hidden bg-surface-panel"
         style={{ width: 0 }}
         aria-hidden="true"
       />
@@ -1451,7 +1451,7 @@ export function Sidebar({
 
   return (
     <aside
-      className="relative flex flex-col bg-surface-sunken text-fg"
+      className="relative flex flex-col bg-surface-panel text-fg"
       style={{ width: collapsed ? 0 : width }}
     >
       {/* 드래그 핸들: 사이드바 우측 가장자리에 위치 */}
@@ -1484,8 +1484,15 @@ export function Sidebar({
             **창이 움직이는 대신 글자가 선택**됐다. 손잡이로 쓰는 자리의 글자는 고를
             대상이 아니다 — 복사할 값이 아니라 앱 이름이다.
           */
+          /*
+            **면을 `bg-titlebar` 로 못 박는다**(#4: "타이틀바의 색상을 통일해줘"). 이 바는
+            색을 안 들고 사이드바 면을 상속받고 있었고, 오른쪽에 붙어 한 줄로 보이는
+            `Workspace` 헤더는 `bg-surface-raised` 였다 — 같은 한 줄이 왼쪽은 사이드바 색,
+            오른쪽은 카드 색으로 갈려 있었다(실측 스크린샷에서 그 이음매가 보인다).
+            높이를 `TOP_BAR_H` 로 맞춘 것과 같은 이유로(#359) 색도 한 곳이 정한다.
+          */
           className={`flex ${TOP_BAR_H} select-none items-center gap-2 border-b border-border
-                      pl-3 pr-3 font-bold`}
+                      bg-titlebar pl-3 pr-3 font-bold`}
         >
           {/*
             **글자를 되돌렸다**(실측 2026-09-08, 사용자가 화면에서 지적 — "murmur 텍스트가

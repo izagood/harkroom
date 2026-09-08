@@ -237,6 +237,34 @@ describe('요구 7 — sunken < surface < raised 관계가 두 모드에서 같�
       expect(luminance(t['surface-sunken']!)).toBeLessThan(luminance(t['surface']!));
     });
 
+    /**
+     * 왼쪽 기둥 셋의 **순서**를 잰다(#5: "레일별로 색상을 약간 다르게 해서 UI적으로
+     * 구분되는 느낌을 줘"). 셋이 전부 `surface-sunken` 한 값이었고 — 그래서 나란히 선
+     * 세 기둥의 경계가 1px 선 하나뿐이었다. 값이 아니라 순서가 이 셋의 뜻이므로 순서를
+     * 잰다: 같은 값을 셋에 다시 넣어도 위 단언들은 전부 초록이다.
+     */
+    it(`${name}: 전환기 < 레일 < 사이드바 < 본문 순으로 떠오른다`, () => {
+      const t = block(selector);
+      const ladder = ['surface-switcher', 'surface-rail', 'surface-panel', 'surface'];
+      for (const key of ladder) expect(t[key], `--app-${key} 가 없다`).toBeTruthy();
+      const lums = ladder.map((k) => luminance(t[k]!));
+      for (let i = 1; i < lums.length; i += 1) {
+        expect(lums[i]!, `${ladder[i]} 가 ${ladder[i - 1]} 보다 떠 있어야 한다`)
+          .toBeGreaterThan(lums[i - 1]!);
+      }
+    });
+
+    /**
+     * 타이틀바는 **한 값**이다(#4). 세로 계단과 따로 두는 이유는 이 줄이 기둥이 아니라
+     * 기둥들을 가로지르는 띠라는 것이고(근거는 `index.css`), 그래서 잴 것은 계단 안의
+     * 자리가 아니라 **본문보다 가라앉아 있는지**다.
+     */
+    it(`${name}: 타이틀바 면이 본문보다 가라앉아 있다`, () => {
+      const t = block(selector);
+      expect(t['titlebar'], '--app-titlebar 가 없다').toBeTruthy();
+      expect(luminance(t['titlebar']!)).toBeLessThan(luminance(t['surface']!));
+    });
+
     it(`${name}: 카드·입력창(raised)은 본문보다 떠 있다`, () => {
       const t = block(selector);
       expect(luminance(t['surface-raised']!)).toBeGreaterThan(luminance(t['surface']!));
@@ -262,11 +290,19 @@ describe('요구 7 — sunken < surface < raised 관계가 두 모드에서 같�
     expect(luminance(light['surface']!)).toBeGreaterThan(luminance(dark['surface']!));
   });
 
-  /** 사이드바가 실제로 그 토큰을 쓰는가 — 토큰만 옳고 화면이 안 쓰면 뜻이 없다. */
-  it('사이드바가 surface-sunken 을, 본문이 surface 계열을 쓴다', () => {
-    const sidebar = readFileSync(resolve(process.cwd(), 'src/components/Sidebar.tsx'), 'utf-8');
-    expect(sidebar).toMatch(/bg-surface-sunken/);
-    const channelPane = readFileSync(resolve(process.cwd(), 'src/components/ChannelPane.tsx'), 'utf-8');
-    expect(channelPane).toMatch(/bg-surface(-raised)?\b/);
+  /**
+   * 화면이 실제로 그 토큰을 쓰는가 — 토큰만 옳고 아무도 안 쓰면 뜻이 없다.
+   *
+   * **사이드바가 `surface-sunken` 에서 `surface-panel` 로 옮겼다**(2026-09-08, #5).
+   * 관계는 그대로다(사이드바는 본문보다 가라앉는다) — 바뀐 것은 **그 관계를 세 기둥이
+   * 나눠 갖는다**는 것이고, 그러려면 기둥마다 자기 이름이 있어야 한다. `surface-sunken`
+   * 은 목록 헤더·격자 바닥처럼 "본문 위에서 한 단 내려간 면"이 계속 쓴다.
+   */
+  it('세 기둥이 각자의 토큰을, 본문이 surface 계열을 쓴다', () => {
+    const read = (f: string) => readFileSync(resolve(process.cwd(), `src/components/${f}`), 'utf-8');
+    expect(read('Sidebar.tsx')).toMatch(/bg-surface-panel/);
+    expect(read('Rail.tsx')).toMatch(/bg-surface-rail/);
+    expect(read('CommunityRail.tsx')).toMatch(/bg-surface-switcher/);
+    expect(read('ChannelPane.tsx')).toMatch(/bg-surface(-raised)?\b/);
   });
 });

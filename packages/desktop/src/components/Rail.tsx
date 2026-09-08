@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useStore } from 'zustand';
 import { communityLabel, useActiveStore, useCommunityRegistry, type CommunityEntry } from '../state/communities';
 import { getController } from '../state/controller';
@@ -6,7 +6,8 @@ import { blockingUnreadCount } from '../state/unread';
 import { Identity, StatusMark } from './Identity';
 import { Menu } from './Menu';
 import { StatusPicker } from './StatusPicker';
-import { isMacOS } from '../lib/platform';
+import { TOP_BAR_H } from '../lib/platform';
+import { RailIcon, type RailIconName } from './RailIcon';
 import type { SectionId } from './settings/sections';
 import { useT } from '../i18n/useT';
 import type { Translate } from '../i18n';
@@ -19,12 +20,28 @@ import type { Translate } from '../i18n';
 export type RailPanel = 'home' | 'dm' | 'agents';
 
 /**
- * 레일 폭. **문서가 62px 로 못 박았고**(「치르는 값 · 가로 62px」) 그 숫자가 손해 계산의
- * 근거이기도 하다 — "본문이 그만큼 좁아진다". Tailwind 의 척도(`w-14` = 56px,
- * `w-16` = 64px)에 62 가 없어 임의값을 쓴다: 문서의 숫자를 화면에서 반올림해 버리면
- * 문서가 계산해 둔 값과 실제 값이 갈린다.
+ * 레일 폭.
+ *
+ * **62px 이었고 72px 로 넓혔다**(실측 2026-09-08, 사용자가 화면에서 지적 — "제일 오른쪽
+ * 버튼 선과 딱 붙어 있어서 UI가 부자연스러워"). 문서는 「치르는 값 · 가로 62px」에서 62 를
+ * 못 박았지만, 그 숫자를 정할 때 계산에 없던 것이 **macOS 신호등**이다: 신호등 3개는
+ * 창 왼쪽에서 78px 을 쓰고(`MAC_TRAFFIC_LIGHT_PL`) 레일은 62px 이라, 맨 오른쪽(최대화)
+ * 단추가 레일의 오른쪽 경계선 밖으로 나가려다 선에 닿았다. 스크린샷에서 잰 간격이 3px 이다.
+ *
+ * 72px 은 두 요구를 함께 만족하는 가장 작은 값이다: 신호등 오른쪽 끝(창 왼쪽에서 58px)과
+ * 경계선 사이에 14px 이 남고(#1), 칸(54px) 좌우로 9px 씩 여백이 생긴다(#3 — "양쪽 여백을
+ * 조금 주는게 UI 적으로 좋아보여"). 문서가 계산한 손해("본문이 그만큼 좁아진다")는 10px
+ * 늘어난다 — 신호등이 선을 밟는 것보다 그쪽이 싸다.
  */
-const RAIL_W = 'w-[62px]';
+const RAIL_W = 'w-[72px]';
+
+/**
+ * 칸이 레일 좌우 경계에서 떨어져 서는 여백(#3). **`items-center` 만으로는 부족하다** —
+ * 가운데 맞춤은 남는 자리를 반씩 나눠 주므로 칸이 레일 폭에 꽉 차면(옛 72px 에 54px 칸)
+ * 4px 밖에 남지 않고, 그 4px 은 여백으로 정한 값이 아니라 **남은 값**이다. 여백을 여기서
+ * 이름으로 정해 두면 칸 폭이나 레일 폭이 바뀔 때 무엇이 지켜져야 하는지가 남는다.
+ */
+const RAIL_GUTTER = 'px-2';
 
 /**
  * 칸 하나의 정의. 배열 하나로 두는 이유는 **숫자 단축키가 레일 순서를 그대로 따라야**
@@ -36,9 +53,10 @@ interface RailCell {
   panel: RailPanel | null;
   /** 화면에 서는 이름. 9px 한 줄 — 문서: "아이콘에 글자를 붙인다". */
   label: string;
-  /** 접근성 이름. 글리프는 `aria-hidden` 이라 이름을 여기서 준다. */
+  /** 접근성 이름. 아이콘은 `aria-hidden` 이라 이름을 여기서 준다. */
   ariaLabel: string;
-  glyph: string;
+  /** 그림. **이모지가 아니라 선 아이콘 한 벌이다**(`RailIcon.tsx` 에 근거가 있다). */
+  icon: RailIconName;
   testId: string;
 }
 
@@ -50,15 +68,16 @@ interface RailCell {
  * 새로 생기는 것마다 갈 곳이 없어 "다시 아래로 매다는 짓"을 반복하게 되고, 지금
  * 사이드바가 정확히 그렇게 된 것이다.
  *
- * 글리프는 문서가 그려 둔 것을 따른다 — DM 은 말풍선, 북마크는 책갈피, Inbox 트레이는
- * 홈이 받는다. 문서 스스로 "홈과 에이전트는 아직 자리만 잡은 글리프"라고 적었으므로
- * 여기서도 대체 글리프를 쓴다: 없는 그림을 지어내는 것보다 자리를 비워 두는 편이 낫다.
+ * 그림은 문서가 그려 둔 것을 따른다 — DM 은 말풍선, 북마크는 책갈피, Inbox 트레이는
+ * 홈이 받는다. **이모지가 아니라 선 아이콘이다**(2026-09-08): 문서가 "자리만 잡은
+ * 글리프"라고 적어 둔 넷을 한 벌로 다시 그렸고, 그림 자체는 `RailIcon.tsx` 가 진다 —
+ * 왜 이모지를 버렸는지(색·크기·플랫폼)가 그 파일에 있다.
  */
 const RAIL_CELLS: RailCell[] = [
-  { panel: 'home', label: 'Home', ariaLabel: 'Home', glyph: '🏠', testId: 'rail-home' },
-  { panel: 'dm', label: 'DM', ariaLabel: 'Direct messages', glyph: '💬', testId: 'rail-dm' },
-  { panel: 'agents', label: 'Agents', ariaLabel: 'Agents', glyph: '🤖', testId: 'rail-agents' },
-  { panel: null, label: 'Saved', ariaLabel: 'Saved messages', glyph: '🔖', testId: 'rail-saved' },
+  { panel: 'home', label: 'Home', ariaLabel: 'Home', icon: 'home', testId: 'rail-home' },
+  { panel: 'dm', label: 'DM', ariaLabel: 'Direct messages', icon: 'dm', testId: 'rail-dm' },
+  { panel: 'agents', label: 'Agents', ariaLabel: 'Agents', icon: 'agents', testId: 'rail-agents' },
+  { panel: null, label: 'Saved', ariaLabel: 'Saved messages', icon: 'saved', testId: 'rail-saved' },
 ];
 
 /**
@@ -68,7 +87,7 @@ const RAIL_CELLS: RailCell[] = [
  * 읽으므로, 둘만 쓰면 `focus-visible` 에서도 링이 그려지지 않는다. `outline-solid` 로
  * 변수를 되돌리는 클래스가 있어야 2px 이 실제로 선다.
  *
- * 링은 안쪽에 그린다(`-outline-offset-2`). 레일은 폭 62px 에 칸이 꽉 차서 바깥으로 밀어낸
+ * 링은 안쪽에 그린다(`-outline-offset-2`). 레일은 폭 72px 에 칸이 꽉 차서 바깥으로 밀어낸
  * 링은 레일 경계에서 잘리고 위아래 칸끼리 겹친다.
  */
 const RAIL_FOCUS = 'outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2';
@@ -108,18 +127,7 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onOpen
   onOpenCommunityMark: () => void;
   onLogout: () => void;
 }) {
-  /**
-   * 레일이 그려지면 **레일이 창의 좌상단**이 되므로 macOS 신호등이 커뮤니티 마크를 덮는다.
-   * `CommunityRail` 이 같은 문제를 이미 세로 여백으로 풀었고(그 파일 주석: 레일은 신호등
-   * 3개(78px)보다 좁아 가로 여백으로는 피할 수 없다) 같은 방법을 쓴다.
-   *
-   * 커뮤니티 레일이 함께 서 있으면 **그쪽이 좌상단**이라 여백은 그쪽 몫이다 — 두 곳이
-   * 동시에 비우면 여백이 두 번 든다(`Sidebar` 의 `macTrafficLightRoom` 이 접힘 여부로
-   * 같은 판정을 하는 이유와 같다).
-   */
   const t = useT();
-  const communityCount = useCommunityRegistry((r) => r.entries.length);
-  const macTrafficLightRoom = useMemo(() => isMacOS() && communityCount < 2, [communityCount]);
 
   /**
    * 홈 칸의 배지 — **나를 막는 것만 센다**(문서: "배지는 나를 막는 것만 센다").
@@ -207,14 +215,38 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onOpen
     <nav
       data-testid="rail"
       aria-label={t('rail.nav.label')}
-      className={`relative flex ${RAIL_W} shrink-0 flex-col items-center gap-1 border-r border-border bg-surface-sunken pb-1 ${
-        macTrafficLightRoom ? 'pt-8' : 'pt-2'
-      }`}
+      /*
+        **면이 `surface-rail` 이다**(#5). 전환기·레일·사이드바가 전부 `surface-sunken` 한
+        값이었어서 세 기둥의 경계가 1px 선 하나뿐이었다 — 계단의 근거는 `index.css` 의
+        그 토큰 옆에 있다.
+      */
+      className={`relative flex ${RAIL_W} shrink-0 flex-col items-center gap-1 border-r border-border bg-surface-rail pb-1`}
     >
+      {/*
+        창 맨 위 한 줄 중 **레일이 지는 몫**(#4: "타이틀바의 색상을 통일해줘").
+        브랜드 바(`Sidebar`)와 헤더(`Workspace`)는 이미 `TOP_BAR_H` 로 높이를 맞춰 한 줄처럼
+        서 있었지만 레일은 그 줄에 참여하지 않았다 — 레일 쪽은 그냥 레일 색이었고, 그래서
+        한 줄이 창을 가로지르는 대신 사이드바에서 시작하는 것처럼 보였다. 세 조각이 같은
+        `bg-titlebar` 와 같은 `border-b` 를 쓰면 그 줄이 창 폭 전체에서 하나가 된다.
+
+        **이것이 신호등 자리이기도 하다.** 전에는 레일 전체에 `pt-8` 을 줘서 세로로
+        비웠는데(#270), 그 여백은 색이 없어서 신호등이 레일 면 위에 떠 있었다. 띠는 높이가
+        36px(`TOP_BAR_H`)이라 신호등(지름 12px, 중심 y≈12px)을 품는다 — 여백을 잃은 것이
+        아니라 **띠가 그 일까지 한다**.
+
+        `data-tauri-drag-region` 은 자식이 없는 이 띠 자체가 대상이므로 그대로 창 손잡이가
+        된다. macOS 가 아닌 곳에서도 그린다: 이 줄은 신호등을 피하는 여백이 아니라 앱이
+        스스로 그리는 타이틀바이고, 다른 두 조각은 이미 모든 플랫폼에서 서 있다.
+      */}
+      <div
+        data-testid="rail-titlebar"
+        data-tauri-drag-region
+        className={`w-full shrink-0 border-b border-border bg-titlebar ${TOP_BAR_H}`}
+      />
       <CommunityMark onClick={onOpenCommunityMark} />
       {/* 네 칸만 스크롤한다 — 위아래 둘은 패널이 무엇을 보여주든 자리가 안 변한다
           (문서: "레일에서 그 둘만 고정이다"). */}
-      <div className="flex w-full flex-1 flex-col items-center gap-1 overflow-y-auto py-2">
+      <div className={`flex w-full flex-1 flex-col items-center gap-1 overflow-y-auto py-2 ${RAIL_GUTTER}`}>
         {RAIL_CELLS.map((cell) => (
           <RailButton
             key={cell.testId}
@@ -236,10 +268,10 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onOpen
         그래서 항목도 `Sidebar` 의 계정 메뉴와 같은 넷(내 프로필 · 상태 바꾸기 · Settings
         `⌘,` · Sign out)을 그대로 옮겼고, 화살표도 톱니도 두지 않는다.
 
-        레일은 62px 이라 메뉴가 그 폭에 갇히면 항목 글자가 잘린다. `left-0` 만 주고 오른쪽은
+        레일은 72px 이라 메뉴가 그 폭에 갇히면 항목 글자가 잘린다. `left-0` 만 주고 오른쪽은
         놓아 메뉴가 자기 폭(`min-w-32`)으로 레일 밖으로 펼쳐지게 한다.
       */}
-      <div className="relative w-full px-1 pb-1">
+      <div className={`relative w-full pb-1 ${RAIL_GUTTER}`}>
         <Menu
           className="left-0"
           header={<MeMenuHeader />}
@@ -271,7 +303,7 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onOpen
             { label: 'Sign out', onSelect: () => { getController().logout(); onLogout(); } },
           ]}
         />
-        {/* 상태 고르기는 메뉴 항목이 **여는 것**이다. 레일 안에 두면 62px 에 눌려 입력칸이
+        {/* 상태 고르기는 메뉴 항목이 **여는 것**이다. 레일 안에 두면 72px 에 눌려 입력칸이
             못 서므로 레일 오른쪽으로 띄운다 — 열려 있는 동안에만 그린다. */}
         {statusOpen && (
           <div className="absolute bottom-full left-full z-20 mb-1 w-64 rounded border border-border bg-surface-raised p-2 shadow-lg">
@@ -359,16 +391,19 @@ function RailButton({ cell, active, badge, countInName, onClick, t }: {
       }`}
     >
       {/*
-        **이 글리프는 타이포 4단이 아니다 — 그림이다.** `aria-hidden` 이고 내용이 이모지라
-        여기서 크기가 정하는 것은 글자의 읽힘이 아니라 **아이콘의 지름**이다. 4단으로
-        끌어내리면(13px) 아래 11px 라벨과 2px 차이가 되어 아이콘과 글자가 한 덩어리로
-        보이고, 레일이 "그림 + 이름" 두 층이라는 사실이 화면에서 사라진다.
-        `Identity` 의 아바타 머리글자와 같은 예외이고(그 파일에 근거가 길게 있다),
-        `test/typeScale.test.ts` 의 `ALLOWED` 에 줄 단위로 적혀 있다.
+        **그림이 글자가 아니게 됐다.** 여기 `text-base` 로 크기를 정하는 이모지 `<span>` 이
+        있었고, 그 줄은 "타이포 4단이 아니라 아이콘의 지름"이라는 근거와 함께
+        `test/typeScale.test.ts` 의 `ALLOWED` 에 등록돼 있었다. 선 아이콘은 `viewBox` 가
+        크기를 정하므로 그 예외가 필요 없다 — 등록도 함께 지웠다.
+
+        20px(`h-5 w-5`)이다: 아래 라벨이 11px 이라 그림이 그보다 확실히 커야 레일이
+        "그림 + 이름" 두 층으로 읽힌다. 색은 주지 않는다 — `currentColor` 로 그려서
+        고른 칸(`text-fg`)과 안 고른 칸(`text-fg-muted`)의 구분을 그림도 함께 받는다.
+        이모지는 자기 색을 들고 와서 그 절반을 못 받았다.
       */}
-      <span aria-hidden="true" className="text-base leading-none">{cell.glyph}</span>
+      <RailIcon name={cell.icon} />
       {/*
-        라벨은 타이포 4단의 맨 아랫단(11px)이다. 9px 이었고, 62px 레일에서 잘릴까가
+        라벨은 타이포 4단의 맨 아랫단(11px)이다. 9px 이었고, 72px 레일에서 잘릴까가
         이 자리의 유일한 걱정이었다 — **재고 올렸다.** 버튼 내부 폭은 54px 이고 좌우
         패딩이 없다. SF(시스템 폰트)의 실제 전진폭으로 가장 긴 라벨 `Agents` 가 11px 에서
         32.89px 이라 21px 이 남는다(`Home` 28.00 · `Saved` 29.08 · `DM` 16.61).

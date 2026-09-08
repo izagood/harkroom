@@ -1,8 +1,7 @@
-import { useMemo } from 'react';
 import { useStore } from 'zustand';
 import { communityLabel, useCommunityRegistry, type CommunityEntry } from '../state/communities';
 import { switchCommunity } from '../state/controller';
-import { isMacOS } from '../lib/platform';
+import { TOP_BAR_H } from '../lib/platform';
 import { useT } from '../i18n/useT';
 
 /**
@@ -25,14 +24,6 @@ export function CommunityRail() {
   const t = useT();
   const entries = useCommunityRegistry((r) => r.entries);
   const activeId = useCommunityRegistry((r) => r.activeId);
-  /**
-   * 레일이 그려지면 **레일이 창의 좌상단**이 되므로 macOS 신호등이 첫 타일을 덮는다.
-   * 가로가 아니라 세로로 비운다: 레일은 신호등 3 개(78px)보다 좁아서 가로 여백으로는
-   * 피할 수 없고, 사이드바의 기존 가로 여백(`MAC_TRAFFIC_LIGHT_PL`)은 그대로 두어도
-   * 레일 폭만큼 오른쪽으로 밀려 있어 덮이지 않는다.
-   */
-  const macTrafficLightRoom = useMemo(() => isMacOS(), []);
-
   // 하나뿐이면 오늘 화면과 같다 — 요소를 남기지 않는다(폭 0 인 껍데기도 두지 않는다).
   if (entries.length < 2) return null;
 
@@ -40,13 +31,33 @@ export function CommunityRail() {
     <nav
       data-testid="community-rail"
       aria-label={t('rail.community.label')}
-      className={`flex w-14 shrink-0 flex-col items-center gap-2 border-r border-border bg-surface-sunken pb-2 ${
-        macTrafficLightRoom ? 'pt-8' : 'pt-2'
-      }`}
+      /*
+        **폭이 56px 에서 72px 이 됐고 면이 `surface-switcher` 다.**
+        폭: 이 레일이 서면 **이것이 창의 첫 열**이라 macOS 신호등이 여기 놓인다. 신호등 3개는
+        창 왼쪽에서 58px 까지 차지하는데 56px 레일에서는 맨 오른쪽 단추가 경계선을 아예
+        넘었다 — `Rail` 이 같은 이유로 72px 이 됐고(그 파일의 `RAIL_W` 에 잰 값이 있다)
+        나란히 서는 두 레일이 신호등에 대해 다른 답을 가질 이유가 없다.
+        면: 전환기·레일·사이드바가 전부 `surface-sunken` 한 값이어서 세 기둥이 한 덩어리로
+        보였다(#5). 가장 왼쪽이 가장 가라앉는다 — 계단은 `index.css` 가 정한다.
+      */
+      className="flex w-[72px] shrink-0 flex-col items-center gap-2 border-r border-border bg-surface-switcher pb-2"
     >
-      {entries.map((entry) => (
-        <CommunityTile key={entry.id} entry={entry} active={entry.id === activeId} />
-      ))}
+      {/*
+        타이틀바 띠 — `Rail` 의 그것과 **같은 이유이고 같은 세 클래스**다(#4). 이 레일이
+        서면 창 맨 위 한 줄의 첫 조각이 여기이므로, 여기가 띠를 안 그리면 한 줄이 두 번째
+        열에서 시작하는 것처럼 보인다. 신호등 자리도 이 띠가 진다(옛 `pt-8` 이 하던 일).
+      */}
+      <div
+        data-testid="community-rail-titlebar"
+        data-tauri-drag-region
+        className={`w-full shrink-0 border-b border-border bg-titlebar ${TOP_BAR_H}`}
+      />
+      {/* 타일이 좌우 경계에 붙지 않게 여백을 준다(#3) — `Rail` 의 `RAIL_GUTTER` 와 같은 값이다. */}
+      <div className="flex w-full flex-col items-center gap-2 px-2">
+        {entries.map((entry) => (
+          <CommunityTile key={entry.id} entry={entry} active={entry.id === activeId} />
+        ))}
+      </div>
     </nav>
   );
 }
@@ -99,7 +110,7 @@ function CommunityTile({ entry, active }: { entry: CommunityEntry; active: boole
         <span
           aria-hidden
           data-testid={`community-offline-${entry.id}`}
-          className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-surface-sunken bg-danger"
+          className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-surface-switcher bg-danger"
         />
       )}
     </button>

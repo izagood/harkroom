@@ -238,11 +238,9 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
     contains: "glyph: 'h-10 w-10 text-base',",
     why: '같은 40px 상자의 `+` 글리프',
   },
-  {
-    file: 'components/Rail.tsx',
-    contains: '<span aria-hidden="true" className="text-base leading-none">{cell.glyph}</span>',
-    why: '레일 칸의 이모지 아이콘 — `aria-hidden` 인 그림이고 크기가 지름이다',
-  },
+  // 레일 칸의 이모지 아이콘(`text-base`)이 여기 있었다. **선 아이콘으로 바뀌면서 예외가
+  // 필요 없어졌다**(2026-09-08) — `RailIcon` 은 `viewBox` 로 크기를 정하므로 글자 크기가
+  // 아예 없다. 예외를 남겨 두면 아래 "죽은 예외를 남기지 않는다" 가 빨개진다.
   {
     file: 'components/Rail.tsx',
     contains: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-raised text-sm font-bold',
