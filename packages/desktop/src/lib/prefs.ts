@@ -19,6 +19,16 @@ export interface NotificationPrefs {
 
 export type ColorMode = 'system' | 'light' | 'dark';
 
+/**
+ * 화면에 쓸 언어. `'system'` 은 **브라우저에게 묻는다**(`detectLocale`) — 색 모드의
+ * `'system'` 과 같은 규약이라 설정 화면에서 둘이 같은 것을 뜻한다.
+ *
+ * 값을 `Locale` 로 좁히지 않고 문자열로 두는 이유: 이 파일은 **저장 매체**를 다루고
+ * 저장본에는 **우리가 지운 언어**가 남아 있을 수 있다(언어를 하나 빼는 날). 좁은 타입은
+ * 그 값을 읽는 순간 거짓말이 되므로, 좁히는 일은 읽는 쪽(`loadLocale`)이 한다.
+ */
+export type LocalePref = 'system' | string;
+
 export interface Prefs {
   notifications: NotificationPrefs;
   sidebarWidth: number;
@@ -26,6 +36,8 @@ export interface Prefs {
   colorMode: ColorMode;
   /** 앱 시작 시 내가 소유한 에이전트의 러너를 자동으로 띄울지(#250). */
   runnerAutoStart: boolean;
+  /** 화면 언어. 기본은 `'system'` — 브라우저가 말하는 것을 따른다. */
+  locale: LocalePref;
 }
 
 const KEY = 'murmur.prefs';
@@ -128,6 +140,7 @@ export const DEFAULT_PREFS: Prefs = {
   sidebarCollapsed: false,
   colorMode: 'system',
   runnerAutoStart: true,
+  locale: 'system',
 };
 
 export const prefsStorage = {
@@ -144,6 +157,7 @@ export const prefsStorage = {
         sidebarCollapsed: parsed.sidebarCollapsed ?? DEFAULT_PREFS.sidebarCollapsed,
         colorMode: parsed.colorMode ?? DEFAULT_PREFS.colorMode,
         runnerAutoStart: parsed.runnerAutoStart ?? DEFAULT_PREFS.runnerAutoStart,
+        locale: parsed.locale ?? DEFAULT_PREFS.locale,
       };
     } catch {
       return DEFAULT_PREFS;

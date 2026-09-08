@@ -1,7 +1,9 @@
 import { useActiveStore } from '../state/communities';
 import { elapsedLabel } from '../lib/progressGroup';
-import { subjectParticle } from '../lib/particle';
-import type { WaitChain as Chain } from '../lib/waitChain';
+import { useT } from '../i18n/useT';
+import {
+  chainSentences, deadlockSentence, unblocksSentence, type WaitChain as Chain,
+} from '../lib/waitChain';
 
 /**
  * 대기 사슬 한 줄 — **사람이 "왜 아무것도 안 움직이지"를 묻지 않게 하는 것**이 목적이다
@@ -16,12 +18,19 @@ import type { WaitChain as Chain } from '../lib/waitChain';
  *
  * `none` 이면 아무것도 그리지 않는다 — 기다리는 것이 없는데 "아무도 안 기다림"을 그리면
  * 그것이 규칙 06 이 말하는 0 을 그리는 짓이다.
+ *
+ * ## 문장은 이 파일이 안 만든다
+ *
+ * 조사도 어순도 여기 없다. **`lib/waitChain.ts` 가 문장을 내고 이 파일은 그리기만
+ * 한다** — 같은 사슬을 인박스(`WaitChainSection`)도 그리므로, 문장 조립이 화면에 있으면
+ * 두 곳이 조용히 갈라진다. 그것이 이 저장소가 판정을 `lib/` 에 두는 이유 그대로다.
  */
 export function WaitChainLine({ chain }: { chain: Chain }) {
   const accounts = useActiveStore((s) => s.accounts);
+  const t = useT();
   if (chain.end === 'none' || chain.links.length === 0) return null;
 
-  const name = (id: string | null): string => (id === null ? '사람' : accounts[id]?.handle ?? '…');
+  const name = (id: string | null): string => (id === null ? t('common.someone') : accounts[id]?.handle ?? '…');
   const head = chain.links[0]!;
   // **`askedAt` 을 쓴다** — 집계로 만든 사슬에는 메시지가 없다(#488 A3-b). 채널 목록은
   // 답글을 싣지 않으므로 서버가 두 계정과 시각만 준다.
@@ -36,18 +45,16 @@ export function WaitChainLine({ chain }: { chain: Chain }) {
         className="mx-4 my-1 rounded border border-state-stuck bg-danger-surface px-2 py-1
                    text-meta text-state-stuck"
       >
-        <span className="font-semibold">교착</span>
-        <span className="ml-1.5 text-fg-muted">
-          {chain.deadlockReason === 'cycle'
-            // 서로를 기다리는 것과 죽은 러너를 기다리는 것은 **사람이 할 일이 다르다**.
-            ? `${chain.links.map((l) => name(l.waiter)).join(' ↔ ')} 가 서로를 기다린다 — 사람만이 풀 수 있다`
-            : `${name(head.waiter)} 가 ${name(head.blockedBy)} 를 기다리는데 응답이 없다`}
-        </span>
+        <span className="font-semibold">{t('waitChain.deadlock')}</span>
+        {/* 서로를 기다리는 것과 죽은 러너를 기다리는 것은 **사람이 할 일이 다르다** —
+            그 갈림은 `deadlockSentence` 가 들고 있다. */}
+        <span className="ml-1.5 text-fg-muted">{deadlockSentence(chain, name, t)}</span>
       </div>
     );
   }
 
   const mine = chain.end === 'me';
+  const unblocks = unblocksSentence(chain, t);
   return (
     <div
       data-testid="wait-chain"
@@ -55,23 +62,16 @@ export function WaitChainLine({ chain }: { chain: Chain }) {
       data-unblocks={chain.unblocks}
       className={`mx-4 my-1 px-1 text-meta ${mine ? 'text-state-turn' : 'text-fg-muted'}`}
     >
-      <span>
-        {chain.links.map((l) => (
-          l.blockedBy === null
-            // '사람 아무나'를 기다리는 것은 특정인을 기다리는 것과 다른 문장이다 —
-            // `사람 의 답을` 처럼 이름 자리에 보통명사를 끼워 넣으면 조사가 어긋난다.
-            ? `${name(l.waiter)}${subjectParticle(name(l.waiter))} 사람의 답을 기다린다`
-            : `${name(l.waiter)}${subjectParticle(name(l.waiter))} ${name(l.blockedBy)}의 답을 기다린다`
-        )).join(' · ')}
-      </span>
+      <span>{chainSentences(chain, name, t).join(' · ')}</span>
       {elapsed && <span className="ml-1 text-fg-subtle">· {elapsed}</span>}
       {/*
-        **몇 개가 풀리는지가 사람이 답할 이유다.** 둘 이상일 때만 말한다 — 하나뿐이면
-        "답하면 1개가 풀린다"는 정보가 아니라 잡음이고, 그 물음 자체가 이미 그 말을 하고 있다.
+        **몇 개가 풀리는지가 사람이 답할 이유다.** 둘 이상일 때만 나온다 — 그 문턱은
+        `unblocksSentence` 가 들고 있어(하나뿐이면 `null`) 인박스와 여기가 갈라지지 않는다.
+
+        이어 붙이는 `—` 는 **화면의 것**이다. 사전에는 문장만 있다 — 같은 문장을 인박스는
+        `· ` 뒤에 놓는다.
       */}
-      {mine && chain.unblocks > 1 && (
-        <span className="ml-1 font-medium">— 답하면 {chain.unblocks}개가 풀린다</span>
-      )}
+      {unblocks && <span className="ml-1 font-medium">— {unblocks}</span>}
     </div>
   );
 }
