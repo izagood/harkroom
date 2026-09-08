@@ -16,7 +16,7 @@ import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, type MemoryContext, cou
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
 import { acceptsPtyInput } from './pty.js';
-import type { PtyWriter, TurnResult } from './pty.js';
+import type { PtyControls, PtyWriter, TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
 import { claudeSessionMaterialized } from './claudeSessions.js';
 import { readLastApiError } from './harnessErrors.js';
@@ -68,11 +68,15 @@ export type RunTurn = (
      */
     onData?: (chunk: Buffer) => void;
     /**
-     * PTY stdin 통로(#315). `onData` 의 반대 방향 — attach 한 소유자가 친 바이트가 이리로
+     * PTY 조작 손잡이(#315). `onData` 의 반대 방향 — attach 한 소유자가 친 바이트가 이리로
      * 들어간다. `RunPtyTurnOptions` 의 같은 이름 필드를 이 계약에도 연 것이고, 이유도
      * `onData` 와 같다: 좁혀 놓은 이 타입이 넘길 방법을 막으면 배선이 구조적으로 불가능하다.
+     *
+     * **`PtyWriter` 가 아니라 `PtyControls` 다(2026-09-08).** 종료가 필요해졌다: TUI 는
+     * 답하고도 죽지 않으므로 러너가 턴의 끝에 이 PTY 를 회수한다. 릴레이에 넘어가는 것은
+     * 여전히 `PtyWriter` 뿐이다 — 관찰하는 쪽에 종료 손잡이를 주면 뷰어가 턴을 죽인다.
      */
-    onSpawn?: (writer: PtyWriter) => void;
+    onSpawn?: (controls: PtyControls) => void;
   },
 ) => Promise<TurnResult>;
 
@@ -89,8 +93,20 @@ export interface TurnRelay {
     channelId: string;
     threadRootId: string | null;
     harness: AgentHarness;
-    /** 이 세션의 PTY 에 사람이 입력할 수 있는가(#369). 멘션 턴은 항상 false 다 — stdin 이 프롬프트 파일이다. */
+    /**
+     * 이 세션의 PTY 에 사람이 입력할 수 있는가.
+     *
+     * **2026-09-08 실행 모델 교체로 claude 멘션 턴은 참이다** — TUI 로 뜨므로 fd 0 이 PTY 다.
+     * codex 는 아직 `exec` + stdin 파일이라 거짓이다(P5). 판정은 하네스 이름이 아니라
+     * `acceptsPtyInput(plan)` 하나로 한다(스펙 §5-3).
+     */
     acceptsInput: boolean;
+    /**
+     * 지금 이 세션을 보고 있는 사람 수. **턴의 끝이 이 값에 걸려 있다**(2026-09-08):
+     * TUI 는 답하고도 죽지 않으므로 러너가 끝을 정해야 하고, 그 조건이 "발화했고 아무도
+     * 안 본다" 다. 릴레이가 이 훅을 안 주면 아무도 안 보는 것으로 다룬다.
+     */
+    onViewerCount?: (count: number) => void;
   }): {
     sessionId: string;
     push(chunk: Buffer): void;
@@ -160,6 +176,16 @@ export interface MentionTurnDeps {
   sessionMaterialized?: (harness: AgentHarness, sessionId: string, claudeConfigDir: string | null) => Promise<boolean>;
   /** 테스트가 sinceMs 캡처 시점을 결정론적으로 만들기 위한 시계 주입. 생략하면 Date.now. */
   now?: () => number;
+  /**
+   * 발화를 확인하는 주기(기본 3초, 2026-09-08). TUI 는 답하고도 안 죽으므로 러너가
+   * "답했는가"를 직접 봐야 하고, 그 사실은 스레드에만 있다 — 에이전트는 자기 PAT 로
+   * 서버에 직접 발화하므로 PTY 출력에는 나타나지 않는다.
+   */
+  utteranceProbeMs?: number;
+  /** 발화 뒤 관찰자가 0 일 때 회수까지의 유예(기본 60초). 인터랙티브 턴과 같은 값이다. */
+  orphanMs?: number;
+  /** 테스트가 타이머를 잡기 위한 주입. 생략하면 unref 된 setTimeout. */
+  schedule?: (fn: () => void, ms: number) => () => void;
 }
 
 /**
@@ -583,22 +609,88 @@ export async function runMentionTurn(
   // **attach 는 이 턴의 권한을 건드리지 않는다.** `plan` 은 위에서 `mode: 'mention'` 과
   // `def.mentionPermission` 으로 이미 조립됐고, 세션을 여는 것은 그 뒤다 — 스펙 §6 의
   // "멘션 턴에 attach 해도 그 턴의 모드는 바꿀 수 없다"가 이 순서로 성립한다.
+  // ── 턴의 끝(2026-09-08 실행 모델 교체). TUI 는 답하고도 죽지 않으므로 러너가 끝을 정한다.
+  //
+  // 끝의 정의는 **"발화했고 아무도 안 본다"** 다. 발화만으로 즉시 죽이면 사람이 답을 보고
+  // 이어서 칠 수 없고(터미널을 보여 주는 이유가 그것이다), 관찰자만 보면 아무도 안 보는
+  // 스레드의 프로세스가 영원히 산다 — 실측 RSS 182~285MB 라 그 값이 작지 않다.
+  //
+  // 회수 장치를 새로 만들지 않는다: `interactiveTurn.ts` 의 viewer 기반 고아 회수가 이미
+  // 그것이고, 그 주석이 근거를 적어 뒀다 — 패널 닫힘·소켓 단절·앱 강제종료가 서버 관점에서
+  // 전부 "뷰어 소멸" 하나로 수렴한다.
+  const schedule = deps.schedule
+    ?? ((fn: () => void, ms: number) => { const t = setTimeout(fn, ms); t.unref?.(); return () => clearTimeout(t); });
+  const end: {
+    controls: PtyControls | null; exited: boolean; spoke: boolean; viewers: number; silenced: boolean;
+    cancelReclaim: (() => void) | null; cancelProbe: (() => void) | null; cancelSilence: (() => void) | null;
+  } = {
+    controls: null, exited: false, spoke: false, viewers: 0, silenced: false,
+    cancelReclaim: null, cancelProbe: null, cancelSilence: null,
+  };
+
+  const reclaim = (): void => {
+    if (end.exited || !end.controls) return;
+    // SIGTERM 이 1차다 — 하네스가 모델 요청·파일 쓰기 중일 수 있어 정리할 기회를 준다.
+    // 유예 뒤 SIGKILL 승격은 `runPtyTurn` 이 이미 갖고 있다. 세션은 디스크라 잃는 것이 없다.
+    end.controls.kill('SIGTERM');
+  };
+
+  /** 끝 조건을 다시 잰다. 발화·뷰어 어느 쪽이 바뀌어도 여기로 모인다. */
+  const reconsiderEnd = (): void => {
+    if (end.exited) return;
+    if (!end.spoke || end.viewers > 0) {
+      end.cancelReclaim?.();
+      end.cancelReclaim = null;
+      return;
+    }
+    if (end.cancelReclaim) return; // 이미 유예 중 — 다시 세우면 유예가 늘어난다.
+    end.cancelReclaim = schedule(() => { end.cancelReclaim = null; reclaim(); }, deps.orphanMs ?? 60_000);
+  };
+
+  const onViewerCount = (count: number): void => {
+    end.viewers = count;
+    reconsiderEnd();
+  };
+
   const session = deps.relay?.openSession({
     agentAccountId: deps.me.id,
     channelId,
     threadRootId: anchor,
     harness: def.harness,
-    // #369: 이 턴은 프롬프트를 **파일로** 받는다(#117 — 본문을 argv 에 올리지 않는다).
-    // 그래서 `composeSpawn` 이 `sh -c 'exec ... < 파일'` 로 감싸고, 자식의 fd 0 은 PTY 가
-    // 아니라 그 파일이다 — 사람이 여기 쳐도 자식에게 닿지 않는다. 그 사실을 서버까지
-    // 실어 보내 **차례 자체를 안 주게** 한다: 쳐도 아무 데도 안 가는 입력창이 최악이다.
+    // 판정은 하네스 이름이 아니라 **fd 0 의 정체** 하나로 한다(스펙 §5-3). 그래서 claude 가
+    // TUI 로 바뀐 것만으로 이 값이 참이 되고, 서버·데스크탑은 손대지 않아도 입력이 열린다.
+    // codex 는 아직 `exec` + stdin 파일이라 거짓이다 — 쳐도 아무 데도 안 가는 입력창이
+    // 최악이므로 그 사실을 서버까지 실어 보내 차례 자체를 안 주게 한다.
     acceptsInput: acceptsPtyInput(plan),
+    onViewerCount,
   });
 
   // #337: 이 스레드에 멘션 턴이 돈다는 사실을 등록한다 — 인터랙티브 open 의 3분기 ①
   // ("멘션 턴 진행 중 → 그 PTY 에 attach")과 main 루프의 유예 판정이 이 등록을 본다.
   // 세션을 연 **뒤**여야 한다: 등록의 sessionId 가 곧 attach 대상이다(릴레이가 없으면 null).
   deps.registry?.register(key, { kind: 'mention', sessionId: session?.sessionId ?? null });
+
+  // 발화 폴링. 서버에만 있는 사실이라 물어보는 수밖에 없다 — 에이전트는 자기 PAT 로
+  // 서버에 직접 발화하므로 러너의 PTY 출력에는 그 사실이 안 나타난다.
+  //
+  // codex 는 `exec` 이라 답하면 스스로 죽는다 — 폴링할 이유가 없다(P5 전까지).
+  const probeMs = deps.utteranceProbeMs ?? 3_000;
+  const probeUtterance = (): void => {
+    if (end.exited || end.spoke) return;
+    void deps.murmur.readThread(channelId, anchor, turnStartSeq)
+      .then((after) => {
+        if (end.exited || end.spoke) return;
+        if (countOwnPostsSince(after, deps.me.id, turnStartSeq) > 0) {
+          end.spoke = true;
+          reconsiderEnd();
+          return;
+        }
+        end.cancelProbe = schedule(probeUtterance, probeMs);
+      })
+      // 관측 실패로 턴을 죽이지 않는다 — 다음 주기에 다시 묻는다.
+      .catch(() => { end.cancelProbe = schedule(probeUtterance, probeMs); });
+  };
+  if (usesTui) end.cancelProbe = schedule(probeUtterance, probeMs);
 
   let result: TurnResult;
   try {
@@ -619,9 +711,20 @@ export async function runMentionTurn(
       // 것은 그 PTY 에 바이트를 넣을 수 있는 주체뿐이고, 그 주체는 하네스가 아니라
       // 사람이다: `mention_permission` 은 에이전트가 스스로 넘지 못하는 선이지 사람이
       // 넘지 못하는 선이 아니다(#315 운영자 결정).
-      onSpawn: session ? (writer: PtyWriter) => session.bindInput(writer) : undefined,
+      onSpawn: (controls: PtyControls) => {
+        // 릴레이에는 입력·크기만 넘긴다(`PtyWriter`) — 종료는 러너의 몫이고, 관찰하는
+        // 쪽에 그 손잡이를 주면 뷰어가 턴을 죽일 수 있게 된다.
+        session?.bindInput(controls);
+        // 회수 손잡이. 릴레이가 없어도 잡아야 한다 — 관찰이 없다고 턴이 안 끝나면 안 된다.
+        end.controls = controls;
+      },
     });
   } finally {
+    // 끝 상태의 타이머를 먼저 끈다 — 남기면 끝난 턴의 타이머가 다음 턴의 PTY 를 죽인다.
+    end.exited = true;
+    end.cancelProbe?.();
+    end.cancelReclaim?.();
+    end.cancelSilence?.();
     // 등록도 세션과 같은 수명이다 — 남겨 두면 끝난 턴이 "진행 중"으로 남아 인터랙티브
     // open 이 죽은 PTY 에 사람을 붙인다.
     deps.registry?.release(key);

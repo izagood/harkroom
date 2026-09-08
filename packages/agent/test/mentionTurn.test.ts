@@ -2131,6 +2131,8 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
       // 그 사실을 세션에 실어 서버가 writer 차례를 안 주게 한다.
       // 2026-09-08: 멘션 턴도 TUI 로 뜨므로 fd 0 이 PTY 다 — 입력을 받는다.
       acceptsInput: true,
+      // 턴의 끝이 뷰어 수에 걸려 있다 — 릴레이가 이 훅으로 알려 준다.
+      onViewerCount: expect.any(Function),
     }]);
     // 바이트가 **변형 없이** 그대로 온다 — 문자열로 뜨면 잘린 UTF-8 이 U+FFFD 가 된다.
     expect(r.bytes).toHaveLength(1);
@@ -2213,7 +2215,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
       // 프로덕션에서는 pty.ts 가 spawn 직후 이 통로를 넘긴다.
       // `resize` 는 이 테스트의 관심사가 아니지만 통로의 계약이다(#335) — 넘기지 않으면
       // 배선이 반쪽이 된 것을 타입이 못 잡는다.
-      opts.onSpawn?.({ write: (chunk) => { arrived.push(chunk); }, resize: () => {} });
+      opts.onSpawn?.({ write: (chunk) => { arrived.push(chunk); }, resize: () => {} , kill: () => {} });
       r.type(typed);
       return { exitCode: 0, timedOut: false, tail: '' };
     };
@@ -2240,7 +2242,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
       const { deps, plans, runTurn, turnOpts } = await makeDeps(fake, r ? { relay: r.relay } : {});
       if (r) {
         runTurn.script = async (_plan, opts) => {
-          opts.onSpawn?.({ write: () => { typedCount += 1; }, resize: () => {} });
+          opts.onSpawn?.({ write: () => { typedCount += 1; }, resize: () => {} , kill: () => {} });
           r.type(Buffer.from('yes\r', 'utf8'));
           return { exitCode: 0, timedOut: false, tail: '' };
         };
@@ -2492,5 +2494,92 @@ describe('실행 모델 교체 — 멘션 턴이 TUI 로 뜬다 (2026-09-08)', (
     expect(plans[0]!.stdinFile).not.toBeNull();
     expect(acceptsPtyInput(plans[0]!)).toBe(false);
     expect(injected).toBeUndefined();
+  });
+});
+
+describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
+  /** 회수 손잡이를 잡고 kill 을 기록하는 가짜 PTY. 뷰어 수도 밖에서 흔들 수 있다. */
+  function endHarness() {
+    let killed: string | null = null;
+    let notifyViewers: ((n: number) => void) | undefined;
+    return {
+      killed: () => killed,
+      viewers: (n: number) => notifyViewers?.(n),
+      relay: {
+        openSession(input: { onViewerCount?: (n: number) => void }) {
+          notifyViewers = input.onViewerCount;
+          return { sessionId: 'end-1', push: () => {}, bindInput: () => {}, close: () => {} };
+        },
+      },
+      /** TUI 처럼 답하고도 안 죽는 하네스. `after` 안에서 발화·뷰어를 흔든다. */
+      script: (after: () => Promise<void> | void) => async (_plan: TurnPlan, opts: {
+        onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+      }) => {
+        opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+        await after();
+        await new Promise((r) => setTimeout(r, 250));  // 안 죽고 버틴다
+        return { exitCode: 0, timedOut: false, tail: '' };
+      },
+    };
+  }
+
+  it('발화하면 회수한다 — TUI 는 답하고도 안 죽으므로 러너가 끝을 정한다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = endHarness();
+    const { deps, runTurn } = await makeDeps(fake, {
+      relay: h.relay, utteranceProbeMs: 5, orphanMs: 5,
+    });
+    runTurn.script = h.script(async () => { await fake.post(CHANNEL, '답했다', null); });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(h.killed()).toBe('SIGTERM');
+  });
+
+  it('관찰자가 있으면 발화해도 회수하지 않는다 — 사람이 보고 있으면 러너는 끼어들지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = endHarness();
+    const { deps, runTurn } = await makeDeps(fake, {
+      relay: h.relay, utteranceProbeMs: 5, orphanMs: 5,
+    });
+    runTurn.script = h.script(async () => {
+      h.viewers(1);                                  // 사람이 붙어 있다
+      await fake.post(CHANNEL, '답했다', null);
+    });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(h.killed()).toBeNull();
+  });
+
+  it('보던 사람이 창을 닫으면 그때 회수한다 — 유예는 뷰어 소멸부터 흐른다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = endHarness();
+    const { deps, runTurn } = await makeDeps(fake, {
+      relay: h.relay, utteranceProbeMs: 5, orphanMs: 5,
+    });
+    runTurn.script = h.script(async () => {
+      h.viewers(1);
+      await fake.post(CHANNEL, '답했다', null);
+      await new Promise((r) => setTimeout(r, 40));
+      h.viewers(0);                                  // 창을 닫았다
+    });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(h.killed()).toBe('SIGTERM');
+  });
+
+  it('발화가 없으면 회수하지 않는다 — 아직 일하는 중이다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = endHarness();
+    const { deps, runTurn } = await makeDeps(fake, {
+      relay: h.relay, utteranceProbeMs: 5, orphanMs: 5,
+    });
+    runTurn.script = h.script(() => {});             // 아무 말도 안 한다
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(h.killed()).toBeNull();
   });
 });
