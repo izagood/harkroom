@@ -94,6 +94,19 @@ export class Controller {
         runnerStates: Object.fromEntries(states.map((s) => [s.agentId, s])),
       });
     });
+    // daemon 이 **직접 확인한 사실**을 스토어로 밀어 넣는다(`#443`). 판정
+    // (`runnerStates`)과 나란히 서고 섞이지 않는 이유는 `appStore.ts::daemonRunners`
+    // 주석의 표에 있다.
+    //
+    // **통째로 갈아 끼운다** — 병합하지 않는다. 관측은 그 순간의 장부 전체이고, 장부에서
+    // 사라진 러너는 daemon 이 더 이상 그것에 대해 아무것도 모른다는 뜻이다. 옛 항목을
+    // 남겨 두면 화면이 이미 없는 러너의 pid 를 계속 보이고, 사람은 그 pid 로 `ps` 를 쳐
+    // 아무것도 못 찾는다 — 그것이 정확히 이 이슈가 없애려는 낡은 사실이다.
+    this.runnerLauncher.setOnObservation((runners) => {
+      this.store.getState().set({
+        daemonRunners: Object.fromEntries(runners.map((r) => [r.agentId, r])),
+      });
+    });
   }
 
   /**
@@ -257,10 +270,11 @@ export class Controller {
       me, channels, dms, leases, unread,
       accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
       groups,
-      // 옛 서버는 `teams` 를 안 싣는다 — 그 서버는 팀을 부르지도 못하므로 빈 목록이
-      // 맞다(`ApiClient.accounts` 주석). `?? []` 로 뭉개면 안 되는 값이 아니다:
-      // 여기서 `undefined` 를 스토어에 넣으면 후보 목록이 순회에서 터진다.
-      teams: teams ?? [],
+      // 옛 서버는 `teams` 를 안 싣는다. **그것을 빈 배열로 바꾸지 않는다** — 팀이
+      // 없는 것과 목록을 못 받은 것은 다른 사실이고, 합치면 설정 격자가 있는 팀을
+      // 없다고 단언한다(`appStore.ts::teams` 의 그 표). `undefined` 대신 `null` 인
+      // 것은 "모른다"를 스토어의 값으로 쓰기 위해서다.
+      teams: teams ?? null,
       reads: Object.fromEntries(reads.map((r) => [r.channelId, { lastReadSeq: r.lastReadSeq, unread: r.unread }])),
     });
     // 초안은 기기 로컬에 있으므로 서버 왕복이 없다 — 크리티컬 패스에 둬도 비용이 없다.
@@ -564,24 +578,58 @@ export class Controller {
   private accountsInFlight: Promise<void> | null = null;
   private lastAccountsRefresh = 0;
   private static readonly ACCOUNTS_REFRESH_INTERVAL_MS = 5_000;
+  /**
+   * 나간 순서와 **적용된 순서**를 재는 두 번호. 아래 `force` 가 진행 중인 조회를
+   * 앞지를 수 있게 된 순간부터, 두 응답이 겹쳐 도착할 수 있다 — 늦게 온 낡은 응답이
+   * 새 것을 덮으면 이 함수가 고치려는 그 상태(스토어가 옛 디렉터리를 든다)로 되돌아간다.
+   */
+  private accountsSeq = 0;
+  private accountsAppliedSeq = 0;
 
+  /**
+   * 디렉터리를 다시 읽는다.
+   *
+   * ## `force` 는 **진행 중인 조회에 합류하지 않는다**
+   *
+   * 합류는 스로틀과 같은 목적으로 있다 — 미지의 작성자가 연달아 오면 같은 조회가 폭주하고,
+   * 그때는 이미 나간 것 하나로 충분하다. **`force` 는 그 경우가 아니다:** 사람이 방금
+   * 팀을 만들었거나(`AgentsSettings::reloadTeams`) 서버가 바뀌었다고 알려 온 것이고
+   * (`agent_team.changed`·`handle_group.changed`), 진행 중인 조회는 **그 사건이 일어나기
+   * 전에 시작된 것**이라 새 팀이 실려 있을 리가 없다. 앞 판은 `??=` 하나로 둘을 같이
+   * 처리해서, 갱신을 부른 그 순간 다른 조회가 떠 있으면 `force` 가 조용히 무력화됐다 —
+   * 만든 팀이 격자에 안 나타나고 다음 갱신까지 그대로 남는다.
+   *
+   * 그래서 `force` 는 늘 새 요청을 낸다. 대신 겹쳐 도착하는 응답의 순서를 **번호로**
+   * 지킨다(위 두 필드): 먼저 나간 응답이 나중에 도착해도 새 것을 덮지 못한다.
+   */
   refreshAccounts(opts: { force?: boolean } = {}): Promise<void> {
     const now = Date.now();
-    if (!opts.force && now - this.lastAccountsRefresh < Controller.ACCOUNTS_REFRESH_INTERVAL_MS) {
-      return Promise.resolve();
+    if (!opts.force) {
+      if (now - this.lastAccountsRefresh < Controller.ACCOUNTS_REFRESH_INTERVAL_MS) {
+        return Promise.resolve();
+      }
+      if (this.accountsInFlight) return this.accountsInFlight;
     }
     this.lastAccountsRefresh = now;
-    this.accountsInFlight ??= this.api
+    const seq = ++this.accountsSeq;
+    const inFlight = this.api
       .accounts()
       .then(({ accounts, groups, teams }) => {
+        // 나보다 뒤에 나간 응답이 이미 적용됐으면 아무것도 하지 않는다.
+        if (seq < this.accountsAppliedSeq) return;
+        this.accountsAppliedSeq = seq;
         this.store.getState().set({
           accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
           groups,
-          teams: teams ?? [],
+          // `?? null` 인 이유는 `start()` 의 같은 자리 주석에 있다.
+          teams: teams ?? null,
         });
       })
-      .finally(() => { this.accountsInFlight = null; });
-    return this.accountsInFlight;
+      // 합류시킬 대상은 **가장 최근에 나간 것**이다 — 늦게 끝난 옛 요청이 그 자리를
+      // 비우면, 아직 도는 새 요청이 있는데도 다음 호출이 또 하나를 낸다.
+      .finally(() => { if (this.accountsInFlight === inFlight) this.accountsInFlight = null; });
+    this.accountsInFlight = inFlight;
+    return inFlight;
   }
 
   /**
@@ -723,7 +771,7 @@ export class Controller {
     // 다른 곳으로 움직이면 이전 링크 강조는 뜻을 잃는다 — 남겨 두면 엉뚱한 메시지가 계속 빛난다.
     // 펼쳐 둔 긴 메시지도 같이 접는다(#217) — 나갔다 돌아온 채널에서 긴 메시지가 여전히
     // 펼쳐져 있으면, 애초에 접기가 막으려던 상태(하나가 화면을 다 먹는 것)로 되돌아간다.
-    store.set({ activeChannelId: channelId, threadRootId: null, highlightedMessageId: null, expandedMessageIds: {} });
+    store.set({ activeChannelId: channelId, threadRootId: null, highlightedMessageId: null });
     // 투영된 system 메시지는 사용자가 그 채널을 보고 있지 않아도 WS로 들어와 maxSeq를 올린다.
     // 그 상태에서 증분 조회를 하면 backlog 전체가 건너뛰어져 채널이 거의 비어 보인다 —
     // 그래서 처음 여는 채널은 히스토리를 통째로 받는다(since=0 → 서버가 최신 N개를 준다).
@@ -771,13 +819,25 @@ export class Controller {
     after.set({ reads: { ...after.reads, [channelId]: { lastReadSeq: newest, unread: 0 } } });
   }
 
-  async openThread(rootId: string): Promise<void> {
+  /**
+   * 스레드를 연다. `focusMessageId` 를 주면 **그 답글 자리**에 세운다(#624 요구 3) —
+   * 채널에 함께 올라온 답에서 "최근 댓글 보기"로 들어오는 경우다. 그 사람의 질문은
+   * "이 스레드가 뭐였나"가 아니라 **"이 말 뒤에 무슨 말이 더 있었나"** 이므로, 뿌리부터
+   * 다시 읽히면 답글이 백 개 달린 스레드에서 방금 본 그 말을 다시 찾아야 한다.
+   *
+   * 세우는 수단은 기존 강조(`highlightedMessageId`)를 그대로 쓴다 — 링크로 도달한 자리를
+   * 화면에 세우고 몇 초 뒤 스스로 풀리는 것이 이미 `MessageItem` 에 있다(#178·#397).
+   * 답글이 **로드된 뒤에** 걸어야 한다: 화면에 없는 메시지에 강조를 걸면 스크롤이
+   * 일어나지 않고, 강조는 5초 뒤 조용히 풀린다.
+   */
+  async openThread(rootId: string, focusMessageId?: string): Promise<void> {
     const channelId = this.store.getState().activeChannelId;
     if (!channelId) return;
     this.store.getState().pushHistory({ channelId, threadRootId: rootId });
     this.store.getState().set({ threadRootId: rootId });
     const page = await this.api.messages(channelId, { thread: rootId });
     this.store.getState().upsertMessages(channelId, page.messages);
+    if (focusMessageId) this.store.getState().set({ highlightedMessageId: focusMessageId });
   }
 
   /**
@@ -863,7 +923,10 @@ export class Controller {
   private recordNotifiedGap(messageId: string, body: string, notified: NotifiedResult): void {
     const state = this.store.getState();
     const groups = state.groups;
-    const teams = state.teams;
+    // 목록을 못 받은 서버에서는 **빈 목록이 사실이다** — 그 서버는 `@팀` 을 해석하지
+    // 못하므로(#172 가 디렉터리와 멘션을 한 커밋에 넣었다) 부를 수 있는 팀이 없다.
+    // 이 `??` 는 뭉개는 것이 아니라 이 자리의 판단이다(`appStore.ts::teams` 의 그 표).
+    const teams = state.teams ?? [];
     const recipients = bodyRecipients(
       body,
       Object.values(state.accounts).map((a) => a.handle),
@@ -960,8 +1023,8 @@ export class Controller {
    * 서버가 받아들인 뒤에 화면을 갱신한다: 미리 그려 두면 서버가 거절한 사진(이미지가 아닌
    * 파일은 400 이다)이 잠깐 내 얼굴로 떴다가 사라진다.
    */
-  async setAvatar(file: File | null): Promise<void> {
-    const attachmentId = file ? (await this.api.upload(file)).id : null;
+  async setAvatar(file: File | null, onProgress?: (fraction: number) => void): Promise<void> {
+    const attachmentId = file ? (await this.api.upload(file, onProgress)).id : null;
     const { avatarAttachmentId } = await this.api.setAvatar(attachmentId);
     const me = this.store.getState().me;
     if (me) this.store.getState().applyAvatar(me.id, avatarAttachmentId);
@@ -974,8 +1037,10 @@ export class Controller {
    * 스토어의 계정 표를 함께 갱신한다: 그러지 않으면 방금 올린 사진이 설정 화면에만 보이고
    * 대화·그리드의 아바타는 옛 색으로 남는다.
    */
-  async setAgentAvatar(agentId: string, file: File | null): Promise<void> {
-    const attachmentId = file ? (await this.api.upload(file)).id : null;
+  async setAgentAvatar(
+    agentId: string, file: File | null, onProgress?: (fraction: number) => void,
+  ): Promise<void> {
+    const attachmentId = file ? (await this.api.upload(file, onProgress)).id : null;
     const { avatarAttachmentId } = await this.api.setAgentAvatar(agentId, attachmentId);
     this.store.getState().applyAvatar(agentId, avatarAttachmentId);
   }
@@ -1026,6 +1091,22 @@ export class Controller {
     const { activeChannelId } = this.store.getState();
     if (!activeChannelId || !body.trim()) return;
     const updated = await this.api.editMessage(activeChannelId, messageId, body);
+    this.store.getState().upsertMessages(activeChannelId, [updated]);
+  }
+
+  /**
+   * 채널로 잘못 내보낸 스레드 답을 채널에서 거둔다(#231 되돌리기).
+   *
+   * `deleteMessage` 와 달리 **스토어에서 빼지 않는다** — 메시지는 스레드에 그대로 있고
+   * 갱신된 행을 덮어쓰기만 한다. 채널 목록은 `alsoInChannel` 로 거르므로(`ChannelPane`)
+   * 그 한 값이 false 로 바뀌는 것만으로 채널에서 사라지고 스레드에는 남는다.
+   *
+   * 열려 있는 스레드를 닫지 않는 이유도 같다: 없어진 것이 아니다.
+   */
+  async recallFromChannel(messageId: string): Promise<void> {
+    const { activeChannelId } = this.store.getState();
+    if (!activeChannelId) return;
+    const updated = await this.api.recallFromChannel(activeChannelId, messageId);
     this.store.getState().upsertMessages(activeChannelId, [updated]);
   }
 
@@ -1677,7 +1758,7 @@ export class Controller {
     const store = this.store.getState();
     // 뒤로·앞으로 이동도 채널을 새로 여는 것이다 — 접힘 기본값이 여기서 갈리면
     // 같은 채널이 어떻게 도착했는지에 따라 다르게 보인다(#217).
-    store.set({ activeChannelId: channelId, threadRootId: null, highlightedMessageId: null, expandedMessageIds: {} });
+    store.set({ activeChannelId: channelId, threadRootId: null, highlightedMessageId: null });
     const since = this.loadedChannels.has(channelId)
       ? Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq))
       : 0;

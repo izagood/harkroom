@@ -3,7 +3,7 @@ import { Overlay } from './Overlay';
 import type { AccountView } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
-import { Identity, StatusMark } from './Identity';
+import { StatusMark } from './Identity';
 import { presenceView, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from '../lib/presenceView';
 
 interface Props {
@@ -110,9 +110,10 @@ export function Directory({ open, onClose, accountId }: Props) {
         ref={isSelected ? (el: HTMLLIElement | null) => { el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' }); } : undefined}
         className={`flex items-center gap-2 rounded px-2 py-1.5 ${a.disabled ? 'opacity-60' : ''} ${isSelected ? 'bg-accent-surface ring-2 ring-accent' : ''}`}
       >
-      {/* #277: 이 자리는 **거터가 아니다** — 고정폭 열이 아니라 넓어지면 행이 늘어나는
-          인라인 칸이고, 디렉터리는 소유자를 보여 주는 것이 일이다(#181·#226). badge 로 둔다. */}
-      <Identity account={a} variant="badge" />
+      {/* 여기 있던 `Identity variant="badge"`(🤖 + 소유자 @핸들)를 뺐다 — 화면은 계정이
+          사람인지 에이전트인지 말하지 않는다(design doc 2, #455). 소유자는 프로필(#475)이
+          답한다. 사람 행에서는 애초에 아무것도 그리지 않던 자리라(#365), 지우고 나면
+          두 종류의 행이 같은 모양으로 선다. */}
       {/* 연결 점은 소켓이 붙어 있는가다. 사람이 고른 상태(StatusMark)와 나란히 둔다 —
           합치면 "연결이 끊긴 사람"과 "방해 금지인 사람"이 한 표시로 뭉친다(#186).
 
@@ -130,22 +131,22 @@ export function Directory({ open, onClose, accountId }: Props) {
       <span className="text-fg-muted">@{a.handle}</span>
       <span
         data-testid={`directory-kind-${a.id}`}
-        className="rounded bg-surface-sunken px-1 text-[11px] uppercase tracking-wide text-fg-muted"
+        className="rounded bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted"
       >
         {a.kind}
       </span>
       {a.isAdmin && (
-        <span className="rounded bg-warning-surface px-1 text-[11px] text-warning">admin</span>
+        <span className="rounded bg-warning-surface px-1 text-meta text-warning">admin</span>
       )}
       <StatusMark account={a} />
-      {a.statusText && <span className="truncate text-[11px] text-fg-subtle">{a.statusText}</span>}
+      {a.statusText && <span className="truncate text-meta text-fg-subtle">{a.statusText}</span>}
       {/* 비활성 계정은 목록에 남기되 **꺼져 있다는 것이 보여야 한다.** 감추면 "이 사람이
           없다"와 "꺼져 있다"가 구분되지 않는다. 흐리게만 두는 것도 부족하다 — 대비를
           못 보는 사람에게는 아무 신호도 아니다. */}
       {a.disabled && (
         <span
           data-testid={`directory-disabled-${a.id}`}
-          className="rounded bg-surface-hover px-1 text-[11px] text-fg"
+          className="rounded bg-surface-hover px-1 text-meta text-fg"
         >
           비활성
         </span>
@@ -156,11 +157,14 @@ export function Directory({ open, onClose, accountId }: Props) {
 
   const section = (label: string, rows: AccountView[]) => (
     <section aria-label={label} className="mb-4">
-      <h3 className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
+      <h3 className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
         {label} ({rows.length})
       </h3>
+      {/* 구획 제목은 아랫단 11px 이고, '없다' 는 **본문단**이다(앱 기본값이라 안 적는다) —
+          목록이 비면 이 한 줄이 화면에 남는 유일한 설명이라 아랫단으로 내리지 않는다.
+          `Inbox`·`SavedMessages` 가 같은 짝을 쓴다. */}
       {rows.length === 0
-        ? <p className="px-2 text-xs text-fg-subtle">{label} 중 맞는 것이 없다</p>
+        ? <p className="px-2 text-fg-subtle">{label} 중 맞는 것이 없다</p>
         : <ul>{rows.map(row)}</ul>}
     </section>
   );
@@ -192,7 +196,7 @@ export function Directory({ open, onClose, accountId }: Props) {
           {/* 실패는 목록 위에 남긴다. 실패했는데 빈 목록만 보이면 사람은 "아무도 없다"로
               읽는다 — 조회 실패를 빈 목록으로 삼키지 않는다. */}
           {load.kind === 'error' && (
-            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-xs text-danger">
+            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-danger">
               계정 목록을 불러오지 못했다 — {load.message}
               <button
                 onClick={() => { reload(); }}
@@ -203,10 +207,10 @@ export function Directory({ open, onClose, accountId }: Props) {
             </div>
           )}
           {load.kind === 'loading' && total === 0 && (
-            <p className="px-2 text-xs text-fg-subtle">불러오는 중…</p>
+            <p className="px-2 text-fg-subtle">불러오는 중…</p>
           )}
           {load.kind === 'ready' && total === 0 && (
-            <p className="px-2 text-xs text-fg-subtle">이 워크스페이스에 아직 계정이 없다</p>
+            <p className="px-2 text-fg-subtle">이 워크스페이스에 아직 계정이 없다</p>
           )}
           {total > 0 && (
             <>

@@ -104,11 +104,11 @@ export function SavedMessages({ open, onClose }: Props) {
             data-testid={`saved-entry-${e.messageId}`}
             className="flex flex-1 items-center gap-2 text-left"
           >
-            <span className="rounded bg-surface-sunken px-1 text-[11px] uppercase tracking-wide text-fg-muted">
+            <span className="rounded bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted">
               {channelLabel(e.channelId)}
             </span>
             <span className="flex-1 italic text-fg-subtle">삭제된 메시지</span>
-            <span className="text-[11px] text-fg-subtle">{time}</span>
+            <span className="text-meta text-fg-subtle">{time}</span>
           </span>
         ) : (
           <button
@@ -116,14 +116,14 @@ export function SavedMessages({ open, onClose }: Props) {
             onClick={() => openEntry(e)}
             className="flex min-w-0 flex-1 items-center gap-2 text-left"
           >
-            <span className="rounded bg-surface-sunken px-1 text-[11px] uppercase tracking-wide text-fg-muted">
+            <span className="rounded bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted">
               {channelLabel(e.channelId)}
             </span>
             <span className="text-fg-muted">@{accounts[e.message.authorId]?.handle ?? '…'}</span>
             <span className="min-w-0 flex-1 truncate text-fg-muted">
               {preview}
             </span>
-            <span className="text-[11px] text-fg-subtle">
+            <span className="text-meta text-fg-subtle">
               {new Date(e.message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
           </button>
@@ -132,7 +132,7 @@ export function SavedMessages({ open, onClose }: Props) {
           data-testid={`saved-toggle-${e.messageId}`}
           aria-label={e.state === 'open' ? '완료로 표시' : '할 것으로 되돌리기'}
           onClick={() => { void toggleState(e); }}
-          className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover"
+          className="shrink-0 rounded border border-border px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
         >
           {e.state === 'open' ? '✓' : '↺'}
         </button>
@@ -168,7 +168,7 @@ export function SavedMessages({ open, onClose }: Props) {
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {load.kind === 'error' && (
-            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-xs text-danger">
+            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-danger">
               불러오지 못했다 — {load.message}
               <button
                 onClick={() => setReloadSeq((n) => n + 1)}
@@ -178,10 +178,12 @@ export function SavedMessages({ open, onClose }: Props) {
               </button>
             </div>
           )}
-          {load.kind === 'loading' && <p className="px-2 text-xs text-fg-subtle">불러오는 중…</p>}
+          {/* 오류·대기·'없다' 는 전부 **본문단**이다(앱 기본값 13px 이라 안 적는다) —
+              목록이 비었을 때 화면에 남는 유일한 글자를 아랫단으로 내리지 않는다. */}
+          {load.kind === 'loading' && <p className="px-2 text-fg-subtle">불러오는 중…</p>}
 
           {load.kind === 'ready' && entries.length === 0 && (
-            <p data-testid="saved-empty" className="px-2 text-xs text-fg-subtle">
+            <p data-testid="saved-empty" className="px-2 text-fg-subtle">
               {tab === 'open' ? '저장된 메시지가 없다' : '완료된 메시지가 없다'}
             </p>
           )}

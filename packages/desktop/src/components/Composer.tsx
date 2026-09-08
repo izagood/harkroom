@@ -2,10 +2,11 @@ import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { parseMessagePermalink, type ScheduledMessageView } from '@murmur/shared';
 import type { AccountView, AgentTeamRow, AttachmentRow, HandleGroupRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
+import { NO_TEAMS } from '../state/appStore';
 import { getController } from '../state/controller';
 import { ApiError } from '../lib/api';
-import { GroupBadge, Identity, TeamBadge } from './Identity';
-import { formatSize } from './Attachments';
+import { GroupBadge, TeamBadge } from './Identity';
+import { AttachmentThumb, formatSize } from './Attachments';
 import {
   mentionQueryAt, applyMention, withStickyMentions, keepMentioned, bodyRecipients,
   type MentionQuery,
@@ -164,7 +165,13 @@ export function Composer({
 }: Props) {
   const accounts = useActiveStore((s) => s.accounts);
   const groups = useActiveStore((s) => s.groups);
-  const teams = useActiveStore((s) => s.teams);
+  /**
+   * 스토어의 `null` 은 *"목록을 못 받았다"* 다(`appStore.ts::teams`). **후보를 만드는 이
+   * 자리에서는 빈 목록이 사실이다** — 그 목록을 안 주는 서버는 `@팀` 을 해석하지도
+   * 못하므로(#172 가 디렉터리와 멘션을 한 커밋에 넣었다) 지금 부를 수 있는 팀이 없다.
+   * 없는 이름을 후보에 세우면 눌러서 보낸 발화가 아무도 안 깨운다.
+   */
+  const teams = useActiveStore((s) => s.teams) ?? NO_TEAMS;
   const myId = useActiveStore((s) => s.me?.id);
   // 채널이 자동으로 멘션하는 에이전트(#173). 키가 없으면 아직 못 받은 것이고 그때는 칩도 접두도 없다.
   const autoRows = useActiveStore((s) => (autoMentionChannelId ? s.channelAutoMentions[autoMentionChannelId] : undefined));
@@ -897,7 +904,7 @@ export function Composer({
           /* 오버레이는 **이벤트를 받지 않는다**(pointer-events-none). 받으면 손이 이 위로
              들어서는 순간 컨테이너 기준으로 dragleave 가 나면서 표시가 꺼지고, 그 꺼진
              자리에 drop 이 떨어진다 — 보이는 것과 받는 것이 갈린다. */
-          className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded border-2 border-dashed border-accent bg-accent-surface/90 text-sm font-medium text-accent"
+          className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded border-2 border-dashed border-accent bg-accent-surface/90 font-medium text-accent"
         >
           여기에 놓으면 첨부된다
         </div>
@@ -935,7 +942,7 @@ export function Composer({
                     {/* 집합에는 표시 이름을 함께 보인다 — `@release` 만으로는 그것이 무엇을
                         묶은 것인지 알 수 없고, 부르기 직전이 그것을 확인하는 자리다. 계정에는
                         붙이지 않는다: 사람·에이전트는 핸들이 곧 이름으로 통한다. */}
-                    <span className="ml-1 truncate text-[11px] text-fg-subtle">{item.group.displayName}</span>
+                    <span className="ml-1 truncate text-meta text-fg-subtle">{item.group.displayName}</span>
                   </>
                 ) : item.kind === 'team' ? (
                   /**
@@ -945,11 +952,12 @@ export function Composer({
                    */
                   <TeamBadge team={item.team} className="ml-1" />
                 ) : (
-                  <>
-                    {/* 거터가 아니라 **핸들 옆** 자리다(#277) — 여기서 소유자를 지우면 "누구의
-                        에이전트를 부르는지"를 부르기 직전에 못 보게 된다. variant 는 badge. */}
-                    <Identity account={item.account} className="ml-1" variant="badge" />
-                  </>
+                  /* 계정 후보에는 아무것도 덧붙이지 않는다. 여기 있던 `Identity`
+                     배지(🤖 + 소유자 @핸들)를 뺐다 — 화면은 부르려는 상대가 사람인지
+                     에이전트인지 말하지 않는다(design doc 2, #455). 사람 후보는 이미
+                     핸들만 서 있었고(#365), 이제 둘이 같은 줄로 선다. 소유자를 확인해야
+                     하면 프로필(#475)을 연다. */
+                  null
                 )}
               </button>
             </li>
@@ -967,10 +975,14 @@ export function Composer({
               data-testid="auto-mention"
               data-handle={h}
               title="이 채널이 자동으로 멘션한다"
-              className="flex items-center gap-1 rounded border border-accent bg-accent-surface px-1.5 py-0.5 text-xs font-medium text-accent"
+              // 멘션 칩은 **아랫단 11px** — 안의 `자동` 배지가 이미 11px 이라 칩 자체를
+              // 본문단으로 두면 칩 하나 안에 두 단이 섰다. 아래 입력칸과 전송·첨부는
+              // 본문단이다: 여기서 사람이 읽고 쓰는 것은 글이고, 칩은 그 글이 누구에게
+              // 가는지 알려 주는 꼬리표다.
+              className="flex items-center gap-1 rounded border border-accent bg-accent-surface px-1.5 py-0.5 text-meta font-medium text-accent"
             >
               <span>@{h}</span>
-              <span className="rounded bg-accent px-1 text-[11px] font-normal text-fg-on-strong">자동</span>
+              <span className="rounded bg-accent px-1 text-meta font-normal text-fg-on-strong">자동</span>
               <button
                 type="button"
                 aria-label={`Skip @${h} this time`}
@@ -987,7 +999,7 @@ export function Composer({
               key={h}
               data-testid="sticky-mention"
               data-handle={h}
-              className="flex items-center gap-1 rounded bg-surface-sunken px-1.5 py-0.5 text-xs font-medium text-fg"
+              className="flex items-center gap-1 rounded bg-surface-sunken px-1.5 py-0.5 text-meta font-medium text-fg"
             >
               <span>@{h}</span>
               <button
@@ -1019,7 +1031,7 @@ export function Composer({
         <ul
           data-testid="body-mentions"
           aria-label="부를 상대"
-          className="mb-1 flex flex-wrap items-center gap-1 text-xs text-fg-muted"
+          className="mb-1 flex flex-wrap items-center gap-1 text-meta text-fg-muted"
         >
           <li>부를 상대:</li>
           {bodyMentionList.map((r) => (
@@ -1060,7 +1072,7 @@ export function Composer({
         </ul>
       )}
       {uploadError && (
-        <p role="alert" className="mb-1 text-[11px] text-danger">{uploadError}</p>
+        <p role="alert" className="mb-1 text-meta text-danger">{uploadError}</p>
       )}
 
       {pending.length > 0 && (
@@ -1068,9 +1080,13 @@ export function Composer({
           {pending.map((a) => (
             <span
               key={a.id}
-              className="inline-flex items-center gap-1 rounded border border-border bg-surface px-1.5 text-[11px] text-fg"
+              /* 이름만 있는 칩은 **무엇을 붙였는지 확인해 주지 못한다** — 스크린샷 파일명은
+                 서로 거의 같아서(`screenshot-20260908-151256.png`) 눈으로 가릴 수 없다.
+                 그래서 이미지면 칩 안에 작은 그림을 세운다. 이 그림은 방금 올라간 **서버의
+                 바이트**를 받아 그린다: 고른 파일이 아니라 실제로 붙은 것을 보여야 한다. */
+              className="inline-flex items-center gap-1 rounded border border-border bg-surface px-1.5 py-0.5 text-meta text-fg"
             >
-              <span aria-hidden>📎</span>
+              <AttachmentThumb attachment={a} />
               {a.filename}
               <span className="text-fg-subtle">{formatSize(a.sizeBytes)}</span>
               <button
@@ -1093,7 +1109,7 @@ export function Composer({
         <div
           role="status"
           data-testid="undo-send"
-          className="mb-1 flex items-center gap-2 rounded bg-surface-sunken px-2 py-1 text-[11px] text-fg-muted"
+          className="mb-1 flex items-center gap-2 rounded bg-surface-sunken px-2 py-1 text-meta text-fg-muted"
         >
           <span className="min-w-0 flex-1 truncate">
             보내는 중… {held.typed || `첨부 ${held.attachments.length}개`}
@@ -1115,7 +1131,7 @@ export function Composer({
           실패만 있을 때 줄 전체가 사라지면, 작성자는 자기 글이 안 나갔다는 것을 영영
           모른다. 목록 조회·취소가 실패한 경우도 여기서 말한다. */}
       {(pendingScheduled.length > 0 || failedScheduled.length > 0 || listError) && (
-        <div className="mb-1 flex flex-col rounded bg-accent-surface px-2 py-1 text-[11px] text-accent">
+        <div className="mb-1 flex flex-col rounded bg-accent-surface px-2 py-1 text-meta text-accent">
           {listError && <p role="alert" className="text-danger">{listError}</p>}
           {(pendingScheduled.length > 0 || failedScheduled.length > 0) && (
             <button
@@ -1190,7 +1206,7 @@ export function Composer({
             type="button"
             aria-label="Add mention"
             aria-pressed={picking}
-            className={`rounded px-2 py-0.5 text-sm text-fg-muted hover:bg-surface-sunken ${
+            className={`rounded px-2 py-0.5 text-fg-muted hover:bg-surface-sunken ${
               picking ? 'bg-surface-hover' : ''
             }`}
             // 누르는 동안 textarea 가 blur 되면 커서 자리가 사라진다.
@@ -1207,7 +1223,7 @@ export function Composer({
           </button>
           {/* aria-label 은 **input** 에 붙인다. label 에 붙이면 그 요소 자신의 이름이
               될 뿐 input 과 연결되지 않아 입력이 접근 불가가 된다. */}
-          <label className="cursor-pointer rounded px-2 py-0.5 text-sm text-fg-muted hover:bg-surface-sunken">
+          <label className="cursor-pointer rounded px-2 py-0.5 text-fg-muted hover:bg-surface-sunken">
             📎
             <input
               ref={fileRef}
@@ -1226,7 +1242,7 @@ export function Composer({
             <button
               type="button"
               aria-label="나중에 보내기"
-              className="rounded px-2 py-0.5 text-sm text-fg-muted hover:bg-surface-sunken disabled:opacity-40"
+              className="rounded px-2 py-0.5 text-fg-muted hover:bg-surface-sunken disabled:opacity-40"
               disabled={!draft.trim()}
               onMouseDown={(e) => e.preventDefault()}
               onClick={openScheduleModal}
@@ -1238,7 +1254,7 @@ export function Composer({
         <button
           type="button"
           aria-label="Send message"
-          className="rounded-full bg-accent px-3 py-1 text-sm font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border disabled:text-fg-subtle"
+          className="rounded-full bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border disabled:text-fg-subtle"
           // 여기는 blur 를 막지 않는다 — 전송에 성공하면 초안이 비므로 커서를 보존할
           // 이유가 없고, 실패하면 사용자가 다시 textarea 를 눌러 이어 쓴다. 반면 위
           // @·첨부 버튼은 누른 뒤에도 같은 자리에 계속 써야 하므로 막는다.
@@ -1252,7 +1268,9 @@ export function Composer({
       {scheduleModalOpen && (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-20">
           <div className="w-80 rounded-lg bg-surface-raised p-4 shadow-lg">
-            <h3 className="mb-3 text-base font-medium">예약 발송</h3>
+            {/* 겹창 제목은 **이름줄단 15px** — 화면 제목단(17px)은 화면 하나를 여는 자리
+                (설정·로그인)에만 준다. 16px(`text-base`)이었고 4단 밖이었다. */}
+            <h3 className="mb-3 text-name font-medium">예약 발송</h3>
             <input
               type="datetime-local"
               aria-label="예약 시각"
@@ -1262,19 +1280,19 @@ export function Composer({
               onChange={(e) => setScheduleDateTime(e.target.value)}
             />
             {scheduleError && (
-              <p role="alert" className="mb-3 text-sm text-danger">{scheduleError}</p>
+              <p role="alert" className="mb-3 text-danger">{scheduleError}</p>
             )}
             <div className="flex justify-end gap-2">
               <button
                 type="button"
-                className="rounded px-3 py-1 text-sm text-fg-muted hover:bg-surface-sunken"
+                className="rounded px-3 py-1 text-fg-muted hover:bg-surface-sunken"
                 onClick={() => setScheduleModalOpen(false)}
               >
                 취소
               </button>
               <button
                 type="button"
-                className="rounded bg-accent px-3 py-1 text-sm font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border"
+                className="rounded bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border"
                 onClick={handleSchedule}
                 disabled={isScheduling || !scheduleDateTime || (scheduleMin !== '' && scheduleDateTime < scheduleMin)}
               >

@@ -72,11 +72,14 @@ export function AgentDefaultsSettings() {
       <SettingsGroup>
         {!isAdmin && (
           // 권한이 없는 것은 오류가 아니다 — 붉게 그리지 않는다.
-          <p className="text-xs text-fg-muted">기본값을 정할 수 있는 것은 admin 뿐이다.</p>
+          // 크기를 안 적어 본문단 13px 을 물려받는다: 이 세 줄은 각자 그 순간 화면의
+          // **내용 전부**이므로(권한 없음·대기·실패) 아랫단으로 내리면 화면 하나가 통째로
+          // 가장 작은 글자가 된다. 아래 폼이 뜨는 정상 경로에서는 라벨이 아랫단이다.
+          <p className="text-fg-muted">기본값을 정할 수 있는 것은 admin 뿐이다.</p>
         )}
-        {isAdmin && defaults === null && <p className="text-xs text-fg-muted">불러오는 중…</p>}
+        {isAdmin && defaults === null && <p className="text-fg-muted">불러오는 중…</p>}
         {isAdmin && defaults === 'error' && (
-          <p role="alert" className="text-xs text-danger">기본값을 불러오지 못했다</p>
+          <p role="alert" className="text-danger">기본값을 불러오지 못했다</p>
         )}
         {isAdmin && form && defaults !== 'error' && (
           <div className="max-w-md space-y-3">
@@ -90,7 +93,7 @@ export function AgentDefaultsSettings() {
               />
             </Field>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="기본 model" hint="비우면 하네스 기본값">
+              <Field label="기본 model" hint="비우면 하네스가 고른다 — murmur 는 그 선택을 발화에 실린 모델로만 안다">
                 <TextInput
                   ariaLabel="기본 model"
                   placeholder="harness 기본값"
@@ -111,10 +114,10 @@ export function AgentDefaultsSettings() {
               <Button variant="primary" disabled={busy} onClick={() => void save()}>
                 기본값 저장
               </Button>
-              {saved && <span className="text-[11px] text-success">저장했다</span>}
-              {error && <span role="alert" className="text-[11px] text-danger">{error}</span>}
+              {saved && <span className="text-meta text-success">저장했다</span>}
+              {error && <span role="alert" className="text-meta text-danger">{error}</span>}
             </div>
-            <p className="text-[11px] text-fg-muted">
+            <p className="text-meta text-fg-muted">
               다음에 만드는 에이전트에만 적용된다. 이미 있는 에이전트는 바뀌지 않는다.
             </p>
           </div>

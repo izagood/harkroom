@@ -20,6 +20,9 @@ import { acc, grp, msg } from './helpers/fakeApi';
  */
 
 const KNOWN = ['fizz', 'someone', 'me'];
+/** `<@id>` 토큰은 36자 uuid 만 인정한다(`MENTION_TOKEN_PATTERN`) — 짧은 가짜 id 로는 이 자리를 잴 수 없다. */
+const UUID_SOMEONE = '11111111-1111-4111-8111-111111111111';
+const UUID_GONE = '22222222-2222-4222-8222-222222222222';
 const GROUPS = ['oncall'];
 
 const show = (body: string) =>
@@ -47,6 +50,7 @@ beforeEach(() => {
     accounts: {
       u1: acc('u1', 'me'),
       u2: acc('u2', 'someone'),
+      [UUID_SOMEONE]: acc(UUID_SOMEONE, 'someone'),
       a1: acc('a1', 'fizz', 'agent'),
     },
     groups: [grp('g1', 'oncall', 'On-call')],
@@ -71,6 +75,15 @@ const CASES: Array<{ name: string; body: string }> = [
   { name: '한 줄에 백틱 셋 — 애매한 입력', body: '이건 ```@fizz``` 다' },
   { name: '언어 표시가 붙은 펜스', body: '```ts\nsend("@fizz");\n```' },
   { name: '코드 없음', body: '@fizz 랑 @oncall 둘 다' },
+  // #592 — 인용도 같은 대조를 받는다. 여기 넣는 이유: 강조와 알림이 갈라지는 자리가
+  // 코드였다면 인용에서도 같은 방식으로 갈라진다.
+  { name: '인용 줄 안', body: '> @fizz 라고 했다' },
+  { name: '인용 안과 밖', body: '> 앞 사람 말: @fizz\n@someone 봐줘' },
+  { name: '인용 안의 인라인 코드 뒤', body: '> 목록 `x` 옆에 @fizz' },
+  { name: '인용 안 집합 handle', body: '> @oncall 이라고 적혀 있었다' },
+  { name: '인용 뒤 빈 줄 뒤 평문', body: '> @fizz\n\n@someone 이건 진짜 부른다' },
+  { name: '들여쓴 인용', body: '   > @fizz 인용이다' },
+  { name: '인용 기호만 있고 공백 없음', body: '>@fizz' },
 ];
 
 describe('화면 강조와 서버 알림 판정이 일치한다 (#298)', () => {
@@ -96,6 +109,63 @@ describe('화면 강조와 서버 알림 판정이 일치한다 (#298)', () => {
     expect(screen.queryByTestId('mention-fizz')).toBeNull();
     // 본문은 그대로 남는다 — 코드로 그려질 뿐 사라지지 않는다.
     expect(screen.getByTestId('code-block').textContent).toBe('@fizz');
+  });
+});
+
+/**
+ * #592 — 인용(`> `) 줄의 `@handle` 은 부르는 것이 아니다.
+ *
+ * 위 대조 표만으로는 부족하다: 강조와 알림이 **둘 다** 인용 안을 부르게 되어도 표는 초록이다.
+ * 그래서 여기서 방향을 못 박는다 — 인용 안은 아무도 부르지 않고, 인용 밖은 그대로 부른다.
+ */
+describe('인용 안의 handle 은 멘션이 아니다 (#592)', () => {
+  it('인용 줄의 handle 은 알림 대상이 아니다', () => {
+    expect(mentionedHandles('> 목록(@fizz·@someone 옆에 @oncall)')).toEqual([]);
+  });
+
+  it('인용 안의 인라인 코드 뒤도 새지 않는다 — 조각별로 다시 판정하면 여기가 샌다', () => {
+    expect(mentionedHandles('> 목록 `code` 옆에 @fizz')).toEqual([]);
+  });
+
+  it('인용 밖은 그대로 부른다 — 위 단언이 멘션 자체가 죽은 것을 통과시키지 않는다', () => {
+    expect(mentionedHandles('> 앞 사람: @fizz\n@someone 확인해')).toEqual(['someone']);
+  });
+
+  it('인용 안의 handle 은 칠하지도 않는다 — 화면이 "불렀다" 고 말하면 거짓이다', () => {
+    show('> @fizz 라고 했다');
+    expect(highlighted()).toEqual([]);
+    // 글자는 그대로 남는다. 인용으로 그려질 뿐 사라지지 않는다.
+    expect(screen.getByTestId('md-quote').textContent).toBe('@fizz 라고 했다');
+  });
+
+  it('인용 안에서도 링크는 링크다 — 인용이 멘션만 끈다', () => {
+    show('> https://example.com 이라고 했다');
+    expect(screen.getByTestId('md-quote').querySelector('a')).not.toBeNull();
+  });
+
+  it('"부를 상대" 줄에도 인용 안은 나오지 않는다', () => {
+    expect(bodyRecipients('> @fizz 랑 @oncall 이라고 적혀 있었다', KNOWN, GROUPS, 'me')).toEqual([]);
+  });
+
+  /**
+   * 인용 안에서도 저장된 멘션 토큰은 **지금의 handle 로 읽힌다**(#271).
+   *
+   * 인용이 끄는 것은 "부르는 것" 하나다. 토큰 해석까지 같이 끄면 옮겨 적은 말이 깨진다 —
+   * 정본이 `<@id>` 이므로(#271) 앞 메시지 본문을 그대로 인용하면 날 uuid 가 화면에 드러난다.
+   * 에이전트는 저장된 본문을 그대로 옮겨 적으므로 이 자리를 실제로 밟는다.
+   */
+  it('인용 안의 <@id> 토큰도 지금 handle 로 읽힌다 — 날 uuid 가 드러나지 않는다', () => {
+    show(`> 앞 사람 말: <@${UUID_SOMEONE}> 봐줘`);
+    const quote = screen.getByTestId('md-quote');
+    expect(quote.textContent).toBe('앞 사람 말: @someone 봐줘');
+    expect(quote.textContent).not.toContain(UUID_SOMEONE);
+    // 읽히기만 한다 — 칠하지도, 부르지도 않는다.
+    expect(highlighted()).toEqual([]);
+  });
+
+  it('모르는 id 는 인용 안에서도 같은 라벨로 떨어진다 — 인용만의 규칙을 새로 만들지 않는다', () => {
+    show(`> 옛 계정: <@${UUID_GONE}> 이라고 했다`);
+    expect(screen.getByTestId('md-quote').textContent).toBe('옛 계정: @알 수 없음 이라고 했다');
   });
 });
 

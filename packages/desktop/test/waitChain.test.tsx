@@ -9,6 +9,7 @@ import { waitChain, waitChainFromLinks } from '../src/lib/waitChain';
 import type { Liveness } from '../src/lib/threadState';
 import { msg, acc } from './helpers/fakeApi';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { WaitChainLine } from '../src/components/WaitChain';
 
 const ME = 'u-me';
@@ -125,6 +126,10 @@ describe('waitChain — 교착', () => {
 describe('WaitChainLine — 화면', () => {
   beforeEach(() => {
     useAppStore.getState().reset();
+    // **한국어라고 말한다.** 기본값은 이제 영어(원본)다 — 아래 축들이 재는 것은
+    // 언어가 아니라 그 문장이 지키는 규율(교착의 두 이유가 다른 문장인 것 등)이고,
+    // 두 언어로 다 뜨는지는 `i18n.test.tsx` 가 잰다.
+    usePrefsStore.getState().setLocale('ko');
     useAppStore.getState().set({
       accounts: {
         [ME]: acc(ME, 'jaebin'),
@@ -134,7 +139,10 @@ describe('WaitChainLine — 화면', () => {
       },
     });
   });
-  afterEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+    usePrefsStore.getState().setLocale('system');
+  });
 
   it('기다리는 것이 없으면 아무것도 그리지 않는다 — 0 을 그리지 않는다', () => {
     render(<WaitChainLine chain={chain([msg('m1', 'c1', 1, '안녕', ME)])} />);
@@ -175,6 +183,9 @@ describe('WaitChainLine — 화면', () => {
 describe('WaitChainLine — 한국어 조사', () => {
   beforeEach(() => {
     useAppStore.getState().reset();
+    // 이 묶음은 **한국어 문법 그 자체**를 잰다 — 언어를 고정하지 않으면 잴 대상이 없다.
+    // `MessageItem` 이 아직 `subjectParticle` 로 같은 문장을 손으로 만든다(남은 것 목록).
+    usePrefsStore.getState().setLocale('ko');
     useAppStore.getState().set({
       accounts: {
         [ME]: acc(ME, 'jaebin'),
@@ -183,6 +194,10 @@ describe('WaitChainLine — 한국어 조사', () => {
         'a-han': acc('a-han', '민수', 'agent'),
       },
     });
+  });
+  afterEach(() => {
+    cleanup();
+    usePrefsStore.getState().setLocale('system');
   });
 
   it("'사람 아무나'를 기다릴 때 조사가 어긋나지 않는다", () => {

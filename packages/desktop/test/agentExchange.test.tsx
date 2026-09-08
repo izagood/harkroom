@@ -17,8 +17,17 @@ import { acc, msg } from './helpers/fakeApi';
 const ME = 'u-me';
 const FORGE = 'a-forge';
 const CODEX = 'a-codex';
+const SCRIBE = 'a-scribe';
 
-const AGENTS = new Set([FORGE, CODEX]);
+/**
+ * 멘션 토큰(`<@id>`)은 **36 자 uuid 만** 받는다(`MENTION_TOKEN_PATTERN`). 위의 짧은 id 들은
+ * 토큰으로 쓸 수 없으므로, 멘션을 보는 테스트만 uuid 를 따로 쓴다 — 짧은 id 로 쓰면
+ * `mentionedIds` 가 아무것도 못 찾아 **테스트가 엉뚱한 이유로 통과한다.**
+ */
+const ME_UUID = '11111111-1111-4111-8111-111111111111';
+const FORGE_UUID = '22222222-2222-4222-8222-222222222222';
+
+const AGENTS = new Set([FORGE, CODEX, SCRIBE, FORGE_UUID]);
 const isAgent = (id: string): boolean => AGENTS.has(id);
 
 /** 슬롯으로 감싸는 헬퍼 — 실제 화면과 같은 순서(진행 먼저, 주고받기 나중)를 탄다. */
@@ -52,6 +61,7 @@ beforeEach(() => {
       [ME]: acc(ME, 'jaebin'),
       [FORGE]: acc(FORGE, 'forge', 'agent'),
       [CODEX]: acc(CODEX, 'codex', 'agent'),
+      [SCRIBE]: acc(SCRIBE, 'scribe', 'agent'),
     },
   });
 });
@@ -69,13 +79,15 @@ describe('groupAgentExchanges — 무엇을 접는가', () => {
     expect(out[0]!.kind === 'exchange' && out[0]!.messages).toHaveLength(3);
   });
 
-  it('사람의 발화가 끼면 두 묶음으로 갈린다', () => {
+  it('사람의 발화가 끼면 묶음이 갈린다 — 그 뒤 각 에이전트의 첫 답은 접히지 않는다', () => {
     const out = slots([
       msg('m1', 'c1', 1, 'a', FORGE), msg('m2', 'c1', 2, 'b', CODEX),
       msg('u1', 'c1', 3, '잠깐', ME),
       msg('m3', 'c1', 4, 'c', FORGE), msg('m4', 'c1', 5, 'd', CODEX),
     ]);
-    expect(out.map((s) => s.kind)).toEqual(['exchange', 'message', 'exchange']);
+    // 앞 구간은 사람이 말한 적 없는 에이전트끼리의 로그라 예전대로 접힌다. 뒤 둘은 사람이
+    // 말한 뒤 **각자의 첫 발화**라 각각 제자리에 남는다(2026-09-08 실측 결함).
+    expect(out.map((s) => s.kind)).toEqual(['exchange', 'message', 'message', 'message']);
   });
 
   it('혼잣말은 주고받기가 아니다 — 한 에이전트만 있으면 접지 않는다', () => {
@@ -131,6 +143,112 @@ describe('groupAgentExchanges — 사람을 막는 말은 접지 않는다', () 
       msg('m1', 'c1', 1, 'a', FORGE),
       askTo('ask1', FORGE, { kind: 'human' }, true),
       msg('m2', 'c1', 3, 'b', CODEX),
+    ]);
+    expect(out.map((s) => s.kind)).toEqual(['exchange']);
+  });
+});
+
+/**
+ * **사람에게 온 답이 접혀 사라졌다**(2026-09-08 실측).
+ *
+ * 사람이 한 스레드에서 에이전트 넷을 불러 정밀 검토를 시켰다. 넷이 각자 답을 올렸는데,
+ * 그 답들이 연속이고 저자가 전부 에이전트라 `groupAgentExchanges` 가 통째로 접었다 —
+ * 화면에 남은 글자가 `avcs ↔ avcs-server ↔ avcshub ↔ murmur · 12번 주고받음` 이었고,
+ * 사람이 본 것은 문자 그대로 "에이전트끼리 대화만 했다" 였다.
+ *
+ * 원인은 판정에 **수신자가 없었다**는 것이다. 저자만 보면 "나에게 온 답"과 "자기들끼리 한
+ * 말"이 같은 값이 된다. 그래서 사람의 발화를 기준선으로 둔다 — 그 뒤 각 에이전트의 첫
+ * 발화는 답이고, 그 다음부터가 주고받기다.
+ */
+describe('groupAgentExchanges — 사람이 부른 뒤의 첫 답은 접지 않는다', () => {
+  it('사람의 요청에 세 에이전트가 각자 답하면 하나도 접히지 않는다', () => {
+    const out = slots([
+      msg('u1', 'c1', 1, '@forge @codex @scribe 이거 검토해', ME),
+      msg('m1', 'c1', 2, 'forge 검토 결과', FORGE),
+      msg('m2', 'c1', 3, 'codex 검토 결과', CODEX),
+      msg('m3', 'c1', 4, 'scribe 검토 결과', SCRIBE),
+    ]);
+    expect(out.map((s) => s.kind)).toEqual(['message', 'message', 'message', 'message']);
+  });
+
+  it('첫 답들 뒤에 이어지는 에이전트끼리의 주고받기는 접힌다 — 그것은 그들 것이다', () => {
+    const out = slots([
+      msg('u1', 'c1', 1, '검토해', ME),
+      msg('m1', 'c1', 2, 'forge 답', FORGE),
+      msg('m2', 'c1', 3, 'codex 답', CODEX),
+      // 여기부터는 둘 다 이미 답했다 — 사람에게 온 말이 아니라 서로에게 하는 말이다.
+      msg('m3', 'c1', 4, '그건 네 쪽이 맞다', FORGE),
+      msg('m4', 'c1', 5, '그럼 넘긴다', CODEX),
+      msg('m5', 'c1', 6, '받았다', FORGE),
+    ]);
+    expect(out.map((s) => s.kind)).toEqual(['message', 'message', 'message', 'exchange']);
+    const folded = out[3]!;
+    expect(folded.kind === 'exchange' && folded.messages.map((m) => m.id)).toEqual(['m3', 'm4', 'm5']);
+  });
+
+  it('같은 에이전트의 두 번째 발화부터 접힌다 — 첫 답만 예외다', () => {
+    const out = slots([
+      msg('u1', 'c1', 1, '검토해', ME),
+      msg('m1', 'c1', 2, 'forge 답', FORGE),
+      msg('m2', 'c1', 3, 'forge 덧붙임', FORGE),
+      msg('m3', 'c1', 4, 'codex 답', CODEX),
+      msg('m4', 'c1', 5, 'codex 덧붙임', CODEX),
+    ]);
+    // m2 는 접을 것이 하나뿐이라(혼잣말) 제자리로 돌아가고, m4 도 같다.
+    expect(out.map((s) => s.kind)).toEqual(['message', 'message', 'message', 'message', 'message']);
+  });
+
+  it('진행 묶음은 사람의 차례를 닫지 않는다 — 그 뒤의 결과 발화가 여전히 첫 답이다', () => {
+    const out = slots([
+      msg('u1', 'c1', 1, '검토해', ME),
+      msg('p1', 'c1', 2, '읽는다', FORGE, { kind: 'progress' }),
+      msg('p2', 'c1', 3, '읽는다', CODEX, { kind: 'progress' }),
+      msg('m1', 'c1', 4, 'forge 답', FORGE),
+      msg('m2', 'c1', 5, 'codex 답', CODEX),
+    ]);
+    expect(out.map((s) => s.kind))
+      .toEqual(['message', 'progress', 'progress', 'message', 'message']);
+  });
+
+  it('사람이 말한 적 없는 목록은 예전대로 접힌다 — 기준선이 없으면 답이라 부를 것이 없다', () => {
+    const out = slots([
+      msg('m1', 'c1', 1, 'ws 는 내가', FORGE),
+      msg('m2', 'c1', 2, '스키마는 내가', CODEX),
+      msg('m3', 'c1', 3, '넘긴다', FORGE),
+    ]);
+    expect(out.map((s) => s.kind)).toEqual(['exchange']);
+  });
+});
+
+/**
+ * **사람을 이름으로 부른 말은 접지 않는다.** `packages/agent/src/prompt.ts` 가 최종 답에
+ * 요청자를 `@handle` 로 부르라고 지시하고, 이 판정이 그 짝이다 — 지시와 판정이 갈라지면
+ * 이름을 부른 답이 그대로 접힌다.
+ */
+describe('groupAgentExchanges — 사람을 멘션한 말은 접지 않는다', () => {
+  it('본문이 사람 계정을 멘션하면 그 자리에서 갈린다', () => {
+    const out = slots([
+      msg('m1', 'c1', 1, 'a', FORGE),
+      msg('m2', 'c1', 2, 'b', CODEX),
+      msg('m3', 'c1', 3, `<@${ME_UUID}> 결과입니다`, FORGE),
+      msg('m4', 'c1', 4, 'c', CODEX),
+      msg('m5', 'c1', 5, 'd', FORGE),
+    ]);
+    expect(out.map((s) => s.kind)).toEqual(['exchange', 'message', 'exchange']);
+  });
+
+  it('동료 에이전트를 멘션한 말은 접힌다 — 나에게 온 말이 아니다', () => {
+    const out = slots([
+      msg('m1', 'c1', 1, `<@${FORGE_UUID}> 이거 봐줘`, CODEX),
+      msg('m2', 'c1', 2, `<@${FORGE_UUID}> 다시 봐줘`, SCRIBE),
+    ]);
+    expect(out.map((s) => s.kind)).toEqual(['exchange']);
+  });
+
+  it('코드 안의 토큰은 부름이 아니다 — 서버(#298)와 같은 규칙이다', () => {
+    const out = slots([
+      msg('m1', 'c1', 1, 'a', FORGE),
+      msg('m2', 'c1', 2, `\`<@${ME_UUID}>\` 를 그대로 쓰면 된다`, CODEX),
     ]);
     expect(out.map((s) => s.kind)).toEqual(['exchange']);
   });

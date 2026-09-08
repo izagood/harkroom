@@ -114,33 +114,39 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
   return (
     <aside className="flex h-full w-80 shrink-0 flex-col border-l border-border bg-surface">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <span className="text-sm font-semibold">문서</span>
+        {/* 패널 제목은 **이름줄단 15px** 이다 — 화면 제목단(17px)은 설정 화면 제목처럼
+            화면 하나를 여는 자리에만 준다. 이 패널은 채널 안에 붙는 곁창이고, 옆의 메타는
+            아랫단 11px 이라 15px 이면 둘 사이 간격이 4px 로 위계가 분명하다. */}
+        <span className="text-name font-semibold">문서</span>
         {/* "누가 언제"는 실제로 저장된 판에만 붙는다. 아직 아무도 쓰지 않은 문서에 지금
             시각과 내 이름을 붙이면 화면이 거짓말한다. */}
         {updatedAtLabel && (
-          <span className="truncate text-[11px] text-fg-subtle">
+          <span className="truncate text-meta text-fg-subtle">
             {updatedByHandle ?? '알 수 없는 사람'} · {updatedAtLabel}
           </span>
         )}
         <button
-          className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-sunken"
+          className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
           onClick={onClose}
         >
           닫기
         </button>
       </div>
 
-      {loading && <div className="p-3 text-sm text-fg-subtle">불러오는 중…</div>}
+      {loading && <div className="p-3 text-fg-subtle">불러오는 중…</div>}
 
       {/* 조회 실패는 오류다 — 빈 문서가 아니다(docs/design.md §4). */}
+      {/* 오류 문구는 **읽어야 하는 글자**다 — 색이 danger 라고 아랫단(11px)으로 내리면
+          사람이 무엇이 틀렸는지 읽어야 할 때 가장 작은 글자가 된다. 본문단 13px 이고,
+          앱 기본값이 그 값이라 크기를 안 적는다(아래 saveError 도 같다). */}
       {loadError && (
-        <div role="alert" className="m-3 rounded bg-danger-surface px-2 py-1 text-xs text-danger">
+        <div role="alert" className="m-3 rounded bg-danger-surface px-2 py-1 text-danger">
           문서를 불러오지 못했다: {loadError}
         </div>
       )}
 
       {saveError && (
-        <div role="alert" className="m-3 rounded bg-warning-surface px-2 py-1 text-xs text-warning">
+        <div role="alert" className="m-3 rounded bg-warning-surface px-2 py-1 text-warning">
           {saveError}
         </div>
       )}
@@ -151,14 +157,14 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
             {editing ? (
               <textarea
                 aria-label="문서 편집"
-                className="w-full resize-none rounded border border-border bg-field p-2 text-sm focus:border-border focus:outline-none"
+                className="w-full resize-none rounded border border-border bg-field p-2 focus:border-border focus:outline-none"
                 rows={12}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder="이 채널의 전제를 적어 둔다"
               />
             ) : doc?.body ? (
-              <div className="text-sm text-fg">
+              <div className="text-fg">
                 <MessageBody
                   body={doc.body}
                   messageId={`channel-doc:${channelId}`}
@@ -167,15 +173,16 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
                 />
               </div>
             ) : (
-              <span className="text-sm text-fg-muted">아직 문서가 없다</span>
+              <span className="text-fg-muted">아직 문서가 없다</span>
             )}
 
             {/* 409 뒤에만 나온다. 내 편집은 위 편집칸에 그대로 있고 서버에 있는 것은 여기
                 있다 — 둘을 나란히 보고 사람이 정한다. */}
             {theirBody !== null && (
               <section className="mt-3 rounded border border-warning-border bg-warning-surface p-2">
-                <h3 className="text-[11px] font-semibold text-warning">서버의 현재 내용</h3>
-                <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-fg">
+                <h3 className="text-meta font-semibold text-warning">서버의 현재 내용</h3>
+                {/* 서버에 있는 문서 본문 — 내 편집과 나란히 놓고 읽는 글자다. 본문단이다. */}
+                <pre className="mt-1 whitespace-pre-wrap break-words text-fg">
                   {theirBody === '' ? '(빈 문서)' : theirBody}
                 </pre>
               </section>
@@ -186,13 +193,13 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
             {editing ? (
               <div className="flex gap-2">
                 <button
-                  className="flex-1 rounded bg-surface-hover px-3 py-1.5 text-sm text-fg hover:bg-border"
+                  className="flex-1 rounded bg-surface-hover px-3 py-1.5 text-fg hover:bg-border"
                   onClick={cancelEditing}
                 >
                   취소
                 </button>
                 <button
-                  className="flex-1 rounded bg-accent px-3 py-1.5 text-sm text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
+                  className="flex-1 rounded bg-accent px-3 py-1.5 text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
                   onClick={() => void save()}
                   disabled={saving}
                 >
@@ -201,7 +208,7 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
               </div>
             ) : (
               <button
-                className="w-full rounded border border-border px-3 py-1.5 text-sm text-fg hover:bg-surface-sunken"
+                className="w-full rounded border border-border px-3 py-1.5 text-fg hover:bg-surface-sunken"
                 onClick={startEditing}
               >
                 편집

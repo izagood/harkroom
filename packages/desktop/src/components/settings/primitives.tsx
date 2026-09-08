@@ -6,7 +6,21 @@ export function SettingsPage({ title, description, children }: {
 }) {
   return (
     <div className="max-w-3xl px-10 py-10">
-      <h2 className="text-2xl font-bold text-fg">{title}</h2>
+      {/*
+        **화면 제목단 17px 은 이 자리다.** 24px(`text-2xl`)이었고 4단 밖이었다.
+
+        설정 안의 `h2` 는 두 종류이고, 그 둘이 같은 단이면 위계가 없다 — 실측:
+        `SettingsPage` 의 제목 1곳(12개 설정 화면이 이 껍데기를 쓴다)과, 두 칸 화면의
+        **칸 제목** 6곳(`AgentsSettings`·`TeamsSettings`·`InviteSettings`·
+        `HandleGroupsSettings` — 이 넷은 `SettingsPage` 를 쓰지 않고 자기 레이아웃을 짠다).
+        전자는 "지금 어느 화면인가"에 답하므로 맨 윗단(17px)이고, 후자는 그 화면 안의 한
+        칸 이름이므로 이름줄단(15px)이다. `ConnectScreen` 의 `h1` 이 전자와 같은 단이다.
+
+        24 → 17px 로 내린 것이 눈에 작아 보이지 않는 이유: 본문이 14 → 13px 로 함께
+        내려가 제목과 본문의 비가 1.71 → 1.31 이 아니라, 그 비를 굵기(`font-bold`)와
+        여백(`mb-8`)이 이미 나눠 지고 있었다.
+      */}
+      <h2 className="text-title font-bold text-fg">{title}</h2>
       <p className="mt-1 mb-8 text-fg-subtle">{description ?? ''}</p>
       {children}
     </div>
@@ -17,7 +31,7 @@ export function SettingsPage({ title, description, children }: {
 export function SettingsGroup({ title, children }: { title?: string; children: ReactNode }) {
   return (
     <section className="mb-8">
-      {title && <h3 className="mb-2 text-[13px] font-semibold text-fg-subtle">{title}</h3>}
+      {title && <h3 className="mb-2 text-body font-semibold text-fg-subtle">{title}</h3>}
       <div className="divide-y divide-border rounded-xl border border-border bg-surface-raised">
         {children}
       </div>
@@ -73,9 +87,15 @@ export function Toggle({ label, description, checked, disabled, onChange }: {
  * 생긴다(그것이 이 Task 의 순서상 이 조각이 먼저인 이유다).
  */
 
-/** 입력 칸의 공통 모양. 라벨과 힌트를 함께 세우는 것이 이 프리미티브의 일이다. */
-const FIELD_BOX = 'w-full rounded border border-border bg-field px-3 py-2 text-sm text-fg placeholder-fg-subtle';
-const FIELD_LABEL = 'block text-xs font-medium text-fg-muted';
+/**
+ * 입력 칸의 공통 모양. 라벨과 힌트를 함께 세우는 것이 이 프리미티브의 일이다.
+ *
+ * **크기는 라벨·힌트가 아랫단 11px, 입력칸이 본문단 13px 이다.** 입력칸에 크기를 적지
+ * 않는 것은 앱 기본값이 본문단이기 때문이고(`Workspace.tsx`), 그것이 이 저장소의
+ * 입력칸 규칙이다 — 방금 친 글자를 다시 읽는 자리다. 라벨은 12px 이었고 4단 밖이었다.
+ */
+const FIELD_BOX = 'w-full rounded border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
+const FIELD_LABEL = 'block text-meta font-medium text-fg-muted';
 
 /**
  * 라벨 + 입력 + 힌트 한 벌.
@@ -96,7 +116,7 @@ export function Field({ label, hint, tone = 'muted', children }: {
       <span className={FIELD_LABEL}>{label}</span>
       <span className="mt-1 block">{children}</span>
       {hint && (
-        <span className={`mt-1 block text-[11px] ${tone === 'warning' ? 'text-warning' : 'text-fg-subtle'}`}>
+        <span className={`mt-1 block text-meta ${tone === 'warning' ? 'text-warning' : 'text-fg-subtle'}`}>
           {hint}
         </span>
       )}
@@ -166,7 +186,7 @@ export function Segmented({ value, onChange, options, label }: {
             type="button"
             role="radio"
             aria-checked={on}
-            className={`flex-1 rounded-md px-3 py-1.5 text-[13px] font-medium ${
+            className={`flex-1 rounded-md px-3 py-1.5 text-body font-medium ${
               on ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:bg-surface-hover'
             }`}
             onClick={() => onChange(o.value)}
@@ -200,7 +220,7 @@ export function Button({ children, onClick, variant = 'secondary', disabled, typ
       type={type}
       disabled={disabled}
       onClick={onClick}
-      className={`rounded px-3 py-1.5 text-[13px] font-medium disabled:opacity-50 ${tone}`}
+      className={`rounded px-3 py-1.5 text-body font-medium disabled:opacity-50 ${tone}`}
     >
       {children}
     </button>

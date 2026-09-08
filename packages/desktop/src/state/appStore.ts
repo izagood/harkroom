@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
 import type { AccountStatus, AccountView, AgentTeamRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus } from '@murmur/shared';
-import type { RunnerState } from '../lib/runnerLauncher';
+import type { ObservedRunner, RunnerState } from '../lib/runnerLauncher';
 import type { NotifiedSummary } from '../lib/notified';
 
 export interface HistoryEntry {
@@ -22,8 +22,32 @@ export interface AppState {
    *
    * 명단은 여기 없다. 팀 명단을 주는 라우트는 `GET /teams/:id` 하나뿐이고, 후보를
    * 그리는 데 필요한 것은 이름과 규모뿐이다(`AgentTeamRow.memberCount`).
+   *
+   * ## `null` 은 **"목록을 못 받았다"** 다 — 빈 배열과 다른 사실이다
+   *
+   * `teams` 를 싣는 것은 `GET /accounts` 뿐이고(`directoryRoutes.ts`), 그 필드가 없는
+   * 서버가 실제로 있다 — 팀 라우트(`/teams`)는 이미 있는데 디렉터리 응답에는 팀이
+   * 없는 중간 버전이다(#172 가 멘션·`memberCount`·디렉터리를 한 커밋에 넣기 전에
+   * 빌드된 서버). 그 서버에 붙으면 이 값이 `null` 이다.
+   *
+   * 앞 판은 그것을 `?? []` 로 뭉갰고, 근거는 *"그 서버는 팀을 부르지도 못하므로 빈
+   * 목록이 맞다"* 였다. **그 근거는 한 소비자에게만 맞는다:**
+   *
+   * | 이 값을 읽는 곳 | 묻는 것 | 빈 배열이 맞나 |
+   * |---|---|---|
+   * | 자동완성 후보 · 조용한 실패 판정 | 지금 부를 수 있는 팀은? | **맞다** — 그 서버는 `@팀` 을 해석하지 못한다 |
+   * | 설정 › 에이전트 › 팀 격자 | 이 워크스페이스에 팀이 있나? | **틀리다** — `POST /teams` 는 그 서버에서도 되고, 만든 팀은 진짜로 있다 |
+   *
+   * 실제로 그 어긋남이 화면에서 나왔다: 팀을 만들면 격자는 *"아직 팀이 없다"* 라고
+   * 단언하는데 다시 만들면 서버가 `name_taken` 으로 거절한다. 모르는 것을 없는 것으로
+   * 그리지 말라는 `docs/design.md` §4 가 막으려던 그것이다.
+   *
+   * 그래서 **모르는 것은 `null` 로 남기고**, 빈 목록이 맞는 소비자가 자기 자리에서
+   * `?? []` 한다(`Composer.tsx`·`MessageBody.tsx`·`controller.ts::recordNotifiedGap`).
+   * 그 `??` 는 뭉개는 것이 아니라 *"여기서는 빈 목록이 사실이다"* 라는 판단이고,
+   * 그 판단이 필요 없는 격자는 `null` 을 받아 사실대로 말한다(`TeamGrid`).
    */
-  teams: AgentTeamRow[];
+  teams: AgentTeamRow[] | null;
   channels: ChannelRow[];
   dms: DmView[];
   activeChannelId: string | null;
@@ -160,19 +184,34 @@ export interface AppState {
    * 다음 이동 때 갈아탄다(`openChannel` 이 지우고 `openMessage` 가 다시 건다).
    */
   highlightedMessageId: string | null;
-  /**
-   * 지금 펼쳐 둔 긴 메시지들(#217). messageId → true.
-   *
-   * **세션 한정 화면 상태다.** `localStorage` 에 넣지 않는다 — 다시 켰을 때 무엇이 펼쳐져
-   * 있을지 사람이 예측할 수 없다. `MessageRow` 에도 넣지 않는다 — 서버에서 온 사실과 지금
-   * 화면의 사정이 한 값에 섞인다(강조 상태가 바로 위에 있는 것과 같은 이유다).
-   *
-   * 채널을 옮기면 비워진다(`openChannel`). 돌아왔을 때 접힌 상태가 기본이어야 긴 메시지가
-   * 다시 앞뒤 대화를 스크롤 밖으로 밀어내지 않는다.
-   */
-  expandedMessageIds: Record<string, true>;
   /** 에이전트별 러너 실행 상태. agentId → state */
   runnerStates: Record<string, RunnerState>;
+  /**
+   * daemon 이 **직접 확인한** 러너의 사실. agentId → 관측(`#443`).
+   *
+   * ## 왜 `runnerStates` 를 늘리지 않았나
+   *
+   * 둘은 **출처와 수명이 다르다.**
+   *
+   * | | `runnerStates` | `daemonRunners` |
+   * |---|---|---|
+   * | 누가 쓰나 | 이 앱의 실행기(`RunnerLauncher.setState`) | daemon(`observe()` 의 응답) |
+   * | 무엇인가 | 이 앱이 **내린 판정**(띄웠다·실패했다·기다린다) | daemon 이 `kill(pid,0)` 등으로 **본 사실** |
+   * | 언제 갱신되나 | 실행기가 무언가 할 때마다 | 관측할 때만 |
+   *
+   * `RunnerState` 에 `pid` 를 넣으면 실행기의 모든 `setState` 가 그 값을 함께 실어야
+   * 한다 — `Omit<RunnerState,'agentId'>` 를 통째로 갈아 끼우는 구조라(그 함수 시그니처)
+   * 한 자리라도 빠뜨리면 **관측된 pid 가 판정 갱신에 지워진다.** 사실이 판정의 부산물로
+   * 사라지는 그 모습이 정확히 `#443` 이 고치려는 것이므로, 나르는 그릇을 갈라 둔다.
+   *
+   * 또 `faceState`(`lib/faceState.ts`)가 `runnerStates` 를 **판정의 유일한 입력**으로
+   * 쓴다. 사실을 그 안에 섞으면 다음 사람이 `pid` 를 보고 얼굴을 정하게 되고, 그것은
+   * daemon 에게 판단을 시키는 것이다(`RunnerInfo.alive` 주석이 금지한 그 방향).
+   *
+   * **비어 있음이 곧 "러너가 없다"가 아니다** — 관측에 실패했거나(daemon 에 못 닿았다)
+   * 아직 안 했을 수도 있다. 그래서 화면은 여기 없는 에이전트에 대해 아무 말도 하지 않는다.
+   */
+  daemonRunners: Record<string, ObservedRunner>;
   /**
    * 이 앱 번들의 버전. **컨트롤러가 기동 때 한 번 밀어 넣는다** — `runnerStates` 와 같은
    * 방향이다(컨트롤러가 밀고 화면은 읽는다). 화면이 컨트롤러에게 직접 물으면 컨트롤러를
@@ -227,18 +266,24 @@ export interface AppState {
   goForward(): HistoryEntry | null;
   /** 현재 위치에서 미래 이력을 모두 잘라낸다(새 항목 추가 시). */
   truncateForward(): void;
-  /** 긴 메시지의 펼침을 뒤집는다(#217). */
-  toggleExpanded(messageId: string): void;
 }
 
+/**
+ * 팀 목록을 못 받았을 때(`teams === null`) 후보를 만드는 자리가 자기 사실로 쓰는 빈 목록.
+ *
+ * **모듈 상수인 것이 요점이다.** 읽는 자리에서 `?? []` 를 적으면 렌더마다 새 배열이 나고,
+ * 그것을 의존에 둔 `useMemo`(`Composer`·`MessageBody` 의 후보 목록)가 매 렌더 다시 돈다.
+ */
+export const NO_TEAMS: AgentTeamRow[] = [];
+
 const initial = {
-  me: null, accounts: {}, groups: [], teams: [], channels: [], dms: [], activeChannelId: null, threadRootId: null,
+  me: null, accounts: {}, groups: [], teams: null, channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], terminalTarget: null, leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, notifiedGaps: {}, projectionBannerDismissed: null,
   highlightedMessageId: null,
-  expandedMessageIds: {}, runnerStates: {}, appVersion: null, savedIds: [], savedCount: 0,
+  runnerStates: {}, daemonRunners: {}, appVersion: null, savedIds: [], savedCount: 0,
   linkPreviewReadyAt: {}, skillsRevision: 0,
 };
 
@@ -256,18 +301,6 @@ export function createAppStore() {
   return create<AppState>((set, get) => ({
     ...initial,
     set: (partial) => set(partial),
-    toggleExpanded: (messageId) => {
-      const cur = get().expandedMessageIds;
-      if (!cur[messageId]) {
-        set({ expandedMessageIds: { ...cur, [messageId]: true } });
-        return;
-      }
-      // 다시 접을 때는 키를 **지운다** — false 를 남기면 "접어 둔 것" 과 "손대지 않은 것" 이
-      // 구분되지 않는 채 목록만 자란다.
-      const next = { ...cur };
-      delete next[messageId];
-      set({ expandedMessageIds: next });
-    },
     upsertMessages: (channelId, rows) => {
       const byId = new Map((get().messages[channelId] ?? []).map((m) => [m.id, m]));
       for (const r of rows) byId.set(r.id, r);

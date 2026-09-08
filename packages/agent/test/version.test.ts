@@ -19,7 +19,20 @@ beforeEach(() => { delete process.env.AGENT_VERSION; });
 afterEach(() => {
   if (original === undefined) delete process.env.AGENT_VERSION;
   else process.env.AGENT_VERSION = original;
+  delete (globalThis as Record<string, unknown>).__AGENT_VERSION__;
 });
+
+/**
+ * 번들에 구워진 값을 흉내낸다.
+ *
+ * 실제 배포에서는 esbuild `define` 이 `__AGENT_VERSION__` 을 **문자열 리터럴로 치환**
+ * 하므로 전역 같은 것은 관여하지 않는다(`packages/desktop/scripts/sidecar.mjs`).
+ * 테스트에서는 치환할 수 없으므로 같은 이름의 전역을 두어 bare 식별자가 그것을 가리키게
+ * 한다 — `version.ts` 가 그 식별자를 `typeof` 로만 만지기 때문에 이 흉내가 성립한다.
+ */
+const bake = (value: string) => {
+  (globalThis as Record<string, unknown>).__AGENT_VERSION__ = value;
+};
 
 describe('러너 버전', () => {
   it('AGENT_VERSION 에서 온다', async () => {
@@ -37,6 +50,27 @@ describe('러너 버전', () => {
 
   // 거짓 버전을 보내지 않는다 — docs/design.md 4절.
   it('값이 없으면 unknown 이다', async () => {
+    expect(await loadVersion()).toBe('unknown');
+  });
+
+  /**
+   * **앱 밖에서 뜬 러너도 자기 버전을 안다.** env 는 누가 띄웠는가에 달린 값이라, 앱이
+   * 띄우지 않은 러너(사람이 직접 띄운 것, 앞 세대가 남긴 것)에는 아무도 심어 주지
+   * 않는다. 구운 값은 "어느 번들에서 나왔나"라서 그 러너도 답할 수 있다.
+   */
+  it('env 가 없으면 번들에 구워진 값을 쓴다', async () => {
+    bake('0.1.80');
+    expect(await loadVersion()).toBe('0.1.80');
+  });
+
+  it('env 가 구운 값을 덮는다 — 오버라이드가 아래에 있으면 오버라이드가 아니다', async () => {
+    bake('0.1.80');
+    process.env.AGENT_VERSION = 'abc1234';
+    expect(await loadVersion()).toBe('abc1234');
+  });
+
+  it('구운 값이 빈 문자열이면 없는 것으로 본다 — 치환이 실패한 것과 같다', async () => {
+    bake('');
     expect(await loadVersion()).toBe('unknown');
   });
 

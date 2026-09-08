@@ -113,7 +113,10 @@ describe('#365 에이전트 쪽도 같아졌다', () => {
 
   // `Identity` 를 **직접** 그려 두 variant 를 마주 놓는다. `MessageItem` 만 거치면
   // 호출부가 variant 를 잘못 주는 것과 컴포넌트가 잘못 그리는 것이 구분되지 않는다.
-  it('에이전트의 두 variant 는 avatar=아바타만, badge=글리프+소유자로 갈린다', () => {
+  //
+  // 초판은 "avatar=아바타만, badge=글리프+소유자로 갈린다"였다. **갈림 자체가 없어졌다**
+  // (#455): badge 는 사람에게 그랬듯 에이전트에게도 아무것도 아니다.
+  it('에이전트의 두 variant 는 avatar=아바타, badge=아무것도 아님이다', () => {
     useAppStore.getState().set({ accounts: { u1: acc('u1', 'owner') } });
     const bot = agent('a1', 'bot', 'u1');
 
@@ -124,8 +127,8 @@ describe('#365 에이전트 쪽도 같아졌다', () => {
     cleanup();
 
     const bad = render(<Identity account={bot} variant="badge" />);
-    expect(within(bad.container).getByText('🤖')).toBeTruthy();
-    expect(within(bad.container).getByText('@owner')).toBeTruthy();
+    expect(bad.container.textContent).toBe('');
+    expect(bad.container.firstElementChild).toBeNull();
   });
 });
 

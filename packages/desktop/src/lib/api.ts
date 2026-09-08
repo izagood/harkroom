@@ -263,6 +263,14 @@ export class ApiClient {
     return this.req('DELETE', `/channels/${channelId}/messages/${messageId}`);
   }
 
+  /**
+   * 채널로 함께 올린 스레드 답을 채널에서 거둔다(#231 되돌리기). 메시지는 지우지 않는다 —
+   * 갱신된 행이 돌아오고 `alsoInChannel` 만 false 다.
+   */
+  recallFromChannel(channelId: string, messageId: string): Promise<MessageRow> {
+    return this.req('DELETE', `/channels/${channelId}/messages/${messageId}/also-in-channel`);
+  }
+
   async listAgents(): Promise<AgentView[]> {
     return (await this.req<{ agents: AgentView[] }>('GET', '/accounts/agents')).agents;
   }
@@ -382,20 +390,45 @@ export class ApiClient {
   /**
    * 파일 하나를 올린다. `FormData` 를 쓰므로 Content-Type 을 직접 정하지 않는다 —
    * boundary 는 브라우저가 만든다.
+   *
+   * **`fetch` 가 아니라 `XMLHttpRequest` 다.** 이유는 하나뿐이다: fetch 는 요청 바디가
+   * 얼마나 갔는지 알려 주지 않는다(`ReadableStream` 업로드는 아직 이 런타임에서 못 쓴다).
+   * 진행률을 못 받으면 화면이 "올리는 중"을 **길이 없는 스피너**로만 그릴 수 있고, 그러면
+   * 큰 파일에서 멈춘 것과 가는 중인 것이 구별되지 않는다 — 사람이 오류로 읽는 자리다.
+   *
+   * `onProgress` 는 0~1 이다. 서버가 total 을 안 주는 경우(`lengthComputable === false`)에는
+   * **부르지 않는다** — 가짜 비율을 그리면 막대가 거짓말을 한다.
    */
-  async upload(file: File): Promise<AttachmentRow> {
+  upload(file: File, onProgress?: (fraction: number) => void): Promise<AttachmentRow> {
     const form = new FormData();
     form.append('file', file);
-    const res = await fetch(`${this.baseUrl}/uploads`, {
-      method: 'POST',
-      headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
-      body: form,
+    return new Promise<AttachmentRow>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${this.baseUrl}/uploads`);
+      if (this.token) xhr.setRequestHeader('authorization', `Bearer ${this.token}`);
+      if (onProgress) {
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && e.total > 0) onProgress(Math.min(1, e.loaded / e.total));
+        };
+      }
+      xhr.onload = () => {
+        // 바이트가 다 간 뒤에도 서버가 저장·검증을 하는 동안은 응답이 안 온다. 그 구간을
+        // 100% 로 못박아 둔다 — 99% 에서 멈춘 막대는 실패처럼 보인다.
+        onProgress?.(1);
+        let body: unknown = null;
+        try { body = JSON.parse(xhr.responseText) as unknown; } catch { body = null; }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(body as AttachmentRow);
+          return;
+        }
+        const err = (body as { error?: { code?: string; message?: string } } | null)?.error;
+        reject(new ApiError(xhr.status, err?.code ?? 'upload_failed', err?.message ?? `HTTP ${xhr.status}`));
+      };
+      // 네트워크가 끊긴 경우다. status 는 0 이라 위의 분기로는 잡히지 않는다.
+      xhr.onerror = () => reject(new ApiError(0, 'upload_failed', 'network error'));
+      xhr.onabort = () => reject(new ApiError(0, 'upload_aborted', 'aborted'));
+      xhr.send(form);
     });
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      throw new ApiError(res.status, body?.error?.code ?? 'upload_failed', body?.error?.message ?? `HTTP ${res.status}`);
-    }
-    return res.json() as Promise<AttachmentRow>;
   }
 
   /**

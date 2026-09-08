@@ -138,8 +138,22 @@ export function Workspace({ onLogout, onOpenSettings }: {
    * 두면 다음 사람이 그 분기가 살아 있다고 읽는다.
    */
 
+  /*
+   * **앱 기본 글자 크기는 여기 한 줄이 정한다** — 타이포 4단의 본문단 13px 이다.
+   *
+   * 14px(`text-sm`)이었다. 그 값은 4단(11 / 13 / 15 / 17) 중 아무것도 아니었고, 그래서
+   * 화면 아래쪽 자리마다 `text-xs`·`text-sm` 으로 다시 덮어야 했다 — 덮는 쪽도 12·14px
+   * 이라 어휘가 둘로 갈렸다. 이 한 줄을 13px 로 내리면 **본문 자리는 아무것도 안 적어도
+   * 맞다**. 실제로 이 작업에서 아래쪽의 중복 선언 여러 곳이 그래서 사라졌다.
+   *
+   * **`text-body` 는 `@theme` 토큰이다**(`index.css`). 한동안 임의값(`text-[13px]`)이었고,
+   * 그때의 이유는 척도 이름이 v4 기본값 12 / 14 / 16px 이라 4단 중 아무것도 가리킬 수
+   * 없다는 것이었다. v4 기본 척도를 재정의하는 길(`text-sm` 을 13px 로)은 지금도 택하지
+   * 않는다 — 그러면 `text-sm` 이 문서의 14px 과 다른 값이 되어 사람이 두 뜻을 계속
+   * 구분해야 한다. 대신 4단에 **역할 이름**을 새로 줬다. 회귀선은 `test/typeScale.test.ts` 다.
+   */
   return (
-    <div className="flex h-screen text-sm">
+    <div className="flex h-screen text-body">
       {/* 업데이트 팝업은 `fixed` 라 이 자리에 두어도 레이아웃을 밀지 않는다. 상단 띠
           (`Notice`·`ProjectionBanner`)와 달리 작업 흐름을 비켜서 우측 하단에 선다 —
           업데이트는 지금 하던 일을 멈출 이유가 아니다. */}
@@ -173,6 +187,13 @@ export function Workspace({ onLogout, onOpenSettings }: {
         onOpenDirectory={() => handleOpenDirectory(null)}
         onOpenChannelDirectory={() => setChannelDirectoryOpen(true)}
         onOpenInbox={() => setInboxOpen(true)}
+        /* 에이전트 격자의 카드가 여는 곳. 신호는 `#279` 의 `onOpenSettings(section, targetId)`
+           를 **재사용**한다 — 프로필의 `에이전트 설정` 버튼과 본문 멘션이 이미 그것으로 같은
+           자리를 열고 있으므로, 새 신호를 만들면 같은 문에 손잡이가 셋이 된다. */
+        onOpenAgentConfig={(agentId) => onOpenSettings('agents', agentId)}
+        /* 설정을 볼 수 없는 사람이 카드를 눌렀을 때. 프로필을 여는 함수는 이미 하나다
+           (`handleOpenDirectory` — id 를 주면 프로필, 안 주면 디렉터리). */
+        onOpenProfile={(accountId) => handleOpenDirectory(accountId)}
         collapsed={sidebarCollapsed}
         onToggleCollapse={handleToggleSidebar}
       />
@@ -220,7 +241,9 @@ export function Workspace({ onLogout, onOpenSettings }: {
               정리할 수 있어야 하고, 그것이 바로 이 기능을 쓰는 상황이다. */}
           <button
             onClick={() => setSweepOpen(true)}
-            className="ml-auto rounded px-2 py-1 text-xs text-fg-muted hover:bg-surface-hover"
+            // 같은 헤더 줄의 앞/뒤 버튼은 크기를 안 적어 본문단을 물려받는다 — 이 버튼만
+            // 아랫단으로 내리면 한 줄 안에 두 단이 서고, 그 줄이 들쭉날쭉해진다.
+            className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover"
             title="미읽음을 하나씩 훑는다"
           >
             미읽음 훑기

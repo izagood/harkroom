@@ -34,6 +34,10 @@ const fail = (id: string): MessageRow => msg(id, 'c1', 1, '못 끝냈다', FORGE
 const progress = (id: string, authorId = FORGE): MessageRow =>
   msg(id, 'c1', 1, '돌고 있다', authorId, { kind: 'progress' });
 
+const report = (id: string, authorId = FORGE): MessageRow => msg(id, 'c1', 1, '다 했다', authorId, {
+  meta: { kind: 'report', report: { checks: ['테스트 통과'] } } as unknown as Record<string, unknown>,
+});
+
 const state = (messages: MessageRow[], live: Liveness = new Set([FORGE, CODEX])): ThreadState =>
   threadState({ messages, myAccountId: ME, isAgent, live });
 
@@ -115,6 +119,45 @@ describe('threadState — 러너 생존', () => {
 });
 
 /**
+ * **한 번 실패한 스레드가 영원히 붉게 남지 않는다.**
+ *
+ * 실패를 누적으로 세면 `failed` 가 `running` 보다 위에 있으므로, 예전에 한 번 `message.fail`
+ * 이 난 스레드는 그 뒤에 에이전트가 다시 붙어 진행 설명을 올리고 있어도 계속 '막힘'이다 —
+ * 사람이 보는 화면에서 "작업 중"이 "막힘"으로 뒤집히던 것이 이것이다.
+ *
+ * 그래서 실패는 **에이전트가 다시 움직이면 풀린다**. 사람이 되묻는 것은 풀지 않는다.
+ */
+describe('threadState — 실패는 다시 움직이면 풀린다', () => {
+  it('실패 뒤에 그 에이전트의 진행이 오면 도는 중으로 돌아온다', () => {
+    expect(state([fail('f1'), progress('p1', FORGE)])).toBe('running');
+  });
+
+  it('다른 에이전트가 대신 붙어도 풀린다 — 진행은 에이전트만 낼 수 있다', () => {
+    expect(state([fail('f1'), progress('p1', CODEX)])).toBe('running');
+  });
+
+  it('완료 보고도 푼다', () => {
+    expect(state([fail('f1'), report('r1')])).toBe('done');
+  });
+
+  it('실패를 낸 계정의 평범한 글도 푼다 — 마지막 답을 글로 내는 러너가 있다', () => {
+    expect(state([fail('f1'), msg('m1', 'c1', 2, '됐다', FORGE)])).toBe('done');
+  });
+
+  it('사람이 되묻는 것은 풀지 않는다 — 그때는 정말 막혀 있다', () => {
+    expect(state([fail('f1'), msg('u1', 'c1', 2, '왜 안 돼?', ME)])).toBe('stuck');
+  });
+
+  it('다시 실패하면 다시 막힘이다', () => {
+    expect(state([fail('f1'), progress('p1', FORGE), fail('f2')])).toBe('stuck');
+  });
+
+  it('풀린 뒤 러너가 죽으면 막힘이다 — 해소가 생존까지 덮지는 않는다', () => {
+    expect(state([fail('f1'), progress('p1', FORGE)], new Set([CODEX]))).toBe('stuck');
+  });
+});
+
+/**
  * 화면에 붙은 자리 — **스레드 패널의 헤더**. 채널 요약 줄에는 아직 달지 않는다:
  * 답글은 스레드를 열 때만 로드되므로(`controller.openThread`), 지금 데이터로 채널에
  * 그리면 열어 보지 않은 스레드가 전부 '끝남'으로 보인다.
@@ -171,8 +214,19 @@ describe('threadStateFromFacts — 채널 요약의 판정', () => {
     expect(from(facts({ openAskAccountIds: [CODEX] }))).toBe('waiting');
   });
 
-  it('실패가 있으면 막힘', () => {
-    expect(from(facts({ failureCount: 1 }))).toBe('stuck');
+  it('안 풀린 실패가 있으면 막힘', () => {
+    expect(from(facts({ failureCount: 1, unresolvedFailureCount: 1 }))).toBe('stuck');
+  });
+
+  it('풀린 실패는 막지 않는다 — 누적은 남아 있어도 상태는 진행을 따른다', () => {
+    expect(from(facts({
+      failureCount: 1, unresolvedFailureCount: 0, lastKind: 'progress', lastAuthorId: FORGE,
+    }))).toBe('running');
+  });
+
+  it('해소를 모르는 옛 서버면 누적으로 물러난다 — 숨기는 것보다 남기는 쪽이 안전하다', () => {
+    // `unresolvedFailureCount` 를 안 싣는 서버다. 실패를 못 본 척하면 사람이 영영 모른다.
+    expect(from(facts({ failureCount: 1, lastKind: 'progress', lastAuthorId: FORGE }))).toBe('stuck');
   });
 
   it('마지막이 진행이고 러너가 살아 있으면 도는 중', () => {
@@ -195,7 +249,9 @@ describe('threadStateFromFacts — 채널 요약의 판정', () => {
     const cases: [MessageRow[], ReturnType<typeof facts>][] = [
       [[ask('a1', { kind: 'human' })], facts({ openAskHumanCount: 1 })],
       [[ask('a1', { kind: 'account', accountId: CODEX })], facts({ openAskAccountIds: [CODEX] })],
-      [[fail('f1')], facts({ failureCount: 1 })],
+      [[fail('f1')], facts({ failureCount: 1, unresolvedFailureCount: 1 })],
+      [[fail('f1'), progress('p1', FORGE)],
+        facts({ failureCount: 1, unresolvedFailureCount: 0, lastKind: 'progress', lastAuthorId: FORGE })],
       [[progress('p1', FORGE)], facts({ lastKind: 'progress', lastAuthorId: FORGE })],
       [[msg('u1', 'c1', 1, '끝', ME)], facts()],
     ];

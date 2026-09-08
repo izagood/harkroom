@@ -116,6 +116,62 @@ describe('isCredentialFailure', () => {
         globalThis.fetch = original;
       }
     });
+
+    /**
+     * 2026-09-08 14:04 실측(@murmur 러너). **REST 경로가 아니라 MCP 트랜스포트가 401 을
+     * 냈고, 그 에러는 이 판정을 통과하지 못했다.**
+     *
+     * 그날의 사슬: 앱이 0.1.57 로 자동 업데이트되며 세대가 바뀌어 daemon 이 옛 러너에
+     * SIGTERM(드레인)을 보냈다. 그 러너는 11.6분짜리 턴 안에 있었고, 턴이 도는 동안
+     * 폴이 나가지 않으므로 카드는 "활동 11분 전 / 러너 버전 모름"으로 굳었다. 사람이
+     * 그것을 죽은 것으로 읽고 ▶(재발급)을 눌렀고, 회전이 **아직 드레인 중인** 러너의
+     * PAT 를 폐기했다. 턴이 끝나 러너가 처음 낸 호출부터 전부 401 이었다.
+     *
+     * 그때 `#250` 이 약속한 것은 "옛 러너는 401 을 받고 78 로 스스로 물러난다"였는데,
+     * 러너는 물러나지 않고 `poll 루프 오류, 재접속` 만 찍었다. 이유가 이 테스트다:
+     * MCP 도구 **결과**의 에러는 `call()` 이 태그를 붙이지만, 트랜스포트가 non-2xx 에
+     * 대고 던지는 `StreamableHTTPError` 는 `status` 도 `source` 도 없이(가진 것은
+     * 숫자 `code` 뿐이다) 그대로 올라온다.
+     *
+     * `murmur.ts` 의 그 자리 주석은 틀린 전제를 명시적으로 적어 뒀다 — *"자격증명
+     * 문제라면 서버가 401/403 을 내는 fetch 경로(definition·accounts)에서 먼저
+     * 드러난다."* **폴 루프는 MCP 전용이고, 롱턴에 park 된 러너는 fetch 경로를 아예
+     * 타지 않는다.**
+     *
+     * 그래서 손으로 만든 객체가 아니라 **프로덕션 클라이언트의 MCP 경로**를 태운다 —
+     * `murmur.ts` 가 트랜스포트 에러에 태그를 붙이는 것을 그만두면 이 테스트가 붉어진다.
+     */
+    it('MCP 트랜스포트가 낸 401 도 murmur 자격증명 실패다 (2026-09-08 실측)', async () => {
+      const original = globalThis.fetch;
+      globalThis.fetch = (async () => new Response(
+        '{"error":{"code":"agent_only","message":"MCP surface requires an agent PAT"}}',
+        { status: 401 },
+      )) as typeof fetch;
+      try {
+        const client = new MurmurAgentClient('http://localhost:3400', 'murp_revoked');
+        // `me()` 는 MCP 도구(`account.me`)다 — REST 경로를 거치지 않는다.
+        const err = await client.me().then(() => null, (e: unknown) => e);
+        expect(err).toBeInstanceOf(Error);
+        expect(isCredentialFailure(err)).toBe('murmur-credential');
+      } finally {
+        globalThis.fetch = original;
+      }
+    });
+
+    // 대조군: 트랜스포트 오류를 전부 자격증명으로 읽으면 서버 재시작·502 마다 러너가
+    // 78 로 죽는다. 그것은 재시도로 낫는 실패이고, 폴 루프의 재접속이 담당한다.
+    it('MCP 트랜스포트의 5xx 는 자격증명 실패가 아니다 (재접속으로 낫는다)', async () => {
+      const original = globalThis.fetch;
+      globalThis.fetch = (async () => new Response('bad gateway', { status: 502 })) as typeof fetch;
+      try {
+        const client = new MurmurAgentClient('http://localhost:3400', 'murp_live');
+        const err = await client.me().then(() => null, (e: unknown) => e);
+        expect(err).toBeInstanceOf(Error);
+        expect(isCredentialFailure(err)).toBe('other');
+      } finally {
+        globalThis.fetch = original;
+      }
+    });
   });
 
   // 일시적 실패는 재시도로 낫는다 — 여기서 죽으면 네트워크가 흔들릴 때마다 러너가 멈춘다.

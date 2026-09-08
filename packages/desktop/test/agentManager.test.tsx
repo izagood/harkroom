@@ -5,6 +5,7 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { acc } from './helpers/fakeApi';
+import { ApiError } from '../src/lib/api';
 
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
@@ -43,6 +44,9 @@ const fakeController = (agents: AgentView[] = []) => {
     // #139: 기본은 "읽었고 비어 있다". 실패나 목록이 필요한 테스트가 갈아끼운다.
     agentMemory: vi.fn(async (): Promise<{ slug: string; value: string; updatedAt: string }[]> => []),
     deleteAgentMemory: vi.fn(async (): Promise<void> => undefined),
+    // 사진을 건 에이전트를 그리면 `Identity` 가 바이트를 받으러 온다 — 없으면 화면이
+    // 아니라 스텁이 터진다. 이 화면은 사진을 건 에이전트를 정상적으로 그린다.
+    fetchAvatar: vi.fn(async (): Promise<Blob> => new Blob(['png-bytes'])),
   };
   setController(c as unknown as Controller);
   return c;
@@ -752,7 +756,7 @@ describe('에이전트 사진 (Task 15-4)', () => {
 
     await waitFor(() => expect(
       (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar,
-    ).toHaveBeenCalledWith('id-rusalka', file));
+    ).toHaveBeenCalledWith('id-rusalka', file, expect.any(Function)));
   });
 
   it('사진이 없으면 지우기가 없다 — 지울 것이 없는 버튼을 그리지 않는다', async () => {
@@ -764,7 +768,7 @@ describe('에이전트 사진 (Task 15-4)', () => {
     expect(screen.queryByRole('button', { name: '지우기' })).toBeNull();
   });
 
-  it('사진이 있으면 지울 수 있다', async () => {
+  it('사진이 있으면 지울 수 있다 — 확인을 거친다', async () => {
     const c = fakeController([agent('rusalka', { avatarAttachmentId: 'att-1' })]);
     (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar =
       vi.fn(async () => undefined);
@@ -772,22 +776,67 @@ describe('에이전트 사진 (Task 15-4)', () => {
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     fireEvent.click(await screen.findByRole('button', { name: '지우기' }));
+    // 첫 클릭은 묻기만 한다 — 되돌릴 수 없는 조작이 스친 클릭 하나로 일어나지 않는다.
+    expect(
+      (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar,
+    ).not.toHaveBeenCalled();
+
+    fireEvent.click(await screen.findByRole('button', { name: '정말 지우기' }));
     await waitFor(() => expect(
       (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar,
-    ).toHaveBeenCalledWith('id-rusalka', null));
+    ).toHaveBeenCalledWith('id-rusalka', null, undefined));
+    // 지운 것을 말한다. 아무 말이 없으면 눌린 것인지조차 알 수 없다 — 그것이 원래 문제였다.
+    expect((await screen.findByTestId('avatar-done')).textContent).toMatch(/지웠습니다/);
   });
 
-  it('거절되면 조용히 실패하지 않는다 — 이미지가 아닌 파일이 가장 흔하다', async () => {
+  /** 확인을 취소하면 아무 일도 없어야 하고, 확인 버튼도 남아 있지 않아야 한다. */
+  it('지우기를 취소하면 사진이 그대로다', async () => {
+    const c = fakeController([agent('rusalka', { avatarAttachmentId: 'att-1' })]);
+    (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar =
+      vi.fn(async () => undefined);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    fireEvent.click(await screen.findByRole('button', { name: '지우기' }));
+    fireEvent.click(await screen.findByRole('button', { name: '취소' }));
+
+    expect(screen.queryByRole('button', { name: '정말 지우기' })).toBeNull();
+    expect(
+      (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('거절되면 조용히 실패하지 않는다 — 무엇을 고를 수 있는지까지 말한다', async () => {
     const c = fakeController([agent('rusalka')]);
     (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar =
-      vi.fn(async () => { throw new Error('not_an_image'); });
+      vi.fn(async () => { throw new ApiError(400, 'not_an_image', 'nope'); });
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     const file = new File([new Uint8Array([1])], 'evil.png', { type: 'image/png' });
     fireEvent.change(await screen.findByTestId('agent-avatar-file'), { target: { files: [file] } });
 
-    expect((await screen.findByRole('alert')).textContent).toContain('이미지 파일만');
+    // 목록을 함께 낸다 — "안 된다"만 말하면 사람은 다음에 무엇을 고를지 모른다.
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('PNG');
+    expect(alert.textContent).toContain('SVG');
+  });
+
+  it('SVG 도 고를 수 있다 — 화면이 서버보다 좁으면 오류조차 못 낸다', async () => {
+    const c = fakeController([agent('rusalka')]);
+    (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar =
+      vi.fn(async () => undefined);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    const input = await screen.findByTestId('agent-avatar-file');
+    expect(input.getAttribute('accept')).toContain('image/svg+xml');
+
+    const file = new File(['<svg/>'], 'face.svg', { type: 'image/svg+xml' });
+    fireEvent.change(input, { target: { files: [file] } });
+    await waitFor(() => expect(
+      (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar,
+    ).toHaveBeenCalledWith('id-rusalka', file, expect.any(Function)));
   });
 });
 

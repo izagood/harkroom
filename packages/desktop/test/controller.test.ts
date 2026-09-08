@@ -186,6 +186,25 @@ describe('Controller', () => {
     expect((api.deleteMessage as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(['c1', 'm1']);
   });
 
+  // #231 되돌리기는 **지우기가 아니다**. 스토어에서 빼면 스레드에서도 사라져
+  // 되돌리기가 지우기가 되고, 열려 있던 스레드까지 닫힌다.
+  it('recall keeps the message in the store and only flips alsoInChannel', async () => {
+    const api = fakeApi();
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    await c.openChannel('c1');
+    useAppStore.getState().upsertMessages('c1', [msg('m7', 'c1', 7, '흘린 말', 'u1', { threadRootId: 'm1', alsoInChannel: true })]);
+
+    await c.recallFromChannel('m7');
+
+    expect((api.recallFromChannel as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(['c1', 'm7']);
+    const kept = useAppStore.getState().messages.c1!.find((m) => m.id === 'm7');
+    expect(kept).toBeTruthy();
+    expect(kept?.alsoInChannel).toBe(false);
+    expect(kept?.threadRootId).toBe('m1');
+  });
+
   // 최신 창 밖으로 밀려난 대화에 도달할 경로가 필요하다.
   it('loads an older page from the oldest message it holds', async () => {
     const api = fakeApi({
@@ -381,6 +400,65 @@ describe('Controller', () => {
     await c.refreshAccounts();
 
     expect(accountsCalls).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * **옛 서버의 `teams` 없음을 빈 목록으로 뭉개지 않는다.**
+   *
+   * 팀 라우트(`/teams`)는 있는데 `GET /accounts` 에 `teams` 가 없는 서버가 실제로 있고
+   * (#172 가 디렉터리·멘션·`memberCount` 를 한 커밋에 넣기 전에 빌드된 서버), 그때 빈
+   * 배열을 넣으면 설정 격자가 **실제로 만들어진 팀을 "없다"고 단언한다.**
+   * 모르는 것과 없는 것을 가르는 값이 `null` 이다(`appStore.ts::teams`).
+   */
+  it('옛 서버가 teams 를 안 실으면 스토어에 null 이 남는다', async () => {
+    // `accountsResult` 헬퍼는 **늘** `teams` 를 싣는다(그 주석) — 옛 서버는 손으로 적는다.
+    const api = fakeApi({ accounts: vi.fn(async () => ({ accounts: [acc('u1', 'admin')], groups: [] })) });
+    const c = new Controller(api, fakeWsFactory().makeWs);
+
+    await c.start();
+
+    expect(useAppStore.getState().teams).toBeNull();
+  });
+
+  /**
+   * **`force` 는 진행 중인 조회에 합류하지 않는다.**
+   *
+   * 합류(`accountsInFlight`)는 스로틀과 같은 목적이다 — 미지의 작성자가 연달아 오면 같은
+   * 조회가 폭주하므로 이미 나간 것 하나로 충분하다. `force` 는 그 경우가 아니다: 사람이
+   * 방금 팀을 만들었거나 서버가 바뀌었다고 알려 온 것이고, 진행 중인 조회는 **그 사건
+   * 이전에 시작된 것**이라 새 것이 실려 있을 리가 없다. 앞 판은 `??=` 하나로 둘을 같이
+   * 처리해서, 그 창에 걸린 `force` 가 조용히 무력화됐다.
+   *
+   * 뒷부분이 그 대가를 잡는다: 두 응답이 겹치면 **늦게 온 옛 응답이 새 것을 덮으면 안 된다.**
+   */
+  it('force 갱신은 진행 중인 조회에 합류하지 않고, 늦게 온 옛 응답이 새 것을 덮지 않는다', async () => {
+    const staleTeam = { id: 't1', name: 'ops', createdBy: 'u1', createdAt: '2024-01-01T00:00:00.000Z', memberCount: 0 };
+    const freshTeam = { id: 't2', name: 'release', createdBy: 'u1', createdAt: '2024-01-02T00:00:00.000Z', memberCount: 0 };
+    let openGate!: () => void;
+    const gate = new Promise<void>((resolve) => { openGate = resolve; });
+    let call = 0;
+    const accounts = vi.fn(async () => {
+      call += 1;
+      // 2번째(느린 조회)만 붙잡아 둔다 — 3번째가 그것을 앞질러 끝나는 상황을 만든다.
+      if (call === 2) { await gate; return accountsResult([acc('u1', 'admin')], [], [staleTeam]); }
+      return accountsResult([acc('u1', 'admin')], [], call === 1 ? [] : [staleTeam, freshTeam]);
+    });
+    const api = fakeApi({ accounts });
+    const c = new Controller(api, fakeWsFactory().makeWs);
+    await c.start();
+
+    const slow = c.refreshAccounts({ force: true });
+    const fast = c.refreshAccounts({ force: true });
+    await fast;
+
+    // 합류했다면 요청이 하나뿐이고, 스토어는 새 팀을 모른 채 남는다.
+    expect(accounts).toHaveBeenCalledTimes(3);
+    expect(useAppStore.getState().teams).toEqual([staleTeam, freshTeam]);
+
+    openGate();
+    await slow;
+
+    expect(useAppStore.getState().teams).toEqual([staleTeam, freshTeam]);
   });
 
   it('refreshAccounts with force: true bypasses throttle', async () => {

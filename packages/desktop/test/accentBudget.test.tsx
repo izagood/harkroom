@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { useActiveStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { MessageBody } from '../src/components/MessageBody';
+import { GallerySettings } from '../src/components/settings/GallerySettings';
 import { acc } from './helpers/fakeApi';
 
 const ME = 'u-me';
@@ -86,10 +87,64 @@ describe('회수한 자리가 되돌아가지 않는다', () => {
    *
    * C1 이 그 줄에 처음으로 *읽으라고 있는 글자*(결론)를 넣었다. 읽히는 글자가 생기면
    * 강조를 붙이려는 손이 따라오는데, 접힌 대화는 **나를 막지 않는다** — 막는 말이 있으면
-   * `agentExchange::blocksHuman` 이 애초에 접지 않으므로, 접힌 줄에 강조가 서는 경우는
+   * `agentExchange::addressesHuman` 이 애초에 접지 않으므로, 접힌 줄에 강조가 서는 경우는
    * 정의상 없다. 진하게 하고 싶으면 `text-fg-muted` 까지가 예산이다.
    */
   it('접힌 주고받기 줄은 강조색을 쓰지 않는다 — 나를 막지 않는 말이다', () => {
     expect(read('components/AgentExchange.tsx')).not.toContain('accent');
   });
+});
+
+/**
+ * **갤러리의 강조 카드는 하나뿐이다** — 기준자에 예산을 박는다.
+ *
+ * 갤러리는 다른 화면을 재는 자다: *"여덟 가지 말과 그 경계 상태. 여기가 깨지면 어휘가
+ * 깨진 것이다."* 그래서 강조 예산이 새는지를 **가장 먼저** 여기서 잰다 — 한 화면에 여덟
+ * 가지가 다 서 있으므로, 예산이 새면 다른 어느 화면보다 먼저 여기서 둘째 강조가 보인다.
+ *
+ * 실측 회귀(v0.1.52): 에이전트가 하나도 없는 계정에서 *"에이전트에게 간 것"* 칸이
+ * *"나에게 온 것"* 과 **픽셀 단위로 같아졌다.** 수신자를 만드는 폴백이 `undefined` 를
+ * `{ kind: 'human' }` 으로 바꿨고, 그래서 강조 카드가 **둘**이 됐다 — 그 칸 자신이
+ * *"무채색. 읽히되 누를 수 없다(규칙 04)"* 라고 적어 둔 자리에서. 기준자가 규칙과 반대로
+ * 그려지면 그것으로 잰 판정이 전부 흔들리므로, 이 단정이 그 자리를 잠근다.
+ *
+ * **계정 목록에 관계없이** 재는 것이 요점이다: 앞의 결함은 에이전트가 있을 때는 보이지
+ * 않았고 없을 때만 나타났다. 그래서 셋을 다 돌린다.
+ */
+describe('컴포넌트 갤러리 — 강조 카드는 하나뿐이다', () => {
+  const AGENTS = {
+    'a-forge': acc('a-forge', 'forge', 'agent', false, { ownerAccountId: ME }),
+    'a-codex': acc('a-codex', 'codex', 'agent'),
+  };
+
+  /** 강조 배경(`bg-accent-surface`)을 입은 카드 수. 이 화면의 강조 예산이 곧 이 숫자다. */
+  const accentCards = (): number =>
+    document.querySelectorAll('[data-testid="ask-card"].bg-accent-surface').length;
+
+  for (const [label, accounts] of [
+    ['에이전트 없음', {}],
+    ['에이전트 하나', { 'a-forge': AGENTS['a-forge'] }],
+    ['에이전트 둘', AGENTS],
+  ] as const) {
+    it(`${label} — 강조 카드가 하나다`, () => {
+      useActiveStore.getState().set({ me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me'), ...accounts } });
+      render(<GallerySettings />);
+
+      // 여덟 가지가 다 서 있는데 강조는 하나 — 그것이 "나를 막는 것만 강조를 받는다"다.
+      expect(accentCards()).toBe(1);
+
+      /**
+       * 강조를 받는 것이 **바로 그 칸**인지도 잰다. 개수만 세면 강조가 엉뚱한 칸으로
+       * 옮겨 가도 통과한다 — "나에게 온 것"이 무채색이 되고 "남에게 간 것"이 강조를
+       * 받으면 개수는 여전히 하나다.
+       */
+      const cards = screen.getAllByTestId('ask-card');
+      expect(cards.map((c) => c.dataset.forMe)).toEqual(['true', 'false', 'true']);
+      // 강조를 받는 유일한 카드는 **첫째**(나에게 왔고 아직 안 답한 것)다.
+      expect(cards[0]!.className).toContain('bg-accent-surface');
+      // 남에게 간 것은 무채색이고 **누를 수 없다**(규칙 04) — 색만 맞고 눌리면 반쪽이다.
+      expect(cards[1]!.className).toContain('bg-surface-agent');
+      expect(cards[1]!.querySelectorAll('button:not([disabled])')).toHaveLength(0);
+    });
+  }
 });

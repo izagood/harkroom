@@ -40,14 +40,16 @@ export function UpdateToast() {
       role="status"
       className="fixed bottom-4 right-4 z-50 flex w-72 items-center gap-2 rounded-lg border border-accent-brand bg-surface-raised px-3 py-2 shadow-lg"
     >
-      <p className="min-w-0 flex-1 truncate text-[13px] text-fg">
+      <p className="min-w-0 flex-1 truncate text-body text-fg">
         {installing ? `Installing v${status.version}…` : `v${status.version} available`}
       </p>
       <button
         type="button"
         disabled={installing}
         onClick={() => void install(status.version)}
-        className="shrink-0 rounded bg-accent px-2 py-1 text-xs font-semibold text-fg-on-strong disabled:bg-transparent disabled:text-fg-subtle"
+        // 옆 문구가 이미 본문단 13px 이다 — 한 줄 안의 버튼을 아랫단으로 내리면 그 줄이
+        // 두 단으로 갈린다. 이 팝업은 문구와 버튼 하나가 전부인 자리다.
+        className="shrink-0 rounded bg-accent px-2 py-1 font-semibold text-fg-on-strong disabled:bg-transparent disabled:text-fg-subtle"
       >
         Update
       </button>

@@ -77,7 +77,7 @@ export function ThreadParticipants({ messages, live }: { messages: MessageRow[];
           <button
             data-testid="terminal-picker"
             aria-expanded={open}
-            className="rounded px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover"
+            className="rounded px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
             onClick={() => setOpen((v) => !v)}
           >
             터미널 ▾
@@ -92,7 +92,7 @@ export function ThreadParticipants({ messages, live }: { messages: MessageRow[];
                 <li key={a.id}>
                   <button
                     data-testid={`terminal-open-${a.handle}`}
-                    className="w-full px-3 py-1 text-left text-[11px] hover:bg-surface-hover"
+                    className="w-full px-3 py-1 text-left text-meta hover:bg-surface-hover"
                     onClick={() => {
                       const m = lastOf(a.id);
                       set({

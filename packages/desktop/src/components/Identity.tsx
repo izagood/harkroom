@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { useActiveStore } from '../state/communities';
 import type { AccountStatus, AccountView, AgentTeamRow, HandleGroupRow } from '@murmur/shared';
 import { getController } from '../state/controller';
 
@@ -24,12 +23,12 @@ import { getController } from '../state/controller';
  *   모든 kind 에서 정사각 상자 하나다. 사람은 **지금의 둥근 아바타 그대로**(이 variant
  *   에서 사람 쪽 마크업은 한 글자도 바뀌지 않는다 — 넘친 것은 에이전트 쪽이었다),
  *   에이전트는 봇 글리프만(소유자 핸들·가운뎃점 없음). `overflow-hidden`, `flex-wrap` 없음.
- * - `badge`: 이름 옆 자리(메시지 이름줄, 컴포저 멘션 후보, 디렉터리 행). 에이전트는 지금의
- *   인라인 배지 그대로 — `#181` 이 소유자를 여기에 넣은 결정은 유효하다. **자리가 잘못됐던
- *   것이지 표시가 잘못된 게 아니다.** 기본값을 `badge` 로 두는 이유도 이것이다:
- *   새 호출자가 variant 를 잊으면 소유자가 사라지는 쪽이 아니라 남는 쪽으로 떨어진다.
- *   **사람은 이 자리에서 아무것도 그리지 않는다(#365)** — 이 자리는 "이 작성자가 무엇인가"를
- *   덧붙이는 표식이고 사람에게는 덧붙일 것이 없다. 사람 아바타가 서는 자리는 `avatar` 다.
+ * - `badge`: 이름 옆 자리. **이제 아무것도 그리지 않는다 — 사람도, 에이전트도.**
+ *   #365 가 사람 쪽에서 지운 것을 에이전트에도 적용했다: 화면은 작성자가 사람인지
+ *   에이전트인지 말하지 않는다. `#181` 이 소유자를 여기 넣은 결정은 그 전제 위에 있었고,
+ *   전제가 바뀌었다 — 종류·소유자·하네스는 프로필(#475)이 답한다.
+ *   기본값을 `badge` 로 두는 이유가 여기서 뒤집힌다: 이제 variant 를 잊은 호출자는
+ *   **지운 표시를 되살리는 쪽이 아니라 아무것도 안 그리는 쪽**으로 떨어진다.
  *
  * 크기는 호출자가 `className` 으로 준다(`h-8 w-8` 등). 그래서 두 kind 의 기본 상자
  * 크기를 `h-5 w-5` 로 **같게** 둔다 — `h-full` 로 부모에 기대면 크기를 주지 않는
@@ -128,30 +127,64 @@ function useAvatarUrl(accountId: string | null, attachmentId: string | null): st
  * 났다). 단을 지키려고 그림을 망가뜨리지 않는다.
  *
  * 회귀선은 `test/typeScale.test.ts` 이고, 이 자리들을 예외로 적어 뒀다.
+ *
+ * ## 껍데기 span 은 전부 `relative` 다 — 장식이 아니다
+ *
+ * 이 컴포넌트가 이름을 내는 방식은 `sr-only` 이고, Tailwind 의 그것은 **`position:
+ * absolute`** 다. 껍데기에 `relative` 가 없으면 그 스팬의 컨테이닝 블록이 **초기 컨테이닝
+ * 블록(ICB)** 이 되고, 그러면 조상에 걸린 `overflow-hidden` 이 **하나도 안 듣는다** —
+ * 자르는 상자는 컨테이닝 블록 사슬 위에 있을 때만 자르기 때문이다.
+ *
+ * 실측 2026-09-08(창 1400×578, 인박스 30줄): 인박스 줄마다 선 이 아바타의 `sr-only` 가
+ * 목록 길이만큼 문서 좌표에 깔려 `documentElement.scrollHeight` 를 578 → **2450** 으로
+ * 늘렸다. 그러면 문서가 스크롤 가능해지고, `scrollIntoView` 한 번에 **앱 껍데기 전체가
+ * 창 위로 올라간다**(상단 바·채널 머리가 잘리고 되돌릴 스크롤바도 없다).
+ *
+ * 인박스가 `Overlay`(`fixed` = positioned 조상)를 벗기 전에는 그 울타리에 가려 안 보였다.
+ * 사이드바·메시지 줄은 우연히 `relative` 가 있어 무사했고 — 우연에 기대지 않는다.
+ * 오프셋을 주지 않으므로 그림은 한 픽셀도 바뀌지 않는다. 회귀선은
+ * `test/shellScroll.test.tsx`.
  */
 export function Identity({ account, className = '', variant = 'badge' }: IdentityProps) {
-  // 에이전트에게만 사진을 받지 않는다 — 에이전트는 스스로 올릴 수단이 없고(#159 범위 밖),
-  // 그 자리는 글리프가 지킨다. 훅은 조건부로 부를 수 없으므로 인자로 걸러 낸다.
-  // #365 로 사람의 `badge` 가 아무것도 그리지 않게 되었으므로 variant 도 같이 걸러 낸다 —
-  // 그리지 않는 자리에서 바이트를 받으면 사람 100 명이 선 디렉터리가 아무것도 안 보이면서
-  // 왕복 100 번을 낸다. 캐시가 있어 첨부당 한 번이지만, 그 한 번도 필요 없는 왕복이다.
-  const human = account && account.kind === 'human' && variant === 'avatar';
+  // 사람과 에이전트 **둘 다** 사진을 받는다. 훅은 조건부로 부를 수 없으므로 인자로 걸러 낸다.
+  //
+  // 여기가 `kind === 'human'` 으로 좁혀져 있었다. 그때는 참이었지만(#159 는 사람만 올렸다)
+  // Task 15-4 가 에이전트 쓰기 경로(`PUT /accounts/agents/:id/avatar`)를 열면서 거짓이
+  // 되었다 — 그 커밋은 라우트·api·컨트롤러·설정 화면을 다 만들고 **읽는 자리인 여기만
+  // 건드리지 않았다.** 결과는 조용한 실패다: 소유자가 사진을 올리면 서버는 200 을 주고
+  // DB 도 바뀌는데 아래 에이전트 분기의 `avatarUrl` 은 영원히 null 이라 화면은 이니셜
+  // 색상 그대로다. 사람에게는 "업로드가 안 먹었다"로만 보인다.
+  //
+  // variant 는 그대로 걸러 낸다. `badge` 자리는 이제 **아무것도** 그리지 않는다(사람은
+  // #365, 에이전트는 #455) — 그리지 않는 자리에서 바이트를 받으면
+  // 100 명이 선 디렉터리가 아무것도 안 보이면서 왕복 100 번을 낸다. 캐시가 있어 첨부당 한
+  // 번이지만, 그 한 번도 필요 없는 왕복이다.
+  const showsPhoto = account !== undefined && variant === 'avatar';
   const avatarUrl = useAvatarUrl(
-    human ? account.id : null,
-    human ? account.avatarAttachmentId : null,
+    showsPhoto ? account.id : null,
+    showsPhoto ? account.avatarAttachmentId : null,
   );
 
-  // #181 소유자는 계정 디렉터리에서 푼다. `getState()` 가 아니라 **구독**이어야 한다 —
-  // 디렉터리는 로그인 뒤에 채워지고 계정 변경 이벤트로 갱신되므로, 스냅샷으로 읽으면
-  // 먼저 그려진 메시지의 소유자가 영영 안 붙는다. 훅은 조건 밖 최상단에서만 부를 수 있다.
-  const accounts = useActiveStore((s) => s.accounts);
+  // **`badge` 자리는 이제 아무것도 그리지 않는다 — 사람도, 에이전트도.**
+  // #365 가 사람 쪽에서 먼저 지운 것을 에이전트에도 그대로 적용한다: 화면은 작성자가
+  // 사람인지 에이전트인지 **말하지 않는다**(design doc 2, #455). 거터 아바타가 이미
+  // 둘을 같은 모양으로 세우고 있는데 이름 옆에서만 🤖 와 소유자 핸들이 붙으면, 아바타로
+  // 지운 구분을 배지가 도로 그린다. 종류·소유자·하네스는 프로필(#475)이 답한다.
+  //
+  // `!account` 보다 **먼저** 걸러 낸다. 이 자리에서는 "모르는 계정"조차 그릴 것이 없다 —
+  // 물음표 원은 아바타 자리의 표시이지 이름 옆 표시가 아니다.
+  //
+  // variant 와 기본값은 남긴다. 지금 이 저장소에 `badge` 를 넘기는 호출자는 없지만,
+  // 기본값이 "아무것도 안 그리는 쪽"이면 variant 를 잊은 새 호출자가 지운 표시를
+  // 되살리는 일이 없다 — #365 가 사람 쪽에서 같은 이유로 내린 결정이다.
+  if (variant === 'badge') return null;
 
   // **"없다"와 "모른다"는 다르다.** 계정 디렉터리에 없는 id 는 후자이고, 아무것도
   // 그리지 않으면 "에이전트가 아니다"로 읽힌다 — docs/design.md 4절의 거울상이다.
   if (!account) {
     return (
       <span
-        className={`inline-flex h-5 w-5 items-center justify-center rounded-full bg-fg-subtle text-[10px] font-semibold text-fg-on-strong ${className}`}
+        className={`relative inline-flex h-5 w-5 items-center justify-center rounded-full bg-fg-subtle text-[10px] font-semibold text-fg-on-strong ${className}`}
       >
         <span aria-hidden="true">?</span>
         <span className="sr-only">알 수 없는 계정</span>
@@ -159,94 +192,25 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
     );
   }
 
-  if (account.kind === 'agent') {
-    // #277: avatar variant 는 거터 자리 — 봇 글리프만, 소유자 핸들·가운뎃점 없음.
-    // 상자 크기·모양은 사람 쪽(아래)과 같은 `h-5 w-5 rounded-full` 이다. 한 열에 사람과
-    // 에이전트가 섞여 서는 자리(거터·참여자 띠)라 둘이 다른 크기면 열이 들쭉날쭉해진다.
-    // `overflow-hidden` 이 이 자리의 계약이다 — 무엇이 들어와도 상자를 넘지 않는다.
-    if (variant === 'avatar') {
-      /**
-       * **대화에서는 "이건 에이전트다"라고 말하지 않는다**(design doc 2, #455).
-       * 사람과 **같은 아바타**로 서고, 구별은 색과 이름이 한다 — 종류·소유자·하네스는
-       * 프로필을 열었을 때 나온다.
-       *
-       * 이 분기가 `handleColor()` 를 부르지 않아 alpha·beta·gamma 가 **배경색 없는 🤖 하나**
-       * 를 공유했다. 참여자 줄(Task 8)이 아바타 셋을 나란히 세우면서 그 결함이 정면으로
-       * 드러났다 — 같은 그림 셋이 서서 누가 누구인지 구별되지 않았다.
-       *
-       * 아래 사람 분기와 **같은 마크업**을 쓴다. 한 열에 사람과 에이전트가 섞여 서는
-       * 자리(거터·참여자 띠)이므로 둘이 다르면 열이 들쭉날쭉해진다. 사진도 같은 규칙으로
-       * 받는다: 에이전트에게 얼굴을 주는 것이 이 문서의 요지다.
-       */
-      return (
-        <span
-          className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-fg-on-strong ${avatarUrl ? 'bg-surface-hover' : handleColor(account.handle)} ${className}`}
-        >
-          {avatarUrl ? (
-            <img data-testid="identity-avatar" src={avatarUrl} alt="" className="h-full w-full object-cover" />
-          ) : (
-            <span aria-hidden="true">{account.handle.charAt(0).toUpperCase()}</span>
-          )}
-          <span className="sr-only">{account.handle}</span>
-        </span>
-      );
-    }
-
-    // badge variant (기본값): 이름 옆 자리 — 지금의 인라인 배지 그대로.
-    // #181 소유자 표시. `null` 이 정상 상태다 — `008_agent_runner.sql` 이 backfill 없이
-    // 컬럼을 더했고 "추측 소유자는 소유자가 아니다"가 그 이유였다. 그래서 없을 때는
-    // **아무것도 그리지 않는다**: "운영자 미상" 같은 문구를 넣으면 화면 대부분이 그
-    // 문구로 채워져 아무것도 구분하지 못하고, 서버가 모르는 것을 없다고 단정하게 된다.
-    // 소유자 계정이 지워졌으면 컬럼이 `on delete set null` 이라 같은 자리로 온다.
-    const owner = account.ownerAccountId ? accounts[account.ownerAccountId] : undefined;
-
-    // 접근성 이름을 **시각적으로 숨긴 텍스트**로 준다. 이모지만 두면 스크린리더가 "로봇
-    // 이모지"를 읽고 이전에 있던 `agent` 정보가 사라진다. `role="img"` + `aria-label` 도
-    // 방법이지만 **질의 표면을 전역으로 바꾼다** — 이 저장소에는 `queryByRole('img')` 로
-    // "SVG 미리보기가 없다"를 확인하는 보안 테스트가 있고, 장식 배지가 그것을 오염시킨다.
-    // **강조색을 쓰지 않는다**(#488 B2). 이 배지는 이제 디렉터리와 자동완성에만 남는데,
-    // 둘 다 답하는 물음이 "누가 있나 / 누구 것인가"이지 **나를 막는 것**이 아니다
-    // (규칙 04). 강조색은 그 자리에만 쓰는 색이다.
-    return (
-      <span className={`inline-flex flex-wrap items-center gap-1 rounded bg-surface-sunken px-1 text-[11px] text-fg-muted ${className}`}>
-        <span aria-hidden="true">🤖</span>
-        <span className="sr-only">에이전트</span>
-        {owner && (
-          <>
-            {/* 가운뎃점은 장식이다 — 스크린리더에는 "소유자"라는 말이 대신 간다. */}
-            <span aria-hidden="true">·</span>
-            <span className="sr-only">소유자</span>
-            <span title={`소유자: ${owner.displayName || owner.handle}`}>@{owner.handle}</span>
-          </>
-        )}
-      </span>
-    );
-  }
-
-  // 사람 계정.
+  // **여기서 종류를 가르지 않는다.** 바로 위에 `kind === 'agent'` 분기가 있었고, 그 안의
+  // 마크업은 이 아래와 한 글자도 다르지 않았다 — #465(같은 아바타)와 #575(에이전트도
+  // 사진을 받는다)가 차례로 두 분기를 같은 것으로 만든 뒤, 배지가 빠지면서 마지막 차이도
+  // 없어졌다. 같은 그림을 두 곳에서 유지하면 한쪽만 바뀐다(이 파일이 반복해서 겪은 결함
+  // 형태다). 종류·소유자·하네스는 프로필(#475)이 답한다.
   //
-  // #365: 사람의 `badge` 는 **아무것도 아니다**. 이 자리가 답하는 질문은 "이 작성자가
-  // 무엇인가"이고, 에이전트에게는 🤖+소유자가 그 답이지만 사람에게는 덧붙일 것이 없다 —
-  // 이름은 이미 이름줄(`author-name`)에 있으므로, 여기 그린 아바타는 거터의 것을 한 번 더
-  // 세운 것뿐이었다. `handle` 을 sr-only 로 내보내므로 스크린리더에도 두 번 읽혔다.
+  // #365 가 사람의 `badge` 를 지웠고 지금은 그 규칙이 에이전트에도 걸린다(위 조기 반환).
+  // 여기 남은 것은 `avatar` 자리뿐이다.
   //
   // 이 자리에 있던 #277 의 주석은 여기에 variant 분기를 넣지 않은 근거였다: "고칠 것 없는
   // 자리를 바꿔 `rounded-full` 이 `rounded` 로 갈리는 식의 무관한 회귀만 생긴다."
   // **그 판단은 그때 기준으로 틀리지 않았다** — 사람 아바타는 32px 거터를 넘친 적이 없다.
-  // 다만 #277 이 본 것은 "넘치는가"이고 "그려야 하는가"는 검토되지 않았다. 지금 바뀌는
-  // 것은 후자뿐이다: 아래 `avatar` 분기의 마크업은 한 글자도 바뀌지 않았고(`rounded-full`
-  // ·`overflow-hidden` 그대로), 그 주석이 경고한 회귀는 #277 회귀선이 계속 지킨다.
+  // 넘친 것은 에이전트 쪽 배지였고, 그 배지는 이제 없다. `rounded-full`·`overflow-hidden`
+  // 은 그대로이며 #277 회귀선이 계속 지킨다.
   //
-  // 기본값 `badge` 는 그대로 둔다. 사람 쪽에서는 그 기본값이 이제 "정보가 남는 쪽"이
-  // 아니라 "아무것도 없는 쪽"으로 떨어지지만, 사람 아바타가 서는 자리는 거터·참여자 띠·
-  // 프로필 칸뿐이고 그 호출자들은 이미 `variant="avatar"` 를 명시한다. 기본값을 뒤집으면
-  // 대신 소유자 표시를 잊는 에이전트 호출자가 생겨 #181 이 되돌아간다.
-  if (variant === 'badge') return null;
-
   // `overflow-hidden` 은 이 자리에도 걸려 있다 — 사진(#159)이 상자를 넘지 않아야 한다.
   return (
     <span
-      className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-fg-on-strong ${avatarUrl ? 'bg-surface-hover' : handleColor(account.handle)} ${className}`}
+      className={`relative inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-fg-on-strong ${avatarUrl ? 'bg-surface-hover' : handleColor(account.handle)} ${className}`}
     >
       {avatarUrl ? (
         // `alt` 를 **비운다**. 접근성 이름은 아래 sr-only 가 이미 내고 있고, 사진에 핸들을
@@ -279,7 +243,7 @@ export function GroupBadge({ group, className = '' }: { group: HandleGroupRow; c
   return (
     <span
       data-testid={`group-badge-${group.handle}`}
-      className={`inline-flex items-center gap-1 rounded bg-warning-surface-strong px-1 text-[11px] text-warning ${className}`}
+      className={`relative inline-flex items-center gap-1 rounded bg-warning-surface-strong px-1 text-meta text-warning ${className}`}
     >
       <span aria-hidden="true">👥</span>
       <span className="sr-only">집합</span>
@@ -308,7 +272,7 @@ export function TeamBadge({ team, className = '' }: { team: AgentTeamRow; classN
   return (
     <span
       data-testid={`team-badge-${team.name}`}
-      className={`inline-flex items-center gap-1 rounded bg-surface-hover px-1 text-[11px] text-fg-muted ${className}`}
+      className={`relative inline-flex items-center gap-1 rounded bg-surface-hover px-1 text-meta text-fg-muted ${className}`}
     >
       <span aria-hidden="true">🤖</span>
       <span className="sr-only">팀</span>
@@ -349,7 +313,7 @@ export function StatusMark({ account, className = '' }: {
       data-testid={`status-${account.id}`}
       data-status={account.status}
       title={name}
-      className={`inline-flex items-center text-[11px] leading-none ${className}`}
+      className={`relative inline-flex items-center text-meta leading-none ${className}`}
     >
       <span aria-hidden="true">{mark.glyph}</span>
       <span className="sr-only">{name}</span>

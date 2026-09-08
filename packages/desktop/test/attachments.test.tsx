@@ -398,3 +398,133 @@ describe('dropping files on the composer', () => {
     }
   });
 });
+
+/**
+ * 보내기 전 칩의 작은 미리보기(#첨부 미리보기).
+ *
+ * 첨부 칩에 이름과 크기만 있으면 **무엇을 붙였는지 확인할 수 없다** — 붙여넣은 스크린샷은
+ * 이름이 시각뿐이라 서로 거의 같고, 잘못된 장을 붙인 채 보내도 보내기 전에는 티가 없다.
+ * 미리보기는 메시지에 그리는 것과 같은 화이트리스트를 쓴다: 칩이 SVG 로 뚫리면 안 된다.
+ */
+describe('보내기 전 첨부 칩의 미리보기', () => {
+  const pick = (name: string, type: string) => {
+    const input = screen.getByLabelText('Attach a file') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['content'], name, { type })] } });
+  };
+
+  it('이미지를 붙이면 칩 안에 작은 그림이 선다', async () => {
+    fakeController({ upload: vi.fn(async () => att({ contentType: 'image/png', filename: 'shot.png' })) });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('shot.png', 'image/png');
+
+    const thumb = await screen.findByTestId('attachment-thumb');
+    // 자리만 잡고 바이트가 안 온 것은 미리보기가 아니다 — src 가 있어야 눈에 보인다.
+    expect(thumb.getAttribute('src')).toBeTruthy();
+  });
+
+  // 이름을 두 번 읽히면 칩 하나가 파일 두 개처럼 들린다 — 이름은 이미 옆에 글자로 있다.
+  it('그림은 이름을 되풀어 읽지 않는다', async () => {
+    fakeController({ upload: vi.fn(async () => att({ contentType: 'image/png', filename: 'shot.png' })) });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('shot.png', 'image/png');
+
+    expect((await screen.findByTestId('attachment-thumb')).getAttribute('alt')).toBe('');
+    expect(screen.getAllByText(/shot\.png/)).toHaveLength(1);
+  });
+
+  // 이미지가 아닌 것은 그릴 수 없다. 그런데도 바이트를 받으면 첨부마다 헛왕복이 붙는다.
+  it('이미지가 아닌 첨부는 바이트를 받지 않고 📎 로 남는다', async () => {
+    const c = fakeController({ upload: vi.fn(async () => att({ filename: 'note.txt' })) });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('note.txt', 'text/plain');
+
+    await screen.findByText(/note\.txt/);
+    expect(c.fetchAttachment).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('attachment-thumb')).toBeNull();
+  });
+
+  // SVG 는 `<script>` 를 담을 수 있다. 칩이 작다는 이유로 화이트리스트가 갈리면 안 된다.
+  it('SVG 는 칩에서도 그리지 않는다', async () => {
+    const c = fakeController({ upload: vi.fn(async () => att({ contentType: 'image/svg+xml', filename: 'x.svg' })) });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('x.svg', 'image/svg+xml');
+
+    await screen.findByText(/x\.svg/);
+    expect(c.fetchAttachment).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('attachment-thumb')).toBeNull();
+  });
+
+  // 미리보기를 못 받아도 칩은 남아야 한다 — 첨부가 사라진 것처럼 보이면 다시 붙인다.
+  it('미리보기를 못 받아도 칩은 이름을 지킨다', async () => {
+    fakeController({
+      upload: vi.fn(async () => att({ contentType: 'image/png', filename: 'shot.png' })),
+      fetchAttachment: vi.fn(async () => { throw new Error('network error'); }),
+    });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('shot.png', 'image/png');
+
+    expect(await screen.findByText(/shot\.png/)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByTestId('attachment-thumb')).toBeNull());
+  });
+
+  // 실패한 그림 자리를 "원래 미리보기가 없는 파일" 과 같은 📎 로 덮으면, 사람은 잘못 붙인
+  // 장을 확인할 기회를 잃은 채 그대로 보낸다. 본문 미리보기와 같은 규칙으로 갈라 말한다.
+  it('미리보기를 못 받은 것과 원래 없는 것을 가려 말한다', async () => {
+    fakeController({
+      upload: vi.fn(async () => att({ contentType: 'image/png', filename: 'shot.png' })),
+      fetchAttachment: vi.fn(async () => { throw new Error('network error'); }),
+    });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('shot.png', 'image/png');
+
+    // 문구가 칩 **안에** 있어야 어느 첨부가 실패했는지 말해 준다.
+    await screen.findByText('(미리보기 실패)');
+    const chip = screen.getByRole('button', { name: /remove shot\.png/i }).parentElement;
+    expect(chip?.textContent).toContain('(미리보기 실패)');
+  });
+
+  it('원래 미리보기가 없는 첨부는 실패라고 말하지 않는다', async () => {
+    fakeController({ upload: vi.fn(async () => att({ filename: 'note.txt' })) });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('note.txt', 'text/plain');
+
+    await screen.findByText(/note\.txt/);
+    expect(screen.queryByText('(미리보기 실패)')).toBeNull();
+  });
+
+  it('미리보기가 성공하면 실패 문구는 남지 않는다', async () => {
+    fakeController({ upload: vi.fn(async () => att({ contentType: 'image/png', filename: 'shot.png' })) });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('shot.png', 'image/png');
+
+    await screen.findByTestId('attachment-thumb');
+    expect(screen.queryByText('(미리보기 실패)')).toBeNull();
+  });
+
+  /**
+   * 바이트가 도착하는 순간 📎(11px)가 그림(24px)으로 바뀌면 칩 줄이 통째로 밀려 내려간다 —
+   * 지우기(×)를 누르려던 손이 빗나간다. 그래서 그림이 **올 자리**는 미리 잡아 둔다.
+   */
+  it('그림이 올 자리는 미리 잡아 칩이 튀지 않게 한다', async () => {
+    const hold = new Promise<Blob>(() => {});
+    fakeController({
+      upload: vi.fn(async () => att({ contentType: 'image/png', filename: 'shot.png' })),
+      fetchAttachment: vi.fn(() => hold),
+    });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('shot.png', 'image/png');
+
+    const chip = (await screen.findByRole('button', { name: /remove shot\.png/i })).parentElement;
+    // 칩의 첫 칸이 그림 자리다 — 바이트가 오기 전에도 그림과 같은 높이를 차지해야 한다.
+    expect(chip?.firstElementChild?.className).toContain('h-6');
+  });
+});
