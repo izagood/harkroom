@@ -528,3 +528,135 @@ describe('보내기 전 첨부 칩의 미리보기', () => {
     expect(chip?.firstElementChild?.className).toContain('h-6');
   });
 });
+
+/**
+ * 그림을 눌러 크게 보기(라이트박스).
+ *
+ * 본문의 미리보기는 `max-h-64` 로 줄여 그린다 — 스크린샷을 보낸 사람이 보라고 보낸 것은
+ * 대개 그 안의 글자인데, 줄인 그림에서는 읽히지 않는다. 크게 볼 자리가 없으면 사람은
+ * 그림을 디스크에 저장해 시스템 뷰어로 열고, 그 왕복에서 채팅을 떠난다.
+ */
+describe('첨부 이미지를 눌러 크게 보기', () => {
+  const image = (over: Partial<AttachmentRow> = {}) =>
+    att({ contentType: 'image/png', filename: 'shot.png', ...over });
+
+  const renderImage = async (over: Partial<AttachmentRow> = {}) => {
+    render(<MessageItem message={withAttachments([image(over)])} />);
+    return screen.findByRole('button', { name: /크게 보기/ });
+  };
+
+  // 누르는 자리는 그림 자체다 — 옆에 따로 링크를 두면, 손이 이미 올라간 곳 밖에서
+  // 누를 곳을 다시 찾아야 한다.
+  it('그림을 누르면 확대 보기가 열린다', async () => {
+    fakeController();
+    fireEvent.click(await renderImage());
+
+    const dialog = screen.getByRole('dialog', { name: 'shot.png' });
+    expect(dialog.querySelector('[data-testid="attachment-full"]')).toBeTruthy();
+  });
+
+  // 열기 전에는 떠 있으면 안 된다 — 채널을 열자마자 그림이 화면을 덮으면 목록을 읽을 수 없다.
+  it('누르기 전에는 열려 있지 않다', async () => {
+    fakeController();
+    await renderImage();
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  // 키보드로도 열려야 한다: `div` 에 onClick 만 달면 마우스만 그림을 볼 수 있다.
+  it('그림 자리는 버튼이라 Tab 으로 닿는다', async () => {
+    fakeController();
+    const opener = await renderImage();
+
+    expect(opener.tagName).toBe('BUTTON');
+  });
+
+  /**
+   * 닫는 길은 `Overlay` 가 정한다 — Esc · 스크림. 이 케이스는 그 프리미티브를 **실제로
+   * 쓰는지**를 잰다: 여기서 스크림·Esc 를 따로 구현하면 "겹쳐 열려도 맨 위 하나만
+   * 닫힌다"는 규칙이 이 자리에서만 갈린다.
+   */
+  it('Esc 로 닫힌다', async () => {
+    fakeController();
+    fireEvent.click(await renderImage());
+    expect(screen.getByRole('dialog')).toBeTruthy();
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('바깥(스크림)을 눌러도 닫힌다', async () => {
+    fakeController();
+    fireEvent.click(await renderImage());
+    const scrim = screen.getByRole('dialog').parentElement as HTMLElement;
+
+    fireEvent.click(scrim);
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('닫기 버튼으로도 닫힌다', async () => {
+    fakeController();
+    fireEvent.click(await renderImage());
+
+    fireEvent.click(screen.getByRole('button', { name: '확대 보기 닫기' }));
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  /**
+   * 확대할 그림은 이미 본문에 그려진 그것이다. 다시 받으면 클릭마다 왕복이 붙고,
+   * objectURL 의 수명을 두 곳이 나눠 갖게 된다 — 닫는 쪽이 revoke 한 URL 을 본문이
+   * 계속 가리키면 미리보기가 빈 자리가 된다.
+   */
+  it('확대해도 바이트를 다시 받지 않는다', async () => {
+    const c = fakeController();
+    fireEvent.click(await renderImage());
+
+    await screen.findByTestId('attachment-full');
+    expect(c.fetchAttachment).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 이미지는 칩이 아니라 그림으로 그려지므로, 확대 보기 말고는 **저장할 자리가 없다** —
+   * 미리보기가 되는 첨부일수록 내려받을 길이 없어지는 것이 이 버튼이 있는 이유다.
+   */
+  it('확대 보기에서 그림을 저장할 수 있다', async () => {
+    const c = fakeController();
+    fireEvent.click(await renderImage());
+
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
+
+    expect(c.saveAttachment).toHaveBeenCalledWith(expect.objectContaining({ id: 'a1' }));
+  });
+
+  it('이름과 크기를 함께 말한다 — 어느 파일을 보고 있는지', async () => {
+    fakeController();
+    fireEvent.click(await renderImage({ sizeBytes: 1234 }));
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.textContent).toContain('shot.png');
+    expect(dialog.textContent).toContain('1.2 KB');
+  });
+
+  // 그릴 수 없는 첨부(칩)를 누르는 것은 저장이다 — 확대 보기를 열면 안 된다.
+  it('이미지가 아닌 첨부에는 확대 보기가 없다', async () => {
+    fakeController();
+    render(<MessageItem message={withAttachments([att()])} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /note\.txt/ }));
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: /크게 보기/ })).toBeNull();
+  });
+
+  // 바이트를 못 받았으면 확대할 것도 없다 — 빈 창을 열면 실패를 성공처럼 보이게 한다.
+  it('미리보기를 못 받으면 확대 보기 자리도 없다', async () => {
+    fakeController({ fetchAttachment: vi.fn(async () => { throw new Error('network error'); }) });
+    render(<MessageItem message={withAttachments([image()])} />);
+
+    await screen.findByText('(불러오기 실패)');
+    expect(screen.queryByRole('button', { name: /크게 보기/ })).toBeNull();
+  });
+});
