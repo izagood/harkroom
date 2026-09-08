@@ -24,7 +24,7 @@ import { runnerReason, runnerStatusLabel } from './RunnerStatus';
 import { AgentGrid } from './settings/AgentGrid';
 // 띄울 권한 판정은 `lib/` 하나가 낸다 — 설정 › 에이전트가 같은 판정을 쓴다.
 import { canRelaunchAgent } from '../lib/relaunchGate';
-import { faceState, type FaceState } from '../lib/faceState';
+import { faceState, isFaceGreyed, type FaceState } from '../lib/faceState';
 import { anyPresenceView, PRESENCE_LABEL, type PresenceView } from '../lib/presenceView';
 import type { SectionId } from './settings/sections';
 import type {
@@ -797,7 +797,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
               **상태는 사라지지 않는다**: 바깥 `span` 의 `title`(`stateLabel`)이 그 말을
               하고, 그것은 색이 못 하는 일이라 반드시 글자로 남아야 한다(`#443`).
             */}
-            <span aria-hidden="true" className={face === 'stopped' || face === 'unknown'
+            <span aria-hidden="true" className={isFaceGreyed(face)
               ? 'block grayscale brightness-[1.7] contrast-[0.55] opacity-90'
               : 'block'}
             >
