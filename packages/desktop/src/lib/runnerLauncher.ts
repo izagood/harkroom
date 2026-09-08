@@ -489,6 +489,14 @@ export class RunnerLauncher {
    * "죽은 뒤 다시 띄우지 않는다" 하나다. 그 사실은 화면 문구가 말한다.
    */
   private restarting = new Set<string>();
+  /**
+   * 회전이 도는 중인 에이전트. **재진입을 막는다**(2026-09-08 실측).
+   *
+   * 그날 감사 로그에 회전이 1초 간격으로 두 번 찍혔다 — 두 번째가 첫 번째가 방금 발급한
+   * PAT 를 폐기했다. 사람이 ▶ 를 두 번 누르거나 두 자리(사이드바·설정)에서 누르면 그렇게
+   * 된다. 그 사이에 뜬 러너는 이미 폐기된 PAT 를 들고 있고, 그 상태가 다시 이 사고의 모양이다.
+   */
+  private reissuing = new Set<string>();
   /** 회수 대기 타이머(`waitForRetirement`). `dispose` 가 거둔다. */
   private retireWaits = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -840,7 +848,7 @@ export class RunnerLauncher {
     this.runners.delete(agent.id);
     this.runTokens.delete(agent.id);
 
-    const exited = await this.awaitRunnerExit(agent.id);
+    const exited = await this.awaitRunnerExit(agent.id, () => this.restarting.has(agent.id));
     if (this.disposed) return;
     if (!this.restarting.delete(agent.id)) {
       // 사람이 예약을 취소했다. 종료는 이미 일어났거나 일어날 것이고, 우리는 띄우지 않는다.
@@ -887,15 +895,19 @@ export class RunnerLauncher {
   /**
    * 장부에서 이 러너가 사라지거나 `alive: false` 가 될 때까지 기다린다.
    * 상한에 걸리면 `false` — 거짓으로 "죽었다"고 하지 않는다.
+   *
+   * `stillWanted` 는 **이 기다림이 아직 누군가의 것인가**다. 재기동은 사람이 예약을
+   * 취소했는지(`restarting`), 회전은 회전이 아직 도는지(`reissuing`)를 본다. 두 호출자가
+   * 같은 집합을 보게 두면 한쪽의 취소가 다른 쪽의 기다림을 조용히 끊는다.
    */
-  private async awaitRunnerExit(agentId: string): Promise<boolean> {
+  private async awaitRunnerExit(agentId: string, stillWanted: () => boolean): Promise<boolean> {
     const intervalMs = this.restartWait.intervalMs ?? 2_000;
     const timeoutMs = this.restartWait.timeoutMs ?? 15 * 60_000;
     const wait = this.restartWait.wait ?? ((ms: number) => new Promise<void>((r) => { setTimeout(r, ms); }));
     const deadline = this.now() + timeoutMs;
 
     for (;;) {
-      if (this.disposed || !this.restarting.has(agentId)) return false;
+      if (this.disposed || !stillWanted()) return false;
       let alive: boolean;
       try {
         const observation = await this.daemon.observe();
@@ -1049,7 +1061,19 @@ export class RunnerLauncher {
   async reissue(target: { agent: LaunchableAgent }): Promise<void> {
     const agentId = target.agent.id;
     if (this.disposed) return;
+    // 이미 도는 회전이 있으면 아무 일도 하지 않는다 — 두 번째 회전은 첫 번째가 방금
+    // 발급한 PAT 를 폐기한다(`reissuing` 주석의 실측).
+    if (this.reissuing.has(agentId)) return;
+    this.reissuing.add(agentId);
+    try {
+      await this.doReissue(target);
+    } finally {
+      this.reissuing.delete(agentId);
+    }
+  }
 
+  private async doReissue(target: { agent: LaunchableAgent }): Promise<void> {
+    const agentId = target.agent.id;
     const read = await this.secrets.read(agentId);
     if (!read.ok) {
       this.setState(agentId, {
@@ -1076,20 +1100,65 @@ export class RunnerLauncher {
 
     await this.secrets.write(agentId, { label: newLabel, token });
 
+    // ── 폐기 전에 **그 PAT 로 도는 러너가 정말 없는지** 확인한다 (2026-09-08 실측) ──────
+    //
+    // 앞 판본은 `this.stop(agentId)` 로 자식을 거뒀다고 믿고 곧바로 폐기했다. 그 핸들은
+    // **이 앱 세션이 띄운 자식만** 갖는다(`stop` 주석). 그날 드레인 중이던 러너는 앞
+    // 세대(옛 앱 번들이 띄운 것)라 그 맵에 없어 `stop()` 은 no-op 이었고, 폐기만 성공해
+    // 멀쩡히 턴을 돌던 러너의 자격증명이 발밑에서 사라졌다.
+    //
+    // 그래서 둘 다 한다: 자식 핸들이 있으면 그것으로, 없으면 **daemon 에게** 말한다
+    // (daemon 은 세대를 안다 — `DaemonObserver.kill` 주석이 정확히 그 자리를 적어 뒀다).
+    await this.stop(agentId);
+    let toldDaemon = true;
+    try {
+      await this.daemon.kill(agentId);
+    } catch {
+      // 못 전했다는 사실만 남긴다. 이때 폐기하면 안 되는 것이 요점이므로 아래에서
+      // `gone` 이 `false` 가 되고, 폐기는 미뤄진다.
+      toldDaemon = false;
+    }
+    // SIGTERM 은 graceful 이다 — 러너는 진행 중인 턴을 마친 뒤에 나간다. 그 시차가
+    // 이 결함의 전부이므로 **부재를 관측**한다(고정 sleep 이 아니다).
+    //
+    // 기다림을 화면에 적는다. 이 사고의 시작이 정확히 그 침묵이었다 — 카드가
+    // "활동 11분 전"에서 굳어 있었고 아무도 "턴을 마치는 중이다"를 말하지 않아 사람이
+    // 그것을 고장으로 읽고 눌렀다. `restart()` 가 같은 자리에서 같은 것을 한다.
+    this.setState(agentId, {
+      status: 'restarting', exitCode: null,
+      message: '새 PAT 를 받았다 — 옛 러너가 진행 중인 턴을 끝내고 물러나기를 기다린다',
+    });
+    const gone = toldDaemon && await this.awaitRunnerExit(agentId, () => this.reissuing.has(agentId));
+
     // 옛 것을 폐기한다. 여기서 실패하면 폐기되지 않은 PAT 가 남으므로 **삼키지 않는다** —
     // 자식은 새 PAT 로 다시 띄우되(새 PAT 는 이미 유효하다) 사람에게 남은 일을 말한다.
     let revokeError: string | null = null;
+    let deferredLabel: string | null = null;
     if (read.value && read.value.label !== newLabel) {
-      try {
-        await this.api.revokePat(agentId, read.value.label);
-      } catch (err) {
-        revokeError = errText(err);
+      if (gone) {
+        try {
+          await this.api.revokePat(agentId, read.value.label);
+        } catch (err) {
+          revokeError = errText(err);
+        }
+      } else {
+        deferredLabel = read.value.label;
       }
     }
 
-    await this.stop(agentId);
     await this.spawnRunner(target.agent, token);
-    if (revokeError) {
+    if (deferredLabel) {
+      // **미뤘다는 사실을 말한다.** 폐기되지 않은 PAT 가 남았고, 그것은 사람이 알아야
+      // 하는 상태다(바로 위 폐기 실패 경로와 같은 규율). 그리고 옛 러너가 왜 아직
+      // 사는지도 함께 적는다 — 그 사실을 안 적으면 사람은 이것을 고장으로 읽고 다시
+      // 누르며, 그 반복이 이 사고의 시작이었다.
+      this.setState(agentId, {
+        status: 'running', exitCode: null,
+        message: `새 PAT 로 다시 띄운다. 옛 PAT(${deferredLabel})는 폐기하지 않았다`
+          + ' — 그것으로 도는 러너가 진행 중인 턴을 마치는 중이다(끝나면 스스로 물러난다).'
+          + ' 지금 끊어야 한다면 설정에서 손으로 폐기해라 — 그 턴은 답을 남기지 못한다.',
+      });
+    } else if (revokeError) {
       this.setState(agentId, {
         status: 'running', exitCode: null,
         message: `새 PAT 로 다시 띄웠지만 옛 PAT(${read.value?.label}) 폐기에 실패했다 — 설정에서 손으로 폐기해라: ${revokeError}`,
