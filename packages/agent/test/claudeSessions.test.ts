@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { claudeSessionFileExists } from '../src/claudeSessions.js';
+import { claudeSessionFileExists, claudeSessionFilePath } from '../src/claudeSessions.js';
 
 const UUID = '6c3c4a88-3c5d-4c7e-af90-1b2c3d4e5f60';
 
@@ -60,5 +60,24 @@ describe('#337 claudeSessionFileExists', () => {
       expect(await claudeSessionFileExists(UUID, { projectsDir: root, configDir: '/nope' }))
         .toBe(true);
     });
+  });
+});
+
+describe('claudeSessionFilePath', () => {
+  it('세션 파일의 경로를 돌려준다 — 존재 확인과 같은 탐색을 쓴다', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'claude-projects-'));
+    const projectDir = join(root, '-private-tmp-whatever-cwd');
+    await mkdir(projectDir, { recursive: true });
+    await writeFile(join(projectDir, `${UUID}.jsonl`), '{"type":"session"}\n');
+
+    expect(await claudeSessionFilePath(UUID, { projectsDir: root }))
+      .toBe(join(projectDir, `${UUID}.jsonl`));
+    expect(await claudeSessionFilePath('00000000-0000-4000-8000-000000000000', { projectsDir: root }))
+      .toBeNull();
+  });
+
+  it('projects 디렉터리가 없으면 null 이다 — 예외가 아니다', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'claude-projects-'));
+    expect(await claudeSessionFilePath(UUID, { projectsDir: join(root, 'nope') })).toBeNull();
   });
 });

@@ -27,11 +27,14 @@ import type { AgentHarness } from '@murmur/shared';
  *
  * 우선순위: `projectsDir`(직접 지정) → `configDir`(계정) → 시스템 기본. `projectsDir` 가
  * 이기는 이유는 그것이 projects 디렉터리 **자체**를 가리키는 더 구체적인 지정이기 때문이다.
+ *
+ * 존재가 아니라 **경로**를 돌려주는 이유(2026-09-08): 실패한 턴이 그 파일을 열어 하네스가
+ * 낸 API 에러를 읽는다(`harnessErrors.ts`). 존재 확인은 그 위에 선다.
  */
-export async function claudeSessionFileExists(
+export async function claudeSessionFilePath(
   sessionId: string,
   opts: { projectsDir?: string; configDir?: string | null } = {},
-): Promise<boolean> {
+): Promise<string | null> {
   const root = opts.projectsDir
     ?? (opts.configDir ? join(opts.configDir, 'projects') : join(homedir(), '.claude', 'projects'));
   let projects;
@@ -39,17 +42,29 @@ export async function claudeSessionFileExists(
     projects = await readdir(root, { withFileTypes: true });
   } catch {
     // 디렉터리가 없다 = claude 세션이 하나도 없다 — "없음"의 정상 경로이지 에러가 아니다.
-    return false;
+    return null;
   }
   const wanted = `${sessionId}.jsonl`;
   for (const entry of projects) {
     if (!entry.isDirectory()) continue;
     try {
       const files = await readdir(join(root, entry.name));
-      if (files.includes(wanted)) return true;
+      if (files.includes(wanted)) return join(root, entry.name, wanted);
     } catch { /* 프로젝트 하나를 못 읽는 것이 나머지 탐색을 막지 않는다 */ }
   }
-  return false;
+  return null;
+}
+
+/**
+ * 세션이 실재하는가. **경로 해석 위에 선다** — 같은 탐색 규칙이 두 벌이 되면 나중에 한쪽만
+ * 고치는 사고가 난다. 이 파일이 이미 겪은 종류다: "경로가 `CLAUDE_CONFIG_DIR` 를 따라간다"를
+ * 한 곳에만 반영하면 다른 쪽이 계정 디렉터리의 세션을 "없음"으로 읽는다.
+ */
+export async function claudeSessionFileExists(
+  sessionId: string,
+  opts: { projectsDir?: string; configDir?: string | null } = {},
+): Promise<boolean> {
+  return (await claudeSessionFilePath(sessionId, opts)) !== null;
 }
 
 /**
