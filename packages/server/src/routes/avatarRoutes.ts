@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { emitEvent } from '../events.js';
 import {
-  findAvatarSource, findAvatarTarget, IMAGE_HEAD_BYTES, readHead, setAccountAvatar, sniffImageType,
+  detectAvatarType, findAvatarSource, findAvatarTarget, setAccountAvatar,
 } from '../services/avatars.js';
 import type { StorageBackend } from '../storage/local.js';
 
@@ -48,12 +48,15 @@ export async function registerAvatarRoutes(
       });
     }
 
-    const type = sniffImageType(await readHead(storage, source.storageKey, IMAGE_HEAD_BYTES));
+    const type = await detectAvatarType(storage, source);
     if (!type) {
       // 아무것도 걸지 않고 돌아간다. 첨부 행은 남긴다 — 지우는 것은 고아 업로드 GC 의 일이고,
       // 여기서 지우면 같은 파일을 다른 용도로 쓰려던 요청까지 함께 날린다.
+      //
+      // 메시지에 **받아 주는 목록을 적는다.** 화면이 이 문장을 그대로 보여 주지는 않지만,
+      // 여기가 목록이 바뀌었을 때 제일 먼저 눈에 띄는 자리다.
       return reply.code(400).send({
-        error: { code: 'not_an_image', message: 'avatar must be a png, jpeg, gif, webp, or avif image' },
+        error: { code: 'not_an_image', message: 'avatar must be a png, jpeg, gif, webp, avif, or svg image' },
       });
     }
 
@@ -102,10 +105,10 @@ export async function registerAvatarRoutes(
       });
     }
 
-    const type = sniffImageType(await readHead(storage, source.storageKey, IMAGE_HEAD_BYTES));
+    const type = await detectAvatarType(storage, source);
     if (!type) {
       return reply.code(400).send({
-        error: { code: 'not_an_image', message: 'avatar must be a png, jpeg, gif, webp, or avif image' },
+        error: { code: 'not_an_image', message: 'avatar must be a png, jpeg, gif, webp, avif, or svg image' },
       });
     }
 

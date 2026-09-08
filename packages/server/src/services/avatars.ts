@@ -2,12 +2,12 @@ import type { Pool } from 'pg';
 import type { StorageBackend } from '../storage/local.js';
 
 /**
- * 아바타로 받아 줄 이미지 타입. `Attachments.tsx:10` 의 `PREVIEWABLE` 화이트리스트와 같은
- * 집합이다 — 화면이 그리지 못하는 타입을 저장해 두면 '설정했는데 안 보이는' 아바타가 된다.
+ * 매직 바이트로 판정하는 이진 이미지 타입. `Attachments.tsx:10` 의 `PREVIEWABLE`
+ * 화이트리스트와 같은 집합이다 — 화면이 그리지 못하는 타입을 저장해 두면 '설정했는데
+ * 안 보이는' 아바타가 된다.
  *
- * **SVG 는 없다.** `attachmentRoutes.ts` 의 `NEVER_INLINE` 이 막는 바로 그것이다: SVG 는
- * `<script>` 를 담을 수 있어 이미지처럼 보이지만 이미지가 아니고, 매직 바이트로 구분할 수도
- * 없다(그냥 XML 텍스트다).
+ * SVG 는 여기 없다. 매직 바이트가 없어서다(그냥 XML 텍스트다) — 판정은 `looksLikeSvg` 가
+ * 따로 한다.
  */
 const IMAGE_SIGNATURES: { type: string; matches: (head: Buffer) => boolean }[] = [
   { type: 'image/png', matches: (h) => h.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },
@@ -40,6 +40,85 @@ export function sniffImageType(head: Buffer): string | null {
   return IMAGE_SIGNATURES.find((sig) => sig.matches(head))?.type ?? null;
 }
 
+/**
+ * SVG 아바타로 받아 줄 최대 크기. **SVG 만 이 상한이 있다** — 이진 이미지는 앞 12바이트로
+ * 판정이 끝나지만 SVG 는 아래 검사를 위해 파일 전체를 문자열로 올려야 하고, 그 비용에는
+ * 상한이 필요하다. 아바타로 쓰는 벡터 그림은 보통 수십 KiB 다.
+ */
+export const SVG_MAX_BYTES = 256 * 1024;
+
+/**
+ * 스크립트가 될 수 있는 조각. **화이트리스트가 아니라 블랙리스트인 것을 알고 쓴다** —
+ * 실행을 막는 것은 이 정규식이 아니라 아래 주석이 말하는 렌더 경로이고, 이것은 그 위에
+ * 한 겹 더 얹는 것이다. 그래서 파일 **전체**를 본다(앞부분만 보는 검사는 통과했다는
+ * 잘못된 확신만 준다).
+ */
+const SVG_UNSAFE = /<\s*(script|foreignObject)\b|\son[a-z]{2,}\s*=|javascript:/i;
+
+/**
+ * 바이트가 SVG 문서인지 본다. **`sniffImageType` 과 같은 자리에 서는 판정이다** — 클라이언트가
+ * 말한 `contentType` 은 여기서도 믿지 않는다.
+ *
+ * SVG 를 받는 이유: 사람이 프로필 사진으로 흔히 가진 파일이고, 거절할 때조차 화면은 그것을
+ * 고를 수 없게 만들어 두어서 **아무 일도 일어나지 않은 것처럼** 보였다.
+ *
+ * 받아도 되는 이유: 아바타가 그려지는 경로가 `Identity.tsx` 의 `<img src={objectURL}>`
+ * 하나뿐이다. `<img>` 안의 SVG 는 스크립트를 실행하지 않고 외부 리소스도 못 부른다.
+ * 서빙 헤더도 그대로다 — `nosniff` + `content-disposition: attachment` 라 주소창으로
+ * 직접 열어도 문서로 실행되지 않는다. 즉 `attachmentRoutes.ts` 의 `NEVER_INLINE` 은
+ * **여전히 유효하고**, 여기서 예외를 뚫는 것이 아니다: 그 목록이 막는 것은 `inline` 으로
+ * 내주는 일이고, 아바타는 inline 으로 내주지 않는다.
+ *
+ * 그 위에 두 가지를 더 본다:
+ * - 문서의 뿌리가 정말 `<svg>` 인가. 아니면 XML 처럼 생긴 HTML 일 수 있다.
+ * - DOCTYPE 의 내부 서브셋(`[ ... ]`)은 거절한다. 엔티티를 선언할 수 있는 자리이고,
+ *   XXE·엔티티 폭탄이 들어온다면 그 문을 지난다.
+ */
+export function looksLikeSvg(bytes: Buffer): boolean {
+  // UTF-16 로 저장된 XML 은 통과하지 못한다. 흔치 않고, 받아 주면 검사해야 할 인코딩이 는다.
+  let rest = bytes.toString('utf8').replace(/^\ufeff/, '').trimStart();
+  // 프롤로그(XML 선언·주석·DOCTYPE)를 지나 첫 원소까지 간다. 없는 것이 보통이지만,
+  // 그리기 도구가 붙여 주는 것도 흔하다 — 그걸로 거절하면 멀쩡한 파일이 튕긴다.
+  for (;;) {
+    if (rest.startsWith('<?')) {
+      const end = rest.indexOf('?>');
+      if (end < 0) return false;
+      rest = rest.slice(end + 2).trimStart();
+    } else if (rest.startsWith('<!--')) {
+      const end = rest.indexOf('-->');
+      if (end < 0) return false;
+      rest = rest.slice(end + 3).trimStart();
+    } else if (/^<!doctype\s/i.test(rest)) {
+      const end = rest.indexOf('>');
+      if (end < 0 || rest.slice(0, end).includes('[')) return false;
+      rest = rest.slice(end + 1).trimStart();
+    } else {
+      break;
+    }
+  }
+  if (!/^<svg[\s/>]/i.test(rest)) return false;
+  return !SVG_UNSAFE.test(rest);
+}
+
+/**
+ * 업로드 하나의 **저장된 바이트로** 아바타 타입을 정한다. 아바타가 아니면 null.
+ *
+ * 두 라우트(`me`·에이전트)가 같은 판정을 한다. 판정을 양쪽에 한 벌씩 두면 한쪽만 넓어지고,
+ * 이 저장소에서 판정 복제가 반복해 결함을 만들었다(#253·#299·#315).
+ */
+export async function detectAvatarType(
+  storage: StorageBackend, source: { storageKey: string; sizeBytes: number },
+): Promise<string | null> {
+  // 상한을 넘는 파일은 SVG 후보가 아니다. 앞부분만 읽고 SVG 로 통과시키면 뒤쪽에 무엇이
+  // 있는지 모른 채 받아 주는 셈이다 — 그래서 그런 파일은 이진 판정(12바이트)만 한다.
+  const oversize = source.sizeBytes > SVG_MAX_BYTES;
+  const want = oversize ? IMAGE_HEAD_BYTES : Math.max(source.sizeBytes, IMAGE_HEAD_BYTES);
+  const bytes = await readHead(storage, source.storageKey, want);
+  const binary = sniffImageType(bytes);
+  if (binary) return binary;
+  return !oversize && looksLikeSvg(bytes) ? 'image/svg+xml' : null;
+}
+
 /** 스토리지에서 앞 `want` 바이트만 읽는다. 판정에 파일 전체를 메모리에 올릴 이유가 없다. */
 export async function readHead(storage: StorageBackend, key: string, want: number): Promise<Buffer> {
   const stream = await storage.read(key);
@@ -66,9 +145,11 @@ export async function readHead(storage: StorageBackend, key: string, want: numbe
  */
 export async function findAvatarSource(
   pool: Pool, attachmentId: string, uploaderId: string,
-): Promise<{ id: string; storageKey: string } | null> {
+): Promise<{ id: string; storageKey: string; sizeBytes: number } | null> {
   const res = await pool.query(
-    `select id, storage_key as "storageKey" from attachment
+    // `sizeBytes` 를 함께 읽는다 — `detectAvatarType` 이 SVG 상한을 판정하는 데 쓴다.
+    // 스토리지를 다시 stat 하지 않는다: 크기는 업로드가 이미 세어 행에 적어 둔 사실이다.
+    `select id, storage_key as "storageKey", size_bytes::int as "sizeBytes" from attachment
       where id = $1 and uploader_id = $2 and message_id is null`,
     [attachmentId, uploaderId],
   );

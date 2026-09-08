@@ -5,6 +5,7 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { acc } from './helpers/fakeApi';
+import { ApiError } from '../src/lib/api';
 
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
@@ -805,17 +806,37 @@ describe('에이전트 사진 (Task 15-4)', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('거절되면 조용히 실패하지 않는다 — 이미지가 아닌 파일이 가장 흔하다', async () => {
+  it('거절되면 조용히 실패하지 않는다 — 무엇을 고를 수 있는지까지 말한다', async () => {
     const c = fakeController([agent('rusalka')]);
     (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar =
-      vi.fn(async () => { throw new Error('not_an_image'); });
+      vi.fn(async () => { throw new ApiError(400, 'not_an_image', 'nope'); });
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     const file = new File([new Uint8Array([1])], 'evil.png', { type: 'image/png' });
     fireEvent.change(await screen.findByTestId('agent-avatar-file'), { target: { files: [file] } });
 
-    expect((await screen.findByRole('alert')).textContent).toContain('이미지 파일만');
+    // 목록을 함께 낸다 — "안 된다"만 말하면 사람은 다음에 무엇을 고를지 모른다.
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('PNG');
+    expect(alert.textContent).toContain('SVG');
+  });
+
+  it('SVG 도 고를 수 있다 — 화면이 서버보다 좁으면 오류조차 못 낸다', async () => {
+    const c = fakeController([agent('rusalka')]);
+    (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar =
+      vi.fn(async () => undefined);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    const input = await screen.findByTestId('agent-avatar-file');
+    expect(input.getAttribute('accept')).toContain('image/svg+xml');
+
+    const file = new File(['<svg/>'], 'face.svg', { type: 'image/svg+xml' });
+    fireEvent.change(input, { target: { files: [file] } });
+    await waitFor(() => expect(
+      (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar,
+    ).toHaveBeenCalledWith('id-rusalka', file, expect.any(Function)));
   });
 });
 
