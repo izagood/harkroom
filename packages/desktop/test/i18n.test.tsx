@@ -27,7 +27,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import type {
-  AgentDefaults, AgentTeamRow, AgentView, OpenAskLink, PatView,
+  AgentDefaults, AgentTeamRow, AgentView, AskMeta, InboxEntry, MessageRow, OpenAskLink, PatView,
 } from '@murmur/shared';
 import { CATALOGS, LOCALES, translator, detectLocale, isLocale, type Locale } from '../src/i18n';
 import { en } from '../src/i18n/en';
@@ -48,6 +48,14 @@ import { Composer } from '../src/components/Composer';
 import { Inbox } from '../src/components/Inbox';
 import { SkillsSettings } from '../src/components/settings/SkillsSettings';
 import { AgentDefaultsSettings } from '../src/components/settings/AgentDefaultsSettings';
+import { MessageItem } from '../src/components/MessageItem';
+import { ProgressRow } from '../src/components/ProgressRow';
+import { AgentExchange } from '../src/components/AgentExchange';
+import { NotifiedGapRow } from '../src/components/NotifiedGapRow';
+import { TypingLine } from '../src/components/TypingLine';
+import { ThreadStateBadge } from '../src/components/ThreadStateBadge';
+import { threadStateLabel, type ThreadState } from '../src/lib/threadState';
+import { inboxRow } from '../src/lib/inboxRow';
 import { fireEvent } from '@testing-library/react';
 import { waitChainFromLinks } from '../src/lib/waitChain';
 import { daemonFactRows } from '../src/lib/daemonFacts';
@@ -1050,6 +1058,496 @@ describe('갤러리 — 설명은 사전을 지나고 견본은 안 지난다', 
     useActiveStore.getState().set({ me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') } });
     render(<GallerySettings />);
     expect(screen.getByText(/이름 자리가/).querySelector('.text-fg-subtle')?.textContent).toBe('…');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. 대화 화면 — **사용자가 가장 많이 보는 자리가 두 언어로 뜬다**
+//
+// 이 묶음이 옮긴 것은 어휘 셋이다: 여덟 가지 말(`speech.*`) · 메시지 행의 살림
+// (`message.*`) · `lib/` 판정 둘(`thread.*`·`inbox.*`).
+//
+// **화면을 렌더해서 잰다.** 사전을 직접 읽는 것으로는 부족하다는 것을 이 저장소가
+// 이미 두 번 겪었다(`NOTIFY_LEVEL_LABEL`·`SkillsSettings` 의 세 칸 이름) — 사전이
+// 갈려 있어도 **화면이 `t()` 를 안 지나면** 그 화면은 한 언어로 굳는다. 이 PR 이
+// 찾은 굳음이 `threadState::THREAD_STATE_LABEL` 이고, 그 자리를 아래 `thread.*` 축이
+// 렌더로 잰다.
+//
+// 다른 회귀선 열넷은 **한국어로 고정돼 있다**(각 파일의 `beforeEach` 주석) — 그것들이
+// 재는 것은 언어가 아니라 그 언어로 표현된 규율이고, 언어를 재는 자리는 여기 하나다.
+// ---------------------------------------------------------------------------
+
+const ALPHA = 'a-alpha';
+
+/** 요약 줄 하나가 서는 메시지 행. 사슬·상태·답글 수를 한 자리에서 그린다. */
+function seedRow(over: Record<string, unknown> = {}): MessageRow {
+  useActiveStore.getState().set({
+    me: acc(ME, 'me'),
+    accounts: {
+      [ME]: acc(ME, 'me'),
+      [FORGE]: acc(FORGE, 'forge', 'agent'),
+      [CODEX]: acc(CODEX, 'codex', 'agent'),
+      [ALPHA]: acc(ALPHA, 'alpha', 'agent'),
+    },
+    messages: { c1: [] },
+    online: [FORGE, CODEX, ALPHA],
+    connected: true,
+  });
+  return msg('m1', 'c1', 1, '루트', ALPHA, {
+    replyCount: 2,
+    participantIds: [ALPHA, FORGE],
+    openAskHumanCount: 0,
+    openAskAccountIds: [],
+    failureCount: 0,
+    lastKind: 'user',
+    lastAuthorId: ALPHA,
+    ...over,
+  });
+}
+
+/** 선택 요청 하나. `to` 로 누구에게 갔는지를 정한다. */
+const askMeta = (to: AskMeta['ask']['to'], over: Record<string, unknown> = {}) => ({
+  kind: 'ask',
+  ask: { options: [{ id: 'o1', label: 'A' }, { id: 'o2', label: 'B' }], to, ...over },
+} as unknown as Record<string, unknown>);
+
+describe('여덟 가지 말 — 카드가 두 언어로 말한다', () => {
+  beforeEach(() => {
+    setController({ answerAsk: async () => undefined, openThread: async () => undefined } as unknown as Controller);
+  });
+
+  /**
+   * **선택 요청의 머리글은 넷이 한 축에 선다** — 내가 · 그 에이전트가 · 사람 아무나 ·
+   * 이미 끝났다. 넷이 서로 달라야 이 카드가 답하는 유일한 질문("누가 답해야 하나")이
+   * 글자로 읽힌다. 언어를 바꿔도 그 넷이 여전히 넷이어야 한다.
+   */
+  it.each(LOCALES)('%s 에서 선택 카드의 머리글 넷이 서로 다르다', (locale) => {
+    speak(locale);
+    const heads = [
+      { to: { kind: 'human' as const }, mine: true },
+      { to: { kind: 'account' as const, accountId: CODEX }, mine: false },
+      { to: { kind: 'human' as const }, mine: false },
+      { to: { kind: 'human' as const }, mine: true, answered: true },
+    ].map(({ to, mine, answered }) => {
+      cleanup();
+      const row = seedRow();
+      if (!mine) useActiveStore.getState().set({ me: null });
+      render(<MessageItem message={{ ...row, meta: askMeta(to, answered ? { answeredWith: 'o1' } : {}) }} />);
+      return screen.getByTestId('ask-card').textContent ?? '';
+    });
+    // 넷이 서로 다르다 — 하나라도 겹치면 그 두 경우가 화면에서 구별되지 않는다.
+    expect(new Set(heads).size).toBe(4);
+  });
+
+  it('선택 카드가 영어로 뜨고, 한국어로 바꾸면 따라온다', () => {
+    const row = seedRow();
+    render(<MessageItem message={{ ...row, meta: askMeta({ kind: 'human' }) }} />);
+    expect(screen.getByTestId('ask-card').textContent).toContain('Pick one');
+
+    cleanup();
+    speak('ko');
+    const ko1 = seedRow();
+    render(<MessageItem message={{ ...ko1, meta: askMeta({ kind: 'human' }) }} />);
+    expect(screen.getByTestId('ask-card').textContent).toContain('골라 줘');
+  });
+
+  /**
+   * **답한 사람의 이름에 조사가 붙는다.** 옛 화면은 받침을 몰라 `이(가)` 로 둘 다
+   * 적었는데, 조사가 번역기 안으로 들어가면서(`{name:이가}`) 이름을 보고 하나를 고른다.
+   * 영어는 이 코드를 안 지난다 — 그것이 문법을 그 언어의 파일에만 두는 이유다.
+   */
+  it('답한 사람의 조사가 한국어에서만 붙는다', () => {
+    speak('ko');
+    const row = seedRow();
+    render(<MessageItem message={{
+      ...row,
+      meta: askMeta({ kind: 'human' }, { answeredWith: 'o1', answeredBy: FORGE }),
+    }} />);
+    expect(screen.getByTestId('ask-card').textContent).toContain('forge 가 골랐다');
+
+    cleanup();
+    speak('en');
+    const row2 = seedRow();
+    render(<MessageItem message={{
+      ...row2,
+      meta: askMeta({ kind: 'human' }, { answeredWith: 'o1', answeredBy: FORGE }),
+    }} />);
+    const text = screen.getByTestId('ask-card').textContent ?? '';
+    expect(text).toContain('forge picked');
+    // 조사 표기가 영어로 새면 여기서 `{name:이가}` 가 그대로 보인다.
+    expect(text).not.toMatch(/[가-힣]/);
+  });
+
+  /**
+   * **실패는 두 언어 모두 「스스로 못 끝냈다」를 말한다**(규칙 03). `Failed` 로 접으면
+   * 판정이 되는데, 이것은 에이전트가 **먼저 사람을 부르는 말**이다 — 1인칭의 무게가
+   * 그 문장에 있어야 한다.
+   */
+  it('실패 카드가 두 언어 모두 못 끝냈다는 사실과 고치는 경로를 함께 낸다', () => {
+    const failure = { kind: 'failure', failure: { retryable: true } } as unknown as Record<string, unknown>;
+    const row = seedRow();
+    render(<MessageItem message={{ ...row, meta: failure }} />);
+    let card = screen.getByTestId('failure-card').textContent ?? '';
+    expect(card).toContain('Could not finish it');
+    // **고치는 경로가 같은 자리에**(규칙 05) — 문구를 옮기면서 그 버튼이 사라지지 않는다.
+    expect(card).toContain('Call again');
+    expect(card).not.toMatch(/[가-힣]/);
+
+    cleanup();
+    speak('ko');
+    const row2 = seedRow();
+    render(<MessageItem message={{ ...row2, meta: failure }} />);
+    card = screen.getByTestId('failure-card').textContent ?? '';
+    expect(card).toContain('끝내지 못했다');
+    expect(card).toContain('다시 부르기');
+  });
+
+  /**
+   * **완료 보고의 세 구획이 한 축에 선다** — 무엇을 했나 · 무엇이 바뀌었나 · 무엇이
+   * 남았나. 셋이 서로 달라야 이 카드가 가장 오래 남고 다시 읽히는 말이 된다.
+   *
+   * 그리고 **항목은 사전을 안 지난다** — 그것은 에이전트가 한 말이지 앱의 말이 아니다.
+   * 영어로 열어도 항목이 한국어로 남는 것이 정직한 상태다(갤러리의 견본과 같은 경계).
+   */
+  it.each(LOCALES)('%s 에서 보고의 세 머리는 옮겨지고 항목은 안 옮겨진다', (locale) => {
+    speak(locale);
+    const report = {
+      kind: 'report',
+      report: { checks: ['타입체크 통과'], files: ['src/a.ts'], remaining: ['문서 갱신'] },
+    } as unknown as Record<string, unknown>;
+    const row = seedRow();
+    render(<MessageItem message={{ ...row, meta: report }} />);
+    const card = screen.getByTestId('report-card');
+    const heads = ['report-checks', 'report-files', 'report-remaining']
+      .map((id) => card.querySelector(`[data-testid="${id}"]`)?.previousElementSibling?.textContent);
+    expect(new Set(heads).size).toBe(3);
+    // 항목은 에이전트가 한 말이라 두 언어 모두 그대로다.
+    expect(card.textContent).toContain('타입체크 통과');
+    expect(card.textContent).toContain('문서 갱신');
+  });
+
+  /**
+   * **진행은 상[aspect]으로 갈린다** — 도는 것과 끝난 것이 다른 낱말이어야 한다.
+   * 옛 코드는 `elapsed.replace(/째$/, '')` 로 한국어 어미를 잘라 영어에서 아무것도
+   * 안 잘렸고, 그 결함을 `lib/time.ts` 가 고쳤다. 이제 **낱말 쪽도** 같은 축을 갖는다.
+   */
+  it.each(LOCALES)('%s 에서 도는 진행과 끝난 진행이 다른 낱말이다', (locale) => {
+    speak(locale);
+    const progress = (id: string) => msg(id, 'c1', 1, '무언가 한다', ALPHA, { kind: 'progress' });
+    useActiveStore.getState().set({
+      me: acc(ME, 'me'),
+      accounts: { [ME]: acc(ME, 'me'), [ALPHA]: acc(ALPHA, 'alpha', 'agent') },
+    });
+    render(<ProgressRow messages={[progress('p1')]} />);
+    const running = screen.getByTestId('progress-row').textContent ?? '';
+    cleanup();
+    render(<ProgressRow messages={[progress('p2')]} endedAt={new Date().toISOString()} />);
+    const ended = screen.getByTestId('progress-row').textContent ?? '';
+    expect(running).not.toBe(ended);
+  });
+
+  /**
+   * **접힌 줄은 결론을 먼저 말한다**(#488 C1). 결론이 없는 구간에서도 그 사실을
+   * 말해야 하고(`yet` 이 진다), 횟수는 그 뒤에 붙는다.
+   */
+  it('주고받기 줄이 두 언어 모두 결론 · 횟수 · 마지막을 낸다', () => {
+    const exchange = [
+      msg('e1', 'c1', 1, 'a', FORGE),
+      msg('e2', 'c1', 2, 'b', CODEX),
+      msg('e3', 'c1', 3, 'c', FORGE),
+    ];
+    useActiveStore.getState().set({
+      me: acc(ME, 'me'),
+      accounts: { [ME]: acc(ME, 'me'), [FORGE]: acc(FORGE, 'forge', 'agent'), [CODEX]: acc(CODEX, 'codex', 'agent') },
+    });
+    render(<AgentExchange messages={exchange} />);
+    let line = screen.getByTestId('agent-exchange').textContent ?? '';
+    // **`yet` 이 진다** — 빼면 "아무것도 안 정해진다"는 판정이 된다.
+    expect(line).toContain('Nothing decided yet');
+    expect(line).toContain('3 exchanges');
+    expect(line).toMatch(/last /);
+    expect(line).not.toMatch(/[가-힣]/);
+
+    cleanup();
+    speak('ko');
+    useActiveStore.getState().set({
+      me: acc(ME, 'me'),
+      accounts: { [ME]: acc(ME, 'me'), [FORGE]: acc(FORGE, 'forge', 'agent'), [CODEX]: acc(CODEX, 'codex', 'agent') },
+    });
+    render(<AgentExchange messages={exchange} />);
+    line = screen.getByTestId('agent-exchange').textContent ?? '';
+    expect(line).toContain('아직 정해진 것 없음');
+    expect(line).toContain('3번 주고받음');
+    expect(line).toContain('마지막');
+  });
+});
+
+describe('메시지 행 — 살림이 두 언어로 뜬다', () => {
+  beforeEach(() => {
+    setController({ openThread: async () => undefined } as unknown as Controller);
+  });
+
+  /**
+   * **답글 수의 복수형이 실제로 갈린다.** 여기 있던 `=== 1 ? 'reply' : 'replies'` 가
+   * 이 PR 이 옮긴 손수 복수형이고, 그것이 사용자가 물은 그 축이다. 한국어가 한 갈래인
+   * 것은 누락이 아니라 그 언어의 사실이므로 같은 축에서 함께 잰다.
+   */
+  it('영어는 1개와 2개가 다른 낱말이고 한국어는 하나다', () => {
+    /**
+     * **눈에 보이는 글자를 잰다.** `aria-label` 만 재면 안 잡힌다 — 접근 이름은 사전을
+     * 지나는데 화면의 그 조각은 옛 손수 복수형을 그대로 들고 있을 수 있고, 실제로
+     * RED 로 확인했다(2026-09-08): `=== 1 ? 'reply' : 'replies'` 를 되살려도 이름만
+     * 재는 축은 **전부 초록이었다**. 그래서 화면 글자와 접근 이름을 **둘 다** 잰다.
+     */
+    const visible = (): string => screen.getByTestId('reply-summary-count').textContent ?? '';
+    const label = (): string =>
+      screen.getByRole('button', { name: /(replies|reply|답글)/ }).getAttribute('aria-label') ?? '';
+
+    render(<MessageItem message={seedRow({ replyCount: 1 })} />);
+    expect(visible()).toBe('1 reply');
+    expect(label()).toContain('1 reply');
+
+    cleanup();
+    render(<MessageItem message={seedRow({ replyCount: 2 })} />);
+    expect(visible()).toBe('2 replies');
+    expect(label()).toContain('2 replies');
+
+    cleanup();
+    speak('ko');
+    render(<MessageItem message={seedRow({ replyCount: 1 })} />);
+    // **한국어는 한 갈래다** — 수에 따라 명사가 안 바뀌는 것이 그 언어의 사실이다.
+    expect(visible()).toBe('답글 1개');
+    cleanup();
+    render(<MessageItem message={seedRow({ replyCount: 2 })} />);
+    expect(visible()).toBe('답글 2개');
+  });
+
+  /**
+   * **접근 이름이 조각을 그 언어의 방식으로 잇는다.** 상태와 마지막 시각이 각각 없을
+   * 수 있어 틀이 넷인데, 한 틀에 빈 문자열을 끼우면 영어에서 `, 2 replies` 처럼 쉼표가
+   * 앞에 남는다 — 눈으로는 안 보이고 귀로만 들리는 결함이다.
+   */
+  it('요약 줄의 접근 이름이 두 언어 모두 앞뒤에 쉼표를 흘리지 않는다', () => {
+    for (const locale of LOCALES) {
+      cleanup();
+      speak(locale);
+      // 상태도 시각도 없는 가장 짧은 틀. 여기서 쉼표가 남으면 나머지 셋도 남는다.
+      const row = seedRow({ openAskHumanCount: null, openAskAccountIds: null, failureCount: null });
+      render(<MessageItem message={row} />);
+      // 요약 줄은 답글 수를 이름에 싣는 유일한 버튼이다 — testid 가 없으므로 그것으로 찾는다.
+      const label = [...document.querySelectorAll('button')]
+        .map((b) => b.getAttribute('aria-label'))
+        .find((v) => v !== null && /(replies|답글)/.test(v))!;
+      expect(label, `${locale} 의 접근 이름이 없다`).toBeTruthy();
+      // 상태도 시각도 없으므로 **수만** 남아야 한다 — 쉼표가 남으면 틀을 한 벌로 접은 것이다.
+      expect(label, `${locale} 의 접근 이름`).not.toMatch(/^\s*,|,\s*$/);
+      expect(label, `${locale} 의 접근 이름에 빈 조각이 있다`).not.toContain(', ,');
+    }
+  });
+
+  /**
+   * **수신자 배지가 두 언어로 뜬다**(규칙 04). 이 배지 하나로 팀 스레드의 "무엇이 내
+   * 일인가"가 풀리므로, 나에게 온 것과 남에게 간 것이 **서로 다른 글자**여야 한다.
+   */
+  it('수신자 배지가 두 언어 모두 나와 남을 가른다', () => {
+    for (const locale of LOCALES) {
+      cleanup();
+      speak(locale);
+      /**
+       * **셋을 잰다.** 나에게 온 것 · 이름 있는 에이전트에게 간 것 · **사람 아무나에게
+       * 간 것**(내가 사람이 아닐 때). 앞의 둘만 재면 안 잡힌다 — `audience.person` 은
+       * 세 번째 경우에만 그려지고, RED 로 확인했다(2026-09-08): 그 문구를 `→ you` 로
+       * 바꿔도 앞의 둘만 재는 축은 **초록이었다**.
+       */
+      const badge = (over: Record<string, unknown>, meNull = false): string => {
+        cleanup();
+        const row = seedRow(over);
+        if (meNull) useActiveStore.getState().set({ me: null });
+        render(<MessageItem message={row} />);
+        return screen.getByTestId('audience-badge').textContent ?? '';
+      };
+
+      const forMe = badge({ meta: askMeta({ kind: 'human' }) });
+      const forAgent = badge({ meta: askMeta({ kind: 'account', accountId: CODEX }) });
+      const forPerson = badge({ meta: askMeta({ kind: 'human' }) }, true);
+
+      expect(new Set([forMe, forAgent, forPerson]).size, `${locale} 의 수신자 배지`).toBe(3);
+      // 화살표는 **두 언어 모두** 남는다 — 방향을 말하는 기호이고 이름과 떨어지면 뜻을 잃는다.
+      for (const b of [forMe, forAgent, forPerson]) expect(b).toContain('→');
+    }
+  });
+
+  /**
+   * **덜 깬 부름은 수와 사유를 함께 말한다**(규칙 05). 수만 말하면 사람이 다음에 무엇을
+   * 할지 모르고, 그러면 이 줄은 놀라게만 하고 끝난다. 영어 원본이 그 사유를 잃지 않는다.
+   */
+  it('덜 깬 부름이 두 언어 모두 수와 사유를 함께 낸다', () => {
+    useActiveStore.getState().set({
+      me: acc(ME, 'me'),
+      accounts: { [ME]: acc(ME, 'me') },
+      notifiedGaps: { m1: { called: 3, woke: 2, groupHandle: 'release', kind: 'group' } },
+    });
+    render(<NotifiedGapRow messageId="m1" />);
+    let row = screen.getByTestId('notified-gap').textContent ?? '';
+    expect(row).toContain('3');
+    expect(row).toContain('2');
+    // **사람이 다음에 할 일**이 문장에 있다 — 채널 멤버로 넣는 것.
+    expect(row).toContain('channel members');
+    expect(row).not.toMatch(/[가-힣]/);
+
+    cleanup();
+    speak('ko');
+    render(<NotifiedGapRow messageId="m1" />);
+    row = screen.getByTestId('notified-gap').textContent ?? '';
+    expect(row).toContain('3명을 불렀는데 2명만 깼다');
+    expect(row).toContain('채널 멤버로 넣어야');
+  });
+
+  /**
+   * **집합과 팀의 사유가 갈린다** — 그 파일이 실측으로 갈라 둔 것이고, 한 문장으로
+   * 접으면 꺼 둔 에이전트 때문에 뜬 줄이 "채널 멤버로 넣어라"고 말한다(규칙 05 가
+   * 막는 헛된 개입). 영어에서도 그 갈림이 남아야 한다.
+   */
+  it.each(LOCALES)('%s 에서 집합·팀·섞인 것의 사유가 서로 다르다', (locale) => {
+    speak(locale);
+    // 섞어 부른 경우는 스토어에서 `kind: null` 이다 — 아무 쪽도 주장할 수 없다는 뜻이고,
+    // 그 자리를 `mixed` 문구가 받는다(`NotifiedGapRow` 의 `gap.kind ?? 'mixed'`).
+    const reasons = ([{ kind: 'group' as const }, { kind: 'team' as const }, { kind: null }]).map(({ kind }) => {
+      cleanup();
+      useActiveStore.getState().set({
+        me: acc(ME, 'me'),
+        accounts: { [ME]: acc(ME, 'me') },
+        notifiedGaps: { m1: { called: 3, woke: 2, groupHandle: null, kind } },
+      });
+      render(<NotifiedGapRow messageId="m1" />);
+      /**
+       * **사유 조각만 잰다.** 줄 전체를 재면 안 잡힌다 — 줄 머리(`집합`·`팀`·`부른
+       * 명단`)가 이미 셋이라, 사유 셋을 한 문장으로 접어도 줄 전체는 여전히 셋이다.
+       * RED 로 확인했다(2026-09-08): 팀의 사유를 집합의 것으로 바꿔도 줄 전체를 재는
+       * 축은 **초록이었다**. 사유는 이 줄의 마지막 조각이다(`text-fg-muted`).
+       */
+      const spans = screen.getByTestId('notified-gap').querySelectorAll('span');
+      return spans[spans.length - 1]?.textContent ?? '';
+    });
+    expect(new Set(reasons).size).toBe(3);
+  });
+
+  /**
+   * **입력 중 줄의 두 갈래가 사전에서도 둘이다.** 이름을 부르는 갈래와 수만 세는
+   * 갈래가 한 키로 묶이면 번역자가 `{names}` 나 `{count}` 중 하나를 지운다 — 그러면
+   * 그 갈래에서 화면이 조용히 빈다.
+   */
+  it('입력 중 줄이 두 언어 모두 이름 갈래와 수 갈래를 낸다', () => {
+    const seedTyping = (ids: string[]) => useActiveStore.getState().set({
+      activeChannelId: 'c1',
+      accounts: {
+        [FORGE]: acc(FORGE, 'forge', 'agent'),
+        [CODEX]: acc(CODEX, 'codex', 'agent'),
+        [ALPHA]: acc(ALPHA, 'alpha', 'agent'),
+      },
+      typing: { c1: ids },
+    });
+
+    seedTyping([FORGE, CODEX]);
+    render(<TypingLine />);
+    expect(screen.getByTestId('typing-line').textContent).toContain('forge, codex');
+    cleanup();
+    seedTyping([FORGE, CODEX, ALPHA]);
+    render(<TypingLine />);
+    // 셋부터는 이름을 안 부르고 수만 센다 — 그 판단은 화면의 것이고 두 언어에 같다.
+    expect(screen.getByTestId('typing-line').textContent).toBe('3 people are typing…');
+
+    cleanup();
+    speak('ko');
+    seedTyping([FORGE, CODEX]);
+    render(<TypingLine />);
+    expect(screen.getByTestId('typing-line').textContent).toBe('forge, codex 입력 중…');
+    cleanup();
+    seedTyping([FORGE, CODEX, ALPHA]);
+    render(<TypingLine />);
+    expect(screen.getByTestId('typing-line').textContent).toBe('3명이 입력 중…');
+  });
+});
+
+/**
+ * **`lib/` 판정 둘 — 훅을 못 쓰는 자리가 언어를 굳히지 않는다.**
+ *
+ * 두 판정 다 화면이 아니라 순수 함수라 `useT` 를 못 쓰고, 그래서 **번역기를 필수 인자로
+ * 맨 뒤에** 받는다(`lastTurnAgo`·`daemonFactRows` 와 같은 자리). 기본값을 주면 안 넘긴
+ * 화면이 조용히 한 언어로 굳는데, 타입이 그것을 막는다 — 그 사실을 여기서 **문구로**
+ * 한 번 더 잰다.
+ */
+describe('스레드 상태 — 판정이 두 언어로 말한다', () => {
+  const all: ThreadState[] = ['my-turn', 'stuck', 'waiting', 'running', 'done'];
+
+  it('다섯이 두 언어 모두 서로 다른 글자를 받는다', () => {
+    for (const locale of LOCALES) {
+      const t = translator(locale);
+      const labels = all.map((s) => threadStateLabel(s, t));
+      expect(new Set(labels).size, `${locale} 의 5단`).toBe(all.length);
+    }
+    // 두 언어가 실제로 갈린다 — 같으면 옮긴 것이 아니다.
+    expect(threadStateLabel('my-turn', translator('en')))
+      .not.toBe(threadStateLabel('my-turn', translator('ko')));
+  });
+
+  /**
+   * **모듈 상수였던 자리를 렌더로 잰다.** `THREAD_STATE_LABEL` 이 `Record<..., string>`
+   * 이라 로드 시점 언어로 굳어 있었고, 위 축(판정 함수를 직접 부르는 것)만으로는 그
+   * 굳음을 못 잡는다 — 화면이 그 함수를 부르지 않고 옛 상수를 계속 읽어도 초록이기
+   * 때문이다. 그래서 배지를 **실제로 그려서** 언어가 따라오는지 본다.
+   */
+  it('배지가 화면에서 언어를 따라온다 — 모듈 상수로 굳지 않는다', () => {
+    render(<ThreadStateBadge state="my-turn" />);
+    expect(screen.getByTestId('thread-state').textContent).toBe('Your turn');
+
+    cleanup();
+    speak('ko');
+    render(<ThreadStateBadge state="my-turn" />);
+    expect(screen.getByTestId('thread-state').textContent).toBe('내 차례');
+  });
+});
+
+describe('인박스 줄 — 판정이 두 언어로 말한다', () => {
+  const entry = (over: Partial<InboxEntry> = {}): InboxEntry => ({
+    id: 1, messageId: 'm1', reason: 'thread_reply', readAt: null, channelId: 'c1',
+    authorId: ALPHA, body: '본문', meta: {}, createdAt: '2026-09-08T00:00:00.000Z',
+    threadRootId: null, ...over,
+  });
+
+  /**
+   * **여섯이 서로 다르다** — 그것이 이 판정의 존재 이유다(*"네 줄이 글자 하나까지
+   * 똑같다"*). 언어를 바꿔도 여섯이 여전히 여섯이어야 한다.
+   */
+  it.each(LOCALES)('%s 에서 여섯 말표가 서로 다르다', (locale) => {
+    const t = translator(locale);
+    const labels = [
+      inboxRow(entry({ meta: askMeta({ kind: 'human' }) }), ME, t).label,
+      inboxRow(entry({ meta: askMeta({ kind: 'account', accountId: CODEX }) }), ME, t).label,
+      inboxRow(entry({ meta: { kind: 'failure', failure: { retryable: true } } }), ME, t).label,
+      inboxRow(entry({ meta: { kind: 'report', report: { checks: ['ok'] } } }), ME, t).label,
+      inboxRow(entry({ reason: 'mention' }), ME, t).label,
+      inboxRow(entry({ reason: 'thread_reply' }), ME, t).label,
+    ];
+    expect(new Set(labels).size).toBe(6);
+  });
+
+  it('말표가 두 언어로 갈리고 DM 만 그대로다', () => {
+    const en1 = inboxRow(entry({ meta: { kind: 'failure', failure: { retryable: true } } }), ME, translator('en'));
+    const ko1 = inboxRow(entry({ meta: { kind: 'failure', failure: { retryable: true } } }), ME, translator('ko'));
+    expect(en1.label).toBe('Stuck');
+    expect(ko1.label).toBe('막혔다');
+    // `DM` 은 **이 제품의 고유어**다 — `waitChain.dm` 이 같은 판단을 이미 했다.
+    expect(inboxRow(entry({ reason: 'dm' }), ME, translator('en')).label).toBe('DM');
+    expect(inboxRow(entry({ reason: 'dm' }), ME, translator('ko')).label).toBe('DM');
+  });
+
+  /** **rank 는 언어를 안 탄다** — 말표만 바뀌고 정렬은 그대로여야 한다. */
+  it.each(LOCALES)('%s 에서 rank 가 같다 — 정렬은 언어를 안 탄다', (locale) => {
+    const t = translator(locale);
+    expect(inboxRow(entry({ meta: askMeta({ kind: 'human' }) }), ME, t).rank).toBe(0);
+    expect(inboxRow(entry({ meta: { kind: 'report', report: { checks: ['ok'] } } }), ME, t).rank).toBe(1);
+    expect(inboxRow(entry({ reason: 'thread_reply' }), ME, t).rank).toBe(2);
   });
 });
 

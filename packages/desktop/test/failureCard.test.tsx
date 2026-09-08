@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import type { FailureMeta, MessageRow } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
 import { groupAgentExchanges } from '../src/lib/agentExchange';
@@ -26,6 +27,7 @@ const failMsg = (meta: Record<string, unknown>, authorId = FORGE): MessageRow =>
   msg('m-fail', 'c1', 1, '마이그레이션을 끝내지 못했다', authorId, { meta });
 
 beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   setController({} as unknown as Controller);
   useAppStore.getState().set({
@@ -38,7 +40,14 @@ beforeEach(() => {
     },
   });
 });
-afterEach(() => cleanup());
+// **언어를 고정한다**(이 묶음의 문구가 사전을 지나면서 기본이 영어가 됐다). 이 파일이
+// 재는 것은 언어가 아니라 **그 언어로 표현된 규율**이다 — 언어를 재는 자리는
+// `i18n.test.tsx` 하나이고, 두 곳에서 재면 문구를 고칠 때 한쪽만 고쳐진다
+// (`gallery.test.tsx`·`skillsSettings.test.tsx`·`agentGrid.test.tsx` 와 같은 규약).
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 describe('FailureCard', () => {
   it('강조와 함께 무엇을·왜를 말한다', () => {

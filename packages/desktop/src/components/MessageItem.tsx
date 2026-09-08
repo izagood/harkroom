@@ -4,9 +4,8 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { AskCard } from './AskCard';
 import { ThreadStateBadge } from './ThreadStateBadge';
-import { threadStateFromFacts, isBlocking, THREAD_STATE_LABEL } from '../lib/threadState';
+import { threadStateFromFacts, isBlocking, threadStateLabel } from '../lib/threadState';
 import { waitChainFromLinks, chainEnds } from '../lib/waitChain';
-import { subjectParticle } from '../lib/particle';
 import { FailureCard } from './FailureCard';
 import { ReportCard } from './ReportCard';
 import { MessageBody } from './MessageBody';
@@ -218,6 +217,27 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
 
   /** 이름을 부르는 유일한 자리. 모르면 `…` 다 — 없는 이름을 지어내지 않는다. */
   const nameOf = (id: string): string => accounts[id]?.handle ?? '…';
+
+  /**
+   * 답글 요약 버튼의 접근 가능한 이름. **상태를 라벨에도 싣는다**(아래 그 자리 주석) —
+   * `aria-label` 이 자식 글자를 덮으므로 배지가 화면에 보여도 여기 없으면 스크린리더에는
+   * 없는 것이다.
+   *
+   * **틀을 넷으로 가른다.** 상태와 마지막 시각이 각각 없을 수 있는데, 한 틀에 `{state}` 를
+   * 두고 빈 문자열을 넣으면 영어에서 `, 2 replies` 처럼 쉼표가 앞에 남는다. 어느 조각을
+   * 어떻게 잇는지는 **그 언어의 일**이라 사전이 져야 하고, 화면은 어느 사실이 있는지만
+   * 고른다.
+   */
+  const summaryLabel = ((): string => {
+    const count = t('message.summary.replies', { count: message.replyCount ?? 0 });
+    const state = summaryState ? threadStateLabel(summaryState, t) : null;
+    if (state && lastReplyTime) {
+      return t('message.summary.labelWithStateAndTime', { state, count, time: lastReplyTime });
+    }
+    if (state) return t('message.summary.labelWithState', { state, count });
+    if (lastReplyTime) return t('message.summary.labelWithTime', { count, time: lastReplyTime });
+    return t('message.summary.label', { count });
+  })();
 
   const participantList = message.participantIds ?? [];
   const displayedParticipants = participantList.slice(0, FACE_SLOTS);
@@ -468,20 +488,20 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               type="button"
               data-testid="author-name"
               className="cursor-pointer text-name font-semibold hover:underline"
-              title={model ? `모델 ${model.id}` : undefined}
+              title={model ? t('message.model.tooltip', { id: model.id }) : undefined}
               // 접근 가능한 이름 앞에 **작성자**를 붙인다. 자기 이름을 부르는 말
               // (`@someone` 이 쓴 "@someone 확인했다")에서는 이름줄 버튼과 본문 멘션 칩이
               // 같은 곳으로 가는 **다른 두 자리**인데, 이름이 같으면 스크린리더 사용자는
               // 목록에 뜬 둘 중 어느 것이 어디인지 알 수 없다(회귀선이 실제로 그 충돌로
               // 빨개졌다: `mentionClick.test.tsx` 의 `getByRole` 이 둘을 찾았다).
-              aria-label={`작성자 ${authorOpen.label}`}
+              aria-label={t('message.authorLabel', { name: authorOpen.label })}
               onClick={authorOpen.run}
             >{author?.handle ?? '…'}</button>
           ) : (
             <span
               data-testid="author-name"
               className="text-name font-semibold"
-              title={model ? `모델 ${model.id}` : undefined}
+              title={model ? t('message.model.tooltip', { id: model.id }) : undefined}
             >{author?.handle ?? '…'}</span>
           )}
           {/* 설정과 어긋난 모델(#600). 배지가 아니라 **경고**다 — 이 자리에 무언가 서 있는
@@ -492,8 +512,8 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
             <span
               data-testid="model-mismatch"
               className="text-meta text-warning"
-              title={`설정된 모델과 다른 계열이다 — 이 말은 ${model.id} 로 했다`}
-              aria-label={`설정된 모델과 다르다: ${model.id}`}
+              title={t('message.model.mismatchTooltip', { id: model.id })}
+              aria-label={t('message.model.mismatchLabel', { id: model.id })}
             >⚠️</span>
           )}
           {/*
@@ -574,7 +594,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                            text-fg hover:bg-surface-hover"
                 onClick={() => onOpenSettings('skills', skillSlug)}
               >
-                스킬 승인 화면 열기
+                {t('message.openSkillApproval')}
               </button>
             )}
             <Attachments attachments={message.attachments} />
@@ -625,7 +645,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                   "열어야 하나"에 답하지 못하는 것은 눈으로 읽든 귀로 듣든 같은 결함이다.
                   화면과 같은 순서(상태 → 답장 수)로 둔다.
                 */
-                aria-label={`${summaryState ? `${THREAD_STATE_LABEL[summaryState]}, ` : ''}${message.replyCount} ${message.replyCount === 1 ? 'reply' : 'replies'}${lastReplyTime ? `, last reply ${lastReplyTime}` : ''}`}
+                aria-label={summaryLabel}
               >
                 {/* 참여자 아바타 — 최대 셋, 나머지는 +N 으로 접는다. 장식 용도라 스크린리더가
                     읽지 않도록 aria-hidden 처리하고 sr-only 도 안 준다. #277: variant="avatar" */}
@@ -668,10 +688,22 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                     data-mine={ends.mine}
                     className={ends.mine ? 'font-medium text-state-turn' : 'text-fg-muted'}
                   >
+                    {/*
+                      **`waitChain.*` 을 부른다 — 새 키를 만들지 않는다.** 이 줄은 사슬의
+                      같은 문장을 다른 재료(`openAskLinks`)에서 낼 뿐이고, 키를 따로 두면
+                      스레드 패널의 사슬 줄과 이 줄이 언젠가 다른 말을 하게 된다.
+
+                      조사는 이제 번역기가 푼다(`{waiter:이가}`) — `subjectParticle` 을
+                      쓰던 마지막 자리가 여기였고, 그 함수와 `lib/particle.ts` 가 함께 사라졌다.
+                    */}
                     {ends.blockedBy === null
-                      // '사람 아무나'는 이름 자리에 보통명사를 끼우면 조사가 어긋난다.
-                      ? `${nameOf(ends.waiter)}${subjectParticle(nameOf(ends.waiter))} 사람의 답을 기다린다`
-                      : `${nameOf(ends.waiter)}${subjectParticle(nameOf(ends.waiter))} ${nameOf(ends.blockedBy)}의 답을 기다린다`}
+                      // '사람 아무나'는 **다른 문장이다** — 이름 자리에 보통명사를 끼우면
+                      // 조사가 어긋난다(그것이 `linkAnyone` 이 따로 있는 이유).
+                      ? t('waitChain.linkAnyone', { waiter: nameOf(ends.waiter) })
+                      : t('waitChain.link', {
+                        waiter: nameOf(ends.waiter),
+                        blockedBy: nameOf(ends.blockedBy),
+                      })}
                   </span>
                 ) : summaryState && <ThreadStateBadge state={summaryState} />}
                 {/*
@@ -679,11 +711,19 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                   '현재 상태'이지 '급한 것'이 아니다."* 강조색은 나를 막는 말에만 쓴다 —
                   막는 것은 이미 왼쪽의 배지가 말하고 있다.
                 */}
-                <span className={summaryState && isBlocking(summaryState)
-                  ? 'text-fg-subtle'
-                  : 'font-medium text-fg-muted underline decoration-dotted underline-offset-2'}
+                {/* `data-testid` 를 두는 이유는 위 `author-gutter` 와 같다 — 회귀선이 이
+                    조각을 클래스 문자열로 더듬지 않게 한다. 복수형은 **눈에 보이는 글자**로
+                    재야 잡히므로(접근 이름만 재면 손수 복수형이 남아도 초록이다, 실측
+                    2026-09-08) 그 조각을 이름으로 가리킬 수 있어야 한다. */}
+                <span
+                  data-testid="reply-summary-count"
+                  className={summaryState && isBlocking(summaryState)
+                    ? 'text-fg-subtle'
+                    : 'font-medium text-fg-muted underline decoration-dotted underline-offset-2'}
                 >
-                  {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
+                  {/* **손수 복수형이 여기 있었다**(`=== 1 ? 'reply' : 'replies'`) —
+                      영어만 맞는 판정이라 `Intl.PluralRules` 에 넘겼다. */}
+                  {t('message.summary.replies', { count: message.replyCount ?? 0 })}
                 </span>
                 {lastReplyTime && <span className="text-fg-subtle">{lastReplyTime}</span>}
               </button>
@@ -754,8 +794,8 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
             {!inThread && !hasReplies && (
               <button
                 className={iconBtn}
-                title="스레드에 답글 달기"
-                aria-label="스레드에 답글 달기"
+                title={t('message.replyInThread')}
+                aria-label={t('message.replyInThread')}
                 onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
               >
                 ↩
@@ -814,15 +854,21 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
  * 남겨 두면 끝난 스레드가 계속 나를 부른다.
  */
 function AudienceBadge({ message }: { message: MessageRow }) {
+  const t = useT();
   const myId = useActiveStore((s) => s.me?.id ?? null);
   const accounts = useActiveStore((s) => s.accounts);
   const ask = readAskMeta(message.meta);
   if (!ask || ask.answeredWith != null) return null;
 
   const forMe = ask.to.kind === 'human' ? myId != null : ask.to.accountId === myId;
+  // 화살표는 문구가 진다 — **방향을 말하는 기호**라 이름과 떨어지면 뜻을 잃는다.
   const label = forMe
-    ? '\u2192 나'
-    : `\u2192 ${ask.to.kind === 'account' ? (accounts[ask.to.accountId]?.handle ?? '다른 에이전트') : '사람'}`;
+    ? t('message.audience.me')
+    : ask.to.kind === 'account'
+      ? t('message.audience.agent', {
+        name: accounts[ask.to.accountId]?.handle ?? t('message.audience.unknownAgent'),
+      })
+      : t('message.audience.person');
   return (
     <span
       data-testid="audience-badge"

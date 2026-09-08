@@ -766,8 +766,111 @@ export const ko = {
   'profile.runner.stale':
     '이 러너는 {strongBundle}로 돌고 있다 — 새 버전으로 재기동하면 갈아탄다.',
   'profile.runner.staleBundle': '앱보다 뒤처진 번들',
+  // message — **키 순서는 `en.ts` 와 같다**. 이 화면의 말투는 `~다` 로 끝나는 서술이고
+  // (대화 옆에 앉는 곁정보라 명령이 아니다) 원래 화면이 그렇게 쓰고 있었다.
+  // ---------------------------------------------------------------------------
 
   'message.channelEcho': '채널에도 전송됨',
   'message.threadOrigin': '스레드에 댓글 남김',
   'message.recentReplies': '최근 댓글 보기',
+  'message.replyInThread': '스레드에 답글 달기',
+  'message.openSkillApproval': '스킬 승인 화면 열기',
+
+  'message.authorLabel': '작성자 {name}',
+
+  // `→ 나` 는 **원래 화면 그대로다**. 한국어는 화면이 사람을 `나` 로 부르는 것이
+  // 자연스럽고(영어는 `you` 가 자연스럽다), 그 차이가 이 두 줄이 낱말 대치가 아닌 자리다.
+  'message.audience.me': '→ 나',
+  'message.audience.person': '→ 사람',
+  'message.audience.agent': '→ {name}',
+  'message.audience.unknownAgent': '다른 에이전트',
+
+  'message.model.tooltip': '모델 {id}',
+  'message.model.mismatchTooltip': '설정된 모델과 다른 계열이다 — 이 말은 {id} 로 했다',
+  'message.model.mismatchLabel': '설정된 모델과 다르다: {id}',
+
+  'message.attachment.previewFailed': '(미리보기 실패)',
+  'message.attachment.loadFailed': '(불러오기 실패)',
+  'message.attachment.zoom': '크게 보기: {filename}',
+  'message.attachment.closeZoom': '확대 보기 닫기',
+  'message.attachment.save': '저장',
+
+  'message.notified.group': '집합',
+  'message.notified.team': '팀',
+  'message.notified.mixed': '부른 명단',
+  'message.notified.counts': '{called}명을 불렀는데 {woke}명만 깼다',
+  'message.notified.reasonGroup': '— 남은 사람은 이 채널을 볼 수 없다. 채널 멤버로 넣어야 부름이 닿는다.',
+  'message.notified.reasonTeam': '— 남은 팀원은 비활성이거나 이 채널을 볼 수 없다. 팀 설정과 채널 멤버를 보라.',
+  'message.notified.reasonMixed': '— 남은 상대에게 부름이 닿지 않았다.',
+
+  // 접근 라벨의 네 틀. 영어와 **같은 순서**(상태 → 수 → 마지막)로 둔다 — 화면이 그
+  // 순서로 그리므로 눈으로 읽는 것과 귀로 듣는 것이 어긋나면 안 된다.
+  'message.summary.label': '{count}',
+  'message.summary.labelWithState': '{state}, {count}',
+  'message.summary.labelWithTime': '{count}, 마지막 답글 {time}',
+  'message.summary.labelWithStateAndTime': '{state}, {count}, 마지막 답글 {time}',
+  // 수에 따라 명사가 안 바뀐다 — `other` 하나인 것이 이 언어의 사실이다.
+  'message.summary.replies': { other: '답글 {count}개' },
+
+  'message.typing.names': '{names} 입력 중…',
+  'message.typing.count': { other: '{count}명이 입력 중…' },
+
+  // ---------------------------------------------------------------------------
+  // speech — **키 순서는 `en.ts` 와 같다**.
+  //
+  // 이 다섯 컴포넌트의 말투는 **에이전트가 하는 말**이라 반말 서술이다(`끝내지 못했다`).
+  // 그것이 원래 화면의 말투이고, 정본 문서가 여덟 가지 말을 "말"이라 부르는 이유다 —
+  // 라벨이 아니라 발화라서, `~합니다` 로 올리면 카드가 폼처럼 읽힌다.
+  // ---------------------------------------------------------------------------
+
+  'speech.ask.pickOne': '골라 줘',
+  // 조사 표기를 쓴다 — handle 은 영문도 한글도 온다(`codex 가` · `민수가`).
+  'speech.ask.agentPicks': '{name:이가} 고른다',
+  'speech.ask.personPicks': '사람이 고른다',
+  'speech.ask.decided': '정해졌다',
+  'speech.ask.answeredBy': '{name:이가} 골랐다',
+  'speech.ask.unknownAgent': '다른 에이전트',
+
+  'speech.failure.title': '끝내지 못했다',
+  'speech.failure.callAgain': '다시 부르기',
+  'speech.failure.retryDraft': '@{handle} 다시 해 줘',
+
+  'speech.progress.working': '작업 중',
+  'speech.progress.worked': '작업',
+  'speech.progress.expand': { other: '{count}줄 펼치기' },
+  'speech.progress.collapse': '접기',
+
+  'speech.report.checks': '확인한 것',
+  'speech.report.files': '바뀐 파일',
+  'speech.report.remaining': '남은 것',
+
+  'speech.exchange.decided': '정했다',
+  'speech.exchange.finished': '끝냈다',
+  'speech.exchange.undecided': '아직 정해진 것 없음',
+  'speech.exchange.count': { other: '{count}번 주고받음' },
+  'speech.exchange.last': '마지막 {time}',
+  'speech.exchange.collapse': '접기',
+
+  // ---------------------------------------------------------------------------
+  // thread — **키 순서는 `en.ts` 와 같다**. 다섯이 한 사다리이고, 원래 화면의 낱말을
+  // 그대로 둔다 — 갤러리 회귀선(`gallery.test.tsx`)이 이 다섯을 한국어로 재고 있다.
+  // ---------------------------------------------------------------------------
+
+  'thread.state.myTurn': '내 차례',
+  'thread.state.stuck': '막힘',
+  'thread.state.waiting': '남을 기다림',
+  'thread.state.running': '도는 중',
+  'thread.state.done': '끝남',
+
+  // ---------------------------------------------------------------------------
+  // inbox — **키 순서는 `en.ts` 와 같다**. 여섯이 서로 달라야 한다는 것이 이 판정의
+  // 존재 이유이고(*"네 줄이 글자 하나까지 똑같다"*), 원래 화면의 낱말이 이미 그렇다.
+  // ---------------------------------------------------------------------------
+
+  'inbox.label.ask': '골라 줘',
+  'inbox.label.askOther': '고르는 중',
+  'inbox.label.failure': '막혔다',
+  'inbox.label.report': '끝냈다',
+  'inbox.label.mention': '불렀다',
+  'inbox.label.reply': '답글',
 } satisfies Catalog;

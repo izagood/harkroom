@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { Controller, setController, type Controller as ControllerType } from '../src/state/controller';
 import { ApiClient } from '../src/lib/api';
 import { readNotifiedHeaders, calledGroups, expectedWakes, notifiedSummary, type CalledGroup, type NotifiedResult } from '../src/lib/notified';
@@ -23,8 +24,19 @@ import { acc, accountsResult, fakeApi, fakeWsFactory, grp, msg, tm } from './hel
  * - 서버가 정말 헤더를 싣는다(목이 아니라 배선을 재는 자리가 하나 있어야 한다)
  */
 
-beforeEach(() => useAppStore.getState().reset());
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
+  useAppStore.getState().reset();
+});
+// **언어를 고정한다**(이 묶음의 문구가 사전을 지나면서 기본이 영어가 됐다). 이 파일이
+// 재는 것은 언어가 아니라 **그 언어로 표현된 규율**이다 — 언어를 재는 자리는
+// `i18n.test.tsx` 하나이고, 두 곳에서 재면 문구를 고칠 때 한쪽만 고쳐진다
+// (`gallery.test.tsx`·`skillsSettings.test.tsx`·`agentGrid.test.tsx` 와 같은 규약).
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  usePrefsStore.getState().setLocale('system');
+});
 
 const headers = (h: Record<string, string>) => new Headers(h);
 

@@ -69,8 +69,9 @@ import type { Message } from './types';
  * ## 남은 것 — 다음 PR 들이 할 일
  *
  * 뼈대 PR 이 **대기 사슬** 13개를, 그 다음이 **사이드바** 107개를, 그 다음이
- * **에이전트 설정**(`AgentsSettings`) 146개를, 이 PR 이 **러너 판정 둘**
- * (`runnerLauncher.ts` 35 · `daemonFacts.ts` 18)을 옮겼다.
+ * **에이전트 설정**(`AgentsSettings`) 146개를, 그 다음이 **러너 판정 둘**
+ * (`runnerLauncher.ts` 35 · `daemonFacts.ts` 18)을, 이 PR 이 **대화 화면 묶음**
+ * (여덟 가지 말 · 메시지 행 · `threadState` · `inboxRow`)을 옮겼다.
  * 남은 것을 무게순으로 적어 둔다 — 각각이 **한 PR** 이다.
  *
  * | 남은 것 | 규모 | 먼저 풀어야 할 것 |
@@ -81,13 +82,18 @@ import type { Message } from './types';
  * | ~~`runnerLauncher.ts`~~ | — | **끝났다**(아래 `runner.*`). 남은 일곱은 `throw new Error(...)` 라 **사람에게 가는 말이 아니다** — 그 영역 머리말이 안 넣은 이유를 적었다 |
  * | `controller.ts` | 59 | 판정 함수. **번역기를 넘기는 배선은 이 PR 이 이미 깔았다**(`RunnerLauncher` 생성자의 마지막 인자) — 그 자리를 그대로 쓰면 된다 |
  * | `packages/shared::installHint` | 3 | **이 저장소의 다른 패키지다.** `runner.exit.notFound` 뒤에 붙는 설치 안내 한 줄이 아직 한국어인데, 서버·러너가 함께 쓰는 패키지라 데스크탑 사전이 닿을 수 없다. 먼저 정할 것: `Translate` 를 `shared` 로 내릴지, 아니면 그 판정이 **키만 내고** 데스크탑이 문구를 씌울지 |
- * | `MessageItem` | 57 | **손으로 하는 복수형이 여기 있다**(`replyCount === 1 ? 'reply' : 'replies'`) — `waitChain.unblocks` 와 같은 모양으로 사전에 넘긴다. `subjectParticle` 을 아직 쓰는 유일한 자리이기도 하다(그 함수는 그때 지운다) |
- * | `Composer` · `Inbox` | 55 · 49 | |
+ * | ~~`MessageItem`~~ | — | **끝났다**(아래 `message.*`·`speech.*`). 그 표가 지목한 손수 복수형(`replyCount === 1 ? 'reply' : 'replies'`)은 `message.summary.replies` 로 갔고, **`subjectParticle` 과 `lib/particle.ts` 는 지웠다** — 그 함수의 마지막 호출처가 이 행의 말 슬롯이었고, 조사는 이제 번역기 안에 있다 |
+ * | ~~여덟 가지 말~~ | — | **끝났다**(아래 `speech.*`). `AskCard`·`FailureCard`·`ReportCard`·`ProgressRow`·`AgentExchange` 다섯이 이루는 어휘 하나이고, 그리는 화면이 넷이라 판정도 화면도 아닌 **어휘 이름**으로 영역을 잡았다 |
+ * | ~~`threadState.ts`~~ | — | **끝났다**(아래 `thread.*`). `THREAD_STATE_LABEL` 이 **모듈 상수라 로드 시점 언어로 굳어 있었다** — `SkillsSettings`·`STRANGER_ATTACHED` 와 같은 모양이고 같은 방식으로 함수로 내렸다 |
+ * | ~~`inboxRow.ts`~~ | — | **끝났다**(아래 `inbox.*`). 번역기를 **필수 인자로 맨 뒤에** 받는다 |
+ * | `Composer` | 55 | |
+ * | `Inbox` | 49 | **말표는 이미 옮겼다**(`inbox.label.*`) — 그 화면이 `useT` 를 이미 들고 있으므로 나머지는 키만 씌우면 된다 |
  * | ~~`daemonFacts.ts`~~ | — | **끝났다**(아래 `daemonFacts.*`). 그 표가 경고한 대로 회귀선을 **키가 아니라 문구로** 남겼다 — `i18n.test.tsx` 가 제약 1(주어)·제약 2(판정 낱말 없음)를 **두 언어로** 다시 잰다 |
  * | ~~시간 표기~~ | — | **끝났다** — 아래 `time.*` 과 `lib/time.ts` 를 보라 |
  * | 설정 목차 14개 · `Save`·`Cancel`·`Invite` 등 | 소수 | 이미 영어다 — **키만 씌우면 된다.** 둘 이상이 쓰므로 `common.*` 로 간다 |
  * | 나머지 설정 화면들(`Gallery`·`Skills`·`HandleGroups`·`AgentDefaults` 등) | 42 · 19 · 16 · 11 | 각각 자기 영역(`gallery`·`skills`·…)을 연다. 영역 이름을 `settings.*` 로 묶지 않는 근거는 아래 `agents` 머리말에 있다 |
- * | `RunnerStatus.tsx::runnerStatusLabel` · `lib/presenceView.ts::PRESENCE_LABEL` | 소수 | **사이드바가 이미 부르고 있다**(`sidebar.runner.state` 가 그 값을 감싼다). 둘 다 세 화면 이상이 쓰므로 옮길 때 `common.*` 후보다 |
+ * | `RunnerStatus.tsx::runnerStatusLabel` · `lib/presenceView.ts::PRESENCE_LABEL` | 소수 | **사이드바가 이미 부르고 있다**(`sidebar.runner.state` 가 그 값을 감싼다). 둘 다 세 화면 이상이 쓰므로 옮길 때 `common.*` 후보다. **둘 다 모듈 상수다** — `THREAD_STATE_LABEL` 이 그랬듯 로드 시점 언어로 굳어 있으므로 함수로 내려야 한다 |
+ * | `ThreadPanel` · `WakeRow` · `Reactions` 등 대화 화면의 나머지 | 소수 | 이 PR 이 옮긴 것은 **말과 행**이지 그 화면들의 껍데기가 아니다. `thread.*` 가 이미 서 있으므로 스레드 패널의 머리띠는 그 영역에 붙는다 |
  *
  * ### `common` 이 아직 비어 있는 이유 — **두 번째 화면이 왔는데도**
  *
@@ -137,6 +143,17 @@ export const en = {
   // ---------------------------------------------------------------------------
   // common — **두 화면 이상이 실제로 부르는 것만** 온다. 미리 올려 두지 않는다.
   // ---------------------------------------------------------------------------
+  /**
+   * **이름을 모를 때 그 자리에 서는 보통명사.** 셋이 부른다(`WaitChain`·
+   * `WaitChainSection`·`AskCard`) — 이 PR 이 세 번째를 붙였고, 그것이 `common` 승격
+   * 자격을 실제로 만족하는 첫 사례다: 셋 다 **같은 하나의 뜻**을 쓴다(*"사람인데 누구인지
+   * 모른다"*). 아직 안 승격한 `Cancel` 과 갈리는 지점이 그것이다 — 그쪽은 글자만 같고
+   * 뜻이 자리마다 다르다(위 머리말의 *"`common` 이 아직 비어 있는 이유"*).
+   *
+   * **`AskCard` 에서는 이름 자리에 들어간다** — 한국어에서는 뒤에 조사가 붙으므로
+   * (`{name:이가} 골랐다`) 보통명사여도 문장이 서야 하고, 그것이 이 낱말을 문장 조각이
+   * 아니라 **한 낱말**로 두는 이유다.
+   */
   'common.someone': 'someone',
 
   // ---------------------------------------------------------------------------
@@ -1362,17 +1379,59 @@ export const en = {
   'waitChain.reasonDeadRunner': 'the answering side has stopped',
 
   // ---------------------------------------------------------------------------
-  // message — 메시지 행(`components/MessageItem.tsx`)이 그리는 말.
+  // message — **메시지 행 하나에 매달린 말**(`components/MessageItem.tsx` 와 그 행이
+  // 품는 `Attachments`·`NotifiedGapRow`, 그리고 대화가 흐르는 자리의 입력 중 줄).
   //
-  // **이 영역은 #624 가 새로 만든 세 마디로 시작한다.** 그 행의 나머지 문구는 아직
-  // 사전 밖에 있다(하드코딩) — 새로 생기는 말만 사전을 지나게 해서, 옮기지 않은 화면이
-  // 사전을 **뒤로** 늘리는 일이 없게 한다.
+  // **#624 가 세 마디로 열었고 이 PR 이 나머지를 채웠다.** 그 머리말이 적어 둔
+  // *"새로 생기는 말만 사전을 지나게 한다"* 는 유예가 끝났다는 뜻이다.
+  //
+  // ## 왜 `speech` 와 갈리나 — **행 자신의 말 / 그 안에 든 말**
+  //
+  // 이 묶음에서 가장 갈리기 쉬운 자리라 먼저 적는다. 아래 `speech.*` 는 **여덟 가지
+  // 말 자신의 어휘**(카드가 스스로 하는 말)이고, 여기 `message.*` 는 **그 카드를
+  // 얹고 있는 행의 살림**(수신자 배지 · 답글 요약 · 첨부 · 부름의 결과)이다.
+  //
+  // 가르는 이유가 하나 더 있다: `speech.*` 는 갤러리가 기준자로 다시 그리는 어휘라
+  // 화면 넷이 부르고, `message.*` 는 이 행 말고는 그릴 자리가 없다. 한 영역으로
+  // 묶으면 갤러리가 행의 살림까지 부르게 되고 그 경계가 흐려진다.
+  //
+  // **덩어리는 행의 실제 구획을 따른다.**
+  //
+  // | 덩어리 | 그 구획 |
+  // |---|---|
+  // | (없음) | 이름줄 옆 · 본문 아래 한 마디짜리들(`channelEcho`·`recentReplies`·…) |
+  // | `audience` | 수신자 배지 — `→ 나` / `→ forge` |
+  // | `attachment` | 첨부 칩 · 확대 보기 |
+  // | `model` | 이름줄의 모델 툴팁과 어긋남 경고 |
+  // | `notified` | 집합·팀을 불렀는데 덜 깬 줄(`NotifiedGapRow`) |
+  // | `summary` | 답글 요약 — 수 · 마지막 시각 · 접근 라벨 |
+  // | `typing` | 입력 중 줄(`TypingLine`) |
+  //
+  // ## 영어를 새로 설계한 자리
   //
   // | 한국어 | 영어 | 왜 |
   // |---|---|---|
   // | 채널에도 전송됨 | `Also sent to the channel` | 상태(과거)다. `Send to channel` 은 동작이라 누를 것처럼 보인다 — 이것은 배지이지 버튼이 아니다 |
   // | 스레드에 댓글 남김 | `Replied in a thread` | `In thread` 는 자리만 말하고 **무슨 일이 있었나**가 빠진다. 이 사본은 답글이므로 동작이 주어다 |
   // | 최근 댓글 보기 | `View recent replies` | `View in thread`(옛 문구)는 목적지를 말했다. 새 목적지는 스레드 머리가 아니라 **이 말 뒤의 댓글**이라 그것을 말한다 |
+  // | → 나 | `→ you` | **화면이 사람에게 말한다**(2인칭). `→ me` 는 화면이 자기를 가리키는 말이 되어, 이 배지가 답하는 질문("이게 내 일인가")과 어긋난다 |
+  // | → 사람 | `→ a person` | `AskAudience` 의 `'human'` = 사람 아무나. `common.someone` 을 안 쓴 이유는 **그것이 답한 사람의 이름 자리**라서다(`speech.ask.answeredBy`) — 여기서는 **받을 쪽의 종류**를 말한다 |
+  // | 다른 에이전트 | `another agent` | 이름을 모를 때. `unknown` 은 아무것도 안 말하고, `agent` 는 그 계정이 에이전트라는 사실만은 확실하므로 그것을 말한다 |
+  // | 스레드에 답글 달기 | `Reply in a thread` | 동작이다(버튼의 `title`·`aria-label`). 위 `threadOrigin` 은 **일어난 일**이라 과거형인 것과 짝을 이룬다 |
+  // | 스킬 승인 화면 열기 | `Open the skill approval screen` | **목적지를 말한다.** `Approve` 는 이 버튼이 승인 자체를 한다고 읽히는데, 실제로는 설정을 열 뿐이다 |
+  // | {n}명을 불렀는데 {m}명만 깼다 | `{called} were called, {woke} woke up` | 수가 둘인 한 문장이다. **조각으로 쪼개지 않는다** — 한국어는 `불렀는데`(역접 연결어미)가 두 수를 잇고 영어는 쉼표가 잇는데, 그 이음매의 자리가 언어마다 다르다 |
+  // | 확대 보기 닫기 | `Close the enlarged view` | `Close` 만 두면 스크린리더 목록에서 이 행의 다른 닫기들과 구별되지 않는다 |
+  // | (미리보기 실패) · (불러오기 실패) | `(preview failed)` · `(could not load)` | **둘을 안 합친다** — 앞은 "원래 미리보기가 없는 것"과 가르는 표시이고 뒤는 파일 자체를 못 받은 것이다(그 파일 주석의 실측) |
+  // | {n}명이 입력 중… | `{count} people are typing…` | 복수형이 실제로 갈린다. 이름을 늘어놓는 갈래(`typing.names`)와 수만 말하는 갈래(`typing.count`)를 **사전에서도 갈라 둔다** — 그 갈림이 화면의 판단(`MAX_NAMES`)이지 언어의 것이 아니어서, 한 키로 묶으면 번역자가 왜 둘인지 모른다 |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`Save`·`Cancel`·`Delete message?`·`Delete`·`More actions`·`message toolbar`** —
+  //   **이미 영어다.** `en.ts` 머리말의 남은 것 표가 *"키만 씌우면 된다"* 로 따로 잡아 둔
+  //   묶음이고, 그중 `Save`·`Cancel` 은 `common` 승격 판단이 아직 안 끝났다(같은 머리말의
+  //   *"`common` 이 아직 비어 있는 이유"*). 이 PR 이 한국어를 옮기면서 그 판단을 앞당기지 않는다
+  // - **`⋯`·`↩`·`×`·`📎`·`⚠️`·`#↵`·`↔`·`+N`** — 글자가 아니라 **기호**다. 어느 언어에서도 같다
+  // - **파일 이름 · 첨부 크기(`1.2 KB`)** — 데이터이고, 크기는 `Intl` 이 아니라 바이트 계산이 낸다
   // ---------------------------------------------------------------------------
 
   // ---------------------------------------------------------------------------
@@ -1779,6 +1838,306 @@ export const en = {
    */
   'message.threadOrigin': 'Replied in a thread',
   'message.recentReplies': 'View recent replies',
+  'message.replyInThread': 'Reply in a thread',
+  'message.openSkillApproval': 'Open the skill approval screen',
+
+  /**
+   * 이름줄 버튼의 접근 가능한 이름. **`작성자` 를 앞에 붙이는 이유**가 그 자리 주석에
+   * 있다 — 자기 이름을 부르는 말에서 이름줄 버튼과 본문 멘션 칩이 같은 이름을 갖게
+   * 되어 스크린리더 사용자가 둘을 못 가른다. 그 사실이 언어를 건너 살아남아야 한다.
+   */
+  'message.authorLabel': 'Author {name}',
+
+  /**
+   * 수신자 배지. **강조는 나에게 온 것에만 간다**(규칙 04) — 그 색 판정은 화면이 하고,
+   * 사전은 화살표 뒤의 이름만 진다. 화살표(`→`)를 문구에 넣는 이유는 그것이 **방향**을
+   * 말하는 기호이고 이름과 떨어지면 뜻을 잃기 때문이다.
+   */
+  'message.audience.me': '→ you',
+  'message.audience.person': '→ a person',
+  'message.audience.agent': '→ {name}',
+  /** 그 계정을 아직 못 받았을 때. **에이전트라는 사실만은 확실하다** — 그것만 말한다. */
+  'message.audience.unknownAgent': 'another agent',
+
+  /** 이름줄 hover 로만 나온다. **모델 id 는 안 옮긴다** — 설정에 적는 그 글자다. */
+  'message.model.tooltip': 'Model {id}',
+  /**
+   * 설정과 어긋난 모델(#600). **설정값을 안 적는다** — 서버가 그것을 안 싣는다
+   * (그 자리 주석). 그래서 "무엇과 다른지"가 아니라 **"무엇으로 했는지"** 를 말한다.
+   */
+  'message.model.mismatchTooltip': 'A different model family than configured — this was said with {id}',
+  'message.model.mismatchLabel': 'Different from the configured model: {id}',
+
+  'message.attachment.previewFailed': '(preview failed)',
+  /**
+   * 바이트 자체를 못 받았다. 위 `previewFailed` 와 **갈라 둔다** — 앞엣것은 칩 안의
+   * 작은 그림이 안 온 것이고 이것은 파일이 안 온 것이다(그 파일 주석의 실측).
+   */
+  'message.attachment.loadFailed': '(could not load)',
+  'message.attachment.zoom': 'View larger: {filename}',
+  'message.attachment.closeZoom': 'Close the enlarged view',
+  'message.attachment.save': 'Save',
+
+  /** 줄 머리 — 무엇을 불렀나. 셋 다 **부름의 대상**이지 사람 수가 아니다. */
+  'message.notified.group': 'Handle group',
+  'message.notified.team': 'Team',
+  /**
+   * 종류를 섞어 불러 아무 쪽도 주장할 수 없다. `Mixed` 한 낱말로 두지 않는 이유:
+   * 그것은 **무엇이 섞였는지**를 안 말한다. 이 줄이 답하는 질문은 "무엇을 불렀나"다.
+   */
+  'message.notified.mixed': 'Who was called',
+  /**
+   * **두 수가 한 문장에 있다.** 조각으로 쪼개면 한국어의 역접 어미(`불렀는데`)가
+   * 갈 자리가 없어진다 — `waitChain.link` 가 어순 때문에 통째로 있는 것과 같은 사정이다.
+   */
+  'message.notified.counts': '{called} were called, {woke} woke up',
+  /**
+   * 사유. **종류마다 다르다** — 그 파일의 주석이 실측으로 갈라 뒀고, 한 문장으로
+   * 접으면 꺼 둔 에이전트 때문에 뜬 줄이 "채널 멤버로 넣어라"고 말하게 된다(규칙 05 가
+   * 막는 헛된 개입). 앞의 `—` 는 화면이 아니라 문구가 진다: 그 자리에서만 다른 색을
+   * 받는 조각이 아니라 이 사유 문장의 일부다.
+   */
+  'message.notified.reasonGroup':
+    '— the rest cannot see this channel. Add them as channel members for the call to reach them.',
+  'message.notified.reasonTeam':
+    '— the rest of the team are disabled or cannot see this channel. Check the team settings and the channel members.',
+  /** 어느 쪽인지 못 가린다. **지어내지 않는다** — 닿지 않았다는 사실만 말한다. */
+  'message.notified.reasonMixed': '— the call did not reach the rest.',
+
+  /**
+   * 답글 요약 버튼의 접근 가능한 이름. **상태를 라벨에도 싣는다**(그 자리 주석) —
+   * `aria-label` 이 자식 글자를 덮으므로, 배지가 화면에 보여도 여기 없으면 스크린리더에는
+   * 없는 것이다. 상태가 없을 수 있어(옛 서버·답글 행) **틀을 셋으로 가른다**: 한 틀에
+   * `{state}` 를 두고 빈 문자열을 넣으면 영어에서 `, 2 replies` 처럼 쉼표가 앞에 남는다.
+   */
+  'message.summary.label': '{count}',
+  'message.summary.labelWithState': '{state}, {count}',
+  'message.summary.labelWithTime': '{count}, last reply {time}',
+  'message.summary.labelWithStateAndTime': '{state}, {count}, last reply {time}',
+  /**
+   * **복수형이 실제로 갈리는 자리.** 여기 있던 `replyCount === 1 ? 'reply' : 'replies'`
+   * 가 이 PR 이 옮긴 손수 복수형이다 — 영어만 맞는 판정이라(러시아어는 2~4 가 `few` 다)
+   * `Intl.PluralRules` 에 넘긴다. 한국어가 한 갈래인 것은 그 언어의 사실이다.
+   */
+  'message.summary.replies': {
+    one: '{count} reply',
+    other: '{count} replies',
+  },
+
+  /**
+   * 입력 중. **두 갈래인 것은 화면의 판단이지 언어의 것이 아니다** — 이름 둘까지는
+   * 부르고 그 위로는 수만 센다(`TypingLine::MAX_NAMES`). 그 판단을 사전에서도 두 키로
+   * 보이게 두어, 번역자가 `{names}` 와 `{count}` 중 하나를 지우지 않게 한다.
+   *
+   * 이름을 잇는 쉼표는 화면이 붙인다 — `Intl.ListFormat` 으로 올릴 자리이지만 그것은
+   * 이 PR 의 범위가 아니고, 지금 화면이 하던 그대로다.
+   */
+  'message.typing.names': '{names} typing…',
+  'message.typing.count': {
+    one: '{count} person is typing…',
+    other: '{count} people are typing…',
+  },
+
+  // ---------------------------------------------------------------------------
+  // speech — **여덟 가지 말 자신의 어휘**(`AskCard`·`FailureCard`·`ReportCard`·
+  // `ProgressRow`·`AgentExchange`).
+  //
+  // **판정 이름도 화면 이름도 아닌 세 번째 경우다** — 이 다섯 컴포넌트가 함께 이루는
+  // **어휘 하나**이고, 그것을 그리는 화면이 넷이다(`ChannelPane`·`ThreadPanel`·
+  // `MessageItem`·`GallerySettings`). `waitChain` 머리말의 근거가 그대로 걸린다: 화면
+  // 이름을 골랐으면 나머지 셋이 남의 키를 부른다.
+  //
+  // 이름을 `speech` 로 두는 것은 이 저장소가 이미 쓰는 말이다 — 정본 문서의 *"여덟 가지
+  // 말"* 이고, 갤러리가 그 구획을 `gallery.speech.*` 로 부른다.
+  //
+  // ## `gallery.speech.*` 와 섞지 마라 — **설명 / 그 말 자신**
+  //
+  // 갤러리 사전은 이 칸들을 **설명**한다(`강조를 받는 유일한 카드. 누를 수 있다.`).
+  // 여기 있는 것은 카드가 **스스로 하는 말**이다(`골라 줘` · `끝내지 못했다`). 둘이
+  // 같은 칸을 가리키지만 하나는 가르치는 글이고 하나는 어휘 자체다 — 합치면 갤러리를
+  // 고칠 때 대화 화면의 말이 함께 바뀐다.
+  //
+  // | 덩어리 | 그 말 |
+  // |---|---|
+  // | `ask` | 선택 요청 — 누가 답해야 하나 · 누가 골랐나 |
+  // | `exchange` | 에이전트끼리의 주고받기 접은 줄 |
+  // | `failure` | 실패 카드 |
+  // | `progress` | 진행 한 줄 |
+  // | `report` | 완료 보고 — 세 구획의 머리 |
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 골라 줘 | `Pick one` | **명령이되 부탁이다.** `Choose an option` 은 폼 안내문이라 이 카드가 사람을 부르는 유일한 말이라는 무게가 사라진다 |
+  // | 정해졌다 | `Decided` | 상태(과거)다. 답이 끝난 카드는 기록이므로 **동작을 안 말한다** — `Answered` 는 누가 답했나로 눈을 돌리는데 그것은 옆 칸(`answeredBy`)이 이미 말한다 |
+  // | {name} 이(가) 골랐다 | `{name} picked` | 위 `Pick one` 과 **같은 동사**여야 한다. 물음이 `pick` 이면 답도 `picked` 다 — 다른 동사를 쓰면 둘이 같은 사건인지가 안 읽힌다 |
+  // | {name} 가 고른다 | `{name} picks` | 현재형이다 — **아직 안 골랐다**. `will pick` 은 미래라 지금 멈춰 있다는 사실이 빠진다 |
+  //
+  // ### 옮기면서 한국어가 **좋아진 자리** — 조사 둘
+  //
+  // 이 두 줄은 원래 조사를 손으로 적고 있었고, 둘 다 틀린 모양이었다:
+  //
+  // | 옛 화면 | 지금 | 왜 좋아졌나 |
+  // |---|---|---|
+  // | `jaebin 이(가) 골랐다` | `jaebin 가 골랐다` · `민준이 골랐다` | 받침을 모르니 **괄호로 둘 다 적던** 것이다. 조사가 번역기 안으로 들어가면서(`{name:이가}`) 이름을 보고 하나를 고른다 — 대기 사슬이 이미 그 규칙을 쓰고 있었는데 이 카드만 안 쓰고 있었다 |
+  // | `forge 가 고른다` | 같음 (한글 이름에서는 `민준이 고른다`) | 문자열 보간으로 **`가` 를 고정**하고 있었다. 영문 이름에서는 우연히 맞았고 한글 이름에서는 틀렸다 |
+  //
+  // 이것이 조사를 `format.ts` 에 둔 이유의 실증이다: 화면마다 손으로 적으면 **화면마다
+  // 다르게 틀린다**. 규칙이 한 자리에 있으면 한 번 고친 것이 모든 화면에 간다.
+  // | 사람이 고른다 | `A person picks` | `AskAudience` 의 `'human'`. `Someone picks` 도 뜻은 맞지만 앞줄(`{name} picks`)과 나란히 설 때 **사람인지 에이전트인지**가 갈려야 한다 |
+  // | 끝내지 못했다 | `Could not finish it` | `Failed` 는 판정이고 이것은 **에이전트가 하는 말**이다(여덟 가지 말 중 유일하게 에이전트가 먼저 사람을 부른다). 1인칭의 무게가 `could not` 에 있다 |
+  // | 다시 부르기 | `Call again` | `Retry` 가 아니다 — 이 버튼은 **작성창을 채울 뿐** 다시 실행하지 않는다(그 자리 주석). `@handle 다시 해 줘` 를 초안으로 놓는 것이라 "부른다"가 맞다 |
+  // | @{handle} 다시 해 줘 | `@{handle} please try again` | **초안이지 화면 문구가 아니다** — 사람이 보내기 전에 고칠 수 있는 글이다. 그래서 명령이 아니라 부탁의 말투를 그대로 진다 |
+  // | 작업 중 · 작업 | `Working` · `Worked` | **상**[aspect]이 갈린다. 끝난 묶음은 기록이라 과거형이고, 그 갈림이 이 줄의 색 판정과 같은 사실을 말한다(도는 점 / 중립 점) |
+  // | {n}줄 펼치기 · 접기 | `Show {count} lines` · `Collapse` | 펼침은 **몇 줄인지**를 말해야 열 이유가 되고(규칙 06 의 결), 접기는 수를 말할 이유가 없다 — 이미 보고 있다 |
+  // | 확인한 것 · 바뀐 파일 · 남은 것 | `Checked` · `Files changed` · `Left to do` | **셋이 한 축에 선다** — 무엇을 했나 · 무엇이 바뀌었나 · 무엇이 남았나. `Remaining` 은 명사라 "남은 것이 있다"만 말하고 **누가 할 일인지**가 빠진다 |
+  // | 정했다 · 끝냈다 | `Decided` · `Finished` | 접은 줄의 결론 머리. **위 `ask.decided` 와 같은 낱말이다** — 같은 사실을 두 자리가 다르게 부르면 어휘가 늘어난다(그 파일 주석이 한국어로 이미 그렇게 정했다) |
+  // | 아직 정해진 것 없음 | `Nothing decided yet` | **`yet` 이 진다** — 빼면 "아무것도 안 정해진다"는 판정이 되는데, 이 구간은 아직 도는 중일 수 있다 |
+  // | {n}번 주고받음 | `{count} exchanges` | 복수형이 갈린다. 접힌 줄에서 **결론 뒤에 오는 부수적인 숫자**라 문장이 아니라 명사구다 |
+  // | 마지막 {시각} | `last {time}` | 시각은 `toLocaleTimeString` 이 그 언어로 낸다 — 사전은 앞의 낱말만 진다(`lib/time.ts` 의 경계와 같은 규율) |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **선택지의 라벨과 힌트(`AskMeta.options`) · 보고의 항목(`checks`·`files`·
+  //   `remaining`) · 다음 제안 칩(`next`) · 실패의 `what`·`reason` · 진행 본문** —
+  //   **에이전트가 한 말이지 앱의 말이 아니다.** 갤러리 머리말이 견본을 안 넣은 것과
+  //   같은 경계다: 사전에 넣으면 번역자가 남의 말을 옮겨야 할 것으로 읽는다
+  // - **소요 시간 · 경과** — `lib/time.ts` 가 낸다(`durationLabel`·`runningLabel`·
+  //   `tookLabel`). *"숫자는 `Intl` 이, 뜻은 사전이"*
+  // - **`↔`·`·`** — 기호다. 이름을 잇고 조각을 가르는 자리이고 어느 언어에서도 같다
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 머리글은 **누가 답해야 하는지**를 말한다 — 그것이 이 카드가 답하는 유일한 질문이다.
+   * 넷이 한 축에 선다: 내가 · 그 에이전트가 · 사람 아무나 · 이미 끝났다.
+   */
+  'speech.ask.pickOne': 'Pick one',
+  'speech.ask.agentPicks': '{name} picks',
+  'speech.ask.personPicks': 'A person picks',
+  'speech.ask.decided': 'Decided',
+  /**
+   * 답한 사람. 이름을 모르면 `common.someone` 이 들어온다 — **그 자리가 이름 자리**라
+   * 보통명사가 와도 문장이 서야 하고, 그것이 `common` 에 그 낱말이 있는 이유다.
+   */
+  'speech.ask.answeredBy': '{name} picked',
+  /** 이름을 모르는 에이전트. `message.audience.unknownAgent` 와 같은 값이지만 **뜻이 다르다** — 여기는 고를 쪽, 저기는 받을 쪽이다. */
+  'speech.ask.unknownAgent': 'another agent',
+
+  'speech.failure.title': 'Could not finish it',
+  'speech.failure.callAgain': 'Call again',
+  /**
+   * **화면 문구가 아니라 초안이다** — 눌러도 안 보내고 작성창을 채운다(그 자리 주석).
+   * 그래서 사람이 보내기 전에 읽고 고칠 글이고, 말투가 부탁이다.
+   */
+  'speech.failure.retryDraft': '@{handle} please try again',
+
+  /** 도는 중 / 끝난 것. **상**[aspect]이 갈리고, 그 갈림이 점의 색과 같은 사실을 말한다. */
+  'speech.progress.working': 'Working',
+  'speech.progress.worked': 'Worked',
+  /** 접힌 줄 수를 말해야 열 이유가 된다 — 하나뿐이면 화면이 이 버튼을 아예 안 그린다. */
+  'speech.progress.expand': {
+    one: 'Show {count} line',
+    other: 'Show {count} lines',
+  },
+  'speech.progress.collapse': 'Collapse',
+
+  /** 보고의 세 구획. **한 축에 선다** — 무엇을 했나 · 무엇이 바뀌었나 · 무엇이 남았나. */
+  'speech.report.checks': 'Checked',
+  'speech.report.files': 'Files changed',
+  'speech.report.remaining': 'Left to do',
+
+  /**
+   * 접은 줄의 결론 머리. `decided` 는 **위 `ask.decided` 와 같은 낱말이어야 한다** —
+   * 같은 사실(선택이 끝났다)을 두 자리가 다르게 부르면 어휘가 하나 늘어난다.
+   */
+  'speech.exchange.decided': 'Decided',
+  'speech.exchange.finished': 'Finished',
+  /** **`yet` 이 진다** — 빼면 판정이 되는데, 이 구간은 아직 도는 중일 수 있다. */
+  'speech.exchange.undecided': 'Nothing decided yet',
+  'speech.exchange.count': {
+    one: '{count} exchange',
+    other: '{count} exchanges',
+  },
+  /** 시각은 `toLocaleTimeString` 이 그 언어로 낸다 — 사전은 앞의 낱말만 진다. */
+  'speech.exchange.last': 'last {time}',
+  'speech.exchange.collapse': 'Collapse',
+
+  // ---------------------------------------------------------------------------
+  // thread — **판정 이름이지 화면 이름이 아니다**(`waitChain`·`daemonFacts` 와 같은 근거).
+  //
+  // 이 다섯 낱말은 `lib/threadState.ts::threadState` 의 판정 결과에 붙는 이름이고,
+  // 그리는 화면이 **이미 셋이다**: `ThreadPanel`(머리띠) · `MessageItem`(답글 요약 배지) ·
+  // `GallerySettings`(5단 견본). `waitChain` 머리말이 둘로도 충분하다고 한 조건을 넘는다.
+  //
+  // ## `THREAD_STATE_LABEL` 이 **모듈 상수였다**
+  //
+  // 이 PR 이 찾은 굳음이다. `Record<ThreadState, string>` 이 파일 맨 위에 서 있어
+  // **로드 시점 언어로 굳었고**, 사전을 갈라 놔도 이 다섯은 영원히 한국어였을 것이다.
+  // `SkillsSettings` 의 세 칸 이름과 `runnerLauncher` 의 `STRANGER_ATTACHED` 가 같은
+  // 모양이었고 같은 방식으로 함수로 내렸다 — `threadStateLabel(state, t)`.
+  //
+  // ## 5단은 **한 사다리다** — 낱말이 그 순서를 져야 한다
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 내 차례 | `Your turn` | **2인칭이다**(`message.audience.me` 와 같은 규율). `My turn` 은 화면이 자기 차례라고 말하는 꼴이다 |
+  // | 막힘 | `Stuck` | `Blocked` 는 **무엇에** 막혔는지를 묻게 하는데, 이 상태는 그 답이 없는 상태다(실패했거나 러너가 죽었다). `Stuck` 은 상태 그 자체의 이름이고 `ThreadState` 의 값 이름과도 같다 |
+  // | 남을 기다림 | `Waiting on others` | `Waiting` 만 두면 위의 `Your turn` 과 대비가 안 선다 — 이 사다리에서 중요한 것은 **나냐 남이냐**다. `waitChain.sectionTitle`(`Waiting on`)과 같은 동사를 쓴다 |
+  // | 도는 중 | `Running` | 답이 필요 없는 구간. `In progress` 는 `speech.progress.*` 와 겹쳐 어휘가 둘이 된다 |
+  // | 끝남 | `Done` | |
+  // ---------------------------------------------------------------------------
+
+  'thread.state.myTurn': 'Your turn',
+  'thread.state.stuck': 'Stuck',
+  'thread.state.waiting': 'Waiting on others',
+  'thread.state.running': 'Running',
+  'thread.state.done': 'Done',
+
+  /**
+   * 채널 요약의 말 슬롯 — **"누가 누구를 기다린다"**. `waitChain.link` 와 **같은 문장**을
+   * 다른 재료(`openAskLinks`)에서 내는 자리라, 키를 따로 두지 않고 그것을 부른다.
+   *
+   * 이 자리가 `subjectParticle` 을 쓰던 **마지막 호출처**였다(`en.ts` 머리말의 남은 것
+   * 표). 조사가 번역기 안으로 들어가면서 그 함수와 `lib/particle.ts` 가 함께 사라졌다.
+   */
+
+  // ---------------------------------------------------------------------------
+  // inbox — **판정 이름이면서 화면 이름이기도 하다** — 두 규칙이 같은 곳에 떨어졌다.
+  //
+  // 이 여섯 말표는 `lib/inboxRow.ts::inboxRow` 가 `meta` 를 읽어 정하고, 그리는 화면은
+  // `Inbox` 하나다. 규칙 2(판정 이름)와 규칙 3(화면 이름)이 **같은 이름을 낸다** —
+  // 그래서 어느 쪽으로 읽어도 `inbox` 다.
+  //
+  // 그럼에도 **판정 쪽으로 읽어 두는 것**이 이 머리말의 요점이다: 이 판정은 인박스 밖에서
+  // 불릴 수 있는 모양(순수 함수 + `meta` 만 본다)이고, 실제로 `AgentExchange` 가 그 어휘를
+  // 이미 빌려 쓴다(그 파일 주석: *"`inboxRow` 가 보고에 쓰는 `끝냈다` 를 그대로 가져온다"*).
+  // 두 번째 화면이 오면 그때 이름을 안 바꾸어도 된다.
+  //
+  // ## 여섯이 **rank 순으로 읽힌다** — 낱말이 그 순서를 져야 한다
+  //
+  // 이 파일의 요점은 *"네 줄이 글자 하나까지 똑같다"* 를 고친 것이고, 그래서 여섯이
+  // 서로 달라야 한다는 것이 어휘의 제약이다. 그리고 rank(0 나를 막는다 → 1 읽을 것 →
+  // 2 배경)가 낱말의 무게로도 읽혀야 한다.
+  //
+  // | 한국어 | rank | 영어 | 왜 |
+  // |---|---|---|---|
+  // | 골라 줘 | 0 | `Pick one` | **`speech.ask.pickOne` 과 같은 말이다.** 같은 물음이 카드에서도 인박스에서도 나를 부르므로, 다르게 부르면 사람은 둘을 다른 사건으로 센다. 그래도 **키는 따로 둔다** — 승격 자격은 "글자가 같다"가 아니라 "뜻이 하나다"이고(`en.ts` 머리말), 인박스의 말표는 카드의 머리글과 달리 **한 줄에 서는 말표**라 나중에 짧아질 수 있다 |
+  // | 막혔다 | 0 | `Stuck` | `thread.state.stuck` 과 같은 낱말. 실패는 **언제나 사람에게 온다**(`FailureMeta` 에 `to` 가 없는 이유) |
+  // | 고르는 중 | 1 | `Being picked` | **남에게 간 물음이다.** `Waiting` 은 내가 기다린다고 읽히는데, 여기서 기다리는 것은 그 물음이다. 진행형이 "아직 안 끝났다"를 진다 |
+  // | 끝냈다 | 1 | `Finished` | `speech.exchange.finished` 와 같은 낱말 — 완료 보고를 두 자리가 같은 말로 부른다 |
+  // | 불렀다 | 1 | `Called you` | **누가 누구를**이 있어야 한다. `Mention` 은 명사라 그것이 나에게 온 일이라는 사실이 빠지고, 그러면 rank 1 인 이유가 안 읽힌다 |
+  // | 답글 | 2 | `Reply` | 배경이다. 명사 한 낱말인 것이 이 rank 의 무게다 — 위 다섯이 문장인데 이것만 명사인 것이 곧 "나에게 온 일이 아니다"를 말한다 |
+  //
+  // `DM` 은 옮기지 않는다 — **이 제품의 고유어**이고 `waitChain.dm` 이 이미 같은 판단을 했다.
+  // ---------------------------------------------------------------------------
+
+  'inbox.label.ask': 'Pick one',
+  'inbox.label.askOther': 'Being picked',
+  'inbox.label.failure': 'Stuck',
+  'inbox.label.report': 'Finished',
+  'inbox.label.mention': 'Called you',
+  'inbox.label.reply': 'Reply',
 } satisfies Record<string, Message>;
 
 /**

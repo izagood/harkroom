@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
 import { acc, msg } from './helpers/fakeApi';
@@ -17,6 +18,7 @@ const fakeController = () => {
 };
 
 beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'me'),
@@ -24,7 +26,14 @@ beforeEach(() => {
     messages: { c1: [] },
   });
 });
-afterEach(() => cleanup());
+// **언어를 고정한다**(이 묶음의 문구가 사전을 지나면서 기본이 영어가 됐다). 이 파일이
+// 재는 것은 언어가 아니라 **그 언어로 표현된 규율**이다 — 언어를 재는 자리는
+// `i18n.test.tsx` 하나이고, 두 곳에서 재면 문구를 고칠 때 한쪽만 고쳐진다
+// (`gallery.test.tsx`·`skillsSettings.test.tsx`·`agentGrid.test.tsx` 와 같은 규약).
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 describe('#254 답글 컨트롤 위치 변경', () => {
   // 회귀선 1: 답글 컨트롤이 본문 열 안, 리액션 다음에 온다.
@@ -44,7 +53,7 @@ describe('#254 답글 컨트롤 위치 변경', () => {
       />,
     );
 
-    const replyBtn = screen.getByRole('button', { name: '2 replies' });
+    const replyBtn = screen.getByRole('button', { name: '답글 2개' });
     // 가드 없이 찾는다 — 없으면 그 자체가 실패여야 한다.
     const reactions = screen.getByTestId('reactions');
 
@@ -65,7 +74,7 @@ describe('#254 답글 컨트롤 위치 변경', () => {
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
 
     const toolbar = screen.getByRole('group', { name: 'message toolbar' });
-    const replyBtn = screen.getByRole('button', { name: '2 replies' });
+    const replyBtn = screen.getByRole('button', { name: '답글 2개' });
 
     // 답글 버튼과 툴바가 다른 부모를 갖는다 (다른 컨테이너)
     expect(toolbar.parentElement).not.toBe(replyBtn.parentElement);
@@ -85,7 +94,7 @@ describe('#254 답글 컨트롤 위치 변경', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
 
-    const replyBtn = screen.getByRole('button', { name: '2 replies' });
+    const replyBtn = screen.getByRole('button', { name: '답글 2개' });
     expect(replyBtn.className).not.toMatch(/\bopacity-0\b/);
     expect(replyBtn.className).not.toMatch(/\binvisible\b/);
     expect(replyBtn.className).not.toMatch(/\bhidden\b/);
@@ -180,7 +189,7 @@ describe('#424 답글 요약은 상자가 아니라 텍스트 링크다', () => 
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
 
-    const replyBtn = screen.getByRole('button', { name: '2 replies' });
+    const replyBtn = screen.getByRole('button', { name: '답글 2개' });
 
     // 상시 노출되는 면이 없다. hover 에서만 깔리는 hover:bg-* 는 살아 있어야 하므로
     // 접두사 없는 bg-/border- 만 걸리도록 경계를 둔다.
@@ -201,7 +210,7 @@ describe('#424 답글 요약은 상자가 아니라 텍스트 링크다', () => 
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
 
-    const count = screen.getByText(/2 replies/);
+    const count = screen.getByText(/답글 2개/);
     expect(count.className).not.toMatch(/\btext-accent\b/);
     expect(count.className).toMatch(/\bunderline\b/);
   });
@@ -210,7 +219,7 @@ describe('#424 답글 요약은 상자가 아니라 텍스트 링크다', () => 
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
 
-    fireEvent.click(screen.getByRole('button', { name: '2 replies' }));
+    fireEvent.click(screen.getByRole('button', { name: '답글 2개' }));
     expect(c.openThread).toHaveBeenCalledWith('m1');
   });
 });

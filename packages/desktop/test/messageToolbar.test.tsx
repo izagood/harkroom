@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import type { MessageRow } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
 import { acc, msg } from './helpers/fakeApi';
@@ -26,6 +27,7 @@ const withReplies = (count: number, rootId = 'm1'): MessageRow[] => {
 };
 
 beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'me'),
@@ -33,7 +35,14 @@ beforeEach(() => {
     messages: { c1: [] },
   });
 });
-afterEach(() => cleanup());
+// **언어를 고정한다**(이 묶음의 문구가 사전을 지나면서 기본이 영어가 됐다). 이 파일이
+// 재는 것은 언어가 아니라 **그 언어로 표현된 규율**이다 — 언어를 재는 자리는
+// `i18n.test.tsx` 하나이고, 두 곳에서 재면 문구를 고칠 때 한쪽만 고쳐진다
+// (`gallery.test.tsx`·`skillsSettings.test.tsx`·`agentGrid.test.tsx` 와 같은 규약).
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 describe('message toolbar', () => {
   it('shows reaction trigger in toolbar on hover for own message', () => {
@@ -236,7 +245,7 @@ describe('reply count visibility', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
 
-    expect(screen.getByRole('button', { name: '2 replies' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '답글 2개' })).toBeTruthy();
   });
 
   // replyCount 가 null 이면(루트가 아니거나 답글 없는 루트) 본문 아래 pill 은 안 나오고,
@@ -267,7 +276,7 @@ describe('reply count visibility', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 3 })} />);
 
-    const pillBtn = screen.getByRole('button', { name: /3 replies/ });
+    const pillBtn = screen.getByRole('button', { name: /답글 3개/ });
     const toolbar = screen.getByRole('group', { name: 'message toolbar' });
     expect(toolbar.contains(pillBtn)).toBe(false);
     expect(within(toolbar).queryByRole('button', { name: '스레드에 답글 달기' })).toBeNull();
@@ -329,7 +338,7 @@ describe('#143/#254 답글 컨트롤과 툴바가 다른 컨테이너에 있다'
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
 
     const toolbar = screen.getByRole('group', { name: 'message toolbar' });
-    const replyBtn = screen.getByRole('button', { name: '2 replies' });
+    const replyBtn = screen.getByRole('button', { name: '답글 2개' });
 
     // 답글 버튼과 툴바가 다른 부모를 갖는다 (다른 컨테이너)
     expect(toolbar.parentElement).not.toBe(replyBtn.parentElement);
