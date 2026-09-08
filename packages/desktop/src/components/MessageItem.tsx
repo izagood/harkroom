@@ -19,6 +19,7 @@ import { Attachments } from './Attachments';
 import { Menu } from './Menu';
 import { ConfirmDialog } from './ConfirmDialog';
 import { bodyAsHandles, displayBody } from '../lib/mention';
+import { accountOpen } from '../lib/accountOpen';
 import type { SectionId } from './settings/sections';
 
 /**
@@ -39,6 +40,14 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
   const myId = useActiveStore((s) => s.me?.id ?? null);
   const accounts = useActiveStore((s) => s.accounts);
+  /**
+   * 이름·얼굴을 눌렀을 때 갈 곳. **`@멘션` 칩과 같은 함수**를 지난다(`lib/accountOpen`) —
+   * 화면에서 한 사람을 가리키는 자리는 셋(멘션 칩·이름줄·거터 아바타)인데 그 셋이 서로
+   * 다른 곳으로 가면, 사람은 "어디를 눌러야 프로필이 나오는지"를 매번 시험해 봐야 한다.
+   * 신호(`onOpenDirectory`·`onOpenSettings`)가 없는 자리에서는 `null` 이라 **버튼이 아니다**
+   * — 눌러도 아무 일이 없는 컨트롤을 남기지 않는다(`MessageBody` 의 같은 규칙).
+   */
+  const authorOpen = accountOpen(author, { id: myId, isAdmin }, { onOpenDirectory, onOpenSettings });
   // 생존 판정의 두 축 — `connected` 가 false 면 `online` 은 '아무도 없다'가 아니라 '모른다'다.
   const online = useActiveStore((s) => s.online);
   const connected = useActiveStore((s) => s.connected);
@@ -356,9 +365,31 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
           32px 고정이라 안에 든 것이 넓어지면 열을 넘친다(그것이 #277 의 결함이었다).
           `data-testid` 는 회귀 테스트가 이 열을 클래스 문자열로 더듬지 않게 하려고 둔다 —
           클래스로 찾으면 스타일을 조금 손보는 순간 테스트가 조용히 아무것도 안 지킨다. */}
-      <div data-testid="author-gutter" className="flex h-8 w-8 shrink-0 items-center justify-center">
-        <Identity account={author} className="h-8 w-8 text-sm" variant="avatar" />
-      </div>
+      {/* 거터 자체가 누를 자리다 — 아바타를 버튼으로 **감싸지 않는다.** 감싸면 거터의
+          첫 자식이 `Identity` 가 아니게 되어(회귀선이 그 자리를 잰다: `gutterOverflow
+          Regression.test.tsx`) 32px 열의 계약이 마크업 한 겹 아래로 밀린다. 여기서
+          바뀌는 것은 태그와 커서뿐이고, 상자·자식은 위 주석 그대로다.
+
+          **보조기술에는 내지 않는다**(`aria-hidden` + `tabIndex={-1}`). 바로 옆 이름줄
+          버튼이 **같은 곳**으로 가므로, 둘 다 내면 메시지마다 같은 이름의 버튼이 둘씩
+          서서 목록과 탭 순서가 두 배가 된다. 잃는 것은 없다 — 키보드·스크린리더는
+          이름줄로 가고, 여기는 얼굴을 눌러 여는 마우스 길이다. */}
+      {authorOpen ? (
+        <button
+          type="button"
+          data-testid="author-gutter"
+          className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full"
+          onClick={authorOpen.run}
+          aria-hidden="true"
+          tabIndex={-1}
+        >
+          <Identity account={author} className="h-8 w-8 text-sm" variant="avatar" />
+        </button>
+      ) : (
+        <div data-testid="author-gutter" className="flex h-8 w-8 shrink-0 items-center justify-center">
+          <Identity account={author} className="h-8 w-8 text-sm" variant="avatar" />
+        </div>
+      )}
       {/*
         본문 최대폭(계획 Task 10 Step 4). 넓은 창에서 보고문이 한 줄 100자를 넘어 읽기가
         무너진다 — 읽히는 말(완료 보고)이 이 열에 살기 때문에 `ch` 로 상한을 둔다.
@@ -376,11 +407,31 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               4단이 실제로는 3단이 되고(15px 을 쓰는 자리가 하나도 없었다), 대화가 한
               덩어리로 흐른다. 같은 줄의 시각·배지는 아랫단 11px 이라 한 줄 안에 세 단이
               아니라 두 단이 선다: **누가**(15)와 **곁정보**(11), 본문은 그 아래 13. */}
-          <span
-            data-testid="author-name"
-            className="text-name font-semibold"
-            title={model ? `모델 ${model.id}` : undefined}
-          >{author?.handle ?? '…'}</span>
+          {/* 이름은 **누를 수 있다** — `@handle` 을 누르는 것과 같은 곳으로 간다.
+              글자 크기·굵기는 위 문단이 정한 그대로이고(15px 이름줄), 누를 수 있다는
+              것은 hover 밑줄과 커서로만 말한다: 여기에 색을 칠하면 이름마다 강조가
+              하나씩 서서 정작 나를 막는 말의 색이 죽는다(규칙 04, #488 B2). */}
+          {authorOpen ? (
+            <button
+              type="button"
+              data-testid="author-name"
+              className="cursor-pointer text-name font-semibold hover:underline"
+              title={model ? `모델 ${model.id}` : undefined}
+              // 접근 가능한 이름 앞에 **작성자**를 붙인다. 자기 이름을 부르는 말
+              // (`@someone` 이 쓴 "@someone 확인했다")에서는 이름줄 버튼과 본문 멘션 칩이
+              // 같은 곳으로 가는 **다른 두 자리**인데, 이름이 같으면 스크린리더 사용자는
+              // 목록에 뜬 둘 중 어느 것이 어디인지 알 수 없다(회귀선이 실제로 그 충돌로
+              // 빨개졌다: `mentionClick.test.tsx` 의 `getByRole` 이 둘을 찾았다).
+              aria-label={`작성자 ${authorOpen.label}`}
+              onClick={authorOpen.run}
+            >{author?.handle ?? '…'}</button>
+          ) : (
+            <span
+              data-testid="author-name"
+              className="text-name font-semibold"
+              title={model ? `모델 ${model.id}` : undefined}
+            >{author?.handle ?? '…'}</span>
+          )}
           {/* 설정과 어긋난 모델(#600). 배지가 아니라 **경고**다 — 이 자리에 무언가 서 있는
               것 자체가 "확인해 봐라"는 뜻이고, 무엇을 확인하는지는 hover 가 말한다.
               설정값을 적지 않는 이유는 서버가 그것을 안 싣기 때문이다(admin·소유자만 보는
