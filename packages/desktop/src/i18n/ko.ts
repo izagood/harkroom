@@ -24,6 +24,24 @@ import type { Catalog } from './en';
 export const ko = {
   'common.someone': '사람',
 
+  'sweep.close': '닫기',
+  'sweep.done': '다 봤다',
+  'sweep.failed': '읽음 처리에 실패했다',
+  'sweep.justNext': '그냥 다음',
+  'sweep.loading': '불러오는 중…',
+  'sweep.readAndNext': '읽음 처리하고 다음',
+  'sweep.retry': '다시 시도',
+  'sweep.title': '미읽음 훑기',
+  'sweep.unknownError': '알 수 없는 오류',
+
+  'accountOpen.agentConfig': '{handle} 에이전트 설정 열기',
+  'accountOpen.profile': '{handle} 프로필 열기',
+
+  'mention.unknownAccount': '알 수 없음',
+
+  'thread.alsoPostToChannel': '채널에도 올리기',
+  'thread.resizeHandle': '스레드 너비 조절',
+
   // ---------------------------------------------------------------------------
   // avatar · avatarEdit — **어투를 `~다` 로 맞췄다.** 이 둘만 `~습니다`·`~주세요` 였고,
   // 한 자리만 높임말이면 같은 앱이 사람을 두 가지로 대한다(`profileName`·`InviteSettings`

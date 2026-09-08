@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
 import type { ChannelPrefRow } from '@murmur/shared';
 import type { SweepItem } from '../src/state/sweep';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController } from '../src/state/controller';
 import { Sweep, SweepShell } from '../src/components/Sweep';
@@ -52,11 +53,19 @@ function mount(api: ReturnType<typeof fakeApi>, prefs: ChannelPrefRow[] = []) {
   render(<Sweep open onClose={() => {}} />);
 }
 
+// **언어를 고정한다.** 이 파일이 재는 것은 언어가 아니라 **그 언어로 표현된 규율**이다 —
+// 언어를 재는 자리는 `i18n.test.tsx` 하나이고, 두 곳에서 재면 문구를 고칠 때 한쪽만
+// 고쳐진다(`gallery.test.tsx`·`agentGrid.test.tsx` 와 같은 규약).
 beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   setController(null);
 });
-afterEach(() => { cleanup(); setController(null); });
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+  setController(null);
+});
 
 describe('미읽음 훑기', () => {
   it('미읽음이 있는 채널을 오래된 것부터 보여 준다', async () => {
