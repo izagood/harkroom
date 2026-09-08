@@ -81,6 +81,30 @@ describe('채널 미읽음 배지', () => {
     expect(screen.getByLabelText('3 unread in other')).toBeTruthy();
   });
 
+  /**
+   * 점과 배지가 **한 묶음으로 오른쪽에 붙는다.** 예전에는 둘 다 `ml-auto` 를 들고 있어
+   * flex 가 남은 여백을 두 auto 마진에 똑같이 나눠 줬고, 그래서 멘션이 있는 채널에서만
+   * 점이 줄 한가운데에 떴다. 클래스 문자열을 재는 이유가 여기 있다 — 이 결함은 "무엇이
+   * 보이는가"가 아니라 "누가 마진을 갖는가"라서, 렌더 결과만 보면 회귀가 조용히 지나간다.
+   */
+  it('keeps the dot and the badge in one right-aligned group', () => {
+    useAppStore.getState().set({
+      reads: { c2: { lastReadSeq: 0, unread: 3 } },
+      unread: [{ id: 1, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c2',
+        authorId: 'u2', body: 'hi', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null }],
+    });
+
+    render(<Sidebar panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={() => {}} />);
+
+    const dot = screen.getByLabelText('3 unread in other');
+    const badge = screen.getByTestId('unread-c2');
+    // 같은 부모 안에 나란히 있고, 미는 마진은 그 부모 하나만 갖는다.
+    expect(dot.parentElement).toBe(badge.parentElement);
+    expect(dot.parentElement?.className).toContain('ml-auto');
+    expect(dot.className).not.toContain('ml-auto');
+    expect(badge.className).not.toContain('ml-auto');
+  });
+
   it('shows no badge at zero', () => {
     useAppStore.getState().set({ reads: { c2: { lastReadSeq: 5, unread: 0 } } });
 
