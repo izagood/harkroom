@@ -154,6 +154,13 @@ export const ko = {
   'sidebar.section.renameName': '섹션 새 이름',
   'sidebar.section.renamePlaceholder': '새 이름',
   'sidebar.section.renameSubmit': '바꾸기',
+  // 시간 — 수량은 `Intl` 이 낸다(`lib/time.ts`). 여기 있는 넷은 수량이 아니다.
+  'time.justNow': '방금',
+  'time.none': '없음',
+  // 어미로 상[aspect]을 말한다 — 영어는 `running {duration}` 으로 말을 앞에 세운다.
+  // **같은 뜻을 언어마다 다른 문법으로 낸다**, 그것이 이 둘이 사전에 있는 이유다.
+  'time.running': '{duration}째',
+  'time.took': '{duration}',
 
   // 조사 표기(`:이가`)가 붙는다 — 위 머리말 참고. 영어 원본에는 이런 표기가 없다.
   'waitChain.link': '{waiter:이가} {blockedBy}의 답을 기다린다',

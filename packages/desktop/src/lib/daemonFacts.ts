@@ -36,6 +36,10 @@
  * 아래 `terminationRow` 의 주석이 그 표 전체를 다룬다.
  */
 import type { ObservedRunner } from './runnerLauncher';
+// 시간 표기는 **앱 전체가 한 벌**이다(`lib/time.ts` 머리말의 실측 표). 이 파일이 길이를
+// 제 손으로 조립하면 같은 뜻이 두 벌이 되고, 그것이 이 함수의 옛 모습이었다.
+import { durationLabel } from './time';
+import type { Translate } from '../i18n';
 
 /**
  * 상세에 서는 한 행. **라벨과 값이 갈려 있다** — 목업이 왼쪽에 라벨 칸, 오른쪽에 값 칸을
@@ -52,23 +56,36 @@ export interface DaemonFactRow {
 /**
  * 두 시각의 차이를 사람이 읽는 길이로. **경과이지 판정이 아니다** — 위 규율 2.
  *
- * '방금'으로 뭉개는 하한과 음수를 다루는 방식은 `lastTurnAgo` 와 같게 둔다: 시계 보정으로
- * 음수가 나올 수 있고, 그때 "-3분"이라고 적으면 사람은 앱이 고장 났다고 읽는다.
+ * ## 두 벌이던 이름을 합쳤다(`#619` 후속)
  *
- * 초까지 내려가는 것이 `lastTurnAgo` 와 다른 점이다. 저쪽이 재는 것은 "마지막 활동"이라
- * 분 해상도가 충분하지만, 여기서 재는 것은 **종료 요청을 보낸 뒤의 기다림**이고 그것은
- * 초 단위로 읽어야 한다 — 롱폴링 한 바퀴가 기본 25초다(`AGENT_POLL_TIMEOUT_MS`).
+ * 이 함수는 `progressGroup.ts` 에도 **같은 이름으로** 있었다(시그니처만 달랐다 —
+ * `(fromMs: number, now)` 와 `(startedAt: string, now)`). 이 저장소가 반복 결함으로
+ * 지목한 *"같은 판정이 두 벌"* 의 모양이라, 서식은 `lib/time.ts::durationLabel` 하나로
+ * 합치고 **이 자리 고유의 정책만** 여기 남겼다:
+ *
+ * - **1초 미만은 `방금` 이라고 말한다.** 저쪽(`progressGroup`)은 같은 자리에서 `null` 을
+ *   내 자리를 비우는데, 여기서는 행이 서야 한다 — 상세의 표에서 값 칸이 비면 그것은
+ *   "짧다"가 아니라 "못 읽었다"로 읽힌다.
+ * - **초까지 내려간다.** 여기서 재는 것은 **종료 요청을 보낸 뒤의 기다림**이고 그것은
+ *   초 단위로 읽어야 한다 — 롱폴링 한 바퀴가 기본 25초다(`AGENT_POLL_TIMEOUT_MS`).
+ *   `durationLabel` 이 60초 미만을 초로 내므로 이 자리는 그대로 얻는다.
+ *
+ * 음수를 다루는 방식은 `agoLabel` 과 같게 둔다: 시계 보정으로 음수가 나올 수 있고,
+ * 그때 "-3분"이라고 적으면 사람은 앱이 고장 났다고 읽는다. 뭉개는 것은 `durationLabel`
+ * 안에 있다 — 이 앱이 시간을 말하는 모든 자리에 같게 걸려야 하는 규율이라 그쪽이 맞다.
+ *
+ * `locale` 과 `t` 를 인자로 받는 것은 `#619` 가 정한 **(b) 주입**이다 — 판정이 React
+ * 컨텍스트에 묶이지 않고, 회귀선이 언어를 골라 넘겨 **문구를 계속 잰다**.
  */
-export function elapsedLabel(fromMs: number, now: number): string {
+export function elapsedLabel(
+  fromMs: number,
+  now: number,
+  locale: string,
+  t: Translate,
+): string {
   const ms = now - fromMs;
-  if (ms < 1_000) return '방금';
-  const secs = Math.floor(ms / 1_000);
-  if (secs < 60) return `${secs}초`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}분 ${secs % 60}초`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}시간 ${mins % 60}분`;
-  return `${Math.floor(hours / 24)}일 ${hours % 24}시간`;
+  if (ms < 1_000) return t('time.justNow');
+  return durationLabel(ms, locale);
 }
 
 /** 목업의 `2026-09-07 16:05` 꼴. 로케일 기본 포맷은 초까지 붙어 행이 두 줄로 넘어간다. */
@@ -133,6 +150,8 @@ function terminationRows(
   runner: ObservedRunner,
   server: ServerStopRequest,
   now: number,
+  locale: string,
+  t: Translate,
 ): DaemonFactRow[] {
   const rows: DaemonFactRow[] = [];
 
@@ -177,7 +196,7 @@ function terminationRows(
     // "그러니 이상하다"는 판정이다. 후자를 적으려면 러너의 롱폴링 예산을 알아야 하는데
     // daemon 도 이 화면도 그것을 모른다.
     const waited = runner.alive
-      ? `${stamp(daemonSent)} 에 SIGTERM · 보낸 지 ${elapsedLabel(daemonSent, now)}, 아직 살아 있다`
+      ? `${stamp(daemonSent)} 에 SIGTERM · 보낸 지 ${elapsedLabel(daemonSent, now, locale, t)}, 아직 살아 있다`
       : `${stamp(daemonSent)} 에 SIGTERM`;
     rows.push({ key: 'signal', label: '시그널', value: waited });
   }
@@ -197,7 +216,9 @@ function terminationRows(
 export function daemonFactRows(
   runner: ObservedRunner | undefined,
   server: ServerStopRequest,
-  now: number = Date.now(),
+  now: number,
+  locale: string,
+  t: Translate,
 ): DaemonFactRow[] {
   if (!runner) return [];
   const rows: DaemonFactRow[] = [];
@@ -213,7 +234,7 @@ export function daemonFactRows(
     rows.push({
       key: 'uptime',
       label: '가동',
-      value: `${stamp(runner.startedAtMs)} 부터 · ${elapsedLabel(runner.startedAtMs, now)}`,
+      value: `${stamp(runner.startedAtMs)} 부터 · ${elapsedLabel(runner.startedAtMs, now, locale, t)}`,
     });
   }
 
@@ -233,6 +254,6 @@ export function daemonFactRows(
     value: runner.alive ? 'alive — kill(pid, 0) 확인' : 'dead — kill(pid, 0) 이 실패했다',
   });
 
-  rows.push(...terminationRows(runner, server, now));
+  rows.push(...terminationRows(runner, server, now, locale, t));
   return rows;
 }

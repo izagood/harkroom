@@ -32,9 +32,27 @@ import type { AgentConfig, AgentDefaults, AgentView, PatView } from '@murmur/sha
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
-import { daemonFactRows, elapsedLabel } from '../src/lib/daemonFacts';
+import { daemonFactRows as rawDaemonFactRows, elapsedLabel as rawElapsedLabel } from '../src/lib/daemonFacts';
 import { tauriDaemonObserver, type ObservedRunner } from '../src/lib/runnerLauncher';
+import { translator } from '../src/i18n';
 import { acc } from './helpers/fakeApi';
+
+/**
+ * 언어를 **인자로** 넘기는 껍데기(`#619` 의 `(b)` 주입). 전역 언어를 안 만지므로 이 파일이
+ * 병렬로 도는 다른 파일의 언어를 밟지 않는다.
+ *
+ * 아래 시험들이 **한국어 문구를 그대로** 재는 것이 중요하다: 시간 표기가 `Intl` 로 옮겨
+ * 갔는데도 이 화면의 문구가 한 글자도 안 바뀌었다는 것이 그 이전의 근거였고, 그 근거가
+ * 참인 동안만 이 시험들이 초록이다.
+ */
+const ko = translator('ko');
+const en = translator('en');
+const daemonFactRows = (
+  runner: ObservedRunner | undefined,
+  server: { requestedAtMs: number | null; ackedAtMs: number | null },
+  now: number = Date.now(),
+) => rawDaemonFactRows(runner, server, now, 'ko', ko);
+const elapsedLabel = (fromMs: number, now: number) => rawElapsedLabel(fromMs, now, 'ko', ko);
 
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
@@ -295,6 +313,30 @@ describe('판정 — 제약 2: N 의 정상 범위를 절대값으로 박지 않
     }
   });
 
+  /**
+   * **제약 2 가 언어를 바꿔도 지켜지는가**(`#619` 후속).
+   *
+   * 위 축은 한국어 판정 낱말을 잰다. 시간 표기가 `Intl` 로 옮겨 가면서 이 값의 일부가
+   * **언어를 따르게 됐으므로**, 영어로 냈을 때 `Intl` 이 판정 낱말을 끼워 넣지 않는지를
+   * 함께 봐야 한다 — 제약 2 는 문구의 성질에 대한 것이지 한국어에 대한 것이 아니다.
+   *
+   * 지금은 이 행의 나머지가 아직 한국어라(화면 이전은 다음 PR) 영어 낱말이 섞여 나오는
+   * 것이 정상이다. 그래서 **경과 부분만** 떼어 재고, 다음 PR 이 이 행을 옮길 때 위 축을
+   * 영어로도 돌리면 된다.
+   */
+  it('경과 표기 자체는 어느 언어로도 판정을 안 한다', () => {
+    const cases = [42_000, 4 * 60_000 + 12_000, 4 * 3_600_000 + 12 * 60_000, 2 * 86_400_000];
+    for (const ms of cases) {
+      const value = rawElapsedLabel(0, ms, 'en', en);
+      // 사실은 적는다 — 수를 낸다.
+      expect(value).toMatch(/\d/);
+      // 판정은 안 한다. `Intl.DurationFormat` 은 길이만 내지 평가를 안 붙인다.
+      for (const verdict of ['abnormal', 'stuck', 'problem', 'failed', 'no response', 'too ', 'unusual']) {
+        expect(value.toLowerCase()).not.toContain(verdict);
+      }
+    }
+  });
+
   it('판정 함수 어디에도 임계값 상수가 없다 — 소스를 직접 본다', async () => {
     // 문구를 대조하는 것만으로는 다음 사람이 새로 넣는 임계값을 못 막는다. 그래서
     // 소스를 읽어 롱폴링 예산의 이름 자체가 없음을 단언한다.
@@ -313,13 +355,28 @@ describe('판정 — 제약 2: N 의 정상 범위를 절대값으로 박지 않
 
 describe('경과 표기 — 음수를 지어내지 않는다', () => {
   it('시계 보정으로 음수가 나와도 "-3분"을 만들지 않는다', () => {
-    // `lastTurnAgo` 와 같은 규율이다 — 음수를 그대로 적으면 사람은 앱이 고장 났다고 읽는다.
+    // `agoLabel` 과 같은 규율이다 — 음수를 그대로 적으면 사람은 앱이 고장 났다고 읽는다.
     expect(elapsedLabel(1_000_000, 900_000)).toBe('방금');
   });
 
+  /**
+   * **문구가 그대로다.** 서식이 `Intl.DurationFormat` 으로 옮겨 갔는데(`lib/time.ts`)
+   * 한국어 화면은 한 글자도 안 바뀌었다 — `Intl` 이 이 넷을 원래 문구 그대로 낸다는
+   * 실측이 그 이전의 근거였고, 이 축이 그 근거를 잠근다.
+   */
   it('종료 요청 뒤의 기다림은 **초까지** 읽힌다 — 롱폴링 한 바퀴가 그 단위다', () => {
     expect(elapsedLabel(0, 42_000)).toBe('42초');
     expect(elapsedLabel(0, 4 * 60_000 + 12_000)).toBe('4분 12초');
+    expect(elapsedLabel(0, 4 * 3_600_000 + 12 * 60_000)).toBe('4시간 12분');
+    expect(elapsedLabel(0, 2 * 86_400_000 + 5 * 3_600_000)).toBe('2일 5시간');
+  });
+
+  /** **언어를 바꾸면 길이 표기도 바뀐다** — 사전에 그 문구가 없는데도. */
+  it('언어를 영어로 바꾸면 길이가 영어로 나온다', () => {
+    expect(rawElapsedLabel(1_000_000, 900_000, 'en', en)).toBe('just now');
+    expect(rawElapsedLabel(0, 42_000, 'en', en)).toBe('42s');
+    expect(rawElapsedLabel(0, 4 * 60_000 + 12_000, 'en', en)).toBe('4m 12s');
+    expect(rawElapsedLabel(0, 4 * 3_600_000 + 12 * 60_000, 'en', en)).toBe('4h 12m');
   });
 });
 
