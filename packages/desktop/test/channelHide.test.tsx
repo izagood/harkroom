@@ -4,6 +4,7 @@ import type { ChannelPrefRow } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { acc, chan, fakeApi, fakeWsFactory } from './helpers/fakeApi';
 
 /**
@@ -47,7 +48,13 @@ const seed = (prefs: Record<string, ChannelPrefRow> = {}): void => {
   });
 };
 
-afterEach(() => { cleanup(); setController(null as unknown as Controller); });
+// **언어를 한국어로 고정한다.** 이 파일의 축들은 사이드바의 한국어 문구로 쓰여 있고,
+// 그 문구가 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다(#619 가 대기 사슬에서
+// 세운 방식과 같다). 영어가 원본이 되면서 기본값이 영어가 됐으므로, 한국어를 재려면
+// 한국어라고 말해야 한다 — 그리고 그렇게 적어 두면 이 축들이 무엇을 재는지가 오히려
+// 또렷해진다. 두 언어로 다 뜨는지는 `i18n.test.tsx` 가 잰다.
+beforeEach(() => { usePrefsStore.getState().setLocale('ko'); });
+afterEach(() => { cleanup(); setController(null as unknown as Controller); usePrefsStore.getState().setLocale('system'); });
 
 describe('사이드바 숨기기(#376)', () => {
   it('1 — 숨긴 채널은 채널 목록에서 사라지고 접힌 Hidden 묶음에만 남는다', () => {

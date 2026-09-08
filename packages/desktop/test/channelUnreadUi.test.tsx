@@ -3,6 +3,7 @@ import { render, screen, fireEvent, cleanup, within } from '@testing-library/rea
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, Controller, type Controller as ControllerType } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { acc, chan, msg, fakeApi, fakeWsFactory } from './helpers/fakeApi';
 
 const fakeController = () => {
@@ -38,8 +39,13 @@ const openMenuFor = (name: string) => {
   return screen.getByRole('menu');
 };
 
-beforeEach(() => { vi.clearAllMocks(); });
-afterEach(cleanup);
+// **언어를 한국어로 고정한다.** 이 파일의 축들은 사이드바의 한국어 문구로 쓰여 있고,
+// 그 문구가 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다(#619 가 대기 사슬에서
+// 세운 방식과 같다). 영어가 원본이 되면서 기본값이 영어가 됐으므로, 한국어를 재려면
+// 한국어라고 말해야 한다 — 그리고 그렇게 적어 두면 이 축들이 무엇을 재는지가 오히려
+// 또렷해진다. 두 언어로 다 뜨는지는 `i18n.test.tsx` 가 잰다.
+beforeEach(() => { vi.clearAllMocks(); usePrefsStore.getState().setLocale('ko'); });
+afterEach(() => { cleanup(); usePrefsStore.getState().setLocale('system'); });
 
 describe('채널 미읽음으로 표시 UI (#154)', () => {
   it('메뉴에서 누르면 마지막 메시지 seq 로 컨트롤러를 부른다', () => {
