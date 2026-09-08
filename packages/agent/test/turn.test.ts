@@ -617,3 +617,39 @@ describe('인증 주입 env 를 자식에게 넘기지 않는다', () => {
     for (const key of KEYS) expect(HARNESS_ENV_DENYLIST).toContain(key);
   });
 });
+
+describe('실행 모델 교체 — 멘션 턴도 TUI 다 (2026-09-08)', () => {
+  const SESSION = '77777777-7777-4777-8777-777777777777';
+
+  it('멘션 턴에 -p 가 없다 — 붙이면 프롬프트가 stdin 파일로 가고 사람이 칠 수 없다', () => {
+    const first = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: SESSION, isFirstTurn: true });
+    expect(first.args).not.toContain('-p');
+    expect(first.args).toContain('--session-id');
+
+    const resumed = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: SESSION, isFirstTurn: false });
+    expect(resumed.args).not.toContain('-p');
+    expect(resumed.args).toContain('-r');
+  });
+
+  it('세션 플래그는 두 종류가 같아진다 — 실행 형태를 가를 근거가 없어졌다', () => {
+    const common = { ...base, harness: 'claude-code' as const, sessionId: SESSION, isFirstTurn: false };
+    const mention = buildTurnCommand({ ...common, mode: 'mention' }).args;
+    const interactive = buildTurnCommand({ ...common, mode: 'interactive' }).args;
+    // 세션을 여는 방식(`-r <id>`)이 같다 — 이것이 fd 0 의 정체를 정하고, 그래서 입력이 열린다.
+    expect(mention.slice(0, 2)).toEqual(['-r', SESSION]);
+    expect(interactive.slice(0, 2)).toEqual(['-r', SESSION]);
+  });
+
+  it('**권한은 여전히 갈린다** — 스펙 §6 이 정한 차이이고 실행 모델 교체가 건드릴 것이 아니다', () => {
+    const common = { ...base, harness: 'claude-code' as const, sessionId: SESSION, isFirstTurn: false };
+    // 멘션 턴은 정의의 mentionPermission 을 받는다(fixture 는 'auto' = bypassPermissions).
+    expect(buildTurnCommand({ ...common, mode: 'mention' }).args).toContain('bypassPermissions');
+    // 인터랙티브 턴은 사람이 앉아 있으므로 그 승격을 받지 않는다.
+    expect(buildTurnCommand({ ...common, mode: 'interactive' }).args).not.toContain('bypassPermissions');
+  });
+
+  it('codex 는 그대로 exec 다 — P5 전까지 두 세계가 함께 산다', () => {
+    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true });
+    expect(p.args).toContain('exec');
+  });
+});
