@@ -7,6 +7,7 @@ import { extractPreviewUrls, renderMentions } from '@murmur/shared';
 import { splitCode } from '../lib/code';
 import { parseBlocks, type Align, type Block, type Emphasis, type Inline } from '../lib/markdown';
 import { getExternalOpener } from '../lib/openExternal';
+import { accountOpen } from '../lib/accountOpen';
 import { getController } from '../state/controller';
 import { LinkPreview } from './LinkPreview';
 import type { SectionId } from './settings/sections';
@@ -83,6 +84,8 @@ export function MessageBody({
   const teams = useActiveStore((s) => s.teams) ?? NO_TEAMS;
   const me = useActiveStore((s) => s.me);
   const myHandle = me?.handle?.toLowerCase() ?? null;
+  // `accountOpen` 은 순수 함수라 스토어를 모른다 — 지금 보고 있는 사람을 값으로 준다.
+  const viewer = useMemo(() => ({ id: me?.id ?? null, isAdmin: me?.isAdmin === true }), [me?.id, me?.isAdmin]);
   // 코드 → 마크다운 구조 순서로 읽는다(#216). 이 순서가 곧 규칙이다 — `lib/markdown` 참고.
   const blocks = useMemo(() => parseBlocks(splitCode(body)), [body]);
   const handles = useMemo(() => Object.values(accounts).map((a) => a.handle), [accounts]);
@@ -149,33 +152,13 @@ export function MessageBody({
     // 오타(`@없는이름`)가 애초에 여기 오지 않는 것과 같은 이유다: 누를 수 있게 만들면
     // "여기에 뭔가 있다" 는 거짓을 말하게 된다.
     //
-    // 에이전트는 **admin 만** 설정으로 보낸다. spec 은 소유자도 보내라고 했지만
-    // `GET /accounts/agents` 가 아직 `requireAdmin` 이어서(`routes/accountRoutes.ts`)
-    // 소유자는 목록 조회에서 403 을 받는다 — 그 화면은 "에이전트 목록을 받지 못했다" 만
-    // 띄우고 목록이 비어 `targetId` 도 아무것도 고르지 못한다. #253 이 열어 준 것은
-    // `PATCH`·메모리·PAT 이고 **목록은 아니다.** 갈 수 있는데 할 수 있는 것이 없는 곳을
-    // 만들지 않는다(design.md §4). #299 에서 목록 라우트가 소유자에게 열렸으므로,
-    // admin 이거나 에이전트 소유자면 설정으로 간다.
-    const target: (() => void) | null = (() => {
-      if (!account) return null;
-      if (isGroup) return null;
-      // #299: admin 또는 소유자면 설정으로 간다.
-      const isOwner = account.kind === 'agent' && account.ownerAccountId === me?.id;
-      if (account.kind === 'agent' && (me?.isAdmin === true || isOwner) && onOpenSettings) {
-        return () => onOpenSettings('agents', account.id);
-      }
-      if (onOpenDirectory) return () => onOpenDirectory(account.id);
-      return null;
-    })();
-
-    // 접근 가능한 이름은 `@handle` 이 아니라 **무엇을 하는지**다. 그러므로 실제로 열리는
-    // 곳을 말해야 한다 — 디렉터리로 가는데 "설정 열기" 라고 부르면 이름이 거짓이 된다.
-    // #299: admin 또는 소유자면 "설정 열기", 그 외는 "프로필 열기".
-    const isOwner = account?.kind === 'agent' && account.ownerAccountId === me?.id;
-    const goesToSettings = account?.kind === 'agent' && (me?.isAdmin === true || isOwner) && !!onOpenSettings;
-    const accessibleName = account && (goesToSettings
-      ? `${account.handle} 에이전트 설정 열기`
-      : `${account.handle} 프로필 열기`);
+    // 에이전트를 어디로 보낼지(admin·소유자면 설정, 그 외는 디렉터리)와 접근 가능한 이름은
+    // **`lib/accountOpen` 한 곳**에서 나온다. 여기 인라인으로 있던 것을 옮긴 이유는 그
+    // 파일 머리에 적었다 — 이름줄·아바타(`MessageItem`)가 같은 곳으로 가야 해서, 그대로
+    // 두면 같은 조건문이 두 벌이 된다.
+    const open = isGroup ? null : accountOpen(account, viewer, { onOpenDirectory, onOpenSettings });
+    const target = open?.run ?? null;
+    const accessibleName = open?.label;
 
     /**
      * **멘션 칩은 배경과 굵기로 구별한다 — 색이 아니다**(#488 B2).
