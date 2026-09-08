@@ -54,7 +54,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    * 신호(`onOpenDirectory`·`onOpenSettings`)가 없는 자리에서는 `null` 이라 **버튼이 아니다**
    * — 눌러도 아무 일이 없는 컨트롤을 남기지 않는다(`MessageBody` 의 같은 규칙).
    */
-  const authorOpen = accountOpen(author, { id: myId, isAdmin }, { onOpenDirectory, onOpenSettings });
+  const authorOpen = accountOpen(author, { id: myId, isAdmin }, { onOpenDirectory, onOpenSettings }, t);
   // 생존 판정의 두 축 — `connected` 가 false 면 `online` 은 '아무도 없다'가 아니라 '모른다'다.
   const online = useActiveStore((s) => s.online);
   const connected = useActiveStore((s) => s.connected);
