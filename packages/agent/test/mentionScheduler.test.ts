@@ -1,0 +1,175 @@
+// mentionScheduler 의 승인 관문 회귀선.
+//
+// 이 파일이 존재하는 이유: 이 회계가 main.ts 에 있었다면 소스 문자열 정규식으로만 검사할 수
+// 있었다(main.ts 는 top-level await 로 진짜 서버에 붙어 import 가 불가능하다). 동시성 회계는
+// 이 저장소가 가장 자주 깨뜨린 종류의 코드라, 그것을 가장 약한 검사에 맡기지 않으려고 모듈로
+// 뺐다 — 그 선택이 값을 하는 자리가 여기다.
+import { describe, expect, it } from 'vitest';
+import { createMentionScheduler, type BatchContext } from '../src/mentionScheduler.js';
+import { TurnRegistry } from '../src/turnRegistry.js';
+import { MentionQueue } from '../src/mentionQueue.js';
+import type { InboxBatch } from '../src/murmur.js';
+import type { MentionTurnResult } from '../src/mentionTurn.js';
+
+const CH = 'ch-1';
+
+/** 한 건짜리 배치. `threadRootId` 가 없으면 채널 최상위 멘션이라 앵커가 그 메시지 자신이다. */
+function batchOf(items: { entryId: number; messageId: string; threadRootId?: string | null; body?: string }[]): InboxBatch {
+  return {
+    entries: items.map((i) => ({
+      id: i.entryId, messageId: i.messageId, reason: 'mention' as const,
+      readAt: null, channelId: CH,
+    })) as unknown as InboxBatch['entries'],
+    messages: items.map((i, n) => ({
+      id: i.messageId, seq: n + 1, channelId: CH,
+      threadRootId: i.threadRootId ?? null, authorId: 'human-1',
+      body: i.body ?? 'hi', kind: 'message', meta: null,
+      createdAt: '2026-09-08T00:00:00Z', alsoInChannel: false,
+    })) as unknown as InboxBatch['messages'],
+  };
+}
+
+const ctx: BatchContext = { channelName: () => 'general', handles: {} };
+
+/** 테스트가 손으로 끝내는 턴. resolve 를 부를 때까지 인플라이트로 남는다. */
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+function harness(opts: { runTurn: () => Promise<MentionTurnResult> }) {
+  const markedRead: number[] = [];
+  const posted: { channelId: string; body: string; anchor: string | null }[] = [];
+  const registry = new TurnRegistry();
+  const scheduler = createMentionScheduler({
+    murmur: {
+      markRead: async (ids) => { markedRead.push(...ids); return ids.length; },
+      post: async (channelId, body, anchor) => { posted.push({ channelId, body, anchor }); return 1; },
+    },
+    registry,
+    queue: new MentionQueue(),
+    accountLane: [null],
+    runMentionTurn: opts.runTurn,
+    buildTurnDeps: () => ({}) as never,
+    hooks: {
+      resumeHandoff: async () => {},
+      stopRequested: () => {},
+      exitIfUnrecoverable: () => {},
+      noticeHarnessLogin: async () => {},
+    },
+    startedAtMs: 0,
+  });
+  return { scheduler, registry, markedRead, posted };
+}
+
+describe('mentionScheduler 승인 관문', () => {
+  it('서로 다른 스레드 3건을 동시에 띄운다', async () => {
+    let calls = 0;
+    const gate = deferred<MentionTurnResult>();
+    const { scheduler } = harness({ runTurn: () => { calls += 1; return gate.promise; } });
+
+    const out = await scheduler.admit(batchOf([
+      { entryId: 1, messageId: 'm1' },
+      { entryId: 2, messageId: 'm2' },
+      { entryId: 3, messageId: 'm3' },
+    ]), ctx);
+
+    // admit 은 턴을 await 하지 않는다 — 셋 다 이미 시작돼 있어야 한다.
+    expect(calls).toBe(3);
+    expect(out.started).toBe(3);
+    expect(scheduler.inFlight()).toBe(3);
+
+    gate.resolve({ stopRequestedAt: null });
+    await scheduler.drain();
+    expect(scheduler.inFlight()).toBe(0);
+  });
+
+  it('같은 스레드 2건은 하나만 띄운다', async () => {
+    let calls = 0;
+    const gate = deferred<MentionTurnResult>();
+    const { scheduler } = harness({ runTurn: () => { calls += 1; return gate.promise; } });
+
+    // 같은 스레드 루트를 가리키는 두 멘션.
+    const out = await scheduler.admit(batchOf([
+      { entryId: 1, messageId: 'm1', threadRootId: 'root-1' },
+      { entryId: 2, messageId: 'm2', threadRootId: 'root-1' },
+    ]), ctx);
+
+    expect(calls).toBe(1);
+    expect(out.started).toBe(1);
+    expect(out.blocked).toBe(1);
+
+    gate.resolve({ stopRequestedAt: null });
+    await scheduler.drain();
+  });
+
+  it('같은 entry 가 두 폴에 걸쳐 와도 한 번만 띄운다', async () => {
+    let calls = 0;
+    const gate = deferred<MentionTurnResult>();
+    const { scheduler } = harness({ runTurn: () => { calls += 1; return gate.promise; } });
+
+    // markRead 는 턴 완료 후이므로 그 entry 는 다음 폴에도 미읽음으로 다시 온다.
+    await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    const second = await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+
+    expect(calls).toBe(1);
+    expect(second.blocked).toBe(1);
+
+    gate.resolve({ stopRequestedAt: null });
+    await scheduler.drain();
+  });
+
+  it('메시지가 없는 고아 entry 는 턴 없이 읽음 처리한다', async () => {
+    const { scheduler, markedRead } = harness({ runTurn: async () => ({ stopRequestedAt: null }) });
+
+    const out = await scheduler.admit(
+      { entries: [{ id: 9, messageId: 'gone', reason: 'mention', readAt: null, channelId: CH }], messages: [] } as unknown as InboxBatch,
+      ctx,
+    );
+
+    expect(out.skipped).toBe(1);
+    expect(out.started).toBe(0);
+    expect(markedRead).toEqual([9]);
+  });
+
+  it('턴이 끝나면 읽음 처리하고 장부를 비운다', async () => {
+    const { scheduler, markedRead } = harness({ runTurn: async () => ({ stopRequestedAt: null }) });
+
+    await scheduler.admit(batchOf([{ entryId: 7, messageId: 'm7' }]), ctx);
+    await scheduler.drain();
+
+    expect(markedRead).toEqual([7]);
+    expect(scheduler.inFlight()).toBe(0);
+  });
+
+  it('resumeHandoff 가 던져도 인플라이트 장부를 비운다', async () => {
+    const registry = new TurnRegistry();
+    const scheduler = createMentionScheduler({
+      murmur: { markRead: async (ids) => ids.length, post: async () => 1 },
+      registry,
+      queue: new MentionQueue(),
+      accountLane: [null],
+      runMentionTurn: async () => ({ stopRequestedAt: null }),
+      buildTurnDeps: () => ({}) as never,
+      hooks: {
+        // 장부 삭제가 이 await 뒤에 있으면 그 스레드는 영원히 blocked 가 된다.
+        resumeHandoff: async () => { throw new Error('이어받기 실패'); },
+        stopRequested: () => {},
+        exitIfUnrecoverable: () => {},
+        noticeHarnessLogin: async () => {},
+      },
+      startedAtMs: 0,
+    });
+
+    await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await scheduler.drain();
+
+    expect(scheduler.inFlight()).toBe(0);
+    // 같은 스레드를 다시 띄울 수 있어야 한다.
+    const again = await scheduler.admit(batchOf([{ entryId: 2, messageId: 'm1' }]), ctx);
+    expect(again.started).toBe(1);
+    await scheduler.drain();
+  });
+});
