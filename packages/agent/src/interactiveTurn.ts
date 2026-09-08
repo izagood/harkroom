@@ -29,7 +29,7 @@ import { resolveWorkspaceDir } from './mentionTurn.js';
 import { findCodexSessionId } from './codexSessions.js';
 import { codexSessionsDir } from './codexHome.js';
 import { claudeSessionMaterialized } from './claudeSessions.js';
-import { ensureWorkspaceTrusted } from './workspaceTrust.js';
+import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
 
@@ -332,6 +332,13 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       workspaceDir: rec.workspaceDir,
       claudeConfigDir: deps.claudeConfigDir,
       codexHome: deps.codexHome,
+    });
+    // 계정 단위 관문도 같은 이유로 미리 지난다. 여기서도 부르는 이유는 인터랙티브 턴이
+    // 그 계정의 **첫 턴일 수 있기** 때문이다 — 멘션 턴에만 두면 사람이 [터미널 열기]로
+    // 먼저 연 계정은 경고 화면부터 만난다.
+    await ensureDangerousModeAccepted({
+      harness: def.harness,
+      claudeConfigDir: deps.claudeConfigDir,
     });
 
     const turnStartMs = Date.now();

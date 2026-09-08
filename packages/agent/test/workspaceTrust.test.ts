@@ -2,11 +2,12 @@
 //
 // 이것이 없으면 TUI 턴은 신뢰 대화상자를 만나고, 러너는 답할 수 없어 무발화 한도까지
 // 매달린다. `-p` 는 이 대화상자를 묻지 않았으므로 실행 모델 교체가 새로 만든 요구다.
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ensureWorkspaceTrusted } from '../src/workspaceTrust.js';
+import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from '../src/workspaceTrust.js';
 
 const WS = '/Users/someone/.murmur-agent/agent-x/workspaces/murmur-forge-abc';
 
@@ -124,6 +125,61 @@ describe('ensureWorkspaceTrusted — 실패해도 던지지 않는다', () => {
     await expect(ensureWorkspaceTrusted({
       harness: 'codex', workspaceDir: WS,
       claudeConfigDir: null, codexHome: await unwritableDir(),
+    })).resolves.toBeUndefined();
+  });
+});
+
+// ── 관문 ③: bypassPermissions 수락(2026-09-08 실측)
+//
+// **이것이 없으면 기본 설정의 모든 첫 턴이 1초 만에 죽는다.** `turn.ts:156` 이 murmur 의
+// `auto` 를 `--permission-mode bypassPermissions` 로 번역하고, TUI 는 그 모드로 뜰 때마다
+// 계정이 한 번도 수락한 적 없으면 경고 화면을 띄운다 — 기본 선택이 `❯ No, exit` 라서
+// 러너가 답을 못 하면 그 선택으로 끝난다(실측: exitCode 1, 경과 ~1초).
+describe('ensureDangerousModeAccepted — claude', () => {
+  it('settings.json 에 수락을 적는다', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'danger-claude-'));
+    await ensureDangerousModeAccepted({ harness: 'claude-code', claudeConfigDir: configDir });
+
+    const doc = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'));
+    expect(doc.skipDangerousModePermissionPrompt).toBe(true);
+  });
+
+  it('기존 설정을 지우지 않는다 — 테마·tui 가 함께 산다', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'danger-claude-'));
+    await writeFile(join(configDir, 'settings.json'), JSON.stringify({ theme: 'dark', tui: 'fullscreen' }));
+
+    await ensureDangerousModeAccepted({ harness: 'claude-code', claudeConfigDir: configDir });
+
+    const doc = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'));
+    expect(doc.theme).toBe('dark');
+    expect(doc.tui).toBe('fullscreen');
+    expect(doc.skipDangerousModePermissionPrompt).toBe(true);
+  });
+
+  it('이미 적혀 있으면 다시 쓰지 않는다 — 하네스와 같은 파일을 놓고 경합하지 않는다', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'danger-claude-'));
+    const path = join(configDir, 'settings.json');
+    await writeFile(path, JSON.stringify({ skipDangerousModePermissionPrompt: true }));
+    const before = (await stat(path)).mtimeMs;
+
+    await ensureDangerousModeAccepted({ harness: 'claude-code', claudeConfigDir: configDir });
+
+    expect((await stat(path)).mtimeMs).toBe(before);
+  });
+
+  it('codex 는 이 관문이 없다 — 아무 파일도 만들지 않는다', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'danger-codex-'));
+    await ensureDangerousModeAccepted({ harness: 'codex', claudeConfigDir: configDir });
+    expect(existsSync(join(configDir, 'settings.json'))).toBe(false);
+  });
+
+  it('못 써도 던지지 않는다 — 그 실패로 턴을 죽이지 않는다', async () => {
+    // 파일을 디렉터리의 부모로 쓰면 어느 플랫폼에서든 ENOTDIR 이다.
+    const base = await mkdtemp(join(tmpdir(), 'danger-bad-'));
+    const blocker = join(base, 'blocker');
+    await writeFile(blocker, 'not a directory');
+    await expect(ensureDangerousModeAccepted({
+      harness: 'claude-code', claudeConfigDir: join(blocker, 'nope'),
     })).resolves.toBeUndefined();
   });
 });
