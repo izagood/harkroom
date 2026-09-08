@@ -44,6 +44,12 @@ export interface RunnerConfig {
   pollTimeoutMs: number;
   /** 한 턴(PTY 실행)의 최대 대기 시간. 코딩 에이전트는 도구 호출을 여러 번 거치므로 넉넉히 잡는다. */
   turnTimeoutMs: number;
+  /**
+   * 하네스 기록이 이만큼 자라지 않으면 **멈춘 것으로 보고 턴을 접는다**(2026-09-09).
+   * `turnTimeoutMs` 와 다른 사실을 잰다 — 그쪽은 "답이 없다", 이쪽은 "일하지 않는다".
+   * 자세한 근거는 `mentionTurn.ts` 의 `harnessStallMs` 주석에 있다.
+   */
+  harnessStallMs: number;
   /** 세션 파일(sessions.json)·MCP 설정·avcs 워크스페이스가 사는 곳. 러너 재시작·재배포에도
    * 살아남아야 하는 것들이라 임시 디렉터리(mkdtemp)가 아니라 고정 경로를 쓴다. */
   stateDir: string;
@@ -73,6 +79,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
     pollTimeoutMs: Number(env.AGENT_POLL_TIMEOUT_MS ?? 25_000),
     // 코딩 에이전트 한 턴은 도구 호출을 여러 번 거칠 수 있다 — 30분을 기본값으로 둔다.
     turnTimeoutMs: Number(env.AGENT_TURN_TIMEOUT_MS ?? 30 * 60_000),
+    // 10분 — 멀쩡히 도는 세션들의 기록 간격 최대치(390초)보다 넉넉히 위이고, 실측된
+    // 정지(30분 내내 한 줄도 안 자랐다)와는 멀리 떨어져 있다. 0 이면 재지 않는다.
+    harnessStallMs: Number(env.AGENT_HARNESS_STALL_MS ?? 10 * 60_000),
     stateDir: env.AGENT_STATE_DIR ?? join(homedir(), '.murmur-agent'),
     agentInstance: validateInstance(env.MURMUR_AGENT_INSTANCE),
     // 60초 — 사람이 티켓을 받고 attach 하기까지, 또는 잠깐 끊긴 소켓이 재-attach 하기까지의

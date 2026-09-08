@@ -118,6 +118,49 @@ export function sessionConflictNotice(): string {
   return '(하네스 세션 상태가 어긋나 답할 수 없었습니다 — 운영자가 러너 로그를 확인해야 합니다)';
 }
 
+/** 재시도 통지에 싣는 사유의 최대 길이. 한 줄로 읽히는 만큼만 남긴다. */
+const RETRY_REASON_MAX_CHARS = 160;
+
+/**
+ * 답하지 못한 턴을 **다시 시도한다**는 통지(2026-09-09 실측).
+ *
+ * 왜 필요한가: 이 자리는 지금까지 `console.error` 뿐이었다. 그날 한 턴이 30분을 서 있다가
+ * 접혔고 러너 로그에는 `답변 실패 (1/3)` 이 남았는데, 스레드에는 **아무것도 남지 않았다** —
+ * 스레드 행의 `failureCount` 조차 0이라 화면이 알 방법이 없었다. 사람이 본 것은 👀 하나
+ * 붙은 `끝남` 배지뿐이었고, 그래서 나온 말이 *"이거 왜 답변 안 하고 있어"* 다.
+ *
+ * `FAILURE_NOTICE` 로 대신할 수 없다: 그것은 3회를 **다 태운 뒤**에 나오는 말이라, 재시도가
+ * 도는 동안(백오프까지 합쳐 수십 분)은 여전히 침묵이다. 사람이 알아야 하는 것은 "끝났다"가
+ * 아니라 **"아직 하는 중이고, 왜 한 번 엎어졌는지"** 다.
+ *
+ * entry 당 1회만 올린다(중복 판정은 호출자가 갖는다) — 매 시도마다 올리면 빠르게 실패하는
+ * 오류에서 스레드가 몇 초 만에 도배된다.
+ */
+export function retryNotice(tried: number, max: number, reason: string | null): string {
+  const head = `(답하지 못하고 끝나 다시 시도합니다 — ${tried}/${max}회째`;
+  const tail = reason === null ? '' : `, 원인: ${reason}`;
+  return `${head}${tail})`;
+}
+
+/**
+ * 실패 사유를 통지에 실을 한 줄로 줄인다. 줄바꿈을 없애고 앞을 남긴다 — 사유는 문장 머리에
+ * 있고(`harness 정지 …`), `tailNotice` 와 방향이 반대인 이유가 그것이다.
+ *
+ * **PAT 가림을 여기서도 한다.** 실패 문구에는 tail 이 섞일 수 있고(`harness 종료 N: …`),
+ * 그 tail 은 PTY 원문이라 토큰이 지나갈 수 있다 — 통지는 스레드에 영구히 남는다.
+ */
+export function retryReason(message: string): string | null {
+  const text = message
+    .replace(/murp_[A-Za-z0-9_-]+/g, '(가림)')
+    .replace(/(Bearer\s+)\S+/gi, '$1(가림)')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (text.length === 0) return null;
+  return text.length > RETRY_REASON_MAX_CHARS
+    ? `${text.slice(0, RETRY_REASON_MAX_CHARS)}…`
+    : text;
+}
+
 /**
  * 사람이 조종 중인 스레드에 온 멘션의 대기 통지(#337, 스펙 §5-2 결정 6). 러너가
  * **에이전트 계정으로** 스레드에 올린다 — NO_REPLY_NOTICE 와 같은 판례다: 시스템 계정을

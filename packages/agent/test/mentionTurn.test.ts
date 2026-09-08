@@ -2966,3 +2966,95 @@ describe('턴 도중 한도 감지 (2026-09-09)', () => {
     })).resolves.toBeTruthy();
   }, 20_000);
 });
+
+// ── 하네스 정지 감지(2026-09-09 프로덕션 관측)
+//
+// 한 턴이 첨부를 받은 직후 **30분을 아무것도 안 하고** 서 있다가 무발화 한도에 걸려
+// 죽었다. 그 세션의 회계가 원인을 못 박는다 — `totalDuration 1,800,002ms` 인데
+// `totalAPIDuration` 은 12,945ms, 재시도 0건. 일하느라 조용했던 것이 아니라 아무 요청도
+// 안 낸 채 서 있었다.
+//
+// 무발화 시계로는 이것을 일찍 잡을 수 없다: 일하는 턴도 30분 내내 답이 없기 때문이다(PR
+// 하나 만드는 턴이 그렇다). 그래서 **다른 사실**을 잰다 — 하네스 기록 파일이 자라는가.
+// 멀쩡히 도는 세션 8개의 기록 간격 최대치는 390초였고, 정지한 턴은 30분 내내 0줄이었다.
+describe('하네스 정지 감지 (2026-09-09)', () => {
+  it('기록이 안 자라면 무발화 한도를 기다리지 않고 접는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5,
+      harnessStallMs: 10,
+      // 무발화 시계는 여기서 절대 안 선다 — 이 턴을 끝내는 것이 정지 시계임을 못 박는다.
+      turnTimeoutMs: 10 * 60_000,
+      // 기록이 없다 = 자란 적이 없다. 기준점은 턴 시작 시각이므로 시계가 그대로 흐른다.
+      readTranscriptMtime: async () => null,
+    });
+    runTurn.script = async (_plan: TurnPlan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      for (let i = 0; i < 400 && killed === null; i += 1) await new Promise((r) => setTimeout(r, 10));
+      return { exitCode: killed ? 143 : 0, timedOut: false, tail: '' };
+    };
+
+    const err = await runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+    }).then(() => null, (e: unknown) => e as Error);
+
+    expect(killed).toBe('SIGTERM');
+    // 문구가 원인을 정확히 말한다 — "정지"와 "무발화"는 사람이 할 일이 다르다. 정지는
+    // 하네스가 서 있었다는 뜻이고, 그 사실이 재시도 통지의 사유가 되어 스레드에 남는다.
+    expect(err?.message).toContain('정지');
+    expect(err?.message).not.toContain('무발화');
+  }, 20_000);
+
+  it('기록이 자라는 동안에는 접지 않는다 — 조용한 것과 멈춘 것은 다르다', async () => {
+    // 이것이 이 시계의 존재 이유다. 오래 걸리는 턴(빌드·CI 대기)은 답도 없고 화면도
+    // 조용하지만 기록은 계속 자란다. 그 턴까지 접으면 무발화 한도를 줄인 것과 다를 게 없다.
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5,
+      harnessStallMs: 10,
+      readTranscriptMtime: async () => Date.now(),
+    });
+    runTurn.script = async (_plan: TurnPlan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      // 정지 한도의 20배를 돈다 — 기록이 자라는 한 아무도 끼어들지 않아야 한다.
+      await new Promise((r) => setTimeout(r, 200));
+      await fake.post(CHANNEL, '답했다', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await expect(runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+    })).resolves.toBeTruthy();
+    expect(killed).toBeNull();
+  }, 20_000);
+
+  it('0 이면 재지 않는다 — 끄는 손잡이가 있어야 한다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let read = 0;
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5,
+      harnessStallMs: 0,
+      readTranscriptMtime: async () => { read += 1; return null; },
+    });
+    runTurn.script = async () => {
+      await new Promise((r) => setTimeout(r, 60));
+      await fake.post(CHANNEL, '답했다', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await expect(runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+    })).resolves.toBeTruthy();
+    // 디스크를 아예 안 본다 — 끈다는 것은 "재고 봐준다"가 아니라 "묻지 않는다"다.
+    expect(read).toBe(0);
+  }, 20_000);
+});

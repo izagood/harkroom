@@ -13,7 +13,7 @@
 // **이것은 하네스 출력 파싱이 아니다.** `claudeSessions.ts`(세션 파일 실재)·`codexSessions.ts`
 // (rollout 발견)가 세운 것과 같은 "디스크의 사실 관측"이고, 그 파일들이 적어 둔 것과 같은
 // 이유로 러너의 파싱 금지 원칙에 어긋나지 않는다.
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import type { AgentHarness } from '@murmur/shared';
 import { claudeSessionFilePath } from './claudeSessions.js';
 
@@ -134,5 +134,41 @@ export async function sessionTranscriptExists(
     return (await claudeSessionFilePath(sessionId, opts)) !== null;
   } catch {
     return false;
+  }
+}
+
+/**
+ * 이 세션의 기록 파일이 **마지막으로 자란 시각**(ms). 파일이 없으면 `null`.
+ *
+ * 무엇을 재는가: "하네스가 아직 살아서 일하는가". claude 는 어시스턴트 메시지·도구
+ * 호출·도구 결과를 한 줄씩 이 파일에 덧붙이므로, 일하는 턴에서는 이 시각이 계속 앞으로
+ * 간다. 멈춘 턴에서는 멈춘다.
+ *
+ * **왜 이 신호인가**(2026-09-09 실측). 한 턴이 첨부를 받은 직후 30분을 아무것도 안 하고
+ * 서 있다가 무발화 한도에 걸려 죽었다. 그 세션의 회계가 원인을 못 박는다 —
+ * `totalDuration 1,800,002ms` 인데 `totalAPIDuration` 은 **12,945ms**, 재시도는 0건.
+ * 일하느라 조용했던 것이 아니라 아무 요청도 안 낸 채 서 있었다. 그런데 러너가 가진
+ * 신호는 "답했는가" 하나뿐이라, 일하는 턴과 멈춘 턴이 30분 동안 똑같아 보였다.
+ *
+ * PTY 출력을 안 쓰는 이유는 `readLastApiError` 머리와 같다 — TUI 는 스피너만으로도
+ * 바이트를 내므로 "살아 있음"의 증거가 되지 못하고, 사람이 친 입력이 그대로 에코된다.
+ *
+ * **던지지 않는다.** 이 값은 턴을 일찍 접기 위한 재료이지 턴의 성패가 아니다. 못 읽으면
+ * `null` 이고, 호출자는 그때 판정을 **하지 않는다**(멈췄다고 단정하지 않는다).
+ */
+export async function sessionTranscriptMtimeMs(
+  harness: AgentHarness,
+  sessionId: string | null,
+  opts: { projectsDir?: string; configDir?: string | null } = {},
+): Promise<number | null> {
+  // codex 의 rollout 은 형식도 위치도 다르다(P5) — 판정할 수 없으면 재지 않는다.
+  if (harness !== 'claude-code') return null;
+  if (!sessionId) return null;
+  try {
+    const path = await claudeSessionFilePath(sessionId, opts);
+    if (path === null) return null;
+    return (await stat(path)).mtimeMs;
+  } catch {
+    return null;
   }
 }
