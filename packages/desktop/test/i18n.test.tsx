@@ -362,10 +362,15 @@ describe('스레드 패널의 사슬 줄 — 어순이 언어를 따른다', () 
 // 모듈 상수라 정확히 그랬다). 배선을 재는 유일한 방법이 렌더다.
 // ---------------------------------------------------------------------------
 
+// #629 가 `Sidebar` 에 콜백 둘(`onOpenAgentConfig`·`onOpenProfile`)을 더했는데 이 픽스처가
+// 따라오지 않아 **main 의 typecheck 가 깨진 채로 머지됐다**(TS2739 ×8). 이 픽스처는 여덟 군데
+// 렌더가 나눠 쓰므로 한 곳만 고치면 되지만, 반대로 한 곳이 뒤지면 여덟 개가 같이 깨진다.
 const sidebarProps = {
   onOpenDirectory: () => {},
   onOpenChannelDirectory: () => {},
   onOpenInbox: () => {},
+  onOpenAgentConfig: () => {},
+  onOpenProfile: () => {},
   collapsed: false,
   onToggleCollapse: () => {},
 };
