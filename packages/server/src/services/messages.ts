@@ -1053,7 +1053,7 @@ export async function getMessageById(pool: Pool, messageId: string): Promise<Mes
 
 export async function listMessages(
   pool: Pool, channelId: string,
-  opts: { since?: number; before?: number; threadRootId?: string | null; limit?: number },
+  opts: { since?: number; before?: number; around?: number; threadRootId?: string | null; limit?: number },
 ): Promise<MessageRow[]> {
   const limit = Math.min(opts.limit ?? 200, 500);
   if (opts.threadRootId) {
@@ -1078,6 +1078,31 @@ export async function listMessages(
       ) latest
       order by seq`,
       [channelId, opts.threadRootId, limit],
+    );
+    return res.rows;
+  }
+  /**
+   * 검색 결과로 **점프**할 때 쓰는 창(⌘F). before·since 는 한쪽 방향만 주므로,
+   * 옛 메시지 하나를 화면에 세우려면 그 앞뒤가 함께 있어야 한다 — 앞만 있으면 그 말이
+   * 화면 맨 아래에 홀로 서서 무슨 대화였는지 알 수 없다.
+   *
+   * 위·아래를 절반씩 나눠 뜬다. 위쪽은 대상 자신을 포함(`seq <= around`)하므로 지워졌거나
+   * 안 보이는 메시지를 가리키면 그냥 그 자리의 창이 오고, 강조할 것이 없을 뿐이다.
+   */
+  if (opts.around !== undefined) {
+    const half = Math.max(1, Math.ceil(limit / 2));
+    const res = await pool.query(
+      `select * from (
+         (select ${LIST_COLS} from message m ${THREAD_STATS}
+          where m.channel_id = $1 and m.seq <= $2 and ${LIST_VISIBLE}
+          order by m.seq desc limit $3)
+         union all
+         (select ${LIST_COLS} from message m ${THREAD_STATS}
+          where m.channel_id = $1 and m.seq > $2 and ${LIST_VISIBLE}
+          order by m.seq limit $3)
+       ) window_rows
+       order by seq`,
+      [channelId, opts.around, half],
     );
     return res.rows;
   }
@@ -1154,9 +1179,48 @@ export async function markInboxRead(pool: Pool, accountId: string, ids: number[]
  * 들어오지 않는다 — "이 대화 안에 있는 걸 아는데 못 찾는" 정확히 반대되는 결과가 된다.
  * 그래서 질의 자체를 좁힌다.
  */
+export interface SearchScope {
+  channelId?: string | null;
+  /** 스레드 스코프(⌘F): 루트 자신과 그 답글만. 채널 스코프 **위에** 더 좁히는 조건이다. */
+  threadRootId?: string | null;
+  limit?: number;
+  offset?: number;
+}
+
+export interface SearchPage {
+  messages: MessageRow[];
+  /** 이 페이지 뒤에 더 있는가. `limit + 1` 을 떠서 판별한다(count 왕복을 만들지 않는다). */
+  hasMore: boolean;
+}
+
+/**
+ * 한 낱말이 두 갈래로 걸린다.
+ *
+ * 1. `m.search @@ websearch_to_tsquery` — 정확하고 빠른 낱말 매치. 지금까지 있던 유일한 갈래다.
+ * 2. `lower(body) like '%q%'` — **부분문자열**. `simple` config 는 어간을 떼지 않아 한국어가
+ *    조사 하나에 걸린다(`'검색을' @@ '검색'` → false). 파일명(`SearchPalette.tsx` 안의
+ *    `SearchPalette`)도 같은 이유로 1번에서 죽는다. 이 갈래가 그 둘을 살린다 —
+ *    044 의 trigram GIN 이 받는 자리이고, 확장을 못 켠 배포에서는 느릴 뿐 답은 같다.
+ *
+ * 짧은 질의(1글자)에는 2번을 걸지 않는다: trigram 인덱스가 3글자 미만을 못 받아 순차 스캔이
+ * 되는데, 그렇게 긁어 온 결과는 어차피 "거의 전부"라 사람에게 쓸모가 없다.
+ *
+ * `%`·`_`·`\` 는 like 의 메타문자다. 사람이 친 그대로 찾도록 이스케이프한다 — 안 하면
+ * `_` 한 글자가 "아무 글자 하나"가 되어 엉뚱한 것이 섞인다.
+ */
+const SEARCH_MATCH = `(
+      m.search @@ websearch_to_tsquery('simple', $1)
+      or (
+        char_length($1) >= 2
+        and lower(m.body) like '%' || replace(replace(replace(lower($1), '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%'
+      )
+    )`;
+
 export async function searchMessages(
-  pool: Pool, requesterId: string, query: string, limit = 50, channelId: string | null = null,
-): Promise<MessageRow[]> {
+  pool: Pool, requesterId: string, query: string, scope: SearchScope = {},
+): Promise<SearchPage> {
+  const limit = Math.min(scope.limit ?? 50, 100);
+  const offset = Math.max(scope.offset ?? 0, 0);
   const res = await pool.query(
     `select m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
        m.author_id as "authorId", m.body, m.kind, m.meta, m.created_at as "createdAt",
@@ -1166,7 +1230,12 @@ export async function searchMessages(
        m.also_in_channel as "alsoInChannel"
      from message m
      join channel c on c.id = m.channel_id
-     where m.search @@ websearch_to_tsquery('simple', $1) and m.deleted_at is null
+     where ${SEARCH_MATCH} and m.deleted_at is null
+       -- 진행 줄(progress)·대기 줄(wake)은 사람이 찾는 **말**이 아니다. 답글 수에서
+       -- 뺀 것과 **같은 목록**이다(shared::countsAsReply) — 종류가 늘면 두 자리를 같이 고친다.
+       -- 여기 없으면 에이전트 진행 줄이 본문 결과를 밀어낸다(상위 N 건에서 잘리므로
+       -- 정작 찾던 말이 응답에 애초에 안 들어온다).
+       and m.kind not in ('progress', 'wake')
        -- 검색은 채널 목록을 우회해 본문에 바로 닿는 표면이다. 여기만 넓으면 목록에도
        -- 배지에도 없는 private 채널의 발언이 검색 결과로 통째로 나온다 — 그래서 목록·배지와
        -- **같은 술어**를 쓴다. admin 예외 없다(결과가 곧 메시지 본문이다).
@@ -1174,8 +1243,21 @@ export async function searchMessages(
        -- 스코프는 가시성 **위에** 얹는 별개 조건이다. null 이면 절이 상수로 접혀 전역 검색의
        -- 계획이 그대로 남는다 — 기존 동작을 건드리지 않는다.
        and ($4::uuid is null or m.channel_id = $4)
-     order by m.seq desc limit $2`,
-    [query, Math.min(limit, 100), requesterId, channelId],
+       -- 스레드 스코프는 루트 자신을 포함한다 — 루트에 있는 말을 못 찾으면 "이 스레드에서
+       -- 찾기"가 아니다(listMessages 의 스레드 분기와 같은 문장).
+       and ($5::uuid is null or m.id = $5 or m.thread_root_id = $5)
+     -- 정확 일치(1번)를 부분문자열-only 히트 앞에 세우고, 그 안에서 ts_rank, 그다음 최신순.
+     -- seq desc 만 있던 때는 흔한 낱말이면 상위 50 이 전부 최근 것으로 차서 정작 찾던
+     -- 옛 메시지가 응답에 들어오지도 않았다.
+     --
+     -- 페이지는 offset 이다(seq 커서가 아니다): 순서가 seq 가 아니라 rank 이므로 seq 커서는
+     -- 이 정렬에서 뜻이 없다.
+     order by (m.search @@ websearch_to_tsquery('simple', $1)) desc,
+              ts_rank(m.search, websearch_to_tsquery('simple', $1)) desc,
+              m.seq desc
+     limit $2 offset $6`,
+    [query, limit + 1, requesterId, scope.channelId ?? null, scope.threadRootId ?? null, offset],
   );
-  return res.rows;
+  const rows = res.rows as MessageRow[];
+  return { messages: rows.slice(0, limit), hasMore: rows.length > limit };
 }

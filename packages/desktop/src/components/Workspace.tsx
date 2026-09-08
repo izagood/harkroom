@@ -14,7 +14,7 @@ import { ProjectionBanner } from './ProjectionBanner';
 import { UpdateToast } from './UpdateToast';
 import { ThreadPanel } from './ThreadPanel';
 import { TerminalPanel } from './TerminalPanel';
-import { SearchPalette } from './SearchPalette';
+import { SearchPalette, type SearchScope } from './SearchPalette';
 import { Sweep } from './Sweep';
 import { Directory } from './Directory';
 import { Profile } from './Profile';
@@ -35,7 +35,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
   const history = useActiveStore((s) => s.history);
   const historyIndex = useActiveStore((s) => s.historyIndex);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [searchInitialScoped, setSearchInitialScoped] = useState(false);
+  const [searchInitialScope, setSearchInitialScope] = useState<SearchScope>('all');
   const [sweepOpen, setSweepOpen] = useState(false);
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [channelDirectoryOpen, setChannelDirectoryOpen] = useState(false);
@@ -67,7 +67,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
   }, []);
 
   const handleOpenSearch = useCallback((scoped: boolean) => {
-    setSearchInitialScoped(scoped);
+    setSearchInitialScope(scoped ? 'channel' : 'all');
     setSearchOpen(true);
   }, []);
 
@@ -95,6 +95,22 @@ export function Workspace({ onLogout, onOpenSettings }: {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
+      /**
+       * ⌘F 는 **입력 중에도** 먹는다. 브라우저·에디터에서 ⌘F 는 글을 쓰다가도 찾기를 여는
+       * 키라, 여기서만 안 되면 사람은 키가 없는 줄 안다. 나머지 단축키는 아래 가드대로
+       * 입력 요소에 포커스가 있으면 가로채지 않는다.
+       *
+       * ⌘K(전체)와 다른 물음이다: ⌘F 는 **지금 보고 있는 것 안에서** 찾는다 — 스레드
+       * 패널이 열려 있으면 그 스레드, 없으면 활성 채널이다. ⌘K 의 두 번째 입구가 되면
+       * 두 키를 나눠 둔 뜻이 없어진다.
+       */
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault();
+        setSearchInitialScope(threadRootId ? 'thread' : 'channel');
+        setSearchOpen(true);
+        return;
+      }
+
       // 입력 요소에 포커스가 있으면 단축키를 가로채지 않는다.
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
@@ -103,7 +119,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
 
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
-        setSearchInitialScoped(false);
+        setSearchInitialScope('all');
         setSearchOpen(true);
         return;
       }
@@ -131,7 +147,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [handleGoBack, handleGoForward, handleToggleSidebar]);
+  }, [handleGoBack, handleGoForward, handleToggleSidebar, threadRootId]);
 
   /*
    * 신호등 여백은 **창의 좌상단에 실제로 있는 바**가 진다(#270). 그 자리가 이제 늘
@@ -316,7 +332,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
           {terminalTarget && <TerminalPanel />}
         </div>
       </div>
-      <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} initialScoped={searchInitialScoped} />
+      <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} initialScope={searchInitialScope} />
       <Sweep open={sweepOpen} onClose={() => setSweepOpen(false)} />
       <Directory open={directoryOpen} onClose={() => { setDirectoryOpen(false); setDirectoryAccountId(null); }} accountId={directoryAccountId} />
       {profileAccountId && (

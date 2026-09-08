@@ -15,7 +15,10 @@ import { usePrefsStore } from '../src/state/prefsStore';
 beforeEach(() => usePrefsStore.getState().setLocale('ko'));
 afterEach(() => usePrefsStore.getState().setLocale('system'));
 
-let mockController: ReturnType<typeof vi.fn> & { openChannel: ReturnType<typeof vi.fn>; openThread: ReturnType<typeof vi.fn>; api: ReturnType<typeof fakeApi> };
+let mockController: ReturnType<typeof vi.fn> & { openChannel: ReturnType<typeof vi.fn>; openThread: ReturnType<typeof vi.fn>; openMessage: ReturnType<typeof vi.fn>; api: ReturnType<typeof fakeApi> };
+
+/** 스코프 없음. 셋을 매번 손으로 적으면 무엇이 달라졌는지 읽히지 않는다. */
+const GLOBAL_SCOPE = { channelId: null, threadRootId: null, offset: 0 };
 
 beforeEach(() => {
   useAppStore.getState().reset();
@@ -30,6 +33,7 @@ beforeEach(() => {
   mockController = {
     openChannel: vi.fn(),
     openThread: vi.fn(),
+    openMessage: vi.fn(),
     api,
     logout: vi.fn(),
     startDm: vi.fn(),
@@ -56,7 +60,7 @@ beforeEach(() => {
     mintPat: vi.fn(),
     createInvite: vi.fn(),
     loadOlder: vi.fn(),
-  } as unknown as typeof mockController & { openChannel: ReturnType<typeof vi.fn>; openThread: ReturnType<typeof vi.fn>; api: ReturnType<typeof fakeApi> };
+  } as unknown as typeof mockController & { openChannel: ReturnType<typeof vi.fn>; openThread: ReturnType<typeof vi.fn>; openMessage: ReturnType<typeof vi.fn>; api: ReturnType<typeof fakeApi> };
   setController(mockController as unknown as Controller);
 });
 
@@ -76,7 +80,7 @@ describe('SearchPalette', () => {
   });
 
   it('질문을 넣으면 api.search 가 그 질문으로 불린다', async () => {
-    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue({ messages: [], hasMore: false });
 
     render(<SearchPalette open={true} onClose={vi.fn()} />);
 
@@ -85,14 +89,17 @@ describe('SearchPalette', () => {
 
     await waitFor(() => {
       // 채널을 열어 두지 않았으므로 스코프는 null 이다 — 전역 검색.
-      expect(mockController.api.search).toHaveBeenCalledWith('hello', null);
+      expect(mockController.api.search).toHaveBeenCalledWith('hello', GLOBAL_SCOPE);
     }, { timeout: 1000 });
   });
 
   it('결과가 그려진다(작성자·본문·채널을 알 수 있다)', async () => {
-    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
       msg('m1', 'c1', 1, 'Hello world', 'u2'),
-    ]);
+      ],
+      hasMore: false,
+    });
 
     render(<SearchPalette open={true} onClose={vi.fn()} />);
 
@@ -107,7 +114,7 @@ describe('SearchPalette', () => {
   });
 
   it('결과가 0건이면 "없다"가 보인다 — 빈 화면이 아니다', async () => {
-    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue({ messages: [], hasMore: false });
 
     render(<SearchPalette open={true} onClose={vi.fn()} />);
 
@@ -136,10 +143,13 @@ describe('SearchPalette', () => {
     }, { timeout: 1000 });
   });
 
-  it('결과를 누르면 openChannel 이 그 채널로 불린다', async () => {
-    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([
+  it('결과를 누르면 openMessage 하나로 간다 — 강조·스레드·실패 통지가 그 안에 있다', async () => {
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
       msg('m1', 'c2', 1, 'Hello', 'u1'),
-    ]);
+      ],
+      hasMore: false,
+    });
 
     render(<SearchPalette open={true} onClose={vi.fn()} />);
 
@@ -154,14 +164,20 @@ describe('SearchPalette', () => {
     fireEvent.click(result);
 
     await waitFor(() => {
-      expect(mockController.openChannel).toHaveBeenCalledWith('c2');
+      expect(mockController.openMessage).toHaveBeenCalledWith('m1');
+      // openChannel/openThread 를 직접 부르면 highlightedMessageId 가 안 걸려
+      // "눌렀는데 아무 일도 없다"가 된다. 그 길로 가지 않는 것이 이 테스트의 요지다.
+      expect(mockController.openChannel).not.toHaveBeenCalled();
     }, { timeout: 1000 });
   });
 
-  it('스레드 답글 결과를 누르면 openThread 도 불린다', async () => {
-    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([
+  it('스레드 답글 결과도 같은 길로 간다', async () => {
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
       msg('m2', 'c1', 2, 'reply', 'u1', { threadRootId: 'm1' }),
-    ]);
+      ],
+      hasMore: false,
+    });
 
     render(<SearchPalette open={true} onClose={vi.fn()} />);
 
@@ -176,8 +192,7 @@ describe('SearchPalette', () => {
     fireEvent.click(result);
 
     await waitFor(() => {
-      expect(mockController.openChannel).toHaveBeenCalledWith('c1');
-      expect(mockController.openThread).toHaveBeenCalledWith('m1');
+      expect(mockController.openMessage).toHaveBeenCalledWith('m2');
     }, { timeout: 1000 });
   });
 
@@ -200,10 +215,13 @@ describe('SearchPalette', () => {
    * act 안에서 렌더와 이펙트를 동기로 밀어내므로 다음 키는 기다릴 것이 없다.
    */
   it('키보드로 결과를 이동·선택할 수 있다', async () => {
-    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [
       msg('m1', 'c1', 1, 'First', 'u1'),
       msg('m2', 'c2', 2, 'Second', 'u2'),
-    ]);
+      ],
+      hasMore: false,
+    });
 
     render(<SearchPalette open={true} onClose={vi.fn()} />);
 
@@ -229,14 +247,14 @@ describe('SearchPalette', () => {
 
     fireEvent.keyDown(document, { key: 'Enter' });
 
-    // 열린 채널이 `c2` 여야 한다 — 화살표가 실제로 두 번째 결과로 옮겨 갔다는 뜻이다.
+    // 연 메시지가 `m2` 여야 한다 — 화살표가 실제로 두 번째 결과로 옮겨 갔다는 뜻이다.
     await waitFor(() => {
-      expect(mockController.openChannel).toHaveBeenCalledWith('c2');
+      expect(mockController.openMessage).toHaveBeenCalledWith('m2');
     }, { timeout: 1000 });
   });
 
   it('입력마다 서버를 때리지 않는다(디바운스)', async () => {
-    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue({ messages: [], hasMore: false });
 
     vi.useFakeTimers();
 
@@ -253,7 +271,7 @@ describe('SearchPalette', () => {
     vi.useRealTimers();
 
     expect(mockController.api.search).toHaveBeenCalledTimes(1);
-    expect(mockController.api.search).toHaveBeenCalledWith('abc', null);
+    expect(mockController.api.search).toHaveBeenCalledWith('abc', GLOBAL_SCOPE);
   });
 
   /**
@@ -262,79 +280,124 @@ describe('SearchPalette', () => {
    */
   it('채널을 열어 두었어도 기본값은 전역이다', async () => {
     useAppStore.getState().set({ activeChannelId: 'c1' });
-    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue({ messages: [], hasMore: false });
 
     render(<SearchPalette open={true} onClose={vi.fn()} />);
 
-    const toggle = screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement;
-    expect(toggle.checked).toBe(false);
+    expect(screen.getByTestId('search-scope-all').getAttribute('aria-pressed')).toBe('true');
 
     fireEvent.change(screen.getByLabelText('검색어 입력'), { target: { value: 'hello' } });
 
     await waitFor(() => {
-      expect(mockController.api.search).toHaveBeenCalledWith('hello', null);
+      expect(mockController.api.search).toHaveBeenCalledWith('hello', GLOBAL_SCOPE);
     }, { timeout: 1000 });
   });
 
-  it('토글을 켜면 열려 있는 채널로 스코프가 걸려 다시 검색한다', async () => {
+  it('이 채널을 고르면 그 채널로 스코프가 걸려 다시 검색한다', async () => {
     useAppStore.getState().set({ activeChannelId: 'c1' });
-    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue({ messages: [], hasMore: false });
 
     render(<SearchPalette open={true} onClose={vi.fn()} />);
 
     fireEvent.change(screen.getByLabelText('검색어 입력'), { target: { value: 'hello' } });
     await waitFor(() => {
-      expect(mockController.api.search).toHaveBeenCalledWith('hello', null);
+      expect(mockController.api.search).toHaveBeenCalledWith('hello', GLOBAL_SCOPE);
     }, { timeout: 1000 });
 
-    fireEvent.click(screen.getByLabelText('이 채널에서만 (general)'));
+    fireEvent.click(screen.getByTestId('search-scope-channel'));
 
     await waitFor(() => {
-      expect(mockController.api.search).toHaveBeenCalledWith('hello', 'c1');
+      expect(mockController.api.search).toHaveBeenCalledWith('hello', { channelId: 'c1', threadRootId: null, offset: 0 });
     }, { timeout: 1000 });
 
-    // 다시 끄면 전역으로 돌아온다 — 한 방향으로만 도는 토글은 토글이 아니다.
-    fireEvent.click(screen.getByLabelText('이 채널에서만 (general)'));
+    // 전체로 되돌아올 수 있어야 한다 — 한 방향으로만 가는 스코프는 스코프가 아니다.
+    fireEvent.click(screen.getByTestId('search-scope-all'));
     await waitFor(() => {
       const calls = (mockController.api.search as ReturnType<typeof vi.fn>).mock.calls;
-      expect(calls[calls.length - 1]).toEqual(['hello', null]);
+      expect(calls[calls.length - 1]).toEqual(['hello', GLOBAL_SCOPE]);
     }, { timeout: 1000 });
   });
 
-  it('열려 있는 채널이 없으면 토글 자체가 없다', () => {
+  it('열려 있는 채널이 없으면 스코프 줄 자체가 없다', () => {
     render(<SearchPalette open={true} onClose={vi.fn()} />);
-    expect(screen.queryByLabelText(/이 채널에서만/)).toBeNull();
+    expect(screen.queryByTestId('search-scope-channel')).toBeNull();
   });
 
-  it('initialScoped=true 로 열면 첫 검색이 채널로 좁혀진다', async () => {
+  /** 스레드 칸은 스레드가 열려 있을 때만 선다 — 없는 자리를 회색으로 남기지 않는다. */
+  it('스레드가 닫혀 있으면 스레드 칸이 없다', () => {
     useAppStore.getState().set({ activeChannelId: 'c1' });
-    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    render(<SearchPalette open={true} onClose={vi.fn()} />);
+    expect(screen.queryByTestId('search-scope-thread')).toBeNull();
+  });
 
-    render(<SearchPalette open={true} onClose={vi.fn()} initialScoped={true} />);
+  it('initialScope=thread 로 열면 열려 있는 스레드로 좁혀 찾는다', async () => {
+    useAppStore.getState().set({ activeChannelId: 'c1', threadRootId: 'm1' });
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue({ messages: [], hasMore: false });
 
-    const toggle = screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement;
-    expect(toggle.checked).toBe(true);
+    render(<SearchPalette open={true} onClose={vi.fn()} initialScope="thread" />);
+    expect(screen.getByTestId('search-scope-thread').getAttribute('aria-pressed')).toBe('true');
 
     fireEvent.change(screen.getByLabelText('검색어 입력'), { target: { value: 'hello' } });
-
     await waitFor(() => {
-      expect(mockController.api.search).toHaveBeenCalledWith('hello', 'c1');
+      // 스레드 스코프에도 채널을 함께 보낸다 — 서버의 403 판정이 채널 단위다.
+      expect(mockController.api.search).toHaveBeenCalledWith(
+        'hello', { channelId: 'c1', threadRootId: 'm1', offset: 0 },
+      );
     }, { timeout: 1000 });
   });
 
-  it('initialScoped=false 로 열면 전역이다', async () => {
+  /**
+   * 잘렸다는 것을 말하지 않으면 사람은 "없다"로 읽는다. '더 보기'는 offset 을 이어
+   * 붙이고 결과를 **잇는다**(갈아치우지 않는다).
+   */
+  it('더 있으면 더 보기가 서고, 누르면 offset 을 이어 붙인다', async () => {
+    (mockController.api.search as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ messages: [msg('m1', 'c1', 1, 'First', 'u1')], hasMore: true })
+      .mockResolvedValueOnce({ messages: [msg('m2', 'c1', 2, 'Second', 'u1')], hasMore: false });
+
+    render(<SearchPalette open={true} onClose={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('검색어 입력'), { target: { value: 'hello' } });
+
+    await waitFor(() => expect(screen.getByTestId('search-more')).toBeTruthy(), { timeout: 1000 });
+    fireEvent.click(screen.getByTestId('search-more'));
+
+    await waitFor(() => {
+      expect(mockController.api.search).toHaveBeenLastCalledWith(
+        'hello', { channelId: null, threadRootId: null, offset: 1 },
+      );
+      expect(screen.getByText('First')).toBeTruthy();
+      expect(screen.getByText('Second')).toBeTruthy();
+      expect(screen.queryByTestId('search-more')).toBeNull();
+    }, { timeout: 1000 });
+  });
+
+  it('initialScope=channel 로 열면 첫 검색이 채널로 좁혀진다', async () => {
     useAppStore.getState().set({ activeChannelId: 'c1' });
-    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue({ messages: [], hasMore: false });
 
-    render(<SearchPalette open={true} onClose={vi.fn()} initialScoped={false} />);
+    render(<SearchPalette open={true} onClose={vi.fn()} initialScope="channel" />);
 
-    const toggle = screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement;
-    expect(toggle.checked).toBe(false);
+    expect(screen.getByTestId('search-scope-channel').getAttribute('aria-pressed')).toBe('true');
 
     fireEvent.change(screen.getByLabelText('검색어 입력'), { target: { value: 'hello' } });
 
     await waitFor(() => {
-      expect(mockController.api.search).toHaveBeenCalledWith('hello', null);
+      expect(mockController.api.search).toHaveBeenCalledWith('hello', { channelId: 'c1', threadRootId: null, offset: 0 });
+    }, { timeout: 1000 });
+  });
+
+  it('initialScope=all 로 열면 전역이다', async () => {
+    useAppStore.getState().set({ activeChannelId: 'c1' });
+    (mockController.api.search as ReturnType<typeof vi.fn>).mockResolvedValue({ messages: [], hasMore: false });
+
+    render(<SearchPalette open={true} onClose={vi.fn()} initialScope="all" />);
+
+    expect(screen.getByTestId('search-scope-all').getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.change(screen.getByLabelText('검색어 입력'), { target: { value: 'hello' } });
+
+    await waitFor(() => {
+      expect(mockController.api.search).toHaveBeenCalledWith('hello', GLOBAL_SCOPE);
     }, { timeout: 1000 });
   });
 
@@ -345,42 +408,40 @@ describe('SearchPalette', () => {
     // 존재한다. 지금은 문구가 달라 우연히 통과하지만, 문구를 손대는 순간 어느 팔레트를
     // 집었는지 모르게 되므로 하나씩 내리고 확인한다.
     const scopedRender = render(
-      <SearchPalette open={true} onClose={vi.fn()} initialScoped={true} />,
+      <SearchPalette open={true} onClose={vi.fn()} initialScope="channel" />,
     );
     expect(screen.getByPlaceholderText('이 채널에서 찾기 (general)')).toBeTruthy();
     scopedRender.unmount();
 
-    render(<SearchPalette open={true} onClose={vi.fn()} initialScoped={false} />);
+    render(<SearchPalette open={true} onClose={vi.fn()} initialScope="all" />);
     expect(screen.getByPlaceholderText('전체에서 찾기')).toBeTruthy();
   });
 
   // 팔레트는 Workspace 에 계속 마운트된 채 open 만 뒤집힌다. useState 초기값은 마운트
-  // 때 한 번만 읽히므로, 열릴 때마다 initialScoped 를 다시 적용하지 않으면 진입점이
+  // 때 한 번만 읽히므로, 열릴 때마다 initialScope 를 다시 적용하지 않으면 진입점이
   // 정한 스코프가 두 번째 열기부터 무시된다(#258 회수 중 발견).
-  it('닫았다 다시 열면 그때의 initialScoped 를 반영한다', () => {
+  it('닫았다 다시 열면 그때의 initialScope 를 반영한다', () => {
     useAppStore.getState().set({ activeChannelId: 'c1' });
 
-    const view = render(<SearchPalette open={false} onClose={vi.fn()} initialScoped={false} />);
-    view.rerender(<SearchPalette open={true} onClose={vi.fn()} initialScoped={true} />);
+    const view = render(<SearchPalette open={false} onClose={vi.fn()} initialScope="all" />);
+    view.rerender(<SearchPalette open={true} onClose={vi.fn()} initialScope="channel" />);
 
-    const toggle = screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement;
-    expect(toggle.checked, '열 때의 initialScoped 가 반영돼야 한다').toBe(true);
+    expect(
+      screen.getByTestId('search-scope-channel').getAttribute('aria-pressed'),
+      '열 때의 initialScope 가 반영돼야 한다',
+    ).toBe('true');
   });
 
-  // 이미 열려 있는 동안 부모가 initialScoped 를 바꿔도, 사람이 손으로 켠 토글을
+  // 이미 열려 있는 동안 부모가 initialScope 를 바꿔도, 사람이 손으로 고른 스코프를
   // 덮어쓰지 않는다. 스코프는 사람의 선택이고 열기 동작만 그걸 초기화한다.
-  it('열려 있는 동안 initialScoped 가 바뀌어도 손으로 켠 토글을 덮지 않는다', () => {
+  it('열려 있는 동안 initialScope 가 바뀌어도 손으로 고른 스코프를 덮지 않는다', () => {
     useAppStore.getState().set({ activeChannelId: 'c1' });
 
-    const view = render(<SearchPalette open={true} onClose={vi.fn()} initialScoped={false} />);
-    fireEvent.click(screen.getByLabelText('이 채널에서만 (general)'));
-    expect((screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement).checked).toBe(
-      true,
-    );
+    const view = render(<SearchPalette open={true} onClose={vi.fn()} initialScope="all" />);
+    fireEvent.click(screen.getByTestId('search-scope-channel'));
+    expect(screen.getByTestId('search-scope-channel').getAttribute('aria-pressed')).toBe('true');
 
-    view.rerender(<SearchPalette open={true} onClose={vi.fn()} initialScoped={false} />);
-    expect((screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement).checked).toBe(
-      true,
-    );
+    view.rerender(<SearchPalette open={true} onClose={vi.fn()} initialScope="all" />);
+    expect(screen.getByTestId('search-scope-channel').getAttribute('aria-pressed')).toBe('true');
   });
 });

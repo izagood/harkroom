@@ -101,12 +101,17 @@ describe('ApiClient', () => {
     await api.search('needle');
     expect((fn.mock.calls[0]! as unknown as [string])[0]).toBe('http://x:3400/search?q=needle');
 
-    await api.search('needle', 'c1');
+    await api.search('needle', { channelId: 'c1' });
     expect((fn.mock.calls[1]! as unknown as [string])[0]).toBe('http://x:3400/search?q=needle&channelId=c1');
 
     // null 은 "스코프 없음"이지 빈 스코프가 아니다 — 빈 channelId 가 붙으면 서버가 400 이다.
-    await api.search('needle', null);
+    await api.search('needle', { channelId: null });
     expect((fn.mock.calls[2]! as unknown as [string])[0]).toBe('http://x:3400/search?q=needle');
+
+    // 스레드 스코프는 채널을 **함께** 보낸다 — 서버의 403 판정이 채널 단위다.
+    await api.search('needle', { channelId: 'c1', threadRootId: 't1', offset: 50 });
+    expect((fn.mock.calls[3]! as unknown as [string])[0])
+      .toBe('http://x:3400/search?q=needle&channelId=c1&threadRootId=t1&offset=50');
   });
   /**
    * 업로드는 이 파일에서 **혼자 `fetch` 를 쓰지 않는다**(진행률 때문에 XHR 이다). 배선을
