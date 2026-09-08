@@ -3,6 +3,8 @@ import { skillGroupOf, type SkillGroupId, type WorkspaceSkillView } from '@murmu
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { SettingsPage } from './primitives';
+import { useT } from '../../i18n/useT';
+import type { Translate } from '../../i18n';
 
 /**
  * 워크스페이스 스킬 승인 화면(#311). `#140` 이 만든 라우트·모델 위에 얹는다.
@@ -14,10 +16,16 @@ import { SettingsPage } from './primitives';
  * `AgentsSettings.tsx` 는 건드리지 않는다 — 레이아웃만 다른 별개의 절이다.
  */
 
-const GROUPS: { id: SkillGroupId; title: string; empty: string }[] = [
-  { id: 'pending', title: '대기 중', empty: '승인을 기다리는 스킬이 없다' },
-  { id: 'approved', title: '승인됨', empty: '승인된 스킬이 없다' },
-  { id: 'disabled', title: '비활성', empty: '비활성된 스킬이 없다' },
+/**
+ * 세 칸의 이름과 빈 목록. **모듈 상수였다가 함수가 됐다** — 상수는 모듈이 처음 읽힐 때
+ * 한 번만 만들어지므로 그때의 언어로 굳고, 언어를 바꿔도 이 세 칸만 옛 언어로 남는다.
+ * 화면이 `t()` 를 지나도 그런 자리는 안 바뀐다는 것이 `i18n.test.tsx` 머리말의 경고이고,
+ * 여기가 실제로 그 모양이었다.
+ */
+const groups = (t: Translate): { id: SkillGroupId; title: string; empty: string }[] => [
+  { id: 'pending', title: t('skills.group.pending'), empty: t('skills.group.pendingEmpty') },
+  { id: 'approved', title: t('skills.group.approved'), empty: t('skills.group.approvedEmpty') },
+  { id: 'disabled', title: t('skills.group.disabled'), empty: t('skills.group.disabledEmpty') },
 ];
 
 /**
@@ -26,7 +34,7 @@ const GROUPS: { id: SkillGroupId; title: string; empty: string }[] = [
  * 이 저장소의 선례(`HandleGroupsSettings` 의 삭제 확인, `AgentsSettings` 의 '정말 지운다')가
  * 모두 화면 안 인라인 확인이다.
  */
-export const APPROVE_CONFIRM_TEXT = '승인하면 모든 에이전트가 이 스킬을 시스템 프롬프트로 읽는다';
+export const approveConfirmText = (t: Translate) => t('skills.confirm.approve');
 
 /**
  * 거부·비활성 확인 문구(#325). **한 문구가 아니라 둘인 이유:** 서버에서 둘은 같은 경로지만
@@ -36,10 +44,11 @@ export const APPROVE_CONFIRM_TEXT = '승인하면 모든 에이전트가 이 스
  * 적으면 일어나지 않는 일을 경고하는 것이고, 확인 문구가 한 번 거짓말하면 다음 문구도
  * 읽히지 않는다.
  */
-export const REJECT_CONFIRM_TEXT = '거부하면 이 스킬은 비활성으로 내려간다 — 되돌리려면 에이전트가 다시 제안해야 한다';
-export const DISABLE_CONFIRM_TEXT = '비활성화하면 모든 에이전트가 이 스킬의 파일과 링크를 삭제한다';
+export const rejectConfirmText = (t: Translate) => t('skills.confirm.reject');
+export const disableConfirmText = (t: Translate) => t('skills.confirm.disable');
 
 export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
+  const t = useT();
   const [skills, setSkills] = useState<WorkspaceSkillView[] | 'error' | null>(null);
   // 제안 알림에서 왔으면 그 스킬의 본문을 처음부터 펼쳐 둔다 — 승인하러 온 사람이
   // 한 번 더 눌러야 본문을 보게 되면, 그 클릭이 곧 안 보고 승인하는 길이 된다.
@@ -89,7 +98,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
   return (
     <SettingsPage
       title="Skills"
-      description="에이전트가 제안한 워크스페이스 스킬. 승인된 스킬의 본문은 모든 에이전트의 시스템 프롬프트에 들어간다."
+      description={t('skills.group.subtitle')}
     >
       <div className="mb-6 flex items-center gap-2">
         <button
@@ -99,14 +108,14 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
           // 불러오는 중에만 막는다. 실패했을 때야말로 다시 눌러야 하므로 그때는 열어 둔다.
           disabled={skills === null}
         >
-          새로고침
+          {t('skills.list.refresh')}
         </button>
-        {skills === null && <span className="text-fg-subtle">불러오는 중…</span>}
+        {skills === null && <span className="text-fg-subtle">{t('skills.list.loading')}</span>}
       </div>
 
       {skills === 'error' && (
         <p role="alert" className="mb-6 rounded-lg border border-danger-border bg-danger-surface p-3 text-danger">
-          스킬 목록을 불러오지 못했다
+          {t('skills.list.loadFailed')}
         </p>
       )}
       {error && (
@@ -115,7 +124,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
         </p>
       )}
 
-      {GROUPS.map((group) => {
+      {groups(t).map((group) => {
         const items = rows.filter((s) => skillGroupOf(s) === group.id);
         return (
           <section key={group.id} className="mb-8">
@@ -150,13 +159,13 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                                        hover:bg-surface-hover disabled:opacity-50"
                             disabled={busy === skill.slug}
                             onClick={() => {
-                              // 두 확인이 동시에 열리면 경고 상자와 '취소' 버튼이 둘씩 뜬다 —
+                              // 두 확인이 동시에 열리면 경고 상자와 t('skills.confirm.cancel') 버튼이 둘씩 뜬다 —
                               // 어느 쪽을 취소하는지 사람이 알 수 없다. 하나만 열어 둔다.
                               setConfirmingDisable(null);
                               setConfirmingApprove(skill.slug);
                             }}
                           >
-                            승인
+                            {t('skills.row.approve')}
                           </button>
                         )}
                         {group.id !== 'disabled' && (
@@ -169,7 +178,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                               setConfirmingDisable(skill.slug);
                             }}
                           >
-                            {group.id === 'pending' ? '거부' : '비활성화'}
+                            {group.id === 'pending' ? t('skills.row.reject') : t('skills.row.disable')}
                           </button>
                         )}
                       </div>
@@ -178,7 +187,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
 
                   {isAdmin && confirmingApprove === skill.slug && (
                     <div className="mt-2 rounded-lg border border-warning-border bg-warning-surface p-3">
-                      <p className="text-warning">{APPROVE_CONFIRM_TEXT}</p>
+                      <p className="text-warning">{approveConfirmText(t)}</p>
                       <div className="mt-2 flex items-center gap-2">
                         <button
                           className="rounded-lg bg-accent px-3 py-1.5 font-medium text-fg-on-strong
@@ -187,10 +196,10 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                           onClick={() => void run(
                             skill.slug,
                             () => getController().approveSkill(skill.slug),
-                            '승인하지 못했다',
+                            t('skills.row.approveFailed'),
                           )}
                         >
-                          승인 확인
+                          {t('skills.confirm.approveStart')}
                         </button>
                         <button
                           className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg
@@ -198,7 +207,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                           disabled={busy === skill.slug}
                           onClick={() => setConfirmingApprove(null)}
                         >
-                          취소
+                          {t('skills.confirm.cancel')}
                         </button>
                       </div>
                     </div>
@@ -206,7 +215,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                   {isAdmin && confirmingDisable === skill.slug && (
                     <div className="mt-2 rounded-lg border border-warning-border bg-warning-surface p-3">
                       <p className="text-warning">
-                        {group.id === 'pending' ? REJECT_CONFIRM_TEXT : DISABLE_CONFIRM_TEXT}
+                        {group.id === 'pending' ? rejectConfirmText(t) : disableConfirmText(t)}
                       </p>
                       <div className="mt-2 flex items-center gap-2">
                         <button
@@ -216,10 +225,10 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                           onClick={() => void run(
                             skill.slug,
                             () => getController().disableSkill(skill.slug),
-                            group.id === 'pending' ? '거부하지 못했다' : '비활성화하지 못했다',
+                            group.id === 'pending' ? t('skills.row.rejectFailed') : t('skills.row.disableFailed'),
                           )}
                         >
-                          {group.id === 'pending' ? '거부 확인' : '비활성화 확인'}
+                          {group.id === 'pending' ? t('skills.row.confirmReject') : t('skills.row.confirmDisable')}
                         </button>
                         <button
                           className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg
@@ -227,7 +236,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                           disabled={busy === skill.slug}
                           onClick={() => setConfirmingDisable(null)}
                         >
-                          취소
+                          {t('skills.confirm.cancel')}
                         </button>
                       </div>
                     </div>
@@ -238,7 +247,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                     aria-expanded={expandedSlug === skill.slug}
                     onClick={() => setExpandedSlug(expandedSlug === skill.slug ? null : skill.slug)}
                   >
-                    {expandedSlug === skill.slug ? '본문 접기' : '본문 보기'}
+                    {expandedSlug === skill.slug ? t('skills.row.fold') : t('skills.row.unfold')}
                   </button>
 
                   {/*

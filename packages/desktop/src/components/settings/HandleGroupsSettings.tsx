@@ -4,6 +4,7 @@ import { HANDLE_PATTERN } from '@murmur/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { GroupBadge } from '../Identity';
+import { useT } from '../../i18n/useT';
 
 /**
  * 핸들 집합(#230)의 설정 화면(#285). 만들기·이름 바꾸기·구성원 추가/제거·삭제.
@@ -29,6 +30,7 @@ interface GroupWithMembers {
 }
 
 export function HandleGroupsSettings() {
+  const t = useT();
   // 스토어 구독이다 — `getState()` 스냅샷이면 만들기·이름 바꾸기 뒤에 목록이 그대로 남는다.
   const groups = useActiveStore((s) => s.groups);
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
@@ -44,7 +46,7 @@ export function HandleGroupsSettings() {
   const [editDisplayName, setEditDisplayName] = useState('');
   // 지우기는 되돌릴 수 없으니 한 번 더 묻는다. `window.confirm` 은 쓰지 않는다 —
   // Tauri 웹뷰에서 막힐 수 있고, 이 저장소의 선례(`Sidebar` 의 채널 삭제 확인,
-  // `AgentsSettings` 의 '정말 지운다')가 모두 화면 안 인라인 확인이다.
+  // `AgentsSettings` 의 t('groups.remove.confirm'))가 모두 화면 안 인라인 확인이다.
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   /** 서버가 사유를 말해 주면 그것을 보인다 — 우리가 지어낸 한 줄로 덮으면 사유가 사라진다. */
@@ -57,7 +59,7 @@ export function HandleGroupsSettings() {
     } catch (e) {
       // 명단을 못 받은 것과 명단이 빈 것은 다른 사실이다 — 상세를 열지 않고 사유를 말한다.
       setSelected(null);
-      setError(reason(e, '구성원 명단을 받지 못했다'));
+      setError(reason(e, t('groups.edit.membersFailed')));
     }
   };
 
@@ -66,7 +68,7 @@ export function HandleGroupsSettings() {
     // 문법은 서버와 **같은 것**을 본다 — 여기 정규식을 리터럴로 적으면 계정·집합이 쓰는
     // 한 네임스페이스의 문법이 화면과 서버에서 갈린다(`handleGroupRoutes` 의 주석).
     if (!new RegExp(`^${HANDLE_PATTERN}$`).test(newHandle)) {
-      setError('집합 핸들은 계정 핸들과 같은 문법이어야 한다');
+      setError(t('groups.new.badHandle'));
       return;
     }
     setSaving(true);
@@ -76,7 +78,7 @@ export function HandleGroupsSettings() {
       setNewHandle('');
       setNewDisplayName('');
     } catch (e) {
-      setError(reason(e, '만들지 못했다 (이미 있는 이름일 수 있다)'));
+      setError(reason(e, t('groups.new.createFailed')));
     } finally {
       setSaving(false);
     }
@@ -93,7 +95,7 @@ export function HandleGroupsSettings() {
       // 상세 패널의 이름도 함께 바뀐다 — 스토어만 고치면 지금 열려 있는 패널이 옛 이름을 남긴다.
       setSelected({ group: updated, members: selected.members });
     } catch (e) {
-      setError(reason(e, '이름을 저장하지 못했다'));
+      setError(reason(e, t('groups.edit.renameFailed')));
     } finally {
       setSaving(false);
     }
@@ -108,7 +110,7 @@ export function HandleGroupsSettings() {
       setConfirmingDelete(false);
       setSelected(null);
     } catch (e) {
-      setError(reason(e, '지우지 못했다'));
+      setError(reason(e, t('groups.remove.failed')));
     } finally {
       setSaving(false);
     }
@@ -126,7 +128,7 @@ export function HandleGroupsSettings() {
     } catch (e) {
       // 서버는 에이전트를 넣으려 하면 사유를 담아 400 을 준다(#230 결정 1). 그 문장이
       // 사람에게 도달해야 왜 안 들어갔는지 알 수 있다.
-      setError(reason(e, op === 'add' ? '구성원을 추가하지 못했다' : '구성원을 제거하지 못했다'));
+      setError(reason(e, op === 'add' ? t('groups.edit.addMemberFailed') : t('groups.edit.removeMemberFailed')));
     } finally {
       setSaving(false);
     }
@@ -156,18 +158,18 @@ export function HandleGroupsSettings() {
       <aside className="w-56 shrink-0 border-r border-border p-3">
         {isAdmin && (
           <div className="mb-3 space-y-2 rounded border border-border p-2">
-            <div className="text-meta font-medium text-fg-muted">새 집합</div>
+            <div className="text-meta font-medium text-fg-muted">{t('groups.new.heading')}</div>
             <input
               className={field}
-              aria-label="집합 핸들"
+              aria-label={t('groups.new.handle')}
               placeholder="handle"
               value={newHandle}
               onChange={(e) => setNewHandle(e.target.value)}
             />
             <input
               className={field}
-              aria-label="집합 표시 이름"
-              placeholder="표시 이름"
+              aria-label={t('groups.new.displayName')}
+              placeholder={t('groups.edit.displayName')}
               value={newDisplayName}
               onChange={(e) => setNewDisplayName(e.target.value)}
             />
@@ -176,12 +178,12 @@ export function HandleGroupsSettings() {
               disabled={saving || !newHandle.trim() || !newDisplayName.trim()}
               onClick={() => void createGroup()}
             >
-              만들기
+              {t('groups.new.create')}
             </button>
           </div>
         )}
 
-        <div className="text-meta uppercase tracking-wide text-fg-subtle">집합</div>
+        <div className="text-meta uppercase tracking-wide text-fg-subtle">{t('groups.list.heading')}</div>
         {/*
           ## **팀을 가리키는 한 줄** (`docs/desktop-agent-cards.html` 4단계)
 
@@ -202,13 +204,12 @@ export function HandleGroupsSettings() {
           지나는 자리다.
         */}
         <p className="mt-1 text-meta text-fg-subtle">
-          사람 여럿을 한 이름으로 부르는 장치다. 에이전트를 묶으려면 설정 › Agents 의 팀 묶음이다 —
-          이름 자리는 둘이 함께 쓴다.
+          {t('groups.list.subtitle')}
         </p>
         {/* 목록이 비어 있는 것과 못 읽은 것을 섞지 않는다: 목록은 스토어(기동 시 조회)에서
             오므로 여기서 "불러오는 중"을 그릴 것이 없고, 조회가 실패했으면 컨트롤러가
             연결 상태로 말한다. 이 자리에서 말할 수 있는 것은 "정말 하나도 없다" 뿐이다. */}
-        {groups.length === 0 && <div className="px-1 py-2 text-fg-muted">아직 없다</div>}
+        {groups.length === 0 && <div className="px-1 py-2 text-fg-muted">{t('groups.list.empty')}</div>}
         {groups.map((g) => (
           <button
             key={g.id}
@@ -229,7 +230,7 @@ export function HandleGroupsSettings() {
         {error && <p role="alert" className="border-b border-danger-border bg-danger-surface px-5 py-2 text-meta text-danger">{error}</p>}
         {!selected ? (
           <div className="flex flex-1 items-center justify-center text-fg-muted">
-            {isAdmin ? '집합을 선택하세요' : '집합을 만들고 고치는 것은 관리자만 할 수 있습니다'}
+            {isAdmin ? t('groups.edit.pick') : t('groups.new.readOnly')}
           </div>
         ) : (
           <>
@@ -242,13 +243,13 @@ export function HandleGroupsSettings() {
                     disabled={saving}
                     onClick={() => void deleteGroup()}
                   >
-                    정말 지운다
+                    {t('groups.remove.confirm')}
                   </button>
                   <button
                     className="rounded px-2 py-1 text-meta text-fg-subtle"
                     onClick={() => setConfirmingDelete(false)}
                   >
-                    취소
+                    {t('groups.remove.cancel')}
                   </button>
                 </span>
               ) : (
@@ -256,19 +257,19 @@ export function HandleGroupsSettings() {
                   className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong"
                   onClick={() => setConfirmingDelete(true)}
                 >
-                  집합 삭제
+                  {t('groups.remove.start')}
                 </button>
               ))}
             </header>
 
             <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
               <div className="rounded border border-border p-3">
-                <div className="text-meta font-medium text-fg-muted">이름</div>
+                <div className="text-meta font-medium text-fg-muted">{t('groups.rename.name')}</div>
                 {editingName === selected.group.id ? (
                   <div className="mt-2 flex gap-2">
                     <input
                       className={field}
-                      aria-label="새 표시 이름"
+                      aria-label={t('groups.edit.newDisplayName')}
                       value={editDisplayName}
                       onChange={(e) => setEditDisplayName(e.target.value)}
                     />
@@ -277,13 +278,13 @@ export function HandleGroupsSettings() {
                       disabled={saving}
                       onClick={() => void updateGroupName()}
                     >
-                      저장
+                      {t('groups.rename.save')}
                     </button>
                     <button
                       className="rounded px-2 py-1 text-meta text-fg-subtle"
                       onClick={() => { setEditingName(null); setEditDisplayName(''); }}
                     >
-                      취소
+                      {t('groups.remove.cancel')}
                     </button>
                   </div>
                 ) : (
@@ -295,7 +296,7 @@ export function HandleGroupsSettings() {
                         className="text-meta text-accent hover:underline"
                         onClick={() => { setEditingName(selected.group.id); setEditDisplayName(selected.group.displayName); }}
                       >
-                        이름 바꾸기
+                        {t('groups.rename.start')}
                       </button>
                     )}
                   </div>
@@ -306,7 +307,7 @@ export function HandleGroupsSettings() {
                 <div className="text-meta font-medium text-fg-muted">구성원 ({selected.members.length})</div>
                 <div className="mt-2 space-y-1">
                   {selected.members.length === 0 ? (
-                    <div className="text-meta text-fg-muted">구성원이 없습니다</div>
+                    <div className="text-meta text-fg-muted">{t('groups.member.empty')}</div>
                   ) : (
                     selected.members.map((id) => {
                       const account = accounts[id];
@@ -315,16 +316,16 @@ export function HandleGroupsSettings() {
                           {/* 계정 디렉터리에 없는 id 는 **"모른다"** 다 — 이름 자리를 비우면
                               "구성원이 아니다"로 읽힌다(design.md 4절). id 를 그대로 보인다. */}
                           <span className="text-meta">
-                            {account ? `@${account.handle}` : `계정 ID: ${id}`}
+                            {account ? `@${account.handle}` : t('groups.edit.memberAccountId', { id })}
                           </span>
                           {isAdmin && (
                             <button
                               className="text-meta text-danger hover:underline"
-                              aria-label={`구성원 제거: ${account ? account.handle : id}`}
+                              aria-label={t('groups.edit.removeMember', { name: account ? account.handle : id })}
                               disabled={saving}
                               onClick={() => void changeMembers([id], 'remove')}
                             >
-                              제거
+                              {t('groups.member.remove')}
                             </button>
                           )}
                         </div>
@@ -335,16 +336,16 @@ export function HandleGroupsSettings() {
 
                 {isAdmin && (
                   <div className="mt-3">
-                    <div className="mb-1 text-meta text-fg-subtle">구성원 추가</div>
+                    <div className="mb-1 text-meta text-fg-subtle">{t('groups.edit.addMember')}</div>
                     <select
                       className={field}
-                      aria-label="구성원 추가"
+                      aria-label={t('groups.edit.addMember')}
                       value=""
                       onChange={(e) => {
                         if (e.target.value) void changeMembers([e.target.value], 'add');
                       }}
                     >
-                      <option value="">계정 선택…</option>
+                      <option value="">{t('groups.member.pick')}</option>
                       {humanAccounts
                         .filter((a) => !selected.members.includes(a.id))
                         .map((a) => (

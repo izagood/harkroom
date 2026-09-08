@@ -5,8 +5,10 @@ import { skillGroupOf } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController, type Controller as ControllerType } from '../src/state/controller';
 import {
-  SkillsSettings, APPROVE_CONFIRM_TEXT, REJECT_CONFIRM_TEXT, DISABLE_CONFIRM_TEXT,
+  SkillsSettings, approveConfirmText, rejectConfirmText, disableConfirmText,
 } from '../src/components/settings/SkillsSettings';
+import { usePrefsStore } from '../src/state/prefsStore';
+import { translator } from '../src/i18n';
 import { Workspace } from '../src/components/Workspace';
 import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
@@ -54,11 +56,24 @@ const signIn = (isAdmin: boolean) => {
   });
 };
 
+/**
+ * **언어를 고정한다.** 이 파일이 재는 것은 승인 게이트지 문구의 언어가 아니고, 아래
+ * 축 하나가 *"거부에는 파일 이야기가 없고 비활성화에는 있다"* 를 **한국어 낱말로**
+ * 잰다 — 그 대비가 이 화면의 요점이라(#325) 낱말을 지우면 축이 무의미해진다.
+ * 언어를 재는 자리는 `i18n.test.tsx` 하나다.
+ */
+const ko = translator('ko');
+
 beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
   localStorage.clear();
   useAppStore.getState().reset();
 });
-afterEach(() => { cleanup(); setController(null as unknown as ControllerType); });
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+  setController(null as unknown as ControllerType);
+});
 
 describe('1. 세 묶음으로 나뉜다', () => {
   it('대기 중·승인됨·비활성이 각각 자기 항목을 갖는다', async () => {
@@ -131,7 +146,7 @@ describe('3. 승인은 확인을 거친다 — `window.confirm` 이 아니다', 
     // 첫 클릭은 확인을 띄울 뿐이다 — 여기서 요청이 나가면 확인 단계가 장식이다.
     expect(c.approveSkill).not.toHaveBeenCalled();
     expect(nativeConfirm).not.toHaveBeenCalled();
-    const confirmText = screen.getByText(APPROVE_CONFIRM_TEXT);
+    const confirmText = screen.getByText(approveConfirmText(ko));
     expect(confirmText.textContent).toContain('모든 에이전트');
 
     fireEvent.click(screen.getByRole('button', { name: '승인 확인' }));
@@ -149,7 +164,7 @@ describe('3. 승인은 확인을 거친다 — `window.confirm` 이 아니다', 
     fireEvent.click(screen.getByRole('button', { name: '승인' }));
     fireEvent.click(screen.getByRole('button', { name: '취소' }));
 
-    expect(screen.queryByText(APPROVE_CONFIRM_TEXT)).toBeNull();
+    expect(screen.queryByText(approveConfirmText(ko))).toBeNull();
     expect(c.approveSkill).not.toHaveBeenCalled();
   });
 });
@@ -173,7 +188,7 @@ describe('3-b. 거부·비활성도 확인을 거친다(#325)', () => {
     expect(c.disableSkill).not.toHaveBeenCalled();
     // 브라우저 확인창으로 대신하면 Tauri 웹뷰에서 막힐 수 있다 — 이 저장소가 거절한 수단이다.
     expect(nativeConfirm).not.toHaveBeenCalled();
-    expect(screen.getByText(REJECT_CONFIRM_TEXT)).toBeTruthy();
+    expect(screen.getByText(rejectConfirmText(ko))).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '거부 확인' }));
     await waitFor(() => expect(c.disableSkill).toHaveBeenCalledWith('pending-one'));
@@ -189,7 +204,7 @@ describe('3-b. 거부·비활성도 확인을 거친다(#325)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '비활성화' }));
     expect(c.disableSkill).not.toHaveBeenCalled();
-    expect(screen.getByText(DISABLE_CONFIRM_TEXT)).toBeTruthy();
+    expect(screen.getByText(disableConfirmText(ko))).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '비활성화 확인' }));
     await waitFor(() => expect(c.disableSkill).toHaveBeenCalledWith('approved-one'));
@@ -204,7 +219,7 @@ describe('3-b. 거부·비활성도 확인을 거친다(#325)', () => {
     fireEvent.click(screen.getByRole('button', { name: '거부' }));
     fireEvent.click(screen.getByRole('button', { name: '취소' }));
 
-    expect(screen.queryByText(REJECT_CONFIRM_TEXT)).toBeNull();
+    expect(screen.queryByText(rejectConfirmText(ko))).toBeNull();
     expect(c.disableSkill).not.toHaveBeenCalled();
   });
 
@@ -217,11 +232,11 @@ describe('3-b. 거부·비활성도 확인을 거친다(#325)', () => {
     await screen.findByText('pending-one');
 
     fireEvent.click(screen.getByRole('button', { name: '거부' }));
-    expect(screen.queryByText(DISABLE_CONFIRM_TEXT)).toBeNull();
-    expect(screen.getByText(REJECT_CONFIRM_TEXT).textContent).not.toContain('파일');
+    expect(screen.queryByText(disableConfirmText(ko))).toBeNull();
+    expect(screen.getByText(rejectConfirmText(ko)).textContent).not.toContain('파일');
 
     fireEvent.click(screen.getByRole('button', { name: '비활성화' }));
-    expect(screen.getByText(DISABLE_CONFIRM_TEXT).textContent).toContain('파일');
+    expect(screen.getByText(disableConfirmText(ko)).textContent).toContain('파일');
   });
 
   it('승인 확인을 열면 거부 확인이 닫힌다 — 취소 버튼이 둘씩 뜨지 않는다', async () => {
@@ -236,8 +251,8 @@ describe('3-b. 거부·비활성도 확인을 거친다(#325)', () => {
     // 둘 다 열려 있으면 getByRole 이 "여럿 찾음"으로 던진다 — 사람도 어느 쪽을
     // 취소하는지 알 수 없다.
     expect(screen.getByRole('button', { name: '취소' })).toBeTruthy();
-    expect(screen.queryByText(REJECT_CONFIRM_TEXT)).toBeNull();
-    expect(screen.getByText(APPROVE_CONFIRM_TEXT)).toBeTruthy();
+    expect(screen.queryByText(rejectConfirmText(ko))).toBeNull();
+    expect(screen.getByText(approveConfirmText(ko))).toBeTruthy();
   });
 });
 

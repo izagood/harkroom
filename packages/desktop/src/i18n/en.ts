@@ -228,6 +228,177 @@ export const en = {
   'gallery.thread.participantsNote': 'Whoever does not answer is dimmed. What you do not own is not in the list.',
   'gallery.thread.states': 'Thread states — five',
   'gallery.thread.statesNote': 'Only two take the accent, and even those two differ in color.',
+  // defaults — **화면 이름이다.** `settings/AgentDefaultsSettings.tsx` 가 그리는 말.
+  //
+  // 작은 화면이라 덩어리를 하나(`field`)만 둔다 — 구획이 하나(값 셋을 세우는 폼)이므로
+  // 나누면 덩어리 이름이 화면 이름을 되풀이할 뿐이다.
+  //
+  // `harness`·`model`·`effort` 는 **옮기지 않는다.** API 필드 이름이자 설정 파일에
+  // 그대로 적히는 값이고, 그 값을 고르는 화면이 다른 이름을 쓰면 사람이 둘을 못 잇는다
+  // (`sidebar.notify` 가 `all`/`mentions`/`none` 을 안 옮긴 것과 같은 규칙).
+  // ---------------------------------------------------------------------------
+
+  'defaults.field.effort': 'Default effort',
+  'defaults.field.harness': 'Default harness',
+  /** 비었을 때 무엇이 되는가. `<select>` 의 빈 값과 `<input>` 의 placeholder 가 함께 쓴다. */
+  'defaults.field.harnessDefault': 'harness default',
+  'defaults.field.model': 'Default model',
+  /**
+   * **비워 두는 것이 선택지다.** murmur 가 모델을 모르는 것이 아니라 *"발화에 실린 것으로만
+   * 안다"* — 그 한계를 적어 두지 않으면 빈 칸이 고장으로 읽힌다.
+   */
+  'defaults.field.modelHint':
+    'Leave it empty and the harness picks — murmur only learns that choice from the model carried on a message',
+  'defaults.field.applyScope': 'It applies only to agents created after this. Agents that already exist do not change.',
+  'defaults.field.loadFailed': 'The defaults did not arrive',
+  'defaults.field.loading': 'Loading…',
+  'defaults.field.notAdmin': 'Only an admin can set the defaults.',
+  'defaults.field.save': 'Save defaults',
+  'defaults.field.saved': 'Saved',
+  'defaults.field.saveFailed': 'The defaults were not saved',
+  'defaults.field.subtitle': 'What a newly created agent inherits. Agents that already exist do not change.',
+
+  // ---------------------------------------------------------------------------
+  // groups — **화면 이름이다.** `settings/HandleGroupsSettings.tsx` 가 그리는 말.
+  //
+  // ## `집합` 을 무엇으로 옮기나
+  //
+  // 한 handle 로 여러 계정을 한꺼번에 부르는 것이다(`@release` 로 팀 전체). 후보가 셋이었다:
+  //
+  // - `Set` — 수학 낱말이라 사람 묶음으로 안 읽힌다
+  // - `Alias` — 하나를 다른 이름으로 부르는 것이지 여럿을 묶는 것이 아니다
+  // - **`Handle group`** ← 이것. 코드가 이미 그 이름이고(`handleGroupRoutes` ·
+  //   `HandleGroupsSettings`), 화면과 코드가 같은 낱말을 쓰면 사람이 둘을 잇는다
+  //
+  // 화면에서는 문맥이 이미 handle 이야기라 짧게 `Group` 으로 쓴다 — 라벨마다
+  // `Handle group` 을 반복하면 정작 다른 부분이 안 읽힌다.
+  // ---------------------------------------------------------------------------
+
+  'groups.edit.addMember': 'Add member',
+  'groups.edit.addMemberFailed': 'The member was not added',
+  'groups.edit.displayName': 'Display name',
+  /** `{id}` 는 계정 id 다 — 이름을 못 찾았을 때만 뜨므로 옮길 것이 없다. */
+  'groups.edit.memberAccountId': 'Account ID: {id}',
+  'groups.edit.membersFailed': 'The member list did not arrive',
+  'groups.edit.newDisplayName': 'New display name',
+  'groups.edit.pick': 'Pick a group',
+  'groups.edit.removeMember': 'Remove {name}',
+  'groups.edit.removeMemberFailed': 'The member is still in the group',
+  'groups.edit.renameFailed': 'The name was not saved',
+  /**
+   * **이름 규칙을 계정과 잇는다.** `Invalid handle` 이 아니라 *"계정 handle 과 같은
+   * 문법"* 이라고 적는 이유는, 사람이 이미 아는 규칙을 가리키는 것이 규칙을 다시
+   * 나열하는 것보다 짧고 정확하기 때문이다 — 그리고 그 둘은 실제로 한 네임스페이스다.
+   */
+  'groups.list.empty': 'None yet',
+  'groups.list.heading': 'Groups',
+  /**
+   * **에이전트 팀과 가르는 문장이다.** 둘은 이름 자리를 함께 쓰므로(한 네임스페이스)
+   * 여기서 안 가르면 사람이 에이전트를 이 화면에서 묶으려 한다.
+   */
+  'groups.list.subtitle':
+    'A way to call several people by one name. To group agents, use the team section under Settings › Agents — '
+    + 'the two share one namespace for names.',
+  'groups.member.empty': 'No members',
+  'groups.member.pick': 'Pick an account…',
+  'groups.member.remove': 'Remove',
+  'groups.new.badHandle': 'A group handle must follow the same grammar as an account handle',
+  'groups.new.createFailed': 'The group was not created (the name may already exist)',
+  'groups.new.displayName': 'Group display name',
+  'groups.new.handle': 'Group handle',
+  'groups.new.readOnly': 'Only an admin can create or change groups',
+  'groups.new.create': 'Create',
+  'groups.new.heading': 'New group',
+  'groups.remove.cancel': 'Cancel',
+  'groups.remove.confirm': 'Delete for good',
+  'groups.remove.start': 'Delete group',
+  'groups.rename.name': 'Name',
+  'groups.rename.save': 'Save',
+  'groups.rename.start': 'Rename',
+  'groups.remove.failed': 'The group is still there',
+
+  // ---------------------------------------------------------------------------
+  // profileName — **화면 이름이다.** `settings/ProfileSettings.tsx` 의 이름 바꾸기.
+  //
+  // 영역이 `profile` 이 아닌 이유: `agents.profile` 이 이미 **에이전트의** 프로필을
+  // 뜻한다. 같은 낱말이 두 영역에서 다른 것을 가리키면 키를 읽는 사람이 매번 어느
+  // 프로필인지 되짚어야 한다.
+  //
+  // ## 어투를 `~다` 로 맞춘다
+  //
+  // 이 화면만 `~하세요`·`~습니다` 였다(`새 이름을 입력하세요.` · `변경에 실패했습니다.`).
+  // 사전의 한국어는 전부 `~다` 이고, 한 화면만 높임말이면 **같은 앱이 사람을 두 가지로
+  // 대한다.** 뜻은 그대로 두고 어투만 맞췄다.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 사진 지우기의 확인·취소. **이름 바꾸기의 것과 한 키로 못 묶는다** — 되돌리는 대상이
+   * 다르고(`en.ts` 의 `Cancel` 판단), 실제로 문구가 갈릴 수 있는 자리다.
+   */
+  'profileAvatar.removeCancel': 'Cancel',
+  'profileAvatar.removeConfirm': 'Delete for good',
+
+  'profileName.apply': 'Apply',
+  'profileName.empty': 'Enter a new name',
+  'profileName.cancel': 'Cancel',
+  'profileName.confirm': 'Confirm',
+  /** 되돌릴 수 없는 조작이라 **두 사실**을 붙여 둔다 — 과거에 미치는 범위와 되돌림 여부. */
+  'profileName.effectPast': 'Mentions in past messages will show the new name too.',
+  'profileName.effectPermanent': 'This change cannot be undone.',
+  'profileName.failed': 'The name was not changed',
+  'profileName.heading': 'Display name',
+  'profileName.input': 'New name',
+  /** 규칙을 나열한다 — `Invalid name` 은 무엇을 고쳐야 하는지 말하지 않는다. */
+  'profileName.start': 'Change',
+  'profileName.invalidChars': 'Only lowercase letters, digits, underscores and hyphens',
+  'profileName.length': 'It must be 2 to 32 characters',
+  'profileName.taken': 'That name is already taken',
+  'profileName.unusable': 'That name cannot be used',
+
+  // ---------------------------------------------------------------------------
+  // skills — **화면 이름이다.** `settings/SkillsSettings.tsx` 가 그리는 말.
+  //
+  // | 덩어리 | 그 구획 |
+  // |---|---|
+  // | `confirm` | 되돌리기 어려운 셋을 누르기 전에 뜨는 문장 |
+  // | `group` | 세 칸(대기 중 · 승인됨 · 비활성)의 이름과 빈 목록 |
+  // | `row` | 스킬 한 줄의 버튼들 |
+  //
+  // ## 확인 문구가 **무엇이 일어나는지**를 말한다
+  //
+  // `Are you sure?` 를 쓰지 않는다. 이 셋은 되돌리기 어렵고 **각각 다른 일이 벌어진다** —
+  // 승인은 모든 에이전트의 프롬프트에 들어가고, 거부는 되돌리려면 에이전트가 다시
+  // 제안해야 하며, 비활성화는 **파일을 지운다**. 그 차이가 문장에 있어야 사람이 무엇을
+  // 누르는지 안다(회귀선이 `거부`에는 파일 이야기가 없고 `비활성화`에는 있는 것을 잰다).
+  // ---------------------------------------------------------------------------
+
+  'skills.confirm.approve': 'Approving means every agent reads this skill as part of its system prompt',
+  'skills.confirm.disable': 'Disabling means every agent deletes this skill\'s files and links',
+  'skills.confirm.reject':
+    'Rejecting drops this skill to disabled — to undo it an agent has to propose it again',
+  'skills.confirm.approveStart': 'Confirm approve',
+  'skills.confirm.cancel': 'Cancel',
+  'skills.group.approved': 'Approved',
+  'skills.group.approvedEmpty': 'No approved skills',
+  'skills.group.disabled': 'Disabled',
+  'skills.group.disabledEmpty': 'No disabled skills',
+  'skills.group.pending': 'Pending',
+  'skills.group.pendingEmpty': 'No skills waiting for approval',
+  'skills.group.subtitle':
+    'Workspace skills proposed by agents. The body of an approved skill goes into every agent\'s system prompt.',
+  'skills.list.loadFailed': 'The skill list did not arrive',
+  'skills.list.loading': 'Loading…',
+  'skills.list.refresh': 'Refresh',
+  'skills.row.approve': 'Approve',
+  'skills.row.approveFailed': 'The skill was not approved',
+  'skills.row.confirmDisable': 'Confirm disable',
+  'skills.row.confirmReject': 'Confirm reject',
+  'skills.row.disable': 'Disable',
+  'skills.row.disableFailed': 'The skill is still enabled',
+  'skills.row.fold': 'Hide body',
+  'skills.row.reject': 'Reject',
+  'skills.row.rejectFailed': 'The skill was not rejected',
+  'skills.row.unfold': 'Show body',
 
   // ---------------------------------------------------------------------------
   // agents — **화면 이름이다.** `settings/AgentsSettings.tsx` 가 그리는 말이고,
