@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import {
   AGENT_HARNESSES, RUNNABLE_HARNESSES,
   type AgentConfig, type AgentDefaults, type AgentView, type MentionPermission, type PatView,
@@ -6,6 +6,10 @@ import {
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { staleRunners } from '../../lib/runnerVersions';
+// #443: daemon 이 직접 확인한 사실을 사람이 읽는 행으로 바꾸는 판정. 화면이 그것을 제 손으로
+// 적지 않는 이유는 그 파일 머리말에 있다 — 규율 셋을 회귀선이 직접 재야 한다.
+import { daemonFactRows } from '../../lib/daemonFacts';
+import type { ObservedRunner } from '../../lib/runnerLauncher';
 // 경과 계산은 `lib/` 한 벌이다 — 카드도 같은 값을 쓰는데 그쪽은 이 파일을 import 할 수
 // 없다(순환). `lastTurnLabel` 은 그 위에 접두만 붙인다(아래 그 함수 주석).
 import { lastTurnAgo } from '../../lib/lastTurn';
@@ -176,6 +180,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const myId = useActiveStore((s) => s.me?.id);
   // #250: 이 앱이 띄운 러너의 상태. 실행기가 스토어에 밀어 넣고 화면은 읽기만 한다.
   const runnerStates = useActiveStore((s) => s.runnerStates);
+  /**
+   * #443: daemon 이 직접 확인한 사실. 위 `runnerStates`(이 앱의 판정)와 **다른 그릇**이고
+   * 그 이유는 `appStore.ts::daemonRunners` 주석의 표에 있다.
+   */
+  const daemonRunners = useActiveStore((s) => s.daemonRunners);
   /** 뒤처진 러너를 세는 기준. 컨트롤러가 스토어에 밀어 넣은 값이다(`appStore.ts`). */
   const appVersion = useActiveStore((s) => s.appVersion);
   const [reissuing, setReissuing] = useState(false);
@@ -1356,6 +1365,33 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 <div className="mt-2">
                   <RunnerStatusLine state={runnerStates[selected.id]} />
                 </div>
+                {/* #443: **daemon 이 직접 확인한 사실**을 바로 위 판정 옆에 얹는다
+                    (정본 문서 `docs/desktop-agent-cards.html` 3단계).
+
+                    ## 새 구획을 만들지 않았다
+
+                    이 절('러너 (이 앱)')이 이미 러너를 말하는 자리이고, 위
+                    `RunnerStatusLine` 이 **이 앱의 판정**을 내놓는다. daemon 의 사실을 다른
+                    구획으로 보내면 사람은 같은 러너에 대한 두 이야기를 화면 두 곳에서
+                    찾아 맞춰 봐야 한다 — 그리고 이 정보가 필요해지는 순간(*"눌렀는데 왜 안
+                    죽지"*)에는 그 둘을 **나란히** 봐야 답이 나온다.
+
+                    ## 카드에는 안 올린다
+
+                    문서가 명시했다: *"카드에 올릴 것은 아니지만 상세에는 있어야 한다."*
+                    `AgentGrid` 의 `place` 축과 사이드바 격리 회귀선은 손대지 않았다.
+
+                    ## 강조색을 쓰지 않는다 (규칙 04)
+
+                    이 정보는 **나를 막지 않는다** — 사실 조회이고, 사람이 지금 무언가를
+                    해야 한다는 신호가 아니다. 그래서 회색 단으로만 적는다. 이 절에서
+                    강조·경고색을 갖는 것은 실패 사유(`RunnerStatusLine` 의 `danger`)와
+                    PAT 재발급 버튼뿐이고, 그 톤을 침범하지 않는다. */}
+                <DaemonFacts
+                  runner={daemonRunners[selected.id]}
+                  stopRequestedAt={selected.stopRequestedAt}
+                  stopAckedAt={selected.stopAckedAt}
+                />
                 {/* 재발급은 순서가 요점이다: 새 발급 → 옛 폐기 → 재실행. 폐기가 먼저면
                     발급 실패 한 번에 쓸 수 있는 PAT 가 사라진다(runnerLauncher.ts 주석). */}
                 <button
@@ -1483,6 +1519,73 @@ function FieldGroup({ title, note, children }: {
       </div>
       {children}
     </section>
+  );
+}
+
+/**
+ * **daemon 이 직접 확인한 것**을 상세에 적는다(`#443`, 정본 문서 3단계).
+ *
+ * ## 이 컴포넌트가 하는 일은 그리기뿐이다
+ *
+ * 무엇을 적을지·무엇을 적지 않을지는 전부 `lib/daemonFacts.ts` 가 정한다. 그 파일이
+ * 지키는 규율 셋(없는 것을 그리지 않는다 · 사실만 적고 판정하지 않는다 · 종료 요청은
+ * 누가 했는지 함께 적는다)을 여기서 다시 판정하면 회귀선이 렌더를 거쳐야만 그것을 잴 수
+ * 있고, 그러면 규율이 깨졌을 때 무엇이 깨졌는지가 문구 대조로만 드러난다.
+ *
+ * ## 행이 하나도 없으면 **구획 자체가 없다**
+ *
+ * daemon 이 이 에이전트를 모르거나(장부에 없다) 옛 daemon 이라 아무 필드도 안 보내면
+ * 빈 배열이 온다. 그때 제목만 남겨 두면 *"daemon 이 직접 확인한 것: (없음)"* 이 되고,
+ * 사람은 그것을 "daemon 이 확인해 봤는데 아무것도 아니었다"로 읽는다 — 사실은 **묻지
+ * 못했거나 daemon 이 그 질문을 모른다**다(규칙 06).
+ *
+ * ## 시각 파싱이 여기 있는 이유
+ *
+ * 서버는 ISO 문자열을 주고 `daemonFacts` 는 ms 를 받는다. 파싱을 순수 함수 안에 넣으면
+ * 그 함수가 파싱 실패를 문구로 꾸미기 시작한다 — 여기서 `NaN` 이면 `null` 로 접어
+ * "그 사실은 없다"로 다룬다. 못 읽은 시각을 지어낸 시각으로 그리는 것보다 낫다.
+ */
+function DaemonFacts({ runner, stopRequestedAt, stopAckedAt }: {
+  runner: ObservedRunner | undefined;
+  stopRequestedAt: string | null;
+  stopAckedAt: string | null;
+}) {
+  const ms = (iso: string | null): number | null => {
+    if (iso === null) return null;
+    const t = Date.parse(iso);
+    return Number.isNaN(t) ? null : t;
+  };
+  const rows = daemonFactRows(runner, {
+    requestedAtMs: ms(stopRequestedAt),
+    ackedAtMs: ms(stopAckedAt),
+  });
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="mt-2" data-testid="daemon-facts">
+      {/* 제목이 **출처를 말한다**. 이 절의 다른 문장들은 이 앱이 하는 일을 말하는데,
+          이 표만은 daemon 이 말한 것이라 그 차이가 보여야 한다 — 안 보이면 사람은
+          `alive` 를 서버가 아는 사실로 오해하고, 그 오해가 `#428` 이 정직하게 적어 둔
+          "실제로 종료했는지는 murmur 가 알 수 없다"와 정면으로 어긋난다. */}
+      <div className="text-[11px] text-fg-muted">러너 — daemon 이 직접 확인한 것</div>
+      {/* `dl` 인 이유: 라벨과 값의 짝이다. `div` 두 개로 그리면 스크린리더가 어느 값이
+          어느 라벨의 것인지 말할 수 없고, 이 표는 값만 봐서는 뜻이 안 통한다(`48127`).
+
+          `dt`·`dd` 를 격자의 **직접 자식**으로 둔다 — 행마다 `div` 로 감싸면 그 `div` 가
+          `dl` 의 자식이 되어 라벨-값 짝이 한 겹 더 깊어지고, `subgrid` 로 다시 정렬을
+          맞춰야 한다. 이 저장소에 그 패턴을 쓰는 자리가 없어서 여기서 새로 만들지 않는다.
+          행을 이름으로 집는 축(`data-fact`)은 `dt` 가 든다. */}
+      <dl className="mt-1 grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-1 text-[11px]">
+        {rows.map((row) => (
+          <Fragment key={row.key}>
+            <dt className="text-fg-subtle" data-fact={row.key}>{row.label}</dt>
+            {/* 값은 등폭이다 — pid·세대·시각이 이 표의 대부분이고, 그것을 비례폭으로
+                적으면 자리마다 폭이 달라 두 에이전트를 번갈아 볼 때 눈이 흔들린다. */}
+            <dd className="font-mono text-fg-muted" data-fact-value={row.key}>{row.value}</dd>
+          </Fragment>
+        ))}
+      </dl>
+    </div>
   );
 }
 
