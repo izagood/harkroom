@@ -349,7 +349,12 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               것이라는 사실을 회귀선이 클래스 문자열로 더듬지 않게 한다. 아바타(`Identity`)도
               handle 을 sr-only 로 내보내므로 글자로 찾으면 두 곳이 걸려, 이름줄이 다른
               사람을 가리키게 되어도 테스트가 무엇을 봤는지 말하지 못한다(#329). */}
-          <span data-testid="author-name" className="font-semibold">{author?.handle ?? '…'}</span>
+          {/* **이름줄단 15px.** 4단(17 / 15 / 13 / 11)에서 둘째 단의 이름이 그대로
+              "이름줄"이고, 그 이름이 가리키는 자리가 여기다 — 이 줄까지 본문단으로 두면
+              4단이 실제로는 3단이 되고(15px 을 쓰는 자리가 하나도 없었다), 대화가 한
+              덩어리로 흐른다. 같은 줄의 시각·배지는 아랫단 11px 이라 한 줄 안에 세 단이
+              아니라 두 단이 선다: **누가**(15)와 **곁정보**(11), 본문은 그 아래 13. */}
+          <span data-testid="author-name" className="text-[15px] font-semibold">{author?.handle ?? '…'}</span>
           {/*
             **여기에 배지가 있었다**(🤖 + 소유자 핸들). 뺐다 — identity 문서:
             *"이름 옆 배지와 소유자 핸들은 뺀다. 아바타만으로 누가 에이전트인지 알 수

@@ -81,7 +81,7 @@ export function WaitChainSection() {
         // **한 줄로 조용히**(문서). 아무 일도 없는 것이 가장 큰 목소리가 되면 안 된다.
         // 다만 **"없다"와 "아직 안 봤다"는 다른 사실**이다(`docs/design.md` §4) —
         // 안 본 채널이 남아 있으면 없다고 단정하지 않는다.
-        <p className="px-2 text-xs text-fg-muted">
+        <p className="px-2 text-fg-muted">
           {unseen ? '아직 다 보지 못했다' : '기다리는 것이 없다'}
         </p>
       ) : (
@@ -96,8 +96,11 @@ export function WaitChainSection() {
               data-end={r.chain.end}
               // 누르면 **그 스레드로 간다** — 이 줄을 읽고 사람이 하려는 일이 그것 하나다.
               onClick={() => void getController().openThread(r.rootId)}
+              // 줄이 **두 단으로** 서 있다: 사슬 한 줄은 본문단(앱 기본값 13px)이고 아래
+              // 채널·사유 줄은 이미 아랫단 11px 이다. 둘을 같은 단으로 두면 어느 쪽이
+              // 판단 근거인지 눈이 못 가른다 — 사람이 읽는 것은 사슬이다.
               className="flex w-full flex-col items-start gap-0.5 rounded px-2 py-1 text-left
-                         text-xs hover:bg-surface-hover"
+                         hover:bg-surface-hover"
             >
               <span className="flex w-full items-center gap-1">
                 {/*

@@ -33,21 +33,23 @@ export function FilesPanel({ files, loading, error, hasMore, onRetry, onLoadMore
       </header>
 
       <div className="flex-1 overflow-y-auto">
-        {loading && <p className="p-4 text-sm text-fg-subtle">불러오는 중…</p>}
+        {/* 크기를 안 적는다 — 앱 기본값이 본문단 13px 이다(`Workspace.tsx`). 같은 값을
+            다시 적으면 어휘만 늘고, 기본값이 바뀔 때 이 줄이 뒤처진다. */}
+        {loading && <p className="p-4 text-fg-subtle">불러오는 중…</p>}
 
         {/* 못 불러온 것과 파일이 없는 것은 **다른 상태다.** 조회 실패를 빈 목록으로 삼키면
             화면이 "오간 파일이 없다"고 말하게 되고, 그것은 거짓말이다(docs/design.md §4).
             그래서 오류일 때는 '없다' 문구를 그리는 분기 자체에 닿지 않는다. */}
         {!loading && error && (
           <div className="p-4">
-            <p role="alert" className="text-sm text-danger">파일 목록을 불러오지 못했다: {error}</p>
+            <p role="alert" className="text-danger">파일 목록을 불러오지 못했다: {error}</p>
             <button className="mt-2 rounded border border-border px-2 py-1 text-[11px] text-fg-muted"
               onClick={onRetry}>다시 시도</button>
           </div>
         )}
 
         {!loading && !error && !files.length && (
-          <p className="p-4 text-sm text-fg-subtle">아직 오간 파일이 없다</p>
+          <p className="p-4 text-fg-subtle">아직 오간 파일이 없다</p>
         )}
 
         {!loading && !error && files.length > 0 && (

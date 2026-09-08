@@ -328,7 +328,10 @@ export function TerminalPanel() {
         minRoomLeft={MIN_CHANNEL_WIDTH + (threadOpen ? MIN_THREAD_WIDTH : 0)}
         onWidth={setTerminalWidth}
       />
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs text-fg-muted">
+      {/* 머리띠는 **아랫단 11px** — 여기 있는 것은 전부 꼬리표다(에이전트 핸들·어느 스레드·
+          상태 칩·닫기). 아래 문구들은 반대로 본문단이다: 세션이 없거나 실패했을 때 사람이
+          다음에 무엇을 할 수 있는지가 그 문장에만 적혀 있다. */}
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-[11px] text-fg-muted">
         <span className="font-semibold">터미널</span>
         <span className="text-fg-subtle">@{agent?.handle ?? target.agentAccountId}</span>
         {/* 어느 채널·스레드의 터미널인지 항상 적는다(#339). 같은 에이전트의 세션이 여럿일
@@ -348,9 +351,9 @@ export function TerminalPanel() {
           닫기
         </button>
       </div>
-      {phase === 'loading' && <p className="px-3 py-2 text-xs text-fg-subtle">세션을 확인하는 중…</p>}
+      {phase === 'loading' && <p className="px-3 py-2 text-fg-subtle">세션을 확인하는 중…</p>}
       {phase === 'no-session' && (
-        <div className="px-3 py-2 text-xs text-fg-subtle">
+        <div className="px-3 py-2 text-fg-subtle">
           <p>진행 중인 턴이 없다 — 직접 열거나, 이 에이전트를 부르면 그 턴에 붙을 수 있다.</p>
           {/* #337: 세션이 없어도 사람이 스스로 연다. 러너가 이 스레드의 세션을 확보해
               (없으면 생성) 인터랙티브 PTY 를 띄우고, 같은 attach 흐름으로 합류한다.
@@ -364,19 +367,19 @@ export function TerminalPanel() {
         </div>
       )}
       {phase === 'error' && (
-        <p className="px-3 py-2 text-xs text-warning">터미널을 열지 못했다: {error}</p>
+        <p className="px-3 py-2 text-warning">터미널을 열지 못했다: {error}</p>
       )}
       {/* **차례를 항상 적는다.** writer 통지가 온 뒤에만 그린다(null 이면 아직 모르거나
           구 서버다 — 그때 "다른 창이 입력 중"이라 적으면 없는 사람을 만들어 낸다).
           강등(false)만 적고 승격을 침묵하면, 두 창을 쓰는 사람이 어느 쪽이 살아 있는지
           화면에서 알 수 없다. */}
       {phase === 'attached' && writer === true && (
-        <p className="px-3 py-2 text-xs text-fg-subtle" role="note" data-testid="writer-note">
+        <p className="px-3 py-2 text-fg-subtle" role="note" data-testid="writer-note">
           입력 가능 — 마지막으로 연 창이 입력을 가진다.
         </p>
       )}
       {phase === 'attached' && writer === false && (
-        <div className="px-3 py-2 text-xs text-fg-subtle">
+        <div className="px-3 py-2 text-fg-subtle">
           <p role="note" data-testid="writer-note" data-writer-reason={writerReason ?? 'unknown'}>
             {writerDeniedText(writerReason)}
           </p>

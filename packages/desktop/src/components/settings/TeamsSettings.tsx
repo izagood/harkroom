@@ -159,11 +159,11 @@ export function TeamsSettings() {
         {!selected && (
           <>
             <header className="flex items-center border-b border-border px-5 py-3">
-              <h2 className="text-base font-bold">Add team</h2>
+              <h2 className="text-[15px] font-bold">Add team</h2>
             </header>
             <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
-              {error && <p role="alert" className="text-xs text-danger">{error}</p>}
-              <label className="block text-xs font-medium text-fg-muted">
+              {error && <p role="alert" className="text-[11px] text-danger">{error}</p>}
+              <label className="block text-[11px] font-medium text-fg-muted">
                 Team name
                 <input
                   aria-label="팀 이름"
@@ -175,7 +175,7 @@ export function TeamsSettings() {
                 />
               </label>
               {!isAdmin && (
-                <p className="text-xs text-fg-subtle">팀을 만들 수 있는 것은 admin 뿐이다</p>
+                <p className="text-[11px] text-fg-subtle">팀을 만들 수 있는 것은 admin 뿐이다</p>
               )}
               <button
                 className="rounded bg-accent px-3 py-2 font-medium text-fg-on-strong disabled:opacity-50"
@@ -191,13 +191,13 @@ export function TeamsSettings() {
         {selected && (
           <>
             <header className="flex items-center border-b border-border px-5 py-3">
-              <h2 className="text-base font-bold">Edit {selected.name}</h2>
+              <h2 className="text-[15px] font-bold">Edit {selected.name}</h2>
             </header>
             <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
-              {error && <p role="alert" className="text-xs text-danger">{error}</p>}
+              {error && <p role="alert" className="text-[11px] text-danger">{error}</p>}
 
               <div className="rounded border border-border p-3">
-                <div className="text-xs font-medium text-fg-muted">팀 이름</div>
+                <div className="text-[11px] font-medium text-fg-muted">팀 이름</div>
                 <div className="mt-2 flex gap-2">
                   <input
                     aria-label="팀 이름 수정"
@@ -219,19 +219,22 @@ export function TeamsSettings() {
               </div>
 
               <div className="rounded border border-border p-3">
-                <div className="text-xs font-medium text-fg-muted">팀원</div>
+                <div className="text-[11px] font-medium text-fg-muted">팀원</div>
                 <div className="mt-2 space-y-1">
-                  {members.length === 0 && <div className="text-xs text-fg-muted">팀원이 없다</div>}
+                  {members.length === 0 && <div className="text-[11px] text-fg-muted">팀원이 없다</div>}
                   {members.map((m) => (
                     <div key={m.accountId} className="flex items-center justify-between rounded bg-surface px-2 py-1.5">
-                      <span className="text-sm">
+                      {/* 팀원 이름도 상자 안의 단(11px)이다 — 옆의 `(비활성)`·`빼기` 가
+                          이미 그 단이라 이름만 올리면 한 줄에 두 단이 선다.
+                          `HandleGroupsSettings` 의 구성원 줄이 같은 짝이다. */}
+                      <span className="text-[11px]">
                         @{m.handle}
-                        {m.disabled && <span className="ml-1 text-[11px] text-fg-muted">(비활성)</span>}
+                        {m.disabled && <span className="ml-1 text-fg-muted">(비활성)</span>}
                       </span>
                       {isAdmin && (
                         <button
                           aria-label={`팀원 빼기: ${m.handle}`}
-                          className="text-xs text-danger hover:underline"
+                          className="text-[11px] text-danger hover:underline"
                           onClick={() => void removeMember(m.accountId)}
                         >
                           빼기
@@ -259,20 +262,20 @@ export function TeamsSettings() {
 
               {isAdmin && (
                 <div className="rounded border border-danger-border p-3">
-                  <div className="text-xs font-medium text-danger">팀 삭제</div>
+                  <div className="text-[11px] font-medium text-danger">팀 삭제</div>
                   <p className="mt-1 text-[11px] text-fg-subtle">팀을 지워도 팀에 속했던 에이전트는 그대로 있다.</p>
                   {confirmDelete ? (
                     <div className="mt-2 flex items-center gap-2">
                       <span className="text-[11px] text-danger">정말 지우는가?</span>
                       <button
-                        className="rounded border border-danger-border bg-danger-surface px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                        className="rounded border border-danger-border bg-danger-surface px-3 py-1.5 text-[11px] font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
                         disabled={busy}
                         onClick={() => void deleteTeam()}
                       >
                         정말 삭제
                       </button>
                       <button
-                        className="rounded border border-border px-3 py-1.5 text-xs text-fg-muted hover:bg-surface-hover"
+                        className="rounded border border-border px-3 py-1.5 text-[11px] text-fg-muted hover:bg-surface-hover"
                         onClick={() => setConfirmDelete(false)}
                       >
                         취소
@@ -280,7 +283,7 @@ export function TeamsSettings() {
                     </div>
                   ) : (
                     <button
-                      className="mt-2 rounded border border-danger-border bg-danger-surface px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                      className="mt-2 rounded border border-danger-border bg-danger-surface px-3 py-1.5 text-[11px] font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
                       disabled={busy}
                       onClick={() => setConfirmDelete(true)}
                     >

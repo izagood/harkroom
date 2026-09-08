@@ -30,7 +30,7 @@ export function AppearanceSettings() {
               role="radio"
               aria-checked={colorMode === option.value}
               aria-label={`${option.label} appearance`}
-              className={`flex-1 rounded-lg py-2 text-sm font-medium transition
+              className={`flex-1 rounded-lg py-2 font-medium transition
                 ${colorMode === option.value
                   ? 'bg-accent text-fg-on-strong'
                   : 'bg-surface-raised text-fg hover:bg-surface'

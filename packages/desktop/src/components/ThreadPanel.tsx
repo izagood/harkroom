@@ -149,7 +149,9 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
       </div>
       <TypingLine />
       <div className="border-t border-border p-3">
-        <label className="mb-2 flex items-center gap-2 text-sm text-fg-muted">
+        {/* 이 체크박스를 켜면 말이 채널에도 나간다 — 읽고 정하는 자리라 본문단이다
+            (앱 기본값 13px 이라 크기를 안 적는다). */}
+        <label className="mb-2 flex items-center gap-2 text-fg-muted">
           <input
             type="checkbox"
             checked={alsoInChannel}

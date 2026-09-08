@@ -296,7 +296,11 @@ function MeMenuHeader() {
           넣지만(빈 문자열이 오는 경로가 있다) 그때 굵은 줄이 사라지면 메뉴 머리가
           "누구의 것인지" 말하지 못한다.
         */}
-        <div className="truncate text-sm font-medium text-fg">{me?.displayName || me?.handle}</div>
+        {/* **이름줄단 15px** — 이 메뉴 머리가 답하는 것이 "누구의 것인가" 하나이고, 아래
+            `@handle · 워크스페이스` 는 이미 아랫단 11px 이다. 4단에서 둘째 단의 이름이
+            그대로 이름줄이고(`MessageItem` 의 작성자 이름이 같은 단), 여기를 본문단으로
+            두면 두 줄이 4px 차이로 붙어 어느 쪽이 이름인지 눈이 못 가른다. */}
+        <div className="truncate text-[15px] font-medium text-fg">{me?.displayName || me?.handle}</div>
         <div className="truncate text-[11px] text-fg-subtle">@{me?.handle} · {workspaceLabel}</div>
       </div>
     </div>
@@ -337,6 +341,14 @@ function RailButton({ cell, active, badge, countInName, onClick }: {
         active ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:bg-surface-hover'
       }`}
     >
+      {/*
+        **이 글리프는 타이포 4단이 아니다 — 그림이다.** `aria-hidden` 이고 내용이 이모지라
+        여기서 크기가 정하는 것은 글자의 읽힘이 아니라 **아이콘의 지름**이다. 4단으로
+        끌어내리면(13px) 아래 11px 라벨과 2px 차이가 되어 아이콘과 글자가 한 덩어리로
+        보이고, 레일이 "그림 + 이름" 두 층이라는 사실이 화면에서 사라진다.
+        `Identity` 의 아바타 머리글자와 같은 예외이고(그 파일에 근거가 길게 있다),
+        `test/typeScale.test.ts` 의 `ALLOWED` 에 줄 단위로 적혀 있다.
+      */}
       <span aria-hidden="true" className="text-base leading-none">{cell.glyph}</span>
       {/*
         라벨은 타이포 4단의 맨 아랫단(11px)이다. 9px 이었고, 62px 레일에서 잘릴까가
@@ -410,6 +422,9 @@ function CommunityMarkTile({ entry, onClick }: { entry: CommunityEntry; onClick:
       aria-label={`${label} — ${connected ? '연결됨' : '연결 끊김'}`}
       title={label}
       onClick={onClick}
+      // `text-sm` 은 4단이 아니라 **h-9 원에 묶인 머리글자**다 — 위 `initial` 하나가 이
+      // 버튼의 내용 전부이고, 크기가 원의 지름에서 따라 나온다(`Identity.tsx` 의 근거와
+      // 같은 자리). 4단으로 올리면 원은 그대로인데 글자만 커져 가장자리에 붙는다.
       className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-raised text-sm font-bold text-fg-muted hover:bg-surface-hover ${RAIL_FOCUS} ${
         connected ? '' : 'border-2 border-danger'
       }`}
