@@ -899,7 +899,12 @@ export const ko = {
   // 못 치는 이유 넷을 뭉개지 않는 것이 이 영역의 요점이고, 그 표는 `en.ts` 머리말에.
   // ---------------------------------------------------------------------------
 
-  'terminal.chip.open': '@{handle} 의 진행 중인 터미널을 본다',
+  /**
+   * **여는 문이다**(2026-09-09). 앞 문구는 "진행 중인 터미널을 본다"였고 그때는 참이었다 —
+   * 턴이 없으면 패널이 「진행 중인 턴이 없다」에서 멈췄다. 지금은 없으면 스스로 띄우므로,
+   * "진행 중"을 남겨 두면 칩이 하는 일의 절반만 말한다.
+   */
+  'terminal.chip.open': '@{handle} 의 터미널을 연다 — 진행 중인 턴이 있으면 그 화면에 붙는다',
   'terminal.chip.label': '터미널 보기',
   /** `#384` 의 정직성 전부 — 그 침묵을 이 줄이 메운다. */
 
@@ -912,10 +917,12 @@ export const ko = {
   'terminal.header.panel': '에이전트 터미널',
 
   'terminal.session.noHost': '터미널을 붙일 자리가 없다',
-  'terminal.session.none': '진행 중인 턴이 없다 — 직접 열거나, 이 에이전트를 부르면 그 턴에 붙을 수 있다.',
+  /** 「턴이 없다」 화면이 없어져(2026-09-09) 이제 **실패 뒤의 다시 열기**만 남았다. */
   'terminal.session.open': '터미널 열기',
   'terminal.session.openFailed': '터미널을 열지 못했다: {reason}',
   'terminal.session.checking': '세션을 확인하는 중…',
+  /** 위와 **갈린다**: 저쪽은 서버의 목록을, 이쪽은 러너가 띄우는 PTY 를 기다린다. */
+  'terminal.session.opening': '터미널을 여는 중…',
 
   /** `runnerState.running` 과 **다른 것을 센다** — 저쪽은 러너, 이쪽은 PTY 세션의 턴이다. */
   'terminal.state.running': '진행 중',
