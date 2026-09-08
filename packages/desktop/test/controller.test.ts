@@ -205,6 +205,26 @@ describe('Controller', () => {
     expect(kept?.threadRootId).toBe('m1');
   });
 
+  // 반대 방향(나중에 채널로 올리기)도 새 메시지를 만들지 않는다 — 같은 id 가 갱신될 뿐이다.
+  // `send` 를 부르면 채널에 사본이 하나 더 생겨 리액션·답글이 두 곳으로 갈린다.
+  it('postToChannel updates the same message instead of sending a copy', async () => {
+    const api = fakeApi();
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    await c.openChannel('c1');
+    useAppStore.getState().upsertMessages('c1', [msg('m7', 'c1', 7, '흘린 말', 'u1', { threadRootId: 'm1', alsoInChannel: false })]);
+
+    await c.postToChannel('m7');
+
+    expect((api.postToChannel as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(['c1', 'm7']);
+    expect((api.postMessage as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+    const rows = useAppStore.getState().messages.c1!.filter((m) => m.id === 'm7');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.alsoInChannel).toBe(true);
+    expect(rows[0]?.seq).toBe(7);
+  });
+
   // 최신 창 밖으로 밀려난 대화에 도달할 경로가 필요하다.
   it('loads an older page from the oldest message it holds', async () => {
     const api = fakeApi({

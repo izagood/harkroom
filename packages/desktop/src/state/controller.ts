@@ -1111,6 +1111,23 @@ export class Controller {
   }
 
   /**
+   * 이미 쓴 스레드 답을 나중에 채널로 올린다(거두기의 반대).
+   *
+   * `send` 를 부르지 않는다 — 새 메시지를 만드는 것이 아니라 있던 메시지 하나가
+   * 채널에도 보이게 되는 것이다. 그래서 여기서도 갱신된 행을 덮어쓰기만 하고,
+   * 채널 목록은 `alsoInChannel` 로 거르므로(`ChannelPane`) 그 한 값으로 채널에 나타난다.
+   *
+   * **채널 목록에서 이 메시지는 원래 자리(`seq`)에 나타난다.** 방금 올렸어도 맨 아래가
+   * 아니다 — `seq` 를 새로 주면 같은 메시지가 두 번 온 것이 되어 읽음 경계가 뒤로 밀린다.
+   */
+  async postToChannel(messageId: string): Promise<void> {
+    const { activeChannelId } = this.store.getState();
+    if (!activeChannelId) return;
+    const updated = await this.api.postToChannel(activeChannelId, messageId);
+    this.store.getState().upsertMessages(activeChannelId, [updated]);
+  }
+
+  /**
    * 이 채널의 고정 목록을 서버에서 다시 받는다(#218).
    *
    * 델타가 아니라 목록 전체를 갈아 끼운다: 핀은 채널 전역 상태라 다른 사람이 고정·해제한
