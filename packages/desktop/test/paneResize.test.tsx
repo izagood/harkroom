@@ -14,7 +14,7 @@ import { ThreadPanel } from '../src/components/ThreadPanel';
 import { TerminalPanel } from '../src/components/TerminalPanel';
 import { setTerminalSinkFactory } from '../src/lib/terminalSink';
 import {
-  paneStorage,
+  paneStorage, paneMaxWidth,
   DEFAULT_THREAD_WIDTH, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH,
   DEFAULT_TERMINAL_WIDTH, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH,
   MIN_CHANNEL_WIDTH,
@@ -159,6 +159,19 @@ describe('스레드 패널 너비 조절', () => {
    * 작아지는데, 그것을 그대로 상한으로 쓰면 **왼쪽으로 끌었는데 패널이 갑자기 줄어든다.**
    * 제약의 일은 이웃을 더 침범하지 못하게 하는 것이지 지금 폭을 강제로 줄이는 것이 아니다.
    */
+  /*
+   * 끌 때만 대화 몫을 지키면 그 약속은 절반만 참이다 — 폭은 기기에 저장돼 다음에도 그
+   * 값으로 서고, 창은 그 사이에 좁아진다. 그때 대화가 폭 0 으로 밀리면 사람은 "채널이
+   * 사라졌다"를 보고, 되돌릴 구분선은 사라진 그 자리에 있다. 상한을 레이아웃에도 적어
+   * 두면 브라우저가 창 크기마다 다시 잰다(jsdom 은 재지 않으므로 여기서는 그 약속이
+   * 적혀 있는지를 본다).
+   */
+  it('창이 좁아져도 대화 몫을 남기도록 상한을 적는다', () => {
+    render(<ThreadPanel />);
+    expect(paneOf('스레드 너비 조절').style.maxWidth)
+      .toBe(paneMaxWidth(MIN_THREAD_WIDTH, MIN_CHANNEL_WIDTH));
+  });
+
   it('대화가 이미 좁아진 상태에서 끌어도 갑자기 줄지 않는다', () => {
     render(<ThreadPanel />);
     // 줄 1000px, 스레드 640px 인데 왼쪽에 남은 자리는 150px 뿐이다(약속한 200 미만).
@@ -243,6 +256,50 @@ describe('터미널 패널 너비 조절', () => {
     stubTerminalRow(1200, 600, 400);
     drag('터미널 너비 조절', 600, -3000);
     expect(paneOf('터미널 너비 조절').style.width).toBe(`${400 + 600 - MIN_CHANNEL_WIDTH}px`);
+  });
+
+  /*
+   * 여기가 사람이 실제로 만난 결함이다(반쪽 창): 넓은 창에서 고른 폭이 그대로 서면서
+   * `shrink-0` 인 터미널이 대화를 폭 0 으로 밀어냈다 — "다른 채널을 열었는데 터미널이
+   * 전체를 차지해 채널이 안 보인다". 끌지 않아도 지켜져야 하는 약속이므로 상한을
+   * 레이아웃에 적는다. 남길 자리는 구분선이 쓰는 값과 **같아야 한다**.
+   */
+  it('끌지 않아도 대화 몫을 남기는 상한이 적혀 있다', async () => {
+    await mount();
+    expect(paneOf('터미널 너비 조절').style.maxWidth)
+      .toBe(paneMaxWidth(MIN_TERMINAL_WIDTH, MIN_CHANNEL_WIDTH));
+  });
+
+  it('스레드가 함께 떠 있으면 상한이 스레드 몫까지 남긴다', async () => {
+    await mount({ threadOpen: true });
+    expect(paneOf('터미널 너비 조절').style.maxWidth)
+      .toBe(paneMaxWidth(MIN_TERMINAL_WIDTH, MIN_CHANNEL_WIDTH + MIN_THREAD_WIDTH));
+  });
+
+  /*
+   * 닫기가 밀려나 안 보였다(반쪽 창, 첫 번째 신고). 머리띠의 꼬리표들(핸들·스코프)은
+   * 길이를 우리가 모르는 값이라 줄이 넘칠 수 있고, 넘친 줄의 오른쪽 끝은 부모의
+   * `overflow-hidden` 에 잘린다 — 잘리는 것이 하필 **패널을 닫을 유일한 손잡이**였다.
+   * 그래서 줄은 넘치지 않게(min-w-0 + overflow-hidden) 두고, 닫기만 줄지 않게 한다.
+   */
+  it('머리띠가 넘쳐도 닫기는 줄지 않는다', async () => {
+    await mount();
+    const close = screen.getByRole('button', { name: '터미널 닫기' });
+    expect(close.className).toContain('shrink-0');
+    const row = close.parentElement as HTMLElement;
+    expect(row.className).toContain('min-w-0');
+    expect(row.className).toContain('overflow-hidden');
+  });
+});
+
+/*
+ * 세 겹이 각각 다른 것을 막는다(`paneMaxWidth` 의 주석). 특히 바깥의 `min(100%, …)` 이
+ * 없으면 아주 좁은 창에서 패널이 줄 밖으로 나가고, 그 오른쪽 끝(닫기 버튼)이 조용히
+ * 잘린다 — 이 축이 그 겹을 지킨다.
+ */
+describe('paneMaxWidth', () => {
+  it('왼쪽 몫을 빼되 자기 최소 폭 아래로는 안 가고, 줄 밖으로도 안 나간다', () => {
+    expect(paneMaxWidth(360, 200)).toBe('min(100%, max(360px, calc(100% - 200px)))');
   });
 });
 

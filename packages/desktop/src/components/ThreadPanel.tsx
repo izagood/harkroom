@@ -13,7 +13,7 @@ import { waitChain } from '../lib/waitChain';
 import { ThreadParticipants } from './ThreadParticipants';
 import { Composer } from './Composer';
 import { PaneResizer } from './PaneResizer';
-import { paneStorage, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH, MIN_CHANNEL_WIDTH } from '../lib/prefs';
+import { paneStorage, paneMaxWidth, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH, MIN_CHANNEL_WIDTH } from '../lib/prefs';
 import { TypingLine } from './TypingLine';
 import type { SectionId } from './settings/sections';
 import { useT } from '../i18n/useT';
@@ -95,7 +95,9 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
          한 줄의 형제가 셋이 되었고, 그 순서를 재는 회귀선이 생겼다. */
       data-testid="thread-pane"
       className="relative flex flex-col border-l border-border bg-surface-raised"
-      style={{ width: threadWidth, minWidth: MIN_THREAD_WIDTH }}
+      /* 상한은 `paneMaxWidth` 가 적는다(그 함수의 주석) — 터미널과 **같은 결함**을 여기서도
+         막는다: 넓은 창에서 고른 폭이 좁은 창에서 그대로 서면 대화가 폭 0 으로 밀린다. */
+      style={{ width: threadWidth, minWidth: MIN_THREAD_WIDTH, maxWidth: paneMaxWidth(MIN_THREAD_WIDTH, MIN_CHANNEL_WIDTH) }}
     >
       <PaneResizer
         label={t('thread.resizeHandle')}
