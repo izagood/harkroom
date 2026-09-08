@@ -126,6 +126,9 @@ describe('#141-8 패널을 닫으면 구독이 끊긴다', () => {
       baseUrl: 'http://localhost:8080',
       agentSessions: vi.fn(async () => sessions),
       attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: sessions[0]! })),
+      // 조회가 빈손이면 패널이 스스로 이것을 부른다(2026-09-09) — 없으면 그 경로가
+      // TypeError 로 죽어 "열지 않는다"와 구별되지 않는다.
+      openInteractiveSession: vi.fn(async () => ({ ticket: 'murt_opened', session: session(), waiting: false })),
     };
     setController({ api } as unknown as Controller);
     useAppStore.getState().set({
@@ -164,20 +167,31 @@ describe('#141-8 패널을 닫으면 구독이 끊긴다', () => {
     expect(screen.queryByLabelText('에이전트 터미널')).toBeNull();
   });
 
-  it('진행 중인 턴이 없으면 그 사실을 말하고 소켓을 열지 않는다', async () => {
-    // "없다"와 "못 읽었다"를 같은 화면으로 그리지 않는다(docs/design.md §4).
-    await mountPanel([]);
-    expect(screen.getByText(/진행 중인 턴이 없다/)).toBeTruthy();
-    expect(FakeSocket.last).toBeNull();
+  it('진행 중인 턴이 없으면 **바로 연다** — 「터미널 열기」를 한 번 더 누르지 않는다', async () => {
+    // 2026-09-09: 예전에는 여기서 「진행 중인 턴이 없다」를 적고 멈췄다. 멘션 턴이 TUI 로
+    // 돌게 된 뒤로 물을 것이 없어져, 조회가 빈손이면 패널이 그 자리에서 인터랙티브 턴을
+    // 연다. 화면에 버튼이 없다는 것만 보면 부족하다 — 열지 **않고** 버튼만 지운 회귀가
+    // 그 검사를 통과하므로, 소켓이 실제로 열리는 것까지 본다.
+    const { api } = await mountPanel([]);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(api.openInteractiveSession).toHaveBeenCalledWith('a1', 'c1', 'm1');
+    expect(FakeSocket.last).not.toBeNull();
+    expect(FakeSocket.last!.url).toContain('murt_opened');
+    expect(screen.queryByText('터미널 열기')).toBeNull();
   });
 });
 
 /**
- * #337 — 진행 중인 턴이 없어도 사람이 스스로 연다. no-session 화면의 [터미널 열기]가
- * REST 로 러너에 인터랙티브 PTY 를 띄우게 하고, 돌아온 티켓으로 **기존 attach 흐름에
- * 합류한다** — 열기 전용 소켓 경로를 따로 만들지 않는 것이 이 배선의 요점이다.
+ * #337 — 진행 중인 턴이 없어도 터미널이 열린다. REST 로 러너에 인터랙티브 PTY 를 띄우게
+ * 하고, 돌아온 티켓으로 **기존 attach 흐름에 합류한다** — 열기 전용 소켓 경로를 따로
+ * 만들지 않는 것이 이 배선의 요점이다.
+ *
+ * **2026-09-09: 그 열기를 사람이 아니라 패널이 한다.** 예전에는 no-session 화면의
+ * [터미널 열기] 를 눌러야 했고, 그 한 번의 물음이 이 축들이 재던 것이었다. 멘션 턴이 TUI
+ * 로 돌게 된 뒤로 물을 것이 없어져 버튼이 실패 화면으로 옮겨 갔다 — 축들은 남고(배선은
+ * 그대로다) **누가 그 경로를 타는가**만 바뀐다.
  */
-describe('#337 [터미널 열기] — 세션이 없어도 스스로 연다', () => {
+describe('#337 인터랙티브 열기 — 세션이 없으면 패널이 스스로 연다', () => {
   const mountNoSession = async (api: Record<string, unknown>) => {
     setTerminalSinkFactory(() => ({ write: () => { /* 배선만 본다 */ }, dispose: () => {} }));
     setController({ api } as unknown as Controller);
@@ -190,7 +204,7 @@ describe('#337 [터미널 열기] — 세션이 없어도 스스로 연다', () 
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
   };
 
-  it('버튼이 스토어의 target 세 필드로 REST 를 부르고, 받은 티켓으로 attach 소켓이 열린다', async () => {
+  it('스토어의 target 세 필드로 REST 를 부르고, 받은 티켓으로 attach 소켓이 열린다', async () => {
     const api = {
       baseUrl: 'http://localhost:8080',
       agentSessions: vi.fn(async () => []),
@@ -198,13 +212,13 @@ describe('#337 [터미널 열기] — 세션이 없어도 스스로 연다', () 
       openInteractiveSession: vi.fn(async () => ({ ticket: 'murt_opened', session: session() })),
     };
     await mountNoSession(api);
-    expect(FakeSocket.last).toBeNull();
-
-    await act(async () => { screen.getByText('터미널 열기').click(); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
     // 스레드 스코프 그대로 — 세션이 없으므로 세션 id 가 아니라 (에이전트, 채널, 스레드)다.
     expect(api.openInteractiveSession).toHaveBeenCalledWith('a1', 'c1', 'm1');
+    // 한 번만 부른다. 조회 경로와 버튼 경로가 둘 다 살아 있으면 러너에 같은 요청이 두 번
+    // 가고, 러너가 멱등하다는 사실 뒤에 그 낭비가 숨는다.
+    expect(api.openInteractiveSession).toHaveBeenCalledTimes(1);
     // 기존 attach 경로에 합류했다 — 별도 소켓 경로가 아니라 같은 티켓 소켓이다.
     expect(FakeSocket.last).not.toBeNull();
     expect(FakeSocket.last!.url).toContain('murt_opened');
@@ -221,8 +235,6 @@ describe('#337 [터미널 열기] — 세션이 없어도 스스로 연다', () 
       }),
     };
     await mountNoSession(api);
-
-    await act(async () => { screen.getByText('터미널 열기').click(); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
     // 화면이 문구를 다시 쓰지 않는다 — 원인을 아는 것은 서버(러너)다.
@@ -230,7 +242,32 @@ describe('#337 [터미널 열기] — 세션이 없어도 스스로 연다', () 
     expect(FakeSocket.last).toBeNull();
   });
 
-  it('세션이 이미 있으면 열기 버튼 없이 곧장 붙는다 — 열기는 no-session 의 것이다', async () => {
+  it('실패 화면에는 다시 열기가 남는다 — 러너를 올린 뒤 누를 자리가 없으면 막다른 길이다', async () => {
+    // 자동 열기가 지운 것은 「턴이 없다」는 막다른 길 하나다. 실패는 다르다: 사람이
+    // 러너를 올리고 다시 누를 수 있어야 하고, 그 두 번째 시도는 같은 열기 경로를 탄다.
+    let attempt = 0;
+    const api = {
+      baseUrl: 'http://localhost:8080',
+      agentSessions: vi.fn(async () => []),
+      openInteractiveSession: vi.fn(async () => {
+        attempt += 1;
+        if (attempt === 1) throw new Error('러너가 붙어 있지 않다');
+        return { ticket: 'murt_retry', session: session() };
+      }),
+    };
+    await mountNoSession(api);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByText(/러너가 붙어 있지 않다/)).toBeTruthy();
+
+    await act(async () => { screen.getByText('터미널 열기').click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(api.openInteractiveSession).toHaveBeenCalledTimes(2);
+    expect(FakeSocket.last).not.toBeNull();
+    expect(FakeSocket.last!.url).toContain('murt_retry');
+  });
+
+  it('세션이 이미 있으면 곧장 붙는다 — 열기는 턴이 없을 때만이다', async () => {
     const api = {
       baseUrl: 'http://localhost:8080',
       agentSessions: vi.fn(async () => [session()]),
@@ -607,6 +644,8 @@ describe('#339 칩·패널은 스레드에 스코프된다 — 같은 에이전�
         session({ sessionId: 'sess-N', threadRootId: null }),
       ]),
       attachAgentSession: vi.fn(),
+      // 일치하는 세션이 없으니 패널은 **자기 스레드의** 터미널을 새로 연다(2026-09-09).
+      openInteractiveSession: vi.fn(async () => ({ ticket: 'murt_m1', session: session() })),
     };
     setController({ api } as unknown as Controller);
     setTerminalSinkFactory(() => ({ write: () => { /* 붙지 않아야 한다 */ }, dispose: () => { /* 같음 */ } }));
@@ -620,8 +659,9 @@ describe('#339 칩·패널은 스레드에 스코프된다 — 같은 에이전�
 
     // attach 자체가 없어야 한다 — 엉뚱한 세션의 티켓을 받는 순간 이미 결함이다.
     expect(api.attachAgentSession).not.toHaveBeenCalled();
-    expect(FakeSocket.last).toBeNull();
-    expect(screen.getByText(/진행 중인 턴이 없다/)).toBeTruthy();
+    // 그리고 새로 여는 것도 **m1 스레드의** 터미널이다. 여기에 m2 나 null 이 실리면
+    // 스코프가 조회에서만 지켜지고 열기에서 새는 셈이다.
+    expect(api.openInteractiveSession).toHaveBeenCalledWith('a1', 'c1', 'm1');
   });
 
   it('헤더가 어느 채널·스레드의 터미널인지 적는다', async () => {
