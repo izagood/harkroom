@@ -31,6 +31,7 @@ import type { AgentSessionView } from '@murmur/shared';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { createAttachTicketStore } from '../ws/tickets.js';
+import { emitEvent } from '../events.js';
 import { createRelayHub } from '../ws/relay.js';
 import type { AgentPresence } from '../mcp/presence.js';
 import { createCredentialSweep, DEFAULT_REVALIDATE_MS, originAllowed } from '../ws/socketLifetime.js';
@@ -92,7 +93,46 @@ export interface AgentRelayDeps {
 export async function registerAgentRelayRoutes(
   app: FastifyInstance, pool: Pool, deps: AgentRelayDeps,
 ): Promise<void> {
-  const hub = createRelayHub();
+  /**
+   * 에이전트가 사람 손을 기다린다(2026-09-08). 허브는 세션의 좌표만 주고, 소유자와
+   * handle 을 붙여 이벤트로 만드는 것은 여기다 — 그 둘은 DB 에 있고, 허브는 DB 를 모른다.
+   *
+   * **소유자에게만 간다.** 남의 에이전트가 관문에 걸린 것은 이 사람이 할 수 있는 일이
+   * 아니고, 그 창을 띄우면 남의 작업 화면만 가린다.
+   */
+  const onAttention = (ev: {
+    sessionId: string; channelId: string; threadRootId: string | null;
+    agentAccountId: string; accountLabel: string;
+  }): void => {
+    void (async () => {
+      try {
+        const res = await pool.query<{ owner_account_id: string; handle: string }>(
+          `select c.owner_account_id, a.handle
+             from agent_config c join account a on a.id = c.account_id
+            where c.account_id = $1`,
+          [ev.agentAccountId],
+        );
+        const row = res.rows[0];
+        // 소유자를 모르면 보낼 곳이 없다. 조용히 버린다 — 전원에게 뿌리지 않는다.
+        if (!row) return;
+        emitEvent({
+          type: 'agent.attention',
+          sessionId: ev.sessionId,
+          channelId: ev.channelId,
+          threadRootId: ev.threadRootId,
+          agentHandle: row.handle,
+          accountLabel: ev.accountLabel,
+          audience: [row.owner_account_id],
+        });
+      } catch (err) {
+        // 알림 하나를 못 보낸 것으로 릴레이를 흔들지 않는다. 사람은 여전히
+        // [터미널 열기]로 직접 닿을 수 있다.
+        app.log.warn({ err }, 'agent.attention 발행 실패');
+      }
+    })();
+  };
+
+  const hub = createRelayHub({ onAttention });
   const attachTickets = createAttachTicketStore({ ttlMs: deps.attachTicketTtlMs });
   /**
    * 뷰어 소켓의 수명. `/ws` 와 **같은 정책**(`ws/socketLifetime.ts`)을 쓴다.
