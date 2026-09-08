@@ -114,6 +114,25 @@ export interface RelayHub {
    * `no_runner`, caps 에 'interactive' 가 없으면 **기다리지 않고 즉시** `runner_outdated` —
    * 구 러너는 이 프레임을 버리므로 기다리는 것은 곧 원인 없는 타임아웃이다.
    */
+  /**
+   * 이 턴을 **그만두게 한다**(Agents 관제 3단계). 러너에게 `session.cancel` 을 보내고,
+   * 러너가 그 턴의 PTY 에 SIGTERM 을 보낸다.
+   *
+   * **응답을 기다리지 않는다**(`openInteractive` 와 갈리는 자리다). 기다릴 것이 없다:
+   * 중단의 결과는 그 턴이 스레드에 남기는 실패 카드이고, 그것은 이 왕복이 아니라 러너의
+   * 발화로 온다. 여기서 ack 를 기다리면 하네스가 SIGTERM 을 정리하는 수 초 동안 화면이
+   * 멈춰 서고, 사람은 눌린 것인지 몰라 또 누른다.
+   *
+   * 반환값은 **보냈는가**까지다:
+   * - `'ok'` — 러너에게 프레임을 넘겼다. 실제 종료는 스레드의 실패 카드가 말한다.
+   * - `'not_found'` — 그런 세션이 없다. 누르는 사이에 턴이 스스로 끝난 것이 대부분이고,
+   *   사람이 원한 결과와 같으므로 화면은 이것을 실패로 그리지 않는다.
+   * - `'no_runner'` — 그 에이전트의 러너가 붙어 있지 않다. 도는 턴이 있어도 우리가
+   *   시그널을 보낼 길이 없다(시그널을 보낼 수 있는 것은 그 프로세스를 띄운 러너뿐이다).
+   * - `'runner_outdated'` — caps 에 'cancel' 이 없다. 구 러너는 이 프레임을 조용히 버리므로
+   *   보내지 않고 즉시 거절한다(#346 caps 의 존재 이유).
+   */
+  cancelSession(sessionId: string, byHandle: string): 'ok' | 'not_found' | 'no_runner' | 'runner_outdated';
   openInteractive(
     agentAccountId: string,
     req: {
@@ -540,6 +559,15 @@ export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
       };
     },
 
+    cancelSession(sessionId, byHandle) {
+      const agentAccountId = ownerOf.get(sessionId);
+      if (!agentAccountId) return 'not_found';
+      const runner = runners.get(agentAccountId);
+      if (!runner) return 'no_runner';
+      if (!runner.caps.has('cancel')) return 'runner_outdated';
+      sendToRunner(runner, { type: 'session.cancel', sessionId, byHandle });
+      return 'ok';
+    },
     openInteractive(agentAccountId, req, opts) {
       const runner = runners.get(agentAccountId);
       if (!runner) return Promise.resolve({ ok: false, reason: 'no_runner' });

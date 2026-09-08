@@ -636,6 +636,14 @@ export const en = {
   // --- Agents 칸의 관제 구획(`AgentTurns`) ------------------------------------
   // 이 묶음이 말하는 것은 **지금 도는 턴**이다. `runnerState.*`(러너 프로세스의 생사)와
   // 뭉치지 않는 이유가 화면의 판단 그대로다: 턴은 "이 일"이고 러너는 "이 사람"이다.
+  'agentTurns.cancel': 'Stop',
+  'agentTurns.cancelAll': 'Stop all',
+  'agentTurns.cancelAllTitle': 'Stop {n} running turns?',
+  'agentTurns.cancelConfirm': 'Stop them',
+  'agentTurns.cancelDetail': 'Only the turns stop — the runners stay up and take the next mention. Each stopped turn leaves a failure note in its thread. Turns someone is driving by hand are left alone.',
+  'agentTurns.cancelKeep': 'Leave them running',
+  'agentTurns.cancelThread': 'Stop thread',
+  'agentTurns.cancelThreadTitle': 'Stop every turn running in this thread',
   'agentTurns.checking': 'Checking\u2026',
   'agentTurns.count': '{n} running',
   'agentTurns.human': 'human at the wheel',

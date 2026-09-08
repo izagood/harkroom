@@ -118,6 +118,12 @@ export interface TurnRelay {
      * 안 본다" 다. 릴레이가 이 훅을 안 주면 아무도 안 보는 것으로 다룬다.
      */
     onViewerCount?: (count: number) => void;
+    /**
+     * 사람이 화면에서 이 턴을 **그만두게 했다**(3단계). 릴레이는 알리기만 하고 죽이는 것은
+     * 이 턴이다 — SIGTERM 을 보내는 손잡이(`PtyControls`)와 그 뒤의 흔적(실패 카드·💬
+     * 제거·재시도 회계)을 가진 쪽이 여기이기 때문이다.
+     */
+    onCancel?: (byHandle: string) => void;
   }): {
     sessionId: string;
     push(chunk: Buffer): void;
@@ -710,10 +716,16 @@ export async function runMentionTurn(
     reclaimed: boolean;
     /** 턴이 도는 동안 관측한 하네스 API 에러(한도·자격증명). 있으면 이 턴은 실패다. */
     apiError: string | null;
+    /**
+     * 사람이 이 턴을 그만두게 했으면 그 사람의 handle(3단계). **`reclaimed` 로 대신할 수
+     * 없다**: 그 값은 "러너가 죽였다"이고 고아 회수·무발화 회수도 참으로 만든다 — 사람이
+     * 눌러서 끝난 것과 아무도 안 봐서 회수된 것은 스레드에 남길 말이 다르다.
+     */
+    canceledBy: string | null;
     cancelReclaim: (() => void) | null; cancelProbe: (() => void) | null; cancelSilence: (() => void) | null;
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
-    apiError: null,
+    apiError: null, canceledBy: null,
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
   };
 
@@ -753,6 +765,19 @@ export async function runMentionTurn(
     // 최악이므로 그 사실을 서버까지 실어 보내 차례 자체를 안 주게 한다.
     acceptsInput: acceptsPtyInput(plan),
     onViewerCount,
+    /*
+      **사람이 [중단] 을 눌렀다**(3단계). 죽이는 것은 릴레이가 아니라 여기다 —
+      `reclaim()` 이 이미 그 일을 하고 있고(SIGTERM, 유예 뒤 SIGKILL 승격은 `runPtyTurn`),
+      그 뒤의 흔적 처리(실패 카드·💬 제거·재시도 회계)도 이 턴의 `finally` 가 갖는다.
+      릴레이가 직접 kill 하면 종료 경로가 둘로 갈라져 한쪽은 아무 흔적도 남기지 않는다.
+
+      `canceledBy` 를 **먼저** 적는다: kill 이 먼저면 그 사이에 exit 가 관측되어 실패 문구가
+      "harness 종료 143" 으로 굳는다 — 사람이 누른 결과를 하네스 고장으로 적는 것이다.
+    */
+    onCancel: (byHandle: string) => {
+      end.canceledBy = byHandle;
+      reclaim();
+    },
   });
 
   // #337: 이 스레드에 멘션 턴이 돈다는 사실을 등록한다 — 인터랙티브 open 의 3분기 ①
@@ -1079,13 +1104,19 @@ export async function runMentionTurn(
     // 그것이 판정 재료가 되면 사람이 본문 한 줄로 러너를 죽일 수 있다(설계 §3-4). 무발화는
     // 하네스가 아무 말도 안 했다는 사실이므로 tail 에서 얻을 것도 없다.
     const failure = new Error(
-      end.apiError
-        // 턴 도중에 관측한 에러가 있으면 그것이 원인이다(2026-09-09). tail 을 담지 않는
-        // 이유는 무발화와 같다 — TUI 에서는 주입한 프롬프트가 에코돼 tail 에 섞인다.
-        ? `harness API 에러: ${end.apiError}`
-        : end.silenced
-          ? `harness 무발화 ${deps.turnTimeoutMs}ms — 답 없이 시간 한도를 넘겼다`
-          : `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
+      // **사람이 중단한 턴은 그 사실을 먼저 말한다**(3단계). 원인이 하네스가 아니라 사람이고,
+      // 그때 사람이 할 일은 아무것도 없다 — 종료 코드와 tail 을 앞세우면 스레드를 보던
+      // 사람은 에이전트가 고장난 줄 알고 러너 로그를 뒤진다. 누가 눌렀는지도 함께 남긴다:
+      // 여럿이 같은 스레드를 보는 자리에서 "누가 멈췄나"는 다음 판단의 재료다.
+      end.canceledBy
+        ? `@${end.canceledBy} 가 이 턴을 중단했다`
+        : end.apiError
+          // 턴 도중에 관측한 에러가 있으면 그것이 원인이다(2026-09-09). tail 을 담지 않는
+          // 이유는 무발화와 같다 — TUI 에서는 주입한 프롬프트가 에코돼 tail 에 섞인다.
+          ? `harness API 에러: ${end.apiError}`
+          : end.silenced
+            ? `harness 무발화 ${deps.turnTimeoutMs}ms — 답 없이 시간 한도를 넘겼다`
+            : `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
     ) as Error & { harnessApiError?: string };
     // **턴 도중 관측이 우선이다.** 종료 뒤 읽기(`apiError`)는 sinceMs 가 없어 앞 턴의
     // 에러를 집을 수 있다 — 지금 턴의 사실을 이미 손에 쥐었으면 그것을 쓴다.

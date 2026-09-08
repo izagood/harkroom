@@ -13,7 +13,7 @@
  * 로 줄을 집고, 글자는 그 안에서 확인한다.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 import type { AgentSessionView } from '@murmur/shared';
 import { AgentTurns } from '../src/components/AgentTurns';
 import { groupTurnsByThread } from '../src/lib/agentTurns';
@@ -32,10 +32,12 @@ const NOW = Date.parse('2026-09-09T00:14:00.000Z');
 const renderTurns = (
   snapshot: Parameters<typeof AgentTurns>[0]['snapshot'],
   onOpenThread = vi.fn(),
+  onCancelTurns: ((turns: AgentSessionView[]) => void) | undefined = undefined,
 ) => {
   render(
     <AgentTurns
       snapshot={snapshot}
+      onCancelTurns={onCancelTurns}
       handleOf={(id) => (id === 'a1' ? 'murmur' : id === 'a2' ? 'patch' : id)}
       channelLabel={(id) => (id === 'c1' ? '#murmur' : `#${id}`)}
       onOpenThread={onOpenThread}
@@ -127,5 +129,83 @@ describe('화면 — 0 과 모름은 다른 것이다', () => {
     renderTurns({ kind: 'checking' });
     expect(screen.getByTestId('agent-turns-checking')).toBeTruthy();
     expect(screen.queryByTestId('agent-turns-none')).toBeNull();
+  });
+});
+
+/**
+ * **중단**(3단계). 여기서 지키는 것은 "무엇을 멈추는가"의 범위다 — 이 기능은 의도 없이
+ * 여럿을 건드린 사고에서 나왔으므로, 그것을 고치는 손이 같은 실수를 하면 안 된다.
+ */
+describe('중단 — 줄 · 스레드 · 전부', () => {
+  /**
+   * 확인 겹창의 두 버튼. **글자로 집지 않는다**(로케일 기본값이 바뀌면 이유 없이 빨개진다)
+   * — 겹창 안에 버튼이 정확히 둘임을 확인하고 자리로 고른다: `ConfirmDialog` 의 마크업이
+   * `justify-end` 로 [취소][확인] 순서를 정해 두었고, 순서가 바뀌면 이 단정이 먼저 깨진다.
+   */
+  const dialogButtons = () => {
+    const buttons = within(screen.getByRole('dialog')).getAllByRole('button');
+    expect(buttons).toHaveLength(2);
+    return { cancel: buttons[0]!, confirm: buttons[1]! };
+  };
+
+  const twoThreads = (): AgentSessionView[] => [
+    turn({ sessionId: 's1' }),
+    turn({ sessionId: 's2', agentAccountId: 'a2' }),
+    turn({ sessionId: 's3', channelId: 'c2', threadRootId: 't9' }),
+  ];
+
+  it('배선이 없으면 버튼이 없다 — 눌러도 아무 일이 없는 버튼을 그리지 않는다', () => {
+    renderTurns({ kind: 'known', turns: [turn({ sessionId: 's1' })] });
+    expect(screen.queryByTestId('agent-turn-cancel-s1')).toBeNull();
+    expect(screen.queryByTestId('agent-turns-cancel-all')).toBeNull();
+  });
+
+  it('줄의 [중단] 은 그 턴 하나만 보낸다', () => {
+    const onCancel = vi.fn();
+    renderTurns({ kind: 'known', turns: twoThreads() }, vi.fn(), onCancel);
+    fireEvent.click(screen.getByTestId('agent-turn-cancel-s2'));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onCancel.mock.calls[0]![0].map((t: AgentSessionView) => t.sessionId)).toEqual(['s2']);
+  });
+
+  it('[스레드 중단] 은 그 스레드의 턴만 보낸다 — 다른 스레드는 건드리지 않는다', () => {
+    const onCancel = vi.fn();
+    renderTurns({ kind: 'known', turns: twoThreads() }, vi.fn(), onCancel);
+    fireEvent.click(screen.getByTestId('agent-turns-cancel-group-c1-t1'));
+    expect(onCancel.mock.calls[0]![0].map((t: AgentSessionView) => t.sessionId)).toEqual(['s1', 's2']);
+  });
+
+  it('사람이 조종 중인 턴에는 [중단] 이 없고, 묶음 중단에서도 빠진다', () => {
+    const onCancel = vi.fn();
+    renderTurns({ kind: 'known', turns: [
+      turn({ sessionId: 's1' }),
+      turn({ sessionId: 's-human', agentAccountId: 'a2', mode: 'interactive' }),
+    ] }, vi.fn(), onCancel);
+    expect(screen.queryByTestId('agent-turn-cancel-s-human')).toBeNull();
+    fireEvent.click(screen.getByTestId('agent-turns-cancel-group-c1-t1'));
+    expect(onCancel.mock.calls[0]![0].map((t: AgentSessionView) => t.sessionId)).toEqual(['s1']);
+  });
+
+  it('[전부 중단] 은 확인을 받고서야 보낸다 — 목록 밖의 스레드까지 멈춘다', () => {
+    const onCancel = vi.fn();
+    renderTurns({ kind: 'known', turns: twoThreads() }, vi.fn(), onCancel);
+    fireEvent.click(screen.getByTestId('agent-turns-cancel-all'));
+    expect(onCancel).not.toHaveBeenCalled();
+    fireEvent.click(dialogButtons().confirm);
+    expect(onCancel.mock.calls[0]![0]).toHaveLength(3);
+  });
+
+  it('확인을 취소하면 아무것도 멈추지 않는다', () => {
+    const onCancel = vi.fn();
+    renderTurns({ kind: 'known', turns: twoThreads() }, vi.fn(), onCancel);
+    fireEvent.click(screen.getByTestId('agent-turns-cancel-all'));
+    fireEvent.click(dialogButtons().cancel);
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it('멈출 것이 하나뿐이면 [전부 중단] 을 세우지 않는다 — 같은 일을 하는 길이 둘이 된다', () => {
+    renderTurns({ kind: 'known', turns: [turn({ sessionId: 's1' })] }, vi.fn(), vi.fn());
+    expect(screen.queryByTestId('agent-turns-cancel-all')).toBeNull();
+    expect(screen.getByTestId('agent-turn-cancel-s1')).toBeTruthy();
   });
 });

@@ -1742,7 +1742,7 @@ export type AgentSessionState = 'running' | 'ended' | 'runner-offline';
  * - `'attention'` 이 없으면 그 러너는 사람을 부르지 못한다(2026-09-08) — 첫 실행 관문에
  *   걸린 턴이 조용히 상한에서 실패한다. 앱은 없는 기능을 있다고 그리지 않는다.
  */
-export type RunnerCap = 'input' | 'interactive' | 'attention';
+export type RunnerCap = 'input' | 'interactive' | 'attention' | 'cancel';
 
 /**
  * 러너 → 서버 프레임. `GET /agent-relay` 소켓에 실린다.
@@ -1802,6 +1802,30 @@ export type RelayRunnerFrame =
 export type RelayServerFrame =
   | { type: 'replay.request'; sessionId: string }
   | { type: 'input'; sessionId: string; data: string }
+  /**
+   * 이 턴을 **그만두게 한다**(Agents 관제 3단계). 사람이 화면에서 [중단] 을 누른 것이고,
+   * 러너는 그 턴의 PTY 에 SIGTERM 을 보낸다(유예 뒤 SIGKILL 승격은 `runPtyTurn` 이 이미
+   * 갖고 있다).
+   *
+   * ## 러너 종료(`stopRequestedAt`·`killRunner`)와 **다른 층**이다
+   *
+   * 그 둘은 "이 에이전트는 당분간 아무 말도 못 한다"이고 되살리는 데 사람 손이 필요하다.
+   * 이 프레임은 "이 일을 그만둬라"이고, 러너는 살아 있어 다음 멘션을 정상으로 받는다.
+   * 한 버튼으로 뭉치면 사람은 폭주를 멈추려고 팀원을 해고한다 — 그것이 이 프레임을 만든
+   * 이유다(복사한 본문의 `@handle` 이 다시 호출로 읽혀 한 스레드에 턴이 연달아 뜬 사고).
+   *
+   * ## 입력으로 대신할 수 없다
+   *
+   * `input` 으로 Ctrl-C(0x03)를 보내는 우회는 **멘션 턴에 통하지 않는다**: 그 턴은
+   * `acceptsInput: false` 라 자식의 fd 0 이 PTY slave 가 아니고, PTY master 로 쓴 바이트는
+   * 자식에게 도달하지 않는다(#369 재현). 그래서 종료는 시그널이어야 하고, 시그널을 보낼
+   * 수 있는 것은 그 프로세스를 띄운 러너뿐이다.
+   *
+   * `byHandle` 은 **누가 눌렀는지**다. 중단된 턴은 스레드에 실패 카드로 남고 그 문구에
+   * 이 이름이 들어간다 — 조용히 사라지면 그 스레드를 보던 사람은 에이전트가 답을 삼킨
+   * 것으로 읽는다.
+   */
+  | { type: 'session.cancel'; sessionId: string; byHandle: string }
   /**
    * PTY 창 크기(#335). **바이트가 아니라 숫자 두 개다** — 그래서 위 `data` 들과 달리
    * base64 규율을 타지 않고, 대신 서버가 값을 검증한다(러너의 `resize` 는 ioctl 로

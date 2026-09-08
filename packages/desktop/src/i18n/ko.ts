@@ -233,6 +233,14 @@ export const ko = {
   // ---------------------------------------------------------------------------
 
   // --- Agents 칸의 관제 구획(`AgentTurns`) — 근거는 `en.ts` 의 같은 묶음에 있다 --------
+  'agentTurns.cancel': '중단',
+  'agentTurns.cancelAll': '전부 중단',
+  'agentTurns.cancelAllTitle': '도는 턴 {n}개를 중단할까?',
+  'agentTurns.cancelConfirm': '중단',
+  'agentTurns.cancelDetail': '턴만 끊는다 — 러너는 살아 있어 다음 멘션을 정상으로 받는다. 중단된 턴은 그 스레드에 실패 카드로 남는다. 사람이 직접 조종 중인 턴은 건드리지 않는다.',
+  'agentTurns.cancelKeep': '그대로 두기',
+  'agentTurns.cancelThread': '스레드 중단',
+  'agentTurns.cancelThreadTitle': '이 스레드에서 도는 턴을 전부 중단한다',
   'agentTurns.checking': '확인 중\u2026',
   'agentTurns.count': '{n}개 도는 중',
   'agentTurns.human': '사람이 조종 중',

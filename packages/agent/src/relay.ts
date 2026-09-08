@@ -31,7 +31,7 @@ export const RING_CAP_BYTES = 256 * 1024;
  * input 을 흘리거나 인터랙티브 open 을 기다리다 타임아웃 나는 일을 막는다 — 능력을
  * 선언하지 않으면 서버는 없는 것으로 읽는다(없는 것을 있다고 표시하지 않는다).
  */
-export const RUNNER_CAPS: readonly RunnerCap[] = ['input', 'interactive', 'attention'];
+export const RUNNER_CAPS: readonly RunnerCap[] = ['input', 'interactive', 'attention', 'cancel'];
 
 /** 소켓의 최소 표면. 프로덕션은 `ws`, 테스트는 가짜다. */
 export interface RelayTransport {
@@ -73,6 +73,13 @@ interface LiveSession {
   writer: PtyWriter | null;
   /** 서버가 알려 준 뷰어 수 변동(#337). 인터랙티브 고아 회수 타이머가 읽는다. */
   onViewerCount?: (count: number) => void;
+  /**
+   * 사람이 이 턴을 **그만두게 했다**(3단계). 죽이는 것은 여기가 아니라 **턴이 한다** —
+   * 그 턴만이 자기 PTY 손잡이(`PtyControls`)와 끝 처리(실패 카드·리액션 정리)를 갖고
+   * 있고, 릴레이가 직접 kill 하면 종료 경로가 둘로 갈라져 한쪽은 흔적을 남기지 않는다.
+   * 고아 회수(`onViewerCount`)가 같은 모양인 이유와 같다.
+   */
+  onCancel?: (byHandle: string) => void;
 }
 
 export interface OpenSessionInput {
@@ -90,6 +97,13 @@ export interface OpenSessionInput {
   acceptsInput: boolean;
   /** 이 세션의 뷰어 수 변동 통지(#337). 인터랙티브 턴만 넘긴다 — 멘션 턴의 끝은 exit 뿐이다. */
   onViewerCount?: (count: number) => void;
+  /**
+   * 사람이 이 턴을 그만두게 했을 때 부른다(3단계). **넘기지 않으면 중단이 통하지 않는다** —
+   * 그것도 사실이라 서버는 caps 로만 "할 수 있다"를 말하고, 이 콜백을 안 준 호출부의
+   * 세션은 프레임을 받고도 아무 일이 없다. 그래서 턴을 도는 쪽(`mentionTurn`)이 반드시
+   * 넘긴다: 죽이는 것은 그 턴의 일이다(`LiveSession.onCancel` 주석).
+   */
+  onCancel?: (byHandle: string) => void;
 }
 
 /**
@@ -281,6 +295,17 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         return;
       }
 
+      case 'session.cancel': {
+        if (typeof frame.sessionId !== 'string' || typeof frame.byHandle !== 'string') return;
+        const live = sessions.get(frame.sessionId);
+        // 없는 세션은 조용히 버린다 — 사람이 누르는 사이에 턴이 스스로 끝난 것이고
+        // (26초짜리 턴에서 흔하다), 그것은 사람이 원한 결과와 같다.
+        if (!live) return;
+        // 예외를 삼키는 이유는 `viewer.count` 와 같다: 한 턴의 종료 처리가 던져도 러너
+        // 프로세스와 다른 턴들은 계속 돌아야 한다.
+        try { live.onCancel?.(frame.byHandle); } catch { /* 중단은 다른 턴을 죽이지 않는다 */ }
+        return;
+      }
       case 'interactive.open': {
         if (typeof frame.requestId !== 'string') return;
         void handleInteractiveOpen(frame);
@@ -356,7 +381,11 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         acceptsInput: input.acceptsInput,
       };
       const live: LiveSession = {
-        info, ring: new RingBuffer(RING_CAP_BYTES), writer: null, onViewerCount: input.onViewerCount,
+        info,
+        ring: new RingBuffer(RING_CAP_BYTES),
+        writer: null,
+        onViewerCount: input.onViewerCount,
+        onCancel: input.onCancel,
       };
       sessions.set(info.sessionId, live);
       send({ type: 'session.started', session: info });
