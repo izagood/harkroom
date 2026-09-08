@@ -20,23 +20,24 @@ import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadConfig, runnerLabel } from './config.js';
 import { MurmurAgentClient } from './murmur.js';
-import { mentionAnchor, runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
+import { runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
 import { runPtyTurn } from './pty.js';
 import { SessionStore } from './sessions.js';
 import { resolveAgentStateDir } from './stateDir.js';
 import { assertHarnessContract, writeMcpConfigOnce } from './turn.js';
 import type { Exec } from './workspace.js';
-import { exhausted, isCredentialFailure, isQuotaExhausted, isSessionIdConflict, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
+import { isCredentialFailure, nextBackoffMs } from './policy.js';
 import { harnessBinaryName } from '@murmur/shared';
 import { runnerExitPlan } from './exit.js';
 import { stopRequestedForRunner } from './stop.js';
-import { controlledNotice, FAILURE_NOTICE, harnessLoginNotice, quotaNotice, sessionConflictNotice } from './prompt.js';
+import { harnessLoginNotice } from './prompt.js';
 import { createRelayClient } from './relay.js';
 import { createInteractiveManager, type InteractiveManager } from './interactiveTurn.js';
 import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
-import { loadClaudeAccountLane, withAccountFailover } from './claudeAccounts.js';
+import { loadClaudeAccountLane } from './claudeAccounts.js';
 import { ensureCodexHome } from './codexHome.js';
+import { createMentionScheduler, type BatchContext } from './mentionScheduler.js';
 
 const config = loadConfig();
 const murmur = new MurmurAgentClient(config.murmurUrl, config.murmurPat);
@@ -288,10 +289,52 @@ interactive = createInteractiveManager({
   orphanMs: config.interactiveOrphanMs,
 });
 
+// 멘션 턴의 실행·회수는 여기 있다(2026-09-08 병렬화). **같은 registry·queue 를 본다** —
+// 갈라지면 인터랙티브 open 이 죽은 PTY 에 사람을 붙이거나 같은 세션에 PTY 가 둘 뜬다.
+//
+// 이 조립이 main 에 남는 이유: 계정 축·워크스페이스 경로·MCP 설정은 기동이 정하는 값이고,
+// 스케줄러가 그것을 직접 읽으면 테스트가 그 환경을 전부 세워야 한다. 스케줄러는 "무엇을
+// 언제 띄우는가"만 알고, "무엇으로 띄우는가"는 이 함수가 넘긴다.
+const scheduler = createMentionScheduler({
+  murmur, registry, queue: mentionQueue, accountLane,
+  runMentionTurn,
+  // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —
+  // 나머지는 계정과 무관하므로 매번 같은 값이다.
+  buildTurnDeps: ({ ctx, mention, account }) => ({
+    murmur, store, exec, runTurn: runPtyTurn, me, guide,
+    channelName: ctx.channelName(mention.channelId),
+    handles: ctx.handles, workspaceBaseDir, mcpConfigPath,
+    // 지시문 파일이 여기 쓰인다(#92) — 에이전트 워크스페이스가 아니라 러너의 상태
+    // 디렉터리다. 워크스페이스 안에 두면 bypassPermissions 에이전트가 자기 지시문을 고칠 수 있다.
+    stateDir: agentStateDir,
+    codexHome,
+    claudeAccount: account?.name ?? null,
+    claudeConfigDir: account?.configDir ?? null,
+    murmurUrl: config.murmurUrl, pat: config.murmurPat,
+    turnTimeoutMs: config.turnTimeoutMs,
+    relay,
+    // #337: 멘션 턴도 자기 존재를 등록해야 인터랙티브 open 이 그 PTY 에 합류한다.
+    registry,
+  } satisfies MentionTurnDeps),
+  hooks: {
+    // #384: 이 스레드에 이어받기 예약이 있으면 **지금** 인터랙티브 턴이 뜬다. 이 자리인
+    // 이유는 세션 상태(turnsRun·codex 세션 id)가 방금 저장됐기 때문이다 — 레지스트리
+    // 해제 시점(턴의 finally)은 그 저장보다 앞이라, 그때 띄우면 이어받기 턴이 옛 레코드를
+    // 읽어 같은 세션을 새로 시작하려 든다(turnRegistry.ts 의 handoffs 주석).
+    resumeHandoff: async (threadKey) => { await interactive?.resumeHandoff(threadKey); },
+    // #129: 종료 요청은 턴이 끝난 **지금** 본다. 진행 중인 다른 턴은 아래 drain 이 기다린다.
+    stopRequested: (at) => {
+      if (stopRequestedForRunner(at, startedAtMs)) acceptStopRequest(at);
+    },
+    exitIfUnrecoverable,
+    noticeHarnessLogin: noticeIfHarnessLogin,
+  },
+  startedAtMs,
+});
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** 항목별 시도 횟수. 영원히 실패하는 한 건이 나머지 멘션을 가로막지 않게 한다. */
-const attempts = new Map<number, number>();
+/** 폴 **자체**의 transport 실패용 백오프. 턴 실패는 스케줄러가 entry 별로 쉰다. */
 let backoffMs = 1_000;
 
 while (running) {
@@ -319,233 +362,25 @@ while (running) {
     const accounts = await murmur.accounts();
     const handles = Object.fromEntries(accounts.map((a) => [a.id, a.handle]));
 
-    const done: number[] = [];
-    let failed = false;
-    let deferred = 0;
-    for (const entry of batch.entries) {
-      const mention = batch.messages.find((m) => m.id === entry.messageId);
-      if (!mention) { done.push(entry.id); continue; }
+    const ctx: BatchContext = {
+      channelName: (channelId) => byId.get(channelId) ?? 'dm',
+      handles,
+    };
+    const outcome = await scheduler.admit(batch, ctx);
 
-      // 이 턴의 앵커 — 규칙은 mentionTurn.ts::mentionAnchor 하나가 갖는다(그 주석 참고).
-      // 여기서 한 번만 계산해 턴과 아래 실패 통지가 **같은 값**을 쓴다.
-      // `mention` 은 `batch.messages.find((m) => m.id === entry.messageId)` 이므로
-      // `mention.id` 는 멘션 **메시지** id 다(inbox 항목 id 인 `entry.id` 가 아니다).
-      const anchor = mentionAnchor(mention);
-
-      // #337: 사람이 이 스레드를 직접 조종 중이면 멘션을 **유예한다** — markRead 도
-      // attempts 증가도 없이 건너뛴다(스펙 §5-2 결정 6: inbox 의 at-least-once 가 그대로
-      // 큐다). 그래서 이 분기는 attempts.set 보다 **앞**이어야 한다 — 뒤에 두면 유예가
-      // 시도 횟수를 갉아먹어, 오래 조종할수록 그 멘션이 MAX_ATTEMPTS 로 조용히 버려진다.
-      // 유예 대상은 인터랙티브 턴뿐이다 — 멘션 턴에 사람이 attach 만 한 경우 그 턴은
-      // 어차피 돌고 있으므로 막지 않는다.
-      // #384: 판정은 `controlOf` 하나다 — 도는 인터랙티브 턴과 **이어받기 예약**을 함께
-      // 본다. 예약 구간(사람이 [이어받기] 를 누르고 멘션 턴이 끝나기를 기다리는 26초)에서
-      // 유예가 빠지면 그 사이에 시작된 멘션 턴이 사람이 기다린 자리를 가져간다.
-      const threadKey = SessionStore.threadKey(mention.channelId, anchor);
-      const controlling = registry.controlOf(threadKey);
-      if (controlling) {
-        deferred += 1;
-        const { shouldNotify, pending } = mentionQueue.defer(threadKey, entry.id, mention.seq);
-        if (shouldNotify) {
-          // 통지는 entry 당 1회 — 재폴링마다 올리면 조종이 길수록 스레드가 도배된다.
-          // 에이전트 계정으로 올린다(NO_REPLY_NOTICE 판례). 실패해도 유예는 유지된다 —
-          // 통지는 관측이고 큐는 inbox 다.
-          try {
-            await murmur.post(mention.channelId, controlledNotice(controlling.openedByHandle ?? '소유자', pending), anchor);
-          } catch (err) {
-            console.error(`  ${entry.messageId} 대기 통지 발화 실패(유예는 유지된다):`,
-              err instanceof Error ? err.message : err);
-          }
-        }
-        continue;
-      }
-
-      const tried = (attempts.get(entry.id) ?? 0) + 1;
-      attempts.set(entry.id, tried);
-      try {
-        // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —
-        // 나머지는 계정과 무관하므로 여기서 한 번만 만든다.
-        const depsBase = {
-          murmur, store, exec, runTurn: runPtyTurn, me, guide,
-          channelName: byId.get(mention.channelId) ?? 'dm',
-          handles, workspaceBaseDir, mcpConfigPath,
-          // 지시문 파일이 여기 쓰인다(#92) — 에이전트 워크스페이스가 아니라 러너의 상태
-          // 디렉터리다. 워크스페이스 안에 두면 bypassPermissions 에이전트가 자기 지시문을
-          // 고칠 수 있다.
-          stateDir: agentStateDir,
-          codexHome,
-          murmurUrl: config.murmurUrl, pat: config.murmurPat,
-          turnTimeoutMs: config.turnTimeoutMs,
-          relay,
-          // #337: 멘션 턴도 자기 존재를 등록해야 인터랙티브 open 이 그 PTY 에 합류한다.
-          registry,
-        };
-        // #98: 채널 최상위 멘션(threadRootId 가 null)은 **그 멘션 메시지를 루트로 하는
-        // 스레드**에 답한다. 두 가지를 한 번에 얻는다: 긴 답이 채널 본문에 쌓이지 않고,
-        // 멘션마다 세션 키가 갈려 서로 무관한 요청의 맥락이 섞이지 않는다. 스레드 안의
-        // 멘션은 그대로 그 스레드의 루트를 쓴다.
-        // 앵커를 여기서 한 번만 계산해 아래 실패 통지와 **같은 값**을 쓴다 — 같은 식을
-        // 두 곳에 적으면 나중에 한쪽만 고치는 사고가 난다.
-        // mentionId 는 앵커와 **다르다**: 스레드 안 멘션의 앵커는 스레드 루트이고,
-        // 리액션 대상은 방금 온 그 멘션이어야 한다.
-        const turnArgs = {
-          channelId: mention.channelId,
-          threadRootId: anchor,
-          mentionId: mention.id,
-          // 깨움(마이그레이션 040): 자기가 걸어 둔 예약이 시각이 되어 자기를 부른 것이다.
-          // 사유는 그 대기 줄의 본문이다 — 서버가 거기 넣었고(agentWakes.ts::scheduleWake),
-          // 여기서 다시 지어내면 사람이 스레드에서 읽는 사유와 프롬프트의 사유가 갈라진다.
-          //
-          // 평범한 멘션으로 처리하면 안 되는 이유: 깨움에는 부른 사람의 새 발화가 없다.
-          // 델타는 자기가 쓴 대기 줄뿐이고 자기 발화는 걸러지므로 프롬프트가 비어, 러너가
-          // 하네스를 돌리지 않고 커서만 전진시킨다 — 기다림이 흔적 없이 사라진다.
-          ...(entry.reason === 'wake' ? { wake: { reason: mention.body } } : {}),
-        };
-        // 계정 축(다중 계정). 한도·자격증명 실패를 만나면 **같은 멘션**을 다음 계정으로 다시
-        // 시도한다 — 읽음 처리로 버리지 않는다. 계정을 바꾼 목적이 정확히 그 멘션에 답하게
-        // 하는 것이기 때문이다. 재시도 회계와 별개로 도는 근거는 `withAccountFailover` 주석에
-        // 있다. 풀이 비면 한 번 돌고 아래 실패 경로가 지금과 똑같이 받는다.
-        //
-        // 세션은 `runMentionTurn` 이 계정 변경을 보고 스스로 버린다(`mentionTurn.ts` 의 무효화
-        // 분기) — 여기서 store 를 직접 만지지 않는다. 그 판단이 한 자리에 있어야 인터랙티브
-        // 턴도 같은 규칙을 따른다.
-        const turn = await withAccountFailover(
-          accountLane,
-          (account) => runMentionTurn(
-            {
-              ...depsBase,
-              claudeAccount: account?.name ?? null,
-              claudeConfigDir: account?.configDir ?? null,
-            } satisfies MentionTurnDeps,
-            turnArgs,
-          ),
-          (from, to) => console.error(
-            `  ${entry.messageId} 계정 전환: ${from?.name ?? '(기본)'} → ${to?.name ?? '(기본)'}`,
-          ),
-        );
-        done.push(entry.id);
-        attempts.delete(entry.id);
-        // #129: 종료 요청은 **턴이 끝난 지금** 본다. runMentionTurn 은 턴 시작 직후에
-        // 정의를 읽지만 스스로 돌아서지 않는다 — 그 간격이 "사람이 기다리는 답을 잃지
-        // 않는다"를 만든다. 배치의 나머지는 미읽음으로 남겨 다음 러너가 이어받는다:
-        // markRead 는 이 for 밖에서 done 만 처리하므로 답한 것만 소비된다.
-        if (stopRequestedForRunner(turn.stopRequestedAt, startedAtMs)) {
-          acceptStopRequest(turn.stopRequestedAt!);
-          break;
-        }
-      } catch (err) {
-        // **여기 도달했다는 것은 계정 축이 이미 소진됐다는 뜻이다**(다중 계정).
-        // `withAccountFailover` 가 위에서 `runMentionTurn` 을 감싸고 있으므로, 풀에 아직
-        // 안 써 본 계정이 있으면 그 오류는 이 catch 에 오지 않는다. 그래서 아래 자격증명
-        // 판정이 러너를 죽이는 것은 **모든 계정의 로그인이 풀렸을 때**뿐이다 — "재시도로
-        // 낫지 않는다"는 `exit.ts` 의 근거가 그때 되살아난다.
-        //
-        // 이 문단이 아래 앵커 주석 **위**에 있는 이유: `test/mainCredentialSites.test.ts` 가
-        // 그 앵커에서 12줄 안에 `exitIfUnrecoverable(err)` 가 있는지 소스로 검사한다.
-        // 사이에 끼우면 그 창을 벌려 회귀선이 깨진다(실제로 한 번 깨뜨렸다).
-        // 재시도로 낫지 않는 실패는 여기서 걸러 **재시도 회계에 들어가기 전에** 죽는다 —
-        // `failed`·`attempts`·`FAILURE_NOTICE` 는 아래 한 줄부터 시작한다. 조용히 반복하면
-        // "왜 답이 없지"의 원인이 묻힌다: 자격증명 실패는 폐기된 PAT 로 무한 재시도하고(#250),
-        // 하네스 실행 파일 부재는 멘션 MAX_ATTEMPTS 건을 태운 뒤에야 흔적을 남긴다(#340).
-        // 물러나기 **전에** 사람이 보는 자리에 말한다(2026-09-07) — 아래 판정은
-        // `process.exit` 을 부르므로 순서가 계약이다.
-        await noticeIfHarnessLogin(err, mention.channelId, anchor, entry.messageId);
-        exitIfUnrecoverable(err);
-
-        // 사용량 한도(2026-09-07 16:05 실측: `You've hit your session limit · resets 4:10pm`).
-        // **재시도 회계에 넣지 않는다.** 3회가 5초 안에 끝나므로 한도가 풀릴 리 없고,
-        // 태운 끝에 남는 "(답변에 실패했습니다 — 운영자 확인이 필요합니다)"는 사람이
-        // 할 일을 잘못 가리킨다 — 여기서 할 일은 **기다리는 것**뿐이다.
-        //
-        // 자격증명과 달리 러너는 물러나지 않는다: 로그인은 멀쩡하고, 한도가 풀리면 다음
-        // 멘션이 그대로 돌아간다.
-        const quota = isQuotaExhausted(err);
-        if (quota) {
-          // tail 원문을 함께 찍는다: 2026-09-07 19:03 사건에서 이 줄은 "풀림: 알 수 없음"만
-          // 남겼고, 그래서 CLI 가 낸 문구(세션 파일에는 `resets 10:50pm (Asia/Seoul)` 이
-          // 있었다)와 판정 사이의 어디가 어긋났는지 알 수 없었다.
-          console.error(`  ${entry.messageId} 사용량 한도 — 재시도하지 않는다 (풀림: ${quota.resetsAt ?? '알 수 없음'}) tail: ${err instanceof Error ? err.message : String(err)}`);
-          try {
-            await murmur.post(mention.channelId, quotaNotice(quota.resetsAt), anchor);
-          } catch (notifyErr) {
-            console.error(`  ${entry.messageId} 한도 통지 발화 실패(읽음 처리 계속):`,
-              notifyErr instanceof Error ? notifyErr.message : notifyErr);
-          }
-          done.push(entry.id);
-          attempts.delete(entry.id);
-          continue;
-        }
-
-        // 세션 id 충돌(2026-09-07 19:03 실측)도 재시도로 낫지 않는다 — 3회가 176·185·278ms
-        // 만에 같은 자리에서 실패했다. 한도와 같은 자리에 두는 이유는 성질이 같아서다:
-        // 재시도는 무의미하고, 러너는 살아 있어야 하고, 사람은 스레드에서 사실을 알아야 한다.
-        //
-        // **자격증명처럼 죽이지 않는다.** 이것은 그 스레드 하나의 세션 상태 문제이고 다른
-        // 스레드는 멀쩡하다 — 죽으면 다른 스레드의 대기 멘션까지 함께 잃는다.
-        //
-        // 근본 원인은 `mentionTurn.ts` 의 세션 실재 관측이 막았다. 여기는 그 관측이 실패하는
-        // 경로에 남겨 두는 그물이라, tail 원문을 함께 찍는다 — 그물이 걷히는 날 운영자가
-        // 볼 것이 이 줄뿐이다(스레드 통지는 uuid 를 싣지 않는다).
-        if (isSessionIdConflict(err)) {
-          console.error(
-            `  ${entry.messageId} 하네스 세션 충돌 — 재시도하지 않는다 (러너의 세션 상태와 하네스 디스크가 어긋났다): `
-              + (err instanceof Error ? err.message : String(err)),
-          );
-          try {
-            await murmur.post(mention.channelId, sessionConflictNotice(), anchor);
-          } catch (notifyErr) {
-            console.error(`  ${entry.messageId} 세션 충돌 통지 발화 실패(읽음 처리 계속):`,
-              notifyErr instanceof Error ? notifyErr.message : notifyErr);
-          }
-          done.push(entry.id);
-          attempts.delete(entry.id);
-          continue;
-        }
-
-        failed = true;
-        console.error(`  ${entry.messageId} 답변 실패 (${tried}/${MAX_ATTEMPTS}):`,
-          err instanceof Error ? err.message : err);
-        // 한도까지 실패하면 읽음 처리해 흘려보낸다 — 안 그러면 이 항목이 큐를 막는다.
-        if (exhausted(tried)) {
-          console.error(`  ${entry.messageId} 포기하고 읽음 처리한다`);
-          // #82: MAX_ATTEMPTS 소진 시 채널에 통지한다. 통지 실패해도 읽음 처리는 계속한다
-          // (통지 실패로 러너가 멈추면 안 된다). #98: 채널 최상위 멘션도 **같은 앵커**에
-          // 쓴다 — 안 그러면 답은 스레드로 가는데 실패 통지만 채널 최상위에 남아, 부른
-          // 사람이 스레드를 보고 있는 동안 실패를 놓친다(#82 가 닫은 구멍이 반쪽 열린다).
-          try {
-            await murmur.post(mention.channelId, FAILURE_NOTICE, anchor);
-          } catch (notifyErr) {
-            console.error(`  ${entry.messageId} 실패 통지 발화 실패(읽음 처리 계속):`,
-              notifyErr instanceof Error ? notifyErr.message : notifyErr);
-          }
-          done.push(entry.id);
-          attempts.delete(entry.id);
-        }
-      } finally {
-        // #384: 이 스레드에 이어받기 예약이 있으면 **지금** 인터랙티브 턴이 뜬다. 이 자리인
-        // 이유는 세션 상태(turnsRun·codex 세션 id)가 방금 저장됐기 때문이다 — 레지스트리
-        // 해제 시점(턴의 finally)은 그 저장보다 앞이라, 그때 띄우면 이어받기 턴이 옛
-        // 레코드를 읽어 같은 세션을 새로 시작하려 든다(turnRegistry.ts 의 handoffs 주석).
-        // 실패 경로에도 있어야 한다: 예약을 남기면 그 스레드의 멘션이 영원히 유예된다.
-        await interactive?.resumeHandoff(threadKey);
-      }
-    }
-    await murmur.markRead(done);
-
-    // poll 은 미읽음이 남아 있으면 즉시 반환한다 — 실패한 채로 곧바로 다시 폴하면 타이트 루프다.
-    if (failed) {
-      await sleep(backoffMs);
-      backoffMs = nextBackoffMs(backoffMs);
-    } else if (deferred > 0 && done.length === 0) {
-      // #337: 배치 전체가 유예뿐이면 미읽음이 그대로 남아 다음 폴이 **즉시** 같은 배치를
-      // 돌려준다 — 조종이 끝날 때까지 타이트 루프다. 실패 backoff 와 별개의 고정 5초다:
-      // 유예는 실패가 아니고(늘어나는 backoff 는 회수 뒤 반응만 늦춘다), 5초는 사람이
-      // 터미널을 닫은 뒤 대기 멘션이 처리되기까지의 최대 지연이다.
+    // 인플라이트 entry 는 미읽음으로 남으므로(markRead 는 턴 완료 후다) 다음 폴이 **즉시**
+    // 같은 배치를 돌려준다 — 아무것도 새로 못 띄운 폴이면 잠깐 쉰다. 유예 backoff 와 같은
+    // 5초다: 유예도 blocked 도 실패가 아니고(늘어나는 backoff 는 자리가 난 뒤 반응만 늦춘다),
+    // 5초는 턴 하나가 끝난 뒤 대기 멘션이 시작되기까지의 최대 지연이다.
+    //
+    // **실패 backoff 가 여기 없는 이유**: 턴 실패는 이제 entry 별로 쉰다(mentionScheduler 의
+    // `backoffFor`). 전역 sleep 으로 두면 스레드 하나의 실패가 나머지 전부를 멈춘다 —
+    // 병렬화가 없앤 바로 그 결함이다. 아래 catch 의 backoffMs 는 폴 자체의 transport
+    // 실패용이고, 그것은 진짜로 러너 전역이다.
+    if (outcome.started === 0 && outcome.deferred + outcome.blocked > 0) {
       await sleep(5_000);
-      backoffMs = 1_000;
-    } else {
-      backoffMs = 1_000;
     }
+    backoffMs = 1_000;
   } catch (err) {
     // #250: 자격증명 실패는 **여기서** 먼저 걸러야 한다. 앱이 PAT 를 회전할 때 옛 러너는
     // 거의 항상 롱폴에 park 돼 있어 401 이 이 catch 로 온다 — 아래 "재접속하면 된다"로
@@ -560,5 +395,8 @@ while (running) {
     backoffMs = nextBackoffMs(backoffMs);
   }
 }
+// #129 의 계약 "진행 중인 턴을 마쳤으므로 물러난다" 를 병렬에서도 지킨다 — 루프를 벗어난
+// 지금 admit 은 멈췄고, 남은 것은 이미 도는 턴들뿐이다.
+await scheduler.drain();
 relay.stop();
 console.log('종료');
