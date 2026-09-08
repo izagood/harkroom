@@ -58,8 +58,31 @@ describe('#159 아바타 표시', () => {
     expect(c.fetchAvatar).not.toHaveBeenCalled();
   });
 
-  it('에이전트는 사진을 받지 않고 글리프 폴백 그대로다', async () => {
-    // 에이전트는 스스로 올릴 수단이 없다(#159 범위 밖). 그 자리는 #146 의 글리프가 지킨다.
+  /**
+   * Task 15-4 로 소유자가 에이전트에 사진을 걸 수 있게 됐다. 쓰기 경로(라우트·api·컨트롤러·
+   * 설정 화면)만 생기고 **읽는 자리**가 사람으로 좁혀진 채 남아, 올린 사진이 DB 에만 있고
+   * 화면에는 영영 안 나왔다. 회귀선을 여기 둔다 — 걸린 자리는 `Identity` 한 곳이다.
+   */
+  it('에이전트도 사진을 걸면 사진을 그린다', async () => {
+    const c = fakeController();
+    render(<Identity account={acc('u3', 'bot', 'agent', false, { avatarAttachmentId: 'att-9' })} variant="avatar" />);
+
+    const img = await screen.findByTestId('identity-avatar');
+    expect(img.getAttribute('src')).toMatch(/^blob:/);
+    expect(c.fetchAvatar).toHaveBeenCalledWith('u3');
+  });
+
+  it('사진이 없는 에이전트는 이니셜 폴백 그대로다', async () => {
+    const c = fakeController();
+    render(<Identity account={acc('u3', 'bot', 'agent')} variant="avatar" />);
+
+    expect(screen.queryByTestId('identity-avatar')).toBeNull();
+    expect(screen.getByText('B')).toBeTruthy();
+    expect(c.fetchAvatar).not.toHaveBeenCalled();
+  });
+
+  it('badge 자리는 사진을 그리지 않고 바이트도 받지 않는다', async () => {
+    // 사진이 서는 자리는 `avatar` 다. badge 에서 받으면 아무것도 안 보이면서 왕복만 난다.
     const c = fakeController();
     render(<Identity account={acc('u3', 'bot', 'agent', false, { avatarAttachmentId: 'att-9' })} />);
 
