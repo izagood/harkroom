@@ -21,9 +21,11 @@ const readSrc = (name: string) => readFile(join(SRC, name), 'utf8');
 
 describe('자격증명·한도 통지 배선', () => {
   it('하네스 로그인 만료는 물러나기 전에 스레드에 통지한다', async () => {
-    const main = await readSrc('main.ts');
-    const notice = main.indexOf('harnessLoginNotice');
-    const exit = main.indexOf('exitIfUnrecoverable(err)');
+    // 2026-09-08: 멘션 실패 경로가 mentionScheduler 로 옮겨갔다. 순서 계약은 그대로다 —
+    // 아래 판정이 process.exit 을 부르므로, 통지가 그보다 뒤에 있으면 영영 발화되지 않는다.
+    const main = await readSrc('mentionScheduler.ts');
+    const notice = main.indexOf('deps.hooks.noticeHarnessLogin(err');
+    const exit = main.indexOf('deps.hooks.exitIfUnrecoverable(err)');
     expect(notice).toBeGreaterThan(0);
     // **순서가 계약이다.** `exitIfUnrecoverable` 는 `process.exit` 을 부른다 — 뒤에 두면
     // 그 줄에 닿지 못하고, 사람은 다시 아무것도 못 본다.
@@ -31,18 +33,25 @@ describe('자격증명·한도 통지 배선', () => {
   });
 
   it('통지 대상은 앵커다 — 답이 스레드로 가는데 통지만 채널 최상위에 남으면 못 본다(#82·#98)', async () => {
+    // 로그인 통지는 main.ts 의 noticeIfHarnessLogin 에 남아 있고(정의를 읽어야 한다),
+    // 한도 통지는 스케줄러로 옮겨갔다. 둘 다 앵커로 간다는 것이 이 검사의 주장이다.
     const main = await readSrc('main.ts');
     expect(main).toMatch(/harnessLoginNotice\([\s\S]{0,120}?\),\s*anchor,?\s*\)/);
-    expect(main).toMatch(/quotaNotice\(quota\.resetsAt\),\s*anchor\)/);
+    const src = await readSrc('mentionScheduler.ts');
+    expect(src).toMatch(/quotaNotice\(quota\.resetsAt\),\s*anchor\)/);
   });
 
   it('사용량 한도는 재시도 회계에 들어가지 않는다', async () => {
-    const main = await readSrc('main.ts');
+    // 회계의 자리표가 `failed = true;` 에서 "답변 실패 (n/MAX)" 줄로 바뀌었다(병렬화로
+    // 전역 실패 플래그가 사라졌다). 지키는 것은 같다: 한도는 그 줄에 닿기 전에 빠져나간다.
+    const main = await readSrc('mentionScheduler.ts');
     const quota = main.indexOf('isQuotaExhausted(err)');
-    const failed = main.indexOf('failed = true;', quota);
+    const failed = main.indexOf('답변 실패 (', quota);
     expect(quota).toBeGreaterThan(0);
     // 한도 분기가 `failed = true` **앞**에서 `continue` 로 빠져야 3회를 태우지 않는다.
-    expect(main.slice(quota, failed)).toContain('continue;');
+    // `continue` 가 아니라 `return` 인 이유: 이 경로는 배치 루프가 아니라 턴 하나를 도는
+    // async 함수 안이다(runOne). 빠져나간다는 사실은 같다.
+    expect(main.slice(quota, failed)).toContain('return;');
   });
 
   it('하네스 이름을 정의에서 읽는다 — 지어내지 않는다(#368)', async () => {
