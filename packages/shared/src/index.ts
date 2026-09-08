@@ -1151,7 +1151,12 @@ export interface InboxEntry {
    * 갈라 두는 이유: 러너가 프롬프트를 다르게 조립해야 한다 — 깨움에는 새 사람 발화가
    * 없어서 델타가 비고, 비면 하네스를 돌리지 않는다(agent/src/mentionTurn.ts).
    */
-  reason: 'mention' | 'thread_reply' | 'dm' | 'wake';
+  /**
+   * `'ask_answered'` 는 **내가 낸 선택지에 사람이 답했다**(2026-09-09). `'wake'` 와 가른
+   * 이유는 040 이 `'wake'` 를 가른 이유와 같다 — 러너가 프롬프트를 다르게 조립한다.
+   * 깨움에는 새 사람 발화가 없지만, **선택에는 있다**(사람이 고른 옵션).
+   */
+  reason: 'mention' | 'thread_reply' | 'dm' | 'wake' | 'ask_answered';
   readAt: string | null;
   channelId: string;
   /**

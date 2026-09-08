@@ -4,6 +4,8 @@
 // 있었다(main.ts 는 top-level await 로 진짜 서버에 붙어 import 가 불가능하다). 동시성 회계는
 // 이 저장소가 가장 자주 깨뜨린 종류의 코드라, 그것을 가장 약한 검사에 맡기지 않으려고 모듈로
 // 뺐다 — 그 선택이 값을 하는 자리가 여기다.
+import { readFileSync } from 'node:fs';
+import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createMentionScheduler, type BatchContext } from '../src/mentionScheduler.js';
 import { TurnRegistry } from '../src/turnRegistry.js';
@@ -325,5 +327,23 @@ describe('mentionScheduler 승인 관문', () => {
     // 한도까지 실패하면 읽음 처리해 흘려보낸다 — 안 그러면 이 항목이 큐를 막는다.
     expect(markedRead).toEqual([1]);
     expect(posted.some((b) => b.includes('실패'))).toBe(true);
+  });
+});
+
+// ── 선택에 답이 오면 그 답을 프롬프트에 싣는다(2026-09-09)
+//
+// 서버가 `ask_answered` 로 깨워도, 러너가 그것을 평범한 멘션으로 다루면 **아무 일도
+// 일어나지 않는다**: 사람은 버튼만 눌렀지 새 메시지를 쓰지 않았으므로 델타가 비고,
+// 비면 하네스가 돌지 않는다(040 이 `wake` 를 따로 만든 이유와 같은 자리).
+describe('ask_answered 깨움', () => {
+  const source = readFileSync(path.resolve(__dirname, '../src/mentionScheduler.ts'), 'utf8');
+
+  it("reason 이 ask_answered 면 깨어난 턴으로 조립한다 — 평범한 멘션이 아니다", () => {
+    expect(source).toContain("ask_answered");
+  });
+
+  it('고른 옵션을 사유에 싣는다 — 스레드를 다시 읽지 않아도 무엇이 정해졌는지 안다', () => {
+    // meta 에 `answeredWith` 가 있고(`inbox.poll` 이 실어 준다), 옵션 목록도 함께 온다.
+    expect(source).toContain('answeredWith');
   });
 });

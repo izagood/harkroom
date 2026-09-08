@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from 'pg';
 import { CHANNEL_MENTION_HANDLE, mentionedHandles, mentionedIds, mentionScanText, normalizeMentions, readAskMeta, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { channelVisibleSql } from './channels.js';
+import { emitEvent } from '../events.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
 import { getTeamByName, listTeamMembers } from './teams.js';
 
@@ -741,6 +742,39 @@ export async function recordAskAnswer(
     [args.messageId, args.optionId, args.actorId],
   );
   if (!updated.rowCount) return 'already_answered';
+
+  /**
+   * **답이 왔음을 물어본 쪽에 알린다**(2026-09-09). 이것이 없으면 `message.ask` 의 약속
+   * ("고르면 즉시 진행")이 성립하지 않는다: 답은 meta 에만 남고, 물어본 에이전트는 그
+   * 사실을 영영 모른다. 게다가 `message.ask` 는 발화라서 그 턴은 답을 올린 뒤 회수되므로
+   * (agent/src/mentionTurn.ts), 사람이 고민하는 사이 물어본 자리는 이미 비어 있다.
+   * 실측(03:41): 답을 기록한 뒤 15분 동안 그 스레드에 아무 일도 없었다.
+   *
+   * **UPDATE 가 성공한 뒤에만** 만든다 — 위 `answeredWith is null` 조건이 경합에서 진
+   * 쪽을 걸러 주므로, 두 사람이 동시에 눌러도 깨움은 하나다.
+   *
+   * `message_id` 는 **물음 자신**이다. 러너는 그 메시지의 meta 에서 `answeredWith` 를
+   * 읽어 무엇이 골라졌는지 안다 — 별도 메시지를 만들지 않는 이유가 이것이다(스레드에
+   * "답했다"는 줄이 하나 더 생기면 그 대화를 읽는 사람에게 소음이다).
+   *
+   * **자기 자신은 깨우지 않는다.** 에이전트가 다른 에이전트의 물음에 답하는 경로가
+   * 있고(`to.kind === 'account'`), 그때 답한 쪽이 곧 물은 쪽이면 자기를 깨우게 된다.
+   *
+   * 실패해도 던지지 않는다 — 답은 이미 기록됐고, 그것이 이 함수가 약속한 것이다.
+   * 깨우지 못하면 사람이 다시 멘션하는 길이 남는다(더 나쁜 쪽은 답이 사라지는 것이다).
+   */
+  const authorId = updated.rows[0].authorId as string;
+  if (authorId !== args.actorId) {
+    try {
+      await pool.query(
+        `insert into inbox (account_id, message_id, reason) values ($1, $2, 'ask_answered')`,
+        [authorId, args.messageId],
+      );
+      emitEvent({ type: 'inbox.updated', accountId: authorId });
+    } catch (err) {
+      console.error('[recordAskAnswer] 깨움 실패(답은 기록됐다):', err);
+    }
+  }
   return updated.rows[0];
 }
 
