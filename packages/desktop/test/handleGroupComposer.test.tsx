@@ -100,9 +100,15 @@ describe('핸들 집합 자동완성 (#285)', () => {
     expect(screen.queryByText('집합')).toBeNull();
   });
 
-  it('5b. 집합이 있어도 목록 길이는 MAX_SUGGESTIONS 를 넘지 않는다', () => {
-    // 계정이 목록을 꽉 채우는 흔한 경우. 예약 자리가 없으면 집합이 아예 안 보이고,
-    // 자리를 떼지 않고 양쪽을 각자 채우면 목록이 두 배가 된다.
+  /**
+   * 계정이 많아도 **집합은 목록에 선다** — 이것이 예약 자리의 뜻이고, 이 축이 지키는 것이다.
+   *
+   * 예전에는 여기서 `길이 <= 8`(`MAX_SUGGESTIONS`)도 함께 쟀다. 그 수는 "목록이 화면을
+   * 덮지 않을 만큼" 이었는데, 화면을 덮지 않게 하는 일은 목록 상자의 높이가 하고 있었고
+   * 이 수는 **아홉째부터를 조용히 지우는** 일만 했다(스크롤도 안 되니 찾을 길이 없다).
+   * 그래서 상한을 올렸고, 이 축은 계정 열 개가 다 서면서 집합도 함께 서는 것을 잰다.
+   */
+  it('5b. 계정이 많아도 집합은 목록에 서고, 계정이 잘리지 않는다', () => {
     const many = Object.fromEntries(
       Array.from({ length: 10 }, (_, i) => [`x${i}`, acc(`x${i}`, `alpha${i}`)]),
     );
@@ -112,8 +118,9 @@ describe('핸들 집합 자동완성 (#285)', () => {
     });
     type('@al');
 
-    const options = screen.getAllByRole('option');
-    expect(options.length).toBeLessThanOrEqual(8);
-    expect(options.some((o) => o.getAttribute('data-handle') === 'alpha-team')).toBe(true);
+    const handles = screen.getAllByRole('option').map((o) => o.getAttribute('data-handle'));
+    expect(handles).toContain('alpha-team');
+    // 계정 열 개 + 집합 하나. 여덟에서 끊기지 않는다.
+    expect(handles.length).toBe(11);
   });
 });
