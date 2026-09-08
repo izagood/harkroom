@@ -124,3 +124,46 @@ describe('한도 판정은 tail 을 로그에 남긴다', () => {
     expect(line).toContain('err instanceof Error');
   });
 });
+
+/**
+ * **네 번째 자리 — 아무도 await 하지 않은 거절**(2026-09-08 14:04 실측).
+ *
+ * 위 세 자리는 모두 `try/catch` 다. 그날 러너를 죽인 것은 그 셋 중 어디도 아니었다:
+ * 드레인(SIGTERM)을 받은 러너가 턴을 끝내고 폴 루프를 빠져나가 `relay.stop()` → `종료`
+ * 까지 정상으로 출력한 **뒤**, 떠 있던 MCP send 하나가 401 로 거절되며 프로세스를 죽였다.
+ * 스택에 애플리케이션 프레임이 하나도 없었다 — 아무도 그 promise 를 들고 있지 않았다.
+ *
+ * 결과는 종료 코드 1 과 생 `StreamableHTTPError` 스택이었고, 앱이 읽는 것은 78 과 마커
+ * 한 줄뿐이므로(`exit.ts` 주석) 앱은 그 죽음을 `needs_reissue` 로 칠할 근거를 못 받았다.
+ * 사람이 화면에서 본 것은 이유 없이 사라진 러너다.
+ *
+ * **판정을 새로 만들지 않는다** — 같은 `exitIfUnrecoverable` 을 태운다. 그것이 물러날
+ * 사유가 아니라고 하면 **다시 던져 Node 의 기본 동작으로 돌려보낸다**: 모든 거절을 로그로
+ * 삼키면 이번 사고와 무관한 결함들이 조용히 묻힌다. 그물은 사유를 아는 거절 하나만 걷는다.
+ *
+ * 행동 층은 `credentialRejectedExit.test.ts` 가 프로세스를 띄워 확인한다. 여기서 재는 것은
+ * 그 파일 머리가 적은 대로 **자리**다 — main.ts 는 import 할 수 없다.
+ */
+describe('아무도 await 하지 않은 거절도 같은 판정을 지난다 (2026-09-08)', () => {
+  it('unhandledRejection 그물이 있다', () => {
+    expect(source).toContain("process.on('unhandledRejection'");
+  });
+
+  it('그물도 `exit.ts` 의 같은 판정을 태운다 — 사유 판정을 두 벌로 만들지 않는다', () => {
+    const at = source.indexOf("process.on('unhandledRejection'");
+    expect(at).toBeGreaterThan(0);
+    const guard = source.indexOf('exitIfUnrecoverable(', at);
+    expect(guard).toBeGreaterThan(0);
+    expect(guard - at).toBeLessThan(600);
+  });
+
+  // 삼키지 않는다: 판정이 "물러날 사유가 아니다"라고 하면 Node 의 기본 동작(크게 죽는다)을
+  // 그대로 둔다. 이 단언이 없으면 그물이 모든 거절을 로그 한 줄로 덮는 쪽으로 흘러간다.
+  it('물러날 사유가 아닌 거절은 삼키지 않고 다시 던진다', () => {
+    const at = source.indexOf("process.on('unhandledRejection'");
+    const guard = source.indexOf('exitIfUnrecoverable(', at);
+    const rethrow = source.indexOf('throw reason;', guard);
+    expect(rethrow).toBeGreaterThan(guard);
+    expect(rethrow - guard).toBeLessThan(600);
+  });
+});
