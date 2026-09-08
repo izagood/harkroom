@@ -48,19 +48,17 @@ export async function registerAvatarRoutes(
       });
     }
 
-    const type = await detectAvatarType(storage, source);
-    if (!type) {
+    const detected = await detectAvatarType(storage, source);
+    if (!detected.type) {
       // 아무것도 걸지 않고 돌아간다. 첨부 행은 남긴다 — 지우는 것은 고아 업로드 GC 의 일이고,
       // 여기서 지우면 같은 파일을 다른 용도로 쓰려던 요청까지 함께 날린다.
       //
-      // 메시지에 **받아 주는 목록을 적는다.** 화면이 이 문장을 그대로 보여 주지는 않지만,
-      // 여기가 목록이 바뀌었을 때 제일 먼저 눈에 띄는 자리다.
-      return reply.code(400).send({
-        error: { code: 'not_an_image', message: 'avatar must be a png, jpeg, gif, webp, avif, or svg image' },
-      });
+      // 코드·문구는 판정한 자리(`avatars.ts`)가 정한다. 여기서 하나로 뭉개면 화면이
+      // 이유별로 다른 말을 할 수 없다.
+      return reply.code(400).send({ error: detected.error });
     }
 
-    await setAccountAvatar(pool, me.id, { attachmentId: source.id, contentType: type });
+    await setAccountAvatar(pool, me.id, { attachmentId: source.id, contentType: detected.type });
     emitEvent({ type: 'avatar.changed', accountId: me.id, avatarAttachmentId: source.id });
     return { avatarAttachmentId: source.id };
   });
@@ -105,14 +103,12 @@ export async function registerAvatarRoutes(
       });
     }
 
-    const type = await detectAvatarType(storage, source);
-    if (!type) {
-      return reply.code(400).send({
-        error: { code: 'not_an_image', message: 'avatar must be a png, jpeg, gif, webp, avif, or svg image' },
-      });
+    const detected = await detectAvatarType(storage, source);
+    if (!detected.type) {
+      return reply.code(400).send({ error: detected.error });
     }
 
-    await setAccountAvatar(pool, id, { attachmentId: source.id, contentType: type });
+    await setAccountAvatar(pool, id, { attachmentId: source.id, contentType: detected.type });
     emitEvent({ type: 'avatar.changed', accountId: id, avatarAttachmentId: source.id });
     return { avatarAttachmentId: source.id };
   });

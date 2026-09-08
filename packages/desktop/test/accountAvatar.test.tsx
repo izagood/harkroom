@@ -255,6 +255,24 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     expect(alert.className).not.toMatch(/sr-only/);
   });
 
+  it('큰 SVG 를 "SVG 만 쓸 수 있습니다"로 되돌려 보내지 않는다', async () => {
+    // 서버는 SVG 만 상한이 낮다(검사에 파일 전체를 읽어야 한다). 이유를 `not_an_image` 로
+    // 뭉개면 SVG 를 들고 있는 사람이 "SVG 를 쓰세요"를 듣고, 고칠 방법을 못 찾는다.
+    fakeController({
+      setAvatar: vi.fn(async () => { throw new ApiError(400, 'svg_too_large', 'too big'); }),
+    });
+    useAppStore.getState().set({ me: acc('u1', 'me') });
+    render(<ProfileSettings onSignOut={() => {}} />);
+
+    const file = new File(['<svg/>'], 'big.svg', { type: 'image/svg+xml' });
+    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/256 KiB/);
+    // 형식 목록을 다시 읊으면 "내 파일이 SVG 가 아닌가?" 로 읽힌다.
+    expect(alert.textContent).not.toMatch(/PNG · JPEG/);
+  });
+
   it('연결이 끊긴 것을 파일 탓으로 말하지 않는다', async () => {
     // 예전에는 무엇이 실패했든 "이미지 파일만 쓸 수 있습니다" 하나였다 — 서버가 죽어 있어도
     // 사람은 자기 파일을 의심하며 다른 파일로 몇 번을 다시 시도하게 된다.
