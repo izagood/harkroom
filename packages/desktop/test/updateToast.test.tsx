@@ -2,13 +2,15 @@
 //
 // 로그인 화면의 배너(#526)는 붙기 전의 막다른 길을 풀었다. 이쪽은 다른 문제다: 이 앱은
 // 하루 종일 켜 두는 창이라, 시작할 때 한 번 확인하고 끝내면 그 사이에 나온 버전을 **다음
-// 재시작까지 모른다.** 그래서 주기적으로 확인하고 우측 하단으로 말한다.
+// 재시작까지 모른다.** 그래서 주기적으로 확인하고 화면 좌측 하단으로 말한다.
 //
 // ## 이 파일이 지키는 두 가지
 //
 // 1. 있을 때 **말한다** — 그리고 사람이 닫으면 이 세션 동안 다시 조르지 않는다.
 // 2. 닫은 것이 "그 버전"에 대한 답이라는 것 — 더 새 버전이 나오면 다시 말해야 한다.
 //    닫기를 영구 침묵으로 읽으면 그 다음 업데이트가 조용히 사라진다.
+// 3. **컴포저의 `전송` 을 덮지 않는다** — 우측 하단이었을 때 이 팝업이 정확히 그 버튼
+//    위에 섰다. 업데이트는 급한 일이 아닌데 지금 쓰던 글을 보내는 것을 막았다.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { UpdateToast } from '../src/components/UpdateToast';
@@ -192,5 +194,27 @@ describe('Workspace 에 실제로 붙어 있다', () => {
     render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
     expect(await screen.findByRole('button', { name: 'Update' })).toBeTruthy();
+  });
+
+  /*
+   * 자리에 대한 회귀선. jsdom 은 레이아웃을 계산하지 않으므로 "겹치는가"를 픽셀로 물을
+   * 수 없다 — 대신 **겹치게 만드는 원인**을 막는다: 오른쪽 아래에 고정되어 있는가.
+   *
+   * 컴포저의 `전송` 은 본문 칸의 우측 하단이라 창의 우측 하단과 같은 자리다. 그래서
+   * `right-*` 로 고정하는 순간 다시 그 버튼 위로 돌아온다. 팝업은 왼쪽에 매달려야 하고,
+   * 그 왼쪽 끝은 레일 폭을 베낀 `fixed left-[62px]` 가 아니라 흐름 안의 앵커가 정한다
+   * (커뮤니티가 둘 이상이면 레일이 하나 더 선다 — 못 박은 숫자는 그때 틀린다).
+   */
+  it('전송 버튼이 있는 우측 하단에 고정하지 않는다', async () => {
+    withSurface();
+    setAppUpdater(stub({ check: vi.fn(async () => ({ version: '9.9.9' })) }));
+    render(<UpdateToast />);
+
+    const toast = (await screen.findByRole('status')) as HTMLElement;
+    const cls = toast.className.split(/\s+/);
+    expect(cls).not.toContain('fixed');
+    expect(cls.some((c) => c.startsWith('right-'))).toBe(false);
+    expect(cls).toContain('absolute');
+    expect(cls.some((c) => c.startsWith('left-'))).toBe(true);
   });
 });
