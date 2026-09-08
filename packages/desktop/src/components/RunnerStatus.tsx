@@ -3,6 +3,8 @@
  * 쓴다 — 두 자리가 따로 문구를 만들면 한쪽만 고치는 사고가 난다.
  */
 import type { RunnerState, RunnerStatus } from '../lib/runnerLauncher';
+import type { Translate } from '../i18n';
+import { useT } from '../i18n/useT';
 
 /**
  * 사람이 읽는 한 줄. **'꺼짐'과 '78 로 죽었다'를 뭉치지 않는다** — 앞은 정상이고 뒤는
@@ -18,28 +20,43 @@ import type { RunnerState, RunnerStatus } from '../lib/runnerLauncher';
  * 어느 실행 파일인지는 여기서 말하지 않는다 — `state.message` 가 이름을 들고 있고
  * (`runnerLauncher.ts::exitStateFor78`), 이 라벨과 그 문구는 화면에서 나란히 나온다.
  * 이름을 여기서도 만들면 하네스 표가 두 곳으로 갈린다.
+ *
+ * ## 번역기를 **필수 인자로 맨 뒤에** 받는다
+ *
+ * 이 함수는 컴포넌트가 아니라 **판정**이라 훅을 못 쓴다(사이드바·설정 상세·시험 셋이
+ * 컴포넌트 밖에서 부른다). 그래서 `i18n/index.ts::Translate` 가 고른 (b) 주입을 따른다.
+ *
+ * **기본값을 주지 않는다.** 주면 부르는 화면이 그 자리를 빠뜨린 채 조용히 한 언어로
+ * 굳고, 그것은 이 이전이 없애려는 그 결함이다. **맨 뒤인 이유**는 앞에 끼우면 기존
+ * 호출처와 회귀선들이 자리만 어긋난 채 컴파일을 지나 초록으로 틀린 것을 재기 때문이다.
+ *
+ * ## 상수 표가 아니라 함수인 이유 (`PRESENCE_LABEL` 과 갈린 자리)
+ *
+ * `Record<RunnerStatus, MessageKey>` 로는 이 판정이 표현되지 않는다: `stopped` 한 갈래가
+ * `exitCode` 를 읽어 **두 문장으로 갈리고**(0·null 이면 꺼짐, 아니면 코드를 그대로
+ * 보인다) 그중 하나는 자리표시자를 받는다. 한 상태가 두 키를 갖는 순간 표가 거짓이 된다.
  */
-export function runnerStatusLabel(state: RunnerState | undefined): string {
-  if (!state) return '꺼짐';
+export function runnerStatusLabel(state: RunnerState | undefined, t: Translate): string {
+  if (!state) return t('runnerState.stopped');
   switch (state.status) {
-    case 'running': return '실행 중';
+    case 'running': return t('runnerState.running');
     // `#431` 2단계 A: `external`(presence 추측)이 사라지고 `adopted` 가 들어왔다.
     // **daemon 이 `kill(pid, 0)` 으로 확인한 러너**라서 생사를 단언할 수 있다 — 앞
     // 이름은 "이 앱이 안 띄웠다"는 뜻이었는데 "실행 중"으로 읽혔고, 그 오독이 `#430` 이다.
     // **문구 재정의는 `#443` 범위다** — 여기서는 상태값이 가리키는 사실만 바로잡는다.
-    case 'adopted': return 'daemon 이 들고 있음';
+    case 'adopted': return t('runnerState.adopted');
     // 재기동을 **예약했다**. 'running' 도 'stopped' 도 아닌 이유는 상태값 주석에 있다 —
     // SIGTERM 은 graceful 이라 러너는 진행 중인 턴을 마친 뒤에야 죽고, 그 시차가 분
     // 단위다. 무엇을 기다리는지는 `state.message` 가 말한다.
-    case 'restarting': return '재기동 대기 (진행 중인 턴을 마치는 중)';
-    case 'needs_reissue': return '종료 (78: 자격증명 폐기 — 재발급 필요)';
-    case 'needs_harness': return '종료 (78: 하네스를 찾을 수 없음 — 설치 필요)';
-    case 'needs_login': return '종료 (78: 하네스 로그인 만료 — 재로그인 필요)';
+    case 'restarting': return t('runnerState.restarting');
+    case 'needs_reissue': return t('runnerState.needsReissue');
+    case 'needs_harness': return t('runnerState.needsHarness');
+    case 'needs_login': return t('runnerState.needsLogin');
     case 'stopped':
       return state.exitCode === null || state.exitCode === 0
-        ? '꺼짐'
-        : `종료 (기타: 코드 ${state.exitCode})`;
-    case 'failed': return '기동 실패';
+        ? t('runnerState.stopped')
+        : t('runnerState.stoppedWithCode', { code: state.exitCode });
+    case 'failed': return t('runnerState.failed');
   }
 }
 
@@ -86,7 +103,10 @@ export function runnerReason(state: RunnerState | undefined): string | null {
 }
 
 export function RunnerStatusLine({ state }: { state: RunnerState | undefined }) {
-  const label = runnerStatusLabel(state);
+  // **여기서는 훅이 맞다** — 컴포넌트다. 위 판정 함수가 `t` 를 인자로 받는 것과
+  // 모순이 아니다: 그 함수는 컴포넌트 밖에서도 불린다(사이드바의 DM 줄 · 설정 상세).
+  const t = useT();
+  const label = runnerStatusLabel(state, t);
   return (
     <div className="text-meta" role="status">
       <span className={state ? TONE[state.status] : 'text-fg-muted'}>{label}</span>

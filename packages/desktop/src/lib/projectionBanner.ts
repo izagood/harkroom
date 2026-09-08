@@ -1,5 +1,6 @@
 import { PROJECTION_UNCONFIGURED_DETAIL, PROJECTION_UNCONFIGURED_HEADLINE } from '@murmur/shared';
 import type { ProjectionStatus } from '@murmur/shared';
+import type { Translate } from '../i18n';
 
 /**
  * 투영이 **정상이 아니라고 말하는 한 줄**(#488 A3-a).
@@ -63,17 +64,28 @@ export function projectionBanner(input: {
    * `1일 전` 이다. 이름이 `minutesAgo` 로 남으면 그 이름이 거짓이 된다.
    */
   ago: (timestamp: number) => string;
+  /**
+   * 이 판정이 내는 말의 번역기. **필수이고 맨 뒤다**(`i18n/index.ts::Translate` 의 (b) 주입).
+   *
+   * 이 파일은 화면이 아니라 훅을 못 쓴다 — 부르는 자리가 셋이고(`ProjectionBanner` ·
+   * `LeasePanel` · `ConnectionSettings`) 셋 다 컴포넌트라 각자 `useT()` 를 넘긴다.
+   * **기본값을 두지 않는 이유**: 주면 그 자리를 빠뜨린 화면이 조용히 한 언어로 굳는다.
+   *
+   * `ago` 와 나란히 서는 것이 맞다 — 둘 다 *"말로 바꾸는 일은 화면의 것"* 이라는 같은
+   * 이유로 주입되고, `ago` 자신이 이미 그 언어를 안다(`useAgo` 가 `t` 를 지난다).
+   */
+  t: Translate;
 }): ProjectionBanner | null {
-  const { status, error, ago } = input;
+  const { status, error, ago, t } = input;
 
   if (error !== null) {
     return {
       testid: 'projection-unreadable',
       tone: 'danger',
-      text: '투영 상태를 읽지 못했다',
+      text: t('projection.banner.unreadable'),
       detail: error,
       strip: true,
-      listNote: '지금 상태를 못 읽어 이 목록을 믿을 수 없다',
+      listNote: t('projection.list.unreadable'),
     };
   }
 
@@ -82,11 +94,11 @@ export function projectionBanner(input: {
     return {
       testid: 'projection-unknown',
       tone: 'muted',
-      text: '투영 상태를 확인하는 중…',
+      text: t('projection.banner.unknown'),
       detail: null,
       strip: false,
       // 띠가 안 서는 유일한 사정이라 이 줄이 그 사정을 말하는 **유일한 자리**다.
-      listNote: '투영 상태를 확인하는 중…',
+      listNote: t('projection.list.unknown'),
     };
   }
 
@@ -94,26 +106,41 @@ export function projectionBanner(input: {
     return {
       testid: 'projection-unconfigured',
       tone: 'warning',
+      // **이 둘만 사전을 안 지난다** — `packages/shared` 의 상수라 데스크탑 사전이 닿을
+      // 수 없다(서버·러너가 함께 쓴다). `runner.exit.notFound` 뒤에 붙는 `installHint()`
+      // 와 **같은 경계이고 같은 미결**이다: `Translate` 를 shared 로 내릴지, 저 상수가
+      // 키만 내고 여기서 문구를 씌울지를 먼저 정해야 한다. 그래서 사전에 짝이 될 키를
+      // 미리 만들어 두지 않았다 — 안 쓰는 키는 검사할 방법이 없어 조용히 썩는다.
       text: PROJECTION_UNCONFIGURED_HEADLINE,
       detail: PROJECTION_UNCONFIGURED_DETAIL,
       strip: true,
-      listNote: '투영이 꺼져 있어 이 목록은 채워지지 않는다',
+      // 목록 쪽은 이 파일의 말이라 사전을 지난다 — 위 둘과 출처가 다르다.
+      listNote: t('projection.list.unconfigured'),
     };
   }
 
   if (status.state === 'stalled') {
     // 폴링을 한 번도 못 했으면 "N분 전"이라고 말할 수 없다 — 모르는 것을 숫자로
     // 꾸미지 않는다.
-    const since = status.lastPolledAt === null
-      ? '언제부터인지 알 수 없지만'
-      : `${ago(status.lastPolledAt)}부터`;
+    //
+    // **조각을 이어 붙이던 것을 통짜 문장 둘로 갈랐다.** 앞 판본은 `since` 한 조각을
+    // 만들어 두 문장에 끼웠는데, 그 조각이 한국어에서는 `~부터`(시각 **뒤**에 붙는
+    // 조사)이고 영어에서는 `for ~`(시각 **앞**에 서는 전치사)다 — 조각으로 두면 어순
+    // 하나가 코드에 굳어 다른 언어가 그 자리를 못 쓴다. `waitChain.link` 가 금지하고
+    // `daemonFacts` 의 종료 요청 행이 같은 이유로 지킨 그 규율이다.
+    const known = status.lastPolledAt !== null;
+    const args = known ? { ago: ago(status.lastPolledAt!) } : undefined;
     return {
       testid: 'projection-stalled',
       tone: 'warning',
-      text: `투영이 ${since} 멈춰 있다`,
+      text: known
+        ? t('projection.banner.stalled', args)
+        : t('projection.banner.stalledUnknownSince'),
       detail: status.lastError,
       strip: true,
-      listNote: `투영이 ${since} 멈춰 이 목록은 지금 사실이 아닐 수 있다`,
+      listNote: known
+        ? t('projection.list.stalled', args)
+        : t('projection.list.stalledUnknownSince'),
     };
   }
 

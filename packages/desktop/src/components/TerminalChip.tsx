@@ -1,5 +1,6 @@
 import type { AccountView, MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
+import { useT } from '../i18n/useT';
 
 /**
  * 진행 중인 에이전트 터미널로 들어가는 진입점(#141 Phase 2, 스펙 §5 "소유자").
@@ -27,6 +28,8 @@ export function TerminalChip({ account, message }: {
 }) {
   const me = useActiveStore((s) => s.me);
   const set = useActiveStore((s) => s.set);
+  // 훅은 아래 두 `return null` 보다 먼저여야 한다.
+  const t = useT();
 
   if (!account || account.kind !== 'agent' || !me) return null;
   // `ownerAccountId === null` 은 `me.id` 와 결코 같아지지 않으므로 이 비교만으로도
@@ -48,9 +51,9 @@ export function TerminalChip({ account, message }: {
         },
       })}
       className="rounded bg-surface-raised px-1.5 py-0.5 text-meta text-fg hover:bg-surface-hover"
-      title={`@${account.handle} 의 진행 중인 터미널을 본다`}
+      title={t('terminal.chip.open', { handle: account.handle })}
     >
-      터미널 보기
+      {t('terminal.chip.label')}
     </button>
   );
 }

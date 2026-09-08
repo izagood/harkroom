@@ -70,18 +70,26 @@ import type { Message } from './types';
  *
  * 뼈대 PR 이 **대기 사슬** 13개를, 그 다음이 **사이드바** 107개를, 그 다음이
  * **에이전트 설정**(`AgentsSettings`) 146개를, 그 다음이 **러너 판정 둘**
- * (`runnerLauncher.ts` 35 · `daemonFacts.ts` 18)을, 이 PR 이 **대화 화면 묶음**
- * (여덟 가지 말 · 메시지 행 · `threadState` · `inboxRow`)을 옮겼다.
+ * (`runnerLauncher.ts` 35 · `daemonFacts.ts` 18)을, 그다음이 **대화 화면 묶음**
+ * (여덟 가지 말 · 메시지 행 · `threadState` · `inboxRow`)을, 이 PR 이 **러너·투영 화면**
+ * (`TerminalPanel` 23 · `ProjectionUrl` 16 · `projectionBanner.ts` 11 ·
+ * `RunnerStatus` 10 · 나머지 넷 11)을 옮겼다.
+
  * 남은 것을 무게순으로 적어 둔다 — 각각이 **한 PR** 이다.
+ *
+ * **집계를 따옴표로만 세지 마라.** 이 PR 이 받은 예상치는 56 이었고 실제는 71 이었다
+ * (1.27배) — 맨몸 JSX 텍스트 노드와 템플릿 리터럴 조각이 안 세어진다. `AgentGrid` 는
+ * 아래 표가 99 라고 적어 뒀는데 **이미 0 이었다**(그 사이 다른 PR 이 옮겼다). 옮기기 전에
+ * 파서로 한 번 세는 것이 그 두 오차를 다 없앤다.
  *
  * | 남은 것 | 규모 | 먼저 풀어야 할 것 |
  * |---|---|---|
- * | `AgentGrid` | 99 | 버전 칩 어휘(`뒤처짐`·`버전 모름`·`멈추는 중`)를 위 표에서 가져온다. **`agents.*` 에 붙는다** — 같은 화면의 격자이고, 이미 선 덩어리(`grid`·`stale`)가 그 자리다 |
+ * | ~~`AgentGrid`~~ | — | **끝났다**(아래 `grid.*`). 그 영역 머리말이 이 표의 *"`agents.*` 에 붙는다"* 를 실측으로 뒤집은 근거를 적어 뒀다 — 두 화면이 공유하는 컴포넌트라 화면 이름으로 영역을 잡으면 사이드바가 남의 키를 부른다 |
  * | `TeamDetail` · `TeamGrid` · `TeamMemberPicker` | 8 · 4 · 5 | **`agents.teams.*` 가 이미 서 있다.** 팀 묶음의 격자 머리와 만들기 폼은 이 PR 이 옮겼고, 상세는 그 파일들에 남아 있다 |
  * | `Profile` | 소수 | `lastTurnLabel` 이 **이미 번역기를 받는다**(이 PR 이 그렇게 바꿨다) — 그 화면이 `useT` 를 이미 들고 있으므로 나머지는 키만 씌우면 된다 |
  * | ~~`runnerLauncher.ts`~~ | — | **끝났다**(아래 `runner.*`). 남은 일곱은 `throw new Error(...)` 라 **사람에게 가는 말이 아니다** — 그 영역 머리말이 안 넣은 이유를 적었다 |
  * | `controller.ts` | 59 | 판정 함수. **번역기를 넘기는 배선은 이 PR 이 이미 깔았다**(`RunnerLauncher` 생성자의 마지막 인자) — 그 자리를 그대로 쓰면 된다 |
- * | `packages/shared::installHint` | 3 | **이 저장소의 다른 패키지다.** `runner.exit.notFound` 뒤에 붙는 설치 안내 한 줄이 아직 한국어인데, 서버·러너가 함께 쓰는 패키지라 데스크탑 사전이 닿을 수 없다. 먼저 정할 것: `Translate` 를 `shared` 로 내릴지, 아니면 그 판정이 **키만 내고** 데스크탑이 문구를 씌울지 |
+ * | `packages/shared::installHint` · `PROJECTION_UNCONFIGURED_*` | 3 · 2 | **이 저장소의 다른 패키지다.** 서버·러너가 함께 쓰는 패키지라 데스크탑 사전이 닿을 수 없다 — `runner.exit.notFound` 뒤에 붙는 설치 안내 한 줄과, 투영이 꺼졌을 때의 머리·본문 둘이 그것이다(`projection` 머리말이 그래서 그 키를 안 만든 이유를 적었다). **이제 자리가 둘이니 한 PR 로 함께 푼다.** 먼저 정할 것: `Translate` 를 `shared` 로 내릴지, 아니면 그 상수들이 **키만 내고** 데스크탑이 문구를 씌울지 — 뒤엣것이면 `shared` 를 쓰는 서버·러너 쪽에는 사전이 없다는 것을 함께 풀어야 한다 |
  * | ~~`MessageItem`~~ | — | **끝났다**(아래 `message.*`·`speech.*`). 그 표가 지목한 손수 복수형(`replyCount === 1 ? 'reply' : 'replies'`)은 `message.summary.replies` 로 갔고, **`subjectParticle` 과 `lib/particle.ts` 는 지웠다** — 그 함수의 마지막 호출처가 이 행의 말 슬롯이었고, 조사는 이제 번역기 안에 있다 |
  * | ~~여덟 가지 말~~ | — | **끝났다**(아래 `speech.*`). `AskCard`·`FailureCard`·`ReportCard`·`ProgressRow`·`AgentExchange` 다섯이 이루는 어휘 하나이고, 그리는 화면이 넷이라 판정도 화면도 아닌 **어휘 이름**으로 영역을 잡았다 |
  * | ~~`threadState.ts`~~ | — | **끝났다**(아래 `thread.*`). `THREAD_STATE_LABEL` 이 **모듈 상수라 로드 시점 언어로 굳어 있었다** — `SkillsSettings`·`STRANGER_ATTACHED` 와 같은 모양이고 같은 방식으로 함수로 내렸다 |
@@ -92,7 +100,7 @@ import type { Message } from './types';
  * | ~~시간 표기~~ | — | **끝났다** — 아래 `time.*` 과 `lib/time.ts` 를 보라 |
  * | 설정 목차 14개 · `Save`·`Cancel`·`Invite` 등 | 소수 | 이미 영어다 — **키만 씌우면 된다.** 둘 이상이 쓰므로 `common.*` 로 간다 |
  * | 나머지 설정 화면들(`Gallery`·`Skills`·`HandleGroups`·`AgentDefaults` 등) | 42 · 19 · 16 · 11 | 각각 자기 영역(`gallery`·`skills`·…)을 연다. 영역 이름을 `settings.*` 로 묶지 않는 근거는 아래 `agents` 머리말에 있다 |
- * | `RunnerStatus.tsx::runnerStatusLabel` · `lib/presenceView.ts::PRESENCE_LABEL` | 소수 | **사이드바가 이미 부르고 있다**(`sidebar.runner.state` 가 그 값을 감싼다). 둘 다 세 화면 이상이 쓰므로 옮길 때 `common.*` 후보다. **둘 다 모듈 상수다** — `THREAD_STATE_LABEL` 이 그랬듯 로드 시점 언어로 굳어 있으므로 함수로 내려야 한다 |
+ * | ~~`RunnerStatus.tsx::runnerStatusLabel` · `lib/presenceView.ts::PRESENCE_LABEL`~~ | — | **끝났다**(아래 `runnerState.*` · `presence.*`). 둘이 **다르게** 풀렸다: 앞은 함수로 내리고 뒤는 표를 남긴 채 값만 키로 바꿨다 — 갈리는 근거(자리표시자와 갈래의 유무)는 `runnerState` 머리말에 있다. `common.*` 후보라던 이 표의 예상은 **틀렸다**: 셋 이상이 쓰는 것은 맞지만 그것들은 `lib/` 판정이 내는 말이라 판단 순서 2번(판정 이름)에 먼저 걸린다 |
  * | `ThreadPanel` · `WakeRow` · `Reactions` 등 대화 화면의 나머지 | 소수 | 이 PR 이 옮긴 것은 **말과 행**이지 그 화면들의 껍데기가 아니다. `thread.*` 가 이미 서 있으므로 스레드 패널의 머리띠는 그 영역에 붙는다 |
  *
  * ### `common` 이 아직 비어 있는 이유 — **두 번째 화면이 왔는데도**
@@ -712,6 +720,21 @@ export const en = {
   'agents.runner.reissueNoteRevoke': 'revokes the old one',
   'agents.runner.reissuing': 'Reissuing…',
   'agents.runner.startFailed': 'The runner did not start: {reason}',
+  /**
+   * 손으로 띄우는 명령 **두 갈래의 이름**(`lib/runnerCommand.ts`). 그 파일이 *"두 갈래를
+   * 모두 적는다 — 하나만 적으면 반쪽이 또 낡는다"* 고 못 박았고, 사람이 자기 상황을
+   * 고르려면 **각 줄이 어느 상황의 것인지**를 알아야 한다.
+   *
+   * `#` 를 문구에 함께 두는 이유: 이 값은 **셸에 붙여넣는 텍스트**다. 주석 기호를 코드가
+   * 붙이고 문구만 사전에서 오면, 번역자가 이것이 셸 주석이라는 것을 모르고 줄바꿈을
+   * 넣어 그 아래 명령을 통째로 주석에서 꺼낸다.
+   *
+   * **`Run a runner` 와 갈린다**(아래 `templateHeading`): 저것은 절의 제목이고 이 둘은
+   * 클립보드에 실려 나가는 값이다.
+   */
+  'agents.runner.commandBundledNote': '# If you installed the app (change the path if you installed it elsewhere)',
+  /** 저장소를 클론한 사람만의 길이다 — 배포판에는 이 소스가 없다(그 파일 머리말). */
+  'agents.runner.commandDevNote': '# A checkout of the murmur repository',
   'agents.runner.templateHeading': 'Run a runner',
   /** 토큰을 잃었을 때 갈 곳. **글로만 두면 발급 자리를 찾아야 한다**(`#177`). */
   'agents.runner.templateNote': 'A token is visible only when it is minted. If you lost it, mint a new one.',
@@ -1663,6 +1686,392 @@ export const en = {
   'grid.card.relaunch': 'Start {handle}',
   'grid.card.relaunchFailed': 'Start {handle} again',
   'grid.card.stop': 'Stop {handle}',
+
+  // ---------------------------------------------------------------------------
+  // presence — **판정 이름이다**(`lib/presenceView.ts::presenceView`). 화면 이름이 아니다.
+  //
+  // `PRESENCE_LABEL` 이 자기 주석에 *"세 자리(사이드바·디렉터리·에이전트 격자)가 같은
+  // 말을 쓴다"* 고 이미 적어 뒀다 — `waitChain` 머리말이 둘로 충분하다고 한 그 조건을
+  // 넘는다. 화면 이름을 골랐다면 나머지 둘이 남의 키를 부른다.
+  //
+  // ## 표를 지우지 않고 **값만 키로 바꿨다** (`Sidebar::NOTIFY_LEVEL_KEY` 판례)
+  //
+  // `runnerStatusLabel` 은 함수로 내렸는데(아래 `runnerState` 머리말) 이쪽은 표로 남겼다.
+  // 갈리는 근거는 **자리표시자의 유무**다: 이 셋은 인자를 안 받는 상수 문구 셋이라
+  // `Record<PresenceView, MessageKey>` 가 그대로 성립하고, 그러면 *"네 번째 값이 생기면
+  // 여기서 컴파일이 막힌다"* 는 성질이 산다(그 판례가 지키려던 것이 그것이다).
+  // **키는 언어를 안 지니므로 모듈 상수여도 안전하다** — 굳는 것은 값이지 키가 아니다.
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 온라인 · 오프라인 | `Online` · `Offline` | 서버가 **말한** 사실 둘이다 |
+  // | 연결 끊김 — 알 수 없음 | `Disconnected — presence unknown` | `agents.detail.disconnected`·`sidebar.brand.disconnected` 와 같은 규율이다: **`Disconnected` 한 단어로 끝내지 않는다.** 그 모듈 주석이 못 박은 것이 *"'오프라인'이라고 쓰지 않는다 — 그것은 아는 척이다"* 이고, 뒤 절반이 그 아는 척을 막는다. 사람이 할 일이 갈린다: 오프라인이면 러너를 되살리고, 모르면 연결이 돌아오기를 기다린다 |
+  // ---------------------------------------------------------------------------
+
+  'presence.offline': 'Offline',
+  'presence.online': 'Online',
+  /**
+   * **`Offline` 이라고 쓰지 않는다** — 그것은 아는 척이다(그 모듈 주석). 뒤 절반이
+   * 빠지면 사람은 이것을 '오프라인'으로 읽고 멀쩡한 러너를 되살리려 든다.
+   */
+  'presence.unknown': 'Disconnected — presence unknown',
+
+  // ---------------------------------------------------------------------------
+  // projection — **판정 이름이다**(`lib/projectionBanner.ts::projectionBanner`).
+  // 화면 이름이 아니다.
+  //
+  // 그 판정을 그리는 화면이 **셋이다**: 화면 위쪽 띠(`ProjectionBanner`) · 리스 목록
+  // (`LeasePanel`) · 연결 설정(`ConnectionSettings`). 그 파일 머리말이 *"두 자리가 각자
+  // 판정하면 반드시 갈라진다"* 며 함수를 하나로 뽑은 그 이유가 키에도 그대로 걸린다.
+  //
+  // `url` 덩어리만 화면 하나(`settings/ProjectionUrl.tsx`)의 것이다. **그래도 여기 둔다** —
+  // 사람에게 그 둘은 한 가지 일이고(투영이 무엇을 바라보고, 지금 도는가), 영역을 가르면
+  // 주소를 고치러 온 사람이 띠의 어휘와 다른 말을 읽는다.
+  //
+  // | 덩어리 | 무엇 |
+  // |---|---|
+  // | `banner` | 띠가 말하는 사정 넷의 **머리 문장** |
+  // | `list` | 같은 사정이 **리스 목록에** 뜻하는 것(`listNote`) |
+  // | `url` | avcs 주소를 앱에서 정하는 줄 |
+  //
+  // ## 네 사정을 뭉개지 않는다 — 영어가 그 갈림을 **그대로** 져야 한다
+  //
+  // 이 영역에서 가장 중요한 것이 그것이다. 그 파일 머리말의 표를 그대로 옮긴다:
+  //
+  // | 사정 | 화면이 말하는 것 | 사람이 할 일 |
+  // |---|---|---|
+  // | `unreadable` | 지금 **못 읽고 있다** | 서버·네트워크를 본다 |
+  // | `unknown` | 아직 **모른다**(첫 응답 전) | 기다린다 |
+  // | `unconfigured` | **꺼져 있다** | 주소를 넣는다 |
+  // | `stalled` | 켜져 있는데 **멈췄다** | 왜 멈췄는지(`lastError`)를 본다 |
+  //
+  // 넷을 한 문구로 접으면 도그푸딩 중에 투영이 끊긴 것을 **아무도 모른다** — 화면이
+  // 평소와 똑같기 때문이다(`docs/design.md` §4). `#267` 이 그것을 회귀선으로 못 박았다.
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 투영 상태를 읽지 못했다 | `The projection status could not be read` | `en.ts` 머리말의 `The X was not Yed` 규율 — **결과 상태**로 쓴다. `Failed to read` 는 동작이 실패했다만 말한다 |
+  // | 지금 상태를 못 읽어 이 목록을 믿을 수 없다 | `The status cannot be read right now, so this list cannot be trusted` | **인과가 한 문장에 있다.** `so` 앞뒤를 자르면 "못 읽는다"와 "못 믿는다"가 따로 읽히고, 사람은 둘을 별개 사실로 센다 |
+  // | 투영 상태를 확인하는 중… | `Checking the projection status…` | **'없다'가 아니라 '아직 모른다'다**(그 함수 주석). `No status` 는 결측이라 거짓이다 |
+  // | 투영이 꺼져 있어 이 목록은 채워지지 않는다 | `Projection is off, so this list will not fill in` | 빈 목록의 **이유**다. 이것을 안 적으면 사람은 "잡힌 작업이 없다"로 읽는다 — 그것이 이 판정이 존재하는 이유다 |
+  // | 언제부터인지 알 수 없지만 | `for an unknown stretch` | **한 번도 못 폴링했을 때.** 모르는 것을 숫자로 꾸미지 않는다. 한국어의 `~부터` 는 시각 **뒤**에 붙는 조사이고 영어는 `for {ago}` 로 앞에 서므로, 이 조각을 코드에 두면 한쪽 어순이 굳는다 — 그래서 **통짜 문장 둘**로 나눠 자리표시자를 낀다(`daemonFacts` 가 `waitChain.link` 의 금지를 지킨 그 모양) |
+  // | 투영이 {since} 멈춰 있다 | `Projection has been stalled for {ago}` | |
+  // | 투영이 {since} 멈춰 이 목록은 지금 사실이 아닐 수 있다 | `Projection has been stalled for {ago}, so this list may not be true right now` | **`may not be` 다** — `is not` 은 단정이고, 멈춘 동안 리스가 안 바뀌었을 수도 있다. 아무도 확인하지 않은 것을 단정하지 않는다 |
+  // | 앱에서 설정 | `Set in the app` | 출처 둘을 **사정마다 다른 말**로(그 파일 주석) — 같은 말이면 "env 를 넣었는데 왜 안 먹나"를 화면에서 알 수 없다 |
+  // | 아직 정해지지 않았다 | `Not set yet` | **출처가 없다는 것도 사정이다.** `yet` 이 진다 — 빠지면 '정할 수 없다'로 읽힌다 |
+  // | 지우면 {url} 로 돌아간다 | `Clearing it falls back to {url}` | 지우기의 **결과**를 미리 말한다. 둘이 갈리는 이유는 env 값의 유무이고, 그것이 사람이 잃는 것을 정한다 |
+  // | 지우면 투영이 꺼진다 | `Clearing it turns projection off` | env 도 없을 때. **잃는 것이 다르므로 문장이 갈린다** |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`PROJECTION_UNCONFIGURED_HEADLINE` · `PROJECTION_UNCONFIGURED_DETAIL`** —
+  //   **이 패키지 밖이다**(`packages/shared`). 서버·러너가 함께 쓰는 값이라 데스크탑
+  //   사전이 닿을 수 없다. `runner` 머리말의 `installHint()` 와 **같은 경계**이고, 같은
+  //   미결이다: `Translate` 를 `shared` 로 내릴지, 그 상수가 **키만 내고** 데스크탑이
+  //   문구를 씌울지를 먼저 정해야 한다. 그래서 `banner.unconfigured` 키가 여기 없다 —
+  //   **안 쓰는 키는 검사할 방법이 없어 조용히 썩는다**(`en.ts` 머리말)
+  // - **`AVCS_BASE_URL` · `avcs`** — 환경변수 이름과 제품 이름이다. 옮기면 사람이 터미널·
+  //   문서에서 보는 말과 화면의 말이 갈라진다(`admin`·`PAT`·`harness` 와 같은 규율)
+  // - **`env`** — `ProjectionUrlSource` 의 **저장·전송용 값**이다. 라벨이 그 값을 그대로
+  //   보이는 이유는 서버 응답에도 그 글자가 오기 때문이다
+  // - **`http://avcs.example:4000`** — 자리표시다. 번역하면 사람이 **입력해야 하는 값**으로 읽는다
+  // - **`status.lastError` · 조회 실패 사유** — 서버가 한 말이다. 앱이 다시 쓰지 않는다(`#368`)
+  // - **경과(`10분 전`)** — `lib/time.ts::agoLabel` 이 그 언어로 낸다. **숫자는 `Intl` 이, 뜻은 사전이**
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 켜져 있는데 멈췄고, **언제부터인지 안다.** `{ago}` 는 `agoLabel` 이 낸 경과다 —
+   * 이 사전이 시간을 제 손으로 적지 않는다.
+   */
+  'projection.banner.stalled': 'Projection has been stalled for {ago}',
+  /**
+   * 폴링을 **한 번도 못 했다.** 모르는 것을 숫자로 꾸미지 않는다 — 위 문장과 조각을
+   * 나눠 쓰지 않고 통짜로 둔 이유는 한국어의 `부터`(조사, 뒤에 붙는다)와 영어의
+   * `for`(전치사, 앞에 선다)가 **어순이 반대**여서다.
+   */
+  'projection.banner.stalledUnknownSince': 'Projection has been stalled for an unknown stretch',
+  /** **'없다'가 아니라 '아직 모른다'다.** 첫 응답 전이라 띠로 세우지 않는다(`strip: false`). */
+  'projection.banner.unknown': 'Checking the projection status…',
+  /** **결과 상태로 쓴다**(`The X was not Yed` 규율). 사유는 `{detail}` 로 따로 선다. */
+  'projection.banner.unreadable': 'The projection status could not be read',
+
+  /** 띠 안의 닫기. **사정별로 닫힌다**(그 화면 주석) — 다른 사정이면 다시 선다. */
+  'projection.banner.dismiss': 'Dismiss this alert',
+  /** 고치는 문. **띠 안에 붙는다**(문서) — 좁은 칸에서는 이 문이 없었다. */
+  'projection.banner.openSettings': 'Open settings',
+
+  /**
+   * 같은 사정이 **리스 목록에** 뜻하는 것. 띠가 "고장났다"를 말하는 동안 이 줄은
+   * *"그래서 이 목록을 어떻게 읽어야 하나"* 를 말한다 — 같은 문구를 두 자리에 세우면
+   * 중복이고, 사용자가 화면에서 그것을 먼저 발견했다(실측 2026-09-07).
+   */
+  'projection.list.stalled': 'Projection has been stalled for {ago}, so this list may not be true right now',
+  'projection.list.stalledUnknownSince':
+    'Projection has been stalled for an unknown stretch, so this list may not be true right now',
+  /** 띠가 **안 서는** 유일한 사정이라 이 줄이 그 사정을 말하는 유일한 자리다. */
+  'projection.list.unknown': 'Checking the projection status…',
+  'projection.list.unconfigured': 'Projection is off, so this list will not fill in',
+  /** **인과가 한 문장에 있다** — 자르면 "못 읽는다"와 "못 믿는다"가 별개 사실로 읽힌다. */
+  'projection.list.unreadable': 'The status cannot be read right now, so this list cannot be trusted',
+
+  /** 편집 자리의 필드 이름. **`avcs` 는 안 옮긴다**(제품 이름). */
+  'projection.url.field': 'avcs address',
+  /** env 값이 있을 때의 안내. **지우면 무엇으로 돌아가는지**를 미리 말한다. */
+  'projection.url.hintFallback': 'Clearing it falls back to {url}',
+  /** env 도 없을 때. **잃는 것이 다르므로 문장이 갈린다.** */
+  'projection.url.hintOff': 'Clearing it turns projection off',
+  'projection.url.loadFailed': 'The projection settings did not arrive',
+  'projection.url.loading': 'Loading the projection settings…',
+  'projection.url.placeholder': 'http://avcs.example:4000',
+  'projection.url.saveFailed': 'The projection URL was not saved',
+  /** **출처가 없다는 것도 사정이다** — '아직 아무도 정하지 않았다'. */
+  'projection.url.sourceNone': 'Not set yet',
+  /**
+   * 출처를 **사정마다 다른 말**로 적는다(그 파일 주석). `{source}` 에 아래 둘 중
+   * 하나가 들어간다.
+   */
+  'projection.url.sourceOf': 'Source: {source}',
+  'projection.url.sourceApp': 'Set in the app',
+  /** **`AVCS_BASE_URL` 은 안 옮긴다** — 사람이 셸에 적는 그 글자여야 한다. */
+  'projection.url.sourceEnv': 'Environment variable (AVCS_BASE_URL)',
+
+  /** 편집·지우기·저장·취소. **이 화면의 것이다** — `common` 승격은 아래 근거로 미룬다. */
+  'projection.url.cancel': 'Cancel',
+  'projection.url.clear': 'Clear',
+  'projection.url.edit': 'Edit',
+  'projection.url.save': 'Save',
+
+  // ---------------------------------------------------------------------------
+  // runnerState — **판정 이름이다**(`components/RunnerStatus.tsx::runnerStatusLabel`).
+  //
+  // ## 왜 `runner.*` 를 재사용하지 않았나 — **둘이 다른 것을 말한다**
+  //
+  // 먼저 겹치는지 확인했고, **안 겹친다.** `runner.*`(`lib/runnerLauncher.ts`)는
+  // `RunnerState.message` 로 올라가는 **사유**이고, 이쪽은 `RunnerState.status` 의
+  // **이름**이다. 화면이 그 둘을 **나란히** 그린다(`RunnerStatusLine`:
+  // `<상태 이름> — <사유>`) — 한 영역에 넣으면 그 두 종류가 이름으로 안 갈린다.
+  //
+  // 겹치는 것처럼 보이는 자리가 실제로 하나 있다: `launch.failed`(사유)와
+  // `runnerState.failed`(이름)가 둘 다 '기동 실패'다. **그래서 더더욱 갈라야 한다** —
+  // 사유 쪽은 `: {reason}` 을 달고 이름 쪽은 안 단다. 한 키로 묶으면 사유가 없는 자리에
+  // 빈 콜론이 남거나, 이름 자리에 남의 사유가 딸려 온다.
+  //
+  // 영역 이름이 `runner` 가 아니라 `runnerState` 인 이유도 그것이다. 이 값들을 그리는
+  // 화면이 **셋이다**(`AgentsSettings` 상세 · `Sidebar` DM 줄 · `ChannelPane` 실패 줄) —
+  // 화면 이름을 골랐다면 나머지 둘이 남의 키를 부른다(`waitChain` 머리말).
+  //
+  // ## 모듈 상수를 **함수로 내렸다** (`threadState::THREAD_STATE_LABEL` 판례)
+  //
+  // 위 `presence` 는 표로 남겼는데 이쪽은 함수다. 갈리는 근거가 둘이다.
+  //
+  // 1. **이미 함수였다.** `runnerStatusLabel` 은 상수 표가 아니라 `switch` 이고, 그것은
+  //    `stopped` 갈래가 `exitCode` 를 읽어 두 문장으로 갈리기 때문이다(`0`·`null` 이면
+  //    꺼짐, 아니면 코드를 그대로 보인다). `Record<RunnerStatus, MessageKey>` 로는
+  //    그 갈림이 표현되지 않는다 — 한 상태가 두 키를 갖는다.
+  // 2. **자리표시자가 있다.** `{code}` 를 받아야 하므로 키만 넘겨서는 문구가 안 된다.
+  //
+  // 그래서 `t` 를 **필수 인자로 맨 뒤에** 받는다(`i18n/index.ts::Translate` 의 (b) 주입).
+  // 기본값을 주면 부르는 화면이 조용히 한 언어로 굳고, 앞에 끼우면 회귀선들이 자리만
+  // 어긋난 채 초록으로 틀린 것을 잰다.
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 꺼짐 | `Off` | `Stopped` 가 아니다 — 아래 `stoppedWithCode` 와 갈려야 하고, 이쪽은 **정상**이다(코드 0 이나 신호로 곱게 죽었다). 그 모듈 주석이 *"'꺼짐'과 '78 로 죽었다'를 뭉치지 않는다"* 고 못 박았다 |
+  // | 실행 중 | `Running` | |
+  // | daemon 이 들고 있음 | `Held by the daemon` | **`#431` 2단계가 `external` 을 없애고 이 이름을 넣었다.** 앞 이름은 "이 앱이 안 띄웠다"는 뜻이었는데 "실행 중"으로 읽혔고 그 오독이 `#430` 이다. `Adopted` 는 우리 내부 낱말(`status: 'adopted'`)이라 화면에 내면 사람이 못 읽는다. **누가 들고 있는지**가 이 이름의 전부다 |
+  // | 재기동 대기 (진행 중인 턴을 마치는 중) | `Waiting to restart (finishing the turn it is on)` | 괄호가 요점이다 — SIGTERM 은 graceful 이라 러너는 진행 중인 턴을 마친 뒤에야 죽고 그 시차가 분 단위다. 빼면 사람은 멈춘 줄 알고 다시 누른다. `grid.card.retiring`·`agents.stop.noteFinish` 가 이미 `finishing the turn it is on` 이라 **같은 말을 쓴다** |
+  // | 종료 (78: 자격증명 폐기 — 재발급 필요) | `Exited (78: the PAT was revoked — reissue it)` | **`78` 을 안 옮긴다**(종료 코드는 숫자다). 셋이 78 을 나눠 쓰므로 **사람이 할 일이 이름 안에 있어야 한다** — 그것을 뺀 것이 `#473` 이 고친 결함이다 |
+  // | 종료 (78: 하네스를 찾을 수 없음 — 설치 필요) | `Exited (78: the harness was not found — install it)` | **`harness` 는 안 옮긴다**(고유어). 어느 실행 파일인지는 여기서 말하지 않는다 — `state.message`(`runner.exit.*`)가 이름을 들고 있고 화면에서 나란히 나온다 |
+  // | 종료 (78: 하네스 로그인 만료 — 재로그인 필요) | `Exited (78: the harness login expired — log in again)` | |
+  // | 종료 (기타: 코드 {code}) | `Exited (other: code {code})` | **코드를 그대로 보인다** — 앱이 원인을 지어내면 사람은 러너 로그를 볼 이유를 잃는다(그 모듈 주석) |
+  // | 기동 실패 | `Did not start` | `grid.runner.launchFailed`·`sidebar.runner.launchFailed`·`agents.detail.launchFailed` 가 이미 그 낱말이다 — 같은 사실을 네 화면이 다른 말로 하지 않는다 |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`state.message`** — `runner.*` 가 이미 지고 있다(위 「왜 재사용 안 했나」).
+  //   `RunnerStatusLine` 은 그 값을 **그대로** 옆에 붙인다
+  // - **`78` · `{code}` · `daemon` · `PAT` · `harness` · `SIGTERM`** — 숫자와 고유어다
+  // ---------------------------------------------------------------------------
+
+  /**
+   * **`#431` 2단계가 만든 이름.** `Adopted` 는 우리 내부 낱말이라 화면에 못 낸다 —
+   * daemon 이 `kill(pid, 0)` 으로 확인한 러너라서 **누가 들고 있는지**가 요점이다.
+   */
+  'runnerState.adopted': 'Held by the daemon',
+  /** `runner.launch.failed`(사유)와 **갈린다** — 이쪽은 이름이라 `: {reason}` 이 안 붙는다. */
+  'runnerState.failed': 'Did not start',
+  /** 78 의 세 갈래. **사람이 할 일이 이름 안에 있다**(`#473`). */
+  'runnerState.needsHarness': 'Exited (78: the harness was not found — install it)',
+  'runnerState.needsLogin': 'Exited (78: the harness login expired — log in again)',
+  'runnerState.needsReissue': 'Exited (78: the PAT was revoked — reissue it)',
+  /**
+   * **괄호가 요점이다.** SIGTERM 은 graceful 이라 러너는 진행 중인 턴을 마친 뒤에야
+   * 죽고 그 시차가 분 단위다 — 빼면 사람은 멈춘 줄 알고 다시 누른다.
+   */
+  'runnerState.restarting': 'Waiting to restart (finishing the turn it is on)',
+  'runnerState.running': 'Running',
+  /** **정상이다** — 코드 0 이나 신호로 곱게 죽었다. 아래와 갈려야 한다. */
+  'runnerState.stopped': 'Off',
+  /** 78 이 아닌 종료. **코드를 그대로 보인다** — 지어내면 러너 로그를 볼 이유가 사라진다. */
+  'runnerState.stoppedWithCode': 'Exited (other: code {code})',
+
+  // ---------------------------------------------------------------------------
+  // terminal — **화면 이름이다.** `components/TerminalPanel.tsx` 가 그리는 말이고,
+  // 이 말들을 내는 판정은 `lib/` 에 없다: 패널이 스스로 쓰는 라벨·오류·안내다.
+  //
+  // `components/TerminalChip.tsx`(그 패널을 여는 칩)도 여기 든다. **한 벌의 어휘**라
+  // 갈라 두면 문을 여는 말과 그 안 화면의 말이 서로 모르게 된다(`speech` 머리말의
+  // 세 번째 경우) — 칩이 `Open the terminal` 이라고 하고 패널이 `Console` 이라고 하면
+  // 사람은 다른 곳에 온 줄 안다.
+  //
+  // | 덩어리 | 그 구획 |
+  // |---|---|
+  // | `chip` | 메시지 줄의 칩 — 이 패널을 여는 문 |
+  // | `header` | 머리띠 — 이름 · 어느 스레드 · 상태 칩 · 닫기 |
+  // | `session` | 세션 조회 셋(확인 중 · 없음 · 실패)과 「터미널 열기」 |
+  // | `state` | 상태 칩의 값 셋(`AgentSessionState`) |
+  // | `writer` | **왜 못 치는가** 넷 + 칠 수 있을 때 한 줄 |
+  // | `handoff` | 이어받기(`#384`) — 누름 · 요청 중 · 예약됨 · 거절 |
+  //
+  // ## 못 치는 이유 넷은 **뭉치면 안 된다** — 사람이 할 일이 갈린다
+  //
+  // 이 영역에서 가장 중요한 것이 `writer.*` 다. `#369` 가 만든 갈림이고, 그 함수 주석이
+  // *"'읽기 전용이다'만 적으면 셋 다 막다른 길로 보인다"* 고 적었다:
+  //
+  // | 사유 | 사람이 할 일 |
+  // |---|---|
+  // | `observeOnly` | 기다리거나 **이어받는다** (그 자리에 버튼이 선다) |
+  // | `otherWriter` | **그 창을 닫는다** |
+  // | `runnerOutdated` | **러너를 올린다** |
+  // | `unknown` | **아무것도 단정하지 않는다** — 구 서버는 이유를 안 싣는다 |
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 터미널 보기 | `Open the terminal` | 칩의 이름이다. `View` 는 읽기만 한다는 뜻인데 소유자는 **직접 친다**(`#315`) — 그 문이 하는 일은 여는 것이다 |
+  // | @{handle} 의 진행 중인 터미널을 본다 | `Open the terminal {handle} is running` | 칩의 `title`. **진행 중**이 진다 — 없으면 새로 띄우는 문으로 읽힌다 |
+  // | 에이전트 터미널 | `Agent terminal` | 패널 자체의 접근 이름 |
+  // | 터미널 너비 조절 | `Resize the terminal` | `PaneResizer` 의 이름. 스레드 패널의 같은 자리와 같은 모양이다 |
+  // | 닫기 / 터미널 닫기 | `Close` / `Close the terminal` | **보이는 글자와 접근 이름이 갈린다** — 원래 화면이 이미 그랬고 회귀선이 그것을 잡았다(옮기면서 한 키로 접었더니 `getByLabelText('터미널 닫기')` 가 빨개졌다). 머리띠의 꼬리표라 보이는 글자는 짧아야 하는데, 그 짧음이 스크린리더에서는 **무엇을** 닫는지를 잃는다. `grid.version.staleAction` 이 같은 이유로 갈라져 있다 |
+  // | 스레드 | `a thread` | 루트 본문을 못 찾았을 때. **스레드라는 사실만 적는다**(그 주석) — 관사가 붙는 이유는 이것이 제목이 아니라 *"어느 스레드"* 자리의 대체값이기 때문이다 |
+  // | 세션을 확인하는 중… | `Checking for a session…` | **'없다'가 아니라 '아직 모른다'다**(`docs/design.md` §4) |
+  // | 진행 중인 턴이 없다 — 직접 열거나, … | `No turn is running — open one yourself, or call this agent and you can join that turn` | **물어봤고 없다**는 단정이다(위와 갈린다). 뒤 절반이 **두 갈래의 길**을 준다 — 없으면 막다른 길로 보인다 |
+  // | 터미널을 열지 못했다: {reason} | `The terminal did not open: {reason}` | `The X was not Yed` 규율 |
+  // | 터미널을 붙일 자리가 없다 | `There is nowhere to attach the terminal` | ref 가 비었다 — 개발 중에만 나는 일이지만 **화면에 뜨는 말**이라 사전에 든다 |
+  // | 입력 가능 — 마지막으로 연 창이 입력을 가진다. | `You can type — the window opened last holds input.` | **승격도 적는다**(그 주석): 강등만 적으면 두 창을 쓰는 사람이 어느 쪽이 살아 있는지 모른다. 뒤 절반이 **규칙**이라 다음에 무엇이 일어날지 예측할 수 있다 |
+  // | 관찰 전용 — 진행 중인 멘션 턴은 프롬프트를 파일로 받으므로 … | `Observing only — a mention turn in flight takes its prompt from a file, so this terminal cannot accept input. To type yourself, open a terminal after the turn ends.` | **원인을 그대로 말한다**(그 함수 주석): "관찰 전용"만 적으면 임의의 제약으로 읽혀 "왜 안 되냐"가 결함으로 다시 올라온다. 그 사실을 아는 사람은 다른 길을 스스로 찾는다 |
+  // | 읽기 전용 — 이 러너는 입력을 다룰 줄 모른다(구버전이거나 붙어 있지 않다). | `Read-only — this runner does not know how to handle input (it is outdated, or not attached).` | 괄호가 **두 가능성**을 남긴다. 하나로 단정하면 러너를 올려도 안 낫는 사람이 생긴다 |
+  // | 읽기 전용 — 다른 창이 입력 중이다. 이 창에 치면 아무 데도 가지 않는다. | `Read-only — another window is typing. What you type here goes nowhere.` | 뒤 문장이 **대가**를 말한다 — 없으면 사람은 쳐 보고 나서야 안다 |
+  // | 읽기 전용 — 이 창의 입력은 러너에 닿지 않는다. | `Read-only — input from this window does not reach the runner.` | 구 서버는 이유를 안 싣는다. **원인을 지어내지 않고** 무엇이 참인지만 적는다(`#368`) |
+  // | 이어받기 | `Take over` | `#384` 가 만든 동작이다. `Resume` 은 멈춘 것이 이어진다는 뜻이라 거짓 — 멘션 턴은 **계속 돌고 있고**, 이 버튼이 하는 일은 그 턴이 끝난 뒤 그 대화를 넘겨받는 예약이다 |
+  // | 이어받기를 예약했다 — 진행 중인 멘션 턴이 끝나면 엽니다. … | `Take-over is queued — it opens when the mention turn in flight ends. This terminal then picks up that conversation.` | **`#384` 의 정직성 전부다.** 진행 중인 턴을 멈추지 않으므로(운영자 결정 A) 누른 뒤 26초쯤 아무것도 안 바뀐 것처럼 보인다 — 그 침묵을 이 줄이 메운다. **다음에 무엇이 일어나는지**까지 말하는 것이 `runner.restart.waitingForRetirement` 와 같은 규율이다 |
+  // | 이어받지 못했다: {reason} | `The take-over did not go through: {reason}` | `The X was not Yed` 규율. 사유는 서버가 쓴 것을 그대로 올린다 |
+  // | 진행 중 | `Running` | 상태 칩. `runnerState.running` 과 **같은 글자이나 다른 것을 센다** — 저쪽은 러너 프로세스, 이쪽은 그 PTY 세션이다. 승격하지 않는 이유는 아래에 |
+  // | 턴 종료 | `Turn ended` | `Ended` 만 두면 무엇이 끝났는지가 빠진다 — 세션이 아니라 **턴**이 끝난 것이고, 그 세션은 이어받을 수 있다 |
+  // | 러너 연결 끊김 | `Runner disconnected` | *"'끝났다'로 쓰지 않는다 — 다른 사실이다"*(그 상수 주석). 턴은 안 끝났고 소켓만 끊겼다 |
+  //
+  // ## `common` 승격을 미룬 자리 — **글자가 같은데도**
+  //
+  // `terminal.state.running`(`Running`)과 `runnerState.running`(`Running`)이 같은 글자다.
+  // `agents` 머리말이 `Cancel` 에 대해 세운 기준 그대로다: **자격은 "글자가 같다"가
+  // 아니라 "뜻이 하나다"** 이고, 이 둘은 아니다 — 하나는 **러너 프로세스가 도는 것**이고
+  // 하나는 **그 안 PTY 세션의 턴이 도는 것**이다. 러너는 돌고 있는데 세션은 끝나 있을
+  // 수 있고, 실제로 그것이 흔한 상태다. 한 키로 묶는 순간 한쪽을 `In progress` 로
+  // 바꾸는 일이 다른 쪽을 함께 바꾼다.
+  //
+  // `terminal.header.close`(`Close`)도 마찬가지다. 이 패널을 닫는 것이고, 다른 화면의
+  // `Close` 가 오면 그때 재면 된다 — **미리 올려 두면 `common` 이 아무도 안 읽는
+  // 사전이 된다**(`en.ts` 머리말).
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **서버가 준 오류 문구(`err.message`)** — 러너 오프라인(404)·구버전(409)·codex
+  //   거절(409)·타임아웃(504)이 그대로 온다. **서버가 원인을 정확히 안다**(그 주석) —
+  //   앱이 다시 쓰지 않는다(`#368`). 위 `session.openFailed`·`handoff.failed` 는 그것을
+  //   **감싸는 틀**만 진다
+  // - **`#{channel}` · `DM` · 스레드 본문 발췌** — 데이터다. 채널 이름은 사람이 지었고
+  //   `DM` 은 이 제품의 고유어이며 발췌는 남의 말이다
+  // - **`@{handle}`** — 사람이 지은 이름이다
+  // ---------------------------------------------------------------------------
+
+  /** 칩의 접근 이름 겸 `title`. **진행 중**이 진다 — 없으면 새로 띄우는 문으로 읽힌다. */
+  'terminal.chip.open': 'Open the terminal {handle} is running',
+  /** 칩의 보이는 글자. `View` 가 아니다 — 소유자는 **직접 친다**(`#315`). */
+  'terminal.chip.label': 'Open the terminal',
+
+  'terminal.handoff.failed': 'The take-over did not go through: {reason}',
+  /**
+   * `#384` 가 만든 동작. **`Resume` 이 아니다** — 멘션 턴은 계속 돌고 있고, 이 버튼이
+   * 하는 일은 그 턴이 끝난 뒤 그 대화를 넘겨받는 **예약**이다.
+   */
+  'terminal.handoff.request': 'Take over',
+  'terminal.handoff.requesting': 'Requesting the take-over…',
+  /**
+   * **`#384` 의 정직성 전부.** 진행 중인 턴을 멈추지 않으므로 누른 뒤 26초쯤은 아무것도
+   * 안 바뀐 것처럼 보인다 — 그 침묵을 이 줄이 메운다. **다음에 무엇이 일어나는지**까지
+   * 말하는 것이 `runner.restart.waitingForRetirement` 와 같은 규율이다.
+   */
+  'terminal.handoff.queued':
+    'Take-over is queued — it opens when the mention turn in flight ends. '
+    + 'This terminal then picks up that conversation.',
+
+  /**
+   * 닫기 버튼의 **보이는 글자**. 접근 이름은 아래 `closeAction` 이 따로 진다 —
+   * 머리띠의 다른 것들과 나란히 서는 꼬리표라 짧아야 하고, 그 짧음이 스크린리더에서는
+   * 무엇을 닫는지를 잃는다. `grid.version.staleAction` 이 같은 이유로 갈라져 있다.
+   */
+  'terminal.header.close': 'Close',
+  /** 그 버튼의 접근 이름. **무엇을 닫는지**를 진다 — 화면에는 이 창만 있는 것이 아니다. */
+  'terminal.header.closeAction': 'Close the terminal',
+  'terminal.header.resize': 'Resize the terminal',
+  /** 루트 본문을 못 찾았을 때. **스레드라는 사실만 적는다** — 이것 하나 때문에 안 받아온다. */
+  'terminal.header.thread': 'a thread',
+  'terminal.header.title': 'Terminal',
+  /** 패널 자체의 접근 이름. 위 `header.title` 은 **보이는 글자**라 짧다. */
+  'terminal.header.panel': 'Agent terminal',
+
+  /** ref 가 비었다 — 개발 중에만 나지만 **화면에 뜨는 말**이라 사전에 든다. */
+  'terminal.session.noHost': 'There is nowhere to attach the terminal',
+  /** **물어봤고 없다.** 뒤 절반이 **두 갈래의 길**을 준다 — 없으면 막다른 길로 보인다. */
+  'terminal.session.none': 'No turn is running — open one yourself, or call this agent and you can join that turn',
+  'terminal.session.open': 'Open a terminal',
+  'terminal.session.openFailed': 'The terminal did not open: {reason}',
+  /** **'없다'가 아니라 '아직 모른다'다**(`docs/design.md` §4). */
+  'terminal.session.checking': 'Checking for a session…',
+
+  /** `runnerState.running` 과 **다른 것을 센다** — 저쪽은 러너, 이쪽은 그 PTY 세션의 턴이다. */
+  'terminal.state.running': 'Running',
+  /** **`Ended` 만 두면 무엇이 끝났는지가 빠진다** — 세션이 아니라 턴이 끝났다. */
+  'terminal.state.ended': 'Turn ended',
+  /** *"'끝났다'로 쓰지 않는다 — 다른 사실이다"*(그 상수 주석). 턴은 안 끝났고 소켓만 끊겼다. */
+  'terminal.state.runnerOffline': 'Runner disconnected',
+
+  /**
+   * 칠 수 있을 때. **승격도 적는다** — 강등만 적으면 두 창을 쓰는 사람이 어느 쪽이
+   * 살아 있는지 화면에서 알 수 없다. 뒤 절반이 **규칙**이라 다음을 예측할 수 있다.
+   */
+  'terminal.writer.can': 'You can type — the window opened last holds input.',
+  /**
+   * 진행 중인 멘션 턴. **원인을 그대로 말한다**(그 함수 주석) — "관찰 전용"만 적으면
+   * 임의의 제약으로 읽혀 "왜 안 되냐"가 결함으로 다시 올라온다.
+   */
+  'terminal.writer.observeOnly':
+    'Observing only — a mention turn in flight takes its prompt from a file, so this terminal '
+    + 'cannot accept input. To type yourself, open a terminal after the turn ends.',
+  /** 뒤 문장이 **대가**를 말한다 — 없으면 사람은 쳐 보고 나서야 안다. */
+  'terminal.writer.otherWriter': 'Read-only — another window is typing. What you type here goes nowhere.',
+  /** 괄호가 **두 가능성**을 남긴다 — 하나로 단정하면 러너를 올려도 안 낫는 사람이 생긴다. */
+  'terminal.writer.runnerOutdated':
+    'Read-only — this runner does not know how to handle input (it is outdated, or not attached).',
+  /** 구 서버는 이유를 안 싣는다. **원인을 지어내지 않고** 무엇이 참인지만 적는다(`#368`). */
+  'terminal.writer.unknown': 'Read-only — input from this window does not reach the runner.',
 
   // ---------------------------------------------------------------------------
   // inbox — **화면 이름이다.** `components/Inbox.tsx` 가 그리는 말이다.

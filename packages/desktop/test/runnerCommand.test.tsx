@@ -10,6 +10,12 @@ import {
   PAT_PLACEHOLDER, RUNNER_DEV_COMMAND, RUNNER_SIDECAR_PATH, runnerCommandClipboardText,
 } from '../src/lib/runnerCommand';
 import { runnerStatusLabel } from '../src/components/RunnerStatus';
+import { translator } from '../src/i18n';
+
+// 이 파일은 위 `beforeEach` 가 앱 언어를 `ko` 로 고정한다 — 재는 것이 언어가 아니라
+// **그 언어로 표현된 규율**(#125: 화면의 명령과 클립보드의 명령이 글자 하나까지 같다)
+// 이기 때문이다. 기대값을 만드는 이 번역기도 같은 언어여야 둘이 실제로 맞붙는다.
+const ko = translator('ko');
 
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
@@ -120,7 +126,7 @@ describe('러너 실행 명령 (#177)', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
     // 명령 전체다: 앞의 환경변수 지정부터 뒤의 `start` 까지. 말줄임표가 있으면 잘린 것이다.
     const copied = String(writeText.mock.calls[0]?.[0]);
-    expect(copied).toBe(runnerCommandClipboardText(PAT_PLACEHOLDER));
+    expect(copied).toBe(runnerCommandClipboardText(PAT_PLACEHOLDER, ko));
     expect(copied).not.toContain('…');
     expect(copied).not.toContain('...');
   });
@@ -138,7 +144,7 @@ describe('러너 실행 명령 (#177)', () => {
     fireEvent.click(within(sectionOf(MINTED_SECTION)).getByRole('button', { name: '명령 복사' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
     // 토큰이 통째로 실린다 — 접두사만 맞는지가 아니라 정확히 같은지를 본다.
-    expect(String(writeText.mock.calls[0]?.[0])).toBe(runnerCommandClipboardText('murp_secret'));
+    expect(String(writeText.mock.calls[0]?.[0])).toBe(runnerCommandClipboardText('murp_secret', ko));
     // 버튼 문구가 잠깐 "복사됨"으로 바뀐다.
     await screen.findByText('복사됨');
   });
@@ -226,7 +232,7 @@ describe('낡은 문구 회귀선 (#431 1단계 사이드카 배포 · #482 adop
     // 다음에 개명되면 **설명도 따라오거나, 안 따라오면 여기서 빨개진다.**
     const adopted = runnerStatusLabel({
       agentId: '', status: 'adopted', exitCode: null, message: null,
-    });
+    }, ko);
     expect(document.body.textContent ?? '').toContain(adopted);
   });
 

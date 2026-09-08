@@ -1737,14 +1737,14 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     복사시키고 있었다. 근거 전문은 그 파일 머리말에 있다. */}
                 <div className="mt-2 flex flex-col gap-1 break-all font-mono text-meta text-warning">
                   <span ref={fullCommandRef} className="whitespace-pre-wrap">
-                    {runnerCommandClipboardText(pat)}
+                    {runnerCommandClipboardText(pat, t)}
                   </span>
                   <button
                     className="self-start shrink-0 rounded border border-warning-border bg-warning-surface-strong px-1.5 py-0.5 text-meta text-warning hover:bg-warning-border"
                     aria-label={t('agents.runner.commandCopy')}
                     onClick={async () => {
                       // #125: 토큰을 자르거나 말줄임표를 붙이지 않는다 — 클립보드에도 명령 전체가 들어간다.
-                      const cmd = runnerCommandClipboardText(pat);
+                      const cmd = runnerCommandClipboardText(pat, t);
                       setError(null);
                       const ok = await copyToClipboard(cmd, fullCommandRef.current, setError, t);
                       if (ok) {
@@ -1810,7 +1810,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       적으면 `RunnerStatus.tsx` 가 바뀔 때 여기만 낡는다(위 import 주석). */}
                   {emphasize(
                     t('agents.runner.ownedNote', {
-                      label: runnerStatusLabel({ agentId: '', status: 'adopted', exitCode: null, message: null }),
+                      label: runnerStatusLabel({ agentId: '', status: 'adopted', exitCode: null, message: null }, t),
                     }),
                     {
                       strongOwn: t('agents.runner.ownedNoteOwn'),
@@ -1899,14 +1899,14 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 <div className="text-meta font-medium text-fg-muted">{t('agents.runner.templateHeading')}</div>
                 <div className="mt-2 flex flex-col gap-1 break-all font-mono text-meta text-fg">
                   <span ref={templateCommandRef} className="whitespace-pre-wrap">
-                    {runnerCommandClipboardText(PAT_PLACEHOLDER)}
+                    {runnerCommandClipboardText(PAT_PLACEHOLDER, t)}
                   </span>
                   <button
                     className="self-start shrink-0 rounded border border-border bg-surface px-1.5 py-0.5 text-meta text-fg hover:bg-surface-sunken"
                     aria-label={t('agents.runner.commandCopy')}
                     onClick={async () => {
                       // 틀은 자리표시까지 통째로 복사한다 — 사람이 그 자리만 토큰으로 바꿔 쓴다.
-                      const cmd = runnerCommandClipboardText(PAT_PLACEHOLDER);
+                      const cmd = runnerCommandClipboardText(PAT_PLACEHOLDER, t);
                       setError(null);
                       const ok = await copyToClipboard(cmd, templateCommandRef.current, setError, t);
                       if (ok) {

@@ -37,6 +37,12 @@ import {
   RUNNER_SIDECAR_PATH,
 } from '../src/lib/runnerCommand';
 import { runnerStatusLabel } from '../src/components/RunnerStatus';
+import { translator } from '../src/i18n';
+
+// **`ko` 로 고정한다.** 이 파일이 재는 상대는 화면이 아니라 `docs/operations.md` 이고
+// 그 문서가 한국어다 — 기대값을 다른 언어로 만들면 정본이 개명돼도 여기가 안 빨개진다
+// (이 시험의 존재 이유가 그 연결이다). 문서가 옮겨지는 날 이 한 줄을 함께 옮긴다.
+const ko = translator('ko');
 
 const ROOT = path.resolve(__dirname, '../../..');
 const read = (rel: string): string => readFileSync(path.join(ROOT, rel), 'utf8');
@@ -99,7 +105,7 @@ describe('낡은 러너 구조 문서 회귀선 (#431 사이드카·daemon · #4
     // `#503` 의 ③과 같은 장치다. 정본이 개명되면 문서가 따라오거나, 안 따라오면 빨개진다.
     const adopted = runnerStatusLabel({
       agentId: '', status: 'adopted', exitCode: null, message: null,
-    });
+    }, ko);
     expect(read('docs/operations.md')).toContain(adopted);
   });
 

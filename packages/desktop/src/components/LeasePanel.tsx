@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useActiveStore } from '../state/communities';
 import { BANNER_TEXT_TONE, projectionBanner } from '../lib/projectionBanner';
-import { useAgo } from '../i18n/useT';
+import { useAgo, useT } from '../i18n/useT';
 
 const shortActor = (keyId: string) => (keyId.length > 12 ? `${keyId.slice(0, 12)}…` : keyId);
 
@@ -56,6 +56,7 @@ export function LeasePanel() {
     status: projectionStatus,
     error: projectionStatusError,
     ago: useAgo(),
+    t: useT(),
   });
 
   /**

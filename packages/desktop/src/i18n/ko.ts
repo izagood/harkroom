@@ -316,6 +316,9 @@ export const ko = {
   'agents.runner.reissueNoteRevoke': '옛 PAT 를 폐기한 뒤',
   'agents.runner.reissuing': '재발급 중…',
   'agents.runner.startFailed': '러너를 띄우지 못했다: {reason}',
+  /** `#` 는 셸 주석 기호다 — 이 값이 통째로 클립보드에 실린다(`en.ts` 의 그 주석). */
+  'agents.runner.commandBundledNote': '# 앱을 설치해 쓰는 경우 (설치 위치가 다르면 경로를 바꾼다)',
+  'agents.runner.commandDevNote': '# murmur 저장소를 클론한 개발 환경',
   'agents.runner.templateHeading': '러너 실행',
   'agents.runner.templateNote': '토큰은 발급 순간에만 보인다. 잃었으면 새로 발급한다.',
   'agents.runner.whoStarts':
@@ -694,6 +697,121 @@ export const ko = {
   'grid.card.relaunch': '{handle} 실행하기',
   'grid.card.relaunchFailed': '{handle} 다시 띄우기',
   'grid.card.stop': '{handle} 멈추기',
+
+  // ---------------------------------------------------------------------------
+  // presence — 세 자리(사이드바·디렉터리·격자)가 같은 말을 쓴다. 표는 남기고 값만
+  // 키로 바꿨다 — 근거는 `en.ts` 의 이 영역 머리말에.
+  // ---------------------------------------------------------------------------
+
+  'presence.offline': '오프라인',
+  'presence.online': '온라인',
+  /** **"오프라인"이라고 쓰지 않는다** — 그것은 아는 척이다(`lib/presenceView.ts`). */
+  'presence.unknown': '연결 끊김 — 알 수 없음',
+
+  // ---------------------------------------------------------------------------
+  // projection — 판정 이름이다(`lib/projectionBanner.ts`). 네 사정을 뭉개지 않는 것이
+  // 이 영역의 전부이고, 그 표는 `en.ts` 머리말에 있다.
+  //
+  // **꺼짐(`unconfigured`)의 문구가 여기 없다** — `packages/shared` 의 상수라 이 사전이
+  // 닿을 수 없다(그 머리말의 '안 넣은 것').
+  // ---------------------------------------------------------------------------
+
+  'projection.banner.stalled': '투영이 {ago}부터 멈춰 있다',
+  /** 한 번도 못 폴링했다 — **모르는 것을 숫자로 꾸미지 않는다**. */
+  'projection.banner.stalledUnknownSince': '투영이 언제부터인지 알 수 없지만 멈춰 있다',
+  'projection.banner.unknown': '투영 상태를 확인하는 중…',
+  'projection.banner.unreadable': '투영 상태를 읽지 못했다',
+
+  'projection.banner.dismiss': '이 알림 닫기',
+  'projection.banner.openSettings': '설정 열기',
+
+  'projection.list.stalled': '투영이 {ago}부터 멈춰 이 목록은 지금 사실이 아닐 수 있다',
+  'projection.list.stalledUnknownSince':
+    '투영이 언제부터인지 알 수 없지만 멈춰 이 목록은 지금 사실이 아닐 수 있다',
+  'projection.list.unknown': '투영 상태를 확인하는 중…',
+  'projection.list.unconfigured': '투영이 꺼져 있어 이 목록은 채워지지 않는다',
+  'projection.list.unreadable': '지금 상태를 못 읽어 이 목록을 믿을 수 없다',
+
+  'projection.url.field': 'avcs 주소',
+  'projection.url.hintFallback': '지우면 {url} 로 돌아간다',
+  'projection.url.hintOff': '지우면 투영이 꺼진다',
+  'projection.url.loadFailed': '투영 설정을 불러오지 못했다',
+  'projection.url.loading': '투영 설정을 불러오는 중…',
+  'projection.url.placeholder': 'http://avcs.example:4000',
+  'projection.url.saveFailed': '투영 URL 을 저장하지 못했다',
+  'projection.url.sourceNone': '아직 정해지지 않았다',
+  'projection.url.sourceOf': '출처: {source}',
+  'projection.url.sourceApp': '앱에서 설정',
+  'projection.url.sourceEnv': '환경변수(AVCS_BASE_URL)',
+
+  'projection.url.cancel': '취소',
+  'projection.url.clear': '지우기',
+  'projection.url.edit': '편집',
+  'projection.url.save': '저장',
+
+  // ---------------------------------------------------------------------------
+  // runnerState — `RunnerStatus.tsx::runnerStatusLabel` 이 내는 **상태의 이름**이다.
+  // 사유(`runner.*`)와 갈리는 근거, 그리고 모듈 상수를 함수로 내린 근거는 `en.ts`
+  // 머리말에 있다.
+  // ---------------------------------------------------------------------------
+
+  /** `#431` 2단계가 `external` 을 없애고 넣은 이름이다 — 그 오독이 `#430` 이었다. */
+  'runnerState.adopted': 'daemon 이 들고 있음',
+  'runnerState.failed': '기동 실패',
+  'runnerState.needsHarness': '종료 (78: 하네스를 찾을 수 없음 — 설치 필요)',
+  'runnerState.needsLogin': '종료 (78: 하네스 로그인 만료 — 재로그인 필요)',
+  'runnerState.needsReissue': '종료 (78: 자격증명 폐기 — 재발급 필요)',
+  /** 괄호가 요점이다 — SIGTERM 은 graceful 이라 그 시차가 분 단위다. */
+  'runnerState.restarting': '재기동 대기 (진행 중인 턴을 마치는 중)',
+  'runnerState.running': '실행 중',
+  /** **정상이다** — 코드 0 이나 신호로 곱게 죽었다. 아래와 갈려야 한다. */
+  'runnerState.stopped': '꺼짐',
+  'runnerState.stoppedWithCode': '종료 (기타: 코드 {code})',
+
+  // ---------------------------------------------------------------------------
+  // terminal — `components/TerminalPanel.tsx` 와 그 패널을 여는 `TerminalChip.tsx`.
+  // 못 치는 이유 넷을 뭉개지 않는 것이 이 영역의 요점이고, 그 표는 `en.ts` 머리말에.
+  // ---------------------------------------------------------------------------
+
+  'terminal.chip.open': '@{handle} 의 진행 중인 터미널을 본다',
+  'terminal.chip.label': '터미널 보기',
+
+  'terminal.handoff.failed': '이어받지 못했다: {reason}',
+  'terminal.handoff.request': '이어받기',
+  'terminal.handoff.requesting': '이어받기를 요청하는 중…',
+  /** `#384` 의 정직성 전부 — 그 침묵을 이 줄이 메운다. */
+  'terminal.handoff.queued':
+    '이어받기를 예약했다 — 진행 중인 멘션 턴이 끝나면 엽니다. 그때 이 터미널이 그 대화를 이어받는다.',
+
+  /** 보이는 글자. 접근 이름은 아래가 따로 진다 — 짧음이 스크린리더에서 뜻을 잃는다. */
+  'terminal.header.close': '닫기',
+  'terminal.header.closeAction': '터미널 닫기',
+  'terminal.header.resize': '터미널 너비 조절',
+  'terminal.header.thread': '스레드',
+  'terminal.header.title': '터미널',
+  'terminal.header.panel': '에이전트 터미널',
+
+  'terminal.session.noHost': '터미널을 붙일 자리가 없다',
+  'terminal.session.none': '진행 중인 턴이 없다 — 직접 열거나, 이 에이전트를 부르면 그 턴에 붙을 수 있다.',
+  'terminal.session.open': '터미널 열기',
+  'terminal.session.openFailed': '터미널을 열지 못했다: {reason}',
+  'terminal.session.checking': '세션을 확인하는 중…',
+
+  /** `runnerState.running` 과 **다른 것을 센다** — 저쪽은 러너, 이쪽은 PTY 세션의 턴이다. */
+  'terminal.state.running': '진행 중',
+  'terminal.state.ended': '턴 종료',
+  /** *"'끝났다'로 쓰지 않는다 — 다른 사실이다"* — 턴은 안 끝났고 소켓만 끊겼다. */
+  'terminal.state.runnerOffline': '러너 연결 끊김',
+
+  'terminal.writer.can': '입력 가능 — 마지막으로 연 창이 입력을 가진다.',
+  /** **원인을 그대로 말한다** — "관찰 전용"만 적으면 임의의 제약으로 읽힌다. */
+  'terminal.writer.observeOnly':
+    '관찰 전용 — 진행 중인 멘션 턴은 프롬프트를 파일로 받으므로 이 터미널은 입력을 받을 수 없다. '
+    + '직접 치려면 턴이 끝난 뒤 터미널을 열어라.',
+  'terminal.writer.otherWriter': '읽기 전용 — 다른 창이 입력 중이다. 이 창에 치면 아무 데도 가지 않는다.',
+  'terminal.writer.runnerOutdated': '읽기 전용 — 이 러너는 입력을 다룰 줄 모른다(구버전이거나 붙어 있지 않다).',
+  /** 구 서버는 이유를 안 싣는다 — **원인을 지어내지 않는다**(`#368`). */
+  'terminal.writer.unknown': '읽기 전용 — 이 창의 입력은 러너에 닿지 않는다.',
 
   // ---------------------------------------------------------------------------
   // inbox — 사슬 구획은 여기 없다(`waitChain.*` 이 진다, `en.ts` 머리말).
