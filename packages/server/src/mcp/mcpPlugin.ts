@@ -165,8 +165,8 @@ function buildMcpServer(
     inputSchema: { query: z.string().min(1).max(256) },
   }, async ({ query }) => {
     // 검색어도 본문과 같은 규칙으로 정본에 맞춘다 — REST `/search` 와 **같은 함수**다.
-    const messages = await searchMessages(pool, account.id, await normalizeSearchQuery(pool, query));
-    return jsonResult({ messages: await denormalizeBodies(pool, messages) });
+    const page = await searchMessages(pool, account.id, await normalizeSearchQuery(pool, query));
+    return jsonResult({ messages: await denormalizeBodies(pool, page.messages) });
   });
 
   server.registerTool('message.post', {

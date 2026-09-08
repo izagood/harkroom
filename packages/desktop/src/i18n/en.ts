@@ -3141,12 +3141,17 @@ export const en = {
   'search.palette.input': 'Search terms',
   'search.palette.label': 'Search messages',
   'search.palette.loading': 'Searching…',
+  'search.palette.more': 'Load more results',
   'search.palette.placeholderAll': 'Search everything',
+  'search.palette.placeholderThread': 'Search this thread',
   /** **`this channel` 을 안 버린다** — 그 이름이 지금 보는 곳이라는 사실이 빠지면 안 된다. */
   'search.palette.placeholderScoped': 'Search this channel ({name})',
   'search.palette.results': 'Search results',
   /** 체크박스 라벨 — placeholder 와 **다른 낱말이어야 한다**(위 표). */
-  'search.palette.scopeLabel': 'Only this channel ({name})',
+  'search.palette.scopeAll': 'Everything',
+  'search.palette.scopeGroup': 'Search scope',
+  'search.palette.scopeLabel': 'In this channel ({name})',
+  'search.palette.scopeThread': 'This thread',
   /** 그 메시지가 스레드 **안에 있다**는 표시다 — 스레드 자체가 아니다. */
   'search.palette.thread': 'In a thread',
   'search.palette.unnamedChannel': 'unnamed channel',

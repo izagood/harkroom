@@ -2947,19 +2947,19 @@ describe('찾기 두 줄 — 같은 물음이 아니다', () => {
         activeChannelId: 'c1',
       });
       setController({
-        api: { search: vi.fn(async () => [] as never[]) },
+        api: { search: vi.fn(async () => ({ messages: [], hasMore: false })) },
       } as unknown as Controller);
       render(<SearchPalette open onClose={() => {}} />);
     };
 
     openPalette();
-    expect(screen.getByLabelText('Only this channel (general)')).toBeTruthy();
+    expect(screen.getByText('In this channel (general)')).toBeTruthy();
     expect(screen.getByPlaceholderText('Search everything')).toBeTruthy();
 
     cleanup();
     speak('ko');
     openPalette();
-    expect(screen.getByLabelText('이 채널에서만 (general)')).toBeTruthy();
+    expect(screen.getByText('이 채널 (general)')).toBeTruthy();
     expect(screen.getByPlaceholderText('전체에서 찾기')).toBeTruthy();
   });
 });

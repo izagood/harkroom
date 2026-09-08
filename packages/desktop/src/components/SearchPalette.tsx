@@ -5,19 +5,29 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
 
+/**
+ * ⌘K 와 ⌘F 는 **다른 물음**이다.
+ *
+ * - `'all'` — 워크스페이스 전체 찾기(⌘K). 그 말이 어디 있었는지 모를 때.
+ * - `'channel'` — 지금 보는 대화 안에서(채널 헤더 버튼, 또는 스레드가 닫힌 ⌘F).
+ * - `'thread'` — 열려 있는 스레드 안에서(⌘F). 브라우저 찾기의 근육 기억과 같은 자리다.
+ */
+export type SearchScope = 'all' | 'channel' | 'thread';
+
 interface Props {
   open: boolean;
   onClose: () => void;
-  initialScoped?: boolean;
+  initialScope?: SearchScope;
 }
 
 /**
  * 검색은 디바운스(300ms) 처리한다 — 입력마다 서버를 치지 않는다.
  * 전문검색 쿼리가 값싸지 않으므로 입력 후 잠시 기다렸다가 보낸다.
  *
- * 전역 진입점(⌘K)은 꺼진 채, 채널 진입점(헤더 버튼)은 켜진 채 연다 — 둘 다 사람의 명시적 선택이다.
+ * 전역 진입점(⌘K)은 전체, 채널 진입점(헤더 버튼)은 채널, ⌘F 는 스레드가 열려 있으면 그
+ * 스레드·없으면 채널로 연다 — 셋 다 사람의 명시적 선택이다.
  */
-export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
+export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
   const t = useT();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<MessageRow[]>([]);
@@ -26,13 +36,14 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
   const [hasSearched, setHasSearched] = useState(false);
   /**
    * #221: 기본값은 전역이다. 좁히는 것은 사람이 명시적으로 하는 선택이라, 팔레트를 열
-   * 때마다 그 열기를 시작한 진입점이 정한 값(`initialScoped`)으로 돌아간다 — 앞서 손으로
-   * 켜 둔 토글이 다음 ⌘K 까지 따라오지 않는다(#258).
+   * 때마다 그 열기를 시작한 진입점이 정한 값(`initialScope`)으로 돌아간다 — 앞서 손으로
+   * 바꾼 스코프가 다음 ⌘K 까지 따라오지 않는다(#258).
    *
    * 여기 `useState` 초기값은 **마운트 때 한 번만** 읽힌다. `Workspace` 는 이 컴포넌트를
    * 계속 마운트해 둔 채 `open` 만 뒤집으므로, 실제로 값을 반영하는 곳은 아래 `open` 이펙트다.
    */
-  const [scoped, setScoped] = useState(initialScoped);
+  const [scope, setScope] = useState<SearchScope>(initialScope);
+  const [hasMore, setHasMore] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const resultRefs = useRef<(HTMLLIElement | null)[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -42,6 +53,7 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
   const channels = useActiveStore((s) => s.channels);
   const dms = useActiveStore((s) => s.dms);
   const activeChannelId = useActiveStore((s) => s.activeChannelId);
+  const activeThreadRootId = useActiveStore((s) => s.threadRootId);
 
   const getChannelName = useCallback((channelId: string): string => {
     const channel = channels.find((c) => c.id === channelId);
@@ -60,42 +72,56 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
     return account ? `@${account.handle}` : authorId;
   }, [accounts]);
 
-  const search = useCallback(async (q: string, channelId: string | null) => {
+  /**
+   * 스코프 하나가 **두 인자**로 갈린다. 스레드 스코프에도 채널을 함께 보내는 이유는
+   * 서버의 403 판정이 채널 단위이기 때문이다(`/search` 주석).
+   */
+  const scopeArgs = useCallback((s: SearchScope): { channelId: string | null; threadRootId: string | null } => {
+    if (s === 'thread' && activeThreadRootId && activeChannelId) {
+      return { channelId: activeChannelId, threadRootId: activeThreadRootId };
+    }
+    if (s !== 'all' && activeChannelId) return { channelId: activeChannelId, threadRootId: null };
+    return { channelId: null, threadRootId: null };
+  }, [activeChannelId, activeThreadRootId]);
+
+  /**
+   * `offset` 이 0 이면 새 검색(결과를 갈아치운다), 아니면 '더 보기'(뒤에 잇는다).
+   * 한 함수로 둔 이유는 스코프·질의를 두 벌 들고 다니지 않기 위해서다.
+   */
+  const search = useCallback(async (q: string, s: SearchScope, offset = 0) => {
     if (!q.trim()) return;
     setLoading(true);
     setError(null);
     try {
-      const messages = await getController().api.search(q, channelId);
-      setResults(messages);
+      const page = await getController().api.search(q, { ...scopeArgs(s), offset });
+      setResults((prev) => (offset === 0 ? page.messages : [...prev, ...page.messages]));
+      setHasMore(page.hasMore);
       setHasSearched(true);
-      setActiveIndex(messages.length > 0 ? 0 : -1);
+      if (offset === 0) setActiveIndex(page.messages.length > 0 ? 0 : -1);
     } catch (e) {
       setError(e instanceof Error ? e.message : t('search.palette.failed'));
-      setResults([]);
+      if (offset === 0) setResults([]);
     } finally {
       setLoading(false);
     }
-  }, [t]);
-
-  const scopeChannelId = scoped && activeChannelId ? activeChannelId : null;
+  }, [t, scopeArgs]);
 
   const handleSearch = useCallback((value: string) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      search(value, scopeChannelId);
+      search(value, scope);
     }, 300);
-  }, [search, scopeChannelId]);
+  }, [search, scope]);
 
   /**
-   * 토글은 디바운스를 건너뛴다 — 타이핑과 달리 이건 한 번의 명시적 동작이라
+   * 스코프 바꾸기는 디바운스를 건너뛴다 — 타이핑과 달리 이건 한 번의 명시적 동작이라
    * 기다릴 이유가 없고, 기다리면 방금 누른 것이 반영됐는지 알 수 없다.
    */
-  const toggleScope = useCallback(() => {
-    const next = !scoped;
-    setScoped(next);
+  const chooseScope = useCallback((next: SearchScope) => {
+    setScope(next);
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (query.trim()) search(query, next && activeChannelId ? activeChannelId : null);
-  }, [scoped, query, activeChannelId, search]);
+    if (query.trim()) search(query, next);
+  }, [query, search]);
 
   useEffect(() => {
     if (!open) {
@@ -104,18 +130,19 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
       setError(null);
       setHasSearched(false);
       setActiveIndex(-1);
-      setScoped(false);
+      setScope('all');
+      setHasMore(false);
       if (debounceRef.current) clearTimeout(debounceRef.current);
       return;
     }
     // 열릴 때마다 진입점이 정한 스코프를 적용한다. `useState` 초기값에만 맡기면 마운트
     // 이후 첫 열기 한 번만 맞고, 그다음부터는 헤더 버튼이 좁히지 못한다.
     //
-    // `initialScoped` 는 의도적으로 의존성에서 뺐다 — 팔레트가 이미 열려 있는 동안
-    // 부모가 이 값을 바꿔도 사람이 손으로 켠 토글을 덮어쓰지 않아야 한다. 열기 동작은
-    // 언제나 `initialScoped` 와 `open` 을 같은 이벤트에서 함께 바꾸므로, 이 이펙트가
+    // `initialScope` 는 의도적으로 의존성에서 뺐다 — 팔레트가 이미 열려 있는 동안
+    // 부모가 이 값을 바꿔도 사람이 손으로 고른 스코프를 덮어쓰지 않아야 한다. 열기 동작은
+    // 언제나 `initialScope` 와 `open` 을 같은 이벤트에서 함께 바꾸므로, 이 이펙트가
     // 도는 렌더에는 새 값이 이미 들어와 있다.
-    setScoped(initialScoped);
+    setScope(initialScope);
     inputRef.current?.focus();
   }, [open]);
 
@@ -128,6 +155,14 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
   const close = useCallback(() => {
     onClose();
   }, [onClose]);
+
+  const openResult = useCallback((msg: MessageRow) => {
+    // 이동은 `openMessage` 하나에 맡긴다 — 채널 전환·스레드 패널·강조·실패 통지가 전부
+    // 그 안에 있다(인박스·저장·첨부가 이미 그 길로 간다). 여기서 openChannel/openThread 를
+    // 직접 부르면 강조가 걸리지 않아 "눌렀는데 아무 일도 없다"가 된다.
+    void getController().openMessage(msg.id);
+    close();
+  }, [close]);
 
   useEffect(() => {
     if (!open) return;
@@ -150,18 +185,13 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
       }
       if (e.key === 'Enter' && activeIndex >= 0 && results[activeIndex]) {
         e.preventDefault();
-        const msg = results[activeIndex];
-        getController().openChannel(msg.channelId);
-        if (msg.threadRootId && msg.threadRootId !== msg.id) {
-          getController().openThread(msg.threadRootId);
-        }
-        close();
+        openResult(results[activeIndex]);
         return;
       }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [open, results, activeIndex, close]);
+  }, [open, results, activeIndex, close, openResult]);
 
   if (!open) return null;
 
@@ -194,9 +224,11 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
               setQuery(value);
               handleSearch(value);
             }}
-            placeholder={scoped && activeChannelId
-              ? t('search.palette.placeholderScoped', { name: getChannelName(activeChannelId) })
-              : t('search.palette.placeholderAll')}
+            placeholder={scope === 'thread' && activeThreadRootId
+              ? t('search.palette.placeholderThread')
+              : scope === 'channel' && activeChannelId
+                ? t('search.palette.placeholderScoped', { name: getChannelName(activeChannelId) })
+                : t('search.palette.placeholderAll')}
             aria-label={t('search.palette.input')}
             className="flex-1 bg-transparent text-fg placeholder-fg-subtle focus:outline-none"
           />
@@ -206,18 +238,29 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
           {loading && <span className="text-meta text-fg-subtle">{t('search.palette.loading')}</span>}
         </div>
 
+        {/* 스코프는 켬/끔이 아니라 **셋 중 하나**다(전체·이 채널·이 스레드). 체크박스로는
+            셋을 말할 수 없어 고르는 줄로 바꿨다. 스레드 칸은 스레드가 열려 있을 때만 선다 —
+            없는 자리를 회색으로 남겨 두면 왜 못 누르는지 설명할 자리가 또 필요해진다. */}
         {activeChannelId && (
-          <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-            <input
-              id="search-scope-toggle"
-              type="checkbox"
-              checked={scoped}
-              onChange={toggleScope}
-              className="accent-teal-500"
-            />
-            <label htmlFor="search-scope-toggle" className="cursor-pointer text-meta text-fg-muted">
-              {t('search.palette.scopeLabel', { name: getChannelName(activeChannelId) })}
-            </label>
+          <div className="flex items-center gap-1 border-b border-border px-3 py-2" role="group" aria-label={t('search.palette.scopeGroup')}>
+            {(['all', 'channel', ...(activeThreadRootId ? ['thread' as const] : [])] as SearchScope[]).map((s) => (
+              <button
+                key={s}
+                type="button"
+                data-testid={`search-scope-${s}`}
+                aria-pressed={scope === s}
+                onClick={() => chooseScope(s)}
+                className={`rounded px-2 py-1 text-meta ${
+                  scope === s ? 'bg-surface-hover text-fg' : 'text-fg-muted hover:bg-surface-sunken'
+                }`}
+              >
+                {s === 'all'
+                  ? t('search.palette.scopeAll')
+                  : s === 'channel'
+                    ? t('search.palette.scopeLabel', { name: getChannelName(activeChannelId) })
+                    : t('search.palette.scopeThread')}
+              </button>
+            ))}
           </div>
         )}
 
@@ -241,13 +284,8 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
               ref={(el) => { resultRefs.current[index] = el; }}
               role="option"
               aria-selected={index === activeIndex}
-              onClick={() => {
-                getController().openChannel(msg.channelId);
-                if (msg.threadRootId && msg.threadRootId !== msg.id) {
-                  getController().openThread(msg.threadRootId);
-                }
-                close();
-              }}
+              data-testid="search-result"
+              onClick={() => openResult(msg)}
               className={`cursor-pointer rounded px-3 py-2 ${
                 index === activeIndex ? 'bg-surface-hover' : 'hover:bg-surface-sunken'
               }`}
@@ -271,6 +309,20 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
               <div className="mt-1 truncate text-fg">{displayBody(msg, accounts)}</div>
             </li>
           ))}
+          {/* 잘렸다는 것을 말하지 않으면 사람은 "없다"로 읽는다 — 상위 50 건이 전부 최근
+              것으로 차 있던 때 정작 찾던 옛 메시지가 없어 보이던 것과 같은 오해다. */}
+          {hasMore && !loading && (
+            <li className="p-2">
+              <button
+                type="button"
+                data-testid="search-more"
+                onClick={() => search(query, scope, enabledResults.length)}
+                className="w-full rounded px-3 py-2 text-meta text-fg-muted hover:bg-surface-sunken"
+              >
+                {t('search.palette.more')}
+              </button>
+            </li>
+          )}
         </ul>
 
         {/* 단축키 안내 띠 — 아랫단 11px. 한 번 배우면 안 읽는 자리다. */}

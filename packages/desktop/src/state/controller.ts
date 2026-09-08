@@ -968,6 +968,29 @@ export class Controller {
       return;
     }
     await this.openChannel(target.channelId);
+    /**
+     * 옛 메시지는 `openChannel` 이 불러온 **최신 페이지에 없다** — 강조할 DOM 이 없으니
+     * 강조도 스크롤도 일어나지 않는다(검색 결과를 눌러도 아무 일이 없던 이유다). 그래서
+     * 그 자리를 가운데 둔 창을 따로 받아 채운다. 이미 실려 있으면 왕복을 만들지 않는다.
+     *
+     * 창은 기존 목록에 **합친다**(갈아치우지 않는다) — 갈아치우면 이미 읽어 둔 최신 쪽을
+     * 버리게 되고, 라이브로 들어오는 새 메시지가 옛 창 바로 아래 붙어 더 이상해진다.
+     * 대신 창과 최신 페이지 사이가 200 개 넘게 벌어진 채널에서는 그 사이가 비어 보인다 —
+     * 사이를 메우는 '여기부터 새 메시지' 구분선은 별개 과제다(`loadOlder` 로 위로 올라가면
+     * 메워진다).
+     */
+    if (!(this.store.getState().messages[target.channelId] ?? []).some((m) => m.id === target.id)) {
+      try {
+        const page = await this.api.messages(target.channelId, { around: target.seq });
+        this.store.getState().upsertMessages(target.channelId, page.messages);
+        this.store.getState().set({
+          hasMore: { ...this.store.getState().hasMore, [target.channelId]: page.hasMore },
+        });
+      } catch {
+        // 창을 못 받아도 채널은 이미 열렸다. 강조만 안 걸릴 뿐이라 사람을 막지 않는다
+        // (구 버전 서버는 `around` 를 모르고 400 을 준다).
+      }
+    }
     // 답글은 스레드 패널까지 연다 — 스레드 밖에서 보면 무엇에 대한 답인지 잃는다.
     if (target.threadRootId) await this.openThread(target.threadRootId);
     // 강조는 openChannel 이 지운 **뒤에** 건다. 순서가 뒤바뀌면 방금 건 강조를 스스로 지운다.

@@ -185,11 +185,12 @@ export class ApiClient {
   /** `hasMore` 는 '이 페이지보다 오래된 것이 남았는가'다 — 상단 추가 로드 표시에 쓴다. */
   messages(
     channelId: string,
-    opts?: { since?: number; before?: number; limit?: number; thread?: string },
+    opts?: { since?: number; before?: number; around?: number; limit?: number; thread?: string },
   ): Promise<{ messages: MessageRow[]; hasMore: boolean }> {
     const q = new URLSearchParams();
     if (opts?.since !== undefined) q.set('since', String(opts.since));
     if (opts?.before !== undefined) q.set('before', String(opts.before));
+    if (opts?.around !== undefined) q.set('around', String(opts.around));
     if (opts?.limit !== undefined) q.set('limit', String(opts.limit));
     if (opts?.thread) q.set('thread', opts.thread);
     const qs = q.size ? `?${q.toString()}` : '';
@@ -625,9 +626,15 @@ export class ApiClient {
    * #221: `channelId` 를 주면 서버가 질의를 좁힌다. 받아 온 결과를 여기서 거르지 않는 이유는
    * 전역 결과가 상위 N 건에서 잘려 이 채널 것이 아예 안 실려 올 수 있기 때문이다.
    */
-  async search(q: string, channelId?: string | null): Promise<MessageRow[]> {
-    const scope = channelId ? `&channelId=${encodeURIComponent(channelId)}` : '';
-    return (await this.req<{ messages: MessageRow[] }>('GET', `/search?q=${encodeURIComponent(q)}${scope}`)).messages;
+  async search(
+    q: string,
+    scope: { channelId?: string | null; threadRootId?: string | null; offset?: number } = {},
+  ): Promise<{ messages: MessageRow[]; hasMore: boolean }> {
+    const params = new URLSearchParams({ q });
+    if (scope.channelId) params.set('channelId', scope.channelId);
+    if (scope.threadRootId) params.set('threadRootId', scope.threadRootId);
+    if (scope.offset) params.set('offset', String(scope.offset));
+    return await this.req<{ messages: MessageRow[]; hasMore: boolean }>('GET', `/search?${params.toString()}`);
   }
 
   /**
