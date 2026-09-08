@@ -193,6 +193,9 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
    */
   const 계정명령파라미터: Record<string, string[]> = {
     claude_accounts_list: [],
+    // 사용량도 아무것도 안 받는다(2026-09-09). 계정 이름조차 넘기지 않는다 — 어느 계정을
+    // 셀지는 데몬이 디스크를 보고 정한다.
+    claude_accounts_usage: [],
     claude_accounts_configure: ['config: serde_json::Value'],
     claude_account_login_start: ['account: String', 'pool: String'],
     claude_account_login_submit: ['code: String', 'login_id: String'],

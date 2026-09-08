@@ -374,6 +374,15 @@ fn claude_accounts_list(
 }
 
 #[tauri::command]
+fn claude_accounts_usage(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.claude_accounts_usage()
+}
+
+#[tauri::command]
 fn claude_accounts_configure(
     app: tauri::AppHandle,
     state: tauri::State<daemon_client::DaemonState>,
@@ -566,6 +575,7 @@ fn main() {
             notification::notification_send,
             app_version,
             claude_accounts_list,
+            claude_accounts_usage,
             claude_accounts_configure,
             claude_account_login_start,
             claude_account_login_submit,

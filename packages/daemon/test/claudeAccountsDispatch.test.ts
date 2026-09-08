@@ -24,6 +24,7 @@ function fakePort(over: Partial<ClaudeAccountsPort> = {}): ClaudeAccountsPort {
     list: vi.fn(async () => ({
       root: '/r', mode: 'flat' as const, defaultPool: null, agents: {}, pools: [], strays: [],
     })),
+    usage: vi.fn(async () => ({ measuredAtMs: 0, windowMs: 1, accounts: [] })),
     configure: vi.fn(async () => undefined),
     removeAccount: vi.fn(async () => undefined),
     removePool: vi.fn(async () => undefined),

@@ -92,6 +92,8 @@ export const REQUEST_TYPES = [
   'claudeAccountRemove',
   'claudePoolRemove',
   'claudeAccountMove',
+  // 사용량 조회(2026-09-09). **읽기만 한다** — 계정 디렉터리를 건드리지 않는다.
+  'claudeAccountsUsage',
 ] as const;
 export type DaemonRequestType = (typeof REQUEST_TYPES)[number];
 
@@ -579,6 +581,67 @@ export interface ClaudeLoginRef {
 
 export interface ClaudeLoginStartResult {
   loginId: string;
+}
+
+/**
+ * 계정 하나가 5시간 창에서 쓴 양. **결과 타입이 여기(프로토콜)에 사는 이유**: 계정
+ * 목록(`ClaudeAccountsSnapshot`)은 데몬과 웹뷰가 각자 손으로 베껴 두 벌인데, 그것이
+ * 좋아서가 아니라 이 파일이 생기기 전의 순서였다. 새로 만드는 말은 한 벌로 둔다 —
+ * 데몬과 웹뷰가 **같은 선언을 import 한다**. 필드가 늘 때 한쪽만 고쳐지는 날이 없다.
+ *
+ * ## 왜 퍼센트가 없는가
+ *
+ * **한도 값을 우리가 모른다.** `claude auth status --json` 에 사용량도 한도도 없고
+ * (실측 2.1.263: `loggedIn`·`authMethod`·`email`·`orgId`·`orgName`·`subscriptionType` 뿐,
+ * `usage` 서브커맨드도 없다), 트랜스크립트에도 분모가 적히지 않는다. 그래서 "80% 썼다"를
+ * 낼 방법이 없다 — 내면 그것은 우리가 지어낸 숫자다.
+ *
+ * 대신 **관측된 것만** 준다: 창 안에서 실제로 쓴 토큰과, claude 자신이 "한도"라고 말한
+ * 순간(`quotaLimits`)과 그것이 풀리는 시각이다. 앞은 상대 비교에 쓰고(어느 계정이 많이
+ * 돌았나), 뒤는 단정할 수 있는 사실이다(지금 소진이다 · 몇 시에 돌아온다).
+ */
+export interface ClaudeAccountUsageTokens {
+  input: number;
+  output: number;
+  /** 캐시 읽기. **입력과 합치지 않는다** — 자릿수가 한둘 크고 값이 다르다. */
+  cacheRead: number;
+  cacheCreation: number;
+}
+
+/** claude 가 "한도"라고 말한 순간. 트랜스크립트의 `quotaLimits` 레코드에서 읽는다. */
+export interface ClaudeAccountLimitHit {
+  /** 그 레코드의 시각. */
+  atMs: number;
+  /** 창이 풀리는 시각. **미래면 지금 소진 중이라는 뜻이다.** 없을 수도 있다. */
+  resetsAtMs: number | null;
+  /** `five_hour` 등. claude 가 쓴 값을 그대로 옮긴다 — 우리가 갈래를 정하지 않는다. */
+  rateLimitType: string | null;
+}
+
+export interface ClaudeAccountUsage {
+  /** 평평한 구조에서는 빈 문자열이다(`ClaudeAccountsSnapshot.mode` 와 같은 규칙). */
+  pool: string;
+  account: string;
+  /**
+   * 이 계정에 대해 센 창의 시작. **계정마다 다를 수 있다** — 소진 중인 계정은
+   * `resetsAt - 5h`(claude 가 말한 창)이고, 그 밖에는 `측정시각 - 5h`(롤링)다.
+   */
+  windowStartMs: number;
+  tokens: ClaudeAccountUsageTokens;
+  /** 창 안의 assistant 응답 수. 토큰보다 "얼마나 돌았나"에 가깝다. */
+  responses: number;
+  /** 트랜스크립트가 마지막으로 쓰인 시각. `null` = 이 계정으로 돈 적이 없다. */
+  lastUsedAtMs: number | null;
+  limitHit: ClaudeAccountLimitHit | null;
+  /** 읽다가 실패한 파일 수. 0 이 아니면 위 숫자가 **적게** 세어진 것이다. */
+  unreadableFiles: number;
+}
+
+export interface ClaudeUsageSnapshot {
+  measuredAtMs: number;
+  /** 창 길이(ms). 화면이 "지난 5시간"을 자기 상수로 적지 않게 값으로 준다. */
+  windowMs: number;
+  accounts: ClaudeAccountUsage[];
 }
 
 export interface PingResult {
