@@ -686,6 +686,45 @@ export async function recordAskAnswer(
 }
 
 /** 삭제는 작성자 또는 admin. 수정과 달리 원문을 왜곡하지 않고 가리는 일이라 운영자에게 열어둔다. */
+/**
+ * 채널에 함께 올린 스레드 답을 **채널에서만** 거둔다(#231 의 되돌리기).
+ *
+ * 지우기가 아니다 — 메시지는 스레드에 그대로 남고 `also_in_channel` 만 false 가 된다.
+ * 스레드에서 하던 이야기를 채널로 잘못 흘린 것을 되돌리는 자리라, 잘못 흘린 사람이
+ * 고를 수 있는 것은 지금까지 "메시지째 지우기" 하나뿐이었다. 그것은 스레드에서
+ * 이야기하던 사람들의 문맥까지 같이 지운다.
+ *
+ * **삭제와 같은 권한**을 쓴다(작성자 또는 admin). 지울 수 있는 사람이 그보다 약한 일을
+ * 못 하면 화면은 더 거친 쪽을 권하게 된다.
+ *
+ * `kind` 를 보지 않는다 — 에이전트가 `alsoInChannel` 로 올린 progress·user 답도 같은
+ * 실수를 할 수 있고, 되돌리는 것은 본문을 고치는 일이 아니다. 같은 이유로 `edited_at`
+ * 도 건드리지 않는다: 사람이 글을 고친 것이 아니다.
+ *
+ * **이미 꺼져 있으면 그대로 돌려준다**(멱등). 두 번 눌러도 404 가 아니라 같은 결과다 —
+ * 다른 창에서 먼저 거둔 뒤 이 창에서 누르는 것은 정상 경로다.
+ *
+ * 알림은 되돌리지 않는다. 채널에 뜬 것을 보고 이미 읽은 사람이 있고, 멘션으로 깬
+ * 사람의 inbox 항목은 그 사람의 것이다 — 남의 읽음 상태를 이 호출이 되감지 않는다.
+ */
+export async function recallFromChannel(
+  pool: Pool, args: { channelId: string; messageId: string; actorId: string; actorIsAdmin: boolean },
+): Promise<MessageRow | MutationRefusal> {
+  const found = await pool.query(
+    `select author_id from message
+     where id = $1 and channel_id = $2 and deleted_at is null`,
+    [args.messageId, args.channelId],
+  );
+  if (!found.rowCount) return 'not_found';
+  if (found.rows[0].author_id !== args.actorId && !args.actorIsAdmin) return 'forbidden';
+
+  const updated = await pool.query(
+    `update message set also_in_channel = false where id = $1 returning ${COLS}`,
+    [args.messageId],
+  );
+  return updated.rows[0];
+}
+
 export async function deleteMessage(
   pool: Pool, args: { channelId: string; messageId: string; actorId: string; actorIsAdmin: boolean },
 ): Promise<'deleted' | MutationRefusal> {
