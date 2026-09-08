@@ -98,6 +98,33 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
     ? new Date(message.lastReplyAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : null;
   /**
+   * **답글이 달렸는가** — 답글 요약과 툴바 진입점이 **같은 하나의 판정**을 나눠 쓴다.
+   *
+   * `replyCount` 는 서버에서 두 가지 뜻을 갖는다
+   * (`packages/server/src/services/messages.ts:216`,
+   * `case when m.thread_root_id is null then thread_stats.reply_count end`):
+   *
+   * - `null` — 이 메시지는 **답글이다**(스레드 루트가 아니다). 답글 수를 셀 대상이 아니다.
+   * - `0` — **스레드 루트인데 답글이 아직 없다.**
+   *
+   * 그리고 `0` 은 반드시 온다: 같은 파일 `:196` 의 `thread_stats` 가
+   * `LEFT JOIN LATERAL (SELECT COUNT(*)::int …) ON true` 라 답글이 없어도 행이 하나 나오고
+   * `COUNT(*)` 는 `0` 이다 — 루트의 `replyCount` 가 `null` 이 되는 경우는 없다.
+   *
+   * **`#396` 이 이 구분을 놓쳤다.** 두 자리를 `replyCount !== null` / `=== null` 로 갈라
+   * 두어, 서버가 실제로 주는 `0` 이 **양쪽 어디에도 맞지 않았다** — 답글 요약이 `0 replies`
+   * 를 그리고 툴바 진입점은 사라져, 문서가 위반 예시로 지목한 그 글자가 스레드로 가는
+   * **유일한** 길이 돼 있었다(`docs/desktop-design-directions.pdf` 5쪽,
+   * *위생 — 자리를 비운다* · *"0은 그리지 않는다"*).
+   *
+   * 그래서 판정을 **여기 한 곳**에 두고 두 자리가 이것의 참/거짓으로만 갈린다.
+   * 조건을 양쪽에 손으로 적으면 배타성이 우연이 되고, `#396` 이 깨진 방식으로 다시
+   * 어긋난다 — 한쪽만 고치는 것이 가능해지기 때문이다. 아래 답글 요약 주석이 지키라고
+   * 한 *"같은 조건끼리는 서로 덮을 대상이 없다"* 는 성질이 이 한 줄로 성립한다:
+   * 세 값(`null`·`0`·`> 0`) 전부에서 진입점은 정확히 하나다.
+   */
+  const hasReplies = (message.replyCount ?? 0) > 0;
+  /**
    * 얼굴 슬롯 — **아바타 셋까지, 나머지는 `+N`**(identity 문서 Task 13).
    *
    * 다섯이던 것을 셋으로 줄인다: **폭이 고정되어야** 참여자가 3이든 40이든 요약 줄의
@@ -368,8 +395,10 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 올리는 순간 #143 이 그대로 되살아나기 때문이다.
                 (#396: 답글이 **없을 때**의 진입점은 애초에 호버에서만 보이는 툴바 아이콘이라
                 조건이 툴바와 같다 — 같은 조건끼리는 서로 덮을 대상이 없으므로 이 경고는
-                적용되지 않는다. 답글 요약은 여전히 절대 툴바로 올리지 않는다.) */}
-            {!inThread && message.replyCount !== null && (
+                적용되지 않는다. 답글 요약은 여전히 절대 툴바로 올리지 않는다.)
+                이 자리는 **답글이 있을 때만**(`hasReplies`) 그린다 — `0` 이면 `0 replies` 가
+                되어 문서가 금지한 글자가 된다. 근거는 `hasReplies` 정의 주석에 있다. */}
+            {!inThread && hasReplies && (
               <button
                 // 답글이 달린 메시지는 호버 없이도 그 사실이 보여야 한다(#161). 답글이 없을
                 // 때만 호버로 드러나되, visibility 가 아니라 opacity 로 숨긴다 —
@@ -508,13 +537,16 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
           <div role="group" aria-label="message toolbar" className={`absolute right-2 top-1 flex items-center gap-0.5 rounded border border-border bg-surface-raised px-1 py-0.5 shadow-sm ${hoverOnly}`}>
             <InlineReactionButtons message={message} />
             <ReactionPicker message={message} />
-            {/* #396: 답글이 아직 없는 메시지(replyCount === null)의 스레드 진입점.
+            {/* #396: 답글이 아직 **없는** 메시지의 스레드 진입점.
                 답글이 달리면 본문 열의 답글 요약(위쪽, #161)이 상시 노출로 이 역할을 대신하므로
                 그때는 여기 그리지 않는다 — 같은 진입을 두 곳에 두지 않는다. inThread 에서는
                 스레드 안에서 또 스레드를 열 수 없으므로 아예 그리지 않는다(바깥 조건이 막는다).
                 아이콘은 💬 를 쓰지 않는다 — 그건 에이전트 상태 신호 이모지라(#144,
-                STATUS_SIGNAL_EMOJI) 사람이 누르는 버튼에 쓰면 신호의 뜻이 무너진다. */}
-            {!inThread && message.replyCount === null && (
+                STATUS_SIGNAL_EMOJI) 사람이 누르는 버튼에 쓰면 신호의 뜻이 무너진다.
+                조건이 `replyCount === null` 이었으나 **`0` 을 빠뜨렸다** — 서버는 답글 없는
+                루트에 `0` 을 주므로 정작 이 아이콘이 가장 필요한 메시지에서 사라졌다.
+                `!hasReplies` 로 `null` 과 `0` 을 함께 받는다(정의 주석 참고). */}
+            {!inThread && !hasReplies && (
               <button
                 className={iconBtn}
                 title="스레드에 답글 달기"
