@@ -53,7 +53,7 @@ describe('repo hygiene', () => {
   });
 
   /**
-   * **실제 사람의 계정 정보가 저장소에 남지 않는다** (2026-09-08).
+   * **실제 사람의 계정·인프라 정보가 저장소에 남지 않는다** (2026-09-08).
    *
    * 무엇이 있었나: 계정 풀 기능을 만들면서 실측 결과를 설계 문서에 적었고, 그 안에 개발
    * 머신의 **실제 이메일과 조직 이름**이 들어갔다(`docs/specs/2026-09-08-...` 두 줄).
@@ -64,28 +64,103 @@ describe('repo hygiene', () => {
    * 들어오게 막는 자리가 여기다.
    *
    * 판정은 **도메인**으로 한다. 이름·핸들은 저장소 전체에 정당하게 등장하고(작성자, 브랜치,
-   * 커밋) 그것을 금지하면 이 테스트가 자기 근거 때문에 빨개진다. 반면 이메일 도메인과
-   * 조직 이름은 코드·문서에 있을 이유가 없다 — 예시가 필요하면 `example.com` 이 있다.
+   * 커밋, 픽스처의 `handle`) 그것을 금지하면 이 테스트가 자기 근거 때문에 빨개진다. 반면
+   * 이메일 도메인과 호스트는 코드·문서에 실제 값으로 있을 이유가 없다.
    *
-   * 되돌려 RED: 아무 문서에 실제 이메일 한 줄을 넣으면 빨개진다.
+   * **금지가 아니라 허용으로 센다** (2026-09-08, 두 번째). 사내 주소 한 줄이 설계 문서에
+   * 남아 초록으로 통과했다. 첫 수습은 그 호스트를 금지 목록에 적는 것이었는데, 그러자
+   * **이 파일이 유출본이 됐다** — 공개 저장소에서 "감출 값 목록"만큼 잘 읽히는 자리가
+   * 없다. 사용자가 그것을 지적했다.
+   *
+   * 그래서 방향을 뒤집었다: 문서·소스에 나오는 **모든** URL 호스트와 이메일 도메인을 모아
+   * **예약·예시 도메인과 공개 문서 링크만 통과**시킨다. 이 방향이면 (1) 감출 값을 여기
+   * 적지 않아도 되고, (2) 아직 새지 않은 주소까지 걸린다 — 금지 목록은 이미 샌 것만 막는다.
+   *
+   * 되돌려 RED: 아무 문서에 실제 이메일 한 줄이나 사내 주소 한 줄을 넣으면 빨개진다.
    */
-  describe('실제 계정 정보가 없다', () => {
-    /** 문서·소스에 있을 이유가 없는 것들. 예시는 `example.com`·`example.org` 를 쓴다. */
-    const 금지 = [
-      // 실제 이메일 도메인. `@example.com`·`@personal.example` 같은 예시 도메인은 통과한다.
-      /@(?:gmail|googlemail|naver|kakao|daum|outlook|hotmail|icloud|yahoo)\.com\b/i,
-      /@rebellions\.ai\b/i,
-      // 조직 이름(사내 네이밍이 드러난다).
-      /\bRebellions-[A-Za-z]+/,
+  describe('실제 계정·인프라 정보가 없다', () => {
+    /**
+     * 통과시키는 도메인. 여기 없는 호스트·이메일 도메인이 나오면 빨개진다.
+     * 새 공개 도메인은 **여기 한 줄 추가**로만 들어온다(리뷰에 그대로 드러난다).
+     */
+    const 허용도메인 = [
+      /^localhost$/i,
+      /\.localhost$/i,
+      /^example\.(?:com|net|org)$/i,
+      /\.example\.(?:com|net|org)$/i,
+      /\.example$/i, // RFC 2606 예약
+      /\.invalid$/i,
+      /\.internal$/i, // ICANN 이 사설용으로 예약한 TLD
+      /\.[a-z0-9-]*test$/i, // `.test` 와 `avcs.status-test` 처럼 회귀선이 만든 도메인
+      // URL 파서·멘션 회귀선이 쓰는 짧은 픽스처 도메인(사람의 것이 아니다).
+      /^(?:fizz|[a-z])\.(?:com|io)$/i,
+      // 공개 문서·표준 링크.
+      /^(?:www\.)?(?:github|nodejs|npmjs|claude|w3)\.(?:com|org)$/i,
+      /^schema\.tauri\.app$/i,
+      /^developers\.openai\.com$/i,
+      /^engineering\.block\.xyz$/i,
     ];
 
+    /** 도메인이 아닌 것들. IP 리터럴은 SSRF 회귀선이 10진·16진 표기까지 쓴다. */
+    const 도메인아님 = [
+      /^\d{1,3}(?:\.\d{1,3}){3}$/,
+      /^\d+$/,
+      /^0x[0-9a-f]+$/i,
+      /^\[[0-9a-f:.]+\]$/i,
+      /[<>{}$]/, // `<host>`·`${base}`·`{{host}}` 자리표시자
+      // 호스트 자리가 비었거나 줄인 것: 문서의 `http://...`, 정규식 리터럴 `https?:\/\/\S+`.
+      /^\.*$/,
+      // 한글이 섞인 호스트는 문서가 뜻으로 쓴 자리표시자다(`http://되돌아간-그-avcs-서버`).
+      /[^\x00-\x7f]/,
+      // 짧은 단일 레이블(`x`·`app`·`user`)은 픽스처다. 하이픈이 붙은 긴 단일 레이블은
+      // 사내 머신 이름의 모양이라 여기서 통과시키지 않는다.
+      /^[a-z0-9]{1,5}$/i,
+    ];
+
+    // 대괄호 IPv6(`http://[::1]/`)를 먼저 잡는다 — `]` 를 빼고 세면 `[::` 에서 잘린다.
+    const URL호스트 = /\bhttps?:\/\/(\[[^\]\s]*\](?::\d*)?|[^\s/?#'"`)\]},\\]*)/gi;
+    const 이메일 = /\b[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g;
     /**
-     * **이 파일 자신은 제외한다.** 금지 패턴과 자기 검사 문자열이 여기 살아 있어야 하고,
-     * 그러지 않으면 이 회귀선이 자기 근거 때문에 빨개진다(첫 실행에서 실제로 그랬다).
+     * 조직 이름은 도메인이 아니어서 허용 목록으로 셀 수 없다. 대신 **실측값의 모양**만
+     * 본다: `org=Foo-Bar` 처럼 대문자 합성어가 값 자리에 오면 걸린다(첫 사고가 그 모양이다).
+     * 픽스처는 `orgName: 'Corp'` 처럼 한 단어를 쓰므로 통과한다.
+     */
+    const 조직이름실측 = /\borg(?:Name)?['"]?\s*[=:]\s*['"]?[A-Z][a-z]+-[A-Z][a-z]+/;
+
+    /** `icons/128x128@2x.png` 같은 파일 이름이 이메일 모양으로 잡힌다. */
+    const 파일이름 = /\.(?:png|jpe?g|svg|webp|gif|ico|css|html|json|md|tsx?)$/i;
+
+    /** `user:pass@host:3400` 에서 호스트만 남긴다. */
+    function 호스트만(raw: string): string {
+      const 인증뒤 = raw.slice(raw.lastIndexOf('@') + 1);
+      return 인증뒤.replace(/:\d*$/, '').replace(/\.$/, '');
+    }
+
+    function 통과(도메인: string): boolean {
+      return 도메인아님.some((re) => re.test(도메인)) || 허용도메인.some((re) => re.test(도메인));
+    }
+
+    function 걸리는주소(text: string): string[] {
+      const out: string[] = [];
+      for (const m of text.matchAll(URL호스트)) {
+        const host = 호스트만(m[1] ?? '');
+        if (!통과(host)) out.push(host);
+      }
+      for (const m of text.matchAll(이메일)) {
+        if (파일이름.test(m[0])) continue;
+        if (!통과(m[1] ?? '')) out.push(m[0]);
+      }
+      const org = 조직이름실측.exec(text);
+      if (org) out.push(org[0]);
+      return out;
+    }
+
+    /**
+     * **이 파일 자신은 제외한다.** 위 허용 목록과 아래 자기 검사가 여기 살아 있어야 하고,
+     * 그러지 않으면 이 회귀선이 자기 근거 때문에 빨개진다.
      *
-     * 파일 하나를 통째로 면제하는 것은 보통 나쁜 신호지만, 여기서는 **면제 대상이 검사기
-     * 자신**이라 그 위험이 다르다: 이 파일에 실제 계정 정보를 넣는 유일한 경로는 금지
-     * 패턴을 늘리는 것이고, 그 변경은 이 파일을 읽는 사람 앞에 그대로 드러난다.
+     * 이제 이 면제가 감추는 것은 **합성된 예시 주소**뿐이다(`acme-corp.net`). 실제 사내
+     * 주소를 여기 적을 이유가 사라졌다 — 그것이 허용 방향으로 뒤집은 이유다.
      */
     const 자기자신 = join(getRoot(), 'packages/server/test/repoHygiene.test.ts');
 
@@ -109,27 +184,48 @@ describe('repo hygiene', () => {
       return out;
     }
 
-    it('소스·문서에 실제 이메일 도메인이나 조직 이름이 없다', () => {
+    it('소스·문서의 호스트·이메일 도메인이 모두 허용 목록 안에 있다', () => {
       const 걸린것: string[] = [];
       for (const file of 소스와문서()) {
         if (file === 자기자신) continue;
-        const text = readFileSync(file, 'utf-8');
-        for (const re of 금지) {
-          const m = re.exec(text);
-          if (m) 걸린것.push(`${file.slice(getRoot().length + 1)}: ${m[0]}`);
+        const rel = file.slice(getRoot().length + 1);
+        for (const 주소 of 걸리는주소(readFileSync(file, 'utf-8'))) {
+          걸린것.push(`${rel}: ${주소}`);
         }
       }
-      expect(걸린것, `실제 계정 정보가 저장소에 있다:\n${걸린것.join('\n')}`).toEqual([]);
+      expect(
+        걸린것,
+        '허용하지 않은 주소가 저장소에 있다. 공개 도메인이면 `허용도메인` 에 한 줄 더하고,' +
+          ' 사내 주소·개인 계정이면 `<host>`·`example.com` 으로 바꾼다:\n' +
+          걸린것.join('\n')
+      ).toEqual([]);
     });
 
-    it('이 회귀선이 실제로 잡는다 — 예시 도메인은 통과하고 실제 도메인은 걸린다', () => {
-      // 예외를 넣은 뒤 그 예외가 금지 전체를 열어 버리는 사고를 여기서 잰다.
-      const 걸리나 = (s: string): boolean => 금지.some((re) => re.test(s));
-      expect(걸리나('you@example.com')).toBe(false);
-      expect(걸리나('me@personal.example')).toBe(false);
-      expect(걸리나('someone@gmail.com')).toBe(true);
-      expect(걸리나('someone@rebellions.ai')).toBe(true);
-      expect(걸리나('org=Rebellions-Lychee')).toBe(true);
+    it('이 회귀선이 실제로 잡는다 — 예시·자리표시자는 통과하고 실제 모양은 걸린다', () => {
+      // 예약·예시 도메인과 자리표시자.
+      expect(통과('example.com')).toBe(true);
+      expect(통과('app.example')).toBe(true);
+      expect(통과('localhost')).toBe(true);
+      expect(통과('127.0.0.1')).toBe(true);
+      expect(통과('<host>')).toBe(true);
+      expect(통과('personal.example')).toBe(true);
+      // 사내 주소의 **모양** — 값은 여기 적지 않는다. `acme-corp` 는 합성한 이름이다.
+      expect(통과('build-box.vm.dc.acme-corp.net')).toBe(false);
+      expect(통과('gateway.acme-corp.net')).toBe(false);
+      expect(통과('acme-corp.net')).toBe(false);
+      // 사람의 계정 도메인.
+      expect(통과('mail-provider.net')).toBe(false);
+
+      // 문서 한 줄에서 실제로 뽑아낸다(포트·자리표시자·파일 이름을 가른다).
+      expect(걸리는주소('실측: `http://build-box.vm.dc.acme-corp.net:3400` 의 Projection'))
+        .toEqual(['build-box.vm.dc.acme-corp.net']);
+      expect(걸리는주소('예시: `http://<host>:3400`, `http://localhost:3400`')).toEqual([]);
+      expect(걸리는주소('연락은 me@fizz.com, you@example.com 으로')).toEqual([]);
+      expect(걸리는주소('작성자 someone@mail-provider.net')).toEqual(['someone@mail-provider.net']);
+      expect(걸리는주소('"icons/128x128@2x.png"')).toEqual([]);
+      // 조직 이름은 모양으로 본다 — 픽스처의 한 단어는 통과하고 합성어 실측값은 걸린다.
+      expect(걸리는주소("orgName: 'Corp'")).toEqual([]);
+      expect(걸리는주소('실측: `org=Acme-Lychee` 로 확인했다')).toEqual(['org=Acme-Lychee']);
     });
   });
 
