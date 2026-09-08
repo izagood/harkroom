@@ -819,13 +819,25 @@ export class Controller {
     after.set({ reads: { ...after.reads, [channelId]: { lastReadSeq: newest, unread: 0 } } });
   }
 
-  async openThread(rootId: string): Promise<void> {
+  /**
+   * 스레드를 연다. `focusMessageId` 를 주면 **그 답글 자리**에 세운다(#624 요구 3) —
+   * 채널에 함께 올라온 답에서 "최근 댓글 보기"로 들어오는 경우다. 그 사람의 질문은
+   * "이 스레드가 뭐였나"가 아니라 **"이 말 뒤에 무슨 말이 더 있었나"** 이므로, 뿌리부터
+   * 다시 읽히면 답글이 백 개 달린 스레드에서 방금 본 그 말을 다시 찾아야 한다.
+   *
+   * 세우는 수단은 기존 강조(`highlightedMessageId`)를 그대로 쓴다 — 링크로 도달한 자리를
+   * 화면에 세우고 몇 초 뒤 스스로 풀리는 것이 이미 `MessageItem` 에 있다(#178·#397).
+   * 답글이 **로드된 뒤에** 걸어야 한다: 화면에 없는 메시지에 강조를 걸면 스크롤이
+   * 일어나지 않고, 강조는 5초 뒤 조용히 풀린다.
+   */
+  async openThread(rootId: string, focusMessageId?: string): Promise<void> {
     const channelId = this.store.getState().activeChannelId;
     if (!channelId) return;
     this.store.getState().pushHistory({ channelId, threadRootId: rootId });
     this.store.getState().set({ threadRootId: rootId });
     const page = await this.api.messages(channelId, { thread: rootId });
     this.store.getState().upsertMessages(channelId, page.messages);
+    if (focusMessageId) this.store.getState().set({ highlightedMessageId: focusMessageId });
   }
 
   /**
