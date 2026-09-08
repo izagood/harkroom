@@ -62,6 +62,11 @@ const NOTIFY_LEVEL_KEY: Record<NotifyLevel, MessageKey> = {
  * 채널 미읽음 표시. **멘션 배지와 다른 신호다** — 멘션은 "당신을 불렀다"(빨간 숫자),
  * 이것은 "새 대화가 있다"(작은 점). 여기에 숫자를 붙이면 두 뜻이 섞여 빨간 배지가 의미를
  * 잃는다. 수치는 aria-label 로만 노출한다(스크린리더·테스트가 읽을 수 있게).
+ *
+ * **오른쪽으로 미는 마진은 이 컴포넌트가 갖지 않는다.** 점과 배지가 각자 `ml-auto` 를
+ * 들고 있으면 flex 가 남은 여백을 두 auto 마진에 **똑같이 나눠** 주어, 둘 다 뜨는 줄에서
+ * 점이 이름 옆도 배지 옆도 아닌 한가운데에 뜬다. 미는 일은 호출부의 상태 묶음(`ml-auto`
+ * 한 번)이 맡고, 여기서는 자기 모양만 그린다.
  */
 function ChannelUnreadDot({ channelId, name }: { channelId: string; name: string }) {
   const unread = useActiveStore((s) => s.reads[channelId]?.unread ?? 0);
@@ -70,7 +75,7 @@ function ChannelUnreadDot({ channelId, name }: { channelId: string; name: string
   return (
     <span
       aria-label={t('sidebar.channel.unread', { count: unread, name })}
-      className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-fg-subtle"
+      className="h-1.5 w-1.5 shrink-0 rounded-full bg-fg-subtle"
     />
   );
 }
@@ -94,7 +99,7 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
   if (notifyLevel === 'none' || !count) return null;
   return (
     <span data-testid={`unread-${channelId}`}
-      className="ml-auto rounded-full bg-danger px-1.5 text-meta font-bold text-fg-on-strong">
+      className="shrink-0 rounded-full bg-danger px-1.5 text-meta font-bold text-fg-on-strong">
       {count}
     </span>
   );
@@ -875,7 +880,11 @@ export function Sidebar({
               실은 것은 앞쪽뿐이라 이 표시를 지우면 사람이 적어 둔 말이 사라진다. */}
           <StatusMark account={dm.peer} />
           <span className="truncate">{dm.label}</span>
-          <UnreadBadge channelId={dm.id} notifyLevel={dm.notifyLevel} />
+          {/* 채널 행과 **같은 묶음**이다(위 주석) — DM 에는 미읽음 점이 없어 안이 하나뿐이지만,
+              미는 마진의 자리를 두 곳이 다르게 두면 다음에 무언가를 더할 때 또 갈린다. */}
+          <span className="ml-auto flex shrink-0 items-center gap-1">
+            <UnreadBadge channelId={dm.id} notifyLevel={dm.notifyLevel} />
+          </span>
         </span>
         {reason && (
           <span data-testid={`runner-reason-${dm.agentId}`}
@@ -1233,8 +1242,12 @@ export function Sidebar({
           : <span className="text-fg-subtle">#</span>}
         {ch.name}
         {ch.repo && <span className="rounded bg-surface-raised px-1 text-meta text-fg-muted">{ch.repo}</span>}
-        <ChannelUnreadDot channelId={ch.id} name={ch.name ?? ''} />
-        <UnreadBadge channelId={ch.id} notifyLevel={notifyLevel} />
+        {/* 오른쪽 상태 묶음. `ml-auto` 는 **여기 한 번만** 있다 — 안의 둘이 각자 갖고
+            있으면 남은 여백이 둘로 갈려 점이 줄 한가운데에 선다(`ChannelUnreadDot` 주석). */}
+        <span className="ml-auto flex shrink-0 items-center gap-1">
+          <ChannelUnreadDot channelId={ch.id} name={ch.name ?? ''} />
+          <UnreadBadge channelId={ch.id} notifyLevel={notifyLevel} />
+        </span>
       </button>
     );
     const copyChannelName = async () => {
