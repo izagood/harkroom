@@ -1,12 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
-import { setController, type Controller } from '../src/state/controller';
+import { setController, Controller } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { ThreadPanel } from '../src/components/ThreadPanel';
 import { MessageItem } from '../src/components/MessageItem';
-import { acc, chan, msg, scheduledApiStub } from './helpers/fakeApi';
+import { acc, chan, msg, scheduledApiStub, fakeApi, fakeWsFactory } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
+import { en } from '../src/i18n/en';
+
+// 문구는 **사전에서 읽는다** — 여기 영문을 다시 적으면 사전과 화면이 갈릴 때
+// 이 파일이 조용히 옛 문구를 지킨다. jsdom 은 영어라 영어 사전이 뜬다.
+const RECENT_REPLIES = en['message.recentReplies'];
+const CHANNEL_ECHO = en['message.channelEcho'];
 
 // #231: 스레드 답을 채널에도 함께 올린다. **메시지는 하나**이고 두 곳에 보인다 —
 // 그래서 이 파일의 회귀선은 "같은 id 가 두 화면에 각각 뜨는가"를 본다.
@@ -78,7 +84,8 @@ describe('#231 스레드 답을 채널에도 함께 올린다', () => {
   it('채널 뷰의 그 메시지에서 원래 스레드로 갈 수 있다', () => {
     const c = fakeController();
     render(<ChannelPane />);
-    fireEvent.click(screen.getByRole('button', { name: 'View in thread' }));
+    fireEvent.click(screen.getByTestId('thread-origin-link'));
+    // 출처 줄은 스레드 **머리**로 간다 — "무슨 얘기였나"에 답하는 링크다.
     expect(c.openThread).toHaveBeenCalledWith('m1');
   });
 
@@ -86,7 +93,69 @@ describe('#231 스레드 답을 채널에도 함께 올린다', () => {
   it('스레드 뷰에서는 스레드로 가는 표시를 그리지 않는다', () => {
     fakeController();
     render(<ThreadPanel />);
-    expect(screen.queryByRole('button', { name: 'View in thread' })).toBeNull();
+    expect(screen.queryByTestId('thread-origin-link')).toBeNull();
+    expect(screen.queryByRole('button', { name: RECENT_REPLIES })).toBeNull();
+  });
+
+  /**
+   * #624 요구 1 — 스레드 안에서 **이 말이 채널에도 나갔다**는 사실이 보인다.
+   * 안 보이면 같은 스레드를 읽는 사람이 "우리끼리 한 말"로 알고 다음 말을 고른다.
+   */
+  it('스레드 뷰의 답에는 채널에도 전송됐다는 표시가 붙는다', () => {
+    fakeController();
+    render(<ThreadPanel />);
+    expect(screen.getByTestId('channel-echo-mark').textContent).toContain(CHANNEL_ECHO);
+  });
+
+  it('채널에 안 올린 답에는 그 표시가 없다', () => {
+    seed(false);
+    fakeController();
+    render(<ThreadPanel />);
+    expect(screen.queryByTestId('channel-echo-mark')).toBeNull();
+  });
+
+  /** 채널 쪽 사본에는 달지 않는다 — 거기서 필요한 사실은 반대(어디서 왔는가)다. */
+  it('채널 뷰에는 채널에도 전송됨 표시를 달지 않는다', () => {
+    fakeController();
+    render(<ChannelPane />);
+    expect(screen.queryByTestId('channel-echo-mark')).toBeNull();
+  });
+
+  /**
+   * #624 요구 2 — 출처 줄은 **어느 메시지의 스레드**에서 왔는지를 말한다. 뿌리 본문을
+   * 싣지 않으면 스레드가 열 개 있는 채널에서 "어떤 스레드"인지 눌러 보기 전엔 모른다.
+   */
+  it('채널 뷰의 출처 줄이 뿌리 메시지 본문을 싣는다', () => {
+    fakeController();
+    render(<ChannelPane />);
+    expect(screen.getByTestId('thread-origin-link').textContent).toContain('root message');
+  });
+
+  /**
+   * 뿌리가 아직 안 불러와졌을 수도 있다(뿌리가 지금 페이지보다 오래됐다). 그때도
+   * **링크는 남는다** — 미리보기는 편의지만 스레드로 가는 길은 이 사본의 앞뒤다.
+   */
+  it('뿌리를 아직 모를 때도 출처 줄은 남는다', () => {
+    seed(true);
+    useAppStore.getState().set({
+      messages: { c1: [msg('m2', 'c1', 2, 'thread answer', 'u2', { threadRootId: 'm1', alsoInChannel: true })] },
+    });
+    const c = fakeController();
+    render(<ChannelPane />);
+    fireEvent.click(screen.getByTestId('thread-origin-link'));
+    expect(c.openThread).toHaveBeenCalledWith('m1');
+  });
+
+  /**
+   * #624 요구 3 — 하단 링크는 스레드 머리가 아니라 **이 메시지 자리**로 간다.
+   * 이 링크가 답하는 질문은 "이 말 뒤에 무슨 말이 더 있었나"이고, 뿌리로 보내면
+   * 답글이 백 개 달린 스레드에서 방금 본 그 말을 다시 찾아야 한다.
+   */
+  it('최근 댓글 보기는 그 메시지 자리로 간다', () => {
+    const c = fakeController();
+    render(<ChannelPane />);
+    fireEvent.click(screen.getByRole('button', { name: RECENT_REPLIES }));
+    expect(c.openThread).toHaveBeenCalledWith('m1', 'm2');
   });
 
   it('스레드 답 작성기에서 채널에도 올리기를 켜면 그대로 전달된다', () => {
@@ -160,5 +229,43 @@ describe('#231 채널에서 거두기', () => {
     render(<MessageItem message={{ ...mineInChannel, authorId: 'u2' }} />);
     openMenu();
     expect(recallItem()).toBeTruthy();
+  });
+});
+
+/**
+ * 컨트롤러 쪽 계약(#624 요구 3). 화면이 `openThread(root, id)` 를 부르는 것만 잰다면,
+ * 두 번째 인자를 컨트롤러가 **버려도** 회귀선이 초록으로 남는다 — 그러면 링크는
+ * 눌리는데 스레드는 뿌리에서 열린다.
+ */
+describe('#624 스레드를 특정 답글 자리에서 연다', () => {
+  const mount = () => {
+    const api = fakeApi({
+      messages: vi.fn(async () => ({
+        messages: [
+          msg('m1', 'c1', 1, 'root message', 'u1'),
+          msg('m2', 'c1', 2, 'thread answer', 'u2', { threadRootId: 'm1', alsoInChannel: true }),
+        ],
+        hasMore: false,
+      })),
+    });
+    const c = new Controller(api, fakeWsFactory().makeWs);
+    setController(c);
+    useAppStore.getState().reset();
+    useAppStore.getState().set({ activeChannelId: 'c1' });
+    return c;
+  };
+
+  it('겨냥한 답글에 강조가 걸린다 — 화면이 그 자리로 스크롤하는 수단이다', async () => {
+    const c = mount();
+    await c.openThread('m1', 'm2');
+    expect(useAppStore.getState().threadRootId).toBe('m1');
+    expect(useAppStore.getState().highlightedMessageId).toBe('m2');
+  });
+
+  it('겨냥하지 않으면 강조를 건드리지 않는다 — 뿌리부터 읽는 평소의 열기다', async () => {
+    const c = mount();
+    await c.openThread('m1');
+    expect(useAppStore.getState().threadRootId).toBe('m1');
+    expect(useAppStore.getState().highlightedMessageId).toBeNull();
   });
 });

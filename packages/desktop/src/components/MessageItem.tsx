@@ -20,12 +20,19 @@ import { Menu } from './Menu';
 import { ConfirmDialog } from './ConfirmDialog';
 import { bodyAsHandles, displayBody } from '../lib/mention';
 import type { SectionId } from './settings/sections';
+import { useT } from '../i18n/useT';
 
 /**
  * 얼굴 슬롯의 칸 수. **폭이 고정되는 것이 이 숫자의 일**이다 — 참여자가 늘어도 요약 줄이
  * 길어지지 않아야 채널을 훑을 수 있다(identity 문서).
  */
 const FACE_SLOTS = 3;
+
+/**
+ * 출처 줄에 실을 뿌리 본문의 길이(#624 요구 2). 뿌리를 **알아보게** 하는 것이 이 줄의
+ * 일이지 뿌리를 읽게 하는 것이 아니다 — 길어지면 사본의 본문보다 출처가 커진다.
+ */
+const ROOT_PREVIEW_CHARS = 40;
 
 export function MessageItem({ message, inThread = false, onOpenDirectory, onOpenSettings }: {
   message: MessageRow;
@@ -34,6 +41,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   onOpenDirectory?: (accountId: string | null) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }) {
+  const t = useT();
   const author = useActiveStore((s) => s.accounts[message.authorId]);
   const isMine = useActiveStore((s) => s.me?.id === message.authorId);
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
@@ -82,6 +90,25 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    * 보이고, 한 줄 안에서 이름과 아바타가 서로 다른 사람을 가리킨다.
    */
   const shownBody = displayBody(message, accounts);
+
+  /**
+   * 이 답이 딸린 스레드의 **뿌리 메시지**(#624 요구 2). 뿌리는 같은 채널의 최상위
+   * 메시지라 채널을 보고 있으면 보통 스토어에 이미 있다 — 없을 수도 있는데(뿌리가 지금
+   * 불러온 페이지보다 오래됐다) 그때는 미리보기 없이 링크만 그린다.
+   * `find` 가 돌려주는 것은 스토어에 든 그 객체이므로 셀렉터가 매번 새 값을 만들지 않는다.
+   */
+  const threadRoot = useActiveStore((s) => (
+    !inThread && message.alsoInChannel && message.threadRootId
+      ? (s.messages[message.channelId] ?? []).find((m) => m.id === message.threadRootId) ?? null
+      : null
+  ));
+  /** 한 줄로 접은 뿌리 본문. 줄바꿈이 남으면 한 줄짜리 링크가 두 줄로 벌어진다. */
+  const rootPreview = useMemo(() => {
+    if (!threadRoot) return null;
+    const text = displayBody(threadRoot, accounts).replace(/\s+/g, ' ').trim();
+    if (!text) return null;
+    return text.length > ROOT_PREVIEW_CHARS ? `${text.slice(0, ROOT_PREVIEW_CHARS)}…` : text;
+  }, [threadRoot, accounts]);
   /**
    * 어느 모델이 이 말을 했는가(#600). **상시 픽셀은 0 이다** — 이름줄 hover 의 `title` 로만
    * 나오고, 어긋났을 때만 ⚠️ 한 글자가 선다.
@@ -416,6 +443,16 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               (TerminalChip 이 판정한다) — 이름줄에 두는 이유는 소유자 배지와 같다:
               32px 거터에 넣으면 넘친다(#277). */}
           <TerminalChip account={author} message={message} />
+          {/* #624 요구 1: 스레드에서 **채널에도** 함께 보낸 답. 스레드 안에서 이 사실이
+              보여야 한다 — 안 보이면 "우리끼리 한 말"로 읽고 다음 말을 고르게 된다.
+              채널 쪽 사본에는 이 표시를 달지 않는다: 거기서 필요한 것은 반대 사실
+              (**어느 스레드에서 왔는가**)이고, 본문 위의 출처 줄이 그것을 말한다.
+              배지이지 링크가 아니다 — 이미 그 스레드 안이라 갈 곳이 없다. */}
+          {inThread && message.alsoInChannel && message.threadRootId && (
+            <span data-testid="channel-echo-mark" className="text-meta text-fg-subtle">
+              #↵ {t('message.channelEcho')}
+            </span>
+          )}
           {avcsType && <span className="rounded bg-warning-surface-strong px-1 text-meta text-warning">{avcsType}</span>}
           <span className="text-meta text-fg-muted">{time}</span>
           {message.editedAt && <span className="text-meta text-fg-muted">(edited)</span>}
@@ -423,6 +460,30 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
 
         {draft === null ? (
           <>
+            {/* #624 요구 2: 채널에 함께 올라온 답은 **어느 스레드에서 왔는지**를 본문
+                **위에** 달고 간다. 아래에 두면 앞뒤 없는 말을 먼저 읽고 나서 출처를 알게
+                되는데, 이 사본이 필요한 정보는 읽기 전에 필요한 것이다.
+                뿌리 본문 미리보기는 편의이고(없을 수 있다) 링크는 필수다 — 미리보기가
+                없다고 링크를 지우면 이 사본이 앞뒤를 되찾을 길이 사라진다. */}
+            {!inThread && message.alsoInChannel && message.threadRootId && (
+              <button
+                data-testid="thread-origin-link"
+                // 아래 "최근 댓글 보기"와 **같은 처리**를 받는다(#488 B2): 스레드로 가는
+                // 링크이지 나를 막는 말이 아니므로 색이 아니라 점선 밑줄이 링크임을 말한다.
+                className="mb-0.5 -mx-1 flex max-w-full items-baseline gap-1 rounded px-1 py-0.5
+                           text-meta text-fg-muted hover:bg-surface-hover"
+                onClick={() => void getController().openThread(message.threadRootId!)}
+                // 미리보기는 화면에서 접히므로(`truncate`) 귀로 듣는 쪽에는 온전히 실어 준다.
+                aria-label={rootPreview ? `${t('message.threadOrigin')}: ${rootPreview}` : t('message.threadOrigin')}
+              >
+                <span className="shrink-0">{t('message.threadOrigin')}{rootPreview ? ':' : ''}</span>
+                {rootPreview && (
+                  <span className="truncate font-medium underline decoration-dotted underline-offset-2">
+                    {rootPreview}
+                  </span>
+                )}
+              </button>
+            )}
             {shownBody.trim() && <MessageBody body={shownBody} messageId={message.id} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
             {/* 선택지는 본문 **바로 아래**에 붙는다 — 답할 자리가 말 옆에 있어야 한다(규칙 05).
                 형식을 못 알아보면 `AskCard` 가 스스로 아무것도 그리지 않는다. */}
@@ -556,7 +617,11 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 "뭔가 달린 메시지"처럼 보였다. 진입점은 호버 툴바의 아이콘으로 옮겼다
                 (아래 우상단 열, message toolbar 안). */}
             {/* #231: alsoInChannel 메시지는 채널에도 보이므로 스레드에서 왔을 때가 아니라
-                채널에서 볼 때 이 버튼이 필요하다. "View in thread" 로 표시한다. */}
+                채널에서 볼 때 이 버튼이 필요하다.
+                #624 요구 3: 문구와 목적지를 바꾼다. 위의 출처 줄이 이미 "어느 스레드인가"에
+                답하므로, 같은 자리에 스레드 **머리**로 가는 링크를 하나 더 두면 두 링크가
+                같은 곳으로 간다. 이 버튼이 답하는 질문은 다른 것이다 — **이 말 뒤에 무슨
+                말이 더 있었나.** 그래서 뿌리가 아니라 이 메시지 자리에 세운다. */}
             {!inThread && message.alsoInChannel && message.threadRootId && (
               <button
                 // #424: 답글 요약과 같은 자리에 서는 링크이므로 상자도 함께 벗긴다 —
@@ -566,9 +631,9 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 className="mt-0.5 self-start -mx-1 rounded px-1 py-0.5 text-meta font-medium
                            text-fg-muted underline decoration-dotted underline-offset-2
                            hover:bg-surface-hover"
-                onClick={() => void getController().openThread(message.threadRootId!)}
+                onClick={() => void getController().openThread(message.threadRootId!, message.id)}
               >
-                View in thread
+                {t('message.recentReplies')}
               </button>
             )}
           </>
