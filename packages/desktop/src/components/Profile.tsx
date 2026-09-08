@@ -98,10 +98,10 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
                 16px(`text-base`)이었고 4단 중 아무것도 아니었다. 화면 제목단(17px)을 주지
                 않는 이유: 이것은 화면이 아니라 겹창이고, 설정·로그인 제목과 같은 단에 서면
                 화면과 겹창의 위계가 없어진다. 아래 `@handle` 은 아랫단 11px 이다. */}
-            <span className="truncate text-[15px] font-semibold">{account.displayName || account.handle}</span>
+            <span className="truncate text-name font-semibold">{account.displayName || account.handle}</span>
             <StatusMark account={account} />
           </div>
-          <div className="text-[11px] text-fg-muted">@{account.handle}</div>
+          <div className="text-meta text-fg-muted">@{account.handle}</div>
         </div>
       </div>
 
@@ -149,7 +149,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
         </dl>
 
         {canSeeConfig && agent && runnerPresent && (
-          <div className="mt-3 text-[11px]">
+          <div className="mt-3 text-meta">
             {isStale && (
               <p className="text-warning" data-testid="runner-stale-note">
                 이 러너는 앱보다 <strong>뒤처진 번들</strong>로 돌고 있다 — 새 버전으로 재기동하면 갈아탄다.
@@ -174,7 +174,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
           {canSeeConfig && onOpenSettings && (
             <button
               data-testid="profile-settings"
-              className="rounded border border-border px-3 py-1.5 text-[13px] font-medium
+              className="rounded border border-border px-3 py-1.5 text-body font-medium
                          text-fg hover:bg-surface-hover"
               onClick={() => { onClose(); onOpenSettings('agents', account.id); }}
             >
@@ -185,7 +185,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
             runnerState?.status === 'restarting' ? (
               <button
                 data-testid="profile-runner-restart-cancel"
-                className="rounded border border-border px-3 py-1.5 text-[13px] font-medium
+                className="rounded border border-border px-3 py-1.5 text-body font-medium
                            text-fg hover:bg-surface-hover"
                 onClick={() => getController().cancelRestart(account.id)}
               >
@@ -196,7 +196,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
                  쓴다. 버전을 모르는데 그렇게 쓰면 지키지 못할 약속이 된다(design.md §4). */
               <button
                 data-testid="profile-runner-restart"
-                className="rounded border border-border px-3 py-1.5 text-[13px] font-medium
+                className="rounded border border-border px-3 py-1.5 text-body font-medium
                            text-fg hover:bg-surface-hover"
                 onClick={() => { void getController().restartRunner(account.id); }}
               >
@@ -207,7 +207,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
           {account.id !== me?.id && (
             <button
               data-testid="profile-dm"
-              className="rounded border border-border px-3 py-1.5 text-[13px] font-medium
+              className="rounded border border-border px-3 py-1.5 text-body font-medium
                          text-fg hover:bg-surface-hover"
               onClick={() => { onClose(); void getController().startDm(account.id); }}
             >
@@ -222,7 +222,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
 
 function Row({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="flex gap-3 text-[13px]">
+    <div className="flex gap-3 text-body">
       <dt className="w-24 shrink-0 text-fg-subtle">{label}</dt>
       {/* mono 12px 은 4단 밖이지만 본문단(13px)을 **광학적으로** 맞추는 보정이다 —
           등폭 글꼴은 같은 pt 에서 크게 보인다. 근거는 `ReportCard.tsx` 에 적어 뒀다. */}

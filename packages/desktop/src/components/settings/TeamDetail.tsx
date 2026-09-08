@@ -168,19 +168,19 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
             격자에서 열리므로 돌아가는 길이 다르게 생기면 사람이 그것을 배워야 한다. */}
         <button
           data-testid="team-back"
-          className="rounded px-1.5 py-0.5 text-[13px] text-fg-muted hover:bg-surface-hover"
+          className="rounded px-1.5 py-0.5 text-body text-fg-muted hover:bg-surface-hover"
           onClick={onBack}
         >
           ← 팀
         </button>
-        <h2 className="text-[15px] font-bold">@{team.name}</h2>
+        <h2 className="text-name font-bold">@{team.name}</h2>
       </header>
 
       <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
-        {error && <p role="alert" className="text-[11px] text-danger">{error}</p>}
+        {error && <p role="alert" className="text-meta text-danger">{error}</p>}
 
         <div className="rounded border border-border p-3">
-          <div className="text-[11px] font-medium text-fg-muted">팀 이름</div>
+          <div className="text-meta font-medium text-fg-muted">팀 이름</div>
           {/*
             ## **이름의 뜻을 말한다** (문서 4단계)
 
@@ -227,14 +227,14 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
               </Button>
             )}
           </div>
-          <p data-testid="team-mention-note" className="mt-2 text-[11px] text-fg-subtle">
+          <p data-testid="team-mention-note" className="mt-2 text-meta text-fg-subtle">
             계정과 같은 이름 자리를 쓴다 — 채널에서 <span className="font-medium text-fg-muted">@{team.name}</span> 을
             부르면 팀원 전원이 깬다. 사람 여럿을 한 이름으로 부르려면 설정 › Handle Groups 다.
           </p>
         </div>
 
         <div className="rounded border border-border p-3">
-          <div className="text-[11px] font-medium text-fg-muted">팀원</div>
+          <div className="text-meta font-medium text-fg-muted">팀원</div>
           {/*
             ## 팀원이 **얼굴**이다 (문서 4단계)
 
@@ -258,10 +258,10 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
           */}
           <div className="mt-2 space-y-1">
             {members === null && !error && (
-              <div className="text-[11px] text-fg-muted">불러오는 중…</div>
+              <div className="text-meta text-fg-muted">불러오는 중…</div>
             )}
             {members !== null && members.length === 0 && (
-              <div className="text-[11px] text-fg-muted">팀원이 없다</div>
+              <div className="text-meta text-fg-muted">팀원이 없다</div>
             )}
             {(members ?? []).map((m) => (
               <div
@@ -273,14 +273,14 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
                 {/* 팀원 이름도 상자 안의 단(11px)이다 — 옆의 `(비활성)`·`빼기` 가 이미 그
                     단이라 이름만 올리면 한 줄에 두 단이 선다. `HandleGroupsSettings` 의
                     구성원 줄이 같은 짝이다. */}
-                <span className="min-w-0 flex-1 truncate text-[11px]">
+                <span className="min-w-0 flex-1 truncate text-meta">
                   @{m.handle}
                   {m.disabled && <span className="ml-1 text-warning">비활성 — 호출에서 빠진다</span>}
                 </span>
                 {isAdmin && (
                   <button
                     aria-label={`팀원 빼기: ${m.handle}`}
-                    className="shrink-0 text-[11px] text-danger hover:underline"
+                    className="shrink-0 text-meta text-danger hover:underline"
                     disabled={busy}
                     onClick={() => void removeMember(m.accountId)}
                   >
@@ -297,7 +297,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
           */}
           {isAdmin && members !== null && (
             <div className="mt-3">
-              <div className="mb-1 text-[11px] text-fg-subtle">
+              <div className="mb-1 text-meta text-fg-subtle">
                 얼굴을 누르면 팀에 들어간다. 멈춘 에이전트도 넣을 수 있다 — 팀에 넣는 것과
                 지금 도는 것은 다른 일이다.
               </div>
@@ -312,18 +312,18 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
             </div>
           )}
           {!isAdmin && (
-            <p className="mt-2 text-[11px] text-fg-subtle">팀원을 바꿀 수 있는 것은 admin 뿐이다</p>
+            <p className="mt-2 text-meta text-fg-subtle">팀원을 바꿀 수 있는 것은 admin 뿐이다</p>
           )}
         </div>
 
         {isAdmin && (
           <div className="rounded border border-danger-border p-3">
-            <div className="text-[11px] font-medium text-danger">팀 삭제</div>
-            <p className="mt-1 text-[11px] text-fg-subtle">팀을 지워도 팀에 속했던 에이전트는 그대로 있다.</p>
+            <div className="text-meta font-medium text-danger">팀 삭제</div>
+            <p className="mt-1 text-meta text-fg-subtle">팀을 지워도 팀에 속했던 에이전트는 그대로 있다.</p>
             {/* 인라인 확인은 그대로 두고 **버튼 모양만 프리미티브를 통과한다**(문서). */}
             {confirmDelete ? (
               <div className="mt-2 flex items-center gap-2">
-                <span className="text-[11px] text-danger">정말 지우는가?</span>
+                <span className="text-meta text-danger">정말 지우는가?</span>
                 <Button variant="danger" disabled={busy} onClick={() => void deleteTeam()}>
                   정말 삭제
                 </Button>

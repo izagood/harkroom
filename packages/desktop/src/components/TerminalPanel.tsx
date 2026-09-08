@@ -331,7 +331,7 @@ export function TerminalPanel() {
       {/* 머리띠는 **아랫단 11px** — 여기 있는 것은 전부 꼬리표다(에이전트 핸들·어느 스레드·
           상태 칩·닫기). 아래 문구들은 반대로 본문단이다: 세션이 없거나 실패했을 때 사람이
           다음에 무엇을 할 수 있는지가 그 문장에만 적혀 있다. */}
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-[11px] text-fg-muted">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-meta text-fg-muted">
         <span className="font-semibold">터미널</span>
         <span className="text-fg-subtle">@{agent?.handle ?? target.agentAccountId}</span>
         {/* 어느 채널·스레드의 터미널인지 항상 적는다(#339). 같은 에이전트의 세션이 여럿일

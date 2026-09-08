@@ -101,7 +101,7 @@ export function NotifiedGapRow({ messageId }: { messageId: string }) {
       data-called={gap.called}
       data-woke={gap.woke}
       data-kind={gap.kind ?? ''}
-      className="mt-0.5 flex flex-wrap items-baseline gap-1 text-[11px] text-warning"
+      className="mt-0.5 flex flex-wrap items-baseline gap-1 text-meta text-warning"
     >
       {/*
         무엇에 대한 줄인지 먼저 말한다 — 문서의 목업이 "집합" 을 앞에 세웠다.

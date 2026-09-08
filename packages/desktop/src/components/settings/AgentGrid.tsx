@@ -331,8 +331,8 @@ const GLYPH_FOCUS = 'outline-none focus-visible:opacity-100 focus-visible:outlin
 function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-2">
-      <span className="w-9 shrink-0 text-[11px] text-fg-subtle">{label}</span>
-      <span className="min-w-0 flex-1 text-[11px] text-fg-muted">{children}</span>
+      <span className="w-9 shrink-0 text-meta text-fg-subtle">{label}</span>
+      <span className="min-w-0 flex-1 text-meta text-fg-muted">{children}</span>
     </div>
   );
 }
@@ -400,7 +400,7 @@ function VersionChip({ handle, runnerVersion, appVersion, onRelaunch }: {
       <span
         data-testid={`agent-version-${handle}`}
         data-version="unknown"
-        className="inline-block rounded border border-dashed border-border px-1.5 py-px text-[11px] text-fg-subtle"
+        className="inline-block rounded border border-dashed border-border px-1.5 py-px text-meta text-fg-subtle"
       >
         버전 모름
       </span>
@@ -414,7 +414,7 @@ function VersionChip({ handle, runnerVersion, appVersion, onRelaunch }: {
       <span
         data-testid={`agent-version-${handle}`}
         data-version="current"
-        className="inline-block rounded bg-surface-sunken px-1.5 py-px text-[11px] text-fg-muted"
+        className="inline-block rounded bg-surface-sunken px-1.5 py-px text-meta text-fg-muted"
       >
         {runnerVersion}
       </span>
@@ -437,7 +437,7 @@ function VersionChip({ handle, runnerVersion, appVersion, onRelaunch }: {
     쪼개지면 뜻이 흐려지는 원자값이다(버전 · 구분점 · 판정 · 손잡이가 한 덩어리다).
   */
   const shape = 'inline-block whitespace-nowrap rounded border border-warning-border'
-    + ' bg-warning-surface px-1.5 py-px text-[11px] text-warning';
+    + ' bg-warning-surface px-1.5 py-px text-meta text-warning';
   if (!onRelaunch) {
     return (
       <span data-testid={`agent-version-${handle}`} data-version="stale" className={shape}>
@@ -616,7 +616,7 @@ export function AgentGrid<T extends AgentCardSubject>({
             onChange={(e) => setQuery(e.target.value)}
           />
           {/* 개수는 **검색창 안**이다(목업) — 몇 개를 뒤지고 있는지가 찾기 전에 보여야 한다. */}
-          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-fg-subtle">
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-meta text-fg-subtle">
             {shown.length}개
           </span>
         </div>
@@ -677,7 +677,7 @@ export function AgentGrid<T extends AgentCardSubject>({
                 <span aria-hidden="true" className={`${s.faceText} leading-none`}>+</span>
               </span>
             )}
-            <span className="text-[11px] text-fg-muted">새 에이전트</span>
+            <span className="text-meta text-fg-muted">새 에이전트</span>
           </button>
         )}
 
@@ -877,19 +877,19 @@ export function AgentGrid<T extends AgentCardSubject>({
                 {place === 'settings' ? (
                   <span className="w-full">
                     <span
-                      className={`block w-full truncate text-center text-[13px] font-semibold ${
+                      className={`block w-full truncate text-center text-body font-semibold ${
                         face === 'ok' ? 'text-fg' : 'text-fg-subtle'
                       }`}
                     >
                       {a.displayName}
                     </span>
-                    <span className="block w-full truncate text-center text-[11px] text-fg-subtle">
+                    <span className="block w-full truncate text-center text-meta text-fg-subtle">
                       @{a.handle}
                     </span>
                   </span>
                 ) : (
                   <span
-                    className={`w-full truncate text-center text-[11px] ${
+                    className={`w-full truncate text-center text-meta ${
                       face === 'ok' ? 'text-fg' : 'text-fg-subtle'
                     }`}
                   >
@@ -964,7 +964,7 @@ export function AgentGrid<T extends AgentCardSubject>({
                   {stopping && (
                     <p
                       data-testid={`agent-stopping-${a.handle}`}
-                      className="mt-1 whitespace-normal text-[11px] text-warning"
+                      className="mt-1 whitespace-normal text-meta text-warning"
                     >
                       멈추는 중 · 러너가 아직 못 봤다
                     </p>
@@ -982,7 +982,7 @@ export function AgentGrid<T extends AgentCardSubject>({
                   {face === 'retiring' && (
                     <p
                       data-testid={`agent-retiring-${a.handle}`}
-                      className="mt-1 whitespace-normal text-[11px] text-accent"
+                      className="mt-1 whitespace-normal text-meta text-accent"
                     >
                       물러나는 중 · 진행 중인 턴을 끝내고 있다
                     </p>
@@ -1083,7 +1083,7 @@ export function AgentGrid<T extends AgentCardSubject>({
         <p
           key={a.id}
           data-testid={`agent-runner-failed-${a.id}`}
-          className="mt-2 whitespace-normal text-[11px] text-danger"
+          className="mt-2 whitespace-normal text-meta text-danger"
         >
           @{a.handle} 기동 실패{runnerStates[a.id]?.message ? ` — ${runnerStates[a.id]!.message}` : ''}
         </p>
@@ -1104,7 +1104,7 @@ export function AgentGrid<T extends AgentCardSubject>({
         <p
           key={a.id}
           data-testid={`agent-runner-harness-${a.id}`}
-          className="mt-2 whitespace-normal text-[11px] text-warning"
+          className="mt-2 whitespace-normal text-meta text-warning"
         >
           @{a.handle} {runnerStates[a.id]?.message ?? '하네스를 찾을 수 없다'}
         </p>
@@ -1124,7 +1124,7 @@ export function AgentGrid<T extends AgentCardSubject>({
         const unknown = shown.filter((a) => faceState(a.id, runnerStates, online, connected) === 'unknown');
         if (unknown.length === 0) return null;
         return (
-          <p data-testid="agent-presence-unknown" className="mt-2 whitespace-normal text-[11px] text-fg-muted">
+          <p data-testid="agent-presence-unknown" className="mt-2 whitespace-normal text-meta text-fg-muted">
             서버와 끊겨 {unknown.length}개 에이전트의 생사를 알 수 없다 — 마지막으로 본 상태이지 지금 상태가 아니다.
             다시 붙으면 갱신된다.
           </p>

@@ -11,7 +11,7 @@ export function InviteSettings() {
   if (!me?.isAdmin) {
     return (
       <div className="p-5">
-        <h2 className="mb-4 text-[15px] font-bold">Invite</h2>
+        <h2 className="mb-4 text-name font-bold">Invite</h2>
         <p className="text-fg-subtle">이 화면은 관리자만 볼 수 있습니다.</p>
       </div>
     );
@@ -33,7 +33,7 @@ export function InviteSettings() {
 
   return (
     <div className="p-5">
-      <h2 className="mb-4 text-[15px] font-bold">Invite</h2>
+      <h2 className="mb-4 text-name font-bold">Invite</h2>
 
       <p className="mb-4 text-fg-muted">
         초대 토큰을 만들어 다른 사람을 이 워크스페이스로 부를 수 있습니다.
@@ -49,8 +49,8 @@ export function InviteSettings() {
           <div className="font-semibold text-warning">
             이 토큰은 지금만 보입니다 — 창을 벗어나면 다시 볼 수 없습니다
           </div>
-          <code className="mt-1 block break-all rounded bg-surface-raised p-2 text-[11px]">{token}</code>
-          <div className="mt-2 text-[11px] text-warning">
+          <code className="mt-1 block break-all rounded bg-surface-raised p-2 text-meta">{token}</code>
+          <div className="mt-2 text-meta text-warning">
             받는 사람이 가입할 때 이 토큰이 필요합니다. 지금 복사해 두세요.
           </div>
         </div>
@@ -58,7 +58,7 @@ export function InviteSettings() {
 
       {error && (
         <div className="mb-4 rounded border border-danger-border bg-danger-surface p-3">
-          <p className="text-[11px] text-danger">{error}</p>
+          <p className="text-meta text-danger">{error}</p>
         </div>
       )}
 

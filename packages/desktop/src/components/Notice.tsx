@@ -17,7 +17,7 @@ export function Notice() {
   return (
     <div
       role="alert"
-      className="flex items-start gap-2 border-b border-warning-border bg-warning-surface px-4 py-2 text-[13px] text-warning"
+      className="flex items-start gap-2 border-b border-warning-border bg-warning-surface px-4 py-2 text-body text-warning"
     >
       <span className="flex-1">{notice}</span>
       <button

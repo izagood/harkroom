@@ -117,16 +117,16 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
         {/* 패널 제목은 **이름줄단 15px** 이다 — 화면 제목단(17px)은 설정 화면 제목처럼
             화면 하나를 여는 자리에만 준다. 이 패널은 채널 안에 붙는 곁창이고, 옆의 메타는
             아랫단 11px 이라 15px 이면 둘 사이 간격이 4px 로 위계가 분명하다. */}
-        <span className="text-[15px] font-semibold">문서</span>
+        <span className="text-name font-semibold">문서</span>
         {/* "누가 언제"는 실제로 저장된 판에만 붙는다. 아직 아무도 쓰지 않은 문서에 지금
             시각과 내 이름을 붙이면 화면이 거짓말한다. */}
         {updatedAtLabel && (
-          <span className="truncate text-[11px] text-fg-subtle">
+          <span className="truncate text-meta text-fg-subtle">
             {updatedByHandle ?? '알 수 없는 사람'} · {updatedAtLabel}
           </span>
         )}
         <button
-          className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-sunken"
+          className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
           onClick={onClose}
         >
           닫기
@@ -180,7 +180,7 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
                 있다 — 둘을 나란히 보고 사람이 정한다. */}
             {theirBody !== null && (
               <section className="mt-3 rounded border border-warning-border bg-warning-surface p-2">
-                <h3 className="text-[11px] font-semibold text-warning">서버의 현재 내용</h3>
+                <h3 className="text-meta font-semibold text-warning">서버의 현재 내용</h3>
                 {/* 서버에 있는 문서 본문 — 내 편집과 나란히 놓고 읽는 글자다. 본문단이다. */}
                 <pre className="mt-1 whitespace-pre-wrap break-words text-fg">
                   {theirBody === '' ? '(빈 문서)' : theirBody}

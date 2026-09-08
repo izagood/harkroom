@@ -193,15 +193,15 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         {/* 채널 이름은 **이름줄단 15px** — 지금 무엇을 보고 있는지 말하는 자리이고,
             `MessageItem` 의 작성자 이름과 같은 단이다. 화면 제목단(17px)은 설정·로그인처럼
             화면 하나를 여는 자리에만 준다. 옆의 주제·꼬리표는 아랫단 11px 이다. */}
-        <span className="text-[15px] font-bold">{title}</span>
-        {channel?.topic && <span className="truncate text-[11px] text-fg-subtle">{channel.topic}</span>}
-        {channel?.repo && <span className="rounded bg-surface-sunken px-1.5 text-[11px] text-fg-muted">{channel.repo}</span>}
-        {isArchived && <span className="rounded bg-surface-hover px-1.5 text-[11px] text-fg-muted">보관됨</span>}
+        <span className="text-name font-bold">{title}</span>
+        {channel?.topic && <span className="truncate text-meta text-fg-subtle">{channel.topic}</span>}
+        {channel?.repo && <span className="rounded bg-surface-sunken px-1.5 text-meta text-fg-muted">{channel.repo}</span>}
+        {isArchived && <span className="rounded bg-surface-hover px-1.5 text-meta text-fg-muted">보관됨</span>}
         {/* 문서는 채널에 붙는다(#188) — DM 에는 없다. `channel` 이 없을 때 버튼을 그리면
             눌러도 아무 일이 없는 죽은 버튼이 된다(패널 쪽 조건과 같은 조건이어야 한다). */}
         {channel && (
           <button
-            className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-sunken"
+            className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
             aria-expanded={docOpen}
             onClick={() => setDocOpen((v) => !v)}
           >
@@ -209,7 +209,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           </button>
         )}
         <button
-          className={`${channel ? '' : 'ml-auto '}shrink-0 rounded border border-border px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-sunken`}
+          className={`${channel ? '' : 'ml-auto '}shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken`}
           onClick={() => setFilesOpen((v) => !v)}
         >
           파일
@@ -218,7 +218,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
             **지금 보는 대화로 좁힌 채** 열고, ⌘K 는 전역으로 남는다 — 두 진입점이 서로
             다른 뜻을 가지므로 title 에 그 차이를 적는다. DM 에도 같은 버튼이 나온다. */}
         <button
-          className="shrink-0 rounded border border-border px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-sunken"
+          className="shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
           onClick={() => onOpenSearch?.(true)}
           aria-label="이 채널에서 찾기"
           title="이 채널에서 찾기 (⌘K 는 전체 검색)"
@@ -231,7 +231,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       {channelPins.length > 0 && (
         <div className="border-b border-border bg-surface">
           <button
-            className="flex w-full items-center gap-1 px-4 py-1 text-left text-[11px] text-fg-muted"
+            className="flex w-full items-center gap-1 px-4 py-1 text-left text-meta text-fg-muted"
             aria-expanded={pinsOpen}
             onClick={() => setPinsOpen((v) => !v)}
           >
@@ -245,7 +245,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
                   {/* 누르면 그 메시지로 간다. `openMessage` 를 쓰는 이유: 답글이면 스레드
                       패널까지 열고 강조를 거는 일이 이미 거기 한 곳에 있다(#178). */}
                   <button
-                    className="flex w-full gap-2 px-6 py-0.5 text-left text-[13px] text-fg hover:bg-surface-sunken"
+                    className="flex w-full gap-2 px-6 py-0.5 text-left text-body text-fg hover:bg-surface-sunken"
                     onClick={() => void getController().openMessage(p.messageId)}
                   >
                     <span className="shrink-0 font-semibold">{accounts[p.message.authorId]?.handle ?? '…'}</span>
@@ -267,7 +267,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           // 서버 히스토리 창(최신 N개) 밖으로 밀려난 대화로 돌아가는 유일한 경로다.
           <div className="px-4 py-2 text-center">
             <button
-              className="rounded border border-border px-2 py-1 text-[11px] text-fg-muted"
+              className="rounded border border-border px-2 py-1 text-meta text-fg-muted"
               onClick={() => void getController().loadOlder()}
             >
               Load older messages
@@ -300,14 +300,14 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
               {newDay && (
                 <div className="flex items-center gap-2 px-4 py-1" role="separator">
                   <span className="h-px flex-1 bg-surface-hover" />
-                  <span className="text-[11px] font-medium text-fg-subtle">{dayLabel(m.createdAt)}</span>
+                  <span className="text-meta font-medium text-fg-subtle">{dayLabel(m.createdAt)}</span>
                   <span className="h-px flex-1 bg-surface-hover" />
                 </div>
               )}
               {m.id === dividerBeforeId && (
                 <div className="flex items-center gap-2 px-4 py-1" role="separator">
                   <span className="h-px flex-1 bg-danger-border" />
-                  <span className="text-[11px] font-medium text-danger">New messages</span>
+                  <span className="text-meta font-medium text-danger">New messages</span>
                   <span className="h-px flex-1 bg-danger-border" />
                 </div>
               )}
@@ -341,7 +341,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
             data-runner-status={runnerFailureInChannel.state.status}
             className={`border-t bg-surface-sunken px-4 py-1.5 ${needsStep ? 'border-warning-border' : 'border-danger-border'}`}
           >
-            <span className={`text-[11px] font-medium ${needsStep ? 'text-warning' : 'text-danger'}`}>
+            <span className={`text-meta font-medium ${needsStep ? 'text-warning' : 'text-danger'}`}>
               @{accounts[runnerFailureInChannel.agentId]?.handle ?? '에이전트'} 는 지금 응답하지 않는다
             </span>
             {/* 사유·설치 안내는 **이 줄이 들고 있다**(`RunnerStatusLine` → `state.message`).

@@ -46,7 +46,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
     /* 글자 크기는 `Workspace` 와 **같은 본문단 13px** 이다(그 파일에 근거를 적어 뒀다).
        설정은 `Workspace` 를 대체해서 그려지므로 이 한 줄이 설정 화면 전체의 기본값이고,
        아래 섹션들이 본문 자리에 크기를 다시 적지 않아도 되는 근거다. */
-    <div className="flex h-screen flex-col bg-surface-sunken text-[13px]">
+    <div className="flex h-screen flex-col bg-surface-sunken text-body">
       <WindowDragStrip />
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-surface">
@@ -60,7 +60,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           <nav className="flex-1 overflow-y-auto px-2 pb-4">
             {SETTINGS_GROUPS.map((g) => (
               <div key={g.title} className="mb-4">
-                <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">{g.title}</div>
+                <div className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">{g.title}</div>
                 {g.items.map((item) => (
                   <button
                     key={item.id}
@@ -76,7 +76,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
             ))}
           </nav>
 
-          <div className="border-t border-border px-4 py-3 text-[11px] text-fg-subtle">
+          <div className="border-t border-border px-4 py-3 text-meta text-fg-subtle">
             {me ? `@${me.handle} · ` : ''}v{__APP_VERSION__}
           </div>
         </aside>

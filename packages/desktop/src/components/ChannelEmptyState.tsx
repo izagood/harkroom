@@ -46,7 +46,7 @@ export function ChannelEmptyState(
       <p className="font-medium text-fg-muted">
         {channel ? `#${channel.name} 에 아직 메시지가 없다` : '아직 메시지가 없다'}
       </p>
-      {channel?.topic && <p className="mt-1 text-[11px] text-fg-subtle">{channel.topic}</p>}
+      {channel?.topic && <p className="mt-1 text-meta text-fg-subtle">{channel.topic}</p>}
       {(mentionAgent || showTopic) && (
         <ul className="mx-auto mt-4 max-w-sm list-disc space-y-1 pl-5 text-left text-fg-subtle">
           {mentionAgent && (

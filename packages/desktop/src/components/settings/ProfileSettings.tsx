@@ -79,7 +79,7 @@ function AvatarRow() {
       {/* 받아 주는 형식을 **오류가 나기 전에** 적어 둔다. 파일 창은 못 고르는 파일을 회색으로
           죽일 뿐 이유를 말하지 않으므로, 목록이 없으면 사람은 무엇을 골라야 할지 모른 채
           아무 일도 일어나지 않는 버튼을 다시 누른다. */}
-      <p className="mt-1 text-[11px] text-fg-subtle">{AVATAR_FORMATS}</p>
+      <p className="mt-1 text-meta text-fg-subtle">{AVATAR_FORMATS}</p>
       <div className="flex justify-end">
         <AvatarStatus phase={edit.phase} />
       </div>
@@ -221,7 +221,7 @@ function HandleRow() {
           <p className="mt-1 text-warning">이 변경은 되돌릴 수 없습니다.</p>
         </div>
       )}
-      {error && <p role="alert" className="text-[11px] text-danger">{error}</p>}
+      {error && <p role="alert" className="text-meta text-danger">{error}</p>}
     </div>
   );
 }

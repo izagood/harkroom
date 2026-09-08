@@ -40,7 +40,7 @@ export function UpdateToast() {
       role="status"
       className="fixed bottom-4 right-4 z-50 flex w-72 items-center gap-2 rounded-lg border border-accent-brand bg-surface-raised px-3 py-2 shadow-lg"
     >
-      <p className="min-w-0 flex-1 truncate text-[13px] text-fg">
+      <p className="min-w-0 flex-1 truncate text-body text-fg">
         {installing ? `Installing v${status.version}…` : `v${status.version} available`}
       </p>
       <button

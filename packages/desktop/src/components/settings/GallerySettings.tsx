@@ -290,8 +290,8 @@ export function GallerySettings() {
 function Row({ title, note, children }: { title: string; note: string; children: React.ReactNode }) {
   return (
     <section>
-      <h3 className="text-[13px] font-semibold text-fg">{title}</h3>
-      <p className="mb-2 text-[11px] text-fg-subtle">{note}</p>
+      <h3 className="text-body font-semibold text-fg">{title}</h3>
+      <p className="mb-2 text-meta text-fg-subtle">{note}</p>
       {children}
     </section>
   );

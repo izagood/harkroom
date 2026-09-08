@@ -199,7 +199,7 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
           {/* '검색 중...' 은 진행 표시다 — 읽고 무언가 하는 글자가 아니라 아랫단 11px.
               오류(`role="alert"`)와 '결과가 없습니다' 는 반대로 본문단이다: 그때는 결과
               목록이 비어 있고 이 한 줄이 화면에 남는 유일한 설명이 된다. */}
-          {loading && <span className="text-[11px] text-fg-subtle">검색 중...</span>}
+          {loading && <span className="text-meta text-fg-subtle">검색 중...</span>}
         </div>
 
         {activeChannelId && (
@@ -211,7 +211,7 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
               onChange={toggleScope}
               className="accent-teal-500"
             />
-            <label htmlFor="search-scope-toggle" className="cursor-pointer text-[11px] text-fg-muted">
+            <label htmlFor="search-scope-toggle" className="cursor-pointer text-meta text-fg-muted">
               이 채널에서만 ({getChannelName(activeChannelId)})
             </label>
           </div>
@@ -251,7 +251,7 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
               {/* 결과 한 줄은 두 단으로 갈린다: **누가·어디**(아랫단 11px)와 **무엇을
                   말했나**(본문단). 찾는 사람이 눈으로 훑는 것은 본문이고, 출처는 그
                   본문을 고른 뒤 확인하는 꼬리표다. */}
-              <div className="flex items-center gap-2 text-[11px] text-fg-muted">
+              <div className="flex items-center gap-2 text-meta text-fg-muted">
                 <span className="font-medium text-fg-muted">{getAuthorName(msg.authorId)}</span>
                 <span>·</span>
                 <span>{getChannelName(msg.channelId)}</span>
@@ -270,7 +270,7 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
         </ul>
 
         {/* 단축키 안내 띠 — 아랫단 11px. 한 번 배우면 안 읽는 자리다. */}
-        <div className="border-t border-border px-3 py-2 text-[11px] text-fg-subtle">
+        <div className="border-t border-border px-3 py-2 text-meta text-fg-subtle">
           <span>↑↓ 이동</span>
           <span className="mx-2">·</span>
           <span>Enter 선택</span>

@@ -151,14 +151,14 @@ export function TeamMemberPicker({ candidates, runnerStates, online, connected, 
               >
                 <Identity account={a} className="h-11 w-11 text-[15px]" variant="avatar" />
               </span>
-              <span className="block w-full truncate text-center text-[11px] text-fg-muted">
+              <span className="block w-full truncate text-center text-meta text-fg-muted">
                 {a.handle}
               </span>
             </button>
           );
         })}
         {shown.length === 0 && (
-          <p className="col-span-full py-4 text-center text-[11px] text-fg-muted">
+          <p className="col-span-full py-4 text-center text-meta text-fg-muted">
             {query.trim()
               ? `"${query.trim()}" 에 맞는 에이전트가 없다`
               : '넣을 수 있는 에이전트가 없다 — 등록된 에이전트가 모두 이 팀에 있다'}
