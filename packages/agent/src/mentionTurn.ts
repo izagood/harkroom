@@ -523,17 +523,20 @@ export async function runMentionTurn(
   // 실패는 syncSkills 안에서 삼키고 stderr 로 남긴다 — 그래서 턴은 그대로 진행한다.
   await syncSkills(deps.stateDir, rec.workspaceDir, () => deps.murmur.listApprovedSkills());
 
-  // #117: 대화 본문도 stdin 파일로 이동한다. argv 에 있으면 같은 머신의 다른 로컬 사용자가
-  // `ps -ef` 로 스레드 내용을 그대로 읽는다. codex 는 지시문까지 합쳐서 stdin 으로 가고,
-  // claude 는 지시문이 이미 systemPromptFile 로 별도로 가므로 여기선 promptCtx 만 stdin 으로 간다.
+  // **프롬프트가 하네스에 닿는 길은 하네스마다 다르다(2026-09-08 실행 모델 교체).**
+  //
+  // `#117` 이 대화 본문을 argv 에서 뺀 이유(같은 머신의 다른 로컬 사용자가 `ps -ef` 로
+  // 스레드 내용을 그대로 읽는다)는 **양쪽에서 그대로 지켜진다** — 주입도 argv 를 지나지
+  // 않는다. 바뀐 것은 "파일이냐 PTY 냐" 하나이고, 그 선택이 **사람이 이 턴에 칠 수 있는지**를
+  // 결정한다(스펙 §5-3: 판정은 fd 0 의 정체 하나로 한다).
+  //
+  // - claude: TUI 로 뜨고 프롬프트는 PTY 에 주입한다 → `stdinFile: null` → 입력이 열린다.
+  // - codex: 아직 `exec` 이라 지시문 + 본문을 합쳐 stdin 파일로 준다(P5 전까지 두 세계가 함께 산다).
+  const usesTui = def.harness === 'claude-code';
   let stdinFile: string | null = null;
-  if (def.harness === 'codex') {
-    // codex: 지시문 + 본문 합쳐서 stdin 으로
+  if (!usesTui) {
     const combined = [systemPrompt, prompt].filter((s) => s.length > 0).join('\n\n');
     stdinFile = await writePromptFile(deps.stateDir, combined);
-  } else {
-    // claude: 본문만 stdin 으로 (지시문은 --append-system-prompt-file 로 별도 파일)
-    stdinFile = await writePromptFile(deps.stateDir, prompt);
   }
 
   const plan = buildTurnCommand({
@@ -602,6 +605,9 @@ export async function runMentionTurn(
     result = await deps.runTurn(plan, {
       cwd: rec.workspaceDir,
       timeoutMs: deps.turnTimeoutMs,
+      // TUI 로 뜬 턴에만 주입한다 — codex 의 `exec` 은 stdin 파일이 곧 프롬프트다.
+      // 주입은 `runPtyTurn` 이 준비 신호를 본 뒤에 한다(pty.ts::injectPrompt).
+      ...(usesTui ? { injectPrompt: { text: prompt } } : {}),
       // 릴레이가 없으면 탭도 없다 — `undefined` 를 넘겨 pty 쪽 호출을 아예 안 만든다.
       onData: session ? (chunk) => session.push(chunk) : undefined,
       // 반대 방향(#315): 사람이 attach 해서 친 바이트가 이 PTY 로 들어온다. 릴레이가
