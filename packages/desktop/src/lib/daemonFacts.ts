@@ -34,6 +34,21 @@
  * ### 3. 종료 요청은 **누가 했는지 함께** 적는다
  *
  * 아래 `terminationRow` 의 주석이 그 표 전체를 다룬다.
+ *
+ * ## 문구는 사전에 있다 — 이 파일은 **무엇을 말할지만** 정한다
+ *
+ * 라벨과 값은 `i18n/en.ts` 의 `daemonFacts.*` 영역에 있고, 여기서는 `t()` 로 꺼낸다.
+ * 그 영역을 `agents.*`(이 판정을 그리는 화면 이름)가 아니라 **판정 이름**으로 잡은
+ * 근거는 그 머리말에 있다 — `waitChain` 이 세운 선례와 같다.
+ *
+ * **조각을 잇지 않는다.** 종료 요청 행은 `사람이 UI 에서 10:23 · 러너가 아직 못 읽음`
+ * 인데, 이것을 `'사람이 UI 에서'` + 시각 + `'러너가 아직 못 읽음'` 으로 두면 어순이 이
+ * 파일에 굳어 영어가 그 조각들을 놓을 자리를 잃는다. 그래서 자리표시자를 낀 **통짜
+ * 문장**을 사전에 두고, 이 파일은 시각과 경과만 채워 넣는다. 같은 이유로 가동 행의
+ * `부터`(조사)도 사전으로 갔다 — 영어에서 그 말은 시각 **앞**(`since`)에 선다.
+ *
+ * 남은 것은 구분자(` · ` · ` / `)뿐이다. 그것은 낱말이 아니라 목록을 잇는 기호라 사전에
+ * 두지 않는다 — 두면 번역자가 그 자리에 문장을 적을 수 있게 된다.
  */
 import type { ObservedRunner } from './runnerLauncher';
 // 시간 표기는 **앱 전체가 한 벌**이다(`lib/time.ts` 머리말의 실측 표). 이 파일이 길이를
@@ -167,21 +182,37 @@ function terminationRows(
     // 러너가 읽어 갔는지까지 붙인다 — 목업의 `러너가 아직 못 읽음` 이 그것이다.
     // 이것을 빼면 "요청했는데 왜 안 멈추지"의 답(*"붙어 있지 않으면 읽어 갈 쪽이 없다"*,
     // `AgentsSettings` 의 중지 상태 표시)이 이 자리에서 사라진다.
+    // **문장을 통째로 사전에 둔다** — `러너가 아직 못 읽음` 을 조각으로 두고 여기서
+    // 이어 붙이면 어순이 이 파일에 굳는다(`waitChain.link` 머리말이 금지한 그것).
+    // `{read}` 자리에 들어가는 것도 조각이 아니라 문장이라, 언어마다 그 자리를
+    // 문장 앞으로 옮길 수도 있다.
     const read = server.ackedAtMs !== null
-      ? `러너가 ${clock(server.ackedAtMs)} 에 읽었다`
-      : '러너가 아직 못 읽음';
-    requesters.push(`사람이 UI 에서 ${clock(server.requestedAtMs)} · ${read}`);
+      ? t('daemonFacts.termination.read', { time: clock(server.ackedAtMs) })
+      : t('daemonFacts.termination.unread');
+    requesters.push(t('daemonFacts.termination.byPerson', {
+      time: clock(server.requestedAtMs), read,
+    }));
   }
   if (daemonSent !== null) {
-    requesters.push(`daemon 이 시그널로 ${clock(daemonSent)}`);
+    requesters.push(t('daemonFacts.termination.bySignal', { time: clock(daemonSent) }));
   }
   if (requesters.length > 0) {
-    rows.push({ key: 'termination', label: '종료 요청', value: requesters.join(' / ') });
+    rows.push({
+      key: 'termination',
+      label: t('daemonFacts.label.termination'),
+      // 두 요청을 잇는 ` / ` 는 사전에 안 넣는다 — 낱말이 아니라 **목록 구분자**이고,
+      // 그것을 사전에 두면 번역자가 그 자리에 문장을 적을 수 있게 된다.
+      value: requesters.join(' / '),
+    });
   } else if (runner.termSentAtMs === null) {
     // daemon 이 **말한** `null` 이다("내가 안 보냈다"). 서버 쪽도 비었으므로 아무도
     // 요청하지 않았다고 말할 수 있다 — 두 출처를 다 봤기 때문에 말할 수 있는 것이고,
     // 그것이 이 함수가 두 출처를 함께 받는 이유다.
-    rows.push({ key: 'termination', label: '종료 요청', value: '없다 — 아무도 요청하지 않았다' });
+    rows.push({
+      key: 'termination',
+      label: t('daemonFacts.label.termination'),
+      value: t('daemonFacts.termination.none'),
+    });
   }
   // `termSentAtMs` 가 `undefined`(옛 daemon)이고 서버 쪽도 비었으면 행이 없다. 그때
   // '없다'라고 적으면 **모르는 것을 단정하는** 것이다 — daemon 쪽 절반을 못 봤으니까.
@@ -190,15 +221,26 @@ function terminationRows(
   //
   // `undefined` 면 서지 않는다(옛 daemon 은 이 사실을 모른다).
   if (runner.termSentAtMs === null) {
-    rows.push({ key: 'signal', label: '시그널', value: 'daemon 은 안 보냈다' });
+    rows.push({
+      key: 'signal',
+      label: t('daemonFacts.label.signal'),
+      value: t('daemonFacts.signal.none'),
+    });
   } else if (daemonSent !== null) {
     // **경과만 적고 판정하지 않는다** — 규율 2. "N 초 지났는데 아직 살아 있다"는 사실이고
     // "그러니 이상하다"는 판정이다. 후자를 적으려면 러너의 롱폴링 예산을 알아야 하는데
     // daemon 도 이 화면도 그것을 모른다.
+    //
+    // 두 갈래를 **각각 한 문장으로** 사전에 둔다. 살아 있을 때만 붙는 꼬리를 조각으로
+    // 두면 언어가 그것을 문장 앞으로 못 옮기고, `SIGTERM` 이 어느 자리에 오는지도
+    // 이 파일이 정하게 된다.
     const waited = runner.alive
-      ? `${stamp(daemonSent)} 에 SIGTERM · 보낸 지 ${elapsedLabel(daemonSent, now, locale, t)}, 아직 살아 있다`
-      : `${stamp(daemonSent)} 에 SIGTERM`;
-    rows.push({ key: 'signal', label: '시그널', value: waited });
+      ? t('daemonFacts.signal.sentStillAlive', {
+        stamp: stamp(daemonSent),
+        elapsed: elapsedLabel(daemonSent, now, locale, t),
+      })
+      : t('daemonFacts.signal.sent', { stamp: stamp(daemonSent) });
+    rows.push({ key: 'signal', label: t('daemonFacts.label.signal'), value: waited });
   }
 
   return rows;
@@ -227,14 +269,25 @@ export function daemonFactRows(
   // 그 프로세스가 무엇인가". 세대만 있고 pid 가 없으면 세대만 적는다.
   const ident: string[] = [];
   if (typeof runner.pid === 'number') ident.push(String(runner.pid));
-  if (typeof runner.incarnationId === 'string') ident.push(`세대 ${runner.incarnationId}`);
-  if (ident.length > 0) rows.push({ key: 'pid', label: 'pid', value: ident.join(' · ') });
+  if (typeof runner.incarnationId === 'string') {
+    ident.push(t('daemonFacts.pid.incarnation', { id: runner.incarnationId }));
+  }
+  // pid 값은 숫자와 세대를 잇기만 한다 — 잇는 ` · ` 는 위 종료 요청 행의 ` / ` 와 같은
+  // 이유로 사전 밖이다(구분자이지 낱말이 아니다).
+  if (ident.length > 0) {
+    rows.push({ key: 'pid', label: t('daemonFacts.label.pid'), value: ident.join(' · ') });
+  }
 
   if (typeof runner.startedAtMs === 'number') {
+    // **`부터` 를 이 파일에 남기지 않는다.** 그것은 조사이고, 영어에서는 그 자리가 아니라
+    // 시각 앞(`since`)에 온다 — 조각으로 두면 영어가 그 말을 놓을 자리가 없다.
     rows.push({
       key: 'uptime',
-      label: '가동',
-      value: `${stamp(runner.startedAtMs)} 부터 · ${elapsedLabel(runner.startedAtMs, now, locale, t)}`,
+      label: t('daemonFacts.label.uptime'),
+      value: t('daemonFacts.uptime.since', {
+        stamp: stamp(runner.startedAtMs),
+        elapsed: elapsedLabel(runner.startedAtMs, now, locale, t),
+      }),
     });
   }
 
@@ -250,8 +303,10 @@ export function daemonFactRows(
   // 것을 사람이 볼 수 있어야 하고, 그것이 이 구획 전체의 태도다.
   rows.push({
     key: 'liveness',
-    label: '생사',
-    value: runner.alive ? 'alive — kill(pid, 0) 확인' : 'dead — kill(pid, 0) 이 실패했다',
+    label: t('daemonFacts.label.liveness'),
+    value: runner.alive
+      ? t('daemonFacts.liveness.alive')
+      : t('daemonFacts.liveness.dead'),
   });
 
   rows.push(...terminationRows(runner, server, now, locale, t));

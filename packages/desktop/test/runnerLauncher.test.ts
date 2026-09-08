@@ -15,6 +15,11 @@ import {
   type LoginPathReader, type SpawnRequest, type StoredRunnerPat, type AppVersionReader,
 } from '../src/lib/runnerLauncher';
 import { fakeDaemon, liveRunner } from './helpers/fakeDaemon';
+import { translator } from '../src/i18n';
+
+// **한국어를 지목해 넘긴다** — 이유는 `daemonFacts.test.tsx` 머리말과 같다. 이 파일이
+// 재는 것은 사유의 **내용**이고, 그것을 한국어 글자로 적어 뒀다.
+const ko = translator('ko');
 
 const agent = (id: string, extra: Partial<LaunchableAgent> = {}): LaunchableAgent => ({
   id, handle: id, ownerAccountId: 'me', disabled: false, stopRequestedAt: null, ...extra,
@@ -119,6 +124,7 @@ const make = (
     // `timeoutMs: 0` 은 "한 번 보고 아직 살아 있으면 포기한다"다: 아직 안 죽은 경로를
     // 재는 회귀선이 무한히 돌지 않게 하는 자리이고, 죽은 경로는 상한 검사 전에 빠진다.
     { intervalMs: 0, wait: async () => {}, timeoutMs: 0 },
+    ko,
   ),
 });
 
@@ -239,7 +245,7 @@ describe('2. liveness — daemon 장부가 판정한다', () => {
     );
     await startAll(launcher, [agent('a')], { live: ['a'] });
 
-    expect(launcher.getStates()[0]!.message).toBe(STRANGER_ATTACHED);
+    expect(launcher.getStates()[0]!.message).toBe(STRANGER_ATTACHED(ko));
   });
 
   it('presence 를 몰라도(소켓 끊김) 띄운다 — 중복을 막는 것은 이제 장부다', async () => {
@@ -881,6 +887,7 @@ describe('9. 중복 방지·정리', () => {
     };
     const launcher = new RunnerLauncher(
       fakeApi(), fakeSecrets(), spawner, fakeLoginPath(), () => 0, fakeDaemon(),
+      undefined, undefined, ko,
     );
 
     const starting = startAll(launcher, [agent('a')]);

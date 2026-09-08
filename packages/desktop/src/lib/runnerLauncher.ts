@@ -63,6 +63,10 @@
 // 로그인 `PATH` 조회(`#305`)였고, 그것이 Rust 로 옮겨가며(`login_path.rs`) 이 파일에서
 // 웹뷰가 프로그램을 실행하는 자리가 하나도 안 남았다.
 import { DAEMON_RETIRING_TOKEN, EX_CONFIG, harnessBinaryName, installHint, runnerExitReason } from '@murmur/shared';
+// 문구는 사전이 진다(`#619`). **이 파일은 타입만 가져온다** — `translator` 를 여기서
+// 부르면 판정이 언어를 스스로 고르게 되고, 그것이 `(c) 전역 번역기`(그 인터페이스 주석이
+// 버린 후보)의 모양이다.
+import type { Translate } from '../i18n';
 
 /**
  * 러너의 지금 상태.
@@ -476,11 +480,19 @@ export const SYSTEM_PATH_FALLBACK = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbi
  * 알아야 할 사실이기 때문이다. 앞 판본은 같은 상황에서 **아무것도 안 띄우고** 화면에는
  * `외부에서 실행 중` 이라고 적었다 — 그것이 `#430` 이 기록한 오독이다.
  *
- * **문구를 여기서 크게 손대지 마라** — 화면 문구 재정의는 `#443` 범위다. 이 상수는
+ * **문구를 여기서 크게 손대지 마라** — 화면 문구 재정의는 `#443` 범위다. 이 자리는
  * "그런 상태가 있다"를 표시할 최소한의 자리만 잡는다.
+ *
+ * ## 상수에서 함수가 됐다(`#619`)
+ *
+ * 문구가 사전으로 가면서 **모듈 상수로는 둘 수 없게 됐다** — 상수는 모듈이 로드되는
+ * 순간 한 언어로 굳고, 그 뒤에 사람이 언어를 바꿔도 이 줄만 옛 언어로 남는다. 언어를
+ * 넘겨받는 함수여야 그 굳음이 구조적으로 불가능하다.
+ *
+ * 회귀선이 이 이름으로 문구를 집으므로(`runnerLauncher.test.ts`) **이름은 그대로 둔다** —
+ * 부르는 쪽이 `STRANGER_ATTACHED(t)` 가 되는 것이 변화의 전부다.
  */
-export const STRANGER_ATTACHED =
-  '이 계정으로 붙어 있는 러너가 서버에 보이지만 이 daemon 의 장부에는 없다 — 내 러너는 새로 띄웠다';
+export const STRANGER_ATTACHED = (t: Translate): string => t('runner.stranger.attached');
 
 export class RunnerLauncher {
   /** 이 앱이 띄운 자식만. 외부 러너는 여기 없다(앱은 그것을 죽일 수도, 죽여서도 안 된다). */
@@ -525,6 +537,30 @@ export class RunnerLauncher {
     private appVersion: AppVersionReader = tauriAppVersionReader,
     /** 재기동이 실제 종료를 기다리는 방식. 기본은 2초 간격, 상한 15분. */
     private restartWait: RestartWaitOptions = {},
+    /**
+     * 러너 상태에 실릴 문구를 그 언어로 내는 번역기(`#619` 의 **(b) 주입**).
+     *
+     * ## 왜 **기본값이 없나**
+     *
+     * `translator('en')` 을 기본으로 두면 이 클래스를 만드는 자리가 언어를 안 넘겨도
+     * 컴파일이 되고, 그러면 **부르는 화면이 조용히 한 언어로 굳는다** — 사람이 설정에서
+     * 언어를 바꿔도 러너 사유만 영어로 남는다. 그 굳음은 렌더까지 가야 드러나고,
+     * 그때는 이미 여러 자리가 기본값에 기대고 있다. `AgentsSettings::lastTurnLabel` 이
+     * 같은 이유로 `Translate` 를 필수로 받는다(그 함수 주석).
+     *
+     * ## 왜 **맨 뒤인가**
+     *
+     * 앞에 끼우면 이 클래스를 만드는 회귀선 여섯 자리가 인자를 전부 한 칸씩 민다.
+     * 그중 `now` 를 고정해 시각을 재는 시험들(`() => 1_700_000_000_000`)은 자리만
+     * 어긋나도 **다른 값이 조용히 그 자리에 들어가** 초록인 채로 틀린 것을 재게 된다.
+     *
+     * ## 왜 **함수 하나이고 언어 코드가 아닌가**
+     *
+     * 이 클래스가 만드는 문구에는 길이·시각이 없다(그것은 `daemonFacts` 쪽이다).
+     * `Intl` 에 넘길 `locale` 이 필요한 자리가 없으므로 그 인자를 받지 않는다 —
+     * 안 쓰는 인자를 받으면 다음 사람이 그것으로 시간을 조립하기 시작한다.
+     */
+    private t: Translate,
   ) {}
 
   /**
@@ -636,7 +672,7 @@ export class RunnerLauncher {
         this.setState(agent.id, {
           status: 'failed',
           exitCode: null,
-          message: `daemon 에 닿지 못해 러너를 띄우지 않았다: ${errText(err)}`,
+          message: this.t('runner.launch.daemonUnreachable', { reason: errText(err) }),
         });
       }
       return;
@@ -649,7 +685,7 @@ export class RunnerLauncher {
         this.setState(agent.id, {
           status: 'failed',
           exitCode: null,
-          message: `기동 실패: ${errText(err)}`,
+          message: this.t('runner.launch.failed', { reason: errText(err) }),
         });
       }
     }
@@ -669,7 +705,7 @@ export class RunnerLauncher {
       this.setState(input.agent.id, {
         status: 'failed',
         exitCode: null,
-        message: `에이전트는 생성됐지만 PAT 를 키체인에 저장하지 못해 러너를 띄우지 않았다: ${errText(err)}`,
+        message: this.t('runner.launch.patNotStored', { reason: errText(err) }),
       });
       return;
     }
@@ -684,7 +720,7 @@ export class RunnerLauncher {
     } catch (err) {
       this.setState(input.agent.id, {
         status: 'failed', exitCode: null,
-        message: `daemon 에 닿지 못해 러너를 띄우지 않았다: ${errText(err)}`,
+        message: this.t('runner.launch.daemonUnreachable', { reason: errText(err) }),
       });
       return;
     }
@@ -695,7 +731,7 @@ export class RunnerLauncher {
       liveAccountIds: input.liveAccountIds,
     }, observation).catch((err) => {
       this.setState(input.agent.id, {
-        status: 'failed', exitCode: null, message: `기동 실패: ${errText(err)}`,
+        status: 'failed', exitCode: null, message: this.t('runner.launch.failed', { reason: errText(err) }),
       });
     });
   }
@@ -776,7 +812,7 @@ export class RunnerLauncher {
 
     const pat = await this.ensurePat(agent.id);
     if (!pat || this.disposed) return; // 사유는 ensurePat 이 상태에 남겼다.
-    await this.spawnRunner(agent, pat.token, strangerAttached ? STRANGER_ATTACHED : null);
+    await this.spawnRunner(agent, pat.token, strangerAttached ? STRANGER_ATTACHED(this.t) : null);
   }
 
   /**
@@ -795,7 +831,7 @@ export class RunnerLauncher {
     this.setState(agent.id, {
       status: 'restarting',
       exitCode: null,
-      message: '앞 세대 러너가 진행 중인 턴을 끝내고 물러나는 중이다 — 끝나면 새로 띄운다',
+      message: this.t('runner.restart.waitingForRetirement'),
     });
     const timer = setTimeout(() => {
       this.retireWaits.delete(agent.id);
@@ -821,7 +857,7 @@ export class RunnerLauncher {
         status: 'failed',
         exitCode: null,
         // 여기서 발급으로 넘어가지 않는 것이 요점이라, 그 사실을 사람에게도 말한다.
-        message: `키체인을 읽지 못했다 — 돌고 있는 러너를 죽일 수 있어 새로 발급하지 않았다: ${read.error}`,
+        message: this.t('runner.launch.keychainUnreadable', { reason: read.error }),
       });
       return null;
     }
@@ -912,7 +948,7 @@ export class RunnerLauncher {
       this.restarting.delete(agent.id);
       this.setState(agent.id, {
         status: 'failed', exitCode: null,
-        message: `재기동하지 못했다 — daemon 에 종료를 전하지 못했다: ${errText(err)}`,
+        message: this.t('runner.restart.killFailed', { reason: errText(err) }),
       });
       return;
     }
@@ -931,8 +967,7 @@ export class RunnerLauncher {
     if (!exited) {
       this.setState(agent.id, {
         status: 'restarting', exitCode: null,
-        message: '러너가 아직 물러나지 않았다 — 진행 중인 턴이 길다.'
-          + ' 종료 요청은 이미 갔으므로 다음 기동에서 새 번들로 뜬다.',
+        message: this.t('runner.restart.stillRunning'),
       });
       return;
     }
@@ -943,7 +978,7 @@ export class RunnerLauncher {
     } catch (err) {
       this.setState(agent.id, {
         status: 'failed', exitCode: null,
-        message: `러너는 물러났지만 daemon 에 닿지 못해 다시 띄우지 못했다: ${errText(err)}`,
+        message: this.t('runner.restart.respawnUnreachable', { reason: errText(err) }),
       });
       return;
     }
@@ -1108,7 +1143,7 @@ export class RunnerLauncher {
     this.runTokens.delete(agentId);
     this.runners.delete(agentId);
     if (code === EX_CONFIG) {
-      this.setState(agentId, { exitCode: code, ...exitStateFor78(agent, tailLines) });
+      this.setState(agentId, { exitCode: code, ...exitStateFor78(agent, tailLines, this.t) });
       return;
     }
     // 재기동을 예약해 둔 러너의 종료는 **끝이 아니라 중간**이다. 'stopped' 로 적으면
@@ -1152,7 +1187,7 @@ export class RunnerLauncher {
     if (!read.ok) {
       this.setState(agentId, {
         status: 'failed', exitCode: null,
-        message: `키체인을 읽지 못해 옛 PAT 를 폐기할 수 없다 — 재발급하지 않았다: ${read.error}`,
+        message: this.t('runner.reissue.keychainUnreadable', { reason: read.error }),
       });
       return;
     }
@@ -1167,7 +1202,7 @@ export class RunnerLauncher {
       // 옛 PAT 는 그대로 살아 있다 — 돌고 있는 러너도 그대로다. 아무것도 잃지 않았다.
       this.setState(agentId, {
         status: 'failed', exitCode: null,
-        message: `새 PAT 를 발급하지 못했다 — 옛 PAT 는 그대로 살아 있다: ${errText(err)}`,
+        message: this.t('runner.reissue.mintFailed', { reason: errText(err) }),
       });
       return;
     }
@@ -1200,7 +1235,7 @@ export class RunnerLauncher {
     // 그것을 고장으로 읽고 눌렀다. `restart()` 가 같은 자리에서 같은 것을 한다.
     this.setState(agentId, {
       status: 'restarting', exitCode: null,
-      message: '새 PAT 를 받았다 — 옛 러너가 진행 중인 턴을 끝내고 물러나기를 기다린다',
+      message: this.t('runner.reissue.waiting'),
     });
     const gone = toldDaemon && await this.awaitRunnerExit(agentId, () => this.reissuing.has(agentId));
 
@@ -1228,14 +1263,14 @@ export class RunnerLauncher {
       // 누르며, 그 반복이 이 사고의 시작이었다.
       this.setState(agentId, {
         status: 'running', exitCode: null,
-        message: `새 PAT 로 다시 띄운다. 옛 PAT(${deferredLabel})는 폐기하지 않았다`
-          + ' — 그것으로 도는 러너가 진행 중인 턴을 마치는 중이다(끝나면 스스로 물러난다).'
-          + ' 지금 끊어야 한다면 설정에서 손으로 폐기해라 — 그 턴은 답을 남기지 못한다.',
+        message: this.t('runner.reissue.revokeDeferred', { label: deferredLabel }),
       });
     } else if (revokeError) {
       this.setState(agentId, {
         status: 'running', exitCode: null,
-        message: `새 PAT 로 다시 띄웠지만 옛 PAT(${read.value?.label}) 폐기에 실패했다 — 설정에서 손으로 폐기해라: ${revokeError}`,
+        message: this.t('runner.reissue.revokeFailed', {
+          label: read.value?.label ?? '', reason: revokeError,
+        }),
       });
     }
   }
@@ -1287,17 +1322,36 @@ function tailExcerpt(tailLines: readonly string[] | undefined, max = 3): string 
 }
 
 /**
+ * 실행 파일 이름을 모를 때 문장의 주어가 되는 말(`이 에이전트의 하네스(claude-code)`).
+ *
+ * 두 갈래가 **같은 글자를 두 번 적고 있었다**(없는 파일 갈래와 로그인 갈래). 사전으로
+ * 옮기며 합친 이유가 그것이다 — 한쪽만 고치면 두 사유가 다른 말로 같은 것을 가리킨다.
+ *
+ * 하네스 이름조차 없으면 `알 수 없음` 이 들어간다. **지어내지 않는다**(`#368`) —
+ * 이름을 비워 두면 문장이 `이 에이전트의 하네스()` 가 되어 사람이 버그로 읽는다.
+ */
+function subjectHarness(agent: LaunchableAgent, t: Translate): string {
+  return t('runner.exit.subjectHarness', {
+    harness: agent.harness ?? t('runner.exit.subjectHarnessUnknown'),
+  });
+}
+
+/**
  * 78 로 죽은 러너의 **상태와 문구**를 정한다 — `#473` 의 핵심 판정.
  *
  * `handleExit` 에서 떼어낸 이유는 회귀선이 이 판정을 상태 기계 없이 직접 부를 수 있어야
  * 하기 때문이다. 그리고 이 함수가 순수하다는 사실 자체가 성질이다: 입력은 꼬리와
- * 하네스 이름뿐이고, 그 둘 말고 판정에 영향을 주는 것이 없다.
+ * 하네스 이름뿐이고, 그 둘 말고 판정에 영향을 주는 것이 없다 — **번역기도 인자라**
+ * 그 성질이 유지된다(`#619` 의 (b) 주입).
  *
  * 세 갈래다. **셋째("모른다")가 이 이슈가 만든 것이다.**
  */
 function exitStateFor78(
   agent: LaunchableAgent,
   tailLines: string[] | undefined,
+  // **맨 뒤다.** 앞에 끼우면 이 판정을 직접 부르는 회귀선들이 인자를 한 칸씩 민다
+  // (`RunnerLauncher` 생성자 주석의 그 근거와 같다).
+  t: Translate,
 ): { status: RunnerStatus; message: string } {
   const reason = runnerExitReason(tailLines);
 
@@ -1305,7 +1359,10 @@ function exitStateFor78(
     // **이름을 말한다.** "하네스를 설치해라"로는 사람이 무엇을 설치할지 모른다 —
     // 에이전트마다 다르다(`claude-code` → `claude`, `codex` → `codex`).
     const binary = harnessBinaryName(agent.harness);
-    const what = binary ? `\`${binary}\`` : `이 에이전트의 하네스(${agent.harness ?? '알 수 없음'})`;
+    // 실행 파일 이름은 **번역하지 않는다** — 사람이 터미널에 치는 그 글자다. 감싸는
+    // 백틱도 여기서 붙인다: 사전에 두면 번역자가 그 표시를 지울 수 있고, 그러면 이름과
+    // 문장이 눈으로 안 갈린다.
+    const what = binary ? `\`${binary}\`` : subjectHarness(agent, t);
     // **어떻게 설치하는지까지 말한다**(`#476`). `#473` 이 이름을 넣어 "무엇이 없는가"는
     // 답했지만 "어떻게 채우는가"는 여전히 사람이 검색해야 했다. murmur 는 하네스를
     // 동봉하지 않기로 했으므로(2026-09-06 방침) **어디서 받는지 알려 주는 것이
@@ -1317,7 +1374,11 @@ function exitStateFor78(
       status: 'needs_harness',
       // 러너가 로그에 적은 것(넘긴 PATH 원문 등)이 그대로 뒤에 붙는다 — 앱이 다시
       // 설명하지 않고 러너가 한 말을 보인다(`#368`).
-      message: `${what} 를 찾을 수 없다 — 설치하고 PATH 에 있는지 확인하라${hint ? `. ${hint}` : ''}`,
+      // 안내가 없으면 **그 문장을 안 만든다** — `{hint}` 를 빈 값으로 채우면 마침표만
+      // 남은 꼬리가 붙는다. 갈래를 사전에서 갈라 두는 이유가 그것이다.
+      message: hint
+        ? t('runner.exit.notFound', { what, hint })
+        : t('runner.exit.notFoundNoHint', { what }),
     };
   }
 
@@ -1325,19 +1386,19 @@ function exitStateFor78(
     // **이름을 말하고, 무엇을 하는지 말한다**(`#473`·`#476` 과 같은 규율). "자격증명을
     // 확인하라"로는 사람이 어디를 볼지 모른다 — 실제로 필요한 것은 한 줄짜리 명령이다.
     const binary = harnessBinaryName(agent.harness);
-    const what = binary ? `\`${binary}\`` : `이 에이전트의 하네스(${agent.harness ?? '알 수 없음'})`;
+    const what = binary ? `\`${binary}\`` : subjectHarness(agent, t);
     return {
       status: 'needs_login',
       message: binary
-        ? `${what} 로그인이 풀렸다 — 터미널에서 \`${binary}\` 를 실행해 다시 로그인하면 살아난다`
-        : `${what} 의 로그인이 풀렸다 — 그 CLI 로 다시 로그인해라`,
+        ? t('runner.exit.loginRequired', { what, binary: `\`${binary}\`` })
+        : t('runner.exit.loginRequiredNoBinary', { what }),
     };
   }
 
   if (reason === 'credential-rejected') {
     // **대조군이다.** 이 갈래는 앞 판본과 문구가 같다 — 이 이슈가 고친 것은 78 을
     // 전부 이쪽으로 보내던 것이지, 이쪽 자체가 아니다.
-    return { status: 'needs_reissue', message: 'PAT 가 폐기·회전됐다 — 재발급하면 다시 뜬다' };
+    return { status: 'needs_reissue', message: t('runner.exit.credentialRejected') };
   }
 
   // ── 둘 다 아닌 78 — **지어내지 않는다** ────────────────────────────────────
@@ -1351,8 +1412,8 @@ function exitStateFor78(
   return {
     status: 'stopped',
     message: excerpt
-      ? `설정 문제로 물러났다(78) — 사유를 가리지 못했다. 러너 로그 마지막 줄: ${excerpt}`
-      : '설정 문제로 물러났다(78) — 사유를 가리지 못했다. 러너 로그를 확인하라',
+      ? t('runner.exit.unknownWithLog', { excerpt })
+      : t('runner.exit.unknown'),
   };
 }
 

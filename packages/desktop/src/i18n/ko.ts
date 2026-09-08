@@ -271,6 +271,92 @@ export const ko = {
     + '카드를 누르면 팀원을 고칠 수 있다.',
 
   // ---------------------------------------------------------------------------
+  // daemonFacts — **원래 문구를 한 글자도 안 바꿨다.**
+  //
+  // 이 판정의 회귀선(`daemonFacts.test.tsx`)은 한국어를 **고정해 놓고 글자를 잰다**
+  // (그 파일이 `setLocale('ko')` 를 하는 이유를 머리말에 적어 뒀다). 그 축들이 지키는
+  // 것은 언어가 아니라 **그 언어로 표현된 규율**이므로(제약 1 의 주어, 제약 2 의 판정
+  // 낱말 없음), 옮기면서 문구를 다듬으면 지켜지던 규율이 조용히 사라진다.
+  //
+  // 그래서 이 영역만은 **영어를 새로 설계하되 한국어는 옮겨 적기만 했다.** 라벨 넷과
+  // 값 아홉이 전부 옛 소스의 그 글자다.
+  // ---------------------------------------------------------------------------
+
+  'daemonFacts.label.liveness': '생사',
+  // `pid` 는 두 언어가 같다 — 필드 이름이라 옮기지 않는다(`en.ts` 머리말).
+  'daemonFacts.label.pid': 'pid',
+  'daemonFacts.label.signal': '시그널',
+  'daemonFacts.label.termination': '종료 요청',
+  'daemonFacts.label.uptime': '가동',
+
+  'daemonFacts.liveness.alive': 'alive — kill(pid, 0) 확인',
+  'daemonFacts.liveness.dead': 'dead — kill(pid, 0) 이 실패했다',
+
+  'daemonFacts.pid.incarnation': '세대 {id}',
+
+  'daemonFacts.signal.none': 'daemon 은 안 보냈다',
+  'daemonFacts.signal.sent': '{stamp} 에 SIGTERM',
+  'daemonFacts.signal.sentStillAlive': '{stamp} 에 SIGTERM · 보낸 지 {elapsed}, 아직 살아 있다',
+
+  'daemonFacts.termination.byPerson': '사람이 UI 에서 {time} · {read}',
+  'daemonFacts.termination.bySignal': 'daemon 이 시그널로 {time}',
+  'daemonFacts.termination.none': '없다 — 아무도 요청하지 않았다',
+  'daemonFacts.termination.read': '러너가 {time} 에 읽었다',
+  'daemonFacts.termination.unread': '러너가 아직 못 읽음',
+
+  'daemonFacts.uptime.since': '{stamp} 부터 · {elapsed}',
+
+  // ---------------------------------------------------------------------------
+  // runner — **여기도 원래 문구 그대로다.**
+  //
+  // 이유가 daemonFacts 와 같다: 러너 실패 사유를 글자로 재는 회귀선이 넷이다
+  // (`runnerFailureDisplay` · `runnerHarnessMissing` · `missingToolchainNotice` ·
+  // `agentGrid`). 그 축들이 지키는 것은 **사유가 뭉개지지 않았다**는 사실이고,
+  // 문구를 다듬으면 그 사실을 재던 자리가 사라진다.
+  //
+  // 옛 소스가 문자열을 이어 붙여 만들던 자리(`+` 로 이은 두세 줄)는 **자리표시자 낀
+  // 한 문장**이 됐다 — 조각으로 두면 영어에서 그 조각들이 갈 자리가 없다는 것이
+  // `waitChain.link` 가 세운 규율이다. 한국어 쪽 결과 글자는 그대로다.
+  // ---------------------------------------------------------------------------
+
+  'runner.exit.credentialRejected': 'PAT 가 폐기·회전됐다 — 재발급하면 다시 뜬다',
+  'runner.exit.loginRequired': '{what} 로그인이 풀렸다 — 터미널에서 {binary} 를 실행해 다시 로그인하면 살아난다',
+  'runner.exit.loginRequiredNoBinary': '{what} 의 로그인이 풀렸다 — 그 CLI 로 다시 로그인해라',
+  'runner.exit.notFound': '{what} 를 찾을 수 없다 — 설치하고 PATH 에 있는지 확인하라. {hint}',
+  'runner.exit.notFoundNoHint': '{what} 를 찾을 수 없다 — 설치하고 PATH 에 있는지 확인하라',
+  'runner.exit.subjectHarness': '이 에이전트의 하네스({harness})',
+  'runner.exit.subjectHarnessUnknown': '알 수 없음',
+  'runner.exit.unknown': '설정 문제로 물러났다(78) — 사유를 가리지 못했다. 러너 로그를 확인하라',
+  'runner.exit.unknownWithLog':
+    '설정 문제로 물러났다(78) — 사유를 가리지 못했다. 러너 로그 마지막 줄: {excerpt}',
+
+  'runner.launch.daemonUnreachable': 'daemon 에 닿지 못해 러너를 띄우지 않았다: {reason}',
+  'runner.launch.failed': '기동 실패: {reason}',
+  'runner.launch.keychainUnreadable':
+    '키체인을 읽지 못했다 — 돌고 있는 러너를 죽일 수 있어 새로 발급하지 않았다: {reason}',
+  'runner.launch.patNotStored':
+    '에이전트는 생성됐지만 PAT 를 키체인에 저장하지 못해 러너를 띄우지 않았다: {reason}',
+
+  'runner.reissue.keychainUnreadable': '키체인을 읽지 못해 옛 PAT 를 폐기할 수 없다 — 재발급하지 않았다: {reason}',
+  'runner.reissue.mintFailed': '새 PAT 를 발급하지 못했다 — 옛 PAT 는 그대로 살아 있다: {reason}',
+  'runner.reissue.revokeDeferred':
+    '새 PAT 로 다시 띄운다. 옛 PAT({label})는 폐기하지 않았다 — 그것으로 도는 러너가 진행 중인 '
+    + '턴을 마치는 중이다(끝나면 스스로 물러난다). 지금 끊어야 한다면 설정에서 손으로 폐기해라 — '
+    + '그 턴은 답을 남기지 못한다.',
+  'runner.reissue.revokeFailed':
+    '새 PAT 로 다시 띄웠지만 옛 PAT({label}) 폐기에 실패했다 — 설정에서 손으로 폐기해라: {reason}',
+  'runner.reissue.waiting': '새 PAT 를 받았다 — 옛 러너가 진행 중인 턴을 끝내고 물러나기를 기다린다',
+
+  'runner.restart.killFailed': '재기동하지 못했다 — daemon 에 종료를 전하지 못했다: {reason}',
+  'runner.restart.respawnUnreachable': '러너는 물러났지만 daemon 에 닿지 못해 다시 띄우지 못했다: {reason}',
+  'runner.restart.stillRunning':
+    '러너가 아직 물러나지 않았다 — 진행 중인 턴이 길다. 종료 요청은 이미 갔으므로 다음 기동에서 새 번들로 뜬다.',
+  'runner.restart.waitingForRetirement': '앞 세대 러너가 진행 중인 턴을 끝내고 물러나는 중이다 — 끝나면 새로 띄운다',
+
+  'runner.stranger.attached':
+    '이 계정으로 붙어 있는 러너가 서버에 보이지만 이 daemon 의 장부에는 없다 — 내 러너는 새로 띄웠다',
+
+  // ---------------------------------------------------------------------------
   // sidebar — **키 순서는 `en.ts` 와 같다**(덩어리 알파벳 → 그 안 키 알파벳).
   // 두 파일이 같은 순서여야 나란히 놓고 읽을 수 있고, 리베이스 충돌도 사람이 합칠 수
   // 있다. 순서의 근거는 `en.ts` 의 sidebar 머리말에 있다.
