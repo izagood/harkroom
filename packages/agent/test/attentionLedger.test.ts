@@ -87,3 +87,28 @@ describe('main.ts 의 원장 배선', () => {
     expect(source).toContain('accountLabel');
   });
 });
+
+// 2026-09-08 실물 검증에서 드러난 어긋남의 회귀선. 관측 결과: 계정 전환이 **한 번도**
+// 일어나지 않고 첫 계정에서 바로 사람을 불렀다 — 스펙 §2-3 이 정한 순서와 반대다.
+describe('사람 부르기는 축의 마지막에서만 열린다', () => {
+  const source = readFileSync(path.resolve(__dirname, '../src/mentionTurn.ts'), 'utf8');
+  const main = readFileSync(path.resolve(__dirname, '../src/main.ts'), 'utf8');
+  const scheduler = readFileSync(path.resolve(__dirname, '../src/mentionScheduler.ts'), 'utf8');
+
+  it('마지막 계정이 아니면 injectPrompt 에서 통째로 뺀다', () => {
+    // `pty.ts` 는 콜백의 **유무로** 두 정책을 가른다 — 넘겨 놓고 안 부르는 방식으로는
+    // 안 된다. 넘기는 순간 그 턴은 던지지 않게 되고, 계정 전환이 사라진다.
+    expect(source).toContain('deps.callsForHuman === false ? {} : {');
+  });
+
+  it('스케줄러가 마지막 여부를 축에서 받아 넘긴다', () => {
+    expect(scheduler).toContain('(account, isLastAccount) =>');
+    expect(scheduler).toContain('isLastAccount');
+  });
+
+  it('main 이 그 플래그로 원장과 부름을 함께 닫는다', () => {
+    // 원장만 닫고 부름을 열어 두면 원장 없이 매번 부른다(claim 검사를 건너뛴다).
+    expect(main).toContain('attentionLedger: isLastAccount ? attentionLedger : undefined');
+    expect(main).toContain('callsForHuman: isLastAccount');
+  });
+});

@@ -212,6 +212,18 @@ export interface MentionTurnDeps {
    * 나머지 턴이 풀린다 — 스레드마다 부르면 사람이 같은 승인을 반복한다.
    */
   attentionLedger?: AttentionLedger;
+  /**
+   * 이 턴이 **사람을 부를 수 있는가**(2026-09-08). 계정 축의 마지막에서만 참이다.
+   *
+   * **왜 축의 마지막에서만인가.** 사람을 부르는 경로는 PTY 를 살려 두려고 **던지지
+   * 않는다** — 그러면 `withAccountFailover` 가 실패를 못 보고 계정 전환이 일어나지
+   * 않는다. 즉 "부른다"와 "전환한다"는 동시에 못 한다. 앞 계정에서 부르면 준비된
+   * 계정이 뒤에 있는데도 사람을 깨우고, 그 계정은 시도조차 되지 않는다.
+   *
+   * 거짓이면 `onAttention` 을 아예 넘기지 않는다 — `pty.ts` 는 그 콜백의 **유무로**
+   * 두 정책(죽이고 던진다 / 살리고 부른다)을 가르기 때문이다.
+   */
+  callsForHuman?: boolean;
 }
 
 /**
@@ -787,33 +799,39 @@ export async function runMentionTurn(
       ...(usesTui ? {
         injectPrompt: {
           text: prompt,
-          /**
-           * 주입이 **먹혔는지**도 잰다(2026-09-08). 증거는 세션 기록 파일의 존재다 —
-           * 화면 문자열로 재면 하네스 버전에 묶이지만, 파일 생성은 사실 자체다.
-           */
-          confirmDelivery: {
-            probe: () => sessionTranscriptExists(def.harness, sessionIdForProbe, {
-              configDir: deps.claudeConfigDir,
-            }),
-          },
-          /**
-           * **사람 부르기는 마지막 수단이다.** 여기까지 왔다는 것은 `withAccountFailover`
-           * 가 풀을 다 태웠다는 뜻이다 — 준비 실패는 계정 전환 방아쇠이므로
-           * (`claudeAccounts.ts::switchesAccount`), 마지막 계정이 아니면 이 콜백이 아니라
-           * 그 전환이 먼저 일어난다.
-           *
-           * 이 턴은 여기서 끝나지 않는다: PTY 가 살아 있고, 사람이 관문을 지나면 그
-           * 자리에서 프롬프트가 주입된다. 끝은 exit 이거나 무발화 시계다 — 그 시계는
-           * 사람이 붙어 있으면(`end.viewers > 0`) 지나가므로, 사람이 오면 살아남는다.
-           */
-          onAttention: (screen: string) => {
-            const label = deps.accountLabel ?? '(기본)';
-            if (deps.attentionLedger && !deps.attentionLedger.claim(label, sessionIdForProbe ?? key)) return;
-            session?.needsAttention(screen, label);
-            console.error(
-              `[mentionTurn] ${key}: 사람 손이 필요하다(계정=${label}) — 앱이 이 세션의 터미널을 연다`,
-            );
-          },
+          // 아래 두 필드는 **함께 켜지고 함께 꺼진다**: `confirmDelivery` 는 `onAttention`
+          // 이 있어야 할 일이 있고(부를 곳이 없으면 확인해도 소용없다), `onAttention` 은
+          // 축의 마지막에서만 열린다. 앞 계정에서는 준비 실패가 그대로 던져져
+          // 계정 전환을 태운다 — 그것이 이 턴이 아직 쓸 수 있는 더 싼 수단이다.
+          ...(deps.callsForHuman === false ? {} : {
+            /**
+             * 주입이 **먹혔는지**도 잰다(2026-09-08). 증거는 세션 기록 파일의 존재다 —
+             * 화면 문자열로 재면 하네스 버전에 묶이지만, 파일 생성은 사실 자체다.
+             */
+            confirmDelivery: {
+              probe: () => sessionTranscriptExists(def.harness, sessionIdForProbe, {
+                configDir: deps.claudeConfigDir,
+              }),
+            },
+            /**
+             * **사람 부르기는 마지막 수단이다.** 여기까지 왔다는 것은 `withAccountFailover`
+             * 가 풀을 다 태웠다는 뜻이다 — 준비 실패는 계정 전환 방아쇠이므로
+             * (`claudeAccounts.ts::switchesAccount`), 마지막 계정이 아니면 이 콜백이 아니라
+             * 그 전환이 먼저 일어난다.
+             *
+             * 이 턴은 여기서 끝나지 않는다: PTY 가 살아 있고, 사람이 관문을 지나면 그
+             * 자리에서 프롬프트가 주입된다. 끝은 exit 이거나 무발화 시계다 — 그 시계는
+             * 사람이 붙어 있으면(`end.viewers > 0`) 지나가므로, 사람이 오면 살아남는다.
+             */
+            onAttention: (screen: string) => {
+              const label = deps.accountLabel ?? '(기본)';
+              if (deps.attentionLedger && !deps.attentionLedger.claim(label, sessionIdForProbe ?? key)) return;
+              session?.needsAttention(screen, label);
+              console.error(
+                `[mentionTurn] ${key}: 사람 손이 필요하다(계정=${label}) — 앱이 이 세션의 터미널을 연다`,
+              );
+            },
+          }),
         },
       } : {}),
       // 릴레이가 없으면 탭도 없다 — `undefined` 를 넘겨 pty 쪽 호출을 아예 안 만든다.
