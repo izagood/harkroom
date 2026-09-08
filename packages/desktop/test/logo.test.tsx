@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
@@ -73,5 +75,47 @@ describe('murmur 로고 (#191)', () => {
   it('접속 화면에서도 접근 가능한 이름 murmur 는 하나뿐이다', () => {
     render(<ConnectScreen onConnected={vi.fn()} />);
     expect(murmurNameCount()).toBe(1);
+  });
+
+  /**
+   * 강조 막대의 색은 **토큰이어야 한다**(실측 2026-09-08). `#E8613C` 를 못 박아 두면
+   * 나머지 6 개는 `currentColor` 로 뒤집히는데 가운데만 라이트 값으로 남아, 다크에서
+   * "로고 색이 안 바뀐다" 로 보인다. 색 이름을 세는 대신 *"막대에 리터럴 색이 없다"* 를
+   * 지킨다 — 다음 사람이 다른 hex 를 박아도 같은 결함이 다시 잡힌다.
+   */
+  it('가운데 막대의 색이 하드코딩이 아니라 강조 토큰이다', () => {
+    sidebar();
+    const strokes = Array.from(
+      screen.getByTestId('murmur-logo').querySelectorAll('path')
+    ).map((path) => path.getAttribute('stroke') ?? '');
+
+    expect(strokes.some((stroke) => stroke.includes('--color-accent-brand'))).toBe(true);
+    // `currentColor` 와 `var(...)` 만 있어야 한다. 폴백 안의 hex 는 `var(` 로 시작하므로
+    // 여기 걸리지 않는다 — 걸리는 것은 `stroke="#E8613C"` 처럼 못 박은 값이다.
+    expect(strokes.filter((stroke) => stroke.startsWith('#'))).toEqual([]);
+  });
+
+  /**
+   * favicon 사본은 문서 밖 리소스라 앱의 CSS 변수를 못 본다. 그래서 같은 두 값을
+   * `prefers-color-scheme` 로 적어 두는데, 컴포넌트만 고치고 이 파일을 잊는 것이
+   * 이 결함이 처음 생긴 경로다.
+   */
+  it('favicon 사본도 다크에서 강조색을 바꾼다', () => {
+    const svg = readFileSync(join(__dirname, '../public/logo.svg'), 'utf-8');
+    const darkBlock = svg.match(/@media \(prefers-color-scheme: dark\)\s*\{([\s\S]*?)\}\s*\}/)?.[1];
+    expect(darkBlock, '다크 블록이 있어야 한다').toBeDefined();
+    expect((darkBlock ?? '').toUpperCase()).toContain('#FF7B54');
+  });
+
+  /**
+   * 상단 바 로고 크기(실측 2026-09-08, 사용자가 화면에서 지적). 이 바는 `h-9` = 36px 인데
+   * 16px 은 44% 밖에 차지하지 않아 브랜드가 부스러기로 보였다. 옆 글자를 뺀 자리라
+   * 로고가 유일한 브랜딩이다 — 절반은 넘고, 바를 꽉 채우지는 않는다.
+   */
+  it('상단 바 로고가 바 높이의 절반보다 크다', () => {
+    sidebar();
+    const size = Number(screen.getByTestId('murmur-logo').getAttribute('width'));
+    expect(size).toBeGreaterThan(18);
+    expect(size).toBeLessThanOrEqual(32);
   });
 });
