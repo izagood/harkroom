@@ -108,6 +108,8 @@ const channelController = () => {
 
 const sidebarProps = {
   onOpenDirectory: () => {},
+  onOpenAgentConfig: () => {},
+  onOpenProfile: () => {},
   onOpenChannelDirectory: () => {},
   onOpenInbox: () => {},
   onOpenSaved: () => {},

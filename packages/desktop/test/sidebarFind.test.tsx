@@ -52,6 +52,8 @@ const fakeController = () => {
 
 const sidebarProps = {
   onOpenDirectory: () => {},
+  onOpenAgentConfig: () => {},
+  onOpenProfile: () => {},
   /* 이 prop 은 남는다 — 옮겨진 것은 그것을 **부르는 자리**뿐이다(10px 돋보기 → 찾기 줄). */
   onOpenChannelDirectory: () => {},
   onOpenInbox: () => {},

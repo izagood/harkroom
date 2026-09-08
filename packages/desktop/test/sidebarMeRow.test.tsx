@@ -48,7 +48,7 @@ const mount = (props: Partial<{ onOpenSettings: (section?: SectionId) => void; o
       <Sidebar panel="home"
         onOpenDirectory={() => {}}
         onOpenChannelDirectory={() => {}}
-        onOpenInbox={() => {}}
+        onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
         collapsed={false}
         onToggleCollapse={vi.fn()}
       />
@@ -67,11 +67,11 @@ const mountBothPanels = () =>
   render(
     <>
       <Sidebar panel="home"
-        onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}}
+        onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
         collapsed={false} onToggleCollapse={vi.fn()}
       />
       <Sidebar panel="dm"
-        onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}}
+        onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
         collapsed={false} onToggleCollapse={vi.fn()}
       />
     </>,

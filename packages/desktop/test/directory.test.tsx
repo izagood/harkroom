@@ -195,7 +195,7 @@ describe('Directory (#226)', () => {
     render(
       <Sidebar panel="home"
         onOpenDirectory={onOpenDirectory} onOpenChannelDirectory={vi.fn()}
-        onOpenInbox={vi.fn()}
+        onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
         collapsed={false}
         onToggleCollapse={vi.fn()}
       />,
