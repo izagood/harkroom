@@ -755,7 +755,7 @@ describe('에이전트 사진 (Task 15-4)', () => {
 
     await waitFor(() => expect(
       (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar,
-    ).toHaveBeenCalledWith('id-rusalka', file));
+    ).toHaveBeenCalledWith('id-rusalka', file, expect.any(Function)));
   });
 
   it('사진이 없으면 지우기가 없다 — 지울 것이 없는 버튼을 그리지 않는다', async () => {
@@ -767,7 +767,7 @@ describe('에이전트 사진 (Task 15-4)', () => {
     expect(screen.queryByRole('button', { name: '지우기' })).toBeNull();
   });
 
-  it('사진이 있으면 지울 수 있다', async () => {
+  it('사진이 있으면 지울 수 있다 — 확인을 거친다', async () => {
     const c = fakeController([agent('rusalka', { avatarAttachmentId: 'att-1' })]);
     (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar =
       vi.fn(async () => undefined);
@@ -775,9 +775,34 @@ describe('에이전트 사진 (Task 15-4)', () => {
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     fireEvent.click(await screen.findByRole('button', { name: '지우기' }));
+    // 첫 클릭은 묻기만 한다 — 되돌릴 수 없는 조작이 스친 클릭 하나로 일어나지 않는다.
+    expect(
+      (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar,
+    ).not.toHaveBeenCalled();
+
+    fireEvent.click(await screen.findByRole('button', { name: '정말 지우기' }));
     await waitFor(() => expect(
       (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar,
-    ).toHaveBeenCalledWith('id-rusalka', null));
+    ).toHaveBeenCalledWith('id-rusalka', null, undefined));
+    // 지운 것을 말한다. 아무 말이 없으면 눌린 것인지조차 알 수 없다 — 그것이 원래 문제였다.
+    expect((await screen.findByTestId('avatar-done')).textContent).toMatch(/지웠습니다/);
+  });
+
+  /** 확인을 취소하면 아무 일도 없어야 하고, 확인 버튼도 남아 있지 않아야 한다. */
+  it('지우기를 취소하면 사진이 그대로다', async () => {
+    const c = fakeController([agent('rusalka', { avatarAttachmentId: 'att-1' })]);
+    (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar =
+      vi.fn(async () => undefined);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    fireEvent.click(await screen.findByRole('button', { name: '지우기' }));
+    fireEvent.click(await screen.findByRole('button', { name: '취소' }));
+
+    expect(screen.queryByRole('button', { name: '정말 지우기' })).toBeNull();
+    expect(
+      (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar,
+    ).not.toHaveBeenCalled();
   });
 
   it('거절되면 조용히 실패하지 않는다 — 이미지가 아닌 파일이 가장 흔하다', async () => {

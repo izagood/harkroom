@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Identity, resetAvatarCache } from '../src/components/Identity';
@@ -138,7 +138,8 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     const file = new File(['png-bytes'], 'me.png', { type: 'image/png' });
     fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
 
-    await waitFor(() => expect(c.setAvatar).toHaveBeenCalledWith(file));
+    // 진행률 콜백이 2번째 인자로 함께 간다 — 그것이 막대가 차오르는 근거다.
+    await waitFor(() => expect(c.setAvatar).toHaveBeenCalledWith(file, expect.any(Function)));
   });
 
   it('지우기는 명시적 null 로 간다', async () => {
@@ -148,7 +149,79 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     render(<ProfileSettings onSignOut={() => {}} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
-    await waitFor(() => expect(c.setAvatar).toHaveBeenCalledWith(null));
+    fireEvent.click(await screen.findByRole('button', { name: '정말 지우기' }));
+    await waitFor(() => expect(c.setAvatar).toHaveBeenCalledWith(null, undefined));
+  });
+
+  /**
+   * 지우기는 **되돌릴 수 없다**(원본 바이트가 남지 않는다). 그런데 한 걸음이었다 —
+   * 스친 클릭 하나로 사진이 사라졌고, 사라진 뒤에도 아무 말이 없어 눌린 것인지조차
+   * 알 수 없었다. 회귀선을 여기 둔다: **첫 클릭은 아무것도 지우지 않는다.**
+   */
+  it('첫 클릭은 확인만 묻는다 — 사진을 지우지 않는다', async () => {
+    const c = fakeController();
+    useAppStore.getState().set({ me: withPhoto('u1', 'me') });
+    render(<ProfileSettings onSignOut={() => {}} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+
+    expect(await screen.findByRole('button', { name: '정말 지우기' })).toBeTruthy();
+    expect(c.setAvatar).not.toHaveBeenCalled();
+
+    // 취소하면 원래 자리로 돌아간다 — 확인 버튼이 남아 있으면 다음 클릭이 지운다.
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+    expect(screen.queryByRole('button', { name: '정말 지우기' })).toBeNull();
+    expect(c.setAvatar).not.toHaveBeenCalled();
+  });
+
+  it('지운 뒤에는 지웠다고 말한다', async () => {
+    const c = fakeController();
+    useAppStore.getState().set({ me: withPhoto('u1', 'me') });
+    render(<ProfileSettings onSignOut={() => {}} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    fireEvent.click(await screen.findByRole('button', { name: '정말 지우기' }));
+
+    await waitFor(() => expect(c.setAvatar).toHaveBeenCalled());
+    expect((await screen.findByTestId('avatar-done')).textContent).toMatch(/지웠습니다/);
+  });
+
+  /**
+   * 진행률이 이 고침의 요점이다. 전에는 사진을 고른 뒤 화면에 생기는 변화가 **버튼이
+   * 흐려지는 것 하나**였고, 큰 파일에서는 사람이 그것을 오류로 읽었다("올라가지 않는다").
+   * 실제로는 가는 중이었다.
+   */
+  it('올리는 동안 막대가 차오르고, 끝나면 바꿨다고 말한다', async () => {
+    let report: ((f: number) => void) | undefined;
+    let finish: (() => void) | undefined;
+    const setAvatar = vi.fn((_f: File | null, onProgress?: (f: number) => void) => {
+      report = onProgress;
+      return new Promise<void>((res) => { finish = () => res(); });
+    });
+    fakeController({ setAvatar: setAvatar as unknown as Controller['setAvatar'] });
+    useAppStore.getState().set({ me: acc('u1', 'me') });
+    render(<ProfileSettings onSignOut={() => {}} />);
+
+    const file = new File(['png-bytes'], 'me.png', { type: 'image/png' });
+    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
+
+    // 아직 한 바이트도 안 갔다 — 비율을 모르는 구간이다. 0% 라고 쓰면 거짓이 된다.
+    const bar = await screen.findByTestId('avatar-progress');
+    expect(bar.getAttribute('aria-valuenow')).toBeNull();
+
+    await act(async () => { report?.(0.4); });
+    expect(screen.getByTestId('avatar-progress').getAttribute('aria-valuenow')).toBe('40');
+    expect(screen.getByTestId('avatar-uploading').textContent).toMatch(/40%/);
+
+    // 바이트가 다 갔지만 서버가 아직 저장 중이다. 100% 에서 멈춘 막대는 실패로 보이므로
+    // **문구가 바뀌어야** 한다.
+    await act(async () => { report?.(1); });
+    expect(screen.getByTestId('avatar-uploading').textContent).toMatch(/적용 중/);
+
+    await act(async () => { finish?.(); });
+    expect((await screen.findByTestId('avatar-done')).textContent).toMatch(/바꿨습니다/);
+    // 끝난 뒤 막대를 남겨 두면 다음 조작 옆에서 '지금 올리는 중'으로 읽힌다.
+    expect(screen.queryByTestId('avatar-progress')).toBeNull();
   });
 
   it('사진이 없으면 지우기 버튼이 없다', () => {
