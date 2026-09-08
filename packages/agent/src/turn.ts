@@ -132,21 +132,24 @@ interface HarnessPreset {
 
 const CLAUDE_PRESET: HarnessPreset = {
   command: 'claude',
-  session(sessionId, isFirstTurn, mode) {
+  session(sessionId, isFirstTurn, _mode) {
     // `buildTurnCommand` 가 이 함수를 부르기 전에 `assertValidSession` 이 이미 non-null 을
     // 보장했다(claude 의 `allowsNullSessionOnFirstTurn` 은 false) — 그 불변식을 여기서
     // 다시 검사하지 않는다(같은 규칙을 두 곳에서 지키면 나중에 한쪽만 고치는 사고가 난다).
     // 아래 캐스트는 순수하게 TypeScript 타입 좁히기다.
     const id = sessionId as string;
-    if (mode === 'interactive') {
-      // 첫 턴은 resume 이 아니다 — "세션 없는 스레드에서 [터미널 열기]"(#337)가 이 분기다.
-      // `--session-id <uuid>`(비-`-p`)로 인터랙티브가 뜨고, 사람이 첫 메시지를 치면 그
-      // uuid 의 세션 파일이 생겨 이후 `-r` resume 이 성립한다(스파이크 실측, 계획 문서
-      // "스파이크 결과" §2). 여기서 `-r` 로 조립하면 존재한 적 없는 세션을 이어받으려다
-      // "No conversation found" 로 죽는다.
-      return isFirstTurn ? ['--session-id', id] : ['-r', id];
-    }
-    return isFirstTurn ? ['-p', '--session-id', id] : ['-p', '-r', id];
+    // **`mode` 를 보지 않는다(2026-09-08 실행 모델 교체).** 멘션 턴도 TUI 로 돈다.
+    //
+    // `-p` 를 붙이면 프롬프트를 stdin 파일로 줘야 하고(#117 — argv 는 `ps` 에 샌다),
+    // 그 순간 `composeSpawn` 이 `sh -c '... < 파일'` 로 감싸 자식의 fd 0 이 PTY 가 아니게
+    // 된다. 그러면 `acceptsPtyInput` 이 거짓이 되어 서버가 writer 차례를 안 주고, 사람은
+    // 진행 중인 그 턴에 칠 수 없다(스펙 §5-3). 터미널을 보여 주는 이유가 개입인데 그
+    // 제약을 받아들일 근거가 없다 — 프롬프트는 PTY 에 주입한다(스펙 §5-4 실측).
+    //
+    // 첫 턴은 resume 이 아니다: `--session-id <uuid>` 로 뜨고, 첫 메시지가 들어가면 그
+    // uuid 의 세션 파일이 생겨 이후 `-r` 이 성립한다. 여기서 `-r` 로 조립하면 존재한 적
+    // 없는 세션을 이어받으려다 "No conversation found" 로 죽는다.
+    return isFirstTurn ? ['--session-id', id] : ['-r', id];
   },
   allowsNullSessionOnFirstTurn: false,
   permission: {
