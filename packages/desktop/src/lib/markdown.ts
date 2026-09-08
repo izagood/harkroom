@@ -1,4 +1,4 @@
-import type { CodeSegment } from '@murmur/shared';
+import { type CodeSegment, QUOTE_LINE } from '@murmur/shared';
 import { classifyLink, type LinkTarget } from './link';
 
 /**
@@ -250,7 +250,12 @@ const HEADING = /^ {0,3}(#{1,6})[ \t]+(.*)$/;
 const RULE = /^ {0,3}(?:-{3,}|\*{3,}|_{3,})[ \t]*$/;
 const BULLET = /^([ \t]*)([-*+])[ \t]+(.*)$/;
 const ORDERED = /^([ \t]*)(\d{1,9})[.)][ \t]+(.*)$/;
-const QUOTE = /^ {0,3}>[ \t]?(.*)$/;
+/**
+ * 인용 줄. **판정을 여기서 다시 쓰지 않는다**(#592) — 멘션 파서가 인용 안의 `@handle` 을
+ * 부르지 않으려면 "무엇이 인용인가" 가 한 벌이어야 한다. 갈라지면 화면은 인용으로 그린
+ * 줄이 알림을 보낸다.
+ */
+const QUOTE = QUOTE_LINE;
 
 /**
  * 한 줄의 토큰을 `|` 경계로 나눈다. **인라인 코드 안의 `|` 는 경계가 아니다** — 토큰이

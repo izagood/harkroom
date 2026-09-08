@@ -1,4 +1,4 @@
-import { CHANNEL_MENTION_HANDLE, denormalizeMentions, fillSystemAccount, MENTION_PATTERN, MENTION_TOKEN_PATTERN, mentionedHandles, type MessageRow, renderMentions, stripCodeSpans } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, denormalizeMentions, fillSystemAccount, MENTION_PATTERN, MENTION_TOKEN_PATTERN, mentionedHandles, mentionScanText, type MessageRow, renderMentions } from '@murmur/shared';
 
 // 멘션 문법은 @murmur/shared 에 있다 — 서버의 알림 발송과 같은 규칙을 봐야 한다. 갈라지면
 // 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(me@x.com), 강조된
@@ -104,8 +104,8 @@ export interface BodyRecipient {
  * 작성자를 걸러 낸다(`services/messages.ts`). "부를 상대" 는 알림이 갈 사람의 목록이므로
  * 자기 이름이 남으면 거짓이 된다. **판정이 아니라 표시 단계의 결정**이라 여기서 한다.
  *
- * 코드 블록 안의 `@handle` 은 여기서 **잡히지 않는다**(#298). 이 줄은 알림이 실제로 가는
- * 쪽을 따라야 하고, 이제 서버도 `stripCodeSpans` 로 코드 안을 제외한다 — 그러므로 이
+ * 코드 블록(#298) 과 인용 줄(#592) 안의 `@handle` 은 여기서 **잡히지 않는다**. 이 줄은 알림이
+ * 실제로 가는 쪽을 따라야 하고, 서버도 `mentionScanText` 로 그 구간을 제외한다 — 그러므로 이
  * 목록도 같은 함수를 쓴다. 앞의 결정("안 갈 사람을 보여 주는 것보다 갈 사람을 숨기는 것이
  * 더 나쁜 거짓말")은 그대로다: 바뀐 것은 **알림이 가는 범위** 자체이지 이 줄의 원칙이
  * 아니다. 여기서 따로 정규식을 쓰면 판정이 다시 두 벌이 된다.
@@ -121,7 +121,7 @@ export function bodyRecipients(
   const seen = new Set<string>();
   const out: BodyRecipient[] = [];
 
-  for (const part of splitMentions(stripCodeSpans(body), knownHandles, groupHandles)) {
+  for (const part of splitMentions(mentionScanText(body), knownHandles, groupHandles)) {
     if (part.kind !== 'mention') continue;
     if (part.handle === self || seen.has(part.handle)) continue;
     seen.add(part.handle);

@@ -244,17 +244,22 @@ export function MessageBody({
    * 마크다운이 읽은 조각 하나. **글자 조각만** 멘션·링크 인식을 한 번 더 지난다 —
    * 코드와 `[글자](주소)` 는 이미 확정된 것이라 다시 나누면 안 된다.
    */
-  const renderInline = (span: Inline, key: string): ReactNode => {
+  const renderInline = (span: Inline, key: string, quoted = false): ReactNode => {
     if (span.kind === 'code') return codeSpan(span.code, key);
     if (span.kind === 'link') {
       return withEmphasis(anchor(span.text, span.href, span.target, `${key}-a`), span, key);
     }
-    const parts = splitLinks(splitMentions(span.text, handles, groupHandles, accountsMap));
+    // 인용 안에서는 멘션을 칠하지 않는다(#592). 서버가 인용 줄의 `@handle` 을 부르지
+    // 않으므로, 여기서 칠하면 화면이 "불렀다" 고 거짓말을 한다 — 이 파일이 코드 구간에서
+    // 이미 피하고 있는 그 거짓말이다. 링크는 인용 안에서도 링크다(부르는 것이 아니다).
+    const parts = quoted
+      ? splitLinks([{ kind: 'text', text: span.text }])
+      : splitLinks(splitMentions(span.text, handles, groupHandles, accountsMap));
     return withEmphasis(parts.map((p, j) => renderPart(p, `${key}-${j}`)), span, key);
   };
 
-  const renderSpans = (spans: Inline[], key: string) =>
-    spans.map((s, i) => renderInline(s, `${key}-${i}`));
+  const renderSpans = (spans: Inline[], key: string, quoted = false) =>
+    spans.map((s, i) => renderInline(s, `${key}-${i}`, quoted));
 
   /**
    * 블록 하나. 간격을 `space-y` 가 아니라 블록마다의 `mb-*`/`last:mb-0` 으로 주는 이유:
@@ -288,7 +293,7 @@ export function MessageBody({
             data-testid="md-quote"
             className="mb-2 border-l-2 border-border pl-2 text-fg-muted last:mb-0"
           >
-            {renderSpans(block.spans, key)}
+            {renderSpans(block.spans, key, true)}
           </blockquote>
         );
       case 'rule':
