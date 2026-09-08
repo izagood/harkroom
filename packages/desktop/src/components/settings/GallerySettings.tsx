@@ -10,6 +10,17 @@ import { ThreadStateBadge } from '../ThreadStateBadge';
 import { ThreadParticipants } from '../ThreadParticipants';
 import { waitChain } from '../../lib/waitChain';
 import { SettingsPage } from './primitives';
+import { useT } from '../../i18n/useT';
+
+/**
+ * 이름을 못 채웠을 때 그 자리에 서는 글자. **상수인 이유는 두 곳이 이것을 써야 하기
+ * 때문이다** — 문장에 끼워 넣는 쪽과, 다른 색을 입히려고 그 문장을 자르는 쪽. 값을 양쪽에
+ * 적으면 하나를 고칠 때 자르기가 조용히 실패하고 문장이 통째로 한 색이 된다.
+ *
+ * `…` 한 글자다(`...` 세 점이 아니다) — 이 화면이 부르는 컴포넌트들이 이름을 못 찾을 때
+ * 내는 것과 같아야 한다.
+ */
+const ELLIPSIS = '…';
 
 /**
  * 컴포넌트 갤러리(계획 Task 11) — **여덟 가지 말과 그 경계 상태를 한 화면에** 모은다.
@@ -37,6 +48,7 @@ import { SettingsPage } from './primitives';
  * 자리에만** 쓴다. 근거와 실측은 `SAMPLE_AGENT` 위 주석에 있다.
  */
 export function GallerySettings() {
+  const t = useT();
   const me = useActiveStore((s) => s.me);
   const realAccounts = useActiveStore((s) => s.accounts);
 
@@ -102,6 +114,19 @@ export function GallerySettings() {
   const chain1 = distinct ? agents[0]!.id : SAMPLE_AGENT;
   const chain2 = distinct ? agents[1]!.id : SAMPLE_PEER;
 
+  /**
+   * ## 여기부터는 **견본이다 — 사전을 지나지 않는다**
+   *
+   * 아래 `body`·`checks`·`next.label` 에 적힌 한국어는 **화면 문구가 아니라 데이터**다.
+   * 카드 안에 흐르는 남의 말이고, 이 화면이 가르치는 것은 그 말의 내용이 아니라 **카드의
+   * 생김새**다 — 견본이 무슨 언어든 여덟 가지 말의 경계는 그대로 보인다.
+   *
+   * 사전에 넣으면 두 가지가 나빠진다: 사전이 가짜 대화로 부풀고, 번역자가 이것을 **옮겨야
+   * 할 것**으로 읽는다. 그래서 영어로 이 화면을 열면 **설명은 영어, 카드 속 대화는
+   * 한국어**다 — 어색해 보이지만 그것이 정직한 상태다.
+   *
+   * 근거 전문은 `i18n/en.ts` 의 `gallery` 영역 머리말에 있다.
+   */
   const base = (id: string, over: Partial<MessageRow> = {}): MessageRow => ({
     // 낸 사람의 기본값은 **에이전트**다. 앞 판본은 에이전트가 없으면 `myId` 로 떨어뜨렸는데,
     // 그러면 "에이전트가 말한 것"이 "내가 말한 것"으로 바뀐다 — 사슬 줄이
@@ -161,8 +186,8 @@ export function GallerySettings() {
 
   return (
     <SettingsPage
-      title="Component gallery"
-      description="여덟 가지 말과 그 경계 상태. 여기가 깨지면 어휘가 깨진 것이다."
+      title={t('gallery.page.title')}
+      description={t('gallery.page.subtitle')}
     >
       <div data-testid="gallery" className="space-y-8">
         {!distinct && (
@@ -181,46 +206,51 @@ export function GallerySettings() {
            * 내리면 갤러리를 처음 여는 사람이 가장 먼저 읽어야 할 줄이 가장 작아진다.
            */
           <p className="text-fg-muted">
-            에이전트가 둘 미만이라 이름 자리가 <span className="text-fg-subtle">…</span> 로 남는다.
-            색과 수신자, 사슬의 모양은 견본으로 고정되어 규칙대로 그려진다 — 에이전트 둘을
-            만들면 이름까지 실제 값으로 채워진다.
+            {/* `…` 만 다른 색이라 한 조각으로 못 쓴다. **자르는 것은 채우기 전의 원문**이다 —
+                채운 뒤 값으로 찾으면 문장 다른 곳의 같은 글자가 걸린다(`AgentsSettings::emphasize`
+                가 실측으로 잡은 함정). 여기서는 자리표시자가 하나라 `split` 하나면 된다. */}
+            {t('gallery.page.namesMissing', { ellipsis: ELLIPSIS })
+              .split(ELLIPSIS)
+              .flatMap((part, i) => (i === 0
+                ? [part]
+                : [<span key={i} className="text-fg-subtle">{ELLIPSIS}</span>, part]))}
           </p>
         )}
 
-        <Row title="선택 — 나에게 온 것" note="강조를 받는 유일한 카드. 누를 수 있다.">
+        <Row title={t('gallery.speech.askForMe')} note={t('gallery.speech.askForMeNote')}>
           <AskCard message={base('g-ask-me', { meta: askMeta({ kind: 'human' }) })} />
         </Row>
 
-        <Row title="선택 — 에이전트에게 간 것" note="무채색. 읽히되 누를 수 없다(규칙 04).">
+        <Row title={t('gallery.speech.askToAgent')} note={t('gallery.speech.askToAgentNote')}>
           {/* 견본 수신자로 고정한다 — 이 칸이 가르치는 것이 계정 목록에 따라 뒤집히면
               가르치는 것 자체가 거짓이 된다(위 주석의 실측). */}
           <AskCard message={base('g-ask-other', { meta: askMeta(askTo(SAMPLE_PEER)) })} />
         </Row>
 
-        <Row title="선택 — 이미 답한 것" note="고른 것만 남고 강조를 거둔다.">
+        <Row title={t('gallery.speech.askDone')} note={t('gallery.speech.askDoneNote')}>
           <AskCard message={base('g-ask-done', { meta: askMeta({ kind: 'human' }, true) })} />
         </Row>
 
-        <Row title="실패 — 다시 부를 수 있다" note="언제나 사람에게 온다. 고치는 경로가 같은 자리에.">
+        <Row title={t('gallery.speech.failRetry')} note={t('gallery.speech.failRetryNote')}>
           <FailureCard message={base('g-fail-retry', { meta: failMeta(true) })} />
         </Row>
 
-        <Row title="실패 — 다시 불러도 소용없다" note="'다시 부르기'가 없다 — 없는 문은 그리지 않는다.">
+        <Row title={t('gallery.speech.failFinal')} note={t('gallery.speech.failFinalNote')}>
           <FailureCard message={base('g-fail-final', { meta: failMeta(false) })} />
         </Row>
 
-        <Row title="완료 보고" note="읽히는 말이라 강조색을 쓰지 않는다. 가장 오래 남는 말이다.">
+        <Row title={t('gallery.speech.report')} note={t('gallery.speech.reportNote')}>
           <ReportCard message={base('g-report', { meta: reportMeta })} />
         </Row>
 
-        <Row title="진행" note="답이 필요 없는 구간. 문장이 아니라 상태 한 줄이다.">
+        <Row title={t('gallery.speech.progress')} note={t('gallery.speech.progressNote')}>
           <ProgressRow messages={[
             base('g-p1', { kind: 'progress', body: 'heartbeat.ts 를 읽는다' }),
             base('g-p2', { kind: 'progress', body: '재연결 경로를 따라간다' }),
           ]} />
         </Row>
 
-        <Row title="에이전트끼리의 주고받기" note="기본 접힘. 접지 않으면 스레드가 로그가 된다.">
+        <Row title={t('gallery.speech.exchange')} note={t('gallery.speech.exchangeNote')}>
           {/* 이 줄은 **이름을 부른다**(`forge ↔ codex · 4번 주고받음`). 그래서 진짜 계정을
               쓰고, 없으면 `…` 로 떨어지는 것을 받아들인다 — 없는 이름을 지어내지 않는다. */}
           <AgentExchange messages={[
@@ -230,7 +260,7 @@ export function GallerySettings() {
           ]} />
         </Row>
 
-        <Row title="스레드 상태 5단" note="강조는 둘뿐이고 그 둘도 색이 다르다.">
+        <Row title={t('gallery.thread.states')} note={t('gallery.thread.statesNote')}>
           <div className="flex flex-wrap gap-2">
             {(['my-turn', 'stuck', 'waiting', 'running', 'done'] as const).map((s) => (
               <ThreadStateBadge key={s} state={s} />
@@ -238,7 +268,7 @@ export function GallerySettings() {
           </div>
         </Row>
 
-        <Row title="대기 사슬 — 내 차례" note="몇 개가 풀리는지가 사람이 답할 이유다.">
+        <Row title={t('gallery.thread.chainMine')} note={t('gallery.thread.chainMineNote')}>
           {/* 두 마디가 이어져야 `— 답하면 2개가 풀린다` 가 나온다: 견본 B 가 A 를 기다리고,
               A 가 사람을 기다린다. 앞 판본은 에이전트가 없으면 두 마디가 **같은 계정**(나)이
               되어 사슬이 한 마디로 접혔다 — `jaebin 가 사람의 답을 기다린다` 하나만 남고
@@ -254,7 +284,7 @@ export function GallerySettings() {
           })} />
         </Row>
 
-        <Row title="대기 사슬 — 교착" note="사슬이 아무 데도 닿지 않는다. 사람만이 푼다.">
+        <Row title={t('gallery.thread.chainStuck')} note={t('gallery.thread.chainStuckNote')}>
           {/* 서로를 기다리는 `cycle` 교착이다 — 둘이 **다른** 계정이어야 성립한다. 앞 판본은
               에이전트가 하나뿐일 때 A→A 가 되어 `forge 가 서로를 기다린다` 라는 혼자
               교착하는 문장을 냈고, 0개일 때는 교착이 아니라 `me` 로 그려졌다(실측). */}
@@ -268,7 +298,7 @@ export function GallerySettings() {
           })} />
         </Row>
 
-        <Row title="참여자 줄 · 터미널 선택자" note="응답 없는 자는 흐리다. 소유자 아닌 것은 목록에 없다.">
+        <Row title={t('gallery.thread.participants')} note={t('gallery.thread.participantsNote')}>
           {/* **이 줄만 견본이 통하지 않는다.** `ThreadParticipants` 는 스토어에서
               `kind === 'agent'` 인 것만 아바타로 세우므로(그 컴포넌트 :35) 없는 id 는 줄에서
               빠지고, 하나도 없으면 `null` 을 낸다. 진짜 계정이 없으면 못 채우는 것이 사실이고

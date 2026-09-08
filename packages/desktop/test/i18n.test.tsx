@@ -40,6 +40,7 @@ import { WaitChainSection } from '../src/components/WaitChainSection';
 import { WaitChainLine } from '../src/components/WaitChain';
 import { Sidebar } from '../src/components/Sidebar';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
+import { GallerySettings } from '../src/components/settings/GallerySettings';
 import { fireEvent } from '@testing-library/react';
 import { waitChainFromLinks } from '../src/lib/waitChain';
 import { acc, chan, msg } from './helpers/fakeApi';
@@ -959,5 +960,80 @@ describe('에이전트 설정 — 옮기면서 사실을 잃지 않는다', () =
     expect(ko['agents.permissions.mentionAuto'].startsWith('auto —')).toBe(true);
     expect(en['agents.permissions.mentionReadonly'].startsWith('readonly —')).toBe(true);
     expect(ko['agents.permissions.mentionReadonly'].startsWith('readonly —')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. 컴포넌트 갤러리 — **설명은 옮기고 견본은 안 옮긴다**
+//
+// 이 화면에는 성격이 다른 두 종류의 글이 있고(그 파일의 `base` 위 주석 · `en.ts` 의
+// `gallery` 머리말), 그 경계가 **코드를 봐서는 안 보인다** — 둘 다 그냥 한국어
+// 문자열이었기 때문이다. 그래서 여기서 잰다.
+//
+// 다음 사람이 견본까지 사전에 밀어 넣는 것을 막는 것이 이 묶음의 목적이다. 사전이
+// 가짜 대화로 부풀고, 번역자가 그것을 옮겨야 할 것으로 읽게 된다.
+// ---------------------------------------------------------------------------
+
+describe('갤러리 — 설명은 사전을 지나고 견본은 안 지난다', () => {
+  const seedGallery = () => {
+    useActiveStore.getState().set({
+      me: acc(ME, 'me'),
+      accounts: { [ME]: acc(ME, 'me'), [FORGE]: acc(FORGE, 'forge', 'agent'), [CODEX]: acc(CODEX, 'codex', 'agent') },
+    });
+  };
+
+  it('칸의 이름과 설명이 영어로 뜬다', () => {
+    seedGallery();
+    render(<GallerySettings />);
+    expect(screen.getByText('Ask — for me')).toBeTruthy();
+    expect(screen.getByText('The only card that gets the accent. It can be pressed.')).toBeTruthy();
+    expect(screen.getByText('Wait chain — deadlock')).toBeTruthy();
+  });
+
+  it('언어를 바꾸면 설명이 한국어로 바뀐다', () => {
+    speak('ko');
+    seedGallery();
+    render(<GallerySettings />);
+    expect(screen.getByText('선택 — 나에게 온 것')).toBeTruthy();
+    expect(screen.getByText('강조를 받는 유일한 카드. 누를 수 있다.')).toBeTruthy();
+    expect(screen.getByText('대기 사슬 — 교착')).toBeTruthy();
+  });
+
+  /**
+   * **이것이 이 묶음의 요점이다.** 영어로 열어도 카드 속 대화는 한국어로 남는다 —
+   * 그것은 murmur 가 하는 말이 아니라 예시로 박아 둔 남의 말이고, 이 화면이 가르치는
+   * 것은 그 내용이 아니라 **카드의 생김새**다.
+   *
+   * 어색해 보이지만 정직한 상태다. 이 축이 빨개진다면 누군가 견본을 사전에 넣었거나,
+   * 반대로 견본을 영어로 다시 적어 **이 경계를 지운 것**이다.
+   */
+  it('영어로 열어도 카드 속 견본 대화는 한국어로 남는다', () => {
+    seedGallery();
+    const { container } = render(<GallerySettings />);
+    expect(container.textContent).toContain('마이그레이션을 어떻게 넣을까?');
+    expect(container.textContent).toContain('lint 를 다시 불러 줘');
+    // 그 문장들이 사전에 새어 들지 않았다.
+    const values = Object.values(en).map((v) => (typeof v === 'string' ? v : Object.values(v).join(' ')));
+    for (const sample of ['마이그레이션', 'lint 를 다시', 'heartbeat.ts 를 읽는다']) {
+      expect(values.some((v) => v.includes(sample)), `견본이 en 사전에 있다: ${sample}`).toBe(false);
+    }
+  });
+
+  /**
+   * `…` 는 **한 곳에서 온다**(`GallerySettings::ELLIPSIS`). 문장에 끼우는 쪽과 다른 색을
+   * 입히려고 자르는 쪽이 같은 값을 써야 하고, 갈라지면 자르기가 조용히 실패해 문단이
+   * 통째로 한 색이 된다 — 화면은 여전히 서므로 아무도 모른다.
+   */
+  it('이름이 빌 때의 안내가 두 언어로 뜨고 말줄임만 다른 색이다', () => {
+    useActiveStore.getState().set({ me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') } });
+    render(<GallerySettings />);
+    const p = screen.getByText(/name slots stay as/);
+    expect(p.querySelector('.text-fg-subtle')?.textContent).toBe('…');
+
+    cleanup();
+    speak('ko');
+    useActiveStore.getState().set({ me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') } });
+    render(<GallerySettings />);
+    expect(screen.getByText(/이름 자리가/).querySelector('.text-fg-subtle')?.textContent).toBe('…');
   });
 });
