@@ -79,10 +79,22 @@ export function inboxRow(entry: InboxEntry, myAccountId: string | null): InboxRo
  * 네이티브 `select` 둘과 체크박스가 사라진 자리다(B3). 칩이 정렬과 같은 축을 쓰므로
  * 고르는 것과 보이는 순서가 어긋나지 않는다.
  */
-export type InboxFilter = 'blocking' | 'reading' | 'all';
+export type InboxFilter = 'blocking' | 'unread' | 'reading' | 'all';
 
-export function matchesFilter(row: InboxRow, filter: InboxFilter): boolean {
+/**
+ * `unread` 만 **줄의 종류가 아니라 내 읽음 상태**를 본다. 나머지 셋은 rank 축이다.
+ *
+ * 축이 둘 섞여 있는 것이 이상해 보이지만, 사람이 인박스에서 묻는 것도 두 가지다 —
+ * "무엇이 나를 막나"(rank)와 "무엇이 새로 왔나"(readAt). 뒤엣것을 물을 길이 없어서
+ * 238줄 중 무엇이 새 것인지 보이지 않았다. 축을 하나로 맞추자고 새 것을 못 묻게 두는
+ * 것보다, 칩 하나가 다른 축이라고 적어 두는 편이 정직하다.
+ *
+ * `unread` 는 **호출부가 읽음 상태를 넘겨야** 참이 될 수 있다. 기본값을 `false` 로 두어,
+ * 그것을 잊은 자리에서 조용히 전부 통과하는 일이 없게 한다(안 넘기면 아무것도 안 맞는다).
+ */
+export function matchesFilter(row: InboxRow, filter: InboxFilter, isUnread = false): boolean {
   if (filter === 'all') return true;
+  if (filter === 'unread') return isUnread;
   if (filter === 'blocking') return row.rank === 0;
   return row.rank === 1;
 }
