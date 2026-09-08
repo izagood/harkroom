@@ -825,48 +825,19 @@ export function sessionTranscriptExists(configDir: string, sessionId: string): b
 `packages/agent/src/main.ts` 에서 `createAttentionLedger()` 를 한 번 만들어
 멘션 턴 deps 로 넘긴다. 세션이 닫힐 때 `release` 를 부른다(`OpenSession.close` 옆).
 
-- [ ] **Step 8: 사람을 부른 세션의 회수 유예를 늘린다**
+- [x] **Step 8: ~~회수 유예를 늘린다~~ — 코드를 읽어 보니 필요 없다**
 
-스펙 §2-6. 인터랙티브 턴은 **사람이 열어서** 뷰어가 1 부터 시작하지만, 이 턴은
-**기계가 불러서** 0 에서 시작한다 — 기본 유예 60초(`mentionTurn.ts:690` 의
-`deps.orphanMs ?? 60_000`)로는 사람이 앱으로 오기 전에 회수된다.
+계획을 쓸 때 §2-6 이 "기계가 불러서 뷰어가 0 에서 시작하므로 유예를 따로 둔다"고 했는데,
+실제 코드는 **이미 옳게 동작한다**:
 
-먼저 실패하는 테스트를 `packages/agent/test/mentionTurn.test.ts` 에 쓴다:
+- `reconsiderEnd` 의 회수 예약은 `end.spoke` 가 참일 때만 걸린다. 사람을 부른 턴은 아직
+  발화하지 않았으므로 애초에 예약되지 않는다 — 60초 유예에 걸릴 일이 없다.
+- 그 턴의 끝을 잡는 것은 무발화 시계(`turnTimeoutMs`, 기본 30분)이고, 그 시계는
+  `end.viewers > 0` 이면 그냥 지나간다. **사람이 오면 살아남고, 아무도 안 오면 30분 뒤
+  회수된다** — §2-6 이 원한 것이 정확히 이것이다.
 
-```ts
-it('사람을 부른 뒤에는 회수 유예가 길어진다 — 사람이 올 시간을 준다', async () => {
-  // 기본 60초로는 사람이 앱을 열기도 전에 SIGTERM 이 간다. 부른 뒤에는 "사람이 자리에
-  // 없을 때 얼마나 붙잡을 것인가"가 그 값의 뜻이 된다(스펙 §2-6).
-  const 회수예약: number[] = [];
-  await 멘션턴실행({
-    ...기본deps,
-    schedule: (fn, ms) => { 회수예약.push(ms); return { cancel() {} }; },
-    onAttentionCalled: true,
-  });
-  expect(회수예약).toContain(600_000);   // 10분
-});
-```
-
-구현: `mentionTurn.ts` 의 `reclaim` 예약이 `end.calledForHuman` 이면
-`deps.attentionOrphanMs ?? 600_000` 을 쓰게 한다. `onAttention` 콜백 안에서
-`end.calledForHuman = true` 로 표시하고, 이미 예약된 회수 타이머를 취소하고 다시 건다:
-
-```ts
-          onAttention: (screen: string) => {
-            const label = deps.accountLabel ?? '(기본)';
-            // **표시가 먼저다.** 원장이 거절해도(같은 계정의 두 번째 턴) 이 턴 역시
-            // 사람을 기다리는 중이므로 짧은 유예로 회수하면 안 된다.
-            end.calledForHuman = true;
-            end.cancelReclaim?.();
-            end.cancelReclaim = schedule(() => { end.cancelReclaim = null; reclaim(); },
-                                         deps.attentionOrphanMs ?? 600_000);
-            if (!deps.attentionLedger.claim(label, rec.sessionId)) return;
-            session?.needsAttention(screen, label);
-          },
-```
-
-Run: `cd packages/agent && npx vitest run test/mentionTurn.test.ts -t '회수 유예'`
-Expected: 처음엔 FAIL(60000 만 예약됨), 구현 뒤 PASS.
+그래서 새 유예 값(`attentionOrphanMs`)을 만들지 않는다. 값을 하나 더 두면 "무발화 30분"과
+"부름 유예 10분" 중 어느 것이 먼저인지를 다음 사람이 매번 다시 따져야 한다.
 
 - [ ] **Step 9: 전체 테스트를 돌린다**
 
