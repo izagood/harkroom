@@ -132,13 +132,44 @@ export class PromptNotDeliveredError extends Error {
 }
 
 /**
- * claude TUI 가 입력을 받을 준비가 됐다는 신호(화면의 입력 프롬프트 표시).
+ * TUI 가 입력을 받을 준비가 됐다는 신호(화면의 입력 프롬프트 표시).
  *
- * **버전에 기대는 값이다.** claude 가 이 표시를 바꾸면 준비를 못 보고 상한에서 실패한다 —
- * 조용히 넘어가는 것(프롬프트가 사라진 채 무발화 한도까지 기다리는 것)보다 낫다. 실패가 곧
- * 이 상수를 고쳐야 한다는 신호다.
+ * **줄 끝에 앵커를 걸면 안 된다(2026-09-08 실측).** 초판은 `/[❯›>]\s*$/m` 였고 실물
+ * claude TUI 에서 **한 번도 맞지 않았다** — TUI 는 절대 커서 이동(`ESC[H`, `ESC[<n>C`)과
+ * `\r` 로 화면을 다시 그리므로, 눈에 보이는 "줄 끝의 ❯" 가 바이트 흐름에서는 줄 끝이
+ * 아니다. 그대로 나갔으면 준비를 영영 못 보고 **모든 멘션이 상한에서 실패**했다.
+ *
+ * 그래서 위치를 재지 않고 **표시의 존재**만 본다. 실측: 부팅 뒤 약 720~760ms 에 나타나고,
+ * 그 시점에 즉시 주입해도 모델이 받아 답한다(같은 날 실물 확인).
+ *
+ * **버전에 기대는 값이다.** 표시가 바뀌면 준비를 못 보고 상한에서 실패한다 — 조용히
+ * 넘어가는 것(프롬프트가 사라진 채 무발화 한도까지 기다리는 것)보다 낫다. 실패가 곧 이
+ * 상수를 고쳐야 한다는 신호다.
  */
-const DEFAULT_READY_PATTERN = /[❯›>]\s*$|Ask\s+\S+\s+to\s+do\s+anything/m;
+const DEFAULT_READY_PATTERN = /[❯›]|Ask\s+\S+\s+to\s+do\s+anything/;
+
+/**
+ * 이 출력이 "입력을 받을 준비" 로 보이는가. **수용 테스트가 실물 CLI 에 대고 같은 판정을
+ * 쓰기 위해 export 한다** — 테스트가 패턴을 베껴 쓰면 프로덕션이 바뀔 때 그 사본만 초록으로
+ * 남는다(이 저장소가 이미 겪은 종류의 어긋남이다).
+ */
+export function looksReadyForPrompt(rawOutput: string, pattern: RegExp = DEFAULT_READY_PATTERN): boolean {
+  return pattern.test(stripAnsi(rawOutput));
+}
+
+/**
+ * 준비 판정 **전에** 화면 제어 시퀀스를 걷어낸다.
+ *
+ * 걷어내지 않으면 위 패턴이 ANSI 바이트 사이에 끼인 표시를 못 보거나, 반대로 색·커서
+ * 시퀀스의 문자를 표시로 오인한다. `tail` 은 사람이 읽는 로그가 아니라 여기서 쓰는
+ * 판정 재료이기도 하므로, 그 두 용도를 가르는 자리가 여기다.
+ */
+function stripAnsi(text: string): string {
+  return text
+    .replace(/\u001b\][0-9]*;[^\u0007]*\u0007/g, '')
+    .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '')
+    .replace(/\u001b[()][AB012]/g, '');
+}
 
 // SIGTERM → SIGKILL 유예 시간. 하네스가 모델 요청을 붙잡고 있는 도중일 수 있다 — 바로
 // SIGKILL 을 쏘면 정리(임시 파일, in-flight 요청 등)할 기회 자체를 빼앗는다.
@@ -470,7 +501,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       readyTimer.unref?.();
       readyProbe = proc.onData(() => {
         if (injected || settled) return;
-        if (!readyPattern.test(decodeTailText(tail.snapshot()))) return;
+        if (!readyPattern.test(stripAnsi(decodeTailText(tail.snapshot())))) return;
         injected = true;
         clearTimeout(readyTimer);
         readyProbe?.dispose();
