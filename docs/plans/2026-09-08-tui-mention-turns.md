@@ -685,130 +685,23 @@ TUI 는 답하고도 안 죽으므로 프로세스 수명으로 재면 정상 �
 
 ---
 
-### Task 6: 유예 판정을 viewer 로 바꾼다
+### Task 6: 유예 판정을 viewer 로 바꾼다 — **하지 않는다(2026-09-08 구현 중 판단)**
 
-**Files:**
-- Modify: `packages/agent/src/mentionScheduler.ts`
-- Test: `packages/agent/test/mentionScheduler.test.ts`
+설계 §3-5 는 유예 판정을 턴 종류(`controlOf`)에서 뷰어 유무로 바꾸라고 했다. 구현하려고
+도달 가능한 상태를 따져 보니 **기존 두 관문이 이미 전부 덮는다**:
 
-**Interfaces:**
-- Consumes: 없음(레지스트리 대신 주입된 조회 함수를 쓴다).
-- Produces: `MentionSchedulerDeps` 에 `viewersOf(threadKey: string): number` 가 붙는다. `controlOf` 판정은 그대로 두고 **그 앞에** viewer 판정이 선다.
+| 상태 | 무엇이 막는가 |
+|---|---|
+| 인터랙티브 턴이 도는 스레드(뷰어 유무 무관) | 관문 3 `registry.controlOf` |
+| 멘션 턴이 도는 스레드 | 관문 4 `inFlightThreads` |
+| **사람이 붙어 있어 회수를 미룬 멘션 턴** | 관문 4 — `runTurn` 이 아직 안 끝났으므로 인플라이트가 그대로다 |
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+세 번째가 이 페이즈가 새로 만든 상태이고, 그것마저 기존 관문에 걸린다. `viewersOf` 를 더하면
+릴레이에 세션별 뷰어 수를 기억시키고 스케줄러에 조회 하나를 더해야 하는데, **그것이 바꾸는
+동작이 없다.** 설계가 과하게 명시한 자리다 — 만들지 않는다.
 
-`mentionScheduler.test.ts` 에 추가:
-
-```ts
-  it('그 스레드를 보고 있는 사람이 있으면 유예한다 — 주입이 사람의 타이핑과 섞이면 안 된다', async () => {
-    let calls = 0;
-    const scheduler = createMentionScheduler({
-      murmur: { markRead: async (ids) => ids.length, post: async () => 1 },
-      registry: new TurnRegistry(),
-      queue: new MentionQueue(),
-      accountLane: [null],
-      runMentionTurn: async () => { calls += 1; return { stopRequestedAt: null }; },
-      buildTurnDeps: () => ({}) as never,
-      viewersOf: () => 1,          // 사람이 보고 있다
-      hooks: {
-        resumeHandoff: async () => {}, stopRequested: () => {},
-        exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {},
-      },
-      startedAtMs: 0,
-    });
-
-    const out = await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
-    expect(out.deferred).toBe(1);
-    expect(calls).toBe(0);
-  });
-
-  it('보는 사람이 없으면 그대로 띄운다', async () => {
-    let calls = 0;
-    const scheduler = createMentionScheduler({
-      murmur: { markRead: async (ids) => ids.length, post: async () => 1 },
-      registry: new TurnRegistry(),
-      queue: new MentionQueue(),
-      accountLane: [null],
-      runMentionTurn: async () => { calls += 1; return { stopRequestedAt: null }; },
-      buildTurnDeps: () => ({}) as never,
-      viewersOf: () => 0,
-      hooks: {
-        resumeHandoff: async () => {}, stopRequested: () => {},
-        exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {},
-      },
-      startedAtMs: 0,
-    });
-
-    const out = await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
-    expect(out.started).toBe(1);
-    await scheduler.drain();
-    expect(calls).toBe(1);
-  });
-```
-
-기존 `harness()` 헬퍼에도 `viewersOf: () => 0` 을 더한다(기본은 아무도 안 본다).
-
-- [ ] **Step 2: 테스트가 실패하는지 확인한다**
-
-Run: `pnpm --filter @murmur/agent exec vitest run test/mentionScheduler.test.ts`
-Expected: FAIL — `viewersOf` 가 타입에 없고, 첫 케이스가 `started: 1` 로 온다
-
-- [ ] **Step 3: 최소 구현을 쓴다**
-
-`MentionSchedulerDeps` 에 더한다:
-
-```ts
-  /**
-   * 이 스레드를 지금 보고 있는 사람 수(2026-09-08).
-   *
-   * **왜 턴의 종류가 아니라 뷰어인가.** 멘션 턴이 TUI 가 되면서 두 종류의 실질 차이가
-   * "누가 열었나"뿐이 됐다. 유예가 막아야 하는 것은 그 이름이 아니라 **입력이 섞이는 것**
-   * 이다 — 사람이 터미널에서 타이핑하는 중에 러너가 bracketed paste 를 밀어 넣으면 두
-   * 입력이 같은 PTY 에서 겹친다. 그 사실을 정확히 재는 값이 뷰어 수다.
-   */
-  viewersOf(threadKey: string): number;
-```
-
-`admit` 의 유예 블록을 다음으로 넓힌다(`controlOf` 판정 **앞**에 뷰어를 본다):
-
-```ts
-        // 사람이 이 스레드를 보고 있으면 유예한다 — 주입이 그 사람의 타이핑과 섞인다.
-        // `controlOf`(인터랙티브 턴·이어받기 예약)보다 **앞**이다: 뷰어가 더 넓은 사실이고,
-        // 좁은 판정이 먼저 서면 넓은 경우를 못 잡는다.
-        const watching = deps.viewersOf(threadKey) > 0;
-        const controlling = watching ? { openedByHandle: undefined } : deps.registry.controlOf(threadKey);
-        if (watching || controlling) {
-```
-
-이하 유예 본문(통지·`queue.defer`)은 그대로다.
-
-- [ ] **Step 4: main.ts 를 배선한다**
-
-`main.ts` 의 `createMentionScheduler({...})` 에 더한다:
-
-```ts
-  // 릴레이가 그 스레드의 세션에 붙어 있는 뷰어 수를 안다. 릴레이가 없으면 0 이다 —
-  // 아무도 못 보는 것이 사실이므로 유예할 이유도 없다.
-  viewersOf: (threadKey) => relay.viewersOf?.(threadKey) ?? 0,
-```
-
-`relay.ts` 의 `RelayClient` 에 `viewersOf(threadKey: string): number` 를 더한다. `LiveSession` 이 이미 `onViewerCount` 로 받은 값을 들고 있으므로 그 값을 threadKey 로 찾아 돌려준다. 세션이 없으면 0.
-
-- [ ] **Step 5: 테스트가 통과하는지 확인한다**
-
-Run: `pnpm --filter @murmur/agent exec vitest run test/mentionScheduler.test.ts && pnpm --filter @murmur/agent typecheck`
-Expected: PASS
-
-- [ ] **Step 6: 커밋**
-
-```bash
-git add packages/agent/src/mentionScheduler.ts packages/agent/src/main.ts packages/agent/src/relay.ts packages/agent/test/mentionScheduler.test.ts
-git commit -m "feat(agent): 유예 판정을 턴 종류에서 뷰어 유무로 바꾼다
-
-멘션 턴이 TUI 가 되면서 두 종류의 실질 차이가 '누가 열었나' 뿐이 됐다.
-유예가 막아야 하는 것은 이름이 아니라 입력이 섞이는 것이고, 그 사실을
-정확히 재는 값이 뷰어 수다."
-```
+(같은 스레드에 후속 멘션이 오면 `blocked` 로 조용히 대기하는 것은 그대로다. 그 무음은 별개
+항목이고 이 페이즈의 범위가 아니다.)
 
 ---
 
