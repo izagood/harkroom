@@ -3,7 +3,7 @@ import { Overlay } from './Overlay';
 import type { AccountView } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
-import { Identity, StatusMark } from './Identity';
+import { StatusMark } from './Identity';
 import { presenceView, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from '../lib/presenceView';
 
 interface Props {
@@ -110,9 +110,10 @@ export function Directory({ open, onClose, accountId }: Props) {
         ref={isSelected ? (el: HTMLLIElement | null) => { el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' }); } : undefined}
         className={`flex items-center gap-2 rounded px-2 py-1.5 ${a.disabled ? 'opacity-60' : ''} ${isSelected ? 'bg-accent-surface ring-2 ring-accent' : ''}`}
       >
-      {/* #277: 이 자리는 **거터가 아니다** — 고정폭 열이 아니라 넓어지면 행이 늘어나는
-          인라인 칸이고, 디렉터리는 소유자를 보여 주는 것이 일이다(#181·#226). badge 로 둔다. */}
-      <Identity account={a} variant="badge" />
+      {/* 여기 있던 `Identity variant="badge"`(🤖 + 소유자 @핸들)를 뺐다 — 화면은 계정이
+          사람인지 에이전트인지 말하지 않는다(design doc 2, #455). 소유자는 프로필(#475)이
+          답한다. 사람 행에서는 애초에 아무것도 그리지 않던 자리라(#365), 지우고 나면
+          두 종류의 행이 같은 모양으로 선다. */}
       {/* 연결 점은 소켓이 붙어 있는가다. 사람이 고른 상태(StatusMark)와 나란히 둔다 —
           합치면 "연결이 끊긴 사람"과 "방해 금지인 사람"이 한 표시로 뭉친다(#186).
 

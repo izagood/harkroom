@@ -80,34 +80,17 @@ describe('mention autocomplete', () => {
   });
 
   /**
-   * #277 경계. 후보 목록의 `Identity` 는 **핸들 옆** 자리이므로 `badge` 다 — 거터가 아니다.
-   * 여기를 `avatar` 로 바꾸면 소유자(#181)가 조용히 사라진다. 부르기 직전이 "누구의
-   * 에이전트인가"가 가장 필요한 순간이고, 사라진 정보는 화면에 아무 흔적을 남기지 않는다.
-   */
-  it('#277: 후보 목록의 에이전트에 소유자 핸들이 함께 나온다', () => {
-    useAppStore.getState().set({
-      accounts: {
-        u1: acc('u1', 'me'),
-        u2: acc('u2', 'rusalka'),
-        a1: { ...acc('a1', 'fizz', 'agent'), ownerAccountId: 'u2' },
-      },
-    });
-    render(<Composer onSend={vi.fn()} />);
-    typeInto('@fizz');
-
-    const opt = screen.getByRole('option', { name: /fizz/ });
-    expect(opt.textContent).toContain('@rusalka');
-  });
-
-  /**
-   * #365: 사람의 `badge` 가 아무것도 그리지 않게 되면서 **후보 목록의 사람 행에서도
-   * 아바타가 빠졌다.** 회귀선이 없으면 이 변화는 아무도 모르게 지나간다.
+   * 두 판본이 여기 겹쳐 있었다. #277 은 "후보 목록은 `badge` 자리이므로 소유자를 낸다"를
+   * 지켰고, #365 는 "사람 후보에는 아무것도 붙지 않는다"를 지켰다 — 한 호출이 종류에 따라
+   * 다른 것을 그렸다는 뜻이다.
    *
-   * **이 자리를 `variant="avatar"` 로 바꾸면 안 된다** — 바로 위 회귀선이 지키는 소유자
-   * 표시(#277)가 같은 호출에서 나오므로, 바꾸면 "누구의 에이전트를 부르는지"가 사라진다.
-   * 두 사실을 한 테스트에서 함께 본다: 한쪽만 보면 다른 쪽이 바뀌어도 초록이다.
+   * 그 차이를 없앤다: **부르려는 상대가 사람인지 에이전트인지 말하지 않는다**(design doc 2,
+   * #455). 후보 줄에는 핸들만 선다. 소유자를 확인해야 하면 프로필(#475)을 연다
+   * (`agentOwner.test.tsx` 가 옮겨 간 자리를 잰다).
+   *
+   * 두 종류를 한 테스트에서 나란히 본다 — 한쪽만 보면 다른 쪽이 갈라져도 초록이다.
    */
-  it('#365 사람 후보에는 아바타가 없고, 같은 자리가 에이전트에게는 소유자를 낸다', () => {
+  it('후보 줄은 사람과 에이전트가 같다 — 핸들만 서고 소유자·글리프는 없다', () => {
     useAppStore.getState().set({
       accounts: {
         u1: acc('u1', 'me'),
@@ -125,8 +108,12 @@ describe('mention autocomplete', () => {
     expect(human.textContent).toContain('@rusalka');
 
     typeInto('@fizz');
-    // 같은 badge 호출이 에이전트 후보에서는 소유자를 낸다.
-    expect(screen.getByRole('option', { name: /fizz/ }).textContent).toContain('@rusalka');
+    const bot = screen.getByRole('option', { name: /fizz/ });
+    expect(bot.textContent).toContain('@fizz');
+    // 소유자 핸들이 붙으면 그 줄만 사람 줄과 달라진다 — 종류를 말하는 것과 같다.
+    expect(bot.textContent).not.toContain('@rusalka');
+    expect(bot.textContent).not.toContain('🤖');
+    expect(within(bot).queryByText('에이전트')).toBeNull();
   });
 
   // 에이전트를 부르는 것이 murmur 의 목적이지만, 사람도 멘션 대상이다.

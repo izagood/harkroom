@@ -82,11 +82,19 @@ describe('컴포저 하단 바 (#146)', () => {
 describe('아이덴티티 컴포넌트가 유일한 경로다 (#146)', () => {
   // 같은 agent 필 마크업이 컴포저와 메시지 두 곳에 하드코딩돼 있었다 — 이 저장소에서
   // 반복되는 결함 형태다. 두 화면이 같은 컴포넌트를 쓰는지 지킨다.
-  it('컴포저 후보 목록에서 에이전트가 표시된다', () => {
+  // 초판은 `에이전트` 배지가 후보 목록에 나오는 것으로 "같은 컴포넌트를 쓰는가"를 쟀다.
+  // 그 배지는 사라졌다(#455) — 이제 계정 후보는 종류를 말하지 않는다. 재는 사실을 바꾼다:
+  // 후보 줄에 **하드코딩된 종류 표시가 되살아나지 않는지**를 본다. 집합·팀 배지는 별개다.
+  it('컴포저 후보 목록은 계정의 종류를 말하지 않는다', () => {
     render(<Composer onSend={vi.fn()} scopeKey="c1" />);
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '@b' } });
 
-    expect(screen.getByText('에이전트')).toBeTruthy();
+    const options = screen.getAllByRole('option');
+    expect(options.length).toBeGreaterThan(0);
+    for (const o of options) {
+      expect(o.textContent).not.toContain('🤖');
+      expect(o.textContent).not.toContain('에이전트');
+    }
   });
 
   /**
