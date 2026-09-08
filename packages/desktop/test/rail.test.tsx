@@ -68,7 +68,7 @@ const mountSidebar = (panel: 'home' | 'dm' | 'agents') =>
       panel={panel}
       onOpenDirectory={vi.fn()}
       onOpenChannelDirectory={vi.fn()}
-      onOpenInbox={vi.fn()}
+      onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
       collapsed={false}
       onToggleCollapse={vi.fn()}
     />,
