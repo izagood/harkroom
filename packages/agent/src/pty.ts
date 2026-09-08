@@ -132,66 +132,56 @@ export class PromptNotDeliveredError extends Error {
 }
 
 /**
- * TUI 가 입력을 받을 준비가 됐다는 신호(화면의 입력 프롬프트 표시).
+ * TUI 가 **입력을 받을 준비**가 됐다는 신호.
  *
- * **줄 끝에 앵커를 걸면 안 된다(2026-09-08 실측).** 초판은 `/[❯›>]\s*$/m` 였고 실물
- * claude TUI 에서 **한 번도 맞지 않았다** — TUI 는 절대 커서 이동(`ESC[H`, `ESC[<n>C`)과
- * `\r` 로 화면을 다시 그리므로, 눈에 보이는 "줄 끝의 ❯" 가 바이트 흐름에서는 줄 끝이
- * 아니다. 그대로 나갔으면 준비를 영영 못 보고 **모든 멘션이 상한에서 실패**했다.
+ * ## 왜 커서 문자만으로는 안 되는가 (2026-09-08 프로덕션 사고)
  *
- * 그래서 위치를 재지 않고 **표시의 존재**만 본다. 실측: 부팅 뒤 약 720~760ms 에 나타나고,
- * 그 시점에 즉시 주입해도 모델이 받아 답한다(같은 날 실물 확인).
+ * 초판은 `[❯›]` 하나였다. **`❯` 는 입력창의 표시가 아니라 모든 메뉴의 선택 커서다** —
+ * 실물에서 이것을 담은 승인 화면을 셋 만났고 전부 준비로 오인됐다:
  *
- * **버전에 기대는 값이다.** 표시가 바뀌면 준비를 못 보고 상한에서 실패한다 — 조용히
- * 넘어가는 것(프롬프트가 사라진 채 무발화 한도까지 기다리는 것)보다 낫다. 실패가 곧 이
- * 상수를 고쳐야 한다는 신호다.
+ * - 폴더 신뢰: `❯No,exit` / `Yes, I trust this folder`
+ * - 온보딩(로그인 방식): `❯1. Claude account with subscription …`
+ * - 팀 텔레메트리 승인: `❯1.Yes,Itrustthesesettings`
+ *
+ * 오인하면 프롬프트가 그 모달에 타이핑되고, 턴은 무발화 한도(기본 30분)까지 매달린다.
+ * 모달을 **부정 목록**으로 하나씩 막는 길은 끝나지 않는다 — 하네스 판본·조직 설정마다 새
+ * 승인 화면이 생기고, 그때마다 러너가 조용히 멈춘다.
+ *
+ * ## 그래서 긍정 신호로 잰다
+ *
+ * 채팅 입력창에만 있는 것을 본다:
+ * - claude: `❯` 뒤의 **비분리 공백(U+00A0)** — 입력줄을 그 문자로 채운다. 메뉴는 `❯1.`,
+ *   `❯No,exit` 처럼 보통 문자가 붙는다.
+ * - codex: `Ask <이름> to do anything` 자리표시자.
+ *
+ * 다섯 화면(위 셋 + claude·codex 입력창)에 대조한 회귀선이 `acceptance-cli.test.ts` 에 있다.
+ *
+ * **판본에 기대는 값이다.** 표시가 바뀌면 준비를 못 보고 상한에서 실패한다 — 조용히
+ * 프롬프트를 흘리는 것보다 낫다. 실패가 곧 이 상수를 고쳐야 한다는 신호다.
  */
-const DEFAULT_READY_PATTERN = /[❯›]|Ask\s+\S+\s+to\s+do\s+anything/;
-
-/**
- * 화면을 덮고 답을 기다리는 모달. 이것이 보이면 **준비가 아니다.**
- *
- * 실측한 두 가지(2026-09-08):
- * - claude: `Is this a project you created or one you trust?` / `Yes, I trust this folder`
- * - codex:  `Trust the contents of this directory?` / `Yes, continue`
- *
- * 공백을 지우고 재는 이유는 `policy.ts` 의 문구 판정과 같다 — PTY 소프트 랩이 어느 자리에든
- * 개행을 끼워 넣고, 화면을 다시 그리는 TUI 에서는 그 자리가 매번 다르다.
- */
-const BLOCKING_MODAL_PATTERN = /trustthisfolder|trustthecontents|projectyoucreated/i;
-
-/**
- * 이 출력이 "입력을 받을 준비" 로 보이는가. **수용 테스트가 실물 CLI 에 대고 같은 판정을
- * 쓰기 위해 export 한다** — 테스트가 패턴을 베껴 쓰면 프로덕션이 바뀔 때 그 사본만 초록으로
- * 남는다(이 저장소가 이미 겪은 종류의 어긋남이다).
- */
-export function looksReadyForPrompt(rawOutput: string, pattern: RegExp = DEFAULT_READY_PATTERN): boolean {
-  const text = stripAnsi(rawOutput);
-  // **모달이 떠 있으면 준비가 아니다(2026-09-08 프로덕션 사고).** 신뢰 대화상자는 준비
-  // 표시와 **같은 글자**(`❯`)를 선택지 앞에 그린다 — 위치로도 글자로도 갈리지 않는다.
-  // 그대로 두면 프롬프트가 모달에 타이핑되고, 턴은 아무 일도 못 한 채 무발화 한도까지
-  // 매달린다(실제로 그랬다).
-  //
-  // 정상 경로에서는 이 검사가 발동하지 않는다 — `workspaceTrust.ts` 가 PTY 를 띄우기 전에
-  // 신뢰를 적어 대화상자 자체를 없앤다. 여기는 **그것이 실패했을 때의 두 번째 층**이고,
-  // 그때는 준비를 못 본 채 상한에서 실패하는 편이 옳다: 모달에 프롬프트를 쏟는 것보다
-  // "준비 신호를 못 봤다"는 실패가 원인을 정확히 가리킨다.
-  if (BLOCKING_MODAL_PATTERN.test(text.replace(/\s+/g, ''))) return false;
-  return pattern.test(text);
-}
+const DEFAULT_READY_PATTERN = /[❯›]\u00a0|Ask\s+\S+\s+to\s+do\s+anything/;
 
 /**
  * 준비 판정 **전에** 화면 제어 시퀀스를 걷어낸다.
  *
- * 걷어내지 않으면 위 패턴이 ANSI 바이트 사이에 끼인 표시를 못 보거나, 반대로 색·커서
- * 시퀀스의 문자를 표시로 오인한다. `tail` 은 사람이 읽는 로그가 아니라 여기서 쓰는
- * 판정 재료이기도 하므로, 그 두 용도를 가르는 자리가 여기다.
+ * 걷어내지 않으면 표시가 ANSI 바이트 사이에 끼여 안 보이거나, 반대로 색·커서 시퀀스의
+ * 문자를 표시로 오인한다. `tail` 은 사람이 읽는 로그이자 여기서 쓰는 판정 재료이므로,
+ * 그 두 용도를 가르는 자리가 여기다.
  */
 function stripAnsi(text: string): string {
   return text
     .replace(/\u001b\][0-9]*;[^\u0007]*\u0007/g, '')
     .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '')
     .replace(/\u001b[()][AB012]/g, '');
+}
+
+/**
+ * 이 출력이 "입력을 받을 준비" 로 보이는가. **수용 테스트가 실물 화면들에 대고 같은 판정을
+ * 쓰기 위해 export 한다** — 테스트가 패턴을 베껴 쓰면 프로덕션이 바뀔 때 그 사본만 초록으로
+ * 남는다(이 저장소가 이미 겪은 종류의 어긋남이다).
+ */
+export function looksReadyForPrompt(rawOutput: string, pattern: RegExp = DEFAULT_READY_PATTERN): boolean {
+  return pattern.test(stripAnsi(rawOutput));
 }
 
 // SIGTERM → SIGKILL 유예 시간. 하네스가 모델 요청을 붙잡고 있는 도중일 수 있다 — 바로

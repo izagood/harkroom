@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { switchesAccount, withAccountFailover } from '../src/claudeAccounts.js';
 import type { ClaudeAccount } from '../src/claudeAccounts.js';
 import { ExecutableNotFoundError, MURMUR_ERROR_SOURCE } from '../src/policy.js';
+import { PromptNotDeliveredError } from '../src/pty.js';
 
 /**
  * 하네스가 자기 세션 파일에 남긴 에러(2026-09-08). 자격증명 판정의 재료가 PTY tail 에서
@@ -34,6 +35,13 @@ describe('계정 전환 방아쇠', () => {
   it('미로그인도 계정을 바꾼다', () => {
     expect(switchesAccount(harnessErr('Not logged in · Please run /login')))
       .toBe(true);
+  });
+
+  it('TUI 준비 실패는 계정을 바꾼다 — 첫 실행 승인은 계정마다 따로다', () => {
+    // 그 계정의 config 가 온보딩·팀 텔레메트리 승인을 안 지났다는 뜻이다. 다른 계정은
+    // 멀쩡할 수 있고, 그것이 계정 축이 있는 이유다. 이 줄이 없으면 승인을 안 지난 계정이
+    // lane 첫 번째일 때 멘션이 3회를 태우고 버려진다(2026-09-08 실측).
+    expect(switchesAccount(new PromptNotDeliveredError(60_000, '(승인 화면)'))).toBe(true);
   });
 
   it('murmur PAT 실패는 계정을 바꾸지 않는다', () => {
