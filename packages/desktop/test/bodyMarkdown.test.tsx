@@ -267,3 +267,100 @@ describe('사람이 쓴 줄바꿈은 마크다운보다 세다', () => {
     expect(bodyText()).toBe('그냥 한 줄');
   });
 });
+
+describe('표는 격자로 그려진다', () => {
+  // 스크린샷에서 실제로 무너진 것이 이것이다: 에이전트가 쓴 GFM 표가 `| --- |` 줄까지
+  // 그대로 보였다. 표는 채팅에서 에이전트가 판단을 정리할 때 가장 자주 쓰는 구조라서,
+  // 이게 안 그려지면 가장 정보 밀도가 높은 메시지가 가장 읽기 어려운 메시지가 된다.
+  const table = [
+    '| claim | 판단 | 근거 |',
+    '| --- | :---: | ---: |',
+    '| `model-cache-ax-k1` 50Gi | **버린다** | `.compile.lock` 하나다 |',
+    '| model-cache | 재바인딩 | 선언이 있다 |',
+  ].join('\n');
+
+  it('머리글 + 구분줄이면 표다 — 그리고 구분줄은 화면에 남지 않는다', () => {
+    show(table);
+
+    const t = screen.getByTestId('md-table');
+    expect(t.tagName).toBe('TABLE');
+    expect(t.getAttribute('data-cols')).toBe('3');
+    expect(screen.getAllByTestId('md-table-row')).toHaveLength(2);
+    // 문법이 화면에 남지 않는다(이 파일 머리의 1번).
+    expect(bodyText()).not.toContain('---');
+    expect(bodyText()).not.toContain('|');
+  });
+
+  it('머리글은 th + scope 다 — 스크린리더가 칸마다 열 이름을 함께 읽는다', () => {
+    show(table);
+
+    const th = screen.getAllByRole('columnheader');
+    expect(th.map((h) => h.textContent)).toEqual(['claim', '판단', '근거']);
+    expect(th.every((h) => h.getAttribute('scope') === 'col')).toBe(true);
+  });
+
+  it('정렬은 구분줄이 말한 것만 따른다', () => {
+    show(table);
+
+    const th = screen.getAllByRole('columnheader');
+    expect(th[0]!.className).toContain('text-left');
+    expect(th[1]!.className).toContain('text-center');
+    expect(th[2]!.className).toContain('text-right');
+  });
+
+  it('칸 안의 코드·강조는 그대로 살아 있다', () => {
+    show(table);
+
+    const first = screen.getAllByTestId('md-table-row')[0]!;
+    expect(first.querySelector('[data-testid="inline-code"]')?.textContent).toBe('model-cache-ax-k1');
+    expect(first.querySelector('[data-testid="md-strong"]')?.textContent).toBe('버린다');
+  });
+
+  it('구분줄이 없으면 표가 아니다 — 사람이 쓴 문장을 격자에 넣지 않는다', () => {
+    // 관대하게 판정하면 `a | b` 라고 쓴 두 줄이 표로 바뀐다. 그건 문법을 못 그린 것보다
+    // 나쁘다 — 보여 준 내용이 사람이 쓴 것과 달라진다.
+    const plain = '왼쪽 | 오른쪽\n위 | 아래';
+    show(plain);
+
+    expect(screen.queryByTestId('md-table')).toBeNull();
+    expect(bodyText()).toBe(plain);
+  });
+
+  it('열 수가 어긋난 구분줄은 표를 만들지 않는다', () => {
+    show('a | b | c\n| --- |');
+
+    expect(screen.queryByTestId('md-table')).toBeNull();
+  });
+
+  it('행마다 칸 수가 달라도 격자는 어긋나지 않는다', () => {
+    show('| a | b |\n| --- | --- |\n| 하나 |\n| 하나 | 둘 | 셋 |');
+
+    const rows = screen.getAllByTestId('md-table-row');
+    expect(rows.map((r) => r.querySelectorAll('td').length)).toEqual([2, 2]);
+    // 넘친 칸은 버리고 모자란 칸은 비운다 — 파서에서 끝내므로 렌더러가 다시 세지 않는다.
+    expect(rows[0]!.textContent).toBe('하나');
+    expect(rows[1]!.textContent).toBe('하나둘');
+  });
+
+  it('인라인 코드 안의 | 는 칸 경계가 아니다', () => {
+    show('| cmd | 뜻 |\n| --- | --- |\n| `a|b` | 하나 |');
+
+    const tds = screen.getAllByTestId('md-table-row')[0]!.querySelectorAll('td');
+    expect(tds).toHaveLength(2);
+    expect(tds[0]!.textContent).toBe('a|b');
+  });
+
+  it('코드 블록 안의 표는 표가 아니다 — 코드가 먼저 떼어졌기 때문이다', () => {
+    show('```\n| a | b |\n| --- | --- |\n```');
+
+    expect(screen.queryByTestId('md-table')).toBeNull();
+    expect(screen.getByTestId('code-block').textContent).toContain('| --- | --- |');
+  });
+
+  it('표는 | 가 없는 줄에서 끝난다 — 뒤 문장이 마지막 행으로 끌려오지 않는다', () => {
+    show('| a | b |\n| --- | --- |\n| 하나 | 둘 |\n표 뒤의 문장');
+
+    expect(screen.getAllByTestId('md-table-row')).toHaveLength(1);
+    expect(screen.getByTestId('md-paragraph').textContent).toContain('표 뒤의 문장');
+  });
+});
