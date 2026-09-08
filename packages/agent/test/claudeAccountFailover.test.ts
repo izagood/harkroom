@@ -179,3 +179,50 @@ describe('main.ts 의 풀 배선', () => {
     expect(source).toContain('풀:');
   });
 });
+
+// ── 마지막 계정 표시(2026-09-08 실물 검증에서 드러난 어긋남)
+//
+// **왜 필요한가.** 준비 실패는 계정 전환 방아쇠인데(`switchesAccount`), 사람을 부르는
+// 경로는 **던지지 않는다** — PTY 를 살려 둬야 사람이 그 화면을 볼 수 있기 때문이다.
+// 그래서 "부른다"와 "전환한다"는 동시에 못 한다.
+//
+// 순서로 가른다: 앞 계정들은 던져서 전환을 태우고, **마지막 계정에서만** 살려 두고
+// 부른다. 그러려면 시도 함수가 자기가 마지막인지 알아야 한다.
+describe('withAccountFailover 의 마지막 계정 표시', () => {
+  const acct = (name: string): ClaudeAccount => ({ name, configDir: `/pool/${name}` });
+  const QUOTA = () => new Error("harness 종료 1: You've hit your session limit · resets 4:10pm");
+
+  it('마지막 계정에서만 isLast 가 참이다', async () => {
+    const 본것: { name: string | null; isLast: boolean }[] = [];
+    await expect(withAccountFailover([acct('lime'), acct('plum'), acct('lychee')], async (a, isLast) => {
+      본것.push({ name: a?.name ?? null, isLast });
+      throw QUOTA();
+    })).rejects.toThrow(/session limit/);
+    expect(본것).toEqual([
+      { name: 'lime', isLast: false },
+      { name: 'plum', isLast: false },
+      { name: 'lychee', isLast: true },
+    ]);
+  });
+
+  it('계정이 하나면 그 하나가 곧 마지막이다', async () => {
+    // 계정 풀을 안 만든 러너([null])도 여기 온다 — 그 러너가 관문에 걸리면 물러설 곳이
+    // 없으므로 **첫 시도에서 바로** 사람을 불러야 한다.
+    const 본것: boolean[] = [];
+    await expect(withAccountFailover([null], async (_a, isLast) => {
+      본것.push(isLast);
+      throw QUOTA();
+    })).rejects.toThrow();
+    expect(본것).toEqual([true]);
+  });
+
+  it('첫 계정이 성공하면 isLast 가 거짓인 채로 끝난다 — 뒤를 시도하지 않는다', async () => {
+    const 본것: boolean[] = [];
+    const r = await withAccountFailover([acct('lime'), acct('plum')], async (_a, isLast) => {
+      본것.push(isLast);
+      return 'ok';
+    });
+    expect(r).toBe('ok');
+    expect(본것).toEqual([false]);
+  });
+});

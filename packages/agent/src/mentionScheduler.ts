@@ -83,6 +83,11 @@ export interface MentionSchedulerDeps {
     ctx: BatchContext;
     mention: InboxBatch['messages'][number];
     account: ClaudeAccount | null;
+    /**
+     * 이 계정이 축의 **마지막인가**(2026-09-08). 사람 부르기는 여기서만 열린다 —
+     * 앞 계정에서 부르면, 준비된 계정이 뒤에 있는데도 사람을 깨운다.
+     */
+    isLastAccount: boolean;
   }): MentionTurnDeps;
   hooks: {
     /** #384 이어받기 — 턴이 완전히 끝난 뒤 main 루프가 정한 자리에서 부른다. */
@@ -145,7 +150,9 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
     try {
       const turn = await withAccountFailover(
         deps.accountLane,
-        (account) => deps.runMentionTurn(deps.buildTurnDeps({ ctx, mention, account }), target),
+        (account, isLastAccount) => deps.runMentionTurn(
+          deps.buildTurnDeps({ ctx, mention, account, isLastAccount }), target,
+        ),
         (from, to) => console.error(
           `  ${mention.id} 계정 전환: ${from?.name ?? '(기본)'} → ${to?.name ?? '(기본)'}`,
         ),
