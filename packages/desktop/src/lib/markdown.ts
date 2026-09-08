@@ -418,7 +418,7 @@ function foldList(items: RawItem[], from: number, indent: number): { block: Bloc
  *
  * 빈 결과를 내지 않는다: 아무 구조가 없는 한 줄짜리 본문도 문단 하나로 돌아온다.
  * 호출부가 "구조가 있으면 이렇게, 없으면 저렇게" 두 갈래를 갖게 되면 그 두 갈래가
- * 갈라진다(예전에 접기와 "더 보기" 를 따로 판단해 생겼던 문제와 같은 종류다).
+ * 갈라진다 — 한쪽만 고쳐지고 다른 쪽은 조용히 뒤처진다.
  */
 export function parseBlocks(segments: CodeSegment[]): Block[] {
   const lines = toLines(segments);
