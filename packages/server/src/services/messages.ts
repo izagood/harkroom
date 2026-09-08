@@ -751,6 +751,46 @@ export async function recallFromChannel(
   return updated.rows[0];
 }
 
+/**
+ * 이미 쓴 스레드 답을 **나중에** 채널로 올린다(#231 의 나머지 절반).
+ *
+ * `recallFromChannel` 의 반대다. 두 방향이 한 자원(`also-in-channel`)의 DELETE·PUT 인
+ * 이유는 바뀌는 것이 본문이 아니라 "채널에도 보인다"는 성질 하나이기 때문이다 —
+ * PATCH(본문 수정)에 얹으면 `edited_at` 이 찍혀, 글을 고치지 않았는데 고쳤다는 자국이 남는다.
+ *
+ * **작성자만** 할 수 있다. 거두기는 admin 에게도 열려 있지만(잘못 흘린 말을 치우는 조정),
+ * 이쪽은 조정이 아니라 **발화**다 — 남의 스레드 글을 채널로 퍼뜨리는 것은 그 사람이 하지
+ * 않은 선택이고, 그것을 admin 이 대신 할 수 있으면 "스레드에만 쓴다"는 판단이 지켜지지 않는다.
+ *
+ * 스레드 답이 아니면 `not_thread_reply` 다. 채널 최상위 메시지는 이미 채널에 있으므로
+ * 켤 것이 없다 — `postMessage` 가 같은 경우를 조용히 false 로 정규화하는 것과 달리 여기서는
+ * 사유를 돌려준다: 저기서는 "채널 메시지에 이 옵션은 뜻이 없다"이고, 여기서는 **사람이
+ * 그 메시지를 겨냥해 눌렀다**는 뜻이라 아무 일도 없이 200 을 주면 화면이 거짓말을 한다.
+ *
+ * 새로 부르지 않는다(inbox 를 건드리지 않는다): 멘션은 글을 쓴 그 순간 이미 알렸고,
+ * 채널로 옮겨 보인다고 같은 사람을 두 번 깨우면 알림이 대화량을 넘어선다.
+ */
+export async function promoteToChannel(
+  pool: Pool, args: { channelId: string; messageId: string; actorId: string },
+): Promise<MessageRow | MutationRefusal | 'not_thread_reply'> {
+  const found = await pool.query(
+    `select author_id, thread_root_id from message
+     where id = $1 and channel_id = $2 and deleted_at is null`,
+    [args.messageId, args.channelId],
+  );
+  if (!found.rowCount) return 'not_found';
+  if (found.rows[0].author_id !== args.actorId) return 'forbidden';
+  if (found.rows[0].thread_root_id === null) return 'not_thread_reply';
+
+  // 이미 켜져 있어도 같은 결과다 — 다른 창에서 먼저 올린 뒤 이 창에서 누르는 것은
+  // 정상 경로이므로 거절하지 않는다(거두기의 두 번 호출과 같은 판단).
+  const updated = await pool.query(
+    `update message set also_in_channel = true where id = $1 returning ${COLS}`,
+    [args.messageId],
+  );
+  return updated.rows[0];
+}
+
 export async function deleteMessage(
   pool: Pool, args: { channelId: string; messageId: string; actorId: string; actorIsAdmin: boolean },
 ): Promise<'deleted' | MutationRefusal> {

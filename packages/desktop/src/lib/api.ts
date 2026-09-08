@@ -271,6 +271,14 @@ export class ApiClient {
     return this.req('DELETE', `/channels/${channelId}/messages/${messageId}/also-in-channel`);
   }
 
+  /**
+   * 이미 쓴 스레드 답을 나중에 채널로 올린다 — 거두기와 **같은 자원의 PUT** 이다.
+   * 새 메시지를 만들지 않으므로 돌아오는 것은 갱신된 같은 행이고 `alsoInChannel` 만 true 다.
+   */
+  postToChannel(channelId: string, messageId: string): Promise<MessageRow> {
+    return this.req('PUT', `/channels/${channelId}/messages/${messageId}/also-in-channel`);
+  }
+
   async listAgents(): Promise<AgentView[]> {
     return (await this.req<{ agents: AgentView[] }>('GET', '/accounts/agents')).agents;
   }
