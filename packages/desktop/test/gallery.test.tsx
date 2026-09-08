@@ -7,6 +7,7 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { GallerySettings } from '../src/components/settings/GallerySettings';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { SETTINGS_GROUPS } from '../src/components/settings/sections';
 import { acc } from './helpers/fakeApi';
 
@@ -14,7 +15,12 @@ const ME = 'u-me';
 const A1 = 'a-forge';
 const A2 = 'a-codex';
 
+// **언어를 고정한다**(설명 문구가 사전을 지나면서 기본이 영어가 됐다). 이 파일이 재는
+// 것은 갤러리가 **무엇을 그리고 무엇을 안 그리는가**이지 그 설명의 언어가 아니다 —
+// 언어를 재는 자리는 `i18n.test.tsx` 하나이고, 두 곳에서 재면 문구를 고칠 때 한쪽만
+// 고쳐진다.
 beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   setController({} as unknown as Controller);
   useAppStore.getState().set({
@@ -26,7 +32,10 @@ beforeEach(() => {
     },
   });
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 describe('컴포넌트 갤러리', () => {
   it('목차의 맨 끝에 선다 — 개발자용이라 찾아 들어갈 일이 없는 자리다', () => {
