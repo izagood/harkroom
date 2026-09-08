@@ -140,6 +140,27 @@ describe('tauriIcon', () => {
     expect(translateX, '글리프가 수평 중앙에 놓여야 한다').toBeCloseTo(centeredOffset, 5);
   });
 
+  /**
+   * 글리프가 플레이트를 채우는 비율(실측 2026-09-08, 사용자가 Dock 에서 지적).
+   * 플레이트는 full-bleed 인데 scale 이 4.8 이던 때 잉크 폭은 캔버스의 46% 였다 —
+   * 아이콘이 아니라 아이콘 안의 그림만 작았다. 중앙 정렬만 지키면 이 결함은 다시
+   * 들어올 수 있으므로(오프셋이 맞은 채로 작을 수 있다) 크기도 수치로 못 박는다.
+   *
+   * 잉크 폭은 뷰박스 128 안에서 막대 x 20~110 에 라운드캡 반지름 4.5 를 더한 99 다.
+   */
+  it('source.svg의 글리프가 캔버스의 70% 이상을 채운다', () => {
+    const svgContent = fs.readFileSync(path.join(ICONS_DIR, 'source.svg'), 'utf-8');
+    const scale = Number(
+      svgContent.match(/scale\(\s*([\d.]+)\s*\)/)![1]
+    );
+    const viewBox = Number(svgContent.match(/viewBox="0\s+0\s+(\d+)\s+\d+"/)![1]);
+    const inkWidth = 99 * scale;
+
+    expect(inkWidth / viewBox, '글리프 잉크 폭 / 캔버스').toBeGreaterThanOrEqual(0.7);
+    // 라운드캡이 둥근 모서리 밖으로 나가면 잘린다 — 위쪽 한계도 함께 둔다.
+    expect(inkWidth / viewBox, '글리프 잉크 폭 / 캔버스').toBeLessThanOrEqual(0.85);
+  });
+
   // 획이 currentColor 라서 color 를 적지 않으면 래스터라이저 기본값(순수 검정)으로
   // 굳는다. 브랜드 잉크색을 잃지 않도록 source.svg 가 색을 못 박게 강제한다.
   it('source.svg가 currentColor용 color를 못 박아 둔다', () => {
