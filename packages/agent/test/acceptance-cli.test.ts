@@ -22,6 +22,7 @@ import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import type { AgentHarness } from '@murmur/shared';
 import { buildTurnCommand, writeMcpConfigOnce, writeSystemPromptFile, type TurnPlan } from '../src/turn.js';
+import { looksReadyForPrompt } from '../src/pty.js';
 
 const run = promisify(execFile);
 
@@ -177,4 +178,51 @@ describe('수용 — 조립한 argv 의 플래그가 그 서브커맨드에 실�
       }
     }, 60_000);
   }
+});
+
+/**
+ * 준비 판정이 **실물 claude TUI 에 실제로 맞는가**(2026-09-08).
+ *
+ * 이 회귀선이 있는 이유: 초판 패턴은 `/[❯›>]\s*$/m`(줄 끝 앵커)였고 단위 테스트는 전부
+ * 초록이었다 — 픽스처가 개행으로 끝나는 문자열이었기 때문이다. 실물에서는 **한 번도 맞지
+ * 않았다**: TUI 가 절대 커서 이동과 `\r` 로 화면을 다시 그려, 눈에 보이는 "줄 끝의 ❯" 가
+ * 바이트 흐름에서는 줄 끝이 아니다. 그대로 나갔으면 **모든 멘션이 상한에서 실패**했다.
+ *
+ * 단위 테스트로는 못 잡는 종류라 수용 층에 둔다 — 이 파일의 다른 케이스가 조립한 argv 를
+ * 실물 CLI 에 대조하는 것과 같은 이유다. 프로덕션 함수를 그대로 부른다(패턴을 베끼지 않는다).
+ */
+describe('수용 — 준비 판정이 실물 TUI 에 맞는가 (2026-09-08)', () => {
+  it('claude TUI 부팅 출력에서 준비 표시를 찾는다', async () => {
+    const { createRequire } = await import('node:module');
+    const require = createRequire(import.meta.url);
+    let pty: { spawn: (f: string, a: string[], o: object) => {
+      onData(cb: (d: string) => void): void; kill(s?: string): void;
+    } };
+    try {
+      pty = require('node-pty');
+    } catch {
+      return; // node-pty 를 못 쓰는 환경에서는 건너뛴다
+    }
+
+    const env: Record<string, string | undefined> = { ...process.env };
+    for (const k of Object.keys(env)) if (k.startsWith('CLAUDE_CODE') || k === 'CLAUDECODE') delete env[k];
+
+    const child = pty.spawn('claude', [
+      '--session-id', '9f1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d',
+      '--settings', '{}', '--strict-mcp-config', '--disable-slash-commands',
+    ], { cols: 120, rows: 40, env });
+
+    const found = await new Promise<boolean>((resolve) => {
+      let all = '';
+      const done = (v: boolean) => { try { child.kill('SIGKILL'); } catch { /* 이미 죽었다 */ } resolve(v); };
+      child.onData((d: string) => {
+        all += d;
+        // 프로덕션과 **같은 조건**: 끝 2KB 창에 대고 같은 함수를 부른다.
+        if (looksReadyForPrompt(all.slice(-2048))) done(true);
+      });
+      setTimeout(() => done(false), 15_000);
+    });
+
+    expect(found).toBe(true);
+  }, 30_000);
 });
