@@ -115,6 +115,31 @@ export function acceptsPtyInput(plan: TurnPlan): boolean {
   return plan.stdinFile === null;
 }
 
+/**
+ * TUI 가 프롬프트를 받을 준비 상태에 닿지 못했다(2026-09-08 실행 모델 교체).
+ *
+ * **조용히 넘어가면 안 되는 이유**: 준비 전에 쓴 바이트는 사라진다. 그대로 두면 하네스가
+ * 프롬프트 없이 떠서 무발화 한도(기본 30분)까지 살아 있고, 사람은 30분을 기다린 끝에
+ * "답변에 실패했습니다"를 본다. 미로그인 화면과 디렉터리 신뢰 대화상자가 정확히 이 모양이라
+ * (스펙 §5-4 실측), 이 실패가 그것들을 함께 잡는 그물이기도 하다 — 그래서 별도의 로그인
+ * 사전 확인을 만들지 않는다.
+ */
+export class PromptNotDeliveredError extends Error {
+  constructor(public readonly waitedMs: number, public readonly tail: string) {
+    super(`TUI 준비 신호를 ${waitedMs}ms 안에 못 봤다 — 프롬프트를 넣지 못했다. 마지막 출력: ${tail}`);
+    this.name = 'PromptNotDeliveredError';
+  }
+}
+
+/**
+ * claude TUI 가 입력을 받을 준비가 됐다는 신호(화면의 입력 프롬프트 표시).
+ *
+ * **버전에 기대는 값이다.** claude 가 이 표시를 바꾸면 준비를 못 보고 상한에서 실패한다 —
+ * 조용히 넘어가는 것(프롬프트가 사라진 채 무발화 한도까지 기다리는 것)보다 낫다. 실패가 곧
+ * 이 상수를 고쳐야 한다는 신호다.
+ */
+const DEFAULT_READY_PATTERN = /[❯›>]\s*$|Ask\s+\S+\s+to\s+do\s+anything/m;
+
 // SIGTERM → SIGKILL 유예 시간. 하네스가 모델 요청을 붙잡고 있는 도중일 수 있다 — 바로
 // SIGKILL 을 쏘면 정리(임시 파일, in-flight 요청 등)할 기회 자체를 빼앗는다.
 const SIGKILL_GRACE_MS = 5_000;
@@ -218,6 +243,25 @@ export interface RunPtyTurnOptions {
    * 인터랙티브 턴이 뜨자마자 SIGTERM 을 맞는다 — 그래서 0 이면 타이머 자체를 걸지 않는다.
    */
   timeoutMs: number;
+  /**
+   * TUI 에 넣을 프롬프트(2026-09-08 실행 모델 교체). 있으면 spawn 뒤 **준비 신호를 기다렸다가**
+   * bracketed paste 로 감싸 쓰고 `\r` 로 보낸다.
+   *
+   * **bracketed paste 로 감싸는 이유**: 그냥 쓰면 첫 개행에서 조기 전송돼 여러 줄 프롬프트가
+   * 여러 메시지로 갈라진다(스펙 §5-4 실측).
+   *
+   * **준비 대기가 조건 기반인 이유**: 고정 슬립은 두 방향으로 틀린다 — 짧으면 프롬프트를
+   * 잃고(준비 전 바이트는 사라진다), 길면 매 턴을 그만큼 늦춘다.
+   *
+   * 없으면 아무것도 쓰지 않는다 — codex 의 `stdinFile` 경로가 그대로 산다.
+   */
+  injectPrompt?: {
+    text: string;
+    /** 준비로 볼 패턴. 생략하면 claude TUI 의 입력 프롬프트. */
+    readyPattern?: RegExp;
+    /** 준비 상한. 넘기면 `PromptNotDeliveredError`. 생략하면 60초. */
+    readyTimeoutMs?: number;
+  };
   /** PTY 초기 크기. 생략하면 비대화형 기본 120x40(스펙 §5)이다. */
   cols?: number;
   rows?: number;
@@ -405,6 +449,39 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       opts.ring?.push(buf);
       opts.onData?.(buf);
     });
+
+    // ── 프롬프트 주입(2026-09-08). **준비 신호를 본 뒤에만** 쓴다.
+    if (opts.injectPrompt) {
+      const { text, readyPattern = DEFAULT_READY_PATTERN, readyTimeoutMs = 60_000 } = opts.injectPrompt;
+      let injected = false;
+      const startedAt = Date.now();
+      let readyProbe: NodePty.IDisposable | null = null;
+      const readyTimer = setTimeout(() => {
+        if (injected || settled) return;
+        // 준비를 못 봤다 — 이 턴은 프롬프트 없이 도는 것이 아니라 실패로 끝난다.
+        readyProbe?.dispose();
+        settled = true;
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        dataListener.dispose();
+        exitListener.dispose();
+        try { proc.kill('SIGKILL'); } catch { /* 이미 죽었으면 회수할 것도 없다 */ }
+        reject(new PromptNotDeliveredError(Date.now() - startedAt, decodeTailText(tail.snapshot())));
+      }, readyTimeoutMs);
+      readyTimer.unref?.();
+      readyProbe = proc.onData(() => {
+        if (injected || settled) return;
+        if (!readyPattern.test(decodeTailText(tail.snapshot()))) return;
+        injected = true;
+        clearTimeout(readyTimer);
+        readyProbe?.dispose();
+        // 감싼 본문과 전송을 나눠 쓴다: 붙여 쓰면 일부 TUI 가 끝 표식과 개행을 한 덩어리로
+        // 읽어 전송을 건너뛴다.
+        try {
+          proc.write(`\u001b[200~${text}\u001b[201~`);
+          proc.write('\r');
+        } catch { /* 그 사이에 죽었으면 exit 리스너가 결과를 정한다 */ }
+      });
+    }
 
     // **시계는 `onSpawn` 이 돌아온 뒤에야 흐르기 시작한다**(#391). 스폰 직후에 하네스가
     // 뜨기를 확인해야 하는 호출자(테스트가 SIGKILL 승격 경로를 태우려면 하네스가 이미
