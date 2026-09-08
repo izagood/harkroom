@@ -471,4 +471,60 @@ describe('보내기 전 첨부 칩의 미리보기', () => {
     expect(await screen.findByText(/shot\.png/)).toBeTruthy();
     await waitFor(() => expect(screen.queryByTestId('attachment-thumb')).toBeNull());
   });
+
+  // 실패한 그림 자리를 "원래 미리보기가 없는 파일" 과 같은 📎 로 덮으면, 사람은 잘못 붙인
+  // 장을 확인할 기회를 잃은 채 그대로 보낸다. 본문 미리보기와 같은 규칙으로 갈라 말한다.
+  it('미리보기를 못 받은 것과 원래 없는 것을 가려 말한다', async () => {
+    fakeController({
+      upload: vi.fn(async () => att({ contentType: 'image/png', filename: 'shot.png' })),
+      fetchAttachment: vi.fn(async () => { throw new Error('network error'); }),
+    });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('shot.png', 'image/png');
+
+    // 문구가 칩 **안에** 있어야 어느 첨부가 실패했는지 말해 준다.
+    await screen.findByText('(미리보기 실패)');
+    const chip = screen.getByRole('button', { name: /remove shot\.png/i }).parentElement;
+    expect(chip?.textContent).toContain('(미리보기 실패)');
+  });
+
+  it('원래 미리보기가 없는 첨부는 실패라고 말하지 않는다', async () => {
+    fakeController({ upload: vi.fn(async () => att({ filename: 'note.txt' })) });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('note.txt', 'text/plain');
+
+    await screen.findByText(/note\.txt/);
+    expect(screen.queryByText('(미리보기 실패)')).toBeNull();
+  });
+
+  it('미리보기가 성공하면 실패 문구는 남지 않는다', async () => {
+    fakeController({ upload: vi.fn(async () => att({ contentType: 'image/png', filename: 'shot.png' })) });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('shot.png', 'image/png');
+
+    await screen.findByTestId('attachment-thumb');
+    expect(screen.queryByText('(미리보기 실패)')).toBeNull();
+  });
+
+  /**
+   * 바이트가 도착하는 순간 📎(11px)가 그림(24px)으로 바뀌면 칩 줄이 통째로 밀려 내려간다 —
+   * 지우기(×)를 누르려던 손이 빗나간다. 그래서 그림이 **올 자리**는 미리 잡아 둔다.
+   */
+  it('그림이 올 자리는 미리 잡아 칩이 튀지 않게 한다', async () => {
+    const hold = new Promise<Blob>(() => {});
+    fakeController({
+      upload: vi.fn(async () => att({ contentType: 'image/png', filename: 'shot.png' })),
+      fetchAttachment: vi.fn(() => hold),
+    });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('shot.png', 'image/png');
+
+    const chip = (await screen.findByRole('button', { name: /remove shot\.png/i })).parentElement;
+    // 칩의 첫 칸이 그림 자리다 — 바이트가 오기 전에도 그림과 같은 높이를 차지해야 한다.
+    expect(chip?.firstElementChild?.className).toContain('h-6');
+  });
 });
