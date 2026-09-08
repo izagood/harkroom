@@ -15,6 +15,7 @@ import { mentionAnchor, runMentionTurn, syncSkills, type MentionTurnDeps, type M
 import { BODY_LIMIT, NO_REPLY_NOTICE } from '../src/prompt.js';
 import { MurmurAgentClient } from '../src/murmur.js';
 import { SessionStore } from '../src/sessions.js';
+import { isQuotaExhausted } from '../src/policy.js';
 import { workspaceName, type Exec } from '../src/workspace.js';
 import type { TurnPlan } from '../src/turn.js';
 import { composeSpawn, runPtyTurn } from '../src/pty.js';
@@ -2380,5 +2381,55 @@ describe('#369 진행 중인 멘션 턴은 입력을 받을 수 없다 (진짜 P
     expect(plan.args.join(' ')).not.toContain('hunter2');
     expect(composeSpawn(plan).args.join(' ')).not.toContain('hunter2');
     expect(composeSpawn(plan).args.join(' ')).toContain(plan.stdinFile!);
+  });
+});
+
+describe('하네스 API 에러를 세션 JSONL 에서 함께 싣는다 (2026-09-08)', () => {
+  it('실패한 턴이 세션 파일의 isApiErrorMessage 를 에러에 싣는다 — tail 에 시각이 없어도', async () => {
+    // 2026-09-07 19:03 사건의 모양: tail 은 잘려 시각이 없고 세션 파일에는 있다.
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+
+    const configDir = await mkdtemp(join(tmpdir(), 'mention-turn-cfg-'));
+    const { deps, runTurn } = await makeDeps(fake, { claudeConfigDir: configDir });
+    runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: '...hit your session limit' });
+
+    // 세션 id 는 러너가 첫 턴에 발급해 store 에 넣는다. 한 번 실패시켜 그 id 를 확정한 뒤
+    // 같은 id 로 세션 파일을 심고 다시 돌린다 — 실물에서도 파일은 턴이 돈 뒤에 생긴다.
+    await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
+      .rejects.toThrow();
+    const sid = deps.store.get(SessionStore.threadKey(CHANNEL, null))!.sessionId!;
+    const proj = join(configDir, 'projects', '-private-tmp-whatever-cwd');
+    await mkdir(proj, { recursive: true });
+    await writeFile(join(proj, `${sid}.jsonl`), JSON.stringify({
+      type: 'assistant',
+      isApiErrorMessage: true,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: "You've hit your session limit \u00b7 resets 3:00am (Asia/Seoul)" }],
+      },
+    }) + '\n');
+
+    const err = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })
+      .then(() => null, (e: unknown) => e as Error & { harnessApiError?: string });
+
+    expect(err).not.toBeNull();
+    expect(err!.harnessApiError).toContain('resets 3:00am (Asia/Seoul)');
+    // 그 필드가 실제로 판정을 낫게 만든다 — tail 만이었으면 resetsAt 이 null 이다.
+    expect(isQuotaExhausted(err)).toEqual({ resetsAt: '3:00am (Asia/Seoul)' });
+  });
+
+  it('세션 파일이 없으면 필드 없이 던진다 — 읽기 실패가 실패 처리를 무너뜨리지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, runTurn } = await makeDeps(fake);
+    runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'some error' });
+
+    const err = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })
+      .then(() => null, (e: unknown) => e as Error & { harnessApiError?: string });
+
+    expect(err).not.toBeNull();
+    expect(err!.harnessApiError).toBeUndefined();
+    expect(err!.message).toContain('some error');
   });
 });
