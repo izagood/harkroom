@@ -136,7 +136,7 @@ describe('음소거된 채널의 미읽음 배지', () => {
       openChannel: vi.fn(), startDm: vi.fn(), logout: vi.fn(),
       setChannelNotifyLevel: vi.fn(), toggleChannelStar: vi.fn(),
     } as unknown as Controller);
-    render(<Sidebar panel="home" onOpenDirectory={vi.fn()} onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar panel="home" onOpenDirectory={vi.fn()} onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
   };
 
   beforeEach(() => {

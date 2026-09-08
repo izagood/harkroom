@@ -38,7 +38,7 @@ const fakeController = () => {
 const renderDmPanel = () =>
   render(
     <Sidebar panel="dm" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}}
-      onOpenInbox={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
+      onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
   );
 
 const dm = (id: string, peerId: string, lastMessageAt: string | null): DmView =>

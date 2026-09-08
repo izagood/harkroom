@@ -30,7 +30,8 @@ import type { AppState } from '../src/state/appStore';
 import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
 import { AgentGrid } from '../src/components/settings/AgentGrid';
-import { acc, chan } from './helpers/fakeApi';
+import { Workspace } from '../src/components/Workspace';
+import { acc, chan, fakeApi } from './helpers/fakeApi';
 import type { RunnerState } from '../src/lib/runnerLauncher';
 import type { AgentView, DmView } from '@murmur/shared';
 
@@ -46,10 +47,20 @@ const fakeController = () => {
   return c;
 };
 
-const renderAgentsPanel = () =>
+/**
+ * 카드가 여는 두 문을 **시험이 잡을 수 있게** 스파이로 받는다(기본값은 빈 함수).
+ * `onOpenAgentConfig` 는 설정 › 에이전트(그 에이전트가 골라진 상태), `onOpenProfile` 은
+ * 설정을 볼 수 없는 사람에게 열리는 프로필이다 — 판정은 `lib/agentConfigGate.ts` 가 낸다.
+ */
+const renderAgentsPanel = (
+  doors: { onOpenAgentConfig?: (id: string) => void; onOpenProfile?: (id: string) => void } = {},
+) =>
   render(
     <Sidebar panel="agents" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}}
-      onOpenInbox={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
+      onOpenInbox={() => {}}
+      onOpenAgentConfig={doors.onOpenAgentConfig ?? (() => {})}
+      onOpenProfile={doors.onOpenProfile ?? (() => {})}
+      collapsed={false} onToggleCollapse={vi.fn()} />,
   );
 
 const dm = (id: string, peerId: string): DmView =>
@@ -159,18 +170,79 @@ describe('비대칭이 사라진다 (docs/desktop-rail.html 3단계)', () => {
 
 describe('세 콜백이 이 자리에서 뜻하는 것', () => {
   /**
-   * **카드를 누르면 DM 이 열린다.** 설정에서는 상세(설정 폼)를 열지만 여기서는 아니다 —
-   * 옛 목록이 이미 `startDm` 이었고(자리만 바뀌었다), 문서가 이 칸을 *"인력"* 이라 적었다.
-   * 사람을 눌러 말을 거는 것이 이 앱에서 대화의 기본 동작이고, 설정으로 보내면 레일에서
-   * 한 번 더 누른 대가가 "설정 화면으로 튀어나가는 것"이 된다.
+   * **카드를 누르면 그 에이전트의 설정이 열린다 — DM 이 아니다.**
+   *
+   * 이 단언이 **뒤집혔다**(jaebin, 2026-09-08): *"여기서 에이전트를 눌렀을 때 DM 이 아니라
+   * 설정이 열려야 해. 이미 메시지를 보내는 건 DM 으로 보낼 수 있잖아."*
+   *
+   * 앞 판본은 근거로 *"옛 목록이 이미 `startDm` 이었다"* 와 문서의 *"인력"* 을 들었다.
+   * 단언만 뒤집지 않고 **왜 그 근거가 끝났는지**를 적는다: 바로 위 DM 칸이 이미 대화
+   * 목록이므로(없으면 `New` 로 만든다) 이 칸까지 DM 을 열면 **같은 것으로 가는 길이 둘**이
+   * 된다. 3단계가 두 칸을 함께 세운 근거는 *"답하는 물음이 다르다"* 였고 — DM 칸은
+   * "누구와 무슨 말을 했나", 이 칸은 "누가 있고 지금 일할 수 있나" — **누르는 동작도 그
+   * 물음을 따라야** 그 구분이 화면에서 참이 된다.
+   *
+   * 되돌려 RED: `onPick` 을 `startDm` 으로 되돌리면 스파이가 안 불려 빨개진다.
    */
-  it('카드를 누르면 DM 이 열린다 — 설정이 아니다', () => {
+  it('카드를 누르면 그 에이전트의 설정이 열린다 — DM 이 아니다', () => {
     const c = fakeController();
+    const onOpenAgentConfig = vi.fn();
     useAppStore.getState().set(두에이전트());
-    renderAgentsPanel();
+    renderAgentsPanel({ onOpenAgentConfig });
 
     fireEvent.click(screen.getByTestId('agent-card-codex'));
-    expect(c.startDm).toHaveBeenCalledWith('codex');
+    // 고른 에이전트가 **설정에서 골라진 상태로** 열려야 한다 — 목록만 열면 사람이 다시 찾는다.
+    expect(onOpenAgentConfig).toHaveBeenCalledWith('codex');
+    // 대화는 DM 칸의 일이다. 여기서 함께 열면 한 번 누른 것이 두 화면을 움직인다.
+    expect(c.startDm).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **설정을 볼 수 없는 사람은 프로필로 간다.** 서버의 `GET /accounts/agents` 는
+   * admin·소유자에게만 답하므로(`agentConfigGate` 주석), 그 외 사람에게 설정을 열면
+   * "목록을 받지 못했다" 만 남는다 — 갈 수 있는데 할 수 있는 것이 없는 곳을 만들지
+   * 않는다(design.md §4). 프로필에는 `DM 열기` 가 서 있어 대화로 가는 길도 끊기지 않는다.
+   *
+   * 선례를 따른 것이다: 본문 멘션(`MessageBody`)이 이미 admin·소유자는 설정, 그 외는
+   * 프로필로 보낸다. 두 자리가 같은 규칙이어야 같은 사람이 같은 문을 본다.
+   */
+  it('설정을 볼 수 없는 사람에게는 프로필이 열린다', () => {
+    fakeController();
+    const onOpenAgentConfig = vi.fn();
+    const onOpenProfile = vi.fn();
+    const me = acc('me', 'nari', 'human', false);
+    useAppStore.getState().set({
+      me,
+      accounts: { me, codex: acc('codex', 'codex', 'agent') },
+      channels: [chan('c1', 'general')],
+      dms: [], online: [], connected: true, activeChannelId: 'c1', runnerStates: {},
+    });
+    renderAgentsPanel({ onOpenAgentConfig, onOpenProfile });
+
+    fireEvent.click(screen.getByTestId('agent-card-codex'));
+    expect(onOpenProfile).toHaveBeenCalledWith('codex');
+    expect(onOpenAgentConfig).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **대조군** — 소유자면 관리자가 아니어도 설정으로 간다. 위 회귀선만 있으면 "admin 만"
+   * 으로 좁힌 구현도 초록이 되고, 그러면 자기 에이전트를 가진 사람이 이 칸에서 자기
+   * 설정에 못 간다(`#299` 가 목록 라우트를 소유자에게 열어 준 것이 정확히 그 이유다).
+   */
+  it('대조군 — 내가 소유한 에이전트는 관리자가 아니어도 설정이 열린다', () => {
+    fakeController();
+    const onOpenAgentConfig = vi.fn();
+    const me = acc('me', 'nari', 'human', false);
+    useAppStore.getState().set({
+      me,
+      accounts: { me, codex: acc('codex', 'codex', 'agent', false, { ownerAccountId: 'me' }) },
+      channels: [chan('c1', 'general')],
+      dms: [], online: [], connected: true, activeChannelId: 'c1', runnerStates: {},
+    });
+    renderAgentsPanel({ onOpenAgentConfig });
+
+    fireEvent.click(screen.getByTestId('agent-card-codex'));
+    expect(onOpenAgentConfig).toHaveBeenCalledWith('codex');
   });
 
   /**
@@ -192,13 +264,19 @@ describe('세 콜백이 이 자리에서 뜻하는 것', () => {
    */
   it('멈춘 에이전트는 ▶ 를 받고, 누르면 러너가 뜬다', () => {
     const c = fakeController();
+    const onOpenAgentConfig = vi.fn();
     useAppStore.getState().set(두에이전트({ online: [], connected: true }));
-    renderAgentsPanel();
+    renderAgentsPanel({ onOpenAgentConfig });
 
     expect(screen.getByTestId('agent-card-codex').dataset.face).toBe('stopped');
     fireEvent.click(screen.getByTestId('agent-relaunch-codex'));
     expect(c.reissueRunnerPat).toHaveBeenCalledWith('codex');
-    // 카드와 다른 동작이다 — 겹쳐 두면 실행이 우연히 눌린다(격자의 규칙).
+    /*
+      **카드와 다른 동작이다** — 겹쳐 두면 실행이 우연히 눌린다(격자의 규칙: ▶ 는
+      `stopPropagation` 을 한다). 재는 대상이 `startDm` 에서 카드의 새 동작(설정 열기)으로
+      옮겼다 — 옛 이름을 그대로 두면 이 단언은 아무것도 막지 못하는 참이 된다.
+    */
+    expect(onOpenAgentConfig).not.toHaveBeenCalled();
     expect(c.startDm).not.toHaveBeenCalled();
   });
 
@@ -403,5 +481,37 @@ describe('칸을 눌러 온 사람에게 빈 화면을 주지 않는다', () => 
     fireEvent.change(screen.getByTestId('agent-search'), { target: { value: 'cod' } });
     expect(screen.getByTestId('agent-card-codex')).toBeTruthy();
     expect(screen.queryByTestId('agent-card-forge')).toBeNull();
+  });
+});
+
+/**
+ * **배선을 `Workspace` 를 통째로 띄워 확인한다.**
+ *
+ * 위 시험들은 `Sidebar` 에 콜백을 손으로 넘긴다 — 그래서 `Workspace` 가 그 두 신호를
+ * **안 넘기는** 판본도 전부 초록이 된다. `#279`(멘션 클릭)가 정확히 그 틈에서 앱 전체의
+ * 멘션을 죽은 버튼으로 내보냈고(`mentionClick.test.tsx` 아래쪽 주석), 그 선례를 따른다.
+ */
+describe('배선 — Workspace 를 통째로', () => {
+  it('레일의 에이전트 칸에서 카드를 누르면 설정이 그 에이전트로 열린다', async () => {
+    const api = fakeApi();
+    setController({
+      api,
+      openChannel: vi.fn().mockResolvedValue(undefined),
+      openThread: vi.fn(), closeThread: vi.fn(),
+      startDm: vi.fn(), logout: vi.fn(), notifyTyping: vi.fn(),
+      refreshAccounts: vi.fn().mockResolvedValue(undefined),
+      send: vi.fn(), loadOlder: vi.fn(),
+      goBack: vi.fn().mockResolvedValue(false),
+      goForward: vi.fn().mockResolvedValue(false),
+    } as unknown as Controller);
+    useAppStore.getState().set(두에이전트());
+    const onOpenSettings = vi.fn();
+    render(<Workspace onLogout={vi.fn()} onOpenSettings={onOpenSettings} />);
+
+    fireEvent.click(screen.getByTestId('rail-agents'));
+    fireEvent.click(await screen.findByTestId('agent-card-codex'));
+
+    // `#279` 가 만든 신호를 그대로 쓴다 — 프로필의 `에이전트 설정` 버튼과 같은 인자다.
+    expect(onOpenSettings).toHaveBeenCalledWith('agents', 'codex');
   });
 });
