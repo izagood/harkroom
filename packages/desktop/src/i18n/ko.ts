@@ -1170,6 +1170,7 @@ export const ko = {
   'channel.header.searchTitle': '이 채널에서 찾기 (⌘K 는 전체 검색)',
 
   'channel.pane.archived': '보관된 채널이다',
+  'channel.pane.jumpToBottom': '아래로 내려가기',
   'channel.pane.runnerFailureAgent': '에이전트',
   /** 조사가 `{handle}` 의 받침을 따른다 — `codex 는` 과 `forge 는` 이 갈리지 않게. */
   'channel.pane.runnerFailureLine': '@{handle:은는} 지금 응답하지 않는다',

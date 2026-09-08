@@ -13,6 +13,7 @@ import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { RunnerStatusLine } from './RunnerStatus';
 import { dayLabel, localDayKey } from '../lib/day';
+import { isNearBottom } from '../lib/stickyBottom';
 import { useLocale, useT } from '../i18n/useT';
 import { displayBody } from '../lib/mention';
 import { mentionedHandles, mentionedIds } from '@murmur/shared';
@@ -42,6 +43,15 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   const t = useT();
   const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins, runnerStates } = useActiveStore();
   const bottomRef = useRef<HTMLDivElement>(null);
+  /** 스크롤 상자 자체. 바닥에서 얼마나 떨어졌는지는 이 요소만 안다. */
+  const listRef = useRef<HTMLDivElement>(null);
+  /**
+   * 지금 바닥을 보고 있는가. **기본값이 참인 것이 중요하다** — 채널을 처음 열면 바닥에
+   * 서므로, 첫 메시지가 도착할 때까지는 "따라 내려간다"가 맞다.
+   */
+  const atBottomRef = useRef(true);
+  /** "아래로 내려가기" 버튼을 세울지. 목록이 늘었지만 사람이 위를 보고 있을 때만 참이다. */
+  const [jumpVisible, setJumpVisible] = useState(false);
   // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
   // 열림 상태도 채널 화면이 들고 있고, 채널이 바뀌면 `key` 로 패널이 다시 만들어진다.
   const [filesOpen, setFilesOpen] = useState(false);
@@ -173,7 +183,53 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 바깥 상자를 끌지 않고, 바닥 표식을 보이게 하는 이 자리의 목적은 그대로 이룬다.
    * 회귀선은 `test/shellScroll.test.tsx`.
    */
-  useEffect(() => { bottomRef.current?.scrollIntoView?.({ block: 'nearest' }); }, [roots.length]);
+  const scrollToBottom = () => {
+    atBottomRef.current = true;
+    setJumpVisible(false);
+    bottomRef.current?.scrollIntoView?.({ block: 'nearest' });
+  };
+
+  /**
+   * 목록이 한 줄 늘었을 때 **따라 내려갈지 버튼을 세울지** 가르는 자리다(2026-09-09).
+   *
+   * 예전에는 조건이 없었다 — 늘면 무조건 바닥으로 갔다. 그래서 위쪽을 읽는 중에 남이 한 줄
+   * 쓰거나, "Remove from channel" 처럼 시스템 메시지를 낳는 조작을 하기만 해도 화면이
+   * 바닥으로 끌려가 읽던 자리를 잃었다. 지금은 바닥에 붙어 있을 때만 따라 내려간다.
+   *
+   * **내가 쓴 것은 예외로 따라간다.** 위쪽을 보다가 뭔가 보내면 그 사람의 관심은 방금
+   * 보낸 것에 있다 — 거기서 버튼을 세우면 자기 발화를 보려고 한 번 더 눌러야 한다.
+   *
+   * 딸림값이 `roots.length` 뿐인 것은 예전과 같다(내용이 바뀌어도 스크롤을 건드릴 일은
+   * 없다). 바닥 여부와 마지막 작성자는 이 렌더의 값을 클로저로 읽으므로 딸림값이 아니다.
+   */
+  useEffect(() => {
+    if (atBottomRef.current || roots[roots.length - 1]?.authorId === me?.id) scrollToBottom();
+    // 목록이 늘었는데 사람이 위를 보고 있다 — 화면은 그대로 두고 내려갈 길만 준다.
+    else setJumpVisible(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roots.length]);
+
+  /**
+   * 채널을 옮기면 **바닥에서 시작한다.** 이 두 줄이 없으면 위를 보다 채널을 옮겼을 때
+   * `atBottomRef` 가 거짓으로 남아, 새 채널의 최신 대화가 아닌 어중간한 자리에 서고
+   * 버튼도 그대로 남는다(스크롤 상자는 채널이 바뀌어도 같은 DOM 이라 `scrollTop` 이
+   * 0 으로 돌아가지도 않는다).
+   */
+  useEffect(() => { scrollToBottom(); }, [activeChannelId]);
+
+  /**
+   * 스크롤 위치를 ref 에 담는 이유: 이 값은 **그리는 데 쓰이지 않는다.** 상태로 두면
+   * 스크롤 한 번에 채널 화면이 프레임마다 다시 그려진다(목록이 수백 줄인 자리다).
+   * 화면에 나오는 것은 버튼의 유무뿐이고, 그것만 상태로 둔다.
+   */
+  const onListScroll = () => {
+    const el = listRef.current;
+    if (!el) return;
+    const near = isNearBottom(el);
+    atBottomRef.current = near;
+    // 사람이 손으로 바닥까지 내려왔으면 버튼은 할 일이 없다.
+    if (near) setJumpVisible(false);
+  };
 
   // 채널을 옮기면 파일 패널을 닫는다. 열린 채로 두면 방금 떠난 채널의 목록이 잠깐 남아
   // 어느 채널의 파일인지 오해할 여지가 생긴다.
@@ -266,7 +322,21 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           )}
         </div>
       )}
-      <div className="flex-1 overflow-y-auto py-2">
+      {/* 스크롤 상자를 한 겹 감싸는 이유는 **버튼을 그 위에 띄우기 위해서**다. 버튼을 상자
+          안에 두면 목록과 함께 스크롤되어 정작 위를 볼 때 화면 밖에 있고, 상자 밖 형제로
+          두면 대화 높이를 그만큼 깎는다(버튼은 잠깐만 서는 것이라 자리를 차지할 이유가
+          없다). `min-h-0` 이 필요한 것은 flex 칸의 기본 최소 높이가 내용 높이라서다 —
+          없으면 목록이 길어질 때 상자가 자라 `overflow-y-auto` 가 듣지 않는다. */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+      <div
+        ref={listRef}
+        onScroll={onListScroll}
+        /* 회귀선(`jumpToBottom.test.tsx`)이 이 상자의 스크롤 수치를 가짜로 세워야 한다 —
+           jsdom 은 레이아웃을 재지 않아 `scrollHeight` 가 늘 0 이다. 글자로는 잡을 수
+           없는 상자다(안에 대화가 다 들어 있다). */
+        data-testid="channel-scroll"
+        className="flex-1 overflow-y-auto py-2"
+      >
         {activeChannelId && hasMore[activeChannelId] && (
           // 서버 히스토리 창(최신 N개) 밖으로 밀려난 대화로 돌아가는 유일한 경로다.
           <div className="px-4 py-2 text-center">
@@ -323,6 +393,18 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           );
         })}
         <div ref={bottomRef} />
+      </div>
+      {/* 작성창 **조금 위**에 선다(jaebin 의 요청 그대로). 오른쪽에 붙이는 것은 본문 글줄을
+          가리지 않기 위해서다 — 대화는 왼쪽 정렬이다. */}
+      {jumpVisible && (
+        <button
+          data-testid="channel-jump-to-bottom"
+          className="absolute bottom-3 right-4 rounded-full border border-border bg-surface-raised px-3 py-1 text-meta font-medium text-fg shadow-lg hover:bg-surface-sunken"
+          onClick={scrollToBottom}
+        >
+          {t('channel.pane.jumpToBottom')}
+        </button>
+      )}
       </div>
       <TypingLine />
       {/* #368: 부른 에이전트의 러너가 안 떴다는 사실은 **부른 자리 바로 위**에 둔다. 헤더에
