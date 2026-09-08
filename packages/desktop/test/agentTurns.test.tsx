@@ -103,6 +103,29 @@ describe('화면 — 도는 턴이 있을 때', () => {
     expect(screen.queryByTestId('agent-turn-human-s-quiet')).toBeNull();
   });
 
+  /*
+    다중 계정 3단계 — **어느 claude 계정으로 도는지**가 줄에 보인다.
+
+    셋을 가르는 것이 이 시험의 요지다: 이름이 있으면 그 이름, `null` 이면 시스템 기본
+    로그인(확인된 사실), 없으면 아무것도 그리지 않는다(모른다). 없을 때 "기본"이라고
+    적으면 화면이 확인한 적 없는 것을 단언하고, 그러면 계정을 쫓는 사람은 화면을 더 이상
+    믿을 수 없다 — `mode`·`acceptsInput` 이 옵셔널인 것과 같은 규율이다.
+  */
+  it('계정 배지는 이름 · 기본 로그인 · 모름 셋을 다르게 그린다', () => {
+    renderTurns({ kind: 'known', turns: [
+      turn({ sessionId: 's-named', claudeAccount: 'lime', claudePool: 'work' }),
+      turn({ sessionId: 's-default', claudeAccount: null, claudePool: null }),
+      turn({ sessionId: 's-unknown' }),
+    ] });
+    expect(screen.getByTestId('agent-turn-account-s-named').textContent).toBe('lime');
+    // 풀은 배지가 아니라 `title` 이 말한다 — 줄이 좁고, 같은 이름의 계정이 풀마다 있을
+    // 수 있어서 풀은 그것을 가릴 때만 필요하다.
+    expect(screen.getByTestId('agent-turn-account-s-named').getAttribute('title')).toContain('work');
+    // 풀이 빈 러너는 시스템 기본 로그인으로 돈다 — 계정 이름이 없는 것과 다른 사실이다.
+    expect(screen.getByTestId('agent-turn-account-s-default').textContent).not.toBe('');
+    expect(screen.queryByTestId('agent-turn-account-s-unknown')).toBeNull();
+  });
+
   it('스레드를 모르는 묶음에는 이동 버튼이 없다 — 눌러도 갈 곳이 없다', () => {
     renderTurns({ kind: 'known', turns: [turn({ sessionId: 's1', threadRootId: null })] });
     expect(screen.getByTestId('agent-turns-group-c1-root')).toBeTruthy();

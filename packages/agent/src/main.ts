@@ -314,6 +314,10 @@ interactive = createInteractiveManager({
   // 보던 세션이 사라진다(세션 파일이 계정 디렉터리 안에 있다) — 관찰 도중에 화면을 갈아
   // 치우는 것보다 그 계정의 한도를 그대로 보여 주는 편이 낫다. 그래서 첫 계정에 고정한다.
   claudeConfigDir: accountLane[0]?.configDir ?? null,
+  // 화면이 말할 이름은 **같은 계정에서** 읽는다(`InteractiveTurnDeps.claudeAccount`) —
+  // 위의 configDir 와 갈리면 화면이 도는 계정과 다른 이름을 단언한다.
+  claudeAccount: accountLane[0]?.name ?? null,
+  claudePool: lane.pool ?? null,
   murmurUrl: config.murmurUrl, pat: config.murmurPat,
   relay, registry, queue: mentionQueue,
   orphanMs: config.interactiveOrphanMs,
@@ -340,6 +344,9 @@ const scheduler = createMentionScheduler({
     codexHome,
     claudeAccount: account?.name ?? null,
     claudeConfigDir: account?.configDir ?? null,
+    // 풀은 계정과 달리 축을 따라 바뀌지 않는다(축 자체가 한 풀이다) — 기동 때 정한 lane
+    // 에서 그대로 온다. 화면이 "어느 풀의 어느 계정"을 말할 수 있으려면 짝이 필요하다.
+    claudePool: lane.pool ?? null,
     // 사람을 부를 때 쓰는 이름과 원장(2026-09-08). **원장은 러너 수명 동안 하나다** —
     // 턴마다 새로 만들면 매번 "처음 부르는 계정"이 되어, 7개 스레드가 동시에 걸렸을 때
     // 창이 7개 뜬다. 관문은 계정 단위라 하나만 지나면 나머지가 함께 풀린다.

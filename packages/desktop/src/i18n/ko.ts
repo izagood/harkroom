@@ -233,6 +233,9 @@ export const ko = {
   // ---------------------------------------------------------------------------
 
   // --- Agents 칸의 관제 구획(`AgentTurns`) — 근거는 `en.ts` 의 같은 묶음에 있다 --------
+  'agentTurns.accountDefault': '기본 로그인',
+  'agentTurns.accountTitle': '이 턴이 지금 쓰는 claude 계정 (풀: {pool})',
+  'agentTurns.accountTitleRoot': '이 턴이 지금 쓰는 claude 계정 (뿌리 풀)',
   'agentTurns.cancel': '중단',
   'agentTurns.cancelAll': '전부 중단',
   'agentTurns.cancelAllTitle': '도는 턴 {n}개를 중단할까?',

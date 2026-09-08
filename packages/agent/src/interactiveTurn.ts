@@ -86,6 +86,9 @@ export interface InteractiveRelay {
     mode?: 'mention' | 'interactive';
     /** 이 세션의 PTY 에 사람이 입력할 수 있는가(#369). 인터랙티브 턴은 stdinFile 이 없어 true 다. */
     acceptsInput: boolean;
+    /** 이 턴이 쓰는 claude 계정과 그 풀(다중 계정 3단계). 관찰용이다 — 턴은 읽지 않는다. */
+    claudeAccount?: string | null;
+    claudePool?: string | null;
     onViewerCount?: (count: number) => void;
   }): {
     sessionId: string;
@@ -118,6 +121,16 @@ export interface InteractiveTurnDeps {
    * 묶는 것과 같은 이유).
    */
   claudeConfigDir: string | null;
+  /**
+   * 그 계정의 이름과 풀. `claudeConfigDir` 와 **같은 계정을 가리켜야 한다** — 이 둘은
+   * 화면이 보는 이름이고 위가 자식이 실제로 쓰는 경로라서, 갈리면 화면이 도는 계정과
+   * 다른 이름을 단언한다. 그래서 main 에서 한 계정(`accountLane[0]`)에서 함께 읽는다.
+   *
+   * 인터랙티브 턴은 **페일오버하지 않는다**(첫 계정 고정) — 그래서 이 값은 턴이 사는
+   * 동안 바뀌지 않는다. 멘션 턴이 턴마다 다시 싣는 것과 다른 점이다.
+   */
+  claudeAccount?: string | null;
+  claudePool?: string | null;
   relay: InteractiveRelay;
   registry: TurnRegistry;
   queue: MentionQueue;
@@ -288,6 +301,9 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       // 자식의 stdin 이다 — 입력이 실제로 닿는다. 위 `mode` 가 아니라 **계획**에서 읽는
       // 이유: 판정의 근거는 턴의 이름이 아니라 fd 0 의 정체다(pty.ts::acceptsPtyInput).
       acceptsInput: acceptsPtyInput(plan),
+      // claude 턴에만 싣는다(`mentionTurn` 과 같은 근거 — 계정 축은 claude 것이다).
+      claudeAccount: def.harness === 'claude-code' ? (deps.claudeAccount ?? null) : undefined,
+      claudePool: def.harness === 'claude-code' ? (deps.claudePool ?? null) : undefined,
       onViewerCount,
     });
 
