@@ -1406,7 +1406,14 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
             레일이 `주 목록` 과 커뮤니티 마크를 든다 — 랜드마크 구별은 이미 되어 있다.
           */}
           <span data-tauri-drag-region className="flex items-center">
-            <Logo size={16} />
+            {/*
+              **28px 이다**(실측 2026-09-08, 사용자가 화면에서 고른 안). 이 바는
+              `TOP_BAR_H` = `h-9` = 36px 인데 16px 로는 바 높이의 44% 밖에 차지하지 않아
+              브랜드가 아니라 부스러기로 보였다. 위 주석대로 옆 글자를 뺐으므로 이 자리에
+              남은 것은 로고 하나뿐이고, 그러면 글자 크기에 맞출 이유도 사라진다.
+              28px 은 위아래 4px 을 남긴다 — 바를 꽉 채우지 않는 마지막 크기다.
+            */}
+            <Logo size={28} />
           </span>
           {/* `#443`: 이 점은 실측에서 **유일하게 맞았던** 표시다(끊긴 순간 빨강). 고치는 것은
               색이 아니라 **말**이다 — `disconnected` 한 단어는 그 뒤에 따라오는 사실
