@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { AgentConfig, AgentView, PatView } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { acc } from './helpers/fakeApi';
@@ -60,8 +61,12 @@ const openAsOwner = async (overrides: Record<string, unknown> = {}) => {
   return c;
 };
 
-beforeEach(() => useAppStore.getState().reset());
-afterEach(() => { cleanup(); setController(null as unknown as Controller); });
+// **언어를 한국어로 고정한다.** 이 파일의 축들은 이 화면의 한국어 문구로 쓰여 있고,
+// 그 문구가 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다(사이드바 PR 이 세운
+// 방식과 같다). 영어가 원본이 되면서 기본값이 영어가 됐으므로, 한국어를 재려면 한국어라고
+// 말해야 한다. 두 언어로 다 뜨는지는 `i18n.test.tsx` 가 잰다.
+beforeEach(() => { useAppStore.getState().reset(); usePrefsStore.getState().setLocale('ko'); });
+afterEach(() => { cleanup(); setController(null as unknown as Controller); usePrefsStore.getState().setLocale('system'); });
 
 describe('소유자의 에이전트 설정 화면 (#299)', () => {
   it('5. 소유자 화면에 PAT·메모리 패널이 보이고 내용이 실제로 채워진다', async () => {
@@ -113,7 +118,7 @@ describe('소유자의 에이전트 설정 화면 (#299)', () => {
     const c = await openAsOwner();
 
     fireEvent.change(screen.getByLabelText('Working directory'), { target: { value: '/tmp/x' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
 
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
     const patch = (c.updateAgent as ReturnType<typeof vi.fn>).mock.calls[0]![1] as Record<string, unknown>;
@@ -135,7 +140,7 @@ describe('소유자의 에이전트 설정 화면 (#299)', () => {
     fireEvent.click(screen.getByTestId('agent-card-mybot'));
     await screen.findByLabelText('Mention permission');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
     const patch = (c.updateAgent as ReturnType<typeof vi.fn>).mock.calls[0]![1] as Record<string, unknown>;
     expect(Object.keys(patch)).toContain('mentionPermission');

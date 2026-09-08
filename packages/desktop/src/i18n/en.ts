@@ -68,12 +68,15 @@ import type { Message } from './types';
  *
  * ## 남은 것 — 다음 PR 들이 할 일
  *
- * 뼈대 PR 이 **대기 사슬** 13개를, 이 PR 이 **사이드바** 107개를 옮겼다.
+ * 뼈대 PR 이 **대기 사슬** 13개를, 그 다음이 **사이드바** 107개를, 이 PR 이
+ * **에이전트 설정**(`AgentsSettings`) 146개를 옮겼다.
  * 남은 것을 무게순으로 적어 둔다 — 각각이 **한 PR** 이다.
  *
  * | 남은 것 | 규모 | 먼저 풀어야 할 것 |
  * |---|---|---|
- * | `AgentsSettings` · `AgentGrid` | 214 · 99 | 버전 칩 어휘(`뒤처짐`·`버전 모름`·`멈추는 중`)를 위 표에서 가져온다 |
+ * | `AgentGrid` | 99 | 버전 칩 어휘(`뒤처짐`·`버전 모름`·`멈추는 중`)를 위 표에서 가져온다. **`agents.*` 에 붙는다** — 같은 화면의 격자이고, 이미 선 덩어리(`grid`·`stale`)가 그 자리다 |
+ * | `TeamDetail` · `TeamGrid` · `TeamMemberPicker` | 8 · 4 · 5 | **`agents.teams.*` 가 이미 서 있다.** 팀 묶음의 격자 머리와 만들기 폼은 이 PR 이 옮겼고, 상세는 그 파일들에 남아 있다 |
+ * | `Profile` | 소수 | `lastTurnLabel` 이 **이미 번역기를 받는다**(이 PR 이 그렇게 바꿨다) — 그 화면이 `useT` 를 이미 들고 있으므로 나머지는 키만 씌우면 된다 |
  * | `runnerLauncher.ts` | 118 | **판정 함수다** — `chainSentences` 와 같은 (b) 주입을 쓴다 |
  * | `controller.ts` | 59 | 판정 함수. 위와 같다 |
  * | `MessageItem` | 57 | **손으로 하는 복수형이 여기 있다**(`replyCount === 1 ? 'reply' : 'replies'`) — `waitChain.unblocks` 와 같은 모양으로 사전에 넘긴다. `subjectParticle` 을 아직 쓰는 유일한 자리이기도 하다(그 함수는 그때 지운다) |
@@ -81,14 +84,25 @@ import type { Message } from './types';
  * | `daemonFacts.ts` | 38 | 판정 함수. **회귀선이 판정 낱말 7개를 검사한다**(`daemonFacts.test.tsx` 의 제약 2) — 그 축은 문구에 `이상`·`비정상` 이 **없음**을 재므로, 옮긴 뒤에도 문구를 재야 한다(키로는 못 잰다) |
  * | ~~시간 표기~~ | — | **끝났다** — 아래 `time.*` 과 `lib/time.ts` 를 보라 |
  * | 설정 목차 14개 · `Save`·`Cancel`·`Invite` 등 | 소수 | 이미 영어다 — **키만 씌우면 된다.** 둘 이상이 쓰므로 `common.*` 로 간다 |
+ * | 나머지 설정 화면들(`Gallery`·`Skills`·`HandleGroups`·`AgentDefaults` 등) | 42 · 19 · 16 · 11 | 각각 자기 영역(`gallery`·`skills`·…)을 연다. 영역 이름을 `settings.*` 로 묶지 않는 근거는 아래 `agents` 머리말에 있다 |
  * | `RunnerStatus.tsx::runnerStatusLabel` · `lib/presenceView.ts::PRESENCE_LABEL` | 소수 | **사이드바가 이미 부르고 있다**(`sidebar.runner.state` 가 그 값을 감싼다). 둘 다 세 화면 이상이 쓰므로 옮길 때 `common.*` 후보다 |
  *
- * ### `common` 이 아직 비어 있는 이유
+ * ### `common` 이 아직 비어 있는 이유 — **두 번째 화면이 왔는데도**
  *
- * 사이드바가 `Save`·`Cancel`·`Invite`·`Person`·`Agent` 를 쓰는데 전부 `sidebar.*` 에
- * 있다. **판단 순서 1번이 "실제로 두 번째 화면이 부를 때"** 이기 때문이다 — 지금은 그
- * 화면이 하나다. 설정 화면을 옮기는 PR 이 같은 말을 부르는 순간, 그때 `common.*` 로
- * 올리고 사이드바 키를 지운다. 미리 올려 두면 `common` 이 아무도 안 읽는 사전이 된다.
+ * 에이전트 설정이 `Cancel` 을 넷(`agents.disable.cancel`·`agents.pat.revokeCancel`·
+ * `agents.profile.avatarRemoveCancel`·`agents.teams.cancel`), `Save` 를 하나
+ * (`agents.detail.save`) 쓴다. 판단 순서 1번(*"실제로 두 번째 화면이 부를 때"*)만 보면
+ * 지금이 승격할 때다. **그런데 승격하지 않았다.**
+ *
+ * 이유는 바로 아래 문단이 이미 적어 둔 것이다 — 그 규칙과 이 규칙은 같은 문장의 앞뒤다.
+ * `Cancel` 이 여러 자리에 있는 것은 **같은 말을 여러 화면이 쓰는 것**이 아니라 *"각
+ * 폼의 취소가 저마다 다른 것을 되돌린다"* 이고, 실제로 이 PR 에서 그 갈림이 났다:
+ * 기억 지우기의 반대짝은 `Cancel` 이 아니라 `Keep it` 이다(무엇이 남는지를 말해야 한다).
+ * 사진 지우기 취소·PAT 폐기 취소·팀 만들기 취소도 각각 다른 것을 되돌린다.
+ *
+ * 한 키로 묶는 순간 그중 하나를 `Keep the photo` 로 바꾸는 일이 나머지 셋을 함께
+ * 바꾼다. **`common` 에 올릴 자격은 "글자가 같다"가 아니라 "뜻이 하나다"** 이고,
+ * `Cancel` 은 뒤엣것이 아니다.
  *
  * 그래서 `sidebar.channel.cancel`·`sidebar.delete.cancel`·`sidebar.edit.cancel`·
  * `sidebar.section.cancel` 넷이 같은 값을 갖고 있다. **중복이 아니라 아직 안 온 승격이다** —
@@ -106,6 +120,11 @@ import type { Message } from './types';
  * `durationLabel` · `runningLabel` · `tookLabel` 넷 중 하나를 부르면 그 언어의 말이
  * 나온다. `{n}분 전` 같은 문구를 사전에 새로 적는 PR 이 있다면 그것은 이 결정을 모르고
  * 쓴 것이다.
+ * **다음 PR 이 다시 잴 자리**를 적어 둔다: `Loading…` 이 지금 둘이고
+ * (`sidebar.members.loading`·`agents.memory.loading`) 뜻도 하나다 — *"아직 못 읽었다"*.
+ * 세 번째가 오면 그것이 `common` 의 첫 손님이다. 다만 `agents.run.defaultsLoading`
+ * (`Loading the defaults…`)·`agents.pat.loading`(`Reading PATs…`)은 **그 후보가 아니다**:
+ * 같은 화면에 여럿이 함께 뜰 수 있어 무엇을 읽는 중인지가 문구에 있어야 한다.
  *
  * 그리고 **설정 화면에 언어 고르는 자리가 아직 없다.** 값과 배선은 다 있다
  * (`prefs.locale` · `setLocale` · `LOCALE_NAMES`) — `AppearanceSettings` 가 색 모드를
@@ -117,6 +136,385 @@ export const en = {
   // common — **두 화면 이상이 실제로 부르는 것만** 온다. 미리 올려 두지 않는다.
   // ---------------------------------------------------------------------------
   'common.someone': 'someone',
+
+  // ---------------------------------------------------------------------------
+  // agents — **화면 이름이다.** `settings/AgentsSettings.tsx` 가 그리는 말이고,
+  // 이 말들을 내는 판정은 `lib/` 에 없다(그쪽에 있는 것은 아래 '안 옮긴 것'에 적었다).
+  //
+  // 영역 이름이 `settings.agents` 가 아니라 `agents` 인 이유: 세 칸 규칙(`en.ts` 머리말)
+  // 에서 `settings` 를 영역으로 쓰면 이 화면의 구획이 셋째 칸을 다 먹어 덩어리가 사라진다
+  // (`settings.agents.runnerStopHint` 처럼 이름이 다시 길어진다). 설정 화면들은 서로
+  // 문자열을 나눠 쓰지 않으므로 **화면 하나가 영역 하나**다.
+  //
+  // **덩어리는 이 화면의 실제 구획을 따른다** — 화면을 열고 짚으면 키가 나온다.
+  //
+  // | 덩어리 | 그 구획 |
+  // |---|---|
+  // | `create` | 새 에이전트 만들기(이름 규칙 · 실패) |
+  // | `detail` | 상세 머리띠 — 돌아가는 길 · 생존 · 소유자 · 기동 실패 |
+  // | `disable` | 비활성화/활성화 상자 |
+  // | `grid` | 격자 머리 · 탭 · 목록 조회 실패 |
+  // | `memory` | 기억(memory) 상자 |
+  // | `pat` | PAT 목록 · 발급 · 폐기 |
+  // | `permissions` | 「권한」 묶음 — 멘션 권한 · 작업 디렉터리 · 소유자 |
+  // | `profile` | 「프로필」 묶음 — 사진 · 이름 · 지시문 |
+  // | `run` | 「실행」 묶음 — harness · 기본값 상태 |
+  // | `runner` | 러너 (이 앱) · 실행 명령 틀 · 복사 |
+  // | `stale` | 뒤처진 러너 재기동 띠 |
+  // | `stop` | 러너 실행 · 중지 상자 |
+  // | `teams` | 팀 묶음(격자 · 만들기) |
+  //
+  // 덩어리 안은 **키 이름 알파벳순**이다 — 근거는 아래 `sidebar` 머리말과 같다(리베이스).
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 중지 / 실행 | `Stop` / `Start` | `#493` 이 「종료 요청」·「요청 되돌리기」를 이 한 쌍으로 접었고 그 근거가 *"사람은 내가 보낸 요청을 취소한다고 생각하지 않는다"* 였다. `Resume` 은 멈춘 것이 이어진다는 뜻이라 거짓이다 — 이 버튼이 하는 일은 **자동 기동 대상에 다시 넣기**뿐이고 러너는 다음 기동에 뜬다 |
+  // | 연결 끊김 — 알 수 없음 | `Disconnected — its presence is unknown` | `sidebar.brand.disconnected` 와 같은 규율이다. `Disconnected` 만 두면 **그래서 이 에이전트가 살았는지 모른다**가 사라지고, 사람은 그것을 '오프라인'으로 읽는다 |
+  // | 활동 없음 | `No activity yet` | `yet` 이 진다. `No activity` 는 '죽었다'로도 읽히는데, `lastTurn.ts` 가 적어 둔 대로 murmur 는 한 번도 안 돈 것과 죽은 것을 **구분할 수단이 없다** |
+  // | 기억 | `Memory` | 화면이 이미 `기억 (memory)` 로 원어를 병기하고 있었다 — 영어에서는 그 병기가 같은 말의 반복이라 하나로 둔다 |
+  // | 두기 | `Keep it` | 지우기 확인의 반대짝이다. `Cancel` 은 **무엇이 남는지**를 안 말한다 — 여기서 사람이 고르는 것은 '취소'가 아니라 '그 기억을 남긴다'다 |
+  // | 뒤처진 러너 전체 재기동 | `Restart all outdated runners ({count})` | `Outdated` 는 위 표(`뒤처짐`)에서 이미 정한 낱말이다. 개수를 이름에 넣는 이유는 원래 주석이 적었다 — **개수가 곧 영향 범위**다 |
+  // | 지원 예정 | `planned` | `not supported` 가 아니다. 원래 주석이 가른 그대로다: *"없는 것은 사용자의 CLI 가 아니라 murmur 의 구현이므로 '설치 안 됨'이 아니라 '지원 예정'이다"* |
+  // | attach | `attach` | **번역하지 않는다.** 사람이 터미널에서 실제로 하는 조작의 이름이고, 이 제품의 고유어다(`admin`·`PAT`·`harness` 와 같다) |
+  //
+  // ## 사전에 **안** 넣은 것 — 각각 이유가 다르다
+  //
+  // - **`runnerStatusLabel`(`RunnerStatus.tsx`) · `daemonFactRows`(`lib/daemonFacts.ts`) ·
+  //   `lastTurnAgo`(`lib/lastTurn.ts`)** — **이 파일 밖이다.** 사이드바 PR 이 같은 경계를
+  //   지켰다(그 커밋: *"이 파일 밖이라 안 건드렸다"*). 이 화면은 그 값을 **감싸는 틀**만
+  //   사전으로 옮긴다(`agents.detail.lastTurn` 이 `{ago}` 를 받는 것이 그것이다)
+  // - **경과·시각 표기** — `Intl` 이 이미 아는 것이다. `en.ts` 머리말의 '남은 것' 표가
+  //   *"사전에 넣기 전에 `Intl.RelativeTimeFormat` 으로 옮길지 먼저 정해야 한다"* 고
+  //   적어 뒀고, 그 판단은 이 PR 의 것이 아니다. `toLocaleString()` 은 이미 로케일을 따른다
+  // - **`admin` · `PAT` · `harness` · `daemon` · `attach` · `murmur`** — 이 제품의 고유어다.
+  //   옮기면 사람이 문서·터미널·서버 오류에서 보는 말과 화면의 말이 갈라진다
+  // - **`auto` · `readonly`** — `MentionPermission` 의 **저장·전송용 값**이다. 옵션 라벨이
+  //   `auto — …` 로 값을 앞에 세우는 것은 그 값이 API·설정 파일에도 그대로 나오기 때문이다
+  //   (`sidebar.notify` 가 `all`/`mentions`/`none` 을 안 옮긴 것과 같은 규율)
+  // - **경로 예시(`/Users/me/some-repo`) · `team-name` · `fizz` · `runner`** — 자리표시다.
+  //   번역하면 사람이 그것을 **입력해야 하는 값**으로 읽는다
+  // - **종료 코드 `78`·`401`** — 숫자다. 러너 로그에서 보는 그 숫자여야 한다
+  // ---------------------------------------------------------------------------
+
+  'agents.create.failed': 'The agent was not created — that name may already be taken',
+  /**
+   * 이름 규칙. **`Invalid name` 이 아니라 무엇이 되는지를 적는다**(`sidebar.channel
+   * .createInvalidName` 과 같은 규율). 뒤의 괄호는 **규칙이 아니라 이유**다 — 이 이름이
+   * 채널에서 `@이름` 이 되기 때문에 handle 문법을 따르는 것이고, 그 사실을 빼면 사람은
+   * 왜 공백이 안 되는지 모른 채 규칙만 외운다.
+   */
+  'agents.create.invalidName':
+    'Names take lowercase letters, digits, hyphens and underscores — 2 to 32 characters '
+    + '(this is what you call in a channel with @name)',
+
+  'agents.detail.back': '← Agents',
+  /**
+   * 소켓이 끊겼을 때. **`Disconnected` 한 단어로 끝내지 않는다** — 끊긴 동안 `online` 은
+   * 그냥 빈 배열이라(그 화면 주석) 이 에이전트가 살아 있는지를 **모르는** 것이지 죽은
+   * 것이 아니다. 한 단어로 줄이면 사람이 그것을 '오프라인'으로 읽는다.
+   */
+  'agents.detail.disconnected': 'Disconnected — its presence is unknown',
+  /**
+   * 경과는 `{ago}` 로 받는다 — **계산도 문구도 `lib/lastTurn.ts` 것이다**(위 '안 넣은 것').
+   * 이 사전이 지는 것은 접두뿐이고, 그것이 원래 `lastTurnLabel` 이 하던 일 그대로다.
+   */
+  'agents.detail.lastTurn': 'Last activity: {ago}',
+  'agents.detail.launchFailed': 'Did not start',
+  /** 사유가 붙을 때. 사유 문구는 러너가 준 것이라 사전이 지지 않는다. */
+  'agents.detail.launchFailedReason': 'Did not start — {reason}',
+  /**
+   * 한 번도 안 돈 에이전트. **`yet` 이 진다** — `lastTurn.ts` 가 적은 대로 murmur 는
+   * '한 번도 안 돌았다'와 '죽었다'를 구분할 수단이 없고, `No activity` 만 두면 사람이
+   * 뒤엣것으로 읽는다.
+   */
+  'agents.detail.noActivity': 'No activity yet',
+  'agents.detail.offline': 'Offline',
+  'agents.detail.online': 'Online',
+  'agents.detail.ownerNone': 'None',
+  /** 소유자 id 는 있는데 계정 디렉터리에 없다 — **빈 칸으로 그리면 '없다'와 같아진다.** */
+  'agents.detail.ownerUnknown': 'Unknown account',
+  /**
+   * 되돌리기. **`Cancel` 이 아니다** — 이 버튼은 화면을 닫지 않고 서버 값으로 초안을
+   * 되채운다(`pick(selected)`). `Cancel` 로 두면 사람은 상세에서 나갈 것으로 읽는다.
+   */
+  'agents.detail.revert': 'Revert',
+  'agents.detail.save': 'Save changes',
+  'agents.detail.saveFailed': 'The changes were not saved',
+  'agents.detail.submitNew': 'Create agent',
+  'agents.detail.titleEdit': 'Edit {handle}',
+  'agents.detail.titleNew': 'Add agent',
+
+  'agents.disable.cancel': 'Cancel',
+  /**
+   * 확인 버튼. **`Confirm` 이 아니다** — 사람이 누르는 것은 절차의 이름이 아니라
+   * "정말 끈다"는 결정이고, `for good` 이 PAT 가 안 돌아온다는 되돌릴 수 없음을 진다
+   * (`sidebar.delete.confirm` 이 같은 규율이다).
+   */
+  'agents.disable.confirm': 'Disable for good',
+  'agents.disable.disable': 'Disable',
+  /**
+   * 스크린리더가 읽는 이름. **보이는 글자(`Disable`)보다 길다** — 이 상자에는 `Disable`
+   * 과 `Disable for good` 이 나란히 서고, 목록으로 훑는 사람에게는 앞뒤 문맥이 없다.
+   * 무엇을 끄는지가 이름에 있어야 그 둘을 가를 수 있다(원래 화면이 그래서 갈라 뒀다).
+   */
+  'agents.disable.disableAction': 'Disable this agent',
+  /**
+   * 끄기·켜기의 실패를 **한 문구로 뭉치지 않는다** — 사람이 방금 누른 것이 무엇이었는지가
+   * 오류에 남아야 어느 쪽이 실패했는지 안다. 그리고 결과 상태로 쓴다(`en.ts` 머리말의
+   * `The X was not Yed`): 지금 그 에이전트가 **여전히 켜져 있다**는 것이 사람이 알아야 할 값이다.
+   */
+  'agents.disable.disableFailed': 'The agent is still enabled',
+  'agents.disable.enable': 'Enable',
+  /** 위 `disableAction` 과 같은 이유로 이름이 따로 있다. */
+  'agents.disable.enableAction': 'Enable this agent',
+  'agents.disable.enableFailed': 'The agent is still disabled',
+  'agents.disable.headingDisabled': 'Disabled agent',
+  'agents.disable.headingEnabled': 'Agent is enabled',
+  /**
+   * 꺼진 에이전트를 다시 켤 때. **PAT 가 왜 없는지를 말한다** — 켠 직후 PAT 0개를 보고
+   * 사람이 "고장 났나"라고 읽지 않게, 그것이 비활성화의 결과였음을 여기서 잇는다.
+   */
+  'agents.disable.noteDisabled':
+    'This agent is disabled. Enabling it again will report that it has no PAT and needs a '
+    + 'new one — disabling revoked every PAT it had.',
+  /**
+   * 끄기 전 안내. **되돌릴 수 없는 것이 무엇인지**를 말한다 — 끄는 것 자체는 되돌릴 수
+   * 있지만 PAT 는 돌아오지 않는다(서버가 해시만 보관한다). 그 비대칭이 이 문장의 전부다.
+   *
+   * `{strong…}` 은 **굵게 그릴 마디**다. 원래 화면이 그 둘을 굵게 두고 있었고, 그 굵기는
+   * 꾸밈이 아니라 문단에서 건져야 할 사실을 가리킨다(`AgentsSettings.emphasize` 머리말).
+   */
+  'agents.disable.noteEnabled':
+    'Disabling an agent {strongRevoked}, and enabling it again does not bring them back — '
+    + 'you have to {strongMint}.',
+  'agents.disable.noteEnabledMint': 'mint new ones',
+  'agents.disable.noteEnabledRevoked': 'revokes every PAT it has',
+  /** 확인 단계. 위 안내와 달리 **지금 벌어질 일**을 현재형으로 말한다. */
+  'agents.disable.warning':
+    '{strongRevoked} and its runner stops. Enabling it again does not bring the PATs back — '
+    + 'you have to {strongMint}.',
+  'agents.disable.warningMint': 'mint new ones',
+  'agents.disable.warningRevoked': 'Every PAT of this agent is revoked',
+
+  'agents.grid.heading': 'Agents',
+  'agents.grid.listFailed': 'The agent list did not arrive',
+  /** 격자 머리. **이름이 무엇을 하는지**를 말한다 — 카드를 눌러도 되는지가 여기서 온다. */
+  'agents.grid.note': 'Call one with @name in a channel. Click a card to open its settings.',
+  'agents.grid.tabAgents': 'Agents',
+  'agents.grid.tablist': 'Agents and teams',
+  'agents.grid.tabTeams': 'Teams',
+
+  'agents.memory.deleteAction': 'Forget {slug}',
+  'agents.memory.deleteConfirm': 'Forget it',
+  'agents.memory.deleteFailed': 'The memory was not forgotten',
+  'agents.memory.deleteStart': 'Forget',
+  'agents.memory.empty': 'Nothing remembered yet',
+  /** **못 읽은 것과 없는 것은 다르다**(design.md §4) — 그래서 위 `empty` 와 갈라 둔다. */
+  'agents.memory.failed': 'The memory did not arrive',
+  'agents.memory.heading': 'Memory',
+  /** 지우기 확인의 반대짝. **`Cancel` 이 아니다** — 사람이 고르는 것은 '남긴다'다. */
+  'agents.memory.keep': 'Keep it',
+  'agents.memory.loading': 'Loading…',
+
+  'agents.pat.label': 'New PAT label',
+  /** 라벨 규칙. 서버가 409 로 거절하는 그 규칙이고, **되쓸 수 있다**까지 말해야 막히지 않는다. */
+  'agents.pat.labelNote':
+    'A label is unique among the live tokens. Revoking one frees its label to be used again.',
+  'agents.pat.listFailed': 'The PAT list could not be read',
+  'agents.pat.loading': 'Reading PATs…',
+  'agents.pat.mint': '+ New PAT',
+  'agents.pat.mintFailed': 'The PAT was not minted',
+  /** 꺼진 에이전트에 PAT 0개는 **정상이다** — 그래서 재발급을 권하지 않는다. */
+  'agents.pat.none': 'No PAT',
+  /** 켜진 에이전트에 PAT 0개면 러너가 못 뜬다 — 그 사실과 사유를 함께 말한다. */
+  'agents.pat.noneNeedsMint': 'No PAT — mint one (disabling revokes them all)',
+  'agents.pat.revoke': 'Revoke',
+  'agents.pat.revokeCancel': 'Cancel',
+  'agents.pat.revokeConfirm': 'Really revoke',
+  'agents.pat.revoked': '(revoked)',
+  'agents.pat.revokeFailed': 'The PAT was not revoked',
+  /** 발급 직후. **왜 다시 못 보는지**를 함께 적는다 — 그것이 지금 복사해야 하는 이유다. */
+  'agents.pat.shownOnce':
+    'This token is visible only now — the server keeps only a hash, so it cannot be shown again',
+
+  'agents.permissions.mentionAuto': 'auto — allow every tool on a mention turn',
+  /** 이 설정이 **안 걸리는 자리**를 말한다 — 없으면 사람은 터미널에서도 막힐 것으로 읽는다. */
+  'agents.permissions.mentionNote':
+    'When a person drives it from a terminal, the harness asks regardless of this setting.',
+  'agents.permissions.mentionReadonly': 'readonly — read only (for consulting)',
+  /** 소유자가 보는 읽기 전용 값. **값을 감추지 않는다** — 감추면 자기 에이전트가 읽기 전용인지도 모른다. */
+  'agents.permissions.mentionReadOnlyValue': 'Mention permission: {value} (only an admin changes this)',
+  'agents.permissions.note': 'Who drives it, and what it may do.',
+  'agents.permissions.ownerLabel': 'Owner',
+  'agents.permissions.ownerNone': 'None — cannot attach',
+  'agents.permissions.ownerNote': 'Only the owner can attach to this agent.',
+  'agents.permissions.ownerReadOnly': 'Owner: @{handle}',
+  'agents.permissions.ownerReadOnlyNone': 'Owner: none — cannot attach',
+  'agents.permissions.title': 'Permissions',
+  /** 비우면 무엇이 되는지까지 말한다 — 비워도 되는 칸임이 그 문장에서만 읽힌다. */
+  'agents.permissions.workingDirPlaceholder':
+    '/Users/me/some-repo — empty makes a fresh empty directory for each thread',
+
+  'agents.profile.avatarFormats': '{formats} · empty picks a color from the name',
+  'agents.profile.avatarRemove': 'Remove',
+  'agents.profile.avatarRemoveCancel': 'Cancel',
+  'agents.profile.avatarRemoveConfirm': 'Really remove',
+  'agents.profile.avatarUpload': 'Upload a photo',
+  /** 되돌릴 수 없다는 것을 **이름 칸 아래**에서 말한다 — 만든 뒤에는 이 칸이 잠긴다. */
+  'agents.profile.handleNote': 'This is what you call in a channel with @name. It cannot be changed later.',
+  'agents.profile.instructionsPlaceholder': 'Write what this agent does.',
+  'agents.profile.note': 'How it looks in a channel, and what it does.',
+  'agents.profile.title': 'Profile',
+
+  'agents.run.defaultsFailed': 'The defaults did not arrive — a new agent cannot be drafted',
+  'agents.run.defaultsLoading': 'Loading the defaults…',
+  'agents.run.defaultsNotAdmin': 'Only an admin can create an agent',
+  'agents.run.harnessDefault': 'harness default',
+  /** 아직 못 돌리는 harness. **`not supported` 가 아니다** — 없는 것은 murmur 의 구현이다. */
+  'agents.run.harnessPlanned': '{harness} (planned)',
+  'agents.run.note': 'What it runs on.',
+  'agents.run.title': 'Run',
+
+  'agents.runner.commandCopy': 'Copy the command',
+  'agents.runner.copied': 'Copied',
+  'agents.runner.copy': 'Copy',
+  /** 선택조차 못 했을 때. 남은 길이 손으로 옮겨 적는 것뿐이라 그것을 말한다. */
+  'agents.runner.copyFailedManual':
+    'The clipboard is not available and the command could not be selected — copy it by hand',
+  /**
+   * 클립보드가 없거나 거부됐을 때. **조용히 실패하지 않는다**(`#177`) — 화면의 그 명령을
+   * 선택해 두었으므로 **다음에 할 일**을 말한다. 오류만 적고 끝내면 사람은 막힌다.
+   */
+  'agents.runner.copyFailedSelected':
+    'The clipboard is not available — the command is selected, so press ⌘C to copy it',
+  /**
+   * daemon 이 자기가 띄운 러너만 아는 것은 **한계 고백**이다. 앞 문장에 뭉치면 사람은
+   * 손으로 띄운 러너도 여기 나타날 것으로 읽고, 안 나타나면 앱이 고장 났다고 판단한다.
+   */
+  'agents.runner.daemonScope':
+    'The daemon {strongOnlyOwn}. A runner on another machine, or one you started by hand, is not '
+    + 'in that ledger and does not show up here — then only the fact that something is attached '
+    + 'to the server comes through as a reason, and this app starts its own runner anyway.',
+  'agents.runner.daemonScopeOnlyOwn': 'only knows the runners it started itself',
+  'agents.runner.factsHeading': 'Runner — what the daemon checked itself',
+  'agents.runner.heading': 'Runner (this app)',
+  /** `{label}` 은 `runnerStatusLabel` 이 낸다 — 이 사전이 상태 이름을 제 손으로 적지 않는다. */
+  'agents.runner.ownedNote':
+    'This app starts runners for the agents {strongOwn}. If a runner the {strongDaemon} is still '
+    + 'alive, it does not start another and shows it as ‘{label}’ — two runners on one agent split '
+    + 'its mentions between them.',
+  'agents.runner.ownedNoteDaemon': 'daemon already holds',
+  'agents.runner.ownedNoteOwn': 'I own',
+  'agents.runner.patGoToMint': 'Go to minting a PAT',
+  'agents.runner.reissue': 'Reissue the PAT',
+  'agents.runner.reissueFailed': 'The PAT was not reissued: {reason}',
+  /**
+   * 재발급이 무엇을 하는지. **순서가 요점이다**(새 발급 → 옛 폐기 → 재실행) — 그리고
+   * 옛 PAT 로 돌던 러너가 어떻게 물러나는지까지 적는다. 그 러너가 다른 머신에 있으면
+   * 사람은 그것을 손으로 죽이러 갈 수 없고, 스스로 물러난다는 사실이 그 걱정을 없앤다.
+   */
+  'agents.runner.reissueNote':
+    'This mints a new PAT, {strongRevoke}, and starts the runner again. A runner still holding '
+    + 'the old PAT — including one on another machine — gets a 401 on its next call and steps '
+    + 'down with exit code 78.',
+  'agents.runner.reissueNoteRevoke': 'revokes the old one',
+  'agents.runner.reissuing': 'Reissuing…',
+  'agents.runner.startFailed': 'The runner did not start: {reason}',
+  'agents.runner.templateHeading': 'Run a runner',
+  /** 토큰을 잃었을 때 갈 곳. **글로만 두면 발급 자리를 찾아야 한다**(`#177`). */
+  'agents.runner.templateNote': 'A token is visible only when it is minted. If you lost it, mint a new one.',
+  /**
+   * 남이 소유한 에이전트는 사람이 손으로 띄워야 한다. **세 사실을 진다** — 서버는 안
+   * 띄운다 / 이 앱은 내 것만 띄운다 / 그 밖은 이 명령을 직접 돌리기 전까지 답하지 않고
+   * 멘션은 쌓인다. 마지막을 자르면 사람은 "부르면 언젠가 오겠지"로 읽는다.
+   */
+  'agents.runner.whoStarts':
+    'The murmur {strongServer} does not start runners. This desktop app starts only the agents '
+    + '{strongOwn} — an agent someone else owns, or one with no owner, {strongNoAnswer} '
+    + '(the mentions just pile up). The runner ships with the app, so any machine with murmur '
+    + 'installed will do — a checkout is only needed for the development branch below.',
+  'agents.runner.whoStartsNoAnswer': 'does not answer mentions until you run the command above to attach a runner',
+  'agents.runner.whoStartsOwn': 'I own',
+  'agents.runner.whoStartsServer': 'server',
+
+  'agents.stale.allCurrent': 'Every running runner is on this bundle.',
+  /**
+   * 재기동이 무엇을 안 하는지. **누르기 전에** 있어야 한다 — 진행 중인 턴이 끊기지
+   * 않는다는 것을 모르면 사람은 긴 턴이 도는 동안 이 버튼을 못 누른다.
+   */
+  'agents.stale.note': 'A restart {strong} — it comes back on the new bundle once the turn is done.',
+  'agents.stale.noteStrong': 'does not cut a turn that is in flight',
+  /**
+   * 개수를 이름에 넣는다 — 원래 주석이 적은 대로 **개수가 곧 영향 범위**다.
+   * 복수형이 갈린다: 영어는 `1 runner` / `2 runners` 이고 한국어는 한 갈래다.
+   */
+  'agents.stale.restart': {
+    one: 'Restart the outdated runner ({count})',
+    other: 'Restart all outdated runners ({count})',
+  },
+  'agents.stale.restartFailed': 'The runners were not restarted: {reason}',
+  /** 앱 버전을 모르면 비교 기준이 없다 — **"전부 최신"은 확인하지 않은 것을 단정하는 말이다.** */
+  'agents.stale.unknownAppVersion': 'The app version could not be read, so being outdated cannot be judged.',
+  /**
+   * 버전을 모르는 러너. **모르는 것을 뒤처졌다고 하지 않는다**(`runnerVersions.ts`) —
+   * 대신 값을 채우는 방법을 적는다. 복수형이 갈린다.
+   */
+  'agents.stale.unknownVersion': {
+    one: '{count} runner of unknown version — it was left out because being outdated cannot be judged. '
+      + 'Restart it once and its version shows from then on.',
+    other: '{count} runners of unknown version — they were left out because being outdated cannot be judged. '
+      + 'Restart them once and their versions show from then on.',
+  },
+
+  'agents.stop.acked':
+    'The runner picked the request up (stop {requestedAt} · acknowledged {ackedAt}). It finishes '
+    + 'the turn it was on and exits — whether it actually exited, murmur cannot know.',
+  /** 이미 읽어 간 뒤가 오히려 다시 켤 일이 생기는 자리다 — 그 뒤로는 자동 기동이 건너뛴다. */
+  'agents.stop.ackedResume': ' Press Start and it is back in the auto-start set from the next start.',
+  'agents.stop.heading': 'Start · stop the runner',
+  /**
+   * 버튼이 짧아진 만큼 **잃으면 안 되는 뉘앙스가 이 문단으로 왔다**(`#493`). 중지는 지금
+   * 끊는 것이 아니라 진행 중인 턴을 마친 뒤 스스로 물러나는 것이고, 실행은 **다음 기동**
+   * 에서 뜬다. 뒤엣것을 자르면 `#129` 가 금지한 거짓 신호(할 수 없는 일을 이름으로
+   * 약속하는 것)를 이름만 바꿔 되살리는 셈이 된다.
+   */
+  'agents.stop.note':
+    '{strongStop} does not cut the runner off now — the runner {strongFinish}. A turn is not cut '
+    + 'in the middle so that nobody loses the answer they are waiting for. While it is stopped this '
+    + 'agent {strongSkipped}. Press {strongStart} and it is back in the set, so {strongNextStart} — '
+    + 'it is not started here and now. Both are reversible at any time.',
+  'agents.stop.noteFinish': ' exits by itself after finishing the turn it is on',
+  'agents.stop.noteNextStart': 'the runner comes up on the next start',
+  'agents.stop.noteSkipped': ' is left out of auto-start',
+  'agents.stop.noteStart': 'Start',
+  'agents.stop.noteStop': 'Stop',
+  'agents.stop.notRequested': 'It is in the auto-start set — no stop has ever been asked for.',
+  /** **'멈췄다'고 쓰지 않는다** — 러너가 읽어 가지 않았으면 아무 일도 일어나지 않았다. */
+  'agents.stop.requested':
+    'Stop asked for ({requestedAt}) — the runner has not picked it up yet. If no runner is '
+    + 'attached, there is nobody to pick it up.',
+  'agents.stop.start': 'Start',
+  'agents.stop.startAction': 'Start the runner',
+  'agents.stop.startFailed': 'The stop request was not withdrawn',
+  'agents.stop.stop': 'Stop',
+  'agents.stop.stopAction': 'Stop the runner',
+  'agents.stop.stopFailed': 'The stop was not asked for',
+
+  'agents.teams.cancel': 'Cancel',
+  'agents.teams.create': 'Create',
+  'agents.teams.createFailed': 'The team was not created',
+  'agents.teams.heading': 'Teams',
+  /** 팀 이름도 handle 문법이다 — 서버가 같은 상수로 검사한다(`HANDLE_PATTERN`). */
+  'agents.teams.invalidName':
+    'Names take letters, digits, hyphens and underscores — 2 to 32 characters',
+  'agents.teams.listFailed': 'The team list did not arrive',
+  'agents.teams.nameLabel': 'New team name',
+  /** 이름의 뜻을 말하는 자리 ① — **이 격자에 있는 것이 무엇인가**에 답한다. */
+  'agents.teams.note':
+    'Group agents and call them by one name — calling @teamname in a channel wakes every member. '
+    + 'Click a card to change who is in it.',
 
   // ---------------------------------------------------------------------------
   // sidebar — **화면 이름이다.** 이 말들을 내는 판정이 `lib/` 에 없다: 사이드바가

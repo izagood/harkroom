@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import type { AgentConfig, AgentDefaults, AgentView, PatView } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { acc } from './helpers/fakeApi';
@@ -66,14 +67,20 @@ const openAgent = async (handle: string) => {
 
 let writeText: ReturnType<typeof vi.fn>;
 
+// **언어를 한국어로 고정한다.** 이 파일의 축들은 이 화면의 한국어 문구로 쓰여 있고,
+// 그 문구가 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다(사이드바 PR 이 세운
+// 방식과 같다). 영어가 원본이 되면서 기본값이 영어가 됐으므로, 한국어를 재려면 한국어라고
+// 말해야 한다. 두 언어로 다 뜨는지는 `i18n.test.tsx` 가 잰다.
 beforeEach(() => {
   useAppStore.getState().reset();
   useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+  usePrefsStore.getState().setLocale('ko');
   writeText = vi.fn(async () => undefined);
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
 });
 afterEach(() => {
   cleanup();
+  usePrefsStore.getState().setLocale('system');
   Reflect.deleteProperty(navigator, 'clipboard');
 });
 
@@ -125,7 +132,7 @@ describe('러너 실행 명령 (#177)', () => {
     fireEvent.click(await screen.findByTestId('agent-create'));
 
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'newagent' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+    fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
     await screen.findByText(MINTED_SECTION);
 
     fireEvent.click(within(sectionOf(MINTED_SECTION)).getByRole('button', { name: '명령 복사' }));
