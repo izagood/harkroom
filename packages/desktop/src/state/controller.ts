@@ -14,6 +14,7 @@ import type { AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
 import { usePrefsStore } from './prefsStore';
+import { detectLocale, isLocale, translator } from '../i18n';
 
 export class Controller {
   private ws: WsHandle | null = null;
@@ -84,6 +85,19 @@ export class Controller {
       undefined, // now — 재발급 라벨의 시각. 기본값(Date.now)을 그대로 쓴다.
       daemonObserver,
       appVersion,
+      undefined, // restartWait — 실제 종료를 기다리는 방식. 기본값을 그대로 쓴다.
+      // 러너 사유의 번역기(`#619`). **부를 때마다 언어를 다시 읽는다** — 여기서
+      // `translator(locale)` 을 한 번 만들어 넘기면 그 함수가 컨트롤러 수명 동안 그
+      // 언어로 굳고, 사람이 설정에서 언어를 바꿔도 러너 사유만 옛 언어로 남는다
+      // (컨트롤러는 앱이 사는 동안 다시 안 만들어진다).
+      //
+      // 저장값이 `'system'` 이거나 우리가 모르는 언어면 브라우저에게 묻는다 —
+      // `useT` 가 화면에서 하는 판단과 **같은 규약**이어야 한국어 화면에 영어 사유가
+      // 섞이지 않는다(`useT.ts::useLocale` 주석).
+      (key, args) => {
+        const pref = usePrefsStore.getState().locale;
+        return translator(isLocale(pref) ? pref : detectLocale())(key, args);
+      },
     );
     // 앱 버전을 **스토어로 밀어 넣는다** — 화면이 컨트롤러에게 묻지 않게(`appVersion`
     // 필드 주석). 실패해도 앱은 떠야 하므로 fire-and-forget 이고, 못 얻으면 `null` 로
