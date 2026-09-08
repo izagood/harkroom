@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ChannelRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
+import { useT } from '../i18n/useT';
 
 interface Props {
   open: boolean;
@@ -25,6 +26,7 @@ function compareChannels(mode: SortMode, a: ChannelRow, b: ChannelRow): number {
 }
 
 export function ChannelDirectory({ open, onClose }: Props) {
+  const t = useT();
   const channels = useActiveStore((s) => s.channels);
   const [query, setQuery] = useState('');
   const [sortMode, setSortMode] = useState<SortMode>('name');
@@ -82,7 +84,7 @@ export function ChannelDirectory({ open, onClose }: Props) {
         onClick={() => handleChannelClick(ch)}
       >
         {ch.visibility === 'private'
-          ? <span className="text-fg-subtle" aria-label="비공개 채널" title="비공개 채널">🔒</span>
+          ? <span className="text-fg-subtle" aria-label={t('channelDirectory.private')} title={t('channelDirectory.private')}>🔒</span>
           : <span className="text-fg-subtle">#</span>}
         <div className="flex-1 overflow-hidden">
           <div className="font-medium text-fg">{ch.name}</div>
@@ -103,17 +105,17 @@ export function ChannelDirectory({ open, onClose }: Props) {
     >
       <div
         role="dialog"
-        aria-label="채널 디렉터리"
+        aria-label={t('channelDirectory.label')}
         className="flex max-h-full w-[36rem] flex-col overflow-hidden rounded-lg border border-border bg-surface-raised text-fg"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
       >
         <div className="flex items-center gap-2 border-b border-border p-3">
-          <span className="font-bold">채널 찾기</span>
+          <span className="font-bold">{t('channelDirectory.heading')}</span>
           <button
             onClick={onClose}
             className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover"
-            aria-label="채널 디렉터리 닫기"
+            aria-label={t('channelDirectory.close')}
           >
             ✕
           </button>
@@ -121,8 +123,8 @@ export function ChannelDirectory({ open, onClose }: Props) {
         <div className="flex items-center gap-2 border-b border-border p-3">
           <input
             type="text"
-            aria-label="채널 이름으로 검색"
-            placeholder="채널 이름"
+            aria-label={t('channelDirectory.search')}
+            placeholder={t('channelDirectory.searchPlaceholder')}
             className="flex-1 rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -136,21 +138,21 @@ export function ChannelDirectory({ open, onClose }: Props) {
               aria-pressed={sortMode === 'name'}
               onClick={() => setSortMode('name')}
             >
-              이름순
+              {t('channelDirectory.sortName')}
             </button>
             <button
               className={`rounded px-2 py-1 ${sortMode === 'creation' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:text-fg'}`}
               aria-pressed={sortMode === 'creation'}
               onClick={() => setSortMode('creation')}
             >
-              생성순
+              {t('channelDirectory.sortAge')}
             </button>
           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {filteredChannels.length === 0 ? (
             <p className="px-2 text-fg-subtle">
-              {query ? '검색 결과가 없다' : '표준 채널이 없다'}
+              {query ? t('channelDirectory.noMatch') : t('channelDirectory.empty')}
             </p>
           ) : (
             <ul>{filteredChannels.map(row)}</ul>
@@ -163,7 +165,7 @@ export function ChannelDirectory({ open, onClose }: Props) {
                 onClick={() => setArchivedOpen((v) => !v)}
               >
                 <span>{archivedOpen ? '▼' : '▶'}</span>
-                보관됨 ({filteredArchived.length})
+                {t('channelDirectory.archived', { count: filteredArchived.length })}
               </button>
               {archivedOpen && (
                 <ul>{filteredArchived.map(row)}</ul>

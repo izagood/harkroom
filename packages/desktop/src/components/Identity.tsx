@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { AccountStatus, AccountView, AgentTeamRow, HandleGroupRow } from '@murmur/shared';
 import { getController } from '../state/controller';
+import { useT } from '../i18n/useT';
+import type { MessageKey } from '../i18n';
 
 /**
  * 계정의 아이덴티티 표현. **이 컴포넌트가 유일한 경로다.**
@@ -164,6 +166,7 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
     showsPhoto ? account.id : null,
     showsPhoto ? account.avatarAttachmentId : null,
   );
+  const t = useT();
 
   // **`badge` 자리는 이제 아무것도 그리지 않는다 — 사람도, 에이전트도.**
   // #365 가 사람 쪽에서 먼저 지운 것을 에이전트에도 그대로 적용한다: 화면은 작성자가
@@ -187,7 +190,7 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
         className={`relative inline-flex h-5 w-5 items-center justify-center rounded-full bg-fg-subtle text-[10px] font-semibold text-fg-on-strong ${className}`}
       >
         <span aria-hidden="true">?</span>
-        <span className="sr-only">알 수 없는 계정</span>
+        <span className="sr-only">{t('identity.account.unknown')}</span>
       </span>
     );
   }
@@ -240,14 +243,17 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
  * 셋이 서로 다른 것으로 읽혀야 한다.
  */
 export function GroupBadge({ group, className = '' }: { group: HandleGroupRow; className?: string }) {
+  const t = useT();
   return (
     <span
       data-testid={`group-badge-${group.handle}`}
       className={`relative inline-flex items-center gap-1 rounded bg-warning-surface-strong px-1 text-meta text-warning ${className}`}
     >
       <span aria-hidden="true">👥</span>
-      <span className="sr-only">집합</span>
-      <span>{group.memberCount}명</span>
+      <span className="sr-only">{t('identity.badge.group')}</span>
+      {/* **숫자만 남긴다** — `명` 은 사람 세는 단위인데 집합에는 에이전트도 든다
+          (`composer.mention.groupCount` 가 같은 판단을 이미 적었다). */}
+      <span>{t('identity.badge.count', { count: group.memberCount })}</span>
     </span>
   );
 }
@@ -269,25 +275,35 @@ export function GroupBadge({ group, className = '' }: { group: HandleGroupRow; c
  * 센다**: 명단의 크기는 운영자의 의도이고, 그 중 몇이 깨는지는 부른 뒤에 알 수 있다.
  */
 export function TeamBadge({ team, className = '' }: { team: AgentTeamRow; className?: string }) {
+  const t = useT();
   return (
     <span
       data-testid={`team-badge-${team.name}`}
       className={`relative inline-flex items-center gap-1 rounded bg-surface-hover px-1 text-meta text-fg-muted ${className}`}
     >
       <span aria-hidden="true">🤖</span>
-      <span className="sr-only">팀</span>
-      <span>{team.memberCount}명</span>
+      <span className="sr-only">{t('identity.badge.team')}</span>
+      <span>{t('identity.badge.count', { count: team.memberCount })}</span>
     </span>
   );
 }
 
-/** 상태별 글리프와 사람이 읽는 이름. 화면과 접근성 이름이 갈리지 않게 한 표에서 낸다. */
-const STATUS_MARKS: Record<AccountStatus, { glyph: string; label: string } | null> = {
+/**
+ * 상태별 글리프와 사람이 읽는 이름. 화면과 접근성 이름이 갈리지 않게 한 표에서 낸다.
+ *
+ * **표는 남기고 이름만 사전 키로 바꿨다**(`NotifiedGapRow::LABEL` 의 선례). 문구를
+ * 값에 그대로 두면 이 상수가 **모듈 로드 시점 언어로 굳어**, 화면이 `t()` 를 지나도
+ * 이 배지만 옛 언어로 남는다(`SkillsSettings` 에서 실제로 났던 결함).
+ *
+ * 함수로 내리지 않은 이유: `Record<AccountStatus, …>` 가 *"상태를 추가하면 컴파일이
+ * 막힌다"* 를 지키고 있고, **키는 언어를 안 지니므로** 상수여도 안전하다.
+ */
+const STATUS_MARKS: Record<AccountStatus, { glyph: string; label: MessageKey } | null> = {
   // 기본값에는 표시를 붙이지 않는다 — 모두에게 붙은 표시는 아무것도 구분하지 못하고,
   // 초록 연결 점 옆에 초록 무언가를 하나 더 두면 둘의 뜻이 섞인다.
   available: null,
-  away: { glyph: '🌙', label: '자리 비움' },
-  dnd: { glyph: '⛔', label: '방해 금지' },
+  away: { glyph: '🌙', label: 'status.value.away' },
+  dnd: { glyph: '⛔', label: 'status.value.dnd' },
 };
 
 /**
@@ -302,12 +318,17 @@ export function StatusMark({ account, className = '' }: {
   account: AccountView | undefined;
   className?: string;
 }) {
+  const t = useT();
   if (!account || account.kind !== 'human') return null;
   const mark = STATUS_MARKS[account.status];
   if (!mark) return null;
   // 문구가 있으면 접근성 이름에 함께 싣는다 — 좁은 자리에 글자를 더 밀어 넣지 않으면서도
   // 스크린리더와 툴팁에는 사람이 적은 말이 도달한다. 이스케이프는 React 가 한다.
-  const name = account.statusText ? `${mark.label}: ${account.statusText}` : mark.label;
+  // **콜론을 코드가 안 붙인다** — 이름과 문구를 잇는 방식이 언어의 것이라 사전이 진다.
+  const label = t(mark.label);
+  const name = account.statusText
+    ? t('status.mark.withText', { label, text: account.statusText })
+    : label;
   return (
     <span
       data-testid={`status-${account.id}`}

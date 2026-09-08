@@ -25,21 +25,35 @@
  * 대조군이 없으면 "언제나 승인을 기다린다고 말하는" 화면으로도 통과한다. 그것은 정상
  * 기동마다 없는 대화상자를 찾게 만들고, 곧 사람이 이 문구를 통째로 무시하게 만든다.
  */
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, act } from '@testing-library/react';
 import {
   BootNotice,
-  KEYCHAIN_WAIT_TITLE,
-  KEYCHAIN_WAIT_HINT,
+  keychainWaitTitle,
+  keychainWaitHint,
   KEYCHAIN_NOTICE_DELAY_MS,
 } from '../src/components/BootNotice';
 import { sessionStore } from '../src/lib/session';
+import { usePrefsStore } from '../src/state/prefsStore';
+import { translator } from '../src/i18n';
 
+/**
+ * **언어를 한국어로 고정한다.** 이 파일이 재는 것은 언어가 아니라 그 언어로 표현된
+ * 규율이다 — 사유만이 아니라 **할 일**까지 말하는가(`대화상자` 를 잰다). 문구가 사전을
+ * 지나게 된 뒤(i18n 이전)에도 그 규율은 그대로여야 하므로, 문구를 지우는 대신 언어를
+ * 못 박는다. `gallery.test.tsx`·`skillsSettings.test.tsx` 가 세운 그 선례다.
+ */
+const t = translator('ko');
+const TITLE = keychainWaitTitle(t);
+const HINT = keychainWaitHint(t);
+
+beforeEach(() => usePrefsStore.getState().setLocale('ko'));
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   localStorage.clear();
+  usePrefsStore.getState().setLocale('system');
 });
 
 describe('부팅 문구 — 무엇을 기다리는지 말한다 (#460)', () => {
@@ -55,11 +69,11 @@ describe('부팅 문구 — 무엇을 기다리는지 말한다 (#460)', () => {
     // 유예 안에서는 아직 아무 말도 안 한다(아래 대조군이 그 자리를 잰다).
     act(() => { vi.advanceTimersByTime(KEYCHAIN_NOTICE_DELAY_MS + 1); });
 
-    expect(screen.getByText(KEYCHAIN_WAIT_TITLE)).toBeTruthy();
+    expect(screen.getByText(TITLE)).toBeTruthy();
     // **사유만으로는 부족하다.** "기다리는 중"만 말하면 사람은 기다리면 되는 줄 알고,
     // 그것이 36분이 된 경로다. 어디를 봐야 하는지가 이 이슈의 답이다.
-    expect(screen.getByText(KEYCHAIN_WAIT_HINT)).toBeTruthy();
-    expect(KEYCHAIN_WAIT_HINT).toContain('대화상자');
+    expect(screen.getByText(HINT)).toBeTruthy();
+    expect(HINT).toContain('대화상자');
     // 화면 밖 사람에게도 닿아야 한다 — 이 이슈의 본질이 "말하지 않는다"이다.
     expect(screen.getByRole('status')).toBeTruthy();
   });
@@ -78,7 +92,7 @@ describe('부팅 문구 — 무엇을 기다리는지 말한다 (#460)', () => {
 
     act(() => { vi.advanceTimersByTime(KEYCHAIN_NOTICE_DELAY_MS - 1); });
 
-    expect(screen.queryByText(KEYCHAIN_WAIT_TITLE)).toBeNull();
+    expect(screen.queryByText(TITLE)).toBeNull();
     // 아는 것은 그대로 말한다 — 화면이 비지는 않는다.
     expect(screen.getByText('Connecting…')).toBeTruthy();
   });
@@ -93,14 +107,14 @@ describe('부팅 문구 — 무엇을 기다리는지 말한다 (#460)', () => {
     vi.useFakeTimers();
     const { rerender } = render(<BootNotice wait="keychain" />);
     act(() => { vi.advanceTimersByTime(KEYCHAIN_NOTICE_DELAY_MS + 1); });
-    expect(screen.getByText(KEYCHAIN_WAIT_TITLE)).toBeTruthy();
+    expect(screen.getByText(TITLE)).toBeTruthy();
 
     // 키체인이 답했다 — `App` 이 `sessionStore.load()` 뒤에 `'unknown'` 으로 되돌린다.
     rerender(<BootNotice wait="unknown" />);
     act(() => { vi.advanceTimersByTime(KEYCHAIN_NOTICE_DELAY_MS * 10); });
 
-    expect(screen.queryByText(KEYCHAIN_WAIT_TITLE)).toBeNull();
-    expect(screen.queryByText(KEYCHAIN_WAIT_HINT)).toBeNull();
+    expect(screen.queryByText(TITLE)).toBeNull();
+    expect(screen.queryByText(HINT)).toBeNull();
   });
 
   /**
@@ -118,7 +132,7 @@ describe('부팅 문구 — 무엇을 기다리는지 말한다 (#460)', () => {
 
     act(() => { vi.advanceTimersByTime(KEYCHAIN_NOTICE_DELAY_MS * 100); });
 
-    expect(screen.queryByText(KEYCHAIN_WAIT_TITLE)).toBeNull();
+    expect(screen.queryByText(TITLE)).toBeNull();
     expect(screen.getByText('Connecting…')).toBeTruthy();
   });
 });

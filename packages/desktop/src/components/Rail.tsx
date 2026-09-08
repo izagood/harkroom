@@ -8,6 +8,8 @@ import { Menu } from './Menu';
 import { StatusPicker } from './StatusPicker';
 import { isMacOS } from '../lib/platform';
 import type { SectionId } from './settings/sections';
+import { useT } from '../i18n/useT';
+import type { Translate } from '../i18n';
 
 /**
  * 레일이 고른 칸. **북마크가 없다** — 북마크는 패널이 아니라 오버레이(`SavedMessages`)를
@@ -115,6 +117,7 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onOpen
    * 동시에 비우면 여백이 두 번 든다(`Sidebar` 의 `macTrafficLightRoom` 이 접힘 여부로
    * 같은 판정을 하는 이유와 같다).
    */
+  const t = useT();
   const communityCount = useCommunityRegistry((r) => r.entries.length);
   const macTrafficLightRoom = useMemo(() => isMacOS() && communityCount < 2, [communityCount]);
 
@@ -203,7 +206,7 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onOpen
   return (
     <nav
       data-testid="rail"
-      aria-label="주 목록"
+      aria-label={t('rail.nav.label')}
       className={`relative flex ${RAIL_W} shrink-0 flex-col items-center gap-1 border-r border-border bg-surface-sunken pb-1 ${
         macTrafficLightRoom ? 'pt-8' : 'pt-2'
       }`}
@@ -220,8 +223,9 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onOpen
             badge={cell.panel === 'home' ? blockingCount : 0}
             /* 북마크 수는 배지가 아니라 이름으로만 간다(위 `savedCount` 주석). */
             countInName={cell.testId === 'rail-saved' && savedCount > 0
-              ? `담아 둔 메시지 ${savedCount}개`
+              ? t('rail.cell.saved', { count: savedCount })
               : undefined}
+            t={t}
             onClick={() => { if (cell.panel) onPanelChange(cell.panel); else onOpenSaved(); }}
           />
         ))}
@@ -247,7 +251,9 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onOpen
                  자리만 옮겼다. 이름을 바꾸면 그 계약을 재는 테스트가 통째로 끊겨,
                  옮긴 것과 잃은 것을 구별할 수 없게 된다. */
               data-testid="me-row"
-              aria-label={me ? `${me.handle} — 내 계정 메뉴` : '내 계정 메뉴'}
+              aria-label={me
+                ? t('rail.me.menuFor', { handle: me.handle })
+                : t('rail.me.menu')}
               className={`flex h-11 w-full items-center justify-center rounded hover:bg-surface-raised ${RAIL_FOCUS}`}
             >
               <span className="relative">
@@ -259,8 +265,8 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onOpen
             </button>
           )}
           items={[
-            { label: '내 프로필', onSelect: () => onOpenSettings('profile') },
-            { label: '상태 바꾸기', onSelect: () => setStatusOpen(true) },
+            { label: t('rail.me.profile'), onSelect: () => onOpenSettings('profile') },
+            { label: t('rail.me.status'), onSelect: () => setStatusOpen(true) },
             { label: 'Settings', shortcut: '⌘,', onSelect: () => onOpenSettings() },
             { label: 'Sign out', onSelect: () => { getController().logout(); onLogout(); } },
           ]}
@@ -320,17 +326,26 @@ function MeMenuHeader() {
  * 이 앱이 처음 쓰는 말이라 그림만으로는 배울 수 없다." 그 대신 레일에는 그 밖에 아무것도
  * 두지 않는다.
  */
-function RailButton({ cell, active, badge, countInName, onClick }: {
+function RailButton({ cell, active, badge, countInName, onClick, t }: {
   cell: RailCell;
   active: boolean;
   badge: number;
   /** 배지 없이 이름에만 싣는 수치(북마크 개수). 없으면 이름은 칸 이름 그대로다. */
   countInName?: string;
   onClick: () => void;
+  t: Translate;
 }) {
+  /* 칸 이름과 수치를 잇는 방식이 언어의 것이라 **사전이 그 문장을 진다** — 코드가
+     ` — ` 를 붙이면 그 자리가 한 언어의 어순으로 굳는다. `cell.ariaLabel` 자체는
+     안 옮긴다: 그 넷은 이미 영어이고 폭을 재어 고른 값이다(`RAIL_CELLS` 주석). */
   const name = badge > 0
-    ? `${cell.ariaLabel} — 나를 기다리는 것 ${badge}개`
-    : countInName ? `${cell.ariaLabel} — ${countInName}` : cell.ariaLabel;
+    ? t('rail.cell.withCount', {
+      name: cell.ariaLabel,
+      count: t('rail.cell.blocking', { count: badge }),
+    })
+    : countInName
+      ? t('rail.cell.withCount', { name: cell.ariaLabel, count: countInName })
+      : cell.ariaLabel;
   return (
     <button
       type="button"
@@ -412,6 +427,7 @@ function CommunityMark({ onClick }: { onClick: () => void }) {
  * 훅이 조건 뒤에 오지 않게 타일을 따로 뽑았다.
  */
 function CommunityMarkTile({ entry, onClick }: { entry: CommunityEntry; onClick: () => void }) {
+  const t = useT();
   const connected = useStore(entry.store, (s) => s.connected);
   const label = communityLabel(entry);
   // 이니셜은 **코드 포인트 단위**로 자른다 — `label[0]` 은 이모지를 반쪽만 잘라 깨진 글자를
@@ -421,7 +437,12 @@ function CommunityMarkTile({ entry, onClick }: { entry: CommunityEntry; onClick:
     <button
       type="button"
       data-testid="rail-community-mark"
-      aria-label={`${label} — ${connected ? '연결됨' : '연결 끊김'}`}
+      /* `CommunityRail` 의 타일과 **같은 키를 본다** — 두 파일이 같은 문장을 따로
+         적으면 한쪽만 고쳐진다(두 파일 주석이 이미 그 중복을 위험으로 적었다). */
+      aria-label={t('rail.community.tile', {
+        name: label,
+        state: t(connected ? 'rail.community.connected' : 'rail.community.disconnected'),
+      })}
       title={label}
       onClick={onClick}
       // `text-sm` 은 4단이 아니라 **h-9 원에 묶인 머리글자**다 — 위 `initial` 하나가 이

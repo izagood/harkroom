@@ -99,9 +99,30 @@ import type { Message } from './types';
  * | ~~`daemonFacts.ts`~~ | — | **끝났다**(아래 `daemonFacts.*`). 그 표가 경고한 대로 회귀선을 **키가 아니라 문구로** 남겼다 — `i18n.test.tsx` 가 제약 1(주어)·제약 2(판정 낱말 없음)를 **두 언어로** 다시 잰다 |
  * | ~~시간 표기~~ | — | **끝났다** — 아래 `time.*` 과 `lib/time.ts` 를 보라 |
  * | 설정 목차 14개 · `Save`·`Cancel`·`Invite` 등 | 소수 | 이미 영어다 — **키만 씌우면 된다.** 둘 이상이 쓰므로 `common.*` 로 간다 |
+ * | ~~`ChannelPane`·`ChannelDocPanel`·`ChannelFiles`·`ChannelEmptyState`~~ | — | **끝났다**(아래 `channel.*`). 곁창 둘을 따로 안 연 근거가 그 머리말에 있다 |
+ * | ~~`SearchPalette` · `ChannelDirectory` · `Directory` · `SavedMessages`~~ | — | **끝났다**(아래 `search`·`channelDirectory`·`directory`·`saved`). 넷 다 겹창이지만 **묻는 것이 달라** 영역이 넷이다 |
+ * | ~~`SidebarFind` · `Rail` · `CommunityRail`~~ | — | **끝났다.** 찾기 줄은 `Sidebar` 가 그리므로 `sidebar.find.*` 로 갔고(새 영역을 안 열었다), 레일 둘은 사이드바 **밖**이라 `rail.*` 을 함께 쓴다 |
+ * | ~~`StatusPicker` · `Identity` · `Workspace` · `BootNotice` · `InviteSettings`~~ | — | **끝났다**(아래 `status`·`identity`·`workspace`·`boot`·`invite`). 앞 둘이 한 벌의 어휘라 `status` 가 화면 이름을 안 쓴다 |
  * | 나머지 설정 화면들(`Gallery`·`Skills`·`HandleGroups`·`AgentDefaults` 등) | 42 · 19 · 16 · 11 | 각각 자기 영역(`gallery`·`skills`·…)을 연다. 영역 이름을 `settings.*` 로 묶지 않는 근거는 아래 `agents` 머리말에 있다 |
  * | ~~`RunnerStatus.tsx::runnerStatusLabel` · `lib/presenceView.ts::PRESENCE_LABEL`~~ | — | **끝났다**(아래 `runnerState.*` · `presence.*`). 둘이 **다르게** 풀렸다: 앞은 함수로 내리고 뒤는 표를 남긴 채 값만 키로 바꿨다 — 갈리는 근거(자리표시자와 갈래의 유무)는 `runnerState` 머리말에 있다. `common.*` 후보라던 이 표의 예상은 **틀렸다**: 셋 이상이 쓰는 것은 맞지만 그것들은 `lib/` 판정이 내는 말이라 판단 순서 2번(판정 이름)에 먼저 걸린다 |
  * | `ThreadPanel` · `WakeRow` · `Reactions` 등 대화 화면의 나머지 | 소수 | 이 PR 이 옮긴 것은 **말과 행**이지 그 화면들의 껍데기가 아니다. `thread.*` 가 이미 서 있으므로 스레드 패널의 머리띠는 그 영역에 붙는다 |
+ * | `RunnerStatus.tsx::runnerStatusLabel` · `lib/presenceView.ts::PRESENCE_LABEL` | 소수 | **사이드바가 이미 부르고 있다**(`sidebar.runner.state` 가 그 값을 감싼다). 둘 다 세 화면 이상이 쓰므로 옮길 때 `common.*` 후보다. `Directory` 도 `PRESENCE_LABEL` 을 부르므로 이제 **세 번째 화면이 왔다** |
+ *
+ * ### 굳은 모듈 상수 — 화면을 옮길 때마다 나온다
+ *
+ * `SkillsSettings` 에서 처음 잡힌 결함 형태(`const X: Record<K, string> = { a: '한국어' }`
+ * 가 모듈 로드 시점 언어로 굳는다)가 **이 PR 에서 넷 더 나왔다**: `SidebarFind::
+ * KIND_LABEL` · `StatusPicker::LABELS` · `Identity::STATUS_MARKS` · `BootNotice::
+ * KEYCHAIN_WAIT_*`. 앞 셋은 **표를 남기고 값만 사전 키로** 바꿨고(`NotifiedGapRow::LABEL`
+ * 의 선례 — 키는 언어를 안 지니므로 상수여도 안전하고, `Record<K, …>` 가 지키던
+ * *"종류를 추가하면 컴파일이 막힌다"* 가 그대로 산다), 넷째는 **함수로 내렸다**
+ * (`threadState::THREAD_STATE_LABEL` 의 선례 — 회귀선이 `export` 를 import 해서 쓰므로
+ * 지울 수 없었다).
+ *
+ * **다음 화면을 옮기는 사람에게**: 파일을 열자마자 `const .*Record<.*string> = {` 를
+ * 먼저 찾아라. 사전 대조 회귀선은 이것을 **절대 못 잡는다** — 사전은 갈려 있고 화면만
+ * 안 따라오기 때문이다. 잡는 방법은 하나뿐이다: 화면을 렌더하고 언어를 바꿔 보는 것
+ * (`i18n.test.tsx` 8·9번 묶음).
  *
  * ### `common` 이 아직 비어 있는 이유 — **두 번째 화면이 왔는데도**
  *
@@ -815,15 +836,138 @@ export const en = {
   'agents.stop.stopAction': 'Stop the runner',
   'agents.stop.stopFailed': 'The stop was not asked for',
 
+  // ---------------------------------------------------------------------------
+  // teams — **덩어리를 늘렸다. 새 영역을 열지 않았다.**
+  //
+  // 앞 PR 이 격자 머리와 만들기 폼을 여기 두었고, 이 PR 이 나머지 셋(`TeamGrid` 의
+  // 검색줄 · `TeamDetail` 상세 전체 · `TeamMemberPicker`)을 같은 덩어리에 붙인다.
+  //
+  // ## 왜 `teams` 영역을 새로 열지 않았나 — 세 기준이 다 같은 쪽을 가리킨다
+  //
+  // 1. **`agents` 머리말의 *"한 화면 = 한 영역"***. 파일이 셋으로 갈렸어도 그리는
+  //    화면은 하나다 — `AgentsSettings` 가 탭으로 격자를 바꾸고, 카드를 누르면 같은
+  //    화면 안에서 상세로 바뀐다(그 파일의 `<TeamDetail>`·`<TeamGrid>` 자리). 파일
+  //    개수로 영역을 가르면 `AgentGrid`·`AgentsSettings` 도 갈려야 하는데, 그 둘은
+  //    이미 `agents`·`grid` 로 **다른 근거**(아래 `grid` 머리말)에 따라 갈려 있다.
+  // 2. **`waitChain`·`runner` 의 *"그리는 화면이 둘 이상이면 판정 이름"***. 이것은
+  //    `lib/` 판정에만 걸리는 예외이고, 팀의 말은 판정이 아니라 화면이 스스로 쓰는
+  //    라벨·오류다 — `lib/` 어디에도 이 문구를 내는 함수가 없다. 예외의 조건이 안 선다.
+  // 3. **`speech` 의 세 번째 경우 — 한 벌의 어휘**. 팀의 말은 한 벌이 아니다. `Create`·
+  //    `Cancel`·`The team was not created` 는 다른 화면이 빌려 갈 어휘가 아니라 이
+  //    화면의 폼 문구이고, 실제로 빌려 가는 자리(사이드바의 「팀 추가」)는 **자기 것을
+  //    이미 갖고 있다**(`sidebar.members.team*`) — 그쪽은 채널에 팀을 넣는 일이라 말이
+  //    다르다. 한 벌이라면 그 둘이 같은 키를 봤을 것이다.
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | ← 팀 | `← Teams` | `AgentsSettings` 의 `agent-back` 과 **같은 어휘**여야 한다(그 화면 주석) — 두 상세가 같은 격자에서 열리므로 돌아가는 길이 다르게 생기면 사람이 그것을 배워야 한다. 격자 머리가 `Teams` 이므로 복수로 돌아간다 |
+  // | 비활성 — 호출에서 빠진다 | `Disabled — left out when the team is called` | **결과를 적는다.** `Disabled` 만 두면 그것이 러너 상태인지 팀 설정인지 모른다 — 이 줄이 말하는 것은 *"팀을 불러도 이 하나는 안 깬다"* 이고, 그 파일 주석이 그 구별을 이 자리의 존재 이유로 적었다 |
+  // | 빼기 | `Remove` | `sidebar.members.remove` 와 같은 낱말이지만 **키를 안 나눈다** — 되돌리는 것이 다르다(채널에서 빼기 대 팀에서 빼기). `common` 승격 기준의 그 갈림이다 |
+  // | 정말 지우는가? | `Delete this team?` | 물음이 **무엇을 지우는지** 말한다. `Are you sure?` 는 되돌릴 수 없다는 것도 대상도 말하지 않는다 |
+  // | 정말 삭제 | `Delete for good` | 머리말이 이미 정한 낱말이다(`sidebar.delete.confirm`·`sidebar.members.leaveConfirm` 이 같은 어휘를 쓴다) |
+  // | 팀을 지워도 팀에 속했던 에이전트는 그대로 있다 | `The agents that were in it stay — only the team goes` | **무엇이 남는지**를 말한다. 삭제 상자에서 사람이 알아야 하는 것은 사라지는 것의 범위이고, 원래 한국어가 그 사실을 지고 있었다 |
+  // | 얼굴을 누르면 팀에 들어간다. 멈춘 에이전트도 넣을 수 있다 — 팀에 넣는 것과 지금 도는 것은 다른 일이다 | `Click a face to add it. A stopped agent can join too — being in a team and running right now are different things.` | 뒤 문장이 **회색 얼굴을 눌러도 되는 이유**다(그 파일 주석의 근거). 빼면 사람이 러너를 다 띄운 뒤에 팀을 짜려 든다 |
+  // | 계정과 같은 이름 자리를 쓴다 — … | `A team name lives in the same namespace as an account …` | 세 사실을 다 진다: 같은 네임스페이스 · `@name` 이 전원을 깨운다 · 사람 여럿은 Handle Groups. 하나라도 빠지면 이름을 정하는 사람이 모르는 채로 정한다(그 자리 주석) |
+  // | 팀원을 바꿀 수 있는 것은 admin 뿐이다 | `Only an admin can change who is in a team` | `admin` 은 안 옮긴다(위 머리말) |
+  // | 넣을 수 있는 에이전트가 없다 — 등록된 에이전트가 모두 이 팀에 있다 | `No agent left to add — every registered agent is already in this team` | **왜 비었는지**를 함께 적는다. 그냥 `No agents` 면 사람은 에이전트가 하나도 없는 줄 안다 |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`@{team.name}` · `@{m.handle}`** — 이름이다. `Handle Groups` 도 그대로 둔다:
+  //   설정 목차의 항목 이름이고, 옮기면 사람이 가리킨 자리를 목차에서 못 찾는다
+  // - **`admin`** — 이 제품의 고유어다(위 머리말의 그 규율)
+  // ---------------------------------------------------------------------------
+
+  /** 상세에서 격자로 돌아가는 길. 화살표까지 값에 든다 — `agents.detail.back` 과 같다. */
+  'agents.teams.back': '← Teams',
   'agents.teams.cancel': 'Cancel',
+  /** 후보 격자의 검색칸. `AgentGrid.shown` 과 **같은 판정**이라 같은 것을 훑는다고 적는다. */
+  'agents.teams.candidateSearch': 'Search team candidates',
+  'agents.teams.candidateSearchPlaceholder': 'Search by name or description',
   'agents.teams.create': 'Create',
   'agents.teams.createFailed': 'The team was not created',
+  'agents.teams.delete': 'Delete team',
+  'agents.teams.deleteConfirm': 'Delete for good',
+  /** 물음이 **무엇을** 지우는지 말한다(위 표). */
+  'agents.teams.deleteConfirmAsk': 'Delete this team?',
+  'agents.teams.deleteFailed': 'The team was not deleted',
+  'agents.teams.deleteHeading': 'Delete team',
+  /** **무엇이 남는지**를 말한다 — 삭제 상자가 답해야 하는 물음이 그것이다. */
+  'agents.teams.deleteNote': 'The agents that were in it stay — only the team goes',
+  'agents.teams.detailFailed': 'The team details did not arrive',
+  /**
+   * 카드의 정보 줄. **한 줄뿐이다**(문서 4단계: 에이전트 카드의 세 줄과 갈리는 자리).
+   * `Team` 은 무엇의 수인지를 말하고, 수 자체는 `{count}` 다 — `members` 를 붙이지
+   * 않는 이유는 `identity.badge.count` 와 같다(그 수에 사람은 안 든다, 전부 에이전트다).
+   */
+  'agents.teams.cardInfo': 'Team · {count}',
+  /** 목록을 못 받았을 때만 서는 줄. **만들 수는 있다**까지 말한다 — 그 사실이 빠지면
+   *  사람은 이 화면이 통째로 죽은 줄 안다. */
+  'agents.teams.gridUnavailable':
+    'This server does not serve the team list — it is older than the app. You can still create a '
+    + 'team, but it will not show up here; check again after the server is upgraded.',
+  'agents.teams.gridEmpty': 'No teams yet',
+  /** 검색이 아무것도 못 찾았을 때. `{query}` 는 사람이 친 글자 그대로다. */
+  /** `grid.search.noMatch` 와 **같은 모양**이다 — 두 격자가 탭으로 갈리는 형제라 못 찾은
+   *  말이 다르게 생기면 탭을 옮길 때마다 사람이 다시 읽는다. */
+  'agents.teams.gridNoMatch': 'No team matches “{query}”',
+  'agents.teams.gridSearch': 'Search teams',
+  /** `grid.search.count` 와 같은 짝이다 — 한국어만 단위를 붙인다(그 키의 근거). */
+  'agents.teams.gridSearchCount': '{count}',
+  'agents.teams.gridSearchPlaceholder': 'Search by name',
   'agents.teams.heading': 'Teams',
   /** 팀 이름도 handle 문법이다 — 서버가 같은 상수로 검사한다(`HANDLE_PATTERN`). */
   'agents.teams.invalidName':
     'Names take letters, digits, hyphens and underscores — 2 to 32 characters',
   'agents.teams.listFailed': 'The team list did not arrive',
+  'agents.teams.memberAddFailed': 'The agent was not added to the team',
+  /**
+   * 후보가 하나도 없을 때. **왜 비었는지까지 적는다** — `No agents` 면 사람은 등록된
+   * 에이전트가 없는 줄 알고 엉뚱한 화면으로 간다.
+   */
+  'agents.teams.memberCandidateEmpty':
+    'No agent left to add — every registered agent is already in this team',
+  'agents.teams.memberCandidateNoMatch': 'No agent matches “{query}”',
+  /**
+   * 팀 호출에서 빠지는 팀원. **결과를 적는다**(위 표) — `Disabled` 만으로는 이것이
+   * 러너가 죽은 것인지 계정이 꺼진 것인지 갈리지 않는다.
+   */
+  'agents.teams.memberDisabled': 'Disabled — left out when the team is called',
+  /**
+   * 카드 맨 아래의 예외 줄. **이름을 먼저 세운다** — 어느 팀원이 빠지는지가 답이고,
+   * `agents.teams.memberDisabled` 와 갈리는 것은 그 하나다(그쪽은 명단의 한 줄이라
+   * 이름이 이미 왼쪽에 있다).
+   */
+  'agents.teams.cardDisabled': '{names} are disabled — left out when the team is called',
+  'agents.teams.memberEmpty': 'No members',
+  'agents.teams.memberLoading': 'Loading…',
+  /** 후보 얼굴의 접근 이름. **하는 일을 말한다** — 격자의 카드(상세를 여는 문)와 갈린다. */
+  'agents.teams.memberPickAction': 'Add to the team: {handle}',
+  /** 회색 얼굴을 눌러도 되는 이유가 뒤 문장에 있다(위 표). */
+  'agents.teams.memberPickNote':
+    'Click a face to add it. A stopped agent can join too — being in a team and running right '
+    + 'now are different things.',
+  'agents.teams.memberReadOnly': 'Only an admin can change who is in a team',
+  'agents.teams.memberRemove': 'Remove',
+  'agents.teams.memberRemoveAction': 'Remove from the team: {handle}',
+  'agents.teams.memberRemoveFailed': 'The agent is still in the team',
+  'agents.teams.membersHeading': 'Members',
+  'agents.teams.nameEdit': 'Edit team name',
+  'agents.teams.nameHeading': 'Team name',
   'agents.teams.nameLabel': 'New team name',
+  /**
+   * 이름의 뜻을 말하는 자리 ② — **이름을 정하는 순간**에 필요한 세 사실을 다 진다
+   * (그 자리 주석: 이름 위가 아니라 입력칸 아래인 이유가 그것이다). `{name}` 은 화면이
+   * 다른 색으로 세우는 자리라 문장에서 뽑혀 있다.
+   */
+  'agents.teams.nameNote':
+    'A team name lives in the same namespace as an account — calling @{name} in a channel wakes '
+    + 'every member. To call several people by one name, go to Settings › Handle Groups.',
+  'agents.teams.nameSave': 'Save',
+  'agents.teams.newTeam': 'New team',
+  'agents.teams.renameFailed': 'The name was not changed',
   /** 이름의 뜻을 말하는 자리 ① — **이 격자에 있는 것이 무엇인가**에 답한다. */
   'agents.teams.note':
     'Group agents and call them by one name — calling @teamname in a channel wakes every member. '
@@ -1191,6 +1335,44 @@ export const en = {
   'sidebar.edit.save': 'Save',
   'sidebar.edit.title': 'Edit {name}',
   'sidebar.edit.topicPlaceholder': 'topic (optional)',
+
+  // ---------------------------------------------------------------------------
+  // find — 사이드바 맨 위의 찾기 줄(`components/SidebarFind.tsx`).
+  //
+  // **새 영역을 열지 않았다.** 그 컴포넌트는 파일만 갈렸을 뿐 `Sidebar.tsx` 가 자기
+  // 껍데기 안에서 그리는 한 줄이고(그 파일 주석: *"이 줄은 `Sidebar` 의 공용 껍데기에
+  // 산다"*), 위 머리말의 *"한 화면 = 한 영역"* 이 그대로 걸린다. `sidebarFind` 를 따로
+  // 열면 같은 화면이 두 영역으로 갈려, 다음 사람이 사이드바의 말을 찾을 때 두 곳을 본다.
+  //
+  // ## 종류 글자 셋 중 **둘은 새로 안 만들었다**
+  //
+  // `KIND_LABEL` 이 `채널`·`사람`·`에이전트` 셋을 낸다. 뒤의 둘은 `sidebar.members
+  // .kindHuman`·`kindAgent` 가 **이미 같은 화면에서 같은 뜻으로** 쓰고 있다 — 이름 옆에
+  // 붙어 *"이것이 사람인가 에이전트인가"* 에 답하는 꼬리표다. 승격 기준(위 머리말)이
+  // *"글자가 같다"* 가 아니라 *"뜻이 하나다"* 인데 여기는 뜻도 하나라, 새 키를 만들면
+  // 한 화면이 같은 말을 두 벌 들고 그중 하나만 고쳐지는 날이 온다.
+  //
+  // 그래서 **`kindChannel` 하나만** 이 덩어리에 선다. `common` 으로 올리지 않은 이유는
+  // 머리말의 그 규칙이다 — 부르는 화면이 아직 사이드바 하나다.
+  // ---------------------------------------------------------------------------
+
+  /** 이 줄이 못 하는 일(보관·생성순·아직 안 들어간 채널)로 가는 다음 걸음. */
+  'sidebar.find.allChannels': 'Search all channels',
+  /** 종류 꼬리표 중 채널. 나머지 둘은 `sidebar.members.kind*` 를 그대로 쓴다(위 머리말). */
+  'sidebar.find.kindChannel': 'Channel',
+  /** 입력칸의 접근 이름. 무엇이 걸리는지는 아래 placeholder 가 말한다. */
+  'sidebar.find.label': 'Search',
+  /**
+   * **아무것도 안 걸렸다.** `No results` 로 두지 않는 이유는 이 줄이 서는 순간이 사람이
+   * 글자를 이미 친 뒤라서다 — 그때 답해야 하는 것은 "결과가 0이다"라는 집계가 아니라
+   * **"그런 것이 없다"** 는 사실이다(`grid.search.noMatch` 와 같은 축).
+   */
+  'sidebar.find.none': 'Nothing matches',
+  /**
+   * **무엇이 걸리는지를 placeholder 가 말한다** — 그 컴포넌트 주석이 이것을 유일한
+   * 자리로 지목했다: 안 적으면 이 칸은 채널만 걸리던 옛 돋보기로 읽힌다.
+   */
+  'sidebar.find.placeholder': 'Channels · people · agents',
 
   'sidebar.members.adminBadge': 'Workspace admin',
   /** 채널 역할이 아니라 계정 속성이다 — 원래 `title` 이 그것을 말하고 있었다. */
@@ -2373,6 +2555,28 @@ export const en = {
   // | `failure` | 실패 카드 |
   // | `progress` | 진행 한 줄 |
   // | `report` | 완료 보고 — 세 구획의 머리 |
+
+  // ---------------------------------------------------------------------------
+  // channel — **화면 이름이다.** `components/ChannelPane.tsx` 와 그것이 여는 두
+  // 곁창(`ChannelDocPanel`·`ChannelFiles`), 그리고 빈 채널의 안내(`ChannelEmptyState`).
+  //
+  // ## 곁창 둘을 따로 열지 않은 이유
+  //
+  // 파일이 넷이지만 사람이 여는 화면은 **채널 하나**다. 문서·파일은 채널 헤더의 버튼이
+  // 열고 채널을 옮기면 함께 닫히며(그 파일들의 주석: *"열린 채로 두면 방금 떠난 채널의
+  // 것이 잠깐 남는다"*), 채널 밖에는 설 자리가 없다. `composer` 를 `channel.composer`
+  // 로 안 넣은 것과 **반대 방향의 같은 판단**이다 — 작성창은 스레드·DM 어디에나 서는
+  // 자기 완결된 화면이라 갈렸고, 이 셋은 채널을 떠나면 존재하지 않는다.
+  //
+  // | 덩어리 | 그 구획 |
+  // |---|---|
+  // | `doc` | 문서 곁창 — 읽기 · 편집 · 409 충돌 |
+  // | `empty` | 메시지가 하나도 없는 채널의 다음 걸음 |
+  // | `files` | 파일 곁창 |
+  // | `header` | 헤더 — 꼬리표 · 세 버튼 |
+  // | `pane` | 본문 — 보관된 채널 · 러너가 응답하지 않는 띠 |
+  //
+  // 덩어리 안은 **키 이름 알파벳순**이다(근거는 `sidebar` 머리말과 같다 — 리베이스).
   //
   // ## 영어를 새로 설계한 자리
   //
@@ -2547,6 +2751,493 @@ export const en = {
   'inbox.label.report': 'Finished',
   'inbox.label.mention': 'Called you',
   'inbox.label.reply': 'Reply',
+  // | 다른 사람이 먼저 고쳤다. 아래 현재 내용을 확인하고 다시 저장하면 내 편집으로 덮어쓴다. | `Someone else saved first. Read what is there now, below — saving again writes your version over it.` | **세 사실을 다 진다**: 무엇이 일어났나 · 어디를 보나 · 다시 누르면 무엇이 되나. 그 셋이 이 기능의 전부다(그 파일 주석 2번: 내 편집을 조용히 버리지 않는 대신 사람이 정한다). `Conflict` 한 낱말로 줄이면 사람은 자기 글이 사라졌는지부터 모른다 |
+  // | 서버의 현재 내용 | `What is on the server now` | `Current version` 은 판(version) 이야기라 어느 쪽이 내 것인지 안 갈린다. 이 칸에 있는 것은 **남의 글**이고 `now` 가 내 편집칸과의 시차를 진다 |
+  // | 아직 문서가 없다 | `No document yet` | `yet` 이 진다 — 못 읽은 것이 아니라 **아무도 아직 안 썼다**는 사실이고, 조회 실패는 위의 오류가 따로 말한다(그 파일 주석 1번) |
+  // | 문서를 불러오지 못했다 | `The document did not arrive` | 머리말의 `The X did not arrive` 그대로다 — 빈 문서와 못 받은 문서를 가르는 이 화면의 규율이 그 문장에 있다 |
+  // | (빈 문서) | `(empty)` | 서버에 있는 것이 **빈 문자열**이라는 사실이다. `No content` 는 문장이라 남의 글로 읽힌다 |
+  // | 이 채널의 전제를 적어 둔다 | `Write down what this channel assumes` | placeholder 다. 문서가 무엇을 담는 자리인지 말한다 — `Write here` 는 아무것도 안 가르친다 |
+  // | 아직 오간 파일이 없다 | `No files have been shared yet` | `yet` 이 같은 일을 한다. `shared` 인 이유: 이 목록이 담는 것은 올린 것이 아니라 **오간 것**이다(첨부 행) |
+  // | 더 오래된 파일 | `Older files` | 버튼이다. `Load more` 는 방향을 안 말하는데 이 목록은 최신순이라 방향이 곧 뜻이다 |
+  // | 보관된 채널이다 | `This channel is archived` | 작성창 자리에 서는 줄이라 **왜 못 쓰는지**가 답이다 |
+  // | @{handle} 는 지금 응답하지 않는다 | `@{handle} is not responding` | 머리말이 이미 정한 낱말이다(`응답이 없다` → `is not responding`) — 주어가 있어야 누가 안 하는지가 온다 |
+  // | #{name} 에 아직 메시지가 없다 | `No messages in #{name} yet` | |
+  // | @{handle} 처럼 에이전트를 멘션하면 그 에이전트의 inbox 로 들어간다 | `Mention an agent like @{handle} and it lands in that agent's inbox` | **`답한다` 가 아니라 `inbox 로 들어간다`** 인 이유를 그 파일 주석이 적었다: 답이 오는지는 러너가 떠 있는가에 달렸고 이 화면은 그것을 모른다 |
+  // | 사이드바에서 이 채널의 ⋯ 메뉴를 열고 '채널 편집'으로 topic 을 정할 수 있다 | `Open the ⋯ menu for this channel in the sidebar and set a topic with "Edit channel"` | 가리키는 항목 이름이 `sidebar.menu.edit` 의 값과 **같은 글자**여야 한다 — 안내가 가리킨 자리를 사람이 메뉴에서 못 찾으면 그 안내는 없느니만 못하다 |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`topic` · `repo` · `inbox`** — 이 제품의 고유어다. `topic` 은 채널 편집 폼의 필드
+  //   이름(`sidebar.edit.topicPlaceholder`)이고 그 자리도 안 옮겼다
+  // - **`⌘K` · `⋯` · `×` · `#` · `🔒` · `▼` · `▶`** — 기호이자 실제 키다
+  // - **채널 이름 · 파일 이름 · `formatSize` 의 숫자** — 데이터다
+  // - **`err.message`(서버 사유)** — 이 화면은 그것을 감싸기만 한다(`sidebar.runner
+  //   .launchFailed` 와 같은 경계)
+  // - **`RunnerStatusLine`(사유·설치 안내)** — 그 줄이 자기 문구를 들고 있고, 띠가 새로
+  //   쓰지 않는 것이 그 자리의 규율이다(그 파일 주석)
+  // ---------------------------------------------------------------------------
+
+  'channel.doc.cancel': 'Cancel',
+  'channel.doc.close': 'Close',
+  /**
+   * 409. **세 사실을 다 진다** — 무엇이 일어났나 · 어디를 보나 · 다시 누르면 무엇이 되나.
+   * 그 셋이 이 기능의 전부다(내 편집은 편집칸에 그대로 있고 사람이 정한다).
+   */
+  'channel.doc.conflict':
+    'Someone else saved first. Read what is there now, below — saving again writes your version over it.',
+  'channel.doc.edit': 'Edit',
+  'channel.doc.editLabel': 'Edit the document',
+  /** 서버에 있는 것이 **빈 문자열**이라는 사실이다 — 남의 글이 아니라 그 상태의 이름이다. */
+  'channel.doc.empty': '(empty)',
+  'channel.doc.heading': 'Document',
+  /** **`yet` 이 진다** — 못 읽은 것이 아니라 아무도 아직 안 썼다. 실패는 아래가 말한다. */
+  'channel.doc.noneYet': 'No document yet',
+  'channel.doc.loadFailed': 'The document did not arrive: {reason}',
+  'channel.doc.loading': 'Loading…',
+  'channel.doc.placeholder': 'Write down what this channel assumes',
+  'channel.doc.save': 'Save',
+  'channel.doc.saveFailed': 'The document was not saved',
+  'channel.doc.saving': 'Saving…',
+  /** 저장한 사람이 계정 목록에 없을 때. **"없다"가 아니라 "모른다"** 다. */
+  'channel.doc.unknownAuthor': 'someone unknown',
+  'channel.doc.unknownError': 'unknown error',
+  /** 409 뒤에 서는 칸의 제목 — `now` 가 내 편집칸과의 시차를 진다. */
+  'channel.doc.theirs': 'What is on the server now',
+
+  'channel.empty.noMessages': 'No messages yet',
+  'channel.empty.noMessagesIn': 'No messages in #{name} yet',
+  /**
+   * **`답한다` 가 아니라 `inbox 로 들어간다`** 다 — 답이 오는지는 러너가 떠 있는가에
+   * 달렸고 이 화면은 그것을 모른다(그 파일 주석).
+   */
+  'channel.empty.tipMention': "Mention an agent like @{handle} and it lands in that agent's inbox.",
+  /**
+   * `"Edit channel"` 은 `sidebar.menu.edit` 의 값과 **같은 글자여야 한다** — 안내가
+   * 가리킨 항목을 사람이 메뉴에서 못 찾으면 그 안내는 없느니만 못하다.
+   */
+  'channel.empty.tipTopic':
+    'Open the ⋯ menu for this channel in the sidebar and set a topic with "Edit channel".',
+
+  'channel.files.close': 'Close the file list',
+  'channel.files.empty': 'No files have been shared yet',
+  'channel.files.heading': 'Files',
+  'channel.files.label': 'Channel files',
+  'channel.files.loadFailed': 'The file list did not arrive: {reason}',
+  'channel.files.loading': 'Loading…',
+  /** 방향이 곧 뜻이다 — 이 목록은 최신순이라 `Load more` 로는 어디로 가는지 모른다. */
+  'channel.files.more': 'Older files',
+  'channel.files.retry': 'Try again',
+  'channel.files.unknownError': 'unknown error',
+
+  'channel.header.archived': 'Archived',
+  'channel.header.doc': 'Document',
+  'channel.header.files': 'Files',
+  'channel.header.search': 'Search',
+  'channel.header.searchLabel': 'Search this channel',
+  /** 두 진입점의 뜻이 다르므로 `title` 이 그 차이를 적는다(그 자리 주석). */
+  'channel.header.searchTitle': 'Search this channel (⌘K searches everything)',
+
+  'channel.pane.archived': 'This channel is archived',
+  /** 계정 목록에 없는 id 일 때의 자리. **"없다"가 아니라 "모른다"** 다. */
+  'channel.pane.runnerFailureAgent': 'agent',
+  /** 머리말이 정한 낱말이다 — 주어가 있어야 누가 안 하는지가 온다. */
+  'channel.pane.runnerFailureLine': '@{handle} is not responding',
+
+  // ---------------------------------------------------------------------------
+  // channelDirectory — **화면 이름이다.** `components/ChannelDirectory.tsx` 의 겹창.
+  //
+  // 위 `channel` 에 안 붙였다: 이것은 채널 **안**의 곁창이 아니라 채널을 **고르는**
+  // 겹창이고, 채널을 안 연 상태에서도 뜬다(사이드바 찾기 줄의 「모든 채널에서 찾기」가
+  // 여는 것이 이것이다). 담는 물음이 *"이 채널에서 무엇을 하나"* 가 아니라 *"어느 채널로
+  // 가나"* 다.
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 채널 찾기 | `Find a channel` | 겹창 제목이다. `Channel directory` 는 우리 내부 이름(`ChannelDirectory`)이라 화면에 내면 사람이 무엇을 하는 곳인지 모른다 — 접근 이름은 그 구조 이름을 그대로 쓴다(아래 `label`) |
+  // | 이름순 / 생성순 | `By name` / `By age` | `By date` 가 아니다 — 이 정렬은 **오래된 것부터** 세우고(그 파일의 `compareChannels`), `By date` 는 어느 방향인지 안 말한다. `By age` 는 나이순이라 오래된 것이 먼저라는 것이 이름에 있다 |
+  // | 표준 채널이 없다 | `No channels here` | `standard` 는 내부 구분(`ChannelRow.kind`)이라 화면에 내지 않는다 — 사람이 보는 목록은 그냥 채널 목록이다 |
+  // | 검색 결과가 없다 | `Nothing matches` | `sidebar.find.none` 과 같은 어휘다. 두 자리가 같은 물음(친 글자에 아무것도 안 걸렸다)에 답하므로 다르게 적을 이유가 없다 |
+  // ---------------------------------------------------------------------------
+
+  'channelDirectory.archived': 'Archived ({count})',
+  'channelDirectory.close': 'Close the channel directory',
+  'channelDirectory.empty': 'No channels here',
+  'channelDirectory.heading': 'Find a channel',
+  /** 겹창의 접근 이름 — 구조의 이름을 그대로 쓴다(제목은 사람의 말이다). */
+  'channelDirectory.label': 'Channel directory',
+  'channelDirectory.noMatch': 'Nothing matches',
+  /** `sidebar.channel.private` 와 같은 말이지만 **다른 화면이다** — 승격은 아직 아니다. */
+  'channelDirectory.private': 'Private channel',
+  'channelDirectory.search': 'Search channels by name',
+  'channelDirectory.searchPlaceholder': 'Channel name',
+  /** **오래된 것부터** 세운다 — `By date` 는 방향을 안 말한다(위 표). */
+  'channelDirectory.sortAge': 'By age',
+  'channelDirectory.sortName': 'By name',
+
+  // ---------------------------------------------------------------------------
+  // search — **화면 이름이다.** `components/SearchPalette.tsx`(⌘K)의 겹창.
+  //
+  // `sidebar.find` 와 **다른 영역인 것이 요점이다.** 그 파일의 표가 둘을 갈랐다:
+  // 이것은 메시지 **본문**을 서버 전문검색으로 뒤지고, 사이드바 줄은 이름을 스토어에서
+  // 훑는다. 물음이 다르므로 어휘도 갈린다 — `Nothing matches`(이름이 안 걸렸다)와
+  // `No messages matched`(그 말을 한 메시지가 없다)는 다른 사실이다.
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 검색 결과가 없습니다 | `No messages matched` | **무엇을 못 찾았는지** 말한다. 이 팔레트는 메시지만 뒤지므로(채널·사람은 사이드바 줄이 한다) 그 범위를 문장이 지녀야 한다 |
+  // | 검색 중... | `Searching…` | |
+  // | 검색 실패 | `The search did not go through` | 머리말의 규율이다 — `Search failed` 는 동작을 탓하고, 이 줄이 말할 것은 **결과가 안 왔다**는 상태다 |
+  // | 전체에서 찾기 | `Search everything` | `sidebar.notify.all` 이 이미 `Everything` 으로 「전부」의 축을 정했다 |
+  // | 이 채널에서 찾기 ({name}) | `Search this channel ({name})` | **`이 채널`을 안 버린다.** `Search in {name}` 으로 줄이면 그 이름이 **지금 보고 있는 곳**이라는 사실이 사라지고, 사람은 그것을 아무 채널의 이름으로 읽는다 — 좁히는 것이 사람의 명시적 선택이라는 이 팔레트의 규약(그 파일 주석 · `#221`)이 그 한 마디에 걸려 있다 |
+  // | 이 채널에서만 ({name}) | `Only this channel ({name})` | 같은 이유로 `이 채널`이 남는다. 위 placeholder 와 **다른 낱말**인 것도 그대로다 — 하나는 지금 무엇을 하는지이고 하나는 무엇을 켜는지다 |
+  // | 스레드 | `In a thread` | 결과 줄의 꼬리표다. `Thread` 한 낱말은 그 메시지가 스레드 **자체**로 읽힌다 — 이것은 그 메시지가 스레드 안에 있다는 표시다 |
+  // | ↑↓ 이동 · Enter 선택 · Esc 닫기 | `↑↓ move` · `Enter open` · `Esc close` | 키 이름은 안 옮긴다(실제 키다). 동사만 옮긴다 — `Enter` 가 하는 일은 고르기가 아니라 **여는 것**이다(그 핸들러가 채널·스레드를 연다) |
+  // | 이름 없는 채널 | `unnamed channel` | 이름이 `null` 인 채널이다. **"없다"를 말하는 것**이지 자리표시가 아니다 |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`DM` · `@{handle}` · `↑↓` · `Enter` · `Esc` · `⌘K`** — 고유어·이름·실제 키다
+  // ---------------------------------------------------------------------------
+
+  'search.palette.empty': 'No messages matched',
+  'search.palette.failed': 'The search did not go through',
+  'search.palette.hintClose': 'Esc close',
+  /** **`open` 이다** — 이 키가 하는 일은 고르기가 아니라 그 채널·스레드를 여는 것이다. */
+  'search.palette.hintOpen': 'Enter open',
+  'search.palette.hintMove': '↑↓ move',
+  'search.palette.input': 'Search terms',
+  'search.palette.label': 'Search messages',
+  'search.palette.loading': 'Searching…',
+  'search.palette.placeholderAll': 'Search everything',
+  /** **`this channel` 을 안 버린다** — 그 이름이 지금 보는 곳이라는 사실이 빠지면 안 된다. */
+  'search.palette.placeholderScoped': 'Search this channel ({name})',
+  'search.palette.results': 'Search results',
+  /** 체크박스 라벨 — placeholder 와 **다른 낱말이어야 한다**(위 표). */
+  'search.palette.scopeLabel': 'Only this channel ({name})',
+  /** 그 메시지가 스레드 **안에 있다**는 표시다 — 스레드 자체가 아니다. */
+  'search.palette.thread': 'In a thread',
+  'search.palette.unnamedChannel': 'unnamed channel',
+
+  // ---------------------------------------------------------------------------
+  // directory — **화면 이름이다.** `components/Directory.tsx` 의 겹창(사람·에이전트).
+  //
+  // 위 `channelDirectory` 와 갈린 이유는 그 머리말의 거울상이다 — 하나는 채널을 고르고
+  // 이것은 계정을 본다. 한 영역으로 묶으면 셋째 칸을 두 화면의 구획이 나눠 먹는다.
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 이 워크스페이스에 아직 계정이 없다 | `No accounts in this workspace yet` | `yet` 이 진다. 못 받은 것은 위의 오류가 따로 말한다(그 화면이 세 상태를 가르는 이유) |
+  // | 계정 목록을 불러오지 못했다 | `The account list did not arrive` | 머리말의 그 문장이다 |
+  // | {label} 중 맞는 것이 없다 | `Nothing in {label} matches` | `{label}` 은 `People`·`Agents` 로 **이미 영어**다. 문장이 그것을 받는 자리라 어순이 갈린다 — 한국어는 뒤에, 영어는 앞에 |
+  // | 비활성 | `Disabled` | `sidebar.members.agentDisabled` 와 같은 낱말·같은 뜻(계정이 꺼졌다)이다. **키는 나눈다** — 부르는 화면이 다르고, 승격은 세 번째 화면이 올 때다 |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`People` · `Agents` · `Directory` · `admin`** — 이미 영어다. 구획 제목 둘은
+  //   `section()` 이 `aria-label` 로도 쓰므로 옮기면 그 이름도 함께 갈린다
+  // - **`a.kind`(`human`/`agent`)** — 서버가 주는 **값**이다(`sidebar.notify` 와 같은 규율)
+  // - **`PRESENCE_LABEL`** — `lib/presenceView.ts` 다. **이 파일 밖이라 안 건드렸다** —
+  //   사이드바 PR 이 지킨 그 경계이고, 세 화면이 그것을 부르므로 `common` 후보이기도 하다
+  //   (`en.ts` 머리말의 '남은 것' 표가 그 자리를 이미 지목했다)
+  // ---------------------------------------------------------------------------
+
+  'directory.close': 'Close the directory',
+  'directory.disabled': 'Disabled',
+  'directory.empty': 'No accounts in this workspace yet',
+  'directory.label': 'Directory',
+  'directory.listFailed': 'The account list did not arrive — {reason}',
+  'directory.loading': 'Loading…',
+  /** `{label}` 은 `People`·`Agents` 라 안 옮긴다 — 어순만 언어를 따른다. */
+  'directory.sectionNoMatch': 'Nothing in {label} matches',
+  'directory.retry': 'Try again',
+  'directory.search': 'Search the directory',
+  'directory.searchPlaceholder': 'Search by handle or name',
+
+  // ---------------------------------------------------------------------------
+  // saved — **화면 이름이다.** `components/SavedMessages.tsx` 의 오버레이(#219).
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 할 것 / 완료 | `To do` / `Done` | **탭 두 칸이 한 축에 선다.** 값 집합은 `open`/`done` 인데 그것을 그대로 쓰면(`Open`/`Done`) `Open` 이 "열려 있다"로도 "열어라"로도 읽힌다 — 이 목록이 담는 것은 상태가 아니라 **내가 미뤄 둔 일**이다 |
+  // | 완료로 표시 / 할 것으로 되돌리기 | `Mark as done` / `Put back on the list` | 뒤엣것이 `Mark as to do` 가 아닌 이유: 그 버튼이 하는 일은 표시를 바꾸는 것이 아니라 **완료 탭에서 할 것 탭으로 옮기는 것**이고(서버가 행을 옮긴다), 사람이 보는 결과가 그 이동이다 |
+  // | 삭제된 메시지 | `Deleted message` | 자리는 남고 본문은 없다(#219 결정 3) — 그 사실의 이름이다 |
+  // | 저장된 메시지가 없다 / 완료된 메시지가 없다 | `Nothing saved yet` / `Nothing done yet` | 탭마다 다른 문장인 것이 요점이다. 하나로 묶으면 완료 탭에서 "저장한 것이 없다"고 말해 거짓이 된다 |
+  // | 불러오지 못했다 | `The list did not arrive` | 머리말의 그 문장이다 |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`Saved` · `just me`** — 이미 영어다
+  // - **`#{channel}` · `@{handle}` · 본문 미리보기 · 시각** — 데이터다
+  // - **`✓` · `↺` · `✕`** — 기호다. 접근 이름은 아래 둘이 진다
+  // ---------------------------------------------------------------------------
+
+  'saved.close': 'Close the panel',
+  'saved.deleted': 'Deleted message',
+  'saved.emptyDone': 'Nothing done yet',
+  'saved.emptyOpen': 'Nothing saved yet',
+  'saved.label': 'Saved messages',
+  'saved.listFailed': 'The list did not arrive — {reason}',
+  'saved.loading': 'Loading…',
+  'saved.markDone': 'Mark as done',
+  /** **표시가 아니라 이동이다** — 서버가 행을 다른 탭으로 옮기고, 사람이 보는 것이 그것이다. */
+  'saved.markOpen': 'Put back on the list',
+  'saved.retry': 'Try again',
+  'saved.tabDone': 'Done',
+  'saved.tabOpen': 'To do',
+
+  // ---------------------------------------------------------------------------
+  // status — **판정 이름이 아니라 한 벌의 어휘다**(`speech` 머리말의 세 번째 경우).
+  //
+  // 이 셋(`available`·`away`·`dnd`)의 이름을 **두 화면이 그린다**: 고르는 자리
+  // (`StatusPicker`)와 남의 상태를 읽는 자리(`Identity::StatusMark`). 화면 이름으로
+  // 영역을 잡으면 둘 중 하나가 남의 키를 부르게 되고, 그것이 `waitChain` 머리말이 화면
+  // 이름을 금지한 조건이다. 값 집합은 `shared` 의 `ACCOUNT_STATUSES` 하나에서 온다 —
+  // `sidebar.notify` 가 `shared` 의 `NOTIFY_LEVELS` 때문에 따로 선 것과 같은 사정이다.
+  //
+  // ## 값과 라벨을 갈랐다 — **`available`·`away`·`dnd` 는 안 옮긴다**
+  //
+  // 그 셋은 **저장·전송용 값**이다(`setStatus(status)` 로 서버에 가고 `data-status` 로
+  // 화면에 남으며 회귀선이 그 속성을 잰다). 사전에 오는 것은 그 값에 씌우는 이름뿐이고,
+  // 코드의 표는 **키를 들고 남는다** — `NotifiedGapRow::LABEL` 의 선례다. 표를 없애고
+  // 함수로 내리면 *"종류를 추가하면 컴파일이 막힌다"* 는 `Record<AccountStatus, …>` 의
+  // 이점이 사라지는데, **키는 언어를 안 지니므로** 상수여도 굳지 않는다.
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 대화 가능 | `Available` | 이 값의 이름이 이미 `available` 이고, 사람이 고르는 것도 그 상태다 |
+  // | 자리 비움 | `Away` | |
+  // | 방해 금지 | `Do not disturb` | `DND` 는 약자라 처음 보는 사람이 못 읽는다. `Busy` 는 다른 뜻이다 — 이것은 바쁘다는 보고가 아니라 **부르지 말라는 요청**이다 |
+  // | 짧은 문구 (최대 80자) | `A short note (80 characters max)` | 한도가 이름에 있어야 사람이 잘리기 전에 안다. `maxLength` 가 조용히 자르므로 화면이 말해야 한다 |
+  // | 문구 지우기 | `Clear the note` | **명시적 `null`** 을 보내는 버튼이다(그 자리 주석: 빈 문자열로 지우면 "없다"와 "빈 것이 있다"가 섞인다). `Clear` 만으로는 무엇을 지우는지 안 갈린다 — 옆에 상태 버튼 셋이 있다 |
+  // | 상태를 바꾸지 못했다 | `The status was not changed` | 머리말의 그 문장이다 — 실패를 삼키면 사람은 정했다고 믿는데 남들에게는 옛 상태로 보인다 |
+  // ---------------------------------------------------------------------------
+
+  /** `{label}` 에 아래 상태 이름이, `{text}` 에 사람이 적은 문구가 든다. */
+  'status.mark.withText': '{label}: {text}',
+  'status.picker.clear': 'Clear the note',
+  'status.picker.close': 'Close',
+  'status.picker.failed': 'The status was not changed',
+  /** 한도가 이름에 있어야 사람이 잘리기 전에 안다 — `maxLength` 는 조용히 자른다. */
+  'status.picker.notePlaceholder': 'A short note (80 characters max)',
+  'status.picker.noteLabel': 'Status note',
+  'status.picker.save': 'Save',
+  'status.value.available': 'Available',
+  'status.value.away': 'Away',
+  /** **약자를 안 쓴다** — 처음 보는 사람이 못 읽는다. `Busy` 는 다른 뜻이다(위 표). */
+  'status.value.dnd': 'Do not disturb',
+
+  // ---------------------------------------------------------------------------
+  // rail — **화면 이름이다.** `components/Rail.tsx` 와 `components/CommunityRail.tsx`.
+  //
+  // 둘을 한 영역에 둔 이유: **같은 자리에 서는 같은 물건**이다. 커뮤니티가 하나면
+  // `Rail` 이 마크를 그리고 둘 이상이면 `CommunityRail` 이 그 왼쪽에 서는데, 두 파일이
+  // 내는 말이 실제로 **같은 문장**이다(`{label} — 연결됨/연결 끊김`). 영역을 가르면 그
+  // 한 문장이 두 곳에 적히고, 두 파일의 주석이 이미 그 중복을 위험으로 적어 뒀다
+  // (*"같은 일을 하는 두 번째 표면을 만들면 어느 쪽이 정본인지 알 수 없게 된다"*).
+  //
+  // 사이드바에 안 붙인 것은 자리 때문이다 — 레일은 `Workspace` 가 사이드바 **밖에**
+  // 세우고(그 파일 주석), 사이드바를 접어도 남는다.
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 주 목록 | `Main navigation` | `nav` 의 접근 이름이다. `Main list` 는 목록 하나를 가리키는데 이것은 목록들 사이를 고르는 자리다 |
+  // | 연결됨 / 연결 끊김 | `connected` / `disconnected` | 이름 뒤에 붙는 조각이라 소문자다(`{label} — connected`). `sidebar.brand.disconnected` 가 두 마디를 지키는 것과 달리 여기는 **타일 하나에 붙는 꼬리표**라 그 자리에 문장이 설 수 없다 |
+  // | 나를 기다리는 것 {n}개 | `{count} waiting for you` | **배지의 숫자를 이름이 진다**(그 파일 주석: 주황 원 하나는 스크린리더에 아무것도 아니다). `unread` 가 아닌 이유는 이 배지가 안 읽음이 아니라 **나를 막는 것**만 세기 때문이다(문서) |
+  // | 담아 둔 메시지 {n}개 | `{count} saved` | 배지로 안 그리고 이름에만 싣는 수치다(그 자리 주석) |
+  // | 내 계정 메뉴 | `Your account menu` | |
+  // | 내 프로필 | `Your profile` | |
+  // | 상태 바꾸기 | `Change your status` | 메뉴 항목이라 동사로 선다 — 무엇이 열리는지가 아니라 무엇을 하는지가 답이다 |
+  // | 커뮤니티 전환 | `Switch community` | |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **칸 이름 넷(`Home`·`DM`·`Agents`·`Saved`)과 그 접근 이름** — **이미 영어다.**
+  //   그리고 `RAIL_CELLS` 표에서 폭을 재어 고른 값이라(그 주석의 실측: `Agents` 가 11px
+  //   에서 32.89px), 언어마다 길이가 갈리면 그 계산이 무너진다. 옮기려면 **먼저 그 폭을
+  //   다시 재야 한다** — 이 PR 의 일이 아니다
+  // - **`Settings` · `Sign out` · `⌘,`** — 이미 영어이고 단축키는 실제 키다
+  // - **`{label}`(커뮤니티 이름) · 이니셜** — 데이터다
+  // ---------------------------------------------------------------------------
+
+  'rail.community.label': 'Switch community',
+  'rail.community.connected': 'connected',
+  'rail.community.disconnected': 'disconnected',
+  /** `{name}` 은 커뮤니티 이름, `{state}` 에 위 둘 중 하나가 든다. */
+  'rail.community.tile': '{name} — {state}',
+  'rail.me.menu': 'Your account menu',
+  'rail.me.menuFor': '{handle} — your account menu',
+  'rail.me.profile': 'Your profile',
+  'rail.me.status': 'Change your status',
+  'rail.nav.label': 'Main navigation',
+  /** 이름 뒤에 붙는 조각 — `{name}` 은 칸 이름(`Home`·`Saved`)이다. */
+  'rail.cell.withCount': '{name} — {count}',
+  /**
+   * **안 읽음이 아니라 나를 막는 것**만 센다(문서).
+   *
+   * **복수형이 아니다.** `1 waiting for you` 와 `2 waiting for you` 가 같은 글자다 —
+   * `waiting` 은 여기서 분사이지 세는 명사가 아니라 영어도 안 갈린다(`composer.schedule
+   * .summary` 의 `{count} scheduled` 가 같은 판단이고, 그 옆의 `{count} attachment(s)` 가
+   * 갈리는 것은 **명사를 세기 때문**이다).
+   */
+  'rail.cell.blocking': '{count} waiting for you',
+  /** 배지로 안 그리고 이름에만 싣는 수치다. 위와 같은 이유로 복수형이 아니다. */
+  'rail.cell.saved': '{count} saved',
+
+  // ---------------------------------------------------------------------------
+  // workspace — **화면 이름이다.** `components/Workspace.tsx` 의 맨 위 띠.
+  //
+  // 넷뿐이라 덩어리를 안 판다(두 칸이 된다 — 머리말의 *"없으면 생략"*).
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 뒤로 / 앞으로 | `Back` / `Forward` | |
+  // | 미읽음 훑기 | `Sweep unread` | 버튼 글자다. `Sweep` 이 이 기능의 이름이고(`Sweep.tsx`), 무엇을 훑는지가 붙어야 한다 |
+  // | 미읽음을 하나씩 훑는다 | `Go through the unread one at a time` | `title` 이다 — 버튼 이름이 못 하는 말(**하나씩**)을 여기가 한다 |
+  // | 사이드바 펼치기 | `Show the sidebar` | 접혀 있을 때만 서는 버튼이라 `Toggle` 이 아니다 |
+  //
+  // **`앞로 (Cmd+])` 의 오타를 고쳤다** — 옮기면서 발견했다(`앞으로` 여야 한다).
+  // 영어 원본에는 그 자리가 `Forward (Cmd+])` 로 서고, 한국어도 바른 글자로 돌아간다.
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`Cmd+[` · `Cmd+]` · `←` · `→`** — 실제 키와 기호다
+  // ---------------------------------------------------------------------------
+
+  'workspace.back': 'Back',
+  'workspace.backTitle': 'Back (Cmd+[)',
+  'workspace.forward': 'Forward',
+  'workspace.forwardTitle': 'Forward (Cmd+])',
+  'workspace.showSidebar': 'Show the sidebar',
+  'workspace.sweep': 'Sweep unread',
+  /** 버튼 이름이 못 하는 말(**하나씩**)을 `title` 이 한다. */
+  'workspace.sweepTitle': 'Go through the unread one at a time',
+
+  // ---------------------------------------------------------------------------
+  // identity — **판정 이름이다.** `components/Identity.tsx` 의 배지 셋이 내는 말이고,
+  // 그 컴포넌트는 **거의 모든 화면**이 부른다(사이드바 · 디렉터리 · 메시지 행 · 팀 상세 ·
+  // 작성창 …). 화면 이름으로 영역을 잡으면 그중 하나가 남의 키를 부르게 되는 바로 그
+  // 조건이다(`waitChain` 머리말).
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 알 수 없는 계정 | `Unknown account` | **"없다"와 "모른다"는 다르다**(그 파일 주석 · design.md §4). `Missing` 은 없어졌다는 뜻이라 거짓이다 — 계정 목록에 아직 안 온 id 다 |
+  // | 집합 / 팀 | `Group` / `Team` | `sr-only` 로만 서는 이름이라 배지가 무엇인지 스크린리더에 말한다. `groups.*` 영역이 이미 `group` 으로 정했고(그 머리말), 팀은 `agents.teams` 가 정했다 — 두 어휘를 여기서 다시 정하지 않는다 |
+  // | {n}명 | `{count}` | **숫자만 남긴다.** `composer.mention.groupCount` 가 이미 같은 판단을 적었다: 한국어의 `명` 은 사람 세는 단위인데 집합에도 팀에도 에이전트가 든다 — 원래 문구가 이미 부정확했고 영어에서 `people` 로 옮기면 그 부정확이 굳는다 |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`?` · `👥` · `🤖` · `🌙` · `⛔`** — 글리프다. 이름은 위 `sr-only` 가 진다
+  // - **상태 이름 셋** — `status.value.*` 가 진다. 이 파일이 그것을 부르는 것이지 자기 것을
+  //   갖지 않는다(그 셋이 두 화면에 서는 한 벌이라는 것이 `status` 머리말의 근거다)
+  // ---------------------------------------------------------------------------
+
+  /** **"없다"가 아니라 "모른다"** 다 — 계정 목록에 아직 안 온 id 다. */
+  'identity.account.unknown': 'Unknown account',
+  /** **숫자만 남긴다** — 집합에도 팀에도 에이전트가 든다(위 표). */
+  'identity.badge.count': '{count}',
+  'identity.badge.group': 'Group',
+  'identity.badge.team': 'Team',
+
+  // ---------------------------------------------------------------------------
+  // invite — **화면 이름이다.** `settings/InviteSettings.tsx`.
+  //
+  // `agents.teams` 에 안 붙였다: 팀은 에이전트를 묶는 일이고 이것은 **사람을 이 서버로
+  // 부르는 일**이다. 설정 화면 하나 = 영역 하나라는 그 규칙 그대로다.
+  //
+  // ## 어투를 `~다` 로 맞췄다
+  //
+  // 이 화면만 `~습니다`·`~세요` 였다. `profileName` 이 같은 이유로 같은 일을 했고
+  // (그 머리말), 한 화면만 높임말이면 같은 앱이 사람을 두 가지로 대한다. **뜻은 그대로
+  // 두고 어투만 바꿨다** — 회귀선이 그것을 잰다.
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 이 화면은 관리자만 볼 수 있습니다 | `Only an admin can see this screen` | `admin` 은 안 옮긴다. 원래 한국어의 `관리자` 가 그 값을 가리키는 말이었고, 이 저장소는 그 자리에 `admin` 을 쓴다(`agents` 머리말) |
+  // | 초대 토큰을 만들어 … 한 번 쓰면 소진됩니다 | `Create an invite token to bring someone into this workspace. The token is shown once, right after it is minted, and never again. It is used up the first time someone signs up with it.` | **세 사실을 다 진다**: 무엇을 하나 · 한 번만 보인다 · 한 번 쓰면 끝이다. 셋 다 되돌릴 수 없는 것에 관한 말이라 하나도 못 뺀다 |
+  // | 이 토큰은 지금만 보입니다 — 창을 벗어나면 다시 볼 수 없습니다 | `This token is on screen only now — leave this view and it is gone` | **놓치면 되돌릴 수 없다**는 것이 이 줄의 전부다(그 자리 주석이 크기를 안 내린 이유로 적었다) |
+  // | 받는 사람이 가입할 때 이 토큰이 필요합니다. 지금 복사해 두세요. | `Whoever you invite needs this token to sign up. Copy it now.` | 뒤 문장이 **지금 할 일**이다 |
+  // | 새 토큰 발급 (앞 토큰은 화면에서 사라집니다) | `Mint a new token (the one above disappears)` | 괄호가 **버튼을 누르면 무엇을 잃는지** 말한다(그 자리 주석: 그래서 버튼을 잠그지 않는다) |
+  // | 초대 발급에 실패했습니다 | `The token was not minted` | 머리말의 그 문장이다 |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`Invite`(화면 제목) · `admin`** — 이미 영어이자 고유어다
+  // - **토큰 문자열** — 데이터다
+  // ---------------------------------------------------------------------------
+
+  'invite.busy': 'Minting…',
+  'invite.create': 'Mint an invite token',
+  'invite.createAgain': 'Mint a new token (the one above disappears)',
+  'invite.failed': 'The token was not minted',
+  'invite.notAdmin': 'Only an admin can see this screen',
+  /** **세 사실을 다 진다** — 무엇을 하나 · 한 번만 보인다 · 한 번 쓰면 끝이다. */
+  'invite.note':
+    'Create an invite token to bring someone into this workspace. The token is shown once, right '
+    + 'after it is minted, and never again. It is used up the first time someone signs up with it.',
+  'invite.tokenNextStep': 'Whoever you invite needs this token to sign up. Copy it now.',
+  /** **놓치면 되돌릴 수 없다**는 것이 이 줄의 전부다. */
+  'invite.tokenWarning': 'This token is on screen only now — leave this view and it is gone',
+
+  // ---------------------------------------------------------------------------
+  // boot — **화면 이름이다.** `components/BootNotice.tsx`(`#460`).
+  //
+  // ## 부팅 시점에 언어를 아는가 — **안다. 문제 없다** (실측 2026-09-08)
+  //
+  // 이 화면은 세션도 못 읽은 시점에 뜨므로 언어를 물을 곳이 있는지부터 확인했다.
+  // `useT` → `usePrefsStore` → `prefsStorage.load()` 이고 그 함수는 `localStorage
+  // .getItem` **동기 호출**이다. 스토어가 만들어지는 순간(모듈 로드) 이미 값이 들어 있고,
+  // 저장된 것이 없으면 `'system'` → `detectLocale()` 이 브라우저에게 묻는다. 두 경로 다
+  // 왕복이 없다 — 키체인을 기다리는 이 화면이 **그 대기 전에** 제 언어로 뜬다.
+  //
+  // (`Workspace` 도 같은 이유로 안전하다. 그 화면은 애초에 세션을 읽은 뒤에 선다.)
+  //
+  // ## 두 문구가 `export` 로 남는다 — **값은 사전에서 온다**
+  //
+  // `KEYCHAIN_WAIT_TITLE`·`KEYCHAIN_WAIT_HINT` 는 회귀선(`keychainWaitNotice.test.tsx`)이
+  // import 해서 쓴다. 지우면 그 시험이 문구를 손으로 다시 적게 되고, 그러면 화면과 시험이
+  // 갈릴 수 있다. 그래서 **함수로 내린다** — `skills` 의 확인 문구 셋이 같은 처지에서
+  // 같은 선례를 세웠다(`lastTurnLabel` 의 그것). 상수로 두면 모듈 로드 시점 언어로 굳는다.
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | OS 키체인의 승인을 기다리는 중 | `Waiting for the OS keychain to be approved` | **관측된 사실**이다(그 파일 주석). 진행형이 *"지금 멈춰 있다"* 를 진다 — 머리말이 `is waiting for` 를 고른 그 근거다 |
+  // | 시스템 승인 대화상자가 떠 있는지 확인하라 — 다른 창 뒤에 가려져 있을 수 있다. 승인하면 곧바로 이어진다. | `Check whether a system approval dialog is open — it can be hidden behind another window. Approve it and this continues right away.` | **단언하지 않는다**(`#368`): `A dialog is waiting` 이 아니라 `Check whether`. 그리고 **가려질 수 있다**까지 말한다 — 실측에서 대화상자는 떠 있었고 사람이 그것을 못 찾은 것이 36분의 실체였다 |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`Connecting…`** — 유예 안에서 서는 줄이고 **이미 영어다.** 그리고 그 줄은
+  //   *"아는 것의 전부"* 라 그대로 둔다는 것이 그 파일의 결정이다
+  // ---------------------------------------------------------------------------
+
+  /** **관측된 사실**이다 — 진행형이 "지금 멈춰 있다"를 진다. */
+  'boot.keychain.title': 'Waiting for the OS keychain to be approved',
+  /**
+   * 사람이 다음에 할 수 있는 일. **이것이 빠지면 고친 게 아니다**(그 파일 주석) —
+   * `Check whether` 로 두는 것이 `#368` 의 요구다: 대화상자가 떠 있다고 **단언하지 않는다**.
+   */
+  'boot.keychain.hint':
+    'Check whether a system approval dialog is open — it can be hidden behind another window. '
+    + 'Approve it and this continues right away.',
 } satisfies Record<string, Message>;
 
 /**

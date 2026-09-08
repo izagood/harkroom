@@ -5,6 +5,16 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController } from '../src/state/controller';
 import { ChannelFiles } from '../src/components/ChannelFiles';
 import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
+import { usePrefsStore } from '../src/state/prefsStore';
+
+/**
+ * **언어를 한국어로 고정한다.** 이 파일이 재는 것은 언어가 아니라 **그 언어로 표현된
+ * 규율**이다 — 문구가 사전을 지나게 된 뒤(i18n 이전)에도 그 규율은 그대로여야 하므로,
+ * 한국어 문구를 재는 줄을 지우는 대신 언어를 못 박는다. `gallery.test.tsx`·
+ * `skillsSettings.test.tsx`·`agentGrid.test.tsx`·`accountAvatar.test.tsx` 가 세운 선례다.
+ */
+beforeEach(() => usePrefsStore.getState().setLocale('ko'));
+afterEach(() => usePrefsStore.getState().setLocale('system'));
 
 /**
  * #232 회귀선(화면). 채널에 오간 파일을 모아 보는 표면이 없었다. 여기 묶어 둔 것은 그 표면이

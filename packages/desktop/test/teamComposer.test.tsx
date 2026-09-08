@@ -57,7 +57,8 @@ describe('팀 자동완성 (#172)', () => {
     expect(option).toBeTruthy();
     // 수가 없으면 `@release` 가 하나인지 다섯인지 모르는 채로 부르게 된다
     // (`AgentTeamRow.memberCount` 가 이 자리를 이름으로 지목한다).
-    expect(option!.textContent).toContain('4명');
+    // 단위(`명`)가 빠진 근거는 `identity.badge.count` 에 있다 — 팀원은 전부 에이전트다.
+    expect(option!.textContent).toContain('4');
   });
 
   it('2. 팀은 계정·집합과 다른 종류로 표시된다', () => {

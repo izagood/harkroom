@@ -3,6 +3,7 @@ import { useStore } from 'zustand';
 import { communityLabel, useCommunityRegistry, type CommunityEntry } from '../state/communities';
 import { switchCommunity } from '../state/controller';
 import { isMacOS } from '../lib/platform';
+import { useT } from '../i18n/useT';
 
 /**
  * 커뮤니티 전환기(#165 결정 1). 사이드바 **왼쪽**에 서는 얇은 레일이다.
@@ -21,6 +22,7 @@ import { isMacOS } from '../lib/platform';
  * 나중에 갈라질 때 두 화면이 함께 부서진다.
  */
 export function CommunityRail() {
+  const t = useT();
   const entries = useCommunityRegistry((r) => r.entries);
   const activeId = useCommunityRegistry((r) => r.activeId);
   /**
@@ -37,7 +39,7 @@ export function CommunityRail() {
   return (
     <nav
       data-testid="community-rail"
-      aria-label="커뮤니티 전환"
+      aria-label={t('rail.community.label')}
       className={`flex w-14 shrink-0 flex-col items-center gap-2 border-r border-border bg-surface-sunken pb-2 ${
         macTrafficLightRoom ? 'pt-8' : 'pt-2'
       }`}
@@ -58,6 +60,7 @@ export function CommunityRail() {
  * 아무것도 아니고, 색만으로 구분하면 그 구분이 색을 못 보는 사람에게는 없는 것과 같다.
  */
 function CommunityTile({ entry, active }: { entry: CommunityEntry; active: boolean }) {
+  const t = useT();
   const connected = useStore(entry.store, (s) => s.connected);
   const label = communityLabel(entry);
   // 이니셜은 **코드 포인트 단위**로 자른다. `label[0]` 은 이모지·일부 문자를 반쪽만 잘라
@@ -68,7 +71,13 @@ function CommunityTile({ entry, active }: { entry: CommunityEntry; active: boole
     <button
       type="button"
       data-testid={`community-tile-${entry.id}`}
-      aria-label={`${label} — ${connected ? '연결됨' : '연결 끊김'}`}
+      /* 이름과 연결 상태를 잇는 방식이 언어의 것이라 **사전이 문장을 진다** — 코드가
+         `—` 를 붙이면 그 자리가 한국어의 어순으로 굳는다. `Rail` 의 마크 타일도 같은
+         키를 본다: 같은 문장을 두 파일이 따로 적으면 한쪽만 고쳐진다. */
+      aria-label={t('rail.community.tile', {
+        name: label,
+        state: t(connected ? 'rail.community.connected' : 'rail.community.disconnected'),
+      })}
       aria-current={active ? 'true' : undefined}
       title={label}
       onClick={() => {

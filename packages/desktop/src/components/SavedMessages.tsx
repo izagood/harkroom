@@ -4,6 +4,7 @@ import type { SavedMessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { displayBody } from '../lib/mention';
+import { useT } from '../i18n/useT';
 
 interface Props {
   open: boolean;
@@ -18,6 +19,7 @@ type LoadState = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; mess
 type Tab = 'open' | 'done';
 
 export function SavedMessages({ open, onClose }: Props) {
+  const t = useT();
   const channels = useActiveStore((s) => s.channels);
   const dms = useActiveStore((s) => s.dms);
   const accounts = useActiveStore((s) => s.accounts);
@@ -107,7 +109,7 @@ export function SavedMessages({ open, onClose }: Props) {
             <span className="rounded bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted">
               {channelLabel(e.channelId)}
             </span>
-            <span className="flex-1 italic text-fg-subtle">삭제된 메시지</span>
+            <span className="flex-1 italic text-fg-subtle">{t('saved.deleted')}</span>
             <span className="text-meta text-fg-subtle">{time}</span>
           </span>
         ) : (
@@ -130,7 +132,7 @@ export function SavedMessages({ open, onClose }: Props) {
         )}
         <button
           data-testid={`saved-toggle-${e.messageId}`}
-          aria-label={e.state === 'open' ? '완료로 표시' : '할 것으로 되돌리기'}
+          aria-label={e.state === 'open' ? t('saved.markDone') : t('saved.markOpen')}
           onClick={() => { void toggleState(e); }}
           className="shrink-0 rounded border border-border px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
         >
@@ -141,13 +143,13 @@ export function SavedMessages({ open, onClose }: Props) {
   };
 
   return (
-    <Overlay label="저장된 메시지" onClose={onClose}>
+    <Overlay label={t('saved.label')} onClose={onClose}>
         <div className="flex items-center gap-2 border-b border-border p-3">
           <span className="font-bold">Saved</span>
           <button
             onClick={onClose}
             className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover"
-            aria-label="패널 닫기"
+            aria-label={t('saved.close')}
           >
             ✕
           </button>
@@ -157,34 +159,34 @@ export function SavedMessages({ open, onClose }: Props) {
             className={`rounded px-2 py-1 ${tab === 'open' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:bg-surface-hover'}`}
             onClick={() => setTab('open')}
           >
-            할 것
+            {t('saved.tabOpen')}
           </button>
           <button
             className={`rounded px-2 py-1 ${tab === 'done' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:bg-surface-hover'}`}
             onClick={() => setTab('done')}
           >
-            완료
+            {t('saved.tabDone')}
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {load.kind === 'error' && (
             <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-danger">
-              불러오지 못했다 — {load.message}
+              {t('saved.listFailed', { reason: load.message })}
               <button
                 onClick={() => setReloadSeq((n) => n + 1)}
                 className="ml-2 rounded bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
               >
-                다시 시도
+                {t('saved.retry')}
               </button>
             </div>
           )}
           {/* 오류·대기·'없다' 는 전부 **본문단**이다(앱 기본값 13px 이라 안 적는다) —
               목록이 비었을 때 화면에 남는 유일한 글자를 아랫단으로 내리지 않는다. */}
-          {load.kind === 'loading' && <p className="px-2 text-fg-subtle">불러오는 중…</p>}
+          {load.kind === 'loading' && <p className="px-2 text-fg-subtle">{t('saved.loading')}</p>}
 
           {load.kind === 'ready' && entries.length === 0 && (
             <p data-testid="saved-empty" className="px-2 text-fg-subtle">
-              {tab === 'open' ? '저장된 메시지가 없다' : '완료된 메시지가 없다'}
+              {tab === 'open' ? t('saved.emptyOpen') : t('saved.emptyDone')}
             </p>
           )}
           {load.kind === 'ready' && entries.length > 0 && <ul>{entries.map(entryRow)}</ul>}

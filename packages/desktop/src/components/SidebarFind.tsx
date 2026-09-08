@@ -3,6 +3,8 @@ import type { AccountView, ChannelRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { Identity } from './Identity';
+import { useT } from '../i18n/useT';
+import type { MessageKey, Translate } from '../i18n';
 
 /**
  * 사이드바 **맨 위**의 찾기(정본 문서 `docs/desktop-remaining-gaps.html` 「A · 찾기가 맨
@@ -84,11 +86,20 @@ type Hit =
  * 사람과 에이전트를 갈라 적는 것도 같은 이유다 — 이 목록에서는 "누구에게 말을 거는가" 가
  * 아니라 "무엇을 골랐는가" 가 물음이고, 셋을 섞어 놓고 둘만 같은 이름으로 부르면 종류
  * 글자가 답을 반만 한다.
+ *
+ * **표는 남기고 값만 사전 키로 바꿨다**(`NotifiedGapRow::LABEL` 의 선례). 문구를 값에
+ * 그대로 두면 이 상수가 **모듈 로드 시점 언어로 굳어**, 사람이 언어를 바꿔도 이 세
+ * 꼬리표만 옛 언어로 남는다. 키는 언어를 안 지니므로 상수여도 안전하고, `Record<Hit
+ * ['kind'], …>` 가 지키던 것(*"종류를 추가하면 컴파일이 막힌다"*)이 그대로 산다.
+ *
+ * **사람·에이전트는 새 키를 안 만들었다.** `sidebar.members.kind*` 가 이미 이 화면에서
+ * 같은 뜻으로(이름 옆에 붙어 사람인가 에이전트인가에 답한다) 쓰고 있다 — 승격 기준이
+ * *"글자가 같다"* 가 아니라 *"뜻이 하나다"* 인데(`en.ts` 머리말) 여기는 뜻도 하나다.
  */
-const KIND_LABEL: Record<Hit['kind'], string> = {
-  channel: '채널',
-  human: '사람',
-  agent: '에이전트',
+const KIND_LABEL: Record<Hit['kind'], MessageKey> = {
+  channel: 'sidebar.find.kindChannel',
+  human: 'sidebar.members.kindHuman',
+  agent: 'sidebar.members.kindAgent',
 };
 
 /** 결과 상한. 20 을 넘기면 목록이 아니라 벽이고, 그때 필요한 것은 스크롤이 아니라 더 친 글자다. */
@@ -100,6 +111,7 @@ export function SidebarFind({ onOpenChannelDirectory }: {
    *  없다(design.md §4). */
   onOpenChannelDirectory: () => void;
 }) {
+  const t = useT();
   const [query, setQuery] = useState('');
   const channels = useActiveStore((s) => s.channels);
   const accounts = useActiveStore((s) => s.accounts);
@@ -155,11 +167,11 @@ export function SidebarFind({ onOpenChannelDirectory }: {
         <input
           data-testid="sidebar-find"
           type="text"
-          aria-label="찾기"
+          aria-label={t('sidebar.find.label')}
           /* 무엇이 걸리는지를 placeholder 가 말한다 — 문서의 "채널·사람·에이전트가 한
              입력으로" 를 사람이 화면에서 확인하는 유일한 자리다. 안 적으면 이 칸은
              채널만 걸리는 예전 돋보기로 읽힌다. */
-          placeholder="채널 · 사람 · 에이전트"
+          placeholder={t('sidebar.find.placeholder')}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
@@ -194,7 +206,7 @@ export function SidebarFind({ onOpenChannelDirectory }: {
           {hits.length === 0 && (
             // 빈 목록과 "안 찾아봤다" 를 구별한다 — `Directory.tsx` 의 세 상태 구분과 같은
             // 이유다. 여기서는 물어보는 중이 없다(스토어에 이미 다 있다) 그래서 둘뿐이다.
-            <li className="px-2 py-1.5 text-meta text-fg-subtle">찾는 것이 없다</li>
+            <li className="px-2 py-1.5 text-meta text-fg-subtle">{t('sidebar.find.none')}</li>
           )}
           {hits.map((hit) => (
             <li key={`${hit.kind}-${hit.id}`}>
@@ -206,7 +218,7 @@ export function SidebarFind({ onOpenChannelDirectory }: {
                 >
                   <span aria-hidden="true" className="shrink-0 text-fg-subtle">#</span>
                   <span className="min-w-0 flex-1 truncate text-fg">{hit.name}</span>
-                  <KindTag kind={hit.kind} />
+                  <KindTag kind={hit.kind} t={t} />
                 </button>
               ) : (
                 <button
@@ -225,7 +237,7 @@ export function SidebarFind({ onOpenChannelDirectory }: {
                     <Identity account={hit.account} variant="avatar" className="h-4 w-4" />
                   </span>
                   <span className="min-w-0 flex-1 truncate text-fg">{hit.account.handle}</span>
-                  <KindTag kind={hit.kind} />
+                  <KindTag kind={hit.kind} t={t} />
                 </button>
               )}
             </li>
@@ -243,7 +255,7 @@ export function SidebarFind({ onOpenChannelDirectory }: {
               className="w-full rounded px-2 py-1 text-left text-meta text-fg-muted hover:bg-surface-raised"
               onClick={() => pick(onOpenChannelDirectory)}
             >
-              모든 채널에서 찾기
+              {t('sidebar.find.allChannels')}
             </button>
           </li>
         </ul>
@@ -260,10 +272,10 @@ export function SidebarFind({ onOpenChannelDirectory }: {
  * 강조색을 쓰지 않는다 — #488 B2 가 회수한 그 색이다. 종류는 "현재 상태" 이지 "나를 막는
  * 것" 이 아니다.
  */
-function KindTag({ kind }: { kind: Hit['kind'] }) {
+function KindTag({ kind, t }: { kind: Hit['kind']; t: Translate }) {
   return (
     // 11px 다 — 4단의 가장 작은 단(#555). 이 글자는 **읽는 것**이라 아바타 원 안의
     // 머리글자처럼 예외가 아니다: 세 종류를 가려 주는 값이므로 읽히지 않으면 쓸모가 없다.
-    <span className="shrink-0 text-meta text-fg-subtle">{KIND_LABEL[kind]}</span>
+    <span className="shrink-0 text-meta text-fg-subtle">{t(KIND_LABEL[kind])}</span>
   );
 }

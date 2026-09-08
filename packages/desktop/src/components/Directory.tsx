@@ -37,6 +37,7 @@ type LoadState = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; mess
  * 없다. handle 과 displayName **둘 다** 본다 — 사람은 둘 중 아는 쪽으로 친다.
  */
 export function Directory({ open, onClose, accountId }: Props) {
+  const t = useT();
   const accounts = useActiveStore((s) => s.accounts);
   const online = useActiveStore((s) => s.online);
   // `#443`: presence 는 **서버가 주는 것**이라 소켓이 끊기면 낡는다. `online` 만 읽으면
@@ -44,9 +45,6 @@ export function Directory({ open, onClose, accountId }: Props) {
   // 에이전트 6개가 전부 초록이었다). `connected` 가 그 낡음을 아는 유일한 문지기다.
   const connected = useActiveStore((s) => s.connected);
   const [query, setQuery] = useState('');
-  // 이 화면은 아직 한국어다 — 이 PR 이 옮긴 것은 `PRESENCE_LABEL` 뿐이라
-  // 그 값을 씌우는 데만 쓴다(그 표가 값이 아니라 **키**를 들게 됐다).
-  const t = useT();
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
 
   const account = accountId ? accounts[accountId] : null;
@@ -152,7 +150,7 @@ export function Directory({ open, onClose, accountId }: Props) {
           data-testid={`directory-disabled-${a.id}`}
           className="rounded bg-surface-hover px-1 text-meta text-fg"
         >
-          비활성
+          {t('directory.disabled')}
         </span>
       )}
     </li>
@@ -168,19 +166,19 @@ export function Directory({ open, onClose, accountId }: Props) {
           목록이 비면 이 한 줄이 화면에 남는 유일한 설명이라 아랫단으로 내리지 않는다.
           `Inbox`·`SavedMessages` 가 같은 짝을 쓴다. */}
       {rows.length === 0
-        ? <p className="px-2 text-fg-subtle">{label} 중 맞는 것이 없다</p>
+        ? <p className="px-2 text-fg-subtle">{t('directory.sectionNoMatch', { label })}</p>
         : <ul>{rows.map(row)}</ul>}
     </section>
   );
 
   return (
-    <Overlay label="디렉터리" onClose={onClose}>
+    <Overlay label={t('directory.label')} onClose={onClose}>
         <div className="flex items-center gap-2 border-b border-border p-3">
           <span className="font-bold">Directory</span>
           <button
             onClick={onClose}
             className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover"
-            aria-label="디렉터리 닫기"
+            aria-label={t('directory.close')}
           >
             ✕
           </button>
@@ -188,8 +186,8 @@ export function Directory({ open, onClose, accountId }: Props) {
         <div className="border-b border-border p-3">
           <input
             type="text"
-            aria-label="디렉터리 검색"
-            placeholder="handle 또는 이름으로 검색"
+            aria-label={t('directory.search')}
+            placeholder={t('directory.searchPlaceholder')}
             className="w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -201,20 +199,20 @@ export function Directory({ open, onClose, accountId }: Props) {
               읽는다 — 조회 실패를 빈 목록으로 삼키지 않는다. */}
           {load.kind === 'error' && (
             <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-danger">
-              계정 목록을 불러오지 못했다 — {load.message}
+              {t('directory.listFailed', { reason: load.message })}
               <button
                 onClick={() => { reload(); }}
                 className="ml-2 rounded bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
               >
-                다시 시도
+                {t('directory.retry')}
               </button>
             </div>
           )}
           {load.kind === 'loading' && total === 0 && (
-            <p className="px-2 text-fg-subtle">불러오는 중…</p>
+            <p className="px-2 text-fg-subtle">{t('directory.loading')}</p>
           )}
           {load.kind === 'ready' && total === 0 && (
-            <p className="px-2 text-fg-subtle">이 워크스페이스에 아직 계정이 없다</p>
+            <p className="px-2 text-fg-subtle">{t('directory.empty')}</p>
           )}
           {total > 0 && (
             <>
