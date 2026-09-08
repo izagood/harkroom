@@ -25,6 +25,30 @@ export const ko = {
   'common.someone': '사람',
 
   // ---------------------------------------------------------------------------
+  // avatar · avatarEdit — **어투를 `~다` 로 맞췄다.** 이 둘만 `~습니다`·`~주세요` 였고,
+  // 한 자리만 높임말이면 같은 앱이 사람을 두 가지로 대한다(`profileName`·`InviteSettings`
+  // 가 세운 선례). 뜻은 그대로다.
+  // ---------------------------------------------------------------------------
+
+  'attachment.fetchFailed': '첨부를 불러오지 못했다',
+  'attachment.missing': '첨부 파일이 서버에 없다',
+
+  'avatar.error.notAnImage': '{formats} 파일만 쓸 수 있다. 파일 이름이 아니라 내용으로 판정한다.',
+  'avatar.error.notFound': '업로드한 파일을 찾지 못했다. 다시 시도한다.',
+  'avatar.error.other': '사진을 바꾸지 못했다 ({code}).',
+  'avatar.error.unreachable': '사진을 바꾸지 못했다. 서버에 연결하지 못했을 수 있다.',
+  'avatar.error.svgTooLarge': 'SVG 는 256 KiB 까지 쓸 수 있다. 더 단순한 그림이나 PNG 로 바꾼다.',
+  'avatar.error.tooLarge': '파일이 너무 크다. 더 작은 이미지를 고른다.',
+
+  'avatarEdit.progress.applying': '프로필에 적용 중…',
+  'avatarEdit.progress.aria': '사진 업로드 진행',
+  'avatarEdit.progress.removing': '사진을 지우는 중…',
+  'avatarEdit.progress.uploading': '사진 올리는 중…',
+  'avatarEdit.progress.uploadingPct': '사진 올리는 중… {pct}%',
+  'avatarEdit.result.changed': '사진을 바꿨다',
+  'avatarEdit.result.removed': '사진을 지웠다',
+
+  // ---------------------------------------------------------------------------
   // gallery — **키 순서는 `en.ts` 와 같다**(덩어리 알파벳 → 그 안 키 알파벳).
   //
   // 이 영역에 **견본 대화가 없는 이유**는 `en.ts` 머리말이 적었다 — 카드 속 말은 화면

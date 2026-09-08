@@ -2,11 +2,15 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { AgentConfig, AgentDefaults, AgentView, PatView } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { translator } from '../src/i18n';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { acc } from './helpers/fakeApi';
 import { ApiError } from '../src/lib/api';
+
+/** 문구가 아니라 **사실**을 잰다 — 어투가 바뀌어도(`~습니다` → `~다`) 이 축은 산다. */
+const ko = translator('ko');
 
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
@@ -792,7 +796,7 @@ describe('에이전트 사진 (Task 15-4)', () => {
       (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar,
     ).toHaveBeenCalledWith('id-rusalka', null, undefined));
     // 지운 것을 말한다. 아무 말이 없으면 눌린 것인지조차 알 수 없다 — 그것이 원래 문제였다.
-    expect((await screen.findByTestId('avatar-done')).textContent).toMatch(/지웠습니다/);
+    expect((await screen.findByTestId('avatar-done')).textContent).toBe(ko('avatarEdit.result.removed'));
   });
 
   /** 확인을 취소하면 아무 일도 없어야 하고, 확인 버튼도 남아 있지 않아야 한다. */
