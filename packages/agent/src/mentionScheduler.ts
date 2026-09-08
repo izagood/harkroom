@@ -106,6 +106,20 @@ export interface MentionScheduler {
   drain(): Promise<void>;
 }
 
+/**
+ * "선택에 답이 왔다" 한 줄. 못 읽으면 **짧게라도 말한다** — 빈 문자열을 돌려주면 델타가
+ * 비어 하네스가 돌지 않고, 그러면 사람이 누른 버튼이 아무 일도 안 한 것이 된다.
+ */
+function askAnsweredNote(mention: { body: string; meta?: unknown }): string {
+  const ask = (mention.meta as { ask?: {
+    options?: { id: string; label: string }[]; answeredWith?: string;
+  } } | undefined)?.ask;
+  const picked = ask?.answeredWith;
+  const label = ask?.options?.find((o) => o.id === picked)?.label;
+  if (!picked) return '내가 낸 선택지에 답이 왔다(어느 것인지 스레드에서 확인해라)';
+  return `내가 낸 선택지에 답이 왔다 — 고른 것: ${label ?? picked}`;
+}
+
 export function createMentionScheduler(deps: MentionSchedulerDeps): MentionScheduler {
   const now = deps.now ?? Date.now;
   /**
@@ -144,6 +158,17 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       // 자기가 쓴 대기 줄뿐이고 자기 발화는 걸러지므로 프롬프트가 비어, 러너가 하네스를
       // 돌리지 않고 커서만 전진시킨다 — 기다림이 흔적 없이 사라진다.
       ...(reason === 'wake' ? { wake: { reason: mention.body } } : {}),
+      /**
+       * **선택에 답이 왔다**(2026-09-09). 깨움과 같은 자리를 쓰는 이유는 같은 문제이기
+       * 때문이다: 사람은 카드의 버튼만 눌렀지 새 메시지를 쓰지 않았으므로 델타가 비고,
+       * 비면 러너가 하네스를 돌리지 않는다 — 그러면 답이 흔적 없이 사라진다.
+       *
+       * **고른 것을 여기서 풀어 싣는다.** `inbox.poll` 이 그 메시지의 meta 를 함께 주므로
+       * (`answeredWith` 와 옵션 목록), 에이전트가 스레드를 다시 읽지 않아도 무엇이
+       * 정해졌는지 안다. 라벨을 쓰는 이유: id 는 에이전트가 지은 내부 값이라 사람이 무엇을
+       * 골랐는지 그 자체로는 말하지 않는다.
+       */
+      ...(reason === 'ask_answered' ? { wake: { reason: askAnsweredNote(mention) } } : {}),
     };
     try {
       const turn = await withAccountFailover(
