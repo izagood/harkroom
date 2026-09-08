@@ -305,6 +305,26 @@ export interface RunPtyTurnOptions {
     readyPattern?: RegExp;
     /** 준비 상한. 넘기면 `PromptNotDeliveredError`. 생략하면 60초. */
     readyTimeoutMs?: number;
+    /**
+     * 준비 상한을 넘겼을 때 **죽이는 대신 부른다**(2026-09-08).
+     *
+     * 여기까지 온 화면은 사람 손이 필요한 것이다 — 첫 실행 승인 관문이 대표적이고, 그
+     * 목록은 우리 계약이 아니라 하네스의 것이라 열거로 끝나지 않는다. 알려진 관문은
+     * `workspaceTrust.ts` 가 미리 없애지만, 다음 버전이 관문을 하나 더 만들 수 있다.
+     *
+     * **그 화면을 죽이면 사람이 열어 볼 대상 자체가 없어진다.** 이것이 있으면 PTY 를
+     * 유지하고 `readyProbe` 도 살려 둔다: 사람이 관문을 지나 입력 프롬프트가 그려지는
+     * 순간 패턴이 맞아 프롬프트가 그대로 주입된다. 그래서 **사람의 개입이 턴을 대체하지
+     * 않고 통과시킨다.**
+     *
+     * 없으면 지금 동작 그대로다(SIGKILL + `PromptNotDeliveredError`) — 사람이 붙을 수
+     * 없는 호출자(비대화형 프로브, 테스트)의 경로다. 콜백 유무가 두 정책을 가르고,
+     * 그래서 플래그를 따로 두지 않는다.
+     *
+     * **이 콜백이 불려도 프라미스는 정착하지 않는다.** 이 턴의 끝은 exit 이거나 고아
+     * 회수다 — 인터랙티브 턴과 같은 규칙이다(#337).
+     */
+    onAttention?: (screen: string) => void;
   };
   /** PTY 초기 크기. 생략하면 비대화형 기본 120x40(스펙 §5)이다. */
   cols?: number;
@@ -496,20 +516,28 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
 
     // ── 프롬프트 주입(2026-09-08). **준비 신호를 본 뒤에만** 쓴다.
     if (opts.injectPrompt) {
-      const { text, readyPattern = DEFAULT_READY_PATTERN, readyTimeoutMs = 60_000 } = opts.injectPrompt;
+      const { text, readyPattern = DEFAULT_READY_PATTERN, readyTimeoutMs = 60_000,
+              onAttention } = opts.injectPrompt;
       let injected = false;
       const startedAt = Date.now();
       let readyProbe: NodePty.IDisposable | null = null;
       const readyTimer = setTimeout(() => {
         if (injected || settled) return;
-        // 준비를 못 봤다 — 이 턴은 프롬프트 없이 도는 것이 아니라 실패로 끝난다.
+        const screen = decodeTailText(tail.snapshot());
+        if (onAttention) {
+          // **여기서 아무것도 정착시키지 않는다.** `readyProbe` 를 그대로 살려 두므로,
+          // 사람이 관문을 지나면 아래 주입이 일어나고 턴이 이어진다.
+          onAttention(screen);
+          return;
+        }
+        // 준비를 못 봤고 부를 사람도 없다 — 이 턴은 프롬프트 없이 도는 것이 아니라 실패다.
         readyProbe?.dispose();
         settled = true;
         if (timeoutTimer) clearTimeout(timeoutTimer);
         dataListener.dispose();
         exitListener.dispose();
         try { proc.kill('SIGKILL'); } catch { /* 이미 죽었으면 회수할 것도 없다 */ }
-        reject(new PromptNotDeliveredError(Date.now() - startedAt, decodeTailText(tail.snapshot())));
+        reject(new PromptNotDeliveredError(Date.now() - startedAt, screen));
       }, readyTimeoutMs);
       readyTimer.unref?.();
       readyProbe = proc.onData(() => {
