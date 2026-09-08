@@ -5,8 +5,9 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import {
   ASK_MAX_OPTIONS, ASK_MIN_OPTIONS,
-  REPORT_MAX_ITEMS, REPORT_MAX_NEXT,
-  type AccountView, type AskAudience, type AskMeta, type FailureMeta, type ReportMeta,
+  MODEL_ID_MAX, REPORT_MAX_ITEMS, REPORT_MAX_NEXT,
+  type AccountView, type AskAudience, type AskMeta, type FailureMeta, type ModelMeta,
+  type ReportMeta,
 } from '@murmur/shared';
 import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
 import { emitEvent, onEvent } from '../events.js';
@@ -20,6 +21,7 @@ import { scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC } from '../services/agentWakes
 import { GUIDE } from './guide.js';
 import { recordRunnerVersion } from '../services/runnerVersion.js';
 import { resolveAttachmentFor } from '../services/attachments.js';
+import { reportedModelMeta } from '../services/reportedModel.js';
 import { AttachmentMissingError, type StorageBackend } from '../storage/local.js';
 import type { Readable } from 'node:stream';
 
@@ -29,6 +31,16 @@ function isValidSlug(slug: string): boolean {
   return slug.length > 0 && slug.length <= 255 && MEMORY_SLUG_REGEX.test(slug);
 }
 import type { AgentPresence } from './presence.js';
+
+/**
+ * 발화 도구가 공통으로 받는 `model` — 에이전트가 신고하는 **자기 모델 ID**(#600).
+ *
+ * 옵셔널인 이유는 두 가지다. ① 사람의 PAT 으로도 이 도구를 부를 수 있고 사람에게는 모델이
+ * 없다. ② 모델을 못 아는 하네스(또는 옛 러너)도 계속 발화할 수 있어야 한다 — 필수로 두면
+ * 프롬프트를 못 받은 러너의 답이 통째로 막힌다. 모르면 생략하고, 그때 화면은 아무것도
+ * 그리지 않는다.
+ */
+const MODEL_ARG = z.string().min(1).max(MODEL_ID_MAX).optional();
 
 function jsonResult(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }] };
@@ -155,13 +167,15 @@ function buildMcpServer(
       body: z.string().min(1).max(8000),
       threadRootId: z.string().uuid().optional(),
       alsoInChannel: z.boolean().optional(),
+      model: MODEL_ARG,
     },
-  }, async ({ channelId, body, threadRootId, alsoInChannel }) => {
+  }, async ({ channelId, body, threadRootId, alsoInChannel, model }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
     const posted = await postMessage(pool, {
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, alsoInChannel,
+      meta: await reportedModelMeta(pool, account.id, model),
     });
     // 에이전트는 첨부를 붙이지 않는다(도구에 그 입력이 없다). 그래도 합 타입이므로 확인해야
     // 하고, 확인 자체가 나중에 도구가 첨부를 받게 될 때의 자리를 남겨 둔다.
@@ -196,13 +210,15 @@ function buildMcpServer(
       channelId: z.string().uuid(),
       body: z.string().min(1).max(8000),
       threadRootId: z.string().uuid().optional(),
+      model: MODEL_ARG,
     },
-  }, async ({ channelId, body, threadRootId }) => {
+  }, async ({ channelId, body, threadRootId, model }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
     const posted = await postMessage(pool, {
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, kind: 'progress',
+      meta: await reportedModelMeta(pool, account.id, model),
     });
     if (posted.failure) {
       return jsonResult({ error: { code: 'bad_attachment', message: 'attachments must be your own, unused uploads' } });
@@ -243,8 +259,9 @@ function buildMcpServer(
       /** 답할 대상의 handle. 비우면 '사람 아무나'다. */
       to: z.string().min(1).max(64).optional(),
       prompt: z.string().min(1).max(500).optional(),
+      model: MODEL_ARG,
     },
-  }, async ({ channelId, body, threadRootId, options, to, prompt }) => {
+  }, async ({ channelId, body, threadRootId, options, to, prompt, model }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
@@ -264,7 +281,10 @@ function buildMcpServer(
       }
       audience = { kind: 'account', accountId: found[0]!.id };
     }
-    const meta: AskMeta = { kind: 'ask', ask: { options, to: audience, ...(prompt ? { prompt } : {}) } };
+    const meta: AskMeta & Partial<ModelMeta> = {
+      kind: 'ask', ask: { options, to: audience, ...(prompt ? { prompt } : {}) },
+      ...(await reportedModelMeta(pool, account.id, model)),
+    };
     const posted = await postMessage(pool, {
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,
@@ -300,14 +320,16 @@ function buildMcpServer(
       what: z.string().min(1).max(500).optional(),
       reason: z.string().min(1).max(1000).optional(),
       retryable: z.boolean(),
+      model: MODEL_ARG,
     },
-  }, async ({ channelId, body, threadRootId, what, reason, retryable }) => {
+  }, async ({ channelId, body, threadRootId, what, reason, retryable, model }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
-    const meta: FailureMeta = {
+    const meta: FailureMeta & Partial<ModelMeta> = {
       kind: 'failure',
       failure: { retryable, ...(what ? { what } : {}), ...(reason ? { reason } : {}) },
+      ...(await reportedModelMeta(pool, account.id, model)),
     };
     const posted = await postMessage(pool, {
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
@@ -346,12 +368,14 @@ function buildMcpServer(
         id: z.string().min(1).max(64),
         label: z.string().min(1).max(200),
       })).max(REPORT_MAX_NEXT).optional(),
+      model: MODEL_ARG,
     },
-  }, async ({ channelId, body, threadRootId, checks, files, remaining, durationMs, next }) => {
+  }, async ({ channelId, body, threadRootId, checks, files, remaining, durationMs, next, model }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
-    const meta: ReportMeta = {
+    const meta: ReportMeta & Partial<ModelMeta> = {
+      ...(await reportedModelMeta(pool, account.id, model)),
       kind: 'report',
       report: {
         checks,
