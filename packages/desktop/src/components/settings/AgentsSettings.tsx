@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import {
-  AGENT_HARNESSES, RUNNABLE_HARNESSES,
-  type AgentConfig, type AgentDefaults, type AgentView, type MentionPermission, type PatView,
+  AGENT_HARNESSES, HANDLE_PATTERN, RUNNABLE_HARNESSES,
+  type AgentConfig, type AgentDefaults, type AgentTeamMemberRow, type AgentTeamRow,
+  type AgentView, type MentionPermission, type PatView,
 } from '@murmur/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
@@ -19,6 +20,11 @@ import { lastTurnAgo } from '../../lib/lastTurn';
 import { RunnerStatusLine, runnerStatusLabel } from '../RunnerStatus';
 import { PAT_PLACEHOLDER, runnerCommandClipboardText } from '../../lib/runnerCommand';
 import { AgentGrid } from './AgentGrid';
+// 팀 묶음(`docs/desktop-agent-cards.html` 4단계). 카드가 `AgentGrid` 를 재사용하지 않은
+// 근거는 `TeamGrid` 머리 주석에 있다 — 요지는 `AgentGridPlace` 가 못 박은 것이다:
+// *"그 이상으로 늘릴 축이 아니다 — 늘어나기 시작하면 카드가 다시 두 벌이 된다."*
+import { TeamGrid } from './TeamGrid';
+import { TeamDetail } from './TeamDetail';
 // 띄울 권한 판정은 `lib/` 하나가 낸다 — 레일의 에이전트 칸이 같은 판정을 쓴다
 // (`docs/desktop-rail.html` 3단계). 사본을 두면 두 화면이 같은 사람에게 다르게 답한다.
 import { canRelaunchAgent } from '../../lib/relaunchGate';
@@ -133,8 +139,56 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 상세의 폭이 좁아져 문서가 세운 세 묶음이 다시 한 줄로 흐른다.
    */
   const [view, setView] = useState<'grid' | 'detail'>('grid');
+  /**
+   * **묶음 둘 — 에이전트 / 팀** (`docs/desktop-agent-cards.html` 4단계).
+   *
+   * 그 단계가 팀을 이 화면으로 옮기면서 설정 목차의 `Teams` 를 없앴다(`sections.ts`).
+   * 근거는 문서의 첫 문장이다: *"팀은 에이전트를 묶는 일이다. 묶을 대상이 옆 화면에 있으면
+   * 사람은 이름을 외워서 옮겨 적는다."*
+   *
+   * **`view` 와 다른 축이다.** `view` 는 *"격자냐 상세냐"* 이고 이것은 *"무엇의 격자냐"* 다.
+   * 한 값으로 합치면(`'agent-grid' | 'agent-detail' | 'team-grid' | 'team-detail'`) 상세에서
+   * 돌아올 때 어느 묶음으로 가야 하는지를 그 값 자체가 잃는다 — 지금은 `view` 만 되돌리면
+   * 묶음이 그대로 남는다.
+   */
+  const [group, setGroup] = useState<'agents' | 'teams'>('agents');
   /** 에이전트별 계정 풀 배정(기기 로컬). 이 값은 서버로 가지 않는다 — `useAgentPool` 주석. */
   const agentPool = useAgentPool(selected?.id ?? null);
+  /**
+   * 상세를 열고 있는 팀. `null` 이면 격자다 — `selected`(에이전트)와 **같은 짝**이고,
+   * 두 값이 동시에 서지 않는 것은 `group` 이 한 번에 하나이기 때문이다.
+   */
+  const [selectedTeam, setSelectedTeam] = useState<AgentTeamRow | null>(null);
+  /** 새 팀 만들기 폼을 여는가. 에이전트의 `selected === null && view === 'detail'` 과 같은 자리. */
+  const [creatingTeam, setCreatingTeam] = useState(false);
+  const [newTeamName, setNewTeamName] = useState('');
+  /**
+   * 팀마다의 **팀원 명단**. `GET /teams/:id` 를 팀 수만큼 부른 결과를 여기 모은다.
+   *
+   * ## N+1 왕복이다 — **그리고 지금은 그것이 맞다** (문서 4단계 · 코디네이터 실측)
+   *
+   * > *"팀원 명단은 `GET /teams/:id` 에만 있다. 카드 격자가 팀마다 그것을 부르면 팀 열이면
+   * > 왕복 열하나다 — **N+1 로 시작해도 된다**(화면은 그려진다). 실측 후 필요하면 그때
+   * > 최소로 얹는 것이 맞고, **지금 서버를 고치지 않는 쪽이 싸다.** 다만 그 사실을 주석에
+   * > 적어라."*
+   *
+   * 그래서 여기 적는다. 함께 적어 둘 실측 셋:
+   *
+   * 1. **카드는 이 왕복을 기다리지 않는다.** `TeamGrid` 는 `members` 가 `undefined` 면
+   *    얼굴 자리를 점선으로 두고 나머지(이름 · `팀 · N명`)를 그대로 그린다 — 수는
+   *    `memberCount` 가 목록에 실려 오기 때문이다(`AgentTeamRow.memberCount`). 즉 왕복이
+   *    느려도 화면이 비지 않고, 얼굴만 나중에 채워진다
+   * 2. **왕복은 팀 목록이 바뀔 때만 돈다**(아래 `useEffect` 의 의존이 `teams` 다). 격자를
+   *    다시 그릴 때마다 도는 것이 아니라 팀이 늘거나 줄 때만이다
+   * 3. **실패는 얼굴 자리에만 남는다.** 한 팀의 명단을 못 받아도 그 카드의 얼굴만 점선이고
+   *    다른 카드와 격자 전체는 멀쩡하다 — `Promise.all` 로 묶어 하나가 실패하면 전부
+   *    비는 모양을 피한다(그래서 아래가 팀마다 따로 `.then` 한다)
+   *
+   * **서버를 고치는 쪽은 `memberCount` 옆에 얼굴 넷을 실어 주는 것**이다(`GET /accounts` 가
+   * `teams` 를 함께 주는 그 자리). 그것이 필요해지는 조건은 팀 수가 많아져 이 왕복이
+   * 눈에 보이는 때이고, 그때 재는 값은 왕복 수가 아니라 **얼굴이 채워지기까지의 시간**이다.
+   */
+  const [teamMembers, setTeamMembers] = useState<Record<string, AgentTeamMemberRow[]>>({});
 
   // 초안이 null 인 것은 '무엇을 기본으로 둘지 아직 모른다'는 뜻이다 — 기본값을 못 읽었는데
   // 조용히 채워 넣으면 화면이 거짓을 말한다(docs/design.md 4절).
@@ -201,6 +255,70 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     void getController().listAgents().then(setAgents).catch(() => setError('에이전트 목록을 받지 못했다'));
   };
   useEffect(reload, []);
+
+  /**
+   * 팀 목록. **스토어에서 읽는다 — 여기서 따로 받지 않는다.**
+   *
+   * `HandleGroupsSettings` 가 집합에 대해 세운 것과 **같은 두 이유**다(그 파일 주석):
+   *
+   * ① `GET /teams` 는 admin 전용이다(`teamRoutes.ts`). 비-admin 에게 읽기 전용 격자를
+   *    보이려면 그 라우트로는 403 이 돌아온다. 팀 목록은 `GET /accounts` 가 계정과 함께
+   *    주고(`#570`) 컨트롤러가 기동 시 스토어에 넣는다(`controller.ts` 의 `teams ?? []`) —
+   *    비-admin 이 목록을 보는 경로는 그것뿐이다
+   * ② 이 화면에서 바꾼 것이 **작성창의 멘션 후보에 즉시 반영돼야 한다.** 화면이 자기만의
+   *    사본을 들고 있으면 두 목록이 갈라진다 — 여기서는 새 이름, 후보에는 옛 이름
+   *    (`controller.ts:873` 이 `teams.map((t) => t.name)` 으로 그 후보를 만든다)
+   *
+   * 그래서 팀을 바꾼 뒤 `refreshAccounts()` 를 부른다(아래 `reloadTeams`) — 목록을 여기서
+   * 갱신하는 것이 아니라 **스토어를 갱신해** 두 자리가 함께 따라오게 한다.
+   */
+  const teams = useActiveStore((s) => s.teams);
+
+  /**
+   * 팀이 바뀐 뒤 스토어를 다시 읽는다. `GET /accounts` 하나가 계정·집합·팀을 함께 주므로
+   * (`#570`) 팀만 따로 받는 경로를 만들지 않는다 — 만들면 위 ①의 admin 게이트가 되돌아온다.
+   */
+  const reloadTeams = () => {
+    // **`force` 가 필요하다.** `refreshAccounts` 는 5초 스로틀이 걸려 있고(그 함수의
+    // `ACCOUNTS_REFRESH_INTERVAL_MS`), 그 스로틀은 *"미지의 작성자가 연달아 오면 요청이
+    // 폭주한다"* 를 막으려고 있는 것이다 — 사람이 방금 누른 조작은 그 경우가 아니다.
+    // 없으면 팀을 만들고 5초 안에 이름을 바꿨을 때 격자가 옛 이름을 그대로 들고 있다.
+    void getController().refreshAccounts({ force: true })
+      .catch(() => setError('팀 목록을 받지 못했다'));
+  };
+
+  /**
+   * **팀원 명단을 팀마다 받는다** — N+1 이고, 그것이 지금 맞는 선택인 근거는 `teamMembers`
+   * 상태의 주석에 있다.
+   *
+   * `Promise.all` 로 묶지 않는 것이 요점이다: 한 팀의 명단이 실패하면 그 카드의 얼굴만
+   * 점선으로 남고 나머지 카드는 채워진다. 묶으면 하나가 실패할 때 격자 전체의 얼굴이
+   * 비고, 그것은 *"화면은 그려진다"* 는 이 결정의 전제를 깬다.
+   *
+   * 의존이 팀의 **id 목록을 문자열로 접은 것**이다(`teams` 배열 자체가 아니다) — 스토어가
+   * 계정을 갱신할 때마다 새 배열 객체가 오므로, `teams` 를 그대로 의존에 두면 팀이 하나도
+   * 안 바뀌었는데 왕복이 팀 수만큼 다시 돈다. `refreshAccounts` 는 소켓 이벤트로도 불리니
+   * (`controller.ts` 의 `swallow(this.refreshAccounts())` 자리들) 그 재실행이 드물지 않다.
+   *
+   * **id 를 그 문자열에서 되꺼내 쓴다.** 왕복에 필요한 것이 id 뿐이라 `teams` 를 효과
+   * 안에서 읽지 않아도 되고, 그래서 의존 목록이 **실제로 쓰는 값과 정확히 같아진다** —
+   * 억제 주석 없이 정직한 의존이 된다.
+   */
+  const teamIdKey = teams.map((t) => t.id).sort().join(',');
+  useEffect(() => {
+    let live = true;
+    for (const id of teamIdKey ? teamIdKey.split(',') : []) {
+      void getController().getTeam(id)
+        .then(({ members }) => {
+          if (live) setTeamMembers((prev) => ({ ...prev, [id]: members }));
+        })
+        // 명단을 못 받은 팀은 **키를 안 넣는다** — `undefined` 가 "아직 모른다"이고
+        // `TeamGrid` 가 그것을 점선 얼굴로 그린다(`TeamCardSubject` 의 그 표). 빈 배열로
+        // 삼키면 그 카드가 "팀원 0명"으로 그려져 자기가 아는 `memberCount` 와 어긋난다.
+        .catch(() => undefined);
+    }
+    return () => { live = false; };
+  }, [teamIdKey]);
 
   /**
    * #428: 종료 요청 뒤 **수령**(`stopAckedAt`)을 화면에 반영한다.
@@ -519,6 +637,181 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const label = 'block text-[11px] font-medium text-fg-muted';
 
   /**
+   * 새 팀. 이름 문법은 **`HANDLE_PATTERN` 을 그대로 쓴다** — 팀 이름이 계정과 같은
+   * 네임스페이스이고 서버가 같은 상수로 검사하므로(`teamRoutes.ts`), 리터럴로 다시 적으면
+   * 화면이 통과시킨 이름을 서버가 400 으로 거절하거나 그 반대가 된다. `TeamDetail` 의
+   * 이름 바꾸기가 같은 상수를 쓴다.
+   */
+  const submitCreateTeam = async () => {
+    const name = newTeamName.trim();
+    if (!name) return;
+    if (!new RegExp(`^${HANDLE_PATTERN}$`).test(name)) {
+      setError('이름은 영문·숫자·-·_ 2~32자여야 한다');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const created = await getController().createTeam(name);
+      setNewTeamName('');
+      setCreatingTeam(false);
+      reloadTeams();
+      // 만든 팀의 상세로 곧바로 간다 — 만드는 이유가 팀원을 넣는 것이고, 격자로
+      // 되돌리면 방금 만든 카드를 다시 찾아 눌러야 한다.
+      setSelectedTeam(created);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '팀을 만들지 못했다');
+    } finally { setBusy(false); }
+  };
+
+  /**
+   * 두 묶음의 탭. **`Segmented` 프리미티브를 쓰지 않는다.**
+   *
+   * 그 프리미티브는 고른 칸에 `bg-accent` 를 칠하는데, 강조 예산이 그것을 막는다(규칙 04 ·
+   * `test/accentBudget.test.tsx`): 강조는 *"나를 막는 것"* 과 *"화면당 주 동작 버튼 하나"*
+   * 에만 쓴다. 어느 묶음을 보고 있는지는 나를 막지 않는다.
+   *
+   * 그리고 하는 일이 다르다 — `Segmented` 가 서 있는 자리(`AgentDefaultsSettings`)는
+   * **저장할 값을 고르는 폼 컨트롤**이고(그래서 `role="radiogroup"` 이다), 이것은 지금
+   * 무엇을 보고 있는지를 가르는 **탭**이다. `radio` 로 두면 스크린리더에 "값을 고르는 중"
+   * 이라고 말하게 된다.
+   *
+   * 모양은 목업의 밑줄 탭이다. 고른 칸을 **밑줄과 글자 무게**로 말한다 — 색을 안 쓰므로
+   * 예산에 들지 않고, 이 저장소가 이미 쓰는 어휘다.
+   */
+  const tab = (id: 'agents' | 'teams', text: string) => (
+    <button
+      key={id}
+      data-testid={`agent-group-${id}`}
+      role="tab"
+      aria-selected={group === id}
+      className={`-mb-px border-b-2 px-3 py-2 text-[13px] ${
+        group === id
+          ? 'border-fg font-semibold text-fg'
+          : 'border-transparent text-fg-muted hover:text-fg'
+      }`}
+      onClick={() => {
+        setGroup(id);
+        // 묶음을 옮기면 **그 묶음의 격자로 간다.** 상세를 열어 둔 채 탭만 바꾸면 다른
+        // 묶음의 상세가 남아 화면이 무엇에 관한 것인지 흐려진다 — `view` 와 `group` 이
+        // 다른 축인 이유가 이것이다(그 상태 주석).
+        setView('grid');
+        setSelected(null);
+        setSelectedTeam(null);
+        setCreatingTeam(false);
+        setError(null);
+      }}
+    >
+      {text}
+    </button>
+  );
+
+  /** 두 격자가 공유하는 머리 — 제목 · 탭. 묶음을 옮겨도 이 자리가 안 흔들린다. */
+  const groupTabs = (
+    <div role="tablist" aria-label="에이전트와 팀" className="mb-4 flex border-b border-border">
+      {tab('agents', '에이전트')}
+      {tab('teams', '팀')}
+    </div>
+  );
+
+  /**
+   * ## 팀 묶음 (`docs/desktop-agent-cards.html` 4단계)
+   *
+   * **에이전트 묶음과 같은 세 상태**다 — 격자 · 상세 · 만들기. `view` 를 공유하지 않는
+   * 이유는 `group` 상태의 주석에 있다(두 축이다).
+   *
+   * 여기가 `if (view === 'grid')` **앞**인 것이 요점이다: 팀 상세는 에이전트 상세와 다른
+   * 화면이고, 뒤에 두면 `view` 가 `'detail'` 인 동안 에이전트 상세가 먼저 잡는다.
+   */
+  if (group === 'teams') {
+    if (selectedTeam) {
+      return (
+        <TeamDetail
+          team={selectedTeam}
+          /* 후보는 **이 화면이 이미 받아 둔 `listAgents()` 의 결과**다 — 새 왕복이 아니고,
+             그래서 후보 목록이 옆 묶음의 격자와 같은 목록이다(`TeamMemberPicker` 주석의
+             *"왜 forge 만 보이나"*). */
+          agents={agents}
+          onBack={() => { setSelectedTeam(null); setError(null); }}
+          onChanged={({ deleted }) => {
+            reloadTeams();
+            // 지운 팀의 상세에 남아 있을 수 없다. 이름만 바뀐 경우는 상세에 머무는데,
+            // `selectedTeam.name` 이 낡으므로 스토어가 갱신되면 아래 격자가 새 이름을
+            // 그린다 — 상세의 제목은 다시 열 때 맞춰진다. 그 어긋남을 지금 고치지 않는
+            // 이유: `updateTeam` 의 응답을 `setSelectedTeam` 에 넣으면 되지만, 그러면
+            // 이 콜백이 "무엇이 바뀌었는지"를 알아야 하고 그 판단이 두 곳에 생긴다.
+            if (deleted) setSelectedTeam(null);
+          }}
+        />
+      );
+    }
+    return (
+      <div className="flex h-full min-h-0 flex-col bg-surface-raised p-5">
+        {groupTabs}
+        <div className="mb-4">
+          <h2 className="text-[15px] font-bold">팀</h2>
+          {/*
+            **이름의 뜻을 말하는 자리 ①**(문서 4단계). 격자 머리에서 한 번, 이름을 정하는
+            칸 아래에서 한 번 말한다(`TeamDetail` 의 `team-mention-note`) — 두 자리인 것이
+            중복이 아닌 이유는 답하는 질문이 다르기 때문이다: 여기는 *"이 격자에 있는 것이
+            무엇인가"* 이고, 저기는 *"이 이름을 지으면 무슨 일이 일어나는가"* 다.
+
+            `#570` 이 팀 멘션을 열었으므로 이것은 **지금 되는 일**이다(`services/messages.ts`).
+          */}
+          <p className="text-[11px] text-fg-subtle">
+            에이전트를 묶어 한 이름으로 부른다 — 채널에서 @팀이름 을 부르면 팀원 전원이 깬다.
+            카드를 누르면 팀원을 고칠 수 있다.
+          </p>
+        </div>
+        {error && <p role="alert" className="mb-2 text-[11px] text-danger">{error}</p>}
+        {/*
+          만들기 폼. 에이전트가 상세 화면에서 만드는 것과 달리 **격자 위 한 줄**인 이유:
+          팀을 만들 때 필요한 것이 이름 하나뿐이다(`createTeam(name)`). 그 하나를 위해
+          화면을 갈아 끼우면 만든 직후 팀원을 넣으러 다시 상세로 들어가는 왕복이 생긴다 —
+          지금은 만들면 곧바로 상세가 열린다(`submitCreateTeam`).
+        */}
+        {creatingTeam && (
+          <div className="mb-4 flex items-center gap-2 rounded-lg border border-border p-3">
+            <input
+              data-testid="team-name-input"
+              aria-label="새 팀 이름"
+              className="flex-1 rounded border border-border bg-field px-3 py-2"
+              placeholder="team-name"
+              value={newTeamName}
+              onChange={(e) => { setNewTeamName(e.target.value); setError(null); }}
+            />
+            <Button
+              variant="primary"
+              disabled={busy || !newTeamName.trim()}
+              onClick={() => void submitCreateTeam()}
+            >
+              만들기
+            </Button>
+            <Button onClick={() => { setCreatingTeam(false); setNewTeamName(''); setError(null); }}>
+              취소
+            </Button>
+          </div>
+        )}
+        <TeamGrid
+          /* 명단을 카드에 실어 준다. 키가 없는 팀은 `members` 가 `undefined` 이고, 그것이
+             "아직 모른다"다(`TeamCardSubject` 의 그 표 · `teamMembers` 주석의 N+1 절). */
+          teams={teams.map((t) => ({ ...t, members: teamMembers[t.id] }))}
+          accounts={accounts}
+          runnerStates={runnerStates}
+          online={online}
+          connected={connected}
+          onPick={setSelectedTeam}
+          onCreate={() => { setCreatingTeam(true); setError(null); }}
+          /* 팀을 만들 수 있는 것은 admin 뿐이다(서버가 그렇게 허용한다) — 비-admin 에게
+             `+` 를 내주면 눌렀을 때 403 이고, 그건 "할 수 있다"는 거짓 신호다
+             (`agentTeams.test.tsx` 머리 주석이 그 규율을 적어 뒀다). */
+          canCreate={isAdmin}
+        />
+      </div>
+    );
+  }
+
+  /**
    * **한 번에 한 화면이다**(identity 문서). 그리드를 보거나 상세를 보거나 — 나란히 두지
    * 않는다. 문서의 목업이 그리드에는 곁창을 그리지 않았고 상세에는 `← 에이전트` 로 돌아가는
    * 길을 그렸다. 나란히 두면 상세의 폭이 좁아져 세 묶음이 다시 한 줄로 흐른다.
@@ -526,6 +819,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   if (view === 'grid') {
     return (
       <div className="flex h-full min-h-0 flex-col bg-surface-raised p-5">
+        {groupTabs}
         <div className="mb-4">
           {/* **칸 제목은 이름줄단 15px 이다.** 이 화면은 `SettingsPage` 를 쓰지 않고 두 칸을
               직접 짜므로, 여기 `h2` 는 화면 제목이 아니라 왼쪽 칸의 이름이다 —

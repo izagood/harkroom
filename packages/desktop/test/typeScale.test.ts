@@ -157,6 +157,11 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
     why: '거터 아바타(h-8)의 머리글자 — 32px 원에 묶인 글리프다',
   },
   {
+    file: 'components/settings/TeamDetail.tsx',
+    contains: '<Identity account={accounts[m.accountId]} className="h-8 w-8 text-sm" variant="avatar" />',
+    why: '같은 h-8 짝 — 팀 상세의 팀원 줄 얼굴(`docs/desktop-agent-cards.html` 4단계)',
+  },
+  {
     file: 'components/Profile.tsx',
     contains: '<Identity account={account} className="h-12 w-12 text-base" variant="avatar" />',
     why: '프로필 겹창의 큰 아바타(h-12) — 48px 원에 묶인 글리프다',

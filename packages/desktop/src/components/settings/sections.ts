@@ -1,7 +1,32 @@
 /** 설정 화면의 목차. 새 섹션은 여기에 한 줄 더하고 SettingsScreen 의 렌더 분기에 한 줄 더하면 붙는다.
  *  타입이 화면(SettingsScreen)이 아니라 여기 사는 이유는, Sidebar·App 이 섹션을 지목하면서
  *  화면 컴포넌트를 import 하게 되면 의존 방향이 거꾸로 서기 때문이다. */
-export type SectionId = 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'claude-accounts' | 'teams' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'gallery';
+/**
+ * **`teams` 가 이 유니온에서 사라졌다** (`docs/desktop-agent-cards.html` 4단계).
+ *
+ * 팀은 `Agents` 화면 안의 묶음이 됐다(`AgentsSettings` 의 `group` 상태). 근거는 문서의
+ * 첫 문장이다: *"팀은 에이전트를 묶는 일이다. 묶을 대상이 옆 화면에 있으면 사람은 이름을
+ * 외워서 옮겨 적는다."*
+ *
+ * **값을 유니온에서 지우는 것이 요점이다.** 목차에서만 빼고 `SectionId` 에 남겨 두면
+ * 저장된 설정이나 딴 화면의 배선이 `'teams'` 를 들고 올 때 `isSectionId` 가 그것을
+ * 통과시키고(그 함수는 목차를 진실로 삼으므로 실제로는 막는다) 타입은 아무 말도 안 한다 —
+ * 즉 컴파일러가 낡은 배선을 잡아 주지 못한다. 지우면 `SettingsScreen` 의 렌더 분기와
+ * 남은 호출부가 **컴파일에서** 막힌다.
+ *
+ * `handle-groups` 는 **남는다.** 문서가 그 관계를 *"이 문서가 정하지 않는 열린 결정"* 으로
+ * 남겼고, 갈라 두기로 정했다 — 팀은 에이전트를 묶고 집합은 사람을 묶으므로(`#570` 이후
+ * 남은 차이가 구성원 종류 하나다: `agent_not_allowed` 대 `not_an_agent`) 쓰는 사람과
+ * 목적이 다르다. 에이전트 화면에 사람 묶음이 들어오면 그 화면이 무엇에 관한 것인지
+ * 흐려진다.
+ *
+ * 갈라 두기로 정하면 남는 일이 하나 있다 — 문서가 그 선택지를 적어 뒀다: *"갈라 두고 각
+ * 화면이 서로를 가리킬지."* 같은 네임스페이스를 쓰므로 `@release` 를 만들려는 사람이 어느
+ * 쪽으로 가야 하는지 화면이 말해야 하고, 목차에서 `Teams` 가 사라진 뒤로는 더 그렇다.
+ * 그 한 줄이 **두 화면에 각각** 있다: `TeamDetail` 의 `team-mention-note`(팀 → 집합)와
+ * `HandleGroupsSettings` 의 목록 머리(집합 → 팀).
+ */
+export type SectionId = 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'gallery';
 
 export const SETTINGS_GROUPS: { title: string; items: { id: SectionId; label: string }[] }[] = [
   {
@@ -30,7 +55,7 @@ export const SETTINGS_GROUPS: { title: string; items: { id: SectionId; label: st
       // Agents 안에 넣지 않는 이유는 개별 에이전트의 설정이 아니기 때문이다
       // (`agent-defaults` 를 별 항목으로 세운 것과 같은 판단이다).
       { id: 'claude-accounts', label: 'Claude accounts' },
-      { id: 'teams', label: 'Teams' },
+      // `Teams` 가 여기 있었다. 지금은 `Agents` 안의 묶음이다 — 근거는 위 `SectionId` 주석.
       { id: 'handle-groups', label: 'Handle Groups' },
       { id: 'invite', label: 'Invite' },
       { id: 'updates', label: 'Updates' },
