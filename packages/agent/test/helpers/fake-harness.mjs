@@ -40,7 +40,9 @@ if (mode === 'hang')    { setInterval(() => {}, 1_000); }            // 타임�
 // 러너가 "준비를 본 뒤에만 주입한다" 를 지키는지 재는 데 쓴다. 준비 신호를 **늦게** 찍는
 // 것이 요점이다: 즉시 찍으면 고정 슬립으로도 통과해 조건 대기를 검증하지 못한다.
 if (mode === 'ready-then-echo') {
-  setTimeout(() => process.stdout.write('READY\n'), 300);
+  // 'READY' 는 pty.test 가 명시 패턴으로 쓰고, '❯ ' 는 러너의 기본 패턴이 찾는 것이다
+  // (claude TUI 의 입력 프롬프트 표시). 둘을 함께 찍어 두 경로를 같은 픽스처로 잰다.
+  setTimeout(() => process.stdout.write('READY\n❯ '), 300);
   process.stdin.setEncoding('utf8');
   let buf = '';
   process.stdin.on('data', (d) => {
