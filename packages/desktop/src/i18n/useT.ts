@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { usePrefsStore } from '../state/prefsStore';
 import { detectLocale, isLocale, translator, type Locale, type Translate } from './index';
+import { agoLabel } from '../lib/time';
 
 /**
  * 화면이 쓰는 번역기.
@@ -29,4 +30,22 @@ export function useT(): Translate {
 export function useLocale(): Locale {
   const pref = usePrefsStore((s) => s.locale);
   return useMemo(() => (isLocale(pref) ? pref : detectLocale()), [pref]);
+}
+
+/**
+ * **"얼마나 전"을 지금 언어로** 내는 함수(`11분 전` · `11 minutes ago`).
+ *
+ * 훅으로 두는 이유: 이 값을 쓰는 자리가 셋인데(`ProjectionBanner`·`LeasePanel`·
+ * `ConnectionSettings`) 셋 다 그것을 **`projectionBanner()` 에 주입한다**(`(b)` 주입).
+ * 세 화면이 각자 `agoLabel(ts, Date.now(), locale, t)` 를 적으면 인자 넷을 세 번 옮겨
+ * 적는 것이고, 그중 하나가 `Date.now()` 를 빠뜨리면 그 화면만 조용히 다르게 된다.
+ *
+ * `Date.now()` 를 여기서 부르는 것이 맞다: 이것은 **화면이 지금을 묻는 자리**이고,
+ * 시각을 정해야 하는 회귀선은 `lib/time.ts::agoLabel` 을 직접 부른다(그 함수가 `now` 를
+ * 인자로 받는 이유).
+ */
+export function useAgo(): (timestamp: number) => string {
+  const t = useT();
+  const locale = useLocale();
+  return useMemo(() => (ts: number) => agoLabel(ts, Date.now(), locale, t), [locale, t]);
 }

@@ -14,13 +14,22 @@ import { useActiveStore } from '../src/state/communities';
 import type { SectionId } from '../src/components/settings/sections';
 import { ProjectionBanner } from '../src/components/ProjectionBanner';
 import { projectionBanner } from '../src/lib/projectionBanner';
+import { usePrefsStore } from '../src/state/prefsStore';
 
 const status = (over: Partial<ProjectionStatus>): ProjectionStatus => ({
   state: 'ok', configured: true, lastPolledAt: Date.now(), lastError: null, ...over,
 } as ProjectionStatus);
 
-beforeEach(() => useActiveStore.getState().reset());
-afterEach(() => cleanup());
+beforeEach(() => {
+  useActiveStore.getState().reset();
+  // **언어를 고정한다**(`#619` 후속으로 `N분 전` 이 앱 언어를 따른다). 이 파일이 재는 것은
+  // 네 사정을 뭉개지 않는가이지 그 문구의 언어가 아니다.
+  usePrefsStore.getState().setLocale('ko');
+});
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 const mount = (props: { onOpenSettings?: (section?: SectionId) => void } = {}) =>
   render(<ProjectionBanner onOpenSettings={props.onOpenSettings} />);
@@ -69,7 +78,7 @@ describe('띠가 서는 사정', () => {
     const { container } = mount();
     expect(container.firstChild).toBeNull();
     // 사정이 사라진 것이 아니다 — 세우지 않을 뿐이다(`LeasePanel` 이 이것을 쓴다).
-    const b = projectionBanner({ status: null, error: null, minutesAgo: () => '방금' });
+    const b = projectionBanner({ status: null, error: null, ago: () => '방금' });
     expect(b?.testid).toBe('projection-unknown');
     expect(b?.strip).toBe(false);
   });

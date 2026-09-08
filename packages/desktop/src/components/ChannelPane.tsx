@@ -13,6 +13,7 @@ import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { RunnerStatusLine } from './RunnerStatus';
 import { dayLabel, localDayKey } from '../lib/day';
+import { useLocale } from '../i18n/useT';
 import { displayBody } from '../lib/mention';
 import { mentionedHandles, mentionedIds } from '@murmur/shared';
 import type { SectionId } from './settings/sections';
@@ -36,6 +37,8 @@ interface ChannelPaneProps {
 }
 
 export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: ChannelPaneProps) {
+  // 날짜 구분선은 **앱 언어**를 따른다(`lib/day.ts` 의 근거). 나머지 문자열은 아직 한국어다.
+  const locale = useLocale();
   const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins, runnerStates } = useActiveStore();
   const bottomRef = useRef<HTMLDivElement>(null);
   // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
@@ -300,7 +303,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
               {newDay && (
                 <div className="flex items-center gap-2 px-4 py-1" role="separator">
                   <span className="h-px flex-1 bg-surface-hover" />
-                  <span className="text-meta font-medium text-fg-subtle">{dayLabel(m.createdAt)}</span>
+                  <span className="text-meta font-medium text-fg-subtle">{dayLabel(m.createdAt, locale)}</span>
                   <span className="h-px flex-1 bg-surface-hover" />
                 </div>
               )}

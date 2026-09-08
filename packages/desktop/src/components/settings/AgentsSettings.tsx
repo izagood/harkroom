@@ -14,6 +14,8 @@ import type { ObservedRunner } from '../../lib/runnerLauncher';
 // 경과 계산은 `lib/` 한 벌이다 — 카드도 같은 값을 쓰는데 그쪽은 이 파일을 import 할 수
 // 없다(순환). `lastTurnLabel` 은 그 위에 접두만 붙인다(아래 그 함수 주석).
 import { lastTurnAgo } from '../../lib/lastTurn';
+import { useT, useLocale } from '../../i18n/useT';
+import type { Translate } from '../../i18n';
 // `runnerStatusLabel` 을 **설명 문구에도** 쓴다 — 상태 이름을 이 파일이 제 손으로 적으면
 // `RunnerStatus.tsx` 가 바뀔 때 여기만 낡는다. `external` → `adopted`(`#482`) 가 정확히
 // 그렇게 어긋났다.
@@ -87,9 +89,21 @@ const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
  * **이름과 반환값은 그대로 남긴다.** 읽는 곳이 셋이고(상세 · `Profile` · 회귀선
  * `agentActivity.test.tsx`) 그 문구는 `#176` 이 정한 것이다 — 계산을 옮기면서 문구까지
  * 바꾸면 이 변경이 만지지 않아야 할 두 화면을 함께 건드린다.
+ *
+ * `locale` 과 `t` 를 받는 것은 `#619` 의 `(b)` 주입이다 — 안쪽 경과 문구가 이제 언어를
+ * 따르므로(`lib/time.ts`) 그 언어를 어디선가 받아야 하고, 전역을 읽으면 회귀선들이
+ * 서로의 언어를 밟는다(vitest 는 파일 병렬이다).
+ *
+ * **접두 `마지막 활동:` 은 아직 한국어다.** 이 PR 은 시간 표기만 옮긴다 — 그 접두는
+ * 이 화면의 문자열이고, 화면 이전은 다음 PR 들의 몫이다(`en.ts` 의 '남은 것' 표).
  */
-export function lastTurnLabel(iso: string | null, now: number = Date.now()): string {
-  const ago = lastTurnAgo(iso, now);
+export function lastTurnLabel(
+  iso: string | null,
+  now: number,
+  locale: string,
+  t: Translate,
+): string {
+  const ago = lastTurnAgo(iso, now, locale, t);
   return iso === null ? '활동 없음' : `마지막 활동: ${ago}`;
 }
 
@@ -128,6 +142,10 @@ const draftOf = (a: AgentView): Draft => ({
 });
 
 export function AgentsSettings({ targetId }: { targetId?: string }) {
+  // 시간 표기는 언어를 따른다(`lib/time.ts`). 이 화면의 나머지 문자열은 아직 한국어다 —
+  // 화면 이전은 다음 PR 의 몫이다(`en.ts` 의 '남은 것' 표).
+  const t = useT();
+  const locale = useLocale();
   const [agents, setAgents] = useState<AgentView[]>([]);
   const [selected, setSelected] = useState<AgentView | null>(null);
   /**
@@ -946,7 +964,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   title={selected.lastTurnAt ? new Date(selected.lastTurnAt).toLocaleString() : undefined}
                   className="text-fg-subtle"
                 >
-                  {lastTurnLabel(selected.lastTurnAt)}
+                  {lastTurnLabel(selected.lastTurnAt, Date.now(), locale, t)}
                 </span>
                 {runnerStates[selected.id]?.status === 'failed' && (
                   <span
@@ -1864,15 +1882,17 @@ function DaemonFacts({ runner, stopRequestedAt, stopAckedAt }: {
   stopRequestedAt: string | null;
   stopAckedAt: string | null;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const ms = (iso: string | null): number | null => {
     if (iso === null) return null;
-    const t = Date.parse(iso);
-    return Number.isNaN(t) ? null : t;
+    const parsed = Date.parse(iso);
+    return Number.isNaN(parsed) ? null : parsed;
   };
   const rows = daemonFactRows(runner, {
     requestedAtMs: ms(stopRequestedAt),
     ackedAtMs: ms(stopAckedAt),
-  });
+  }, Date.now(), locale, t);
   if (rows.length === 0) return null;
 
   return (

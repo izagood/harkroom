@@ -3,10 +3,11 @@
 // 문서의 마지막 경고가 이 화면의 규칙이다: **"이 화면에서 정보를 더하는 쪽이 항상 지는
 // 쪽이다."** 최악은 에이전트 40개이고, 그 수에서 무너지지 않는 것은 **고정 폭 카드와 검색**
 // 둘뿐이다.
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import type { AgentView } from '@murmur/shared';
 import { AgentGrid } from '../src/components/settings/AgentGrid';
+import { usePrefsStore } from '../src/state/prefsStore';
 
 const agent = (handle: string, over: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
@@ -34,7 +35,14 @@ const grid = (props: Partial<Parameters<typeof AgentGrid>[0]> = {}) => render(
   />,
 );
 
-afterEach(() => cleanup());
+// **언어를 고정한다**(`#619` 후속으로 활동 경과가 앱 언어를 따른다). 이 파일이 재는 것은
+// 카드가 무엇을 올리고 무엇을 안 올리는가이지 그 문구의 언어가 아니다 — 안 고정하면
+// 시험이 기계의 브라우저 로캘에 매달린다.
+beforeEach(() => usePrefsStore.getState().setLocale('ko'));
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 describe('AgentGrid — 검색', () => {
   it('이름으로 찾는다', () => {

@@ -2,8 +2,9 @@ import { useMemo } from 'react';
 import { getController } from '../state/controller';
 import { useActiveStore } from '../state/communities';
 import { unblocksSentence, waitChainFromLinks, type WaitChain } from '../lib/waitChain';
-import { elapsedLabel } from '../lib/progressGroup';
-import { useT } from '../i18n/useT';
+import { elapsedMs } from '../lib/progressGroup';
+import { runningLabel } from '../lib/time';
+import { useT, useLocale } from '../i18n/useT';
 
 /**
  * **지금 누가 누구를 기다리는가** — 인박스의 한 구획(#488 A3-b → C2).
@@ -32,6 +33,13 @@ export function WaitChainSection() {
   const online = useActiveStore((s) => s.online);
   const connected = useActiveStore((s) => s.connected);
   const t = useT();
+  const locale = useLocale();
+  // 기다림은 아직 도는 중이라 `runningLabel` 이다 — 스레드 패널(`WaitChainLine`)과 **같은
+  // 판정을 같은 모양으로** 낸다. 두 화면이 같은 사슬을 그리므로 여기서 갈리면 안 된다.
+  const waited = (askedAt: string): string | null => {
+    const ms = elapsedMs(askedAt, Date.now());
+    return ms === null ? null : runningLabel(ms, locale, t);
+  };
 
   /**
    * **아직 안 본 채널이 있는가.** `store.messages` 는 **연 채널만** 채워진다
@@ -116,7 +124,7 @@ export function WaitChainSection() {
                   {' → '}
                   {name(head.blockedBy === null && mine ? myId : r.chain.links[r.chain.links.length - 1]!.blockedBy)}
                 </span>
-                <span className="ml-auto shrink-0 text-fg-subtle">{elapsedLabel(head.askedAt, Date.now())}</span>
+                <span className="ml-auto shrink-0 text-fg-subtle">{waited(head.askedAt)}</span>
               </span>
               <span className="truncate text-meta text-fg-subtle">
                 {r.channelName ? `#${r.channelName}` : t('waitChain.dm')}
