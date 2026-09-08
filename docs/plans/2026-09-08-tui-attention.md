@@ -90,7 +90,7 @@ setTimeout(() => {
 ```bash
 cd packages/agent
 WS_A=$(mktemp -d)/a && WS_B=$(mktemp -d)/b && mkdir -p "$WS_A" "$WS_B"
-CFG=~/.murmur-agent/claude-accounts/work/lime
+CFG=~/.murmur-agent/claude-accounts/work/aria
 python3 - "$CFG/.claude.json" "$WS_A" "$WS_B" <<'PY'
 import json, sys
 p, a, b = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -590,7 +590,7 @@ describe('attention 계약', () => {
     const f: RelayRunnerFrame = {
       type: 'attention.required',
       sessionId: 's1',
-      accountLabel: 'lime',
+      accountLabel: 'aria',
       screen: Buffer.from('WARNING').toString('base64'),
     };
     expect(f.type).toBe('attention.required');
@@ -606,7 +606,7 @@ describe('attention 계약', () => {
   it('데스크탑 이벤트가 스레드를 가리킨다 — 세션만으로는 패널을 못 연다', () => {
     const e: WsServerEvent = {
       type: 'agent.attention', sessionId: 's1', channelId: 'c1',
-      threadRootId: 't1', agentHandle: 'murmur', accountLabel: 'lime',
+      threadRootId: 't1', agentHandle: 'murmur', accountLabel: 'aria',
     };
     expect(e.channelId).toBe('c1');
   });
@@ -673,21 +673,21 @@ import { createAttentionLedger } from '../src/attentionLedger.js';
 describe('attention 원장', () => {
   it('같은 계정은 한 번만 부른다', () => {
     const l = createAttentionLedger();
-    expect(l.claim('lime', 's1')).toBe(true);
-    expect(l.claim('lime', 's2')).toBe(false);
+    expect(l.claim('aria', 's1')).toBe(true);
+    expect(l.claim('aria', 's2')).toBe(false);
   });
 
   it('계정이 다르면 각각 부른다 — 관문은 계정마다 따로다', () => {
     const l = createAttentionLedger();
-    expect(l.claim('lime', 's1')).toBe(true);
-    expect(l.claim('plum', 's2')).toBe(true);
+    expect(l.claim('aria', 's1')).toBe(true);
+    expect(l.claim('cedar', 's2')).toBe(true);
   });
 
   it('놓으면 다시 부를 수 있다 — 다음 관문(④)은 또 사람이 필요하다', () => {
     const l = createAttentionLedger();
-    l.claim('lime', 's1');
-    l.release('lime');
-    expect(l.claim('lime', 's2')).toBe(true);
+    l.claim('aria', 's1');
+    l.release('aria');
+    expect(l.claim('aria', 's2')).toBe(true);
   });
 
   it('계정 이름이 없는 러너(풀 미구성)도 한 번은 부른다', () => {
@@ -880,20 +880,20 @@ it('attention.required 를 받으면 소유자에게 agent.attention 을 쏜다'
   hub.onRunnerFrame(runner, { type: 'session.started', session: 세션뷰 });
   hub.onRunnerFrame(runner, {
     type: 'attention.required', sessionId: 세션뷰.sessionId,
-    accountLabel: 'lime', screen: Buffer.from('WARNING').toString('base64'),
+    accountLabel: 'aria', screen: Buffer.from('WARNING').toString('base64'),
   });
   expect(발행된이벤트).toContainEqual(expect.objectContaining({
     type: 'agent.attention',
     sessionId: 세션뷰.sessionId,
     channelId: 세션뷰.channelId,
-    accountLabel: 'lime',
+    accountLabel: 'aria',
   }));
 });
 
 it('세션을 모르면 아무것도 쏘지 않는다 — 채널을 모르면 패널을 못 연다', () => {
   hub.onRunnerFrame(runner, {
     type: 'attention.required', sessionId: '모르는세션',
-    accountLabel: 'lime', screen: '',
+    accountLabel: 'aria', screen: '',
   });
   expect(발행된이벤트).toHaveLength(0);
 });
@@ -961,7 +961,7 @@ git commit -m "feat(server): attention.required 를 소유자의 agent.attention
 it('agent.attention 을 받으면 그 스레드의 터미널을 연다', async () => {
   await controller.handleEvent({
     type: 'agent.attention', sessionId: 's1', channelId: 'c1',
-    threadRootId: 't1', agentHandle: 'murmur', accountLabel: 'lime',
+    threadRootId: 't1', agentHandle: 'murmur', accountLabel: 'aria',
   });
   expect(api.attachAgentSession).toHaveBeenCalledWith('s1');
 });
@@ -970,7 +970,7 @@ it('이미 그 세션의 패널이 열려 있으면 다시 열지 않는다', as
   state.openTerminalSessionId = 's1';
   await controller.handleEvent({
     type: 'agent.attention', sessionId: 's1', channelId: 'c1',
-    threadRootId: 't1', agentHandle: 'murmur', accountLabel: 'lime',
+    threadRootId: 't1', agentHandle: 'murmur', accountLabel: 'aria',
   });
   expect(api.attachAgentSession).not.toHaveBeenCalled();
 });
@@ -979,7 +979,7 @@ it('창이 백그라운드면 알림만 띄운다 — 남의 화면 앞으로 �
   state.windowFocused = false;
   await controller.handleEvent({
     type: 'agent.attention', sessionId: 's1', channelId: 'c1',
-    threadRootId: 't1', agentHandle: 'murmur', accountLabel: 'lime',
+    threadRootId: 't1', agentHandle: 'murmur', accountLabel: 'aria',
   });
   expect(api.attachAgentSession).not.toHaveBeenCalled();
   expect(notify).toHaveBeenCalledWith(expect.stringContaining('murmur'));

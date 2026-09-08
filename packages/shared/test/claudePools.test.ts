@@ -22,19 +22,19 @@ describe('parseClaudePoolsConfig', () => {
   it('세 필드를 읽는다', () => {
     expect(parseClaudePoolsConfig({
       defaultPool: 'work',
-      order: { work: ['lime', 'plum'] },
+      order: { work: ['aria', 'cedar'] },
       agents: { a1: 'personal' },
-    })).toEqual({ defaultPool: 'work', order: { work: ['lime', 'plum'] }, agents: { a1: 'personal' } });
+    })).toEqual({ defaultPool: 'work', order: { work: ['aria', 'cedar'] }, agents: { a1: 'personal' } });
   });
 
   it('모양이 틀린 항목만 버리고 나머지는 살린다', () => {
     const cfg = parseClaudePoolsConfig({
       defaultPool: 42,                        // 문자열이 아니다
-      order: { work: ['lime', 7], bad: 'x' }, // 원소·값이 배열이 아니다
+      order: { work: ['aria', 7], bad: 'x' }, // 원소·값이 배열이 아니다
       agents: { a1: 'personal', a2: 9 },      // 값이 문자열이 아니다
     });
     expect(cfg.defaultPool).toBe(null);
-    expect(cfg.order).toEqual({ work: ['lime'] });
+    expect(cfg.order).toEqual({ work: ['aria'] });
     expect(cfg.agents).toEqual({ a1: 'personal' });
   });
 
@@ -42,11 +42,11 @@ describe('parseClaudePoolsConfig', () => {
     // 이 이름은 경로 세그먼트가 된다 — 문법에서 끊는다.
     const cfg = parseClaudePoolsConfig({
       defaultPool: '../escape',
-      order: { 'Work Pool': ['lime'], work: ['Lime', 'plum'] },
+      order: { 'Work Pool': ['aria'], work: ['Lime', 'cedar'] },
       agents: { a1: '../escape' },
     });
     expect(cfg.defaultPool).toBe(null);
-    expect(cfg.order).toEqual({ work: ['plum'] });
+    expect(cfg.order).toEqual({ work: ['cedar'] });
     expect(cfg.agents).toEqual({});
   });
 });
@@ -79,18 +79,18 @@ describe('orderAccounts', () => {
   it('설정 순서를 따르고 나머지를 사전순으로 뒤에 붙인다', () => {
     // 뒤에 붙이는 이유: UI 가 순서를 쓴 뒤 사람이 계정을 새로 만들 수 있다.
     // 그때 그 계정이 사라지면 "만들었는데 안 쓴다"가 된다.
-    const cfg = parseClaudePoolsConfig({ order: { work: ['plum', 'lime'] } });
-    expect(orderAccounts(cfg, 'work', ['lime', 'plum', 'zebra'])).toEqual(['plum', 'lime', 'zebra']);
+    const cfg = parseClaudePoolsConfig({ order: { work: ['cedar', 'aria'] } });
+    expect(orderAccounts(cfg, 'work', ['aria', 'cedar', 'zebra'])).toEqual(['cedar', 'aria', 'zebra']);
   });
 
   it('설정에 있지만 디스크에 없는 이름은 조용히 빠진다', () => {
     // 디스크가 멤버십의 진실이다. 사람이 파인더에서 지웠을 수 있다.
-    const cfg = parseClaudePoolsConfig({ order: { work: ['gone', 'lime'] } });
-    expect(orderAccounts(cfg, 'work', ['lime'])).toEqual(['lime']);
+    const cfg = parseClaudePoolsConfig({ order: { work: ['gone', 'aria'] } });
+    expect(orderAccounts(cfg, 'work', ['aria'])).toEqual(['aria']);
   });
 
   it('순서 지정이 없으면 사전순이다', () => {
-    expect(orderAccounts(EMPTY, 'work', ['plum', 'lime'])).toEqual(['lime', 'plum']);
+    expect(orderAccounts(EMPTY, 'work', ['cedar', 'aria'])).toEqual(['aria', 'cedar']);
   });
 });
 

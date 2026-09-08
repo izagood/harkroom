@@ -81,7 +81,7 @@ function harness(status: unknown = { loggedIn: true }) {
 describe('loginStart', () => {
   it('실측 출력에서 URL 을 한 번만 뽑는다 — OSC 8 로 두 번 나온다', async () => {
     const h = harness();
-    const { loginId } = await h.port.loginStart('work', 'lime');
+    const { loginId } = await h.port.loginStart('work', 'aria');
     h.children[0]!.emitRealOutput();
 
     const urls = h.events.filter((e) => e.url !== undefined);
@@ -92,38 +92,38 @@ describe('loginStart', () => {
 
   it('계정 디렉터리를 먼저 만든다 — 없으면 claude 가 어디에 로그인할지 모른다', async () => {
     const h = harness();
-    await h.port.loginStart('work', 'lime');
+    await h.port.loginStart('work', 'aria');
     // 파일시스템을 직접 본다. `list()` 로 재면 안 된다 — 이 픽스처는 flat 모드(pools.json
-    // 없음)라 뿌리의 하위(`work`)가 계정으로 세어지고 `lime` 은 그 판정에 안 나온다.
-    expect((await stat(join(h.root, 'work', 'lime'))).isDirectory()).toBe(true);
+    // 없음)라 뿌리의 하위(`work`)가 계정으로 세어지고 `aria` 은 그 판정에 안 나온다.
+    expect((await stat(join(h.root, 'work', 'aria'))).isDirectory()).toBe(true);
   });
 
   it('그 디렉터리를 spawnLogin 에 넘긴다 — CLAUDE_CONFIG_DIR 이 될 값이다', async () => {
     const h = harness();
-    await h.port.loginStart('work', 'lime');
-    expect(h.spawned).toEqual([join(h.root, 'work', 'lime')]);
+    await h.port.loginStart('work', 'aria');
+    expect(h.spawned).toEqual([join(h.root, 'work', 'aria')]);
   });
 
   it('이름 문법을 잰다', async () => {
     const h = harness();
-    await expect(h.port.loginStart('..', 'lime')).rejects.toThrow();
+    await expect(h.port.loginStart('..', 'aria')).rejects.toThrow();
     await expect(h.port.loginStart('work', '..')).rejects.toThrow();
   });
 
   it('같은 계정에 로그인이 이미 돌고 있으면 거절한다', async () => {
     // 둘이 같은 디렉터리를 밟는다 — 어느 쪽 자격증명이 남는지 알 수 없다.
     const h = harness();
-    await h.port.loginStart('work', 'lime');
-    await expect(h.port.loginStart('work', 'lime')).rejects.toThrow();
+    await h.port.loginStart('work', 'aria');
+    await expect(h.port.loginStart('work', 'aria')).rejects.toThrow();
     // 다른 계정은 괜찮다.
-    await expect(h.port.loginStart('work', 'plum')).resolves.toBeTruthy();
+    await expect(h.port.loginStart('work', 'cedar')).resolves.toBeTruthy();
   });
 });
 
 describe('loginSubmit', () => {
   it('코드를 stdin 에 한 줄로 쓴다', async () => {
     const h = harness();
-    const { loginId } = await h.port.loginStart('work', 'lime');
+    const { loginId } = await h.port.loginStart('work', 'aria');
     await h.port.loginSubmit(loginId, 'the-code');
     expect(h.children[0]!.written).toEqual(['the-code\n']);
   });
@@ -136,7 +136,7 @@ describe('loginSubmit', () => {
 
   it('개행이 든 코드를 첫 줄만 보낸다 — 붙여 넣기에 개행이 섞인다', async () => {
     const h = harness();
-    const { loginId } = await h.port.loginStart('work', 'lime');
+    const { loginId } = await h.port.loginStart('work', 'aria');
     await h.port.loginSubmit(loginId, 'the-code\nextra');
     expect(h.children[0]!.written).toEqual(['the-code\n']);
   });
@@ -146,7 +146,7 @@ describe('loginCancel', () => {
   it('SIGTERM 뒤 유예가 지나면 SIGKILL 로 승격한다', async () => {
     // 러너 회수와 같은 규율이다 — 하네스가 정리할 기회를 먼저 준다.
     const h = harness();
-    const { loginId } = await h.port.loginStart('work', 'lime');
+    const { loginId } = await h.port.loginStart('work', 'aria');
     await h.port.loginCancel(loginId);
     expect(h.children[0]!.signals[0]).toBe('SIGTERM');
     await new Promise((r) => setTimeout(r, 10));
@@ -156,7 +156,7 @@ describe('loginCancel', () => {
   it('이미 끝난 로그인을 취소해도 던지지 않는다', async () => {
     // 사람이 브라우저를 닫는 것과 취소를 누르는 것이 경합한다.
     const h = harness();
-    const { loginId } = await h.port.loginStart('work', 'lime');
+    const { loginId } = await h.port.loginStart('work', 'aria');
     h.children[0]!.emit('exit', 0, null);
     await expect(h.port.loginCancel(loginId)).resolves.toBeUndefined();
   });
@@ -165,7 +165,7 @@ describe('loginCancel', () => {
 describe('종료 통지', () => {
   it('성공하면 done 과 상태를 함께 낸다', async () => {
     const h = harness({ loggedIn: true, email: 'a@b.c' });
-    const { loginId } = await h.port.loginStart('work', 'lime');
+    const { loginId } = await h.port.loginStart('work', 'aria');
     h.children[0]!.emit('exit', 0, null);
     await new Promise((r) => setTimeout(r, 10));
 
@@ -178,7 +178,7 @@ describe('종료 통지', () => {
   it('실패해도 done 을 낸다 — 무음으로 끝나지 않는다', async () => {
     // 통지가 없으면 UI 가 영원히 "로그인 중"을 그린다.
     const h = harness({ loggedIn: false });
-    await h.port.loginStart('work', 'lime');
+    await h.port.loginStart('work', 'aria');
     h.children[0]!.emit('exit', 1, null);
     await new Promise((r) => setTimeout(r, 10));
 
@@ -190,10 +190,10 @@ describe('종료 통지', () => {
 
   it('끝난 뒤에는 같은 계정에 다시 로그인할 수 있다', async () => {
     const h = harness();
-    await h.port.loginStart('work', 'lime');
+    await h.port.loginStart('work', 'aria');
     h.children[0]!.emit('exit', 0, null);
     await new Promise((r) => setTimeout(r, 10));
-    await expect(h.port.loginStart('work', 'lime')).resolves.toBeTruthy();
+    await expect(h.port.loginStart('work', 'aria')).resolves.toBeTruthy();
   });
 });
 
@@ -201,8 +201,8 @@ describe('shutdownLogins', () => {
   it('진행 중인 로그인을 전부 회수한다', async () => {
     // 러너와 달리 살려 두지 않는다 — 사람이 브라우저에서 완료해도 코드를 받을 프로세스가 없다.
     const h = harness();
-    await h.port.loginStart('work', 'lime');
-    await h.port.loginStart('work', 'plum');
+    await h.port.loginStart('work', 'aria');
+    await h.port.loginStart('work', 'cedar');
     await h.port.shutdownLogins();
     expect(h.children[0]!.killed).toBe(true);
     expect(h.children[1]!.killed).toBe(true);

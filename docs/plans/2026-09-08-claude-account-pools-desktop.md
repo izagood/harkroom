@@ -100,19 +100,19 @@ describe('parseClaudePoolsConfig', () => {
   it('세 필드를 읽는다', () => {
     expect(parseClaudePoolsConfig({
       defaultPool: 'work',
-      order: { work: ['lime', 'plum'] },
+      order: { work: ['aria', 'cedar'] },
       agents: { 'a1': 'personal' },
-    })).toEqual({ defaultPool: 'work', order: { work: ['lime', 'plum'] }, agents: { a1: 'personal' } });
+    })).toEqual({ defaultPool: 'work', order: { work: ['aria', 'cedar'] }, agents: { a1: 'personal' } });
   });
 
   it('모양이 틀린 항목만 버리고 나머지는 살린다', () => {
     const cfg = parseClaudePoolsConfig({
       defaultPool: 42,                       // 문자열이 아니다
-      order: { work: ['lime', 7], bad: 'x' }, // 원소·값이 배열이 아니다
+      order: { work: ['aria', 7], bad: 'x' }, // 원소·값이 배열이 아니다
       agents: { a1: 'personal', a2: 9 },      // 값이 문자열이 아니다
     });
     expect(cfg.defaultPool).toBe(null);
-    expect(cfg.order).toEqual({ work: ['lime'] });
+    expect(cfg.order).toEqual({ work: ['aria'] });
     expect(cfg.agents).toEqual({ a1: 'personal' });
   });
 
@@ -120,11 +120,11 @@ describe('parseClaudePoolsConfig', () => {
     // 이 이름은 경로 세그먼트가 된다 — 문법에서 끊는다.
     const cfg = parseClaudePoolsConfig({
       defaultPool: '../escape',
-      order: { 'Work Pool': ['lime'], work: ['Lime', 'plum'] },
+      order: { 'Work Pool': ['aria'], work: ['Lime', 'cedar'] },
       agents: { a1: '../escape' },
     });
     expect(cfg.defaultPool).toBe(null);
-    expect(cfg.order).toEqual({ work: ['plum'] });
+    expect(cfg.order).toEqual({ work: ['cedar'] });
     expect(cfg.agents).toEqual({});
   });
 });
@@ -157,18 +157,18 @@ describe('orderAccounts', () => {
   it('설정 순서를 따르고 나머지를 사전순으로 뒤에 붙인다', () => {
     // 뒤에 붙이는 이유: UI 가 순서를 쓴 뒤 사람이 계정을 새로 만들 수 있다.
     // 그때 그 계정이 사라지면 "만들었는데 안 쓴다"가 된다.
-    const cfg = parseClaudePoolsConfig({ order: { work: ['plum', 'lime'] } });
-    expect(orderAccounts(cfg, 'work', ['lime', 'plum', 'zebra'])).toEqual(['plum', 'lime', 'zebra']);
+    const cfg = parseClaudePoolsConfig({ order: { work: ['cedar', 'aria'] } });
+    expect(orderAccounts(cfg, 'work', ['aria', 'cedar', 'zebra'])).toEqual(['cedar', 'aria', 'zebra']);
   });
 
   it('설정에 있지만 디스크에 없는 이름은 조용히 빠진다', () => {
     // 디스크가 멤버십의 진실이다. 사람이 파인더에서 지웠을 수 있다.
-    const cfg = parseClaudePoolsConfig({ order: { work: ['gone', 'lime'] } });
-    expect(orderAccounts(cfg, 'work', ['lime'])).toEqual(['lime']);
+    const cfg = parseClaudePoolsConfig({ order: { work: ['gone', 'aria'] } });
+    expect(orderAccounts(cfg, 'work', ['aria'])).toEqual(['aria']);
   });
 
   it('순서 지정이 없으면 사전순이다', () => {
-    expect(orderAccounts(EMPTY, 'work', ['plum', 'lime'])).toEqual(['lime', 'plum']);
+    expect(orderAccounts(EMPTY, 'work', ['cedar', 'aria'])).toEqual(['aria', 'cedar']);
   });
 });
 
@@ -367,24 +367,24 @@ async function poolFixture(
 describe('loadClaudeAccountLane — 풀 축', () => {
   it('pools.json 이 없으면 뿌리가 암묵 풀이다 — 어제 동작 그대로', async () => {
     // 하위 호환이 이 한 줄에 걸려 있다(spec §4-3). 술어는 파일의 존재 하나다.
-    const root = await fixture(['lime', 'plum']);
+    const root = await fixture(['aria', 'cedar']);
     const lane = await loadClaudeAccountLane({ root, agentId: 'a1' });
     expect(lane.pool).toBe(null);
-    expect(lane.accounts.map((a) => a.name)).toEqual(['lime', 'plum']);
-    expect(lane.accounts[0]!.configDir).toBe(join(root, 'lime'));
+    expect(lane.accounts.map((a) => a.name)).toEqual(['aria', 'cedar']);
+    expect(lane.accounts[0]!.configDir).toBe(join(root, 'aria'));
   });
 
   it('pools.json 이 있으면 하위 디렉터리가 풀이다', async () => {
-    const root = await poolFixture({ work: ['lime'], personal: ['gmail'] }, { defaultPool: 'work' });
+    const root = await poolFixture({ work: ['aria'], personal: ['gmail'] }, { defaultPool: 'work' });
     const lane = await loadClaudeAccountLane({ root, agentId: 'a1' });
     expect(lane.pool).toBe('work');
-    expect(lane.accounts.map((a) => a.name)).toEqual(['lime']);
-    expect(lane.accounts[0]!.configDir).toBe(join(root, 'work', 'lime'));
+    expect(lane.accounts.map((a) => a.name)).toEqual(['aria']);
+    expect(lane.accounts[0]!.configDir).toBe(join(root, 'work', 'aria'));
   });
 
   it('에이전트 배정이 기본 풀을 덮는다', async () => {
     const root = await poolFixture(
-      { work: ['lime'], personal: ['gmail'] },
+      { work: ['aria'], personal: ['gmail'] },
       { defaultPool: 'work', agents: { a1: 'personal' } },
     );
     expect((await loadClaudeAccountLane({ root, agentId: 'a1' })).pool).toBe('personal');
@@ -393,7 +393,7 @@ describe('loadClaudeAccountLane — 풀 축', () => {
 
   it('MURMUR_CLAUDE_POOL 이 가장 세다', async () => {
     const root = await poolFixture(
-      { work: ['lime'], personal: ['gmail'] },
+      { work: ['aria'], personal: ['gmail'] },
       { defaultPool: 'work', agents: { a1: 'work' } },
     );
     const lane = await loadClaudeAccountLane({ root, agentId: 'a1', forcedPool: 'personal' });
@@ -402,7 +402,7 @@ describe('loadClaudeAccountLane — 풀 축', () => {
   });
 
   it('MURMUR_CLAUDE_POOL 이 없는 풀을 가리키면 던진다 — 사람이 타이핑한 의도다', async () => {
-    const root = await poolFixture({ work: ['lime'] }, { defaultPool: 'work' });
+    const root = await poolFixture({ work: ['aria'] }, { defaultPool: 'work' });
     await expect(loadClaudeAccountLane({ root, agentId: 'a1', forcedPool: 'ghost' }))
       .rejects.toThrow(/ghost/);
   });
@@ -410,13 +410,13 @@ describe('loadClaudeAccountLane — 풀 축', () => {
   it('pools.json 이 없는 풀을 가리키면 경고하고 무시한다 — 던지지 않는다', async () => {
     // UI 가 쓴 뒤 사람이 디렉터리를 지울 수 있다. 던지면 러너가 안 뜨고 사용자는
     // 앱에서 고칠 수 없다(spec §5-1). 다음 단계로 떨어진다.
-    const root = await poolFixture({ work: ['lime'] }, { defaultPool: 'work', agents: { a1: 'gone' } });
+    const root = await poolFixture({ work: ['aria'] }, { defaultPool: 'work', agents: { a1: 'gone' } });
     const lane = await loadClaudeAccountLane({ root, agentId: 'a1' });
     expect(lane.pool).toBe('work'); // 배정을 무시하고 기본 풀로 떨어졌다
   });
 
   it('기본 풀도 없으면 계정 지정 없음이다', async () => {
-    const root = await poolFixture({ work: ['lime'] }, { agents: { a1: 'gone' } });
+    const root = await poolFixture({ work: ['aria'] }, { agents: { a1: 'gone' } });
     const lane = await loadClaudeAccountLane({ root, agentId: 'a1' });
     expect(lane.pool).toBe(null);
     expect(lane.accounts).toEqual([]);
@@ -424,20 +424,20 @@ describe('loadClaudeAccountLane — 풀 축', () => {
 
   it('풀 안 순서를 pools.json 이 정한다', async () => {
     const root = await poolFixture(
-      { work: ['lime', 'plum', 'zebra'] },
-      { defaultPool: 'work', order: { work: ['plum', 'lime'] } },
+      { work: ['aria', 'cedar', 'zebra'] },
+      { defaultPool: 'work', order: { work: ['cedar', 'aria'] } },
     );
     expect((await loadClaudeAccountLane({ root, agentId: 'a1' })).accounts.map((a) => a.name))
-      .toEqual(['plum', 'lime', 'zebra']);
+      .toEqual(['cedar', 'aria', 'zebra']);
   });
 
   it('MURMUR_CLAUDE_ACCOUNTS 가 풀 안 순서를 덮는다', async () => {
     const root = await poolFixture(
-      { work: ['lime', 'plum'] },
-      { defaultPool: 'work', order: { work: ['lime', 'plum'] } },
+      { work: ['aria', 'cedar'] },
+      { defaultPool: 'work', order: { work: ['aria', 'cedar'] } },
     );
-    const lane = await loadClaudeAccountLane({ root, agentId: 'a1', order: 'plum' });
-    expect(lane.accounts.map((a) => a.name)).toEqual(['plum']);
+    const lane = await loadClaudeAccountLane({ root, agentId: 'a1', order: 'cedar' });
+    expect(lane.accounts.map((a) => a.name)).toEqual(['cedar']);
   });
 
   it('빈 풀은 계정 0개다 — 오류가 아니다', async () => {
@@ -450,10 +450,10 @@ describe('loadClaudeAccountLane — 풀 축', () => {
   it('깨진 pools.json 은 없는 것으로 본다', async () => {
     // 파싱 실패로 러너가 안 뜨면 사용자는 앱에서 고칠 수 없다.
     const root = mkdtempSync(join(tmpdir(), 'murmur-pools-broken-'));
-    await mkdir(join(root, 'lime'), { recursive: true });
+    await mkdir(join(root, 'aria'), { recursive: true });
     await writeFile(join(root, 'pools.json'), '{ not json');
     const lane = await loadClaudeAccountLane({ root, agentId: 'a1' });
-    // 파일이 **있으므로** 풀 모드다. 하위 디렉터리 `lime` 은 풀로 읽히고 그 안에 계정이 없다.
+    // 파일이 **있으므로** 풀 모드다. 하위 디렉터리 `aria` 은 풀로 읽히고 그 안에 계정이 없다.
     expect(lane.accounts).toEqual([]);
   });
 });
@@ -739,16 +739,16 @@ function port(root: string, status: unknown = LOGGED_IN) {
 describe('list', () => {
   it('pools.json 이 없으면 flat 모드로 뿌리의 계정을 준다', async () => {
     const root = mkdtempSync(join(tmpdir(), 'd-acc-'));
-    await mkdir(join(root, 'lime'), { recursive: true });
+    await mkdir(join(root, 'aria'), { recursive: true });
     const snap = await port(root).list();
     expect(snap.mode).toBe('flat');
     expect(snap.pools).toHaveLength(1);
-    expect(snap.pools[0]!.accounts.map((a) => a.name)).toEqual(['lime']);
+    expect(snap.pools[0]!.accounts.map((a) => a.name)).toEqual(['aria']);
   });
 
   it('pools.json 이 있으면 pools 모드로 풀별 계정을 준다', async () => {
     const root = mkdtempSync(join(tmpdir(), 'd-acc-'));
-    await mkdir(join(root, 'work', 'lime'), { recursive: true });
+    await mkdir(join(root, 'work', 'aria'), { recursive: true });
     await writeFile(join(root, 'pools.json'), JSON.stringify({ defaultPool: 'work' }));
     const snap = await port(root).list();
     expect(snap.mode).toBe('pools');
@@ -758,14 +758,14 @@ describe('list', () => {
 
   it('로그인 상태를 계정마다 실어 준다 — 비밀값은 없다', async () => {
     const root = mkdtempSync(join(tmpdir(), 'd-acc-'));
-    await mkdir(join(root, 'lime'), { recursive: true });
+    await mkdir(join(root, 'aria'), { recursive: true });
     const snap = await port(root, LOGGED_IN).list();
     expect(snap.pools[0]!.accounts[0]!.status).toMatchObject({ loggedIn: true, email: 'a@b.c' });
   });
 
   it('미로그인 계정도 목록에 남는다 — 사람이 로그인해야 하는 대상이다', async () => {
     const root = mkdtempSync(join(tmpdir(), 'd-acc-'));
-    await mkdir(join(root, 'lime'), { recursive: true });
+    await mkdir(join(root, 'aria'), { recursive: true });
     const snap = await port(root, LOGGED_OUT).list();
     expect(snap.pools[0]!.accounts[0]!.status.loggedIn).toBe(false);
   });
@@ -774,7 +774,7 @@ describe('list', () => {
     // 사용자가 풀을 만든 순간 평평한 계정은 목록에서 사라진다(spec §4-3).
     // 조용히 사라지면 "계정이 없어졌다"가 되므로 따로 보고한다.
     const root = mkdtempSync(join(tmpdir(), 'd-acc-'));
-    await mkdir(join(root, 'work', 'lime'), { recursive: true });
+    await mkdir(join(root, 'work', 'aria'), { recursive: true });
     await mkdir(join(root, 'leftover'), { recursive: true });
     await writeFile(join(root, 'leftover', '.credentials.json'), '{}');
     await writeFile(join(root, 'pools.json'), JSON.stringify({ defaultPool: 'work' }));
@@ -823,17 +823,17 @@ describe('configure', () => {
 describe('removeAccount · removePool', () => {
   it('계정 디렉터리를 지운다', async () => {
     const root = mkdtempSync(join(tmpdir(), 'd-acc-'));
-    await mkdir(join(root, 'work', 'lime'), { recursive: true });
-    await mkdir(join(root, 'work', 'plum'), { recursive: true });
+    await mkdir(join(root, 'work', 'aria'), { recursive: true });
+    await mkdir(join(root, 'work', 'cedar'), { recursive: true });
     await writeFile(join(root, 'pools.json'), JSON.stringify({ defaultPool: 'work' }));
-    await port(root).removeAccount('work', 'lime');
+    await port(root).removeAccount('work', 'aria');
     const snap = await port(root).list();
-    expect(snap.pools[0]!.accounts.map((a) => a.name)).toEqual(['plum']);
+    expect(snap.pools[0]!.accounts.map((a) => a.name)).toEqual(['cedar']);
   });
 
   it('풀 디렉터리를 지운다', async () => {
     const root = mkdtempSync(join(tmpdir(), 'd-acc-'));
-    await mkdir(join(root, 'work', 'lime'), { recursive: true });
+    await mkdir(join(root, 'work', 'aria'), { recursive: true });
     await writeFile(join(root, 'pools.json'), JSON.stringify({ defaultPool: 'work' }));
     await port(root).removePool('work');
     expect((await port(root).list()).pools).toEqual([]);
@@ -877,10 +877,10 @@ describe('move', () => {
 
   it('대상 이름이 이미 있으면 거절한다 — 덮어쓰지 않는다', async () => {
     const root = mkdtempSync(join(tmpdir(), 'd-acc-'));
-    await mkdir(join(root, 'lime'), { recursive: true });
-    await mkdir(join(root, 'work', 'lime'), { recursive: true });
+    await mkdir(join(root, 'aria'), { recursive: true });
+    await mkdir(join(root, 'work', 'aria'), { recursive: true });
     await writeFile(join(root, 'pools.json'), JSON.stringify({ defaultPool: 'work' }));
-    await expect(port(root).move('lime', 'work')).rejects.toThrow();
+    await expect(port(root).move('aria', 'work')).rejects.toThrow();
   });
 });
 ```

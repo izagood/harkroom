@@ -162,8 +162,8 @@ claude 내부 컨텍스트는 잃지만 스레드의 사실은 프롬프트로 �
 러너가 대신 할 수 없다. OAuth 로그인은 브라우저를 요구한다.
 
 ```sh
-mkdir -p ~/.murmur-agent/claude-accounts/lime
-CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/lime claude
+mkdir -p ~/.murmur-agent/claude-accounts/aria
+CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/aria claude
 # 뜬 화면에서 /login → 브라우저에서 그 계정으로 로그인 → 닫는다
 ```
 
@@ -200,7 +200,7 @@ skipped when Claude is run in non-interactive mode"*). TUI 는 사람이 앉아 
 확인:
 
 ```sh
-CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/lime \
+CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/aria \
   claude -p 'reply with OK'   # → OK
 ```
 
@@ -234,13 +234,13 @@ RED 먼저 쓴다.
 
 **통한 것.**
 
-- 풀 로드와 사전순: 두 계정이 이름순으로 나왔고, `MURMUR_CLAUDE_ACCOUNTS="zdead,lime"` 이
+- 풀 로드와 사전순: 두 계정이 이름순으로 나왔고, `MURMUR_CLAUDE_ACCOUNTS="zdead,aria"` 이
   순서를 뒤집었다.
 - `CLAUDE_CONFIG_DIR` 가 계정마다 실제로 자식 env 에 들어갔다.
 - 인증 주입 키 넷이 자식 env 에서 사라졌다(부모에 심어 두고 확인).
 - 미로그인 계정에서 실제 claude 가 `Not logged in · Please run /login` / 종료 1 을 냈고,
   `switchesAccount` 가 참을 돌려줬다 — §4-4 의 새 패턴이 실물 출력에 걸린다.
-- **핵심 시나리오**: 못 쓰는 계정을 먼저 두면 `zdead → lime` 전환이 일어나고 살아 있는
+- **핵심 시나리오**: 못 쓰는 계정을 먼저 두면 `zdead → aria` 전환이 일어나고 살아 있는
   계정이 답했다. 첫 계정이 멀쩡하면 전환 없이 첫 계정에서 끝났다(둘째를 건드리지 않았다).
 - 모든 계정이 방아쇠에 걸리면 마지막 오류가 호출자에게 전달됐다 — 기존 한도·자격증명 경로가
   그대로 받는다.

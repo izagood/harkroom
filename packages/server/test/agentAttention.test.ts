@@ -26,20 +26,20 @@ describe('attention.required 중계', () => {
     const { hub, 부름 } = 세운다();
     hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.started', session: 세션 }));
     hub.onRunnerMessage('agent-1', JSON.stringify({
-      type: 'attention.required', sessionId: 's1', accountLabel: 'lime',
+      type: 'attention.required', sessionId: 's1', accountLabel: 'aria',
       screen: Buffer.from('WARNING').toString('base64'),
     }));
 
     expect(부름).toEqual([{
       sessionId: 's1', channelId: 'c1', threadRootId: 't1',
-      agentAccountId: 'agent-1', accountLabel: 'lime',
+      agentAccountId: 'agent-1', accountLabel: 'aria',
     }]);
   });
 
   it('모르는 세션이면 아무것도 넘기지 않는다 — 채널을 모르면 열 패널이 없다', () => {
     const { hub, 부름 } = 세운다();
     hub.onRunnerMessage('agent-1', JSON.stringify({
-      type: 'attention.required', sessionId: '모르는세션', accountLabel: 'lime', screen: '',
+      type: 'attention.required', sessionId: '모르는세션', accountLabel: 'aria', screen: '',
     }));
     expect(부름).toHaveLength(0);
   });
@@ -51,7 +51,7 @@ describe('attention.required 중계', () => {
     const 다른소켓: RelaySocket = { send: () => {}, close: () => {} };
     hub.addRunner('agent-2', 다른소켓);
     hub.onRunnerMessage('agent-2', JSON.stringify({
-      type: 'attention.required', sessionId: 's1', accountLabel: 'lime', screen: '',
+      type: 'attention.required', sessionId: 's1', accountLabel: 'aria', screen: '',
     }));
     expect(부름).toHaveLength(0);
   });
@@ -62,7 +62,7 @@ describe('attention.required 중계', () => {
     const { hub, 부름 } = 세운다();
     hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.started', session: 세션 }));
     hub.onRunnerMessage('agent-1', JSON.stringify({
-      type: 'attention.required', sessionId: 's1', accountLabel: 'lime',
+      type: 'attention.required', sessionId: 's1', accountLabel: 'aria',
       screen: Buffer.from('비밀이 섞인 화면').toString('base64'),
     }));
     expect(JSON.stringify(부름)).not.toContain('비밀');
@@ -74,7 +74,7 @@ describe('attention.required 중계', () => {
     hub.addRunner('agent-1', { send: () => {}, close: () => {} });
     hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.started', session: 세션 }));
     expect(() => hub.onRunnerMessage('agent-1', JSON.stringify({
-      type: 'attention.required', sessionId: 's1', accountLabel: 'lime', screen: '',
+      type: 'attention.required', sessionId: 's1', accountLabel: 'aria', screen: '',
     }))).not.toThrow();
   });
 });
