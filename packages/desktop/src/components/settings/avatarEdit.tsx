@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { avatarErrorMessage } from '../../lib/avatar';
+import { useT } from '../../i18n/useT';
 
 /**
  * 사진 바꾸기의 **상태 하나**다(#159 · Task 15-4 후속).
@@ -49,6 +50,7 @@ export type AvatarEdit = {
 export function useAvatarEdit(
   apply: (file: File | null, onProgress?: (fraction: number) => void) => Promise<void>,
 ): AvatarEdit {
+  const t = useT();
   const [phase, setPhase] = useState<AvatarPhase>({ kind: 'idle' });
   const pickRef = useRef<HTMLInputElement | null>(null);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
@@ -89,7 +91,7 @@ export function useAvatarEdit(
     } catch (e) {
       // 원인을 그대로 문장으로 옮긴다 — 확장자를 믿지 않는 서버 거절(`not_an_image`)과
       // 네트워크 끊김은 사람이 해야 할 다음 행동이 다르다.
-      settle({ kind: 'error', message: avatarErrorMessage(e) });
+      settle({ kind: 'error', message: avatarErrorMessage(e, t) });
     } finally {
       // 같은 파일을 다시 고를 수 있게 비운다 — 안 비우면 change 가 안 난다.
       if (pickRef.current) pickRef.current.value = '';
@@ -119,6 +121,7 @@ export function useAvatarEdit(
  * 않은 것**과 구분되지 않는다 — 그것이 이 고침의 출발점이었다.
  */
 export function AvatarStatus({ phase }: { phase: AvatarPhase }) {
+  const t = useT();
   if (phase.kind === 'idle') return null;
 
   if (phase.kind === 'error') {
@@ -132,14 +135,14 @@ export function AvatarStatus({ phase }: { phase: AvatarPhase }) {
         data-testid="avatar-done"
         className="mt-1 text-meta text-fg-muted"
       >
-        {phase.removed ? '사진을 지웠습니다' : '사진을 바꿨습니다'}
+        {t(phase.removed ? 'avatarEdit.result.removed' : 'avatarEdit.result.changed')}
       </p>
     );
   }
 
   // 지우기는 올릴 바이트가 없다 — 막대 대신 말만 둔다. 있지도 않은 진행을 그리지 않는다.
   if (phase.kind === 'removing') {
-    return <p role="status" data-testid="avatar-removing" className="mt-1 text-meta text-fg-muted">사진을 지우는 중…</p>;
+    return <p role="status" data-testid="avatar-removing" className="mt-1 text-meta text-fg-muted">{t('avatarEdit.progress.removing')}</p>;
   }
 
   const pct = phase.kind === 'applying' ? 100 : Math.round((phase.fraction ?? 0) * 100);
@@ -151,7 +154,7 @@ export function AvatarStatus({ phase }: { phase: AvatarPhase }) {
       <div
         role="progressbar"
         data-testid="avatar-progress"
-        aria-label="사진 업로드 진행"
+        aria-label={t('avatarEdit.progress.aria')}
         aria-valuemin={0}
         aria-valuemax={100}
         // 비율을 모르는 구간에서는 valuenow 를 비운다(불확정) — 0 으로 두면 스크린리더가
@@ -165,9 +168,9 @@ export function AvatarStatus({ phase }: { phase: AvatarPhase }) {
         />
       </div>
       <span className="text-meta text-fg-muted">
-        {phase.kind === 'applying' ? '프로필에 적용 중…'
-          : unknown ? '사진 올리는 중…'
-            : `사진 올리는 중… ${pct}%`}
+        {phase.kind === 'applying' ? t('avatarEdit.progress.applying')
+          : unknown ? t('avatarEdit.progress.uploading')
+            : t('avatarEdit.progress.uploadingPct', { pct })}
       </span>
     </div>
   );

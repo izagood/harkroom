@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { translator } from '../src/i18n';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { Identity, resetAvatarCache } from '../src/components/Identity';
@@ -8,6 +9,9 @@ import { MessageItem } from '../src/components/MessageItem';
 import { ProfileSettings } from '../src/components/settings/ProfileSettings';
 import { acc, msg } from './helpers/fakeApi';
 import { ApiError } from '../src/lib/api';
+
+/** 문구가 아니라 **사실**을 잰다 — 어투가 바뀌어도(`~습니다` → `~다`) 이 축은 산다. */
+const ko = translator('ko');
 
 const fakeController = (over: Partial<Controller> = {}) => {
   const c = {
@@ -192,7 +196,7 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     fireEvent.click(await screen.findByRole('button', { name: '정말 지우기' }));
 
     await waitFor(() => expect(c.setAvatar).toHaveBeenCalled());
-    expect((await screen.findByTestId('avatar-done')).textContent).toMatch(/지웠습니다/);
+    expect((await screen.findByTestId('avatar-done')).textContent).toBe(ko('avatarEdit.result.removed'));
   });
 
   /**
@@ -228,7 +232,7 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     expect(screen.getByTestId('avatar-uploading').textContent).toMatch(/적용 중/);
 
     await act(async () => { finish?.(); });
-    expect((await screen.findByTestId('avatar-done')).textContent).toMatch(/바꿨습니다/);
+    expect((await screen.findByTestId('avatar-done')).textContent).toBe(ko('avatarEdit.result.changed'));
     // 끝난 뒤 막대를 남겨 두면 다음 조작 옆에서 '지금 올리는 중'으로 읽힌다.
     expect(screen.queryByTestId('avatar-progress')).toBeNull();
   });
