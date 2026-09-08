@@ -4,7 +4,7 @@
 // 얼굴이 여럿이라는 것뿐이다"* 라고 적었다. 이 파일이 재는 것은 그 "여럿"이 실제로 뜻을
 // 갖는가다 — 넷이 서는 것만으로는 부족하고, **어느 넷이 어느 순서로** 서는지가 이 카드가
 // 말하려는 사실 전부다.
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi, beforeEach} from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import type { AccountView, AgentTeamMemberRow } from '@murmur/shared';
 import type { RunnerState } from '../src/lib/runnerLauncher';
@@ -12,6 +12,16 @@ import { TeamGrid, type TeamCardSubject } from '../src/components/settings/TeamG
 import { acc } from './helpers/fakeApi';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { usePrefsStore } from '../src/state/prefsStore';
+
+/**
+ * **언어를 한국어로 고정한다.** 이 파일이 재는 것은 언어가 아니라 **그 언어로 표현된
+ * 규율**이다 — 문구가 사전을 지나게 된 뒤(i18n 이전)에도 그 규율은 그대로여야 하므로,
+ * 한국어 문구를 재는 줄을 지우는 대신 언어를 못 박는다. `gallery.test.tsx`·
+ * `skillsSettings.test.tsx`·`agentGrid.test.tsx`·`accountAvatar.test.tsx` 가 세운 선례다.
+ */
+beforeEach(() => usePrefsStore.getState().setLocale('ko'));
+afterEach(() => usePrefsStore.getState().setLocale('system'));
 
 /** 러너 상태 하나. `agentGrid.test.tsx` 가 같은 네 필드를 손으로 적는다. */
 const rs = (

@@ -4,6 +4,16 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController } from '../src/state/controller';
 import { Composer } from '../src/components/Composer';
 import { acc, grp, fakeApi, fakeWsFactory } from './helpers/fakeApi';
+import { usePrefsStore } from '../src/state/prefsStore';
+
+/**
+ * **언어를 한국어로 고정한다.** 이 파일이 재는 것은 언어가 아니라 **그 언어로 표현된
+ * 규율**이다 — 문구가 사전을 지나게 된 뒤(i18n 이전)에도 그 규율은 그대로여야 하므로,
+ * 한국어 문구를 재는 줄을 지우는 대신 언어를 못 박는다. `gallery.test.tsx`·
+ * `skillsSettings.test.tsx`·`agentGrid.test.tsx`·`accountAvatar.test.tsx` 가 세운 선례다.
+ */
+beforeEach(() => usePrefsStore.getState().setLocale('ko'));
+afterEach(() => usePrefsStore.getState().setLocale('system'));
 
 /**
  * 핸들 집합이 멘션 후보에 섞이는 것(#285).
@@ -41,7 +51,10 @@ describe('핸들 집합 자동완성 (#285)', () => {
     const option = optionFor('oncall');
     expect(option).toBeTruthy();
     // 구성원 수가 없으면 `@release` 가 한 사람인지 스무 사람인지 모르는 채로 부르게 된다.
-    expect(option!.textContent).toContain('3명');
+    // **단위(`명`)가 빠졌다**: 이 집합에는 에이전트도 들 수 있어 사람 세는 단위가 틀렸고,
+    // 영어로 옮기면 그 부정확이 굳는다(`identity.badge.count`·`composer.mention.groupCount`
+    // 가 같은 판단이다). 재는 것은 단위가 아니라 **수가 보이는가** 이므로 수만 잰다.
+    expect(option!.textContent).toContain('3');
     // 표시 이름도 함께 — 핸들만으로는 무엇을 묶은 것인지 알 수 없다.
     expect(option!.textContent).toContain('On-call');
   });

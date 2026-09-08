@@ -2,12 +2,29 @@ import { useEffect, useState } from 'react';
 import { ACCOUNT_STATUSES, type AccountStatus } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
+import { useT } from '../i18n/useT';
+import type { MessageKey } from '../i18n';
 
-/** 화면에 쓰는 이름. 값 집합은 shared 의 `ACCOUNT_STATUSES` 하나에서 나온다. */
-const LABELS: Record<AccountStatus, string> = {
-  available: '대화 가능',
-  away: '자리 비움',
-  dnd: '방해 금지',
+/**
+ * 화면에 쓰는 이름. 값 집합은 shared 의 `ACCOUNT_STATUSES` 하나에서 나온다.
+ *
+ * **저장·전송용 값과 화면 라벨을 갈랐다.** `available`·`away`·`dnd` 는 서버로 가고
+ * (`setStatus(s)`) 화면의 `data-status` 로도 남는 값이라 **안 옮긴다** — `sidebar.notify`
+ * 가 `all`/`mentions`/`none` 을 안 옮긴 것과 같은 규율이다. 사전에 오는 것은 그 값에
+ * 씌우는 이름뿐이다.
+ *
+ * **표는 남기고 값만 사전 키로 바꿨다**(`NotifiedGapRow::LABEL` 의 선례). 문구를 그대로
+ * 두면 이 상수가 **모듈 로드 시점 언어로 굳어**, 사람이 언어를 바꿔도 이 세 버튼만 옛
+ * 언어로 남는다. 키는 언어를 안 지니므로 상수여도 안전하고, `Record<AccountStatus, …>`
+ * 가 지키던 것(*"상태를 추가하면 컴파일이 막힌다"*)이 그대로 산다.
+ *
+ * `Identity::STATUS_MARKS` 와 **같은 키를 본다** — 두 화면이 같은 세 상태를 그리므로,
+ * 다른 키를 들면 고르는 자리와 읽는 자리의 말이 갈린다(`status` 영역 머리말의 근거).
+ */
+const LABEL_KEY: Record<AccountStatus, MessageKey> = {
+  available: 'status.value.available',
+  away: 'status.value.away',
+  dnd: 'status.value.dnd',
 };
 
 /**
@@ -29,6 +46,7 @@ export function StatusPicker({ onDone }: {
   /** 상태를 정했거나 사용자가 닫았을 때. 여는 쪽이 닫는 쪽이다. */
   onDone: () => void;
 }) {
+  const t = useT();
   const me = useActiveStore((s) => s.me);
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +69,7 @@ export function StatusPicker({ onDone }: {
       onDone();
     } catch (err) {
       // 실패를 조용히 삼키면 사용자는 정했다고 믿는데 남들에게는 예전 상태로 보인다.
-      setError(err instanceof Error ? err.message : '상태를 바꾸지 못했다');
+      setError(err instanceof Error ? err.message : t('status.picker.failed'));
     }
   };
 
@@ -73,14 +91,14 @@ export function StatusPicker({ onDone }: {
           // 조작이 문구를 함께 지우면 사용자는 왜 사라졌는지 알 수 없다.
           onClick={() => void apply(s)}
         >
-          {LABELS[s]}
+          {t(LABEL_KEY[s])}
         </button>
       ))}
       <input
-        aria-label="상태 문구"
+        aria-label={t('status.picker.noteLabel')}
         maxLength={80}
         value={text}
-        placeholder="짧은 문구 (최대 80자)"
+        placeholder={t('status.picker.notePlaceholder')}
         className="mt-1 w-full rounded border border-border bg-field px-2 py-1 text-fg outline-none"
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') void apply(me.status, text.trim() || null); }}
@@ -91,7 +109,7 @@ export function StatusPicker({ onDone }: {
           className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
           onClick={() => void apply(me.status, text.trim() || null)}
         >
-          저장
+          {t('status.picker.save')}
         </button>
         {statusText && (
           <button
@@ -100,7 +118,7 @@ export function StatusPicker({ onDone }: {
             // "빈 문구가 있다"가 섞인다.
             onClick={() => void apply(me.status, null)}
           >
-            문구 지우기
+            {t('status.picker.clear')}
           </button>
         )}
         {/*
@@ -112,7 +130,7 @@ export function StatusPicker({ onDone }: {
           className="ml-auto rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
           onClick={onDone}
         >
-          닫기
+          {t('status.picker.close')}
         </button>
       </div>
     </div>

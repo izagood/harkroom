@@ -3,6 +3,7 @@ import type { ChannelFileRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { formatSize } from './Attachments';
+import { useT } from '../i18n/useT';
 
 /**
  * 채널 파일 색인(#232) — 이 채널에 오간 첨부를 최신순으로 모아 보여 준다.
@@ -22,34 +23,35 @@ export function FilesPanel({ files, loading, error, hasMore, onRetry, onLoadMore
   onClose: () => void;
   onOpen: (file: ChannelFileRow) => void;
 }) {
+  const t = useT();
   const accounts = useActiveStore((s) => s.accounts);
 
   return (
-    <section className="flex w-80 flex-col border-l border-border bg-surface-raised" aria-label="채널 파일">
+    <section className="flex w-80 flex-col border-l border-border bg-surface-raised" aria-label={t('channel.files.label')}>
       <header className="flex items-center border-b border-border px-4 py-2">
-        <span className="font-bold">파일</span>
+        <span className="font-bold">{t('channel.files.heading')}</span>
         <button className="ml-auto rounded px-2 text-fg-subtle hover:bg-surface-sunken"
-          onClick={onClose} aria-label="파일 목록 닫기">×</button>
+          onClick={onClose} aria-label={t('channel.files.close')}>×</button>
       </header>
 
       <div className="flex-1 overflow-y-auto">
         {/* 크기를 안 적는다 — 앱 기본값이 본문단 13px 이다(`Workspace.tsx`). 같은 값을
             다시 적으면 어휘만 늘고, 기본값이 바뀔 때 이 줄이 뒤처진다. */}
-        {loading && <p className="p-4 text-fg-subtle">불러오는 중…</p>}
+        {loading && <p className="p-4 text-fg-subtle">{t('channel.files.loading')}</p>}
 
         {/* 못 불러온 것과 파일이 없는 것은 **다른 상태다.** 조회 실패를 빈 목록으로 삼키면
             화면이 "오간 파일이 없다"고 말하게 되고, 그것은 거짓말이다(docs/design.md §4).
             그래서 오류일 때는 '없다' 문구를 그리는 분기 자체에 닿지 않는다. */}
         {!loading && error && (
           <div className="p-4">
-            <p role="alert" className="text-danger">파일 목록을 불러오지 못했다: {error}</p>
+            <p role="alert" className="text-danger">{t('channel.files.loadFailed', { reason: error })}</p>
             <button className="mt-2 rounded border border-border px-2 py-1 text-meta text-fg-muted"
-              onClick={onRetry}>다시 시도</button>
+              onClick={onRetry}>{t('channel.files.retry')}</button>
           </div>
         )}
 
         {!loading && !error && !files.length && (
-          <p className="p-4 text-fg-subtle">아직 오간 파일이 없다</p>
+          <p className="p-4 text-fg-subtle">{t('channel.files.empty')}</p>
         )}
 
         {!loading && !error && files.length > 0 && (
@@ -78,7 +80,7 @@ export function FilesPanel({ files, loading, error, hasMore, onRetry, onLoadMore
         {!loading && !error && hasMore && (
           <div className="px-4 py-2 text-center">
             <button className="rounded border border-border px-2 py-1 text-meta text-fg-muted"
-              onClick={onLoadMore}>더 오래된 파일</button>
+              onClick={onLoadMore}>{t('channel.files.more')}</button>
           </div>
         )}
       </div>
@@ -91,6 +93,7 @@ const PAGE = 50;
 
 /** 이 채널의 파일을 불러와 `FilesPanel` 에 넘긴다. */
 export function ChannelFiles({ channelId, onClose }: { channelId: string; onClose: () => void }) {
+  const t = useT();
   const [files, setFiles] = useState<ChannelFileRow[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -108,11 +111,11 @@ export function ChannelFiles({ channelId, onClose }: { channelId: string; onClos
       // 실패했으면 이전 목록도 버린다 — 남겨 두면 오류 문구 옆에 낡은 목록이 함께 보인다.
       setFiles([]);
       setHasMore(false);
-      setError(e instanceof Error ? e.message : '알 수 없는 오류');
+      setError(e instanceof Error ? e.message : t('channel.files.unknownError'));
     } finally {
       setLoading(false);
     }
-  }, [channelId]);
+  }, [channelId, t]);
 
   useEffect(() => { void load(); }, [load]);
 

@@ -1,5 +1,6 @@
 import type { ChannelRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
+import { useT } from '../i18n/useT';
 
 /**
  * 메시지가 하나도 없는 채널에 다음 걸음을 보여 준다(#234).
@@ -15,6 +16,7 @@ import { useActiveStore } from '../state/communities';
 export function ChannelEmptyState(
   { channel, isArchived }: { channel: ChannelRow | undefined; isArchived: boolean },
 ) {
+  const t = useT();
   const { accounts, me } = useActiveStore();
 
   // 멘션 자동완성과 **같은 기준**으로 고른다(Composer.tsx 의 후보 필터 — 나 자신 제외,
@@ -44,16 +46,18 @@ export function ChannelEmptyState(
           여기 적힌 것이 사람이 읽을 수 있는 전부이고, 아래 목록은 다음에 무엇을 할 수
           있는지 알려 주는 문장이다. 주제만 아랫단 11px 로 내렸다: 제목 아래 딸린 꼬리표다. */}
       <p className="font-medium text-fg-muted">
-        {channel ? `#${channel.name} 에 아직 메시지가 없다` : '아직 메시지가 없다'}
+        {channel
+          ? t('channel.empty.noMessagesIn', { name: channel.name ?? '' })
+          : t('channel.empty.noMessages')}
       </p>
       {channel?.topic && <p className="mt-1 text-meta text-fg-subtle">{channel.topic}</p>}
       {(mentionAgent || showTopic) && (
         <ul className="mx-auto mt-4 max-w-sm list-disc space-y-1 pl-5 text-left text-fg-subtle">
           {mentionAgent && (
-            <li>@{mentionAgent.handle} 처럼 에이전트를 멘션하면 그 에이전트의 inbox 로 들어간다.</li>
+            <li>{t('channel.empty.tipMention', { handle: mentionAgent.handle })}</li>
           )}
           {showTopic && (
-            <li>사이드바에서 이 채널의 ⋯ 메뉴를 열고 '채널 편집'으로 topic 을 정할 수 있다.</li>
+            <li>{t('channel.empty.tipTopic')}</li>
           )}
         </ul>
       )}
