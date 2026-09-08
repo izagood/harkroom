@@ -51,6 +51,7 @@ import { translator } from '../src/i18n';
 const ko = translator('ko');
 
 import { RunnerStatusLine } from '../src/components/RunnerStatus';
+import { usePrefsStore } from '../src/state/prefsStore';
 
 const agent = (id: string): LaunchableAgent => ({
   id, handle: id, ownerAccountId: 'me', disabled: false, stopRequestedAt: null,
@@ -111,13 +112,19 @@ function withoutTauri(): void {
   delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
 }
 
+// **언어를 `ko` 로 고정한다.** 이 파일의 축들이 한국어 문구를 직접 재는데, 그 문구가
+// 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다(`gallery`·`agentGrid`·
+// `skillsSettings` 회귀선이 같은 이유로 고정한다). 영어가 원본이 되면서 기본값이
+// 영어가 됐으므로, 한국어를 재려면 한국어라고 말해야 한다.
 beforeEach(() => {
   invoke.mockReset();
+  usePrefsStore.getState().setLocale('ko');
   withTauri();
 });
 afterEach(() => {
   withoutTauri();
   cleanup();
+  usePrefsStore.getState().setLocale('system');
 });
 
 describe('1. PATH 는 Rust 에게 묻는다 — 웹뷰가 셸을 부르지 않는다 (#513)', () => {

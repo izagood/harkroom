@@ -15,6 +15,12 @@ import type { SectionId } from '../src/components/settings/sections';
 import { ProjectionBanner } from '../src/components/ProjectionBanner';
 import { projectionBanner } from '../src/lib/projectionBanner';
 import { usePrefsStore } from '../src/state/prefsStore';
+import { translator } from '../src/i18n';
+
+// 위 `beforeEach` 가 앱 언어를 `ko` 로 고정하므로, 판정 함수를 **직접** 부르는 자리도
+// 같은 언어의 번역기를 넘긴다 — 화면을 지나는 축과 안 지나는 축이 다른 언어를 재면
+// 그 둘이 서로를 검증하지 못한다.
+const ko = translator('ko');
 
 const status = (over: Partial<ProjectionStatus>): ProjectionStatus => ({
   state: 'ok', configured: true, lastPolledAt: Date.now(), lastError: null, ...over,
@@ -78,7 +84,7 @@ describe('띠가 서는 사정', () => {
     const { container } = mount();
     expect(container.firstChild).toBeNull();
     // 사정이 사라진 것이 아니다 — 세우지 않을 뿐이다(`LeasePanel` 이 이것을 쓴다).
-    const b = projectionBanner({ status: null, error: null, ago: () => '방금' });
+    const b = projectionBanner({ status: null, error: null, ago: () => '방금', t: ko });
     expect(b?.testid).toBe('projection-unknown');
     expect(b?.strip).toBe(false);
   });

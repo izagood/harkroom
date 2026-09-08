@@ -42,6 +42,7 @@ import { Directory } from '../src/components/Directory';
 import { acc, chan } from './helpers/fakeApi';
 import { presenceView, anyPresenceView, PRESENCE_LABEL } from '../src/lib/presenceView';
 import { usePrefsStore } from '../src/state/prefsStore';
+import { translator } from '../src/i18n';
 
 const fakeController = () => {
   const c = {
@@ -122,13 +123,29 @@ describe('판정 — presenceView (#443)', () => {
     expect(anyPresenceView(['u9'], ['u2'], true)).toBe('offline');
   });
 
-  /** 세 값이 서로 다른 말을 한다 — 문구가 겹치면 사람에게는 값이 둘뿐이다. */
+  /**
+   * 세 값이 서로 다른 말을 한다 — 문구가 겹치면 사람에게는 값이 둘뿐이다.
+   *
+   * **이제 표가 키를 들고 문구는 사전에 있다**(`lib/presenceView.ts` 의 그 주석: 값을
+   * 들면 모듈 로드 시점 언어로 굳는다). 그래서 이 축이 **키가 아니라 문구를** 재도록
+   * 번역기를 지난다 — 키 셋이 다른 것은 자명해서 아무것도 안 지키고, 지켜야 하는 것은
+   * *"사람이 읽는 말 셋이 서로 다르다"* 이기 때문이다.
+   *
+   * **두 언어로 잰다.** 한 언어에서만 세 문구가 갈리고 다른 언어에서 둘이 겹치면 그
+   * 언어의 사용자에게는 이 이슈가 안 고쳐진 것이다.
+   */
   it('세 값의 문구가 서로 다르고, unknown 은 오프라인이라고 말하지 않는다', () => {
-    const labels = new Set(Object.values(PRESENCE_LABEL));
-    expect(labels.size).toBe(3);
-    expect(PRESENCE_LABEL.unknown).toContain('알 수 없음');
-    // **"오프라인"이라고 쓰지 않는다** — 그것은 아는 척이고, 사람은 러너를 되살리려 한다.
-    expect(PRESENCE_LABEL.unknown).not.toBe(PRESENCE_LABEL.offline);
+    for (const locale of ['ko', 'en'] as const) {
+      const t = translator(locale);
+      const labels = new Set(Object.values(PRESENCE_LABEL).map((k) => t(k)));
+      expect(labels.size, locale).toBe(3);
+      // **"오프라인"이라고 쓰지 않는다** — 그것은 아는 척이고, 사람은 러너를 되살리려 한다.
+      expect(t(PRESENCE_LABEL.unknown), locale).not.toBe(t(PRESENCE_LABEL.offline));
+    }
+    // 그 '모른다'가 두 언어 모두 문장에 남아 있다 — `Disconnected` 한 낱말로 끝내면
+    // 사람이 그것을 '오프라인'으로 읽는다(`en.ts` 의 `presence` 머리말).
+    expect(translator('ko')(PRESENCE_LABEL.unknown)).toContain('알 수 없음');
+    expect(translator('en')(PRESENCE_LABEL.unknown)).toContain('unknown');
   });
 });
 
@@ -155,7 +172,7 @@ describe('사이드바 — DM 줄의 생존 표시 (#443)', () => {
     // `lib/faceState.ts` 가 이미 적어 뒀고, 여기서는 그것이 `ok` 가 **아님**을 지킨다.
     expect(face.dataset.face).toBe('unknown');
     // 색만 바꾸면 스크린리더에는 아무 말도 안 한 것과 같다 — **글자로도 말한다.**
-    expect(face.getAttribute('title')).toBe(PRESENCE_LABEL.unknown);
+    expect(face.getAttribute('title')).toBe(translator('ko')(PRESENCE_LABEL.unknown));
     // 색이 빠진다(격자와 같은 클래스). 초록이 남아 있지 않다는 것이 이 이슈의 요지다.
     expect(face.innerHTML).toContain('grayscale');
   });

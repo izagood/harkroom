@@ -61,6 +61,8 @@
  * 척하는 주소를 박아 넣으면 그것이 또 하나의 조용한 거짓말이 된다.
  */
 
+import type { Translate } from '../i18n';
+
 /** 러너 사이드카의 실행 파일 이름. Rust 의 `RUNNER_SIDECAR_NAME` 과 같은 값이다. */
 export const RUNNER_SIDECAR_NAME = 'murmur-runner';
 
@@ -74,10 +76,20 @@ export const RUNNER_SIDECAR_PATH =
 /** 저장소를 클론해 개발할 때 쓰는 명령. 배포판에는 이 소스가 없다. */
 export const RUNNER_DEV_COMMAND = 'pnpm --filter @murmur/agent start';
 
-/** 서버 주소 자리표시. 사람이 자기 머신에서 서버에 닿는 주소로 바꿔 쓴다. */
+/**
+ * 서버 주소 자리표시. 사람이 자기 머신에서 서버에 닿는 주소로 바꿔 쓴다.
+ *
+ * **사전을 안 지난다.** 이것은 화면 문구가 아니라 **셸 명령 안의 자리표시**이고,
+ * 클립보드에 그대로 실려 나간다(`#125`: 화면의 명령과 복사되는 명령이 글자 하나까지
+ * 같아야 한다). `agents` 머리말이 `/Users/me/some-repo`·`team-name` 에 대해 세운 규율
+ * 그대로다 — 번역하면 사람이 그것을 **입력해야 하는 값**으로 읽는다.
+ *
+ * 한국어로 남는 것이 어색해 보이지만 그것이 정직한 상태다: 이 자리는 사람이 지우고
+ * 자기 주소를 넣는 칸이라, 무슨 언어든 꺾쇠가 그 뜻을 진다.
+ */
 export const SERVER_URL_PLACEHOLDER = '<서버 주소>';
 
-/** PAT 자리표시. 토큰은 발급 순간에만 보이므로 상시 화면에는 이것만 실린다. */
+/** PAT 자리표시. 토큰은 발급 순간에만 보이므로 상시 화면에는 이것만 실린다. 위와 같은 규율이다. */
 export const PAT_PLACEHOLDER = '<발급한 토큰>';
 
 /**
@@ -103,14 +115,25 @@ export function runnerCommands(pat: string): {
   };
 }
 
-/** 복사 버튼이 클립보드에 넣는 값. 두 갈래를 한 벌로 넘긴다 — 사람은 자기 상황을 고른다. */
-export function runnerCommandClipboardText(pat: string): string {
+/**
+ * 복사 버튼이 클립보드에 넣는 값. 두 갈래를 한 벌로 넘긴다 — 사람은 자기 상황을 고른다.
+ *
+ * ## 번역기를 **필수 인자로 맨 뒤에** 받는다
+ *
+ * 이 파일은 화면이 아니라 훅을 못 쓴다(`i18n/index.ts::Translate` 의 (b) 주입).
+ * **기본값을 두지 않는다** — 주면 부르는 화면이 조용히 한 언어로 굳고, 앞에 끼우면
+ * 회귀선들이 자리만 어긋난 채 초록으로 틀린 것을 잰다.
+ *
+ * 두 주석 줄만 사전을 지난다. **명령 자체는 안 지난다** — 셸에 그대로 들어가는 값이라
+ * 언어를 타면 붙여넣는 순간 실패한다(이 파일 머리말이 없애는 그 상태다).
+ */
+export function runnerCommandClipboardText(pat: string, t: Translate): string {
   const { bundled, dev } = runnerCommands(pat);
   return [
-    '# 앱을 설치해 쓰는 경우 (설치 위치가 다르면 경로를 바꾼다)',
+    t('agents.runner.commandBundledNote'),
     bundled,
     '',
-    '# murmur 저장소를 클론한 개발 환경',
+    t('agents.runner.commandDevNote'),
     dev,
   ].join('\n');
 }

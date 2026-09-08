@@ -5,6 +5,7 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { StatusMark } from './Identity';
 import { presenceView, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from '../lib/presenceView';
+import { useT } from '../i18n/useT';
 
 interface Props {
   open: boolean;
@@ -43,6 +44,9 @@ export function Directory({ open, onClose, accountId }: Props) {
   // 에이전트 6개가 전부 초록이었다). `connected` 가 그 낡음을 아는 유일한 문지기다.
   const connected = useActiveStore((s) => s.connected);
   const [query, setQuery] = useState('');
+  // 이 화면은 아직 한국어다 — 이 PR 이 옮긴 것은 `PRESENCE_LABEL` 뿐이라
+  // 그 값을 씌우는 데만 쓴다(그 표가 값이 아니라 **키**를 들게 됐다).
+  const t = useT();
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
 
   const account = accountId ? accounts[accountId] : null;
@@ -124,7 +128,7 @@ export function Directory({ open, onClose, accountId }: Props) {
       <span
         data-testid={`directory-presence-${a.id}`}
         data-online={presence}
-        title={PRESENCE_LABEL[presence]}
+        title={t(PRESENCE_LABEL[presence])}
         className={`h-2 w-2 shrink-0 rounded-full ${PRESENCE_DOT_CLASS[presence]}`}
       />
       <span className="font-medium text-fg">{a.displayName}</span>

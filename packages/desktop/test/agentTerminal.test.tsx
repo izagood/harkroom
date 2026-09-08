@@ -6,6 +6,7 @@ import { render, screen, cleanup, act } from '@testing-library/react';
 import type { AgentSessionView } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { TerminalChip } from '../src/components/TerminalChip';
 import { TerminalPanel } from '../src/components/TerminalPanel';
 import { setTerminalSinkFactory, type TerminalSinkOptions } from '../src/lib/terminalSink';
@@ -54,13 +55,19 @@ class FakeSocket {
 
 const b64 = (s: string): string => Buffer.from(s, 'utf8').toString('base64');
 
+// **언어를 `ko` 로 고정한다.** 이 파일의 축들이 한국어 문구를 직접 재는데, 그 문구가
+// 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다(`gallery`·`agentGrid`·
+// `skillsSettings` 회귀선이 같은 이유로 고정한다). 영어가 원본이 되면서 기본값이
+// 영어가 됐으므로, 한국어를 재려면 한국어라고 말해야 한다.
 beforeEach(() => {
   useAppStore.getState().reset();
+  usePrefsStore.getState().setLocale('ko');
   FakeSocket.last = null;
   vi.stubGlobal('WebSocket', FakeSocket as unknown as typeof WebSocket);
 });
 afterEach(() => {
   cleanup();
+  usePrefsStore.getState().setLocale('system');
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   setController(null as unknown as Controller);
