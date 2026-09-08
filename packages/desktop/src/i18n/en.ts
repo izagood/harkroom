@@ -134,6 +134,29 @@ export const en = {
   'waitChain.dm': 'DM',
   'waitChain.reasonCycle': 'waiting on each other',
   'waitChain.reasonDeadRunner': 'the answering side has stopped',
+
+  // ---------------------------------------------------------------------------
+  // message — 메시지 행(`components/MessageItem.tsx`)이 그리는 말.
+  //
+  // **이 영역은 #624 가 새로 만든 세 마디로 시작한다.** 그 행의 나머지 문구는 아직
+  // 사전 밖에 있다(하드코딩) — 새로 생기는 말만 사전을 지나게 해서, 옮기지 않은 화면이
+  // 사전을 **뒤로** 늘리는 일이 없게 한다.
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 채널에도 전송됨 | `Also sent to the channel` | 상태(과거)다. `Send to channel` 은 동작이라 누를 것처럼 보인다 — 이것은 배지이지 버튼이 아니다 |
+  // | 스레드에 댓글 남김 | `Replied in a thread` | `In thread` 는 자리만 말하고 **무슨 일이 있었나**가 빠진다. 이 사본은 답글이므로 동작이 주어다 |
+  // | 최근 댓글 보기 | `View recent replies` | `View in thread`(옛 문구)는 목적지를 말했다. 새 목적지는 스레드 머리가 아니라 **이 말 뒤의 댓글**이라 그것을 말한다 |
+  // ---------------------------------------------------------------------------
+
+  'message.channelEcho': 'Also sent to the channel',
+  /**
+   * 출처 줄의 라벨. **뿌리 본문은 이 문장에 끼우지 않는다** — 화면에서 그 조각만
+   * 잘라 접어야 하고(`truncate`), 문장 안에 넣으면 접을 대상을 가리킬 수 없다.
+   * 라벨과 본문 사이의 콜론은 화면이 붙인다: 언어마다 갈릴 만한 어순이 여기엔 없다.
+   */
+  'message.threadOrigin': 'Replied in a thread',
+  'message.recentReplies': 'View recent replies',
 } satisfies Record<string, Message>;
 
 /**
