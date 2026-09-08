@@ -101,10 +101,29 @@ describe('ensureWorkspaceTrusted — codex', () => {
 });
 
 describe('ensureWorkspaceTrusted — 실패해도 던지지 않는다', () => {
-  it('쓸 수 없는 경로여도 예외를 올리지 않는다 — 준비 대기 상한이 그 사실을 말한다', async () => {
+  /**
+   * 쓸 수 없는 경로를 **파일을 부모로 삼아** 만든다. `/proc/...` 같은 플랫폼 특수 경로를
+   * 쓰면 OS 마다 다르게 동작한다 — CI(Linux)에서는 그 쓰기가 매달려 테스트가 시간 초과로
+   * 죽었다(2026-09-08). 파일 아래 경로는 어디서나 즉시 ENOTDIR 이다.
+   */
+  async function unwritableDir(): Promise<string> {
+    const base = await mkdtemp(join(tmpdir(), 'trust-unwritable-'));
+    const asFile = join(base, 'not-a-dir');
+    await writeFile(asFile, 'x');
+    return join(asFile, 'child');
+  }
+
+  it('claude: 쓸 수 없는 경로여도 예외를 올리지 않는다 — 준비 대기 상한이 그 사실을 말한다', async () => {
     await expect(ensureWorkspaceTrusted({
       harness: 'claude-code', workspaceDir: WS,
-      claudeConfigDir: '/proc/nonexistent/nope', codexHome: '/unused',
+      claudeConfigDir: await unwritableDir(), codexHome: '/unused',
+    })).resolves.toBeUndefined();
+  });
+
+  it('codex: 쓸 수 없는 경로여도 예외를 올리지 않는다', async () => {
+    await expect(ensureWorkspaceTrusted({
+      harness: 'codex', workspaceDir: WS,
+      claudeConfigDir: null, codexHome: await unwritableDir(),
     })).resolves.toBeUndefined();
   });
 });
