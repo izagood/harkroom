@@ -19,6 +19,21 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 
 const source = readFileSync(path.resolve(__dirname, '../src/main.ts'), 'utf8');
+/**
+ * 2026-09-08 병렬화로 **멘션 턴의 실패 경로가 여기로 옮겨왔다**(main.ts 는 배치를 스케줄러에
+ * 넘기기만 한다). 기동·폴 루프의 두 자리는 여전히 main.ts 에 있으므로 두 소스를 함께 본다 —
+ * 세 자리가 한 파일에 있다는 것은 이 회귀선의 주장이 아니었다. 주장은 "세 자리 **전부**에
+ * 걸려 있다" 이고, 그것은 파일이 갈려도 그대로 참이어야 한다.
+ */
+const schedulerSource = readFileSync(path.resolve(__dirname, '../src/mentionScheduler.ts'), 'utf8');
+
+/** `guardedNear` 의 스케줄러판. 판정 호출 이름이 hooks 경유라 문자열이 다르다. */
+const guardedNearInScheduler = (anchor: string, within = 14): boolean => {
+  const at = schedulerSource.indexOf(anchor);
+  if (at < 0) throw new Error(`앵커를 못 찾았다(코드가 바뀌었으면 이 테스트를 고쳐라): ${anchor}`);
+  const window = schedulerSource.slice(at, at + schedulerSource.slice(at).split('\n').slice(0, within).join('\n').length);
+  return window.includes('deps.hooks.exitIfUnrecoverable(err)');
+};
 
 /** 그 자리 뒤로 몇 줄 안에 판정 호출이 있는가. */
 const guardedNear = (anchor: string, within = 12): boolean => {
@@ -33,8 +48,8 @@ describe('종료 판정이 세 자리에 다 걸려 있다', () => {
     expect(guardedNear('return [await murmur.me(), await murmur.guide()] as const;')).toBe(true);
   });
 
-  it('멘션 턴의 catch', () => {
-    expect(guardedNear('// 재시도로 낫지 않는 실패는 여기서 걸러')).toBe(true);
+  it('멘션 턴의 catch (mentionScheduler 로 이동)', () => {
+    expect(guardedNearInScheduler('// 재시도로 낫지 않는 실패는 여기서 걸러')).toBe(true);
   });
 
   it('폴 루프의 catch — 재접속으로 삼키기 **전에** 본다', () => {
@@ -49,6 +64,10 @@ describe('종료 판정이 세 자리에 다 걸려 있다', () => {
   it('판정은 `exit.ts` 의 것 하나뿐이다 — 자리마다 다시 짜지 않는다', () => {
     expect(source).toContain("from './exit.js'");
     expect(source.match(/process\.exit\(78\)/g)).toBeNull();
+    // 스케줄러도 자기 판정을 짓지 않는다 — 주입받은 훅 하나만 부른다.
+    // **호출만** 잰다(`process.exit(`) — 주석이 그 이름을 언급하는 것은 코드가 아니다.
+    expect(schedulerSource.match(/process\.exit\(/g)).toBeNull();
+    expect(schedulerSource).not.toContain("from './exit.js'");
   });
 
   // #340 — 자리에 있는 것만으로는 부족하다. 멘션 턴의 catch 에서 판정이 **재시도 회계보다
@@ -58,11 +77,12 @@ describe('종료 판정이 세 자리에 다 걸려 있다', () => {
   it('멘션 catch 에서 판정이 재시도 회계보다 앞이다 — 실패 계상 전에 죽는다', () => {
     // **멘션 catch 안**에서만 잰다. 파일 앞쪽에도 같은 이름이 있으므로(기동 자리, import 줄)
     // 첫 등장으로 재면 순서 비교가 언제나 참이 되어 아무것도 지키지 못한다.
-    const at = source.indexOf('// 재시도로 낫지 않는 실패는 여기서 걸러');
+    const at = schedulerSource.indexOf('// 재시도로 낫지 않는 실패는 여기서 걸러');
     expect(at).toBeGreaterThan(0);
-    const guard = source.indexOf('exitIfUnrecoverable(err);', at);
-    const accounting = source.indexOf('failed = true;', at);
-    const notice = source.indexOf('await murmur.post(mention.channelId, FAILURE_NOTICE', at);
+    const guard = schedulerSource.indexOf('deps.hooks.exitIfUnrecoverable(err);', at);
+    // 회계의 자리표: 실패를 (n/MAX_ATTEMPTS) 로 세는 그 줄이다.
+    const accounting = schedulerSource.indexOf('답변 실패 (', at);
+    const notice = schedulerSource.indexOf('FAILURE_NOTICE', at);
     expect(guard).toBeGreaterThan(0);
     expect(accounting).toBeGreaterThan(guard);
     expect(notice).toBeGreaterThan(guard);
@@ -73,8 +93,8 @@ describe('종료 판정이 세 자리에 다 걸려 있다', () => {
   // 말하는 "재시도 0회"의 실제 모양이다. 회계 자체가 사라지면(다른 실패까지 안 세면) 이 단언이
   // 빨개진다.
   it('항목 시도 회계는 그대로 있다 — 이번 변경이 재시도 전반을 죽이지 않았다', () => {
-    expect(source).toContain('attempts.set(entry.id, tried)');
-    expect(source).toContain('if (exhausted(tried))');
+    expect(schedulerSource).toMatch(/attempts\.set\(entry\.id, \{ tried/);
+    expect(schedulerSource).toContain('if (exhausted(tried))');
   });
 });
 
@@ -85,19 +105,19 @@ describe('종료 판정이 세 자리에 다 걸려 있다', () => {
 // 앞에** 걸려 있는지만 본다 — 뒤에 있으면 3회를 태우는 옛 동작이 그대로 남는다.
 describe('세션 id 충돌은 재시도 회계에 들어가지 않는다', () => {
   const mentionCatchAt = (): number => {
-    const at = source.indexOf('// 재시도로 낫지 않는 실패는 여기서 걸러');
+    const at = schedulerSource.indexOf('// 재시도로 낫지 않는 실패는 여기서 걸러');
     expect(at).toBeGreaterThan(0);
     return at;
   };
 
   it('멘션 catch 에서 세션 충돌을 판정한다', () => {
-    expect(source.indexOf('isSessionIdConflict(err)', mentionCatchAt())).toBeGreaterThan(0);
+    expect(schedulerSource.indexOf('isSessionIdConflict(err)', mentionCatchAt())).toBeGreaterThan(0);
   });
 
   it('그 판정이 재시도 회계보다 앞이다', () => {
     const at = mentionCatchAt();
-    const conflict = source.indexOf('isSessionIdConflict(err)', at);
-    const accounting = source.indexOf('failed = true;', at);
+    const conflict = schedulerSource.indexOf('isSessionIdConflict(err)', at);
+    const accounting = schedulerSource.indexOf('답변 실패 (', at);
     expect(conflict).toBeGreaterThan(0);
     expect(accounting).toBeGreaterThan(conflict);
   });
@@ -105,9 +125,9 @@ describe('세션 id 충돌은 재시도 회계에 들어가지 않는다', () =>
   // 러너를 죽이면 안 된다. 판정이 `exitIfUnrecoverable` 을 타면 다른 스레드의 대기 멘션까지
   // 함께 잃는다 — 이 실패에는 그럴 이유가 없다.
   it('러너를 죽이지 않는다 — 판정은 exit 판정과 별개다', () => {
-    expect(source).toContain('sessionConflictNotice');
-    const conflict = source.indexOf('isSessionIdConflict(err)', mentionCatchAt());
-    const between = source.slice(conflict, source.indexOf('failed = true;', conflict));
+    expect(schedulerSource).toContain('sessionConflictNotice');
+    const conflict = schedulerSource.indexOf('isSessionIdConflict(err)', mentionCatchAt());
+    const between = schedulerSource.slice(conflict, schedulerSource.indexOf('답변 실패 (', conflict));
     expect(between).not.toContain('exitIfUnrecoverable');
   });
 });
@@ -118,9 +138,9 @@ describe('세션 id 충돌은 재시도 회계에 들어가지 않는다', () =>
 // tail 원문이 있어야 어디서 어긋났는지 보인다.
 describe('한도 판정은 tail 을 로그에 남긴다', () => {
   it('시각을 못 읽었을 때 원문을 함께 찍는다', () => {
-    const at = source.indexOf('사용량 한도 — 재시도하지 않는다');
+    const at = schedulerSource.indexOf('사용량 한도 — 재시도하지 않는다');
     expect(at).toBeGreaterThan(0);
-    const line = source.slice(at, source.indexOf('\n', at));
+    const line = schedulerSource.slice(at, schedulerSource.indexOf('\n', at));
     expect(line).toContain('err instanceof Error');
   });
 });
