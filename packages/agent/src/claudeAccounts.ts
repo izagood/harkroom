@@ -135,8 +135,8 @@ export function switchesAccount(err: unknown): boolean {
   // 있고**, 그것이 정확히 계정 축이 있는 이유다.
   //
   // 이 줄이 없으면 승인을 안 지난 계정이 lane 첫 번째일 때 그 멘션이 3회를 태우고 버려진다 —
-  // 나머지 계정이 다 멀쩡한데도. 실측(2026-09-08): lime 이 첫 계정이라 모든 턴이 거기서
-  // 막혔고 lychee·plum 은 놀고 있었다.
+  // 나머지 계정이 다 멀쩡한데도. 실측(2026-09-08): aria 이 첫 계정이라 모든 턴이 거기서
+  // 막혔고 basil·cedar 은 놀고 있었다.
   if (err instanceof PromptNotDeliveredError) return true;
   return isCredentialFailure(err) === 'harness-credential';
 }

@@ -567,9 +567,9 @@ describe('계정별 CLAUDE_CONFIG_DIR 주입', () => {
   it('claude 는 CLAUDE_CONFIG_DIR 를 받는다', () => {
     const p = buildTurnCommand({
       ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true,
-      claudeConfigDir: '/pool/lime',
+      claudeConfigDir: '/pool/aria',
     });
-    expect(p.env.CLAUDE_CONFIG_DIR).toBe('/pool/lime');
+    expect(p.env.CLAUDE_CONFIG_DIR).toBe('/pool/aria');
   });
 
   it('풀이 없으면(null) 주입하지 않는다 — 시스템 기본을 쓴다', () => {
@@ -585,7 +585,7 @@ describe('계정별 CLAUDE_CONFIG_DIR 주입', () => {
   it('codex 에는 주입하지 않는다', () => {
     const p = buildTurnCommand({
       ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true,
-      claudeConfigDir: '/pool/lime',
+      claudeConfigDir: '/pool/aria',
     });
     expect('CLAUDE_CONFIG_DIR' in p.env).toBe(false);
     expect(p.env.CODEX_HOME).toBe('/state/codex-home');
@@ -605,7 +605,7 @@ describe('인증 주입 env 를 자식에게 넘기지 않는다', () => {
     try {
       const p = buildTurnCommand({
         ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true,
-        claudeConfigDir: '/pool/lime',
+        claudeConfigDir: '/pool/aria',
       });
       expect(key in p.env).toBe(false);
     } finally {

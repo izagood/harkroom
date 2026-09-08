@@ -155,10 +155,10 @@ describe('claudeAccountsRoot', () => {
 describe('loadClaudeAccounts', () => {
   it('하위 디렉터리를 사전순으로 돌려준다', async () => {
     // 순서가 예측 가능해야 로그를 읽고 다음 계정을 알 수 있다.
-    const root = await fixture(['plum', 'lime', 'personal']);
+    const root = await fixture(['cedar', 'aria', 'personal']);
     const accounts = await loadClaudeAccounts({ root });
-    expect(accounts.map((a) => a.name)).toEqual(['lime', 'personal', 'plum']);
-    expect(accounts[0]!.configDir).toBe(join(root, 'lime'));
+    expect(accounts.map((a) => a.name)).toEqual(['aria', 'personal', 'cedar']);
+    expect(accounts[0]!.configDir).toBe(join(root, 'aria'));
   });
 
   it('뿌리가 없으면 빈 배열이다 — 오류가 아니다', async () => {
@@ -167,42 +167,42 @@ describe('loadClaudeAccounts', () => {
   });
 
   it('디렉터리가 아닌 것은 계정이 아니다', async () => {
-    const root = await fixture(['lime']);
+    const root = await fixture(['aria']);
     await writeFile(join(root, 'README.md'), 'not an account');
-    expect((await loadClaudeAccounts({ root })).map((a) => a.name)).toEqual(['lime']);
+    expect((await loadClaudeAccounts({ root })).map((a) => a.name)).toEqual(['aria']);
   });
 
   it('이름 문법에 안 맞는 디렉터리는 건너뛴다', async () => {
     // 사람이 `.DS_Store` 나 `Lime Backup` 같은 것을 만들어 둘 수 있다. 그것을 계정으로
     // 세면 러너가 없는 로그인을 가리키고, 그 실패는 계정 축을 한 칸 헛돌게 만든다.
-    const root = await fixture(['lime', 'Lime Backup', '.hidden']);
-    expect((await loadClaudeAccounts({ root })).map((a) => a.name)).toEqual(['lime']);
+    const root = await fixture(['aria', 'Lime Backup', '.hidden']);
+    expect((await loadClaudeAccounts({ root })).map((a) => a.name)).toEqual(['aria']);
   });
 
   it('MURMUR_CLAUDE_ACCOUNTS 가 순서와 부분집합을 정한다', async () => {
-    const root = await fixture(['lime', 'personal', 'plum']);
-    const accounts = await loadClaudeAccounts({ root, order: 'plum,lime' });
-    expect(accounts.map((a) => a.name)).toEqual(['plum', 'lime']);
+    const root = await fixture(['aria', 'personal', 'cedar']);
+    const accounts = await loadClaudeAccounts({ root, order: 'cedar,aria' });
+    expect(accounts.map((a) => a.name)).toEqual(['cedar', 'aria']);
   });
 
   it('MURMUR_CLAUDE_ACCOUNTS 의 공백을 무시한다', async () => {
-    const root = await fixture(['lime', 'plum']);
-    expect((await loadClaudeAccounts({ root, order: ' plum , lime ' })).map((a) => a.name))
-      .toEqual(['plum', 'lime']);
+    const root = await fixture(['aria', 'cedar']);
+    expect((await loadClaudeAccounts({ root, order: ' cedar , aria ' })).map((a) => a.name))
+      .toEqual(['cedar', 'aria']);
   });
 
   it('MURMUR_CLAUDE_ACCOUNTS 에 없는 계정이 오면 기동을 실패시킨다', async () => {
     // 조용히 무시하면 운영자가 계정 B 라고 믿고 띄운 러너가 A 로 돈다 —
     // config.ts::validateInstance 와 같은 판단이다.
-    const root = await fixture(['lime']);
-    await expect(loadClaudeAccounts({ root, order: 'lime,ghost' }))
+    const root = await fixture(['aria']);
+    await expect(loadClaudeAccounts({ root, order: 'aria,ghost' }))
       .rejects.toThrow(/ghost/);
   });
 
   it('MURMUR_CLAUDE_ACCOUNTS 가 빈 문자열이면 지정이 없는 것으로 본다', async () => {
-    const root = await fixture(['lime', 'plum']);
+    const root = await fixture(['aria', 'cedar']);
     expect((await loadClaudeAccounts({ root, order: '' })).map((a) => a.name))
-      .toEqual(['lime', 'plum']);
+      .toEqual(['aria', 'cedar']);
   });
 });
 ```
@@ -335,8 +335,8 @@ git commit -m "feat(agent): claude 계정 풀을 읽는다
 ```ts
 describe('계정별 CLAUDE_CONFIG_DIR 주입', () => {
   it('claude 는 CLAUDE_CONFIG_DIR 를 받는다', () => {
-    const plan = buildTurnCommand({ ...base, claudeConfigDir: '/pool/lime' });
-    expect(plan.env.CLAUDE_CONFIG_DIR).toBe('/pool/lime');
+    const plan = buildTurnCommand({ ...base, claudeConfigDir: '/pool/aria' });
+    expect(plan.env.CLAUDE_CONFIG_DIR).toBe('/pool/aria');
   });
 
   it('풀이 없으면(null) 주입하지 않는다 — 시스템 기본을 쓴다', () => {
@@ -349,7 +349,7 @@ describe('계정별 CLAUDE_CONFIG_DIR 주입', () => {
   it('codex 에는 주입하지 않는다', () => {
     const plan = buildTurnCommand({
       ...base, harness: 'codex', sessionId: null, codexHome: '/state/codex-home',
-      claudeConfigDir: '/pool/lime',
+      claudeConfigDir: '/pool/aria',
     });
     expect('CLAUDE_CONFIG_DIR' in plan.env).toBe(false);
     expect(plan.env.CODEX_HOME).toBe('/state/codex-home');
@@ -373,7 +373,7 @@ describe('인증 주입 env 를 자식에게 넘기지 않는다', () => {
         model: null, effort: null, systemPrompt: '', systemPromptFile: '/tmp/sp.txt',
         promptCtx: 'hi', mcpConfigPath: '/tmp/mcp.json',
         murmurUrl: 'http://localhost:3400', codexHome: '', pat: 'pat-value',
-        stdinFile: '/tmp/prompt.txt', claudeConfigDir: '/pool/lime',
+        stdinFile: '/tmp/prompt.txt', claudeConfigDir: '/pool/aria',
       });
       expect(key in plan.env).toBe(false);
     } finally {
@@ -643,11 +643,11 @@ git commit -m "fix(agent): 세션 실재 판정이 계정 디렉터리를 본다
     await store.load();
     await store.put('k', {
       workspaceDir: '/w', sessionId: null, harness: 'claude-code',
-      lastFedSeq: 0, turnsRun: 0, claudeAccount: 'lime',
+      lastFedSeq: 0, turnsRun: 0, claudeAccount: 'aria',
     });
     const reloaded = new SessionStore(path);
     await reloaded.load();
-    expect(reloaded.get('k')?.claudeAccount).toBe('lime');
+    expect(reloaded.get('k')?.claudeAccount).toBe('aria');
   });
 
   it('claudeAccount 가 없는 옛 레코드도 읽는다', async () => {
@@ -673,13 +673,13 @@ git commit -m "fix(agent): 세션 실재 판정이 계정 디렉터리를 본다
     // (기존 'harness 가 바뀌면...' 테스트와 같은 셋업을 쓴다)
     await store.put(key, {
       workspaceDir: '/w', sessionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      harness: 'claude-code', lastFedSeq: 7, turnsRun: 2, claudeAccount: 'plum',
+      harness: 'claude-code', lastFedSeq: 7, turnsRun: 2, claudeAccount: 'cedar',
     });
 
-    await runMentionTurn({ ...deps, claudeAccount: 'lime', claudeConfigDir: '/pool/lime' }, args);
+    await runMentionTurn({ ...deps, claudeAccount: 'aria', claudeConfigDir: '/pool/aria' }, args);
 
     const rec = store.get(key)!;
-    expect(rec.claudeAccount).toBe('lime');
+    expect(rec.claudeAccount).toBe('aria');
     expect(rec.sessionId).not.toBe('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
     expect(rec.workspaceDir).toBe('/w'); // 워크스페이스는 재사용한다 — 산출물은 계정과 무관하다
   });
@@ -687,10 +687,10 @@ git commit -m "fix(agent): 세션 실재 판정이 계정 디렉터리를 본다
   it('계정이 같으면 세션을 유지한다', async () => {
     await store.put(key, {
       workspaceDir: '/w', sessionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      harness: 'claude-code', lastFedSeq: 7, turnsRun: 2, claudeAccount: 'lime',
+      harness: 'claude-code', lastFedSeq: 7, turnsRun: 2, claudeAccount: 'aria',
     });
 
-    await runMentionTurn({ ...deps, claudeAccount: 'lime', claudeConfigDir: '/pool/lime' }, args);
+    await runMentionTurn({ ...deps, claudeAccount: 'aria', claudeConfigDir: '/pool/aria' }, args);
 
     expect(store.get(key)!.sessionId).toBe('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
   });
@@ -1049,8 +1049,8 @@ continue/break 와 제어 흐름이 겹치기 때문이다."
 등록은 계정마다 한 번, 사람이 해야 한다 — OAuth 는 브라우저를 요구한다.
 
 ```sh
-mkdir -p ~/.murmur-agent/claude-accounts/lime
-CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/lime claude
+mkdir -p ~/.murmur-agent/claude-accounts/aria
+CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/aria claude
 # 뜬 화면에서 /login → 브라우저에서 그 계정으로 로그인 → 닫는다
 ```
 
@@ -1060,11 +1060,11 @@ CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/lime claude
 확인:
 
 ```sh
-CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/lime claude -p 'reply with OK'
+CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/aria claude -p 'reply with OK'
 ```
 
 - `MURMUR_CLAUDE_ACCOUNTS_DIR` — 뿌리를 옮긴다.
-- `MURMUR_CLAUDE_ACCOUNTS` — 쉼표로 순서와 부분집합을 정한다(예: `plum,lime`). 없는 이름을
+- `MURMUR_CLAUDE_ACCOUNTS` — 쉼표로 순서와 부분집합을 정한다(예: `cedar,aria`). 없는 이름을
   적으면 러너가 뜨지 않는다.
 
 지정이 없으면 이름 사전순이다.
@@ -1095,7 +1095,7 @@ git commit -m "docs(agent): claude 다중 계정 등록 절차"
 
 - [ ] **Step 1: 계정 둘을 등록한다**
 
-Task 7 의 절차로 `lime` 과 하나 더. 둘째는 시크릿 창.
+Task 7 의 절차로 `aria` 과 하나 더. 둘째는 시크릿 창.
 
 - [ ] **Step 2: 러너와 같은 방식으로 각 계정이 도는지 확인한다**
 
@@ -1119,17 +1119,17 @@ Expected: 각 계정이 `OK`.
 grep -h "claude 계정" ~/Library/Application\ Support/app.murmur.desktop/daemon/runner-*.log | tail -5
 ```
 
-Expected: `claude 계정 2개: lime, <다른 이름>`
+Expected: `claude 계정 2개: aria, <다른 이름>`
 
 - [ ] **Step 4: 페일오버를 관측한다**
 
 첫 계정을 일부러 못 쓰게 만든다 — 그 디렉터리의 자격증명을 치운다(되돌릴 수 있게 옮긴다).
 
 ```sh
-mv ~/.murmur-agent/claude-accounts/lime/.credentials.json /tmp/lime-creds.bak 2>/dev/null
+mv ~/.murmur-agent/claude-accounts/aria/.credentials.json /tmp/lime-creds.bak 2>/dev/null
 security delete-generic-password \
-  -s "Claude Code-credentials-$(printf %s "$HOME/.murmur-agent/claude-accounts/lime" | shasum -a 256 | cut -c1-8)" 2>/dev/null
-CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/lime claude -p 'x'   # → Not logged in 확인
+  -s "Claude Code-credentials-$(printf %s "$HOME/.murmur-agent/claude-accounts/aria" | shasum -a 256 | cut -c1-8)" 2>/dev/null
+CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/aria claude -p 'x'   # → Not logged in 확인
 ```
 
 멘션을 하나 보낸다. Expected: 스레드에 **정상 답변**이 온다. 러너 로그에 계정 전환 줄이 남는다.
@@ -1141,7 +1141,7 @@ grep -h "계정 전환" ~/Library/Application\ Support/app.murmur.desktop/daemon
 - [ ] **Step 5: 되돌린다**
 
 ```sh
-mv /tmp/lime-creds.bak ~/.murmur-agent/claude-accounts/lime/.credentials.json 2>/dev/null
+mv /tmp/lime-creds.bak ~/.murmur-agent/claude-accounts/aria/.credentials.json 2>/dev/null
 # 또는 그 디렉터리에서 다시 로그인한다
 ```
 

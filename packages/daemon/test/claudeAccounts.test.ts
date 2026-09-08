@@ -30,34 +30,34 @@ async function tmp(prefix = 'd-acc-'): Promise<string> {
 describe('list', () => {
   it('pools.json 이 없으면 flat 모드로 뿌리의 계정을 준다', async () => {
     const root = await tmp();
-    await mkdir(join(root, 'lime'), { recursive: true });
+    await mkdir(join(root, 'aria'), { recursive: true });
     const snap = await port(root).list();
     expect(snap.mode).toBe('flat');
     expect(snap.pools).toHaveLength(1);
-    expect(snap.pools[0]!.accounts.map((a) => a.name)).toEqual(['lime']);
+    expect(snap.pools[0]!.accounts.map((a) => a.name)).toEqual(['aria']);
   });
 
   it('pools.json 이 있으면 pools 모드로 풀별 계정을 준다', async () => {
     const root = await tmp();
-    await mkdir(join(root, 'work', 'lime'), { recursive: true });
+    await mkdir(join(root, 'work', 'aria'), { recursive: true });
     await writeFile(join(root, 'pools.json'), JSON.stringify({ defaultPool: 'work' }));
     const snap = await port(root).list();
     expect(snap.mode).toBe('pools');
     expect(snap.defaultPool).toBe('work');
     expect(snap.pools.map((p) => p.name)).toEqual(['work']);
-    expect(snap.pools[0]!.accounts.map((a) => a.name)).toEqual(['lime']);
+    expect(snap.pools[0]!.accounts.map((a) => a.name)).toEqual(['aria']);
   });
 
   it('로그인 상태를 계정마다 실어 준다 — 비밀값은 없다', async () => {
     const root = await tmp();
-    await mkdir(join(root, 'lime'), { recursive: true });
+    await mkdir(join(root, 'aria'), { recursive: true });
     const snap = await port(root, LOGGED_IN).list();
     expect(snap.pools[0]!.accounts[0]!.status).toMatchObject({ loggedIn: true, email: 'a@b.c' });
   });
 
   it('미로그인 계정도 목록에 남는다 — 사람이 로그인해야 하는 대상이다', async () => {
     const root = await tmp();
-    await mkdir(join(root, 'lime'), { recursive: true });
+    await mkdir(join(root, 'aria'), { recursive: true });
     const snap = await port(root, LOGGED_OUT).list();
     expect(snap.pools[0]!.accounts[0]!.status.loggedIn).toBe(false);
   });
@@ -66,7 +66,7 @@ describe('list', () => {
     // 사용자가 풀을 만든 순간 평평한 계정은 계정 목록에서 사라진다. 조용히 사라지면
     // "계정이 없어졌다"가 되므로 따로 보고해 UI 가 이전을 안내할 수 있게 한다.
     const root = await tmp();
-    await mkdir(join(root, 'work', 'lime'), { recursive: true });
+    await mkdir(join(root, 'work', 'aria'), { recursive: true });
     await mkdir(join(root, 'leftover'), { recursive: true });
     await writeFile(join(root, 'leftover', '.credentials.json'), '{}');
     await writeFile(join(root, 'pools.json'), JSON.stringify({ defaultPool: 'work' }));
@@ -77,8 +77,8 @@ describe('list', () => {
 
   it('flat 모드에서는 strays 가 비어 있다 — 그때는 그것들이 계정이다', async () => {
     const root = await tmp();
-    await mkdir(join(root, 'lime'), { recursive: true });
-    await writeFile(join(root, 'lime', '.credentials.json'), '{}');
+    await mkdir(join(root, 'aria'), { recursive: true });
+    await writeFile(join(root, 'aria', '.credentials.json'), '{}');
     expect((await port(root).list()).strays).toEqual([]);
   });
 
@@ -149,16 +149,16 @@ describe('configure', () => {
 describe('removeAccount · removePool', () => {
   async function poolsRoot(): Promise<string> {
     const root = await tmp();
-    await mkdir(join(root, 'work', 'lime'), { recursive: true });
-    await mkdir(join(root, 'work', 'plum'), { recursive: true });
+    await mkdir(join(root, 'work', 'aria'), { recursive: true });
+    await mkdir(join(root, 'work', 'cedar'), { recursive: true });
     await writeFile(join(root, 'pools.json'), JSON.stringify({ defaultPool: 'work' }));
     return root;
   }
 
   it('계정 디렉터리를 지운다', async () => {
     const root = await poolsRoot();
-    await port(root).removeAccount('work', 'lime');
-    expect((await port(root).list()).pools[0]!.accounts.map((a) => a.name)).toEqual(['plum']);
+    await port(root).removeAccount('work', 'aria');
+    expect((await port(root).list()).pools[0]!.accounts.map((a) => a.name)).toEqual(['cedar']);
   });
 
   it('풀 디렉터리를 지운다', async () => {
@@ -213,10 +213,10 @@ describe('move', () => {
 
   it('대상 이름이 이미 있으면 거절한다 — 덮어쓰지 않는다', async () => {
     const root = await tmp();
-    await mkdir(join(root, 'lime'), { recursive: true });
-    await mkdir(join(root, 'work', 'lime'), { recursive: true });
+    await mkdir(join(root, 'aria'), { recursive: true });
+    await mkdir(join(root, 'work', 'aria'), { recursive: true });
     await writeFile(join(root, 'pools.json'), JSON.stringify({ defaultPool: 'work' }));
-    await expect(port(root).move('lime', 'work')).rejects.toThrow();
+    await expect(port(root).move('aria', 'work')).rejects.toThrow();
   });
 
   it('없는 풀로 옮기려 하면 거절한다', async () => {
@@ -230,6 +230,6 @@ describe('move', () => {
     const root = await tmp();
     await writeFile(join(root, 'pools.json'), JSON.stringify({}));
     await expect(port(root).move('..', 'work')).rejects.toThrow();
-    await expect(port(root).move('lime', '..')).rejects.toThrow();
+    await expect(port(root).move('aria', '..')).rejects.toThrow();
   });
 });
