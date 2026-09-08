@@ -249,13 +249,21 @@ describe('buildSystemPrompt', () => {
   });
 
   /**
-   * 원인의 나머지 절반: 답이 스레드 안에만 남았다. 채널 화면은 `alsoInChannel` 이 아닌
-   * 스레드 답을 걸러내므로(`desktop/src/components/ChannelPane.tsx`), 채널만 보는 사람에게는
-   * 자기 질문 뒤가 비어 있었다. 도구에 인자가 있어도 프롬프트가 말하지 않으면 쓰이지 않는다.
+   * 2026-09-08 오후에 **뒤집힌 기본값**의 회귀선이다. 같은 날 아침에는 "채널 최상위 요청에는
+   * alsoInChannel 을 붙여라"였고, 그 탓에 PR 보고처럼 긴 답이 전부 채널로 올라와 사람이 자기가
+   * 올린 요청을 채널에서 찾을 수 없게 됐다(jaebin 의 요청으로 되돌림). 되돌려도 원래 문제는
+   * 돌아오지 않는다 — 채널 요약 줄이 루트에 답글 수를 그린다(`MessageItem` 의 `hasReplies`).
+   *
+   * 이 테스트가 지키는 것은 문구가 아니라 **방향**이다: 기본은 스레드, 에코는 명시 요청 시의
+   * 예외. 다시 "붙여라"로 되돌리려면 이 테스트를 지워야 하고, 그때 이 주석을 읽게 된다.
    */
-  it('채널 최상위 요청에는 alsoInChannel 을 붙이라고 지시한다', () => {
+  it('답은 스레드 안에만 남기고 명시 요청 시에만 채널에 에코하라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
-    expect(s).toContain('alsoInChannel');
+    expect(s).toContain('스레드 안에만');
+    expect(s).toContain('`alsoInChannel` 을 붙이지');
+    expect(s).toContain('명시적으로');
+    // 옛 지시(무조건 붙여라)가 되살아나면 걸린다.
+    expect(s).not.toContain('채널 최상위에서 부른 요청에 답할 때는');
   });
 
   // #90: 한 턴에서 여러 번 message.post 를 부르면 같은 스레드에 답이 여러 개 남는다.
