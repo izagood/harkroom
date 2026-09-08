@@ -41,6 +41,11 @@ import { WaitChainLine } from '../src/components/WaitChain';
 import { Sidebar } from '../src/components/Sidebar';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { GallerySettings } from '../src/components/settings/GallerySettings';
+// 6번 묶음이 여는 화면 넷. **사전이 아니라 화면을 잰다** — 그 이유는 그 묶음 머리말에 있다.
+import { Profile } from '../src/components/Profile';
+import { AgentGrid } from '../src/components/settings/AgentGrid';
+import { Composer } from '../src/components/Composer';
+import { Inbox } from '../src/components/Inbox';
 import { fireEvent } from '@testing-library/react';
 import { waitChainFromLinks } from '../src/lib/waitChain';
 import { daemonFactRows } from '../src/lib/daemonFacts';
@@ -1390,5 +1395,262 @@ describe('러너 사유 — 컨트롤러가 지금 언어로 말한다', () => {
     // 한국어로 바꾸면 같은 사유가 한국어로 온다. 이 둘이 같은 글자면 컨트롤러가
     // 언어를 한 번만 읽고 굳힌 것이다.
     expect(await 사유('ko')).toContain('기동 실패');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. 화면 넷이 두 언어로 뜬다 — `Profile` · `AgentGrid` · `Composer` · `Inbox`
+//
+// **화면을 열어서 잰다.** 위 1번 묶음이 이미 사전을 재고 있으므로 여기서 사전을 또 읽는
+// 것은 아무것도 더 지키지 않는다 — 사전이 갈려 있어도 **화면이 `t()` 를 안 지나면** 그
+// 화면은 한 언어로 굳는다(사이드바 묶음의 머리말이 적은 그 이유 그대로다).
+//
+// 다른 회귀선 아홉(`profile`·`inbox`·`composer`·`scheduledSend`·… )은 **한국어로 고정**
+// 돼 있다 — 그것들이 재는 것은 언어가 아니라 그 언어로 표현된 규율이고, 언어를 재는
+// 자리는 이 파일 하나다.
+// ---------------------------------------------------------------------------
+
+const AGENT = 'a-mine';
+
+/** 이 넷은 컨트롤러를 만진다 — 문자열만 재므로 부르는 것만 있으면 된다. */
+function stubController() {
+  setController({
+    // `Composer` 는 채널이 있으면 예약 목록을 곧바로 조회한다 — 없으면 그 화면이 뜨다 만다.
+    api: { inbox: async () => [], scheduledMessages: async () => [] },
+    listAgents: async () => [],
+    openMessage: async () => undefined,
+    openChannel: async () => undefined,
+    refreshAccounts: async () => undefined,
+    notifyTyping: () => undefined,
+  } as unknown as Controller);
+}
+
+function seedProfile() {
+  const me = { ...acc(ME, 'me'), isAdmin: true };
+  useActiveStore.getState().set({
+    me,
+    accounts: { [ME]: me, [AGENT]: acc(AGENT, 'mine', 'agent', false, { ownerAccountId: ME }) },
+    online: [AGENT],
+    connected: true,
+    appVersion: '0.1.15',
+  });
+}
+
+/** 격자 카드 하나. 정보 세 줄이 서려면 `place` 가 기본값(`settings`)이어야 한다. */
+const gridAgent = (): AgentView => ({
+  ...acc(AGENT, 'mine', 'agent'),
+  harness: 'claude-code',
+  model: null,
+  runnerVersion: null,
+  lastTurnAt: null,
+  instructions: '',
+  workingDir: null,
+  mentionPermission: 'auto',
+  stopRequestedAt: null,
+  stopAckedAt: null,
+} as unknown as AgentView);
+
+describe('프로필 — 두 언어로 뜬다', () => {
+  beforeEach(() => { stubController(); seedProfile(); });
+
+  it('행 이름과 값이 영어로 뜬다', async () => {
+    render(<Profile accountId={AGENT} onClose={() => {}} />);
+    const dialog = await screen.findByRole('dialog', { name: 'mine profile' });
+    expect(dialog.textContent).toContain('Kind');
+    expect(dialog.textContent).toContain('Agent');
+    // **생존은 `Presence` 다** — `Connection` 은 소켓 상태로 읽힌다(`en.ts` 의 profile 표).
+    expect(dialog.textContent).toContain('Presence');
+    expect(dialog.textContent).toContain('Online');
+    // 겹창 전체에 한국어가 한 글자도 없다 — 빼 두는 자리가 없다.
+    expect(dialog.textContent).not.toMatch(/[가-힣]/);
+  });
+
+  it('행 이름과 값이 한국어로 바뀐다', async () => {
+    speak('ko');
+    render(<Profile accountId={AGENT} onClose={() => {}} />);
+    const dialog = await screen.findByRole('dialog', { name: 'mine 프로필' });
+    expect(dialog.textContent).toContain('종류');
+    expect(dialog.textContent).toContain('에이전트');
+    expect(dialog.textContent).toContain('생존');
+    expect(dialog.textContent).toContain('온라인');
+  });
+
+  /** `admin` 은 **두 언어에서 같은 글자다** — 이 제품의 고유어다(`en.ts` 머리말). */
+  it('권한 값 admin 은 언어를 안 탄다', async () => {
+    const me = { ...acc(ME, 'me'), isAdmin: true };
+    useActiveStore.getState().set({ me, accounts: { [ME]: me } });
+    render(<Profile accountId={ME} onClose={() => {}} />);
+    expect((await screen.findByRole('dialog')).textContent).toContain('admin');
+    cleanup();
+    speak('ko');
+    render(<Profile accountId={ME} onClose={() => {}} />);
+    expect((await screen.findByRole('dialog')).textContent).toContain('admin');
+  });
+});
+
+describe('에이전트 격자 — 두 언어로 뜬다', () => {
+  const grid = () => (
+    <AgentGrid
+      agents={[gridAgent()]}
+      selectedId={null}
+      runnerStates={{}}
+      online={[]}
+      connected
+      onPick={() => {}}
+      onCreate={() => {}}
+      canCreate
+    />
+  );
+
+  it('검색줄과 카드 정보가 영어로 뜬다', () => {
+    render(grid());
+    expect(screen.getByLabelText('Search agents')).toBeTruthy();
+    expect(screen.getByTestId('agent-grid').textContent).toContain('Harness');
+    // 모델이 `null` 이면 **'모른다'가 아니라 '하네스가 고른다'** 다.
+    expect(screen.getByTestId('agent-grid').textContent).toContain('harness default');
+    // 버전을 모르는 러너는 **모른다고 적는다** — 칩을 안 그리면 "러너가 없다"와 같아진다.
+    expect(screen.getByTestId('agent-version-mine').textContent).toBe('Version unknown');
+  });
+
+  it('검색줄과 카드 정보가 한국어로 바뀐다', () => {
+    speak('ko');
+    render(grid());
+    expect(screen.getByLabelText('에이전트 검색')).toBeTruthy();
+    expect(screen.getByTestId('agent-grid').textContent).toContain('하네스');
+    expect(screen.getByTestId('agent-version-mine').textContent).toBe('버전 모름');
+  });
+
+  /**
+   * **못 찾은 것과 아무것도 없는 것은 다른 사실이다**(design.md §4). 그 구별이 언어를
+   * 건너 살아남는지 — 뼈대가 뜻을 옮겼지 낱말만 옮긴 것이 아님을 재는 축이다.
+   */
+  it('빈 목록과 못 찾은 것이 두 언어 모두 다른 문장이다', () => {
+    const empty = (
+      <AgentGrid
+        agents={[]}
+        selectedId={null}
+        runnerStates={{}}
+        online={[]}
+        connected
+        onPick={() => {}}
+        onCreate={() => {}}
+        canCreate
+      />
+    );
+    render(empty);
+    expect(screen.getByText('No agents yet')).toBeTruthy();
+    cleanup();
+
+    render(grid());
+    fireEvent.change(screen.getByTestId('agent-search'), { target: { value: 'zzz' } });
+    expect(screen.getByText(/No agent matches/)).toBeTruthy();
+    cleanup();
+
+    speak('ko');
+    render(empty);
+    expect(screen.getByText('아직 에이전트가 없다')).toBeTruthy();
+    cleanup();
+    render(grid());
+    fireEvent.change(screen.getByTestId('agent-search'), { target: { value: 'zzz' } });
+    expect(screen.getByText(/맞는 에이전트가 없다/)).toBeTruthy();
+  });
+});
+
+describe('작성창 — 두 언어로 뜬다', () => {
+  beforeEach(() => {
+    stubController();
+    useActiveStore.getState().set({
+      me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') }, connected: true,
+    });
+  });
+
+  const composer = () => <Composer onSend={async () => {}} channelId="c1" scopeKey="c1" />;
+
+  it('버튼 이름이 영어로 뜬다', () => {
+    render(composer());
+    expect(screen.getByText('Send')).toBeTruthy();
+    expect(screen.getByLabelText('Send later')).toBeTruthy();
+  });
+
+  it('버튼 이름이 한국어로 바뀐다', () => {
+    speak('ko');
+    render(composer());
+    expect(screen.getByText('전송')).toBeTruthy();
+    expect(screen.getByLabelText('나중에 보내기')).toBeTruthy();
+  });
+
+  /**
+   * **예약 겹창이 두 언어로 뜬다.** 이 겹창의 말이 화면 밖(모달) 이라 자칫 빠지는데,
+   * 빠지면 그 자리만 한 언어로 굳는다.
+   */
+  it('예약 겹창이 두 언어로 뜬다', () => {
+    render(composer());
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hi' } });
+    fireEvent.click(screen.getByLabelText('Send later'));
+    expect(screen.getByText('Schedule this message')).toBeTruthy();
+    expect(screen.getByLabelText('Send at')).toBeTruthy();
+
+    cleanup();
+    speak('ko');
+    render(composer());
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hi' } });
+    fireEvent.click(screen.getByLabelText('나중에 보내기'));
+    expect(screen.getByText('예약 발송')).toBeTruthy();
+    expect(screen.getByLabelText('예약 시각')).toBeTruthy();
+  });
+});
+
+describe('인박스 — 두 언어로 뜬다', () => {
+  beforeEach(() => {
+    stubController();
+    useActiveStore.getState().set({
+      me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') },
+      channels: [chan('c1', 'general')], messages: { c1: [] }, connected: true,
+    });
+  });
+
+  it('필터 칩과 구획이 영어로 뜬다', async () => {
+    render(<Inbox open onClose={() => {}} />);
+    expect(screen.getByTestId('inbox-filter-blocking').textContent).toContain('Blocking you');
+    expect(screen.getByTestId('inbox-filter-all').textContent).toContain('Everything');
+    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent)
+      .toBe('Nothing has called you'));
+    // 자리의 이름이자 머리글이다 — 랜드마크로 찾을 수 있어야 한다.
+    expect(screen.getByRole('complementary', { name: 'Inbox' })).toBeTruthy();
+  });
+
+  it('필터 칩과 구획이 한국어로 바뀐다', async () => {
+    speak('ko');
+    render(<Inbox open onClose={() => {}} />);
+    expect(screen.getByTestId('inbox-filter-blocking').textContent).toContain('나를 막는 것');
+    expect(screen.getByTestId('inbox-filter-all').textContent).toContain('전부');
+    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent)
+      .toBe('나를 부른 것이 없다'));
+    expect(screen.getByRole('complementary', { name: '인박스' })).toBeTruthy();
+  });
+
+  /**
+   * **사슬 구획의 이름은 `waitChain.*` 것이다** — 인박스가 그 이름을 제 손으로 다시
+   * 적으면 스레드 패널과 갈린다(그 영역이 화면 이름이 아니라 판정 이름인 이유).
+   * 두 언어 모두 그 사전의 말이 나오는지 잰다.
+   */
+  it('사슬 구획 이름이 사슬 사전에서 온다 — 인박스가 다시 적지 않는다', () => {
+    render(<Inbox open onClose={() => {}} />);
+    expect(screen.getByRole('region', { name: en['waitChain.sectionTitle'] as string })).toBeTruthy();
+    cleanup();
+    speak('ko');
+    render(<Inbox open onClose={() => {}} />);
+    expect(screen.getByRole('region', { name: ko['waitChain.sectionTitle'] as string })).toBeTruthy();
+  });
+
+  /**
+   * **랜드마크 이름에 개수가 없다.** 구획 이름은 자리의 이름이고, 개수가 섞이면 목록이
+   * 바뀔 때마다 이름이 달라져 자리를 이름으로 찾는 사람에게 매번 다른 구획이 된다.
+   * 보이는 머리글은 개수를 단다 — 그 둘이 갈려 있는 것이 이 축이 지키는 것이다.
+   */
+  it('구획 이름에는 개수가 없고 머리글에는 있다', async () => {
+    render(<Inbox open onClose={() => {}} />);
+    const region = await screen.findByRole('region', { name: 'Called you' });
+    expect(region.querySelector('h3')?.textContent).toContain('(0)');
   });
 });

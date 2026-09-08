@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { ChannelAutoMentionRow } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, Controller } from '../src/state/controller';
 import { Composer } from '../src/components/Composer';
 import { Workspace } from '../src/components/Workspace';
@@ -38,7 +39,12 @@ const autoChips = () =>
 const stickyChips = () =>
   screen.queryAllByTestId('sticky-mention').map((el) => el.getAttribute('data-handle'));
 
+// **언어를 한국어로 고정한다.** 이 파일의 축들은 이 화면의 한국어 문구로 쓰여 있고,
+// 그 문구가 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다(`#619`·사이드바 PR 이
+// 세운 방식과 같다). 영어가 원본이라 기본값이 영어이므로, 한국어를 재려면 한국어라고
+// 말해야 한다. 두 언어로 다 뜨는지는 `i18n.test.tsx` 가 잰다.
 beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
   // 보냄 취소 창은 이 파일의 관심사가 아니다(#223) — 끄고 즉시 전송 경로를 본다.
   undoSendStorage.saveWindowMs(0);
   useAppStore.getState().reset();
@@ -53,7 +59,7 @@ beforeEach(() => {
     channelAutoMentions: { c1: [row('a1', 'fizz')] },
   });
 });
-afterEach(() => cleanup());
+afterEach(() => { cleanup(); usePrefsStore.getState().setLocale('system'); });
 
 describe('자동 멘션 작성창 (#173)', () => {
   // 회귀 3

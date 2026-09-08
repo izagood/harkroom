@@ -7,6 +7,7 @@ import { bodyWithHandles } from '../lib/mention';
 import { INBOX_PANE_WIDTH, MIN_INBOX_PANE_WIDTH } from '../lib/prefs';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
+import { useT } from '../i18n/useT';
 
 interface Props {
   open: boolean;
@@ -99,6 +100,7 @@ interface DraftItem {
  * 다음에 열었을 때 **걸러져 사라진 항목이 없는 항목으로 보인다.**
  */
 export function Inbox({ open, onClose }: Props) {
+  const t = useT();
   const channels = useActiveStore((s) => s.channels);
   const dms = useActiveStore((s) => s.dms);
   const accounts = useActiveStore((s) => s.accounts);
@@ -357,12 +359,12 @@ export function Inbox({ open, onClose }: Props) {
           <span className="flex items-center gap-1.5 text-meta text-fg-subtle">
             {/* **언제·어디.** */}
             <span>{channelLabel(e.channelId)}</span>
-            {e.threadRootId && <span>· 스레드</span>}
+            {e.threadRootId && <span>· {t('inbox.entries.thread')}</span>}
             <span>· {new Date(e.createdAt).toLocaleString()}</span>
         {/* 안 읽음은 표시가 있어야 한다. 필터로 걸러 볼 수 있는 것이 목록에서는 안 보이면
             "안 읽음만" 을 껐을 때 무엇이 안 읽은 것인지 알 수 없다. */}
             {e.readAt === null && (
-              <span data-testid={`inbox-unread-${e.id}`} className="text-accent">· 안 읽음</span>
+              <span data-testid={`inbox-unread-${e.id}`} className="text-accent">· {t('inbox.entries.unread')}</span>
             )}
           </span>
         </span>
@@ -409,10 +411,10 @@ export function Inbox({ open, onClose }: Props) {
           data-testid={`inbox-draft-badge-${d.scopeKey}`}
           className="rounded bg-warning-surface px-1 text-meta uppercase tracking-wide text-warning"
         >
-          초안
+          {t('inbox.drafts.badge')}
         </span>
         <span className="text-fg-muted">
-          {d.channelId ? channelLabel(d.channelId) : d.threadRootId ? '스레드' : d.scopeKey}
+          {d.channelId ? channelLabel(d.channelId) : d.threadRootId ? t('inbox.drafts.thread') : d.scopeKey}
         </span>
         <span className="truncate text-fg-subtle">{d.body}</span>
       </button>
@@ -440,14 +442,15 @@ export function Inbox({ open, onClose }: Props) {
         평소에는 아무 링도 보이지 않는다.
       */
       tabIndex={-1}
-      aria-label="인박스"
+      aria-label={t('inbox.pane.title')}
       style={{ width: INBOX_PANE_WIDTH, minWidth: MIN_INBOX_PANE_WIDTH }}
       className="flex flex-col overflow-hidden border-r border-border bg-surface-raised
                  text-fg outline-none focus-visible:outline-solid focus-visible:outline-2
                  focus-visible:outline-accent focus-visible:-outline-offset-2"
     >
         <div className="flex items-center gap-2 border-b border-border p-3">
-          <span className="font-bold">Inbox</span>
+          {/* 머리글과 구획 이름이 **같은 키**다 — 같은 말을 두 번 적으면 하나가 낡는다. */}
+          <span className="font-bold">{t('inbox.pane.title')}</span>
           {/* 닫는 길 둘 중 마우스의 몫. Esc 는 위 `useEffect` 가 진다 — 마우스만 쓰는
               사람에게 Esc 는 없는 길이고, 자리에는 걷어낼 스크림도 없다. */}
           <button
@@ -455,7 +458,7 @@ export function Inbox({ open, onClose }: Props) {
             className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover
                        focus-visible:outline-solid focus-visible:outline-2
                        focus-visible:outline-accent"
-            aria-label="인박스 닫기"
+            aria-label={t('inbox.pane.close')}
           >
             ✕
           </button>
@@ -466,13 +469,13 @@ export function Inbox({ open, onClose }: Props) {
         */}
         <div className="flex flex-wrap items-center gap-1.5 border-b border-border p-3">
           {([
-            ['blocking', '나를 막는 것'],
+            ['blocking', t('inbox.filter.blocking')],
             // **새로 온 것을 묻는 칩**. 나머지 셋은 줄의 종류(rank)를 묻는데 이것만 내
             // 읽음 상태를 묻는다 — 축이 다르다는 것을 알면서 둔다(`matchesFilter` 주석).
             // 이것 없이는 이미 본 수백 줄 사이에서 새 줄을 골라낼 길이 화면에 없었다.
-            ['unread', '안 읽은 것'],
-            ['reading', '읽을 것'],
-            ['all', '전부'],
+            ['unread', t('inbox.filter.unread')],
+            ['reading', t('inbox.filter.reading')],
+            ['all', t('inbox.filter.all')],
           ] as const).map(([value, label]) => (
             <button
               key={value}
@@ -500,29 +503,33 @@ export function Inbox({ open, onClose }: Props) {
               부르지 않았다" 로 읽는다 — 조회 실패를 빈 목록으로 삼키지 않는다. */}
           {load.kind === 'error' && (
             <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-danger">
-              인박스를 불러오지 못했다 — {load.message}
+              {t('inbox.pane.loadFailed', { reason: load.message })}
               <button
                 onClick={() => { reload(); }}
                 className="ml-2 rounded bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
               >
-                다시 시도
+                {t('inbox.pane.retry')}
               </button>
             </div>
           )}
           {/* 오류·대기·'없다' 는 목록이 비었을 때 **화면에 남는 유일한 글자**다. 색이
               subtle 이라고 아랫단으로 내리면 그 순간 화면에서 가장 작은 글자가 유일한
               설명이 된다 — 본문단(앱 기본값 13px)이라 크기를 안 적는다. */}
-          {load.kind === 'loading' && <p className="px-2 text-fg-subtle">불러오는 중…</p>}
+          {load.kind === 'loading' && <p className="px-2 text-fg-subtle">{t('inbox.pane.loading')}</p>}
 
-          <section aria-label="나를 부른 것" className="mb-4">
+          {/* **구획 이름에는 수가 없고 머리글에는 있다** — `WaitChainSection` 이 이미 그
+              모양이다(`waitChain.sectionTitle` / `sectionTitleCount`). 랜드마크는 자리의
+              이름이라 그 안의 개수가 섞이면 목록이 바뀔 때마다 이름이 달라지고, 자리를
+              이름으로 찾는 사람에게 그것은 매번 다른 구획이 된다. */}
+          <section aria-label={t('inbox.entries.heading')} className="mb-4">
             <h3 className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
-              나를 부른 것 ({shownEntries.length})
+              {t('inbox.entries.headingCount', { count: shownEntries.length })}
             </h3>
             {/* '없다' 는 조회가 성공했을 때만 말할 수 있다. 실패·대기 중에 이 문장을 내면
                 모르는 것을 아는 것처럼 말하는 것이다. */}
             {load.kind === 'ready' && shownEntries.length === 0 && (
               <p data-testid="inbox-empty" className="px-2 text-fg-subtle">
-                {entries.length === 0 ? '나를 부른 것이 없다' : '필터에 맞는 것이 없다'}
+                {entries.length === 0 ? t('inbox.entries.empty') : t('inbox.entries.noMatch')}
               </p>
             )}
             {shownEntries.length > 0 && <ul>{shownEntries.map(entryRow)}</ul>}
@@ -536,16 +543,19 @@ export function Inbox({ open, onClose }: Props) {
             사슬은 어디에도 안 보인다 — 인박스가 "막는 말이 모이는 자리"이려면 그것도
             여기 있어야 한다.
           */}
-          <section aria-label="기다리는 것" className="mb-4">
+          {/* 이름이 `waitChain.*` 것이다 — 이 구획을 그리는 것은 `WaitChainSection` 이고,
+              그 판정의 이름을 화면이 제 손으로 다시 적으면 둘이 갈린다(`en.ts` 의
+              waitChain 머리말: 판정 이름이지 화면 이름이 아니다). */}
+          <section aria-label={t('waitChain.sectionTitle')} className="mb-4">
             <WaitChainSection />
           </section>
 
-          <section aria-label="쓰다 만 초안">
+          <section aria-label={t('inbox.drafts.heading')}>
             <h3 className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
-              쓰다 만 초안 ({shownDrafts.length})
+              {t('inbox.drafts.headingCount', { count: shownDrafts.length })}
             </h3>
             {shownDrafts.length === 0
-              ? <p className="px-2 text-fg-subtle">쓰다 만 초안이 없다</p>
+              ? <p className="px-2 text-fg-subtle">{t('inbox.drafts.empty')}</p>
               : <ul>{shownDrafts.map(draftRow)}</ul>}
           </section>
         </div>
