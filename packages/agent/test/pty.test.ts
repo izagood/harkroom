@@ -1,10 +1,10 @@
 import { tmpdir } from 'node:os';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { basename, delimiter, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { composeSpawn, RingBuffer, resolveExecutable, runPtyTurn, type PtyWriter } from '../src/pty.js';
+import { composeSpawn, PromptNotDeliveredError, RingBuffer, resolveExecutable, runPtyTurn, type PtyWriter } from '../src/pty.js';
 import { ExecutableNotFoundError } from '../src/policy.js';
 
 const fake = join(dirname(fileURLToPath(import.meta.url)), 'helpers/fake-harness.mjs');
@@ -631,4 +631,44 @@ describe('injectPrompt — TUI 에 프롬프트를 넣는다 (2026-09-08)', () =
     await runPtyTurn(plan('ok'), { cwd: process.cwd(), timeoutMs: 10_000, onData: (c) => chunks.push(c) });
     expect(Buffer.concat(chunks).toString('utf8')).not.toContain('[200~');
   });
+});
+
+// ── 준비 상한이 하는 일(2026-09-08 실행 모델 교체 후속)
+//
+// 상한에 닿았다는 것은 "이 화면이 프롬프트를 받을 모양이 아니다"이고, 첫 실행 관문이
+// 대표적이다. 그 화면을 죽이면 **사람이 열어 볼 대상 자체가 없어진다** — 관문 목록은
+// 하네스의 것이라 열거로 끝나지 않으므로, 모르는 관문에서 사람이 개입할 길을 남긴다.
+describe('준비 상한 — onAttention 이 있으면 죽이지 않는다', () => {
+  it('상한을 넘기면 onAttention 을 부르고, 사람이 관문을 지나면 그 자리에서 주입된다', async () => {
+    const 화면: string[] = [];
+    let writer: PtyWriter | null = null;
+    const turn = runPtyTurn(plan('gatekeeper'), {
+      cwd: process.cwd(),
+      timeoutMs: 0,
+      onSpawn: (c) => { writer = c; },
+      injectPrompt: { text: '안녕', readyTimeoutMs: 300, onAttention: (s) => 화면.push(s) },
+    });
+
+    // 조건으로 기다린다 — 고정 슬립은 느린 CI 에서 샌다.
+    await vi.waitFor(() => expect(화면).toHaveLength(1), { timeout: 5_000 });
+    // 부른 화면에 관문이 실려 있다 — 데스크탑이 "무엇을 기다리는지" 보여줄 재료다.
+    expect(화면[0]).toContain('fake gatekeeper');
+
+    // **PTY 가 살아 있다는 증거**: 사람 흉내로 Enter 를 보내면 하네스가 응답한다.
+    // 죽었다면 이 입력은 아무 데도 안 가고 아래가 시간 초과로 빨개진다.
+    writer!.write(Buffer.from('\r'));
+    const r = await turn;
+    expect(r.exitCode).toBe(0);
+    // 관문을 지난 **뒤에** 프롬프트가 실제로 들어갔다 — 사람의 개입이 턴을 대체하지 않고
+    // 통과시킨다는 것이 이 설계의 값 대부분이다.
+    expect(r.tail).toContain('injected:');
+  }, 30_000);
+
+  it('onAttention 이 없으면 지금대로 죽고 던진다 — 콜백 유무가 두 정책을 가른다', async () => {
+    await expect(runPtyTurn(plan('gatekeeper'), {
+      cwd: process.cwd(),
+      timeoutMs: 0,
+      injectPrompt: { text: '안녕', readyTimeoutMs: 300 },
+    })).rejects.toBeInstanceOf(PromptNotDeliveredError);
+  }, 20_000);
 });
