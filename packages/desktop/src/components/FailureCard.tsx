@@ -34,11 +34,14 @@ export function FailureCard({ message, inThread = false }: {
   const failure = readFailureMeta(message.meta);
   if (!failure) return null;
 
+  /* 폭 상한을 여기서 다시 두지 않는다 — 부모(`MessageItem` 의 본문 열)가 이미 상한을 쥐고
+     있고, 여기 `max-w-prose`(65ch)를 남기면 열을 넓혀도 이 카드만 옛 폭에 남아 한 화면에
+     폭이 둘 선다(`messageWidth.test.tsx`). */
   return (
     <div
       data-testid="failure-card"
       data-retryable={failure.retryable}
-      className="mt-1.5 max-w-prose rounded-lg border border-state-stuck bg-danger-surface"
+      className="mt-1.5 rounded-lg border border-state-stuck bg-danger-surface"
     >
       <div className="flex items-baseline gap-2 px-3 pt-2">
         <span className="text-meta font-semibold text-state-stuck">{t('speech.failure.title')}</span>
