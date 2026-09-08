@@ -139,6 +139,20 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   const skillSlug = isSystem && typeof message.meta.skillSlug === 'string'
     ? message.meta.skillSlug
     : null;
+  /**
+   * **연쇄 깊이 상한에 막힌 호출**(4단계). 서버가 `meta.mentionChainCapped` 로 표시한다 —
+   * 본문 글자를 파싱하지 않는 이유는 `skillSlug` 와 같다(문구를 다듬는 순간 조용히 사라진다).
+   *
+   * 이 줄이 **반드시 보여야 하는 이유**: 막힌 호출은 아무 일도 일어나지 않은 것처럼 보인다.
+   * 사람은 "왜 아무도 안 왔나"를 묻게 되고, 그 답이 화면에 없으면 러너·네트워크를 의심한다
+   * (design.md §4 — 없는 것을 있다고 표시하지 않는 것의 반대 방향 절반이다).
+   */
+  const chainCapped = Array.isArray(message.meta.mentionChainCapped)
+    ? (message.meta.mentionChainCapped as unknown[]).filter((h): h is string => typeof h === 'string')
+    : [];
+  const chainLimit = typeof message.meta.mentionChainLimit === 'number'
+    ? message.meta.mentionChainLimit
+    : null;
   const time = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const lastReplyTime = message.lastReplyAt
     ? new Date(message.lastReplyAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -633,6 +647,17 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
             <FailureCard message={message} inThread={inThread} />
             {/* 완료 보고 — 읽히는 말이므로 강조를 받지 않는다(규칙 03). */}
             <ReportCard message={message} inThread={inThread} />
+            {chainCapped.length > 0 && (
+              /* 강조를 쓰지 않는다(규칙 03) — 이것은 사람이 **알아야 하는** 사실이지
+                 사람이 **해야 하는 일**이 아니다. 다시 부르고 싶으면 사람이 직접 한 줄
+                 쓰면 되고, 그러면 깊이가 0 에서 다시 세어진다. */
+              <p data-testid="mention-chain-capped" className="mt-1 text-meta text-fg-muted">
+                {t('message.chainCapped', {
+                  handles: chainCapped.map((h) => `@${h}`).join(' '),
+                  limit: chainLimit ?? '',
+                })}
+              </p>
+            )}
             {skillSlug && onOpenSettings && (
               <button
                 className="mt-1 rounded-lg border border-border px-2 py-1 text-meta font-medium

@@ -2653,6 +2653,8 @@ export const en = {
   'message.threadOrigin': 'Replied in a thread',
   'message.recentReplies': 'View recent replies',
   'message.replyInThread': 'Reply in a thread',
+  // 연쇄 깊이 상한에 막힌 호출(4단계). 사람이 알아야 하는 사실이고, 할 일은 아니다.
+  'message.chainCapped': 'Did not call {handles} — the mention chain hit its depth limit ({limit}). Write a line yourself to continue.',
   'message.openSkillApproval': 'Open the skill approval screen',
 
   /**
