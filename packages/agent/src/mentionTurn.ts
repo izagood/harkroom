@@ -20,6 +20,8 @@ import type { PtyControls, PtyWriter, TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
 import { claudeSessionMaterialized } from './claudeSessions.js';
 import { readLastApiError } from './harnessErrors.js';
+import type { AttentionLedger } from './attentionLedger.js';
+import { sessionTranscriptExists } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
 import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
@@ -121,6 +123,11 @@ export interface TurnRelay {
     push(chunk: Buffer): void;
     /** 사람이 친 바이트가 갈 곳(#315). spawn 시점에 이어 붙인다. */
     bindInput(writer: PtyWriter): void;
+    /**
+     * 이 세션이 사람 손을 기다린다(2026-09-08). 앱이 이 세션의 터미널을 연다 —
+     * 관문에 걸린 턴은 화면에 아무 신호도 남기지 않아서, 사람은 열어 볼 이유조차 모른다.
+     */
+    needsAttention(screen: string, accountLabel: string): void;
     close(): void;
   };
 }
@@ -195,6 +202,16 @@ export interface MentionTurnDeps {
   orphanMs?: number;
   /** 테스트가 타이머를 잡기 위한 주입. 생략하면 unref 된 setTimeout. */
   schedule?: (fn: () => void, ms: number) => () => void;
+  /**
+   * 이 턴이 쓰는 계정 이름(2026-09-08). 사람을 부를 때 "어느 계정이 막혔는지"를 화면에
+   * 싣고, 같은 계정으로 두 번 부르지 않게 하는 키다. 계정 풀을 안 만든 러너는 없다.
+   */
+  accountLabel?: string;
+  /**
+   * 계정별 부름 원장(`attentionLedger.ts`). 관문은 계정 단위라 한 번 지나면 그 계정의
+   * 나머지 턴이 풀린다 — 스레드마다 부르면 사람이 같은 승인을 반복한다.
+   */
+  attentionLedger?: AttentionLedger;
 }
 
 /**
@@ -753,6 +770,10 @@ export async function runMentionTurn(
     claudeConfigDir: deps.claudeConfigDir,
   });
 
+  // 아래 콜백들이 쓰는 값을 여기서 잡아 둔다 — 콜백 안에서는 `rec` 의 좁힌 타입이
+  // 유지되지 않고(비동기 경계), 세션 id 는 첫 턴에도 이미 발급돼 있다.
+  const sessionIdForProbe: string | null = rec.sessionId;
+
   let result: TurnResult;
   try {
     result = await deps.runTurn(plan, {
@@ -763,7 +784,38 @@ export async function runMentionTurn(
       timeoutMs: usesTui ? 0 : deps.turnTimeoutMs,
       // TUI 로 뜬 턴에만 주입한다 — codex 의 `exec` 은 stdin 파일이 곧 프롬프트다.
       // 주입은 `runPtyTurn` 이 준비 신호를 본 뒤에 한다(pty.ts::injectPrompt).
-      ...(usesTui ? { injectPrompt: { text: prompt } } : {}),
+      ...(usesTui ? {
+        injectPrompt: {
+          text: prompt,
+          /**
+           * 주입이 **먹혔는지**도 잰다(2026-09-08). 증거는 세션 기록 파일의 존재다 —
+           * 화면 문자열로 재면 하네스 버전에 묶이지만, 파일 생성은 사실 자체다.
+           */
+          confirmDelivery: {
+            probe: () => sessionTranscriptExists(def.harness, sessionIdForProbe, {
+              configDir: deps.claudeConfigDir,
+            }),
+          },
+          /**
+           * **사람 부르기는 마지막 수단이다.** 여기까지 왔다는 것은 `withAccountFailover`
+           * 가 풀을 다 태웠다는 뜻이다 — 준비 실패는 계정 전환 방아쇠이므로
+           * (`claudeAccounts.ts::switchesAccount`), 마지막 계정이 아니면 이 콜백이 아니라
+           * 그 전환이 먼저 일어난다.
+           *
+           * 이 턴은 여기서 끝나지 않는다: PTY 가 살아 있고, 사람이 관문을 지나면 그
+           * 자리에서 프롬프트가 주입된다. 끝은 exit 이거나 무발화 시계다 — 그 시계는
+           * 사람이 붙어 있으면(`end.viewers > 0`) 지나가므로, 사람이 오면 살아남는다.
+           */
+          onAttention: (screen: string) => {
+            const label = deps.accountLabel ?? '(기본)';
+            if (deps.attentionLedger && !deps.attentionLedger.claim(label, sessionIdForProbe ?? key)) return;
+            session?.needsAttention(screen, label);
+            console.error(
+              `[mentionTurn] ${key}: 사람 손이 필요하다(계정=${label}) — 앱이 이 세션의 터미널을 연다`,
+            );
+          },
+        },
+      } : {}),
       // 릴레이가 없으면 탭도 없다 — `undefined` 를 넘겨 pty 쪽 호출을 아예 안 만든다.
       onData: session ? (chunk) => session.push(chunk) : undefined,
       // 반대 방향(#315): 사람이 attach 해서 친 바이트가 이 PTY 로 들어온다. 릴레이가

@@ -33,6 +33,7 @@ import { stopRequestedForRunner } from './stop.js';
 import { harnessLoginNotice } from './prompt.js';
 import { createRelayClient } from './relay.js';
 import { createInteractiveManager, type InteractiveManager } from './interactiveTurn.js';
+import { createAttentionLedger } from './attentionLedger.js';
 import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
 import { loadClaudeAccountLane } from './claudeAccounts.js';
@@ -302,6 +303,10 @@ relay.start();
 // 턴이 같은 레지스트리를 봐야 한다 — 갈라지면 같은 세션에 PTY 가 둘 뜬다(turnRegistry.ts).
 const registry = new TurnRegistry();
 const mentionQueue = new MentionQueue();
+// 계정별 "사람 부름" 원장(2026-09-08). **러너 수명 동안 하나다** — 첫 실행 관문은 계정
+// 설정에 기록되므로 한 계정이 한 번 지나면 그 계정의 모든 턴이 풀린다. 턴마다 새로 만들면
+// 매번 처음이 되어 사람이 같은 승인을 스레드 수만큼 반복하게 된다.
+const attentionLedger = createAttentionLedger();
 interactive = createInteractiveManager({
   murmur, store, exec, runTurn: runPtyTurn, me,
   workspaceBaseDir, mcpConfigPath, codexHome,
@@ -335,6 +340,11 @@ const scheduler = createMentionScheduler({
     codexHome,
     claudeAccount: account?.name ?? null,
     claudeConfigDir: account?.configDir ?? null,
+    // 사람을 부를 때 쓰는 이름과 원장(2026-09-08). **원장은 러너 수명 동안 하나다** —
+    // 턴마다 새로 만들면 매번 "처음 부르는 계정"이 되어, 7개 스레드가 동시에 걸렸을 때
+    // 창이 7개 뜬다. 관문은 계정 단위라 하나만 지나면 나머지가 함께 풀린다.
+    accountLabel: account?.name ?? undefined,
+    attentionLedger,
     murmurUrl: config.murmurUrl, pat: config.murmurPat,
     turnTimeoutMs: config.turnTimeoutMs,
     relay,

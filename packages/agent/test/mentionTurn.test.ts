@@ -2149,6 +2149,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
             sessionId: `sess-${opened.length}`,
             push: (chunk: Buffer) => { bytes.push(chunk); },
             bindInput: (writer: PtyWriter) => { writers.push(writer); },
+            needsAttention: () => {},
             close: () => { closed += 1; },
           };
         },
@@ -2387,6 +2388,7 @@ describe('진행 중인 멘션 턴에 사람이 칠 수 있다 (진짜 PTY 배�
               }
             },
             bindInput(w: PtyWriter) { writer = w; },
+            needsAttention() {},
             close() {},
           };
         },
@@ -2557,7 +2559,7 @@ describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
       relay: {
         openSession(input: { onViewerCount?: (n: number) => void }) {
           notifyViewers = input.onViewerCount;
-          return { sessionId: 'end-1', push: () => {}, bindInput: () => {}, close: () => {} };
+          return { sessionId: 'end-1', push: () => {}, bindInput: () => {}, needsAttention: () => {}, close: () => {} };
         },
       },
       /** TUI 처럼 답하고도 안 죽는 하네스. `after` 안에서 발화·뷰어를 흔든다. */
@@ -2667,7 +2669,7 @@ describe('타임아웃이 무발화 경과를 잰다 (2026-09-08)', () => {
       relay: {
         openSession(input: { onViewerCount?: (n: number) => void }) {
           notifyViewers = input.onViewerCount;
-          return { sessionId: 's-silence', push: () => {}, bindInput: () => {}, close: () => {} };
+          return { sessionId: 's-silence', push: () => {}, bindInput: () => {}, needsAttention: () => {}, close: () => {} };
         },
       },
     });
