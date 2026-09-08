@@ -4,7 +4,7 @@
 // 이 러너를 만들면서 MCP 표면에 구멍이 하나 드러났다: 미읽음을 소비하는 도구가 없어서 같은
 // 멘션에 영원히 반복 응답했다. `inbox.read` 를 추가해 닫았고, 그래서 여기 REST 호출이 없다.
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { AccountView, AgentView, InboxEntry, MessageRow } from '@murmur/shared';
 import { mcpUrl } from './turn.js';
 import { MURMUR_ERROR_SOURCE } from './policy.js';
@@ -34,6 +34,33 @@ function murmurError(message: string, status?: number): Error {
   return err;
 }
 
+/**
+ * MCP **트랜스포트**가 던진 에러도 이 클라이언트의 에러다 — 태그를 붙여 다시 던진다
+ * (2026-09-08 14:04 실측).
+ *
+ * 왜 필요한가: `call()` 은 도구 **결과**의 에러만 태그했고, 그 자리 주석은 전제를 이렇게
+ * 적어 뒀다 — *"자격증명 문제라면 서버가 401/403 을 내는 fetch 경로에서 먼저 드러난다."*
+ * **그 전제가 틀렸다.** 폴 루프(`inbox.poll`)는 MCP 전용이고, 롱턴에 park 된 러너는 fetch
+ * 경로를 아예 타지 않는다. 그날 PAT 가 회전되자 러너가 처음 낸 호출은 MCP `POST /mcp` 였고,
+ * 서버는 도구 결과가 아니라 **HTTP 401** 로 답했다. SDK 는 그것을 `StreamableHTTPError`
+ * 로 던지는데 그 객체가 가진 것은 숫자 `code` 뿐 — `status` 도 `source` 도 없다. 그래서
+ * `isCredentialFailure` 는 `'other'` 로 읽었고, `#250` 이 약속한 "401 이면 78 로 물러난다"가
+ * 지켜지지 않아 러너는 `poll 루프 오류, 재접속` 만 찍다가 처리되지 않은 예외로 죽었다.
+ *
+ * **문구가 아니라 클래스로 판정한다.** `policy.ts::isExecutableNotFound` 가 같은 규율을
+ * 적어 뒀다 — 우리가 직접 다루는 오류에 문구 매칭을 쓸 이유가 없고, 메시지가 바뀌어도
+ * 이 판정은 안 흔들린다.
+ *
+ * `code` 가 `undefined` 인 판본(트랜스포트가 status 를 못 읽은 경우)은 status 없이 태그만
+ * 붙는다 — 출처는 우리가 아는 사실이고, status 는 모르는 사실이다. 지어내지 않는다.
+ */
+function tagTransportError(err: unknown): never {
+  if (err instanceof StreamableHTTPError) {
+    throw murmurError(err.message, err.code);
+  }
+  throw err;
+}
+
 export class MurmurAgentClient {
   private mcp: Client | null = null;
 
@@ -58,16 +85,23 @@ export class MurmurAgentClient {
   }
 
   private async call<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
-    const client = await this.connected();
-    const res = await client.callTool({ name, arguments: args });
+    // 접속(initialize POST)과 도구 호출이 **같은 try 안**에 있어야 한다 — 401 은 둘 중
+    // 어느 쪽에서든 온다(러너는 `reset()` 뒤 다음 호출에서 새로 접속한다).
+    let res: Awaited<ReturnType<Client['callTool']>>;
+    try {
+      const client = await this.connected();
+      res = await client.callTool({ name, arguments: args });
+    } catch (err) {
+      tagTransportError(err);
+    }
     const first = (res.content as { type: string; text?: string }[] | undefined)?.[0];
     if (!first || first.type !== 'text' || !first.text) {
       throw murmurError(`${name}: 텍스트 결과가 없다`);
     }
     const parsed = JSON.parse(first.text) as T & { error?: { code: string; message: string } };
     if (parsed.error) {
-      // MCP 도구 에러에는 HTTP status 가 없다 — code 로만 온다. 자격증명 문제라면
-      // 서버가 401/403 을 내는 fetch 경로(definition·accounts)에서 먼저 드러난다.
+      // 도구 **결과**의 에러에는 HTTP status 가 없다 — code 로만 온다. HTTP status 로 오는
+      // 실패(자격증명 포함)는 위 `tagTransportError` 가 잡는다.
       throw murmurError(`${name}: ${parsed.error.code} ${parsed.error.message}`);
     }
     return parsed;
