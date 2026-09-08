@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mentionedHandles } from '@murmur/shared';
-import { mentionQueryAt, applyMention, splitMentions } from '../src/lib/mention';
+import { bodyWithHandles, displayBody, mentionQueryAt, applyMention, splitMentions } from '../src/lib/mention';
 
 describe('mentionQueryAt', () => {
   // 커서 바로 앞의 @토큰만 후보다. 뒤쪽 텍스트나 앞선 멘션에 반응하면 엉뚱한 데서 창이 뜬다.
@@ -133,5 +133,37 @@ describe('the same rule the server notifies by', () => {
     const notified = mentionedHandles(body).filter((h) => known.includes(h));
 
     expect([...new Set(highlighted)].sort()).toEqual(notified.sort());
+  });
+});
+
+/**
+ * 미리보기 자리(#271 의 뒤끝) — 본문 렌더러를 지나지 않는 줄도 `<@id>` 를 풀어야 한다.
+ * 2026-09-08 실측: 인박스의 모든 줄이 본문 대신 `<@2c8c1910-…>` 를 보여 주고 있었다.
+ */
+describe('bodyWithHandles', () => {
+  const FIZZ = '11111111-1111-4111-8111-111111111111';
+  const accounts = { [FIZZ]: { handle: 'fizz' } };
+
+  it('renders a stored token as the current handle', () => {
+    expect(bodyWithHandles(`<@${FIZZ}> 이거 봐줘`, accounts)).toBe('@fizz 이거 봐줘');
+  });
+
+  // 계정을 모를 때 토큰을 그대로 두면 그 줄만 uuid 를 보여 준다 — 미리보기는 다시 저장될
+  // 문자열이 아니므로 화면 쪽 규칙(`@알 수 없음`)을 따른다.
+  it('falls back to a readable label for an unknown id', () => {
+    expect(bodyWithHandles(`<@${FIZZ}> 안녕`, {})).toBe('@알 수 없음 안녕');
+  });
+
+  it('leaves a body without tokens untouched', () => {
+    expect(bodyWithHandles('@fizz 이미 이름이다', accounts)).toBe('@fizz 이미 이름이다');
+  });
+
+  // 사람에게 보여 주는 본문은 **한 함수**를 지난다(#329) — 그 함수가 자리표시자와 토큰을
+  // 둘 다 책임진다. 하나만 풀면 그 자리에 다른 하나가 날것으로 남는다.
+  it('displayBody resolves both the system placeholder and the token', () => {
+    expect(displayBody(
+      { body: `<@${FIZZ}> 를 불렀다`, kind: 'user', meta: {} },
+      accounts,
+    )).toBe('@fizz 를 불렀다');
   });
 });

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { MessageRow } from '@murmur/shared';
+import { displayBody } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 
@@ -261,7 +262,9 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
                   </>
                 )}
               </div>
-              <div className="mt-1 truncate text-fg">{msg.body}</div>
+              {/* 본문은 `displayBody` 를 지난다 — 이 줄도 `MessageBody` 를 지나지 않아
+                  `<@id>`·`{account}` 를 스스로 풀어야 한다(`lib/mention` 주석). */}
+              <div className="mt-1 truncate text-fg">{displayBody(msg, accounts)}</div>
             </li>
           ))}
         </ul>
