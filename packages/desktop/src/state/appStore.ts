@@ -240,7 +240,16 @@ export interface AppState {
   skillsRevision: number;
   set(partial: Partial<AppState>): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
-  incrementReplyCount(channelId: string, messageId: string): void;
+  /**
+   * 스레드 루트의 두 집계를 함께 움직인다(2026-09-09). 예전 이름은 `incrementReplyCount`
+   * 였고 **더하기만** 있었다 — 답글을 지워도 그 수가 줄지 않아, 다시 받아오기 전까지
+   * 채널이 없는 답글을 셌다.
+   *
+   * `countsAsReply` 는 서버의 기준을 그대로 옮긴 것이다: `progress`·`wake` 는 활동이지
+   * 답글이 아니므로 `activityCount` 만 움직인다. 두 수를 한 함수로 움직이는 이유는
+   * 나뉘면 한쪽만 부르는 자리가 생기고, 그것이 정확히 지금 고치는 결함이기 때문이다.
+   */
+  bumpThreadCounts(channelId: string, messageId: string, delta: 1 | -1, countsAsReply: boolean): void;
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
   removeMessage(channelId: string, messageId: string): void;
   /**
@@ -307,14 +316,21 @@ export function createAppStore() {
       const merged = [...byId.values()].sort((a, b) => a.seq - b.seq);
       set({ messages: { ...get().messages, [channelId]: merged } });
     },
-    incrementReplyCount: (channelId, messageId) => {
+    bumpThreadCounts: (channelId, messageId, delta, countsAsReply) => {
       const rows = get().messages[channelId];
       if (!rows) return;
       const parent = rows.find((m) => m.id === messageId);
       if (!parent) return;
-      const next = rows.map((m) =>
-        m.id === messageId ? { ...m, replyCount: (m.replyCount ?? 0) + 1 } : m
-      );
+      // 0 아래로 내려가지 않는다 — 삭제 이벤트가 두 번 오거나(재연결 뒤 재생) 서버가 이미
+      // 뺀 수를 받아 둔 뒤 오면 음수가 되고, `hasReplies`/`hasActivity` 가 뒤집힌다.
+      const clamp = (n: number | null): number => Math.max(0, (n ?? 0) + delta);
+      const next = rows.map((m) => (m.id === messageId
+        ? {
+          ...m,
+          replyCount: countsAsReply ? clamp(m.replyCount) : (m.replyCount ?? 0),
+          activityCount: clamp(m.activityCount),
+        }
+        : m));
       set({ messages: { ...get().messages, [channelId]: next } });
     },
     /**

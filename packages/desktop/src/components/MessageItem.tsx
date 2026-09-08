@@ -171,6 +171,18 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    */
   const hasReplies = (message.replyCount ?? 0) > 0;
   /**
+   * **무언가 달렸는가** — 요약 줄과 툴바 진입점을 가르는 판정. `hasReplies` 와 갈라진
+   * 이유(2026-09-09): `replyCount` 가 접힌 진행(`ProgressRow`)·대기 줄(`WakeRow`)을 더는
+   * 세지 않으므로, 진행만 있는 스레드에서 그 값은 `0` 이다. 그 하나로 요약 줄을 가르면
+   * **도는 스레드의 `작업 중` 배지가 통째로 사라진다** — 이 줄이 배지를 얹고 있는 유일한
+   * 자리이고, 열어 보지 않은 스레드가 도는지 끝났는지는 오직 그 배지가 답한다.
+   *
+   * 그래서 판정을 둘로 가른다: **자리가 서는가**(이것)와 **글자를 그리는가**(`hasReplies`).
+   * `0` 은 여전히 그려지지 않으므로(규칙 06 · `#396`) 진행뿐인 스레드의 요약 줄에는
+   * 배지만 서고 `0개` 는 없다.
+   */
+  const hasActivity = (message.activityCount ?? message.replyCount ?? 0) > 0;
+  /**
    * 얼굴 슬롯 — **아바타 셋까지, 나머지는 `+N`**(identity 문서 Task 13).
    *
    * 다섯이던 것을 셋으로 줄인다: **폭이 고정되어야** 참여자가 3이든 40이든 요약 줄의
@@ -231,6 +243,13 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   const summaryLabel = ((): string => {
     const count = t('message.summary.replies', { count: message.replyCount ?? 0 });
     const state = summaryState ? threadStateLabel(summaryState, t) : null;
+    /**
+     * **읽을 답글이 없으면 수를 말하지 않는다.** 이 줄은 접힌 진행만 있는 스레드에도
+     * 서므로(`hasActivity`), 여기서 `count` 를 그대로 실으면 화면에 없는 `0개의 답글` 이
+     * 스크린리더에만 존재하게 된다 — 눈으로 읽든 귀로 듣든 같은 거짓이다. 그때 이 줄이
+     * 말하는 사실은 상태 하나뿐이다.
+     */
+    if (!hasReplies) return state ?? t('message.replyInThread');
     if (state && lastReplyTime) {
       return t('message.summary.labelWithStateAndTime', { state, count, time: lastReplyTime });
     }
@@ -645,7 +664,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 적용되지 않는다. 답글 요약은 여전히 절대 툴바로 올리지 않는다.)
                 이 자리는 **답글이 있을 때만**(`hasReplies`) 그린다 — `0` 이면 `0 replies` 가
                 되어 문서가 금지한 글자가 된다. 근거는 `hasReplies` 정의 주석에 있다. */}
-            {!inThread && hasReplies && (
+            {!inThread && hasActivity && (
               <button
                 // 답글이 달린 메시지는 호버 없이도 그 사실이 보여야 한다(#161). 답글이 없을
                 // 때만 호버로 드러나되, visibility 가 아니라 opacity 로 숨긴다 —
@@ -741,16 +760,21 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                     조각을 클래스 문자열로 더듬지 않게 한다. 복수형은 **눈에 보이는 글자**로
                     재야 잡히므로(접근 이름만 재면 손수 복수형이 남아도 초록이다, 실측
                     2026-09-08) 그 조각을 이름으로 가리킬 수 있어야 한다. */}
-                <span
-                  data-testid="reply-summary-count"
-                  className={summaryState && isBlocking(summaryState)
-                    ? 'text-fg-subtle'
-                    : 'font-medium text-fg-muted underline decoration-dotted underline-offset-2'}
-                >
-                  {/* **손수 복수형이 여기 있었다**(`=== 1 ? 'reply' : 'replies'`) —
-                      영어만 맞는 판정이라 `Intl.PluralRules` 에 넘겼다. */}
-                  {t('message.summary.replies', { count: message.replyCount ?? 0 })}
-                </span>
+                {/* `hasReplies` 로 다시 가른다 — 자리는 `hasActivity` 가 세우지만
+                    **`0개` 는 글자로 그리지 않는다**(규칙 06). 진행만 있는 스레드에서 이
+                    조각이 빠지면 줄에는 배지와 얼굴만 남는다. */}
+                {hasReplies && (
+                  <span
+                    data-testid="reply-summary-count"
+                    className={summaryState && isBlocking(summaryState)
+                      ? 'text-fg-subtle'
+                      : 'font-medium text-fg-muted underline decoration-dotted underline-offset-2'}
+                  >
+                    {/* **손수 복수형이 여기 있었다**(`=== 1 ? 'reply' : 'replies'`) —
+                        영어만 맞는 판정이라 `Intl.PluralRules` 에 넘겼다. */}
+                    {t('message.summary.replies', { count: message.replyCount ?? 0 })}
+                  </span>
+                )}
                 {lastReplyTime && <span className="text-fg-subtle">{lastReplyTime}</span>}
               </button>
             )}
@@ -817,7 +841,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 조건이 `replyCount === null` 이었으나 **`0` 을 빠뜨렸다** — 서버는 답글 없는
                 루트에 `0` 을 주므로 정작 이 아이콘이 가장 필요한 메시지에서 사라졌다.
                 `!hasReplies` 로 `null` 과 `0` 을 함께 받는다(정의 주석 참고). */}
-            {!inThread && !hasReplies && (
+            {!inThread && !hasActivity && (
               <button
                 className={iconBtn}
                 title={t('message.replyInThread')}

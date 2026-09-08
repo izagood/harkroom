@@ -637,6 +637,21 @@ export interface OpenAskLink {
   askedAt: string;
 }
 
+/**
+ * 이 종류의 말이 **답글로 세어지는가**(2026-09-09).
+ *
+ * `progress`·`wake` 는 결과 발화가 아니다 — 화면이 그것을 말풍선이 아니라 상태 한 줄
+ * (`ProgressRow`)·대기 줄(`WakeRow`)로 그리고, 러너도 자기 발화로 세지 않는다
+ * (`agent/src/prompt.ts::countOwnPostsSince`). 그 기준을 **문장 하나**로 둔다.
+ *
+ * 서버의 SQL(`services/messages.ts::THREAD_STATS`)은 이 함수를 부를 수 없어 같은 목록을
+ * `kind NOT IN ('progress','wake')` 로 적는다. 종류가 늘면 두 자리를 함께 고쳐야 하므로
+ * 그 쪽 주석이 이 함수를 가리킨다.
+ */
+export function countsAsReply(kind: MessageRow['kind']): boolean {
+  return kind !== 'progress' && kind !== 'wake';
+}
+
 export interface MessageRow {
   id: string;
   seq: number;
@@ -658,9 +673,28 @@ export interface MessageRow {
   reactions: ReactionRow[];
   /** 첨부가 없으면 빈 배열. 사용자가 고른 순서를 지킨다. */
   attachments: AttachmentRow[];
-  /** 스레드 루트에만 있음. 답글 수. */
+  /**
+   * 스레드 루트에만 있음. **화면이 답글로 그리는 것**의 수 — `progress`·`wake` 는 세지
+   * 않는다(`kind` 주석의 같은 기준).
+   *
+   * 예전에는 전부 셌다. 그때는 진행도 말풍선으로 흘렀으니 수와 화면이 맞았는데, 진행이
+   * 상태 한 줄로 접히고(`ProgressRow`) 대기가 대기 줄이 된(`WakeRow`) 뒤로는 **"답글 2개"
+   * 를 눌러 열면 말풍선이 하나뿐**이었다. 세는 것과 그리는 것이 갈라지면 사람은 화면을
+   * 못 믿는다.
+   */
   replyCount: number | null;
-  /** 스레드 루트에만 있음. 마지막 답글 시각. */
+  /**
+   * 스레드 루트에만 있음. 루트에 달린 것 **전부**의 수 — `progress`·`wake` 를 포함한다.
+   *
+   * `replyCount` 와 나뉘어 있는 이유는 둘이 **다른 질문**에 답하기 때문이다:
+   * `replyCount` 는 *"읽을 말이 몇 개인가"*(사람에게 보이는 글자), 이것은 *"이 스레드에
+   * 무언가 달렸는가"*(요약 줄과 스레드 진입점을 세울지)다. 진행만 있는 스레드에서 이
+   * 값이 없으면 요약 줄이 통째로 사라지고, 그 줄에 얹힌 `작업 중` 배지도 함께 사라져
+   * 열어 보지 않은 스레드가 도는지 끝났는지 알 수 없게 된다.
+   */
+  activityCount: number | null;
+  /** 스레드 루트에만 있음. 마지막 답글 시각. `replyCount` 와 같은 기준으로 센다 —
+   * 진행·대기 줄의 시각은 답글 시각이 아니다(그 시각은 `ProgressRow` 가 따로 말한다). */
   lastReplyAt: string | null;
   /** 스레드 루트에만 있음. 답글 작성자 목록 (중복 없음). */
   participantIds: string[] | null;
