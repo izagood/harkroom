@@ -55,6 +55,9 @@ interface MenuProps {
    * (지금 추측으로 만들면 틀린 추상이 된다).
    *
    * `openOnContextMenu` 로 열린 경우에는 이 값이 무시되고 커서 좌표가 쓰인다.
+   *
+   * **희망 사항이지 확정이 아니다.** 여는 쪽에 자리가 없으면 반대쪽으로 뒤집는다
+   * (`useResolvedPlacement`). 자리가 있으면 여기 적은 대로 연다.
    */
   placement?: 'top' | 'bottom';
   /**
@@ -73,6 +76,33 @@ interface MenuProps {
    */
   header?: ReactNode;
   className?: string;
+}
+
+/** `absolute` 배치와 트리거 사이의 간격(`mt-1`/`mb-1`) — 뒤집을지 잴 때 함께 센다. */
+const PLACEMENT_GAP = 4;
+
+/**
+ * 메뉴가 실제로 잘리는 상자. 화면(뷰포트)과 **스크롤되는 조상들**의 교집합이다.
+ *
+ * 뷰포트만 보면 안 된다: 메시지 툴바의 `⋯` 메뉴는 화면 한복판에 있어도 메시지 목록
+ * (`overflow-y: auto`)의 아래 테두리에서 잘린다. 목록 맨 아래 메시지에서 메뉴를 열면
+ * 항목 대부분이 그 테두리 밖으로 나가 **누를 수 없었다** — 이 함수가 없으면 그 사실을
+ * 알 방법이 없다.
+ *
+ * 조상 하나에서 멈추지 않고 끝까지 올라가며 교집합을 좁힌다. 스크롤 상자 안에 스크롤
+ * 상자가 있는 배치(스레드 패널 안의 목록)에서 바깥 상자가 더 좁을 수 있다.
+ */
+function clipBounds(el: HTMLElement): { top: number; bottom: number } {
+  let top = 0;
+  let bottom = window.innerHeight;
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const overflowY = getComputedStyle(p).overflowY;
+    if (overflowY === 'visible' || overflowY === '') continue;
+    const r = p.getBoundingClientRect();
+    top = Math.max(top, r.top);
+    bottom = Math.min(bottom, r.bottom);
+  }
+  return { top, bottom };
 }
 
 /**
@@ -106,6 +136,11 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
   const triggerRef = useRef<HTMLElement | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  /**
+   * 실제로 연 방향. `placement` 는 희망이고 이것이 결과다 — 여는 쪽에 자리가 없으면
+   * 반대쪽으로 뒤집힌다.
+   */
+  const [resolvedPlacement, setResolvedPlacement] = useState(placement);
 
   const close = useCallback(() => {
     setOpen(false);
@@ -123,6 +158,49 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
     // enabledIndexes 는 매 렌더 새 배열이라 의존성에 넣으면 매 렌더 재실행된다 — 열림 전이만 본다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  /**
+   * 자리가 없으면 반대쪽으로 뒤집는다.
+   *
+   * **왜 필요한가**: 메시지 툴바의 `⋯` 는 `placement="bottom"` 인데, 목록 **맨 아래**
+   * 메시지에서 열면 메뉴가 목록의 아래 테두리에서 잘린다. 첫 항목만 반쯤 보이고 나머지는
+   * 누를 수 없다 — 스크롤을 올려 그 메시지를 위로 보내야만 쓸 수 있었다. 목록의 마지막
+   * 메시지는 **가장 자주 다루는 메시지**라 이 결함은 늘 걸린다.
+   *
+   * **왜 렌더 뒤에 재는가**: 메뉴 높이는 항목 수와 머리 유무에 따라 다르고, 여는 순간에는
+   * 아직 없다. 좌표로 여는 경로(`openAt`)가 `items.length * 28` 로 어림하는 것과 달리
+   * 여기서는 진짜 높이를 잴 수 있다 — `useLayoutEffect` 는 **그리기 전에** 돌므로
+   * 뒤집혀도 사람 눈에는 깜빡임이 없다.
+   *
+   * **왜 두 방향을 한 번에 계산하는가**: "지금 넘쳤나"로 판단하면 뒤집힌 뒤 다시 재면서
+   * 왔다 갔다 할 수 있다. 그래서 렌더된 위치가 아니라 **트리거 기준 남은 자리**로만
+   * 정한다 — 같은 입력에 늘 같은 답이 나온다.
+   *
+   * 양쪽 다 모자라면 **더 넓은 쪽**으로 연다. 뒤집어도 다 안 보이는 상황에서 원래 방향을
+   * 고집할 이유가 없다.
+   */
+  useLayoutEffect(() => {
+    if (!open) return;
+    // 좌표로 연 메뉴는 `position: fixed` 라 조상에 잘리지 않고, 이미 화면 안으로 잘라 둔다.
+    if (openAt) { setResolvedPlacement(placement); return; }
+    const menu = menuRef.current;
+    const trigger = triggerRef.current;
+    if (!menu || !trigger) return;
+
+    const height = menu.getBoundingClientRect().height;
+    const triggerRect = trigger.getBoundingClientRect();
+    const clip = clipBounds(menu);
+    const roomBelow = clip.bottom - triggerRect.bottom - PLACEMENT_GAP;
+    const roomAbove = triggerRect.top - clip.top - PLACEMENT_GAP;
+
+    // 원하는 쪽에 들어가면 그대로 둔다. 안 들어갈 때만, 반대쪽이 더 넓으면 뒤집는다.
+    const wantsBelow = placement === 'bottom';
+    const room = wantsBelow ? roomBelow : roomAbove;
+    const other = wantsBelow ? roomAbove : roomBelow;
+    setResolvedPlacement(height > room && other > room ? (wantsBelow ? 'top' : 'bottom') : placement);
+    // 항목이 바뀌면 높이도 바뀐다 — 열려 있는 동안 항목이 바뀌는 소비자는 아직 없지만,
+    // 길이를 의존성에 두면 그때 조용히 틀리지 않는다.
+  }, [open, openAt, placement, items.length, header]);
 
   // 바깥 클릭으로 닫는다. document 리스너라 **네이티브** MouseEvent 다 — React 의 합성
   // 이벤트 타입을 쓰면 캐스트로 타입을 속이게 된다(초판이 그랬다).
@@ -209,7 +287,7 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
           ref={menuRef}
           role="menu"
           onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } }}
-          className={`${openAt ? '' : `absolute ${placement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 min-w-32 rounded border border-border bg-surface-raised py-1 shadow-lg ${className}`}
+          className={`${openAt ? '' : `absolute ${resolvedPlacement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 min-w-32 rounded border border-border bg-surface-raised py-1 shadow-lg ${className}`}
           style={menuStyle}
         >
           {/*
