@@ -230,6 +230,16 @@ export const ko = {
   // `harness`·`daemon`·`attach`·`murmur`, `auto`/`readonly` 값, 경로·이름 예시, 종료 코드.
   // ---------------------------------------------------------------------------
 
+  // --- Agents 칸의 관제 구획(`AgentTurns`) — 근거는 `en.ts` 의 같은 묶음에 있다 --------
+  'agentTurns.checking': '확인 중\u2026',
+  'agentTurns.count': '{n}개 도는 중',
+  'agentTurns.human': '사람이 조종 중',
+  'agentTurns.noThread': '러너가 어느 스레드의 턴인지 말하지 않았다',
+  'agentTurns.none': '도는 턴 없음',
+  'agentTurns.scope': '러너가 알려 준 턴만, 내가 볼 수 있는 에이전트에 대해 보인다.',
+  'agentTurns.title': '지금 도는 턴',
+  'agentTurns.unknown': '도는 턴을 알 수 없다',
+  'agentTurns.unknownHint': '0개라는 뜻이 아니다 — 러너는 계속 돌고 있을 수 있다.',
   'agents.create.failed': '만들지 못했다 (이미 있는 이름일 수 있다)',
   'agents.create.invalidName': '이름은 소문자·숫자·-·_ 2~32자여야 한다 (채널에서 @이름 으로 부른다)',
   'agents.create.poolFailed': '에이전트는 만들어졌지만 계정 풀을 배정하지 못했다: {reason}',

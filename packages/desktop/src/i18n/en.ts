@@ -632,6 +632,18 @@ export const en = {
   // - **종료 코드 `78`·`401`** — 숫자다. 러너 로그에서 보는 그 숫자여야 한다
   // ---------------------------------------------------------------------------
 
+  // --- Agents 칸의 관제 구획(`AgentTurns`) ------------------------------------
+  // 이 묶음이 말하는 것은 **지금 도는 턴**이다. `runnerState.*`(러너 프로세스의 생사)와
+  // 뭉치지 않는 이유가 화면의 판단 그대로다: 턴은 "이 일"이고 러너는 "이 사람"이다.
+  'agentTurns.checking': 'Checking\u2026',
+  'agentTurns.count': '{n} running',
+  'agentTurns.human': 'human at the wheel',
+  'agentTurns.noThread': 'The runner did not say which thread this turn belongs to',
+  'agentTurns.none': 'No turns running',
+  'agentTurns.scope': 'Turns the runners reported, for agents you can see.',
+  'agentTurns.title': 'Running turns',
+  'agentTurns.unknown': "Can't tell what's running",
+  'agentTurns.unknownHint': 'This is not zero — a runner may still be working.',
   'agents.create.failed': 'The agent was not created — that name may already be taken',
   /**
    * 이름 규칙. **`Invalid name` 이 아니라 무엇이 되는지를 적는다**(`sidebar.channel
