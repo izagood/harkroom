@@ -42,6 +42,14 @@ import {
   type SpawnRequest, type StoredRunnerPat,
 } from '../src/lib/runnerLauncher';
 import { fakeDaemon } from './helpers/fakeDaemon';
+import { translator } from '../src/i18n';
+
+// **한국어를 지목해 넘긴다.** 이 파일의 축들은 한국어 사유 문구로 쓰여 있고, 그 문구가
+// 지키는 것은 언어가 아니라 **사유가 뭉개지지 않았다**는 규율이다(`daemonFacts.test.tsx`
+// 가 같은 이유로 언어를 고정한다). 영어가 원본이 되면서 기본값이 영어가 됐으므로,
+// 한국어를 재려면 한국어라고 말해야 한다.
+const ko = translator('ko');
+
 import { RunnerStatusLine } from '../src/components/RunnerStatus';
 
 const agent = (id: string): LaunchableAgent => ({
@@ -82,7 +90,10 @@ const fakeLoginPath = (value: string | null): LoginPathReader & { read: ReturnTy
 
 async function start(loginPath: LoginPathReader) {
   const spawner = fakeSpawner();
-  const launcher = new RunnerLauncher(fakeApi(), fakeSecrets(), spawner, loginPath, () => 0, fakeDaemon());
+  const launcher = new RunnerLauncher(
+    fakeApi(), fakeSecrets(), spawner, loginPath, () => 0, fakeDaemon(),
+    undefined, undefined, ko,
+  );
   await launcher.startAll({
     agents: [agent('a')],
     myAccountId: 'me',
@@ -208,7 +219,10 @@ describe('2. 얻은 PATH 가 자식 env 에 들어간다', () => {
   it('프로세스 생애 동안 한 번만 읽는다 — 러너 수만큼 셸을 띄우지 않는다', async () => {
     const loginPath = fakeLoginPath('/login/bin');
     const spawner = fakeSpawner();
-    const launcher = new RunnerLauncher(fakeApi(), fakeSecrets(), spawner, loginPath, () => 0, fakeDaemon());
+    const launcher = new RunnerLauncher(
+    fakeApi(), fakeSecrets(), spawner, loginPath, () => 0, fakeDaemon(),
+    undefined, undefined, ko,
+  );
     const input = { myAccountId: 'me', liveAccountIds: new Set<string>() };
     await launcher.startAll({ agents: [agent('a'), agent('b')], ...input });
     await launcher.startAll({ agents: [agent('c')], ...input });
@@ -303,6 +317,7 @@ describe('7. daemon 이 node 를 못 찾은 사유가 화면에 온다 (#513)', 
     daemon.error = new Error(message);
     const launcher = new RunnerLauncher(
       fakeApi(), fakeSecrets(), spawner, fakeLoginPath('/usr/bin'), () => 0, daemon,
+      undefined, undefined, ko,
     );
     await launcher.startAll({
       agents: [agent('a')],

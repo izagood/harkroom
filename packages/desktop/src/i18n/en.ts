@@ -68,8 +68,9 @@ import type { Message } from './types';
  *
  * ## 남은 것 — 다음 PR 들이 할 일
  *
- * 뼈대 PR 이 **대기 사슬** 13개를, 그 다음이 **사이드바** 107개를, 이 PR 이
- * **에이전트 설정**(`AgentsSettings`) 146개를 옮겼다.
+ * 뼈대 PR 이 **대기 사슬** 13개를, 그 다음이 **사이드바** 107개를, 그 다음이
+ * **에이전트 설정**(`AgentsSettings`) 146개를, 이 PR 이 **러너 판정 둘**
+ * (`runnerLauncher.ts` 35 · `daemonFacts.ts` 18)을 옮겼다.
  * 남은 것을 무게순으로 적어 둔다 — 각각이 **한 PR** 이다.
  *
  * | 남은 것 | 규모 | 먼저 풀어야 할 것 |
@@ -77,11 +78,12 @@ import type { Message } from './types';
  * | `AgentGrid` | 99 | 버전 칩 어휘(`뒤처짐`·`버전 모름`·`멈추는 중`)를 위 표에서 가져온다. **`agents.*` 에 붙는다** — 같은 화면의 격자이고, 이미 선 덩어리(`grid`·`stale`)가 그 자리다 |
  * | `TeamDetail` · `TeamGrid` · `TeamMemberPicker` | 8 · 4 · 5 | **`agents.teams.*` 가 이미 서 있다.** 팀 묶음의 격자 머리와 만들기 폼은 이 PR 이 옮겼고, 상세는 그 파일들에 남아 있다 |
  * | `Profile` | 소수 | `lastTurnLabel` 이 **이미 번역기를 받는다**(이 PR 이 그렇게 바꿨다) — 그 화면이 `useT` 를 이미 들고 있으므로 나머지는 키만 씌우면 된다 |
- * | `runnerLauncher.ts` | 118 | **판정 함수다** — `chainSentences` 와 같은 (b) 주입을 쓴다 |
- * | `controller.ts` | 59 | 판정 함수. 위와 같다 |
+ * | ~~`runnerLauncher.ts`~~ | — | **끝났다**(아래 `runner.*`). 남은 일곱은 `throw new Error(...)` 라 **사람에게 가는 말이 아니다** — 그 영역 머리말이 안 넣은 이유를 적었다 |
+ * | `controller.ts` | 59 | 판정 함수. **번역기를 넘기는 배선은 이 PR 이 이미 깔았다**(`RunnerLauncher` 생성자의 마지막 인자) — 그 자리를 그대로 쓰면 된다 |
+ * | `packages/shared::installHint` | 3 | **이 저장소의 다른 패키지다.** `runner.exit.notFound` 뒤에 붙는 설치 안내 한 줄이 아직 한국어인데, 서버·러너가 함께 쓰는 패키지라 데스크탑 사전이 닿을 수 없다. 먼저 정할 것: `Translate` 를 `shared` 로 내릴지, 아니면 그 판정이 **키만 내고** 데스크탑이 문구를 씌울지 |
  * | `MessageItem` | 57 | **손으로 하는 복수형이 여기 있다**(`replyCount === 1 ? 'reply' : 'replies'`) — `waitChain.unblocks` 와 같은 모양으로 사전에 넘긴다. `subjectParticle` 을 아직 쓰는 유일한 자리이기도 하다(그 함수는 그때 지운다) |
  * | `Composer` · `Inbox` | 55 · 49 | |
- * | `daemonFacts.ts` | 38 | 판정 함수. **회귀선이 판정 낱말 7개를 검사한다**(`daemonFacts.test.tsx` 의 제약 2) — 그 축은 문구에 `이상`·`비정상` 이 **없음**을 재므로, 옮긴 뒤에도 문구를 재야 한다(키로는 못 잰다) |
+ * | ~~`daemonFacts.ts`~~ | — | **끝났다**(아래 `daemonFacts.*`). 그 표가 경고한 대로 회귀선을 **키가 아니라 문구로** 남겼다 — `i18n.test.tsx` 가 제약 1(주어)·제약 2(판정 낱말 없음)를 **두 언어로** 다시 잰다 |
  * | ~~시간 표기~~ | — | **끝났다** — 아래 `time.*` 과 `lib/time.ts` 를 보라 |
  * | 설정 목차 14개 · `Save`·`Cancel`·`Invite` 등 | 소수 | 이미 영어다 — **키만 씌우면 된다.** 둘 이상이 쓰므로 `common.*` 로 간다 |
  * | 나머지 설정 화면들(`Gallery`·`Skills`·`HandleGroups`·`AgentDefaults` 등) | 42 · 19 · 16 · 11 | 각각 자기 영역(`gallery`·`skills`·…)을 연다. 영역 이름을 `settings.*` 로 묶지 않는 근거는 아래 `agents` 머리말에 있다 |
@@ -605,6 +607,285 @@ export const en = {
   'agents.teams.note':
     'Group agents and call them by one name — calling @teamname in a channel wakes every member. '
     + 'Click a card to change who is in it.',
+
+  // ---------------------------------------------------------------------------
+  // daemonFacts — **판정 이름이지 화면 이름이 아니다**(`waitChain` 과 같은 근거).
+  //
+  // 이 말들은 `lib/daemonFacts.ts::daemonFactRows` 에서 나온다. 지금 그리는 화면은
+  // 하나(`AgentsSettings` 의 상세)뿐이라 `agents.*` 에 붙일 수도 있었지만 **안 붙였다** —
+  // 위 `agents` 머리말이 *"한 화면 = 한 영역"* 이라 적은 그 규칙의 예외가 `lib/` 판정이고,
+  // 그 예외를 세운 것이 `waitChain` 머리말이다: 화면 이름으로 영역을 잡으면 **두 번째
+  // 화면이 남의 키를 부르게 된다.** 이 판정은 그 조건에 이미 반쯤 걸려 있다 — daemon 이
+  // 확인한 사실은 카드(`AgentGrid`)에도 팀 상세에도 설 수 있는 값이고, 실제로 회귀선이
+  // *"격자에는 pid 가 없다"* 를 **문서의 결정으로** 잠가 뒀지 구조로 막아 두지 않았다.
+  // 그 결정이 바뀌는 날 `agents.*` 였다면 격자가 `agents.runner.*` 를 부른다.
+  //
+  // | 덩어리 | 그 행 |
+  // |---|---|
+  // | `label` | 왼쪽 라벨 칸 — 행 이름 |
+  // | `pid` | pid 행의 값에 붙는 세대 |
+  // | `liveness` | 생사 행의 값 |
+  // | `termination` | 종료 요청 행의 값 — **주어가 있는 문장** |
+  // | `signal` | 시그널 행의 값 |
+  //
+  // ## 문장을 조각으로 쪼개지 않았다 — `waitChain.link` 가 금지한 그것
+  //
+  // 종료 요청 행은 `사람이 UI 에서 10:23 · 러너가 아직 못 읽음` 이다. 이것을
+  // `'사람이 UI 에서'` + 시각 + `'·'` + `'러너가 아직 못 읽음'` 조각으로 두면 영어에서
+  // 그 조각들이 갈 자리가 없다. 그래서 **자리표시자를 낀 통짜 문장**으로 둔다 —
+  // 어순 전체가 각 언어의 것이다.
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 사람이 UI 에서 {time} | `A person asked from the UI at {time}` | **주어가 문장 앞에 선다** — 이 행의 존재 이유가 그것이다(`daemonProtocol.ts` 의 표: 주어를 빼면 두 사실이 서로를 반박하는 것처럼 읽힌다). `Requested from the UI` 는 수동이라 누가 했는지가 사라진다 |
+  // | 러너가 아직 못 읽음 | `the runner has not read it yet` | `unacked` 는 우리 내부 낱말이다. `yet` 이 진다 — **아직**이 빠지면 '영영 못 읽는다'로 읽힌다 |
+  // | 러너가 {time} 에 읽었다 | `the runner read it at {time}` | |
+  // | daemon 이 시그널로 {time} | `The daemon signalled at {time}` | daemon 자신의 행위다. 위 문장과 **주어가 갈려야** 두 출처가 구별된다 |
+  // | 없다 — 아무도 요청하지 않았다 | `None — no one asked` | `No request` 는 명사구라 **아무도**가 사라진다. 이 값은 두 출처를 다 보고서야 말할 수 있는 단정이라(그 함수 주석), 그 단정의 주체를 문장이 지녀야 한다 |
+  // | daemon 은 안 보냈다 | `The daemon did not send one` | 이것도 **daemon 이 말한 `null`** 이지 결측이 아니다. `Not sent` 로 줄이면 그 구별이 사라진다 |
+  // | {stamp} 에 SIGTERM · 보낸 지 {elapsed}, 아직 살아 있다 | `SIGTERM at {stamp} · sent {elapsed} ago, still alive` | **판정 낱말이 없다**(제약 2). `still alive` 는 사실이고 `not responding` 은 판정이다 — 후자를 쓰려면 러너의 롱폴링 예산을 알아야 하는데 아무도 모른다 |
+  // | alive — kill(pid, 0) 확인 | `alive — confirmed with kill(pid, 0)` | **`alive`·`dead` 를 안 옮긴다** — `kill(pid, 0)` 이 내는 그 상태의 이름이고, 사람이 `ps` 와 daemon 로그에서 보는 말이다 |
+  // | dead — kill(pid, 0) 이 실패했다 | `dead — kill(pid, 0) failed` | **어떻게 알았는지**가 값에 남는다. 관측이지 판단이 아니라는 것이 이 구획 전체의 태도다 |
+  // | 가동 | `Uptime` | |
+  // | 생사 | `Liveness` | `Alive?` 는 물음이라 라벨이 아니다. `Status` 는 이 화면의 다른 상태들과 겹친다 |
+  // | 종료 요청 | `Stop request` | `Termination` 은 시그널 쪽 낱말이라 아래 행과 겹친다. 사람이 UI 에서 건 것은 **요청**이다(`#493` 이 그 낱말을 정했다) |
+  // | 시그널 | `Signal` | |
+  // | 세대 {id} | `incarnation {id}` | daemon 장부의 필드 이름이 `incarnationId` 다 — 사람이 로그에서 보는 그 말이어야 한다 |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`pid`** — 라벨이자 필드 이름이다. 옮기면 사람이 `ps` 로 확인할 때 쓰는 말과 갈린다.
+  //   그래도 **키는 만든다**(`daemonFacts.label.pid`) — 값이 같은 것과 사전 밖에 있는 것은
+  //   다르고, 라벨 넷 중 하나만 하드코딩으로 남으면 다음 사람이 그 자리를 못 찾는다
+  // - **`SIGTERM` · `kill(pid, 0)` · `daemon` · `alive` · `dead`** — 고유어이자 실제 호출·상태
+  //   이름이다(`agents` 머리말의 `admin`·`PAT`·`harness` 와 같은 규율)
+  // - **시각(`2026-09-07 16:05` · `10:23`) · 경과** — `stamp()`·`clock()` 이 만드는 숫자이고,
+  //   경과는 `lib/time.ts` 가 그 언어로 낸다. **숫자는 `Intl` 이, 뜻은 사전이**
+  // ---------------------------------------------------------------------------
+
+  'daemonFacts.label.liveness': 'Liveness',
+  'daemonFacts.label.pid': 'pid',
+  'daemonFacts.label.signal': 'Signal',
+  'daemonFacts.label.termination': 'Stop request',
+  'daemonFacts.label.uptime': 'Uptime',
+
+  /** **`alive` 를 안 옮긴다** — `kill(pid, 0)` 이 내는 상태의 이름이다(위 표). */
+  'daemonFacts.liveness.alive': 'alive — confirmed with kill(pid, 0)',
+  'daemonFacts.liveness.dead': 'dead — kill(pid, 0) failed',
+
+  /** pid 옆에 붙는 세대. daemon 장부의 필드 이름(`incarnationId`)을 그대로 쓴다. */
+  'daemonFacts.pid.incarnation': 'incarnation {id}',
+
+  /**
+   * daemon 이 **말한** `null` 이다("내가 안 보냈다") — 결측이 아니다. 그 구별이 이 행이
+   * 서느냐 마느냐를 가르므로(규칙 06) 문장도 **주어를 갖는다**.
+   */
+  'daemonFacts.signal.none': 'The daemon did not send one',
+  /** 이미 죽었다 — 기다림을 적을 이유가 없다. */
+  'daemonFacts.signal.sent': 'SIGTERM at {stamp}',
+  /**
+   * 보냈는데 아직 살아 있다. **경과만 적고 판정하지 않는다**(제약 2) — `still alive` 는
+   * 사실이고, `not responding`·`stuck` 은 판정이다. 그 판정을 하려면 러너의 롱폴링
+   * 예산을 알아야 하는데 daemon 도 이 화면도 그것을 모른다.
+   */
+  'daemonFacts.signal.sentStillAlive': 'SIGTERM at {stamp} · sent {elapsed} ago, still alive',
+
+  /**
+   * 사람이 UI 에서 건 요청. **주어가 문장 앞에 선다** — 이 행의 존재 이유가 그것이다.
+   * `{read}` 에 아래 둘 중 하나가 **통째로** 들어간다(조각이 아니라 문장이다).
+   */
+  'daemonFacts.termination.byPerson': 'A person asked from the UI at {time} · {read}',
+  'daemonFacts.termination.bySignal': 'The daemon signalled at {time}',
+  /**
+   * 아무도 요청하지 않았다. **두 출처를 다 봤을 때만** 말할 수 있는 단정이라(그 함수
+   * 주석) 문장이 그 단정을 지닌다 — `No request` 는 명사구라 '아무도'가 사라진다.
+   */
+  'daemonFacts.termination.none': 'None — no one asked',
+  'daemonFacts.termination.read': 'the runner read it at {time}',
+  /** **`yet` 이 진다** — 빠지면 '영영 못 읽는다'로 읽힌다. */
+  'daemonFacts.termination.unread': 'the runner has not read it yet',
+
+  /**
+   * 가동 행. **절대 시각과 경과를 함께 적는다** — 사람이 뺄셈하게 만들지 않는다(회귀선의
+   * 축 이름 그대로다). 한국어의 `부터` 는 시각 **뒤**에 붙는 조사이고 영어의 `since` 는
+   * 시각 **앞**에 서는 전치사라, 그 말을 코드에 두면 한쪽 어순이 굳는다.
+   */
+  'daemonFacts.uptime.since': 'since {stamp} · {elapsed}',
+
+  // ---------------------------------------------------------------------------
+  // runner — **판정 이름이다**(`lib/runnerLauncher.ts`). 화면 이름이 아니다.
+  //
+  // 이 말들은 러너 상태(`RunnerState.message`)로 올라가고, 그것을 그리는 화면이 **이미
+  // 넷이다**: `AgentGrid`(카드) · `AgentsSettings`(상세) · `Sidebar`(러너 줄) ·
+  // `dmMergedList`(DM 목록의 사유 줄). `waitChain` 머리말이 둘로도 충분하다고 한 그
+  // 조건을 이 판정은 두 배로 넘긴다 — 화면 이름을 골랐다면 나머지 셋이 남의 키를 부른다.
+  //
+  // | 덩어리 | 무엇 |
+  // |---|---|
+  // | `launch` | 기동 경로의 실패 — daemon 에 못 닿음 · 키체인 · 알 수 없는 예외 |
+  // | `restart` | 재기동 · 앞 세대가 물러나기를 기다리는 중 |
+  // | `reissue` | PAT 재발급 — 회전 중과 그 뒤에 남은 일 |
+  // | `exit` | 러너가 78 로 죽은 뒤의 **사유 판정**(`exitStateFor78`) |
+  // | `stranger` | 장부에 없는데 서버에는 붙어 있는 러너 |
+  //
+  // ## 러너 실패 사유는 **뭉치면 안 된다** — 사람이 할 일이 갈린다
+  //
+  // 이 영역에서 가장 중요한 것이 `exit.*` 다. `#473`·`#476` 이 만든 갈림이고,
+  // 영어 원본이 그 갈림을 **그대로 져야** 한다:
+  //
+  // | 사유 | 사람이 할 일 |
+  // |---|---|
+  // | `exit.notFound` | 하네스를 **설치**한다 (그리고 어디서 받는지까지 말한다) |
+  // | `exit.loginRequired` | 그 CLI 로 **로그인**한다 |
+  // | `exit.credentialRejected` | murmur 설정에서 PAT 를 **재발급**한다 |
+  // | `exit.unknown*` | **아무것도 단정하지 않는다** — 로그를 보여 주고 사람이 판단한다 |
+  //
+  // 앞 셋을 `Configuration problem` 같은 한 문구로 접으면 사람은 셋 다에 대해 같은
+  // 일을 시도하고 두 번은 틀린다. 넷째를 앞 셋 중 하나로 접는 것이 정확히 `#473` 이
+  // 고친 결함이라, 영어에서도 **"가리지 못했다"가 문장에 남는다.**
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 기동 실패: {reason} | `The runner did not start: {reason}` | `en.ts` 머리말의 `The X was not Yed` 규율 — **결과 상태**로 쓴다. `Launch failed` 는 동작이 실패했다만 말한다 |
+  // | daemon 에 닿지 못해 러너를 띄우지 않았다 | `The daemon could not be reached, so no runner was started` | **인과가 한 문장에 있다.** `so` 앞뒤를 자르면 "daemon 이 안 됐다"와 "러너가 안 떴다"가 따로 읽히고, 사람은 둘을 별개 사고로 센다 |
+  // | 찾을 수 없다 — 설치하고 PATH 에 있는지 확인하라 | `{what} was not found — install it and make sure it is on PATH` | **무엇을**(이름) + **어떻게**(설치·PATH) 둘 다. `#473` 이 앞을, `#476` 이 뒤를 넣었고 영어가 둘 다 져야 한다 |
+  // | 이 에이전트의 하네스({name}) | `this agent's harness ({harness})` | 실행 파일 이름을 모를 때의 대체. **`harness` 는 안 옮긴다**(고유어) |
+  // | 알 수 없음 | `unknown` | 하네스 이름조차 없을 때. 지어내지 않는다(`#368`) |
+  // | 로그인이 풀렸다 | `is no longer logged in` | `Login required` 는 상태만 말하고 **전에는 됐다**를 안 말한다. 사람은 이것을 첫 설정으로 오해해 엉뚱한 곳을 본다 |
+  // | 터미널에서 `{binary}` 를 실행해 다시 로그인하면 살아난다 | `run {binary} in a terminal and log in again` | 한 줄짜리 명령이 실제로 필요한 것이다 |
+  // | PAT 가 폐기·회전됐다 — 재발급하면 다시 뜬다 | `The PAT was revoked or rotated — minting a new one brings it back` | **대조군이다**(그 함수 주석) — 문구를 옮기되 뜻을 바꾸지 않는다 |
+  // | 설정 문제로 물러났다(78) — 사유를 가리지 못했다 | `It exited over a configuration problem (78) — the reason could not be told apart` | **`78` 을 안 옮긴다**(종료 코드는 숫자다). *"가리지 못했다"* 가 이 갈래의 전부라 영어에서도 남는다 |
+  // | 러너 로그 마지막 줄: {excerpt} | `The last lines of the runner log: {excerpt}` | 러너가 한 말을 그대로 보인다(`#368`) — 앱이 다시 설명하지 않는다 |
+  // | 키체인을 읽지 못했다 — 돌고 있는 러너를 죽일 수 있어 새로 발급하지 않았다 | `The keychain could not be read — no new PAT was minted, since that could kill a running runner` | **안 한 일과 그 이유**가 요점이다. 이 문장에서 `since` 절을 빼면 사람은 앱이 게으르다고 읽는다 |
+  // | 앞 세대 러너가 진행 중인 턴을 끝내고 물러나는 중이다 — 끝나면 새로 띄운다 | `The previous runner is finishing its turn before stepping down — a new one starts when it does` | 2026-09-08 사고가 만든 문장이다. **침묵이 그 사고의 시작**이었으므로(사람이 고장으로 읽고 다시 눌렀다) 지금 무엇이 일어나는지와 **다음에 무엇이 일어나는지**를 둘 다 말한다 |
+  // | 러너가 아직 물러나지 않았다 — 진행 중인 턴이 길다 | `The runner has not stepped down yet — the turn in flight is long` | `Timeout` 이 아니다. 상한에 걸린 것은 우리 기다림이지 러너가 아니고, **러너는 정상이다** |
+  // | 옛 PAT 는 그대로 살아 있다 | `the old one is still alive` | **아무것도 잃지 않았다**가 이 문장의 값이다 |
+  // | 설정에서 손으로 폐기해라 | `revoke it by hand in the settings` | 남은 일을 말한다 |
+  // | 그 턴은 답을 남기지 못한다 | `that turn will not leave an answer` | 손으로 끊을 때의 **대가**다. 이것을 빼면 사람은 공짜인 줄 알고 끊는다 |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`throw new Error(...)` 여섯 자리** — 사람에게 가는 말이 아니다. `tauriInvoke()` 가
+  //   `null` 인 것(브라우저 개발)과 daemon 응답이 계약과 다른 것은 **개발자가 보는 계약
+  //   위반**이고, 이 문자열들은 그대로 `errText(err)` 에 실려 위 `launch.failed` 의
+  //   `{reason}` 안에 들어간다. 사전에 넣으면 번역된 예외 메시지를 로그에서 찾게 된다
+  // - **`installHint()`(`packages/shared`)** — **이 파일 밖이다.** `exit.notFound` 뒤에 붙는
+  //   설치 안내 한 줄이 아직 한국어인데, 그것은 서버·러너가 함께 쓰는 패키지라
+  //   데스크탑 사전이 닿을 수 없다(`Translate` 를 shared 로 내리는 것은 이 PR 의 범위가
+  //   아니다). 사이드바 PR 이 지킨 그 경계와 같다
+  // - **PAT 라벨(`desktop:<id>#<epoch>`) · 실행 파일 이름(`claude`·`codex`) · 종료 코드 `78`** —
+  //   저장·전송용 값이고 사람이 터미널에서 보는 그 글자다
+  // - **`errText(err)` 의 내용** — 러너·daemon·OS 가 한 말이다. 앱이 다시 쓰지 않는다(`#368`)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 78 로 죽었는데 PAT 가 거절됐다. **대조군이다** — `#473` 이 고친 것은 78 을 전부
+   * 이쪽으로 보내던 것이지 이 갈래 자체가 아니라, 뜻을 그대로 옮긴다.
+   */
+  'runner.exit.credentialRejected': 'The PAT was revoked or rotated — minting a new one brings it back',
+  /**
+   * 로그인이 풀렸는데 실행 파일 이름을 안다. **한 줄짜리 명령을 준다** — `#476` 이
+   * 세운 규율이다(`Login required` 는 어디를 볼지 안 말한다).
+   */
+  'runner.exit.loginRequired': '{what} is no longer logged in — run {binary} in a terminal and log in again',
+  /** 이름을 모를 때. 그때는 명령을 지어내지 않고 **그 CLI** 라고만 말한다(`#368`). */
+  'runner.exit.loginRequiredNoBinary': '{what} is no longer logged in — log in again with that CLI',
+  /**
+   * 실행 파일이 없다. **무엇이 없는지와 어떻게 채우는지를 둘 다** 말한다(`#473`+`#476`).
+   * `{hint}` 는 `installHint()` 가 준 한 줄이고, 없으면 아래 `notFoundNoHint` 를 쓴다 —
+   * 지어내지 않는다.
+   */
+  'runner.exit.notFound': '{what} was not found — install it and make sure it is on PATH. {hint}',
+  'runner.exit.notFoundNoHint': '{what} was not found — install it and make sure it is on PATH',
+  /**
+   * 실행 파일 이름을 모를 때 `{what}` 자리에 들어가는 말. `{harness}` 에 하네스 이름이
+   * 오고, 그것도 없으면 아래 `subjectHarnessUnknown` 이 그 자리에 들어간다.
+   */
+  'runner.exit.subjectHarness': "this agent's harness ({harness})",
+  'runner.exit.subjectHarnessUnknown': 'unknown',
+  /**
+   * 78 인데 사유를 못 가렸다. **이 갈래가 `#473` 이 만든 것이다** — 앞 셋 중 하나로
+   * 접으면 사람이 틀린 일을 한다. *"가리지 못했다"* 가 영어에도 남아야 하는 이유다.
+   */
+  'runner.exit.unknown':
+    'It exited over a configuration problem (78) — the reason could not be told apart. '
+    + 'Check the runner log',
+  /** 로그 꼬리가 있을 때. **러너가 한 말을 그대로 보인다** — 앱이 다시 설명하지 않는다. */
+  'runner.exit.unknownWithLog':
+    'It exited over a configuration problem (78) — the reason could not be told apart. '
+    + 'The last lines of the runner log: {excerpt}',
+
+  /**
+   * daemon 에 못 닿아 아무것도 안 띄웠다. **인과가 한 문장에 있다** — 자르면 사람은
+   * "daemon 이 안 됐다"와 "러너가 안 떴다"를 별개 사고로 센다.
+   */
+  'runner.launch.daemonUnreachable': 'The daemon could not be reached, so no runner was started: {reason}',
+  /** 그 밖의 실패. **결과 상태로 쓴다**(`The X was not Yed` 규율). */
+  'runner.launch.failed': 'The runner did not start: {reason}',
+  /**
+   * 키체인을 못 읽었다. **여기서 발급으로 넘어가지 않는 것이 요점**이라 그 사실을
+   * 사람에게도 말한다 — `since` 절을 빼면 사람은 앱이 게으르다고 읽는다.
+   */
+  'runner.launch.keychainUnreadable':
+    'The keychain could not be read — no new PAT was minted, since that could kill a running runner: {reason}',
+  /** 계정은 만들어졌다. **그 사실을 먼저 말한다** — 안 그러면 사람은 처음부터 다시 만든다. */
+  'runner.launch.patNotStored':
+    'The agent was created, but its PAT was not stored in the keychain, so no runner was started: {reason}',
+
+  /** 키체인을 못 읽어 옛 것을 못 지운다. 그래서 **발급도 안 했다**. */
+  'runner.reissue.keychainUnreadable':
+    'The keychain could not be read, so the old PAT cannot be revoked — nothing was re-minted: {reason}',
+  /** 발급 자체가 실패했다. **아무것도 잃지 않았다**가 이 문장의 값이다. */
+  'runner.reissue.mintFailed': 'A new PAT was not minted — the old one is still alive: {reason}',
+  /**
+   * 옛 러너가 아직 그 PAT 로 돌고 있어 폐기를 미뤘다. **왜 미뤘는지와 지금 끊으면
+   * 무엇을 잃는지**를 함께 말한다 — 대가를 안 적으면 사람은 공짜인 줄 알고 끊는다.
+   */
+  'runner.reissue.revokeDeferred':
+    'Starting again with the new PAT. The old one ({label}) was not revoked — a runner is still '
+    + 'finishing its turn with it (it steps down on its own when done). If you must cut it now, '
+    + 'revoke it by hand in the settings — that turn will not leave an answer.',
+  /**
+   * 재발급했는데 옛 PAT 를 못 지웠다. **남은 일을 말한다** — 폐기되지 않은 PAT 가
+   * 남았고 그것은 사람이 알아야 하는 상태다.
+   */
+  'runner.reissue.revokeFailed':
+    'Started again with the new PAT, but the old one ({label}) was not revoked — '
+    + 'revoke it by hand in the settings: {reason}',
+  /** 회전 중. **기다림을 화면에 적는다** — 그 침묵이 2026-09-08 사고의 시작이었다. */
+  'runner.reissue.waiting': 'Got a new PAT — waiting for the old runner to finish its turn and step down',
+
+  /** daemon 에 종료를 못 전했다 — 재기동이 시작조차 안 됐다. */
+  'runner.restart.killFailed': 'It could not be restarted — the daemon was not told to stop it: {reason}',
+  /** 죽기는 했는데 다시 띄울 상대가 없다. **어디까지 됐는지**를 말한다. */
+  'runner.restart.respawnUnreachable':
+    'The runner stepped down, but the daemon could not be reached to start it again: {reason}',
+  /**
+   * 상한에 걸렸다. **`Timeout` 이 아니다** — 상한에 걸린 것은 우리 기다림이고
+   * 러너는 정상이다. 그리고 **다음에 무엇이 일어나는지**까지 말한다.
+   */
+  'runner.restart.stillRunning':
+    'The runner has not stepped down yet — the turn in flight is long. The stop request has already '
+    + 'gone, so it comes up on the new bundle at the next start.',
+  /**
+   * 앞 세대가 물러나기를 기다린다. 2026-09-08 사고가 만든 문장이라 **지금 무엇이
+   * 일어나는지와 다음에 무엇이 일어나는지**를 둘 다 말한다.
+   */
+  'runner.restart.waitingForRetirement':
+    'The previous runner is finishing its turn before stepping down — a new one starts when it does',
+
+  /**
+   * 장부에 없는데 서버에는 붙어 있다. **실패가 아니다** — 러너는 떴고 상태는 `running`
+   * 이다. 이 문장이 붙는 이유는 *"이 계정으로 내가 모르는 러너가 하나 더 붙어 있을 수
+   * 있다"* 가 사람이 알아야 할 사실이기 때문이다(`#430` 이 기록한 오독).
+   */
+  'runner.stranger.attached':
+    "A runner for this account is attached to the server but is not in this daemon's ledger — "
+    + 'a new one was started for this app',
 
   // ---------------------------------------------------------------------------
   // sidebar — **화면 이름이다.** 이 말들을 내는 판정이 `lib/` 에 없다: 사이드바가

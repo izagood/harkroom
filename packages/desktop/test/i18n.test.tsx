@@ -35,7 +35,7 @@ import { ko } from '../src/i18n/ko';
 import { interpolate } from '../src/i18n/format';
 import { useActiveStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
-import { setController, type Controller } from '../src/state/controller';
+import { setController, Controller } from '../src/state/controller';
 import { WaitChainSection } from '../src/components/WaitChainSection';
 import { WaitChainLine } from '../src/components/WaitChain';
 import { Sidebar } from '../src/components/Sidebar';
@@ -43,7 +43,15 @@ import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { GallerySettings } from '../src/components/settings/GallerySettings';
 import { fireEvent } from '@testing-library/react';
 import { waitChainFromLinks } from '../src/lib/waitChain';
-import { acc, chan, msg } from './helpers/fakeApi';
+import { daemonFactRows } from '../src/lib/daemonFacts';
+import {
+  RunnerLauncher, STRANGER_ATTACHED,
+  type LaunchableAgent, type RunnerSpawner,
+} from '../src/lib/runnerLauncher';
+import { CREDENTIAL_REJECTED_LINE, EXECUTABLE_NOT_FOUND_LINE, EX_CONFIG, HARNESS_LOGIN_REQUIRED_LINE } from '@murmur/shared';
+import { fakeDaemon } from './helpers/fakeDaemon';
+import type { Translate } from '../src/i18n';
+import { acc, chan, msg, fakeApi, fakeWsFactory } from './helpers/fakeApi';
 
 /** 사전 값에서 자리표시자 이름을 뽑는다. 조사 표기(`:이가`)는 이름의 일부가 아니다. */
 function placeholders(value: unknown): Set<string> {
@@ -1035,5 +1043,352 @@ describe('갤러리 — 설명은 사전을 지나고 견본은 안 지난다', 
     useActiveStore.getState().set({ me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') } });
     render(<GallerySettings />);
     expect(screen.getByText(/이름 자리가/).querySelector('.text-fg-subtle')?.textContent).toBe('…');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `lib/` 판정 — **사전만 읽지 않고 판정 함수를 두 언어로 부른다**
+//
+// 이 묶음이 앞의 것들과 다른 점: 위 축들은 화면을 렌더하거나 사전 값을 직접 읽는데,
+// 여기서는 **판정 함수에 언어를 넘겨 나온 글자**를 잰다. `#619` 가 (a)(키만 낸다)를
+// 버린 이유가 그것이다 — 키가 오는 것과 그것이 사람이 읽을 말이 되는 것은 다른 사실이고,
+// 이 저장소의 판정 회귀선이 지키는 것은 뒤엣것이다.
+// ---------------------------------------------------------------------------
+
+describe('daemon 사실 — 판정이 두 언어로 말한다', () => {
+  const enT = translator('en');
+  const koT = translator('ko');
+  /** 목업의 여섯 행이 나오는 관측. `daemonFacts.test.tsx` 의 `fullRunner` 와 같은 모양이다. */
+  const runner = {
+    agentId: 'forge', alive: true, adopted: false,
+    pid: 48127, incarnationId: '3',
+    startedAtMs: new Date(2026, 8, 7, 16, 5).getTime(),
+    termSentAtMs: null,
+  };
+  const noStop = { requestedAtMs: null, ackedAtMs: null };
+  const rows = (locale: Locale, t: typeof enT, now = runner.startedAtMs + 60_000) =>
+    Object.fromEntries(
+      daemonFactRows(runner, noStop, now, locale, t).map((r) => [r.key, r]),
+    );
+
+  it('라벨이 언어를 따른다 — 값 칸만 바뀌고 라벨이 안 바뀌면 표가 반쪽만 옮겨진 것이다', () => {
+    const e = rows('en', enT);
+    const k = rows('ko', koT);
+
+    expect(e.liveness!.label).toBe('Liveness');
+    expect(k.liveness!.label).toBe('생사');
+    expect(e.uptime!.label).toBe('Uptime');
+    expect(k.uptime!.label).toBe('가동');
+    // `pid` 는 **두 언어가 같다** — 필드 이름이라 옮기지 않는다(`en.ts` 머리말).
+    expect(e.pid!.label).toBe('pid');
+    expect(k.pid!.label).toBe('pid');
+  });
+
+  /**
+   * **`kill(pid, 0)` 이 두 언어에 다 남는다.** 어떻게 알았는지를 값에 적는 것이 이 구획의
+   * 태도이고(`daemonFacts.test.tsx` 의 그 축), 옮기면서 그 호출 이름을 번역하면
+   * 사람이 `ps` 와 daemon 로그에서 보는 말과 화면의 말이 갈라진다.
+   */
+  it('생사가 두 언어 모두 kill(pid, 0) 을 그대로 적는다', () => {
+    expect(rows('en', enT).liveness!.value).toContain('kill(pid, 0)');
+    expect(rows('ko', koT).liveness!.value).toContain('kill(pid, 0)');
+    // `alive` 도 상태의 이름이라 안 옮긴다.
+    expect(rows('en', enT).liveness!.value).toContain('alive');
+    expect(rows('ko', koT).liveness!.value).toContain('alive');
+  });
+
+  /**
+   * **경과가 같은 줄에서 언어를 따른다.** 가동 행은 사전의 틀(`{stamp} 부터 · {elapsed}`)과
+   * `Intl` 이 만든 길이가 한 줄에서 만나는 자리다 — 둘 중 하나만 언어를 따르면 그 줄이
+   * 두 언어로 뜬다(`agents.detail.lastTurn` 이 같은 축을 갖는 이유).
+   */
+  it('가동 행에서 틀과 경과가 같은 언어로 뜬다', () => {
+    const now = runner.startedAtMs + 4 * 3_600_000 + 12 * 60_000;
+    expect(rows('en', enT, now).uptime!.value).toContain('since');
+    expect(rows('en', enT, now).uptime!.value).toContain('4h 12m');
+    expect(rows('ko', koT, now).uptime!.value).toContain('부터');
+    expect(rows('ko', koT, now).uptime!.value).toContain('4시간 12분');
+  });
+
+  /**
+   * **주어가 두 언어에 다 있다** — `#443` 의 제약 1. 이것이 이 행의 존재 이유다:
+   * 주어를 빼면 서버 쪽 사실과 daemon 쪽 사실이 서로를 반박하는 것처럼 읽힌다
+   * (`daemonProtocol.ts::RunnerInfo.termSentAtMs` 의 표).
+   */
+  it('종료 요청이 두 언어 모두 **누가 했는지**로 시작한다', () => {
+    const req = new Date(2026, 8, 8, 10, 23).getTime();
+    const ask = (locale: Locale, t: typeof enT) => daemonFactRows(
+      runner, { requestedAtMs: req, ackedAtMs: null }, req + 60_000, locale, t,
+    ).find((r) => r.key === 'termination')!.value;
+
+    expect(ask('en', enT)).toContain('A person');
+    expect(ask('en', enT)).toContain('10:23');
+    // **`yet` 이 진다** — 빠지면 '영영 못 읽는다'로 읽힌다.
+    expect(ask('en', enT)).toContain('has not read it yet');
+    expect(ask('ko', koT)).toContain('사람이 UI 에서');
+    expect(ask('ko', koT)).toContain('러너가 아직 못 읽음');
+  });
+
+  /**
+   * **제약 2 가 영어에서도 지켜진다.** `daemonFacts.test.tsx` 는 한국어 판정 낱말을
+   * 재는데, 그 축이 지키는 것은 언어가 아니라 **문구의 성질**이다 — 경과는 적되
+   * 이상하다고 판정하지 않는다. 영어 원본을 새로 썼으므로 영어로도 재야 한다.
+   */
+  it('시그널 행이 두 언어 모두 경과만 적고 판정하지 않는다', () => {
+    const sent = new Date(2026, 8, 8, 10, 23).getTime();
+    // 롱폴링 기본 예산(25초)을 한참 넘긴 4분 12초. **이래도 판정하지 않는다.**
+    const late = sent + 4 * 60_000 + 12_000;
+    const signal = (locale: Locale, t: typeof enT) => daemonFactRows(
+      { ...runner, termSentAtMs: sent, alive: true }, noStop, late, locale, t,
+    ).find((r) => r.key === 'signal')!.value;
+
+    // 사실은 적는다.
+    expect(signal('en', enT)).toContain('still alive');
+    expect(signal('en', enT)).toContain('4m 12s');
+    expect(signal('ko', koT)).toContain('아직 살아 있다');
+    expect(signal('ko', koT)).toContain('4분 12초');
+    // 판정은 안 한다 — 이 낱말이 들어오면 그 숫자가 어느 배포에서는 거짓이 된다.
+    for (const verdict of ['abnormal', 'stuck', 'not responding', 'problem', 'failed', 'too ']) {
+      expect(signal('en', enT).toLowerCase()).not.toContain(verdict);
+    }
+    for (const verdict of ['이상', '비정상', '멈췄', '문제', '실패', '너무']) {
+      expect(signal('ko', koT)).not.toContain(verdict);
+    }
+  });
+});
+
+describe('러너 사유 — 판정이 두 언어로 말한다', () => {
+  const enT = translator('en');
+  const koT = translator('ko');
+
+  const agent = (extra: Partial<LaunchableAgent> = {}): LaunchableAgent => ({
+    id: 'a', handle: 'a', ownerAccountId: 'me', disabled: false,
+    stopRequestedAt: null, harness: 'claude-code', ...extra,
+  });
+
+  /** 자식을 띄운 뒤 원하는 코드·꼬리로 죽인다 — `exitStateFor78` 을 **실제 경로로** 부른다. */
+  async function 죽인다(a: LaunchableAgent, tail: string[], t: Translate) {
+    let onExit: ((code: number | null, tailLines?: string[]) => void) | undefined;
+    const spawner: RunnerSpawner = {
+      spawn: async (req) => {
+        onExit = req.onExit;
+        return { kill: async () => {} };
+      },
+    };
+    const launcher = new RunnerLauncher(
+      {
+        baseUrl: 'https://murmur.example',
+        listPats: async () => [],
+        mintPat: async (_id: string, label: string) => `murp_${label}`,
+        revokePat: async () => ({ revoked: 1 }),
+      },
+      {
+        read: async () => ({ ok: true as const, value: null }),
+        write: async () => {},
+        clear: async () => {},
+        deviceId: async () => 'ab12cd34',
+      },
+      spawner,
+      { read: async () => '/login/bin' },
+      () => 0,
+      fakeDaemon(),
+      undefined,
+      undefined,
+      t,
+    );
+    await launcher.startAll({ agents: [a], myAccountId: 'me', liveAccountIds: new Set<string>() });
+    onExit!(EX_CONFIG, tail);
+    return launcher.getStates()[0]!;
+  }
+
+  /**
+   * **이 축이 이 PR 의 핵심이다.** 러너 실패 사유 넷은 사람이 할 일이 각각 다르고
+   * (`en.ts` 의 runner 머리말 표), 영어 원본이 그 갈림을 잃으면 사람은 셋 중 둘에서
+   * 틀린 일을 한다. 그래서 **영어로도 넷이 서로 다른 말을 하는지**를 잰다.
+   */
+  it('78 의 네 갈래가 영어에서도 갈린다 — 사람이 할 일이 다르기 때문이다', async () => {
+    const notFound = await 죽인다(agent(), [EXECUTABLE_NOT_FOUND_LINE], enT);
+    const login = await 죽인다(agent(), [HARNESS_LOGIN_REQUIRED_LINE], enT);
+    const rejected = await 죽인다(agent(), [CREDENTIAL_REJECTED_LINE], enT);
+    const unknown = await 죽인다(agent(), ['something else entirely'], enT);
+
+    // ① 설치한다 — **이름과 PATH 를 둘 다** 말한다(`#473`+`#476`).
+    expect(notFound.status).toBe('needs_harness');
+    expect(notFound.message).toContain('claude');
+    expect(notFound.message).toContain('PATH');
+    // **자격증명 이야기를 하지 않는다** — 그것이 `#473` 이 고친 결함이다.
+    expect(notFound.message).not.toMatch(/PAT(?!H)/);
+
+    // ② 로그인한다 — 그리고 **한 줄짜리 명령**을 준다.
+    expect(login.status).toBe('needs_login');
+    expect(login.message).toContain('logged in');
+    expect(login.message).toContain('claude');
+    expect(login.message).not.toMatch(/PAT(?!H)/);
+
+    // ③ 재발급한다 — 여기서만 PAT 이야기를 한다.
+    expect(rejected.status).toBe('needs_reissue');
+    expect(rejected.message).toContain('PAT');
+
+    // ④ **아무것도 단정하지 않는다.** 이 갈래가 `#473` 이 만든 것이고, 앞 셋 중
+    //    하나로 접으면 사람이 다시 틀린 일을 한다.
+    expect(unknown.status).toBe('stopped');
+    expect(unknown.message).toContain('could not be told apart');
+    expect(unknown.message).not.toContain('PATH');
+    expect(unknown.message).not.toMatch(/PAT(?!H)/);
+    // 종료 코드는 **숫자 그대로** 남는다 — 러너 로그에서 보는 그 숫자여야 한다.
+    expect(unknown.message).toContain('78');
+  });
+
+  it('같은 갈래가 한국어로도 같은 사실을 말한다', async () => {
+    const notFound = await 죽인다(agent(), [EXECUTABLE_NOT_FOUND_LINE], koT);
+    const login = await 죽인다(agent(), [HARNESS_LOGIN_REQUIRED_LINE], koT);
+
+    expect(notFound.status).toBe('needs_harness');
+    expect(notFound.message).toContain('claude');
+    expect(notFound.message).toContain('PATH');
+    expect(login.status).toBe('needs_login');
+    expect(login.message).toContain('로그인');
+    // 상태가 같은데 문구가 같으면 옮긴 것이 아니다 — 두 언어가 실제로 갈리는지 본다.
+    expect(notFound.message).not.toBe(
+      (await 죽인다(agent(), [EXECUTABLE_NOT_FOUND_LINE], enT)).message,
+    );
+  });
+
+  /**
+   * **하네스 이름을 모를 때도 지어내지 않는다**(`#368`). 실행 파일 이름이 없으면
+   * `이 에이전트의 하네스(...)` 가 주어가 되고, 하네스 이름조차 없으면 `알 수 없음` 이
+   * 그 자리에 들어간다 — 괄호가 비면 사람이 버그로 읽는다.
+   */
+  it('모르는 하네스에서도 두 언어가 빈 괄호를 만들지 않는다', async () => {
+    const e = await 죽인다(agent({ harness: undefined }), [EXECUTABLE_NOT_FOUND_LINE], enT);
+    const k = await 죽인다(agent({ harness: undefined }), [EXECUTABLE_NOT_FOUND_LINE], koT);
+
+    expect(e.message).toContain('unknown');
+    expect(e.message).not.toContain('()');
+    expect(k.message).toContain('알 수 없음');
+    expect(k.message).not.toContain('()');
+    // `harness` 는 **안 옮긴다** — 이 제품의 고유어다.
+    expect(e.message).toContain('harness');
+    expect(k.message).toContain('하네스');
+  });
+
+  /**
+   * 장부에 없는데 서버에는 붙어 있다. **실패가 아니라는 것**이 이 문장의 요점이라
+   * 두 언어 모두 그 사실(러너는 떴다)을 말해야 한다.
+   */
+  it('장부 밖 러너 문구가 두 언어 모두 「내 러너는 띄웠다」까지 말한다', () => {
+    expect(STRANGER_ATTACHED(enT)).toContain('ledger');
+    expect(STRANGER_ATTACHED(enT)).toContain('a new one was started');
+    expect(STRANGER_ATTACHED(koT)).toContain('장부');
+    expect(STRANGER_ATTACHED(koT)).toContain('새로 띄웠다');
+    // `daemon` 은 고유어라 두 언어에서 같은 글자다.
+    expect(STRANGER_ATTACHED(enT)).toContain('daemon');
+    expect(STRANGER_ATTACHED(koT)).toContain('daemon');
+  });
+
+  /**
+   * **물러나는 중은 침묵하지 않는다**(2026-09-08 사고). 그 침묵이 사고의 시작이었으므로
+   * 두 언어 모두 *지금 무엇이 일어나는지*와 *다음에 무엇이 일어나는지*를 다 말한다.
+   */
+  it('물러나는 중 문구가 두 언어 모두 「끝나면 새로 띄운다」까지 말한다', () => {
+    expect(en['runner.restart.waitingForRetirement']).toContain('finishing its turn');
+    expect(en['runner.restart.waitingForRetirement']).toContain('a new one starts');
+    expect(ko['runner.restart.waitingForRetirement']).toContain('물러나는 중');
+    expect(ko['runner.restart.waitingForRetirement']).toContain('끝나면 새로 띄운다');
+  });
+
+  /**
+   * **미룬 폐기는 대가를 말한다.** 지금 끊으면 그 턴이 답을 잃는다는 사실을 빼면
+   * 사람은 공짜인 줄 알고 끊는다.
+   */
+  it('폐기 미룸 문구가 두 언어 모두 「그 턴은 답을 잃는다」까지 말한다', () => {
+    expect(en['runner.reissue.revokeDeferred']).toContain('will not leave an answer');
+    expect(ko['runner.reissue.revokeDeferred']).toContain('답을 남기지 못한다');
+  });
+
+  /**
+   * **안 한 일과 그 이유가 함께 온다.** 키체인을 못 읽었을 때 발급으로 넘어가지 않는
+   * 것이 요점이고, 그 이유(돌고 있는 러너를 죽일 수 있다)를 빼면 사람은 앱이 게으르다고
+   * 읽는다.
+   */
+  it('키체인 실패 문구가 두 언어 모두 「왜 발급하지 않았나」를 말한다', () => {
+    expect(en['runner.launch.keychainUnreadable']).toContain('kill a running runner');
+    expect(ko['runner.launch.keychainUnreadable']).toContain('돌고 있는 러너를 죽일 수 있어');
+  });
+});
+
+/**
+ * **배선 축 — 컨트롤러가 언어를 굳히지 않는다.**
+ *
+ * 위 축들은 판정 함수에 언어를 **직접 넘겨** 문구를 재므로, 그 판정을 실제로 부르는
+ * 자리(`Controller`)가 언어를 어떻게 고르는지는 못 본다. 그 자리는 화면이 아니라
+ * 컨트롤러라 `useT` 를 못 쓰고, 그래서 **한 번 만든 번역기를 들고 있기 쉽다** —
+ * 그러면 사람이 설정에서 언어를 바꿔도 러너 사유만 옛 언어로 남는다.
+ *
+ * **RED 로 확인했다**(2026-09-08): 컨트롤러가 넘기는 번역기를 `translator('en')` 로
+ * 굳히면 이 축이 빨개진다. 그 프로브를 넣기 전에는 **전체 회귀선이 초록이었다** —
+ * 이 축이 없으면 그 굳음을 아무도 못 잡는다는 뜻이라, 그래서 이 축을 더했다.
+ */
+describe('러너 사유 — 컨트롤러가 지금 언어로 말한다', () => {
+  /** 자식을 못 띄우는 spawner. 사유가 러너 상태로 오르는 가장 짧은 경로다. */
+  const brokenSpawner = (): RunnerSpawner => ({
+    spawn: async () => { throw new Error('boom'); },
+  });
+
+  const runnerAgent = {
+    id: 'a-forge', handle: 'forge', displayName: 'forge', kind: 'agent' as const,
+    isAdmin: false, instructions: '', harness: 'claude-code' as const, model: null, effort: null,
+    workingDir: null, mentionPermission: 'auto' as const, ownerAccountId: 'u1',
+    disabled: false, runnerVersion: null, stopRequestedAt: null, stopAckedAt: null,
+    lastTurnAt: null, status: 'available' as const, statusText: null,
+    avatarAttachmentId: null,
+  };
+
+  /** 러너를 띄우려다 실패시키고, 그 사유 한 줄을 돌려준다. */
+  async function 사유(locale: 'en' | 'ko'): Promise<string> {
+    // 앞 호출이 남긴 러너 상태를 지운다 — 안 지우면 두 번째 호출이 첫 번째의 사유를
+    // 그대로 읽어, 언어가 안 바뀌어도 초록이 된다(거짓 초록).
+    useActiveStore.getState().reset();
+    usePrefsStore.getState().setLocale(locale);
+    const api = fakeApi({ listAgents: vi.fn(async () => [runnerAgent]) });
+    const ws = fakeWsFactory();
+    const c = new Controller(
+      api,
+      ws.makeWs,
+      undefined,
+      undefined,
+      {
+        read: async () => ({ ok: true as const, value: { label: 'desktop:x', token: 'murp_x' } }),
+        write: async () => {},
+        clear: async () => {},
+        deviceId: async () => 'ab12cd34',
+      },
+      brokenSpawner(),
+      { read: async () => '/login/bin' },
+      undefined,
+      fakeDaemon(),
+    );
+    await c.start();
+    // **자동 기동은 `presence.snapshot` 에서 시작한다** — presence 가 도착한 그 순간이
+    // "누가 이미 붙어 있는가"를 처음 아는 시점이기 때문이다(그 자리 주석). 그래서 이
+    // 축도 그 이벤트를 실제로 흘려보내야 러너 상태가 생긴다.
+    ws.callbacks.current!.onOpen();
+    ws.callbacks.current!.onEvent({ type: 'presence.snapshot', online: [] });
+    await vi.waitFor(() => {
+      const states = useActiveStore.getState().runnerStates;
+      expect(Object.values(states).some((s) => s.message)).toBe(true);
+    });
+    const states = useActiveStore.getState().runnerStates;
+    return Object.values(states).map((s) => s.message).find(Boolean)!;
+  }
+
+  afterEach(() => { usePrefsStore.getState().setLocale('system'); });
+
+  it('언어를 바꾸면 러너 실패 사유도 그 언어로 나온다', async () => {
+    // 영어가 원본이다 — 그리고 사유는 **결과 상태**로 말한다(`The X was not Yed`).
+    expect(await 사유('en')).toContain('did not start');
+    // 한국어로 바꾸면 같은 사유가 한국어로 온다. 이 둘이 같은 글자면 컨트롤러가
+    // 언어를 한 번만 읽고 굳힌 것이다.
+    expect(await 사유('ko')).toContain('기동 실패');
   });
 });
