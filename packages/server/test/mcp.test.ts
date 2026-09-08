@@ -7,7 +7,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 import { onEvent } from '../src/events.js';
-import { readAskMeta, readFailureMeta, readReportMeta } from '@murmur/shared';
+import { readAskMeta, readFailureMeta, readModelMeta, readReportMeta } from '@murmur/shared';
 import { recordAskAnswer } from '../src/services/messages.js';
 
 let app: FastifyInstance;
@@ -105,7 +105,7 @@ describe('mcp surface', () => {
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
     expect(names).toEqual([
-      'account.me', 'channel.doc', 'channel.list', 'inbox.poll', 'inbox.read',
+      'account.me', 'attachment.fetch', 'channel.doc', 'channel.list', 'inbox.poll', 'inbox.read',
       'memory.get', 'memory.list', 'memory.set',
       'message.ask', 'message.fail', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.report', 'message.search', 'message.unreact',
       'skill.propose', 'turn.wake', 'workspace.guide',
@@ -622,5 +622,76 @@ describe('message.report — 완료 보고의 계약', () => {
     expect(readReportMeta({ kind: 'report', report: { checks: [] } })).toBeNull();
     expect(readReportMeta({ kind: 'report', report: { files: ['a.ts'] } })).toBeNull();
     expect(readReportMeta({ kind: 'report', report: { checks: ['하나'] } })).not.toBeNull();
+  });
+});
+
+/**
+ * #600 — 발화가 **어느 모델로 했는지**를 싣는다.
+ *
+ * 여기서 재는 것은 서버의 두 가지 일이다. ① 신고값을 `meta.model` 로 옮긴다(그 값이 없으면
+ * meta 를 만들지 않는다 — 옛 러너의 발화가 빈 껍데기를 남기지 않아야 한다). ② 설정값과
+ * 견주어 **어긋남만** 판정하고 설정값 자체는 싣지 않는다(harness·model 은 admin·소유자만
+ * 보는 값이다).
+ */
+describe('#600 발화에 실린 모델', () => {
+  it('신고한 모델이 meta 에 실린다 — 안 신고하면 아무것도 안 실린다', async () => {
+    const client = await mcpClient(botPat);
+
+    const said = text(await client.callTool({
+      name: 'message.post',
+      arguments: { channelId, body: '모델을 신고한다', model: 'claude-opus-5[1m]' },
+    })) as { message: { meta: Record<string, unknown> } };
+    const silent = text(await client.callTool({
+      name: 'message.post', arguments: { channelId, body: '모델을 안 신고한다' },
+    })) as { message: { meta: Record<string, unknown> } };
+
+    expect(readModelMeta(said.message.meta)).toEqual({ id: 'claude-opus-5[1m]' });
+    expect(readModelMeta(silent.message.meta)).toBeNull();
+  });
+
+  it('설정과 계열이 어긋나면 표시하고, 설정값 자체는 싣지 않는다', async () => {
+    const agent = await createAgent(app, adminToken, 'modelbot');
+    await app.inject({
+      method: 'PATCH', url: `/accounts/agents/${agent.accountId}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { model: 'claude-fable-5-1' },
+    });
+    const client = await mcpClient(agent.pat);
+
+    const off = text(await client.callTool({
+      name: 'message.post',
+      arguments: { channelId, body: 'fable 로 설정됐는데 opus 로 답한다', model: 'claude-opus-5' },
+    })) as { message: { meta: Record<string, unknown> } };
+    const ok = text(await client.callTool({
+      name: 'message.post',
+      arguments: { channelId, body: '설정대로 답한다', model: 'claude-fable-5-1' },
+    })) as { message: { meta: Record<string, unknown> } };
+
+    expect(readModelMeta(off.message.meta)).toEqual({ id: 'claude-opus-5', mismatch: true });
+    // 설정된 모델 이름이 meta 에 새면 채널을 보는 모두가 남의 에이전트 설정을 읽는다.
+    expect(JSON.stringify(off.message.meta)).not.toContain('fable-5-1');
+    expect(readModelMeta(ok.message.meta)).toEqual({ id: 'claude-fable-5-1' });
+  });
+
+  it('완료 보고·실패·진행 설명도 같은 모양으로 싣는다 — 도구마다 다르면 그 도구로 답한 에이전트만 모른다', async () => {
+    const client = await mcpClient(botPat);
+    const args = { channelId, model: 'claude-opus-5' };
+
+    const report = text(await client.callTool({
+      name: 'message.report', arguments: { ...args, body: '다 했다', checks: ['테스트 통과'] },
+    })) as { message: { meta: Record<string, unknown> } };
+    const failed = text(await client.callTool({
+      name: 'message.fail', arguments: { ...args, body: '못 했다', retryable: false },
+    })) as { message: { meta: Record<string, unknown> } };
+    const progress = text(await client.callTool({
+      name: 'message.progress', arguments: { ...args, body: '하고 있다' },
+    })) as { message: { meta: Record<string, unknown> } };
+
+    for (const m of [report, failed, progress]) {
+      expect(readModelMeta(m.message.meta)).toEqual({ id: 'claude-opus-5' });
+    }
+    // 모델을 실었다고 그 발화의 **종류**가 사라지면 안 된다(카드가 평문으로 흐른다).
+    expect(readReportMeta(report.message.meta)).not.toBeNull();
+    expect(readFailureMeta(failed.message.meta)).not.toBeNull();
   });
 });

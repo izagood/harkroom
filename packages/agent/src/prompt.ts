@@ -231,6 +231,35 @@ export function buildSystemPrompt(opts: {
     '대화 프롬프트 맨 위에 준다 — 그대로 넣어 호출한다(threadRootId 가 "채널 최상위(없음)"으로',
     '적혀 있으면 그 인자는 생략하고 channelId 만 넘긴다).',
     '',
+    // 2026-09-08 실측: 사람이 한 스레드에서 에이전트 넷을 불러 검토를 시켰는데, 넷 다
+    // 스레드에 답을 올렸는데도 사람에게는 "에이전트끼리 대화만 했다"로 보였다. 원인이 둘이고
+    // 아래 두 줄이 각각의 짝이다.
+    //
+    // ① 답에 요청자의 이름이 없었다. 데스크탑은 에이전트끼리의 연속 구간을 한 줄로 접는데
+    //    (`desktop/src/lib/agentExchange.ts`), 그 판정이 "이 말이 사람에게 오는가"를 본다.
+    //    요청자를 `@handle` 로 부르면 그 판정에 걸려 접히지 않는다 — 화면의 `addressesHuman`
+    //    과 이 지시가 한 쌍이다. 접힘 규칙 자체도 같은 커밋에서 고쳤으므로 이 줄이 없어도
+    //    답은 보이지만, 이름을 부른 답이 사람에게 훨씬 잘 읽힌다.
+    // ② 답이 스레드 안에만 있었다. 채널 화면은 `alsoInChannel` 이 아닌 스레드 답을 걸러낸다
+    //    (`desktop/src/components/ChannelPane.tsx`). 그래서 채널만 보는 사람에게는 자기
+    //    질문 뒤가 비어 있었다.
+    // #600: 어느 모델이 답했는지. **에이전트만 알 수 있다** — 러너가 넘기는 `--model` 은
+    // 설정값이고, 설정이 비면(`agent_config.model === null`) 러너는 플래그를 아예 안 붙여
+    // 하네스가 고른다. 그 선택은 하네스 출력에만 있고, 러너는 출력을 해석하지 않는다(pty.ts).
+    // 그래서 이 한 줄이 murmur 가 실제 모델을 아는 유일한 길이다. 표시는 hover 뿐이므로
+    // (`desktop/src/components/MessageItem.tsx`) 이 값을 실어도 화면이 시끄러워지지 않는다.
+    '발화할 때(`message.post`·`report`·`fail`·`ask`·`progress`) `model` 인자에 **네가 지금 쓰는',
+    '모델 ID** 를 그대로 실어라 — 환경 설명에 적힌 정확한 ID 를 쓴다(예: `claude-opus-5[1m]`).',
+    '이름을 다듬거나 추측하지 말고, 모르면 생략한다. 사람이 이름줄에 hover 할 때만 보이므로',
+    '화면을 어지럽히지 않는다.',
+    '',
+    '누구에게 답하는지를 잊지 마라 — **이 스레드를 연 사람에게 답하는 것**이 목적이다.',
+    '동료 에이전트에게만 말하고 끝내지 말고, 최종 답은 요청자를 `@handle` 로 부르며 쓴다.',
+    '',
+    '사람이 채널 최상위에서 부른 요청에 답할 때는 `message.post` 에 `alsoInChannel: true` 를',
+    '함께 준다 — 그러지 않으면 답이 스레드 안에만 남아, 채널을 보는 사람에게는 자기 질문 뒤가',
+    '비어 있는 것으로 보인다. 스레드 안에서 오간 중간 대화에는 붙이지 않는다(채널이 시끄러워진다).',
+    '',
     // #90: 한 턴에서 message.post 를 여러 번 부르면 같은 스레드에 답이 여러 개 남는다.
     // 금지형("절대 두 번 부르지 마라")보다 "한 번에 정리한다"가 모델에게 실행 가능한 지시다.
     // 러너는 이걸 강제하지 못한다 — 하네스 출력을 파싱하지 않는다는 경계(pty.ts) 때문이다.
@@ -269,13 +298,51 @@ export function buildSystemPrompt(opts: {
  * avcs 투영이 만드는 system 메시지 등, 호출 시점에 handles 맵이 못 따라온 작성자가 있을 수 있다. */
 function renderLine(m: MessageRow, handles: Record<string, string>): string {
   const handle = handles[m.authorId] ?? '알 수 없는 사용자';
-  // 첨부는 URL 도 미리보기도 없다(AttachmentRow 에 storageKey 가 없다 — @murmur/shared).
-  // 그래도 파일명만 알려주면 에이전트가 "내용은 못 보지만 뭔가 첨부됐다"고 사실대로 답할
-  // 여지가 생긴다. 존재를 통째로 숨기는 것보다 낫다.
+  // **id 를 함께 싣는다.** 파일명만 있으면 에이전트는 그 첨부를 열 방법이 없어 내용을
+  // 짐작하거나 못 봤다고 답한다(2026-09-08 실측 — 아래 attachmentHowTo 주석). id 는
+  // `GET /attachments/:id` 의 유일한 열쇠이고, AttachmentRow 는 그것을 이미 들고 있었다.
+  // contentType·sizeBytes 도 함께 준다 — 내려받기 전에 "열 수 있는 것인가, 얼마나 큰가"를
+  // 판단할 근거다(200MB 짜리를 무조건 받게 만들지 않는다).
   const attachmentNote = m.attachments.length
-    ? ` [첨부: ${m.attachments.map((a) => a.filename).join(', ')}]`
+    ? ` [첨부: ${m.attachments
+        .map((a) => `${a.filename} (id ${a.id}, ${a.contentType}, ${a.sizeBytes}B)`)
+        .join(', ')}]`
     : '';
   return `${handle}: ${m.body}${attachmentNote}`;
+}
+
+/**
+ * 첨부 바이트를 **실제로 여는 방법**. 이 절이 없던 동안 무슨 일이 있었나(2026-09-08 실측):
+ * 사람이 스크린샷을 붙여 "이 부분을 고쳐 달라"고 했고, 에이전트는 "첨부 스크린샷을 제가
+ * 열지 못했습니다(파일이 제 쪽 디스크에 없었습니다)"라고 답한 뒤 **코드만 보고 어느 화면인지
+ * 추측해** 고쳤다. 추측이 맞았지만 그것은 운이다.
+ *
+ * 정작 바이트는 그때도 닿을 수 있었다. 막힌 것은 통로가 아니라 **아는 것**이었다:
+ *   - 하네스는 러너 env 를 통째로 물려받아 `MURMUR_PAT` 을 들고 있다(turn.ts::childEnv).
+ *   - 서버에는 `GET /attachments/:id` 가 계정 인가로 열려 있다(attachmentRoutes.ts).
+ *   - 그런데 프롬프트는 파일명만 줬고(위 renderLine 의 옛 코드), 이 통로를 아무도 말해
+ *     주지 않았다. 셋 중 어느 하나가 아니라 **id + 통로 안내**가 빠져 있었다.
+ *
+ * 통로를 **둘** 적는다. `curl` 이 먼저인 이유는 셸이 있는 하네스가 그 한 줄로 파일을 손에
+ * 넣고 곧바로 자기 도구로 열 수 있기 때문이고, MCP `attachment.fetch` 를 함께 적는 이유는
+ * **셸이 없는 하네스에는 그것이 유일한 통로**이기 때문이다(#585). 하나만 적으면 그 하나가
+ * 없는 쪽 에이전트는 다시 "못 봤다"로 돌아간다.
+ *
+ * 첨부가 있는 턴에만 붙인다 — 대부분의 턴은 첨부가 없고, 그때 이 여덟 줄은 순전한 낭비다.
+ *
+ * URL 은 러너가 아는 실값(`config.murmurUrl`)을 그대로 굽고 토큰은 **env 이름으로만** 적는다.
+ * 실값을 프롬프트 파일에 넣지 않는 이유는 #92·#117 과 같다 — 그 파일은 디스크에 남는다.
+ */
+function attachmentHowTo(murmurUrl: string): string[] {
+  return [
+    '',
+    '(위 `[첨부: …]` 의 id 로 첨부 바이트를 직접 받을 수 있다 — 파일명만 보고 내용을 짐작하지 마라.',
+    '셸이 있으면:',
+    `  curl -fsS -H "Authorization: Bearer $MURMUR_PAT" ${murmurUrl}/attachments/<id> -o /tmp/<파일명>`,
+    '받은 파일을 열어서 봐라 — 이미지도 그대로 읽힌다.',
+    '셸이 없으면 murmur MCP 의 `attachment.fetch` 를 attachmentId 로 불러라 — 이미지는 그 응답에',
+    '그림으로 실려 온다. 받기가 실패했을 때만 "못 봤다"고 말하고, 못 본 것을 본 것처럼 쓰지 마라.)',
+  ];
 }
 
 /**
@@ -298,6 +365,16 @@ export function buildTurnPrompt(opts: {
   channelId: string;
   threadRootId: string | null;
   /**
+   * 서버 베이스 URL(`config.murmurUrl`). 첨부 안내에 실을 실값이다.
+   *
+   * 옵셔널이 아니라 필수인 이유: 여기서 `$MURMUR_URL` 같은 env 참조로 때우면 그 변수가
+   * 없는 러너(`config.ts` 는 없으면 기본값으로 넘어간다)에서 curl 이 조용히 실패한다.
+   * 러너는 자기가 붙은 URL 을 이미 알고 있으므로 그 값을 받는다 — 두 번째 진실 원천을
+   * 만들지 않는다. 첨부가 없는 턴에는 쓰이지 않지만 그렇다고 옵셔널로 두면 새 호출자가
+   * 잊었을 때 **첨부가 있는 턴에서만** 조용히 망가진다.
+   */
+  murmurUrl: string;
+  /**
    * 이 턴이 **깨어난 턴**이면 그 사유(마이그레이션 040). 있으면 사람의 새 발화가 없어도
    * 프롬프트가 비지 않는다 — 깨움에는 부른 사람이 없고, 예약 줄을 쓴 것도 자기라서
    * 아래 자기-발화 필터에 전부 걸린다. 그대로 두면 `mentionTurn` 이 하네스를 돌리지
@@ -305,7 +382,7 @@ export function buildTurnPrompt(opts: {
    */
   wake?: { reason: string };
 }): { prompt: string; fedSeq: number } {
-  const { messages, lastFedSeq, meId, handles, channelId, threadRootId, wake } = opts;
+  const { messages, lastFedSeq, meId, handles, channelId, threadRootId, murmurUrl, wake } = opts;
   const isFirstTurn = lastFedSeq === 0;
 
   const newMessages = messages.filter((m) => m.seq > lastFedSeq);
@@ -333,7 +410,10 @@ export function buildTurnPrompt(opts: {
   // "forge: CI 결과 확인" 으로 보이면 에이전트가 자기 옛 말을 새 요청으로 읽는다.
   // 아래 델타에 사람의 새 발화가 함께 있을 수 있으므로 이 줄은 그것을 대체하지 않고 앞에 선다.
   const wakeLines = wake === undefined ? [] : [`(예약된 후속 턴 — 사유: ${wake.reason})`, ''];
-  const prompt = [head, '', ...wakeLines, ...lines].join('\n');
+  // 안내는 첨부 줄 **뒤**에 선다 — 먼저 무엇이 왔는지 보고 그다음 어떻게 여는지 읽는 순서다.
+  // `toShow` 로 판정한다: 보여주지 않은 메시지의 첨부는 프롬프트에 id 가 없어 열 수도 없다.
+  const howTo = toShow.some((m) => m.attachments.length) ? attachmentHowTo(murmurUrl) : [];
+  const prompt = [head, '', ...wakeLines, ...lines, ...howTo].join('\n');
 
   return { prompt, fedSeq };
 }

@@ -1,11 +1,13 @@
-import { useMemo } from 'react';
+import { Fragment, useMemo, type ReactNode } from 'react';
 import { useActiveStore } from '../state/communities';
+import { NO_TEAMS } from '../state/appStore';
 import { splitMentions } from '../lib/mention';
 import { splitLinks, type LinkTarget, type BodyPart } from '../lib/link';
-import { extractPreviewUrls } from '@murmur/shared';
+import { extractPreviewUrls, renderMentions } from '@murmur/shared';
 import { splitCode } from '../lib/code';
-import { shouldCollapse, COLLAPSED_MAX_PX } from '../lib/collapse';
+import { parseBlocks, type Align, type Block, type Emphasis, type Inline } from '../lib/markdown';
 import { getExternalOpener } from '../lib/openExternal';
+import { accountOpen } from '../lib/accountOpen';
 import { getController } from '../state/controller';
 import { LinkPreview } from './LinkPreview';
 import type { SectionId } from './settings/sections';
@@ -20,9 +22,15 @@ import type { SectionId } from './settings/sections';
  * 그 앞에 코드가 온다(#216). 코드가 먼저 나뉘므로 코드 안의 URL 과 @handle 은 링크도
  * 멘션도 되지 않는다 — 별도 예외 처리가 아니라 순서에서 따라오는 결과다.
  *
- * 다 그린 결과를 마지막에 접는다(#217). 접기는 **그리는 방식을 바꾸지 않는다** — 위의
- * 인식 결과를 그대로 담은 뒤 담긴 상자의 높이만 자르므로, 접힌 상태에서도 코드는 코드로,
- * 링크는 링크로 남는다.
+ * 코드와 멘션 사이에 마크다운 구조가 들어간다(#216). 제목·목록·인용·강조는 `lib/markdown`
+ * 이 **구조체**로 읽어 오고 여기서는 그것을 엘리먼트로만 바꾼다 — 이 파일에
+ * `dangerouslySetInnerHTML` 이 없는 것이 계약이다. 마크다운이 코드 뒤·멘션 앞에 오는
+ * 덕분에 "코드 블록 안의 `**` 는 굵어지지 않고, 굵은 글씨 안의 `@handle` 은 멘션으로
+ * 남는다" 가 예외 처리 없이 따라온다.
+ *
+ * 길다고 접지 않는다. 접기는 한때 있었지만(#217) 실제로는 거의 모든 메시지가 문턱을
+ * 넘어 늘 "Show more" 가 달렸고, 읽으려면 매번 눌러야 했다 — 스크롤 한 번으로 끝날 일에
+ * 클릭을 더한 셈이라 걷어냈다. 본문은 언제나 통째로 보인다.
  */
 
 /**
@@ -71,18 +79,15 @@ export function MessageBody({
 } & MentionOpeners) {
   const accounts = useActiveStore((s) => s.accounts);
   const groups = useActiveStore((s) => s.groups);
-  const teams = useActiveStore((s) => s.teams);
+  // 목록을 못 받은 서버에서는 빈 목록이 사실이다 — 판단의 근거는 `Composer` 의 같은
+  // 자리 주석과 하나다(그 서버는 `@팀` 을 펼치지 않으므로 칠할 이름이 없다).
+  const teams = useActiveStore((s) => s.teams) ?? NO_TEAMS;
   const me = useActiveStore((s) => s.me);
   const myHandle = me?.handle?.toLowerCase() ?? null;
-  // 접기 판정은 본문만 본다 — 작성자가 누구인지 보지 않는다. 자기가 쓴 긴 메시지도 남의
-  // 대화를 밀어내는 것은 똑같고, 예외를 두면 "왜 이건 접히고 저건 안 접히지" 를 사람이
-  // 매번 판단해야 한다(#217).
-  const collapsible = useMemo(() => shouldCollapse(body), [body]);
-  const expanded = useActiveStore((s) => s.expandedMessageIds[messageId] === true);
-  const toggleExpanded = useActiveStore((s) => s.toggleExpanded);
-  const collapsed = collapsible && !expanded;
-
-  const segments = useMemo(() => splitCode(body), [body]);
+  // `accountOpen` 은 순수 함수라 스토어를 모른다 — 지금 보고 있는 사람을 값으로 준다.
+  const viewer = useMemo(() => ({ id: me?.id ?? null, isAdmin: me?.isAdmin === true }), [me?.id, me?.isAdmin]);
+  // 코드 → 마크다운 구조 순서로 읽는다(#216). 이 순서가 곧 규칙이다 — `lib/markdown` 참고.
+  const blocks = useMemo(() => parseBlocks(splitCode(body)), [body]);
   const handles = useMemo(() => Object.values(accounts).map((a) => a.handle), [accounts]);
   const accountsMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -112,26 +117,30 @@ export function MessageBody({
     [accounts],
   );
 
+  /**
+   * 누를 수 있는 링크. 맨 URL(#214)과 `[글자](주소)`(#216)가 **같은 여기 하나**를 지난다 —
+   * 이동 경로가 신뢰 경계라서(외부 셸로 나가는 자리다) 두 벌로 두면 한쪽만 고쳐진다.
+   */
+  const anchor = (label: string, href: string, target: LinkTarget, key: string) => (
+    <a
+      key={key}
+      // href 를 두는 이유: 마우스를 올리면 어디로 가는지 보이고 키보드로도 잡힌다.
+      // 실제 이동은 우리가 한다 — 웹뷰가 스스로 따라가면 앱이 그 페이지로 바뀐다.
+      href={href}
+      rel="noreferrer noopener"
+      data-testid="body-link"
+      data-link-kind={target.kind}
+      className="text-accent underline underline-offset-2 hover:text-accent-hover"
+      onClick={(e) => { e.preventDefault(); void followLink(target); }}
+    >
+      {label}
+    </a>
+  );
+
   /** 코드가 아닌 구간만 멘션·링크 조각으로 나눠 그린다. */
   const renderPart = (p: BodyPart, key: string) => {
     if (p.kind === 'text') return <span key={key}>{p.text}</span>;
-    if (p.kind === 'link') {
-      return (
-        <a
-          key={key}
-          // href 를 두는 이유: 마우스를 올리면 어디로 가는지 보이고 키보드로도 잡힌다.
-          // 실제 이동은 우리가 한다 — 웹뷰가 스스로 따라가면 앱이 그 페이지로 바뀐다.
-          href={p.text}
-          rel="noreferrer noopener"
-          data-testid="body-link"
-          data-link-kind={p.target.kind}
-          className="text-accent underline underline-offset-2 hover:text-accent-hover"
-          onClick={(e) => { e.preventDefault(); void followLink(p.target); }}
-        >
-          {p.text}
-        </a>
-      );
-    }
+    if (p.kind === 'link') return anchor(p.text, p.text, p.target, key);
     const isSelf = p.handle === myHandle;
     const isGroup = (p as { isGroup?: boolean }).isGroup === true;
     const account = byHandle.get(p.handle);
@@ -143,33 +152,13 @@ export function MessageBody({
     // 오타(`@없는이름`)가 애초에 여기 오지 않는 것과 같은 이유다: 누를 수 있게 만들면
     // "여기에 뭔가 있다" 는 거짓을 말하게 된다.
     //
-    // 에이전트는 **admin 만** 설정으로 보낸다. spec 은 소유자도 보내라고 했지만
-    // `GET /accounts/agents` 가 아직 `requireAdmin` 이어서(`routes/accountRoutes.ts`)
-    // 소유자는 목록 조회에서 403 을 받는다 — 그 화면은 "에이전트 목록을 받지 못했다" 만
-    // 띄우고 목록이 비어 `targetId` 도 아무것도 고르지 못한다. #253 이 열어 준 것은
-    // `PATCH`·메모리·PAT 이고 **목록은 아니다.** 갈 수 있는데 할 수 있는 것이 없는 곳을
-    // 만들지 않는다(design.md §4). #299 에서 목록 라우트가 소유자에게 열렸으므로,
-    // admin 이거나 에이전트 소유자면 설정으로 간다.
-    const target: (() => void) | null = (() => {
-      if (!account) return null;
-      if (isGroup) return null;
-      // #299: admin 또는 소유자면 설정으로 간다.
-      const isOwner = account.kind === 'agent' && account.ownerAccountId === me?.id;
-      if (account.kind === 'agent' && (me?.isAdmin === true || isOwner) && onOpenSettings) {
-        return () => onOpenSettings('agents', account.id);
-      }
-      if (onOpenDirectory) return () => onOpenDirectory(account.id);
-      return null;
-    })();
-
-    // 접근 가능한 이름은 `@handle` 이 아니라 **무엇을 하는지**다. 그러므로 실제로 열리는
-    // 곳을 말해야 한다 — 디렉터리로 가는데 "설정 열기" 라고 부르면 이름이 거짓이 된다.
-    // #299: admin 또는 소유자면 "설정 열기", 그 외는 "프로필 열기".
-    const isOwner = account?.kind === 'agent' && account.ownerAccountId === me?.id;
-    const goesToSettings = account?.kind === 'agent' && (me?.isAdmin === true || isOwner) && !!onOpenSettings;
-    const accessibleName = account && (goesToSettings
-      ? `${account.handle} 에이전트 설정 열기`
-      : `${account.handle} 프로필 열기`);
+    // 에이전트를 어디로 보낼지(admin·소유자면 설정, 그 외는 디렉터리)와 접근 가능한 이름은
+    // **`lib/accountOpen` 한 곳**에서 나온다. 여기 인라인으로 있던 것을 옮긴 이유는 그
+    // 파일 머리에 적었다 — 이름줄·아바타(`MessageItem`)가 같은 곳으로 가야 해서, 그대로
+    // 두면 같은 조건문이 두 벌이 된다.
+    const open = isGroup ? null : accountOpen(account, viewer, { onOpenDirectory, onOpenSettings });
+    const target = open?.run ?? null;
+    const accessibleName = open?.label;
 
     /**
      * **멘션 칩은 배경과 굵기로 구별한다 — 색이 아니다**(#488 B2).
@@ -213,90 +202,220 @@ export function MessageBody({
     );
   };
 
-  const bodyContent = (
-    <div className="whitespace-pre-wrap break-words" data-testid="message-body">
-      {segments.map((seg, i) => {
-        if (seg.kind === 'inlineCode') {
-          return (
-            <code
-              key={i}
-              data-testid="inline-code"
-              className="rounded bg-surface-sunken px-1 py-0.5 font-mono text-[0.9em] text-fg"
+  /**
+   * 강조를 겉에 씌운다. `<strong>`·`<em>`·`<s>` 는 **의미가 있는 태그**다 — 굵기만 필요하면
+   * `font-bold` 로 끝나지만 그러면 스크린리더에 아무것도 전달되지 않는다. 세 축이 독립이라
+   * 중첩(`**굵고 _기울고_**`)이 그대로 태그 중첩으로 나온다.
+   */
+  const withEmphasis = (node: ReactNode, e: Emphasis, key: string): ReactNode => {
+    let out = node;
+    if (e.strike) out = <s data-testid="md-strike">{out}</s>;
+    if (e.em) out = <em data-testid="md-em">{out}</em>;
+    if (e.strong) out = <strong className="font-semibold" data-testid="md-strong">{out}</strong>;
+    return <Fragment key={key}>{out}</Fragment>;
+  };
+
+  /** 인라인 코드. 코드 블록과 같은 배경을 쓴다 — "이건 그대로 복사할 것" 이라는 같은 신호다. */
+  const codeSpan = (code: string, key: string) => (
+    <code
+      key={key}
+      data-testid="inline-code"
+      className="rounded bg-surface-sunken px-1 py-0.5 font-mono text-[0.9em] text-fg"
+    >
+      {code}
+    </code>
+  );
+
+  /**
+   * 인용 안의 글자. 토큰만 지금 handle 로 바꾸고 그 밖은 손대지 않는다.
+   *
+   * `accountsMap` 이 비었으면 그대로 둔다 — `splitMentions` 이 같은 조건에서 같은 선택을
+   * 한다(#271). 여기만 다르게 굴면, 계정을 아직 못 받은 화면에서 인용은 `@알 수 없음`,
+   * 인용 밖은 `<@id>` 로 갈라진다.
+   */
+  const quotedText = (text: string): string =>
+    accountsMap.size > 0 ? renderMentions(text, accountsMap) : text;
+
+  /**
+   * 마크다운이 읽은 조각 하나. **글자 조각만** 멘션·링크 인식을 한 번 더 지난다 —
+   * 코드와 `[글자](주소)` 는 이미 확정된 것이라 다시 나누면 안 된다.
+   */
+  const renderInline = (span: Inline, key: string, quoted = false): ReactNode => {
+    if (span.kind === 'code') return codeSpan(span.code, key);
+    if (span.kind === 'link') {
+      return withEmphasis(anchor(span.text, span.href, span.target, `${key}-a`), span, key);
+    }
+    // 인용 안에서는 멘션을 칠하지 않는다(#592). 서버가 인용 줄의 `@handle` 을 부르지
+    // 않으므로, 여기서 칠하면 화면이 "불렀다" 고 거짓말을 한다 — 이 파일이 코드 구간에서
+    // 이미 피하고 있는 그 거짓말이다. 링크는 인용 안에서도 링크다(부르는 것이 아니다).
+    //
+    // 다만 `<@id>` 토큰은 **읽어 준다**(#271). 인용이 끄는 것은 "부르는 것" 하나이고,
+    // 토큰 해석까지 같이 끄면 옮겨 적은 말 자체가 깨진다 — 정본이 `<@id>` 이므로 앞
+    // 메시지 본문을 그대로 인용하면 날 uuid 가 화면에 드러난다(에이전트가 저장된 본문을
+    // 옮겨 적을 때 실제로 그렇게 된다). 읽되 칠하지 않는 것이 인용의 규칙이다.
+    const parts = quoted
+      ? splitLinks([{ kind: 'text', text: quotedText(span.text) }])
+      : splitLinks(splitMentions(span.text, handles, groupHandles, accountsMap));
+    return withEmphasis(parts.map((p, j) => renderPart(p, `${key}-${j}`)), span, key);
+  };
+
+  const renderSpans = (spans: Inline[], key: string, quoted = false) =>
+    spans.map((s, i) => renderInline(s, `${key}-${i}`, quoted));
+
+  /**
+   * 블록 하나. 간격을 `space-y` 가 아니라 블록마다의 `mb-*`/`last:mb-0` 으로 주는 이유:
+   * 제목은 **위쪽** 간격이 더 필요하고(다음 절이 시작한다는 신호다) 컨테이너 하나의
+   * 균일 간격으로는 그 차이를 낼 수 없다.
+   */
+  const renderBlock = (block: Block, key: string): ReactNode => {
+    switch (block.kind) {
+      case 'heading': {
+        // 실제 `<h1>` 을 쓰지 않는다. 메시지는 대화 목록 **안**에 있어서 문서 개요의
+        // 자리를 주장하면 안 되고, 한 채널에 `<h1>` 이 스무 개 서면 개요가 거짓이 된다.
+        // 대신 `role=heading` + `aria-level` 로 **상대적** 깊이만 말한다.
+        const size = block.level <= 1 ? 'text-[1.15em]' : block.level === 2 ? 'text-[1.05em]' : 'text-[1em]';
+        return (
+          <div
+            key={key}
+            role="heading"
+            aria-level={Math.min(6, block.level + 2)}
+            data-testid="md-heading"
+            data-level={block.level}
+            className={`mt-3 mb-1 font-semibold text-fg first:mt-0 ${size}`}
+          >
+            {renderSpans(block.spans, key)}
+          </div>
+        );
+      }
+      case 'quote':
+        return (
+          <blockquote
+            key={key}
+            data-testid="md-quote"
+            className="mb-2 border-l-2 border-border pl-2 text-fg-muted last:mb-0"
+          >
+            {renderSpans(block.spans, key, true)}
+          </blockquote>
+        );
+      case 'rule':
+        return <hr key={key} data-testid="md-rule" className="my-2.5 border-border" />;
+      case 'list': {
+        const Tag = block.ordered ? 'ol' : 'ul';
+        return (
+          <Tag
+            key={key}
+            data-testid="md-list"
+            data-ordered={String(block.ordered)}
+            // `list-outside` + 왼쪽 여백: 감긴 둘째 줄이 글머리표 아래로 흘러들지 않는다.
+            start={block.ordered ? block.start : undefined}
+            className={`mb-2 ml-5 list-outside last:mb-0 ${block.ordered ? 'list-decimal' : 'list-disc'}`}
+          >
+            {block.items.map((item, i) => (
+              <li key={i} data-testid="md-list-item" className="my-0.5">
+                {renderSpans(item.spans, `${key}-${i}`)}
+                {item.children.map((c, j) => renderBlock(c, `${key}-${i}-${j}`))}
+              </li>
+            ))}
+          </Tag>
+        );
+      }
+      case 'table': {
+        // 정렬은 구분줄이 말한 것만 따른다. `null` 은 왼쪽이다 — 칸 내용을 보고 숫자면
+        // 오른쪽으로 미루는 추측을 하지 않는다(`lib/markdown` 의 `Align` 참고).
+        const cell = (a: Align) =>
+          a === 'center' ? 'text-center' : a === 'right' ? 'text-right' : 'text-left';
+        return (
+          // 넓은 표는 **가로로 스크롤한다.** 대화 폭에 맞추려고 열을 접으면 같은 열이
+          // 행마다 다른 자리에 서고, 그때 표는 표가 아니게 된다. 코드 블록과 같은 선택이다.
+          <div key={key} className="my-2 overflow-x-auto last:mb-0">
+            <table
+              data-testid="md-table"
+              data-cols={String(block.align.length)}
+              className="min-w-full border-collapse text-[0.95em]"
             >
-              {seg.code}
-            </code>
-          );
-        }
-        if (seg.kind === 'codeBlock') {
-          return (
-            // 코드는 접히지 않는다 — 줄바꿈된 명령줄은 그대로 복사해도 실행되지 않는다.
-            // 대신 가로로 스크롤한다.
-            <div key={i} className="my-1 overflow-hidden rounded border border-border">
-              {seg.lang && (
-                // 언어는 **표시만** 한다. 문법 강조기를 들이면 의존성과 공격 표면이 같이 커진다.
-                <div
-                  data-testid="code-lang"
-                  className="border-b border-border bg-surface-sunken px-2 py-0.5 font-mono text-[0.75em] text-fg-subtle"
-                >
-                  {seg.lang}
-                </div>
-              )}
-              <pre
-                data-testid="code-block"
-                data-lang={seg.lang ?? ''}
-                className="overflow-x-auto bg-surface px-2 py-1 font-mono text-[0.9em] text-fg"
+              <thead>
+                <tr>
+                  {block.head.map((c, ci) => (
+                    <th
+                      key={ci}
+                      // `scope` 를 두는 이유: 스크린리더가 각 칸을 읽을 때 어느 열인지
+                      // 함께 말해 준다. 굵게만 칠하면 그 연결이 전달되지 않는다.
+                      scope="col"
+                      className={`border border-border bg-surface-sunken px-2 py-1 font-semibold whitespace-normal ${cell(block.align[ci] ?? null)}`}
+                    >
+                      {renderSpans(c, `${key}-h-${ci}`)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {block.rows.map((row, ri) => (
+                  <tr key={ri} data-testid="md-table-row">
+                    {row.map((c, ci) => (
+                      <td
+                        key={ci}
+                        // 칸 안에서는 `pre-wrap` 을 끈다. 칸은 이미 앞뒤 여백을 떼고 왔고,
+                        // 여기서 여백을 그대로 지키면 표 폭이 글자 수가 아니라 사람이 칸을
+                        // 맞추려고 넣은 공백으로 결정된다.
+                        className={`border border-border px-2 py-1 align-top whitespace-normal ${cell(block.align[ci] ?? null)}`}
+                      >
+                        {renderSpans(c, `${key}-${ri}-${ci}`)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      }
+      case 'code':
+        return (
+          // 코드는 접히지 않는다 — 줄바꿈된 명령줄은 그대로 복사해도 실행되지 않는다.
+          // 대신 가로로 스크롤한다.
+          <div key={key} className="my-2 overflow-hidden rounded border border-border last:mb-0">
+            {block.lang && (
+              // 언어는 **표시만** 한다. 문법 강조기를 들이면 의존성과 공격 표면이 같이 커진다.
+              <div
+                data-testid="code-lang"
+                className="border-b border-border bg-surface-sunken px-2 py-0.5 font-mono text-[0.75em] text-fg-subtle"
               >
-                <code>{seg.code}</code>
-              </pre>
-            </div>
-          );
-        }
-        // 코드가 아닌 구간에만 기존 인식이 얹힌다.
-return splitLinks(splitMentions(seg.text, handles, groupHandles, accountsMap)).map((p, j) => renderPart(p, `${i}-${j}`));
-      })}
+                {block.lang}
+              </div>
+            )}
+            <pre
+              data-testid="code-block"
+              data-lang={block.lang ?? ''}
+              className="overflow-x-auto bg-surface px-2 py-1 font-mono text-[0.9em] text-fg"
+            >
+              <code>{block.code}</code>
+            </pre>
+          </div>
+        );
+      default:
+        return (
+          <p key={key} data-testid="md-paragraph" className="mb-2 last:mb-0">
+            {renderSpans(block.spans, key)}
+          </p>
+        );
+    }
+  };
+
+  const bodyContent = (
+    // `whitespace-pre-wrap` 은 여기 그대로 둔다 — 문단 안의 한 줄바꿈은 마크다운에서는
+    // 사라지는 것이 표준이지만, 채팅에서 줄을 나눠 쓴 사람은 **그렇게 보이기를 기대한다.**
+    // 문법을 따르느라 사람이 쓴 줄바꿈을 지우면 렌더링이 내용을 바꾼 것이 된다.
+    <div className="whitespace-pre-wrap break-words" data-testid="message-body">
+      {blocks.map((b, i) => renderBlock(b, String(i)))}
     </div>
   );
 
   const linkPreviews = urls.map((url) => <LinkPreview key={url} url={url} />);
 
-  const content = (
+  return (
     <>
       {bodyContent}
       {linkPreviews}
     </>
-  );
-
-  // 접을 대상이 아니면 상자도 버튼도 만들지 않는다. **자르기와 "더 보기" 는 같은 조건
-  // 하나에서 나온다** — 둘을 따로 판단하면 버튼 없이 잘린 상태가 생길 수 있고, 그것은
-  // 정보가 사라진 것이다.
-  if (!collapsible) return content;
-
-  return (
-    <div data-testid="collapsible-body" data-collapsed={String(collapsed)}>
-      <div
-        data-testid="body-clip"
-        // 접을 때 본문을 DOM 에서 빼지 않는다 — `display:none` 이면 브라우저 찾기·복사·
-        // 스크린리더가 본문에 도달하지 못하고, 그건 내용을 지운 것과 다르지 않다.
-        // 그래서 자르는 수단은 `max-height` + `overflow:hidden` 이다.
-        className={collapsed ? 'overflow-hidden' : undefined}
-        // 값을 클래스 문자열로 적지 않고 상수에서 가져온다 — 판정에 쓴 높이와 실제로 자른
-        // 높이가 두 곳에 적히면 한쪽만 고쳐질 때 소리 없이 어긋난다.
-        style={collapsed ? { maxHeight: `${COLLAPSED_MAX_PX}px` } : undefined}
-      >
-        {content}
-      </div>
-      {/* 버튼은 **본문 흐름 아래**에 둔다. 왼쪽 아바타 거터(#161 2단계)의 고정폭 예산에
-          끼워 넣지 않는다 — 거기는 이미 아바타가 쓰고 있고, 호버 툴바(#143)와 답글
-          컨트롤(#145)이 가로 예산을 다투는 자리다. */}
-      <button
-        data-testid="expand-body"
-        // 상태를 색이나 글자로만 알리지 않는다 — disclosure 는 aria-expanded 가 상태다.
-        aria-expanded={expanded}
-        className="mt-0.5 rounded border border-border px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-sunken"
-        onClick={() => toggleExpanded(messageId)}
-      >
-        {collapsed ? 'Show more' : 'Show less'}
-      </button>
-    </div>
   );
 }

@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, mentionedHandles, mentionedIds, normalizeMentions, readAskMeta, stripCodeSpans, type InboxEntry, type MessageRow } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, mentionedHandles, mentionedIds, mentionScanText, normalizeMentions, readAskMeta, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { channelVisibleSql } from './channels.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
@@ -80,7 +80,7 @@ const ATTACHMENTS = `coalesce((
 // #218: 핀 목록도 이 컬럼 집합으로 메시지를 내주기 때문에 export 다. 핀 전용으로 컬럼을
 // 다시 적으면 위에 적은 "네 갈래" 가 다섯이 되고, 리액션·첨부가 그 응답에서만 빠진다.
 //
-// 스레드 상태 재료(`openAsk*`·`failureCount`·`last*`)도 `replyCount` 와 **같은 처지**로
+// 스레드 상태 재료(`openAsk*`·`*failureCount`·`last*`)도 `replyCount` 와 **같은 처지**로
 // null 이다. 이 컬럼 집합을 쓰는 경로(POST·PATCH·링크·핀·담기)는 스레드를 요약하는 자리가
 // 아니라 **방금 그 한 줄**을 답하는 자리다. 여기서 굳이 집계하면 메시지를 하나 쓸 때마다
 // 스레드 전체를 훑는 비용이 붙는데, 정작 화면이 그 값을 쓰는 곳(채널 목록·사이드바)은
@@ -91,7 +91,8 @@ export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root
   edited_at as "editedAt", ${REACTIONS}, ${ATTACHMENTS},
   null::int as "replyCount", null::text as "lastReplyAt", null::text[] as "participantIds",
   null::int as "openAskHumanCount", null::text[] as "openAskAccountIds", null::jsonb as "openAskLinks",
-  null::int as "failureCount", null::text as "lastKind", null::text as "lastAuthorId",
+  null::int as "failureCount", null::int as "unresolvedFailureCount",
+  null::text as "lastKind", null::text as "lastAuthorId",
   also_in_channel as "alsoInChannel"`;
 
 /**
@@ -144,6 +145,30 @@ const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
         AND t.meta->'ask'->'to'->>'accountId' IS NOT NULL
     ), '{}'::text[]) as open_ask_account_ids,
     COUNT(*) FILTER (WHERE t.meta->>'kind' = 'failure')::int as failure_count,
+    -- **안 풀린** 실패만 따로 센다. 위의 누적 개수로 '막힘'을 칠하면 한 번 실패한 스레드는
+    -- 그 뒤에 에이전트가 다시 붙어 진행 설명을 올리고 있어도 영원히 붉게 남는다 — 사람이
+    -- 보는 화면에서 "작업 중"이 계속 "막힘"으로 뒤집히던 것이 이것이다.
+    --
+    -- 해소의 정의: **그 실패보다 뒤에 에이전트의 말이 있으면 풀린 것이다.** 에이전트의
+    -- 말이란 (a) 진행 설명·대기 줄(kind), (b) 완료 보고(meta.kind), (c) **그 실패를 낸
+    -- 계정 자신의 아무 말**이다. (c) 가 필요한 이유는 마지막 답을 평범한 글로 내는 러너가
+    -- 있어서고, 그때 그 계정이 에이전트라는 것은 실패를 낸 자가 그 계정이라는 사실이
+    -- 이미 말해 준다 — account 를 조인하지 않고도 안다.
+    --
+    -- 사람이 되묻는 말은 풀지 않는다. 그때는 정말로 막혀 있는 것이고, 그것을 '끝남'으로
+    -- 칠하는 것이 이 필드가 막으려는 반대쪽 거짓말이다.
+    COUNT(*) FILTER (
+      WHERE t.meta->>'kind' = 'failure'
+        AND NOT EXISTS (
+          SELECT 1 FROM message r
+          WHERE (r.id = m.id OR r.thread_root_id = m.id)
+            AND r.deleted_at IS NULL
+            AND r.seq > t.seq
+            AND (r.kind IN ('progress', 'wake')
+              OR r.meta->>'kind' = 'report'
+              OR r.author_id = t.author_id)
+        )
+    )::int as unresolved_failure_count,
     -- 마디들: 누가 → 누구를 기다리는가(#488 A3-b). 위의 두 집계로는 부족하다 —
     -- open_ask_account_ids 는 '답해야 하는 쪽'만 모은 집합이라 누가 물었는지가
     -- 지워지고, 사슬을 이으려면 짝이 필요하다.
@@ -219,6 +244,7 @@ const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.threa
   case when m.thread_root_id is null then thread_state.open_ask_human_count end as "openAskHumanCount",
   case when m.thread_root_id is null then thread_state.open_ask_account_ids end as "openAskAccountIds",
   case when m.thread_root_id is null then thread_state.failure_count end as "failureCount",
+  case when m.thread_root_id is null then thread_state.unresolved_failure_count end as "unresolvedFailureCount",
   case when m.thread_root_id is null then thread_state.open_ask_links end as "openAskLinks",
   case when m.thread_root_id is null then thread_last.last_kind end as "lastKind",
   case when m.thread_root_id is null then thread_last.last_author_id end as "lastAuthorId",
@@ -388,8 +414,8 @@ export async function postMessage(
      * `channel_member` 행이 아예 없으므로(`createChannel` — private 만 첫 멤버를 넣는다)
      * 정규화가 통째로 비고, 그 채널의 멘션은 알림이 하나도 가지 않는다.
      *
-     * `mentionedHandles` 가 코드 구간을 걷어내므로(#298) 코드 안의 `@handle` 은 여기
-     * 목록에 들어오지 않고, `normalizeMentions` 도 같은 판정으로 코드 구간을 비껴간다.
+     * `mentionedHandles` 가 코드 구간(#298)과 인용 줄(#592)을 걷어내므로 그 안의 `@handle` 은
+     * 여기 목록에 들어오지 않고, `normalizeMentions` 도 같은 판정으로 그 구간을 비껴간다.
      */
     const bodyHandles = mentionedHandles(input.body);
     const mentionedAccounts = bodyHandles.length
@@ -442,7 +468,7 @@ export async function postMessage(
      *
      * 작성자 자신은 걸러 낸다.
      */
-    for (const accountId of mentionedIds(stripCodeSpans(normalizedBody))) {
+    for (const accountId of mentionedIds(mentionScanText(normalizedBody))) {
       if (accountId !== input.authorId) {
         await insertInbox(client, accountId, message.id, 'mention', notified);
       }
@@ -686,6 +712,45 @@ export async function recordAskAnswer(
 }
 
 /** 삭제는 작성자 또는 admin. 수정과 달리 원문을 왜곡하지 않고 가리는 일이라 운영자에게 열어둔다. */
+/**
+ * 채널에 함께 올린 스레드 답을 **채널에서만** 거둔다(#231 의 되돌리기).
+ *
+ * 지우기가 아니다 — 메시지는 스레드에 그대로 남고 `also_in_channel` 만 false 가 된다.
+ * 스레드에서 하던 이야기를 채널로 잘못 흘린 것을 되돌리는 자리라, 잘못 흘린 사람이
+ * 고를 수 있는 것은 지금까지 "메시지째 지우기" 하나뿐이었다. 그것은 스레드에서
+ * 이야기하던 사람들의 문맥까지 같이 지운다.
+ *
+ * **삭제와 같은 권한**을 쓴다(작성자 또는 admin). 지울 수 있는 사람이 그보다 약한 일을
+ * 못 하면 화면은 더 거친 쪽을 권하게 된다.
+ *
+ * `kind` 를 보지 않는다 — 에이전트가 `alsoInChannel` 로 올린 progress·user 답도 같은
+ * 실수를 할 수 있고, 되돌리는 것은 본문을 고치는 일이 아니다. 같은 이유로 `edited_at`
+ * 도 건드리지 않는다: 사람이 글을 고친 것이 아니다.
+ *
+ * **이미 꺼져 있으면 그대로 돌려준다**(멱등). 두 번 눌러도 404 가 아니라 같은 결과다 —
+ * 다른 창에서 먼저 거둔 뒤 이 창에서 누르는 것은 정상 경로다.
+ *
+ * 알림은 되돌리지 않는다. 채널에 뜬 것을 보고 이미 읽은 사람이 있고, 멘션으로 깬
+ * 사람의 inbox 항목은 그 사람의 것이다 — 남의 읽음 상태를 이 호출이 되감지 않는다.
+ */
+export async function recallFromChannel(
+  pool: Pool, args: { channelId: string; messageId: string; actorId: string; actorIsAdmin: boolean },
+): Promise<MessageRow | MutationRefusal> {
+  const found = await pool.query(
+    `select author_id from message
+     where id = $1 and channel_id = $2 and deleted_at is null`,
+    [args.messageId, args.channelId],
+  );
+  if (!found.rowCount) return 'not_found';
+  if (found.rows[0].author_id !== args.actorId && !args.actorIsAdmin) return 'forbidden';
+
+  const updated = await pool.query(
+    `update message set also_in_channel = false where id = $1 returning ${COLS}`,
+    [args.messageId],
+  );
+  return updated.rows[0];
+}
+
 export async function deleteMessage(
   pool: Pool, args: { channelId: string; messageId: string; actorId: string; actorIsAdmin: boolean },
 ): Promise<'deleted' | MutationRefusal> {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useStore } from 'zustand';
 import { communityLabel, useActiveStore, useCommunityRegistry, type CommunityEntry } from '../state/communities';
 import { getController } from '../state/controller';
+import { blockingUnreadCount } from '../state/unread';
 import { Identity, StatusMark } from './Identity';
 import { Menu } from './Menu';
 import { StatusPicker } from './StatusPicker';
@@ -126,13 +127,14 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onOpen
    * "새 대화가 있다"에 가깝다. 사이드바의 채널별 `UnreadBadge` 와 같은 배열을 쓰므로
    * 두 표시가 갈라지지 않는다.
    *
+   * 세는 규칙 자체는 `state/unread.ts` 에 있다 — 독(Dock) 배지가 같은 것을 세야 해서
+   * 꺼냈다(`lib/useDockBadge.ts`). 여기서 다시 적으면 화면의 숫자와 독의 숫자가 갈라진다.
+   *
    * **이 배지가 홈 칸에 있는 것이 문서의 요구다** — Inbox 는 홈 패널 맨 위 한 줄로
    * 내려가고 배지만 레일이 대신 받는다. 그래야 어느 칸에 있든 "나를 기다리는 것 2개"가
    * 계속 보인다.
    */
-  const blockingCount = useActiveStore(
-    (s) => s.unread.filter((e) => !e.readAt && (e.reason === 'mention' || e.reason === 'dm')).length,
-  );
+  const blockingCount = useActiveStore((s) => blockingUnreadCount(s.unread));
 
   /**
    * 담아 둔 메시지 수(#219). **배지로 그리지 않는다** — 문서: *"배지는 나를 막는 것만
@@ -296,8 +298,12 @@ function MeMenuHeader() {
           넣지만(빈 문자열이 오는 경로가 있다) 그때 굵은 줄이 사라지면 메뉴 머리가
           "누구의 것인지" 말하지 못한다.
         */}
-        <div className="truncate text-sm font-medium text-fg">{me?.displayName || me?.handle}</div>
-        <div className="truncate text-[11px] text-fg-subtle">@{me?.handle} · {workspaceLabel}</div>
+        {/* **이름줄단 15px** — 이 메뉴 머리가 답하는 것이 "누구의 것인가" 하나이고, 아래
+            `@handle · 워크스페이스` 는 이미 아랫단 11px 이다. 4단에서 둘째 단의 이름이
+            그대로 이름줄이고(`MessageItem` 의 작성자 이름이 같은 단), 여기를 본문단으로
+            두면 두 줄이 4px 차이로 붙어 어느 쪽이 이름인지 눈이 못 가른다. */}
+        <div className="truncate text-name font-medium text-fg">{me?.displayName || me?.handle}</div>
+        <div className="truncate text-meta text-fg-subtle">@{me?.handle} · {workspaceLabel}</div>
       </div>
     </div>
   );
@@ -337,6 +343,14 @@ function RailButton({ cell, active, badge, countInName, onClick }: {
         active ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:bg-surface-hover'
       }`}
     >
+      {/*
+        **이 글리프는 타이포 4단이 아니다 — 그림이다.** `aria-hidden` 이고 내용이 이모지라
+        여기서 크기가 정하는 것은 글자의 읽힘이 아니라 **아이콘의 지름**이다. 4단으로
+        끌어내리면(13px) 아래 11px 라벨과 2px 차이가 되어 아이콘과 글자가 한 덩어리로
+        보이고, 레일이 "그림 + 이름" 두 층이라는 사실이 화면에서 사라진다.
+        `Identity` 의 아바타 머리글자와 같은 예외이고(그 파일에 근거가 길게 있다),
+        `test/typeScale.test.ts` 의 `ALLOWED` 에 줄 단위로 적혀 있다.
+      */}
       <span aria-hidden="true" className="text-base leading-none">{cell.glyph}</span>
       {/*
         라벨은 타이포 4단의 맨 아랫단(11px)이다. 9px 이었고, 62px 레일에서 잘릴까가
@@ -347,7 +361,7 @@ function RailButton({ cell, active, badge, countInName, onClick }: {
         된다. `truncate` 를 달지 않는 이유도 그것이다 — 잘릴 수 없는 폭이면 말줄임은
         일어나지 않을 코드이고, 있으면 "잘려도 된다"로 읽힌다.
       */}
-      <span aria-hidden="true" className="text-[11px] leading-none">{cell.label}</span>
+      <span aria-hidden="true" className="text-meta leading-none">{cell.label}</span>
       {badge > 0 && (
         /*
           배지도 11px 로 올린다. 이것이 커지면 글리프를 덮을까가 걱정이지만 — `right-1` 로
@@ -358,7 +372,7 @@ function RailButton({ cell, active, badge, countInName, onClick }: {
         <span
           aria-hidden="true"
           data-testid={`${cell.testId}-badge`}
-          className="absolute right-1 top-0.5 rounded-full bg-accent px-1 text-[11px] font-bold text-fg-on-strong"
+          className="absolute right-1 top-0.5 rounded-full bg-accent px-1 text-meta font-bold text-fg-on-strong"
         >
           {badge}
         </span>
@@ -410,6 +424,9 @@ function CommunityMarkTile({ entry, onClick }: { entry: CommunityEntry; onClick:
       aria-label={`${label} — ${connected ? '연결됨' : '연결 끊김'}`}
       title={label}
       onClick={onClick}
+      // `text-sm` 은 4단이 아니라 **h-9 원에 묶인 머리글자**다 — 위 `initial` 하나가 이
+      // 버튼의 내용 전부이고, 크기가 원의 지름에서 따라 나온다(`Identity.tsx` 의 근거와
+      // 같은 자리). 4단으로 올리면 원은 그대로인데 글자만 커져 가장자리에 붙는다.
       className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-raised text-sm font-bold text-fg-muted hover:bg-surface-hover ${RAIL_FOCUS} ${
         connected ? '' : 'border-2 border-danger'
       }`}

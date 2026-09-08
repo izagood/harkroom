@@ -44,7 +44,7 @@ describe('사람이 정한 상태 (#186)', () => {
     // **이 이슈가 지키는 사실은 그대로다**: 연결 여부와 사람이 고른 상태가 화면에 **둘 다**
     // 있어야 한다. 여기서 그 둘을 각각 찾는다.
     fakeController();
-    render(<Sidebar panel="dm" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar panel="dm" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
 
     const face = screen.getByTestId('dm-face-d1');
     expect(face).toBeTruthy();
@@ -73,7 +73,7 @@ describe('사람이 정한 상태 (#186)', () => {
       dms: [{ id: 'd1', memberIds: ['u1', 'u2'], lastMessageAt: null }],
       online: ['u2'],
     });
-    render(<Sidebar panel="dm" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
+    render(<Sidebar panel="dm" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
     expect(screen.getByTestId('status-u2').getAttribute('data-status')).toBe('dnd');
 
     act(() => {

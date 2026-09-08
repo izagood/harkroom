@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AgentView } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
+import { canSeeAgentConfig } from '../lib/agentConfigGate';
 import { Identity, StatusMark } from './Identity';
 import { Overlay } from './Overlay';
 import { lastTurnLabel } from './settings/AgentsSettings';
@@ -38,10 +39,14 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
   const online = useActiveStore((s) => s.online);
   const connected = useActiveStore((s) => s.connected);
 
-  /** 설정까지 볼 수 있는가 — 서버의 판정과 같아야 한다(`GET /accounts/agents`). */
-  const isOwner = account?.kind === 'agent'
-    && account.ownerAccountId !== null && account.ownerAccountId === me?.id;
-  const canSeeConfig = account?.kind === 'agent' && (me?.isAdmin === true || isOwner);
+  /**
+   * 설정까지 볼 수 있는가 — 서버의 판정과 같아야 한다(`GET /accounts/agents`).
+   *
+   * 판정은 `lib/agentConfigGate.ts` 하나가 낸다. 여기 사본을 두면 같은 문(설정 › 에이전트)을
+   * 여는 세 자리 — 이 프로필 · 본문 멘션 · 레일의 에이전트 격자 — 가 서로 다른 규칙으로
+   * 문을 그린다.
+   */
+  const canSeeConfig = canSeeAgentConfig(account, me);
 
   const [agent, setAgent] = useState<AgentView | null>(null);
   useEffect(() => {
@@ -94,10 +99,14 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
         <Identity account={account} className="h-12 w-12 text-base" variant="avatar" />
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="truncate text-base font-semibold">{account.displayName || account.handle}</span>
+            {/* **이름줄단 15px** — 이 겹창의 주제가 사람 하나이고 그 이름이 여기다.
+                16px(`text-base`)이었고 4단 중 아무것도 아니었다. 화면 제목단(17px)을 주지
+                않는 이유: 이것은 화면이 아니라 겹창이고, 설정·로그인 제목과 같은 단에 서면
+                화면과 겹창의 위계가 없어진다. 아래 `@handle` 은 아랫단 11px 이다. */}
+            <span className="truncate text-name font-semibold">{account.displayName || account.handle}</span>
             <StatusMark account={account} />
           </div>
-          <div className="text-xs text-fg-muted">@{account.handle}</div>
+          <div className="text-meta text-fg-muted">@{account.handle}</div>
         </div>
       </div>
 
@@ -120,7 +129,15 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
           {canSeeConfig && agent && (
             <>
               <Row label="하네스" value={agent.harness} />
-              <Row label="모델" value={agent.model ?? '하네스 기본값'} />
+              {/* **`null` 은 '모델 없음'이 아니라 '이 설정이 정하지 않는다'다**(#600).
+                  그냥 `하네스 기본값` 이라고만 적으면 사람은 이 행을 "실제로 쓰는 모델"로
+                  읽는데, 그 경우 murmur 는 실제 모델을 **모른다** — 러너가 `--model` 을
+                  아예 붙이지 않아 하네스가 고르고, 러너는 하네스 출력을 해석하지 않는다.
+                  실제로 무엇이 답했는지는 발화 이름줄 hover 에 있다(`meta.model`). */}
+              <Row
+                label="모델"
+                value={agent.model ?? '하네스 기본값 — 실제 모델은 발화 이름줄 hover 로 본다'}
+              />
               <Row label="작업 디렉터리" value={agent.workingDir ?? '스레드마다 새로 만든다'} mono />
               <Row label="마지막 활동" value={lastTurnLabel(agent.lastTurnAt)} />
               {/* 러너가 **어느 번들로** 돌고 있는가. 이 행이 없으면 아래 재기동 버튼은
@@ -137,7 +154,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
         </dl>
 
         {canSeeConfig && agent && runnerPresent && (
-          <div className="mt-3 text-[11px]">
+          <div className="mt-3 text-meta">
             {isStale && (
               <p className="text-warning" data-testid="runner-stale-note">
                 이 러너는 앱보다 <strong>뒤처진 번들</strong>로 돌고 있다 — 새 버전으로 재기동하면 갈아탄다.
@@ -162,7 +179,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
           {canSeeConfig && onOpenSettings && (
             <button
               data-testid="profile-settings"
-              className="rounded border border-border px-3 py-1.5 text-[13px] font-medium
+              className="rounded border border-border px-3 py-1.5 text-body font-medium
                          text-fg hover:bg-surface-hover"
               onClick={() => { onClose(); onOpenSettings('agents', account.id); }}
             >
@@ -173,7 +190,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
             runnerState?.status === 'restarting' ? (
               <button
                 data-testid="profile-runner-restart-cancel"
-                className="rounded border border-border px-3 py-1.5 text-[13px] font-medium
+                className="rounded border border-border px-3 py-1.5 text-body font-medium
                            text-fg hover:bg-surface-hover"
                 onClick={() => getController().cancelRestart(account.id)}
               >
@@ -184,7 +201,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
                  쓴다. 버전을 모르는데 그렇게 쓰면 지키지 못할 약속이 된다(design.md §4). */
               <button
                 data-testid="profile-runner-restart"
-                className="rounded border border-border px-3 py-1.5 text-[13px] font-medium
+                className="rounded border border-border px-3 py-1.5 text-body font-medium
                            text-fg hover:bg-surface-hover"
                 onClick={() => { void getController().restartRunner(account.id); }}
               >
@@ -195,7 +212,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
           {account.id !== me?.id && (
             <button
               data-testid="profile-dm"
-              className="rounded border border-border px-3 py-1.5 text-[13px] font-medium
+              className="rounded border border-border px-3 py-1.5 text-body font-medium
                          text-fg hover:bg-surface-hover"
               onClick={() => { onClose(); void getController().startDm(account.id); }}
             >
@@ -210,7 +227,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
 
 function Row({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="flex gap-3 text-[13px]">
+    <div className="flex gap-3 text-body">
       <dt className="w-24 shrink-0 text-fg-subtle">{label}</dt>
       {/* mono 12px 은 4단 밖이지만 본문단(13px)을 **광학적으로** 맞추는 보정이다 —
           등폭 글꼴은 같은 pt 에서 크게 보인다. 근거는 `ReportCard.tsx` 에 적어 뒀다. */}

@@ -231,13 +231,15 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
               disabled={item.disabled}
               onClick={() => { if (!item.disabled) { item.onSelect(); close(); } }}
               onKeyDown={(e) => onMenuKeyDown(e, index)}
-              className={`flex w-full items-center gap-4 px-3 py-2 text-left text-sm ${MENU_ITEM_FOCUS} ${
+              // 항목은 본문단(앱 기본값 13px), 단축키는 이미 아랫단 11px 이다 — 고르려면
+              // 항목을 읽어야 하고 단축키는 한 번 배우면 안 읽는다.
+              className={`flex w-full items-center gap-4 px-3 py-2 text-left ${MENU_ITEM_FOCUS} ${
                 item.disabled ? 'cursor-not-allowed text-fg-subtle' : 'text-fg-muted hover:bg-surface-hover hover:text-fg'
               }`}
             >
               <span>{item.label}</span>
               {item.shortcut && (
-                <span aria-hidden="true" className="ml-auto text-[11px] text-fg-subtle">{item.shortcut}</span>
+                <span aria-hidden="true" className="ml-auto text-meta text-fg-subtle">{item.shortcut}</span>
               )}
             </button>
           ))}

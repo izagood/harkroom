@@ -91,6 +91,7 @@ describe('스레드 상태 재료 — 채널 목록이 루트만 봐도 상태�
     expect(r.openAskHumanCount).toBe(0);
     expect(r.openAskAccountIds).toEqual([]);
     expect(r.failureCount).toBe(0);
+    expect(r.unresolvedFailureCount).toBe(0);
     // 마지막 말은 루트 자신이다 — 답글이 없어도 `lastKind` 는 null 이 아니다.
     expect(r.lastKind).toBe('user');
     expect(r.lastAuthorId).toBe(adminId);
@@ -159,6 +160,49 @@ describe('스레드 상태 재료 — 채널 목록이 루트만 봐도 상태�
     expect((await rootRow(id)).failureCount).toBe(1);
   });
 
+  /**
+   * **누적과 상태는 다르다.** `failureCount` 로 '막힘'을 칠하면 한 번 실패한 스레드는
+   * 그 뒤에 에이전트가 다시 붙어 진행 설명을 올리고 있어도 영원히 붉다 — 사람이 보는
+   * 화면에서 "작업 중"이 계속 "막힘"으로 뒤집히던 것이 이것이다. 그래서 **안 풀린**
+   * 실패를 따로 싣는다.
+   */
+  it('안 풀린 실패를 따로 센다 — 에이전트가 다시 움직이면 풀린다', async () => {
+    const id = await root();
+    await seed(botId, '못 끝냈다', failure, id);
+    expect((await rootRow(id)).unresolvedFailureCount).toBe(1);
+
+    // 사람이 되묻는 것은 풀지 않는다. 그때야말로 막힌 것이 맞다.
+    await post(adminToken, '왜 안 돼?', { threadRootId: id });
+    expect((await rootRow(id)).unresolvedFailureCount).toBe(1);
+
+    // 에이전트가 다시 진행을 올리면 풀린다. **누적은 그대로 남는다** — 두 값의 뜻이 다르다.
+    await postMessage(pool, {
+      channelId, authorId: botId, body: '다시 돈다', threadRootId: id, kind: 'progress',
+    });
+    const r = await rootRow(id);
+    expect(r.failureCount).toBe(1);
+    expect(r.unresolvedFailureCount).toBe(0);
+  });
+
+  it('실패를 낸 계정의 평범한 글도 푼다 — 마지막 답을 글로 내는 러너가 있다', async () => {
+    const id = await root();
+    await seed(botId, '못 끝냈다', failure, id);
+    await post(botPat, '결국 됐다', { threadRootId: id });
+    expect((await rootRow(id)).unresolvedFailureCount).toBe(0);
+  });
+
+  it('다시 실패하면 다시 안 풀린 것이 하나다', async () => {
+    const id = await root();
+    await seed(botId, '첫 실패', failure, id);
+    await postMessage(pool, {
+      channelId, authorId: botId, body: '다시 돈다', threadRootId: id, kind: 'progress',
+    });
+    await seed(botId, '또 실패', failure, id);
+    const r = await rootRow(id);
+    expect(r.failureCount).toBe(2);
+    expect(r.unresolvedFailureCount).toBe(1);
+  });
+
   it('마지막 말이 진행이면 그 종류와 저자를 싣는다', async () => {
     const id = await root();
     await post(botPat, '먼저 한 마디', { threadRootId: id });
@@ -205,6 +249,7 @@ describe('스레드 상태 재료 — 채널 목록이 루트만 봐도 상태�
     expect(reply.openAskHumanCount).toBeNull();
     expect(reply.openAskAccountIds).toBeNull();
     expect(reply.failureCount).toBeNull();
+    expect(reply.unresolvedFailureCount).toBeNull();
     expect(reply.lastKind).toBeNull();
     expect(reply.lastAuthorId).toBeNull();
   });

@@ -461,6 +461,7 @@ fn daemon_spawn_runner(
     murmur_pat: String,
     murmur_url: String,
     path: String,
+    agent_version: Option<String>,
 ) -> Result<daemon_client::SpawnRunnerResult, String> {
     // **여기서 배치를 손보지 않는다**(`#433` — 위의 큰 주석). `node-pty` 를 찾는 것은
     // 러너 자신의 일이 됐고(`nodePtyLoader.ts`), 그래서 이 커맨드는 daemon 을 확보해
@@ -471,6 +472,18 @@ fn daemon_spawn_runner(
     env.insert("MURMUR_PAT".to_string(), murmur_pat);
     env.insert("MURMUR_URL".to_string(), murmur_url);
     env.insert("PATH".to_string(), path);
+    // `agent_version` 만 `Option` 인 이유: 나머지 셋은 없으면 러너가 아예 못 뜨지만
+    // 이것은 **없을 수 있는 값**이다(`AppVersionReader` 가 `null` 을 돌려주는 경우).
+    // 그때 빈 문자열을 심으면 러너가 빈 버전을 보고하고, 화면은 '모른다'와 구별할 수
+    // 없는 값을 얻는다 — 없으면 **넣지 않는다**(docs/design.md §4).
+    //
+    // 이 파라미터가 없던 시절에는 웹뷰가 `env.AGENT_VERSION` 을 채워도 이 자리에서
+    // 통째로 사라졌고, 그래서 모든 러너가 자기 버전을 `'unknown'` 으로 보고했다.
+    // 그 누락이 조용했던 이유는 위층 테스트가 가짜 spawner 만 봤기 때문이다
+    // (`test/daemonSpawner.test.ts` 가 이제 실제 invoke 인자를 단언한다).
+    if let Some(version) = agent_version.filter(|v| !v.is_empty()) {
+        env.insert("AGENT_VERSION".to_string(), version);
+    }
     conn.spawn_runner(&agent_id, env)
 }
 

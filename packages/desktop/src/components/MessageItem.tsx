@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { messagePermalink, readAskMeta, type MessageRow } from '@murmur/shared';
+import { messagePermalink, readAskMeta, readModelMeta, type MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { AskCard } from './AskCard';
@@ -17,14 +17,23 @@ import { WakeRow } from './WakeRow';
 import { NotifiedGapRow } from './NotifiedGapRow';
 import { Attachments } from './Attachments';
 import { Menu } from './Menu';
+import { ConfirmDialog } from './ConfirmDialog';
 import { bodyAsHandles, displayBody } from '../lib/mention';
+import { accountOpen } from '../lib/accountOpen';
 import type { SectionId } from './settings/sections';
+import { useT } from '../i18n/useT';
 
 /**
  * 얼굴 슬롯의 칸 수. **폭이 고정되는 것이 이 숫자의 일**이다 — 참여자가 늘어도 요약 줄이
  * 길어지지 않아야 채널을 훑을 수 있다(identity 문서).
  */
 const FACE_SLOTS = 3;
+
+/**
+ * 출처 줄에 실을 뿌리 본문의 길이(#624 요구 2). 뿌리를 **알아보게** 하는 것이 이 줄의
+ * 일이지 뿌리를 읽게 하는 것이 아니다 — 길어지면 사본의 본문보다 출처가 커진다.
+ */
+const ROOT_PREVIEW_CHARS = 40;
 
 export function MessageItem({ message, inThread = false, onOpenDirectory, onOpenSettings }: {
   message: MessageRow;
@@ -33,11 +42,20 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   onOpenDirectory?: (accountId: string | null) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }) {
+  const t = useT();
   const author = useActiveStore((s) => s.accounts[message.authorId]);
   const isMine = useActiveStore((s) => s.me?.id === message.authorId);
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
   const myId = useActiveStore((s) => s.me?.id ?? null);
   const accounts = useActiveStore((s) => s.accounts);
+  /**
+   * 이름·얼굴을 눌렀을 때 갈 곳. **`@멘션` 칩과 같은 함수**를 지난다(`lib/accountOpen`) —
+   * 화면에서 한 사람을 가리키는 자리는 셋(멘션 칩·이름줄·거터 아바타)인데 그 셋이 서로
+   * 다른 곳으로 가면, 사람은 "어디를 눌러야 프로필이 나오는지"를 매번 시험해 봐야 한다.
+   * 신호(`onOpenDirectory`·`onOpenSettings`)가 없는 자리에서는 `null` 이라 **버튼이 아니다**
+   * — 눌러도 아무 일이 없는 컨트롤을 남기지 않는다(`MessageBody` 의 같은 규칙).
+   */
+  const authorOpen = accountOpen(author, { id: myId, isAdmin }, { onOpenDirectory, onOpenSettings });
   // 생존 판정의 두 축 — `connected` 가 false 면 `online` 은 '아무도 없다'가 아니라 '모른다'다.
   const online = useActiveStore((s) => s.online);
   const connected = useActiveStore((s) => s.connected);
@@ -50,7 +68,11 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
 
   // 강조만 하고 화면 밖에 두면 긴 채널에서는 아무 일도 안 일어난 것과 같다.
   // jsdom 에는 scrollIntoView 가 없으므로 옵셔널 호출이다(ChannelPane 도 같은 이유로 그렇다).
-  useEffect(() => { if (highlighted) rowRef.current?.scrollIntoView?.(); }, [highlighted]);
+  //
+  // `block: 'nearest'` 인 이유는 `ChannelPane` 의 같은 호출에 적어 뒀다 — 무인자
+  // (`'start'`)는 **문서까지** 밀어 앱 껍데기를 창 위로 끌어올린다. 인박스에서 줄을 눌러
+  // 여기로 오는 길이 정확히 그 경로였다(실측 2026-09-08).
+  useEffect(() => { if (highlighted) rowRef.current?.scrollIntoView?.({ block: 'nearest' }); }, [highlighted]);
 
   // 강조가 계속 남으면 같은 채널에서 진짜 강조가 필요한 순간에 신호가 죽는다(#397).
   // 몇 초 뒤에 자동으로 해제한다 — 사용자가 확인하고 있다는 신호다.
@@ -77,6 +99,35 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    * 보이고, 한 줄 안에서 이름과 아바타가 서로 다른 사람을 가리킨다.
    */
   const shownBody = displayBody(message, accounts);
+
+  /**
+   * 이 답이 딸린 스레드의 **뿌리 메시지**(#624 요구 2). 뿌리는 같은 채널의 최상위
+   * 메시지라 채널을 보고 있으면 보통 스토어에 이미 있다 — 없을 수도 있는데(뿌리가 지금
+   * 불러온 페이지보다 오래됐다) 그때는 미리보기 없이 링크만 그린다.
+   * `find` 가 돌려주는 것은 스토어에 든 그 객체이므로 셀렉터가 매번 새 값을 만들지 않는다.
+   */
+  const threadRoot = useActiveStore((s) => (
+    !inThread && message.alsoInChannel && message.threadRootId
+      ? (s.messages[message.channelId] ?? []).find((m) => m.id === message.threadRootId) ?? null
+      : null
+  ));
+  /** 한 줄로 접은 뿌리 본문. 줄바꿈이 남으면 한 줄짜리 링크가 두 줄로 벌어진다. */
+  const rootPreview = useMemo(() => {
+    if (!threadRoot) return null;
+    const text = displayBody(threadRoot, accounts).replace(/\s+/g, ' ').trim();
+    if (!text) return null;
+    return text.length > ROOT_PREVIEW_CHARS ? `${text.slice(0, ROOT_PREVIEW_CHARS)}…` : text;
+  }, [threadRoot, accounts]);
+  /**
+   * 어느 모델이 이 말을 했는가(#600). **상시 픽셀은 0 이다** — 이름줄 hover 의 `title` 로만
+   * 나오고, 어긋났을 때만 ⚠️ 한 글자가 선다.
+   *
+   * 왜 글자로 안 그리는가: 모델은 거의 언제나 설정대로이고, 언제나 맞는 정보를 모든 말
+   * 옆에 세우면 이름줄이 배지밭이 된다(#488 이 강조색을 회수한 그 이유). 사람이 실제로
+   * 묻는 순간("이 답을 뭐가 했지?")은 드물고, 그때는 hover 가 답한다. 반대로 **어긋남**은
+   * 드물고 곧 문제이므로(간단한 일에 Opus, 어려운 일에 Fable) 그것만 눈에 보인다.
+   */
+  const model = readModelMeta(message.meta);
   const avcsType = typeof message.meta.avcsType === 'string' ? message.meta.avcsType : null;
   /**
    * 스킬 제안 알림에서 승인 화면으로 가는 진입점(#311 요구 5).
@@ -93,6 +144,33 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   const lastReplyTime = message.lastReplyAt
     ? new Date(message.lastReplyAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : null;
+  /**
+   * **답글이 달렸는가** — 답글 요약과 툴바 진입점이 **같은 하나의 판정**을 나눠 쓴다.
+   *
+   * `replyCount` 는 서버에서 두 가지 뜻을 갖는다
+   * (`packages/server/src/services/messages.ts:216`,
+   * `case when m.thread_root_id is null then thread_stats.reply_count end`):
+   *
+   * - `null` — 이 메시지는 **답글이다**(스레드 루트가 아니다). 답글 수를 셀 대상이 아니다.
+   * - `0` — **스레드 루트인데 답글이 아직 없다.**
+   *
+   * 그리고 `0` 은 반드시 온다: 같은 파일 `:196` 의 `thread_stats` 가
+   * `LEFT JOIN LATERAL (SELECT COUNT(*)::int …) ON true` 라 답글이 없어도 행이 하나 나오고
+   * `COUNT(*)` 는 `0` 이다 — 루트의 `replyCount` 가 `null` 이 되는 경우는 없다.
+   *
+   * **`#396` 이 이 구분을 놓쳤다.** 두 자리를 `replyCount !== null` / `=== null` 로 갈라
+   * 두어, 서버가 실제로 주는 `0` 이 **양쪽 어디에도 맞지 않았다** — 답글 요약이 `0 replies`
+   * 를 그리고 툴바 진입점은 사라져, 문서가 위반 예시로 지목한 그 글자가 스레드로 가는
+   * **유일한** 길이 돼 있었다(`docs/desktop-design-directions.pdf` 5쪽,
+   * *위생 — 자리를 비운다* · *"0은 그리지 않는다"*).
+   *
+   * 그래서 판정을 **여기 한 곳**에 두고 두 자리가 이것의 참/거짓으로만 갈린다.
+   * 조건을 양쪽에 손으로 적으면 배타성이 우연이 되고, `#396` 이 깨진 방식으로 다시
+   * 어긋난다 — 한쪽만 고치는 것이 가능해지기 때문이다. 아래 답글 요약 주석이 지키라고
+   * 한 *"같은 조건끼리는 서로 덮을 대상이 없다"* 는 성질이 이 한 줄로 성립한다:
+   * 세 값(`null`·`0`·`> 0`) 전부에서 진입점은 정확히 하나다.
+   */
+  const hasReplies = (message.replyCount ?? 0) > 0;
   /**
    * 얼굴 슬롯 — **아바타 셋까지, 나머지는 `+N`**(identity 문서 Task 13).
    *
@@ -151,6 +229,18 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   // 수정은 admin 에게도 열지 않는다: 남의 발언을 고칠 수 있으면 기록이 증거가 못 된다.
   const canDelete = (isMine || isAdmin) && !isSystem;
   /**
+   * 채널로 함께 올린 스레드 답을 채널에서 거둔다(#231 되돌리기).
+   *
+   * 조건이 셋인 이유: 스레드 답이어야 하고(`threadRootId`), 지금 채널에도 보이고 있어야
+   * 하고(`alsoInChannel`), 지울 수 있는 사람이어야 한다. 앞의 둘은 "지금 상태"라 이미
+   * 거둔 메시지에는 항목이 아예 뜨지 않는다 — 눌러도 아무 일 없는 항목은 거짓 신호다
+   * (design.md §4).
+   *
+   * 보관된 채널에서도 남긴다. 잘못 흘린 말을 치우는 길은 채널이 얼어붙은 뒤에도 있어야
+   * 한다 — 서버의 삭제·핀 해제가 같은 이유로 보관을 보지 않는다.
+   */
+  const canRecall = canDelete && message.alsoInChannel && message.threadRootId !== null;
+  /**
    * 이 메시지의 핀(#218). 핀은 **채널 전역 사실**이라 메시지 행이 아니라 채널별 목록에서
    * 찾는다 — `MessageRow` 에 넣으면 같은 사실이 두 곳에 생기고, 남이 고정했을 때 한쪽만
    * 갱신되는 갈라짐이 난다(리액션과 달리 핀은 델타 이벤트가 없다).
@@ -173,6 +263,14 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   };
 
   const hoverOnly = 'opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100';
+
+  /**
+   * 확인창에 보여 줄 대상 미리보기. 수정창(#271)과 같은 두 손질을 거친다 —
+   * `displayBody` 로 시스템 문구의 계정 자리를 채우고, `bodyAsHandles` 로 저장된 정본의
+   * `<@0f3c…>` 를 `@handle` 로 되돌린다. 날것을 그대로 두면 사람은 자기가 무엇을 지우는지
+   * 읽지 못한 채 확인을 누르게 된다.
+   */
+  const deletePreview = bodyAsHandles(displayBody(message, accounts), accounts).trim();
   const iconBtn = 'rounded p-1 text-fg-subtle hover:bg-surface-raised';
 
   /**
@@ -257,7 +355,19 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
     // #271: 수정창에는 `@handle` 을 채운다 — 저장된 정본은 `<@id>` 라, 그대로 넣으면
     // 사람이 `<@0f3c…>` 를 고치게 된다. 저장할 때 서버가 다시 정규화한다.
     ...(canEdit ? [{ label: 'Edit', onSelect: () => setDraft(bodyAsHandles(message.body, accounts)) }] : []),
-    ...(canDelete && !confirmingDelete ? [{ label: 'Delete', onSelect: () => setConfirmingDelete(true) }] : []),
+    // 확인은 **겹창**으로 묻는다(#ConfirmDialog). 예전에는 툴바 안에 확인 버튼을 끼워 넣느라
+    // `!confirmingDelete` 로 이 항목을 숨겨야 했다 — 같은 자리를 두 UI 가 나눠 썼기 때문이다.
+    // 겹창은 툴바 밖이라 자리를 다투지 않으므로 조건은 권한 하나로 돌아온다.
+    ...(canDelete ? [{ label: 'Delete', onSelect: () => setConfirmingDelete(true) }] : []),
+    /**
+     * #231 되돌리기. 문구가 'Delete' 가 아닌 이유를 문구 자체가 말해야 한다 — 이것은
+     * 지우기가 아니라 **채널에서만** 거두는 일이고, 메시지는 스레드에 그대로 남는다.
+     * 그래서 대상('from channel')을 문구에 박는다.
+     *
+     * 확인 단계를 두지 않는다: 지우기와 달리 본문이 사라지지 않는다. 다만 되돌린 것을
+     * 다시 채널로 올리는 길은 없으므로(다시 쓰면 된다) 'Undo' 라고 부르지도 않는다.
+     */
+    ...(canRecall ? [{ label: 'Remove from channel', onSelect: () => { void getController().recallFromChannel(message.id); } }] : []),
     // #219: 나중에 볼 것으로 담기. 담겨 있으면 문구가 해제로 바뀐다 — 같은 자리에 두 항목을
     // 나란히 두면 어느 것이 지금 상태인지 화면이 말하지 않는다.
     // 문구는 이 메뉴의 나머지(Pin·Edit·Delete…)와 같은 영문이다: 여기만 한국어로 두면
@@ -282,9 +392,31 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
           32px 고정이라 안에 든 것이 넓어지면 열을 넘친다(그것이 #277 의 결함이었다).
           `data-testid` 는 회귀 테스트가 이 열을 클래스 문자열로 더듬지 않게 하려고 둔다 —
           클래스로 찾으면 스타일을 조금 손보는 순간 테스트가 조용히 아무것도 안 지킨다. */}
-      <div data-testid="author-gutter" className="flex h-8 w-8 shrink-0 items-center justify-center">
-        <Identity account={author} className="h-8 w-8 text-sm" variant="avatar" />
-      </div>
+      {/* 거터 자체가 누를 자리다 — 아바타를 버튼으로 **감싸지 않는다.** 감싸면 거터의
+          첫 자식이 `Identity` 가 아니게 되어(회귀선이 그 자리를 잰다: `gutterOverflow
+          Regression.test.tsx`) 32px 열의 계약이 마크업 한 겹 아래로 밀린다. 여기서
+          바뀌는 것은 태그와 커서뿐이고, 상자·자식은 위 주석 그대로다.
+
+          **보조기술에는 내지 않는다**(`aria-hidden` + `tabIndex={-1}`). 바로 옆 이름줄
+          버튼이 **같은 곳**으로 가므로, 둘 다 내면 메시지마다 같은 이름의 버튼이 둘씩
+          서서 목록과 탭 순서가 두 배가 된다. 잃는 것은 없다 — 키보드·스크린리더는
+          이름줄로 가고, 여기는 얼굴을 눌러 여는 마우스 길이다. */}
+      {authorOpen ? (
+        <button
+          type="button"
+          data-testid="author-gutter"
+          className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full"
+          onClick={authorOpen.run}
+          aria-hidden="true"
+          tabIndex={-1}
+        >
+          <Identity account={author} className="h-8 w-8 text-sm" variant="avatar" />
+        </button>
+      ) : (
+        <div data-testid="author-gutter" className="flex h-8 w-8 shrink-0 items-center justify-center">
+          <Identity account={author} className="h-8 w-8 text-sm" variant="avatar" />
+        </div>
+      )}
       {/*
         본문 최대폭(계획 Task 10 Step 4). 넓은 창에서 보고문이 한 줄 100자를 넘어 읽기가
         무너진다 — 읽히는 말(완료 보고)이 이 열에 살기 때문에 `ch` 로 상한을 둔다.
@@ -297,7 +429,48 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               것이라는 사실을 회귀선이 클래스 문자열로 더듬지 않게 한다. 아바타(`Identity`)도
               handle 을 sr-only 로 내보내므로 글자로 찾으면 두 곳이 걸려, 이름줄이 다른
               사람을 가리키게 되어도 테스트가 무엇을 봤는지 말하지 못한다(#329). */}
-          <span data-testid="author-name" className="font-semibold">{author?.handle ?? '…'}</span>
+          {/* **이름줄단 15px.** 4단(17 / 15 / 13 / 11)에서 둘째 단의 이름이 그대로
+              "이름줄"이고, 그 이름이 가리키는 자리가 여기다 — 이 줄까지 본문단으로 두면
+              4단이 실제로는 3단이 되고(15px 을 쓰는 자리가 하나도 없었다), 대화가 한
+              덩어리로 흐른다. 같은 줄의 시각·배지는 아랫단 11px 이라 한 줄 안에 세 단이
+              아니라 두 단이 선다: **누가**(15)와 **곁정보**(11), 본문은 그 아래 13. */}
+          {/* 이름은 **누를 수 있다** — `@handle` 을 누르는 것과 같은 곳으로 간다.
+              글자 크기·굵기는 위 문단이 정한 그대로이고(15px 이름줄), 누를 수 있다는
+              것은 hover 밑줄과 커서로만 말한다: 여기에 색을 칠하면 이름마다 강조가
+              하나씩 서서 정작 나를 막는 말의 색이 죽는다(규칙 04, #488 B2). */}
+          {authorOpen ? (
+            <button
+              type="button"
+              data-testid="author-name"
+              className="cursor-pointer text-name font-semibold hover:underline"
+              title={model ? `모델 ${model.id}` : undefined}
+              // 접근 가능한 이름 앞에 **작성자**를 붙인다. 자기 이름을 부르는 말
+              // (`@someone` 이 쓴 "@someone 확인했다")에서는 이름줄 버튼과 본문 멘션 칩이
+              // 같은 곳으로 가는 **다른 두 자리**인데, 이름이 같으면 스크린리더 사용자는
+              // 목록에 뜬 둘 중 어느 것이 어디인지 알 수 없다(회귀선이 실제로 그 충돌로
+              // 빨개졌다: `mentionClick.test.tsx` 의 `getByRole` 이 둘을 찾았다).
+              aria-label={`작성자 ${authorOpen.label}`}
+              onClick={authorOpen.run}
+            >{author?.handle ?? '…'}</button>
+          ) : (
+            <span
+              data-testid="author-name"
+              className="text-name font-semibold"
+              title={model ? `모델 ${model.id}` : undefined}
+            >{author?.handle ?? '…'}</span>
+          )}
+          {/* 설정과 어긋난 모델(#600). 배지가 아니라 **경고**다 — 이 자리에 무언가 서 있는
+              것 자체가 "확인해 봐라"는 뜻이고, 무엇을 확인하는지는 hover 가 말한다.
+              설정값을 적지 않는 이유는 서버가 그것을 안 싣기 때문이다(admin·소유자만 보는
+              값이다 — `shared/src/index.ts` 의 `ModelMeta`). */}
+          {model?.mismatch && (
+            <span
+              data-testid="model-mismatch"
+              className="text-meta text-warning"
+              title={`설정된 모델과 다른 계열이다 — 이 말은 ${model.id} 로 했다`}
+              aria-label={`설정된 모델과 다르다: ${model.id}`}
+            >⚠️</span>
+          )}
           {/*
             **여기에 배지가 있었다**(🤖 + 소유자 핸들). 뺐다 — identity 문서:
             *"이름 옆 배지와 소유자 핸들은 뺀다. 아바타만으로 누가 에이전트인지 알 수
@@ -321,13 +494,47 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               (TerminalChip 이 판정한다) — 이름줄에 두는 이유는 소유자 배지와 같다:
               32px 거터에 넣으면 넘친다(#277). */}
           <TerminalChip account={author} message={message} />
-          {avcsType && <span className="rounded bg-warning-surface-strong px-1 text-[11px] text-warning">{avcsType}</span>}
-          <span className="text-[11px] text-fg-muted">{time}</span>
-          {message.editedAt && <span className="text-[11px] text-fg-muted">(edited)</span>}
+          {/* #624 요구 1: 스레드에서 **채널에도** 함께 보낸 답. 스레드 안에서 이 사실이
+              보여야 한다 — 안 보이면 "우리끼리 한 말"로 읽고 다음 말을 고르게 된다.
+              채널 쪽 사본에는 이 표시를 달지 않는다: 거기서 필요한 것은 반대 사실
+              (**어느 스레드에서 왔는가**)이고, 본문 위의 출처 줄이 그것을 말한다.
+              배지이지 링크가 아니다 — 이미 그 스레드 안이라 갈 곳이 없다. */}
+          {inThread && message.alsoInChannel && message.threadRootId && (
+            <span data-testid="channel-echo-mark" className="text-meta text-fg-subtle">
+              #↵ {t('message.channelEcho')}
+            </span>
+          )}
+          {avcsType && <span className="rounded bg-warning-surface-strong px-1 text-meta text-warning">{avcsType}</span>}
+          <span className="text-meta text-fg-muted">{time}</span>
+          {message.editedAt && <span className="text-meta text-fg-muted">(edited)</span>}
         </div>
 
         {draft === null ? (
           <>
+            {/* #624 요구 2: 채널에 함께 올라온 답은 **어느 스레드에서 왔는지**를 본문
+                **위에** 달고 간다. 아래에 두면 앞뒤 없는 말을 먼저 읽고 나서 출처를 알게
+                되는데, 이 사본이 필요한 정보는 읽기 전에 필요한 것이다.
+                뿌리 본문 미리보기는 편의이고(없을 수 있다) 링크는 필수다 — 미리보기가
+                없다고 링크를 지우면 이 사본이 앞뒤를 되찾을 길이 사라진다. */}
+            {!inThread && message.alsoInChannel && message.threadRootId && (
+              <button
+                data-testid="thread-origin-link"
+                // 아래 "최근 댓글 보기"와 **같은 처리**를 받는다(#488 B2): 스레드로 가는
+                // 링크이지 나를 막는 말이 아니므로 색이 아니라 점선 밑줄이 링크임을 말한다.
+                className="mb-0.5 -mx-1 flex max-w-full items-baseline gap-1 rounded px-1 py-0.5
+                           text-meta text-fg-muted hover:bg-surface-hover"
+                onClick={() => void getController().openThread(message.threadRootId!)}
+                // 미리보기는 화면에서 접히므로(`truncate`) 귀로 듣는 쪽에는 온전히 실어 준다.
+                aria-label={rootPreview ? `${t('message.threadOrigin')}: ${rootPreview}` : t('message.threadOrigin')}
+              >
+                <span className="shrink-0">{t('message.threadOrigin')}{rootPreview ? ':' : ''}</span>
+                {rootPreview && (
+                  <span className="truncate font-medium underline decoration-dotted underline-offset-2">
+                    {rootPreview}
+                  </span>
+                )}
+              </button>
+            )}
             {shownBody.trim() && <MessageBody body={shownBody} messageId={message.id} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
             {/* 선택지는 본문 **바로 아래**에 붙는다 — 답할 자리가 말 옆에 있어야 한다(규칙 05).
                 형식을 못 알아보면 `AskCard` 가 스스로 아무것도 그리지 않는다. */}
@@ -338,7 +545,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
             <ReportCard message={message} inThread={inThread} />
             {skillSlug && onOpenSettings && (
               <button
-                className="mt-1 rounded-lg border border-border px-2 py-1 text-[11px] font-medium
+                className="mt-1 rounded-lg border border-border px-2 py-1 text-meta font-medium
                            text-fg hover:bg-surface-hover"
                 onClick={() => onOpenSettings('skills', skillSlug)}
               >
@@ -364,8 +571,10 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 올리는 순간 #143 이 그대로 되살아나기 때문이다.
                 (#396: 답글이 **없을 때**의 진입점은 애초에 호버에서만 보이는 툴바 아이콘이라
                 조건이 툴바와 같다 — 같은 조건끼리는 서로 덮을 대상이 없으므로 이 경고는
-                적용되지 않는다. 답글 요약은 여전히 절대 툴바로 올리지 않는다.) */}
-            {!inThread && message.replyCount !== null && (
+                적용되지 않는다. 답글 요약은 여전히 절대 툴바로 올리지 않는다.)
+                이 자리는 **답글이 있을 때만**(`hasReplies`) 그린다 — `0` 이면 `0 replies` 가
+                되어 문서가 금지한 글자가 된다. 근거는 `hasReplies` 정의 주석에 있다. */}
+            {!inThread && hasReplies && (
               <button
                 // 답글이 달린 메시지는 호버 없이도 그 사실이 보여야 한다(#161). 답글이 없을
                 // 때만 호버로 드러나되, visibility 가 아니라 opacity 로 숨긴다 —
@@ -383,7 +592,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 // 파란 상자가 줄줄이 서서 본문보다 먼저 눈에 띄었다. Slack 처럼 참여자 얼굴 +
                 // 강조색 텍스트 링크로만 두고, 면은 hover 에서만 옅게 깔아 클릭 대상임을 알린다.
                 className="mt-0.5 self-start -mx-1 flex items-center gap-1.5 rounded px-1 py-0.5
-                           text-[11px] hover:bg-surface-hover"
+                           text-meta hover:bg-surface-hover"
                 onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
                 /*
                   **상태를 라벨에도 싣는다.** `aria-label` 은 자식 글자를 **덮어쓰므로**,
@@ -459,19 +668,23 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 "뭔가 달린 메시지"처럼 보였다. 진입점은 호버 툴바의 아이콘으로 옮겼다
                 (아래 우상단 열, message toolbar 안). */}
             {/* #231: alsoInChannel 메시지는 채널에도 보이므로 스레드에서 왔을 때가 아니라
-                채널에서 볼 때 이 버튼이 필요하다. "View in thread" 로 표시한다. */}
+                채널에서 볼 때 이 버튼이 필요하다.
+                #624 요구 3: 문구와 목적지를 바꾼다. 위의 출처 줄이 이미 "어느 스레드인가"에
+                답하므로, 같은 자리에 스레드 **머리**로 가는 링크를 하나 더 두면 두 링크가
+                같은 곳으로 간다. 이 버튼이 답하는 질문은 다른 것이다 — **이 말 뒤에 무슨
+                말이 더 있었나.** 그래서 뿌리가 아니라 이 메시지 자리에 세운다. */}
             {!inThread && message.alsoInChannel && message.threadRootId && (
               <button
                 // #424: 답글 요약과 같은 자리에 서는 링크이므로 상자도 함께 벗긴다 —
                 // 한쪽만 상자면 두 진입점이 다른 종류처럼 보인다.
                 // #488 B2: 답글 요약과 **같은 처리**를 받는다 — 스레드로 가는 링크이지
                 // 나를 막는 말이 아니다. 색 대신 점선 밑줄이 링크임을 말한다.
-                className="mt-0.5 self-start -mx-1 rounded px-1 py-0.5 text-[11px] font-medium
+                className="mt-0.5 self-start -mx-1 rounded px-1 py-0.5 text-meta font-medium
                            text-fg-muted underline decoration-dotted underline-offset-2
                            hover:bg-surface-hover"
-                onClick={() => void getController().openThread(message.threadRootId!)}
+                onClick={() => void getController().openThread(message.threadRootId!, message.id)}
               >
-                View in thread
+                {t('message.recentReplies')}
               </button>
             )}
           </>
@@ -488,8 +701,8 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               }}
             />
             <div className="flex gap-1">
-              <button className="rounded border border-border px-1.5 text-[11px] text-fg-muted" onClick={save}>Save</button>
-              <button className="rounded border border-border px-1.5 text-[11px] text-fg-muted" onClick={() => setDraft(null)}>Cancel</button>
+              <button className="rounded border border-border px-1.5 text-meta text-fg-muted" onClick={save}>Save</button>
+              <button className="rounded border border-border px-1.5 text-meta text-fg-muted" onClick={() => setDraft(null)}>Cancel</button>
             </div>
           </div>
         )}
@@ -504,13 +717,16 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
           <div role="group" aria-label="message toolbar" className={`absolute right-2 top-1 flex items-center gap-0.5 rounded border border-border bg-surface-raised px-1 py-0.5 shadow-sm ${hoverOnly}`}>
             <InlineReactionButtons message={message} />
             <ReactionPicker message={message} />
-            {/* #396: 답글이 아직 없는 메시지(replyCount === null)의 스레드 진입점.
+            {/* #396: 답글이 아직 **없는** 메시지의 스레드 진입점.
                 답글이 달리면 본문 열의 답글 요약(위쪽, #161)이 상시 노출로 이 역할을 대신하므로
                 그때는 여기 그리지 않는다 — 같은 진입을 두 곳에 두지 않는다. inThread 에서는
                 스레드 안에서 또 스레드를 열 수 없으므로 아예 그리지 않는다(바깥 조건이 막는다).
                 아이콘은 💬 를 쓰지 않는다 — 그건 에이전트 상태 신호 이모지라(#144,
-                STATUS_SIGNAL_EMOJI) 사람이 누르는 버튼에 쓰면 신호의 뜻이 무너진다. */}
-            {!inThread && message.replyCount === null && (
+                STATUS_SIGNAL_EMOJI) 사람이 누르는 버튼에 쓰면 신호의 뜻이 무너진다.
+                조건이 `replyCount === null` 이었으나 **`0` 을 빠뜨렸다** — 서버는 답글 없는
+                루트에 `0` 을 주므로 정작 이 아이콘이 가장 필요한 메시지에서 사라졌다.
+                `!hasReplies` 로 `null` 과 `0` 을 함께 받는다(정의 주석 참고). */}
+            {!inThread && !hasReplies && (
               <button
                 className={iconBtn}
                 title="스레드에 답글 달기"
@@ -520,24 +736,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 ↩
               </button>
             )}
-            {confirmingDelete ? (
-              // 삭제는 되돌릴 수 없으니 한 번 더 묻는다. 확인은 **메뉴 밖**에 둔다 — 메뉴 안에
-              // 두면 항목을 누르는 순간 메뉴가 닫히면서 확인 단계가 사라진다.
-              <>
-                <button
-                  className="rounded border border-danger-border bg-danger-surface px-1.5 text-[11px] text-danger"
-                  onClick={() => { setConfirmingDelete(false); void getController().deleteMessage(message.id); }}
-                >
-                  Really delete
-                </button>
-                <button
-                  className="rounded border border-border px-1.5 text-[11px] text-fg-muted"
-                  onClick={() => setConfirmingDelete(false)}
-                >
-                  Keep
-                </button>
-              </>
-            ) : (
+            {
               // 항목이 하나도 없으면 트리거를 만들지 않는다 — 열어도 비어 있는 메뉴는
               // "할 수 있는 게 있다"는 거짓 신호다(design.md §4).
               //
@@ -555,10 +754,29 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                   placement="bottom"
                 />
               )
-            )}
+            }
           </div>
         )}
       </div>
+
+      {/* 삭제는 되돌릴 수 없으니 한 번 더 묻는다. 확인은 **툴바 밖 겹창**이다 — 툴바 안에
+          두면 (1) 확인 버튼이 들어오면서 아이콘들이 밀려 커서 아래에서 버튼이 갈리고,
+          (2) 툴바가 호버로만 보이는 탓에 커서가 행을 벗어나는 순간 질문이 조용히 사라진다.
+          겹창은 무엇을 지우는지 본문째 보여 주기까지 한다(`ConfirmDialog` 주석). */}
+      {confirmingDelete && (
+        <ConfirmDialog
+          title="Delete message?"
+          // 본문이 빈 메시지(첨부만 올린 것)에서는 미리보기를 아예 그리지 않는다 —
+          // 빈 상자는 "본문이 이렇다"가 아니라 "못 읽었다"로 보인다.
+          detail={deletePreview === '' ? undefined : (
+            <span className="line-clamp-3 whitespace-pre-wrap break-words">{deletePreview}</span>
+          )}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => { setConfirmingDelete(false); void getController().deleteMessage(message.id); }}
+          onCancel={() => setConfirmingDelete(false)}
+        />
+      )}
     </div>
   );
 }
@@ -584,7 +802,7 @@ function AudienceBadge({ message }: { message: MessageRow }) {
     <span
       data-testid="audience-badge"
       data-for-me={forMe}
-      className={`rounded px-1 text-[11px] font-medium ${
+      className={`rounded px-1 text-meta font-medium ${
         forMe ? 'bg-accent-surface text-state-turn' : 'text-fg-agent'
       }`}
     >

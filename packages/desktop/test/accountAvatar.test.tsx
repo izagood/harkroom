@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Identity, resetAvatarCache } from '../src/components/Identity';
 import { MessageItem } from '../src/components/MessageItem';
 import { ProfileSettings } from '../src/components/settings/ProfileSettings';
 import { acc, msg } from './helpers/fakeApi';
+import { ApiError } from '../src/lib/api';
 
 const fakeController = (over: Partial<Controller> = {}) => {
   const c = {
@@ -58,19 +59,43 @@ describe('#159 아바타 표시', () => {
     expect(c.fetchAvatar).not.toHaveBeenCalled();
   });
 
-  it('에이전트는 사진을 받지 않고 글리프 폴백 그대로다', async () => {
-    // 에이전트는 스스로 올릴 수단이 없다(#159 범위 밖). 그 자리는 #146 의 글리프가 지킨다.
+  /**
+   * Task 15-4 로 소유자가 에이전트에 사진을 걸 수 있게 됐다. 쓰기 경로(라우트·api·컨트롤러·
+   * 설정 화면)만 생기고 **읽는 자리**가 사람으로 좁혀진 채 남아, 올린 사진이 DB 에만 있고
+   * 화면에는 영영 안 나왔다. 회귀선을 여기 둔다 — 걸린 자리는 `Identity` 한 곳이다.
+   */
+  it('에이전트도 사진을 걸면 사진을 그린다', async () => {
     const c = fakeController();
-    render(<Identity account={acc('u3', 'bot', 'agent', false, { avatarAttachmentId: 'att-9' })} />);
+    render(<Identity account={acc('u3', 'bot', 'agent', false, { avatarAttachmentId: 'att-9' })} variant="avatar" />);
+
+    const img = await screen.findByTestId('identity-avatar');
+    expect(img.getAttribute('src')).toMatch(/^blob:/);
+    expect(c.fetchAvatar).toHaveBeenCalledWith('u3');
+  });
+
+  it('사진이 없는 에이전트는 이니셜 폴백 그대로다', async () => {
+    const c = fakeController();
+    render(<Identity account={acc('u3', 'bot', 'agent')} variant="avatar" />);
 
     expect(screen.queryByTestId('identity-avatar')).toBeNull();
-    expect(screen.getByText('에이전트')).toBeTruthy();
+    expect(screen.getByText('B')).toBeTruthy();
+    expect(c.fetchAvatar).not.toHaveBeenCalled();
+  });
+
+  it('badge 자리는 아무것도 그리지 않고 바이트도 받지 않는다', async () => {
+    // 사진이 서는 자리는 `avatar` 다. 이 자리는 이제 **아무것도** 그리지 않으므로(#455)
+    // 받아 봐야 그릴 곳이 없다 — 목록 하나가 계정 수만큼 왕복을 내는 것을 막는다.
+    const c = fakeController();
+    const { container } = render(<Identity account={acc('u3', 'bot', 'agent', false, { avatarAttachmentId: 'att-9' })} />);
+
+    expect(container.textContent).toBe('');
+    expect(screen.queryByTestId('identity-avatar')).toBeNull();
     expect(c.fetchAvatar).not.toHaveBeenCalled();
   });
 
   it('모르는 계정은 물음표 폴백 그대로다', async () => {
     fakeController();
-    render(<Identity account={undefined} />);
+    render(<Identity account={undefined} variant="avatar" />);
     expect(screen.queryByTestId('identity-avatar')).toBeNull();
     expect(screen.getByText('알 수 없는 계정')).toBeTruthy();
   });
@@ -114,7 +139,8 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     const file = new File(['png-bytes'], 'me.png', { type: 'image/png' });
     fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
 
-    await waitFor(() => expect(c.setAvatar).toHaveBeenCalledWith(file));
+    // 진행률 콜백이 2번째 인자로 함께 간다 — 그것이 막대가 차오르는 근거다.
+    await waitFor(() => expect(c.setAvatar).toHaveBeenCalledWith(file, expect.any(Function)));
   });
 
   it('지우기는 명시적 null 로 간다', async () => {
@@ -124,7 +150,79 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     render(<ProfileSettings onSignOut={() => {}} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
-    await waitFor(() => expect(c.setAvatar).toHaveBeenCalledWith(null));
+    fireEvent.click(await screen.findByRole('button', { name: '정말 지우기' }));
+    await waitFor(() => expect(c.setAvatar).toHaveBeenCalledWith(null, undefined));
+  });
+
+  /**
+   * 지우기는 **되돌릴 수 없다**(원본 바이트가 남지 않는다). 그런데 한 걸음이었다 —
+   * 스친 클릭 하나로 사진이 사라졌고, 사라진 뒤에도 아무 말이 없어 눌린 것인지조차
+   * 알 수 없었다. 회귀선을 여기 둔다: **첫 클릭은 아무것도 지우지 않는다.**
+   */
+  it('첫 클릭은 확인만 묻는다 — 사진을 지우지 않는다', async () => {
+    const c = fakeController();
+    useAppStore.getState().set({ me: withPhoto('u1', 'me') });
+    render(<ProfileSettings onSignOut={() => {}} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+
+    expect(await screen.findByRole('button', { name: '정말 지우기' })).toBeTruthy();
+    expect(c.setAvatar).not.toHaveBeenCalled();
+
+    // 취소하면 원래 자리로 돌아간다 — 확인 버튼이 남아 있으면 다음 클릭이 지운다.
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+    expect(screen.queryByRole('button', { name: '정말 지우기' })).toBeNull();
+    expect(c.setAvatar).not.toHaveBeenCalled();
+  });
+
+  it('지운 뒤에는 지웠다고 말한다', async () => {
+    const c = fakeController();
+    useAppStore.getState().set({ me: withPhoto('u1', 'me') });
+    render(<ProfileSettings onSignOut={() => {}} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    fireEvent.click(await screen.findByRole('button', { name: '정말 지우기' }));
+
+    await waitFor(() => expect(c.setAvatar).toHaveBeenCalled());
+    expect((await screen.findByTestId('avatar-done')).textContent).toMatch(/지웠습니다/);
+  });
+
+  /**
+   * 진행률이 이 고침의 요점이다. 전에는 사진을 고른 뒤 화면에 생기는 변화가 **버튼이
+   * 흐려지는 것 하나**였고, 큰 파일에서는 사람이 그것을 오류로 읽었다("올라가지 않는다").
+   * 실제로는 가는 중이었다.
+   */
+  it('올리는 동안 막대가 차오르고, 끝나면 바꿨다고 말한다', async () => {
+    let report: ((f: number) => void) | undefined;
+    let finish: (() => void) | undefined;
+    const setAvatar = vi.fn((_f: File | null, onProgress?: (f: number) => void) => {
+      report = onProgress;
+      return new Promise<void>((res) => { finish = () => res(); });
+    });
+    fakeController({ setAvatar: setAvatar as unknown as Controller['setAvatar'] });
+    useAppStore.getState().set({ me: acc('u1', 'me') });
+    render(<ProfileSettings onSignOut={() => {}} />);
+
+    const file = new File(['png-bytes'], 'me.png', { type: 'image/png' });
+    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
+
+    // 아직 한 바이트도 안 갔다 — 비율을 모르는 구간이다. 0% 라고 쓰면 거짓이 된다.
+    const bar = await screen.findByTestId('avatar-progress');
+    expect(bar.getAttribute('aria-valuenow')).toBeNull();
+
+    await act(async () => { report?.(0.4); });
+    expect(screen.getByTestId('avatar-progress').getAttribute('aria-valuenow')).toBe('40');
+    expect(screen.getByTestId('avatar-uploading').textContent).toMatch(/40%/);
+
+    // 바이트가 다 갔지만 서버가 아직 저장 중이다. 100% 에서 멈춘 막대는 실패로 보이므로
+    // **문구가 바뀌어야** 한다.
+    await act(async () => { report?.(1); });
+    expect(screen.getByTestId('avatar-uploading').textContent).toMatch(/적용 중/);
+
+    await act(async () => { finish?.(); });
+    expect((await screen.findByTestId('avatar-done')).textContent).toMatch(/바꿨습니다/);
+    // 끝난 뒤 막대를 남겨 두면 다음 조작 옆에서 '지금 올리는 중'으로 읽힌다.
+    expect(screen.queryByTestId('avatar-progress')).toBeNull();
   });
 
   it('사진이 없으면 지우기 버튼이 없다', () => {
@@ -139,8 +237,10 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
    * `sr-only` 로만 내면 스크린리더가 아닌 사람에게는 '아무 일도 일어나지 않은 것'과
    * 구분되지 않는다 — 버튼이 잠깐 눌렸다 풀리고 사진은 그대로다.
    */
-  it('서버가 거절하면 보이는 오류를 낸다', async () => {
-    fakeController({ setAvatar: vi.fn(async () => { throw new Error('400'); }) });
+  it('서버가 거절하면 보이는 오류를 낸다 — 무엇을 고를 수 있는지까지 말한다', async () => {
+    fakeController({
+      setAvatar: vi.fn(async () => { throw new ApiError(400, 'not_an_image', 'nope'); }),
+    });
     useAppStore.getState().set({ me: acc('u1', 'me') });
     render(<ProfileSettings onSignOut={() => {}} />);
 
@@ -148,9 +248,58 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
 
     const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toMatch(/이미지 파일만/);
+    // "안 된다"만 말하고 끝나면 사람은 다음에 무엇을 고를지 모른 채 같은 실패를 반복한다.
+    expect(alert.textContent).toMatch(/PNG/);
+    expect(alert.textContent).toMatch(/SVG/);
     // 화면에서 감춰 두면 낸 것이 아니다.
     expect(alert.className).not.toMatch(/sr-only/);
+  });
+
+  it('큰 SVG 를 "SVG 만 쓸 수 있습니다"로 되돌려 보내지 않는다', async () => {
+    // 서버는 SVG 만 상한이 낮다(검사에 파일 전체를 읽어야 한다). 이유를 `not_an_image` 로
+    // 뭉개면 SVG 를 들고 있는 사람이 "SVG 를 쓰세요"를 듣고, 고칠 방법을 못 찾는다.
+    fakeController({
+      setAvatar: vi.fn(async () => { throw new ApiError(400, 'svg_too_large', 'too big'); }),
+    });
+    useAppStore.getState().set({ me: acc('u1', 'me') });
+    render(<ProfileSettings onSignOut={() => {}} />);
+
+    const file = new File(['<svg/>'], 'big.svg', { type: 'image/svg+xml' });
+    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/256 KiB/);
+    // 형식 목록을 다시 읊으면 "내 파일이 SVG 가 아닌가?" 로 읽힌다.
+    expect(alert.textContent).not.toMatch(/PNG · JPEG/);
+  });
+
+  it('연결이 끊긴 것을 파일 탓으로 말하지 않는다', async () => {
+    // 예전에는 무엇이 실패했든 "이미지 파일만 쓸 수 있습니다" 하나였다 — 서버가 죽어 있어도
+    // 사람은 자기 파일을 의심하며 다른 파일로 몇 번을 다시 시도하게 된다.
+    fakeController({ setAvatar: vi.fn(async () => { throw new TypeError('Failed to fetch'); }) });
+    useAppStore.getState().set({ me: acc('u1', 'me') });
+    render(<ProfileSettings onSignOut={() => {}} />);
+
+    const file = new File(['png-bytes'], 'me.png', { type: 'image/png' });
+    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/연결/);
+    expect(alert.textContent).not.toMatch(/PNG/);
+  });
+
+  it('SVG 를 파일 창에서 고를 수 있다', async () => {
+    // 화면이 서버보다 좁으면 SVG 는 파일 창에서 회색으로 죽고, **고를 수 없는 파일은 오류
+    // 메시지도 못 낸다** — 사람에게는 버튼을 눌렀는데 아무 일도 없는 것으로 보인다.
+    const c = fakeController();
+    useAppStore.getState().set({ me: acc('u1', 'me') });
+    render(<ProfileSettings onSignOut={() => {}} />);
+
+    expect(screen.getByTestId('avatar-file').getAttribute('accept')).toContain('image/svg+xml');
+
+    const file = new File(['<svg/>'], 'me.svg', { type: 'image/svg+xml' });
+    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
+    await waitFor(() => expect(c.setAvatar).toHaveBeenCalledWith(file, expect.any(Function)));
   });
 
   it('읽기 전용 안내가 사진은 바꿀 수 있다고 말한다', () => {

@@ -5,7 +5,7 @@ import type { RunnerState } from '../../lib/runnerLauncher';
 // B1 의 세 얼굴 규칙은 `lib/faceState.ts` 하나가 낸다 — DM 목록도 같은 판정을 쓴다
 // (`docs/desktop-rail.html` 2단계). 여기 사본을 두면 두 화면이 같은 러너를 다르게 그린다.
 // `isStopping` 은 **격자만** 부른다 — 사이드바가 그 값을 받을 수 없는 이유가 그 함수 주석에 있다.
-import { faceState, isStopping } from '../../lib/faceState';
+import { faceState, faceTakesRelaunch, isFaceGreyed, isStopping } from '../../lib/faceState';
 // 뒤처짐 판정도 **이미 있는 것을 그대로 쓴다**(`lib/runnerVersions.ts`). 그 규칙
 // (*"모르는 것을 뒤처졌다고 하지 않는다"*)을 칩에서 다시 적으면 일괄 재기동 띠와 카드가
 // 서로 다른 대상을 고르고, 그 어긋남은 조용하다 — 그 모듈 주석이 정확히 그것을 경고한다.
@@ -331,8 +331,8 @@ const GLYPH_FOCUS = 'outline-none focus-visible:opacity-100 focus-visible:outlin
 function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-2">
-      <span className="w-9 shrink-0 text-[11px] text-fg-subtle">{label}</span>
-      <span className="min-w-0 flex-1 text-[11px] text-fg-muted">{children}</span>
+      <span className="w-9 shrink-0 text-meta text-fg-subtle">{label}</span>
+      <span className="min-w-0 flex-1 text-meta text-fg-muted">{children}</span>
     </div>
   );
 }
@@ -400,7 +400,7 @@ function VersionChip({ handle, runnerVersion, appVersion, onRelaunch }: {
       <span
         data-testid={`agent-version-${handle}`}
         data-version="unknown"
-        className="inline-block rounded border border-dashed border-border px-1.5 py-px text-[11px] text-fg-subtle"
+        className="inline-block rounded border border-dashed border-border px-1.5 py-px text-meta text-fg-subtle"
       >
         버전 모름
       </span>
@@ -414,7 +414,7 @@ function VersionChip({ handle, runnerVersion, appVersion, onRelaunch }: {
       <span
         data-testid={`agent-version-${handle}`}
         data-version="current"
-        className="inline-block rounded bg-surface-sunken px-1.5 py-px text-[11px] text-fg-muted"
+        className="inline-block rounded bg-surface-sunken px-1.5 py-px text-meta text-fg-muted"
       >
         {runnerVersion}
       </span>
@@ -437,7 +437,7 @@ function VersionChip({ handle, runnerVersion, appVersion, onRelaunch }: {
     쪼개지면 뜻이 흐려지는 원자값이다(버전 · 구분점 · 판정 · 손잡이가 한 덩어리다).
   */
   const shape = 'inline-block whitespace-nowrap rounded border border-warning-border'
-    + ' bg-warning-surface px-1.5 py-px text-[11px] text-warning';
+    + ' bg-warning-surface px-1.5 py-px text-meta text-warning';
   if (!onRelaunch) {
     return (
       <span data-testid={`agent-version-${handle}`} data-version="stale" className={shape}>
@@ -609,14 +609,14 @@ export function AgentGrid<T extends AgentCardSubject>({
           <input
             data-testid="agent-search"
             aria-label="에이전트 검색"
-            className="w-full rounded-lg border border-border bg-field py-2 pl-8 pr-14 text-sm
+            className="w-full rounded-lg border border-border bg-field py-2 pl-8 pr-14
                        text-fg placeholder-fg-subtle"
             placeholder="이름으로 찾기"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
           {/* 개수는 **검색창 안**이다(목업) — 몇 개를 뒤지고 있는지가 찾기 전에 보여야 한다. */}
-          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-fg-subtle">
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-meta text-fg-subtle">
             {shown.length}개
           </span>
         </div>
@@ -677,7 +677,7 @@ export function AgentGrid<T extends AgentCardSubject>({
                 <span aria-hidden="true" className={`${s.faceText} leading-none`}>+</span>
               </span>
             )}
-            <span className="text-[11px] text-fg-muted">새 에이전트</span>
+            <span className="text-meta text-fg-muted">새 에이전트</span>
           </button>
         )}
 
@@ -855,7 +855,7 @@ export function AgentGrid<T extends AgentCardSubject>({
                       되어 "이미 멈췄다"로 읽히는데, 그 러너는 아직 턴을 돌리고 있을 수 있다.
                       같은 필터를 절반 세기로 쓴다 — 새 회색을 하나 더 만들지 않는다. */}
                   <span
-                    className={face === 'stopped' || face === 'unknown'
+                    className={isFaceGreyed(face)
                       ? 'block grayscale brightness-[1.7] contrast-[0.55] opacity-90'
                       : stopping
                         ? 'block grayscale-[0.5] brightness-[1.35] contrast-[0.78] opacity-95'
@@ -877,19 +877,19 @@ export function AgentGrid<T extends AgentCardSubject>({
                 {place === 'settings' ? (
                   <span className="w-full">
                     <span
-                      className={`block w-full truncate text-center text-[13px] font-semibold ${
+                      className={`block w-full truncate text-center text-body font-semibold ${
                         face === 'ok' ? 'text-fg' : 'text-fg-subtle'
                       }`}
                     >
                       {a.displayName}
                     </span>
-                    <span className="block w-full truncate text-center text-[11px] text-fg-subtle">
+                    <span className="block w-full truncate text-center text-meta text-fg-subtle">
                       @{a.handle}
                     </span>
                   </span>
                 ) : (
                   <span
-                    className={`w-full truncate text-center text-[11px] ${
+                    className={`w-full truncate text-center text-meta ${
                       face === 'ok' ? 'text-fg' : 'text-fg-subtle'
                     }`}
                   >
@@ -964,9 +964,27 @@ export function AgentGrid<T extends AgentCardSubject>({
                   {stopping && (
                     <p
                       data-testid={`agent-stopping-${a.handle}`}
-                      className="mt-1 whitespace-normal text-[11px] text-warning"
+                      className="mt-1 whitespace-normal text-meta text-warning"
                     >
                       멈추는 중 · 러너가 아직 못 봤다
+                    </p>
+                  )}
+                  {/*
+                    **물러나는 중은 글자로 말한다**(2026-09-08 실측). 회색만으로는
+                    `stopped`(꺼졌다)와 구분되지 않고, 사람은 회색을 보면 켜려 한다 —
+                    `#443` 이 `unknown` 에 대해 세운 그 규율이다. 그날 이 자리에 읽을
+                    글자가 하나도 없었던 것이 오해의 절반이었다.
+
+                    `warning` 이 아니라 `accent` 인 이유: 실패가 아니라 **진행 중**이다.
+                    `RunnerStatus` 의 `TONE` 이 같은 판단으로 `restarting` 을 `accent` 에
+                    두고 있고, 같은 사실을 두 색으로 말하지 않는다.
+                  */}
+                  {face === 'retiring' && (
+                    <p
+                      data-testid={`agent-retiring-${a.handle}`}
+                      className="mt-1 whitespace-normal text-meta text-accent"
+                    >
+                      물러나는 중 · 진행 중인 턴을 끝내고 있다
                     </p>
                   )}
                 </div>
@@ -989,7 +1007,7 @@ export function AgentGrid<T extends AgentCardSubject>({
                   된다 — `#430` 의 중복이 바로 그 모양이었다. 모를 때 화면이 할 일은
                   행동을 권하는 것이 아니라 **모른다고 말하는 것**이다. */}
               {/* `canRelaunch` 를 안 준 호출자에게는 오늘 동작 그대로다(그 prop 주석). */}
-              {onRelaunch && (canRelaunch?.(a) ?? true) && face !== 'ok' && face !== 'unknown' && (
+              {onRelaunch && (canRelaunch?.(a) ?? true) && faceTakesRelaunch(face) && (
                 /*
                   **글리프는 사진 안에 있다**(문서: "실행하기 버튼도 사라진다 — 사진 안으로
                   들어간다"). 그래서 뱃지가 아니라 얼굴을 덮는 원이고, 평소에는 **옅게** 얹혀
@@ -1046,9 +1064,12 @@ export function AgentGrid<T extends AgentCardSubject>({
           );
         })}
 
-        {/* 검색 결과가 비었을 때. 목록이 비어 있는 것과 **못 찾은 것**은 다른 사실이다. */}
+        {/* 검색 결과가 비었을 때. 목록이 비어 있는 것과 **못 찾은 것**은 다른 사실이다.
+            크기를 안 적어 본문단 13px 을 물려받는다 — 그리드가 비면 이 한 줄이 그 자리의
+            내용 전부다. 카드 안의 꼬리표들이 아랫단이라고 이 줄까지 내리면, 아무것도
+            못 찾았을 때 화면에서 가장 작은 글자가 유일한 설명이 된다. */}
         {shown.length === 0 && (
-          <p className="col-span-full py-6 text-center text-xs text-fg-muted">
+          <p className="col-span-full py-6 text-center text-fg-muted">
             {query.trim() ? `"${query.trim()}" 에 맞는 에이전트가 없다` : '아직 에이전트가 없다'}
           </p>
         )}
@@ -1062,7 +1083,7 @@ export function AgentGrid<T extends AgentCardSubject>({
         <p
           key={a.id}
           data-testid={`agent-runner-failed-${a.id}`}
-          className="mt-2 whitespace-normal text-[11px] text-danger"
+          className="mt-2 whitespace-normal text-meta text-danger"
         >
           @{a.handle} 기동 실패{runnerStates[a.id]?.message ? ` — ${runnerStates[a.id]!.message}` : ''}
         </p>
@@ -1083,7 +1104,7 @@ export function AgentGrid<T extends AgentCardSubject>({
         <p
           key={a.id}
           data-testid={`agent-runner-harness-${a.id}`}
-          className="mt-2 whitespace-normal text-[11px] text-warning"
+          className="mt-2 whitespace-normal text-meta text-warning"
         >
           @{a.handle} {runnerStates[a.id]?.message ?? '하네스를 찾을 수 없다'}
         </p>
@@ -1103,7 +1124,7 @@ export function AgentGrid<T extends AgentCardSubject>({
         const unknown = shown.filter((a) => faceState(a.id, runnerStates, online, connected) === 'unknown');
         if (unknown.length === 0) return null;
         return (
-          <p data-testid="agent-presence-unknown" className="mt-2 whitespace-normal text-[11px] text-fg-muted">
+          <p data-testid="agent-presence-unknown" className="mt-2 whitespace-normal text-meta text-fg-muted">
             서버와 끊겨 {unknown.length}개 에이전트의 생사를 알 수 없다 — 마지막으로 본 상태이지 지금 상태가 아니다.
             다시 붙으면 갱신된다.
           </p>

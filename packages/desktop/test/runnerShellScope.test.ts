@@ -224,15 +224,20 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
     }
   });
 
-  it('`daemon_spawn_runner` 가 받는 파라미터가 agentId + env 값 세 개뿐이다 — 프로그램 경로·인자·cwd 가 아니다', () => {
+  it('`daemon_spawn_runner` 가 받는 파라미터가 agentId + env 값 네 개뿐이다 — 프로그램 경로·인자·cwd 가 아니다', () => {
     const match = mainRs.match(/fn daemon_spawn_runner\(([\s\S]*?)\)\s*->/);
     expect(match).not.toBeNull();
     const params = splitParams(match![1]!)
       // `state`(Tauri State)·`app`(Tauri AppHandle) 은 프레임워크가 채우는 값이지
       // 웹뷰의 입력이 아니다(아래 "webviewParams" 스위트가 같은 구분을 이미 쓰고 있다).
       .filter((p) => !p.startsWith('state:') && !p.startsWith('app:'));
+    // `agent_version` 이 여기 있는 것은 **값이 하나 더 늘었다**는 뜻일 뿐이다 — 이 목록이
+    // 지키는 성질(웹뷰가 프로그램·경로를 고르지 못한다)은 그대로다. 이 목록을 세 개로
+    // 고정해 두었던 동안 위층이 심은 `AGENT_VERSION` 이 이 칸에서 사라졌고, 그래서 모든
+    // 러너가 자기 버전을 `'unknown'` 으로 보고했다.
     expect(params.sort()).toEqual([
       'agent_id: String',
+      'agent_version: Option<String>',
       'murmur_pat: String',
       'murmur_url: String',
       'path: String',

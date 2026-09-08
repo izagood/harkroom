@@ -119,6 +119,47 @@ describe('컨트롤러 → 실행기 배선', () => {
   });
 
   /**
+   * `#443` — **관측이 스토어까지 흐른다.**
+   *
+   * 이 배선이 이 파일에 있어야 하는 이유는 이 파일 머리말 그대로다: `daemonFacts.test.tsx`
+   * 는 파싱과 판정과 렌더를 각각 잡지만, 스토어에 **아무도 밀어 넣지 않아도** 그 셋이 다
+   * 초록이다(렌더 회귀선이 `daemonRunners` 를 손으로 채우니까). 관측과 스토어 사이의
+   * 화살표는 컨트롤러를 실제로 기동해야만 보인다.
+   *
+   * 그리고 이 화살표가 **`runnerStates` 와 갈라져 있다**는 것도 여기서 잡는다 — 사실을
+   * 판정 안에 섞으면 실행기의 다음 `setState` 가 pid 를 지운다(`appStore.ts::daemonRunners`).
+   */
+  it('daemon 이 확인한 사실이 판정과 **나란히** 스토어에 오른다', async () => {
+    const observed = { ...liveRunner('rusalka'), pid: 48127, incarnationId: '3', termSentAtMs: null };
+    await boot([agentView('rusalka')], ['rusalka'], fakeDaemon([observed]));
+
+    // 사실은 사실 자리에.
+    expect(useAppStore.getState().daemonRunners.rusalka).toMatchObject({ pid: 48127, incarnationId: '3' });
+    // 판정은 판정 자리에, 그리고 **사실이 섞여 들어오지 않았다.**
+    expect(useAppStore.getState().runnerStates.rusalka!.status).toBe('adopted');
+    expect(useAppStore.getState().runnerStates.rusalka).not.toHaveProperty('pid');
+  });
+
+  it('장부에서 사라진 러너는 스토어에서도 사라진다 — 낡은 pid 를 남기지 않는다', async () => {
+    // 관측은 그 순간의 장부 **전체**다. 병합하면 이미 없는 러너의 pid 가 화면에 남고,
+    // 사람은 그 pid 로 `ps` 를 쳐 아무것도 못 찾는다(`controller.ts` 의 그 주석).
+    const { daemon, c } = await boot(
+      [agentView('rusalka')], ['rusalka'], fakeDaemon([{ ...liveRunner('rusalka'), pid: 48127 }]),
+    );
+    expect(useAppStore.getState().daemonRunners.rusalka!.pid).toBe(48127);
+
+    // 러너가 실제로 물러났다. `kill()` 이 이것을 자동으로 하지 않는 것이 의도다 —
+    // SIGTERM 은 graceful 이고 그 시차가 설계 전부다(`fakeDaemon.died` 주석).
+    daemon.died('rusalka');
+    // 다시 관측하게 만든다. **컨트롤러의 공개 표면으로** 부른다 — 실행기를 직접 잡으면
+    // 이 회귀선이 배선을 우회해 재고, 그것이 이 파일 머리말이 금지한 그 모습이다.
+    // 재기동은 종료를 확인하려 장부를 다시 읽는다(`awaitRunnerExit`).
+    await c.restartRunner('rusalka');
+
+    expect(useAppStore.getState().daemonRunners.rusalka).toBeUndefined();
+  });
+
+  /**
    * **배선 쪽 핵심 회귀선**(`#431` 2단계 A). 실측(2026-09-06, 두 번)이 재현하는 상황:
    * 다른 워크트리의 러너가 서버 presence 에 올라와 있고 내 daemon 장부에는 없다.
    *

@@ -3,6 +3,7 @@ import { createNotifier } from './lib/notify';
 import { sessionStore, type StoredCommunity } from './lib/session';
 import { useColorMode } from './lib/useColorMode';
 import { useNotificationOpen } from './lib/useNotificationOpen';
+import { useDockBadge } from './lib/useDockBadge';
 import { getActiveEntry } from './state/communities';
 import { getController, openNotificationTarget, startCommunitySession, type Controller } from './state/controller';
 import { ConnectScreen } from './screens/ConnectScreen';
@@ -44,6 +45,11 @@ export default function App() {
    * 여기서 그 순서를 다시 쓰지 않는다 — 링크 클릭(#178)과 갈릴 자리를 만들지 않는다.
    */
   useNotificationOpen((target) => { void openNotificationTarget(target); });
+  /**
+   * 독 아이콘의 미읽음 표시. `useNotificationOpen` 과 같은 이유로 **여기**다 — 미읽음은
+   * 부팅·접속·설정 화면에서도 늘고 줄어들고, `ready` 안쪽에 두면 그동안 배지가 굳는다.
+   */
+  useDockBadge();
   const [phase, setPhase] = useState<'boot' | 'connect' | 'ready'>('boot');
   // 설정은 세션 상태(phase)가 아니라 뷰다 — 그래서 별도 상태로 둔다.
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -138,8 +144,16 @@ export default function App() {
    * `#270` 이 OS 타이틀바를 없앤 것은 창 전역인데 손잡이는 `Workspace` 안에만 달렸기 때문이다.
    * 두 화면을 같은 띠로 감싸 이 갈래가 늘어나도 손잡이가 따라오게 한다.
    */
+  /*
+   * 글자 크기는 `Workspace`·`SettingsScreen` 과 **같은 본문단 13px** 이다.
+   *
+   * 여기에는 크기가 없었고, 그러면 이 두 화면(`boot`·`connect`)만 브라우저 기본값
+   * **16px** 로 그려진다 — 앱의 다른 화면은 14px(`Workspace` 의 `text-sm`)이었으니
+   * 로그인 화면이 혼자 한 단 크게 서 있었다. 실측으로 발견한 세 번째 뿌리다.
+   * 셋을 같은 값으로 맞추면 화면을 넘어가도 본문이 같은 크기로 남는다.
+   */
   const withDragStrip = (screen: ReactElement) => (
-    <div className="flex h-screen flex-col bg-surface-sunken">
+    <div className="flex h-screen flex-col bg-surface-sunken text-body">
       <WindowDragStrip />
       {/* 띠가 세로를 먹은 만큼 화면이 넘치지 않도록 나머지를 준다. */}
       <div className="min-h-0 flex-1">{screen}</div>

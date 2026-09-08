@@ -305,16 +305,17 @@ export const MENTION_TOKEN_PATTERN = '<@([0-9a-f-]{36})>';
  * 본문에서 불린 handle 들. 소문자로 정규화해 중복을 없앤다(`@fizz` 와 `@Fizz` 는 한 사람).
  * 패턴이 대문자를 이미 포함하므로 `i` 플래그는 필요하지 않다.
  *
- * 코드 블록(#298) 안의 `@handle` 은 무시한다 — `stripCodeSpans` 가 먼저 코드를 걷어낸다.
+ * 코드 블록(#298) 과 인용 줄(#592) 안의 `@handle` 은 무시한다 — `mentionScanText` 가 먼저
+ * 그 구간을 걷어낸다. 인용은 남의 말을 옮기는 자리이므로 부르는 것이 아니다.
  *
- * **순서가 결정이다: 코드 제거 → 멘션 추출 → 그룹 확장(#230)·채널 전체(#225).** 코드 제거가
+ * **순서가 결정이다: 코드·인용 제거 → 멘션 추출 → 그룹 확장(#230)·채널 전체(#225).** 코드 제거가
  * 맨 앞이므로 코드 안의 그룹 handle 은 애초에 `handles` 에 들어오지 못하고, 따라서 확장될
  * 기회도 없다 — 예외 처리가 아니라 순서에서 따라오는 결과다. 서버(`services/messages.ts`)의
  * 그룹 확장은 이 함수가 돌려준 목록만 훑으므로 그 순서가 코드로 강제된다.
  */
 export function mentionedHandles(body: string): string[] {
   const found = new Set<string>();
-  for (const m of stripCodeSpans(body).matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
+  for (const m of mentionScanText(body).matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
     if (m[2]) found.add(m[2].toLowerCase());
   }
   return [...found];
@@ -335,10 +336,14 @@ export function mentionedIds(body: string): string[] {
 /**
  * 본문의 `@handle`(**존재하는 계정만**)을 `<@id>` 로 정규화한다(#271). 저장 전에 한 번 돈다.
  *
- * **코드 구간은 건드리지 않는다**(#298). 판정은 `splitCode` 하나가 하고 여기서는 그것이
- * 내준 평문 조각의 원문 범위만 고쳐 쓴다 — 자기 정규식으로 코드를 다시 판정하면 규칙이
- * 두 벌이 되고, 갈라지는 순간 코드 블록 안의 `@handle` 이 저장 시 멘션이 되어 알림까지
- * 간다. `mentionedHandles` 가 같은 이유로 `stripCodeSpans` 를 지난다.
+ * **코드 구간과 인용 줄은 건드리지 않는다**(#298, #592). 판정은 `mentionRegions` 하나가 하고
+ * 여기서는 그것이 내준 조각의 원문 범위만 고쳐 쓴다 — 자기 정규식으로 다시 판정하면 규칙이
+ * 두 벌이 되고, 갈라지는 순간 코드·인용 안의 `@handle` 이 저장 시 멘션이 되어 알림까지
+ * 간다. `mentionedHandles` 가 같은 이유로 `mentionScanText` 를 지난다.
+ *
+ * 정규화하지 않은 자리의 `@handle` 은 **글자 그대로** 남는다. 그래서 인용을 옮겨 적은 본문은
+ * 저장된 뒤에도 사람이 쓴 모양 그대로 보인다 — `mentionedIds`(알림)도 `<@id>` 만 보므로
+ * 추출과 정규화가 같은 답을 낸다.
  *
  * 계정 목록을 순회하지 않고 **본문을 한 번** 훑는다. 순회하면 비용이 워크스페이스의 계정
  * 수에 비례하고, 그보다 나쁘게는 handle 을 정규식에 끼워 넣는 자리가 생긴다.
@@ -354,9 +359,8 @@ export function normalizeMentions(body: string, accountsMap: Map<string, string>
   if (!accountsMap.size) return body;
   const mention = new RegExp(MENTION_PATTERN, 'g');
   // 뒤에서부터 고친다 — 앞에서 고치면 뒤 조각의 원문 오프셋이 밀린다.
-  const plains = splitCode(body).filter((s): s is { kind: 'plain'; text: string; start: number } => s.kind === 'plain');
   let out = body;
-  for (const seg of [...plains].reverse()) {
+  for (const seg of mentionRegions(body).reverse()) {
     const replaced = seg.text.replace(mention, (whole, lead: string, handle: string) => {
       const id = accountsMap.get(handle.toLowerCase());
       return id ? `${lead}<@${id}>` : whole;
@@ -439,21 +443,62 @@ export function fillSystemAccount(body: string, handle: string | null): string {
 }
 
 /**
- * 본문에서 코드 구간을 걷어낸 나머지(#298). 멘션을 찾을 대상은 **이것뿐**이다.
+ * 인용 줄(#592). `> ` 로 시작하는 줄이고, 뒤의 공백 하나까지 표시로 먹는다.
+ *
+ * **이 판정이 여기 있는 이유:** 인용은 렌더러(데스크탑의 `quote` 블록)와 멘션 파서가 **같은
+ * 것**을 인용이라고 불러야 한다. 갈라지면 화면은 인용으로 그리는 줄이 저장 시에는 평문으로
+ * 취급되어 그 안의 `@handle` 이 알림을 보낸다 — `#298` 이 코드 블록에서 막은 것과 같은
+ * 거짓말이다. 그래서 `desktop/src/lib/markdown.ts` 는 자기 정규식을 갖지 않고 이것을 쓴다.
+ *
+ * 게으른 이어짐(`> a` 다음 줄의 `b`)은 인용이 아니다. 마크다운 표준은 그것을 인용에 붙이지만
+ * 데스크탑 렌더러는 `>` 가 없는 줄에서 인용을 끊으므로(`parseBlocks`), 여기서 표준을 따르면
+ * 화면과 판정이 다시 갈라진다.
+ */
+export const QUOTE_LINE = /^ {0,3}>[ \t]?(.*)$/;
+
+/**
+ * 멘션을 찾을 구간과 그 **원문 위치**. 코드(#298)와 인용 줄(#592)을 뺀 나머지다.
+ *
+ * 인용 범위를 원문의 **줄 단위로 먼저 잡고** 코드 구간과 교차시킨다. 코드 조각별로 인용을
+ * 다시 판정하면 `> 인용 ` + `` `코드` `` + ` @handle` 처럼 인라인 코드가 섞인 인용에서 첫
+ * 조각만 인용으로 보이고 뒤가 샌다 — 이 결함의 절반이 그 모양이다.
+ */
+function mentionRegions(body: string): { text: string; start: number }[] {
+  const quoted: [number, number][] = [];
+  let at = 0;
+  for (const line of body.split('\n')) {
+    if (QUOTE_LINE.test(line)) quoted.push([at, at + line.length]);
+    at += line.length + 1;
+  }
+
+  const out: { text: string; start: number }[] = [];
+  for (const seg of splitCode(body)) {
+    if (seg.kind !== 'plain') continue;
+    const end = seg.start + seg.text.length;
+    let cursor = seg.start;
+    for (const [qs, qe] of quoted) {
+      if (qe <= cursor || qs >= end) continue;
+      if (qs > cursor) out.push({ text: body.slice(cursor, qs), start: cursor });
+      cursor = Math.max(cursor, Math.min(end, qe));
+    }
+    if (cursor < end) out.push({ text: body.slice(cursor, end), start: cursor });
+  }
+  return out;
+}
+
+/**
+ * 본문에서 멘션을 찾을 평문(#298, #592). 멘션을 찾을 대상은 **이것뿐**이다 — 서버 알림,
+ * 데스크탑의 "부를 상대"(#278), 에이전트 교환 판정(`agentExchange.ts`)이 모두 이것을 지난다.
  *
  * 남은 조각을 개행으로 이어 붙인다. 개행은 handle 문자가 아니므로 `MENTION_PATTERN` 의
  * 선행 문자 조건에서 조각의 첫 글자가 `^` 와 같은 자격을 갖는다 — 조각을 따로 훑는 것과
- * 결과가 같고, 코드를 걷어낸 자리에서 두 조각이 붙어 없던 멘션이 생기는 일도 없다.
+ * 결과가 같고, 걷어낸 자리에서 두 조각이 붙어 없던 멘션이 생기는 일도 없다.
  *
- * 문자열 하나를 돌려주는 이유: 이 값을 쓰는 곳이 서버의 멘션 추출과 데스크탑의 "부를
- * 상대"(#278) 둘인데, 둘 다 정규식을 한 번 돌릴 평문이 필요할 뿐이다. 각자 세그먼트를
- * 이어 붙이게 두면 그 이어 붙이는 규칙이 다시 두 벌이 된다.
+ * 문자열 하나를 돌려주는 이유: 쓰는 곳은 모두 정규식을 한 번 돌릴 평문이 필요할 뿐이다.
+ * 각자 세그먼트를 이어 붙이게 두면 그 이어 붙이는 규칙이 다시 두 벌이 된다.
  */
-export function stripCodeSpans(body: string): string {
-  return splitCode(body)
-    .filter((seg): seg is { kind: 'plain'; text: string; start: number } => seg.kind === 'plain')
-    .map((seg) => seg.text)
-    .join('\n');
+export function mentionScanText(body: string): string {
+  return mentionRegions(body).map((r) => r.text).join('\n');
 }
 
 /**
@@ -620,7 +665,7 @@ export interface MessageRow {
   /** 스레드 루트에만 있음. 답글 작성자 목록 (중복 없음). */
   participantIds: string[] | null;
   /**
-   * 스레드 상태의 **재료**(Task 6 Step 2). 다섯 필드가 한 덩이로 움직인다 — 서버가 판정하지
+   * 스레드 상태의 **재료**(Task 6 Step 2). 이 필드들이 한 덩이로 움직인다 — 서버가 판정하지
    * 않고 사실만 싣는다.
    *
    * **왜 판정이 아니라 재료인가:** 판정은 화면의 순수 함수 `threadState()` 하나가 하고,
@@ -659,8 +704,28 @@ export interface MessageRow {
    * 집는다.
    */
   openAskLinks: OpenAskLink[] | null;
-  /** 이 스레드에 실패(`meta.kind === 'failure'`)가 몇 개 있는가. 0 이면 없다. */
+  /**
+   * 이 스레드에 실패(`meta.kind === 'failure'`)가 **몇 번 있었는가**. 0 이면 없다.
+   *
+   * **누적이다 — 상태가 아니다.** 화면이 이것으로 '막힘'을 칠하면 한 번 실패한 스레드는
+   * 그 뒤에 에이전트가 다시 붙어 잘 돌고 있어도 **영원히 붉다.** 판정에 쓸 것은
+   * 아래 `unresolvedFailureCount` 다. 이 값은 옛 서버와의 하위호환으로만 남아 있다.
+   */
   failureCount: number | null;
+  /**
+   * 그중 **아직 안 풀린** 실패의 수.
+   *
+   * 실패는 사람이 손으로 지우는 것이 아니라 **에이전트가 다시 움직이면 풀린다** — 그래서
+   * "그 실패보다 뒤에 에이전트의 말이 있는가"로 센다. 에이전트의 말이란 진행 설명·완료
+   * 보고이거나, **그 실패를 낸 계정 자신의 아무 말**이다(마지막 답을 평범한 글로 내는
+   * 러너가 있다). 사람이 "왜 안 돼?"라고 되묻는 것은 풀지 않는다 — 그때야말로 막힌 것이
+   * 맞기 때문이다.
+   *
+   * `null` 인 경우가 두 가지이고 **뜻이 다르다**: 답글 행이라 요약할 자리가 아니거나,
+   * 이 필드를 모르는 **옛 서버**다. 후자에서 화면은 `failureCount` 로 물러난다 — 해소를
+   * 모를 때는 실패를 숨기는 쪽보다 남기는 쪽이 안전하다.
+   */
+  unresolvedFailureCount: number | null;
   /**
    * 스레드의 **마지막 말**의 종류. `'progress'` 일 때만 '도는 중'일 수 있다 —
    * 실제로 도는지는 `lastAuthorId` 의 생존을 아는 클라이언트가 판정한다.
@@ -920,6 +985,87 @@ export function readReportMeta(
   if (!Array.isArray(report.checks) || report.checks.length === 0) return null;
   if (!report.checks.every((c) => typeof c === 'string' && c.length > 0)) return null;
   return report;
+}
+
+/**
+ * 발화에 실린 **모델**. 에이전트가 자기 입으로 신고한다(#600).
+ *
+ * **왜 자기 신고인가.** murmur 는 실제로 쓰인 모델을 알 방법이 없다 — 아는 것은 설정값
+ * (`agent_config.model` → `agent_defaults.model`)뿐이고, 그것이 `null` 이면 러너는
+ * `--model` 플래그를 아예 붙이지 않아(`agent/src/turn.ts`) 결정이 하네스로 넘어간다.
+ * 러너는 하네스 출력을 해석하지 않는다는 경계(pty.ts)가 있어 stream-json 의 init 에서
+ * 캐낼 수도 없다. 반면 **에이전트 자신은 자기 모델을 안다** — 하네스가 시스템 프롬프트에
+ * 넣어 주기 때문이다. 그래서 가장 싸고 정확한 출처가 발화하는 그 자신이다.
+ *
+ * **`meta.kind` 를 쓰지 않는 이유**: ask·report·failure 는 그 발화가 *무엇인지*를 말하는
+ * 배타적 종류인데, 모델은 그것들과 **직교**한다(보고에도 모델이 있다). 그래서 `kind` 를
+ * 보지 않고 `meta.model` 키만 본다 — 완료 보고가 모델을 실어도 보고로 남는다.
+ */
+export interface ModelMeta {
+  model: {
+    /** 하네스가 알려 준 모델 ID 그대로(`claude-opus-5[1m]` 처럼 꾸밈이 붙어 있어도 그대로). */
+    id: string;
+    /**
+     * 설정된 모델과 **계열이 어긋난다**. 어긋날 때만 있다 — 맞으면 키가 없다.
+     *
+     * 판정은 서버가 하고(`modelsDisagree`), 설정값 자체는 싣지 않는다: harness·model 은
+     * admin·소유자만 보는 값인데(`GET /accounts/agents`) meta 는 채널을 보는 모두에게
+     * 간다. 어긋났다는 **사실**만으로 화면이 할 일은 충분하다.
+     */
+    mismatch?: true;
+  };
+}
+
+/** 모델 ID 의 상한. 하네스가 긴 ID 를 쓰더라도 meta 가 본문만큼 커지지는 않게 한다. */
+export const MODEL_ID_MAX = 120;
+
+/**
+ * `meta` 가 모델을 싣고 있는지 판정한다. `readAskMeta` 와 같은 규약이다 — **모르는 `meta` 는
+ * 평문으로 흘린다.** 형식을 못 알아보면 `null` 이고, 화면은 아무것도 그리지 않는다.
+ */
+export function readModelMeta(
+  meta: Record<string, unknown> | null | undefined,
+): ModelMeta['model'] | null {
+  if (!meta) return null;
+  const model = meta.model as ModelMeta['model'] | undefined;
+  if (!model || typeof model !== 'object') return null;
+  if (typeof model.id !== 'string') return null;
+  const id = model.id.trim();
+  if (id.length === 0 || id.length > MODEL_ID_MAX) return null;
+  return { id, ...(model.mismatch === true ? { mismatch: true as const } : {}) };
+}
+
+/** 아는 계열의 이름들. 여기 없는 이름은 '모른다'로 다루고 경고하지 않는다. */
+const MODEL_FAMILIES = ['opus', 'sonnet', 'haiku', 'fable', 'gpt', 'codex', 'gemini'] as const;
+
+/**
+ * 모델 ID 에서 **계열**을 뽑는다(`claude-opus-5[1m]` → `opus`, `sonnet` → `sonnet`).
+ *
+ * 계열까지만 보는 이유는 같은 모델을 부르는 이름이 여럿이기 때문이다: 설정에는 별칭
+ * (`opus`)을 쓰고 하네스는 정식 ID(`claude-opus-5`)를 말하며, 거기에 `[1m]` 같은 꾸밈이
+ * 붙는다. 문자열을 그대로 비교하면 **맞는데 어긋났다고 말한다** — 거짓 경고는 아무 경고도
+ * 없는 것보다 나쁘다(그때부터 사람은 배지를 안 믿는다).
+ */
+export function modelFamily(id: string | null | undefined): string | null {
+  if (!id) return null;
+  const lower = id.toLowerCase();
+  return MODEL_FAMILIES.find((f) => lower.includes(f)) ?? null;
+}
+
+/**
+ * 설정된 모델과 신고된 모델이 **어긋나는가**. 둘 다 계열을 알아볼 수 있고 그 계열이 다를
+ * 때만 `true` 다.
+ *
+ * 한쪽이라도 계열을 모르면 `false` 다 — 새 모델 이름이 나올 때마다 이 목록이 뒤처지는데,
+ * 뒤처짐이 거짓 경고로 나타나면 안 된다. 모르는 것은 조용히 넘긴다.
+ */
+export function modelsDisagree(
+  configured: string | null | undefined, reported: string | null | undefined,
+): boolean {
+  const a = modelFamily(configured);
+  const b = modelFamily(reported);
+  if (a === null || b === null) return false;
+  return a !== b;
 }
 
 export interface ChannelRow {

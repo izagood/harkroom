@@ -16,6 +16,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import type { OpenAskLink } from '@murmur/shared';
 import { useActiveStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { WaitChainSection } from '../src/components/WaitChainSection';
 import { acc, chan, msg } from './helpers/fakeApi';
@@ -46,8 +47,17 @@ beforeEach(() => {
   controller = { openThread: vi.fn(async () => undefined) };
   setController(controller as unknown as Controller);
   useActiveStore.getState().reset();
+  // **언어를 고정한다.** 이 파일의 축들은 한국어 문구로 쓰여 있고, 그 문구가 지키는
+  // 것(빈 상태 · "없다"와 "아직 안 봤다"의 구별 · 강조 · 정렬)은 언어와 무관하다.
+  // 기본값은 이제 영어이므로(원본), 한국어를 재려면 한국어라고 말해야 한다 — 그리고
+  // 그렇게 적어 두면 **이 축들이 무엇을 재는지가 오히려 또렷해진다**: 언어가 아니라
+  // 그 언어로 표현된 규율이다. 두 언어로 다 뜨는지는 `i18n.test.tsx` 가 잰다.
+  usePrefsStore.getState().setLocale('ko');
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 describe('기다리는 것이 없을 때', () => {
   /**

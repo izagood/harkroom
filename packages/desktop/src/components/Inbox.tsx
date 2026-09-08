@@ -3,6 +3,7 @@ import { Identity } from './Identity';
 import { WaitChainSection } from './WaitChainSection';
 import type { InboxEntry } from '@murmur/shared';
 import { inboxRow, matchesFilter, type InboxFilter } from '../lib/inboxRow';
+import { bodyWithHandles } from '../lib/mention';
 import { INBOX_PANE_WIDTH, MIN_INBOX_PANE_WIDTH } from '../lib/prefs';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -260,7 +261,10 @@ export function Inbox({ open, onClose }: Props) {
    */
   useEffect(() => {
     if (!open) return;
-    paneRef.current?.focus();
+    // `preventScroll`: 포커스는 기본으로 **대상을 보이게 스크롤한다** — 이 자리는 창을
+    // 꽉 채우므로 스크롤할 이유가 없고, 문서가 스크롤 가능한 상태라면 여는 것만으로
+    // 껍데기가 밀린다(`ChannelPane` 의 `scrollIntoView` 주석과 같은 사고다).
+    paneRef.current?.focus({ preventScroll: true });
   }, [open]);
 
   if (!open) return null;
@@ -317,16 +321,20 @@ export function Inbox({ open, onClose }: Props) {
             */}
             <span
               data-testid={`inbox-reason-${e.id}`}
-              className={`rounded px-1 text-[11px] ${row.rank === 0
+              className={`rounded px-1 text-meta ${row.rank === 0
                 ? 'bg-accent-surface font-medium text-state-turn'
                 : 'bg-surface-sunken text-fg-muted'}`}
             >
               {row.label}
             </span>
-            {/* **무엇을** — 본문 한 줄. 자르는 폭은 화면이 정한다(서버는 안 자른다). */}
-            <span className="truncate text-fg">{e.body}</span>
+            {/* **무엇을** — 본문 한 줄. 자르는 폭은 화면이 정한다(서버는 안 자른다).
+
+                `bodyWithHandles` 를 지나는 이유: 서버가 싣는 본문은 정본 형식(`<@id>`)이고,
+                이 줄은 `MessageBody` 를 지나지 않아 그 치환을 스스로 해야 한다. 안 하면
+                줄마다 `<@2c8c1910-…>` 만 보이고 "무엇을" 이 사라진다(2026-09-08 실측). */}
+            <span className="truncate text-fg">{bodyWithHandles(e.body, accounts)}</span>
           </span>
-          <span className="flex items-center gap-1.5 text-[11px] text-fg-subtle">
+          <span className="flex items-center gap-1.5 text-meta text-fg-subtle">
             {/* **언제·어디.** */}
             <span>{channelLabel(e.channelId)}</span>
             {e.threadRootId && <span>· 스레드</span>}
@@ -355,7 +363,7 @@ export function Inbox({ open, onClose }: Props) {
               data-testid={`inbox-answer-${e.id}-${o.id}`}
               disabled={answering === e.id}
               onClick={() => void answer(e, o.id)}
-              className="rounded border border-border px-2 py-0.5 text-[11px] text-fg
+              className="rounded border border-border px-2 py-0.5 text-meta text-fg
                          hover:bg-surface-hover disabled:opacity-50"
             >
               {o.label}
@@ -379,7 +387,7 @@ export function Inbox({ open, onClose }: Props) {
             색만으로는 부족해 글자 표를 함께 단다. */}
         <span
           data-testid={`inbox-draft-badge-${d.scopeKey}`}
-          className="rounded bg-warning-surface px-1 text-[11px] uppercase tracking-wide text-warning"
+          className="rounded bg-warning-surface px-1 text-meta uppercase tracking-wide text-warning"
         >
           초안
         </span>
@@ -414,7 +422,7 @@ export function Inbox({ open, onClose }: Props) {
       tabIndex={-1}
       aria-label="인박스"
       style={{ width: INBOX_PANE_WIDTH, minWidth: MIN_INBOX_PANE_WIDTH }}
-      className="flex flex-col overflow-hidden border-r border-border bg-surface-raised text-sm
+      className="flex flex-col overflow-hidden border-r border-border bg-surface-raised
                  text-fg outline-none focus-visible:outline-solid focus-visible:outline-2
                  focus-visible:outline-accent focus-visible:-outline-offset-2"
     >
@@ -448,7 +456,9 @@ export function Inbox({ open, onClose }: Props) {
               data-selected={filter === value}
               aria-pressed={filter === value}
               onClick={() => setFilter(value)}
-              className={`rounded-full border px-2.5 py-0.5 text-xs ${filter === value
+              // 칩은 **아랫단 11px** — 아래 구획 제목들이 이미 그 단이고, 칩과 제목은
+              // 목록을 어떻게 자를지 말하는 같은 층이다. 목록 안의 글자가 본문단이다.
+              className={`rounded-full border px-2.5 py-0.5 text-meta ${filter === value
                 ? 'border-border bg-surface-sunken font-medium text-fg'
                 : 'border-border text-fg-muted hover:bg-surface-hover'}`}
             >
@@ -465,7 +475,7 @@ export function Inbox({ open, onClose }: Props) {
           {/* 실패는 목록 위에 남긴다. 실패했는데 빈 목록만 보이면 사람은 "아무도 나를
               부르지 않았다" 로 읽는다 — 조회 실패를 빈 목록으로 삼키지 않는다. */}
           {load.kind === 'error' && (
-            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-xs text-danger">
+            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-danger">
               인박스를 불러오지 못했다 — {load.message}
               <button
                 onClick={() => { reload(); }}
@@ -475,16 +485,19 @@ export function Inbox({ open, onClose }: Props) {
               </button>
             </div>
           )}
-          {load.kind === 'loading' && <p className="px-2 text-xs text-fg-subtle">불러오는 중…</p>}
+          {/* 오류·대기·'없다' 는 목록이 비었을 때 **화면에 남는 유일한 글자**다. 색이
+              subtle 이라고 아랫단으로 내리면 그 순간 화면에서 가장 작은 글자가 유일한
+              설명이 된다 — 본문단(앱 기본값 13px)이라 크기를 안 적는다. */}
+          {load.kind === 'loading' && <p className="px-2 text-fg-subtle">불러오는 중…</p>}
 
           <section aria-label="나를 부른 것" className="mb-4">
-            <h3 className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
+            <h3 className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
               나를 부른 것 ({shownEntries.length})
             </h3>
             {/* '없다' 는 조회가 성공했을 때만 말할 수 있다. 실패·대기 중에 이 문장을 내면
                 모르는 것을 아는 것처럼 말하는 것이다. */}
             {load.kind === 'ready' && shownEntries.length === 0 && (
-              <p data-testid="inbox-empty" className="px-2 text-xs text-fg-subtle">
+              <p data-testid="inbox-empty" className="px-2 text-fg-subtle">
                 {entries.length === 0 ? '나를 부른 것이 없다' : '필터에 맞는 것이 없다'}
               </p>
             )}
@@ -504,11 +517,11 @@ export function Inbox({ open, onClose }: Props) {
           </section>
 
           <section aria-label="쓰다 만 초안">
-            <h3 className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
+            <h3 className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
               쓰다 만 초안 ({shownDrafts.length})
             </h3>
             {shownDrafts.length === 0
-              ? <p className="px-2 text-xs text-fg-subtle">쓰다 만 초안이 없다</p>
+              ? <p className="px-2 text-fg-subtle">쓰다 만 초안이 없다</p>
               : <ul>{shownDrafts.map(draftRow)}</ul>}
           </section>
         </div>

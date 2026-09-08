@@ -139,7 +139,15 @@ describe('overflow menu actions', () => {
     expect(screen.getByDisplayValue('원문')).toBeTruthy();
   });
 
-  it('shows confirmation state when Delete is clicked', () => {
+  /**
+   * 확인은 **겹창**이다. 앞 판은 호버 툴바 안에 'Really delete' / 'Keep' 을 끼워 넣었고,
+   * 그 배치는 (1) 툴바 폭을 바꿔 방금 누른 자리에 다른 버튼을 앉히고 (2) 툴바가
+   * `opacity-0 group-hover` 라 커서가 행을 벗어나면 질문을 조용히 지웠다.
+   *
+   * 그래서 재는 것을 "확인 버튼이 어딘가 있다"가 아니라 **"툴바 밖 `dialog` 안에 있다"**로
+   * 적는다. 이 단언이 없으면 다음 사람이 확인을 툴바로 되돌려도 테스트가 통과한다.
+   */
+  it('opens a confirm dialog — not an inline toolbar state — when Delete is clicked', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '지울 메시지', 'u1')} />);
 
@@ -148,7 +156,13 @@ describe('overflow menu actions', () => {
     fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
 
-    expect(screen.getByRole('button', { name: 'Really delete' })).toBeTruthy();
+    const dialog = screen.getByRole('dialog', { name: 'Delete message?' });
+    expect(within(dialog).getByRole('button', { name: 'Delete' })).toBeTruthy();
+    // 무엇을 지우는지 창이 말한다 — 겹창은 행에서 떨어져 있어서 이것이 없으면
+    // 목록을 훑던 사람이 어느 메시지에 확인을 준 것인지 모른다.
+    expect(within(dialog).getByText('지울 메시지')).toBeTruthy();
+    // 툴바는 그대로다. 확인이 툴바 안에 있으면 이 단언이 깨진다.
+    expect(within(toolbar).queryByRole('button', { name: 'Delete' })).toBeNull();
     expect(c.deleteMessage).not.toHaveBeenCalled();
   });
 
@@ -160,9 +174,58 @@ describe('overflow menu actions', () => {
     fireEvent.mouseEnter(toolbar);
     fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Really delete' }));
+    const dialog = screen.getByRole('dialog', { name: 'Delete message?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => expect(c.deleteMessage).toHaveBeenCalledWith('m1'));
+  });
+
+  it('cancels without deleting — 취소 버튼', () => {
+    const c = fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, '지울 메시지', 'u1')} />);
+
+    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    fireEvent.mouseEnter(toolbar);
+    fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByRole('dialog', { name: 'Delete message?' })).toBeNull();
+    expect(c.deleteMessage).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Esc 로 닫힌다 — `Overlay` 가 document 리스너로 준다. 여기서 재는 이유는, 확인창이
+   * `Overlay` 를 벗고 자체 마크업으로 돌아가는 순간 이 경로가 조용히 없어지기 때문이다.
+   */
+  it('cancels on Escape', () => {
+    const c = fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, '지울 메시지', 'u1')} />);
+
+    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    fireEvent.mouseEnter(toolbar);
+    fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog', { name: 'Delete message?' })).toBeNull();
+    expect(c.deleteMessage).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 열리자마자 손가락은 **취소** 위에 있다. 확인창을 띄운 줄 모르고 Enter 를 친 사람이
+   * 그대로 지우면 확인 단계를 둔 이유가 사라진다.
+   */
+  it('focuses the safe choice when it opens', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, '지울 메시지', 'u1')} />);
+
+    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    fireEvent.mouseEnter(toolbar);
+    fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
   });
 });
 

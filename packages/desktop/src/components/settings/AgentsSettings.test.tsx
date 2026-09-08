@@ -366,6 +366,24 @@ describe('AgentsSettings — 에이전트별 계정 풀', () => {
     });
   });
 
+  it('목록 조회가 실패해도 칸을 감추지 않고 왜 못 골랐는지 적는다', async () => {
+    // 실패를 "기능 없음"으로 그리면 사람은 이 앱에 그런 기능이 아예 없다고 읽는다 —
+    // 실제로 그렇게 읽힌 적이 있다. 데몬이 대답을 못 한 것과 이 빌드에 표면이 없는 것은
+    // 다른 사실이고, 화면이 그 둘을 같은 모습으로 그리면 안 된다.
+    vi.stubGlobal('__TAURI_INTERNALS__', {
+      transformCallback: () => 1,
+      invoke: vi.fn(async (cmd: string) => {
+        if (cmd === 'claude_accounts_list') throw new Error('데몬이 죽었다');
+        return {};
+      }),
+    });
+    await openDetail();
+    const select = await screen.findByLabelText(/account pool/i);
+    // 잠근다 — 읽지 못한 목록에서 고르게 두면 배정이 스냅샷 없이 쓰여 순서·기본 풀이 지워진다.
+    expect((select as HTMLSelectElement).disabled).toBe(true);
+    await waitFor(() => expect(screen.getByText(/데몬이 죽었다/)).toBeTruthy());
+  });
+
   it('Tauri 표면이 없으면 풀 선택을 그리지 않는다', async () => {
     // 그려 두면 고를 수 있는데 아무 일도 안 난다.
     vi.unstubAllGlobals();

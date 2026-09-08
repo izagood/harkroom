@@ -1,4 +1,4 @@
-import { readAskMeta, readFailureMeta, type MessageRow } from '@murmur/shared';
+import { readAskMeta, readFailureMeta, readReportMeta, type MessageRow } from '@murmur/shared';
 
 /**
  * 스레드가 지금 어떤 상태인가 — 화면 전체가 같은 어휘를 쓰기 위한 5단(규칙 03).
@@ -61,10 +61,19 @@ export function threadState(input: ThreadStateInput): ThreadState {
 
   let myTurn = false;
   let othersTurn = false;
+  // **안 풀린** 실패가 있는가. 실패를 만나면 켜고, 그 뒤에 에이전트가 다시 말하면 끈다 —
+  // 누적으로 세면 한 번 실패한 스레드가 영원히 붉다(`resolvesFailure` 의 주석 참고).
   let failed = false;
+  let failedBy: string | null = null;
 
   for (const m of messages) {
-    if (readFailureMeta(m.meta) != null) failed = true;
+    if (readFailureMeta(m.meta) != null) {
+      failed = true;
+      failedBy = m.authorId;
+    } else if (failed && resolvesFailure(m, failedBy)) {
+      failed = false;
+      failedBy = null;
+    }
     const ask = readAskMeta(m.meta);
     if (!ask || ask.answeredWith != null) continue;
     // `human` 은 '사람 아무나'이므로 내가 사람이면 내 차례다(`AskCard::isForMe` 와 같은 판정).
@@ -87,11 +96,32 @@ export function threadState(input: ThreadStateInput): ThreadState {
 }
 
 /**
+ * 이 말이 앞선 실패를 **푸는가**.
+ *
+ * 실패는 사람이 손으로 지우는 것이 아니라 **에이전트가 다시 움직이면 풀린다.** 그 신호는
+ * 셋이다: 진행 설명·대기 줄(`kind` 가 그 둘이면 MCP 로만 낼 수 있으므로 에이전트다),
+ * 완료 보고, 그리고 **실패를 낸 계정 자신의 아무 말**(마지막 답을 평범한 글로 내는 러너가
+ * 있다 — 그 계정이 에이전트라는 것은 실패를 낸 자가 그 계정이라는 사실이 말해 준다).
+ *
+ * 사람이 "왜 안 돼?"라고 되묻는 것은 **풀지 않는다.** 그때는 정말로 막혀 있는 것이고,
+ * 그것을 '끝남'으로 칠하는 것이 반대쪽 거짓말이다.
+ *
+ * 서버의 `unresolved_failure_count` 와 **같은 규칙이어야 한다**(services/messages.ts) —
+ * 두 입구가 같은 답을 내는 것이 이 파일 전체의 요점이므로, 한쪽만 고치면 채널에서 본
+ * 상태와 스레드를 열어 본 상태가 갈라진다.
+ */
+function resolvesFailure(m: MessageRow, failedBy: string | null): boolean {
+  if (m.kind === 'progress' || m.kind === 'wake') return true;
+  if (readReportMeta(m.meta) != null) return true;
+  return failedBy != null && m.authorId === failedBy;
+}
+
+/**
  * 서버가 실어 준 집계로 같은 판정을 낸다(#484 · Task 6 Step 2).
  *
  * **채널 목록에는 루트만 있다** — 답글은 스레드를 열 때만 로드되므로 위 `threadState()` 에
  * 그 배열을 넘기면 열어 보지 않은 스레드가 전부 '끝남'이 된다. 서버가 그 구멍을 메우는
- * 재료를 싣고(`openAskHumanCount`·`openAskAccountIds`·`failureCount`·`lastKind`·`lastAuthorId`),
+ * 재료를 싣고(`openAskHumanCount`·`openAskAccountIds`·`unresolvedFailureCount`·`lastKind`·`lastAuthorId`),
  * 여기서 **같은 `decide()`** 를 지난다.
  *
  * 두 입구가 같은 함수를 지나는 것이 요점이다: 판정이 두 벌이면 채널에서 본 상태와 스레드를
@@ -102,7 +132,8 @@ export function threadState(input: ThreadStateInput): ThreadState {
  */
 export function threadStateFromFacts(input: {
   row: Pick<MessageRow,
-    'openAskHumanCount' | 'openAskAccountIds' | 'failureCount' | 'lastKind' | 'lastAuthorId'>;
+    'openAskHumanCount' | 'openAskAccountIds' | 'failureCount' | 'lastKind' | 'lastAuthorId'>
+    & Partial<Pick<MessageRow, 'unresolvedFailureCount'>>;
   myAccountId: string | null;
   isAgent: (accountId: string) => boolean;
   live: Liveness;
@@ -120,7 +151,9 @@ export function threadStateFromFacts(input: {
   return decide({
     myTurn: toMe || humanTurn,
     othersTurn: row.openAskAccountIds.some((id) => id !== myAccountId),
-    failed: row.failureCount > 0,
+    // 해소를 아는 서버면 그것을 보고, 모르는 **옛 서버**면 누적으로 물러난다 — 해소를
+    // 모를 때는 실패를 숨기는 쪽보다 남기는 쪽이 안전하다.
+    failed: (row.unresolvedFailureCount ?? row.failureCount) > 0,
     lastIsProgress: row.lastKind === 'progress' && row.lastAuthorId != null && isAgent(row.lastAuthorId),
     lastAuthorId: row.lastAuthorId,
     live,

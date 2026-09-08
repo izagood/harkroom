@@ -185,12 +185,12 @@ jobs:
     outputs:
       tag: ${{ steps.release.outputs.tag }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: main
           fetch-depth: 0 # 태그를 조회해야 한다 — 얕은 클론에는 태그가 없다
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
 
@@ -286,17 +286,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60 # 공증 왕복(수 분)이 있어 `ci.yml` 의 20 분보다 넉넉히 잡는다
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # **태그를 체크아웃한다.** `main` 을 받으면 그 사이에 머지된 것이 섞여 들어와
           # 태그가 가리키는 것과 다른 산출물이 나온다.
           ref: ${{ needs.prepare.outputs.tag }}
 
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6
         with:
           version: 11
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: pnpm
@@ -304,7 +304,7 @@ jobs:
       # 캐시 키는 `Cargo.lock` 해시 기반이고 `restore-keys` 가 없다 — 이유는 `ci.yml` 의
       # 같은 자리에 적혀 있다(다른 lock 으로 만든 target 을 끌어오면 검증한다고 주장하는
       # 의존과 실제로 링크된 것이 갈린다).
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry

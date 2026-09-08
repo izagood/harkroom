@@ -1,4 +1,4 @@
-import { CHANNEL_MENTION_HANDLE, denormalizeMentions, fillSystemAccount, MENTION_PATTERN, MENTION_TOKEN_PATTERN, mentionedHandles, type MessageRow, renderMentions, stripCodeSpans } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, denormalizeMentions, fillSystemAccount, MENTION_PATTERN, MENTION_TOKEN_PATTERN, mentionedHandles, mentionScanText, type MessageRow, renderMentions, splitCode } from '@murmur/shared';
 
 // 멘션 문법은 @murmur/shared 에 있다 — 서버의 알림 발송과 같은 규칙을 봐야 한다. 갈라지면
 // 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(me@x.com), 강조된
@@ -104,8 +104,8 @@ export interface BodyRecipient {
  * 작성자를 걸러 낸다(`services/messages.ts`). "부를 상대" 는 알림이 갈 사람의 목록이므로
  * 자기 이름이 남으면 거짓이 된다. **판정이 아니라 표시 단계의 결정**이라 여기서 한다.
  *
- * 코드 블록 안의 `@handle` 은 여기서 **잡히지 않는다**(#298). 이 줄은 알림이 실제로 가는
- * 쪽을 따라야 하고, 이제 서버도 `stripCodeSpans` 로 코드 안을 제외한다 — 그러므로 이
+ * 코드 블록(#298) 과 인용 줄(#592) 안의 `@handle` 은 여기서 **잡히지 않는다**. 이 줄은 알림이
+ * 실제로 가는 쪽을 따라야 하고, 서버도 `mentionScanText` 로 그 구간을 제외한다 — 그러므로 이
  * 목록도 같은 함수를 쓴다. 앞의 결정("안 갈 사람을 보여 주는 것보다 갈 사람을 숨기는 것이
  * 더 나쁜 거짓말")은 그대로다: 바뀐 것은 **알림이 가는 범위** 자체이지 이 줄의 원칙이
  * 아니다. 여기서 따로 정규식을 쓰면 판정이 다시 두 벌이 된다.
@@ -121,7 +121,7 @@ export function bodyRecipients(
   const seen = new Set<string>();
   const out: BodyRecipient[] = [];
 
-  for (const part of splitMentions(stripCodeSpans(body), knownHandles, groupHandles)) {
+  for (const part of splitMentions(mentionScanText(body), knownHandles, groupHandles)) {
     if (part.kind !== 'mention') continue;
     if (part.handle === self || seen.has(part.handle)) continue;
     seen.add(part.handle);
@@ -180,9 +180,11 @@ export function bodyAsHandles(body: string, accounts: Record<string, { id: strin
  * 바꾸면 과거의 입·퇴장 메시지도 새 이름으로 그려진다.
  *
  * **본문을 사람에게 보여 주는 자리는 전부 이 함수를 지난다** — 메시지 행(`MessageItem`),
- * 담아 둔 목록(`SavedMessages`), 고정 미리보기(`ChannelPane`), OS 알림 둘(`controller` 의
- * `announceNewMessage`·`announceNewMentions`). 한 곳이라도 원본 `body` 를 그대로 쓰면 그
- * 자리에만 `{account}` 라는 글자가 남는다 — 이 브랜치의 초판이 메시지 행만 고쳐 그랬다.
+ * 담아 둔 목록(`SavedMessages`), 고정 미리보기(`ChannelPane`), 인박스 줄(`Inbox`),
+ * 찾기 결과(`SearchPalette`), 훑기(`Sweep`), 기다림·진행 줄(`WakeRow`·`ProgressRow`),
+ * OS 알림 둘(`controller` 의 `announceNewMessage`·`announceNewMentions`). 한 곳이라도 원본
+ * `body` 를 그대로 쓰면 그 자리에만 `{account}` 라는 글자가 남고(초판이 메시지 행만 고쳐
+ * 그랬다) `<@id>` 라는 uuid 가 남는다(`bodyWithHandles` 주석).
  *
  * 수정·복사는 이 함수를 지나지 **않는다**(`bodyAsHandles` 를 쓴다). 그 둘은 다시 저장하거나
  * 다른 곳에 붙여넣을 문자열을 만들고, 시스템 메시지는 애초에 수정할 수 없다(`canEdit`).
@@ -194,6 +196,51 @@ export function displayBody(
   message: Pick<MessageRow, 'body' | 'kind' | 'meta'>,
   accounts: Record<string, { handle: string }>,
 ): string {
-  if (message.kind !== 'system' || typeof message.meta.accountId !== 'string') return message.body;
-  return fillSystemAccount(message.body, accounts[message.meta.accountId]?.handle ?? null);
+  const filled = message.kind === 'system' && typeof message.meta.accountId === 'string'
+    ? fillSystemAccount(message.body, accounts[message.meta.accountId]?.handle ?? null)
+    : message.body;
+  return bodyWithHandles(filled, accounts);
+}
+
+/**
+ * 저장된 본문의 `<@id>` 를 **지금의** handle 로 바꾼다(#271).
+ *
+ * `splitMentions` 도 같은 치환을 하지만 그것은 `MessageBody` 안에서만 일어난다 — 본문을
+ * **한 줄 미리보기**로 내는 자리는 그 렌더러를 지나지 않으므로 치환을 못 받고, 그 자리에는
+ * `<@2c8c1910-da9c-…>` 라는 uuid 가 그대로 남는다. 실측(2026-09-08): 인박스 목록의 모든
+ * 줄이 본문 대신 uuid 를 보여 주고 있었다 — 나를 부른 것이 무슨 말인지 알 수 없는 화면이고,
+ * 인박스에서는 그 손실이 가장 비싸다.
+ *
+ * 그래서 `displayBody` 가 이것을 함께 지난다: **본문을 사람에게 보여 주는 자리는 전부 그
+ * 함수를 지난다**는 규약(#329)이 이미 있고, 그 규약이 이제 `<@id>` 까지 책임진다. 본문
+ * 렌더러(`MessageBody`)에도 두 번 걸리지만 치환된 뒤에는 토큰이 없어 두 번째는 아무 일도
+ * 하지 않는다.
+ *
+ * 모르는 id 는 `@알 수 없음` 이 된다(`renderMentions` 의 기본값) — 미리보기는 다시 저장될
+ * 문자열이 아니므로 화면 쪽 규칙을 따른다. 저장·붙여넣기용은 `bodyAsHandles` 다.
+ *
+ * `accounts` 는 **id 로 키가 잡힌 맵**이다(`appStore.accounts`). 키가 곧 계정 id 이므로
+ * 값에서 `id` 를 다시 읽지 않는다.
+ */
+export function bodyWithHandles(
+  body: string, accounts: Record<string, { handle: string }>,
+): string {
+  // 토큰이 없으면 맵도 만들지 않고 코드 구간도 나누지 않는다 — 목록의 줄마다 불린다.
+  if (!body.includes('<@')) return body;
+  const idToHandle = new Map<string, string>();
+  for (const [id, a] of Object.entries(accounts)) idToHandle.set(id, a.handle);
+
+  // **코드 구간은 비껴간다**(#298 과 같은 판정, 같은 함수로). `MessageBody` 는 `splitCode`
+  // 로 코드를 먼저 떼기 때문에 `` `<@id>` `` 를 그대로 보여 준다 — 여기서 본문 전체에
+  // 치환을 걸면 그 규칙이 이 함수를 지나는 자리마다 깨진다(회귀선: mentionTokenRender
+  // "코드 구간의 토큰은 코드로 남는다"). 원문을 잘라 붙이므로 백틱·펜스는 그대로다.
+  let out = body;
+  // 뒤에서부터 고친다 — 앞에서 고치면 뒤 조각의 원문 오프셋이 밀린다(`normalizeMentions`).
+  for (const seg of splitCode(body).reverse()) {
+    if (seg.kind !== 'plain') continue;
+    const replaced = renderMentions(seg.text, idToHandle);
+    if (replaced === seg.text) continue;
+    out = out.slice(0, seg.start) + replaced + out.slice(seg.start + seg.text.length);
+  }
+  return out;
 }

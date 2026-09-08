@@ -67,13 +67,13 @@ export function ProjectionUrl() {
 
   return (
     <div className="px-4 py-3">
-      {config === null && <p className="text-xs text-fg-muted">투영 설정을 불러오는 중…</p>}
+      {config === null && <p className="text-meta text-fg-muted">투영 설정을 불러오는 중…</p>}
       {config === 'error' && (
-        <p role="alert" className="text-xs text-danger">투영 설정을 불러오지 못했다</p>
+        <p role="alert" className="text-meta text-danger">투영 설정을 불러오지 못했다</p>
       )}
       {config !== null && config !== 'error' && !editing && (
         <div className="flex items-center gap-3">
-          <span data-testid="projection-source" className="min-w-0 flex-1 truncate text-xs text-fg-muted">
+          <span data-testid="projection-source" className="min-w-0 flex-1 truncate text-meta text-fg-muted">
             {/* 출처가 없다는 것도 사정이다 — '아직 아무도 정하지 않았다'. */}
             {config.source === null
               ? '아직 정해지지 않았다'
@@ -103,7 +103,7 @@ export function ProjectionUrl() {
           </div>
         </div>
       )}
-      {error && <p role="alert" className="mt-2 text-[11px] text-danger">{error}</p>}
+      {error && <p role="alert" className="mt-2 text-meta text-danger">{error}</p>}
     </div>
   );
 }

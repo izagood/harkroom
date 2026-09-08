@@ -9,6 +9,11 @@ import { getController } from '../state/controller';
  */
 const PREVIEWABLE = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'];
 
+/** 미리보기 판정은 **한 곳에서만** 한다 — 화이트리스트가 갈리면 한쪽만 SVG 를 그린다. */
+export function canPreview(attachment: AttachmentRow): boolean {
+  return PREVIEWABLE.includes(attachment.contentType);
+}
+
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const units = ['KB', 'MB', 'GB'];
@@ -50,11 +55,43 @@ function useAttachmentUrl(id: string, enabled: boolean): { url: string | null; f
   return { url, failed };
 }
 
-function Attachment({ attachment }: { attachment: AttachmentRow }) {
-  const canPreview = PREVIEWABLE.includes(attachment.contentType);
-  const { url, failed } = useAttachmentUrl(attachment.id, canPreview);
+/**
+ * 칩 안에 들어가는 작은 미리보기. **이름 옆에 놓이는 그림이므로 alt 는 비운다** — 이름을
+ * 두 번 읽히면 스크린리더에서 칩 하나가 파일 두 개처럼 들린다.
+ *
+ * 그릴 수 없으면 📎 로 남되 **"원래 미리보기가 없는 것"과 "받지 못한 것"을 가른다** — 둘을
+ * 같은 📎 로 덮으면, 네트워크가 끊겨 그림이 빠진 자리를 사람이 "이 파일은 원래 이렇다"로
+ * 읽고 그대로 보낸다. 본문 미리보기가 `(불러오기 실패)` 로 가르는 것과 같은 규칙이다.
+ */
+export function AttachmentThumb({ attachment }: { attachment: AttachmentRow }) {
+  const previewable = canPreview(attachment);
+  const { url, failed } = useAttachmentUrl(attachment.id, previewable);
+  if (!url) {
+    return (
+      // 그림이 올 자리는 미리 그림 높이(h-6)로 잡는다 — 바이트가 도착하는 순간 11px 이모지가
+      // 24px 그림으로 바뀌면서 칩 줄 전체가 밀려 내려간다. 처음부터 그릴 수 없는 첨부는
+      // 자리를 잡지 않는다: 올 것이 없는데 비워 둔 여백이다.
+      <span className={previewable ? 'inline-flex h-6 items-center gap-1' : 'inline-flex items-center gap-1'}>
+        <span aria-hidden>📎</span>
+        {failed && <span className="text-danger">(미리보기 실패)</span>}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={url}
+      alt=""
+      data-testid="attachment-thumb"
+      className="h-6 w-6 shrink-0 rounded-sm border border-border object-cover"
+    />
+  );
+}
 
-  if (canPreview && url) {
+function Attachment({ attachment }: { attachment: AttachmentRow }) {
+  const previewable = canPreview(attachment);
+  const { url, failed } = useAttachmentUrl(attachment.id, previewable);
+
+  if (previewable && url) {
     return (
       <img
         src={url}
@@ -65,7 +102,7 @@ function Attachment({ attachment }: { attachment: AttachmentRow }) {
   }
   return (
     <button
-      className="inline-flex items-center gap-2 rounded border border-border bg-surface px-2 py-1 text-[13px] text-fg hover:bg-surface-sunken"
+      className="inline-flex items-center gap-2 rounded border border-border bg-surface px-2 py-1 text-body text-fg hover:bg-surface-sunken"
       onClick={() => void getController().saveAttachment(attachment)}
     >
       <span aria-hidden>📎</span>
