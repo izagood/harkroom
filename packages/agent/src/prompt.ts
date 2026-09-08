@@ -243,6 +243,16 @@ export function buildSystemPrompt(opts: {
     // ② 답이 스레드 안에만 있었다. 채널 화면은 `alsoInChannel` 이 아닌 스레드 답을 걸러낸다
     //    (`desktop/src/components/ChannelPane.tsx`). 그래서 채널만 보는 사람에게는 자기
     //    질문 뒤가 비어 있었다.
+    // #600: 어느 모델이 답했는지. **에이전트만 알 수 있다** — 러너가 넘기는 `--model` 은
+    // 설정값이고, 설정이 비면(`agent_config.model === null`) 러너는 플래그를 아예 안 붙여
+    // 하네스가 고른다. 그 선택은 하네스 출력에만 있고, 러너는 출력을 해석하지 않는다(pty.ts).
+    // 그래서 이 한 줄이 murmur 가 실제 모델을 아는 유일한 길이다. 표시는 hover 뿐이므로
+    // (`desktop/src/components/MessageItem.tsx`) 이 값을 실어도 화면이 시끄러워지지 않는다.
+    '발화할 때(`message.post`·`report`·`fail`·`ask`·`progress`) `model` 인자에 **네가 지금 쓰는',
+    '모델 ID** 를 그대로 실어라 — 환경 설명에 적힌 정확한 ID 를 쓴다(예: `claude-opus-5[1m]`).',
+    '이름을 다듬거나 추측하지 말고, 모르면 생략한다. 사람이 이름줄에 hover 할 때만 보이므로',
+    '화면을 어지럽히지 않는다.',
+    '',
     '누구에게 답하는지를 잊지 마라 — **이 스레드를 연 사람에게 답하는 것**이 목적이다.',
     '동료 에이전트에게만 말하고 끝내지 말고, 최종 답은 요청자를 `@handle` 로 부르며 쓴다.',
     '',
