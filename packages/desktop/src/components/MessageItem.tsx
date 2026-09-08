@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { messagePermalink, readAskMeta, type MessageRow } from '@murmur/shared';
+import { messagePermalink, readAskMeta, readModelMeta, type MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { AskCard } from './AskCard';
@@ -82,6 +82,16 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    * 보이고, 한 줄 안에서 이름과 아바타가 서로 다른 사람을 가리킨다.
    */
   const shownBody = displayBody(message, accounts);
+  /**
+   * 어느 모델이 이 말을 했는가(#600). **상시 픽셀은 0 이다** — 이름줄 hover 의 `title` 로만
+   * 나오고, 어긋났을 때만 ⚠️ 한 글자가 선다.
+   *
+   * 왜 글자로 안 그리는가: 모델은 거의 언제나 설정대로이고, 언제나 맞는 정보를 모든 말
+   * 옆에 세우면 이름줄이 배지밭이 된다(#488 이 강조색을 회수한 그 이유). 사람이 실제로
+   * 묻는 순간("이 답을 뭐가 했지?")은 드물고, 그때는 hover 가 답한다. 반대로 **어긋남**은
+   * 드물고 곧 문제이므로(간단한 일에 Opus, 어려운 일에 Fable) 그것만 눈에 보인다.
+   */
+  const model = readModelMeta(message.meta);
   const avcsType = typeof message.meta.avcsType === 'string' ? message.meta.avcsType : null;
   /**
    * 스킬 제안 알림에서 승인 화면으로 가는 진입점(#311 요구 5).
@@ -366,7 +376,23 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               4단이 실제로는 3단이 되고(15px 을 쓰는 자리가 하나도 없었다), 대화가 한
               덩어리로 흐른다. 같은 줄의 시각·배지는 아랫단 11px 이라 한 줄 안에 세 단이
               아니라 두 단이 선다: **누가**(15)와 **곁정보**(11), 본문은 그 아래 13. */}
-          <span data-testid="author-name" className="text-[15px] font-semibold">{author?.handle ?? '…'}</span>
+          <span
+            data-testid="author-name"
+            className="text-[15px] font-semibold"
+            title={model ? `모델 ${model.id}` : undefined}
+          >{author?.handle ?? '…'}</span>
+          {/* 설정과 어긋난 모델(#600). 배지가 아니라 **경고**다 — 이 자리에 무언가 서 있는
+              것 자체가 "확인해 봐라"는 뜻이고, 무엇을 확인하는지는 hover 가 말한다.
+              설정값을 적지 않는 이유는 서버가 그것을 안 싣기 때문이다(admin·소유자만 보는
+              값이다 — `shared/src/index.ts` 의 `ModelMeta`). */}
+          {model?.mismatch && (
+            <span
+              data-testid="model-mismatch"
+              className="text-[11px] text-warning"
+              title={`설정된 모델과 다른 계열이다 — 이 말은 ${model.id} 로 했다`}
+              aria-label={`설정된 모델과 다르다: ${model.id}`}
+            >⚠️</span>
+          )}
           {/*
             **여기에 배지가 있었다**(🤖 + 소유자 핸들). 뺐다 — identity 문서:
             *"이름 옆 배지와 소유자 핸들은 뺀다. 아바타만으로 누가 에이전트인지 알 수

@@ -987,6 +987,87 @@ export function readReportMeta(
   return report;
 }
 
+/**
+ * 발화에 실린 **모델**. 에이전트가 자기 입으로 신고한다(#600).
+ *
+ * **왜 자기 신고인가.** murmur 는 실제로 쓰인 모델을 알 방법이 없다 — 아는 것은 설정값
+ * (`agent_config.model` → `agent_defaults.model`)뿐이고, 그것이 `null` 이면 러너는
+ * `--model` 플래그를 아예 붙이지 않아(`agent/src/turn.ts`) 결정이 하네스로 넘어간다.
+ * 러너는 하네스 출력을 해석하지 않는다는 경계(pty.ts)가 있어 stream-json 의 init 에서
+ * 캐낼 수도 없다. 반면 **에이전트 자신은 자기 모델을 안다** — 하네스가 시스템 프롬프트에
+ * 넣어 주기 때문이다. 그래서 가장 싸고 정확한 출처가 발화하는 그 자신이다.
+ *
+ * **`meta.kind` 를 쓰지 않는 이유**: ask·report·failure 는 그 발화가 *무엇인지*를 말하는
+ * 배타적 종류인데, 모델은 그것들과 **직교**한다(보고에도 모델이 있다). 그래서 `kind` 를
+ * 보지 않고 `meta.model` 키만 본다 — 완료 보고가 모델을 실어도 보고로 남는다.
+ */
+export interface ModelMeta {
+  model: {
+    /** 하네스가 알려 준 모델 ID 그대로(`claude-opus-5[1m]` 처럼 꾸밈이 붙어 있어도 그대로). */
+    id: string;
+    /**
+     * 설정된 모델과 **계열이 어긋난다**. 어긋날 때만 있다 — 맞으면 키가 없다.
+     *
+     * 판정은 서버가 하고(`modelsDisagree`), 설정값 자체는 싣지 않는다: harness·model 은
+     * admin·소유자만 보는 값인데(`GET /accounts/agents`) meta 는 채널을 보는 모두에게
+     * 간다. 어긋났다는 **사실**만으로 화면이 할 일은 충분하다.
+     */
+    mismatch?: true;
+  };
+}
+
+/** 모델 ID 의 상한. 하네스가 긴 ID 를 쓰더라도 meta 가 본문만큼 커지지는 않게 한다. */
+export const MODEL_ID_MAX = 120;
+
+/**
+ * `meta` 가 모델을 싣고 있는지 판정한다. `readAskMeta` 와 같은 규약이다 — **모르는 `meta` 는
+ * 평문으로 흘린다.** 형식을 못 알아보면 `null` 이고, 화면은 아무것도 그리지 않는다.
+ */
+export function readModelMeta(
+  meta: Record<string, unknown> | null | undefined,
+): ModelMeta['model'] | null {
+  if (!meta) return null;
+  const model = meta.model as ModelMeta['model'] | undefined;
+  if (!model || typeof model !== 'object') return null;
+  if (typeof model.id !== 'string') return null;
+  const id = model.id.trim();
+  if (id.length === 0 || id.length > MODEL_ID_MAX) return null;
+  return { id, ...(model.mismatch === true ? { mismatch: true as const } : {}) };
+}
+
+/** 아는 계열의 이름들. 여기 없는 이름은 '모른다'로 다루고 경고하지 않는다. */
+const MODEL_FAMILIES = ['opus', 'sonnet', 'haiku', 'fable', 'gpt', 'codex', 'gemini'] as const;
+
+/**
+ * 모델 ID 에서 **계열**을 뽑는다(`claude-opus-5[1m]` → `opus`, `sonnet` → `sonnet`).
+ *
+ * 계열까지만 보는 이유는 같은 모델을 부르는 이름이 여럿이기 때문이다: 설정에는 별칭
+ * (`opus`)을 쓰고 하네스는 정식 ID(`claude-opus-5`)를 말하며, 거기에 `[1m]` 같은 꾸밈이
+ * 붙는다. 문자열을 그대로 비교하면 **맞는데 어긋났다고 말한다** — 거짓 경고는 아무 경고도
+ * 없는 것보다 나쁘다(그때부터 사람은 배지를 안 믿는다).
+ */
+export function modelFamily(id: string | null | undefined): string | null {
+  if (!id) return null;
+  const lower = id.toLowerCase();
+  return MODEL_FAMILIES.find((f) => lower.includes(f)) ?? null;
+}
+
+/**
+ * 설정된 모델과 신고된 모델이 **어긋나는가**. 둘 다 계열을 알아볼 수 있고 그 계열이 다를
+ * 때만 `true` 다.
+ *
+ * 한쪽이라도 계열을 모르면 `false` 다 — 새 모델 이름이 나올 때마다 이 목록이 뒤처지는데,
+ * 뒤처짐이 거짓 경고로 나타나면 안 된다. 모르는 것은 조용히 넘긴다.
+ */
+export function modelsDisagree(
+  configured: string | null | undefined, reported: string | null | undefined,
+): boolean {
+  const a = modelFamily(configured);
+  const b = modelFamily(reported);
+  if (a === null || b === null) return false;
+  return a !== b;
+}
+
 export interface ChannelRow {
   id: string;
   name: string | null;
