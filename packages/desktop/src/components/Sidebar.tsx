@@ -3,7 +3,7 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { sidebarStorage, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../lib/prefs';
 // `isMacOS`·`MAC_TRAFFIC_LIGHT_PL` 이 여기 있었다 — 신호등 여백은 이제 레일이 진다(아래 주석).
-import { TOP_BAR_H } from '../lib/platform';
+import { TOP_BAR_BG, TOP_BAR_H } from '../lib/platform';
 import { LeasePanel } from './LeasePanel';
 import { Menu } from './Menu';
 // `StatusPicker` 가 여기 있었다 — 계정 행과 함께 `Rail.tsx` 로 갔다.
@@ -1484,8 +1484,15 @@ export function Sidebar({
             **창이 움직이는 대신 글자가 선택**됐다. 손잡이로 쓰는 자리의 글자는 고를
             대상이 아니다 — 복사할 값이 아니라 앱 이름이다.
           */
+          /*
+            **면 색을 `TOP_BAR_BG` 에서 받는다**(사용자 요청 4, 2026-09-08 — "타이틀바의
+            색상을 통일해줘"). 앞 판은 면을 아예 적지 않아 사이드바(`sunken`)를 물려받았고,
+            바로 오른쪽에 붙은 `Workspace` 헤더는 `raised` 였다 — 한 줄처럼 보이는 두 조각이
+            서로 다른 색이라 창 위쪽에 이유 없는 세로 이음선이 생겼다. 높이를 한 상수가 정하는
+            것과 같은 이유로(`TOP_BAR_H`) 색도 한 상수가 정한다.
+          */
           className={`flex ${TOP_BAR_H} select-none items-center gap-2 border-b border-border
-                      pl-3 pr-3 font-bold`}
+                      ${TOP_BAR_BG} pl-3 pr-3 font-bold`}
         >
           {/*
             **글자를 되돌렸다**(실측 2026-09-08, 사용자가 화면에서 지적 — "murmur 텍스트가
