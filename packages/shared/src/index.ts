@@ -1556,6 +1556,17 @@ export type WsServerEvent =
   | { type: 'presence.changed'; accountId: string; online: boolean }
   | { type: 'presence.snapshot'; online: string[] }
   /**
+   * 에이전트 세션이 **사람 손을 기다린다**(2026-09-08). 데스크탑이 그 스레드의 터미널
+   * 패널을 연다 — 관문에 걸린 턴은 화면에 아무 신호도 남기지 않아서, 사람은 [터미널 열기]를
+   * 누를 이유조차 모른다. 그래서 앱이 먼저 말해야 한다.
+   *
+   * **attach 소켓이 아니라 이 소켓으로 오는 이유**: attach 는 이미 붙은 세션에만 온다.
+   * 여기서 알려야 하는 것은 **아직 아무도 안 보고 있는 세션**이다.
+   */
+  | { type: 'agent.attention'; sessionId: string; channelId: string;
+      threadRootId: string | null; agentAccountId: string; agentHandle: string;
+      accountLabel: string }
+  /**
    * 사람이 자기 상태를 바꿨다(#186). presence 와 **별개의 이벤트**다 — 상태 변경은
    * `presence.changed` 를 만들지 않고, 연결이 끊겨도 상태는 남는다.
    */
@@ -1723,7 +1734,7 @@ export type AgentSessionState = 'running' | 'ended' | 'runner-offline';
  *   그러면 사람은 [이어받기] 를 눌러 놓고 여전히 관찰 전용인 화면을 본다 — 눌렀는데 아무
  *   일도 없는 그 결함이 정확히 #384 가 막으려는 것이다.
  */
-export type RunnerCap = 'input' | 'interactive' | 'handoff';
+export type RunnerCap = 'input' | 'interactive' | 'handoff' | 'attention';
 
 /**
  * 러너 → 서버 프레임. `GET /agent-relay` 소켓에 실린다.
@@ -1763,7 +1774,21 @@ export type RelayRunnerFrame =
    */
   | { type: 'interactive.reserved'; requestId: string; sessionId: string }
   /** interactive.open 이 실패했다(codex 거절 등). message 는 사람에게 그대로 보여줄 문구다. */
-  | { type: 'interactive.error'; requestId: string; message: string };
+  | { type: 'interactive.error'; requestId: string; message: string }
+  /**
+   * 이 세션이 **사람 손을 기다린다**(2026-09-08). 러너가 준비 신호를 상한 안에 못 봤거나,
+   * 주입이 먹지 않았고 — **계정 풀을 다 태운 뒤**다. 즉 이 화면은 다른 계정으로 우회되지
+   * 않는다.
+   *
+   * `interactive.opened` 와 프레임을 가른 이유는 `interactive.reserved` 를 가른 이유와
+   * 같다: "사람이 열었다"와 "기계가 부른다"는 사람이 다음에 할 일이 다르다. 전자는 이미
+   * 사람이 앞에 있고, 후자는 **아직 아무도 모른다** — 그래서 후자만 앱이 화면을 띄운다.
+   *
+   * `screen` 은 `output` 과 **같은 규율로 base64** 다. 서버는 열지 않는다: 관문 화면에도
+   * 계정 이메일 같은 것이 실린다. `accountLabel` 은 "어느 계정이 막혔는지"를 사람에게
+   * 보여줄 재료다(계정 풀을 안 만든 러너는 `'(기본)'`).
+   */
+  | { type: 'attention.required'; sessionId: string; accountLabel: string; screen: string };
 
 /**
  * 서버 → 러너 프레임.

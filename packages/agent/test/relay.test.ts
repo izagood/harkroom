@@ -83,7 +83,11 @@ describe('#141 러너 릴레이 — 접속과 announce', () => {
     // "세션이 없다"를 구분할 수 없다.
     // caps 도 함께 간다(#346): 선언이 없으면 서버는 이 러너를 구버전(입력·인터랙티브
     // 불가)으로 읽고, 뷰어에 writer 차례를 주지 않는다 — 선언이 곧 기능의 존재 증명이다.
-    expect(d.sent[0]).toEqual({ type: 'announce', sessions: [], caps: ['input', 'interactive', 'handoff'] });
+    // 능력 목록은 **서버가 읽는 계약**이라 값으로 고정한다 — 늘어날 때 이 줄이 함께
+    // 바뀌어야 서버 쪽 분기도 같이 검토된다(구 러너는 없는 능력을 선언하지 않는다).
+    expect(d.sent[0]).toEqual({
+      type: 'announce', sessions: [], caps: ['input', 'interactive', 'handoff', 'attention'],
+    });
 
     const session = client.openSession({ ...SESSION });
     expect(d.sent[1]).toMatchObject({ type: 'session.started' });

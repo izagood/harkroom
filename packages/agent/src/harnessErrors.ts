@@ -82,3 +82,29 @@ export async function readLastApiError(
   }
   return last === null ? null : { text: last };
 }
+
+/**
+ * 이 세션의 **대화 기록 파일이 있는가** — 즉 대화가 실제로 시작됐는가(2026-09-08).
+ *
+ * `readLastApiError` 와 같은 경로를 본다. 내용을 읽지 않는 이유: 여기서 필요한 것은
+ * "무엇을 말했나"가 아니라 "말이 시작됐나" 하나뿐이고, 그 판정은 빠르고 틀릴 수 없어야
+ * 한다 — 주입 직후 짧은 창 안에서 불린다(`pty.ts::injectPrompt.confirmDelivery`).
+ *
+ * **던지지 않는다.** 호출자는 거짓을 "증거 없음"으로 읽고 사람을 부른다. 조용히 태우는
+ * 것보다 한 번 더 부르는 쪽이 낫다.
+ */
+export async function sessionTranscriptExists(
+  harness: AgentHarness,
+  sessionId: string | null,
+  opts: { projectsDir?: string; configDir?: string | null } = {},
+): Promise<boolean> {
+  // codex 의 rollout 은 형식도 위치도 다르다(P5). 판정할 수 없으면 **참**을 돌려준다 —
+  // 여기서 거짓을 돌려주면 codex 턴이 매번 사람을 부른다.
+  if (harness !== 'claude-code') return true;
+  if (!sessionId) return true;
+  try {
+    return (await claudeSessionFilePath(sessionId, opts)) !== null;
+  } catch {
+    return false;
+  }
+}

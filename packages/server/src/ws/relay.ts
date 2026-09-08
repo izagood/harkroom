@@ -168,7 +168,28 @@ function isPtySize(value: unknown): value is number {
 /** interactive.open 응답 대기의 기본 한도. 러너는 로컬 spawn 뿐이라 10초면 충분히 길다. */
 const INTERACTIVE_OPEN_TIMEOUT_MS = 10_000;
 
-export function createRelayHub(): RelayHub {
+/**
+ * 허브 바깥으로 나가는 알림(2026-09-08). **이벤트 버스를 여기서 직접 타지 않는 이유**는
+ * 파일 머리 주석과 같다 — 허브는 러너 소켓과 뷰어 소켓을 직결하는 자리이고, 워크스페이스
+ * 전체에 뿌리는 일은 라우트의 몫이다. 여기서는 "누구의 무엇이 사람을 기다린다"만 말한다.
+ */
+export interface RelayHubHooks {
+  /**
+   * 이 세션이 사람 손을 기다린다. 라우트가 소유자를 찾아 `agent.attention` 으로 발행한다.
+   *
+   * **화면 바이트는 넘기지 않는다.** `output` 과 같은 규율이다 — 관문 화면에도 계정
+   * 이메일 같은 것이 실리고, 사람은 attach 해서 ring 재생으로 그것을 본다.
+   */
+  onAttention?: (ev: {
+    sessionId: string;
+    channelId: string;
+    threadRootId: string | null;
+    agentAccountId: string;
+    accountLabel: string;
+  }) => void;
+}
+
+export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
   const runners = new Map<string, Runner>();
   /**
    * interactive.open 의 미결 요청(#337). agentAccountId 를 함께 든다 — 응답 프레임이
@@ -372,6 +393,24 @@ export function createRelayHub(): RelayHub {
               message: typeof frame.message === 'string' ? frame.message : undefined,
             });
           }
+          return;
+        }
+        case 'attention.required': {
+          if (typeof frame.sessionId !== 'string') return;
+          // 소유 검사는 `output` 과 같은 결이다 — 안 하면 러너 하나가 남의 세션 id 로
+          // 프레임을 보내 그 사람의 앱에 창을 띄울 수 있다.
+          if (ownerOf.get(frame.sessionId) !== agentAccountId) return;
+          const session = runners.get(agentAccountId)?.sessions.get(frame.sessionId);
+          // 세션을 모르면 채널·스레드를 알 수 없고, 그러면 앱이 열 패널이 없다.
+          // 조용히 버린다 — 없는 것을 있다고 표시하지 않는다.
+          if (!session) return;
+          hooks.onAttention?.({
+            sessionId: session.sessionId,
+            channelId: session.channelId,
+            threadRootId: session.threadRootId,
+            agentAccountId,
+            accountLabel: typeof frame.accountLabel === 'string' ? frame.accountLabel : '(기본)',
+          });
           return;
         }
         case 'output': {

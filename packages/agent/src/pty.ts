@@ -305,6 +305,46 @@ export interface RunPtyTurnOptions {
     readyPattern?: RegExp;
     /** 준비 상한. 넘기면 `PromptNotDeliveredError`. 생략하면 60초. */
     readyTimeoutMs?: number;
+    /**
+     * 준비 상한을 넘겼을 때 **죽이는 대신 부른다**(2026-09-08).
+     *
+     * 여기까지 온 화면은 사람 손이 필요한 것이다 — 첫 실행 승인 관문이 대표적이고, 그
+     * 목록은 우리 계약이 아니라 하네스의 것이라 열거로 끝나지 않는다. 알려진 관문은
+     * `workspaceTrust.ts` 가 미리 없애지만, 다음 버전이 관문을 하나 더 만들 수 있다.
+     *
+     * **그 화면을 죽이면 사람이 열어 볼 대상 자체가 없어진다.** 이것이 있으면 PTY 를
+     * 유지하고 `readyProbe` 도 살려 둔다: 사람이 관문을 지나 입력 프롬프트가 그려지는
+     * 순간 패턴이 맞아 프롬프트가 그대로 주입된다. 그래서 **사람의 개입이 턴을 대체하지
+     * 않고 통과시킨다.**
+     *
+     * 없으면 지금 동작 그대로다(SIGKILL + `PromptNotDeliveredError`) — 사람이 붙을 수
+     * 없는 호출자(비대화형 프로브, 테스트)의 경로다. 콜백 유무가 두 정책을 가르고,
+     * 그래서 플래그를 따로 두지 않는다.
+     *
+     * **이 콜백이 불려도 프라미스는 정착하지 않는다.** 이 턴의 끝은 exit 이거나 고아
+     * 회수다 — 인터랙티브 턴과 같은 규칙이다(#337).
+     */
+    onAttention?: (screen: string) => void;
+    /**
+     * 주입이 **먹혔는지** 재는 확인 창(2026-09-08, 스펙 §2-5).
+     *
+     * 준비 신호는 "화면이 입력을 받을 모양이다"까지만 말한다. 프로덕션에서 프롬프트를
+     * 넣은 뒤 대화가 시작되지 않는 상태가 12~30분 실재했고, 무발화 한도가 끝낼 때까지
+     * 아무도 몰랐다 — 준비 상한도 조립도 판정도 정상이었으므로 **원인은 미확정이다.**
+     * 이 창은 원인이 무엇이든 그 상태를 잡는다.
+     *
+     * `probe` 는 "대화가 실제로 시작됐다"를 판정한다. 러너는 세션 기록 파일의 존재를
+     * 쓴다 — 화면 문자열로 재면 하네스 버전에 묶이지만, 파일 생성은 사실 자체다.
+     * **던지면 "증거 없음"으로 읽는다**: 사람을 부르는 쪽이 조용히 태우는 것보다 낫다.
+     *
+     * `onAttention` 이 없으면 부를 곳이 없으므로 이 창도 돌지 않는다.
+     * 생략하면 확인 창 자체가 없다(기존 호출자 그대로).
+     */
+    confirmDelivery?: {
+      probe: () => boolean | Promise<boolean>;
+      /** 주입부터 증거까지 허용할 시간. 생략하면 15초. */
+      withinMs?: number;
+    };
   };
   /** PTY 초기 크기. 생략하면 비대화형 기본 120x40(스펙 §5)이다. */
   cols?: number;
@@ -496,20 +536,28 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
 
     // ── 프롬프트 주입(2026-09-08). **준비 신호를 본 뒤에만** 쓴다.
     if (opts.injectPrompt) {
-      const { text, readyPattern = DEFAULT_READY_PATTERN, readyTimeoutMs = 60_000 } = opts.injectPrompt;
+      const { text, readyPattern = DEFAULT_READY_PATTERN, readyTimeoutMs = 60_000,
+              onAttention } = opts.injectPrompt;
       let injected = false;
       const startedAt = Date.now();
       let readyProbe: NodePty.IDisposable | null = null;
       const readyTimer = setTimeout(() => {
         if (injected || settled) return;
-        // 준비를 못 봤다 — 이 턴은 프롬프트 없이 도는 것이 아니라 실패로 끝난다.
+        const screen = decodeTailText(tail.snapshot());
+        if (onAttention) {
+          // **여기서 아무것도 정착시키지 않는다.** `readyProbe` 를 그대로 살려 두므로,
+          // 사람이 관문을 지나면 아래 주입이 일어나고 턴이 이어진다.
+          onAttention(screen);
+          return;
+        }
+        // 준비를 못 봤고 부를 사람도 없다 — 이 턴은 프롬프트 없이 도는 것이 아니라 실패다.
         readyProbe?.dispose();
         settled = true;
         if (timeoutTimer) clearTimeout(timeoutTimer);
         dataListener.dispose();
         exitListener.dispose();
         try { proc.kill('SIGKILL'); } catch { /* 이미 죽었으면 회수할 것도 없다 */ }
-        reject(new PromptNotDeliveredError(Date.now() - startedAt, decodeTailText(tail.snapshot())));
+        reject(new PromptNotDeliveredError(Date.now() - startedAt, screen));
       }, readyTimeoutMs);
       readyTimer.unref?.();
       readyProbe = proc.onData(() => {
@@ -524,6 +572,22 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
           proc.write(`\u001b[200~${text}\u001b[201~`);
           proc.write('\r');
         } catch { /* 그 사이에 죽었으면 exit 리스너가 결과를 정한다 */ }
+
+        // 주입이 **먹혔는지** 확인한다(스펙 §2-5). 여기서도 아무것도 정착시키지 않는다 —
+        // 사람을 부를 뿐이고, `readyProbe` 는 이미 소임을 다해 dispose 됐다.
+        const confirm = opts.injectPrompt?.confirmDelivery;
+        if (confirm && onAttention) {
+          const confirmTimer = setTimeout(() => {
+            if (settled) return;
+            void (async () => {
+              let ok = false;
+              try { ok = await confirm.probe(); } catch { ok = false; }
+              if (!ok && !settled) onAttention(decodeTailText(tail.snapshot()));
+            })();
+          }, confirm.withinMs ?? 15_000);
+          // 이 타이머만으로 러너를 살려 두지 않는다 — 턴의 수명은 PTY 가 정한다.
+          confirmTimer.unref?.();
+        }
       });
     }
 
