@@ -138,6 +138,96 @@ export const en = {
   'common.someone': 'someone',
 
   // ---------------------------------------------------------------------------
+  // gallery — **화면 이름이다.** `settings/GallerySettings.tsx` 가 그리는 말이고,
+  // 그 화면은 다른 화면을 재는 **기준자**다(그 파일 머리말).
+  //
+  // ## 여기 오는 것은 **설명**뿐이다 — 견본은 안 온다
+  //
+  // 이 화면에는 성격이 다른 두 종류의 글이 있다.
+  //
+  // | | 예 | 어디에 |
+  // |---|---|---|
+  // | **설명** — 이 칸이 무엇을 가르치는가 | `강조를 받는 유일한 카드. 누를 수 있다.` | **사전** |
+  // | **견본** — 가짜 대화의 내용 | `lint 를 다시 불러 줘` · `008 을 고친다` | **코드에 그대로** |
+  //
+  // 견본을 사전에 넣지 않는 이유가 둘이다. 첫째, **그것은 화면 문구가 아니라 데이터다** —
+  // 카드 안에 흐르는 남의 말이고, 사전에 넣으면 사전이 가짜 대화로 부푼다. 둘째,
+  // **번역자가 그것을 옮길 이유가 없다** — 이 화면이 가르치는 것은 카드의 생김새이지 그
+  // 안에 무슨 말이 적혔는가가 아니고, 견본이 무슨 언어든 여덟 가지 말의 경계는 그대로
+  // 보인다. 사전에 있으면 번역자는 그것을 **옮겨야 할 것**으로 읽는다.
+  //
+  // 그래서 영어로 이 화면을 열면 **설명은 영어, 카드 속 대화는 한국어**다. 어색해 보이지만
+  // 그것이 정직한 상태다 — 저 대화는 murmur 가 하는 말이 아니라 예시로 박아 둔 남의 말이다.
+  //
+  // **덩어리는 화면의 구획을 따른다.**
+  //
+  // | 덩어리 | 그 구획 |
+  // |---|---|
+  // | `page` | 화면 제목 · 에이전트가 모자랄 때의 안내 |
+  // | `speech` | 여덟 가지 말 — 선택 셋 · 실패 둘 · 보고 · 진행 · 주고받기 |
+  // | `thread` | 스레드 상태 5단 · 대기 사슬 둘 · 참여자 줄 |
+  //
+  // 덩어리 안은 **키 이름 알파벳순**이다(근거는 `sidebar` 머리말과 같다 — 리베이스).
+  //
+  // ## 이름은 `title`, 가르치는 것은 `note`
+  //
+  // 각 칸이 둘을 갖는다. `title` 은 **어휘의 이름**(`Ask — for me`)이고 `note` 는 **왜 이
+  // 모양인가**(`The only card that gets the accent…`)다. 한 문장으로 합치지 않는 이유는
+  // 화면이 둘을 다른 크기로 세우기 때문이다(`Row`: 제목은 `text-body`, 설명은 `text-meta`).
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 에이전트가 둘 미만일 때. **비는 것은 이름뿐**이라고 정확히 말한다 — 앞 판본은 넓게
+   * 경고했다가 정작 색이 뒤집힌 것은 말하지 않았다(그 파일 주석의 실측). 넓은 경고는
+   * 그 경고 자체를 못 믿게 만든다.
+   *
+   * `{ellipsis}` 로 받는 이유: 화면이 그 자리에만 다른 색을 입힌다(`text-fg-subtle`).
+   * 값(`…`)을 사전에 적으면 번역자가 그것을 문장으로 읽고 고치려 든다.
+   */
+  'gallery.page.namesMissing':
+    'With fewer than two agents the name slots stay as {ellipsis}. Colors, recipients and chain '
+    + 'shapes are pinned by samples, so they follow the rules — create two agents and the names '
+    + 'fill in with real values too.',
+  'gallery.page.subtitle': 'The eight kinds of speech and their edge states. If this breaks, the vocabulary broke.',
+  'gallery.page.title': 'Component gallery',
+
+  /**
+   * 여덟 가지 말. **이름을 `Ask`·`Failure`·`Report` 로 두고 갈래를 `—` 뒤에 적는다** —
+   * 한국어 `선택 — 나에게 온 것` 과 같은 구조다. 갈래를 앞에 세우면(`For me — ask`)
+   * 같은 어휘의 세 칸이 목록에서 흩어진다.
+   */
+  'gallery.speech.askDone': 'Ask — already answered',
+  'gallery.speech.askDoneNote': 'Only the chosen option remains, and the accent is withdrawn.',
+  'gallery.speech.askForMe': 'Ask — for me',
+  'gallery.speech.askForMeNote': 'The only card that gets the accent. It can be pressed.',
+  /** 규칙 04 를 이름으로 부른다 — 번호가 문서(`docs/design.md`)의 것이라 번역하지 않는다. */
+  'gallery.speech.askToAgent': 'Ask — sent to an agent',
+  'gallery.speech.askToAgentNote': 'Neutral. Readable but not pressable (rule 04).',
+  'gallery.speech.exchange': 'Agents talking to each other',
+  'gallery.speech.exchangeNote': 'Folded by default. Unfolded, a thread becomes a log.',
+  /**
+   * **`'다시 부르기'가 없다`** 를 옮기면서 따옴표를 그대로 둔다 — 그 버튼의 이름을
+   * 인용하는 것이라 문장의 일부가 아니다.
+   */
+  'gallery.speech.failFinal': 'Failure — retrying will not help',
+  'gallery.speech.failFinalNote': 'No "Retry" — a door that does not exist is not drawn.',
+  'gallery.speech.failRetry': 'Failure — can be retried',
+  'gallery.speech.failRetryNote': 'Always comes to a person. The way to fix it sits in the same place.',
+  'gallery.speech.progress': 'Progress',
+  'gallery.speech.progressNote': 'A stretch that needs no answer. Not a sentence but one line of state.',
+  'gallery.speech.report': 'Completion report',
+  'gallery.speech.reportNote': 'A message to be read, so it takes no accent. It is the one that stays longest.',
+
+  'gallery.thread.chainMine': 'Wait chain — my turn',
+  'gallery.thread.chainMineNote': 'How many unblock is the reason a person answers.',
+  'gallery.thread.chainStuck': 'Wait chain — deadlock',
+  'gallery.thread.chainStuckNote': 'The chain reaches nowhere. Only a person can break it.',
+  'gallery.thread.participants': 'Participant row · terminal picker',
+  'gallery.thread.participantsNote': 'Whoever does not answer is dimmed. What you do not own is not in the list.',
+  'gallery.thread.states': 'Thread states — five',
+  'gallery.thread.statesNote': 'Only two take the accent, and even those two differ in color.',
+
+  // ---------------------------------------------------------------------------
   // agents — **화면 이름이다.** `settings/AgentsSettings.tsx` 가 그리는 말이고,
   // 이 말들을 내는 판정은 `lib/` 에 없다(그쪽에 있는 것은 아래 '안 옮긴 것'에 적었다).
   //
