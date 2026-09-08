@@ -127,6 +127,31 @@ export interface AgentConfig {
    * 타임스탬프를 저장하면 러너 시계가 앞선 머신에서 미래 시각이 화면에 뜬다.
    */
   lastTurnAt: string | null;
+  /**
+   * 지금 붙어 있는 러너가 **기동 때 읽은** claude 계정 lane(Agents 관제 5단계).
+   *
+   * 셋을 가른다:
+   *   * `null` — **모른다**. 구 러너이거나 아직 폴을 한 번도 보내지 않았다.
+   *   * `{ pool: null | '이름', accounts: [] }` — 풀이 비어 러너가 시스템 기본
+   *     로그인(`~/.claude`)으로 돈다. `pool: null` 은 풀 지정이 없는 것(암묵 풀)이다.
+   *   * 계정이 있는 lane — 페일오버가 **이 순서로** 돈다(정렬하지 않는다).
+   *
+   * **지금 무엇으로 도는지는 여기서 읽지 마라.** 페일오버는 턴 단위로 머리를 옮기고
+   * 그 사실은 러너 메모리에만 있다 — 지금 도는 계정은 턴 줄(`AgentSessionView.claudeAccount`,
+   * #694)이 답한다. 이 값은 러너가 사는 동안 바뀌지 않는 것, 즉 "무엇을 읽고 떴나"다.
+   *
+   * `runnerVersion` 과 같이 읽기 전용이다 — PATCH 로는 바꿀 수 없고 `inbox.poll` 이
+   * 나르는 값 하나만 이것을 쓴다.
+   */
+  claudeLane: ClaudeLaneView | null;
+}
+
+/** `AgentConfig.claudeLane` 의 값. 순서가 뜻이 있다. */
+export interface ClaudeLaneView {
+  /** 풀 이름. `null` 은 풀 지정이 없는 것(뿌리 자체를 쓴다)이다. */
+  pool: string | null;
+  /** 계정 이름들, **페일오버 순서 그대로**. 빈 배열은 시스템 기본 로그인을 뜻한다. */
+  accounts: string[];
 }
 
 export interface AgentView extends AccountView, AgentConfig {}

@@ -19,6 +19,7 @@ import { getMemory, listMemory, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_L
 import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC } from '../services/agentWakes.js';
 import { guideFor } from './guide.js';
+import { recordClaudeLane } from '../services/claudeLane.js';
 import { recordRunnerVersion } from '../services/runnerVersion.js';
 import { resolveAttachmentFor } from '../services/attachments.js';
 import { reportedModelMeta } from '../services/reportedModel.js';
@@ -466,12 +467,30 @@ function buildMcpServer(
 
   server.registerTool('inbox.poll', {
     description: '미읽음 inbox 조회. timeoutMs>0이면 새 항목이 올 때까지 long-poll',
-    inputSchema: { timeoutMs: z.number().int().min(0).max(25_000).optional(), version: z.string().optional() },
-  }, async ({ timeoutMs, version }) => {
+    inputSchema: {
+      timeoutMs: z.number().int().min(0).max(25_000).optional(),
+      version: z.string().optional(),
+      // 러너가 기동 때 읽은 claude lane(5단계). **버전과 같은 자리로 온다** — 러너가
+      // 이미 25초마다 부르는 것이 이 도구 하나뿐이라, lane 만을 위한 엔드포인트를 두면
+      // 러너가 새 실패 지점을 하나 더 갖는다(못 보내면 폴까지 실패하는 것이 아니라,
+      // 폴은 되는데 lane 만 조용히 안 오는 상태를 따로 다뤄야 한다).
+      claudeLane: z.object({
+        pool: z.string().nullable(),
+        // 이름만 받는다 — 경로·이메일은 받지 않는다(러너 로그와 같은 규율).
+        accounts: z.array(z.string()).max(64),
+      }).optional(),
+    },
+  }, async ({ timeoutMs, version, claudeLane }) => {
     // 버전이 오면 기록한다 — 배포가 넣어 준 빌드 시점 값이다(#129). 값이 바뀔 때만
     // 실제로 쓰이므로 이 핫 패스에 쓰기 비용이 없다(services/runnerVersion.ts 주석).
     if (version) {
       await recordRunnerVersion(pool, account.id, version);
+    }
+    // lane 도 같은 규칙이다 — 값이 바뀔 때만 쓴다(services/claudeLane.ts 주석).
+    // **사람 계정에는 쓰지 않는다**: 사람이 MCP 로 폴을 걸 수 있고, lane 은 러너에만
+    // 있는 개념이라 사람 계정에 행이 생기면 화면이 사람에게 계정 순서를 그린다.
+    if (claudeLane && account.kind === 'agent') {
+      await recordClaudeLane(pool, account.id, claudeLane);
     }
     // presence 를 여기서 표시하지 않는다 — `/mcp` 라우트가 요청마다 이미 했다.
     // 예전에는 이 자리가 유일한 mark 였고, 그것이 **일하는 중인 에이전트를 죽었다고

@@ -3,6 +3,7 @@ import type { AgentView } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { canSeeAgentConfig } from '../lib/agentConfigGate';
+import { claudeLaneLabel, showsClaudeLane } from '../lib/claudeLane';
 import { Identity, StatusMark } from './Identity';
 import { Overlay } from './Overlay';
 import { emphasize, lastTurnLabel } from './settings/AgentsSettings';
@@ -173,6 +174,17 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
                 value={runnerVersionLabel(agent.runnerVersion, appVersion, t)}
                 mono={agent.runnerVersion !== null && agent.runnerVersion !== UNKNOWN_RUNNER_VERSION}
               />
+              {/* 러너가 **어느 claude 계정들을 읽고 떴나**(5단계). 턴 줄(#694)이 도는
+                  턴에 대해 답하는 것을 이 행이 조용한 러너에 대해 답한다 — 그것이 없으면
+                  계정 화면의 "러너는 시작할 때 풀을 한 번 읽는다"가 확인되지 않는
+                  주장으로 남는다. claude 하네스에만 그린다(`lib/claudeLane.ts`). */}
+              {showsClaudeLane(agent.harness) && (
+                <Row
+                  label={t('profile.rows.claudeLane')}
+                  value={claudeLaneLabel(agent.claudeLane, t)}
+                  mono={agent.claudeLane !== null && agent.claudeLane.accounts.length > 0}
+                />
+              )}
             </>
           )}
         </dl>

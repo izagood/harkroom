@@ -224,6 +224,13 @@ console.log(claudeAccounts.length
 // (`withAccountFailover` 주석).
 const accountLane = claudeAccounts.length ? claudeAccounts : [null];
 
+// 폴이 나르는 신고값(5단계). **이름과 풀만** — 경로·이메일은 싣지 않는다(위 콘솔 한 줄과
+// 같은 규율). 기동 때 한 번 만들어 두는 이유는 이것이 러너가 사는 동안 바뀌지 않는
+// 사실이기 때문이다: 페일오버가 옮기는 머리는 여기 없고, 지금 도는 계정은 턴 줄(#694)이
+// 말한다. codex·gemini 러너가 이것을 보내도 서버가 harness 로 걸러 낸다
+// (`services/claudeLane.ts`) — 러너가 자기 하네스를 폴 루프에서 들고 있지 않기 때문이다.
+const claudeLaneReport = { pool: lane.pool ?? null, accounts: claudeAccounts.map((a) => a.name) };
+
 // 서버별로 갈리기 전 경로가 남아 있으면 **경고만** 한다 — 자동으로 옮기지 않는다.
 // 코드는 그 디렉터리가 *어느 서버의* 이 handle 것인지 알 방법이 없다(아래 레거시
 // sessions.json 주석과 같은 논리다). 대신 운영자가 판단할 수 있게 명령을 그대로 준다.
@@ -380,7 +387,7 @@ let backoffMs = 1_000;
 
 while (running) {
   try {
-    const batch = await murmur.pollInbox(config.pollTimeoutMs);
+    const batch = await murmur.pollInbox(config.pollTimeoutMs, claudeLaneReport);
     if (!batch.entries.length) {
       backoffMs = 1_000;
       // 멘션이 없어도 종료 요청은 봐야 한다. 턴 안에서만 정의를 읽으면 **조용한 러너는

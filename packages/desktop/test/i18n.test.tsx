@@ -696,6 +696,7 @@ const agentView = (extra: Partial<AgentView> = {}): AgentView => ({
   id: AGENT_ID, handle: 'forge', displayName: 'forge', kind: 'agent', isAdmin: false,
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
+  claudeLane: null,
   stopRequestedAt: null, stopAckedAt: null, lastTurnAt: null,
   status: 'available', statusText: null, avatarAttachmentId: null, ...extra,
 });
@@ -1871,6 +1872,7 @@ describe('러너 사유 — 컨트롤러가 지금 언어로 말한다', () => {
     isAdmin: false, instructions: '', harness: 'claude-code' as const, model: null, effort: null,
     workingDir: null, mentionPermission: 'auto' as const, ownerAccountId: 'u1',
     disabled: false, runnerVersion: null, stopRequestedAt: null, stopAckedAt: null,
+    claudeLane: null,
     lastTurnAt: null, status: 'available' as const, statusText: null,
     avatarAttachmentId: null,
   };
@@ -1968,6 +1970,7 @@ const gridAgent = (): AgentView => ({
   harness: 'claude-code',
   model: null,
   runnerVersion: null,
+  claudeLane: null,
   lastTurnAt: null,
   instructions: '',
   workingDir: null,

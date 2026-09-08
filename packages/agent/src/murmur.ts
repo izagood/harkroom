@@ -215,9 +215,19 @@ export class MurmurAgentClient {
     return (await res.json()) as { slug: string; body: string }[];
   }
 
-  /** timeoutMs 동안 park 한다. 새 항목이 없으면 빈 배치로 정상 반환된다. */
-  pollInbox(timeoutMs: number): Promise<InboxBatch> {
-    return this.call<InboxBatch>('inbox.poll', { timeoutMs, version: VERSION });
+  /**
+   * timeoutMs 동안 park 한다. 새 항목이 없으면 빈 배치로 정상 반환된다.
+   *
+   * `claudeLane` 은 기동 때 읽은 계정 순서다(5단계). **버전과 같은 자리로 실어 보낸다** —
+   * 값이 바뀔 때만 서버가 쓰므로(services/claudeLane.ts) 이 25초 루프에 쓰기 비용이 없고,
+   * 러너가 이미 거는 호출에 얹으면 lane 만을 위한 새 실패 지점이 생기지 않는다.
+   * claude 하네스가 아닌 러너는 넘기지 않는다 — 그러면 서버에 행이 안 생기고, 화면은
+   * 그것을 **모른다**로 그린다(없는 lane 을 빈 lane 으로 적으면 거짓이 된다).
+   */
+  pollInbox(timeoutMs: number, claudeLane?: { pool: string | null; accounts: string[] }): Promise<InboxBatch> {
+    return this.call<InboxBatch>('inbox.poll', {
+      timeoutMs, version: VERSION, ...(claudeLane ? { claudeLane } : {}),
+    });
   }
 
   async readThread(channelId: string, threadRootId: string | null, since?: number, limit = 30): Promise<MessageRow[]> {

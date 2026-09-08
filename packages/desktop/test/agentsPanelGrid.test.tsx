@@ -424,6 +424,7 @@ describe('좁은 폭 — 62px 레일 옆의 패널은 설정 화면이 아니다
       ...acc('forge', 'forge', 'agent'),
       instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
       mentionPermission: 'auto', runnerVersion: null,
+      claudeLane: null,
       stopRequestedAt: null, stopAckedAt: null, lastTurnAt: null,
     };
     render(

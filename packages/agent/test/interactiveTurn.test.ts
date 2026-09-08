@@ -25,6 +25,7 @@ function defOf(overrides: Partial<AgentView> = {}): AgentView {
     // mkdir 경로). avcs 경로 자체는 mentionTurn 테스트가 지킨다 — 같은 함수를 쓴다.
     workingDir: null, mentionPermission: 'auto', ownerAccountId: 'human-1', disabled: false,
     runnerVersion: null, stopRequestedAt: null, stopAckedAt: null, lastTurnAt: null,
+    claudeLane: null,
     status: 'available', statusText: null, avatarAttachmentId: null,
     ...overrides,
   };

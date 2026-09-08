@@ -2612,6 +2612,22 @@ export const en = {
   'profile.rows.modelDefault':
     'harness default — hover a message byline for the model that actually answered',
   'profile.rows.owner': 'Owner',
+  /**
+   * 러너가 기동 때 읽은 claude 계정 lane(5단계). **행 이름이 "지금 쓰는 계정"이 아니다** —
+   * 지금 도는 것은 턴 줄이 말하고, 이 행은 러너가 무엇을 읽고 떴는지다.
+   */
+  'profile.rows.claudeLane': 'Claude accounts read at startup',
+  /** 풀이 비었다. **모른다와 다른 사실이다** — 사람이 계정을 넣어야 하는 상태다. */
+  'profile.rows.claudeLaneEmpty': '{pool} is empty — running on the system login',
+  /** 순서가 뜻이다(페일오버가 이 순서로 돈다). 화살표는 코드가 잇는다. */
+  'profile.rows.claudeLaneOrder': '{pool}: {accounts}',
+  /** 풀 지정이 없는 것 — 뿌리 자체를 쓴다. 이름 없는 풀을 빈 문자로 그리지 않는다. */
+  'profile.rows.claudeLanePoolRoot': 'the default pool',
+  /**
+   * 아직 신고가 없다. `runnerVersionUnknown` 과 같은 모양으로 적는다 — 원인이 둘이지만
+   * (구 러너 / 아직 폴을 안 보냈다) 사람이 할 일이 하나다.
+   */
+  'profile.rows.claudeLaneUnknown': 'Not reported — restart the runner once and it fills in',
   'profile.rows.permission': 'Permission',
   'profile.rows.presence': 'Presence',
   'profile.rows.presenceNotResponding': 'Not responding',
