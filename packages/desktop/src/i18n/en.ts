@@ -3006,6 +3006,7 @@ export const en = {
   'channel.header.searchTitle': 'Search this channel (⌘K searches everything)',
 
   'channel.pane.archived': 'This channel is archived',
+  'channel.pane.jumpToBottom': 'Jump to latest',
   /** 계정 목록에 없는 id 일 때의 자리. **"없다"가 아니라 "모른다"** 다. */
   'channel.pane.runnerFailureAgent': 'agent',
   /** 머리말이 정한 낱말이다 — 주어가 있어야 누가 안 하는지가 온다. */
