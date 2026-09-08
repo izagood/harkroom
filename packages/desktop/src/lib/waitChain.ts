@@ -1,5 +1,6 @@
 import { readAskMeta, type MessageRow, type OpenAskLink } from '@murmur/shared';
 import type { Liveness } from './threadState';
+import type { Translate } from '../i18n';
 
 /**
  * 대기 사슬의 한 마디 — **누가 누구를 기다리는가**.
@@ -217,4 +218,77 @@ export function chainEnds(chain: WaitChain): { waiter: string; blockedBy: string
   const first = chain.links[0]!;
   const last = chain.links[chain.links.length - 1]!;
   return { waiter: first.waiter, blockedBy: last.blockedBy };
+}
+
+// ---------------------------------------------------------------------------
+// 사슬을 **사람이 읽는 말**로 — 번역기를 인자로 받는다
+// ---------------------------------------------------------------------------
+
+/**
+ * 계정 id 를 화면에 쓸 이름으로. `null` 은 '사람 아무나'다.
+ *
+ * 화면이 넘긴다 — 이름은 스토어(`accounts`)에서 오고 `lib/` 는 스토어를 모른다.
+ */
+export type NameOf = (accountId: string | null) => string;
+
+/**
+ * 사슬 문장들 — **`WaitChainLine` 이 이어 붙일 조각**.
+ *
+ * ## 왜 이 함수가 `lib/` 에 있나 (i18n 구조 판단 (b))
+ *
+ * 원래 이 문장 조립은 `WaitChain.tsx` 안에 있었고 조사(`subjectParticle`)를 화면이
+ * 손으로 붙였다. 영어를 원본으로 두는 순간 그 모양이 무너진다 — 영어에는 조사가 없고
+ * **어순이 다르다**(`A가 B의 답을 기다린다` / `A is waiting for B`). 조각을 화면이
+ * 이으면 언어마다 이을 방법이 달라지므로, **문장 전체를 사전이 갖고** 화면은 채우기만
+ * 한다.
+ *
+ * 그러면 그 채우기는 어디서 하나. 이 저장소의 규율은 **판정과 렌더를 가른다**
+ * (`threadState`·`faceState`·`inboxRow` 가 전부 `lib/` 에 있고 화면은 그리기만 한다).
+ * 문장을 고르는 것은 판정 쪽이다 — 어떤 마디가 `linkAnyone` 이고 어떤 것이 `link`
+ * 인지는 **`blockedBy` 가 null 인가**라는 판정이고, 그것을 화면에 두면 두 화면
+ * (스레드 패널·인박스)이 각자 판정하게 된다.
+ *
+ * **`t` 를 인자로 받는다**(후보 (b)). 그래서 이 함수는 여전히 순수하고 React 를
+ * 모른다 — 시험이 `translator('en')` 을 그냥 넘긴다. 후보 (a)(키와 인자만 내기)를
+ * 버린 이유는 `i18n/index.ts::Translate` 머리말에 있다: 이 저장소의 회귀선은 키가
+ * 아니라 **사람이 읽는 문구**를 재고, 키만 내면 그 의도를 잃는다.
+ */
+export function chainSentences(chain: WaitChain, name: NameOf, t: Translate): string[] {
+  return chain.links.map((l) => (
+    l.blockedBy === null
+      // '사람 아무나'는 특정인을 기다리는 것과 **다른 문장**이다. 한국어에서는 이름
+      // 자리에 보통명사를 끼우면 조사가 어긋나서 갈랐고(실측 회귀선), 영어에서도
+      // `waiting for someone to answer` 가 `waiting for someone` 보다 곧다.
+      ? t('waitChain.linkAnyone', { waiter: name(l.waiter) })
+      : t('waitChain.link', { waiter: name(l.waiter), blockedBy: name(l.blockedBy) })
+  ));
+}
+
+/**
+ * 교착 한 문장. **두 이유가 다른 문장인 이유는 사람이 할 일이 다르기 때문이다** —
+ * 서로를 기다리는 것은 끊어야 하고, 죽은 러너는 다시 띄워야 한다.
+ */
+export function deadlockSentence(chain: WaitChain, name: NameOf, t: Translate): string {
+  const head = chain.links[0]!;
+  if (chain.deadlockReason === 'cycle') {
+    return t('waitChain.deadlockCycle', {
+      names: chain.links.map((l) => name(l.waiter)).join(' ↔ '),
+    });
+  }
+  return t('waitChain.deadlockDeadRunner', {
+    waiter: name(head.waiter),
+    blockedBy: name(head.blockedBy),
+  });
+}
+
+/**
+ * **몇 개가 풀리는지.** 둘 이상일 때만 문장이 있다 — 하나뿐이면 "답하면 1개가 풀린다"는
+ * 정보가 아니라 잡음이고, 그 물음 자체가 이미 그 말을 하고 있다.
+ *
+ * 그래서 `null` 을 낼 수 있다. 화면이 그 문턱을 다시 쓰지 않게 **판정을 여기 둔다** —
+ * 두 화면이 각자 들고 있으면 한쪽만 고쳐질 수 있다.
+ */
+export function unblocksSentence(chain: WaitChain, t: Translate): string | null {
+  if (chain.end !== 'me' || chain.unblocks <= 1) return null;
+  return t('waitChain.unblocks', { count: chain.unblocks });
 }
