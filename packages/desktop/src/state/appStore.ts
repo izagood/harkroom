@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { draftsStorage } from '../lib/prefs';
 import type { AccountStatus, AccountView, AgentTeamRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus } from '@murmur/shared';
-import type { RunnerState } from '../lib/runnerLauncher';
+import type { ObservedRunner, RunnerState } from '../lib/runnerLauncher';
 import type { NotifiedSummary } from '../lib/notified';
 
 export interface HistoryEntry {
@@ -163,6 +163,32 @@ export interface AppState {
   /** 에이전트별 러너 실행 상태. agentId → state */
   runnerStates: Record<string, RunnerState>;
   /**
+   * daemon 이 **직접 확인한** 러너의 사실. agentId → 관측(`#443`).
+   *
+   * ## 왜 `runnerStates` 를 늘리지 않았나
+   *
+   * 둘은 **출처와 수명이 다르다.**
+   *
+   * | | `runnerStates` | `daemonRunners` |
+   * |---|---|---|
+   * | 누가 쓰나 | 이 앱의 실행기(`RunnerLauncher.setState`) | daemon(`observe()` 의 응답) |
+   * | 무엇인가 | 이 앱이 **내린 판정**(띄웠다·실패했다·기다린다) | daemon 이 `kill(pid,0)` 등으로 **본 사실** |
+   * | 언제 갱신되나 | 실행기가 무언가 할 때마다 | 관측할 때만 |
+   *
+   * `RunnerState` 에 `pid` 를 넣으면 실행기의 모든 `setState` 가 그 값을 함께 실어야
+   * 한다 — `Omit<RunnerState,'agentId'>` 를 통째로 갈아 끼우는 구조라(그 함수 시그니처)
+   * 한 자리라도 빠뜨리면 **관측된 pid 가 판정 갱신에 지워진다.** 사실이 판정의 부산물로
+   * 사라지는 그 모습이 정확히 `#443` 이 고치려는 것이므로, 나르는 그릇을 갈라 둔다.
+   *
+   * 또 `faceState`(`lib/faceState.ts`)가 `runnerStates` 를 **판정의 유일한 입력**으로
+   * 쓴다. 사실을 그 안에 섞으면 다음 사람이 `pid` 를 보고 얼굴을 정하게 되고, 그것은
+   * daemon 에게 판단을 시키는 것이다(`RunnerInfo.alive` 주석이 금지한 그 방향).
+   *
+   * **비어 있음이 곧 "러너가 없다"가 아니다** — 관측에 실패했거나(daemon 에 못 닿았다)
+   * 아직 안 했을 수도 있다. 그래서 화면은 여기 없는 에이전트에 대해 아무 말도 하지 않는다.
+   */
+  daemonRunners: Record<string, ObservedRunner>;
+  /**
    * 이 앱 번들의 버전. **컨트롤러가 기동 때 한 번 밀어 넣는다** — `runnerStates` 와 같은
    * 방향이다(컨트롤러가 밀고 화면은 읽는다). 화면이 컨트롤러에게 직접 물으면 컨트롤러를
    * 목으로 세우는 모든 테스트가 그 메서드를 알아야 하고, 실패는 렌더 도중의 예외가 된다.
@@ -225,7 +251,7 @@ const initial = {
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {},
   history: [], historyIndex: -1, notice: null, notifiedGaps: {}, projectionBannerDismissed: null,
   highlightedMessageId: null,
-  runnerStates: {}, appVersion: null, savedIds: [], savedCount: 0,
+  runnerStates: {}, daemonRunners: {}, appVersion: null, savedIds: [], savedCount: 0,
   linkPreviewReadyAt: {}, skillsRevision: 0,
 };
 
