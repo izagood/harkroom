@@ -182,82 +182,47 @@ describe('수용 — 조립한 argv 의 플래그가 그 서브커맨드에 실�
 });
 
 /**
- * 준비 판정이 **실물 claude TUI 출력에 맞는가**(2026-09-08).
- *
- * ## 왜 이 회귀선이 필요한가
- *
- * 초판 패턴은 `/[❯›>]\s*$/m`(줄 끝 앵커)였고 단위 테스트는 전부 초록이었다 — 픽스처가
- * `'READY\n'` 처럼 개행으로 끝나는 문자열이었기 때문이다. **실물에서는 한 번도 맞지
- * 않았다**: TUI 는 절대 커서 이동(`ESC[H`, `ESC[<n>C`)과 `\r` 로 화면을 다시 그리므로,
- * 눈에 보이는 "줄 끝의 ❯" 가 바이트 흐름에서는 줄 끝이 아니다. 그대로 나갔으면 준비를
- * 영영 못 보고 **모든 멘션이 상한에서 실패**했다.
- *
- * ## 왜 실물을 띄우지 않고 픽스처인가
- *
- * TUI 를 실제로 띄우려면 **로그인이 필요하다**. CI 러너에는 없으므로 그 테스트는 환경에
- * 의존하고, 환경에 의존하는 테스트는 CI 에서 꺼지거나 빨개진다 — 둘 다 회귀선이 아니다.
- * 대신 실물 부팅 출력을 그대로 떠서 고정한다(`fixtures/claude-tui-ready.txt`, 2026-09-08
- * claude 2.1.263 에서 캡처). 그 바이트가 이 결함을 그대로 담고 있으므로, 판정이 다시 위치
- * 기반으로 돌아가면 여기서 빨개진다.
- *
- * 픽스처는 언젠가 낡는다 — 그때는 이 파일의 다른 케이스들처럼 실물에 대고 다시 뜨면 된다.
- */
-describe('수용 — 준비 판정이 실물 TUI 출력에 맞는가 (2026-09-08)', () => {
-  const raw = readFileSync(
-    new URL('./fixtures/claude-tui-ready.txt', import.meta.url), 'utf8',
-  );
-
-  it('실물 부팅 출력에서 준비 표시를 찾는다', () => {
-    expect(looksReadyForPrompt(raw)).toBe(true);
-  });
-
-  it('그 출력에는 **줄 끝에** 표시가 없다 — 위치로 재면 영영 못 본다', () => {
-    // 이 단정이 이 회귀선의 핵심이다. 초판이 쓰던 앵커가 실물에서 왜 실패했는지를
-    // 코드로 고정한다 — 다음 사람이 "줄 끝이면 더 정확하지 않나" 로 되돌리지 못하게.
-    expect(/❯\s*$/m.test(raw)).toBe(false);
-  });
-
-  it('아직 준비되지 않은 출력에는 반응하지 않는다 — 상한이 그물 노릇을 하려면 거짓이어야 한다', () => {
-    expect(looksReadyForPrompt('Please run /login to authenticate\n')).toBe(false);
-  });
-});
-
-/**
- * **신뢰 대화상자를 준비로 오인하지 않는다**(2026-09-08 프로덕션 사고의 회귀선).
+ * **준비 판정이 입력창과 승인 화면을 가르는가**(2026-09-08 프로덕션 사고의 회귀선).
  *
  * ## 무슨 일이 있었나
  *
- * `-p` 는 워크스페이스 신뢰를 묻지 않는다 — claude 의 `--help` 가 명시한다: *"The workspace
- * trust dialog is skipped when Claude is run in non-interactive mode (via -p …)"*. 멘션 턴을
- * TUI 로 옮기면서 그 대화상자가 깨어났고, 프로덕션의 **모든 claude 멘션 턴이 죽었다**.
+ * 초판 판정은 커서 문자(`[❯›]`) 하나였고 단위 테스트는 전부 초록이었다 — 픽스처가 정상
+ * 부팅 화면뿐이었기 때문이다. 실물에서는 **승인 화면 셋이 전부 준비로 오인됐다**:
+ * 폴더 신뢰, 온보딩(로그인 방식 선택), 팀 텔레메트리 승인. 셋 다 `❯` 를 선택지 앞에 그린다.
  *
- * 준비 판정이 466ms 에 발동했는데 그때 화면에 있던 것은 입력창이 아니라 그 대화상자였다 —
- * **대화상자가 준비 표시와 같은 글자(`❯`)를 선택지 앞에 그린다.** 프롬프트가 모달에
- * 타이핑되고 턴은 무발화 한도까지 매달렸다.
+ * 오인하면 프롬프트가 그 모달에 타이핑되고 턴은 무발화 한도(30분)까지 매달린다 — v0.1.92·
+ * v0.1.96 에서 실제로 그랬다.
  *
- * ## 왜 단위 테스트가 못 잡았나
+ * ## 왜 이 표가 필요한가
  *
- * 픽스처는 정상 부팅 화면이었고, 개발 중 프로브는 **이미 신뢰된 디렉터리**(스크래치패드·홈)
- * 에서 돌아 대화상자를 한 번도 못 봤다. 프로덕션은 스레드마다 새 워크스페이스를 만든다.
+ * 모달을 **부정 목록**으로 막는 길은 끝나지 않는다(하네스 판본·조직 설정마다 새 승인 화면이
+ * 생긴다). 그래서 입력창에만 있는 **긍정 신호**로 잰다. 이 표는 그 판별이 다섯 화면을 옳게
+ * 가르는지를 고정한다 — 다음 사람이 "커서만 보면 간단한데" 로 되돌리지 못하게.
  *
- * 그래서 실물 대화상자 화면을 그대로 떠서 고정한다.
+ * 승인 화면은 실물에서 관측한 문구를 그대로 담았다. 새 승인 화면을 만나면 여기 한 줄
+ * 더하고, 판별이 그것도 거르는지 본다.
  */
-describe('수용 — 신뢰 대화상자를 준비로 오인하지 않는다 (2026-09-08)', () => {
-  const modal = readFileSync(
-    new URL('./fixtures/claude-tui-trust-modal.txt', import.meta.url), 'utf8',
-  );
+describe('수용 — 준비 판정이 입력창과 승인 화면을 가른다 (2026-09-08)', () => {
+  const read = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
 
-  it('그 화면에는 준비 표시가 **들어 있다** — 글자만으로는 갈리지 않는다', () => {
-    // 이 단정이 문제의 성질을 고정한다. `❯` 가 없었다면 애초에 오인이 없었다.
-    expect(/❯/.test(modal)).toBe(true);
-  });
+  const SCREENS: { name: string; file: string; ready: boolean }[] = [
+    { name: 'claude 입력창', file: 'claude-tui-ready.txt', ready: true },
+    { name: 'codex 입력창', file: 'codex-tui-ready.txt', ready: true },
+    { name: '폴더 신뢰 승인', file: 'claude-tui-trust-modal.txt', ready: false },
+    { name: '온보딩(로그인 방식)', file: 'claude-tui-login-menu.txt', ready: false },
+    { name: '팀 텔레메트리 승인', file: 'claude-tui-settings-approval.txt', ready: false },
+  ];
 
-  it('그래도 준비로 보지 않는다', () => {
-    expect(looksReadyForPrompt(modal)).toBe(false);
-  });
+  for (const { name, file, ready } of SCREENS) {
+    it(`${name} → ${ready ? '준비' : '준비 아님'}`, () => {
+      expect(looksReadyForPrompt(read(file))).toBe(ready);
+    });
+  }
 
-  it('정상 부팅 화면은 여전히 준비로 본다 — 방어가 정상 경로를 막지 않는다', () => {
-    const ready = readFileSync(new URL('./fixtures/claude-tui-ready.txt', import.meta.url), 'utf8');
-    expect(looksReadyForPrompt(ready)).toBe(true);
+  it('**다섯 화면 전부 커서 문자를 담고 있다** — 그것으로는 갈릴 수 없다는 사실을 고정한다', () => {
+    // 이 단정이 사고의 성질이다. 커서만 보던 판정이 왜 실패했는지가 여기 있다.
+    for (const { name, file } of SCREENS) {
+      expect(/[❯›]/.test(read(file)), name).toBe(true);
+    }
   });
 });

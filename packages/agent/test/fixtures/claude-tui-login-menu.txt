@@ -1,0 +1,4 @@
+
+[2m❯[0m1. Claude account with subscription · Pro, Max, Team, or Enterprise
+2. Anthropic Console account · API usage billing
+3. 3rd-party platform · Amazon Bedrock, Microsoft Foundry, or Vertex AI
