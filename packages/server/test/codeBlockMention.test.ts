@@ -18,6 +18,7 @@ let app: FastifyInstance;
 let stop: () => Promise<void>;
 let adminToken: string;
 let fizzPat: string;
+let fizzId: string;
 let teamMemberToken: string;
 let teamMemberId: string;
 let channelId: string;
@@ -63,7 +64,7 @@ beforeAll(async () => {
   stop = db.stop;
   app = await buildServer({ pool: db.pool });
   ({ token: adminToken } = await bootstrapAdmin(app));
-  ({ pat: fizzPat } = await createAgent(app, adminToken, 'fizz'));
+  ({ accountId: fizzId, pat: fizzPat } = await createAgent(app, adminToken, 'fizz'));
   ({ id: teamMemberId, token: teamMemberToken } = await registerHuman('teamperson'));
 
   const chan = await app.inject({
@@ -129,6 +130,56 @@ describe('코드 블록 안 멘션은 알림을 만들지 않는다 (#298)', () 
 
   it('이력은 다시 쓰지 않는다 — 저장된 본문은 그대로다', async () => {
     const body = '```\n@fizz\n```';
+    const id = await post(body);
+    const read = await app.inject({
+      method: 'GET', url: `/channels/${channelId}/messages`, headers: auth(adminToken),
+    });
+    expect(read.statusCode).toBe(200);
+    const found = (read.json().messages as Array<{ id: string; body: string }>).find((m) => m.id === id);
+    expect(found?.body).toBe(body);
+  });
+});
+
+/**
+ * 인용(`> `) 줄 안 `@handle` 은 알림을 만들지 않는다(#592).
+ *
+ * 같은 파일에 두는 이유: 인용은 `#298` 이 코드에 내린 것과 **같은 결정**이고, 판정도 같은
+ * 자리(`mentionScanText`)가 한다. 갈라 두면 한쪽만 고쳐질 때 다른 쪽 회귀선이 조용히 남는다.
+ *
+ * 이 결함이 실제로 만든 일: 에이전트가 화면을 인용해 옮겨 적기만 해도 그 안의 핸들이
+ * 불려서, 아무 할 일 없는 에이전트 세션이 깨어나 턴을 태웠다.
+ */
+describe('인용 줄 안 멘션은 알림을 만들지 않는다 (#592)', () => {
+  it('인용 줄의 @handle 은 inbox 에 행을 남기지 않는다', async () => {
+    const id = await post('> 컴포저 목록(@fizz 옆에 배지)');
+    expect(await inboxFor(fizzPat, id)).toEqual([]);
+  });
+
+  it('인용 안의 인라인 코드 뒤도 새지 않는다', async () => {
+    // 인용 판정을 코드 조각별로 다시 하면 첫 조각만 인용으로 보이고 이 줄이 샌다.
+    const id = await post('> 목록 `x` 옆에 @fizz');
+    expect(await inboxFor(fizzPat, id)).toEqual([]);
+  });
+
+  it('인용 밖의 @handle 은 여전히 알림이 간다 — 위 단언이 알림 자체가 죽은 것을 통과시키지 않는다', async () => {
+    const id = await post('> 앞 사람 말: @fizz\n@fizz 이건 진짜 부른다');
+    expect((await inboxFor(fizzPat, id)).map((r) => r.reason)).toEqual(['mention']);
+  });
+
+  it('인용 안의 집합 handle 은 확장되지 않는다', async () => {
+    const id = await post('> @codeteam 이라고 적혀 있었다');
+    expect(await inboxFor(teamMemberToken, id)).toEqual([]);
+  });
+
+  it('인용 안의 저장된 멘션 토큰(<@id>)도 알림을 만들지 않는다', async () => {
+    // 에이전트는 이미 정규화된 본문을 그대로 인용할 수 있다. 그때 토큰 경로
+    // (`mentionedIds`)가 같은 판정을 쓰지 않으면 handle 만 막고 토큰이 샌다.
+    const id = await post(`> 앞 메시지: <@${fizzId}> 를 불렀다`);
+    expect(await inboxFor(fizzPat, id)).toEqual([]);
+  });
+
+  it('인용 줄은 정규화되지 않는다 — 저장된 본문이 사람이 쓴 그대로다', async () => {
+    const body = '> 목록에 @fizz 가 있었다';
     const id = await post(body);
     const read = await app.inject({
       method: 'GET', url: `/channels/${channelId}/messages`, headers: auth(adminToken),
