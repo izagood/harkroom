@@ -1,10 +1,10 @@
 import { tmpdir } from 'node:os';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { basename, delimiter, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { composeSpawn, RingBuffer, resolveExecutable, runPtyTurn, type PtyWriter } from '../src/pty.js';
+import { composeSpawn, PromptNotDeliveredError, RingBuffer, resolveExecutable, runPtyTurn, type PtyWriter } from '../src/pty.js';
 import { ExecutableNotFoundError } from '../src/policy.js';
 
 const fake = join(dirname(fileURLToPath(import.meta.url)), 'helpers/fake-harness.mjs');
@@ -631,4 +631,107 @@ describe('injectPrompt — TUI 에 프롬프트를 넣는다 (2026-09-08)', () =
     await runPtyTurn(plan('ok'), { cwd: process.cwd(), timeoutMs: 10_000, onData: (c) => chunks.push(c) });
     expect(Buffer.concat(chunks).toString('utf8')).not.toContain('[200~');
   });
+});
+
+// ── 준비 상한이 하는 일(2026-09-08 실행 모델 교체 후속)
+//
+// 상한에 닿았다는 것은 "이 화면이 프롬프트를 받을 모양이 아니다"이고, 첫 실행 관문이
+// 대표적이다. 그 화면을 죽이면 **사람이 열어 볼 대상 자체가 없어진다** — 관문 목록은
+// 하네스의 것이라 열거로 끝나지 않으므로, 모르는 관문에서 사람이 개입할 길을 남긴다.
+describe('준비 상한 — onAttention 이 있으면 죽이지 않는다', () => {
+  it('상한을 넘기면 onAttention 을 부르고, 사람이 관문을 지나면 그 자리에서 주입된다', async () => {
+    const 화면: string[] = [];
+    let writer: PtyWriter | null = null;
+    const turn = runPtyTurn(plan('gatekeeper'), {
+      cwd: process.cwd(),
+      timeoutMs: 0,
+      onSpawn: (c) => { writer = c; },
+      injectPrompt: { text: '안녕', readyTimeoutMs: 300, onAttention: (s) => 화면.push(s) },
+    });
+
+    // 조건으로 기다린다 — 고정 슬립은 느린 CI 에서 샌다.
+    await vi.waitFor(() => expect(화면).toHaveLength(1), { timeout: 5_000 });
+    // 부른 화면에 관문이 실려 있다 — 데스크탑이 "무엇을 기다리는지" 보여줄 재료다.
+    expect(화면[0]).toContain('fake gatekeeper');
+
+    // **PTY 가 살아 있다는 증거**: 사람 흉내로 Enter 를 보내면 하네스가 응답한다.
+    // 죽었다면 이 입력은 아무 데도 안 가고 아래가 시간 초과로 빨개진다.
+    writer!.write(Buffer.from('\r'));
+    const r = await turn;
+    expect(r.exitCode).toBe(0);
+    // 관문을 지난 **뒤에** 프롬프트가 실제로 들어갔다 — 사람의 개입이 턴을 대체하지 않고
+    // 통과시킨다는 것이 이 설계의 값 대부분이다.
+    expect(r.tail).toContain('injected:');
+  }, 30_000);
+
+  it('onAttention 이 없으면 지금대로 죽고 던진다 — 콜백 유무가 두 정책을 가른다', async () => {
+    await expect(runPtyTurn(plan('gatekeeper'), {
+      cwd: process.cwd(),
+      timeoutMs: 0,
+      injectPrompt: { text: '안녕', readyTimeoutMs: 300 },
+    })).rejects.toBeInstanceOf(PromptNotDeliveredError);
+  }, 20_000);
+});
+
+// ── 주입이 **먹혔는지** 재는 확인 창(2026-09-08, 스펙 2-5)
+//
+// 준비 신호는 "화면이 입력을 받을 모양이다"까지만 말한다. 2026-09-08 프로덕션에서
+// 프롬프트를 넣은 뒤 대화가 시작되지 않는 상태가 12~30분 실재했고, 아무도 알아채지
+// 못했다. 원인은 미확정이지만 — 준비 상한도 조립도 판정도 정상이었다 — 그 상태 자체는
+// 잡을 수 있다.
+describe('주입 확인 창 — 준비 신호만으로는 부족하다', () => {
+  it('주입 뒤 증거가 없으면 onAttention 을 부른다', async () => {
+    // 'ready-then-silent' 가 프로덕션의 그 모양이다: 준비 신호를 찍고, 주입을 받고,
+    // 죽지도 답하지도 않는다. 'ready-then-echo' 로는 못 잰다 — 그쪽은 주입 직후 종료해
+    // 턴이 정착하고, 정착한 턴에는 부를 이유가 없다(그것도 옳은 동작이다).
+    const 화면: string[] = [];
+    const turn = runPtyTurn(plan('ready-then-silent'), {
+      cwd: process.cwd(), timeoutMs: 3_000,
+      injectPrompt: {
+        text: '안녕',
+        confirmDelivery: { probe: () => false, withinMs: 200 },
+        onAttention: (s) => 화면.push(s),
+      },
+    });
+    await vi.waitFor(() => expect(화면).toHaveLength(1), { timeout: 3_000 });
+    await turn.catch(() => {});   // 시간 한도로 끝난다 — 이 테스트가 재는 것은 아니다.
+  }, 20_000);
+
+  it('증거가 있으면 부르지 않는다', async () => {
+    const 화면: string[] = [];
+    await runPtyTurn(plan('ready-then-echo'), {
+      cwd: process.cwd(), timeoutMs: 10_000,
+      injectPrompt: {
+        text: '안녕',
+        confirmDelivery: { probe: () => true, withinMs: 200 },
+        onAttention: (s) => 화면.push(s),
+      },
+    });
+    expect(화면).toHaveLength(0);
+  }, 20_000);
+
+  it('probe 가 던지면 증거 없음으로 읽는다 — 사람을 부르는 쪽이 안전하다', async () => {
+    // 반대로 읽으면(던지면 정상) 2026-09-08 처럼 조용히 태운다.
+    const 화면: string[] = [];
+    const turn = runPtyTurn(plan('ready-then-silent'), {
+      cwd: process.cwd(), timeoutMs: 3_000,
+      injectPrompt: {
+        text: '안녕',
+        confirmDelivery: { probe: () => { throw new Error('디스크 오류'); }, withinMs: 200 },
+        onAttention: (s) => 화면.push(s),
+      },
+    });
+    await vi.waitFor(() => expect(화면).toHaveLength(1), { timeout: 3_000 });
+    await turn.catch(() => {});
+  }, 20_000);
+
+  it('confirmDelivery 가 없으면 확인 창도 없다 — 기존 호출자는 그대로다', async () => {
+    const 화면: string[] = [];
+    const r = await runPtyTurn(plan('ready-then-echo'), {
+      cwd: process.cwd(), timeoutMs: 10_000,
+      injectPrompt: { text: '안녕', onAttention: (s) => 화면.push(s) },
+    });
+    expect(r.exitCode).toBe(0);
+    expect(화면).toHaveLength(0);
+  }, 20_000);
 });

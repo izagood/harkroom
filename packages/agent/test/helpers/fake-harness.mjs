@@ -213,3 +213,36 @@ if (mode === 'isatty-reject') {
   process.stdout.write(`prompt-received:${data.trim()}\n`);
   process.exit(0);
 }
+
+// 2026-09-08: 첫 실행 관문 흉내. 준비 신호가 **아닌** 화면(승인 메뉴)을 그리고 버틴다.
+// 사람이 Enter 를 보내면 그때서야 입력 프롬프트를 그린다 — "사람이 관문을 지나면 그
+// 자리에서 주입된다"(스펙 2-2)의 회귀선이다.
+//
+// '\u276f' 뒤가 **보통 공백**인 것이 요점이다: 실물 승인 메뉴가 그 모양이고, 러너의 준비
+// 판정은 NBSP(U+00A0) 로 입력창과 메뉴를 가른다. 여기를 NBSP 로 바꾸면 이 픽스처가
+// 실물과 다른 성질을 갖게 되고, 테스트는 초록인데 프로덕션은 관문을 준비로 읽는다.
+if (mode === 'gatekeeper') {
+  process.stdout.write('WARNING: fake gatekeeper\n\u276f No, exit\n  Yes, I accept\n');
+  process.stdin.setEncoding('utf8');
+  let 지났나 = false;
+  process.stdin.on('data', (d) => {
+    if (!지났나) {
+      if (!d.includes('\r') && !d.includes('\n')) return;
+      지났나 = true;
+      // 사람이 관문을 지났다 — 이제 입력 프롬프트를 그린다(NBSP).
+      process.stdout.write('\n\u276f\u00a0');
+      return;
+    }
+    if (d.includes('[201~')) { process.stdout.write(`injected:${d}`); process.exit(0); }
+  });
+  setTimeout(() => process.exit(23), 20_000); // 안전망
+}
+
+// 2026-09-08 프로덕션의 무발화 30분 모양. 준비 신호를 찍고, 주입을 받고, **그 뒤로
+// 아무것도 하지 않는다** — 죽지도 않는다. 'ready-then-echo' 로는 이 상태를 못 만든다:
+// 그쪽은 주입을 받자마자 종료해서 턴이 정착하고, 정착한 턴에는 부를 이유가 없다.
+if (mode === 'ready-then-silent') {
+  setTimeout(() => process.stdout.write('READY\n❯ '), 100);
+  process.stdin.on('data', () => { /* 받지만 아무 일도 하지 않는다 */ });
+  setInterval(() => {}, 1_000);
+}

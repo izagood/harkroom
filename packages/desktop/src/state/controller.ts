@@ -480,6 +480,33 @@ export class Controller {
           this.swallow(this.startRunners());
         }
         break;
+      case 'agent.attention': {
+        // 관문에 걸린 턴은 화면에 아무 신호도 남기지 않는다 — 답이 안 올 뿐이다. 사람은
+        // [터미널 열기]를 누를 이유조차 모르므로, 앱이 먼저 그 화면을 띄운다.
+        const 지금 = store.terminalTarget;
+        const 같은자리 = 지금
+          && 지금.agentAccountId === e.agentAccountId
+          && 지금.channelId === e.channelId
+          && 지금.threadRootId === e.threadRootId;
+        // 이미 보고 있으면 아무것도 안 한다. 같은 자리를 다시 세우면 xterm 이 다시 붙어
+        // 화면이 깜빡이고, 사람이 치고 있던 입력이 끊긴다.
+        if (같은자리) break;
+        store.set({
+          notice: `${e.agentHandle} needs you in the terminal (account ${e.accountLabel}).`,
+        });
+        // **사람이 보던 화면을 빼앗지 않는다.** 다른 스레드의 터미널을 보고 있다면 그
+        // 사람은 지금 다른 것을 하는 중이고, 안내가 그것을 알린다.
+        // 스레드 루트가 없으면 열 자리 자체가 없다(`terminalTarget` 은 스레드를 가리킨다).
+        if (지금 || !e.threadRootId) break;
+        store.set({
+          terminalTarget: {
+            agentAccountId: e.agentAccountId,
+            channelId: e.channelId,
+            threadRootId: e.threadRootId,
+          },
+        });
+        break;
+      }
       case 'presence.changed': {
         const cur = new Set(this.store.getState().online);
         if (e.online) cur.add(e.accountId); else cur.delete(e.accountId);

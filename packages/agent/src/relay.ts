@@ -31,7 +31,7 @@ export const RING_CAP_BYTES = 256 * 1024;
  * input 을 흘리거나 인터랙티브 open 을 기다리다 타임아웃 나는 일을 막는다 — 능력을
  * 선언하지 않으면 서버는 없는 것으로 읽는다(없는 것을 있다고 표시하지 않는다).
  */
-export const RUNNER_CAPS: readonly RunnerCap[] = ['input', 'interactive', 'handoff'];
+export const RUNNER_CAPS: readonly RunnerCap[] = ['input', 'interactive', 'handoff', 'attention'];
 
 /** 소켓의 최소 표면. 프로덕션은 `ws`, 테스트는 가짜다. */
 export interface RelayTransport {
@@ -124,6 +124,14 @@ export interface OpenSession {
    * 이 부른다 — 그 전에 서버가 보낸 입력은 쓸 곳이 없어 버려진다(`LiveSession.writer`).
    */
   bindInput(writer: PtyWriter): void;
+  /**
+   * 이 세션이 **사람 손을 기다린다**(2026-09-08). `screen` 은 화면 tail 이고, 여기서
+   * base64 로 감싸 보낸다 — 호출자는 그 규율을 몰라도 된다(`push` 와 같다).
+   *
+   * 부를지 말지는 호출자가 정한다: 관문은 계정 단위라 같은 계정으로 여러 번 부르면
+   * 사람이 같은 승인을 반복한다(`attentionLedger.ts`).
+   */
+  needsAttention(screen: string, accountLabel: string): void;
   /** 턴이 끝났다. 세션을 닫고 서버에 알린다. */
   close(): void;
 }
@@ -376,6 +384,15 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         },
         bindInput(writer) {
           live.writer = writer;
+        },
+        needsAttention(screen, accountLabel) {
+          send({
+            type: 'attention.required',
+            sessionId: info.sessionId,
+            accountLabel,
+            // `output` 과 같은 규율 — 서버는 이 바이트를 열지 않는다.
+            screen: Buffer.from(screen, 'utf8').toString('base64'),
+          });
         },
         close() {
           sessions.delete(info.sessionId);

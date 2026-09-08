@@ -79,6 +79,71 @@ async function trustForCodex(workspaceDir: string, codexHome: string): Promise<v
 }
 
 /**
+ * claude 의 계정 설정 파일. **`.claude.json` 과 다른 파일이다** — 그쪽은 워크스페이스별
+ * 상태(`projects[dir]`)를 담고, 이쪽은 계정 전체에 걸리는 설정을 담는다.
+ */
+function claudeSettingsFile(configDir: string | null): string {
+  return join(configDir ?? join(homedir(), '.claude'), 'settings.json');
+}
+
+/**
+ * bypassPermissions 경고 화면을 미리 지나 둔다(2026-09-08 실측).
+ *
+ * **이 관문은 기본 경로다.** `turn.ts` 의 프리셋이 murmur 의 `auto` 를 claude 의
+ * `--permission-mode bypassPermissions` 로 번역하고, `auto` 가 에이전트 기본값이다. TUI 는
+ * 그 모드로 뜰 때마다 계정이 한 번도 수락한 적 없으면 경고를 띄우는데, **기본 선택이
+ * `❯ No, exit`** 라서 답할 사람이 없으면 그 선택으로 끝난다 — 실측 exitCode 1, 경과 ~1초.
+ *
+ * **권한이 새로 열리지 않는다.** 그 모드는 이미 `mentionPermission: 'auto'` 가 정한
+ * 것이고, 이 화면은 **이미 내려진 결정을 계정마다 다시 묻는 확인창**일 뿐이다. 여기서
+ * 적는 것은 "그 결정을 이 계정에도 적용한다"이지 새 권한이 아니다.
+ *
+ * **워크스페이스가 아니라 계정 단위다.** 그래서 `ensureWorkspaceTrusted` 와 함수를 갈랐다 —
+ * 저장 위치도 다르고(`settings.json`), 한 번 적으면 그 계정의 모든 워크스페이스가 풀린다.
+ *
+ * codex 에는 이 관문이 없다. 없는 파일을 만들지 않는다.
+ */
+async function acceptDangerousModeForClaude(configDir: string | null): Promise<void> {
+  const path = claudeSettingsFile(configDir);
+  let doc: Record<string, unknown> = {};
+  try {
+    doc = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+  } catch {
+    // 없거나 깨졌다 — 이 키 하나만 담은 최소 문서로 시작한다. 하네스가 나머지를 채운다.
+    doc = {};
+  }
+  // 이미 적혀 있으면 아무것도 쓰지 않는다(`trustForClaude` 와 같은 이유): 하네스가 이 파일에
+  // 테마·TUI 모드를 함께 담으므로, 매 턴 다시 쓰면 그 상태를 놓고 경합한다.
+  if (doc.skipDangerousModePermissionPrompt === true) return;
+
+  doc.skipDangerousModePermissionPrompt = true;
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(doc, null, 2), { mode: 0o600 });
+}
+
+/**
+ * 이 계정이 하네스의 **계정 단위 관문**을 지나게 한다. `ensureWorkspaceTrusted` 와 나란히,
+ * **PTY 를 띄우기 전에** 부른다.
+ *
+ * 던지지 않는 이유는 `ensureWorkspaceTrusted` 와 같다 — 못 적었으면 관문이 뜨고, 그때는
+ * 준비 대기가 상한에서 사람을 부른다(`pty.ts::injectPrompt.onAttention`).
+ */
+export async function ensureDangerousModeAccepted(opts: {
+  harness: AgentHarness;
+  claudeConfigDir: string | null;
+}): Promise<void> {
+  try {
+    if (opts.harness === 'claude-code') await acceptDangerousModeForClaude(opts.claudeConfigDir);
+  } catch (err) {
+    console.error(
+      '[workspaceTrust] bypassPermissions 수락 기록 실패(턴은 계속한다 — 경고 화면이 뜨면 '
+        + '준비 대기가 상한에서 사람을 부른다): '
+        + (err instanceof Error ? err.message : String(err)),
+    );
+  }
+}
+
+/**
  * 이 턴이 쓸 워크스페이스를 하네스가 신뢰하게 한다. **PTY 를 띄우기 전에 부른다** —
  * 뜬 뒤에 적으면 그 턴은 이미 대화상자를 만난 뒤다.
  */
