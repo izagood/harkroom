@@ -751,6 +751,49 @@ export async function recallFromChannel(
   return updated.rows[0];
 }
 
+/**
+ * 스레드에 이미 올라간 답을 **나중에** 채널로도 올린다(#231 의 반대 방향).
+ *
+ * `alsoInChannel` 은 지금까지 발화 순간에만 정할 수 있었다 — 스레드에서 이야기가 끝난 뒤
+ * "이건 채널도 봐야 한다"고 판단하면 길이 없어서 같은 말을 채널에 다시 써야 했고, 그러면
+ * 원문과 사본이 갈라진다(리액션·답글이 붙는 자리가 둘이 된다). 그래서 새 메시지를 만들지
+ * 않고 **같은 행의 성질만 켠다** — `recallFromChannel` 을 그대로 뒤집은 것이라 같은 자원
+ * (`.../also-in-channel`)의 POST 다.
+ *
+ * **작성자 본인만**이다. 지우기·거두기와 달리 admin 에게 열지 않는다: 저 둘은 이미 퍼진 말을
+ * 치우는 **조정**이지만, 이것은 남의 말을 **더 넓은 자리로 퍼뜨리는** 발화다. 조정 권한이
+ * 발화 권한이 되면 스레드에서 한 말이 남의 손에 채널로 나갈 수 있다.
+ *
+ * 스레드 답이 아니면 `not_thread_reply` 다 — 채널 메시지는 이미 채널에 있고, `postMessage`
+ * 도 `threadRootId` 없는 `alsoInChannel` 을 false 로 정규화한다. 켤 것이 없는 호출을 성공으로
+ * 돌려주면 화면은 아무 일도 안 일어난 것을 켜진 것으로 읽는다.
+ *
+ * `seq` 는 건드리지 않는다. 채널 목록은 `seq` 순이라 이 메시지는 **쓰인 시각의 자리**에
+ * 끼어든다 — 맨 아래로 오지 않는다. 올리는 사람이 채널의 시간을 다시 쓰지 못하게 하는 쪽을
+ * 골랐다(seq 를 밀면 남의 읽음 위치·미읽음 셈이 전부 흔들린다). 같은 이유로 `edited_at` 도
+ * 찍지 않는다: 본문은 그대로다.
+ *
+ * 이미 켜져 있으면 그대로 돌려준다(멱등) — `recallFromChannel` 과 대칭이다.
+ */
+export async function shareToChannel(
+  pool: Pool, args: { channelId: string; messageId: string; actorId: string },
+): Promise<MessageRow | MutationRefusal | 'not_thread_reply'> {
+  const found = await pool.query(
+    `select author_id, thread_root_id from message
+     where id = $1 and channel_id = $2 and deleted_at is null`,
+    [args.messageId, args.channelId],
+  );
+  if (!found.rowCount) return 'not_found';
+  if (found.rows[0].author_id !== args.actorId) return 'forbidden';
+  if (found.rows[0].thread_root_id === null) return 'not_thread_reply';
+
+  const updated = await pool.query(
+    `update message set also_in_channel = true where id = $1 returning ${COLS}`,
+    [args.messageId],
+  );
+  return updated.rows[0];
+}
+
 export async function deleteMessage(
   pool: Pool, args: { channelId: string; messageId: string; actorId: string; actorIsAdmin: boolean },
 ): Promise<'deleted' | MutationRefusal> {

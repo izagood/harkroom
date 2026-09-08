@@ -213,3 +213,88 @@ describe('#231 채널에서 거두기', () => {
     expect(res.statusCode).toBe(404);
   });
 });
+
+// #231 의 반대 방향: 스레드에 이미 올라간 답을 **나중에** 채널로도 올린다. 거두기와 같은
+// 자원의 POST 다. 회귀선은 넷 — 켜지는가, 멱등인가, 남의 글은 막는가(admin 도), 스레드
+// 답이 아닌 것을 막는가.
+describe('#231 나중에 채널로 보내기', () => {
+  const share = (token: string, messageId: string) =>
+    app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages/${messageId}/also-in-channel`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+  const postQuiet = async (token: string, body: string) => {
+    const root = await post(token, `root for ${body}`);
+    const rootId = root.json().id as string;
+    const reply = await post(token, body, { threadRootId: rootId });
+    return { rootId, id: reply.json().id as string, seq: reply.json().seq as number };
+  };
+
+  it('나중에 켜면 채널 목록에 실려 나오고 스레드 소속은 그대로다', async () => {
+    const { rootId, id, seq } = await postQuiet(adminToken, 'later');
+    const res = await share(adminToken, id);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().alsoInChannel).toBe(true);
+    // 새 메시지가 아니라 같은 행이다 — id 도 seq 도 그대로다(채널의 시간을 다시 쓰지 않는다).
+    expect(res.json().id).toBe(id);
+    expect(res.json().seq).toBe(seq);
+    // 본문을 고친 것이 아니므로 수정 자국을 남기지 않는다.
+    expect(res.json().editedAt).toBeNull();
+
+    const rows = await listMessages(pool, channelId, { limit: 50 });
+    const found = rows.find((m) => m.id === id);
+    expect(found?.alsoInChannel).toBe(true);
+    expect(found?.threadRootId).toBe(rootId);
+  });
+
+  it('두 번 눌러도 같은 결과다', async () => {
+    const { id } = await postQuiet(adminToken, 'twice later');
+    await share(adminToken, id);
+    const again = await share(adminToken, id);
+    expect(again.statusCode).toBe(200);
+    expect(again.json().alsoInChannel).toBe(true);
+  });
+
+  it('거둔 것을 다시 올릴 수 있다', async () => {
+    const { id } = await postQuiet(adminToken, 'round trip');
+    await share(adminToken, id);
+    await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/messages/${id}/also-in-channel`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    const again = await share(adminToken, id);
+    expect(again.json().alsoInChannel).toBe(true);
+  });
+
+  it('남의 글은 admin 이라도 채널로 내보낼 수 없다', async () => {
+    const root = await post(adminToken, 'root for agent share');
+    const rootId = root.json().id as string;
+    const client = await mcpClient(botPat);
+    const posted = text(await client.callTool({
+      name: 'message.post',
+      arguments: { channelId, body: 'agent quiet answer', threadRootId: rootId },
+    })) as { message: { id: string } };
+    await client.close();
+
+    // 거두기(조정)와 달리 이것은 발화다 — admin 권한이 남의 말을 채널로 퍼뜨리는 힘이
+    // 되면 안 된다.
+    const res = await share(adminToken, posted.message.id);
+    expect(res.statusCode).toBe(403);
+
+    const rows = await listMessages(pool, channelId, { limit: 50 });
+    expect(rows.find((m) => m.id === posted.message.id)?.alsoInChannel).toBe(false);
+  });
+
+  it('스레드 답이 아니면 400 이다', async () => {
+    const top = await post(adminToken, 'plain channel message');
+    const res = await share(adminToken, top.json().id as string);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('not_thread_reply');
+  });
+
+  it('없는 메시지는 404 다', async () => {
+    const res = await share(adminToken, '00000000-0000-4000-8000-000000000000');
+    expect(res.statusCode).toBe(404);
+  });
+});

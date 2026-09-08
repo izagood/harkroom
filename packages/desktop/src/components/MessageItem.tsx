@@ -241,6 +241,19 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    */
   const canRecall = canDelete && message.alsoInChannel && message.threadRootId !== null;
   /**
+   * 스레드에 이미 올라간 내 답을 나중에 채널로도 올린다(#231 의 반대 방향).
+   *
+   * `canRecall` 의 거울이다 — 스레드 답이어야 하고(`threadRootId`), **지금 채널에 안 보이고**
+   * 있어야 한다(`!alsoInChannel`). 둘 다 "지금 상태"라 이미 올라간 메시지에는 뜨지 않는다.
+   *
+   * 권한만 다르다: **내 글만**이다(admin 도 아니다). 거두기는 이미 퍼진 말을 치우는 조정이라
+   * admin 에게 열지만, 이것은 남의 말을 더 넓은 자리로 내보내는 발화다 — 서버도 작성자만 받는다.
+   *
+   * 보관된 채널에서는 감춘다: 채널에 새로 내보내는 일이라 서버의 `channelPostGate` 가 거절한다.
+   * 서버가 거절하는 것을 메뉴에 남겨 두면 없는 것을 있다고 표시하는 셈이다(design.md §4).
+   */
+  const canShareToChannel = isMine && !isSystem && !message.alsoInChannel && message.threadRootId !== null;
+  /**
    * 이 메시지의 핀(#218). 핀은 **채널 전역 사실**이라 메시지 행이 아니라 채널별 목록에서
    * 찾는다 — `MessageRow` 에 넣으면 같은 사실이 두 곳에 생기고, 남이 고정했을 때 한쪽만
    * 갱신되는 갈라짐이 난다(리액션과 달리 핀은 델타 이벤트가 없다).
@@ -364,10 +377,19 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
      * 지우기가 아니라 **채널에서만** 거두는 일이고, 메시지는 스레드에 그대로 남는다.
      * 그래서 대상('from channel')을 문구에 박는다.
      *
-     * 확인 단계를 두지 않는다: 지우기와 달리 본문이 사라지지 않는다. 다만 되돌린 것을
-     * 다시 채널로 올리는 길은 없으므로(다시 쓰면 된다) 'Undo' 라고 부르지도 않는다.
+     * 확인 단계를 두지 않는다: 지우기와 달리 본문이 사라지지 않고, 거둔 것은 바로 아래의
+     * 'Send to channel' 로 다시 올릴 수 있다. 그래도 'Undo' 라고 부르지 않는다 — 이것은
+     * 내 마지막 동작을 취소하는 것이 아니라 지금 상태를 바꾸는 일이다.
      */
     ...(canRecall ? [{ label: 'Remove from channel', onSelect: () => { void getController().recallFromChannel(message.id); } }] : []),
+    /**
+     * #231 의 반대 방향. 스레드에서 이야기가 끝난 뒤 "이건 채널도 봐야 한다"고 판단하는 것은
+     * 흔한 일이고, 그때까지 길이 없어 같은 말을 채널에 다시 쓰면 원문과 사본이 갈라졌다.
+     *
+     * 문구에 대상('to channel')을 박아 'Remove from channel' 과 한 쌍으로 읽히게 한다.
+     * 확인 단계를 두지 않는다 — 잘못 눌러도 바로 위의 'Remove from channel' 로 되돌린다.
+     */
+    ...(canShareToChannel && !isArchived ? [{ label: 'Send to channel', onSelect: () => { void getController().shareToChannel(message.id); } }] : []),
     // #219: 나중에 볼 것으로 담기. 담겨 있으면 문구가 해제로 바뀐다 — 같은 자리에 두 항목을
     // 나란히 두면 어느 것이 지금 상태인지 화면이 말하지 않는다.
     // 문구는 이 메뉴의 나머지(Pin·Edit·Delete…)와 같은 영문이다: 여기만 한국어로 두면

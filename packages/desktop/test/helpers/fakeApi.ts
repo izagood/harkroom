@@ -150,6 +150,10 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     // 지우기가 아니라 갱신이라는 사실을 fake 도 그렇게 말해야 한다.
     recallFromChannel: vi.fn(async (_c: string, messageId: string) =>
       msg(messageId, 'c1', 1, 'recalled', 'u1', { threadRootId: 'm1', alsoInChannel: false })),
+    // 반대 방향(나중에 채널로 보내기)도 같은 모양이다 — 새 메시지가 아니라 같은 id 가
+    // `alsoInChannel: true` 로 돌아온다.
+    shareToChannel: vi.fn(async (_c: string, messageId: string) =>
+      msg(messageId, 'c1', 1, 'shared', 'u1', { threadRootId: 'm1', alsoInChannel: true })),
     addReaction: vi.fn(async () => undefined),
     removeReaction: vi.fn(async () => undefined),
     createDm: vi.fn(),

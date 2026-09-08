@@ -269,3 +269,88 @@ describe('#624 스레드를 특정 답글 자리에서 연다', () => {
     expect(useAppStore.getState().highlightedMessageId).toBeNull();
   });
 });
+
+/**
+ * #231 의 반대 방향 — 스레드에 이미 올라간 답을 **나중에** 채널로도 올린다.
+ *
+ * 거두기 블록의 거울이다: 지키는 것은 항목이 뜨는 조건이다. 이미 채널에 있는 답·채널
+ * 메시지·남의 답·보관된 채널에 항목이 남아 있으면 눌러도 아무 일이 없거나 서버가 403·400
+ * 으로 돌려보낸다 — 둘 다 화면이 없는 것을 있다고 말한 것이다(design.md §4).
+ */
+describe('#231 나중에 채널로 보내기', () => {
+  const openMenu = (): void => { fireEvent.click(screen.getByLabelText('More actions')); };
+  const shareItem = () => screen.queryByRole('menuitem', { name: 'Send to channel' });
+
+  const controllerWithShare = () => {
+    const c = { ...fakeController(), shareToChannel: vi.fn(async () => undefined) };
+    setController(c as unknown as Controller);
+    return c;
+  };
+
+  // 채널에는 아직 안 보이는 내 스레드 답 — 이 기능의 대상이다.
+  const mineQuiet = msg('m2', 'c1', 2, 'thread answer', 'u1', { threadRootId: 'm1', alsoInChannel: false });
+
+  beforeEach(() => { seed(false); });
+
+  it('채널에 안 보이는 내 답을 나중에 올릴 수 있다', () => {
+    const c = controllerWithShare();
+    render(<MessageItem message={mineQuiet} />);
+
+    openMenu();
+    fireEvent.click(shareItem()!);
+    expect(c.shareToChannel).toHaveBeenCalledWith('m2');
+  });
+
+  it('이미 채널에 올라간 답에는 항목이 없다', () => {
+    controllerWithShare();
+    render(<MessageItem message={{ ...mineQuiet, alsoInChannel: true }} />);
+    openMenu();
+    expect(shareItem()).toBeNull();
+  });
+
+  // 채널 메시지는 이미 채널에 있다 — 켤 것이 없다(서버도 400 이다).
+  it('그냥 채널 메시지에는 항목이 없다', () => {
+    controllerWithShare();
+    render(<MessageItem message={msg('m3', 'c1', 3, 'plain', 'u1')} />);
+    openMenu();
+    expect(shareItem()).toBeNull();
+  });
+
+  // 거두기와 달리 admin 에게도 열지 않는다: 남의 말을 더 넓은 자리로 내보내는 것은
+  // 조정이 아니라 발화다. 서버도 작성자만 받는다.
+  it('남의 답은 admin 이라도 올릴 수 없다', () => {
+    seed(false);
+    useAppStore.getState().set({ me: { ...acc('u1', 'admin'), isAdmin: true } });
+    controllerWithShare();
+    render(<MessageItem message={{ ...mineQuiet, authorId: 'u2' }} />);
+    openMenu();
+    expect(shareItem()).toBeNull();
+  });
+
+  // 보관된 채널은 읽기 전용이라 서버가 거절한다 — 메뉴에 남겨 두면 거짓 신호다.
+  it('보관된 채널에는 항목이 없다', () => {
+    seed(false);
+    useAppStore.getState().set({ channels: [chan('c1', 'general', 'main-repo', 'public', { archivedAt: '2024-02-01T00:00:00.000Z' })] });
+    controllerWithShare();
+    render(<MessageItem message={mineQuiet} />);
+    openMenu();
+    expect(shareItem()).toBeNull();
+  });
+
+  /**
+   * 컨트롤러 쪽 계약. 화면이 부르는 것만 재면, 컨트롤러가 응답을 스토어에 얹지 않아도
+   * 회귀선이 초록으로 남는다 — 그러면 누른 뒤 채널 화면이 그대로여서 아무 일도 안 한
+   * 것처럼 보인다(WS 이벤트가 늦게 오면 그 사이가 비어 있다).
+   */
+  it('컨트롤러가 갱신된 메시지를 스토어에 얹는다', async () => {
+    const api = fakeApi({});
+    const c = new Controller(api, fakeWsFactory().makeWs);
+    setController(c);
+    useAppStore.getState().reset();
+    useAppStore.getState().set({ activeChannelId: 'c1', messages: { c1: [mineQuiet] } });
+
+    await c.shareToChannel('m2');
+    expect(api.shareToChannel).toHaveBeenCalledWith('c1', 'm2');
+    expect(useAppStore.getState().messages.c1?.find((m) => m.id === 'm2')?.alsoInChannel).toBe(true);
+  });
+});

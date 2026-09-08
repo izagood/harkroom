@@ -1111,6 +1111,28 @@ export class Controller {
   }
 
   /**
+   * 스레드에 이미 올라간 내 답을 나중에 채널로도 올린다(#231 의 반대 방향).
+   *
+   * 실패를 삼키지 않는다: 보관된 채널은 서버가 `channel_archived` 로 거절한다. 메뉴는
+   * 보관된 채널에서 이 항목을 감추지만, 다른 창에서 보관된 직후를 누르는 경합이 남는다 —
+   * 그때 조용히 아무 일도 안 하면 사람은 계속 다시 누른다(핀과 같은 결).
+   */
+  async shareToChannel(messageId: string): Promise<void> {
+    const { activeChannelId } = this.store.getState();
+    if (!activeChannelId) return;
+    try {
+      const updated = await this.api.shareToChannel(activeChannelId, messageId);
+      this.store.getState().upsertMessages(activeChannelId, [updated]);
+    } catch (e) {
+      this.store.getState().set({
+        notice: e instanceof ApiError && e.code === 'channel_archived'
+          ? "This channel is archived — it's read-only, so nothing new can be sent to it."
+          : 'Could not send that message to the channel. Check your connection and try again.',
+      });
+    }
+  }
+
+  /**
    * 이 채널의 고정 목록을 서버에서 다시 받는다(#218).
    *
    * 델타가 아니라 목록 전체를 갈아 끼운다: 핀은 채널 전역 상태라 다른 사람이 고정·해제한
