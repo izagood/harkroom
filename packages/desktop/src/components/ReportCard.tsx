@@ -31,10 +31,13 @@ export function ReportCard({ message, inThread = false }: {
 
   const scope = inThread ? `thread:${message.threadRootId ?? message.id}` : message.channelId;
 
+  /* 폭 상한을 여기서 다시 두지 않는다 — 부모(`MessageItem` 의 본문 열)가 이미 상한을 쥐고
+     있고, 여기 `max-w-prose`(65ch)를 남기면 열을 넓혀도 이 카드만 옛 폭에 남아 한 화면에
+     폭이 둘 선다(`messageWidth.test.tsx`). */
   return (
     <div
       data-testid="report-card"
-      className="mt-1.5 max-w-prose rounded-lg border border-border bg-surface-sunken px-3 py-2"
+      className="mt-1.5 rounded-lg border border-border bg-surface-sunken px-3 py-2"
     >
       <Section title={t('speech.report.checks')} testid="report-checks" items={report.checks} />
       {/* 파일 경로만 고정폭이다 — 문장과 섞이면 줄이 흔들린다. */}
