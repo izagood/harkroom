@@ -49,10 +49,10 @@ describe('깨움 배선', () => {
       messages: [
         { id: 'w1', seq: 1, channelId: 'ch-1', threadRootId: null, authorId: 'agent-1',
           body: '30분 뒤 CI 확인', kind: 'message', meta: null,
-          createdAt: '2026-09-08T00:00:00Z', alsoInChannel: false },
+          createdAt: '2026-09-08T00:00:00Z', alsoInChannel: false, deletedAt: null },
         { id: 'm1', seq: 2, channelId: 'ch-1', threadRootId: null, authorId: 'human-1',
           body: '이거 봐줘', kind: 'message', meta: null,
-          createdAt: '2026-09-08T00:00:00Z', alsoInChannel: false },
+          createdAt: '2026-09-08T00:00:00Z', alsoInChannel: false, deletedAt: null },
       ],
     } as never, { channelName: () => 'general', handles: {} });
     await scheduler.drain();

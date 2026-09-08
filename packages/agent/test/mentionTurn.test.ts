@@ -41,7 +41,7 @@ function msg(seq: number, authorId: string, body: string, threadRootId: string |
     // 항상 null 이다 — 옵셔널이 아니라 명시적 null 이라 fixture 도 그것을 적어야 한다.
     replyCount: null, lastReplyAt: null, participantIds: null,
     openAskHumanCount: null, openAskAccountIds: null, openAskLinks: null, failureCount: null, unresolvedFailureCount: null,
-    lastKind: null, lastAuthorId: null, alsoInChannel: false,
+    lastKind: null, lastAuthorId: null, alsoInChannel: false, deletedAt: null,
   };
 }
 

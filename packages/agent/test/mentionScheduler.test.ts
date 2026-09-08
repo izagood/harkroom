@@ -24,7 +24,7 @@ function batchOf(items: { entryId: number; messageId: string; threadRootId?: str
       id: i.messageId, seq: n + 1, channelId: CH,
       threadRootId: i.threadRootId ?? null, authorId: 'human-1',
       body: i.body ?? 'hi', kind: 'message', meta: null,
-      createdAt: '2026-09-08T00:00:00Z', alsoInChannel: false,
+      createdAt: '2026-09-08T00:00:00Z', alsoInChannel: false, deletedAt: null,
     })) as unknown as InboxBatch['messages'],
   };
 }
