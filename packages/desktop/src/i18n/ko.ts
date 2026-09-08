@@ -1055,6 +1055,8 @@ export const ko = {
   'message.threadOrigin': '스레드에 댓글 남김',
   'message.recentReplies': '최근 댓글 보기',
   'message.replyInThread': '스레드에 답글 달기',
+  // 연쇄 깊이 상한에 막힌 호출(4단계) — 근거는 `en.ts` 의 같은 자리에 있다.
+  'message.chainCapped': '{handles} 를 부르지 않았다 — 멘션 연쇄가 깊이 상한({limit})에 닿았다. 이어 가려면 사람이 한 줄 쓰면 된다.',
   'message.openSkillApproval': '스킬 승인 화면 열기',
 
   'message.authorLabel': '작성자 {name}',

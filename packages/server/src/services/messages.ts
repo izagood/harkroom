@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, mentionedHandles, mentionedIds, mentionScanText, normalizeMentions, readAskMeta, type InboxEntry, type MessageRow } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionScanText, normalizeMentions, readAskMeta, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { channelVisibleSql } from './channels.js';
 import { emitEvent } from '../events.js';
@@ -390,6 +390,50 @@ async function fanOutMention(
   }
 }
 
+/**
+ * 이 발화가 **연쇄의 몇 번째 고리인가**(4단계). 정의와 근거는
+ * `043_mention_chain_depth.sql` 에 있다.
+ *
+ * ## 사람은 언제나 0 이다
+ *
+ * 사람은 연쇄의 시작이지 고리가 아니다. 그래서 사람이 한 번 끼어들면 깊이는 다시 0 에서
+ * 세어지고, 상한에 걸려 멈춘 스레드도 사람이 말을 걸면 **정상으로 되살아난다** — 상한이
+ * 스레드를 영구히 잠그는 장치가 되지 않게 하는 것이 이 규칙이다.
+ *
+ * ## 판정을 새로 만들지 않는다
+ *
+ * "이 메시지가 나를 불렀나"는 알림이 쓰는 그 판정(`mentionedIds(mentionScanText(body))`)으로
+ * 답한다. SQL 의 `like '%<@id>%'` 로 대신하면 **인용 줄과 코드 블록 안의 토큰까지 세어**
+ * 부르지 않은 것을 부른 것으로 취급한다 — 그러면 남의 말을 인용한 스레드가 이유 없이
+ * 상한에 걸린다.
+ *
+ * 최근 `DEPTH_SCAN_LIMIT` 개만 훑는다. 연쇄는 직전 발화에서 이어지므로 더 거슬러 갈 이유가
+ * 없고, 스레드가 수백 줄이어도 비용이 일정해야 한다.
+ */
+const DEPTH_SCAN_LIMIT = 50;
+
+async function mentionDepthFor(
+  client: PoolClient,
+  input: { channelId: string; threadRootId: string | null; authorId: string; authorIsAgent: boolean },
+): Promise<number> {
+  if (!input.authorIsAgent) return 0;
+  const rows = (await client.query(
+    `select body, mention_depth as depth from message
+      where channel_id = $1
+        and ($2::uuid is null or thread_root_id = $2 or id = $2)
+        and deleted_at is null
+      order by seq desc
+      limit ${DEPTH_SCAN_LIMIT}`,
+    [input.channelId, input.threadRootId],
+  )).rows as { body: string; depth: number }[];
+  for (const row of rows) {
+    // 나를 부른 **가장 최근** 메시지 하나가 내 앞 고리다 — 그것을 찾으면 멈춘다.
+    if (mentionedIds(mentionScanText(row.body)).includes(input.authorId)) return row.depth + 1;
+  }
+  // 나를 부른 것이 없는 발화(스스로 올린 보고·깨움 뒤의 이어 말하기)는 연쇄가 아니다.
+  return 0;
+}
+
 export async function postMessage(
   pool: Pool, input: PostMessageInput,
 ): Promise<PostMessageResult> {
@@ -472,18 +516,61 @@ export async function postMessage(
     const bodyHandles = mentionedHandles(input.body);
     const mentionedAccounts = bodyHandles.length
       ? (await client.query(
-          `select id, lower(handle) as handle from account where lower(handle) = any($1)`,
+          // `kind` 를 함께 읽는다(4단계) — 연쇄 깊이 상한은 **에이전트만** 막으므로 부른
+          // 대상이 사람인지 에이전트인지를 알아야 하고, 그 사실은 이미 이 조회에 있다.
+          // 계정마다 다시 물으면 부른 수만큼 왕복이 늘고, 그 왕복은 게시 경로에 붙는다.
+          `select id, lower(handle) as handle, kind from account where lower(handle) = any($1)`,
           [bodyHandles],
-        )).rows as { id: string; handle: string }[]
+        )).rows as { id: string; handle: string; kind: 'human' | 'agent' }[]
       : [];
     const handleToId = new Map(mentionedAccounts.map((r) => [r.handle, r.id]));
     const normalizedBody = normalizeMentions(input.body, handleToId);
 
+    /*
+      연쇄 깊이(4단계). **insert 보다 앞에서** 잰다 — 뒤에서 재면 자기 자신이 스캔 대상에
+      들어가고, 그러면 자기 본문이 자기를 부른 것으로 보이는 경우(고정 멘션이 자기 handle
+      을 담는 드문 경우) 깊이가 한 칸 부풀어 상한이 한 고리 일찍 닫힌다.
+
+      작성자가 에이전트인지도 여기서 한 번만 읽는다 — 아래 상한 판정이 같은 값을 써야 한다.
+    */
+    const authorKind = (await client.query(
+      `select kind from account where id = $1`, [input.authorId],
+    )).rows[0]?.kind as 'human' | 'agent' | undefined;
+    const authorIsAgent = authorKind === 'agent';
+    const mentionDepth = await mentionDepthFor(client, {
+      channelId: input.channelId,
+      threadRootId: input.threadRootId ?? null,
+      authorId: input.authorId,
+      authorIsAgent,
+    });
+    /*
+      상한 판정을 **insert 보다 앞에서** 끝낸다. 뒤에서 `update ... meta` 로 얹으면 이미
+      읽어 응답·WS 이벤트로 나간 행에는 그 사실이 없어서, 화면은 부르지 않은 호출을
+      부른 것으로 그린다 — 같은 메시지가 두 형식으로 존재하는 순간을 만들지 않는다는
+      정규화 주석의 규율과 같다.
+    */
+    const chainCapped = authorIsAgent && mentionDepth >= MENTION_CHAIN_LIMIT;
+    const cappedIds = new Set<string>();
+    if (chainCapped) {
+      for (const accountId of mentionedIds(mentionScanText(normalizedBody))) {
+        if (accountId === input.authorId) continue;
+        // **에이전트만 막는다.** 사람을 부르는 것은 "이 스레드에 사람이 필요하다"는 뜻이라
+        // 상한이 걸린 그때 오히려 더 필요하다.
+        if (mentionedAccounts.find((a) => a.id === accountId)?.kind === 'agent') cappedIds.add(accountId);
+      }
+    }
+    const cappedHandles = mentionedAccounts.filter((a) => cappedIds.has(a.id)).map((a) => a.handle);
     const inserted = await client.query(
-      `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel)
-       values ($1, $2, $3, $4, $5, $6, $7) returning id`,
+      `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel, mention_depth)
+       values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
       [input.channelId, input.threadRootId ?? null, input.authorId, normalizedBody,
-       input.kind ?? 'user', JSON.stringify(input.meta ?? {}), alsoInChannel],
+       input.kind ?? 'user',
+       // 막힌 호출은 **그 메시지에 남는다** — 조용히 사라지면 사람은 "왜 아무도 안 왔나"를
+       // 묻고, 그 답이 화면에 없다(design.md §4).
+       JSON.stringify(cappedHandles.length
+         ? { ...(input.meta ?? {}), mentionChainCapped: cappedHandles, mentionChainLimit: MENTION_CHAIN_LIMIT }
+         : (input.meta ?? {})),
+       alsoInChannel, mentionDepth],
     );
     const messageId = inserted.rows[0].id as string;
 
@@ -520,8 +607,19 @@ export async function postMessage(
      *
      * 작성자 자신은 걸러 낸다.
      */
+    /*
+      **연쇄 깊이 상한**(4단계). 상한에 닿은 에이전트의 발화는 **다른 에이전트를 부르지
+      못한다** — 그 지점부터가 관측된 폭주의 모양이고, 각 고리는 앞의 답을 그대로 다시 던진다.
+
+      **사람에게 가는 알림은 막지 않는다.** 상한은 기계가 스스로 도는 것을 끊는 장치이고,
+      사람을 부르는 것은 "이 스레드에 사람이 필요하다"는 뜻이라 그때 오히려 더 필요하다.
+      막힌 호출은 조용히 사라지지 않고 `meta.mentionChainCapped` 로 그 메시지에 남는다 —
+      화면이 그 사실을 그려야 사람이 "왜 아무도 안 왔나"를 묻지 않는다(design.md §4).
+    */
     for (const accountId of mentionedIds(mentionScanText(normalizedBody))) {
-      if (accountId !== input.authorId) {
+      // 상한에 걸린 에이전트는 **inbox 항목을 받지 않는다** — 그것이 곧 턴이 뜨지 않는다는
+      // 뜻이다(러너는 inbox 를 폴한다). 판정은 위에서 이미 끝났고 여기서 다시 하지 않는다.
+      if (accountId !== input.authorId && !cappedIds.has(accountId)) {
         await insertInbox(client, accountId, message.id, 'mention', notified);
       }
     }
