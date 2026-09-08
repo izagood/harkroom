@@ -91,6 +91,10 @@ interface DraftItem {
  * 채널(`channelId`). 시간·작성자는 없다 — 뷰가 `created_at` 을 안 내려주고 작성자는
  * 엔트리에 없다. 있는 척하는 필터를 두는 것보다 없는 편이 정직하다.
  *
+ * **안 읽음은 오래 이 주석에만 있었다** — 칩은 rank 축 셋뿐이었다. 그래서 '전부' 로 열면
+ * 이미 본 수백 줄이 새 줄과 **같은 모양으로** 섞여 나왔다. 지금은 칩 하나('안 읽은 것')로
+ * 좁힐 수 있고, 좁히지 않아도 읽은 줄은 물러나 보인다(`entryRow`).
+ *
  * 필터 상태는 영속하지 않는다. 닫았다 열면 처음으로 돌아간다 — 좁혀 둔 것을 기억해 두면
  * 다음에 열었을 때 **걸러져 사라진 항목이 없는 항목으로 보인다.**
  */
@@ -191,7 +195,7 @@ export function Inbox({ open, onClose }: Props) {
   const shownEntries = useMemo(() => entries
     .map((e) => ({ e, row: inboxRow(e, myId) }))
     .filter(({ e, row }) => {
-      if (!matchesFilter(row, filter)) return false;
+      if (!matchesFilter(row, filter, e.readAt === null)) return false;
       if (channelFilter !== 'all' && e.channelId !== channelFilter) return false;
       return true;
     })
@@ -299,14 +303,28 @@ export function Inbox({ open, onClose }: Props) {
    */
   const entryRow = (e: InboxEntry) => {
     const row = inboxRow(e, myId);
+    /**
+     * 이미 본 줄인가. **'전부' 로 보면 목록의 대부분이 이것**이라(실측 238줄 중 대다수),
+     * 새 줄과 같은 대접을 받으면 새 줄이 그 안에 묻힌다 — "본 것도 계속 나와서 뭐가 새로
+     * 온 것인지 알 수 없다"는 말이 그 뜻이었다.
+     *
+     * 읽은 줄을 **숨기지는 않는다**: 방금 읽은 것을 다시 찾는 것도 이 목록의 일이다.
+     * 대신 물러나게 한다(본문이 흐려지고, 왼쪽 표시선이 없다).
+     */
+    const isUnread = e.readAt === null;
     return (
     <li key={e.id}>
       <button
         data-testid={`inbox-entry-${e.id}`}
         data-kind={row.kind}
         data-rank={row.rank}
+        data-unread={isUnread ? 'true' : 'false'}
         onClick={() => openEntry(e)}
-        className="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-surface-hover"
+        // 왼쪽 표시선이 새 줄을 **훑어 내려가며** 찾게 해 준다 — 줄 끝의 '· 안 읽음'
+        // 글자는 눈이 한 줄씩 끝까지 가야 보인다. 읽은 줄도 같은 두께의 투명한 선을
+        // 두어(`border-transparent`) 글자가 좌우로 밀리지 않게 한다.
+        className={`flex w-full items-start gap-2 rounded border-l-2 px-2 py-1.5 text-left hover:bg-surface-hover ${
+          isUnread ? 'border-accent' : 'border-transparent'}`}
       >
         {/* **누가** — 얼굴이 이름을 대신한다(identity 문서와 같은 규칙). */}
         {e.authorId && (
@@ -332,7 +350,9 @@ export function Inbox({ open, onClose }: Props) {
                 `bodyWithHandles` 를 지나는 이유: 서버가 싣는 본문은 정본 형식(`<@id>`)이고,
                 이 줄은 `MessageBody` 를 지나지 않아 그 치환을 스스로 해야 한다. 안 하면
                 줄마다 `<@2c8c1910-…>` 만 보이고 "무엇을" 이 사라진다(2026-09-08 실측). */}
-            <span className="truncate text-fg">{bodyWithHandles(e.body, accounts)}</span>
+            {/* 이미 본 줄은 여기서 물러난다 — 색만 옮기고 글자는 그대로 둔다(줄이는 것은
+                숨기는 것이고, 다시 찾을 길을 없앤다). */}
+            <span className={`truncate ${isUnread ? 'text-fg' : 'text-fg-muted'}`}>{bodyWithHandles(e.body, accounts)}</span>
           </span>
           <span className="flex items-center gap-1.5 text-meta text-fg-subtle">
             {/* **언제·어디.** */}
@@ -447,6 +467,10 @@ export function Inbox({ open, onClose }: Props) {
         <div className="flex flex-wrap items-center gap-1.5 border-b border-border p-3">
           {([
             ['blocking', '나를 막는 것'],
+            // **새로 온 것을 묻는 칩**. 나머지 셋은 줄의 종류(rank)를 묻는데 이것만 내
+            // 읽음 상태를 묻는다 — 축이 다르다는 것을 알면서 둔다(`matchesFilter` 주석).
+            // 이것 없이는 이미 본 수백 줄 사이에서 새 줄을 골라낼 길이 화면에 없었다.
+            ['unread', '안 읽은 것'],
             ['reading', '읽을 것'],
             ['all', '전부'],
           ] as const).map(([value, label]) => (
@@ -465,7 +489,7 @@ export function Inbox({ open, onClose }: Props) {
               {label}
               {value !== 'all' && (
                 <span className="ml-1 text-fg-subtle">
-                  {entries.filter((e) => matchesFilter(inboxRow(e, myId), value)).length}
+                  {entries.filter((e) => matchesFilter(inboxRow(e, myId), value, e.readAt === null)).length}
                 </span>
               )}
             </button>
