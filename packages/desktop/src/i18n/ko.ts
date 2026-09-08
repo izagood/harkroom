@@ -25,6 +25,46 @@ export const ko = {
   'common.someone': '사람',
 
   // ---------------------------------------------------------------------------
+  // gallery — **키 순서는 `en.ts` 와 같다**(덩어리 알파벳 → 그 안 키 알파벳).
+  //
+  // 이 영역에 **견본 대화가 없는 이유**는 `en.ts` 머리말이 적었다 — 카드 속 말은 화면
+  // 문구가 아니라 데이터이고, 이 화면이 가르치는 것은 카드의 생김새다.
+  // ---------------------------------------------------------------------------
+
+  'gallery.page.namesMissing':
+    '에이전트가 둘 미만이라 이름 자리가 {ellipsis} 로 남는다. 색과 수신자, 사슬의 모양은 '
+    + '견본으로 고정되어 규칙대로 그려진다 — 에이전트 둘을 만들면 이름까지 실제 값으로 채워진다.',
+  'gallery.page.subtitle': '여덟 가지 말과 그 경계 상태. 여기가 깨지면 어휘가 깨진 것이다.',
+  /** 화면 제목은 원래도 영어였다 — 설정 목차의 다른 항목들과 같은 자리이기 때문이다. */
+  'gallery.page.title': 'Component gallery',
+
+  'gallery.speech.askDone': '선택 — 이미 답한 것',
+  'gallery.speech.askDoneNote': '고른 것만 남고 강조를 거둔다.',
+  'gallery.speech.askForMe': '선택 — 나에게 온 것',
+  'gallery.speech.askForMeNote': '강조를 받는 유일한 카드. 누를 수 있다.',
+  'gallery.speech.askToAgent': '선택 — 에이전트에게 간 것',
+  'gallery.speech.askToAgentNote': '무채색. 읽히되 누를 수 없다(규칙 04).',
+  'gallery.speech.exchange': '에이전트끼리의 주고받기',
+  'gallery.speech.exchangeNote': '기본 접힘. 접지 않으면 스레드가 로그가 된다.',
+  'gallery.speech.failFinal': '실패 — 다시 불러도 소용없다',
+  'gallery.speech.failFinalNote': "'다시 부르기'가 없다 — 없는 문은 그리지 않는다.",
+  'gallery.speech.failRetry': '실패 — 다시 부를 수 있다',
+  'gallery.speech.failRetryNote': '언제나 사람에게 온다. 고치는 경로가 같은 자리에.',
+  'gallery.speech.progress': '진행',
+  'gallery.speech.progressNote': '답이 필요 없는 구간. 문장이 아니라 상태 한 줄이다.',
+  'gallery.speech.report': '완료 보고',
+  'gallery.speech.reportNote': '읽히는 말이라 강조색을 쓰지 않는다. 가장 오래 남는 말이다.',
+
+  'gallery.thread.chainMine': '대기 사슬 — 내 차례',
+  'gallery.thread.chainMineNote': '몇 개가 풀리는지가 사람이 답할 이유다.',
+  'gallery.thread.chainStuck': '대기 사슬 — 교착',
+  'gallery.thread.chainStuckNote': '사슬이 아무 데도 닿지 않는다. 사람만이 푼다.',
+  'gallery.thread.participants': '참여자 줄 · 터미널 선택자',
+  'gallery.thread.participantsNote': '응답 없는 자는 흐리다. 소유자 아닌 것은 목록에 없다.',
+  'gallery.thread.states': '스레드 상태 5단',
+  'gallery.thread.statesNote': '강조는 둘뿐이고 그 둘도 색이 다르다.',
+
+  // ---------------------------------------------------------------------------
   // agents — **키 순서는 `en.ts` 와 같다**(덩어리 알파벳 → 그 안 키 알파벳).
   //
   // 원래 화면의 말투를 그대로 살렸다. 이 화면은 `~합니다` 와 `~한다` 가 섞여 있었는데
