@@ -33,12 +33,26 @@ import type {
 import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, PROJECTION_UNCONFIGURED_NOTICE, notifyLevelOf, sortChannelsBySection } from '@murmur/shared';
 import { Logo } from './Logo';
 import { SidebarToggleIcon } from './SidebarToggleIcon';
+// 화면은 `useT`, `lib/` 성격의 판정(`memberErrorText`)은 `Translate` 를 인자로 받는다 —
+// 그 갈림의 근거는 `i18n/index.ts::Translate` 머리말에 있다.
+import { useT } from '../i18n/useT';
+import type { MessageKey, Translate } from '../i18n';
 
-/** 메뉴에 그리는 이름. 값(`all`/`mentions`/`none`)은 저장·전송용이라 번역하지 않는다. */
-const NOTIFY_LEVEL_LABEL: Record<NotifyLevel, string> = {
-  all: '전체',
-  mentions: '멘션만',
-  none: '없음',
+/**
+ * 메뉴에 그리는 이름. 값(`all`/`mentions`/`none`)은 저장·전송용이라 번역하지 않는다.
+ *
+ * **표가 값 → 키로 바뀌었다.** 예전에는 이 상수가 문구를 들고 있었는데, 그러면 언어를
+ * 바꿔도 이 표는 안 바뀐다 — 모듈이 로드될 때 한 번 굳는 값이라 `useT` 가 닿지 않는다.
+ * 키만 들고 있으면 그리는 자리에서 `t()` 를 지나므로 언어를 따라온다.
+ *
+ * **`NotifyLevel` 로 색인된 채로 둔다**(문자열 배열이 아니라): 네 번째 수준이 생기면
+ * 여기서 컴파일이 막힌다 — `shared` 가 값을 늘렸는데 화면이 이름을 안 지은 상태로
+ * 조용히 통과하지 않는다.
+ */
+const NOTIFY_LEVEL_KEY: Record<NotifyLevel, MessageKey> = {
+  all: 'sidebar.notify.all',
+  mentions: 'sidebar.notify.mentions',
+  none: 'sidebar.notify.none',
 };
 
 /**
@@ -48,10 +62,11 @@ const NOTIFY_LEVEL_LABEL: Record<NotifyLevel, string> = {
  */
 function ChannelUnreadDot({ channelId, name }: { channelId: string; name: string }) {
   const unread = useActiveStore((s) => s.reads[channelId]?.unread ?? 0);
+  const t = useT();
   if (!unread) return null;
   return (
     <span
-      aria-label={`${unread} unread in ${name}`}
+      aria-label={t('sidebar.channel.unread', { count: unread, name })}
       className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-fg-subtle"
     />
   );
@@ -93,11 +108,19 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
  * 이후 보관 게이트를 통과하므로 이 사유를 받지 못한다 — 그래도 같은 함수를 통과시키는 이유는
  * 세 자리가 같은 `memberError` 한 칸에 쓰기 때문이다. 그래서 문구도 "나갈 수 없다"가 아니라
  * 남는 두 조작에 참인 것으로 적는다.
+ *
+ * **번역기를 인자로 받는다**(i18n 구조 판단 (b) — `i18n/index.ts::Translate` 머리말).
+ * 이것은 판정이다: 서버 사유 하나를 알아보고 나머지는 그대로 흘린다. 그 판정을 화면 안에
+ * 두면 세 호출자가 각자 같은 `if` 를 적게 되고, 서버가 문구를 바꾸는 날 한 곳만 고쳐진다.
+ *
+ * `fallback` 은 **키가 아니라 이미 번역된 문자열**을 받는다. 자리마다 다른 말이고
+ * (초대 · 내보내기 · 나가기), 호출부가 `t()` 를 이미 손에 들고 있어 여기서 다시
+ * 키를 풀 이유가 없다.
  */
-const memberErrorText = (err: unknown, fallback: string): string => {
+const memberErrorText = (err: unknown, fallback: string, t: Translate): string => {
   const msg = err instanceof Error ? err.message : fallback;
   return msg === 'archived channels are read-only'
-    ? '보관된 채널은 읽기 전용이라 멤버를 바꿀 수 없다'
+    ? t('sidebar.members.readOnlyArchived')
     : msg;
 };
 
@@ -139,6 +162,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
   onToggleCollapse: () => void;
 }) {
   const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, channelAutoMentions, messages, runnerStates, projectionStatus } = useActiveStore();
+  const t = useT();
   /*
    * macOS 신호등 여백(#270)이 여기 있었다. **더 이상 이 바가 창의 좌상단이 아니다** —
    * 레일이 항상 왼쪽에 서므로 좌상단은 레일이고, 여백은 레일이 진다(`Rail.tsx` 의
@@ -275,7 +299,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
     setAutoMentionError(null);
     // 자동 멘션 목록(#173)은 멤버 목록과 **별개로** 받는다 — 한쪽 실패가 다른 쪽을 가리면 안 된다.
     void getController().loadChannelAutoMentions(channelId)
-      .catch((err: unknown) => setAutoMentionError(err instanceof Error ? err.message : '자동 멘션 목록을 받지 못했다'));
+      .catch((err: unknown) => setAutoMentionError(err instanceof Error ? err.message : t('sidebar.members.autoMentionListFailed')));
     setMemberError(null);
     setInviteAccountId('');
     setLeaveConfirmId(null);
@@ -286,7 +310,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
     try {
       await getController().loadChannelMembers(channelId);
     } catch (err) {
-      setMemberError(err instanceof Error ? err.message : '멤버 목록을 받지 못했다');
+      setMemberError(err instanceof Error ? err.message : t('sidebar.members.listFailed'));
       return;
     }
     /**
@@ -302,7 +326,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
       try {
         setTeams(await getController().listTeams());
       } catch {
-        setTeamError('팀 목록을 받지 못했다');
+        setTeamError(t('sidebar.members.teamListFailed'));
       }
     }
   };
@@ -319,7 +343,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
       // 방금 들어온 에이전트를 빼고 그린다.
       await getController().loadChannelMembers(channelId);
     } catch (err) {
-      setTeamError(err instanceof Error ? err.message : '팀 추가에 실패했다');
+      setTeamError(err instanceof Error ? err.message : t('sidebar.members.teamAddFailed'));
     }
   };
 
@@ -330,7 +354,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
       setInviteAccountId('');
       setMemberError(null);
     } catch (err) {
-      setMemberError(memberErrorText(err, '초대에 실패했다'));
+      setMemberError(memberErrorText(err, t('sidebar.members.inviteFailed'), t));
     }
   };
 
@@ -347,11 +371,11 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
     try {
       members = await getController().loadChannelMembers(channelId);
     } catch (err) {
-      setMemberError(err instanceof Error ? err.message : '멤버 목록을 받지 못했다');
+      setMemberError(err instanceof Error ? err.message : t('sidebar.members.listFailed'));
       return;
     }
     if (!members.some((m) => m.accountId === me.id)) {
-      setMemberError('이 채널의 멤버가 아니다');
+      setMemberError(t('sidebar.members.notAMember'));
       return;
     }
     if (members.length === 1) {
@@ -367,7 +391,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
       await getController().leaveChannel(channelId, me.id);
       closeMembers();
     } catch (err) {
-      setMemberError(memberErrorText(err, '나가기에 실패했다'));
+      setMemberError(memberErrorText(err, t('sidebar.members.leaveFailed'), t));
     }
   };
 
@@ -379,7 +403,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
       (info) => setDeleteCount(info.messageCount),
       (err: unknown) => {
         setDeleteCount('error');
-        setDeleteError(err instanceof Error ? err.message : '메시지 수를 읽지 못했다');
+        setDeleteError(err instanceof Error ? err.message : t('sidebar.delete.countFailed'));
       },
     );
   };
@@ -395,7 +419,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
       await getController().deleteChannel(channelId);
       closeDelete();
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : '삭제에 실패했다');
+      setDeleteError(err instanceof Error ? err.message : t('sidebar.delete.failed'));
     }
   };
 
@@ -410,7 +434,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
       if (on) await getController().setChannelAutoMention(channelId, agentAccountId);
       else await getController().unsetChannelAutoMention(channelId, agentAccountId);
     } catch (err) {
-      setAutoMentionError(err instanceof Error ? err.message : '자동 멘션을 바꾸지 못했다');
+      setAutoMentionError(err instanceof Error ? err.message : t('sidebar.members.autoMentionFailed'));
     }
   };
 
@@ -451,7 +475,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
       await getController().updateChannel(editingChannelId, input);
       closeEdit();
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : '채널 편집에 실패했다');
+      setEditError(err instanceof Error ? err.message : t('sidebar.edit.failed'));
     }
   };
 
@@ -462,7 +486,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
    */
   const submitNewChannel = async (): Promise<void> => {
     if (!new RegExp(CHANNEL_NAME_PATTERN).test(newChannelName)) {
-      setCreateError('이름은 영문 소문자·숫자·`-`·`_` 만 쓸 수 있다 (1~48자)');
+      setCreateError(t('sidebar.channel.createInvalidName'));
       return;
     }
     try {
@@ -470,7 +494,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
       closeCreate();
     } catch (err) {
       // 실패를 조용히 삼키면 사용자는 눌렀는데 아무 일도 안 난 것으로 본다.
-      setCreateError(err instanceof Error ? err.message : '채널 생성에 실패했다');
+      setCreateError(err instanceof Error ? err.message : t('sidebar.channel.createFailed'));
     }
   };
 
@@ -672,8 +696,8 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
       void getController().reorderChannels(next);
     };
     return [
-      ...(idx > 0 ? [{ label: '위로', onSelect: () => swapTo(idx - 1) }] : []),
-      ...(idx < ids.length - 1 ? [{ label: '아래로', onSelect: () => swapTo(idx + 1) }] : []),
+      ...(idx > 0 ? [{ label: t('sidebar.menu.moveUp'), onSelect: () => swapTo(idx - 1) }] : []),
+      ...(idx < ids.length - 1 ? [{ label: t('sidebar.menu.moveDown'), onSelect: () => swapTo(idx + 1) }] : []),
     ];
   };
 
@@ -771,7 +795,12 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
     const reason = runnerReason(runner);
     // 색은 스크린리더에 아무 말도 하지 않는다(`#443`). 아바타 한 칸에 상태를 실었으므로
     // 그 칸이 글자로도 같은 말을 해야 한다 — 러너가 있으면 그쪽 문구가 더 구체적이다.
-    const stateLabel = runner ? `러너: ${runnerStatusLabel(runner)}` : PRESENCE_LABEL[dm.presence];
+    // `runnerStatusLabel`·`PRESENCE_LABEL` 은 **아직 한국어다** — 둘 다 이 파일 밖이고
+    // (`RunnerStatus.tsx`·`lib/presenceView.ts`) 이 PR 의 범위가 아니다. 여기서 하는 일은
+    // 그 값을 **감싸는 틀**만 사전으로 옮기는 것이다.
+    const stateLabel = runner
+      ? t('sidebar.runner.state', { label: runnerStatusLabel(runner) })
+      : PRESENCE_LABEL[dm.presence];
     return (
       <button key={dm.id} className={`${row(dm.id === activeChannelId)} ${reason ? 'flex-col items-start' : ''}`}
         onClick={() => void getController().openChannel(dm.id)}>
@@ -828,7 +857,9 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
           <span data-testid={`runner-reason-${dm.agentId}`}
             className={`whitespace-normal text-left text-meta ${
               runner?.status === 'needs_harness' || runner?.status === 'needs_login' ? 'text-warning' : 'text-danger'}`}>
-            {runner?.status === 'needs_harness' || runner?.status === 'needs_login' ? reason : `기동 실패 — ${reason}`}
+            {runner?.status === 'needs_harness' || runner?.status === 'needs_login'
+              ? reason
+              : t('sidebar.runner.launchFailed', { reason })}
           </span>
         )}
       </button>
@@ -856,12 +887,12 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
             갈려 있던 것을 하나로 맞췄고, 크기를 안 적어 앱 기본값을 물려받는다. 방금 친
             글자를 다시 읽는 자리다. `SidebarFind.tsx` 에 그 근거를 적어 뒀다.
           */}
-          <div className="mb-1 text-meta text-fg-muted">#{ch.name} 편집</div>
+          <div className="mb-1 text-meta text-fg-muted">{t('sidebar.edit.title', { name: `#${ch.name}` })}</div>
           <input
             type="text"
             aria-label="Topic"
             className="mb-1 w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
-            placeholder="topic (선택)"
+            placeholder={t('sidebar.edit.topicPlaceholder')}
             value={editTopic}
             onChange={(e) => { setEditTopic(e.target.value); setEditError(null); }}
           />
@@ -870,7 +901,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
               type="text"
               aria-label="Repository"
               className="flex-1 rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
-              placeholder="repo (비우면 해제)"
+              placeholder={t('sidebar.edit.repoPlaceholder')}
               value={editRepo}
               onChange={(e) => { setEditRepo(e.target.value); setEditError(null); }}
             />
@@ -890,13 +921,13 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
               className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
               onClick={() => void submitEdit()}
             >
-              저장
+              {t('sidebar.edit.save')}
             </button>
             <button
               className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
               onClick={closeEdit}
             >
-              취소
+              {t('sidebar.edit.cancel')}
             </button>
           </div>
         </div>
@@ -906,14 +937,14 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
       return (
         <div key={ch.id} data-testid={`delete-${ch.id}`} className="mt-1 rounded border border-danger bg-surface-raised p-1">
           <div className="mb-1 text-meta text-fg-muted">
-            {ch.visibility === 'private' ? '🔒' : '#'}{ch.name} 삭제
+            {t('sidebar.delete.title', { name: `${ch.visibility === 'private' ? '🔒' : '#'}${ch.name}` })}
           </div>
           {/* 지울 규모를 보여 준다 — 삭제 뒤에는 무엇이 사라졌는지 물을 곳이 없다.
               아직 못 읽었으면 개수를 지어내지 않는다. */}
-          {deleteCount === null && <p className="mb-1 text-meta text-fg-subtle">메시지 수를 읽고 있다…</p>}
+          {deleteCount === null && <p className="mb-1 text-meta text-fg-subtle">{t('sidebar.delete.counting')}</p>}
           {typeof deleteCount === 'number' && (
             <p className="mb-1 text-meta text-warning">
-              이 채널과 메시지 {deleteCount}개를 영구히 지운다. 되돌릴 수 없다.
+              {t('sidebar.delete.scope', { count: deleteCount })}
             </p>
           )}
           {deleteError && <p role="alert" className="mb-1 text-meta text-danger">{deleteError}</p>}
@@ -925,14 +956,14 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                 className="rounded bg-danger px-2 py-0.5 text-meta text-fg-on-strong hover:bg-danger-hover"
                 onClick={() => void confirmDelete(ch.id)}
               >
-                정말 삭제
+                {t('sidebar.delete.confirm')}
               </button>
             )}
             <button
               className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
               onClick={closeDelete}
             >
-              취소
+              {t('sidebar.delete.cancel')}
             </button>
           </div>
         </div>
@@ -954,7 +985,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
       return (
         <div key={ch.id} data-testid={`members-${ch.id}`} className="mt-1 rounded border border-border bg-surface-raised p-1">
           <div className="mb-1 text-meta text-fg-muted">
-            {ch.visibility === 'private' ? '🔒' : '#'}{ch.name} 멤버
+            {t('sidebar.members.title', { name: `${ch.visibility === 'private' ? '🔒' : '#'}${ch.name}` })}
           </div>
           {/* public 과 private 에서 이 목록의 **뜻이 다르다**. public 채널은 멤버가 아니어도
               읽고 쓸 수 있으므로 여기 적힌 사람들은 "볼 수 있는 사람"이 아니라 구독자다 —
@@ -962,16 +993,16 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
               반대로 이 목록이 곧 볼 수 있는 사람의 전부다. */}
           <p className="mb-1 text-meta text-fg-subtle">
             {ch.visibility === 'private'
-              ? '이 목록이 이 채널을 볼 수 있는 사람의 전부다.'
-              : '누구나 읽고 쓸 수 있는 채널이다 — 이 목록은 구독한 사람이지, 볼 수 있는 사람의 전부가 아니다.'}
+              ? t('sidebar.members.scopePrivate')
+              : t('sidebar.members.scopePublic')}
           </p>
           {memberError && <p role="alert" className="mb-1 text-meta text-danger">{memberError}</p>}
           {/* 키 자체가 없으면 '아직 못 받았다'다 — 빈 목록으로 그리면 거짓 사실이 된다. */}
           {members === undefined
-            ? !memberError && <p className="mb-1 text-meta text-fg-subtle">불러오는 중…</p>
+            ? !memberError && <p className="mb-1 text-meta text-fg-subtle">{t('sidebar.members.loading')}</p>
             : (
               <ul className="mb-1 space-y-0.5">
-                {members.length === 0 && <li className="text-meta text-fg-subtle">멤버가 없다</li>}
+                {members.length === 0 && <li className="text-meta text-fg-subtle">{t('sidebar.members.empty')}</li>}
                 {members.map((m) => {
                   // 디렉터리에 없는 계정은 **아무 종류도 주장하지 않는다** — 모르는 것을
                   // '사람'으로 그리면 에이전트가 사람으로 보이는 거짓 사실이 된다.
@@ -981,7 +1012,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                       <span>@{m.handle}</span>
                       {account && (
                         <span className="rounded bg-surface-raised px-1 text-meta text-fg">
-                          {account.kind === 'agent' ? '에이전트' : '사람'}
+                          {account.kind === 'agent' ? t('sidebar.members.kindAgent') : t('sidebar.members.kindHuman')}
                         </span>
                       )}
                       {/* 채널 역할이 아니라 **계정 속성**이다 — 채널별 역할은 아직 없다(#183).
@@ -989,19 +1020,19 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                       {account?.isAdmin && (
                         <span
                           className="rounded bg-surface-raised px-1 text-meta text-warning"
-                          title="워크스페이스 admin — 채널 역할이 아니다"
+                          title={t('sidebar.members.adminBadgeTitle')}
                         >
-                          워크스페이스 admin
+                          {t('sidebar.members.adminBadge')}
                         </span>
                       )}
                       {me?.isAdmin && m.accountId !== me?.id && (
                         <button
                           className="ml-auto rounded px-1 text-meta text-fg-subtle hover:bg-surface-hover hover:text-danger"
-                          aria-label={`${m.handle} 내보내기`}
+                          aria-label={t('sidebar.members.removeAction', { handle: m.handle })}
                           onClick={() => void getController().leaveChannel(ch.id, m.accountId)
-                            .catch((err: unknown) => setMemberError(memberErrorText(err, '내보내기에 실패했다')))}
+                            .catch((err: unknown) => setMemberError(memberErrorText(err, t('sidebar.members.removeFailed'), t)))}
                         >
-                          내보내기
+                          {t('sidebar.members.remove')}
                         </button>
                       )}
                     </li>
@@ -1024,20 +1055,28 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
               .sort((a, b) => a.handle.localeCompare(b.handle));
             return (
               <div data-testid={`auto-mentions-${ch.id}`} className="mb-1 border-t border-border pt-1">
-                <div className="mb-0.5 text-meta text-fg-muted">자동 멘션</div>
+                <div className="mb-0.5 text-meta text-fg-muted">{t('sidebar.members.autoMentionHeading')}</div>
                 <p className="mb-1 text-meta text-fg-subtle">
-                  켜진 에이전트는 이 채널에서 사람이 쓰는 글 앞에 자동으로 불린다. 작성창의 칩 × 로 한 메시지에서만 뺄 수 있다.
-                  {!me?.isAdmin && ' 바꾸는 것은 admin 만 할 수 있다.'}
+                  {/*
+                    **두 문장이 따로 있다.** 뒤엣것은 admin 이 아닌 사람에게만 붙는 조건절이고,
+                    한 키로 합치면 두 경우가 각각 한 문장씩 필요해져 사전 항목이 둘로 늘어난다
+                    (그리고 앞 문장이 두 곳에 복제된다). 이어 붙이는 것은 화면의 일이다 —
+                    `WaitChainSection` 이 `·` 를 화면에 남긴 것과 같은 규칙이다.
+                  */}
+                  {t('sidebar.members.autoMentionNote')}
+                  {!me?.isAdmin && t('sidebar.members.autoMentionNoteReadOnly')}
                 </p>
                 {autoMentionError && <p role="alert" className="mb-1 text-meta text-danger">{autoMentionError}</p>}
                 {/* 키가 없으면 '아직 못 받았다' — 빈 목록으로 그리면 "아무도 안 부른다"는 거짓 사실이 된다. */}
                 {autoRows === undefined
-                  ? !autoMentionError && <p className="mb-1 text-meta text-fg-subtle">불러오는 중…</p>
+                  ? !autoMentionError && <p className="mb-1 text-meta text-fg-subtle">{t('sidebar.members.loading')}</p>
                   : (
                     <ul className="mb-1 space-y-0.5">
                       {agents.length === 0 && (
                         <li className="text-meta text-fg-subtle">
-                          {me?.isAdmin ? '켤 수 있는 에이전트가 없다' : '자동으로 부르는 에이전트가 없다'}
+                          {me?.isAdmin
+                            ? t('sidebar.members.autoMentionEmptyAdmin')
+                            : t('sidebar.members.autoMentionEmptyReader')}
                         </li>
                       )}
                       {agents.map((a) => (
@@ -1046,7 +1085,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                             <label className="flex items-center gap-1">
                               <input
                                 type="checkbox"
-                                aria-label={`@${a.handle} 자동 멘션`}
+                                aria-label={t('sidebar.members.autoMentionCheckbox', { handle: a.handle })}
                                 checked={onIds.has(a.id)}
                                 onChange={(e) => void toggleAutoMention(ch.id, a.id, e.target.checked)}
                               />
@@ -1059,9 +1098,9 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                               무조건 붙이면 체크가 비어 있는 줄에 '자동' 이라고 적힌다 — 화면이
                               체크박스와 반대되는 말을 한다. */}
                           {onIds.has(a.id) && (
-                            <span className="rounded bg-accent-surface px-1 text-meta text-accent">자동</span>
+                            <span className="rounded bg-accent-surface px-1 text-meta text-accent">{t('sidebar.members.autoMentionBadge')}</span>
                           )}
-                          {a.disabled && <span className="rounded bg-surface-hover px-1 text-meta text-fg-muted">비활성</span>}
+                          {a.disabled && <span className="rounded bg-surface-hover px-1 text-meta text-fg-muted">{t('sidebar.members.agentDisabled')}</span>}
                         </li>
                       ))}
                     </ul>
@@ -1071,18 +1110,18 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
           })()}
           {leaveConfirmId === ch.id && (
             <p role="alert" className="mb-1 text-meta text-warning">
-              나가면 아무도 이 채널을 볼 수 없다 — 마지막 멤버다. 채널은 지워지지 않는다.
+              {t('sidebar.members.lastMemberWarning')}
             </p>
           )}
           {canInvite && (
             <div className="mb-1 flex items-center gap-1">
               <select
-                aria-label="초대할 계정"
+                aria-label={t('sidebar.members.inviteSelect')}
                 className="flex-1 rounded border border-border bg-field px-1 py-0.5 text-fg"
                 value={inviteAccountId}
                 onChange={(e) => setInviteAccountId(e.target.value)}
               >
-                <option value="">계정 선택…</option>
+                <option value="">{t('sidebar.members.invitePick')}</option>
                 {invitable.map((a) => <option key={a.id} value={a.id}>@{a.handle}</option>)}
               </select>
               <button
@@ -1090,7 +1129,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                 disabled={!inviteAccountId}
                 onClick={() => void submitInvite(ch.id)}
               >
-                초대
+                {t('sidebar.members.invite')}
               </button>
             </div>
           )}
@@ -1111,15 +1150,15 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
           )}
           {ch.visibility === 'private' && teams.length > 0 && (
             <div className="mb-1 space-y-1">
-              <div className="text-meta text-fg-subtle">팀으로 추가</div>
+              <div className="text-meta text-fg-subtle">{t('sidebar.members.teamHeading')}</div>
               <div className="flex items-center gap-1">
                 <select
-                  aria-label="추가할 팀"
+                  aria-label={t('sidebar.members.teamSelect')}
                   className="flex-1 rounded border border-border bg-field px-1 py-0.5 text-fg"
                   value={selectedTeamId}
                   onChange={(e) => { setSelectedTeamId(e.target.value); setTeamAddResult(null); }}
                 >
-                  <option value="">팀 선택…</option>
+                  <option value="">{t('sidebar.members.teamPick')}</option>
                   {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
                 <button
@@ -1127,14 +1166,14 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                   disabled={!selectedTeamId}
                   onClick={() => void submitTeamAdd(ch.id)}
                 >
-                  추가
+                  {t('sidebar.members.teamAdd')}
                 </button>
               </div>
               {teamAddResult && (
                 <div className="text-meta text-fg-muted">
-                  {teamAddResult.added.length > 0 && <span>추가: {teamAddResult.added.join(', ')}</span>}
-                  {teamAddResult.skipped.length > 0 && <span className="ml-1 text-warning">건너뜀: {teamAddResult.skipped.join(', ')}</span>}
-                  {teamAddResult.alreadyMember.length > 0 && <span className="ml-1">이미 있음: {teamAddResult.alreadyMember.join(', ')}</span>}
+                  {teamAddResult.added.length > 0 && <span>{t('sidebar.members.teamAdded', { names: teamAddResult.added.join(', ') })}</span>}
+                  {teamAddResult.skipped.length > 0 && <span className="ml-1 text-warning">{t('sidebar.members.teamSkipped', { names: teamAddResult.skipped.join(', ') })}</span>}
+                  {teamAddResult.alreadyMember.length > 0 && <span className="ml-1">{t('sidebar.members.teamAlready', { names: teamAddResult.alreadyMember.join(', ') })}</span>}
                 </div>
               )}
             </div>
@@ -1147,14 +1186,14 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                 className="rounded px-2 py-0.5 text-meta text-danger hover:bg-surface-raised"
                 onClick={() => void (leaveConfirmId === ch.id ? confirmLeave(ch.id) : requestLeave(ch.id))}
               >
-                {leaveConfirmId === ch.id ? '정말 나가기' : '나가기'}
+                {leaveConfirmId === ch.id ? t('sidebar.members.leaveConfirm') : t('sidebar.members.leave')}
               </button>
             )}
             <button
               className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
               onClick={closeMembers}
             >
-              닫기
+              {t('sidebar.members.close')}
             </button>
           </div>
         </div>
@@ -1166,7 +1205,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
         {/* private 채널은 '#' 대신 자물쇠다. 여기 이 표시가 없으면 사용자는 자기가 쓰는
             글이 전원에게 가는지 멤버에게만 가는지 화면 어디에서도 알 수 없다. */}
         {ch.visibility === 'private'
-          ? <span className="text-fg-subtle" aria-label="비공개 채널" title="비공개 채널">🔒</span>
+          ? <span className="text-fg-subtle" aria-label={t('sidebar.channel.private')} title={t('sidebar.channel.private')}>🔒</span>
           : <span className="text-fg-subtle">#</span>}
         {ch.name}
         {ch.repo && <span className="rounded bg-surface-raised px-1 text-meta text-fg-muted">{ch.repo}</span>}
@@ -1201,13 +1240,13 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
       ...(lastSeq > 0 ? [{
         // 마지막 메시지부터 미읽음 — 결과는 미읽음 1, 즉 "이 채널 다시 보라"는 표시다.
         // 특정 메시지를 골라 그 지점부터 미읽음으로 만드는 것은 #179 다.
-        label: '미읽음으로 표시',
+        label: t('sidebar.menu.markUnread'),
         onSelect: () => void getController().markChannelUnread(ch.id, lastSeq),
       }] : []),
-      ...(me?.isAdmin ? [{ label: '채널 편집', onSelect: () => startEdit(ch) }] : []),
+      ...(me?.isAdmin ? [{ label: t('sidebar.menu.edit'), onSelect: () => startEdit(ch) }] : []),
       ...(me?.isAdmin ? [isArchived
-        ? { label: '보관 해제', onSelect: () => void getController().archiveChannel(ch.id, false) }
-        : { label: '보관', onSelect: () => void getController().archiveChannel(ch.id, true) }]
+        ? { label: t('sidebar.menu.unarchive'), onSelect: () => void getController().archiveChannel(ch.id, false) }
+        : { label: t('sidebar.menu.archive'), onSelect: () => void getController().archiveChannel(ch.id, true) }]
       : []),
       /**
        * 삭제(#155). **보관된 채널에만** 만든다 — 서버가 보관되지 않은 채널의 삭제를 409 로
@@ -1215,14 +1254,14 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
        * (docs/design.md 4절). DM 은 이 목록(`sortedChannels`)에 없어 애초에 닿지 않는다.
        */
       ...(me?.isAdmin && isArchived
-        ? [{ label: '삭제', onSelect: () => startDelete(ch.id) }] : []),
-      { label: '멤버 보기', onSelect: () => void openMembers(ch.id) },
+        ? [{ label: t('sidebar.menu.delete'), onSelect: () => startDelete(ch.id) }] : []),
+      { label: t('sidebar.menu.members'), onSelect: () => void openMembers(ch.id) },
       // 초대와 나가기는 **그 채널의 멤버**여야 하는 동작이다(public 채널의 초대는 예외 —
       // 서버 게이트가 누구나 통과시킨다). 메뉴는 목록을 받기 전에도 그려지므로 아직
       // 모르는 것을 '아니다'로 단정하지 않는다: 목록을 받아 아닌 것이 확인된 때만 뺀다.
       ...(ch.visibility === 'public' || knownMember
-        ? [{ label: '초대', onSelect: () => void openMembers(ch.id) }] : []),
-      ...(knownMember ? [{ label: '나가기', onSelect: () => void requestLeave(ch.id) }] : []),
+        ? [{ label: t('sidebar.menu.invite'), onSelect: () => void openMembers(ch.id) }] : []),
+      ...(knownMember ? [{ label: t('sidebar.menu.leave'), onSelect: () => void requestLeave(ch.id) }] : []),
       /*
        * 숨기기(#376). **나가기 바로 옆에 둔다** — 두 항목이 같은 자리에 있어야 "관심 없다"를
        * 표현하는 길이 나가기 하나뿐이 아니라는 것이 보인다. 멤버십을 보지 않는다: 멤버가
@@ -1230,17 +1269,22 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
        * 않으므로 게이트가 필요 없다. 확인 절차도 없다 — 되돌리는 값이 클릭 한 번이다.
        */
       isHidden(ch.id)
-        ? { label: '숨김 해제', onSelect: () => void getController().setChannelHidden(ch.id, false) }
-        : { label: '숨기기', onSelect: () => void getController().setChannelHidden(ch.id, true) },
-      { label: '채널명 복사', onSelect: copyChannelName },
-      { label: '채널 ID 복사', onSelect: copyChannelId },
+        ? { label: t('sidebar.menu.unhide'), onSelect: () => void getController().setChannelHidden(ch.id, false) }
+        : { label: t('sidebar.menu.hide'), onSelect: () => void getController().setChannelHidden(ch.id, true) },
+      { label: t('sidebar.menu.copyName'), onSelect: copyChannelName },
+      { label: t('sidebar.menu.copyId'), onSelect: copyChannelId },
       // 음소거 토글 하나가 아니라 세 수준을 나란히 둔다(#224). 켬/끔 스위치와 수준을 같이
       // 두면 "음소거 껐는데 왜 아직 조용하지"가 생긴다 — 여기가 유일한 조작 자리다.
       ...NOTIFY_LEVELS.map((level) => ({
-        label: `${notifyLevel === level ? '✓ ' : ''}알림: ${NOTIFY_LEVEL_LABEL[level]}`,
+        // `✓ ` 는 **화면의 것이다** — 사전에 넣으면 켠 것과 안 켠 것이 각각 사전 항목이
+        // 되어 항목 수가 두 배가 된다(그리고 두 항목이 갈라진다).
+        label: t('sidebar.notify.item', {
+          check: notifyLevel === level ? '✓ ' : '',
+          level: t(NOTIFY_LEVEL_KEY[level]),
+        }),
         onSelect: () => void getController().setChannelNotifyLevel(ch.id, level),
       })),
-      { label: isStarred ? '즐겨찾기 해제' : '즐겨찾기', onSelect: () => void getController().toggleChannelStar(ch.id) },
+      { label: isStarred ? t('sidebar.menu.unstar') : t('sidebar.menu.star'), onSelect: () => void getController().toggleChannelStar(ch.id) },
       /*
        * 섹션 이동(#157). DM 은 섹션을 가질 수 없다 — kind 로 거르고, 서버도 400 을 준다.
        *
@@ -1253,15 +1297,15 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
         ...knownSections
           .filter((name) => name !== pref?.section)
           .map((name) => ({
-            label: `섹션: ${name}`,
+            label: t('sidebar.menu.section', { name }),
             onSelect: () => void getController().setChannelSection(ch.id, name),
           })),
         {
-          label: '새 섹션…',
+          label: t('sidebar.menu.sectionNew'),
           onSelect: () => { setSectionEditFor(ch.id); setSectionDraft(''); },
         },
         ...(pref?.section ? [
-          { label: '섹션에서 빼기', onSelect: () => void getController().setChannelSection(ch.id, null) },
+          { label: t('sidebar.menu.sectionClear'), onSelect: () => void getController().setChannelSection(ch.id, null) },
         ] : []),
       ] : []),
       /*
@@ -1289,10 +1333,10 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
           <input
             type="text"
             autoFocus
-            aria-label="새 섹션 이름"
+            aria-label={t('sidebar.section.name')}
             maxLength={40}
             className="w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
-            placeholder="섹션 이름"
+            placeholder={t('sidebar.section.movePlaceholder')}
             value={sectionDraft}
             onChange={(e) => setSectionDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -1306,13 +1350,13 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
               className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
               onClick={submitSection}
             >
-              옮기기
+              {t('sidebar.section.moveSubmit')}
             </button>
             <button
               className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
               onClick={() => { setSectionEditFor(null); setSectionDraft(''); }}
             >
-              취소
+              {t('sidebar.section.cancel')}
             </button>
           </div>
         </div>
@@ -1375,7 +1419,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
         <div
           role="separator"
           aria-orientation="vertical"
-          aria-label="사이드바 너비 조절"
+          aria-label={t('sidebar.resize.handle')}
           tabIndex={0}
           className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-accent focus:bg-accent"
           onMouseDown={handleDragStart}
@@ -1441,12 +1485,12 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
               것을 여기서 미리 말해 둔다. */}
           <span data-testid="connection-dot" data-connected={String(connected)}
             className={`h-2 w-2 rounded-full ${connected ? 'bg-success' : 'bg-danger'}`}
-            title={connected ? '서버에 연결됨' : '서버와 끊김 — 다시 붙을 때까지 아래 목록의 생사는 알 수 없다'} />
+            title={connected ? t('sidebar.brand.connected') : t('sidebar.brand.disconnected')} />
           <button
             onClick={onToggleCollapse}
             className="ml-auto rounded p-1 hover:bg-surface-raised"
-            aria-label="사이드바 접기"
-            title="사이드바 접기"
+            aria-label={t('sidebar.brand.collapse')}
+            title={t('sidebar.brand.collapse')}
           >
             <SidebarToggleIcon />
           </button>
@@ -1472,7 +1516,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
         나오고 어느 쪽이 무엇인지 알 수 없다. 찾기 줄이 이 상자 밖으로 나갔는지를 재는
         시험도 이 이름으로 상자를 집는다.
       */}
-      <nav aria-label="채널 목록" className="flex-1 space-y-4 overflow-y-auto p-2">
+      <nav aria-label={t('sidebar.brand.nav')} className="flex-1 space-y-4 overflow-y-auto p-2">
         {/*
           **레일이 고른 칸의 묶음만 그린다**(정본 문서 1단계). 이 `nav` 는 여전히
           `overflow-y-auto` 이지만, 이제 한 번에 한 목록만 담으므로 그 목록이 세로를 다 쓴다 —
@@ -1517,7 +1561,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
         {starredChannels.length > 0 && (
           <div>
             <div className="flex items-center gap-1 px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
-              Favorites
+              {t('sidebar.channel.favorites')}
             </div>
             {starredChannels.map((item) => channelRow(item.channel))}
           </div>
@@ -1537,7 +1581,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
             되풀이한다.
           */}
           <div className="flex items-center gap-1 px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
-            Channels
+            {t('sidebar.channel.heading')}
           </div>
           {/*
             `+` 는 목록의 **첫 칸**이다(#488 A2) — 예전에는 채널 목록 **끝**이라 채널이
@@ -1569,7 +1613,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                     checked={newChannelPrivate}
                     onChange={(e) => setNewChannelPrivate(e.target.checked)}
                   />
-                  비공개 (멤버만 볼 수 있다)
+                  {t('sidebar.channel.privateOption')}
                 </label>
                 {createError && <p role="alert" className="mb-1 text-meta text-danger">{createError}</p>}
                 <div className="flex gap-1">
@@ -1577,17 +1621,17 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
 className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
                     onClick={() => void submitNewChannel()}
                   >
-                    만들기
+                    {t('sidebar.channel.createSubmit')}
                   </button>
                   <button
 className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
                     onClick={closeCreate}
                   >
-                    취소
+                    {t('sidebar.channel.cancel')}
                   </button>
                 </div>
               </div>
-            ) : addRow('Create channel', () => setCreateChannelOpen(true), 'add-channel')
+            ) : addRow(t('sidebar.channel.create'), () => setCreateChannelOpen(true), 'add-channel')
           )}
           {/* 섹션(#157)으로 묶어 그린다. 섹션 없는 것들은 맨 아래 무제목 묶음이다. */}
           {groupedChannels.map((group) => {
@@ -1598,10 +1642,10 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
                 <input
                   type="text"
                   autoFocus
-                  aria-label="섹션 새 이름"
+                  aria-label={t('sidebar.section.renameName')}
                   maxLength={40}
                   className="w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
-                  placeholder="새 이름"
+                  placeholder={t('sidebar.section.renamePlaceholder')}
                   value={sectionRenameDraft}
                   onChange={(e) => setSectionRenameDraft(e.target.value)}
                   onKeyDown={(e) => {
@@ -1628,13 +1672,13 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
                       }
                     }}
                   >
-                    바꾸기
+                    {t('sidebar.section.renameSubmit')}
                   </button>
                   <button
                     className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
                     onClick={() => { setSectionRenameFor(null); setSectionRenameDraft(''); }}
                   >
-                    취소
+                    {t('sidebar.section.cancel')}
                   </button>
                 </div>
               </div>
@@ -1651,7 +1695,7 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
                 )}
                 items={[
                   {
-                    label: '이름 바꾸기',
+                    label: t('sidebar.section.rename'),
                     onSelect: () => { if (sectionName) { setSectionRenameFor(sectionName); setSectionRenameDraft(sectionName); } },
                   },
                 ]}
@@ -1673,7 +1717,7 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
               onClick={() => setArchivedOpen((v) => !v)}
             >
               <span>{archivedOpen ? '▼' : '▶'}</span>
-              Archived ({archivedChannels.length})
+              {t('sidebar.channel.archived', { count: archivedChannels.length })}
             </button>
             {archivedOpen && archivedChannels.map(channelRow)}
           </div>
@@ -1687,7 +1731,7 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
               onClick={() => setHiddenOpen((v) => !v)}
             >
               <span>{hiddenOpen ? '▼' : '▶'}</span>
-              Hidden ({hiddenChannels.length})
+              {t('sidebar.channel.hidden', { count: hiddenChannels.length })}
             </button>
             {hiddenOpen && hiddenChannels.map(channelRow)}
           </div>
@@ -1716,7 +1760,7 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
             버튼이라 채널의 `+` 와 모양도 자리도 달랐다 — 같은 일을 하는 것이 목록마다 다르게
             생기면 사람은 매번 새로 찾는다.
           */}
-          {addRow('New', () => setPickerOpen((v) => !v), 'add-dm')}
+          {addRow(t('sidebar.dm.new'), () => setPickerOpen((v) => !v), 'add-dm')}
           {pickerOpen ? (
             <div className="mb-1 rounded border border-border bg-surface-raised p-1">
               {others.map((a) => (
@@ -1823,6 +1867,8 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
               **눌러도 아무 일이 없는 함수를 넘기지 않는다**(design.md §4): 두 값이 갈리는
               날 조용히 죽은 버튼이 생기는 대신 여기서 명시적으로 던진다.
             */
+            // 던지는 말은 **화면 문자열이 아니다** — 개발자가 스택 트레이스에서 읽는 것이라
+            // 사전에 넣지 않는다(사전이 사람에게 보이지 않는 말을 지고 있게 된다).
             onCreate={() => { throw new Error('사이드바에서는 에이전트를 만들지 않는다 — 설정의 일이다'); }}
             canCreate={false}
             /*
