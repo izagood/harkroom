@@ -45,12 +45,15 @@ export function AskCard({ message }: { message: MessageRow }) {
     ? (accounts[ask.answeredBy]?.handle ?? t('common.someone'))
     : null;
 
+  /* 폭 상한을 여기서 다시 두지 않는다 — 부모(`MessageItem` 의 본문 열)가 이미 상한을 쥐고
+     있고, 여기 `max-w-prose`(65ch)를 남기면 열을 넓혀도 이 카드만 옛 폭에 남아 한 화면에
+     폭이 둘 선다(`messageWidth.test.tsx`). */
   return (
     <div
       data-testid="ask-card"
       data-for-me={forMe}
       data-answered={answered}
-      className={`mt-1.5 max-w-prose rounded-lg border ${
+      className={`mt-1.5 rounded-lg border ${
         // 강조는 **답을 기다리는 내 차례**에만 간다. 답이 끝난 카드는 기록이므로 강조를
         // 거둔다 — 안 그러면 끝난 스레드가 계속 나를 부른다.
         canChoose ? 'border-state-turn bg-accent-surface' : 'border-border-agent bg-surface-agent'
