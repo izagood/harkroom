@@ -9,6 +9,11 @@ import { getController } from '../state/controller';
  */
 const PREVIEWABLE = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'];
 
+/** 미리보기 판정은 **한 곳에서만** 한다 — 화이트리스트가 갈리면 한쪽만 SVG 를 그린다. */
+export function canPreview(attachment: AttachmentRow): boolean {
+  return PREVIEWABLE.includes(attachment.contentType);
+}
+
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const units = ['KB', 'MB', 'GB'];
@@ -50,11 +55,29 @@ function useAttachmentUrl(id: string, enabled: boolean): { url: string | null; f
   return { url, failed };
 }
 
-function Attachment({ attachment }: { attachment: AttachmentRow }) {
-  const canPreview = PREVIEWABLE.includes(attachment.contentType);
-  const { url, failed } = useAttachmentUrl(attachment.id, canPreview);
+/**
+ * 칩 안에 들어가는 작은 미리보기. **이름 옆에 놓이는 그림이므로 alt 는 비운다** — 이름을
+ * 두 번 읽히면 스크린리더에서 칩 하나가 파일 두 개처럼 들린다. 그릴 수 없는 것(이미지가
+ * 아니거나 아직 못 받았거나 실패)은 📎 로 남는다: 자리 크기는 같아서 글자가 흔들리지 않는다.
+ */
+export function AttachmentThumb({ attachment }: { attachment: AttachmentRow }) {
+  const { url } = useAttachmentUrl(attachment.id, canPreview(attachment));
+  if (!url) return <span aria-hidden>📎</span>;
+  return (
+    <img
+      src={url}
+      alt=""
+      data-testid="attachment-thumb"
+      className="h-6 w-6 shrink-0 rounded-sm border border-border object-cover"
+    />
+  );
+}
 
-  if (canPreview && url) {
+function Attachment({ attachment }: { attachment: AttachmentRow }) {
+  const previewable = canPreview(attachment);
+  const { url, failed } = useAttachmentUrl(attachment.id, previewable);
+
+  if (previewable && url) {
     return (
       <img
         src={url}
