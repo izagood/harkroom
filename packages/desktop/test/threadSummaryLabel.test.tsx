@@ -13,11 +13,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
 import { acc, msg } from './helpers/fakeApi';
 
 beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
   setController({ openThread: vi.fn(async () => undefined) } as unknown as Controller);
   useAppStore.getState().reset();
   useAppStore.getState().set({
@@ -26,7 +28,14 @@ beforeEach(() => {
     messages: { c1: [] },
   });
 });
-afterEach(() => cleanup());
+// **언어를 고정한다**(이 묶음의 문구가 사전을 지나면서 기본이 영어가 됐다). 이 파일이
+// 재는 것은 언어가 아니라 **그 언어로 표현된 규율**이다 — 언어를 재는 자리는
+// `i18n.test.tsx` 하나이고, 두 곳에서 재면 문구를 고칠 때 한쪽만 고쳐진다
+// (`gallery.test.tsx`·`skillsSettings.test.tsx`·`agentGrid.test.tsx` 와 같은 규약).
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 /** 서버가 실어 주는 집계(#484)를 얹은 요약 줄 하나. */
 const summary = (over: Record<string, unknown>) => msg('m1', 'c1', 1, 'root', 'u2', {
@@ -44,7 +53,7 @@ describe('요약 줄의 접근 이름', () => {
     render(<MessageItem message={summary({ openAskHumanCount: 1 })} />);
     const btn = screen.getByRole('button', { name: /내 차례/ });
     // 답장 수도 그대로 남는다 — 상태가 그것을 **대체**하는 것이 아니라 앞에 선다.
-    expect(btn.getAttribute('aria-label')).toContain('2 replies');
+    expect(btn.getAttribute('aria-label')).toContain('답글 2개');
   });
 
   it('막힘도 마찬가지다', () => {
@@ -58,7 +67,7 @@ describe('요약 줄의 접근 이름', () => {
    */
   it('집계가 없으면 상태를 지어내지 않는다', () => {
     render(<MessageItem message={summary({ openAskHumanCount: null, openAskAccountIds: null, failureCount: null })} />);
-    const btn = screen.getByRole('button', { name: /2 replies/ });
+    const btn = screen.getByRole('button', { name: /답글 2개/ });
     const label = btn.getAttribute('aria-label') ?? '';
     for (const word of ['내 차례', '막힘', '남을 기다림', '도는 중', '끝남']) {
       expect(label).not.toContain(word);

@@ -1,6 +1,8 @@
 import { readAskMeta, type AskAudience, type MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
+import { useT } from '../i18n/useT';
+import type { Translate } from '../i18n';
 
 /**
  * 선택 요청 카드 — 이 디자인 언어에서 **대화 안의 유일한 "상자"**다(상자 예산 1개).
@@ -22,6 +24,7 @@ import { getController } from '../state/controller';
  * 평문으로 읽는다. **빈 상자는 "여기 뭔가 있다"는 거짓 신호다.**
  */
 export function AskCard({ message }: { message: MessageRow }) {
+  const t = useT();
   const myId = useActiveStore((s) => s.me?.id ?? null);
   const accounts = useActiveStore((s) => s.accounts);
   const ask = readAskMeta(message.meta);
@@ -36,8 +39,10 @@ export function AskCard({ message }: { message: MessageRow }) {
   const canChoose = !answered && forMe;
 
   const chosen = answered ? ask.options.find((o) => o.id === ask.answeredWith) : undefined;
+  // 이름을 모르면 **이름 자리에 보통명사가 온다** — 그 낱말이 `common.someone` 에 있는
+  // 이유이고, 조사는 번역기가 그것을 보고 고른다(`{name:이가}`).
   const answeredByName = ask.answeredBy
-    ? (accounts[ask.answeredBy]?.handle ?? '누군가')
+    ? (accounts[ask.answeredBy]?.handle ?? t('common.someone'))
     : null;
 
   return (
@@ -55,10 +60,10 @@ export function AskCard({ message }: { message: MessageRow }) {
         <span
           className={`text-meta font-semibold ${canChoose ? 'text-state-turn' : 'text-fg-agent'}`}
         >
-          {headline(ask.to, myId, accounts, answered)}
+          {headline(ask.to, myId, accounts, answered, t)}
         </span>
         {answered && answeredByName && (
-          <span className="text-meta text-fg-subtle">{answeredByName} 이(가) 골랐다</span>
+          <span className="text-meta text-fg-subtle">{t('speech.ask.answeredBy', { name: answeredByName })}</span>
         )}
       </div>
       {ask.prompt && <p className="px-3 pt-1 text-body text-fg-muted">{ask.prompt}</p>}
@@ -108,9 +113,14 @@ function headline(
   myId: string | null,
   accounts: Record<string, { handle: string } | undefined>,
   answered: boolean,
+  t: Translate,
 ): string {
-  if (answered) return '정해졌다';
-  if (isForMe(to, myId)) return '골라 줘';
-  if (to.kind === 'account') return `${accounts[to.accountId]?.handle ?? '다른 에이전트'} 가 고른다`;
-  return '사람이 고른다';
+  if (answered) return t('speech.ask.decided');
+  if (isForMe(to, myId)) return t('speech.ask.pickOne');
+  if (to.kind === 'account') {
+    return t('speech.ask.agentPicks', {
+      name: accounts[to.accountId]?.handle ?? t('speech.ask.unknownAgent'),
+    });
+  }
+  return t('speech.ask.personPicks');
 }

@@ -1,7 +1,7 @@
 import { readReportMeta, type MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { durationLabel } from '../lib/time';
-import { useLocale } from '../i18n/useT';
+import { useLocale, useT } from '../i18n/useT';
 
 /**
  * 완료 보고 카드 — **이 스레드에서 가장 오래 남고 가장 많이 다시 읽히는 말**이다(규칙 03).
@@ -23,8 +23,9 @@ export function ReportCard({ message, inThread = false }: {
   inThread?: boolean;
 }) {
   const setDraft = useActiveStore((s) => s.setDraft);
-  // 소요 시간은 앱 언어를 따른다(`lib/time.ts`). 이 카드의 나머지 문자열은 아직 한국어다.
+  // 소요 시간은 `lib/time.ts` 가, 세 구획의 머리는 사전이 낸다.
   const locale = useLocale();
+  const t = useT();
   const report = readReportMeta(message.meta);
   if (!report) return null;
 
@@ -35,13 +36,13 @@ export function ReportCard({ message, inThread = false }: {
       data-testid="report-card"
       className="mt-1.5 max-w-prose rounded-lg border border-border bg-surface-sunken px-3 py-2"
     >
-      <Section title="확인한 것" testid="report-checks" items={report.checks} />
+      <Section title={t('speech.report.checks')} testid="report-checks" items={report.checks} />
       {/* 파일 경로만 고정폭이다 — 문장과 섞이면 줄이 흔들린다. */}
       {report.files?.length ? (
-        <Section title="바뀐 파일" testid="report-files" items={report.files} mono />
+        <Section title={t('speech.report.files')} testid="report-files" items={report.files} mono />
       ) : null}
       {report.remaining?.length ? (
-        <Section title="남은 것" testid="report-remaining" items={report.remaining} tone="text-warning" />
+        <Section title={t('speech.report.remaining')} testid="report-remaining" items={report.remaining} tone="text-warning" />
       ) : null}
 
       {report.durationMs != null && (

@@ -4,7 +4,8 @@
 // 그리고 그 반대편의 거짓말 — 소켓이 끊겼다고 도는 스레드를 전부 붉게 칠하는 것 — 도 함께 막는다.
 import { describe, it, expect } from 'vitest';
 import type { AskMeta, FailureMeta, MessageRow } from '@murmur/shared';
-import { threadState, threadStateFromFacts, isBlocking, THREAD_STATE_LABEL, type Liveness, type ThreadState } from '../src/lib/threadState';
+import { threadState, threadStateFromFacts, isBlocking, threadStateLabel, type Liveness, type ThreadState } from '../src/lib/threadState';
+import { LOCALES, translator } from '../src/i18n';
 import { msg } from './helpers/fakeApi';
 
 const ME = 'u-me';
@@ -163,9 +164,25 @@ describe('threadState — 실패는 다시 움직이면 풀린다', () => {
  * 그리면 열어 보지 않은 스레드가 전부 '끝남'으로 보인다.
  */
 describe('상태 어휘가 한 표에서 나온다', () => {
-  it('다섯 상태가 모두 이름을 갖는다', () => {
-    const all: ThreadState[] = ['my-turn', 'stuck', 'waiting', 'running', 'done'];
-    for (const s of all) expect(THREAD_STATE_LABEL[s]).toBeTruthy();
+  const all: ThreadState[] = ['my-turn', 'stuck', 'waiting', 'running', 'done'];
+
+  /**
+   * **붙어 있는 언어 전부에서 잰다.** 원래 이 축은 모듈 상수(`THREAD_STATE_LABEL`)를
+   * 읽어 한 언어만 봤는데, 그 상수가 로드 시점 언어로 굳어 있던 것이 이 PR 이 고친
+   * 결함이다. 언어를 하나만 재면 세 번째 언어가 다섯 중 하나를 빠뜨려도 초록이다.
+   */
+  it.each(LOCALES)('%s 에서 다섯 상태가 모두 이름을 갖는다', (locale) => {
+    const t = translator(locale);
+    for (const s of all) expect(threadStateLabel(s, t)).toBeTruthy();
+  });
+
+  /**
+   * **다섯이 서로 다른 글자를 받는다.** 5단이 한 사다리인 것이 이 표의 요점이라
+   * (규칙 03) 둘이 같은 글자를 받으면 그 두 상태는 화면에서 구별되지 않는다.
+   */
+  it.each(LOCALES)('%s 에서 다섯이 서로 다른 글자다', (locale) => {
+    const t = translator(locale);
+    expect(new Set(all.map((s) => threadStateLabel(s, t))).size).toBe(all.length);
   });
 });
 

@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import type { AskMeta, MessageRow } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
 import { acc, msg } from './helpers/fakeApi';
@@ -34,6 +35,7 @@ const askMessage = (meta: Record<string, unknown>): MessageRow =>
 let answerAsk: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   answerAsk = vi.fn().mockResolvedValue(undefined);
   setController({ answerAsk } as unknown as Controller);
@@ -45,7 +47,14 @@ beforeEach(() => {
     },
   });
 });
-afterEach(() => cleanup());
+// **언어를 고정한다**(이 묶음의 문구가 사전을 지나면서 기본이 영어가 됐다). 이 파일이
+// 재는 것은 언어가 아니라 **그 언어로 표현된 규율**이다 — 언어를 재는 자리는
+// `i18n.test.tsx` 하나이고, 두 곳에서 재면 문구를 고칠 때 한쪽만 고쳐진다
+// (`gallery.test.tsx`·`skillsSettings.test.tsx`·`agentGrid.test.tsx` 와 같은 규약).
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 describe('AskCard — 수신자에 따른 두 얼굴', () => {
   it('나에게 온 선택지는 고를 수 있고, 클릭이 곧 답이다', () => {
@@ -94,7 +103,10 @@ describe('AskCard — 수신자에 따른 두 얼굴', () => {
     const card = screen.getByTestId('ask-card');
     expect(card.dataset.answered).toBe('true');
     expect(screen.getByText('정해졌다')).toBeTruthy();
-    expect(screen.getByText('jaebin 이(가) 골랐다')).toBeTruthy();
+    // **`이(가)` 가 사라졌다.** 옛 문구는 받침을 몰라 괄호로 둘 다 적었는데, 조사가
+    // 번역기 안으로 들어가면서(`{name:이가}`) 이름을 보고 하나를 고른다 —
+    // 영문 이름은 `jaebin 가`, 받침 있는 한글 이름은 `민준이` 가 된다.
+    expect(screen.getByText('jaebin 가 골랐다')).toBeTruthy();
 
     // 고른 것만 남는다 — 안 고른 선택지를 계속 보이면 무엇으로 정해졌는지가 흐려진다.
     expect((screen.getByTestId('ask-option-new') as HTMLButtonElement).disabled).toBe(true);

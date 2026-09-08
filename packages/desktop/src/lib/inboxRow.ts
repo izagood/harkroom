@@ -1,4 +1,5 @@
 import { readAskMeta, readFailureMeta, readReportMeta, type InboxEntry } from '@murmur/shared';
+import type { Translate } from '../i18n';
 
 /**
  * 인박스 줄 하나가 **무슨 말인가**(#488 C2).
@@ -39,8 +40,13 @@ export interface InboxRow {
 /**
  * `meta` 를 읽어 줄의 성격을 정한다. **모르는 `meta` 는 평문으로 흐른다** — 이
  * 저장소의 불변 규약이고, 여기서도 `reason` 이 정한 기본값으로 떨어진다.
+ *
+ * **번역기가 필수 인자이고 맨 뒤에 온다.** 이 파일은 화면이 아니라 `lib/` 판정이라
+ * 훅을 못 쓴다 — `lastTurnAgo`·`daemonFactRows` 가 이미 그 자리를 쓴다. 기본값을 주면
+ * 안 넘긴 화면이 조용히 한 언어로 굳고, 앞에 끼우면 인자 자리가 어긋난 채 컴파일이
+ * 통과할 수 있다.
  */
-export function inboxRow(entry: InboxEntry, myAccountId: string | null): InboxRow {
+export function inboxRow(entry: InboxEntry, myAccountId: string | null, t: Translate): InboxRow {
   const ask = readAskMeta(entry.meta);
   if (ask && ask.answeredWith == null) {
     // **나에게 온 물음만 막는 말이다**(규칙 04). 남에게 간 물음은 읽을 것이다 —
@@ -50,7 +56,7 @@ export function inboxRow(entry: InboxEntry, myAccountId: string | null): InboxRo
       : ask.to.accountId === myAccountId;
     return {
       kind: 'ask',
-      label: forMe ? '골라 줘' : '고르는 중',
+      label: t(forMe ? 'inbox.label.ask' : 'inbox.label.askOther'),
       rank: forMe ? 0 : 1,
       // 셋 이상이면 줄에서 안 고른다 — 줄이 버튼 밭이 된다.
       options: forMe && ask.options.length === 2 ? ask.options : null,
@@ -59,18 +65,19 @@ export function inboxRow(entry: InboxEntry, myAccountId: string | null): InboxRo
 
   // 실패는 **항상 사람에게 온다**(`FailureMeta` 에 `to` 가 없는 이유). 나를 막는다.
   if (readFailureMeta(entry.meta)) {
-    return { kind: 'failure', label: '막혔다', rank: 0, options: null };
+    return { kind: 'failure', label: t('inbox.label.failure'), rank: 0, options: null };
   }
 
   // 보고는 읽을 것이다 — 끝난 일을 알리는 말이라 나를 막지 않는다.
   if (readReportMeta(entry.meta)) {
-    return { kind: 'report', label: '끝냈다', rank: 1, options: null };
+    return { kind: 'report', label: t('inbox.label.report'), rank: 1, options: null };
   }
 
   // 여기부터는 `meta` 가 말하지 않는다. **어떻게 왔는가**로 떨어진다.
+  // `DM` 은 안 옮긴다 — **이 제품의 고유어**다(`waitChain.dm` 이 같은 판단을 이미 했다).
   if (entry.reason === 'dm') return { kind: 'dm', label: 'DM', rank: 1, options: null };
-  if (entry.reason === 'mention') return { kind: 'mention', label: '불렀다', rank: 1, options: null };
-  return { kind: 'reply', label: '답글', rank: 2, options: null };
+  if (entry.reason === 'mention') return { kind: 'mention', label: t('inbox.label.mention'), rank: 1, options: null };
+  return { kind: 'reply', label: t('inbox.label.reply'), rank: 2, options: null };
 }
 
 /**

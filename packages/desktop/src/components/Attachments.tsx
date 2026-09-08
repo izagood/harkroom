@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AttachmentRow } from '@murmur/shared';
 import { getController } from '../state/controller';
 import { Overlay } from './Overlay';
+import { useT } from '../i18n/useT';
 
 /**
  * 미리보기를 허용하는 타입. **화이트리스트다** — `image/*` 로 열면 `image/svg+xml` 이 들어오고,
@@ -65,6 +66,7 @@ function useAttachmentUrl(id: string, enabled: boolean): { url: string | null; f
  * 읽고 그대로 보낸다. 본문 미리보기가 `(불러오기 실패)` 로 가르는 것과 같은 규칙이다.
  */
 export function AttachmentThumb({ attachment }: { attachment: AttachmentRow }) {
+  const t = useT();
   const previewable = canPreview(attachment);
   const { url, failed } = useAttachmentUrl(attachment.id, previewable);
   if (!url) {
@@ -74,7 +76,7 @@ export function AttachmentThumb({ attachment }: { attachment: AttachmentRow }) {
       // 자리를 잡지 않는다: 올 것이 없는데 비워 둔 여백이다.
       <span className={previewable ? 'inline-flex h-6 items-center gap-1' : 'inline-flex items-center gap-1'}>
         <span aria-hidden>📎</span>
-        {failed && <span className="text-danger">(미리보기 실패)</span>}
+        {failed && <span className="text-danger">{t('message.attachment.previewFailed')}</span>}
       </span>
     );
   }
@@ -105,6 +107,7 @@ function Lightbox({ attachment, url, onClose }: {
   url: string;
   onClose: () => void;
 }) {
+  const t = useT();
   return (
     // 폭을 고정하지 않는다(기본값 `w-[42rem]` 를 물려받으면 작은 그림 옆에 빈 판이 남는다) —
     // 화면보다 큰 그림만 뷰포트에서 잘라 낸다.
@@ -120,11 +123,11 @@ function Lightbox({ attachment, url, onClose }: {
         <button
           className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
           onClick={() => void getController().saveAttachment(attachment)}
-        >저장</button>
+        >{t('message.attachment.save')}</button>
         <button
           className="shrink-0 rounded px-2 text-fg-subtle hover:bg-surface-sunken"
           onClick={onClose}
-          aria-label="확대 보기 닫기"
+          aria-label={t('message.attachment.closeZoom')}
         >×</button>
       </header>
       {/*
@@ -142,6 +145,7 @@ function Lightbox({ attachment, url, onClose }: {
 }
 
 function Attachment({ attachment }: { attachment: AttachmentRow }) {
+  const t = useT();
   const previewable = canPreview(attachment);
   const { url, failed } = useAttachmentUrl(attachment.id, previewable);
   const [zoomed, setZoomed] = useState(false);
@@ -160,7 +164,7 @@ function Attachment({ attachment }: { attachment: AttachmentRow }) {
         <button
           type="button"
           onClick={() => setZoomed(true)}
-          aria-label={`크게 보기: ${attachment.filename}`}
+          aria-label={t('message.attachment.zoom', { filename: attachment.filename })}
           className="block cursor-zoom-in rounded border border-border"
         >
           <img
@@ -181,7 +185,7 @@ function Attachment({ attachment }: { attachment: AttachmentRow }) {
       <span aria-hidden>📎</span>
       <span className="font-medium">{attachment.filename}</span>
       <span className="text-fg-subtle">{formatSize(attachment.sizeBytes)}</span>
-      {failed && <span className="text-danger">(불러오기 실패)</span>}
+      {failed && <span className="text-danger">{t('message.attachment.loadFailed')}</span>}
     </button>
   );
 }

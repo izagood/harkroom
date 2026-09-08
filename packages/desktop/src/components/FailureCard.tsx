@@ -1,6 +1,7 @@
 import { readFailureMeta, type MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { TerminalChip } from './TerminalChip';
+import { useT } from '../i18n/useT';
 
 /**
  * 실패 카드 — 에이전트가 **스스로 못 끝냈다**(규칙 03).
@@ -27,6 +28,7 @@ export function FailureCard({ message, inThread = false }: {
   /** 스레드 안이면 작성창의 scope 가 다르다 — 채널 작성창을 채우면 사람이 그것을 못 본다. */
   inThread?: boolean;
 }) {
+  const t = useT();
   const author = useActiveStore((s) => s.accounts[message.authorId]);
   const setDraft = useActiveStore((s) => s.setDraft);
   const failure = readFailureMeta(message.meta);
@@ -39,7 +41,7 @@ export function FailureCard({ message, inThread = false }: {
       className="mt-1.5 max-w-prose rounded-lg border border-state-stuck bg-danger-surface"
     >
       <div className="flex items-baseline gap-2 px-3 pt-2">
-        <span className="text-meta font-semibold text-state-stuck">끝내지 못했다</span>
+        <span className="text-meta font-semibold text-state-stuck">{t('speech.failure.title')}</span>
         {failure.what && <span className="text-meta text-fg-muted">{failure.what}</span>}
       </div>
       {/* 이유는 **사람이 읽는 말**이다 — 스택트레이스가 아니다. 자세한 것은 터미널이 답한다. */}
@@ -61,10 +63,12 @@ export function FailureCard({ message, inThread = false }: {
               // (`ChannelPane`·`ThreadPanel` 의 `scopeKey`). 여기서 다른 식을 쓰면 채운 초안이
               // 아무 작성창에도 안 나타난다.
               inThread ? `thread:${message.threadRootId ?? message.id}` : message.channelId,
-              `@${author.handle} 다시 해 줘`,
+              // **초안이지 화면 문구가 아니다** — 사람이 보내기 전에 읽고 고칠 글이라
+              // 사전에서도 부탁의 말투를 진다.
+              t('speech.failure.retryDraft', { handle: author.handle }),
             )}
           >
-            다시 부르기
+            {t('speech.failure.callAgain')}
           </button>
         )}
       </div>

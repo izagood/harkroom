@@ -3,11 +3,11 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import type { WorkspaceSkillView } from '@murmur/shared';
 import { skillGroupOf } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { Controller, setController, type Controller as ControllerType } from '../src/state/controller';
 import {
   SkillsSettings, approveConfirmText, rejectConfirmText, disableConfirmText,
 } from '../src/components/settings/SkillsSettings';
-import { usePrefsStore } from '../src/state/prefsStore';
 import { translator } from '../src/i18n';
 import { Workspace } from '../src/components/Workspace';
 import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
@@ -67,8 +67,13 @@ const ko = translator('ko');
 beforeEach(() => {
   usePrefsStore.getState().setLocale('ko');
   localStorage.clear();
+  usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
 });
+// **언어를 고정한다**(이 묶음의 문구가 사전을 지나면서 기본이 영어가 됐다). 이 파일이
+// 재는 것은 언어가 아니라 **그 언어로 표현된 규율**이다 — 언어를 재는 자리는
+// `i18n.test.tsx` 하나이고, 두 곳에서 재면 문구를 고칠 때 한쪽만 고쳐진다
+// (`gallery.test.tsx`·`agentGrid.test.tsx` 와 같은 규약).
 afterEach(() => {
   cleanup();
   usePrefsStore.getState().setLocale('system');

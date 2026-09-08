@@ -8,6 +8,18 @@
 import { describe, it, expect } from 'vitest';
 import type { AskMeta, FailureMeta, InboxEntry, ReportMeta } from '@murmur/shared';
 import { inboxRow, matchesFilter } from '../src/lib/inboxRow';
+import { translator } from '../src/i18n';
+
+/**
+ * **언어를 고정한다.** 이 파일이 재는 것은 언어가 아니라 그 언어로 표현된 규율이다 —
+ * *"네 줄이 글자 하나까지 똑같다"* 를 고친 것이 이 판정의 존재 이유이고, 여섯이 서로
+ * 다른 글자를 받는지가 그 규율이다. 언어를 재는 자리는 `i18n.test.tsx` 하나이고,
+ * 두 곳에서 재면 문구를 고칠 때 한쪽만 고쳐진다(갤러리·스킬 설정 회귀선과 같은 규약).
+ *
+ * `usePrefsStore` 로 고정하지 않는 이유: 이 판정은 화면이 아니라 `lib/` 순수 함수라
+ * 스토어를 안 읽는다. 번역기를 직접 만들어 넘기는 것이 그 사실을 그대로 드러낸다.
+ */
+const ko = translator('ko');
 
 const ME = 'u-me';
 const OTHER = 'u-other';
@@ -35,7 +47,7 @@ const report: Record<string, unknown> =
 
 describe('줄이 갈린다 — reason 만으로는 못 하던 것', () => {
   it('나에게 온 선택은 "골라 줘"이고 나를 막는다', () => {
-    const r = inboxRow(entry({ meta: ask({ kind: 'account', accountId: ME }) }), ME);
+    const r = inboxRow(entry({ meta: ask({ kind: 'account', accountId: ME }) }), ME, ko);
     expect(r.kind).toBe('ask');
     expect(r.label).toBe('골라 줘');
     expect(r.rank).toBe(0);
@@ -43,29 +55,29 @@ describe('줄이 갈린다 — reason 만으로는 못 하던 것', () => {
 
   /** **규칙 04.** 남에게 간 물음은 읽을 것이다 — 강조가 여러 줄에 뿌려지면 신호가 죽는다. */
   it('남에게 간 선택은 나를 막지 않는다', () => {
-    const r = inboxRow(entry({ meta: ask({ kind: 'account', accountId: OTHER }) }), ME);
+    const r = inboxRow(entry({ meta: ask({ kind: 'account', accountId: OTHER }) }), ME, ko);
     expect(r.label).toBe('고르는 중');
     expect(r.rank).toBe(1);
   });
 
   it("'사람 아무나'에게 온 것은 나를 막는다 — 내가 사람이면 내 차례일 수 있다", () => {
-    expect(inboxRow(entry({ meta: ask({ kind: 'human' }) }), ME).rank).toBe(0);
+    expect(inboxRow(entry({ meta: ask({ kind: 'human' }) }), ME, ko).rank).toBe(0);
   });
 
   it('이미 답한 물음은 아무도 막지 않는다', () => {
-    const r = inboxRow(entry({ meta: ask({ kind: 'account', accountId: ME }, 2, true) }), ME);
+    const r = inboxRow(entry({ meta: ask({ kind: 'account', accountId: ME }, 2, true) }), ME, ko);
     expect(r.kind).not.toBe('ask');
   });
 
   /** 실패는 **항상 사람에게 온다**(`FailureMeta` 에 `to` 가 없는 이유). */
   it('실패는 나를 막는다', () => {
-    const r = inboxRow(entry({ meta: failure }), ME);
+    const r = inboxRow(entry({ meta: failure }), ME, ko);
     expect(r.label).toBe('막혔다');
     expect(r.rank).toBe(0);
   });
 
   it('보고는 읽을 것이다 — 끝난 일은 나를 막지 않는다', () => {
-    const r = inboxRow(entry({ meta: report }), ME);
+    const r = inboxRow(entry({ meta: report }), ME, ko);
     expect(r.label).toBe('끝냈다');
     expect(r.rank).toBe(1);
   });
@@ -75,17 +87,17 @@ describe('줄이 갈린다 — reason 만으로는 못 하던 것', () => {
    * 인박스가 터지지 않고 `reason` 이 정한 기본값으로 떨어진다.
    */
   it('모르는 meta 는 reason 이 정한 자리로 떨어진다', () => {
-    const r = inboxRow(entry({ meta: { kind: 'not-yet-known' }, reason: 'mention' }), ME);
+    const r = inboxRow(entry({ meta: { kind: 'not-yet-known' }, reason: 'mention' }), ME, ko);
     expect(r.kind).toBe('mention');
     expect(r.label).toBe('불렀다');
   });
 
   it('네 종류가 서로 다른 글자를 받는다 — 이것이 이 작업의 전부다', () => {
     const labels = [
-      inboxRow(entry({ meta: ask({ kind: 'account', accountId: ME }) }), ME).label,
-      inboxRow(entry({ meta: failure }), ME).label,
-      inboxRow(entry({ meta: report }), ME).label,
-      inboxRow(entry({ reason: 'dm' }), ME).label,
+      inboxRow(entry({ meta: ask({ kind: 'account', accountId: ME }) }), ME, ko).label,
+      inboxRow(entry({ meta: failure }), ME, ko).label,
+      inboxRow(entry({ meta: report }), ME, ko).label,
+      inboxRow(entry({ reason: 'dm' }), ME, ko).label,
     ];
     expect(new Set(labels).size).toBe(4);
   });
@@ -97,26 +109,26 @@ describe('선택은 줄에서 끝난다', () => {
    * 인박스는 알림 목록일 뿐이고, 컨셉이 말한 '막는 말을 푸는 자리'가 되지 못한다."*
    */
   it('둘이면 줄에서 고를 수 있다', () => {
-    const r = inboxRow(entry({ meta: ask({ kind: 'account', accountId: ME }, 2) }), ME);
+    const r = inboxRow(entry({ meta: ask({ kind: 'account', accountId: ME }, 2) }), ME, ko);
     expect(r.options).toHaveLength(2);
   });
 
   /** 셋 이상은 줄이 버튼 밭이 된다 — 그때는 스레드에서 고른다. */
   it('셋 이상이면 줄에서 고르지 않는다', () => {
-    const r = inboxRow(entry({ meta: ask({ kind: 'account', accountId: ME }, 3) }), ME);
+    const r = inboxRow(entry({ meta: ask({ kind: 'account', accountId: ME }, 3) }), ME, ko);
     expect(r.options).toBeNull();
   });
 
   it('남에게 간 물음은 내가 줄에서 고를 수 없다', () => {
-    const r = inboxRow(entry({ meta: ask({ kind: 'account', accountId: OTHER }, 2) }), ME);
+    const r = inboxRow(entry({ meta: ask({ kind: 'account', accountId: OTHER }, 2) }), ME, ko);
     expect(r.options).toBeNull();
   });
 });
 
 describe('필터 칩이 정렬과 같은 축을 쓴다', () => {
-  const blocking = inboxRow(entry({ meta: failure }), ME);
-  const reading = inboxRow(entry({ meta: report }), ME);
-  const background = inboxRow(entry({ reason: 'thread_reply' }), ME);
+  const blocking = inboxRow(entry({ meta: failure }), ME, ko);
+  const reading = inboxRow(entry({ meta: report }), ME, ko);
+  const background = inboxRow(entry({ reason: 'thread_reply' }), ME, ko);
 
   it('막는 것 · 읽을 것 · 배경이 서로 다른 rank 를 받는다', () => {
     expect([blocking.rank, reading.rank, background.rank]).toEqual([0, 1, 2]);

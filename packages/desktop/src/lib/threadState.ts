@@ -1,4 +1,5 @@
 import { readAskMeta, readFailureMeta, readReportMeta, type MessageRow } from '@murmur/shared';
+import type { MessageKey, Translate } from '../i18n';
 
 /**
  * 스레드가 지금 어떤 상태인가 — 화면 전체가 같은 어휘를 쓰기 위한 5단(규칙 03).
@@ -184,14 +185,33 @@ function decide(f: {
   return 'done';
 }
 
-/** 사람이 읽는 이름. 화면 여러 곳이 같은 말을 쓰도록 한 표에서 낸다. */
-export const THREAD_STATE_LABEL: Record<ThreadState, string> = {
-  'my-turn': '내 차례',
-  stuck: '막힘',
-  waiting: '남을 기다림',
-  running: '도는 중',
-  done: '끝남',
+/**
+ * 상태 → 사전 키. **표는 남기되 값이 글자가 아니라 키다** — 화면 여러 곳이 같은 말을
+ * 쓴다는 원래 목적은 그대로이고, 언어만 여기서 안 정한다.
+ */
+const LABEL_KEY: Record<ThreadState, MessageKey> = {
+  'my-turn': 'thread.state.myTurn',
+  stuck: 'thread.state.stuck',
+  waiting: 'thread.state.waiting',
+  running: 'thread.state.running',
+  done: 'thread.state.done',
 };
+
+/**
+ * 사람이 읽는 이름.
+ *
+ * **원래 `THREAD_STATE_LABEL` 이라는 모듈 상수였다** — `Record<ThreadState, string>` 에
+ * 한국어를 박아 둔 표라 **로드 시점 언어로 굳어 있었다.** 사전을 갈라 놓아도 이 다섯은
+ * 영원히 한국어였을 것이다(`SkillsSettings` 의 세 칸 이름과 `runnerLauncher` 의
+ * `STRANGER_ATTACHED` 가 같은 모양이었고 같은 방식으로 풀렸다).
+ *
+ * **번역기가 필수 인자이고 맨 뒤에 온다.** 기본값을 주면 안 넘긴 화면이 조용히 한
+ * 언어로 굳고, 앞에 끼우면 이 함수를 부르는 자리들의 인자 자리가 어긋난 채 컴파일이
+ * 통과할 수 있다(`lastTurnAgo`·`daemonFactRows` 가 같은 자리를 쓴다).
+ */
+export function threadStateLabel(state: ThreadState, t: Translate): string {
+  return t(LABEL_KEY[state]);
+}
 
 /**
  * 이 상태가 **강조를 받는가**. 규칙 03·04 의 실행이다 — 강조가 여러 상태에 뿌려지는 순간

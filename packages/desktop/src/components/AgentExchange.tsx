@@ -4,6 +4,7 @@ import { useActiveStore } from '../state/communities';
 import { exchangeParticipants, exchangeConclusion } from '../lib/agentExchange';
 import { MessageItem } from './MessageItem';
 import type { SectionId } from './settings/sections';
+import { useT } from '../i18n/useT';
 
 /**
  * 에이전트 둘 사이의 주고받기를 **접힌 한 줄**로 그린다(규칙 04 · 계획 Task 5).
@@ -35,6 +36,7 @@ export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThr
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
   inThread?: boolean;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const accounts = useActiveStore((s) => s.accounts);
 
@@ -52,7 +54,7 @@ export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThr
           className="mx-4 my-0.5 rounded px-1 text-meta text-fg-agent hover:bg-surface-hover"
           onClick={() => setOpen(false)}
         >
-          {names.join(' ↔ ')} · 접기
+          {names.join(' ↔ ')} · {t('speech.exchange.collapse')}
         </button>
         {/* 펼치면 **평소의 메시지 그대로** 보인다 — 접힘은 표시 단계의 일이고, 펼친 뒤에는
             다른 말과 같은 대접을 받아야 한다(별도 조판을 두면 어휘가 하나 더 늘어난다). */}
@@ -100,7 +102,9 @@ export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThr
               와 `inboxRow` 가 보고에 쓰는 `끝냈다` 를 그대로 가져온다. 같은 사실을 세
               화면이 다른 말로 부르면 어휘가 그만큼 늘어난다.
             */}
-            <span className="shrink-0 text-fg-subtle">· {conclusion.source === 'ask' ? '정했다' : '끝냈다'}</span>
+            <span className="shrink-0 text-fg-subtle">
+              · {t(conclusion.source === 'ask' ? 'speech.exchange.decided' : 'speech.exchange.finished')}
+            </span>
             {/*
               결론만 `text-fg-muted` 다 — 이 줄에서 **읽으라고 있는 유일한 글자**이므로
               옆의 회색보다 한 단 진하다. 강조색은 아니다: 접힌 대화는 나를 막지 않고
@@ -122,13 +126,16 @@ export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThr
             말한다**: 이것도 "열어야 하나"에 대한 답이고(열 이유가 약하다), 마지막 발언을
             결론으로 내세우는 것보다 정직하다.
           */
-          <span className="shrink-0 text-fg-subtle">· 아직 정해진 것 없음</span>
+          <span className="shrink-0 text-fg-subtle">· {t('speech.exchange.undecided')}</span>
         )}
         {/* 횟수와 시각은 **결론 뒤**다. 지우지 않는다 — 문서가 "부수적인 숫자"라고 한 것은
             없애라는 말이 아니라 앞자리를 내주라는 말이다. `ml-auto` 로 줄 끝에 붙여
             결론이 짧을 때도 두 숫자가 같은 자리에서 읽히게 한다. */}
-        <span className="ml-auto shrink-0 text-fg-subtle">· {messages.length}번 주고받음</span>
-        <span className="shrink-0 text-fg-subtle">· 마지막 {lastTime}</span>
+        <span className="ml-auto shrink-0 text-fg-subtle">
+          · {t('speech.exchange.count', { count: messages.length })}
+        </span>
+        {/* 시각은 `toLocaleTimeString` 이 그 언어로 낸다 — 사전은 앞의 낱말만 진다. */}
+        <span className="shrink-0 text-fg-subtle">· {t('speech.exchange.last', { time: lastTime })}</span>
       </button>
     </div>
   );
