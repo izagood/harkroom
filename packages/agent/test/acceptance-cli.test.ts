@@ -221,3 +221,43 @@ describe('수용 — 준비 판정이 실물 TUI 출력에 맞는가 (2026-09-08
     expect(looksReadyForPrompt('Please run /login to authenticate\n')).toBe(false);
   });
 });
+
+/**
+ * **신뢰 대화상자를 준비로 오인하지 않는다**(2026-09-08 프로덕션 사고의 회귀선).
+ *
+ * ## 무슨 일이 있었나
+ *
+ * `-p` 는 워크스페이스 신뢰를 묻지 않는다 — claude 의 `--help` 가 명시한다: *"The workspace
+ * trust dialog is skipped when Claude is run in non-interactive mode (via -p …)"*. 멘션 턴을
+ * TUI 로 옮기면서 그 대화상자가 깨어났고, 프로덕션의 **모든 claude 멘션 턴이 죽었다**.
+ *
+ * 준비 판정이 466ms 에 발동했는데 그때 화면에 있던 것은 입력창이 아니라 그 대화상자였다 —
+ * **대화상자가 준비 표시와 같은 글자(`❯`)를 선택지 앞에 그린다.** 프롬프트가 모달에
+ * 타이핑되고 턴은 무발화 한도까지 매달렸다.
+ *
+ * ## 왜 단위 테스트가 못 잡았나
+ *
+ * 픽스처는 정상 부팅 화면이었고, 개발 중 프로브는 **이미 신뢰된 디렉터리**(스크래치패드·홈)
+ * 에서 돌아 대화상자를 한 번도 못 봤다. 프로덕션은 스레드마다 새 워크스페이스를 만든다.
+ *
+ * 그래서 실물 대화상자 화면을 그대로 떠서 고정한다.
+ */
+describe('수용 — 신뢰 대화상자를 준비로 오인하지 않는다 (2026-09-08)', () => {
+  const modal = readFileSync(
+    new URL('./fixtures/claude-tui-trust-modal.txt', import.meta.url), 'utf8',
+  );
+
+  it('그 화면에는 준비 표시가 **들어 있다** — 글자만으로는 갈리지 않는다', () => {
+    // 이 단정이 문제의 성질을 고정한다. `❯` 가 없었다면 애초에 오인이 없었다.
+    expect(/❯/.test(modal)).toBe(true);
+  });
+
+  it('그래도 준비로 보지 않는다', () => {
+    expect(looksReadyForPrompt(modal)).toBe(false);
+  });
+
+  it('정상 부팅 화면은 여전히 준비로 본다 — 방어가 정상 경로를 막지 않는다', () => {
+    const ready = readFileSync(new URL('./fixtures/claude-tui-ready.txt', import.meta.url), 'utf8');
+    expect(looksReadyForPrompt(ready)).toBe(true);
+  });
+});

@@ -20,6 +20,7 @@ import type { PtyControls, PtyWriter, TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
 import { claudeSessionMaterialized } from './claudeSessions.js';
 import { readLastApiError } from './harnessErrors.js';
+import { ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
 import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
@@ -691,6 +692,16 @@ export async function runMentionTurn(
       .catch(() => { end.cancelProbe = schedule(probeUtterance, probeMs); });
   };
   if (usesTui) end.cancelProbe = schedule(probeUtterance, probeMs);
+
+  // **PTY 를 띄우기 전에** 이 워크스페이스를 하네스가 신뢰하게 한다(2026-09-08).
+  // 뜬 뒤에 적으면 그 턴은 이미 신뢰 대화상자를 만난 뒤다 — 러너는 답할 수 없고, 그
+  // 대화상자가 준비 표시와 같은 글자를 담고 있어 프롬프트가 모달에 타이핑된다.
+  await ensureWorkspaceTrusted({
+    harness: def.harness,
+    workspaceDir: rec.workspaceDir,
+    claudeConfigDir: deps.claudeConfigDir,
+    codexHome: deps.codexHome,
+  });
 
   let result: TurnResult;
   try {
