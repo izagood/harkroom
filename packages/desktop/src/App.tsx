@@ -138,8 +138,16 @@ export default function App() {
    * `#270` 이 OS 타이틀바를 없앤 것은 창 전역인데 손잡이는 `Workspace` 안에만 달렸기 때문이다.
    * 두 화면을 같은 띠로 감싸 이 갈래가 늘어나도 손잡이가 따라오게 한다.
    */
+  /*
+   * 글자 크기는 `Workspace`·`SettingsScreen` 과 **같은 본문단 13px** 이다.
+   *
+   * 여기에는 크기가 없었고, 그러면 이 두 화면(`boot`·`connect`)만 브라우저 기본값
+   * **16px** 로 그려진다 — 앱의 다른 화면은 14px(`Workspace` 의 `text-sm`)이었으니
+   * 로그인 화면이 혼자 한 단 크게 서 있었다. 실측으로 발견한 세 번째 뿌리다.
+   * 셋을 같은 값으로 맞추면 화면을 넘어가도 본문이 같은 크기로 남는다.
+   */
   const withDragStrip = (screen: ReactElement) => (
-    <div className="flex h-screen flex-col bg-surface-sunken">
+    <div className="flex h-screen flex-col bg-surface-sunken text-[13px]">
       <WindowDragStrip />
       {/* 띠가 세로를 먹은 만큼 화면이 넘치지 않도록 나머지를 준다. */}
       <div className="min-h-0 flex-1">{screen}</div>

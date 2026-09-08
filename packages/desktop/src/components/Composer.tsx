@@ -897,7 +897,7 @@ export function Composer({
           /* 오버레이는 **이벤트를 받지 않는다**(pointer-events-none). 받으면 손이 이 위로
              들어서는 순간 컨테이너 기준으로 dragleave 가 나면서 표시가 꺼지고, 그 꺼진
              자리에 drop 이 떨어진다 — 보이는 것과 받는 것이 갈린다. */
-          className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded border-2 border-dashed border-accent bg-accent-surface/90 text-sm font-medium text-accent"
+          className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded border-2 border-dashed border-accent bg-accent-surface/90 font-medium text-accent"
         >
           여기에 놓으면 첨부된다
         </div>
@@ -968,7 +968,11 @@ export function Composer({
               data-testid="auto-mention"
               data-handle={h}
               title="이 채널이 자동으로 멘션한다"
-              className="flex items-center gap-1 rounded border border-accent bg-accent-surface px-1.5 py-0.5 text-xs font-medium text-accent"
+              // 멘션 칩은 **아랫단 11px** — 안의 `자동` 배지가 이미 11px 이라 칩 자체를
+              // 본문단으로 두면 칩 하나 안에 두 단이 섰다. 아래 입력칸과 전송·첨부는
+              // 본문단이다: 여기서 사람이 읽고 쓰는 것은 글이고, 칩은 그 글이 누구에게
+              // 가는지 알려 주는 꼬리표다.
+              className="flex items-center gap-1 rounded border border-accent bg-accent-surface px-1.5 py-0.5 text-[11px] font-medium text-accent"
             >
               <span>@{h}</span>
               <span className="rounded bg-accent px-1 text-[11px] font-normal text-fg-on-strong">자동</span>
@@ -988,7 +992,7 @@ export function Composer({
               key={h}
               data-testid="sticky-mention"
               data-handle={h}
-              className="flex items-center gap-1 rounded bg-surface-sunken px-1.5 py-0.5 text-xs font-medium text-fg"
+              className="flex items-center gap-1 rounded bg-surface-sunken px-1.5 py-0.5 text-[11px] font-medium text-fg"
             >
               <span>@{h}</span>
               <button
@@ -1020,7 +1024,7 @@ export function Composer({
         <ul
           data-testid="body-mentions"
           aria-label="부를 상대"
-          className="mb-1 flex flex-wrap items-center gap-1 text-xs text-fg-muted"
+          className="mb-1 flex flex-wrap items-center gap-1 text-[11px] text-fg-muted"
         >
           <li>부를 상대:</li>
           {bodyMentionList.map((r) => (
@@ -1191,7 +1195,7 @@ export function Composer({
             type="button"
             aria-label="Add mention"
             aria-pressed={picking}
-            className={`rounded px-2 py-0.5 text-sm text-fg-muted hover:bg-surface-sunken ${
+            className={`rounded px-2 py-0.5 text-fg-muted hover:bg-surface-sunken ${
               picking ? 'bg-surface-hover' : ''
             }`}
             // 누르는 동안 textarea 가 blur 되면 커서 자리가 사라진다.
@@ -1208,7 +1212,7 @@ export function Composer({
           </button>
           {/* aria-label 은 **input** 에 붙인다. label 에 붙이면 그 요소 자신의 이름이
               될 뿐 input 과 연결되지 않아 입력이 접근 불가가 된다. */}
-          <label className="cursor-pointer rounded px-2 py-0.5 text-sm text-fg-muted hover:bg-surface-sunken">
+          <label className="cursor-pointer rounded px-2 py-0.5 text-fg-muted hover:bg-surface-sunken">
             📎
             <input
               ref={fileRef}
@@ -1227,7 +1231,7 @@ export function Composer({
             <button
               type="button"
               aria-label="나중에 보내기"
-              className="rounded px-2 py-0.5 text-sm text-fg-muted hover:bg-surface-sunken disabled:opacity-40"
+              className="rounded px-2 py-0.5 text-fg-muted hover:bg-surface-sunken disabled:opacity-40"
               disabled={!draft.trim()}
               onMouseDown={(e) => e.preventDefault()}
               onClick={openScheduleModal}
@@ -1239,7 +1243,7 @@ export function Composer({
         <button
           type="button"
           aria-label="Send message"
-          className="rounded-full bg-accent px-3 py-1 text-sm font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border disabled:text-fg-subtle"
+          className="rounded-full bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border disabled:text-fg-subtle"
           // 여기는 blur 를 막지 않는다 — 전송에 성공하면 초안이 비므로 커서를 보존할
           // 이유가 없고, 실패하면 사용자가 다시 textarea 를 눌러 이어 쓴다. 반면 위
           // @·첨부 버튼은 누른 뒤에도 같은 자리에 계속 써야 하므로 막는다.
@@ -1253,7 +1257,9 @@ export function Composer({
       {scheduleModalOpen && (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-20">
           <div className="w-80 rounded-lg bg-surface-raised p-4 shadow-lg">
-            <h3 className="mb-3 text-base font-medium">예약 발송</h3>
+            {/* 겹창 제목은 **이름줄단 15px** — 화면 제목단(17px)은 화면 하나를 여는 자리
+                (설정·로그인)에만 준다. 16px(`text-base`)이었고 4단 밖이었다. */}
+            <h3 className="mb-3 text-[15px] font-medium">예약 발송</h3>
             <input
               type="datetime-local"
               aria-label="예약 시각"
@@ -1263,19 +1269,19 @@ export function Composer({
               onChange={(e) => setScheduleDateTime(e.target.value)}
             />
             {scheduleError && (
-              <p role="alert" className="mb-3 text-sm text-danger">{scheduleError}</p>
+              <p role="alert" className="mb-3 text-danger">{scheduleError}</p>
             )}
             <div className="flex justify-end gap-2">
               <button
                 type="button"
-                className="rounded px-3 py-1 text-sm text-fg-muted hover:bg-surface-sunken"
+                className="rounded px-3 py-1 text-fg-muted hover:bg-surface-sunken"
                 onClick={() => setScheduleModalOpen(false)}
               >
                 취소
               </button>
               <button
                 type="button"
-                className="rounded bg-accent px-3 py-1 text-sm font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border"
+                className="rounded bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border"
                 onClick={handleSchedule}
                 disabled={isScheduling || !scheduleDateTime || (scheduleMin !== '' && scheduleDateTime < scheduleMin)}
               >

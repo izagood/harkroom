@@ -845,11 +845,22 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
     if (isEditing) {
       return (
         <div key={ch.id} className="mt-1 rounded border border-border bg-surface-raised p-1">
-          <div className="mb-1 text-xs text-fg-muted">#{ch.name} 편집</div>
+          {/*
+            **사이드바의 단은 아랫단 11px 이다** — 이 파일이 이미 그렇게 서 있었다: 오류·
+            안내·멤버 이름·구획 라벨·미읽음 개수가 전부 11px 이고, 그것은 10px 27곳을
+            11px 로 올린 앞 작업이 만든 상태다. 그래서 남아 있던 12px(`text-xs`) 24곳을
+            **색으로 가르지 않고 자리로** 11px 에 붙였다: 이 열은 좁고, 한 열 안에 두 단이
+            서면 눌러야 할 버튼과 읽어야 할 줄이 눈에서 뒤섞인다.
+
+            **입력칸만 예외로 본문단 13px** 이다 — 14px(`text-sm`) 4곳과 12px 1곳으로
+            갈려 있던 것을 하나로 맞췄고, 크기를 안 적어 앱 기본값을 물려받는다. 방금 친
+            글자를 다시 읽는 자리다. `SidebarFind.tsx` 에 그 근거를 적어 뒀다.
+          */}
+          <div className="mb-1 text-[11px] text-fg-muted">#{ch.name} 편집</div>
           <input
             type="text"
             aria-label="Topic"
-            className="mb-1 w-full rounded border border-border bg-field px-2 py-1 text-sm text-fg placeholder-fg-subtle"
+            className="mb-1 w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
             placeholder="topic (선택)"
             value={editTopic}
             onChange={(e) => { setEditTopic(e.target.value); setEditError(null); }}
@@ -858,7 +869,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
             <input
               type="text"
               aria-label="Repository"
-              className="flex-1 rounded border border-border bg-field px-2 py-1 text-sm text-fg placeholder-fg-subtle"
+              className="flex-1 rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
               placeholder="repo (비우면 해제)"
               value={editRepo}
               onChange={(e) => { setEditRepo(e.target.value); setEditError(null); }}
@@ -876,13 +887,13 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
           )}
           <div className="flex gap-1">
             <button
-              className="rounded bg-accent px-2 py-0.5 text-xs text-fg-on-strong hover:bg-accent-hover"
+              className="rounded bg-accent px-2 py-0.5 text-[11px] text-fg-on-strong hover:bg-accent-hover"
               onClick={() => void submitEdit()}
             >
               저장
             </button>
             <button
-              className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-hover"
+              className="rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover"
               onClick={closeEdit}
             >
               취소
@@ -894,7 +905,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
     if (deletingChannelId === ch.id) {
       return (
         <div key={ch.id} data-testid={`delete-${ch.id}`} className="mt-1 rounded border border-danger bg-surface-raised p-1">
-          <div className="mb-1 text-xs text-fg-muted">
+          <div className="mb-1 text-[11px] text-fg-muted">
             {ch.visibility === 'private' ? '🔒' : '#'}{ch.name} 삭제
           </div>
           {/* 지울 규모를 보여 준다 — 삭제 뒤에는 무엇이 사라졌는지 물을 곳이 없다.
@@ -911,14 +922,14 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                 조작을 승인하게 하지 않는다. */}
             {typeof deleteCount === 'number' && (
               <button
-                className="rounded bg-danger px-2 py-0.5 text-xs text-fg-on-strong hover:bg-danger-hover"
+                className="rounded bg-danger px-2 py-0.5 text-[11px] text-fg-on-strong hover:bg-danger-hover"
                 onClick={() => void confirmDelete(ch.id)}
               >
                 정말 삭제
               </button>
             )}
             <button
-              className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-hover"
+              className="rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover"
               onClick={closeDelete}
             >
               취소
@@ -942,7 +953,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
       const canInvite = members !== undefined && (ch.visibility === 'public' || isMember);
       return (
         <div key={ch.id} data-testid={`members-${ch.id}`} className="mt-1 rounded border border-border bg-surface-raised p-1">
-          <div className="mb-1 text-xs text-fg-muted">
+          <div className="mb-1 text-[11px] text-fg-muted">
             {ch.visibility === 'private' ? '🔒' : '#'}{ch.name} 멤버
           </div>
           {/* public 과 private 에서 이 목록의 **뜻이 다르다**. public 채널은 멤버가 아니어도
@@ -966,7 +977,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                   // '사람'으로 그리면 에이전트가 사람으로 보이는 거짓 사실이 된다.
                   const account = accounts[m.accountId];
                   return (
-                    <li key={m.accountId} className="flex items-center gap-1 text-xs text-fg-muted">
+                    <li key={m.accountId} className="flex items-center gap-1 text-[11px] text-fg-muted">
                       <span>@{m.handle}</span>
                       {account && (
                         <span className="rounded bg-surface-raised px-1 text-[11px] text-fg">
@@ -1013,7 +1024,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
               .sort((a, b) => a.handle.localeCompare(b.handle));
             return (
               <div data-testid={`auto-mentions-${ch.id}`} className="mb-1 border-t border-border pt-1">
-                <div className="mb-0.5 text-xs text-fg-muted">자동 멘션</div>
+                <div className="mb-0.5 text-[11px] text-fg-muted">자동 멘션</div>
                 <p className="mb-1 text-[11px] text-fg-subtle">
                   켜진 에이전트는 이 채널에서 사람이 쓰는 글 앞에 자동으로 불린다. 작성창의 칩 × 로 한 메시지에서만 뺄 수 있다.
                   {!me?.isAdmin && ' 바꾸는 것은 admin 만 할 수 있다.'}
@@ -1030,7 +1041,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                         </li>
                       )}
                       {agents.map((a) => (
-                        <li key={a.id} className="flex items-center gap-1 text-xs text-fg-muted">
+                        <li key={a.id} className="flex items-center gap-1 text-[11px] text-fg-muted">
                           {me?.isAdmin ? (
                             <label className="flex items-center gap-1">
                               <input
@@ -1067,7 +1078,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
             <div className="mb-1 flex items-center gap-1">
               <select
                 aria-label="초대할 계정"
-                className="flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-fg"
+                className="flex-1 rounded border border-border bg-field px-1 py-0.5 text-fg"
                 value={inviteAccountId}
                 onChange={(e) => setInviteAccountId(e.target.value)}
               >
@@ -1075,7 +1086,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                 {invitable.map((a) => <option key={a.id} value={a.id}>@{a.handle}</option>)}
               </select>
               <button
-                className="rounded bg-accent px-2 py-0.5 text-xs text-fg-on-strong hover:bg-accent-hover disabled:opacity-40"
+                className="rounded bg-accent px-2 py-0.5 text-[11px] text-fg-on-strong hover:bg-accent-hover disabled:opacity-40"
                 disabled={!inviteAccountId}
                 onClick={() => void submitInvite(ch.id)}
               >
@@ -1104,7 +1115,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
               <div className="flex items-center gap-1">
                 <select
                   aria-label="추가할 팀"
-                  className="flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-fg"
+                  className="flex-1 rounded border border-border bg-field px-1 py-0.5 text-fg"
                   value={selectedTeamId}
                   onChange={(e) => { setSelectedTeamId(e.target.value); setTeamAddResult(null); }}
                 >
@@ -1112,7 +1123,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                   {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
                 <button
-                  className="rounded bg-accent px-2 py-0.5 text-xs text-fg-on-strong hover:bg-accent-hover disabled:opacity-40"
+                  className="rounded bg-accent px-2 py-0.5 text-[11px] text-fg-on-strong hover:bg-accent-hover disabled:opacity-40"
                   disabled={!selectedTeamId}
                   onClick={() => void submitTeamAdd(ch.id)}
                 >
@@ -1133,14 +1144,14 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                 200 으로 받아 주지만 아무 일도 일어나지 않는다 — 그런 항목은 만들지 않는다. */}
             {isMember && (
               <button
-                className="rounded px-2 py-0.5 text-xs text-danger hover:bg-surface-raised"
+                className="rounded px-2 py-0.5 text-[11px] text-danger hover:bg-surface-raised"
                 onClick={() => void (leaveConfirmId === ch.id ? confirmLeave(ch.id) : requestLeave(ch.id))}
               >
                 {leaveConfirmId === ch.id ? '정말 나가기' : '나가기'}
               </button>
             )}
             <button
-              className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-hover"
+              className="rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover"
               onClick={closeMembers}
             >
               닫기
@@ -1280,7 +1291,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
             autoFocus
             aria-label="새 섹션 이름"
             maxLength={40}
-            className="w-full rounded border border-border bg-field px-2 py-1 text-sm text-fg placeholder-fg-subtle"
+            className="w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
             placeholder="섹션 이름"
             value={sectionDraft}
             onChange={(e) => setSectionDraft(e.target.value)}
@@ -1292,13 +1303,13 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
           />
           <div className="mt-1 flex gap-1">
             <button
-              className="rounded bg-accent px-2 py-0.5 text-xs text-fg-on-strong hover:bg-accent-hover"
+              className="rounded bg-accent px-2 py-0.5 text-[11px] text-fg-on-strong hover:bg-accent-hover"
               onClick={submitSection}
             >
               옮기기
             </button>
             <button
-              className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
+              className="rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-raised"
               onClick={() => { setSectionEditFor(null); setSectionDraft(''); }}
             >
               취소
@@ -1530,7 +1541,7 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                 <input
                   type="text"
                   aria-label="New channel name"
-                  className="mb-1 w-full rounded border border-border bg-field px-2 py-1 text-sm text-fg placeholder-fg-subtle"
+                  className="mb-1 w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
                   placeholder="channel-name"
                   value={newChannelName}
                   onChange={(e) => { setNewChannelName(e.target.value); setCreateError(null); }}
@@ -1554,13 +1565,13 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
                 {createError && <p role="alert" className="mb-1 text-[11px] text-danger">{createError}</p>}
                 <div className="flex gap-1">
                   <button
-className="rounded bg-accent px-2 py-0.5 text-xs text-fg-on-strong hover:bg-accent-hover"
+className="rounded bg-accent px-2 py-0.5 text-[11px] text-fg-on-strong hover:bg-accent-hover"
                     onClick={() => void submitNewChannel()}
                   >
                     만들기
                   </button>
                   <button
-className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
+className="rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-raised"
                     onClick={closeCreate}
                   >
                     취소
@@ -1580,7 +1591,7 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
                   autoFocus
                   aria-label="섹션 새 이름"
                   maxLength={40}
-                  className="w-full rounded border border-border bg-field px-2 py-1 text-xs text-fg placeholder-fg-subtle"
+                  className="w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
                   placeholder="새 이름"
                   value={sectionRenameDraft}
                   onChange={(e) => setSectionRenameDraft(e.target.value)}
@@ -1598,7 +1609,7 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
                 />
                 <div className="mt-1 flex gap-1">
                   <button
-                    className="rounded bg-accent px-2 py-0.5 text-xs text-fg-on-strong hover:bg-accent-hover"
+                    className="rounded bg-accent px-2 py-0.5 text-[11px] text-fg-on-strong hover:bg-accent-hover"
                     onClick={() => {
                       const newName = sectionRenameDraft.trim();
                       setSectionRenameFor(null);
@@ -1611,7 +1622,7 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
                     바꾸기
                   </button>
                   <button
-                    className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
+                    className="rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-raised"
                     onClick={() => { setSectionRenameFor(null); setSectionRenameDraft(''); }}
                   >
                     취소
@@ -1623,7 +1634,7 @@ className="rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-raised"
                 renderTrigger={(props) => (
                   <div
                     data-testid={`section-header-${sectionName}`}
-                    className="group px-2 py-1 text-xs font-medium text-fg-muted hover:bg-surface-raised cursor-pointer"
+                    className="group px-2 py-1 text-[11px] font-medium text-fg-muted hover:bg-surface-raised cursor-pointer"
                     {...props}
                   >
                     {sectionName}

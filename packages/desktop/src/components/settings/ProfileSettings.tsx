@@ -165,7 +165,7 @@ function HandleRow() {
             type="text"
             value={newHandle}
             onChange={(e) => setNewHandle(e.target.value)}
-            className="w-40 rounded-lg border border-border bg-field px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none"
+            className="w-40 rounded-lg border border-border bg-field px-2 py-1 text-fg focus:border-accent focus:outline-none"
             placeholder="새 이름"
           />
           {!confirming ? (
@@ -204,7 +204,7 @@ function HandleRow() {
         </div>
       </div>
       {confirming && (
-        <div className="rounded-lg border border-warning-border bg-warning-surface p-3 text-sm text-warning">
+        <div className="rounded-lg border border-warning-border bg-warning-surface p-3 text-warning">
           <p className="font-medium">과거 메시지의 멘션도 새 이름으로 표시됩니다.</p>
           <p className="mt-1 text-warning">이 변경은 되돌릴 수 없습니다.</p>
         </div>

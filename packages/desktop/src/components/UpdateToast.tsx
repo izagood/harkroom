@@ -47,7 +47,9 @@ export function UpdateToast() {
         type="button"
         disabled={installing}
         onClick={() => void install(status.version)}
-        className="shrink-0 rounded bg-accent px-2 py-1 text-xs font-semibold text-fg-on-strong disabled:bg-transparent disabled:text-fg-subtle"
+        // 옆 문구가 이미 본문단 13px 이다 — 한 줄 안의 버튼을 아랫단으로 내리면 그 줄이
+        // 두 단으로 갈린다. 이 팝업은 문구와 버튼 하나가 전부인 자리다.
+        className="shrink-0 rounded bg-accent px-2 py-1 font-semibold text-fg-on-strong disabled:bg-transparent disabled:text-fg-subtle"
       >
         Update
       </button>
