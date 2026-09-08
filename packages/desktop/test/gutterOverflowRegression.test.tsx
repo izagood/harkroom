@@ -12,6 +12,10 @@ import { undoSendStorage } from '../src/lib/prefs';
 // `Identity` 가 거터(고정폭 열)와 이름 옆(인라인) 두 자리를 겸했고, 이름 옆에 맞춘
 // 배지(`🤖 · @소유자`)가 32px 열에 들어가 넘쳤다. `variant` 로 자리를 명시해 가른다.
 //
+// 그 배지는 이후 화면 전체에서 사라졌다(#455 — 사람과 에이전트를 구분하지 않는다).
+// **이 파일이 재는 사실은 그대로다**: 거터에는 넘칠 수 있는 것이 들어가지 않고, 이름 옆
+// 자리는 비어 있다. 배지가 어떤 이름으로든 되살아나면 여기서 잡힌다.
+//
 // jsdom 에는 레이아웃이 없다 — 넘침을 픽셀로 재지 못한다. 그래서 **넘칠 수 있는 내용이
 // 거터에 들어갔는가**(소유자 핸들 텍스트)와 **넘침을 막는 계약이 걸려 있는가**
 // (`overflow-hidden`, `flex-wrap` 없음)를 DOM 으로 단언한다.
@@ -188,21 +192,24 @@ describe('#277 Identity variant 구분', () => {
     expect(screen.queryByText('@owner')).toBeNull();
   });
 
-  it('variant="badge" 인 에이전트는 소유자까지 전부 표시', () => {
+  // **`badge` 는 이제 아무것도 그리지 않는다 — 사람도, 에이전트도**(#455).
+  // #277 이 이 자리를 가른 이유(넘치는 배지를 거터에서 뺀다)는 그대로 유효하고, 배지 쪽
+  // 내용만 사라졌다. 그래서 이 회귀선도 남는다: "빈 자리"가 다시 채워지는 것을 막는다.
+  it('variant="badge" 는 에이전트에게도 아무것도 그리지 않는다', () => {
     useAppStore.getState().set({ accounts: { u1: acc('u1', 'owner') } });
-    render(<Identity account={agent('a1', 'bot', 'u1')} variant="badge" />);
+    const { container } = render(<Identity account={agent('a1', 'bot', 'u1')} variant="badge" />);
 
-    expect(screen.getByText('🤖')).toBeTruthy();
-    expect(screen.getByText('@owner')).toBeTruthy();
+    expect(container.textContent).toBe('');
+    expect(container.firstElementChild).toBeNull();
   });
 
-  // 기본값이 badge 인 것은 결정이다 — variant 를 잊은 새 호출자가 정보를 **잃는** 쪽이
-  // 아니라 남기는 쪽으로 떨어진다. 넘침은 눈에 보이고, 사라진 소유자는 안 보인다.
-  it('variant 기본값은 badge 다', () => {
+  // 기본값이 badge 인 것은 여전히 결정이다 — 뜻만 뒤집혔다. variant 를 잊은 새 호출자가
+  // 지운 표시를 **되살리는** 쪽이 아니라 아무것도 안 그리는 쪽으로 떨어진다.
+  it('variant 기본값은 badge 다 — 즉 아무것도 그리지 않는다', () => {
     useAppStore.getState().set({ accounts: { u1: acc('u1', 'owner') } });
-    render(<Identity account={agent('a1', 'bot', 'u1')} />);
+    const { container } = render(<Identity account={agent('a1', 'bot', 'u1')} />);
 
-    expect(screen.getByText('@owner')).toBeTruthy();
+    expect(container.textContent).toBe('');
   });
 
   // 두 kind 가 한 열에 섞여 서므로 상자 크기가 같아야 한다. `h-full` 로 부모에 기대면

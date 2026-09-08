@@ -4,7 +4,7 @@ import type { AccountView, AgentTeamRow, AttachmentRow, HandleGroupRow } from '@
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { ApiError } from '../lib/api';
-import { GroupBadge, Identity, TeamBadge } from './Identity';
+import { GroupBadge, TeamBadge } from './Identity';
 import { formatSize } from './Attachments';
 import {
   mentionQueryAt, applyMention, withStickyMentions, keepMentioned, bodyRecipients,
@@ -945,11 +945,12 @@ export function Composer({
                    */
                   <TeamBadge team={item.team} className="ml-1" />
                 ) : (
-                  <>
-                    {/* 거터가 아니라 **핸들 옆** 자리다(#277) — 여기서 소유자를 지우면 "누구의
-                        에이전트를 부르는지"를 부르기 직전에 못 보게 된다. variant 는 badge. */}
-                    <Identity account={item.account} className="ml-1" variant="badge" />
-                  </>
+                  /* 계정 후보에는 아무것도 덧붙이지 않는다. 여기 있던 `Identity`
+                     배지(🤖 + 소유자 @핸들)를 뺐다 — 화면은 부르려는 상대가 사람인지
+                     에이전트인지 말하지 않는다(design doc 2, #455). 사람 후보는 이미
+                     핸들만 서 있었고(#365), 이제 둘이 같은 줄로 선다. 소유자를 확인해야
+                     하면 프로필(#475)을 연다. */
+                  null
                 )}
               </button>
             </li>

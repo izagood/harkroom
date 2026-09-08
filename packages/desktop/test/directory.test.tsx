@@ -61,23 +61,19 @@ describe('Directory (#226)', () => {
     expect(screen.getByText('@scribe')).toBeTruthy();
   });
 
-  // #181: 소유자도 `Identity` 를 통과해 나온다 — 디렉터리가 따로 그리지 않는다.
-  it('에이전트 행에 소유자가 함께 보인다', async () => {
-    put(acc('u1', 'alice'), { ...agentWithSecrets('a1', 'scribe'), ownerAccountId: 'u1' });
-    open();
-    const agents = await waitFor(() => screen.getByRole('region', { name: 'Agents' }));
-    expect(within(agents).getByText('@alice')).toBeTruthy();
-  });
-
   /**
-   * #365: 사람의 `badge` 가 아무것도 그리지 않게 되면서 **디렉터리 사람 행의 아바타도
-   * 사라졌다.** 그 사라짐을 여기서 못 박는다 — 회귀선이 없으면 아무도 모르는 변화가 된다.
+   * 두 판본이 여기 겹쳐 있었다. #181·#226 은 "에이전트 행에 소유자가 보인다"를 지켰고,
+   * #365 는 "사람 행에는 아무것도 안 붙는다"를 지켰다 — 한 호출이 종류에 따라 다른 것을
+   * 그렸다는 뜻이고, 그 차이가 곧 "이 행은 에이전트다"라는 표시였다.
    *
-   * **이 자리를 `variant="avatar"` 로 바꾸면 안 된다.** 같은 한 호출이 에이전트에게는
-   * 소유자 표시(#181·#226)를 내는 자리라, avatar 로 바꾸면 소유자가 통째로 사라진다.
-   * 그래서 두 사실을 **한 테스트에서 함께** 본다: 한쪽만 단언하면 다른 쪽을 바꿔도 초록이다.
+   * 그 차이를 없앤다(design doc 2, #455): **두 행이 같은 모양으로 선다.** 소유자는
+   * 프로필(#475)이 답하고 `agentOwner.test.tsx` 가 그 자리를 잰다. 종류를 알아야 하는
+   * 사람은 섹션(People/Agents)과 kind 칩을 본다 — 그것은 목록의 구조이지 행에 붙는
+   * 표식이 아니다(아래 '사람과 에이전트가 구분돼 보인다'가 계속 잰다).
+   *
+   * 두 종류를 **한 테스트에서 함께** 본다: 한쪽만 단언하면 다른 쪽이 갈라져도 초록이다.
    */
-  it('#365 사람 행에는 아바타가 없고, 같은 자리가 에이전트에게는 소유자를 낸다', async () => {
+  it('사람 행과 에이전트 행이 같다 — 아바타도 소유자도 글리프도 없다', async () => {
     put(
       // 사진을 **걸어 둔** 사람이다 — 사진이 없어서 안 보이는 것과 자리가 없어서 안 보이는
       // 것을 가른다. 사진이 있는데도 상자가 없어야 이 자리가 정말 비었다는 뜻이다.
@@ -95,10 +91,13 @@ describe('Directory (#226)', () => {
     expect(within(row).getByText('@alice')).toBeTruthy();
     expect(within(row).getByTestId('directory-kind-u1')).toBeTruthy();
 
-    // 같은 `variant="badge"` 호출이 에이전트 행에서는 소유자를 낸다. 이것이 이 자리를
-    // avatar 로 바꾸지 않은 이유다.
+    // 에이전트 행도 같다. 소유자 핸들(@alice)이 붙으면 그 행만 사람 행과 달라진다.
     const agents = screen.getByRole('region', { name: 'Agents' });
-    expect(within(agents).getByText('@alice')).toBeTruthy();
+    const botRow = within(agents).getByTestId('directory-row-a1');
+    expect(botRow.textContent).not.toContain('@alice');
+    expect(botRow.textContent).not.toContain('🤖');
+    expect(within(botRow).queryByText('S')).toBeNull();
+    expect(within(botRow).getByText('@scribe')).toBeTruthy();
   });
 
   // 섹션이 갈려 있어야 "이 handle 이 사람인가 에이전트인가"를 화면이 답한다. 한 목록에

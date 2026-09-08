@@ -81,19 +81,20 @@ describe('#159 아바타 표시', () => {
     expect(c.fetchAvatar).not.toHaveBeenCalled();
   });
 
-  it('badge 자리는 사진을 그리지 않고 바이트도 받지 않는다', async () => {
-    // 사진이 서는 자리는 `avatar` 다. badge 에서 받으면 아무것도 안 보이면서 왕복만 난다.
+  it('badge 자리는 아무것도 그리지 않고 바이트도 받지 않는다', async () => {
+    // 사진이 서는 자리는 `avatar` 다. 이 자리는 이제 **아무것도** 그리지 않으므로(#455)
+    // 받아 봐야 그릴 곳이 없다 — 목록 하나가 계정 수만큼 왕복을 내는 것을 막는다.
     const c = fakeController();
-    render(<Identity account={acc('u3', 'bot', 'agent', false, { avatarAttachmentId: 'att-9' })} />);
+    const { container } = render(<Identity account={acc('u3', 'bot', 'agent', false, { avatarAttachmentId: 'att-9' })} />);
 
+    expect(container.textContent).toBe('');
     expect(screen.queryByTestId('identity-avatar')).toBeNull();
-    expect(screen.getByText('에이전트')).toBeTruthy();
     expect(c.fetchAvatar).not.toHaveBeenCalled();
   });
 
   it('모르는 계정은 물음표 폴백 그대로다', async () => {
     fakeController();
-    render(<Identity account={undefined} />);
+    render(<Identity account={undefined} variant="avatar" />);
     expect(screen.queryByTestId('identity-avatar')).toBeNull();
     expect(screen.getByText('알 수 없는 계정')).toBeTruthy();
   });
