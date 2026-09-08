@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
 import { getController } from '../state/controller';
 import { useActiveStore } from '../state/communities';
-import { waitChainFromLinks, type WaitChain } from '../lib/waitChain';
+import { unblocksSentence, waitChainFromLinks, type WaitChain } from '../lib/waitChain';
 import { elapsedLabel } from '../lib/progressGroup';
+import { useT } from '../i18n/useT';
 
 /**
  * **지금 누가 누구를 기다리는가** — 인박스의 한 구획(#488 A3-b → C2).
@@ -30,6 +31,7 @@ export function WaitChainSection() {
   const myId = useActiveStore((s) => s.me?.id ?? null);
   const online = useActiveStore((s) => s.online);
   const connected = useActiveStore((s) => s.connected);
+  const t = useT();
 
   /**
    * **아직 안 본 채널이 있는가.** `store.messages` 는 **연 채널만** 채워진다
@@ -65,7 +67,7 @@ export function WaitChainSection() {
     return out.sort((a, b) => rank(a.chain.end) - rank(b.chain.end));
   }, [channels, messages, myId, online, connected]);
 
-  const name = (id: string | null): string => (id === null ? '사람' : accounts[id]?.handle ?? '…');
+  const name = (id: string | null): string => (id === null ? t('common.someone') : accounts[id]?.handle ?? '…');
 
   return (
     <div data-testid="wait-chain-section">
@@ -75,20 +77,21 @@ export function WaitChainSection() {
           제목이 `(0)` 이고 본문이 "아직 다 보지 못했다"이면 **한 구획이 서로 반대되는
           두 말**을 한다 — 본문은 정직한데 제목이 안 본 것을 0으로 단정한다.
         */}
-        기다리는 것{unseen ? '' : ` (${rows.length})`}
+        {unseen ? t('waitChain.sectionTitle') : t('waitChain.sectionTitleCount', { count: rows.length })}
       </h3>
       {rows.length === 0 ? (
         // **한 줄로 조용히**(문서). 아무 일도 없는 것이 가장 큰 목소리가 되면 안 된다.
         // 다만 **"없다"와 "아직 안 봤다"는 다른 사실**이다(`docs/design.md` §4) —
         // 안 본 채널이 남아 있으면 없다고 단정하지 않는다.
         <p className="px-2 text-fg-muted">
-          {unseen ? '아직 다 보지 못했다' : '기다리는 것이 없다'}
+          {unseen ? t('waitChain.unseen') : t('waitChain.empty')}
         </p>
       ) : (
         rows.map((r) => {
           const head = r.chain.links[0]!;
           const mine = r.chain.end === 'me';
           const stuck = r.chain.end === 'deadlock';
+          const unblocks = unblocksSentence(r.chain, t);
           return (
             <button
               key={`${r.channelId}:${r.rootId}`}
@@ -116,10 +119,19 @@ export function WaitChainSection() {
                 <span className="ml-auto shrink-0 text-fg-subtle">{elapsedLabel(head.askedAt, Date.now())}</span>
               </span>
               <span className="truncate text-meta text-fg-subtle">
-                {r.channelName ? `#${r.channelName}` : 'DM'}
-                {mine && r.chain.unblocks > 1 && ` · 답하면 ${r.chain.unblocks}개가 풀린다`}
-                {stuck && r.chain.deadlockReason === 'cycle' && ' · 서로를 기다린다'}
-                {stuck && r.chain.deadlockReason === 'dead-runner' && ' · 답할 쪽이 멈췄다'}
+                {r.channelName ? `#${r.channelName}` : t('waitChain.dm')}
+                {/*
+                  **문턱은 `unblocksSentence` 가 들고 있다** — 스레드 패널도 같은 문장을
+                  쓰므로 `> 1` 을 두 화면이 각자 적으면 한쪽만 고쳐질 수 있다.
+
+                  **이어 붙이는 기호는 화면의 것이다.** 사전에는 문장만 있고 `·` 나 `—`
+                  가 없다 — 같은 문장을 스레드 패널은 `— ` 뒤에, 여기서는 `· ` 뒤에
+                  놓는다. 기호를 사전에 넣으면 번역가가 그 자리마다 다른 사전 항목을
+                  요구하게 되고, 그러면 문장 하나가 자리 수만큼 늘어난다.
+                */}
+                {unblocks && ` · ${unblocks}`}
+                {stuck && r.chain.deadlockReason === 'cycle' && ` · ${t('waitChain.reasonCycle')}`}
+                {stuck && r.chain.deadlockReason === 'dead-runner' && ` · ${t('waitChain.reasonDeadRunner')}`}
               </span>
             </button>
           );
