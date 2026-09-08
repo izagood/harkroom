@@ -82,6 +82,17 @@ function shellQuote(arg: string): string {
  * 무관한 실패가 자격증명 실패로 오판된다(재현: `test/policy.test.ts` "#380 1단계 실측").
  * 이 두 사실 중 첫째만으로도 이 래핑을 없애면 안 된다는 결론에 이른다 — 그래서 `stdinFile`
  * 경로는 남겨 뒀다. 회귀 고정: `test/pty.test.ts` "#380 1단계 실측".
+ *
+ * **범위 주의(2026-09-08 실측).** 위 결론은 **`-p`/`exec` 모드에 한정된다.** 거절하는 주체가
+ * `--print` 의 `isatty(0)` 판정이기 때문이다 — TUI(비 `-p`)는 stdin 이 tty 인 것이 정상이고,
+ * 이 저장소의 인터랙티브 턴(`interactiveTurn.ts`, `stdinFile: null`)이 이미 그렇게 돈다.
+ * TUI 에 bracketed paste(`ESC[200~ … ESC[201~`)로 여러 줄 프롬프트를 주입하는 것은 실물에서
+ * **된다**(claude 2.1.263). 그러니 이 주석을 "PTY 로는 프롬프트를 못 준다"로 읽으면 안 된다.
+ *
+ * 다만 **둘째 사실(에코 오염)은 TUI 로 가도 따라온다** — 주입한 본문이 그대로 에코돼 tail 에
+ * 섞이고, `policy.ts::isCredentialFailure` 가 그 문자열로 판정해 러너를 78 로 물러나게 한다.
+ * 실행 모델을 TUI 로 바꾸려면 그 판정을 tail 에서 떼는 것이 선행 조건이다.
+ * 근거와 실측표: `docs/specs/2026-09-01-runner-sessions-pty-design.md` §5-4.
  */
 export function composeSpawn(plan: TurnPlan): { command: string; args: string[] } {
   if (!plan.stdinFile) return { command: plan.command, args: plan.args };
