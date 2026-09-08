@@ -512,6 +512,157 @@ export const ko = {
   'waitChain.reasonCycle': '서로를 기다린다',
   'waitChain.reasonDeadRunner': '답할 쪽이 멈췄다',
 
+  // ---------------------------------------------------------------------------
+  // composer — 원래 화면의 말투(`~한다`)를 그대로 뒀다. 단정을 바꾼 곳은 없다.
+  //
+  // **번역하지 않은 것**은 `en.ts` 의 composer 머리말에 적었다 — 서버가 준 실패 사유,
+  // 호출자가 넘기는 placeholder, 기호(`@`·`📎`·`🕐`·`×`).
+  // ---------------------------------------------------------------------------
+
+  'composer.attach.drop': '여기에 놓으면 첨부된다',
+  'composer.attach.uploadFailed': '{filename} 을 올리지 못했다 (크기 제한을 넘었을 수 있다)',
+
+  'composer.mention.autoBadge': '자동',
+  'composer.mention.autoTitle': '이 채널이 자동으로 멘션한다',
+  // 원래 화면 그대로 `(채널 전체)` 다. 영어가 `(everyone here)` 로 **사람들**을 세는 쪽으로
+  // 옮긴 이유는 `en.ts` 표에 있고, 한국어는 원래 문구가 이미 그 뜻으로 읽힌다.
+  'composer.mention.channelAll': '(채널 전체)',
+  // **`명` 을 뺐다.** 그 단위는 사람만 세는 말인데 집합에는 에이전트도 든다 — 영어가
+  // 숫자만 남긴 것과 같은 판단이고, 원래 문구의 부정확을 여기서 함께 고친다.
+  'composer.mention.groupCount': '({count})',
+  'composer.mention.reaching': '부를 상대',
+  'composer.mention.reachingLabel': '부를 상대',
+
+  'composer.schedule.cancel': '취소',
+  'composer.schedule.cancelOne': '예약 취소',
+  'composer.schedule.cancelFailed': '예약을 취소하지 못했다',
+  'composer.schedule.hasAttachments': '첨부가 붙은 메시지는 예약할 수 없다 — 첨부를 떼거나 지금 보내라',
+  'composer.schedule.failed': '예약에 실패했다',
+  'composer.schedule.notSent': '보내지 못함: {reason}',
+  'composer.schedule.listFailed': '예약 목록을 불러오지 못했다',
+  'composer.schedule.later': '나중에 보내기',
+  'composer.schedule.submit': '예약',
+  'composer.schedule.submitting': '예약 중…',
+  'composer.schedule.summary': '예약 {count}건',
+  'composer.schedule.summaryFailed': ' · 실패 {count}건',
+  'composer.schedule.timeLabel': '예약 시각',
+  'composer.schedule.title': '예약 발송',
+
+  // 수에 따라 명사가 안 바뀐다 — `other` 하나가 이 언어의 사실이다(위 머리말).
+  'composer.send.attachmentsOnly': { other: '첨부 {count}개' },
+  'composer.send.sending': '보내는 중…',
+  'composer.send.submit': '전송',
+  'composer.send.undo': '보냄 취소',
+
+  // ---------------------------------------------------------------------------
+  // grid — 에이전트 격자. 영역을 `agents` 에 안 붙인 근거는 `en.ts` 의 grid 머리말에 있다
+  // (이 컴포넌트는 설정과 사이드바 **둘이 공유한다**).
+  // ---------------------------------------------------------------------------
+
+  'grid.card.harness': '하네스',
+  'grid.card.harnessDefault': '하네스 기본값',
+  'grid.card.lastTurn': '활동',
+  'grid.card.runner': '러너',
+  'grid.card.retiring': '물러나는 중 · 진행 중인 턴을 끝내고 있다',
+  'grid.card.stopping': '멈추는 중 · 러너가 아직 못 봤다',
+
+  'grid.runner.harnessMissing': '하네스를 찾을 수 없다',
+  'grid.runner.launchFailed': '기동 실패',
+  'grid.runner.launchFailedReason': '기동 실패 — {reason}',
+  'grid.runner.presenceUnknown': {
+    other: '서버와 끊겨 {count}개 에이전트의 생사를 알 수 없다 — 마지막으로 본 상태이지 '
+      + '지금 상태가 아니다. 다시 붙으면 갱신된다.',
+  },
+
+  'grid.search.create': '새 에이전트',
+  'grid.search.empty': '아직 에이전트가 없다',
+  'grid.search.label': '에이전트 검색',
+  'grid.search.noMatch': '“{query}” 에 맞는 에이전트가 없다',
+  'grid.search.placeholder': '이름으로 찾기',
+  // 한국어는 단위를 붙인다 — 영어가 숫자만 세우는 이유는 `en.ts` 의 그 키 주석에 있다.
+  'grid.search.count': '{count}개',
+
+  'grid.version.current': '{version}',
+  'grid.version.stale': '{version} · 뒤처짐',
+  'grid.version.staleAction': '{handle} 러너 재기동 — {version} 은 앱보다 뒤처졌다',
+  'grid.version.unknown': '버전 모름',
+
+  'grid.card.relaunch': '{handle} 실행하기',
+  'grid.card.relaunchFailed': '{handle} 다시 띄우기',
+  'grid.card.stop': '{handle} 멈추기',
+
+  // ---------------------------------------------------------------------------
+  // inbox — 사슬 구획은 여기 없다(`waitChain.*` 이 진다, `en.ts` 머리말).
+  // ---------------------------------------------------------------------------
+
+  'inbox.drafts.badge': '초안',
+  'inbox.drafts.empty': '쓰다 만 초안이 없다',
+  'inbox.drafts.heading': '쓰다 만 초안',
+  'inbox.drafts.headingCount': '쓰다 만 초안 ({count})',
+  'inbox.drafts.thread': '스레드',
+
+  'inbox.entries.empty': '나를 부른 것이 없다',
+  'inbox.entries.heading': '나를 부른 것',
+  'inbox.entries.headingCount': '나를 부른 것 ({count})',
+  'inbox.entries.noMatch': '필터에 맞는 것이 없다',
+  'inbox.entries.thread': '스레드',
+  'inbox.entries.unread': '안 읽음',
+
+  'inbox.filter.all': '전부',
+  'inbox.filter.blocking': '나를 막는 것',
+  'inbox.filter.unread': '안 읽은 것',
+  'inbox.filter.reading': '읽을 것',
+
+  'inbox.pane.close': '인박스 닫기',
+  'inbox.pane.loadFailed': '인박스를 불러오지 못했다 — {reason}',
+  'inbox.pane.loading': '불러오는 중…',
+  'inbox.pane.retry': '다시 시도',
+  // 머리글이 원래 `Inbox` 였다 — 영어가 원본이므로 그쪽은 그 글자를 지키고, 한국어는
+  // 화면의 다른 말들과 같은 언어로 선다(`aria-label` 이 이미 `인박스` 였다).
+  'inbox.pane.title': '인박스',
+
+  // ---------------------------------------------------------------------------
+  // profile — 사람과 에이전트가 같은 틀을 쓴다(그 화면 주석: 행 이름만 다르다).
+  // ---------------------------------------------------------------------------
+
+  'profile.actions.agentSettings': '에이전트 설정',
+  'profile.actions.dm': 'DM 열기',
+  'profile.actions.restartCancel': '재기동 예약 취소',
+  'profile.actions.restartStale': '새 버전으로 재기동',
+  'profile.actions.restart': '러너 재기동',
+
+  'profile.rows.harness': '하네스',
+  'profile.rows.kind': '종류',
+  'profile.rows.kindAgent': '에이전트',
+  'profile.rows.kindHuman': '사람',
+  'profile.rows.lastTurn': '마지막 활동',
+  'profile.rows.model': '모델',
+  'profile.rows.modelDefault': '하네스 기본값 — 실제 모델은 발화 이름줄 hover 로 본다',
+  'profile.rows.owner': '소유자',
+  'profile.rows.permission': '권한',
+  // 원래 행 이름은 `연결` 이었다. 영어가 `Presence` 로 간 이유(`Connection` 은 소켓
+  // 상태로 읽힌다)가 한국어에도 그대로 걸려 `생존` 으로 옮긴다 — 이 행이 답하는 것은
+  // 소켓이 아니라 **그 에이전트가 지금 답하는가**이고, 코드가 그것을 `live` 라 부른다.
+  'profile.rows.presence': '생존',
+  'profile.rows.presenceNotResponding': '응답 없음',
+  'profile.rows.presenceOnline': '온라인',
+  'profile.rows.presenceUnknown': '알 수 없음',
+  'profile.rows.runnerVersion': '러너 버전',
+  'profile.rows.runnerVersionWithApp': '{version} (앱 {appVersion})',
+  'profile.rows.runnerVersionUnknown': '버전을 모른다 — 재기동하면 채워진다',
+  'profile.rows.state': '상태',
+  'profile.rows.stateDisabled': '비활성',
+  'profile.rows.title': '{handle} 프로필',
+  'profile.rows.workingDir': '작업 디렉터리',
+  'profile.rows.workingDirPerThread': '스레드마다 새로 만든다',
+
+  'profile.runner.restartQueued':
+    '재기동을 예약했다 — {strongTurn}을 마치면 새 버전으로 뜬다. 턴을 끊지 않는다.',
+  'profile.runner.restartQueuedTurn': '진행 중인 턴',
+  'profile.runner.stale':
+    '이 러너는 {strongBundle}로 돌고 있다 — 새 버전으로 재기동하면 갈아탄다.',
+  'profile.runner.staleBundle': '앱보다 뒤처진 번들',
+
   'message.channelEcho': '채널에도 전송됨',
   'message.threadOrigin': '스레드에 댓글 남김',
   'message.recentReplies': '최근 댓글 보기',
