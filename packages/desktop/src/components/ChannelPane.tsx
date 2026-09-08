@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
@@ -214,8 +214,52 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * `atBottomRef` 가 거짓으로 남아, 새 채널의 최신 대화가 아닌 어중간한 자리에 서고
    * 버튼도 그대로 남는다(스크롤 상자는 채널이 바뀌어도 같은 DOM 이라 `scrollTop` 이
    * 0 으로 돌아가지도 않는다).
+   *
+   * `useLayoutEffect` 인 이유(2026-09-09): 그리기 **전에** 내려간다. `useEffect` 는 화면이
+   * 한 번 나온 뒤에 도므로, 이전 채널의 `scrollTop` 이 남은 어중간한 자리가 한 프레임
+   * 보였다가 튄다 — 채널을 자주 옮기는 사람에게는 그 깜빡임이 곧 "가운데로 들어왔다"다.
    */
-  useEffect(() => { scrollToBottom(); }, [activeChannelId]);
+  useLayoutEffect(() => { scrollToBottom(); }, [activeChannelId]);
+
+  /**
+   * **늦게 자라는 내용까지 따라간다**(jaebin 보고 2026-09-09: "채널에 들어오면 항상 어중간한
+   * 가운데 시점으로 들어와서 항상 밑으로 내려가야 한다").
+   *
+   * 위의 두 효과는 목록이 **몇 줄인지** 바뀔 때만 돈다. 그런데 줄 수는 그대로인 채 높이가
+   * 자라는 길이 여럿 있다 — 첨부 그림은 URL 을 받아온 **뒤에** `<img>` 가 생기고
+   * (`Attachments.tsx`), 링크 미리보기 카드도 fetch 가 끝난 뒤에 붙고(`LinkPreview.tsx`),
+   * 글꼴이 늦게 오면 모든 줄이 함께 자란다. 바닥으로 내려간 다음 그런 것들이 몇백 px 자라면
+   * **스크롤 이벤트는 일어나지 않는다**(내용이 자란 것이지 사람이 움직인 것이 아니다) —
+   * 화면은 그 자리에 남고, 아래로 자란 만큼이 그대로 "내려가야 하는 거리"가 된다. 그림과
+   * 링크가 많은 채널일수록 그 거리가 길어 정말로 가운데쯤에 서게 된다.
+   *
+   * 그래서 **바닥 표식이 화면에서 벗어나는 순간**을 신호로 삼는다. 여기서 알고 싶은 것은
+   * 내용의 높이가 아니라 "바닥이 아직 보이는가" 이고, 그 질문은 표식 하나로 정확히 답이
+   * 된다(`ResizeObserver` 로 높이를 재려면 목록을 감싸는 상자를 하나 더 넣어야 한다).
+   * `root` 를 스크롤 상자로 주는 것이 핵심이다 — 기준은 창이 아니라 이 상자다.
+   *
+   * **`atBottomRef` 가 참일 때만 움직인다.** 사람이 위를 보고 있으면 표식은 당연히 안 보이고,
+   * 그때 따라 내려가면 `jumpToBottom.test.tsx` 가 지키는 규율(읽던 자리를 빼앗지 않는다)을
+   * 정면으로 깬다. 스크롤 이벤트가 관찰자 콜백보다 먼저 도착하므로, 사람이 손으로 올린
+   * 순간에는 이 값이 이미 거짓이다.
+   */
+  useEffect(() => {
+    const root = listRef.current;
+    const marker = bottomRef.current;
+    // jsdom 에는 `IntersectionObserver` 가 없다. 없으면 이 보정만 빠지는 것이고 줄 수로
+    // 도는 위의 효과는 그대로 돈다 — `scrollIntoView?.()` 의 옵셔널과 같은 태도다.
+    if (!root || !marker || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!atBottomRef.current) return;
+        if (entries.some((e) => e.isIntersecting)) return;
+        marker.scrollIntoView?.({ block: 'nearest' });
+      },
+      { root },
+    );
+    io.observe(marker);
+    return () => io.disconnect();
+  }, []);
 
   /**
    * 스크롤 위치를 ref 에 담는 이유: 이 값은 **그리는 데 쓰이지 않는다.** 상태로 두면
@@ -392,7 +436,10 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
             </Fragment>
           );
         })}
-        <div ref={bottomRef} />
+        {/* 바닥 표식. **높이 1px 을 주는 이유**: 위의 관찰자가 이 요소로 "바닥이 보이는가"를
+            판정한다 — 높이가 0 인 상자의 교차 판정은 브라우저마다 다르게 굴러 신호가 조용히
+            죽을 수 있다. 1px 은 화면에서 보이지 않고 줄 간격도 바꾸지 않는다. */}
+        <div ref={bottomRef} data-testid="channel-bottom" className="h-px" />
       </div>
       {/* 작성창 **조금 위**에 선다(jaebin 의 요청 그대로). 오른쪽에 붙이는 것은 본문 글줄을
           가리지 않기 위해서다 — 대화는 왼쪽 정렬이다. */}
