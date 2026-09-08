@@ -154,10 +154,6 @@ export function Workspace({ onLogout, onOpenSettings }: {
    */
   return (
     <div className="flex h-screen text-body">
-      {/* 업데이트 팝업은 `fixed` 라 이 자리에 두어도 레이아웃을 밀지 않는다. 상단 띠
-          (`Notice`·`ProjectionBanner`)와 달리 작업 흐름을 비켜서 우측 하단에 선다 —
-          업데이트는 지금 하던 일을 멈출 이유가 아니다. */}
-      <UpdateToast />
       {/* 전환기 레일은 **사이드바 밖**에 둔다(#165). 사이드바 안에 넣으면 사이드바를 접는
           순간(폭 0) 전환기까지 함께 사라져, 커뮤니티를 바꾸려면 먼저 사이드바를 펴야 한다.
           커뮤니티가 하나면 이 컴포넌트는 아무것도 그리지 않으므로 오늘 화면과 같다. */}
@@ -182,6 +178,23 @@ export function Workspace({ onLogout, onOpenSettings }: {
         onOpenCommunityMark={() => onOpenSettings('communities')}
         onLogout={onLogout}
       />
+      {/*
+        업데이트 팝업의 **앵커**다. 폭 0 이므로 칸을 차지하지 않지만, 흐름 안에 있으니
+        왼쪽 끝이 곧 "레일 오른쪽 = 사이드바 칸의 시작"이다. 팝업은 이 안에서
+        `absolute` 로 서서 레이아웃을 밀지 않는다.
+
+        원래는 팝업 자신이 `fixed bottom-4 right-4` 였고, 그 자리가 컴포저의 `전송` 을
+        덮었다. 왼쪽으로 옮기면서 `fixed left-[62px]` 로 레일 폭을 베낄 수도 있었지만,
+        커뮤니티가 둘 이상일 때 `CommunityRail`(56px)이 하나 더 서므로 그 숫자는 곧
+        틀린다. 폭을 아는 것은 레이아웃이니 자리도 레이아웃이 정하게 둔다.
+
+        사이드바 **안**에 넣지 않는 이유는 `CommunityRail`·`Rail` 이 사이드바 밖에 있는
+        것과 같다: 사이드바를 접으면(폭 0) 팝업까지 사라져, 업데이트를 알리는 자리가
+        접기 상태에 따라 없어진다.
+      */}
+      <div className="relative w-0 shrink-0">
+        <UpdateToast />
+      </div>
       <Sidebar
         panel={railPanel}
         onOpenDirectory={() => handleOpenDirectory(null)}
