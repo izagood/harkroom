@@ -107,7 +107,13 @@ const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
  * 채운 뒤 값으로 찾으면 그 값과 같은 글자가 문장 다른 곳에 있을 때 엉뚱한 자리가 굵어진다
  * (`{strongStart}` 의 값 `실행` 은 같은 문장의 `러너 실행` 에도 있다 — 실측으로 잡았다).
  */
-function emphasize(template: string, strong: Record<string, string>): React.ReactNode[] {
+/*
+  **내보낸다** — `Profile` 이 같은 모양의 안내문 둘을 그린다(뒤처짐 · 재기동 예약).
+  그 화면이 이미 이 파일에서 `lastTurnLabel` 을 가져오고 있으므로 새 의존이 아니고,
+  사본을 두면 *"굵을 마디를 자리표시자 채우기 **전에** 찾는다"* 는 위 문단의 판단이
+  두 곳에 있게 된다 — 그 판단은 실측으로 잡은 것이라 한 곳에 있어야 한다.
+*/
+export function emphasize(template: string, strong: Record<string, string>): React.ReactNode[] {
   // `{이름}` 을 경계로 자른다. `split` 에 캡처 그룹이 있으면 구분자도 결과에 섞여 나오므로
   // 홀수 칸이 곧 자리표시자 이름이다.
   const parts = template.split(/\{(\w+)\}/g);

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { Controller, setController } from '../src/state/controller';
 import { Composer } from '../src/components/Composer';
 import { MessageBody } from '../src/components/MessageBody';
@@ -19,7 +20,12 @@ import { acc, grp, tm, fakeApi, fakeWsFactory } from './helpers/fakeApi';
  *    그리면, `lib/mention.ts` 머리의 경계가 깨진다: *"강조되지 않은 것이 몰래 알림을 보낸다"*.
  * 5. 팀이 없는 워크스페이스의 후보 목록은 **한 글자도 달라지지 않는다**.
  */
+// **언어를 한국어로 고정한다.** 이 파일의 축들은 이 화면의 한국어 문구로 쓰여 있고,
+// 그 문구가 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다(`#619`·사이드바 PR 이
+// 세운 방식과 같다). 영어가 원본이라 기본값이 영어이므로, 한국어를 재려면 한국어라고
+// 말해야 한다. 두 언어로 다 뜨는지는 `i18n.test.tsx` 가 잰다.
 beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'me', 'human', true),
@@ -33,7 +39,7 @@ beforeEach(() => {
   });
   setController(new Controller(fakeApi(), fakeWsFactory().makeWs));
 });
-afterEach(() => { cleanup(); setController(null as unknown as Controller); });
+afterEach(() => { cleanup(); usePrefsStore.getState().setLocale('system'); setController(null as unknown as Controller); });
 
 const type = (value: string) => {
   render(<Composer onSend={vi.fn()} scopeKey="c1" />);
@@ -89,7 +95,9 @@ describe('팀 자동완성 (#172)', () => {
       .querySelector('[data-handle="release"]');
     expect(item).toBeTruthy();
     expect(item!.getAttribute('data-kind')).toBe('group');
-    expect(item!.textContent).toContain('(4명)');
+    // **단위(`명`)가 빠졌다** — 그 말은 사람만 세는데 집합·팀에는 에이전트도 든다
+    // (`en.ts` 의 composer 머리말). 수를 말한다는 이 축의 뜻은 그대로다.
+    expect(item!.textContent).toContain('(4)');
   });
 
   /**

@@ -5,9 +5,12 @@ import { getController } from '../state/controller';
 import { canSeeAgentConfig } from '../lib/agentConfigGate';
 import { Identity, StatusMark } from './Identity';
 import { Overlay } from './Overlay';
-import { lastTurnLabel } from './settings/AgentsSettings';
+import { emphasize, lastTurnLabel } from './settings/AgentsSettings';
 import { staleRunners, UNKNOWN_RUNNER_VERSION } from '../lib/runnerVersions';
 import { useT, useLocale } from '../i18n/useT';
+// 화면 밖 순수 함수(`runnerVersionLabel`)는 번역기를 인자로 받는다 — 그 갈림의 근거는
+// `i18n/index.ts::Translate` 머리말에 있다.
+import type { Translate } from '../i18n';
 import type { SectionId } from './settings/sections';
 
 /**
@@ -34,9 +37,11 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
   onClose: () => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }) {
-  // **이 화면은 아직 안 옮겼다.** 이 둘을 들이는 것은 `lastTurnLabel` 이 `locale` 과
-  // 번역기를 인자로 받게 됐기 때문이다(그 함수 주석: 기본값을 주면 이 화면이 조용히 한
-  // 언어로 굳는다). 이 파일의 나머지 한국어는 다음 PR 의 몫이다.
+  // **이 화면은 옮겼다**(`profile.*`). 처음에 이 둘을 들인 것은 `lastTurnLabel` 이
+  // `locale` 과 번역기를 받게 됐기 때문이고(그 함수 주석), 그때 남긴 *"나머지는 다음
+  // PR 의 몫"* 이 이 변경이다 — 이제 이 화면의 모든 말이 `t()` 를 지난다. 예외는
+  // `agent.harness` 값과 `lastTurnLabel` 이 내는 문구뿐이고, 근거는 `en.ts` 의
+  // profile 머리말 '안 넣은 것' 에 있다.
   const t = useT();
   const locale = useLocale();
   const account = useActiveStore((s) => s.accounts[accountId]);
@@ -99,7 +104,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
   const live = connected ? online.includes(account.id) : null;
 
   return (
-    <Overlay label={`${account.handle} 프로필`} onClose={onClose} className="w-[26rem]">
+    <Overlay label={t('profile.rows.title', { handle: account.handle })} onClose={onClose} className="w-[26rem]">
       <div className="flex items-center gap-3 border-b border-border p-4">
         <Identity account={account} className="h-12 w-12 text-base" variant="avatar" />
         <div className="min-w-0">
@@ -118,40 +123,54 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
       <div className="overflow-y-auto p-4">
         <dl className="space-y-2">
           {/* 종류는 여기 와서야 나온다 — 흐름에서는 말하지 않는다(원칙 01). */}
-          <Row label="종류" value={account.kind === 'agent' ? '에이전트' : '사람'} />
-          {account.isAdmin && <Row label="권한" value="admin" />}
-          {account.disabled && <Row label="상태" value="비활성" />}
+          <Row
+            label={t('profile.rows.kind')}
+            value={account.kind === 'agent' ? t('profile.rows.kindAgent') : t('profile.rows.kindHuman')}
+          />
+          {/* `admin` 은 **번역하지 않는다** — 이 제품의 고유어다(`en.ts` 의 agents 머리말). */}
+          {account.isAdmin && <Row label={t('profile.rows.permission')} value="admin" />}
+          {account.disabled && <Row label={t('profile.rows.state')} value={t('profile.rows.stateDisabled')} />}
 
           {account.kind === 'agent' && (
             <Row
-              label="연결"
-              value={live === null ? '알 수 없음' : live ? '온라인' : '응답 없음'}
+              label={t('profile.rows.presence')}
+              value={live === null
+                ? t('profile.rows.presenceUnknown')
+                : live ? t('profile.rows.presenceOnline') : t('profile.rows.presenceNotResponding')}
             />
           )}
           {/* 소유자가 `null` 인 것은 '아무나'가 아니라 '아직 아무도'다(#181) — 없으면 행이 없다. */}
-          {owner && <Row label="소유자" value={`@${owner.handle}`} />}
+          {owner && <Row label={t('profile.rows.owner')} value={`@${owner.handle}`} />}
 
           {canSeeConfig && agent && (
             <>
-              <Row label="하네스" value={agent.harness} />
+              {/* 값은 `claude-code` 같은 고유어다 — 라벨만 사전을 지난다. */}
+              <Row label={t('profile.rows.harness')} value={agent.harness} />
               {/* **`null` 은 '모델 없음'이 아니라 '이 설정이 정하지 않는다'다**(#600).
                   그냥 `하네스 기본값` 이라고만 적으면 사람은 이 행을 "실제로 쓰는 모델"로
                   읽는데, 그 경우 murmur 는 실제 모델을 **모른다** — 러너가 `--model` 을
                   아예 붙이지 않아 하네스가 고르고, 러너는 하네스 출력을 해석하지 않는다.
                   실제로 무엇이 답했는지는 발화 이름줄 hover 에 있다(`meta.model`). */}
               <Row
-                label="모델"
-                value={agent.model ?? '하네스 기본값 — 실제 모델은 발화 이름줄 hover 로 본다'}
+                label={t('profile.rows.model')}
+                value={agent.model ?? t('profile.rows.modelDefault')}
               />
-              <Row label="작업 디렉터리" value={agent.workingDir ?? '스레드마다 새로 만든다'} mono />
-              <Row label="마지막 활동" value={lastTurnLabel(agent.lastTurnAt, Date.now(), locale, t)} />
+              <Row
+                label={t('profile.rows.workingDir')}
+                value={agent.workingDir ?? t('profile.rows.workingDirPerThread')}
+                mono
+              />
+              <Row
+                label={t('profile.rows.lastTurn')}
+                value={lastTurnLabel(agent.lastTurnAt, Date.now(), locale, t)}
+              />
               {/* 러너가 **어느 번들로** 돌고 있는가. 이 행이 없으면 아래 재기동 버튼은
                   누를 이유를 알 수 없는 버튼이다. `unknown`·`null` 은 원인이 다르지만
                   (환경변수를 못 받았다 / 보고가 한 번도 없었다) 사람이 할 일은 같으므로
                   한 문장으로 적는다 — 없는 구분을 화면에 만들지 않는다. */}
               <Row
-                label="러너 버전"
-                value={runnerVersionLabel(agent.runnerVersion, appVersion)}
+                label={t('profile.rows.runnerVersion')}
+                value={runnerVersionLabel(agent.runnerVersion, appVersion, t)}
                 mono={agent.runnerVersion !== null && agent.runnerVersion !== UNKNOWN_RUNNER_VERSION}
               />
             </>
@@ -161,8 +180,12 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
         {canSeeConfig && agent && runnerPresent && (
           <div className="mt-3 text-meta">
             {isStale && (
+              /* 굵을 마디는 **자리표시자로 받는다** — 사전에 `<strong>` 을 적지 않는
+                 근거는 `AgentsSettings.emphasize` 머리말에 있다(어순이 언어마다 다르다). */
               <p className="text-warning" data-testid="runner-stale-note">
-                이 러너는 앱보다 <strong>뒤처진 번들</strong>로 돌고 있다 — 새 버전으로 재기동하면 갈아탄다.
+                {emphasize(t('profile.runner.stale'), {
+                  strongBundle: t('profile.runner.staleBundle'),
+                })}
               </p>
             )}
             {/* **기다린다는 사실이 화면에 있어야 한다.** SIGTERM 은 graceful 이라 러너는
@@ -170,7 +193,9 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
                 없으면 사람에게는 "눌렀는데 아무 일이 없다"다 — `#384` 가 이미 고친 결함이다. */}
             {runnerState?.status === 'restarting' && (
               <p className="text-fg" role="status" data-testid="runner-restart-note">
-                재기동을 예약했다 — <strong>진행 중인 턴</strong>을 마치면 새 버전으로 뜬다. 턴을 끊지 않는다.
+                {emphasize(t('profile.runner.restartQueued'), {
+                  strongTurn: t('profile.runner.restartQueuedTurn'),
+                })}
               </p>
             )}
           </div>
@@ -188,7 +213,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
                          text-fg hover:bg-surface-hover"
               onClick={() => { onClose(); onOpenSettings('agents', account.id); }}
             >
-              에이전트 설정
+              {t('profile.actions.agentSettings')}
             </button>
           )}
           {canSeeConfig && agent && runnerPresent && (
@@ -199,7 +224,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
                            text-fg hover:bg-surface-hover"
                 onClick={() => getController().cancelRestart(account.id)}
               >
-                재기동 예약 취소
+                {t('profile.actions.restartCancel')}
               </button>
             ) : (
               /* 이름이 사실을 약속한다: 뒤처졌다고 **확인된** 때만 "새 버전으로"라고
@@ -210,7 +235,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
                            text-fg hover:bg-surface-hover"
                 onClick={() => { void getController().restartRunner(account.id); }}
               >
-                {isStale ? '새 버전으로 재기동' : '러너 재기동'}
+                {isStale ? t('profile.actions.restartStale') : t('profile.actions.restart')}
               </button>
             )
           )}
@@ -221,7 +246,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
                          text-fg hover:bg-surface-hover"
               onClick={() => { onClose(); void getController().startDm(account.id); }}
             >
-              DM 열기
+              {t('profile.actions.dm')}
             </button>
           )}
         </div>
@@ -245,11 +270,20 @@ function Row({ label, value, mono = false }: { label: string; value: string; mon
  * 러너 버전 한 줄. 두 사실을 함께 적는다 — 러너의 버전과 **비교 대상**(앱의 버전).
  * 앱 버전만 알거나 러너 버전만 알면 사람은 "뒤처졌다"를 스스로 확인할 수 없다.
  */
-function runnerVersionLabel(runnerVersion: string | null, appVersion: string | null): string {
+function runnerVersionLabel(
+  runnerVersion: string | null,
+  appVersion: string | null,
+  t: Translate,
+): string {
   if (runnerVersion === null || runnerVersion === UNKNOWN_RUNNER_VERSION) {
     // 원인은 둘(환경변수를 못 받았다 / 보고가 없었다)이지만 사람이 할 일은 하나다:
     // 한 번 재기동하면 값이 채워진다. 그래서 구분을 화면에 만들지 않는다.
-    return '버전을 모른다 — 재기동하면 채워진다';
+    return t('profile.rows.runnerVersionUnknown');
   }
-  return appVersion === null ? runnerVersion : `${runnerVersion} (앱 ${appVersion})`;
+  // **화면 밖 함수라 `t` 를 인자로 받는다**(`i18n/index.ts::Translate` 의 (b) 주입).
+  // 앱 버전을 모르면 비교 대상이 없으므로 러너 버전만 세운다 — 그때 `(app )` 처럼 빈
+  // 괄호를 남기면 사람은 그 괄호를 값으로 읽는다.
+  return appVersion === null
+    ? runnerVersion
+    : t('profile.rows.runnerVersionWithApp', { version: runnerVersion, appVersion });
 }

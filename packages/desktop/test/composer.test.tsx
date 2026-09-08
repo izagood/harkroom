@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { Composer } from '../src/components/Composer';
 // 판정이 갈라지지 않았는지 보려면 **본문을 실제로 렌더해** 대조해야 한다(#278).
 import { MessageBody } from '../src/components/MessageBody';
@@ -24,7 +25,12 @@ const typeInto = (value: string) => {
   return box;
 };
 
+// **언어를 한국어로 고정한다.** 이 파일의 축들은 이 화면의 한국어 문구로 쓰여 있고,
+// 그 문구가 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다(`#619`·사이드바 PR 이
+// 세운 방식과 같다). 영어가 원본이라 기본값이 영어이므로, 한국어를 재려면 한국어라고
+// 말해야 한다. 두 언어로 다 뜨는지는 `i18n.test.tsx` 가 잰다.
 beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
   // 이 파일이 검증하는 것은 보냄 취소 창이 아니다(#223) — 창을 끄고 즉시 전송 경로를 본다.
   // 창 자체는 undoSend.test.tsx 가 단독으로 지킨다.
   undoSendStorage.saveWindowMs(0);
@@ -42,6 +48,7 @@ beforeEach(() => {
   setController(c);
 });
 afterEach(() => {
+  usePrefsStore.getState().setLocale('system');
   cleanup();
   setController(null as unknown as Controller);
 });
@@ -550,7 +557,8 @@ describe('부를 상대 미리보기 (#278)', () => {
 
     const line = screen.getByTestId('body-mentions');
     expect(line.querySelector('[data-handle="oncall"]')!.getAttribute('data-kind')).toBe('group');
-    expect(line.textContent).toContain('(3명)');
+    // 단위가 빠진 근거는 `en.ts` 의 composer 머리말에 있다 — 집합에는 사람만 들지 않는다.
+    expect(line.textContent).toContain('(3)');
   });
 
   /**

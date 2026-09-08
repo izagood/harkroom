@@ -68,7 +68,9 @@ describe('AgentGrid — 검색', () => {
   it('못 찾은 것과 아무것도 없는 것은 다른 말이다', () => {
     grid({ agents: [agent('alpha')] });
     fireEvent.change(screen.getByTestId('agent-search'), { target: { value: 'zzz' } });
-    expect(screen.getByText(/"zzz" 에 맞는 에이전트가 없다/)).toBeTruthy();
+    // 따옴표가 곧은 것에서 **활자 따옴표**(`“”`)로 바뀌었다 — 사전의 다른 인용
+    // (`agents.runner.ownedNote` 의 `‘{label}’`)과 같은 모양으로 맞춘 것이다.
+    expect(screen.getByText(/“zzz” 에 맞는 에이전트가 없다/)).toBeTruthy();
 
     // 목록이 정말 비어 있는 것은 **다른 사실**이다 — 검색어를 지우고 확인한다.
     cleanup();

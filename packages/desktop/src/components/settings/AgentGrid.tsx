@@ -387,6 +387,10 @@ function VersionChip({ handle, runnerVersion, appVersion, onRelaunch }: {
   /** 없으면 뒤처진 칩도 안 눌린다 — *"권한 없는 사람에게는 문이 없다"*(`AgentGrid` 주석). */
   onRelaunch?: () => void;
 }) {
+  // **훅을 이 컴포넌트가 직접 부른다** — 격자에서 `t` 를 prop 으로 내려보내면 카드마다
+  // 인자가 하나 늘고, 그 인자는 이 칩이 그리는 세 문구에만 쓰인다. 화면이므로 훅이 맞다
+  // (화면 밖 순수 함수만 `Translate` 를 인자로 받는다 — `i18n/index.ts` 머리말).
+  const t = useT();
   const { stale, unknown } = staleRunners({
     agents: [{ id: handle, runnerVersion }],
     live: new Set([handle]),
@@ -403,10 +407,22 @@ function VersionChip({ handle, runnerVersion, appVersion, onRelaunch }: {
         data-version="unknown"
         className="inline-block rounded border border-dashed border-border px-1.5 py-px text-meta text-fg-subtle"
       >
-        버전 모름
+        {t('grid.version.unknown')}
       </span>
     );
   }
+
+  /*
+    **여기부터 `runnerVersion` 은 값이 있다.** 위 `unknown` 갈래가 `null` 과 `'unknown'`
+    을 다 걸러 냈기 때문인데(`runnerVersions.ts` 의 판정), 그 사실은 `staleRunners` 의
+    반환값 안에 있어 타입으로는 흘러나오지 않는다.
+
+    사전을 지나면서 이것이 **드러났다**: 전에는 `{runnerVersion}` 을 그대로 그려 `null`
+    이 조용히 빈 칸이 됐고, 지금은 자리표시자 인자라 타입이 막는다. 좁히는 자리를 여기
+    한 번 두어 아래 세 갈래가 같은 값을 쓴다 — 갈래마다 `?? ''` 를 적으면 그 셋 중
+    하나가 빈 칩을 그리는 날이 온다.
+  */
+  const version = runnerVersion ?? '';
 
   // 최신. **회색 칩으로 조용히 적는다** — 정상에는 표시를 붙이지 않는다는 규칙에서 버전은
   // 예외다(문서: *"'맞다'를 확인하러 오는 값"*). 손잡이는 없다: 갈아 끼울 것이 없다.
@@ -417,7 +433,7 @@ function VersionChip({ handle, runnerVersion, appVersion, onRelaunch }: {
         data-version="current"
         className="inline-block rounded bg-surface-sunken px-1.5 py-px text-meta text-fg-muted"
       >
-        {runnerVersion}
+        {t('grid.version.current', { version })}
       </span>
     );
   }
@@ -442,7 +458,7 @@ function VersionChip({ handle, runnerVersion, appVersion, onRelaunch }: {
   if (!onRelaunch) {
     return (
       <span data-testid={`agent-version-${handle}`} data-version="stale" className={shape}>
-        {runnerVersion} · 뒤처짐
+        {t('grid.version.stale', { version })}
       </span>
     );
   }
@@ -452,14 +468,14 @@ function VersionChip({ handle, runnerVersion, appVersion, onRelaunch }: {
       data-version="stale"
       // 색은 스크린리더에 아무 말도 하지 않는다(`#443`). 칩 글자가 `↻` 로 끝나므로 그것이
       // 무엇을 하는 것인지 접근 이름이 말해야 한다.
-      aria-label={`${handle} 러너 재기동 — ${runnerVersion} 은 앱보다 뒤처졌다`}
+      aria-label={t('grid.version.staleAction', { handle, version })}
       // 포커스 링을 따로 안 붙인다 — 전역 `:focus-visible`(`index.css`)이 준다. `GLYPH_FOCUS`
       // 는 **얼굴 글리프 전용**이다: 그것들은 `opacity-50` 으로 숨어 있어 `opacity-100` 을
       // 함께 켜야 하는데(그 상수 주석), 이 칩은 평소에도 또렷하므로 그 조합이 필요 없다.
       className={`${shape} hover:bg-warning-surface-strong`}
       onClick={(e) => { e.stopPropagation(); onRelaunch(); }}
     >
-      {runnerVersion} · 뒤처짐 <span aria-hidden="true">{'↻'}</span>
+      {t('grid.version.stale', { version })} <span aria-hidden="true">{'↻'}</span>
     </button>
   );
 }
@@ -584,7 +600,8 @@ export function AgentGrid<T extends AgentCardSubject>({
   place?: AgentGridPlace;
 }) {
   const [query, setQuery] = useState('');
-  // 활동 경과는 언어를 따른다(`lib/time.ts`). 이 카드의 나머지 문자열은 아직 한국어다.
+  // 이 격자의 말은 전부 `grid.*` 를 지난다. 활동 경과만 `lib/time.ts` 가 낸다 —
+  // *"숫자는 `Intl` 이, 뜻은 사전이"*.
   const t = useT();
   const locale = useLocale();
   const s = PLACE[place];
@@ -612,16 +629,16 @@ export function AgentGrid<T extends AgentCardSubject>({
           <span aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-fg-subtle">⌕</span>
           <input
             data-testid="agent-search"
-            aria-label="에이전트 검색"
+            aria-label={t('grid.search.label')}
             className="w-full rounded-lg border border-border bg-field py-2 pl-8 pr-14
                        text-fg placeholder-fg-subtle"
-            placeholder="이름으로 찾기"
+            placeholder={t('grid.search.placeholder')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
           {/* 개수는 **검색창 안**이다(목업) — 몇 개를 뒤지고 있는지가 찾기 전에 보여야 한다. */}
           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-meta text-fg-subtle">
-            {shown.length}개
+            {t('grid.search.count', { count: shown.length })}
           </span>
         </div>
       </div>
@@ -681,7 +698,7 @@ export function AgentGrid<T extends AgentCardSubject>({
                 <span aria-hidden="true" className={`${s.faceText} leading-none`}>+</span>
               </span>
             )}
-            <span className="text-meta text-fg-muted">새 에이전트</span>
+            <span className="text-meta text-fg-muted">{t('grid.search.create')}</span>
           </button>
         )}
 
@@ -921,18 +938,18 @@ export function AgentGrid<T extends AgentCardSubject>({
                   {/* `harness` 가 없으면 그 줄을 안 그린다 — 없는 것을 있다고 하지 않는다
                       (design.md §4). 설정 화면은 `AgentView` 를 넘기므로 늘 있다. */}
                   {a.harness !== undefined && (
-                    <InfoRow label="하네스">
+                    <InfoRow label={t('grid.card.harness')}>
                       <span className="block truncate">{a.harness}</span>
                       {/* **모델이 `null` 이면 `하네스 기본값`**(`AgentConfig.model` 의 계약).
                           빈 칸으로 두면 "모델을 모른다"로 읽히는데, `null` 은 모르는 것이
                           아니라 **하네스가 고른다는 결정**이다. */}
                       <span className="block truncate text-fg-subtle">
-                        {a.model ?? '하네스 기본값'}
+                        {a.model ?? t('grid.card.harnessDefault')}
                       </span>
                     </InfoRow>
                   )}
                   {a.runnerVersion !== undefined && (
-                    <InfoRow label="러너">
+                    <InfoRow label={t('grid.card.runner')}>
                       <VersionChip
                         handle={a.handle}
                         runnerVersion={a.runnerVersion}
@@ -948,7 +965,7 @@ export function AgentGrid<T extends AgentCardSubject>({
                     </InfoRow>
                   )}
                   {a.lastTurnAt !== undefined && (
-                    <InfoRow label="활동">
+                    <InfoRow label={t('grid.card.lastTurn')}>
                       {/* 계산은 `lib/lastTurn.ts` 한 벌이다 — 상세의 `lastTurnLabel` 이 같은
                           함수 위에 접두만 붙인다. 여기서 접두를 빼는 이유는 왼쪽 `활동`
                           라벨이 이미 그 말을 하기 때문이다(그 모듈 주석). */}
@@ -970,7 +987,7 @@ export function AgentGrid<T extends AgentCardSubject>({
                       data-testid={`agent-stopping-${a.handle}`}
                       className="mt-1 whitespace-normal text-meta text-warning"
                     >
-                      멈추는 중 · 러너가 아직 못 봤다
+                      {t('grid.card.stopping')}
                     </p>
                   )}
                   {/*
@@ -988,7 +1005,7 @@ export function AgentGrid<T extends AgentCardSubject>({
                       data-testid={`agent-retiring-${a.handle}`}
                       className="mt-1 whitespace-normal text-meta text-accent"
                     >
-                      물러나는 중 · 진행 중인 턴을 끝내고 있다
+                      {t('grid.card.retiring')}
                     </p>
                   )}
                 </div>
@@ -1023,7 +1040,9 @@ export function AgentGrid<T extends AgentCardSubject>({
                 */
                 <button
                   data-testid={`agent-relaunch-${a.handle}`}
-                  aria-label={`${a.handle} ${face === 'failed' ? '다시 띄우기' : '실행하기'}`}
+                  aria-label={face === 'failed'
+                    ? t('grid.card.relaunchFailed', { handle: a.handle })
+                    : t('grid.card.relaunch', { handle: a.handle })}
                   className={`absolute left-1/2 top-0 flex ${s.glyph} -translate-x-1/2 items-center
                               justify-center rounded-full leading-none opacity-50 transition
                               group-hover:opacity-100 ${GLYPH_FOCUS} ${
@@ -1055,7 +1074,7 @@ export function AgentGrid<T extends AgentCardSubject>({
               {canStop && onStop && (
                 <button
                   data-testid={`agent-stop-${a.handle}`}
-                  aria-label={`${a.handle} 멈추기`}
+                  aria-label={t('grid.card.stop', { handle: a.handle })}
                   className={`absolute left-1/2 top-0 flex ${s.glyph} -translate-x-1/2 items-center
                               justify-center rounded-full leading-none text-fg opacity-0 transition
                               group-hover:opacity-100 ${GLYPH_FOCUS}`}
@@ -1074,7 +1093,9 @@ export function AgentGrid<T extends AgentCardSubject>({
             못 찾았을 때 화면에서 가장 작은 글자가 유일한 설명이 된다. */}
         {shown.length === 0 && (
           <p className="col-span-full py-6 text-center text-fg-muted">
-            {query.trim() ? `"${query.trim()}" 에 맞는 에이전트가 없다` : '아직 에이전트가 없다'}
+            {query.trim()
+              ? t('grid.search.noMatch', { query: query.trim() })
+              : t('grid.search.empty')}
           </p>
         )}
       </div>
@@ -1089,7 +1110,12 @@ export function AgentGrid<T extends AgentCardSubject>({
           data-testid={`agent-runner-failed-${a.id}`}
           className="mt-2 whitespace-normal text-meta text-danger"
         >
-          @{a.handle} 기동 실패{runnerStates[a.id]?.message ? ` — ${runnerStates[a.id]!.message}` : ''}
+          {/* 사유(`message`)는 **`lib/runnerLauncher.ts` 가 낸다** — 이 파일 밖이라 감싸는
+              틀만 사전을 지난다(`en.ts` 의 grid 머리말 '안 넣은 것'). 사유가 있고 없고로
+              문구를 가르는 것은 `sidebar.runner.launchFailed` 와 같은 모양이다. */}
+          @{a.handle} {runnerStates[a.id]?.message
+            ? t('grid.runner.launchFailedReason', { reason: runnerStates[a.id]!.message! })
+            : t('grid.runner.launchFailed')}
         </p>
       ))}
 
@@ -1110,7 +1136,8 @@ export function AgentGrid<T extends AgentCardSubject>({
           data-testid={`agent-runner-harness-${a.id}`}
           className="mt-2 whitespace-normal text-meta text-warning"
         >
-          @{a.handle} {runnerStates[a.id]?.message ?? '하네스를 찾을 수 없다'}
+          {/* 러너가 사유를 주면 **그것이 이긴다** — 사전의 문구는 그 값이 없을 때만 선다. */}
+          @{a.handle} {runnerStates[a.id]?.message ?? t('grid.runner.harnessMissing')}
         </p>
       ))}
 
@@ -1129,8 +1156,7 @@ export function AgentGrid<T extends AgentCardSubject>({
         if (unknown.length === 0) return null;
         return (
           <p data-testid="agent-presence-unknown" className="mt-2 whitespace-normal text-meta text-fg-muted">
-            서버와 끊겨 {unknown.length}개 에이전트의 생사를 알 수 없다 — 마지막으로 본 상태이지 지금 상태가 아니다.
-            다시 붙으면 갱신된다.
+            {t('grid.runner.presenceUnknown', { count: unknown.length })}
           </p>
         );
       })()}
