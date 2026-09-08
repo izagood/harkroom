@@ -89,7 +89,8 @@ const ATTACHMENTS = `coalesce((
 export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
   author_id as "authorId", body, kind, meta, created_at as "createdAt",
   edited_at as "editedAt", ${REACTIONS}, ${ATTACHMENTS},
-  null::int as "replyCount", null::text as "lastReplyAt", null::text[] as "participantIds",
+  null::int as "replyCount", null::int as "activityCount",
+  null::text as "lastReplyAt", null::text[] as "participantIds",
   null::int as "openAskHumanCount", null::text[] as "openAskAccountIds", null::jsonb as "openAskLinks",
   null::int as "failureCount", null::int as "unresolvedFailureCount",
   null::text as "lastKind", null::text as "lastAuthorId",
@@ -208,8 +209,23 @@ LEFT JOIN LATERAL (
 ) thread_last ON true`;
 
 // 스레드 메타데이터: 루트 메시지에만 계산. LATERAL join으로 같은 쿼리에서 계산한다 (N+1 방지).
-// 진행 설명(kind='progress')도 답글 수에 포함한다. 사용자가 "답글 3개"를 보고 열었을 때
-// 진행 설명도 포함되어 있으면 그 수를 이해할 수 있다. 제외하면 개수가 안 맞는 것처럼 보여서 혼란스러운데.
+//
+// **답글 수는 화면이 답글로 그리는 것만 센다**(2026-09-09). 여기 있던 주석은 반대를 적어
+// 두었다 — *"진행 설명도 답글 수에 포함한다 … 제외하면 개수가 안 맞는 것처럼 보인다."*
+// 그 근거는 진행이 말풍선으로 흐르던 시절의 것이고, `#144` 이후로는 성립하지 않는다:
+// 스레드는 연속된 `progress` 를 **상태 한 줄**로 접고(`ProgressRow`), `wake` 는 대기 줄로
+// 그린다(`WakeRow`). 그래서 "답글 2개" 를 눌러 열면 말풍선이 하나뿐이었다 — 사용자가
+// 2026-09-09 에 화면 둘을 나란히 놓고 지적한 그 상태다(실측: 진행 1 + 결과 1 = `2`).
+//
+// 세는 기준은 **러너의 기준과 같은 하나**다: `progress`·`wake` 는 결과 발화가 아니다
+// (`shared::countsAsReply` · `agent/src/prompt.ts::countOwnPostsSince`). 셋이 같은 문장을
+// 쓰지 않으면 화면과 러너가 같은 스레드를 다르게 센다. SQL 은 그 함수를 부를 수 없어
+// 목록을 여기 다시 적는다 — **종류가 늘면 두 자리를 함께 고친다.**
+//
+// **`activity_count` 는 그 대신 남는다** — 접힌 진행만 있는 스레드에서도 요약 줄이 서야
+// 하기 때문이다. 그 줄이 사라지면 `작업 중` 배지도 함께 사라져, 열어 보지 않은 스레드가
+// **도는지 끝났는지 화면에서 알 수 없다**(그것이 아래 `THREAD_STATE_FACTS` 가 존재하는
+// 이유이기도 하다). 답글 수는 `0` 이라 글자로 그려지지 않고(규칙 06), 자리만 남는다.
 //
 // **참여자 순서는 '마지막으로 말한 순'이다**(identity 문서 · Task 13). 원래는
 // `ARRAY_AGG(DISTINCT author_id)` 였는데, `DISTINCT` 가 uuid 로 정렬해 버려 **순서가 사실상
@@ -219,8 +235,9 @@ LEFT JOIN LATERAL (
 // 그래서 저자별 최근 발화 시각으로 정렬한 뒤 배열로 만든다. 화면은 **앞에서부터** 셋을
 // 취하므로 방금 말한 사람이 항상 보인다.
 const THREAD_STATS = `LEFT JOIN LATERAL (
-  SELECT COUNT(*)::int as reply_count,
-    MAX(created_at)::text as last_reply_at,
+  SELECT COUNT(*) FILTER (WHERE kind NOT IN ('progress', 'wake'))::int as reply_count,
+    COUNT(*)::int as activity_count,
+    MAX(created_at) FILTER (WHERE kind NOT IN ('progress', 'wake'))::text as last_reply_at,
     COALESCE((
       SELECT ARRAY_AGG(author_id ORDER BY last_at DESC)
       FROM (
@@ -253,6 +270,7 @@ const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.threa
   case when m.deleted_at is null then (${REACTIONS.replace(/message\./g, 'm.').replace(/ as reactions$/, '')}) else '[]'::json end as reactions,
   case when m.deleted_at is null then (${ATTACHMENTS.replace(/message\./g, 'm.').replace(/ as attachments$/, '')}) else '[]'::json end as attachments,
   case when m.thread_root_id is null then thread_stats.reply_count end as "replyCount",
+  case when m.thread_root_id is null then thread_stats.activity_count end as "activityCount",
   case when m.thread_root_id is null then thread_stats.last_reply_at end as "lastReplyAt",
   case when m.thread_root_id is null then thread_stats.participant_ids end as "participantIds",
   case when m.thread_root_id is null then thread_state.open_ask_human_count end as "openAskHumanCount",
@@ -1011,7 +1029,8 @@ export async function searchMessages(
     `select m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
        m.author_id as "authorId", m.body, m.kind, m.meta, m.created_at as "createdAt",
        m.edited_at as "editedAt", '[]'::json as reactions, '[]'::json as attachments,
-       null::int as "replyCount", null::text as "lastReplyAt", null::text[] as "participantIds",
+       null::int as "replyCount", null::int as "activityCount",
+  null::text as "lastReplyAt", null::text[] as "participantIds",
        m.also_in_channel as "alsoInChannel"
      from message m
      join channel c on c.id = m.channel_id

@@ -1,5 +1,5 @@
 import type { AccountStatus, AddTeamToChannelResult, AgentView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@murmur/shared';
-import { notifyLevelOf } from '@murmur/shared';
+import { countsAsReply, notifyLevelOf } from '@murmur/shared';
 import { ApiClient, ApiError } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
@@ -418,7 +418,9 @@ export class Controller {
         this.bumpUnread(e.message.channelId, e.message.authorId);
         this.swallow(this.announceNewMessage(e.message));
         if (e.message.threadRootId) {
-          store.incrementReplyCount(e.message.channelId, e.message.threadRootId);
+          store.bumpThreadCounts(
+            e.message.channelId, e.message.threadRootId, 1, countsAsReply(e.message.kind),
+          );
         }
         // 서버는 기동 시 투영용 system 계정을 만든다 — 그보다 먼저 부트스트랩한 클라이언트는
         // 그 계정을 모르고, 작성자가 '…'로 표시된다. 디렉터리는 정적이 아니다.
@@ -428,11 +430,26 @@ export class Controller {
         // 같은 id 로 덮어쓰면 upsert 가 제자리 교체한다.
         store.upsertMessages(e.message.channelId, [e.message]);
         break;
-      case 'message.deleted':
+      case 'message.deleted': {
+        /**
+         * **지우면 수도 줄어야 한다.** 여기서 집계를 되돌리지 않아 `message.created` 만
+         * 더하고 아무도 빼지 않았고, 답글을 지운 채널은 다시 받아오기 전까지 없는 답글을
+         * 셌다(2026-09-09).
+         *
+         * 지워질 행에서 재료를 먼저 읽는다 — `removeMessage` 뒤에는 이 메시지가 어느
+         * 스레드의 무엇이었는지 알 방법이 없다(삭제 이벤트에는 id 와 채널뿐이다).
+         * 스토어에 없으면(아직 안 받아온 채널) 아무것도 하지 않는다: 모르는 것을
+         * 짐작해 빼면 맞는 수를 틀리게 만든다.
+         */
+        const gone = (store.messages[e.channelId] ?? []).find((m) => m.id === e.messageId);
         store.removeMessage(e.channelId, e.messageId);
+        if (gone?.threadRootId) {
+          store.bumpThreadCounts(e.channelId, gone.threadRootId, -1, countsAsReply(gone.kind));
+        }
         // 루트가 사라진 스레드를 계속 열어 두면 답글만 남은 빈 패널에 갇힌다.
         if (store.threadRootId === e.messageId) store.set({ threadRootId: null });
         break;
+      }
       case 'reaction.added':
       case 'reaction.removed':
         store.applyReaction(e.channelId, e.messageId, e.emoji, e.accountId, e.type === 'reaction.added');

@@ -1,7 +1,12 @@
 # internal working docs — never committed (any directory named superpowers)
 superpowers/
 
-node_modules/
+# **슬래시가 없다.** `node_modules/` 는 **디렉터리만** 가린다 — 이 저장소를 별도
+# worktree 로 검증할 때 흔히 쓰는 `ln -s <repo>/node_modules .` 심링크는 git 이
+# 디렉터리가 아니라 **파일**로 보므로 그 패턴을 그대로 빠져나가, `git add -A` 에
+# 딸려 올라간다. 실측(2026-09-09): 그렇게 올라간 심링크 하나가 CI 의
+# `pnpm install` 을 `ENOTDIR: not a directory, mkdir '.../node_modules'` 로 죽였다.
+node_modules
 dist/
 target/
 .env

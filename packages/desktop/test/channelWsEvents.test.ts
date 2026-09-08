@@ -240,6 +240,63 @@ describe('스레드 답글 이벤트를 받는 데스크탑 (#395)', () => {
     expect(m!.replyCount).toBe(1);
   });
 
+  /**
+   * **진행은 답글 수를 올리지 않는다**(2026-09-09). 화면이 그것을 말풍선이 아니라 상태
+   * 한 줄로 접으므로(`ProgressRow`), 세면 "답글 2개인데 말풍선은 하나"가 된다 —
+   * 사용자가 실제로 지적한 화면이다. 대신 활동 수는 오른다: 요약 줄이 서야 그 위의
+   * `작업 중` 배지도 선다.
+   */
+  it('진행 답글은 replyCount 를 올리지 않고 activityCount 만 올린다', async () => {
+    const { callbacks } = await startWith();
+    useAppStore.getState().upsertMessages('c1', [
+      msg('m-root', 'c1', 1, 'root', 'u1', { replyCount: 0, activityCount: 0 }),
+    ]);
+
+    callbacks.current!.onEvent({
+      type: 'message.created',
+      message: msg('m-p', 'c1', 2, '보는 중', 'u2', { threadRootId: 'm-root', kind: 'progress' }),
+      audience: 'all',
+    });
+
+    const m = useAppStore.getState().messages['c1']!.find((m) => m.id === 'm-root');
+    expect(m!.replyCount).toBe(0);
+    expect(m!.activityCount).toBe(1);
+  });
+
+  /**
+   * **지우면 수도 줄어야 한다.** `message.created` 만 더하고 아무도 빼지 않아, 답글을
+   * 지운 채널은 다시 받아오기 전까지 **없는 답글을 셌다**.
+   */
+  it('message.deleted 로 답글이 사라지면 부모의 수가 함께 줄어든다', async () => {
+    const { callbacks } = await startWith();
+    useAppStore.getState().upsertMessages('c1', [
+      msg('m-root', 'c1', 1, 'root', 'u1', { replyCount: 1, activityCount: 1 }),
+      msg('m-reply', 'c1', 2, 'reply', 'u2', { threadRootId: 'm-root' }),
+    ]);
+
+    callbacks.current!.onEvent({ type: 'message.deleted', channelId: 'c1', messageId: 'm-reply', audience: 'all' });
+
+    const m = useAppStore.getState().messages['c1']!.find((m) => m.id === 'm-root');
+    expect(m!.replyCount).toBe(0);
+    expect(m!.activityCount).toBe(0);
+  });
+
+  it('같은 삭제가 두 번 와도 수가 음수로 내려가지 않는다', async () => {
+    const { callbacks } = await startWith();
+    useAppStore.getState().upsertMessages('c1', [
+      msg('m-root', 'c1', 1, 'root', 'u1', { replyCount: 1, activityCount: 1 }),
+      msg('m-reply', 'c1', 2, 'reply', 'u2', { threadRootId: 'm-root' }),
+    ]);
+
+    callbacks.current!.onEvent({ type: 'message.deleted', channelId: 'c1', messageId: 'm-reply', audience: 'all' });
+    // 두 번째는 스토어에 그 행이 없으므로 아무것도 빼지 않는다(모르는 것을 짐작하지 않는다).
+    callbacks.current!.onEvent({ type: 'message.deleted', channelId: 'c1', messageId: 'm-reply', audience: 'all' });
+
+    const m = useAppStore.getState().messages['c1']!.find((m) => m.id === 'm-root');
+    expect(m!.replyCount).toBe(0);
+    expect(m!.activityCount).toBe(0);
+  });
+
   it('채널 본문에는 답글이 여전히 안 보인다(회귀선 — 의도된 설계)', async () => {
     const { callbacks } = await startWith();
     useAppStore.getState().set({ activeChannelId: 'c1' });

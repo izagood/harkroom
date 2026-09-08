@@ -4,7 +4,7 @@ import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
-import { listMessages } from '../src/services/messages.js';
+import { listMessages, postMessage } from '../src/services/messages.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -52,7 +52,53 @@ const post = (token: string, body: string, extra: object = {}) =>
     payload: { body, ...extra },
   });
 
+/**
+ * 진행·대기는 REST 로 못 올린다(그 경로에 `kind` 가 없다) — 러너가 MCP 로 올리는 것들이다.
+ * 여기서 재는 것은 **집계**이므로 서비스로 바로 넣는다.
+ */
+const postKind = (authorId: string, body: string, kind: 'progress' | 'wake', threadRootId: string) =>
+  postMessage(pool, { channelId, authorId, body, threadRootId, kind, attachmentIds: [] });
+
 describe('thread metadata', () => {
+  /**
+   * **답글 수는 화면이 답글로 그리는 것만 센다**(2026-09-09).
+   *
+   * 여기 있던 규약은 반대였다 — 진행도 셌다. 그 시절에는 진행이 말풍선으로 흘러 수와
+   * 화면이 맞았지만, `#144` 이후 스레드는 연속된 진행을 상태 한 줄(`ProgressRow`)로 접고
+   * 대기를 대기 줄(`WakeRow`)로 그린다. 그래서 채널이 "답글 2개"라고 적은 스레드를 열면
+   * 말풍선이 하나뿐이었다(2026-09-09 실측 화면).
+   */
+  it('진행·대기는 답글 수에 들지 않는다 — 대신 activityCount 가 센다', async () => {
+    const root = await post(adminToken, 'root with progress');
+    const rootId = root.json().id as string;
+
+    await postKind(botAccountId, '보는 중', 'progress', rootId);
+    await postKind(botAccountId, '5분 뒤 다시', 'wake', rootId);
+    const answer = await post(botPat, '다 봤다', { threadRootId: rootId });
+    const answerAt = answer.json().createdAt as string;
+
+    const messages = await listMessages(pool, channelId, { limit: 10 });
+    const found = messages.find((m) => m.id === rootId);
+    expect(found!.replyCount).toBe(1);
+    // 자리를 세우는 수는 셋을 다 센다 — 진행만 있는 스레드에서도 요약 줄과 상태 배지가
+    // 서야 하기 때문이다.
+    expect(found!.activityCount).toBe(3);
+    // 마지막 '답글' 시각도 같은 기준이다 — 대기 줄의 시각은 답글 시각이 아니다.
+    expect(new Date(found!.lastReplyAt!).getTime()).toBeCloseTo(new Date(answerAt).getTime(), -2);
+  });
+
+  it('진행만 달린 스레드는 답글 0 · 활동 1 이다', async () => {
+    const root = await post(adminToken, 'root, progress only');
+    const rootId = root.json().id as string;
+    await postKind(botAccountId, '보는 중', 'progress', rootId);
+
+    const messages = await listMessages(pool, channelId, { limit: 10 });
+    const found = messages.find((m) => m.id === rootId);
+    expect(found!.replyCount).toBe(0);
+    expect(found!.activityCount).toBe(1);
+    expect(found!.lastReplyAt).toBeNull();
+  });
+
   it('root with no replies has count 0 and null lastReplyAt', async () => {
     const root = await post(adminToken, 'root message');
     const rootId = root.json().id as string;
@@ -61,6 +107,7 @@ describe('thread metadata', () => {
     expect(found).toBeDefined();
     expect(found!.threadRootId).toBeNull();
     expect(found!.replyCount).toBe(0);
+    expect(found!.activityCount).toBe(0);
     expect(found!.lastReplyAt).toBeNull();
     expect(found!.participantIds).toEqual([]);
   });
