@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { useActiveStore } from '../../state/communities';
 import { getController } from '../../state/controller';
 import { ApiError } from '../../lib/api';
+import { AVATAR_ACCEPT, AVATAR_FORMATS } from '../../lib/avatar';
 import { Identity } from '../Identity';
 import { ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
 import { AvatarStatus, useAvatarEdit } from './avatarEdit';
@@ -20,7 +21,7 @@ function AvatarRow() {
     (file: File | null, onProgress?: (f: number) => void) => getController().setAvatar(file, onProgress),
     [],
   );
-  const edit = useAvatarEdit(apply, '이미지 파일만 프로필 사진으로 쓸 수 있습니다.');
+  const edit = useAvatarEdit(apply);
 
   return (
     <div className="px-4 py-3">
@@ -32,7 +33,7 @@ function AvatarRow() {
             ref={edit.pickRef}
             type="file"
             data-testid="avatar-file"
-            accept="image/png,image/jpeg,image/gif,image/webp,image/avif"
+            accept={AVATAR_ACCEPT}
             className="hidden"
             onChange={edit.onPicked}
           />
@@ -75,6 +76,10 @@ function AvatarRow() {
           ))}
         </span>
       </div>
+      {/* 받아 주는 형식을 **오류가 나기 전에** 적어 둔다. 파일 창은 못 고르는 파일을 회색으로
+          죽일 뿐 이유를 말하지 않으므로, 목록이 없으면 사람은 무엇을 골라야 할지 모른 채
+          아무 일도 일어나지 않는 버튼을 다시 누른다. */}
+      <p className="mt-1 text-[11px] text-fg-subtle">{AVATAR_FORMATS}</p>
       <div className="flex justify-end">
         <AvatarStatus phase={edit.phase} />
       </div>

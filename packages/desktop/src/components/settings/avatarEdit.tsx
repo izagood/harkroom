@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { avatarErrorMessage } from '../../lib/avatar';
 
 /**
  * 사진 바꾸기의 **상태 하나**다(#159 · Task 15-4 후속).
@@ -41,12 +42,12 @@ export type AvatarEdit = {
  * `apply` 는 이 화면이 아는 쓰기 경로다(사람은 `setAvatar`, 에이전트는 `setAgentAvatar`).
  * 두 화면이 같은 단계를 각자 세면 한쪽만 고치는 날이 오므로 상태는 여기 한 벌만 둔다.
  *
- * `errorMessage` 를 받는 이유: 두 화면의 문구가 이미 달랐다("프로필 사진"·"사진"). 문구를
- * 여기서 하나로 합치면 이 커밋이 화면 글자까지 바꾸게 되고, 그건 이 고침의 일이 아니다.
+ * 실패 문장은 **받지 않는다** — `lib/avatar.ts` 의 `avatarErrorMessage` 하나가 원인별로
+ * 낸다. 화면마다 문장을 넘기던 동안은 무엇이 실패했든 "이미지 파일만 쓸 수 있습니다" 였고,
+ * 서버가 죽어 있어도 사람이 자기 파일을 의심했다. 받아 주는 형식이 늘 때 고칠 자리도 하나다.
  */
 export function useAvatarEdit(
   apply: (file: File | null, onProgress?: (fraction: number) => void) => Promise<void>,
-  errorMessage: string,
 ): AvatarEdit {
   const [phase, setPhase] = useState<AvatarPhase>({ kind: 'idle' });
   const pickRef = useRef<HTMLInputElement | null>(null);
@@ -85,15 +86,15 @@ export function useAvatarEdit(
         }
         : undefined);
       settle({ kind: 'done', removed: file === null });
-    } catch {
-      // 서버가 거절하는 가장 흔한 경우는 이미지가 아닌 파일이다(매직 바이트로 판정한다) —
-      // 확장자를 믿지 않으므로 `.png` 라는 이름만으로는 통과하지 못한다.
-      settle({ kind: 'error', message: errorMessage });
+    } catch (e) {
+      // 원인을 그대로 문장으로 옮긴다 — 확장자를 믿지 않는 서버 거절(`not_an_image`)과
+      // 네트워크 끊김은 사람이 해야 할 다음 행동이 다르다.
+      settle({ kind: 'error', message: avatarErrorMessage(e) });
     } finally {
       // 같은 파일을 다시 고를 수 있게 비운다 — 안 비우면 change 가 안 난다.
       if (pickRef.current) pickRef.current.value = '';
     }
-  }, [apply, errorMessage, settle]);
+  }, [apply, settle]);
 
   const busy = phase.kind === 'uploading' || phase.kind === 'applying' || phase.kind === 'removing';
 

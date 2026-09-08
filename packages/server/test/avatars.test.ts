@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin } from './helpers/fixtures.js';
+import { looksLikeSvg, startsLikeSvg, SVG_MAX_BYTES } from '../src/services/avatars.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -14,6 +15,13 @@ let adminId: string;
 let otherToken: string;
 let otherId: string;
 let storageRoot: string;
+/**
+ * 위 `app` 은 업로드 상한이 4 KiB 다(작은 파일로 빠르게 도는 것이 목적). SVG 상한(256 KiB)을
+ * **넘기는** 파일은 그 앞에서 413 으로 막혀 아바타 판정까지 가지 못한다 — 그래서 상한을
+ * 넉넉히 준 두 번째 서버를 같은 DB 위에 세운다. 토큰은 DB 에 있으니 그대로 쓴다.
+ */
+let bigApp: FastifyInstance;
+let bigStorageRoot: string;
 
 /** 진짜 PNG 시그니처(8바이트) + 뒤를 채우는 바이트. 판정은 앞 12바이트만 본다. */
 const PNG = Buffer.concat([
@@ -22,12 +30,18 @@ const PNG = Buffer.concat([
 ]);
 /** 이미지가 아닌 파일. `<script>` 를 담은 HTML 이 아바타로 전원에게 서빙되면 안 된다. */
 const HTML = Buffer.from('<html><script>alert(1)</script></html>');
+/** 그리기 도구가 내놓는 모양 그대로 — XML 선언이 앞에 붙는다. */
+const SVG = Buffer.from(
+  '<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4"/></svg>',
+);
 
 beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
   storageRoot = await mkdtemp(join(tmpdir(), 'murmur-avatar-'));
   app = await buildServer({ pool: db.pool, storage: { root: storageRoot, maxBytes: 4096 } });
+  bigStorageRoot = await mkdtemp(join(tmpdir(), 'murmur-avatar-big-'));
+  bigApp = await buildServer({ pool: db.pool, storage: { root: bigStorageRoot, maxBytes: SVG_MAX_BYTES * 4 } });
   ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
 
   const inv = await app.inject({
@@ -47,8 +61,9 @@ beforeAll(async () => {
   otherToken = login.json().token as string;
 });
 afterAll(async () => {
-  await app.close(); await stop();
+  await app.close(); await bigApp.close(); await stop();
   await rm(storageRoot, { recursive: true, force: true });
+  await rm(bigStorageRoot, { recursive: true, force: true });
 });
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -64,9 +79,11 @@ function multipart(filename: string, content: Buffer, contentType: string) {
   return { body: Buffer.concat([head, content, tail]), boundary };
 }
 
-async function upload(token: string, filename: string, content: Buffer, contentType: string): Promise<string> {
+async function upload(
+  token: string, filename: string, content: Buffer, contentType: string, on?: FastifyInstance,
+): Promise<string> {
   const m = multipart(filename, content, contentType);
-  const res = await app.inject({
+  const res = await (on ?? app).inject({
     method: 'POST', url: '/uploads',
     headers: { ...auth(token), 'content-type': `multipart/form-data; boundary=${m.boundary}` },
     payload: m.body,
@@ -75,8 +92,10 @@ async function upload(token: string, filename: string, content: Buffer, contentT
   return res.json().id as string;
 }
 
-const setAvatar = (token: string, payload: unknown) =>
-  app.inject({ method: 'PUT', url: '/accounts/me/avatar', headers: auth(token), payload: payload as object });
+const setAvatar = (token: string, payload: unknown, on?: FastifyInstance) =>
+  (on ?? app).inject({
+    method: 'PUT', url: '/accounts/me/avatar', headers: auth(token), payload: payload as object,
+  });
 
 const meView = async (token: string) =>
   (await app.inject({ method: 'GET', url: '/auth/me', headers: auth(token) })).json();
@@ -151,6 +170,62 @@ describe('#159 계정 프로필 사진', () => {
     expect(res.json().error.code).toBe('not_an_image');
     // 거절했으면 아무것도 걸리지 않았다.
     expect((await meView(adminToken)).avatarAttachmentId).toBe(before);
+  });
+
+  it('SVG 를 아바타로 걸 수 있다', async () => {
+    // 매직 바이트가 없어 이진 판정으로는 안 잡힌다. 그래도 사람이 프로필 사진으로 흔히
+    // 가진 파일이고, 그리는 자리가 `<img src={objectURL}>` 하나뿐이라 스크립트가 실행될
+    // 문맥이 없다 — 그래서 받는다.
+    const id = await upload(adminToken, 'me.svg', SVG, 'image/svg+xml');
+    const set = await setAvatar(adminToken, { attachmentId: id });
+    expect(set.statusCode).toBe(200);
+
+    const bytes = await app.inject({
+      method: 'GET', url: `/accounts/${adminId}/avatar`, headers: auth(otherToken),
+    });
+    expect(bytes.statusCode).toBe(200);
+    expect(bytes.headers['content-type']).toContain('image/svg+xml');
+    // 방어는 그대로다: inline 으로 내주지 않고 sniff 도 막는다. 예외를 뚫은 것이 아니다.
+    expect(bytes.headers['x-content-type-options']).toBe('nosniff');
+    expect(bytes.headers['content-disposition']).toContain('attachment');
+  });
+
+  it('스크립트를 담은 SVG 는 거절한다', async () => {
+    const evil = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+    const id = await upload(adminToken, 'evil.svg', evil, 'image/svg+xml');
+    const before = (await meView(adminToken)).avatarAttachmentId;
+
+    const res = await setAvatar(adminToken, { attachmentId: id });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('not_an_image');
+    expect((await meView(adminToken)).avatarAttachmentId).toBe(before);
+  });
+
+  it('상한을 넘긴 SVG 는 "SVG 가 아니다"가 아니라 크기로 거절한다', async () => {
+    // 이유를 뭉개면 SVG 를 들고 있는 사람이 "SVG 만 쓸 수 있습니다"를 듣는다. 경로가 많은
+    // 벡터 그림은 이 상한을 쉽게 넘으므로 지어낸 상황이 아니다.
+    const big = Buffer.concat([
+      Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">'),
+      Buffer.from('<rect x="0" y="0" width="1" height="1"/>'.repeat(8000)),
+      Buffer.from('</svg>'),
+    ]);
+    expect(big.length).toBeGreaterThan(SVG_MAX_BYTES);
+    const id = await upload(adminToken, 'big.svg', big, 'image/svg+xml', bigApp);
+    const before = (await meView(adminToken)).avatarAttachmentId;
+
+    const res = await setAvatar(adminToken, { attachmentId: id }, bigApp);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('svg_too_large');
+    expect((await meView(adminToken)).avatarAttachmentId).toBe(before);
+  });
+
+  it('상한을 넘긴 SVG 아닌 파일은 그대로 not_an_image 다', async () => {
+    // 크기 갈래가 생겼다고 이미지가 아닌 큰 파일까지 SVG 이야기를 들으면 안 된다.
+    const bigHtml = Buffer.concat([HTML, Buffer.alloc(SVG_MAX_BYTES + 1, 0x20)]);
+    const id = await upload(adminToken, 'big.html', bigHtml, 'text/html', bigApp);
+    const res = await setAvatar(adminToken, { attachmentId: id }, bigApp);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('not_an_image');
   });
 
   it('메시지에 붙은 첨부는 아바타로 걸 수 없다', async () => {
@@ -283,5 +358,48 @@ describe('에이전트 아바타 (Task 15-4)', () => {
       headers: auth(otherToken), payload: {},
     });
     expect(missing.statusCode).toBe(400);
+  });
+});
+
+/**
+ * SVG 판정을 함수로 직접 본다. 라우트를 지나는 검사는 한 번 통과하면 그것으로 끝이지만,
+ * 여기서 막는 것들은 **각각 다른 이유로** 막는 것이라 하나씩 세워 두어야 나중에 누가
+ * 정규식을 손댈 때 무엇이 깨졌는지 보인다.
+ */
+describe('looksLikeSvg', () => {
+  const svg = (inner: string) => Buffer.from(inner);
+
+  it('프롤로그가 붙어도 SVG 로 본다', () => {
+    expect(looksLikeSvg(svg('<svg xmlns="http://www.w3.org/2000/svg"/>'))).toBe(true);
+    expect(looksLikeSvg(svg('\ufeff  <?xml version="1.0"?><!-- 주석 --><svg viewBox="0 0 1 1"></svg>'))).toBe(true);
+    // 내부 서브셋이 없는 DOCTYPE 은 옛 그리기 도구가 흔히 붙인다 — 그걸로 튕기면 안 된다.
+    expect(looksLikeSvg(svg('<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "x.dtd"><svg/>'))).toBe(true);
+  });
+
+  it('SVG 가 아닌 것은 거절한다', () => {
+    expect(looksLikeSvg(HTML)).toBe(false);
+    expect(looksLikeSvg(svg('<html><body><svg/></body></html>'))).toBe(false);
+    expect(looksLikeSvg(PNG)).toBe(false);
+    expect(looksLikeSvg(svg('<svgx/>'))).toBe(false);
+  });
+
+  it('스크립트가 될 수 있는 조각을 거절한다', () => {
+    expect(looksLikeSvg(svg('<svg><script>alert(1)</script></svg>'))).toBe(false);
+    expect(looksLikeSvg(svg('<svg onload="alert(1)"/>'))).toBe(false);
+    expect(looksLikeSvg(svg('<svg><a href="javascript:alert(1)"><rect/></a></svg>'))).toBe(false);
+    expect(looksLikeSvg(svg('<svg><foreignObject><b>x</b></foreignObject></svg>'))).toBe(false);
+    // 엔티티를 선언할 수 있는 자리는 통째로 막는다(XXE·엔티티 폭탄).
+    expect(looksLikeSvg(svg('<!DOCTYPE svg [<!ENTITY a "b">]><svg/>'))).toBe(false);
+  });
+
+  it('startsLikeSvg 는 뿌리만 보고, 그것만으로 받아 주지 않는다', () => {
+    // 상한을 넘긴 파일의 **거절 이유**를 가르는 데만 쓰는 판정이다. 스크립트를 담았어도
+    // 뿌리가 svg 면 true 다 — 그래서 이것으로 통과시키면 안 된다는 것이 계약이다.
+    const evil = svg('<svg><script>alert(1)</script></svg>');
+    expect(startsLikeSvg(evil)).toBe(true);
+    expect(looksLikeSvg(evil)).toBe(false);
+    // 앞부분만 잘려 있어도 답한다(상한 넘는 파일은 앞 4 KiB 만 읽어 온다).
+    expect(startsLikeSvg(svg('<?xml version="1.0"?><svg viewBox="0 0 1 1"><rect'))).toBe(true);
+    expect(startsLikeSvg(HTML)).toBe(false);
   });
 });
