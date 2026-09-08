@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import type { ChannelFileRow } from '@murmur/shared';
 import { basename } from 'node:path';
+import { assertChannelVisible } from './channels.js';
 
 /** 서버 내부에서 쓰는 행. `storageKey` 는 여기까지만 산다. */
 export interface StoredAttachment {
@@ -168,4 +169,39 @@ export async function findDownloadTarget(
     },
     channelId: row.messageId === null ? null : row.channelId,
   };
+}
+
+/**
+ * 첨부 열람 거절 사유. 셋으로 나누는 이유는 REST 응답의 문구를 **그대로** 유지하기
+ * 위해서다 — 판정을 여기로 옮기면서 사용자가 보는 메시지가 뭉개지면, 리팩터가
+ * "동작은 그대로"라고 말할 수 없다.
+ */
+export type AttachmentDenial = 'not_found' | 'not_yours' | 'not_visible';
+
+/**
+ * "이 계정이 이 첨부를 볼 수 있나"를 판정한다 — 그리고 **이 판정은 한 벌만 있어야 한다.**
+ *
+ * 규칙 자체는 원래 `GET /attachments/:id` 안에 인라인으로 있었다. 라우트가 하나뿐일 때는
+ * 거기 있어도 맞았지만, MCP `attachment.fetch`(#585)가 같은 바이트를 다른 통로로 내주면서
+ * 사정이 바뀐다: 규칙을 옮겨 적으면 한쪽만 고쳐지고, 그 순간 새는 쪽은 **아무도 안 보는
+ * 통로**가 된다(사람은 REST 를 쓰고 에이전트가 MCP 를 쓴다).
+ *
+ * 두 가지를 판정한다.
+ *  - 메시지에 붙지 않은 업로드(`channelId === null`)는 **올린 사람만** 본다. 남이 id 를
+ *    맞혔을 때 열리면 게시 전 초안이 새는 경로가 된다.
+ *  - 붙은 첨부는 그 채널의 가시성을 **그대로** 따른다 — `assertChannelVisible` 을 부르고
+ *    여기서 규칙을 다시 쓰지 않는다.
+ */
+export async function resolveAttachmentFor(
+  pool: Pool, attachmentId: string, accountId: string,
+): Promise<{ ok: true; attachment: StoredAttachment } | { ok: false; denial: AttachmentDenial }> {
+  const target = await findDownloadTarget(pool, attachmentId);
+  if (!target) return { ok: false, denial: 'not_found' };
+
+  if (target.channelId === null) {
+    if (target.attachment.uploaderId !== accountId) return { ok: false, denial: 'not_yours' };
+  } else if (!(await assertChannelVisible(pool, target.channelId, accountId))) {
+    return { ok: false, denial: 'not_visible' };
+  }
+  return { ok: true, attachment: target.attachment };
 }

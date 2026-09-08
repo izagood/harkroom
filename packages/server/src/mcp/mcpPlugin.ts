@@ -19,6 +19,9 @@ import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC } from '../services/agentWakes.js';
 import { GUIDE } from './guide.js';
 import { recordRunnerVersion } from '../services/runnerVersion.js';
+import { resolveAttachmentFor } from '../services/attachments.js';
+import { AttachmentMissingError, type StorageBackend } from '../storage/local.js';
+import type { Readable } from 'node:stream';
 
 const MEMORY_SLUG_REGEX = /^core$|^mem\/[a-z0-9][a-z0-9_-]{0,63}((\/[a-z0-9][a-z0-9_-]{0,63})*)$/;
 
@@ -31,10 +34,56 @@ function jsonResult(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }] };
 }
 
+/**
+ * 그림으로 실을 타입. **허용 목록이다** — `contentType` 은 올린 클라이언트가 보낸 값이라
+ * 신뢰하지 않고(attachmentRoutes.ts 의 같은 판단), 여기 없는 것은 바이트를 싣지 않는다.
+ *
+ * 이 네 개인 이유: 모델이 실제로 그림으로 읽는 형식이 이것들이다. `image/svg+xml` 이
+ * 빠진 것은 크기나 취향 문제가 아니다 — SVG 는 마크업이고 `<script>` 를 담을 수 있어
+ * 이름만 이미지다(REST 쪽 `NEVER_INLINE` 이 같은 이유로 그것을 내려받기로만 내준다).
+ */
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+
+/**
+ * 그림으로 실어 줄 최대 원본 크기. base64 는 4/3 로 부풀므로 3MiB → 4MiB 가 되고,
+ * 그것이 한 요청에 이미지 하나로 실리는 실질 한계 안이다.
+ *
+ * 넘는 것을 **거절하지 않는다** — 메타데이터로 떨어뜨린다. 그래야 에이전트가 "무엇이
+ * 왔는지"는 알고, 정말 필요하면 REST 로 스트리밍해 받는다. 여기서 200MB 를 통째로
+ * base64 로 만들면 서버 메모리와 모델 컨텍스트를 함께 태운다.
+ */
+const IMAGE_MAX_BYTES = 3 * 1024 * 1024;
+
+/**
+ * 스트림을 메모리로 모은다. 도구 응답은 base64 **문자열** 하나라 스트리밍할 수가 없다 —
+ * REST 는 스트림을 그대로 흘려보내지만 여기서는 전부 손에 들어야 한다.
+ *
+ * 모으는 동안에도 한계를 다시 센다. 위에서 `sizeBytes` 로 이미 걸렀지만 그것은 **DB 가
+ * 기억하는 크기**다. 파일이 그것과 다르면(잘못된 마이그레이션·수동 조작) 한계가 없는 것과
+ * 같아지므로, 실제로 흘러온 바이트로 한 번 더 막는다.
+ */
+async function collect(stream: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of stream) {
+    total += (chunk as Buffer).length;
+    if (total > IMAGE_MAX_BYTES) {
+      stream.destroy();
+      throw new OversizeError(`read ${total}B, over the inline limit`);
+    }
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
+/** 파일이 DB 가 기억하는 크기보다 큰 경우. 이 하나만 위 `collect` 가 던진다. */
+class OversizeError extends Error {}
+
 function buildMcpServer(
   pool: Pool,
   account: AccountView,
   lifecycle: Lifecycle,
+  storage: StorageBackend,
 ): McpServer {
   const server = new McpServer({ name: 'murmur', version: '0.1.0' });
 
@@ -582,6 +631,87 @@ function buildMcpServer(
     return jsonResult({ wake: result.wake, message: result.message });
   });
 
+  /**
+   * 첨부 바이트 받기(#585). **이미지는 그림으로 이 응답에 실린다.**
+   *
+   * 왜 REST 가 있는데도 필요한가: 프롬프트에 `curl` 안내를 넣어 셸이 있는 하네스는 이미
+   * 열 수 있게 됐지만(agent/src/prompt.ts::attachmentHowTo), **셸이 없는 하네스의
+   * 에이전트는 그 안내로 아무것도 못 한다.** 그쪽에는 도구 호출이 유일한 통로다.
+   *
+   * 판정을 여기서 다시 쓰지 않는다 — REST 다운로드와 **같은 함수**(`resolveAttachmentFor`)를
+   * 부른다. 두 통로가 같은 바이트를 내주는데 규칙이 두 벌이면, 한쪽만 고친 날에 새는 쪽은
+   * 아무도 안 보는 통로가 된다.
+   *
+   * 이미지가 아니거나 크면 **바이트 대신 메타데이터**를 준다(아래 IMAGE_TYPES·
+   * IMAGE_MAX_BYTES 주석). 실패가 아니라 "이렇게 받아라"까지 함께 답한다.
+   */
+  server.registerTool('attachment.fetch', {
+    description: '첨부 바이트 받기 — 이미지는 그림으로 실린다. id 는 프롬프트의 [첨부: …] 에 있다',
+    inputSchema: { attachmentId: z.string().uuid() },
+  }, async ({ attachmentId }) => {
+    const resolved = await resolveAttachmentFor(pool, attachmentId, account.id);
+    if (!resolved.ok) {
+      // 사유를 뭉개지 않는다 — 에이전트가 할 다음 행동이 다르다(`not_found` 는 id 를 다시
+      // 보고, `not_visible` 은 사람에게 묻는다). REST 와 같은 문장으로 답한다.
+      if (resolved.denial === 'not_found') {
+        return jsonResult({ error: { code: 'not_found', message: 'no such attachment' } });
+      }
+      return jsonResult({
+        error: {
+          code: 'forbidden',
+          message: resolved.denial === 'not_yours' ? 'not your upload' : 'not a member of this dm channel',
+        },
+      });
+    }
+    const { id, filename, contentType, sizeBytes } = resolved.attachment;
+    const meta = { id, filename, contentType, sizeBytes };
+
+    if (!IMAGE_TYPES.includes(contentType) || sizeBytes > IMAGE_MAX_BYTES) {
+      return jsonResult({
+        attachment: meta,
+        // 왜 바이트가 없는지 **이유를 말한다.** "빈 응답"으로 두면 에이전트는 받기가
+        // 실패한 것과 구별하지 못하고 같은 호출을 다시 한다.
+        note: sizeBytes > IMAGE_MAX_BYTES
+          ? `too large to inline (${sizeBytes}B > ${IMAGE_MAX_BYTES}B)`
+          : 'not an inlineable image type; bytes are not carried in this response',
+        // 셸이 없는 하네스에는 이 경로가 **막힌 길**이라는 것을 말해 준다. 그러지 않으면
+        // 에이전트는 이 안내를 만족시키려 시도했다가 조용히 실패하고 같은 자리를 돈다 —
+        // 못 여는 것을 아는 것이 사람에게 물어볼 근거가 된다.
+        download: `GET /attachments/${id} (Authorization: Bearer $MURMUR_PAT) — needs shell/HTTP access; if you have neither, say so and ask the human instead of guessing`,
+      });
+    }
+
+    let body: Buffer;
+    try {
+      body = await collect(await storage.read(resolved.attachment.storageKey));
+    } catch (err) {
+      if (err instanceof OversizeError) {
+        return jsonResult({
+          attachment: meta,
+          note: `file is larger than its recorded size and exceeds ${IMAGE_MAX_BYTES}B`,
+          download: `GET /attachments/${id} (Authorization: Bearer $MURMUR_PAT)`,
+        });
+      }
+      if (err instanceof AttachmentMissingError) {
+        // 행은 있는데 파일이 없다(#257). REST 와 같은 코드로 답한다 — 찾은 경로는 싣지
+        // 않는다(서버 파일시스템 경로를 알려 주는 셈이고, 에이전트가 할 일이 달라지지 않는다).
+        return jsonResult({
+          error: { code: 'attachment_missing', message: 'attachment file not found on the server' },
+        });
+      }
+      throw err;
+    }
+
+    // 텍스트 한 줄을 그림 **앞에** 같이 싣는다. 그림만 주면 에이전트는 자기가 무엇을 보고
+    // 있는지(어느 첨부인지) 말할 수 없어, 나중에 "그 스크린샷"을 가리킬 근거가 없다.
+    return {
+      content: [
+        { type: 'text' as const, text: JSON.stringify({ attachment: meta }) },
+        { type: 'image' as const, data: body.toString('base64'), mimeType: contentType },
+      ],
+    };
+  });
+
   return server;
 }
 
@@ -590,6 +720,7 @@ export async function registerMcp(
   pool: Pool,
   lifecycle: Lifecycle,
   agentPresence: AgentPresence,
+  storage: StorageBackend,
 ): Promise<void> {
   app.post('/mcp', async (req, reply) => {
     if (!req.account || req.account.kind !== 'agent') {
@@ -607,7 +738,7 @@ export async function registerMcp(
      * 진행 메시지를 올리는 것도, 메모리를 읽는 것도 전부 "나 여기 있다"다.
      */
     agentPresence.mark(req.account.id);
-    const server = buildMcpServer(pool, req.account, lifecycle);
+    const server = buildMcpServer(pool, req.account, lifecycle, storage);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     reply.hijack();
     reply.raw.on('close', () => {

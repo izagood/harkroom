@@ -105,7 +105,7 @@ describe('mcp surface', () => {
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
     expect(names).toEqual([
-      'account.me', 'channel.doc', 'channel.list', 'inbox.poll', 'inbox.read',
+      'account.me', 'attachment.fetch', 'channel.doc', 'channel.list', 'inbox.poll', 'inbox.read',
       'memory.get', 'memory.list', 'memory.set',
       'message.ask', 'message.fail', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.report', 'message.search', 'message.unreact',
       'skill.propose', 'turn.wake', 'workspace.guide',
