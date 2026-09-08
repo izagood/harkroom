@@ -259,7 +259,14 @@ export class ApiClient {
     return this.req('PATCH', `/channels/${channelId}/messages/${messageId}`, { body });
   }
 
-  deleteMessage(channelId: string, messageId: string): Promise<void> {
+  /**
+   * 메시지를 지운다. **돌아오는 것이 두 가지다.**
+   *
+   * 보통은 204(=`undefined`) 다 — 행이 사라졌다. 답글이 남은 스레드 머리를 지웠을 때만
+   * 200 으로 **자리표시자 행**이 온다(본문·첨부·리액션이 떼어진 행). 그 스레드는 계속
+   * 열려 있어야 하므로 부른 쪽은 목록에서 빼는 대신 이 행을 덮는다.
+   */
+  deleteMessage(channelId: string, messageId: string): Promise<MessageRow | undefined> {
     return this.req('DELETE', `/channels/${channelId}/messages/${messageId}`);
   }
 

@@ -139,7 +139,7 @@ export function GallerySettings() {
     editedAt: null, reactions: [], attachments: [],
     replyCount: null, lastReplyAt: null, participantIds: null,
     openAskHumanCount: null, openAskAccountIds: null, openAskLinks: null, failureCount: null, unresolvedFailureCount: null,
-    lastKind: null, lastAuthorId: null, alsoInChannel: false,
+    lastKind: null, lastAuthorId: null, alsoInChannel: false, deletedAt: null,
     ...over,
   });
 

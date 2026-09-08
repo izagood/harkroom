@@ -93,7 +93,7 @@ export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root
   null::int as "openAskHumanCount", null::text[] as "openAskAccountIds", null::jsonb as "openAskLinks",
   null::int as "failureCount", null::int as "unresolvedFailureCount",
   null::text as "lastKind", null::text as "lastAuthorId",
-  also_in_channel as "alsoInChannel"`;
+  also_in_channel as "alsoInChannel", deleted_at as "deletedAt"`;
 
 /**
  * 스레드 상태 판정의 **재료**(Task 6 Step 2). 판정 자체는 여기서 하지 않는다.
@@ -235,9 +235,23 @@ const THREAD_STATS = `LEFT JOIN LATERAL (
 ${THREAD_STATE_FACTS}`;
 
 // listMessages 에서 사용하는 컬럼: 루트면 메타데이터 있음, 답글이면 null.
+//
+// **지워진 행의 본문·meta·첨부·리액션은 비운다.** 아래 `LIST_VISIBLE` 때문에 이 목록에는
+// 지워진 스레드 머리가 자리표시자로 한 행 섞여 올 수 있고, 그 행에 내용을 그대로 실으면
+// 삭제가 삭제가 아니다 — 화면만 가려도 API 응답과 에이전트 프롬프트에는 남는다(핀·나중에
+// 보기가 같은 판단을 한다: `savedMessages.ts` 의 `message: smDeleted ? null`). 남는 것은
+// **스레드가 여기서 시작했다는 사실**뿐이다: id·seq·시각·답글 집계.
+//
+// `meta` 를 비우는 것이 특히 중요하다 — 지운 머리에 미답 물음(`ask`)이 실려 있으면
+// 그 스레드는 영원히 "누군가를 기다리는" 것으로 보인다.
 const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
-  m.author_id as "authorId", m.body, m.kind, m.meta, m.created_at as "createdAt",
-  m.edited_at as "editedAt", ${REACTIONS.replace(/message\./g, 'm.')}, ${ATTACHMENTS.replace(/message\./g, 'm.')},
+  m.author_id as "authorId",
+  case when m.deleted_at is null then m.body else '' end as body,
+  m.kind, case when m.deleted_at is null then m.meta else '{}'::jsonb end as meta,
+  m.created_at as "createdAt",
+  m.edited_at as "editedAt",
+  case when m.deleted_at is null then (${REACTIONS.replace(/message\./g, 'm.').replace(/ as reactions$/, '')}) else '[]'::json end as reactions,
+  case when m.deleted_at is null then (${ATTACHMENTS.replace(/message\./g, 'm.').replace(/ as attachments$/, '')}) else '[]'::json end as attachments,
   case when m.thread_root_id is null then thread_stats.reply_count end as "replyCount",
   case when m.thread_root_id is null then thread_stats.last_reply_at end as "lastReplyAt",
   case when m.thread_root_id is null then thread_stats.participant_ids end as "participantIds",
@@ -248,7 +262,26 @@ const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.threa
   case when m.thread_root_id is null then thread_state.open_ask_links end as "openAskLinks",
   case when m.thread_root_id is null then thread_last.last_kind end as "lastKind",
   case when m.thread_root_id is null then thread_last.last_author_id end as "lastAuthorId",
-  m.also_in_channel as "alsoInChannel"`;
+  m.also_in_channel as "alsoInChannel", m.deleted_at as "deletedAt"`;
+
+/**
+ * 목록에 들어오는 조건. `deleted_at is null` **하나가 아니다** — 예외가 정확히 하나 있다:
+ * **답글이 남은 스레드 머리.**
+ *
+ * 왜: 스레드를 시작한 말을 지우면 지금까지는 그 한 행만 사라졌다. 답글은 살아 있는데
+ * 목록에서 머리가 빠지므로, 채널에서는 스레드 자체가 없어진 것으로 보이고 그 안의
+ * 히스토리로 들어갈 문이 없어진다(2026-09-09 신고). 반대로 답글까지 함께 지우면
+ * 남의 말이 내 삭제로 사라진다 — 그래서 **머리 자리만** 남기고 본문은 위에서 뗀다.
+ *
+ * 답글이 하나도 없으면(또는 남은 답글이 모두 지워지면) 이 조건이 거짓이 되어 머리도
+ * 목록에서 사라진다 — "댓글 없으면 그냥 삭제"가 별도 분기 없이 이 한 줄에서 나온다.
+ *
+ * 답글 자신은 이 예외를 못 받는다(`m.thread_root_id is null` 이 머리만 고른다):
+ * 답글에는 매달릴 자식이 없으므로 자리표시자로 남길 이유가 없다.
+ */
+const LIST_VISIBLE = `(m.deleted_at is null or (m.thread_root_id is null and exists (
+  select 1 from message r where r.thread_root_id = m.id and r.deleted_at is null
+)))`;
 
 /**
  * 숨긴 채널(#376)을 다시 나타나게 하는 inbox 사유들. **`dm` 은 없다.**
@@ -791,19 +824,66 @@ export async function promoteToChannel(
   return updated.rows[0];
 }
 
+/**
+ * 목록에 보이는 모양 그대로 한 행을 읽는다. `getMessageById` 와 다른 점이 두 가지다 —
+ * `LIST_COLS`(답글 집계 포함)로 읽고, `LIST_VISIBLE` 을 쓰므로 **자리표시자도 돌려준다.**
+ *
+ * `deleteMessage` 가 이것을 쓰는 이유: 지운 뒤 그 자리가 목록에서 아예 사라졌는지
+ * 자리표시자로 남았는지를 **판정 규칙을 다시 쓰지 않고** 알아내려면, 목록이 쓰는 조건에
+ * 그대로 물어보는 것이 유일한 방법이다. 여기서 `null` 이면 사라진 것이다.
+ */
+async function readListRow(pool: Pool, channelId: string, messageId: string): Promise<MessageRow | null> {
+  const res = await pool.query(
+    `select ${LIST_COLS} from message m ${THREAD_STATS}
+     where m.channel_id = $1 and m.id = $2 and ${LIST_VISIBLE}`,
+    [channelId, messageId],
+  );
+  return res.rows[0] ?? null;
+}
+
+/**
+ * 삭제 결과. 행 하나가 사라지는 것으로 끝나지 않기 때문에 합 타입이 아니라 두 필드다 —
+ * 부른 쪽은 이 둘을 보고 어떤 이벤트를 낼지 정한다.
+ */
+export interface DeleteMessageOutcome {
+  /**
+   * 지웠는데도 **목록에 자리가 남은** 경우 그 행(= 답글이 살아 있는 스레드 머리).
+   * 이때 화면에 낼 이벤트는 `message.deleted` 가 아니라 `message.updated` 다: 행을 빼면
+   * 스레드로 들어갈 문이 함께 사라진다.
+   */
+  tombstone: MessageRow | null;
+  /**
+   * 이 메시지가 **마지막 남은 답글**이어서 자리표시자로 서 있던 머리까지 함께 사라졌으면
+   * 그 머리의 id. 답글 하나를 지운 결과로 다른 행이 사라지는 유일한 경우다.
+   */
+  rootGone: string | null;
+}
+
 export async function deleteMessage(
   pool: Pool, args: { channelId: string; messageId: string; actorId: string; actorIsAdmin: boolean },
-): Promise<'deleted' | MutationRefusal> {
+): Promise<DeleteMessageOutcome | MutationRefusal> {
   const found = await pool.query(
-    `select author_id from message
+    `select author_id, thread_root_id as "threadRootId" from message
      where id = $1 and channel_id = $2 and deleted_at is null`,
     [args.messageId, args.channelId],
   );
   if (!found.rowCount) return 'not_found';
   if (found.rows[0].author_id !== args.actorId && !args.actorIsAdmin) return 'forbidden';
+  const threadRootId: string | null = found.rows[0].threadRootId;
 
   await pool.query(`update message set deleted_at = now() where id = $1`, [args.messageId]);
-  return 'deleted';
+
+  /**
+   * 지운 것이 스레드 머리면 그 자리가 남았는지 목록에 물어본다(답글이 하나라도 살아
+   * 있으면 남는다 — `LIST_VISIBLE`). 답글을 지운 경우에는 그 반대를 묻는다: 이 답글이
+   * 마지막이어서 자리표시자로 서 있던 머리까지 사라졌는가. 두 질문 다 조건을 여기서
+   * 다시 쓰지 않고 `readListRow` 에 넘긴다.
+   */
+  if (threadRootId === null) {
+    return { tombstone: await readListRow(pool, args.channelId, args.messageId), rootGone: null };
+  }
+  const root = await readListRow(pool, args.channelId, threadRootId);
+  return { tombstone: null, rootGone: root === null ? threadRootId : null };
 }
 
 /**
@@ -831,7 +911,7 @@ export async function listMessages(
     if (opts.since !== undefined && opts.since > 0) {
       const res = await pool.query(
         `select ${LIST_COLS} from message m ${THREAD_STATS}
-         where m.channel_id = $1 and (m.id = $2 or m.thread_root_id = $2) and m.seq > $3 and m.deleted_at is null
+         where m.channel_id = $1 and (m.id = $2 or m.thread_root_id = $2) and m.seq > $3 and ${LIST_VISIBLE}
          order by m.seq limit $4`,
         [channelId, opts.threadRootId, opts.since, limit],
       );
@@ -840,10 +920,10 @@ export async function listMessages(
     const res = await pool.query(
       `select * from (
         select ${LIST_COLS} from message m ${THREAD_STATS}
-        where m.channel_id = $1 and m.id = $2 and m.deleted_at is null
+        where m.channel_id = $1 and m.id = $2 and ${LIST_VISIBLE}
         union all
         select ${LIST_COLS} from message m ${THREAD_STATS}
-        where m.channel_id = $1 and m.thread_root_id = $2 and m.deleted_at is null
+        where m.channel_id = $1 and m.thread_root_id = $2 and ${LIST_VISIBLE}
         order by seq desc limit $3
       ) latest
       order by seq`,
@@ -857,7 +937,7 @@ export async function listMessages(
     const res = await pool.query(
       `select * from (
          select ${LIST_COLS} from message m ${THREAD_STATS}
-         where m.channel_id = $1 and m.seq < $2 and m.deleted_at is null
+         where m.channel_id = $1 and m.seq < $2 and ${LIST_VISIBLE}
          order by m.seq desc limit $3
        ) older
        order by seq`,
@@ -869,7 +949,7 @@ export async function listMessages(
   if (since > 0) {
     const res = await pool.query(
       `select ${LIST_COLS} from message m ${THREAD_STATS}
-       where m.channel_id = $1 and m.seq > $2 and m.deleted_at is null
+       where m.channel_id = $1 and m.seq > $2 and ${LIST_VISIBLE}
        order by m.seq limit $3`,
       [channelId, since, limit],
     );
@@ -879,7 +959,7 @@ export async function listMessages(
   const res = await pool.query(
     `select * from (
        select ${LIST_COLS} from message m ${THREAD_STATS}
-       where m.channel_id = $1 and m.deleted_at is null
+       where m.channel_id = $1 and ${LIST_VISIBLE}
        order by m.seq desc limit $2
      ) latest
      order by seq`,
