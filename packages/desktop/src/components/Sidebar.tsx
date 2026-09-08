@@ -24,6 +24,9 @@ import { runnerReason, runnerStatusLabel } from './RunnerStatus';
 import { AgentGrid } from './settings/AgentGrid';
 // 띄울 권한 판정은 `lib/` 하나가 낸다 — 설정 › 에이전트가 같은 판정을 쓴다.
 import { canRelaunchAgent } from '../lib/relaunchGate';
+// 설정 문의 판정도 한 벌이다(`lib/agentConfigGate.ts`) — 프로필·본문 멘션이 같은 함수를
+// 쓴다. 세 곳이 같은 문을 여는데 술어가 세 벌이면 한쪽만 고친 날 문이 어긋난다.
+import { canSeeAgentConfig } from '../lib/agentConfigGate';
 import { faceState, isFaceGreyed, type FaceState } from '../lib/faceState';
 import { anyPresenceView, PRESENCE_LABEL, type PresenceView } from '../lib/presenceView';
 import type { SectionId } from './settings/sections';
@@ -124,7 +127,10 @@ const memberErrorText = (err: unknown, fallback: string, t: Translate): string =
     : msg;
 };
 
-export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpenInbox, collapsed, onToggleCollapse }: {
+export function Sidebar({
+  panel, onOpenDirectory, onOpenChannelDirectory, onOpenInbox, onOpenAgentConfig, onOpenProfile,
+  collapsed, onToggleCollapse,
+}: {
   /**
    * 레일이 고른 칸(정본 문서 `docs/desktop-rail.html` 1단계). 이 패널은 **그 칸의 묶음만**
    * 그린다 — 문서의 해법이 "레일에서 고른 하나만 넓은 패널이 보여준다"이고, 그래야 각
@@ -153,6 +159,24 @@ export function Sidebar({ panel, onOpenDirectory, onOpenChannelDirectory, onOpen
    */
   onOpenChannelDirectory: () => void;
   onOpenInbox: () => void;
+  /**
+   * 에이전트 칸에서 카드를 누르면 **그 에이전트의 설정**이 열린다(`onPick` 주석에 근거).
+   *
+   * `onOpenSettings(section, targetId)` 를 그대로 받지 않고 **에이전트 하나로 좁힌** 이유:
+   * 이 컴포넌트가 설정에 대해 아는 것은 "에이전트 상세를 연다" 하나뿐이고, 그 위의 주석이
+   * 적어 둔 것처럼 일반 설정 진입점은 레일의 일이다(#488 A1). 넓은 신호를 다시 들이면
+   * 사이드바에 설정 진입점을 두지 말라는 그 결정이 타입 쪽에서 조용히 풀린다.
+   *
+   * **옵셔널이 아니다** — 배선을 잊은 화면에서 카드가 눌러도 아무 일이 없게 두지 않는다
+   * (design.md §4).
+   */
+  onOpenAgentConfig: (agentId: string) => void;
+  /**
+   * 설정을 볼 수 없는 사람이 카드를 눌렀을 때 여는 곳(`onPick` 주석에 근거). 위
+   * `onOpenDirectory`(누구를 지목하지 않는 검색 목록)와 **다른 화면**이다 — 디렉터리는
+   * "누가 있나", 프로필은 "이 사람이 무엇인가"에 답한다(`Workspace.handleOpenDirectory` 주석).
+   */
+  onOpenProfile: (accountId: string) => void;
   /*
    * `onOpenSaved` 가 여기 있었다. **레일의 북마크 칸으로 갔다** — 문서: "북마크는 레일에만
    * 둔다. 자기 칸이 있는데 홈에도 한 줄을 세우면 같은 것으로 가는 길이 둘이 되고, 그때부터
@@ -1837,25 +1861,47 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
             agents={panelAgents}
             /*
               **고른 것을 표시하지 않는다.** 설정에서 이 값은 "지금 상세를 열어 둔 카드"이고,
-              여기서는 상세를 열지 않는다(아래 `onPick`). 활성 DM 을 여기에 대입하면 강조가
-              두 곳에서 같은 사실을 말한다 — DM 칸이 이미 활성 줄을 면으로 표시한다.
+              여기서 카드를 누르면 화면이 **설정으로 넘어가므로**(아래 `onPick`) 이 격자는
+              그 순간 언마운트된다 — 표시할 "열어 둔 카드"가 이 칸에는 남지 않는다.
+              활성 DM 을 여기에 대입하면 강조가 두 곳에서 같은 사실을 말한다 — DM 칸이
+              이미 활성 줄을 면으로 표시한다.
             */
             selectedId={null}
             runnerStates={runnerStates}
             online={online}
             connected={connected}
             /*
-              **카드를 누르면 DM 이 열린다** — 설정에서는 상세를 열지만 여기서는 아니다.
+              **카드를 누르면 그 에이전트의 설정이 열린다.**
 
-              근거 둘. ① 옛 목록이 이미 `startDm` 이었다: 이 칸에서 에이전트를 누르는 것의
-              뜻은 바뀌지 않았고 모양만 그리드가 됐다. ② 문서가 이 칸을 *"인력"* 이라고
-              적었다 — 사람을 눌러 말을 거는 것이 이 앱에서 기본 동작이고, 설정 화면으로
-              튀어나가면 레일을 한 번 더 누른 대가(문서 「치르는 값」)가 손해로 남는다.
+              전 판본은 `startDm` 이었고 근거로 *"옛 목록이 이미 `startDm` 이었다"* 와
+              문서의 *"인력"* 을 들었다. **그 근거가 뒤집혔다**(jaebin, 2026-09-08):
+              *"이미 메시지를 보내는 건 DM 으로 보낼 수 있잖아."*
 
-              설정으로 가는 길이 사라지는 것은 아니다: 레일 맨 아래 계정 메뉴와 `⌘,` 가
-              그 문이고(#488 A1), 거기서 에이전트를 고르면 상세가 열린다.
+              이 칸이 DM 을 열면 **같은 것으로 가는 길이 둘**이 된다 — 바로 위 DM 칸이
+              이미 대화 목록이고, 거기에 이 에이전트의 줄이 (없으면 `New` 로) 선다.
+              2단계 주석이 필터를 남길 때 쓴 그 문장이 여기에 되돌아온 것이고, 3단계가
+              그 문장을 비켜 간 근거는 *"두 칸이 답하는 물음이 다르다"* 였다:
+              DM 칸은 *"최근에 누구와 무슨 말을 했나"*, 이 칸은 *"우리 팀에 누가 있고 지금
+              일할 수 있나"*. **누르는 동작도 그 물음을 따라야** 두 칸이 진짜로 갈린다 —
+              인력을 누르는 것은 그 사람의 **자리를 보는 것**이다(하네스·모델·역할·러너).
+
+              레일을 한 번 더 누른 대가는 그대로 남는다: 이 칸은 설정 화면이 못 하는 일을
+              한다 — 격자에서 얼굴로 상태를 훑고, 멈춘 것은 ▶ 로 여기서 바로 켠다.
             */
-            onPick={(a) => void getController().startDm(a.id)}
+            onPick={(a) => {
+              /*
+                **설정을 볼 수 없는 사람은 프로필로 보낸다.** 판정은 `canSeeAgentConfig`
+                하나가 갖고(그 주석에 근거), 그 문을 못 여는 사람에게 설정을 열면
+                `GET /accounts/agents` 가 403 을 내어 "목록을 받지 못했다"만 남는다 —
+                갈 수 있는데 할 수 있는 것이 없는 곳을 만들지 않는다(design.md §4).
+
+                프로필을 고른 것은 **본문 멘션의 선례와 같게** 두기 위해서다
+                (`MessageBody` 의 `target`): admin·소유자는 설정, 그 외는 프로필. 프로필에는
+                `DM 열기`가 서 있으므로 대화로 가는 길도 여기서 끊기지 않는다.
+              */
+              if (canSeeAgentConfig(a, me)) { onOpenAgentConfig(a.id); return; }
+              onOpenProfile(a.id);
+            }}
             /*
               **만들기 문을 이 칸에 두지 않는다.** A2 가 정한 것을 그대로 따른다:
               *"설정으로 가는 `+ Add or edit agents` 는 nav 에서 사라진다(이동 사이에 설정이

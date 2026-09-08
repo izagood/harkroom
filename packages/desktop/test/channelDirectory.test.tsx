@@ -25,6 +25,8 @@ const fakeController = () => {
 
 const sidebarProps = {
   onOpenDirectory: () => {},
+  onOpenAgentConfig: () => {},
+  onOpenProfile: () => {},
   onOpenChannelDirectory: () => {},
   onOpenInbox: () => {},
   onOpenSaved: () => {},

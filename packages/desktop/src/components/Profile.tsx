@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AgentView } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
+import { canSeeAgentConfig } from '../lib/agentConfigGate';
 import { Identity, StatusMark } from './Identity';
 import { Overlay } from './Overlay';
 import { lastTurnLabel } from './settings/AgentsSettings';
@@ -38,10 +39,14 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
   const online = useActiveStore((s) => s.online);
   const connected = useActiveStore((s) => s.connected);
 
-  /** 설정까지 볼 수 있는가 — 서버의 판정과 같아야 한다(`GET /accounts/agents`). */
-  const isOwner = account?.kind === 'agent'
-    && account.ownerAccountId !== null && account.ownerAccountId === me?.id;
-  const canSeeConfig = account?.kind === 'agent' && (me?.isAdmin === true || isOwner);
+  /**
+   * 설정까지 볼 수 있는가 — 서버의 판정과 같아야 한다(`GET /accounts/agents`).
+   *
+   * 판정은 `lib/agentConfigGate.ts` 하나가 낸다. 여기 사본을 두면 같은 문(설정 › 에이전트)을
+   * 여는 세 자리 — 이 프로필 · 본문 멘션 · 레일의 에이전트 격자 — 가 서로 다른 규칙으로
+   * 문을 그린다.
+   */
+  const canSeeConfig = canSeeAgentConfig(account, me);
 
   const [agent, setAgent] = useState<AgentView | null>(null);
   useEffect(() => {

@@ -1,5 +1,6 @@
 import type { AccountView } from '@murmur/shared';
 import type { SectionId } from '../components/settings/sections';
+import { canSeeAgentConfig } from './agentConfigGate';
 
 /**
  * 계정을 눌렀을 때 갈 곳(#279 → #6xx).
@@ -47,8 +48,20 @@ export function accountOpen(
 ): AccountOpen | null {
   if (!account) return null;
 
-  const isOwner = account.kind === 'agent' && account.ownerAccountId === viewer.id;
-  if (account.kind === 'agent' && (viewer.isAdmin || isOwner) && onOpenSettings) {
+  /*
+    **판정은 `agentConfigGate` 하나가 낸다.** 여기 인라인으로 두면 같은 물음("이 사람이 이
+    에이전트의 설정을 볼 수 있는가")이 이 파일과 프로필(`Profile.canSeeConfig`) · 레일의
+    에이전트 격자(`Sidebar` 의 `onPick`)에 세 벌로 살게 된다 — 이 파일 머리 주석이 멘션과
+    이름줄에 대해 경고한 것과 **같은 형태**의 결함이다. 목적지(이 함수)와 술어(그 모듈)는
+    다른 물음이라 나뉘어 있는 것이고, 술어가 필요한 자리는 목적지가 필요하지 않다:
+    프로필은 갈 곳이 아니라 **버튼을 그릴지**를 묻는다.
+
+    옮기면서 한 가지가 함께 고쳐진다 — `ownerAccountId === viewer.id` 는 부트스트랩 전
+    (`viewer.id === null`)이면서 소유자가 없는 에이전트(`ownerAccountId === null`)를
+    '내 것'으로 읽었다. `#181` 이 정한 규칙(*"추측 소유자는 소유자가 아니다"*)을 그
+    모듈이 지킨다.
+  */
+  if (canSeeAgentConfig(account, viewer) && onOpenSettings) {
     return {
       run: () => onOpenSettings('agents', account.id),
       label: `${account.handle} 에이전트 설정 열기`,
