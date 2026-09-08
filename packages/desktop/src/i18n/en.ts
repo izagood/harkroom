@@ -2278,7 +2278,7 @@ export const en = {
   // |---|---|
   // | `chip` | 메시지 줄의 칩 — 이 패널을 여는 문 |
   // | `header` | 머리띠 — 이름 · 어느 스레드 · 상태 칩 · 닫기 |
-  // | `session` | 세션 조회 셋(확인 중 · 없음 · 실패)과 「터미널 열기」 |
+  // | `session` | 세션 조회·열기 셋(확인 중 · 여는 중 · 실패)과 실패 뒤의 「터미널 열기」 |
   // | `state` | 상태 칩의 값 셋(`AgentSessionState`) |
   // | `writer` | **왜 못 치는가** 넷 + 칠 수 있을 때 한 줄 |
   //
@@ -2299,13 +2299,18 @@ export const en = {
   // | 한국어 | 영어 | 왜 |
   // |---|---|---|
   // | 터미널 보기 | `Open the terminal` | 칩의 이름이다. `View` 는 읽기만 한다는 뜻인데 소유자는 **직접 친다**(`#315`) — 그 문이 하는 일은 여는 것이다 |
-  // | @{handle} 의 진행 중인 터미널을 본다 | `Open the terminal {handle} is running` | 칩의 `title`. **진행 중**이 진다 — 없으면 새로 띄우는 문으로 읽힌다 |
+  // | @{handle} 의 터미널을 연다 — 진행 중인 턴이 있으면 그 화면에 붙는다 | `Open a terminal for {handle} — joins the turn it is on, if any` | 칩의 `title`. 앞 문구(`the terminal {handle} is running`)는 **진행 중**을 졌는데, 그때는 턴이 없으면 패널이 멈춰 섰기 때문이다(2026-09-09에 없어졌다). 지금은 없으면 스스로 띄우므로 앞 절이 **여는 것**을 말하고, 뒤 절이 붙는 경우를 진다 |
   // | 에이전트 터미널 | `Agent terminal` | 패널 자체의 접근 이름 |
   // | 터미널 너비 조절 | `Resize the terminal` | `PaneResizer` 의 이름. 스레드 패널의 같은 자리와 같은 모양이다 |
   // | 닫기 / 터미널 닫기 | `Close` / `Close the terminal` | **보이는 글자와 접근 이름이 갈린다** — 원래 화면이 이미 그랬고 회귀선이 그것을 잡았다(옮기면서 한 키로 접었더니 `getByLabelText('터미널 닫기')` 가 빨개졌다). 머리띠의 꼬리표라 보이는 글자는 짧아야 하는데, 그 짧음이 스크린리더에서는 **무엇을** 닫는지를 잃는다. `grid.version.staleAction` 이 같은 이유로 갈라져 있다 |
   // | 스레드 | `a thread` | 루트 본문을 못 찾았을 때. **스레드라는 사실만 적는다**(그 주석) — 관사가 붙는 이유는 이것이 제목이 아니라 *"어느 스레드"* 자리의 대체값이기 때문이다 |
   // | 세션을 확인하는 중… | `Checking for a session…` | **'없다'가 아니라 '아직 모른다'다**(`docs/design.md` §4) |
-  // | 진행 중인 턴이 없다 — 직접 열거나, … | `No turn is running — open one yourself, or call this agent and you can join that turn` | **물어봤고 없다**는 단정이다(위와 갈린다). 뒤 절반이 **두 갈래의 길**을 준다 — 없으면 막다른 길로 보인다 |
+  // | 터미널을 여는 중… | `Opening the terminal…` | 위 `checking` 과 **갈린다** — 저쪽은 서버의 세션 목록을 기다리고 이쪽은 러너가 띄우는 PTY 를 기다린다(뒤가 몇 초 더 걸린다). 한 문구로 뭉치면 러너가 늦을 때 「확인 중」이 멈춰 있는 화면이 된다 |
+  //
+  // 「진행 중인 턴이 없다 — 직접 열거나, …」는 **없어졌다**(2026-09-09). 멘션 턴이 TUI 로
+  // 돌게 된 뒤로 「터미널 보기」를 누른 사람에게 물을 것이 없어서, 그 화면이 하던 일(=
+  // [터미널 열기] 를 한 번 더 눌리게 하기)을 패널이 스스로 한다. 문구를 남겨 두면 다음
+  // 사람이 없는 화면을 번역하게 된다.
   // | 터미널을 열지 못했다: {reason} | `The terminal did not open: {reason}` | `The X was not Yed` 규율 |
   // | 터미널을 붙일 자리가 없다 | `There is nowhere to attach the terminal` | ref 가 비었다 — 개발 중에만 나는 일이지만 **화면에 뜨는 말**이라 사전에 든다 |
   // | 입력 가능 — 마지막으로 연 창이 입력을 가진다. | `You can type — the window opened last holds input.` | **승격도 적는다**(그 주석): 강등만 적으면 두 창을 쓰는 사람이 어느 쪽이 살아 있는지 모른다. 뒤 절반이 **규칙**이라 다음에 무엇이 일어날지 예측할 수 있다 |
@@ -2345,7 +2350,11 @@ export const en = {
   // ---------------------------------------------------------------------------
 
   /** 칩의 접근 이름 겸 `title`. **진행 중**이 진다 — 없으면 새로 띄우는 문으로 읽힌다. */
-  'terminal.chip.open': 'Open the terminal {handle} is running',
+  /**
+   * **여는 문이다**(2026-09-09). 턴이 없으면 패널이 스스로 띄우므로 `is running` 은
+   * 칩이 하는 일의 절반만 말한다 — 붙는 것은 **턴이 있을 때만**이라 뒤 절이 그것을 진다.
+   */
+  'terminal.chip.open': 'Open a terminal for {handle} — joins the turn it is on, if any',
   /** 칩의 보이는 글자. `View` 가 아니다 — 소유자는 **직접 친다**(`#315`). */
   'terminal.chip.label': 'Open the terminal',
   /**
@@ -2375,12 +2384,13 @@ export const en = {
 
   /** ref 가 비었다 — 개발 중에만 나지만 **화면에 뜨는 말**이라 사전에 든다. */
   'terminal.session.noHost': 'There is nowhere to attach the terminal',
-  /** **물어봤고 없다.** 뒤 절반이 **두 갈래의 길**을 준다 — 없으면 막다른 길로 보인다. */
-  'terminal.session.none': 'No turn is running — open one yourself, or call this agent and you can join that turn',
+  /** **실패 뒤의 다시 열기다**(2026-09-09) — 「턴이 없다」 화면이 없어져 이 버튼만 남았다. */
   'terminal.session.open': 'Open a terminal',
   'terminal.session.openFailed': 'The terminal did not open: {reason}',
   /** **'없다'가 아니라 '아직 모른다'다**(`docs/design.md` §4). */
   'terminal.session.checking': 'Checking for a session…',
+  /** 위와 **갈린다**: 저쪽은 서버의 목록을 기다리고 이쪽은 러너가 띄우는 PTY 를 기다린다. */
+  'terminal.session.opening': 'Opening the terminal…',
 
   /** `runnerState.running` 과 **다른 것을 센다** — 저쪽은 러너, 이쪽은 그 PTY 세션의 턴이다. */
   'terminal.state.running': 'Running',
