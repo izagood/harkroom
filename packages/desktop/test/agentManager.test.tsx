@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { AgentConfig, AgentDefaults, AgentView, PatView } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { acc } from './helpers/fakeApi';
@@ -52,14 +53,19 @@ const fakeController = (agents: AgentView[] = []) => {
   return c;
 };
 
+// **언어를 한국어로 고정한다.** 이 파일의 축들은 이 화면의 한국어 문구로 쓰여 있고,
+// 그 문구가 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다(`#619`·사이드바 PR 이
+// 세운 방식과 같다). 영어가 원본이 되면서 기본값이 영어가 됐으므로, 한국어를 재려면
+// 한국어라고 말해야 한다. 두 언어로 다 뜨는지는 `i18n.test.tsx` 가 잰다.
 beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   // 에이전트 설정은 admin 화면이다 — 생성도 기본값 조회도 서버가 admin 만 받는다.
   // 기본값이 admin 이 아니면 이 파일의 생성 테스트들이 실제로는 서버가 거절할 흐름을
   // 검증하게 된다. admin 이 아닌 경우는 그것을 확인하는 테스트가 따로 덮어쓴다.
   useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
 });
-afterEach(() => cleanup());
+afterEach(() => { cleanup(); usePrefsStore.getState().setLocale('system'); });
 
 describe('AgentsSettings', () => {
   it('creates an agent from the name and instructions the operator typed', async () => {
@@ -72,7 +78,7 @@ describe('AgentsSettings', () => {
     fireEvent.change(screen.getByLabelText('Agent instructions'), {
       target: { value: '느린 쿼리를 찾아 원인을 설명한다.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+    fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
 
     await waitFor(() => expect(c.createAgent).toHaveBeenCalled());
     expect(c.createAgent.mock.calls[0]![0]).toMatchObject({
@@ -88,7 +94,7 @@ describe('AgentsSettings', () => {
     fireEvent.click(await screen.findByTestId('agent-create'));
 
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+    fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
 
     // 토큰은 코드 블록과 실행 힌트 두 곳에 나온다 — 보이는지만 확인한다.
     expect((await screen.findAllByText(/murp_secret/)).length).toBeGreaterThan(0);
@@ -102,7 +108,7 @@ describe('AgentsSettings', () => {
     fireEvent.click(await screen.findByTestId('agent-create'));
 
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+    fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
 
     // "토큰 조각 + 말줄임표" 형태가 화면에 있으면 안 된다 — 복사하면 인증이 실패한다.
     const panel = await screen.findByText(/이 토큰은 지금만 보인다/);
@@ -118,7 +124,7 @@ describe('AgentsSettings', () => {
     fireEvent.click(await screen.findByTestId('agent-create'));
 
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+    fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
 
     // 명령 힌트에 토큰이 **잘리지 않은 채** 들어 있어야 복사해서 바로 쓸 수 있다.
     const panel = await screen.findByText(/이 토큰은 지금만 보인다/);
@@ -134,7 +140,7 @@ describe('AgentsSettings', () => {
     fireEvent.click(await screen.findByTestId('agent-create'));
 
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+    fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
 
     // 문구를 느슨한 정규식으로 잡으면 관계없는 문장에 우연히 걸린다 — 이 안내가 반드시
     // 말해야 하는 두 가지를 각각 확인한다: murmur 가 러너를 띄우지 않는다는 것과,
@@ -149,7 +155,7 @@ describe('AgentsSettings', () => {
     // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
     fireEvent.click(await screen.findByTestId('agent-create'));
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
+    fireEvent.click(await screen.findByRole('button', { name: '에이전트 만들기' }));
 
     expect(c.createAgent).not.toHaveBeenCalled();
   });
@@ -210,7 +216,7 @@ describe('AgentsSettings', () => {
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     fireEvent.change(screen.getByLabelText('Agent instructions'), { target: { value: '고친 지시문' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
 
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
     const [id, patch] = c.updateAgent.mock.calls[0]!;
@@ -226,7 +232,7 @@ describe('AgentsSettings', () => {
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     fireEvent.click(screen.getByRole('button', { name: 'Use harness defaults' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
 
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
     expect(c.updateAgent.mock.calls[0]![1]).toMatchObject({ model: null, effort: null });
@@ -242,7 +248,7 @@ describe('AgentsSettings', () => {
     expect((screen.getByLabelText('Mention permission') as HTMLSelectElement).value).toBe('auto');
 
     fireEvent.change(screen.getByLabelText('Mention permission'), { target: { value: 'readonly' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
 
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
     expect(c.updateAgent.mock.calls[0]![1]).toMatchObject({ mentionPermission: 'readonly' });
@@ -405,7 +411,7 @@ describe('AgentsSettings', () => {
       fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
       fireEvent.change(screen.getByLabelText('Owner'), { target: { value: 'u2' } });
-      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      fireEvent.click(screen.getByRole('button', { name: '저장' }));
 
       await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
       expect(c.updateAgent.mock.calls[0]![1].ownerAccountId).toBe('u2');
@@ -418,7 +424,7 @@ describe('AgentsSettings', () => {
       fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
       fireEvent.change(screen.getByLabelText('Owner'), { target: { value: '' } });
-      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      fireEvent.click(screen.getByRole('button', { name: '저장' }));
 
       await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
       expect(c.updateAgent.mock.calls[0]![1].ownerAccountId).toBeNull();
@@ -517,7 +523,7 @@ describe('새 에이전트 기본값', () => {
     fireEvent.click(await screen.findByTestId('agent-create'));
 
     fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+    fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
 
     await waitFor(() => expect(c.createAgent).toHaveBeenCalled());
     expect(c.createAgent.mock.calls[0]![0]).toMatchObject({
@@ -540,7 +546,7 @@ describe('새 에이전트 기본값', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('기본값을 불러오지 못했다');
     // 조용한 기본값이 아니다 — 초안 자체가 없으므로 harness 를 고르는 자리도 없다.
     expect(screen.queryByLabelText('Agent harness')).toBeNull();
-    expect((screen.getByRole('button', { name: 'Create agent' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: '에이전트 만들기' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
 
@@ -697,7 +703,7 @@ describe('상세는 세 묶음, 저장은 한 쌍 (Task 15-3)', () => {
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-    await screen.findByRole('button', { name: 'Save changes' });
+    await screen.findByRole('button', { name: '저장' });
     expect(screen.queryByRole('button', { name: '되돌리기' })).toBeNull();
   });
 
@@ -721,7 +727,7 @@ describe('상세는 세 묶음, 저장은 한 쌍 (Task 15-3)', () => {
     render(<AgentsSettings />);
     // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
     fireEvent.click(await screen.findByTestId('agent-create'));
-    await screen.findByRole('button', { name: 'Create agent' });
+    await screen.findByRole('button', { name: '에이전트 만들기' });
     expect(screen.queryByRole('button', { name: '되돌리기' })).toBeNull();
   });
 });
@@ -880,7 +886,7 @@ describe('그리드와 상세는 한 번에 하나만 (Task 15)', () => {
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-create'));
 
-    expect(await screen.findByRole('button', { name: 'Create agent' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '에이전트 만들기' })).toBeTruthy();
     expect(screen.queryByTestId('agent-grid')).toBeNull();
   });
 });

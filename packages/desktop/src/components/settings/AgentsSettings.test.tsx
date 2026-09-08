@@ -4,6 +4,20 @@ import type { AccountView, AgentView } from '@murmur/shared';
 import { AgentsSettings } from './AgentsSettings';
 import { setController, type Controller } from '../../state/controller';
 import { resetCommunityRegistry, useActiveStore } from '../../state/communities';
+import { usePrefsStore } from '../../state/prefsStore';
+
+/**
+ * **언어를 한국어로 고정한다.** 이 파일의 축들은 이 화면의 한국어 문구로 쓰여 있고, 그
+ * 문구가 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다 — 세 상태(요청 전 ·
+ * 미수령 · 수령)를 접지 않는 것, 생사를 단정하지 않는 것. 영어가 원본이 되면서 기본값이
+ * 영어가 됐으므로, 한국어를 재려면 한국어라고 말해야 한다.
+ *
+ * 이 파일은 `describe` 마다 제 훅이 있어 **맨 위에 한 쌍을 더 둔다** — 각 `describe` 의
+ * 훅에 끼워 넣으면 새 `describe` 가 그것을 빠뜨린 채 추가된다.
+ * 두 언어로 다 뜨는지는 `test/i18n.test.tsx` 가 잰다.
+ */
+beforeEach(() => { usePrefsStore.getState().setLocale('ko'); });
+afterEach(() => { usePrefsStore.getState().setLocale('system'); });
 
 /**
  * #428: 종료 요청 수령(`stopAckedAt`)이 화면에 반영되는지를 잰다.

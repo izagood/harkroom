@@ -34,7 +34,9 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
   onClose: () => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }) {
-  // 활동 경과는 언어를 따른다(`lib/time.ts`). 나머지 문자열은 아직 한국어다.
+  // **이 화면은 아직 안 옮겼다.** 이 둘을 들이는 것은 `lastTurnLabel` 이 `locale` 과
+  // 번역기를 인자로 받게 됐기 때문이다(그 함수 주석: 기본값을 주면 이 화면이 조용히 한
+  // 언어로 굳는다). 이 파일의 나머지 한국어는 다음 PR 의 몫이다.
   const t = useT();
   const locale = useLocale();
   const account = useActiveStore((s) => s.accounts[accountId]);
@@ -51,7 +53,6 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
    * 문을 그린다.
    */
   const canSeeConfig = canSeeAgentConfig(account, me);
-
   const [agent, setAgent] = useState<AgentView | null>(null);
   useEffect(() => {
     if (!canSeeConfig) return;
