@@ -57,10 +57,14 @@ export function projectionBanner(input: {
   /**
    * '멈춘 지 얼마나'를 사람 말로 바꾸는 것은 화면의 일이라 주입받는다.
    * `lastPolledAt` 은 **epoch 밀리초**다(ISO 문자열이 아니다).
+   *
+   * 이름이 `minutesAgo` 에서 바뀐 이유(`#619` 후속): 서식이 `lib/time.ts::agoLabel` 로
+   * 합쳐지면서 **분만 내지 않는다** — 한 시간이 넘으면 `1시간 전`, 하루가 넘으면
+   * `1일 전` 이다. 이름이 `minutesAgo` 로 남으면 그 이름이 거짓이 된다.
    */
-  minutesAgo: (timestamp: number) => string;
+  ago: (timestamp: number) => string;
 }): ProjectionBanner | null {
-  const { status, error, minutesAgo } = input;
+  const { status, error, ago } = input;
 
   if (error !== null) {
     return {
@@ -102,7 +106,7 @@ export function projectionBanner(input: {
     // 꾸미지 않는다.
     const since = status.lastPolledAt === null
       ? '언제부터인지 알 수 없지만'
-      : `${minutesAgo(status.lastPolledAt)}부터`;
+      : `${ago(status.lastPolledAt)}부터`;
     return {
       testid: 'projection-stalled',
       tone: 'warning',

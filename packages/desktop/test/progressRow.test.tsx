@@ -8,7 +8,10 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import type { MessageRow } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { ProgressRow } from '../src/components/ProgressRow';
-import { groupProgress, elapsedLabel } from '../src/lib/progressGroup';
+import { groupProgress, elapsedMs } from '../src/lib/progressGroup';
+import { durationLabel, runningLabel, tookLabel } from '../src/lib/time';
+import { translator } from '../src/i18n';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { acc, msg } from './helpers/fakeApi';
@@ -22,6 +25,9 @@ const prog = (id: string, body: string, authorId = FORGE, createdAt?: string): M
 
 beforeEach(() => {
   useAppStore.getState().reset();
+  // **언어를 고정한다**(`#619` 후속으로 경과가 앱 언어를 따른다). 이 파일이 재는 것은
+  // 진행이 상태 한 줄로 접히는가이지 그 문구의 언어가 아니다.
+  usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().set({
     me: acc(ME, 'jaebin'),
     accounts: {
@@ -33,7 +39,10 @@ beforeEach(() => {
     },
   });
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 describe('groupProgress — 무엇이 한 묶음인가', () => {
   it('같은 저자의 연속 progress 를 하나로 접는다', () => {
@@ -66,14 +75,94 @@ describe('groupProgress — 무엇이 한 묶음인가', () => {
   });
 });
 
-describe('elapsedLabel — 경과는 묶음의 시작부터', () => {
+describe('elapsedMs — 경과는 묶음의 시작부터, 그리고 말할 만한가', () => {
   const t0 = new Date('2026-09-06T00:00:00.000Z').getTime();
+  const at = (ms: number) => elapsedMs('2026-09-06T00:00:00.000Z', t0 + ms);
+
   it('1분 미만은 숫자를 붙이지 않는다 — 0분째는 정보가 아니라 잡음이다', () => {
-    expect(elapsedLabel('2026-09-06T00:00:00.000Z', t0 + 30_000)).toBeNull();
+    expect(at(30_000)).toBeNull();
   });
-  it('분과 시간을 사람이 읽는 말로 준다', () => {
-    expect(elapsedLabel('2026-09-06T00:00:00.000Z', t0 + 3 * 60_000)).toBe('3분째');
-    expect(elapsedLabel('2026-09-06T00:00:00.000Z', t0 + 90 * 60_000)).toBe('1시간째');
+
+  /**
+   * **서식이 아니라 정책만 남았다**(`#619` 후속). 이 함수가 내던 `3분째` 는
+   * `lib/time.ts::runningLabel` 로 갔다 — `daemonFacts.ts` 에 같은 이름의 함수가
+   * 두 벌로 있던 것을 그쪽 하나로 합쳤기 때문이다(그 함수 주석의 표).
+   *
+   * 여기 남는 것은 **말할 만한가**이고, 그 문구는 아래 `runningLabel` 축이 잰다.
+   */
+  it('1분이 넘으면 그 길이를 그대로 준다 — 자르는 것은 서식의 일이다', () => {
+    expect(at(3 * 60_000)).toBe(3 * 60_000);
+    expect(at(90 * 60_000)).toBe(90 * 60_000);
+  });
+});
+
+/**
+ * **`3분` 과 `3분째` 는 다른 사실이다** — `lib/time.ts` 가 그 둘을 사전 항목 둘로 가른
+ * 이유를 잠근다.
+ *
+ * 이전 코드는 `ProgressRow` 에서 `elapsed.replace(/째$/, '')` 로 끝난 묶음의 어미를
+ * 잘랐다. 한국어 어미를 정규식으로 자르는 것이라 **다른 언어에서는 아무것도 안 잘리고**,
+ * 영어 화면이 도는 진행과 끝난 진행을 같은 글자로 말하게 된다. 그 결함이 다시 들어오지
+ * 않게 **두 언어 모두**에서 둘이 갈리는 것을 잰다.
+ */
+describe('runningLabel · tookLabel — 상[aspect]은 언어마다 다른 문법으로 온다', () => {
+  const ko = translator('ko');
+  const en = translator('en');
+  const THREE_MIN = 3 * 60_000;
+
+  it('한국어는 어미로 가른다', () => {
+    expect(runningLabel(THREE_MIN, 'ko', ko)).toBe('3분째');
+    expect(tookLabel(THREE_MIN, 'ko', ko)).toBe('3분');
+  });
+
+  it('영어는 말을 앞에 세워 가른다 — 어미가 없다', () => {
+    expect(runningLabel(THREE_MIN, 'en', en)).toBe('running 3m');
+    expect(tookLabel(THREE_MIN, 'en', en)).toBe('took 3m');
+  });
+
+  it('두 언어 모두에서 도는 것과 끝난 것이 **다른 글자**다', () => {
+    for (const [locale, t] of [['ko', ko], ['en', en]] as const) {
+      expect(runningLabel(THREE_MIN, locale, t)).not.toBe(tookLabel(THREE_MIN, locale, t));
+    }
+  });
+
+  /**
+   * **진행 줄은 초를 안 읽는다**(`Grain`). 이 줄은 곁눈으로 읽는 자리라 초까지 적으면
+   * 매 초 글자가 바뀌어 옆의 이름과 상태를 읽기 어렵다 — 옛 `progressGroup.elapsedLabel`
+   * 이 분·시간만 낸 것이 그 판단이었고, `lib/time.ts` 로 합치면서 잃지 않았다.
+   *
+   * 같은 길이를 상세(`daemonFacts`)는 `fine` 으로 읽어 `4분 12초` 라고 적는다 — 그것이
+   * 이 축이 지키는 갈림이다.
+   */
+  it('진행 줄은 큰 단위만 읽는다 — 상세는 초까지 읽는다', () => {
+    const FOUR_TWELVE = 4 * 60_000 + 12_000;
+    expect(runningLabel(FOUR_TWELVE, 'ko', ko)).toBe('4분째');
+    expect(runningLabel(FOUR_TWELVE, 'en', en)).toBe('running 4m');
+    // 같은 값을 `fine` 으로 부르면 초가 온다.
+    expect(durationLabel(FOUR_TWELVE, 'ko', 'fine')).toBe('4분 12초');
+  });
+
+  /**
+   * **0 을 빈 칸으로 그리지 않는다.**
+   *
+   * `Intl.DurationFormat` 은 `{seconds: 0}` 을 **빈 문자열**로 낸다(실측 2026-09-08).
+   * 그대로 두면 소요 시간 칸이 비고, 빈 칸은 "짧다"가 아니라 **"못 읽었다"** 로 읽힌다.
+   * 러너가 `durationMs: 0` 을 보낼 수 있으므로(`ReportMeta`) 가상의 경우가 아니다.
+   */
+  it('0 을 빈 문자열로 내지 않는다 — 빈 칸은 "못 읽었다"로 읽힌다', () => {
+    for (const locale of ['ko', 'en'] as const) {
+      expect(durationLabel(0, locale)).not.toBe('');
+      expect(durationLabel(0, locale)).toMatch(/0/);
+    }
+    expect(durationLabel(0, 'ko')).toBe('0초');
+    expect(durationLabel(0, 'en')).toBe('0s');
+  });
+
+  /** 아랫단위가 0 이면 뺀다 — `1분 0초` 는 0 이 자리를 차지하는 잡음이다(규칙 06). */
+  it('아랫단위가 0 이면 적지 않는다', () => {
+    expect(durationLabel(60_000, 'ko')).toBe('1분');
+    expect(durationLabel(3_600_000, 'ko')).toBe('1시간');
+    expect(durationLabel(86_400_000, 'ko')).toBe('1일');
   });
 });
 
@@ -192,6 +281,27 @@ describe('ProgressRow — 끝난 묶음', () => {
       />,
     );
     expect(screen.getByTestId('progress-row').textContent).toContain('작업 중');
+  });
+
+  /**
+   * **화면에서도 두 상태가 갈린다 — 영어에서도**(`#619` 후속).
+   *
+   * 이전 코드는 `elapsed.replace(/째$/, '')` 로 끝난 묶음의 어미를 잘랐다. 그 정규식은
+   * 영어에서 아무것도 안 잘라, **영어 화면이 도는 진행과 끝난 진행을 같은 글자로**
+   * 말하게 된다. 두 축을 나란히 두어 그 결함이 다시 들어오면 빨개지게 한다.
+   */
+  it('언어를 영어로 바꿔도 끝난 것과 도는 것이 다른 글자다', () => {
+    usePrefsStore.getState().setLocale('en');
+    const messages = [prog('p1', '파일을 읽는다', FORGE, AT_P1), prog('p2', '테스트', FORGE, AT_P2)];
+
+    const { unmount } = render(<ProgressRow messages={messages} endedAt={AT_END} />);
+    expect(screen.getByTestId('progress-row').textContent).toContain('took 4m');
+    expect(screen.getByTestId('progress-row').textContent).not.toContain('running');
+    unmount();
+
+    render(<ProgressRow messages={messages} endedAt={null} />);
+    // 도는 쪽은 `running` 이 붙는다 — 한국어의 `째` 가 하던 일을 영어는 이렇게 한다.
+    expect(screen.getByTestId('progress-row').textContent).toContain('running');
   });
 });
 

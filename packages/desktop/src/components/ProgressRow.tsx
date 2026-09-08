@@ -2,7 +2,9 @@ import { useState } from 'react';
 import type { MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { displayBody } from '../lib/mention';
-import { elapsedLabel } from '../lib/progressGroup';
+import { elapsedMs } from '../lib/progressGroup';
+import { runningLabel, tookLabel } from '../lib/time';
+import { useT, useLocale } from '../i18n/useT';
 import { TerminalChip } from './TerminalChip';
 
 /**
@@ -35,13 +37,20 @@ export function ProgressRow({ messages, endedAt = null }: {
   const first = messages[0]!;
   const last = messages[messages.length - 1]!;
 
-  // 경과는 **묶음의 시작**부터 잰다(`elapsedLabel` 주석 참고). 끝난 묶음은 그 끝까지만
+  const t = useT();
+  const locale = useLocale();
+
+  // 경과는 **묶음의 시작**부터 잰다(`elapsedMs` 주석 참고). 끝난 묶음은 그 끝까지만
   // 잰다 — `Date.now()` 로 재면 15:08 에 끝난 진행이 15:15 에 "11분째" 로 보인다
   // (2026-09-07 실측: 사용자가 그 화면을 보고 "죽었나 도나?" 를 물었다).
   const ended = endedAt === null ? null : new Date(endedAt).getTime();
-  const elapsed = elapsedLabel(first.createdAt, ended === null || Number.isNaN(ended) ? Date.now() : ended);
-  const name = author?.handle ?? '…';
   const 끝났다 = ended !== null && !Number.isNaN(ended);
+  const ms = elapsedMs(first.createdAt, 끝났다 ? ended! : Date.now());
+  // **두 상태를 사전 항목 둘로 가른다**(`lib/time.ts::runningLabel` 주석). 여기 있던
+  // `elapsed.replace(/째$/, '')` 는 한국어 어미를 정규식으로 자르던 것이라 다른 언어에서
+  // 아무것도 안 잘렸다 — 영어 화면이 "끝난 진행"과 "도는 진행"을 같은 글자로 말했다.
+  const elapsed = ms === null ? null : 끝났다 ? tookLabel(ms, locale, t) : runningLabel(ms, locale, t);
+  const name = author?.handle ?? '…';
 
   return (
     <div data-testid="progress-row" className="px-4 py-0.5">
@@ -56,10 +65,7 @@ export function ProgressRow({ messages, endedAt = null }: {
         <span className="font-medium text-fg-agent">{name}</span>
         {/* 끝났으면 상태가 아니라 **기록**이다 — "작업 중" 은 지금을 말하는 말이다. */}
         <span>{끝났다 ? '작업' : '작업 중'}</span>
-        {elapsed && (
-          // 끝난 묶음에서는 "째"(진행형)를 떼고 걸린 시간만 남긴다.
-          <span className="text-fg-subtle">· {끝났다 ? elapsed.replace(/째$/, '') : elapsed}</span>
-        )}
+        {elapsed && <span className="text-fg-subtle">· {elapsed}</span>}
         {/*
           접힌 개수는 **둘 이상일 때만** 말한다. 하나뿐인데 "1줄"이라고 적으면 접힌 것이
           없는데 접혔다고 말하는 셈이고, 규칙 06(없는 것은 자리를 차지하지 않는다)에 걸린다.

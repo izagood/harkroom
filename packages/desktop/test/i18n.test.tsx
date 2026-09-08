@@ -230,22 +230,20 @@ describe('화면 — 기본은 영어다', () => {
   });
 
   /**
-   * **경과 표기(`3분째`)는 아직 한국어다** — `progressGroup.ts::elapsedLabel` 은 이
-   * PR 이 옮기지 않았고, 그것은 이 구획이 부르는 **다른 판정 함수**다. 그래서 이 축은
-   * 사슬 줄만 재고 행 전체를 재지 않는다.
+   * **경과 표기도 이제 영어다**(`#619` 후속). 그 PR 이 남긴 주의점이 여기 있었다 —
+   * *"경과 표기(`3분째`)는 아직 한국어라 이 축은 사슬 줄만 재고 행 전체를 재지 않는다."*
    *
-   * 남은 것을 시험이 **거짓으로 초록으로 만들지 않는 것**이 여기서 중요하다: 행 전체에
-   * `[가-힣]` 이 없다고 쓰면 다음 사람이 `elapsedLabel` 을 옮긴 줄 알게 된다. 그 함수는
-   * 아래 '남은 것' 목록에 있다.
+   * 시간 표기가 `lib/time.ts` 한 벌로 합쳐지면서 그 예외가 없어졌으므로 **행 전체**를
+   * 잰다. 예외를 남겨 두면 다음 사람이 그 자리에 한국어를 다시 넣어도 초록이다.
    */
-  it('사슬 줄이 영어 어순으로 뜬다 — 조사가 안 붙는다', () => {
+  it('사슬 줄이 영어 어순으로 뜬다 — 조사가 안 붙고, 경과도 영어다', () => {
     seed([link(FORGE, ME)]);
     render(<WaitChainSection />);
     const row = screen.getByTestId('wait-chain-root-1');
     expect(row.textContent).toContain('#general');
     expect(row.textContent).toContain('forge');
-    // 사전이 내는 말에는 한국어가 안 섞인다. 경과는 아직 저쪽 함수의 것이라 뺀다.
-    expect(row.textContent!.replace(/\d+분째/, '')).not.toMatch(/[가-힣]/);
+    // **행 전체**에 한국어가 없다 — 빼 두는 자리가 하나도 없다.
+    expect(row.textContent).not.toMatch(/[가-힣]/);
   });
 
   it('몇 개가 풀리는지 영어로 말한다', () => {
@@ -527,5 +525,98 @@ describe('사이드바 안내문 — 옮기면서 사실을 잃지 않는다', (
     expect(en['sidebar.brand.disconnected'].length).toBeGreaterThan('Disconnected'.length + 10);
     expect(en['sidebar.brand.disconnected']).toContain('trusted');
     expect(ko['sidebar.brand.disconnected']).toContain('알 수 없다');
+/**
+ * **시간 표기가 한 벌인 것을 잠근다**(`#619` 후속).
+ *
+ * 이 저장소가 반복 결함으로 지목한 것이 *"같은 판정이 두 벌"* 이고, 시간 표기가 정확히
+ * 그 모양이었다 — `elapsedLabel` 이 **이름까지 같은 채** 두 파일에 있었고(시그니처가
+ * 달라 컴파일은 조용했다), 같은 일을 하는 함수가 `minutesAgo` · `lastTurnAgo` ·
+ * `formatDuration` 까지 합쳐 여섯 벌이었다.
+ *
+ * 합친 것을 문구 대조만으로는 지킬 수 없다: 다음 사람이 화면 안에서 `${분}분 전` 을
+ * 다시 조립해도 그 화면의 회귀선은 초록이다. 그래서 **소스를 직접 읽어** 시간 단위를
+ * 손으로 이어 붙이는 자리가 `lib/time.ts` 밖에 없음을 단언한다
+ * (`daemonFacts.test.tsx` 의 *"판정 함수 어디에도 임계값 상수가 없다 — 소스를 직접
+ * 본다"* 와 같은 방식이다).
+ */
+describe('시간 표기 — 한 벌이다', () => {
+  /**
+   * 시간 낱말이 **문자열 리터럴 안에서** 조립되는 모양. 템플릿의 `}` 나 따옴표 바로 뒤에
+   * 단위가 붙는 것이 그 신호다(`` `${mins}분 전` `` · `` `${secs}초` ``).
+   */
+  const HAND_BUILT = /[}'"]\s*(?:분 전|시간 전|일 전|분째|시간째|초|분|시간|일)\s*[`'"]/;
+
+  /** `src/` 아래 모든 `.ts`·`.tsx` 를 **주석을 지운 채** 준다. */
+  async function sources(): Promise<[path: string, code: string][]> {
+    const { readdir, readFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const out: [string, string][] = [];
+    const walk = async (dir: string): Promise<void> => {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) { await walk(full); continue; }
+        if (!/\.tsx?$/.test(entry.name)) continue;
+        // 주석에서 옛 문구를 **인용**하는 것은 정상이다 — 근거를 남기는 자리다.
+        // 금지 대상은 코드가 그 문자열을 만드는 것이므로 주석을 지운 뒤 본다.
+        const code = (await readFile(full, 'utf8'))
+          .replace(/\/\*[\s\S]*?\*\//g, '')
+          .replace(/\/\/.*$/gm, '');
+        out.push([full.replace(/^.*\/src\//, 'src/'), code]);
+      }
+    };
+    await walk(join(process.cwd(), 'src'));
+    return out;
+  }
+
+  it('시간 단위를 손으로 이어 붙이는 자리가 사전과 time.ts 밖에 없다', async () => {
+    const offenders = (await sources())
+      // 사전은 시간 낱말을 **가질 수밖에 없다**(`time.running` 의 `{duration}째`) —
+      // 그것이 `Intl` 이 못 내는 뜻이고, 이 PR 이 사전에 남기기로 한 자리다.
+      .filter(([path]) => !path.startsWith('src/i18n/'))
+      // `time.ts` 는 그 조립을 **혼자 하기로 한** 파일이다.
+      .filter(([path]) => path !== 'src/lib/time.ts')
+      .filter(([, code]) => HAND_BUILT.test(code))
+      .map(([path]) => path);
+
+    expect(offenders).toEqual([]);
+  });
+
+  /** 이름이 같은 함수가 두 파일에 다시 서는 것도 막는다 — 그것이 옛 결함의 모양이다. */
+  it('`elapsedLabel` 이 한 파일에만 있다', async () => {
+    const files = (await sources())
+      .filter(([, code]) => /export function elapsedLabel/.test(code))
+      .map(([path]) => path);
+
+    expect(files).toEqual(['src/lib/daemonFacts.ts']);
+  });
+
+  /**
+   * **"얼마나 전"이 분에서 멈추지 않는다.**
+   *
+   * 옛 `minutesAgo` 는 한 시간 전을 `60분 전`, 한 달 전을 `41760분 전` 이라고 적었고
+   * 옛 `lastTurnAgo` 는 같은 물음에 `1시간 전`·`29일 전` 이라고 답했다 — **같은 뜻을
+   * 두 함수가 다르게 말하고 있었다.** 합치면서 뒤쪽으로 수렴했고, 그 근거는
+   * `lastTurn.ts` 가 이미 적어 둔 것이다: *"사람이 시계와 뺄셈으로 계산하게 만들 이유가
+   * 없다."*
+   *
+   * 이 축이 없으면 다음 사람이 "원래 분이었는데" 하며 되돌릴 수 있다.
+   */
+  it('"얼마나 전"이 시간·일로 올라간다 — 분에서 멈추지 않는다', async () => {
+    const { agoLabel } = await import('../src/lib/time');
+    const NOW = 1_800_000_000_000;
+    const ko = translator('ko');
+    const ago = (ms: number) => agoLabel(NOW - ms, NOW, 'ko', ko);
+
+    expect(ago(59 * 60_000)).toBe('59분 전');
+    // 여기서 올라간다 — 옛 `minutesAgo` 는 `60분 전` 이었다.
+    expect(ago(60 * 60_000)).toBe('1시간 전');
+    expect(ago(23 * 3_600_000)).toBe('23시간 전');
+    // 여기서 또 올라간다 — 옛 `minutesAgo` 는 `1440분 전` 이었다.
+    expect(ago(24 * 3_600_000)).toBe('1일 전');
+    expect(ago(29 * 86_400_000)).toBe('29일 전');
+    // 분에서 멈추던 옛 문구가 어디에도 안 나온다.
+    for (const ms of [60 * 60_000, 24 * 3_600_000, 29 * 86_400_000]) {
+      expect(ago(ms)).not.toMatch(/^\d{3,}분 전$/);
+    }
   });
 });

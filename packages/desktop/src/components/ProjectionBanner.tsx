@@ -1,7 +1,7 @@
 import { useActiveStore } from '../state/communities';
 import type { SectionId } from './settings/sections';
 import { projectionBanner } from '../lib/projectionBanner';
-import { minutesAgo } from '../lib/minutesAgo';
+import { useAgo } from '../i18n/useT';
 
 /**
  * 고치는 문이 **지목하는 자리**. 투영은 "이 앱이 말을 거는 서버" 가 avcs 를 향해 돌리는
@@ -50,7 +50,10 @@ export function ProjectionBanner({ onOpenSettings }: {
   const error = useActiveStore((s) => s.projectionStatusError);
   const dismissed = useActiveStore((s) => s.projectionBannerDismissed);
 
-  const banner = projectionBanner({ status, error, minutesAgo });
+  // 훅은 조건 앞에서 부른다 — 아래 두 `return null` 보다 먼저여야 한다.
+  const ago = useAgo();
+
+  const banner = projectionBanner({ status, error, ago });
   if (!banner || !banner.strip) return null;
   // 같은 사정을 다시 세우지 않는다. 다른 사정이면 열쇠가 달라 다시 선다.
   if (dismissed === banner.testid) return null;
