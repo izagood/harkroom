@@ -50,6 +50,44 @@ function useAttachmentUrl(id: string, enabled: boolean): { url: string | null; f
   return { url, failed };
 }
 
+/**
+ * 좁은 자리(컴포저의 대기 칩)에 세우는 **작은** 미리보기. 이름과 크기만 보이면 방금 붙인
+ * 것이 의도한 그림인지 알 수 없다 — 붙여넣은 스크린샷은 `screenshot-20260908-151256.png`
+ * 처럼 서로 구별되지 않는 이름을 달고 오기 때문에, 잘못 고른 것을 보내고 나서야 안다.
+ *
+ * 미리보기 판단은 `Attachment` 와 **같은 화이트리스트**를 쓴다 — 여기만 느슨하면 SVG 가
+ * 컴포저로 새어 들어온다. 그림이 아니거나 아직 못 받았으면 지금까지처럼 📎 로 남고,
+ * 자리 크기는 같게 잡는다: 바이트가 도착하는 순간 칩 폭이 튀면 옆의 × 를 누르려던 손이
+ * 빗나간다.
+ *
+ * 옆에 파일명이 이미 있으므로 그림 자체는 장식이다(`alt=""`) — alt 에 이름을 또 넣으면
+ * 스크린리더가 같은 이름을 두 번 읽는다.
+ */
+export function AttachmentThumb({ attachment }: { attachment: AttachmentRow }) {
+  const canPreview = PREVIEWABLE.includes(attachment.contentType);
+  const { url, failed } = useAttachmentUrl(attachment.id, canPreview);
+
+  if (canPreview && url) {
+    return (
+      <img
+        src={url}
+        alt=""
+        data-testid="attachment-thumb"
+        className="h-6 w-6 shrink-0 rounded-sm border border-border object-cover"
+      />
+    );
+  }
+  // 그리지 못한 이유는 둘이다: 그릴 수 없는 타입이거나, 받다 실패했거나. 둘 다 📎 로만
+  // 덮으면 구분이 사라진다(#257 과 같은 이유). 칩에 문장을 더 넣으면 한 줄이 무너지므로
+  // 여기서는 짧게만 말한다 — 파일 자체는 이미 서버에 올라가 있고, 보내는 데는 지장이 없다.
+  return (
+    <span className="inline-flex h-6 shrink-0 items-center gap-1">
+      <span aria-hidden>📎</span>
+      {failed && <span className="text-danger">(미리보기 실패)</span>}
+    </span>
+  );
+}
+
 function Attachment({ attachment }: { attachment: AttachmentRow }) {
   const canPreview = PREVIEWABLE.includes(attachment.contentType);
   const { url, failed } = useAttachmentUrl(attachment.id, canPreview);

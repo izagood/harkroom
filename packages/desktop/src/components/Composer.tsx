@@ -5,7 +5,7 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { ApiError } from '../lib/api';
 import { GroupBadge, TeamBadge } from './Identity';
-import { formatSize } from './Attachments';
+import { AttachmentThumb, formatSize } from './Attachments';
 import {
   mentionQueryAt, applyMention, withStickyMentions, keepMentioned, bodyRecipients,
   type MentionQuery,
@@ -1073,9 +1073,10 @@ export function Composer({
           {pending.map((a) => (
             <span
               key={a.id}
-              className="inline-flex items-center gap-1 rounded border border-border bg-surface px-1.5 text-[11px] text-fg"
+              className="inline-flex items-center gap-1 rounded border border-border bg-surface px-1.5 py-0.5 text-[11px] text-fg"
             >
-              <span aria-hidden>📎</span>
+              {/* 📎 자리를 그림이 대신한다 — 무엇을 붙였는지는 이름보다 그림이 빨리 답한다. */}
+              <AttachmentThumb attachment={a} />
               {a.filename}
               <span className="text-fg-subtle">{formatSize(a.sizeBytes)}</span>
               <button

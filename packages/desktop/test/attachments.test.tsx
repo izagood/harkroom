@@ -245,6 +245,64 @@ describe('attaching a file in the composer', () => {
     await waitFor(() => expect(screen.queryByText(/gone\.txt/)).toBeNull());
   });
 
+  // 파일명만으로는 "내가 고르려던 그 그림인가" 에 답할 수 없다 — 붙여넣은 스크린샷은
+  // 이름이 서로 구별되지 않는다. 보내기 전에 눈으로 확인할 수 있어야 한다.
+  it('shows a small preview of a pending image', async () => {
+    fakeController({ upload: vi.fn(async () => att({ contentType: 'image/png', filename: 'shot.png' })) });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('shot.png', 'image/png');
+
+    const thumb = await screen.findByTestId('attachment-thumb');
+    expect((thumb as HTMLImageElement).src).toBeTruthy();
+    // 칩의 이름·크기는 그대로 남는다 — 그림이 이름을 밀어내면 같은 그림 두 장을 구분 못 한다.
+    expect(screen.getByText(/shot\.png/)).toBeTruthy();
+  });
+
+  // SVG 는 `<script>` 를 담을 수 있다. 본문 미리보기와 **같은 화이트리스트**를 써야
+  // 한쪽만 막히는 날이 오지 않는다. 바이트를 아예 받지 않는지로 확인한다.
+  it('does not even fetch an svg for the composer thumbnail', async () => {
+    const c = fakeController({
+      upload: vi.fn(async () => att({ contentType: 'image/svg+xml', filename: 'x.svg' })),
+    });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('x.svg', 'image/svg+xml');
+
+    await screen.findByText(/x\.svg/);
+    expect(c.fetchAttachment).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('attachment-thumb')).toBeNull();
+  });
+
+  // 이름은 올린 사람이 정한다 — `evil.png` 가 실제로 HTML 이면 그리면 안 된다.
+  it('does not preview a pending file that merely claims to be an image by name', async () => {
+    const c = fakeController({
+      upload: vi.fn(async () => att({ contentType: 'text/html', filename: 'evil.png' })),
+    });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('evil.png', 'text/html');
+
+    await screen.findByText(/evil\.png/);
+    expect(c.fetchAttachment).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('attachment-thumb')).toBeNull();
+  });
+
+  // 미리보기만 실패한 것과 "원래 미리보기가 없는 파일" 이 둘 다 📎 로 보이면 구분이 없다.
+  it('says the thumbnail failed instead of silently showing the clip', async () => {
+    fakeController({
+      upload: vi.fn(async () => att({ contentType: 'image/png', filename: 'fail.png' })),
+      fetchAttachment: vi.fn(async () => { throw new Error('network error'); }),
+    });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('fail.png', 'image/png');
+
+    await waitFor(() => expect(screen.getByText('(미리보기 실패)')).toBeTruthy());
+    // 올리기는 성공했으므로 보내는 데 지장이 없어야 한다 — 칩은 그대로 남는다.
+    expect(screen.getByText(/fail\.png/)).toBeTruthy();
+  });
+
   it('lets me drop a pending attachment before sending', async () => {
     fakeController({ upload: vi.fn(async () => att({ filename: 'oops.txt' })) });
     render(<Composer onSend={vi.fn()} />);
