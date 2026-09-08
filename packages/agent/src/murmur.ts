@@ -143,8 +143,16 @@ export class MurmurAgentClient {
     }
   }
 
+  /**
+   * 워크스페이스 규칙. 러너는 **항상 `mode: 'turn'`** 으로 받는다 — 러너가 띄우는 것은
+   * 턴뿐이고, 턴에게 상주용 poll 계약을 주면 그 턴이 인박스를 또 보고 남의 앵커의 요청을
+   * 대신 해 버린다(2026-09-08 실측, 서버 `mcp/guide.ts` 머리에 경위가 있다).
+   *
+   * 서버가 이 인자를 모르는 판본이면(러너가 먼저 배포되는 창) MCP 는 알 수 없는 인자를
+   * 무시하고 전문을 준다 — 옛 동작으로 후퇴할 뿐 실패하지 않는다.
+   */
   async guide(): Promise<string> {
-    const res = await this.call<{ guide?: string } | string>('workspace.guide');
+    const res = await this.call<{ guide?: string } | string>('workspace.guide', { mode: 'turn' });
     return typeof res === 'string' ? res : (res.guide ?? JSON.stringify(res));
   }
 
@@ -217,6 +225,20 @@ export class MurmurAgentClient {
     if (threadRootId) args.threadRootId = threadRootId;
     if (since !== undefined) args.since = since;
     const res = await this.call<{ messages: MessageRow[] }>('message.read', args);
+    return res.messages;
+  }
+
+  /**
+   * 채널 전체(스레드 답 포함)에서 seq 커서 이후. `message.read` 에 `threadRootId` 를 주지
+   * 않으면 서버 `listMessages` 가 스레드 경계 없이 돌려준다 — 그 계약에 이름을 붙인 것이다.
+   *
+   * 러너가 이것을 쓰는 자리는 하나다: 침묵으로 끝난 턴이 **자기 앵커 밖에** 발화를 남겼는지
+   * 보는 관측(`mentionTurn.ts::offAnchorEvidence`). 앵커 스레드만 읽어서는 정의상 안 보인다.
+   */
+  async readChannelSince(channelId: string, sinceSeq: number, limit = 200): Promise<MessageRow[]> {
+    const res = await this.call<{ messages: MessageRow[] }>('message.read', {
+      channelId, since: sinceSeq, limit,
+    });
     return res.messages;
   }
 

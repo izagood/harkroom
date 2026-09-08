@@ -6,7 +6,7 @@
 // 세션이 이미 아는 것까지 다시 넘길 필요가 없다 — 그 경계가 `lastFedSeq` 다. 그리고 예전엔
 // 러너가 모델 응답을 파싱해 대신 올렸지만, 이제 에이전트가 murmur MCP `message.post` 로
 // 스스로 올린다 — 그래서 시스템 프롬프트가 "어디에 쓸지"까지 알려줘야 한다.
-import type { MessageRow } from '@murmur/shared';
+import { messagePermalink, type MessageRow } from '@murmur/shared';
 
 /** 서버의 메시지 본문 상한(`POST /channels/:id/messages` 의 zod `max(8000)`). 넘기면 발화가 실패한다. */
 export const BODY_LIMIT = 8000;
@@ -231,6 +231,17 @@ export function buildSystemPrompt(opts: {
     '대화 프롬프트 맨 위에 준다 — 그대로 넣어 호출한다(threadRootId 가 "채널 최상위(없음)"으로',
     '적혀 있으면 그 인자는 생략하고 channelId 만 넘긴다).',
     '',
+    // 2026-09-08 실측: 서로 다른 앵커를 받은 턴 셋 중 둘이 **자기 앵커 대신** 채널의 더
+    // 새로운 요청을 구현했다. 같은 기능 PR 이 셋 나오고(#638·#639·#640) 정작 그 둘의
+    // 앵커에는 답이 없었다. 원인은 워크스페이스 가이드가 상주 에이전트용 poll 계약을
+    // 턴에게도 주고 있었던 것이고(서버 `mcp/guide.ts` 가 그것을 모드로 갈랐다), 이 두 줄은
+    // 가이드가 없거나 옛 판본이어도 앵커가 지켜지도록 프롬프트 자신이 거는 안전선이다.
+    // 여기에 두는 이유: 바로 위가 channelId·threadRootId 를 말한 자리다 — 그 값이 무엇을
+    // 뜻하는지(=이 턴의 일 전체)를 같은 문단에서 말해야 한다.
+    '**그 앵커가 이 턴의 일 전부다.** 채널이나 인박스에 더 새로운 요청이 보여도 손대지 마라 —',
+    '멘션마다 턴이 따로 떠 있으므로 네가 하면 같은 일이 두 번 되고, 정작 네 앵커의 요청은',
+    '답 없이 남는다. 눈에 띈 요청은 대신 하지 말고 그 사실만 네 스레드에 한 줄 적어라.',
+    '',
     // 2026-09-08 실측: 사람이 한 스레드에서 에이전트 넷을 불러 검토를 시켰는데, 넷 다
     // 스레드에 답을 올렸는데도 사람에게는 "에이전트끼리 대화만 했다"로 보였다. 원인이 둘이고
     // 아래 두 줄이 각각의 짝이다.
@@ -442,6 +453,59 @@ export function countOwnPostsSince(messages: MessageRow[], meId: string, sinceSe
   return messages.filter(
     (m) => m.authorId === meId && m.seq > sinceSeq && !NON_UTTERANCE_KINDS.has(m.kind),
   ).length;
+}
+
+/**
+ * 이 턴이 **자기 앵커가 아닌 스레드에** 남긴 발화들.
+ *
+ * ## 왜 필요한가 (2026-09-08 실측)
+ *
+ * 서로 다른 앵커를 받은 턴 둘이 자기 앵커 대신 채널의 다른 요청을 구현하고, 결과도 **그쪽
+ * 스레드에** 올렸다. 그 두 턴의 앵커에는 `NO_REPLY_NOTICE` 한 줄만 남았다 — 사람이 본 것은
+ * "답 없이 턴을 끝냈습니다" 였고, 그 턴이 실제로는 30분을 일해서 옆 스레드에 답을 올렸다는
+ * 사실은 어디에도 없었다. 침묵의 **이유**가 러너에게는 보이는데 사람에게 안 보였다.
+ *
+ * ## 판정 규칙
+ *
+ * 메시지가 속한 스레드는 `threadRootId ?? id` 다(루트 메시지 자신은 자기 id 가 스레드다).
+ * 앵커가 `null`(채널 최상위)인 턴에게는 "최상위에 쓴 것"이 자기 자리이므로 `threadRootId`
+ * 가 null 인 것만 자기 것이다 — 그 경우 루트의 id 로 비교하면 자기 발화가 전부 남의 것이 된다.
+ *
+ * 발화의 정의는 `countOwnPostsSince` 와 **같다**(progress·wake 제외) — 세는 규칙이 두 벌이
+ * 되면 "앵커에는 0건인데 밖에는 1건"의 두 숫자가 서로 다른 뜻을 갖게 된다.
+ *
+ * ## 이것이 증명하지 못하는 것
+ *
+ * 같은 채널에서 턴이 **동시에** 돌면 여기 잡힌 발화가 남의 정상 턴의 것일 수 있다(계정이
+ * 같아 구분되지 않는다 — `hasOwnPostSince` 의 #174 와 같은 한계다). 그래서 호출부는 이것을
+ * 고발이 아니라 정황으로 쓴다: 이미 침묵으로 통지가 나가는 자리에만 덧붙인다.
+ */
+export function offAnchorPosts(
+  messages: MessageRow[], meId: string, anchor: string | null, sinceSeq: number,
+): MessageRow[] {
+  return messages.filter((m) => {
+    if (m.authorId !== meId || m.seq <= sinceSeq || NON_UTTERANCE_KINDS.has(m.kind)) return false;
+    return anchor === null ? m.threadRootId !== null : (m.threadRootId ?? m.id) !== anchor;
+  });
+}
+
+/**
+ * `offAnchorPosts` 가 잡은 것을 `NO_REPLY_NOTICE` 뒤에 붙일 한 문단으로 만든다.
+ *
+ * 스레드 링크를 싣는다 — "다른 스레드에 썼다"만 말하면 사람이 그것을 찾을 방법이 없다.
+ * 형식은 데스크탑이 이미 여는 permalink(`messagePermalink`)다: 붙여넣으면 그 스레드가 열린다.
+ * 잡힌 것이 없으면 `null` 이다(`harnessTailNotice` 와 같은 규칙: 빈 상자는 "여기 뭔가
+ * 있다"는 거짓 신호다).
+ */
+export function offAnchorNotice(posts: MessageRow[]): string | null {
+  if (posts.length === 0) return null;
+  const roots = [...new Set(posts.map((m) => m.threadRootId ?? m.id))];
+  const links = roots.map((id) => messagePermalink(id));
+  return [
+    `다만 이 턴이 도는 동안 **다른 스레드에** 내 발화가 ${posts.length}건 있었다 —`,
+    '이 턴이 자기 앵커 대신 그쪽 요청을 했을 수 있다(같은 계정의 다른 턴일 수도 있다):',
+    ...links.map((l) => `- ${l}`),
+  ].join('\n');
 }
 
 /**

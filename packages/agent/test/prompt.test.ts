@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, buildSystemPrompt, harnessTailNotice, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, quotaNotice, sessionConflictNotice, type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, harnessTailNotice, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -452,5 +452,75 @@ describe('harnessTailNotice — 버려지던 마지막 출력', () => {
     expect(harnessTailNotice('', 'murp_x')).toBeNull();
     expect(harnessTailNotice('   \n\r\n  ', 'murp_x')).toBeNull();
     expect(harnessTailNotice('\x1B[?25h\x1B[0m', 'murp_x')).toBeNull();
+  });
+});
+
+/**
+ * 2026-09-08 사고의 회귀선: 서로 다른 앵커를 받은 턴 둘이 자기 앵커 대신 채널의 다른
+ * 요청을 구현하고 그쪽 스레드에 답을 올렸다. 자기 앵커에는 "답 없이 턴을 끝냈습니다"만
+ * 남아, 사람 눈에는 30분 일한 턴이 아무것도 안 한 것으로 보였다.
+ */
+describe('앵커 밖 발화 관측 (2026-09-08)', () => {
+  const inThread = (seq: number, authorId: string, root: string | null) =>
+    msg(seq, authorId, `m${seq}`, { threadRootId: root });
+
+  it('앵커가 스레드일 때: 다른 스레드와 채널 최상위의 내 발화를 잡는다', () => {
+    const all = [
+      inThread(11, 'a1', 'T1'),   // 내 앵커 — 잡히면 안 된다
+      inThread(12, 'a1', 'T2'),   // 남의 스레드 — 잡힌다
+      inThread(13, 'a1', null),   // 채널 최상위 — 내 앵커가 아니다
+      inThread(14, 'a2', 'T2'),   // 동료의 발화 — 내 것이 아니다
+    ];
+    const strays = offAnchorPosts(all, 'a1', 'T1', 10);
+    expect(strays.map((m) => m.seq)).toEqual([12, 13]);
+  });
+
+  it('앵커 스레드의 루트 메시지 자신은 앵커 안이다 — id 로도 비교한다', () => {
+    const root = msg(20, 'a1', '루트', { id: 'T1', threadRootId: null });
+    expect(offAnchorPosts([root], 'a1', 'T1', 10)).toEqual([]);
+  });
+
+  it('앵커가 채널 최상위(null)면 스레드 답이 앵커 밖이다', () => {
+    const all = [inThread(21, 'a1', null), inThread(22, 'a1', 'T9')];
+    expect(offAnchorPosts(all, 'a1', null, 20).map((m) => m.seq)).toEqual([22]);
+  });
+
+  it('기준선 이전과 progress·wake 는 세지 않는다 — countOwnPostsSince 와 같은 규칙이다', () => {
+    const all = [
+      inThread(5, 'a1', 'T2'),                                        // 턴 시작 전
+      msg(31, 'a1', '진행', { threadRootId: 'T2', kind: 'progress' }),
+      msg(32, 'a1', '대기', { threadRootId: 'T2', kind: 'wake' }),
+      inThread(33, 'a1', 'T2'),
+    ];
+    expect(offAnchorPosts(all, 'a1', 'T1', 10).map((m) => m.seq)).toEqual([33]);
+  });
+
+  it('통지는 스레드 루트를 중복 없이 permalink 로 싣는다 — 링크가 없으면 찾을 방법이 없다', () => {
+    const posts = [inThread(41, 'a1', 'T2'), inThread(42, 'a1', 'T2'), inThread(43, 'a1', 'T3')];
+    const n = offAnchorNotice(posts)!;
+    expect(n).toContain('3건');
+    expect(n).toContain('murmur://message/T2');
+    expect(n).toContain('murmur://message/T3');
+    expect(n.match(/murmur:\/\/message\/T2/g)).toHaveLength(1);
+  });
+
+  it('통지는 단정하지 않는다 — 같은 계정의 다른 턴일 수도 있다', () => {
+    const n = offAnchorNotice([inThread(51, 'a1', 'T2')])!;
+    expect(n).toMatch(/수 있다/);
+  });
+
+  it('잡힌 것이 없으면 null 이다 — 빈 상자는 거짓 신호다', () => {
+    expect(offAnchorNotice([])).toBeNull();
+  });
+});
+
+describe('앵커 고정 지시 (2026-09-08)', () => {
+  it('시스템 프롬프트가 앵커 하나만 하라고 못 박는다 — 가이드가 옛 판본이어도 남는 안전선', () => {
+    const s = buildSystemPrompt({
+      handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] },
+    });
+    expect(s).toContain('그 앵커가 이 턴의 일 전부다');
+    expect(s).toMatch(/손대지 마라/);
+    expect(s).toMatch(/답 없이 남는다/);
   });
 });
