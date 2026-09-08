@@ -172,4 +172,58 @@ describe('mentionScheduler 승인 관문', () => {
     expect(again.started).toBe(1);
     await scheduler.drain();
   });
+  it('사람이 조종 중인 스레드의 멘션은 유예하고 통지는 entry 당 1회다', async () => {
+    let calls = 0;
+    const { scheduler, registry, posted, markedRead } = harness({
+      runTurn: async () => { calls += 1; return { stopRequestedAt: null }; },
+    });
+    // 사람이 이 스레드를 조종 중이다.
+    registry.register(`${CH}/root-1`, { kind: 'interactive', sessionId: 's1', openedByHandle: 'jaebin' });
+
+    const first = await scheduler.admit(batchOf([
+      { entryId: 1, messageId: 'm1', threadRootId: 'root-1' },
+    ]), ctx);
+    const second = await scheduler.admit(batchOf([
+      { entryId: 1, messageId: 'm1', threadRootId: 'root-1' },
+    ]), ctx);
+
+    expect(first.deferred).toBe(1);
+    expect(second.deferred).toBe(1);
+    expect(calls).toBe(0);
+    // 유예는 markRead 하지 않는다 — inbox 의 at-least-once 가 그대로 큐다.
+    expect(markedRead).toEqual([]);
+    // 재폴링마다 올리면 조종이 길수록 스레드가 도배된다.
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!.body).toContain('jaebin');
+  });
+
+  it('유예 통지가 실패해도 유예는 유지된다', async () => {
+    const registry = new TurnRegistry();
+    let calls = 0;
+    const scheduler = createMentionScheduler({
+      murmur: {
+        markRead: async (ids) => ids.length,
+        post: async () => { throw new Error('발화 실패'); },
+      },
+      registry,
+      queue: new MentionQueue(),
+      accountLane: [null],
+      runMentionTurn: async () => { calls += 1; return { stopRequestedAt: null }; },
+      buildTurnDeps: () => ({}) as never,
+      hooks: {
+        resumeHandoff: async () => {}, stopRequested: () => {},
+        exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {},
+      },
+      startedAtMs: 0,
+    });
+    registry.register(`${CH}/root-1`, { kind: 'interactive', sessionId: 's1', openedByHandle: 'jaebin' });
+
+    const out = await scheduler.admit(batchOf([
+      { entryId: 1, messageId: 'm1', threadRootId: 'root-1' },
+    ]), ctx);
+
+    // 통지는 관측이고 큐는 inbox 다 — 통지가 실패해도 턴을 시작하면 안 된다.
+    expect(out.deferred).toBe(1);
+    expect(calls).toBe(0);
+  });
 });
