@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
@@ -144,8 +144,9 @@ describe('ChannelPane', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-    // 확인은 메뉴 밖에 남는다 — 메뉴 안에 두면 항목을 누르는 순간 닫히면서 확인이 사라진다.
-    fireEvent.click(screen.getByRole('button', { name: 'Really delete' }));
+    // 확인은 메뉴 밖 겹창에 남는다 — 메뉴 안에 두면 항목을 누르는 순간 닫히면서 확인이 사라진다.
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete message?' }))
+      .getByRole('button', { name: 'Delete' }));
 
     expect(c.deleteMessage).toHaveBeenCalledWith('m1');
   });
