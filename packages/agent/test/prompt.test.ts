@@ -197,6 +197,29 @@ describe('buildSystemPrompt', () => {
     expect(s).toContain('message.post');
   });
 
+  /**
+   * 2026-09-08 실측: 사람이 한 스레드에서 에이전트 넷을 불러 검토를 시켰고 넷 다 답을
+   * 올렸는데, 사람에게는 "에이전트끼리 대화만 했다"로 보였다. 프롬프트가 **누구에게
+   * 답하는지**를 한 줄도 말하지 않은 것이 원인의 절반이었다 — 아무도 요청자를 이름으로
+   * 부르지 않았고, 데스크탑의 접힘 판정(`agentExchange::addressesHuman`)에 걸릴 단서도
+   * 남지 않았다. 화면 쪽 판정과 이 지시가 한 쌍이므로 회귀를 양쪽에서 막는다.
+   */
+  it('요청자에게 답하고 이름으로 부르라고 지시한다', () => {
+    const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
+    expect(s).toContain('이 스레드를 연 사람에게 답하는 것');
+    expect(s).toContain('@handle');
+  });
+
+  /**
+   * 원인의 나머지 절반: 답이 스레드 안에만 남았다. 채널 화면은 `alsoInChannel` 이 아닌
+   * 스레드 답을 걸러내므로(`desktop/src/components/ChannelPane.tsx`), 채널만 보는 사람에게는
+   * 자기 질문 뒤가 비어 있었다. 도구에 인자가 있어도 프롬프트가 말하지 않으면 쓰이지 않는다.
+   */
+  it('채널 최상위 요청에는 alsoInChannel 을 붙이라고 지시한다', () => {
+    const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
+    expect(s).toContain('alsoInChannel');
+  });
+
   // #90: 한 턴에서 여러 번 message.post 를 부르면 같은 스레드에 답이 여러 개 남는다.
   // "한 번에 정리해서 올려라"는 실행 가능한 지시다.
   it('한 턴에 한 번만 발화하라고 지시한다', () => {
