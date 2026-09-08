@@ -128,6 +128,23 @@ function useAvatarUrl(accountId: string | null, attachmentId: string | null): st
  * 났다). 단을 지키려고 그림을 망가뜨리지 않는다.
  *
  * 회귀선은 `test/typeScale.test.ts` 이고, 이 자리들을 예외로 적어 뒀다.
+ *
+ * ## 껍데기 span 은 전부 `relative` 다 — 장식이 아니다
+ *
+ * 이 컴포넌트가 이름을 내는 방식은 `sr-only` 이고, Tailwind 의 그것은 **`position:
+ * absolute`** 다. 껍데기에 `relative` 가 없으면 그 스팬의 컨테이닝 블록이 **초기 컨테이닝
+ * 블록(ICB)** 이 되고, 그러면 조상에 걸린 `overflow-hidden` 이 **하나도 안 듣는다** —
+ * 자르는 상자는 컨테이닝 블록 사슬 위에 있을 때만 자르기 때문이다.
+ *
+ * 실측 2026-09-08(창 1400×578, 인박스 30줄): 인박스 줄마다 선 이 아바타의 `sr-only` 가
+ * 목록 길이만큼 문서 좌표에 깔려 `documentElement.scrollHeight` 를 578 → **2450** 으로
+ * 늘렸다. 그러면 문서가 스크롤 가능해지고, `scrollIntoView` 한 번에 **앱 껍데기 전체가
+ * 창 위로 올라간다**(상단 바·채널 머리가 잘리고 되돌릴 스크롤바도 없다).
+ *
+ * 인박스가 `Overlay`(`fixed` = positioned 조상)를 벗기 전에는 그 울타리에 가려 안 보였다.
+ * 사이드바·메시지 줄은 우연히 `relative` 가 있어 무사했고 — 우연에 기대지 않는다.
+ * 오프셋을 주지 않으므로 그림은 한 픽셀도 바뀌지 않는다. 회귀선은
+ * `test/shellScroll.test.tsx`.
  */
 export function Identity({ account, className = '', variant = 'badge' }: IdentityProps) {
   // 사람과 에이전트 **둘 다** 사진을 받는다. 훅은 조건부로 부를 수 없으므로 인자로 걸러 낸다.
@@ -159,7 +176,7 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
   if (!account) {
     return (
       <span
-        className={`inline-flex h-5 w-5 items-center justify-center rounded-full bg-fg-subtle text-[10px] font-semibold text-fg-on-strong ${className}`}
+        className={`relative inline-flex h-5 w-5 items-center justify-center rounded-full bg-fg-subtle text-[10px] font-semibold text-fg-on-strong ${className}`}
       >
         <span aria-hidden="true">?</span>
         <span className="sr-only">알 수 없는 계정</span>
@@ -188,7 +205,7 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
        */
       return (
         <span
-          className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-fg-on-strong ${avatarUrl ? 'bg-surface-hover' : handleColor(account.handle)} ${className}`}
+          className={`relative inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-fg-on-strong ${avatarUrl ? 'bg-surface-hover' : handleColor(account.handle)} ${className}`}
         >
           {avatarUrl ? (
             <img data-testid="identity-avatar" src={avatarUrl} alt="" className="h-full w-full object-cover" />
@@ -216,7 +233,7 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
     // 둘 다 답하는 물음이 "누가 있나 / 누구 것인가"이지 **나를 막는 것**이 아니다
     // (규칙 04). 강조색은 그 자리에만 쓰는 색이다.
     return (
-      <span className={`inline-flex flex-wrap items-center gap-1 rounded bg-surface-sunken px-1 text-[11px] text-fg-muted ${className}`}>
+      <span className={`relative inline-flex flex-wrap items-center gap-1 rounded bg-surface-sunken px-1 text-[11px] text-fg-muted ${className}`}>
         <span aria-hidden="true">🤖</span>
         <span className="sr-only">에이전트</span>
         {owner && (
@@ -254,7 +271,7 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
   // `overflow-hidden` 은 이 자리에도 걸려 있다 — 사진(#159)이 상자를 넘지 않아야 한다.
   return (
     <span
-      className={`inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-fg-on-strong ${avatarUrl ? 'bg-surface-hover' : handleColor(account.handle)} ${className}`}
+      className={`relative inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-fg-on-strong ${avatarUrl ? 'bg-surface-hover' : handleColor(account.handle)} ${className}`}
     >
       {avatarUrl ? (
         // `alt` 를 **비운다**. 접근성 이름은 아래 sr-only 가 이미 내고 있고, 사진에 핸들을
@@ -287,7 +304,7 @@ export function GroupBadge({ group, className = '' }: { group: HandleGroupRow; c
   return (
     <span
       data-testid={`group-badge-${group.handle}`}
-      className={`inline-flex items-center gap-1 rounded bg-warning-surface-strong px-1 text-[11px] text-warning ${className}`}
+      className={`relative inline-flex items-center gap-1 rounded bg-warning-surface-strong px-1 text-[11px] text-warning ${className}`}
     >
       <span aria-hidden="true">👥</span>
       <span className="sr-only">집합</span>
@@ -316,7 +333,7 @@ export function TeamBadge({ team, className = '' }: { team: AgentTeamRow; classN
   return (
     <span
       data-testid={`team-badge-${team.name}`}
-      className={`inline-flex items-center gap-1 rounded bg-surface-hover px-1 text-[11px] text-fg-muted ${className}`}
+      className={`relative inline-flex items-center gap-1 rounded bg-surface-hover px-1 text-[11px] text-fg-muted ${className}`}
     >
       <span aria-hidden="true">🤖</span>
       <span className="sr-only">팀</span>
@@ -357,7 +374,7 @@ export function StatusMark({ account, className = '' }: {
       data-testid={`status-${account.id}`}
       data-status={account.status}
       title={name}
-      className={`inline-flex items-center text-[11px] leading-none ${className}`}
+      className={`relative inline-flex items-center text-[11px] leading-none ${className}`}
     >
       <span aria-hidden="true">{mark.glyph}</span>
       <span className="sr-only">{name}</span>

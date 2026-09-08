@@ -260,7 +260,10 @@ export function Inbox({ open, onClose }: Props) {
    */
   useEffect(() => {
     if (!open) return;
-    paneRef.current?.focus();
+    // `preventScroll`: 포커스는 기본으로 **대상을 보이게 스크롤한다** — 이 자리는 창을
+    // 꽉 채우므로 스크롤할 이유가 없고, 문서가 스크롤 가능한 상태라면 여는 것만으로
+    // 껍데기가 밀린다(`ChannelPane` 의 `scrollIntoView` 주석과 같은 사고다).
+    paneRef.current?.focus({ preventScroll: true });
   }, [open]);
 
   if (!open) return null;
