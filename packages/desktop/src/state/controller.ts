@@ -94,6 +94,19 @@ export class Controller {
         runnerStates: Object.fromEntries(states.map((s) => [s.agentId, s])),
       });
     });
+    // daemon 이 **직접 확인한 사실**을 스토어로 밀어 넣는다(`#443`). 판정
+    // (`runnerStates`)과 나란히 서고 섞이지 않는 이유는 `appStore.ts::daemonRunners`
+    // 주석의 표에 있다.
+    //
+    // **통째로 갈아 끼운다** — 병합하지 않는다. 관측은 그 순간의 장부 전체이고, 장부에서
+    // 사라진 러너는 daemon 이 더 이상 그것에 대해 아무것도 모른다는 뜻이다. 옛 항목을
+    // 남겨 두면 화면이 이미 없는 러너의 pid 를 계속 보이고, 사람은 그 pid 로 `ps` 를 쳐
+    // 아무것도 못 찾는다 — 그것이 정확히 이 이슈가 없애려는 낡은 사실이다.
+    this.runnerLauncher.setOnObservation((runners) => {
+      this.store.getState().set({
+        daemonRunners: Object.fromEntries(runners.map((r) => [r.agentId, r])),
+      });
+    });
   }
 
   /**
