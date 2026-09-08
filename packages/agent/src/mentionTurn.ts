@@ -466,6 +466,8 @@ export async function runMentionTurn(
     handles: deps.handles,
     channelId,
     threadRootId: anchor,
+    // 첨부 안내에 실을 실값(#첨부 열기). 러너는 자기가 붙은 URL 을 이미 안다.
+    murmurUrl: deps.murmurUrl,
     ...(target.wake ? { wake: target.wake } : {}),
   });
 
