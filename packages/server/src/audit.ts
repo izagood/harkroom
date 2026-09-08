@@ -89,7 +89,6 @@ export type AuditAction =
   // 이유는 같은 결이다: 아직 셸이 열리지 않았고, 그 턴이 끝난 뒤에 열린다. 하나로 뭉치면
   // 감사가 "열었다"고 말하는데 그 시각에는 아직 아무 PTY 도 없다. detail 은 {sessionId,
   // channelId, threadRootId} — sessionId 는 그 순간 도는 **멘션 턴**의 것이다.
-  | 'agent.interactive.handoffReserved';
 
 export interface AuditEntry {
   action: AuditAction;

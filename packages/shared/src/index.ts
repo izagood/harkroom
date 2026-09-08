@@ -1729,12 +1729,10 @@ export type AgentSessionState = 'running' | 'ended' | 'runner-offline';
  *   만 내린다 — 구 러너에서 타이핑이 "고장"이 아니라 "안 열림"으로 보이게.
  * - `'interactive'` 가 없으면 인터랙티브 open 요청이 타임아웃 대기 없이 즉시
  *   `runner_outdated` 로 거절된다.
- * - `'handoff'` 가 없으면 **이어받기**(#384) 요청이 같은 자리에서 즉시 거절된다. 이 능력이
- *   없는 러너는 `handoff` 플래그를 모르므로 진행 중인 멘션 턴의 세션을 그대로 돌려주는데,
- *   그러면 사람은 [이어받기] 를 눌러 놓고 여전히 관찰 전용인 화면을 본다 — 눌렀는데 아무
- *   일도 없는 그 결함이 정확히 #384 가 막으려는 것이다.
+ * - `'attention'` 이 없으면 그 러너는 사람을 부르지 못한다(2026-09-08) — 첫 실행 관문에
+ *   걸린 턴이 조용히 상한에서 실패한다. 앱은 없는 기능을 있다고 그리지 않는다.
  */
-export type RunnerCap = 'input' | 'interactive' | 'handoff' | 'attention';
+export type RunnerCap = 'input' | 'interactive' | 'attention';
 
 /**
  * 러너 → 서버 프레임. `GET /agent-relay` 소켓에 실린다.
@@ -1759,20 +1757,6 @@ export type RelayRunnerFrame =
    * 도착하므로(순서 보장), 서버가 이 응답을 받는 시점에 세션 조회는 성립한다.
    */
   | { type: 'interactive.opened'; requestId: string; sessionId: string; created: boolean }
-  /**
-   * 이어받기가 **예약**됐다(#384). 진행 중인 멘션 턴이 끝난 뒤 러너가 같은 하네스 세션
-   * id 로 인터랙티브 턴을 띄운다 — 진행 중인 턴을 멈추지 않는다(운영자 결정 A: 멈추면
-   * 하네스가 어디까지 했는지 사람이 모른다).
-   *
-   * **`interactive.opened` 에 플래그를 더하지 않고 프레임을 가른 이유**: "열렸다"와
-   * "기다린다"는 사람이 다음에 할 일이 다르다 — 열렸으면 지금 치고, 기다리는 것이면
-   * 화면에 그 사실이 있어야 한다. 한 프레임의 옵셔널 필드로 두면 그 필드를 안 읽는
-   * 경로가 "열렸다"로 뭉개고, 그것이 곧 "눌렀는데 아무 일이 없다"다.
-   *
-   * `sessionId` 는 **지금 도는 멘션 턴**의 세션이다: 사람은 기다리는 동안 그 화면을 계속
-   * 본다(관찰 전용인 채로). 인터랙티브 턴의 세션 id 는 아직 존재하지 않는다.
-   */
-  | { type: 'interactive.reserved'; requestId: string; sessionId: string }
   /** interactive.open 이 실패했다(codex 거절 등). message 는 사람에게 그대로 보여줄 문구다. */
   | { type: 'interactive.error'; requestId: string; message: string }
   /**
@@ -1780,8 +1764,7 @@ export type RelayRunnerFrame =
    * 주입이 먹지 않았고 — **계정 풀을 다 태운 뒤**다. 즉 이 화면은 다른 계정으로 우회되지
    * 않는다.
    *
-   * `interactive.opened` 와 프레임을 가른 이유는 `interactive.reserved` 를 가른 이유와
-   * 같다: "사람이 열었다"와 "기계가 부른다"는 사람이 다음에 할 일이 다르다. 전자는 이미
+   * `interactive.opened` 와 프레임을 가른 이유: "사람이 열었다"와 "기계가 부른다"는 사람이 다음에 할 일이 다르다. 전자는 이미
    * 사람이 앞에 있고, 후자는 **아직 아무도 모른다** — 그래서 후자만 앱이 화면을 띄운다.
    *
    * `screen` 은 `output` 과 **같은 규율로 base64** 다. 서버는 열지 않는다: 관문 화면에도
@@ -1834,16 +1817,6 @@ export type RelayServerFrame =
       channelId: string;
       threadRootId: string;
       openedByHandle: string;
-      /**
-       * 진행 중인 멘션 턴을 **이어받으러** 온 요청인가(#384). true 면 러너는 그 턴이 끝난
-       * 뒤 인터랙티브 턴을 띄우겠다고 예약하고 `interactive.reserved` 로 답한다. false 면
-       * 지금까지의 답 그대로다 — 진행 중인 멘션 턴의 세션에 관찰로 합류한다(#369).
-       *
-       * 옵셔널인 이유는 `mode`·`acceptsInput` 과 같다: 구 서버는 이 필드를 모른다. 없으면
-       * 이어받기가 아닌 것으로 읽는다 — 없는 요청을 있다고 읽으면 사람이 부탁하지 않은
-       * 턴이 뜬다. 러너 쪽 계약(`InteractiveOpenRequest.handoff`)은 필수다.
-       */
-      handoff?: boolean;
       cols?: number;
       rows?: number;
     };

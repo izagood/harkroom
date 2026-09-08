@@ -86,7 +86,7 @@ describe('#141 러너 릴레이 — 접속과 announce', () => {
     // 능력 목록은 **서버가 읽는 계약**이라 값으로 고정한다 — 늘어날 때 이 줄이 함께
     // 바뀌어야 서버 쪽 분기도 같이 검토된다(구 러너는 없는 능력을 선언하지 않는다).
     expect(d.sent[0]).toEqual({
-      type: 'announce', sessions: [], caps: ['input', 'interactive', 'handoff', 'attention'],
+      type: 'announce', sessions: [], caps: ['input', 'interactive', 'attention'],
     });
 
     const session = client.openSession({ ...SESSION });
@@ -395,8 +395,8 @@ describe('#337 interactive.open 왕복', () => {
     const client = createRelayClient({
       murmurUrl: 'http://x', pat: 'p', dial: d.dial,
       onInteractiveOpen: async (req) => {
-        expect(req).toEqual({ channelId: 'c1', threadRootId: 'm1', openedByHandle: 'jaebin', handoff: false, cols: 100, rows: 30 });
-        return { sessionId: 'sess-i', created: true, waiting: false };
+        expect(req).toEqual({ channelId: 'c1', threadRootId: 'm1', openedByHandle: 'jaebin', cols: 100, rows: 30 });
+        return { sessionId: 'sess-i', created: true };
       },
     });
     client.start();

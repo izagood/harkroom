@@ -876,13 +876,7 @@ export const ko = {
 
   'terminal.chip.open': '@{handle} 의 진행 중인 터미널을 본다',
   'terminal.chip.label': '터미널 보기',
-
-  'terminal.handoff.failed': '이어받지 못했다: {reason}',
-  'terminal.handoff.request': '이어받기',
-  'terminal.handoff.requesting': '이어받기를 요청하는 중…',
   /** `#384` 의 정직성 전부 — 그 침묵을 이 줄이 메운다. */
-  'terminal.handoff.queued':
-    '이어받기를 예약했다 — 진행 중인 멘션 턴이 끝나면 엽니다. 그때 이 터미널이 그 대화를 이어받는다.',
 
   /** 보이는 글자. 접근 이름은 아래가 따로 진다 — 짧음이 스크린리더에서 뜻을 잃는다. */
   'terminal.header.close': '닫기',
