@@ -219,6 +219,32 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, onC
                           {t('agentTurns.human')}
                         </span>
                       )}
+                      {/*
+                        **지금 이 턴이 쓰는 claude 계정**(다중 계정 3단계). 계정 풀은
+                        러너가 기동할 때 정하고 한도에 걸리면 턴 단위로 다음 계정으로
+                        넘어가는데, 그 사실이 러너 콘솔 한 줄에만 남아서 사람은 등록한
+                        계정 중 무엇이 도는지 볼 수 없었다 — 그래서 사용량도, 넘어간
+                        순간도 알 수 없었다. 여기 배지가 그 사실을 턴 줄에 붙인다.
+
+                        `undefined` 와 `null` 을 가른다(`AgentSessionView.claudeAccount`):
+                        없으면 **아무것도 그리지 않는다** — 이 필드를 싣지 않는 러너이거나
+                        claude 하네스가 아닌 턴이고, 그때 "기본"이라고 적으면 화면이
+                        확인한 적 없는 것을 단언한다. `null` 은 확인된 사실이다: 풀이 비어
+                        시스템 기본 로그인으로 돈다.
+
+                        풀 이름은 배지에 적지 않고 `title` 에 둔다 — 줄이 좁고, 사람이
+                        평소 쫓는 것은 계정 이름이다. 같은 이름의 계정이 풀마다 있을 수
+                        있어서 풀은 그때만 필요하다.
+                      */}
+                      {turn.claudeAccount !== undefined && (
+                        <span data-testid={`agent-turn-account-${turn.sessionId}`}
+                          title={turn.claudePool
+                            ? t('agentTurns.accountTitle', { pool: turn.claudePool })
+                            : t('agentTurns.accountTitleRoot')}
+                          className="min-w-0 shrink truncate rounded bg-surface-raised px-1 text-fg-muted">
+                          {turn.claudeAccount ?? t('agentTurns.accountDefault')}
+                        </span>
+                      )}
                       <span className="ml-auto shrink-0 text-fg-subtle">
                         {Number.isFinite(startedAt) ? runningLabel(Math.max(0, now - startedAt), locale, t) : turn.harness}
                       </span>

@@ -2135,7 +2135,10 @@ describe('MurmurAgentClient.listApprovedSkills(#140)', () => {
 describe('#141 릴레이 세션 (Phase 2 attach)', () => {
   /** 릴레이 스텁. 열린 세션과 받은 바이트를 기록만 한다. */
   function fakeRelay() {
-    const opened: { agentAccountId: string; channelId: string; threadRootId: string | null; harness: string }[] = [];
+    const opened: {
+      agentAccountId: string; channelId: string; threadRootId: string | null; harness: string;
+      claudeAccount?: string | null; claudePool?: string | null;
+    }[] = [];
     const bytes: Buffer[] = [];
     /** `bindInput` 으로 받은 PTY 통로들(#315). 세션 순서대로 쌓인다. */
     const writers: PtyWriter[] = [];
@@ -2143,7 +2146,11 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     return {
       opened, bytes, writers, closedCount: () => closed,
       relay: {
-        openSession(input: { agentAccountId: string; channelId: string; threadRootId: string | null; harness: 'claude-code' | 'codex' | 'gemini' }) {
+        openSession(input: {
+          agentAccountId: string; channelId: string; threadRootId: string | null;
+          harness: 'claude-code' | 'codex' | 'gemini';
+          claudeAccount?: string | null; claudePool?: string | null;
+        }) {
           opened.push(input);
           return {
             sessionId: `sess-${opened.length}`,
@@ -2186,12 +2193,53 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
       // 사람이 [중단] 을 누르면 릴레이가 이 훅으로 알린다(3단계). **죽이는 것은 이 턴이다** —
       // 넘기지 않으면 서버는 caps 로 "할 수 있다"고 말해 놓고 프레임은 아무 일도 못 한다.
       onCancel: expect.any(Function),
+      // 다중 계정 3단계: 이 턴이 **어느 claude 계정으로 도는지**를 세션에 싣는다. 이
+      // 픽스처는 풀이 빈 러너라(`makeDeps` 기본값) 둘 다 null — 시스템 기본 로그인이다.
+      // `null` 과 `undefined` 는 다르다: 여기 null 은 확인된 사실이고, 없으면 모른다는
+      // 뜻이다(아래 codex 케이스).
+      claudeAccount: null,
+      claudePool: null,
     }]);
     // 바이트가 **변형 없이** 그대로 온다 — 문자열로 뜨면 잘린 UTF-8 이 U+FFFD 가 된다.
     expect(r.bytes).toHaveLength(1);
     expect(r.bytes[0]!.equals(raw)).toBe(true);
     // 턴이 끝나면 세션도 닫힌다 — 안 닫으면 서버 목록에 끝난 턴이 영구히 남는다.
     expect(r.closedCount()).toBe(1);
+  });
+
+  /*
+    다중 계정 3단계. 이 회귀선이 왜 있는가: 계정 전환은 `withAccountFailover` 가 **턴
+    단위로** 하는데 그 사실이 러너 콘솔 한 줄에만 남아서, 사람은 등록한 계정 중 무엇이
+    지금 도는지 알 수 없었다. 사용량도, 한도에 걸려 넘어간 순간도 그래서 안 보였다.
+    화면이 그것을 말할 수 있는 유일한 근거가 이 세션에 실리는 값이다.
+  */
+  it('claude 턴은 지금 쓰는 계정과 풀을 세션에 싣는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const r = fakeRelay();
+    const { deps } = await makeDeps(fake, { relay: r.relay, claudeAccount: 'lime', claudePool: 'work' });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(r.opened.map((o) => [o.claudeAccount, o.claudePool])).toEqual([['lime', 'work']]);
+  });
+
+  /*
+    **codex 턴에는 싣지 않는다.** 계정 축은 claude 계정 풀이므로 codex 턴에 그 이름을
+    실으면 화면이 그 턴과 아무 상관 없는 계정을 가리킨다 — 없는 것(`undefined`, "모른다")
+    으로 남기는 편이 틀린 것을 단언하는 것보다 낫다(`mode`·`acceptsInput` 과 같은 규율).
+  */
+  it('codex 턴에는 claude 계정을 싣지 않는다 — 모르는 것으로 남긴다', async () => {
+    const fake = new FakeMurmur(defOf({ harness: 'codex' }));
+    fake.seedFrom('human-1', '@forge 안녕');
+    const r = fakeRelay();
+    const { deps } = await makeDeps(fake, { relay: r.relay, claudeAccount: 'lime', claudePool: 'work' });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(r.opened).toHaveLength(1);
+    expect(r.opened[0]!.claudeAccount).toBeUndefined();
+    expect(r.opened[0]!.claudePool).toBeUndefined();
   });
 
   it('스레드 안 멘션이면 세션 스코프가 그 스레드 루트다', async () => {

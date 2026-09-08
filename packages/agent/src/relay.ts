@@ -95,6 +95,16 @@ export interface OpenSessionInput {
    * `acceptsPtyInput(plan)` 으로 자기 계획에서 그대로 읽어 넘긴다.
    */
   acceptsInput: boolean;
+  /**
+   * 이 턴이 쓰는 claude 계정 이름과 그 풀(다중 계정 3단계). `null` 은 시스템 기본 로그인,
+   * **생략은 모른다**(`AgentSessionView.claudeAccount`).
+   *
+   * `acceptsInput` 과 달리 옵셔널인 이유: 생략의 결과가 판정이 아니라 **부재**다 —
+   * 화면은 아무것도 그리지 않는다. claude 가 아닌 하네스의 턴이 정확히 그 경우라서,
+   * 필수로 두면 호출부가 무의미한 값을 지어내 실어야 한다.
+   */
+  claudeAccount?: string | null;
+  claudePool?: string | null;
   /** 이 세션의 뷰어 수 변동 통지(#337). 인터랙티브 턴만 넘긴다 — 멘션 턴의 끝은 exit 뿐이다. */
   onViewerCount?: (count: number) => void;
   /**
@@ -379,6 +389,11 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         // 서버의 writer 판정이 읽는 사실(#369). 여기서 다시 계산하지 않는다 — 근거는
         // 그 턴의 계획(stdinFile)이고, 그것을 아는 것은 턴을 조립한 호출부다.
         acceptsInput: input.acceptsInput,
+        // 계정은 **턴마다 다시 실린다** — 페일오버가 턴 단위로 넘기므로, 넘어간 그 순간이
+        // 다음 세션의 이 값으로 화면에 나타난다. 러너 기동 시점의 값을 캐시해 두면 넘어간
+        // 뒤에도 옛 계정을 계속 주장한다.
+        claudeAccount: input.claudeAccount,
+        claudePool: input.claudePool,
       };
       const live: LiveSession = {
         info,

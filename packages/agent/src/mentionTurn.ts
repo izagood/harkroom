@@ -113,6 +113,12 @@ export interface TurnRelay {
      */
     acceptsInput: boolean;
     /**
+     * 이 턴이 쓰는 claude 계정과 그 풀(다중 계정 3단계). 관찰용이다 — 턴은 이 값을
+     * 읽지 않는다(`AgentSessionView.claudeAccount`).
+     */
+    claudeAccount?: string | null;
+    claudePool?: string | null;
+    /**
      * 지금 이 세션을 보고 있는 사람 수. **턴의 끝이 이 값에 걸려 있다**(2026-09-08):
      * TUI 는 답하고도 죽지 않으므로 러너가 끝을 정해야 하고, 그 조건이 "발화했고 아무도
      * 안 본다" 다. 릴레이가 이 훅을 안 주면 아무도 안 보는 것으로 다룬다.
@@ -173,6 +179,13 @@ export interface MentionTurnDeps {
    * (`codexHome` 주석과 같은 이유).
    */
   claudeConfigDir: string | null;
+  /**
+   * 그 계정이 속한 풀 이름(`pools.json`). `null`·생략은 뿌리(암묵 풀)다. 턴의 동작에는
+   * 쓰이지 않는다 — **릴레이 세션에 실어 화면이 "어느 풀의 어느 계정"을 말할 수 있게
+   * 하는 것**이 전부다(`AgentSessionView.claudePool`). 그래서 옵셔널이다: 이 값을 모르는
+   * 호출부의 턴은 그대로 돌고 화면만 풀을 말하지 못한다.
+   */
+  claudePool?: string | null;
   murmurUrl: string;
   pat: string;
   turnTimeoutMs: number;
@@ -764,6 +777,11 @@ export async function runMentionTurn(
     // codex 는 아직 `exec` + stdin 파일이라 거짓이다 — 쳐도 아무 데도 안 가는 입력창이
     // 최악이므로 그 사실을 서버까지 실어 보내 차례 자체를 안 주게 한다.
     acceptsInput: acceptsPtyInput(plan),
+    // **claude 턴에만 싣는다.** 계정 축은 claude 계정 풀이므로, codex·gemini 턴에 이
+    // 이름을 실으면 화면이 그 턴과 아무 상관 없는 계정을 가리키게 된다 — 생략은 "모른다"
+    // 이고, 모르는 것으로 남기는 편이 틀린 것을 단언하는 것보다 낫다.
+    claudeAccount: def.harness === 'claude-code' ? deps.claudeAccount : undefined,
+    claudePool: def.harness === 'claude-code' ? (deps.claudePool ?? null) : undefined,
     onViewerCount,
     /*
       **사람이 [중단] 을 눌렀다**(3단계). 죽이는 것은 릴레이가 아니라 여기다 —

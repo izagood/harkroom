@@ -636,6 +636,9 @@ export const en = {
   // --- Agents 칸의 관제 구획(`AgentTurns`) ------------------------------------
   // 이 묶음이 말하는 것은 **지금 도는 턴**이다. `runnerState.*`(러너 프로세스의 생사)와
   // 뭉치지 않는 이유가 화면의 판단 그대로다: 턴은 "이 일"이고 러너는 "이 사람"이다.
+  'agentTurns.accountDefault': 'default login',
+  'agentTurns.accountTitle': 'Running on this claude account (pool: {pool})',
+  'agentTurns.accountTitleRoot': 'Running on this claude account (root pool)',
   'agentTurns.cancel': 'Stop',
   'agentTurns.cancelAll': 'Stop all',
   'agentTurns.cancelAllTitle': 'Stop {n} running turns?',
