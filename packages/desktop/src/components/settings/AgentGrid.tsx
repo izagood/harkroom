@@ -13,6 +13,7 @@ import { staleRunners } from '../../lib/runnerVersions';
 // 경과 계산도 한 벌이다. `AgentsSettings.lastTurnLabel` 이 같은 함수 위에 접두만 붙인다 —
 // 이 파일이 그쪽에서 가져올 수 없는 이유(순환)가 `lib/lastTurn.ts` 주석에 있다.
 import { lastTurnAgo } from '../../lib/lastTurn';
+import { useT, useLocale } from '../../i18n/useT';
 
 /**
  * 이 격자가 카드 하나를 그리는 데 **실제로 필요한 것**. `AgentView` 를 요구하지 않는 이유가
@@ -583,6 +584,9 @@ export function AgentGrid<T extends AgentCardSubject>({
   place?: AgentGridPlace;
 }) {
   const [query, setQuery] = useState('');
+  // 활동 경과는 언어를 따른다(`lib/time.ts`). 이 카드의 나머지 문자열은 아직 한국어다.
+  const t = useT();
+  const locale = useLocale();
   const s = PLACE[place];
 
   const shown = useMemo(() => {
@@ -948,7 +952,7 @@ export function AgentGrid<T extends AgentCardSubject>({
                       {/* 계산은 `lib/lastTurn.ts` 한 벌이다 — 상세의 `lastTurnLabel` 이 같은
                           함수 위에 접두만 붙인다. 여기서 접두를 빼는 이유는 왼쪽 `활동`
                           라벨이 이미 그 말을 하기 때문이다(그 모듈 주석). */}
-                      <span className="block truncate">{lastTurnAgo(a.lastTurnAt)}</span>
+                      <span className="block truncate">{lastTurnAgo(a.lastTurnAt, Date.now(), locale, t)}</span>
                     </InfoRow>
                   )}
                   {/*

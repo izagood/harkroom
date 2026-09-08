@@ -79,7 +79,7 @@ import type { Message } from './types';
  * | `MessageItem` | 57 | **손으로 하는 복수형이 여기 있다**(`replyCount === 1 ? 'reply' : 'replies'`) — `waitChain.unblocks` 와 같은 모양으로 사전에 넘긴다. `subjectParticle` 을 아직 쓰는 유일한 자리이기도 하다(그 함수는 그때 지운다) |
  * | `Composer` · `Inbox` | 55 · 49 | |
  * | `daemonFacts.ts` | 38 | 판정 함수. **회귀선이 판정 낱말 7개를 검사한다**(`daemonFacts.test.tsx` 의 제약 2) — 그 축은 문구에 `이상`·`비정상` 이 **없음**을 재므로, 옮긴 뒤에도 문구를 재야 한다(키로는 못 잰다) |
- * | `minutesAgo.ts` · `progressGroup.ts::elapsedLabel` · `day.ts` | 소수 | **시간 표기.** 셋이 각자 `분 전`·`분째`·`오늘` 을 만든다. 이것들은 `Intl.RelativeTimeFormat` 이 이미 아는 것이라, 사전에 넣기 전에 **그쪽으로 옮길지 먼저 정해야 한다** |
+ * | ~~시간 표기~~ | — | **끝났다** — 아래 `time.*` 과 `lib/time.ts` 를 보라 |
  * | 설정 목차 14개 · `Save`·`Cancel`·`Invite` 등 | 소수 | 이미 영어다 — **키만 씌우면 된다.** 둘 이상이 쓰므로 `common.*` 로 간다 |
  * | `RunnerStatus.tsx::runnerStatusLabel` · `lib/presenceView.ts::PRESENCE_LABEL` | 소수 | **사이드바가 이미 부르고 있다**(`sidebar.runner.state` 가 그 값을 감싼다). 둘 다 세 화면 이상이 쓰므로 옮길 때 `common.*` 후보다 |
  *
@@ -94,6 +94,18 @@ import type { Message } from './types';
  * `sidebar.section.cancel` 넷이 같은 값을 갖고 있다. **중복이 아니라 아직 안 온 승격이다** —
  * 한 폼의 취소만 문구를 바꾸는 일이 실제로 있고(예: 삭제 확인에서 `Keep the channel`),
  * 그때 한 키를 넷이 나눠 쓰고 있으면 나머지 셋이 함께 바뀐다.
+ *
+ * ## 시간 표기는 끝났다 — 남은 화면들이 다시 정하지 않는다
+ *
+ * 이 표가 *"사전에 넣기 전에 `Intl.RelativeTimeFormat` 으로 갈지 **먼저 정해야 한다**"*
+ * 고 남겼던 것이 풀렸다. 실측 표와 근거는 `lib/time.ts` 머리말에 있고, 결론만 옮긴다:
+ *
+ * > **숫자는 `Intl` 이, 뜻은 사전이.**
+ *
+ * 남은 아홉 화면이 시간을 말할 때 **사전에 새 키를 만들지 않는다.** `agoLabel` ·
+ * `durationLabel` · `runningLabel` · `tookLabel` 넷 중 하나를 부르면 그 언어의 말이
+ * 나온다. `{n}분 전` 같은 문구를 사전에 새로 적는 PR 이 있다면 그것은 이 결정을 모르고
+ * 쓴 것이다.
  *
  * 그리고 **설정 화면에 언어 고르는 자리가 아직 없다.** 값과 배선은 다 있다
  * (`prefs.locale` · `setLocale` · `LOCALE_NAMES`) — `AppearanceSettings` 가 색 모드를
@@ -322,6 +334,36 @@ export const en = {
   'sidebar.section.renameName': 'New name for the section',
   'sidebar.section.renamePlaceholder': 'New name',
   'sidebar.section.renameSubmit': 'Rename',
+  // time — **`Intl` 이 못 내는 것만 온다.**
+  //
+  // 시간 표기의 경계는 `lib/time.ts` 머리말이 실측 표로 정했다: **숫자는 `Intl` 이,
+  // 뜻은 사전이.** 그래서 여기에는 `11분 전`·`4분 12초` 같은 수량이 **없다** — 그것은
+  // `RelativeTimeFormat`·`DurationFormat` 이 어느 언어로든 낸다. 여기 남는 넷은
+  // 수량이 아니라 우리가 정한 뜻이다:
+  //
+  // - `justNow`  — "숫자를 말하지 않기로 한" 결정. `Intl` 의 `now`/`지금` 은 우리가
+  //                고른 말이 아니다
+  // - `none`     — 잴 값 자체가 없다(`lastTurnAt === null`). 시간이 아니다
+  // - `running`  — **상**[aspect]이다. `3분` 과 `3분째` 는 다른 사실이고 `Intl` 은
+  //                후자를 못 낸다
+  // - `took`     — `running` 의 짝. 둘을 사전 항목으로 갈라야 각 언어가 제 방식으로
+  //                가른다(이전 코드는 한국어 어미를 `replace(/째$/, '')` 로 잘랐다 —
+  //                그 정규식은 영어에서 아무것도 안 자른다)
+  //
+  // `{duration}` 에 들어오는 것은 `Intl.DurationFormat` 이 이미 그 언어로 만든 글자다.
+  // ---------------------------------------------------------------------------
+
+  /** 1분 미만. `0 minutes ago` 는 사람이 쓰지 않는 말이다. */
+  'time.justNow': 'just now',
+  /** 한 번도 없었다 — **'죽었다'가 아니다**(`lastTurn.ts`). 그래서 `never` 가 아니라 `none`. */
+  'time.none': 'none',
+  /**
+   * 아직 도는 중. 영어는 어미가 없으므로 **말을 앞에 세운다** — 이것이 상을 사전에
+   * 둬야 하는 이유 그대로다. 한국어는 `{duration}째` 로 어미를 붙인다.
+   */
+  'time.running': 'running {duration}',
+  /** 끝난 것의 길이. 과거형이 그 사실을 말한다. */
+  'time.took': 'took {duration}',
 
   // ---------------------------------------------------------------------------
   // waitChain — **판정 이름이지 화면 이름이 아니다.**

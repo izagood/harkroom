@@ -22,7 +22,15 @@
  * 그래서 **경과만 내는 함수**(`lastTurnAgo`)가 아래에 있고, 접두를 붙인 문구는
  * `AgentsSettings.lastTurnLabel` 이 그것을 감싼다. 계산과 규율(미래 시각을 '방금'으로
  * 뭉개는 것, `null` 을 '없음'으로 말하는 것)은 **여기 한 벌뿐**이다.
+ *
+ * ## 서식은 이 파일이 안 만든다(`#619` 후속)
+ *
+ * `11분 전` 을 손으로 조립하던 것이 `lib/time.ts::agoLabel` 로 갔다 — 그 문구는 이 앱이
+ * 시간을 말하는 **다섯 자리가 전부 같은 모양으로** 내야 하는 것이라, 조립이 여기 남으면
+ * 다시 두 벌이 된다. 여기 남는 것은 이 자리 고유의 규율 하나다: **`null` 은 '없음'이다.**
  */
+import { agoLabel } from './time';
+import type { Translate } from '../i18n';
 
 /**
  * `null` 은 **'활동 없음'** 이다 — '죽었다'가 아니다. murmur 는 러너 프로세스를 보지
@@ -32,17 +40,16 @@
  *
  * 절대 시각을 그대로 쓰지 않는 이유: 운영자가 알고 싶은 것은 "얼마나 됐나"이고, 그것을
  * 사람이 시계와 뺄셈으로 계산하게 만들 이유가 없다. 대신 `title` 로 절대 시각을 함께 준다.
+ *
+ * 미래 시각을 '방금'으로 뭉개는 규율은 `agoLabel` 이 들고 있다 — 이 앱이 시간을 말하는
+ * 모든 자리에 같게 걸려야 하는 규율이라 그쪽이 맞다(그 함수 주석).
  */
-export function lastTurnAgo(iso: string | null, now: number = Date.now()): string {
-  if (iso === null) return '없음';
-  const ms = now - new Date(iso).getTime();
-  // 미래 시각은 서버가 now() 로 찍으므로 정상적으로는 오지 않는다(러너가 보낸 값을 저장하지
-  // 않는 이유가 그것이다). 그래도 시계 보정이나 왕복 지연으로 음수가 될 수 있어, "N분 후"
-  // 같은 말을 만들지 않고 '방금'으로 뭉갠다.
-  const mins = Math.floor(ms / 60_000);
-  if (mins < 1) return '방금';
-  if (mins < 60) return `${mins}분 전`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}시간 전`;
-  return `${Math.floor(hours / 24)}일 전`;
+export function lastTurnAgo(
+  iso: string | null,
+  now: number,
+  locale: string,
+  t: Translate,
+): string {
+  if (iso === null) return t('time.none');
+  return agoLabel(new Date(iso).getTime(), now, locale, t);
 }

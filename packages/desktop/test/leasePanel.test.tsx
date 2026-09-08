@@ -5,11 +5,18 @@ import {
 } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { LeasePanel } from '../src/components/LeasePanel';
+import { usePrefsStore } from '../src/state/prefsStore';
 
-beforeEach(() => useAppStore.getState().reset());
+beforeEach(() => {
+  useAppStore.getState().reset();
+  // **언어를 고정한다**(`#619` 후속으로 `N분 전` 이 앱 언어를 따른다). 이 파일이 재는 것은
+  // 네 사정을 뭉개지 않는가이지 그 문구의 언어가 아니다.
+  usePrefsStore.getState().setLocale('ko');
+});
 
 afterEach(() => {
   cleanup();
+  usePrefsStore.getState().setLocale('system');
 });
 
 /** 상태 픽스처. 테스트마다 관심 있는 필드만 덮어쓴다. */

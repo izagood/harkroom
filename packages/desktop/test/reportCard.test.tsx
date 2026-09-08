@@ -8,6 +8,7 @@ import type { MessageRow, ReportMeta } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { acc, msg } from './helpers/fakeApi';
 
 const ME = 'u-me';
@@ -23,13 +24,19 @@ const reportMsg = (meta: Record<string, unknown>, threadRootId: string | null = 
 
 beforeEach(() => {
   useAppStore.getState().reset();
+  // **언어를 고정한다**(`#619` 후속으로 소요 시간이 앱 언어를 따른다). 이 파일이 재는 것은
+  // 카드가 세 묶음을 나눠 그리는가이지 그 문구의 언어가 아니다.
+  usePrefsStore.getState().setLocale('ko');
   setController({} as unknown as Controller);
   useAppStore.getState().set({
     me: acc(ME, 'jaebin'),
     accounts: { [ME]: acc(ME, 'jaebin'), [FORGE]: acc(FORGE, 'forge', 'agent') },
   });
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 describe('ReportCard — 읽기 조판', () => {
   it('확인한 것 · 바뀐 파일 · 남은 것을 나눠 그린다', () => {
@@ -45,6 +52,22 @@ describe('ReportCard — 읽기 조판', () => {
     expect(screen.getByText('ws/heartbeat.test.ts')).toBeTruthy();
     expect(screen.getByText('lint 를 다시 부를지')).toBeTruthy();
     expect(screen.getByText('6분 40초')).toBeTruthy();
+  });
+
+  /**
+   * **소요 시간도 앱 언어를 따른다**(`#619` 후속). 여기 있던 `formatDuration` 은
+   * `lib/time.ts::durationLabel` 과 같은 판정의 사본이었고, 합치면서 이 값이 언어를
+   * 얻었다 — 사전에 `6분 40초` 라는 문구가 **없는데도** 바뀐다.
+   */
+  it('언어를 영어로 바꾸면 소요 시간이 영어로 나온다', () => {
+    usePrefsStore.getState().setLocale('en');
+    render(<MessageItem message={reportMsg(reportMeta({
+      checks: ['연속 미응답만 끊는다'],
+      durationMs: 400_000,
+    }))} />);
+
+    expect(screen.getByText('6m 40s')).toBeTruthy();
+    expect(screen.queryByText('6분 40초')).toBeNull();
   });
 
   it('없는 묶음은 그리지 않는다 — 0 은 자리를 차지하지 않는다', () => {

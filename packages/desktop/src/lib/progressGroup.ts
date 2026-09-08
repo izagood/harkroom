@@ -67,17 +67,27 @@ export function groupProgress(messages: MessageRow[]): Slot[] {
 }
 
 /**
- * 경과를 사람이 읽는 한 마디로. **묶음의 첫 progress 를 기준으로 잰다** — 마지막을 쓰면
- * 30초마다 갱신하는 러너의 "3분째"가 영원히 "0분째"로 보인다(그 러너가 3분째 돌고 있다는
- * 것이 이 줄이 말해야 하는 유일한 사실이다).
+ * 이 묶음의 경과가 **말할 만한가**. `null` 이면 아무 말도 안 한다.
+ *
+ * ## 서식이 아니라 정책만 남았다(`#619` 후속)
+ *
+ * 여기 있던 `elapsedLabel(startedAt, now)` 이 `daemonFacts.ts` 의 같은 이름 함수와
+ * **두 벌**이었다(시그니처만 달랐다). 둘의 공통은 "ms 를 단위로 갈라 그 언어의 말로
+ * 적는다" 하나였고 그것을 `lib/time.ts::durationLabel` 로 합쳤다 — 갈래를 만들던 셋은
+ * 전부 **부르는 쪽의 정책**이었기 때문이다(그 함수 주석의 표).
+ *
+ * 이 자리의 정책이 이 함수다: **1분 미만이면 자리를 비운다.** 갓 시작한 것에 "0분째"를
+ * 붙이면 숫자가 정보가 아니라 잡음이고, 그것은 규칙 06 이 말하는 0 을 그리는 짓이다.
+ * (`daemonFacts` 쪽은 반대다 — 그쪽은 행이 서야 하므로 `방금` 이라고 **말한다**.)
+ *
+ * **묶음의 첫 progress 를 기준으로 잰다** — 마지막을 쓰면 30초마다 갱신하는 러너의
+ * "3분째"가 영원히 "0분째"로 보인다(그 러너가 3분째 돌고 있다는 것이 이 줄이 말해야
+ * 하는 유일한 사실이다).
  *
  * `now` 를 인자로 받는 이유: 시간을 읽는 함수는 테스트가 시간을 정할 수 있어야 한다.
  */
-export function elapsedLabel(startedAt: string, now: number): string | null {
+export function elapsedMs(startedAt: string, now: number): number | null {
   const ms = now - new Date(startedAt).getTime();
-  // 갓 시작한 것에 "0분째"를 붙이면 숫자가 정보가 아니라 잡음이다.
   if (!Number.isFinite(ms) || ms < 60_000) return null;
-  const minutes = Math.floor(ms / 60_000);
-  if (minutes < 60) return `${minutes}분째`;
-  return `${Math.floor(minutes / 60)}시간째`;
+  return ms;
 }

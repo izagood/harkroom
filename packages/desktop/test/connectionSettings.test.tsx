@@ -17,6 +17,7 @@ import type { ProjectionStatus } from '@murmur/shared';
 import { useActiveStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { ConnectionSettings } from '../src/components/settings/ConnectionSettings';
+import { usePrefsStore } from '../src/state/prefsStore';
 
 const status = (over: Partial<ProjectionStatus>): ProjectionStatus => ({
   state: 'ok', configured: true, repo: 'izagood/murmur', lastLogIndex: 0,
@@ -26,9 +27,15 @@ const status = (over: Partial<ProjectionStatus>): ProjectionStatus => ({
 beforeEach(() => {
   localStorage.clear();
   useActiveStore.getState().reset();
+  // **언어를 고정한다**(`#619` 후속으로 `N분 전` 이 앱 언어를 따른다). 이 파일이 재는 것은
+  // 이 행이 사정을 말하는가이지 그 문구의 언어가 아니다.
+  usePrefsStore.getState().setLocale('ko');
   setController({ api: { baseUrl: 'http://localhost:3400' } } as unknown as Controller);
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 const row = () => screen.getByTestId('projection-row').textContent ?? '';
 

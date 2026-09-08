@@ -1,5 +1,7 @@
 import { readReportMeta, type MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
+import { durationLabel } from '../lib/time';
+import { useLocale } from '../i18n/useT';
 
 /**
  * 완료 보고 카드 — **이 스레드에서 가장 오래 남고 가장 많이 다시 읽히는 말**이다(규칙 03).
@@ -21,6 +23,8 @@ export function ReportCard({ message, inThread = false }: {
   inThread?: boolean;
 }) {
   const setDraft = useActiveStore((s) => s.setDraft);
+  // 소요 시간은 앱 언어를 따른다(`lib/time.ts`). 이 카드의 나머지 문자열은 아직 한국어다.
+  const locale = useLocale();
   const report = readReportMeta(message.meta);
   if (!report) return null;
 
@@ -41,7 +45,7 @@ export function ReportCard({ message, inThread = false }: {
       ) : null}
 
       {report.durationMs != null && (
-        <p className="mt-1.5 text-meta text-fg-subtle">{formatDuration(report.durationMs)}</p>
+        <p className="mt-1.5 text-meta text-fg-subtle">{durationLabel(report.durationMs, locale)}</p>
       )}
 
       {/*
@@ -99,11 +103,7 @@ function Section({ title, items, testid, mono = false, tone = 'text-fg-muted' }:
   );
 }
 
-/** 사람이 읽는 소요 시간. 초 단위 밑은 반올림한다 — 정밀도가 정보를 더하지 않는다. */
-function formatDuration(ms: number): string {
-  const sec = Math.round(ms / 1000);
-  if (sec < 60) return `${sec}초`;
-  const min = Math.floor(sec / 60);
-  const rest = sec % 60;
-  return rest ? `${min}분 ${rest}초` : `${min}분`;
-}
+// 소요 시간은 `lib/time.ts::durationLabel` 한 벌이다(`#619` 후속). 여기 있던
+// `formatDuration` 은 그 함수와 **같은 판정의 여섯 번째 사본**이었다 — 단위를 갈라
+// 그 언어의 말로 적는 것이 하는 일의 전부였고, 다른 점은 초 미만을 반올림하느냐
+// 버리느냐뿐이었다(밀리초는 이 카드에 실리지 않으므로 화면에 차이가 안 난다).

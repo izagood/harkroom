@@ -15,6 +15,8 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings, lastTurnLabel } from '../src/components/settings/AgentsSettings';
 import { lastTurnAgo } from '../src/lib/lastTurn';
+import { translator } from '../src/i18n';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { acc } from './helpers/fakeApi';
 
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
@@ -51,9 +53,16 @@ const connectedWith = (online: string[]) => {
 
 beforeEach(() => {
   useAppStore.getState().reset();
+  // **언어를 고정한다**(`#619` 후속). 아래 렌더 축들이 재는 것은 *"생존과 마지막 활동이
+  // 둘 다 보이는가"* 이지 그 문구의 언어가 아니다. 안 고정하면 시험이 기계의 브라우저
+  // 로캘에 매달린다 — `i18n.test.tsx` 가 세운 규약과 같다.
+  usePrefsStore.getState().setLocale('ko');
   connectedWith([]);
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 describe('마지막 활동 표시 (#176)', () => {
   it('온라인 여부와 마지막 활동을 둘 다 보여 준다 — 하나가 다른 하나를 대체하지 않는다', async () => {
@@ -145,23 +154,55 @@ describe('마지막 활동 표시 (#176)', () => {
 describe('lastTurnLabel', () => {
   const NOW = new Date('2026-09-03T12:00:00.000Z').getTime();
   const ago = (ms: number) => new Date(NOW - ms).toISOString();
+  // 언어를 인자로 넘긴다(`#619` 의 `(b)` 주입) — 전역을 만지지 않으므로 이 파일이 다른
+  // 파일의 언어를 밟지 않는다(vitest 는 파일 병렬이다).
+  const ko = translator('ko');
+  const en = translator('en');
+  const koLabel = (iso: string | null) => lastTurnLabel(iso, NOW, 'ko', ko);
+  const enLabel = (iso: string | null) => lastTurnLabel(iso, NOW, 'en', en);
 
   it('null 은 활동 없음이다 — 한 번도 안 돌린 것과 죽은 것을 구분할 수단이 없다', () => {
-    expect(lastTurnLabel(null, NOW)).toBe('활동 없음');
+    expect(koLabel(null)).toBe('활동 없음');
   });
 
+  /**
+   * **문구가 그대로다.** 시간 표기가 `Intl.RelativeTimeFormat` 으로 옮겨 갔는데
+   * (`lib/time.ts`) 한국어 화면은 한 글자도 안 바뀌었다 — 그것을 실측으로 확인하고
+   * 이 축이 잠근다. `Intl` 이 이 다섯을 원래 문구 그대로 낸다는 것이 A/B/C 판단의
+   * 근거였고, 그 근거가 참인 동안만 이 시험이 초록이다.
+   */
   it('분·시간·일 단위로 내림한다', () => {
-    expect(lastTurnLabel(ago(30_000), NOW)).toBe('마지막 활동: 방금');
-    expect(lastTurnLabel(ago(60_000), NOW)).toBe('마지막 활동: 1분 전');
-    expect(lastTurnLabel(ago(59 * 60_000), NOW)).toBe('마지막 활동: 59분 전');
-    expect(lastTurnLabel(ago(60 * 60_000), NOW)).toBe('마지막 활동: 1시간 전');
-    expect(lastTurnLabel(ago(23 * 60 * 60_000), NOW)).toBe('마지막 활동: 23시간 전');
-    expect(lastTurnLabel(ago(25 * 60 * 60_000), NOW)).toBe('마지막 활동: 1일 전');
+    expect(koLabel(ago(30_000))).toBe('마지막 활동: 방금');
+    expect(koLabel(ago(60_000))).toBe('마지막 활동: 1분 전');
+    expect(koLabel(ago(59 * 60_000))).toBe('마지막 활동: 59분 전');
+    expect(koLabel(ago(60 * 60_000))).toBe('마지막 활동: 1시간 전');
+    expect(koLabel(ago(23 * 60 * 60_000))).toBe('마지막 활동: 23시간 전');
+    expect(koLabel(ago(25 * 60 * 60_000))).toBe('마지막 활동: 1일 전');
+  });
+
+  /**
+   * **언어를 바꾸면 시간 문구도 바뀐다** — 이 PR 의 요점이다.
+   *
+   * `하루 전` 을 `yesterday` 라고 하지 않는 것도 함께 잰다: 이 값이 재는 것은 **길이**라
+   * 달력의 말을 쓰면 25시간 전과 47시간 전이 같은 말이 된다(`agoLabel` 이
+   * `numeric: 'always'` 인 이유). 달력을 말하는 자리는 `dayLabel` 이고 그쪽은 `어제` 다.
+   */
+  it('언어를 영어로 바꾸면 경과가 영어로 나온다 — 사전에 그 문구가 없는데도', () => {
+    expect(enLabel(ago(30_000))).toBe('마지막 활동: just now');
+    expect(enLabel(ago(60_000))).toBe('마지막 활동: 1 minute ago');
+    expect(enLabel(ago(11 * 60_000))).toBe('마지막 활동: 11 minutes ago');
+    expect(enLabel(ago(60 * 60_000))).toBe('마지막 활동: 1 hour ago');
+    // 복수형을 우리가 안 판단한다 — `Intl` 이 `minute`/`minutes` 를 가른다.
+    expect(enLabel(ago(2 * 60 * 60_000))).toBe('마지막 활동: 2 hours ago');
+    expect(enLabel(ago(25 * 60 * 60_000))).toBe('마지막 활동: 1 day ago');
+    expect(enLabel(null)).toBe('활동 없음');
   });
 
   it('미래 시각은 "N분 후" 같은 말을 만들지 않는다', () => {
     // 서버가 now() 를 찍으므로 정상적으로는 오지 않지만, 시계 보정으로 음수가 될 수 있다.
-    expect(lastTurnLabel(new Date(NOW + 5 * 60_000).toISOString(), NOW)).toBe('마지막 활동: 방금');
+    expect(koLabel(new Date(NOW + 5 * 60_000).toISOString())).toBe('마지막 활동: 방금');
+    // 영어에서도 같은 규율이다 — `in 5 minutes` 가 나오면 사람은 앱이 고장 났다고 읽는다.
+    expect(enLabel(new Date(NOW + 5 * 60_000).toISOString())).toBe('마지막 활동: just now');
   });
 
   /**
@@ -179,10 +220,13 @@ describe('lastTurnLabel', () => {
    */
   it('접두를 뺀 것이 lastTurnAgo 다 — 계산이 두 벌이 아니다', () => {
     for (const ms of [30_000, 60_000, 59 * 60_000, 60 * 60_000, 25 * 60 * 60_000]) {
-      expect(lastTurnLabel(ago(ms), NOW)).toBe(`마지막 활동: ${lastTurnAgo(ago(ms), NOW)}`);
+      expect(koLabel(ago(ms))).toBe(`마지막 활동: ${lastTurnAgo(ago(ms), NOW, 'ko', ko)}`);
+      // 언어를 바꿔도 그 관계가 유지된다 — 갈라짐이 한 언어에만 생기지 않게.
+      expect(enLabel(ago(ms))).toBe(`마지막 활동: ${lastTurnAgo(ago(ms), NOW, 'en', en)}`);
     }
     // `null` 은 접두 규칙이 다르다 — `마지막 활동: 없음` 이 아니라 `활동 없음` 이다(`#176`).
-    expect(lastTurnAgo(null, NOW)).toBe('없음');
-    expect(lastTurnLabel(null, NOW)).toBe('활동 없음');
+    expect(lastTurnAgo(null, NOW, 'ko', ko)).toBe('없음');
+    expect(lastTurnAgo(null, NOW, 'en', en)).toBe('none');
+    expect(koLabel(null)).toBe('활동 없음');
   });
 });

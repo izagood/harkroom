@@ -7,6 +7,7 @@ import { Identity, StatusMark } from './Identity';
 import { Overlay } from './Overlay';
 import { lastTurnLabel } from './settings/AgentsSettings';
 import { staleRunners, UNKNOWN_RUNNER_VERSION } from '../lib/runnerVersions';
+import { useT, useLocale } from '../i18n/useT';
 import type { SectionId } from './settings/sections';
 
 /**
@@ -33,6 +34,9 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
   onClose: () => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }) {
+  // 활동 경과는 언어를 따른다(`lib/time.ts`). 나머지 문자열은 아직 한국어다.
+  const t = useT();
+  const locale = useLocale();
   const account = useActiveStore((s) => s.accounts[accountId]);
   const me = useActiveStore((s) => s.me);
   const accounts = useActiveStore((s) => s.accounts);
@@ -139,7 +143,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
                 value={agent.model ?? '하네스 기본값 — 실제 모델은 발화 이름줄 hover 로 본다'}
               />
               <Row label="작업 디렉터리" value={agent.workingDir ?? '스레드마다 새로 만든다'} mono />
-              <Row label="마지막 활동" value={lastTurnLabel(agent.lastTurnAt)} />
+              <Row label="마지막 활동" value={lastTurnLabel(agent.lastTurnAt, Date.now(), locale, t)} />
               {/* 러너가 **어느 번들로** 돌고 있는가. 이 행이 없으면 아래 재기동 버튼은
                   누를 이유를 알 수 없는 버튼이다. `unknown`·`null` 은 원인이 다르지만
                   (환경변수를 못 받았다 / 보고가 한 번도 없었다) 사람이 할 일은 같으므로
