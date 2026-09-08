@@ -147,16 +147,16 @@ const visibleOrder = (): string[] => {
       if (testid?.startsWith('section-header-')) return [testid.replace('section-header-', '')];
       if (el.tagName !== 'BUTTON') return [];
       const text = (el.textContent ?? '').trim();
-      return text.startsWith('#') ? [text.replace(/⋯$/, '').trim()] : [];
+      return text.startsWith('#') ? [text] : [];
     });
 };
 
-/** 채널 행의 `⋯` 메뉴를 연다. 이름으로 골라야 정렬이 바뀌어도 옳은 행을 집는다. */
+/** 채널 행을 우클릭해 메뉴를 연다. 이름으로 골라야 정렬이 바뀌어도 옳은 행을 집는다. */
 const openMenuFor = (name: string) => {
   const button = screen.getAllByRole('button').find((b) => (b.textContent ?? '').startsWith(`#${name}`));
   if (!button) throw new Error(`행을 못 찾았다: ${name}`);
-  const dots = button.parentElement!.querySelector('button[aria-haspopup="menu"]') as HTMLElement;
-  fireEvent.click(dots);
+  // 행 자체가 트리거다(`⋯` 버튼은 없앴다) — 우클릭이 채널 버튼에서 그 행까지 올라간다.
+  fireEvent.contextMenu(button);
 };
 
 // **언어를 한국어로 고정한다.** 이 파일의 축들은 사이드바의 한국어 문구로 쓰여 있고,

@@ -560,8 +560,8 @@ describe('멤버 패널 팀 추가 (#172)', () => {
   );
 
   const openMembers = async (name: RegExp, channelId: string): Promise<HTMLElement> => {
-    const row = screen.getByRole('button', { name }).closest('div')!;
-    fireEvent.click(within(row).getByRole('button', { name: '⋯' }));
+    // 행 자체가 트리거다(`⋯` 버튼은 없앴다) — 우클릭으로 연다.
+    fireEvent.contextMenu(screen.getByRole('button', { name }));
     fireEvent.click(screen.getByRole('menuitem', { name: '멤버 보기' }));
     return await screen.findByTestId(`members-${channelId}`);
   };

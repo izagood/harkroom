@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
@@ -118,7 +118,7 @@ describe('Sidebar', () => {
       fakeController();
       render(<Sidebar panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-      fireEvent.click(screen.getAllByRole('button', { name: '⋯' })[0]!);
+      fireEvent.contextMenu(screen.getAllByRole('button', { name: /^# / })[0]!);
 
       expect(screen.queryByRole('menuitem', { name: '채널 편집' })).toBeNull();
       // 계정별 항목은 비-admin 에게도 도달 가능해야 한다.
@@ -131,16 +131,21 @@ describe('Sidebar', () => {
     const openMenuFor = (name: string): void => {
       // `#` 과 이름이 별도 노드라 텍스트 매칭이 안 된다. 접근성 이름으로 찾되, 별도
       // 노드가 **공백으로 결합**되므로(`"# dev main-repo 1"`) 그 공백을 포함해 맞춘다.
-      const row = screen.getByRole('button', { name: new RegExp(`# ${name}\\b`) }).closest('div')!;
-      fireEvent.click(within(row).getByRole('button', { name: '⋯' }));
+      // 행 자체가 트리거다 — 우클릭 이벤트가 채널 버튼에서 그 행까지 올라간다.
+      fireEvent.contextMenu(screen.getByRole('button', { name: new RegExp(`# ${name}\\b`) }));
     };
 
-    it('admin 이면 채널 행에 편집 메뉴 (…) 가 보인다', () => {
+    // `⋯` 버튼은 없앴다 — 그래서 "트리거가 몇 개인가"는 버튼을 세어 볼 수 없다.
+    // 대신 **행마다 메뉴가 달려 있는가**를 본다: 채널 버튼을 감싼 트리거가
+    // `aria-haspopup="menu"` 를 갖는지가 그 사실이다.
+    it('admin 이면 채널 행마다 메뉴가 달려 있다', () => {
       fakeController();
       asAdmin();
       render(<Sidebar panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
-      const menus = screen.getAllByRole('button', { name: '⋯' });
-      expect(menus.length).toBe(2);
+      const rows = screen.getAllByRole('button', { name: /^# / });
+      expect(rows.length).toBe(2);
+      expect(rows.map((b) => b.parentElement?.getAttribute('aria-haspopup')))
+        .toEqual(['menu', 'menu']);
     });
 
     it('편집 메뉴를 누르면 폼이 열리고 현재 값이 채워진다', () => {
@@ -359,7 +364,7 @@ describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
 
     // 정렬이 있는 화면이라 인덱스로 고른 행이 c1 이라는 보장이 없다 — 채널 id 는
     // 열어 둔 행의 것으로 맞춘다.
-    fireEvent.click(screen.getAllByRole('button', { name: '⋯' })[0]!);
+    fireEvent.contextMenu(screen.getAllByRole('button', { name: /^# / })[0]!);
     fireEvent.click(screen.getByRole('menuitem', { name: '알림: 없음' }));
 
     expect(c.setChannelNotifyLevel).toHaveBeenCalledWith(expect.any(String), 'none');
@@ -375,7 +380,7 @@ describe('채널 음소거·즐겨찾기 (#151, #152)', () => {
     });
     render(<Sidebar panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole('button', { name: '⋯' }));
+    fireEvent.contextMenu(screen.getByRole('button', { name: /^# general\b/ }));
 
     expect(screen.getByRole('menuitem', { name: '✓ 알림: 없음' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: '알림: 전체' })).toBeTruthy();
@@ -485,29 +490,54 @@ describe('채널 컨텍스트 메뉴 (#111)', () => {
     fakeController();
     render(<Sidebar panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-    const trigger = screen.getAllByRole('button', { name: '⋯' })[0]!;
+    // 트리거는 채널 버튼을 감싼 행이다(`⋯` 버튼은 없앴다).
+    const trigger = getChannelButton('general').parentElement!;
     expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
 
-    fireEvent.click(trigger);
+    fireEvent.contextMenu(trigger);
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
   });
 
-  it('⋯ 클릭과 우클릭이 같은 항목을 낸다', () => {
-    // 좌클릭과 우클릭이 같은 메뉴를 열어야 한다 — 같은 항목이 포함되어 있는지 확인한다.
+  /*
+   * `⋯` 버튼을 없앤 자리. 그 버튼은 우클릭과 **같은 `items`** 를 냈다 —
+   * 같은 일을 하는 두 번째 진입점이라, 줄마다 자리를 먹으면서 채널 이름이 쓸 폭만
+   * 좁혔다. 지운 뒤에도 메뉴 자체는 그대로여야 하므로 셋을 함께 지킨다:
+   * 버튼이 없다 · 우클릭은 여전히 연다 · 왼쪽 클릭은 **채널을 열 뿐** 메뉴를 열지 않는다.
+   */
+  it('채널 행에 ⋯ 버튼이 없고, 메뉴는 우클릭으로만 열린다', () => {
+    const c = fakeController();
+    render(<Sidebar panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
+
+    expect(screen.queryByRole('button', { name: '⋯' })).toBeNull();
+
+    // 왼쪽 클릭은 채널을 여는 것으로 끝난다.
+    fireEvent.click(getChannelButton('general'));
+    expect(c.openChannel).toHaveBeenCalledWith('c1');
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    fireEvent.contextMenu(getChannelButton('general'));
+    const items = screen.getAllByRole('menuitem').map((el) => el.textContent);
+    expect(items).toContain('채널명 복사');
+    expect(items).toContain('알림: 없음');
+  });
+
+  /*
+   * 메뉴가 열린 채로 다른 채널을 누르면 닫힌다. Menu 의 바깥 클릭 리스너는 **트리거
+   * 안쪽** mousedown 을 무시하므로(클릭으로 여는 소비자의 중복 토글을 막는 장치다),
+   * 행이 곧 트리거가 된 지금은 행을 눌러도 그 리스너가 닫아 주지 않는다 —
+   * 트리거의 `onClick` 을 열려 있을 때만 되불러 닫는 이유가 이것이다. 없으면 메뉴가
+   * 커서 자리에 뜬 채 남는다.
+   */
+  it('메뉴가 열린 채 행을 왼쪽 클릭하면 닫힌다', () => {
     fakeController();
     render(<Sidebar panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-    fireEvent.click(screen.getAllByRole('button', { name: '⋯' })[0]!);
-    const clickItems = screen.getAllByRole('menuitem').map((el) => el.textContent);
-    expect(clickItems).toContain('채널명 복사');
-    expect(clickItems).toContain('알림: 없음');
-
-    fireEvent.click(document.body);
     fireEvent.contextMenu(getChannelButton('general'));
-    const contextItems = screen.getAllByRole('menuitem').map((el) => el.textContent);
-    expect(contextItems).toContain('채널명 복사');
-    expect(contextItems).toContain('알림: 없음');
+    expect(screen.getByRole('menu')).toBeTruthy();
+
+    fireEvent.click(getChannelButton('general'));
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 
   it('채널명 복사가 클립보드에 이름을 쓴다', async () => {

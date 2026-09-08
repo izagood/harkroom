@@ -74,7 +74,7 @@ describe('채널 보관 UI (#153)', () => {
     fakeController();
     sidebar();
 
-    fireEvent.click(screen.getAllByRole('button', { name: '⋯' })[0]!);
+    fireEvent.contextMenu(screen.getAllByRole('button', { name: /^# / })[0]!);
     const menu = screen.getByRole('menu');
     expect(within(menu).queryByText('보관')).toBeNull();
     expect(within(menu).queryByText('보관 해제')).toBeNull();
@@ -85,7 +85,7 @@ describe('채널 보관 UI (#153)', () => {
     const c = fakeController();
     sidebar();
 
-    fireEvent.click(screen.getAllByRole('button', { name: '⋯' })[0]!);
+    fireEvent.contextMenu(screen.getAllByRole('button', { name: /^# / })[0]!);
     fireEvent.click(screen.getByText('보관'));
 
     expect(c.archiveChannel).toHaveBeenCalledWith('c1', true);

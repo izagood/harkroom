@@ -439,10 +439,9 @@ function seedSidebar() {
   });
 }
 
-/** 채널 행의 `⋯` 를 눌러 메뉴를 연다. */
+/** 채널 행을 우클릭해 메뉴를 연다(`⋯` 버튼은 없앴다 — 행이 곧 트리거다). */
 function openChannelMenu(): HTMLElement {
-  const trigger = screen.getAllByRole('button', { name: '⋯' })[0]!;
-  fireEvent.click(trigger);
+  fireEvent.contextMenu(screen.getAllByRole('button', { name: /^# / })[0]!);
   return screen.getByRole('menu');
 }
 

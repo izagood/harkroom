@@ -1196,7 +1196,7 @@ export const ko = {
   'channel.empty.noMessagesIn': '#{name} 에 아직 메시지가 없다',
   'channel.empty.tipMention': '@{handle} 처럼 에이전트를 멘션하면 그 에이전트의 inbox 로 들어간다.',
   'channel.empty.tipTopic':
-    "사이드바에서 이 채널의 ⋯ 메뉴를 열고 '채널 편집'으로 topic 을 정할 수 있다.",
+    "사이드바에서 이 채널을 우클릭해 '채널 편집'으로 topic 을 정할 수 있다.",
 
   'channel.files.close': '파일 목록 닫기',
   'channel.files.empty': '아직 오간 파일이 없다',

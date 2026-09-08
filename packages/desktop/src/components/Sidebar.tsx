@@ -1411,23 +1411,34 @@ export function Sidebar({
         </div>
       )}
       <div className="relative flex w-full items-center">
+        {/*
+          * **행 자체가 트리거다.** 오른쪽 끝에 있던 `⋯` 버튼은 없앴다 — 우클릭과
+          * 글자 그대로 같은 메뉴를 냈고(같은 `items`, 같은 `Menu`), 같은 일을 하는
+          * 두 번째 진입점이 줄마다 자리를 먹으며 채널 이름이 쓸 폭만 좁혔다.
+          *
+          * `onClick` 만 빼고 펼친다. 그대로 두면 행을 왼쪽 클릭할 때 채널을 여는
+          * 동시에 메뉴가 열린다. 대신 **이미 열려 있을 때만** 그 토글을 닫는 데 쓴다:
+          * Menu 의 바깥 클릭 리스너는 트리거 안쪽 mousedown 을 무시하므로(클릭으로 여는
+          * 소비자의 중복 토글을 막는 장치다), 여기서 닫아 주지 않으면 우클릭으로 연 뒤
+          * 다른 채널을 눌러도 메뉴가 커서 자리에 그대로 떠 있는다.
+          *
+          * `tabIndex={-1}` 은 Escape 로 닫을 때 포커스가 돌아올 자리다 — `close()` 가
+          * 트리거에 `focus()` 를 건다. div 는 그대로면 포커스를 못 받아 포커스가 body 로
+          * 떨어진다. 탭 순서에는 들어가지 않는다(`-1`).
+          *
+          * **키보드로 여는 길은 남는다**: 채널 버튼에 포커스를 두고 메뉴 키(또는
+          * Shift+F10)를 누르면 브라우저가 `contextmenu` 를 쏘고, 그 이벤트가 이 행까지
+          * 올라온다 — 버튼을 지운다고 메뉴가 마우스 전용이 되지는 않는다.
+          */}
         <Menu
-          renderTrigger={(props) => (
+          renderTrigger={({ onClick, ...props }) => (
             <div
+              {...props}
+              tabIndex={-1}
+              onClick={() => { if (props['aria-expanded']) onClick(); }}
               className="flex flex-1 items-center"
-              onContextMenu={(e) => { props.onContextMenu?.(e); }}
             >
               {ChannelButton}
-              {/* props 를 그대로 펼친다 — ref 와 aria-haspopup/aria-expanded 가 여기
-                  붙어야 한다. Menu.tsx 주석이 그 계약을 적어 뒀고, 빼먹어도 타입은
-                  통과한다(초판이 그렇게 접근성 속성과 포커스 복귀를 잃었다). */}
-              <button
-                {...props}
-                onClick={(e) => { e.stopPropagation(); props.onClick(); }}
-                className="ml-auto rounded px-1 text-fg-subtle hover:bg-surface-raised hover:text-fg"
-              >
-                ⋯
-              </button>
             </div>
           )}
           items={menuItems}

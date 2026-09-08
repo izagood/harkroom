@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { ChannelPrefRow } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController } from '../src/state/controller';
@@ -30,12 +30,12 @@ const sidebar = () => render(
 /** 사이드바에 지금 보이는 채널 이름들. 개수가 아니라 **목록**으로 봐야 무엇이 사라졌는지 갈린다. */
 const visibleChannels = (): string[] =>
   screen.queryAllByRole('button')
-    .map((el) => (el.textContent ?? '').replace('⋯', '').trim())
+    .map((el) => (el.textContent ?? '').trim())
     .filter((t) => t.startsWith('#'));
 
 const openMenuFor = (name: RegExp): void => {
-  const row = screen.getByRole('button', { name }).closest('div')!;
-  fireEvent.click(within(row).getByRole('button', { name: '⋯' }));
+  // 행 자체가 트리거다(`⋯` 버튼은 없앴다) — 우클릭으로 연다.
+  fireEvent.contextMenu(screen.getByRole('button', { name }));
 };
 
 const seed = (prefs: Record<string, ChannelPrefRow> = {}): void => {
