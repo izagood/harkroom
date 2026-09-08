@@ -9,6 +9,9 @@ import { faceState, isFaceGreyed } from '../../lib/faceState';
 // 겹침 순서는 순수 판정이라 컴포넌트 밖이다. 왜 그것이 함수여야 하는지(그리고 왜 이름순이
 // 아닌지)가 그 모듈 주석에 있다.
 import { TEAM_FACE_SLOTS, sortTeamFaces } from '../../lib/teamFaces';
+// 번역기를 `t` 로 안 받는다 — 아래 격자가 팀 하나를 `t` 로 순회한다(`shown.map((t) => …)`).
+// 같은 이름을 쓰면 그 안에서 번역기가 가려지고, 가려진 채로 컴파일이 통과할 수 있다.
+import { useT } from '../../i18n/useT';
 
 /**
  * 팀 카드가 그리는 데 필요한 것. `AgentTeamRow` + **팀원 명단**이다.
@@ -284,6 +287,7 @@ export function TeamGrid({
   onCreate(): void;
   canCreate: boolean;
 }) {
+  const trans = useT();
   const [query, setQuery] = useState('');
 
   /**
@@ -315,15 +319,15 @@ export function TeamGrid({
           <span aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-fg-subtle">⌕</span>
           <input
             data-testid="team-search"
-            aria-label="팀 검색"
+            aria-label={trans('agents.teams.gridSearch')}
             className="w-full rounded-lg border border-border bg-field py-2 pl-8 pr-14
                        text-fg placeholder-fg-subtle"
-            placeholder="이름으로 찾기"
+            placeholder={trans('agents.teams.gridSearchPlaceholder')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-meta text-fg-subtle">
-            {shown.length}개
+            {trans('agents.teams.gridSearchCount', { count: shown.length })}
           </span>
         </div>
       </div>
@@ -339,7 +343,7 @@ export function TeamGrid({
             onClick={onCreate}
           >
             <span aria-hidden="true" className="text-[15px] leading-none">+</span>
-            <span className="text-meta text-fg-muted">새 팀</span>
+            <span className="text-meta text-fg-muted">{trans('agents.teams.newTeam')}</span>
           </button>
         )}
 
@@ -420,7 +424,7 @@ export function TeamGrid({
                 크기인지 다른 무엇인지 카드 하나만 봐서는 알 수 없다.
               */}
               <div className="mt-auto w-full border-t border-border pt-2">
-                <p className="text-meta text-fg-muted">팀 · {t.memberCount}명</p>
+                <p className="text-meta text-fg-muted">{trans('agents.teams.cardInfo', { count: t.memberCount })}</p>
                 {/*
                   **비활성 팀원 한 줄.** `warning` 인 이유가 `AgentGrid` 의 `멈추는 중` 과
                   같다: 나를 막지 않으므로 강조가 아니고(규칙 04 · `accentBudget`), 고장도
@@ -437,7 +441,7 @@ export function TeamGrid({
                     data-testid={`team-disabled-${t.name}`}
                     className="mt-1 whitespace-normal text-meta text-warning"
                   >
-                    {off.map((m) => m.handle).join(' · ')} 는 비활성 — 호출에서 빠진다
+                    {trans('agents.teams.cardDisabled', { names: off.map((m) => m.handle).join(' · ') })}
                   </p>
                 )}
               </div>
@@ -460,12 +464,13 @@ export function TeamGrid({
             data-testid="team-list-unavailable"
             className="col-span-full py-6 text-center text-warning"
           >
-            이 서버는 팀 목록을 주지 않는다 — 앱보다 낡은 서버다.
-            {' '}팀을 만들 수는 있지만 만든 팀이 여기 나타나지 않으니, 서버를 올린 뒤에 확인해라.
+            {trans('agents.teams.gridUnavailable')}
           </p>
         ) : shown.length === 0 && (
           <p className="col-span-full py-6 text-center text-fg-muted">
-            {query.trim() ? `"${query.trim()}" 에 맞는 팀이 없다` : '아직 팀이 없다'}
+            {query.trim()
+              ? trans('agents.teams.gridNoMatch', { query: query.trim() })
+              : trans('agents.teams.gridEmpty')}
           </p>
         )}
       </div>

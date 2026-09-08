@@ -366,13 +366,64 @@ export const ko = {
   'agents.stop.stopAction': '러너 중지',
   'agents.stop.stopFailed': '종료를 요청하지 못했다',
 
+  // teams — **덩어리를 늘렸다.** 원래 화면 문구를 그대로 옮겼고, 갈린 곳은 둘뿐이다:
+  // `← 팀` 이 `← 팀 목록` 이 되지 않았고(격자 머리가 `팀` 이라 그대로다), `팀원 빼기: `
+  // 가 `팀에서 빼기: ` 로 바뀌었다 — 접근 이름은 **어디서 빼는지**를 말해야 채널 멤버
+  // 빼기(`sidebar.members.removeAction`)와 안 겹친다.
+
+  'agents.teams.back': '← 팀',
   'agents.teams.cancel': '취소',
+  'agents.teams.candidateSearch': '팀원 후보 검색',
+  'agents.teams.candidateSearchPlaceholder': '이름 · 설명으로 찾기',
   'agents.teams.create': '만들기',
   'agents.teams.createFailed': '팀을 만들지 못했다',
+  'agents.teams.delete': '팀 지우기',
+  'agents.teams.deleteConfirm': '정말 삭제',
+  'agents.teams.deleteConfirmAsk': '정말 지우는가?',
+  'agents.teams.deleteFailed': '팀을 지우지 못했다',
+  'agents.teams.deleteHeading': '팀 삭제',
+  'agents.teams.deleteNote': '팀을 지워도 팀에 속했던 에이전트는 그대로 있다',
+  'agents.teams.detailFailed': '팀 정보를 받지 못했다',
+  'agents.teams.cardInfo': '팀 · {count}명',
+  'agents.teams.gridUnavailable':
+    '이 서버는 팀 목록을 주지 않는다 — 앱보다 낡은 서버다. 팀을 만들 수는 있지만 만든 팀이 '
+    + '여기 나타나지 않으니, 서버를 올린 뒤에 확인해라.',
+  'agents.teams.gridEmpty': '아직 팀이 없다',
+  'agents.teams.gridNoMatch': '“{query}” 에 맞는 팀이 없다',
+  'agents.teams.gridSearch': '팀 검색',
+  'agents.teams.gridSearchCount': '{count}개',
+  'agents.teams.gridSearchPlaceholder': '이름으로 찾기',
   'agents.teams.heading': '팀',
   'agents.teams.invalidName': '이름은 영문·숫자·-·_ 2~32자여야 한다',
   'agents.teams.listFailed': '팀 목록을 받지 못했다',
+  'agents.teams.memberAddFailed': '팀원을 추가하지 못했다',
+  'agents.teams.memberCandidateEmpty':
+    '넣을 수 있는 에이전트가 없다 — 등록된 에이전트가 모두 이 팀에 있다',
+  'agents.teams.memberCandidateNoMatch': '“{query}” 에 맞는 에이전트가 없다',
+  'agents.teams.memberDisabled': '비활성 — 호출에서 빠진다',
+  /** 조사가 이름 목록의 받침을 따른다 — `forge 는` 과 `민수는` 이 갈리지 않게. */
+  'agents.teams.cardDisabled': '{names:은는} 비활성 — 호출에서 빠진다',
+  'agents.teams.memberEmpty': '팀원이 없다',
+  'agents.teams.memberLoading': '불러오는 중…',
+  'agents.teams.memberPickAction': '팀에 넣기: {handle}',
+  'agents.teams.memberPickNote':
+    '얼굴을 누르면 팀에 들어간다. 멈춘 에이전트도 넣을 수 있다 — 팀에 넣는 것과 지금 도는 '
+    + '것은 다른 일이다.',
+  'agents.teams.memberReadOnly': '팀원을 바꿀 수 있는 것은 admin 뿐이다',
+  'agents.teams.memberRemove': '빼기',
+  'agents.teams.memberRemoveAction': '팀에서 빼기: {handle}',
+  'agents.teams.memberRemoveFailed': '팀원을 빼지 못했다',
+  'agents.teams.membersHeading': '팀원',
+  'agents.teams.nameEdit': '팀 이름 수정',
+  'agents.teams.nameHeading': '팀 이름',
   'agents.teams.nameLabel': '새 팀 이름',
+  /** `{name}` 은 화면이 다른 색으로 세우는 자리라 문장에서 뽑혀 있다(`en.ts` 와 같다). */
+  'agents.teams.nameNote':
+    '계정과 같은 이름 자리를 쓴다 — 채널에서 @{name} 을 부르면 팀원 전원이 깬다. '
+    + '사람 여럿을 한 이름으로 부르려면 설정 › Handle Groups 다.',
+  'agents.teams.nameSave': '저장',
+  'agents.teams.newTeam': '새 팀',
+  'agents.teams.renameFailed': '이름을 바꾸지 못했다',
   'agents.teams.note':
     '에이전트를 묶어 한 이름으로 부른다 — 채널에서 @팀이름 을 부르면 팀원 전원이 깬다. '
     + '카드를 누르면 팀원을 고칠 수 있다.',
@@ -504,6 +555,14 @@ export const ko = {
   'sidebar.edit.save': '저장',
   'sidebar.edit.title': '{name} 편집',
   'sidebar.edit.topicPlaceholder': 'topic (선택)',
+
+  // find — **종류 글자 셋 중 둘은 `sidebar.members.kind*` 를 그대로 쓴다**(`en.ts` 머리말).
+
+  'sidebar.find.allChannels': '모든 채널에서 찾기',
+  'sidebar.find.kindChannel': '채널',
+  'sidebar.find.label': '찾기',
+  'sidebar.find.none': '찾는 것이 없다',
+  'sidebar.find.placeholder': '채널 · 사람 · 에이전트',
 
   'sidebar.members.adminBadge': '워크스페이스 admin',
   'sidebar.members.adminBadgeTitle': '워크스페이스 admin — 채널 역할이 아니다',
@@ -991,4 +1050,222 @@ export const ko = {
   'inbox.label.report': '끝냈다',
   'inbox.label.mention': '불렀다',
   'inbox.label.reply': '답글',
+
+  // ---------------------------------------------------------------------------
+  // channel — **원래 화면 문구를 그대로 옮겼다.** 단정을 바꾼 곳은 없다.
+  //
+  // 세 자리만 갈렸고 셋 다 **원래 화면에 없던 접근 이름**이라 새로 지은 것이다:
+  // `channel.doc.close`·`channel.files.close`·`channel.header.searchLabel` 은 원래
+  // `aria-label` 이 있었으므로 그 값을 그대로 뒀고, `channel.doc.editLabel` 도 같다.
+  // ---------------------------------------------------------------------------
+
+  'channel.doc.cancel': '취소',
+  'channel.doc.close': '닫기',
+  'channel.doc.conflict':
+    '다른 사람이 먼저 고쳤다. 아래 현재 내용을 확인하고 다시 저장하면 내 편집으로 덮어쓴다.',
+  'channel.doc.edit': '편집',
+  'channel.doc.editLabel': '문서 편집',
+  'channel.doc.empty': '(빈 문서)',
+  'channel.doc.heading': '문서',
+  'channel.doc.noneYet': '아직 문서가 없다',
+  'channel.doc.loadFailed': '문서를 불러오지 못했다: {reason}',
+  'channel.doc.loading': '불러오는 중…',
+  'channel.doc.placeholder': '이 채널의 전제를 적어 둔다',
+  'channel.doc.save': '저장',
+  'channel.doc.saveFailed': '저장하지 못했다',
+  'channel.doc.saving': '저장 중…',
+  'channel.doc.unknownAuthor': '알 수 없는 사람',
+  'channel.doc.unknownError': '알 수 없는 오류',
+  'channel.doc.theirs': '서버의 현재 내용',
+
+  'channel.empty.noMessages': '아직 메시지가 없다',
+  'channel.empty.noMessagesIn': '#{name} 에 아직 메시지가 없다',
+  'channel.empty.tipMention': '@{handle} 처럼 에이전트를 멘션하면 그 에이전트의 inbox 로 들어간다.',
+  'channel.empty.tipTopic':
+    "사이드바에서 이 채널의 ⋯ 메뉴를 열고 '채널 편집'으로 topic 을 정할 수 있다.",
+
+  'channel.files.close': '파일 목록 닫기',
+  'channel.files.empty': '아직 오간 파일이 없다',
+  'channel.files.heading': '파일',
+  'channel.files.label': '채널 파일',
+  'channel.files.loadFailed': '파일 목록을 불러오지 못했다: {reason}',
+  'channel.files.loading': '불러오는 중…',
+  'channel.files.more': '더 오래된 파일',
+  'channel.files.retry': '다시 시도',
+  'channel.files.unknownError': '알 수 없는 오류',
+
+  'channel.header.archived': '보관됨',
+  'channel.header.doc': '문서',
+  'channel.header.files': '파일',
+  'channel.header.search': '검색',
+  'channel.header.searchLabel': '이 채널에서 찾기',
+  'channel.header.searchTitle': '이 채널에서 찾기 (⌘K 는 전체 검색)',
+
+  'channel.pane.archived': '보관된 채널이다',
+  'channel.pane.runnerFailureAgent': '에이전트',
+  /** 조사가 `{handle}` 의 받침을 따른다 — `codex 는` 과 `forge 는` 이 갈리지 않게. */
+  'channel.pane.runnerFailureLine': '@{handle:은는} 지금 응답하지 않는다',
+
+  // ---------------------------------------------------------------------------
+  // channelDirectory — **원래 문구 그대로다.** `표준 채널이 없다` 만 `채널이 없다` 로
+  // 줄였다: `standard` 는 내부 구분이고, 그 낱말이 화면에 서면 사람은 「표준이 아닌
+  // 채널」이 어딘가 따로 있다고 읽는다(실제로 그것은 DM 이고 이 목록의 물음이 아니다).
+  // ---------------------------------------------------------------------------
+
+  'channelDirectory.archived': '보관됨 ({count})',
+  'channelDirectory.close': '채널 디렉터리 닫기',
+  'channelDirectory.empty': '채널이 없다',
+  'channelDirectory.heading': '채널 찾기',
+  'channelDirectory.label': '채널 디렉터리',
+  'channelDirectory.noMatch': '검색 결과가 없다',
+  'channelDirectory.private': '비공개 채널',
+  'channelDirectory.search': '채널 이름으로 검색',
+  'channelDirectory.searchPlaceholder': '채널 이름',
+  'channelDirectory.sortAge': '생성순',
+  'channelDirectory.sortName': '이름순',
+
+  // ---------------------------------------------------------------------------
+  // search — **어투를 `~다` 로 맞췄다.** 이 화면만 `검색 결과가 없습니다` 였다
+  // (`profileName`·`invite` 와 같은 이유 — `en.ts` 머리말). 뜻은 그대로다.
+  //
+  // `검색 실패` 도 갈렸다: 그것은 낱말이지 문장이 아니어서 **무엇이 지금 참인지**를
+  // 안 말한다. 이 저장소의 오류 규율(`~하지 못했다`)로 돌린다.
+  // ---------------------------------------------------------------------------
+
+  'search.palette.empty': '맞는 메시지가 없다',
+  'search.palette.failed': '검색하지 못했다',
+  'search.palette.hintClose': 'Esc 닫기',
+  'search.palette.hintOpen': 'Enter 열기',
+  'search.palette.hintMove': '↑↓ 이동',
+  'search.palette.input': '검색어 입력',
+  'search.palette.label': '메시지 검색',
+  'search.palette.loading': '검색 중…',
+  'search.palette.placeholderAll': '전체에서 찾기',
+  'search.palette.placeholderScoped': '이 채널에서 찾기 ({name})',
+  'search.palette.results': '검색 결과',
+  'search.palette.scopeLabel': '이 채널에서만 ({name})',
+  'search.palette.thread': '스레드',
+  'search.palette.unnamedChannel': '이름 없는 채널',
+
+  // ---------------------------------------------------------------------------
+  // directory — **원래 문구 그대로다.** `{label}` 은 `People`·`Agents` 라 안 옮긴다 —
+  // 그 값이 `section()` 의 `aria-label` 이기도 해서, 옮기면 구획 이름이 함께 갈린다.
+  // ---------------------------------------------------------------------------
+
+  'directory.close': '디렉터리 닫기',
+  'directory.disabled': '비활성',
+  'directory.empty': '이 워크스페이스에 아직 계정이 없다',
+  'directory.label': '디렉터리',
+  'directory.listFailed': '계정 목록을 불러오지 못했다 — {reason}',
+  'directory.loading': '불러오는 중…',
+  'directory.sectionNoMatch': '{label} 중 맞는 것이 없다',
+  'directory.retry': '다시 시도',
+  'directory.search': '디렉터리 검색',
+  'directory.searchPlaceholder': 'handle 또는 이름으로 검색',
+
+  // ---------------------------------------------------------------------------
+  // saved — **원래 문구 그대로다.** 접근 이름 하나만 갈렸다: `할 것으로 되돌리기` 는
+  // 그대로 두되 영어가 `Put back on the list` 인 이유가 `en.ts` 표에 있다.
+  // ---------------------------------------------------------------------------
+
+  'saved.close': '패널 닫기',
+  'saved.deleted': '삭제된 메시지',
+  'saved.emptyDone': '완료된 메시지가 없다',
+  'saved.emptyOpen': '저장된 메시지가 없다',
+  'saved.label': '저장된 메시지',
+  'saved.listFailed': '불러오지 못했다 — {reason}',
+  'saved.loading': '불러오는 중…',
+  'saved.markDone': '완료로 표시',
+  'saved.markOpen': '할 것으로 되돌리기',
+  'saved.retry': '다시 시도',
+  'saved.tabDone': '완료',
+  'saved.tabOpen': '할 것',
+
+  // ---------------------------------------------------------------------------
+  // status — **원래 문구 그대로다.** 값 셋(`available`·`away`·`dnd`)은 안 옮긴다
+  // (`en.ts` 머리말) — 여기 오는 것은 그 값에 씌우는 이름뿐이다.
+  // ---------------------------------------------------------------------------
+
+  'status.mark.withText': '{label}: {text}',
+  'status.picker.clear': '문구 지우기',
+  'status.picker.close': '닫기',
+  'status.picker.failed': '상태를 바꾸지 못했다',
+  'status.picker.notePlaceholder': '짧은 문구 (최대 80자)',
+  'status.picker.noteLabel': '상태 문구',
+  'status.picker.save': '저장',
+  'status.value.available': '대화 가능',
+  'status.value.away': '자리 비움',
+  'status.value.dnd': '방해 금지',
+
+  // ---------------------------------------------------------------------------
+  // rail — **원래 문구 그대로다.** 칸 이름 넷은 안 옮긴다(`en.ts` 머리말: 폭을 재어 고른
+  // 값이라 언어마다 길이가 갈리면 그 계산이 무너진다).
+  //
+  // `{count}` 자리에 `개` 를 그대로 둔다 — 원래 화면이 그렇게 세고 있었고, 이 수가 세는
+  // 것은 사람이 아니라 **항목**이라 그 단위가 맞는다(`composer.mention.groupCount` 가
+  // `명` 을 버린 것과 갈리는 지점이 그것이다).
+  // ---------------------------------------------------------------------------
+
+  'rail.community.label': '커뮤니티 전환',
+  'rail.community.connected': '연결됨',
+  'rail.community.disconnected': '연결 끊김',
+  'rail.community.tile': '{name} — {state}',
+  'rail.me.menu': '내 계정 메뉴',
+  'rail.me.menuFor': '{handle} — 내 계정 메뉴',
+  'rail.me.profile': '내 프로필',
+  'rail.me.status': '상태 바꾸기',
+  'rail.nav.label': '주 목록',
+  'rail.cell.withCount': '{name} — {count}',
+  'rail.cell.blocking': '나를 기다리는 것 {count}개',
+  'rail.cell.saved': '담아 둔 메시지 {count}개',
+
+  // ---------------------------------------------------------------------------
+  // workspace — **`앞로 (Cmd+])` 의 오타를 고쳤다**(`앞으로` 여야 한다). 옮기면서
+  // 발견했고, 뜻이 아니라 글자가 틀린 것이라 그대로 둘 이유가 없다.
+  // ---------------------------------------------------------------------------
+
+  'workspace.back': '뒤로',
+  'workspace.backTitle': '뒤로 (Cmd+[)',
+  'workspace.forward': '앞으로',
+  'workspace.forwardTitle': '앞으로 (Cmd+])',
+  'workspace.showSidebar': '사이드바 펼치기',
+  'workspace.sweep': '미읽음 훑기',
+  'workspace.sweepTitle': '미읽음을 하나씩 훑는다',
+
+  // ---------------------------------------------------------------------------
+  // identity — **`{n}명` 이 `{count}` 로 바뀐 자리다**(`en.ts` 표). 집합에도 팀에도
+  // 에이전트가 드는데 `명` 은 사람 세는 단위라, 원래 문구가 이미 부정확했다.
+  // 괄호도 없앴다 — 배지 안의 수가 무엇인지는 옆의 글리프와 `sr-only` 이름이 말한다.
+  // ---------------------------------------------------------------------------
+
+  'identity.account.unknown': '알 수 없는 계정',
+  'identity.badge.count': '{count}',
+  'identity.badge.group': '집합',
+  'identity.badge.team': '팀',
+
+  // ---------------------------------------------------------------------------
+  // invite — **어투를 `~다` 로 맞췄다**(`profileName` 과 같은 이유, `en.ts` 머리말).
+  // 뜻은 한 글자도 안 바꿨다: 세 사실(한 번만 보인다 · 소진된다 · 지금 복사하라)이
+  // 그대로 있고, 어미만 `~습니다`·`~세요` 에서 `~다` 로 왔다.
+  // ---------------------------------------------------------------------------
+
+  'invite.busy': '발급 중…',
+  'invite.create': '초대 토큰 발급',
+  'invite.createAgain': '새 토큰 발급 (앞 토큰은 화면에서 사라진다)',
+  'invite.failed': '초대 토큰을 발급하지 못했다',
+  'invite.notAdmin': '이 화면은 admin 만 볼 수 있다',
+  'invite.note':
+    '초대 토큰을 만들어 다른 사람을 이 워크스페이스로 부를 수 있다. 토큰은 발급 직후 한 번만 '
+    + '보이고 다시 볼 수 없다. 한 번 쓰면 소진된다.',
+  'invite.tokenNextStep': '받는 사람이 가입할 때 이 토큰이 필요하다. 지금 복사해 둔다.',
+  'invite.tokenWarning': '이 토큰은 지금만 보인다 — 창을 벗어나면 다시 볼 수 없다',
+
+  // ---------------------------------------------------------------------------
+  // boot — **원래 문구 그대로다.** 부팅 시점에도 언어를 안다는 실측은 `en.ts` 머리말에.
+  // ---------------------------------------------------------------------------
+
+  'boot.keychain.title': 'OS 키체인의 승인을 기다리는 중',
+  'boot.keychain.hint':
+    '시스템 승인 대화상자가 떠 있는지 확인하라 — 다른 창 뒤에 가려져 있을 수 있다. '
+    + '승인하면 곧바로 이어진다.',
 } satisfies Catalog;

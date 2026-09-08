@@ -3,6 +3,7 @@ import type { MessageRow } from '@murmur/shared';
 import { displayBody } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
+import { useT } from '../i18n/useT';
 
 interface Props {
   open: boolean;
@@ -17,6 +18,7 @@ interface Props {
  * 전역 진입점(⌘K)은 꺼진 채, 채널 진입점(헤더 버튼)은 켜진 채 연다 — 둘 다 사람의 명시적 선택이다.
  */
 export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
+  const t = useT();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<MessageRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -43,7 +45,7 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
 
   const getChannelName = useCallback((channelId: string): string => {
     const channel = channels.find((c) => c.id === channelId);
-    if (channel) return channel.name ?? '이름 없는 채널';
+    if (channel) return channel.name ?? t('search.palette.unnamedChannel');
     const dm = dms.find((d) => d.id === channelId);
     if (dm) {
       const otherId = dm.memberIds.find((id) => id !== useActiveStore.getState().me?.id);
@@ -51,7 +53,7 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
       return other ? `@${other.handle}` : 'DM';
     }
     return channelId;
-  }, [channels, dms, accounts]);
+  }, [channels, dms, accounts, t]);
 
   const getAuthorName = useCallback((authorId: string): string => {
     const account = accounts[authorId];
@@ -68,12 +70,12 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
       setHasSearched(true);
       setActiveIndex(messages.length > 0 ? 0 : -1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : '검색 실패');
+      setError(e instanceof Error ? e.message : t('search.palette.failed'));
       setResults([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const scopeChannelId = scoped && activeChannelId ? activeChannelId : null;
 
@@ -180,7 +182,7 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
         className="w-full max-w-xl rounded-lg border border-border bg-surface-raised shadow-xl"
         role="dialog"
         aria-modal="true"
-        aria-label="메시지 검색"
+        aria-label={t('search.palette.label')}
       >
         <div className="flex items-center gap-2 border-b border-border p-3">
           <input
@@ -192,14 +194,16 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
               setQuery(value);
               handleSearch(value);
             }}
-            placeholder={scoped && activeChannelId ? `이 채널에서 찾기 (${getChannelName(activeChannelId)})` : '전체에서 찾기'}
-            aria-label="검색어 입력"
+            placeholder={scoped && activeChannelId
+              ? t('search.palette.placeholderScoped', { name: getChannelName(activeChannelId) })
+              : t('search.palette.placeholderAll')}
+            aria-label={t('search.palette.input')}
             className="flex-1 bg-transparent text-fg placeholder-fg-subtle focus:outline-none"
           />
           {/* '검색 중...' 은 진행 표시다 — 읽고 무언가 하는 글자가 아니라 아랫단 11px.
               오류(`role="alert"`)와 '결과가 없습니다' 는 반대로 본문단이다: 그때는 결과
               목록이 비어 있고 이 한 줄이 화면에 남는 유일한 설명이 된다. */}
-          {loading && <span className="text-meta text-fg-subtle">검색 중...</span>}
+          {loading && <span className="text-meta text-fg-subtle">{t('search.palette.loading')}</span>}
         </div>
 
         {activeChannelId && (
@@ -212,7 +216,7 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
               className="accent-teal-500"
             />
             <label htmlFor="search-scope-toggle" className="cursor-pointer text-meta text-fg-muted">
-              이 채널에서만 ({getChannelName(activeChannelId)})
+              {t('search.palette.scopeLabel', { name: getChannelName(activeChannelId) })}
             </label>
           </div>
         )}
@@ -226,10 +230,10 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
         <ul
           className="max-h-80 overflow-y-auto p-2"
           role="listbox"
-          aria-label="검색 결과"
+          aria-label={t('search.palette.results')}
         >
           {hasSearched && enabledResults.length === 0 && !loading && !error && (
-            <li className="p-4 text-center text-fg-subtle">검색 결과가 없습니다</li>
+            <li className="p-4 text-center text-fg-subtle">{t('search.palette.empty')}</li>
           )}
           {enabledResults.map((msg, index) => (
             <li
@@ -258,7 +262,7 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
                 {msg.threadRootId && msg.threadRootId !== msg.id && (
                   <>
                     <span>·</span>
-                    <span className="text-fg-subtle">스레드</span>
+                    <span className="text-fg-subtle">{t('search.palette.thread')}</span>
                   </>
                 )}
               </div>
@@ -271,11 +275,11 @@ export function SearchPalette({ open, onClose, initialScoped = false }: Props) {
 
         {/* 단축키 안내 띠 — 아랫단 11px. 한 번 배우면 안 읽는 자리다. */}
         <div className="border-t border-border px-3 py-2 text-meta text-fg-subtle">
-          <span>↑↓ 이동</span>
+          <span>{t('search.palette.hintMove')}</span>
           <span className="mx-2">·</span>
-          <span>Enter 선택</span>
+          <span>{t('search.palette.hintOpen')}</span>
           <span className="mx-2">·</span>
-          <span>Esc 닫기</span>
+          <span>{t('search.palette.hintClose')}</span>
         </div>
       </div>
     </div>

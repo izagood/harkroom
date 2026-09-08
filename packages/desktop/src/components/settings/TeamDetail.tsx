@@ -6,6 +6,7 @@ import { useActiveStore } from '../../state/communities';
 import { Identity } from '../Identity';
 import { Button } from './primitives';
 import { TeamMemberPicker } from './TeamMemberPicker';
+import { useT } from '../../i18n/useT';
 
 /**
  * 팀 이름 문법. **`HANDLE_PATTERN` 을 그대로 쓴다** — 팀 이름은 계정 handle 과 같은
@@ -68,6 +69,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
    */
   onChanged(change: { deleted: boolean }): void;
 }) {
+  const t = useT();
   const [members, setMembers] = useState<AgentTeamMemberRow[] | null>(null);
   const [editName, setEditName] = useState(team.name);
   const [error, setError] = useState<string | null>(null);
@@ -99,15 +101,15 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
       .then(({ members: m }) => { if (live) setMembers(m); })
       // 명단을 못 받은 것과 명단이 빈 것은 다른 사실이다 — `null` 로 남겨 두면 아래가
       // "불러오는 중"으로 그리고, 사유는 이 줄이 말한다(`HandleGroupsSettings` 와 같은 짝).
-      .catch(() => { if (live) setError('팀 정보를 받지 못했다'); });
+      .catch(() => { if (live) setError(t('agents.teams.detailFailed')); });
     return () => { live = false; };
-  }, [team.id, team.name]);
+  }, [team.id, team.name, t]);
 
   const submitEdit = async () => {
     const next = editName.trim();
     if (!next || next === team.name) return;
     if (!NAME_RE.test(next)) {
-      setError('이름은 영문·숫자·-·_ 2~32자여야 한다');
+      setError(t('agents.teams.invalidName'));
       return;
     }
     setBusy(true);
@@ -116,7 +118,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
       await getController().updateTeam(team.id, next);
       onChanged({ deleted: false });
     } catch (e) {
-      setError(e instanceof Error ? e.message : '이름을 바꾸지 못했다');
+      setError(e instanceof Error ? e.message : t('agents.teams.renameFailed'));
     } finally { setBusy(false); }
   };
 
@@ -128,7 +130,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
       setConfirmDelete(false);
       onChanged({ deleted: true });
     } catch (e) {
-      setError(e instanceof Error ? e.message : '팀을 지우지 못했다');
+      setError(e instanceof Error ? e.message : t('agents.teams.deleteFailed'));
     } finally { setBusy(false); }
   };
 
@@ -142,7 +144,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
       // 바뀌었으면 목록도 다시 읽어야 그 수가 맞는다(`TeamGrid` 의 그 주석).
       onChanged({ deleted: false });
     } catch (e) {
-      setError(e instanceof Error ? e.message : '팀원을 추가하지 못했다');
+      setError(e instanceof Error ? e.message : t('agents.teams.memberAddFailed'));
     } finally { setBusy(false); }
   };
 
@@ -154,7 +156,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
       setMembers(m);
       onChanged({ deleted: false });
     } catch (e) {
-      setError(e instanceof Error ? e.message : '팀원을 빼지 못했다');
+      setError(e instanceof Error ? e.message : t('agents.teams.memberRemoveFailed'));
     } finally { setBusy(false); }
   };
 
@@ -171,7 +173,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
           className="rounded px-1.5 py-0.5 text-body text-fg-muted hover:bg-surface-hover"
           onClick={onBack}
         >
-          ← 팀
+          {t('agents.teams.back')}
         </button>
         <h2 className="text-name font-bold">@{team.name}</h2>
       </header>
@@ -180,7 +182,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
         {error && <p role="alert" className="text-meta text-danger">{error}</p>}
 
         <div className="rounded border border-border p-3">
-          <div className="text-meta font-medium text-fg-muted">팀 이름</div>
+          <div className="text-meta font-medium text-fg-muted">{t('agents.teams.nameHeading')}</div>
           {/*
             ## **이름의 뜻을 말한다** (문서 4단계)
 
@@ -211,7 +213,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
           */}
           <div className="mt-2 flex gap-2">
             <input
-              aria-label="팀 이름 수정"
+              aria-label={t('agents.teams.nameEdit')}
               className="flex-1 rounded border border-border bg-field px-3 py-2"
               value={editName}
               onChange={(e) => { setEditName(e.target.value); setError(null); }}
@@ -223,18 +225,19 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
                 disabled={busy || editName.trim() === team.name}
                 onClick={() => void submitEdit()}
               >
-                저장
+                {t('agents.teams.nameSave')}
               </Button>
             )}
           </div>
           <p data-testid="team-mention-note" className="mt-2 text-meta text-fg-subtle">
-            계정과 같은 이름 자리를 쓴다 — 채널에서 <span className="font-medium text-fg-muted">@{team.name}</span> 을
-            부르면 팀원 전원이 깬다. 사람 여럿을 한 이름으로 부르려면 설정 › Handle Groups 다.
+            {/* 이름 자리만 다른 색을 입는다 — 그래서 `{name}` 이 문장에서 뽑혀 있고,
+                문장 전체의 어순은 사전이 진다(코드가 조각을 잇지 않는다). */}
+            {t('agents.teams.nameNote', { name: team.name })}
           </p>
         </div>
 
         <div className="rounded border border-border p-3">
-          <div className="text-meta font-medium text-fg-muted">팀원</div>
+          <div className="text-meta font-medium text-fg-muted">{t('agents.teams.membersHeading')}</div>
           {/*
             ## 팀원이 **얼굴**이다 (문서 4단계)
 
@@ -258,10 +261,10 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
           */}
           <div className="mt-2 space-y-1">
             {members === null && !error && (
-              <div className="text-meta text-fg-muted">불러오는 중…</div>
+              <div className="text-meta text-fg-muted">{t('agents.teams.memberLoading')}</div>
             )}
             {members !== null && members.length === 0 && (
-              <div className="text-meta text-fg-muted">팀원이 없다</div>
+              <div className="text-meta text-fg-muted">{t('agents.teams.memberEmpty')}</div>
             )}
             {(members ?? []).map((m) => (
               <div
@@ -275,16 +278,16 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
                     구성원 줄이 같은 짝이다. */}
                 <span className="min-w-0 flex-1 truncate text-meta">
                   @{m.handle}
-                  {m.disabled && <span className="ml-1 text-warning">비활성 — 호출에서 빠진다</span>}
+                  {m.disabled && <span className="ml-1 text-warning">{t('agents.teams.memberDisabled')}</span>}
                 </span>
                 {isAdmin && (
                   <button
-                    aria-label={`팀원 빼기: ${m.handle}`}
+                    aria-label={t('agents.teams.memberRemoveAction', { handle: m.handle })}
                     className="shrink-0 text-meta text-danger hover:underline"
                     disabled={busy}
                     onClick={() => void removeMember(m.accountId)}
                   >
-                    빼기
+                    {t('agents.teams.memberRemove')}
                   </button>
                 )}
               </div>
@@ -298,8 +301,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
           {isAdmin && members !== null && (
             <div className="mt-3">
               <div className="mb-1 text-meta text-fg-subtle">
-                얼굴을 누르면 팀에 들어간다. 멈춘 에이전트도 넣을 수 있다 — 팀에 넣는 것과
-                지금 도는 것은 다른 일이다.
+                {t('agents.teams.memberPickNote')}
               </div>
               <TeamMemberPicker
                 candidates={candidates}
@@ -312,27 +314,27 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
             </div>
           )}
           {!isAdmin && (
-            <p className="mt-2 text-meta text-fg-subtle">팀원을 바꿀 수 있는 것은 admin 뿐이다</p>
+            <p className="mt-2 text-meta text-fg-subtle">{t('agents.teams.memberReadOnly')}</p>
           )}
         </div>
 
         {isAdmin && (
           <div className="rounded border border-danger-border p-3">
-            <div className="text-meta font-medium text-danger">팀 삭제</div>
-            <p className="mt-1 text-meta text-fg-subtle">팀을 지워도 팀에 속했던 에이전트는 그대로 있다.</p>
+            <div className="text-meta font-medium text-danger">{t('agents.teams.deleteHeading')}</div>
+            <p className="mt-1 text-meta text-fg-subtle">{t('agents.teams.deleteNote')}</p>
             {/* 인라인 확인은 그대로 두고 **버튼 모양만 프리미티브를 통과한다**(문서). */}
             {confirmDelete ? (
               <div className="mt-2 flex items-center gap-2">
-                <span className="text-meta text-danger">정말 지우는가?</span>
+                <span className="text-meta text-danger">{t('agents.teams.deleteConfirmAsk')}</span>
                 <Button variant="danger" disabled={busy} onClick={() => void deleteTeam()}>
-                  정말 삭제
+                  {t('agents.teams.deleteConfirm')}
                 </Button>
-                <Button onClick={() => setConfirmDelete(false)}>취소</Button>
+                <Button onClick={() => setConfirmDelete(false)}>{t('agents.teams.cancel')}</Button>
               </div>
             ) : (
               <div className="mt-2">
                 <Button variant="danger" disabled={busy} onClick={() => setConfirmDelete(true)}>
-                  팀 지우기
+                  {t('agents.teams.delete')}
                 </Button>
               </div>
             )}

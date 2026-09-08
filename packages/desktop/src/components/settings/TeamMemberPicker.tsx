@@ -3,6 +3,7 @@ import type { AgentView } from '@murmur/shared';
 import { Identity } from '../Identity';
 import type { RunnerState } from '../../lib/runnerLauncher';
 import { faceState, isFaceGreyed } from '../../lib/faceState';
+import { useT } from '../../i18n/useT';
 
 /**
  * 팀원 고르기 — **얼굴로 고른다** (`docs/desktop-agent-cards.html` 4단계).
@@ -73,6 +74,7 @@ export function TeamMemberPicker({ candidates, runnerStates, online, connected, 
   onAdd(accountId: string): void;
   busy: boolean;
 }) {
+  const t = useT();
   const [query, setQuery] = useState('');
 
   /** `AgentGrid.shown` 과 **같은 판정**이다 — 이름·표시이름·설명을 훑고 가나다로 세운다. */
@@ -93,10 +95,10 @@ export function TeamMemberPicker({ candidates, runnerStates, online, connected, 
         <span aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-fg-subtle">⌕</span>
         <input
           data-testid="team-candidate-search"
-          aria-label="팀원 후보 검색"
+          aria-label={t('agents.teams.candidateSearch')}
           className="w-full rounded-lg border border-border bg-field py-2 pl-8 pr-3
                      text-fg placeholder-fg-subtle"
-          placeholder="이름 · 설명으로 찾기"
+          placeholder={t('agents.teams.candidateSearchPlaceholder')}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -136,7 +138,7 @@ export function TeamMemberPicker({ candidates, runnerStates, online, connected, 
                 것인지 스크린리더에 아무 말도 하지 않고, 격자의 카드(상세를 여는 문)와
                 구분되지 않는다 — 이 파일 머리 주석이 그것을 같은 손잡이의 위험으로 적었다.
               */
-              aria-label={`팀에 넣기: ${a.handle}`}
+              aria-label={t('agents.teams.memberPickAction', { handle: a.handle })}
               disabled={busy}
               className="flex w-[72px] flex-col items-center gap-1 rounded-lg p-1
                          hover:bg-surface-hover disabled:opacity-50"
@@ -160,8 +162,8 @@ export function TeamMemberPicker({ candidates, runnerStates, online, connected, 
         {shown.length === 0 && (
           <p className="col-span-full py-4 text-center text-meta text-fg-muted">
             {query.trim()
-              ? `"${query.trim()}" 에 맞는 에이전트가 없다`
-              : '넣을 수 있는 에이전트가 없다 — 등록된 에이전트가 모두 이 팀에 있다'}
+              ? t('agents.teams.memberCandidateNoMatch', { query: query.trim() })
+              : t('agents.teams.memberCandidateEmpty')}
           </p>
         )}
       </div>

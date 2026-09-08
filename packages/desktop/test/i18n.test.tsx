@@ -25,7 +25,7 @@
  * | 없는 키 `t('waitChain.nope')` | **타입** — `MessageKey` 에 없어 컴파일이 막힌다 |
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, act } from '@testing-library/react';
 import type {
   AgentDefaults, AgentTeamRow, AgentView, AskMeta, InboxEntry, MessageRow, OpenAskLink, PatView,
 } from '@murmur/shared';
@@ -66,7 +66,7 @@ import {
 import { CREDENTIAL_REJECTED_LINE, EXECUTABLE_NOT_FOUND_LINE, EX_CONFIG, HARNESS_LOGIN_REQUIRED_LINE } from '@murmur/shared';
 import { fakeDaemon } from './helpers/fakeDaemon';
 import type { Translate } from '../src/i18n';
-import { acc, chan, msg, fakeApi, fakeWsFactory } from './helpers/fakeApi';
+import { acc, chan, msg, tm, inboxEntry, fakeApi, fakeWsFactory } from './helpers/fakeApi';
 // 7번 묶음(러너·투영)이 재는 판정·화면들. **사전이 아니라 이 경로를 잰다** —
 // 그 묶음 머리말이 왜인지 적었다.
 import { runnerStatusLabel } from '../src/components/RunnerStatus';
@@ -80,6 +80,13 @@ import type { WriterDeniedReason } from '@murmur/shared';
 import type { RunnerState, RunnerStatus } from '../src/lib/runnerLauncher';
 import type { ProjectionStatus } from '@murmur/shared';
 import { PROJECTION_UNCONFIGURED_HEADLINE } from '@murmur/shared';
+import { SidebarFind } from '../src/components/SidebarFind';
+import { StatusPicker } from '../src/components/StatusPicker';
+import { StatusMark } from '../src/components/Identity';
+import { SearchPalette } from '../src/components/SearchPalette';
+import { TeamDetail } from '../src/components/settings/TeamDetail';
+import { Rail } from '../src/components/Rail';
+import { BootNotice, KEYCHAIN_NOTICE_DELAY_MS } from '../src/components/BootNotice';
 
 /** 사전 값에서 자리표시자 이름을 뽑는다. 조사 표기(`:이가`)는 이름의 일부가 아니다. */
 function placeholders(value: unknown): Set<string> {
@@ -2666,5 +2673,471 @@ describe('손으로 띄우는 명령 — 주석만 옮기고 명령은 안 옮�
       expect(t('agents.runner.commandBundledNote'), locale).toMatch(/^#/);
       expect(t('agents.runner.commandDevNote'), locale).toMatch(/^#/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. 채널·검색·팀 — **모듈 상수 셋이 언어를 굳히지 않는다**
+//
+// 이 묶음이 겨누는 것은 8번과 같은 결함 형태인데, 이 PR 이 그것을 **셋 더** 찾았다:
+//
+// | 자리 | 무엇이 굳었나 | 어떻게 풀었나 |
+// |---|---|---|
+// | `SidebarFind::KIND_LABEL` | 종류 꼬리표 셋 | 표는 남기고 **값만 사전 키로**(`NotifiedGapRow` 선례) |
+// | `StatusPicker::LABELS` | 상태 이름 셋 | 같은 선례 — 값·라벨을 갈라 값(`available`…)은 안 옮긴다 |
+// | `Identity::STATUS_MARKS` | 상태 이름 + 글리프 | 같은 선례. `StatusPicker` 와 **같은 키를 본다** |
+// | `BootNotice::KEYCHAIN_WAIT_*` | 부팅 두 줄 | **함수로 내림**(`threadState::THREAD_STATE_LABEL` 선례) — `export` 는 남는다: 회귀선이 그것을 import 한다 |
+//
+// **그래서 사전을 읽지 않고 화면을 렌더해 언어를 바꿔 본다.** 사전 대조만으로는 굳은
+// 상수를 절대 못 잡는다 — 사전은 갈려 있고 화면만 안 따라오기 때문이다(8번 머리말).
+// ---------------------------------------------------------------------------
+
+describe('굳은 모듈 상수 셋 — 언어를 바꾸면 화면이 따라온다', () => {
+  /**
+   * **`SidebarFind::KIND_LABEL` 이 굳어 있던 자리.** 한 글자를 치면 채널·사람·에이전트가
+   * 함께 걸리고 각 줄에 종류 꼬리표가 붙는다 — 그 셋이 언어를 따라오는지 본다.
+   *
+   * 사람·에이전트 둘이 **`sidebar.members.kind*` 를 그대로 쓰는지**도 여기서 잰다:
+   * 새 키를 만들었다면 그 값이 멤버 패널의 값과 갈릴 수 있고, 그러면 한 화면이 같은 말을
+   * 두 벌 들게 된다(그 영역 머리말이 안 만든 이유로 적은 것).
+   */
+  it('사이드바 찾기의 종류 꼬리표 셋이 언어를 따라온다 — 모듈 상수로 굳지 않는다', () => {
+    const seed = () => {
+      useActiveStore.getState().set({
+        me: acc(ME, 'me'),
+        accounts: {
+          [ME]: acc(ME, 'me'),
+          h1: acc('h1', 'zeta'),
+          a1: acc('a1', 'zebra', 'agent'),
+        },
+        channels: [chan('c1', 'zebra-deploy')],
+      });
+    };
+
+    seed();
+    render(<SidebarFind onOpenChannelDirectory={() => {}} />);
+    fireEvent.change(screen.getByTestId('sidebar-find'), { target: { value: 'ze' } });
+    const rows = () => screen.getByTestId('sidebar-find-results').textContent ?? '';
+    expect(rows()).toContain('Channel');
+    expect(rows()).toContain('Person');
+    expect(rows()).toContain('Agent');
+    // 굳은 상수가 남아 있으면 이 줄이 잡는다.
+    expect(rows()).not.toContain('에이전트');
+
+    cleanup();
+    speak('ko');
+    seed();
+    render(<SidebarFind onOpenChannelDirectory={() => {}} />);
+    fireEvent.change(screen.getByTestId('sidebar-find'), { target: { value: 'ze' } });
+    expect(rows()).toContain('채널');
+    expect(rows()).toContain('사람');
+    expect(rows()).toContain('에이전트');
+    expect(rows()).not.toContain('Agent');
+  });
+
+  /**
+   * **`sidebar.members.kind*` 를 빌려 쓴 것이 실제로 같은 값인가.** 위 시험은 화면을
+   * 재고 이 줄은 **키를 재서** 두 자리가 갈라지지 않았음을 못 박는다 — 다음 사람이
+   * `sidebar.find.kindHuman` 을 새로 만들면 위 시험은 여전히 초록이고 이 줄만 빨개진다.
+   */
+  it('사람·에이전트 꼬리표는 멤버 패널과 같은 키다 — 한 화면이 같은 말을 두 벌 안 든다', () => {
+    for (const catalog of [en, ko]) {
+      expect(catalog['sidebar.members.kindHuman']).toBeDefined();
+      expect(catalog['sidebar.members.kindAgent']).toBeDefined();
+    }
+    // 채널만 이 덩어리의 것이다. 나머지 둘을 새로 만들었다면 그 키가 사전에 있을 것이고,
+    // `satisfies Catalog` 가 아니라 **여기서** 잡힌다.
+    expect(Object.keys(en).filter((k) => k.startsWith('sidebar.find.kind')))
+      .toEqual(['sidebar.find.kindChannel']);
+  });
+
+  /**
+   * **`StatusPicker::LABELS` 와 `Identity::STATUS_MARKS` 가 둘 다 굳어 있던 자리.**
+   *
+   * 한 시험에서 두 화면을 함께 재는 것이 요점이다 — 두 상수가 **같은 세 상태**를 그리므로
+   * 하나만 고치면 고르는 자리와 읽는 자리의 말이 갈린다(`status` 영역이 화면 이름을
+   * 안 쓴 이유가 그것이다).
+   */
+  it('상태 이름 셋이 두 화면에서 함께 언어를 따라온다 — 모듈 상수로 굳지 않는다', () => {
+    const seed = (status: 'available' | 'away' | 'dnd') => {
+      const me = acc(ME, 'me', 'human', false, { status });
+      useActiveStore.getState().set({ me, accounts: { [ME]: me } });
+      setController({ setStatus: vi.fn(async () => undefined) } as unknown as Controller);
+      return me;
+    };
+
+    /**
+     * 두 화면을 **함께** 그린다 — 고르는 자리(`StatusPicker`)와 읽는 자리(`StatusMark`)가
+     * 각자 모듈 상수를 들고 있었고, 하나만 고치면 둘의 말이 갈린다. 그것이 `status`
+     * 영역이 화면 이름을 안 쓴 이유이므로, 회귀선도 한 자리에서 둘을 함께 재야 한다.
+     */
+    const both = (status: 'available' | 'away' | 'dnd') => {
+      const me = seed(status);
+      return render(
+        <>
+          <StatusPicker onDone={() => {}} />
+          <StatusMark account={me} />
+        </>,
+      );
+    };
+
+    both('away');
+    const picker = () => screen.getByTestId('status-picker').textContent ?? '';
+    const mark = () => screen.getByTestId(`status-${ME}`).textContent ?? '';
+    expect(picker()).toContain('Available');
+    expect(picker()).toContain('Away');
+    expect(picker()).toContain('Do not disturb');
+    // 읽는 자리도 같은 언어여야 한다 — 한쪽만 고치면 여기가 빨개진다.
+    expect(mark()).toContain('Away');
+    expect(picker()).not.toContain('자리 비움');
+
+    cleanup();
+    speak('ko');
+    both('away');
+    expect(picker()).toContain('대화 가능');
+    expect(picker()).toContain('자리 비움');
+    expect(picker()).toContain('방해 금지');
+    expect(mark()).toContain('자리 비움');
+    expect(picker()).not.toContain('Away');
+  });
+
+  /**
+   * **값과 라벨을 갈랐다.** `available`·`away`·`dnd` 는 서버로 가고 `data-status` 로도
+   * 남는 **저장·전송용 값**이라 두 언어 모두 그대로다 — `sidebar.notify` 가 `all`/
+   * `mentions`/`none` 을 안 옮긴 것과 같은 규율이고, 이 줄이 그 경계를 못 박는다.
+   */
+  it('상태 값은 두 언어 모두 안 옮긴다 — 서버로 가는 값이다', () => {
+    const me = acc(ME, 'me', 'human', false, { status: 'dnd' });
+    for (const locale of ['en', 'ko'] as const) {
+      cleanup();
+      speak(locale);
+      useActiveStore.getState().set({ me, accounts: { [ME]: me } });
+      render(<StatusMark account={me} />);
+      expect(screen.getByTestId(`status-${ME}`).getAttribute('data-status'), locale).toBe('dnd');
+    }
+  });
+
+  /**
+   * **`BootNotice` 의 두 줄이 굳어 있던 자리이자, 부팅 시점 언어를 재는 자리다.**
+   *
+   * 이 화면은 세션도 못 읽은 시점에 뜬다 — `useT` 가 그때 무엇을 내는지가 물음이었다.
+   * 실측 결론은 그 파일 주석에 있다(`prefsStorage.load()` 가 `localStorage` 동기 호출이라
+   * 왕복이 없다). 그 사실을 **화면으로** 잰다: 언어를 정해 두고 부팅 화면을 띄우면
+   * 그 언어로 뜨는가.
+   */
+  it('부팅 화면이 언어를 따라온다 — 세션 전에도 언어를 안다', () => {
+    vi.useFakeTimers();
+    try {
+      render(<BootNotice wait="keychain" />);
+      act(() => { vi.advanceTimersByTime(KEYCHAIN_NOTICE_DELAY_MS + 1); });
+      const notice = () => screen.getByTestId('boot-notice').textContent ?? '';
+      expect(notice()).toContain('Waiting for the OS keychain');
+      // **할 일까지 말한다** — 사유만 남으면 `#460` 이 고친 것이 반쯤 되돌아간다.
+      expect(notice()).toContain('system approval dialog');
+      expect(notice()).not.toContain('키체인');
+
+      cleanup();
+      speak('ko');
+      render(<BootNotice wait="keychain" />);
+      act(() => { vi.advanceTimersByTime(KEYCHAIN_NOTICE_DELAY_MS + 1); });
+      expect(notice()).toContain('OS 키체인의 승인을 기다리는 중');
+      expect(notice()).toContain('대화상자');
+      expect(notice()).not.toContain('keychain');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. 채널·검색·팀 — **옮기면서 사실을 잃지 않는다**
+//
+// 9번이 배선을 재고 이 묶음이 **뜻**을 잰다. 각 줄이 겨누는 것은 원래 한국어가 지고
+// 있던 사실 하나이고, 영어가 그것을 빠뜨렸으면 빨개진다.
+// ---------------------------------------------------------------------------
+
+describe('채널 문서 — 409 가 두 언어 모두 세 사실을 다 말한다', () => {
+  /**
+   * 이 기능의 요점은 *"남의 것을 덮어쓰지 않으려고 내 것을 조용히 버리지 않는다"* 이고,
+   * 그것이 사람에게 도달하려면 **세 사실**이 다 있어야 한다: 무엇이 일어났나 · 어디를
+   * 보나 · 다시 누르면 무엇이 되나. 하나라도 빠지면 사람은 자기 글이 사라졌는지부터
+   * 모른 채 저장을 다시 누른다.
+   */
+  it('무엇이 일어났나 · 어디를 보나 · 다시 누르면 무엇이 되나', () => {
+    const conflict = en['channel.doc.conflict'] as string;
+    expect(conflict).toMatch(/saved first/);
+    expect(conflict).toMatch(/below/);
+    expect(conflict).toMatch(/over it/);
+
+    const koConflict = ko['channel.doc.conflict'] as string;
+    expect(koConflict).toMatch(/먼저 고쳤다/);
+    expect(koConflict).toMatch(/아래/);
+    expect(koConflict).toMatch(/덮어쓴다/);
+  });
+
+  /**
+   * **빈 문서와 못 받은 문서가 다른 문장이다**(design.md §4). 그 구별이 언어를 건너
+   * 살아남는지 — `channel.doc.noneYet` 은 *"아직 안 썼다"* 이고 `loadFailed` 는
+   * *"못 받았다"* 다. 하나로 합치면 사람이 남의 문서 위에 저장한다.
+   */
+  it('빈 문서와 못 받은 문서가 두 언어 모두 다른 문장이다', () => {
+    for (const catalog of [en, ko]) {
+      expect(catalog['channel.doc.noneYet']).not.toEqual(catalog['channel.doc.loadFailed']);
+    }
+    // `yet` 이 진다 — 빠지면 '영영 없다'로 읽힌다.
+    expect(en['channel.doc.noneYet']).toMatch(/yet/);
+    expect(ko['channel.doc.noneYet']).toMatch(/아직/);
+    // 실패는 **화면이 지금 무엇을 모르는지**를 말한다(머리말의 `did not arrive`).
+    expect(en['channel.doc.loadFailed']).toMatch(/did not arrive/);
+  });
+});
+
+describe('빈 채널 안내 — 없는 동작을 권하지 않는다', () => {
+  /**
+   * **`답한다` 가 아니라 `inbox 로 들어간다`.** 답이 오는지는 러너가 떠 있는가에 달렸고
+   * 이 화면은 그것을 모른다(`ChannelEmptyState` 주석 · `#125`). 영어가 `it replies` 로
+   * 넘어가면 화면이 모르는 것을 단언하게 되므로 그 낱말을 못 박는다.
+   */
+  it('멘션 안내가 두 언어 모두 「답한다」고 말하지 않는다', () => {
+    expect(en['channel.empty.tipMention']).toMatch(/inbox/);
+    expect(en['channel.empty.tipMention']).not.toMatch(/repl(y|ies)/i);
+    expect(ko['channel.empty.tipMention']).toMatch(/inbox/);
+    expect(ko['channel.empty.tipMention']).not.toMatch(/답한다/);
+  });
+
+  /**
+   * **가리킨 메뉴 항목의 이름이 실제 메뉴의 글자와 같아야 한다.** 안내가 가리킨 자리를
+   * 사람이 메뉴에서 못 찾으면 그 안내는 없느니만 못하다 — 언어를 나누면 그 어긋남이
+   * 조용히 생기는 자리가 정확히 여기다.
+   */
+  it('topic 안내가 가리키는 메뉴 항목이 두 언어 모두 실제 메뉴의 글자다', () => {
+    expect(en['channel.empty.tipTopic']).toContain(en['sidebar.menu.edit'] as string);
+    expect(ko['channel.empty.tipTopic']).toContain(ko['sidebar.menu.edit'] as string);
+  });
+});
+
+describe('찾기 두 줄 — 같은 물음이 아니다', () => {
+  /**
+   * `SearchPalette`(⌘K)는 **메시지 본문**을 서버에 묻고, 사이드바 찾기 줄은 **이름**을
+   * 스토어에서 훑는다(그 파일의 표). 두 빈 결과가 같은 문장이면 사람은 ⌘K 가 채널도
+   * 찾아 준다고 읽는다 — 그 구별이 언어를 건너 살아남는지 잰다.
+   */
+  it('빈 결과 문장이 두 언어 모두 서로 다르다', () => {
+    for (const catalog of [en, ko]) {
+      expect(catalog['search.palette.empty']).not.toEqual(catalog['sidebar.find.none']);
+    }
+    // 팔레트는 **무엇을** 못 찾았는지 말한다 — 메시지만 뒤지기 때문이다.
+    expect(en['search.palette.empty']).toMatch(/message/i);
+    expect(ko['search.palette.empty']).toMatch(/메시지/);
+  });
+
+  /**
+   * **`이 채널` 을 안 버린다.** 좁히는 것이 사람의 명시적 선택이라는 규약(`#221`)이
+   * 그 한 마디에 걸려 있다 — 이름만 남기면 그것이 지금 보고 있는 곳이라는 사실이 사라진다.
+   */
+  it('좁힌 검색이 두 언어 모두 「지금 보는 채널」이라고 말한다', () => {
+    expect(en['search.palette.scopeLabel']).toMatch(/this channel/);
+    expect(en['search.palette.placeholderScoped']).toMatch(/this channel/);
+    expect(ko['search.palette.scopeLabel']).toMatch(/이 채널/);
+    expect(ko['search.palette.placeholderScoped']).toMatch(/이 채널/);
+  });
+
+  /** 팔레트가 실제로 두 언어로 뜨는지 — 사전만 보면 배선이 틀려도 초록이다. */
+  it('팔레트가 두 언어로 뜬다', async () => {
+    const openPalette = () => {
+      useActiveStore.getState().set({
+        accounts: { [ME]: acc(ME, 'me') },
+        channels: [chan('c1', 'general')],
+        activeChannelId: 'c1',
+      });
+      setController({
+        api: { search: vi.fn(async () => [] as never[]) },
+      } as unknown as Controller);
+      render(<SearchPalette open onClose={() => {}} />);
+    };
+
+    openPalette();
+    expect(screen.getByLabelText('Only this channel (general)')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Search everything')).toBeTruthy();
+
+    cleanup();
+    speak('ko');
+    openPalette();
+    expect(screen.getByLabelText('이 채널에서만 (general)')).toBeTruthy();
+    expect(screen.getByPlaceholderText('전체에서 찾기')).toBeTruthy();
+  });
+});
+
+describe('팀 상세 — 이름의 뜻을 두 언어가 다 말한다', () => {
+  /**
+   * 이름 칸 아래의 한 줄이 **세 사실**을 진다: 계정과 같은 네임스페이스 · `@이름` 이
+   * 전원을 깨운다 · 사람 여럿은 Handle Groups. 하나라도 빠지면 이름을 정하는 사람이
+   * 모르는 채로 정하고, 그 순간이 이 문장이 존재하는 유일한 이유다(그 자리 주석).
+   */
+  it('네임스페이스 · 전원이 깬다 · 집합은 저쪽 — 셋이 두 언어에 다 있다', () => {
+    const e = en['agents.teams.nameNote'] as string;
+    expect(e).toMatch(/namespace/);
+    expect(e).toMatch(/every member/);
+    expect(e).toMatch(/Handle Groups/);
+
+    const k = ko['agents.teams.nameNote'] as string;
+    expect(k).toMatch(/같은 이름 자리/);
+    expect(k).toMatch(/전원이 깬다/);
+    expect(k).toMatch(/Handle Groups/);
+  });
+
+  /**
+   * **비활성 팀원이 왜 적히는가** — `Disabled` 한 낱말은 러너가 죽은 것인지 계정이 꺼진
+   * 것인지 안 가른다. 이 줄이 말할 것은 **결과**다: 팀을 불러도 이 하나는 안 깬다.
+   */
+  it('비활성 팀원 줄이 두 언어 모두 「호출에서 빠진다」까지 말한다', () => {
+    expect(en['agents.teams.memberDisabled']).toMatch(/left out when the team is called/);
+    expect(ko['agents.teams.memberDisabled']).toMatch(/호출에서 빠진다/);
+  });
+
+  /**
+   * 삭제 상자가 답해야 하는 것은 **무엇이 남는가** 다. `Are you sure?` 만으로는 사람이
+   * 에이전트까지 사라지는 줄 알고 못 누른다.
+   */
+  it('팀 삭제 안내가 두 언어 모두 「에이전트는 남는다」를 말한다', () => {
+    expect(en['agents.teams.deleteNote']).toMatch(/agents .*stay/);
+    expect(ko['agents.teams.deleteNote']).toMatch(/에이전트는 그대로 있다/);
+  });
+
+  /**
+   * **`admin` 은 두 언어에서 같은 글자다.** 이 제품의 고유어라 옮기면 사람이 문서·서버
+   * 오류에서 보는 말과 화면의 말이 갈린다(`agents` 머리말). 초대 화면의 `관리자` 를
+   * `admin` 으로 되돌린 것도 같은 규율이고, 그 자리를 함께 잰다.
+   */
+  it('admin 이 두 언어에서 같은 글자다', () => {
+    for (const key of ['agents.teams.memberReadOnly', 'invite.notAdmin'] as (keyof typeof en)[]) {
+      expect(en[key], `en.${key}`).toContain('admin');
+      expect(ko[key], `ko.${key}`).toContain('admin');
+      expect(ko[key], `ko.${key}`).not.toContain('관리자');
+    }
+  });
+
+  /** 팀 상세가 실제로 두 언어로 뜬다 — 사전만 보면 배선이 틀려도 초록이다. */
+  it('팀 상세가 두 언어로 뜬다', async () => {
+    const team = tm('t1', 'release', 1);
+    const open = () => {
+      useActiveStore.getState().set({
+        me: { ...acc(ME, 'me'), isAdmin: true },
+        accounts: { [ME]: { ...acc(ME, 'me'), isAdmin: true } },
+      });
+      setController({
+        getTeam: vi.fn(async () => ({ team, members: [] })),
+      } as unknown as Controller);
+      render(<TeamDetail team={team} agents={[]} onBack={() => {}} onChanged={() => {}} />);
+    };
+
+    open();
+    await waitFor(() => expect(screen.getByText('No members')).toBeTruthy());
+    expect(screen.getByLabelText('Edit team name')).toBeTruthy();
+    expect(screen.getByTestId('team-back').textContent).toContain('Teams');
+
+    cleanup();
+    speak('ko');
+    open();
+    await waitFor(() => expect(screen.getByText('팀원이 없다')).toBeTruthy());
+    expect(screen.getByLabelText('팀 이름 수정')).toBeTruthy();
+    expect(screen.getByTestId('team-back').textContent).toContain('팀');
+  });
+});
+
+describe('초대 화면 — 되돌릴 수 없는 것을 두 언어가 다 말한다', () => {
+  /**
+   * 이 화면의 세 사실은 전부 **되돌릴 수 없는 것**에 관한 말이다: 한 번만 보인다 ·
+   * 한 번 쓰면 소진된다 · 지금 복사해야 한다. 하나라도 빠지면 사람이 토큰을 잃는다.
+   */
+  it('한 번만 보인다 · 소진된다 · 지금 복사한다 — 셋이 두 언어에 다 있다', () => {
+    const e = `${en['invite.note']} ${en['invite.tokenWarning']} ${en['invite.tokenNextStep']}`;
+    expect(e).toMatch(/once/);
+    expect(e).toMatch(/used up/);
+    expect(e).toMatch(/Copy it now/);
+
+    const k = `${ko['invite.note']} ${ko['invite.tokenWarning']} ${ko['invite.tokenNextStep']}`;
+    expect(k).toMatch(/한 번만/);
+    expect(k).toMatch(/소진된다/);
+    expect(k).toMatch(/지금 복사/);
+  });
+
+  /**
+   * **다시 누르면 무엇을 잃는지**를 버튼이 말한다 — 그래서 버튼을 잠그지 않는다는 것이
+   * 그 자리의 판단이고(초대는 여러 사람에게 하는 일이다), 그 대가를 라벨이 진다.
+   */
+  it('다시 발급 버튼이 두 언어 모두 「앞 토큰이 사라진다」를 말한다', () => {
+    expect(en['invite.createAgain']).toMatch(/disappears/);
+    expect(ko['invite.createAgain']).toMatch(/사라진다/);
+  });
+
+  /**
+   * **어투를 `~다` 로 맞췄다.** 이 화면만 `~습니다`·`~세요` 였고, 한 화면만 높임말이면
+   * 같은 앱이 사람을 두 가지로 대한다(`profileName` 이 세운 그 선례).
+   */
+  it('초대 화면의 한국어가 사전의 다른 한국어와 같은 어투다', () => {
+    for (const key of [
+      'invite.notAdmin', 'invite.note', 'invite.failed',
+      'invite.tokenWarning', 'invite.tokenNextStep', 'invite.createAgain',
+    ] as (keyof typeof en)[]) {
+      const v = ko[key] as string;
+      expect(v, `ko.${key}`).not.toMatch(/(습니다|하세요|세요)[.\s]*$/);
+    }
+  });
+});
+
+describe('레일 — 두 언어로 뜨고 칸 이름은 안 옮긴다', () => {
+  const railProps = {
+    panel: 'home' as const,
+    onPanelChange: () => {},
+    onOpenSaved: () => {},
+    onOpenSettings: () => {},
+    onOpenCommunityMark: () => {},
+    onLogout: () => {},
+  };
+
+  /**
+   * **칸 이름 넷은 두 언어 모두 그대로다.** `RAIL_CELLS` 의 그 값들은 62px 레일에서
+   * 폭을 재어 고른 것이라(그 주석의 실측: `Agents` 가 11px 에서 32.89px), 언어마다
+   * 길이가 갈리면 그 계산이 무너진다 — 옮기려면 **먼저 다시 재야 한다.**
+   */
+  it('칸 이름 넷이 두 언어에서 같은 글자다', () => {
+    for (const locale of ['en', 'ko'] as const) {
+      cleanup();
+      speak(locale);
+      useActiveStore.getState().set({ me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') } });
+      render(<Rail {...railProps} />);
+      const rail = screen.getByTestId('rail').textContent ?? '';
+      for (const name of ['Home', 'DM', 'Agents', 'Saved']) {
+        expect(rail, `${locale}.${name}`).toContain(name);
+      }
+    }
+  });
+
+  /**
+   * **배지의 수치는 이름이 진다** — 주황 원 하나는 스크린리더에 아무것도 아니다(문서).
+   * 그 이름이 언어를 따라오는지, 그리고 칸 이름과 수치를 잇는 어순이 **사전의 것**인지
+   * 잰다: 코드가 ` — ` 를 붙이면 그 자리가 한 언어의 어순으로 굳는다.
+   */
+  it('나를 막는 것의 수가 두 언어로 이름에 실린다', () => {
+    const seedBlocking = () => {
+      useActiveStore.getState().set({
+        me: acc(ME, 'me'),
+        accounts: { [ME]: acc(ME, 'me') },
+        unread: [inboxEntry(1, 'm1', 'mention'), inboxEntry(2, 'm2', 'dm')],
+      });
+    };
+
+    seedBlocking();
+    render(<Rail {...railProps} />);
+    expect(screen.getByTestId('rail-home').getAttribute('aria-label'))
+      .toBe('Home — 2 waiting for you');
+
+    cleanup();
+    speak('ko');
+    seedBlocking();
+    render(<Rail {...railProps} />);
+    expect(screen.getByTestId('rail-home').getAttribute('aria-label'))
+      .toBe('Home — 나를 기다리는 것 2개');
   });
 });

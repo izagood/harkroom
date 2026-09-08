@@ -6,6 +6,22 @@ import { setController, type Controller } from '../src/state/controller';
 import { Identity } from '../src/components/Identity';
 import { MessageItem } from '../src/components/MessageItem';
 import { acc, msg } from './helpers/fakeApi';
+import { usePrefsStore } from '../src/state/prefsStore';
+import { translator } from '../src/i18n';
+
+/**
+ * **언어를 한국어로 고정한다.** 이 파일이 재는 것은 언어가 아니라 **그 언어로 표현된
+ * 규율**이다 — 문구가 사전을 지나게 된 뒤(i18n 이전)에도 그 규율은 그대로여야 하므로,
+ * 한국어 문구를 재는 줄을 지우는 대신 언어를 못 박는다. `gallery.test.tsx`·
+ * `skillsSettings.test.tsx`·`agentGrid.test.tsx`·`accountAvatar.test.tsx` 가 세운 선례다.
+ */
+/** 답글 요약은 **문구가 아니라 개수와 이름**을 잰다 — 사전에서 그 문구를 가져오면
+  * 언어를 못 박지 않고도 축이 산다. 고정한 언어와 단언이 어긋날 일도 없어진다. */
+const ko = translator('ko');
+const replies = (n: number) => ko('message.summary.replies', { count: n });
+
+beforeEach(() => usePrefsStore.getState().setLocale('ko'));
+afterEach(() => usePrefsStore.getState().setLocale('system'));
 
 const fakeController = () => {
   const c = {
@@ -154,8 +170,8 @@ describe('#161 2단계 답글 컨트롤', () => {
     });
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 51 })} />);
 
-    expect(screen.getByRole('button', { name: /51 replies/ })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /^2 replies/ })).toBeNull();
+    expect(screen.getByRole('button', { name: new RegExp(replies(51)) })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: new RegExp(`^${replies(2)}`) })).toBeNull();
   });
 
   it('replyCount 가 null 이면 답글 컨트롤이 안 나온다', () => {
@@ -163,7 +179,7 @@ describe('#161 2단계 답글 컨트롤', () => {
     render(<MessageItem message={msg('m1', 'c1', 1, 'reply', 'u2', { replyCount: null, threadRootId: 'm0' })} />);
 
     // replyCount 가 null 이면 버튼이 안 보인다
-    expect(screen.queryByRole('button', { name: /repl(y|ies)/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: new RegExp(replies(2).replace(/\d+/, '\\d+')) })).toBeNull();
   });
 
   it('마지막 답글 시각이 보인다', () => {
@@ -221,7 +237,7 @@ describe('#161 2단계 답글 컨트롤', () => {
     })} />);
 
     // 방금 말한 delta 가 서고, 가장 오래된 alpha 가 잘린다 — 명단이 움직인다는 뜻이다.
-    const summary = screen.getByRole('button', { name: /replies/ });
+    const summary = screen.getByRole('button', { name: new RegExp(replies(4)) });
     expect(summary.textContent).toContain('delta');
     expect(summary.textContent).not.toContain('alpha');
   });
@@ -235,13 +251,13 @@ describe('#161 2단계 답글 컨트롤', () => {
       participantIds: ['u2', 'u3', 'u4'],
     })} />);
 
-    const replyButton = screen.getByRole('button', { name: /3 replies/ });
+    const replyButton = screen.getByRole('button', { name: new RegExp(replies(3)) });
     // 버튼 자체에 접근 가능한 이름이 있다.
     expect(replyButton).toBeTruthy();
 
     // 참여자 아바타들은 aria-hidden 이라 스크린리더가 읽지 않는다.
     // replyCount 버튼만 있고 "Reply in thread"는 안 보인다.
-    const replyButtons = screen.getAllByRole('button', { name: /repl(y|ies)/ });
+    const replyButtons = screen.getAllByRole('button', { name: new RegExp(replies(3).replace(/\d+/, '\\d+')) });
     expect(replyButtons).toHaveLength(1);
   });
 });
