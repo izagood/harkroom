@@ -1,8 +1,8 @@
 import { Fragment, useMemo, type ReactNode } from 'react';
 import { useActiveStore } from '../state/communities';
-import { splitMentions } from '../lib/mention';
+import { splitMentions, type MessagePart } from '../lib/mention';
 import { splitLinks, type LinkTarget, type BodyPart } from '../lib/link';
-import { extractPreviewUrls } from '@murmur/shared';
+import { extractPreviewUrls, renderMentions } from '@murmur/shared';
 import { splitCode } from '../lib/code';
 import { parseBlocks, type Align, type Block, type Emphasis, type Inline } from '../lib/markdown';
 import { getExternalOpener } from '../lib/openExternal';
@@ -25,6 +25,10 @@ import type { SectionId } from './settings/sections';
  * `dangerouslySetInnerHTML` 이 없는 것이 계약이다. 마크다운이 코드 뒤·멘션 앞에 오는
  * 덕분에 "코드 블록 안의 `**` 는 굵어지지 않고, 굵은 글씨 안의 `@handle` 은 멘션으로
  * 남는다" 가 예외 처리 없이 따라온다.
+ *
+ * 인용은 그 구조 중 하나이고, **인용 안에서는 멘션을 칠하지 않는다**(#597). 서버도 그
+ * 안의 `@handle` 로 알림을 보내지 않으므로(`mentionScope`), 칠하면 이 파일이 지키는 경계가
+ * 깨진다: 강조된 것이 알림을 보내지 않는다.
  *
  * 길다고 접지 않는다. 접기는 한때 있었지만(#217) 실제로는 거의 모든 메시지가 문턱을
  * 넘어 늘 "Show more" 가 달렸고, 읽으려면 매번 눌러야 했다 — 스크롤 한 번으로 끝날 일에
@@ -241,20 +245,34 @@ export function MessageBody({
   );
 
   /**
+   * 인용 안의 글자(#597). **멘션으로 칠하지 않는다** — 인용은 남의 말을 옮기는 자리라
+   * 서버가 그 안의 `@handle` 로 알림을 보내지 않는다(`mentionScope`). 여기서 칠하면 이
+   * 파일 머리의 경계가 깨진다: 강조된 것이 알림을 보내지 않는다.
+   *
+   * 그래도 `<@id>` 는 **지금 이름으로** 바꾼다. 옮겨 적은 문장을 그리는 것과 부르는 것은
+   * 다른 일이고, 바꾸지 않으면 이 변경 이전에 저장된 인용에 `<@uuid>` 가 날것으로 보인다.
+   */
+  const quotedText = (text: string): MessagePart[] => [
+    { kind: 'text', text: accountsMap.size ? renderMentions(text, accountsMap) : text },
+  ];
+
+  /**
    * 마크다운이 읽은 조각 하나. **글자 조각만** 멘션·링크 인식을 한 번 더 지난다 —
    * 코드와 `[글자](주소)` 는 이미 확정된 것이라 다시 나누면 안 된다.
    */
-  const renderInline = (span: Inline, key: string): ReactNode => {
+  const renderInline = (span: Inline, key: string, paint = true): ReactNode => {
     if (span.kind === 'code') return codeSpan(span.code, key);
     if (span.kind === 'link') {
       return withEmphasis(anchor(span.text, span.href, span.target, `${key}-a`), span, key);
     }
-    const parts = splitLinks(splitMentions(span.text, handles, groupHandles, accountsMap));
+    const parts = splitLinks(paint
+      ? splitMentions(span.text, handles, groupHandles, accountsMap)
+      : quotedText(span.text));
     return withEmphasis(parts.map((p, j) => renderPart(p, `${key}-${j}`)), span, key);
   };
 
-  const renderSpans = (spans: Inline[], key: string) =>
-    spans.map((s, i) => renderInline(s, `${key}-${i}`));
+  const renderSpans = (spans: Inline[], key: string, paint = true) =>
+    spans.map((s, i) => renderInline(s, `${key}-${i}`, paint));
 
   /**
    * 블록 하나. 간격을 `space-y` 가 아니라 블록마다의 `mb-*`/`last:mb-0` 으로 주는 이유:
@@ -288,7 +306,7 @@ export function MessageBody({
             data-testid="md-quote"
             className="mb-2 border-l-2 border-border pl-2 text-fg-muted last:mb-0"
           >
-            {renderSpans(block.spans, key)}
+            {renderSpans(block.spans, key, false)}
           </blockquote>
         );
       case 'rule':

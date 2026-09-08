@@ -1,4 +1,4 @@
-import type { CodeSegment } from '@murmur/shared';
+import { QUOTE_LINE, type CodeSegment } from '@murmur/shared';
 import { classifyLink, type LinkTarget } from './link';
 
 /**
@@ -250,7 +250,13 @@ const HEADING = /^ {0,3}(#{1,6})[ \t]+(.*)$/;
 const RULE = /^ {0,3}(?:-{3,}|\*{3,}|_{3,})[ \t]*$/;
 const BULLET = /^([ \t]*)([-*+])[ \t]+(.*)$/;
 const ORDERED = /^([ \t]*)(\d{1,9})[.)][ \t]+(.*)$/;
-const QUOTE = /^ {0,3}>[ \t]?(.*)$/;
+/**
+ * 인용 줄. **판정은 shared 의 `QUOTE_LINE` 하나다**(#597) — 멘션 층이 "여기는 부르는
+ * 자리가 아니다" 라고 걷어내는 그 줄과 화면이 인용으로 그리는 줄이 같아야 한다. 갈라지면
+ * `lib/mention.ts` 머리의 거짓말이 돌아온다: 인용으로 그려졌는데 알림은 간다.
+ * 여기서 덧붙이는 것은 인용 부호를 뗀 **나머지를 잡는 부분**뿐이다.
+ */
+const QUOTE = new RegExp(`${QUOTE_LINE.source}[ \\t]?(.*)$`);
 
 /**
  * 한 줄의 토큰을 `|` 경계로 나눈다. **인라인 코드 안의 `|` 는 경계가 아니다** — 토큰이

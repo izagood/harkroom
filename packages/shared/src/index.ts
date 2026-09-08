@@ -277,6 +277,87 @@ export function splitCode(body: string): CodeSegment[] {
 }
 
 /**
+ * 인용 줄(#597). `>` 로 시작하는 줄은 **남의 말을 옮기는 자리**다 — 거기 적힌 `@handle` 은
+ * 부르는 것이 아니라 옮겨 적은 것이다. 화면·로그·앞 메시지를 그대로 옮기는 일이 가장 잦은
+ * 곳이 인용이고, 옮겨 적기만 해도 그 사람들의 턴이 깨어나면 인용을 쓸 수 없게 된다.
+ *
+ * **화면의 인용 판정(`desktop/src/lib/markdown.ts` 의 `QUOTE`)이 이 정규식을 그대로 쓴다.**
+ * 두 벌이 되면 `lib/mention.ts` 머리가 경계하는 거짓말이 그대로 돌아온다 — 인용으로
+ * 그려졌는데 알림은 가거나, 그 반대다.
+ *
+ * 여는 공백 세 칸까지 허용하는 것은 마크다운의 관례를 따른 것이고, 여기서 중요한 것은
+ * 관례 자체가 아니라 **화면과 같은 것을 인용이라 부른다**는 사실이다.
+ */
+export const QUOTE_LINE = /^ {0,3}>/;
+
+/**
+ * 멘션을 찾을 구간(#597). `splitCode` 가 내준 평문에서 **인용 줄을 한 번 더 걷어낸다.**
+ *
+ * 인용을 `splitCode` 안에 넣지 않는 이유: 그 함수는 렌더러(`MessageBody`)도 쓴다. 인용을
+ * 코드로 판정하면 화면이 인용문을 코드 블록으로 그린다 — 코드인지와 부를 수 있는 자리인지는
+ * **다른 질문**이라 층을 나눈다. 대신 멘션 쪽 질문은 여기 하나로 모은다(#298 이 코드에 대해
+ * 그렇게 한 것과 같은 이유다).
+ *
+ * 줄의 **시작이 평문일 때만** 인용으로 센다. 줄 첫머리가 코드 구간이면(`` `a` > @x ``)
+ * 화면도 그 줄을 인용으로 그리지 않으므로, 여기서 인용이라 부르면 판정이 갈라진다.
+ * 인용으로 센 줄은 **줄 전체**가 빠진다 — 인용 줄 중간의 인라인 코드 뒤에 이어진 조각만
+ * 남기면 그 조각의 `@handle` 이 화면에는 인용으로 그려지면서 알림은 가게 된다.
+ *
+ * `start` 는 원문 위치다(#271) — `normalizeMentions` 가 원문의 그 자리만 고쳐 쓴다.
+ */
+export function mentionSpans(body: string): Array<{ text: string; start: number }> {
+  const plains = splitCode(body).filter(
+    (seg): seg is { kind: 'plain'; text: string; start: number } => seg.kind === 'plain',
+  );
+
+  // 평문 구간의 원문 범위. 줄의 시작이 이 안에 들어야 그 줄을 인용으로 볼 수 있다.
+  const inPlain = (at: number): boolean =>
+    plains.some((seg) => at >= seg.start && at < seg.start + seg.text.length);
+
+  const quoted = new Set<number>();
+  {
+    let at = 0;
+    for (const line of body.split('\n')) {
+      if (QUOTE_LINE.test(line) && inPlain(at)) quoted.add(at);
+      at += line.length + 1;
+    }
+  }
+  if (!quoted.size) return plains.map((seg) => ({ text: seg.text, start: seg.start }));
+
+  const out: Array<{ text: string; start: number }> = [];
+  for (const seg of plains) {
+    // 구간의 첫 조각은 줄 중간에서 시작할 수 있다(앞에 인라인 코드가 있었다). 그 조각이
+    // 속한 줄의 시작을 한 번만 찾고, 그 뒤 조각들은 줄 시작과 자리가 같다.
+    let lineStart = body.lastIndexOf('\n', seg.start - 1) + 1;
+    let at = seg.start;
+    for (const piece of seg.text.split('\n')) {
+      if (!quoted.has(lineStart)) out.push({ text: piece, start: at });
+      at += piece.length + 1;
+      lineStart = at;
+    }
+  }
+  return out;
+}
+
+/**
+ * 멘션을 찾을 평문(#298·#597). 멘션을 찾을 대상은 **이것뿐**이다 — 코드도 인용도 아닌 자리.
+ *
+ * 남은 조각을 개행으로 이어 붙인다. 개행은 handle 문자가 아니므로 `MENTION_PATTERN` 의
+ * 선행 문자 조건에서 조각의 첫 글자가 `^` 와 같은 자격을 갖는다 — 조각을 따로 훑는 것과
+ * 결과가 같고, 걷어낸 자리에서 두 조각이 붙어 없던 멘션이 생기는 일도 없다.
+ *
+ * 문자열 하나를 돌려주는 이유: 이 값을 쓰는 곳이 서버의 멘션 추출과 데스크탑의 "부를
+ * 상대"(#278) 둘인데, 둘 다 정규식을 한 번 돌릴 평문이 필요할 뿐이다. 각자 세그먼트를
+ * 이어 붙이게 두면 그 이어 붙이는 규칙이 다시 두 벌이 된다.
+ *
+ * `stripCodeSpans` 라는 이름이었다(#298). 이제 걷어내는 것이 코드만이 아니라서 이름을
+ * 바꿨다 — 옛 이름을 남겨 두면 다음 사람이 "코드만 빼는 것" 을 부르고 인용이 다시 샌다.
+ */
+export function mentionScope(body: string): string {
+  return mentionSpans(body).map((seg) => seg.text).join('\n');
+}
+
+/**
  * 본문 안의 멘션. 서버(알림 발송)와 데스크탑(강조)이 **반드시 같은 규칙**을 써야 한다 —
  * 갈라지면 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(`me@x.com`),
  * 강조된 것이 알림을 보내지 않는다(`@Fizz`).
@@ -305,16 +386,16 @@ export const MENTION_TOKEN_PATTERN = '<@([0-9a-f-]{36})>';
  * 본문에서 불린 handle 들. 소문자로 정규화해 중복을 없앤다(`@fizz` 와 `@Fizz` 는 한 사람).
  * 패턴이 대문자를 이미 포함하므로 `i` 플래그는 필요하지 않다.
  *
- * 코드 블록(#298) 안의 `@handle` 은 무시한다 — `stripCodeSpans` 가 먼저 코드를 걷어낸다.
+ * 코드 블록(#298)과 인용 줄(#597) 안의 `@handle` 은 무시한다 — `mentionScope` 가 먼저 걷어낸다.
  *
- * **순서가 결정이다: 코드 제거 → 멘션 추출 → 그룹 확장(#230)·채널 전체(#225).** 코드 제거가
- * 맨 앞이므로 코드 안의 그룹 handle 은 애초에 `handles` 에 들어오지 못하고, 따라서 확장될
+ * **순서가 결정이다: 코드·인용 제거 → 멘션 추출 → 그룹 확장(#230)·채널 전체(#225).** 그 제거가
+ * 맨 앞이므로 코드·인용 안의 그룹 handle 은 애초에 `handles` 에 들어오지 못하고, 따라서 확장될
  * 기회도 없다 — 예외 처리가 아니라 순서에서 따라오는 결과다. 서버(`services/messages.ts`)의
  * 그룹 확장은 이 함수가 돌려준 목록만 훑으므로 그 순서가 코드로 강제된다.
  */
 export function mentionedHandles(body: string): string[] {
   const found = new Set<string>();
-  for (const m of stripCodeSpans(body).matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
+  for (const m of mentionScope(body).matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
     if (m[2]) found.add(m[2].toLowerCase());
   }
   return [...found];
@@ -335,10 +416,10 @@ export function mentionedIds(body: string): string[] {
 /**
  * 본문의 `@handle`(**존재하는 계정만**)을 `<@id>` 로 정규화한다(#271). 저장 전에 한 번 돈다.
  *
- * **코드 구간은 건드리지 않는다**(#298). 판정은 `splitCode` 하나가 하고 여기서는 그것이
+ * **코드 구간과 인용 줄은 건드리지 않는다**(#298·#597). 판정은 `mentionSpans` 하나가 하고 여기서는 그것이
  * 내준 평문 조각의 원문 범위만 고쳐 쓴다 — 자기 정규식으로 코드를 다시 판정하면 규칙이
  * 두 벌이 되고, 갈라지는 순간 코드 블록 안의 `@handle` 이 저장 시 멘션이 되어 알림까지
- * 간다. `mentionedHandles` 가 같은 이유로 `stripCodeSpans` 를 지난다.
+ * 간다. `mentionedHandles` 가 같은 이유로 `mentionScope` 를 지난다.
  *
  * 계정 목록을 순회하지 않고 **본문을 한 번** 훑는다. 순회하면 비용이 워크스페이스의 계정
  * 수에 비례하고, 그보다 나쁘게는 handle 을 정규식에 끼워 넣는 자리가 생긴다.
@@ -354,7 +435,7 @@ export function normalizeMentions(body: string, accountsMap: Map<string, string>
   if (!accountsMap.size) return body;
   const mention = new RegExp(MENTION_PATTERN, 'g');
   // 뒤에서부터 고친다 — 앞에서 고치면 뒤 조각의 원문 오프셋이 밀린다.
-  const plains = splitCode(body).filter((s): s is { kind: 'plain'; text: string; start: number } => s.kind === 'plain');
+  const plains = mentionSpans(body);
   let out = body;
   for (const seg of [...plains].reverse()) {
     const replaced = seg.text.replace(mention, (whole, lead: string, handle: string) => {
@@ -436,24 +517,6 @@ export const SYSTEM_ACCOUNT_PLACEHOLDER = '{account}';
  */
 export function fillSystemAccount(body: string, handle: string | null): string {
   return body.split(SYSTEM_ACCOUNT_PLACEHOLDER).join(handle ?? UNKNOWN_ACCOUNT_LABEL);
-}
-
-/**
- * 본문에서 코드 구간을 걷어낸 나머지(#298). 멘션을 찾을 대상은 **이것뿐**이다.
- *
- * 남은 조각을 개행으로 이어 붙인다. 개행은 handle 문자가 아니므로 `MENTION_PATTERN` 의
- * 선행 문자 조건에서 조각의 첫 글자가 `^` 와 같은 자격을 갖는다 — 조각을 따로 훑는 것과
- * 결과가 같고, 코드를 걷어낸 자리에서 두 조각이 붙어 없던 멘션이 생기는 일도 없다.
- *
- * 문자열 하나를 돌려주는 이유: 이 값을 쓰는 곳이 서버의 멘션 추출과 데스크탑의 "부를
- * 상대"(#278) 둘인데, 둘 다 정규식을 한 번 돌릴 평문이 필요할 뿐이다. 각자 세그먼트를
- * 이어 붙이게 두면 그 이어 붙이는 규칙이 다시 두 벌이 된다.
- */
-export function stripCodeSpans(body: string): string {
-  return splitCode(body)
-    .filter((seg): seg is { kind: 'plain'; text: string; start: number } => seg.kind === 'plain')
-    .map((seg) => seg.text)
-    .join('\n');
 }
 
 /**

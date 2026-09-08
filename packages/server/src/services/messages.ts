@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, mentionedHandles, mentionedIds, normalizeMentions, readAskMeta, stripCodeSpans, type InboxEntry, type MessageRow } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, mentionedHandles, mentionedIds, normalizeMentions, mentionScope, readAskMeta, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { channelVisibleSql } from './channels.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
@@ -468,7 +468,7 @@ export async function postMessage(
      *
      * 작성자 자신은 걸러 낸다.
      */
-    for (const accountId of mentionedIds(stripCodeSpans(normalizedBody))) {
+    for (const accountId of mentionedIds(mentionScope(normalizedBody))) {
       if (accountId !== input.authorId) {
         await insertInbox(client, accountId, message.id, 'mention', notified);
       }
