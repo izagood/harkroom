@@ -22,8 +22,32 @@ export interface AppState {
    *
    * 명단은 여기 없다. 팀 명단을 주는 라우트는 `GET /teams/:id` 하나뿐이고, 후보를
    * 그리는 데 필요한 것은 이름과 규모뿐이다(`AgentTeamRow.memberCount`).
+   *
+   * ## `null` 은 **"목록을 못 받았다"** 다 — 빈 배열과 다른 사실이다
+   *
+   * `teams` 를 싣는 것은 `GET /accounts` 뿐이고(`directoryRoutes.ts`), 그 필드가 없는
+   * 서버가 실제로 있다 — 팀 라우트(`/teams`)는 이미 있는데 디렉터리 응답에는 팀이
+   * 없는 중간 버전이다(#172 가 멘션·`memberCount`·디렉터리를 한 커밋에 넣기 전에
+   * 빌드된 서버). 그 서버에 붙으면 이 값이 `null` 이다.
+   *
+   * 앞 판은 그것을 `?? []` 로 뭉갰고, 근거는 *"그 서버는 팀을 부르지도 못하므로 빈
+   * 목록이 맞다"* 였다. **그 근거는 한 소비자에게만 맞는다:**
+   *
+   * | 이 값을 읽는 곳 | 묻는 것 | 빈 배열이 맞나 |
+   * |---|---|---|
+   * | 자동완성 후보 · 조용한 실패 판정 | 지금 부를 수 있는 팀은? | **맞다** — 그 서버는 `@팀` 을 해석하지 못한다 |
+   * | 설정 › 에이전트 › 팀 격자 | 이 워크스페이스에 팀이 있나? | **틀리다** — `POST /teams` 는 그 서버에서도 되고, 만든 팀은 진짜로 있다 |
+   *
+   * 실제로 그 어긋남이 화면에서 나왔다: 팀을 만들면 격자는 *"아직 팀이 없다"* 라고
+   * 단언하는데 다시 만들면 서버가 `name_taken` 으로 거절한다. 모르는 것을 없는 것으로
+   * 그리지 말라는 `docs/design.md` §4 가 막으려던 그것이다.
+   *
+   * 그래서 **모르는 것은 `null` 로 남기고**, 빈 목록이 맞는 소비자가 자기 자리에서
+   * `?? []` 한다(`Composer.tsx`·`MessageBody.tsx`·`controller.ts::recordNotifiedGap`).
+   * 그 `??` 는 뭉개는 것이 아니라 *"여기서는 빈 목록이 사실이다"* 라는 판단이고,
+   * 그 판단이 필요 없는 격자는 `null` 을 받아 사실대로 말한다(`TeamGrid`).
    */
-  teams: AgentTeamRow[];
+  teams: AgentTeamRow[] | null;
   channels: ChannelRow[];
   dms: DmView[];
   activeChannelId: string | null;
@@ -244,8 +268,16 @@ export interface AppState {
   truncateForward(): void;
 }
 
+/**
+ * 팀 목록을 못 받았을 때(`teams === null`) 후보를 만드는 자리가 자기 사실로 쓰는 빈 목록.
+ *
+ * **모듈 상수인 것이 요점이다.** 읽는 자리에서 `?? []` 를 적으면 렌더마다 새 배열이 나고,
+ * 그것을 의존에 둔 `useMemo`(`Composer`·`MessageBody` 의 후보 목록)가 매 렌더 다시 돈다.
+ */
+export const NO_TEAMS: AgentTeamRow[] = [];
+
 const initial = {
-  me: null, accounts: {}, groups: [], teams: [], channels: [], dms: [], activeChannelId: null, threadRootId: null,
+  me: null, accounts: {}, groups: [], teams: null, channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], terminalTarget: null, leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {},
