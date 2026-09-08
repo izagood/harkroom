@@ -89,10 +89,13 @@ function claudeSettingsFile(configDir: string | null): string {
 /**
  * bypassPermissions 경고 화면을 미리 지나 둔다(2026-09-08 실측).
  *
- * **이 관문은 기본 경로다.** `turn.ts` 의 프리셋이 murmur 의 `auto` 를 claude 의
- * `--permission-mode bypassPermissions` 로 번역하고, `auto` 가 에이전트 기본값이다. TUI 는
- * 그 모드로 뜰 때마다 계정이 한 번도 수락한 적 없으면 경고를 띄우는데, **기본 선택이
- * `❯ No, exit`** 라서 답할 사람이 없으면 그 선택으로 끝난다 — 실측 exitCode 1, 경과 ~1초.
+ * **더는 기본 경로가 아니다**(2026-09-09). `turn.ts` 가 murmur 의 `auto` 를 claude 의
+ * `auto` 로 번역하도록 고쳤고, 그 모드에는 이 경고가 없다(실측). 남겨 두는 이유는 사람이
+ * 터미널에서 `shift+tab` 으로 bypass 까지 올려 쓸 수 있기 때문이다 — 그때 이 기록이 없으면
+ * 그 세션이 경고 화면에서 멈춘다.
+ *
+ * 2026-09-08 에는 이것이 기본 경로였고, 그래서 프로덕션의 모든 첫 턴이 **기본 선택
+ * `❯ No, exit`** 로 1초 만에 죽었다(exitCode 1).
  *
  * **권한이 새로 열리지 않는다.** 그 모드는 이미 `mentionPermission: 'auto'` 가 정한
  * 것이고, 이 화면은 **이미 내려진 결정을 계정마다 다시 묻는 확인창**일 뿐이다. 여기서

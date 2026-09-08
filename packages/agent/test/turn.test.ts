@@ -642,10 +642,23 @@ describe('실행 모델 교체 — 멘션 턴도 TUI 다 (2026-09-08)', () => {
 
   it('**권한은 여전히 갈린다** — 스펙 §6 이 정한 차이이고 실행 모델 교체가 건드릴 것이 아니다', () => {
     const common = { ...base, harness: 'claude-code' as const, sessionId: SESSION, isFirstTurn: false };
-    // 멘션 턴은 정의의 mentionPermission 을 받는다(fixture 는 'auto' = bypassPermissions).
-    expect(buildTurnCommand({ ...common, mode: 'mention' }).args).toContain('bypassPermissions');
+    // 멘션 턴은 정의의 mentionPermission 을 받는다(fixture 는 'auto').
+    const mention = buildTurnCommand({ ...common, mode: 'mention' }).args;
+    expect(mention).toContain('--permission-mode');
+    expect(mention).toContain('auto');
     // 인터랙티브 턴은 사람이 앉아 있으므로 그 승격을 받지 않는다.
-    expect(buildTurnCommand({ ...common, mode: 'interactive' }).args).not.toContain('bypassPermissions');
+    expect(buildTurnCommand({ ...common, mode: 'interactive' }).args).not.toContain('--permission-mode');
+  });
+
+  // **`bypassPermissions` 로 되돌리지 마라**(2026-09-09). murmur 의 `auto` 는 "판단이
+  // 필요하면 사람에게 묻는다"이고, 그 자리가 앱에 이미 있다(`message.ask` 의 선택 카드).
+  // `bypassPermissions` 는 아무것도 묻지 않으며, TUI 로 뜰 때마다 경고 화면을 띄워
+  // 기본 선택('No, exit')으로 턴을 1초에 죽인다(2026-09-08 프로덕션 사고).
+  it("멘션 턴이 bypassPermissions 로 돌지 않는다", () => {
+    const p = buildTurnCommand({
+      ...base, harness: 'claude-code', mode: 'mention', sessionId: SESSION, isFirstTurn: false,
+    });
+    expect(p.args).not.toContain('bypassPermissions');
   });
 
   it('codex 는 그대로 exec 다 — P5 전까지 두 세계가 함께 산다', () => {
