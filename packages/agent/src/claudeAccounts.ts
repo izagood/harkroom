@@ -32,6 +32,7 @@ import {
 } from '@murmur/shared/claudePools';
 
 import { isCredentialFailure, isExecutableNotFound, isQuotaExhausted } from './policy.js';
+import { PromptNotDeliveredError } from './pty.js';
 
 /**
  * 계정 이름 문법. `config.ts::INSTANCE_PATTERN` 과 **같은 값**이고 같은 이유다 — 이 이름이
@@ -127,6 +128,16 @@ export async function loadClaudeAccounts(
 export function switchesAccount(err: unknown): boolean {
   if (isExecutableNotFound(err) === 'executable-not-found') return false;
   if (isQuotaExhausted(err) !== null) return true;
+  // **TUI 가 준비 상태에 못 닿았다 = 이 계정으로는 안 된다(2026-09-08).**
+  //
+  // 그 계정의 config 디렉터리가 첫 실행 승인을 안 지났다는 뜻이다(온보딩·팀 텔레메트리 —
+  // 다중 계정 설계 §5 의 "계정 준비"). 승인은 계정마다 따로이므로 **다른 계정은 멀쩡할 수
+  // 있고**, 그것이 정확히 계정 축이 있는 이유다.
+  //
+  // 이 줄이 없으면 승인을 안 지난 계정이 lane 첫 번째일 때 그 멘션이 3회를 태우고 버려진다 —
+  // 나머지 계정이 다 멀쩡한데도. 실측(2026-09-08): lime 이 첫 계정이라 모든 턴이 거기서
+  // 막혔고 lychee·plum 은 놀고 있었다.
+  if (err instanceof PromptNotDeliveredError) return true;
   return isCredentialFailure(err) === 'harness-credential';
 }
 
