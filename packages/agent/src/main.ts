@@ -335,7 +335,7 @@ const scheduler = createMentionScheduler({
     channelName: ctx.channelName(mention.channelId),
     handles: ctx.handles, workspaceBaseDir, mcpConfigPath,
     // 지시문 파일이 여기 쓰인다(#92) — 에이전트 워크스페이스가 아니라 러너의 상태
-    // 디렉터리다. 워크스페이스 안에 두면 bypassPermissions 에이전트가 자기 지시문을 고칠 수 있다.
+    // 디렉터리다. 워크스페이스 안에 두면 에이전트가 자기 지시문을 고칠 수 있다.
     stateDir: agentStateDir,
     codexHome,
     claudeAccount: account?.name ?? null,
