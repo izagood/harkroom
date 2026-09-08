@@ -44,8 +44,17 @@ const BODY_COUNT_FROM = Math.floor(MAX_MESSAGE_BODY_CHARS * 0.9);
  */
 const PASTE_AS_FILE_CHARS = 2_000;
 
-/** 목록이 화면을 덮지 않을 만큼만 보여준다. 더 좁히는 것은 사용자가 글자를 더 치는 일이다. */
-const MAX_SUGGESTIONS = 8;
+/**
+ * 목록에 담는 후보의 상한. **목록의 높이는 이 수가 아니라 상자가 정한다** — 아래
+ * 후보 목록은 `max-h-*` + `overflow-y-auto` 로 스크롤되는 상자다.
+ *
+ * 8 이었다. 그때 이 수의 뜻은 "화면을 덮지 않을 만큼" 이었고, 그래서 계정이 아홉만
+ * 있어도 아홉째부터는 **조용히 사라졌다** — 목록은 여덟 줄에서 끝나고 스크롤할 것도
+ * 없으니, 있는 상대를 찾을 길이 화면에 남지 않았다(실측: 8 개만 보이고 스크롤이 안
+ * 된다는 신고). 화면을 덮지 않게 하는 일은 상자의 높이가 이미 하고 있으므로 여기서
+ * 두 번 하지 않는다. 이제 이 수는 **한 번에 그리는 항목 수의 상한**이다.
+ */
+const MAX_SUGGESTIONS = 50;
 
 /**
  * '입력 중' 갱신 간격. 글자마다 소켓으로 보내면 한 문장에 수십 번 오간다. 서버의 만료
@@ -62,8 +71,13 @@ const TYPING_THROTTLE_MS = 3_000;
  * 깨진다. 그래서 총량은 그대로 두고 집합에 앞자리 몇 개를 예약한다.
  *
  * 집합이 없는 워크스페이스에서는 예약이 0 이므로 목록은 **글자 하나도 달라지지 않는다.**
+ *
+ * 3 이었다 — 목록 전체가 8 줄일 때의 몫이다. 목록이 스크롤되게 된 뒤로는 그 수가
+ * **집합·팀을 감추는 쪽**으로만 일했다(팀이 넷인데 셋만 서는 화면). 그래서 뜻을 바꿔
+ * 목록의 절반으로 둔다: 집합·팀이 목록을 다 차지하는 것은 막고(나머지 절반은 늘 계정
+ * 자리다), 그 아래에서는 있는 것을 다 보인다.
  */
-const MAX_GROUP_SUGGESTIONS = 3;
+const MAX_GROUP_SUGGESTIONS = MAX_SUGGESTIONS / 2;
 
 /** 에이전트를 먼저 세운다 — murmur 에서 @ 를 치는 주된 이유다. 그 안에서는 이름순. */
 function rank(a: AccountView, b: AccountView): number {
@@ -269,6 +283,8 @@ export function Composer({
   // 삽입 후 커서를 옮겨야 한다. React 는 value 만 되돌리므로 DOM 을 직접 만진다.
   const pendingCaret = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  /** 후보 목록(스크롤되는 상자). 키보드로 옮긴 항목을 이 안으로 끌어오는 데만 쓴다. */
+  const listRef = useRef<HTMLUListElement>(null);
   const prevScopeKey = useRef(scopeKey);
   // 지금 그려진 스코프. 타이머와 언마운트 정리 함수는 렌더 클로저 밖에서 돌기 때문에
   // 그 자리에서 현재 자리를 알려면 ref 여야 한다.
@@ -536,6 +552,26 @@ export function Composer({
   const options = picking ? pickable : matches;
   // 후보가 없으면 목록은 없는 것과 같다 — Enter 를 붙잡아 두면 메시지를 못 보낸다.
   const open = options.length > 0 && (picking || query !== null);
+
+  /**
+   * 키보드로 옮긴 후보를 목록 안으로 끌어온다.
+   *
+   * 목록은 넘치면 스크롤되는 상자이고 강조는 `active` 라는 숫자다 — 끌어오지 않으면
+   * ↓ 를 계속 누른 사람은 **화면 밖의 항목이 골라진 상태로** Enter 를 누른다. 무엇이
+   * 골라졌는지 보이지 않으니 목록이 여덟 줄에서 멈춘 것처럼 읽히고(실측 신고), 마지막
+   * 항목에서 첫 항목으로 돌아가는 순환(`% options.length`)도 화면에는 나타나지 않는다.
+   *
+   * `block: 'nearest'` 여서 **이미 보이는 항목에는 아무 일도 하지 않는다** — 마우스를
+   * 목록 위로 굴리면 hover 가 `active` 를 바꾸는데(`onMouseEnter`), 여기서 매번
+   * 스크롤하면 손으로 굴린 것을 코드가 되돌려 목록이 떨린다.
+   *
+   * jsdom 에는 `scrollIntoView` 가 없다 — 없는 환경에서 목록이 죽지 않게 옵셔널로 부른다.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const item = listRef.current?.children[active] as HTMLElement | undefined;
+    item?.scrollIntoView?.({ block: 'nearest' });
+  }, [active, open, options.length]);
 
   useLayoutEffect(() => {
     const caret = pendingCaret.current;
@@ -1174,7 +1210,12 @@ export function Composer({
           id={listId}
           role="listbox"
           aria-label={picking ? 'Mentions to keep' : 'Mention suggestions'}
-          className="absolute bottom-full left-0 z-10 mb-1 max-h-64 w-72 overflow-y-auto rounded border border-border bg-surface-raised py-1 shadow-lg"
+          ref={listRef}
+          /* 상자가 목록의 높이를 정한다 — 후보 수는 `MAX_SUGGESTIONS` 까지 늘어나고
+             넘치는 것은 여기서 스크롤된다. `vh` 를 함께 두는 이유: 고정 높이만 두면
+             창이 낮을 때 목록이 화면 위로 잘려 나가고, 잘린 쪽은 스크롤로도 닿지 않는다.
+             `overscroll-contain` 은 목록의 끝에서 굴린 것이 뒤의 대화를 밀지 않게 한다. */
+          className="absolute bottom-full left-0 z-10 mb-1 max-h-[min(22rem,60vh)] w-72 overflow-y-auto overscroll-contain rounded border border-border bg-surface-raised py-1 shadow-lg"
         >
           {options.map((item, i) => (
             <li key={item.id}>

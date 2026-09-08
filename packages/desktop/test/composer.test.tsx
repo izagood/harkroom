@@ -186,6 +186,65 @@ describe('mention autocomplete', () => {
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe(`@${second} `);
   });
 
+  /**
+   * **여덟 개에서 끊기지 않는다.** 후보 목록의 상한은 오래 8 이었고 그 수의 뜻은 "목록이
+   * 화면을 덮지 않을 만큼" 이었다 — 그런데 화면을 덮지 않게 하는 일은 목록 상자의
+   * 높이(`max-h-*` + `overflow-y-auto`)가 이미 하고 있었으므로, 그 수가 실제로 한 일은
+   * **아홉째부터를 조용히 지우는 것**이었다. 스크롤할 것도 없으니 부를 수 있는 상대를
+   * 찾을 길이 화면에 남지 않는다(실측 신고: "선택할 수 있는 멘션이 더 있는데 특정 개수만
+   * 보여").
+   */
+  it('후보가 여덟 개를 넘어도 목록에서 잘리지 않는다', () => {
+    const many = Object.fromEntries(
+      Array.from({ length: 12 }, (_, i) => [`m${i}`, acc(`m${i}`, `mate${i}`, 'agent')]),
+    );
+    useAppStore.getState().set({ accounts: { u1: acc('u1', 'me'), ...many } });
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@mate');
+
+    expect(screen.getAllByRole('option')).toHaveLength(12);
+  });
+
+  /**
+   * 상한 자체는 남아 있다(`MAX_SUGGESTIONS`). 뜻이 "화면을 덮지 않을 만큼" 에서 **한 번에
+   * 그리는 항목 수**로 바뀐 것이고, 그 수를 아주 크게 두면 계정이 수천인 워크스페이스에서
+   * @ 하나가 목록 수천 줄을 그린다. 이 축은 그 상한이 사라지지 않았다는 것만 잰다.
+   */
+  it('후보가 아주 많으면 상한에서 멈춘다 (그리는 비용의 상한)', () => {
+    const many = Object.fromEntries(
+      Array.from({ length: 80 }, (_, i) => [`m${i}`, acc(`m${i}`, `mate${String(i).padStart(2, '0')}`, 'agent')]),
+    );
+    useAppStore.getState().set({ accounts: { u1: acc('u1', 'me'), ...many } });
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@mate');
+
+    expect(screen.getAllByRole('option')).toHaveLength(50);
+  });
+
+  /**
+   * **↓ 로 옮긴 항목을 목록이 따라 스크롤한다.** 강조는 숫자 하나(`active`)이고 목록은
+   * 넘치면 스크롤되는 상자다 — 끌어오지 않으면 화면 밖의 항목이 골라진 상태로 Enter 를
+   * 누르게 되고, 목록이 몇 줄에서 멈춘 것처럼 보인다. `block: 'nearest'` 인지도 함께
+   * 잰다: 이미 보이는 항목까지 스크롤하면 마우스로 굴린 것을 코드가 되돌려 떨린다.
+   */
+  it('키보드로 옮긴 후보를 목록 안으로 끌어온다', () => {
+    const spy = vi.fn();
+    // jsdom 에는 scrollIntoView 가 없다 — 이 축이 재는 호출 자체를 여기서 심는다.
+    (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = spy;
+    const many = Object.fromEntries(
+      Array.from({ length: 12 }, (_, i) => [`m${i}`, acc(`m${i}`, `mate${i}`, 'agent')]),
+    );
+    useAppStore.getState().set({ accounts: { u1: acc('u1', 'me'), ...many } });
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@mate');
+    spy.mockClear();
+
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'ArrowDown' });
+
+    expect(spy).toHaveBeenCalledWith({ block: 'nearest' });
+    delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
   // Escape 로 닫은 뒤에는 Enter 가 다시 전송이어야 한다 — 아니면 멘션을 포기한 사용자가
   // 메시지를 못 보낸다.
   it('closes on Escape and hands Enter back to send', () => {
