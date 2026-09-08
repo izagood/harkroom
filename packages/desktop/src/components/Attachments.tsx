@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AttachmentRow } from '@murmur/shared';
 import { getController } from '../state/controller';
+import { Overlay } from './Overlay';
 
 /**
  * 미리보기를 허용하는 타입. **화이트리스트다** — `image/*` 로 열면 `image/svg+xml` 이 들어오고,
@@ -87,17 +88,89 @@ export function AttachmentThumb({ attachment }: { attachment: AttachmentRow }) {
   );
 }
 
-function Attachment({ attachment }: { attachment: AttachmentRow }) {
-  const previewable = canPreview(attachment);
-  const { url, failed } = useAttachmentUrl(attachment.id, previewable);
-
-  if (previewable && url) {
-    return (
+/**
+ * 확대 보기(#첨부 확대). 본문의 그림은 `max-h-64` 로 줄여 그리므로 스크린샷 속 글자는
+ * 대개 읽히지 않는다 — 크게 볼 자리가 없으면 사람은 그림을 디스크에 저장해 시스템 뷰어로
+ * 열고, 그때 채팅을 떠난다.
+ *
+ * 스크림 · Esc · 바깥 클릭은 **`Overlay` 가 정한다.** 여기서 다시 정하면 "겹쳐 열려도
+ * 맨 위 하나만 닫힌다"는 규칙이 이 자리에서만 갈린다.
+ *
+ * **바이트를 다시 받지 않는다.** 확대할 그림은 이미 본문에 그려진 그것이므로 같은
+ * objectURL 을 그대로 넘겨 쓴다. 다시 받으면 클릭마다 왕복이 붙고, URL 의 수명(revoke)을
+ * 두 곳이 나눠 갖게 된다 — 그러면 닫는 쪽이 revoke 한 URL 을 본문이 계속 가리킨다.
+ */
+function Lightbox({ attachment, url, onClose }: {
+  attachment: AttachmentRow;
+  url: string;
+  onClose: () => void;
+}) {
+  return (
+    // 폭을 고정하지 않는다(기본값 `w-[42rem]` 를 물려받으면 작은 그림 옆에 빈 판이 남는다) —
+    // 화면보다 큰 그림만 뷰포트에서 잘라 낸다.
+    <Overlay label={attachment.filename} onClose={onClose} align="center" className="max-w-[92vw]">
+      <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+        <span className="truncate font-medium">{attachment.filename}</span>
+        <span className="shrink-0 text-fg-subtle">{formatSize(attachment.sizeBytes)}</span>
+        {/*
+          이미지는 칩이 아니라 그림으로 그려지므로 **여기 말고는 저장할 자리가 없다.**
+          저장이 칩 분기에만 붙어 있으면, 미리보기가 되는 첨부일수록 내려받을 길이 없다.
+          실패 문구는 컨트롤러가 Notice 로 세운다(#257) — 여기서 다시 삼키지 않는다.
+        */}
+        <button
+          className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
+          onClick={() => void getController().saveAttachment(attachment)}
+        >저장</button>
+        <button
+          className="shrink-0 rounded px-2 text-fg-subtle hover:bg-surface-sunken"
+          onClick={onClose}
+          aria-label="확대 보기 닫기"
+        >×</button>
+      </header>
+      {/*
+        `max-h-[80vh]` 로 세로를 제한한다 — 높이를 열어 두면 세로로 긴 스크린샷에서 그림이
+        패널을 밀어내고 머리줄(이름 · 저장 · 닫기)이 화면 밖으로 나간다.
+      */}
       <img
         src={url}
         alt={attachment.filename}
-        className="max-h-64 max-w-full rounded border border-border"
+        data-testid="attachment-full"
+        className="max-h-[80vh] max-w-full object-contain"
       />
+    </Overlay>
+  );
+}
+
+function Attachment({ attachment }: { attachment: AttachmentRow }) {
+  const previewable = canPreview(attachment);
+  const { url, failed } = useAttachmentUrl(attachment.id, previewable);
+  const [zoomed, setZoomed] = useState(false);
+
+  if (previewable && url) {
+    return (
+      <>
+        {/*
+          **그림 자체가 누르는 자리다.** 옆에 "크게 보기" 링크를 따로 두면, 사람이 이미
+          손을 올려 둔 곳(그림) 밖에서 누를 곳을 다시 찾아야 한다.
+          `div` 에 `onClick` 만 달지 않고 `button` 으로 두는 이유는 키보드다 — Tab 으로
+          닿고 Enter · Space 로 열려야 마우스 없이도 그림을 볼 수 있다.
+          이름은 버튼이 말한다(`aria-label`) — 그림의 `alt` 는 그대로 두지만, 버튼에
+          이름이 없으면 스크린리더가 "버튼" 이라고만 읽는다.
+        */}
+        <button
+          type="button"
+          onClick={() => setZoomed(true)}
+          aria-label={`크게 보기: ${attachment.filename}`}
+          className="block cursor-zoom-in rounded border border-border"
+        >
+          <img
+            src={url}
+            alt={attachment.filename}
+            className="max-h-64 max-w-full rounded"
+          />
+        </button>
+        {zoomed && <Lightbox attachment={attachment} url={url} onClose={() => setZoomed(false)} />}
+      </>
     );
   }
   return (
