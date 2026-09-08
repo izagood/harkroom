@@ -97,15 +97,16 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
   /**
    * 스레드에 이미 올라간 답을 나중에 채널로도 올린다(#231 의 반대 방향).
    *
-   * 거두기와 **같은 자원의 반대 동작**이라 같은 경로의 POST 다: "채널에도 보인다"는 성질을
-   * 켜는 것이 POST, 끄는 것이 DELETE 다. PATCH(본문 수정)에 얹지 않는 이유도 거두기와 같다 —
+   * 거두기와 **같은 자원의 반대 동작**이라 같은 경로다: "채널에도 보인다"는 성질을 켜는
+   * 것이 PUT, 끄는 것이 DELETE 다. POST 가 아니라 PUT 인 이유는 **멱등**이라는 것 자체다 —
+   * 두 번 눌러도 결과와 응답이 같고, 새 자원을 만들지 않으므로 201 도 아니다. PATCH(본문 수정)에 얹지 않는 이유도 거두기와 같다 —
    * 글을 고친 것이 아니므로 `edited_at` 을 찍으면 안 된다.
    *
    * 게이트는 **메시지 POST 와 같은 것**을 쓴다(`channelPostGate`) — 이것은 채널에 말을
    * 새로 내보내는 일이라, 보관된(읽기 전용) 채널에서는 거절돼야 한다. 거두기가 보관을 보지
    * 않는 것과 방향이 다르다: 치우기는 얼어붙은 뒤에도 열려야 하고, 내보내기는 아니다.
    */
-  app.post('/channels/:id/messages/:messageId/also-in-channel', { preHandler: app.requireAccount }, async (req, reply) => {
+  app.put('/channels/:id/messages/:messageId/also-in-channel', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id, messageId } = z.object({
       id: z.string().uuid(), messageId: z.string().uuid(),
     }).parse(req.params);

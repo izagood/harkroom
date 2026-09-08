@@ -220,7 +220,7 @@ describe('#231 채널에서 거두기', () => {
 describe('#231 나중에 채널로 보내기', () => {
   const share = (token: string, messageId: string) =>
     app.inject({
-      method: 'POST', url: `/channels/${channelId}/messages/${messageId}/also-in-channel`,
+      method: 'PUT', url: `/channels/${channelId}/messages/${messageId}/also-in-channel`,
       headers: { authorization: `Bearer ${token}` },
     });
 

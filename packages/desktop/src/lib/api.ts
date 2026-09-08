@@ -276,7 +276,7 @@ export class ApiClient {
    * 만들지 않는다 — 같은 행이 `alsoInChannel: true` 로 갱신돼 돌아온다.
    */
   shareToChannel(channelId: string, messageId: string): Promise<MessageRow> {
-    return this.req('POST', `/channels/${channelId}/messages/${messageId}/also-in-channel`);
+    return this.req('PUT', `/channels/${channelId}/messages/${messageId}/also-in-channel`);
   }
 
   async listAgents(): Promise<AgentView[]> {
