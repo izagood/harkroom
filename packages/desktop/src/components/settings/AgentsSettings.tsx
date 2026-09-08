@@ -14,6 +14,8 @@ import type { ObservedRunner } from '../../lib/runnerLauncher';
 // 경과 계산은 `lib/` 한 벌이다 — 카드도 같은 값을 쓰는데 그쪽은 이 파일을 import 할 수
 // 없다(순환). `lastTurnLabel` 은 그 위에 접두만 붙인다(아래 그 함수 주석).
 import { lastTurnAgo } from '../../lib/lastTurn';
+// 화면은 `useT`, 화면 밖에서 쓰이는 순수 함수(`lastTurnLabel`)는 `Translate` 를 인자로
+// 받는다 — 그 갈림의 근거는 `i18n/index.ts::Translate` 머리말에 있다.
 import { useT, useLocale } from '../../i18n/useT';
 import type { Translate } from '../../i18n';
 // `runnerStatusLabel` 을 **설명 문구에도** 쓴다 — 상태 이름을 이 파일이 제 손으로 적으면
@@ -46,6 +48,10 @@ const copyToClipboard = async (
   text: string,
   target: HTMLElement | null,
   onError: (msg: string) => void,
+  // **번역기를 인자로 받는다**(`chainSentences`·`memberErrorText` 와 같은 (b) 주입,
+  // 근거는 `i18n/index.ts::Translate` 머리말). 이 함수는 컴포넌트 밖이라 훅을 부를 수
+  // 없고, 모듈 전역 번역기를 부르면 언어가 전역 상태에 묶여 시험이 서로의 언어를 밟는다.
+  t: Translate,
 ): Promise<boolean> => {
   // 비보안 컨텍스트에서는 브라우저가 `navigator.clipboard` 를 아예 노출하지 않는다 —
   // 그래서 `isSecureContext` 를 따로 보지 않고 존재 여부만 본다(MessageItem 과 같은 판정).
@@ -63,9 +69,9 @@ const copyToClipboard = async (
     range.selectNodeContents(target);
     selection.removeAllRanges();
     selection.addRange(range);
-    onError('클립보드를 쓸 수 없다 — 명령을 선택해 두었으니 ⌘C 로 복사한다');
+    onError(t('agents.runner.copyFailedSelected'));
   } else {
-    onError('클립보드를 쓸 수 없고 명령을 선택할 수도 없다 — 명령을 손으로 옮겨 적는다');
+    onError(t('agents.runner.copyFailedManual'));
   }
   return false;
 };
@@ -76,6 +82,45 @@ const copyToClipboard = async (
 const PLANNED = ['cursor', 'goose', 'amp', 'devin'];
 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+/**
+ * 문장 안의 몇 마디를 **굵게** 그린다. 이 화면의 긴 안내문들이 그렇게 쓰여 있었고
+ * (`중지`·`진행 중인 턴을 마친 뒤 스스로 종료`·`모든 PAT 가 폐기`), 그 굵기는 꾸밈이
+ * 아니라 **읽는 사람이 문단에서 건져야 할 사실**을 가리킨다 — 없애면 문단이 그냥 길어진다.
+ *
+ * ## 사전에 `<strong>` 을 넣지 않는다
+ *
+ * 후보가 셋이었다.
+ *
+ * - **사전 값에 태그를 적고 `dangerouslySetInnerHTML`** — 이 저장소가 이미 거절한 길이다
+ *   (`lib/markdown.ts` 머리말: *"그래서 `dangerouslySetInnerHTML` 이 들어올 자리가 애초에
+ *   없다"*). 번역문은 사람이 고치는 파일이라 그 자리에 태그가 있으면 언젠가 태그가 깨진다
+ * - **문장을 조각으로 쪼개 사전에 넣기**(`'중지'`, `'는 러너를 지금 끊지 않는다 — '`, …) —
+ *   `waitChain.link` 머리말이 금지한 그것이다: 어순이 언어마다 달라 조각이 갈 자리가 없다
+ * - **문장은 통째로 두고, 굵을 마디를 `{strongX}` 로 받아 여기서 갈라 감싼다** ← 이것
+ *
+ * 셋째면 **사전은 평문이고 문장은 통째다.** 번역하는 사람은 `{strongStop}` 을 자기 언어의
+ * 어순에 맞는 자리에 놓기만 하면 되고, 굵기가 어디에 걸리는지는 그 자리가 결정한다 —
+ * 한국어가 `{strongStop}는 …` 이고 영어가 `{strongStop} does not …` 인 것이 그것이다.
+ *
+ * 갈라내는 방법이 **자리표시자를 채우기 전의 원문**을 보는 것이라는 점이 요점이다:
+ * 채운 뒤 값으로 찾으면 그 값과 같은 글자가 문장 다른 곳에 있을 때 엉뚱한 자리가 굵어진다
+ * (`{strongStart}` 의 값 `실행` 은 같은 문장의 `러너 실행` 에도 있다 — 실측으로 잡았다).
+ */
+function emphasize(template: string, strong: Record<string, string>): React.ReactNode[] {
+  // `{이름}` 을 경계로 자른다. `split` 에 캡처 그룹이 있으면 구분자도 결과에 섞여 나오므로
+  // 홀수 칸이 곧 자리표시자 이름이다.
+  const parts = template.split(/\{(\w+)\}/g);
+  return parts.map((part, i) => {
+    if (i % 2 === 0) return <Fragment key={i}>{part}</Fragment>;
+    const value = strong[part];
+    // 굵게 할 마디로 안 준 자리표시자는 **평문으로 그대로 둔다** — 지우면 문장이 말이
+    // 되는 것처럼 보여서 빠진 인자를 아무도 못 찾는다(`format.ts::interpolate` 와 같은 규율).
+    return value === undefined
+      ? <Fragment key={i}>{`{${part}}`}</Fragment>
+      : <strong key={i}>{value}</strong>;
+  });
+}
 
 /**
  * "마지막 활동: N분 전"(`#176`). **접두만 붙이는 껍데기다** — 계산과 규율(`null` 을
@@ -90,12 +135,21 @@ const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
  * `agentActivity.test.tsx`) 그 문구는 `#176` 이 정한 것이다 — 계산을 옮기면서 문구까지
  * 바꾸면 이 변경이 만지지 않아야 할 두 화면을 함께 건드린다.
  *
- * `locale` 과 `t` 를 받는 것은 `#619` 의 `(b)` 주입이다 — 안쪽 경과 문구가 이제 언어를
- * 따르므로(`lib/time.ts`) 그 언어를 어디선가 받아야 하고, 전역을 읽으면 회귀선들이
- * 서로의 언어를 밟는다(vitest 는 파일 병렬이다).
+ * ## 번역기와 locale 을 둘 다 받는다 — 접두는 사전이, 경과는 `Intl` 이
  *
- * **접두 `마지막 활동:` 은 아직 한국어다.** 이 PR 은 시간 표기만 옮긴다 — 그 접두는
- * 이 화면의 문자열이고, 화면 이전은 다음 PR 들의 몫이다(`en.ts` 의 '남은 것' 표).
+ * `t` 가 **필수 인자**다. 기본값(영어 번역기)을 주면 `Profile` 이 그것을 안 넘겨도 컴파일이
+ * 통과하고, 그 화면은 언어를 바꿔도 영원히 영어로 굳는다 — 그 조용한 굳음이 정확히
+ * `i18n.test.tsx` 머리말이 렌더까지 재는 이유다. 안 넘기면 **컴파일이 막힌다.**
+ *
+ * `locale` 은 `#619` 의 `(b)` 주입이다 — 안쪽 경과 문구가 언어를 따르므로(`lib/time.ts`)
+ * 그 언어를 어디선가 받아야 하고, 전역을 읽으면 회귀선들이 서로의 언어를 밟는다
+ * (vitest 는 파일 병렬이다).
+ *
+ * 둘의 자리는 **맨 뒤**다. `now` 를 앞에 두면 시각을 고정해 재는 회귀선이 이미 그 자리를
+ * 쓰고 있어서 순서를 바꿀 수 없고, 새 인자를 앞에 끼우면 그 축들이 전부 자리를 옮긴다.
+ *
+ * **이 줄이 이제 통째로 그 언어로 뜬다.** 접두(`Last activity:`)는 사전이 내고 경과
+ * (`11 minutes ago`)는 `Intl` 이 낸다 — 두 PR 이 각자 반쪽을 옮겼고 여기서 만났다.
  */
 export function lastTurnLabel(
   iso: string | null,
@@ -104,7 +158,7 @@ export function lastTurnLabel(
   t: Translate,
 ): string {
   const ago = lastTurnAgo(iso, now, locale, t);
-  return iso === null ? '활동 없음' : `마지막 활동: ${ago}`;
+  return iso === null ? t('agents.detail.noActivity') : t('agents.detail.lastTurn', { ago });
 }
 
 interface Draft {
@@ -142,8 +196,7 @@ const draftOf = (a: AgentView): Draft => ({
 });
 
 export function AgentsSettings({ targetId }: { targetId?: string }) {
-  // 시간 표기는 언어를 따른다(`lib/time.ts`). 이 화면의 나머지 문자열은 아직 한국어다 —
-  // 화면 이전은 다음 PR 의 몫이다(`en.ts` 의 '남은 것' 표).
+  // 시간 표기는 언어를 따른다(`lib/time.ts`). 접두는 사전을 지난다.
   const t = useT();
   const locale = useLocale();
   const [agents, setAgents] = useState<AgentView[]>([]);
@@ -272,7 +325,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const humanAccounts = Object.values(accounts).filter((a) => a.kind === 'human');
 
   const reload = () => {
-    void getController().listAgents().then(setAgents).catch(() => setError('에이전트 목록을 받지 못했다'));
+    void getController().listAgents().then(setAgents).catch(() => setError(t('agents.grid.listFailed')));
   };
   useEffect(reload, []);
 
@@ -306,7 +359,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     // 폭주한다"* 를 막으려고 있는 것이다 — 사람이 방금 누른 조작은 그 경우가 아니다.
     // 없으면 팀을 만들고 5초 안에 이름을 바꿨을 때 격자가 옛 이름을 그대로 들고 있다.
     void getController().refreshAccounts({ force: true })
-      .catch(() => setError('팀 목록을 받지 못했다'));
+      .catch(() => setError(t('agents.teams.listFailed')));
   };
 
   /**
@@ -519,12 +572,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
         setSelected(updated);
         reload();
       } catch {
-        setError('저장하지 못했다');
+        setError(t('agents.detail.saveFailed'));
       } finally { setBusy(false); }
       return;
     }
     if (!/^[a-z0-9_-]{2,32}$/.test(draft.handle)) {
-      setError('이름은 소문자·숫자·-·_ 2~32자여야 한다 (채널에서 @이름 으로 부른다)');
+      setError(t('agents.create.invalidName'));
       return;
     }
     setBusy(true);
@@ -535,7 +588,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       setPat(minted);
       reload();
     } catch {
-      setError('만들지 못했다 (이미 있는 이름일 수 있다)');
+      setError(t('agents.create.failed'));
     } finally { setBusy(false); }
   };
 
@@ -556,7 +609,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       setSelected(updated);
       setAgents((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
     } catch {
-      setError('종료를 요청하지 못했다');
+      setError(t('agents.stop.stopFailed'));
     } finally { setBusy(false); }
   };
 
@@ -582,7 +635,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       setSelected(updated);
       setAgents((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
     } catch {
-      setError('종료 요청을 되돌리지 못했다');
+      setError(t('agents.stop.startFailed'));
     } finally { setBusy(false); }
   };
 
@@ -606,7 +659,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       // 방금 폐기된 토큰이 살아 있는 것처럼 남는다.
       loadPats(selected);
     } catch {
-      setError(willDisable ? '비활성화하지 못했다' : '활성화하지 못했다');
+      // 켜기·끄기가 **한 오류 문구를 나눠 쓰지 않는다** — 사람이 방금 누른 것이
+      // 무엇이었는지가 오류에 남아야 어느 쪽이 실패했는지 알 수 있다.
+      setError(willDisable ? t('agents.disable.disableFailed') : t('agents.disable.enableFailed'));
     } finally {
       setBusy(false);
       setConfirmingDisable(false);
@@ -620,7 +675,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       await getController().revokePat(selected.id, label);
       loadPats(selected);
     } catch {
-      setError('PAT 를 폐기하지 못했다');
+      setError(t('agents.pat.revokeFailed'));
     }
     setRevoking(null);
   };
@@ -636,7 +691,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     } catch (e) {
       // 서버가 왜 거절했는지 그대로 보여야 한다 — 특히 '이 라벨은 이미 쓰인다'(409)는
       // 사용자가 라벨만 바꾸면 해결되는 것이라, 뭉개면 막힌 것처럼 보인다.
-      setError(e instanceof Error ? e.message : 'PAT 를 새로 발급하지 못했다');
+      setError(e instanceof Error ? e.message : t('agents.pat.mintFailed'));
     } finally { setBusy(false); }
   };
 
@@ -664,7 +719,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     const name = newTeamName.trim();
     if (!name) return;
     if (!new RegExp(`^${HANDLE_PATTERN}$`).test(name)) {
-      setError('이름은 영문·숫자·-·_ 2~32자여야 한다');
+      setError(t('agents.teams.invalidName'));
       return;
     }
     setBusy(true);
@@ -678,7 +733,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       // 되돌리면 방금 만든 카드를 다시 찾아 눌러야 한다.
       setSelectedTeam(created);
     } catch (e) {
-      setError(e instanceof Error ? e.message : '팀을 만들지 못했다');
+      setError(e instanceof Error ? e.message : t('agents.teams.createFailed'));
     } finally { setBusy(false); }
   };
 
@@ -726,9 +781,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
   /** 두 격자가 공유하는 머리 — 제목 · 탭. 묶음을 옮겨도 이 자리가 안 흔들린다. */
   const groupTabs = (
-    <div role="tablist" aria-label="에이전트와 팀" className="mb-4 flex border-b border-border">
-      {tab('agents', '에이전트')}
-      {tab('teams', '팀')}
+    <div role="tablist" aria-label={t('agents.grid.tablist')} className="mb-4 flex border-b border-border">
+      {tab('agents', t('agents.grid.tabAgents'))}
+      {tab('teams', t('agents.grid.tabTeams'))}
     </div>
   );
 
@@ -767,7 +822,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       <div className="flex h-full min-h-0 flex-col bg-surface-raised p-5">
         {groupTabs}
         <div className="mb-4">
-          <h2 className="text-name font-bold">팀</h2>
+          <h2 className="text-name font-bold">{t('agents.teams.heading')}</h2>
           {/*
             **이름의 뜻을 말하는 자리 ①**(문서 4단계). 격자 머리에서 한 번, 이름을 정하는
             칸 아래에서 한 번 말한다(`TeamDetail` 의 `team-mention-note`) — 두 자리인 것이
@@ -776,10 +831,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
             `#570` 이 팀 멘션을 열었으므로 이것은 **지금 되는 일**이다(`services/messages.ts`).
           */}
-          <p className="text-meta text-fg-subtle">
-            에이전트를 묶어 한 이름으로 부른다 — 채널에서 @팀이름 을 부르면 팀원 전원이 깬다.
-            카드를 누르면 팀원을 고칠 수 있다.
-          </p>
+          <p className="text-meta text-fg-subtle">{t('agents.teams.note')}</p>
         </div>
         {error && <p role="alert" className="mb-2 text-meta text-danger">{error}</p>}
         {/*
@@ -792,7 +844,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           <div className="mb-4 flex items-center gap-2 rounded-lg border border-border p-3">
             <input
               data-testid="team-name-input"
-              aria-label="새 팀 이름"
+              aria-label={t('agents.teams.nameLabel')}
               className="flex-1 rounded border border-border bg-field px-3 py-2"
               placeholder="team-name"
               value={newTeamName}
@@ -803,10 +855,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               disabled={busy || !newTeamName.trim()}
               onClick={() => void submitCreateTeam()}
             >
-              만들기
+              {t('agents.teams.create')}
             </Button>
             <Button onClick={() => { setCreatingTeam(false); setNewTeamName(''); setError(null); }}>
-              취소
+              {t('agents.teams.cancel')}
             </Button>
           </div>
         )}
@@ -843,10 +895,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               직접 짜므로, 여기 `h2` 는 화면 제목이 아니라 왼쪽 칸의 이름이다 —
               `primitives.tsx` 의 `SettingsPage` 제목(17px)과 갈라 둔 근거를 그 파일에
               적어 뒀다. 16px(`text-base`)이었고 4단 밖이었다. */}
-          <h2 className="text-name font-bold">에이전트</h2>
-          <p className="text-meta text-fg-subtle">
-            채널에서 @이름 으로 부른다. 카드를 누르면 설정이 열린다.
-          </p>
+          <h2 className="text-name font-bold">{t('agents.grid.heading')}</h2>
+          <p className="text-meta text-fg-subtle">{t('agents.grid.note')}</p>
         </div>
         {error && <p role="alert" className="mb-2 text-meta text-danger">{error}</p>}
         <StaleRunnerBar
@@ -854,6 +904,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           runnerStates={runnerStates}
           appVersion={appVersion}
           onError={setError}
+          /* 자식이 훅을 다시 부르지 않고 **같은 번역기를 받는다** — 부모가 이미 든 값이라
+             두 번 부를 이유가 없고, 받아 두면 이 컴포넌트가 언어를 따라오는지가 부모의
+             렌더 한 곳에서만 결정된다. */
+          t={t}
         />
         <AgentGrid
           agents={agents}
@@ -879,7 +933,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             */
             if (!canRelaunchAgent(a, myId ? { id: myId, isAdmin } : null)) return;
             void getController().reissueRunnerPat(a.id).catch((err: unknown) => setError(
-              `러너를 띄우지 못했다: ${err instanceof Error ? err.message : String(err)}`,
+              t('agents.runner.startFailed', { reason: err instanceof Error ? err.message : String(err) }),
             ));
           }}
           /*
@@ -906,7 +960,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               .then((updated) => setAgents(
                 (prev) => prev.map((x) => (x.id === updated.id ? updated : x)),
               ))
-              .catch(() => setError('종료를 요청하지 못했다'));
+              .catch(() => setError(t('agents.stop.stopFailed')));
           }}
           /* 버전 칩의 기준값. `StaleRunnerBar` 가 읽는 그 값이다 — 띠와 카드가 같은 기준을
              봐야 "3대"가 격자에서 어느 셋인지 맞는다(문서 2쪽 「러너 버전」). */
@@ -931,9 +985,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               className="rounded px-1.5 py-0.5 text-body text-fg-muted hover:bg-surface-hover"
               onClick={() => { setView('grid'); setSelected(null); setError(null); }}
             >
-              ← 에이전트
+              {t('agents.detail.back')}
             </button>
-            <h2 className="text-name font-bold">{selected ? `Edit ${selected.handle}` : 'Add agent'}</h2>
+            <h2 className="text-name font-bold">
+              {selected ? t('agents.detail.titleEdit', { handle: selected.handle }) : t('agents.detail.titleNew')}
+            </h2>
             {/*
               **생존·마지막 활동·러너 실패는 여기로 내려온다**(Task 15-2). 카드에서는 뺐지만
               (문서: "카드는 조용하다") **없애면 안 되는 사실들**이다 — #124 는 러너 없는
@@ -947,7 +1003,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   data-online={connected ? String(online.includes(selected.id)) : 'unknown'}
                   className={connected && online.includes(selected.id) ? 'text-success' : 'text-fg-muted'}
                 >
-                  {connected ? (online.includes(selected.id) ? '온라인' : '오프라인') : '연결 끊김 — 알 수 없음'}
+                  {connected
+                    ? (online.includes(selected.id) ? t('agents.detail.online') : t('agents.detail.offline'))
+                    : t('agents.detail.disconnected')}
                 </span>
                 {/*
                   #181 소유자. **세 경우를 구별한다** — 없다 / 있고 디렉터리에 있다 / 있는데
@@ -956,8 +1014,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 */}
                 <span className={accounts[selected.ownerAccountId ?? '']?.handle ? 'text-accent' : 'text-fg-muted'}>
                   {selected.ownerAccountId === null
-                    ? '없음'
-                    : (accounts[selected.ownerAccountId]?.handle ?? '알 수 없는 계정')}
+                    ? t('agents.detail.ownerNone')
+                    : (accounts[selected.ownerAccountId]?.handle ?? t('agents.detail.ownerUnknown'))}
                 </span>
                 <span
                   data-testid={`agent-last-turn-${selected.id}`}
@@ -971,7 +1029,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     data-testid={`agent-runner-failed-${selected.id}`}
                     className="whitespace-normal text-danger"
                   >
-                    기동 실패{runnerStates[selected.id]?.message ? ` — ${runnerStates[selected.id]!.message}` : ''}
+                    {/* 사유가 있으면 그것을 문장 안에 받는다 — 화면이 `—` 를 손으로 잇지
+                        않는 이유는 그 이음매가 언어마다 다르기 때문이다. */}
+                    {runnerStates[selected.id]?.message
+                      ? t('agents.detail.launchFailedReason', { reason: runnerStates[selected.id]!.message! })
+                      : t('agents.detail.launchFailed')}
                   </span>
                 )}
               </span>
@@ -994,8 +1056,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 className={`rounded border border-border p-3 ${defaults === 'error' ? 'text-danger' : 'text-fg-subtle'}`}
               >
                 {defaults === 'error'
-                  ? '기본값을 불러오지 못했다 — 새 에이전트 초안을 만들 수 없다'
-                  : (isAdmin ? '기본값을 불러오는 중…' : '에이전트를 만들 수 있는 것은 admin 뿐이다')}
+                  ? t('agents.run.defaultsFailed')
+                  : (isAdmin ? t('agents.run.defaultsLoading') : t('agents.run.defaultsNotAdmin'))}
               </div>
             ) : (
             <>
@@ -1003,7 +1065,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               **상세는 세 묶음이다**(identity 문서 Task 15-3): 프로필 · 실행 · 권한.
               전에는 아홉 필드가 한 줄로 흘러 무엇이 무엇과 묶이는지 알 수 없었다.
             */}
-            <FieldGroup title="프로필" note="채널에서 어떻게 보이고 무엇을 하는가.">
+            <FieldGroup title={t('agents.profile.title')} note={t('agents.profile.note')}>
             {/*
               사진(identity 문서 Task 15-4). **에이전트는 자기 사진을 올릴 손이 없다** —
               소유자가 대신 올려 주지 않으면 영원히 색 하나로 남는다. 문서가 이 화면의 성패를
@@ -1026,7 +1088,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     onChange={avatarEdit.onPicked}
                   />
                   <Button disabled={avatarEdit.busy} onClick={avatarEdit.openPicker}>
-                    사진 올리기
+                    {t('agents.profile.avatarUpload')}
                   </Button>
                   {/*
                     지우기는 **두 걸음**이다(같은 화면의 `confirmingDisable` 과 같은 모양).
@@ -1036,16 +1098,20 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   {selected.avatarAttachmentId && (avatarEdit.confirmingRemove ? (
                     <>
                       <Button variant="danger" disabled={avatarEdit.busy} onClick={avatarEdit.confirmRemove}>
-                        정말 지우기
+                        {t('agents.profile.avatarRemoveConfirm')}
                       </Button>
-                      <Button onClick={avatarEdit.cancelRemove}>취소</Button>
+                      <Button onClick={avatarEdit.cancelRemove}>{t('agents.profile.avatarRemoveCancel')}</Button>
                     </>
                   ) : (
                     <Button variant="danger" disabled={avatarEdit.busy} onClick={avatarEdit.askRemove}>
-                      지우기
+                      {t('agents.profile.avatarRemove')}
                     </Button>
                   ))}
-                  <span className="text-meta text-fg-subtle">{AVATAR_FORMATS} · 비우면 이름에서 색을 뽑는다</span>
+                  {/* `AVATAR_FORMATS` 는 형식 목록(`PNG · JPEG · …`)이라 번역하지 않는다 —
+                      파일 형식의 이름이고, 사람이 파일 고르개에서 보는 그 말이다. */}
+                  <span className="text-meta text-fg-subtle">
+                    {t('agents.profile.avatarFormats', { formats: AVATAR_FORMATS })}
+                  </span>
                 </div>
                 <AvatarStatus phase={avatarEdit.phase} />
               </div>
@@ -1060,7 +1126,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 disabled={selected !== null}
                 onChange={(e) => setDraft({ ...draft, handle: e.target.value })}
               />
-              {!selected && <span className="text-meta text-fg-subtle">채널에서 @이름 으로 부른다. 나중에 바꿀 수 없다.</span>}
+              {!selected && <span className="text-meta text-fg-subtle">{t('agents.profile.handleNote')}</span>}
             </label>
 
             <label className={label}>
@@ -1069,7 +1135,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 className={`${field} resize-y`}
                 aria-label="Agent instructions"
                 rows={6}
-                placeholder="이 에이전트가 무엇을 하는지 적는다."
+                placeholder={t('agents.profile.instructionsPlaceholder')}
                 value={draft.instructions}
                 onChange={(e) => setDraft({ ...draft, instructions: e.target.value })}
               />
@@ -1077,7 +1143,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
             </FieldGroup>
 
-            <FieldGroup title="실행" note="무엇으로 도는가.">
+            <FieldGroup title={t('agents.run.title')} note={t('agents.run.note')}>
             <div>
               <div className={label}>AI configuration</div>
               <div className="mt-1 flex gap-1">
@@ -1107,10 +1173,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 {AGENT_HARNESSES.map((h) =>
                   (RUNNABLE_HARNESSES as readonly string[]).includes(h)
                     ? <option key={h} value={h}>{h} (default)</option>
-                    : <option key={h} value={h} disabled>{h} (지원 예정)</option>,
+                    : <option key={h} value={h} disabled>{t('agents.run.harnessPlanned', { harness: h })}</option>,
                 )}
                 {PLANNED.map((h) => (
-                  <option key={h} value={h} disabled>{h} (지원 예정)</option>
+                  <option key={h} value={h} disabled>{t('agents.run.harnessPlanned', { harness: h })}</option>
                 ))}
               </select>
             </label>
@@ -1151,7 +1217,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
             </FieldGroup>
 
-            <FieldGroup title="권한" note="누가 조종하고 무엇을 할 수 있는가.">
+            <FieldGroup title={t('agents.permissions.title')} note={t('agents.permissions.note')}>
             {/* #253 의 표에서 `mentionPermission` 은 **admin 전용**이다. 소유자에게는 비활성
                 입력이 아니라 **아예 그리지 않는다** — 눌러도 안 되는 것을 보여 주면 사람은
                 자기가 뭘 잘못했다고 생각한다(#299). 값 자체는 아래 읽기 전용 칸에 적는다. */}
@@ -1164,12 +1230,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   value={draft.mentionPermission}
                   onChange={(e) => setDraft({ ...draft, mentionPermission: e.target.value as MentionPermission })}
                 >
-                  <option value="auto">auto — 멘션 턴에서 도구를 모두 허용</option>
-                  <option value="readonly">readonly — 읽기만 (상담 전용)</option>
+                  {/* 값(`auto`·`readonly`)은 저장·전송용이라 번역하지 않는다 — 라벨이
+                      그 값을 앞에 세우는 것은 같은 말이 API·설정 파일에도 나오기 때문이다. */}
+                  <option value="auto">{t('agents.permissions.mentionAuto')}</option>
+                  <option value="readonly">{t('agents.permissions.mentionReadonly')}</option>
                 </select>
-                <span className="text-meta text-fg-subtle">
-                  사람이 터미널로 직접 조종할 때는 이 설정과 무관하게 하네스가 물어본다.
-                </span>
+                <span className="text-meta text-fg-subtle">{t('agents.permissions.mentionNote')}</span>
               </label>
             )}
 
@@ -1180,7 +1246,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   <input
                     className={field}
                     aria-label="Model"
-                    placeholder="harness 기본값"
+                    placeholder={t('agents.run.harnessDefault')}
                     value={draft.model}
                     onChange={(e) => setDraft({ ...draft, model: e.target.value })}
                   />
@@ -1193,7 +1259,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     value={draft.effort}
                     onChange={(e) => setDraft({ ...draft, effort: e.target.value })}
                   >
-                    <option value="">harness 기본값</option>
+                    <option value="">{t('agents.run.harnessDefault')}</option>
                     {EFFORTS.map((e) => <option key={e} value={e}>{e}</option>)}
                   </select>
                 </label>
@@ -1205,7 +1271,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               <input
                 className={field}
                 aria-label="Working directory"
-                placeholder="/Users/me/some-repo — 비우면 스레드 전용 빈 디렉터리를 새로 만든다"
+                placeholder={t('agents.permissions.workingDirPlaceholder')}
                 value={draft.workingDir}
                 onChange={(e) => setDraft({ ...draft, workingDir: e.target.value })}
               />
@@ -1213,21 +1279,19 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
             {selected && isAdmin && (
               <label className={label}>
-                소유자
+                {t('agents.permissions.ownerLabel')}
                 <select
                   className={field}
                   aria-label="Owner"
                   value={draft.ownerAccountId ?? ''}
                   onChange={(e) => setDraft({ ...draft, ownerAccountId: e.target.value || null })}
                 >
-                  <option value="">없음 — attach 불가</option>
+                  <option value="">{t('agents.permissions.ownerNone')}</option>
                   {humanAccounts.map((a) => (
                     <option key={a.id} value={a.id}>{a.handle}</option>
                   ))}
                 </select>
-                <span className="text-meta text-fg-subtle">
-                  소유자만 이 에이전트에 attach 할 수 있다.
-                </span>
+                <span className="text-meta text-fg-subtle">{t('agents.permissions.ownerNote')}</span>
               </label>
             )}
 
@@ -1235,13 +1299,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               <div className="rounded border border-border bg-surface p-3">
                 <div className="text-meta text-fg-subtle">
                   {draft.ownerAccountId
-                    ? `소유자: @${accounts[draft.ownerAccountId]?.handle ?? '?'}`
-                    : '소유자: 없음 — attach 불가'}
+                    ? t('agents.permissions.ownerReadOnly', { handle: accounts[draft.ownerAccountId]?.handle ?? '?' })
+                    : t('agents.permissions.ownerReadOnlyNone')}
                 </div>
                 {/* admin 전용 필드의 **값**은 숨길 것이 아니다 — 숨기면 소유자는 자기 에이전트가
                     읽기 전용인지도 모른 채 부른다. 바꿀 수 없다는 것만 분명히 한다. */}
                 <div className="mt-1 text-meta text-fg-subtle">
-                  {`Mention permission: ${draft.mentionPermission} (admin 만 바꾼다)`}
+                  {t('agents.permissions.mentionReadOnlyValue', { value: draft.mentionPermission })}
                 </div>
               </div>
             )}
@@ -1252,16 +1316,16 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
             {selected && (isAdmin || isOwner) && (
               <div className="rounded border border-border p-3">
-                <div className="text-meta font-medium text-fg-muted">기억 (memory)</div>
+                <div className="text-meta font-medium text-fg-muted">{t('agents.memory.heading')}</div>
                 {/* 읽기·삭제만이다. 편집을 넣지 않는 이유(#139): 사람이 고쳐도 에이전트가
                     다음 턴에 덮어쓰면 **사람은 자기 수정이 왜 사라졌는지 알 수 없다.** */}
                 <div className="mt-2 space-y-2">
-                  {memories === null && <div className="text-meta text-fg-muted">불러오는 중…</div>}
+                  {memories === null && <div className="text-meta text-fg-muted">{t('agents.memory.loading')}</div>}
                   {memories === 'error' && (
-                    <div role="alert" className="text-meta text-danger">기억을 불러오지 못했다</div>
+                    <div role="alert" className="text-meta text-danger">{t('agents.memory.failed')}</div>
                   )}
                   {Array.isArray(memories) && memories.length === 0 && (
-                    <div className="text-meta text-fg-muted">기억이 없다</div>
+                    <div className="text-meta text-fg-muted">{t('agents.memory.empty')}</div>
                   )}
                   {Array.isArray(memories) && memories.map((m) => (
                     <div key={m.slug} className="rounded bg-surface px-2 py-1.5">
@@ -1276,25 +1340,25 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                                 setConfirmingSlug(null);
                                 void getController().deleteAgentMemory(selected.id, m.slug)
                                   .then(() => loadMemories(selected))
-                                  .catch(() => setError('기억을 지우지 못했다'));
+                                  .catch(() => setError(t('agents.memory.deleteFailed')));
                               }}
                             >
-                              정말 지운다
+                              {t('agents.memory.deleteConfirm')}
                             </button>
                             <button
                               className="rounded border border-border px-1.5 text-meta text-fg-muted"
                               onClick={() => setConfirmingSlug(null)}
                             >
-                              두기
+                              {t('agents.memory.keep')}
                             </button>
                           </span>
                         ) : (
                           <button
                             className="rounded border border-border px-1.5 text-meta text-fg-muted"
-                            aria-label={`${m.slug} 기억 지우기`}
+                            aria-label={t('agents.memory.deleteAction', { slug: m.slug })}
                             onClick={() => setConfirmingSlug(m.slug)}
                           >
-                            지우기
+                            {t('agents.memory.deleteStart')}
                           </button>
                         )}
                       </div>
@@ -1312,59 +1376,60 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             {selected && isAdmin && (
               <div className={`rounded border p-3 ${selected.disabled ? 'border-border bg-surface' : 'border-danger-border bg-danger-surface'}`}>
                 <div className="text-meta font-medium text-fg-muted">
-                  {selected.disabled ? '비활성화된 에이전트' : '에이전트 활성화'}
+                  {selected.disabled ? t('agents.disable.headingDisabled') : t('agents.disable.headingEnabled')}
                 </div>
                 {selected.disabled ? (
                   <div className="mt-2">
-                    <p className="text-meta text-fg-subtle mb-2">
-                      이 에이전트는 비활성화되어 있습니다. 다시 활성화하면 PAT 가 없다(재발급 필요)고
-                      안내가 뜹니다 — 비활성화 시 모든 PAT 가 폐기되었기 때문입니다.
-                    </p>
+                    <p className="text-meta text-fg-subtle mb-2">{t('agents.disable.noteDisabled')}</p>
                     <button
                       className="rounded border border-accent bg-accent-surface px-2 py-1 text-meta font-medium text-accent hover:bg-surface-hover disabled:opacity-50"
-                      aria-label="에이전트 활성화"
+                      aria-label={t('agents.disable.enableAction')}
                       disabled={busy}
                       onClick={() => void toggleDisabled()}
                     >
-                      활성화
+                      {t('agents.disable.enable')}
                     </button>
                   </div>
                 ) : confirmingDisable ? (
                   <div className="mt-2">
                     <p className="text-meta text-danger mb-2">
-                      <strong>이 에이전트의 모든 PAT 가 폐기</strong>되어 러너가 멈춥니다.
-                      다시 활성화해도 PAT 는 돌아오지 않으며, <strong>새로 발급</strong>해야 합니다.
+                      {emphasize(t('agents.disable.warning'), {
+                        strongRevoked: t('agents.disable.warningRevoked'),
+                        strongMint: t('agents.disable.warningMint'),
+                      })}
                     </p>
                     <div className="flex gap-1">
                       <button
                         className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
-                        aria-label="정말 비활성화"
+                        aria-label={t('agents.disable.confirm')}
                         disabled={busy}
                         onClick={() => void toggleDisabled()}
                       >
-                        정말 비활성화
+                        {t('agents.disable.confirm')}
                       </button>
                       <button
                         className="rounded border border-border px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
                         onClick={() => setConfirmingDisable(false)}
                       >
-                        취소
+                        {t('agents.disable.cancel')}
                       </button>
                     </div>
                   </div>
                 ) : (
                   <div className="mt-2">
                     <p className="text-meta text-fg-subtle mb-2">
-                      에이전트를 비활성화하면 <strong>모든 PAT 가 폐기</strong>되고, 다시 활성화해도
-                      PAT 는 복구되지 않아 <strong>새로 발급</strong>해야 합니다.
+                      {emphasize(t('agents.disable.noteEnabled'), {
+                        strongRevoked: t('agents.disable.noteEnabledRevoked'),
+                        strongMint: t('agents.disable.noteEnabledMint'),
+                      })}
                     </p>
                     <button
                       className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
-                      aria-label="에이전트 비활성화"
+                      aria-label={t('agents.disable.disableAction')}
                       disabled={busy}
                       onClick={() => void toggleDisabled()}
                     >
-                      비활성화
+                      {t('agents.disable.disable')}
                     </button>
                   </div>
                 )}
@@ -1411,7 +1476,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     죽었는지 영원히 모른다(019_agent_stop_request.sql). daemon 이 생사를 아는
                     문제는 `#443` 의 자리이고, 이 절이 답하는 질문이 아니다 — 이 절은
                     "이 에이전트가 자동 기동 대상에 들어와 있는가"에만 답한다. */}
-                <div className="text-meta font-medium text-fg-muted">러너 실행 · 중지</div>
+                <div className="text-meta font-medium text-fg-muted">{t('agents.stop.heading')}</div>
                 {/* #493: 버튼이 "종료 요청"/"요청 되돌리기" 둘에서 **한 자리 토글**로 접혔다.
                     "요청"·"되돌리기"는 서버 API 의 대칭(`stop` ↔ `stop/undo`)에서 온 **내부
                     어휘**였다. 사람은 "내가 보낸 요청을 취소한다"고 생각하지 않는다 —
@@ -1424,12 +1489,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
                     **여기서 daemon 의 생사를 말하지는 않는다** — `#443` 의 자리다. */}
                 <p className="mt-1 text-meta text-fg-subtle">
-                  <strong>중지</strong>는 러너를 지금 끊지 않는다 — 러너가
-                  <strong> 진행 중인 턴을 마친 뒤 스스로 종료</strong>한다. 턴 중간에 끊지 않는 것은
-                  사람이 기다리는 답을 잃지 않기 위해서다. 중지해 둔 동안 이 에이전트는
-                  <strong> 자동 기동에서 빠진다</strong>. <strong>실행</strong>을 누르면 다시 대상에
-                  들어와 <strong>다음 기동에서 러너가 뜬다</strong> — 지금 이 자리에서 띄우지는
-                  않는다. 둘 다 언제든 되돌릴 수 있는 조작이다.
+                  {emphasize(t('agents.stop.note'), {
+                    strongStop: t('agents.stop.noteStop'),
+                    strongFinish: t('agents.stop.noteFinish'),
+                    strongSkipped: t('agents.stop.noteSkipped'),
+                    strongStart: t('agents.stop.noteStart'),
+                    strongNextStart: t('agents.stop.noteNextStart'),
+                  })}
                 </p>
                 {/* #493: **세 상태를 버튼이 아니라 이 상태 표시로 옮겼다.**
 
@@ -1447,26 +1513,28 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     **'멈췄다'고 쓰지 않는다** — 위 주석과 019 마이그레이션이 그 이유를 적었다. */}
                 <div className="mt-2 text-meta" role="status">
                   {!selected.stopRequestedAt && (
-                    <span className="text-fg-muted">
-                      자동 기동 대상이다 — 중지를 걸어 둔 적이 없다.
-                    </span>
+                    <span className="text-fg-muted">{t('agents.stop.notRequested')}</span>
                   )}
                   {selected.stopRequestedAt && !selected.stopAckedAt && (
                     <span className="text-warning">
-                      중지함 ({new Date(selected.stopRequestedAt).toLocaleString()}) —
-                      러너가 아직 읽어 가지 않았다. 러너가 붙어 있지 않으면 읽어 갈 쪽도 없다.
+                      {/* 시각은 `toLocaleString()` 이 낸다 — **사전에 넣지 않는다**(`Intl` 이
+                          이미 로케일을 따른다). 문장은 그 값을 자리표시자로 받는다. */}
+                      {t('agents.stop.requested', {
+                        requestedAt: new Date(selected.stopRequestedAt).toLocaleString(),
+                      })}
                     </span>
                   )}
                   {selected.stopRequestedAt && selected.stopAckedAt && (
                     <span className="text-fg-muted">
-                      러너가 요청을 읽어 갔다 (중지 {new Date(selected.stopRequestedAt).toLocaleString()}
-                      {' '}· 수령 {new Date(selected.stopAckedAt).toLocaleString()}).
-                      진행 중이던 턴을 마치고 종료한다 — 실제로 종료했는지는 murmur 가 알 수 없다.
+                      {t('agents.stop.acked', {
+                        requestedAt: new Date(selected.stopRequestedAt).toLocaleString(),
+                        ackedAt: new Date(selected.stopAckedAt).toLocaleString(),
+                      })}
                       {/* #427 → #493: 러너가 이미 읽어 간 뒤가 오히려 다시 켤 필요가 생기는
                           자리다 — 그 뒤로는 자동 기동이 이 에이전트를 영영 건너뛴다. 실행을
                           누른다고 이미 물러난 러너가 그 자리에서 되살아나지는 않으므로
                           '다음 기동부터'라고 쓴다. */}
-                      {' '}실행을 누르면 다음 기동부터 다시 자동 기동 대상이 된다.
+                      {t('agents.stop.ackedResume')}
                     </span>
                   )}
                 </div>
@@ -1484,20 +1552,20 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   {selected.stopRequestedAt ? (
                     <button
                       className="rounded border border-border px-2 py-1 text-meta font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
-                      aria-label="러너 실행"
+                      aria-label={t('agents.stop.startAction')}
                       disabled={busy}
                       onClick={() => void undoStopRequest()}
                     >
-                      실행
+                      {t('agents.stop.start')}
                     </button>
                   ) : (
                     <button
                       className="rounded border border-warning-border bg-warning-surface px-2 py-1 text-meta font-medium text-warning hover:bg-warning-surface-strong disabled:opacity-50"
-                      aria-label="러너 중지"
+                      aria-label={t('agents.stop.stopAction')}
                       disabled={busy}
                       onClick={() => void requestStop()}
                     >
-                      중지
+                      {t('agents.stop.stop')}
                     </button>
                   )}
                 </div>
@@ -1509,20 +1577,18 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 <div className="text-meta font-medium text-fg-muted">PAT (Personal Access Token)</div>
                 <div className="mt-2 space-y-2">
                   {pats === null ? (
-                    <div className="text-meta text-fg-muted">PAT 를 읽고 있다…</div>
+                    <div className="text-meta text-fg-muted">{t('agents.pat.loading')}</div>
                   ) : pats === 'error' ? (
                     // 실패를 '없음'으로 그리면 살아 있는 PAT 를 없다고 하고, 그 위에서
                     // "새로 발급해야 한다"까지 말하게 된다(docs/design.md 4절).
-                    <div className="text-meta text-danger" role="alert">PAT 목록을 읽지 못했다</div>
+                    <div className="text-meta text-danger" role="alert">{t('agents.pat.listFailed')}</div>
                   ) : pats.length === 0 ? (
                     /* #251: 켜진 에이전트에 PAT 가 0개면 러너가 뜰 수 없다 — 비활성화가
                        PAT 를 전부 폐기하고 다시 켜도 되살리지 않으므로(서버가 해시만
                        보관한다), 재발급이 필요하다는 것을 이 자리에서 말한다. 꺼진
                        에이전트에서는 0개가 정상 상태라 권하지 않는다. */
                     <div className={`text-meta ${selected.disabled ? 'text-fg-muted' : 'text-warning'}`}>
-                      {selected.disabled
-                        ? 'PAT 가 없다'
-                        : 'PAT 가 없다 — 새로 발급해야 한다(비활성화 시 전부 폐기됨)'}
+                      {selected.disabled ? t('agents.pat.none') : t('agents.pat.noneNeedsMint')}
                     </div>
                   ) : (
                     pats.map((p) => (
@@ -1530,7 +1596,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         <div className="text-meta">
                           <span className="font-medium">{p.label}</span>
                           {p.revokedAt && (
-                            <span className="ml-2 text-danger">(폐기됨)</span>
+                            <span className="ml-2 text-danger">{t('agents.pat.revoked')}</span>
                           )}
                           <span className="ml-2 text-fg-muted">
                             {new Date(p.createdAt).toLocaleDateString()}
@@ -1543,13 +1609,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                                 className="rounded border border-danger-border bg-danger-surface px-1.5 py-0.5 text-meta text-danger"
                                 onClick={() => void revokePat(p.label)}
                               >
-                               Really revoke
+                               {t('agents.pat.revokeConfirm')}
                               </button>
                               <button
                                 className="px-1.5 py-0.5 text-meta text-fg-subtle"
                                 onClick={() => setRevoking(null)}
                               >
-                               Cancel
+                               {t('agents.pat.revokeCancel')}
                               </button>
                             </div>
                           ) : (
@@ -1557,7 +1623,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                               className="text-meta text-danger hover:underline"
                               onClick={() => setRevoking(p.label)}
                             >
-                              Revoke
+                              {t('agents.pat.revoke')}
                             </button>
                           )
                         )}
@@ -1569,7 +1635,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   <input
                     ref={newPatLabelRef}
                     className="w-40 rounded border border-border bg-field px-2 py-1"
-                    aria-label="New PAT label"
+                    aria-label={t('agents.pat.label')}
                     placeholder="runner"
                     value={newPatLabel}
                     onChange={(e) => setNewPatLabel(e.target.value)}
@@ -1579,12 +1645,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     disabled={busy || newPatLabel.trim() === ''}
                     onClick={() => void mintNewPat()}
                   >
-                    + New PAT
+                    {t('agents.pat.mint')}
                   </button>
                 </div>
-                <p className="mt-1 text-meta text-fg-muted">
-                  라벨은 살아 있는 토큰 안에서 유일합니다. 폐기하면 같은 라벨을 다시 쓸 수 있습니다.
-                </p>
+                <p className="mt-1 text-meta text-fg-muted">{t('agents.pat.labelNote')}</p>
               </div>
             )}
 
@@ -1597,9 +1661,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             {pat && (
               // 서버가 해시만 보관하므로 지금 놓치면 다시 볼 수 없다.
               <div className="rounded border border-warning-border bg-warning-surface p-3">
-                <div className="text-meta font-semibold text-warning">
-                  이 토큰은 지금만 보인다 — 서버가 해시만 보관하므로 다시 볼 수 없다
-                </div>
+                <div className="text-meta font-semibold text-warning">{t('agents.pat.shownOnce')}</div>
                 <code className="mt-1 block break-all rounded bg-surface-raised p-2 text-meta">{pat}</code>
                 {/* #125: 이 명령의 토큰을 자르고 말줄임표를 붙여 두면, 그대로 복사해 실행했을 때
                     인증이 실패한다 — "완성된 명령"처럼 보이는데 아니었다. 전체 토큰을 싣는다.
@@ -1616,19 +1678,19 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   </span>
                   <button
                     className="self-start shrink-0 rounded border border-warning-border bg-warning-surface-strong px-1.5 py-0.5 text-meta text-warning hover:bg-warning-border"
-                    aria-label="명령 복사"
+                    aria-label={t('agents.runner.commandCopy')}
                     onClick={async () => {
                       // #125: 토큰을 자르거나 말줄임표를 붙이지 않는다 — 클립보드에도 명령 전체가 들어간다.
                       const cmd = runnerCommandClipboardText(pat);
                       setError(null);
-                      const ok = await copyToClipboard(cmd, fullCommandRef.current, setError);
+                      const ok = await copyToClipboard(cmd, fullCommandRef.current, setError, t);
                       if (ok) {
                         setCopySuccess('full');
                         setTimeout(() => setCopySuccess((s) => s === 'full' ? null : s), 2000);
                       }
                     }}
                   >
-                    {copySuccess === 'full' ? '복사됨' : '복사'}
+                    {copySuccess === 'full' ? t('agents.runner.copied') : t('agents.runner.copy')}
                   </button>
                 </div>
                 {/* #125: 등록만으로는 아무 일도 일어나지 않는다. 실측으로 에이전트 6개 중 4개가
@@ -1645,11 +1707,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     (`#431` 1단계·`#494`) 뒤로는 **앱이 설치된 머신**이면 된다 —
                     저장소는 개발 갈래에서만 필요하다. */}
                 <p className="mt-2 text-meta text-warning">
-                  murmur <strong>서버</strong>는 러너를 띄우지 않는다. 이 데스크탑 앱은
-                  <strong> 내가 소유한</strong> 에이전트만 띄운다 — 남이 소유했거나 소유자가
-                  없는 에이전트는 <strong>위 명령을 직접 실행해 러너를 붙이기 전까지 멘션에
-                  답하지 않는다</strong>(멘션은 쌓이기만 한다). 러너는 앱과 함께 배포되므로
-                  murmur 앱이 설치된 머신이면 된다 — 저장소는 아래 개발용 갈래에만 필요하다.
+                  {emphasize(t('agents.runner.whoStarts'), {
+                    strongServer: t('agents.runner.whoStartsServer'),
+                    strongOwn: t('agents.runner.whoStartsOwn'),
+                    strongNoAnswer: t('agents.runner.whoStartsNoAnswer'),
+                  })}
                 </p>
               </div>
             )}
@@ -1674,25 +1736,32 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                    판정을 presence 추측에서 daemon 관측으로 옮긴 것이 `#430` 의 핵심이었다. */}
             {selected && (isAdmin || (myId !== undefined && selected.ownerAccountId === myId)) && (
               <div className="rounded border border-border p-3">
-                <div className="text-meta font-medium text-fg-muted">러너 (이 앱)</div>
+                <div className="text-meta font-medium text-fg-muted">{t('agents.runner.heading')}</div>
                 {/* 상태 문구를 여기 하드코딩하지 않는다 — `runnerStatusLabel` 에서 받아 온다.
                     이 설명이 낡았던 이유가 정확히 그 하드코딩이었다: `#482` 가 `external` 을
                     `adopted` 로 바꾸며 `RunnerStatus.tsx` 의 문구를 고쳤는데, 같은 말을 제 손으로
                     적어 둔 이 문장은 따라오지 않아 화면 두 자리가 서로 다른 말을 했다.
                     같은 출처에서 내면 다음 개명도 저절로 따라온다. */}
                 <p className="mt-1 text-meta text-fg-subtle">
-                  이 앱은 <strong>내가 소유한</strong> 에이전트의 러너를 띄운다.{' '}
-                  <strong>daemon 이 이미 들고 있는</strong> 러너가 살아 있으면 새로 띄우지 않고
-                  &apos;{runnerStatusLabel({ agentId: '', status: 'adopted', exitCode: null, message: null })}&apos;
-                  으로 표시한다 — 같은 에이전트에 러너가 둘이면 멘션을 두 러너가 나눠 집어 간다.
+                  {/* `{label}` 은 `runnerStatusLabel` 이 낸다 — 상태 이름을 이 문장이 제 손으로
+                      적으면 `RunnerStatus.tsx` 가 바뀔 때 여기만 낡는다(위 import 주석). */}
+                  {emphasize(
+                    t('agents.runner.ownedNote', {
+                      label: runnerStatusLabel({ agentId: '', status: 'adopted', exitCode: null, message: null }),
+                    }),
+                    {
+                      strongOwn: t('agents.runner.ownedNoteOwn'),
+                      strongDaemon: t('agents.runner.ownedNoteDaemon'),
+                    },
+                  )}
                 </p>
                 {/* 남이 띄운 러너를 이 화면이 못 본다는 것은 **한계 고백**이라 따로 적는다.
                     앞 문장에 "누가 띄웠든"으로 뭉쳐 두면 사람은 손으로 띄운 러너도 여기
                     나타날 것으로 읽고, 안 나타나면 앱이 고장 났다고 판단한다. */}
                 <p className="mt-1 text-meta text-fg-subtle">
-                  daemon 은 <strong>자기가 띄운 러너만</strong> 안다. 다른 머신이나 손으로 띄운
-                  러너는 이 목록에 없어서 여기 나타나지 않는다 — 그때는 서버에 붙어 있다는
-                  사실만 사유로 붙고, 이 앱은 자기 러너를 그대로 띄운다.
+                  {emphasize(t('agents.runner.daemonScope'), {
+                    strongOnlyOwn: t('agents.runner.daemonScopeOnlyOwn'),
+                  })}
                 </p>
                 <div className="mt-2">
                   <RunnerStatusLine state={runnerStates[selected.id]} />
@@ -1728,7 +1797,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     발급 실패 한 번에 쓸 수 있는 PAT 가 사라진다(runnerLauncher.ts 주석). */}
                 <button
                   className="mt-2 rounded border border-warning-border bg-warning-surface px-2 py-1 text-meta font-medium text-warning hover:bg-warning-surface-strong disabled:opacity-50"
-                  aria-label="PAT 재발급"
+                  aria-label={t('agents.runner.reissue')}
                   disabled={reissuing}
                   onClick={() => {
                     const id = selected.id;
@@ -1736,17 +1805,17 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     setError(null);
                     void getController().reissueRunnerPat(id)
                       .catch((err: unknown) => setError(
-                        `PAT 재발급에 실패했다: ${err instanceof Error ? err.message : String(err)}`,
+                        t('agents.runner.reissueFailed', { reason: err instanceof Error ? err.message : String(err) }),
                       ))
                       .finally(() => setReissuing(false));
                   }}
                 >
-                  {reissuing ? '재발급 중…' : 'PAT 재발급'}
+                  {reissuing ? t('agents.runner.reissuing') : t('agents.runner.reissue')}
                 </button>
                 <p className="mt-1 text-meta text-fg-subtle">
-                  새 PAT 를 발급하고 <strong>옛 PAT 를 폐기한 뒤</strong> 러너를 다시 띄운다.
-                  옛 PAT 로 돌던 러너(다른 머신의 것도)는 다음 호출에서 401 을 받고 종료 코드
-                  78 로 스스로 물러난다.
+                  {emphasize(t('agents.runner.reissueNote'), {
+                    strongRevoke: t('agents.runner.reissueNoteRevoke'),
+                  })}
                 </p>
               </div>
             )}
@@ -1764,30 +1833,30 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 (`runnerCommand.ts` 머리말). */}
             {selected && (isAdmin || isOwner) && (
               <div className="rounded border border-border p-3">
-                <div className="text-meta font-medium text-fg-muted">러너 실행</div>
+                <div className="text-meta font-medium text-fg-muted">{t('agents.runner.templateHeading')}</div>
                 <div className="mt-2 flex flex-col gap-1 break-all font-mono text-meta text-fg">
                   <span ref={templateCommandRef} className="whitespace-pre-wrap">
                     {runnerCommandClipboardText(PAT_PLACEHOLDER)}
                   </span>
                   <button
                     className="self-start shrink-0 rounded border border-border bg-surface px-1.5 py-0.5 text-meta text-fg hover:bg-surface-sunken"
-                    aria-label="명령 복사"
+                    aria-label={t('agents.runner.commandCopy')}
                     onClick={async () => {
                       // 틀은 자리표시까지 통째로 복사한다 — 사람이 그 자리만 토큰으로 바꿔 쓴다.
                       const cmd = runnerCommandClipboardText(PAT_PLACEHOLDER);
                       setError(null);
-                      const ok = await copyToClipboard(cmd, templateCommandRef.current, setError);
+                      const ok = await copyToClipboard(cmd, templateCommandRef.current, setError, t);
                       if (ok) {
                         setCopySuccess('template');
                         setTimeout(() => setCopySuccess((s) => s === 'template' ? null : s), 2000);
                       }
                     }}
                   >
-                    {copySuccess === 'template' ? '복사됨' : '복사'}
+                    {copySuccess === 'template' ? t('agents.runner.copied') : t('agents.runner.copy')}
                   </button>
                 </div>
                 <p className="mt-2 text-meta text-fg-subtle">
-                  토큰은 발급 순간에만 보인다. 잃었으면 새로 발급한다.{' '}
+                  {t('agents.runner.templateNote')}{' '}
                   <button
                     className="text-accent underline"
                     onClick={() => {
@@ -1795,7 +1864,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       newPatLabelRef.current?.focus();
                     }}
                   >
-                    PAT 발급으로 이동
+                    {t('agents.runner.patGoToMint')}
                   </button>
                 </p>
               </div>
@@ -1814,7 +1883,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               disabled={busy || draft === null}
               onClick={() => void submit()}
             >
-              {selected ? 'Save changes' : 'Create agent'}
+              {selected ? t('agents.detail.save') : t('agents.detail.submitNew')}
             </Button>
             {/* 되돌리기는 **고친 것이 있을 때만** 선다 — 누를 것이 없는 버튼을 그리지 않는다.
                 고른 에이전트를 다시 고르면 서버 값으로 초안이 다시 채워진다(`pick`). */}
@@ -1824,7 +1893,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 disabled={busy}
                 onClick={() => pick(selected)}
               >
-                되돌리기
+                {t('agents.detail.revert')}
               </Button>
             )}
           </footer>
@@ -1882,6 +1951,8 @@ function DaemonFacts({ runner, stopRequestedAt, stopAckedAt }: {
   stopRequestedAt: string | null;
   stopAckedAt: string | null;
 }) {
+  // 이 컴포넌트가 사전에서 꺼내는 것은 **제목 하나뿐**이다 — 행의 라벨·값은
+  // `lib/daemonFacts.ts` 가 정하고, 그 파일은 이 PR 의 범위 밖이다(`en.ts` 머리말).
   const t = useT();
   const locale = useLocale();
   const ms = (iso: string | null): number | null => {
@@ -1901,7 +1972,7 @@ function DaemonFacts({ runner, stopRequestedAt, stopAckedAt }: {
           이 표만은 daemon 이 말한 것이라 그 차이가 보여야 한다 — 안 보이면 사람은
           `alive` 를 서버가 아는 사실로 오해하고, 그 오해가 `#428` 이 정직하게 적어 둔
           "실제로 종료했는지는 murmur 가 알 수 없다"와 정면으로 어긋난다. */}
-      <div className="text-meta text-fg-muted">러너 — daemon 이 직접 확인한 것</div>
+      <div className="text-meta text-fg-muted">{t('agents.runner.factsHeading')}</div>
       {/* `dl` 인 이유: 라벨과 값의 짝이다. `div` 두 개로 그리면 스크린리더가 어느 값이
           어느 라벨의 것인지 말할 수 없고, 이 표는 값만 봐서는 뜻이 안 통한다(`48127`).
 
@@ -1944,11 +2015,13 @@ function DaemonFacts({ runner, stopRequestedAt, stopAckedAt }: {
  * 사라지면 "이 기능이 없다"로 읽힌다. 비활성 버튼 + 이유가 "전부 최신이다"라는 **사실**을
  * 말한다 — 없는 것과 할 일이 없는 것은 다르다(docs/design.md §4).
  */
-function StaleRunnerBar({ agents, runnerStates, appVersion, onError }: {
+function StaleRunnerBar({ agents, runnerStates, appVersion, onError, t }: {
   agents: AgentView[];
   runnerStates: Record<string, { status: string } | undefined>;
   appVersion: string | null;
   onError: (message: string) => void;
+  /** 부모가 이미 든 번역기를 받는다 — 여기서 `useT` 를 다시 부를 이유가 없다(그 prop 주석). */
+  t: Translate;
 }) {
   const [busy, setBusy] = useState(false);
   // 러너가 **있다고 보는** 에이전트만 대상이다. `runnerStates` 는 이 앱의 실행기가 관리하는
@@ -1976,20 +2049,22 @@ function StaleRunnerBar({ agents, runnerStates, appVersion, onError }: {
             setBusy(true);
             void getController().restartStaleRunners()
               .catch((err: unknown) => onError(
-                `재기동하지 못했다: ${err instanceof Error ? err.message : String(err)}`,
+                t('agents.stale.restartFailed', { reason: err instanceof Error ? err.message : String(err) }),
               ))
               .finally(() => setBusy(false));
           }}
         >
-          뒤처진 러너 전체 재기동 ({stale.length})
+          {/* 개수가 **곧 영향 범위**다(이 컴포넌트 머리말). 영어는 1대와 여러 대가 다른
+              낱말이라 복수형으로 갈리고, 한국어는 한 갈래다. */}
+          {t('agents.stale.restart', { count: stale.length })}
         </button>
         {stale.length === 0 && (
           <span className="text-meta text-fg-subtle">
             {appVersion === null
               // 앱 버전을 못 얻었으면 비교 기준이 없다. "전부 최신이다"로 적으면 확인하지
               // 않은 것을 단정하는 셈이다.
-              ? '앱 버전을 얻지 못해 뒤처짐을 판정할 수 없다.'
-              : '도는 러너가 전부 이 번들이다.'}
+              ? t('agents.stale.unknownAppVersion')
+              : t('agents.stale.allCurrent')}
           </span>
         )}
       </div>
@@ -1998,14 +2073,13 @@ function StaleRunnerBar({ agents, runnerStates, appVersion, onError }: {
           `AGENT_VERSION` 이 심긴 러너가 뜨고 그 뒤로는 판정에 든다. */}
       {unknown.length > 0 && (
         <p className="mt-1 text-meta text-fg-subtle">
-          버전을 모르는 러너 {unknown.length}대 — 뒤처졌는지 알 수 없어 대상에서 뺐다.
-          한 번 재기동하면 그 뒤로는 버전이 보인다.
+          {t('agents.stale.unknownVersion', { count: unknown.length })}
         </p>
       )}
       {/* 진행 중인 턴을 끊지 않는다는 사실이 **누르기 전에** 있어야 한다. 이 조작은
           예약이고, 실제 교체는 그 턴이 끝난 뒤다(실측 5분 넘는 턴도 있다). */}
       <p className="mt-1 text-meta text-fg-subtle">
-        재기동은 <strong>진행 중인 턴을 끊지 않는다</strong> — 턴을 마친 뒤 새 번들로 다시 뜬다.
+        {emphasize(t('agents.stale.note'), { strong: t('agents.stale.noteStrong') })}
       </p>
     </div>
   );

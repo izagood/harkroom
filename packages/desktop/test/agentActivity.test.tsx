@@ -19,6 +19,15 @@ import { translator } from '../src/i18n';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc } from './helpers/fakeApi';
 
+/**
+ * **언어를 한국어로 고정한다.** 이 파일의 축들은 이 화면의 한국어 문구로 쓰여 있고, 그
+ * 문구가 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다 — *'활동 없음'이지
+ * '죽었다'가 아니다* · *못 읽은 목록과 빈 목록은 다르다*. 영어가 원본이 되면서 기본값이
+ * 영어가 됐으므로, 한국어를 재려면 한국어라고 말해야 한다.
+ * 두 언어로 다 뜨는지는 `i18n.test.tsx` 가 잰다.
+ */
+const ko = translator('ko');
+
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
@@ -58,6 +67,7 @@ beforeEach(() => {
   // 로캘에 매달린다 — `i18n.test.tsx` 가 세운 규약과 같다.
   usePrefsStore.getState().setLocale('ko');
   connectedWith([]);
+  usePrefsStore.getState().setLocale('ko');
 });
 afterEach(() => {
   cleanup();
@@ -136,7 +146,11 @@ describe('마지막 활동 표시 (#176)', () => {
     fireEvent.click(card);
     const presence = await screen.findByTestId(`agent-presence-${bot.id}`);
     expect(presence.dataset.online).toBe('unknown');
-    expect(presence.textContent).toContain('알 수 없음');
+    // 문구가 `알 수 없음` 에서 `연결 끊김 — 살아 있는지 알 수 없다` 로 길어졌다(i18n PR).
+    // **재는 것은 낱말이 아니라 그 사실이다** — 끊긴 동안 이 자리가 '모른다'고 말하는가.
+    // 그리고 '오프라인'이라고 단정하지 않는가: 그 둘이 이 축의 전부다.
+    expect(presence.textContent).toContain('알 수 없다');
+    expect(presence.textContent).not.toContain('오프라인');
     // 마지막 활동은 서버가 준 값이라 소켓과 무관하게 그대로 보인다.
     expect(screen.getByTestId(`agent-last-turn-${bot.id}`).textContent).toBe('마지막 활동: 5분 전');
   });
@@ -181,28 +195,35 @@ describe('lastTurnLabel', () => {
   });
 
   /**
-   * **언어를 바꾸면 시간 문구도 바뀐다** — 이 PR 의 요점이다.
+   * **줄 전체가 그 언어로 뜬다** — 접두와 경과가 서로 다른 데서 온다.
+   *
+   * 접두(`Last activity:`)는 **사전**이 내고 경과(`just now`)는 **`Intl`** 이 낸다. 두
+   * 작업이 각자 반쪽을 옮겼고(`#622` 가 경과를, `#641` 이 접두를) 여기서 만났다 —
+   * 그래서 이 축은 **두 출처가 한 줄에서 어긋나지 않는 것**을 잰다. 한쪽만 옮겨진
+   * 상태(`마지막 활동: just now`)가 실제로 며칠 존재했고, 그것이 화면에서 어떻게
+   * 보였는지가 이 축이 있어야 하는 이유다.
    *
    * `하루 전` 을 `yesterday` 라고 하지 않는 것도 함께 잰다: 이 값이 재는 것은 **길이**라
    * 달력의 말을 쓰면 25시간 전과 47시간 전이 같은 말이 된다(`agoLabel` 이
    * `numeric: 'always'` 인 이유). 달력을 말하는 자리는 `dayLabel` 이고 그쪽은 `어제` 다.
    */
-  it('언어를 영어로 바꾸면 경과가 영어로 나온다 — 사전에 그 문구가 없는데도', () => {
-    expect(enLabel(ago(30_000))).toBe('마지막 활동: just now');
-    expect(enLabel(ago(60_000))).toBe('마지막 활동: 1 minute ago');
-    expect(enLabel(ago(11 * 60_000))).toBe('마지막 활동: 11 minutes ago');
-    expect(enLabel(ago(60 * 60_000))).toBe('마지막 활동: 1 hour ago');
+  it('언어를 영어로 바꾸면 접두도 경과도 영어로 나온다', () => {
+    expect(enLabel(ago(30_000))).toBe('Last activity: just now');
+    expect(enLabel(ago(60_000))).toBe('Last activity: 1 minute ago');
+    expect(enLabel(ago(11 * 60_000))).toBe('Last activity: 11 minutes ago');
+    expect(enLabel(ago(60 * 60_000))).toBe('Last activity: 1 hour ago');
     // 복수형을 우리가 안 판단한다 — `Intl` 이 `minute`/`minutes` 를 가른다.
-    expect(enLabel(ago(2 * 60 * 60_000))).toBe('마지막 활동: 2 hours ago');
-    expect(enLabel(ago(25 * 60 * 60_000))).toBe('마지막 활동: 1 day ago');
-    expect(enLabel(null)).toBe('활동 없음');
+    expect(enLabel(ago(2 * 60 * 60_000))).toBe('Last activity: 2 hours ago');
+    expect(enLabel(ago(25 * 60 * 60_000))).toBe('Last activity: 1 day ago');
+    // `null` 은 접두 규칙이 다르다 — 두 언어 모두 접두를 안 붙인다(`#176`).
+    expect(enLabel(null)).toBe('No activity yet');
   });
 
   it('미래 시각은 "N분 후" 같은 말을 만들지 않는다', () => {
     // 서버가 now() 를 찍으므로 정상적으로는 오지 않지만, 시계 보정으로 음수가 될 수 있다.
     expect(koLabel(new Date(NOW + 5 * 60_000).toISOString())).toBe('마지막 활동: 방금');
     // 영어에서도 같은 규율이다 — `in 5 minutes` 가 나오면 사람은 앱이 고장 났다고 읽는다.
-    expect(enLabel(new Date(NOW + 5 * 60_000).toISOString())).toBe('마지막 활동: just now');
+    expect(enLabel(new Date(NOW + 5 * 60_000).toISOString())).toBe('Last activity: just now');
   });
 
   /**
@@ -222,7 +243,7 @@ describe('lastTurnLabel', () => {
     for (const ms of [30_000, 60_000, 59 * 60_000, 60 * 60_000, 25 * 60 * 60_000]) {
       expect(koLabel(ago(ms))).toBe(`마지막 활동: ${lastTurnAgo(ago(ms), NOW, 'ko', ko)}`);
       // 언어를 바꿔도 그 관계가 유지된다 — 갈라짐이 한 언어에만 생기지 않게.
-      expect(enLabel(ago(ms))).toBe(`마지막 활동: ${lastTurnAgo(ago(ms), NOW, 'en', en)}`);
+      expect(enLabel(ago(ms))).toBe(`Last activity: ${lastTurnAgo(ago(ms), NOW, 'en', en)}`);
     }
     // `null` 은 접두 규칙이 다르다 — `마지막 활동: 없음` 이 아니라 `활동 없음` 이다(`#176`).
     expect(lastTurnAgo(null, NOW, 'ko', ko)).toBe('없음');

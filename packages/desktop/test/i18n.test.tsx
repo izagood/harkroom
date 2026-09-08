@@ -24,9 +24,11 @@
  * | `useT` 가 언어를 무시하게 함 | "언어를 바꾸면 화면이 따라온다" |
  * | 없는 키 `t('waitChain.nope')` | **타입** — `MessageKey` 에 없어 컴파일이 막힌다 |
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
-import type { OpenAskLink } from '@murmur/shared';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import type {
+  AgentDefaults, AgentTeamRow, AgentView, OpenAskLink, PatView,
+} from '@murmur/shared';
 import { CATALOGS, LOCALES, translator, detectLocale, isLocale, type Locale } from '../src/i18n';
 import { en } from '../src/i18n/en';
 import { ko } from '../src/i18n/ko';
@@ -37,6 +39,7 @@ import { setController, type Controller } from '../src/state/controller';
 import { WaitChainSection } from '../src/components/WaitChainSection';
 import { WaitChainLine } from '../src/components/WaitChain';
 import { Sidebar } from '../src/components/Sidebar';
+import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { fireEvent } from '@testing-library/react';
 import { waitChainFromLinks } from '../src/lib/waitChain';
 import { acc, chan, msg } from './helpers/fakeApi';
@@ -621,5 +624,340 @@ describe('시간 표기 — 한 벌이다', () => {
     for (const ms of [60 * 60_000, 24 * 3_600_000, 29 * 86_400_000]) {
       expect(ago(ms)).not.toMatch(/^\d{3,}분 전$/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. 에이전트 설정이 두 언어로 뜬다 — **이 PR 의 완료 기준 3**
+//
+// 사이드바(5번 묶음)와 같은 방식이다: 이 화면의 다른 회귀선 열한 벌은 **한국어로
+// 고정돼 있고**(각 파일 머리의 주석), 그것들이 재는 것은 언어가 아니라 그 언어로
+// 표현된 규율이다 — 세 상태를 접지 않는 것 · 못 읽은 것과 없는 것을 가르는 것 ·
+// 되돌릴 수 없는 조작에 확인을 거는 것. 언어를 재는 자리는 여기 하나다.
+//
+// **화면을 열어서 잰다.** 사전만 비교하면 화면이 `t()` 를 안 지나도 초록이고, 이
+// 화면에는 그 함정이 실제로 있었다 — `lastTurnLabel` 은 컴포넌트 밖 순수 함수라
+// 훅이 닿지 않고, 번역기를 인자로 안 받으면 영원히 한 언어로 굳는다.
+// ---------------------------------------------------------------------------
+
+const AGENT_ID = 'id-forge';
+
+const agentView = (extra: Partial<AgentView> = {}): AgentView => ({
+  id: AGENT_ID, handle: 'forge', displayName: 'forge', kind: 'agent', isAdmin: false,
+  instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
+  mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
+  stopRequestedAt: null, stopAckedAt: null, lastTurnAt: null,
+  status: 'available', statusText: null, avatarAttachmentId: null, ...extra,
+});
+
+/**
+ * 이 화면은 admin 이라야 대부분의 문자열이 선다(만들기 · 비활성화 · 러너 실행·중지).
+ * `pats` 를 인자로 두는 이유: PAT 0개와 그 안내가 **켜짐/꺼짐에 따라 다른 문장**이라
+ * 그 갈림을 아래 축이 직접 연다.
+ */
+function seedAgents(agents: AgentView[], pats: PatView[] = [], teams: AgentTeamRow[] | null = []) {
+  useActiveStore.getState().reset();
+  useActiveStore.getState().set({
+    me: { ...acc(ME, 'me'), isAdmin: true },
+    accounts: { [ME]: { ...acc(ME, 'me'), isAdmin: true } },
+    online: [],
+    connected: true,
+    teams,
+  });
+  setController({
+    listAgents: vi.fn(async () => agents),
+    listPats: vi.fn(async () => pats),
+    agentDefaults: vi.fn(async (): Promise<AgentDefaults> => (
+      { harness: 'claude-code', model: null, effort: null }
+    )),
+    agentMemory: vi.fn(async () => []),
+    getTeam: vi.fn(async () => ({ members: [] })),
+    refreshAccounts: vi.fn(async () => undefined),
+  } as unknown as Controller);
+}
+
+/** 카드를 눌러 상세로 들어간다 — 옮긴 문자열 대부분이 그 뒤에 있다. */
+async function openDetail() {
+  fireEvent.click(await screen.findByTestId('agent-card-forge'));
+}
+
+describe('에이전트 설정 — 기본은 영어다', () => {
+  it('격자 머리와 탭이 영어로 뜬다', async () => {
+    seedAgents([agentView()]);
+    render(<AgentsSettings />);
+    await screen.findByTestId('agent-card-forge');
+    expect(screen.getByRole('heading', { name: 'Agents' })).toBeTruthy();
+    expect(screen.getByRole('tablist', { name: 'Agents and teams' })).toBeTruthy();
+    expect(screen.getByText('Call one with @name in a channel. Click a card to open its settings.'))
+      .toBeTruthy();
+  });
+
+  it('상세의 세 묶음 제목이 영어로 뜬다', async () => {
+    seedAgents([agentView()]);
+    render(<AgentsSettings />);
+    await openDetail();
+    for (const title of ['Profile', 'Run', 'Permissions']) {
+      expect(screen.getByRole('heading', { name: title }), title).toBeTruthy();
+    }
+  });
+
+  /**
+   * **`#493` 이 접은 한 쌍**(실행/중지)이 영어로도 한 쌍이다. `Resume` 이 아니라
+   * `Start` 인 근거는 `en.ts` 의 그 표에 있다 — 이 버튼은 멈춘 것을 잇는 것이 아니라
+   * 자동 기동 대상에 되넣는 것이다.
+   */
+  it('러너 실행·중지가 영어로 뜨고 세 상태가 접히지 않는다', async () => {
+    seedAgents([agentView()]);
+    render(<AgentsSettings />);
+    await openDetail();
+    expect(await screen.findByRole('button', { name: 'Stop the runner' })).toBeTruthy();
+    expect(screen.getByText('It is in the auto-start set — no stop has ever been asked for.'))
+      .toBeTruthy();
+  });
+
+  /**
+   * **긴 안내문의 굵은 마디가 영어로도 굵다.** 그 굵기는 꾸밈이 아니라 문단에서 건져야
+   * 할 사실을 가리킨다(`AgentsSettings.emphasize` 머리말) — 사전이 평문이 되면서
+   * `<strong>` 이 통째로 사라지는 것이 이 배선의 실패 모양이라, 그것을 여기서 잰다.
+   */
+  it('중지 안내의 굵은 마디가 영어로도 <strong> 이다', async () => {
+    seedAgents([agentView()]);
+    render(<AgentsSettings />);
+    await openDetail();
+    const note = (await screen.findByText(/does not cut the runner off now/)).closest('p')!;
+    const strongs = [...note.querySelectorAll('strong')].map((el) => el.textContent);
+    expect(strongs).toContain('Stop');
+    expect(strongs).toContain('Start');
+    // 굵기가 살아 있어도 **문장이 조각으로 흩어지면 안 된다** — 통째로 한 문단이다.
+    expect(note.textContent).toContain('it is not started here and now');
+  });
+
+  /**
+   * **오류가 영어로 뜬다.** 화면이 실제로 실패를 겪는 경로로 확인한다 — 사전만 재면
+   * `setError` 가 옛 문자열을 그대로 들고 있어도 초록이다.
+   */
+  it('에이전트 목록을 못 받으면 영어로 그 사실을 말한다', async () => {
+    seedAgents([]);
+    setController({
+      listAgents: vi.fn(async () => { throw new Error('down'); }),
+      agentDefaults: vi.fn(async (): Promise<AgentDefaults> => (
+        { harness: 'claude-code', model: null, effort: null }
+      )),
+      refreshAccounts: vi.fn(async () => undefined),
+    } as unknown as Controller);
+    render(<AgentsSettings />);
+    await waitFor(() => {
+      // `Failed to load` 가 아니라 **화면이 지금 무엇을 모르는지**를 말한다.
+      expect(screen.getByRole('alert').textContent).toContain('did not arrive');
+    });
+  });
+
+  /**
+   * 이름 규칙 오류. **`Invalid name` 이 아니라 무엇이 되는지를 적는다** — 그리고
+   * 왜 그 문법인지(`@name` 으로 부른다)까지 남아 있는지 함께 잰다.
+   */
+  it('이름 규칙 오류가 영어로 규칙과 그 이유를 다 말한다', async () => {
+    seedAgents([]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-create'));
+    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'Bad Name' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('lowercase letters');
+    expect(alert.textContent).toContain('2 to 32 characters');
+    expect(alert.textContent).toContain('@name');
+  });
+});
+
+describe('에이전트 설정 — 언어를 한국어로 바꾸면 한국어로 뜬다', () => {
+  beforeEach(() => speak('ko'));
+
+  it('격자 머리와 탭이 한국어로 바뀐다', async () => {
+    seedAgents([agentView()]);
+    render(<AgentsSettings />);
+    await screen.findByTestId('agent-card-forge');
+    expect(screen.getByRole('heading', { name: '에이전트' })).toBeTruthy();
+    expect(screen.getByRole('tablist', { name: '에이전트와 팀' })).toBeTruthy();
+  });
+
+  it('상세의 세 묶음 제목이 한국어로 바뀐다', async () => {
+    seedAgents([agentView()]);
+    render(<AgentsSettings />);
+    await openDetail();
+    for (const title of ['프로필', '실행', '권한']) {
+      expect(screen.getByRole('heading', { name: title }), title).toBeTruthy();
+    }
+  });
+
+  it('러너 실행·중지가 한국어로 바뀐다', async () => {
+    seedAgents([agentView()]);
+    render(<AgentsSettings />);
+    await openDetail();
+    expect(await screen.findByRole('button', { name: '러너 중지' })).toBeTruthy();
+    expect(screen.getByText('자동 기동 대상이다 — 중지를 걸어 둔 적이 없다.')).toBeTruthy();
+  });
+
+  it('중지 안내의 굵은 마디가 한국어로도 <strong> 이다', async () => {
+    seedAgents([agentView()]);
+    render(<AgentsSettings />);
+    await openDetail();
+    const note = (await screen.findByText(/러너를 지금 끊지 않는다/)).closest('p')!;
+    const strongs = [...note.querySelectorAll('strong')].map((el) => el.textContent);
+    expect(strongs).toContain('중지');
+    expect(strongs).toContain('실행');
+  });
+
+  it('이름 규칙 오류가 한국어로 바뀐다', async () => {
+    seedAgents([]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-create'));
+    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'Bad Name' } });
+    fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('2~32자');
+  });
+});
+
+/**
+ * **경계를 잰다 — 이 PR 이 어디까지 옮겼나.**
+ *
+ * `lastTurnLabel` 은 접두만 사전을 지나고 경과(`11분 전`)는 `lib/lastTurn.ts` 의 것이다.
+ * 그 함수는 이 PR 의 범위 밖이고(`en.ts` 머리말의 '남은 것' 표: `Intl.RelativeTimeFormat`
+ * 으로 옮길지 먼저 정해야 한다), 그래서 영어 화면에도 `Last activity: 11분 전` 이 뜬다.
+ *
+ * **그 어긋남을 시험이 감추지 않는 것**이 여기서 중요하다. 행 전체에 한국어가 없다고
+ * 쓰면 다음 사람이 `lastTurnAgo` 도 옮긴 줄 알게 된다 — 사이드바 축이 `3분째` 를 빼고
+ * 잰 것과 같은 규율이다.
+ */
+/**
+ * **한 줄이 두 출처에서 온다 — 그 둘이 어긋나지 않는 것을 잰다.**
+ *
+ * 접두(`Last activity:`)는 **사전**이 내고 경과(`11 minutes ago`)는 **`Intl`** 이 낸다
+ * (`lib/time.ts`: *"숫자는 `Intl` 이, 뜻은 사전이"*). 두 작업이 각자 반쪽을 옮겼고
+ * (`#622` 가 경과를, `#641` 이 접두를) 여기서 만났다.
+ *
+ * 반쪽만 옮겨진 상태(`Last activity: 11분 전`)가 실제로 며칠 존재했다 — 컴파일도
+ * 회귀선도 조용했고 **화면을 열어야만 보였다.** 그래서 이 축은 사전을 읽지 않고
+ * 화면을 렌더해서 잰다.
+ */
+describe('에이전트 설정 — 시간 표기가 한 줄에서 만난다', () => {
+  it('접두와 경과가 같은 언어로 뜬다', async () => {
+    const lastTurnAt = new Date(Date.now() - 11 * 60_000).toISOString();
+    seedAgents([agentView({ lastTurnAt })]);
+    render(<AgentsSettings />);
+    await openDetail();
+    const row = await screen.findByTestId(`agent-last-turn-${AGENT_ID}`);
+    // 접두는 사전에서, 경과는 `Intl` 에서 — 둘 다 영어다.
+    expect(row.textContent).toBe('Last activity: 11 minutes ago');
+    // 반쪽만 옮겨진 옛 상태가 다시 나타나지 않는다.
+    expect(row.textContent).not.toContain('분 전');
+
+    cleanup();
+    speak('ko');
+    seedAgents([agentView({ lastTurnAt })]);
+    render(<AgentsSettings />);
+    await openDetail();
+    expect((await screen.findByTestId(`agent-last-turn-${AGENT_ID}`)).textContent)
+      .toBe('마지막 활동: 11분 전');
+  });
+
+  /** 한 번도 안 돈 것은 **'죽었다'가 아니다** — `yet` 이 그 사실을 진다. */
+  it("'활동 없음'이 두 언어 모두 '모른다'를 남긴다", () => {
+    expect(en['agents.detail.noActivity']).toBe('No activity yet');
+    expect(ko['agents.detail.noActivity']).toBe('활동 없음');
+  });
+});
+
+/**
+ * **복수형이 이 화면에서도 실제로 갈린다.** 뒤처진 러너를 한 번에 재기동하는 것은
+ * 되돌리기 어려운 조작이고(진행 중인 턴을 기다린다), 그 이름의 개수가 곧 영향 범위다 —
+ * `1 runners` 가 뜨면 그 문장이 급조된 것으로 읽히고 사람은 숫자를 다시 확인하지 않는다.
+ */
+describe('에이전트 설정 — 개수를 말하는 문장의 복수형', () => {
+  it('영어는 1대와 2대가 다른 낱말이다', () => {
+    const t = translator('en');
+    expect(t('agents.stale.restart', { count: 1 })).toBe('Restart the outdated runner (1)');
+    expect(t('agents.stale.restart', { count: 2 })).toBe('Restart all outdated runners (2)');
+    expect(t('agents.stale.unknownVersion', { count: 1 })).toContain('1 runner of unknown version');
+    expect(t('agents.stale.unknownVersion', { count: 3 })).toContain('3 runners of unknown version');
+  });
+
+  it('한국어는 수에 따라 명사가 안 바뀐다', () => {
+    const t = translator('ko');
+    expect(t('agents.stale.restart', { count: 1 })).toContain('(1)');
+    expect(t('agents.stale.restart', { count: 7 })).toContain('(7)');
+    expect(t('agents.stale.unknownVersion', { count: 7 })).toContain('러너 7대');
+  });
+});
+
+/**
+ * **옮기면서 사실을 잃지 않았다.** 이 화면의 오류·안내는 *"무엇이 잘못됐고 어떻게
+ * 고치는가"* 를 말한다 — 낱말이 아니라 **그 사실이 두 언어에 다 있는지**를 잰다.
+ */
+describe('에이전트 설정 — 옮기면서 사실을 잃지 않는다', () => {
+  it('끊김이 두 언어 모두 「그래서 살아 있는지 모른다」까지 말한다', () => {
+    // `Disconnected` 한 단어로 줄이면 사람이 그것을 '오프라인'으로 읽는다.
+    expect(en['agents.detail.disconnected'].length).toBeGreaterThan('Disconnected'.length + 10);
+    expect(en['agents.detail.disconnected']).toContain('unknown');
+    expect(ko['agents.detail.disconnected']).toContain('알 수 없다');
+  });
+
+  it('PAT 0개 안내가 두 언어 모두 「왜 없어졌나」까지 말한다', () => {
+    // 켜진 에이전트의 0개는 러너가 못 뜬다는 뜻이고, 그 사유(비활성화가 전부 폐기했다)를
+    // 함께 말해야 사람이 "고장 났나"로 읽지 않는다.
+    expect(en['agents.pat.noneNeedsMint']).toContain('mint one');
+    expect(en['agents.pat.noneNeedsMint']).toContain('disabling revokes them all');
+    expect(ko['agents.pat.noneNeedsMint']).toContain('새로 발급');
+    expect(ko['agents.pat.noneNeedsMint']).toContain('전부 폐기');
+    // 꺼진 에이전트에서 0개는 **정상이다** — 그래서 재발급을 권하지 않는다.
+    expect(en['agents.pat.none']).not.toContain('mint');
+    expect(ko['agents.pat.none']).not.toContain('발급');
+  });
+
+  it('클립보드 실패가 두 언어 모두 「다음에 무엇을 하나」를 말한다', () => {
+    // 오류만 적고 끝내면 사람은 막힌다(`#177`).
+    expect(en['agents.runner.copyFailedSelected']).toContain('⌘C');
+    expect(ko['agents.runner.copyFailedSelected']).toContain('⌘C');
+    expect(en['agents.runner.copyFailedManual']).toContain('by hand');
+    expect(ko['agents.runner.copyFailedManual']).toContain('손으로');
+  });
+
+  /**
+   * **끄기 안내는 비대칭을 말한다** — 끄는 것은 되돌릴 수 있지만 PAT 는 안 돌아온다.
+   * 뒤엣것을 자르면 사람은 이것을 되돌릴 수 있는 조작으로만 읽는다.
+   */
+  it('비활성화 안내가 두 언어 모두 「PAT 는 안 돌아온다」를 말한다', () => {
+    expect(en['agents.disable.noteEnabled']).toContain('does not bring them back');
+    expect(ko['agents.disable.noteEnabled']).toContain('복구되지 않아');
+  });
+
+  /**
+   * **번역하지 않은 것이 번역되지 않았다.** `admin`·`PAT`·`harness`·`daemon`·`attach` 는
+   * 이 제품의 고유어이고, 옮기면 사람이 문서·터미널·서버 오류에서 보는 말과 화면의 말이
+   * 갈라진다(`en.ts` 의 agents 머리말).
+   */
+  it('제품 고유어는 두 언어에서 같은 글자다', () => {
+    const pairs: [keyof typeof en, string][] = [
+      ['agents.run.defaultsNotAdmin', 'admin'],
+      ['agents.pat.none', 'PAT'],
+      ['agents.run.harnessDefault', 'harness'],
+      ['agents.runner.daemonScope', 'daemon'],
+      ['agents.permissions.ownerNone', 'attach'],
+    ];
+    for (const [key, word] of pairs) {
+      expect(en[key], `en.${key}`).toContain(word);
+      expect(ko[key], `ko.${key}`).toContain(word);
+    }
+  });
+
+  /**
+   * **저장·전송용 값은 라벨에 그대로 선다.** `auto`/`readonly` 는 API·설정 파일에도
+   * 나오는 값이라, 라벨이 그 값을 앞에 세우는 것이 두 언어 모두의 규약이다
+   * (`sidebar.notify` 가 `all`/`mentions`/`none` 을 안 옮긴 것과 같다).
+   */
+  it('mentionPermission 값이 두 언어 모두 라벨 앞에 그대로 있다', () => {
+    expect(en['agents.permissions.mentionAuto'].startsWith('auto —')).toBe(true);
+    expect(ko['agents.permissions.mentionAuto'].startsWith('auto —')).toBe(true);
+    expect(en['agents.permissions.mentionReadonly'].startsWith('readonly —')).toBe(true);
+    expect(ko['agents.permissions.mentionReadonly'].startsWith('readonly —')).toBe(true);
   });
 });

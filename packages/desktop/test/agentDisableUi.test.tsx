@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import type { AgentDefaults, AgentView, PatView } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { Controller, setController } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { Composer } from '../src/components/Composer';
@@ -44,11 +45,16 @@ const fakeController = (agents: AgentView[], pats: PatView[] = []) => {
   return c;
 };
 
+// **언어를 한국어로 고정한다.** 이 파일의 축들은 이 화면의 한국어 문구로 쓰여 있고,
+// 그 문구가 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다(`#619`·사이드바 PR 이
+// 세운 방식과 같다). 영어가 원본이 되면서 기본값이 영어가 됐으므로, 한국어를 재려면
+// 한국어라고 말해야 한다. 두 언어로 다 뜨는지는 `i18n.test.tsx` 가 잰다.
 beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
 });
-afterEach(() => cleanup());
+afterEach(() => { cleanup(); usePrefsStore.getState().setLocale('system'); });
 
 describe('#251 비활성화 컨트롤은 admin 에게만 보인다', () => {
   // 회귀선 3. `disabled` 는 `requireAdmin` 이라(#253) 소유자에게도 열지 않는다.
