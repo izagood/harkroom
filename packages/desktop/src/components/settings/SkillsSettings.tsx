@@ -251,8 +251,13 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                   {expandedSlug === skill.slug && (
                     <pre
                       data-testid={`skill-body-${skill.slug}`}
+                      /* 스킬 본문은 **읽는 글자**이므로 본문단이고, 등폭이라 한 단 내린
+                         12px 이다 — 이 저장소의 등폭 보정(`ReportCard`·`Profile` 의
+                         `font-mono text-[12px]`)과 같은 규칙이다. 등폭은 같은 pt 에서
+                         산세리프보다 크게 보여 13px 로 두면 옆의 13px 본문보다 커 보인다.
+                         `test/typeScale.test.ts` 의 `ALLOWED` 가 그 근거를 적어 뒀다. */
                       className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg
-                                 border border-border bg-surface p-3 font-mono text-xs text-fg"
+                                 border border-border bg-surface p-3 font-mono text-[12px] text-fg"
                     >
                       {skill.body}
                     </pre>

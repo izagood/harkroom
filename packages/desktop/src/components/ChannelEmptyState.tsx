@@ -40,12 +40,15 @@ export function ChannelEmptyState(
 
   return (
     <div className="px-4 py-10 text-center" data-testid="channel-empty-state">
-      <p className="text-sm font-medium text-fg-muted">
+      {/* 이 화면은 **본문단만 쓴다**(앱 기본값이라 크기를 안 적는다) — 채널이 비었을 때
+          여기 적힌 것이 사람이 읽을 수 있는 전부이고, 아래 목록은 다음에 무엇을 할 수
+          있는지 알려 주는 문장이다. 주제만 아랫단 11px 로 내렸다: 제목 아래 딸린 꼬리표다. */}
+      <p className="font-medium text-fg-muted">
         {channel ? `#${channel.name} 에 아직 메시지가 없다` : '아직 메시지가 없다'}
       </p>
-      {channel?.topic && <p className="mt-1 text-xs text-fg-subtle">{channel.topic}</p>}
+      {channel?.topic && <p className="mt-1 text-[11px] text-fg-subtle">{channel.topic}</p>}
       {(mentionAgent || showTopic) && (
-        <ul className="mx-auto mt-4 max-w-sm list-disc space-y-1 pl-5 text-left text-xs text-fg-subtle">
+        <ul className="mx-auto mt-4 max-w-sm list-disc space-y-1 pl-5 text-left text-fg-subtle">
           {mentionAgent && (
             <li>@{mentionAgent.handle} 처럼 에이전트를 멘션하면 그 에이전트의 inbox 로 들어간다.</li>
           )}

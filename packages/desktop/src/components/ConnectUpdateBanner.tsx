@@ -43,7 +43,9 @@ export function ConnectUpdateBanner() {
       <div className="rounded border border-warning-border bg-warning-surface px-3 py-2">
         {/* 빨강(danger)을 쓰지 않는다 — 그 색은 이 화면에서 이미 로그인 실패가 쓴다.
             같은 색이면 '서버 문제'와 '업데이트 확인 문제'가 한 화면에서 구분되지 않는다. */}
-        <p className="text-xs font-medium text-warning">Could not check for updates</p>
+        {/* 사유 한 줄은 읽는 글자이므로 본문단(앱 기본값 13px)이고, 그 아래 등폭 원문은
+            이미 아랫단 11px 이다 — 사람이 먼저 읽는 것과 필요할 때만 보는 것이 갈린다. */}
+        <p className="font-medium text-warning">Could not check for updates</p>
         <p className="truncate font-mono text-[11px] text-fg-muted" title={status.message}>
           {status.message}
         </p>
@@ -54,14 +56,14 @@ export function ConnectUpdateBanner() {
   const installing = status.kind === 'installing';
   return (
     <div className="flex items-center gap-2 rounded border border-accent-brand bg-accent-surface px-3 py-2">
-      <p className="min-w-0 flex-1 truncate text-xs text-fg">
+      <p className="min-w-0 flex-1 truncate text-fg">
         {installing ? `Installing v${status.version}…` : `v${status.version} available`}
       </p>
       <button
         type="button"
         disabled={installing}
         onClick={() => void install(status.version)}
-        className="rounded bg-accent px-2 py-1 text-xs font-semibold text-fg-on-strong disabled:bg-transparent disabled:text-fg-subtle"
+        className="rounded bg-accent px-2 py-1 font-semibold text-fg-on-strong disabled:bg-transparent disabled:text-fg-subtle"
       >
         Update
       </button>

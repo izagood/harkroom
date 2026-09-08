@@ -235,7 +235,7 @@ function CommunityRow(props: {
             )}
           </span>
           <span className="mt-0.5 flex items-center gap-2 text-fg-subtle">
-            <span className="min-w-0 truncate font-mono text-xs">{entry.baseUrl || '—'}</span>
+            <span className="min-w-0 truncate font-mono text-[11px]">{entry.baseUrl || '—'}</span>
             <span className={`h-2 w-2 shrink-0 rounded-full ${connected ? 'bg-success' : 'bg-danger'}`} />
             <span data-testid={`community-state-${entry.id}`}>
               {connected ? 'Connected' : 'Disconnected'}

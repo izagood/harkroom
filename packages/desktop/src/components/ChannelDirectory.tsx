@@ -86,8 +86,10 @@ export function ChannelDirectory({ open, onClose }: Props) {
           : <span className="text-fg-subtle">#</span>}
         <div className="flex-1 overflow-hidden">
           <div className="font-medium text-fg">{ch.name}</div>
+          {/* 주제는 이름 아래 딸린 한 줄이다 — 아랫단 11px. 이름(위 줄)은 크기를 안 적어
+              본문단 13px 이고, `font-medium` 으로만 도드라진다. */}
           {ch.topic && (
-            <div className="truncate text-xs text-fg-subtle">{ch.topic}</div>
+            <div className="truncate text-[11px] text-fg-subtle">{ch.topic}</div>
           )}
         </div>
       </button>
@@ -102,7 +104,7 @@ export function ChannelDirectory({ open, onClose }: Props) {
       <div
         role="dialog"
         aria-label="채널 디렉터리"
-        className="flex max-h-full w-[36rem] flex-col overflow-hidden rounded-lg border border-border bg-surface-raised text-sm text-fg"
+        className="flex max-h-full w-[36rem] flex-col overflow-hidden rounded-lg border border-border bg-surface-raised text-fg"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
       >
@@ -126,7 +128,9 @@ export function ChannelDirectory({ open, onClose }: Props) {
             onChange={(e) => setQuery(e.target.value)}
             autoFocus
           />
-          <div className="flex rounded bg-surface-sunken text-xs">
+          {/* 정렬 토글은 **아랫단 11px** — 옆의 검색 입력(본문단)이 이 줄의 주역이고 이
+              둘은 그 결과를 어떻게 늘어놓을지 고르는 곁 조작이다. */}
+          <div className="flex rounded bg-surface-sunken text-[11px]">
             <button
               className={`rounded px-2 py-1 ${sortMode === 'name' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:text-fg'}`}
               aria-pressed={sortMode === 'name'}
@@ -145,7 +149,7 @@ export function ChannelDirectory({ open, onClose }: Props) {
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {filteredChannels.length === 0 ? (
-            <p className="px-2 text-xs text-fg-subtle">
+            <p className="px-2 text-fg-subtle">
               {query ? '검색 결과가 없다' : '표준 채널이 없다'}
             </p>
           ) : (

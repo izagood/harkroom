@@ -94,7 +94,10 @@ export function ConnectScreen(props: ConnectScreenProps) {
           <Logo size={48} decorative />
           {/* 제목이 이 화면이 무엇을 하는 중인지 말한다. `add` 에서 'murmur' 라고만 적으면
               이미 murmur 안에 있는 사람에게 아무것도 알려 주지 않는다. */}
-          <h1 className="text-lg font-bold">{adding ? 'Sign in to another community' : 'murmur'}</h1>
+          {/* **화면 제목단 17px.** 18px(`text-lg`)이었고 4단 중 아무것도 아니었다. 이 자리는
+              화면 하나가 무엇을 하는 중인지 말하는 유일한 줄이라 맨 윗단이 맞다 —
+              `SettingsPage` 의 제목과 같은 단이다(그 파일에 근거를 적어 뒀다). */}
+          <h1 className="text-[17px] font-bold">{adding ? 'Sign in to another community' : 'murmur'}</h1>
         </div>
         {/* 로그인 **전**에도 업데이트할 수 있어야 한다(실측 2026-09-07): 서버에 못 붙는
             버전이면 업데이트가 필요한데, 업데이트가 로그인 뒤에만 있으면 빠져나갈 길이 없다.
@@ -102,33 +105,38 @@ export function ConnectScreen(props: ConnectScreenProps) {
             `add` 는 겹창이고 그 사람은 이미 들어와 있다 — Settings 가 열려 있으므로 이
             배너가 푸는 고리가 없다. 겹창에 업데이트 안내를 겹쳐 놓지 않는다. */}
         {!adding && <ConnectUpdateBanner />}
-        <label className="block text-xs font-medium">
+        {/* 입력 라벨은 **아랫단 11px**, 입력칸 자체는 본문단 13px(`field` 에 크기가 없어
+            앱 기본값을 물려받는다). 라벨이 값보다 작은 것이 이 저장소의 라벨·값 짝이다
+            (`settings/primitives.tsx` 의 `FIELD_LABEL`·`FIELD_BOX` 가 같은 짝이다).
+            아래 '초대 토큰 있나' 같은 곁길 버튼도 같은 아랫단이다 — 폼을 채우는 사람이
+            읽는 것은 라벨과 오류 한 줄이고, 그 오류만 본문단으로 올렸다. */}
+        <label className="block text-[11px] font-medium">
           Server URL
           <input className={field} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
         </label>
         {authMode === 'signin' ? (
-          <label className="block text-xs font-medium">
+          <label className="block text-[11px] font-medium">
             Login ID
             <input className={field} value={loginId} onChange={(e) => setLoginId(e.target.value)} />
           </label>
         ) : (
           <>
-            <label className="block text-xs font-medium">
+            <label className="block text-[11px] font-medium">
               Login ID
               <input className={field} value={loginId} onChange={(e) => setLoginId(e.target.value)} />
             </label>
-            <label className="block text-xs font-medium">
+            <label className="block text-[11px] font-medium">
               Handle (@)
               <input className={field} value={handle} onChange={(e) => setHandle(e.target.value)} />
             </label>
-            <label className="block text-xs font-medium">
+            <label className="block text-[11px] font-medium">
               Display name
               <input className={field} value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
             </label>
           </>
         )}
         {authMode === 'register' && (
-          <label className="block text-xs font-medium">
+          <label className="block text-[11px] font-medium">
             Invite token
             <input
               className={field}
@@ -138,11 +146,12 @@ export function ConnectScreen(props: ConnectScreenProps) {
             />
           </label>
         )}
-        <label className="block text-xs font-medium">
+        <label className="block text-[11px] font-medium">
           Password
           <input className={field} type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
         </label>
-        {error && <p className="text-xs text-danger">{error}</p>}
+        {/* 오류는 본문단이다 — 로그인이 막힌 사람에게 이 한 줄이 유일한 단서다. */}
+        {error && <p className="text-danger">{error}</p>}
         <button
           type="submit"
           // 초대 가입은 토큰 없이 보내면 서버가 400 을낸다 — 보내기 전에 막는다.
@@ -155,7 +164,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
           <div className="space-y-1">
             <button
               type="button"
-              className="w-full text-xs text-fg-subtle underline"
+              className="w-full text-[11px] text-fg-subtle underline"
               onClick={() => setAuthMode('register')}
             >
               Have an invite token? Join this workspace
@@ -166,7 +175,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
             {!adding && (
               <button
                 type="button"
-                className="w-full text-xs text-fg-subtle underline"
+                className="w-full text-[11px] text-fg-subtle underline"
                 onClick={() => setAuthMode('bootstrap')}
               >
                 First run? Create the admin account
@@ -176,7 +185,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
         ) : (
           <button
             type="button"
-            className="w-full text-xs text-fg-subtle underline"
+            className="w-full text-[11px] text-fg-subtle underline"
             onClick={() => { setAuthMode('signin'); setError(null); }}
           >
             Back to sign in
@@ -185,7 +194,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
         {props.mode === 'add' && (
           <button
             type="button"
-            className="w-full rounded border border-border py-1.5 text-xs font-medium hover:bg-surface"
+            className="w-full rounded border border-border py-1.5 text-[11px] font-medium hover:bg-surface"
             onClick={props.onCancel}
           >
             Cancel

@@ -609,7 +609,7 @@ export function AgentGrid<T extends AgentCardSubject>({
           <input
             data-testid="agent-search"
             aria-label="에이전트 검색"
-            className="w-full rounded-lg border border-border bg-field py-2 pl-8 pr-14 text-sm
+            className="w-full rounded-lg border border-border bg-field py-2 pl-8 pr-14
                        text-fg placeholder-fg-subtle"
             placeholder="이름으로 찾기"
             value={query}
@@ -1046,9 +1046,12 @@ export function AgentGrid<T extends AgentCardSubject>({
           );
         })}
 
-        {/* 검색 결과가 비었을 때. 목록이 비어 있는 것과 **못 찾은 것**은 다른 사실이다. */}
+        {/* 검색 결과가 비었을 때. 목록이 비어 있는 것과 **못 찾은 것**은 다른 사실이다.
+            크기를 안 적어 본문단 13px 을 물려받는다 — 그리드가 비면 이 한 줄이 그 자리의
+            내용 전부다. 카드 안의 꼬리표들이 아랫단이라고 이 줄까지 내리면, 아무것도
+            못 찾았을 때 화면에서 가장 작은 글자가 유일한 설명이 된다. */}
         {shown.length === 0 && (
-          <p className="col-span-full py-6 text-center text-xs text-fg-muted">
+          <p className="col-span-full py-6 text-center text-fg-muted">
             {query.trim() ? `"${query.trim()}" 에 맞는 에이전트가 없다` : '아직 에이전트가 없다'}
           </p>
         )}

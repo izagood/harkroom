@@ -190,8 +190,11 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     <div data-testid="channel-pane" className="flex min-w-0 flex-1">
     <main className="flex min-w-0 flex-1 flex-col bg-surface-raised">
       <header className="flex items-center gap-2 border-b border-border px-4 py-2">
-        <span className="font-bold">{title}</span>
-        {channel?.topic && <span className="truncate text-xs text-fg-subtle">{channel.topic}</span>}
+        {/* 채널 이름은 **이름줄단 15px** — 지금 무엇을 보고 있는지 말하는 자리이고,
+            `MessageItem` 의 작성자 이름과 같은 단이다. 화면 제목단(17px)은 설정·로그인처럼
+            화면 하나를 여는 자리에만 준다. 옆의 주제·꼬리표는 아랫단 11px 이다. */}
+        <span className="text-[15px] font-bold">{title}</span>
+        {channel?.topic && <span className="truncate text-[11px] text-fg-subtle">{channel.topic}</span>}
         {channel?.repo && <span className="rounded bg-surface-sunken px-1.5 text-[11px] text-fg-muted">{channel.repo}</span>}
         {isArchived && <span className="rounded bg-surface-hover px-1.5 text-[11px] text-fg-muted">보관됨</span>}
         {/* 문서는 채널에 붙는다(#188) — DM 에는 없다. `channel` 이 없을 때 버튼을 그리면
@@ -350,7 +353,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       })()}
       <div className="border-t border-border p-3">
         {isArchived ? (
-          <div className="rounded bg-surface-sunken p-2 text-center text-sm text-fg-subtle">
+          <div className="rounded bg-surface-sunken p-2 text-center text-fg-subtle">
             보관된 채널이다
           </div>
         ) : (

@@ -76,6 +76,9 @@ function CommunityTile({ entry, active }: { entry: CommunityEntry; active: boole
         // 일이고, 그 실패는 `sessionStore.save` 가 자기 자리에서 사람에게 말한다(#212).
         void switchCommunity(entry.id);
       }}
+      // `text-sm` 은 4단이 아니라 **h-10 원에 묶인 머리글자**다(아래 `{initial}` 하나가
+      // 내용 전부다) — `Identity.tsx` 의 아바타 머리글자와 같은 예외이고 크기가 원의
+      // 지름에서 따라 나온다. `Rail.tsx` 의 h-9 타일이 한 단 아래인 것도 그 규칙이다.
       className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold
         ${active
           ? 'bg-accent text-fg-on-strong'

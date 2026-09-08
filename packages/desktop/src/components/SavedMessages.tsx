@@ -168,7 +168,7 @@ export function SavedMessages({ open, onClose }: Props) {
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {load.kind === 'error' && (
-            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-xs text-danger">
+            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-danger">
               불러오지 못했다 — {load.message}
               <button
                 onClick={() => setReloadSeq((n) => n + 1)}
@@ -178,10 +178,12 @@ export function SavedMessages({ open, onClose }: Props) {
               </button>
             </div>
           )}
-          {load.kind === 'loading' && <p className="px-2 text-xs text-fg-subtle">불러오는 중…</p>}
+          {/* 오류·대기·'없다' 는 전부 **본문단**이다(앱 기본값 13px 이라 안 적는다) —
+              목록이 비었을 때 화면에 남는 유일한 글자를 아랫단으로 내리지 않는다. */}
+          {load.kind === 'loading' && <p className="px-2 text-fg-subtle">불러오는 중…</p>}
 
           {load.kind === 'ready' && entries.length === 0 && (
-            <p data-testid="saved-empty" className="px-2 text-xs text-fg-subtle">
+            <p data-testid="saved-empty" className="px-2 text-fg-subtle">
               {tab === 'open' ? '저장된 메시지가 없다' : '완료된 메시지가 없다'}
             </p>
           )}

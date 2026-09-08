@@ -851,7 +851,13 @@
         <div class="base__row"><div class="base__k">상자 예산</div><div class="base__v">한 메시지에 테두리 상자는 <b>최대 1개</b>, 그 하나는 <b>선택지</b>가 쓴다. 답글·리액션 pill 은 텍스트로 내린다.</div></div>
         <div class="base__row"><div class="base__k">0은 그리지 않는다</div><div class="base__v"><code>0 replies</code>, 빈 리액션 줄, 권한 없는 동작 — 규칙 06 을 화면 전체에 적용한 것이다.</div></div>
         <div class="base__row"><div class="base__k">스레드 폭</div><div class="base__v">고정 386px 을 버리고 <b>가변 + 최소 480px</b>. 선택지·보고문·사슬이 들어갈 자리가 필요하다.</div></div>
-        <div class="base__row"><div class="base__k">타이포·색</div><div class="base__v">타이포 4단(19 / 14 / 12 / 11) · 회색 3단 · 강조 1색(<code>#E8613C</code>)으로 통일. 상태색은 강조색과 분리한다.</div></div>
+        <div class="base__row"><div class="base__k">타이포·색</div><div class="base__v">타이포 4단(<b>17 / 15 / 13 / 11</b>) · 회색 3단 · 강조 1색(<code>#E8613C</code>)으로 통일. 상태색은 강조색과 분리한다.
+          <br><br><b>[갱신 2026-09-08]</b> 이 자리에는 <b>19 / 14 / 12 / 11</b> 로 적혀 있었다. 화면에서 확인해 <b>17 / 15 / 13 / 11</b> 로 고쳤고, 근거는 둘이다.
+          <br>① <b>단 사이 간격이 고르다.</b> 문서 숫자는 14↔12 가 2px 인데 19↔14 가 5px 여서, 붙어 보이는 두 단과 멀리 떨어진 한 단이 함께 있었다. 2px 씩 고르게 올라가면 어느 두 단도 붙어 보이지 않는다.
+          <br>② <b>화면이 이미 그 넷을 쓴다.</b> 실측(<code>packages/desktop/src</code>, 주석을 지운 뒤 센 것): 임의 크기 245곳 중 <b>213곳이 11px</b>·24곳이 13px 이고, 회귀선 <code>test/typeScale.test.ts</code> 가 그 넷을 강제한다. 문서 숫자를 택하면 그 245곳과 척도 이름 227곳, 그리고 회귀선까지 <b>472곳</b>을 다시 만지고 얻는 것은 본문 1px 축소뿐이다.
+          <br><br><b>각 단이 무엇인가</b>(이 갱신에서 자리를 정했다): <b>17px</b> 화면 제목 — 설정 화면 제목(<code>SettingsPage</code>)과 로그인 화면 제목, 둘뿐이다. <b>15px</b> 이름줄 — 메시지 작성자 이름, 채널 이름, 프로필·겹창의 제목, 두 칸 설정 화면의 칸 제목. <b>13px</b> 본문 — 앱의 기본 글자 크기이고(<code>Workspace</code>·<code>SettingsScreen</code>·<code>App</code> 세 뿌리가 이 값을 준다) 입력칸이 전부 이 단이다. <b>11px</b> 로우·상태·시간 — 사이드바 전체, 시각·꼬리표·구획 라벨·입력 라벨.
+          <br><br><b>15px 과 17px 은 쓰는 자리가 하나도 없었다.</b> 4단이라고 적혀 있었지만 화면은 실제로 두 단(11·13)으로만 돌아갔고, 나머지는 Tailwind 기본값 12 / 14 / 16 / 18 / 24px 이 대신 서 있었다 — 어휘가 <b>두 벌</b>이었다는 뜻이다. 이 갱신과 함께 그 둘째 어휘(척도 이름 227곳)를 없앴다.
+          <br><br><b>PDF 는 이 갱신을 담지 못한다</b>(<code>desktop-design-directions.pdf</code> — 재생성 수단이 없다). PDF 의 <code>19 / 14 / 12 / 11</code> 은 <b>낡은 값</b>이고, 어긋나면 이 HTML 과 <code>test/typeScale.test.ts</code> 가 정본이다.</div></div>
         <div class="base__row"><div class="base__k">아이콘·언어·오버레이</div><div class="base__v">라인 아이콘 1종(이모지는 리액션 <b>내용</b>에만) · UI 문자열 한쪽 언어로 · 스크림 + Esc + 포커스 트랩 규칙 하나를 Directory·Inbox·Saved·검색이 공유.</div></div>
         <div class="base__row"><div class="base__k">참여자 목록</div><div class="base__v">사이드바에 사람과 에이전트를 한 목록으로. <code>+ Add or edit agents</code> 는 그 목록의 마지막 줄로 — 설정은 목록의 부속이지 대체가 아니다.</div></div>
         <div class="base__row"><div class="base__k">컴포넌트 갤러리</div><div class="base__v">숨은 라우트에 <b>여덟 가지 말 × 두 수신자</b>를 한 화면에. 이후 기능이 “기존 디자인을 따라간다”가 가능해지는 지점이다.</div></div>
@@ -903,9 +909,9 @@
           <div class="sw"><i style="background:#93908A"></i><span>#93908A<br>기다림</span></div>
         </div>
         <ul style="margin-top:1rem">
-          <li>본문 <b>14px / 1.65</b> · 상태 라벨 11px 대문자</li>
+          <li>본문 <b>13px / 1.65</b> · 상태 라벨 11px 대문자 <span style="opacity:.7">[갱신 2026-09-08: 14px 이었다 — 위 위생 항목의 4단(17 / 15 / 13 / 11)에 맞췄다]</span></li>
           <li>선택지 옵션은 본문 크기 — 읽고 골라야 하니까</li>
-          <li>수신자 배지는 10px 고정폭</li>
+          <li>수신자 배지는 10px 고정폭 <span style="opacity:.7">[갱신: 배지도 <b>11px</b> 이다 — 10px 은 어느 단도 아니었고, 하나 남으면 다음 화면이 그것을 보고 또 쓴다]</span></li>
         </ul>
       </div>
     </div>
@@ -1206,8 +1212,8 @@
           <div class="sw"><i style="background:#5E8A6E"></i><span>#5E8A6E<br>끝남</span></div>
         </div>
         <ul style="margin-top:1rem">
-          <li>스레드 본문 <b>14px / 1.68</b>, 폭 <code>70ch</code></li>
-          <li>터미널 층만 고정폭 · 탭 라벨 9px</li>
+          <li>스레드 본문 <b>13px / 1.68</b>, 폭 <code>70ch</code> <span style="opacity:.7">[갱신 2026-09-08: 14px 이었다 — 4단의 본문단에 맞췄다]</span></li>
+          <li>터미널 층만 고정폭 · 탭 라벨 <b>11px</b> <span style="opacity:.7">[갱신: 9px 이었다 — 4단 밖이다. 레일 라벨도 같은 이유로 9px → 11px 로 올렸고 잘리지 않는 것을 실측했다]</span></li>
           <li>좁은 창에서는 터미널이 스레드를 <b>덮는다</b></li>
         </ul>
       </div>
