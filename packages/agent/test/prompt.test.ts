@@ -93,6 +93,9 @@ describe('buildTurnPrompt', () => {
     expect(r.prompt).toContain('$MURMUR_PAT');
     // 토큰 실값은 프롬프트에 굽지 않는다 — env 이름만 적는다(#92·#117 과 같은 이유).
     expect(r.prompt).not.toContain('Bearer eyJ');
+    // **셸이 없는 하네스의 통로도 함께 적는다.** curl 만 적으면 셸이 없는 에이전트는 이
+    // 안내를 읽고도 아무것도 못 해 다시 "못 봤다"로 돌아간다(#585).
+    expect(r.prompt).toContain('attachment.fetch');
   });
 
   // 대부분의 턴에는 첨부가 없다. 그때도 안내가 붙으면 매 턴 순전한 낭비이고, "첨부가 있다"는
@@ -104,6 +107,7 @@ describe('buildTurnPrompt', () => {
     });
     expect(r.prompt).not.toContain('/attachments/');
     expect(r.prompt).not.toContain('curl');
+    expect(r.prompt).not.toContain('attachment.fetch');
   });
 
   // 호출자(main.ts)가 이미 계산해 둔 channelId·threadRootId 가 유일한 진실 원천이어야 한다.
