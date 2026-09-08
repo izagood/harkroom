@@ -26,6 +26,9 @@ export function avatarErrorMessage(err: unknown): string {
     // 서버가 바이트를 보고 거절했다. 확장자를 믿지 않으므로 `.png` 라는 이름만으로는 통과하지 못한다.
     if (err.code === 'not_an_image') return `${AVATAR_FORMATS} 파일만 쓸 수 있습니다. 파일 이름이 아니라 내용으로 판정합니다.`;
     if (err.code === 'too_large') return '파일이 너무 큽니다. 더 작은 이미지를 골라 주세요.';
+    // 이 문장이 따로 있어야 하는 이유: SVG 는 검사에 파일 전체를 읽어야 해서 상한이 다른
+    // 형식보다 훨씬 낮다. 이유를 뭉개면 SVG 를 든 사람이 "SVG 만 쓸 수 있습니다"를 듣는다.
+    if (err.code === 'svg_too_large') return 'SVG 는 256 KiB 까지 쓸 수 있습니다. 더 단순한 그림이나 PNG 로 바꿔 주세요.';
     if (err.code === 'not_found') return '업로드한 파일을 찾지 못했습니다. 다시 시도해 주세요.';
     return `사진을 바꾸지 못했습니다 (${err.code}).`;
   }

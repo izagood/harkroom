@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin } from './helpers/fixtures.js';
-import { looksLikeSvg } from '../src/services/avatars.js';
+import { looksLikeSvg, startsLikeSvg, SVG_MAX_BYTES } from '../src/services/avatars.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -15,6 +15,13 @@ let adminId: string;
 let otherToken: string;
 let otherId: string;
 let storageRoot: string;
+/**
+ * 위 `app` 은 업로드 상한이 4 KiB 다(작은 파일로 빠르게 도는 것이 목적). SVG 상한(256 KiB)을
+ * **넘기는** 파일은 그 앞에서 413 으로 막혀 아바타 판정까지 가지 못한다 — 그래서 상한을
+ * 넉넉히 준 두 번째 서버를 같은 DB 위에 세운다. 토큰은 DB 에 있으니 그대로 쓴다.
+ */
+let bigApp: FastifyInstance;
+let bigStorageRoot: string;
 
 /** 진짜 PNG 시그니처(8바이트) + 뒤를 채우는 바이트. 판정은 앞 12바이트만 본다. */
 const PNG = Buffer.concat([
@@ -33,6 +40,8 @@ beforeAll(async () => {
   stop = db.stop;
   storageRoot = await mkdtemp(join(tmpdir(), 'murmur-avatar-'));
   app = await buildServer({ pool: db.pool, storage: { root: storageRoot, maxBytes: 4096 } });
+  bigStorageRoot = await mkdtemp(join(tmpdir(), 'murmur-avatar-big-'));
+  bigApp = await buildServer({ pool: db.pool, storage: { root: bigStorageRoot, maxBytes: SVG_MAX_BYTES * 4 } });
   ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
 
   const inv = await app.inject({
@@ -52,8 +61,9 @@ beforeAll(async () => {
   otherToken = login.json().token as string;
 });
 afterAll(async () => {
-  await app.close(); await stop();
+  await app.close(); await bigApp.close(); await stop();
   await rm(storageRoot, { recursive: true, force: true });
+  await rm(bigStorageRoot, { recursive: true, force: true });
 });
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -69,9 +79,11 @@ function multipart(filename: string, content: Buffer, contentType: string) {
   return { body: Buffer.concat([head, content, tail]), boundary };
 }
 
-async function upload(token: string, filename: string, content: Buffer, contentType: string): Promise<string> {
+async function upload(
+  token: string, filename: string, content: Buffer, contentType: string, on?: FastifyInstance,
+): Promise<string> {
   const m = multipart(filename, content, contentType);
-  const res = await app.inject({
+  const res = await (on ?? app).inject({
     method: 'POST', url: '/uploads',
     headers: { ...auth(token), 'content-type': `multipart/form-data; boundary=${m.boundary}` },
     payload: m.body,
@@ -80,8 +92,10 @@ async function upload(token: string, filename: string, content: Buffer, contentT
   return res.json().id as string;
 }
 
-const setAvatar = (token: string, payload: unknown) =>
-  app.inject({ method: 'PUT', url: '/accounts/me/avatar', headers: auth(token), payload: payload as object });
+const setAvatar = (token: string, payload: unknown, on?: FastifyInstance) =>
+  (on ?? app).inject({
+    method: 'PUT', url: '/accounts/me/avatar', headers: auth(token), payload: payload as object,
+  });
 
 const meView = async (token: string) =>
   (await app.inject({ method: 'GET', url: '/auth/me', headers: auth(token) })).json();
@@ -185,6 +199,33 @@ describe('#159 계정 프로필 사진', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('not_an_image');
     expect((await meView(adminToken)).avatarAttachmentId).toBe(before);
+  });
+
+  it('상한을 넘긴 SVG 는 "SVG 가 아니다"가 아니라 크기로 거절한다', async () => {
+    // 이유를 뭉개면 SVG 를 들고 있는 사람이 "SVG 만 쓸 수 있습니다"를 듣는다. 경로가 많은
+    // 벡터 그림은 이 상한을 쉽게 넘으므로 지어낸 상황이 아니다.
+    const big = Buffer.concat([
+      Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">'),
+      Buffer.from('<rect x="0" y="0" width="1" height="1"/>'.repeat(8000)),
+      Buffer.from('</svg>'),
+    ]);
+    expect(big.length).toBeGreaterThan(SVG_MAX_BYTES);
+    const id = await upload(adminToken, 'big.svg', big, 'image/svg+xml', bigApp);
+    const before = (await meView(adminToken)).avatarAttachmentId;
+
+    const res = await setAvatar(adminToken, { attachmentId: id }, bigApp);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('svg_too_large');
+    expect((await meView(adminToken)).avatarAttachmentId).toBe(before);
+  });
+
+  it('상한을 넘긴 SVG 아닌 파일은 그대로 not_an_image 다', async () => {
+    // 크기 갈래가 생겼다고 이미지가 아닌 큰 파일까지 SVG 이야기를 들으면 안 된다.
+    const bigHtml = Buffer.concat([HTML, Buffer.alloc(SVG_MAX_BYTES + 1, 0x20)]);
+    const id = await upload(adminToken, 'big.html', bigHtml, 'text/html', bigApp);
+    const res = await setAvatar(adminToken, { attachmentId: id }, bigApp);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('not_an_image');
   });
 
   it('메시지에 붙은 첨부는 아바타로 걸 수 없다', async () => {
@@ -349,5 +390,16 @@ describe('looksLikeSvg', () => {
     expect(looksLikeSvg(svg('<svg><foreignObject><b>x</b></foreignObject></svg>'))).toBe(false);
     // 엔티티를 선언할 수 있는 자리는 통째로 막는다(XXE·엔티티 폭탄).
     expect(looksLikeSvg(svg('<!DOCTYPE svg [<!ENTITY a "b">]><svg/>'))).toBe(false);
+  });
+
+  it('startsLikeSvg 는 뿌리만 보고, 그것만으로 받아 주지 않는다', () => {
+    // 상한을 넘긴 파일의 **거절 이유**를 가르는 데만 쓰는 판정이다. 스크립트를 담았어도
+    // 뿌리가 svg 면 true 다 — 그래서 이것으로 통과시키면 안 된다는 것이 계약이다.
+    const evil = svg('<svg><script>alert(1)</script></svg>');
+    expect(startsLikeSvg(evil)).toBe(true);
+    expect(looksLikeSvg(evil)).toBe(false);
+    // 앞부분만 잘려 있어도 답한다(상한 넘는 파일은 앞 4 KiB 만 읽어 온다).
+    expect(startsLikeSvg(svg('<?xml version="1.0"?><svg viewBox="0 0 1 1"><rect'))).toBe(true);
+    expect(startsLikeSvg(HTML)).toBe(false);
   });
 });

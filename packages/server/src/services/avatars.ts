@@ -75,6 +75,17 @@ const SVG_UNSAFE = /<\s*(script|foreignObject)\b|\son[a-z]{2,}\s*=|javascript:/i
  *   XXE·엔티티 폭탄이 들어온다면 그 문을 지난다.
  */
 export function looksLikeSvg(bytes: Buffer): boolean {
+  return startsLikeSvg(bytes) && !SVG_UNSAFE.test(bytes.toString('utf8'));
+}
+
+/**
+ * 문서의 **뿌리가 `<svg>` 인지만** 본다(스크립트 검사는 하지 않는다). 그래서 파일 앞부분만
+ * 있어도 답할 수 있고, 상한을 넘긴 파일이 "SVG 이긴 하다"를 판정하는 데 쓴다 —
+ * 그 구분이 없으면 큰 SVG 를 든 사람이 "SVG 만 쓸 수 있습니다"를 듣는다.
+ *
+ * 이것만으로 받아 주면 안 된다. 받아 주는 판정은 `looksLikeSvg` 다.
+ */
+export function startsLikeSvg(bytes: Buffer): boolean {
   // UTF-16 로 저장된 XML 은 통과하지 못한다. 흔치 않고, 받아 주면 검사해야 할 인코딩이 는다.
   let rest = bytes.toString('utf8').replace(/^\ufeff/, '').trimStart();
   // 프롤로그(XML 선언·주석·DOCTYPE)를 지나 첫 원소까지 간다. 없는 것이 보통이지만,
@@ -96,27 +107,53 @@ export function looksLikeSvg(bytes: Buffer): boolean {
       break;
     }
   }
-  if (!/^<svg[\s/>]/i.test(rest)) return false;
-  return !SVG_UNSAFE.test(rest);
+  return /^<svg[\s/>]/i.test(rest);
 }
 
 /**
- * 업로드 하나의 **저장된 바이트로** 아바타 타입을 정한다. 아바타가 아니면 null.
+ * 아바타 판정 결과. **거절은 이유를 들고 온다** — 예전에는 `null` 하나여서 라우트가 무엇이든
+ * `not_an_image` 로 옮겼고, 상한을 넘긴 SVG 를 든 사람이 "SVG 만 쓸 수 있습니다"를 들었다.
+ * 문구를 여기 두는 이유: 두 라우트가 같은 거절을 하고, 한쪽만 고쳐지면 다시 어긋난다.
+ */
+export type AvatarTypeResult =
+  | { type: string; error?: undefined }
+  | { type: null; error: { code: 'not_an_image' | 'svg_too_large'; message: string } };
+
+/** 받아 주는 목록을 적어 둔다 — 목록이 바뀌었을 때 제일 먼저 눈에 띄는 자리다. */
+const NOT_AN_IMAGE: AvatarTypeResult = {
+  type: null,
+  error: { code: 'not_an_image', message: 'avatar must be a png, jpeg, gif, webp, avif, or svg image' },
+};
+
+const SVG_TOO_LARGE: AvatarTypeResult = {
+  type: null,
+  error: { code: 'svg_too_large', message: `svg avatar must be at most ${SVG_MAX_BYTES} bytes` },
+};
+
+/**
+ * 상한을 넘긴 파일에서 "SVG 이긴 한가"를 보려고 읽는 앞부분. 뿌리 원소까지만 필요하지만,
+ * 그리기 도구가 붙이는 XML 선언·주석·DOCTYPE 이 그 앞에 길게 오는 일이 있어 넉넉히 잡는다.
+ */
+const SVG_PROBE_BYTES = 4096;
+
+/**
+ * 업로드 하나의 **저장된 바이트로** 아바타 타입을 정한다. 아바타가 아니면 이유를 돌려준다.
  *
  * 두 라우트(`me`·에이전트)가 같은 판정을 한다. 판정을 양쪽에 한 벌씩 두면 한쪽만 넓어지고,
  * 이 저장소에서 판정 복제가 반복해 결함을 만들었다(#253·#299·#315).
  */
 export async function detectAvatarType(
   storage: StorageBackend, source: { storageKey: string; sizeBytes: number },
-): Promise<string | null> {
-  // 상한을 넘는 파일은 SVG 후보가 아니다. 앞부분만 읽고 SVG 로 통과시키면 뒤쪽에 무엇이
-  // 있는지 모른 채 받아 주는 셈이다 — 그래서 그런 파일은 이진 판정(12바이트)만 한다.
+): Promise<AvatarTypeResult> {
+  // 상한을 넘는 파일은 SVG 로 받지 않는다. 앞부분만 읽고 통과시키면 뒤쪽에 무엇이 있는지
+  // 모른 채 받아 주는 셈이다 — 대신 앞부분으로 **거절 이유**만 가른다.
   const oversize = source.sizeBytes > SVG_MAX_BYTES;
-  const want = oversize ? IMAGE_HEAD_BYTES : Math.max(source.sizeBytes, IMAGE_HEAD_BYTES);
+  const want = oversize ? SVG_PROBE_BYTES : Math.max(source.sizeBytes, IMAGE_HEAD_BYTES);
   const bytes = await readHead(storage, source.storageKey, want);
   const binary = sniffImageType(bytes);
-  if (binary) return binary;
-  return !oversize && looksLikeSvg(bytes) ? 'image/svg+xml' : null;
+  if (binary) return { type: binary };
+  if (oversize) return startsLikeSvg(bytes) ? SVG_TOO_LARGE : NOT_AN_IMAGE;
+  return looksLikeSvg(bytes) ? { type: 'image/svg+xml' } : NOT_AN_IMAGE;
 }
 
 /** 스토리지에서 앞 `want` 바이트만 읽는다. 판정에 파일 전체를 메모리에 올릴 이유가 없다. */
