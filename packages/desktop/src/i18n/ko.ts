@@ -192,7 +192,8 @@ export const ko = {
   // skills — 확인 문구 셋이 **각각 다른 일**을 말한다(`en.ts` 머리말).
   // ---------------------------------------------------------------------------
 
-  'skills.confirm.approve': '승인하면 모든 에이전트가 이 스킬을 시스템 프롬프트로 읽는다',
+  'skills.confirm.approve':
+    '승인하면 이 본문이 모든 에이전트의 스킬 디렉터리에 SKILL.md 로 깔리고, 하네스가 필요할 때 읽는다',
   'skills.confirm.disable': '비활성화하면 모든 에이전트가 이 스킬의 파일과 링크를 삭제한다',
   'skills.confirm.reject': '거부하면 이 스킬은 비활성으로 내려간다 — 되돌리려면 에이전트가 다시 제안해야 한다',
   'skills.confirm.approveStart': '승인 확인',
@@ -203,7 +204,8 @@ export const ko = {
   'skills.group.disabledEmpty': '비활성된 스킬이 없다',
   'skills.group.pending': '대기 중',
   'skills.group.pendingEmpty': '승인을 기다리는 스킬이 없다',
-  'skills.group.subtitle': '에이전트가 제안한 워크스페이스 스킬. 승인된 스킬의 본문은 모든 에이전트의 시스템 프롬프트에 들어간다.',
+  'skills.group.subtitle':
+    '에이전트가 제안한 워크스페이스 스킬. 승인하면 본문이 모든 에이전트의 스킬 파일로 깔리고, 하네스가 필요할 때 읽는다.',
   'skills.list.loadFailed': '스킬 목록을 불러오지 못했다',
   'skills.list.loading': '불러오는 중…',
   'skills.list.refresh': '새로고침',

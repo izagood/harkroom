@@ -15,7 +15,8 @@ import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 /**
  * 워크스페이스 스킬 승인 화면(#311).
  *
- * 무엇을 지키는가: 승인은 그 본문이 **모든 에이전트의 시스템 프롬프트**에 들어가는 일이다.
+ * 무엇을 지키는가: 승인은 그 본문이 **모든 에이전트의 스킬 디렉터리에 `SKILL.md` 로
+ * 깔리는** 일이다(러너의 `syncSkills`).
  * 그래서 이 회귀선이 지키는 것은 배치가 아니라 세 가지다 — (1) 승인 권한이 없는 사람에게는
  * 컨트롤이 **아예 없고**, (2) 확인을 거치기 전에는 요청이 **나가지 않으며**, (3) 본문은
  * 해석되지 않고 **실제 바이트 그대로** 보인다. 셋 중 하나라도 새면 승인 게이트가 있는
@@ -63,6 +64,8 @@ const signIn = (isAdmin: boolean) => {
  * 언어를 재는 자리는 `i18n.test.tsx` 하나다.
  */
 const ko = translator('ko');
+// 문구의 **사실성**을 두 사전에서 함께 지킨다 — 한쪽만 고치면 다른 쪽이 옛말을 남긴다.
+const en = translator('en');
 
 beforeEach(() => {
   usePrefsStore.getState().setLocale('ko');
@@ -158,6 +161,27 @@ describe('3. 승인은 확인을 거친다 — `window.confirm` 이 아니다', 
     await waitFor(() => expect(c.approveSkill).toHaveBeenCalledWith('pending-one'));
 
     vi.unstubAllGlobals();
+  });
+
+  /**
+   * **확인 문구는 실제로 일어나는 일을 말해야 한다.** 이 문구는 "승인하면 모든 에이전트가
+   * 이 스킬을 **시스템 프롬프트로** 읽는다"였다. 실제로 일어나는 일은 러너가 본문을
+   * `SKILL.md` 로 깔고(`mentionTurn.ts::syncSkills`) 하네스가 그 파일을 필요할 때 읽는
+   * 것이며, 프롬프트에 상주하는 것은 이름·설명뿐이다. 승인하는 사람이 "본문 전체가 언제나
+   * 모두의 프롬프트에 들어간다"고 읽으면 승인 판단이 실제보다 무거워진다.
+   *
+   * 아래 거부·비활성 문구를 둘로 가른 것과 **같은 이유**다: 확인 문구가 한 번 사실과
+   * 어긋나면 다음 문구도 읽히지 않는다. 그래서 옛 표현이 돌아오는 것까지 막는다.
+   */
+  it('승인 문구는 실제 동작(스킬 파일로 깔린다)을 말한다 — 시스템 프롬프트라고 하지 않는다', () => {
+    for (const t of [ko, en]) {
+      expect(approveConfirmText(t)).toContain('SKILL.md');
+      expect(approveConfirmText(t)).not.toContain('시스템 프롬프트');
+      expect(approveConfirmText(t)).not.toContain('system prompt');
+    }
+    // 승인이 **모두에게** 미치는 일이라는 사실은 그대로 남는다 — 그것이 게이트의 이유다.
+    expect(approveConfirmText(ko)).toContain('모든 에이전트');
+    expect(approveConfirmText(en)).toContain('every agent');
   });
 
   it('취소하면 확인이 닫히고 요청은 끝내 나가지 않는다', async () => {
