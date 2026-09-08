@@ -69,7 +69,7 @@ export function WaitChainSection() {
 
   return (
     <div data-testid="wait-chain-section">
-      <h3 className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
+      <h3 className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
         {/*
           **모를 때는 수를 말하지 않는다**(실측 2026-09-07, 사용자가 화면에서 발견).
           제목이 `(0)` 이고 본문이 "아직 다 보지 못했다"이면 **한 구획이 서로 반대되는
@@ -115,7 +115,7 @@ export function WaitChainSection() {
                 </span>
                 <span className="ml-auto shrink-0 text-fg-subtle">{elapsedLabel(head.askedAt, Date.now())}</span>
               </span>
-              <span className="truncate text-[11px] text-fg-subtle">
+              <span className="truncate text-meta text-fg-subtle">
                 {r.channelName ? `#${r.channelName}` : 'DM'}
                 {mine && r.chain.unblocks > 1 && ` · 답하면 ${r.chain.unblocks}개가 풀린다`}
                 {stuck && r.chain.deadlockReason === 'cycle' && ' · 서로를 기다린다'}

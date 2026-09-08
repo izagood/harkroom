@@ -46,7 +46,7 @@ export function ConnectUpdateBanner() {
         {/* 사유 한 줄은 읽는 글자이므로 본문단(앱 기본값 13px)이고, 그 아래 등폭 원문은
             이미 아랫단 11px 이다 — 사람이 먼저 읽는 것과 필요할 때만 보는 것이 갈린다. */}
         <p className="font-medium text-warning">Could not check for updates</p>
-        <p className="truncate font-mono text-[11px] text-fg-muted" title={status.message}>
+        <p className="truncate font-mono text-meta text-fg-muted" title={status.message}>
           {status.message}
         </p>
       </div>

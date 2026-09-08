@@ -88,7 +88,7 @@ function Attachment({ attachment }: { attachment: AttachmentRow }) {
   }
   return (
     <button
-      className="inline-flex items-center gap-2 rounded border border-border bg-surface px-2 py-1 text-[13px] text-fg hover:bg-surface-sunken"
+      className="inline-flex items-center gap-2 rounded border border-border bg-surface px-2 py-1 text-body text-fg hover:bg-surface-sunken"
       onClick={() => void getController().saveAttachment(attachment)}
     >
       <span aria-hidden>📎</span>

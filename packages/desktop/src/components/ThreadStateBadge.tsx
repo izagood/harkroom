@@ -18,7 +18,7 @@ export function ThreadStateBadge({ state, className = '' }: { state: ThreadState
       data-testid="thread-state"
       data-state={state}
       data-blocking={isBlocking(state)}
-      className={`inline-flex items-center gap-1 rounded px-1.5 text-[11px] font-medium ${TONE[state]} ${className}`}
+      className={`inline-flex items-center gap-1 rounded px-1.5 text-meta font-medium ${TONE[state]} ${className}`}
     >
       <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${DOT[state]}`} />
       {THREAD_STATE_LABEL[state]}

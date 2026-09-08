@@ -43,7 +43,7 @@ export function FilesPanel({ files, loading, error, hasMore, onRetry, onLoadMore
         {!loading && error && (
           <div className="p-4">
             <p role="alert" className="text-danger">파일 목록을 불러오지 못했다: {error}</p>
-            <button className="mt-2 rounded border border-border px-2 py-1 text-[11px] text-fg-muted"
+            <button className="mt-2 rounded border border-border px-2 py-1 text-meta text-fg-muted"
               onClick={onRetry}>다시 시도</button>
           </div>
         )}
@@ -65,8 +65,8 @@ export function FilesPanel({ files, loading, error, hasMore, onRetry, onLoadMore
                   className="block w-full px-4 py-2 text-left hover:bg-surface"
                   onClick={() => onOpen(f)}
                 >
-                  <span className="block truncate text-[13px] font-medium text-fg">{f.filename}</span>
-                  <span className="block text-[11px] text-fg-subtle">
+                  <span className="block truncate text-body font-medium text-fg">{f.filename}</span>
+                  <span className="block text-meta text-fg-subtle">
                     {formatSize(f.sizeBytes)} · @{accounts[f.authorId]?.handle ?? f.authorId}
                   </span>
                 </button>
@@ -77,7 +77,7 @@ export function FilesPanel({ files, loading, error, hasMore, onRetry, onLoadMore
 
         {!loading && !error && hasMore && (
           <div className="px-4 py-2 text-center">
-            <button className="rounded border border-border px-2 py-1 text-[11px] text-fg-muted"
+            <button className="rounded border border-border px-2 py-1 text-meta text-fg-muted"
               onClick={onLoadMore}>더 오래된 파일</button>
           </div>
         )}

@@ -88,7 +88,7 @@ export function runnerReason(state: RunnerState | undefined): string | null {
 export function RunnerStatusLine({ state }: { state: RunnerState | undefined }) {
   const label = runnerStatusLabel(state);
   return (
-    <div className="text-[11px]" role="status">
+    <div className="text-meta" role="status">
       <span className={state ? TONE[state.status] : 'text-fg-muted'}>{label}</span>
       {/* 사유는 **보이는 자리**에 둔다 — `sr-only` 나 콘솔에만 두면 아무도 읽지 않는다. */}
       {state?.message && (

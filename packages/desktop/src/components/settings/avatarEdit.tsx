@@ -122,7 +122,7 @@ export function AvatarStatus({ phase }: { phase: AvatarPhase }) {
   if (phase.kind === 'idle') return null;
 
   if (phase.kind === 'error') {
-    return <p role="alert" data-testid="avatar-error" className="mt-1 text-[11px] text-danger">{phase.message}</p>;
+    return <p role="alert" data-testid="avatar-error" className="mt-1 text-meta text-danger">{phase.message}</p>;
   }
 
   if (phase.kind === 'done') {
@@ -130,7 +130,7 @@ export function AvatarStatus({ phase }: { phase: AvatarPhase }) {
       <p
         role="status"
         data-testid="avatar-done"
-        className="mt-1 text-[11px] text-fg-muted"
+        className="mt-1 text-meta text-fg-muted"
       >
         {phase.removed ? '사진을 지웠습니다' : '사진을 바꿨습니다'}
       </p>
@@ -139,7 +139,7 @@ export function AvatarStatus({ phase }: { phase: AvatarPhase }) {
 
   // 지우기는 올릴 바이트가 없다 — 막대 대신 말만 둔다. 있지도 않은 진행을 그리지 않는다.
   if (phase.kind === 'removing') {
-    return <p role="status" data-testid="avatar-removing" className="mt-1 text-[11px] text-fg-muted">사진을 지우는 중…</p>;
+    return <p role="status" data-testid="avatar-removing" className="mt-1 text-meta text-fg-muted">사진을 지우는 중…</p>;
   }
 
   const pct = phase.kind === 'applying' ? 100 : Math.round((phase.fraction ?? 0) * 100);
@@ -164,7 +164,7 @@ export function AvatarStatus({ phase }: { phase: AvatarPhase }) {
           style={{ width: unknown ? '15%' : `${pct}%` }}
         />
       </div>
-      <span className="text-[11px] text-fg-muted">
+      <span className="text-meta text-fg-muted">
         {phase.kind === 'applying' ? '프로필에 적용 중…'
           : unknown ? '사진 올리는 중…'
             : `사진 올리는 중… ${pct}%`}

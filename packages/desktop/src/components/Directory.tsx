@@ -131,22 +131,22 @@ export function Directory({ open, onClose, accountId }: Props) {
       <span className="text-fg-muted">@{a.handle}</span>
       <span
         data-testid={`directory-kind-${a.id}`}
-        className="rounded bg-surface-sunken px-1 text-[11px] uppercase tracking-wide text-fg-muted"
+        className="rounded bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted"
       >
         {a.kind}
       </span>
       {a.isAdmin && (
-        <span className="rounded bg-warning-surface px-1 text-[11px] text-warning">admin</span>
+        <span className="rounded bg-warning-surface px-1 text-meta text-warning">admin</span>
       )}
       <StatusMark account={a} />
-      {a.statusText && <span className="truncate text-[11px] text-fg-subtle">{a.statusText}</span>}
+      {a.statusText && <span className="truncate text-meta text-fg-subtle">{a.statusText}</span>}
       {/* 비활성 계정은 목록에 남기되 **꺼져 있다는 것이 보여야 한다.** 감추면 "이 사람이
           없다"와 "꺼져 있다"가 구분되지 않는다. 흐리게만 두는 것도 부족하다 — 대비를
           못 보는 사람에게는 아무 신호도 아니다. */}
       {a.disabled && (
         <span
           data-testid={`directory-disabled-${a.id}`}
-          className="rounded bg-surface-hover px-1 text-[11px] text-fg"
+          className="rounded bg-surface-hover px-1 text-meta text-fg"
         >
           비활성
         </span>
@@ -157,7 +157,7 @@ export function Directory({ open, onClose, accountId }: Props) {
 
   const section = (label: string, rows: AccountView[]) => (
     <section aria-label={label} className="mb-4">
-      <h3 className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
+      <h3 className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
         {label} ({rows.length})
       </h3>
       {/* 구획 제목은 아랫단 11px 이고, '없다' 는 **본문단**이다(앱 기본값이라 안 적는다) —

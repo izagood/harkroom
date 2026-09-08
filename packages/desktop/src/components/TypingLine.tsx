@@ -22,7 +22,7 @@ export function TypingLine() {
     <div
       data-testid="typing-line"
       aria-live="polite"
-      className="px-4 pb-1 text-[11px] italic text-fg-subtle"
+      className="px-4 pb-1 text-meta italic text-fg-subtle"
     >
       {label}
     </div>

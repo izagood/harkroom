@@ -147,7 +147,7 @@ export default function App() {
    * 셋을 같은 값으로 맞추면 화면을 넘어가도 본문이 같은 크기로 남는다.
    */
   const withDragStrip = (screen: ReactElement) => (
-    <div className="flex h-screen flex-col bg-surface-sunken text-[13px]">
+    <div className="flex h-screen flex-col bg-surface-sunken text-body">
       <WindowDragStrip />
       {/* 띠가 세로를 먹은 만큼 화면이 넘치지 않도록 나머지를 준다. */}
       <div className="min-h-0 flex-1">{screen}</div>
