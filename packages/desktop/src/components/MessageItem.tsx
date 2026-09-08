@@ -17,6 +17,7 @@ import { WakeRow } from './WakeRow';
 import { NotifiedGapRow } from './NotifiedGapRow';
 import { Attachments } from './Attachments';
 import { Menu } from './Menu';
+import { ConfirmDialog } from './ConfirmDialog';
 import { bodyAsHandles, displayBody } from '../lib/mention';
 import type { SectionId } from './settings/sections';
 
@@ -216,6 +217,14 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   };
 
   const hoverOnly = 'opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100';
+
+  /**
+   * 확인창에 보여 줄 대상 미리보기. 수정창(#271)과 같은 두 손질을 거친다 —
+   * `displayBody` 로 시스템 문구의 계정 자리를 채우고, `bodyAsHandles` 로 저장된 정본의
+   * `<@0f3c…>` 를 `@handle` 로 되돌린다. 날것을 그대로 두면 사람은 자기가 무엇을 지우는지
+   * 읽지 못한 채 확인을 누르게 된다.
+   */
+  const deletePreview = bodyAsHandles(displayBody(message, accounts), accounts).trim();
   const iconBtn = 'rounded p-1 text-fg-subtle hover:bg-surface-raised';
 
   /**
@@ -300,7 +309,10 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
     // #271: 수정창에는 `@handle` 을 채운다 — 저장된 정본은 `<@id>` 라, 그대로 넣으면
     // 사람이 `<@0f3c…>` 를 고치게 된다. 저장할 때 서버가 다시 정규화한다.
     ...(canEdit ? [{ label: 'Edit', onSelect: () => setDraft(bodyAsHandles(message.body, accounts)) }] : []),
-    ...(canDelete && !confirmingDelete ? [{ label: 'Delete', onSelect: () => setConfirmingDelete(true) }] : []),
+    // 확인은 **겹창**으로 묻는다(#ConfirmDialog). 예전에는 툴바 안에 확인 버튼을 끼워 넣느라
+    // `!confirmingDelete` 로 이 항목을 숨겨야 했다 — 같은 자리를 두 UI 가 나눠 썼기 때문이다.
+    // 겹창은 툴바 밖이라 자리를 다투지 않으므로 조건은 권한 하나로 돌아온다.
+    ...(canDelete ? [{ label: 'Delete', onSelect: () => setConfirmingDelete(true) }] : []),
     /**
      * #231 되돌리기. 문구가 'Delete' 가 아닌 이유를 문구 자체가 말해야 한다 — 이것은
      * 지우기가 아니라 **채널에서만** 거두는 일이고, 메시지는 스레드에 그대로 남는다.
@@ -582,24 +594,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 ↩
               </button>
             )}
-            {confirmingDelete ? (
-              // 삭제는 되돌릴 수 없으니 한 번 더 묻는다. 확인은 **메뉴 밖**에 둔다 — 메뉴 안에
-              // 두면 항목을 누르는 순간 메뉴가 닫히면서 확인 단계가 사라진다.
-              <>
-                <button
-                  className="rounded border border-danger-border bg-danger-surface px-1.5 text-[11px] text-danger"
-                  onClick={() => { setConfirmingDelete(false); void getController().deleteMessage(message.id); }}
-                >
-                  Really delete
-                </button>
-                <button
-                  className="rounded border border-border px-1.5 text-[11px] text-fg-muted"
-                  onClick={() => setConfirmingDelete(false)}
-                >
-                  Keep
-                </button>
-              </>
-            ) : (
+            {
               // 항목이 하나도 없으면 트리거를 만들지 않는다 — 열어도 비어 있는 메뉴는
               // "할 수 있는 게 있다"는 거짓 신호다(design.md §4).
               //
@@ -617,10 +612,29 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                   placement="bottom"
                 />
               )
-            )}
+            }
           </div>
         )}
       </div>
+
+      {/* 삭제는 되돌릴 수 없으니 한 번 더 묻는다. 확인은 **툴바 밖 겹창**이다 — 툴바 안에
+          두면 (1) 확인 버튼이 들어오면서 아이콘들이 밀려 커서 아래에서 버튼이 갈리고,
+          (2) 툴바가 호버로만 보이는 탓에 커서가 행을 벗어나는 순간 질문이 조용히 사라진다.
+          겹창은 무엇을 지우는지 본문째 보여 주기까지 한다(`ConfirmDialog` 주석). */}
+      {confirmingDelete && (
+        <ConfirmDialog
+          title="Delete message?"
+          // 본문이 빈 메시지(첨부만 올린 것)에서는 미리보기를 아예 그리지 않는다 —
+          // 빈 상자는 "본문이 이렇다"가 아니라 "못 읽었다"로 보인다.
+          detail={deletePreview === '' ? undefined : (
+            <span className="line-clamp-3 whitespace-pre-wrap break-words">{deletePreview}</span>
+          )}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => { setConfirmingDelete(false); void getController().deleteMessage(message.id); }}
+          onCancel={() => setConfirmingDelete(false)}
+        />
+      )}
     </div>
   );
 }

@@ -24,13 +24,22 @@ const STACK: object[] = [];
  * 오버레이가 둘 이상 열려 있으면 **가장 나중에 열린 것만** Esc 를 받는다. 전부 닫으면
  * 사람이 하나를 닫으려던 조작이 화면 전체를 지운다.
  */
-export function Overlay({ label, onClose, children, className = 'w-[42rem]' }: {
+export function Overlay({ label, onClose, children, className = 'w-[42rem]', align = 'start' }: {
   /** 접근성 이름. `role="dialog"` 에는 이름이 있어야 스크린리더가 무엇이 열렸는지 말한다. */
   label: string;
   onClose: () => void;
   children: ReactNode;
   /** 패널 폭 등 자리별 차이. 스크림·모서리·배경은 공통이다. */
   className?: string;
+  /**
+   * 세로 정렬. 기본은 `start` 다 — 첫 소비자들(Directory·Inbox·Saved·검색)은 목록이라
+   * 내용 높이가 열려 있고, 그런 패널을 가운데 두면 항목이 늘 때마다 창이 위아래로 자란다.
+   *
+   * `center` 는 **높이가 정해진 작은 창**을 위한 것이다. 확인창처럼 한 문장을 묻는 패널을
+   * 화면 맨 위에 붙여 두면, 방금 누른 버튼에서 멀어진 데다 시선이 가야 할 곳이
+   * 스크림의 가장자리가 된다.
+   */
+  align?: 'start' | 'center';
 }) {
   useEffect(() => {
     /**
@@ -56,7 +65,8 @@ export function Overlay({ label, onClose, children, className = 'w-[42rem]' }: {
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-start justify-center bg-black/60 p-8"
+      className={`fixed inset-0 z-40 flex justify-center bg-black/60 p-8
+                  ${align === 'center' ? 'items-center' : 'items-start'}`}
       onClick={onClose}
     >
       <div

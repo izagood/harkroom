@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
@@ -145,8 +145,10 @@ describe('the actions that were already there', () => {
     render(<MessageItem message={mine} />);
     openMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-    // 확인은 메뉴 밖이다 — 누르는 순간 메뉴가 닫히면서 확인 단계가 사라지지 않도록.
-    fireEvent.click(screen.getByRole('button', { name: 'Really delete' }));
+    // 확인은 메뉴 밖 **겹창**이다 — 메뉴 안에 두면 항목을 누르는 순간 메뉴가 닫히면서
+    // 확인 단계가 사라지고, 툴바 안에 두면 호버가 풀릴 때 질문이 조용히 없어진다.
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete message?' }))
+      .getByRole('button', { name: 'Delete' }));
     expect(c.deleteMessage).toHaveBeenCalledWith('m8');
   });
 
