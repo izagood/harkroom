@@ -22,6 +22,8 @@ import { SidebarFind } from './SidebarFind';
 // `runnerStatusLabel` 은 DM 줄이 쓴다 — 아바타에 실은 상태를 접근 이름으로도 내야 한다.
 import { runnerReason, runnerStatusLabel } from './RunnerStatus';
 import { AgentGrid } from './settings/AgentGrid';
+import { AgentTurns } from './AgentTurns';
+import { useAgentTurns } from '../lib/agentTurns';
 // 띄울 권한 판정은 `lib/` 하나가 낸다 — 설정 › 에이전트가 같은 판정을 쓴다.
 import { canRelaunchAgent } from '../lib/relaunchGate';
 // 설정 문의 판정도 한 벌이다(`lib/agentConfigGate.ts`) — 프로필·본문 멘션이 같은 함수를
@@ -614,6 +616,13 @@ export function Sidebar({
     () => Object.values(accounts).filter((a) => a.kind === 'agent'),
     [accounts],
   );
+
+  /*
+    지금 도는 턴(Agents 관제 1단계). **이 칸을 보고 있을 때만 묻는다** — 사이드바는 항상
+    떠 있고 다른 칸에서 이 요청을 계속 내면 아무도 보지 않는 값을 위해 왕복이 붙는다.
+    훅은 조건부로 부를 수 없으므로(리액트 규칙) 조건은 인자로 넘긴다.
+  */
+  const agentTurns = useAgentTurns(panel === 'agents');
 
   // "새 섹션…" 을 고른 채널과 입력 중인 이름(#157). `prompt()` 대신 인라인 입력이다.
   const [sectionEditFor, setSectionEditFor] = useState<string | null>(null);
@@ -1869,6 +1878,25 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
           한 번에 한 패널만 그려지므로 화면에서 부딪히는 일도 없지만, 이름이 갈려 있어야
           시험이 두 칸을 구별할 수 있다.
         */}
+        {panel === 'agents' && (
+          <AgentTurns
+            snapshot={agentTurns}
+            /*
+              handle 은 스토어의 계정에서 읽는다. 없는 계정(방금 지워졌거나 아직 안 온 것)은
+              **id 를 그대로 보인다** — 빈 자리를 그리면 어느 에이전트인지 잃는다.
+            */
+            handleOf={(id) => accounts[id]?.handle ?? id}
+            channelLabel={(id) => {
+              const ch = channels.find((c) => c.id === id);
+              return ch ? `${ch.visibility === 'private' ? '🔒' : '#'}${ch.name}` : id;
+            }}
+            /*
+              이동은 `openMessage` 에 맡긴다 — 스레드 루트도 메시지이므로 그 경로가
+              채널 전환 · 스레드 패널 · 실패 통지를 이미 다 한다(퍼머링크와 같은 길).
+            */
+            onOpenThread={(rootId) => { void getController().openMessage(rootId); }}
+          />
+        )}
         {panel === 'agents' && (
           <AgentGrid
             /*
