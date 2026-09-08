@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import {
-  ASK_MAX_OPTIONS, ASK_MIN_OPTIONS,
+  ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, MAX_MESSAGE_BODY_CHARS,
   MODEL_ID_MAX, REPORT_MAX_ITEMS, REPORT_MAX_NEXT,
   type AccountView, type AskAudience, type AskMeta, type FailureMeta, type ModelMeta,
   type ReportMeta,
@@ -173,7 +173,7 @@ function buildMcpServer(
     description: '채널 또는 스레드에 메시지 발화',
     inputSchema: {
       channelId: z.string().uuid(),
-      body: z.string().min(1).max(8000),
+      body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
       threadRootId: z.string().uuid().optional(),
       alsoInChannel: z.boolean().optional(),
       model: MODEL_ARG,
@@ -217,7 +217,7 @@ function buildMcpServer(
     description: '긴 작업 시작 시 진행 설명 메시지(결과 발화로 세지 않음)',
     inputSchema: {
       channelId: z.string().uuid(),
-      body: z.string().min(1).max(8000),
+      body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
       threadRootId: z.string().uuid().optional(),
       model: MODEL_ARG,
     },
@@ -258,7 +258,7 @@ function buildMcpServer(
     description: '갈림길에서 선택지를 내놓는다(고르면 즉시 진행). to 는 사람이면 생략, 특정 대상이면 handle',
     inputSchema: {
       channelId: z.string().uuid(),
-      body: z.string().min(1).max(8000),
+      body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
       threadRootId: z.string().uuid().optional(),
       options: z.array(z.object({
         id: z.string().min(1).max(64),
@@ -324,7 +324,7 @@ function buildMcpServer(
     description: '스스로 못 끝냈음을 알린다(수신자는 언제나 사람). retryable 로 다시 부를 수 있는지 밝힌다',
     inputSchema: {
       channelId: z.string().uuid(),
-      body: z.string().min(1).max(8000),
+      body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
       threadRootId: z.string().uuid().optional(),
       what: z.string().min(1).max(500).optional(),
       reason: z.string().min(1).max(1000).optional(),
@@ -367,7 +367,7 @@ function buildMcpServer(
     description: '완료 보고(확인한 것 · 바뀐 파일 · 남은 것 · 다음 제안). checks 는 필수',
     inputSchema: {
       channelId: z.string().uuid(),
-      body: z.string().min(1).max(8000),
+      body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
       threadRootId: z.string().uuid().optional(),
       checks: z.array(z.string().min(1).max(300)).min(1).max(REPORT_MAX_ITEMS),
       files: z.array(z.string().min(1).max(400)).max(REPORT_MAX_ITEMS).optional(),
@@ -610,7 +610,7 @@ function buildMcpServer(
     description: '워크스페이스 스킬 제안(미승인 상태, 채널에 알림)',
     inputSchema: {
       slug: z.string().min(1).max(40),
-      body: z.string().min(1).max(8000),
+      body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
       channelId: z.string().uuid(),
     },
   }, async ({ slug, body, channelId }) => {

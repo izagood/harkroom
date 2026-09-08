@@ -173,6 +173,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({
     // 기본값 false 를 유지한다 — 프록시가 없는데 신뢰하면 헤더 위조로 리밋이 무의미해진다.
     trustProxy: deps.trustProxy ?? false,
+    /**
+     * JSON 본문의 상한을 **명시한다**. fastify 기본값(1MB)에 기대면 그 수가 어디에도 적혀
+     * 있지 않아, 메시지 상한(`MAX_MESSAGE_BODY_CHARS`)과의 관계를 읽을 수 없다. 여기를
+     * 넉넉히 두는 이유는 이 통로로 메시지만 오지 않기 때문이다 — 채널 문서(`64KB`)와
+     * 에이전트 설정(`8000자` 여러 필드)이 같은 통로를 쓴다. 파일은 이 통로가 아니라
+     * multipart 업로드로 간다.
+     */
+    bodyLimit: 1024 * 1024,
     logger: loggerConfig({
       level: deps.logLevel ?? process.env.LOG_LEVEL ?? 'info',
       stream: deps.logStream,
@@ -184,7 +192,19 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     if (err.name === 'ZodError') {
       return reply.code(400).send({ error: { code: 'invalid_request', message: err.message } });
     }
-    reply.code(500).send({ error: { code: 'internal', message: err.message } });
+    /**
+     * **fastify 가 스스로 던진 오류는 자기 상태 코드를 들고 온다** — 본문이 `bodyLimit` 을
+     * 넘으면 413, content-type 이 틀리면 415다. 그것을 전부 500 `internal` 로 덮으면 화면은
+     * 자기가 고칠 수 있는 일(글이 너무 길다)을 "서버가 고장났다"로 읽고, 사람에게는 다시
+     * 시도하라는 말밖에 할 수 없다. 코드도 함께 넘겨야 호출부가 사유로 갈라 볼 수 있다.
+     *
+     * 5xx 는 그대로 `internal` 이다 — 서버 내부 사정을 코드로 노출할 이유가 없다.
+     */
+    const status = typeof err.statusCode === 'number' && err.statusCode >= 400 && err.statusCode < 500
+      ? err.statusCode
+      : 500;
+    const code = status === 500 ? 'internal' : (err.code ?? 'bad_request').toLowerCase();
+    reply.code(status).send({ error: { code, message: err.message } });
   });
 
   app.setNotFoundHandler((req, reply) => {
