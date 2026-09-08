@@ -151,7 +151,7 @@ export interface MentionTurnDeps {
   /**
    * 러너의 상태 디렉터리(config.ts::stateDir). 지시문 파일을 여기 쓴다 —
    * **에이전트의 워크스페이스 안에 두면 안 된다**: `mentionPermission: 'auto'`
-   * (bypassPermissions)인 에이전트가 자기 지시문을 읽고 고칠 수 있게 된다.
+   * 인 에이전트가 자기 지시문을 읽고 고칠 수 있게 된다.
    */
   stateDir: string;
   /** 이 러너 전용 CODEX_HOME. 세션 발견과 자식 env 가 같은 루트를 봐야 한다. */
@@ -240,7 +240,7 @@ export interface MentionTurnDeps {
  * 서로 다른 사실이라 나눠서 다룬다(리뷰 지적) — 하나로 뭉개
  * (`def.workingDir ?? process.cwd()`) `ensureWorkspace` 에 넘기면, 아무도 지정한 적 없는
  * `process.cwd()`(러너 자신의 체크아웃)에서 avcs 워크스페이스를 시도하게 된다. 그건
- * 누구도 요청하지 않은 동작이고 `mentionPermission: 'auto'`(bypassPermissions)와 겹치면
+ * 누구도 요청하지 않은 동작이고 `mentionPermission: 'auto'` 와 겹치면
  * 러너 자신의 코드가 대상이 되는 사고다.
  *
  * - `workingDir === null`(아무도 지정하지 않음) → avcs 를 아예 시도하지 않는다. 스레드
@@ -818,8 +818,9 @@ export async function runMentionTurn(
   });
   // 계정 단위 관문(2026-09-08). 위와 갈라 부르는 이유는 저장 위치와 범위가 다르기
   // 때문이다 — 이쪽은 `settings.json` 이고, 한 번 적으면 그 계정의 모든 워크스페이스가
-  // 풀린다. 기본 설정의 모든 첫 턴이 이 관문을 만나므로(auto → bypassPermissions),
-  // 빠뜨리면 turn 이 1초 만에 `exit 1` 로 죽는다.
+  // 풀린다. **기본 경로는 이제 이 관문을 만나지 않는다**(2026-09-09: auto → claude 의
+  // `auto`). 남겨 두는 이유는 사람이 터미널에서 bypass 로 올려 쓸 수 있기 때문이다 —
+  // 그때 이 기록이 없으면 그 세션이 경고 화면에서 멈춘다. 이미 있으면 아무것도 안 쓴다.
   await ensureDangerousModeAccepted({
     harness: def.harness,
     claudeConfigDir: deps.claudeConfigDir,
