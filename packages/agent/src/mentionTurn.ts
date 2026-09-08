@@ -12,7 +12,7 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { join } from 'node:path';
 import type { AgentHarness, AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE } from './prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
 import { acceptsPtyInput } from './pty.js';
@@ -29,6 +29,14 @@ import type { TurnRegistry } from './turnRegistry.js';
 export interface MentionTurnMurmur {
   definition(): Promise<AgentView>;
   readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
+  /**
+   * 채널 **전체**(스레드 답 포함)에서 seq 커서 이후를 읽는다 — `offAnchorEvidence` 가 쓴다.
+   *
+   * `readThread(ch, null, since)` 와 서버 호출은 같지만 이름을 따로 둔다: 저 호출은 부르는
+   * 자리마다 "최상위 스레드를 읽는다"로도 읽히고, 두 의도가 한 이름에 겹치면 한쪽을 고칠 때
+   * 다른 쪽이 조용히 바뀐다. 여기서 필요한 것은 **스레드 경계를 넘어 보는 것**이다.
+   */
+  readChannelSince(channelId: string, sinceSeq: number, limit?: number): Promise<MessageRow[]>;
   /** #139: core 본문과 mem/* slug 목록. 실패는 **던진다** — 호출자가 구분해야 한다. */
   readMemory(): Promise<{ core: string | null; slugs: string[] }>;
   /**
@@ -259,6 +267,40 @@ export interface MentionTarget {
  * 그래서 예방은 시스템 프롬프트(prompt.ts)가 하고, 이 함수는 그것이 지켜졌는지를
  * murmur 데이터로만 관측한다 — 설계 경계를 넘지 않는 유일한 관측 지점이다.
  */
+/**
+ * 이 턴이 자기 앵커 밖에 남긴 발화를 관측해 통지에 실을 문단으로 만든다(없으면 `null`).
+ *
+ * 채널 전체를 읽는다 — `threadRootId` 를 주지 않은 `message.read` 는 스레드 답까지 포함해
+ * seq 커서 이후 전부를 돌려준다(서버 `listMessages`). 앵커 스레드만 읽는 기존 관측으로는
+ * **정의상** 이것을 볼 수 없다: 문제는 발화가 다른 스레드에 있다는 것이다.
+ *
+ * 러너 로그에도 남긴다. 통지는 사람이 보는 자리고 로그는 운영이 보는 자리인데, 이 사고는
+ * 로그에서 여러 턴을 나란히 놓고 봐야 모양이 보인다(그날도 그렇게 찾았다).
+ *
+ * **던지지 않는다.** 이것은 통지를 더 좋게 만드는 정황이지 통지의 조건이 아니다.
+ */
+async function offAnchorEvidence(
+  deps: MentionTurnDeps, key: string, channelId: string, anchor: string | null, turnStartSeq: number,
+): Promise<string | null> {
+  try {
+    // limit 를 넉넉히 준다 — 기본 30 은 바쁜 채널에서 내 발화를 창 밖으로 밀어낸다.
+    const channelWide = await deps.murmur.readChannelSince(channelId, turnStartSeq, 200);
+    const strays = offAnchorPosts(channelWide, deps.me.id, anchor, turnStartSeq);
+    if (strays.length === 0) return null;
+    console.warn(
+      `[mentionTurn] ${key}: 앵커에는 발화가 없는데 같은 채널의 다른 스레드에 내 발화가 ` +
+        `${strays.length}건 있다 — 이 턴이 남의 앵커의 요청을 대신했을 수 있다(2026-09-08 사고와 같은 모양). ` +
+        `대상 스레드: ${[...new Set(strays.map((m) => m.threadRootId ?? m.id))].join(', ')}`,
+    );
+    return offAnchorNotice(strays);
+  } catch (err) {
+    console.error(
+      `[mentionTurn] ${key}: 앵커 밖 발화 관측 실패(통지는 그대로 나간다) — ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
+}
+
 function warnOnDuplicatePosts(key: string, postCount: number): void {
   if (postCount <= 1) return;
   console.warn(
@@ -799,9 +841,16 @@ export async function runMentionTurn(
       // 해석이 아니라 **증거 첨부**다(`harnessTailNotice` 주석). 통지가 먼저 서는 순서도
       // 뜻이 있다: 사실("발화가 없었다")이 먼저고, 출력은 그 사실의 정황이다.
       const evidence = harnessTailNotice(result.tail, deps.pat);
-      const body = evidence === null
-        ? NO_REPLY_NOTICE
-        : `${NO_REPLY_NOTICE}\n\n하네스가 마지막에 남긴 출력:\n${evidence}`;
+      // **침묵의 이유가 옆 스레드에 있을 수 있다**(2026-09-08 실측, `offAnchorPosts` 주석).
+      // 여기서만 채널 전체를 훑는 이유는 값이 싸지 않아서다: 이 경로는 드물게 도는 침묵
+      // 경로이고, 그때는 사람에게 어차피 통지가 나가므로 한 왕복을 더 쓸 값어치가 있다.
+      // 실패해도 통지 자체는 그대로 나간다 — 정황이 없다고 사실을 못 남기면 본말이 뒤집힌다.
+      const offAnchor = await offAnchorEvidence(deps, key, channelId, anchor, turnStartSeq);
+      const body = [
+        NO_REPLY_NOTICE,
+        ...(offAnchor === null ? [] : ['', offAnchor]),
+        ...(evidence === null ? [] : ['', `하네스가 마지막에 남긴 출력:\n${evidence}`]),
+      ].join('\n');
       // 상한을 넘기면 서버가 거절해 **통지 자체가 사라진다** — 이 기능이 막으려던 것과
       // 같은 결과다. `harnessTailNotice` 가 이미 1000자로 줄이지만, 상한 판정을 그 함수의
       // 상수에 맡기지 않는다: 여기가 서버 계약을 아는 자리다.

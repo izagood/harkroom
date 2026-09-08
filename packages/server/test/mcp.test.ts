@@ -152,6 +152,22 @@ describe('mcp surface', () => {
     await client.close();
   });
 
+  /**
+   * 2026-09-08: 러너가 띄운 턴에게 저 계약을 그대로 주면 턴이 인박스를 또 보고 남의 앵커의
+   * 요청을 대신 한다(`mcp/guide.ts` 머리). 도구가 모드를 실제로 받는지를 여기서 지킨다 —
+   * `guideModes.test.ts` 는 문안을 보고, 이 테스트는 **배선**을 본다.
+   */
+  it('workspace.guide(mode=turn) drops the poll loop and pins the anchor', async () => {
+    const client = await mcpClient(botPat);
+    const { guide } = text(await client.callTool({
+      name: 'workspace.guide', arguments: { mode: 'turn' },
+    })) as { guide: string };
+    expect(guide).not.toMatch(/## poll 루프 계약/);
+    expect(guide).toMatch(/threadRootId/);
+    expect(guide).toMatch(/## avcs 사용 경계/);
+    await client.close();
+  });
+
   it('inbox.poll returns mention created after the call (long-poll)', async () => {
     const client = await mcpClient(botPat);
     const pending = client.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 10_000 } });
