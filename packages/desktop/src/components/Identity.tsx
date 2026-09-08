@@ -130,15 +130,23 @@ function useAvatarUrl(accountId: string | null, attachmentId: string | null): st
  * 회귀선은 `test/typeScale.test.ts` 이고, 이 자리들을 예외로 적어 뒀다.
  */
 export function Identity({ account, className = '', variant = 'badge' }: IdentityProps) {
-  // 에이전트에게만 사진을 받지 않는다 — 에이전트는 스스로 올릴 수단이 없고(#159 범위 밖),
-  // 그 자리는 글리프가 지킨다. 훅은 조건부로 부를 수 없으므로 인자로 걸러 낸다.
-  // #365 로 사람의 `badge` 가 아무것도 그리지 않게 되었으므로 variant 도 같이 걸러 낸다 —
-  // 그리지 않는 자리에서 바이트를 받으면 사람 100 명이 선 디렉터리가 아무것도 안 보이면서
-  // 왕복 100 번을 낸다. 캐시가 있어 첨부당 한 번이지만, 그 한 번도 필요 없는 왕복이다.
-  const human = account && account.kind === 'human' && variant === 'avatar';
+  // 사람과 에이전트 **둘 다** 사진을 받는다. 훅은 조건부로 부를 수 없으므로 인자로 걸러 낸다.
+  //
+  // 여기가 `kind === 'human'` 으로 좁혀져 있었다. 그때는 참이었지만(#159 는 사람만 올렸다)
+  // Task 15-4 가 에이전트 쓰기 경로(`PUT /accounts/agents/:id/avatar`)를 열면서 거짓이
+  // 되었다 — 그 커밋은 라우트·api·컨트롤러·설정 화면을 다 만들고 **읽는 자리인 여기만
+  // 건드리지 않았다.** 결과는 조용한 실패다: 소유자가 사진을 올리면 서버는 200 을 주고
+  // DB 도 바뀌는데 아래 에이전트 분기의 `avatarUrl` 은 영원히 null 이라 화면은 이니셜
+  // 색상 그대로다. 사람에게는 "업로드가 안 먹었다"로만 보인다.
+  //
+  // variant 는 그대로 걸러 낸다. `badge` 자리는 사진을 그리는 자리가 아니다(사람은 #365
+  // 로 아무것도 그리지 않고, 에이전트는 🤖 배지다) — 그리지 않는 자리에서 바이트를 받으면
+  // 100 명이 선 디렉터리가 아무것도 안 보이면서 왕복 100 번을 낸다. 캐시가 있어 첨부당 한
+  // 번이지만, 그 한 번도 필요 없는 왕복이다.
+  const showsPhoto = account !== undefined && variant === 'avatar';
   const avatarUrl = useAvatarUrl(
-    human ? account.id : null,
-    human ? account.avatarAttachmentId : null,
+    showsPhoto ? account.id : null,
+    showsPhoto ? account.avatarAttachmentId : null,
   );
 
   // #181 소유자는 계정 디렉터리에서 푼다. `getState()` 가 아니라 **구독**이어야 한다 —

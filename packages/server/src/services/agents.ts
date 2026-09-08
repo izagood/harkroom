@@ -13,8 +13,9 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   -- 에이전트는 상태를 고를 수 없다(서버가 거절한다). 기본값 그대로지만 AccountView 의
   -- 필수 필드라 형태를 맞춰 준다 — 화면은 사람 계정에만 이 값을 그린다.
   a.status, a.status_text as "statusText",
-  -- 에이전트는 스스로 아바타를 올리지 않는다(#159 범위 밖). AccountView 의 필수 필드라
-  -- 형태를 맞춰 주고, 값은 그대로 null 로 남아 화면이 기존 폴백(글리프)을 그린다.
+  -- 에이전트는 스스로 올릴 손이 없지만 소유자·admin 이 대신 건다
+  -- (Task 15-4, PUT /accounts/agents/:id/avatar). 그래서 이 값은 null 로 남지 않는다 —
+  -- 화면은 사람과 **같은 규칙**으로 이 id 를 보고 사진을 받아 온다(Identity).
   a.avatar_attachment_id as "avatarAttachmentId",
   v.version as "runnerVersion",
   -- #129 종료 요청. 러너 자신(GET /agent/config)과 운영자 목록이 **같은 뷰**를 본다 —
