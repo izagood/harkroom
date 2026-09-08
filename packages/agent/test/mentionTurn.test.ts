@@ -2706,3 +2706,74 @@ describe('타임아웃이 무발화 경과를 잰다 (2026-09-08)', () => {
     expect((turnOpts[0] as { timeoutMs?: number }).timeoutMs).toBe(12_345);
   });
 });
+
+// ── 회수로 끝난 턴은 실패가 아니다(2026-09-08 프로덕션 관측)
+//
+// TUI 는 답하고도 죽지 않으므로 **러너가 죽인다**. 그 수단이 SIGTERM 이고 종료 코드는
+// 143 이다 — `-p` 시절의 "종료 코드가 곧 성패"가 여기서 깨진다.
+//
+// **실측**: 에이전트가 답을 완성해 스레드에 올린 턴들이 `답변 실패 (1/3)` 로 기록되고
+// 재시도 3회를 태웠다. 중복 발화는 `answered` 판정이 막았지만, 로그가 성공한 턴을
+// 실패로 말했고 그 로그로 하루를 진단했다.
+//
+// **위 `endHarness` 가 이것을 못 잡은 이유**: 그 가짜는 회수당한 뒤에도 `exitCode: 0`
+// 을 돌려준다. 실물 PTY 는 SIGTERM 을 맞으면 143 이다 — 픽스처가 실물과 다른 성질을
+// 가지면 그 층은 테스트가 전부 초록이어도 보증되지 않는다.
+describe('회수로 끝난 턴의 성패 (2026-09-08)', () => {
+  /** `endHarness` 와 같되, **회수당하면 실물처럼 143 으로 끝난다**. */
+  function killedHarness(exitCode = 143) {
+    let killed: string | null = null;
+    let notifyViewers: ((n: number) => void) | undefined;
+    return {
+      killed: () => killed,
+      viewers: (n: number) => notifyViewers?.(n),
+      relay: {
+        openSession(input: { onViewerCount?: (n: number) => void }) {
+          notifyViewers = input.onViewerCount;
+          return { sessionId: 'kill-1', push: () => {}, bindInput: () => {}, needsAttention: () => {}, close: () => {} };
+        },
+      },
+      script: (after: () => Promise<void> | void) => async (_plan: TurnPlan, opts: {
+        onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+      }) => {
+        opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+        await after();
+        // 회수를 기다렸다가, 죽었으면 실물처럼 143 으로 끝난다.
+        for (let i = 0; i < 40 && killed === null; i += 1) await new Promise((r) => setTimeout(r, 10));
+        return { exitCode: killed ? exitCode : 0, timedOut: false, tail: '' };
+      },
+    };
+  }
+
+  it('발화한 뒤 회수된 턴은 성공이다 — 143 을 실패로 읽지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = killedHarness();
+    const { deps, runTurn } = await makeDeps(fake, {
+      relay: h.relay, utteranceProbeMs: 5, orphanMs: 5,
+    });
+    runTurn.script = h.script(async () => { await fake.post(CHANNEL, '답했다', null); });
+
+    // 던지면 호출자가 "답변 실패"로 기록하고 재시도 3회를 태운다 — 이미 답한 스레드에.
+    await expect(runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+    })).resolves.toBeTruthy();
+    expect(h.killed()).toBe('SIGTERM');
+  });
+
+  it('발화 없이 죽은 143 은 여전히 실패다 — 무발화를 성공으로 뭉개지 않는다', async () => {
+    // 회수는 발화한 턴에만 예약되지만, 무발화 시계도 같은 SIGTERM 을 쓴다. 그 둘을
+    // 종료 코드로 못 가르므로 **발화 여부**로 가른다.
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = killedHarness();
+    const { deps, runTurn } = await makeDeps(fake, {
+      relay: h.relay, utteranceProbeMs: 5, orphanMs: 5, turnTimeoutMs: 60,
+    });
+    runTurn.script = h.script(async () => { /* 아무 말도 하지 않는다 */ });
+
+    await expect(runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+    })).rejects.toThrow();
+  });
+});

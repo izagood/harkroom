@@ -694,14 +694,20 @@ export async function runMentionTurn(
     ?? ((fn: () => void, ms: number) => { const t = setTimeout(fn, ms); t.unref?.(); return () => clearTimeout(t); });
   const end: {
     controls: PtyControls | null; exited: boolean; spoke: boolean; viewers: number; silenced: boolean;
+    /**
+     * **러너가 이 턴을 죽였는가**(2026-09-08). 종료 코드로는 못 가른다: 회수도 무발화도
+     * SIGTERM 이라 둘 다 143 이고, 하네스가 스스로 죽은 143 과도 같다.
+     */
+    reclaimed: boolean;
     cancelReclaim: (() => void) | null; cancelProbe: (() => void) | null; cancelSilence: (() => void) | null;
   } = {
-    controls: null, exited: false, spoke: false, viewers: 0, silenced: false,
+    controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
   };
 
   const reclaim = (): void => {
     if (end.exited || !end.controls) return;
+    end.reclaimed = true;
     // SIGTERM 이 1차다 — 하네스가 모델 요청·파일 쓰기 중일 수 있어 정리할 기회를 준다.
     // 유예 뒤 SIGKILL 승격은 `runPtyTurn` 이 이미 갖고 있다. 세션은 디스크라 잃는 것이 없다.
     end.controls.kill('SIGTERM');
@@ -934,7 +940,16 @@ export async function runMentionTurn(
   // `end.silenced` 를 함께 본다(2026-09-08): 무발화로 회수한 턴은 SIGTERM 으로 죽으므로
   // exitCode 만 봐도 대개 실패로 잡히지만, 그 사실을 조건에 명시해야 아래 문구가 원인을
   // 정확히 말한다 — "무발화"와 "하네스가 스스로 죽었다"는 사람이 할 일이 다르다.
-  if (result.exitCode !== 0 || result.timedOut || end.silenced) {
+  // **발화한 뒤 우리가 회수한 턴은 성공이다**(2026-09-08 프로덕션 관측). TUI 는 답하고도
+  // 죽지 않으므로 러너가 SIGTERM 으로 끝내는데, 그 143 을 실패로 읽으면 답을 낸 턴이
+  // "답변 실패"로 기록되고 재시도 3회를 태운다 — 이미 답한 스레드에.
+  //
+  // **종료 코드로는 못 가른다**: 회수·무발화·하네스 자멸이 전부 143 이다. 그래서 러너가
+  // 아는 두 사실을 함께 본다 — 우리가 죽였는가(`reclaimed`), 그리고 답했는가(`spoke`).
+  // 무발화 회수는 `spoke` 가 거짓이므로 아래 실패 경로에 그대로 남는다.
+  const 회수로끝났다 = end.reclaimed && end.spoke && !end.silenced;
+
+  if (!회수로끝났다 && (result.exitCode !== 0 || result.timedOut || end.silenced)) {
     // #81: 실패한 턴은 turnsRun 을 올리지 않는다. claude 의 세션 uuid 는 러너가 발급만 했을
     // 뿐 하네스에 등록됐다는 증거가 아니다 — 올리면 다음 턴이 isFirstTurn=false 로 판단해
     // `-r`(resume)로 조립하고, 존재한 적 없는 세션을 이어받으려다 또 실패한다. 0 으로 둬야
