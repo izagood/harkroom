@@ -349,6 +349,58 @@ describe('메모리 주입 (#139)', () => {
 });
 
 /**
+ * 스킬 제안 절(#140 의 마지막 조각). **이 describe 가 지키는 것은 문구가 아니라 "0" 이다.**
+ *
+ * 2026-09-09 에 확인한 상태: 테이블·MCP 도구·승인 화면·러너 실체화가 전부 머지·릴리스됐고
+ * 설정 → Skills 는 대기 0 / 승인 0 / 비활성 0 이었다. 배관 어디도 고장난 데가 없었고,
+ * 시스템 프롬프트에 스킬 이야기가 한 줄도 없었을 뿐이다. 그러니 이 절이 조용히 지워지거나
+ * 문턱 문장만 빠지면 기능은 **다시 0 으로** 돌아가고, 그때 아무 테스트도 빨개지지 않는다.
+ * 그래서 절의 존재(도구 이름)와 양쪽 문턱을 따로 단정한다.
+ */
+describe('스킬 제안 절 (#140)', () => {
+  const build = (memory: MemoryContext = { core: null, slugs: [] }) =>
+    buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory });
+
+  it('제안 도구와 승인 게이트를 알려준다 — 도구 목록에 이름만 있는 것으로는 안 불린다', () => {
+    const s = build();
+    expect(s).toContain('skill.propose');
+    expect(s).toContain('제안만 할 수 있다');
+    expect(s).toContain('SKILL.md');
+  });
+
+  // 문턱이 낮으면 승인 큐가 차서 게이트가 형식이 되고, 없으면 아무도 제안하지 않는다.
+  // 양쪽을 다 단정해야 한쪽만 남은 절이 통과하지 못한다.
+  it('언제 제안하나(반복·워크스페이스 공용)를 말한다', () => {
+    const s = build();
+    expect(s).toContain('세 번쯤 되풀이');
+    expect(s).toContain('다른 에이전트도 그대로 따라할 수 있는');
+  });
+
+  it('무엇은 제안하지 않나(일회성·불확실)를 말한다 — 남발은 승인 게이트를 형식으로 만든다', () => {
+    const s = build();
+    expect(s).toContain('제안하지 마라');
+    expect(s).toContain('사람의 승인 시간');
+  });
+
+  it('나만 쓸 사실은 메모리로 가라고 갈라 준다', () => {
+    expect(build({ core: null, slugs: [] })).toContain('`memory.set` 이다');
+  });
+
+  /**
+   * **#139 의 불변식은 프롬프트 전체의 성질이다.** 메모리 조회가 실패한 턴에 프롬프트가
+   * 메모리를 입에 올리면 에이전트는 "내 기억은 비어 있다"고 읽고 진짜 기억을 덮어쓴다.
+   * 위 '조회가 실패하면 온보딩 안내조차 들어가지 않는다' 는 `memorySection` 만 보던 선이고,
+   * 스킬 절이 같은 이름을 적으면 그 선은 같은 파일 안에서 뚫린다 — 여기가 그 짝이다.
+   */
+  it('메모리 조회가 실패한 턴에는 memory.set 을 가리키지 않는다 — 그래도 스킬 절은 남는다', () => {
+    const s = build('unavailable');
+    expect(s).not.toContain('memory.set');
+    expect(s).toContain('skill.propose');
+    expect(s).toContain('남이 그대로 따라할 절차');
+  });
+});
+
+/**
  * 2026-09-07 16:06·16:09 — 사용자의 말: *"그럼 다시 로그인 할 수 있게 알려줬어야지"*.
  *
  * 그때 스레드에 남은 것은 `FAILURE_NOTICE`("운영자 확인이 필요합니다") 두 줄이었다.
