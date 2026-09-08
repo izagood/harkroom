@@ -39,6 +39,14 @@ import {
   type LoginPathReader, type RunnerApi, type RunnerSecretStore, type RunnerSpawner, type RunnerState,
 } from '../src/lib/runnerLauncher';
 import { fakeDaemon } from './helpers/fakeDaemon';
+import { translator } from '../src/i18n';
+
+// **한국어를 지목해 넘긴다.** 이 파일의 축들은 한국어 사유 문구로 쓰여 있고, 그 문구가
+// 지키는 것은 언어가 아니라 **사유가 뭉개지지 않았다**는 규율이다(`daemonFacts.test.tsx`
+// 가 같은 이유로 언어를 고정한다). 영어가 원본이 되면서 기본값이 영어가 됐으므로,
+// 한국어를 재려면 한국어라고 말해야 한다.
+const ko = translator('ko');
+
 import { DEFAULT_PREFS, undoSendStorage } from '../src/lib/prefs';
 import { acc, chan, msg, scheduledApiStub } from './helpers/fakeApi';
 
@@ -78,7 +86,10 @@ async function launchWithRealFailure(): Promise<RunnerState> {
   };
   const spawner: RunnerSpawner = { spawn: vi.fn() };
   const loginPath: LoginPathReader = { read: vi.fn(async () => '/login/bin') };
-  const launcher = new RunnerLauncher(api, secrets, spawner, loginPath, () => 1_700_000_000_000, fakeDaemon());
+  const launcher = new RunnerLauncher(
+    api, secrets, spawner, loginPath, () => 1_700_000_000_000, fakeDaemon(),
+    undefined, undefined, ko,
+  );
 
   // 자동 기동이 기본으로 켜져 있다는 것이 이 결함의 전제다 — 꺼져 있으면 실행기는 아예
   // 불리지 않고 실패 상태도 안 생긴다(controller.ts::startRunners).
