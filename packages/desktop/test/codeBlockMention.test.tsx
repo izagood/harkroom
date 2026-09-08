@@ -20,6 +20,9 @@ import { acc, grp, msg } from './helpers/fakeApi';
  */
 
 const KNOWN = ['fizz', 'someone', 'me'];
+/** `<@id>` 토큰은 36자 uuid 만 인정한다(`MENTION_TOKEN_PATTERN`) — 짧은 가짜 id 로는 이 자리를 잴 수 없다. */
+const UUID_SOMEONE = '11111111-1111-4111-8111-111111111111';
+const UUID_GONE = '22222222-2222-4222-8222-222222222222';
 const GROUPS = ['oncall'];
 
 const show = (body: string) =>
@@ -47,6 +50,7 @@ beforeEach(() => {
     accounts: {
       u1: acc('u1', 'me'),
       u2: acc('u2', 'someone'),
+      [UUID_SOMEONE]: acc(UUID_SOMEONE, 'someone'),
       a1: acc('a1', 'fizz', 'agent'),
     },
     groups: [grp('g1', 'oncall', 'On-call')],
@@ -141,6 +145,27 @@ describe('인용 안의 handle 은 멘션이 아니다 (#592)', () => {
 
   it('"부를 상대" 줄에도 인용 안은 나오지 않는다', () => {
     expect(bodyRecipients('> @fizz 랑 @oncall 이라고 적혀 있었다', KNOWN, GROUPS, 'me')).toEqual([]);
+  });
+
+  /**
+   * 인용 안에서도 저장된 멘션 토큰은 **지금의 handle 로 읽힌다**(#271).
+   *
+   * 인용이 끄는 것은 "부르는 것" 하나다. 토큰 해석까지 같이 끄면 옮겨 적은 말이 깨진다 —
+   * 정본이 `<@id>` 이므로(#271) 앞 메시지 본문을 그대로 인용하면 날 uuid 가 화면에 드러난다.
+   * 에이전트는 저장된 본문을 그대로 옮겨 적으므로 이 자리를 실제로 밟는다.
+   */
+  it('인용 안의 <@id> 토큰도 지금 handle 로 읽힌다 — 날 uuid 가 드러나지 않는다', () => {
+    show(`> 앞 사람 말: <@${UUID_SOMEONE}> 봐줘`);
+    const quote = screen.getByTestId('md-quote');
+    expect(quote.textContent).toBe('앞 사람 말: @someone 봐줘');
+    expect(quote.textContent).not.toContain(UUID_SOMEONE);
+    // 읽히기만 한다 — 칠하지도, 부르지도 않는다.
+    expect(highlighted()).toEqual([]);
+  });
+
+  it('모르는 id 는 인용 안에서도 같은 라벨로 떨어진다 — 인용만의 규칙을 새로 만들지 않는다', () => {
+    show(`> 옛 계정: <@${UUID_GONE}> 이라고 했다`);
+    expect(screen.getByTestId('md-quote').textContent).toBe('옛 계정: @알 수 없음 이라고 했다');
   });
 });
 
