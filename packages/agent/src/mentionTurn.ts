@@ -212,6 +212,18 @@ export interface MentionTurnDeps {
    * 나머지 턴이 풀린다 — 스레드마다 부르면 사람이 같은 승인을 반복한다.
    */
   attentionLedger?: AttentionLedger;
+  /**
+   * 이 턴이 **사람을 부를 수 있는가**(2026-09-08). 계정 축의 마지막에서만 참이다.
+   *
+   * **왜 축의 마지막에서만인가.** 사람을 부르는 경로는 PTY 를 살려 두려고 **던지지
+   * 않는다** — 그러면 `withAccountFailover` 가 실패를 못 보고 계정 전환이 일어나지
+   * 않는다. 즉 "부른다"와 "전환한다"는 동시에 못 한다. 앞 계정에서 부르면 준비된
+   * 계정이 뒤에 있는데도 사람을 깨우고, 그 계정은 시도조차 되지 않는다.
+   *
+   * 거짓이면 `onAttention` 을 아예 넘기지 않는다 — `pty.ts` 는 그 콜백의 **유무로**
+   * 두 정책(죽이고 던진다 / 살리고 부른다)을 가르기 때문이다.
+   */
+  callsForHuman?: boolean;
 }
 
 /**
@@ -682,14 +694,20 @@ export async function runMentionTurn(
     ?? ((fn: () => void, ms: number) => { const t = setTimeout(fn, ms); t.unref?.(); return () => clearTimeout(t); });
   const end: {
     controls: PtyControls | null; exited: boolean; spoke: boolean; viewers: number; silenced: boolean;
+    /**
+     * **러너가 이 턴을 죽였는가**(2026-09-08). 종료 코드로는 못 가른다: 회수도 무발화도
+     * SIGTERM 이라 둘 다 143 이고, 하네스가 스스로 죽은 143 과도 같다.
+     */
+    reclaimed: boolean;
     cancelReclaim: (() => void) | null; cancelProbe: (() => void) | null; cancelSilence: (() => void) | null;
   } = {
-    controls: null, exited: false, spoke: false, viewers: 0, silenced: false,
+    controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
   };
 
   const reclaim = (): void => {
     if (end.exited || !end.controls) return;
+    end.reclaimed = true;
     // SIGTERM 이 1차다 — 하네스가 모델 요청·파일 쓰기 중일 수 있어 정리할 기회를 준다.
     // 유예 뒤 SIGKILL 승격은 `runPtyTurn` 이 이미 갖고 있다. 세션은 디스크라 잃는 것이 없다.
     end.controls.kill('SIGTERM');
@@ -787,33 +805,39 @@ export async function runMentionTurn(
       ...(usesTui ? {
         injectPrompt: {
           text: prompt,
-          /**
-           * 주입이 **먹혔는지**도 잰다(2026-09-08). 증거는 세션 기록 파일의 존재다 —
-           * 화면 문자열로 재면 하네스 버전에 묶이지만, 파일 생성은 사실 자체다.
-           */
-          confirmDelivery: {
-            probe: () => sessionTranscriptExists(def.harness, sessionIdForProbe, {
-              configDir: deps.claudeConfigDir,
-            }),
-          },
-          /**
-           * **사람 부르기는 마지막 수단이다.** 여기까지 왔다는 것은 `withAccountFailover`
-           * 가 풀을 다 태웠다는 뜻이다 — 준비 실패는 계정 전환 방아쇠이므로
-           * (`claudeAccounts.ts::switchesAccount`), 마지막 계정이 아니면 이 콜백이 아니라
-           * 그 전환이 먼저 일어난다.
-           *
-           * 이 턴은 여기서 끝나지 않는다: PTY 가 살아 있고, 사람이 관문을 지나면 그
-           * 자리에서 프롬프트가 주입된다. 끝은 exit 이거나 무발화 시계다 — 그 시계는
-           * 사람이 붙어 있으면(`end.viewers > 0`) 지나가므로, 사람이 오면 살아남는다.
-           */
-          onAttention: (screen: string) => {
-            const label = deps.accountLabel ?? '(기본)';
-            if (deps.attentionLedger && !deps.attentionLedger.claim(label, sessionIdForProbe ?? key)) return;
-            session?.needsAttention(screen, label);
-            console.error(
-              `[mentionTurn] ${key}: 사람 손이 필요하다(계정=${label}) — 앱이 이 세션의 터미널을 연다`,
-            );
-          },
+          // 아래 두 필드는 **함께 켜지고 함께 꺼진다**: `confirmDelivery` 는 `onAttention`
+          // 이 있어야 할 일이 있고(부를 곳이 없으면 확인해도 소용없다), `onAttention` 은
+          // 축의 마지막에서만 열린다. 앞 계정에서는 준비 실패가 그대로 던져져
+          // 계정 전환을 태운다 — 그것이 이 턴이 아직 쓸 수 있는 더 싼 수단이다.
+          ...(deps.callsForHuman === false ? {} : {
+            /**
+             * 주입이 **먹혔는지**도 잰다(2026-09-08). 증거는 세션 기록 파일의 존재다 —
+             * 화면 문자열로 재면 하네스 버전에 묶이지만, 파일 생성은 사실 자체다.
+             */
+            confirmDelivery: {
+              probe: () => sessionTranscriptExists(def.harness, sessionIdForProbe, {
+                configDir: deps.claudeConfigDir,
+              }),
+            },
+            /**
+             * **사람 부르기는 마지막 수단이다.** 여기까지 왔다는 것은 `withAccountFailover`
+             * 가 풀을 다 태웠다는 뜻이다 — 준비 실패는 계정 전환 방아쇠이므로
+             * (`claudeAccounts.ts::switchesAccount`), 마지막 계정이 아니면 이 콜백이 아니라
+             * 그 전환이 먼저 일어난다.
+             *
+             * 이 턴은 여기서 끝나지 않는다: PTY 가 살아 있고, 사람이 관문을 지나면 그
+             * 자리에서 프롬프트가 주입된다. 끝은 exit 이거나 무발화 시계다 — 그 시계는
+             * 사람이 붙어 있으면(`end.viewers > 0`) 지나가므로, 사람이 오면 살아남는다.
+             */
+            onAttention: (screen: string) => {
+              const label = deps.accountLabel ?? '(기본)';
+              if (deps.attentionLedger && !deps.attentionLedger.claim(label, sessionIdForProbe ?? key)) return;
+              session?.needsAttention(screen, label);
+              console.error(
+                `[mentionTurn] ${key}: 사람 손이 필요하다(계정=${label}) — 앱이 이 세션의 터미널을 연다`,
+              );
+            },
+          }),
         },
       } : {}),
       // 릴레이가 없으면 탭도 없다 — `undefined` 를 넘겨 pty 쪽 호출을 아예 안 만든다.
@@ -916,7 +940,16 @@ export async function runMentionTurn(
   // `end.silenced` 를 함께 본다(2026-09-08): 무발화로 회수한 턴은 SIGTERM 으로 죽으므로
   // exitCode 만 봐도 대개 실패로 잡히지만, 그 사실을 조건에 명시해야 아래 문구가 원인을
   // 정확히 말한다 — "무발화"와 "하네스가 스스로 죽었다"는 사람이 할 일이 다르다.
-  if (result.exitCode !== 0 || result.timedOut || end.silenced) {
+  // **발화한 뒤 우리가 회수한 턴은 성공이다**(2026-09-08 프로덕션 관측). TUI 는 답하고도
+  // 죽지 않으므로 러너가 SIGTERM 으로 끝내는데, 그 143 을 실패로 읽으면 답을 낸 턴이
+  // "답변 실패"로 기록되고 재시도 3회를 태운다 — 이미 답한 스레드에.
+  //
+  // **종료 코드로는 못 가른다**: 회수·무발화·하네스 자멸이 전부 143 이다. 그래서 러너가
+  // 아는 두 사실을 함께 본다 — 우리가 죽였는가(`reclaimed`), 그리고 답했는가(`spoke`).
+  // 무발화 회수는 `spoke` 가 거짓이므로 아래 실패 경로에 그대로 남는다.
+  const 회수로끝났다 = end.reclaimed && end.spoke && !end.silenced;
+
+  if (!회수로끝났다 && (result.exitCode !== 0 || result.timedOut || end.silenced)) {
     // #81: 실패한 턴은 turnsRun 을 올리지 않는다. claude 의 세션 uuid 는 러너가 발급만 했을
     // 뿐 하네스에 등록됐다는 증거가 아니다 — 올리면 다음 턴이 isFirstTurn=false 로 판단해
     // `-r`(resume)로 조립하고, 존재한 적 없는 세션을 이어받으려다 또 실패한다. 0 으로 둬야
