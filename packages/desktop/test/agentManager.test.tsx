@@ -43,6 +43,9 @@ const fakeController = (agents: AgentView[] = []) => {
     // #139: 기본은 "읽었고 비어 있다". 실패나 목록이 필요한 테스트가 갈아끼운다.
     agentMemory: vi.fn(async (): Promise<{ slug: string; value: string; updatedAt: string }[]> => []),
     deleteAgentMemory: vi.fn(async (): Promise<void> => undefined),
+    // 사진을 건 에이전트를 그리면 `Identity` 가 바이트를 받으러 온다 — 없으면 화면이
+    // 아니라 스텁이 터진다. 이 화면은 사진을 건 에이전트를 정상적으로 그린다.
+    fetchAvatar: vi.fn(async (): Promise<Blob> => new Blob(['png-bytes'])),
   };
   setController(c as unknown as Controller);
   return c;
