@@ -1098,3 +1098,85 @@ describe('AgentGrid — 사이드바는 한 픽셀도 안 바뀐다', () => {
       .toContain('bg-surface-sunken');
   });
 });
+
+/**
+ * **물러나는 중은 '멈춘 것'이 아니다** (2026-09-08 14:04 실측 — 이 사고의 시작).
+ *
+ * 그날의 카드가 이랬다:
+ *
+ * ```
+ * 하네스   claude-code
+ * 러너     [버전 모름]        ← 점선 칩
+ * 활동     11분 전
+ *          ▶                  ← 얼굴 위에 실행하기 글리프
+ * ```
+ *
+ * 실제로는 그 러너가 **멀쩡히 일하고 있었다.** 앱이 자동 업데이트로 세대가 바뀌어 daemon 이
+ * 드레인(SIGTERM)을 보냈고, 러너는 설계대로 11.6분짜리 턴을 마치는 중이었다. 앱은 그 사실을
+ * `restarting` 으로 알고 있었다 — `RunnerStatus` 의 그 값 주석이 이유를 이미 적어 뒀다:
+ * *"'running' 으로 두면 … 'stopped' 로 두면 없는 종료를 단정한다. 둘 다 거짓 신호다."*
+ *
+ * **그런데 `faceState` 가 그 구분을 버렸다.** `restarting` 은 어느 분기에도 안 들어 presence
+ * 판정까지 흘러갔고, 롱턴 동안 폴이 안 나가 presence TTL(30초)이 만료된 러너는 `online` 에
+ * 없었다 → `stopped` → ▶. 사람이 그 ▶ 를 눌렀고, 그것이 PAT 회전을 불러 일하던 러너의
+ * 자격증명을 폐기했다. **화면이 만든 오해가 사람을 통해 사고가 됐다.**
+ *
+ * `unknown` 으로 미루지 않는 이유: 그 얼굴은 "서버와 끊겨 N개 에이전트의 생사를 알 수 없다"를
+ * **글자로** 낸다(`agent-presence-unknown`). 끊기지도 않았고 우리가 알고 있는데 모른다고
+ * 적으면 그것도 거짓 신호다 — 하나를 다른 하나로 바꾸는 것뿐이다.
+ */
+describe('물러나는 중 — 다섯 번째 얼굴 (2026-09-08 실측)', () => {
+  const retiring = {
+    agents: [agent('alpha')],
+    runnerStates: {
+      'id-alpha': {
+        agentId: 'id-alpha', status: 'restarting' as const, exitCode: null,
+        message: '앞 세대 러너가 진행 중인 턴을 끝내고 물러나는 중이다 — 끝나면 새로 띄운다',
+      },
+    },
+    // presence TTL 이 만료된 상태 — 롱턴 동안 폴이 나가지 않아 그날 실제로 이랬다.
+    online: [],
+    connected: true,
+  };
+
+  /**
+   * **이 단언 하나가 그날의 클릭 경로를 닫는다.** ▶ 는 "눌러서 켜라"인데, 지금 그 러너는
+   * 일하고 있다 — 켜라고 권할 것이 없다(`#443` 이 `unknown` 에 ▶ 를 안 단 것과 같은 근거).
+   */
+  it('▶ 를 달지 않는다 — 일하고 있는 러너를 켜라고 권하지 않는다', () => {
+    grid({ ...retiring, onRelaunch: vi.fn() });
+
+    expect(screen.queryByTestId('agent-relaunch-alpha')).toBeNull();
+  });
+
+  it('생사를 모른다고 적지 않는다 — 끊기지 않았고 우리가 알고 있다', () => {
+    grid(retiring);
+
+    expect(screen.getByTestId('agent-card-alpha').dataset.face).not.toBe('unknown');
+    expect(screen.queryByTestId('agent-presence-unknown')).toBeNull();
+  });
+
+  /**
+   * 색을 빼는 것만으로는 `stopped`(꺼졌다)와 구분되지 않고, 사람은 회색을 보면 켜려 한다 —
+   * `#443` 이 `unknown` 에 대해 세운 그 규율이 여기에도 그대로 적용된다. 그날 사람이 읽을
+   * 글자가 하나도 없었던 것이 문제의 절반이었다.
+   */
+  it('무엇을 기다리는지 글자로 말한다', () => {
+    grid(retiring);
+
+    expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('retiring');
+    expect(screen.getByTestId('agent-retiring-alpha').textContent).toContain('턴');
+  });
+
+  /**
+   * **대조군.** 위 셋만 있으면 `faceState` 가 무조건 `retiring` 을 돌려줘도 초록이다 —
+   * 그러면 멈춘 러너를 켤 길이 사라진다.
+   */
+  it('정말 멈춘 러너는 여전히 ▶ 를 받는다', () => {
+    grid({ agents: [agent('alpha')], online: [], connected: true, onRelaunch: vi.fn() });
+
+    expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('stopped');
+    expect(screen.getByTestId('agent-relaunch-alpha')).toBeTruthy();
+    expect(screen.queryByTestId('agent-retiring-alpha')).toBeNull();
+  });
+});
