@@ -4,7 +4,7 @@ import { splitMentions } from '../lib/mention';
 import { splitLinks, type LinkTarget, type BodyPart } from '../lib/link';
 import { extractPreviewUrls } from '@murmur/shared';
 import { splitCode } from '../lib/code';
-import { parseBlocks, type Block, type Emphasis, type Inline } from '../lib/markdown';
+import { parseBlocks, type Align, type Block, type Emphasis, type Inline } from '../lib/markdown';
 import { shouldCollapse, COLLAPSED_MAX_PX } from '../lib/collapse';
 import { getExternalOpener } from '../lib/openExternal';
 import { getController } from '../state/controller';
@@ -320,6 +320,56 @@ export function MessageBody({
               </li>
             ))}
           </Tag>
+        );
+      }
+      case 'table': {
+        // 정렬은 구분줄이 말한 것만 따른다. `null` 은 왼쪽이다 — 칸 내용을 보고 숫자면
+        // 오른쪽으로 미루는 추측을 하지 않는다(`lib/markdown` 의 `Align` 참고).
+        const cell = (a: Align) =>
+          a === 'center' ? 'text-center' : a === 'right' ? 'text-right' : 'text-left';
+        return (
+          // 넓은 표는 **가로로 스크롤한다.** 대화 폭에 맞추려고 열을 접으면 같은 열이
+          // 행마다 다른 자리에 서고, 그때 표는 표가 아니게 된다. 코드 블록과 같은 선택이다.
+          <div key={key} className="my-2 overflow-x-auto last:mb-0">
+            <table
+              data-testid="md-table"
+              data-cols={String(block.align.length)}
+              className="min-w-full border-collapse text-[0.95em]"
+            >
+              <thead>
+                <tr>
+                  {block.head.map((c, ci) => (
+                    <th
+                      key={ci}
+                      // `scope` 를 두는 이유: 스크린리더가 각 칸을 읽을 때 어느 열인지
+                      // 함께 말해 준다. 굵게만 칠하면 그 연결이 전달되지 않는다.
+                      scope="col"
+                      className={`border border-border bg-surface-sunken px-2 py-1 font-semibold whitespace-normal ${cell(block.align[ci] ?? null)}`}
+                    >
+                      {renderSpans(c, `${key}-h-${ci}`)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {block.rows.map((row, ri) => (
+                  <tr key={ri} data-testid="md-table-row">
+                    {row.map((c, ci) => (
+                      <td
+                        key={ci}
+                        // 칸 안에서는 `pre-wrap` 을 끈다. 칸은 이미 앞뒤 여백을 떼고 왔고,
+                        // 여기서 여백을 그대로 지키면 표 폭이 글자 수가 아니라 사람이 칸을
+                        // 맞추려고 넣은 공백으로 결정된다.
+                        className={`border border-border px-2 py-1 align-top whitespace-normal ${cell(block.align[ci] ?? null)}`}
+                      >
+                        {renderSpans(c, `${key}-${ri}-${ci}`)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         );
       }
       case 'code':
