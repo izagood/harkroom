@@ -1504,11 +1504,20 @@ export const daemonSpawner: RunnerSpawner = {
       // 주석과 같은 사정) — 그 사실을 그대로 실패로 올린다.
       throw new Error('이 환경에서는 러너를 띄울 수 없다 — Tauri invoke 표면이 없다');
     }
+    // **env 를 이름 붙은 값으로 펴서 넘긴다** — 맵째로 넘기면 웹뷰가 자식의 환경을
+    // 임의로 고를 수 있고, 그것은 `#431` 이 지키는 성질(웹뷰는 값만 넘긴다)을 깬다.
+    // 대신 펴는 자리가 **한 칸씩 빠뜨릴 수 있는 자리**가 된다: `AGENT_VERSION` 이
+    // 그렇게 빠져서, 위층이 심어 준 버전이 여기서 사라지고 모든 러너가 자기 버전을
+    // `'unknown'` 으로 보고했다. 키를 늘릴 때는 이 자리도 같이 본다.
     const result = await invoke('daemon_spawn_runner', {
       agentId: req.agentId,
       murmurPat: req.env.MURMUR_PAT,
       murmurUrl: req.env.MURMUR_URL,
       path: req.env.PATH,
+      // 앱 버전을 얻지 못하면 위층이 `env` 에 키를 아예 넣지 않는다
+      // (`spawnRunner` 주석). 그 '없음'을 `null` 로 그대로 넘긴다 — Rust 쪽
+      // `Option<String>` 이 받아 env 에 넣지 않는다.
+      agentVersion: req.env.AGENT_VERSION ?? null,
     });
     const spawned = result as { agentId?: unknown; pid?: unknown; incarnationId?: unknown };
     if (typeof spawned?.incarnationId !== 'string' || typeof spawned.pid !== 'number') {
