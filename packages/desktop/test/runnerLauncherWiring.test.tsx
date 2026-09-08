@@ -9,7 +9,7 @@
  * 버튼이 실행기에 닿는지를 본다.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import {
   CREDENTIAL_REJECTED_LINE,
   EXECUTABLE_NOT_FOUND_LINE,
@@ -103,7 +103,9 @@ beforeEach(() => {
   usePrefsStore.setState({ runnerAutoStart: true });
   usePrefsStore.getState().setLocale('ko');
 });
-afterEach(() => { cleanup(); usePrefsStore.getState().setLocale('system'); });
+// 가짜 타이머를 쓴 축이 있다(아래 10번). 되돌리지 않으면 이 파일의 나머지 축이 멈춘
+// 시계 위에서 `waitFor` 를 돌다 죽는다 — 이미 진짜 시계면 아무 일도 안 한다.
+afterEach(() => { vi.useRealTimers(); cleanup(); usePrefsStore.getState().setLocale('system'); });
 
 describe('컨트롤러 → 실행기 배선', () => {
   it('presence 를 받은 뒤 내가 소유한 에이전트의 러너를 띄운다', async () => {
@@ -505,5 +507,93 @@ describe('9. 전체 재기동은 기다리는 대상을 숨기지 않는다', ()
     daemon.died('old1');
     daemon.died('old2');
     expect([...(await pending)].sort()).toEqual(['old1', 'old2']);
+  });
+});
+
+/**
+ * 10. **눌린 것과 갈리는 중인 것이 화면에 보인다** (2026-09-08 사용자 보고).
+ *
+ * 보고는 세 줄이었고 셋 다 같은 뿌리다 — *"전체 재기동을 눌렀는데 UI 적으로 아무 변화가
+ * 없어서 눌렀는지 알 수가 없었어"*, *"에이전트들 변화가 실시간으로 UI 에서 변하는 게
+ * 아니라 다른 화면을 갔다가 와야 해서"*, *"뒤쳐진 러너를 눌렀을 때도 상태 변화가 없어서"*.
+ *
+ * 8번이 이미 "누르면 그 러너가 갈린다"를 재고 있었다. **그것이 통과하는데도 화면은
+ * 아무 말도 안 했다** — 재는 것이 `daemon.kills` 였기 때문이다. 여기서는 사람이 보는
+ * 것만 잰다: 버튼의 낱말, 띠의 줄, 카드의 칩.
+ */
+describe('10. 전체 재기동은 눌린 것을 화면에 말한다', () => {
+  it('누른 즉시 낱말이 바뀌고 몇 대에 걸었는지 적힌다 — 다 돌아오면 그것도 적는다', async () => {
+    const daemon = fakeDaemon([liveRunner('old', true)]);
+    await boot([agentView('old', { runnerVersion: '0.1.6' })], ['old'], daemon, '0.1.15');
+    render(<AgentsSettings />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /뒤처진 러너 전체 재기동 \(1\)/ }));
+
+    // 앞 판본은 여기서 `disabled:opacity-50` 하나였다. 그 모양은 **0 대일 때의 평소
+    // 모양과 같다** — 그래서 누른 것이 아무 흔적도 안 남겼다.
+    await screen.findByRole('button', { name: '재기동 거는 중…' });
+    // 그리고 몇 대에 걸었는지는 **지금** 적혀야 한다. 컨트롤러의 반환값을 기다리면 그
+    // 값은 러너가 턴을 마친 뒤에야 온다(실측 상한 15분).
+    await screen.findByText(/러너 1대에 재기동을 걸었다/);
+
+    // 카드도 같은 사실을 말한다 — 뒤처짐 칩이 그대로 남아 있으면 사람은 다시 누른다.
+    await waitFor(() => expect(screen.getByTestId('agent-version-old').getAttribute('data-version'))
+      .toBe('restarting'));
+    expect(screen.getByTestId('agent-version-old').textContent).toBe('재기동 중…');
+
+    // 나가는 것을 **관측**해서 안다(`awaitRunnerExit`, 2초 간격) — 기본 1초로는 그
+    // 한 바퀴가 안 돈다.
+    daemon.died('old');
+    await screen.findByText(/러너 1대가 새 번들로 돌아왔다/, {}, { timeout: 5_000 });
+  });
+
+  /**
+   * 띠와 카드가 **같은 화면에서 서로 다른 말을 하던** 자리(실측 스크린샷). 사람이 그
+   * 비활성 버튼을 누르고 "눌렀는지 알 수가 없다"고 말한 것이 이 어긋남이다.
+   */
+  it('뒤처진 러너가 남의 기기 것이면 "전부 최신"이라고 하지 않는다', async () => {
+    const daemon = fakeDaemon([liveRunner('fresh', true)]);
+    await boot(
+      [
+        agentView('fresh', { runnerVersion: '0.1.15' }),
+        // 이 앱이 안 띄운 러너다 — `runnerStates` 에 없으므로 버튼의 대상이 아니다.
+        agentView('other', { runnerVersion: '0.1.6', ownerAccountId: 'u2' }),
+      ],
+      ['fresh', 'other'],
+      daemon,
+      '0.1.15',
+    );
+    render(<AgentsSettings />);
+
+    // 대상은 그대로 0 이다 — 남의 러너를 여기서 재기동하면 그 PAT·소유가 이 기기로 옮겨 온다.
+    const button = await screen.findByRole('button', { name: /뒤처진 러너 전체 재기동 \(0\)/ });
+    expect(button.hasAttribute('disabled')).toBe(true);
+    // 바뀌는 것은 **말**이다. 카드가 `· 뒤처짐` 을 달고 있는 옆에서 "전부 이 번들이다"는 거짓이다.
+    await screen.findByText(/뒤처진 러너 1대는 다른 기기의 것이라/);
+    expect(screen.queryByText('도는 러너가 전부 이 번들이다.')).toBeNull();
+    expect(screen.getByTestId('agent-version-other').getAttribute('data-version')).toBe('stale');
+  });
+
+  /**
+   * 실시간 갱신. `agents` 를 읽는 자리가 마운트 한 번뿐이었고, 그것이 *"다른 화면을
+   * 갔다가 와야 해서"* 의 전부다 — 그 왕복이 이 컴포넌트를 다시 마운트시킨다.
+   *
+   * **가짜 시계를 `boot()` 뒤에 켠다.** `boot` 안의 `waitFor` 가 멈춘 시계 위에서는
+   * 20초를 기다리다 죽고, `render` 앞에 켜야 폴의 `setInterval` 이 가짜 시계에 걸린다.
+   */
+  it('러너 버전이 바뀌면 화면을 떠나지 않아도 카드가 따라온다', async () => {
+    const daemon = fakeDaemon([liveRunner('old', true)]);
+    const { api } = await boot([agentView('old', { runnerVersion: '0.1.6' })], ['old'], daemon, '0.1.15');
+
+    vi.useFakeTimers();
+    render(<AgentsSettings />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByTestId('agent-version-old').getAttribute('data-version')).toBe('stale');
+
+    // 서버가 새 버전을 들었다(러너가 새 번들로 다시 떴다).
+    api.listAgents = vi.fn(async () => [agentView('old', { runnerVersion: '0.1.15' })]);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(screen.getByTestId('agent-version-old').getAttribute('data-version')).toBe('current');
   });
 });

@@ -874,6 +874,17 @@ export const en = {
 
   'agents.stale.allCurrent': 'Every running runner is on this bundle.',
   /**
+   * 뒤처진 러너가 **보이는데 이 버튼의 대상이 아닐 때.** `allCurrent` 를 그대로 쓰면
+   * 카드가 `· Outdated` 를 달고 있는 옆에서 "전부 이 번들이다"를 단정한다 — 그 어긋남이
+   * 사람을 비활성 버튼으로 보냈다. 어디서 눌러야 하는지까지 적는다. 복수형이 갈린다.
+   */
+  'agents.stale.elsewhere': {
+    one: 'Every runner this device started is on this bundle. {count} outdated runner belongs to '
+      + 'another device and cannot be restarted from here — press it in the murmur on that device.',
+    other: 'Every runner this device started is on this bundle. {count} outdated runners belong to '
+      + 'another device and cannot be restarted from here — press it in the murmur on that device.',
+  },
+  /**
    * 재기동이 무엇을 안 하는지. **누르기 전에** 있어야 한다 — 진행 중인 턴이 끊기지
    * 않는다는 것을 모르면 사람은 긴 턴이 도는 동안 이 버튼을 못 누른다.
    */
@@ -887,7 +898,28 @@ export const en = {
     one: 'Restart the outdated runner ({count})',
     other: 'Restart all outdated runners ({count})',
   },
+  /**
+   * 끝났다는 사실. **걸었다(`restartRequested`)와 다른 말이다** — 그 사이가 진행 중인
+   * 턴을 기다리는 시간이고, 실측 상한이 15분이다. 복수형이 갈린다.
+   */
+  'agents.stale.restartDone': {
+    one: '{count} runner is back on the new bundle.',
+    other: '{count} runners are back on the new bundle.',
+  },
   'agents.stale.restartFailed': 'The runners were not restarted: {reason}',
+  /**
+   * 누른 **즉시** 서는 줄. 이 조작은 예약이라 여기서 끝나지 않는다는 것을 함께 적는다 —
+   * 안 적으면 사람은 곧 버전이 바뀔 것으로 읽고, 안 바뀌는 동안 다시 누른다.
+   */
+  'agents.stale.restartRequested': {
+    one: 'A restart is queued for {count} runner — it comes back on the new bundle once its turn is done.',
+    other: 'A restart is queued for {count} runners — they come back on the new bundle once their turns are done.',
+  },
+  /**
+   * 누르는 동안의 버튼 이름. **개수를 안 싣는다** — 그 수는 바로 아래 진행 줄이 말하고,
+   * 버튼은 지금 눌리지 않는다는 사실만 지면 된다.
+   */
+  'agents.stale.restarting': 'Restarting…',
   /** 앱 버전을 모르면 비교 기준이 없다 — **"전부 최신"은 확인하지 않은 것을 단정하는 말이다.** */
   'agents.stale.unknownAppVersion': 'The app version could not be read, so being outdated cannot be judged.',
   /**
@@ -1951,6 +1983,11 @@ export const en = {
    * 뒤처진 러너. `en.ts` 머리말이 정한 `Outdated` 다. 칩이 눌리는 자리라 **접근 이름이
    * 따로 있다**(아래) — 색은 스크린리더에 아무 말도 하지 않는다(`#443`).
    */
+  /**
+   * 재기동을 걸어 둔 러너. **버전을 안 싣는다** — 지금 보고된 값은 나가는 중인 옛 러너의
+   * 것이라, 그것을 적으면 방금 누른 조작이 아무 일도 안 한 것처럼 읽힌다.
+   */
+  'grid.version.restarting': 'Restarting…',
   'grid.version.stale': '{version} · Outdated',
   /**
    * 그 칩의 접근 이름. **무엇을 하는 버튼인지와 왜인지를 함께 진다** — 칩 글자가 `↻` 로
