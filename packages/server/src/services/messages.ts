@@ -80,7 +80,7 @@ const ATTACHMENTS = `coalesce((
 // #218: 핀 목록도 이 컬럼 집합으로 메시지를 내주기 때문에 export 다. 핀 전용으로 컬럼을
 // 다시 적으면 위에 적은 "네 갈래" 가 다섯이 되고, 리액션·첨부가 그 응답에서만 빠진다.
 //
-// 스레드 상태 재료(`openAsk*`·`failureCount`·`last*`)도 `replyCount` 와 **같은 처지**로
+// 스레드 상태 재료(`openAsk*`·`*failureCount`·`last*`)도 `replyCount` 와 **같은 처지**로
 // null 이다. 이 컬럼 집합을 쓰는 경로(POST·PATCH·링크·핀·담기)는 스레드를 요약하는 자리가
 // 아니라 **방금 그 한 줄**을 답하는 자리다. 여기서 굳이 집계하면 메시지를 하나 쓸 때마다
 // 스레드 전체를 훑는 비용이 붙는데, 정작 화면이 그 값을 쓰는 곳(채널 목록·사이드바)은
@@ -91,7 +91,8 @@ export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root
   edited_at as "editedAt", ${REACTIONS}, ${ATTACHMENTS},
   null::int as "replyCount", null::text as "lastReplyAt", null::text[] as "participantIds",
   null::int as "openAskHumanCount", null::text[] as "openAskAccountIds", null::jsonb as "openAskLinks",
-  null::int as "failureCount", null::text as "lastKind", null::text as "lastAuthorId",
+  null::int as "failureCount", null::int as "unresolvedFailureCount",
+  null::text as "lastKind", null::text as "lastAuthorId",
   also_in_channel as "alsoInChannel"`;
 
 /**
@@ -144,6 +145,30 @@ const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
         AND t.meta->'ask'->'to'->>'accountId' IS NOT NULL
     ), '{}'::text[]) as open_ask_account_ids,
     COUNT(*) FILTER (WHERE t.meta->>'kind' = 'failure')::int as failure_count,
+    -- **안 풀린** 실패만 따로 센다. 위의 누적 개수로 '막힘'을 칠하면 한 번 실패한 스레드는
+    -- 그 뒤에 에이전트가 다시 붙어 진행 설명을 올리고 있어도 영원히 붉게 남는다 — 사람이
+    -- 보는 화면에서 "작업 중"이 계속 "막힘"으로 뒤집히던 것이 이것이다.
+    --
+    -- 해소의 정의: **그 실패보다 뒤에 에이전트의 말이 있으면 풀린 것이다.** 에이전트의
+    -- 말이란 (a) 진행 설명·대기 줄(kind), (b) 완료 보고(meta.kind), (c) **그 실패를 낸
+    -- 계정 자신의 아무 말**이다. (c) 가 필요한 이유는 마지막 답을 평범한 글로 내는 러너가
+    -- 있어서고, 그때 그 계정이 에이전트라는 것은 실패를 낸 자가 그 계정이라는 사실이
+    -- 이미 말해 준다 — account 를 조인하지 않고도 안다.
+    --
+    -- 사람이 되묻는 말은 풀지 않는다. 그때는 정말로 막혀 있는 것이고, 그것을 '끝남'으로
+    -- 칠하는 것이 이 필드가 막으려는 반대쪽 거짓말이다.
+    COUNT(*) FILTER (
+      WHERE t.meta->>'kind' = 'failure'
+        AND NOT EXISTS (
+          SELECT 1 FROM message r
+          WHERE (r.id = m.id OR r.thread_root_id = m.id)
+            AND r.deleted_at IS NULL
+            AND r.seq > t.seq
+            AND (r.kind IN ('progress', 'wake')
+              OR r.meta->>'kind' = 'report'
+              OR r.author_id = t.author_id)
+        )
+    )::int as unresolved_failure_count,
     -- 마디들: 누가 → 누구를 기다리는가(#488 A3-b). 위의 두 집계로는 부족하다 —
     -- open_ask_account_ids 는 '답해야 하는 쪽'만 모은 집합이라 누가 물었는지가
     -- 지워지고, 사슬을 이으려면 짝이 필요하다.
@@ -219,6 +244,7 @@ const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.threa
   case when m.thread_root_id is null then thread_state.open_ask_human_count end as "openAskHumanCount",
   case when m.thread_root_id is null then thread_state.open_ask_account_ids end as "openAskAccountIds",
   case when m.thread_root_id is null then thread_state.failure_count end as "failureCount",
+  case when m.thread_root_id is null then thread_state.unresolved_failure_count end as "unresolvedFailureCount",
   case when m.thread_root_id is null then thread_state.open_ask_links end as "openAskLinks",
   case when m.thread_root_id is null then thread_last.last_kind end as "lastKind",
   case when m.thread_root_id is null then thread_last.last_author_id end as "lastAuthorId",
