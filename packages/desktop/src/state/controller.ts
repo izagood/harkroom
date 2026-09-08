@@ -760,14 +760,18 @@ export class Controller {
      * `wake` 는 에이전트가 **자기에게** 건 대기다(마이그레이션 040). 사람의 inbox 에는
      * 오지 않지만, 온다 해도 알리지 않는다 — 사람에게 온 말이 아니고, 화면에는 이미
      * 대기 줄로 보인다(WakeRow). 남의 기다림이 내 밤을 깨울 이유가 없다.
+     *
+     * `ask_answered` 도 같다(마이그레이션 043): 에이전트가 낸 선택지에 **사람이** 답한
+     * 것을 그 에이전트에게 알리는 사유다. 답한 사람은 방금 자기가 누른 것이라 알림이
+     * 필요 없고, 다른 사람에게는 남의 대화다.
      */
     const label: Record<InboxEntry['reason'], string> = {
       mention: 'mentioned you in', thread_reply: 'replied in a thread in', dm: 'messaged you in',
-      wake: 'is waiting in',
+      wake: 'is waiting in', ask_answered: 'got an answer in',
     };
     const wanted: Record<InboxEntry['reason'], boolean> = {
       mention: prefs.mention, thread_reply: prefs.threadReply, dm: prefs.dm,
-      wake: false,
+      wake: false, ask_answered: false,
     };
 
     for (const e of unread) {

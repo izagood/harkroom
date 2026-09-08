@@ -123,3 +123,66 @@ describe('POST /channels/:id/messages/:messageId/ask-answer', () => {
     expect(notAsk.statusCode).toBe(404);
   });
 });
+
+// ── 답이 오면 물어본 에이전트를 깨운다(2026-09-09 프로덕션 관측)
+//
+// `message.ask` 의 설명은 *"갈림길에서 선택지를 내놓는다(고르면 즉시 진행)"* 인데, 그
+// "즉시 진행"을 만드는 코드가 없었다. 답은 meta 에 기록되지만 물어본 에이전트는 그 사실을
+// 영영 모른다 — 게다가 `message.ask` 는 발화라서 그 턴은 답을 올린 뒤 회수된다.
+//
+// 실측(03:41): 사람이 답을 고른 뒤 **15분 동안** 그 스레드에 아무 일도 없었다.
+describe('선택에 답하면 물어본 에이전트가 깨어난다', () => {
+  it('inbox 에 ask_answered 항목이 생긴다', async () => {
+    const ask = await postMessage(pool, {
+      channelId, authorId: agentId, body: '어느 쪽으로 갈까?', threadRootId: null,
+      meta: {
+        kind: 'ask',
+        ask: { options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], to: { kind: 'human' } },
+      } as unknown as Record<string, unknown>,
+    });
+    const messageId = ask.message!.id;
+
+    const before = await pool.query(
+      `select count(*)::int as n from inbox where account_id = $1`, [agentId],
+    );
+
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages/${messageId}/ask-answer`,
+      headers: auth(adminToken), payload: { optionId: 'b' },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const after = await pool.query(
+      `select reason, message_id from inbox where account_id = $1 order by id desc limit 1`, [agentId],
+    );
+    expect(after.rows[0]?.reason).toBe('ask_answered');
+    // 물음 자신을 가리킨다 — 러너가 그 메시지의 meta 에서 `answeredWith` 를 읽는다.
+    expect(after.rows[0]?.message_id).toBe(messageId);
+    const cnt = await pool.query(`select count(*)::int as n from inbox where account_id = $1`, [agentId]);
+    expect(cnt.rows[0].n).toBe(before.rows[0].n + 1);
+  });
+
+  it('이미 답한 물음에 다시 답해도 깨움이 두 번 생기지 않는다', async () => {
+    // 409 는 경합의 정상 결과다(위 테스트들). 그때 깨움을 또 만들면 에이전트가 같은
+    // 선택으로 두 번 깨어나 같은 일을 두 번 한다.
+    const ask = await postMessage(pool, {
+      channelId, authorId: agentId, body: '두 번 답해 보자', threadRootId: null,
+      meta: {
+        kind: 'ask',
+        ask: { options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], to: { kind: 'human' } },
+      } as unknown as Record<string, unknown>,
+    });
+    const messageId = ask.message!.id;
+    const url = `/channels/${channelId}/messages/${messageId}/ask-answer`;
+
+    await app.inject({ method: 'POST', url, headers: auth(adminToken), payload: { optionId: 'a' } });
+    const second = await app.inject({ method: 'POST', url, headers: auth(adminToken), payload: { optionId: 'b' } });
+    expect(second.statusCode).toBe(409);
+
+    const n = await pool.query(
+      `select count(*)::int as n from inbox where account_id = $1 and message_id = $2`,
+      [agentId, messageId],
+    );
+    expect(n.rows[0].n).toBe(1);
+  });
+});
