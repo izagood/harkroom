@@ -149,12 +149,35 @@ export class PromptNotDeliveredError extends Error {
 const DEFAULT_READY_PATTERN = /[❯›]|Ask\s+\S+\s+to\s+do\s+anything/;
 
 /**
+ * 화면을 덮고 답을 기다리는 모달. 이것이 보이면 **준비가 아니다.**
+ *
+ * 실측한 두 가지(2026-09-08):
+ * - claude: `Is this a project you created or one you trust?` / `Yes, I trust this folder`
+ * - codex:  `Trust the contents of this directory?` / `Yes, continue`
+ *
+ * 공백을 지우고 재는 이유는 `policy.ts` 의 문구 판정과 같다 — PTY 소프트 랩이 어느 자리에든
+ * 개행을 끼워 넣고, 화면을 다시 그리는 TUI 에서는 그 자리가 매번 다르다.
+ */
+const BLOCKING_MODAL_PATTERN = /trustthisfolder|trustthecontents|projectyoucreated/i;
+
+/**
  * 이 출력이 "입력을 받을 준비" 로 보이는가. **수용 테스트가 실물 CLI 에 대고 같은 판정을
  * 쓰기 위해 export 한다** — 테스트가 패턴을 베껴 쓰면 프로덕션이 바뀔 때 그 사본만 초록으로
  * 남는다(이 저장소가 이미 겪은 종류의 어긋남이다).
  */
 export function looksReadyForPrompt(rawOutput: string, pattern: RegExp = DEFAULT_READY_PATTERN): boolean {
-  return pattern.test(stripAnsi(rawOutput));
+  const text = stripAnsi(rawOutput);
+  // **모달이 떠 있으면 준비가 아니다(2026-09-08 프로덕션 사고).** 신뢰 대화상자는 준비
+  // 표시와 **같은 글자**(`❯`)를 선택지 앞에 그린다 — 위치로도 글자로도 갈리지 않는다.
+  // 그대로 두면 프롬프트가 모달에 타이핑되고, 턴은 아무 일도 못 한 채 무발화 한도까지
+  // 매달린다(실제로 그랬다).
+  //
+  // 정상 경로에서는 이 검사가 발동하지 않는다 — `workspaceTrust.ts` 가 PTY 를 띄우기 전에
+  // 신뢰를 적어 대화상자 자체를 없앤다. 여기는 **그것이 실패했을 때의 두 번째 층**이고,
+  // 그때는 준비를 못 본 채 상한에서 실패하는 편이 옳다: 모달에 프롬프트를 쏟는 것보다
+  // "준비 신호를 못 봤다"는 실패가 원인을 정확히 가리킨다.
+  if (BLOCKING_MODAL_PATTERN.test(text.replace(/\s+/g, ''))) return false;
+  return pattern.test(text);
 }
 
 /**
