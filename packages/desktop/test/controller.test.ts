@@ -205,6 +205,25 @@ describe('Controller', () => {
     expect(kept?.threadRootId).toBe('m1');
   });
 
+  // #231 앞방향도 **새 메시지가 아니다**. 스토어에 한 줄 더 넣으면 같은 말이 두 벌로
+  // 보이고, 리액션과 답글이 둘로 갈린다.
+  it('share only flips alsoInChannel on the row it already holds', async () => {
+    const api = fakeApi();
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    await c.openChannel('c1');
+    useAppStore.getState().upsertMessages('c1', [msg('m8', 'c1', 8, '나중에 올릴 말', 'u1', { threadRootId: 'm1' })]);
+
+    await c.shareToChannel('m8', 'c1');
+
+    expect((api.shareToChannel as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(['c1', 'm8']);
+    const rows = useAppStore.getState().messages.c1!.filter((m) => m.id === 'm8');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.alsoInChannel).toBe(true);
+    expect(rows[0]?.threadRootId).toBe('m1');
+  });
+
   // 최신 창 밖으로 밀려난 대화에 도달할 경로가 필요하다.
   it('loads an older page from the oldest message it holds', async () => {
     const api = fakeApi({

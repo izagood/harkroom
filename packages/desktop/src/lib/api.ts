@@ -271,6 +271,14 @@ export class ApiClient {
     return this.req('DELETE', `/channels/${channelId}/messages/${messageId}/also-in-channel`);
   }
 
+  /**
+   * 스레드에 이미 올린 답을 나중에 채널로도 올린다(#231 앞방향). 새 메시지를 만들지
+   * 않는다 — 같은 행이 `alsoInChannel: true` 로 돌아온다.
+   */
+  shareToChannel(channelId: string, messageId: string): Promise<MessageRow> {
+    return this.req('PUT', `/channels/${channelId}/messages/${messageId}/also-in-channel`);
+  }
+
   async listAgents(): Promise<AgentView[]> {
     return (await this.req<{ agents: AgentView[] }>('GET', '/accounts/agents')).agents;
   }

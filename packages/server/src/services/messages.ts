@@ -751,6 +751,48 @@ export async function recallFromChannel(
   return updated.rows[0];
 }
 
+/**
+ * 스레드에 이미 올려 둔 답을 **나중에** 채널로도 올린다(#231 의 앞방향).
+ *
+ * `alsoInChannel` 은 여태 쓰는 순간에만 정할 수 있었다 — 스레드에서 이야기가 끝나고
+ * 나서야 "이건 채널도 봐야 한다"를 알게 되는 것이 보통인데, 그때 남은 길은 같은 말을
+ * 채널에 **다시 쓰는 것**뿐이었다. 그러면 같은 문장이 두 벌 생기고, 리액션과 답글이
+ * 둘로 갈린다. 여기서는 행을 하나 그대로 두고 `also_in_channel` 만 켠다.
+ *
+ * **작성자만** 할 수 있다 — 거두기(`recallFromChannel`)와 갈리는 지점이다. 거두기는
+ * 잘못 흘린 말을 치우는 조정이라 admin 에게도 열지만, 올리기는 남의 말을 더 넓은
+ * 자리에 **내가** 세우는 일이다. 그것은 수정과 같은 종류라(`editMessage` 도 작성자
+ * 전용이다) 권한을 넓히지 않는다.
+ *
+ * **스레드 답이어야 한다.** 최상위 메시지는 이미 채널에 있으므로 켤 것이 없다 —
+ * `postMessage` 가 같은 이유로 false 로 정규화한다. 여기서는 조용히 넘기지 않고
+ * `not_in_thread` 로 거절한다: 호출부가 없는 상태를 만들려 한 것이므로 그렇게 말해 준다.
+ *
+ * **이미 켜져 있으면 그대로 돌려준다**(멱등). 거두기와 같은 이유다 — 다른 창에서 먼저
+ * 올린 뒤 이 창에서 누르는 것은 정상 경로다.
+ *
+ * 알림은 다시 돌리지 않는다. 멘션은 이 말이 처음 올라갈 때 이미 사람을 깨웠고, 채널로
+ * 옮겨 보인다는 이유로 같은 사람을 두 번 깨우면 "새 말"과 "옮겨진 말"이 구분되지 않는다.
+ */
+export async function shareToChannel(
+  pool: Pool, args: { channelId: string; messageId: string; actorId: string },
+): Promise<MessageRow | MutationRefusal | 'not_in_thread'> {
+  const found = await pool.query(
+    `select author_id, thread_root_id from message
+     where id = $1 and channel_id = $2 and deleted_at is null`,
+    [args.messageId, args.channelId],
+  );
+  if (!found.rowCount) return 'not_found';
+  if (found.rows[0].author_id !== args.actorId) return 'forbidden';
+  if (found.rows[0].thread_root_id === null) return 'not_in_thread';
+
+  const updated = await pool.query(
+    `update message set also_in_channel = true where id = $1 returning ${COLS}`,
+    [args.messageId],
+  );
+  return updated.rows[0];
+}
+
 export async function deleteMessage(
   pool: Pool, args: { channelId: string; messageId: string; actorId: string; actorIsAdmin: boolean },
 ): Promise<'deleted' | MutationRefusal> {

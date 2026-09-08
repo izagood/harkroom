@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@murmur/shared';
 import { emitEvent } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
-import { deleteMessage, editMessage, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
+import { deleteMessage, editMessage, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages, shareToChannel } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -90,6 +90,52 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     if (result === 'forbidden') {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'only the author can edit a user message' } });
     }
+    emitEvent({ type: 'message.updated', message: result, audience: await audienceFor(pool, id) });
+    return result;
+  });
+
+  /**
+   * 스레드에 이미 올린 답을 **나중에** 채널로도 올린다(#231 의 앞방향).
+   *
+   * 거두기(아래 DELETE)와 **같은 자원**을 반대 방향으로 쓴다: "채널에도 보인다"는 성질이
+   * 하위 자원이고, 켜는 것이 PUT, 끄는 것이 DELETE 다. PATCH 본문에 플래그로 얹지 않는
+   * 이유도 거두기와 같다 — 저 경로는 본문 수정이라 `edited_at` 을 찍는데, 채널로 올리는
+   * 것은 글을 고친 것이 아니다.
+   *
+   * 멱등이라 PUT 이다 — 두 번 눌러도 결과가 같고 응답도 같다(201 을 쓰지 않는 이유).
+   *
+   * **보관된 채널에서는 거절한다.** 거두기는 보관 뒤에도 남지만(잘못 흘린 말을 치우는
+   * 길은 얼어붙은 뒤에도 있어야 한다) 올리기는 얼어붙은 채널에 **새 줄을 세우는** 일이라
+   * 읽기 전용 규칙을 그대로 받는다. 그래서 `assertChannelVisible` 이 아니라 쓰기 게이트를
+   * 쓴다 — 가시성과 보관을 한 번에 본다.
+   */
+  app.put('/channels/:id/messages/:messageId/also-in-channel', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id, messageId } = z.object({
+      id: z.string().uuid(), messageId: z.string().uuid(),
+    }).parse(req.params);
+    const gate = await channelPostGate(pool, id, req.account!.id);
+    if (gate === 'forbidden') {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    if (gate === 'archived') {
+      return reply.code(403).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
+    }
+
+    const result = await shareToChannel(pool, { channelId: id, messageId, actorId: req.account!.id });
+    if (result === 'not_found') {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such message' } });
+    }
+    if (result === 'forbidden') {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'only the author can send their message to the channel' } });
+    }
+    if (result === 'not_in_thread') {
+      return reply.code(400).send({
+        error: { code: 'not_in_thread', message: 'only a thread reply can be sent to the channel' },
+      });
+    }
+    // 거두기와 같은 이벤트다 — 채널 화면은 `message.updated` 로 이 메시지를 다시 그리고,
+    // 그때 `alsoInChannel: true` 를 보고 목록에 넣는다. `message.created` 를 쓰면 이미
+    // 스레드에 이 행을 들고 있는 화면이 같은 메시지를 두 벌로 그린다.
     emitEvent({ type: 'message.updated', message: result, audience: await audienceFor(pool, id) });
     return result;
   });

@@ -251,6 +251,22 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   const canUnpin = pin !== undefined && (pin.pinnedBy === myId || isAdmin);
   // 보관된 채널은 읽기 전용이라 고정이 거절된다(서버의 `channelPostGate`).
   const isArchived = useActiveStore((s) => s.channels.find((c) => c.id === message.channelId)?.archivedAt != null);
+  /**
+   * 반대 방향(#231 앞방향): 스레드에만 있는 내 답을 나중에 채널로 올린다.
+   *
+   * 조건이 `canRecall` 의 거울이다 — 스레드 답이어야 하고, **아직** 채널에 안 보여야
+   * 하고, 내 말이어야 한다. 이미 채널에 보이는 메시지에는 대신 'Remove from channel'
+   * 이 서므로 두 항목이 같이 뜨는 일은 없다.
+   *
+   * `canDelete` 가 아니라 `isMine` 인 이유는 서버와 같다: 거두기는 조정이라 admin 에게도
+   * 열지만, 올리기는 남의 말을 더 넓은 자리에 내가 세우는 일이다.
+   *
+   * 보관된 채널에서는 빼낸다 — 서버가 읽기 전용으로 거절한다(Pin 과 같은 처리).
+   * 거두기는 보관 뒤에도 남는 것과 갈리는데, 치우는 길은 얼어붙은 뒤에도 있어야 하고
+   * 세우는 길은 아니기 때문이다.
+   */
+  const canShareToChannel =
+    isMine && !isSystem && !isArchived && message.threadRootId !== null && !message.alsoInChannel;
   // #219: 담긴 상태는 **id 집합**(open+done 전부)으로 본다. 패널이 받아 온 한 탭의 행들로
   // 판단하면 '완료' 탭을 한 번 열어 본 뒤로 open 인 메시지가 담기지 않은 것으로 읽힌다.
   const savedIds = useActiveStore((s) => s.savedIds);
@@ -364,10 +380,22 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
      * 지우기가 아니라 **채널에서만** 거두는 일이고, 메시지는 스레드에 그대로 남는다.
      * 그래서 대상('from channel')을 문구에 박는다.
      *
-     * 확인 단계를 두지 않는다: 지우기와 달리 본문이 사라지지 않는다. 다만 되돌린 것을
-     * 다시 채널로 올리는 길은 없으므로(다시 쓰면 된다) 'Undo' 라고 부르지도 않는다.
+     * 확인 단계를 두지 않는다: 지우기와 달리 본문이 사라지지 않고, 거둔 것을 다시 올리는
+     * 길이 바로 아래 항목('Send to channel')으로 있다. 그래도 'Undo' 라고 부르지 않는
+     * 이유는 이 항목이 **직전 동작을 무르는 것**이 아니라 지금 상태를 바꾸는 것이기
+     * 때문이다 — 쓸 때 켠 것이든 나중에 올린 것이든 같은 항목이 선다.
      */
     ...(canRecall ? [{ label: 'Remove from channel', onSelect: () => { void getController().recallFromChannel(message.id); } }] : []),
+    /**
+     * #231 앞방향. 스레드에서 이야기가 끝나고 나서야 "이건 채널도 봐야 한다"를 알게 되는
+     * 것이 보통이라, 쓸 때 체크하지 못한 답을 나중에 올릴 자리가 필요하다. 문구가
+     * 'Remove from channel' 의 거울이 되게 목적지를 그대로 박는다.
+     *
+     * 확인 단계를 두지 않는다: 되돌리는 길이 바로 위 항목으로 있다.
+     */
+    ...(canShareToChannel
+      ? [{ label: 'Send to channel', onSelect: () => { void getController().shareToChannel(message.id, message.channelId); } }]
+      : []),
     // #219: 나중에 볼 것으로 담기. 담겨 있으면 문구가 해제로 바뀐다 — 같은 자리에 두 항목을
     // 나란히 두면 어느 것이 지금 상태인지 화면이 말하지 않는다.
     // 문구는 이 메뉴의 나머지(Pin·Edit·Delete…)와 같은 영문이다: 여기만 한국어로 두면

@@ -213,3 +213,117 @@ describe('#231 채널에서 거두기', () => {
     expect(res.statusCode).toBe(404);
   });
 });
+
+// #231 앞방향: 스레드에 이미 올린 답을 **나중에** 채널로도 올린다.
+// 회귀선은 "새 메시지를 만들지 않는가"와 권한이다 — 올리는 것은 작성자만이다.
+describe('#231 나중에 채널로 올리기', () => {
+  const share = (token: string, messageId: string) =>
+    app.inject({
+      method: 'PUT', url: `/channels/${channelId}/messages/${messageId}/also-in-channel`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+  const postReply = async (token: string, body: string) => {
+    const root = await post(token, `root for ${body}`);
+    const rootId = root.json().id as string;
+    const reply = await post(token, body, { threadRootId: rootId });
+    return { rootId, id: reply.json().id as string };
+  };
+
+  it('올리면 채널에 뜨고 같은 행이 그대로다', async () => {
+    const { rootId, id } = await postReply(adminToken, 'worth sharing');
+    const before = (await listMessages(pool, channelId, { limit: 50 })).length;
+
+    const res = await share(adminToken, id);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().id).toBe(id);
+    expect(res.json().alsoInChannel).toBe(true);
+
+    const rows = await listMessages(pool, channelId, { limit: 50 });
+    // 사본을 만들지 않는다 — 같은 행의 플래그만 켠다. 다시 쓰면 리액션과 답글이 둘로 갈린다.
+    expect(rows.length).toBe(before);
+    const found = rows.find((m) => m.id === id);
+    expect(found?.alsoInChannel).toBe(true);
+    expect(found?.threadRootId).toBe(rootId);
+    // 글을 고친 것이 아니다 — 수정 자국을 남기면 안 된다.
+    expect(found?.editedAt).toBeNull();
+  });
+
+  it('두 번 올려도 같은 결과다', async () => {
+    const { id } = await postReply(adminToken, 'twice up');
+    await share(adminToken, id);
+    const again = await share(adminToken, id);
+    expect(again.statusCode).toBe(200);
+    expect(again.json().alsoInChannel).toBe(true);
+  });
+
+  it('올린 뒤 다시 거둘 수 있다', async () => {
+    const { id } = await postReply(adminToken, 'up then down');
+    await share(adminToken, id);
+    const recalled = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/messages/${id}/also-in-channel`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(recalled.statusCode).toBe(200);
+    expect(recalled.json().alsoInChannel).toBe(false);
+  });
+
+  // 거두기와 갈리는 지점이다: 지우기와 달리 올리기는 조정이 아니라 발화에 가깝다.
+  it('admin 이어도 남의 답은 올릴 수 없다', async () => {
+    const root = await post(adminToken, 'root for agent share');
+    const rootId = root.json().id as string;
+    const client = await mcpClient(botPat);
+    const posted = text(await client.callTool({
+      name: 'message.post',
+      arguments: { channelId, body: 'agent thread note', threadRootId: rootId },
+    })) as { message: { id: string } };
+    await client.close();
+
+    const res = await share(adminToken, posted.message.id);
+    expect(res.statusCode).toBe(403);
+
+    const rows = await listMessages(pool, channelId, { limit: 50 });
+    expect(rows.find((m) => m.id === posted.message.id)?.alsoInChannel).toBe(false);
+  });
+
+  it('스레드 답이 아니면 400 이다', async () => {
+    const res0 = await post(adminToken, 'plain top-level');
+    const res = await share(adminToken, res0.json().id as string);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('not_in_thread');
+  });
+
+  it('없는 메시지는 404 다', async () => {
+    const res = await share(adminToken, '00000000-0000-4000-8000-000000000000');
+    expect(res.statusCode).toBe(404);
+  });
+
+  // 보관된 채널은 읽기 전용이다 — 얼어붙은 채널에 새 줄을 세우지 않는다.
+  it('보관된 채널에서는 거절한다', async () => {
+    const ch = await app.inject({
+      method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: 'also-archived' },
+    });
+    const archivedId = ch.json().id as string;
+    const root = await app.inject({
+      method: 'POST', url: `/channels/${archivedId}/messages`,
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { body: 'root' },
+    });
+    const reply = await app.inject({
+      method: 'POST', url: `/channels/${archivedId}/messages`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { body: 'reply', threadRootId: root.json().id },
+    });
+    await app.inject({
+      method: 'PATCH', url: `/channels/${archivedId}`,
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { archived: true },
+    });
+
+    const res = await app.inject({
+      method: 'PUT', url: `/channels/${archivedId}/messages/${reply.json().id}/also-in-channel`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('channel_archived');
+  });
+});

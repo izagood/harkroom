@@ -1111,6 +1111,21 @@ export class Controller {
   }
 
   /**
+   * 스레드에 이미 올린 내 답을 **나중에** 채널로도 올린다(#231 앞방향).
+   *
+   * `reply(..., alsoInChannel)` 과 달리 **새 메시지를 만들지 않는다** — 같은 행의
+   * `alsoInChannel` 만 켜서 덮어쓴다. 다시 써서 올리면 같은 문장이 두 벌 생기고
+   * 리액션과 답글이 둘로 갈린다.
+   *
+   * 채널은 이 메시지의 것을 쓴다(`activeChannelId` 가 아니라). 스레드 패널은 채널을
+   * 바꿔도 열려 있을 수 있어, 지금 보는 채널로 보내면 남의 채널에 대고 부르게 된다.
+   */
+  async shareToChannel(messageId: string, channelId: string): Promise<void> {
+    const updated = await this.api.shareToChannel(channelId, messageId);
+    this.store.getState().upsertMessages(channelId, [updated]);
+  }
+
+  /**
    * 이 채널의 고정 목록을 서버에서 다시 받는다(#218).
    *
    * 델타가 아니라 목록 전체를 갈아 끼운다: 핀은 채널 전역 상태라 다른 사람이 고정·해제한

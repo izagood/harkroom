@@ -232,6 +232,74 @@ describe('#231 채널에서 거두기', () => {
   });
 });
 
+// #231 앞방향 — 스레드에만 있던 답을 **나중에** 채널로 올린다.
+//
+// 거두기의 거울이라 지키는 것도 거울이다: 이미 채널에 있는 답·채널 메시지·남의 답·
+// 보관된 채널에는 항목이 뜨면 안 된다(눌러도 아무 일이 없거나 서버가 거절한다).
+describe('#231 나중에 채널로 올리기', () => {
+  const openMenu = (): void => { fireEvent.click(screen.getByLabelText('More actions')); };
+  const shareItem = () => screen.queryByRole('menuitem', { name: 'Send to channel' });
+
+  const controllerWithShare = () => {
+    const c = { ...fakeController(), shareToChannel: vi.fn(async () => undefined) };
+    setController(c as unknown as Controller);
+    return c;
+  };
+
+  /** 스레드에만 있는 내 답 — 이 항목이 서야 하는 유일한 모양이다. */
+  const mineInThread = msg('m2', 'c1', 2, 'thread answer', 'u1', { threadRootId: 'm1', alsoInChannel: false });
+
+  beforeEach(() => { seed(false); });
+
+  it('스레드에만 있는 내 답을 채널로 올릴 수 있다', () => {
+    const c = controllerWithShare();
+    render(<MessageItem message={mineInThread} />);
+
+    openMenu();
+    fireEvent.click(shareItem()!);
+    // 채널은 **메시지의 것**을 보낸다 — 스레드 패널은 채널을 바꿔도 열려 있을 수 있다.
+    expect(c.shareToChannel).toHaveBeenCalledWith('m2', 'c1');
+  });
+
+  it('이미 채널에 올라간 답에는 항목이 없다', () => {
+    controllerWithShare();
+    render(<MessageItem message={{ ...mineInThread, alsoInChannel: true }} />);
+    openMenu();
+    expect(shareItem()).toBeNull();
+  });
+
+  // 최상위 메시지는 이미 채널에 있다 — 올릴 것이 없다.
+  it('그냥 채널 메시지에는 항목이 없다', () => {
+    controllerWithShare();
+    render(<MessageItem message={msg('m3', 'c1', 3, 'plain', 'u1')} />);
+    openMenu();
+    expect(shareItem()).toBeNull();
+  });
+
+  // 거두기와 갈리는 지점이다: 남의 말을 더 넓은 자리에 내가 세우지는 못한다.
+  it('남의 답은 admin 이어도 올릴 수 없다', () => {
+    seed(false);
+    useAppStore.getState().set({ me: { ...acc('u1', 'admin'), isAdmin: true } });
+    controllerWithShare();
+    render(<MessageItem message={{ ...mineInThread, authorId: 'u2' }} />);
+    openMenu();
+    expect(shareItem()).toBeNull();
+  });
+
+  // 보관된 채널은 읽기 전용이라 서버가 거절한다 — 메뉴에 남겨 두면 없는 것을 있다고 말한다.
+  it('보관된 채널에서는 항목이 없다', () => {
+    seed(false);
+    useAppStore.getState().set({
+      channels: useAppStore.getState().channels.map((c) => (
+        c.id === 'c1' ? { ...c, archivedAt: new Date().toISOString() } : c)),
+    });
+    controllerWithShare();
+    render(<MessageItem message={mineInThread} />);
+    openMenu();
+    expect(shareItem()).toBeNull();
+  });
+});
+
 /**
  * 컨트롤러 쪽 계약(#624 요구 3). 화면이 `openThread(root, id)` 를 부르는 것만 잰다면,
  * 두 번째 인자를 컨트롤러가 **버려도** 회귀선이 초록으로 남는다 — 그러면 링크는
