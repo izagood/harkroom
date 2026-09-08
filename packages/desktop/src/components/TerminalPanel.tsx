@@ -5,7 +5,7 @@ import { getController } from '../state/controller';
 import { connectAgentAttach, type AttachHandle } from '../lib/agentTerminal';
 import { getTerminalSinkFactory, type TerminalSink } from '../lib/terminalSink';
 import { PaneResizer } from './PaneResizer';
-import { paneStorage, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH, MIN_CHANNEL_WIDTH, MIN_THREAD_WIDTH } from '../lib/prefs';
+import { paneStorage, paneMaxWidth, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH, MIN_CHANNEL_WIDTH, MIN_THREAD_WIDTH } from '../lib/prefs';
 import { useT } from '../i18n/useT';
 import type { MessageKey, Translate } from '../i18n';
 
@@ -309,6 +309,13 @@ export function TerminalPanel() {
     // 같은 대상을 다시 눌렀다는 이유로 attach 를 끊고 다시 여는 것은 낭비이자 화면 깜빡임이다.
   }, [target?.agentAccountId, target?.channelId, target?.threadRootId]);
 
+  /**
+   * 이 패널 **왼쪽에 반드시 남길 폭**. `PaneResizer` 에 넘기는 것과 같은 값이고, 아래
+   * `maxWidth` 도 같은 값을 쓴다 — 끌 때만 지키고 창 크기에는 안 지키면 그 약속은 절반만
+   * 참이다(그 절반이 이 결함이었다).
+   */
+  const roomLeftReserve = MIN_CHANNEL_WIDTH + (threadOpen ? MIN_THREAD_WIDTH : 0);
+
   if (!target) return null;
 
   return (
@@ -318,7 +325,7 @@ export function TerminalPanel() {
          xterm 은 `terminalSink` 의 `ResizeObserver` 가 스스로 다시 맞추고 새 크기를
          PTY 에 알리므로, 여기서 refit 을 따로 부르지 않는다. */
       className="relative flex shrink-0 flex-col border-l border-border bg-surface-sunken"
-      style={{ width: terminalWidth }}
+      style={{ width: terminalWidth, maxWidth: paneMaxWidth(MIN_TERMINAL_WIDTH, roomLeftReserve) }}
       aria-label={t('terminal.header.panel')}
     >
       <PaneResizer
@@ -329,15 +336,19 @@ export function TerminalPanel() {
         /* 이 구분선 왼쪽에는 대화**와 스레드**가 있다. 스레드는 `min-width` 아래로는
            줄지 않으므로 그 몫까지 남겨야 한다 — 대화 몫만 남기면 요구한 폭이 실제로
            안 나오고, 줄이 넘쳐 `overflow-hidden` 에 조용히 잘린다. */
-        minRoomLeft={MIN_CHANNEL_WIDTH + (threadOpen ? MIN_THREAD_WIDTH : 0)}
+        minRoomLeft={roomLeftReserve}
         onWidth={setTerminalWidth}
       />
       {/* 머리띠는 **아랫단 11px** — 여기 있는 것은 전부 꼬리표다(에이전트 핸들·어느 스레드·
           상태 칩·닫기). 아래 문구들은 반대로 본문단이다: 세션이 없거나 실패했을 때 사람이
           다음에 무엇을 할 수 있는지가 그 문장에만 적혀 있다. */}
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-meta text-fg-muted">
-        <span className="font-semibold">{t('terminal.header.title')}</span>
-        <span className="text-fg-subtle">@{agent?.handle ?? target.agentAccountId}</span>
+      {/* **줄이 넘치면 잘린다**(`min-w-0` + `overflow-hidden`). 이 줄에는 길이를 우리가
+          모르는 것이 둘 있다 — 에이전트 핸들과 스레드 표기다. 넘치는 것을 그냥 두면 flex
+          가 줄을 늘려 오른쪽 끝의 닫기가 패널 밖으로 밀려나고, 부모가 잘라 내므로 **닫을
+          손잡이가 화면에서 사라진다.** 좁은 창에서 실제로 그렇게 됐다. */}
+      <div className="flex min-w-0 items-center gap-2 overflow-hidden border-b border-border px-3 py-2 text-meta text-fg-muted">
+        <span className="shrink-0 font-semibold">{t('terminal.header.title')}</span>
+        <span className="min-w-0 truncate text-fg-subtle">@{agent?.handle ?? target.agentAccountId}</span>
         {/* 어느 채널·스레드의 터미널인지 항상 적는다(#339). 같은 에이전트의 세션이 여럿일
             수 있는데 이 표기가 없으면 사람은 지금 보는 화면이 어느 스레드의 것인지 알 길이
             없다 — 스코프를 고치고도 화면이 침묵하면 결함이 반쯤 남는 셈이다. */}
@@ -346,10 +357,13 @@ export function TerminalPanel() {
           {' · '}
           {threadRoot ? threadExcerpt(threadRoot.body) : t('terminal.header.thread')}
         </span>
-        {state && <span className="rounded bg-surface-raised px-1.5 py-0.5">{t(STATE_LABEL[state])}</span>}
+        {state && <span className="shrink-0 rounded bg-surface-raised px-1.5 py-0.5">{t(STATE_LABEL[state])}</span>}
+        {/* **닫기는 줄지 않는다**(`shrink-0`). 이 줄에서 마지막까지 남아야 하는 것은 이
+            버튼 하나다 — 꼬리표(핸들·스코프)는 줄어들거나 말줄임표가 되면 그만이지만,
+            이것이 사라지면 패널을 닫을 길이 없어진다. */}
         <button
           onClick={() => set({ terminalTarget: null })}
-          className="ml-auto rounded px-2 py-0.5 text-fg-muted hover:bg-surface-raised"
+          className="ml-auto shrink-0 rounded px-2 py-0.5 text-fg-muted hover:bg-surface-raised"
           aria-label={t('terminal.header.closeAction')}
         >
           {t('terminal.header.close')}

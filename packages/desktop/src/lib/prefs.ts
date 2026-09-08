@@ -97,6 +97,27 @@ export const MAX_TERMINAL_WIDTH = 1000;
 export const MIN_CHANNEL_WIDTH = 200;
 
 /**
+ * 오른쪽 패널(스레드·터미널)이 **실제로 커질 수 있는 상한**을 CSS 로 적는다.
+ *
+ * `MIN_CHANNEL_WIDTH` 는 지금까지 **끄는 순간에만** 지켜졌다(`PaneResizer.roomBound`).
+ * 그런데 패널의 폭은 기기에 저장돼 다음에도 그 값으로 서고, 창은 그 사이에 좁아진다 —
+ * 넓은 창에서 고른 608px(또는 끌어 둔 900px)이 반쪽 창에서 그대로 서면 `shrink-0` 인
+ * 터미널이 대화를 폭 0 으로 밀어낸다. 사람에게는 *"채널 자체가 보이지 않는다"* 이고,
+ * 되돌릴 손잡이(구분선)는 사라진 그 자리에 있으므로 빠져나올 길도 없다.
+ * 그래서 약속을 **레이아웃 쪽에도** 적는다: 끌 때와 창이 줄 때가 같은 규칙을 따른다.
+ *
+ * `%` 는 flex 컨테이너(패널들이 선 가로줄)의 폭이라, 창 크기가 바뀌면 브라우저가 다시
+ * 잰다 — `ResizeObserver` 를 새로 달지 않는 이유다. 세 겹인 이유는 각각 다른 것을 막는다:
+ * - `calc(100% - reserve)` — 왼쪽 이웃의 몫을 남긴다(본래의 약속).
+ * - `max(min…)` — 그 몫을 남기다 패널 자신이 못 쓸 만큼 좁아지지 않게 한다.
+ * - `min(100%…)` — 그래도 **줄 밖으로는 나가지 않는다.** 이것이 없으면 아주 좁은 창에서
+ *   패널의 오른쪽 끝(= 닫기 버튼)이 부모의 `overflow-hidden` 에 잘려 사라진다.
+ */
+export function paneMaxWidth(minWidth: number, reserveLeft: number): string {
+  return `min(100%, max(${minWidth}px, calc(100% - ${reserveLeft}px)))`;
+}
+
+/**
  * 인박스 자리의 폭(#488 C2 — *"모달이 아니라 자리"*).
  *
  * **끌 수 있게 만들지 않았다.** 스레드·터미널이 `paneStorage` 에 폭을 두는 이유는 그 안에
