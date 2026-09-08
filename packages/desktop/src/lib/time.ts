@@ -42,59 +42,83 @@
  *
  * **경계가 한 줄로 말해진다: 숫자는 `Intl` 이, 뜻은 사전이.**
  *
- * ## `Intl.DurationFormat` 을 써도 되나 — 셋에서 실측했다
+ * ## 길이는 왜 `DurationFormat` 이 아니라 `NumberFormat` + `ListFormat` 인가
  *
  * `RelativeTimeFormat` 만으로는 `4분 12초` 를 못 낸다(그것은 "언제"가 아니라 "얼마나
- * 오래"다 — 단위가 둘이다). `DurationFormat` 이 그 자리를 정확히 채우는데 비교적 새
- * API 라 있는지를 **실제 실행 환경에서 확인했다**(2026-09-08):
+ * 오래"다 — 단위가 둘이다). 그 자리를 정확히 채우는 것이 `Intl.DurationFormat` 인데,
+ * **이 저장소는 그것을 쓸 수 없다.**
+ *
+ * 처음엔 썼고, 배포 엔진에서 확인까지 했다. 그런데 **CI 가 통째로 무너졌다**
+ * (`TypeError: Intl.DurationFormat is not a constructor`, 7개 파일 51개 테스트).
+ * 확인한 환경이 실제로 도는 환경 전부가 아니었던 것이다:
  *
  * | 환경 | `Intl.DurationFormat` |
  * |---|---|
  * | JavaScriptCore(macOS 26.5) — **배포본이 도는 엔진** | 있다 |
- * | Node 24 | 있다 |
- * | jsdom(회귀선) | 있다 |
+ * | Node 24 — 개발 기계 | 있다 |
+ * | **Node 22 — CI 러너**(`.github/workflows/ci.yml`) | **없다** |
  *
- * 배포 대상이 macOS 뿐이고(`tauri.conf.json` 의 `targets: ["app", "dmg"]`) 그 WebView 가
- * WKWebView = JavaScriptCore 이므로, **화면이 도는 그 엔진에서 직접 확인한 것**이 근거다.
- * `typeof` 로 막지 않는다 — 없는 환경이 배포 대상에 없는데 대비 코드를 두면 그 코드는
- * 영원히 안 도는 채로 남고, 아무도 그것이 맞는지 모른다.
+ * `Intl.DurationFormat` 은 **Node 23+** 다. 그런데 이 저장소는 `package.json` 에
+ * `engines: { node: ">=22" }` 를 선언하므로 **Node 22 에서 돌아야 한다** — CI 를 Node 24
+ * 로 올려 초록을 만드는 것은 선언과 실제를 어긋나게 하면서 Node 22 기여자를 막는 일이라
+ * 택하지 않았다.
  *
- * 타입은 `lib: ["ES2023"]` 이라 아직 없다. 그래서 아래에 최소 선언을 둔다 —
- * `lib` 를 올리면 그때 지운다.
+ * **다음 사람에게 남기는 함정**: 배포 엔진에서 되는 것이 곧 회귀선에서 되는 것이 아니다.
+ * 새 `Intl` API 를 들일 때는 **배포 엔진과 `engines` 의 하한(지금 Node 22) 둘 다**에서
+ * 재라. 그리고 `mise exec node@22 -- npx vitest` 로는 **확인이 안 된다** — `npx` 가
+ * 시스템 Node 로 되돌아가 실제로는 Node 24 에서 돈다(이 함정에 한 번 빠졌다). 하한을
+ * 실제로 재려면 그 버전의 `node` 실행 파일로 vitest 를 직접 불러야 한다 —
+ * mise 라면 `~/.local/share/mise/installs/node/22.x.y/bin/node` 를 찾아
+ * `./node_modules/vitest/vitest.mjs run` 에 붙인다.
+ *
+ * 그래서 **`DurationFormat` 이 하던 일을 Node 22 에 있는 `Intl` 둘로 조립한다**:
+ * `NumberFormat({style: 'unit'})` 이 단위 하나를 그 언어의 말로 적고
+ * (`4` → `4시간`/`4h`), `ListFormat({type: 'unit'})` 이 그것들을 그 언어의 방식으로
+ * 잇는다(`4시간 12분` / `4h 12m`). **이것은 손으로 만든 폴백이 아니다** — 단위 이름도
+ * 잇는 방식도 우리가 안 적고 `Intl` 이 낸다. 그래서 이 파일의 경계("숫자는 `Intl`, 뜻은
+ * 사전")가 그대로고, **세 번째 언어를 붙이는 비용도 그대로 0 이다**(사전에 시간 단위
+ * 이름이 안 늘어난다).
+ *
+ * 조립이 `DurationFormat` 과 **같은 글자를 내는지 실측으로 확인했다**(2026-09-08).
+ * 초·분·시·일 4,932 개 조합을 ko·en 두 언어로 네이티브와 한 글자씩 비교했다:
+ *
+ * | 환경 | 네이티브와 다른 조합 |
+ * |---|---|
+ * | JavaScriptCore(macOS 26.5) — **배포 엔진** | 0 / 3,970 |
+ * | Node 24 | 0 / 4,932 (아래 `0` 한 줄 빼고) |
+ * | Node 22 | 네이티브가 없어 비교 불가 — 조립 결과는 위 둘과 같다 |
+ *
+ * **테스트가 배포와 다른 것을 재지 않는다**: 폴리필을 테스트에만 넣는 길(그러면 회귀선이
+ * 배포본과 다른 구현을 잰다)을 버린 이유가 이것이다. 지금은 세 환경이 **전부 같은 코드**를
+ * 돌린다 — 분기가 없으니 "어느 쪽이 도는가"를 물을 필요 자체가 없다.
+ *
+ * 유일하게 갈리는 자리가 `0` 인데, **그쪽은 조립이 오히려 옳다**: 네이티브
+ * `DurationFormat` 은 `{seconds: 0}` 을 **빈 문자열**로 내서 `secondsDisplay: 'always'`
+ * 짜리 서식기를 따로 둬야 했는데, 조립은 그냥 `0초`/`0s` 를 낸다. 그래서 그 서식기가
+ * 사라졌다(아래 `durationLabel` 참고).
  */
 import type { Translate } from '../i18n';
 
 /**
- * `Intl.DurationFormat` 의 최소 선언. TypeScript `lib` 가 ES2023 이라 아직 표준 선언에
- * 없다(`tsconfig.json`). **`any` 로 우회하지 않는 이유**: 이 파일이 넘기는 인자가
- * 틀리면 화면에 이상한 시간이 뜨고, 그것을 컴파일이 잡아 주는 편이 낫다.
+ * 길이를 말할 때 쓰는 단위들. `pickUnits` 가 고르고 `formatDuration` 이 글자로 만든다.
  *
- * `declare global` 안에서 **기존 `Intl` 에 합친다**(interface merging). 파일 안에
- * `declare namespace Intl` 을 쓰면 그것이 전역 `Intl` 을 **가려서** 같은 파일의
- * `Intl.RelativeTimeFormat` 이 안 보이게 된다(실측으로 잡았다, 2026-09-08).
- * `lib` 를 올려 표준 선언이 들어오면 이 블록을 지운다.
+ * 순서가 **큰 것부터**인 것이 계약이다 — 아래 `formatDuration` 이 이 순서대로 이어 붙인다.
+ * 값은 `Intl.NumberFormat` 의 `unit` 이름이라 **마음대로 못 바꾼다**(허용 목록이 있다).
  */
-declare global {
-  namespace Intl {
-    interface DurationInput {
-      days?: number;
-      hours?: number;
-      minutes?: number;
-      seconds?: number;
-    }
-    interface DurationFormatOptions {
-      style?: 'long' | 'short' | 'narrow' | 'digital';
-      /** `'always'` 면 0 초도 적는다 — `durationLabel` 이 0 을 말하는 자리에만 쓴다. */
-      secondsDisplay?: 'auto' | 'always';
-    }
-    interface DurationFormat {
-      format(duration: DurationInput): string;
-    }
-    const DurationFormat: {
-      new (locale: string, options?: DurationFormatOptions): DurationFormat;
-    };
-  }
-}
+const DURATION_UNITS = [
+  ['days', 'day'],
+  ['hours', 'hour'],
+  ['minutes', 'minute'],
+  ['seconds', 'second'],
+] as const;
+
+/** `pickUnits` 가 고른 단위 묶음. `Intl.DurationFormat` 의 입력과 같은 모양이다. */
+type DurationInput = {
+  days?: number;
+  hours?: number;
+  minutes?: number;
+  seconds?: number;
+};
 
 /**
  * 서식기를 만들 때마다 새로 만들지 않는다. `Intl` 생성자는 로캘 자료를 훑으므로 목록을
@@ -104,8 +128,8 @@ declare global {
  * 않는다는 뜻이고, 그것이 이 화면에서 언어 전환이 즉시 먹는 이유다.
  */
 const relativeCache = new Map<string, Intl.RelativeTimeFormat>();
-const durationCache = new Map<string, Intl.DurationFormat>();
-const zeroCache = new Map<string, Intl.DurationFormat>();
+const unitCache = new Map<string, Intl.NumberFormat>();
+const listCache = new Map<string, Intl.ListFormat>();
 
 function relative(locale: string, numeric: 'auto' | 'always'): Intl.RelativeTimeFormat {
   const key = `${locale}:${numeric}`;
@@ -117,31 +141,51 @@ function relative(locale: string, numeric: 'auto' | 'always'): Intl.RelativeTime
   return f;
 }
 
-function duration(locale: string): Intl.DurationFormat {
-  let f = durationCache.get(locale);
+/** 단위 하나를 그 언어의 말로 — `4` + `hour` → `4시간`/`4h`. */
+function unit(locale: string, u: string): Intl.NumberFormat {
+  const key = `${locale}:${u}`;
+  let f = unitCache.get(key);
   if (f === undefined) {
     // `narrow` 를 고른 이유: 한국어는 셋(`long`·`short`·`narrow`)이 전부 `4분 12초` 로
-    // 같고, 영어만 갈린다(`4 minutes, 12 seconds` / `4 min, 12 sec` / `4m 12s`).
-    // 이 값이 서는 자리는 카드의 좁은 칸과 상세의 값 칸이라 **줄을 넘기면 안 된다** —
-    // `long` 의 `4 minutes, 12 seconds` 는 그 칸에서 두 줄이 된다(`daemonFacts.ts` 의
-    // `stamp()` 가 초를 뗀 것과 같은 사정).
-    f = new Intl.DurationFormat(locale, { style: 'narrow' });
-    durationCache.set(locale, f);
+    // 같고, 영어만 갈린다(`4 minutes` / `4 min` / `4h`). 이 값이 서는 자리는 카드의 좁은
+    // 칸과 상세의 값 칸이라 **줄을 넘기면 안 된다** — `long` 의 `4 minutes, 12 seconds`
+    // 는 그 칸에서 두 줄이 된다(`daemonFacts.ts` 의 `stamp()` 가 초를 뗀 것과 같은 사정).
+    f = new Intl.NumberFormat(locale, { style: 'unit', unit: u, unitDisplay: 'narrow' });
+    unitCache.set(key, f);
   }
   return f;
 }
 
 /**
- * 0 만을 위한 서식기 — `secondsDisplay: 'always'` 라 `0초`·`0s` 를 낸다.
- * 왜 따로 두는지는 `durationLabel` 안의 주석에 있다.
+ * 단위 둘을 그 언어의 방식으로 잇는다 — `['4시간', '12분']` → `4시간 12분`.
+ *
+ * `type: 'unit'` 이 요점이다. 기본값(`'conjunction'`)은 `4시간 및 12분`·`4h and 12m` 처럼
+ * **접속사를 넣는다** — 그것은 길이를 말하는 말이 아니다. `'unit'` 이 `DurationFormat` 이
+ * 쓰는 것과 같은 이음이고, 위 주석의 실측이 그것을 확인한 것이다.
  */
-function zeroDuration(locale: string): Intl.DurationFormat {
-  let f = zeroCache.get(locale);
+function list(locale: string): Intl.ListFormat {
+  let f = listCache.get(locale);
   if (f === undefined) {
-    f = new Intl.DurationFormat(locale, { style: 'narrow', secondsDisplay: 'always' });
-    zeroCache.set(locale, f);
+    f = new Intl.ListFormat(locale, { style: 'narrow', type: 'unit' });
+    listCache.set(locale, f);
   }
   return f;
+}
+
+/**
+ * `Intl.DurationFormat` 이 하던 일 — 단위 묶음을 그 언어의 글자로.
+ *
+ * **왜 `DurationFormat` 을 안 부르는지는 이 파일 맨 위에 있다**(Node 22 에 없다).
+ * 여기서 우리가 정하는 것은 **무엇을 말할지**(`pickUnits` 가 고른 단위)뿐이고, 단위
+ * 이름도 잇는 방식도 전부 `Intl` 이 낸다 — 그래서 언어를 붙일 때 여기 손댈 것이 없다.
+ */
+function formatDuration(locale: string, input: DurationInput): string {
+  const parts: string[] = [];
+  for (const [key, u] of DURATION_UNITS) {
+    const v = input[key];
+    if (v !== undefined) parts.push(unit(locale, u).format(v));
+  }
+  return list(locale).format(parts);
 }
 
 /**
@@ -161,17 +205,17 @@ export type Grain = 'fine' | 'coarse';
  * 밀리초를 **어떤 단위로 말할지** 고른다. 한 단계만 내려간다 — `2일 5시간 3분 12초` 는
  * 사람이 읽는 말이 아니라 계산 결과다.
  *
- * 반환이 `Intl.DurationInput` 인 이유: 단위 선택은 우리 판단이고(무엇을 말할지),
+ * 반환이 `DurationInput` 인 이유: 단위 선택은 우리 판단이고(무엇을 말할지),
  * 그것을 **글자로 만드는 것**은 `Intl` 의 일이다. 둘을 안 섞는다.
  *
  * **아랫단위가 `0` 이면 빼고 준다.** `{minutes: 1, seconds: 0}` 을 그대로 넘기면
  * `Intl` 이 `1분 0초` 를 내는데, 옛 `daemonFacts.elapsedLabel` 도 그것을 피해 있었다.
  * `0` 은 정보가 아니라 자리를 차지하는 잡음이다(규칙 06).
  */
-function pickUnits(ms: number, grain: Grain): Intl.DurationInput {
+function pickUnits(ms: number, grain: Grain): DurationInput {
   const secs = Math.floor(ms / 1_000);
   if (secs < 60) return { seconds: secs };
-  const drop = (big: Intl.DurationInput, small: Intl.DurationInput): Intl.DurationInput =>
+  const drop = (big: DurationInput, small: DurationInput): DurationInput =>
     (grain === 'coarse' || Object.values(small)[0] === 0) ? big : { ...big, ...small };
   const mins = Math.floor(secs / 60);
   if (mins < 60) return drop({ minutes: mins }, { seconds: secs % 60 });
@@ -250,16 +294,18 @@ export function agoLabel(fromMs: number, now: number, locale: string, t: Transla
 export function durationLabel(ms: number, locale: string, grain: Grain = 'fine'): string {
   const safe = Math.max(0, Number.isFinite(ms) ? ms : 0);
   /**
-   * **`Intl.DurationFormat` 은 0 을 빈 문자열로 낸다**(실측 2026-09-08 — `{seconds: 0}`
-   * 도, `{minutes: 0, seconds: 0}` 도 `""` 다). 그것을 그대로 화면에 내면 값 칸이 비고,
-   * 빈 칸은 "짧다"가 아니라 **"못 읽었다"** 로 읽힌다(`daemonFacts.ts` 규율 1 의 거울상).
-   * 옛 `formatDuration` 은 `0초` 라고 말했고, 그 판단을 지킨다.
+   * **1초 미만도 `0초`·`0s` 라고 말한다.** 빈 칸으로 두면 "짧다"가 아니라 **"못 읽었다"**
+   * 로 읽힌다(`daemonFacts.ts` 규율 1 의 거울상). 옛 `formatDuration` 이 그렇게 말했고,
+   * 그 판단을 지킨다.
    *
-   * `secondsDisplay: 'always'` 로 서식기 전체를 바꾸지 않는다 — 그러면 `4시간 12분` 이
-   * `4시간 12분 0초` 가 되어, 0 하나를 살리려고 모든 자리에 0 을 붙이는 셈이다.
+   * 여기 분기가 없는 것이 위 조립(`NumberFormat` + `ListFormat`)의 덤이다. 네이티브
+   * `Intl.DurationFormat` 은 `{seconds: 0}` 을 **빈 문자열**로 내서
+   * `secondsDisplay: 'always'` 짜리 서식기를 따로 두고 0 일 때만 그리로 보내야 했는데
+   * (그 서식기를 전체에 쓰면 `4시간 12분` 이 `4시간 12분 0초` 가 된다), 조립은 `0` 도
+   * 그냥 한 단위로 적는다.
+   * `pickUnits` 가 이미 `{seconds: 0}` 을 돌려주므로 아래 한 줄이 그대로 `0초` 를 낸다.
    */
-  if (safe < 1_000) return zeroDuration(locale).format({ seconds: 0 });
-  return duration(locale).format(pickUnits(safe, grain));
+  return formatDuration(locale, pickUnits(safe, grain));
 }
 
 /**
