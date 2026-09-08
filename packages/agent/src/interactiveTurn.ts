@@ -29,6 +29,7 @@ import { resolveWorkspaceDir } from './mentionTurn.js';
 import { findCodexSessionId } from './codexSessions.js';
 import { codexSessionsDir } from './codexHome.js';
 import { claudeSessionMaterialized } from './claudeSessions.js';
+import { ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
 
@@ -324,6 +325,15 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
 
     // Codex 첫 인터랙티브 세션의 rollout 을 찾는 하한. PTY 를 띄우기 직전에 찍어야 방금
     // 생성된 파일과 같은 cwd 의 오래된 세션을 혼동하지 않는다.
+    // 인터랙티브 턴도 TUI 라 같은 대화상자를 만난다 — 사람이 앉아 있으므로 답할 수는
+    // 있지만, 그 사람이 매번 답해야 하는 것은 이 기능이 주려던 경험이 아니다.
+    await ensureWorkspaceTrusted({
+      harness: def.harness,
+      workspaceDir: rec.workspaceDir,
+      claudeConfigDir: deps.claudeConfigDir,
+      codexHome: deps.codexHome,
+    });
+
     const turnStartMs = Date.now();
     const turn = deps.runTurn(plan, {
       cwd: rec.workspaceDir,
