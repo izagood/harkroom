@@ -2583,3 +2583,75 @@ describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
     expect(h.killed()).toBeNull();
   });
 });
+
+describe('타임아웃이 무발화 경과를 잰다 (2026-09-08)', () => {
+  it('답 없이 한도를 넘기면 회수하고 실패로 끝난다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    const { deps, runTurn } = await makeDeps(fake, { utteranceProbeMs: 5, turnTimeoutMs: 30 });
+    runTurn.script = async (_plan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      await new Promise((r) => setTimeout(r, 250));   // 아무 말도 안 한다
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    const err = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })
+      .then(() => null, (e: unknown) => e as Error);
+
+    expect(killed).toBe('SIGTERM');
+    // 문구가 원인을 정확히 말한다 — "무발화"와 "하네스가 스스로 죽었다"는 할 일이 다르다.
+    expect(err?.message).toContain('무발화');
+    // tail 을 담지 않는다: TUI 에서는 주입한 프롬프트가 에코돼 섞인다(설계 §3-4).
+    expect(err?.message).not.toContain('안녕');
+  });
+
+  it('관찰자가 있으면 무발화 한도를 재지 않는다 — 사람이 보고 있으면 끼어들지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    let notifyViewers: ((n: number) => void) | undefined;
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, turnTimeoutMs: 30,
+      relay: {
+        openSession(input: { onViewerCount?: (n: number) => void }) {
+          notifyViewers = input.onViewerCount;
+          return { sessionId: 's-silence', push: () => {}, bindInput: () => {}, close: () => {} };
+        },
+      },
+    });
+    runTurn.script = async (_plan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      notifyViewers?.(1);
+      await new Promise((r) => setTimeout(r, 250));
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(killed).toBeNull();
+  });
+
+  it('TUI 턴은 PTY 시계를 안 쓴다 — timeoutMs 0 으로 뜬다(무기한)', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, turnOpts, runTurn } = await makeDeps(fake, { turnTimeoutMs: 12_345 });
+    runTurn.script = async () => ({ exitCode: 0, timedOut: false, tail: '' });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect((turnOpts[0] as { timeoutMs?: number }).timeoutMs).toBe(0);
+  });
+
+  it('codex 는 그대로 PTY 시계를 쓴다 — exec 은 프로세스 수명과 턴이 같은 사실이다', async () => {
+    const fake = new FakeMurmur(defOf({ harness: 'codex' }));
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, turnOpts, runTurn } = await makeDeps(fake, { turnTimeoutMs: 12_345 });
+    runTurn.script = async () => ({ exitCode: 0, timedOut: false, tail: '' });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect((turnOpts[0] as { timeoutMs?: number }).timeoutMs).toBe(12_345);
+  });
+});
