@@ -127,13 +127,15 @@ describe('Inbox (#185)', () => {
     expect(screen.getByTestId('inbox-filter-all').getAttribute('aria-pressed')).toBe('false');
   });
 
-  // 3. '안 읽음만' 필터는 **사라졌다**(#488 B3: 체크박스가 없어진다). 정렬과 필터의 축이
-  //    '나를 막는가' 하나로 모였고, 안 읽음은 그 축과 직교해서 칩이 될 수 없다 — 그래서
-  //    그 필터를 재던 테스트는 무효다.
+  // 3. '안 읽음만' 필터는 #488 B3 에서 사라졌다가 **돌아왔다.** 없앤 근거는 축이 다르다는
+  //    것이었는데(정렬은 '나를 막는가', 이것은 내 읽음 상태), 실제로 쓰다 보니 그 대가가
+  //    너무 컸다 — '전부' 에 이미 본 수백 줄이 새 줄과 같은 모양으로 섞여 나와서 무엇이
+  //    새로 온 것인지 화면이 말하지 못했다(2026-09-08 사용자 보고).
   //
-  //    다만 **표시**는 남아 있고 남아 있어야 한다: 읽은 것과 안 읽은 것이 한 목록에 섞여
-  //    나오므로 줄 자체가 둘을 갈라 말하지 않으면 목록이 무엇인지 알 수 없다. 그래서
-  //    걸러 내는 것 대신 **표시가 안 읽은 줄에만 붙는다**는 것을 잰다.
+  //    축이 다르다는 사실 자체는 그대로다. 그래서 칩을 되살리면서 `matchesFilter` 주석에
+  //    "이 칩만 다른 축"이라고 적어 둔다 — 숨기는 것보다 적어 두는 편이 정직하다.
+  //
+  //    표시도 그대로 남는다: 좁히지 않고 보는 사람에게는 줄 자체가 둘을 갈라 말해야 한다.
   it('안 읽음 표시가 안 읽은 줄에만 붙는다', async () => {
     fakeController(async () => [
       entry(1, 'mention', 'c1', null),
@@ -145,6 +147,47 @@ describe('Inbox (#185)', () => {
 
     expect(screen.getByTestId('inbox-unread-1')).toBeTruthy();
     expect(screen.queryByTestId('inbox-unread-2')).toBeNull();
+  });
+
+  it("'안 읽은 것' 칩으로 좁히면 이미 본 줄이 빠진다", async () => {
+    fakeController(async () => [
+      entry(1, 'mention', 'c1', null),
+      entry(2, 'mention', 'c1', '2026-09-03T00:00:00.000Z'),
+    ]);
+    open();
+    await waitFor(() => expect(screen.getByTestId('inbox-entry-1')).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId('inbox-filter-unread'));
+    expect(screen.getByTestId('inbox-entry-1')).toBeTruthy();
+    expect(screen.queryByTestId('inbox-entry-2')).toBeNull();
+
+    // 칩의 숫자도 같은 셈을 쓴다 — 목록과 숫자가 갈리면 어느 쪽이 사실인지 알 수 없다.
+    expect(screen.getByTestId('inbox-filter-unread').textContent).toContain('1');
+
+    fireEvent.click(screen.getByTestId('inbox-filter-all'));
+    expect(screen.getByTestId('inbox-entry-2')).toBeTruthy();
+  });
+
+  /**
+   * 좁히지 **않고** 보는 사람에게도 새 줄이 보여야 한다 — 사람이 실제로 겪은 것은
+   * '전부' 화면이었다. 줄 끝의 '· 안 읽음' 글자는 눈이 한 줄씩 끝까지 가야 보이므로,
+   * 훑어 내려가며 찾을 수 있는 표시(왼쪽 선)와 물러난 본문을 함께 잰다.
+   */
+  it("'전부' 에서도 새 줄과 이미 본 줄이 눈으로 갈린다", async () => {
+    fakeController(async () => [
+      entry(1, 'mention', 'c1', null),
+      entry(2, 'mention', 'c1', '2026-09-03T00:00:00.000Z'),
+    ]);
+    open();
+    await waitFor(() => expect(screen.getByTestId('inbox-entry-1')).toBeTruthy());
+
+    const fresh = screen.getByTestId('inbox-entry-1');
+    const seen = screen.getByTestId('inbox-entry-2');
+    expect(fresh.getAttribute('data-unread')).toBe('true');
+    expect(seen.getAttribute('data-unread')).toBe('false');
+    // 새 줄에만 색이 든 선이 선다. 읽은 줄도 같은 두께의 투명한 선을 둬 글자가 안 밀린다.
+    expect(fresh.className).toContain('border-accent');
+    expect(seen.className).toContain('border-transparent');
   });
 
   // 4. 채널 필터 `select` 도 사라졌다(#488 B3). UI 가 없으면 그것을 누르던 테스트는 잴
