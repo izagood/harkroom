@@ -109,6 +109,17 @@ class FakeMurmur implements MentionTurnMurmur {
     return Promise.resolve(all.filter((m) => m.seq > since).slice(0, this.limit));
   }
 
+  /**
+   * 서버 계약: `threadRootId` 를 주지 않은 `message.read` 는 **스레드 답까지 포함해** seq
+   * 커서 이후를 돌려준다(`listMessages`). 위 `readThread` 가 threadRootId 로 거르는 것과
+   * 달리 여기서는 거르지 않는다 — 이 fake 가 그 차이를 지우면 앵커 밖 발화 관측이
+   * 테스트에서만 보이고 프로덕션에서는 안 보이는(또는 그 반대) 상태가 된다.
+   */
+  readChannelSince(channelId: string, sinceSeq: number, limit = 200): Promise<MessageRow[]> {
+    const all = this.messages.filter((m) => m.channelId === channelId && m.seq > sinceSeq);
+    return Promise.resolve(all.slice(0, limit));
+  }
+
   post(channelId: string, body: string, threadRootId: string | null): Promise<number> {
     this.posts.push({ channelId, body, threadRootId });
     const m = this.seedFrom(ME.id, body, threadRootId);
@@ -308,6 +319,44 @@ describe('runMentionTurn', () => {
     const fake = new FakeMurmur(defOf());
     fake.seedFrom('human-1', '@forge 뭐라도 답해줘');
     const { deps } = await makeDeps(fake); // 기본 스크립트: exit 0, 발화 없음
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(fake.posts).toHaveLength(1);
+    expect(fake.posts[0]!.body).toBe(NO_REPLY_NOTICE);
+  });
+
+  /**
+   * 2026-09-08: 앵커 셋에 턴 셋이 떴는데, 둘이 자기 앵커 대신 채널의 다른 요청을 구현하고
+   * **그쪽 스레드에** 답을 올렸다. 자기 앵커에 남은 것은 "답 없이 턴을 끝냈습니다" 한 줄이라
+   * 사람은 그 턴이 아무것도 안 한 줄 알았다. 침묵의 이유가 옆 스레드에 있었다.
+   *
+   * 이 관측은 **침묵 경로에서만** 돈다(채널 전체를 훑는 왕복이라 값이 있다) — 답을 올린
+   * 턴에는 통지 자체가 없으므로 붙일 자리도 없다.
+   */
+  it('침묵한 턴이 다른 스레드에 발화했으면 NO_REPLY_NOTICE 가 그 스레드를 함께 알린다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 이 스레드의 일을 해줘');
+    const { deps } = await makeDeps(fake);
+    // 하네스가 자기 앵커(채널 최상위)가 아니라 옆 스레드에 답을 올렸다.
+    deps.runTurn = (() => fake.post(CHANNEL, '옆 스레드에 답합니다', 'other-root')
+      .then(() => ({ exitCode: 0, timedOut: false, tail: '' }))) as typeof deps.runTurn;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    const notice = fake.posts.find((p) => p.body.startsWith(NO_REPLY_NOTICE));
+    expect(notice, '침묵 통지가 있어야 한다').toBeDefined();
+    expect(notice!.threadRootId).toBeNull(); // 통지는 **내 앵커**에 남는다
+    expect(notice!.body).toContain('다른 스레드에');
+    expect(notice!.body).toContain('murmur://message/other-root');
+  });
+
+  it('앵커 안에서만 말한 침묵 턴에는 앵커 밖 문단이 붙지 않는다 — 없는 사고를 지어내지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 답해줘');
+    const { deps } = await makeDeps(fake);
+    // 발화는 없고, 채널에는 **동료의** 다른 스레드 발화만 있다.
+    fake.seedFrom('a2-other-agent', '동료의 다른 스레드 말', 'other-root');
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
