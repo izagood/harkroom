@@ -2,7 +2,7 @@ import { Fragment, useMemo, type ReactNode } from 'react';
 import { useActiveStore } from '../state/communities';
 import { splitMentions } from '../lib/mention';
 import { splitLinks, type LinkTarget, type BodyPart } from '../lib/link';
-import { extractPreviewUrls } from '@murmur/shared';
+import { extractPreviewUrls, renderMentions } from '@murmur/shared';
 import { splitCode } from '../lib/code';
 import { parseBlocks, type Align, type Block, type Emphasis, type Inline } from '../lib/markdown';
 import { getExternalOpener } from '../lib/openExternal';
@@ -241,6 +241,16 @@ export function MessageBody({
   );
 
   /**
+   * 인용 안의 글자. 토큰만 지금 handle 로 바꾸고 그 밖은 손대지 않는다.
+   *
+   * `accountsMap` 이 비었으면 그대로 둔다 — `splitMentions` 이 같은 조건에서 같은 선택을
+   * 한다(#271). 여기만 다르게 굴면, 계정을 아직 못 받은 화면에서 인용은 `@알 수 없음`,
+   * 인용 밖은 `<@id>` 로 갈라진다.
+   */
+  const quotedText = (text: string): string =>
+    accountsMap.size > 0 ? renderMentions(text, accountsMap) : text;
+
+  /**
    * 마크다운이 읽은 조각 하나. **글자 조각만** 멘션·링크 인식을 한 번 더 지난다 —
    * 코드와 `[글자](주소)` 는 이미 확정된 것이라 다시 나누면 안 된다.
    */
@@ -252,8 +262,13 @@ export function MessageBody({
     // 인용 안에서는 멘션을 칠하지 않는다(#592). 서버가 인용 줄의 `@handle` 을 부르지
     // 않으므로, 여기서 칠하면 화면이 "불렀다" 고 거짓말을 한다 — 이 파일이 코드 구간에서
     // 이미 피하고 있는 그 거짓말이다. 링크는 인용 안에서도 링크다(부르는 것이 아니다).
+    //
+    // 다만 `<@id>` 토큰은 **읽어 준다**(#271). 인용이 끄는 것은 "부르는 것" 하나이고,
+    // 토큰 해석까지 같이 끄면 옮겨 적은 말 자체가 깨진다 — 정본이 `<@id>` 이므로 앞
+    // 메시지 본문을 그대로 인용하면 날 uuid 가 화면에 드러난다(에이전트가 저장된 본문을
+    // 옮겨 적을 때 실제로 그렇게 된다). 읽되 칠하지 않는 것이 인용의 규칙이다.
     const parts = quoted
-      ? splitLinks([{ kind: 'text', text: span.text }])
+      ? splitLinks([{ kind: 'text', text: quotedText(span.text) }])
       : splitLinks(splitMentions(span.text, handles, groupHandles, accountsMap));
     return withEmphasis(parts.map((p, j) => renderPart(p, `${key}-${j}`)), span, key);
   };
