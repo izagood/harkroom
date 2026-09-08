@@ -42,7 +42,11 @@ if (mode === 'hang')    { setInterval(() => {}, 1_000); }            // 타임�
 if (mode === 'ready-then-echo') {
   // 'READY' 는 pty.test 가 명시 패턴으로 쓰고, '❯ ' 는 러너의 기본 패턴이 찾는 것이다
   // (claude TUI 의 입력 프롬프트 표시). 둘을 함께 찍어 두 경로를 같은 픽스처로 잰다.
-  setTimeout(() => process.stdout.write('READY\n❯ '), 300);
+  // '❯' 뒤는 **비분리 공백(U+00A0)** 이다 — 실물 claude TUI 가 입력줄을 그 문자로 채우고,
+  // 러너의 준비 판정이 그것으로 입력창과 승인 메뉴를 가른다(메뉴는 `❯1.` 처럼 보통 문자다).
+  // 보통 공백으로 두면 이 픽스처가 실물과 다른 성질을 갖게 되고, 그때 이 테스트는 초록인데
+  // 프로덕션은 준비를 못 본다 — 2026-09-08 에 실제로 그렇게 깨졌다.
+  setTimeout(() => process.stdout.write('READY\n\u276f\u00a0'), 300);
   process.stdin.setEncoding('utf8');
   let buf = '';
   process.stdin.on('data', (d) => {
