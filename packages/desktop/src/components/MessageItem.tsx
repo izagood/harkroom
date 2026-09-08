@@ -155,6 +155,18 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   // 수정은 admin 에게도 열지 않는다: 남의 발언을 고칠 수 있으면 기록이 증거가 못 된다.
   const canDelete = (isMine || isAdmin) && !isSystem;
   /**
+   * 채널로 함께 올린 스레드 답을 채널에서 거둔다(#231 되돌리기).
+   *
+   * 조건이 셋인 이유: 스레드 답이어야 하고(`threadRootId`), 지금 채널에도 보이고 있어야
+   * 하고(`alsoInChannel`), 지울 수 있는 사람이어야 한다. 앞의 둘은 "지금 상태"라 이미
+   * 거둔 메시지에는 항목이 아예 뜨지 않는다 — 눌러도 아무 일 없는 항목은 거짓 신호다
+   * (design.md §4).
+   *
+   * 보관된 채널에서도 남긴다. 잘못 흘린 말을 치우는 길은 채널이 얼어붙은 뒤에도 있어야
+   * 한다 — 서버의 삭제·핀 해제가 같은 이유로 보관을 보지 않는다.
+   */
+  const canRecall = canDelete && message.alsoInChannel && message.threadRootId !== null;
+  /**
    * 이 메시지의 핀(#218). 핀은 **채널 전역 사실**이라 메시지 행이 아니라 채널별 목록에서
    * 찾는다 — `MessageRow` 에 넣으면 같은 사실이 두 곳에 생기고, 남이 고정했을 때 한쪽만
    * 갱신되는 갈라짐이 난다(리액션과 달리 핀은 델타 이벤트가 없다).
@@ -262,6 +274,15 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
     // 사람이 `<@0f3c…>` 를 고치게 된다. 저장할 때 서버가 다시 정규화한다.
     ...(canEdit ? [{ label: 'Edit', onSelect: () => setDraft(bodyAsHandles(message.body, accounts)) }] : []),
     ...(canDelete && !confirmingDelete ? [{ label: 'Delete', onSelect: () => setConfirmingDelete(true) }] : []),
+    /**
+     * #231 되돌리기. 문구가 'Delete' 가 아닌 이유를 문구 자체가 말해야 한다 — 이것은
+     * 지우기가 아니라 **채널에서만** 거두는 일이고, 메시지는 스레드에 그대로 남는다.
+     * 그래서 대상('from channel')을 문구에 박는다.
+     *
+     * 확인 단계를 두지 않는다: 지우기와 달리 본문이 사라지지 않는다. 다만 되돌린 것을
+     * 다시 채널로 올리는 길은 없으므로(다시 쓰면 된다) 'Undo' 라고 부르지도 않는다.
+     */
+    ...(canRecall ? [{ label: 'Remove from channel', onSelect: () => { void getController().recallFromChannel(message.id); } }] : []),
     // #219: 나중에 볼 것으로 담기. 담겨 있으면 문구가 해제로 바뀐다 — 같은 자리에 두 항목을
     // 나란히 두면 어느 것이 지금 상태인지 화면이 말하지 않는다.
     // 문구는 이 메뉴의 나머지(Pin·Edit·Delete…)와 같은 영문이다: 여기만 한국어로 두면

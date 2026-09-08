@@ -1030,6 +1030,22 @@ export class Controller {
   }
 
   /**
+   * 채널로 잘못 내보낸 스레드 답을 채널에서 거둔다(#231 되돌리기).
+   *
+   * `deleteMessage` 와 달리 **스토어에서 빼지 않는다** — 메시지는 스레드에 그대로 있고
+   * 갱신된 행을 덮어쓰기만 한다. 채널 목록은 `alsoInChannel` 로 거르므로(`ChannelPane`)
+   * 그 한 값이 false 로 바뀌는 것만으로 채널에서 사라지고 스레드에는 남는다.
+   *
+   * 열려 있는 스레드를 닫지 않는 이유도 같다: 없어진 것이 아니다.
+   */
+  async recallFromChannel(messageId: string): Promise<void> {
+    const { activeChannelId } = this.store.getState();
+    if (!activeChannelId) return;
+    const updated = await this.api.recallFromChannel(activeChannelId, messageId);
+    this.store.getState().upsertMessages(activeChannelId, [updated]);
+  }
+
+  /**
    * 이 채널의 고정 목록을 서버에서 다시 받는다(#218).
    *
    * 델타가 아니라 목록 전체를 갈아 끼운다: 핀은 채널 전역 상태라 다른 사람이 고정·해제한

@@ -186,6 +186,25 @@ describe('Controller', () => {
     expect((api.deleteMessage as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(['c1', 'm1']);
   });
 
+  // #231 되돌리기는 **지우기가 아니다**. 스토어에서 빼면 스레드에서도 사라져
+  // 되돌리기가 지우기가 되고, 열려 있던 스레드까지 닫힌다.
+  it('recall keeps the message in the store and only flips alsoInChannel', async () => {
+    const api = fakeApi();
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    await c.openChannel('c1');
+    useAppStore.getState().upsertMessages('c1', [msg('m7', 'c1', 7, '흘린 말', 'u1', { threadRootId: 'm1', alsoInChannel: true })]);
+
+    await c.recallFromChannel('m7');
+
+    expect((api.recallFromChannel as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(['c1', 'm7']);
+    const kept = useAppStore.getState().messages.c1!.find((m) => m.id === 'm7');
+    expect(kept).toBeTruthy();
+    expect(kept?.alsoInChannel).toBe(false);
+    expect(kept?.threadRootId).toBe('m1');
+  });
+
   // 최신 창 밖으로 밀려난 대화에 도달할 경로가 필요하다.
   it('loads an older page from the oldest message it holds', async () => {
     const api = fakeApi({

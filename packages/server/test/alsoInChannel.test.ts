@@ -144,3 +144,72 @@ describe('#231 alsoInChannel', () => {
     expect(after.json().unread).toBe(baseline + 1);
   });
 });
+
+// #231 되돌리기: 스레드 이야기를 채널로 잘못 흘렸을 때 **채널에서만** 거둔다.
+// 회귀선은 "지우기가 되지 않는가" 하나에 걸려 있다 — 메시지는 스레드에 남아야 한다.
+describe('#231 채널에서 거두기', () => {
+  const recall = (token: string, messageId: string) =>
+    app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/messages/${messageId}/also-in-channel`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+  const postAlso = async (token: string, body: string) => {
+    const root = await post(token, `root for ${body}`);
+    const rootId = root.json().id as string;
+    const reply = await post(token, body, { threadRootId: rootId, alsoInChannel: true });
+    return { rootId, id: reply.json().id as string };
+  };
+
+  it('거두면 채널에서 빠지고 스레드에는 남는다', async () => {
+    const { rootId, id } = await postAlso(adminToken, 'oops');
+    const res = await recall(adminToken, id);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().alsoInChannel).toBe(false);
+
+    const rows = await listMessages(pool, channelId, { limit: 50 });
+    const found = rows.find((m) => m.id === id);
+    // 지운 것이 아니다 — 행은 그대로 있고 스레드 소속도 그대로다.
+    expect(found).toBeTruthy();
+    expect(found?.alsoInChannel).toBe(false);
+    expect(found?.threadRootId).toBe(rootId);
+  });
+
+  it('두 번 거둬도 같은 결과다', async () => {
+    const { id } = await postAlso(adminToken, 'twice');
+    await recall(adminToken, id);
+    const again = await recall(adminToken, id);
+    // 다른 창에서 먼저 거둔 뒤 이 창에서 누르는 것은 정상 경로다 — 404 가 아니다.
+    expect(again.statusCode).toBe(200);
+    expect(again.json().alsoInChannel).toBe(false);
+  });
+
+  it('작성자도 admin 도 아니면 거절한다', async () => {
+    const { id } = await postAlso(adminToken, 'not yours');
+    const res = await recall(botPat, id);
+    expect(res.statusCode).toBe(403);
+
+    const rows = await listMessages(pool, channelId, { limit: 50 });
+    expect(rows.find((m) => m.id === id)?.alsoInChannel).toBe(true);
+  });
+
+  it('admin 은 남의 것도 거둘 수 있다', async () => {
+    const root = await post(adminToken, 'root for agent recall');
+    const rootId = root.json().id as string;
+    const client = await mcpClient(botPat);
+    const posted = text(await client.callTool({
+      name: 'message.post',
+      arguments: { channelId, body: 'agent overshare', threadRootId: rootId, alsoInChannel: true },
+    })) as { message: { id: string } };
+    await client.close();
+
+    const res = await recall(adminToken, posted.message.id);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().alsoInChannel).toBe(false);
+  });
+
+  it('없는 메시지는 404 다', async () => {
+    const res = await recall(adminToken, '00000000-0000-4000-8000-000000000000');
+    expect(res.statusCode).toBe(404);
+  });
+});
