@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { displayBody } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import type { SweepItem } from '../state/sweep';
@@ -121,7 +122,8 @@ export function SweepShell({ items, loading, error, onRetry, onClose, onMarkRead
                 {current.messages.map((m) => (
                   <li key={m.id} className="rounded bg-surface-sunken p-2 text-fg">
                     <span className="mr-2 text-[11px] text-fg-subtle">@{accounts[m.authorId]?.handle ?? m.authorId}</span>
-                    {m.body}
+                    {/* `displayBody` — 훑기도 본문 렌더러를 지나지 않는다(`lib/mention` 주석). */}
+                    {displayBody(m, accounts)}
                   </li>
                 ))}
               </ul>

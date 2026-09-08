@@ -286,6 +286,30 @@ describe('Inbox 줄이 무엇을 말하는가 (#488 C2)', () => {
    * 언제·어디. 문서: *"지금 줄에는 이 중 어느 것도 없다."* 넷 중 하나라도 빠지면 줄은
    * 다시 알림 한 줄로 돌아간다.
    */
+  /**
+   * **본문 자리에 uuid 가 오면 "무엇을" 이 없는 것과 같다.** 2026-09-08 실측: 서버가 싣는
+   * 본문은 정본 형식(`<@id>`)이고, 이 줄은 `MessageBody` 를 지나지 않아 그 치환을 못 받아
+   * 142줄 전부가 `<@2c8c1910-da9c-…>` 로 보였다 — 나를 부른 것이 무슨 말인지 알 수 없다.
+   *
+   * 그래서 문자열 함수만 단언하지 않고 **줄을 실제로 렌더한다**: `bodyWithHandles` 를
+   * 단독으로 재면 인박스가 그것을 부르지 않아도 초록이고, 그때 화면은 다시 uuid 다.
+   */
+  it('본문의 <@id> 가 지금의 handle 로 보인다 (uuid 가 아니다)', async () => {
+    // 토큰 문법은 uuid 만 받는다(`MENTION_TOKEN_PATTERN`) — fixture 의 `u1` 같은 짧은
+    // id 로는 이 결함이 재현되지 않는다. 서버가 싣는 것과 같은 모양을 쓴다.
+    const BOB = '2c8c1910-da9c-47bc-a483-ce41a1217d85';
+    useAppStore.getState().set({ accounts: { u1: acc('u1', 'alice'), [BOB]: acc(BOB, 'bob') } });
+    fakeController(async () => [
+      entry(1, 'mention', 'c1', null, { body: `<@${BOB}> 배포 로그 봐 줄 수 있나` }),
+    ]);
+    open();
+    await waitFor(() => expect(screen.getByTestId('inbox-entry-1')).toBeTruthy());
+
+    const row = screen.getByTestId('inbox-entry-1');
+    expect(row.textContent).toContain('@bob 배포 로그 봐 줄 수 있나');
+    expect(row.textContent).not.toContain(`<@${BOB}>`);
+  });
+
   it('줄이 얼굴·말표·본문·언제어디를 함께 말한다', async () => {
     useAppStore.getState().set({ accounts: { u1: acc('u1', 'alice') } });
     fakeController(async () => [

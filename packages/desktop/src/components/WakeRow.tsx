@@ -1,4 +1,5 @@
 import { readWakeMeta, type MessageRow } from '@murmur/shared';
+import { displayBody } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 
 /**
@@ -16,6 +17,8 @@ import { useActiveStore } from '../state/communities';
  */
 export function WakeRow({ message }: { message: MessageRow }) {
   const author = useActiveStore((s) => s.accounts[message.authorId]);
+  // 사유도 본문이다 — 본문 렌더러를 지나지 않으므로 `<@id>` 를 여기서 푼다(`lib/mention` 주석).
+  const accounts = useActiveStore((s) => s.accounts);
   const wake = readWakeMeta(message.meta);
   const at = wake === null ? null : new Date(wake.wakeAt);
   // 시각을 못 읽어도 줄은 그린다 — 대기 자체가 사실이고, 시각을 모르는 것이 그 사실을 지우지 않는다.
@@ -30,7 +33,7 @@ export function WakeRow({ message }: { message: MessageRow }) {
         <span aria-hidden="true" className="shrink-0">🕐</span>
         <span className="font-medium text-fg-agent">{author?.handle ?? '…'}</span>
         {label === null ? <span>다시 봅니다</span> : <span>{label} 에 다시 봅니다</span>}
-        <span className="text-fg-subtle">· {message.body}</span>
+        <span className="text-fg-subtle">· {displayBody(message, accounts)}</span>
       </div>
     </div>
   );
