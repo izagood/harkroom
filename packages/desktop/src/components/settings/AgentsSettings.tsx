@@ -781,13 +781,18 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
             {/* 계정 풀 — **이 기기에만 저장된다.** 위 필드들과 저장 경로가 다르므로
                 (서버 PATCH 가 아니라 로컬 데몬) 고르는 즉시 쓰고, 그 사실을 적는다.
-                표면이 없으면 아예 그리지 않는다 — 그려 두면 고를 수 있는데 아무 일도 안 난다. */}
+                표면이 없으면 아예 그리지 않는다 — 그려 두면 고를 수 있는데 아무 일도 안 난다.
+
+                **읽는 중·읽기 실패는 "없음"이 아니다.** 그때도 칸은 그리고 잠그기만 한다 —
+                감추면 아래 `agentPool.error` 를 그릴 자리도 같이 사라져, 데몬이 대답을 못 한
+                것뿐인데 사람은 "이 앱에 그런 기능이 없다"고 읽는다. */}
             {agentPool.available && (
               <label className={label}>
                 Account pool
                 <select
                   className={field}
                   aria-label="Account pool"
+                  disabled={!agentPool.ready}
                   value={agentPool.assigned}
                   onChange={(e) => void agentPool.assign(e.target.value)}
                 >
