@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { Identity, resetAvatarCache } from '../src/components/Identity';
 import { MessageItem } from '../src/components/MessageItem';
@@ -25,12 +26,19 @@ const fakeController = (over: Partial<Controller> = {}) => {
 const withPhoto = (id: string, handle: string, attachmentId = 'att-1') =>
   acc(id, handle, 'human', false, { avatarAttachmentId: attachmentId });
 
+// **언어를 고정한다.** 이 파일이 재는 것은 화면이 무엇을 보내고 무엇을 막는가이지
+// 문구의 언어가 아니다 — 언어를 재는 자리는 `i18n.test.tsx` 하나이고, 두 곳에서 재면
+// 문구를 고칠 때 한쪽만 고쳐진다.
 beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   // 캐시는 모듈 수준이라 테스트 사이에 새어 나간다 — 앱에서는 세션 하나가 통째로 산다.
   resetAvatarCache();
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 // #365 로 사람의 `badge` 는 아무것도 그리지 않는다. 아래에서 **아바타 자체**를 재는
 // 자리들은 `variant="avatar"` 를 명시한다 — 기본값(`badge`)으로 두면 이 테스트들이

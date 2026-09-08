@@ -3,6 +3,7 @@ import type { AgentDefaults } from '@murmur/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { Button, Field, Segmented, Select, SettingsGroup, SettingsPage, TextInput } from './primitives';
+import { useT } from '../../i18n/useT';
 
 /** 러너가 실제로 띄울 수 있는 하네스. `AgentsSettings` 와 같은 목록이어야 한다. */
 const RUNNABLE_HARNESSES = ['claude-code', 'codex'] as const;
@@ -21,6 +22,7 @@ const EFFORTS = ['low', 'medium', 'high'] as const;
  * 값이라, 참조로 두면 기본값을 고치는 순간 돌고 있는 에이전트의 하네스가 중간에 바뀐다.
  */
 export function AgentDefaultsSettings() {
+  const t = useT();
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
   // **세 상태다**(#171): null(아직 안 읽음) / 'error'(못 읽음) / 값.
   // 셋을 구별하지 않으면 "불러오는 중"과 "못 불러왔다"가 같은 빈 화면이 된다.
@@ -60,14 +62,14 @@ export function AgentDefaultsSettings() {
       setForm({ harness: next.harness, model: next.model ?? '', effort: next.effort ?? '' });
       setSaved(true);
     } catch {
-      setError('기본값을 저장하지 못했다');
+      setError(t('defaults.field.saveFailed'));
     } finally { setBusy(false); }
   };
 
   return (
     <SettingsPage
       title="Agent defaults"
-      description="새로 만드는 에이전트가 물려받을 값. 이미 있는 에이전트는 바뀌지 않는다."
+      description={t('defaults.field.subtitle')}
     >
       <SettingsGroup>
         {!isAdmin && (
@@ -75,50 +77,50 @@ export function AgentDefaultsSettings() {
           // 크기를 안 적어 본문단 13px 을 물려받는다: 이 세 줄은 각자 그 순간 화면의
           // **내용 전부**이므로(권한 없음·대기·실패) 아랫단으로 내리면 화면 하나가 통째로
           // 가장 작은 글자가 된다. 아래 폼이 뜨는 정상 경로에서는 라벨이 아랫단이다.
-          <p className="text-fg-muted">기본값을 정할 수 있는 것은 admin 뿐이다.</p>
+          <p className="text-fg-muted">{t('defaults.field.notAdmin')}</p>
         )}
-        {isAdmin && defaults === null && <p className="text-fg-muted">불러오는 중…</p>}
+        {isAdmin && defaults === null && <p className="text-fg-muted">{t('defaults.field.loading')}</p>}
         {isAdmin && defaults === 'error' && (
-          <p role="alert" className="text-danger">기본값을 불러오지 못했다</p>
+          <p role="alert" className="text-danger">{t('defaults.field.loadFailed')}</p>
         )}
         {isAdmin && form && defaults !== 'error' && (
           <div className="max-w-md space-y-3">
             {/* 하네스는 둘뿐이라 펼치지 않고 전부 보인다 — 고르기 전에 무엇이 있는지 안다. */}
-            <Field label="기본 harness">
+            <Field label={t('defaults.field.harness')}>
               <Segmented
-                label="기본 harness"
+                label={t('defaults.field.harness')}
                 value={form.harness}
                 onChange={(v) => { setForm({ ...form, harness: v }); setSaved(false); }}
                 options={RUNNABLE_HARNESSES.map((h) => ({ value: h, label: h }))}
               />
             </Field>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="기본 model" hint="비우면 하네스가 고른다 — murmur 는 그 선택을 발화에 실린 모델로만 안다">
+              <Field label={t('defaults.field.model')} hint={t('defaults.field.modelHint')}>
                 <TextInput
-                  ariaLabel="기본 model"
-                  placeholder="harness 기본값"
+                  ariaLabel={t('defaults.field.model')}
+                  placeholder={t('defaults.field.harnessDefault')}
                   value={form.model}
                   onChange={(v) => { setForm({ ...form, model: v }); setSaved(false); }}
                 />
               </Field>
-              <Field label="기본 effort">
+              <Field label={t('defaults.field.effort')}>
                 <Select
-                  ariaLabel="기본 effort"
+                  ariaLabel={t('defaults.field.effort')}
                   value={form.effort}
                   onChange={(v) => { setForm({ ...form, effort: v }); setSaved(false); }}
-                  options={[{ value: '', label: 'harness 기본값' }, ...EFFORTS.map((e) => ({ value: e, label: e }))]}
+                  options={[{ value: '', label: t('defaults.field.harnessDefault') }, ...EFFORTS.map((e) => ({ value: e, label: e }))]}
                 />
               </Field>
             </div>
             <div className="flex items-center gap-2">
               <Button variant="primary" disabled={busy} onClick={() => void save()}>
-                기본값 저장
+                {t('defaults.field.save')}
               </Button>
-              {saved && <span className="text-meta text-success">저장했다</span>}
+              {saved && <span className="text-meta text-success">{t('defaults.field.saved')}</span>}
               {error && <span role="alert" className="text-meta text-danger">{error}</span>}
             </div>
             <p className="text-meta text-fg-muted">
-              다음에 만드는 에이전트에만 적용된다. 이미 있는 에이전트는 바뀌지 않는다.
+              {t('defaults.field.applyScope')}
             </p>
           </div>
         )}
