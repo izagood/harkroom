@@ -225,8 +225,14 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 묶음이 그대로 남는다.
    */
   const [group, setGroup] = useState<'agents' | 'teams'>('agents');
+  /**
+   * 방금 만든 에이전트의 id. **만들기 화면은 만든 뒤에도 그대로 서 있다**(PAT 를 그 자리에
+   * 보여 줘야 하므로 상세로 넘기지 않는다) — 그동안 풀 선택이 다시 바뀌면 쓸 대상이
+   * 필요하다. 이 값이 없으면 그 조작은 아무 데도 쓰이지 않는다.
+   */
+  const [createdAgentId, setCreatedAgentId] = useState<string | null>(null);
   /** 에이전트별 계정 풀 배정(기기 로컬). 이 값은 서버로 가지 않는다 — `useAgentPool` 주석. */
-  const agentPool = useAgentPool(selected?.id ?? null);
+  const agentPool = useAgentPool(selected?.id ?? createdAgentId);
   /**
    * 상세를 열고 있는 팀. `null` 이면 격자다 — `selected`(에이전트)와 **같은 짝**이고,
    * 두 값이 동시에 서지 않는 것은 `group` 이 한 번에 하나이기 때문이다.
@@ -301,6 +307,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   // 클립보드를 못 쓸 때 선택해 줄 명령 노드들. 화면 밖 복제가 아니라 사람이 보고 있는 그 텍스트다.
   const fullCommandRef = useRef<HTMLSpanElement | null>(null);
   const templateCommandRef = useRef<HTMLSpanElement | null>(null);
+  /** 토큰 원문이 그려진 노드. 클립보드가 막혔을 때 **이것을** 선택해 준다(아래 복사 버튼). */
+  const patRef = useRef<HTMLElement | null>(null);
   // #177: "잃었으면 새로 발급한다" 를 글로만 두면 발급 자리를 찾아야 한다 — 진입점으로 보낸다.
   const newPatLabelRef = useRef<HTMLInputElement | null>(null);
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
@@ -515,6 +523,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
   const pick = (a: AgentView) => {
     setSelected(a);
+    setCreatedAgentId(null);
     setView('detail');
     setDraft(draftOf(a));
     setCustomized(a.model !== null || a.effort !== null);
@@ -530,6 +539,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
   const startNew = () => {
     setSelected(null);
+    // 앞서 만든 에이전트의 id 를 남기면 새 초안의 풀 선택이 **그 에이전트**에 쓰인다.
+    setCreatedAgentId(null);
     setView('detail');
     // 기본값을 모르면 초안도 만들지 않는다 — 지어낸 값으로 채우면 그것이 운영자가 정한
     // 기본값인지 구분할 수 없다.
@@ -582,10 +593,17 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     }
     setBusy(true);
     try {
-      const { pat: minted } = await getController().createAgent({
-        handle: draft.handle, displayName: draft.handle, ...configPatch(draft),
-      });
+      const { agent, pat: minted, poolError } = await getController().createAgent(
+        { handle: draft.handle, displayName: draft.handle, ...configPatch(draft) },
+        // 고른 풀을 **여기서** 넘긴다 — 러너가 뜨기 전에 쓰여야 첫 러너가 그 풀로 돈다
+        // (`controller.createAgent` 의 근거). `''` 은 배정 없음이라 넘길 것이 없다.
+        agentPool.assigned ? { claudePool: agentPool.assigned } : undefined,
+      );
       setPat(minted);
+      setCreatedAgentId(agent.id);
+      // 배정 실패는 **생성 실패가 아니다.** 그렇게 적지 않으면 사람은 위 PAT 상자를
+      // 무효한 것으로 읽고 버린다 — 그 토큰은 다시 볼 수 없다.
+      if (poolError) setError(t('agents.create.poolFailed', { reason: poolError }));
       reload();
     } catch {
       setError(t('agents.create.failed'));
@@ -1205,9 +1223,16 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   </option>
                   {agentPool.pools.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
+                {/* 만들기와 상세에서 **적용 시점이 다르다.** 상세는 고르는 즉시 데몬에
+                    쓰이고 러너 재시작이 필요하지만, 만들기에는 쓸 대상이 아직 없어
+                    생성 시점에 쓰인다(그래서 첫 러너가 이미 그 풀로 뜬다 — 재시작이
+                    필요 없다). 한 문구로 뭉개면 한쪽은 반드시 틀린 말이 된다. */}
                 <span className="mt-1 block text-meta text-fg-subtle">
                   This machine only — pools are local directories, so this is not shared
-                  with other devices. Restart the runner for a change to take effect.
+                  with other devices.{' '}
+                  {selected || createdAgentId
+                    ? 'Restart the runner for a change to take effect.'
+                    : 'Applied when the agent is created, before its runner starts.'}
                 </span>
                 {agentPool.error && (
                   <span className="mt-1 block text-meta text-danger">{agentPool.error}</span>
@@ -1662,7 +1687,39 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               // 서버가 해시만 보관하므로 지금 놓치면 다시 볼 수 없다.
               <div className="rounded border border-warning-border bg-warning-surface p-3">
                 <div className="text-meta font-semibold text-warning">{t('agents.pat.shownOnce')}</div>
-                <code className="mt-1 block break-all rounded bg-surface-raised p-2 text-meta">{pat}</code>
+                {/* 토큰 **자체**를 복사하는 버튼. 아래 명령 복사와 둘 다 남는 이유:
+                    이 토큰이 가는 곳이 러너 명령만이 아니다 — 다른 기기의 `.env`,
+                    비밀 저장소, CI 변수처럼 명령 껍데기가 방해가 되는 자리가 있고,
+                    그때 사람은 명령을 복사해 앞뒤를 손으로 잘라내야 했다. 잘라내다
+                    한 글자를 흘리면 인증만 조용히 실패한다(#125 가 잘린 토큰에 대해
+                    지적한 것과 같은 결말).
+
+                    문구는 아래 명령 복사와 **같은 키를 쓴다**(`agents.runner.copy`) —
+                    글자가 `Copy`/`Copied` 하나뿐인데 사전에 두 벌을 두면 한쪽만
+                    번역되는 날이 온다. 무엇을 복사하는지는 `aria-label` 이 가른다. */}
+                <div className="mt-1 flex items-start gap-2">
+                  <code
+                    ref={patRef}
+                    className="min-w-0 flex-1 break-all rounded bg-surface-raised p-2 text-meta"
+                  >
+                    {pat}
+                  </code>
+                  <button
+                    className="shrink-0 rounded border border-warning-border bg-warning-surface-strong px-1.5 py-0.5 text-meta text-warning hover:bg-warning-border"
+                    aria-label={t('agents.pat.copyToken')}
+                    onClick={async () => {
+                      setError(null);
+                      // 자르지 않는다 — 화면에 있는 그 문자열 전체가 클립보드로 간다.
+                      const ok = await copyToClipboard(pat, patRef.current, setError, t);
+                      if (ok) {
+                        setCopySuccess('pat');
+                        setTimeout(() => setCopySuccess((c) => c === 'pat' ? null : c), 2000);
+                      }
+                    }}
+                  >
+                    {copySuccess === 'pat' ? t('agents.runner.copied') : t('agents.runner.copy')}
+                  </button>
+                </div>
                 {/* #125: 이 명령의 토큰을 자르고 말줄임표를 붙여 두면, 그대로 복사해 실행했을 때
                     인증이 실패한다 — "완성된 명령"처럼 보이는데 아니었다. 전체 토큰을 싣는다.
                     바로 위 코드 블록에 이미 전체 토큰이 있으므로 중복 노출이 새 위험은 아니다.
