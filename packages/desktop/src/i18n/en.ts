@@ -186,6 +186,32 @@ export const en = {
   'common.someone': 'someone',
 
   // ---------------------------------------------------------------------------
+  // appearance — 화면 이름. `settings/AppearanceSettings.tsx`.
+  //
+  // 이 화면은 **원래 영어였다**(색 모드 셋). 여기 오는 것은 언어 고르개뿐이고, 그것이
+  // 마지막으로 남아 있던 자리다 — 사전과 배선은 진작 있었는데 **고를 자리가 없어서**
+  // 사람이 언어를 바꿀 방법이 없었다.
+  //
+  // 언어 이름 자체(`English` · `한국어`)는 사전에 없다. `LOCALE_NAMES` 가 **각 언어를
+  // 그 언어로** 적고 있고, 그것이 옳다 — 영어를 못 읽는 사람이 자기 언어를 찾을 수
+  // 있어야 한다. 사전에 넣으면 지금 언어로 번역되어 `Korean` 이 되고, 그러면 한국어를
+  // 찾는 사람이 영어 화면에서 자기 언어를 못 찾는다.
+  // ---------------------------------------------------------------------------
+
+  'appearance.colorMode': 'Color mode',
+  'appearance.description': 'Follow your system or choose a light or dark appearance',
+  'appearance.language': 'Language',
+  /** `{name}` 은 `LOCALE_NAMES` 의 값이다 — 그 언어로 적힌 이름이라 번역하지 않는다. */
+  'appearance.languageOption': 'Use {name}',
+  /**
+   * 기본값. **`Auto` 가 아니라 `System`** — 색 모드가 같은 자리에서 이미 `System` 을
+   * 쓰고 있고, 두 줄이 같은 뜻에 다른 낱말을 쓰면 사람이 그 차이를 찾는다.
+   */
+  'appearance.languageSystem': 'System',
+  'appearance.mode': '{mode} appearance',
+  'appearance.title': 'Appearance',
+
+  // ---------------------------------------------------------------------------
   // avatar — **판정 이름이다.** `lib/avatar.ts::avatarErrorMessage` 가 내는 말이고,
   // 그것을 그리는 화면이 둘이다(내 프로필 · 에이전트 프로필). `waitChain` 이 화면 이름을
   // 금지한 조건 그대로다.

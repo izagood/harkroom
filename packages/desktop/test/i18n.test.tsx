@@ -30,6 +30,8 @@ import type {
   AgentDefaults, AgentTeamRow, AgentView, AskMeta, InboxEntry, MessageRow, OpenAskLink, PatView,
 } from '@murmur/shared';
 import { CATALOGS, LOCALES, translator, detectLocale, isLocale, type Locale } from '../src/i18n';
+import { LOCALE_NAMES } from '../src/i18n';
+import { AppearanceSettings } from '../src/components/settings/AppearanceSettings';
 import { avatarErrorMessage } from '../src/lib/avatar';
 import { ApiError } from '../src/lib/api';
 import { accountOpen } from '../src/lib/accountOpen';
@@ -60,7 +62,7 @@ import { TypingLine } from '../src/components/TypingLine';
 import { ThreadStateBadge } from '../src/components/ThreadStateBadge';
 import { threadStateLabel, type ThreadState } from '../src/lib/threadState';
 import { inboxRow } from '../src/lib/inboxRow';
-import { fireEvent } from '@testing-library/react';
+import { fireEvent, within } from '@testing-library/react';
 import { waitChainFromLinks } from '../src/lib/waitChain';
 import { daemonFactRows } from '../src/lib/daemonFacts';
 import {
@@ -3248,5 +3250,59 @@ describe('잔여 — 훑기·계정 열기·멘션', () => {
   it('모르는 계정 자리가 두 언어로 뜬다', () => {
     expect(translator('en')('mention.unknownAccount')).toBe('unknown');
     expect(translator('ko')('mention.unknownAccount')).toBe('알 수 없음');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 12. 언어 고르개 — **사람이 언어를 바꿀 수 있다**
+//
+// 사전과 배선은 진작 있었는데(`prefs.locale`·`setLocale`) **고를 자리가 없었다.**
+// 옮기기가 다 끝나도 그 상태로는 반쪽이다 — 화면이 두 언어를 낼 줄 알아도 사람이
+// 그것을 부를 방법이 없기 때문이다.
+// ---------------------------------------------------------------------------
+
+describe('언어 고르개', () => {
+  it('고르면 화면이 그 언어로 바뀐다', () => {
+    render(<AppearanceSettings />);
+    // 기본은 영어다.
+    expect(screen.getByText(en['appearance.language'])).toBeTruthy();
+
+    fireEvent.click(screen.getByText(LOCALE_NAMES.ko));
+    expect(usePrefsStore.getState().locale).toBe('ko');
+    // 같은 화면이 다시 그려지며 한국어가 된다.
+    expect(screen.getByText(ko['appearance.language'])).toBeTruthy();
+  });
+
+  /**
+   * **언어 이름은 사전을 안 지난다.** 지나면 지금 언어로 번역되어 영어 화면에서
+   * `Korean` 이 되고, **한국어를 찾는 사람이 자기 언어를 못 찾는다** — 고르개가
+   * 있어야 하는 이유 자체를 무너뜨린다.
+   */
+  it('언어 이름은 어느 화면에서도 그 언어로 적힌다', () => {
+    for (const locale of ['en', 'ko'] as const) {
+      cleanup();
+      speak(locale);
+      render(<AppearanceSettings />);
+      expect(screen.getByText('English'), locale).toBeTruthy();
+      expect(screen.getByText('한국어'), locale).toBeTruthy();
+    }
+  });
+
+  /**
+   * `System` 은 언어가 아니라 **"내가 안 고르겠다"는 결정**이라 지금 언어로 말한다.
+   *
+   * 색 모드에도 같은 낱말이 서므로 **그 묶음 안에서** 찾는다 — 화면 전체에서 찾으면
+   * 둘이 걸리고, 그 둘은 서로 다른 것을 뜻한다.
+   */
+  it("'시스템'은 지금 언어를 따른다", () => {
+    const langGroup = () => screen.getByRole('radiogroup', {
+      name: usePrefsStore.getState().locale === 'ko' ? ko['appearance.language'] : en['appearance.language'],
+    });
+    render(<AppearanceSettings />);
+    expect(within(langGroup()).getByText(en['appearance.languageSystem'])).toBeTruthy();
+    cleanup();
+    speak('ko');
+    render(<AppearanceSettings />);
+    expect(within(langGroup()).getByText(ko['appearance.languageSystem'])).toBeTruthy();
   });
 });

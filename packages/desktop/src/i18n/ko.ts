@@ -24,6 +24,14 @@ import type { Catalog } from './en';
 export const ko = {
   'common.someone': '사람',
 
+  'appearance.colorMode': '색 모드',
+  'appearance.description': '시스템을 따르거나, 밝게 또는 어둡게 고른다',
+  'appearance.language': '언어',
+  'appearance.languageOption': '{name} 로 보기',
+  'appearance.languageSystem': '시스템',
+  'appearance.mode': '{mode} 모드',
+  'appearance.title': '모양',
+
   'sweep.close': '닫기',
   'sweep.done': '다 봤다',
   'sweep.failed': '읽음 처리에 실패했다',

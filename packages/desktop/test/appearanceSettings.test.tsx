@@ -1,8 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { usePrefsStore } from '../src/state/prefsStore';
+import { en } from '../src/i18n/en';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { prefsStorage, DEFAULT_PREFS } from '../src/lib/prefs';
 import { AppearanceSettings } from '../src/components/settings/AppearanceSettings';
@@ -164,17 +165,26 @@ describe('요구 4 — 로그아웃(appStore.reset) 후에도 colorMode 가 남�
   });
 });
 
+/**
+ * **색 모드 묶음 안에서 센다.** 이 화면에 언어 고르개가 함께 서면서 `radio` 가 화면
+ * 전체로는 여섯이 됐다 — 그 둘은 서로 다른 것을 고르는 자리이므로 함께 세면 이 축이
+ * 재려던 *"색 모드는 3단이다"* 가 사라진다.
+ */
+const colorRadios = () => within(
+  screen.getByRole('radiogroup', { name: en['appearance.colorMode'] }),
+).getAllByRole('radio');
+
 describe('요구 5 — segmented control 3단', () => {
   it('세 단이 있고 각각 접근 가능한 이름을 갖는다', () => {
     render(<Themed><AppearanceSettings /></Themed>);
 
-    const names = screen.getAllByRole('radio').map((b) => b.getAttribute('aria-label'));
+    const names = colorRadios().map((b) => b.getAttribute('aria-label'));
     expect(names).toEqual(['System appearance', 'Light appearance', 'Dark appearance']);
   });
 
   it('현재 값만 눌린 상태로 보인다', () => {
     render(<Themed><AppearanceSettings /></Themed>);
-    const checked = () => screen.getAllByRole('radio')
+    const checked = () => colorRadios()
       .filter((b) => b.getAttribute('aria-checked') === 'true')
       .map((b) => b.getAttribute('aria-label'));
 
