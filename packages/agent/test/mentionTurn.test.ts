@@ -2777,3 +2777,69 @@ describe('회수로 끝난 턴의 성패 (2026-09-08)', () => {
     })).rejects.toThrow();
   });
 });
+
+// ── 한도는 턴이 도는 동안 잡는다(2026-09-09 프로덕션 관측)
+//
+// TUI 는 한도 에러를 받고도 **죽지 않는다** — 431ms 만에 "You've hit your session limit"
+// 을 화면에 찍고 계속 산다. `-p` 시절에는 프로세스 종료가 신호였고 그 exit code 가 계정
+// 전환을 태웠는데, TUI 에서 그 신호가 사라졌다.
+//
+// 실측: 한도에 걸린 TUI 20여 개가 같은 계정으로 8분 넘게 살아 있었고, 계정 전환은 0건.
+// 그 턴들은 무발화 30분까지 자리를 차지한 뒤에야 끝난다 — 그동안 멀쩡한 계정 둘이 논다.
+//
+// 러너는 이 사실을 읽을 줄 안다(`readLastApiError`). 빠진 것은 **턴이 끝나기 전에 한 번
+// 보는 것**뿐이었다: 그 코드는 턴 종료 뒤에 있었고, TUI 턴은 스스로 끝나지 않는다.
+describe('턴 도중 한도 감지 (2026-09-09)', () => {
+  it('한도 에러를 보면 그 턴을 끝내고, 계정 전환이 붙을 오류로 던진다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5,
+      // 하네스가 한도 에러를 냈다는 사실을 디스크 대신 주입으로 준다 — 실제 판정은
+      // `harnessErrors.test.ts` 가 실물 형식으로 본다.
+      readApiError: async () => ({ text: "You've hit your session limit · resets 4:10pm" }),
+    });
+    // 답하지 않고 버티는 TUI — 한도에 걸린 실물의 모양이다.
+    runTurn.script = async (_plan: TurnPlan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      for (let i = 0; i < 60 && killed === null; i += 1) await new Promise((r) => setTimeout(r, 10));
+      return { exitCode: killed ? 143 : 0, timedOut: false, tail: '' };
+    };
+
+    let err: (Error & { harnessApiError?: string }) | null = null;
+    await runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+    }).catch((e) => { err = e as Error & { harnessApiError?: string }; });
+
+    expect(killed).toBe('SIGTERM');
+    // 이 필드가 `switchesAccount` 의 재료다 — 없으면 축이 안 돈다.
+    expect(err!.harnessApiError).toContain('session limit');
+  }, 20_000);
+
+  it('이미 발화한 턴은 한도 에러가 보여도 성공이다 — 답은 이미 갔다', async () => {
+    // 답을 올린 뒤 후속 작업에서 한도를 만나는 경우다. 그 턴을 실패로 읽으면 재시도가
+    // 같은 질문에 두 번 답한다.
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 5,
+      readApiError: async () => ({ text: "You've hit your session limit" }),
+    });
+    runTurn.script = async (_plan: TurnPlan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      await fake.post(CHANNEL, '답했다', null);
+      for (let i = 0; i < 60 && killed === null; i += 1) await new Promise((r) => setTimeout(r, 10));
+      return { exitCode: killed ? 143 : 0, timedOut: false, tail: '' };
+    };
+
+    await expect(runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+    })).resolves.toBeTruthy();
+  }, 20_000);
+});

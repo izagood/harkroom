@@ -49,7 +49,19 @@ function textOf(record: { message?: { content?: unknown } }): string | null {
 export async function readLastApiError(
   harness: AgentHarness,
   sessionId: string | null,
-  opts: { projectsDir?: string; configDir?: string | null } = {},
+  opts: {
+    projectsDir?: string;
+    configDir?: string | null;
+    /**
+     * 이 시각(ms) **이후**의 에러만 읽는다(2026-09-09). 없으면 지금까지처럼 마지막을 읽는다.
+     *
+     * **턴이 도는 동안** 이 파일을 볼 때 필요하다: 세션 파일은 그 스레드의 전체 이력이라
+     * 앞 턴의 한도 에러가 그대로 남아 있고, 그것을 지금 턴의 것으로 읽으면 멀쩡한 계정을
+     * 버리고 축을 헛돈다. 시각을 모르는 레코드(타임스탬프 없음)는 **세지 않는다** —
+     * 없는 것을 있다고 읽지 않는다.
+     */
+    sinceMs?: number;
+  } = {},
 ): Promise<HarnessApiError | null> {
   // codex 의 rollout 은 형식이 다르다 — P5 에서 다룬다. 지금 억지로 읽으면 "읽었다"는 거짓
   // 신호가 생기고, 그것이 아직 정상 동작하는 tail 폴백을 가린다.
@@ -70,13 +82,17 @@ export async function readLastApiError(
   for (const line of raw.split('\n')) {
     // 값싼 사전 거르기 — 세션 파일은 수 MB 가 되기도 하고 그 대부분은 이 필드가 없다.
     if (!line.includes('isApiErrorMessage')) continue;
-    let record: { isApiErrorMessage?: unknown; message?: { content?: unknown } };
+    let record: { isApiErrorMessage?: unknown; timestamp?: unknown; message?: { content?: unknown } };
     try {
       record = JSON.parse(line);
     } catch {
       continue; // 깨진 줄 하나가 나머지 탐색을 막지 않는다
     }
     if (record.isApiErrorMessage !== true) continue;
+    if (opts.sinceMs !== undefined) {
+      const at = typeof record.timestamp === 'string' ? Date.parse(record.timestamp) : NaN;
+      if (!Number.isFinite(at) || at < opts.sinceMs) continue;
+    }
     const text = textOf(record);
     if (text) last = text;
   }
@@ -96,7 +112,19 @@ export async function readLastApiError(
 export async function sessionTranscriptExists(
   harness: AgentHarness,
   sessionId: string | null,
-  opts: { projectsDir?: string; configDir?: string | null } = {},
+  opts: {
+    projectsDir?: string;
+    configDir?: string | null;
+    /**
+     * 이 시각(ms) **이후**의 에러만 읽는다(2026-09-09). 없으면 지금까지처럼 마지막을 읽는다.
+     *
+     * **턴이 도는 동안** 이 파일을 볼 때 필요하다: 세션 파일은 그 스레드의 전체 이력이라
+     * 앞 턴의 한도 에러가 그대로 남아 있고, 그것을 지금 턴의 것으로 읽으면 멀쩡한 계정을
+     * 버리고 축을 헛돈다. 시각을 모르는 레코드(타임스탬프 없음)는 **세지 않는다** —
+     * 없는 것을 있다고 읽지 않는다.
+     */
+    sinceMs?: number;
+  } = {},
 ): Promise<boolean> {
   // codex 의 rollout 은 형식도 위치도 다르다(P5). 판정할 수 없으면 **참**을 돌려준다 —
   // 여기서 거짓을 돌려주면 codex 턴이 매번 사람을 부른다.
