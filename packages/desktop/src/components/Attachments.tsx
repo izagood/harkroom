@@ -57,12 +57,26 @@ function useAttachmentUrl(id: string, enabled: boolean): { url: string | null; f
 
 /**
  * 칩 안에 들어가는 작은 미리보기. **이름 옆에 놓이는 그림이므로 alt 는 비운다** — 이름을
- * 두 번 읽히면 스크린리더에서 칩 하나가 파일 두 개처럼 들린다. 그릴 수 없는 것(이미지가
- * 아니거나 아직 못 받았거나 실패)은 📎 로 남는다: 자리 크기는 같아서 글자가 흔들리지 않는다.
+ * 두 번 읽히면 스크린리더에서 칩 하나가 파일 두 개처럼 들린다.
+ *
+ * 그릴 수 없으면 📎 로 남되 **"원래 미리보기가 없는 것"과 "받지 못한 것"을 가른다** — 둘을
+ * 같은 📎 로 덮으면, 네트워크가 끊겨 그림이 빠진 자리를 사람이 "이 파일은 원래 이렇다"로
+ * 읽고 그대로 보낸다. 본문 미리보기가 `(불러오기 실패)` 로 가르는 것과 같은 규칙이다.
  */
 export function AttachmentThumb({ attachment }: { attachment: AttachmentRow }) {
-  const { url } = useAttachmentUrl(attachment.id, canPreview(attachment));
-  if (!url) return <span aria-hidden>📎</span>;
+  const previewable = canPreview(attachment);
+  const { url, failed } = useAttachmentUrl(attachment.id, previewable);
+  if (!url) {
+    return (
+      // 그림이 올 자리는 미리 그림 높이(h-6)로 잡는다 — 바이트가 도착하는 순간 11px 이모지가
+      // 24px 그림으로 바뀌면서 칩 줄 전체가 밀려 내려간다. 처음부터 그릴 수 없는 첨부는
+      // 자리를 잡지 않는다: 올 것이 없는데 비워 둔 여백이다.
+      <span className={previewable ? 'inline-flex h-6 items-center gap-1' : 'inline-flex items-center gap-1'}>
+        <span aria-hidden>📎</span>
+        {failed && <span className="text-danger">(미리보기 실패)</span>}
+      </span>
+    );
+  }
   return (
     <img
       src={url}
