@@ -1030,6 +1030,11 @@ export const ko = {
   // 원래 행 이름은 `연결` 이었다. 영어가 `Presence` 로 간 이유(`Connection` 은 소켓
   // 상태로 읽힌다)가 한국어에도 그대로 걸려 `생존` 으로 옮긴다 — 이 행이 답하는 것은
   // 소켓이 아니라 **그 에이전트가 지금 답하는가**이고, 코드가 그것을 `live` 라 부른다.
+  'profile.rows.claudeLane': '기동 때 읽은 claude 계정',
+  'profile.rows.claudeLaneEmpty': '{pool}이 비어 있다 — 시스템 기본 로그인으로 돈다',
+  'profile.rows.claudeLaneOrder': '{pool}: {accounts}',
+  'profile.rows.claudeLanePoolRoot': '기본 풀',
+  'profile.rows.claudeLaneUnknown': '신고가 없다 — 재기동하면 채워진다',
   'profile.rows.presence': '생존',
   'profile.rows.presenceNotResponding': '응답 없음',
   'profile.rows.presenceOnline': '온라인',

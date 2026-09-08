@@ -59,6 +59,7 @@ const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: 'u1', disabled: false, runnerVersion: null,
+  claudeLane: null,
   stopRequestedAt: null, stopAckedAt: null, lastTurnAt: null,
   status: 'available', statusText: null, avatarAttachmentId: null, ...extra,
 });

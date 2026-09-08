@@ -32,6 +32,7 @@ const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
+  claudeLane: null,
   stopRequestedAt: null, stopAckedAt: null,
   // #176: 기본은 '아직 한 번도 턴을 돌린 적 없음' — 필요한 테스트가 덮는다.
   lastTurnAt: null,

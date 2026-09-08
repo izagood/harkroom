@@ -16,6 +16,7 @@ const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
+  claudeLane: null,
   // #129: 종료 요청은 읽기 전용 사실이다 — 기본은 '요청 없음'이고, 필요한 테스트가 덮는다.
   stopRequestedAt: null, stopAckedAt: null,
   // #176: 기본은 '아직 한 번도 턴을 돌린 적 없음'이다 — 화면은 그것을 '활동 없음'으로만 그린다.

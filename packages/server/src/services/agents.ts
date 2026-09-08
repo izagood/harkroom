@@ -24,10 +24,17 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   c.stop_acked_at as "stopAckedAt",
   -- #176 마지막으로 턴을 마친 시각. presence(온라인 여부)와 **다른 사실**이라 여기 한 컬럼으로
   -- 오고, 화면은 둘을 나란히 그린다 — 합치면 #124 가 닫은 결함이 되살아난다.
-  c.last_turn_at as "lastTurnAt"`;
+  c.last_turn_at as "lastTurnAt",
+  -- 러너가 기동 때 읽은 claude lane(5단계). 행이 없으면 **모른다** — 그래서 컬럼 둘을
+  -- 그대로 쓰지 않고 json 하나로 접는다: 행이 없을 때 null 하나가 "모른다"를 말하고,
+  -- 있을 때 빈 accounts 가 "풀이 비었다"를 말한다. 컬럼 둘로 보내면 화면이 그 둘을
+  -- (pool is null && accounts is null) 같은 조합으로 다시 세워야 한다.
+  case when l.account_id is null then null
+       else json_build_object('pool', l.pool, 'accounts', l.accounts) end as "claudeLane"`;
 
 const FROM = `from account a left join agent_config c on c.account_id = a.id
-  left join agent_runner_version v on v.account_id = a.id`;
+  left join agent_runner_version v on v.account_id = a.id
+  left join agent_claude_lane l on l.account_id = a.id`;
 
 export function isHarness(value: unknown): value is AgentHarness {
   return typeof value === 'string' && (AGENT_HARNESSES as readonly string[]).includes(value);
