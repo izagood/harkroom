@@ -61,7 +61,7 @@ export function ReactionPicker({ message }: { message: MessageRow }) {
         ))}
         <button
           aria-label="Close reaction picker"
-          className="rounded px-1 text-[11px] text-fg-muted hover:bg-surface-sunken"
+          className="rounded px-1 text-meta text-fg-muted hover:bg-surface-sunken"
           onClick={() => setPicking(false)}
         >
           ×
@@ -73,7 +73,7 @@ export function ReactionPicker({ message }: { message: MessageRow }) {
   return (
     <button
       aria-label="Add reaction"
-      className="rounded-full border border-border px-1.5 text-[11px] text-fg-subtle hover:bg-surface-sunken"
+      className="rounded-full border border-border px-1.5 text-meta text-fg-subtle hover:bg-surface-sunken"
       onClick={() => setPicking(true)}
     >
       ＋
@@ -108,7 +108,7 @@ export function InlineReactionButtons({ message }: { message: MessageRow }) {
             // 바뀌지 않아야 포커스가 그 버튼에 머문 채로도 읽히는 이름이 흔들리지 않는다.
             aria-label={`React with ${emoji}`}
             aria-pressed={mine}
-            className={`rounded px-1 text-[11px] ${
+            className={`rounded px-1 text-meta ${
               mine ? 'bg-surface-sunken font-medium text-fg' : 'text-fg-subtle hover:bg-surface-sunken'
             }`}
             onClick={() => toggle(emoji, !mine)}
@@ -150,7 +150,7 @@ export function Reactions({ message }: { message: MessageRow }) {
               선까지 갈라 두면 칩이 셋만 붙어도 줄이 시끄러워지고, 눌린 상태는
               `aria-pressed` 가 이미 정확히 말한다.
             */
-            className={`flex items-center gap-1 rounded-full border border-border px-1.5 text-[11px] ${
+            className={`flex items-center gap-1 rounded-full border border-border px-1.5 text-meta ${
               mine ? 'bg-surface-sunken font-medium text-fg' : 'bg-surface text-fg-muted'
             }`}
             onClick={() => toggle(r.emoji, !mine)}

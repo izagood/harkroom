@@ -141,6 +141,8 @@ describe('murmur 로고 (#191)', () => {
     sidebar();
     const cls = screen.getByText('murmur').className;
     expect(cls).toContain('text-fg');
-    expect(cls).toMatch(/text-\[(11|13|15|17)px\]/);
+    // 4단이 `@theme` 토큰이 된 뒤로는 임의값이 아니라 역할 이름이다(`index.css`).
+    // 재는 것은 그대로다 — **이 글자가 4단 안에 있는가**.
+    expect(cls).toMatch(/text-(title|name|body|meta)\b/);
   });
 });

@@ -119,7 +119,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
         const items = rows.filter((s) => skillGroupOf(s) === group.id);
         return (
           <section key={group.id} className="mb-8">
-            <h3 className="mb-2 text-[13px] font-semibold text-fg-subtle">
+            <h3 className="mb-2 text-body font-semibold text-fg-subtle">
               {group.title} ({items.length})
             </h3>
             <div className="divide-y divide-border rounded-xl border border-border bg-surface-raised">

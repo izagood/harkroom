@@ -41,7 +41,7 @@ export function ReportCard({ message, inThread = false }: {
       ) : null}
 
       {report.durationMs != null && (
-        <p className="mt-1.5 text-[11px] text-fg-subtle">{formatDuration(report.durationMs)}</p>
+        <p className="mt-1.5 text-meta text-fg-subtle">{formatDuration(report.durationMs)}</p>
       )}
 
       {/*
@@ -58,7 +58,7 @@ export function ReportCard({ message, inThread = false }: {
               // **본문 크기로 그린다**(13px). 이 카드에서 유일하게 누르는 물건인데 보조
               // 텍스트(11px)보다 작으면 안 된다 — 읽고 고르는 것이므로 `AskCard` 의 옵션과
               // 같은 크기여야 한다. 세로 여백도 함께 키워 손가락·커서가 닿을 자리를 준다.
-              className="rounded-md border border-border bg-surface-raised px-3 py-1.5 text-[13px]
+              className="rounded-md border border-border bg-surface-raised px-3 py-1.5 text-body
                          font-medium text-fg hover:border-fg-subtle hover:bg-surface-hover"
               onClick={() => setDraft(scope, n.label)}
             >
@@ -80,7 +80,7 @@ function Section({ title, items, testid, mono = false, tone = 'text-fg-muted' }:
 }) {
   return (
     <div className="mb-1.5 last:mb-0">
-      <h4 className="text-[11px] font-semibold uppercase tracking-wide text-fg-subtle">{title}</h4>
+      <h4 className="text-meta font-semibold uppercase tracking-wide text-fg-subtle">{title}</h4>
       <ul data-testid={testid} className="mt-0.5 space-y-0.5">
         {items.map((it) => (
           // 넉넉한 행간 — 다시 읽히는 글이므로 읽기 품질이 전부다.
@@ -90,7 +90,7 @@ function Section({ title, items, testid, mono = false, tone = 'text-fg-muted' }:
           // 두면 옆줄의 13px 본문보다 한 단 커 보인다. 한 단 내려 광학적으로 같은 크기를
           // 만든다 — 단을 어긴 것이 아니라 단을 지키기 위한 보정이다. `Profile.tsx` 의
           // `Row` 가 같은 쌍(본문 13 / mono 12)을 쓴다.
-          <li key={it} className={`text-[13px] leading-relaxed ${mono ? 'font-mono text-[12px]' : ''} ${tone}`}>
+          <li key={it} className={`text-body leading-relaxed ${mono ? 'font-mono text-[12px]' : ''} ${tone}`}>
             {it}
           </li>
         ))}

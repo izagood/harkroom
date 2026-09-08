@@ -45,7 +45,7 @@ export function ProgressRow({ messages, endedAt = null }: {
 
   return (
     <div data-testid="progress-row" className="px-4 py-0.5">
-      <div className="flex items-center gap-1.5 text-[11px] text-fg-muted">
+      <div className="flex items-center gap-1.5 text-meta text-fg-muted">
         {/* 점은 `state-running` 이다 — 강조가 아니다. 도는 것은 나를 막지 않는다(규칙 03).
             끝난 묶음은 중립색이다: 색이 상태를 말하는 자리이므로, 끝난 것이 계속 도는
             색으로 남으면 글자를 고쳐도 화면은 여전히 "돈다"고 말한다. */}
@@ -84,7 +84,7 @@ export function ProgressRow({ messages, endedAt = null }: {
       {open && (
         <ul data-testid="progress-detail" className="mt-1 space-y-0.5 border-l border-border-agent pl-2">
           {messages.map((m) => (
-            <li key={m.id} className="text-[11px] text-fg-subtle">{displayBody(m, accounts)}</li>
+            <li key={m.id} className="text-meta text-fg-subtle">{displayBody(m, accounts)}</li>
           ))}
         </ul>
       )}

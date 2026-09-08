@@ -34,7 +34,7 @@ export function WaitChainLine({ chain }: { chain: Chain }) {
         data-end="deadlock"
         data-reason={chain.deadlockReason}
         className="mx-4 my-1 rounded border border-state-stuck bg-danger-surface px-2 py-1
-                   text-[11px] text-state-stuck"
+                   text-meta text-state-stuck"
       >
         <span className="font-semibold">교착</span>
         <span className="ml-1.5 text-fg-muted">
@@ -53,7 +53,7 @@ export function WaitChainLine({ chain }: { chain: Chain }) {
       data-testid="wait-chain"
       data-end={chain.end}
       data-unblocks={chain.unblocks}
-      className={`mx-4 my-1 px-1 text-[11px] ${mine ? 'text-state-turn' : 'text-fg-muted'}`}
+      className={`mx-4 my-1 px-1 text-meta ${mine ? 'text-state-turn' : 'text-fg-muted'}`}
     >
       <span>
         {chain.links.map((l) => (

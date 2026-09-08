@@ -300,8 +300,8 @@ function MeMenuHeader() {
             `@handle · 워크스페이스` 는 이미 아랫단 11px 이다. 4단에서 둘째 단의 이름이
             그대로 이름줄이고(`MessageItem` 의 작성자 이름이 같은 단), 여기를 본문단으로
             두면 두 줄이 4px 차이로 붙어 어느 쪽이 이름인지 눈이 못 가른다. */}
-        <div className="truncate text-[15px] font-medium text-fg">{me?.displayName || me?.handle}</div>
-        <div className="truncate text-[11px] text-fg-subtle">@{me?.handle} · {workspaceLabel}</div>
+        <div className="truncate text-name font-medium text-fg">{me?.displayName || me?.handle}</div>
+        <div className="truncate text-meta text-fg-subtle">@{me?.handle} · {workspaceLabel}</div>
       </div>
     </div>
   );
@@ -359,7 +359,7 @@ function RailButton({ cell, active, badge, countInName, onClick }: {
         된다. `truncate` 를 달지 않는 이유도 그것이다 — 잘릴 수 없는 폭이면 말줄임은
         일어나지 않을 코드이고, 있으면 "잘려도 된다"로 읽힌다.
       */}
-      <span aria-hidden="true" className="text-[11px] leading-none">{cell.label}</span>
+      <span aria-hidden="true" className="text-meta leading-none">{cell.label}</span>
       {badge > 0 && (
         /*
           배지도 11px 로 올린다. 이것이 커지면 글리프를 덮을까가 걱정이지만 — `right-1` 로
@@ -370,7 +370,7 @@ function RailButton({ cell, active, badge, countInName, onClick }: {
         <span
           aria-hidden="true"
           data-testid={`${cell.testId}-badge`}
-          className="absolute right-1 top-0.5 rounded-full bg-accent px-1 text-[11px] font-bold text-fg-on-strong"
+          className="absolute right-1 top-0.5 rounded-full bg-accent px-1 text-meta font-bold text-fg-on-strong"
         >
           {badge}
         </span>

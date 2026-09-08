@@ -114,10 +114,10 @@ export function AgentDefaultsSettings() {
               <Button variant="primary" disabled={busy} onClick={() => void save()}>
                 기본값 저장
               </Button>
-              {saved && <span className="text-[11px] text-success">저장했다</span>}
-              {error && <span role="alert" className="text-[11px] text-danger">{error}</span>}
+              {saved && <span className="text-meta text-success">저장했다</span>}
+              {error && <span role="alert" className="text-meta text-danger">{error}</span>}
             </div>
-            <p className="text-[11px] text-fg-muted">
+            <p className="text-meta text-fg-muted">
               다음에 만드는 에이전트에만 적용된다. 이미 있는 에이전트는 바뀌지 않는다.
             </p>
           </div>

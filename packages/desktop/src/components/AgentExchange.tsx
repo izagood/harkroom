@@ -49,7 +49,7 @@ export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThr
         <button
           data-testid="agent-exchange-toggle"
           aria-expanded
-          className="mx-4 my-0.5 rounded px-1 text-[11px] text-fg-agent hover:bg-surface-hover"
+          className="mx-4 my-0.5 rounded px-1 text-meta text-fg-agent hover:bg-surface-hover"
           onClick={() => setOpen(false)}
         >
           {names.join(' ↔ ')} · 접기
@@ -87,7 +87,7 @@ export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThr
       <button
         data-testid="agent-exchange-toggle"
         aria-expanded={false}
-        className="flex w-full min-w-0 items-center gap-1.5 rounded px-1 text-left text-[11px]
+        className="flex w-full min-w-0 items-center gap-1.5 rounded px-1 text-left text-meta
                    text-fg-agent hover:bg-surface-hover"
         onClick={() => setOpen(true)}
       >

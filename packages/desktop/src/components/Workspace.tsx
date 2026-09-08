@@ -146,13 +146,14 @@ export function Workspace({ onLogout, onOpenSettings }: {
    * 이라 어휘가 둘로 갈렸다. 이 한 줄을 13px 로 내리면 **본문 자리는 아무것도 안 적어도
    * 맞다**. 실제로 이 작업에서 아래쪽의 중복 선언 여러 곳이 그래서 사라졌다.
    *
-   * 임의값(`text-[13px]`)으로 적는 이유는 척도 이름이 v4 기본값 12 / 14 / 16px 이라
-   * 4단 중 하나를 가리킬 수 없기 때문이다. `index.css` 는 척도를 재정의하지 않는다 —
-   * 재정의하면 `text-sm` 이 13px 이 되지만 사람이 두 이름을 계속 배워야 한다.
-   * 회귀선은 `test/typeScale.test.ts` 다.
+   * **`text-body` 는 `@theme` 토큰이다**(`index.css`). 한동안 임의값(`text-[13px]`)이었고,
+   * 그때의 이유는 척도 이름이 v4 기본값 12 / 14 / 16px 이라 4단 중 아무것도 가리킬 수
+   * 없다는 것이었다. v4 기본 척도를 재정의하는 길(`text-sm` 을 13px 로)은 지금도 택하지
+   * 않는다 — 그러면 `text-sm` 이 문서의 14px 과 다른 값이 되어 사람이 두 뜻을 계속
+   * 구분해야 한다. 대신 4단에 **역할 이름**을 새로 줬다. 회귀선은 `test/typeScale.test.ts` 다.
    */
   return (
-    <div className="flex h-screen text-[13px]">
+    <div className="flex h-screen text-body">
       {/* 업데이트 팝업은 `fixed` 라 이 자리에 두어도 레이아웃을 밀지 않는다. 상단 띠
           (`Notice`·`ProjectionBanner`)와 달리 작업 흐름을 비켜서 우측 하단에 선다 —
           업데이트는 지금 하던 일을 멈출 이유가 아니다. */}

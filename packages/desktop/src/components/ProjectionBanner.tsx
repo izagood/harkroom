@@ -63,7 +63,7 @@ export function ProjectionBanner({ onOpenSettings }: {
     <div
       role="alert"
       data-testid={`strip-${banner.testid}`}
-      className={`flex items-start gap-2 border-b px-4 py-2 text-[13px] ${tone}`}
+      className={`flex items-start gap-2 border-b px-4 py-2 text-body ${tone}`}
     >
       <div className="flex-1">
         <span>{banner.text}</span>

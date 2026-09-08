@@ -53,15 +53,15 @@ export function AskCard({ message }: { message: MessageRow }) {
     >
       <div className="flex items-baseline gap-2 px-3 pt-2">
         <span
-          className={`text-[11px] font-semibold ${canChoose ? 'text-state-turn' : 'text-fg-agent'}`}
+          className={`text-meta font-semibold ${canChoose ? 'text-state-turn' : 'text-fg-agent'}`}
         >
           {headline(ask.to, myId, accounts, answered)}
         </span>
         {answered && answeredByName && (
-          <span className="text-[11px] text-fg-subtle">{answeredByName} 이(가) 골랐다</span>
+          <span className="text-meta text-fg-subtle">{answeredByName} 이(가) 골랐다</span>
         )}
       </div>
-      {ask.prompt && <p className="px-3 pt-1 text-[13px] text-fg-muted">{ask.prompt}</p>}
+      {ask.prompt && <p className="px-3 pt-1 text-body text-fg-muted">{ask.prompt}</p>}
 
       <div className="flex flex-col gap-1 p-2">
         {ask.options.map((o) => {
@@ -76,7 +76,7 @@ export function AskCard({ message }: { message: MessageRow }) {
               disabled={!canChoose}
               data-testid={`ask-option-${o.id}`}
               // 옵션은 **본문 크기**로 그린다 — 읽고 골라야 하는 글이지 라벨이 아니다.
-              className={`rounded border px-2.5 py-1.5 text-left text-[13px] ${
+              className={`rounded border px-2.5 py-1.5 text-left text-body ${
                 canChoose
                   ? 'border-border bg-surface-raised hover:border-state-turn hover:bg-surface-hover'
                   : 'border-border-agent bg-transparent'
@@ -84,7 +84,7 @@ export function AskCard({ message }: { message: MessageRow }) {
               onClick={() => { void getController().answerAsk(message.id, o.id, message.channelId); }}
             >
               <span className={`font-medium ${canChoose ? 'text-fg' : 'text-fg-agent'}`}>{o.label}</span>
-              {o.hint && <span className="ml-2 text-[11px] text-fg-subtle">{o.hint}</span>}
+              {o.hint && <span className="ml-2 text-meta text-fg-subtle">{o.hint}</span>}
             </button>
           );
         })}

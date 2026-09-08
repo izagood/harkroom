@@ -624,7 +624,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * **이 화면의 묶음 상자 안은 아랫단 11px 이다** — 라벨·안내 문구·버튼이 모두 그 단이다.
    *
    * 색으로 가르지 않고 **이미 서 있던 것을 따랐다**: 이 파일은 상자 안의 상태·오류·안내
-   * (`불러오는 중…`·`기억이 없다`·PAT 폐기 경고)를 앞서부터 `text-[11px]` 로 쓰고 있었고,
+   * (`불러오는 중…`·`기억이 없다`·PAT 폐기 경고)를 앞서부터 `text-meta` 로 쓰고 있었고,
    * 남아 있던 12px(`text-xs`)은 그 상자의 라벨과 버튼이었다. 버튼만 본문단으로 올리면
    * **경고 문구보다 버튼이 큰** 상자가 되고, 그것은 위계가 뒤집힌 것이다.
    *
@@ -632,7 +632,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 방금 친 글자를 다시 읽는 자리다. `settings/primitives.tsx` 가 같은 짝을 쓴다.
    */
   const field = 'w-full rounded border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
-  const label = 'block text-[11px] font-medium text-fg-muted';
+  const label = 'block text-meta font-medium text-fg-muted';
 
   /**
    * 새 팀. 이름 문법은 **`HANDLE_PATTERN` 을 그대로 쓴다** — 팀 이름이 계정과 같은
@@ -683,7 +683,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       data-testid={`agent-group-${id}`}
       role="tab"
       aria-selected={group === id}
-      className={`-mb-px border-b-2 px-3 py-2 text-[13px] ${
+      className={`-mb-px border-b-2 px-3 py-2 text-body ${
         group === id
           ? 'border-fg font-semibold text-fg'
           : 'border-transparent text-fg-muted hover:text-fg'
@@ -747,7 +747,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       <div className="flex h-full min-h-0 flex-col bg-surface-raised p-5">
         {groupTabs}
         <div className="mb-4">
-          <h2 className="text-[15px] font-bold">팀</h2>
+          <h2 className="text-name font-bold">팀</h2>
           {/*
             **이름의 뜻을 말하는 자리 ①**(문서 4단계). 격자 머리에서 한 번, 이름을 정하는
             칸 아래에서 한 번 말한다(`TeamDetail` 의 `team-mention-note`) — 두 자리인 것이
@@ -756,12 +756,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
             `#570` 이 팀 멘션을 열었으므로 이것은 **지금 되는 일**이다(`services/messages.ts`).
           */}
-          <p className="text-[11px] text-fg-subtle">
+          <p className="text-meta text-fg-subtle">
             에이전트를 묶어 한 이름으로 부른다 — 채널에서 @팀이름 을 부르면 팀원 전원이 깬다.
             카드를 누르면 팀원을 고칠 수 있다.
           </p>
         </div>
-        {error && <p role="alert" className="mb-2 text-[11px] text-danger">{error}</p>}
+        {error && <p role="alert" className="mb-2 text-meta text-danger">{error}</p>}
         {/*
           만들기 폼. 에이전트가 상세 화면에서 만드는 것과 달리 **격자 위 한 줄**인 이유:
           팀을 만들 때 필요한 것이 이름 하나뿐이다(`createTeam(name)`). 그 하나를 위해
@@ -823,12 +823,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               직접 짜므로, 여기 `h2` 는 화면 제목이 아니라 왼쪽 칸의 이름이다 —
               `primitives.tsx` 의 `SettingsPage` 제목(17px)과 갈라 둔 근거를 그 파일에
               적어 뒀다. 16px(`text-base`)이었고 4단 밖이었다. */}
-          <h2 className="text-[15px] font-bold">에이전트</h2>
-          <p className="text-[11px] text-fg-subtle">
+          <h2 className="text-name font-bold">에이전트</h2>
+          <p className="text-meta text-fg-subtle">
             채널에서 @이름 으로 부른다. 카드를 누르면 설정이 열린다.
           </p>
         </div>
-        {error && <p role="alert" className="mb-2 text-[11px] text-danger">{error}</p>}
+        {error && <p role="alert" className="mb-2 text-meta text-danger">{error}</p>}
         <StaleRunnerBar
           agents={agents}
           runnerStates={runnerStates}
@@ -908,12 +908,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             */}
             <button
               data-testid="agent-back"
-              className="rounded px-1.5 py-0.5 text-[13px] text-fg-muted hover:bg-surface-hover"
+              className="rounded px-1.5 py-0.5 text-body text-fg-muted hover:bg-surface-hover"
               onClick={() => { setView('grid'); setSelected(null); setError(null); }}
             >
               ← 에이전트
             </button>
-            <h2 className="text-[15px] font-bold">{selected ? `Edit ${selected.handle}` : 'Add agent'}</h2>
+            <h2 className="text-name font-bold">{selected ? `Edit ${selected.handle}` : 'Add agent'}</h2>
             {/*
               **생존·마지막 활동·러너 실패는 여기로 내려온다**(Task 15-2). 카드에서는 뺐지만
               (문서: "카드는 조용하다") **없애면 안 되는 사실들**이다 — #124 는 러너 없는
@@ -921,7 +921,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               #368 은 기동 실패가 presence 문구에 묻히던 것을 각각 닫았다. 셋을 나란히 둔다.
             */}
             {selected && (
-              <span className="flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="flex flex-wrap items-center gap-2 text-meta">
                 <span
                   data-testid={`agent-presence-${selected.id}`}
                   data-online={connected ? String(online.includes(selected.id)) : 'unknown'}
@@ -1025,7 +1025,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       지우기
                     </Button>
                   ))}
-                  <span className="text-[11px] text-fg-subtle">{AVATAR_FORMATS} · 비우면 이름에서 색을 뽑는다</span>
+                  <span className="text-meta text-fg-subtle">{AVATAR_FORMATS} · 비우면 이름에서 색을 뽑는다</span>
                 </div>
                 <AvatarStatus phase={avatarEdit.phase} />
               </div>
@@ -1040,7 +1040,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 disabled={selected !== null}
                 onChange={(e) => setDraft({ ...draft, handle: e.target.value })}
               />
-              {!selected && <span className="text-[11px] text-fg-subtle">채널에서 @이름 으로 부른다. 나중에 바꿀 수 없다.</span>}
+              {!selected && <span className="text-meta text-fg-subtle">채널에서 @이름 으로 부른다. 나중에 바꿀 수 없다.</span>}
             </label>
 
             <label className={label}>
@@ -1119,12 +1119,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   </option>
                   {agentPool.pools.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
-                <span className="mt-1 block text-[11px] text-fg-subtle">
+                <span className="mt-1 block text-meta text-fg-subtle">
                   This machine only — pools are local directories, so this is not shared
                   with other devices. Restart the runner for a change to take effect.
                 </span>
                 {agentPool.error && (
-                  <span className="mt-1 block text-[11px] text-danger">{agentPool.error}</span>
+                  <span className="mt-1 block text-meta text-danger">{agentPool.error}</span>
                 )}
               </label>
             )}
@@ -1147,7 +1147,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   <option value="auto">auto — 멘션 턴에서 도구를 모두 허용</option>
                   <option value="readonly">readonly — 읽기만 (상담 전용)</option>
                 </select>
-                <span className="text-[11px] text-fg-subtle">
+                <span className="text-meta text-fg-subtle">
                   사람이 터미널로 직접 조종할 때는 이 설정과 무관하게 하네스가 물어본다.
                 </span>
               </label>
@@ -1205,7 +1205,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     <option key={a.id} value={a.id}>{a.handle}</option>
                   ))}
                 </select>
-                <span className="text-[11px] text-fg-subtle">
+                <span className="text-meta text-fg-subtle">
                   소유자만 이 에이전트에 attach 할 수 있다.
                 </span>
               </label>
@@ -1213,14 +1213,14 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
             {!isAdmin && selected && (
               <div className="rounded border border-border bg-surface p-3">
-                <div className="text-[11px] text-fg-subtle">
+                <div className="text-meta text-fg-subtle">
                   {draft.ownerAccountId
                     ? `소유자: @${accounts[draft.ownerAccountId]?.handle ?? '?'}`
                     : '소유자: 없음 — attach 불가'}
                 </div>
                 {/* admin 전용 필드의 **값**은 숨길 것이 아니다 — 숨기면 소유자는 자기 에이전트가
                     읽기 전용인지도 모른 채 부른다. 바꿀 수 없다는 것만 분명히 한다. */}
-                <div className="mt-1 text-[11px] text-fg-subtle">
+                <div className="mt-1 text-meta text-fg-subtle">
                   {`Mention permission: ${draft.mentionPermission} (admin 만 바꾼다)`}
                 </div>
               </div>
@@ -1232,26 +1232,26 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
             {selected && (isAdmin || isOwner) && (
               <div className="rounded border border-border p-3">
-                <div className="text-[11px] font-medium text-fg-muted">기억 (memory)</div>
+                <div className="text-meta font-medium text-fg-muted">기억 (memory)</div>
                 {/* 읽기·삭제만이다. 편집을 넣지 않는 이유(#139): 사람이 고쳐도 에이전트가
                     다음 턴에 덮어쓰면 **사람은 자기 수정이 왜 사라졌는지 알 수 없다.** */}
                 <div className="mt-2 space-y-2">
-                  {memories === null && <div className="text-[11px] text-fg-muted">불러오는 중…</div>}
+                  {memories === null && <div className="text-meta text-fg-muted">불러오는 중…</div>}
                   {memories === 'error' && (
-                    <div role="alert" className="text-[11px] text-danger">기억을 불러오지 못했다</div>
+                    <div role="alert" className="text-meta text-danger">기억을 불러오지 못했다</div>
                   )}
                   {Array.isArray(memories) && memories.length === 0 && (
-                    <div className="text-[11px] text-fg-muted">기억이 없다</div>
+                    <div className="text-meta text-fg-muted">기억이 없다</div>
                   )}
                   {Array.isArray(memories) && memories.map((m) => (
                     <div key={m.slug} className="rounded bg-surface px-2 py-1.5">
                       <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-medium">{m.slug}</span>
+                        <span className="text-meta font-medium">{m.slug}</span>
                         {confirmingSlug === m.slug ? (
                           <span className="flex gap-1">
                             {/* 되돌릴 수 없으니 한 번 더 묻는다 — MessageItem 의 삭제 확인과 같은 규칙. */}
                             <button
-                              className="rounded border border-danger-border bg-danger-surface px-1.5 text-[11px] text-danger"
+                              className="rounded border border-danger-border bg-danger-surface px-1.5 text-meta text-danger"
                               onClick={() => {
                                 setConfirmingSlug(null);
                                 void getController().deleteAgentMemory(selected.id, m.slug)
@@ -1262,7 +1262,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                               정말 지운다
                             </button>
                             <button
-                              className="rounded border border-border px-1.5 text-[11px] text-fg-muted"
+                              className="rounded border border-border px-1.5 text-meta text-fg-muted"
                               onClick={() => setConfirmingSlug(null)}
                             >
                               두기
@@ -1270,7 +1270,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                           </span>
                         ) : (
                           <button
-                            className="rounded border border-border px-1.5 text-[11px] text-fg-muted"
+                            className="rounded border border-border px-1.5 text-meta text-fg-muted"
                             aria-label={`${m.slug} 기억 지우기`}
                             onClick={() => setConfirmingSlug(m.slug)}
                           >
@@ -1279,7 +1279,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         )}
                       </div>
                       {/* 값은 최대 8000자다 — 설정 화면이 그것 때문에 무한히 길어지면 안 된다. */}
-                      <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[11px] text-fg-muted">
+                      <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-meta text-fg-muted">
                         {m.value}
                       </pre>
                     </div>
@@ -1291,17 +1291,17 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             {/* #251: 에이전트 비활성화/활성화. 관리 행위이므로 admin 만 보인다. */}
             {selected && isAdmin && (
               <div className={`rounded border p-3 ${selected.disabled ? 'border-border bg-surface' : 'border-danger-border bg-danger-surface'}`}>
-                <div className="text-[11px] font-medium text-fg-muted">
+                <div className="text-meta font-medium text-fg-muted">
                   {selected.disabled ? '비활성화된 에이전트' : '에이전트 활성화'}
                 </div>
                 {selected.disabled ? (
                   <div className="mt-2">
-                    <p className="text-[11px] text-fg-subtle mb-2">
+                    <p className="text-meta text-fg-subtle mb-2">
                       이 에이전트는 비활성화되어 있습니다. 다시 활성화하면 PAT 가 없다(재발급 필요)고
                       안내가 뜹니다 — 비활성화 시 모든 PAT 가 폐기되었기 때문입니다.
                     </p>
                     <button
-                      className="rounded border border-accent bg-accent-surface px-2 py-1 text-[11px] font-medium text-accent hover:bg-surface-hover disabled:opacity-50"
+                      className="rounded border border-accent bg-accent-surface px-2 py-1 text-meta font-medium text-accent hover:bg-surface-hover disabled:opacity-50"
                       aria-label="에이전트 활성화"
                       disabled={busy}
                       onClick={() => void toggleDisabled()}
@@ -1311,13 +1311,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   </div>
                 ) : confirmingDisable ? (
                   <div className="mt-2">
-                    <p className="text-[11px] text-danger mb-2">
+                    <p className="text-meta text-danger mb-2">
                       <strong>이 에이전트의 모든 PAT 가 폐기</strong>되어 러너가 멈춥니다.
                       다시 활성화해도 PAT 는 돌아오지 않으며, <strong>새로 발급</strong>해야 합니다.
                     </p>
                     <div className="flex gap-1">
                       <button
-                        className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-[11px] font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                        className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
                         aria-label="정말 비활성화"
                         disabled={busy}
                         onClick={() => void toggleDisabled()}
@@ -1325,7 +1325,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         정말 비활성화
                       </button>
                       <button
-                        className="rounded border border-border px-2 py-1 text-[11px] text-fg-muted hover:bg-surface-sunken"
+                        className="rounded border border-border px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
                         onClick={() => setConfirmingDisable(false)}
                       >
                         취소
@@ -1334,12 +1334,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   </div>
                 ) : (
                   <div className="mt-2">
-                    <p className="text-[11px] text-fg-subtle mb-2">
+                    <p className="text-meta text-fg-subtle mb-2">
                       에이전트를 비활성화하면 <strong>모든 PAT 가 폐기</strong>되고, 다시 활성화해도
                       PAT 는 복구되지 않아 <strong>새로 발급</strong>해야 합니다.
                     </p>
                     <button
-                      className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-[11px] font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                      className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
                       aria-label="에이전트 비활성화"
                       disabled={busy}
                       onClick={() => void toggleDisabled()}
@@ -1391,7 +1391,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     죽었는지 영원히 모른다(019_agent_stop_request.sql). daemon 이 생사를 아는
                     문제는 `#443` 의 자리이고, 이 절이 답하는 질문이 아니다 — 이 절은
                     "이 에이전트가 자동 기동 대상에 들어와 있는가"에만 답한다. */}
-                <div className="text-[11px] font-medium text-fg-muted">러너 실행 · 중지</div>
+                <div className="text-meta font-medium text-fg-muted">러너 실행 · 중지</div>
                 {/* #493: 버튼이 "종료 요청"/"요청 되돌리기" 둘에서 **한 자리 토글**로 접혔다.
                     "요청"·"되돌리기"는 서버 API 의 대칭(`stop` ↔ `stop/undo`)에서 온 **내부
                     어휘**였다. 사람은 "내가 보낸 요청을 취소한다"고 생각하지 않는다 —
@@ -1403,7 +1403,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     이 사실은 반드시 글로 남아 있어야 한다.
 
                     **여기서 daemon 의 생사를 말하지는 않는다** — `#443` 의 자리다. */}
-                <p className="mt-1 text-[11px] text-fg-subtle">
+                <p className="mt-1 text-meta text-fg-subtle">
                   <strong>중지</strong>는 러너를 지금 끊지 않는다 — 러너가
                   <strong> 진행 중인 턴을 마친 뒤 스스로 종료</strong>한다. 턴 중간에 끊지 않는 것은
                   사람이 기다리는 답을 잃지 않기 위해서다. 중지해 둔 동안 이 에이전트는
@@ -1425,7 +1425,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     `stopAckedAt` 을 더해 셋을 가른다.
 
                     **'멈췄다'고 쓰지 않는다** — 위 주석과 019 마이그레이션이 그 이유를 적었다. */}
-                <div className="mt-2 text-[11px]" role="status">
+                <div className="mt-2 text-meta" role="status">
                   {!selected.stopRequestedAt && (
                     <span className="text-fg-muted">
                       자동 기동 대상이다 — 중지를 걸어 둔 적이 없다.
@@ -1463,7 +1463,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 <div className="mt-2 flex gap-2">
                   {selected.stopRequestedAt ? (
                     <button
-                      className="rounded border border-border px-2 py-1 text-[11px] font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
+                      className="rounded border border-border px-2 py-1 text-meta font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
                       aria-label="러너 실행"
                       disabled={busy}
                       onClick={() => void undoStopRequest()}
@@ -1472,7 +1472,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     </button>
                   ) : (
                     <button
-                      className="rounded border border-warning-border bg-warning-surface px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-surface-strong disabled:opacity-50"
+                      className="rounded border border-warning-border bg-warning-surface px-2 py-1 text-meta font-medium text-warning hover:bg-warning-surface-strong disabled:opacity-50"
                       aria-label="러너 중지"
                       disabled={busy}
                       onClick={() => void requestStop()}
@@ -1486,20 +1486,20 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
             {selected && (isAdmin || isOwner) && (
               <div className="rounded border border-border p-3">
-                <div className="text-[11px] font-medium text-fg-muted">PAT (Personal Access Token)</div>
+                <div className="text-meta font-medium text-fg-muted">PAT (Personal Access Token)</div>
                 <div className="mt-2 space-y-2">
                   {pats === null ? (
-                    <div className="text-[11px] text-fg-muted">PAT 를 읽고 있다…</div>
+                    <div className="text-meta text-fg-muted">PAT 를 읽고 있다…</div>
                   ) : pats === 'error' ? (
                     // 실패를 '없음'으로 그리면 살아 있는 PAT 를 없다고 하고, 그 위에서
                     // "새로 발급해야 한다"까지 말하게 된다(docs/design.md 4절).
-                    <div className="text-[11px] text-danger" role="alert">PAT 목록을 읽지 못했다</div>
+                    <div className="text-meta text-danger" role="alert">PAT 목록을 읽지 못했다</div>
                   ) : pats.length === 0 ? (
                     /* #251: 켜진 에이전트에 PAT 가 0개면 러너가 뜰 수 없다 — 비활성화가
                        PAT 를 전부 폐기하고 다시 켜도 되살리지 않으므로(서버가 해시만
                        보관한다), 재발급이 필요하다는 것을 이 자리에서 말한다. 꺼진
                        에이전트에서는 0개가 정상 상태라 권하지 않는다. */
-                    <div className={`text-[11px] ${selected.disabled ? 'text-fg-muted' : 'text-warning'}`}>
+                    <div className={`text-meta ${selected.disabled ? 'text-fg-muted' : 'text-warning'}`}>
                       {selected.disabled
                         ? 'PAT 가 없다'
                         : 'PAT 가 없다 — 새로 발급해야 한다(비활성화 시 전부 폐기됨)'}
@@ -1507,7 +1507,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   ) : (
                     pats.map((p) => (
                       <div key={`${p.label}:${p.createdAt}`} className="flex items-center justify-between rounded bg-surface px-2 py-1.5">
-                        <div className="text-[11px]">
+                        <div className="text-meta">
                           <span className="font-medium">{p.label}</span>
                           {p.revokedAt && (
                             <span className="ml-2 text-danger">(폐기됨)</span>
@@ -1520,13 +1520,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                           revoking === p.label ? (
                             <div className="flex items-center gap-1">
                               <button
-                                className="rounded border border-danger-border bg-danger-surface px-1.5 py-0.5 text-[11px] text-danger"
+                                className="rounded border border-danger-border bg-danger-surface px-1.5 py-0.5 text-meta text-danger"
                                 onClick={() => void revokePat(p.label)}
                               >
                                Really revoke
                               </button>
                               <button
-                                className="px-1.5 py-0.5 text-[11px] text-fg-subtle"
+                                className="px-1.5 py-0.5 text-meta text-fg-subtle"
                                 onClick={() => setRevoking(null)}
                               >
                                Cancel
@@ -1534,7 +1534,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                             </div>
                           ) : (
                             <button
-                              className="text-[11px] text-danger hover:underline"
+                              className="text-meta text-danger hover:underline"
                               onClick={() => setRevoking(p.label)}
                             >
                               Revoke
@@ -1555,14 +1555,14 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     onChange={(e) => setNewPatLabel(e.target.value)}
                   />
                   <button
-                    className="rounded bg-surface-sunken px-2 py-1 text-[11px] font-medium text-fg hover:bg-surface-hover disabled:opacity-50"
+                    className="rounded bg-surface-sunken px-2 py-1 text-meta font-medium text-fg hover:bg-surface-hover disabled:opacity-50"
                     disabled={busy || newPatLabel.trim() === ''}
                     onClick={() => void mintNewPat()}
                   >
                     + New PAT
                   </button>
                 </div>
-                <p className="mt-1 text-[11px] text-fg-muted">
+                <p className="mt-1 text-meta text-fg-muted">
                   라벨은 살아 있는 토큰 안에서 유일합니다. 폐기하면 같은 라벨을 다시 쓸 수 있습니다.
                 </p>
               </div>
@@ -1572,15 +1572,15 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 그리면 '에이전트가 없다'와 '못 읽었다'가 같아진다. 위 PAT 로더가 실패를
                 `setPats([])` 로 삼키는데, 그것을 따라 하지 않는다. role 을 주는 이유: 색만으로
                 는 스크린리더에 아무 말도 하지 않는다. */}
-            {error && <p role="alert" className="text-[11px] text-danger">{error}</p>}
+            {error && <p role="alert" className="text-meta text-danger">{error}</p>}
 
             {pat && (
               // 서버가 해시만 보관하므로 지금 놓치면 다시 볼 수 없다.
               <div className="rounded border border-warning-border bg-warning-surface p-3">
-                <div className="text-[11px] font-semibold text-warning">
+                <div className="text-meta font-semibold text-warning">
                   이 토큰은 지금만 보인다 — 서버가 해시만 보관하므로 다시 볼 수 없다
                 </div>
-                <code className="mt-1 block break-all rounded bg-surface-raised p-2 text-[11px]">{pat}</code>
+                <code className="mt-1 block break-all rounded bg-surface-raised p-2 text-meta">{pat}</code>
                 {/* #125: 이 명령의 토큰을 자르고 말줄임표를 붙여 두면, 그대로 복사해 실행했을 때
                     인증이 실패한다 — "완성된 명령"처럼 보이는데 아니었다. 전체 토큰을 싣는다.
                     바로 위 코드 블록에 이미 전체 토큰이 있으므로 중복 노출이 새 위험은 아니다.
@@ -1590,12 +1590,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     사이드카 배포로 바뀌었는데 화면에는 `pnpm --filter @murmur/agent start` 가
                     남아, 저장소를 클론하지 않은 사람에게 **붙여넣는 순간 실패하는 명령**을
                     복사시키고 있었다. 근거 전문은 그 파일 머리말에 있다. */}
-                <div className="mt-2 flex flex-col gap-1 break-all font-mono text-[11px] text-warning">
+                <div className="mt-2 flex flex-col gap-1 break-all font-mono text-meta text-warning">
                   <span ref={fullCommandRef} className="whitespace-pre-wrap">
                     {runnerCommandClipboardText(pat)}
                   </span>
                   <button
-                    className="self-start shrink-0 rounded border border-warning-border bg-warning-surface-strong px-1.5 py-0.5 text-[11px] text-warning hover:bg-warning-border"
+                    className="self-start shrink-0 rounded border border-warning-border bg-warning-surface-strong px-1.5 py-0.5 text-meta text-warning hover:bg-warning-border"
                     aria-label="명령 복사"
                     onClick={async () => {
                       // #125: 토큰을 자르거나 말줄임표를 붙이지 않는다 — 클립보드에도 명령 전체가 들어간다.
@@ -1624,7 +1624,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     실행한다"* 는 러너가 소스로 돌던 시절의 조건이다. 사이드카 배포
                     (`#431` 1단계·`#494`) 뒤로는 **앱이 설치된 머신**이면 된다 —
                     저장소는 개발 갈래에서만 필요하다. */}
-                <p className="mt-2 text-[11px] text-warning">
+                <p className="mt-2 text-meta text-warning">
                   murmur <strong>서버</strong>는 러너를 띄우지 않는다. 이 데스크탑 앱은
                   <strong> 내가 소유한</strong> 에이전트만 띄운다 — 남이 소유했거나 소유자가
                   없는 에이전트는 <strong>위 명령을 직접 실행해 러너를 붙이기 전까지 멘션에
@@ -1654,13 +1654,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                    판정을 presence 추측에서 daemon 관측으로 옮긴 것이 `#430` 의 핵심이었다. */}
             {selected && (isAdmin || (myId !== undefined && selected.ownerAccountId === myId)) && (
               <div className="rounded border border-border p-3">
-                <div className="text-[11px] font-medium text-fg-muted">러너 (이 앱)</div>
+                <div className="text-meta font-medium text-fg-muted">러너 (이 앱)</div>
                 {/* 상태 문구를 여기 하드코딩하지 않는다 — `runnerStatusLabel` 에서 받아 온다.
                     이 설명이 낡았던 이유가 정확히 그 하드코딩이었다: `#482` 가 `external` 을
                     `adopted` 로 바꾸며 `RunnerStatus.tsx` 의 문구를 고쳤는데, 같은 말을 제 손으로
                     적어 둔 이 문장은 따라오지 않아 화면 두 자리가 서로 다른 말을 했다.
                     같은 출처에서 내면 다음 개명도 저절로 따라온다. */}
-                <p className="mt-1 text-[11px] text-fg-subtle">
+                <p className="mt-1 text-meta text-fg-subtle">
                   이 앱은 <strong>내가 소유한</strong> 에이전트의 러너를 띄운다.{' '}
                   <strong>daemon 이 이미 들고 있는</strong> 러너가 살아 있으면 새로 띄우지 않고
                   &apos;{runnerStatusLabel({ agentId: '', status: 'adopted', exitCode: null, message: null })}&apos;
@@ -1669,7 +1669,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 {/* 남이 띄운 러너를 이 화면이 못 본다는 것은 **한계 고백**이라 따로 적는다.
                     앞 문장에 "누가 띄웠든"으로 뭉쳐 두면 사람은 손으로 띄운 러너도 여기
                     나타날 것으로 읽고, 안 나타나면 앱이 고장 났다고 판단한다. */}
-                <p className="mt-1 text-[11px] text-fg-subtle">
+                <p className="mt-1 text-meta text-fg-subtle">
                   daemon 은 <strong>자기가 띄운 러너만</strong> 안다. 다른 머신이나 손으로 띄운
                   러너는 이 목록에 없어서 여기 나타나지 않는다 — 그때는 서버에 붙어 있다는
                   사실만 사유로 붙고, 이 앱은 자기 러너를 그대로 띄운다.
@@ -1707,7 +1707,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 {/* 재발급은 순서가 요점이다: 새 발급 → 옛 폐기 → 재실행. 폐기가 먼저면
                     발급 실패 한 번에 쓸 수 있는 PAT 가 사라진다(runnerLauncher.ts 주석). */}
                 <button
-                  className="mt-2 rounded border border-warning-border bg-warning-surface px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-surface-strong disabled:opacity-50"
+                  className="mt-2 rounded border border-warning-border bg-warning-surface px-2 py-1 text-meta font-medium text-warning hover:bg-warning-surface-strong disabled:opacity-50"
                   aria-label="PAT 재발급"
                   disabled={reissuing}
                   onClick={() => {
@@ -1723,7 +1723,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 >
                   {reissuing ? '재발급 중…' : 'PAT 재발급'}
                 </button>
-                <p className="mt-1 text-[11px] text-fg-subtle">
+                <p className="mt-1 text-meta text-fg-subtle">
                   새 PAT 를 발급하고 <strong>옛 PAT 를 폐기한 뒤</strong> 러너를 다시 띄운다.
                   옛 PAT 로 돌던 러너(다른 머신의 것도)는 다음 호출에서 401 을 받고 종료 코드
                   78 로 스스로 물러난다.
@@ -1744,13 +1744,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 (`runnerCommand.ts` 머리말). */}
             {selected && (isAdmin || isOwner) && (
               <div className="rounded border border-border p-3">
-                <div className="text-[11px] font-medium text-fg-muted">러너 실행</div>
-                <div className="mt-2 flex flex-col gap-1 break-all font-mono text-[11px] text-fg">
+                <div className="text-meta font-medium text-fg-muted">러너 실행</div>
+                <div className="mt-2 flex flex-col gap-1 break-all font-mono text-meta text-fg">
                   <span ref={templateCommandRef} className="whitespace-pre-wrap">
                     {runnerCommandClipboardText(PAT_PLACEHOLDER)}
                   </span>
                   <button
-                    className="self-start shrink-0 rounded border border-border bg-surface px-1.5 py-0.5 text-[11px] text-fg hover:bg-surface-sunken"
+                    className="self-start shrink-0 rounded border border-border bg-surface px-1.5 py-0.5 text-meta text-fg hover:bg-surface-sunken"
                     aria-label="명령 복사"
                     onClick={async () => {
                       // 틀은 자리표시까지 통째로 복사한다 — 사람이 그 자리만 토큰으로 바꿔 쓴다.
@@ -1766,7 +1766,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     {copySuccess === 'template' ? '복사됨' : '복사'}
                   </button>
                 </div>
-                <p className="mt-2 text-[11px] text-fg-subtle">
+                <p className="mt-2 text-meta text-fg-subtle">
                   토큰은 발급 순간에만 보인다. 잃었으면 새로 발급한다.{' '}
                   <button
                     className="text-accent underline"
@@ -1826,8 +1826,8 @@ function FieldGroup({ title, note, children }: {
   return (
     <section className="space-y-3">
       <div>
-        <h3 className="text-[13px] font-semibold text-fg">{title}</h3>
-        <p className="text-[11px] text-fg-subtle">{note}</p>
+        <h3 className="text-body font-semibold text-fg">{title}</h3>
+        <p className="text-meta text-fg-subtle">{note}</p>
       </div>
       {children}
     </section>
@@ -1879,7 +1879,7 @@ function DaemonFacts({ runner, stopRequestedAt, stopAckedAt }: {
           이 표만은 daemon 이 말한 것이라 그 차이가 보여야 한다 — 안 보이면 사람은
           `alive` 를 서버가 아는 사실로 오해하고, 그 오해가 `#428` 이 정직하게 적어 둔
           "실제로 종료했는지는 murmur 가 알 수 없다"와 정면으로 어긋난다. */}
-      <div className="text-[11px] text-fg-muted">러너 — daemon 이 직접 확인한 것</div>
+      <div className="text-meta text-fg-muted">러너 — daemon 이 직접 확인한 것</div>
       {/* `dl` 인 이유: 라벨과 값의 짝이다. `div` 두 개로 그리면 스크린리더가 어느 값이
           어느 라벨의 것인지 말할 수 없고, 이 표는 값만 봐서는 뜻이 안 통한다(`48127`).
 
@@ -1887,7 +1887,7 @@ function DaemonFacts({ runner, stopRequestedAt, stopAckedAt }: {
           `dl` 의 자식이 되어 라벨-값 짝이 한 겹 더 깊어지고, `subgrid` 로 다시 정렬을
           맞춰야 한다. 이 저장소에 그 패턴을 쓰는 자리가 없어서 여기서 새로 만들지 않는다.
           행을 이름으로 집는 축(`data-fact`)은 `dt` 가 든다. */}
-      <dl className="mt-1 grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-1 text-[11px]">
+      <dl className="mt-1 grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-1 text-meta">
         {rows.map((row) => (
           <Fragment key={row.key}>
             <dt className="text-fg-subtle" data-fact={row.key}>{row.label}</dt>
@@ -1948,7 +1948,7 @@ function StaleRunnerBar({ agents, runnerStates, appVersion, onError }: {
         <button
           data-testid="restart-stale-runners"
           disabled={stale.length === 0 || busy}
-          className="rounded border border-border px-2 py-1 text-[11px] text-fg
+          className="rounded border border-border px-2 py-1 text-meta text-fg
                      hover:bg-surface-sunken disabled:opacity-50"
           onClick={() => {
             setBusy(true);
@@ -1962,7 +1962,7 @@ function StaleRunnerBar({ agents, runnerStates, appVersion, onError }: {
           뒤처진 러너 전체 재기동 ({stale.length})
         </button>
         {stale.length === 0 && (
-          <span className="text-[11px] text-fg-subtle">
+          <span className="text-meta text-fg-subtle">
             {appVersion === null
               // 앱 버전을 못 얻었으면 비교 기준이 없다. "전부 최신이다"로 적으면 확인하지
               // 않은 것을 단정하는 셈이다.
@@ -1975,14 +1975,14 @@ function StaleRunnerBar({ agents, runnerStates, appVersion, onError }: {
           사실을 적어 사람이 개별 재기동으로 값을 채우게 한다 — 재기동 한 번이면
           `AGENT_VERSION` 이 심긴 러너가 뜨고 그 뒤로는 판정에 든다. */}
       {unknown.length > 0 && (
-        <p className="mt-1 text-[11px] text-fg-subtle">
+        <p className="mt-1 text-meta text-fg-subtle">
           버전을 모르는 러너 {unknown.length}대 — 뒤처졌는지 알 수 없어 대상에서 뺐다.
           한 번 재기동하면 그 뒤로는 버전이 보인다.
         </p>
       )}
       {/* 진행 중인 턴을 끊지 않는다는 사실이 **누르기 전에** 있어야 한다. 이 조작은
           예약이고, 실제 교체는 그 턴이 끝난 뒤다(실측 5분 넘는 턴도 있다). */}
-      <p className="mt-1 text-[11px] text-fg-subtle">
+      <p className="mt-1 text-meta text-fg-subtle">
         재기동은 <strong>진행 중인 턴을 끊지 않는다</strong> — 턴을 마친 뒤 새 번들로 다시 뜬다.
       </p>
     </div>
