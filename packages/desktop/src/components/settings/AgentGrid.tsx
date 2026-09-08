@@ -380,10 +380,22 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
  * 러너는 나를 막지 않는다 — 잘 돌고 있고, 갈아 끼우는 것은 내가 고를 일이다. 그래서
  * `warning` 이고, 실패는 이미 `danger` 라 둘이 섞이지 않는다.
  */
-function VersionChip({ handle, runnerVersion, appVersion, onRelaunch }: {
+function VersionChip({ handle, runnerVersion, appVersion, restarting, onRelaunch }: {
   handle: string;
   runnerVersion: string | null;
   appVersion: string | null;
+  /**
+   * **네 번째 모양** — 재기동을 걸어 둔 러너다(`RunnerState.status === 'restarting'`).
+   *
+   * 2026-09-08 실측이 만든 것이다: 뒤처짐 칩을 누르면 얼굴만 회색이 되고(`retiring`)
+   * **칩은 `· 뒤처짐 ↻` 그대로 남았다.** 방금 누른 그 자리가 아무 말도 안 하니 사람은
+   * "눌렀는지 알 수가 없어" 다시 누른다 — 그 반복이 `faceState` 의 `retiring` 절이 적어
+   * 둔 사고의 시작이다. `faceState` 가 *"갈리는 것은 글자"* 라고 적은 그 글자를 여기서 낸다.
+   *
+   * 일괄 재기동 띠(`StaleRunnerBar`)도 같은 상태를 세우므로(`RunnerLauncher.restart` 가
+   * 첫 줄에서 `restarting` 을 밀어 넣는다) 카드 쪽 응답이 **두 경로에 한 벌**로 선다.
+   */
+  restarting?: boolean;
   /** 없으면 뒤처진 칩도 안 눌린다 — *"권한 없는 사람에게는 문이 없다"*(`AgentGrid` 주석). */
   onRelaunch?: () => void;
 }) {
@@ -391,6 +403,31 @@ function VersionChip({ handle, runnerVersion, appVersion, onRelaunch }: {
   // 인자가 하나 늘고, 그 인자는 이 칩이 그리는 세 문구에만 쓰인다. 화면이므로 훅이 맞다
   // (화면 밖 순수 함수만 `Translate` 를 인자로 받는다 — `i18n/index.ts` 머리말).
   const t = useT();
+
+  /*
+    **재기동 중이 먼저다.** 아래 세 갈래는 전부 *"서버가 마지막으로 들은 버전"* 을 말하는데,
+    재기동을 걸어 둔 동안 그 값은 **아직 옛 러너의 것**이다(새 러너는 뜨지도 않았다). 그
+    상태에서 `· 뒤처짐 ↻` 를 계속 그리면 칩이 "아직 아무 일도 안 일어났다"고 말하는 셈이고,
+    그것이 정확히 사람을 다시 누르게 만든 신호다.
+
+    `aria-live` 를 다는 이유: 이 글자는 **사람이 방금 누른 것에 대한 답**이다. 누른 자리가
+    글자만 바뀌면 스크린리더는 아무것도 읽지 않는다 — 색이 말을 하지 않는 것과 같은 이유다
+    (`#443`). 손잡이가 사라지므로 포커스가 몸통으로 떨어지는데, 그때 읽을 것이 있어야 한다.
+  */
+  if (restarting) {
+    return (
+      <span
+        data-testid={`agent-version-${handle}`}
+        data-version="restarting"
+        aria-live="polite"
+        className="inline-block whitespace-nowrap rounded border border-warning-border
+                   bg-warning-surface px-1.5 py-px text-meta text-warning"
+      >
+        {t('grid.version.restarting')}
+      </span>
+    );
+  }
+
   const { stale, unknown } = staleRunners({
     agents: [{ id: handle, runnerVersion }],
     live: new Set([handle]),
@@ -954,6 +991,10 @@ export function AgentGrid<T extends AgentCardSubject>({
                         handle={a.handle}
                         runnerVersion={a.runnerVersion}
                         appVersion={appVersion}
+                        /* 러너가 갈아 끼워지는 중이라는 사실. 이 격자는 `runnerStates` 를
+                           이미 손에 들고 있으므로 새 왕복이 없고, 실행기가 그 값을 스토어에
+                           밀어 넣는 순간 칩이 따라 바뀐다(`VersionChip.restarting` 주석). */
+                        restarting={runnerStates[a.id]?.status === 'restarting'}
                         /* 뒤처진 칩이 부르는 것은 `▶`·`↻` 와 **같은 콜백**이다 — 하는 일이
                            같다(러너를 새 번들로 다시 띄운다). 권한 술어도 같은 것을 본다:
                            문이 없어야 할 사람에게 버전 칩만 문이 되면 `canRelaunch` 가
