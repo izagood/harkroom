@@ -4,6 +4,7 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { ThreadPanel } from '../src/components/ThreadPanel';
+import { MessageItem } from '../src/components/MessageItem';
 import { acc, chan, msg, scheduledApiStub } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
 
@@ -96,5 +97,68 @@ describe('#231 스레드 답을 채널에도 함께 올린다', () => {
     fireEvent.change(box, { target: { value: 'on it' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(c.reply).toHaveBeenCalledWith('on it', [], 'c1', 'm1', true);
+  });
+});
+
+
+// #231 되돌리기 — 스레드에서 하던 이야기를 채널로 잘못 흘렸을 때 **채널에서만** 거둔다.
+//
+// 이 블록이 지키는 것은 항목이 뜨는 조건이다. 이미 거둔 메시지·채널 메시지·남의 메시지에
+// 항목이 남아 있으면, 눌러도 아무 일이 없거나 서버가 403 으로 돌려보낸다 — 둘 다
+// 화면이 없는 것을 있다고 말한 것이다.
+describe('#231 채널에서 거두기', () => {
+  const openMenu = (): void => { fireEvent.click(screen.getByLabelText('More actions')); };
+  const recallItem = () => screen.queryByRole('menuitem', { name: 'Remove from channel' });
+
+  const controllerWithRecall = () => {
+    const c = { ...fakeController(), recallFromChannel: vi.fn(async () => undefined) };
+    setController(c as unknown as Controller);
+    return c;
+  };
+
+  const mineInChannel = msg('m2', 'c1', 2, 'thread answer', 'u1', { threadRootId: 'm1', alsoInChannel: true });
+
+  beforeEach(() => { seed(true); });
+
+  it('채널에도 올린 내 답에서 거둘 수 있다', () => {
+    const c = controllerWithRecall();
+    render(<MessageItem message={mineInChannel} />);
+
+    openMenu();
+    fireEvent.click(recallItem()!);
+    expect(c.recallFromChannel).toHaveBeenCalledWith('m2');
+  });
+
+  it('이미 거둔 답에는 항목이 없다', () => {
+    controllerWithRecall();
+    render(<MessageItem message={{ ...mineInChannel, alsoInChannel: false }} />);
+    openMenu();
+    expect(recallItem()).toBeNull();
+  });
+
+  // 스레드 답이 아니면 거둘 채널 사본 자체가 없다 — 그 메시지가 곧 채널 메시지다.
+  it('그냥 채널 메시지에는 항목이 없다', () => {
+    controllerWithRecall();
+    render(<MessageItem message={msg('m3', 'c1', 3, 'plain', 'u1')} />);
+    openMenu();
+    expect(recallItem()).toBeNull();
+  });
+
+  it('남의 답은 admin 이 아니면 거둘 수 없다', () => {
+    controllerWithRecall();
+    render(<MessageItem message={{ ...mineInChannel, authorId: 'u2' }} />);
+    openMenu();
+    expect(recallItem()).toBeNull();
+  });
+
+  // 삭제와 같은 권한이다 — 지울 수 있는 사람이 그보다 약한 일을 못 하면
+  // 화면이 admin 에게 더 거친 쪽을 권하게 된다.
+  it('admin 은 남의 답도 거둘 수 있다', () => {
+    seed(true);
+    useAppStore.getState().set({ me: { ...acc('u1', 'admin'), isAdmin: true } });
+    controllerWithRecall();
+    render(<MessageItem message={{ ...mineInChannel, authorId: 'u2' }} />);
+    openMenu();
+    expect(recallItem()).toBeTruthy();
   });
 });

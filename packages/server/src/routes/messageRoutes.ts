@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@murmur/shared';
 import { emitEvent } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
-import { deleteMessage, editMessage, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
+import { deleteMessage, editMessage, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -90,6 +90,40 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     if (result === 'forbidden') {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'only the author can edit a user message' } });
     }
+    emitEvent({ type: 'message.updated', message: result, audience: await audienceFor(pool, id) });
+    return result;
+  });
+
+  /**
+   * 채널로 함께 올린 스레드 답을 채널에서 거둔다(#231 의 되돌리기).
+   *
+   * PATCH 에 얹지 않는다: 저 경로는 **본문 수정**이라 `edited_at` 을 찍는다. 채널에서
+   * 거두는 것은 글을 고친 것이 아니므로 같은 자국을 남기면 안 된다. 그래서 "채널에도
+   * 보인다"는 성질 자체를 하위 자원으로 두고 그것을 DELETE 한다.
+   *
+   * 응답은 갱신된 메시지다 — 부른 쪽은 그것을 그대로 스토어에 덮으면 되고,
+   * `alsoInChannel: false` 가 되는 순간 채널 목록의 필터가 알아서 뺀다.
+   */
+  app.delete('/channels/:id/messages/:messageId/also-in-channel', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id, messageId } = z.object({
+      id: z.string().uuid(), messageId: z.string().uuid(),
+    }).parse(req.params);
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+
+    const result = await recallFromChannel(pool, {
+      channelId: id, messageId, actorId: req.account!.id, actorIsAdmin: req.account!.isAdmin,
+    });
+    if (result === 'not_found') {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such message' } });
+    }
+    if (result === 'forbidden') {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'only the author or an admin can recall' } });
+    }
+    // 삭제가 아니라 갱신이다 — 채널 화면은 `message.updated` 로 이 메시지를 다시 그리고,
+    // 그때 `alsoInChannel: false` 를 보고 목록에서 뺀다. `message.deleted` 를 쓰면
+    // 스레드 화면에서도 사라져 되돌리기가 지우기가 된다.
     emitEvent({ type: 'message.updated', message: result, audience: await audienceFor(pool, id) });
     return result;
   });

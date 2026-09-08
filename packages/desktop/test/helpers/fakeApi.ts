@@ -146,6 +146,10 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     wsTicket: vi.fn(async () => 'murt_fake'),
     editMessage: vi.fn(async () => msg('m-edit', 'c1', 1, 'edited')),
     deleteMessage: vi.fn(async () => undefined),
+    // #231 되돌리기: 거두면 **같은 메시지**가 `alsoInChannel: false` 로 돌아온다 —
+    // 지우기가 아니라 갱신이라는 사실을 fake 도 그렇게 말해야 한다.
+    recallFromChannel: vi.fn(async (_c: string, messageId: string) =>
+      msg(messageId, 'c1', 1, 'recalled', 'u1', { threadRootId: 'm1', alsoInChannel: false })),
     addReaction: vi.fn(async () => undefined),
     removeReaction: vi.fn(async () => undefined),
     createDm: vi.fn(),
