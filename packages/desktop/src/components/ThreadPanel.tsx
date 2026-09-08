@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
@@ -15,6 +15,7 @@ import { Composer } from './Composer';
 import { PaneResizer } from './PaneResizer';
 import { paneStorage, paneMaxWidth, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH, MIN_CHANNEL_WIDTH } from '../lib/prefs';
 import { TypingLine } from './TypingLine';
+import { isNearBottom } from '../lib/stickyBottom';
 import type { SectionId } from './settings/sections';
 import { useT } from '../i18n/useT';
 
@@ -77,6 +78,57 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
     live,
   }), [thread, me, live]);
 
+  /**
+   * **스레드를 열면 마지막 답글이 보여야 한다**(jaebin 보고, 2026-09-09): 스레드는 계속
+   * 길어지는데 패널은 늘 맨 위에서 시작해, 열 때마다 손으로 끝까지 내려야 했다.
+   *
+   * 판정은 채널과 **같은 것을 쓴다**(`lib/stickyBottom`) — 두 자리가 다른 규칙을 쓰면 같은
+   * 대화가 화면마다 다르게 움직인다. 다만 "아래로 내려가기" 버튼은 여기 두지 않았다:
+   * 채널에 그 버튼이 생긴 이유는 목록이 수백 줄이라 위를 읽는 중 새 줄이 오면 되돌아갈
+   * 길이 필요했던 것이고, 스레드는 답글 몇 줄짜리 상자다. 필요해지면 그때 붙인다.
+   */
+  const bottomRef = useRef<HTMLDivElement>(null);
+  /** 스크롤 상자 자체. 바닥에서 얼마나 떨어졌는지는 이 요소만 안다. */
+  const listRef = useRef<HTMLDivElement>(null);
+  /** 지금 바닥을 보고 있는가. 스레드를 열면 바닥에 서므로 기본값은 참이다. */
+  const atBottomRef = useRef(true);
+
+  /** `block: 'nearest'` 는 필수다 — 근거는 `ChannelPane` 의 같은 함수 위에 적혀 있다. */
+  const scrollToBottom = () => {
+    atBottomRef.current = true;
+    bottomRef.current?.scrollIntoView?.({ block: 'nearest' });
+  };
+
+  /**
+   * 스레드를 열거나 다른 스레드로 옮기면 **바닥에서 시작한다.** `atBottomRef` 를 되돌리는
+   * 것이 핵심이다 — 스크롤 상자는 스레드가 바뀌어도 같은 DOM 이라 `scrollTop` 이 0 으로
+   * 돌아가지 않고, 앞 스레드에서 위를 보던 값이 그대로 남는다.
+   *
+   * 열 때 답글은 아직 없을 수 있다(`controller.openThread` 가 받아 온다). 그때는 이 효과가
+   * 짧은 목록의 바닥(=맨 위)으로 가고, 답글이 도착해 길이가 늘면 아래 효과가 다시 내려간다.
+   */
+  useEffect(() => { scrollToBottom(); }, [threadRootId]);
+
+  /**
+   * 답글이 늘었을 때. 채널과 같은 규율이다 — **바닥에 붙어 있을 때만** 따라 내려가고,
+   * 위쪽을 읽는 중이면 화면을 건드리지 않는다. 내가 쓴 답글은 예외로 따라간다(위를 보다
+   * 답을 보냈다면 그 사람의 관심은 방금 보낸 것에 있다).
+   */
+  useEffect(() => {
+    if (atBottomRef.current || thread[thread.length - 1]?.authorId === me?.id) scrollToBottom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread.length]);
+
+  /**
+   * 바닥 여부를 ref 에 담는 이유도 채널과 같다: 이 값은 그리는 데 쓰이지 않으므로 상태로
+   * 두면 스크롤 한 번에 패널이 프레임마다 다시 그려진다.
+   */
+  const onListScroll = () => {
+    const el = listRef.current;
+    if (!el) return;
+    atBottomRef.current = isNearBottom(el);
+  };
+
   if (!threadRootId) return null;
 
   return (
@@ -123,7 +175,15 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
       </header>
       {/* 사슬은 헤더 **바로 아래**다 — "무엇을 기다리는가"는 대화를 읽기 전에 알아야 한다. */}
       <WaitChainLine chain={chain} />
-      <div className="flex-1 overflow-y-auto py-2">
+      <div
+        ref={listRef}
+        onScroll={onListScroll}
+        /* 회귀선(`threadScroll.test.tsx`)이 이 상자의 스크롤 수치를 가짜로 세워야 한다 —
+           jsdom 은 레이아웃을 재지 않아 `scrollHeight` 가 늘 0 이다(채널의 `channel-scroll`
+           과 같은 이유). */
+        data-testid="thread-scroll"
+        className="flex-1 overflow-y-auto py-2"
+      >
         {/* 채널과 **같은 함수**로 접는다 — 두 곳이 다른 판정을 쓰면 같은 대화가 자리마다
             다르게 보인다(`lib/progressGroup`·`lib/agentExchange`). 순서도 채널과 같아야 한다:
             진행을 먼저 접고 그 위에 주고받기를 접는다. */}
@@ -150,6 +210,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
                 />
               )
         ))}
+        <div ref={bottomRef} />
       </div>
       <TypingLine />
       <div className="border-t border-border p-3">
