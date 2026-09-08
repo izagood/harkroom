@@ -41,4 +41,8 @@ export const ko = {
   'waitChain.dm': 'DM',
   'waitChain.reasonCycle': '서로를 기다린다',
   'waitChain.reasonDeadRunner': '답할 쪽이 멈췄다',
+
+  'message.channelEcho': '채널에도 전송됨',
+  'message.threadOrigin': '스레드에 댓글 남김',
+  'message.recentReplies': '최근 댓글 보기',
 } satisfies Catalog;
