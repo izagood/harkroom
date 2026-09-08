@@ -265,7 +265,16 @@ function TeamFaces({ team, accounts, runnerStates, online, connected }: {
 export function TeamGrid({
   teams, accounts, runnerStates, online, connected, onPick, onCreate, canCreate,
 }: {
-  teams: TeamCardSubject[];
+  /**
+   * 팀 목록. **`null` 은 "서버가 목록을 주지 않았다"** 이고 빈 배열(*"팀이 없다"*)과
+   * 다른 사실이다 — `TeamCardSubject.members` 의 `undefined`/`[]` 가 갈리는 것과 같은
+   * 규율이고(위 표), 여기서 그 둘을 합치면 아래 빈 상태가 **있는 팀을 없다고 단언한다.**
+   *
+   * 그 상태가 실제로 나왔다: 팀 라우트는 있는데 `GET /accounts` 에 `teams` 가 없는 서버에
+   * 붙으면, 팀을 만들어도 격자는 비어 있고 같은 이름으로 다시 만들면 서버가
+   * `name_taken` 으로 거절한다(`appStore.ts::teams` 의 그 표).
+   */
+  teams: TeamCardSubject[] | null;
   /** 얼굴을 그리려면 계정이 필요하다 — 팀원 행에는 handle 만 있고 사진·이름은 없다. */
   accounts: Record<string, AccountView>;
   runnerStates: Record<string, RunnerState>;
@@ -287,15 +296,20 @@ export function TeamGrid({
    * 상태가 팀원 다섯의 얼굴에 흩어져 있어, 상태순이라는 것이 애초에 하나로 정해지지 않는다.
    */
   const shown = useMemo(() => {
+    const all = teams ?? [];
     const q = query.trim().toLowerCase();
-    const matched = q ? teams.filter((t) => t.name.toLowerCase().includes(q)) : teams;
+    const matched = q ? all.filter((t) => t.name.toLowerCase().includes(q)) : all;
     return [...matched].sort((a, b) => a.name.localeCompare(b.name));
   }, [teams, query]);
 
   return (
     <div className="flex min-h-0 flex-col">
       {/* 검색줄의 모양·자리·바닥색이 에이전트 격자와 같다 — 두 묶음이 탭으로 갈리는
-          형제이므로, 여기서 모양이 갈리면 탭을 옮길 때마다 화면이 다시 배치된다. */}
+          형제이므로, 여기서 모양이 갈리면 탭을 옮길 때마다 화면이 다시 배치된다.
+
+          **목록을 못 받았으면 아예 그리지 않는다.** 훑을 것이 없는 검색창은 눌러도 아무
+          일이 안 일어나는 손잡이고, 오른쪽의 `N개` 는 모르는 수를 `0개` 로 단언한다. */}
+      {teams !== null && (
       <div className={`sticky top-0 z-10 ${FRAME.bg} pb-4`}>
         <div className="relative">
           <span aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-fg-subtle">⌕</span>
@@ -313,6 +327,7 @@ export function TeamGrid({
           </span>
         </div>
       </div>
+      )}
 
       <div data-testid="team-grid" className={`grid ${FRAME.grid} ${FRAME.gridBg} overflow-y-auto`}>
         {/* `+` 가 맨 앞인 것도 에이전트 격자와 같다 — 개수와 무관하게 자리가 고정된다. */}
@@ -430,8 +445,25 @@ export function TeamGrid({
           );
         })}
 
-        {/* 못 찾은 것과 아무것도 없는 것은 다른 사실이다(에이전트 격자와 같은 짝). */}
-        {shown.length === 0 && (
+        {/*
+          빈 상태가 **셋**이다. 못 찾은 것과 아무것도 없는 것이 다른 사실인 것은 에이전트
+          격자와 같은 짝이고(그 파일), 거기에 *"목록을 못 받았다"* 가 더 붙는다 — 그것을
+          `아직 팀이 없다` 로 그리면 화면이 모르는 것을 단언한다(`docs/design.md` §4).
+
+          문구가 **다음 행동을 말한다**: 이 자리에서 사람이 실제로 겪는 것은 "만들었는데
+          안 보인다"이고, 그 답은 새로고침이 아니라 서버를 올리는 것이다. `+` 카드는
+          남긴다 — 만들기 자체는 그 서버에서도 되고(`POST /teams`), 여기서 손잡이까지
+          없애면 만들 수 있는 것을 못 한다고 말하는 반대 방향의 거짓이 된다.
+        */}
+        {teams === null ? (
+          <p
+            data-testid="team-list-unavailable"
+            className="col-span-full py-6 text-center text-warning"
+          >
+            이 서버는 팀 목록을 주지 않는다 — 앱보다 낡은 서버다.
+            {' '}팀을 만들 수는 있지만 만든 팀이 여기 나타나지 않으니, 서버를 올린 뒤에 확인해라.
+          </p>
+        ) : shown.length === 0 && (
           <p className="col-span-full py-6 text-center text-fg-muted">
             {query.trim() ? `"${query.trim()}" 에 맞는 팀이 없다` : '아직 팀이 없다'}
           </p>

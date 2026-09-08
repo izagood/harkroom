@@ -119,8 +119,10 @@ export interface CalledGroup {
  * **에이전트 팀에 사람인 내가 드는 날은 오지 않는다.**
  *
  * @param groups 집합 목록(`state.groups`).
- * @param teams 팀 목록(`state.teams`). 옛 서버에서는 빈 배열이고, 그러면 팀 handle 은
- *   아래에서 "후보에 없는 이름"으로 걸러진다 — 그 서버는 팀을 부르지도 못하므로 맞다.
+ * @param teams 팀 목록. 옛 서버에서는 `state.teams` 가 `null`(목록을 못 받았다)이고,
+ *   부르는 쪽이 그것을 빈 배열로 옮겨 준다(`controller.ts::recordNotifiedGap`). 그러면 팀
+ *   handle 은 아래에서 "후보에 없는 이름"으로 걸러진다 — 그 서버는 팀을 부르지도 못하므로
+ *   이 자리에서는 빈 목록이 사실이다(`appStore.ts::teams` 의 그 표).
  */
 export function calledGroups(
   recipients: BodyRecipient[], groups: HandleGroupRow[], teams: AgentTeamRow[] = [],

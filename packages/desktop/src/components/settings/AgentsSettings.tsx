@@ -265,8 +265,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    *
    * ① `GET /teams` 는 admin 전용이다(`teamRoutes.ts`). 비-admin 에게 읽기 전용 격자를
    *    보이려면 그 라우트로는 403 이 돌아온다. 팀 목록은 `GET /accounts` 가 계정과 함께
-   *    주고(`#570`) 컨트롤러가 기동 시 스토어에 넣는다(`controller.ts` 의 `teams ?? []`) —
-   *    비-admin 이 목록을 보는 경로는 그것뿐이다
+   *    주고(`#570`) 컨트롤러가 기동 시 스토어에 넣는다(`controller.ts` 의 `teams ?? null`) —
+   *    비-admin 이 목록을 보는 경로는 그것뿐이다. **그래서 이 화면은 `null` 을 그대로
+   *    받는다**: 그 필드를 안 싣는 서버에서 빈 배열로 바꾸면, 격자가 `POST /teams` 로
+   *    실제로 만들어진 팀을 "아직 팀이 없다"고 단언한다(`appStore.ts::teams` 의 그 표)
    * ② 이 화면에서 바꾼 것이 **작성창의 멘션 후보에 즉시 반영돼야 한다.** 화면이 자기만의
    *    사본을 들고 있으면 두 목록이 갈라진다 — 여기서는 새 이름, 후보에는 옛 이름
    *    (`controller.ts:873` 이 `teams.map((t) => t.name)` 으로 그 후보를 만든다)
@@ -306,7 +308,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 안에서 읽지 않아도 되고, 그래서 의존 목록이 **실제로 쓰는 값과 정확히 같아진다** —
    * 억제 주석 없이 정직한 의존이 된다.
    */
-  const teamIdKey = teams.map((t) => t.id).sort().join(',');
+  const teamIdKey = (teams ?? []).map((t) => t.id).sort().join(',');
   useEffect(() => {
     let live = true;
     for (const id of teamIdKey ? teamIdKey.split(',') : []) {
@@ -793,7 +795,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
         <TeamGrid
           /* 명단을 카드에 실어 준다. 키가 없는 팀은 `members` 가 `undefined` 이고, 그것이
              "아직 모른다"다(`TeamCardSubject` 의 그 표 · `teamMembers` 주석의 N+1 절). */
-          teams={teams.map((t) => ({ ...t, members: teamMembers[t.id] }))}
+          teams={teams === null ? null : teams.map((t) => ({ ...t, members: teamMembers[t.id] }))}
           accounts={accounts}
           runnerStates={runnerStates}
           online={online}
