@@ -153,7 +153,23 @@ const CLAUDE_PRESET: HarnessPreset = {
   },
   allowsNullSessionOnFirstTurn: false,
   permission: {
-    auto: ['--permission-mode', 'bypassPermissions'],
+    /**
+     * **`auto` 는 claude 의 `auto` 다**(2026-09-09 정정). 예전에는 `bypassPermissions` 로
+     * 번역했는데, 그것은 murmur 의 `auto` 가 뜻하는 것과 다르다:
+     *
+     * - `auto`: *"위험으로 판정된 것은 차단되고 Claude 가 다른 방법을 시도한다. 장시간
+     *   작업에 이상적"* — 판단이 필요하면 사람에게 묻는다.
+     * - `bypassPermissions`: *"harmful commands to run … only use in isolated
+     *   environments"* — 아무것도 묻지 않는다.
+     *
+     * murmur 는 사람이 개입할 자리를 이미 갖고 있다(`message.ask` 의 선택 카드, 앱의
+     * 터미널 패널). 그 자리를 두고 아무것도 안 묻는 모드로 도는 것은 설계와 어긋난다.
+     *
+     * **덤으로 관문 하나가 사라진다**: `bypassPermissions` 는 TUI 로 뜰 때마다 계정이
+     * 수락한 적 없으면 경고 화면을 띄우고, 기본 선택이 `No, exit` 라 러너가 답을 못 하면
+     * 1초 만에 죽었다(2026-09-08 프로덕션 사고). `auto` 에는 그 화면이 없다(실측).
+     */
+    auto: ['--permission-mode', 'auto'],
     readonly: ['--permission-mode', 'plan'],
   },
   // `--strict-mcp-config` 를 항상 함께 준다 — 없으면 운영자의 전역 MCP 목록(Slack·Gmail·
