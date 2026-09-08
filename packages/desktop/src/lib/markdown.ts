@@ -52,6 +52,16 @@ export type Inline =
    */
   | ({ kind: 'link'; text: string; href: string; target: LinkTarget } & Emphasis);
 
+/**
+ * 표 칸의 정렬. `null` 은 구분줄이 정렬을 말하지 않았다는 뜻이고, 그때는 **왼쪽**이다 —
+ * 칸 내용을 보고 숫자면 오른쪽으로 미루는 식의 추측을 하지 않는다. 그런 추측은 같은 열이
+ * 행마다 다르게 서는 결과를 낳는다.
+ */
+export type Align = 'left' | 'center' | 'right' | null;
+
+/** 한 행. 칸마다 인라인 조각 목록이다. */
+export type Row = Inline[][];
+
 /** 목록 항목. `children` 에는 **중첩 목록만** 들어간다. */
 export interface ListItem {
   spans: Inline[];
@@ -67,7 +77,13 @@ export type Block =
   | { kind: 'rule' }
   | { kind: 'code'; code: string; lang: string | null }
   /** `start` 는 `1.` 이 아니라 `3.` 으로 시작한 목록을 그대로 그리기 위한 것이다. */
-  | { kind: 'list'; ordered: boolean; start: number; items: ListItem[] };
+  | { kind: 'list'; ordered: boolean; start: number; items: ListItem[] }
+  /**
+   * GFM 표. `align.length` 가 곧 **열 수**이고 모든 행이 그 길이로 맞춰져 들어온다 —
+   * 렌더러가 행마다 칸 수를 다시 세지 않게 하려는 것이다. 행마다 열 수가 다른 표를
+   * 그대로 넘기면 `<td>` 가 어긋나 표가 계단처럼 무너진다.
+   */
+  | { kind: 'table'; align: Align[]; head: Row; rows: Row[] };
 
 // ── 인라인 ───────────────────────────────────────────────────────────────────
 
@@ -236,6 +252,114 @@ const BULLET = /^([ \t]*)([-*+])[ \t]+(.*)$/;
 const ORDERED = /^([ \t]*)(\d{1,9})[.)][ \t]+(.*)$/;
 const QUOTE = /^ {0,3}>[ \t]?(.*)$/;
 
+/**
+ * 한 줄의 토큰을 `|` 경계로 나눈다. **인라인 코드 안의 `|` 는 경계가 아니다** — 토큰이
+ * 이미 나뉘어 온 덕분에 별도 예외가 아니라 순서에서 따라온다(`` `a|b` `` 는 한 칸이다).
+ * `\|` 는 글자 `|` 로 남긴다.
+ *
+ * 양끝의 `|` 가 만든 빈 칸은 떼어 낸다 — GFM 처럼 `| a | b |` 와 `a | b` 를 같은 두 칸으로 읽는다.
+ */
+function splitCells(toks: Tok[]): Tok[][] {
+  const cells: Tok[][] = [[]];
+  const cur = () => cells[cells.length - 1]!;
+
+  for (const t of toks) {
+    if (t.kind !== 'plain') { cur().push(t); continue; }
+    let buf = '';
+    for (let i = 0; i < t.text.length; i += 1) {
+      const ch = t.text[i]!;
+      if (ch === '\\' && t.text[i + 1] === '|') { buf += '|'; i += 1; continue; }
+      if (ch === '|') {
+        if (buf) cur().push({ kind: 'plain', text: buf });
+        buf = '';
+        cells.push([]);
+        continue;
+      }
+      buf += ch;
+    }
+    if (buf) cur().push({ kind: 'plain', text: buf });
+  }
+
+  if (cells.length > 1 && cells[0]!.length === 0) cells.shift();
+  if (cells.length > 1 && cells[cells.length - 1]!.length === 0) cells.pop();
+  return cells;
+}
+
+/** 칸 앞뒤의 여백만 떼어 낸다. 칸 안쪽 글자는 손대지 않는다. */
+function trimCell(toks: Tok[]): Tok[] {
+  const out: Tok[] = toks.map((t) => ({ ...t }));
+  const first = out[0];
+  if (first && first.kind === 'plain') first.text = first.text.replace(/^[ \t]+/, '');
+  const last = out[out.length - 1];
+  if (last && last.kind === 'plain') last.text = last.text.replace(/[ \t]+$/, '');
+  return out.filter((t) => t.kind !== 'plain' || t.text.length > 0);
+}
+
+/** `|`(escape 되지 않은) 가 글자 토큰 안에 있는가. 표 후보인지 보는 값싼 앞잡이다. */
+function hasPipe(toks: Tok[]): boolean {
+  return toks.some((t) => t.kind === 'plain' && t.text.replace(/\\\|/g, '').includes('|'));
+}
+
+/** 표 구분줄의 칸. `-`, `---`, `:--`, `--:`, `:-:` 만 인정한다. */
+const DELIM_CELL = /^:?-+:?$/;
+
+/**
+ * 이 줄이 표 구분줄이면 열별 정렬, 아니면 `null`.
+ *
+ * 칸 하나라도 구분줄 모양이 아니면 **표가 아니다.** 관대하게 넘기면 `a | b` 라고 쓴
+ * 평범한 문장 두 줄이 표로 바뀌어 사람이 쓴 글이 격자 안으로 사라진다.
+ */
+function delimAligns(toks: Tok[]): Align[] | null {
+  if (!toks.length || !hasPipe(toks)) return null;
+  const out: Align[] = [];
+  for (const cell of splitCells(toks)) {
+    if (cell.length !== 1 || cell[0]!.kind !== 'plain') return null;
+    const s = cell[0]!.text.trim();
+    if (!DELIM_CELL.test(s)) return null;
+    const l = s.startsWith(':');
+    const r = s.endsWith(':');
+    out.push(l && r ? 'center' : r ? 'right' : l ? 'left' : null);
+  }
+  return out.length ? out : null;
+}
+
+/**
+ * `at` 줄에서 표가 시작하면 그 블록과 **다음에 볼 줄**을, 아니면 `null`.
+ *
+ * 줄의 첫 토큰이 글자인지 인라인 코드인지 보지 않는다 — 표 판정에 쓰는 것은 `|` 와 다음
+ * 줄의 구분줄뿐이고, 그래서 `` `a` | b `` 로 시작하는 머리글도 같은 길을 지난다.
+ */
+function tryTable(lines: Tok[][], at: number): { block: Block; next: number } | null {
+  const toks = lines[at]!;
+  if (!hasPipe(toks)) return null;
+  const head = splitCells(toks);
+  const align = delimAligns(lines[at + 1] ?? []);
+  if (!align || align.length !== head.length) return null;
+
+  const rows: Row[] = [];
+  let j = at + 2;
+  // 표는 `|` 가 없는 줄에서 끝난다(빈 줄도 그렇다). 빈 줄까지만 보면 표 뒤에 바로 붙여 쓴
+  // 문장이 표의 마지막 행으로 들어간다.
+  while (j < lines.length && hasPipe(lines[j]!)) {
+    rows.push(fitRow(splitCells(lines[j]!), align.length));
+    j += 1;
+  }
+  return {
+    block: { kind: 'table', align, head: head.map((c) => inlineOf(trimCell(c))), rows },
+    next: j,
+  };
+}
+
+/**
+ * 행을 머리글의 열 수에 맞춘다. 넘치는 칸은 버리고 모자란 칸은 빈 칸으로 채운다 —
+ * GFM 과 같은 규칙이고, `<td>` 어긋남을 파서에서 끝내려는 것이다.
+ */
+function fitRow(cells: Tok[][], width: number): Row {
+  const out: Row = [];
+  for (let c = 0; c < width; c += 1) out.push(inlineOf(trimCell(cells[c] ?? [])));
+  return out;
+}
+
 interface RawItem {
   indent: number;
   ordered: boolean;
@@ -346,7 +470,15 @@ export function parseBlocks(segments: CodeSegment[]): Block[] {
     }
 
     if (head.kind !== 'plain') {
-      // 줄이 인라인 코드로 시작한다 — 블록 표시가 없으므로 문단이다.
+      // 줄이 인라인 코드로 시작한다 — 블록 표시가 없다. 표만 예외다: 표는 첫 글자가 아니라
+      // `|` 와 다음 줄의 구분줄로 판정하므로 첫 토큰의 종류와 무관하다.
+      const t = tryTable(lines, i);
+      if (t) {
+        flushRun();
+        blocks.push(t.block);
+        i = t.next;
+        continue;
+      }
       pushRun('paragraph', inlineOf(toks));
       i += 1;
       continue;
@@ -378,6 +510,21 @@ export function parseBlocks(segments: CodeSegment[]): Block[] {
     if (q) {
       pushRun('quote', inlineOf(withoutPrefix(toks, q[1]!)));
       i += 1;
+      continue;
+    }
+
+    /**
+     * 표. **구분줄이 바로 다음 줄에 있을 때만** 표다.
+     *
+     * 앞 줄만 보고는 표의 머리글과 `a | b` 라고 쓴 문장을 구별할 수 없다. 열 수까지 같기를
+     * 요구하는 것도 같은 이유다 — 여기서 관대해지면 사람이 쓴 문단이 격자 안으로 끌려
+     * 들어가고, 그건 "안 그려진 문법" 보다 나쁘다(내용이 바뀐다).
+     */
+    const tbl = tryTable(lines, i);
+    if (tbl) {
+      flushRun();
+      blocks.push(tbl.block);
+      i = tbl.next;
       continue;
     }
 
