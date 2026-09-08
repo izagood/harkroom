@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin } from './helpers/fixtures.js';
+import { looksLikeSvg } from '../src/services/avatars.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -22,6 +23,10 @@ const PNG = Buffer.concat([
 ]);
 /** 이미지가 아닌 파일. `<script>` 를 담은 HTML 이 아바타로 전원에게 서빙되면 안 된다. */
 const HTML = Buffer.from('<html><script>alert(1)</script></html>');
+/** 그리기 도구가 내놓는 모양 그대로 — XML 선언이 앞에 붙는다. */
+const SVG = Buffer.from(
+  '<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4"/></svg>',
+);
 
 beforeAll(async () => {
   const db = await startTestDb();
@@ -150,6 +155,35 @@ describe('#159 계정 프로필 사진', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('not_an_image');
     // 거절했으면 아무것도 걸리지 않았다.
+    expect((await meView(adminToken)).avatarAttachmentId).toBe(before);
+  });
+
+  it('SVG 를 아바타로 걸 수 있다', async () => {
+    // 매직 바이트가 없어 이진 판정으로는 안 잡힌다. 그래도 사람이 프로필 사진으로 흔히
+    // 가진 파일이고, 그리는 자리가 `<img src={objectURL}>` 하나뿐이라 스크립트가 실행될
+    // 문맥이 없다 — 그래서 받는다.
+    const id = await upload(adminToken, 'me.svg', SVG, 'image/svg+xml');
+    const set = await setAvatar(adminToken, { attachmentId: id });
+    expect(set.statusCode).toBe(200);
+
+    const bytes = await app.inject({
+      method: 'GET', url: `/accounts/${adminId}/avatar`, headers: auth(otherToken),
+    });
+    expect(bytes.statusCode).toBe(200);
+    expect(bytes.headers['content-type']).toContain('image/svg+xml');
+    // 방어는 그대로다: inline 으로 내주지 않고 sniff 도 막는다. 예외를 뚫은 것이 아니다.
+    expect(bytes.headers['x-content-type-options']).toBe('nosniff');
+    expect(bytes.headers['content-disposition']).toContain('attachment');
+  });
+
+  it('스크립트를 담은 SVG 는 거절한다', async () => {
+    const evil = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+    const id = await upload(adminToken, 'evil.svg', evil, 'image/svg+xml');
+    const before = (await meView(adminToken)).avatarAttachmentId;
+
+    const res = await setAvatar(adminToken, { attachmentId: id });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('not_an_image');
     expect((await meView(adminToken)).avatarAttachmentId).toBe(before);
   });
 
@@ -283,5 +317,37 @@ describe('에이전트 아바타 (Task 15-4)', () => {
       headers: auth(otherToken), payload: {},
     });
     expect(missing.statusCode).toBe(400);
+  });
+});
+
+/**
+ * SVG 판정을 함수로 직접 본다. 라우트를 지나는 검사는 한 번 통과하면 그것으로 끝이지만,
+ * 여기서 막는 것들은 **각각 다른 이유로** 막는 것이라 하나씩 세워 두어야 나중에 누가
+ * 정규식을 손댈 때 무엇이 깨졌는지 보인다.
+ */
+describe('looksLikeSvg', () => {
+  const svg = (inner: string) => Buffer.from(inner);
+
+  it('프롤로그가 붙어도 SVG 로 본다', () => {
+    expect(looksLikeSvg(svg('<svg xmlns="http://www.w3.org/2000/svg"/>'))).toBe(true);
+    expect(looksLikeSvg(svg('\ufeff  <?xml version="1.0"?><!-- 주석 --><svg viewBox="0 0 1 1"></svg>'))).toBe(true);
+    // 내부 서브셋이 없는 DOCTYPE 은 옛 그리기 도구가 흔히 붙인다 — 그걸로 튕기면 안 된다.
+    expect(looksLikeSvg(svg('<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "x.dtd"><svg/>'))).toBe(true);
+  });
+
+  it('SVG 가 아닌 것은 거절한다', () => {
+    expect(looksLikeSvg(HTML)).toBe(false);
+    expect(looksLikeSvg(svg('<html><body><svg/></body></html>'))).toBe(false);
+    expect(looksLikeSvg(PNG)).toBe(false);
+    expect(looksLikeSvg(svg('<svgx/>'))).toBe(false);
+  });
+
+  it('스크립트가 될 수 있는 조각을 거절한다', () => {
+    expect(looksLikeSvg(svg('<svg><script>alert(1)</script></svg>'))).toBe(false);
+    expect(looksLikeSvg(svg('<svg onload="alert(1)"/>'))).toBe(false);
+    expect(looksLikeSvg(svg('<svg><a href="javascript:alert(1)"><rect/></a></svg>'))).toBe(false);
+    expect(looksLikeSvg(svg('<svg><foreignObject><b>x</b></foreignObject></svg>'))).toBe(false);
+    // 엔티티를 선언할 수 있는 자리는 통째로 막는다(XXE·엔티티 폭탄).
+    expect(looksLikeSvg(svg('<!DOCTYPE svg [<!ENTITY a "b">]><svg/>'))).toBe(false);
   });
 });

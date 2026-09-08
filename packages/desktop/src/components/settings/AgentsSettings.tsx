@@ -28,6 +28,7 @@ import { TeamDetail } from './TeamDetail';
 // 띄울 권한 판정은 `lib/` 하나가 낸다 — 레일의 에이전트 칸이 같은 판정을 쓴다
 // (`docs/desktop-rail.html` 3단계). 사본을 두면 두 화면이 같은 사람에게 다르게 답한다.
 import { canRelaunchAgent } from '../../lib/relaunchGate';
+import { AVATAR_ACCEPT, AVATAR_FORMATS } from '../../lib/avatar';
 import { Identity } from '../Identity';
 import { Button } from './primitives';
 import { AvatarStatus, useAvatarEdit } from './avatarEdit';
@@ -437,7 +438,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     },
     [selectedId],
   );
-  const avatarEdit = useAvatarEdit(applyAvatar, '이미지 파일만 사진으로 쓸 수 있다');
+  const avatarEdit = useAvatarEdit(applyAvatar);
 
   const pick = (a: AgentView) => {
     setSelected(a);
@@ -1000,7 +1001,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     ref={avatarEdit.pickRef}
                     type="file"
                     data-testid="agent-avatar-file"
-                    accept="image/png,image/jpeg,image/gif,image/webp,image/avif"
+                    accept={AVATAR_ACCEPT}
                     className="hidden"
                     onChange={avatarEdit.onPicked}
                   />
@@ -1024,7 +1025,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       지우기
                     </Button>
                   ))}
-                  <span className="text-[11px] text-fg-subtle">비우면 이름에서 색을 뽑는다</span>
+                  <span className="text-[11px] text-fg-subtle">{AVATAR_FORMATS} · 비우면 이름에서 색을 뽑는다</span>
                 </div>
                 <AvatarStatus phase={avatarEdit.phase} />
               </div>
