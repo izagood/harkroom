@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, mentionedHandles, mentionedIds, normalizeMentions, readAskMeta, stripCodeSpans, type InboxEntry, type MessageRow } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, mentionedHandles, mentionedIds, mentionScanText, normalizeMentions, readAskMeta, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { channelVisibleSql } from './channels.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
@@ -414,8 +414,8 @@ export async function postMessage(
      * `channel_member` 행이 아예 없으므로(`createChannel` — private 만 첫 멤버를 넣는다)
      * 정규화가 통째로 비고, 그 채널의 멘션은 알림이 하나도 가지 않는다.
      *
-     * `mentionedHandles` 가 코드 구간을 걷어내므로(#298) 코드 안의 `@handle` 은 여기
-     * 목록에 들어오지 않고, `normalizeMentions` 도 같은 판정으로 코드 구간을 비껴간다.
+     * `mentionedHandles` 가 코드 구간(#298)과 인용 줄(#592)을 걷어내므로 그 안의 `@handle` 은
+     * 여기 목록에 들어오지 않고, `normalizeMentions` 도 같은 판정으로 그 구간을 비껴간다.
      */
     const bodyHandles = mentionedHandles(input.body);
     const mentionedAccounts = bodyHandles.length
@@ -468,7 +468,7 @@ export async function postMessage(
      *
      * 작성자 자신은 걸러 낸다.
      */
-    for (const accountId of mentionedIds(stripCodeSpans(normalizedBody))) {
+    for (const accountId of mentionedIds(mentionScanText(normalizedBody))) {
       if (accountId !== input.authorId) {
         await insertInbox(client, accountId, message.id, 'mention', notified);
       }

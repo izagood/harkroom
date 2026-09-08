@@ -6,4 +6,4 @@
  * 유지하기 위한 재수출일 뿐이고, **복사본이 아니다.** 이 파일에 판정을 다시 적으면
  * #298 이 없앤 두 벌이 그대로 돌아온다.
  */
-export { splitCode, stripCodeSpans, type CodeSegment } from '@murmur/shared';
+export { mentionScanText, splitCode, type CodeSegment } from '@murmur/shared';

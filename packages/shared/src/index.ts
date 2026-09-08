@@ -305,16 +305,17 @@ export const MENTION_TOKEN_PATTERN = '<@([0-9a-f-]{36})>';
  * 본문에서 불린 handle 들. 소문자로 정규화해 중복을 없앤다(`@fizz` 와 `@Fizz` 는 한 사람).
  * 패턴이 대문자를 이미 포함하므로 `i` 플래그는 필요하지 않다.
  *
- * 코드 블록(#298) 안의 `@handle` 은 무시한다 — `stripCodeSpans` 가 먼저 코드를 걷어낸다.
+ * 코드 블록(#298) 과 인용 줄(#592) 안의 `@handle` 은 무시한다 — `mentionScanText` 가 먼저
+ * 그 구간을 걷어낸다. 인용은 남의 말을 옮기는 자리이므로 부르는 것이 아니다.
  *
- * **순서가 결정이다: 코드 제거 → 멘션 추출 → 그룹 확장(#230)·채널 전체(#225).** 코드 제거가
+ * **순서가 결정이다: 코드·인용 제거 → 멘션 추출 → 그룹 확장(#230)·채널 전체(#225).** 코드 제거가
  * 맨 앞이므로 코드 안의 그룹 handle 은 애초에 `handles` 에 들어오지 못하고, 따라서 확장될
  * 기회도 없다 — 예외 처리가 아니라 순서에서 따라오는 결과다. 서버(`services/messages.ts`)의
  * 그룹 확장은 이 함수가 돌려준 목록만 훑으므로 그 순서가 코드로 강제된다.
  */
 export function mentionedHandles(body: string): string[] {
   const found = new Set<string>();
-  for (const m of stripCodeSpans(body).matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
+  for (const m of mentionScanText(body).matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
     if (m[2]) found.add(m[2].toLowerCase());
   }
   return [...found];
@@ -335,10 +336,14 @@ export function mentionedIds(body: string): string[] {
 /**
  * 본문의 `@handle`(**존재하는 계정만**)을 `<@id>` 로 정규화한다(#271). 저장 전에 한 번 돈다.
  *
- * **코드 구간은 건드리지 않는다**(#298). 판정은 `splitCode` 하나가 하고 여기서는 그것이
- * 내준 평문 조각의 원문 범위만 고쳐 쓴다 — 자기 정규식으로 코드를 다시 판정하면 규칙이
- * 두 벌이 되고, 갈라지는 순간 코드 블록 안의 `@handle` 이 저장 시 멘션이 되어 알림까지
- * 간다. `mentionedHandles` 가 같은 이유로 `stripCodeSpans` 를 지난다.
+ * **코드 구간과 인용 줄은 건드리지 않는다**(#298, #592). 판정은 `mentionRegions` 하나가 하고
+ * 여기서는 그것이 내준 조각의 원문 범위만 고쳐 쓴다 — 자기 정규식으로 다시 판정하면 규칙이
+ * 두 벌이 되고, 갈라지는 순간 코드·인용 안의 `@handle` 이 저장 시 멘션이 되어 알림까지
+ * 간다. `mentionedHandles` 가 같은 이유로 `mentionScanText` 를 지난다.
+ *
+ * 정규화하지 않은 자리의 `@handle` 은 **글자 그대로** 남는다. 그래서 인용을 옮겨 적은 본문은
+ * 저장된 뒤에도 사람이 쓴 모양 그대로 보인다 — `mentionedIds`(알림)도 `<@id>` 만 보므로
+ * 추출과 정규화가 같은 답을 낸다.
  *
  * 계정 목록을 순회하지 않고 **본문을 한 번** 훑는다. 순회하면 비용이 워크스페이스의 계정
  * 수에 비례하고, 그보다 나쁘게는 handle 을 정규식에 끼워 넣는 자리가 생긴다.
@@ -354,9 +359,8 @@ export function normalizeMentions(body: string, accountsMap: Map<string, string>
   if (!accountsMap.size) return body;
   const mention = new RegExp(MENTION_PATTERN, 'g');
   // 뒤에서부터 고친다 — 앞에서 고치면 뒤 조각의 원문 오프셋이 밀린다.
-  const plains = splitCode(body).filter((s): s is { kind: 'plain'; text: string; start: number } => s.kind === 'plain');
   let out = body;
-  for (const seg of [...plains].reverse()) {
+  for (const seg of mentionRegions(body).reverse()) {
     const replaced = seg.text.replace(mention, (whole, lead: string, handle: string) => {
       const id = accountsMap.get(handle.toLowerCase());
       return id ? `${lead}<@${id}>` : whole;
@@ -439,21 +443,62 @@ export function fillSystemAccount(body: string, handle: string | null): string {
 }
 
 /**
- * 본문에서 코드 구간을 걷어낸 나머지(#298). 멘션을 찾을 대상은 **이것뿐**이다.
+ * 인용 줄(#592). `> ` 로 시작하는 줄이고, 뒤의 공백 하나까지 표시로 먹는다.
+ *
+ * **이 판정이 여기 있는 이유:** 인용은 렌더러(데스크탑의 `quote` 블록)와 멘션 파서가 **같은
+ * 것**을 인용이라고 불러야 한다. 갈라지면 화면은 인용으로 그리는 줄이 저장 시에는 평문으로
+ * 취급되어 그 안의 `@handle` 이 알림을 보낸다 — `#298` 이 코드 블록에서 막은 것과 같은
+ * 거짓말이다. 그래서 `desktop/src/lib/markdown.ts` 는 자기 정규식을 갖지 않고 이것을 쓴다.
+ *
+ * 게으른 이어짐(`> a` 다음 줄의 `b`)은 인용이 아니다. 마크다운 표준은 그것을 인용에 붙이지만
+ * 데스크탑 렌더러는 `>` 가 없는 줄에서 인용을 끊으므로(`parseBlocks`), 여기서 표준을 따르면
+ * 화면과 판정이 다시 갈라진다.
+ */
+export const QUOTE_LINE = /^ {0,3}>[ \t]?(.*)$/;
+
+/**
+ * 멘션을 찾을 구간과 그 **원문 위치**. 코드(#298)와 인용 줄(#592)을 뺀 나머지다.
+ *
+ * 인용 범위를 원문의 **줄 단위로 먼저 잡고** 코드 구간과 교차시킨다. 코드 조각별로 인용을
+ * 다시 판정하면 `> 인용 ` + `` `코드` `` + ` @handle` 처럼 인라인 코드가 섞인 인용에서 첫
+ * 조각만 인용으로 보이고 뒤가 샌다 — 이 결함의 절반이 그 모양이다.
+ */
+function mentionRegions(body: string): { text: string; start: number }[] {
+  const quoted: [number, number][] = [];
+  let at = 0;
+  for (const line of body.split('\n')) {
+    if (QUOTE_LINE.test(line)) quoted.push([at, at + line.length]);
+    at += line.length + 1;
+  }
+
+  const out: { text: string; start: number }[] = [];
+  for (const seg of splitCode(body)) {
+    if (seg.kind !== 'plain') continue;
+    const end = seg.start + seg.text.length;
+    let cursor = seg.start;
+    for (const [qs, qe] of quoted) {
+      if (qe <= cursor || qs >= end) continue;
+      if (qs > cursor) out.push({ text: body.slice(cursor, qs), start: cursor });
+      cursor = Math.max(cursor, Math.min(end, qe));
+    }
+    if (cursor < end) out.push({ text: body.slice(cursor, end), start: cursor });
+  }
+  return out;
+}
+
+/**
+ * 본문에서 멘션을 찾을 평문(#298, #592). 멘션을 찾을 대상은 **이것뿐**이다 — 서버 알림,
+ * 데스크탑의 "부를 상대"(#278), 에이전트 교환 판정(`agentExchange.ts`)이 모두 이것을 지난다.
  *
  * 남은 조각을 개행으로 이어 붙인다. 개행은 handle 문자가 아니므로 `MENTION_PATTERN` 의
  * 선행 문자 조건에서 조각의 첫 글자가 `^` 와 같은 자격을 갖는다 — 조각을 따로 훑는 것과
- * 결과가 같고, 코드를 걷어낸 자리에서 두 조각이 붙어 없던 멘션이 생기는 일도 없다.
+ * 결과가 같고, 걷어낸 자리에서 두 조각이 붙어 없던 멘션이 생기는 일도 없다.
  *
- * 문자열 하나를 돌려주는 이유: 이 값을 쓰는 곳이 서버의 멘션 추출과 데스크탑의 "부를
- * 상대"(#278) 둘인데, 둘 다 정규식을 한 번 돌릴 평문이 필요할 뿐이다. 각자 세그먼트를
- * 이어 붙이게 두면 그 이어 붙이는 규칙이 다시 두 벌이 된다.
+ * 문자열 하나를 돌려주는 이유: 쓰는 곳은 모두 정규식을 한 번 돌릴 평문이 필요할 뿐이다.
+ * 각자 세그먼트를 이어 붙이게 두면 그 이어 붙이는 규칙이 다시 두 벌이 된다.
  */
-export function stripCodeSpans(body: string): string {
-  return splitCode(body)
-    .filter((seg): seg is { kind: 'plain'; text: string; start: number } => seg.kind === 'plain')
-    .map((seg) => seg.text)
-    .join('\n');
+export function mentionScanText(body: string): string {
+  return mentionRegions(body).map((r) => r.text).join('\n');
 }
 
 /**
