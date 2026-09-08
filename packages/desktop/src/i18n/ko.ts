@@ -758,6 +758,13 @@ export const ko = {
   'composer.mention.reaching': '부를 상대',
   'composer.mention.reachingLabel': '부를 상대',
 
+  /**
+   * 퍼머링크를 붙여넣었을 때 서는 줄. 붙여넣은 글자는 초안에 그대로 있고, 이 줄은
+   * **이동할 수 있다**고만 말한다 — 이동은 옆 버튼을 누를 때만 일어난다.
+   */
+  'composer.link.pasted': '메시지 링크를 붙여넣었다',
+  'composer.link.open': '그 메시지로 이동',
+
   'composer.schedule.cancel': '취소',
   'composer.schedule.cancelOne': '예약 취소',
   'composer.schedule.cancelFailed': '예약을 취소하지 못했다',
