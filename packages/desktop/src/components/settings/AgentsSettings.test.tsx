@@ -406,3 +406,129 @@ describe('AgentsSettings — 에이전트별 계정 풀', () => {
     expect(screen.queryByLabelText(/account pool/i)).toBeNull();
   });
 });
+
+/**
+ * 만들기 화면의 계정 풀 선택.
+ *
+ * **왜 상세와 따로 재나:** 두 화면은 쓸 대상이 다르다 — 상세에는 에이전트 id 가 있어
+ * 고르는 즉시 데몬에 쓰지만, 만들기에는 id 가 없어 쓸 곳이 없다. 앞 판본은 그 차이를
+ * `available` 에 `agentId !== null` 로 접어 넣어 **만들기 화면에서는 칸이 아예 사라졌다** —
+ * 사람은 에이전트를 만든 뒤 상세로 다시 들어가야 풀을 고를 수 있었고, 그 사이 러너는
+ * 이미 기본 풀로 떠 있었다.
+ */
+describe('AgentsSettings — 만들 때 계정 풀을 고른다', () => {
+  let createAgent: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    resetCommunityRegistry();
+    useActiveStore.setState({ me: ME, accounts: { [ME_ID]: ME } });
+    vi.stubGlobal('__TAURI_INTERNALS__', {
+      transformCallback: () => 1,
+      invoke: vi.fn(async (cmd: string) => {
+        if (cmd === 'claude_accounts_list') {
+          return {
+            root: '/r', mode: 'pools', defaultPool: 'work',
+            agents: {}, strays: [],
+            pools: [{ name: 'work', accounts: [] }, { name: 'personal', accounts: [] }],
+          };
+        }
+        return {};
+      }),
+    });
+    createAgent = vi.fn(async () => ({
+      agent: makeAgent({ id: 'agent-new', handle: 'beta' }), pat: 'murp_new', poolError: null,
+    }));
+    setController({
+      listAgents: vi.fn(async () => []),
+      listPats: vi.fn(async () => []),
+      agentMemory: vi.fn(async () => ({ profile: null, entries: [] })),
+      agentDefaults: vi.fn(async () => ({ harness: 'claude', model: null, effort: null })),
+      createAgent,
+    } as unknown as Controller);
+  });
+
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); setController(null); });
+
+  async function openCreate(): Promise<void> {
+    render(<AgentsSettings />);
+    (await screen.findByTestId('agent-create')).click();
+  }
+
+  it('만들기 화면에도 풀 선택이 있다 — 만든 뒤 상세로 다시 들어가게 만들지 않는다', async () => {
+    await openCreate();
+    const select = await screen.findByLabelText(/account pool/i);
+    const options = screen.getAllByRole('option').map((o) => (o as HTMLOptionElement).value);
+    expect(options).toContain('work');
+    expect(options).toContain('personal');
+    expect((select as HTMLSelectElement).value).toBe('');
+  });
+
+  it('고른 풀을 생성 호출에 실어 보낸다 — 러너가 뜨기 전에 쓰여야 첫 러너가 그 풀로 돈다', async () => {
+    await openCreate();
+    const { fireEvent } = await import('@testing-library/react');
+    fireEvent.change(await screen.findByLabelText(/account pool/i), { target: { value: 'personal' } });
+    fireEvent.change(screen.getByLabelText('Agent name'), { target: { value: 'beta' } });
+    screen.getByRole('button', { name: '에이전트 만들기' }).click();
+
+    await waitFor(() => expect(createAgent).toHaveBeenCalled());
+    // 배정을 생성 **뒤에** 쓰면 `startCreated` 가 이미 기본 풀로 러너를 띄운다 —
+    // 그래서 값이 생성 호출 자체에 실려야 한다.
+    expect(createAgent.mock.calls[0]![1]).toEqual({ claudePool: 'personal' });
+  });
+
+  it('기본 풀 사용이면 아무것도 실어 보내지 않는다', async () => {
+    await openCreate();
+    const { fireEvent } = await import('@testing-library/react');
+    fireEvent.change(screen.getByLabelText('Agent name'), { target: { value: 'beta' } });
+    screen.getByRole('button', { name: '에이전트 만들기' }).click();
+
+    await waitFor(() => expect(createAgent).toHaveBeenCalled());
+    expect(createAgent.mock.calls[0]![1]).toBeUndefined();
+  });
+
+  it('풀 배정만 실패하면 생성 실패라고 말하지 않는다 — PAT 는 그대로 보여 준다', async () => {
+    // 그렇게 적지 않으면 사람은 PAT 상자를 무효한 것으로 읽고 버린다. 그 토큰은 다시 볼 수 없다.
+    createAgent = vi.fn(async () => ({
+      agent: makeAgent({ id: 'agent-new', handle: 'beta' }),
+      pat: 'murp_new',
+      poolError: '데몬이 죽었다',
+    }));
+    setController({
+      listAgents: vi.fn(async () => []),
+      listPats: vi.fn(async () => []),
+      agentMemory: vi.fn(async () => ({ profile: null, entries: [] })),
+      agentDefaults: vi.fn(async () => ({ harness: 'claude', model: null, effort: null })),
+      createAgent,
+    } as unknown as Controller);
+
+    await openCreate();
+    const { fireEvent } = await import('@testing-library/react');
+    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'beta' } });
+    screen.getByRole('button', { name: '에이전트 만들기' }).click();
+
+    await waitFor(() => expect(screen.getByText(/에이전트는 만들어졌지만/)).toBeTruthy());
+    expect(screen.getByText('murp_new')).toBeTruthy();
+    expect(screen.queryByText(/만들지 못했다/)).toBeNull();
+  });
+
+  /**
+   * 토큰 **자체**를 복사하는 버튼. 러너 명령 복사와 둘 다 필요한 이유: 토큰이 가는 곳이
+   * 명령만이 아니다(다른 기기의 `.env`·비밀 저장소·CI 변수). 버튼이 없으면 사람은 명령을
+   * 복사해 앞뒤를 손으로 잘라내야 하고, 한 글자를 흘리면 인증만 조용히 실패한다.
+   */
+  it('PAT 옆에 토큰만 복사하는 버튼이 있다', async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText }, configurable: true, writable: true,
+    });
+    await openCreate();
+    const { fireEvent } = await import('@testing-library/react');
+    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'beta' } });
+    screen.getByRole('button', { name: '에이전트 만들기' }).click();
+
+    const copy = await screen.findByLabelText('토큰 복사');
+    copy.click();
+    // 명령 껍데기가 아니라 **토큰 원문**이 클립보드로 가야 한다.
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('murp_new'));
+  });
+});

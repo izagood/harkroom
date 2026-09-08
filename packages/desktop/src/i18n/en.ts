@@ -298,6 +298,13 @@ export const en = {
   'agents.create.invalidName':
     'Names take lowercase letters, digits, hyphens and underscores — 2 to 32 characters '
     + '(this is what you call in a channel with @name)',
+  /**
+   * 계정 풀 배정만 실패했을 때. **`agents.create.failed` 와 다른 문장이어야 한다** —
+   * 계정과 PAT 는 이미 만들어졌고 그 토큰은 다시 볼 수 없으므로, "만들지 못했다"로
+   * 적으면 사람은 화면에 떠 있는 PAT 상자를 무효한 것으로 읽고 버린다.
+   */
+  'agents.create.poolFailed':
+    'The agent was created, but its account pool was not assigned: {reason}',
 
   'agents.detail.back': '← Agents',
   /**
@@ -408,6 +415,9 @@ export const en = {
   'agents.memory.keep': 'Keep it',
   'agents.memory.loading': 'Loading…',
 
+  /** 토큰 **자체**를 복사하는 버튼. 버튼 글자는 `agents.runner.copy` 를 쓰고
+   *  (`Copy` 하나를 두 벌로 두지 않는다) 무엇을 복사하는지는 이 이름이 가른다. */
+  'agents.pat.copyToken': 'Copy the token',
   'agents.pat.label': 'New PAT label',
   /** 라벨 규칙. 서버가 409 로 거절하는 그 규칙이고, **되쓸 수 있다**까지 말해야 막히지 않는다. */
   'agents.pat.labelNote':

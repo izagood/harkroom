@@ -166,3 +166,28 @@ export async function listenClaudeLogin(
     void invoke('plugin:event|unlisten', { event: CLAUDE_LOGIN_EVENT, eventId });
   };
 }
+
+/**
+ * 에이전트 하나의 **풀 배정**만 바꾼다. `''` 이면 배정을 지운다(= 기본 풀 사용).
+ *
+ * 왜 여기 있나: 쓰기가 `configureClaudeAccounts` 하나뿐이고 그것은 **부분 갱신이 아니다** —
+ * 기본 풀·순서를 같이 실어 보내지 않으면 그 둘이 지워진다. 그 병합을 부르는 쪽마다 적으면
+ * 한 곳이 순서를 안 싣는 날 순서가 조용히 날아가고, 그 사실은 러너를 띄워 봐야 드러난다.
+ * 지금 부르는 곳이 둘이다 — 상세 화면의 선택(`useAgentPool`)과 **만들기 흐름**
+ * (`controller.createAgent`, 러너가 뜨기 전에 써야 한다).
+ *
+ * 스냅샷을 **매번 다시 읽는다.** 부르는 쪽의 캐시를 받지 않는 이유: 만들기 흐름에는 그런
+ * 캐시가 없고, 있는 쪽(훅)도 그 사이 다른 화면이 풀을 만들거나 지웠을 수 있다 — 낡은
+ * 스냅샷을 그대로 실어 보내는 것이 바로 위 문단이 말한 '조용히 날아가는' 경로다.
+ */
+export async function assignAgentPool(agentId: string, pool: string): Promise<void> {
+  const snap = await listClaudeAccounts();
+  const order: Record<string, string[]> = {};
+  for (const p of snap.pools) if (p.name) order[p.name] = p.accounts.map((a) => a.name);
+  const agents = { ...snap.agents };
+  // 빈 문자열은 이름 문법(`CLAUDE_POOL_NAME_PATTERN`)에 걸려 데몬이 거절한다 —
+  // **키를 지우는 것**이 "기본 풀 사용"의 유일한 표현이다.
+  if (pool === '') delete agents[agentId];
+  else agents[agentId] = pool;
+  await configureClaudeAccounts({ defaultPool: snap.defaultPool, order, agents });
+}
