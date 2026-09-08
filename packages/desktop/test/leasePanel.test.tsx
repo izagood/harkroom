@@ -263,3 +263,87 @@ describe('빈 목록에서는 고장을 되풀이하지 않는다', () => {
     expect(screen.getByTestId('projection-unknown').textContent).toContain('확인하는 중');
   });
 });
+
+/**
+ * **내용이 없으면 제목도 없다**(문서 3 · 실측 v0.1.52).
+ *
+ * 사용자가 앱에서 발견했다: 홈 패널 하단에 `ACTIVE WORK` 라벨이 있고 **그 아래가
+ * 완전히 비어 있었다.** 위 묶음이 "리스가 없으면 아무 줄도 세우지 않는다"를 못 박았지만
+ * 제목에는 아무 조건이 없어서, 내용 셋이 모두 거짓인 창에서 제목 혼자 남았다.
+ *
+ * 문서 3: *"설정 오류는 띠로 나가고, 그 구역은 그냥 없어진다."* 「없어진다」는 제목까지
+ * 없어지는 것이다 — 빈 제목은 없어진 것이 아니라 이름만 남은 빈 칸이다.
+ *
+ * **제목을 무조건 지우는 것은 답이 아니다.** 그릴 내용이 있을 때는 제목이 있어야 그
+ * 내용이 무엇에 대한 것인지 알 수 있다. 그래서 이 묶음은 사라지는 창 하나와 **남아야
+ * 하는 창 넷**을 같이 재고, 뒤쪽이 "제목을 늘 지운다"는 답을 막는다.
+ */
+describe('내용이 없으면 ACTIVE WORK 제목도 없다', () => {
+  const LABEL = 'Active work';
+
+  /**
+   * 사용자가 본 그 상태다: 띠가 이미 말하는 고장(`strip: true`)이고 남은 리스가 없다.
+   * 목록 줄도, "없다"도, 리스도 그리지 않으니 제목이 가리킬 내용이 하나도 없다.
+   */
+  it('띠가 말하는 고장이고 리스가 없으면 제목까지 사라진다', () => {
+    useAppStore.getState().set({
+      projectionStatus: status({ state: 'unconfigured', configured: false, lastPolledAt: null }),
+      leases: [],
+    });
+    const { container } = render(<LeasePanel />);
+    expect(screen.queryByText(LABEL)).toBeNull();
+    // 라벨만 지우고 빈 껍데기를 남기면 그 자리가 여전히 한 줄을 차지한다.
+    expect(container.textContent).toBe('');
+  });
+
+  /** 나머지 두 고장도 같다 — `strip` 하나로 판정하니 사정마다 갈라지지 않는다. */
+  it('멈춘 것과 못 읽은 것도 리스가 없으면 제목이 사라진다', () => {
+    useAppStore.getState().set({
+      projectionStatus: status({ state: 'stalled', lastPolledAt: Date.now() - 6 * 60 * 1000 }),
+      leases: [],
+    });
+    expect(panelText()).toBe('');
+
+    useAppStore.getState().set({ projectionStatusError: 'Failed to fetch', leases: [] });
+    expect(panelText()).toBe('');
+  });
+
+  /**
+   * **여기부터가 "제목을 늘 지운다"를 막는 자리다.** 그릴 내용이 있는 네 창에서는 제목이
+   * 남아야 한다 — 제목이 없으면 아래 줄이 무엇에 대한 것인지 화면이 말하지 못한다.
+   */
+  it('정상이고 빈 목록이면 제목과 "없다"가 함께 남는다', () => {
+    useAppStore.getState().set({ projectionStatus: status({ state: 'ok' }), leases: [] });
+    render(<LeasePanel />);
+    expect(screen.getByText(LABEL)).toBeTruthy();
+    expect(screen.getByText('No active work')).toBeTruthy();
+  });
+
+  it('리스가 있으면 제목이 남는다', () => {
+    useAppStore.getState().set({ projectionStatus: status({ state: 'ok' }), leases: LEASE });
+    render(<LeasePanel />);
+    expect(screen.getByText(LABEL)).toBeTruthy();
+    expect(screen.getByText(/src\/a\.ts/)).toBeTruthy();
+  });
+
+  it('고장이어도 남은 리스가 있으면 제목이 남는다', () => {
+    useAppStore.getState().set({
+      projectionStatus: status({ state: 'stalled', lastPolledAt: Date.now() - 6 * 60 * 1000 }),
+      leases: LEASE,
+    });
+    render(<LeasePanel />);
+    expect(screen.getByText(LABEL)).toBeTruthy();
+    expect(screen.getByTestId('projection-stalled')).toBeTruthy();
+  });
+
+  /**
+   * 띠가 세우지 않는 '확인하는 중'(`strip: false`)은 여기가 유일한 자리다. 그 줄이
+   * 남으니 제목도 남아야 한다 — 이 창까지 지우면 그 사정이 화면에서 사라진다.
+   */
+  it("'확인하는 중'은 리스가 없어도 제목과 함께 남는다", () => {
+    useAppStore.getState().set({ projectionStatus: null, projectionStatusError: null, leases: [] });
+    render(<LeasePanel />);
+    expect(screen.getByText(LABEL)).toBeTruthy();
+    expect(screen.getByTestId('projection-unknown')).toBeTruthy();
+  });
+});
