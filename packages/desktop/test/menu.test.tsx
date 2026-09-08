@@ -117,3 +117,70 @@ describe('프리미티브의 다른 계약이 그대로다', () => {
     expect(screen.getByRole('menuitem', { name: 'Settings' })).toBeTruthy();
   });
 });
+
+// 목록 **맨 아래** 메시지에서 `⋯` 메뉴가 잘려 누를 수 없던 결함.
+//
+// 메시지 툴바는 `placement="bottom"` 이라 메뉴가 트리거 아래로 열리는데, 마지막 메시지에서는
+// 그 아래가 메시지 목록(`overflow-y: auto`)의 테두리 밖이다. 화면 밖이 아니라 **스크롤 상자
+// 밖**이라 뷰포트만 보는 계산으로는 잡히지 않았다 — 목록을 스크롤해 그 메시지를 위로 올려야만
+// 항목을 누를 수 있었다.
+//
+// **jsdom 한계**: 레이아웃이 없어 모든 `getBoundingClientRect` 가 0 이다. 그래서 배치를
+// 직접 만들어 준다 — 요소마다 `data-rect` 로 좌표를 붙이고 그 값을 돌려주게 스텁한다.
+// 재는 값이 가짜여도 **재고 나서 어느 쪽으로 여는가** 라는 판단은 진짜 코드가 한다.
+describe('자리가 없으면 반대쪽으로 연다', () => {
+  const stubRects = () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const spec = this.dataset.rect ?? this.closest<HTMLElement>('[data-rect]')?.dataset.rect;
+      const [top, bottom] = (spec ?? '0 0').split(' ').map(Number) as [number, number];
+      return { top, bottom, height: bottom - top, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) } as DOMRect;
+    });
+  };
+
+  /** 스크롤 상자(0~300) 안, 지정한 자리에 선 트리거로 메뉴를 연다. */
+  const openInScroller = (triggerTop: number) => {
+    render(
+      <div data-rect="0 300" style={{ overflowY: 'auto' }}>
+        <div data-rect={`${triggerTop} ${triggerTop + 20}`}>
+          <Menu
+            renderTrigger={(props) => <button {...props}>me</button>}
+            items={items}
+            placement="bottom"
+          />
+        </div>
+      </div>,
+    );
+    fireEvent.click(screen.getByText('me'));
+    return screen.getByRole('menu');
+  };
+
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('스크롤 상자 아래 테두리에 걸리면 위로 뒤집는다', () => {
+    stubRects();
+    // 트리거 아래는 300-296=4px 뿐이고 간격만으로 다 쓴다. 메뉴는(스텁에서 20px) 안 들어간다.
+    const menu = openInScroller(276);
+    expect(menu.className).toContain('bottom-full');
+    expect(menu.className).not.toContain('top-full');
+  });
+
+  it('자리가 있으면 원래 방향(아래) 그대로 연다', () => {
+    stubRects();
+    // 트리거 아래로 280px 남는다 — 뒤집을 이유가 없다.
+    const menu = openInScroller(0);
+    expect(menu.className).toContain('top-full');
+    expect(menu.className).not.toContain('bottom-full');
+  });
+
+  it('스크롤 상자가 없으면 화면 높이로 잰다 — 조상만 보고 0 으로 접지 않는다', () => {
+    stubRects();
+    render(
+      <div data-rect="10 30">
+        <Menu renderTrigger={(props) => <button {...props}>me</button>} items={items} placement="bottom" />
+      </div>,
+    );
+    fireEvent.click(screen.getByText('me'));
+    // jsdom 창은 768px 이라 아래가 넉넉하다.
+    expect(screen.getByRole('menu').className).toContain('top-full');
+  });
+});
