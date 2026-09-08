@@ -12,6 +12,10 @@ import {
   type MentionQuery,
 } from '../lib/mention';
 import { undoSendStorage } from '../lib/prefs';
+// 붙여넣기가 누구를 부르는지 · 인용으로 바꾸는 방법. 판정은 서버가 쓰는 것과 같은
+// 함수 하나(`mentionedHandles`)에 얹혀 있다 — 그 파일의 주석이 근거다.
+import { callsInText, quoteText, MANY_CALLS } from '../lib/pasteCalls';
+import { ConfirmDialog } from './ConfirmDialog';
 import { useT } from '../i18n/useT';
 
 /** 목록이 화면을 덮지 않을 만큼만 보여준다. 더 좁히는 것은 사용자가 글자를 더 치는 일이다. */
@@ -226,6 +230,19 @@ export function Composer({
    * 붙여넣을 때마다 화면이 끌려가서, 링크를 채팅에 남기는 방법이 아예 없었다.
    */
   const [pastedLink, setPastedLink] = useState<string | null>(null);
+  /**
+   * 방금 붙여넣은 글이 **부르는 이름들**과 그 원문(2단계). 링크 제안 줄과 같은 모양의
+   * 제안 줄을 세우고, 인용으로 바꾸는 버튼이 여기 담긴 원문을 초안에서 찾아 갈아 끼운다.
+   *
+   * 원문을 함께 드는 이유: 인용은 **붙여넣은 조각에만** 걸려야 한다. 초안 전체를 인용으로
+   * 바꾸면 사람이 직접 쓴 문장과 부른 이름까지 인용에 먹혀, 정작 보내려던 호출이 사라진다.
+   */
+  const [pastedCalls, setPastedCalls] = useState<{ text: string; handles: string[] } | null>(null);
+  /**
+   * 보내기 전 확인이 필요한 다수 호출(2단계). `null` 이 아니면 겹창이 서 있고, 초안은
+   * **그대로 남아 있다** — 취소하면 사람이 이름을 지우고 다시 보낼 수 있어야 한다.
+   */
+  const [manyCalls, setManyCalls] = useState<string[] | null>(null);
   const heldRef = useRef<HeldMessage | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -698,7 +715,12 @@ export function Composer({
     };
   }, []);
 
-  const send = () => {
+  /**
+   * @param confirmed 다수 호출 확인을 이미 받았는가(겹창의 [보내기]가 참으로 다시 부른다).
+   *   **초안을 겹창에 넘기지 않는다** — 여기서 되돌아가도 초안이 그대로라 같은 값이 다시
+   *   계산된다. 넘기면 겹창이 뜬 사이의 편집이 무시되어, 화면에 보이는 글과 다른 글이 나간다.
+   */
+  const send = (confirmed = false) => {
     // 고정 멘션만으로는 보낼 것이 없다 — 빈 Enter 가 '@fizz' 하나만 던지면 사고다.
     // 다만 파일만 보내는 것은 자연스럽다.
     if (!draft.trim() && !pending.length) return;
@@ -712,6 +734,21 @@ export function Composer({
      * 은 `withStickyMentions` 가 건너뛴다. 자동이 먼저, 고정이 뒤다.
      */
     const body = withStickyMentions(typed, [...autoActive, ...sticky]);
+    /*
+      **셋 이상을 부르면 한 번 묻는다**(2단계).
+
+      세는 것은 `body` 가 아니라 **사람이 이 줄에 쓴 글(`typed`)** 이다. 자동 멘션(#173)과
+      고정 멘션은 사람이 **이미 내린 결정**이다 — 채널이 셋을 자동으로 부르도록 해 둔
+      사람에게 매 발화마다 같은 확인을 내면 그 확인은 곧 눈이 감기는 장식이 되고, 그러면
+      정작 붙여넣기가 넷을 부르는 날에도 반사적으로 넘긴다. 이 문이 막으려는 것은
+      **이 줄에서 새로 생긴 호출**이고, 복사한 본문은 언제나 그쪽에 있다.
+
+      `mentionedHandles` 가 인용 줄·코드 블록을 이미 걷어내므로, 붙여넣기를 인용으로
+      바꾼 글은 이 문에 걸리지 않는다 — 두 장치가 같은 판정 위에 서 있다는 뜻이다.
+    */
+    const calls = callsInText(typed, known);
+    if (!confirmed && calls.length >= MANY_CALLS) { setManyCalls(calls); return; }
+    setManyCalls(null);
     const attachments = pending;
     // 앞의 것이 아직 대기 중이면 **먼저 내보낸다.** 한 번에 하나만 들 수 있으므로 덮으면
     // 앞의 글을 잃고, 사람이 친 순서도 이 편이 지켜진다.
@@ -775,6 +812,18 @@ export function Composer({
       void uploadFiles(files.map((f, i) => nameClipboardFile(f, at, i)));
       return;
     }
+    /*
+      **붙여넣은 글이 누구를 부르는지 알려 준다**(2단계). 여기서도 `preventDefault` 를
+      하지 않는다 — 글자는 웹뷰가 그대로 넣고, 인용으로 바꾸는 것은 제안 줄의 버튼을
+      누를 때만 일어난다. 이 파일이 링크에 대해 세운 규칙(*"붙여넣기는 붙여넣기로
+      끝난다"*)을 멘션에도 같게 적용하는 것이다: 붙여넣기가 사람 글을 조용히 고쳐 쓰면,
+      인용이 싫은 사람은 되돌릴 방법을 화면에서 찾지 못한다.
+
+      부를 이름이 없으면 줄을 세우지 않는다 — 평범한 붙여넣기에 매번 줄이 뜨면 그 줄은
+      곧 아무도 안 읽는 장식이 된다.
+    */
+    const calls = callsInText(text, known);
+    if (calls.length) setPastedCalls({ text, handles: calls });
     const messageId = parseMessagePermalink(text);
     // 링크가 아니면 아무것도 하지 않는다 — 평범한 붙여넣기다.
     if (!messageId) return;
@@ -811,6 +860,34 @@ export function Composer({
    * 제안이 남아 있으면 그 버튼은 초안에 없는 것을 가리킨다.
    */
   const linkOffer = pastedLink && draft.includes(messagePermalink(pastedLink)) ? pastedLink : null;
+  /*
+    붙여넣은 조각이 **아직 초안에 그대로 있을 때만** 제안한다. 링크 제안(`linkOffer`)이
+    같은 판정을 쓰는 이유와 같다: 사람이 지웠거나 고쳐 쓴 뒤에도 줄이 남아 있으면, 그
+    줄의 버튼은 찾을 수 없는 글을 인용하려 든다.
+  */
+  const callOffer = pastedCalls && draft.includes(pastedCalls.text) ? pastedCalls : null;
+  /**
+   * 붙여넣은 조각을 인용으로 갈아 끼운다. **부르는 것을 멈추는 정본 수단**이다 —
+   * 서버가 인용 줄의 `@handle` 을 부르지 않기 때문이고(#592), 그래서 이 버튼은 문구가
+   * 아니라 실제 판정을 바꾼다.
+   *
+   * 커서는 갈아 끼운 조각의 **끝**으로 둔다. 초안 앞쪽이 길어지면 커서가 뒤로 밀려
+   * 사람이 이어 쓰던 자리를 잃는다.
+   */
+  const quotePastedCalls = (offer: { text: string; handles: string[] }): void => {
+    const at = draft.indexOf(offer.text);
+    if (at < 0) { setPastedCalls(null); return; }
+    const quoted = quoteText(offer.text);
+    setDraftLocal(draft.slice(0, at) + quoted + draft.slice(at + offer.text.length));
+    setPastedCalls(null);
+    const caret = at + quoted.length;
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(caret, caret);
+    });
+  };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (open) {
@@ -1133,6 +1210,53 @@ export function Composer({
         </div>
       )}
 
+      {callOffer && (
+        /* 붙여넣은 글이 부르는 이름을 말하는 줄. 링크 제안 줄과 **같은 자리·같은 모양**이다 —
+           둘 다 "컴포저가 지금 무엇을 들고 있는가"를 말하고, 사람은 한 자리를 익혀 둘을 읽는다. */
+        <div
+          role="status"
+          data-testid="pasted-calls"
+          className="mb-1 flex items-center gap-2 rounded bg-surface-sunken px-2 py-1 text-meta text-fg-muted"
+        >
+          <span className="min-w-0 flex-1 truncate">
+            {t('composer.paste.calls', { handles: callOffer.handles.map((h) => `@${h}`).join(' ') })}
+          </span>
+          <button
+            type="button"
+            data-testid="pasted-calls-quote"
+            className="rounded px-1.5 py-0.5 font-medium text-accent hover:bg-surface-hover"
+            // 커서를 지킨다 — 누른 뒤에도 초안을 이어서 쓰는 사람이 있다(링크 줄과 같은 이유).
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => quotePastedCalls(callOffer)}
+          >
+            {t('composer.paste.quote')}
+          </button>
+          <button
+            type="button"
+            data-testid="pasted-calls-dismiss"
+            aria-label={t('composer.paste.keep')}
+            title={t('composer.paste.keep')}
+            className="rounded px-1 text-fg-muted hover:bg-surface-hover"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setPastedCalls(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+      {manyCalls && (
+        /* 되돌릴 수 있는 지점에 세운 확인이다 — 보내고 나면 턴은 이미 떴고 그때는 중단밖에
+           남지 않는다. `danger` 를 주지 않는 이유: 여럿을 부르는 것은 파괴가 아니라
+           **비싼 일**이다. 빨간 버튼은 지우기·종료에 남겨 둔다. */
+        <ConfirmDialog
+          title={t('composer.paste.confirmTitle', { count: manyCalls.length })}
+          detail={t('composer.paste.confirmDetail', { handles: manyCalls.map((h) => `@${h}`).join(' ') })}
+          confirmLabel={t('composer.paste.confirmSend')}
+          cancelLabel={t('composer.paste.confirmCancel')}
+          onConfirm={() => { setManyCalls(null); send(true); }}
+          onCancel={() => setManyCalls(null)}
+        />
+      )}
       {linkOffer && (
         /* 붙여넣은 링크는 **글자로 남고**, 이 줄이 이동할 길이다. 대기 줄(아래)과 같은
            모양으로 두는 이유: 둘 다 "컴포저가 지금 무엇을 들고 있는가"를 말하는 줄이고,
@@ -1337,7 +1461,9 @@ export function Composer({
           // 이유가 없고, 실패하면 사용자가 다시 textarea 를 눌러 이어 쓴다. 반면 위
           // @·첨부 버튼은 누른 뒤에도 같은 자리에 계속 써야 하므로 막는다.
           onMouseDown={(e) => e.preventDefault()}
-          onClick={send}
+          /* **인자 없이 부른다.** `onClick={send}` 로 두면 클릭 이벤트가 `confirmed` 자리에
+             들어가 항상 참이 되어, 다수 호출 확인이 조용히 건너뛰어진다. */
+          onClick={() => send()}
           disabled={!draft.trim() && !pending.length}
         >
           {t('composer.send.submit')}

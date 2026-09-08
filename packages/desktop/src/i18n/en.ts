@@ -1881,6 +1881,15 @@ export const en = {
   'composer.mention.reachingLabel': 'Reaching',
 
   /** 붙여넣은 퍼머링크 줄. 이동은 옆 버튼을 누를 때만 일어난다. */
+  // 붙여넣기가 부르는 이름(2단계). `composer.link.*` 와 같은 자리에 서는 제안 줄이라
+  // 이름도 그 옆에 둔다 — 두 줄은 "컴포저가 지금 무엇을 들고 있는가"를 말한다.
+  'composer.paste.calls': 'Pasted text calls {handles}',
+  'composer.paste.quote': 'Quote it instead',
+  'composer.paste.keep': 'Leave it as it is',
+  'composer.paste.confirmTitle': 'Call {count} names?',
+  'composer.paste.confirmDetail': 'This message calls {handles}. Each one starts its own turn.',
+  'composer.paste.confirmSend': 'Send',
+  'composer.paste.confirmCancel': 'Keep editing',
   'composer.link.pasted': 'Pasted a message link',
   'composer.link.open': 'Go to that message',
 

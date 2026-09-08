@@ -58,12 +58,16 @@ export function ConfirmDialog({ title, detail, confirmLabel, cancelLabel = 'Canc
         <div className="flex justify-end gap-2">
           <button
             ref={cancelRef}
+            /* 시험이 버튼을 **글자로 집지 않게** 이름을 준다 — 로케일 기본값이 바뀌면
+               글자로 집은 줄이 이유 없이 빨개진다(사전 이관이 세운 규율). */
+            data-testid="confirm-cancel"
             className="rounded px-3 py-1 text-fg-muted hover:bg-surface-sunken"
             onClick={onCancel}
           >
             {cancelLabel}
           </button>
           <button
+            data-testid="confirm-ok"
             className={danger
               ? 'rounded border border-danger-border bg-danger-surface px-3 py-1 font-medium text-danger hover:bg-danger-surface-strong'
               : 'rounded bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover'}
