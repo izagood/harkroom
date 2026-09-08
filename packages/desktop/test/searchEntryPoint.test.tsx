@@ -76,6 +76,10 @@ const pressCmdK = () => {
   fireEvent.keyDown(document, { key: 'k', metaKey: true });
 };
 
+const pressCmdF = (target: Document | Element = document) => {
+  fireEvent.keyDown(target, { key: 'f', metaKey: true });
+};
+
 const type = (value: string) => {
   fireEvent.change(screen.getByLabelText('검색어 입력'), { target: { value } });
 };
@@ -87,12 +91,14 @@ describe('검색 진입점 배선 (#258)', () => {
 
     openSearchFromHeader();
 
-    const toggle = screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement;
-    expect(toggle.checked, '헤더로 열면 스코프가 켜져 있어야 한다').toBe(true);
+    expect(
+      screen.getByTestId('search-scope-channel').getAttribute('aria-pressed'),
+      '헤더로 열면 스코프가 채널이어야 한다',
+    ).toBe('true');
 
     type('hello');
     await waitFor(
-      () => expect(c.api.search).toHaveBeenCalledWith('hello', 'c1'),
+      () => expect(c.api.search).toHaveBeenCalledWith('hello', { channelId: 'c1', threadRootId: null, offset: 0 }),
       { timeout: 1000 },
     );
   });
@@ -103,12 +109,14 @@ describe('검색 진입점 배선 (#258)', () => {
 
     pressCmdK();
 
-    const toggle = screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement;
-    expect(toggle.checked, '⌘K 는 전역이어야 한다').toBe(false);
+    expect(
+      screen.getByTestId('search-scope-all').getAttribute('aria-pressed'),
+      '⌘K 는 전역이어야 한다',
+    ).toBe('true');
 
     type('hello');
     await waitFor(
-      () => expect(c.api.search).toHaveBeenCalledWith('hello', null),
+      () => expect(c.api.search).toHaveBeenCalledWith('hello', { channelId: null, threadRootId: null, offset: 0 }),
       { timeout: 1000 },
     );
   });
@@ -122,22 +130,22 @@ describe('검색 진입점 배선 (#258)', () => {
 
     pressCmdK();
     expect(
-      (screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement).checked,
-    ).toBe(false);
+      screen.getByTestId('search-scope-channel').getAttribute('aria-pressed'),
+    ).toBe('false');
     fireEvent.keyDown(document, { key: 'Escape' });
 
     openSearchFromHeader();
     expect(
-      (screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement).checked,
+      screen.getByTestId('search-scope-channel').getAttribute('aria-pressed'),
       '⌘K 로 한 번 열었다고 헤더 버튼이 전역으로 열려선 안 된다',
-    ).toBe(true);
+    ).toBe('true');
     fireEvent.keyDown(document, { key: 'Escape' });
 
     pressCmdK();
     expect(
-      (screen.getByLabelText('이 채널에서만 (general)') as HTMLInputElement).checked,
+      screen.getByTestId('search-scope-channel').getAttribute('aria-pressed'),
       '헤더 버튼으로 한 번 열었다고 ⌘K 가 좁힌 채 열려선 안 된다',
-    ).toBe(false);
+    ).toBe('false');
   });
 
   it('placeholder 가 어느 범위를 뒤지는지 말한다', () => {
@@ -160,11 +168,11 @@ describe('검색 진입점 배선 (#258)', () => {
     render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
     openSearchFromHeader();
-    expect((screen.getByLabelText('이 채널에서만 (@bot)') as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByTestId('search-scope-channel').getAttribute('aria-pressed')).toBe('true');
 
     type('hello');
     await waitFor(
-      () => expect(c.api.search).toHaveBeenCalledWith('hello', 'd1'),
+      () => expect(c.api.search).toHaveBeenCalledWith('hello', { channelId: 'd1', threadRootId: null, offset: 0 }),
       { timeout: 1000 },
     );
   });
@@ -175,5 +183,53 @@ describe('검색 진입점 배선 (#258)', () => {
     render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
     expect(screen.queryByRole('button', { name: '이 채널에서 찾기' })).toBeNull();
+  });
+
+  /**
+   * ⌘F 는 ⌘K 의 두 번째 입구가 아니다 — **지금 보고 있는 것 안에서** 찾는다.
+   * 스레드 패널이 열려 있으면 그 스레드, 없으면 활성 채널이다.
+   */
+  it('⌘F 는 스레드가 닫혀 있으면 채널로 열린다', async () => {
+    const c = fakeController();
+    render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    pressCmdF();
+    expect(screen.getByTestId('search-scope-channel').getAttribute('aria-pressed')).toBe('true');
+
+    type('hello');
+    await waitFor(
+      () => expect(c.api.search).toHaveBeenCalledWith('hello', { channelId: 'c1', threadRootId: null, offset: 0 }),
+      { timeout: 1000 },
+    );
+  });
+
+  it('⌘F 는 스레드가 열려 있으면 그 스레드로 열린다', async () => {
+    const c = fakeController();
+    useAppStore.getState().set({ threadRootId: 'm9' });
+    render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    pressCmdF();
+    expect(screen.getByTestId('search-scope-thread').getAttribute('aria-pressed')).toBe('true');
+
+    type('hello');
+    await waitFor(
+      () => expect(c.api.search).toHaveBeenCalledWith('hello', { channelId: 'c1', threadRootId: 'm9', offset: 0 }),
+      { timeout: 1000 },
+    );
+  });
+
+  /**
+   * 글을 쓰다가도 열려야 한다. 다른 단축키는 입력 포커스를 존중하지만 ⌘F 만 예외다 —
+   * 브라우저·에디터에서 ⌘F 가 그렇게 동작하므로, 여기서만 안 먹으면 사람은 키가 없는 줄 안다.
+   */
+  it('⌘F 는 입력에 포커스가 있어도 먹는다', () => {
+    fakeController();
+    render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    const textareas = document.querySelectorAll('textarea');
+    expect(textareas.length, '작성칸이 있어야 이 테스트가 뜻이 있다').toBeGreaterThan(0);
+    pressCmdF(textareas[0]!);
+
+    expect(screen.getByLabelText('검색어 입력')).toBeTruthy();
   });
 });

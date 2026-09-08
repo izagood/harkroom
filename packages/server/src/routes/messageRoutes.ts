@@ -229,17 +229,19 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     const q = z.object({
       since: z.coerce.number().int().min(0).optional(),
       before: z.coerce.number().int().min(0).optional(),
+      // 검색 점프용 창: 이 seq 를 **가운데 두고** 앞뒤를 준다.
+      around: z.coerce.number().int().min(0).optional(),
       limit: z.coerce.number().int().min(1).max(500).optional(),
       thread: z.string().uuid().optional(),
-    }).refine((v) => v.before === undefined || v.since === undefined, {
-      // 서로 반대 방향이다. 함께 오면 어느 쪽을 의도했는지 서버가 고를 수 없다.
-      message: 'before and since are opposite directions — send one',
+    }).refine((v) => [v.before, v.since, v.around].filter((x) => x !== undefined).length <= 1, {
+      // 서로 다른 방향이다. 함께 오면 어느 쪽을 의도했는지 서버가 고를 수 없다.
+      message: 'before, since and around are different directions — send one',
     }).parse(req.query);
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
     const messages = await listMessages(pool, id, {
-      since: q.since, before: q.before, limit: q.limit, threadRootId: q.thread ?? null,
+      since: q.since, before: q.before, around: q.around, limit: q.limit, threadRootId: q.thread ?? null,
     });
     // 스레드 조회는 '더 오래된 것'을 페이지로 돌려주는 경로가 없다 — before 분기가 스레드를
     // 필터하지 않으므로 이 값을 true 로 올리면 클라이언트가 채널 전체를 거슬러 올라간다.
@@ -376,17 +378,21 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     const q = z.object({
       q: z.string().min(1).max(256),
       channelId: z.string().uuid().optional(),
+      // ⌘F 의 스코프. `channelId` 없이 와도 뜻이 서지만(스레드 id 하나로 채널이 정해진다)
+      // 클라이언트는 늘 둘을 함께 보낸다 — 403 판정이 채널 단위이기 때문이다.
+      threadRootId: z.string().uuid().optional(),
+      offset: z.coerce.number().int().min(0).max(1000).optional(),
     }).parse(req.query);
     if (q.channelId && !(await assertChannelVisible(pool, q.channelId, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
     // 검색어의 `@handle` 도 본문과 **같은 규칙**으로 `<@id>` 로 바꾼다(#271) — 저장된
     // 정본이 `<@id>` 이므로, 바꾸지 않으면 이름을 바꾼 뒤 옛 메시지를 영영 못 찾는다.
-    return {
-      messages: await searchMessages(
-        pool, req.account!.id, await normalizeSearchQuery(pool, q.q), 50, q.channelId ?? null,
-      ),
-    };
+    return await searchMessages(pool, req.account!.id, await normalizeSearchQuery(pool, q.q), {
+      channelId: q.channelId ?? null,
+      threadRootId: q.threadRootId ?? null,
+      offset: q.offset ?? 0,
+    });
   });
 
   // #219: 나중에 볼 메시지. 라우트 전부가 **요청자 자신의 행만** 다룬다 — 남의 큐를 가리키는

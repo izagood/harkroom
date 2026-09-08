@@ -163,7 +163,7 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
       chan(id, id, input.repo ?? null)),
     archiveChannel: vi.fn(async (id: string, _archived: boolean) =>
       chan(id, id, null)),
-    search: vi.fn(async () => []),
+    search: vi.fn(async () => ({ messages: [], hasMore: false })),
     // #215: 링크 미리보기 카드. 베이스가 덮어야 "부르지 않았다" 를 단언할 수 있고, 본문에
     // URL 이 있는 다른 테스트가 없는 표면을 부르지 않는다.
     getLinkPreview: vi.fn(async () => { throw Object.assign(new Error('not found'), { status: 404 }); }),
