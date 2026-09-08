@@ -50,7 +50,11 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
 
   // 강조만 하고 화면 밖에 두면 긴 채널에서는 아무 일도 안 일어난 것과 같다.
   // jsdom 에는 scrollIntoView 가 없으므로 옵셔널 호출이다(ChannelPane 도 같은 이유로 그렇다).
-  useEffect(() => { if (highlighted) rowRef.current?.scrollIntoView?.(); }, [highlighted]);
+  //
+  // `block: 'nearest'` 인 이유는 `ChannelPane` 의 같은 호출에 적어 뒀다 — 무인자
+  // (`'start'`)는 **문서까지** 밀어 앱 껍데기를 창 위로 끌어올린다. 인박스에서 줄을 눌러
+  // 여기로 오는 길이 정확히 그 경로였다(실측 2026-09-08).
+  useEffect(() => { if (highlighted) rowRef.current?.scrollIntoView?.({ block: 'nearest' }); }, [highlighted]);
 
   // 강조가 계속 남으면 같은 채널에서 진짜 강조가 필요한 순간에 신호가 죽는다(#397).
   // 몇 초 뒤에 자동으로 해제한다 — 사용자가 확인하고 있다는 신호다.

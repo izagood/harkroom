@@ -161,7 +161,15 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     return roots.find((m) => m.seq > frozen && m.authorId !== me?.id)?.id ?? null;
   }, [roots, dividerSeq, activeChannelId, me?.id]);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView?.(); }, [roots.length]);
+  /**
+   * **`block: 'nearest'` 는 필수다.** 인자를 안 주면 `block: 'start'` 이고, 그것은 이 요소가
+   * 맨 위에 오도록 **문서를 포함한 모든 스크롤 조상**을 민다 — 문서가 어떤 이유로든
+   * 스크롤 가능해진 순간(실측: `Identity` 의 `sr-only` 가 컨테이닝 블록을 벗어났을 때)
+   * 이 한 줄이 앱 껍데기 전체를 창 위로 끌어올린다. `nearest` 는 필요한 만큼만 움직여
+   * 바깥 상자를 끌지 않고, 바닥 표식을 보이게 하는 이 자리의 목적은 그대로 이룬다.
+   * 회귀선은 `test/shellScroll.test.tsx`.
+   */
+  useEffect(() => { bottomRef.current?.scrollIntoView?.({ block: 'nearest' }); }, [roots.length]);
 
   // 채널을 옮기면 파일 패널을 닫는다. 열린 채로 두면 방금 떠난 채널의 목록이 잠깐 남아
   // 어느 채널의 파일인지 오해할 여지가 생긴다.
