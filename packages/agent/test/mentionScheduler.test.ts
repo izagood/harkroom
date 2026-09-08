@@ -226,4 +226,107 @@ describe('mentionScheduler 승인 관문', () => {
     expect(out.deferred).toBe(1);
     expect(calls).toBe(0);
   });
+  it('실패한 entry 는 백오프 전에는 다시 띄우지 않는다', async () => {
+    let calls = 0;
+    let now = 1_000;
+    const scheduler = createMentionScheduler({
+      murmur: { markRead: async (ids) => ids.length, post: async () => 1 },
+      registry: new TurnRegistry(),
+      queue: new MentionQueue(),
+      accountLane: [null],
+      runMentionTurn: async () => { calls += 1; throw new Error('턴 실패'); },
+      buildTurnDeps: () => ({}) as never,
+      hooks: {
+        resumeHandoff: async () => {}, stopRequested: () => {},
+        exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {},
+      },
+      startedAtMs: 0,
+      now: () => now,
+    });
+
+    await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await scheduler.drain();
+    expect(calls).toBe(1);
+
+    // 백오프가 아직 안 지났다 — 다시 띄우지 않는다.
+    const blocked = await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    expect(blocked.blocked).toBe(1);
+    expect(calls).toBe(1);
+
+    // 백오프가 지나면 다시 띄운다.
+    now += 60_000;
+    const retried = await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    expect(retried.started).toBe(1);
+    await scheduler.drain();
+    expect(calls).toBe(2);
+  });
+
+  it('실패 백오프가 다른 스레드의 멘션을 막지 않는다', async () => {
+    const started: string[] = [];
+    const now = 1_000;
+    const scheduler = createMentionScheduler({
+      murmur: { markRead: async (ids) => ids.length, post: async () => 1 },
+      registry: new TurnRegistry(),
+      queue: new MentionQueue(),
+      accountLane: [null],
+      runMentionTurn: async (_d, target) => {
+        started.push(target.mentionId);
+        if (target.mentionId === 'bad') throw new Error('턴 실패');
+        return { stopRequestedAt: null };
+      },
+      buildTurnDeps: () => ({}) as never,
+      hooks: {
+        resumeHandoff: async () => {}, stopRequested: () => {},
+        exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {},
+      },
+      startedAtMs: 0,
+      now: () => now,
+    });
+
+    await scheduler.admit(batchOf([{ entryId: 1, messageId: 'bad' }]), ctx);
+    await scheduler.drain();
+
+    // bad 는 백오프 중이지만 good 은 그대로 흐른다 — 전역 sleep 이었다면 둘 다 멈춘다.
+    const out = await scheduler.admit(batchOf([
+      { entryId: 1, messageId: 'bad' },
+      { entryId: 2, messageId: 'good' },
+    ]), ctx);
+    expect(out.started).toBe(1);
+    expect(out.blocked).toBe(1);
+    await scheduler.drain();
+    expect(started).toEqual(['bad', 'good']);
+  });
+
+  it('MAX_ATTEMPTS 를 소진하면 통지하고 읽음 처리해 큐를 비운다', async () => {
+    let now = 1_000;
+    const markedRead: number[] = [];
+    const posted: string[] = [];
+    const scheduler = createMentionScheduler({
+      murmur: {
+        markRead: async (ids) => { markedRead.push(...ids); return ids.length; },
+        post: async (_c, body) => { posted.push(body); return 1; },
+      },
+      registry: new TurnRegistry(),
+      queue: new MentionQueue(),
+      accountLane: [null],
+      runMentionTurn: async () => { throw new Error('턴 실패'); },
+      buildTurnDeps: () => ({}) as never,
+      hooks: {
+        resumeHandoff: async () => {}, stopRequested: () => {},
+        exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {},
+      },
+      startedAtMs: 0,
+      now: () => now,
+    });
+
+    for (let i = 0; i < 3; i += 1) {
+      await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+      await scheduler.drain();
+      now += 60_000;
+    }
+
+    // 한도까지 실패하면 읽음 처리해 흘려보낸다 — 안 그러면 이 항목이 큐를 막는다.
+    expect(markedRead).toEqual([1]);
+    expect(posted.some((b) => b.includes('실패'))).toBe(true);
+  });
 });
