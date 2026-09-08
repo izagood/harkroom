@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useStore } from 'zustand';
 import { communityLabel, useActiveStore, useCommunityRegistry, type CommunityEntry } from '../state/communities';
 import { getController } from '../state/controller';
+import { blockingUnreadCount } from '../state/unread';
 import { Identity, StatusMark } from './Identity';
 import { Menu } from './Menu';
 import { StatusPicker } from './StatusPicker';
@@ -126,13 +127,14 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onOpen
    * "새 대화가 있다"에 가깝다. 사이드바의 채널별 `UnreadBadge` 와 같은 배열을 쓰므로
    * 두 표시가 갈라지지 않는다.
    *
+   * 세는 규칙 자체는 `state/unread.ts` 에 있다 — 독(Dock) 배지가 같은 것을 세야 해서
+   * 꺼냈다(`lib/useDockBadge.ts`). 여기서 다시 적으면 화면의 숫자와 독의 숫자가 갈라진다.
+   *
    * **이 배지가 홈 칸에 있는 것이 문서의 요구다** — Inbox 는 홈 패널 맨 위 한 줄로
    * 내려가고 배지만 레일이 대신 받는다. 그래야 어느 칸에 있든 "나를 기다리는 것 2개"가
    * 계속 보인다.
    */
-  const blockingCount = useActiveStore(
-    (s) => s.unread.filter((e) => !e.readAt && (e.reason === 'mention' || e.reason === 'dm')).length,
-  );
+  const blockingCount = useActiveStore((s) => blockingUnreadCount(s.unread));
 
   /**
    * 담아 둔 메시지 수(#219). **배지로 그리지 않는다** — 문서: *"배지는 나를 막는 것만

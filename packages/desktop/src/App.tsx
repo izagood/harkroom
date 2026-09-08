@@ -3,6 +3,7 @@ import { createNotifier } from './lib/notify';
 import { sessionStore, type StoredCommunity } from './lib/session';
 import { useColorMode } from './lib/useColorMode';
 import { useNotificationOpen } from './lib/useNotificationOpen';
+import { useDockBadge } from './lib/useDockBadge';
 import { getActiveEntry } from './state/communities';
 import { getController, openNotificationTarget, startCommunitySession, type Controller } from './state/controller';
 import { ConnectScreen } from './screens/ConnectScreen';
@@ -44,6 +45,11 @@ export default function App() {
    * 여기서 그 순서를 다시 쓰지 않는다 — 링크 클릭(#178)과 갈릴 자리를 만들지 않는다.
    */
   useNotificationOpen((target) => { void openNotificationTarget(target); });
+  /**
+   * 독 아이콘의 미읽음 표시. `useNotificationOpen` 과 같은 이유로 **여기**다 — 미읽음은
+   * 부팅·접속·설정 화면에서도 늘고 줄어들고, `ready` 안쪽에 두면 그동안 배지가 굳는다.
+   */
+  useDockBadge();
   const [phase, setPhase] = useState<'boot' | 'connect' | 'ready'>('boot');
   // 설정은 세션 상태(phase)가 아니라 뷰다 — 그래서 별도 상태로 둔다.
   const [connectError, setConnectError] = useState<string | null>(null);
