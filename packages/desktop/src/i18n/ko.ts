@@ -1016,6 +1016,7 @@ export const ko = {
   // ---------------------------------------------------------------------------
 
   'message.channelEcho': '채널에도 전송됨',
+  'message.deleted': '채팅이 삭제되었습니다',
   'message.threadOrigin': '스레드에 댓글 남김',
   'message.recentReplies': '최근 댓글 보기',
   'message.replyInThread': '스레드에 답글 달기',

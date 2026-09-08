@@ -36,7 +36,7 @@ function msg(seq: number): MessageRow {
     kind: 'user', meta: {}, createdAt: new Date(2026, 8, 4, 0, 0, seq).toISOString(), editedAt: null,
     reactions: [], attachments: [], replyCount: null, lastReplyAt: null, participantIds: null,
     openAskHumanCount: null, openAskAccountIds: null, openAskLinks: null, failureCount: null, unresolvedFailureCount: null,
-    lastKind: null, lastAuthorId: null, alsoInChannel: false,
+    lastKind: null, lastAuthorId: null, alsoInChannel: false, deletedAt: null,
   };
 }
 

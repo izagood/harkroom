@@ -190,12 +190,37 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     if (result === 'forbidden') {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'only the author or an admin can delete' } });
     }
-    emitEvent({ type: 'message.deleted', channelId: id, messageId, audience: await audienceFor(pool, id) });
+    const audience = await audienceFor(pool, id);
+    /**
+     * 답글이 남은 스레드 머리를 지우면 **행이 사라지지 않는다** — 본문을 뗀 자리표시자가
+     * 남는다(`LIST_VISIBLE`). 그때 `message.deleted` 를 내면 화면이 그 행을 목록에서 빼고,
+     * 살아 있는 답글로 들어갈 문이 함께 없어진다(2026-09-09 신고의 반대 방향 결함).
+     * 그래서 남은 경우는 `message.updated` 다 — 거두기(also-in-channel)가 같은 판단을 한다.
+     */
+    if (result.tombstone) {
+      emitEvent({ type: 'message.updated', message: result.tombstone, audience });
+    } else {
+      emitEvent({ type: 'message.deleted', channelId: id, messageId, audience });
+    }
+    /**
+     * 마지막 답글을 지우면 자리표시자로 서 있던 머리도 같은 순간에 사라진다("댓글 없으면
+     * 그냥 삭제"). 그 사실을 알리지 않으면 다른 창에는 답글 없는 자리표시자가 새로 고칠
+     * 때까지 남는다 — 지운 사람 화면에서만 맞는 상태가 된다.
+     */
+    if (result.rootGone) {
+      emitEvent({ type: 'message.deleted', channelId: id, messageId: result.rootGone, audience });
+    }
     // 본문은 남기지 않는다 — 감사에 복사하면 삭제가 삭제가 아니다.
     await recordAudit(pool, {
       action: 'message.deleted', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: messageId, detail: { channelId: id },
     }, req);
+    /**
+     * 자리표시자가 남았으면 그 행을 돌려준다(204 가 아니라 200). 부른 쪽은 그것을 스토어에
+     * 덮으면 되고, 아무것도 오지 않으면(204) 정말 사라진 것이라 목록에서 뺀다 — 클라이언트가
+     * 답글 수를 다시 세어 판정할 필요가 없다.
+     */
+    if (result.tombstone) return result.tombstone;
     return reply.code(204).send();
   });
 
