@@ -543,7 +543,8 @@ export const en = {
   // 누르는지 안다(회귀선이 `거부`에는 파일 이야기가 없고 `비활성화`에는 있는 것을 잰다).
   // ---------------------------------------------------------------------------
 
-  'skills.confirm.approve': 'Approving means every agent reads this skill as part of its system prompt',
+  'skills.confirm.approve':
+    'Approving installs this body as a SKILL.md file for every agent — the harness reads it when it needs it',
   'skills.confirm.disable': 'Disabling means every agent deletes this skill\'s files and links',
   'skills.confirm.reject':
     'Rejecting drops this skill to disabled — to undo it an agent has to propose it again',
@@ -556,7 +557,7 @@ export const en = {
   'skills.group.pending': 'Pending',
   'skills.group.pendingEmpty': 'No skills waiting for approval',
   'skills.group.subtitle':
-    'Workspace skills proposed by agents. The body of an approved skill goes into every agent\'s system prompt.',
+    'Workspace skills proposed by agents. Approving installs the body as a skill file for every agent, which the harness reads when it needs it.',
   'skills.list.loadFailed': 'The skill list did not arrive',
   'skills.list.loading': 'Loading…',
   'skills.list.refresh': 'Refresh',
