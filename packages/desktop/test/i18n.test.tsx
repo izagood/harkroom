@@ -36,6 +36,8 @@ import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { WaitChainSection } from '../src/components/WaitChainSection';
 import { WaitChainLine } from '../src/components/WaitChain';
+import { Sidebar } from '../src/components/Sidebar';
+import { fireEvent } from '@testing-library/react';
 import { waitChainFromLinks } from '../src/lib/waitChain';
 import { acc, chan, msg } from './helpers/fakeApi';
 
@@ -344,5 +346,181 @@ describe('스레드 패널의 사슬 줄 — 어순이 언어를 따른다', () 
     speak('ko');
     render(<WaitChainLine chain={chainOf([link(FORGE, CODEX), link(CODEX, FORGE)])} />);
     expect(screen.getByTestId('wait-chain').textContent).toContain('사람만이 풀 수 있다');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. 사이드바가 두 언어로 뜬다 — **이 PR 의 완료 기준 3**
+//
+// 다른 사이드바 회귀선 열넷은 **한국어로 고정돼 있다**(각 파일 머리의 주석) — 그것들이
+// 재는 것은 언어가 아니라 그 언어로 표현된 규율이라, 언어를 재는 자리는 여기 하나다.
+// 두 곳에서 같은 것을 재면 문구를 고칠 때 한쪽만 고쳐진다.
+//
+// **화면을 열어서 잰다.** 사전을 직접 읽어 `en['sidebar.menu.leave'] !== ko[...]` 를
+// 확인하는 것으로는 부족하다 — 위 1번 묶음이 이미 사전을 재고 있고, 사전이 갈려 있어도
+// **화면이 `t()` 를 안 지나면** 그 화면은 한 언어로 굳는다(예전 `NOTIFY_LEVEL_LABEL` 이
+// 모듈 상수라 정확히 그랬다). 배선을 재는 유일한 방법이 렌더다.
+// ---------------------------------------------------------------------------
+
+const sidebarProps = {
+  onOpenDirectory: () => {},
+  onOpenChannelDirectory: () => {},
+  onOpenInbox: () => {},
+  collapsed: false,
+  onToggleCollapse: () => {},
+};
+
+/** admin 이어야 편집·삭제·만들기가 메뉴에 선다 — 옮긴 문자열 대부분이 그 뒤에 있다. */
+function seedSidebar() {
+  useActiveStore.getState().set({
+    me: { ...acc(ME, 'me'), isAdmin: true },
+    accounts: { [ME]: { ...acc(ME, 'me'), isAdmin: true }, [FORGE]: acc(FORGE, 'forge', 'agent') },
+    channels: [chan('c1', 'general')],
+    messages: { c1: [] },
+    dms: [],
+    online: [],
+    connected: true,
+  });
+}
+
+/** 채널 행의 `⋯` 를 눌러 메뉴를 연다. */
+function openChannelMenu(): HTMLElement {
+  const trigger = screen.getAllByRole('button', { name: '⋯' })[0]!;
+  fireEvent.click(trigger);
+  return screen.getByRole('menu');
+}
+
+describe('사이드바 — 기본은 영어다', () => {
+  beforeEach(seedSidebar);
+
+  it('구획 머리와 연결 점이 영어로 뜬다', () => {
+    render(<Sidebar panel="home" {...sidebarProps} />);
+    expect(screen.getByRole('navigation', { name: 'Channels' })).toBeTruthy();
+    expect(screen.getByLabelText('Collapse sidebar')).toBeTruthy();
+    expect(screen.getByTestId('connection-dot').getAttribute('title'))
+      .toBe('Connected to the server');
+  });
+
+  /** **알림 3단이 한 축으로 선다** — 셋의 관계가 이름에서 읽혀야 한다(`en.ts` notify 머리말). */
+  it('알림 3단이 영어로 뜨고 셋이 같은 축에 선다', () => {
+    render(<Sidebar panel="home" {...sidebarProps} />);
+    const items = [...openChannelMenu().querySelectorAll('[role="menuitem"]')]
+      .map((el) => el.textContent);
+    // 기본값이 `mentions` 이므로 그 줄에만 `✓` 가 붙는다(`notifyLevelOf`).
+    expect(items).toContain('Notify: Everything');
+    expect(items).toContain('✓ Notify: Only mentions');
+    expect(items).toContain('Notify: Nothing');
+  });
+
+  it('메뉴 항목이 영어로 뜬다', () => {
+    render(<Sidebar panel="home" {...sidebarProps} />);
+    const items = [...openChannelMenu().querySelectorAll('[role="menuitem"]')]
+      .map((el) => el.textContent);
+    expect(items).toContain('Edit channel');
+    expect(items).toContain('View members');
+    expect(items).toContain('Copy channel name');
+    // 사이드바 메뉴에는 한국어가 한 글자도 없다 — 섹션 이름 같은 사람이 지은 값은 없는 상태다.
+    expect(items.join(' ')).not.toMatch(/[가-힣]/);
+  });
+
+  /**
+   * **오류가 영어로 뜬다.** 화면이 실제로 실패를 겪는 경로로 확인한다 — 사전만 재면
+   * `setCreateError` 가 옛 문자열을 그대로 들고 있어도 초록이다.
+   */
+  it('채널 이름 규칙 오류가 영어로 뜬다 — 무엇이 되는지를 적는다', () => {
+    render(<Sidebar panel="home" {...sidebarProps} />);
+    fireEvent.click(screen.getByTestId('add-channel'));
+    fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'Bad Name' } });
+    fireEvent.click(screen.getByText('Create'));
+    const alert = screen.getByRole('alert');
+    // `Invalid name` 이 아니라 **무엇이 되는지**를 적는다.
+    expect(alert.textContent).toContain('lowercase letters');
+    expect(alert.textContent).toContain('1 to 48 characters');
+  });
+});
+
+describe('사이드바 — 언어를 한국어로 바꾸면 한국어로 뜬다', () => {
+  beforeEach(() => {
+    seedSidebar();
+    speak('ko');
+  });
+
+  it('구획 머리와 연결 점이 한국어로 바뀐다', () => {
+    render(<Sidebar panel="home" {...sidebarProps} />);
+    expect(screen.getByRole('navigation', { name: '채널 목록' })).toBeTruthy();
+    expect(screen.getByLabelText('사이드바 접기')).toBeTruthy();
+    expect(screen.getByTestId('connection-dot').getAttribute('title')).toBe('서버에 연결됨');
+  });
+
+  it('알림 3단이 한국어로 바뀐다', () => {
+    render(<Sidebar panel="home" {...sidebarProps} />);
+    const items = [...openChannelMenu().querySelectorAll('[role="menuitem"]')]
+      .map((el) => el.textContent);
+    expect(items).toContain('알림: 전체');
+    expect(items).toContain('✓ 알림: 멘션만');
+    expect(items).toContain('알림: 없음');
+  });
+
+  it('메뉴 항목이 한국어로 바뀐다', () => {
+    render(<Sidebar panel="home" {...sidebarProps} />);
+    const items = [...openChannelMenu().querySelectorAll('[role="menuitem"]')]
+      .map((el) => el.textContent);
+    expect(items).toContain('채널 편집');
+    expect(items).toContain('멤버 보기');
+    expect(items).toContain('채널명 복사');
+  });
+
+  it('채널 이름 규칙 오류가 한국어로 바뀐다', () => {
+    render(<Sidebar panel="home" {...sidebarProps} />);
+    fireEvent.click(screen.getByTestId('add-channel'));
+    fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'Bad Name' } });
+    fireEvent.click(screen.getByText('만들기'));
+    expect(screen.getByRole('alert').textContent).toContain('1~48자');
+  });
+});
+
+/**
+ * **복수형이 사이드바에서도 실제로 갈린다.** 되돌릴 수 없는 조작의 규모를 말하는 자리라
+ * `1 messages` 가 뜨면 그 문장이 급조된 것으로 읽히고, 사람은 숫자를 다시 확인하지 않는다.
+ *
+ * 한국어가 한 갈래인 것은 그 언어의 사실이므로 같은 축에서 함께 잰다 — 그래야 "한국어에
+ * `one` 이 없다"가 누락이 아니라 **설계**임이 이 파일 안에서 읽힌다.
+ */
+describe('사이드바 삭제 확인 — 규모를 말하는 문장의 복수형', () => {
+  const t = (locale: Locale) => translator(locale);
+
+  it('영어는 1개와 2개가 다른 낱말이다', () => {
+    expect(t('en')('sidebar.delete.scope', { count: 1 })).toContain('its 1 message for good');
+    expect(t('en')('sidebar.delete.scope', { count: 2 })).toContain('its 2 messages for good');
+  });
+
+  it('한국어는 수에 따라 명사가 안 바뀐다', () => {
+    expect(t('ko')('sidebar.delete.scope', { count: 1 })).toContain('메시지 1개');
+    expect(t('ko')('sidebar.delete.scope', { count: 7 })).toContain('메시지 7개');
+  });
+});
+
+/**
+ * **긴 안내문이 뜻을 잃지 않았다.** 자동 멘션 안내는 두 사실을 진다 — 무엇이 일어나는가,
+ * 그리고 한 번만 빼려면 어디를 누르는가. 영어로 옮기면서 뒤엣것을 잘라내면 사람은 칩을
+ * 영영 발견하지 못하므로, **두 언어 모두 두 사실을 다 갖는지**를 잰다(낱말이 아니라 뜻).
+ */
+describe('사이드바 안내문 — 옮기면서 사실을 잃지 않는다', () => {
+  it('자동 멘션 안내가 두 언어 모두 「무엇이 일어나나」와 「어떻게 빼나」를 다 말한다', () => {
+    const note = { en: en['sidebar.members.autoMentionNote'], ko: ko['sidebar.members.autoMentionNote'] };
+    expect(note.en).toContain('called at the front');
+    expect(note.en).toContain('composer');
+    expect(note.ko).toContain('앞에 자동으로 불린다');
+    expect(note.ko).toContain('작성창');
+  });
+
+  /**
+   * **끊김은 한 단어로 끝나지 않는다**(`#443`). 그 뒤에 따라오는 사실 — 아래 목록의
+   * 생사를 알 수 없다 — 까지 말해야 사람이 아래에서 볼 것을 미리 안다.
+   */
+  it('끊김 문구가 두 언어 모두 「그래서 아래를 믿을 수 없다」까지 말한다', () => {
+    expect(en['sidebar.brand.disconnected'].length).toBeGreaterThan('Disconnected'.length + 10);
+    expect(en['sidebar.brand.disconnected']).toContain('trusted');
+    expect(ko['sidebar.brand.disconnected']).toContain('알 수 없다');
   });
 });
