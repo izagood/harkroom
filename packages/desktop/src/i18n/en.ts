@@ -186,6 +186,62 @@ export const en = {
   'common.someone': 'someone',
 
   // ---------------------------------------------------------------------------
+  // avatar — **판정 이름이다.** `lib/avatar.ts::avatarErrorMessage` 가 내는 말이고,
+  // 그것을 그리는 화면이 둘이다(내 프로필 · 에이전트 프로필). `waitChain` 이 화면 이름을
+  // 금지한 조건 그대로다.
+  //
+  // ## 왜 원인별로 문장이 다른가
+  //
+  // 앞 판은 무엇이 실패했든 *"이미지 파일만 쓸 수 있습니다"* 하나였다. 서버가 죽었거나
+  // 네트워크가 끊겼을 때도 사람에게는 **자기 파일 탓**으로 보이고, 파일을 바꿔 가며 몇
+  // 번을 다시 시도하게 만든다. 그래서 각 문장이 **그 사람이 다음에 할 일**을 정한다:
+  // 형식을 바꿀지 · 더 작은 그림을 고를지 · 그냥 다시 눌러 볼지.
+  //
+  // `svg_too_large` 가 따로 있는 이유도 그것이다 — SVG 는 검사에 파일 전체를 읽어야 해서
+  // 상한이 다른 형식보다 훨씬 낮다. 뭉개면 SVG 를 든 사람이 *"SVG 만 쓸 수 있습니다"* 를
+  // 듣는다.
+  //
+  // `{formats}`(`PNG · JPEG · …`)와 `{code}` 는 **번역하지 않는다** — 형식 이름과 서버가
+  // 낸 코드이고, 코드는 사람이 그대로 옮겨 적어 물어보는 값이다.
+  // ---------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------
+  // attachment — 첨부를 여는 데 실패했을 때. `state/controller.ts` 가 알림 줄로 낸다.
+  //
+  // **둘로 갈린 이유**: 서버가 *"그 파일이 없다"* 고 말한 것과, 우리가 아예 못 읽은 것은
+  // 사람이 할 일이 다르다 — 앞은 다시 눌러도 소용없고 뒤는 잠시 뒤 되는 수가 있다.
+  // ---------------------------------------------------------------------------
+
+  'attachment.fetchFailed': 'The attachment could not be loaded',
+  'attachment.missing': 'The attachment is not on the server',
+
+  'avatar.error.notAnImage': '{formats} files only. We judge by content, not by the file name.',
+  'avatar.error.notFound': 'The uploaded file was not found. Try again.',
+  /** 서버가 코드까지 준 경우. 알 수 없는 코드가 와도 **그 코드를 그대로 보여 준다.** */
+  'avatar.error.other': 'The photo was not changed ({code}).',
+  /** 서버에 닿지도 못했다 — 파일 문제가 아니라는 것을 말해야 파일을 또 바꾸지 않는다. */
+  'avatar.error.unreachable': 'The photo was not changed. The server may be unreachable.',
+  'avatar.error.svgTooLarge':
+    'SVG is capped at 256 KiB. Use a simpler drawing, or a PNG.',
+  'avatar.error.tooLarge': 'The file is too large. Pick a smaller image.',
+
+  // ---------------------------------------------------------------------------
+  // avatarEdit — 화면 이름. `settings/avatarEdit.tsx` 의 진행·결과 줄.
+  //
+  // 진행 문구가 셋인 것은 **단계가 셋이기 때문이다**(올리는 중 · 프로필에 적용 중 ·
+  // 지우는 중). 하나로 뭉치면 오래 걸리는 자리에서 사람이 무엇을 기다리는지 모른다.
+  // ---------------------------------------------------------------------------
+
+  'avatarEdit.progress.applying': 'Applying to your profile…',
+  'avatarEdit.progress.aria': 'Photo upload progress',
+  'avatarEdit.progress.removing': 'Removing the photo…',
+  'avatarEdit.progress.uploading': 'Uploading the photo…',
+  /** 퍼센트가 있을 때. 없을 때(`uploading`)와 갈라 두어야 `…0%` 가 안 뜬다. */
+  'avatarEdit.progress.uploadingPct': 'Uploading the photo… {pct}%',
+  'avatarEdit.result.changed': 'The photo was changed',
+  'avatarEdit.result.removed': 'The photo was removed',
+
+  // ---------------------------------------------------------------------------
   // gallery — **화면 이름이다.** `settings/GallerySettings.tsx` 가 그리는 말이고,
   // 그 화면은 다른 화면을 재는 **기준자**다(그 파일 머리말).
   //

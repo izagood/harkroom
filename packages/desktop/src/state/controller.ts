@@ -14,9 +14,24 @@ import type { AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
 import { usePrefsStore } from './prefsStore';
-import { detectLocale, isLocale, translator } from '../i18n';
+import { detectLocale, isLocale, translator, type Translate } from '../i18n';
 
 export class Controller {
+
+  /**
+   * 이 컨트롤러가 쓰는 번역기. **부를 때마다 언어를 다시 읽는다** — `translator(locale)` 을
+   * 한 번 만들어 두면 그 함수가 **컨트롤러 수명 동안 그 언어로 굳고**, 사람이 설정에서
+   * 언어를 바꿔도 여기서 나온 말만 옛 언어로 남는다(컨트롤러는 앱이 사는 동안 다시 안
+   * 만들어진다).
+   *
+   * 저장값이 `'system'` 이거나 우리가 모르는 언어면 브라우저에게 묻는다 — `useT` 가
+   * 화면에서 하는 판단과 **같은 규약**이어야 한국어 화면에 영어가 섞이지 않는다
+   * (`useT.ts::useLocale` 주석).
+   */
+  private t(): Translate {
+    const pref = usePrefsStore.getState().locale;
+    return translator(isLocale(pref) ? pref : detectLocale());
+  }
   private ws: WsHandle | null = null;
   private unreadFetchSeq = 0;
   /** 히스토리를 이미 통째로 받은 채널. 이 집합에 없으면 openChannel이 증분이 아니라 전체를 받는다. */
@@ -86,18 +101,9 @@ export class Controller {
       daemonObserver,
       appVersion,
       undefined, // restartWait — 실제 종료를 기다리는 방식. 기본값을 그대로 쓴다.
-      // 러너 사유의 번역기(`#619`). **부를 때마다 언어를 다시 읽는다** — 여기서
-      // `translator(locale)` 을 한 번 만들어 넘기면 그 함수가 컨트롤러 수명 동안 그
-      // 언어로 굳고, 사람이 설정에서 언어를 바꿔도 러너 사유만 옛 언어로 남는다
-      // (컨트롤러는 앱이 사는 동안 다시 안 만들어진다).
-      //
-      // 저장값이 `'system'` 이거나 우리가 모르는 언어면 브라우저에게 묻는다 —
-      // `useT` 가 화면에서 하는 판단과 **같은 규약**이어야 한국어 화면에 영어 사유가
-      // 섞이지 않는다(`useT.ts::useLocale` 주석).
-      (key, args) => {
-        const pref = usePrefsStore.getState().locale;
-        return translator(isLocale(pref) ? pref : detectLocale())(key, args);
-      },
+      // 러너 사유의 번역기(`#619`). **감싸서 넘기는 것이 요점이다** — `this.t()` 를
+      // 그대로 넘기면 지금의 언어로 굳는다(그 메서드 주석).
+      (key, args) => this.t()(key, args),
     );
     // 앱 버전을 **스토어로 밀어 넣는다** — 화면이 컨트롤러에게 묻지 않게(`appVersion`
     // 필드 주석). 실패해도 앱은 떠야 하므로 fire-and-forget 이고, 못 얻으면 `null` 로
@@ -1071,11 +1077,12 @@ export class Controller {
     try {
       blob = await this.fetchAttachment(attachment.id);
     } catch (e) {
-      if (e instanceof ApiError && e.code === 'attachment_missing') {
-        this.store.getState().set({ notice: '첨부 파일이 서버에 없습니다' });
-      } else {
-        this.store.getState().set({ notice: '첨부를 불러오지 못했습니다' });
-      }
+      const t = this.t();
+      this.store.getState().set({
+        notice: t(e instanceof ApiError && e.code === 'attachment_missing'
+          ? 'attachment.missing'
+          : 'attachment.fetchFailed'),
+      });
       return;
     }
     const url = URL.createObjectURL(blob);

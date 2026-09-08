@@ -30,6 +30,8 @@ import type {
   AgentDefaults, AgentTeamRow, AgentView, AskMeta, InboxEntry, MessageRow, OpenAskLink, PatView,
 } from '@murmur/shared';
 import { CATALOGS, LOCALES, translator, detectLocale, isLocale, type Locale } from '../src/i18n';
+import { avatarErrorMessage } from '../src/lib/avatar';
+import { ApiError } from '../src/lib/api';
 import { en } from '../src/i18n/en';
 import { ko } from '../src/i18n/ko';
 import { interpolate } from '../src/i18n/format';
@@ -3139,5 +3141,57 @@ describe('레일 — 두 언어로 뜨고 칸 이름은 안 옮긴다', () => {
     render(<Rail {...railProps} />);
     expect(screen.getByTestId('rail-home').getAttribute('aria-label'))
       .toBe('Home — 나를 기다리는 것 2개');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. 사진·첨부 — **`if` 사슬을 표로 바꾼 자리**
+//
+// `avatarErrorMessage` 가 서버 코드별로 다른 문장을 냈는데, 그 갈래가 `if` 사슬이었다.
+// 사슬은 **모르는 코드를 조용히 마지막 가지로 흘린다** — 서버가 새 코드를 내기 시작해도
+// 아무도 모르고, 사람은 원인과 무관한 문장을 읽는다(`#658` 의 `writerDeniedText` 와 같은
+// 모양이고 같은 방식으로 표가 됐다).
+// ---------------------------------------------------------------------------
+
+describe('사진 오류 — 원인별로 다른 말을 한다', () => {
+  const err = (code: string) => new ApiError(400, code, code);
+
+  /**
+   * **원인이 다르면 문장이 다르다.** 앞 판은 무엇이 실패했든 한 문장이라, 서버가 죽었을
+   * 때도 사람에게는 **자기 파일 탓**으로 보였고 파일을 바꿔 가며 다시 시도하게 만들었다.
+   */
+  it('네 코드가 두 언어 모두 서로 다른 문장을 받는다', () => {
+    for (const locale of ['en', 'ko'] as const) {
+      const t = translator(locale);
+      const texts = ['not_an_image', 'too_large', 'svg_too_large', 'not_found']
+        .map((c) => avatarErrorMessage(err(c), t));
+      expect(new Set(texts).size, locale).toBe(4);
+    }
+  });
+
+  /**
+   * **모르는 코드는 그 코드를 그대로 보여 준다.** 표가 `undefined` 를 내는 자리이고,
+   * 사람이 그 값을 그대로 옮겨 적어 물어볼 수 있어야 한다 — 사슬이었을 때는 그 코드가
+   * 마지막 가지의 문장에 먹혀 사라졌다.
+   */
+  it('모르는 코드가 와도 그 코드가 문장에 남는다', () => {
+    for (const locale of ['en', 'ko'] as const) {
+      expect(avatarErrorMessage(err('brand_new_code'), translator(locale)), locale)
+        .toContain('brand_new_code');
+    }
+  });
+
+  /** 서버에 닿지도 못한 것은 **파일 문제가 아니다** — 그 사실이 문장에 있어야 한다. */
+  it('연결 실패는 파일 탓으로 말하지 않는다', () => {
+    expect(avatarErrorMessage(new Error('offline'), translator('en'))).toContain('server');
+    expect(avatarErrorMessage(new Error('offline'), translator('ko'))).toContain('서버');
+  });
+
+  /** 형식 목록은 **옮기지 않는다** — 형식 이름이라 두 언어가 같은 글자를 받는다. */
+  it('형식 목록은 두 언어 모두 그대로다', () => {
+    for (const locale of ['en', 'ko'] as const) {
+      expect(avatarErrorMessage(err('not_an_image'), translator(locale)), locale)
+        .toContain('PNG');
+    }
   });
 });
