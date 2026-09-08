@@ -8,14 +8,8 @@
 // - `interactiveTurn.ts` 의 3분기 — 멘션 턴 진행 중이면 그 PTY 에 attach, 인터랙티브
 //   진행 중이면 기존 세션 반환, 없으면 새로 연다.
 // - `main.ts` 의 멘션 유예 — kind 가 'interactive' 인 스레드의 멘션은 markRead 없이
-//   건너뛴다(스펙 §5-2 결정 6). **#384 로 그 판정이 `controlOf` 하나로 좁혀졌다**: 도는
-//   인터랙티브 턴과 아직 기다리는 이어받기 예약이 유예 대상으로 같기 때문이다(main 이 두
-//   조건을 각자 조립하면 예약 구간에서만 유예가 빠진다 — 그 구간이 사람이 기다리는 26초다).
+//   건너뛴다(스펙 §5-2 결정 6). 판정은 `controlOf` 하나다.
 // 두 소비자가 각자 상태를 들면 겹침(같은 세션에 PTY 둘)이 생기므로 여기 하나로 모은다.
-//
-// **#384: 여기 사는 것이 하나 늘었다 — 이어받기 예약.** 턴이 아니라 "그 턴이 끝나면 뜰
-// 턴"이고(아래 `handoffs`), 턴과 같은 맵에 두면 진행 중인 멘션 턴과 겹쳐 `register` 가
-// 던진다. 예약도 인메모리인 것은 위와 같은 이유다: 러너가 죽으면 기다릴 턴도 없다.
 import type { TurnMode } from './turn.js';
 
 export interface TurnRecord {
@@ -30,27 +24,8 @@ export interface TurnRecord {
 }
 
 /**
- * 이어받기 예약(#384). "이 스레드의 멘션 턴이 끝나면 인터랙티브 턴을 띄운다"는 사실이고,
- * 턴이 아니다 — 그래서 `turns` 와 **다른 맵**에 산다: 예약을 턴으로 등록하면 진행 중인
- * 멘션 턴과 겹쳐 `register` 가 던지고, 그 예약을 지우는 것이 곧 진행 중인 턴을 지우는 일이 된다.
- */
-export interface HandoffReservation {
-  /** [이어받기] 를 누른 사람의 handle. 멘션 유예 통지 문구에 들어간다(진행 중인 턴과 같은 문구). */
-  openedByHandle: string;
-  channelId: string;
-  threadRootId: string;
-  /**
-   * 누른 사람이 보고 있는 화면 크기. 예약에 함께 두는 이유: 대기 뒤에 뜨는 PTY 는 그
-   * 사람의 창으로 떠야 하고, 이 값을 매니저의 별도 맵에 두면 예약과 그 payload 가 두
-   * 곳으로 갈라져 한쪽만 지워지는 상태가 생긴다(그러면 유예가 영원히 풀리지 않는다).
-   */
-  cols?: number;
-  rows?: number;
-}
-
-/**
- * 지금 이 스레드에 **사람의 조종이 걸려 있는가**의 답(#384). 도는 인터랙티브 턴이든,
- * 아직 기다리는 이어받기 예약이든 멘션은 유예된다.
+ * 지금 이 스레드에 **사람의 조종이 걸려 있는가**의 답. 도는 인터랙티브 턴이 있으면
+ * 그 스레드의 멘션은 유예된다.
  */
 export interface ThreadControl {
   openedByHandle?: string;
@@ -67,7 +42,6 @@ export class TurnRegistry {
    * 같은 세션을 `--session-id` 로 새로 시작하려 든다("Session ID already in use").
    * 그래서 푸는 순간은 턴이 완전히 정착한 뒤, main 루프가 정한다(`interactive.resumeHandoff`).
    */
-  private handoffs = new Map<string, HandoffReservation>();
 
   /**
    * 턴 시작에 등록한다. 같은 스레드에 이미 턴이 있으면 **크게 던진다** — 조용히
@@ -91,33 +65,14 @@ export class TurnRegistry {
     this.turns.delete(threadKey);
   }
 
-  /** 이어받기를 예약한다(#384). 먼저 누른 사람을 유지한다 — 예약은 턴 하나이고 그 턴은 하나뿐이다. */
-  reserveHandoff(threadKey: string, rec: HandoffReservation): void {
-    if (this.handoffs.has(threadKey)) return;
-    this.handoffs.set(threadKey, rec);
-  }
-
-  handoff(threadKey: string): HandoffReservation | undefined {
-    return this.handoffs.get(threadKey);
-  }
-
-  /** 예약을 지운다 — 인터랙티브 턴이 떴거나, 띄우다 실패했을 때. */
-  clearHandoff(threadKey: string): void {
-    this.handoffs.delete(threadKey);
-  }
-
   /**
    * 멘션을 유예해야 하는가 — **유예 판정은 이 하나다**(main 루프가 부른다).
    *
-   * 인터랙티브 턴과 이어받기 예약을 호출부에서 각각 조립하면, 예약 구간에서만 유예가
-   * 빠진다. 그 구간이 정확히 사람이 [이어받기] 를 누르고 기다리는 26초이고, 거기서 새
-   * 멘션 턴이 시작되면 사람이 기다린 자리를 그 턴이 가져간다(스펙 §5-2 결정 6 의 구멍).
+   * 판정을 한 자리에 모아 두는 이유: 호출부에서 조립하면 한쪽만 고치는 사고가 난다.
    */
   controlOf(threadKey: string): ThreadControl | null {
     const turn = this.turns.get(threadKey);
     if (turn?.kind === 'interactive') return { openedByHandle: turn.openedByHandle };
-    const reserved = this.handoffs.get(threadKey);
-    if (reserved) return { openedByHandle: reserved.openedByHandle };
     return null;
   }
 

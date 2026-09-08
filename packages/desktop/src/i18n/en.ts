@@ -2218,7 +2218,6 @@ export const en = {
   // | `session` | 세션 조회 셋(확인 중 · 없음 · 실패)과 「터미널 열기」 |
   // | `state` | 상태 칩의 값 셋(`AgentSessionState`) |
   // | `writer` | **왜 못 치는가** 넷 + 칠 수 있을 때 한 줄 |
-  // | `handoff` | 이어받기(`#384`) — 누름 · 요청 중 · 예약됨 · 거절 |
   //
   // ## 못 치는 이유 넷은 **뭉치면 안 된다** — 사람이 할 일이 갈린다
   //
@@ -2275,7 +2274,7 @@ export const en = {
   //
   // - **서버가 준 오류 문구(`err.message`)** — 러너 오프라인(404)·구버전(409)·codex
   //   거절(409)·타임아웃(504)이 그대로 온다. **서버가 원인을 정확히 안다**(그 주석) —
-  //   앱이 다시 쓰지 않는다(`#368`). 위 `session.openFailed`·`handoff.failed` 는 그것을
+  //   앱이 다시 쓰지 않는다(`#368`). 위 `session.openFailed` 는 그것을
   //   **감싸는 틀**만 진다
   // - **`#{channel}` · `DM` · 스레드 본문 발췌** — 데이터다. 채널 이름은 사람이 지었고
   //   `DM` 은 이 제품의 고유어이며 발췌는 남의 말이다
@@ -2286,22 +2285,15 @@ export const en = {
   'terminal.chip.open': 'Open the terminal {handle} is running',
   /** 칩의 보이는 글자. `View` 가 아니다 — 소유자는 **직접 친다**(`#315`). */
   'terminal.chip.label': 'Open the terminal',
-
-  'terminal.handoff.failed': 'The take-over did not go through: {reason}',
   /**
    * `#384` 가 만든 동작. **`Resume` 이 아니다** — 멘션 턴은 계속 돌고 있고, 이 버튼이
    * 하는 일은 그 턴이 끝난 뒤 그 대화를 넘겨받는 **예약**이다.
    */
-  'terminal.handoff.request': 'Take over',
-  'terminal.handoff.requesting': 'Requesting the take-over…',
   /**
    * **`#384` 의 정직성 전부.** 진행 중인 턴을 멈추지 않으므로 누른 뒤 26초쯤은 아무것도
    * 안 바뀐 것처럼 보인다 — 그 침묵을 이 줄이 메운다. **다음에 무엇이 일어나는지**까지
    * 말하는 것이 `runner.restart.waitingForRetirement` 와 같은 규율이다.
    */
-  'terminal.handoff.queued':
-    'Take-over is queued — it opens when the mention turn in flight ends. '
-    + 'This terminal then picks up that conversation.',
 
   /**
    * 닫기 버튼의 **보이는 글자**. 접근 이름은 아래 `closeAction` 이 따로 진다 —
