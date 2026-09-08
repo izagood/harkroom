@@ -281,12 +281,54 @@ export interface DaemonObservation {
   runners: ObservedRunner[];
 }
 
+/**
+ * daemon 이 러너 하나에 대해 **직접 확인한** 것.
+ *
+ * ## 왜 셋이 아니라 여섯인가 (`#443`, `docs/desktop-agent-cards.html` 3단계)
+ *
+ * 앞 판본은 `agentId`·`alive`·`adopted` 셋만 들었고, 그 셋이 실행기의 판정
+ * (*"띄울까 말까"*)에 필요한 전부였다. 나머지는 파싱 루프가 **버렸다** — daemon 소켓과
+ * Rust(`main.rs::daemon_list_runners` 가 `runners` 를 그대로 통과시킨다)까지는 왔는데
+ * TS 로 넘어오는 자리에서 사라졌다(실측 2026-09-08).
+ *
+ * 그래서 러너가 안 죽을 때 사람이 볼 것이 아무것도 없었다. 정본 문서가 그 자리를 이렇게
+ * 적었다: *"카드에 올릴 것은 아니지만 상세에는 있어야 한다 — **러너가 안 죽을 때 사람이
+ * 볼 것이 그것뿐이다**."*
+ *
+ * ## 새 필드가 전부 옵셔널인 이유
+ *
+ * 옛 daemon 은 이것을 안 보낼 수 있다(아래 파싱 루프 주석과 같은 사정). `0` 이나 `-1`
+ * 같은 자리표시를 넣지 않는 것이 요점이다 — 그러면 화면이 "pid 0" 같은 거짓을 그리고,
+ * 사람은 그것이 진짜 pid 인지 '모른다'의 표현인지 구분할 수 없다. `undefined` 이면
+ * 화면은 **그 행을 그리지 않는다**(규칙 06: 없는 것을 그리지 않는다).
+ */
 export interface ObservedRunner {
   agentId: string;
   /** daemon 이 `kill(pid, 0)` 으로 **직접 확인한** 생사. 서버 추측이 아니다. */
   alive: boolean;
   /** 띄운 것이 아니라 채택한 것인가(`#431` 2-c). */
   adopted: boolean;
+  /** 러너 프로세스의 pid. daemon 장부(`runners-v1.json`)에 적힌 그 값이다. */
+  pid?: number;
+  /**
+   * 이 spawn 이 만든 세대(`daemonProtocol.ts::SpawnRunnerResult`). 같은 에이전트가
+   * 재기동을 거치면 올라가므로, 사람이 "방금 누른 재기동이 실제로 갈았나"를 이것으로 본다.
+   */
+  incarnationId?: string;
+  /** daemon 이 이 러너를 띄운(또는 채택한) 시각. epoch ms. */
+  startedAtMs?: number;
+  /**
+   * **daemon 이** SIGTERM 을 보낸 시각. **daemon 이 안 보냈으면 `null`.**
+   *
+   * `null` 과 `undefined` 가 다르다: `null` 은 *"daemon 이 안 보냈다"* 이고 daemon 이
+   * 실제로 말한 사실이며, `undefined` 는 *"옛 daemon 이라 이 필드를 아예 모른다"* 다.
+   *
+   * **`null` 은 "아무도 종료를 요청하지 않았다"가 아니다.** 종료 요청 경로가 둘이고 이
+   * 필드는 그중 하나만 안다 — 사람이 UI 에서 한 것은 서버 DB 의 `stopRequestedAt`(`#428`)이
+   * 알고 daemon 은 모른다. 그래서 화면은 두 출처를 **합쳐** 한 줄로 내야 한다
+   * (`daemonProtocol.ts::RunnerInfo.termSentAtMs` 의 표 전체가 이 한 줄의 근거다).
+   */
+  termSentAtMs?: number | null;
 }
 
 /**
@@ -454,6 +496,8 @@ export class RunnerLauncher {
   private disposed = false;
   private states = new Map<string, RunnerState>();
   private onStateChange?: (states: RunnerState[]) => void;
+  /** `setOnObservation` 이 건 구독자. daemon 이 말한 사실이 화면까지 가는 통로다(`#443`). */
+  private onObservation?: (runners: ObservedRunner[]) => void;
 
   /**
    * 로그인 셸 `PATH` 조회 결과의 캐시(#305). **프로세스 생애 동안 한 번만 읽는다** —
@@ -515,7 +559,7 @@ export class RunnerLauncher {
   async ensureDaemon(): Promise<DaemonObservation | null> {
     if (this.disposed) return null;
     try {
-      return await this.daemon.observe();
+      return await this.observeAndPublish();
     } catch {
       return null;
     }
@@ -523,6 +567,36 @@ export class RunnerLauncher {
 
   setOnStateChange(cb: (states: RunnerState[]) => void): void {
     this.onStateChange = cb;
+  }
+
+  /**
+   * daemon 이 말한 **사실**을 받는 자리(`#443`). `setOnStateChange` 와 **갈라 둔다** —
+   * 저쪽은 이 앱의 판정이고 이쪽은 관측이다(`appStore.ts::daemonRunners` 의 표).
+   *
+   * 관측이 **여러 자리에서** 일어난다는 것이 이 구독자가 필요한 이유다: 기동
+   * (`ensureDaemon`), 일괄 기동(`startAll`), 방금 만든 에이전트(`startCreated`),
+   * 재기동 뒤 재spawn, 그리고 종료를 기다리는 폴링(`awaitRunnerExit`)까지 다섯 곳이다.
+   * 호출자가 각자 스토어에 밀어 넣게 두면 새 관측 자리가 생길 때마다 그것을 빠뜨리고,
+   * 그러면 **화면의 pid 가 조용히 낡는다.** 그래서 관측을 한 함수(`observeAndPublish`)로
+   * 좁히고 그 안에서만 알린다.
+   */
+  setOnObservation(cb: (runners: ObservedRunner[]) => void): void {
+    this.onObservation = cb;
+  }
+
+  /**
+   * daemon 에게 묻고 **그 답을 구독자에게 흘린다.** 이 클래스의 모든 `observe()` 는 이
+   * 함수를 거친다 — 위 `setOnObservation` 주석이 그 이유다.
+   *
+   * 실패는 **그대로 던진다.** 호출자마다 실패에 붙일 문구가 다르고(누구의 러너를 못
+   * 띄웠는지), 여기서 삼키면 그 문구가 사라진다. 실패했을 때 구독자에게 빈 목록을
+   * 보내지 않는 것도 같은 규율이다 — "daemon 에 못 닿았다"를 "러너가 없다"로 바꿔
+   * 말하는 셈이 되고, 그러면 화면이 방금 전까지 보고 있던 pid 를 잃는다.
+   */
+  private async observeAndPublish(): Promise<DaemonObservation> {
+    const observation = await this.daemon.observe();
+    this.onObservation?.(observation.runners);
+    return observation;
   }
 
   getStates(): RunnerState[] {
@@ -556,7 +630,7 @@ export class RunnerLauncher {
 
     let observation: DaemonObservation;
     try {
-      observation = await this.daemon.observe();
+      observation = await this.observeAndPublish();
     } catch (err) {
       for (const agent of targets) {
         this.setState(agent.id, {
@@ -606,7 +680,7 @@ export class RunnerLauncher {
     // 있는 경우(앱을 다시 띄운 직후 같은 핸들을 다시 만들었다면)를 못 본다.
     let observation: DaemonObservation;
     try {
-      observation = await this.daemon.observe();
+      observation = await this.observeAndPublish();
     } catch (err) {
       this.setState(input.agent.id, {
         status: 'failed', exitCode: null,
@@ -865,7 +939,7 @@ export class RunnerLauncher {
 
     let observation: DaemonObservation;
     try {
-      observation = await this.daemon.observe();
+      observation = await this.observeAndPublish();
     } catch (err) {
       this.setState(agent.id, {
         status: 'failed', exitCode: null,
@@ -910,7 +984,7 @@ export class RunnerLauncher {
       if (this.disposed || !stillWanted()) return false;
       let alive: boolean;
       try {
-        const observation = await this.daemon.observe();
+        const observation = await this.observeAndPublish();
         alive = observation.runners.some((r) => r.agentId === agentId && r.alive);
       } catch {
         // 관측 실패는 "살아 있다"도 "죽었다"도 아니다. 다음 주기에 다시 묻는다 —
@@ -1510,7 +1584,10 @@ export const tauriDaemonObserver: DaemonObserver = {
     }
     const runners: ObservedRunner[] = [];
     for (const raw of body.runners) {
-      const r = raw as { agentId?: unknown; alive?: unknown; adopted?: unknown };
+      const r = raw as {
+        agentId?: unknown; alive?: unknown; adopted?: unknown;
+        pid?: unknown; incarnationId?: unknown; startedAtMs?: unknown; termSentAtMs?: unknown;
+      };
       if (typeof r?.agentId !== 'string') continue;
       runners.push({
         agentId: r.agentId,
@@ -1519,6 +1596,21 @@ export const tauriDaemonObserver: DaemonObserver = {
         // 두 번째 러너를 띄우는 쪽이 더 나쁘다.
         alive: r.alive !== false,
         adopted: r.adopted === true,
+        // **아래 넷은 판정에 쓰이지 않는다** — 상세 화면이 사람에게 보일 사실이다(`#443`).
+        //
+        // 위의 `alive` 와 달리 **없으면 없는 대로 둔다.** `alive` 가 기본값을 갖는 이유는
+        // 그것이 "띄울까 말까"를 가르기 때문이고, 판정에 쓰이지 않는 값에 기본값을 주면
+        // 그것은 곧 화면에 그리는 거짓이 된다 — `pid: 0` 은 사람이 진짜 pid 로 읽는다.
+        // 그래서 형이 맞을 때만 담고, 아니면 키 자체가 없다(규칙 06).
+        ...(typeof r.pid === 'number' ? { pid: r.pid } : {}),
+        ...(typeof r.incarnationId === 'string' ? { incarnationId: r.incarnationId } : {}),
+        ...(typeof r.startedAtMs === 'number' ? { startedAtMs: r.startedAtMs } : {}),
+        // `termSentAtMs` 만 `null` 을 **받아 담는다.** daemon 이 보낸 `null` 은
+        // *"내가 시그널을 안 보냈다"* 라는 사실이지 결측이 아니고, 그것을 결측으로
+        // 접으면 상세가 '시그널' 행을 못 그린다(`ObservedRunner.termSentAtMs` 주석).
+        ...(typeof r.termSentAtMs === 'number' || r.termSentAtMs === null
+          ? { termSentAtMs: r.termSentAtMs as number | null }
+          : {}),
       });
     }
     return { daemonPid: body.daemonPid, attached: body.attached, runners };
