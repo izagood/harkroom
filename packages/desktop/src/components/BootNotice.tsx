@@ -40,6 +40,8 @@
  * `main.rs` 의 `secret_get` 주석이 같은 판단을 적어 두었다.
  */
 import { useEffect, useState } from 'react';
+import { useT } from '../i18n/useT';
+import type { Translate } from '../i18n';
 
 /**
  * 이 시간이 지나도 키체인이 안 끝나면 말한다.
@@ -55,8 +57,25 @@ import { useEffect, useState } from 'react';
  */
 export const KEYCHAIN_NOTICE_DELAY_MS = 3_000;
 
-/** 무엇을 기다리는지 — **관측된 사실**이다. */
-export const KEYCHAIN_WAIT_TITLE = 'OS 키체인의 승인을 기다리는 중';
+/**
+ * 무엇을 기다리는지 — **관측된 사실**이다.
+ *
+ * **상수가 아니라 함수다.** 문구를 `const` 로 두면 모듈이 처음 읽히는 시점의 언어로
+ * 굳어, 사람이 언어를 바꿔도 이 두 줄만 옛 언어로 남는다(`SkillsSettings` 에서 실제로
+ * 났던 결함). `export` 를 지우지 않은 이유는 회귀선(`keychainWaitNotice.test.tsx`)이
+ * 이것을 import 해서 쓰기 때문이다 — 지우면 그 시험이 문구를 손으로 다시 적게 되고,
+ * 그때부터 화면과 시험이 조용히 갈릴 수 있다. `skills.confirm.*` 이 같은 처지에서
+ * 같은 선례를 세웠다(`threadState::THREAD_STATE_LABEL` 을 함수로 내린 그 판례).
+ *
+ * ## 부팅 시점에 언어를 아는가 — **안다** (실측 2026-09-08)
+ *
+ * 이 화면은 세션도 못 읽은 시점에 뜨므로 물을 곳이 있는지부터 확인했다. `useT` 는
+ * `usePrefsStore` 를 읽고 그 스토어는 `prefsStorage.load()` = `localStorage.getItem`
+ * **동기 호출**로 만들어진다. 저장된 것이 없으면 `'system'` → `detectLocale()` 이
+ * 브라우저에게 묻는다. 두 경로 다 왕복이 없어, 키체인을 기다리는 이 화면이 **그 대기
+ * 전에** 제 언어로 뜬다.
+ */
+export const keychainWaitTitle = (t: Translate): string => t('boot.keychain.title');
 
 /**
  * 사람이 다음에 할 수 있는 일. **이것이 빠지면 고친 게 아니다** — "기다리는 중"만으로는
@@ -65,8 +84,7 @@ export const KEYCHAIN_WAIT_TITLE = 'OS 키체인의 승인을 기다리는 중';
  * 다른 창 뒤에 가려질 수 있다는 것까지 말하는 이유: 실측에서 대화상자는 **떠 있었고**
  * 사람이 그것을 못 찾은 것이 대기의 실체였다.
  */
-export const KEYCHAIN_WAIT_HINT =
-  '시스템 승인 대화상자가 떠 있는지 확인하라 — 다른 창 뒤에 가려져 있을 수 있다. 승인하면 곧바로 이어진다.';
+export const keychainWaitHint = (t: Translate): string => t('boot.keychain.hint');
 
 export type BootWait = 'unknown' | 'keychain';
 
@@ -83,6 +101,7 @@ export function BootNotice({
   wait?: BootWait;
   delayMs?: number;
 }) {
+  const t = useT();
   const [elapsed, setElapsed] = useState(false);
 
   useEffect(() => {
@@ -104,9 +123,9 @@ export function BootNotice({
           글자가 된다. 본문단 13px 은 앱 기본값이라 안 적는다. */}
       {speaking && (
         <div className="mt-2 max-w-md">
-          <div className="text-fg">{KEYCHAIN_WAIT_TITLE}</div>
+          <div className="text-fg">{keychainWaitTitle(t)}</div>
           {/* 사유만으로는 부족하다. **사람이 다음에 무엇을 할 수 있는지**가 이 이슈의 답이다. */}
-          <div className="mt-1 text-fg-muted">{KEYCHAIN_WAIT_HINT}</div>
+          <div className="mt-1 text-fg-muted">{keychainWaitHint(t)}</div>
         </div>
       )}
     </div>

@@ -13,7 +13,7 @@ import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { RunnerStatusLine } from './RunnerStatus';
 import { dayLabel, localDayKey } from '../lib/day';
-import { useLocale } from '../i18n/useT';
+import { useLocale, useT } from '../i18n/useT';
 import { displayBody } from '../lib/mention';
 import { mentionedHandles, mentionedIds } from '@murmur/shared';
 import type { SectionId } from './settings/sections';
@@ -37,8 +37,9 @@ interface ChannelPaneProps {
 }
 
 export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: ChannelPaneProps) {
-  // 날짜 구분선은 **앱 언어**를 따른다(`lib/day.ts` 의 근거). 나머지 문자열은 아직 한국어다.
+  // 날짜 구분선은 **앱 언어**를 따른다(`lib/day.ts` 의 근거).
   const locale = useLocale();
+  const t = useT();
   const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins, runnerStates } = useActiveStore();
   const bottomRef = useRef<HTMLDivElement>(null);
   // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
@@ -199,7 +200,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         <span className="text-name font-bold">{title}</span>
         {channel?.topic && <span className="truncate text-meta text-fg-subtle">{channel.topic}</span>}
         {channel?.repo && <span className="rounded bg-surface-sunken px-1.5 text-meta text-fg-muted">{channel.repo}</span>}
-        {isArchived && <span className="rounded bg-surface-hover px-1.5 text-meta text-fg-muted">보관됨</span>}
+        {isArchived && <span className="rounded bg-surface-hover px-1.5 text-meta text-fg-muted">{t('channel.header.archived')}</span>}
         {/* 문서는 채널에 붙는다(#188) — DM 에는 없다. `channel` 이 없을 때 버튼을 그리면
             눌러도 아무 일이 없는 죽은 버튼이 된다(패널 쪽 조건과 같은 조건이어야 한다). */}
         {channel && (
@@ -208,14 +209,14 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
             aria-expanded={docOpen}
             onClick={() => setDocOpen((v) => !v)}
           >
-            문서
+            {t('channel.header.doc')}
           </button>
         )}
         <button
           className={`${channel ? '' : 'ml-auto '}shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken`}
           onClick={() => setFilesOpen((v) => !v)}
         >
-          파일
+          {t('channel.header.files')}
         </button>
         {/* 검색은 ⌘K 로도 열리지만 단축키만으로는 보이지 않는다(#258). 헤더 버튼은
             **지금 보는 대화로 좁힌 채** 열고, ⌘K 는 전역으로 남는다 — 두 진입점이 서로
@@ -223,10 +224,10 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         <button
           className="shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
           onClick={() => onOpenSearch?.(true)}
-          aria-label="이 채널에서 찾기"
-          title="이 채널에서 찾기 (⌘K 는 전체 검색)"
+          aria-label={t('channel.header.searchLabel')}
+          title={t('channel.header.searchTitle')}
         >
-          검색
+          {t('channel.header.search')}
         </button>
       </header>
       {/* 고정된 메시지(#218). 핀이 하나도 없으면 아무것도 그리지 않는다 — 늘 있는 빈 줄은
@@ -345,7 +346,10 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
             className={`border-t bg-surface-sunken px-4 py-1.5 ${needsStep ? 'border-warning-border' : 'border-danger-border'}`}
           >
             <span className={`text-meta font-medium ${needsStep ? 'text-warning' : 'text-danger'}`}>
-              @{accounts[runnerFailureInChannel.agentId]?.handle ?? '에이전트'} 는 지금 응답하지 않는다
+              {t('channel.pane.runnerFailureLine', {
+                handle: accounts[runnerFailureInChannel.agentId]?.handle
+                  ?? t('channel.pane.runnerFailureAgent'),
+              })}
             </span>
             {/* 사유·설치 안내는 **이 줄이 들고 있다**(`RunnerStatusLine` → `state.message`).
                 띠가 자기 문구를 새로 쓰지 않는 것이 규율이다 — 쓰는 순간 실행기가 만든
@@ -357,7 +361,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       <div className="border-t border-border p-3">
         {isArchived ? (
           <div className="rounded bg-surface-sunken p-2 text-center text-fg-subtle">
-            보관된 채널이다
+            {t('channel.pane.archived')}
           </div>
         ) : (
           <Composer

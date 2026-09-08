@@ -22,12 +22,14 @@ import { ChannelDirectory } from './ChannelDirectory';
 import { Inbox } from './Inbox';
 import { SavedMessages } from './SavedMessages';
 import type { SectionId } from './settings/sections';
+import { useT } from '../i18n/useT';
 
 export function Workspace({ onLogout, onOpenSettings }: {
   onLogout: () => void;
   /** #279: `targetId` 는 "이 에이전트가 선택된 상태로" 라는 뜻이다. */
   onOpenSettings: (section?: SectionId, targetId?: string) => void;
 }) {
+  const t = useT();
   const threadRootId = useActiveStore((s) => s.threadRootId);
   const terminalTarget = useActiveStore((s) => s.terminalTarget);
   const history = useActiveStore((s) => s.history);
@@ -226,8 +228,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
             <button
               onClick={handleToggleSidebar}
               className="rounded px-2 py-1 hover:bg-surface-hover"
-              aria-label="사이드바 펼치기"
-              title="사이드바 펼치기"
+              aria-label={t('workspace.showSidebar')}
+              title={t('workspace.showSidebar')}
             >
               <SidebarToggleIcon />
             </button>
@@ -236,8 +238,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
             onClick={handleGoBack}
             disabled={!canGoBack}
             className={`rounded px-2 py-1 ${canGoBack ? 'hover:bg-surface-hover' : 'text-fg-muted cursor-not-allowed'}`}
-            aria-label="뒤로"
-            title="뒤로 (Cmd+[)"
+            aria-label={t('workspace.back')}
+            title={t('workspace.backTitle')}
           >
             ←
           </button>
@@ -245,8 +247,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
             onClick={handleGoForward}
             disabled={!canGoForward}
             className={`rounded px-2 py-1 ${canGoForward ? 'hover:bg-surface-hover' : 'text-fg-muted cursor-not-allowed'}`}
-            aria-label="앞으로"
-            title="앞로 (Cmd+])"
+            aria-label={t('workspace.forward')}
+            title={t('workspace.forwardTitle')}
           >
             →
           </button>
@@ -257,9 +259,9 @@ export function Workspace({ onLogout, onOpenSettings }: {
             // 같은 헤더 줄의 앞/뒤 버튼은 크기를 안 적어 본문단을 물려받는다 — 이 버튼만
             // 아랫단으로 내리면 한 줄 안에 두 단이 서고, 그 줄이 들쭉날쭉해진다.
             className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover"
-            title="미읽음을 하나씩 훑는다"
+            title={t('workspace.sweepTitle')}
           >
-            미읽음 훑기
+            {t('workspace.sweep')}
           </button>
         </div>
         {/* 알림은 헤더 바로 아래, 대화 위에 둔다 — 채널 안에 그리면 채널을 못 연 실패를

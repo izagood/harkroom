@@ -172,7 +172,7 @@ describe('팀 설정 화면 (#172)', () => {
     // 명단은 **응답이 준 것**이다 — 낙관적으로 손으로 더하면 서버가 거절해도 화면에 남는다.
     await waitFor(() => expect(screen.getByTestId('team-member-helper')).toBeTruthy());
 
-    fireEvent.click(screen.getByLabelText('팀원 빼기: bot'));
+    fireEvent.click(screen.getByLabelText('팀에서 빼기: bot'));
     await waitFor(() => expect(api.removeTeamMember).toHaveBeenCalledWith('t1', 'a1'));
     // 명단에서만 사라진다 — 후보 격자에는 다시 나타나는 것이 맞다.
     await waitFor(() => expect(screen.queryByTestId('team-member-bot')).toBeNull());

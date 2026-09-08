@@ -6,6 +6,16 @@ import { InviteSettings } from '../src/components/settings/InviteSettings';
 // 계정 fixture 는 공용 헬퍼를 쓴다 — 여기서 객체를 손으로 만들면 AccountView 에 필드가
 // 늘 때(실제로 `disabled` 가 늘었다) 이 파일만 조용히 낡는다.
 import { acc as baseAcc } from './helpers/fakeApi';
+import { usePrefsStore } from '../src/state/prefsStore';
+
+/**
+ * **언어를 한국어로 고정한다.** 이 파일이 재는 것은 언어가 아니라 **그 언어로 표현된
+ * 규율**이다 — 문구가 사전을 지나게 된 뒤(i18n 이전)에도 그 규율은 그대로여야 하므로,
+ * 한국어 문구를 재는 줄을 지우는 대신 언어를 못 박는다. `gallery.test.tsx`·
+ * `skillsSettings.test.tsx`·`agentGrid.test.tsx`·`accountAvatar.test.tsx` 가 세운 선례다.
+ */
+beforeEach(() => usePrefsStore.getState().setLocale('ko'));
+afterEach(() => usePrefsStore.getState().setLocale('system'));
 
 const acc = (id: string, handle: string, isAdmin: boolean) => ({ ...baseAcc(id, handle), isAdmin });
 
@@ -27,7 +37,10 @@ describe('InviteSettings', () => {
   it('초대 섹션은 admin에게만 보인다 — 일반 사용자에게는 접근 제한 메시지가 보인다', () => {
     useAppStore.getState().set({ me: acc('u1', 'user', false) });
     render(<InviteSettings />);
-    expect(screen.getByText(/관리자만 볼 수 있습니다/)).toBeTruthy();
+    // **`관리자` 가 `admin` 으로 바뀌었다** — 이 저장소는 그 값을 옮기지 않는다
+    // (`agents` 영역 머리말의 고유어 규율). 재는 것은 낱말이 아니라 **admin 이 아닌
+    // 사람에게 이 화면이 닫혀 있다고 말하는가** 이므로, 그 사실을 그대로 잰다.
+    expect(screen.getByText(/admin 만 볼 수 있다/)).toBeTruthy();
   });
 
   it('admin이 초대 버튼을 누르면 createInvite가 호출되고 토큰이 화면에 보인다', async () => {

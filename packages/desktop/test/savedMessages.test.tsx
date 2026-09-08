@@ -8,6 +8,16 @@ import { MessageItem } from '../src/components/MessageItem';
 import { Rail } from '../src/components/Rail';
 import { Workspace } from '../src/components/Workspace';
 import { acc, chan, msg, fakeApi, scheduledApiStub } from './helpers/fakeApi';
+import { usePrefsStore } from '../src/state/prefsStore';
+
+/**
+ * **언어를 한국어로 고정한다.** 이 파일이 재는 것은 언어가 아니라 **그 언어로 표현된
+ * 규율**이다 — 문구가 사전을 지나게 된 뒤(i18n 이전)에도 그 규율은 그대로여야 하므로,
+ * 한국어 문구를 재는 줄을 지우는 대신 언어를 못 박는다. `gallery.test.tsx`·
+ * `skillsSettings.test.tsx`·`agentGrid.test.tsx`·`accountAvatar.test.tsx` 가 세운 선례다.
+ */
+beforeEach(() => usePrefsStore.getState().setLocale('ko'));
+afterEach(() => usePrefsStore.getState().setLocale('system'));
 
 /**
  * 나중에 볼 메시지의 데스크탑 쪽(#219).

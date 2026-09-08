@@ -4,6 +4,16 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, getController, type Controller } from '../src/state/controller';
 import { SearchPalette } from '../src/components/SearchPalette';
 import { acc, chan, msg, fakeApi } from './helpers/fakeApi';
+import { usePrefsStore } from '../src/state/prefsStore';
+
+/**
+ * **언어를 한국어로 고정한다.** 이 파일이 재는 것은 언어가 아니라 **그 언어로 표현된
+ * 규율**이다 — 문구가 사전을 지나게 된 뒤(i18n 이전)에도 그 규율은 그대로여야 하므로,
+ * 한국어 문구를 재는 줄을 지우는 대신 언어를 못 박는다. `gallery.test.tsx`·
+ * `skillsSettings.test.tsx`·`agentGrid.test.tsx`·`accountAvatar.test.tsx` 가 세운 선례다.
+ */
+beforeEach(() => usePrefsStore.getState().setLocale('ko'));
+afterEach(() => usePrefsStore.getState().setLocale('system'));
 
 let mockController: ReturnType<typeof vi.fn> & { openChannel: ReturnType<typeof vi.fn>; openThread: ReturnType<typeof vi.fn>; api: ReturnType<typeof fakeApi> };
 
@@ -105,7 +115,10 @@ describe('SearchPalette', () => {
     fireEvent.change(input, { target: { value: 'nonexistent' } });
 
     await waitFor(() => {
-      expect(screen.getByText('검색 결과가 없습니다')).toBeTruthy();
+      // **어투를 `~다` 로 맞췄고 범위를 말한다.** 이 팔레트는 메시지만 뒤지므로
+      // (채널·사람은 사이드바 찾기 줄이 한다) 그 범위가 문장에 있어야 한다.
+      // 재는 것은 문구가 아니라 **빈 결과를 사람에게 말하는가** 이므로 그대로 잰다.
+      expect(screen.getByText('맞는 메시지가 없다')).toBeTruthy();
     }, { timeout: 1000 });
   });
 
