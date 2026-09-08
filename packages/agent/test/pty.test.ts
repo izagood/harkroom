@@ -600,3 +600,35 @@ describe('resolveExecutable — execvp 규칙(#340)', () => {
     }
   });
 });
+
+describe('injectPrompt — TUI 에 프롬프트를 넣는다 (2026-09-08)', () => {
+  it('준비 신호를 본 뒤 bracketed paste 로 감싸 보낸다 — 여러 줄이 한 메시지로 간다', async () => {
+    const chunks: Buffer[] = [];
+    const result = await runPtyTurn(plan('ready-then-echo'), {
+      cwd: process.cwd(),
+      timeoutMs: 15_000,
+      onData: (c) => chunks.push(c),
+      injectPrompt: { text: '첫 줄\n둘째 줄', readyPattern: /READY/, readyTimeoutMs: 6_000 },
+    });
+    const seen = Buffer.concat(chunks).toString('utf8');
+    // 감싸지 않으면 첫 개행에서 조기 전송돼 '둘째 줄' 이 별개 메시지가 된다.
+    expect(seen).toContain('[200~');
+    expect(seen).toContain('[201~');
+    expect(seen).toContain('둘째 줄');
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('준비 신호를 못 보면 상한에서 실패한다 — 조용히 프롬프트 없는 TUI 를 남기지 않는다', async () => {
+    await expect(runPtyTurn(plan('hang-silent'), {
+      cwd: process.cwd(),
+      timeoutMs: 15_000,
+      injectPrompt: { text: '아무거나', readyPattern: /READY/, readyTimeoutMs: 600 },
+    })).rejects.toThrow(/준비 신호/);
+  });
+
+  it('injectPrompt 가 없으면 아무것도 쓰지 않는다 — codex 의 stdinFile 경로가 그대로다', async () => {
+    const chunks: Buffer[] = [];
+    await runPtyTurn(plan('ok'), { cwd: process.cwd(), timeoutMs: 10_000, onData: (c) => chunks.push(c) });
+    expect(Buffer.concat(chunks).toString('utf8')).not.toContain('[200~');
+  });
+});

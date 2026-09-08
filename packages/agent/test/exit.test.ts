@@ -12,6 +12,15 @@ import { ExecutableNotFoundError, MURMUR_ERROR_SOURCE } from '../src/policy.js';
 const murmurErr = (status: number) =>
   Object.assign(new Error(`murmur ${status}`), { status, source: MURMUR_ERROR_SOURCE });
 
+/**
+ * 하네스가 자기 세션 파일에 남긴 에러(2026-09-08). 자격증명 판정의 재료가 PTY tail 에서
+ * 이 구조화 필드로 옮겨갔다 — tail 에는 TUI 가 에코한 사람의 프롬프트가 섞이기 때문이다.
+ * 78 로 물러난다는 계약 자체는 그대로이므로 아래 케이스들은 재료만 바뀐 채 산다.
+ */
+function harnessErr(text: string): Error & { harnessApiError: string } {
+  return Object.assign(new Error('harness 종료 1'), { harnessApiError: text });
+}
+
 describe('자격증명 실패는 78 로 물러난다', () => {
   it('murmur 401 → 78', () => {
     const plan = runnerExitPlan(murmurErr(401));
@@ -24,7 +33,7 @@ describe('자격증명 실패는 78 로 물러난다', () => {
   });
 
   it('하네스 로그인 실패도 78 — 재시도로 낫지 않는 것이 같다', () => {
-    expect(runnerExitPlan(new Error('could not resolve authentication'))?.code).toBe(78);
+    expect(runnerExitPlan(harnessErr('could not resolve authentication'))?.code).toBe(78);
   });
 
   it('마지막 줄이 앱과 사람이 찾는 그 한 줄이다', () => {
@@ -33,7 +42,7 @@ describe('자격증명 실패는 78 로 물러난다', () => {
 
   it('murmur PAT 문제와 하네스 로그인 문제를 다르게 안내한다 — 볼 곳이 다르다', () => {
     expect(runnerExitPlan(murmurErr(401))!.lines.join('\n')).toContain('MURMUR_PAT');
-    expect(runnerExitPlan(new Error('x-api-key'))!.lines.join('\n')).toContain('claude CLI');
+    expect(runnerExitPlan(harnessErr('x-api-key'))!.lines.join('\n')).toContain('claude CLI');
   });
 
   /**
@@ -43,7 +52,10 @@ describe('자격증명 실패는 78 로 물러난다', () => {
    * 있었지만 **앱이 읽는 마커가 하나**여서 그 구분이 러너 로그 안에서 끝났다.
    */
   it('하네스 로그인 실패는 murmur PAT 와 다른 마커를 낸다 — 앱이 읽는 것은 마커뿐이다', () => {
-    const plan = runnerExitPlan(new Error('Failed to authenticate: OAuth session expired and could not be refreshed'));
+    // 재료가 구조화 필드로 옮겨갔다(2026-09-08) — 판정 자체와 78 계약은 그대로다.
+    const plan = runnerExitPlan(Object.assign(new Error('harness 종료 1'), {
+      harnessApiError: 'Failed to authenticate: OAuth session expired and could not be refreshed',
+    }));
     expect(plan?.code).toBe(78);
     expect(plan!.lines.at(-1)).toBe(HARNESS_LOGIN_REQUIRED_LINE);
     expect(plan!.lines.at(-1)).not.toBe(CREDENTIAL_REJECTED_LINE);
@@ -108,7 +120,7 @@ describe('#340 하네스 실행 파일 부재는 78 로 물러난다', () => {
   // 자격증명 실패의 기존 동작이 이 추가로 흔들리지 않았다 — 두 판정이 같은 자리에 나란히
   // 있으므로, 앞쪽이 뒤쪽 입력을 물면 안내문이 통째로 뒤바뀐다.
   it('자격증명 실패는 그대로 자격증명 안내로 간다', () => {
-    const plan = runnerExitPlan(new Error('could not resolve authentication'))!;
+    const plan = runnerExitPlan(harnessErr('could not resolve authentication'))!;
     expect(plan.code).toBe(EX_CONFIG);
     // 2026-09-07: 이 단정의 **마커가 바뀌었다.** 하네스 자격증명 실패는 이제
     // `HARNESS_LOGIN_REQUIRED_LINE` 을 낸다 — 앱이 "PAT 재발급"과 "claude 재로그인"을

@@ -14,6 +14,7 @@
 //   codex exec resume <uuid> --skip-git-repo-check --help  → 도움말을 내고 통과
 //   codex exec resume <uuid> --skip-git-repo-check          → unexpected argument 로 죽는다
 // 즉 `--help` 는 나머지 인자 검증을 건너뛰므로 그 방법은 이 결함을 못 잡는다.
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,6 +23,7 @@ import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import type { AgentHarness } from '@murmur/shared';
 import { buildTurnCommand, writeMcpConfigOnce, writeSystemPromptFile, type TurnPlan } from '../src/turn.js';
+import { looksReadyForPrompt } from '../src/pty.js';
 
 const run = promisify(execFile);
 
@@ -177,4 +179,45 @@ describe('수용 — 조립한 argv 의 플래그가 그 서브커맨드에 실�
       }
     }, 60_000);
   }
+});
+
+/**
+ * 준비 판정이 **실물 claude TUI 출력에 맞는가**(2026-09-08).
+ *
+ * ## 왜 이 회귀선이 필요한가
+ *
+ * 초판 패턴은 `/[❯›>]\s*$/m`(줄 끝 앵커)였고 단위 테스트는 전부 초록이었다 — 픽스처가
+ * `'READY\n'` 처럼 개행으로 끝나는 문자열이었기 때문이다. **실물에서는 한 번도 맞지
+ * 않았다**: TUI 는 절대 커서 이동(`ESC[H`, `ESC[<n>C`)과 `\r` 로 화면을 다시 그리므로,
+ * 눈에 보이는 "줄 끝의 ❯" 가 바이트 흐름에서는 줄 끝이 아니다. 그대로 나갔으면 준비를
+ * 영영 못 보고 **모든 멘션이 상한에서 실패**했다.
+ *
+ * ## 왜 실물을 띄우지 않고 픽스처인가
+ *
+ * TUI 를 실제로 띄우려면 **로그인이 필요하다**. CI 러너에는 없으므로 그 테스트는 환경에
+ * 의존하고, 환경에 의존하는 테스트는 CI 에서 꺼지거나 빨개진다 — 둘 다 회귀선이 아니다.
+ * 대신 실물 부팅 출력을 그대로 떠서 고정한다(`fixtures/claude-tui-ready.txt`, 2026-09-08
+ * claude 2.1.263 에서 캡처). 그 바이트가 이 결함을 그대로 담고 있으므로, 판정이 다시 위치
+ * 기반으로 돌아가면 여기서 빨개진다.
+ *
+ * 픽스처는 언젠가 낡는다 — 그때는 이 파일의 다른 케이스들처럼 실물에 대고 다시 뜨면 된다.
+ */
+describe('수용 — 준비 판정이 실물 TUI 출력에 맞는가 (2026-09-08)', () => {
+  const raw = readFileSync(
+    new URL('./fixtures/claude-tui-ready.txt', import.meta.url), 'utf8',
+  );
+
+  it('실물 부팅 출력에서 준비 표시를 찾는다', () => {
+    expect(looksReadyForPrompt(raw)).toBe(true);
+  });
+
+  it('그 출력에는 **줄 끝에** 표시가 없다 — 위치로 재면 영영 못 본다', () => {
+    // 이 단정이 이 회귀선의 핵심이다. 초판이 쓰던 앵커가 실물에서 왜 실패했는지를
+    // 코드로 고정한다 — 다음 사람이 "줄 끝이면 더 정확하지 않나" 로 되돌리지 못하게.
+    expect(/❯\s*$/m.test(raw)).toBe(false);
+  });
+
+  it('아직 준비되지 않은 출력에는 반응하지 않는다 — 상한이 그물 노릇을 하려면 거짓이어야 한다', () => {
+    expect(looksReadyForPrompt('Please run /login to authenticate\n')).toBe(false);
+  });
 });

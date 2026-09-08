@@ -18,7 +18,7 @@ import { SessionStore } from '../src/sessions.js';
 import { isQuotaExhausted } from '../src/policy.js';
 import { workspaceName, type Exec } from '../src/workspace.js';
 import type { TurnPlan } from '../src/turn.js';
-import { composeSpawn, runPtyTurn } from '../src/pty.js';
+import { acceptsPtyInput, composeSpawn, runPtyTurn } from '../src/pty.js';
 import type { PtyWriter, TurnResult } from '../src/pty.js';
 import type { RelayRunnerFrame } from '@murmur/shared';
 import { createRelayClient, type RelayHandlers } from '../src/relay.js';
@@ -199,6 +199,7 @@ async function makeDeps(fake: FakeMurmur, overrides: Partial<MentionTurnDeps> = 
   deps: MentionTurnDeps;
   execCalls: string[][];
   plans: TurnPlan[];
+  turnOpts: { injectPrompt?: { text: string } }[];
   runTurn: RunTurn & { script: RunTurn };
 }> {
   const store = new SessionStore(join(await mkdtemp(join(tmpdir(), 'mention-turn-')), 'sessions.json'));
@@ -220,11 +221,17 @@ async function makeDeps(fake: FakeMurmur, overrides: Partial<MentionTurnDeps> = 
   };
 
   const plans: TurnPlan[] = [];
+  /**
+   * 각 계획과 **함께 넘어온 opts**. 2026-09-08 실행 모델 교체로 프롬프트가 stdinFile 에서
+   * `injectPrompt` 로 옮겨갔고, 그 내용을 보려면 계획만으로는 부족하다.
+   */
+  const turnOpts: { injectPrompt?: { text: string } }[] = [];
   // 기본 스크립트: 아무 것도 안 하고 exitCode 0 으로 끝난다(발화 없음) — 시나리오마다
   // runTurn.script 를 갈아 끼워 다른 행동(에이전트가 답을 올림 등)을 흉내낸다.
   const runTurn = Object.assign(
     (plan: TurnPlan, opts: { cwd: string; timeoutMs: number }) => {
       plans.push(plan);
+      turnOpts.push(opts as { injectPrompt?: { text: string } });
       return runTurn.script(plan, opts);
     },
     { script: (_plan: TurnPlan, _opts: { cwd: string; timeoutMs: number }) => Promise.resolve<TurnResult>({ exitCode: 0, timedOut: false, tail: '' }) },
@@ -252,18 +259,24 @@ async function makeDeps(fake: FakeMurmur, overrides: Partial<MentionTurnDeps> = 
     ...overrides,
   };
 
-  return { deps, execCalls, plans, runTurn };
+  return { deps, execCalls, plans, turnOpts, runTurn };
 }
 
 /**
- * #117:.plan.stdinFile 에서 프롬프트 내용을 읽는다. stdinFile 이 없으면(인터랙티브·resume)
- * args 에서 찾는다. 이 헬퍼는 argv 에서 stdinFile 로 바뀐 변경(#117) 를 반영한다.
+ * 이 턴에 실제로 하네스로 간 프롬프트를 읽는다.
+ *
+ * 경로가 두 번 바뀌었다: argv → stdin 파일(#117, `ps -ef` 노출 회피) → **PTY 주입**
+ * (2026-09-08 실행 모델 교체, claude 한정). 셋 다 볼 수 있어야 한 헬퍼로 두 하네스를 잰다.
+ * `turnOpts` 는 `plans` 와 **같은 순서**로 쌓인다(makeDeps 의 runTurn).
  */
-async function getPlanContent(plans: TurnPlan[]): Promise<string[]> {
-  return Promise.all(plans.map(async (p) => {
-    if (p.stdinFile) {
-      return readFile(p.stdinFile, 'utf8');
-    }
+async function getPlanContent(
+  plans: TurnPlan[],
+  turnOpts: { injectPrompt?: { text: string } }[] = [],
+): Promise<string[]> {
+  return Promise.all(plans.map(async (p, i) => {
+    const injected = turnOpts[i]?.injectPrompt?.text;
+    if (injected !== undefined) return injected;
+    if (p.stdinFile) return readFile(p.stdinFile, 'utf8');
     return p.args.join(' ');
   }));
 }
@@ -273,7 +286,7 @@ describe('runMentionTurn', () => {
   it('첫 멘션: ensureWorkspace 1회 + 세션 생성 + 에이전트가 스스로 답을 올리면 NO_REPLY 없음', async () => {
     const fake = new FakeMurmur(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
-    const { deps, execCalls, plans, runTurn } = await makeDeps(fake);
+    const { deps, execCalls, plans, runTurn, turnOpts } = await makeDeps(fake);
     runTurn.script = async () => {
       // 하네스가 아니라 이 테스트가 "에이전트가 message.post 를 불렀다"를 흉내낸다
       // (프로세스 경계 밖이라 실제로 fakeMurmur.post 를 부를 수 없다).
@@ -294,7 +307,7 @@ describe('runMentionTurn', () => {
     expect(plans[0]!.args).toContain(rec!.sessionId);
     // 시스템 프롬프트에 channelId·threadRootId 를 알려줘야 에이전트가 message.post 대상을 안다.
     // #117: 프롬프트가 stdin 파일로 이동했다.
-    const planContent = await getPlanContent(plans);
+    const planContent = await getPlanContent(plans, turnOpts);
     expect(planContent[0]).toContain(`channelId: ${CHANNEL}`);
     expect(fake.posts).toHaveLength(1); // 에이전트의 답 하나뿐 — NO_REPLY 가 추가되지 않았다
   });
@@ -323,7 +336,7 @@ describe('runMentionTurn', () => {
   it('시스템 프롬프트에 턴 예산과 turn.wake 지시가 실려 간다', async () => {
     const fake = new FakeMurmur(defOf());
     fake.seedFrom('human-1', '@forge 오래 걸리는 일');
-    const { deps, plans } = await makeDeps(fake);
+    const { deps, plans, turnOpts } = await makeDeps(fake);
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
@@ -380,7 +393,7 @@ describe('runMentionTurn', () => {
   it('깨어난 턴은 사람의 새 발화가 없어도 하네스를 돌리고, 프롬프트에 사유가 실린다', async () => {
     const fake = new FakeMurmur(defOf());
     fake.seedFrom('human-1', '@forge PR 올리고 CI 통과하면 머지해');
-    const { deps, runTurn, plans } = await makeDeps(fake);
+    const { deps, runTurn, plans, turnOpts } = await makeDeps(fake);
 
     // 1) 예약을 건 턴
     runTurn.script = async () => {
@@ -399,7 +412,7 @@ describe('runMentionTurn', () => {
     });
 
     expect(plans.length).toBe(runsAfterFirst + 1);
-    const prompt = await readFile(plans[plans.length - 1]!.stdinFile!, 'utf8');
+    const prompt = (await getPlanContent(plans, turnOpts)).at(-1)!;
     expect(prompt).toContain('예약된 후속 턴');
     expect(prompt).toContain('CI 결과 확인');
   });
@@ -538,7 +551,7 @@ describe('runMentionTurn', () => {
     it('ensureWorkspace 재호출 없음 + isFirstTurn=false 로 -r 조립', async () => {
       const fake = new FakeMurmur(defOf());
       fake.seedFrom('human-1', '첫 질문');
-      const { deps, execCalls, plans, runTurn } = await makeDeps(fake);
+      const { deps, execCalls, plans, runTurn, turnOpts } = await makeDeps(fake);
       runTurn.script = async () => {
         await fake.post(CHANNEL, '첫 답', null);
         return { exitCode: 0, timedOut: false, tail: '' };
@@ -564,7 +577,7 @@ describe('runMentionTurn', () => {
     it('lastFedSeq 전진: 두 번째 턴의 promptCtx 에 첫 턴 메시지가 없다', async () => {
       const fake = new FakeMurmur(defOf());
       fake.seedFrom('human-1', '첫번째메시지고유문구');
-      const { deps, plans, runTurn } = await makeDeps(fake);
+      const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
       runTurn.script = async () => {
         await fake.post(CHANNEL, '첫번째답변고유문구', null);
         return { exitCode: 0, timedOut: false, tail: '' };
@@ -575,7 +588,7 @@ describe('runMentionTurn', () => {
       await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       // #117: 프롬프트가 stdin 파일로 이동했다.
-      const planContent = await getPlanContent(plans);
+      const planContent = await getPlanContent(plans, turnOpts);
       const secondTurnArgs = planContent[1];
       expect(secondTurnArgs).toContain('두번째메시지고유문구');
       expect(secondTurnArgs).not.toContain('첫번째메시지고유문구');
@@ -587,7 +600,7 @@ describe('runMentionTurn', () => {
   it('harness 를 바꾸면 다음 턴이 isFirstTurn: true 로 조립되고 옛 sessionId 가 남지 않는다', async () => {
     const fake = new FakeMurmur(defOf({ harness: 'claude-code' }));
     fake.seedFrom('human-1', '첫 질문');
-    const { deps, execCalls, plans, runTurn } = await makeDeps(fake);
+    const { deps, execCalls, plans, runTurn, turnOpts } = await makeDeps(fake);
     runTurn.script = async () => {
       await fake.post(CHANNEL, '첫 답', null);
       return { exitCode: 0, timedOut: false, tail: '' };
@@ -622,7 +635,7 @@ describe('runMentionTurn', () => {
   it('계정이 바뀌면 세션을 버리고 첫 턴으로 다시 시작한다', async () => {
     const fake = new FakeMurmur(defOf({ harness: 'claude-code' }));
     fake.seedFrom('human-1', '첫 질문');
-    const { deps, execCalls, plans, runTurn } = await makeDeps(fake, {
+    const { deps, execCalls, plans, runTurn, turnOpts } = await makeDeps(fake, {
       claudeAccount: 'plum', claudeConfigDir: '/pool/plum',
     });
     runTurn.script = async () => {
@@ -660,7 +673,7 @@ describe('runMentionTurn', () => {
   it('계정이 같으면 세션을 유지한다', async () => {
     const fake = new FakeMurmur(defOf({ harness: 'claude-code' }));
     fake.seedFrom('human-1', '첫 질문');
-    const { deps, plans, runTurn } = await makeDeps(fake, {
+    const { deps, plans, runTurn, turnOpts } = await makeDeps(fake, {
       claudeAccount: 'lime', claudeConfigDir: '/pool/lime',
     });
     runTurn.script = async () => {
@@ -683,7 +696,7 @@ describe('runMentionTurn', () => {
   it('옛 레코드(계정 필드 없음)를 계정 지정 없는 러너가 읽어도 세션을 버리지 않는다', async () => {
     const fake = new FakeMurmur(defOf({ harness: 'claude-code' }));
     fake.seedFrom('human-1', '첫 질문');
-    const { deps, plans, runTurn } = await makeDeps(fake);
+    const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
     runTurn.script = async () => {
       await fake.post(CHANNEL, '첫 답', null);
       return { exitCode: 0, timedOut: false, tail: '' };
@@ -708,7 +721,7 @@ describe('runMentionTurn', () => {
   it('지시문을 argv 가 아니라 파일로 넘긴다 (#92)', async () => {
     const fake = new FakeMurmur(defOf({ instructions: '절대-argv에-없어야-하는-지시문' }));
     fake.seedFrom('human-1', '@forge 안녕');
-    const { deps, plans } = await makeDeps(fake);
+    const { deps, plans, turnOpts } = await makeDeps(fake);
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
@@ -730,7 +743,7 @@ describe('runMentionTurn', () => {
   it('지시문 파일은 에이전트 워크스페이스 밖에 쓴다', async () => {
     const fake = new FakeMurmur(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
-    const { deps, plans } = await makeDeps(fake);
+    const { deps, plans, turnOpts } = await makeDeps(fake);
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
@@ -819,7 +832,7 @@ describe('runMentionTurn', () => {
     it('실패 후 재시도에서 델타가 비어있어도 하네스가 다시 실행된다 (#81 핵심 재현)', async () => {
       const fake = new FakeMurmur(defOf());
       fake.seedFrom('human-1', '첫 번째 질문');
-      const { deps, plans, runTurn } = await makeDeps(fake);
+      const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
       let callCount = 0;
       runTurn.script = async () => {
         callCount += 1;
@@ -892,7 +905,7 @@ describe('runMentionTurn', () => {
     it('세션이 실재하면 다음 턴은 같은 id 로 resume 한다', async () => {
       const fake = new FakeMurmur(defOf());
       fake.seedFrom('human-1', '@forge 안녕');
-      const { deps, plans, runTurn } = await makeDeps(fake, { sessionMaterialized: async () => true });
+      const { deps, plans, runTurn, turnOpts } = await makeDeps(fake, { sessionMaterialized: async () => true });
       let calls = 0;
       runTurn.script = async () => {
         calls += 1;
@@ -937,7 +950,7 @@ describe('runMentionTurn', () => {
   it('건너뛴 턴(전부 자기 발화) 이후에도 세션은 그대로 이어진다 — turnsRun 유지, 같은 sessionId 로 resume', async () => {
     const fake = new FakeMurmur(defOf());
     fake.seedFrom('human-1', '첫 질문');
-    const { deps, plans, runTurn } = await makeDeps(fake);
+    const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
     runTurn.script = async () => {
       await fake.post(CHANNEL, '첫 답', null); // 자기 발화 — 다음 턴 프롬프트에서는 걸러진다
       return { exitCode: 0, timedOut: false, tail: '' };
@@ -970,12 +983,12 @@ describe('runMentionTurn', () => {
   it('handles 맵에 있는 다른 계정의 메시지는 handle 로 렌더된다', async () => {
     const fake = new FakeMurmur(defOf());
     fake.seedFrom('human-1', '@forge 이 스레드 좀 봐줘');
-    const { deps, plans } = await makeDeps(fake, { handles: { [ME.id]: ME.handle, 'human-1': 'jaebin' } });
+    const { deps, plans, turnOpts } = await makeDeps(fake, { handles: { [ME.id]: ME.handle, 'human-1': 'jaebin' } });
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     // #117: 프롬프트가 stdin 파일로 이동했다.
-    const planContent = await getPlanContent(plans);
+    const planContent = await getPlanContent(plans, turnOpts);
     expect(planContent[0]).toContain('jaebin: @forge 이 스레드 좀 봐줘');
     expect(planContent[0]).not.toContain('알 수 없는 사용자');
   });
@@ -983,12 +996,12 @@ describe('runMentionTurn', () => {
   it('handles 맵에 없는 작성자는 여전히 "알 수 없는 사용자"로 표시된다 — 회귀 대조', async () => {
     const fake = new FakeMurmur(defOf());
     fake.seedFrom('ghost-1', '@forge 나 누군지 모를걸');
-    const { deps, plans } = await makeDeps(fake, { handles: { [ME.id]: ME.handle } });
+    const { deps, plans, turnOpts } = await makeDeps(fake, { handles: { [ME.id]: ME.handle } });
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     // #117: 프롬프트가 stdin 파일로 이동했다.
-    const planContent = await getPlanContent(plans);
+    const planContent = await getPlanContent(plans, turnOpts);
     expect(planContent[0]).toContain('알 수 없는 사용자');
   });
 
@@ -1070,7 +1083,7 @@ describe('runMentionTurn', () => {
   it('codex 세션 발견이 실패해도(turnsRun>=1, sessionId 여전히 null) 다음 턴은 isFirstTurn:true 로 다시 시작한다 — 영구 벽돌 방지', async () => {
     const fake = new FakeMurmur(defOf({ harness: 'codex' }));
     fake.seedFrom('human-1', '@forge 첫 질문');
-    const { deps, plans, runTurn } = await makeDeps(fake);
+    const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
     runTurn.script = async () => {
       await fake.post(CHANNEL, '답변', null);
       return { exitCode: 0, timedOut: false, tail: '' };
@@ -1185,12 +1198,14 @@ describe('runMentionTurn', () => {
       const fake = new FakeMurmur(defOf());
       fake.limit = 3;
       for (const b of ['옛1', '옛2', '최근1', '최근2', '최근3']) fake.seedFrom('human-1', b);
-      const { deps, plans } = await makeDeps(fake);
+      const { deps, plans, turnOpts } = await makeDeps(fake);
 
       await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       // #117: 대화 본문이 stdin 파일로 이동했다 — plan.stdinFile 에서 내용을 확인한다.
-      const fed = await Promise.all(plans.map(async (p) => {
+      const fed = await Promise.all(plans.map(async (p, i) => {
+        const injected = turnOpts[i]?.injectPrompt?.text;
+        if (injected !== undefined) return injected;
         if (p.stdinFile) {
           return readFile(p.stdinFile, 'utf8');
         }
@@ -1215,7 +1230,7 @@ describe('runMentionTurn', () => {
       const fake = new FakeMurmur(defOf());
       fake.limit = 10; // #117: limit 를 높여 모든 메시지가 포함되도록 한다
       fake.seedFrom('human-1', '첫 질문');
-      const { deps, plans } = await makeDeps(fake);
+      const { deps, plans, turnOpts } = await makeDeps(fake);
 
       // 턴 1: 커서를 세운다.
       await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
@@ -1229,7 +1244,9 @@ describe('runMentionTurn', () => {
       await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
       // #117: 대화 본문이 stdin 파일로 이동했다 — plan.stdinFile 에서 내용을 확인한다.
-      const fed = await Promise.all(plans.map(async (p) => {
+      const fed = await Promise.all(plans.map(async (p, i) => {
+        const injected = turnOpts[i]?.injectPrompt?.text;
+        if (injected !== undefined) return injected;
         if (p.stdinFile) {
           return readFile(p.stdinFile, 'utf8');
         }
@@ -1731,7 +1748,7 @@ describe('종료 요청 (#129)', () => {
     const REQUESTED_AT = '2026-09-03T10:00:00.000Z';
     const fake = new FakeMurmur(defOf({ stopRequestedAt: REQUESTED_AT }));
     fake.seedFrom('human-1', '@forge 안녕');
-    const { deps, plans, runTurn } = await makeDeps(fake);
+    const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
     runTurn.script = async () => {
       await fake.post(CHANNEL, '답이다', null);
       return { exitCode: 0, timedOut: false, tail: '' };
@@ -2112,7 +2129,10 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
       agentAccountId: ME.id, channelId: CHANNEL, threadRootId: null, harness: 'claude-code',
       // #369: 멘션 턴은 프롬프트를 파일로 받으므로 이 PTY 는 입력을 받을 수 없다 —
       // 그 사실을 세션에 실어 서버가 writer 차례를 안 주게 한다.
-      acceptsInput: false,
+      // 2026-09-08: 멘션 턴도 TUI 로 뜨므로 fd 0 이 PTY 다 — 입력을 받는다.
+      acceptsInput: true,
+      // 턴의 끝이 뷰어 수에 걸려 있다 — 릴레이가 이 훅으로 알려 준다.
+      onViewerCount: expect.any(Function),
     }]);
     // 바이트가 **변형 없이** 그대로 온다 — 문자열로 뜨면 잘린 UTF-8 이 U+FFFD 가 된다.
     expect(r.bytes).toHaveLength(1);
@@ -2187,7 +2207,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     const fake = new FakeMurmur(defOf({ mentionPermission: 'readonly' }));
     fake.seedFrom('human-1', '@forge 안녕');
     const r = realRelay();
-    const { deps, runTurn, plans } = await makeDeps(fake, { relay: r.relay });
+    const { deps, runTurn, plans, turnOpts } = await makeDeps(fake, { relay: r.relay });
 
     const typed = Buffer.from('\x1b[Ayes\r', 'binary');
     const arrived: Buffer[] = [];
@@ -2195,7 +2215,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
       // 프로덕션에서는 pty.ts 가 spawn 직후 이 통로를 넘긴다.
       // `resize` 는 이 테스트의 관심사가 아니지만 통로의 계약이다(#335) — 넘기지 않으면
       // 배선이 반쪽이 된 것을 타입이 못 잡는다.
-      opts.onSpawn?.({ write: (chunk) => { arrived.push(chunk); }, resize: () => {} });
+      opts.onSpawn?.({ write: (chunk) => { arrived.push(chunk); }, resize: () => {} , kill: () => {} });
       r.type(typed);
       return { exitCode: 0, timedOut: false, tail: '' };
     };
@@ -2219,10 +2239,10 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     const runOnce = async (r?: ReturnType<typeof realRelay>) => {
       const fake = new FakeMurmur(defOf({ mentionPermission: 'readonly' }));
       fake.seedFrom('human-1', '@forge 안녕');
-      const { deps, plans, runTurn } = await makeDeps(fake, r ? { relay: r.relay } : {});
+      const { deps, plans, runTurn, turnOpts } = await makeDeps(fake, r ? { relay: r.relay } : {});
       if (r) {
         runTurn.script = async (_plan, opts) => {
-          opts.onSpawn?.({ write: () => { typedCount += 1; }, resize: () => {} });
+          opts.onSpawn?.({ write: () => { typedCount += 1; }, resize: () => {} , kill: () => {} });
           r.type(Buffer.from('yes\r', 'utf8'));
           return { exitCode: 0, timedOut: false, tail: '' };
         };
@@ -2259,7 +2279,12 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
 });
 
 /**
- * #369 — 멘션 턴의 attach 입력은 자식에게 **닿지 않는다**. 그 사실을 코드로 고정한다.
+ * **2026-09-08 실행 모델 교체로 이 회귀선이 뒤집혔다.** #369 는 "멘션 턴의 attach 입력은
+ * 자식에게 닿지 않는다"를 고정했고 그것은 `-p` 가 강제한 stdin 리다이렉션의 결과였다.
+ * 원인을 없앴으므로(멘션 턴도 TUI 로 뜬다) 이제 **닿는다** — 지키는 사실이 반대가 됐다.
+ *
+ * 배선은 그대로 값을 한다: 이 파일에서 유일하게 진짜 조립·진짜 spawn·진짜 리다이렉션을
+ * 태우는 테스트이므로, 이번 변경의 **엔드투엔드 증명**이 여기 선다.
  *
  * **이 파일의 다른 릴레이 테스트와 달리 `runTurn` 을 스텁하지 않는다.** 이슈가 지적한
  * 테스트 공백이 정확히 그것이었다: `pty` 쪽 입력 테스트는 `stdinFile: null` 인 계획만
@@ -2272,7 +2297,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
  * 진짜 조립·진짜 spawn·진짜 리다이렉션을 전부 태울 수 있다. 명령을 직접 갈아 끼우면
  * 그 순간 이 테스트가 지키려는 "진짜 멘션 계획"이 사라진다.
  */
-describe('#369 진행 중인 멘션 턴은 입력을 받을 수 없다 (진짜 PTY 배선)', () => {
+describe('진행 중인 멘션 턴에 사람이 칠 수 있다 (진짜 PTY 배선, 2026-09-08)', () => {
   /** 프롬프트 파일 EOF 뒤에 넣어 볼 센티넬. 출력 에코와 구분되도록 자식이 읽은 것만 센다. */
   const PROBE = 'ZZPROBEZZ\r';
 
@@ -2306,7 +2331,8 @@ describe('#369 진행 중인 멘션 턴은 입력을 받을 수 없다 (진짜 P
             sessionId: 'sess-369',
             push(chunk: Buffer) {
               out += chunk.toString('utf8');
-              if (typed === 0 && out.includes('EOF_SEEN')) {
+              // 자식이 주입을 되뱉은 뒤에 사람이 친다 — 시간이 아니라 사건으로 잰다.
+              if (typed === 0 && out.includes('[201~')) {
                 typed += 1;
                 writer?.write(Buffer.from(PROBE));
               }
@@ -2319,41 +2345,36 @@ describe('#369 진행 중인 멘션 턴은 입력을 받을 수 없다 (진짜 P
     };
   }
 
-  it('stdinFile 이 non-null 인 진짜 멘션 계획에서, spawn 뒤에 보낸 입력이 자식에 도달하지 않는다', async () => {
+  it('진짜 멘션 계획에서 spawn 뒤에 보낸 입력이 자식에 **도달한다**', async () => {
     const binDir = await harnessShim();
     const prevPath = process.env.PATH;
     const prevMode = process.env.FAKE_MODE;
     process.env.PATH = `${binDir}:${prevPath ?? ''}`;
-    process.env.FAKE_MODE = 'stdin-file-probe';
+    // 준비 신호를 찍고 stdin 을 읽어 되뱉는 TUI 흉내 — 러너의 주입과 사람의 타이핑이
+    // **같은 통로(PTY)** 로 간다는 것이 이 테스트의 요점이다.
+    process.env.FAKE_MODE = 'ready-then-echo';
     try {
       // `workingDir: null` 이어야 한다 — 다른 테스트의 기본값 '/repo' 는 이 기계에 없는
-      // 경로이고, 스텁 runTurn 은 cwd 를 안 쓰지만 진짜 spawn 은 그 디렉터리로 chdir 한다
-      // (없으면 자식이 출력 한 줄 없이 exit 1 로 죽어 원인이 안 보인다).
+      // 경로이고, 진짜 spawn 은 그 디렉터리로 chdir 한다.
       const fakeMurmur = new FakeMurmur(defOf({ workingDir: null }));
       fakeMurmur.seedFrom('human-1', '@forge 안녕');
       const r = probeRelay();
-      // 하네스가 EOF 뒤 기다리는 시간 — 기본 1.5초는 이 테스트에 불필요하게 길다.
-      process.env.FAKE_PROBE_WAIT_MS = '500';
       const { deps } = await makeDeps(fakeMurmur, { relay: r.relay, runTurn: r.capture(runPtyTurn) });
 
       await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
-      // 진짜 멘션 계획이다 — 프롬프트가 파일로 갔고(#117), 그래서 `composeSpawn` 이
-      // `sh -c 'exec ... < 파일'` 로 감싼다. 이 두 줄이 이 테스트의 전제다.
+      // 진짜 멘션 계획이다 — 그리고 이제 stdin 리다이렉션이 **없다**. 이 두 줄이 전제다.
       const plan = r.plan();
       expect(plan).not.toBeNull();
-      expect(plan!.stdinFile).not.toBeNull();
-      expect(composeSpawn(plan!).command).toBe('sh');
+      expect(plan!.stdinFile).toBeNull();
+      // 감싸지 않으므로 자식이 곧 하네스다 — 시그널도 그대로 닿는다(pty.ts::composeSpawn).
+      expect(composeSpawn(plan!).command).not.toBe('sh');
 
-      // 하네스가 프롬프트 파일을 실제로 읽었고(리다이렉션은 동작한다), 그 뒤에 사람이 쳤다.
-      expect(r.output()).toContain('EOF_SEEN');
-      expect(r.typedCount()).toBe(1);
-      // **그런데 자식에게는 닿지 않았다.** 이것이 #369 다 — 자식의 fd 0 은 PTY slave 가
-      // 아니라 EOF 에 닿은 일반 파일이라, PTY master 로 쓴 바이트가 갈 곳이 없다.
-      expect(r.output()).toContain('probe-seen:no');
-      expect(r.output()).not.toContain('probe-seen:yes');
-      // 그래서 이 세션은 애초에 입력을 받을 수 없다고 서버에 신고한다(관찰 전용).
-      expect(r.opened.map((o) => o.acceptsInput)).toEqual([false]);
+      // 러너가 준비 신호를 보고 주입했고, 자식이 그것을 되뱉었다 — fd 0 이 PTY 다.
+      expect(r.output()).toContain('[201~');
+      // 그래서 이 세션은 입력을 받을 수 있다고 서버에 신고한다. **이 한 값이 게이트다** —
+      // 서버·데스크탑은 손대지 않아도 여기서 입력이 열린다(스펙 §5-3 의 판정 그대로).
+      expect(r.opened.map((o) => o.acceptsInput)).toEqual([true]);
     } finally {
       process.env.PATH = prevPath;
       if (prevMode === undefined) delete process.env.FAKE_MODE;
@@ -2369,18 +2390,21 @@ describe('#369 진행 중인 멘션 턴은 입력을 받을 수 없다 (진짜 P
   it('프롬프트 본문이 argv 에 없다 — 파일 경로만 있다', async () => {
     const fakeMurmur = new FakeMurmur(defOf());
     fakeMurmur.seedFrom('human-1', '@forge 비밀번호는 hunter2 다');
-    const { deps, plans } = await makeDeps(fakeMurmur);
+    const { deps, plans, turnOpts } = await makeDeps(fakeMurmur);
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     const plan = plans[0]!;
-    const body = await readFile(plan.stdinFile!, 'utf8');
-    expect(body).toContain('hunter2');
+    // 본문은 이제 주입으로 간다(파일이 아니라 PTY). **argv 를 지나지 않는 것은 그대로다** —
+    // 그 방향으로 흐르면 `ps -ef` 로 같은 머신의 다른 로컬 사용자에게 스레드 본문이 샌다.
+    expect(turnOpts[0]?.injectPrompt?.text).toContain('hunter2');
     // 조립된 argv 에도, `composeSpawn` 이 셸로 감싼 최종 명령줄에도 본문이 없어야 한다 —
     // 감싼 뒤를 안 보면 리다이렉션 문자열에 본문을 이어붙이는 회귀를 놓친다.
     expect(plan.args.join(' ')).not.toContain('hunter2');
     expect(composeSpawn(plan).args.join(' ')).not.toContain('hunter2');
-    expect(composeSpawn(plan).args.join(' ')).toContain(plan.stdinFile!);
+    // stdin 리다이렉션 자체가 사라졌다 — 감쌀 것이 없으므로 자식이 곧 하네스다.
+    expect(plan.stdinFile).toBeNull();
+    expect(composeSpawn(plan).command).not.toBe('sh');
   });
 });
 
@@ -2431,5 +2455,203 @@ describe('하네스 API 에러를 세션 JSONL 에서 함께 싣는다 (2026-09-
     expect(err).not.toBeNull();
     expect(err!.harnessApiError).toBeUndefined();
     expect(err!.message).toContain('some error');
+  });
+});
+
+describe('실행 모델 교체 — 멘션 턴이 TUI 로 뜬다 (2026-09-08)', () => {
+  it('claude 멘션 턴은 stdinFile 없이 뜨고 프롬프트는 주입으로 간다 — 사람이 칠 수 있다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕하세요');
+    const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
+    let injected: string | undefined;
+    runTurn.script = async (_plan, opts) => {
+      injected = (opts as { injectPrompt?: { text: string } }).injectPrompt?.text;
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    // fd 0 이 PTY 다 — 이 하나가 acceptsInput 을 참으로 만든다(스펙 §5-3 의 판정 그대로).
+    expect(plans[0]!.stdinFile).toBeNull();
+    expect(acceptsPtyInput(plans[0]!)).toBe(true);
+    // 프롬프트는 argv 가 아니라 주입으로 간다 — argv 로 가면 ps 에 대화가 샌다(#117).
+    expect(injected).toContain('안녕하세요');
+    expect(plans[0]!.args.join(' ')).not.toContain('안녕하세요');
+  });
+
+  it('codex 멘션 턴은 그대로 stdinFile 이다 — P5 전까지 두 세계가 함께 산다', async () => {
+    const fake = new FakeMurmur(defOf({ harness: 'codex' }));
+    fake.seedFrom('human-1', '@forge 안녕하세요');
+    const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
+    let injected: string | undefined;
+    runTurn.script = async (_plan, opts) => {
+      injected = (opts as { injectPrompt?: { text: string } }).injectPrompt?.text;
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(plans[0]!.stdinFile).not.toBeNull();
+    expect(acceptsPtyInput(plans[0]!)).toBe(false);
+    expect(injected).toBeUndefined();
+  });
+});
+
+describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
+  /** 회수 손잡이를 잡고 kill 을 기록하는 가짜 PTY. 뷰어 수도 밖에서 흔들 수 있다. */
+  function endHarness() {
+    let killed: string | null = null;
+    let notifyViewers: ((n: number) => void) | undefined;
+    return {
+      killed: () => killed,
+      viewers: (n: number) => notifyViewers?.(n),
+      relay: {
+        openSession(input: { onViewerCount?: (n: number) => void }) {
+          notifyViewers = input.onViewerCount;
+          return { sessionId: 'end-1', push: () => {}, bindInput: () => {}, close: () => {} };
+        },
+      },
+      /** TUI 처럼 답하고도 안 죽는 하네스. `after` 안에서 발화·뷰어를 흔든다. */
+      script: (after: () => Promise<void> | void) => async (_plan: TurnPlan, opts: {
+        onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+      }) => {
+        opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+        await after();
+        await new Promise((r) => setTimeout(r, 250));  // 안 죽고 버틴다
+        return { exitCode: 0, timedOut: false, tail: '' };
+      },
+    };
+  }
+
+  it('발화하면 회수한다 — TUI 는 답하고도 안 죽으므로 러너가 끝을 정한다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = endHarness();
+    const { deps, runTurn } = await makeDeps(fake, {
+      relay: h.relay, utteranceProbeMs: 5, orphanMs: 5,
+    });
+    runTurn.script = h.script(async () => { await fake.post(CHANNEL, '답했다', null); });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(h.killed()).toBe('SIGTERM');
+  });
+
+  it('관찰자가 있으면 발화해도 회수하지 않는다 — 사람이 보고 있으면 러너는 끼어들지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = endHarness();
+    const { deps, runTurn } = await makeDeps(fake, {
+      relay: h.relay, utteranceProbeMs: 5, orphanMs: 5,
+    });
+    runTurn.script = h.script(async () => {
+      h.viewers(1);                                  // 사람이 붙어 있다
+      await fake.post(CHANNEL, '답했다', null);
+    });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(h.killed()).toBeNull();
+  });
+
+  it('보던 사람이 창을 닫으면 그때 회수한다 — 유예는 뷰어 소멸부터 흐른다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = endHarness();
+    const { deps, runTurn } = await makeDeps(fake, {
+      relay: h.relay, utteranceProbeMs: 5, orphanMs: 5,
+    });
+    runTurn.script = h.script(async () => {
+      h.viewers(1);
+      await fake.post(CHANNEL, '답했다', null);
+      await new Promise((r) => setTimeout(r, 40));
+      h.viewers(0);                                  // 창을 닫았다
+    });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(h.killed()).toBe('SIGTERM');
+  });
+
+  it('발화가 없으면 회수하지 않는다 — 아직 일하는 중이다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = endHarness();
+    const { deps, runTurn } = await makeDeps(fake, {
+      relay: h.relay, utteranceProbeMs: 5, orphanMs: 5,
+    });
+    runTurn.script = h.script(() => {});             // 아무 말도 안 한다
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(h.killed()).toBeNull();
+  });
+});
+
+describe('타임아웃이 무발화 경과를 잰다 (2026-09-08)', () => {
+  it('답 없이 한도를 넘기면 회수하고 실패로 끝난다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    const { deps, runTurn } = await makeDeps(fake, { utteranceProbeMs: 5, turnTimeoutMs: 30 });
+    runTurn.script = async (_plan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      await new Promise((r) => setTimeout(r, 250));   // 아무 말도 안 한다
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    const err = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })
+      .then(() => null, (e: unknown) => e as Error);
+
+    expect(killed).toBe('SIGTERM');
+    // 문구가 원인을 정확히 말한다 — "무발화"와 "하네스가 스스로 죽었다"는 할 일이 다르다.
+    expect(err?.message).toContain('무발화');
+    // tail 을 담지 않는다: TUI 에서는 주입한 프롬프트가 에코돼 섞인다(설계 §3-4).
+    expect(err?.message).not.toContain('안녕');
+  });
+
+  it('관찰자가 있으면 무발화 한도를 재지 않는다 — 사람이 보고 있으면 끼어들지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    let notifyViewers: ((n: number) => void) | undefined;
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, turnTimeoutMs: 30,
+      relay: {
+        openSession(input: { onViewerCount?: (n: number) => void }) {
+          notifyViewers = input.onViewerCount;
+          return { sessionId: 's-silence', push: () => {}, bindInput: () => {}, close: () => {} };
+        },
+      },
+    });
+    runTurn.script = async (_plan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      notifyViewers?.(1);
+      await new Promise((r) => setTimeout(r, 250));
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(killed).toBeNull();
+  });
+
+  it('TUI 턴은 PTY 시계를 안 쓴다 — timeoutMs 0 으로 뜬다(무기한)', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, turnOpts, runTurn } = await makeDeps(fake, { turnTimeoutMs: 12_345 });
+    runTurn.script = async () => ({ exitCode: 0, timedOut: false, tail: '' });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect((turnOpts[0] as { timeoutMs?: number }).timeoutMs).toBe(0);
+  });
+
+  it('codex 는 그대로 PTY 시계를 쓴다 — exec 은 프로세스 수명과 턴이 같은 사실이다', async () => {
+    const fake = new FakeMurmur(defOf({ harness: 'codex' }));
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, turnOpts, runTurn } = await makeDeps(fake, { turnTimeoutMs: 12_345 });
+    runTurn.script = async () => ({ exitCode: 0, timedOut: false, tail: '' });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect((turnOpts[0] as { timeoutMs?: number }).timeoutMs).toBe(12_345);
   });
 });

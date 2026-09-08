@@ -36,6 +36,26 @@ if (mode === 'hang')    { setInterval(() => {}, 1_000); }            // 타임�
 // stdin 으로 받을 수 있는 이유는 이 모드를 쓰는 계획의 `stdinFile` 이 null 이라 자식의
 // fd 0 이 PTY slave 이기 때문이다(`pty.ts::acceptsPtyInput`). 신호가 영영 안 오면 매달리지
 // 않는다 — 그때는 종료 코드 22 가 원인을 말해 준다(다른 모드들의 8초 안전망과 같은 규율).
+// TUI 흉내(2026-09-08 실행 모델 교체). 준비 신호를 찍고 stdin 을 읽어 되뱉는다 —
+// 러너가 "준비를 본 뒤에만 주입한다" 를 지키는지 재는 데 쓴다. 준비 신호를 **늦게** 찍는
+// 것이 요점이다: 즉시 찍으면 고정 슬립으로도 통과해 조건 대기를 검증하지 못한다.
+if (mode === 'ready-then-echo') {
+  // 'READY' 는 pty.test 가 명시 패턴으로 쓰고, '❯ ' 는 러너의 기본 패턴이 찾는 것이다
+  // (claude TUI 의 입력 프롬프트 표시). 둘을 함께 찍어 두 경로를 같은 픽스처로 잰다.
+  setTimeout(() => process.stdout.write('READY\n❯ '), 300);
+  process.stdin.setEncoding('utf8');
+  let buf = '';
+  process.stdin.on('data', (d) => {
+    buf += d;
+    // bracketed paste 의 끝 표식이 오면 받은 것을 그대로 되뱉고 끝낸다.
+    if (buf.includes('[201~')) { process.stdout.write(buf); process.exit(0); }
+  });
+  setTimeout(() => process.exit(21), 8_000); // 안전망
+}
+
+// 아무 신호도 안 찍고 버틴다 — 미로그인 화면·디렉터리 신뢰 대화상자가 이 모양이다.
+if (mode === 'hang-silent') { setInterval(() => {}, 1_000); }
+
 if (mode === 'chatty') {
   for (let i = 0; i < 10_000; i++) console.log(`line ${i}`);
   process.stdin.on('data', () => process.exit(0));

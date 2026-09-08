@@ -6,6 +6,15 @@ import { switchesAccount, withAccountFailover } from '../src/claudeAccounts.js';
 import type { ClaudeAccount } from '../src/claudeAccounts.js';
 import { ExecutableNotFoundError, MURMUR_ERROR_SOURCE } from '../src/policy.js';
 
+/**
+ * 하네스가 자기 세션 파일에 남긴 에러(2026-09-08). 자격증명 판정의 재료가 PTY tail 에서
+ * 구조화 필드로 옮겨갔고(`policy.ts::isCredentialFailure`), 계정 전환 방아쇠가 그 판정을
+ * 조합하므로 여기도 같은 재료를 쓴다 — 판정 자체는 그대로다.
+ */
+function harnessErr(text: string): Error & { harnessApiError: string } {
+  return Object.assign(new Error('harness 종료 1'), { harnessApiError: text });
+}
+
 describe('계정 전환 방아쇠', () => {
   it('사용량 한도는 계정을 바꾼다', () => {
     // policy.ts::isQuotaExhausted 주석은 "여기서 할 일은 기다리는 것뿐"이라 적었는데,
@@ -17,13 +26,13 @@ describe('계정 전환 방아쇠', () => {
 
   it('harness 자격증명 실패는 계정을 바꾼다', () => {
     // 그 계정의 로그인이 만료·부재다. 다른 계정은 멀쩡할 수 있다.
-    expect(switchesAccount(new Error(
-      'harness 종료 1: Failed to authenticate: OAuth session expired and could not be refreshed',
+    expect(switchesAccount(harnessErr(
+      'Failed to authenticate: OAuth session expired and could not be refreshed',
     ))).toBe(true);
   });
 
   it('미로그인도 계정을 바꾼다', () => {
-    expect(switchesAccount(new Error('harness 종료 1: Not logged in · Please run /login')))
+    expect(switchesAccount(harnessErr('Not logged in · Please run /login')))
       .toBe(true);
   });
 
