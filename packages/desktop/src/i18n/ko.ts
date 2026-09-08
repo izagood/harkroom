@@ -372,11 +372,20 @@ export const ko = {
   'agents.runner.whoStartsServer': '서버',
 
   'agents.stale.allCurrent': '도는 러너가 전부 이 번들이다.',
+  'agents.stale.elsewhere': {
+    other: '이 기기가 띄운 러너는 전부 이 번들이다. 뒤처진 러너 {count}대는 다른 기기의 것이라 '
+      + '여기서 재기동할 수 없다 — 그 기기의 murmur 에서 눌러야 한다.',
+  },
   'agents.stale.note': '재기동은 {strong} — 턴을 마친 뒤 새 번들로 다시 뜬다.',
   'agents.stale.noteStrong': '진행 중인 턴을 끊지 않는다',
   // 한국어는 수에 따라 명사가 안 바뀐다 — `other` 하나인 것이 그 언어의 사실이다.
   'agents.stale.restart': { other: '뒤처진 러너 전체 재기동 ({count})' },
+  'agents.stale.restartDone': { other: '러너 {count}대가 새 번들로 돌아왔다.' },
   'agents.stale.restartFailed': '재기동하지 못했다: {reason}',
+  'agents.stale.restartRequested': {
+    other: '러너 {count}대에 재기동을 걸었다 — 진행 중인 턴을 마치면 새 번들로 다시 뜬다.',
+  },
+  'agents.stale.restarting': '재기동 거는 중…',
   'agents.stale.unknownAppVersion': '앱 버전을 얻지 못해 뒤처짐을 판정할 수 없다.',
   'agents.stale.unknownVersion': {
     other: '버전을 모르는 러너 {count}대 — 뒤처졌는지 알 수 없어 대상에서 뺐다. '
@@ -791,6 +800,7 @@ export const ko = {
   'grid.search.count': '{count}개',
 
   'grid.version.current': '{version}',
+  'grid.version.restarting': '재기동 중…',
   'grid.version.stale': '{version} · 뒤처짐',
   'grid.version.staleAction': '{handle} 러너 재기동 — {version} 은 앱보다 뒤처졌다',
   'grid.version.unknown': '버전 모름',

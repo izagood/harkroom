@@ -344,6 +344,49 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   useEffect(reload, []);
 
   /**
+   * **격자를 열어 둔 동안 목록을 계속 다시 읽는다** (2026-09-08 실측).
+   *
+   * ## 무엇이 문제였나
+   *
+   * `agents` 를 읽는 자리는 바로 위 `useEffect(reload, [])` **하나뿐**이었다 — 마운트 시
+   * 한 번. 그래서 카드에 실린 세 값(러너 버전 · 마지막 활동 · 멈추는 중)이 **화면을 연
+   * 그 순간에 굳었다.** 재기동을 걸어 새 러너가 뜨고 서버가 새 `runnerVersion` 을 들어도
+   * 칩은 계속 `· 뒤처짐` 이었고, 사람이 확인하는 유일한 길이 *"다른 화면을 갔다가 오는 것"*
+   * 이었다(그 왕복이 이 컴포넌트를 다시 마운트시켜 위 한 줄을 다시 돌린다).
+   *
+   * `runnerStates` 는 이미 실시간이다(스토어) — 굳어 있던 것은 **서버가 아는 사실** 쪽이다.
+   * 그래서 고칠 자리가 이 한 줄이다.
+   *
+   * ## 왜 소켓이 아니라 폴인가
+   *
+   * `agent.updated` 류의 이벤트가 아직 없다(`#428` 주석이 같은 사실을 적어 뒀다). 그것을
+   * 만드는 것은 이 결함의 범위를 넘고, `listAgents()` 는 초기 로드에도 쓰는 가벼운 목록
+   * 조회다 — 새 엔드포인트 없이 그대로 재사용한다.
+   *
+   * ## 간격 5초 · 격자에서만 · 창이 보일 때만
+   *
+   * - **5초**는 `#428` 이 이미 고른 값이다(실측 수령 4초). 두 폴이 다른 박자로 돌 이유가 없다
+   * - **격자에서만** 돈다. 상세를 여는 순간 멈춘다 — 상세는 사람이 글을 쓰는 화면이고,
+   *   그 화면이 필요로 하는 갱신은 `#428` 의 좁은 폴이 이미 맡고 있다
+   * - **`document.hidden` 이면 건너뛴다.** 창을 내려 둔 사람 수만큼 목록 조회가 늘 이유가
+   *   없다. 타이머는 계속 돌되 왕복만 접으므로, 창을 되살리면 늦어도 5초 뒤 최신이 된다
+   *
+   * `selected` 는 **건드리지 않는다.** 이 폴이 상세의 값까지 갈아 끼우면 사람이 쓰던 초안
+   * 위로 서버 값이 덮인다 — 그것을 하는 자리는 `#428` 의 폴 하나이고, 그쪽은 대상을
+   * *"종료 요청했지만 아직 못 받음"* 하나로 좁혀 뒀다.
+   */
+  useEffect(() => {
+    if (view !== 'grid') return;
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      // 폴링 실패를 화면 오류로 띄우지 않는다 — 다음 tick 이 다시 시도한다(`#428` 과 같은
+      // 규율). 여기서 `setError` 를 부르면 잠깐의 네트워크 끊김이 붉은 줄로 남는다.
+      void getController().listAgents().then(setAgents).catch(() => undefined);
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [view]);
+
+  /**
    * 팀 목록. **스토어에서 읽는다 — 여기서 따로 받지 않는다.**
    *
    * `HandleGroupsSettings` 가 집합에 대해 세운 것과 **같은 두 이유**다(그 파일 주석):
@@ -2087,6 +2130,28 @@ function StaleRunnerBar({ agents, runnerStates, appVersion, onError, t }: {
   t: Translate;
 }) {
   const [busy, setBusy] = useState(false);
+  /**
+   * **눌렀다는 사실**과 **끝났다는 사실**을 따로 든다 (2026-09-08 실측).
+   *
+   * 앞 판본은 `busy` 하나였고, 그것이 하는 일은 버튼을 `disabled:opacity-50` 으로 흐리는
+   * 것뿐이었다. 그런데 이 버튼은 **뒤처진 러너가 0 대면 평소에도 흐리다** — 누른 뒤와
+   * 누르기 전의 모양이 같으니 사람에게는 *"눌렀는지 알 수가 없어"* 가 된다.
+   *
+   * 그리고 이 조작은 **길다.** `restartStaleRunners()` 는 러너가 진행 중인 턴을 마치고
+   * 나가기를 기다린다(`RunnerLauncher.restart` 의 `awaitRunnerExit`, 상한 15분). 그 끝을
+   * 기다려서야 결과를 적으면 사람은 그동안 아무 말도 못 듣는다. 그래서 둘로 가른다:
+   *
+   * | 값 | 언제 | 무엇을 말하나 |
+   * |---|---|---|
+   * | `requested` | 누른 **즉시** | 몇 대에 재기동을 걸었다 — 턴을 마치면 다시 뜬다 |
+   * | `done` | 전부 다시 뜬 뒤 | 몇 대가 새 번들로 돌아왔다 |
+   *
+   * `requested` 를 컨트롤러의 반환값으로 채우지 않는 이유가 그 표에 있다 — 그 값은 **끝에야**
+   * 온다. 띠가 이미 센 `stale.length` 가 지금 손에 있는 답이고, 컨트롤러가 같은
+   * `staleRunners()` 를 보므로 두 수가 갈라지지 않는다.
+   */
+  const [requested, setRequested] = useState<number | null>(null);
+  const [done, setDone] = useState<number | null>(null);
   // 러너가 **있다고 보는** 에이전트만 대상이다. `runnerStates` 는 이 앱의 실행기가 관리하는
   // (즉 소유한) 에이전트만 담으므로, 이 한 줄이 소유 판정도 겸한다 — 그래도 컨트롤러가
   // 같은 술어를 한 번 더 본다(`restartStaleRunners`).
@@ -2099,6 +2164,32 @@ function StaleRunnerBar({ agents, runnerStates, appVersion, onError, t }: {
       .map((a) => a.id),
   );
   const { stale, unknown } = staleRunners({ agents, live, appVersion });
+  /**
+   * **띠와 카드가 서로 다른 말을 하던 자리** (2026-09-08 실측 스크린샷).
+   *
+   * 화면에는 이 둘이 나란히 있었다:
+   *
+   * ```
+   * [뒤처진 러너 전체 재기동 (0)]  도는 러너가 전부 이 번들이다.
+   * …
+   * @rebelro   러너  0.1.85 · 뒤처짐 ↻
+   * ```
+   *
+   * 둘 다 자기 규칙대로는 옳다. 띠의 대상은 **이 기기가 띄운 러너**뿐이고(위 `live`),
+   * 카드의 칩은 *"서버가 마지막으로 들은 버전"* 을 말한다(`VersionChip` 의 `live` 주석).
+   * 그런데 사람이 읽는 것은 두 문장이고, 한쪽이 *"전부 이 번들이다"* 라고 **단정한다** —
+   * 그 단정이 거짓이라 사람은 비활성 버튼을 누르고 아무 일도 안 일어나는 것을 봤다.
+   *
+   * 그래서 **버튼의 대상은 그대로 두고 말만 사실로 바꾼다.** 남의 기기가 띄운 러너를 이
+   * 앱이 재기동하면 그 러너의 PAT·소유가 여기로 옮겨 온다 — 대상을 넓히는 것은
+   * `restartStaleRunners` 가 거부한 방향이고(그 함수의 `mine` 주석), 이 결함은 그것이
+   * 아니라 문장이 낸 것이다.
+   */
+  const elsewhere = staleRunners({
+    agents,
+    live: new Set(agents.map((a) => a.id)),
+    appVersion,
+  }).stale.length - stale.length;
 
   return (
     <div className="mb-3 rounded border border-border p-3">
@@ -2110,27 +2201,64 @@ function StaleRunnerBar({ agents, runnerStates, appVersion, onError, t }: {
                      hover:bg-surface-sunken disabled:opacity-50"
           onClick={() => {
             setBusy(true);
+            // 누른 그 순간의 대상 수를 **먼저** 적는다(위 그 표). 앞 판본이 사람에게
+            // 아무 말도 안 한 채 15분까지 기다릴 수 있었던 자리다.
+            setRequested(stale.length);
+            setDone(null);
             void getController().restartStaleRunners()
-              .catch((err: unknown) => onError(
-                t('agents.stale.restartFailed', { reason: err instanceof Error ? err.message : String(err) }),
-              ))
+              .then((ids) => setDone(ids.length))
+              .catch((err: unknown) => {
+                // 실패하면 "걸었다"는 말이 남아 있으면 안 된다 — 남기면 오류 줄과 진행
+                // 줄이 동시에 서서 무엇이 참인지 사람이 고르게 된다.
+                setRequested(null);
+                onError(
+                  t('agents.stale.restartFailed', { reason: err instanceof Error ? err.message : String(err) }),
+                );
+              })
               .finally(() => setBusy(false));
           }}
         >
           {/* 개수가 **곧 영향 범위**다(이 컴포넌트 머리말). 영어는 1대와 여러 대가 다른
-              낱말이라 복수형으로 갈리고, 한국어는 한 갈래다. */}
-          {t('agents.stale.restart', { count: stale.length })}
+              낱말이라 복수형으로 갈리고, 한국어는 한 갈래다.
+
+              **누르는 동안 낱말이 바뀐다.** 흐려지는 것만으로는 0 대일 때의 평소 모양과
+              구분되지 않는다(위 `requested` 주석). 글자가 바뀌면 그 자리 하나로 "받았다"가
+              전해진다. */}
+          {busy
+            ? t('agents.stale.restarting')
+            : t('agents.stale.restart', { count: stale.length })}
         </button>
-        {stale.length === 0 && (
+        {/* 재기동이 도는 동안에는 이 말을 접는다 — 방금 걸어 둔 것이 있는데 "전부 최신이다"
+            가 나란히 서면 둘 중 무엇이 참인지 사람이 고르게 된다. 아래 진행 줄이 그 자리를
+            대신 말한다. */}
+        {stale.length === 0 && !busy && (
           <span className="text-meta text-fg-subtle">
             {appVersion === null
               // 앱 버전을 못 얻었으면 비교 기준이 없다. "전부 최신이다"로 적으면 확인하지
               // 않은 것을 단정하는 셈이다.
               ? t('agents.stale.unknownAppVersion')
-              : t('agents.stale.allCurrent')}
+              // 뒤처진 러너가 **보이는데** 이 버튼의 대상이 아니면 그 사실을 적는다.
+              // "전부 이 번들이다"는 그때 거짓이다(위 `elsewhere` 주석).
+              : elsewhere > 0
+                ? t('agents.stale.elsewhere', { count: elsewhere })
+                : t('agents.stale.allCurrent')}
           </span>
         )}
       </div>
+      {/*
+        **누른 것에 대한 답.** `role="status"` 라 스크린리더가 그 자리를 다시 읽는다 — 이
+        줄이 서는 것은 사람이 방금 누른 결과이고, 색도 위치도 그것을 말해 주지 않는다.
+
+        `done` 이 먼저다: 끝났으면 걸어 둔 사실이 아니라 **끝났다는 사실**이 지금의 답이다.
+        `requested === 0` 이면 아무 줄도 안 선다 — 0 대면 버튼이 애초에 안 눌린다.
+      */}
+      {(busy || done !== null) && (requested ?? 0) > 0 && (
+        <p role="status" className="mt-1 text-meta text-fg-muted">
+          {done !== null
+            ? t('agents.stale.restartDone', { count: done })
+            : t('agents.stale.restartRequested', { count: requested ?? 0 })}
+        </p>
+      )}
       {/* **모르는 것을 뒤처졌다고 하지 않는다**(`runnerVersions.ts` 의 판정). 대신 그
           사실을 적어 사람이 개별 재기동으로 값을 채우게 한다 — 재기동 한 번이면
           `AGENT_VERSION` 이 심긴 러너가 뜨고 그 뒤로는 판정에 든다. */}
