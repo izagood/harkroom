@@ -16,12 +16,14 @@ import { PaneResizer } from './PaneResizer';
 import { paneStorage, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH, MIN_CHANNEL_WIDTH } from '../lib/prefs';
 import { TypingLine } from './TypingLine';
 import type { SectionId } from './settings/sections';
+import { useT } from '../i18n/useT';
 
 export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
   /** 멘션 이동(#279). 스레드의 멘션도 대화의 멘션과 같게 동작해야 한다. */
   onOpenDirectory?: (accountId: string | null) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 } = {}) {
+  const t = useT();
   const { activeChannelId, threadRootId, messages, accounts, me, online, connected } = useActiveStore();
   /** 채널과 같은 판정을 쓴다 — 모르는 계정은 에이전트로 치지 않는다(`lib/agentExchange`). */
   const isAgent = (id: string): boolean => accounts[id]?.kind === 'agent';
@@ -96,7 +98,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
       style={{ width: threadWidth, minWidth: MIN_THREAD_WIDTH }}
     >
       <PaneResizer
-        label="스레드 너비 조절"
+        label={t('thread.resizeHandle')}
         width={threadWidth}
         min={MIN_THREAD_WIDTH}
         max={MAX_THREAD_WIDTH}
@@ -158,7 +160,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
             onChange={(e) => setAlsoInChannel(e.target.checked)}
             className="rounded border-border"
           />
-          채널에도 올리기
+          {t('thread.alsoPostToChannel')}
         </label>
         <Composer
           scopeKey={`thread:${threadRootId}`}

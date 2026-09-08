@@ -3,6 +3,7 @@ import { displayBody } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import type { SweepItem } from '../state/sweep';
+import { useT } from '../i18n/useT';
 
 /**
  * 훑기 화면(#227) — 미읽음을 하나씩 보여 주고 다음으로 넘어간다.
@@ -20,13 +21,14 @@ export function SweepShell({ items, loading, error, onRetry, onClose, onMarkRead
   onClose: () => void;
   onMarkRead: (item: SweepItem) => Promise<void>;
 }) {
+  const t = useT();
   const [index, setIndex] = useState(0);
   const [actionError, setActionError] = useState<string | null>(null);
   const accounts = useActiveStore((s) => s.accounts);
 
   /**
    * 목록을 다시 불러오면 처음부터 본다. 인덱스를 그대로 두면 짧아진 목록의 끝을 가리켜
-   * 볼 것이 남았는데도 "다 봤다"가 뜬다.
+   * 볼 것이 남았는데도 t('sweep.done')가 뜬다.
    *
    * **effect 가 아니라 렌더 중에 되돌린다.** `useEffect(..., [items])` 로 두면 목록이
    * 그려진 뒤 effect 가 흘러나가기 전에 사람이 '다음'을 누를 수 있고, 그 클릭으로 올라간
@@ -44,7 +46,7 @@ export function SweepShell({ items, loading, error, onRetry, onClose, onMarkRead
   const current = items[index];
 
   /**
-   * '읽음 처리하고 다음'. 서버 ack 가 **성공한 뒤에만** 넘어간다 — 실패했는데 넘어가면
+   * t('sweep.readAndNext'). 서버 ack 가 **성공한 뒤에만** 넘어간다 — 실패했는데 넘어가면
    * 사람은 정리했다고 믿지만 미읽음은 그대로 남는다.
    */
   const markAndNext = useCallback(async () => {
@@ -54,12 +56,12 @@ export function SweepShell({ items, loading, error, onRetry, onClose, onMarkRead
       setActionError(null);
       setIndex((i) => i + 1);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : '읽음 처리에 실패했다');
+      setActionError(err instanceof Error ? err.message : t('sweep.failed'));
     }
   }, [current, onMarkRead]);
 
   /**
-   * '그냥 다음'. **읽음 상태를 건드리지 않는다.**
+   * t('sweep.justNext'). **읽음 상태를 건드리지 않는다.**
    *
    * 훑으면서 지나가는 것은 읽은 것이 아니다. 그리고 `markChannelRead` 는 단조 전진이라
    * (`readPositions.ts`: "되돌아가지 않고") 실수로 넘긴 항목은 #154 의 미읽음 표시로만
@@ -79,36 +81,36 @@ export function SweepShell({ items, loading, error, onRetry, onClose, onMarkRead
         className="flex max-h-[70vh] w-full max-w-xl flex-col rounded-lg border border-border bg-surface-raised shadow-xl"
         role="dialog"
         aria-modal="true"
-        aria-label="미읽음 훑기"
+        aria-label={t('sweep.title')}
       >
         {/* 이 대화창은 두 단만 쓴다: **읽는 것은 본문단**(제목·메시지·오류·아래 두 버튼,
             앱 기본값이라 크기를 안 적는다), **세는 것과 꼬리표는 아랫단 11px**(진행 수·
             닫기·채널 라벨·작성자 핸들). 훑는 사람이 판단 근거로 읽는 것은 메시지 본문이고,
             나머지는 그 본문이 어디서 왔고 몇 번째인지 알려 주는 자리다. */}
         <div className="flex items-center gap-2 border-b border-border p-3 text-fg">
-          <span className="font-medium">미읽음 훑기</span>
+          <span className="font-medium">{t('sweep.title')}</span>
           {!loading && !error && items.length > 0 && index < items.length && (
             <span className="text-meta text-fg-subtle">{index + 1} / {items.length}</span>
           )}
           <button className="ml-auto rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
-            onClick={onClose}>닫기</button>
+            onClick={onClose}>{t('sweep.close')}</button>
         </div>
 
-        {loading && <div className="p-4 text-fg-muted">불러오는 중…</div>}
+        {loading && <div className="p-4 text-fg-muted">{t('sweep.loading')}</div>}
 
         {/* 못 불러온 것과 볼 것이 없는 것은 **다른 상태다.** 조회 실패를 빈 목록으로 삼키면
-            화면이 "다 봤다"고 말하게 되고, 그것은 거짓말이다(docs/design.md §4). 그래서
+            화면이 t('sweep.done')고 말하게 되고, 그것은 거짓말이다(docs/design.md §4). 그래서
             오류일 때는 완료 문구를 그리는 분기 자체에 닿지 않는다. */}
         {!loading && error && (
           <div className="p-4">
             <p role="alert" className="text-danger">미읽음을 불러오지 못했다: {error}</p>
             <button className="mt-2 rounded bg-accent px-2 py-1 text-fg-on-strong hover:bg-accent-hover"
-              onClick={onRetry}>다시 시도</button>
+              onClick={onRetry}>{t('sweep.retry')}</button>
           </div>
         )}
 
         {!loading && !error && !current && (
-          <div className="p-6 text-center text-fg-muted">다 봤다</div>
+          <div className="p-6 text-center text-fg-muted">{t('sweep.done')}</div>
         )}
 
         {!loading && !error && current && (
@@ -135,9 +137,9 @@ export function SweepShell({ items, loading, error, onRetry, onClose, onMarkRead
               {/* 이 둘이 이 화면의 주 조작이다 — 훑기는 이 버튼을 반복해서 누르는 일이라
                   아랫단으로 내리지 않는다. */}
               <button className="rounded bg-accent px-2 py-1 text-fg-on-strong hover:bg-accent-hover"
-                onClick={() => void markAndNext()}>읽음 처리하고 다음</button>
+                onClick={() => void markAndNext()}>{t('sweep.readAndNext')}</button>
               <button className="rounded px-2 py-1 text-fg-muted hover:bg-surface-hover"
-                onClick={skip}>그냥 다음</button>
+                onClick={skip}>{t('sweep.justNext')}</button>
             </div>
           </>
         )}
@@ -148,6 +150,7 @@ export function SweepShell({ items, loading, error, onRetry, onClose, onMarkRead
 
 /** 전체 미읽음 모드. 목록만 만들고 훑기 동작은 `SweepShell` 에 맡긴다. */
 export function Sweep({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const t = useT();
   const [items, setItems] = useState<SweepItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -160,7 +163,7 @@ export function Sweep({ open, onClose }: { open: boolean; onClose: () => void })
     } catch (err) {
       // 실패했으면 이전 목록도 버린다 — 남겨 두면 오류 문구 옆에 낡은 목록이 함께 보인다.
       setItems([]);
-      setError(err instanceof Error ? err.message : '알 수 없는 오류');
+      setError(err instanceof Error ? err.message : t('sweep.unknownError'));
     } finally {
       setLoading(false);
     }

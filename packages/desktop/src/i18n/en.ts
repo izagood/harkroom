@@ -240,6 +240,49 @@ export const en = {
   'avatarEdit.progress.uploadingPct': 'Uploading the photo… {pct}%',
   'avatarEdit.result.changed': 'The photo was changed',
   'avatarEdit.result.removed': 'The photo was removed',
+  // sweep — 화면 이름. `components/Sweep.tsx` 의 미읽음 훑기.
+  //
+  // 두 버튼이 **다른 일**을 한다: `readAndNext` 는 읽음으로 표시하고 넘어가고,
+  // `justNext` 는 표시하지 않고 넘어간다. 한 낱말로 뭉치면 훑기의 요점이 사라진다 —
+  // 이 화면은 *"읽었다고 칠 것"* 과 *"나중에 볼 것"* 을 가르려고 있다.
+  // ---------------------------------------------------------------------------
+
+  'sweep.close': 'Close',
+  'sweep.done': 'All caught up',
+  'sweep.failed': 'It was not marked as read',
+  'sweep.justNext': 'Skip',
+  'sweep.loading': 'Loading…',
+  'sweep.readAndNext': 'Mark read and go on',
+  'sweep.retry': 'Try again',
+  'sweep.title': 'Sweep unread',
+  /** 서버가 사유를 안 줬을 때. **`{reason}` 자리를 비우지 않는다** — 빈 괄호가 남는다. */
+  'sweep.unknownError': 'Unknown error',
+
+  // ---------------------------------------------------------------------------
+  // accountOpen — **판정 이름이다.** `lib/accountOpen.ts` 가 내는 접근 이름이고,
+  // 이름을 누를 수 있는 자리마다 쓰인다(본문 멘션 · 참여자 줄 · 아바타).
+  //
+  // 이 둘은 **가는 곳이 다르다** — 설정과 프로필. 스크린리더는 그 차이를 이름으로만
+  // 알 수 있으므로 한 낱말로 못 묶는다.
+  // ---------------------------------------------------------------------------
+
+  'accountOpen.agentConfig': "Open {handle}'s agent settings",
+  'accountOpen.profile': "Open {handle}'s profile",
+
+  // ---------------------------------------------------------------------------
+  // mention — 멘션 토큰(`<@id>`)을 이름으로 되돌릴 때 **그 계정을 못 찾은 자리**.
+  //
+  // 지우지 않고 말한다: 지우면 문장에 구멍이 나고, id 를 그대로 두면 사람이 못 읽는다.
+  // ---------------------------------------------------------------------------
+
+  'mention.unknownAccount': 'unknown',
+
+  // ---------------------------------------------------------------------------
+  // thread — 스레드 패널. `thread.*` 영역이 이미 있고(상태 다섯), 여기 둘을 더한다.
+  // ---------------------------------------------------------------------------
+
+  'thread.alsoPostToChannel': 'Also post to the channel',
+  'thread.resizeHandle': 'Resize the thread panel',
 
   // ---------------------------------------------------------------------------
   // gallery — **화면 이름이다.** `settings/GallerySettings.tsx` 가 그리는 말이고,

@@ -1,4 +1,5 @@
 import { Fragment, useMemo, type ReactNode } from 'react';
+import { useT } from '../i18n/useT';
 import { useActiveStore } from '../state/communities';
 import { NO_TEAMS } from '../state/appStore';
 import { splitMentions } from '../lib/mention';
@@ -77,6 +78,7 @@ export function MessageBody({
   body: string;
   messageId: string;
 } & MentionOpeners) {
+  const t = useT();
   const accounts = useActiveStore((s) => s.accounts);
   const groups = useActiveStore((s) => s.groups);
   // 목록을 못 받은 서버에서는 빈 목록이 사실이다 — 판단의 근거는 `Composer` 의 같은
@@ -156,7 +158,7 @@ export function MessageBody({
     // **`lib/accountOpen` 한 곳**에서 나온다. 여기 인라인으로 있던 것을 옮긴 이유는 그
     // 파일 머리에 적었다 — 이름줄·아바타(`MessageItem`)가 같은 곳으로 가야 해서, 그대로
     // 두면 같은 조건문이 두 벌이 된다.
-    const open = isGroup ? null : accountOpen(account, viewer, { onOpenDirectory, onOpenSettings });
+    const open = isGroup ? null : accountOpen(account, viewer, { onOpenDirectory, onOpenSettings }, t);
     const target = open?.run ?? null;
     const accessibleName = open?.label;
 
