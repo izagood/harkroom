@@ -418,37 +418,34 @@ describe('사이드바 토글 아이콘', () => {
 });
 
 /**
- * **브랜드 줄에 앱 이름을 글자로 적지 않는다**(실측 2026-09-07, 사용자가 지적).
+ * **브랜드 줄은 로고 + 글자다**(실측 2026-09-08, 사용자가 화면에서 지적 — "murmur
+ * 텍스트가 안 나와").
  *
- * 레일에 이미 커뮤니티 마크가 서 있어(`Rail.tsx`) 앱 이름을 여기서 또 적으면 같은
- * 화면이 두 번 말하는 셈이다. 로고 하나로 충분하다.
+ * 앞 판(2026-09-07)은 *"레일에 커뮤니티 마크가 서 있으니 앱 이름을 여기서 또 적으면 같은
+ * 화면이 두 번 말하는 셈"* 이라며 글자를 뺐다. 틀린 지점은 **레일의 마크가 커뮤니티
+ * 이름이지 앱 이름이 아니라는 것**이다 — 글자를 빼자 창 왼쪽 위에 파형만 남았고, 그것이
+ * 무엇의 로고인지는 이미 아는 사람만 안다.
  *
- * **다만 이름이 사라지면 안 된다** — 글자를 빼면서 로고의 `decorative` 도 떼어
- * `role="img"` + `aria-label="murmur"` 가 그 자리를 잇는다. 둘 다 없으면 스크린리더가
- * 이 줄을 무명 랜드마크로 만난다.
+ * **이름을 지는 쪽은 글자다.** 로고는 `decorative`(`aria-hidden`)로 물러난다. 둘 다
+ * 이름을 내면 스크린리더가 앱 이름을 두 번 읽는다 — 그 수는 `test/logo.test.tsx` 가 센다.
  */
-describe('브랜드 줄은 로고만 둔다', () => {
-  /**
-   * **글자 노드만 본다.** `textContent` 로는 잴 수 없다 — 로고가 접근성 이름으로 내는
-   * `aria-label="murmur"` 가 jsdom 의 `textContent` 에 섞여 들어와, 글자를 뺐는데도
-   * 문자열이 잡힌다(실제로 그렇게 한 번 틀렸다). 그래서 **직접 자식 텍스트 노드**만 센다.
-   */
-  it('앱 이름을 글자로 적지 않는다', () => {
+describe('브랜드 줄은 로고와 글자를 함께 둔다', () => {
+  it('앱 이름을 글자로 적는다', () => {
     renderWorkspace({ sidebarCollapsed: false });
     const brand = screen.getByTestId('sidebar-brand');
-    const ownText = [...brand.childNodes]
-      .filter((n) => n.nodeType === 3)
-      .map((n) => n.textContent ?? '')
-      .join('')
-      .trim();
-    expect(ownText).toBe('');
+    expect(brand.textContent).toContain('murmur');
   });
 
-  it('그래도 접근성 이름은 남는다 — 로고가 그것을 잇는다', () => {
-    const { container } = renderWorkspace({ sidebarCollapsed: false });
+  /**
+   * **손잡이 위의 글자도 창을 끌어야 한다.** 이 줄은 `data-tauri-drag-region` 이고,
+   * 그 위에 얹힌 요소가 속성을 물려받지 않으면 글자를 잡아 끌 때만 창이 안 움직인다 —
+   * 사람은 "가끔 안 끌린다"로 만난다. 로고와 글자를 감싼 `span` 이 그 속성을 들어야 한다.
+   */
+  it('로고와 글자를 감싼 자리도 창 손잡이다', () => {
+    renderWorkspace({ sidebarCollapsed: false });
     const brand = screen.getByTestId('sidebar-brand');
-    expect(brand.querySelector('[role="img"][aria-label="murmur"]')).toBeTruthy();
-    expect(container).toBeTruthy();
+    const wrap = brand.querySelector('[data-testid="murmur-logo"]')!.parentElement!;
+    expect(wrap.hasAttribute('data-tauri-drag-region')).toBe(true);
   });
 
   /** 연결 점은 남는다 — `#443` 이 "실측에서 유일하게 맞았던 표시"라 적은 자리다. */
