@@ -4,7 +4,7 @@ import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin } from './helpers/fixtures.js';
-import { searchMessages } from '../src/services/messages.js';
+import { searchMessages, searchHasMore, SEARCH_MAX_OFFSET } from '../src/services/messages.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -148,6 +148,59 @@ describe('search', () => {
     });
     const bodies = res.json().messages.map((m: { body: string }) => m.body);
     expect(bodies.sort()).toEqual(['quokka reply', 'quokka root']);
+  });
+
+  /**
+   * 접두 tsquery(`'검색':*`)로 바꾸면서 **의도해서 잃은 것**이 여기 있다: 2글자 질의의
+   * 중간일치(`검색` 으로 `재검색`). like 갈래를 3글자 미만에 걸면 OR 의 한쪽이 인덱스
+   * 불가가 되어 tsvector 인덱스까지 함께 버려지고 계획 전체가 순차 스캔이 된다
+   * (실측 200k 행: 42.9 ms vs 0.067 ms). 3글자부터는 like 갈래가 그대로 받는다 —
+   * 이 테스트가 그 경계를 못박는다. 경계를 옮기려면 위 실측을 다시 재고 옮겨라.
+   */
+  it('matches prefixes at two characters, and middle matches from three', async () => {
+    for (const body of ['재검색을 했다', '재빠르게 검색을 했다']) {
+      await app.inject({
+        method: 'POST', url: `/channels/${channelId}/messages`,
+        headers: { authorization: `Bearer ${adminToken}` }, payload: { body },
+      });
+    }
+    const two = await searchMessages(pool, adminId, '검색');
+    const twoBodies = two.messages.map((m) => m.body);
+    // 접두는 잡는다(조사가 붙어도).
+    expect(twoBodies).toContain('재빠르게 검색을 했다');
+    // 중간일치는 2글자에서 놓는다 — 값을 아는 채로 둔 구멍이다.
+    expect(twoBodies).not.toContain('재검색을 했다');
+
+    // 3글자부터는 like 갈래가 켜져 중간일치가 돌아온다.
+    const three = await searchMessages(pool, adminId, '재검색');
+    expect(three.messages.map((m) => m.body)).toContain('재검색을 했다');
+  });
+
+  /**
+   * 낱말이 하나도 안 나오는 질의다. 접두 tsquery 를 만들 때 여기에 `:*` 를 그냥 붙이면
+   * `to_tsquery` 가 syntax error 로 터져 **500** 이 된다 — 사람이 칠 수 있는 글자다.
+   */
+  it('answers a query that yields no lexemes instead of failing', async () => {
+    const res = await app.inject({
+      method: 'GET', url: '/search?q=%21%21%21', headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  /**
+   * 라우트의 offset 천장과 `hasMore` 는 **같은 값을 봐야 한다.** 어긋나면 마지막 페이지에도
+   * '더 보기'가 서고, 누르는 순간 천장을 넘은 offset 이 나가 400 을 받는다.
+   */
+  it('stops offering more at the offset ceiling, and the route refuses past it', async () => {
+    expect(searchHasMore(51, 50, 0)).toBe(true);
+    expect(searchHasMore(51, 50, SEARCH_MAX_OFFSET - 50)).toBe(true);
+    expect(searchHasMore(51, 50, SEARCH_MAX_OFFSET)).toBe(false);
+
+    const res = await app.inject({
+      method: 'GET', url: `/search?q=pipeline&offset=${SEARCH_MAX_OFFSET + 50}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(400);
   });
 
   it('excludes deleted messages', async () => {

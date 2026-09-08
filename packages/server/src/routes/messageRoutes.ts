@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { MAX_MESSAGE_BODY_CHARS, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@murmur/shared';
 import { emitEvent } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
-import { deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
+import { deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -381,7 +381,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
       // ⌘F 의 스코프. `channelId` 없이 와도 뜻이 서지만(스레드 id 하나로 채널이 정해진다)
       // 클라이언트는 늘 둘을 함께 보낸다 — 403 판정이 채널 단위이기 때문이다.
       threadRootId: z.string().uuid().optional(),
-      offset: z.coerce.number().int().min(0).max(1000).optional(),
+      offset: z.coerce.number().int().min(0).max(SEARCH_MAX_OFFSET).optional(),
     }).parse(req.query);
     if (q.channelId && !(await assertChannelVisible(pool, q.channelId, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
