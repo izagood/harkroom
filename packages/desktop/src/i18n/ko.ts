@@ -78,6 +78,7 @@ export const ko = {
 
   'agents.create.failed': '만들지 못했다 (이미 있는 이름일 수 있다)',
   'agents.create.invalidName': '이름은 소문자·숫자·-·_ 2~32자여야 한다 (채널에서 @이름 으로 부른다)',
+  'agents.create.poolFailed': '에이전트는 만들어졌지만 계정 풀을 배정하지 못했다: {reason}',
 
   'agents.detail.back': '← 에이전트',
   'agents.detail.disconnected': '연결 끊김 — 살아 있는지 알 수 없다',
@@ -139,6 +140,7 @@ export const ko = {
   'agents.memory.keep': '두기',
   'agents.memory.loading': '불러오는 중…',
 
+  'agents.pat.copyToken': '토큰 복사',
   'agents.pat.label': 'New PAT label',
   'agents.pat.labelNote': '라벨은 살아 있는 토큰 안에서 유일하다. 폐기하면 같은 라벨을 다시 쓸 수 있다.',
   'agents.pat.listFailed': 'PAT 목록을 읽지 못했다',

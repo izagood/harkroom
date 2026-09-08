@@ -8,6 +8,8 @@ import { bodyRecipients, displayBody } from '../lib/mention';
 import { calledGroups, notifiedSummary, type NotifiedResult } from '../lib/notified';
 import { RunnerLauncher, tauriDaemonObserver, tauriLoginPathReader, tauriSecretStore, daemonSpawner, tauriAppVersionReader, type AppVersionReader, type DaemonObserver, type LoginPathReader, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
 import { staleRunners } from '../lib/runnerVersions';
+// 만들기 흐름이 러너를 띄우기 **전에** 풀 배정을 쓴다 — 근거는 `createAgent` 안에 있다.
+import { assignAgentPool } from '../lib/claudeAccounts';
 import type { AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
@@ -1236,9 +1238,35 @@ export class Controller {
    */
   async createAgent(
     input: { handle: string; displayName: string } & Partial<import('@murmur/shared').AgentConfig>,
-  ): Promise<{ agent: import('@murmur/shared').AgentView; pat: string }> {
+    opts?: { claudePool?: string },
+  ): Promise<{ agent: import('@murmur/shared').AgentView; pat: string; poolError: string | null }> {
     const agent = await this.api.createAgent(input);
     const pat = await this.api.mintPat(agent.id, 'runner');
+    /**
+     * 계정 풀 배정은 **러너가 뜨기 전에** 쓴다.
+     *
+     * 러너는 자기 풀을 시작할 때 한 번만 읽는다(`ClaudeAccountsSettings` 의 안내:
+     * *"A runner reads its pool once at startup"*). 아래 `startCreated` 가 `autoStart`
+     * 에서 러너를 띄우므로, 배정을 그 뒤에 쓰면 **방금 만든 에이전트의 첫 러너는 기본
+     * 풀로 돈다** — 만들기 화면에서 풀을 고른 사람에게 그 선택은 재시작 전까지 아무 일도
+     * 하지 않고, 화면에는 고른 값이 그대로 보이므로 그 어긋남을 알 방법이 없다.
+     *
+     * 서버로 가지 않는 값이라 `input` 에 실을 수 없다(`useAgentPool` 머리말: 풀은 이
+     * 기기에만 존재하는 자원이다). 그래서 별도 인자로 받는다.
+     *
+     * **실패가 생성을 되돌리지 않는다.** 계정과 PAT 는 이미 만들어졌고 PAT 원문은 지금
+     * 놓치면 다시 볼 수 없다 — 여기서 던지면 화면이 "만들지 못했다"를 그리며 유일한
+     * 토큰을 버린다(이 메서드 머리말이 러너 준비 실패에 대해 정한 것과 같은 규율).
+     * 대신 사유를 돌려주고, 화면이 "만들어졌지만 풀은 배정하지 못했다"를 말한다.
+     */
+    let poolError: string | null = null;
+    if (opts?.claudePool) {
+      try {
+        await assignAgentPool(agent.id, opts.claudePool);
+      } catch (err) {
+        poolError = err instanceof Error ? err.message : String(err);
+      }
+    }
     const prefs = usePrefsStore.getState();
     const store = this.store.getState();
     await this.runnerLauncher.startCreated({
@@ -1247,7 +1275,7 @@ export class Controller {
       autoStart: prefs.runnerAutoStart,
       liveAccountIds: store.connected ? new Set(store.online) : null,
     });
-    return { agent, pat };
+    return { agent, pat, poolError };
   }
 
   updateAgent(
