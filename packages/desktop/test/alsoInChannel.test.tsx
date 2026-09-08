@@ -13,6 +13,7 @@ import { en } from '../src/i18n/en';
 // 이 파일이 조용히 옛 문구를 지킨다. jsdom 은 영어라 영어 사전이 뜬다.
 const RECENT_REPLIES = en['message.recentReplies'];
 const CHANNEL_ECHO = en['message.channelEcho'];
+const ALSO_POST = en['thread.alsoPostToChannel'];
 
 // #231: 스레드 답을 채널에도 함께 올린다. **메시지는 하나**이고 두 곳에 보인다 —
 // 그래서 이 파일의 회귀선은 "같은 id 가 두 화면에 각각 뜨는가"를 본다.
@@ -161,7 +162,7 @@ describe('#231 스레드 답을 채널에도 함께 올린다', () => {
   it('스레드 답 작성기에서 채널에도 올리기를 켜면 그대로 전달된다', () => {
     const c = fakeController();
     render(<ThreadPanel />);
-    fireEvent.click(screen.getByLabelText('채널에도 올리기'));
+    fireEvent.click(screen.getByLabelText(ALSO_POST));
     const box = screen.getByPlaceholderText('Reply…') as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: 'on it' } });
     fireEvent.keyDown(box, { key: 'Enter' });

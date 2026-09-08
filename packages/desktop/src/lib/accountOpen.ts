@@ -1,4 +1,5 @@
 import type { AccountView } from '@murmur/shared';
+import type { Translate } from '../i18n';
 import type { SectionId } from '../components/settings/sections';
 import { canSeeAgentConfig } from './agentConfigGate';
 
@@ -45,6 +46,9 @@ export function accountOpen(
   account: AccountView | undefined,
   viewer: Viewer,
   { onOpenDirectory, onOpenSettings }: AccountOpeners,
+  // 번역기를 **맨 뒤에 필수로** 받는다 — 기본값을 주면 부르는 화면이 안 넘겨도 컴파일이
+  // 통과하고 그 화면의 접근 이름만 한 언어로 굳는다(`lastTurnAgo`·`inboxRow` 와 같은 규약).
+  t: Translate,
 ): AccountOpen | null {
   if (!account) return null;
 
@@ -64,13 +68,13 @@ export function accountOpen(
   if (canSeeAgentConfig(account, viewer) && onOpenSettings) {
     return {
       run: () => onOpenSettings('agents', account.id),
-      label: `${account.handle} 에이전트 설정 열기`,
+      label: t('accountOpen.agentConfig', { handle: account.handle }),
     };
   }
   if (onOpenDirectory) {
     return {
       run: () => onOpenDirectory(account.id),
-      label: `${account.handle} 프로필 열기`,
+      label: t('accountOpen.profile', { handle: account.handle }),
     };
   }
   return null;

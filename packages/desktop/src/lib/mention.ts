@@ -1,4 +1,5 @@
 import { CHANNEL_MENTION_HANDLE, denormalizeMentions, fillSystemAccount, MENTION_PATTERN, MENTION_TOKEN_PATTERN, mentionedHandles, mentionScanText, type MessageRow, renderMentions, splitCode } from '@murmur/shared';
+import type { Translate } from '../i18n';
 
 // 멘션 문법은 @murmur/shared 에 있다 — 서버의 알림 발송과 같은 규칙을 봐야 한다. 갈라지면
 // 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(me@x.com), 강조된
@@ -55,11 +56,14 @@ export type MessagePart =
 export function splitMentions(
   body: string, knownHandles: string[], groupHandles: string[] = [],
   accountsMap?: Map<string, string>,
+  // 못 찾은 계정 자리에 세울 말이 사전을 지난다. **맨 뒤에 두되 선택이다** — 이 함수는
+  // `accountsMap` 없이도 불리고(그때는 그 말이 안 쓰인다), 있는 호출처만 넘기면 된다.
+  t?: Translate,
 ): MessagePart[] {
   // <@id> 토큰이 있으면 현재 handle 로 렌더링한다(#271)
   let processedBody = body;
   if (accountsMap && accountsMap.size > 0) {
-    processedBody = renderMentions(body, accountsMap, '알 수 없음');
+    processedBody = renderMentions(body, accountsMap, t ? t('mention.unknownAccount') : 'unknown');
   }
   // `@channel`(#225)은 그 handle 의 계정이 없어도 칠한다 — 서버가 채널 전체에 알림을
   // 보내기 때문이다. 여기서 빼면 위 주석이 경계하는 바로 그 불일치가 된다: 강조되지 않은
