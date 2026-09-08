@@ -85,8 +85,12 @@ describe('#141 러너 릴레이 — 접속과 announce', () => {
     // 불가)으로 읽고, 뷰어에 writer 차례를 주지 않는다 — 선언이 곧 기능의 존재 증명이다.
     // 능력 목록은 **서버가 읽는 계약**이라 값으로 고정한다 — 늘어날 때 이 줄이 함께
     // 바뀌어야 서버 쪽 분기도 같이 검토된다(구 러너는 없는 능력을 선언하지 않는다).
+    // `'cancel'` 이 늘어난 자리(3단계). 이 줄이 바뀌었으므로 서버 쪽 분기도 함께 봤다:
+    // `hub.cancelSession` 이 caps 에 'cancel' 이 없으면 프레임을 **보내지 않고** 즉시
+    // `runner_outdated` 를 낸다 — 구 러너는 이 프레임을 조용히 버리므로 기다리는 것은
+    // 곧 원인 없는 침묵이다(`server/src/ws/relay.ts` 의 같은 판정).
     expect(d.sent[0]).toEqual({
-      type: 'announce', sessions: [], caps: ['input', 'interactive', 'attention'],
+      type: 'announce', sessions: [], caps: ['input', 'interactive', 'attention', 'cancel'],
     });
 
     const session = client.openSession({ ...SESSION });

@@ -478,3 +478,72 @@ describe('#141-7 attach 는 턴의 권한을 바꾸지 않는다', () => {
     expect(audit.rowCount).toBe(1);
   });
 });
+
+/**
+ * **중단**(Agents 관제 3단계) — `POST /agent-sessions/:id/cancel`.
+ *
+ * 여기서 지키는 것은 셋이다:
+ *
+ * 1. 인가가 **attach 와 같다**(소유자·admin). 남의 에이전트의 일을 멈추는 것이 화면을
+ *    보는 것보다 가벼울 이유가 없다.
+ * 2. 러너에게 **`session.cancel` 프레임이 실제로 간다** — 누가 눌렀는지와 함께.
+ *    그 이름이 중단된 턴의 실패 카드에 들어간다.
+ * 3. **못 보내는 사유를 가른다.** caps 에 'cancel' 이 없는 구 러너는 이 프레임을 조용히
+ *    버리므로, 기다리지 않고 즉시 409 `runner_outdated` 다 — 사람이 할 일이 "러너를
+ *    올려라"이고, 그것은 "러너를 띄워라"(`no_runner`)와 다른 일이다.
+ */
+describe('중단 — POST /agent-sessions/:id/cancel (3단계)', () => {
+  it('소유자가 누르면 러너에게 session.cancel 이 가고 202 다', async () => {
+    const runner = await connectRunner(agentPat);
+    runner.send({ type: 'announce', sessions: [session({ sessionId: 'cancel-1' })], caps: ['cancel'] });
+    await waitForSession(ownerToken, 'cancel-1');
+    const res = await app.inject({
+      method: 'POST', url: '/agent-sessions/cancel-1/cancel', headers: auth(ownerToken),
+    });
+    expect(res.statusCode).toBe(202);
+    await waitFor(() => runner.received.some((f) => f.type === 'session.cancel' && f.sessionId === 'cancel-1'));
+    const frame = runner.received.find((f) => f.type === 'session.cancel');
+    // 누가 눌렀는지가 프레임에 실린다 — 러너가 실패 카드 문구에 그 이름을 적는다.
+    expect(frame).toMatchObject({ type: 'session.cancel', sessionId: 'cancel-1' });
+    expect((frame as { byHandle: string }).byHandle).toBeTruthy();
+    // 감사에는 사건과 세션만 남는다(파일 머리 주석) — 러너 종료와 **다른 사건**이다.
+    const audit = await pool.query<{ action: string }>(
+      `select action from audit_log where action = 'agent.turn.canceled' and target = $1`, [agentId],
+    );
+    expect(audit.rowCount).toBe(1);
+    await runner.close();
+  });
+
+  it('소유자도 admin 도 아니면 403 이고, 러너에게 아무것도 가지 않는다', async () => {
+    const runner = await connectRunner(agentPat);
+    runner.send({ type: 'announce', sessions: [session({ sessionId: 'cancel-2' })], caps: ['cancel'] });
+    await waitForSession(ownerToken, 'cancel-2');
+    const res = await app.inject({
+      method: 'POST', url: '/agent-sessions/cancel-2/cancel', headers: auth(strangerToken),
+    });
+    expect(res.statusCode).toBe(403);
+    expect(runner.received.some((f) => f.type === 'session.cancel')).toBe(false);
+    await runner.close();
+  });
+
+  it('없는 세션은 404 다 — 누르는 사이에 턴이 스스로 끝난 것이 대부분이다', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/agent-sessions/nope/cancel', headers: auth(adminToken),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('caps 에 cancel 이 없는 러너는 409 runner_outdated 다 — 기다리면 원인 없는 침묵이 된다', async () => {
+    const runner = await connectRunner(agentPat);
+    // 구 러너를 흉내낸다: attach 는 되지만 중단은 못 한다.
+    runner.send({ type: 'announce', sessions: [session({ sessionId: 'cancel-3' })], caps: ['input'] });
+    await waitForSession(ownerToken, 'cancel-3');
+    const res = await app.inject({
+      method: 'POST', url: '/agent-sessions/cancel-3/cancel', headers: auth(ownerToken),
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('runner_outdated');
+    expect(runner.received.some((f) => f.type === 'session.cancel')).toBe(false);
+    await runner.close();
+  });
+});

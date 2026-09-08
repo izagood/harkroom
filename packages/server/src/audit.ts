@@ -79,6 +79,9 @@ export type AuditAction =
   // — 묶어도 남는 것이 "언제 쳤는가"라면 덜 남긴 것이 아니다. 내용은 여전히 없다:
   // 바이트 **수**는 base64 길이 산술로만 세고, 서버는 그 base64 를 열지 않는다.
   | 'agent.attached' | 'agent.detached'
+  // 사람이 도는 턴 하나를 멈춘 것(Agents 관제 3단계). 러너 종료(`agent.stop.requested`)와
+  // **다른 사건이다** — 이쪽은 러너가 살아 있고 다음 멘션을 정상으로 받는다.
+  | 'agent.turn.canceled'
   // #337: 사람이 스스로 에이전트의 인터랙티브 터미널을 열었다(스펙 §5-2 결정 4). attach
   // (관찰)와 별도 액션이다 — 셸을 여는 것은 관찰보다 강한 행위라, 감사 조회가 "봤다"와
   // "열었다"를 액션 하나로 골라낼 수 있어야 한다. detail 은 {sessionId, channelId,

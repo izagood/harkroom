@@ -897,6 +897,40 @@ export class Controller {
    * 멈춘 것으로 보고 같은 링크를 계속 누른다. 사유를 셋으로 나누는 이유: 지워진 것과
    * 볼 수 없는 것과 연결이 끊긴 것은 사람이 다음에 할 일이 서로 다르다.
    */
+  /**
+   * 도는 턴들을 **그만두게 한다**(Agents 관제 3단계). 화면은 줄·스레드·전부를 같은 이
+   * 경로로 보낸다 — 서버에도 묶음 전용 문이 없다(무엇이 한 묶음인지는 화면의 일이다).
+   *
+   * ## 404 는 실패가 아니다
+   *
+   * 누르는 사이에 그 턴이 스스로 끝난 것이고(26초짜리 턴에서 흔하다), **사람이 원한
+   * 결과와 같다.** 그것을 통지로 올리면 성공한 중단마다 빨간 줄이 뜬다.
+   *
+   * ## 여러 개를 한 번에 눌러도 통지는 하나다
+   *
+   * 스레드 하나에 턴이 넷이면 실패도 넷이 될 수 있고, 그 넷이 대개 **같은 원인**이다
+   * (러너가 안 붙어 있거나 구 버전이다). 네 줄을 쌓으면 사람은 원인 하나를 네 번 읽는다.
+   *
+   * 성공은 통지하지 않는다: 중단됐다는 증거는 이 왕복이 아니라 **목록에서 그 줄이 사라지고
+   * 스레드에 실패 카드가 뜨는 것**이다. 서버의 202 는 "러너에게 넘겼다"까지다.
+   */
+  async cancelAgentTurns(sessionIds: readonly string[]): Promise<void> {
+    let firstFailure: string | null = null;
+    for (const sessionId of sessionIds) {
+      try {
+        await this.api.cancelAgentSession(sessionId);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) continue;
+        // 서버가 쓴 문구를 그대로 올린다 — `no_runner`(러너를 띄워라)와
+        // `runner_outdated`(러너를 올려라)는 사람이 할 일이 다르고, 그 구분은 서버가 썼다.
+        if (!firstFailure) firstFailure = e instanceof Error ? e.message : String(e);
+      }
+    }
+    if (firstFailure) {
+      this.store.getState().set({ notice: `Could not stop that turn — ${firstFailure}` });
+    }
+  }
+
   async openMessage(messageId: string): Promise<void> {
     let target: MessageRow;
     try {

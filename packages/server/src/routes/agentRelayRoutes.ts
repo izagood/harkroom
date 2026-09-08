@@ -185,6 +185,71 @@ export async function registerAgentRelayRoutes(
    * 티켓 하나로 남의 세션에 붙는다. 인가는 여기(Bearer 인증된 REST)서 한 번 하고,
    * 소켓은 그 결정을 운반하는 티켓만 소모한다.
    */
+  /**
+   * 이 턴을 **그만두게 한다**(Agents 관제 3단계). 인가는 attach 와 **같은 판정**이다
+   * (`checkOwnerOrAdmin`) — 남의 에이전트의 일을 멈추는 것이 화면을 보는 것보다 가벼울
+   * 이유가 없다.
+   *
+   * ## 러너 종료와 다른 문이다
+   *
+   * `POST /accounts/agents/:id/stop` 은 "이 에이전트는 당분간 아무 말도 못 한다"이고
+   * 되살리는 데 사람 손이 필요하다. 이 문은 "이 일을 그만둬라"이고 러너는 살아 있어
+   * 다음 멘션을 정상으로 받는다. 두 문을 하나로 합치면 사람은 폭주를 멈추려고 팀원을
+   * 해고한다 — 그것이 이 문을 낸 이유다.
+   *
+   * ## 상태 코드
+   *
+   * - `202` — 러너에게 넘겼다. **끝났다는 뜻이 아니다**: 하네스가 SIGTERM 을 정리하는
+   *   시간이 있고, 끝의 증거는 그 턴이 스레드에 남기는 실패 카드다.
+   * - `404 not_found` — 그런 세션이 없다. 누르는 사이에 턴이 스스로 끝난 것이 대부분이라
+   *   화면은 이것을 실패로 그리지 않아야 한다(사람이 원한 결과와 같다).
+   * - `409 no_runner` · `409 runner_outdated` — 보낼 길이 없다. 사유를 가르는 이유는
+   *   사람이 할 일이 다르기 때문이다: 앞은 러너를 띄우는 것, 뒤는 러너를 새 버전으로
+   *   올리는 것이다.
+   *
+   * 일괄 중단(스레드 하나 · 전부)을 위한 별도 문을 두지 않는다: 화면이 세션 목록을 이미
+   * 갖고 있으므로 이 문을 여러 번 부르면 되고, 서버에 묶음 판정을 두면 "무엇이 한 묶음인가"
+   * 가 두 곳(화면·서버)에서 갈린다.
+   */
+  app.post<{ Params: { id: string } }>('/agent-sessions/:id/cancel', {
+    preHandler: app.requireAccount,
+  }, async (req, reply) => {
+    const account = req.account!;
+    const session = hub.getSession(req.params.id);
+    if (!session) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such session' } });
+    }
+    const verdict = await checkOwnerOrAdmin(pool, account, session.agentAccountId);
+    if (!verdict.ok) {
+      return reply.code(verdict.status).send({ error: { code: verdict.code, message: verdict.message } });
+    }
+    // **누가 눌렀는지를 러너에게 넘긴다.** 중단된 턴은 실패 카드에 이 이름을 적는다 —
+    // 여럿이 같은 스레드를 보는 자리에서 "누가 멈췄나"는 다음 판단의 재료이고, 이름이
+    // 없으면 그 카드는 에이전트가 스스로 고장난 것처럼 읽힌다.
+    const outcome = hub.cancelSession(session.sessionId, account.handle);
+    if (outcome === 'not_found') {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such session' } });
+    }
+    if (outcome !== 'ok') {
+      return reply.code(409).send({
+        error: {
+          code: outcome,
+          message: outcome === 'no_runner'
+            ? 'that agent has no runner attached — nothing can be signalled'
+            : 'that runner is too old to stop a turn — update it',
+        },
+      });
+    }
+    // 감사에는 사건과 세션만(파일 머리 주석). 중단은 사람이 남의 일을 멈춘 것이라
+    // attach 와 같은 무게로 남긴다.
+    await recordAudit(pool, {
+      action: 'agent.turn.canceled',
+      ...actorOf(req),
+      target: session.agentAccountId,
+      detail: { sessionId: session.sessionId, channelId: session.channelId },
+    }, req);
+    return reply.code(202).send({ ok: true });
+  });
   app.post<{ Params: { id: string } }>('/agent-sessions/:id/attach', {
     preHandler: app.requireAccount,
   }, async (req, reply) => {

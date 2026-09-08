@@ -2183,6 +2183,9 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
       acceptsInput: true,
       // 턴의 끝이 뷰어 수에 걸려 있다 — 릴레이가 이 훅으로 알려 준다.
       onViewerCount: expect.any(Function),
+      // 사람이 [중단] 을 누르면 릴레이가 이 훅으로 알린다(3단계). **죽이는 것은 이 턴이다** —
+      // 넘기지 않으면 서버는 caps 로 "할 수 있다"고 말해 놓고 프레임은 아무 일도 못 한다.
+      onCancel: expect.any(Function),
     }]);
     // 바이트가 **변형 없이** 그대로 온다 — 문자열로 뜨면 잘린 UTF-8 이 U+FFFD 가 된다.
     expect(r.bytes).toHaveLength(1);
@@ -2548,6 +2551,77 @@ describe('실행 모델 교체 — 멘션 턴이 TUI 로 뜬다 (2026-09-08)', (
   });
 });
 
+/**
+ * **사람이 턴을 그만두게 한다**(Agents 관제 3단계, `session.cancel`).
+ *
+ * 지키는 것 둘:
+ *
+ * 1. **죽이는 것은 턴이다.** 릴레이는 `onCancel` 로 알리기만 한다 — 그 턴만이 PTY 손잡이와
+ *    끝 처리(실패 카드·💬 제거·재시도 회계)를 갖는다. 릴레이가 직접 kill 하면 종료 경로가
+ *    둘로 갈라져 한쪽은 아무 흔적도 남기지 않는다.
+ * 2. **실패 문구가 사람을 가리킨다.** `harness 종료 143` 으로 적으면 스레드를 보던 사람은
+ *    에이전트가 고장난 줄 알고 러너 로그를 뒤진다 — 원인이 하네스가 아니라 사람이고,
+ *    그때 사람이 할 일은 아무것도 없다.
+ */
+describe('중단 — 사람이 도는 턴을 멈춘다 (3단계)', () => {
+  /** 중단 손잡이를 잡고 kill 을 기록하는 가짜 PTY. 위 `endHarness` 와 같은 모양이다. */
+  function cancelHarness() {
+    let killed: string | null = null;
+    let cancel: ((byHandle: string) => void) | undefined;
+    return {
+      killed: () => killed,
+      cancelBy: (handle: string) => cancel?.(handle),
+      relay: {
+        openSession(input: { onCancel?: (byHandle: string) => void }) {
+          cancel = input.onCancel;
+          return { sessionId: 'cancel-1', push: () => {}, bindInput: () => {}, needsAttention: () => {}, close: () => {} };
+        },
+      },
+      /** 중단을 맞고 143 으로 죽는 하네스 — SIGTERM 을 받은 프로세스의 종료 코드다. */
+      script: (after: () => Promise<void> | void) => async (_plan: TurnPlan, opts: {
+        onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+      }) => {
+        opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+        await after();
+        return { exitCode: 143, timedOut: false, tail: '' };
+      },
+    };
+  }
+
+  it('[중단] 은 그 턴의 PTY 에 SIGTERM 을 보낸다 — 유예 뒤 SIGKILL 승격은 runPtyTurn 이 갖는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = cancelHarness();
+    const { deps, runTurn } = await makeDeps(fake, { relay: h.relay });
+    runTurn.script = h.script(() => { h.cancelBy('jaebin'); });
+    await expect(
+      runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
+    ).rejects.toThrow(/중단/);
+    expect(h.killed()).toBe('SIGTERM');
+  });
+
+  it('실패 문구가 누른 사람을 가리킨다 — 하네스 종료 코드로 적지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = cancelHarness();
+    const { deps, runTurn } = await makeDeps(fake, { relay: h.relay });
+    runTurn.script = h.script(() => { h.cancelBy('jaebin'); });
+    await expect(
+      runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
+    ).rejects.toThrow(/@jaebin 가 이 턴을 중단했다/);
+  });
+
+  it('중단이 없으면 문구는 그대로 하네스를 가리킨다 — 두 실패를 뭉치지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = cancelHarness();
+    const { deps, runTurn } = await makeDeps(fake, { relay: h.relay });
+    runTurn.script = h.script(() => {});
+    await expect(
+      runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
+    ).rejects.toThrow(/harness 종료 143/);
+  });
+});
 describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
   /** 회수 손잡이를 잡고 kill 을 기록하는 가짜 PTY. 뷰어 수도 밖에서 흔들 수 있다. */
   function endHarness() {

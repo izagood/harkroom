@@ -1895,6 +1895,14 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
               채널 전환 · 스레드 패널 · 실패 통지를 이미 다 한다(퍼머링크와 같은 길).
             */
             onOpenThread={(rootId) => { void getController().openMessage(rootId); }}
+            /*
+              중단(3단계). 줄·스레드·전부가 **한 경로**로 간다 — 묶음 판정은 화면의 일이고
+              (`AgentTurns` 의 `onCancelTurns` 주석), 실패 통지를 하나로 묶는 것은
+              컨트롤러의 일이다(같은 원인을 네 번 읽히지 않게).
+            */
+            onCancelTurns={(turns) => {
+              void getController().cancelAgentTurns(turns.map((turn) => turn.sessionId));
+            }}
           />
         )}
         {panel === 'agents' && (

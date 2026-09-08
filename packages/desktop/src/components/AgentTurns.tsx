@@ -31,12 +31,15 @@
  * 물어서 답을 못 받은 경우는 아예 다른 상태로 그린다(`unknown`): **0 과 모름을 같은 모양으로
  * 그리면** 사람은 폭주가 멈춘 줄 안다.
  */
+import { useState } from 'react';
+import type { AgentSessionView } from '@murmur/shared';
 import type { AgentTurnsSnapshot } from '../lib/agentTurns';
 import { groupTurnsByThread } from '../lib/agentTurns';
+import { ConfirmDialog } from './ConfirmDialog';
 import { runningLabel } from '../lib/time';
 import { useLocale, useT } from '../i18n/useT';
 
-export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, now = Date.now() }: {
+export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, onCancelTurns, now = Date.now() }: {
   snapshot: AgentTurnsSnapshot;
   /** 계정 id → `@handle`. 스토어 모양을 이 컴포넌트가 알지 않게 함수로 받는다. */
   handleOf: (accountId: string) => string;
@@ -46,11 +49,26 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, now
    * 패널·실패 통지**가 퍼머링크와 같은 경로로 처리된다 — 여기서 다시 조립하지 않는다.
    */
   onOpenThread: (threadRootId: string) => void;
+  /**
+   * 이 턴들을 **그만두게 한다**(3단계). 한 줄이든 한 스레드든 전부든 **같은 콜백**이다 —
+   * 서버에도 묶음 전용 문이 없다(화면이 무엇을 한 묶음으로 보는지는 화면의 일이고, 서버에
+   * 그 판정을 두면 두 곳에서 갈린다).
+   *
+   * 없으면 중단 버튼을 **그리지 않는다**. 눌러도 아무 일이 없는 버튼을 만들지 않는다
+   * (design.md §4) — 배선을 빠뜨린 화면에서 조용히 죽은 버튼이 서는 대신 버튼이 부재한다.
+   */
+  onCancelTurns?: (turns: AgentSessionView[]) => void;
   /** 회귀선이 시각을 고정할 수 있어야 한다(`lib/time.ts::agoLabel` 이 `now` 를 받는 이유와 같다). */
   now?: number;
 }) {
   const t = useT();
   const locale = useLocale();
+  /**
+   * `전부 중단` 확인 겹창(3단계). **줄·스레드 단위에는 확인을 두지 않는다** — 그 둘은
+   * 사람이 무엇을 멈추는지 보면서 누르는 것이고, 확인을 세 곳에 다 두면 확인 자체가
+   * 장식이 된다. 전부는 다르다: 목록 밖의 스레드까지 멈추므로 남의 정상 작업이 함께 죽는다.
+   */
+  const [confirmAll, setConfirmAll] = useState<AgentSessionView[] | null>(null);
 
   const frame = (children: React.ReactNode) => (
     <section data-testid="agent-turns" className="px-2 pb-2">
@@ -82,6 +100,18 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, now
     );
   }
 
+  /**
+   * 묶음 중단이 실제로 멈출 턴들. **사람이 조종 중인 턴(`mode === 'interactive'`)은 뺀다** —
+   * 그 화면 앞에는 사람이 앉아 있고, 목록에서 누른 한 번으로 남의 터미널을 죽이는 것은
+   * 이 기능이 막으려는 사고(의도 없이 여럿을 건드리는 것)와 같은 모양이다. 그 턴은 자기
+   * 창에서 끝내면 된다(Ctrl-C 가 그 세션에는 실제로 통한다 — `acceptsInput` 이 참이다).
+   *
+   * `mode` 가 없는 턴(구 러너)은 **뺀 것이 아니라 모르는 것**이라 포함한다: 멘션 턴이
+   * 대다수이고, 모른다는 이유로 중단에서 제외하면 폭주를 멈추는 손이 조용히 반쪽이 된다.
+   */
+  const stoppable = (turns: readonly AgentSessionView[]): AgentSessionView[] =>
+    turns.filter((turn) => turn.mode !== 'interactive');
+
   const groups = groupTurnsByThread(snapshot.turns);
   if (!groups.length) {
     return frame(
@@ -96,9 +126,32 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, now
 
   return frame(
     <>
-      <p data-testid="agent-turns-count" className="px-2 pb-1 text-meta text-state-running">
-        {t('agentTurns.count', { n: snapshot.turns.length })}
-      </p>
+      <div className="flex items-center gap-2 px-2 pb-1">
+        <p data-testid="agent-turns-count" className="text-meta text-state-running">
+          {t('agentTurns.count', { n: snapshot.turns.length })}
+        </p>
+        {onCancelTurns && stoppable(snapshot.turns).length > 1 && (
+          /* **둘 이상일 때만 선다.** 하나뿐이면 그 줄의 [중단] 과 같은 일을 하는 두 번째
+             버튼이 되고, 같은 일을 하는 길이 둘이면 사람은 매번 어느 쪽인지 고른다. */
+          <button type="button" data-testid="agent-turns-cancel-all"
+            onClick={() => setConfirmAll(stoppable(snapshot.turns))}
+            className="ml-auto shrink-0 rounded px-1.5 py-0.5 text-meta text-danger hover:bg-danger-surface">
+            {t('agentTurns.cancelAll')}
+          </button>
+        )}
+      </div>
+      {confirmAll && (
+        <ConfirmDialog
+          title={t('agentTurns.cancelAllTitle', { n: confirmAll.length })}
+          detail={t('agentTurns.cancelDetail')}
+          confirmLabel={t('agentTurns.cancelConfirm')}
+          cancelLabel={t('agentTurns.cancelKeep')}
+          /* 되돌릴 수 없다 — 중단된 턴은 다시 이어지지 않고 새 멘션으로만 다시 시작한다. */
+          danger
+          onConfirm={() => { onCancelTurns?.(confirmAll); setConfirmAll(null); }}
+          onCancel={() => setConfirmAll(null)}
+        />
+      )}
       <ul className="flex flex-col gap-1">
         {groups.map((group) => {
           const root = group.threadRootId;
@@ -110,23 +163,44 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, now
                 러너가 스레드를 말하지 않은 묶음은 **버튼이 아니다** — 눌러도 갈 곳이 없는
                 버튼을 그리지 않는다(design.md §4). 그 사실을 `title` 이 말한다.
               */}
-              {root ? (
-                <button type="button" data-testid={`agent-turns-open-${root}`}
-                  onClick={() => onOpenThread(root)}
-                  className="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-surface-hover">
-                  <span className="truncate text-meta font-medium text-fg">{channelLabel(group.channelId)}</span>
-                  <span className="ml-auto shrink-0 text-meta text-state-running">
-                    {t('agentTurns.count', { n: group.turns.length })}
-                  </span>
-                </button>
-              ) : (
-                <div className="flex items-center gap-2 px-2 py-1" title={t('agentTurns.noThread')}>
-                  <span className="truncate text-meta font-medium text-fg-muted">{channelLabel(group.channelId)}</span>
-                  <span className="ml-auto shrink-0 text-meta text-state-running">
-                    {t('agentTurns.count', { n: group.turns.length })}
-                  </span>
-                </div>
-              )}
+              {/*
+                묶음 머리는 **버튼 하나가 아니라 줄**이다(3단계). 이동과 중단을 한 버튼에
+                담을 수 없고, 중단을 이동 버튼 안에 중첩하면 누를 때마다 두 일이 함께
+                일어난다 — 그것이 바로 이 기능이 막으려는 사고의 모양이다.
+              */}
+              <div className="flex items-center gap-1 px-2 py-1">
+                {root ? (
+                  <button type="button" data-testid={`agent-turns-open-${root}`}
+                    onClick={() => onOpenThread(root)}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                    <span className="truncate text-meta font-medium text-fg">{channelLabel(group.channelId)}</span>
+                    <span className="ml-auto shrink-0 text-meta text-state-running">
+                      {t('agentTurns.count', { n: group.turns.length })}
+                    </span>
+                  </button>
+                ) : (
+                  <div className="flex min-w-0 flex-1 items-center gap-2" title={t('agentTurns.noThread')}>
+                    <span className="truncate text-meta font-medium text-fg-muted">{channelLabel(group.channelId)}</span>
+                    <span className="ml-auto shrink-0 text-meta text-state-running">
+                      {t('agentTurns.count', { n: group.turns.length })}
+                    </span>
+                  </div>
+                )}
+                {/*
+                  **스레드가 중단의 정본 단위다.** 폭주는 스레드에 갇혀 일어나므로 사람이
+                  실제로 쓰게 될 버튼은 대개 이것 하나다. 여기에는 확인을 두지 않는다 —
+                  무엇을 멈추는지 보면서 누르는 자리이고, 확인이 세 곳에 다 있으면 확인이
+                  장식이 된다(`전부` 만 목록 밖까지 멈추므로 확인을 받는다).
+                */}
+                {onCancelTurns && stoppable(group.turns).length > 0 && (
+                  <button type="button" data-testid={`agent-turns-cancel-group-${group.channelId}-${root ?? 'root'}`}
+                    onClick={() => onCancelTurns(stoppable(group.turns))}
+                    title={t('agentTurns.cancelThreadTitle')}
+                    className="shrink-0 rounded px-1.5 py-0.5 text-meta text-danger hover:bg-danger-surface">
+                    {t('agentTurns.cancelThread')}
+                  </button>
+                )}
+              </div>
               <ul>
                 {group.turns.map((turn) => {
                   const startedAt = Date.parse(turn.startedAt);
@@ -148,6 +222,19 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, now
                       <span className="ml-auto shrink-0 text-fg-subtle">
                         {Number.isFinite(startedAt) ? runningLabel(Math.max(0, now - startedAt), locale, t) : turn.harness}
                       </span>
+                      {/*
+                        **사람이 조종 중인 턴에는 이 버튼이 없다** — 부재이지 비활성이 아니다.
+                        그 화면 앞에는 사람이 앉아 있고, 그 세션은 입력을 받으므로(`acceptsInput`)
+                        자기 창에서 끝내는 길이 이미 있다. 비활성으로 두면 사람은 왜 못 누르는지
+                        물을 대상을 찾게 된다(`TerminalChip` 이 같은 판단을 적어 뒀다).
+                      */}
+                      {onCancelTurns && turn.mode !== 'interactive' && (
+                        <button type="button" data-testid={`agent-turn-cancel-${turn.sessionId}`}
+                          onClick={() => onCancelTurns([turn])}
+                          className="shrink-0 rounded px-1 text-danger hover:bg-danger-surface">
+                          {t('agentTurns.cancel')}
+                        </button>
+                      )}
                     </li>
                   );
                 })}
