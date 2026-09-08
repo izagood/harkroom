@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import type { AgentDefaults } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { AgentDefaultsSettings } from '../src/components/settings/AgentDefaultsSettings';
 import { SETTINGS_GROUPS } from '../src/components/settings/sections';
@@ -30,8 +31,17 @@ const asAdmin = (isAdmin = true) => {
   useAppStore.getState().set({ me: acc('u1', 'jaebin', 'human', isAdmin) });
 };
 
-beforeEach(() => asAdmin());
-afterEach(() => cleanup());
+// **언어를 고정한다.** 이 파일이 재는 것은 화면이 무엇을 보내고 무엇을 막는가이지
+// 문구의 언어가 아니다 — 언어를 재는 자리는 `i18n.test.tsx` 하나이고, 두 곳에서 재면
+// 문구를 고칠 때 한쪽만 고쳐진다.
+beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
+  asAdmin();
+});
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 describe('Agent defaults — 목차의 별도 항목이다', () => {
   it('설정 목차에 서 있고 Agents 바로 뒤다', () => {

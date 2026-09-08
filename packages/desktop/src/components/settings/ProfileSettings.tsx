@@ -5,6 +5,7 @@ import { ApiError } from '../../lib/api';
 import { AVATAR_ACCEPT, AVATAR_FORMATS } from '../../lib/avatar';
 import { Identity } from '../Identity';
 import { ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
+import { useT } from '../../i18n/useT';
 import { AvatarStatus, useAvatarEdit } from './avatarEdit';
 
 /**
@@ -16,6 +17,7 @@ import { AvatarStatus, useAvatarEdit } from './avatarEdit';
  * 그게 바로 `Identity` 주석이 못박은 "하나의 사실이 두 곳에 유지된다"다.
  */
 function AvatarRow() {
+  const t = useT();
   const me = useActiveStore((s) => s.me);
   const apply = useCallback(
     (file: File | null, onProgress?: (f: number) => void) => getController().setAvatar(file, onProgress),
@@ -56,13 +58,13 @@ function AvatarRow() {
                 disabled={edit.busy}
                 onClick={edit.confirmRemove}
               >
-                정말 지우기
+                {t('profileAvatar.removeConfirm')}
               </button>
               <button
                 className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg-muted hover:bg-surface"
                 onClick={edit.cancelRemove}
               >
-                취소
+                {t('profileAvatar.removeCancel')}
               </button>
             </>
           ) : (
@@ -88,6 +90,7 @@ function AvatarRow() {
 }
 
 function HandleRow() {
+  const t = useT();
   const me = useActiveStore((s) => s.me);
   const [editing, setEditing] = useState(false);
   const [newHandle, setNewHandle] = useState('');
@@ -111,18 +114,18 @@ function HandleRow() {
 
   const requestConfirm = () => {
     if (newHandle === me?.handle) {
-      setError('새 이름을 입력하세요.');
+      setError(t('profileName.empty'));
       return;
     }
     if (newHandle.length < 2 || newHandle.length > 32) {
-      setError('2~32자로 입력하세요.');
+      setError(t('profileName.length'));
       return;
     }
     // 서버와 **같은 문자 집합**이다(`accountRoutes.ts` 의 `^[a-z0-9_-]{2,32}$`). 여기서
     // 대문자를 통과시키면 서버가 400 을 주고, 사람은 "잘못된 이름입니다" 만 보게 된다 —
     // 무엇이 잘못됐는지는 화면 어디에도 없다. 판정을 넓게 두는 쪽이 더 나쁜 거짓말이다.
     if (!/^[a-z0-9_-]+$/.test(newHandle)) {
-      setError('소문자와 숫자, 밑줄, 하이픈만 사용할 수 있습니다.');
+      setError(t('profileName.invalidChars'));
       return;
     }
     setConfirming(true);
@@ -142,11 +145,11 @@ function HandleRow() {
       // 문구를 다듬는 순간 조용히 "변경에 실패했습니다" 로 뭉개진다 — 실제로 400 가지는
       // 그 방식으로는 한 번도 맞지 않았다(오류 메시지에 상태 코드가 들어 있지 않다).
       if (e instanceof ApiError && e.code === 'handle_taken') {
-        setError('이 이름은 이미 쓰고 있습니다.');
+        setError(t('profileName.taken'));
       } else if (e instanceof ApiError && e.status === 400) {
-        setError('쓸 수 없는 이름입니다.');
+        setError(t('profileName.unusable'));
       } else {
-        setError('변경에 실패했습니다.');
+        setError(t('profileName.failed'));
       }
     } finally {
       setBusy(false);
@@ -156,13 +159,13 @@ function HandleRow() {
   if (!editing) {
     return (
       <div className="flex items-center gap-4 px-4 py-3">
-        <span className="font-medium text-fg">불리는 이름</span>
+        <span className="font-medium text-fg">{t('profileName.heading')}</span>
         <span className="ml-auto min-w-0 truncate text-fg-muted">@{me?.handle ?? '—'}</span>
         <button
           className="shrink-0 rounded-lg border border-border px-3 py-1.5 font-medium hover:bg-surface"
           onClick={startEdit}
         >
-          바꾸기
+          {t('profileName.start')}
         </button>
       </div>
     );
@@ -171,14 +174,14 @@ function HandleRow() {
   return (
     <div className="flex flex-col gap-3 px-4 py-3">
       <div className="flex items-center gap-4">
-        <span className="font-medium text-fg">불리는 이름</span>
+        <span className="font-medium text-fg">{t('profileName.heading')}</span>
         <div className="ml-auto flex items-center gap-2">
           <input
             type="text"
             value={newHandle}
             onChange={(e) => setNewHandle(e.target.value)}
             className="w-40 rounded-lg border border-border bg-field px-2 py-1 text-fg focus:border-accent focus:outline-none"
-            placeholder="새 이름"
+            placeholder={t('profileName.input')}
           />
           {!confirming ? (
             <>
@@ -186,13 +189,13 @@ function HandleRow() {
                 className="rounded-lg border border-border px-3 py-1 font-medium hover:bg-surface"
                 onClick={cancelEdit}
               >
-                취소
+                {t('profileName.cancel')}
               </button>
               <button
                 className="rounded-lg bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover"
                 onClick={requestConfirm}
               >
-                확인
+                {t('profileName.confirm')}
               </button>
             </>
           ) : (
@@ -202,23 +205,25 @@ function HandleRow() {
                 onClick={() => setConfirming(false)}
                 disabled={busy}
               >
-                취소
+                {t('profileName.cancel')}
               </button>
               <button
                 className="rounded-lg bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
                 onClick={apply}
                 disabled={busy}
               >
-                {busy ? '...' : '적용'}
+                {busy ? '...' : t('profileName.apply')}
               </button>
             </>
           )}
         </div>
       </div>
+      {/* 두 문장이 **한 자리에 함께** 서는 것이 이 확인의 요점이라(범위 + 되돌림 여부)
+          회귀선이 둘을 한 덩어리로 읽는다. 낱말이 아니라 그 사실을 잰다. */}
       {confirming && (
-        <div className="rounded-lg border border-warning-border bg-warning-surface p-3 text-warning">
-          <p className="font-medium">과거 메시지의 멘션도 새 이름으로 표시됩니다.</p>
-          <p className="mt-1 text-warning">이 변경은 되돌릴 수 없습니다.</p>
+        <div data-testid="handle-change-confirm" className="rounded-lg border border-warning-border bg-warning-surface p-3 text-warning">
+          <p className="font-medium">{t('profileName.effectPast')}</p>
+          <p className="mt-1 text-warning">{t('profileName.effectPermanent')}</p>
         </div>
       )}
       {error && <p role="alert" className="text-meta text-danger">{error}</p>}

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { Controller, setController } from '../src/state/controller';
 import { HandleGroupsSettings } from '../src/components/settings/HandleGroupsSettings';
 import { Composer } from '../src/components/Composer';
@@ -26,8 +27,18 @@ const seed = (isAdmin: boolean) => {
   });
 };
 
-beforeEach(() => seed(true));
-afterEach(() => { cleanup(); setController(null as unknown as Controller); });
+// **언어를 고정한다.** 이 파일이 재는 것은 화면이 무엇을 보내고 무엇을 막는가이지
+// 문구의 언어가 아니다 — 언어를 재는 자리는 `i18n.test.tsx` 하나이고, 두 곳에서 재면
+// 문구를 고칠 때 한쪽만 고쳐진다.
+beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
+  seed(true);
+});
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+  setController(null as unknown as Controller);
+});
 
 function mount(overrides: Partial<Parameters<typeof fakeApi>[0]> = {}) {
   const api = fakeApi({
