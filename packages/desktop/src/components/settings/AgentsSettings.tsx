@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
   AGENT_HARNESSES, HANDLE_PATTERN, RUNNABLE_HARNESSES,
   type AgentConfig, type AgentDefaults, type AgentTeamMemberRow, type AgentTeamRow,
@@ -30,6 +30,7 @@ import { TeamDetail } from './TeamDetail';
 import { canRelaunchAgent } from '../../lib/relaunchGate';
 import { Identity } from '../Identity';
 import { Button } from './primitives';
+import { AvatarStatus, useAvatarEdit } from './avatarEdit';
 import { useAgentPool } from './useAgentPool';
 
 /** #177: 클립보드가 없거나 거부되면 **조용히 실패하지 않는다** — 화면에 있는 그 명령
@@ -421,26 +422,22 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const dirty = selected !== null && draft !== null
     && JSON.stringify(draft) !== JSON.stringify(draftOf(selected));
 
-  const avatarPick = useRef<HTMLInputElement>(null);
-  const [avatarBusy, setAvatarBusy] = useState(false);
-
-  /** 사진을 걸거나(파일) 지운다(null). `ProfileSettings` 의 선례와 같은 모양이다. */
-  const applyAvatar = async (file: File | null): Promise<void> => {
-    if (!selected) return;
-    setAvatarBusy(true);
-    setError(null);
-    try {
-      await getController().setAgentAvatar(selected.id, file);
-    } catch {
-      // 서버가 거절하는 가장 흔한 경우는 이미지가 아닌 파일이다(매직 바이트로 판정한다) —
-      // 확장자를 믿지 않으므로 `.png` 라는 이름만으로는 통과하지 못한다.
-      setError('이미지 파일만 사진으로 쓸 수 있다');
-    } finally {
-      setAvatarBusy(false);
-      // 같은 파일을 다시 고를 수 있게 비운다 — 안 비우면 change 가 안 난다.
-      if (avatarPick.current) avatarPick.current.value = '';
-    }
-  };
+  /**
+   * 사진을 걸거나(파일) 지운다(null). 단계·확인·진행률은 `useAvatarEdit` 이 센다 —
+   * `ProfileSettings` 와 같은 것을 두 벌 세면 한쪽만 고치는 날이 온다.
+   *
+   * 오류를 `setError`(이 화면 위쪽의 공용 오류 줄)로 올리지 않는다: 사진의 실패는 사진
+   * 옆에 서야 하고, 저장 실패와 같은 자리에 겹치면 어느 조작이 실패했는지 알 수 없다.
+   */
+  const selectedId = selected?.id ?? null;
+  const applyAvatar = useCallback(
+    async (file: File | null, onProgress?: (f: number) => void): Promise<void> => {
+      if (!selectedId) return;
+      await getController().setAgentAvatar(selectedId, file, onProgress);
+    },
+    [selectedId],
+  );
+  const avatarEdit = useAvatarEdit(applyAvatar, '이미지 파일만 사진으로 쓸 수 있다');
 
   const pick = (a: AgentView) => {
     setSelected(a);
@@ -996,25 +993,40 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               새 에이전트에는 그리지 않는다 — 아직 계정이 없어 걸 대상이 없다.
             */}
             {selected && (
-              <div className="flex items-center gap-3">
-                <Identity account={selected} className="h-12 w-12 text-base" variant="avatar" />
-                <input
-                  ref={avatarPick}
-                  type="file"
-                  data-testid="agent-avatar-file"
-                  accept="image/png,image/jpeg,image/gif,image/webp,image/avif"
-                  className="hidden"
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) void applyAvatar(f); }}
-                />
-                <Button disabled={avatarBusy} onClick={() => avatarPick.current?.click()}>
-                  사진 올리기
-                </Button>
-                {selected.avatarAttachmentId && (
-                  <Button variant="danger" disabled={avatarBusy} onClick={() => void applyAvatar(null)}>
-                    지우기
+              <div>
+                <div className="flex items-center gap-3">
+                  <Identity account={selected} className="h-12 w-12 text-base" variant="avatar" />
+                  <input
+                    ref={avatarEdit.pickRef}
+                    type="file"
+                    data-testid="agent-avatar-file"
+                    accept="image/png,image/jpeg,image/gif,image/webp,image/avif"
+                    className="hidden"
+                    onChange={avatarEdit.onPicked}
+                  />
+                  <Button disabled={avatarEdit.busy} onClick={avatarEdit.openPicker}>
+                    사진 올리기
                   </Button>
-                )}
-                <span className="text-[11px] text-fg-subtle">비우면 이름에서 색을 뽑는다</span>
+                  {/*
+                    지우기는 **두 걸음**이다(같은 화면의 `confirmingDisable` 과 같은 모양).
+                    한 걸음이던 동안은 스친 클릭 하나로 사진이 사라졌고, 사라진 뒤에도
+                    아무 말이 없어 눌린 것인지조차 알 수 없었다.
+                  */}
+                  {selected.avatarAttachmentId && (avatarEdit.confirmingRemove ? (
+                    <>
+                      <Button variant="danger" disabled={avatarEdit.busy} onClick={avatarEdit.confirmRemove}>
+                        정말 지우기
+                      </Button>
+                      <Button onClick={avatarEdit.cancelRemove}>취소</Button>
+                    </>
+                  ) : (
+                    <Button variant="danger" disabled={avatarEdit.busy} onClick={avatarEdit.askRemove}>
+                      지우기
+                    </Button>
+                  ))}
+                  <span className="text-[11px] text-fg-subtle">비우면 이름에서 색을 뽑는다</span>
+                </div>
+                <AvatarStatus phase={avatarEdit.phase} />
               </div>
             )}
             <label className={label}>
