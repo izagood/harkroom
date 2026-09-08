@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, mentionedHandles, mentionedIds, normalizeMentions, readAskMeta, stripCodeSpans, type InboxEntry, type MessageRow } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, mentionedHandles, mentionedIds, mentionSearchText, normalizeMentions, readAskMeta, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { channelVisibleSql } from './channels.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
@@ -462,13 +462,14 @@ export async function postMessage(
      * 알림 판정은 **정규화된 본문의 `<@id>` 토큰**에서 한다(#271 요구 6). 옛 handle 경로를
      * 남겨 두면 두 판정이 갈라지고, 그때 본문에 남은 것과 알림이 간 곳이 달라진다.
      *
-     * 코드 구간을 한 번 더 걷어내는 이유: 사람이 코드 블록 안에 `<@uuid>` 를 **직접** 적을
-     * 수 있다. 정규화는 코드를 비껴가지만 그렇게 손으로 적힌 토큰까지 막지는 못한다 —
-     * 코드 안은 알림을 만들지 않는다는 #298 의 결정을 여기서도 같은 함수로 지킨다.
+     * 코드·인용 구간을 한 번 더 걷어내는 이유: 사람이 코드 블록이나 인용 안에 `<@uuid>` 를
+     * **직접** 적을 수 있다(에이전트가 저장된 원문을 그대로 옮겨 적으면 실제로 그렇게 된다).
+     * 정규화는 그 구간을 비껴가지만 그렇게 손으로 적힌 토큰까지 막지는 못한다 — 코드(#298)
+     * 안과 인용(#593) 안은 알림을 만들지 않는다는 결정을 여기서도 같은 함수로 지킨다.
      *
      * 작성자 자신은 걸러 낸다.
      */
-    for (const accountId of mentionedIds(stripCodeSpans(normalizedBody))) {
+    for (const accountId of mentionedIds(mentionSearchText(normalizedBody))) {
       if (accountId !== input.authorId) {
         await insertInbox(client, accountId, message.id, 'mention', notified);
       }

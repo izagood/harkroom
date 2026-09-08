@@ -1,5 +1,5 @@
 import {
-  mentionedIds, readAskMeta, readFailureMeta, readReportMeta, stripCodeSpans, type MessageRow,
+  mentionedIds, mentionSearchText, readAskMeta, readFailureMeta, readReportMeta, type MessageRow,
 } from '@murmur/shared';
 import type { Slot } from './progressGroup';
 
@@ -138,8 +138,9 @@ export function groupAgentExchanges(slots: Slot[], isAgent: IsAgent): ExchangeSl
  *   `@handle` 로 부르며 쓴 답이 여기 걸린다(`packages/agent/src/prompt.ts` 가 그렇게 쓰라고
  *   지시한다 — 이 판정과 그 지시가 한 쌍이다).
  *
- * 멘션 판정을 서버와 같은 규칙으로 한다: `stripCodeSpans` 를 먼저 거쳐 **코드 안의 토큰은
- * 부름이 아니다**(#298). 그래야 코드를 인용한 말이 "사람을 불렀다"로 오인되지 않는다.
+ * 멘션 판정을 서버와 같은 규칙으로 한다: `mentionSearchText` 를 먼저 거쳐 **코드(#298)와
+ * 인용(#593) 안의 토큰은 부름이 아니다.** 그래야 남의 말을 옮겨 적은 줄이 "사람을 불렀다"로
+ * 오인되지 않는다 — 서버가 그 줄로 알림을 만들지 않는 것과 같은 규칙이어야 한다.
  *
  * `isAgent` 가 모르는 계정은 에이전트로 치지 않으므로 사람 쪽으로 센다 — 이 파일이 택한
  * 방향(접으면 안 되는 것을 접느니 안 접는다)과 같다.
@@ -151,7 +152,7 @@ function addressesHuman(m: MessageRow, isAgent: IsAgent): boolean {
   // 이미 답한 선택은 더 이상 아무도 막지 않는다 — 기록일 뿐이므로 접혀도 된다.
   if (ask != null && ask.answeredWith == null && ask.to.kind === 'human') return true;
   // 자기 자신을 부른 것은 사람을 부른 것이 아니다(에이전트가 제 handle 을 인용할 수 있다).
-  return mentionedIds(stripCodeSpans(m.body)).some((id) => id !== m.authorId && !isAgent(id));
+  return mentionedIds(mentionSearchText(m.body)).some((id) => id !== m.authorId && !isAgent(id));
 }
 
 /** 접힌 줄이 말할 참여자 — 등장 순서를 지킨다(먼저 말한 쪽이 먼저 읽힌다). */

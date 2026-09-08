@@ -1,4 +1,4 @@
-import type { CodeSegment } from '@murmur/shared';
+import { QUOTE_LINE, type CodeSegment } from '@murmur/shared';
 import { classifyLink, type LinkTarget } from './link';
 
 /**
@@ -250,7 +250,9 @@ const HEADING = /^ {0,3}(#{1,6})[ \t]+(.*)$/;
 const RULE = /^ {0,3}(?:-{3,}|\*{3,}|_{3,})[ \t]*$/;
 const BULLET = /^([ \t]*)([-*+])[ \t]+(.*)$/;
 const ORDERED = /^([ \t]*)(\d{1,9})[.)][ \t]+(.*)$/;
-const QUOTE = /^ {0,3}>[ \t]?(.*)$/;
+// 인용(`>`)의 정규식만 여기 없다 — `QUOTE_LINE`(@murmur/shared, #593)을 그대로 쓴다.
+// 멘션 판정이 인용 줄을 빼는 데 **같은** 것을 봐야 하기 때문이다. 복사본을 두면 그리는
+// 것과 부르는 것이 갈라져, 인용으로 그려진 줄이 몰래 알림을 보낸다.
 
 /**
  * 한 줄의 토큰을 `|` 경계로 나눈다. **인라인 코드 안의 `|` 는 경계가 아니다** — 토큰이
@@ -506,7 +508,7 @@ export function parseBlocks(segments: CodeSegment[]): Block[] {
       continue;
     }
 
-    const q = QUOTE.exec(text);
+    const q = QUOTE_LINE.exec(text);
     if (q) {
       pushRun('quote', inlineOf(withoutPrefix(toks, q[1]!)));
       i += 1;

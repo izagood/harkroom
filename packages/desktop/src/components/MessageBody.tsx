@@ -2,7 +2,7 @@ import { Fragment, useMemo, type ReactNode } from 'react';
 import { useActiveStore } from '../state/communities';
 import { splitMentions } from '../lib/mention';
 import { splitLinks, type LinkTarget, type BodyPart } from '../lib/link';
-import { extractPreviewUrls } from '@murmur/shared';
+import { extractPreviewUrls, renderMentions } from '@murmur/shared';
 import { splitCode } from '../lib/code';
 import { parseBlocks, type Align, type Block, type Emphasis, type Inline } from '../lib/markdown';
 import { getExternalOpener } from '../lib/openExternal';
@@ -243,18 +243,33 @@ export function MessageBody({
   /**
    * 마크다운이 읽은 조각 하나. **글자 조각만** 멘션·링크 인식을 한 번 더 지난다 —
    * 코드와 `[글자](주소)` 는 이미 확정된 것이라 다시 나누면 안 된다.
+   *
+   * `mentions=false` 는 인용 블록이다(#593). 인용 안의 `@handle` 은 알림을 만들지 않으므로
+   * 칠하지도 않는다 — 칠하면 #298 이 경계한 거짓말이 된다: 강조된 것이 알림을 보내지 않는다.
+   * 대신 `<@id>` 토큰은 여전히 현재 handle 로 **읽히게** 바꾼다. 그러지 않으면 인용 안에서만
+   * 날 uuid 가 드러난다(이 규칙 이전에 저장된 본문을 옮겨 적으면 실제로 그렇게 된다).
+   * 링크는 그대로 산다 — 인용이 없애는 것은 "부른다" 뿐이다.
    */
-  const renderInline = (span: Inline, key: string): ReactNode => {
+  const renderInline = (span: Inline, key: string, mentions: boolean): ReactNode => {
     if (span.kind === 'code') return codeSpan(span.code, key);
     if (span.kind === 'link') {
       return withEmphasis(anchor(span.text, span.href, span.target, `${key}-a`), span, key);
     }
-    const parts = splitLinks(splitMentions(span.text, handles, groupHandles, accountsMap));
+    const text = mentions
+      ? null
+      : accountsMap && accountsMap.size > 0
+        ? renderMentions(span.text, accountsMap, '알 수 없음')
+        : span.text;
+    const parts = splitLinks(
+      text === null
+        ? splitMentions(span.text, handles, groupHandles, accountsMap)
+        : [{ kind: 'text', text }],
+    );
     return withEmphasis(parts.map((p, j) => renderPart(p, `${key}-${j}`)), span, key);
   };
 
-  const renderSpans = (spans: Inline[], key: string) =>
-    spans.map((s, i) => renderInline(s, `${key}-${i}`));
+  const renderSpans = (spans: Inline[], key: string, mentions = true) =>
+    spans.map((s, i) => renderInline(s, `${key}-${i}`, mentions));
 
   /**
    * 블록 하나. 간격을 `space-y` 가 아니라 블록마다의 `mb-*`/`last:mb-0` 으로 주는 이유:
@@ -288,7 +303,7 @@ export function MessageBody({
             data-testid="md-quote"
             className="mb-2 border-l-2 border-border pl-2 text-fg-muted last:mb-0"
           >
-            {renderSpans(block.spans, key)}
+            {renderSpans(block.spans, key, false)}
           </blockquote>
         );
       case 'rule':

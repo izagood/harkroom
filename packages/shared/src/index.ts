@@ -302,19 +302,64 @@ export const MENTION_PATTERN = `(^|[^a-zA-Z0-9_-])@(${HANDLE_PATTERN})`;
 export const MENTION_TOKEN_PATTERN = '<@([0-9a-f-]{36})>';
 
 /**
+ * 인용 줄(#593). 마크다운 인용은 **남의 말을 옮기는 자리**다 — 옮겨 적은 `@handle` 은
+ * 부르는 것이 아니다. 데스크탑 `markdown.ts` 가 인용 블록을 그릴 때 쓰는 것과 **같은**
+ * 정규식이다(거기서 여기를 import 한다): 그리는 규칙과 부르는 규칙이 갈라지면 화면에
+ * 인용으로 보이는 줄이 몰래 알림을 보낸다.
+ *
+ * `>` 뒤의 내용은 캡처로 남긴다 — 렌더러가 그 부분만 떼어 쓴다. 판정 쪽은 `test` 만 한다.
+ */
+export const QUOTE_LINE = /^ {0,3}>[ \t]?(.*)$/;
+
+/**
+ * 멘션이 유효한 구간. **원문 오프셋을 보존한다** — `normalizeMentions` 가 이 범위만 고쳐
+ * 쓰기 때문이다.
+ *
+ * 코드(#298)를 `splitCode` 로 떼어낸 뒤, 남은 평문에서 인용 줄(#593)을 더 뺀다.
+ *
+ * **인용을 `splitCode` 에 넣지 않는 이유:** 그 함수는 판정만 하는 것이 아니라 **렌더러도**
+ * 쓴다(`MessageBody`·`markdown`·`collapse`). 인용을 코드 조각으로 돌려주면 인용문이 회색
+ * 코드 상자로 그려진다. 코드와 인용은 "멘션이 아니다" 만 같고 "어떻게 보인다" 는 다르므로,
+ * 같아야 하는 층에서만 합친다.
+ */
+function mentionSpans(body: string): Array<{ text: string; start: number }> {
+  const out: Array<{ text: string; start: number }> = [];
+  for (const seg of splitCode(body)) {
+    if (seg.kind !== 'plain') continue;
+    let at = seg.start;
+    // 인용이 아닌 **연속된** 줄은 한 조각으로 모은다. 줄마다 쪼개면 조각이 늘 뿐이고,
+    // 이어 붙인 결과는 `mentionSearchText` 가 개행으로 잇는 것과 같다.
+    let run: { text: string; start: number } | null = null;
+    for (const line of seg.text.split('\n')) {
+      if (QUOTE_LINE.test(line)) {
+        if (run) { out.push(run); run = null; }
+      } else if (run) {
+        run.text += `\n${line}`;
+      } else {
+        run = { text: line, start: at };
+      }
+      at += line.length + 1; // 줄 길이 + 개행 하나
+    }
+    if (run) out.push(run);
+  }
+  return out;
+}
+
+/**
  * 본문에서 불린 handle 들. 소문자로 정규화해 중복을 없앤다(`@fizz` 와 `@Fizz` 는 한 사람).
  * 패턴이 대문자를 이미 포함하므로 `i` 플래그는 필요하지 않다.
  *
- * 코드 블록(#298) 안의 `@handle` 은 무시한다 — `stripCodeSpans` 가 먼저 코드를 걷어낸다.
+ * 코드 블록(#298) 과 인용 줄(#593) 안의 `@handle` 은 무시한다 — `mentionSearchText` 가
+ * 먼저 그 구간을 걷어낸다.
  *
- * **순서가 결정이다: 코드 제거 → 멘션 추출 → 그룹 확장(#230)·채널 전체(#225).** 코드 제거가
- * 맨 앞이므로 코드 안의 그룹 handle 은 애초에 `handles` 에 들어오지 못하고, 따라서 확장될
+ * **순서가 결정이다: 코드·인용 제거 → 멘션 추출 → 그룹 확장(#230)·채널 전체(#225).** 제거가
+ * 맨 앞이므로 코드·인용 안의 그룹 handle 은 애초에 `handles` 에 들어오지 못하고, 따라서 확장될
  * 기회도 없다 — 예외 처리가 아니라 순서에서 따라오는 결과다. 서버(`services/messages.ts`)의
  * 그룹 확장은 이 함수가 돌려준 목록만 훑으므로 그 순서가 코드로 강제된다.
  */
 export function mentionedHandles(body: string): string[] {
   const found = new Set<string>();
-  for (const m of stripCodeSpans(body).matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
+  for (const m of mentionSearchText(body).matchAll(new RegExp(MENTION_PATTERN, 'g'))) {
     if (m[2]) found.add(m[2].toLowerCase());
   }
   return [...found];
@@ -335,10 +380,10 @@ export function mentionedIds(body: string): string[] {
 /**
  * 본문의 `@handle`(**존재하는 계정만**)을 `<@id>` 로 정규화한다(#271). 저장 전에 한 번 돈다.
  *
- * **코드 구간은 건드리지 않는다**(#298). 판정은 `splitCode` 하나가 하고 여기서는 그것이
- * 내준 평문 조각의 원문 범위만 고쳐 쓴다 — 자기 정규식으로 코드를 다시 판정하면 규칙이
+ * **코드(#298)·인용(#593) 구간은 건드리지 않는다.** 판정은 `mentionSpans` 하나가 하고
+ * 여기서는 그것이 내준 조각의 원문 범위만 고쳐 쓴다 — 자기 정규식으로 다시 판정하면 규칙이
  * 두 벌이 되고, 갈라지는 순간 코드 블록 안의 `@handle` 이 저장 시 멘션이 되어 알림까지
- * 간다. `mentionedHandles` 가 같은 이유로 `stripCodeSpans` 를 지난다.
+ * 간다. `mentionedHandles` 가 같은 이유로 `mentionSearchText` 를 지난다.
  *
  * 계정 목록을 순회하지 않고 **본문을 한 번** 훑는다. 순회하면 비용이 워크스페이스의 계정
  * 수에 비례하고, 그보다 나쁘게는 handle 을 정규식에 끼워 넣는 자리가 생긴다.
@@ -354,9 +399,9 @@ export function normalizeMentions(body: string, accountsMap: Map<string, string>
   if (!accountsMap.size) return body;
   const mention = new RegExp(MENTION_PATTERN, 'g');
   // 뒤에서부터 고친다 — 앞에서 고치면 뒤 조각의 원문 오프셋이 밀린다.
-  const plains = splitCode(body).filter((s): s is { kind: 'plain'; text: string; start: number } => s.kind === 'plain');
+  const spans = mentionSpans(body);
   let out = body;
-  for (const seg of [...plains].reverse()) {
+  for (const seg of [...spans].reverse()) {
     const replaced = seg.text.replace(mention, (whole, lead: string, handle: string) => {
       const id = accountsMap.get(handle.toLowerCase());
       return id ? `${lead}<@${id}>` : whole;
@@ -439,7 +484,10 @@ export function fillSystemAccount(body: string, handle: string | null): string {
 }
 
 /**
- * 본문에서 코드 구간을 걷어낸 나머지(#298). 멘션을 찾을 대상은 **이것뿐**이다.
+ * 본문에서 코드(#298)·인용(#593) 구간을 걷어낸 나머지. 멘션을 찾을 대상은 **이것뿐**이다.
+ *
+ * 이름이 `stripCodeSpans` 가 아닌 이유: 걷어내는 것이 코드만이 아니게 됐다. 이름이 코드만
+ * 말하면 다음 사람이 "인용도 빼려면 함수를 하나 더" 로 가고, 그 순간 판정이 두 벌이 된다.
  *
  * 남은 조각을 개행으로 이어 붙인다. 개행은 handle 문자가 아니므로 `MENTION_PATTERN` 의
  * 선행 문자 조건에서 조각의 첫 글자가 `^` 와 같은 자격을 갖는다 — 조각을 따로 훑는 것과
@@ -449,11 +497,8 @@ export function fillSystemAccount(body: string, handle: string | null): string {
  * 상대"(#278) 둘인데, 둘 다 정규식을 한 번 돌릴 평문이 필요할 뿐이다. 각자 세그먼트를
  * 이어 붙이게 두면 그 이어 붙이는 규칙이 다시 두 벌이 된다.
  */
-export function stripCodeSpans(body: string): string {
-  return splitCode(body)
-    .filter((seg): seg is { kind: 'plain'; text: string; start: number } => seg.kind === 'plain')
-    .map((seg) => seg.text)
-    .join('\n');
+export function mentionSearchText(body: string): string {
+  return mentionSpans(body).map((seg) => seg.text).join('\n');
 }
 
 /**
