@@ -127,9 +127,8 @@ const SCALE_NAME = /(?<![\w-])(?:[a-z-]+:)*text-(xs|sm|base|lg|xl|[2-9]xl)(?![\w
  * 2. **등폭 글꼴의 12px** — 본문단 13px 을 *광학적으로* 맞추는 보정이다. 등폭은 같은 pt
  *    에서 산세리프보다 크게 보여, 13px 로 두면 옆의 13px 본문보다 한 단 커 보인다.
  *    단을 어긴 것이 아니라 단을 지키기 위해 한 단 내린 것이다.
- * 3. **레일의 이모지 아이콘** — `aria-hidden` 이고 내용이 그림이라 크기가 정하는 것은
- *    읽힘이 아니라 아이콘의 지름이다. 아래 라벨이 11px 이므로 이것까지 4단으로 내리면
- *    그림과 글자가 한 덩어리로 보인다(`Rail.tsx` 에 근거를 적어 뒀다).
+ * 3. ~~레일의 이모지 아이콘~~ — **없어졌다.** 그 자리는 이제 선 아이콘(`RailIcons.tsx`)이고
+ *    지름을 `width`/`height` 가 정하므로 글자 크기의 예외가 아니다.
  *
  * **1 은 척도 이름 쪽에도 그대로 적용된다**. `AgentGrid.tsx` 의 주석이 그 근거를 이미
  * 적어 뒀다: *"여기만 임의값으로 바꾸면 표 안에서 두 어휘가 섞이고, 다음에 이 표를 고치는
@@ -238,11 +237,9 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
     contains: "glyph: 'h-10 w-10 text-base',",
     why: '같은 40px 상자의 `+` 글리프',
   },
-  {
-    file: 'components/Rail.tsx',
-    contains: '<span aria-hidden="true" className="text-base leading-none">{cell.glyph}</span>',
-    why: '레일 칸의 이모지 아이콘 — `aria-hidden` 인 그림이고 크기가 지름이다',
-  },
+  // **레일 칸의 이모지 예외는 사라졌다**(2026-09-08). 네 칸의 그림이 선 아이콘이 되면서
+  //   (`RailIcons.tsx`) 크기를 `width`/`height` 속성이 정한다 — 글자 크기가 아니므로 척도의
+  //   예외로 등록할 것이 남지 않는다. 예외 목록은 짧을수록 좋고, 사라진 예외는 지운다.
   {
     file: 'components/Rail.tsx',
     contains: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-raised text-sm font-bold',

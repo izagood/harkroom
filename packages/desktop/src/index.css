@@ -35,6 +35,7 @@
   --app-surface: #fafafa;         /* 화면 바닥 — 본문 영역 */
   --app-surface-raised: #ffffff;  /* 카드·입력창·팝오버. 바닥보다 한 단계 떠 있다 */
   --app-surface-sunken: #f4f4f5;  /* 사이드바·목록 헤더. 바닥보다 한 단계 가라앉는다 */
+  --app-surface-rail: #eeeef0;    /* 맨 왼쪽 레일 — 사이드바보다 한 단계 더 가라앉는다 */
   --app-surface-hover: #e4e4e7;   /* 눌릴 수 있는 줄에 마우스를 올렸을 때 */
   /*
     입력 칸의 면. **면 세 단계와 따로 두는 이유**: 입력 칸은 사이드바(sunken) 안에도,
@@ -109,14 +110,15 @@
 }
 
 /*
-  다크. 같은 **관계**를 유지한다 — sunken < surface < raised 순으로 밝아진다.
+  다크. 같은 **관계**를 유지한다 — rail < sunken < surface < raised 순으로 밝아진다.
   (초판은 다크에서 sunken 을 zinc-800 으로 둬 사이드바가 본문보다 **밝았다**. 그러면
   "가라앉은 면"이라는 역할 이름이 거짓이 되고, 두 모드가 서로 다른 규칙을 갖게 된다.)
 */
 :root[data-theme="dark"] {
   --app-surface: #18181b;
   --app-surface-raised: #27272a;
-  --app-surface-sunken: #09090b;
+  --app-surface-sunken: #121215;
+  --app-surface-rail: #09090b;
   --app-surface-hover: #3f3f46;
   --app-field: #27272a;
   --app-border: #3f3f46;
@@ -154,6 +156,7 @@
   --color-surface: var(--app-surface);
   --color-surface-raised: var(--app-surface-raised);
   --color-surface-sunken: var(--app-surface-sunken);
+  --color-surface-rail: var(--app-surface-rail);
   --color-surface-hover: var(--app-surface-hover);
   --color-field: var(--app-field);
   --color-border: var(--app-border);
