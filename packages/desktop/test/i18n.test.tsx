@@ -366,6 +366,11 @@ const sidebarProps = {
   onOpenDirectory: () => {},
   onOpenChannelDirectory: () => {},
   onOpenInbox: () => {},
+  // #629 가 더한 두 열기 훅. 이 파일은 문자열만 재지만 **필수 prop 이라 빠지면 타입이
+  // 깨진다** — 실제로 #630(이 테스트)과 #629(prop 추가)가 각자 초록으로 머지된 뒤 main 에서
+  // 처음 만나 깨졌다. 여는 동작은 이 테스트의 관심사가 아니므로 빈 함수로 둔다.
+  onOpenAgentConfig: () => {},
+  onOpenProfile: () => {},
   collapsed: false,
   onToggleCollapse: () => {},
 };

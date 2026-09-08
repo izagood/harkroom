@@ -19,6 +19,7 @@ import { acceptsPtyInput } from './pty.js';
 import type { PtyWriter, TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
 import { claudeSessionMaterialized } from './claudeSessions.js';
+import { readLastApiError } from './harnessErrors.js';
 import { codexSessionsDir } from './codexHome.js';
 import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
@@ -743,9 +744,24 @@ export async function runMentionTurn(
     });
     // tail 을 반드시 포함한다 — PTY 안에서는 stdout/stderr 가 한 스트림으로 섞여 나오므로
     // policy.ts::isCredentialFailure 가 자격증명 실패를 판단할 근거가 이것뿐이다.
-    throw new Error(
+    // tail 을 반드시 포함한다 — PTY 안에서는 stdout 과 stderr 가 한 스트림으로 섞여 나오므로
+    // policy.ts 의 **tail 폴백**이 볼 근거가 이것뿐이다.
+    //
+    // **그 위에 구조화된 사실을 얹는다(2026-09-08).** 세션 JSONL 의 `isApiErrorMessage`
+    // 레코드는 앞이 안 잘리고 사람의 프롬프트가 섞이지 않는다(`harnessErrors.ts` 머리).
+    // 2026-09-07 19:03 사건에서 tail 판정이 "풀림: 알 수 없음"만 남긴 자리가 여기다 —
+    // 그날도 세션 파일에는 시각이 온전히 있었다.
+    //
+    // **읽기가 실패해도 던지지 않는다.** 이 값은 판정을 더 좋게 만드는 재료이지 턴의 성패가
+    // 아니다. 여기서 예외를 올리면 원래 하려던 실패 처리(통지·재시도 회계)까지 함께 무너진다.
+    const apiError = await readLastApiError(def.harness, rec.sessionId, {
+      configDir: deps.claudeConfigDir,
+    }).catch(() => null);
+    const failure = new Error(
       `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
-    );
+    ) as Error & { harnessApiError?: string };
+    if (apiError) failure.harnessApiError = apiError.text;
+    throw failure;
   }
 
   // 여기 도달했다면 정상 종료다(위에서 실패를 이미 걸렀다). 성공한 턴만 turnsRun 을 올린다.

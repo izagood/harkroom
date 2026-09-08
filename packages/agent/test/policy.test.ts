@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound, isQuotaExhausted, isSessionIdConflict, nextBackoffMs, MAX_ATTEMPTS, exhausted } from '../src/policy.js';
+import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound, isQuotaExhausted, isSessionIdConflict, nextBackoffMs, quotaFromText, MAX_ATTEMPTS, exhausted } from '../src/policy.js';
 import { MURMUR_ERROR_SOURCE } from '../src/policy.js';
 import { MurmurAgentClient } from '../src/murmur.js';
 
@@ -316,6 +316,37 @@ describe('#340 isExecutableNotFound', () => {
  * 보고 무엇을 확인할지 모른 채, 실제로는 **아무것도 하지 않고 기다리면 되는** 상황에서
  * 로그인이나 PAT 를 뒤진다.
  */
+describe('isQuotaExhausted — 구조화 필드 우선(2026-09-08)', () => {
+  it('harnessApiError 를 tail 보다 먼저 본다 — tail 이 잘려 시각이 없어도 읽는다', () => {
+    // 2026-09-07 19:03 사건의 모양: 세션 파일에는 시각이 있었고 tail 에는 없었다.
+    const err = Object.assign(new Error('harness 종료 1: ...hit your session limit'), {
+      harnessApiError: "You've hit your session limit \u00b7 resets 10:50pm (Asia/Seoul)",
+    });
+    expect(isQuotaExhausted(err)).toEqual({ resetsAt: '10:50pm (Asia/Seoul)' });
+  });
+
+  it('구조화 필드가 없으면 기존 tail 판정으로 간다', () => {
+    const err = new Error("harness 종료 1: You've hit your session limit \u00b7 resets 4:10pm (Asia/Seoul)");
+    expect(isQuotaExhausted(err)).toEqual({ resetsAt: '4:10pm (Asia/Seoul)' });
+  });
+
+  it('구조화 필드가 한도가 아니면 tail 로 폴백한다 — 앞 턴의 다른 에러가 이번 한도를 가리면 안 된다', () => {
+    const err = Object.assign(new Error("harness 종료 1: You've hit your session limit \u00b7 resets 9:00pm"), {
+      harnessApiError: 'API Error: overloaded_error',
+    });
+    expect(isQuotaExhausted(err)).toEqual({ resetsAt: '9:00pm' });
+  });
+
+  it('quotaFromText 는 한도가 아닌 문구에 null 을 준다', () => {
+    expect(quotaFromText('그냥 실패했다')).toBeNull();
+  });
+
+  it('quotaFromText 는 ESC 앞에서 멈춘다 — 한도에 걸린 claude 는 죽기 전에 화면을 다시 그린다', () => {
+    expect(quotaFromText("You've hit your session limit \u00b7 resets 10:50pm (Asia/Seoul)\u001b[0m\u001b[?25h"))
+      .toEqual({ resetsAt: '10:50pm (Asia/Seoul)' });
+  });
+});
+
 describe('isQuotaExhausted', () => {
   it('사용량 한도 문구에서 풀리는 시각을 읽어 준다', () => {
     expect(isQuotaExhausted(new Error(

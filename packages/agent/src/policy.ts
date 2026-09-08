@@ -122,14 +122,31 @@ const HARNESS_CREDENTIAL_PATTERNS = [
  * (`pty.ts` 는 raw 바이트를 그대로 담는다) 그 가정 자체를 버리고, 시각이 끝나는 자리를
  * **줄 끝 또는 ESC**로 잡는다.
  */
-export function isQuotaExhausted(err: unknown): { resetsAt: string | null } | null {
-  const text = err instanceof Error ? err.message : String(err ?? '');
+export function quotaFromText(text: string): { resetsAt: string | null } | null {
   const squashed = text.replace(/\s+/g, '').toLowerCase();
   // `You've` 의 아포스트로피는 판본·터미널에 따라 `'` 와 `’` 가 다 나오므로 뺀 채로 본다.
   if (!/hityour(session|usage)limit/i.test(squashed.replace(/['’]/g, ''))) return null;
   // `[^\n\u001b]` — 줄 끝이나 ESC 에서 멈춘다. 뒤에 무엇이 더 오든 상관하지 않는다.
   const resets = /resets\s+([^\n\u001b]+)/i.exec(text);
   return { resetsAt: resets ? resets[1]!.trim() : null };
+}
+
+/**
+ * **구조화 필드를 먼저 본다(2026-09-08).** `mentionTurn` 이 세션 JSONL 에서 읽은 하네스 자신의
+ * 에러 문구를 `harnessApiError` 로 실어 준다. 그 재료가 tail 보다 나은 이유는
+ * `harnessErrors.ts` 머리에 있다 — 앞이 안 잘리고, 사람의 프롬프트가 섞이지 않는다.
+ *
+ * 못 읽었으면(파일 부재·codex) 필드가 없고 그때는 기존 tail 판정 그대로다. 필드가 **있는데
+ * 한도가 아닌** 경우에도 tail 로 폴백한다: 그 값은 "그 세션의 마지막 API 에러"이지 "이 턴이
+ * 실패한 이유"라는 보장이 아니라서, 앞 턴의 다른 에러가 이번 한도를 가리면 안 된다.
+ */
+export function isQuotaExhausted(err: unknown): { resetsAt: string | null } | null {
+  const structured = (err as { harnessApiError?: unknown } | null)?.harnessApiError;
+  if (typeof structured === 'string') {
+    const hit = quotaFromText(structured);
+    if (hit) return hit;
+  }
+  return quotaFromText(err instanceof Error ? err.message : String(err ?? ''));
 }
 
 /**
