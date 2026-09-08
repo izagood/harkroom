@@ -27,7 +27,7 @@ const 부름 = {
   threadRootId: 't1',
   agentAccountId: 'agent-1',
   agentHandle: 'murmur',
-  accountLabel: 'lime',
+  accountLabel: 'aria',
 };
 
 describe('agent.attention 을 받은 데스크탑', () => {
@@ -44,7 +44,7 @@ describe('agent.attention 을 받은 데스크탑', () => {
   it('어느 계정이 막혔는지 말한다 — 계정이 여럿이면 그것이 다음 행동을 정한다', async () => {
     const { callbacks } = await 앱();
     callbacks.current!.onEvent(부름);
-    expect(useAppStore.getState().notice).toContain('lime');
+    expect(useAppStore.getState().notice).toContain('aria');
     expect(useAppStore.getState().notice).toContain('murmur');
   });
 

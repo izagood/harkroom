@@ -291,8 +291,8 @@ MCP 설정을 상속하지 않는다. 승인된 Codex 스킬은 공식 저장소
 ~/.murmur-agent/claude-accounts/
   pools.json          기본 풀·순서·에이전트 배정
   work/               풀
-    lime/             계정 = CLAUDE_CONFIG_DIR 하나
-    plum/
+    aria/             계정 = CLAUDE_CONFIG_DIR 하나
+    cedar/
   personal/           풀
     gmail/
 ```
@@ -306,7 +306,7 @@ MCP 설정을 상속하지 않는다. 승인된 Codex 스킬은 공식 저장소
 ```json
 {
   "defaultPool": "work",
-  "order": { "work": ["lime", "plum"] },
+  "order": { "work": ["aria", "cedar"] },
   "agents": { "<agent account id>": "personal" }
 }
 ```
@@ -344,8 +344,8 @@ UI가 쓴 뒤 사람이 파인더에서 디렉터리를 지울 수 있고 그때
 등록은 계정마다 한 번, 사람이 해야 한다 — OAuth는 브라우저를 요구한다.
 
 ```sh
-mkdir -p ~/.murmur-agent/claude-accounts/work/lime
-CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/work/lime claude auth login
+mkdir -p ~/.murmur-agent/claude-accounts/work/aria
+CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/work/aria claude auth login
 # 뜬 URL 을 브라우저에서 열고 로그인 → 코드를 붙여 넣는다
 ```
 
@@ -363,12 +363,12 @@ JSON
 확인:
 
 ```sh
-CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/work/lime claude auth status --json
+CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/work/aria claude auth status --json
 ```
 
 - `MURMUR_CLAUDE_ACCOUNTS_DIR` — 뿌리를 옮긴다.
 - `MURMUR_CLAUDE_POOL` — 쓸 풀을 강제한다(배정·기본 풀을 덮는다). 없는 풀이면 기동 실패다.
-- `MURMUR_CLAUDE_ACCOUNTS` — 쉼표로 순서와 부분집합을 정한다(예: `plum,lime`). 없는 이름을
+- `MURMUR_CLAUDE_ACCOUNTS` — 쉼표로 순서와 부분집합을 정한다(예: `cedar,aria`). 없는 이름을
   적으면 **러너가 뜨지 않는다** — 조용히 무시하면 계정 B라고 믿고 띄운 러너가 A로 돈다.
 
 지정이 없으면 이름 사전순이다. 기동 로그에 계정 이름 목록이 남는다(이메일·토큰은 안 남는다).
