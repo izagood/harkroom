@@ -1841,6 +1841,10 @@ export const en = {
   /** 위 줄의 접근 이름. 보이는 글자와 같은 말이라 한 키로 두지 않는 이유가 없다. */
   'composer.mention.reachingLabel': 'Reaching',
 
+  /** 붙여넣은 퍼머링크 줄. 이동은 옆 버튼을 누를 때만 일어난다. */
+  'composer.link.pasted': 'Pasted a message link',
+  'composer.link.open': 'Go to that message',
+
   'composer.schedule.cancel': 'Cancel',
   /** 예약 하나를 무르는 `×` 의 접근 이름. 위 `cancel`(겹창을 닫는 것)과 **다른 일이다.** */
   'composer.schedule.cancelOne': 'Cancel this scheduled message',
