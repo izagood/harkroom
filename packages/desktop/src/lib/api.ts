@@ -263,6 +263,14 @@ export class ApiClient {
     return this.req('DELETE', `/channels/${channelId}/messages/${messageId}`);
   }
 
+  /**
+   * 채널로 함께 올린 스레드 답을 채널에서 거둔다(#231 되돌리기). 메시지는 지우지 않는다 —
+   * 갱신된 행이 돌아오고 `alsoInChannel` 만 false 다.
+   */
+  recallFromChannel(channelId: string, messageId: string): Promise<MessageRow> {
+    return this.req('DELETE', `/channels/${channelId}/messages/${messageId}/also-in-channel`);
+  }
+
   async listAgents(): Promise<AgentView[]> {
     return (await this.req<{ agents: AgentView[] }>('GET', '/accounts/agents')).agents;
   }
