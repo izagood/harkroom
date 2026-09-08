@@ -38,6 +38,14 @@ import type { MessageKey, Translate } from '../i18n';
  *
  * 이 패널이 `TurnMode` 를 읽지 않는다는 위 문장은 **여전히 참이다**: 입력이 열리는 근거는
  * 서버의 `writer` 프레임 하나다(#369 의 판정) — 화면은 그것을 다시 재지 않는다.
+ *
+ * **문이 하나 줄었다**(2026-09-09). 진행 중인 세션이 없을 때 이 패널은 「진행 중인 턴이
+ * 없다」를 적고 [터미널 열기] 를 한 번 더 눌리게 했다. 그 버튼은 *묻는* 문이었고, 물어야
+ * 했던 이유는 인터랙티브가 예외였기 때문이다 — 멘션 턴이 TUI 로 돌게 된 뒤로 그 전제가
+ * 없어졌다. 그래서 조회에서 세션을 못 찾으면 같은 자리에서 바로 인터랙티브 턴을 연다.
+ * 러너 쪽이 이미 멱등해서(`interactiveTurn.ts` 의 3분기) 자동으로 타도 PTY 가 늘지 않고,
+ * 두 경로가 같은 attach 흐름으로 수렴하므로 사람에게는 턴이 돌고 있었는지가 화면 차이로
+ * 보이지 않는다. [터미널 열기] 는 **실패 화면에만** 남는다(러너를 올린 뒤 다시 누를 자리).
  */
 export function TerminalPanel() {
   const target = useActiveStore((s) => s.terminalTarget);
@@ -63,11 +71,14 @@ export function TerminalPanel() {
   const set = useActiveStore((s) => s.set);
   const hostRef = useRef<HTMLDivElement | null>(null);
   /**
-   * 세 가지를 갈라 말한다(docs/design.md §4). 'loading' 은 "아직 모른다"이고,
-   * 'no-session' 은 "물어봤고 진행 중인 턴이 없다"이며, 'error' 는 "못 물어봤다"다.
+   * 네 가지를 갈라 말한다(docs/design.md §4). 'loading' 은 "진행 중인 세션이 있는지 아직
+   * 모른다"이고, 'opening' 은 "없어서 지금 띄우는 중"이며, 'error' 는 "못 물어봤다"다.
    * 하나로 뭉치면 러너가 죽은 것과 한가한 것이 같은 화면이 된다.
+   *
+   * **'no-session' 은 없어졌다**(2026-09-09). 진행 중인 턴이 없다는 사실이 화면의 종점이
+   * 아니게 됐기 때문이다 — 아래 조회 경로가 그 자리에서 바로 인터랙티브 턴을 연다.
    */
-  const [phase, setPhase] = useState<'loading' | 'no-session' | 'attached' | 'error'>('loading');
+  const [phase, setPhase] = useState<'loading' | 'opening' | 'attached' | 'error'>('loading');
   const [state, setState] = useState<AgentSessionState | null>(null);
   const [error, setError] = useState<string | null>(null);
   /**
@@ -94,9 +105,10 @@ export function TerminalPanel() {
    */
   const resizeRef = useRef(false);
   /**
-   * [터미널 열기](#337)의 손잡이. effect 안의 attach 경로를 버튼이 재사용해야 해서
-   * (인터랙티브 open 도 결국 티켓 하나로 수렴한다 — 서버가 그렇게 설계됐다) effect 가
-   * 자기 클로저를 여기 걸어 둔다. 열기 경로를 밖에 따로 만들면 소켓·sink 정리가 두 벌이 된다.
+   * 인터랙티브 열기(#337)의 손잡이. effect 안의 attach 경로를 **조회 경로와 실패 뒤의
+   * 다시 열기가 함께** 재사용해야 해서(인터랙티브 open 도 결국 티켓 하나로 수렴한다 —
+   * 서버가 그렇게 설계됐다) effect 가 자기 클로저를 여기 걸어 둔다. 열기 경로를 밖에
+   * 따로 만들면 소켓·sink 정리가 두 벌이 된다.
    */
   const openRef = useRef<(() => void) | null>(null);
 
@@ -201,12 +213,17 @@ export function TerminalPanel() {
       }
     };
 
-    // [터미널 열기](#337) — 진행 중인 턴이 없어도 러너가 세션을 확보해 인터랙티브 PTY 를
+    // 인터랙티브 열기(#337) — 진행 중인 턴이 없어도 러너가 세션을 확보해 인터랙티브 PTY 를
     // 띄우고, 그 티켓으로 위와 같은 attach 흐름에 합류한다.
-    openRef.current = () => {
-      setPhase('loading');
+    //
+    // **러너 쪽이 이미 멱등하다**(`interactiveTurn.ts` 3분기): 그 스레드에 멘션 턴이나
+    // 인터랙티브 턴이 돌고 있으면 기존 세션을 그대로 돌려주고, 아무 턴도 없을 때만 새
+    // PTY 를 띄운다. 그래서 이 경로를 조회 실패 직후에 자동으로 타도 PTY 가 둘로 늘지 않는다.
+    const openInteractive = () => {
+      setPhase('opening');
       void begin(() => api.openInteractiveSession(target.agentAccountId, target.channelId, target.threadRootId));
     };
+    openRef.current = openInteractive;
 
     void (async () => {
       try {
@@ -221,7 +238,13 @@ export function TerminalPanel() {
           && s.channelId === target.channelId
           && s.threadRootId === target.threadRootId);
         if (disposed) return;
-        if (!session) { setPhase('no-session'); return; }
+        // **진행 중인 턴이 없으면 바로 연다**(2026-09-09). 예전에는 여기서 멈춰
+        // "진행 중인 턴이 없다"를 적고 [터미널 열기] 버튼을 하나 더 눌리게 했다. 그
+        // 버튼은 *묻는* 문이었는데, 멘션 턴이 TUI 로 돌게 된 뒤로는 물을 것이 없다 —
+        // 「터미널 보기」를 누른 사람이 원하는 것은 예외 없이 그 터미널이다. 진행 중인
+        // 세션에 붙는 위 경로와 여기가 **같은 attach 흐름**으로 수렴하므로, 사람에게는
+        // 턴이 돌고 있었는지 여부가 화면 차이로 보이지 않는다(그것이 이 변경의 요점이다).
+        if (!session) { openInteractive(); return; }
         await begin(() => api.attachAgentSession(session.sessionId));
       } catch (err) {
         if (disposed) return;
@@ -303,12 +326,16 @@ export function TerminalPanel() {
         </button>
       </div>
       {phase === 'loading' && <p className="px-3 py-2 text-fg-subtle">{t('terminal.session.checking')}</p>}
-      {phase === 'no-session' && (
-        <div className="px-3 py-2 text-fg-subtle">
-          <p>{t('terminal.session.none')}</p>
-          {/* #337: 세션이 없어도 사람이 스스로 연다. 러너가 이 스레드의 세션을 확보해
-              (없으면 생성) 인터랙티브 PTY 를 띄우고, 같은 attach 흐름으로 합류한다.
-              실패(러너 오프라인·구버전·codex 거절)는 서버 문구가 그대로 error 로 온다. */}
+      {/* 조회와 열기를 **갈라 적는다.** 둘 다 "기다려라"이지만 기다리는 대상이 다르다 —
+          앞은 서버의 세션 목록이고 뒤는 러너가 띄우는 PTY 다(뒤가 몇 초 더 걸린다).
+          한 문구로 뭉치면 러너가 늦을 때 "확인 중"이 몇 초 멈춰 있는 화면이 된다. */}
+      {phase === 'opening' && <p className="px-3 py-2 text-fg-subtle">{t('terminal.session.opening')}</p>}
+      {phase === 'error' && (
+        <div className="px-3 py-2">
+          <p className="text-warning">{t('terminal.session.openFailed', { reason: error ?? '' })}</p>
+          {/* **실패에만 남는 버튼이다.** 자동 열기가 지운 것은 "턴이 없다"는 막다른 길
+              하나이고, 실패는 다르다 — 러너를 올린 뒤 다시 누를 자리가 없으면 사람은
+              패널을 닫고 다시 여는 우회로를 알아내야 한다. */}
           <button
             onClick={() => openRef.current?.()}
             className="mt-2 rounded bg-surface-raised px-2 py-1 text-fg hover:bg-surface-hover"
@@ -316,9 +343,6 @@ export function TerminalPanel() {
             {t('terminal.session.open')}
           </button>
         </div>
-      )}
-      {phase === 'error' && (
-        <p className="px-3 py-2 text-warning">{t('terminal.session.openFailed', { reason: error ?? '' })}</p>
       )}
       {/* **차례를 항상 적는다.** writer 통지가 온 뒤에만 그린다(null 이면 아직 모르거나
           구 서버다 — 그때 "다른 창이 입력 중"이라 적으면 없는 사람을 만들어 낸다).
