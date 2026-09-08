@@ -232,6 +232,77 @@ describe('#231 채널에서 거두기', () => {
   });
 });
 
+// 이미 쓴 스레드 답을 **나중에** 채널로 올린다(거두기의 반대). 이 블록이 지키는 것은
+// 항목이 뜨는 조건과 그것이 **새 메시지를 만들지 않는다**는 사실이다 — `send` 로 붙이면
+// 채널에 사본이 하나 더 생겨 스레드의 그 발언과 리액션·답글이 갈린다.
+describe('나중에 채널로 올리기', () => {
+  const openMenu = (): void => { fireEvent.click(screen.getByLabelText('More actions')); };
+  const promoteItem = () => screen.queryByRole('menuitem', { name: 'Post to channel' });
+  const recallItem = () => screen.queryByRole('menuitem', { name: 'Remove from channel' });
+
+  const controllerWithPromote = () => {
+    const c = { ...fakeController(), postToChannel: vi.fn(async () => undefined) };
+    setController(c as unknown as Controller);
+    return c;
+  };
+
+  const mineQuiet = msg('m2', 'c1', 2, 'thread answer', 'u1', { threadRootId: 'm1', alsoInChannel: false });
+
+  beforeEach(() => { seed(false); });
+
+  it('채널에 안 올린 내 스레드 답에서 올릴 수 있다', () => {
+    const c = controllerWithPromote();
+    render(<MessageItem message={mineQuiet} inThread />);
+
+    openMenu();
+    fireEvent.click(promoteItem()!);
+    expect(c.postToChannel).toHaveBeenCalledWith('m2');
+    // 새 메시지를 만드는 길로 가지 않는다.
+    expect(c.send).not.toHaveBeenCalled();
+    expect(c.reply).not.toHaveBeenCalled();
+  });
+
+  // 두 방향이 한 메뉴에 함께 뜨면 지금 상태가 어느 쪽인지 화면이 말하지 않는다.
+  it('이미 채널에 올린 답에는 올리기 대신 거두기가 뜬다', () => {
+    controllerWithPromote();
+    render(<MessageItem message={{ ...mineQuiet, alsoInChannel: true }} inThread />);
+    openMenu();
+    expect(promoteItem()).toBeNull();
+    expect(recallItem()).toBeTruthy();
+  });
+
+  // 스레드 답이 아니면 올릴 곳이 없다 — 그 메시지가 곧 채널 메시지다(서버도 400 이다).
+  it('그냥 채널 메시지에는 항목이 없다', () => {
+    controllerWithPromote();
+    render(<MessageItem message={msg('m3', 'c1', 3, 'plain', 'u1')} />);
+    openMenu();
+    expect(promoteItem()).toBeNull();
+  });
+
+  // 거두기는 admin 에게도 열려 있지만 이쪽은 발화다 — 남이 스레드에만 쓰기로 한 말을
+  // admin 이 채널로 퍼뜨릴 수 없다(서버도 작성자만 허용한다).
+  it('admin 이라도 남의 답에는 항목이 없다', () => {
+    seed(false);
+    useAppStore.getState().set({ me: { ...acc('u1', 'admin'), isAdmin: true } });
+    controllerWithPromote();
+    render(<MessageItem message={{ ...mineQuiet, authorId: 'u2' }} inThread />);
+    openMenu();
+    expect(promoteItem()).toBeNull();
+  });
+
+  // 새 글을 쓸 수 없는 채널이면 옛 글을 새로 내보일 수도 없다(서버가 403 이다).
+  it('보관된 채널에는 항목이 없다', () => {
+    seed(false);
+    useAppStore.getState().set({
+      channels: [{ ...chan('c1', 'general', 'main-repo'), archivedAt: new Date().toISOString() }],
+    });
+    controllerWithPromote();
+    render(<MessageItem message={mineQuiet} inThread />);
+    openMenu();
+    expect(promoteItem()).toBeNull();
+  });
+});
+
 /**
  * 컨트롤러 쪽 계약(#624 요구 3). 화면이 `openThread(root, id)` 를 부르는 것만 잰다면,
  * 두 번째 인자를 컨트롤러가 **버려도** 회귀선이 초록으로 남는다 — 그러면 링크는

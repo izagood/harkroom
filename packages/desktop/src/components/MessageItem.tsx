@@ -251,6 +251,24 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   const canUnpin = pin !== undefined && (pin.pinnedBy === myId || isAdmin);
   // 보관된 채널은 읽기 전용이라 고정이 거절된다(서버의 `channelPostGate`).
   const isArchived = useActiveStore((s) => s.channels.find((c) => c.id === message.channelId)?.archivedAt != null);
+  /**
+   * 이미 쓴 스레드 답을 나중에 채널로 올린다(거두기의 반대). 컴포저의 체크박스는 **쓸 때**
+   * 한 번만 물으므로, 스레드에서 이야기가 끝난 뒤 "이건 채널도 봐야 한다"가 되면 지금까지는
+   * 같은 말을 다시 쓰는 수밖에 없었다 — 그러면 스레드의 그 발언과 채널의 사본이 서로 다른
+   * 메시지가 되어 리액션·답글이 갈린다.
+   *
+   * 조건이 넷이다. 스레드 답이어야 하고(`threadRootId`), 아직 채널에 안 보여야 하고
+   * (`!alsoInChannel` — 이미 보이면 올릴 것이 없고 그 자리에는 거두기가 뜬다),
+   * 보관된 채널이 아니어야 하고, **내가 쓴 글이어야** 한다.
+   *
+   * 마지막 조건이 `canDelete`(작성자 또는 admin)와 다른 것이 이 항목의 핵심이다: 거두기는
+   * 잘못 흘린 말을 치우는 **조정**이라 admin 에게도 열려 있지만, 채널로 올리는 것은
+   * **발화**다. 남이 스레드에만 쓰기로 한 말을 admin 이 채널로 퍼뜨릴 수 있으면 그 판단이
+   * 지켜지지 않는다. 서버도 작성자만 허용하므로(`promoteToChannel`) 메뉴를 더 넓게 내주면
+   * 눌릴 때마다 403 이 돌아온다.
+   */
+  const canPostToChannel = isMine && !isSystem && message.threadRootId !== null
+    && !message.alsoInChannel && !isArchived;
   // #219: 담긴 상태는 **id 집합**(open+done 전부)으로 본다. 패널이 받아 온 한 탭의 행들로
   // 판단하면 '완료' 탭을 한 번 열어 본 뒤로 open 인 메시지가 담기지 않은 것으로 읽힌다.
   const savedIds = useActiveStore((s) => s.savedIds);
@@ -368,6 +386,13 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
      * 다시 채널로 올리는 길은 없으므로(다시 쓰면 된다) 'Undo' 라고 부르지도 않는다.
      */
     ...(canRecall ? [{ label: 'Remove from channel', onSelect: () => { void getController().recallFromChannel(message.id); } }] : []),
+    /**
+     * 거두기와 **같은 자리, 반대 방향**이다. 둘은 조건이 배타적이라(`alsoInChannel`)
+     * 한 메뉴에 함께 뜨는 일이 없다 — 지금 상태가 어느 쪽인지 항목 하나가 말한다.
+     *
+     * 확인 단계를 두지 않는다: 되돌리는 길(`Remove from channel`)이 바로 옆에 있다.
+     */
+    ...(canPostToChannel ? [{ label: 'Post to channel', onSelect: () => { void getController().postToChannel(message.id); } }] : []),
     // #219: 나중에 볼 것으로 담기. 담겨 있으면 문구가 해제로 바뀐다 — 같은 자리에 두 항목을
     // 나란히 두면 어느 것이 지금 상태인지 화면이 말하지 않는다.
     // 문구는 이 메뉴의 나머지(Pin·Edit·Delete…)와 같은 영문이다: 여기만 한국어로 두면
