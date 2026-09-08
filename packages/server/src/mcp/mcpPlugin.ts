@@ -18,7 +18,7 @@ import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '.
 import { getMemory, listMemory, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, setMemory } from '../services/memory.js';
 import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC } from '../services/agentWakes.js';
-import { GUIDE } from './guide.js';
+import { guideFor } from './guide.js';
 import { recordRunnerVersion } from '../services/runnerVersion.js';
 import { resolveAttachmentFor } from '../services/attachments.js';
 import { reportedModelMeta } from '../services/reportedModel.js';
@@ -99,8 +99,17 @@ function buildMcpServer(
 ): McpServer {
   const server = new McpServer({ name: 'murmur', version: '0.1.0' });
 
-  server.registerTool('workspace.guide', { description: '워크스페이스 규칙(avcs 사용 경계 포함)' },
-    async () => jsonResult({ guide: GUIDE }));
+  /**
+   * 워크스페이스 규칙. `mode` 로 독자를 가른다(`guide.ts` 머리의 실측 참고) — 러너가 띄운
+   * 턴은 인박스를 자기가 물지 않으므로 poll 절을 받으면 **남의 요청을 대신 해 버린다**.
+   *
+   * 기본값이 'resident' 인 이유: 모드를 모르는 옛 호출자(러너가 서버보다 늦게 배포되는
+   * 창)는 지금까지와 글자 그대로 같은 전문을 받아야 한다. 새 값은 옵트인이다.
+   */
+  server.registerTool('workspace.guide', {
+    description: '워크스페이스 규칙(avcs 사용 경계 포함). mode=turn 이면 러너 턴용 판본',
+    inputSchema: { mode: z.enum(['resident', 'turn']).optional() },
+  }, async ({ mode }) => jsonResult({ guide: guideFor(mode ?? 'resident') }));
 
   server.registerTool('account.me', { description: '내 계정 정보' },
     async () => jsonResult(account));
