@@ -696,7 +696,10 @@ export async function runMentionTurn(
   try {
     result = await deps.runTurn(plan, {
       cwd: rec.workspaceDir,
-      timeoutMs: deps.turnTimeoutMs,
+      // **0 = 무기한**(pty.ts 옵션 주석). TUI 턴의 시간 한도는 러너가 무발화로 잰다 —
+      // PTY 쪽 시계는 프로세스 수명을 재는데, TUI 에서는 그 둘이 다른 사실이다.
+      // codex 는 `exec` 이라 두 사실이 같으므로 그대로 PTY 시계를 쓴다.
+      timeoutMs: usesTui ? 0 : deps.turnTimeoutMs,
       // TUI 로 뜬 턴에만 주입한다 — codex 의 `exec` 은 stdin 파일이 곧 프롬프트다.
       // 주입은 `runPtyTurn` 이 준비 신호를 본 뒤에 한다(pty.ts::injectPrompt).
       ...(usesTui ? { injectPrompt: { text: prompt } } : {}),
@@ -717,6 +720,19 @@ export async function runMentionTurn(
         session?.bindInput(controls);
         // 회수 손잡이. 릴레이가 없어도 잡아야 한다 — 관찰이 없다고 턴이 안 끝나면 안 된다.
         end.controls = controls;
+        // **무발화 시계(2026-09-08).** `turnTimeoutMs` 는 이제 프로세스 수명이 아니라
+        // "답 없이 흐른 시간"을 잰다 — TUI 는 답하고도 안 죽으므로 프로세스 수명으로 재면
+        // 정상 턴까지 시간 한도에 걸린다.
+        //
+        // 관찰자가 있으면 재지 않는다: 인터랙티브 턴이 `timeoutMs: 0`(무기한)인 것과 같은
+        // 규칙이고, 회수·유예와 한 문장으로 모인다 — 사람이 보고 있으면 러너는 끼어들지 않는다.
+        if (usesTui) {
+          end.cancelSilence = schedule(() => {
+            if (end.exited || end.spoke || end.viewers > 0) return;
+            end.silenced = true;
+            reclaim();
+          }, deps.turnTimeoutMs);
+        }
       },
     });
   } finally {
@@ -784,7 +800,10 @@ export async function runMentionTurn(
     rec = { ...rec, sessionId: discovered };
   }
 
-  if (result.exitCode !== 0 || result.timedOut) {
+  // `end.silenced` 를 함께 본다(2026-09-08): 무발화로 회수한 턴은 SIGTERM 으로 죽으므로
+  // exitCode 만 봐도 대개 실패로 잡히지만, 그 사실을 조건에 명시해야 아래 문구가 원인을
+  // 정확히 말한다 — "무발화"와 "하네스가 스스로 죽었다"는 사람이 할 일이 다르다.
+  if (result.exitCode !== 0 || result.timedOut || end.silenced) {
     // #81: 실패한 턴은 turnsRun 을 올리지 않는다. claude 의 세션 uuid 는 러너가 발급만 했을
     // 뿐 하네스에 등록됐다는 증거가 아니다 — 올리면 다음 턴이 isFirstTurn=false 로 판단해
     // `-r`(resume)로 조립하고, 존재한 적 없는 세션을 이어받으려다 또 실패한다. 0 으로 둬야
@@ -866,8 +885,13 @@ export async function runMentionTurn(
     const apiError = await readLastApiError(def.harness, rec.sessionId, {
       configDir: deps.claudeConfigDir,
     }).catch(() => null);
+    // **무발화는 tail 을 담지 않는다.** TUI 에서는 주입한 프롬프트가 에코돼 tail 에 섞이고,
+    // 그것이 판정 재료가 되면 사람이 본문 한 줄로 러너를 죽일 수 있다(설계 §3-4). 무발화는
+    // 하네스가 아무 말도 안 했다는 사실이므로 tail 에서 얻을 것도 없다.
     const failure = new Error(
-      `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
+      end.silenced
+        ? `harness 무발화 ${deps.turnTimeoutMs}ms — 답 없이 시간 한도를 넘겼다`
+        : `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
     ) as Error & { harnessApiError?: string };
     if (apiError) failure.harnessApiError = apiError.text;
     throw failure;
