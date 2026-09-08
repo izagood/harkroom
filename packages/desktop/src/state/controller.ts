@@ -900,12 +900,17 @@ export class Controller {
    * 답글이 **로드된 뒤에** 걸어야 한다: 화면에 없는 메시지에 강조를 걸면 스크롤이
    * 일어나지 않고, 강조는 5초 뒤 조용히 풀린다.
    */
-  async openThread(rootId: string, focusMessageId?: string): Promise<void> {
+  /**
+   * `aroundSeq` 는 **그 답글이 보이는 창**을 달라는 것이다(검색 결과로 점프할 때). 없으면
+   * 지금까지대로 스레드의 최신 페이지를 뜬다 — 답글이 그보다 많은 스레드에서 옛 답글로
+   * 점프하면 대상이 창에 없어 강조가 아무 일도 하지 않는다.
+   */
+  async openThread(rootId: string, focusMessageId?: string, aroundSeq?: number): Promise<void> {
     const channelId = this.store.getState().activeChannelId;
     if (!channelId) return;
     this.store.getState().pushHistory({ channelId, threadRootId: rootId });
     this.store.getState().set({ threadRootId: rootId });
-    const page = await this.api.messages(channelId, { thread: rootId });
+    const page = await this.api.messages(channelId, { thread: rootId, around: aroundSeq });
     this.store.getState().upsertMessages(channelId, page.messages);
     if (focusMessageId) this.store.getState().set({ highlightedMessageId: focusMessageId });
   }
@@ -992,7 +997,9 @@ export class Controller {
       }
     }
     // 답글은 스레드 패널까지 연다 — 스레드 밖에서 보면 무엇에 대한 답인지 잃는다.
-    if (target.threadRootId) await this.openThread(target.threadRootId);
+    // 대상의 seq 를 함께 준다: 스레드도 최신 페이지만 뜨므로, 주지 않으면 옛 답글은
+    // 채널 쪽 창을 받아 놓고도 스레드 패널에는 없다(강조가 걸릴 DOM 이 그쪽이다).
+    if (target.threadRootId) await this.openThread(target.threadRootId, undefined, target.seq);
     // 강조는 openChannel 이 지운 **뒤에** 건다. 순서가 뒤바뀌면 방금 건 강조를 스스로 지운다.
     this.store.getState().set({ highlightedMessageId: target.id, notice: null });
   }
