@@ -192,10 +192,25 @@ export function isCredentialFailure(err: unknown): CredentialFailureType {
     return status === 401 || status === 403 ? 'murmur-credential' : 'other';
   }
 
-  // 태그가 없으면 하네스에서 온 것으로 본다(mentionTurn.ts 가 tail 을 담아 던진 에러).
   if (status === 401 || status === 403) return 'harness-credential';
-  const squashed = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, '');
-  return HARNESS_CREDENTIAL_PATTERNS.some((re) => re.test(squashed)) ? 'harness-credential' : 'other';
+
+  // **하네스 자격증명은 tail 문자열로 재지 않는다(2026-09-08 실행 모델 교체).**
+  //
+  // TUI 는 주입한 프롬프트를 그대로 에코하므로 tail 에 **사람이 쓴 말이 섞인다**(#380 2단계
+  // 실측이 이미 관측한 오탐 경로다). 그 재료로 판정하면 에이전트를 멘션할 수 있는 사람이
+  // 본문에 `authentication_error` 한 줄을 적는 것만으로 그 러너를 `exit 78` 로 물러나게 할
+  // 수 있고, 그 러너가 맡은 **모든 스레드**가 함께 죽는다.
+  //
+  // 대신 하네스가 **자기 세션 파일에 남긴** 구조화 에러를 본다(`harnessErrors.ts` 가 읽어
+  // `harnessApiError` 로 실어 준다). 거기에는 사람의 말이 섞일 수 없다 — `isApiErrorMessage`
+  // 플래그가 붙은 레코드의 내용은 하네스 자신의 문구다.
+  //
+  // 문구 목록(`HARNESS_CREDENTIAL_PATTERNS`)은 그대로다. 바뀐 것은 **재료**뿐이다.
+  const structured = (err as { harnessApiError?: unknown } | null)?.harnessApiError;
+  if (typeof structured !== 'string') return 'other';
+  return HARNESS_CREDENTIAL_PATTERNS.some((re) => re.test(structured.replace(/\s+/g, '')))
+    ? 'harness-credential'
+    : 'other';
 }
 
 /**

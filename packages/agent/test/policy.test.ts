@@ -3,11 +3,23 @@ import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound, isQ
 import { MURMUR_ERROR_SOURCE } from '../src/policy.js';
 import { MurmurAgentClient } from '../src/murmur.js';
 
+/**
+ * 하네스가 **자기 세션 파일에** 남긴 에러를 흉내낸다(2026-09-08 실행 모델 교체).
+ *
+ * 자격증명 판정의 재료가 PTY tail 에서 이 구조화 필드로 옮겨갔다. tail 을 계속 쓰면 TUI 가
+ * 에코한 **사람의 프롬프트**가 섞이고, 그러면 본문에 `authentication_error` 를 적은 사람이
+ * 러너를 78 로 물러나게 할 수 있다. 문구 목록은 그대로이므로 아래 케이스들은 재료만 바뀐
+ * 채 그대로 산다 — **삭제가 아니라 이설이다.**
+ */
+function harnessErr(text: string): Error & { harnessApiError: string } {
+  return Object.assign(new Error(`harness 종료 1: (tail 은 이제 판정 재료가 아니다)`), { harnessApiError: text });
+}
+
 describe('isCredentialFailure', () => {
   // 자격증명 오류는 재시도로 낫지 않는다 — 운영자가 키를 넣어야 한다. 무한 재시도로 감추면
   // 로그만 쌓이고 원인이 묻힌다.
   it('recognises a missing credential as an operator problem', () => {
-    const err = new Error(
+    const err = harnessErr(
       'Could not resolve authentication method. Expected one of apiKey, authToken, credentials, config, or profile to be set.',
     );
 
@@ -30,21 +42,21 @@ describe('isCredentialFailure', () => {
         // 공백을 남기는 랩과 먹는 랩을 둘 다 만든다.
         const keepsSpace = `harness 종료 1: ${phrase.slice(0, i)}\n${phrase.slice(i)} (tail)`;
         const eatsSpace = `harness 종료 1: ${phrase.slice(0, i).trimEnd()}\n${phrase.slice(i).trimStart()} (tail)`;
-        expect(isCredentialFailure(new Error(keepsSpace)), `공백 유지 랩 @${i}`).toBe('harness-credential');
-        expect(isCredentialFailure(new Error(eatsSpace)), `공백 소비 랩 @${i}`).toBe('harness-credential');
+        expect(isCredentialFailure(harnessErr(keepsSpace)), `공백 유지 랩 @${i}`).toBe('harness-credential');
+        expect(isCredentialFailure(harnessErr(eatsSpace)), `공백 소비 랩 @${i}`).toBe('harness-credential');
       }
     });
 
     it('x-api-key 가 하이픈 자리에서 접혀도 감지한다', () => {
-      expect(isCredentialFailure(new Error('harness 종료 1: invalid x-api-\nkey header'))).toBe('harness-credential');
-      expect(isCredentialFailure(new Error('harness 종료 1: invalid x-api\n-key header'))).toBe('harness-credential');
+      expect(isCredentialFailure(harnessErr('harness 종료 1: invalid x-api-\nkey header'))).toBe('harness-credential');
+      expect(isCredentialFailure(harnessErr('harness 종료 1: invalid x-api\n-key header'))).toBe('harness-credential');
     });
 
     // `authentication_error` 는 밑줄이 있는 API 에러 코드다 — 밑줄을 공백으로 오인해
     // `authentication\s+error` 로 바꾸면 이 신호를 통째로 잃는다(실제로 그 실수를 했다).
     it('authentication_error 코드를 여전히 감지한다 (밑줄이 공백이 아니다)', () => {
-      expect(isCredentialFailure(new Error('harness 종료 1: {"type":"authentication_error"}'))).toBe('harness-credential');
-      expect(isCredentialFailure(new Error('harness 종료 1: {"type":"authentication_\nerror"}'))).toBe('harness-credential');
+      expect(isCredentialFailure(harnessErr('harness 종료 1: {"type":"authentication_error"}'))).toBe('harness-credential');
+      expect(isCredentialFailure(harnessErr('harness 종료 1: {"type":"authentication_\nerror"}'))).toBe('harness-credential');
     });
   });
 
@@ -63,13 +75,13 @@ describe('isCredentialFailure', () => {
    */
   describe('2026-09-07 실측 — claude CLI 의 OAuth 만료', () => {
     it('OAuth 세션 만료를 harness 자격증명 실패로 감지한다', () => {
-      expect(isCredentialFailure(new Error(
+      expect(isCredentialFailure(harnessErr(
         'harness 종료 1: Failed to authenticate: OAuth session expired and could not be refreshed',
       ))).toBe('harness-credential');
     });
 
     it('PTY 소프트 랩으로 접혀도 감지한다', () => {
-      expect(isCredentialFailure(new Error(
+      expect(isCredentialFailure(harnessErr(
         'harness 종료 1: Failed to authenticate: OAuth session expired and\ncould not be refreshed',
       ))).toBe('harness-credential');
     });
@@ -94,12 +106,27 @@ describe('isCredentialFailure', () => {
     });
 
     it('harness tail 의 자격증명 문구는 harness 실패다', () => {
-      expect(isCredentialFailure(new Error('harness 종료 1: Could not resolve authentication method'))).toBe('harness-credential');
+      expect(isCredentialFailure(harnessErr('harness 종료 1: Could not resolve authentication method'))).toBe('harness-credential');
+    });
+
+    /**
+     * **이 케이스가 이번 이설의 이유다(2026-09-08).**
+     *
+     * TUI 는 주입한 프롬프트를 그대로 에코하므로 tail 에 사람이 쓴 말이 섞인다. 판정이
+     * tail 을 계속 봤다면, 에이전트를 멘션할 수 있는 사람이 본문에 이 문구 한 줄을 적는
+     * 것만으로 그 러너를 `exit 78` 로 물러나게 할 수 있었다 — 그 러너가 맡은 **모든
+     * 스레드**가 함께 죽는다.
+     */
+    it('사람이 쓴 말이 tail 에 섞여도 자격증명 실패로 읽지 않는다 — 러너를 죽이는 길이 없다', () => {
+      const echoed = new Error(
+        'harness 종료 1: @murmur authentication_error 가 왜 나는지 조사해줘\n> 그 문구를 그대로 붙였다',
+      );
+      expect(isCredentialFailure(echoed)).toBe('other');
     });
 
     it('일반 하네스 실패와 네트워크 끊김은 other 다', () => {
-      expect(isCredentialFailure(new Error('harness 종료 1: some other error'))).toBe('other');
-      expect(isCredentialFailure(new Error('socket hang up'))).toBe('other');
+      expect(isCredentialFailure(harnessErr('harness 종료 1: some other error'))).toBe('other');
+      expect(isCredentialFailure(harnessErr('socket hang up'))).toBe('other');
     });
 
     // 태그를 손으로 붙인 객체가 아니라 **프로덕션 클라이언트가 실제로 던지는 에러**를 태운다.
@@ -184,7 +211,7 @@ describe('isCredentialFailure', () => {
   });
 
   it('treats an unrelated failure as transient', () => {
-    expect(isCredentialFailure(new Error('socket hang up'))).toBe('other');
+    expect(isCredentialFailure(harnessErr('socket hang up'))).toBe('other');
   });
 
   // #380 1단계 실측 — 프롬프트를 pty.write() 로 보내면 PTY 가 그 바이트를 그대로 에코해
@@ -195,17 +222,17 @@ describe('isCredentialFailure', () => {
   describe('#380 1단계 실측 — 에코된 프롬프트 본문이 자격증명 판정을 오염시킨다', () => {
     it('프롬프트에 x-api-key 를 언급하면 무관한 실패가 자격증명 실패로 오판된다', () => {
       const tail = '이 프로젝트는 x-api-key 헤더를 어떻게 검증하나요?\r\nError: some unrelated bug\r\n';
-      expect(isCredentialFailure(new Error(`harness 종료 1: ${tail}`))).toBe('harness-credential');
+      expect(isCredentialFailure(harnessErr(`harness 종료 1: ${tail}`))).toBe('harness-credential');
     });
 
     it('프롬프트에 authentication_error 를 언급하면 오판된다', () => {
       const tail = 'authentication_error 처리 로직을 문서화해줘\r\nError: unrelated crash\r\n';
-      expect(isCredentialFailure(new Error(`harness 종료 1: ${tail}`))).toBe('harness-credential');
+      expect(isCredentialFailure(harnessErr(`harness 종료 1: ${tail}`))).toBe('harness-credential');
     });
 
     it('프롬프트에 could not resolve authentication 문구를 그대로 쓰면 오판된다', () => {
       const tail = '왜 could not resolve authentication 에러가 나는지 조사해줘\r\nError: unrelated crash\r\n';
-      expect(isCredentialFailure(new Error(`harness 종료 1: ${tail}`))).toBe('harness-credential');
+      expect(isCredentialFailure(harnessErr(`harness 종료 1: ${tail}`))).toBe('harness-credential');
     });
   });
 
@@ -216,21 +243,21 @@ describe('isCredentialFailure', () => {
   // 한 번이었다.
   describe('미로그인 (다중 계정)', () => {
     it('미로그인 문구를 harness 자격증명 실패로 본다', () => {
-      expect(isCredentialFailure(new Error('harness 종료 1: Not logged in · Please run /login')))
+      expect(isCredentialFailure(harnessErr('harness 종료 1: Not logged in · Please run /login')))
         .toBe('harness-credential');
     });
 
     // PTY(cols 120) 소프트랩은 어느 자리에든 개행을 끼워 넣는다 — 공백을 전부 지우고
     // 맞추는 이 파일의 규율이 이 문구에도 성립해야 한다.
     it('소프트랩으로 개행이 낀 미로그인 문구도 잡는다', () => {
-      expect(isCredentialFailure(new Error('harness 종료 1: Not logged\r\nin · Please run /login')))
+      expect(isCredentialFailure(harnessErr('harness 종료 1: Not logged\r\nin · Please run /login')))
         .toBe('harness-credential');
     });
 
     // 오탐 방어: 사람이 `/login` 을 입력하라고 안내하는 무관한 실패를 자격증명 실패로
     // 오판하면, 러너가 멀쩡한 계정을 버리고 다음 계정으로 헛되이 넘어간다.
     it('`/login` 만 있는 무관한 문구는 자격증명 실패가 아니다', () => {
-      expect(isCredentialFailure(new Error('harness 종료 1: try /login next time')))
+      expect(isCredentialFailure(harnessErr('harness 종료 1: try /login next time')))
         .toBe('other');
     });
   });
@@ -301,7 +328,7 @@ describe('#340 isExecutableNotFound', () => {
   it('두 판정은 서로 배타적이다', () => {
     const notFound = new ExecutableNotFoundError('claude', '/usr/bin');
     expect(isCredentialFailure(notFound)).toBe('other');
-    const cred = new Error('could not resolve authentication');
+    const cred = harnessErr('could not resolve authentication');
     expect(isExecutableNotFound(cred)).toBe('other');
     expect(isCredentialFailure(cred)).toBe('harness-credential');
   });
