@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AttachmentRow } from '@murmur/shared';
 import { getController } from '../state/controller';
 import { Overlay } from './Overlay';
@@ -108,6 +108,17 @@ function Lightbox({ attachment, url, onClose }: {
   onClose: () => void;
 }) {
   const t = useT();
+  /**
+   * **포커스를 겹창 안으로 옮긴다.** 안 옮기면 포커스는 스크림 뒤의 그림 버튼에 남는다 —
+   * 화살표·PageDown 으로 스크롤하면 보이지 않는 뒤쪽 목록이 움직이고, Tab 은 겹창이 아니라
+   * 뒤 화면의 다음 버튼으로 간다. 키보드로 열었을 때 닫는 길(`Esc` 는 document 에서 받지만
+   * `×` 는 아니다)이 손에 닿지 않는 것도 같은 이유다.
+   *
+   * 닫기 버튼을 고른다 — 겹창에서 사람이 가장 자주 하는 다음 동작이고, 저장을 먼저 잡으면
+   * Enter 한 번에 파일 저장이 시작된다.
+   */
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { closeRef.current?.focus(); }, []);
   return (
     // 폭을 고정하지 않는다(기본값 `w-[42rem]` 를 물려받으면 작은 그림 옆에 빈 판이 남는다) —
     // 화면보다 큰 그림만 뷰포트에서 잘라 낸다.
@@ -125,6 +136,7 @@ function Lightbox({ attachment, url, onClose }: {
           onClick={() => void getController().saveAttachment(attachment)}
         >{t('message.attachment.save')}</button>
         <button
+          ref={closeRef}
           className="shrink-0 rounded px-2 text-fg-subtle hover:bg-surface-sunken"
           onClick={onClose}
           aria-label={t('message.attachment.closeZoom')}

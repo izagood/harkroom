@@ -649,15 +649,18 @@ describe('첨부 이미지를 눌러 크게 보기', () => {
     expect(dialog.textContent).toContain('1.2 KB');
   });
 
-  // 그릴 수 없는 첨부(칩)를 누르는 것은 저장이다 — 확대 보기를 열면 안 된다.
+  // 그릴 수 없는 첨부(칩)를 누르는 것은 저장이다 — 확대 보기가 그 자리를 먹으면
+  // 파일을 받으려던 사람이 겹창을 보게 된다. 열리지 않는 것만이 아니라 **저장이
+  // 그대로 불리는지**까지 잰다: 클릭이 조용히 아무 일도 안 하는 것도 같은 회귀다.
   it('이미지가 아닌 첨부에는 확대 보기가 없다', async () => {
-    fakeController();
+    const c = fakeController();
     render(<MessageItem message={withAttachments([att()])} />);
 
     fireEvent.click(screen.getByRole('button', { name: /note\.txt/ }));
 
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('button', { name: /크게 보기/ })).toBeNull();
+    expect(c.saveAttachment).toHaveBeenCalledWith(expect.objectContaining({ id: 'a1' }));
   });
 
   // 바이트를 못 받았으면 확대할 것도 없다 — 빈 창을 열면 실패를 성공처럼 보이게 한다.
@@ -667,5 +670,53 @@ describe('첨부 이미지를 눌러 크게 보기', () => {
 
     await screen.findByText('(불러오기 실패)');
     expect(screen.queryByRole('button', { name: /크게 보기/ })).toBeNull();
+  });
+
+  /**
+   * PR #646 이 세운 경계 셋 — 같은 기능을 따로 구현하면서 잡은 것이라, 구현은 겹치지만
+   * 이 회귀선들은 main 에 없었다.
+   */
+
+  /**
+   * **포커스가 겹창으로 들어와야 한다.** 그림 버튼에 남으면 화살표·PageDown 이 스크림
+   * 뒤의 목록을 움직이고, Tab 은 겹창이 아니라 뒤 화면의 다음 버튼으로 간다 — 키보드로
+   * 열었을 때 `×` 가 손에 닿지 않는 것도 같은 이유다.
+   */
+  it('열면 포커스가 겹창 안으로 들어온다', async () => {
+    fakeController();
+    fireEvent.click(await renderImage());
+
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '확대 보기 닫기' }));
+  });
+
+  /**
+   * "다시 받지 않는다" 를 요청 수로만 재면, 겹창이 **다른** objectURL(예: 두 번째 blob)을
+   * 그려도 초록이다. 같은 URL 인지까지 봐야 목록의 그림을 그대로 쓴다는 뜻이 된다.
+   */
+  it('겹창의 그림은 목록의 그림과 같은 objectURL 이다', async () => {
+    fakeController();
+    const opener = await renderImage();
+    const listed = screen.getByRole('img', { name: 'shot.png' }).getAttribute('src');
+
+    fireEvent.click(opener);
+
+    expect(screen.getByTestId('attachment-full').getAttribute('src')).toBe(listed);
+    expect(listed).toBeTruthy();
+  });
+
+  /**
+   * 여러 장이 붙은 메시지에서 **누른** 그림이 열려야 한다. 열림 상태를 첨부마다 들지 않고
+   * 메시지 하나에 들면, 두 번째 그림을 눌렀을 때 첫 장이 열리는 모양이 된다.
+   */
+  it('여러 장 중 누른 그림이 열린다', async () => {
+    fakeController();
+    render(<MessageItem message={withAttachments([
+      image({ id: 'a1', filename: 'first.png' }),
+      image({ id: 'a2', filename: 'second.png' }),
+    ])} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '크게 보기: second.png' }));
+
+    expect(screen.getByRole('dialog', { name: 'second.png' })).toBeTruthy();
   });
 });
