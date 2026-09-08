@@ -157,8 +157,9 @@ tail 은 끝 2KB 링이라 시각이 잘렸는데 세션 파일에는 온전히 
 - `turnRegistry.ts` 의 `handoffs`·`reserveHandoff`·`clearHandoff`·`handoff`
 - `mentionScheduler.ts` 의 `hooks.resumeHandoff`
 
-**남는 것**: `WriterDeniedReason` 의 `'observe-only'` — codex 는 범위 밖이라 `exec`(stdinFile)
-를 계속 쓰고, 그 세션은 여전히 관찰 전용이다. 사유를 지우면 그 화면이 원인을 지어낸다.
+**남는 것**: `WriterDeniedReason` 의 `'observe-only'` — P5 전까지 codex 는 `exec`(stdinFile)로
+돌고 그 세션은 관찰 전용이다. 사유를 지우면 그 화면이 원인을 지어낸다. P5 가 끝나면 그때
+지운다.
 
 ### 3-7. 마이그레이션 — 코드가 없다
 
@@ -186,6 +187,7 @@ tail 은 끝 2KB 링이라 시각이 잘렸는데 세션 파일에는 온전히 
 | P2 | 3-1 TUI 조립 + 프롬프트 주입 | P1 |
 | P3 | 3-2·3-3 턴의 끝과 타임아웃, 3-5 유예 규칙 | P2 |
 | P4 | 3-6 철거 | P3 |
+| P5 | codex 를 같은 모델로 (신뢰 대화상자 처리 포함) | P4 |
 
 **P1 을 먼저 독립적으로 출하한다.** TUI 전환과 무관하게 지금 있는 버그(2026-09-07 의 "풀림:
 알 수 없음")를 고치고, 실패 판정이 안정된 뒤에 실행 모델을 바꾸는 편이 안전하다 — 두 변경이
@@ -193,9 +195,13 @@ tail 은 끝 2KB 링이라 시각이 잘렸는데 세션 파일에는 온전히 
 
 ## 6. 범위 밖
 
-- **codex.** `exec` 세션을 대화형 `resume` 이 이어받는지 실측하지 못했다(프로브의 `CODEX_HOME`
-  에 인증이 없어 401 로 끝났다 — 설계가 아니라 측정 환경의 문제다). codex 는 계속 `exec`
-  (stdinFile)로 돌고, 그 세션은 관찰 전용으로 남는다. `CODEX_HANDOFF_REJECTION` 도 그대로다.
+- **codex 를 P5 로 미룬다(범위 밖이 아니다).** 2026-09-08 실측에서 codex 도 claude 와 같은
+  성질을 보였다(§5-4): `exec` 세션을 `codex resume <session-id>` 가 이어받고, bracketed paste
+  주입과 작업 중 `Ctrl+C` 인터럽트가 된다. 다만 **claude 에 없는 요소가 하나 있다** — TUI 가
+  부팅하며 디렉터리 신뢰 대화상자를 띄운다(`ensureCodexHome` 이 config 를 격리하므로 신뢰
+  상태가 상속되지 않는다). 자동 응답으로 넘기든 `config.toml` 에 미리 심든 그 결정이 하나 더
+  붙으므로, claude 경로가 안정된 뒤 별도 페이즈로 다룬다. `CODEX_HANDOFF_REJECTION` 은 그때
+  함께 걷는다.
 - **도는 턴에 새 메시지를 주입해 방향을 바꾸는 것.** 하네스가 지원하지 않는다 — 턴 도중 들어온
   입력은 **큐에 담겼다가 다음 턴**으로 돈다(2026-09-08 실측, `--input-format stream-json` 에서
   턴1 완료 뒤 새 `system/init` 이 뜨고 그제야 두 번째 메시지가 처리됐다). TUI 도 같다. 사람이
@@ -209,5 +215,5 @@ tail 은 끝 2KB 링이라 시각이 잘렸는데 세션 파일에는 온전히 
   바뀔 수 있다. 상한을 넘기면 조용히 넘어가지 말고 실패로 끝내야 그 변화가 드러난다.
 - **에코는 화면(ring)에는 남는다.** tail 판정을 버리므로 오판 경로는 닫히지만, 사람이 보는
   화면에 프롬프트 본문이 그대로 뜨는 것은 정상 동작이다(TUI 가 대화를 보여 주는 것이다).
-- **codex 와 claude 의 실행 모델이 갈린다.** 한동안 `stdinFile` 경로와 주입 경로가 함께 산다.
+- **codex 와 claude 의 실행 모델이 P5 까지 갈린다.** 그동안 `stdinFile` 경로와 주입 경로가 함께 산다.
   `composeSpawn` 의 `#380` 절이 그 두 세계의 근거를 이미 적고 있으므로 지우지 않는다.
