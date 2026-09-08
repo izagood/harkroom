@@ -93,10 +93,51 @@ describe('daemonSpawner 는 daemon 에게 러너를 띄우라고 시킨다 (#431
     // **인자 목록 자체를 단언한다.** "경로가 없다"를 `not.toHaveProperty` 로 재면 이름만
     // 바꾼 경로 인자가 통과한다 — 있는 것을 전부 적어야 새로 생긴 것이 걸린다.
     expect(Object.keys(call!.args!).sort()).toEqual([
-      'agentId', 'murmurPat', 'murmurUrl', 'path',
+      'agentId', 'agentVersion', 'murmurPat', 'murmurUrl', 'path',
     ]);
     // `path` 는 자식의 `PATH` 환경변수이지 실행 파일 경로가 아니다 — 값이지 실행 표면이 아니다.
     expect(call!.args!.path).toBe('/usr/bin');
+  });
+
+  /**
+   * **회귀선 — `AGENT_VERSION` 이 이 칸에서 사라지지 않는다.**
+   *
+   * `runnerLauncher.spawnRunner` 는 앱 번들의 버전을 `env.AGENT_VERSION` 으로 심는다.
+   * 그런데 이 spawner 는 env 를 **이름 붙은 invoke 인자로 펴서** 넘기므로, 펴는 목록에
+   * 없는 키는 조용히 버려진다. 실제로 그렇게 버려져서 모든 러너가 자기 버전을
+   * `'unknown'` 으로 보고했고(화면에는 전부 "버전 모름"), 그 위층 테스트
+   * (`runnerLauncher.test.ts` 의 "spawn env 에 AGENT_VERSION 이 실린다")는 **가짜
+   * spawner** 를 보므로 초록이었다. 그래서 이 단언은 여기 있어야 한다.
+   *
+   * 키 존재만 재지 않고 **값**을 재는 이유: `agentVersion: undefined` 도 키 목록
+   * 단언은 통과한다.
+   */
+  it('`env.AGENT_VERSION` 을 `agentVersion` 으로 넘긴다 — 이 값이 러너 버전 보고의 유일한 근거다', async () => {
+    await daemonSpawner.spawn({
+      agentId: 'agent-1',
+      env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin', AGENT_VERSION: '0.1.80' },
+      onExit: () => {},
+    });
+
+    const call = tauri.calls.find((c) => c.cmd === 'daemon_spawn_runner');
+    expect(call!.args!.agentVersion).toBe('0.1.80');
+  });
+
+  /**
+   * 앱 버전을 얻지 못하면 위층이 `env` 에 키를 넣지 않는다(`spawnRunner` 주석: 거짓
+   * 버전을 심는 것보다 '모른다'가 낫다). 그 '없음'이 `null` 로 넘어가야 Rust 의
+   * `Option<String>` 이 env 에 넣지 않는다 — `undefined` 로 두면 인자 목록에서 키가
+   * 통째로 빠지고, 그때 무엇이 넘어가는지가 직렬화에 달린 일이 된다.
+   */
+  it('`AGENT_VERSION` 이 없으면 `null` 을 넘긴다 — 빈 값을 지어내지 않는다', async () => {
+    await daemonSpawner.spawn({
+      agentId: 'agent-1',
+      env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin' },
+      onExit: () => {},
+    });
+
+    const call = tauri.calls.find((c) => c.cmd === 'daemon_spawn_runner');
+    expect(call!.args!.agentVersion).toBeNull();
   });
 
   /**
