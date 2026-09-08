@@ -104,7 +104,7 @@ export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThr
             {/*
               결론만 `text-fg-muted` 다 — 이 줄에서 **읽으라고 있는 유일한 글자**이므로
               옆의 회색보다 한 단 진하다. 강조색은 아니다: 접힌 대화는 나를 막지 않고
-              (막으면 `blocksHuman` 이 애초에 접지 않는다), 규칙 04 는 강조를 나를 막는
+              (막으면 `addressesHuman` 이 애초에 접지 않는다), 규칙 04 는 강조를 나를 막는
               것에만 쓴다.
 
               `truncate` 는 글자 수 상한(`EXCHANGE_CONCLUSION_MAX`) 뒤의 두 번째 겹이다 —

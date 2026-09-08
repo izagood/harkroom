@@ -1,4 +1,6 @@
-import { readAskMeta, readFailureMeta, readReportMeta, type MessageRow } from '@murmur/shared';
+import {
+  mentionedIds, readAskMeta, readFailureMeta, readReportMeta, stripCodeSpans, type MessageRow,
+} from '@murmur/shared';
 import type { Slot } from './progressGroup';
 
 /**
@@ -28,19 +30,56 @@ type IsAgent = (accountId: string) => boolean;
  * - 서로 **다른 에이전트가 둘 이상** 참여하고(혼잣말은 주고받기가 아니다)
  * - 구간 안에 **사람에게 온 말이 없다**
  *
- * ## 접지 않는 예외 — 사람에게 온 말
+ * ## 접지 않는 예외 ① — 사람에게 온 말
  *
  * 구간 안에 수신자가 사람인 선택 요청(`to.kind === 'human'`)이 있으면 **접지 않는다.**
  * 그것은 에이전트끼리의 대화가 아니라 사람을 부르는 말이고, 접으면 "내 차례"가 접힌 줄
  * 뒤로 사라진다 — 규칙 04 가 지키려는 것과 정반대다.
  *
  * **실패도 같은 예외에 든다**(`FailureMeta`). 실패는 언제나 사람에게 오는 말이므로 접으면
- * 사람이 그것을 못 본다 — 에이전트가 먼저 사람을 부르는 유일한 경우다. 두 판정을
- * `blocksHuman` 한 곳에 모아 두어 "사람을 막는가"라는 하나의 질문으로 답하게 한다.
+ * 사람이 그것을 못 본다 — 에이전트가 먼저 사람을 부르는 유일한 경우다. **본문이 사람
+ * 계정을 멘션한 말**도 같다 — 에이전트가 요청자를 이름으로 부른 말은 그 사람에게 온
+ * 말이다. 세 판정을 `addressesHuman` 한 곳에 모아 두어 "이 말이 사람에게 오는가"라는
+ * 하나의 질문으로 답하게 한다.
+ *
+ * ## 접지 않는 예외 ② — 사람이 부른 뒤 각 에이전트의 첫 답
+ *
+ * 이 예외가 없어서 실제로 답이 사라졌다(2026-09-08 실측). 사람이 한 스레드에서 에이전트
+ * 넷을 부르면 넷이 각자 **사람에게** 답하는데, 그 넷이 연속이고 저자가 전부 에이전트라
+ * 위 조건에 그대로 걸려 `avcs ↔ avcs-server ↔ avcshub ↔ murmur · 12번 주고받음 · 펼치기`
+ * 한 줄로 접혔다. 화면에 남은 글자가 문자 그대로 "에이전트끼리 대화했다" 였고, 정밀 검토
+ * 다섯 건이 전부 그 줄 뒤에 있었다.
+ *
+ * 원인은 판정에 **수신자가 없었다**는 것이다. 저자만 보면 "나에게 온 답"과 "자기들끼리 한
+ * 말"이 같은 값이 된다. 그래서 사람의 발화를 기준선으로 둔다:
+ *
+ * > **사람이 말한 뒤, 각 에이전트의 첫 발화는 접지 않는다.** 같은 에이전트의 두 번째
+ * > 발화부터, 그리고 그 뒤 에이전트끼리 주고받는 말은 접는다.
+ *
+ * 이 규칙이 규칙 04 의 원래 의도를 그대로 적은 것이다 — **나에게 온 답은 내 것이고, 그
+ * 뒤 자기들끼리 하는 말은 그들 것이다.**
+ *
+ * 왜 "사람이 부른 에이전트"(사람 발화의 멘션)로 좁히지 않는가: 화면은 `@channel` 과 집합
+ * (`@team`)을 펼칠 수 없다 — 그 명단은 서버에만 있다. 멘션으로 재면 그 두 경로의 답이
+ * 다시 조용히 접히고, 그것은 지금 고치는 결함과 같은 종류다. 대신 사람이 말한 적이
+ * **없으면** 이 예외는 아예 켜지지 않는다(`turnOpen`) — 그래야 사람 없이 흐르는
+ * 에이전트끼리의 로그가 예전대로 접힌다.
+ *
+ * 이 예외가 틀리는 방향은 **너무 많이 보여 주는 쪽**이다(사람이 "고맙다"만 써도 그 뒤 첫
+ * 발화들이 펼쳐진다). 이 파일이 이미 택한 방향이 그쪽이다 — *접으면 안 되는 것을 접느니
+ * 안 접는다*.
  */
 export function groupAgentExchanges(slots: Slot[], isAgent: IsAgent): ExchangeSlot[] {
   const out: ExchangeSlot[] = [];
   let run: MessageRow[] = [];
+
+  /**
+   * 사람이 이 목록에서 말한 적이 있는가. 예외 ②는 이것이 참일 때만 켜진다 — 기준선이
+   * 없으면 "답"이라고 부를 대상이 없다.
+   */
+  let turnOpen = false;
+  /** 사람이 마지막으로 말한 뒤 이미 답한 에이전트. 첫 답만 예외로 빼기 위한 장부다. */
+  const answered = new Set<string>();
 
   /** 모인 구간을 확정한다. 접을 값이 없으면 원래 자리로 되돌린다. */
   const flush = (): void => {
@@ -58,31 +97,61 @@ export function groupAgentExchanges(slots: Slot[], isAgent: IsAgent): ExchangeSl
 
   for (const slot of slots) {
     // 진행 묶음은 이미 접혀 있다 — 그 접힘을 이 접힘이 삼키면 두 규칙이 한 줄에 뭉친다.
+    //
+    // 진행은 **사람의 차례를 닫지 않는다**: 에이전트가 일하는 중이라는 말이고, 그 뒤에 오는
+    // 결과 발화가 여전히 사람에게 온 첫 답이다. 그래서 `answered` 를 비우지 않는다.
     if (slot.kind !== 'message') { flush(); out.push(slot); continue; }
     const m = slot.message;
-    if (isAgent(m.authorId) && !blocksHuman(m)) {
-      run.push(m);
-    } else {
+
+    // 사람의 발화 — 새 기준선이다. 앞의 구간을 닫고 장부를 비운다.
+    if (!isAgent(m.authorId)) {
       flush();
+      turnOpen = true;
+      answered.clear();
       out.push(slot);
+      continue;
     }
+
+    // 예외 ① 사람에게 오는 말, 예외 ② 사람이 부른 뒤 이 에이전트의 첫 발화.
+    const firstAnswer = turnOpen && !answered.has(m.authorId);
+    if (addressesHuman(m, isAgent) || firstAnswer) {
+      flush();
+      answered.add(m.authorId);
+      out.push(slot);
+      continue;
+    }
+
+    run.push(m);
   }
   flush();
   return out;
 }
 
 /**
- * 이 말이 **사람을 막는가**. 막는다면 에이전트가 쓴 말이라도 접지 않는다 — 사슬의 끝은
- * 언제나 사람이고, 사람을 부르는 말이 접힌 줄 뒤로 사라지면 안 된다.
+ * 이 말이 **사람에게 오는가**. 온다면 에이전트가 쓴 말이라도 접지 않는다 — 사슬의 끝은
+ * 언제나 사람이고, 사람에게 온 말이 접힌 줄 뒤로 사라지면 안 된다.
  *
- * 실패 어휘가 생기면 여기 한 줄이 는다(위 주석 참고).
+ * 판정이 셋이다:
+ * - **실패**는 언제나 사람에게 오는 말이다 — 접으면 사람이 그것을 못 본다.
+ * - **사람에게 온 미답 선택**은 사람의 차례다. 이미 답한 선택은 기록일 뿐이라 접혀도 된다.
+ * - **본문이 사람 계정을 멘션한 말**은 그 사람을 이름으로 부른 것이다. 에이전트가 요청자를
+ *   `@handle` 로 부르며 쓴 답이 여기 걸린다(`packages/agent/src/prompt.ts` 가 그렇게 쓰라고
+ *   지시한다 — 이 판정과 그 지시가 한 쌍이다).
+ *
+ * 멘션 판정을 서버와 같은 규칙으로 한다: `stripCodeSpans` 를 먼저 거쳐 **코드 안의 토큰은
+ * 부름이 아니다**(#298). 그래야 코드를 인용한 말이 "사람을 불렀다"로 오인되지 않는다.
+ *
+ * `isAgent` 가 모르는 계정은 에이전트로 치지 않으므로 사람 쪽으로 센다 — 이 파일이 택한
+ * 방향(접으면 안 되는 것을 접느니 안 접는다)과 같다.
  */
-function blocksHuman(m: MessageRow): boolean {
+function addressesHuman(m: MessageRow, isAgent: IsAgent): boolean {
   // 실패는 언제나 사람에게 오는 말이다 — 접으면 사람이 그것을 못 본다.
   if (readFailureMeta(m.meta) != null) return true;
   const ask = readAskMeta(m.meta);
   // 이미 답한 선택은 더 이상 아무도 막지 않는다 — 기록일 뿐이므로 접혀도 된다.
-  return ask != null && ask.answeredWith == null && ask.to.kind === 'human';
+  if (ask != null && ask.answeredWith == null && ask.to.kind === 'human') return true;
+  // 자기 자신을 부른 것은 사람을 부른 것이 아니다(에이전트가 제 handle 을 인용할 수 있다).
+  return mentionedIds(stripCodeSpans(m.body)).some((id) => id !== m.authorId && !isAgent(id));
 }
 
 /** 접힌 줄이 말할 참여자 — 등장 순서를 지킨다(먼저 말한 쪽이 먼저 읽힌다). */
@@ -146,7 +215,7 @@ export interface ExchangeConclusion {
  *
  * ## 실패는 여기 오지 않는다
  *
- * `FailureMeta` 를 보지 않는 것은 누락이 아니다 — 실패가 있는 구간은 `blocksHuman` 이
+ * `FailureMeta` 를 보지 않는 것은 누락이 아니다 — 실패가 있는 구간은 `addressesHuman` 이
  * **애초에 접지 않는다**. 여기서 실패를 읽으면 그 판정이 두 벌이 되고, 접히지도 않는 말의
  * 결론을 계산하는 죽은 가지가 남는다.
  *

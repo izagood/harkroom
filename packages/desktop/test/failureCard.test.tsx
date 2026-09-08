@@ -1,7 +1,7 @@
 // 실패 어휘 — 여덟 가지 말 중 유일하게 **에이전트가 먼저 사람을 부르는** 말이다.
 //
 // 계획서에 이 어휘를 세우는 Task 가 없어 Task 5 가 우회해 두었던 자리를 여기서 닫는다
-// (`lib/agentExchange.ts::blocksHuman`). Task 6(`stuck`)·Task 7(교착)이 이것을 전제로 한다.
+// (`lib/agentExchange.ts::addressesHuman`). Task 6(`stuck`)·Task 7(교착)이 이것을 전제로 한다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import type { FailureMeta, MessageRow } from '@murmur/shared';
