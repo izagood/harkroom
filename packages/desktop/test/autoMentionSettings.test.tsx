@@ -66,8 +66,8 @@ const sidebar = () => render(
 );
 
 const openSection = async (): Promise<HTMLElement> => {
-  const rowEl = screen.getByRole('button', { name: /# general\b/ }).closest('div')!;
-  fireEvent.click(within(rowEl).getByRole('button', { name: '⋯' }));
+  // 행 자체가 트리거다(`⋯` 버튼은 없앴다) — 우클릭으로 연다.
+  fireEvent.contextMenu(screen.getByRole('button', { name: /# general\b/ }));
   fireEvent.click(screen.getByRole('menuitem', { name: '멤버 보기' }));
   return await screen.findByTestId('auto-mentions-c1');
 };

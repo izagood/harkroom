@@ -1446,7 +1446,7 @@ export const en = {
   // | `delete` | 채널 삭제 확인 |
   // | `edit` | 채널 편집 폼 |
   // | `members` | 멤버 패널(자동 멘션 · 팀 추가 포함) |
-  // | `menu` | 채널 행 오른쪽 `⋯` 메뉴 |
+  // | `menu` | 채널 행 우클릭 메뉴 |
   // | `notify` | 알림 3단 — 그 메뉴 안이지만 **값 집합이 `shared` 의 것**이라 따로 둔다 |
   // | `resize` | 너비 손잡이 |
   // | `runner` | DM 줄이 러너에 대해 내는 말 |
@@ -3007,7 +3007,7 @@ export const en = {
   // | @{handle} 는 지금 응답하지 않는다 | `@{handle} is not responding` | 머리말이 이미 정한 낱말이다(`응답이 없다` → `is not responding`) — 주어가 있어야 누가 안 하는지가 온다 |
   // | #{name} 에 아직 메시지가 없다 | `No messages in #{name} yet` | |
   // | @{handle} 처럼 에이전트를 멘션하면 그 에이전트의 inbox 로 들어간다 | `Mention an agent like @{handle} and it lands in that agent's inbox` | **`답한다` 가 아니라 `inbox 로 들어간다`** 인 이유를 그 파일 주석이 적었다: 답이 오는지는 러너가 떠 있는가에 달렸고 이 화면은 그것을 모른다 |
-  // | 사이드바에서 이 채널의 ⋯ 메뉴를 열고 '채널 편집'으로 topic 을 정할 수 있다 | `Open the ⋯ menu for this channel in the sidebar and set a topic with "Edit channel"` | 가리키는 항목 이름이 `sidebar.menu.edit` 의 값과 **같은 글자**여야 한다 — 안내가 가리킨 자리를 사람이 메뉴에서 못 찾으면 그 안내는 없느니만 못하다 |
+  // | 사이드바에서 이 채널을 우클릭해 '채널 편집'으로 topic 을 정할 수 있다 | `Right-click this channel in the sidebar and set a topic with "Edit channel"` | 가리키는 항목 이름이 `sidebar.menu.edit` 의 값과 **같은 글자**여야 한다 — 안내가 가리킨 자리를 사람이 메뉴에서 못 찾으면 그 안내는 없느니만 못하다 |
   //
   // ## 사전에 **안** 넣은 것
   //
@@ -3060,7 +3060,7 @@ export const en = {
    * 가리킨 항목을 사람이 메뉴에서 못 찾으면 그 안내는 없느니만 못하다.
    */
   'channel.empty.tipTopic':
-    'Open the ⋯ menu for this channel in the sidebar and set a topic with "Edit channel".',
+    'Right-click this channel in the sidebar and set a topic with "Edit channel".',
 
   'channel.files.close': 'Close the file list',
   'channel.files.empty': 'No files have been shared yet',

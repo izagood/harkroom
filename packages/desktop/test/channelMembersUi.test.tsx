@@ -63,8 +63,8 @@ const sidebar = () => render(
 );
 
 const openMenuFor = (accessibleName: RegExp): void => {
-  const row = screen.getByRole('button', { name: accessibleName }).closest('div')!;
-  fireEvent.click(within(row).getByRole('button', { name: '⋯' }));
+  // 행 자체가 트리거다(`⋯` 버튼은 없앴다) — 우클릭으로 연다.
+  fireEvent.contextMenu(screen.getByRole('button', { name: accessibleName }));
 };
 
 const openMembers = async (accessibleName: RegExp, channelId: string): Promise<HTMLElement> => {

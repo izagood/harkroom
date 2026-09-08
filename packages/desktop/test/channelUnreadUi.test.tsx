@@ -34,8 +34,8 @@ const seed = () => {
 };
 
 const openMenuFor = (name: string) => {
-  const row = screen.getByText(name).closest('div.relative') as HTMLElement;
-  fireEvent.click(within(row).getByRole('button', { name: '⋯' }));
+  // 행 자체가 트리거다(`⋯` 버튼은 없앴다). 우클릭 이벤트는 채널 버튼에서 그 행까지 올라간다.
+  fireEvent.contextMenu(screen.getByText(name).closest('button') as HTMLElement);
   return screen.getByRole('menu');
 };
 

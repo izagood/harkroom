@@ -46,12 +46,12 @@ const sidebar = () => render(
     collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
-/** 보관 섹션을 펴고 그 채널의 ⋯ 메뉴를 연다. */
+/** 보관 섹션을 펴고 그 채널을 우클릭해 메뉴를 연다(`⋯` 버튼은 없앴다). */
 const openArchivedMenu = () => {
   fireEvent.click(screen.getByText(/Archived/));
   // 보관 섹션의 채널은 마지막 행이다 — 일반 목록 뒤에 온다.
-  const triggers = screen.getAllByRole('button', { name: '⋯' });
-  fireEvent.click(triggers[triggers.length - 1]!);
+  const rows = screen.getAllByRole('button', { name: /^# / });
+  fireEvent.contextMenu(rows[rows.length - 1]!);
   return screen.getByRole('menu');
 };
 
@@ -71,7 +71,7 @@ describe('채널 삭제 UI (#155)', () => {
     fakeController();
     sidebar();
 
-    fireEvent.click(screen.getAllByRole('button', { name: '⋯' })[0]!);
+    fireEvent.contextMenu(screen.getAllByRole('button', { name: /^# / })[0]!);
     const menu = screen.getByRole('menu');
     expect(within(menu).getByText('보관')).toBeTruthy();
     expect(within(menu).queryByText('삭제')).toBeNull();
