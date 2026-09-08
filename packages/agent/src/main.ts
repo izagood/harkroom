@@ -356,11 +356,6 @@ const scheduler = createMentionScheduler({
     registry,
   } satisfies MentionTurnDeps),
   hooks: {
-    // #384: 이 스레드에 이어받기 예약이 있으면 **지금** 인터랙티브 턴이 뜬다. 이 자리인
-    // 이유는 세션 상태(turnsRun·codex 세션 id)가 방금 저장됐기 때문이다 — 레지스트리
-    // 해제 시점(턴의 finally)은 그 저장보다 앞이라, 그때 띄우면 이어받기 턴이 옛 레코드를
-    // 읽어 같은 세션을 새로 시작하려 든다(turnRegistry.ts 의 handoffs 주석).
-    resumeHandoff: async (threadKey) => { await interactive?.resumeHandoff(threadKey); },
     // #129: 종료 요청은 턴이 끝난 **지금** 본다. 진행 중인 다른 턴은 아래 drain 이 기다린다.
     stopRequested: (at) => {
       if (stopRequestedForRunner(at, startedAtMs)) acceptStopRequest(at);

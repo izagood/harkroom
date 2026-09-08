@@ -54,7 +54,6 @@ function harness(opts: { runTurn: () => Promise<MentionTurnResult> }) {
     runMentionTurn: opts.runTurn,
     buildTurnDeps: () => ({}) as never,
     hooks: {
-      resumeHandoff: async () => {},
       stopRequested: () => {},
       exitIfUnrecoverable: () => {},
       noticeHarnessLogin: async () => {},
@@ -154,8 +153,6 @@ describe('mentionScheduler 승인 관문', () => {
       runMentionTurn: async () => ({ stopRequestedAt: null }),
       buildTurnDeps: () => ({}) as never,
       hooks: {
-        // 장부 삭제가 이 await 뒤에 있으면 그 스레드는 영원히 blocked 가 된다.
-        resumeHandoff: async () => { throw new Error('이어받기 실패'); },
         stopRequested: () => {},
         exitIfUnrecoverable: () => {},
         noticeHarnessLogin: async () => {},
@@ -211,7 +208,7 @@ describe('mentionScheduler 승인 관문', () => {
       runMentionTurn: async () => { calls += 1; return { stopRequestedAt: null }; },
       buildTurnDeps: () => ({}) as never,
       hooks: {
-        resumeHandoff: async () => {}, stopRequested: () => {},
+        stopRequested: () => {},
         exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {},
       },
       startedAtMs: 0,
@@ -237,7 +234,7 @@ describe('mentionScheduler 승인 관문', () => {
       runMentionTurn: async () => { calls += 1; throw new Error('턴 실패'); },
       buildTurnDeps: () => ({}) as never,
       hooks: {
-        resumeHandoff: async () => {}, stopRequested: () => {},
+        stopRequested: () => {},
         exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {},
       },
       startedAtMs: 0,
@@ -276,7 +273,7 @@ describe('mentionScheduler 승인 관문', () => {
       },
       buildTurnDeps: () => ({}) as never,
       hooks: {
-        resumeHandoff: async () => {}, stopRequested: () => {},
+        stopRequested: () => {},
         exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {},
       },
       startedAtMs: 0,
@@ -312,7 +309,7 @@ describe('mentionScheduler 승인 관문', () => {
       runMentionTurn: async () => { throw new Error('턴 실패'); },
       buildTurnDeps: () => ({}) as never,
       hooks: {
-        resumeHandoff: async () => {}, stopRequested: () => {},
+        stopRequested: () => {},
         exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {},
       },
       startedAtMs: 0,

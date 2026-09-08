@@ -35,8 +35,8 @@ describe('깨움 배선', () => {
       runMentionTurn: async (_d, target) => { targets.push(target); return { stopRequestedAt: null }; },
       buildTurnDeps: () => ({}) as never,
       hooks: {
-        resumeHandoff: async () => {}, stopRequested: () => {},
-        exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {},
+        stopRequested: () => {},
+      exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {},
       },
       startedAtMs: 0,
     });

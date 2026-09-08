@@ -2625,16 +2625,6 @@ describe('터미널 패널 — 두 언어로 뜬다', () => {
   });
 
   /**
-   * **`#384` 의 정직성.** 진행 중인 턴을 멈추지 않으므로 누른 뒤 26초쯤 아무것도 안
-   * 바뀐 것처럼 보인다 — 그 침묵을 이 줄이 메운다. 그래서 **다음에 무엇이 일어나는지**
-   * 까지 말해야 하고, 그것이 두 언어에 다 있어야 한다.
-   */
-  it('이어받기 예약이 두 언어 모두 「다음에 무엇이 일어나는가」를 말한다', () => {
-    expect(ko['terminal.handoff.queued']).toContain('끝나면');
-    expect(en['terminal.handoff.queued'] as string).toContain('when the mention turn in flight ends');
-  });
-
-  /**
    * **보이는 글자와 접근 이름이 갈린다.** 옮기면서 한 키로 접었더니 `agentTerminal
    * .test.tsx` 의 `getByLabelText('터미널 닫기')` 가 빨개졌다 — 머리띠의 꼬리표라 보이는
    * 글자는 짧아야 하는데, 그 짧음이 스크린리더에서는 **무엇을** 닫는지를 잃는다.

@@ -31,15 +31,13 @@ import type { MessageKey, Translate } from '../i18n';
  * 그 사실을 글로 적는다 — 눌러도 아무 일이 없는 입력창이 최악이다. 프레임이 한 번도
  * 안 오는 구 서버에서는 자연스럽게 읽기 전용으로 남는다.
  *
- * **[이어받기](#384)가 그 배지 자리에 붙었다.** 관찰 전용의 이유가 진행 중인 멘션 턴일
- * 때(그리고 그때만) 사람이 그 턴을 이어받을 수 있다 — 누르면 러너가 예약하고, 그 턴이
- * 끝나면 같은 하네스 세션의 인터랙티브 턴으로 **이 자리에서** 갈아탄다. 기다리는 동안
- * 화면은 그 사실을 적는다: 진행 중인 턴을 멈추지 않으므로(운영자 결정 A) 표시가 없으면
- * 사람에게는 "눌렀는데 아무 일이 없다"가 된다.
+ * **관찰 전용 배지는 남는다.** 그 사유(`'observe-only'`)는 codex 가 아직 `exec` + stdin
+ * 파일로 돌아 그 세션에 사람이 칠 수 없다는 사실이다 — P5 가 끝나면 그때 지운다. claude
+ * 멘션 턴은 TUI 라 사람이 그대로 칠 수 있고, 그래서 이어받기라는 우회로가 없어졌다
+ * (2026-09-08 철거).
  *
- * 이 패널이 `TurnMode` 를 읽지 않는다는 위 문장은 **여전히 참이다**: 이어받기 버튼의
- * 조건은 서버가 준 `reason`('observe-only') 하나이고, 갈아탄 뒤 입력이 열리는 근거도
- * 서버의 `writer` 프레임 하나다(#369 의 판정) — 화면은 어느 쪽도 다시 재지 않는다.
+ * 이 패널이 `TurnMode` 를 읽지 않는다는 위 문장은 **여전히 참이다**: 입력이 열리는 근거는
+ * 서버의 `writer` 프레임 하나다(#369 의 판정) — 화면은 그것을 다시 재지 않는다.
  */
 export function TerminalPanel() {
   const target = useActiveStore((s) => s.terminalTarget);
@@ -101,19 +99,6 @@ export function TerminalPanel() {
    * 자기 클로저를 여기 걸어 둔다. 열기 경로를 밖에 따로 만들면 소켓·sink 정리가 두 벌이 된다.
    */
   const openRef = useRef<(() => void) | null>(null);
-  /**
-   * [이어받기](#384)의 진행 상태. **'waiting' 이 화면에 나와야 한다** — 진행 중인 멘션 턴은
-   * 멈추지 않고 끝나기를 기다리므로(운영자 결정 A), 이 값이 화면에 없으면 사람에게는
-   * "눌렀는데 아무 일이 없다"가 된다. 그것이 이 저장소가 오늘 반복해서 고친 결함이다
-   * (#368 러너 사유, #369 attach 입력, #381 work.link — 전부 조용히 삼켜지는 것이었다).
-   */
-  const [handoff, setHandoff] = useState<'none' | 'requesting' | 'waiting'>('none');
-  /**
-   * 이어받기가 **거절된** 이유. 서버 문구를 그대로 든다 — codex 거절·구 러너·러너 오프라인이
-   * 여기로 온다. `phase='error'` 로 뭉치지 않는 이유: 그러면 보고 있던 멘션 턴의 화면이
-   * 사라진다. 거절은 이 스레드를 못 보게 된 사건이 아니다.
-   */
-  const [handoffError, setHandoffError] = useState<string | null>(null);
 
   /** 패널 폭. 스레드 패널과 같은 규약이다 — 바꿀 때마다 기기 로컬에 적는다. */
   const [terminalWidth, setWidth] = useState(() => paneStorage.loadTerminalWidth());
@@ -121,10 +106,6 @@ export function TerminalPanel() {
     setWidth(next);
     paneStorage.saveTerminalWidth(next);
   }, []);
-  /** `onStatus` 콜백이 읽는 최신 이어받기 상태(writerRef 와 같은 이유 — 클로저가 얼어붙는다). */
-  const handoffRef = useRef<'none' | 'requesting' | 'waiting'>('none');
-  /** 멘션 턴이 끝나면 인터랙티브 세션으로 갈아탄다(#384). effect 가 자기 클로저를 걸어 둔다. */
-  const handoffRequestRef = useRef<(() => void) | null>(null);
   // 훅은 아래 `if (!target) return null` 보다 먼저여야 한다.
   const t = useT();
 
@@ -136,13 +117,13 @@ export function TerminalPanel() {
     const api = getController().api;
 
     /**
-     * xterm 배선 → attach 소켓. attach·[터미널 열기]·[이어받기] 가 이 하나로 수렴한다 —
+     * xterm 배선 → attach 소켓. attach 와 [터미널 열기]가 이 하나로 수렴한다 —
      * 갈라 두면 소켓·sink 정리가 여러 벌이 되고, 한 벌만 고치는 사고가 난다.
      */
     const attachTo = (ticket: string): void => {
-      // **다시** 붙는 경로가 생겼다(#384: 이어받기가 멘션 세션 → 인터랙티브 세션으로
-      // 갈아탄다) — 앞의 소켓과 화면을 먼저 놓는다. 남겨 두면 끝난 멘션 세션의 바이트가
-      // 계속 흘러들고, sink 가 둘이면 같은 host 에 xterm 이 두 번 붙어 화면이 겹친다.
+      // **다시** 붙을 수 있다([터미널 열기]가 같은 자리에서 새 세션을 연다) — 앞의 소켓과
+      // 화면을 먼저 놓는다. 남겨 두면 끝난 세션의 바이트가 계속 흘러들고, sink 가 둘이면
+      // 같은 host 에 xterm 이 두 번 붙어 화면이 겹친다.
       attach?.close();
       attach = null;
       sink?.dispose();
@@ -179,11 +160,9 @@ export function TerminalPanel() {
         onOutput: (bytes) => sink?.write(bytes),
         onStatus: (next) => {
           setState(next);
-          // #384: 이어받기를 기다리는 중이었고 그 턴이 방금 끝났다 → 인터랙티브 세션으로
           // 갈아탄다. 러너는 이미 예약대로 그 턴을 띄웠거나 띄우는 중이고, 이 요청이
           // 그 세션의 티켓을 받아 온다. **끝났다는 사실은 이미 오는 프레임이 알려 준다** —
           // 폴링을 새로 만들지 않는다.
-          if (next === 'ended' && handoffRef.current === 'waiting') handoffRequestRef.current?.();
         },
         onWriter: (turn) => {
           writerRef.current = turn.writer;
@@ -223,53 +202,11 @@ export function TerminalPanel() {
     };
 
     // [터미널 열기](#337) — 진행 중인 턴이 없어도 러너가 세션을 확보해 인터랙티브 PTY 를
-    // 띄우고, 그 티켓으로 위와 같은 attach 흐름에 합류한다. `handoff:false` — 기다릴 턴이
-    // 없는 자리이고, 이어받기와 요청을 갈라 보내야 러너가 무엇을 부탁받았는지 안다.
+    // 띄우고, 그 티켓으로 위와 같은 attach 흐름에 합류한다.
     openRef.current = () => {
       setPhase('loading');
-      void begin(() => api.openInteractiveSession(target.agentAccountId, target.channelId, target.threadRootId, false));
+      void begin(() => api.openInteractiveSession(target.agentAccountId, target.channelId, target.threadRootId));
     };
-
-    /**
-     * [이어받기](#384) — 진행 중인 멘션 턴을 이어받는다. 두 번 불린다:
-     * ① 사람이 누를 때 → 러너가 예약하고 `waiting` 으로 답한다(멘션 턴은 계속 돈다).
-     * ② 그 턴이 끝났을 때(`status: ended`) → 같은 요청이 이제 인터랙티브 세션의 티켓을
-     *    받아 온다. 그 세션은 `stdinFile: null` 이라 #369 의 판정만으로 writer 가 열린다.
-     *
-     * 러너 응답 한도(10초)보다 턴이 길므로(실측 26초쯤) 서버가 기다렸다 주는 길은 없다 —
-     * 기다림은 화면이 들고, 끝나는 시점은 이미 오는 프레임(`status`)이 알려 준다.
-     */
-    const requestHandoff = (): void => {
-      handoffRef.current = 'requesting';
-      setHandoff('requesting');
-      setHandoffError(null);
-      void (async () => {
-        try {
-          const res = await api.openInteractiveSession(
-            target.agentAccountId, target.channelId, target.threadRootId, true,
-          );
-          if (disposed) return;
-          if (res.waiting) {
-            handoffRef.current = 'waiting';
-            setHandoff('waiting');
-            return;
-          }
-          // 열렸다 — 누르는 사이에 턴이 끝났거나(26초짜리 턴에서 흔하다), 기다린 턴이
-          // 방금 끝난 뒤의 두 번째 호출이다. 그 세션으로 갈아탄다.
-          handoffRef.current = 'none';
-          setHandoff('none');
-          attachTo(res.ticket);
-        } catch (err) {
-          if (disposed) return;
-          // 거절 문구는 서버가 쓴 것을 그대로 올린다(codex 거절·구 러너·러너 오프라인).
-          // 화면이 원인을 지어내지 않는다 — #369 가 세운 규칙 그대로다.
-          handoffRef.current = 'none';
-          setHandoff('none');
-          setHandoffError(err instanceof Error ? err.message : String(err));
-        }
-      })();
-    };
-    handoffRequestRef.current = requestHandoff;
 
     void (async () => {
       try {
@@ -298,10 +235,6 @@ export function TerminalPanel() {
       // 흘러들고, 그것은 사람이 보지 않는 화면으로 비밀이 계속 오간다는 뜻이다.
       disposed = true;
       openRef.current = null;
-      // 대기 중이었다면 그 대기도 이 창의 것이다(#384) — 패널을 닫으면 사라진다. 러너의
-      // 예약은 남아 그 턴이 뜨는데, 아무도 안 붙으면 고아 회수가 걷어 간다(스펙 §5-2 결정 5).
-      handoffRequestRef.current = null;
-      handoffRef.current = 'none';
       attach?.close();
       sink?.dispose();
     };
@@ -401,35 +334,6 @@ export function TerminalPanel() {
           <p role="note" data-testid="writer-note" data-writer-reason={writerReason ?? 'unknown'}>
             {writerDeniedText(writerReason, t)}
           </p>
-          {/* #384: 관찰 전용의 **이유가 진행 중인 멘션 턴일 때만** 이어받을 것이 있다.
-              다른 창이 차례를 가져간 경우(other-writer)는 그 창을 닫으면 되고, 구 러너
-              (runner-outdated)는 러너를 올려야 한다 — 거기에 이 버튼을 두면 눌러도 아무
-              일이 없다. 버튼의 존재 조건이 곧 "이어받을 턴이 있다"여야 한다. */}
-          {writerReason === 'observe-only' && handoff === 'none' && !handoffError && (
-            <button
-              onClick={() => handoffRequestRef.current?.()}
-              className="mt-2 rounded bg-surface-raised px-2 py-1 text-fg hover:bg-surface-hover"
-              data-testid="handoff-button"
-            >
-              {t('terminal.handoff.request')}
-            </button>
-          )}
-          {handoff === 'requesting' && (
-            <p className="mt-2" role="status" data-testid="handoff-note">{t('terminal.handoff.requesting')}</p>
-          )}
-          {/* **기다린다는 사실이 화면에 있다**(#384 의 정직성 전부). 진행 중인 턴을 멈추지
-              않으므로(운영자 결정 A) 누른 뒤 26초쯤은 아무것도 안 바뀐 것처럼 보인다 —
-              그 침묵을 이 한 줄이 메운다. */}
-          {handoff === 'waiting' && (
-            <p className="mt-2 text-fg" role="status" data-testid="handoff-note">
-              {t('terminal.handoff.queued')}
-            </p>
-          )}
-          {handoffError && (
-            <p className="mt-2 text-warning" role="note" data-testid="handoff-error">
-              {t('terminal.handoff.failed', { reason: handoffError })}
-            </p>
-          )}
         </div>
       )}
       {/* 이 자리는 항상 렌더한다 — 조건부로 만들면 세션을 찾은 순간 ref 가 아직 null 이라
