@@ -160,8 +160,11 @@ export function Directory({ open, onClose, accountId }: Props) {
       <h3 className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
         {label} ({rows.length})
       </h3>
+      {/* 구획 제목은 아랫단 11px 이고, '없다' 는 **본문단**이다(앱 기본값이라 안 적는다) —
+          목록이 비면 이 한 줄이 화면에 남는 유일한 설명이라 아랫단으로 내리지 않는다.
+          `Inbox`·`SavedMessages` 가 같은 짝을 쓴다. */}
       {rows.length === 0
-        ? <p className="px-2 text-xs text-fg-subtle">{label} 중 맞는 것이 없다</p>
+        ? <p className="px-2 text-fg-subtle">{label} 중 맞는 것이 없다</p>
         : <ul>{rows.map(row)}</ul>}
     </section>
   );
@@ -193,7 +196,7 @@ export function Directory({ open, onClose, accountId }: Props) {
           {/* 실패는 목록 위에 남긴다. 실패했는데 빈 목록만 보이면 사람은 "아무도 없다"로
               읽는다 — 조회 실패를 빈 목록으로 삼키지 않는다. */}
           {load.kind === 'error' && (
-            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-xs text-danger">
+            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-danger">
               계정 목록을 불러오지 못했다 — {load.message}
               <button
                 onClick={() => { reload(); }}
@@ -204,10 +207,10 @@ export function Directory({ open, onClose, accountId }: Props) {
             </div>
           )}
           {load.kind === 'loading' && total === 0 && (
-            <p className="px-2 text-xs text-fg-subtle">불러오는 중…</p>
+            <p className="px-2 text-fg-subtle">불러오는 중…</p>
           )}
           {load.kind === 'ready' && total === 0 && (
-            <p className="px-2 text-xs text-fg-subtle">이 워크스페이스에 아직 계정이 없다</p>
+            <p className="px-2 text-fg-subtle">이 워크스페이스에 아직 계정이 없다</p>
           )}
           {total > 0 && (
             <>

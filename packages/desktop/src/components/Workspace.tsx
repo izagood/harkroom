@@ -138,8 +138,21 @@ export function Workspace({ onLogout, onOpenSettings }: {
    * 두면 다음 사람이 그 분기가 살아 있다고 읽는다.
    */
 
+  /*
+   * **앱 기본 글자 크기는 여기 한 줄이 정한다** — 타이포 4단의 본문단 13px 이다.
+   *
+   * 14px(`text-sm`)이었다. 그 값은 4단(11 / 13 / 15 / 17) 중 아무것도 아니었고, 그래서
+   * 화면 아래쪽 자리마다 `text-xs`·`text-sm` 으로 다시 덮어야 했다 — 덮는 쪽도 12·14px
+   * 이라 어휘가 둘로 갈렸다. 이 한 줄을 13px 로 내리면 **본문 자리는 아무것도 안 적어도
+   * 맞다**. 실제로 이 작업에서 아래쪽의 중복 선언 여러 곳이 그래서 사라졌다.
+   *
+   * 임의값(`text-[13px]`)으로 적는 이유는 척도 이름이 v4 기본값 12 / 14 / 16px 이라
+   * 4단 중 하나를 가리킬 수 없기 때문이다. `index.css` 는 척도를 재정의하지 않는다 —
+   * 재정의하면 `text-sm` 이 13px 이 되지만 사람이 두 이름을 계속 배워야 한다.
+   * 회귀선은 `test/typeScale.test.ts` 다.
+   */
   return (
-    <div className="flex h-screen text-sm">
+    <div className="flex h-screen text-[13px]">
       {/* 업데이트 팝업은 `fixed` 라 이 자리에 두어도 레이아웃을 밀지 않는다. 상단 띠
           (`Notice`·`ProjectionBanner`)와 달리 작업 흐름을 비켜서 우측 하단에 선다 —
           업데이트는 지금 하던 일을 멈출 이유가 아니다. */}
@@ -220,7 +233,9 @@ export function Workspace({ onLogout, onOpenSettings }: {
               정리할 수 있어야 하고, 그것이 바로 이 기능을 쓰는 상황이다. */}
           <button
             onClick={() => setSweepOpen(true)}
-            className="ml-auto rounded px-2 py-1 text-xs text-fg-muted hover:bg-surface-hover"
+            // 같은 헤더 줄의 앞/뒤 버튼은 크기를 안 적어 본문단을 물려받는다 — 이 버튼만
+            // 아랫단으로 내리면 한 줄 안에 두 단이 서고, 그 줄이 들쭉날쭉해진다.
+            className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover"
             title="미읽음을 하나씩 훑는다"
           >
             미읽음 훑기

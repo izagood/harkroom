@@ -80,55 +80,61 @@ export function SweepShell({ items, loading, error, onRetry, onClose, onMarkRead
         aria-modal="true"
         aria-label="미읽음 훑기"
       >
-        <div className="flex items-center gap-2 border-b border-border p-3 text-sm text-fg">
+        {/* 이 대화창은 두 단만 쓴다: **읽는 것은 본문단**(제목·메시지·오류·아래 두 버튼,
+            앱 기본값이라 크기를 안 적는다), **세는 것과 꼬리표는 아랫단 11px**(진행 수·
+            닫기·채널 라벨·작성자 핸들). 훑는 사람이 판단 근거로 읽는 것은 메시지 본문이고,
+            나머지는 그 본문이 어디서 왔고 몇 번째인지 알려 주는 자리다. */}
+        <div className="flex items-center gap-2 border-b border-border p-3 text-fg">
           <span className="font-medium">미읽음 훑기</span>
           {!loading && !error && items.length > 0 && index < items.length && (
-            <span className="text-xs text-fg-subtle">{index + 1} / {items.length}</span>
+            <span className="text-[11px] text-fg-subtle">{index + 1} / {items.length}</span>
           )}
-          <button className="ml-auto rounded px-2 py-0.5 text-xs text-fg-muted hover:bg-surface-hover"
+          <button className="ml-auto rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover"
             onClick={onClose}>닫기</button>
         </div>
 
-        {loading && <div className="p-4 text-sm text-fg-muted">불러오는 중…</div>}
+        {loading && <div className="p-4 text-fg-muted">불러오는 중…</div>}
 
         {/* 못 불러온 것과 볼 것이 없는 것은 **다른 상태다.** 조회 실패를 빈 목록으로 삼키면
             화면이 "다 봤다"고 말하게 되고, 그것은 거짓말이다(docs/design.md §4). 그래서
             오류일 때는 완료 문구를 그리는 분기 자체에 닿지 않는다. */}
         {!loading && error && (
           <div className="p-4">
-            <p role="alert" className="text-sm text-danger">미읽음을 불러오지 못했다: {error}</p>
-            <button className="mt-2 rounded bg-accent px-2 py-1 text-xs text-fg-on-strong hover:bg-accent-hover"
+            <p role="alert" className="text-danger">미읽음을 불러오지 못했다: {error}</p>
+            <button className="mt-2 rounded bg-accent px-2 py-1 text-fg-on-strong hover:bg-accent-hover"
               onClick={onRetry}>다시 시도</button>
           </div>
         )}
 
         {!loading && !error && !current && (
-          <div className="p-6 text-center text-sm text-fg-muted">다 봤다</div>
+          <div className="p-6 text-center text-fg-muted">다 봤다</div>
         )}
 
         {!loading && !error && current && (
           <>
             <div className="flex-1 overflow-y-auto p-3">
-              <div className="mb-2 text-xs text-fg-muted">
+              <div className="mb-2 text-[11px] text-fg-muted">
                 {current.label}
                 <span className="ml-2 text-fg-subtle">안 읽은 메시지 {current.messages.length}개</span>
               </div>
               <ul className="space-y-2">
                 {current.messages.map((m) => (
-                  <li key={m.id} className="rounded bg-surface-sunken p-2 text-sm text-fg">
-                    <span className="mr-2 text-xs text-fg-subtle">@{accounts[m.authorId]?.handle ?? m.authorId}</span>
+                  <li key={m.id} className="rounded bg-surface-sunken p-2 text-fg">
+                    <span className="mr-2 text-[11px] text-fg-subtle">@{accounts[m.authorId]?.handle ?? m.authorId}</span>
                     {m.body}
                   </li>
                 ))}
               </ul>
             </div>
             {actionError && (
-              <p role="alert" className="px-3 pb-2 text-xs text-danger">{actionError}</p>
+              <p role="alert" className="px-3 pb-2 text-danger">{actionError}</p>
             )}
             <div className="flex gap-2 border-t border-border p-3">
-              <button className="rounded bg-accent px-2 py-1 text-xs text-fg-on-strong hover:bg-accent-hover"
+              {/* 이 둘이 이 화면의 주 조작이다 — 훑기는 이 버튼을 반복해서 누르는 일이라
+                  아랫단으로 내리지 않는다. */}
+              <button className="rounded bg-accent px-2 py-1 text-fg-on-strong hover:bg-accent-hover"
                 onClick={() => void markAndNext()}>읽음 처리하고 다음</button>
-              <button className="rounded px-2 py-1 text-xs text-fg-muted hover:bg-surface-hover"
+              <button className="rounded px-2 py-1 text-fg-muted hover:bg-surface-hover"
                 onClick={skip}>그냥 다음</button>
             </div>
           </>

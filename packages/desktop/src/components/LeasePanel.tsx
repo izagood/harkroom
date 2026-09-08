@@ -116,20 +116,24 @@ export function LeasePanel() {
       */}
       {banner && (!banner.strip || byRepo.length > 0) && (
         <div data-testid={banner.testid} className="space-y-0.5 px-2 pb-1">
-          <div className={`text-xs ${BANNER_TEXT_TONE[banner.tone]}`}>{banner.listNote}</div>
+          {/* 이 파일은 사이드바 안이고, **사이드바의 단은 아랫단 11px** 이다 —
+              `Sidebar.tsx` 가 오류·안내·멤버 이름·구획 라벨을 이미 전부 11px 로 통일해
+              뒀다(그 파일의 10px 27곳을 11px 로 올린 작업). 여기만 본문단으로 올리면
+              같은 열에 두 단이 서고, 이 줄이 사이드바에서 혼자 크게 보인다. */}
+          <div className={`text-[11px] ${BANNER_TEXT_TONE[banner.tone]}`}>{banner.listNote}</div>
         </div>
       )}
       {/* "No active work" 는 **상태를 읽었고 정상일 때만** 쓴다. 그 밖의 경우는 위
           배너가 왜 비어 있는지 이미 말했고, 거기에 "없다"를 덧붙이면 읽지도 못한
           것을 없다고 단정하는 셈이다. */}
       {byRepo.length === 0 && banner === null && (
-        <div className="px-2 text-xs text-fg-muted">No active work</div>
+        <div className="px-2 text-[11px] text-fg-muted">No active work</div>
       )}
       {byRepo.map(([repo, rows]) => (
         <div key={repo} className="px-2 pb-1">
-          <div className="text-xs font-semibold text-fg-muted">{repo}</div>
+          <div className="text-[11px] font-semibold text-fg-muted">{repo}</div>
           {rows.map((l) => (
-            <div key={`${l.path}:${l.actorKeyId}`} className="truncate text-xs text-fg-subtle">
+            <div key={`${l.path}:${l.actorKeyId}`} className="truncate text-[11px] text-fg-subtle">
               {l.path} — {shortActor(l.actorKeyId)}
             </div>
           ))}

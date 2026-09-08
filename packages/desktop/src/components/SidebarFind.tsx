@@ -174,7 +174,12 @@ export function SidebarFind({ onOpenChannelDirectory }: {
             }
           }}
           /* 포커스 링은 전역 `:focus-visible` 이 준다(#548) — 여기서 다시 붙이지 않는다. */
-          className="w-full rounded border border-border bg-field py-1 pl-7 pr-2 text-sm
+          /* **입력칸은 늘 본문단 13px** 이다(앱 기본값이라 크기를 안 적는다). 사이드바의
+             다른 글자는 아랫단 11px 이지만 입력칸은 예외로 두었다 — 사람이 방금 친 글자를
+             다시 읽는 자리이고, 이 저장소의 입력칸은 사이드바 안에서 12·14px 로 갈려
+             있었다(실측 7곳). 하나로 맞추면 배울 규칙이 하나 줄어든다. 아래 결과 줄은
+             사이드바 단(11px)을 그대로 쓴다. */
+          className="w-full rounded border border-border bg-field py-1 pl-7 pr-2
                      text-fg placeholder-fg-subtle"
         />
       </div>

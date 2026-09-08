@@ -62,8 +62,11 @@ export function Overlay({ label, onClose, children, className = 'w-[42rem]' }: {
       <div
         role="dialog"
         aria-label={label}
+        // 크기를 안 적는다 — 겹창도 앱 기본값(본문단 13px)을 그대로 물려받는다.
+        // 여기 14px 을 박아 두면 겹창 안만 한 단 큰 화면이 되고, 그것이 이 저장소가
+        // 어휘를 둘로 갈랐던 방식이다.
         className={`flex max-h-full flex-col overflow-hidden rounded-lg border border-border
-                    bg-surface-raised text-sm text-fg ${className}`}
+                    bg-surface-raised text-fg ${className}`}
         // 패널 안의 클릭이 스크림까지 올라가면 무엇을 눌러도 닫힌다.
         onClick={(e) => e.stopPropagation()}
       >

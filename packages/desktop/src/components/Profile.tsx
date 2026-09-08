@@ -94,10 +94,14 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
         <Identity account={account} className="h-12 w-12 text-base" variant="avatar" />
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="truncate text-base font-semibold">{account.displayName || account.handle}</span>
+            {/* **이름줄단 15px** — 이 겹창의 주제가 사람 하나이고 그 이름이 여기다.
+                16px(`text-base`)이었고 4단 중 아무것도 아니었다. 화면 제목단(17px)을 주지
+                않는 이유: 이것은 화면이 아니라 겹창이고, 설정·로그인 제목과 같은 단에 서면
+                화면과 겹창의 위계가 없어진다. 아래 `@handle` 은 아랫단 11px 이다. */}
+            <span className="truncate text-[15px] font-semibold">{account.displayName || account.handle}</span>
             <StatusMark account={account} />
           </div>
-          <div className="text-xs text-fg-muted">@{account.handle}</div>
+          <div className="text-[11px] text-fg-muted">@{account.handle}</div>
         </div>
       </div>
 

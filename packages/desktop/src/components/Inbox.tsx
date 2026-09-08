@@ -417,7 +417,7 @@ export function Inbox({ open, onClose }: Props) {
       tabIndex={-1}
       aria-label="인박스"
       style={{ width: INBOX_PANE_WIDTH, minWidth: MIN_INBOX_PANE_WIDTH }}
-      className="flex flex-col overflow-hidden border-r border-border bg-surface-raised text-sm
+      className="flex flex-col overflow-hidden border-r border-border bg-surface-raised
                  text-fg outline-none focus-visible:outline-solid focus-visible:outline-2
                  focus-visible:outline-accent focus-visible:-outline-offset-2"
     >
@@ -451,7 +451,9 @@ export function Inbox({ open, onClose }: Props) {
               data-selected={filter === value}
               aria-pressed={filter === value}
               onClick={() => setFilter(value)}
-              className={`rounded-full border px-2.5 py-0.5 text-xs ${filter === value
+              // 칩은 **아랫단 11px** — 아래 구획 제목들이 이미 그 단이고, 칩과 제목은
+              // 목록을 어떻게 자를지 말하는 같은 층이다. 목록 안의 글자가 본문단이다.
+              className={`rounded-full border px-2.5 py-0.5 text-[11px] ${filter === value
                 ? 'border-border bg-surface-sunken font-medium text-fg'
                 : 'border-border text-fg-muted hover:bg-surface-hover'}`}
             >
@@ -468,7 +470,7 @@ export function Inbox({ open, onClose }: Props) {
           {/* 실패는 목록 위에 남긴다. 실패했는데 빈 목록만 보이면 사람은 "아무도 나를
               부르지 않았다" 로 읽는다 — 조회 실패를 빈 목록으로 삼키지 않는다. */}
           {load.kind === 'error' && (
-            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-xs text-danger">
+            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-danger">
               인박스를 불러오지 못했다 — {load.message}
               <button
                 onClick={() => { reload(); }}
@@ -478,7 +480,10 @@ export function Inbox({ open, onClose }: Props) {
               </button>
             </div>
           )}
-          {load.kind === 'loading' && <p className="px-2 text-xs text-fg-subtle">불러오는 중…</p>}
+          {/* 오류·대기·'없다' 는 목록이 비었을 때 **화면에 남는 유일한 글자**다. 색이
+              subtle 이라고 아랫단으로 내리면 그 순간 화면에서 가장 작은 글자가 유일한
+              설명이 된다 — 본문단(앱 기본값 13px)이라 크기를 안 적는다. */}
+          {load.kind === 'loading' && <p className="px-2 text-fg-subtle">불러오는 중…</p>}
 
           <section aria-label="나를 부른 것" className="mb-4">
             <h3 className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
@@ -487,7 +492,7 @@ export function Inbox({ open, onClose }: Props) {
             {/* '없다' 는 조회가 성공했을 때만 말할 수 있다. 실패·대기 중에 이 문장을 내면
                 모르는 것을 아는 것처럼 말하는 것이다. */}
             {load.kind === 'ready' && shownEntries.length === 0 && (
-              <p data-testid="inbox-empty" className="px-2 text-xs text-fg-subtle">
+              <p data-testid="inbox-empty" className="px-2 text-fg-subtle">
                 {entries.length === 0 ? '나를 부른 것이 없다' : '필터에 맞는 것이 없다'}
               </p>
             )}
@@ -511,7 +516,7 @@ export function Inbox({ open, onClose }: Props) {
               쓰다 만 초안 ({shownDrafts.length})
             </h3>
             {shownDrafts.length === 0
-              ? <p className="px-2 text-xs text-fg-subtle">쓰다 만 초안이 없다</p>
+              ? <p className="px-2 text-fg-subtle">쓰다 만 초안이 없다</p>
               : <ul>{shownDrafts.map(draftRow)}</ul>}
           </section>
         </div>

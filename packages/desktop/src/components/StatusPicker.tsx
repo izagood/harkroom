@@ -65,7 +65,10 @@ export function StatusPicker({ onDone }: {
         <button
           key={s}
           aria-pressed={me.status === s}
-          className={`block w-full rounded px-2 py-1 text-left text-xs hover:bg-surface-hover ${me.status === s ? 'text-fg' : 'text-fg-muted'}`}
+          // 고르는 항목과 입력칸은 **본문단 13px**(앱 기본값이라 안 적는다) — 아래 오류·
+          // 버튼은 아랫단 11px 이다. 고르려면 읽어야 하고, 다 고른 뒤 누르는 것과 그 결과는
+          // 눈이 이미 가 있는 자리다.
+          className={`block w-full rounded px-2 py-1 text-left hover:bg-surface-hover ${me.status === s ? 'text-fg' : 'text-fg-muted'}`}
           // 문구는 넘기지 않는다 — 키 부재가 '손대지 않음'이다. 상태만 바꾸려던
           // 조작이 문구를 함께 지우면 사용자는 왜 사라졌는지 알 수 없다.
           onClick={() => void apply(s)}
@@ -78,7 +81,7 @@ export function StatusPicker({ onDone }: {
         maxLength={80}
         value={text}
         placeholder="짧은 문구 (최대 80자)"
-        className="mt-1 w-full rounded border border-border bg-field px-2 py-1 text-xs text-fg outline-none"
+        className="mt-1 w-full rounded border border-border bg-field px-2 py-1 text-fg outline-none"
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') void apply(me.status, text.trim() || null); }}
       />
