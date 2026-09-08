@@ -130,6 +130,7 @@ between "no work" and "projection is off", is listed in one place:
 | `MURMUR_PAT` | Personal Access Token for authentication | - | Yes |
 | `AGENT_POLL_TIMEOUT_MS` | Inbox polling timeout | `25000` (25s) | No |
 | `AGENT_TURN_TIMEOUT_MS` | Maximum wait for one turn (PTY execution) | `1800000` (30min) | No |
+| `AGENT_HARNESS_STALL_MS` | Idle time after which a harness whose transcript stopped growing is treated as stalled and the turn is folded (`0` disables) | `600000` (10min) | No |
 | `AGENT_INTERACTIVE_ORPHAN_MS` | Grace before an interactive PTY with zero viewers is reclaimed (SIGTERM → SIGKILL) | `60000` (60s) | No |
 | `AGENT_STATE_DIR` | Directory for sessions.json, MCP config, AVCS workspace | `~/.murmur-agent` | No |
 | `CODEX_HOME` | Source Codex home whose `auth.json` is linked into the runner-isolated Codex home; child Codex processes always use the isolated home under `AGENT_STATE_DIR` | `~/.codex` | No |

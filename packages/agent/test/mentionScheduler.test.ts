@@ -41,7 +41,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function harness(opts: { runTurn: () => Promise<MentionTurnResult> }) {
+function harness(opts: { runTurn: () => Promise<MentionTurnResult>; now?: () => number }) {
   const markedRead: number[] = [];
   const posted: { channelId: string; body: string; anchor: string | null }[] = [];
   const registry = new TurnRegistry();
@@ -61,6 +61,7 @@ function harness(opts: { runTurn: () => Promise<MentionTurnResult> }) {
       noticeHarnessLogin: async () => {},
     },
     startedAtMs: 0,
+    ...(opts.now ? { now: opts.now } : {}),
   });
   return { scheduler, registry, markedRead, posted };
 }
@@ -345,5 +346,73 @@ describe('ask_answered 깨움', () => {
   it('고른 옵션을 사유에 싣는다 — 스레드를 다시 읽지 않아도 무엇이 정해졌는지 안다', () => {
     // meta 에 `answeredWith` 가 있고(`inbox.poll` 이 실어 준다), 옵션 목록도 함께 온다.
     expect(source).toContain('answeredWith');
+  });
+});
+
+// ── 재시도를 스레드에 말한다(2026-09-09 프로덕션 관측)
+//
+// 그날 한 턴이 30분을 서 있다가 접혔다. 러너 로그에는 `답변 실패 (1/3)` 이 남았는데
+// **스레드에는 아무것도 남지 않았다** — 스레드 행의 `failureCount` 조차 0이라 화면이 알
+// 방법이 없었다. 사람이 본 것은 👀 하나 붙은 `끝남` 배지뿐이었고, 그래서 나온 말이
+// "이거 왜 답변 안 하고 있어" 다.
+//
+// `FAILURE_NOTICE` 로는 못 메운다: 그것은 3회를 다 태운 뒤에 나오므로, 재시도가 도는
+// 동안(백오프까지 90초 이상)은 여전히 침묵이다.
+describe('재시도 통지 (2026-09-09)', () => {
+  it('첫 실패에서 사유와 함께 스레드에 남긴다', async () => {
+    const { scheduler, posted } = harness({
+      runTurn: () => Promise.reject(new Error('harness 정지 600000ms — 기록이 자라지 않았다(답 없음)')),
+    });
+
+    await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await scheduler.drain();
+
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!.body).toContain('다시 시도');
+    expect(posted[0]!.body).toContain('1/3');
+    // 사유가 실려야 값을 한다 — "실패했다"만으로는 사람이 기다릴지 손댈지 못 고른다.
+    expect(posted[0]!.body).toContain('정지');
+    // 아직 끝난 게 아니다: "운영자 확인이 필요합니다"는 3회를 태운 뒤의 말이다.
+    expect(posted[0]!.body).not.toContain('운영자');
+  });
+
+  it('시도마다 올리지 않는다 — entry 당 1회다', async () => {
+    // 빠르게 실패하는 오류에서 매번 올리면 스레드가 몇 초 만에 도배된다.
+    let clock = 0;
+    const { scheduler, posted, markedRead } = harness({
+      runTurn: () => Promise.reject(new Error('harness 종료 1: boom')),
+      now: () => clock,
+    });
+
+    await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await scheduler.drain();
+    clock += 120_000;   // 백오프를 넘긴다
+    await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await scheduler.drain();
+
+    // 재시도 통지는 하나뿐이다.
+    expect(posted.filter((p) => p.body.includes('다시 시도'))).toHaveLength(1);
+
+    clock += 120_000;
+    await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await scheduler.drain();
+
+    // 3회를 태우면 기존 실패 통지가 그대로 나오고 읽음 처리로 흘러간다 — 이 변경이
+    // 그 경로를 건드리지 않았다는 회귀선이다.
+    expect(posted.at(-1)?.body).toContain('운영자');
+    expect(markedRead).toContain(1);
+  });
+
+  it('사유에서 PAT 를 가린다 — 통지는 스레드에 영구히 남는다', async () => {
+    // 실패 문구에는 tail 이 섞일 수 있고(`harness 종료 N: …`), tail 은 PTY 원문이다.
+    const { scheduler, posted } = harness({
+      runTurn: () => Promise.reject(new Error('harness 종료 1: MURMUR_PAT=murp_deadbeefcafe 로 붙는다')),
+    });
+
+    await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await scheduler.drain();
+
+    expect(posted[0]!.body).not.toContain('murp_deadbeefcafe');
+    expect(posted[0]!.body).toContain('(가림)');
   });
 });

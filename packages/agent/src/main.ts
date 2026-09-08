@@ -365,6 +365,7 @@ const scheduler = createMentionScheduler({
     callsForHuman: isLastAccount,
     murmurUrl: config.murmurUrl, pat: config.murmurPat,
     turnTimeoutMs: config.turnTimeoutMs,
+    harnessStallMs: config.harnessStallMs,
     relay,
     // #337: 멘션 턴도 자기 존재를 등록해야 인터랙티브 open 이 그 PTY 에 합류한다.
     registry,

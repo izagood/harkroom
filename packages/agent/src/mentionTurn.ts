@@ -21,7 +21,7 @@ import { findCodexSessionId } from './codexSessions.js';
 import { claudeSessionMaterialized } from './claudeSessions.js';
 import { readLastApiError } from './harnessErrors.js';
 import type { AttentionLedger } from './attentionLedger.js';
-import { sessionTranscriptExists } from './harnessErrors.js';
+import { sessionTranscriptExists, sessionTranscriptMtimeMs } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
 import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
@@ -212,6 +212,12 @@ export interface MentionTurnDeps {
   /** 테스트가 sinceMs 캡처 시점을 결정론적으로 만들기 위한 시계 주입. 생략하면 Date.now. */
   now?: () => number;
   /**
+   * 하네스 기록이 마지막으로 자란 시각(기본 `sessionTranscriptMtimeMs`). 주입 가능한
+   * 이유는 `readApiError` 와 같다 — 실제 판정이 `~/.claude/projects` 를 훑으므로, 테스트가
+   * 그것을 세우지 않고 "자라는 중"과 "멈췄다"를 다 재현할 수 있어야 한다.
+   */
+  readTranscriptMtime?: typeof sessionTranscriptMtimeMs;
+  /**
    * 발화를 확인하는 주기(기본 3초, 2026-09-08). TUI 는 답하고도 안 죽으므로 러너가
    * "답했는가"를 직접 봐야 하고, 그 사실은 스레드에만 있다 — 에이전트는 자기 PAT 로
    * 서버에 직접 발화하므로 PTY 출력에는 나타나지 않는다.
@@ -219,6 +225,20 @@ export interface MentionTurnDeps {
   utteranceProbeMs?: number;
   /** 발화 뒤 관찰자가 0 일 때 회수까지의 유예(기본 60초). 인터랙티브 턴과 같은 값이다. */
   orphanMs?: number;
+  /**
+   * **하네스가 멈춘 것으로 보는 무활동 시간**(기본 10분, 2026-09-09). 기록 파일이 이 시간
+   * 동안 자라지 않으면 답을 기다리지 않고 접는다.
+   *
+   * `turnTimeoutMs`(무발화 30분)와 **다른 사실을 잰다.** 무발화 시계는 "답이 없다"를 재는데,
+   * 일하는 턴도 30분 내내 답이 없다 — PR 하나 만드는 턴이 그렇다. 그래서 그 시계는 짧게
+   * 못 하고, 짧게 못 하니 멈춘 턴이 30분을 통째로 가져간다. 이 시계는 "일하고 있다"를
+   * 직접 재므로 짧아도 일하는 턴을 죽이지 않는다.
+   *
+   * 값의 근거: 멀쩡히 도는 세션 8개의 기록 간격을 재 보니 최대가 390초(6.5분)였다
+   * (긴 빌드·CI 대기가 그 자리다). 10분은 그 위의 첫 자리이고, 실측된 정지(30분 내내
+   * 한 줄도 안 자랐다)와는 멀리 떨어져 있다.
+   */
+  harnessStallMs?: number;
   /** 테스트가 타이머를 잡기 위한 주입. 생략하면 unref 된 setTimeout. */
   schedule?: (fn: () => void, ms: number) => () => void;
   /**
@@ -735,10 +755,24 @@ export async function runMentionTurn(
      * 눌러서 끝난 것과 아무도 안 봐서 회수된 것은 스레드에 남길 말이 다르다.
      */
     canceledBy: string | null;
+    /**
+     * **하네스가 멈춰서 우리가 접었는가**(2026-09-09). `silenced` 와 갈라야 하는 이유는
+     * 사람이 읽을 문장이 다르기 때문이다 — 무발화는 "시간 안에 답을 못 했다"이고 이것은
+     * "일하다 만 게 아니라 서 있었다"다. 재시도 통지의 사유가 그대로 이 문장이 된다.
+     */
+    stalled: boolean;
+    /**
+     * 사람 손을 부른 턴인가(`onAttention`). 부른 뒤에는 정지 시계를 재지 않는다 — 그
+     * 턴의 기록이 안 자라는 것은 고장이 아니라 **사람을 기다리는 중**이라는 뜻이고,
+     * 여기서 접으면 관문 앞에 세워 둔 턴이 사람이 오기 전에 사라진다.
+     */
+    awaitingHuman: boolean;
+    /** 하네스 기록이 마지막으로 자란 것을 본 시각(ms). 정지 판정의 기준점이다. */
+    lastLifeMs: number;
     cancelReclaim: (() => void) | null; cancelProbe: (() => void) | null; cancelSilence: (() => void) | null;
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
-    apiError: null, canceledBy: null,
+    apiError: null, canceledBy: null, stalled: false, awaitingHuman: false, lastLifeMs: 0,
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
   };
 
@@ -831,6 +865,37 @@ export async function runMentionTurn(
     return true;
   };
 
+  /**
+   * **하네스가 멈췄는가**(2026-09-09 실측). 기록 파일이 `harnessStallMs` 동안 자라지
+   * 않았으면 접는다. 판정 기준점은 마지막으로 자란 것을 본 시각이고, 아직 한 번도 못
+   * 봤으면 턴 시작 시각이다 — 그래야 "기록이 아예 안 생긴다"도 같은 시계로 잡힌다.
+   *
+   * **못 읽으면 판정하지 않는다.** `null` 은 "파일이 없다"와 "읽기가 실패했다"를 함께
+   * 뜻하므로, 그것을 정지로 읽으면 첫 몇 초의 정상 턴이 죽는다. 기준점만 그대로 두고
+   * 다음 주기에 다시 본다 — 진짜로 안 생기면 시계가 그대로 흘러 잡힌다.
+   */
+  const probeStall = async (): Promise<boolean> => {
+    const limit = deps.harnessStallMs ?? 10 * 60_000;
+    // 기준점이 아직 안 잡혔으면(턴 시작 직전) 재지 않는다 — 0 을 기준으로 빼면
+    // 첫 주기가 곧바로 한도를 넘는다.
+    if (limit <= 0 || end.awaitingHuman || end.lastLifeMs === 0) return false;
+    const read = deps.readTranscriptMtime ?? sessionTranscriptMtimeMs;
+    const mtime = await read(def.harness, sessionIdForProbe, {
+      configDir: deps.claudeConfigDir,
+    }).catch(() => null);
+    if (end.exited || end.spoke || end.awaitingHuman) return false;
+    if (mtime !== null && mtime > end.lastLifeMs) { end.lastLifeMs = mtime; return false; }
+    // 관찰자가 있으면 재지 않는다 — 무발화 시계와 같은 규칙이다(사람이 보고 있으면
+    // 러너는 끼어들지 않는다). 사람이 그 터미널에서 직접 치고 있을 수 있다.
+    if (end.viewers > 0) return false;
+    const idleMs = (deps.now?.() ?? Date.now()) - end.lastLifeMs;
+    if (idleMs < limit) return false;
+    end.stalled = true;
+    console.error(`[mentionTurn] ${key}: 하네스가 멈췄다 — 기록이 ${idleMs}ms 째 자라지 않는다`);
+    reclaim();
+    return true;
+  };
+
   const probeUtterance = (): void => {
     if (end.exited || end.spoke) return;
     void deps.murmur.readThread(channelId, anchor, turnStartSeq)
@@ -843,6 +908,8 @@ export async function runMentionTurn(
         }
         // 발화가 없다 — 하네스가 말을 못 하는 이유가 디스크에 있을 수 있다.
         if (await probeApiError()) return;
+        // 에러도 없다 — 그러면 일하는 중인가, 서 있는가. 그것도 디스크가 말해 준다.
+        if (await probeStall()) return;
         end.cancelProbe = schedule(probeUtterance, probeMs);
       })
       // 관측 실패로 턴을 죽이지 않는다 — 다음 주기에 다시 묻는다.
@@ -878,6 +945,8 @@ export async function runMentionTurn(
    * 하네스가 쓴 에러를 놓친다.
    */
   const turnStartedAtMs = deps.now?.() ?? Date.now();
+  // 정지 시계의 첫 기준점. 기록이 아직 없는 구간도 이 시각부터 흐른다.
+  end.lastLifeMs = turnStartedAtMs;
 
   let result: TurnResult;
   try {
@@ -917,6 +986,9 @@ export async function runMentionTurn(
              * 사람이 붙어 있으면(`end.viewers > 0`) 지나가므로, 사람이 오면 살아남는다.
              */
             onAttention: (screen: string) => {
+              // 이 턴은 이제 **사람을 기다린다** — 기록이 안 자라는 것이 정상이다.
+              // 정지 시계를 계속 재면 사람이 오기 전에 접힌다(위 `awaitingHuman` 주석).
+              end.awaitingHuman = true;
               const label = deps.accountLabel ?? '(기본)';
               if (deps.attentionLedger && !deps.attentionLedger.claim(label, sessionIdForProbe ?? key)) return;
               session?.needsAttention(screen, label);
@@ -1034,9 +1106,9 @@ export async function runMentionTurn(
   // **종료 코드로는 못 가른다**: 회수·무발화·하네스 자멸이 전부 143 이다. 그래서 러너가
   // 아는 두 사실을 함께 본다 — 우리가 죽였는가(`reclaimed`), 그리고 답했는가(`spoke`).
   // 무발화 회수는 `spoke` 가 거짓이므로 아래 실패 경로에 그대로 남는다.
-  const 회수로끝났다 = end.reclaimed && end.spoke && !end.silenced;
+  const 회수로끝났다 = end.reclaimed && end.spoke && !end.silenced && !end.stalled;
 
-  if (!회수로끝났다 && (result.exitCode !== 0 || result.timedOut || end.silenced || end.apiError)) {
+  if (!회수로끝났다 && (result.exitCode !== 0 || result.timedOut || end.silenced || end.stalled || end.apiError)) {
     // #81: 실패한 턴은 turnsRun 을 올리지 않는다. claude 의 세션 uuid 는 러너가 발급만 했을
     // 뿐 하네스에 등록됐다는 증거가 아니다 — 올리면 다음 턴이 isFirstTurn=false 로 판단해
     // `-r`(resume)로 조립하고, 존재한 적 없는 세션을 이어받으려다 또 실패한다. 0 으로 둬야
@@ -1132,9 +1204,13 @@ export async function runMentionTurn(
           // 턴 도중에 관측한 에러가 있으면 그것이 원인이다(2026-09-09). tail 을 담지 않는
           // 이유는 무발화와 같다 — TUI 에서는 주입한 프롬프트가 에코돼 tail 에 섞인다.
           ? `harness API 에러: ${end.apiError}`
-          : end.silenced
-            ? `harness 무발화 ${deps.turnTimeoutMs}ms — 답 없이 시간 한도를 넘겼다`
-            : `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
+          // 정지를 무발화보다 **먼저** 본다: 접는 수단이 같은 SIGTERM 이라 무발화 시계가
+          // 뒤따라 설 수 있는데, 사람이 알아야 할 사실은 "서 있었다" 쪽이다.
+          : end.stalled
+            ? `harness 정지 ${deps.harnessStallMs ?? 10 * 60_000}ms — 기록이 자라지 않았다(답 없음)`
+            : end.silenced
+              ? `harness 무발화 ${deps.turnTimeoutMs}ms — 답 없이 시간 한도를 넘겼다`
+              : `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
     ) as Error & { harnessApiError?: string };
     // **턴 도중 관측이 우선이다.** 종료 뒤 읽기(`apiError`)는 sinceMs 가 없어 앞 턴의
     // 에러를 집을 수 있다 — 지금 턴의 사실을 이미 손에 쥐었으면 그것을 쓴다.

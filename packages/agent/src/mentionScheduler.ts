@@ -15,7 +15,9 @@ import { SessionStore } from './sessions.js';
 import type { TurnRegistry } from './turnRegistry.js';
 import type { MentionQueue } from './mentionQueue.js';
 import { withAccountFailover, type ClaudeAccount } from './claudeAccounts.js';
-import { controlledNotice, FAILURE_NOTICE, quotaNotice, sessionConflictNotice } from './prompt.js';
+import {
+  controlledNotice, FAILURE_NOTICE, quotaNotice, retryNotice, retryReason, sessionConflictNotice,
+} from './prompt.js';
 import { exhausted, isQuotaExhausted, isSessionIdConflict, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 
 /**
@@ -129,7 +131,11 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
    * 루프 전체를 재웠다. 병렬에서는 그것이 틀리다 — 스레드 A 의 실패가 스레드 B~F 의 새
    * 멘션까지 멈춘다. 러너 전역 백오프는 폴 루프의 transport 실패에만 남는다(main.ts).
    */
-  const attempts = new Map<number, { tried: number; notBefore: number }>();
+  /**
+   * `noticed`: 이 entry 의 재시도 통지를 이미 올렸는가(2026-09-09). entry 당 1회다 —
+   * 매 시도마다 올리면 빠르게 실패하는 오류에서 스레드가 몇 초 만에 도배된다.
+   */
+  const attempts = new Map<number, { tried: number; notBefore: number; noticed?: boolean }>();
   /** 지금 도는 턴의 entry id. markRead 가 완료 후라 같은 entry 가 다음 폴에 또 온다. */
   const inFlightEntries = new Set<number>();
   /**
@@ -236,7 +242,26 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         return;
       }
       // 아직 시도가 남았다 — 다음 시도 시각을 찍는다. 이 entry 만 쉬고 나머지는 흐른다.
-      attempts.set(entryId, { tried, notBefore: now() + backoffFor(tried) });
+      //
+      // **그 사실을 스레드에도 남긴다**(2026-09-09). 여기는 지금까지 `console.error` 뿐이었고,
+      // 그 결과가 "30분 침묵 뒤에도 스레드에 아무것도 없다" 였다 — 사람은 👀 붙은 `끝남`
+      // 배지만 보고 러너가 죽은 줄 안다. `FAILURE_NOTICE` 로는 못 메운다: 그것은 3회를 다
+      // 태운 뒤에 나오므로, 재시도가 도는 동안은 여전히 침묵이다.
+      //
+      // 통지가 실패해도 재시도 회계는 그대로 간다 — 말하지 못한 것과 시도하지 못한 것은
+      // 같은 실패가 아니다(위 대기 통지와 같은 판례).
+      const already = attempts.get(entryId)?.noticed === true;
+      if (!already) {
+        await deps.murmur.post(
+          mention.channelId,
+          retryNotice(tried, MAX_ATTEMPTS, retryReason(err instanceof Error ? err.message : String(err))),
+          anchor,
+        ).catch((e: unknown) => {
+          console.error(`  ${mention.id} 재시도 통지 발화 실패(재시도는 계속된다):`,
+            e instanceof Error ? e.message : e);
+        });
+      }
+      attempts.set(entryId, { tried, notBefore: now() + backoffFor(tried), noticed: true });
     } finally {
       // **이 두 줄이 어떤 await 보다도 앞이어야 한다.** 뒤에 두면 그 사이 예외에 스레드
       // 키가 장부에 영구히 남고, 그 스레드는 영원히 blocked 가 된다 — 프로세스는 회수됐는데
@@ -302,8 +327,11 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
 
         // **관문을 전부 통과한 지금이 유일한 증가 지점이다.** blocked·deferred·skipped 는 이
         // 줄에 닿지 않는다 — 닿으면 붐비는 스레드의 멘션이 답도 못 듣고 MAX_ATTEMPTS 로 버려진다.
-        const tried = (attempts.get(entry.id)?.tried ?? 0) + 1;
-        attempts.set(entry.id, { tried, notBefore: 0 });
+        const prior = attempts.get(entry.id);
+        const tried = (prior?.tried ?? 0) + 1;
+        // `noticed` 를 **보존한다**: 여기서 떨어뜨리면 시도마다 "아직 안 알렸다"가 되어
+        // entry 당 1회라는 약속이 깨진다.
+        attempts.set(entry.id, { tried, notBefore: 0, noticed: prior?.noticed });
 
         const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason)
           .catch((err: unknown) => {
