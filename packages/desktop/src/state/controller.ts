@@ -1269,7 +1269,17 @@ export class Controller {
   async deleteMessage(messageId: string): Promise<void> {
     const { activeChannelId, threadRootId } = this.store.getState();
     if (!activeChannelId) return;
-    await this.api.deleteMessage(activeChannelId, messageId);
+    const tombstone = await this.api.deleteMessage(activeChannelId, messageId);
+    /**
+     * 답글이 남은 스레드 머리를 지우면 서버가 **자리표시자 행**을 돌려준다. 그것을 목록에서
+     * 빼면 살아 있는 답글로 들어갈 문이 함께 사라진다 — 신고된 결함의 반대 방향이다.
+     * 그래서 빼지 않고 덮고, **스레드도 닫지 않는다**: 지운 것은 내 첫 줄이고 그 아래
+     * 히스토리는 그대로 있다.
+     */
+    if (tombstone) {
+      this.store.getState().upsertMessages(activeChannelId, [tombstone]);
+      return;
+    }
     this.store.getState().removeMessage(activeChannelId, messageId);
     // 내가 지운 경우에도 같다. WS 이벤트를 기다리지 않고 즉시 닫는다.
     if (threadRootId === messageId) this.store.getState().set({ threadRootId: null });

@@ -422,6 +422,16 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
       : [{ label: 'Save for later', onSelect: () => { void getController().saveMessage(message.id); } }]),
   ];
 
+  /**
+   * **지워진 스레드 머리**(요청 2026-09-09). 여기서 갈라지는 이유는 이 행에 그릴 것이
+   * 거의 없기 때문이다 — 본문·첨부·리액션·물음은 서버가 이미 떼어 냈고(`LIST_COLS`),
+   * 남은 것은 "여기서 스레드가 시작했다"는 사실뿐이다. 아래 본문 열을 조건으로 누비면
+   * 이름줄·툴바·메뉴가 전부 "지운 말에 대해서는 뭘 하나"를 따로 답해야 한다.
+   *
+   * 훅은 이 줄 위에서 모두 돌았으므로 호출 순서는 변하지 않는다.
+   */
+  if (message.deletedAt) return <DeletedMessageRow message={message} inThread={inThread} />;
+
   return (
     <div
       ref={rowRef}
@@ -858,6 +868,47 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
           onCancel={() => setConfirmingDelete(false)}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * 지워진 스레드 머리의 자리(요청 2026-09-09).
+ *
+ * **왜 자리가 남는가:** 스레드를 시작한 말을 지우면 답글은 그대로 살아 있다. 그 한 행까지
+ * 목록에서 빼면 채널에서는 스레드가 통째로 없어진 것으로 보이고, 안에 남은 히스토리로
+ * 들어갈 문이 사라진다. 반대로 답글까지 함께 지우면 남의 말이 내 삭제로 사라진다.
+ * 그래서 **머리 자리만** 남긴다 — 서버가 본문·첨부·리액션·meta 를 떼어 보내므로
+ * (`services/messages.ts` 의 `LIST_COLS`) 여기서 새어 나갈 내용은 애초에 없다.
+ * 답글이 하나도 없는 머리는 이 행조차 오지 않는다(그냥 지워진다).
+ *
+ * **아무것도 곁들이지 않는다:** 이름·얼굴·시각·툴바가 없다. 지운 말의 작성자와 시각은
+ * 지운 말의 일부이고, 지운 말에는 고칠 것도 리액션할 것도 없다. 남기는 컨트롤은
+ * **스레드로 들어가는 문** 하나다 — 그것이 이 행이 존재하는 이유다.
+ */
+function DeletedMessageRow({ message, inThread }: { message: MessageRow; inThread: boolean }) {
+  const t = useT();
+  const replyCount = message.replyCount ?? 0;
+  return (
+    <div data-testid="deleted-message" className="group relative flex gap-2 px-4 py-1.5">
+      {/* 아바타 거터의 폭을 비워 둔다 — 얼굴은 그리지 않지만 본문 열이 위아래 메시지와
+          같은 자리에서 시작해야 목록이 한 칸 밀려 보이지 않는다. */}
+      <div className="h-8 w-8 shrink-0" aria-hidden="true" />
+      <div className="min-w-0 max-w-[1280px] flex-1">
+        <div className="text-body italic text-fg-subtle">{t('message.deleted')}</div>
+        {/* 스레드 안에서는 그리지 않는다 — 이미 그 스레드 안이라 갈 곳이 없다
+            (`message.channelEcho` 배지와 같은 판단). */}
+        {!inThread && replyCount > 0 && (
+          <button
+            data-testid="deleted-message-replies"
+            className="mt-0.5 -mx-1 rounded px-1 py-0.5 text-meta font-medium text-fg-muted
+                       underline decoration-dotted underline-offset-2 hover:bg-surface-hover"
+            onClick={() => void getController().openThread(message.id)}
+          >
+            {t('message.summary.replies', { count: replyCount })}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
