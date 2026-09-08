@@ -14,6 +14,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import type { OpenAskLink } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
 import { acc, msg } from './helpers/fakeApi';
@@ -58,10 +59,18 @@ function summary(links: OpenAskLink[] | null, over: Record<string, unknown> = {}
 }
 
 beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
   setController({ openThread: vi.fn(async () => undefined) } as unknown as Controller);
   useAppStore.getState().reset();
 });
-afterEach(() => cleanup());
+// **언어를 고정한다**(이 묶음의 문구가 사전을 지나면서 기본이 영어가 됐다). 이 파일이
+// 재는 것은 언어가 아니라 **그 언어로 표현된 규율**이다 — 언어를 재는 자리는
+// `i18n.test.tsx` 하나이고, 두 곳에서 재면 문구를 고칠 때 한쪽만 고쳐진다
+// (`gallery.test.tsx`·`skillsSettings.test.tsx`·`agentGrid.test.tsx` 와 같은 규약).
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 describe('말 슬롯 — 무엇을 기다리는가', () => {
   it('누가 누구를 기다리는지 한 문장으로 말한다', () => {
@@ -137,7 +146,7 @@ describe('아무도 기다리지 않으면', () => {
   it('이름이 아예 안 나오고 배지와 답장 수만 남는다', () => {
     summary([]);
     expect(screen.queryByTestId('speech-slot')).toBeNull();
-    expect(screen.getByText(/4 replies/)).toBeTruthy();
+    expect(screen.getByText(/답글 4개/)).toBeTruthy();
   });
 
   /** 재료가 없는 것(옛 서버·답글 행)도 마찬가지다 — 모르는 것을 문장으로 지어내지 않는다. */

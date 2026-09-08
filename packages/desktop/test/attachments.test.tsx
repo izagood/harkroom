@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { AttachmentRow, MessageRow } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { Controller, setController } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
 import { Composer } from '../src/components/Composer';
@@ -36,6 +37,7 @@ beforeEach(() => {
   // 이 파일이 검증하는 것은 보냄 취소 창이 아니다(#223) — 창을 끄고 즉시 전송 경로를 본다.
   // 창 자체는 undoSend.test.tsx 가 단독으로 지킨다.
   undoSendStorage.saveWindowMs(0);
+  usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'me'),
@@ -43,7 +45,14 @@ beforeEach(() => {
     activeChannelId: 'c1',
   });
 });
-afterEach(() => cleanup());
+// **언어를 고정한다**(이 묶음의 문구가 사전을 지나면서 기본이 영어가 됐다). 이 파일이
+// 재는 것은 언어가 아니라 **그 언어로 표현된 규율**이다 — 언어를 재는 자리는
+// `i18n.test.tsx` 하나이고, 두 곳에서 재면 문구를 고칠 때 한쪽만 고쳐진다
+// (`gallery.test.tsx`·`skillsSettings.test.tsx`·`agentGrid.test.tsx` 와 같은 규약).
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 describe('showing attachments on a message', () => {
   it('names the file and its size', () => {

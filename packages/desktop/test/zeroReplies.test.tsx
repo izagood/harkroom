@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
 import { acc, msg } from './helpers/fakeApi';
@@ -17,6 +18,7 @@ const fakeController = () => {
 };
 
 beforeEach(() => {
+  usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'me'),
@@ -24,7 +26,14 @@ beforeEach(() => {
     messages: { c1: [] },
   });
 });
-afterEach(() => cleanup());
+// **언어를 고정한다**(이 묶음의 문구가 사전을 지나면서 기본이 영어가 됐다). 이 파일이
+// 재는 것은 언어가 아니라 **그 언어로 표현된 규율**이다 — 언어를 재는 자리는
+// `i18n.test.tsx` 하나이고, 두 곳에서 재면 문구를 고칠 때 한쪽만 고쳐진다
+// (`gallery.test.tsx`·`skillsSettings.test.tsx`·`agentGrid.test.tsx` 와 같은 규약).
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 /**
  * **`0` 은 그리지 않는다**(`docs/desktop-design-directions.pdf` 5쪽, *위생 — 자리를 비운다*):
@@ -58,12 +67,16 @@ describe('#489 답글 0개 루트: 0 은 그리지 않고, 스레드로 가는 �
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 0 })} />);
 
+    // 어느 언어로도 `0` 을 세지 않는다 — 문서가 금지한 것은 그 숫자이지 그 낱말이 아니다.
     expect(screen.queryByText(/0 replies/)).toBeNull();
     expect(screen.queryByText(/0 reply/)).toBeNull();
+    expect(screen.queryByText(/답글 0개/)).toBeNull();
     // 접근성 이름으로도 새어 나가지 않는다 — 눈으로 읽든 귀로 듣든 같은 결함이다.
     expect(screen.queryByRole('button', { name: /0 repl(y|ies)/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /답글 0개/ })).toBeNull();
     // 답글 요약 자체가 그려지지 않는다(`> 0` 일 때만 그린다).
     expect(screen.queryByRole('button', { name: /^\d+ repl(y|ies)/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^답글 \d+개/ })).toBeNull();
   });
 
   // 회귀선 2 — **진입점은 남는다.** 이것이 없으면 회귀선 1 은 기능을 없앤 것이다.
@@ -128,7 +141,8 @@ describe('#489 답글 0개 루트: 0 은 그리지 않고, 스레드로 가는 �
 
       const toolbar = screen.getByRole('group', { name: 'message toolbar' });
       const inToolbar = within(toolbar).queryByRole('button', { name: '스레드에 답글 달기' });
-      const summary = screen.queryByRole('button', { name: /\d+ repl(y|ies)/ });
+      // 이 파일은 한국어로 고정돼 있다(위 `beforeEach`) — 요약 줄의 이름은 `답글 N개` 다.
+      const summary = screen.queryByRole('button', { name: /답글 \d+개/ });
 
       const entries = [inToolbar, summary].filter((e) => e !== null);
       expect(entries, `replyCount=${String(replyCount)} 에서 진입점 수`).toHaveLength(1);
