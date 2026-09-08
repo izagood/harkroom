@@ -100,6 +100,7 @@ interface DraftItem {
  * 다음에 열었을 때 **걸러져 사라진 항목이 없는 항목으로 보인다.**
  */
 export function Inbox({ open, onClose }: Props) {
+  // `inboxRow` 는 `lib/` 판정이라 훅을 못 쓴다 — 번역기를 여기서 만들어 넘긴다.
   const t = useT();
   const channels = useActiveStore((s) => s.channels);
   const dms = useActiveStore((s) => s.dms);
@@ -195,7 +196,7 @@ export function Inbox({ open, onClose }: Props) {
    * 두면 방금 온 답글 하나가 어제부터 나를 막고 있던 물음을 아래로 밀어낸다.
    */
   const shownEntries = useMemo(() => entries
-    .map((e) => ({ e, row: inboxRow(e, myId) }))
+    .map((e) => ({ e, row: inboxRow(e, myId, t) }))
     .filter(({ e, row }) => {
       if (!matchesFilter(row, filter, e.readAt === null)) return false;
       if (channelFilter !== 'all' && e.channelId !== channelFilter) return false;
@@ -204,7 +205,9 @@ export function Inbox({ open, onClose }: Props) {
     .sort((a, b) => a.row.rank - b.row.rank
       || Date.parse(b.e.createdAt) - Date.parse(a.e.createdAt))
     .map(({ e }) => e),
-  [entries, filter, channelFilter, myId]);
+  // `t` 가 의존성에 있어야 한다 — 언어를 바꾸면 말표가 바뀌고, 그것이 정렬의 재료인
+  // `rank` 와 같은 함수에서 나온다. 빼면 언어를 바꿔도 이 목록만 옛 말표로 남는다.
+  [entries, filter, channelFilter, myId, t]);
 
   const shownDrafts = useMemo(() => draftItems.filter((d) => {
     // **칩으로 좁히면 초안은 빠진다.** 초안은 남이 나를 부른 것이 아니라 내가 쓰다 만
@@ -304,7 +307,7 @@ export function Inbox({ open, onClose }: Props) {
    * 답하고(`lib/inboxRow`), 나머지 재료는 서버가 실어 준다.
    */
   const entryRow = (e: InboxEntry) => {
-    const row = inboxRow(e, myId);
+    const row = inboxRow(e, myId, t);
     /**
      * 이미 본 줄인가. **'전부' 로 보면 목록의 대부분이 이것**이라(실측 238줄 중 대다수),
      * 새 줄과 같은 대접을 받으면 새 줄이 그 안에 묻힌다 — "본 것도 계속 나와서 뭐가 새로
@@ -492,7 +495,7 @@ export function Inbox({ open, onClose }: Props) {
               {label}
               {value !== 'all' && (
                 <span className="ml-1 text-fg-subtle">
-                  {entries.filter((e) => matchesFilter(inboxRow(e, myId), value, e.readAt === null)).length}
+                  {entries.filter((e) => matchesFilter(inboxRow(e, myId, t), value, e.readAt === null)).length}
                 </span>
               )}
             </button>

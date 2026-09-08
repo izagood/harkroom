@@ -1,4 +1,6 @@
 import { useActiveStore } from '../state/communities';
+import { useT } from '../i18n/useT';
+import type { MessageKey } from '../i18n';
 
 /**
  * **집합 호출의 결과** — 셋을 불렀는데 둘만 깼다는 한 줄.
@@ -77,21 +79,31 @@ import { useActiveStore } from '../state/communities';
  * 그때는 이름도 못 말하므로(`NotifiedSummary.groupHandle` 이 `null`) "부른 명단" 이
  * 그 줄이 말할 수 있는 전부다.
  */
-const LABEL = { group: '집합', team: '팀', mixed: '부른 명단' } as const;
+const LABEL: Record<'group' | 'team' | 'mixed', MessageKey> = {
+  group: 'message.notified.group',
+  team: 'message.notified.team',
+  mixed: 'message.notified.mixed',
+};
 
 /**
  * 사유 문장. **종류마다 다르다** — 근거는 아래 렌더 안의 주석에 있다.
  *
  * 상수로 뽑아 둔 이유: 세 문장을 JSX 안의 삼항으로 엮으면 어느 종류가 어느 문장을 받는지
  * 읽을 수 없고, 종류가 하나 늘 때 조용히 빠뜨린다. 여기서는 키가 빠지면 컴파일이 깨진다.
+ *
+ * **표는 남기되 값이 글자가 아니라 사전 키다.** 글자를 그대로 두면 이 모듈 상수가
+ * 로드 시점 언어로 굳는다 — `threadState` 의 `THREAD_STATE_LABEL` 이 그 모양이었다.
+ * 키는 언어를 안 갖고 있으므로 상수로 둬도 안전하고, 위 문단의 이점(빠지면 컴파일이
+ * 깨진다)은 그대로다.
  */
-const REASON = {
-  group: '— 남은 사람은 이 채널을 볼 수 없다. 채널 멤버로 넣어야 부름이 닿는다.',
-  team: '— 남은 팀원은 비활성이거나 이 채널을 볼 수 없다. 팀 설정과 채널 멤버를 보라.',
-  mixed: '— 남은 상대에게 부름이 닿지 않았다.',
-} as const;
+const REASON: Record<'group' | 'team' | 'mixed', MessageKey> = {
+  group: 'message.notified.reasonGroup',
+  team: 'message.notified.reasonTeam',
+  mixed: 'message.notified.reasonMixed',
+};
 
 export function NotifiedGapRow({ messageId }: { messageId: string }) {
+  const t = useT();
   const gap = useActiveStore((s) => s.notifiedGaps[messageId]);
   if (!gap) return null;
 
@@ -111,11 +123,11 @@ export function NotifiedGapRow({ messageId }: { messageId: string }) {
         설정을 뒤진다. 종류를 모르면(둘을 섞어 불렀다) 아무 쪽도 주장하지 않는다.
       */}
       <span className="font-medium">
-        {LABEL[gap.kind ?? 'mixed']}{gap.groupHandle === null ? '' : ` @${gap.groupHandle}`}
+        {t(LABEL[gap.kind ?? 'mixed'])}{gap.groupHandle === null ? '' : ` @${gap.groupHandle}`}
       </span>
-      <span>
-        {gap.called}명을 불렀는데 {gap.woke}명만 깼다
-      </span>
+      {/* **두 수가 한 문장에 있다** — 조각으로 쪼개면 한국어의 역접 어미(`불렀는데`)가
+          갈 자리가 없어진다(`waitChain.link` 가 통째로 있는 것과 같은 사정). */}
+      <span>{t('message.notified.counts', { called: gap.called, woke: gap.woke })}</span>
       {/*
         **사유를 함께 말한다.** 수만 말하면 사람이 다음에 무엇을 할지 모르고, 그러면 이 줄은
         놀라게만 하고 끝난다(규칙 05 — 개입 비용).
@@ -135,7 +147,7 @@ export function NotifiedGapRow({ messageId }: { messageId: string }) {
         은 여전히 못 짚는다(깬 사람의 id 는 헤더가 잘라 준다). 두 문을 다 보여 주고 사람이
         고르게 하는 것이 없는 확신을 꾸미는 것보다 낫다(규칙 06 의 결).
       */}
-      <span className="text-fg-muted">{REASON[gap.kind ?? 'mixed']}</span>
+      <span className="text-fg-muted">{t(REASON[gap.kind ?? 'mixed'])}</span>
     </div>
   );
 }

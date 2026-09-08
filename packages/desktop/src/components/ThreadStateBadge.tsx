@@ -1,4 +1,5 @@
-import { THREAD_STATE_LABEL, isBlocking, type ThreadState } from '../lib/threadState';
+import { threadStateLabel, isBlocking, type ThreadState } from '../lib/threadState';
+import { useT } from '../i18n/useT';
 
 /**
  * 스레드 상태 한 조각. 화면 여러 곳이 **같은 어휘와 같은 색**을 쓰도록 한 자리에서 낸다
@@ -13,6 +14,7 @@ import { THREAD_STATE_LABEL, isBlocking, type ThreadState } from '../lib/threadS
  * "내 차례"라는 신호가 죽는다(규칙 03).
  */
 export function ThreadStateBadge({ state, className = '' }: { state: ThreadState; className?: string }) {
+  const t = useT();
   return (
     <span
       data-testid="thread-state"
@@ -21,7 +23,7 @@ export function ThreadStateBadge({ state, className = '' }: { state: ThreadState
       className={`inline-flex items-center gap-1 rounded px-1.5 text-meta font-medium ${TONE[state]} ${className}`}
     >
       <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${DOT[state]}`} />
-      {THREAD_STATE_LABEL[state]}
+      {threadStateLabel(state, t)}
     </span>
   );
 }

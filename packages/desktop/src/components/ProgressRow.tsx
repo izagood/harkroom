@@ -63,8 +63,9 @@ export function ProgressRow({ messages, endedAt = null }: {
           className={`h-1.5 w-1.5 shrink-0 rounded-full ${끝났다 ? 'bg-fg-subtle' : 'bg-state-running'}`}
         />
         <span className="font-medium text-fg-agent">{name}</span>
-        {/* 끝났으면 상태가 아니라 **기록**이다 — "작업 중" 은 지금을 말하는 말이다. */}
-        <span>{끝났다 ? '작업' : '작업 중'}</span>
+        {/* 끝났으면 상태가 아니라 **기록**이다 — 상[aspect]이 갈리므로 사전 항목도 둘이다
+            (`speech.progress.worked` / `working`). 이 갈림이 위 점의 색과 같은 사실을 말한다. */}
+        <span>{끝났다 ? t('speech.progress.worked') : t('speech.progress.working')}</span>
         {elapsed && <span className="text-fg-subtle">· {elapsed}</span>}
         {/*
           접힌 개수는 **둘 이상일 때만** 말한다. 하나뿐인데 "1줄"이라고 적으면 접힌 것이
@@ -77,7 +78,9 @@ export function ProgressRow({ messages, endedAt = null }: {
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
           >
-            {open ? '접기' : `${messages.length}줄 펼치기`}
+            {open
+              ? t('speech.progress.collapse')
+              : t('speech.progress.expand', { count: messages.length })}
           </button>
         )}
         {/*

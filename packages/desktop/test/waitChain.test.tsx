@@ -184,7 +184,6 @@ describe('WaitChainLine — 한국어 조사', () => {
   beforeEach(() => {
     useAppStore.getState().reset();
     // 이 묶음은 **한국어 문법 그 자체**를 잰다 — 언어를 고정하지 않으면 잴 대상이 없다.
-    // `MessageItem` 이 아직 `subjectParticle` 로 같은 문장을 손으로 만든다(남은 것 목록).
     usePrefsStore.getState().setLocale('ko');
     useAppStore.getState().set({
       accounts: {

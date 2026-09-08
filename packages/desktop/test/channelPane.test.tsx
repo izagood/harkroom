@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { acc, chan, msg, scheduledApiStub } from './helpers/fakeApi';
@@ -24,6 +25,7 @@ beforeEach(() => {
   // 이 파일이 검증하는 것은 보냄 취소 창이 아니다(#223) — 창을 끄고 즉시 전송 경로를 본다.
   // 창 자체는 undoSend.test.tsx 가 단독으로 지킨다.
   undoSendStorage.saveWindowMs(0);
+  usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'admin'),
@@ -42,8 +44,13 @@ beforeEach(() => {
   });
 });
 
+// **언어를 고정한다**(이 묶음의 문구가 사전을 지나면서 기본이 영어가 됐다). 이 파일이
+// 재는 것은 언어가 아니라 **그 언어로 표현된 규율**이다 — 언어를 재는 자리는
+// `i18n.test.tsx` 하나이고, 두 곳에서 재면 문구를 고칠 때 한쪽만 고쳐진다
+// (`gallery.test.tsx`·`skillsSettings.test.tsx`·`agentGrid.test.tsx` 와 같은 규약).
 afterEach(() => {
   cleanup();
+  usePrefsStore.getState().setLocale('system');
 });
 
 describe('ChannelPane', () => {
@@ -165,10 +172,13 @@ describe('ChannelPane', () => {
       },
     });
     render(<ChannelPane />);
-    expect(screen.getByRole('button', { name: '1 reply' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '답글 1개' })).toBeTruthy();
   });
 
-  it('pluralises the reply count', () => {
+  // **복수형이 실제로 갈리는지는 여기서 안 잰다** — 이 파일은 한국어로 고정돼 있고
+  // 한국어는 수에 따라 명사가 안 바뀐다(그 언어의 사실). 영어의 `1 reply`/`2 replies`
+  // 는 `i18n.test.tsx` 가 두 언어로 잰다. 여기서 지키는 것은 **수가 그려진다**는 것이다.
+  it('draws the reply count for more than one reply', () => {
     fakeController();
     useAppStore.getState().set({
       messages: {
@@ -180,7 +190,7 @@ describe('ChannelPane', () => {
       },
     });
     render(<ChannelPane />);
-    expect(screen.getByRole('button', { name: '2 replies' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '답글 2개' })).toBeTruthy();
   });
 
   // #396: 답글이 없는 메시지는 본문 아래에 "Reply in thread" 버튼을 두지 않는다 —
@@ -190,6 +200,7 @@ describe('ChannelPane', () => {
     useAppStore.getState().set({ messages: { c1: [msg('m1', 'c1', 1, 'lonely', 'u2')] } });
     render(<ChannelPane />);
     expect(screen.queryByRole('button', { name: /repl(y|ies)$/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^답글 \d+개$/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Reply in thread' })).toBeNull();
     expect(screen.getByRole('button', { name: '스레드에 답글 달기' })).toBeTruthy();
   });
@@ -205,7 +216,7 @@ describe('ChannelPane', () => {
       },
     });
     render(<ChannelPane />);
-    fireEvent.click(screen.getByRole('button', { name: '1 reply' }));
+    fireEvent.click(screen.getByRole('button', { name: '답글 1개' }));
     expect(c.openThread).toHaveBeenCalledWith('m1');
   });
 
