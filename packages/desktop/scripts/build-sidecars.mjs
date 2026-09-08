@@ -15,10 +15,14 @@
 // 유효한 중간 상태가 아니다 — 명령 하나가 둘 다 내는 것이 그 계약과도 맞는다.
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { binariesDir, buildSidecar, repoRoot, resolveTarget } from './sidecar.mjs';
+import { appVersion, binariesDir, buildSidecar, repoRoot, resolveTarget, runnerDefines } from './sidecar.mjs';
 
 async function main() {
   const target = resolveTarget();
+  // 러너는 **자기 번들의 버전을 안고 나간다**. 앱이 spawn 할 때 심어 주는
+  // `AGENT_VERSION` 은 그 위의 오버라이드일 뿐이고, 앱 밖에서 뜬 러너에는 아무도 심어
+  // 주지 않는다 — 구운 값이 없으면 그런 러너는 영원히 `unknown` 이다.
+  const version = appVersion();
 
   // 옛 산출물을 통째로 걷어낸다(위 주석 — 이 자리가 유일한 청소 지점이다).
   rmSync(binariesDir, { recursive: true, force: true });
@@ -32,6 +36,7 @@ async function main() {
     resolveFrom: agentRoot,
     // PTY 를 여는 것은 러너의 일이다 — 그래서 `node-pty` 는 **러너만** 곁들인다.
     nativeDeps: ['node-pty'],
+    define: runnerDefines(version),
     target,
   });
 
@@ -48,6 +53,7 @@ async function main() {
   });
 
   console.log(`러너 사이드카 빌드 완료: ${runner.outfile}`);
+  console.log(`  구워 넣은 버전: ${version}`);
   console.log(`  node-pty prebuild: ${target.platform}-${target.arch}`);
   console.log(`daemon 사이드카 빌드 완료: ${daemon.outfile}`);
   console.log('  네이티브 의존: 없음 (PTY 는 러너의 일이다)');

@@ -19,6 +19,7 @@
 // - **엔트리포인트** — 러너는 `packages/agent/src/main.ts`, daemon 은 `daemon/src/main.ts`
 // - **산출물 이름** — `murmur-runner` / `murmur-daemon` (`externalBin` 항목 이름과 같아야 한다)
 // - **곁들일 네이티브 의존** — **러너만 `node-pty`** 를 곁들인다
+// - **구워 넣을 값**(`define`) — **러너만** 자기 버전을 안고 나간다(`runnerDefines()`)
 //
 // 마지막 항목이 이 일반화의 핵심이다. **daemon 은 `node-pty` 가 필요 없다** — PTY 를 여는
 // 것은 하네스를 실제로 돌리는 러너의 일이고, daemon 은 프로세스를 spawn 하고 unix 소켓으로
@@ -50,6 +51,32 @@ export const desktopRoot = join(here, '..');
 export const repoRoot = join(desktopRoot, '..', '..');
 /** 사이드카 산출물이 모이는 곳. Tauri 의 `externalBin` 이 여기서 집어 간다. */
 export const binariesDir = join(desktopRoot, 'src-tauri', 'binaries');
+
+/**
+ * 이 번들이 나오는 앱의 버전.
+ *
+ * **`tauri.conf.json` 이 출처인 이유**: 그것이 Tauri 가 `package_info().version` 으로
+ * 돌려주는 값이고(`src-tauri/src/main.rs::app_version`), 앱이 러너에 심는
+ * `AGENT_VERSION` 도 같은 값이다. 여기서 `packages/desktop/package.json`(항상 `0.0.0`)
+ * 을 읽으면 구운 값과 앱이 심는 값이 **갈리고**, 그러면 뒤처짐 판정이 방금 띄운 러너를
+ * 뒤처졌다고 말한다.
+ */
+export function appVersion() {
+  const conf = JSON.parse(readFileSync(join(desktopRoot, 'src-tauri', 'tauri.conf.json'), 'utf8'));
+  if (typeof conf.version !== 'string' || conf.version === '') {
+    throw new Error('tauri.conf.json 에 version 이 없다 — 사이드카에 구울 값이 없다');
+  }
+  return conf.version;
+}
+
+/**
+ * 러너 번들에 구울 값들. `packages/agent/src/version.ts` 의 `__AGENT_VERSION__` 과
+ * **이름이 같아야 한다** — 다르면 치환이 일어나지 않고, 러너는 조용히 `unknown` 을
+ * 보고한다(그 조용함이 이 값이 한 번도 올라오지 않은 이유였다).
+ */
+export function runnerDefines(version) {
+  return { __AGENT_VERSION__: JSON.stringify(version) };
+}
 
 /**
  * Rust 쪽(target triple)과 Node 쪽(`process.platform`/`process.arch`) 명명 규칙이 다르다.
@@ -118,8 +145,10 @@ export function resolveTarget() {
  *   **비워 두는 것이 기본이다** — 곁들이는 것은 esbuild 가 인라인할 수 없는 `.node` 애드온을
  *   가진 패키지뿐이다(러너의 `node-pty`). daemon 은 그런 의존이 없으므로 비운다.
  * @param {{triple:string, platform:string, arch:string}} opts.target `resolveTarget()` 의 결과.
+ * @param {Record<string,string>} [opts.define] 번들 시점에 치환할 값들(esbuild `define`).
+ *   **비워 두는 것이 기본이다** — 러너만 자기 버전을 구워 간다(`runnerDefines()`).
  */
-export async function buildSidecar({ name, entry, resolveFrom, nativeDeps = [], target }) {
+export async function buildSidecar({ name, entry, resolveFrom, nativeDeps = [], target, define = {} }) {
   mkdirSync(binariesDir, { recursive: true });
 
   const outfile = join(binariesDir, `${name}-${target.triple}`);
@@ -132,6 +161,10 @@ export async function buildSidecar({ name, entry, resolveFrom, nativeDeps = [], 
     format: 'esm',
     target: 'node22',
     outfile: bundleFile,
+    // **구워 넣는 값**(지금은 러너 버전 하나). 치환되지 않으면 그 식별자는 선언되지 않은
+    // 채 남고, 읽는 쪽은 `typeof` 로만 만져 조용히 없는 값으로 떨어진다 — 그래서 이름이
+    // 어긋나도 빌드는 성공한다. 그 조용함을 `sidecarVersionBake.test.ts` 가 잡는다.
+    define,
     // 네이티브 애드온은 번들에 못 들어간다 — external 로 두고 아래에서 패키지 전체를
     // 곁들여 복사한다. **`nativeDeps` 가 비면 이 목록도 비고, 그러면 번들에 들어갈 수
     // 없는 것을 external 로 눈감아 주는 일 자체가 없다** — daemon 이 실수로 `node-pty` 를

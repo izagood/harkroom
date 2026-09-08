@@ -25,12 +25,13 @@ import { describe, expect, it, afterAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-// @ts-expect-error — 빌드 스크립트는 순수 JS 다(타입 선언이 없다).
+// 빌드 스크립트는 순수 JS 지만 선언만 옆에 둔다(`scripts/sidecar.d.mts`) — 이 파일이
+// 재는 배선을 `any` 로 두면 파라미터 이름이 바뀌어도 조용히 통과한다.
 import { buildSidecar, binariesDir, resolveTarget } from '../scripts/sidecar.mjs';
 
 const NAME = 'builtin-require-probe';
-const target = resolveTarget() as { triple: string; platform: string; arch: string };
-const outfile = join(binariesDir as string, `${NAME}-${target.triple}`);
+const target = resolveTarget();
+const outfile = join(binariesDir, `${NAME}-${target.triple}`);
 
 afterAll(() => {
   // 이 회귀선의 산출물은 배포물이 아니다 — 남기면 `binaries/` 에 정체 모를 실행 파일이
@@ -40,7 +41,7 @@ afterAll(() => {
 
 describe('사이드카 번들 (ESM)', () => {
   it('번들된 CJS 의존이 Node 빌트인을 require 할 수 있다', async () => {
-    await (buildSidecar as (o: unknown) => Promise<void>)({
+    await buildSidecar({
       name: NAME,
       entry: join(__dirname, 'fixtures', 'cjsRequiresBuiltinEntry.mjs'),
       resolveFrom: __dirname,
