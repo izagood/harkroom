@@ -525,6 +525,9 @@ describe('사이드바 안내문 — 옮기면서 사실을 잃지 않는다', (
     expect(en['sidebar.brand.disconnected'].length).toBeGreaterThan('Disconnected'.length + 10);
     expect(en['sidebar.brand.disconnected']).toContain('trusted');
     expect(ko['sidebar.brand.disconnected']).toContain('알 수 없다');
+  });
+});
+
 /**
  * **시간 표기가 한 벌인 것을 잠근다**(`#619` 후속).
  *
