@@ -5,7 +5,7 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { ApiError } from '../lib/api';
 import { GroupBadge, TeamBadge } from './Identity';
-import { formatSize } from './Attachments';
+import { AttachmentThumb, formatSize } from './Attachments';
 import {
   mentionQueryAt, applyMention, withStickyMentions, keepMentioned, bodyRecipients,
   type MentionQuery,
@@ -1073,9 +1073,13 @@ export function Composer({
           {pending.map((a) => (
             <span
               key={a.id}
-              className="inline-flex items-center gap-1 rounded border border-border bg-surface px-1.5 text-[11px] text-fg"
+              /* 이름만 있는 칩은 **무엇을 붙였는지 확인해 주지 못한다** — 스크린샷 파일명은
+                 서로 거의 같아서(`screenshot-20260908-151256.png`) 눈으로 가릴 수 없다.
+                 그래서 이미지면 칩 안에 작은 그림을 세운다. 이 그림은 방금 올라간 **서버의
+                 바이트**를 받아 그린다: 고른 파일이 아니라 실제로 붙은 것을 보여야 한다. */
+              className="inline-flex items-center gap-1 rounded border border-border bg-surface px-1.5 py-0.5 text-[11px] text-fg"
             >
-              <span aria-hidden>📎</span>
+              <AttachmentThumb attachment={a} />
               {a.filename}
               <span className="text-fg-subtle">{formatSize(a.sizeBytes)}</span>
               <button
