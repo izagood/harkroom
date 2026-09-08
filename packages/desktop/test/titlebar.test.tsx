@@ -170,9 +170,16 @@ describe('#270 드래그 손잡이', () => {
  * 따라 그 자리가 브랜드 바와 헤더 사이를 오갔다. 이제 레일이 **항상** 왼쪽 첫 열이라
  * 좌상단은 늘 레일이다 — 접든 펴든 다른 두 곳은 여백을 지지 않는다.
  *
- * 레일은 **세로**로 비운다(`pt-8`), 가로가 아니다. `CommunityRail` 이 그 이유를 적어 뒀다:
+ * 레일은 **세로**로 비운다, 가로가 아니다. `CommunityRail` 이 그 이유를 적어 뒀다:
  * 레일은 신호등 3개(78px)보다 좁아서 `pl-[78px]` 로는 피할 수 없다. 그래서 이 파일의
  * 단언도 `MAC_TRAFFIC_LIGHT_PL` 이 **두 바에 없다**는 쪽으로 바뀐다.
+ *
+ * **비우는 방법이 `pt-8` 에서 띠 하나로 바뀌었다**(2026-09-08, 사용자 요청 1·4). 레일 맨 위에
+ * `TOP_BAR_H`(36px) 짜리 조각(`rail-titlebar`)이 서서 그 자리를 비우고, 동시에 브랜드 바·헤더와
+ * 같은 색을 지며 오른쪽 테두리를 지지 않는다 — 그래야 세로선이 신호등을 지나가지 않는다.
+ * 그래서 이 절의 단언은 `pt-8` 대신 그 띠를 본다. **플랫폼 분기도 사라졌다**: 띠는 신호등을
+ * 피하기 위한 것만이 아니라 옆 두 바와 한 줄을 이루는 조각이라 Windows 에서도 서야 한다
+ * (없으면 레일의 내용만 28px 위로 올라가 한 줄이 어긋난다).
  */
 describe('#270 신호등 여백', () => {
   it('macOS·사이드바 펼침 — 좌상단은 레일이라 브랜드 바도 헤더도 여백을 지지 않는다', () => {
@@ -181,8 +188,8 @@ describe('#270 신호등 여백', () => {
 
     expect(screen.getByTestId('sidebar-brand').className).not.toContain(MAC_TRAFFIC_LIGHT_PL);
     expect(screen.getByTestId('app-header').className).not.toContain(MAC_TRAFFIC_LIGHT_PL);
-    // 여백을 잃은 것이 아니라 옮긴 것이다 — 레일이 세로로 비운다.
-    expect(screen.getByTestId('rail').className).toContain('pt-8');
+    // 여백을 잃은 것이 아니라 옮긴 것이다 — 레일 맨 위의 띠가 그 자리를 비운다.
+    expect(screen.getByTestId('rail-titlebar').className).toContain(TOP_BAR_H);
   });
 
   it('macOS·사이드바 접힘 — 레일이 남으므로 헤더가 좌상단이 되지 않는다', () => {
@@ -194,14 +201,16 @@ describe('#270 신호등 여백', () => {
     // 문서가 요구한 "좁은 창에서는 레일만 남기고 패널을 접는" 단계가 이것이다.
     expect(screen.queryByTestId('sidebar-brand')).toBeNull();
     expect(screen.getByTestId('rail')).toBeTruthy();
-    expect(screen.getByTestId('rail').className).toContain('pt-8');
+    expect(screen.getByTestId('rail-titlebar').className).toContain(TOP_BAR_H);
   });
 
-  it('macOS 가 아니면 레일도 여백을 두지 않는다', () => {
+  it('macOS 가 아니어도 띠는 남는다 — 신호등 때문만이 아니라 한 줄을 이루는 조각이다', () => {
     pretendWindows();
     renderWorkspace({ sidebarCollapsed: false });
     expect(screen.getByTestId('sidebar-brand').className).not.toContain(MAC_TRAFFIC_LIGHT_PL);
     expect(screen.getByTestId('app-header').className).not.toContain(MAC_TRAFFIC_LIGHT_PL);
+    expect(screen.getByTestId('rail-titlebar').className).toContain(TOP_BAR_H);
+    // 옛 방식(레일 자체의 세로 여백)은 사라졌다 — 두 방법이 함께 있으면 여백이 두 번 든다.
     expect(screen.getByTestId('rail').className).not.toContain('pt-8');
 
     cleanup();
