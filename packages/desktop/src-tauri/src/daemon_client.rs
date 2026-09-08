@@ -1938,6 +1938,11 @@ impl DaemonConnection {
         self.request("claudeAccountsList", json!({}))
     }
 
+    /// 사용량. **인자가 없다** — 어느 계정을 셀지는 데몬이 디스크를 보고 정한다.
+    pub fn claude_accounts_usage(&self) -> Result<Value, String> {
+        self.request("claudeAccountsUsage", json!({}))
+    }
+
     pub fn claude_accounts_configure(&self, config: Value) -> Result<Value, String> {
         self.request("claudeAccountsConfigure", config)
     }

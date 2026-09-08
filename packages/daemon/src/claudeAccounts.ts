@@ -37,6 +37,9 @@ import {
   parseClaudePoolsConfig,
   type ClaudePoolsConfig,
 } from '@murmur/shared/claudePools';
+import type { ClaudeUsageSnapshot } from '@murmur/shared/daemonProtocol';
+
+import { measureClaudeUsage, type UsageTarget } from './claudeUsage.js';
 
 /**
  * `claude auth status --json` 이 주는 것 중 **UI 가 쓰는 것만**. 비밀값은 이 출력에 없다
@@ -120,6 +123,13 @@ export interface ClaudeAccountsPort {
   loginStart(pool: string, account: string): Promise<{ loginId: string }>;
   loginSubmit(loginId: string, code: string): Promise<void>;
   loginCancel(loginId: string): Promise<void>;
+  /**
+   * 계정별 사용량. **읽기만 한다.** 같은 포트에 두는 이유: 세는 대상이 이 포트가 이미
+   * 소유한 그 디렉터리들이고, 열거를 두 벌로 두면 어느 계정이 목록엔 있고 사용량엔
+   * 없는 날이 온다. 실제 계산은 `claudeUsage.ts` 다 — 여기와 이유가 다르다(저것은
+   * 관측이고 이것은 소유다).
+   */
+  usage(): Promise<ClaudeUsageSnapshot>;
   /** 진행 중인 로그인을 전부 회수한다. 데몬 종료 경로가 부른다. */
   shutdownLogins(): Promise<void>;
   onLoginEvent(cb: (e: ClaudeLoginEvent) => void): void;
@@ -306,16 +316,89 @@ function nodeSpawnLogin(configDir: string): ClaudeLoginChild {
   }) as unknown as ClaudeLoginChild;
 }
 
+/**
+ * `pools.json`. **없음(`null`)과 깨짐(빈 설정)을 가른다** — 존재가 모드 스위치다.
+ */
+async function readPoolsConfig(root: string): Promise<ClaudePoolsConfig | null> {
+  let text: string;
+  try {
+    text = await readFile(poolsConfigPath(root), 'utf8');
+  } catch {
+    return null;
+  }
+  try {
+    return parseClaudePoolsConfig(JSON.parse(text));
+  } catch {
+    return parseClaudePoolsConfig(undefined);
+  }
+}
+
+/** 뿌리 아래 계정 하나가 실제로 어디 있는가. */
+export interface ClaudeAccountDir {
+  name: string;
+  /** `CLAUDE_CONFIG_DIR` 로 쓰이는 그 경로. */
+  dir: string;
+}
+
+/**
+ * **디스크의 모양 그대로** — 상태를 재지 않는다.
+ *
+ * `list()` 와 `usage()` 가 이것을 공유한다. 갈라 둔 이유는 `list()` 가 계정마다
+ * `claude auth status` 를 돌리는데(느리고 실패할 수 있다) 사용량은 그것이 필요 없기
+ * 때문이고, 합쳐 둔 이유는 **열거가 한 벌이어야** 하기 때문이다 — 두 벌이면 목록에는
+ * 보이는데 사용량에는 없는 계정이 생기고 그것은 화면에서 "0" 으로 보인다.
+ */
+export interface ClaudeAccountsLayout {
+  root: string;
+  mode: 'flat' | 'pools';
+  defaultPool: string | null;
+  agents: Record<string, string>;
+  strays: string[];
+  /** 계정이 **없는 풀도 들어 있다** — 빈 풀을 화면에서 지우면 방금 만든 풀이 사라진다. */
+  pools: { name: string; accounts: ClaudeAccountDir[] }[];
+}
+
+export async function readClaudeAccountsLayout(root: string): Promise<ClaudeAccountsLayout> {
+  const dirsOf = async (parent: string): Promise<ClaudeAccountDir[]> =>
+    (await subdirs(parent)).map((name) => ({ name, dir: join(parent, name) }));
+
+  const cfg = await readPoolsConfig(root);
+  if (cfg === null) {
+    // 평평한 구조. 뿌리의 하위 디렉터리가 계정이고, 이름 없는 풀 하나로 보여 준다.
+    const accounts = await dirsOf(root);
+    return {
+      root, mode: 'flat', defaultPool: null, agents: {},
+      pools: accounts.length ? [{ name: '', accounts }] : [],
+      strays: [],
+    };
+  }
+
+  const pools: ClaudeAccountsLayout['pools'] = [];
+  const strays: string[] = [];
+  for (const name of await subdirs(root)) {
+    const dir = join(root, name);
+    // 풀 모드에서 **계정 모양인 뿌리 하위 디렉터리는 풀이 아니라 잔여물**이다.
+    // 그것을 풀로 세면 UI 가 "계정 0개인 이상한 풀"을 그리고, 사용자는 자기 계정이
+    // 어디 갔는지 알 수 없다.
+    if (await looksLikeAccount(dir)) { strays.push(name); continue; }
+    pools.push({ name, accounts: await dirsOf(dir) });
+  }
+  return { root, mode: 'pools', defaultPool: cfg.defaultPool, agents: cfg.agents, pools, strays };
+}
+
 export function createClaudeAccountsPort(opts: {
   root?: string;
   runStatus?: (configDir: string) => Promise<unknown>;
   spawnLogin?: (configDir: string) => ClaudeLoginChild;
   killGraceMs?: number;
+  /** 사용량 창의 기준 시각. 테스트가 고정한다 — 5시간 창은 시계에 달린 판정이다. */
+  now?: () => number;
 } = {}): ClaudeAccountsPort {
   const root = opts.root ?? claudeAccountsRoot();
   const runStatus = opts.runStatus ?? nodeRunStatus;
   const spawnLogin = opts.spawnLogin ?? nodeSpawnLogin;
   const killGraceMs = opts.killGraceMs ?? LOGIN_KILL_GRACE_MS;
+  const now = opts.now ?? ((): number => Date.now());
 
   /** 진행 중인 로그인. 키는 `loginId`. */
   const logins = new Map<string, {
@@ -334,56 +417,36 @@ export function createClaudeAccountsPort(opts: {
     for (const cb of loginListeners) { try { cb(e); } catch { /* 관찰은 부작용이 아니다 */ } }
   };
 
-  /** `pools.json`. **없음(`null`)과 깨짐(빈 설정)을 가른다** — 존재가 모드 스위치다. */
-  async function readConfig(): Promise<ClaudePoolsConfig | null> {
-    let text: string;
-    try {
-      text = await readFile(poolsConfigPath(root), 'utf8');
-    } catch {
-      return null;
-    }
-    try {
-      return parseClaudePoolsConfig(JSON.parse(text));
-    } catch {
-      return parseClaudePoolsConfig(undefined);
-    }
-  }
-
-  async function accountsOf(dir: string): Promise<ClaudeAccountView[]> {
-    const names = await subdirs(dir);
-    const out: ClaudeAccountView[] = [];
-    for (const name of names) {
-      out.push({ name, status: readStatus(await runStatus(join(dir, name))) });
-    }
-    return out;
-  }
-
   return {
     async list(): Promise<ClaudeAccountsSnapshot> {
-      const cfg = await readConfig();
-
-      if (cfg === null) {
-        // 평평한 구조. 뿌리의 하위 디렉터리가 계정이고, 이름 없는 풀 하나로 보여 준다.
-        const accounts = await accountsOf(root);
-        return {
-          root, mode: 'flat', defaultPool: null, agents: {},
-          pools: accounts.length ? [{ name: '', accounts }] : [],
-          strays: [],
-        };
-      }
-
-      const poolNames = await subdirs(root);
+      const layout = await readClaudeAccountsLayout(root);
       const pools: ClaudePoolView[] = [];
-      const strays: string[] = [];
-      for (const name of poolNames) {
-        const dir = join(root, name);
-        // 풀 모드에서 **계정 모양인 뿌리 하위 디렉터리는 풀이 아니라 잔여물**이다.
-        // 그것을 풀로 세면 UI 가 "계정 0개인 이상한 풀"을 그리고, 사용자는 자기 계정이
-        // 어디 갔는지 알 수 없다.
-        if (await looksLikeAccount(dir)) { strays.push(name); continue; }
-        pools.push({ name, accounts: await accountsOf(dir) });
+      for (const p of layout.pools) {
+        const accounts: ClaudeAccountView[] = [];
+        for (const a of p.accounts) {
+          accounts.push({ name: a.name, status: readStatus(await runStatus(a.dir)) });
+        }
+        pools.push({ name: p.name, accounts });
       }
-      return { root, mode: 'pools', defaultPool: cfg.defaultPool, agents: cfg.agents, pools, strays };
+      return {
+        root: layout.root,
+        mode: layout.mode,
+        defaultPool: layout.defaultPool,
+        agents: layout.agents,
+        pools,
+        strays: layout.strays,
+      };
+    },
+
+    async usage(): Promise<ClaudeUsageSnapshot> {
+      const layout = await readClaudeAccountsLayout(root);
+      const targets: UsageTarget[] = [];
+      for (const p of layout.pools) {
+        for (const a of p.accounts) targets.push({ pool: p.name, account: a.name, dir: a.dir });
+      }
+      // **잔여물은 세지 않는다.** 목록에도 계정으로 안 나오므로, 세면 화면이 그릴 자리가
+      // 없는 줄이 생긴다.
+      return measureClaudeUsage(targets, now());
     },
 
     async configure(cfg: ClaudePoolsConfig): Promise<void> {

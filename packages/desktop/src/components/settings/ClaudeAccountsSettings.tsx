@@ -25,8 +25,11 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { CLAUDE_POOL_NAME_PATTERN } from '@murmur/shared/claudePools';
 
+import { useLocale } from '../../i18n/useT';
+
 import {
   cancelClaudeLogin,
+  claudeAccountsUsage,
   configureClaudeAccounts,
   hasClaudeAccountsSurface,
   listClaudeAccounts,
@@ -39,7 +42,9 @@ import {
   type ClaudeAccountsSnapshot,
   type ClaudeAuthStatus,
   type ClaudeLoginEvent,
+  type ClaudeUsageSnapshot,
 } from '../../lib/claudeAccounts';
+import { lastUsedLabel, limitLine, usageByAccount, usageSummary } from '../../lib/claudeUsage';
 import { getExternalOpener } from '../../lib/openExternal';
 import { Button, Field, SettingsGroup, SettingsPage, TextInput } from './primitives';
 
@@ -66,7 +71,15 @@ function statusLine(status: ClaudeAuthStatus): string {
 
 export function ClaudeAccountsSettings() {
   const available = hasClaudeAccountsSurface();
+  // **글자는 영어이지만 시각 표기는 로케일을 따른다.** 이 화면의 문구는 사전을 쓰지 않는데
+  // (이 파일 머리말) `HH:MM` 은 문구가 아니라 숫자 표기라 `Intl` 이 낸다 — `lib/time.ts`
+  // 머리말이 가른 그 축이다: 수량·표기는 플랫폼이 우리보다 잘 안다.
+  const locale = useLocale();
   const [snap, setSnap] = useState<ClaudeAccountsSnapshot | null>(null);
+  // 사용량은 **목록과 따로** 온다. 실패해도 계정 목록은 그대로 옳으므로 오류도 따로 든다 —
+  // 하나로 두면 트랜스크립트를 못 읽은 것이 "계정을 못 읽었다"로 보인다.
+  const [usage, setUsage] = useState<ClaudeUsageSnapshot | null>(null);
+  const [usageError, setUsageError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending>(null);
   const [login, setLogin] = useState<LoginState | null>(null);
@@ -85,7 +98,27 @@ export function ClaudeAccountsSettings() {
     }
   }, [available]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  /**
+   * 사용량을 다시 잰다. **자동으로 되풀이하지 않는다** — 계정당 트랜스크립트 수십 MB 를
+   * 훑는 일이라 주기적으로 돌리면 설정 화면을 열어 둔 것만으로 디스크를 계속 읽는다.
+   * 화면을 열 때 한 번 재고, 그 뒤는 사람이 누를 때 다시 잰다.
+   */
+  const refreshUsage = useCallback(async () => {
+    if (!available) return;
+    try {
+      setUsage(await claudeAccountsUsage());
+      setUsageError(null);
+    } catch (err) {
+      setUsageError(err instanceof Error ? err.message : String(err));
+    }
+  }, [available]);
+
+  useEffect(() => { void refresh(); void refreshUsage(); }, [refresh, refreshUsage]);
+
+  // 잰 시각을 판정의 기준으로 쓴다. `Date.now()` 를 렌더에서 부르면 같은 스냅샷이
+  // 렌더마다 다르게 그려지고, 무엇보다 **잰 뒤에 흐른 시간**이 판정에 섞인다.
+  const nowMs = usage?.measuredAtMs ?? 0;
+  const usageMap = usageByAccount(usage?.accounts ?? null);
 
   // 로그인 진행을 듣는다. 화면이 살아 있는 동안만 — 떠날 때 떼지 않으면 다음 마운트가
   // 두 번 듣는다.
@@ -172,6 +205,26 @@ export function ClaudeAccountsSettings() {
         </SettingsGroup>
       )}
 
+      {/*
+        사용량 안내와 다시 재기. **여기 한 곳에 둔다** — 계정 줄마다 버튼을 두면 사람이
+        계정 열 개를 열 번 눌러야 하고, 한 번의 측정이 어차피 전부를 센다.
+
+        "no fixed limit to compare against" 를 적는 이유: 이 숫자에 퍼센트가 없는 것이
+        누락으로 보이면 사람은 우리가 못 만든 줄 안다. 분모가 어디에도 없다는 것이 사실이다.
+      */}
+      <SettingsGroup>
+        <div className="flex items-center justify-between px-4 py-3">
+          <div className="text-meta text-fg-subtle">
+            {usageError
+              ? `Could not read usage: ${usageError}`
+              : usage
+                ? 'Usage counted from each account’s own transcripts over its last 5-hour window. Claude reports no fixed limit to compare against, so these are amounts, not percentages.'
+                : 'Reading usage from transcripts…'}
+          </div>
+          <Button onClick={() => void refreshUsage()}>Refresh usage</Button>
+        </div>
+      </SettingsGroup>
+
       {/* 러너 반영 안내 — 이 화면의 변경이 언제 효과를 내는지 말한다. */}
       <SettingsGroup>
         <div className="px-4 py-3 text-meta text-fg-subtle">
@@ -246,22 +299,46 @@ export function ClaudeAccountsSettings() {
             </div>
           </div>
 
-          {pool.accounts.map((a) => (
-            <div key={a.name} className="flex items-center justify-between px-4 py-3">
-              <div>
-                <div className="font-mono text-fg">{a.name}</div>
-                <div className={`text-meta ${a.status.loggedIn ? 'text-fg-subtle' : 'text-warning'}`}>
-                  {statusLine(a.status)}
-                </div>
-              </div>
-              <Button
-                variant="danger"
-                onClick={() => setPending({ kind: 'account', pool: pool.name, account: a.name })}
+          {pool.accounts.map((a) => {
+            const u = usageMap.get(`${pool.name}/${a.name}`);
+            const limit = u ? limitLine(u, nowMs, locale) : null;
+            return (
+              <div
+                key={a.name}
+                className="flex items-center justify-between px-4 py-3"
+                data-testid={`claude-account-${pool.name}-${a.name}`}
               >
-                {`Remove account ${a.name}`}
-              </Button>
-            </div>
-          ))}
+                <div>
+                  <div className="font-mono text-fg">{a.name}</div>
+                  <div className={`text-meta ${a.status.loggedIn ? 'text-fg-subtle' : 'text-warning'}`}>
+                    {statusLine(a.status)}
+                  </div>
+                  {/*
+                    **아직 안 온 것과 0 을 가른다.** 사용량이 오기 전에 `0 responses` 를
+                    그리면 화면이 확인한 적 없는 것을 단언한다 — `AgentTurns` 에서 `0` 과
+                    `모름` 을 가른 것과 같은 규율이다.
+                  */}
+                  <div className="text-meta text-fg-subtle" data-testid="claude-account-usage">
+                    {u ? `${usageSummary(u)} · ${lastUsedLabel(u, locale)}` : usageError ? 'Usage unavailable' : 'Reading usage…'}
+                  </div>
+                  {limit && (
+                    <div
+                      className={`text-meta ${limit.tone === 'warning' ? 'text-warning' : 'text-fg-subtle'}`}
+                      data-testid="claude-account-limit"
+                    >
+                      {limit.text}
+                    </div>
+                  )}
+                </div>
+                <Button
+                  variant="danger"
+                  onClick={() => setPending({ kind: 'account', pool: pool.name, account: a.name })}
+                >
+                  {`Remove account ${a.name}`}
+                </Button>
+              </div>
+            );
+          })}
         </SettingsGroup>
       ))}
 

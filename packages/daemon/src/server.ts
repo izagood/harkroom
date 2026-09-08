@@ -413,6 +413,13 @@ export class DaemonServer {
           return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
         }
       }
+      case 'claudeAccountsUsage': {
+        const port = this.requireAccounts();
+        if (isDaemonError(port)) return port;
+        // **payload 를 보지 않는다.** 웹뷰가 넘길 것이 없다 — 어느 계정을 셀지는 디스크가
+        // 정하고, 이름을 받으면 그 이름이 다시 경로가 된다(그 표면을 늘리지 않는다).
+        return await port.usage();
+      }
       case 'claudeAccountMove': {
         const port = this.requireAccounts();
         if (isDaemonError(port)) return port;
