@@ -7,12 +7,16 @@
      1. color 를 여기 못 박았다. 획이 currentColor 라서 색을 적지 않으면 래스터라이저의
         기본 color(보통 순수 검정)로 굳어 브랜드 잉크색을 잃는다. 앱 아이콘은
         prefers-color-scheme 를 따라갈 수 없으니 라이트 모드 색 하나로 고정한다.
-     2. 128 짜리 뷰박스를 4.8 배(= 1024 의 60%)로 키우고 남는 여백을 위아래·좌우
-        똑같이 (1024 - 614.4) / 2 = 204.8 씩 나눠 캔버스 정중앙에 놓는다.
-        x 와 y 오프셋이 같아야 중앙이다 — test/tauriIcon.test.ts 가 이 값을 지킨다. -->
+     2. 128 짜리 뷰박스를 8 배로 키워 캔버스(1024)에 그대로 얹는다. 곱이 딱 맞아
+        여백이 0 이므로 오프셋도 translate(0, 0) 이다 — x 와 y 가 같아야 중앙이고,
+        test/tauriIcon.test.ts 가 그 값을 지킨다.
+        **왜 8 인가**(실측 2026-09-08, 사용자가 Dock 에서 지적): 4.8 배일 때 잉크의
+        실제 폭은 99 * 4.8 = 475px, 캔버스의 46% 였다. 플레이트는 full-bleed 인데 안의
+        파형만 작아서 Dock 에서 로고가 작아 보였다. 8 배면 잉크가 792px(77%)이 되고
+        획의 라운드캡까지 넣어도 둥근 모서리(rx 225)에 닿지 않는다. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" color="#16181C">
   <rect x="0" y="0" width="1024" height="1024" rx="225.28" ry="225.28" fill="#FFFFFF"/>
-  <g transform="translate(204.8, 204.8) scale(4.8)">
+  <g transform="translate(0, 0) scale(8)">
     <path d="M20 52.0 V 76.0" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
     <path d="M35 42.0 V 86.0" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
     <path d="M50 31.0 V 97.0" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>

@@ -38,7 +38,22 @@ export function Logo({
       <path d="M20 52.0 V 76.0" stroke="currentColor" strokeWidth="9" strokeLinecap="round" />
       <path d="M35 42.0 V 86.0" stroke="currentColor" strokeWidth="9" strokeLinecap="round" />
       <path d="M50 31.0 V 97.0" stroke="currentColor" strokeWidth="9" strokeLinecap="round" />
-      <path d="M65 18.0 V 110.0" stroke="#E8613C" strokeWidth="9" strokeLinecap="round" />
+      {/*
+        가운데 막대의 색은 **토큰이다**(실측 2026-09-08, 사용자가 화면에서 지적).
+        `#E8613C` 를 못 박아 두면 나머지 6 개는 `currentColor` 로 뒤집히는데 이 막대만
+        라이트 값으로 남아, 다크에서 "로고 색이 안 바뀐다" 로 보인다 — 다크의
+        `--app-accent-brand` 는 `#ff7b54` 로 이미 다른 값이다(`index.css`).
+        `<img>` 로 쓰이는 사본(`public/logo.svg`)은 문서 밖 리소스여서 이 변수를 못 보므로
+        거기서는 `prefers-color-scheme` 로 같은 두 값을 적어 둔다 — 둘을 함께 고쳐라.
+        폴백을 남기는 이유: 이 컴포넌트가 `index.css` 없이 렌더되는 자리(테스트·스토리)에서
+        변수가 빈 값이면 획이 사라진다.
+      */}
+      <path
+        d="M65 18.0 V 110.0"
+        stroke="var(--color-accent-brand, #E8613C)"
+        strokeWidth="9"
+        strokeLinecap="round"
+      />
       <path d="M80 33.0 V 95.0" stroke="currentColor" strokeWidth="9" strokeLinecap="round" />
       <path d="M95 45.0 V 83.0" stroke="currentColor" strokeWidth="9" strokeLinecap="round" />
       <path d="M110 53.0 V 75.0" stroke="currentColor" strokeWidth="9" strokeLinecap="round" />
