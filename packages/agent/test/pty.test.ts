@@ -672,3 +672,66 @@ describe('준비 상한 — onAttention 이 있으면 죽이지 않는다', () =
     })).rejects.toBeInstanceOf(PromptNotDeliveredError);
   }, 20_000);
 });
+
+// ── 주입이 **먹혔는지** 재는 확인 창(2026-09-08, 스펙 2-5)
+//
+// 준비 신호는 "화면이 입력을 받을 모양이다"까지만 말한다. 2026-09-08 프로덕션에서
+// 프롬프트를 넣은 뒤 대화가 시작되지 않는 상태가 12~30분 실재했고, 아무도 알아채지
+// 못했다. 원인은 미확정이지만 — 준비 상한도 조립도 판정도 정상이었다 — 그 상태 자체는
+// 잡을 수 있다.
+describe('주입 확인 창 — 준비 신호만으로는 부족하다', () => {
+  it('주입 뒤 증거가 없으면 onAttention 을 부른다', async () => {
+    // 'ready-then-silent' 가 프로덕션의 그 모양이다: 준비 신호를 찍고, 주입을 받고,
+    // 죽지도 답하지도 않는다. 'ready-then-echo' 로는 못 잰다 — 그쪽은 주입 직후 종료해
+    // 턴이 정착하고, 정착한 턴에는 부를 이유가 없다(그것도 옳은 동작이다).
+    const 화면: string[] = [];
+    const turn = runPtyTurn(plan('ready-then-silent'), {
+      cwd: process.cwd(), timeoutMs: 3_000,
+      injectPrompt: {
+        text: '안녕',
+        confirmDelivery: { probe: () => false, withinMs: 200 },
+        onAttention: (s) => 화면.push(s),
+      },
+    });
+    await vi.waitFor(() => expect(화면).toHaveLength(1), { timeout: 3_000 });
+    await turn.catch(() => {});   // 시간 한도로 끝난다 — 이 테스트가 재는 것은 아니다.
+  }, 20_000);
+
+  it('증거가 있으면 부르지 않는다', async () => {
+    const 화면: string[] = [];
+    await runPtyTurn(plan('ready-then-echo'), {
+      cwd: process.cwd(), timeoutMs: 10_000,
+      injectPrompt: {
+        text: '안녕',
+        confirmDelivery: { probe: () => true, withinMs: 200 },
+        onAttention: (s) => 화면.push(s),
+      },
+    });
+    expect(화면).toHaveLength(0);
+  }, 20_000);
+
+  it('probe 가 던지면 증거 없음으로 읽는다 — 사람을 부르는 쪽이 안전하다', async () => {
+    // 반대로 읽으면(던지면 정상) 2026-09-08 처럼 조용히 태운다.
+    const 화면: string[] = [];
+    const turn = runPtyTurn(plan('ready-then-silent'), {
+      cwd: process.cwd(), timeoutMs: 3_000,
+      injectPrompt: {
+        text: '안녕',
+        confirmDelivery: { probe: () => { throw new Error('디스크 오류'); }, withinMs: 200 },
+        onAttention: (s) => 화면.push(s),
+      },
+    });
+    await vi.waitFor(() => expect(화면).toHaveLength(1), { timeout: 3_000 });
+    await turn.catch(() => {});
+  }, 20_000);
+
+  it('confirmDelivery 가 없으면 확인 창도 없다 — 기존 호출자는 그대로다', async () => {
+    const 화면: string[] = [];
+    const r = await runPtyTurn(plan('ready-then-echo'), {
+      cwd: process.cwd(), timeoutMs: 10_000,
+      injectPrompt: { text: '안녕', onAttention: (s) => 화면.push(s) },
+    });
+    expect(r.exitCode).toBe(0);
+    expect(화면).toHaveLength(0);
+  }, 20_000);
+});

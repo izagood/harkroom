@@ -237,3 +237,12 @@ if (mode === 'gatekeeper') {
   });
   setTimeout(() => process.exit(23), 20_000); // 안전망
 }
+
+// 2026-09-08 프로덕션의 무발화 30분 모양. 준비 신호를 찍고, 주입을 받고, **그 뒤로
+// 아무것도 하지 않는다** — 죽지도 않는다. 'ready-then-echo' 로는 이 상태를 못 만든다:
+// 그쪽은 주입을 받자마자 종료해서 턴이 정착하고, 정착한 턴에는 부를 이유가 없다.
+if (mode === 'ready-then-silent') {
+  setTimeout(() => process.stdout.write('READY\n❯ '), 100);
+  process.stdin.on('data', () => { /* 받지만 아무 일도 하지 않는다 */ });
+  setInterval(() => {}, 1_000);
+}
