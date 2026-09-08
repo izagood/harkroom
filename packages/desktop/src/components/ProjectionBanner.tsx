@@ -1,7 +1,7 @@
 import { useActiveStore } from '../state/communities';
 import type { SectionId } from './settings/sections';
 import { projectionBanner } from '../lib/projectionBanner';
-import { useAgo } from '../i18n/useT';
+import { useAgo, useT } from '../i18n/useT';
 
 /**
  * 고치는 문이 **지목하는 자리**. 투영은 "이 앱이 말을 거는 서버" 가 avcs 를 향해 돌리는
@@ -52,8 +52,9 @@ export function ProjectionBanner({ onOpenSettings }: {
 
   // 훅은 조건 앞에서 부른다 — 아래 두 `return null` 보다 먼저여야 한다.
   const ago = useAgo();
+  const t = useT();
 
-  const banner = projectionBanner({ status, error, ago });
+  const banner = projectionBanner({ status, error, ago, t });
   if (!banner || !banner.strip) return null;
   // 같은 사정을 다시 세우지 않는다. 다른 사정이면 열쇠가 달라 다시 선다.
   if (dismissed === banner.testid) return null;
@@ -86,12 +87,12 @@ export function ProjectionBanner({ onOpenSettings }: {
           // 함수를 그대로 넘기지 않는다 — React 가 첫 인자로 `MouseEvent` 를 준다.
           onClick={() => onOpenSettings?.(PROJECTION_SECTION)}
         >
-          설정 열기
+          {t('projection.banner.openSettings')}
         </button>
       )}
       <button
         data-testid="projection-dismiss"
-        aria-label="이 알림 닫기"
+        aria-label={t('projection.banner.dismiss')}
         className="shrink-0 rounded px-1 hover:bg-warning-surface-strong"
         onClick={() => useActiveStore.getState().set({ projectionBannerDismissed: banner.testid })}
       >

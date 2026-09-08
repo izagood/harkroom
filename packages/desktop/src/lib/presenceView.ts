@@ -1,3 +1,5 @@
+import type { MessageKey } from '../i18n';
+
 /**
  * 사람 옆의 점이 **무엇을 말하는가**(`#443`).
  *
@@ -46,13 +48,31 @@
  */
 export type PresenceView = 'online' | 'offline' | 'unknown';
 
-/** 화면에 쓰는 이름. 세 자리(사이드바·디렉터리·에이전트 격자)가 같은 말을 쓴다. */
-export const PRESENCE_LABEL: Record<PresenceView, string> = {
-  online: '온라인',
-  offline: '오프라인',
+// 이 파일은 문구를 안 짓고 **키만** 짓는다 — 아래 `PRESENCE_LABEL` 주석이 그 근거다.
+// 타입만 가져오므로 `lib/` 판정이 여전히 React 도 사전 값도 모른다.
+
+/**
+ * 화면에 쓰는 이름. 세 자리(사이드바·디렉터리·에이전트 격자)가 같은 말을 쓴다.
+ *
+ * ## 값이 아니라 **키**를 든다 (`Sidebar::NOTIFY_LEVEL_KEY` 판례)
+ *
+ * 전에는 이 표가 한국어 문구를 들고 있었다. 그러면 **모듈이 로드될 때 그 언어로 굳어**
+ * 화면이 `t()` 를 지나도 안 바뀐다 — 상수는 `useT` 가 닿지 않는 자리다.
+ *
+ * 표 자체는 남긴다. 이 셋은 자리표시자를 안 받는 상수 문구라 키만으로 충분하고,
+ * **키는 언어를 안 지니므로 모듈 상수여도 안전하다**(굳는 것은 값이지 키가 아니다).
+ * `PresenceView` 로 색인된 채로 두는 이유가 그 판례가 지키려던 성질이다 — **네 번째
+ * 값이 생기면 여기서 컴파일이 막힌다.** 배열로 폈다면 그 자리가 조용히 통과한다.
+ *
+ * `runnerStatusLabel` 은 같은 문제를 **함수로** 풀었다. 갈리는 근거(자리표시자와
+ * 갈래의 유무)는 `i18n/en.ts` 의 `runnerState` 영역 머리말에 있다.
+ */
+export const PRESENCE_LABEL: Record<PresenceView, MessageKey> = {
+  online: 'presence.online',
+  offline: 'presence.offline',
   // **"오프라인"이라고 쓰지 않는다.** 그것은 아는 척이다 — 사람이 할 일은
   // 러너를 되살리는 것이 아니라 연결이 돌아오기를 기다리는 것이다.
-  unknown: '연결 끊김 — 알 수 없음',
+  unknown: 'presence.unknown',
 };
 
 /**

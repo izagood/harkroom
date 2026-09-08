@@ -9,6 +9,7 @@ import { render, screen, fireEvent, cleanup, act } from '@testing-library/react'
 import type { AgentSessionView } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { ThreadPanel } from '../src/components/ThreadPanel';
 import { TerminalPanel } from '../src/components/TerminalPanel';
 import { setTerminalSinkFactory } from '../src/lib/terminalSink';
@@ -32,13 +33,19 @@ const drag = (label: string, from: number, to: number): void => {
   fireEvent.mouseUp(document);
 };
 
+// **언어를 `ko` 로 고정한다.** 이 파일의 축들이 한국어 문구를 직접 재는데, 그 문구가
+// 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다(`gallery`·`agentGrid`·
+// `skillsSettings` 회귀선이 같은 이유로 고정한다). 영어가 원본이 되면서 기본값이
+// 영어가 됐으므로, 한국어를 재려면 한국어라고 말해야 한다.
 beforeEach(() => {
   localStorage.clear();
   useAppStore.getState().reset();
+  usePrefsStore.getState().setLocale('ko');
 });
 
 afterEach(() => {
   cleanup();
+  usePrefsStore.getState().setLocale('system');
   setController(null as unknown as Controller);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();

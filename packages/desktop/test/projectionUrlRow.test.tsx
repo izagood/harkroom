@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import type { ProjectionConfigView } from '@murmur/shared';
 import { useActiveStore } from '../src/state/communities';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { ProjectionUrl } from '../src/components/settings/ProjectionUrl';
 import { acc } from './helpers/fakeApi';
@@ -35,8 +36,19 @@ const mount = (opts: { isAdmin?: boolean; config?: ProjectionConfigView | Error 
   return render(<ProjectionUrl />);
 };
 
-beforeEach(() => { localStorage.clear(); useActiveStore.getState().reset(); });
-afterEach(() => cleanup());
+// **언어를 `ko` 로 고정한다.** 이 파일의 축들이 한국어 문구를 직접 재는데, 그 문구가
+// 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다 — 출처 둘이 서로 다른 말을
+// 하는가, 지우기 안내가 잃는 것을 말하는가. `gallery`·`agentGrid` 회귀선이 같은
+// 이유로 고정한다.
+beforeEach(() => {
+  localStorage.clear();
+  useActiveStore.getState().reset();
+  usePrefsStore.getState().setLocale('ko');
+});
+afterEach(() => {
+  cleanup();
+  usePrefsStore.getState().setLocale('system');
+});
 
 describe('투영 URL 편집 줄', () => {
   /** 권한이 없는 것은 오류가 아니다. 403 을 붉게 그리면 잘못 없는 화면에 경고가 뜬다. */

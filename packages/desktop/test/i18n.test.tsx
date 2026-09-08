@@ -67,6 +67,19 @@ import { CREDENTIAL_REJECTED_LINE, EXECUTABLE_NOT_FOUND_LINE, EX_CONFIG, HARNESS
 import { fakeDaemon } from './helpers/fakeDaemon';
 import type { Translate } from '../src/i18n';
 import { acc, chan, msg, fakeApi, fakeWsFactory } from './helpers/fakeApi';
+// 7번 묶음(러너·투영)이 재는 판정·화면들. **사전이 아니라 이 경로를 잰다** —
+// 그 묶음 머리말이 왜인지 적었다.
+import { runnerStatusLabel } from '../src/components/RunnerStatus';
+import { PRESENCE_LABEL } from '../src/lib/presenceView';
+import { projectionBanner } from '../src/lib/projectionBanner';
+import { runnerCommandClipboardText } from '../src/lib/runnerCommand';
+import { ProjectionBanner } from '../src/components/ProjectionBanner';
+import { ProjectionUrl } from '../src/components/settings/ProjectionUrl';
+import { writerDeniedText } from '../src/components/TerminalPanel';
+import type { WriterDeniedReason } from '@murmur/shared';
+import type { RunnerState, RunnerStatus } from '../src/lib/runnerLauncher';
+import type { ProjectionStatus } from '@murmur/shared';
+import { PROJECTION_UNCONFIGURED_HEADLINE } from '@murmur/shared';
 
 /** 사전 값에서 자리표시자 이름을 뽑는다. 조사 표기(`:이가`)는 이름의 일부가 아니다. */
 function placeholders(value: unknown): Set<string> {
@@ -2256,6 +2269,402 @@ describe('설정 화면 넷 — 언어를 바꾸면 따라온다', () => {
     ] as (keyof typeof en)[]) {
       const v = ko[key] as string;
       expect(v, `ko.${key}`).not.toMatch(/(습니다|하세요)\.?$/);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. 러너·투영 — 모듈 상수로 굳지 않는다
+//
+// **이 묶음이 지키는 것은 사전의 내용이 아니라 그 값이 화면에 닿는 경로다.** 이 이전이
+// 없앤 결함이 정확히 그것이었다: `runnerStatusLabel`·`PRESENCE_LABEL`·`STATE_LABEL`·
+// `SOURCE_LABEL` 넷이 **모듈 로드 시점 언어로 굳은 문구**를 들고 있어, 화면이 `t()` 를
+// 지나도 그 자리만 안 바뀌었다. 사이드바가 그것을 이미 감싸고 있었으므로(`sidebar.runner
+// .state`) **틀만 영어가 되고 안의 라벨은 한국어로 남는** 반쪽 상태가 실제로 있었다.
+//
+// 그래서 축들이 **사전을 읽지 않는다** — 화면을 두 언어로 렌더하거나 판정 함수를 두
+// 언어로 부른다. 사전만 읽으면 키가 있다는 것만 증명되고, 그 키가 화면에 닿는지는
+// 증명되지 않는다(그것이 이 이전이 고친 바로 그 간극이다).
+// ---------------------------------------------------------------------------
+
+describe('러너 상태 이름 — 판정이 두 언어로 말한다', () => {
+  const state = (over: Partial<RunnerState> = {}): RunnerState => ({
+    agentId: 'a', status: 'running', exitCode: null, message: null, ...over,
+  } as RunnerState);
+
+  /**
+   * **모듈 상수였다면 이 축이 못 잡는다.** 굳은 표는 두 언어로 불러도 같은 값을 내므로
+   * `en !== ko` 가 거짓이 되어 여기서 빨개진다 — 그것이 이 이전의 RED 다.
+   */
+  it('여덟 상태가 두 언어에서 모두 다른 말이 된다 — 언어를 따라온다', () => {
+    const ko = translator('ko');
+    const en = translator('en');
+    const statuses: RunnerStatus[] = [
+      'running', 'adopted', 'restarting', 'needs_reissue',
+      'needs_harness', 'needs_login', 'stopped', 'failed',
+    ];
+    for (const status of statuses) {
+      const k = runnerStatusLabel(state({ status }), ko);
+      const e = runnerStatusLabel(state({ status }), en);
+      expect(k, status).not.toBe(e);
+      // 그리고 **비어 있지 않다** — 없는 키를 부르면 뼈대가 키를 그대로 낸다.
+      expect(e, status).not.toContain('runnerState.');
+    }
+  });
+
+  /**
+   * **`#473` 이 만든 갈림이 영어에도 남는다.** 78 을 셋이 나눠 쓰는데 사람이 할 일은
+   * 재발급·설치·재로그인으로 전부 다르다 — 셋을 한 문구로 접으면 두 번은 틀린 일을 한다.
+   */
+  it('78 의 세 갈래가 두 언어 모두 서로 다른 일을 시킨다', () => {
+    for (const locale of ['ko', 'en'] as const) {
+      const t = translator(locale);
+      const three = (['needs_reissue', 'needs_harness', 'needs_login'] as RunnerStatus[])
+        .map((status) => runnerStatusLabel(state({ status }), t));
+      expect(new Set(three).size, locale).toBe(3);
+      // 셋 다 **78 을 그대로 적는다** — 종료 코드는 숫자이고 러너 로그에서 보는 그 값이다.
+      for (const line of three) expect(line, locale).toContain('78');
+    }
+    // 사람이 할 일이 각 문장 안에 있다(`#473`: 그것을 뺀 것이 그 이슈가 고친 결함이다).
+    const en = translator('en');
+    expect(runnerStatusLabel(state({ status: 'needs_harness' }), en)).toContain('install');
+    expect(runnerStatusLabel(state({ status: 'needs_login' }), en)).toContain('log in');
+    expect(runnerStatusLabel(state({ status: 'needs_reissue' }), en)).toContain('reissue');
+  });
+
+  /**
+   * **'꺼짐'과 '코드 N 으로 죽었다'를 뭉치지 않는다**(그 모듈 주석). 앞은 정상이고 뒤는
+   * 사람이 러너 로그를 볼 일이다 — 그리고 **코드를 지어내지 않고 그대로 보인다**.
+   */
+  it('정상 종료와 코드 있는 종료가 두 언어 모두 갈리고, 코드가 글자에 남는다', () => {
+    for (const locale of ['ko', 'en'] as const) {
+      const t = translator(locale);
+      const off = runnerStatusLabel(state({ status: 'stopped', exitCode: 0 }), t);
+      const coded = runnerStatusLabel(state({ status: 'stopped', exitCode: 137 }), t);
+      expect(off, locale).not.toBe(coded);
+      expect(coded, locale).toContain('137');
+      // `null`(신호로 죽었다)도 정상 쪽이다 — 코드가 없으면 지어내지 않는다.
+      expect(runnerStatusLabel(state({ status: 'stopped', exitCode: null }), t), locale).toBe(off);
+    }
+  });
+
+  /**
+   * **사이드바가 이 값을 감싸서 쓴다**(`sidebar.runner.state`). 이 이전 전에는 틀만
+   * 언어를 따르고 안의 라벨은 한국어로 굳어 **한 줄에 두 언어가 섞였다** — 이 축이
+   * 그 자리를 화면에서 직접 잰다.
+   */
+  it('사이드바 DM 줄이 틀과 라벨을 같은 언어로 낸다', async () => {
+    const label = (locale: Locale): string => {
+      speak(locale);
+      const t = translator(locale);
+      return t('sidebar.runner.state', {
+        label: runnerStatusLabel(state({ status: 'adopted' }), t),
+      });
+    };
+    const koLine = label('ko');
+    const enLine = label('en');
+    expect(koLine).not.toBe(enLine);
+    // 섞이지 않는다: 영어 줄에 한국어 글자가 없고, 그 반대도 없다.
+    expect(enLine).not.toMatch(/[가-힣]/);
+    expect(koLine).toMatch(/[가-힣]/);
+  });
+});
+
+describe('생존 표시 — 표가 값이 아니라 키를 든다', () => {
+  /**
+   * **셋이 서로 다른 말을 한다**(`#443`). 그리고 그 셋이 **언어를 따라온다** — 표가
+   * 문구를 들고 있었다면 두 언어가 같은 값을 내 여기서 빨개진다.
+   */
+  it('세 값이 두 언어 모두 서로 다르고, 언어를 따라온다', () => {
+    for (const locale of ['ko', 'en'] as const) {
+      const t = translator(locale);
+      expect(new Set(Object.values(PRESENCE_LABEL).map((k) => t(k))).size, locale).toBe(3);
+    }
+    const ko = translator('ko');
+    const en = translator('en');
+    for (const key of Object.values(PRESENCE_LABEL)) expect(ko(key)).not.toBe(en(key));
+  });
+
+  /**
+   * **`unknown` 이 '오프라인'이라고 말하지 않는다** — 그것은 아는 척이고(그 모듈 주석),
+   * 사람이 할 일이 갈린다: 오프라인이면 러너를 되살리고, 모르면 연결을 기다린다.
+   * 그래서 **한 낱말로 끝내지 않는다**는 규율이 두 언어에 다 있어야 한다.
+   */
+  it("'모른다'가 두 언어 모두 문장에 남는다 — 한 낱말로 끝내지 않는다", () => {
+    expect(translator('ko')(PRESENCE_LABEL.unknown)).toContain('알 수 없음');
+    const en = translator('en')(PRESENCE_LABEL.unknown);
+    expect(en).toContain('unknown');
+    // `Disconnected` 만 두면 사람이 그것을 '오프라인'으로 읽는다 — 뒤가 붙어 있다.
+    expect(en).not.toBe('Disconnected');
+    expect(en.split(/\s+/).length).toBeGreaterThan(1);
+  });
+});
+
+describe('투영 — 네 사정이 두 언어 모두 뭉개지지 않는다', () => {
+  // `t` 를 여기서 채운다 — 각 축이 언어만 고르면 되도록. 그것이 이 묶음이 재는 축이다.
+  const banner = (
+    locale: Locale,
+    input: Omit<Parameters<typeof projectionBanner>[0], 't'>,
+  ) => projectionBanner({ ...input, t: translator(locale) });
+
+  const stalled = (lastPolledAt: number | null): ProjectionStatus => ({
+    state: 'stalled', configured: true, lastPolledAt, lastError: null,
+  } as ProjectionStatus);
+
+  /**
+   * **이 이전이 가장 조심한 자리다.** 빈 목록 하나가 넷을 뭉갤 수 있고(꺼짐·멈춤·못
+   * 읽음·정말 없음), 그러면 도그푸딩 중에 투영이 끊긴 것을 **아무도 모른다** — 화면이
+   * 평소와 똑같기 때문이다. `#267` 이 그것을 회귀선으로 못 박았고, 이 축은 그 구별이
+   * **언어를 건너** 살아남는지를 잰다.
+   */
+  it('띠 문장 셋이 두 언어 모두 서로 다르다', () => {
+    for (const locale of ['ko', 'en'] as const) {
+      const texts = [
+        banner(locale, { status: null, error: 'boom', ago: () => 'x' })!.text,
+        banner(locale, { status: null, error: null, ago: () => 'x' })!.text,
+        banner(locale, { status: stalled(Date.now()), error: null, ago: () => 'x' })!.text,
+      ];
+      expect(new Set(texts).size, locale).toBe(3);
+    }
+  });
+
+  /**
+   * **같은 사정이라도 띠와 목록은 다른 말을 한다**(#489 의 결함, 실측 2026-09-07).
+   * 띠는 "고장났다"를, 목록 줄은 "그래서 이 목록을 어떻게 읽어야 하나"를 말한다 —
+   * 같은 문구를 두 자리에 세우면 사용자 눈에는 그냥 중복이다.
+   */
+  it('띠와 목록 줄이 두 언어 모두 다른 문장이다', () => {
+    for (const locale of ['ko', 'en'] as const) {
+      for (const input of [
+        { status: null, error: 'boom', ago: () => 'x' },
+        { status: stalled(Date.now()), error: null, ago: () => 'x' },
+      ]) {
+        const b = banner(locale, input)!;
+        expect(b.text, locale).not.toBe(b.listNote);
+      }
+    }
+  });
+
+  /**
+   * **한 번도 못 폴링했으면 시간을 지어내지 않는다.** `projectionBanner.test.tsx` 가
+   * 한국어로 재는 그 축을 여기서 **영어로도** 잰다 — 옮기면서 그 규율이 한 언어에만
+   * 남았는지를 보는 자리다(뼈대가 뜻을 옮겼지 낱말만 옮긴 것이 아님).
+   */
+  it('폴링 기록이 없으면 두 언어 모두 숫자를 지어내지 않는다', () => {
+    for (const locale of ['ko', 'en'] as const) {
+      const b = banner(locale, { status: stalled(null), error: null, ago: () => '10분 전' })!;
+      expect(b.text, locale).not.toContain('10분 전');
+      expect(b.text, locale).not.toMatch(/\d/);
+      expect(b.listNote, locale).not.toMatch(/\d/);
+    }
+    // 그리고 **아는 경우에는 그 값을 그대로 싣는다** — 대조군이다. 없으면 위 축이
+    // "경과를 아예 안 적는다"로도 초록이 된다.
+    const known = banner('en', { status: stalled(Date.now()), error: null, ago: () => '10 minutes ago' })!;
+    expect(known.text).toContain('10 minutes ago');
+  });
+
+  /**
+   * **꺼짐만 사전을 안 지난다** — `packages/shared` 의 상수라 데스크탑 사전이 닿을 수
+   * 없다(`runner.exit.notFound` 뒤의 `installHint()` 와 같은 경계). 그 사실을 회귀선에
+   * 박아 둔다: 다음 사람이 "왜 이것만 한국어인가"를 결함으로 읽지 않도록, 그리고 그
+   * 경계가 풀리는 날 이 축이 그 자리를 가리키도록.
+   */
+  it('꺼짐 문구는 shared 의 상수 그대로다 — 이 패키지 밖이라 아직 못 옮긴다', () => {
+    for (const locale of ['ko', 'en'] as const) {
+      const b = banner(locale, {
+        status: { state: 'unconfigured', configured: false, lastPolledAt: null, lastError: null } as ProjectionStatus,
+        error: null,
+        ago: () => 'x',
+      })!;
+      expect(b.text, locale).toBe(PROJECTION_UNCONFIGURED_HEADLINE);
+      // **목록 줄은 이 파일의 말이라 사전을 지난다** — 둘의 출처가 다르다는 것이 요점이다.
+      expect(b.listNote, locale).not.toBe(PROJECTION_UNCONFIGURED_HEADLINE);
+    }
+    // 그 목록 줄은 언어를 따라온다 — 위 `text` 가 안 따라오는 것과 대비된다.
+    const koNote = banner('ko', {
+      status: { state: 'unconfigured', configured: false, lastPolledAt: null, lastError: null } as ProjectionStatus,
+      error: null, ago: () => 'x',
+    })!.listNote;
+    const enNote = banner('en', {
+      status: { state: 'unconfigured', configured: false, lastPolledAt: null, lastError: null } as ProjectionStatus,
+      error: null, ago: () => 'x',
+    })!.listNote;
+    expect(koNote).not.toBe(enNote);
+  });
+
+  /**
+   * 화면까지 닿는지 잰다. 위 축들은 판정 함수를 직접 부르므로 **그 값이 띠에 실리는지**는
+   * 증명하지 않는다 — 이 이전이 고친 결함이 정확히 "판정은 옮겼는데 화면이 안 따라온다"
+   * 였으므로 한 축은 화면을 지나야 한다.
+   */
+  it('띠가 언어를 따라 뜬다', () => {
+    useActiveStore.getState().reset();
+    useActiveStore.getState().set({ projectionStatusError: 'boom' });
+    speak('en');
+    render(<ProjectionBanner />);
+    expect(screen.getByTestId('strip-projection-unreadable').textContent).toContain('could not be read');
+    cleanup();
+
+    speak('ko');
+    render(<ProjectionBanner />);
+    expect(screen.getByTestId('strip-projection-unreadable').textContent).toContain('읽지 못했다');
+  });
+});
+
+describe('투영 주소 줄 — 출처 표가 언어를 따라온다', () => {
+  const mount = () => {
+    useActiveStore.getState().reset();
+    useActiveStore.getState().set({ me: acc('me', 'me', 'human', true) });
+    setController({
+      projectionConfig: async () => ({ url: 'http://a', appUrl: 'http://a', envUrl: null, source: 'app' }),
+    } as unknown as Controller);
+    render(<ProjectionUrl />);
+  };
+
+  /**
+   * **출처 둘이 서로 다른 말을 한다**(그 화면 주석: 같은 말이면 "env 를 넣었는데 왜 안
+   * 먹나"를 화면에서 알 수 없다). 그리고 표가 **키를 들어야** 언어를 따라온다 — 문구를
+   * 들고 있었다면 아래 두 화면이 같은 글자를 낸다.
+   */
+  it('출처 줄이 두 언어로 뜬다 — 모듈 상수로 굳지 않는다', async () => {
+    speak('en');
+    mount();
+    await waitFor(() => expect(screen.getByTestId('projection-source').textContent).toContain('Set in the app'));
+    cleanup();
+
+    speak('ko');
+    mount();
+    await waitFor(() => expect(screen.getByTestId('projection-source').textContent).toContain('앱에서 설정'));
+  });
+
+  /** **`AVCS_BASE_URL` 은 두 언어에서 같은 글자다** — 사람이 셸에 적는 그 이름이다. */
+  it('환경변수 이름은 언어를 안 탄다', () => {
+    for (const locale of ['ko', 'en'] as const) {
+      expect(translator(locale)('projection.url.sourceEnv'), locale).toContain('AVCS_BASE_URL');
+    }
+  });
+
+  /**
+   * **지우기 안내가 둘로 갈린다 — 잃는 것이 다르기 때문이다.** env 값이 있으면 그리로
+   * 돌아가고, 없으면 투영이 꺼진다. 한 문장으로 뭉치면 사람이 지우기 전에 무엇을 잃는지
+   * 모른다. 그 갈림이 두 언어에 다 있어야 한다.
+   */
+  it('지우기 안내가 두 언어 모두 두 갈래로 갈린다', () => {
+    for (const locale of ['ko', 'en'] as const) {
+      const t = translator(locale);
+      const fallback = t('projection.url.hintFallback', { url: 'http://env' });
+      const off = t('projection.url.hintOff');
+      expect(fallback, locale).not.toBe(off);
+      // 돌아갈 곳이 있으면 **그 주소를 적는다** — 어디로 가는지 말하지 않으면 안내가 아니다.
+      expect(fallback, locale).toContain('http://env');
+    }
+  });
+});
+
+describe('터미널 패널 — 두 언어로 뜬다', () => {
+  /**
+   * **못 치는 이유 넷을 뭉개지 않는다**(`#369`). 원인마다 다음 행동이 다르다: 그 창을
+   * 닫거나, 이어받거나, 러너를 올리거나, (구 서버면) 아무것도 단정하지 않는다.
+   * "읽기 전용이다"만 적으면 넷 다 막다른 길로 보인다.
+   */
+  it('못 치는 이유 넷이 두 언어 모두 서로 다른 문장이다', () => {
+    // **판정 함수를 지난다** — 사전을 직접 읽으면 이 축이 아무것도 안 지킨다.
+    // 프로브로 확인했다: 표에서 두 사유가 같은 키를 가리키게 해도 사전에는 문장이
+    // 넷 그대로 있어 초록이었다. 지키려는 것은 *"사전에 넷이 있다"* 가 아니라
+    // **"네 사유가 서로 다른 말에 닿는다"** 이고, 그 배선이 표에 있다.
+    const reasons: (WriterDeniedReason | null)[] = [
+      'observe-only', 'other-writer', 'runner-outdated', null,
+    ];
+    for (const locale of ['ko', 'en'] as const) {
+      const t = translator(locale);
+      const four = reasons.map((r) => writerDeniedText(r, t));
+      expect(new Set(four).size, locale).toBe(4);
+    }
+    // 그리고 넷 다 **언어를 따라온다** — 하나라도 굳으면 그 사유만 남의 언어로 뜬다.
+    for (const r of reasons) {
+      expect(writerDeniedText(r, translator('ko'))).not.toBe(writerDeniedText(r, translator('en')));
+    }
+  });
+
+  /**
+   * 관찰 전용 문구가 **원인을 그대로 말한다**(그 함수 주석). "관찰 전용"만 적으면 임의의
+   * 제약으로 읽혀 "왜 안 되냐"가 결함으로 다시 올라온다 — 프롬프트를 파일로 받는다는
+   * 사실이 이 제약의 전부이고, 그것을 아는 사람은 다른 길을 스스로 찾는다.
+   */
+  it('관찰 전용이 두 언어 모두 「왜」와 「그럼 어떻게」를 다 말한다', () => {
+    expect(ko['terminal.writer.observeOnly']).toContain('파일');
+    expect(ko['terminal.writer.observeOnly']).toContain('턴이 끝난 뒤');
+    const e = en['terminal.writer.observeOnly'] as string;
+    expect(e).toContain('from a file');
+    expect(e).toContain('after the turn ends');
+  });
+
+  /**
+   * **상태 셋이 서로 다르고, `runner-offline` 을 '끝났다'로 쓰지 않는다**(그 상수 주석).
+   * 턴은 안 끝났고 소켓만 끊긴 것이라 다른 사실이다.
+   */
+  it('세션 상태 셋이 두 언어 모두 갈리고, 끊김을 종료라 하지 않는다', () => {
+    for (const locale of ['ko', 'en'] as const) {
+      const t = translator(locale);
+      const three = ['terminal.state.running', 'terminal.state.ended', 'terminal.state.runnerOffline']
+        .map((k) => t(k as keyof typeof en));
+      expect(new Set(three).size, locale).toBe(3);
+    }
+    expect(en['terminal.state.runnerOffline']).not.toBe(en['terminal.state.ended']);
+  });
+
+  /**
+   * **`#384` 의 정직성.** 진행 중인 턴을 멈추지 않으므로 누른 뒤 26초쯤 아무것도 안
+   * 바뀐 것처럼 보인다 — 그 침묵을 이 줄이 메운다. 그래서 **다음에 무엇이 일어나는지**
+   * 까지 말해야 하고, 그것이 두 언어에 다 있어야 한다.
+   */
+  it('이어받기 예약이 두 언어 모두 「다음에 무엇이 일어나는가」를 말한다', () => {
+    expect(ko['terminal.handoff.queued']).toContain('끝나면');
+    expect(en['terminal.handoff.queued'] as string).toContain('when the mention turn in flight ends');
+  });
+
+  /**
+   * **보이는 글자와 접근 이름이 갈린다.** 옮기면서 한 키로 접었더니 `agentTerminal
+   * .test.tsx` 의 `getByLabelText('터미널 닫기')` 가 빨개졌다 — 머리띠의 꼬리표라 보이는
+   * 글자는 짧아야 하는데, 그 짧음이 스크린리더에서는 **무엇을** 닫는지를 잃는다.
+   */
+  it('닫기의 접근 이름이 보이는 글자보다 구체적이다 — 두 언어 모두', () => {
+    for (const locale of ['ko', 'en'] as const) {
+      const t = translator(locale);
+      const short = t('terminal.header.close');
+      const action = t('terminal.header.closeAction');
+      expect(action, locale).not.toBe(short);
+      expect(action.length, locale).toBeGreaterThan(short.length);
+    }
+  });
+});
+
+describe('손으로 띄우는 명령 — 주석만 옮기고 명령은 안 옮긴다', () => {
+  /**
+   * **명령 자체는 언어를 안 탄다.** 셸에 그대로 들어가는 값이라 번역되면 붙여넣는 순간
+   * 실패한다 — `runnerCommand.ts` 머리말이 없애는 그 상태다. 옮기는 것은 그 위의
+   * 안내 주석 두 줄뿐이다.
+   */
+  it('두 언어에서 명령은 같고 주석만 다르다', () => {
+    const koText = runnerCommandClipboardText('murp_x', translator('ko'));
+    const enText = runnerCommandClipboardText('murp_x', translator('en'));
+    expect(koText).not.toBe(enText);
+    // 명령 줄들은 글자 하나까지 같다(`#125`: 화면과 클립보드가 같아야 한다).
+    const commands = (text: string) => text.split('\n').filter((l) => !l.startsWith('#') && l !== '');
+    expect(commands(koText)).toEqual(commands(enText));
+    // 그리고 **토큰이 통째로** 실린다 — 자르면 "완성된 명령"처럼 보이는데 인증이 실패한다.
+    for (const text of [koText, enText]) {
+      expect(text).toContain('murp_x');
+      expect(text).not.toContain('…');
+    }
+  });
+
+  /** 주석 줄은 **`#` 로 시작한다** — 셸 주석이라, 번역이 그 기호를 잃으면 명령이 깨진다. */
+  it('두 언어 모두 안내 줄이 셸 주석으로 남는다', () => {
+    for (const locale of ['ko', 'en'] as const) {
+      const t = translator(locale);
+      expect(t('agents.runner.commandBundledNote'), locale).toMatch(/^#/);
+      expect(t('agents.runner.commandDevNote'), locale).toMatch(/^#/);
     }
   });
 });

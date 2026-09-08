@@ -824,12 +824,15 @@ export function Sidebar({
     const reason = runnerReason(runner);
     // 색은 스크린리더에 아무 말도 하지 않는다(`#443`). 아바타 한 칸에 상태를 실었으므로
     // 그 칸이 글자로도 같은 말을 해야 한다 — 러너가 있으면 그쪽 문구가 더 구체적이다.
-    // `runnerStatusLabel`·`PRESENCE_LABEL` 은 **아직 한국어다** — 둘 다 이 파일 밖이고
-    // (`RunnerStatus.tsx`·`lib/presenceView.ts`) 이 PR 의 범위가 아니다. 여기서 하는 일은
-    // 그 값을 **감싸는 틀**만 사전으로 옮기는 것이다.
+    //
+    // **둘 다 이제 사전을 지난다.** 앞 판본의 이 주석은 두 값이 *"아직 한국어"* 라고
+    // 적었는데, 그 둘이 모듈 상수로 굳어 있던 것이 이 줄에서 언어가 갈리는 원인이었다
+    // (`sidebar.runner.state` 라는 **틀**만 영어가 되고 그 안의 라벨은 한국어로 남았다).
+    // 각각 함수와 키 표로 바뀌었고(`RunnerStatus.tsx`·`lib/presenceView.ts` 의 주석에
+    // 어느 쪽을 왜 골랐는지 있다), 이 자리는 여전히 **감싸는 틀**만 진다.
     const stateLabel = runner
-      ? t('sidebar.runner.state', { label: runnerStatusLabel(runner) })
-      : PRESENCE_LABEL[dm.presence];
+      ? t('sidebar.runner.state', { label: runnerStatusLabel(runner, t) })
+      : t(PRESENCE_LABEL[dm.presence]);
     return (
       <button key={dm.id} className={`${row(dm.id === activeChannelId)} ${reason ? 'flex-col items-start' : ''}`}
         onClick={() => void getController().openChannel(dm.id)}>

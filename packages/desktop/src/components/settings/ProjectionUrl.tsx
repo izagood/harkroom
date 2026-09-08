@@ -3,14 +3,21 @@ import type { ProjectionConfigView, ProjectionUrlSource } from '@murmur/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { Button, Field, TextInput } from './primitives';
+import { useT } from '../../i18n/useT';
+import type { MessageKey } from '../../i18n';
 
 /**
  * 출처를 **사정마다 다른 말**로 적는다. 같은 말이면 화면이 env 와 앱 설정을 구별하지
  * 못하고, "env 를 넣었는데 왜 안 먹나" 를 화면에서 알 수 없다.
+ *
+ * **값이 아니라 키를 든다**(`Sidebar::NOTIFY_LEVEL_KEY` · `lib/presenceView.ts` 와 같은
+ * 판례). 문구를 들면 모듈 로드 시점 언어로 굳어 `t()` 를 지나도 안 바뀐다. 표를 남기고
+ * `ProjectionUrlSource` 로 색인하는 이유도 같다 — **세 번째 출처가 생기면 여기서
+ * 컴파일이 막힌다.**
  */
-const SOURCE_LABEL: Record<ProjectionUrlSource, string> = {
-  app: '앱에서 설정',
-  env: '환경변수(AVCS_BASE_URL)',
+const SOURCE_LABEL: Record<ProjectionUrlSource, MessageKey> = {
+  app: 'projection.url.sourceApp',
+  env: 'projection.url.sourceEnv',
 };
 
 /**
@@ -37,6 +44,8 @@ export function ProjectionUrl() {
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 훅은 조건 앞에서 부른다 — 아래 `if (!isAdmin) return null` 보다 먼저여야 한다.
+  const t = useT();
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -61,45 +70,65 @@ export function ProjectionUrl() {
       // 최대 1 분 동안 꺼진 것처럼 보이고 사용자는 저장이 실패했다고 읽는다.
       await getController().refreshProjection();
     } catch {
-      setError('투영 URL 을 저장하지 못했다');
+      setError(t('projection.url.saveFailed'));
     } finally { setBusy(false); }
   };
 
   return (
     <div className="px-4 py-3">
-      {config === null && <p className="text-meta text-fg-muted">투영 설정을 불러오는 중…</p>}
+      {config === null && <p className="text-meta text-fg-muted">{t('projection.url.loading')}</p>}
       {config === 'error' && (
-        <p role="alert" className="text-meta text-danger">투영 설정을 불러오지 못했다</p>
+        <p role="alert" className="text-meta text-danger">{t('projection.url.loadFailed')}</p>
       )}
       {config !== null && config !== 'error' && !editing && (
         <div className="flex items-center gap-3">
           <span data-testid="projection-source" className="min-w-0 flex-1 truncate text-meta text-fg-muted">
             {/* 출처가 없다는 것도 사정이다 — '아직 아무도 정하지 않았다'. */}
             {config.source === null
-              ? '아직 정해지지 않았다'
-              : `출처: ${SOURCE_LABEL[config.source]}`}
+              ? t('projection.url.sourceNone')
+              /* 틀과 출처 이름을 갈라 둔다 — 한국어는 `출처: X` 이고 영어는 `Source: X` 라
+                 지금은 어순이 같지만, 이 자리를 조각으로 이어 붙이면 그 어순이 코드에
+                 굳는다(`waitChain.link` 가 금지한 그것). 틀이 자리표시자를 받으므로
+                 어순 전체가 각 언어의 것이다. */
+              : t('projection.url.sourceOf', { source: t(SOURCE_LABEL[config.source]) })}
           </span>
-          <Button disabled={busy} onClick={() => { setEditing(true); setError(null); }}>편집</Button>
+          <Button disabled={busy} onClick={() => { setEditing(true); setError(null); }}>
+            {t('projection.url.edit')}
+          </Button>
           {/* 앱 값이 없으면 지울 것이 없다. 누를 수 있게 두면 아무 일도 없는 버튼이 된다. */}
           {config.appUrl !== null && (
-            <Button variant="danger" disabled={busy} onClick={() => void commit(null)}>지우기</Button>
+            <Button variant="danger" disabled={busy} onClick={() => void commit(null)}>
+              {t('projection.url.clear')}
+            </Button>
           )}
         </div>
       )}
       {config !== null && config !== 'error' && editing && (
         <div className="max-w-md space-y-2">
-          <Field label="avcs 주소" hint={config.envUrl ? `지우면 ${config.envUrl} 로 돌아간다` : '지우면 투영이 꺼진다'}>
+          {/* 안내가 **둘로 갈리는 이유는 잃는 것이 다르기 때문이다** — env 값이 있으면
+              그리로 돌아가고, 없으면 투영이 꺼진다. 한 문장으로 뭉치면 사람이 지우기 전에
+              무엇을 잃는지 모른다. */}
+          <Field
+            label={t('projection.url.field')}
+            hint={config.envUrl
+              ? t('projection.url.hintFallback', { url: config.envUrl })
+              : t('projection.url.hintOff')}
+          >
             <TextInput
-              ariaLabel="avcs 주소"
-              placeholder="http://avcs.example:4000"
+              ariaLabel={t('projection.url.field')}
+              placeholder={t('projection.url.placeholder')}
               value={draft}
               disabled={busy}
               onChange={setDraft}
             />
           </Field>
           <div className="flex items-center gap-2">
-            <Button variant="primary" disabled={busy} onClick={() => void commit(draft)}>저장</Button>
-            <Button disabled={busy} onClick={() => { setEditing(false); setError(null); }}>취소</Button>
+            <Button variant="primary" disabled={busy} onClick={() => void commit(draft)}>
+              {t('projection.url.save')}
+            </Button>
+            <Button disabled={busy} onClick={() => { setEditing(false); setError(null); }}>
+              {t('projection.url.cancel')}
+            </Button>
           </div>
         </div>
       )}
