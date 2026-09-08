@@ -313,7 +313,13 @@ function renderLine(m: MessageRow, handles: Record<string, string>): string {
  *   - 그런데 프롬프트는 파일명만 줬고(위 renderLine 의 옛 코드), 이 통로를 아무도 말해
  *     주지 않았다. 셋 중 어느 하나가 아니라 **id + 통로 안내**가 빠져 있었다.
  *
- * 첨부가 있는 턴에만 붙인다 — 대부분의 턴은 첨부가 없고, 그때 이 여섯 줄은 순전한 낭비다.
+ * 길을 **두 개** 적는다. curl 은 셸이 있는 하네스의 길이고, MCP `attachment.fetch` 는
+ * 셸이 없는 하네스의 길이다(#585). 하나만 적으면 그 하나가 없는 하네스에서 결함이 그대로
+ * 남는다 — 그리고 프롬프트는 어느 하네스에 실릴지 모른다. 도구 쪽을 먼저 적는 이유는
+ * 그것이 바이트를 모델 컨텍스트에 직접 넣는 길이라, 받아 놓고 열지 않는 단계가 없다는
+ * 것이다.
+ *
+ * 첨부가 있는 턴에만 붙인다 — 대부분의 턴은 첨부가 없고, 그때 이 몇 줄은 순전한 낭비다.
  *
  * URL 은 러너가 아는 실값(`config.murmurUrl`)을 그대로 굽고 토큰은 **env 이름으로만** 적는다.
  * 실값을 프롬프트 파일에 넣지 않는 이유는 #92·#117 과 같다 — 그 파일은 디스크에 남는다.
@@ -322,7 +328,8 @@ function attachmentHowTo(murmurUrl: string): string[] {
   return [
     '',
     '(위 `[첨부: …]` 의 id 로 첨부 바이트를 직접 받을 수 있다 — 파일명만 보고 내용을 짐작하지 마라:',
-    `  curl -fsS -H "Authorization: Bearer $MURMUR_PAT" ${murmurUrl}/attachments/<id> -o /tmp/<파일명>`,
+    '  murmur MCP 의 `attachment.fetch` 에 그 id 를 넣어라 — 이미지는 그림으로, 텍스트는 글로 온다.',
+    `  셸이 있으면: curl -fsS -H "Authorization: Bearer $MURMUR_PAT" ${murmurUrl}/attachments/<id> -o /tmp/<파일명>`,
     '받은 파일을 열어서 봐라 — 이미지도 그대로 읽힌다. 받기가 실패했을 때만 "못 봤다"고 말하고,',
     '못 본 것을 본 것처럼 쓰지 마라.)',
   ];

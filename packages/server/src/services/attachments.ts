@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import type { ChannelFileRow } from '@murmur/shared';
 import { basename } from 'node:path';
+import { assertChannelVisible } from './channels.js';
 
 /** 서버 내부에서 쓰는 행. `storageKey` 는 여기까지만 산다. */
 export interface StoredAttachment {
@@ -168,4 +169,33 @@ export async function findDownloadTarget(
     },
     channelId: row.messageId === null ? null : row.channelId,
   };
+}
+
+/**
+ * "이 계정이 이 첨부를 받을 수 있나" 판정. REST `GET /attachments/:id` 와 MCP
+ * `attachment.fetch` 가 **같은 함수**를 부른다.
+ *
+ * 두 표면이 각자 판정하면 갈린다 — 그리고 갈리는 방향이 위험하다. 새 표면이 "아직 메시지에
+ * 붙지 않은 업로드는 업로더만"이나 "삭제된 메시지의 첨부는 없는 것"을 빠뜨리면, 그 표면
+ * 하나가 게시 전 초안과 지워진 첨부를 여는 통로가 된다. 그래서 판정을 여기 한 곳에 둔다.
+ *
+ * 코드는 HTTP 상태가 아니라 사실을 말한다(`not_found`·`forbidden`) — REST 는 그것을 404/403
+ * 으로 옮기고, MCP 는 그대로 실어 준다.
+ */
+export async function resolveAttachmentAccess(
+  pool: Pool, attachmentId: string, accountId: string,
+): Promise<{ ok: true; attachment: StoredAttachment } | { ok: false; code: 'not_found' | 'forbidden'; message: string }> {
+  const target = await findDownloadTarget(pool, attachmentId);
+  if (!target) return { ok: false, code: 'not_found', message: 'no such attachment' };
+
+  if (target.channelId === null) {
+    // 아직 메시지에 붙지 않은 업로드는 올린 사람만 볼 수 있다 — 남이 id 를 맞혔을 때
+    // 열리면, 게시 전 초안이 새는 경로가 된다.
+    if (target.attachment.uploaderId !== accountId) {
+      return { ok: false, code: 'forbidden', message: 'not your upload' };
+    }
+  } else if (!(await assertChannelVisible(pool, target.channelId, accountId))) {
+    return { ok: false, code: 'forbidden', message: 'not a member of this dm channel' };
+  }
+  return { ok: true, attachment: target.attachment };
 }

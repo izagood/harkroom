@@ -95,6 +95,24 @@ describe('buildTurnPrompt', () => {
     expect(r.prompt).not.toContain('Bearer eyJ');
   });
 
+  /**
+   * curl 만 적으면 **셸이 없는 하네스에서 결함이 그대로 남는다**(#585 가 그 자리다).
+   * 프롬프트는 어느 하네스에 실릴지 모르므로 두 길을 다 적는다.
+   */
+  it('셸이 없는 하네스를 위해 MCP 도구도 함께 알려준다', () => {
+    const r = buildTurnPrompt({
+      messages: [msg(1, 'u1', '이거 봐줘', {
+        attachments: [{ id: 'att1', filename: 'error.png', contentType: 'image/png', sizeBytes: 100 }],
+      })],
+      lastFedSeq: 0, meId: 'a1', handles, channelId: 'c', threadRootId: null,
+      murmurUrl: 'http://localhost:3400',
+    });
+    expect(r.prompt).toContain('attachment.fetch');
+    // 두 길이 같은 열쇠(id)를 쓴다는 것이 함께 보여야 한다 — 도구만 알고 id 를 못 만들면
+    // 그것도 못 보는 것이다.
+    expect(r.prompt).toContain('att1');
+  });
+
   // 대부분의 턴에는 첨부가 없다. 그때도 안내가 붙으면 매 턴 순전한 낭비이고, "첨부가 있다"는
   // 잘못된 신호까지 준다.
   it('첨부가 없는 턴에는 첨부 안내를 붙이지 않는다', () => {
@@ -104,6 +122,7 @@ describe('buildTurnPrompt', () => {
     });
     expect(r.prompt).not.toContain('/attachments/');
     expect(r.prompt).not.toContain('curl');
+    expect(r.prompt).not.toContain('attachment.fetch');
   });
 
   // 호출자(main.ts)가 이미 계산해 둔 channelId·threadRootId 가 유일한 진실 원천이어야 한다.

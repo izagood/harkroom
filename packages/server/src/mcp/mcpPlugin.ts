@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
+import type { Readable } from 'node:stream';
 import { z } from 'zod';
 import {
   ASK_MAX_OPTIONS, ASK_MIN_OPTIONS,
@@ -12,6 +13,8 @@ import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js
 import { emitEvent, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
+import { resolveAttachmentAccess } from '../services/attachments.js';
+import { AttachmentMissingError, type StorageBackend } from '../storage/local.js';
 import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { getMemory, listMemory, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, setMemory } from '../services/memory.js';
@@ -31,10 +34,61 @@ function jsonResult(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }] };
 }
 
+/**
+ * 모델이 그림으로 읽을 수 있는 타입. **`image/svg+xml` 은 없다** — 확장자가 image 여도
+ * 이미지 디코더가 받지 않는다(SVG 는 텍스트다). 그래서 SVG 는 아래 텍스트 분기로 간다.
+ */
+const MODEL_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+
+/**
+ * 인라인으로 실어 주는 한계. 이미지 쪽은 base64 로 부풀어도 5MB 를 넘지 않는 크기이고
+ * (모델 API 가 그림 하나에 두는 상한), 텍스트 쪽은 로그·diff 를 통째로 실었을 때
+ * 컨텍스트를 다 먹지 않는 크기다. 넘으면 **자르지 않고** 메타데이터로 떨어뜨린다 —
+ * 잘린 것을 전부인 줄 알고 답하는 것이 못 보는 것보다 나쁘다.
+ */
+const MAX_INLINE_IMAGE_BYTES = 3_750_000;
+const MAX_INLINE_TEXT_BYTES = 256 * 1024;
+
+/** 글자로 읽히는 타입인가. `+xml`·`+json` 접미도 포함한다(svg·rss 가 그 모양이다). */
+function isTextual(contentType: string): boolean {
+  return contentType.startsWith('text/')
+    || /^application\/(json|xml|x-ndjson|javascript|sql|x-sh|x-yaml|yaml)$/.test(contentType)
+    || /\+(json|xml)$/.test(contentType);
+}
+
+/** 상한을 넘겼다. 도구가 메타데이터 응답으로 바꿔 돌려준다. */
+class InlineTooLarge extends Error {
+  constructor(public readonly bytes: number) {
+    super(`attachment exceeds ${bytes} bytes`);
+    this.name = 'InlineTooLarge';
+  }
+}
+
+/**
+ * 스트림을 버퍼로 모은다. **흐르는 중에 상한을 센다** — 다 모아 놓고 재면 상한이 상한이
+ * 아니다(`storage.write` 가 업로드에서 같은 모양을 쓴다). 호출부가 행의 `sizeBytes` 로
+ * 이미 걸렀는데도 여기서 또 재는 이유는, 그 숫자가 실제 파일과 어긋날 수 있고 그때 믿을
+ * 것은 흐르는 바이트뿐이기 때문이다.
+ */
+async function collect(stream: Readable, limit: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of stream) {
+    total += (chunk as Buffer).length;
+    if (total > limit) {
+      stream.destroy();
+      throw new InlineTooLarge(total);
+    }
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
 function buildMcpServer(
   pool: Pool,
   account: AccountView,
   lifecycle: Lifecycle,
+  storage: StorageBackend,
 ): McpServer {
   const server = new McpServer({ name: 'murmur', version: '0.1.0' });
 
@@ -88,6 +142,78 @@ function buildMcpServer(
     // 에이전트는 handle 로 생각한다 — 정본(`<@id>`)을 **현재** handle 로 되돌려 준다(#271).
     const messages = await listMessages(pool, channelId, { since, limit, threadRootId: threadRootId ?? null });
     return jsonResult({ messages: await denormalizeBodies(pool, messages) });
+  });
+
+  /**
+   * 첨부 바이트를 도구 결과로 실어 준다(#585).
+   *
+   * REST `GET /attachments/:id` 가 이미 있는데 도구가 필요한 이유: 셸이 없는 하네스의
+   * 에이전트는 curl 을 부를 수 없다. 그 에이전트에게 첨부는 **파일명뿐**이고, 그러면
+   * "그림을 보라"는 요청에 파일명으로 내용을 짐작해 답하게 된다 — #585 가 정확히 그 사고다.
+   * MCP `image` content 로 돌려주면 바이트가 모델 컨텍스트에 그대로 들어간다.
+   *
+   * 인가는 **판정하지 않는다** — `resolveAttachmentAccess` 가 REST 와 같은 답을 낸다.
+   * 여기서 규칙을 다시 쓰면 두 표면이 갈리고, 갈리는 쪽이 게시 전 초안을 여는 통로가 된다.
+   *
+   * 크거나 그림도 글도 아닌 첨부는 바이트 대신 메타데이터와 받는 길을 준다. 자르지 않는
+   * 이유는 하나다: 잘린 것을 전부인 줄 알고 답하는 것이 못 보는 것보다 나쁘다.
+   */
+  server.registerTool('attachment.fetch', {
+    description: '첨부 바이트 조회. 이미지는 그림으로, 텍스트는 글로 실어 준다(id 는 메시지의 attachments[].id)',
+    inputSchema: { id: z.string().uuid() },
+  }, async ({ id }) => {
+    const access = await resolveAttachmentAccess(pool, id, account.id);
+    if (!access.ok) {
+      return jsonResult({ error: { code: access.code, message: access.message } });
+    }
+    const { filename, contentType, sizeBytes } = access.attachment;
+    const meta = { id, filename, contentType, sizeBytes };
+    // 받는 길은 **못 실어 줄 때만** 알려 준다. 늘 실으면 바이트를 이미 손에 든 에이전트가
+    // 같은 첨부를 한 번 더 받는다.
+    const fallback = (reason: string) => jsonResult({
+      attachment: meta,
+      inlined: false,
+      reason,
+      download: {
+        method: 'GET',
+        path: `/attachments/${id}`,
+        header: 'Authorization: Bearer <MURMUR_PAT>',
+        note: '셸이 있으면 curl 로 받아 열어라. 파일명만 보고 내용을 짐작하지 마라.',
+      },
+    });
+
+    const asImage = MODEL_IMAGE_TYPES.includes(contentType);
+    const asText = !asImage && isTextual(contentType);
+    if (!asImage && !asText) return fallback('binary attachment — 모델이 바이트로 읽을 수 없는 타입이다');
+    const limit = asImage ? MAX_INLINE_IMAGE_BYTES : MAX_INLINE_TEXT_BYTES;
+    if (sizeBytes > limit) return fallback(`too large to inline (${sizeBytes}B > ${limit}B)`);
+
+    let bytes: Buffer;
+    try {
+      bytes = await collect(await storage.read(access.attachment.storageKey), limit);
+    } catch (err) {
+      // 행의 크기와 실제 파일이 어긋난 경우다 — 위 검사는 행을 믿은 것이었다.
+      if (err instanceof InlineTooLarge) {
+        return fallback(`too large to inline (${err.bytes}B > ${limit}B)`);
+      }
+      if (err instanceof AttachmentMissingError) {
+        // 행은 있는데 파일이 없다(#257). 경로는 응답에 싣지 않는다 — 서버 파일시스템의
+        // 절대경로이고, 에이전트가 그것을 알아도 할 수 있는 일이 없다.
+        return jsonResult({
+          error: { code: 'attachment_missing', message: 'attachment file not found on the server' },
+        });
+      }
+      throw err;
+    }
+    return {
+      content: [
+        // 메타데이터를 함께 싣는다: 그림만 오면 에이전트는 이게 어느 첨부였는지 모른다.
+        { type: 'text' as const, text: JSON.stringify({ attachment: meta, inlined: true }) },
+        asImage
+          ? { type: 'image' as const, data: bytes.toString('base64'), mimeType: contentType }
+          : { type: 'text' as const, text: bytes.toString('utf8') },
+      ],
+    };
   });
 
   server.registerTool('message.search', {
@@ -590,6 +716,7 @@ export async function registerMcp(
   pool: Pool,
   lifecycle: Lifecycle,
   agentPresence: AgentPresence,
+  storage: StorageBackend,
 ): Promise<void> {
   app.post('/mcp', async (req, reply) => {
     if (!req.account || req.account.kind !== 'agent') {
@@ -607,7 +734,7 @@ export async function registerMcp(
      * 진행 메시지를 올리는 것도, 메모리를 읽는 것도 전부 "나 여기 있다"다.
      */
     agentPresence.mark(req.account.id);
-    const server = buildMcpServer(pool, req.account, lifecycle);
+    const server = buildMcpServer(pool, req.account, lifecycle, storage);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     reply.hijack();
     reply.raw.on('close', () => {

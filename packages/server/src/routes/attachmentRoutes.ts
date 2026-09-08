@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { assertChannelVisible } from '../services/channels.js';
-import { findDownloadTarget, listChannelFiles, recordUpload } from '../services/attachments.js';
+import { listChannelFiles, recordUpload, resolveAttachmentAccess } from '../services/attachments.js';
 import { StorageLimitError, AttachmentMissingError, type StorageBackend } from '../storage/local.js';
 
 /**
@@ -96,31 +96,25 @@ export async function registerAttachmentRoutes(
   app.get('/attachments/:id', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
 
-    const target = await findDownloadTarget(pool, id);
-    if (!target) {
-      return reply.code(404).send({ error: { code: 'not_found', message: 'no such attachment' } });
+    // 누가 무엇을 받을 수 있는지는 서비스가 판정한다 — MCP `attachment.fetch` 가 같은
+    // 함수를 부른다(두 표면이 각자 판정하면 한쪽만 게시 전 초안을 열게 된다).
+    const access = await resolveAttachmentAccess(pool, id, req.account!.id);
+    if (!access.ok) {
+      return reply.code(access.code === 'not_found' ? 404 : 403)
+        .send({ error: { code: access.code, message: access.message } });
     }
-
-    if (target.channelId === null) {
-      // 아직 메시지에 붙지 않은 업로드는 올린 사람만 볼 수 있다 — 남이 id 를 맞혔을 때
-      // 열리면, 게시 전 초안이 새는 경로가 된다.
-      if (target.attachment.uploaderId !== req.account!.id) {
-        return reply.code(403).send({ error: { code: 'forbidden', message: 'not your upload' } });
-      }
-    } else if (!(await assertChannelVisible(pool, target.channelId, req.account!.id))) {
-      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
-    }
+    const attachment = access.attachment;
 
     try {
-      const body = await storage.read(target.attachment.storageKey);
-      const type = NEVER_INLINE.includes(target.attachment.contentType)
+      const body = await storage.read(attachment.storageKey);
+      const type = NEVER_INLINE.includes(attachment.contentType)
         ? 'application/octet-stream'
-        : target.attachment.contentType;
+        : attachment.contentType;
       return reply
         // nosniff 없이는 브라우저가 내용을 보고 타입을 다시 판정해 스크립트로 실행할 수 있다.
         .header('x-content-type-options', 'nosniff')
-        .header('content-disposition', dispositionFor(target.attachment.filename))
-        .header('content-length', String(target.attachment.sizeBytes))
+        .header('content-disposition', dispositionFor(attachment.filename))
+        .header('content-length', String(attachment.sizeBytes))
         .type(type)
         .send(body);
     } catch (err) {
@@ -134,7 +128,7 @@ export async function registerAttachmentRoutes(
          * 아무 로그인 사용자에게나 알려 주는 셈이고, 사람이 이 화면에서 할 수 있는 일은
          * 경로를 알아도 달라지지 않는다.
          */
-        req.log.warn(`attachment ${target.attachment.id} row exists but file is missing at ${err.path}`);
+        req.log.warn(`attachment ${attachment.id} row exists but file is missing at ${err.path}`);
         return reply.code(404).send({
           error: { code: 'attachment_missing', message: 'attachment file not found on the server' },
         });
