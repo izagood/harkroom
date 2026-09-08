@@ -12,7 +12,8 @@ export type WorkspaceEvent =
   // 에이전트 세션이 사람 손을 기다린다(2026-09-08). 소유자에게만 간다 — 남의 에이전트가
   // 막힌 것은 이 사람이 할 수 있는 일이 아니다.
   | { type: 'agent.attention'; sessionId: string; channelId: string;
-      threadRootId: string | null; agentHandle: string; accountLabel: string; audience: string[] }
+      threadRootId: string | null; agentAccountId: string; agentHandle: string;
+      accountLabel: string; audience: string[] }
   // 사람이 직접 고른 상태(#186). presence 와 나란히 산다 — 이 이벤트는
   // presence.changed 를 만들지 않고, 소켓이 끊겨도 상태는 그대로 남는다.
   | { type: 'status.changed'; accountId: string; status: AccountStatus; statusText: string | null }
