@@ -15,6 +15,7 @@ import { SessionStore } from './sessions.js';
 import type { TurnRegistry } from './turnRegistry.js';
 import type { MentionQueue } from './mentionQueue.js';
 import { withAccountFailover, type ClaudeAccount } from './claudeAccounts.js';
+import { controlledNotice } from './prompt.js';
 
 /** 배치 단위로 한 번만 받는 것들. 턴마다 바뀌지 않는다. */
 export interface BatchContext {
@@ -123,6 +124,36 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
 
         const anchor = mentionAnchor(mention);
         const threadKey = SessionStore.threadKey(mention.channelId, anchor);
+
+        // #337/#384: 사람이 이 스레드를 조종 중이면 **유예한다** — markRead 도 attempts 증가도
+        // 없이 건너뛴다(스펙 §5-2 결정 6: inbox 의 at-least-once 가 그대로 큐다). 판정은
+        // `controlOf` 하나다: 도는 인터랙티브 턴과 아직 기다리는 이어받기 예약을 함께 본다.
+        // 예약 구간(사람이 [이어받기] 를 누르고 기다리는 26초)에서 유예가 빠지면 그 사이에
+        // 시작된 멘션 턴이 사람이 기다린 자리를 가져간다.
+        //
+        // **아래 스레드 판정보다 앞이어야 한다.** 뒤에 두면 인터랙티브 턴이 registry 에 있다는
+        // 이유로 `blocked` 로 세어져, 사람은 아무 통지도 못 받는다.
+        const controlling = deps.registry.controlOf(threadKey);
+        if (controlling) {
+          out.deferred += 1;
+          const { shouldNotify, pending } = deps.queue.defer(threadKey, entry.id, mention.seq);
+          if (shouldNotify) {
+            // 통지는 entry 당 1회 — 재폴링마다 올리면 조종이 길수록 스레드가 도배된다.
+            try {
+              await deps.murmur.post(
+                mention.channelId,
+                controlledNotice(controlling.openedByHandle ?? '소유자', pending),
+                anchor,
+              );
+            } catch (err) {
+              // 통지는 관측이고 큐는 inbox 다 — 실패해도 유예는 유지된다.
+              console.error(`  ${entry.messageId} 대기 통지 발화 실패(유예는 유지된다):`,
+                err instanceof Error ? err.message : err);
+            }
+          }
+          continue;
+        }
+
         if (inFlightThreads.has(threadKey) || deps.registry.get(threadKey)) { out.blocked += 1; continue; }
 
         // 장부 등록은 **동기적으로, 띄우기 전에**. 위 inFlightThreads 주석이 이유다.
