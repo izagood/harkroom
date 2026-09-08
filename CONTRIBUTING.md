@@ -99,6 +99,66 @@ The CI pipeline (see `.github/workflows/ci.yml`) runs:
 
 Both checks must pass for PRs to be merged.
 
+### A green local typecheck does not mean CI will pass
+
+CI checks the **merge of your branch with `main`**, not your branch. So a PR can fail on a
+type error that does not exist in either one:
+
+```
+test/i18n.test.tsx(395,13): error TS2739: Type '{ ... }' is missing the following
+properties from type '{ ... }': onOpenAgentConfig, onOpenProfile
+```
+
+Here `main` had added two required props to a component while the branch was in review,
+and the branch's own test helper — written before those props existed — still compiled
+cleanly on its own base. Neither side was broken; only their merge was.
+
+**This is not a merge conflict.** Git had nothing to resolve: the two commits touched
+different files. Conflicts are textual, and this failure is semantic — a caller in one
+commit and a signature in the other. `mergeable=MERGEABLE` on the PR says nothing about it.
+
+Before pushing to a PR that has been open while other work merged, rebase and re-check:
+
+```sh
+git fetch origin && git rebase origin/main
+cd packages/desktop && ./node_modules/.bin/tsc -p .
+```
+
+If you rebase to fix this, use `--force-with-lease` rather than `--force` so a push
+cannot silently discard commits someone else added to the branch.
+
+### Verify against the CI engine, not your local one
+
+CI runs **Node 22** (`.github/workflows/ci.yml`), and `package.json` declares
+`engines: { node: ">=22" }` — 22 is the floor the code must clear. A newer local Node will
+happily run APIs that do not exist there:
+
+```
+TypeError: Intl.DurationFormat is not a constructor    ← Node 23+ only
+```
+
+Fifty-one tests failed in CI on that one line while passing locally on Node 24.
+
+To actually test on the floor, **call the binary directly**. `npx` does not do this — it
+falls back to the system Node and the version pin is silently lost:
+
+```sh
+mise exec node@22 -- node -e 'console.log(process.version)'      # v22.23.1
+mise exec node@22 -- npx node -e 'console.log(process.version)'  # v24.3.0  ← leaks
+```
+
+Because this is a pnpm workspace, `vitest` lives inside each package rather than at the
+root:
+
+```sh
+cd packages/desktop
+<path-to-node-22>/bin/node ./node_modules/vitest/vitest.mjs run
+```
+
+Checking that a browser engine has an API is not the same check. Deployment runs
+JavaScriptCore, which had `Intl.DurationFormat` — the gap was the `engines` floor, and
+only running on 22 finds it.
+
 ## Keychain prompts on every dev rebuild
 
 If macOS asks for your login-keychain password every time you rebuild the desktop app —
