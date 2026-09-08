@@ -266,6 +266,58 @@ describe('attaching a file in the composer', () => {
     expect(await screen.findByRole('alert')).toBeTruthy();
   });
 
+  /**
+   * 대기 칩 썸네일. 스크린샷을 붙여넣으면 이름이 `screenshot-<시각>.png` 라 두 장 이상일 때
+   * 이름으로는 구분되지 않는다 — 보내기 전에 어느 그림인지 보이지 않으면 잘못 고른 파일을
+   * 되돌릴 기회가 없다.
+   */
+  it('이미지 대기 칩에는 작은 미리보기가 함께 선다', async () => {
+    fakeController({ upload: vi.fn(async () => att({ contentType: 'image/png', filename: 'shot.png' })) });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('shot.png', 'image/png');
+
+    expect(await screen.findByTestId('attachment-thumb')).toBeTruthy();
+  });
+
+  // 이미지가 아닌 것에는 바이트를 받지 않는다 — 파일 하나 고를 때마다 쓸데없는 왕복이 붙는다.
+  it('이미지가 아닌 첨부는 미리보기를 받지 않는다', async () => {
+    const c = fakeController({ upload: vi.fn(async () => att({ filename: 'note.txt' })) });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('note.txt');
+
+    await screen.findByText(/note\.txt/);
+    expect(c.fetchAttachment).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('attachment-thumb')).toBeNull();
+  });
+
+  // 올리기는 됐는데 미리보기만 못 받은 경우를 📎 로만 덮으면 "원래 미리보기가 없는 파일" 과
+  // 구분되지 않는다 — 사람은 잘못된 파일을 붙였다고 의심하게 된다(#257 과 같은 함정).
+  it('미리보기를 못 받으면 칩이 그렇게 말한다', async () => {
+    fakeController({
+      upload: vi.fn(async () => att({ contentType: 'image/png', filename: 'shot.png' })),
+      fetchAttachment: vi.fn(async () => { throw new Error('network error'); }),
+    });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('shot.png', 'image/png');
+
+    expect(await screen.findByText('(미리보기 실패)')).toBeTruthy();
+  });
+
+  // SVG 는 `<script>` 를 담을 수 있어 이미지처럼 보이지만 이미지가 아니다. 메시지 쪽 가드와
+  // 같은 화이트리스트를 쓰는지 컴포저 자리에서도 확인한다 — 표면이 둘이면 한쪽만 새기 쉽다.
+  it('SVG 대기 칩은 그리지 않는다', async () => {
+    const c = fakeController({ upload: vi.fn(async () => att({ contentType: 'image/svg+xml', filename: 'x.svg' })) });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('x.svg', 'image/svg+xml');
+
+    await screen.findByText(/x\.svg/);
+    expect(c.fetchAttachment).not.toHaveBeenCalled();
+  });
+
   it('does not send a message with nothing in it', () => {
     const onSend = vi.fn();
     fakeController();

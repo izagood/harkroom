@@ -50,8 +50,51 @@ function useAttachmentUrl(id: string, enabled: boolean): { url: string | null; f
   return { url, failed };
 }
 
+/**
+ * 이 첨부를 그림으로 그려도 되는가. 화이트리스트 판단을 한 군데로 모은다 — 컴포저 칩과
+ * 본문 미리보기가 각자 목록을 들면 한쪽만 `image/svg+xml` 을 막는 날이 온다.
+ */
+export function isPreviewable(contentType: string): boolean {
+  return PREVIEWABLE.includes(contentType);
+}
+
+/**
+ * 첨부 칩 앞에 서는 **작은 미리보기**. 이름만 적힌 칩은 "제대로 된 파일을 골랐나" 에 답하지
+ * 못한다 — 붙여넣은 스크린샷은 `screenshot-20260908-151256.png` 처럼 서로 구분되지 않는
+ * 이름을 달고 오고, 잘못 고른 것은 보낸 뒤에야 보인다. 그래서 보내기 전 대기 칩에서 쓴다.
+ *
+ * 바이트는 방금 올린 파일이라도 서버에서 다시 받는다. 로컬 `File` 을 들고 objectURL 을 따로
+ * 관리하면 revoke 를 놓치는 경로(전송·삭제·보냄 취소 복원)가 셋으로 갈라진다.
+ *
+ * 그림은 장식이다(`alt=""`) — 파일명은 바로 옆에 글자로 있고, 여기서 또 읽으면 화면 낭독기가
+ * 같은 이름을 두 번 말한다.
+ */
+export function AttachmentThumb({ attachment }: { attachment: AttachmentRow }) {
+  const canPreview = isPreviewable(attachment.contentType);
+  const { url, failed } = useAttachmentUrl(attachment.id, canPreview);
+
+  if (canPreview && url) {
+    return (
+      <img
+        src={url}
+        alt=""
+        data-testid="attachment-thumb"
+        className="h-6 w-6 shrink-0 rounded-sm border border-border object-cover"
+      />
+    );
+  }
+  // 그리지 못한 이유는 둘이다: 그릴 수 없는 타입이거나, 받다 실패했거나. 실패를 📎 로만 덮으면
+  // "원래 미리보기가 없는 파일" 과 구분되지 않는다 — #257 이 본문 칩에서 고친 것과 같은 함정이다.
+  return (
+    <>
+      <span aria-hidden>📎</span>
+      {failed && <span className="text-danger">(미리보기 실패)</span>}
+    </>
+  );
+}
+
 function Attachment({ attachment }: { attachment: AttachmentRow }) {
-  const canPreview = PREVIEWABLE.includes(attachment.contentType);
+  const canPreview = isPreviewable(attachment.contentType);
   const { url, failed } = useAttachmentUrl(attachment.id, canPreview);
 
   if (canPreview && url) {
