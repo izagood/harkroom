@@ -10,9 +10,12 @@ import { MessageItem } from '../src/components/MessageItem';
 import { acc, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 // #228 — 퍼머링크 고리의 **여는 쪽**. #178 이 링크를 만드는 쪽만 배선해서, 사용자가 얻는
-// 것은 'Link copied.' 와 어디에도 쓸 수 없는 문자열이었다. 여기서 지키는 것은 두 가지다:
-// 링크만 붙여넣으면 그 메시지가 열린다는 것, 그리고 **그 밖의 붙여넣기는 건드리지 않는다**는
-// 것. 후자를 놓치면 링크를 인용하려던 사람이 쓰던 글을 잃는다.
+// 것은 'Link copied.' 와 어디에도 쓸 수 없는 문자열이었다.
+//
+// 그 이동을 **붙여넣기 자체에 붙였던 것**을 여기서 되돌린다. 붙여넣으면 무조건 끌려갔으므로
+// 링크를 채팅에 남길 방법이 아예 없었다 — "긴 스레드는 링크로 넘기고 새 스레드에서 잇자"가
+// 못 되는 앱이었다. 그래서 이 파일이 지키는 것은 셋이다: 붙여넣기는 **글자를 남기고**,
+// 이동은 **제안 줄의 버튼을 누를 때만** 일어나고, 그 밖의 붙여넣기는 건드리지 않는다.
 
 const LINKED_ID = '11111111-2222-4333-8444-555555555555';
 
@@ -29,6 +32,15 @@ const paste = (box: HTMLElement, text: string): void => {
 };
 
 const draft = (): string => useAppStore.getState().drafts[''] ?? '';
+
+/**
+ * 제안 줄의 **이동** 버튼. 글자가 아니라 자리로 집는다 — 사전이 두 언어이므로 이름으로
+ * 집으면 로케일 기본값이 바뀌는 날 테스트가 이유 없이 빨개진다.
+ */
+const goButton = (): HTMLElement =>
+  screen.getByTestId('pasted-link').querySelectorAll('button')[0] as HTMLElement;
+const dismissButton = (): HTMLElement =>
+  screen.getByTestId('pasted-link').querySelectorAll('button')[1] as HTMLElement;
 
 /** 컨트롤러를 세우고 돌려준다. 실제 Controller 를 쓰는 이유: 가로채기가 닿아야 하는 곳이 그것이다. */
 const mount = (overrides = {}) => {
@@ -57,7 +69,23 @@ afterEach(() => {
 describe('컴포저에 퍼머링크를 붙여넣는다', () => {
   const linked = () => msg(LINKED_ID, 'c1', 5, 'the decision we made', 'u2');
 
-  it('링크만 붙여넣으면 그 메시지가 열린다', async () => {
+  it('링크만 붙여넣어도 글자는 초안에 남고, 저절로 이동하지 않는다', () => {
+    const { api, c } = mount({
+      message: vi.fn(async () => linked()),
+      messages: vi.fn(async () => ({ messages: [linked()], hasMore: false })),
+    });
+    void c.start();
+    render(<Composer onSend={vi.fn()} />);
+
+    paste(screen.getByRole('textbox'), messagePermalink(LINKED_ID));
+
+    // 이것이 요점이다 — 링크를 **채팅에 남기려는** 사람이 붙여넣기를 쓸 수 있어야 한다.
+    expect(draft()).toBe(messagePermalink(LINKED_ID));
+    expect(api.message).not.toHaveBeenCalled();
+    expect(useAppStore.getState().activeChannelId).toBeNull();
+  });
+
+  it('제안 줄의 버튼을 누르면 그 메시지가 열린다', async () => {
     const { api, c } = mount({
       message: vi.fn(async () => linked()),
       messages: vi.fn(async () => ({ messages: [linked()], hasMore: false })),
@@ -66,6 +94,7 @@ describe('컴포저에 퍼머링크를 붙여넣는다', () => {
     render(<Composer onSend={vi.fn()} />);
 
     paste(screen.getByRole('textbox'), messagePermalink(LINKED_ID));
+    fireEvent.click(goButton());
 
     await waitFor(() => expect(useAppStore.getState().activeChannelId).toBe('c1'));
     expect(api.message).toHaveBeenCalledWith(LINKED_ID);
@@ -73,7 +102,7 @@ describe('컴포저에 퍼머링크를 붙여넣는다', () => {
     expect(useAppStore.getState().highlightedMessageId).toBe(LINKED_ID);
   });
 
-  it('가로챈 링크는 초안에 남지 않는다', async () => {
+  it('이동해도 붙여넣은 글자는 그 자리의 초안에 남는다', async () => {
     const { c } = mount({
       message: vi.fn(async () => linked()),
       messages: vi.fn(async () => ({ messages: [linked()], hasMore: false })),
@@ -82,11 +111,39 @@ describe('컴포저에 퍼머링크를 붙여넣는다', () => {
     render(<Composer onSend={vi.fn()} />);
 
     paste(screen.getByRole('textbox'), messagePermalink(LINKED_ID));
+    fireEvent.click(goButton());
 
     await waitFor(() => expect(useAppStore.getState().activeChannelId).toBe('c1'));
-    // 이동하면서 글자가 남으면 초안이 더러워지고, 다음에 쓴 문장에 링크가 붙어 나간다.
-    expect(draft()).toBe('');
-    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('');
+    // 이동은 링크를 **소비하지 않는다** — 갔다 와서 그 링크를 인용해 쓸 수도 있다.
+    expect(draft()).toBe(messagePermalink(LINKED_ID));
+  });
+
+  it('붙여넣은 링크를 지우면 제안 줄도 사라진다', () => {
+    const { c } = mount();
+    void c.start();
+    render(<Composer onSend={vi.fn()} />);
+    const box = screen.getByRole('textbox');
+
+    paste(box, messagePermalink(LINKED_ID));
+    expect(screen.getByTestId('pasted-link')).toBeTruthy();
+
+    fireEvent.change(box, { target: { value: '', selectionStart: 0 } });
+
+    // 초안에 없는 것을 가리키는 버튼이 남으면, 누른 사람은 방금 붙여넣은 것으로 읽는다.
+    expect(screen.queryByTestId('pasted-link')).toBeNull();
+  });
+
+  it('제안 줄을 닫으면 이동하지 않고 글자만 남는다', () => {
+    const { api, c } = mount({ message: vi.fn(async () => linked()) });
+    void c.start();
+    render(<Composer onSend={vi.fn()} />);
+
+    paste(screen.getByRole('textbox'), messagePermalink(LINKED_ID));
+    fireEvent.click(dismissButton());
+
+    expect(screen.queryByTestId('pasted-link')).toBeNull();
+    expect(draft()).toBe(messagePermalink(LINKED_ID));
+    expect(api.message).not.toHaveBeenCalled();
   });
 
   it('문장 속에 섞인 링크는 가로채지 않고 평범하게 들어간다', async () => {
@@ -101,6 +158,8 @@ describe('컴포저에 퍼머링크를 붙여넣는다', () => {
     expect(draft()).toBe(quoted);
     expect(api.message).not.toHaveBeenCalled();
     expect(useAppStore.getState().activeChannelId).toBeNull();
+    // 문장째 붙여넣은 것은 애초에 인용이다 — 제안 줄도 세우지 않는다.
+    expect(screen.queryByTestId('pasted-link')).toBeNull();
   });
 
   it('퍼머링크가 아닌 텍스트는 평범하게 들어간다', async () => {
@@ -122,8 +181,9 @@ describe('컴포저에 퍼머링크를 붙여넣는다', () => {
     render(<><Composer onSend={vi.fn()} /><Notice /></>);
 
     paste(screen.getByRole('textbox'), messagePermalink(LINKED_ID));
+    fireEvent.click(goButton());
 
-    // 조용히 아무 일도 안 하면 붙여넣은 사람은 앱이 멈춘 줄 알고 같은 링크를 계속 붙여넣는다.
+    // 조용히 아무 일도 안 하면 누른 사람은 앱이 멈춘 줄 알고 같은 버튼을 계속 누른다.
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toMatch(/can't open that message/i);
     expect(useAppStore.getState().activeChannelId).toBeNull();
@@ -137,6 +197,7 @@ describe('컴포저에 퍼머링크를 붙여넣는다', () => {
     render(<><Composer onSend={vi.fn()} /><Notice /></>);
 
     paste(screen.getByRole('textbox'), messagePermalink(LINKED_ID));
+    fireEvent.click(goButton());
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toMatch(/gone/i);
@@ -153,6 +214,7 @@ describe('컴포저에 퍼머링크를 붙여넣는다', () => {
     render(<Composer onSend={vi.fn()} />);
 
     paste(screen.getByRole('textbox'), messagePermalink(LINKED_ID));
+    fireEvent.click(goButton());
 
     await waitFor(() => expect(useAppStore.getState().highlightedMessageId).toBe(LINKED_ID));
 
