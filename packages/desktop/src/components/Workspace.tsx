@@ -3,7 +3,7 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { sidebarStorage } from '../lib/prefs';
 // `isMacOS`·`MAC_TRAFFIC_LIGHT_PL` 이 여기 있었다 — 좌상단은 이제 늘 레일이다(아래 주석).
-import { TOP_BAR_H } from '../lib/platform';
+import { TOP_BAR_BG, TOP_BAR_H } from '../lib/platform';
 import { CommunityRail } from './CommunityRail';
 import { Rail, type RailPanel } from './Rail';
 import { Sidebar } from './Sidebar';
@@ -222,7 +222,13 @@ export function Workspace({ onLogout, onOpenSettings }: {
         <div
           data-testid="app-header"
           data-tauri-drag-region
-          className={`flex ${TOP_BAR_H} items-center gap-2 border-b border-border bg-surface-raised pl-2 pr-2`}
+          /*
+            면 색은 `TOP_BAR_BG` 가 정한다(요청 4). 값은 이 판 전과 같은 `raised` 지만, 이제
+            **여기서 정하지 않는다** — 레일의 띠·브랜드 바와 한 줄로 보이는 조각이라 한 곳에서
+            같이 바뀌어야 한다. 여기 색을 손으로 적으면 다음에 한쪽만 고쳐지고, 그 어긋남이
+            방금 사용자가 지적한 것이다.
+          */
+          className={`flex ${TOP_BAR_H} items-center gap-2 border-b border-border ${TOP_BAR_BG} pl-2 pr-2`}
         >
           {sidebarCollapsed && (
             <button
