@@ -30,6 +30,7 @@ describe('attention 계약', () => {
       sessionId: 's1',
       channelId: 'c1',
       threadRootId: 't1',
+      agentAccountId: 'a1',
       agentHandle: 'murmur',
       accountLabel: 'lime',
     };
@@ -45,6 +46,7 @@ describe('attention 계약', () => {
       sessionId: 's1',
       channelId: 'c1',
       threadRootId: null,
+      agentAccountId: 'a1',
       agentHandle: 'murmur',
       accountLabel: '(기본)',
     };

@@ -1564,7 +1564,8 @@ export type WsServerEvent =
    * 여기서 알려야 하는 것은 **아직 아무도 안 보고 있는 세션**이다.
    */
   | { type: 'agent.attention'; sessionId: string; channelId: string;
-      threadRootId: string | null; agentHandle: string; accountLabel: string }
+      threadRootId: string | null; agentAccountId: string; agentHandle: string;
+      accountLabel: string }
   /**
    * 사람이 자기 상태를 바꿨다(#186). presence 와 **별개의 이벤트**다 — 상태 변경은
    * `presence.changed` 를 만들지 않고, 연결이 끊겨도 상태는 남는다.

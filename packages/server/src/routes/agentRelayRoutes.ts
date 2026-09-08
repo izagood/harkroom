@@ -120,6 +120,7 @@ export async function registerAgentRelayRoutes(
           sessionId: ev.sessionId,
           channelId: ev.channelId,
           threadRootId: ev.threadRootId,
+          agentAccountId: ev.agentAccountId,
           agentHandle: row.handle,
           accountLabel: ev.accountLabel,
           audience: [row.owner_account_id],
