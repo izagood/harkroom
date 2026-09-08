@@ -4,7 +4,7 @@ import type { RunnerState } from './runnerLauncher';
  * 아바타가 말하는 상태의 값들. 목록에서 파생하지 않고 직접 적는 것은 `PresenceView` 와
  * 같은 모양이다 — 이 넷은 각각 **그리는 방법이 다르고**, 화면이 값마다 분기를 갖는다.
  */
-export type FaceState = 'ok' | 'stopped' | 'failed' | 'unknown';
+export type FaceState = 'ok' | 'stopped' | 'failed' | 'unknown' | 'retiring';
 
 /**
  * **종료 요청 중** — `stopRequestedAt` 은 있고 `stopAckedAt` 은 없는 동안이다
@@ -77,6 +77,7 @@ export function isStopping(agent: {
  * - `stopped` 색이 빠지고 ▶ — 누르면 그 자리에서 켜진다
  * - `failed`  붉은 테와 ↻, 그리고 **사유 한 줄**(유일하게 글자가 느는 상태)
  * - `unknown` **모른다** — `#443` 이 만든 것
+ * - `retiring` **물러나는 중** — 2026-09-08 사고가 만든 것(아래)
  *
  * ## `unknown` 이 왜 생겼나 — `ok` 도 거짓말이었다 (실측 2026-09-06, 릴리즈 `.app`)
  *
@@ -127,6 +128,42 @@ export function isStopping(agent: {
  *
  * **▶ 를 안 다는 것이 요점이다.** `stopped` 의 ▶ 는 "눌러서 켜라"이고, 지금은 이미 돌고
  * 있을 수도 있는 것을 또 띄우자고 권하는 셈이 된다.
+ *
+ * ## `retiring` 이 왜 생겼나 — **`stopped` 가 거짓말이었다** (실측 2026-09-08 14:04)
+ *
+ * 앞 판본은 `restarting` 을 **어느 분기에도 넣지 않았다.** 그래서 그 값은 아래 presence
+ * 판정까지 흘러갔고, 롱턴 동안 폴이 나가지 않아 TTL(30초)이 만료된 러너는 `online` 에
+ * 없었다 → `stopped` → 얼굴에 ▶ 가 걸렸다. 그날 카드는 이랬다:
+ *
+ * ```
+ * 러너  [버전 모름]     활동  11분 전     ▶
+ * ```
+ *
+ * 그 러너는 **멀쩡히 일하고 있었다.** 앱이 자동 업데이트로 세대가 바뀌어 daemon 이 드레인
+ * (SIGTERM)을 보냈고, 러너는 설계대로 11.6분짜리 턴을 마치는 중이었다. 사람이 그 ▶ 를
+ * 눌렀고, 그것이 PAT 회전을 불러 일하던 러너의 자격증명을 폐기했다 — 화면이 만든 오해가
+ * 사람을 통해 사고가 됐다.
+ *
+ * **앱은 그 사실을 알고 있었다.** `RunnerStatus` 의 `restarting` 주석이 이미 이렇게 적혀
+ * 있다: *"'running' 으로 두면 사람에게는 '눌렀는데 아무 일이 없다'이고, 'stopped' 로 두면
+ * 없는 종료를 단정한다. 둘 다 거짓 신호다."* 그 값이 애써 지킨 구분을 이 함수가 버린 것이다.
+ *
+ * ### 왜 `unknown` 으로 미루지 않는가
+ *
+ * `unknown` 은 화면에서 **글자를 낸다** — *"서버와 끊겨 N개 에이전트의 생사를 알 수 없다"*
+ * (`AgentGrid` 의 `agent-presence-unknown`). 끊기지도 않았고 우리가 알고 있는데 모른다고
+ * 적으면 그것도 거짓 신호다. 거짓말 하나를 다른 거짓말로 바꾸는 것뿐이다.
+ *
+ * ### 왜 유니온에 값을 더하는 것이 여기서는 되는가
+ *
+ * `isStopping` 은 유니온에 들지 못했다 — 사이드바가 `stopRequestedAt` 을 손에 들 수 없어서
+ * (위 표) "어느 화면에서도 안 나오는 값"이 되기 때문이다. **`restarting` 은 그렇지 않다**:
+ * 두 화면이 모두 `runnerStates` 를 받고, 이 함수가 그것만 보고 판정한다. 즉 두 화면이 다
+ * 이 값을 받을 수 있으므로 `FaceState` 의 계약(*"이 넷은 각각 그리는 방법이 다르고, 화면이
+ * 값마다 분기를 갖는다"*)이 그대로 참이다.
+ *
+ * `unknown` 과 **같은 회색조·▶ 없음**을 쓴다 — 둘 다 "지금 켜라고 권할 것이 없다"이므로
+ * 그리는 방법이 같아도 된다. 갈리는 것은 **글자**이고, 그것이 이 값을 따로 둔 이유 전부다.
  */
 export function faceState(
   id: string,
@@ -144,9 +181,45 @@ export function faceState(
   // **서버와 끊겨도 그 사실은 안 끊긴다.** 그래서 `connected` 를 보지 않는다.
   if (st === 'running' || st === 'adopted') return 'ok';
 
+  // 물러나는 중이다 — 앱이 종료를 말했고 러너가 진행 중인 턴을 마치는 중이다. presence 로
+  // 넘기지 않는 것이 요점이다: 롱턴이면 TTL 이 만료돼 `stopped` 가 되고, 그 얼굴의 ▶ 가
+  // 일하는 러너를 죽인다(위 `retiring` 절의 실측). `connected` 를 보지 않는 이유는
+  // `running` 과 같다 — 이 사실의 출처는 이 앱 자신이고, 소켓과 무관하다.
+  if (st === 'restarting') return 'retiring';
+
   // ── daemon 이 모르는 것은 서버에 묻는다 ────────────────────────────────────
   // 남의 기계에서 뜬 러너가 여기 든다(`design.md` §1 외부 접속형). daemon 의 침묵은
   // "안 돈다"가 아니라 "내 장부에 없다"이므로 그것으로 생사를 말할 수 없다.
   if (!connected) return 'unknown';
   return online.includes(id) ? 'ok' : 'stopped';
+}
+
+/**
+ * **회색조로 그리는 얼굴인가.**
+ *
+ * 왜 함수인가: 이 판정은 격자(`AgentGrid`)와 사이드바(`Sidebar` 의 DM 줄) **두 곳**에
+ * 같은 모양으로 적혀 있었다(`face === 'stopped' || face === 'unknown'`). 2026-09-08 이
+ * 세 번째 값(`retiring`)을 더하면서 그 복제가 실제 위험이 됐다 — 한쪽만 고치면 같은 러너가
+ * 격자에서는 회색이고 DM 목록에서는 초록이 된다. 이 파일 머리 주석이 그 사고를 이미
+ * 적어 뒀다(`#476`).
+ *
+ * 셋이 같은 회색을 쓰는 근거: 전부 **"지금 켜라고 권할 것이 없다"** 이고, 갈리는 것은
+ * 글자다(`stopped` 는 ▶, `unknown` 은 끊김 한 줄, `retiring` 은 무엇을 기다리는지).
+ */
+export function isFaceGreyed(face: FaceState): boolean {
+  return face === 'stopped' || face === 'unknown' || face === 'retiring';
+}
+
+/**
+ * **▶(또는 ↻)를 받는 얼굴인가.**
+ *
+ * `ok` 가 빠지는 이유: 정상은 기본값이라 손잡이를 붙이지 않는다. `unknown` 이 빠지는 이유는
+ * `#443` 이고(모르는 것을 켜라고 권하면 이미 도는 러너를 하나 더 띄운다), `retiring` 이
+ * 빠지는 이유는 2026-09-08 실측이다 — 그 ▶ 가 일하고 있던 러너를 죽였다.
+ *
+ * 두 값이 같은 이유로 빠지므로 **판정을 하나로 둔다.** 조건을 호출부에 늘어놓으면 다음에
+ * 값이 하나 더 늘 때 한 자리만 고쳐지고, 그 어긋남은 조용히 '켜라고 권하는' 쪽으로 간다.
+ */
+export function faceTakesRelaunch(face: FaceState): boolean {
+  return face === 'stopped' || face === 'failed';
 }

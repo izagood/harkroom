@@ -5,7 +5,7 @@ import type { RunnerState } from '../../lib/runnerLauncher';
 // B1 의 세 얼굴 규칙은 `lib/faceState.ts` 하나가 낸다 — DM 목록도 같은 판정을 쓴다
 // (`docs/desktop-rail.html` 2단계). 여기 사본을 두면 두 화면이 같은 러너를 다르게 그린다.
 // `isStopping` 은 **격자만** 부른다 — 사이드바가 그 값을 받을 수 없는 이유가 그 함수 주석에 있다.
-import { faceState, isStopping } from '../../lib/faceState';
+import { faceState, faceTakesRelaunch, isFaceGreyed, isStopping } from '../../lib/faceState';
 // 뒤처짐 판정도 **이미 있는 것을 그대로 쓴다**(`lib/runnerVersions.ts`). 그 규칙
 // (*"모르는 것을 뒤처졌다고 하지 않는다"*)을 칩에서 다시 적으면 일괄 재기동 띠와 카드가
 // 서로 다른 대상을 고르고, 그 어긋남은 조용하다 — 그 모듈 주석이 정확히 그것을 경고한다.
@@ -855,7 +855,7 @@ export function AgentGrid<T extends AgentCardSubject>({
                       되어 "이미 멈췄다"로 읽히는데, 그 러너는 아직 턴을 돌리고 있을 수 있다.
                       같은 필터를 절반 세기로 쓴다 — 새 회색을 하나 더 만들지 않는다. */}
                   <span
-                    className={face === 'stopped' || face === 'unknown'
+                    className={isFaceGreyed(face)
                       ? 'block grayscale brightness-[1.7] contrast-[0.55] opacity-90'
                       : stopping
                         ? 'block grayscale-[0.5] brightness-[1.35] contrast-[0.78] opacity-95'
@@ -969,6 +969,24 @@ export function AgentGrid<T extends AgentCardSubject>({
                       멈추는 중 · 러너가 아직 못 봤다
                     </p>
                   )}
+                  {/*
+                    **물러나는 중은 글자로 말한다**(2026-09-08 실측). 회색만으로는
+                    `stopped`(꺼졌다)와 구분되지 않고, 사람은 회색을 보면 켜려 한다 —
+                    `#443` 이 `unknown` 에 대해 세운 그 규율이다. 그날 이 자리에 읽을
+                    글자가 하나도 없었던 것이 오해의 절반이었다.
+
+                    `warning` 이 아니라 `accent` 인 이유: 실패가 아니라 **진행 중**이다.
+                    `RunnerStatus` 의 `TONE` 이 같은 판단으로 `restarting` 을 `accent` 에
+                    두고 있고, 같은 사실을 두 색으로 말하지 않는다.
+                  */}
+                  {face === 'retiring' && (
+                    <p
+                      data-testid={`agent-retiring-${a.handle}`}
+                      className="mt-1 whitespace-normal text-[11px] text-accent"
+                    >
+                      물러나는 중 · 진행 중인 턴을 끝내고 있다
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -989,7 +1007,7 @@ export function AgentGrid<T extends AgentCardSubject>({
                   된다 — `#430` 의 중복이 바로 그 모양이었다. 모를 때 화면이 할 일은
                   행동을 권하는 것이 아니라 **모른다고 말하는 것**이다. */}
               {/* `canRelaunch` 를 안 준 호출자에게는 오늘 동작 그대로다(그 prop 주석). */}
-              {onRelaunch && (canRelaunch?.(a) ?? true) && face !== 'ok' && face !== 'unknown' && (
+              {onRelaunch && (canRelaunch?.(a) ?? true) && faceTakesRelaunch(face) && (
                 /*
                   **글리프는 사진 안에 있다**(문서: "실행하기 버튼도 사라진다 — 사진 안으로
                   들어간다"). 그래서 뱃지가 아니라 얼굴을 덮는 원이고, 평소에는 **옅게** 얹혀

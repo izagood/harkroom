@@ -564,6 +564,141 @@ describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
     expect(state.message).toContain('폐기에 실패했다');
     expect(state.message).toContain(oldLabel);
   });
+
+  /**
+   * 2026-09-08 14:04 실측(@murmur). **폐기가 자기가 멈출 수 없는 러너의 발밑을 뺐다.**
+   *
+   * 그날의 모양: 앱이 0.1.57 로 자동 업데이트되며 세대가 바뀌어 daemon 이 옛 러너에
+   * SIGTERM(드레인)을 보냈다. 그 러너는 11.6분짜리 턴 안에 있었으니 설계대로 턴을 마치고
+   * 나가는 중이었다 — 즉 **멀쩡하게 일하고 있었다.** 그런데 카드는 롱턴 동안 폴이 나가지
+   * 않아 "활동 11분 전 / 러너 버전 모름"으로 굳었고, 사람이 그것을 죽은 것으로 읽고
+   * ▶ 를 눌렀다.
+   *
+   * `reissue` 는 `this.stop(agentId)` 로 자식을 거둔다고 믿었는데, 그 핸들은 **이 앱
+   * 세션이 띄운 자식만** 갖는다(`stop` 주석이 그렇게 적혀 있다). 드레인 중이던 러너는
+   * 앞 세대(0.1.55 앱이 띄운 것)라 그 맵에 없어 `stop()` 은 no-op 이었고, 폐기만 성공했다.
+   * 러너는 턴을 끝내고 낸 첫 호출부터 401 을 받았다.
+   *
+   * 그래서 순서를 하나 더 고정한다: **살아 있는지 확인하기 전에는 폐기하지 않는다.**
+   * 발급은 그대로 먼저다(그 근거는 위 테스트가 지킨다) — 잃으면 안 되는 것은 옛 PAT 이지
+   * 새 PAT 가 아니다.
+   */
+  describe('멈추지 못한 러너의 PAT 는 폐기하지 않는다 (2026-09-08 실측)', () => {
+    const reissueWith = (daemon: ReturnType<typeof fakeDaemon>, secrets: ReturnType<typeof fakeSecrets>) =>
+      make(fakeApi(), secrets, fakeSpawner(), fakeLoginPath(), () => 1_700_000_000_000, daemon);
+
+    it('앞 세대 러너가 아직 살아 있으면 옛 PAT 를 살려 둔다', async () => {
+      const oldLabel = patLabelPrefix(DEVICE);
+      const secrets = fakeSecrets({ a: { label: oldLabel, token: 'murp_old' } });
+      // `adopted: true` — 이 앱 세션이 띄운 자식이 아니다(그날의 모양). `died()` 를
+      // 부르지 않으므로 이 러너는 관측 상한까지 살아 있다.
+      const daemon = fakeDaemon([liveRunner('a', true)]);
+      const { launcher, api } = reissueWith(daemon, secrets);
+
+      await launcher.reissue({ agent: agent('a') });
+
+      // 새 PAT 는 발급됐다 — 그것이 없으면 교체가 뜰 수 없다.
+      expect(api.mintPat).toHaveBeenCalled();
+      // 옛 PAT 는 그대로다. 그것으로 도는 러너가 아직 턴을 돌고 있다.
+      expect(api.revokePat).not.toHaveBeenCalled();
+    });
+
+    // 자식 핸들이 없어도 물러나라고 **말은 해야** 한다 — daemon 이 그 세대를 안다.
+    // 이것이 없으면 앞 세대 러너는 아무에게도 종료를 통보받지 못한 채 남는다.
+    it('daemon 에 종료를 전한다 — 자식 핸들이 없어도', async () => {
+      const oldLabel = patLabelPrefix(DEVICE);
+      const secrets = fakeSecrets({ a: { label: oldLabel, token: 'murp_old' } });
+      const daemon = fakeDaemon([liveRunner('a', true)]);
+      const { launcher } = reissueWith(daemon, secrets);
+
+      await launcher.reissue({ agent: agent('a') });
+
+      expect(daemon.kills).toEqual(['a']);
+    });
+
+    // 남은 일을 말한다 — 폐기되지 않은 PAT 가 있다는 사실을 삼키지 않는 것이 이 파일의
+    // 기존 규율이다(바로 위 '폐기가 실패하면' 테스트와 같은 근거).
+    it('폐기를 미뤘다는 사실과 그 라벨을 사람에게 남긴다', async () => {
+      const oldLabel = patLabelPrefix(DEVICE);
+      const secrets = fakeSecrets({ a: { label: oldLabel, token: 'murp_old' } });
+      const daemon = fakeDaemon([liveRunner('a', true)]);
+      const { launcher } = reissueWith(daemon, secrets);
+
+      await launcher.reissue({ agent: agent('a') });
+
+      const message = launcher.getStates()[0]!.message ?? '';
+      expect(message).toContain(oldLabel);
+      expect(message).toContain('턴');
+    });
+
+    // 기다리는 동안 화면이 **비어 있으면 안 된다.** 이 사고의 시작이 정확히 그 침묵이었다:
+    // 카드가 "활동 11분 전"에서 굳어 있었고 아무도 "턴을 마치는 중이다"를 말하지 않아
+    // 사람이 그것을 고장으로 읽었다. 기다림은 사실이므로 기다린다고 말한다.
+    it('옛 러너를 기다리는 동안 상태를 남긴다 — 침묵이 이 사고의 시작이었다', async () => {
+      const oldLabel = patLabelPrefix(DEVICE);
+      const secrets = fakeSecrets({ a: { label: oldLabel, token: 'murp_old' } });
+      const daemon = fakeDaemon([liveRunner('a', true)]);
+      const { launcher } = reissueWith(daemon, secrets);
+
+      // 관측이 불리는 순간의 상태를 붙잡는다 — 기다림이 끝난 뒤의 상태로는 이것을 못 잰다.
+      let whileWaiting: string | null = null;
+      const observe = daemon.observe.bind(daemon);
+      daemon.observe = async () => {
+        whileWaiting ??= launcher.getStates()[0]?.status ?? null;
+        return observe();
+      };
+
+      await launcher.reissue({ agent: agent('a') });
+
+      expect(whileWaiting).toBe('restarting');
+    });
+
+    // 대조군: 러너가 실제로 물러났으면 폐기는 그대로 일어난다. 이 단언이 없으면
+    // "언제나 미룬다"가 초록이고, 그것은 폐기 기능을 없앤 것이다.
+    it('러너가 물러났으면 폐기한다 — 미루기가 폐기를 없애지 않는다', async () => {
+      const oldLabel = patLabelPrefix(DEVICE);
+      const secrets = fakeSecrets({ a: { label: oldLabel, token: 'murp_old' } });
+      // 빈 장부 = 도는 러너가 없다.
+      const daemon = fakeDaemon([]);
+      const { launcher, api } = reissueWith(daemon, secrets);
+
+      await launcher.reissue({ agent: agent('a') });
+
+      expect(api.calls).toEqual([`mint:${oldLabel}#1700000000000`, `revoke:${oldLabel}`]);
+    });
+  });
+
+  /**
+   * 2026-09-08 14:04 실측 — 감사 로그에 회전이 **1초 간격으로 두 번** 찍혔다:
+   *
+   * ```
+   * 14:04:07.364  pat.issued   desktop:85b0a07d#1788843847356
+   * 14:04:07.408  pat.revoked  runner
+   * 14:04:08.304  pat.issued   desktop:85b0a07d#1788843848300
+   * 14:04:08.325  pat.revoked  desktop:85b0a07d#1788843847356
+   * ```
+   *
+   * 두 번째 회전이 첫 번째가 방금 발급한 PAT 를 폐기했다. 즉 **회전이 자기 자신과 경쟁**
+   * 한다 — 사람이 ▶ 를 두 번 누르거나 두 자리(사이드바·설정)에서 누르면 이렇게 된다.
+   * 무해해 보이지만 그 사이에 뜬 러너는 이미 폐기된 PAT 를 들고 있고, 그 상태는 다시
+   * 이 사고의 모양이다.
+   */
+  it('회전 중에 다시 눌러도 두 번 돌지 않는다 (2026-09-08 실측)', async () => {
+    const oldLabel = patLabelPrefix(DEVICE);
+    const secrets = fakeSecrets({ a: { label: oldLabel, token: 'murp_old' } });
+    const daemon = fakeDaemon([]);
+    const { launcher, api } = make(
+      fakeApi(), secrets, fakeSpawner(), fakeLoginPath(), () => 1_700_000_000_000, daemon,
+    );
+
+    await Promise.all([
+      launcher.reissue({ agent: agent('a') }),
+      launcher.reissue({ agent: agent('a') }),
+    ]);
+
+    expect(api.mintPat).toHaveBeenCalledTimes(1);
+    expect(api.revokePat).toHaveBeenCalledTimes(1);
+  });
 });
 
 /**
