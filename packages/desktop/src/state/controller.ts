@@ -973,8 +973,8 @@ export class Controller {
    * 서버가 받아들인 뒤에 화면을 갱신한다: 미리 그려 두면 서버가 거절한 사진(이미지가 아닌
    * 파일은 400 이다)이 잠깐 내 얼굴로 떴다가 사라진다.
    */
-  async setAvatar(file: File | null): Promise<void> {
-    const attachmentId = file ? (await this.api.upload(file)).id : null;
+  async setAvatar(file: File | null, onProgress?: (fraction: number) => void): Promise<void> {
+    const attachmentId = file ? (await this.api.upload(file, onProgress)).id : null;
     const { avatarAttachmentId } = await this.api.setAvatar(attachmentId);
     const me = this.store.getState().me;
     if (me) this.store.getState().applyAvatar(me.id, avatarAttachmentId);
@@ -987,8 +987,10 @@ export class Controller {
    * 스토어의 계정 표를 함께 갱신한다: 그러지 않으면 방금 올린 사진이 설정 화면에만 보이고
    * 대화·그리드의 아바타는 옛 색으로 남는다.
    */
-  async setAgentAvatar(agentId: string, file: File | null): Promise<void> {
-    const attachmentId = file ? (await this.api.upload(file)).id : null;
+  async setAgentAvatar(
+    agentId: string, file: File | null, onProgress?: (fraction: number) => void,
+  ): Promise<void> {
+    const attachmentId = file ? (await this.api.upload(file, onProgress)).id : null;
     const { avatarAttachmentId } = await this.api.setAgentAvatar(agentId, attachmentId);
     this.store.getState().applyAvatar(agentId, avatarAttachmentId);
   }

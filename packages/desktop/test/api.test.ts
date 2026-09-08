@@ -108,4 +108,65 @@ describe('ApiClient', () => {
     await api.search('needle', null);
     expect((fn.mock.calls[2]! as unknown as [string])[0]).toBe('http://x:3400/search?q=needle');
   });
+  /**
+   * 업로드는 이 파일에서 **혼자 `fetch` 를 쓰지 않는다**(진행률 때문에 XHR 이다). 배선을
+   * 지키는 자리가 여기밖에 없다 — 화면 테스트는 컨트롤러를 목으로 바꿔 이 층을 안 지난다.
+   */
+  it('reports upload progress and resolves with the attachment row', async () => {
+    const sent: { method?: string; url?: string; headers: Record<string, string> } = { headers: {} };
+    let instance: FakeXhr;
+    class FakeXhr {
+      upload: { onprogress?: (e: { lengthComputable: boolean; loaded: number; total: number }) => void } = {};
+      onload?: () => void;
+      onerror?: () => void;
+      onabort?: () => void;
+      status = 0;
+      responseText = '';
+      open(method: string, url: string) { sent.method = method; sent.url = url; }
+      setRequestHeader(k: string, v: string) { sent.headers[k] = v; }
+      send() { instance = this as unknown as FakeXhr; }
+    }
+    vi.stubGlobal('XMLHttpRequest', FakeXhr);
+
+    const api = new ApiClient('http://x:3400', 'tok-1');
+    const seen: number[] = [];
+    const file = new File(['abc'], 'a.png', { type: 'image/png' });
+    const p = api.upload(file, (f) => seen.push(f));
+
+    instance!.upload.onprogress!({ lengthComputable: true, loaded: 50, total: 200 });
+    // total 을 모르면 비율을 만들지 않는다 — 가짜 비율을 그리면 막대가 거짓말을 한다.
+    instance!.upload.onprogress!({ lengthComputable: false, loaded: 60, total: 0 });
+    instance!.status = 200;
+    instance!.responseText = JSON.stringify({ id: 'att-1', filename: 'a.png' });
+    instance!.onload!();
+
+    await expect(p).resolves.toMatchObject({ id: 'att-1' });
+    expect(sent.method).toBe('POST');
+    expect(sent.url).toBe('http://x:3400/uploads');
+    expect(sent.headers.authorization).toBe('Bearer tok-1');
+    // 마지막 1 은 `onload` 가 못박는다 — 99% 에서 멈춘 막대는 실패처럼 보인다.
+    expect(seen).toEqual([0.25, 1]);
+  });
+
+  it('turns an upload rejection into ApiError with the server code', async () => {
+    let instance: { status: number; responseText: string; onload?: () => void; upload: Record<string, unknown>; open(): void; setRequestHeader(): void; send(): void };
+    class FakeXhr {
+      upload: Record<string, unknown> = {};
+      onload?: () => void;
+      status = 0;
+      responseText = '';
+      open() {}
+      setRequestHeader() {}
+      send() { instance = this as never; }
+    }
+    vi.stubGlobal('XMLHttpRequest', FakeXhr);
+
+    const api = new ApiClient('http://x:3400', 'tok');
+    const p = api.upload(new File(['x'], 'x.png'));
+    instance!.status = 400;
+    instance!.responseText = JSON.stringify({ error: { code: 'not_an_image', message: 'nope' } });
+    instance!.onload!();
+
+    await expect(p).rejects.toMatchObject({ status: 400, code: 'not_an_image' });
+  });
 });

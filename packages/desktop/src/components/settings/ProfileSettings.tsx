@@ -1,9 +1,10 @@
-import { useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useActiveStore } from '../../state/communities';
 import { getController } from '../../state/controller';
 import { ApiError } from '../../lib/api';
 import { Identity } from '../Identity';
 import { ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
+import { AvatarStatus, useAvatarEdit } from './avatarEdit';
 
 /**
  * 프로필 사진 행(#159). **이 화면에 처음 들어오는 쓰기 경로다** — 나머지 항목은 서버에
@@ -15,25 +16,11 @@ import { ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
  */
 function AvatarRow() {
   const me = useActiveStore((s) => s.me);
-  const pick = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function apply(file: File | null) {
-    setBusy(true);
-    setError(null);
-    try {
-      await getController().setAvatar(file);
-    } catch {
-      // 서버가 거절하는 가장 흔한 경우는 이미지가 아닌 파일이다(매직 바이트로 판정한다).
-      // 확장자를 믿고 통과시키지 않으므로 `.png` 라는 이름만으로는 걸리지 않는다.
-      setError('이미지 파일만 프로필 사진으로 쓸 수 있습니다.');
-    } finally {
-      setBusy(false);
-      // 같은 파일을 다시 고를 수 있게 값을 비운다 — 안 비우면 change 가 안 난다.
-      if (pick.current) pick.current.value = '';
-    }
-  }
+  const apply = useCallback(
+    (file: File | null, onProgress?: (f: number) => void) => getController().setAvatar(file, onProgress),
+    [],
+  );
+  const edit = useAvatarEdit(apply, '이미지 파일만 프로필 사진으로 쓸 수 있습니다.');
 
   return (
     <div className="px-4 py-3">
@@ -42,35 +29,55 @@ function AvatarRow() {
         <span className="ml-auto flex items-center gap-3">
           <Identity account={me ?? undefined} className="h-10 w-10 text-base" variant="avatar" />
           <input
-            ref={pick}
+            ref={edit.pickRef}
             type="file"
             data-testid="avatar-file"
             accept="image/png,image/jpeg,image/gif,image/webp,image/avif"
             className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) void apply(f); }}
+            onChange={edit.onPicked}
           />
           <button
             className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg hover:bg-surface disabled:opacity-50"
-            disabled={busy}
-            onClick={() => pick.current?.click()}
+            disabled={edit.busy}
+            onClick={edit.openPicker}
           >
             Upload
           </button>
-          {me?.avatarAttachmentId && (
+          {/*
+            지우기는 **두 걸음**이다. 한 걸음이던 동안은 실수로 스친 클릭 하나가 사진을
+            지웠고, 지운 뒤에도 아무 말이 없어 눌린 것조차 알 수 없었다. 이 저장소가
+            비활성화(`AgentsSettings` 의 `confirmingDisable`)에서 이미 쓰는 모양이다.
+          */}
+          {me?.avatarAttachmentId && (edit.confirmingRemove ? (
+            <>
+              <button
+                className="rounded-lg border border-danger-border bg-danger-surface px-3 py-1.5 font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                disabled={edit.busy}
+                onClick={edit.confirmRemove}
+              >
+                정말 지우기
+              </button>
+              <button
+                className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg-muted hover:bg-surface"
+                onClick={edit.cancelRemove}
+              >
+                취소
+              </button>
+            </>
+          ) : (
             <button
               className="rounded-lg border border-border px-3 py-1.5 font-medium text-danger hover:bg-danger-surface disabled:opacity-50"
-              disabled={busy}
-              onClick={() => void apply(null)}
+              disabled={edit.busy}
+              onClick={edit.askRemove}
             >
               Remove
             </button>
-          )}
+          ))}
         </span>
       </div>
-      {/* 눈에 보이게 낸다. `sr-only` 로만 두면 스크린리더가 아닌 사람에게는 **아무 일도
-          일어나지 않은 것**과 구분되지 않는다 — 버튼이 잠깐 눌렸다 풀리고 사진은 그대로다.
-          이 저장소의 다른 오류 표면과 같은 모양을 쓴다(`Composer.tsx` 의 업로드 오류). */}
-      {error && <p role="alert" className="mt-1 text-[11px] text-danger">{error}</p>}
+      <div className="flex justify-end">
+        <AvatarStatus phase={edit.phase} />
+      </div>
     </div>
   );
 }
