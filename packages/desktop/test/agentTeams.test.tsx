@@ -54,7 +54,7 @@ const agentView = (id: string, handle: string, over: Partial<AgentView> = {}): A
  * 전용)를 부르지 않고 `GET /accounts` 가 함께 준 것을 읽는 이유가 그 파일 주석에 있다
  * (비-admin 이 목록을 보는 유일한 경로다).
  */
-const seed = (isAdmin: boolean, teams: AgentTeamRow[] = [team('t1', 'ops')]) => {
+const seed = (isAdmin: boolean, teams: AgentTeamRow[] | null = [team('t1', 'ops')]) => {
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'me', 'human', isAdmin),
@@ -130,6 +130,25 @@ describe('팀 설정 화면 (#172)', () => {
 
     // 만든 뒤 **그 팀의 상세로 간다** — 만드는 이유가 팀원을 넣는 것이다.
     await waitFor(() => expect(screen.getByRole('heading', { name: '@release' })).toBeTruthy());
+  });
+
+  /**
+   * **1b. 목록을 못 받은 서버에서 격자가 거짓말하지 않는다.**
+   *
+   * 스토어의 `null` 이 이 화면까지 그대로 와야 성립한다(`appStore.ts::teams` 의 그 표).
+   * 중간의 어느 자리에서든 `?? []` 로 옮기면 격자는 다시 *"아직 팀이 없다"* 를 그리고,
+   * 그것이 이 화면에서 실제로 겪은 결함이다 — 팀을 만들었는데 격자가 비어 있고 다시
+   * 만들면 서버가 `name_taken` 으로 거절했다. 판정 자체는 `teamGrid.test.tsx` 가 재고,
+   * 여기서는 **그 값이 화면까지 닿는가**를 잡는다.
+   */
+  it('1b. 서버가 팀 목록을 안 주면 격자가 그 사실을 말한다', async () => {
+    seed(true, null);
+    mountTeams();
+
+    await waitFor(() => expect(screen.getByTestId('team-list-unavailable')).toBeTruthy());
+    expect(screen.getByTestId('team-grid').textContent).not.toContain('아직 팀이 없다');
+    // 만들기는 그 서버에서도 되므로 `+` 는 남는다.
+    expect(screen.getByTestId('team-create')).toBeTruthy();
   });
 
   it('2. 팀원 추가·빼기가 라우트를 부르고 응답이 준 명단을 그린다', async () => {

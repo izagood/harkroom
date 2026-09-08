@@ -38,11 +38,13 @@ const accountsFor = (teams: TeamCardSubject[]): Record<string, AccountView> =>
   );
 
 const grid = (props: Partial<Parameters<typeof TeamGrid>[0]> = {}) => {
-  const teams = props.teams ?? [team('ops', [member('a1', 'bot')])];
+  // `null`(목록을 못 받았다)을 **그대로 넘길 수 있어야 한다** — `?? 기본값` 이면 그 사실이
+  // 팀 하나로 바뀌어, 이 파일이 그 상태를 아예 못 세운다.
+  const teams = props.teams === undefined ? [team('ops', [member('a1', 'bot')])] : props.teams;
   return render(
     <TeamGrid
       teams={teams}
-      accounts={props.accounts ?? accountsFor(teams)}
+      accounts={props.accounts ?? accountsFor(teams ?? [])}
       runnerStates={props.runnerStates ?? {}}
       online={props.online ?? []}
       connected={props.connected ?? true}
@@ -437,6 +439,25 @@ describe('팀 카드 — 틀이 에이전트 카드와 같다', () => {
     fireEvent.change(screen.getByTestId('team-search'), { target: { value: 'zzz' } });
     // 못 찾은 것과 아무것도 없는 것은 다른 사실이다.
     expect(screen.getByTestId('team-grid').textContent).toContain('맞는 팀이 없다');
+  });
+
+  /**
+   * **목록을 못 받은 것과 팀이 없는 것은 다른 사실이다.**
+   *
+   * 이 시험이 재는 것은 실제로 겪은 화면이다: 팀 라우트는 있는데 `GET /accounts` 에
+   * `teams` 가 없는 서버에 붙으면, 팀을 만들어도 격자가 비어 있고 같은 이름으로 다시
+   * 만들면 서버가 `name_taken` 으로 거절한다. 그때 격자가 *"아직 팀이 없다"* 라고 하면
+   * 화면이 모르는 것을 단언하는 것이고(`docs/design.md` §4), 사람은 서버가 아니라 자기
+   * 조작을 의심한다.
+   */
+  it('목록을 못 받았으면 "아직 팀이 없다" 라고 하지 않는다', () => {
+    grid({ teams: null });
+    expect(screen.getByTestId('team-list-unavailable')).toBeTruthy();
+    expect(screen.getByTestId('team-grid').textContent).not.toContain('아직 팀이 없다');
+    // 만들기는 그 서버에서도 된다(`POST /teams`) — 손잡이를 없애면 반대 방향의 거짓이다.
+    expect(screen.getByTestId('team-create')).toBeTruthy();
+    // 훑을 목록이 없으면 검색줄도 없다 — 그 줄의 `N개` 는 모르는 수를 `0개` 로 단언한다.
+    expect(screen.queryByTestId('team-search')).toBeNull();
   });
 
   it('만들 수 없는 사람에게는 + 가 없다', () => {
