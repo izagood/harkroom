@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { parseMessagePermalink, type ScheduledMessageView } from '@murmur/shared';
 import type { AccountView, AgentTeamRow, AttachmentRow, HandleGroupRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
+import { NO_TEAMS } from '../state/appStore';
 import { getController } from '../state/controller';
 import { ApiError } from '../lib/api';
 import { GroupBadge, TeamBadge } from './Identity';
@@ -164,7 +165,13 @@ export function Composer({
 }: Props) {
   const accounts = useActiveStore((s) => s.accounts);
   const groups = useActiveStore((s) => s.groups);
-  const teams = useActiveStore((s) => s.teams);
+  /**
+   * 스토어의 `null` 은 *"목록을 못 받았다"* 다(`appStore.ts::teams`). **후보를 만드는 이
+   * 자리에서는 빈 목록이 사실이다** — 그 목록을 안 주는 서버는 `@팀` 을 해석하지도
+   * 못하므로(#172 가 디렉터리와 멘션을 한 커밋에 넣었다) 지금 부를 수 있는 팀이 없다.
+   * 없는 이름을 후보에 세우면 눌러서 보낸 발화가 아무도 안 깨운다.
+   */
+  const teams = useActiveStore((s) => s.teams) ?? NO_TEAMS;
   const myId = useActiveStore((s) => s.me?.id);
   // 채널이 자동으로 멘션하는 에이전트(#173). 키가 없으면 아직 못 받은 것이고 그때는 칩도 접두도 없다.
   const autoRows = useActiveStore((s) => (autoMentionChannelId ? s.channelAutoMentions[autoMentionChannelId] : undefined));

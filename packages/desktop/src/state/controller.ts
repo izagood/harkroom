@@ -270,10 +270,11 @@ export class Controller {
       me, channels, dms, leases, unread,
       accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
       groups,
-      // 옛 서버는 `teams` 를 안 싣는다 — 그 서버는 팀을 부르지도 못하므로 빈 목록이
-      // 맞다(`ApiClient.accounts` 주석). `?? []` 로 뭉개면 안 되는 값이 아니다:
-      // 여기서 `undefined` 를 스토어에 넣으면 후보 목록이 순회에서 터진다.
-      teams: teams ?? [],
+      // 옛 서버는 `teams` 를 안 싣는다. **그것을 빈 배열로 바꾸지 않는다** — 팀이
+      // 없는 것과 목록을 못 받은 것은 다른 사실이고, 합치면 설정 격자가 있는 팀을
+      // 없다고 단언한다(`appStore.ts::teams` 의 그 표). `undefined` 대신 `null` 인
+      // 것은 "모른다"를 스토어의 값으로 쓰기 위해서다.
+      teams: teams ?? null,
       reads: Object.fromEntries(reads.map((r) => [r.channelId, { lastReadSeq: r.lastReadSeq, unread: r.unread }])),
     });
     // 초안은 기기 로컬에 있으므로 서버 왕복이 없다 — 크리티컬 패스에 둬도 비용이 없다.
@@ -577,24 +578,58 @@ export class Controller {
   private accountsInFlight: Promise<void> | null = null;
   private lastAccountsRefresh = 0;
   private static readonly ACCOUNTS_REFRESH_INTERVAL_MS = 5_000;
+  /**
+   * 나간 순서와 **적용된 순서**를 재는 두 번호. 아래 `force` 가 진행 중인 조회를
+   * 앞지를 수 있게 된 순간부터, 두 응답이 겹쳐 도착할 수 있다 — 늦게 온 낡은 응답이
+   * 새 것을 덮으면 이 함수가 고치려는 그 상태(스토어가 옛 디렉터리를 든다)로 되돌아간다.
+   */
+  private accountsSeq = 0;
+  private accountsAppliedSeq = 0;
 
+  /**
+   * 디렉터리를 다시 읽는다.
+   *
+   * ## `force` 는 **진행 중인 조회에 합류하지 않는다**
+   *
+   * 합류는 스로틀과 같은 목적으로 있다 — 미지의 작성자가 연달아 오면 같은 조회가 폭주하고,
+   * 그때는 이미 나간 것 하나로 충분하다. **`force` 는 그 경우가 아니다:** 사람이 방금
+   * 팀을 만들었거나(`AgentsSettings::reloadTeams`) 서버가 바뀌었다고 알려 온 것이고
+   * (`agent_team.changed`·`handle_group.changed`), 진행 중인 조회는 **그 사건이 일어나기
+   * 전에 시작된 것**이라 새 팀이 실려 있을 리가 없다. 앞 판은 `??=` 하나로 둘을 같이
+   * 처리해서, 갱신을 부른 그 순간 다른 조회가 떠 있으면 `force` 가 조용히 무력화됐다 —
+   * 만든 팀이 격자에 안 나타나고 다음 갱신까지 그대로 남는다.
+   *
+   * 그래서 `force` 는 늘 새 요청을 낸다. 대신 겹쳐 도착하는 응답의 순서를 **번호로**
+   * 지킨다(위 두 필드): 먼저 나간 응답이 나중에 도착해도 새 것을 덮지 못한다.
+   */
   refreshAccounts(opts: { force?: boolean } = {}): Promise<void> {
     const now = Date.now();
-    if (!opts.force && now - this.lastAccountsRefresh < Controller.ACCOUNTS_REFRESH_INTERVAL_MS) {
-      return Promise.resolve();
+    if (!opts.force) {
+      if (now - this.lastAccountsRefresh < Controller.ACCOUNTS_REFRESH_INTERVAL_MS) {
+        return Promise.resolve();
+      }
+      if (this.accountsInFlight) return this.accountsInFlight;
     }
     this.lastAccountsRefresh = now;
-    this.accountsInFlight ??= this.api
+    const seq = ++this.accountsSeq;
+    const inFlight = this.api
       .accounts()
       .then(({ accounts, groups, teams }) => {
+        // 나보다 뒤에 나간 응답이 이미 적용됐으면 아무것도 하지 않는다.
+        if (seq < this.accountsAppliedSeq) return;
+        this.accountsAppliedSeq = seq;
         this.store.getState().set({
           accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
           groups,
-          teams: teams ?? [],
+          // `?? null` 인 이유는 `start()` 의 같은 자리 주석에 있다.
+          teams: teams ?? null,
         });
       })
-      .finally(() => { this.accountsInFlight = null; });
-    return this.accountsInFlight;
+      // 합류시킬 대상은 **가장 최근에 나간 것**이다 — 늦게 끝난 옛 요청이 그 자리를
+      // 비우면, 아직 도는 새 요청이 있는데도 다음 호출이 또 하나를 낸다.
+      .finally(() => { if (this.accountsInFlight === inFlight) this.accountsInFlight = null; });
+    this.accountsInFlight = inFlight;
+    return inFlight;
   }
 
   /**
@@ -876,7 +911,10 @@ export class Controller {
   private recordNotifiedGap(messageId: string, body: string, notified: NotifiedResult): void {
     const state = this.store.getState();
     const groups = state.groups;
-    const teams = state.teams;
+    // 목록을 못 받은 서버에서는 **빈 목록이 사실이다** — 그 서버는 `@팀` 을 해석하지
+    // 못하므로(#172 가 디렉터리와 멘션을 한 커밋에 넣었다) 부를 수 있는 팀이 없다.
+    // 이 `??` 는 뭉개는 것이 아니라 이 자리의 판단이다(`appStore.ts::teams` 의 그 표).
+    const teams = state.teams ?? [];
     const recipients = bodyRecipients(
       body,
       Object.values(state.accounts).map((a) => a.handle),
