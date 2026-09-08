@@ -1204,6 +1204,402 @@ export const en = {
   // | 최근 댓글 보기 | `View recent replies` | `View in thread`(옛 문구)는 목적지를 말했다. 새 목적지는 스레드 머리가 아니라 **이 말 뒤의 댓글**이라 그것을 말한다 |
   // ---------------------------------------------------------------------------
 
+  // ---------------------------------------------------------------------------
+  // composer — **화면 이름이다.** `components/Composer.tsx` 가 그리는 말이고, 이 말들을
+  // 내는 판정이 `lib/` 에 없다: 작성창이 스스로 쓰는 라벨·오류·안내다.
+  //
+  // 영역 이름이 `channel.composer` 가 아닌 이유는 `agents` 머리말의 *"한 화면 = 한 영역"*
+  // 그대로다 — 작성창은 채널·스레드·DM 어디에나 서는 **자기 완결된 화면**이고, 채널
+  // 영역을 만들어 그 아래 넣으면 셋째 칸을 작성창의 구획이 다 먹는다.
+  //
+  // | 덩어리 | 그 구획 |
+  // |---|---|
+  // | `attach` | 첨부 — 끌어다 놓기 · 업로드 실패 |
+  // | `mention` | 멘션 칩 · 「부를 상대」 줄 |
+  // | `schedule` | 예약 발송 — 겹창 · 목록 · 취소 |
+  // | `send` | 전송 · 보냄 취소(대기 줄) |
+  //
+  // 덩어리 안은 **키 이름 알파벳순**이다(근거는 `sidebar` 머리말과 같다 — 리베이스).
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 여기에 놓으면 첨부된다 | `Drop to attach` | 원래 문장은 조건절이지만 이것은 **끌고 있는 1초 동안만 뜨는 글자**다. 영어에서 조건절(`If you drop it here…`)은 그 순간에 읽히지 않는다 — 명령형이 곧 그 자리가 무엇을 받는지를 말한다 |
+  // | 자동 | `Auto` | 칩 안의 배지다. `sidebar.members.autoMentionBadge` 가 **이미 같은 말을 같은 뜻으로** 쓰고 있다 — 아래 `common` 판단 참고 |
+  // | 부를 상대 | `Reaching` | `Recipients` 는 이미 보낸 것의 명단으로 읽힌다. 이 줄은 **아직 안 보낸 본문**이 지금 부르고 있는 것이라, 진행형이 그 미완을 진다 |
+  // | 보내는 중… | `Sending…` | |
+  // | 보냄 취소 | `Undo` | 원래 `aria-label` 이 이미 `Undo send` 였다 — 보이는 글자를 그 이름과 어긋나게 두지 않는다. 버튼이 대기 줄 안에 서므로 `send` 는 문맥이 이미 말한다 |
+  // | 보내지 못함 | `Not sent` | `Failed` 는 동작을 탓하고, 이 줄이 말하는 것은 **그 글이 지금 안 나갔다**는 상태다(`en.ts` 머리말의 `The X was not Yed` 와 같은 축) |
+  // | 나중에 보내기 | `Send later` | |
+  // | 예약 발송 | `Schedule this message` | 겹창 제목이다. `Schedule` 한 낱말은 명사(일정표)로도 읽혀 무엇을 예약하는지가 빠진다 |
+  // | 예약 {n}건 | `{count} scheduled` | 수량이라 복수형이 갈릴 것 같지만 **안 갈린다** — `scheduled` 는 여기서 형용사이고 셀 수 있는 명사가 아니다(`1 scheduled` · `2 scheduled` 둘 다 맞다) |
+  // | 첨부 {n}개 | `{count} attachment(s)` | **여기는 갈린다** — 명사를 세기 때문이다. 그래서 복수형 묶음이다 |
+  // | ({n}명) | `({count})` | **숫자만 남긴다.** 한국어의 `명`은 사람 세는 단위인데 집합에는 에이전트도 든다 — 원래 문구가 이미 부정확했고, 영어에서 `people` 로 옮기면 그 부정확이 굳는다. 괄호 안의 수가 `@release` 옆에 서면 그것이 구성원 수라는 것은 자리가 말한다 |
+  // | (채널 전체) | `(everyone here)` | `(whole channel)` 은 채널이라는 **그릇**을 가리키고, 이 줄이 세는 것은 그 안의 **사람들**이다. 위 `({count})` 와 같은 축에 서야 한다 |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`m.failedReason`** — 서버가 준 사유다. `sidebar.runner.launchFailed` 가 `{reason}` 을
+  //   감싸기만 하는 것과 같은 경계다
+  // - **`placeholder` prop** — 이 화면이 짓는 말이 아니라 **호출자가 넘기는 값**이다
+  //   (`ChannelPane` 의 `Message {target}` · `ThreadPanel` 의 `Reply…`). 둘 다 이미 영어이고,
+  //   옮기는 것은 그 화면들의 몫이다
+  // - **`@` · `📎` · `🕐` · `×` · `▼` · `▶`** — 글자가 아니라 기호다. 접근 이름은 이미 영어였다
+  // ---------------------------------------------------------------------------
+
+  /** 끌고 있는 동안만 뜬다 — 그래서 조건절이 아니라 명령형이다(위 표). */
+  'composer.attach.drop': 'Drop to attach',
+  /**
+   * 업로드 실패. **크기를 단정하지 않는다** — 화면은 서버가 왜 거절했는지 모르고
+   * (413 인지 다른 이유인지), 원래 한국어도 `~일 수 있다`로 그 모름을 지고 있었다.
+   * 그 모름을 지우면 사람은 파일을 줄여 다시 시도하다가 진짜 이유를 못 찾는다.
+   */
+  'composer.attach.uploadFailed': '{filename} was not uploaded — it may be over the size limit',
+
+  'composer.mention.autoBadge': 'Auto',
+  /**
+   * 자동 멘션 칩의 `title`. **`sidebar.members.autoMentionNote` 와 한 쌍이다** — 그쪽이
+   * *"작성창의 칩 × 로 한 번만 뺀다"* 고 약속했으므로, 이 칩은 자기가 **채널이 건 것**임을
+   * 말해야 그 약속의 대상임이 읽힌다. `Auto-mentioned` 만 두면 누가 걸었는지가 빠진다.
+   */
+  'composer.mention.autoTitle': 'This channel mentions it automatically',
+  /** 채널 전체를 부르는 이름 옆. **그릇이 아니라 사람들을 센다**(위 표). */
+  'composer.mention.channelAll': '(everyone here)',
+  /**
+   * 집합·팀의 구성원 수. **단위를 안 적는다** — 그 집합에는 사람도 에이전트도 들고,
+   * 한국어의 `명`은 앞엣것만 세는 말이라 원래 문구가 이미 부정확했다(위 표).
+   */
+  'composer.mention.groupCount': '({count})',
+  'composer.mention.reaching': 'Reaching',
+  /** 위 줄의 접근 이름. 보이는 글자와 같은 말이라 한 키로 두지 않는 이유가 없다. */
+  'composer.mention.reachingLabel': 'Reaching',
+
+  'composer.schedule.cancel': 'Cancel',
+  /** 예약 하나를 무르는 `×` 의 접근 이름. 위 `cancel`(겹창을 닫는 것)과 **다른 일이다.** */
+  'composer.schedule.cancelOne': 'Cancel this scheduled message',
+  'composer.schedule.cancelFailed': 'The scheduled message was not cancelled',
+  /**
+   * 첨부가 붙으면 예약할 수 없다. **막는 사실과 빠져나갈 길을 함께 준다** — 앞만 적으면
+   * 사람은 첨부를 떼야 하는지 지금 보내야 하는지를 스스로 알아내야 한다.
+   */
+  'composer.schedule.hasAttachments':
+    'A message with attachments cannot be scheduled — remove the attachments, or send it now',
+  'composer.schedule.failed': 'The message was not scheduled',
+  /** 실패한 예약의 사유 앞. **`{reason}` 은 서버 것이라 사전이 안 진다**(위 '안 넣은 것'). */
+  'composer.schedule.notSent': 'Not sent: {reason}',
+  /** 목록 조회 실패. **빈 목록과 갈라야 한다**(design.md §4) — 그래서 `did not arrive` 다. */
+  'composer.schedule.listFailed': 'The scheduled list did not arrive',
+  'composer.schedule.later': 'Send later',
+  /** 겹창을 여는 것이 아니라 **거는 것**이다. 눌린 뒤 글자가 바뀐다. */
+  'composer.schedule.submit': 'Schedule',
+  'composer.schedule.submitting': 'Scheduling…',
+  /** **셀 수 있는 명사가 아니다** — `1 scheduled` 도 `2 scheduled` 도 맞다(위 표). */
+  'composer.schedule.summary': '{count} scheduled',
+  /** 그중 실패한 것. 앞의 요약 뒤에 이어 붙는다. */
+  'composer.schedule.summaryFailed': ' · {count} failed',
+  'composer.schedule.timeLabel': 'Send at',
+  'composer.schedule.title': 'Schedule this message',
+
+  /** 첨부만 있고 글이 없을 때 대기 줄이 무엇을 보내는지 말한다. **여기는 복수형이 갈린다.** */
+  'composer.send.attachmentsOnly': {
+    one: '{count} attachment',
+    other: '{count} attachments',
+  },
+  'composer.send.sending': 'Sending…',
+  'composer.send.submit': 'Send',
+  /** 보이는 글자. 접근 이름이 이미 `Undo send` 였으므로 그와 어긋나지 않게 둔다(위 표). */
+  'composer.send.undo': 'Undo',
+
+  // ---------------------------------------------------------------------------
+  // grid — **에이전트 격자다.** `settings/AgentGrid.tsx` 가 그리고, 이 컴포넌트는
+  // **두 자리에 선다**(`AgentGridPlace`: 설정의 격자 · 사이드바의 에이전트 칸).
+  //
+  // ## 왜 `agents.grid.*` 에 안 붙였나 — `en.ts` 의 '남은 것' 표가 그렇게 적었는데
+  //
+  // 그 표는 *"`AgentGrid` … **`agents.*` 에 붙는다** — 같은 화면의 격자이고"* 라고
+  // 적어 뒀다. **실측하니 그 전제가 틀렸다**: `AgentGrid` 는 `AgentsSettings` 의 일부가
+  // 아니라 **두 화면이 공유하는 컴포넌트**다(`AgentGridPlace` 주석이 그 계약을 못 박고
+  // 있다 — 사이드바가 같은 카드를 쓴다). `agents` 영역에 넣으면 사이드바가 그리는 카드가
+  // **남의 화면 이름으로 된 키**를 부르게 되고, 그것은 `waitChain` 머리말이 이미 경계한
+  // 그 결함이다(*"같은 판정을 두 화면이 그리면 화면 이름을 쓴 순간 둘 중 하나가 남의
+  // 키를 부른다"*). 그래서 **그리는 것의 이름**으로 영역을 연다 — 격자다.
+  //
+  // 기존 `agents.grid.*` 넷(`heading`·`note`·`tabAgents`·`tabTeams`·`listFailed`)은
+  // **그대로 둔다**: 그것들은 이 컴포넌트가 아니라 `AgentsSettings` 가 격자 **위에**
+  // 그리는 머리띠이고, 사이드바는 그 문구를 안 쓴다.
+  //
+  // | 덩어리 | 그 구획 |
+  // |---|---|
+  // | `card` | 카드 안 정보 세 줄 · 진행 중 상태 글자 |
+  // | `runner` | 격자 아래 러너 사유 줄 셋(실패 · 하네스 없음 · 생사 모름) |
+  // | `search` | 검색줄 · 개수 · 빈 결과 |
+  // | `version` | 러너 버전 칩 3종 |
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 뒤처짐 · 버전 모름 | `Outdated` · `Version unknown` | **`en.ts` 머리말 표가 이미 정했다**(그 표의 아래 셋) — 다음 PR 이 어휘를 다시 정하지 않도록 남겨 둔 그 판단이고, 이 PR 이 그 다음 PR 이다 |
+  // | 멈추는 중 · 러너가 아직 못 봤다 | `Stopping — the runner has not seen it yet` | `Stopping` 도 그 표가 정한 낱말이다. 뒤 절반이 요점이다: 요청이 **실패한 것이 아니라 아직 안 읽힌 것**이라, 그것을 자르면 사람은 다시 누른다 |
+  // | 물러나는 중 · 진행 중인 턴을 끝내고 있다 | `Stepping down — finishing the turn it is on` | `Stopping` 과 **갈려야 한다**: 앞엣것은 요청이 아직 안 닿은 것이고 이것은 러너가 받아들여 물러나는 중이다. `agents.stop.noteFinish` 가 이미 `finishing the turn it is on` 으로 그 사실을 적었으므로 같은 말을 쓴다 |
+  // | 기동 실패 | `Did not start` | `sidebar.runner.launchFailed`·`agents.detail.launchFailed` 가 이미 그 낱말이다 — 같은 사실을 세 화면이 다른 말로 하지 않는다 |
+  // | 새 에이전트 | `New agent` | `+` 칸의 이름이다. `Add agent`(`agents.detail.titleNew`)는 **그 화면의 제목**이라 이 칸의 이름과 뜻이 겹치지 않는다 — 여기는 문을 가리키고 저기는 그 안에 선 화면이다 |
+  // | 서버와 끊겨 … 생사를 알 수 없다 | `Disconnected — …` | `agents.detail.disconnected`·`sidebar.brand.disconnected` 와 같은 규율이다: **`Disconnected` 한 단어로 끝내지 않는다** |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`runnerStates[id].message`** — `lib/runnerLauncher.ts` 가 내는 사유다. **이 파일
+  //   밖이고**, `agents` 머리말이 세운 경계 그대로다(*"이 화면은 그 값을 감싸는 틀만
+  //   사전으로 옮긴다"*). 아래 `runner.harnessMissing` 이 그 값이 **없을 때만** 쓰는
+  //   기본 문구인 이유도 그것이다 — 있으면 러너의 말이 이긴다
+  // - **`↻` · `▶` · `■` · `+` · `⌕`** — 기호다. 접근 이름은 아래 키들이 진다
+  // - **`{handle}` · `{version}`** — 사람이 지은 이름과 러너가 보고한 값이다
+  // ---------------------------------------------------------------------------
+
+  'grid.card.harness': 'Harness',
+  /** 모델이 `null` 일 때. **'모른다'가 아니라 '하네스가 고른다'다**(`AgentConfig.model`). */
+  'grid.card.harnessDefault': 'harness default',
+  'grid.card.lastTurn': 'Activity',
+  /** 카드 왼쪽 라벨. 값은 `VersionChip` 이 낸다. */
+  'grid.card.runner': 'Runner',
+  /**
+   * 러너가 받아들여 물러나는 중. **아래 `stopping` 과 갈린다** — 그쪽은 요청이 아직 안
+   * 닿은 것이고 이것은 닿아서 마무리하는 중이다. 한 문구로 뭉치면 사람은 두 번 누른다.
+   */
+  'grid.card.retiring': 'Stepping down — finishing the turn it is on',
+  /**
+   * 종료를 요청했는데 러너가 아직 못 읽었다. **`Stopped` 가 아니다**(`agents.stop.requested`
+   * 와 같은 규율) — 읽어 가지 않았으면 아무 일도 일어나지 않았다.
+   */
+  'grid.card.stopping': 'Stopping — the runner has not seen it yet',
+
+  /**
+   * 하네스가 없어 물러난 러너(`#476`). **러너가 사유를 주면 그것을 쓴다** — 이 문구는
+   * 그 값이 없을 때만 서는 기본값이다(위 '안 넣은 것').
+   */
+  'grid.runner.harnessMissing': 'The harness could not be found',
+  'grid.runner.launchFailed': 'Did not start',
+  /** 사유가 붙을 때. **사유 문구는 러너 것이라 사전이 안 진다.** */
+  'grid.runner.launchFailedReason': 'Did not start — {reason}',
+  /**
+   * 서버와 끊긴 동안. **한 줄로 묶는다** — 끊기면 남의 러너가 전부 이 상태가 되고,
+   * 40줄이 깔리면 그것이 곧 소음이다(원래 주석이 적어 둔 그 판단이다).
+   *
+   * **`Offline` 이라고 하지 않는다**: 마지막으로 본 상태이지 지금 상태가 아니라는 것이
+   * 이 줄 전체의 요점이다. 복수형이 갈린다.
+   */
+  'grid.runner.presenceUnknown': {
+    one: 'Disconnected — whether {count} agent is alive cannot be known. This is the last state '
+      + 'seen, not the state now. It refreshes when the connection is back.',
+    other: 'Disconnected — whether {count} agents are alive cannot be known. This is the last '
+      + 'state seen, not the state now. It refreshes when the connection is back.',
+  },
+
+  /** `+` 칸. **`Add agent` 와 갈린다** — 이것은 문의 이름이고 그것은 그 안 화면의 제목이다. */
+  'grid.search.create': 'New agent',
+  /** 목록이 비었다 — **못 찾은 것과 다른 사실이다**(아래 `noMatch`). */
+  'grid.search.empty': 'No agents yet',
+  'grid.search.label': 'Search agents',
+  /** 검색으로 못 찾았을 때. 무엇으로 찾았는지를 되비춘다 — 오타가 그 자리에서 보인다. */
+  'grid.search.noMatch': 'No agent matches “{query}”',
+  'grid.search.placeholder': 'Find by name',
+  /**
+   * 검색창 안의 개수. **몇 개를 뒤지고 있는지가 찾기 전에 보여야 한다**(원래 주석).
+   * 한국어는 `{count}개` 로 단위를 붙이지만 영어는 숫자만 선다 — 옆에 `Search agents`
+   * 라는 이름이 이미 있어 무엇을 세는지는 자리가 말한다.
+   */
+  'grid.search.count': '{count}',
+
+  /** 앱과 같은 번들. **회색으로 조용히 적는다** — 값 자체가 글자다. */
+  'grid.version.current': '{version}',
+  /**
+   * 뒤처진 러너. `en.ts` 머리말이 정한 `Outdated` 다. 칩이 눌리는 자리라 **접근 이름이
+   * 따로 있다**(아래) — 색은 스크린리더에 아무 말도 하지 않는다(`#443`).
+   */
+  'grid.version.stale': '{version} · Outdated',
+  /**
+   * 그 칩의 접근 이름. **무엇을 하는 버튼인지와 왜인지를 함께 진다** — 칩 글자가 `↻` 로
+   * 끝나므로 그것이 무슨 일인지는 이름만이 말할 수 있다.
+   */
+  'grid.version.staleAction': 'Restart the runner of {handle} — {version} is behind the app',
+  /**
+   * 버전을 모르는 러너. **칩을 안 그리는 것이 아니라 모른다고 적는다** — 안 그리면
+   * "러너가 없다"와 구분되지 않는다(원래 주석이 이 칩을 만든 이유가 그것이다).
+   */
+  'grid.version.unknown': 'Version unknown',
+
+  /** 격자의 `▶`·`↻` 접근 이름. 하는 일이 갈리므로 **두 낱말이 따로 있다.** */
+  'grid.card.relaunch': 'Start {handle}',
+  'grid.card.relaunchFailed': 'Start {handle} again',
+  'grid.card.stop': 'Stop {handle}',
+
+  // ---------------------------------------------------------------------------
+  // inbox — **화면 이름이다.** `components/Inbox.tsx` 가 그리는 말이다.
+  //
+  // **사슬 구획은 여기 없다** — `waitChain.*` 이 이미 그것을 지고 있고(그 머리말: 판정
+  // 이름이지 화면 이름이 아니다), 이 화면은 `WaitChainSection` 을 부르기만 한다.
+  // 구획의 `aria-label` 도 `waitChain.sectionTitle` 을 그대로 쓴다 — 같은 말을 두 번
+  // 적으면 그중 하나가 낡는다.
+  //
+  // | 덩어리 | 그 구획 |
+  // |---|---|
+  // | `drafts` | 「쓰다 만 초안」 구획 |
+  // | `entries` | 「나를 부른 것」 구획 — 줄의 꼬리표 · 빈 상태 |
+  // | `filter` | 필터 칩 넷 |
+  // | `pane` | 자리 자체 — 이름 · 닫기 · 조회 실패 · 대기 |
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 나를 부른 것 | `Called you` | `Mentions` 는 수단(`@`)을 가리키는데 이 구획에는 답글·물음도 든다(`reason` 이 셋이다). 이 목록의 기준은 **나에게 왔는가**이지 어떻게 왔는가가 아니다 |
+  // | 나를 막는 것 | `Blocking you` | 규칙 04 가 강조를 주는 그 축이고, `waitChain` 이 이미 `waiting`/`blocked` 어휘를 쓴다 |
+  // | 읽을 것 | `To read` | `Unread` 는 바로 옆 칩(`안 읽은 것`)의 이름이라 겹친다 — 이쪽은 rank 축(무엇이 나를 부르나)이고 그쪽은 내 읽음 상태다. **축이 다르다는 것이 이름에서 갈려야 한다** |
+  // | 안 읽은 것 · 안 읽음 | `Unread` | 칩과 줄 끝 표시가 같은 말을 한다 — 한 키다 |
+  // | 전부 | `Everything` | `sidebar.notify.all` 이 이미 그 낱말이고 뜻도 같다. 아래 `common` 판단 참고 |
+  // | 쓰다 만 초안 | `Unfinished drafts` | `Drafts` 만 두면 저장된 초안함으로 읽힌다. 이것은 **쓰다 만 것**이고, 그 미완이 목록에 서는 이유다 |
+  // | 초안 | `Draft` | 줄의 꼬리표. 위 구획 이름과 갈라 둔다 — 꼬리표는 그 한 줄이 무엇인지만 말한다 |
+  // | 인박스를 불러오지 못했다 | `The inbox did not arrive` | `did not arrive` 규율(`en.ts` 머리말) |
+  // | 필터에 맞는 것이 없다 | `Nothing matches the filter` | **`나를 부른 것이 없다` 와 갈린다** — 하나는 목록이 비었고 하나는 걸러 낸 것이다. 원래 화면이 그 둘을 갈라 뒀고 그 구별이 이 목록의 값이다 |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`row.label` · `o.label`** — `lib/inboxRow.ts` 판정과 서버의 선택지 문구다.
+  //   **이 파일 밖이다**(`agents` 머리말의 경계)
+  // - **`channelLabel`** — `#general` · handle 이다. 사람이 지은 이름을 번역하지 않는다
+  // - **`✕`** — 기호다. 접근 이름은 `pane.close` 가 진다
+  // - **`Inbox`(머리글)** — 이미 영어다. 그러나 **키를 씌운다**: 다음 언어가 그 자리를
+  //   자기 말로 적을 수 있어야 하고, 지금 영어인 것은 우연이지 계약이 아니다
+  // ---------------------------------------------------------------------------
+
+  'inbox.drafts.badge': 'Draft',
+  'inbox.drafts.empty': 'No unfinished drafts',
+  /**
+   * 구획 이름(랜드마크)과 눈에 보이는 머리글을 **가른다** — `waitChain.sectionTitle` /
+   * `sectionTitleCount` 가 이미 그 모양이다. 랜드마크는 **자리의 이름**이라 그 안의
+   * 개수가 섞이면 목록이 바뀔 때마다 이름이 달라지고, 스크린리더로 자리를 오가는
+   * 사람에게는 매번 다른 구획처럼 들린다.
+   */
+  'inbox.drafts.heading': 'Unfinished drafts',
+  'inbox.drafts.headingCount': 'Unfinished drafts ({count})',
+  /** 채널을 못 알아낸 스레드 초안. **`scopeKey` 를 그대로 내는 자리의 앞말이다.** */
+  'inbox.drafts.thread': 'thread',
+
+  /** 목록이 비었다 — **걸러 낸 것과 다른 사실이다**(아래 `noMatch`). */
+  'inbox.entries.empty': 'Nothing has called you',
+  /** 위 `drafts.heading` 과 같은 이유로 갈라 둔다 — 랜드마크 이름에 수를 안 섞는다. */
+  'inbox.entries.heading': 'Called you',
+  'inbox.entries.headingCount': 'Called you ({count})',
+  /** 걸러 냈을 때. 칩을 되돌리면 다시 나온다는 것이 이 문장과 빈 목록의 차이다. */
+  'inbox.entries.noMatch': 'Nothing matches the filter',
+  /** 줄이 스레드에서 왔다. 앞의 `·` 는 화면이 붙인다. */
+  'inbox.entries.thread': 'thread',
+  /** 줄 끝의 안 읽음 표시. **칩(`filter.unread`)과 같은 말이다** — 한 키로 둔다. */
+  'inbox.entries.unread': 'Unread',
+
+  'inbox.filter.all': 'Everything',
+  'inbox.filter.blocking': 'Blocking you',
+  /** **rank 축이 아니라 읽음 축이다**(원래 주석이 그 어긋남을 알면서 뒀다). */
+  'inbox.filter.unread': 'Unread',
+  /** rank 축. **위 `unread` 와 이름이 겹치면 안 된다**(위 표). */
+  'inbox.filter.reading': 'To read',
+
+  'inbox.pane.close': 'Close the inbox',
+  /**
+   * 조회 실패. **빈 목록으로 삼키지 않는다** — 실패했는데 빈 목록만 보이면 사람은
+   * "아무도 나를 부르지 않았다"로 읽는다(원래 주석). `{reason}` 은 서버 것이다.
+   */
+  'inbox.pane.loadFailed': 'The inbox did not arrive — {reason}',
+  'inbox.pane.loading': 'Loading…',
+  'inbox.pane.retry': 'Try again',
+  /** 자리의 이름(`aria-label`)이자 머리글. 스크린리더가 이 구획을 찾는 이름이다. */
+  'inbox.pane.title': 'Inbox',
+
+  // ---------------------------------------------------------------------------
+  // profile — **화면 이름이다.** `components/Profile.tsx` 가 그리는 겹창이고,
+  // **사람과 에이전트가 같은 틀을 쓴다**(그 화면 주석: 행 이름만 다르다).
+  //
+  // | 덩어리 | 그 구획 |
+  // |---|---|
+  // | `actions` | 아래 버튼 줄 — 설정 · 재기동 · DM |
+  // | `rows` | 정의 목록의 행 이름과 값 |
+  // | `runner` | 러너 상태 안내 두 줄(뒤처짐 · 재기동 예약) |
+  //
+  // ## 영어를 새로 설계한 자리
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 종류 · 사람 · 에이전트 | `Kind` · `Person` · `Agent` | `sidebar.members.kindHuman`/`kindAgent` 가 **이미 그 두 낱말**이고 뜻도 같다. 아래 `common` 판단 참고 |
+  // | 연결 — 알 수 없음 / 온라인 / 응답 없음 | `Presence` — `Unknown` / `Online` / `Not responding` | 행 이름이 `Connection` 이면 소켓 상태로 읽힌다. 이 행이 말하는 것은 **그 에이전트가 지금 답하는가**이고 그 말이 `presence` 다(코드가 이미 `online`·`presence` 로 부른다). `응답 없음` 은 `waitChain.deadlockDeadRunner` 의 `is not responding` 과 같은 사실이라 같은 낱말을 쓴다 |
+  // | 비활성 | `Disabled` | `sidebar.members.agentDisabled` 와 같은 말이다 |
+  // | 하네스 기본값 — 실제 모델은 발화 이름줄 hover 로 본다 | `harness default — hover a message byline for the model that actually answered` | **뒤 절반이 요점이다**(`#600`): `null` 은 '모델 없음'이 아니라 '이 설정이 정하지 않는다'이고, 그러면 murmur 는 실제 모델을 **모른다**. 어디서 볼 수 있는지를 자르면 사람은 이 행을 "실제로 쓰는 모델"로 읽는다 |
+  // | 스레드마다 새로 만든다 | `a fresh directory for each thread` | `agents.permissions.workingDirPlaceholder` 가 이미 `a fresh empty directory for each thread` 로 같은 사실을 적었다 |
+  // | 버전을 모른다 — 재기동하면 채워진다 | `Version unknown — restart it once and it fills in` | **원인을 가르지 않는다**(원래 주석): 환경변수를 못 받았든 보고가 없었든 사람이 할 일은 하나다 |
+  // | (앱 {v}) | `(app {version})` | **비교 대상이 함께 있어야 한다**(원래 주석) — 러너 버전만 알면 뒤처졌는지를 스스로 확인할 수 없다 |
+  // | 뒤처진 번들 | `an outdated bundle` | `Outdated` 는 `en.ts` 머리말이 정한 낱말이다 |
+  // | 재기동을 예약했다 | `A restart is queued` | `Restarting` 은 **지금 하고 있다**로 읽히는데, 실제로는 진행 중인 턴이 끝나기를 기다리는 중이다(`#384` 가 이미 고친 그 오해다) |
+  // | 새 버전으로 재기동 / 러너 재기동 | `Restart on the new bundle` / `Restart the runner` | **이름이 사실을 약속한다**(원래 주석): 뒤처졌다고 **확인된** 때만 "새 버전으로"라고 쓴다 |
+  //
+  // ## 사전에 **안** 넣은 것
+  //
+  // - **`agent.harness`** — 값 자체다(`claude-code`). `agents` 머리말이 `harness` 를 고유어로
+  //   못 박았고, 그 값은 더더욱 그렇다
+  // - **`lastTurnLabel`** — `AgentsSettings` 의 함수이고 `agents.detail.lastTurn`·
+  //   `agents.detail.noActivity` 를 이미 지난다. 이 화면은 부르기만 한다
+  // - **`admin`** — 고유어다(`agents` 머리말)
+  // - **`@handle` · `DM`** — 이름과 이 제품의 말이다
+  // ---------------------------------------------------------------------------
+
+  /** 설정으로 가는 문. **`canSeeConfig` 인 사람에게만 선다** — 없는 사람에게는 문이 없다. */
+  'profile.actions.agentSettings': 'Agent settings',
+  'profile.actions.dm': 'Open a DM',
+  /** 예약을 무른다. 러너는 계속 돈다 — 무르는 것은 **예약**이지 러너가 아니다. */
+  'profile.actions.restartCancel': 'Cancel the queued restart',
+  /** 뒤처졌다고 **확인됐을 때만** 이 이름이다(위 표). */
+  'profile.actions.restartStale': 'Restart on the new bundle',
+  'profile.actions.restart': 'Restart the runner',
+
+  'profile.rows.harness': 'Harness',
+  'profile.rows.kind': 'Kind',
+  'profile.rows.kindAgent': 'Agent',
+  'profile.rows.kindHuman': 'Person',
+  'profile.rows.lastTurn': 'Last activity',
+  'profile.rows.model': 'Model',
+  /** `null` 은 **'모른다'가 아니라 '하네스가 고른다'다**(`#600`). 뒤 절반이 그 사실을 진다. */
+  'profile.rows.modelDefault':
+    'harness default — hover a message byline for the model that actually answered',
+  'profile.rows.owner': 'Owner',
+  'profile.rows.permission': 'Permission',
+  'profile.rows.presence': 'Presence',
+  'profile.rows.presenceNotResponding': 'Not responding',
+  'profile.rows.presenceOnline': 'Online',
+  /** **`connected` 가 false 면 '모른다'다** — 오프라인이 아니다(그 화면의 규약). */
+  'profile.rows.presenceUnknown': 'Unknown',
+  'profile.rows.runnerVersion': 'Runner version',
+  /** 앱 버전을 아는 경우. **비교 대상이 함께 서야 뒤처짐을 스스로 확인할 수 있다.** */
+  'profile.rows.runnerVersionWithApp': '{version} (app {appVersion})',
+  /** 원인 둘을 **가르지 않는다** — 사람이 할 일이 하나다(위 표). */
+  'profile.rows.runnerVersionUnknown': 'Version unknown — restart it once and it fills in',
+  'profile.rows.state': 'State',
+  'profile.rows.stateDisabled': 'Disabled',
+  'profile.rows.title': '{handle} profile',
+  'profile.rows.workingDir': 'Working directory',
+  'profile.rows.workingDirPerThread': 'a fresh directory for each thread',
+
+  /**
+   * 재기동 예약. **기다린다는 사실이 화면에 있어야 한다**(`#384`) — SIGTERM 은 graceful
+   * 이라 러너는 진행 중인 턴을 마친 뒤에야 죽고, 그동안 표시가 없으면 사람에게는
+   * "눌렀는데 아무 일이 없다"다. `{strong…}` 은 굵게 그릴 마디다.
+   */
+  'profile.runner.restartQueued':
+    'A restart is queued — it comes up on the new bundle once {strongTurn} is done. The turn is not cut.',
+  'profile.runner.restartQueuedTurn': 'the turn in flight',
+  /** 뒤처짐 안내. 누르기 전에 **무엇을 갈아 끼우는지**를 말한다. */
+  'profile.runner.stale':
+    'This runner is on {strongBundle} — restarting it moves it to the new one.',
+  'profile.runner.staleBundle': 'a bundle older than the app',
+
   'message.channelEcho': 'Also sent to the channel',
   /**
    * 출처 줄의 라벨. **뿌리 본문은 이 문장에 끼우지 않는다** — 화면에서 그 조각만

@@ -12,6 +12,7 @@ import {
   type MentionQuery,
 } from '../lib/mention';
 import { undoSendStorage } from '../lib/prefs';
+import { useT } from '../i18n/useT';
 
 /** 목록이 화면을 덮지 않을 만큼만 보여준다. 더 좁히는 것은 사용자가 글자를 더 치는 일이다. */
 const MAX_SUGGESTIONS = 8;
@@ -163,6 +164,7 @@ interface HeldMessage {
 export function Composer({
   onSend, placeholder, rows = 2, autoFocus, scopeKey = '', channelId, autoMentionChannelId,
 }: Props) {
+  const t = useT();
   const accounts = useActiveStore((s) => s.accounts);
   const groups = useActiveStore((s) => s.groups);
   /**
@@ -268,7 +270,7 @@ export function Composer({
       .catch((err: unknown) => {
         if (!alive) return;
         setScheduledMessages([]);
-        setListError(errorText(err, '예약 목록을 불러오지 못했다'));
+        setListError(errorText(err, t('composer.schedule.listFailed')));
       });
     return () => { alive = false; };
   }, [channelId]);
@@ -568,7 +570,7 @@ export function Composer({
         setPending((cur) => [...cur, row]);
       } catch {
         // 조용히 사라지면 사용자는 파일이 갔다고 믿는다.
-        setUploadError(`${file.name} 을 올리지 못했다 (크기 제한을 넘었을 수 있다)`);
+        setUploadError(t('composer.attach.uploadFailed', { filename: file.name }));
       }
     }
   };
@@ -837,7 +839,7 @@ export function Composer({
     // 사람은 첨부까지 예약됐다고 믿는다. 그래서 거절하고 이유를 말한다: 첨부는 컴포저에
     // 그대로 남으므로 떼거나 지금 보내는 두 길이 다 열려 있다.
     if (pending.length > 0) {
-      setScheduleError('첨부가 붙은 메시지는 예약할 수 없다 — 첨부를 떼거나 지금 보내라');
+      setScheduleError(t('composer.schedule.hasAttachments'));
       return;
     }
     const api = getController().api;
@@ -850,7 +852,7 @@ export function Composer({
       // 서버가 준 사유(`send_at_in_past`·`send_at_too_far`·`agents_cannot_schedule`)를
       // 그대로 보인다. `ApiError` 는 사유를 `message` 에 들고 오지 `error.message` 가
       // 아니다 — 초판이 그 자리를 잘못 읽어 늘 "예약에 실패했다"만 떴다.
-      setScheduleError(errorText(err, '예약에 실패했다'));
+      setScheduleError(errorText(err, t('composer.schedule.failed')));
       return;
     } finally {
       setIsScheduling(false);
@@ -864,7 +866,7 @@ export function Composer({
     try {
       setScheduledMessages(await api.scheduledMessages(channelId));
     } catch (err: unknown) {
-      setListError(errorText(err, '예약 목록을 불러오지 못했다'));
+      setListError(errorText(err, t('composer.schedule.listFailed')));
     }
   };
 
@@ -877,7 +879,7 @@ export function Composer({
       setScheduledMessages(await api.scheduledMessages(channelId));
     } catch (err: unknown) {
       // 취소가 실패했는데 줄이 그대로 남으면 "눌렀는데 안 지워진다"만 보인다. 사유를 적는다.
-      setListError(errorText(err, '예약을 취소하지 못했다'));
+      setListError(errorText(err, t('composer.schedule.cancelFailed')));
     }
   };
 
@@ -906,7 +908,7 @@ export function Composer({
              자리에 drop 이 떨어진다 — 보이는 것과 받는 것이 갈린다. */
           className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded border-2 border-dashed border-accent bg-accent-surface/90 font-medium text-accent"
         >
-          여기에 놓으면 첨부된다
+          {t('composer.attach.drop')}
         </div>
       )}
       {open && (
@@ -974,7 +976,7 @@ export function Composer({
               key={`auto:${h}`}
               data-testid="auto-mention"
               data-handle={h}
-              title="이 채널이 자동으로 멘션한다"
+              title={t('composer.mention.autoTitle')}
               // 멘션 칩은 **아랫단 11px** — 안의 `자동` 배지가 이미 11px 이라 칩 자체를
               // 본문단으로 두면 칩 하나 안에 두 단이 섰다. 아래 입력칸과 전송·첨부는
               // 본문단이다: 여기서 사람이 읽고 쓰는 것은 글이고, 칩은 그 글이 누구에게
@@ -982,7 +984,7 @@ export function Composer({
               className="flex items-center gap-1 rounded border border-accent bg-accent-surface px-1.5 py-0.5 text-meta font-medium text-accent"
             >
               <span>@{h}</span>
-              <span className="rounded bg-accent px-1 text-meta font-normal text-fg-on-strong">자동</span>
+              <span className="rounded bg-accent px-1 text-meta font-normal text-fg-on-strong">{t('composer.mention.autoBadge')}</span>
               <button
                 type="button"
                 aria-label={`Skip @${h} this time`}
@@ -1030,10 +1032,12 @@ export function Composer({
       {bodyMentionList.length > 0 && (
         <ul
           data-testid="body-mentions"
-          aria-label="부를 상대"
+          aria-label={t('composer.mention.reachingLabel')}
           className="mb-1 flex flex-wrap items-center gap-1 text-meta text-fg-muted"
         >
-          <li>부를 상대:</li>
+          {/* 콜론은 **화면이 붙인다** — 언어마다 갈릴 만한 어순이 여기엔 없고,
+              사전에 넣으면 그 문장부호를 번역하는 사람이 지우게 된다. */}
+          <li>{t('composer.mention.reaching')}:</li>
           {bodyMentionList.map((r) => (
             <li
               key={r.handle}
@@ -1063,10 +1067,10 @@ export function Composer({
               */}
               {r.kind === 'group' && (
                 <span className="text-fg-subtle">
-                  ({groupMemberCounts.get(r.handle) ?? 0}명)
+                  {t('composer.mention.groupCount', { count: groupMemberCounts.get(r.handle) ?? 0 })}
                 </span>
               )}
-              {r.kind === 'channel' && <span className="text-fg-subtle">(채널 전체)</span>}
+              {r.kind === 'channel' && <span className="text-fg-subtle">{t('composer.mention.channelAll')}</span>}
             </li>
           ))}
         </ul>
@@ -1112,7 +1116,8 @@ export function Composer({
           className="mb-1 flex items-center gap-2 rounded bg-surface-sunken px-2 py-1 text-meta text-fg-muted"
         >
           <span className="min-w-0 flex-1 truncate">
-            보내는 중… {held.typed || `첨부 ${held.attachments.length}개`}
+            {t('composer.send.sending')}{' '}
+            {held.typed || t('composer.send.attachmentsOnly', { count: held.attachments.length })}
           </span>
           <button
             type="button"
@@ -1122,7 +1127,7 @@ export function Composer({
             onMouseDown={(e) => e.preventDefault()}
             onClick={undoSend}
           >
-            보냄 취소
+            {t('composer.send.undo')}
           </button>
         </div>
       )}
@@ -1141,8 +1146,9 @@ export function Composer({
               onClick={() => setScheduledExpanded(!scheduledExpanded)}
             >
               <span>
-                예약 {pendingScheduled.length}건
-                {failedScheduled.length > 0 && ` · 실패 ${failedScheduled.length}건`}
+                {t('composer.schedule.summary', { count: pendingScheduled.length })}
+                {failedScheduled.length > 0
+                  && t('composer.schedule.summaryFailed', { count: failedScheduled.length })}
               </span>
               <span aria-hidden="true">{scheduledExpanded ? '▼' : '▶'}</span>
             </button>
@@ -1155,7 +1161,7 @@ export function Composer({
                   <span className="ml-2 shrink-0 text-fg-subtle">{new Date(m.sendAt).toLocaleString()}</span>
                   <button
                     type="button"
-                    aria-label="예약 취소"
+                    aria-label={t('composer.schedule.cancelOne')}
                     className="ml-2 rounded px-1 text-danger hover:bg-danger-surface-strong"
                     onClick={() => void handleCancelScheduled(m.id)}
                   >
@@ -1168,7 +1174,10 @@ export function Composer({
                   <span className="min-w-0 flex-1 truncate">{m.body}</span>
                   {/* 사유는 **글로도** 보여야 한다 — 색만으로 실패를 말하면 색을 못 보는
                       사람에게는 평범한 줄이다. */}
-                  <span className="ml-2 shrink-0">보내지 못함: {m.failedReason}</span>
+                  {/* 사유는 **서버가 준 것**이다 — 사전은 그것을 감싸는 앞말만 진다. */}
+                  <span className="ml-2 shrink-0">
+                    {t('composer.schedule.notSent', { reason: m.failedReason ?? '' })}
+                  </span>
                 </div>
               ))}
             </div>
@@ -1251,7 +1260,7 @@ export function Composer({
           {channelId && (
             <button
               type="button"
-              aria-label="나중에 보내기"
+              aria-label={t('composer.schedule.later')}
               className="rounded px-2 py-0.5 text-fg-muted hover:bg-surface-sunken disabled:opacity-40"
               disabled={!draft.trim()}
               onMouseDown={(e) => e.preventDefault()}
@@ -1272,7 +1281,7 @@ export function Composer({
           onClick={send}
           disabled={!draft.trim() && !pending.length}
         >
-          전송
+          {t('composer.send.submit')}
         </button>
       </div>
       {scheduleModalOpen && (
@@ -1280,10 +1289,10 @@ export function Composer({
           <div className="w-80 rounded-lg bg-surface-raised p-4 shadow-lg">
             {/* 겹창 제목은 **이름줄단 15px** — 화면 제목단(17px)은 화면 하나를 여는 자리
                 (설정·로그인)에만 준다. 16px(`text-base`)이었고 4단 밖이었다. */}
-            <h3 className="mb-3 text-name font-medium">예약 발송</h3>
+            <h3 className="mb-3 text-name font-medium">{t('composer.schedule.title')}</h3>
             <input
               type="datetime-local"
-              aria-label="예약 시각"
+              aria-label={t('composer.schedule.timeLabel')}
               className="mb-3 w-full rounded border border-border bg-field px-3 py-2"
               value={scheduleDateTime}
               min={scheduleMin}
@@ -1298,7 +1307,7 @@ export function Composer({
                 className="rounded px-3 py-1 text-fg-muted hover:bg-surface-sunken"
                 onClick={() => setScheduleModalOpen(false)}
               >
-                취소
+                {t('composer.schedule.cancel')}
               </button>
               <button
                 type="button"
@@ -1306,7 +1315,7 @@ export function Composer({
                 onClick={handleSchedule}
                 disabled={isScheduling || !scheduleDateTime || (scheduleMin !== '' && scheduleDateTime < scheduleMin)}
               >
-                {isScheduling ? '예약 중…' : '예약'}
+                {isScheduling ? t('composer.schedule.submitting') : t('composer.schedule.submit')}
               </button>
             </div>
           </div>
