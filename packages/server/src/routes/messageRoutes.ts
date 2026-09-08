@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@murmur/shared';
+import { MAX_MESSAGE_BODY_CHARS, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@murmur/shared';
 import { emitEvent } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
@@ -16,7 +16,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({
       // 첨부만 보내는 것은 자연스럽다 — 그때 본문은 빈 문자열이다.
-      body: z.string().max(8000),
+      body: z.string().max(MAX_MESSAGE_BODY_CHARS),
       threadRootId: z.string().uuid().optional(),
       attachmentIds: z.array(z.string().uuid()).max(10).optional(),
       alsoInChannel: z.boolean().optional(),
@@ -78,7 +78,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     const { id, messageId } = z.object({
       id: z.string().uuid(), messageId: z.string().uuid(),
     }).parse(req.params);
-    const { body } = z.object({ body: z.string().min(1).max(8000) }).parse(req.body);
+    const { body } = z.object({ body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS) }).parse(req.body);
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }

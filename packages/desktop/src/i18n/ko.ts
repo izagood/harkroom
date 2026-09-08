@@ -790,6 +790,9 @@ export const ko = {
   'composer.paste.confirmDetail': '이 메시지는 {handles} 를 부른다. 부른 수만큼 턴이 따로 뜬다.',
   'composer.paste.confirmSend': '보내기',
   'composer.paste.confirmCancel': '더 고치기',
+  'composer.paste.long': '{chars}자 — 그대로 보내면 대화가 밀린다',
+  'composer.paste.asFile': '파일로 첨부',
+  'composer.paste.moving': '첨부하는 중…',
   'composer.link.pasted': '메시지 링크를 붙여넣었다',
   'composer.link.open': '그 메시지로 이동',
 
@@ -810,6 +813,10 @@ export const ko = {
 
   // 수에 따라 명사가 안 바뀐다 — `other` 하나가 이 언어의 사실이다(위 머리말).
   'composer.send.attachmentsOnly': { other: '첨부 {count}개' },
+  'composer.send.failed': '메시지가 나가지 않았다 — 연결을 확인하고 다시 보내라',
+  'composer.send.tooLong': '{over}자 넘었다 — 상한은 {max}자다',
+  'composer.send.over': '{over}자 넘음',
+  'composer.send.remaining': '{remaining}자 남음',
   'composer.send.sending': '보내는 중…',
   'composer.send.submit': '전송',
   'composer.send.undo': '보냄 취소',

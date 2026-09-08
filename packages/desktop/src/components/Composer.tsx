@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
-import { messagePermalink, parseMessagePermalink, type ScheduledMessageView } from '@murmur/shared';
+import { MAX_MESSAGE_BODY_CHARS, messagePermalink, parseMessagePermalink, type ScheduledMessageView } from '@murmur/shared';
 import type { AccountView, AgentTeamRow, AttachmentRow, HandleGroupRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { NO_TEAMS } from '../state/appStore';
@@ -17,6 +17,32 @@ import { undoSendStorage } from '../lib/prefs';
 import { callsInText, quoteText, MANY_CALLS } from '../lib/pasteCalls';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useT } from '../i18n/useT';
+
+/**
+ * 남은 글자를 세어 보이기 시작하는 지점 — 상한의 9할이다.
+ *
+ * 항상 보이게 두지 않는 이유: 평소 대화는 한두 줄이고, 그때 `7,912자 남음` 은 아무에게도
+ * 필요 없는 숫자가 컴포저에 상주하는 것이다. 사람이 상한을 알아야 하는 순간은 상한이 손에
+ * 잡힐 때뿐이고, 9할이면 남은 800자로 문장을 마무리할지 나눌지 판단할 여유가 있다.
+ */
+const BODY_COUNT_FROM = Math.floor(MAX_MESSAGE_BODY_CHARS * 0.9);
+
+/**
+ * 이만큼 긴 글을 붙여넣으면 **파일로 넘길 길을 제안한다.**
+ *
+ * 상한(`MAX_MESSAGE_BODY_CHARS`)이 아니라 그보다 훨씬 앞인 이유: 상한은 서버가 받아 주는
+ * 한계이고, 이 수는 **대화가 읽히는 한계**다. 코드 파일이나 로그를 통째로 붙여넣으면
+ * 상한 안이어도(2천~8천자) 그 한 통이 채널을 몇 화면 밀어내서, 그 앞뒤의 대화가 스크롤
+ * 밖으로 사라진다 — 붙여넣은 사람이 잃는 것이 아니라 **읽는 사람이** 잃는다.
+ *
+ * 2,000자로 잡은 근거: 이 앱의 메시지 한 통은 대략 60자에 한 줄이고(`messageWidth`),
+ * 2,000자면 30줄 남짓이라 노트북 화면 하나를 그 한 통이 채운다. 그보다 짧으면 대화가
+ * 밀린다고 말하기 어렵고, 더 길게 잡으면 이미 밀린 뒤에 제안하는 셈이 된다.
+ *
+ * **막지 않는다 — 제안만 한다.** 붙여넣은 글은 그대로 초안에 들어가고, 파일로 옮기는 것은
+ * 사람이 버튼을 누를 때만 일어난다(붙여넣기의 규칙: `onPaste` 주석).
+ */
+const PASTE_AS_FILE_CHARS = 2_000;
 
 /** 목록이 화면을 덮지 않을 만큼만 보여준다. 더 좁히는 것은 사용자가 글자를 더 치는 일이다. */
 const MAX_SUGGESTIONS = 8;
@@ -63,6 +89,26 @@ function errorText(err: unknown, fallback: string): string {
  * 시각은 **로컬 시각**이다. UTC 를 박으면 방금 붙여넣은 사람이 자기 시계와 다른 숫자를 보고
  * 그 파일이 자기 것인지부터 의심한다 — 이름의 쓸모는 사람이 알아보는 데 있다.
  */
+/**
+ * 붙여넣은 **글**을 첨부 파일로 만든다(코드 전체·로그 전체를 넘기는 길).
+ *
+ * `.txt` 로 고정한다. 내용을 보고 `.ts`·`.py` 를 맞혀 붙이는 쪽이 친절해 보이지만, 맞히기가
+ * 틀리는 순간 파일 이름이 **내용에 대한 거짓말**이 된다. 그리고 확장자를 바꿔도 얻는 것이
+ * 없다: 미리보기 화이트리스트는 이미지뿐이고(`Attachments.tsx::PREVIEWABLE`), 받는 사람은
+ * 어느 확장자든 내려받아 자기 편집기로 연다.
+ *
+ * 이름에 시각을 박는 것은 스크린샷과 같은 이유다 — 한 채널에 `pasted.txt` 가 열 개면
+ * 파일 목록(#232)에서 어느 것이 어느 것인지 구분할 수 없다.
+ */
+export function pastedTextFile(text: string, at: Date): File {
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  const stamp = `${at.getFullYear()}${p2(at.getMonth() + 1)}${p2(at.getDate())}`
+    + `-${p2(at.getHours())}${p2(at.getMinutes())}${p2(at.getSeconds())}`;
+  // `text/plain;charset=utf-8` 로 담는다 — 한글이 든 글을 charset 없이 올리면 받는 쪽
+  // 브라우저가 제 기본 인코딩으로 읽어 깨진다.
+  return new File([text], `pasted-${stamp}.txt`, { type: 'text/plain;charset=utf-8' });
+}
+
 export function nameClipboardFile(file: File, at: Date, seq = 0): File {
   // 사람이 진짜 파일을 복사해 붙여넣은 경우다 — 그 이름이 시각보다 언제나 낫다.
   if (file.name && file.name !== 'image.png') return file;
@@ -200,6 +246,14 @@ export function Composer({
   const [pending, setPending] = useState<AttachmentRow[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   /**
+   * 전송이 실패한 사유. **자리별로 둔다**(`Record<scopeKey, string>`) — 초안 되돌리기가
+   * 자리를 지키는 것과 같은 이유다(`dispatch` 주석). 보냄 취소 창이 도는 동안 채널을
+   * 옮겼다면 실패는 **글을 쓴 그 채널**의 사실이고, 옮겨 온 채널의 컴포저에 남의 실패
+   * 사유가 서면 사람은 방금 자기가 누른 것이 실패한 줄로 읽는다. 되돌아오면 복원된 초안과
+   * 사유가 함께 그 자리에 있다.
+   */
+  const [sendErrorByScope, setSendErrorByScope] = useState<Record<string, string>>({});
+  /**
    * 지금 파일이 컴포저 위에 떠 있는가. 놓을 자리를 그리는 데만 쓴다 — 표시가 없으면 사람은
    * 여기가 받는 자리인지 모른 채 손을 놓고, 그 파일은 웹뷰가 열어 앱 화면을 갈아치운다.
    */
@@ -243,6 +297,17 @@ export function Composer({
    * **그대로 남아 있다** — 취소하면 사람이 이름을 지우고 다시 보낼 수 있어야 한다.
    */
   const [manyCalls, setManyCalls] = useState<string[] | null>(null);
+  /**
+   * 방금 붙여넣은 **긴 글**. 파일로 넘길 것을 제안하기 위한 것이고, 그 자체로는 아무것도
+   * 하지 않는다 — 링크 제안(`pastedLink`)과 같은 규약이다.
+   *
+   * 글자를 그대로 들고 있는 이유: 파일로 옮길 때 **초안에서 그 부분만** 지워야 하는데,
+   * 위치(offset)로 들고 있으면 그 뒤에 한 글자만 쳐도 어긋난다. 글자 자체를 들고 있으면
+   * 초안에 아직 있는지도(`draft.includes`) 같은 값으로 판정된다.
+   */
+  const [pastedText, setPastedText] = useState<string | null>(null);
+  /** 파일로 올리는 중. 두 번 누르면 같은 글이 두 개 붙는다. */
+  const [movingToFile, setMovingToFile] = useState(false);
   const heldRef = useRef<HeldMessage | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -280,6 +345,8 @@ export function Composer({
     // 이동 제안은 초안과 달리 **복원하지 않는다** — 옮겨 온 채널의 초안에 없는 링크를
     // 가리키는 버튼이 남으면, 누른 사람은 자기가 방금 붙여넣은 것으로 읽는다.
     setPastedLink(null);
+    // 파일 제안도 같다 — 남의 채널에 붙여넣은 글을 이 채널의 첨부로 만들면 안 된다.
+    setPastedText(null);
   }, [scopeKey]);
 
   // 예약 메시지 목록 조회(#222). 채널이 바뀔 때마다 새로 받는다.
@@ -376,6 +443,20 @@ export function Composer({
     () => (stickyByScope[scopeKey] ?? []).filter((h) => known.has(h) && !autoHandles.includes(h)),
     [stickyByScope, scopeKey, known, autoHandles],
   );
+
+  /**
+   * **서버로 나갈 본문 그 자체** — 자동·고정 멘션 접두까지 붙은 것이다. 길이를 여기서 재는
+   * 이유: 접두는 발송 시점에 본문에 들어가므로(`send` 의 `withStickyMentions`), 사람이 친
+   * 글자만 세면 화면은 여유가 있다고 보고 서버는 상한을 넘겼다고 거절한다. **같은 함수로
+   * 만든 같은 문자열**을 재는 것이 그 어긋남을 없애는 유일한 방법이다.
+   */
+  const outgoing = useMemo(
+    () => withStickyMentions(draft, [...autoActive, ...sticky]),
+    [draft, autoActive, sticky],
+  );
+  const overBy = outgoing.length - MAX_MESSAGE_BODY_CHARS;
+  const tooLong = overBy > 0;
+  const sendError = sendErrorByScope[scopeKey] ?? null;
 
   // 아래 두 목록은 `MessageBody` 가 `splitMentions` 에 주는 것과 **같은 인자**다(#278).
   // 자기 계정도 뺀 것이 없다 — 인자가 달라지면 같은 함수를 써도 판정이 갈라진다.
@@ -655,7 +736,17 @@ export function Composer({
 
   /** 여기를 지나야만 메시지가 존재하기 시작한다 — 그 전에는 서버도 알림도 이 글을 모른다. */
   const dispatch = (item: HeldMessage) => {
-    void Promise.resolve(item.send(item.body, item.attachments.map((a) => a.id))).catch(() => {
+    void Promise.resolve(item.send(item.body, item.attachments.map((a) => a.id))).catch((err: unknown) => {
+      /**
+       * **사유를 말한다.** 여기서 실패를 삼키면 화면에는 아무 일도 일어나지 않은 것으로
+       * 보인다 — 초안만 조용히 돌아오므로, 사람은 글이 안 나갔다는 것조차 모른 채 답을
+       * 기다린다. 실제로 그랬다: 8000자를 넘긴 본문은 서버가 400 으로 거절하는데 화면은
+       * 침묵했다. 길이만의 문제가 아니다(보관된 채널·잘못된 첨부·끊긴 연결이 같은 길로
+       * 온다). 사유는 `ApiError.message` 에 서버가 담아 준다.
+       */
+      setSendErrorByScope((prev) => ({
+        ...prev, [item.scope]: errorText(err, t('composer.send.failed')),
+      }));
       // 실패하면 사용자가 친 것만 되돌린다 — 접두사까지 남기면 다음 전송에서 두 번 붙는다.
       // **쓴 자리로** 되돌린다: 대기 중에 채널을 옮겼다면 지금 입력창은 남의 자리다.
       const store = useActiveStore.getState();
@@ -724,6 +815,22 @@ export function Composer({
     // 고정 멘션만으로는 보낼 것이 없다 — 빈 Enter 가 '@fizz' 하나만 던지면 사고다.
     // 다만 파일만 보내는 것은 자연스럽다.
     if (!draft.trim() && !pending.length) return;
+    /**
+     * 상한을 넘으면 **왕복하지 않는다.** 버튼은 이미 흐려져 있지만 Enter 는 그 버튼을 지나지
+     * 않으므로 이 가드가 없으면 키보드로만 상한을 넘길 수 있다. 사유를 함께 세우는 이유는,
+     * 키보드로 누른 사람은 버튼이 왜 흐려졌는지 볼 기회가 없었기 때문이다.
+     */
+    if (tooLong) {
+      setSendErrorByScope((prev) => ({
+        ...prev,
+        [scopeKey]: t('composer.send.tooLong', {
+          over: overBy.toLocaleString(), max: MAX_MESSAGE_BODY_CHARS.toLocaleString(),
+        }),
+      }));
+      return;
+    }
+    // 다시 누른 순간 앞의 사유는 지난 일이다 — 남겨 두면 성공한 뒤에도 붉은 줄이 남는다.
+    if (sendError) setSendErrorByScope((prev) => ({ ...prev, [scopeKey]: '' }));
     const typed = draft;
     /**
      * 접두는 **여기, 발송 시점에** 본문에 들어간다(#173, design.md §4 "접두는 실제 본문에
@@ -824,6 +931,13 @@ export function Composer({
     */
     const calls = callsInText(text, known);
     if (calls.length) setPastedCalls({ text, handles: calls });
+    /**
+     * 긴 글은 **파일로 넘길 길을 제안한다**(막지 않는다 — 글자는 그대로 들어간다).
+     * 판정을 붙여넣은 조각으로 하는 이유: 초안 전체 길이로 재면 여러 번 나눠 붙여넣거나
+     * 길게 쓴 글에도 제안이 서는데, 사람이 직접 쓴 글은 파일로 옮길 대상이 아니다.
+     * 옮길 만한 것은 **한 덩어리로 온 것**(코드 파일·로그·문서 전체)이다.
+     */
+    if (text.length >= PASTE_AS_FILE_CHARS) setPastedText(text);
     const messageId = parseMessagePermalink(text);
     // 링크가 아니면 아무것도 하지 않는다 — 평범한 붙여넣기다.
     if (!messageId) return;
@@ -887,6 +1001,45 @@ export function Composer({
       el.focus();
       el.setSelectionRange(caret, caret);
     });
+  };
+
+  /**
+   * 파일로 옮길 것을 제안할 글. 둘 중 하나다.
+   *
+   * - **붙여넣은 덩어리** — 아직 초안에 그대로 있을 때만이다(링크 제안과 같은 규칙:
+   *   지운 글을 가리키는 버튼이 남아 있으면 안 된다).
+   * - **본문 전체** — 상한을 넘긴 경우다. 이때는 붙여넣은 것이 없어도 제안한다: 사람이
+   *   여러 번에 걸쳐 넣었거나 직접 쓴 글이 넘긴 것이고, 그 상태에서 사람이 할 수 있는
+   *   일이 "직접 줄이기" 하나뿐이면 코드 전체를 전하려던 목적은 어차피 못 이룬다.
+   */
+  const fileOffer = pastedText && draft.includes(pastedText)
+    ? pastedText
+    : (tooLong ? draft : null);
+
+  /**
+   * 제안을 받아들인다 — 그 글을 `.txt` 첨부로 올리고 **초안에서 뺀다.**
+   *
+   * **올린 뒤에 뺀다.** 순서를 뒤집으면 업로드가 실패한 순간 사람이 붙여넣은 글이 어디에도
+   * 없다 — 클립보드는 이미 다른 것으로 바뀌어 있을 수 있고, 그러면 통째로 잃는다.
+   * 그래서 실패하면 초안은 손대지 않고 사유만 남긴다(첨부 실패와 같은 줄이다).
+   */
+  const moveToFile = async (text: string) => {
+    if (movingToFile) return;
+    setMovingToFile(true);
+    setUploadError(null);
+    const file = pastedTextFile(text, new Date());
+    try {
+      const row = await getController().upload(file);
+      setPending((cur) => [...cur, row]);
+      // 뺀 자리에 공백만 남기지 않는다 — 첨부만 보내는 것은 자연스럽고(서버도 허용한다),
+      // 남은 초안이 공백뿐이면 전송 버튼은 첨부를 보고 살아 있다.
+      setDraftLocal((current) => current.replace(text, '').trim());
+      setPastedText(null);
+    } catch {
+      setUploadError(t('composer.attach.uploadFailed', { filename: file.name }));
+    } finally {
+      setMovingToFile(false);
+    }
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1183,6 +1336,11 @@ export function Composer({
       {uploadError && (
         <p role="alert" className="mb-1 text-meta text-danger">{uploadError}</p>
       )}
+      {/* 전송 실패 사유. `role="alert"` 로 두어 **색을 못 보는 사람에게도** 읽힌다 —
+          첨부 실패 줄과 같은 규칙이다. */}
+      {sendError && (
+        <p role="alert" data-testid="send-error" className="mb-1 text-meta text-danger">{sendError}</p>
+      )}
 
       {pending.length > 0 && (
         <div className="mb-1 flex flex-wrap gap-1">
@@ -1257,6 +1415,46 @@ export function Composer({
           onCancel={() => setManyCalls(null)}
         />
       )}
+      {fileOffer && (
+        /* 붙여넣기 제안 줄과 **같은 모양**이다(`pasted-link`) — 둘 다 "컴포저가 지금 무엇을
+           들고 있는가"를 말하는 줄이라 사람은 한 자리를 익혀 둘을 읽는다. 상한을 넘겨
+           전송이 막힌 경우 이 줄이 유일한 출구이므로, 오류 줄(`send-error`) 바로 위에
+           서도록 순서를 잡았다. */
+        <div
+          role="status"
+          data-testid="paste-as-file"
+          className="mb-1 flex items-center gap-2 rounded bg-surface-sunken px-2 py-1 text-meta text-fg-muted"
+        >
+          <span className="min-w-0 flex-1 truncate">
+            {t('composer.paste.long', { chars: fileOffer.length.toLocaleString() })}
+          </span>
+          <button
+            type="button"
+            data-testid="paste-as-file-move"
+            className="rounded px-1.5 py-0.5 font-medium text-accent hover:bg-surface-hover disabled:opacity-40"
+            // 커서를 지킨다 — 옮긴 뒤에도 초안을 이어서 쓰는 사람이 있다.
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => void moveToFile(fileOffer)}
+            disabled={movingToFile}
+          >
+            {movingToFile ? t('composer.paste.moving') : t('composer.paste.asFile')}
+          </button>
+          {/* 제안을 물린다. **상한을 넘긴 본문에는 물릴 자리를 주지 않는다** — 그때 이 줄은
+              제안이 아니라 전송이 막힌 이유에 대한 답이고, 지워 두면 사람은 막힌 채로 남는다. */}
+          {pastedText !== null && !tooLong && (
+            <button
+              type="button"
+              aria-label="Dismiss long paste"
+              className="rounded px-1 text-fg-muted hover:bg-surface-hover"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setPastedText(null)}
+            >
+              ×
+            </button>
+          )}
+        </div>
+      )}
+
       {linkOffer && (
         /* 붙여넣은 링크는 **글자로 남고**, 이 줄이 이동할 길이다. 대기 줄(아래)과 같은
            모양으로 두는 이유: 둘 다 "컴포저가 지금 무엇을 들고 있는가"를 말하는 줄이고,
@@ -1453,21 +1651,38 @@ export function Composer({
             </button>
           )}
         </div>
-        <button
-          type="button"
-          aria-label="Send message"
-          className="rounded-full bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border disabled:text-fg-subtle"
-          // 여기는 blur 를 막지 않는다 — 전송에 성공하면 초안이 비므로 커서를 보존할
-          // 이유가 없고, 실패하면 사용자가 다시 textarea 를 눌러 이어 쓴다. 반면 위
-          // @·첨부 버튼은 누른 뒤에도 같은 자리에 계속 써야 하므로 막는다.
-          onMouseDown={(e) => e.preventDefault()}
-          /* **인자 없이 부른다.** `onClick={send}` 로 두면 클릭 이벤트가 `confirmed` 자리에
-             들어가 항상 참이 되어, 다수 호출 확인이 조용히 건너뛰어진다. */
-          onClick={() => send()}
-          disabled={!draft.trim() && !pending.length}
-        >
-          {t('composer.send.submit')}
-        </button>
+        <div className="flex items-center gap-2">
+          {/* 남은 글자. **끝에서만 선다**(`BODY_COUNT_FROM`) — 넘긴 뒤에는 넘긴 양을 말한다.
+              `aria-live` 를 안 붙인 이유: 글자마다 바뀌는 값이라 읽어 주면 입력을 덮는다.
+              넘겼다는 사실은 위 `role="alert"` 줄이 전한다. */}
+          {outgoing.length >= BODY_COUNT_FROM && (
+            <span
+              data-testid="body-count"
+              className={`text-meta ${tooLong ? 'text-danger' : 'text-fg-subtle'}`}
+            >
+              {tooLong
+                ? t('composer.send.over', { over: overBy.toLocaleString() })
+                : t('composer.send.remaining', { remaining: (-overBy).toLocaleString() })}
+            </span>
+          )}
+          <button
+            type="button"
+            aria-label="Send message"
+            className="rounded-full bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border disabled:text-fg-subtle"
+            // 여기는 blur 를 막지 않는다 — 전송에 성공하면 초안이 비므로 커서를 보존할
+            // 이유가 없고, 실패하면 사용자가 다시 textarea 를 눌러 이어 쓴다. 반면 위
+            // @·첨부 버튼은 누른 뒤에도 같은 자리에 계속 써야 하므로 막는다.
+            onMouseDown={(e) => e.preventDefault()}
+            /* **인자 없이 부른다.** `onClick={send}` 로 두면 클릭 이벤트가 `confirmed` 자리에
+               들어가 항상 참이 되어, 다수 호출 확인이 조용히 건너뛰어진다. */
+            onClick={() => send()}
+            // 상한을 넘긴 채로는 누를 수 없다 — 누를 수 있게 두고 실패를 보여 주는 것보다,
+            // 애초에 못 누르게 하고 얼마나 넘겼는지 옆에 세우는 것이 고칠 길을 준다.
+            disabled={(!draft.trim() && !pending.length) || tooLong}
+          >
+            {t('composer.send.submit')}
+          </button>
+        </div>
       </div>
       {scheduleModalOpen && (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-20">

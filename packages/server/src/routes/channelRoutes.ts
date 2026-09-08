@@ -19,7 +19,7 @@ import {
 } from '../services/scheduledMessages.js';
 // 이름 규칙은 데스크탑의 채널 생성 입력(Sidebar.tsx)과 **같은 것**이어야 한다 — 그래서
 // 정규식을 여기 리터럴로 두지 않고 shared 의 상수를 쓴다.
-import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, SYSTEM_ACCOUNT_PLACEHOLDER } from '@murmur/shared';
+import { CHANNEL_NAME_PATTERN, MAX_MESSAGE_BODY_CHARS, NOTIFY_LEVELS, SYSTEM_ACCOUNT_PLACEHOLDER } from '@murmur/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { postMessage } from '../services/messages.js';
@@ -823,9 +823,9 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
   app.post('/channels/:id/scheduled', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = scheduledChannelParam.parse(req.params);
     const { body, sendAt, threadRootId } = z.object({
-      // 8000 은 즉시 발송(`messageRoutes.ts`·`mcpPlugin.ts`)과 **같은 상한**이다. 여기만
-      // 넉넉하게 두면 예약을 거쳐 8000자를 넘는 메시지를 넣을 수 있는 우회로가 된다.
-      body: z.string().min(1).max(8000),
+      // 상한은 즉시 발송(`messageRoutes.ts`·`mcpPlugin.ts`)과 **같은 상수**를 본다. 여기만
+      // 넉넉하게 두면 예약을 거쳐 상한을 넘는 메시지를 넣을 수 있는 우회로가 된다.
+      body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
       sendAt: z.string().datetime(),
       threadRootId: z.string().uuid().optional(),
     }).parse(req.body);

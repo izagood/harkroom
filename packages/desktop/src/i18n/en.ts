@@ -1898,6 +1898,14 @@ export const en = {
   'composer.paste.confirmDetail': 'This message calls {handles}. Each one starts its own turn.',
   'composer.paste.confirmSend': 'Send',
   'composer.paste.confirmCancel': 'Keep editing',
+  /**
+   * 긴 글을 붙여넣었을 때 서는 줄. **몇 자인지 말하는 것이 요점이다** — "길다"만으로는
+   * 사람이 파일로 옮길 만한지 판단할 수 없다. 무엇이 문제인지도 함께 적는다: 상한을 넘긴
+   * 것이 아니라 **읽는 사람의 화면이 밀리는** 것이 이 줄이 서는 이유다.
+   */
+  'composer.paste.long': '{chars} characters — pasting this inline buries the conversation',
+  'composer.paste.asFile': 'Attach as a file',
+  'composer.paste.moving': 'Attaching…',
   'composer.link.pasted': 'Pasted a message link',
   'composer.link.open': 'Go to that message',
 
@@ -1932,6 +1940,18 @@ export const en = {
     one: '{count} attachment',
     other: '{count} attachments',
   },
+  /**
+   * 전송이 실패한 사유의 **기본 문구**. 서버가 사유를 주면 그것을 보이므로(`ApiError.message`)
+   * 이 문구가 서는 것은 사유를 못 받았을 때뿐이다 — 연결이 끊겼거나 응답이 오류 봉투가
+   * 아닐 때다. 그래서 원인을 단정하지 않는다.
+   */
+  'composer.send.failed': 'The message was not sent — check your connection and try again',
+  /** 상한을 넘긴 채 누른 사람에게. 무엇을 하면 되는지까지 말한다. */
+  'composer.send.tooLong': 'Too long by {over} characters — the limit is {max}',
+  /** 글자 수 표시. 상한을 넘긴 쪽. */
+  'composer.send.over': '{over} over',
+  /** 글자 수 표시. 아직 여유가 있는 쪽. */
+  'composer.send.remaining': '{remaining} left',
   'composer.send.sending': 'Sending…',
   'composer.send.submit': 'Send',
   /** 보이는 글자. 접근 이름이 이미 `Undo send` 였으므로 그와 어긋나지 않게 둔다(위 표). */
