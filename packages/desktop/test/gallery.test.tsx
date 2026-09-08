@@ -78,10 +78,80 @@ describe('컴포넌트 갤러리', () => {
     expect(screen.getAllByTestId('failure-retry')).toHaveLength(1);
   });
 
-  it('에이전트가 없어도 깨지지 않는다 — 이름을 못 채운다고 말한다', () => {
+  /**
+   * **어휘는 계정 목록에 매달리지 않는다**(v0.1.52 실측 회귀).
+   *
+   * 앞 판본은 에이전트 수에 따라 갤러리가 다른 말을 했다. 실측:
+   *
+   * ```
+   * 0개  세 카드가 전부 `for-me=true` — 규칙 04 를 가르치는 칸이 규칙을 위반했다
+   *      두 사슬이 전부 `end=me` — 교착 칸이 교착을 안 그렸다
+   *      두 줄이 `jaebin 가 사람의 답을 기다린다` — 내가 나를 기다리는 문장
+   * 1개  교착이 `forge 가 서로를 기다린다` — 혼자 교착하는 문장
+   * ```
+   *
+   * 갤러리는 다른 화면을 재는 **기준자**다. 기준자가 계정 목록에 따라 흔들리면 그것으로
+   * 잰 판정이 전부 흔들리므로, **에이전트 수와 무관하게** 어휘가 같은지를 잰다.
+   *
+   * 색·강조 쪽 단정은 `accentBudget.test.tsx` 에 있다(강조 예산이 그 파일의 주제다).
+   * 여기서는 **모양**을 잰다: 수신자가 갈리는가, 사슬이 둘로 갈리는가.
+   */
+  describe('어휘가 에이전트 수에 흔들리지 않는다', () => {
+    const counts = [
+      ['없음', {}],
+      ['하나', { [A1]: acc(A1, 'forge', 'agent', false, { ownerAccountId: ME }) }],
+      ['둘', {
+        [A1]: acc(A1, 'forge', 'agent', false, { ownerAccountId: ME }),
+        [A2]: acc(A2, 'codex', 'agent'),
+      }],
+    ] as const;
+
+    for (const [label, accounts] of counts) {
+      it(`에이전트 ${label} — 수신자와 사슬이 규칙대로 갈린다`, () => {
+        useAppStore.getState().set({ accounts: { [ME]: acc(ME, 'jaebin'), ...accounts } });
+        render(<GallerySettings />);
+
+        // 규칙 04: 나에게 온 것 · **남에게 간 것** · 이미 답한 것.
+        expect(screen.getAllByTestId('ask-card').map((c) => c.dataset.forMe))
+          .toEqual(['true', 'false', 'true']);
+        // 두 사슬이 서로 다른 끝을 그린다 — 둘이 같으면 한 칸이 자기 설명과 어긋난다.
+        expect(screen.getAllByTestId('wait-chain').map((c) => c.dataset.end))
+          .toEqual(['me', 'deadlock']);
+        // 교착의 종류도 갈린다: 서로를 기다리는 것과 죽은 러너는 사람이 할 일이 다르다.
+        expect(screen.getAllByTestId('wait-chain')[1]!.dataset.reason).toBe('cycle');
+      });
+    }
+
+    /**
+     * **내 차례 사슬은 두 마디여야 한다** — 그것이 이 칸의 요점("몇 개가 풀리는지가
+     * 사람이 답할 이유다")이다. 앞 판본은 에이전트가 없을 때 두 마디가 같은 계정(나)으로
+     * 접혀 한 마디가 됐고, 그러면 `— 답하면 N개가 풀린다` 가 아예 사라졌다(실측).
+     */
+    it('내 차례 사슬은 두 마디가 이어진다 — 풀리는 수를 말할 수 있어야 한다', () => {
+      useAppStore.getState().set({ accounts: { [ME]: acc(ME, 'jaebin') } });
+      render(<GallerySettings />);
+      expect(screen.getAllByTestId('wait-chain')[0]!.dataset.unblocks).toBe('2');
+    });
+
+    /**
+     * **내가 낸 말로 바뀌지 않는다.** 앞 판본의 `authorId: a2?.id ?? myId` 는 에이전트가
+     * 없을 때 "에이전트가 말한 것"을 "내가 말한 것"으로 바꿨다 — 그러면 에이전트끼리의
+     * 주고받기 칸이 나 혼자 떠드는 줄이 되고, 그 칸이 가르치는 것이 거짓이 된다.
+     */
+    it('에이전트가 없어도 갤러리가 나를 화자로 만들지 않는다', () => {
+      useAppStore.getState().set({ accounts: { [ME]: acc(ME, 'jaebin') } });
+      render(<GallerySettings />);
+      // 사슬 줄에 내 이름이 없다 — 이름을 모르면 `…` 이고, 그것이 이 저장소의 규약이다.
+      for (const chain of screen.getAllByTestId('wait-chain')) {
+        expect(chain.textContent).not.toContain('jaebin');
+      }
+    });
+  });
+
+  it('에이전트가 둘 미만이면 이름이 빈다고 말한다 — 색이 아니라 이름만', () => {
     useAppStore.getState().set({ accounts: { [ME]: acc(ME, 'jaebin') } });
     render(<GallerySettings />);
-    expect(screen.getByText(/에이전트가 하나도 없어/)).toBeTruthy();
+    expect(screen.getByText(/이름 자리가/)).toBeTruthy();
     // 그래도 화면 자체는 선다 — 빈 화면이면 무엇이 잘못됐는지 알 수 없다.
     expect(screen.getByTestId('gallery')).toBeTruthy();
   });
