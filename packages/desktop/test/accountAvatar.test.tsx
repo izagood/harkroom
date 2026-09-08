@@ -6,6 +6,7 @@ import { Identity, resetAvatarCache } from '../src/components/Identity';
 import { MessageItem } from '../src/components/MessageItem';
 import { ProfileSettings } from '../src/components/settings/ProfileSettings';
 import { acc, msg } from './helpers/fakeApi';
+import { ApiError } from '../src/lib/api';
 
 const fakeController = (over: Partial<Controller> = {}) => {
   const c = {
@@ -236,8 +237,10 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
    * `sr-only` 로만 내면 스크린리더가 아닌 사람에게는 '아무 일도 일어나지 않은 것'과
    * 구분되지 않는다 — 버튼이 잠깐 눌렸다 풀리고 사진은 그대로다.
    */
-  it('서버가 거절하면 보이는 오류를 낸다', async () => {
-    fakeController({ setAvatar: vi.fn(async () => { throw new Error('400'); }) });
+  it('서버가 거절하면 보이는 오류를 낸다 — 무엇을 고를 수 있는지까지 말한다', async () => {
+    fakeController({
+      setAvatar: vi.fn(async () => { throw new ApiError(400, 'not_an_image', 'nope'); }),
+    });
     useAppStore.getState().set({ me: acc('u1', 'me') });
     render(<ProfileSettings onSignOut={() => {}} />);
 
@@ -245,9 +248,58 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
 
     const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toMatch(/이미지 파일만/);
+    // "안 된다"만 말하고 끝나면 사람은 다음에 무엇을 고를지 모른 채 같은 실패를 반복한다.
+    expect(alert.textContent).toMatch(/PNG/);
+    expect(alert.textContent).toMatch(/SVG/);
     // 화면에서 감춰 두면 낸 것이 아니다.
     expect(alert.className).not.toMatch(/sr-only/);
+  });
+
+  it('큰 SVG 를 "SVG 만 쓸 수 있습니다"로 되돌려 보내지 않는다', async () => {
+    // 서버는 SVG 만 상한이 낮다(검사에 파일 전체를 읽어야 한다). 이유를 `not_an_image` 로
+    // 뭉개면 SVG 를 들고 있는 사람이 "SVG 를 쓰세요"를 듣고, 고칠 방법을 못 찾는다.
+    fakeController({
+      setAvatar: vi.fn(async () => { throw new ApiError(400, 'svg_too_large', 'too big'); }),
+    });
+    useAppStore.getState().set({ me: acc('u1', 'me') });
+    render(<ProfileSettings onSignOut={() => {}} />);
+
+    const file = new File(['<svg/>'], 'big.svg', { type: 'image/svg+xml' });
+    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/256 KiB/);
+    // 형식 목록을 다시 읊으면 "내 파일이 SVG 가 아닌가?" 로 읽힌다.
+    expect(alert.textContent).not.toMatch(/PNG · JPEG/);
+  });
+
+  it('연결이 끊긴 것을 파일 탓으로 말하지 않는다', async () => {
+    // 예전에는 무엇이 실패했든 "이미지 파일만 쓸 수 있습니다" 하나였다 — 서버가 죽어 있어도
+    // 사람은 자기 파일을 의심하며 다른 파일로 몇 번을 다시 시도하게 된다.
+    fakeController({ setAvatar: vi.fn(async () => { throw new TypeError('Failed to fetch'); }) });
+    useAppStore.getState().set({ me: acc('u1', 'me') });
+    render(<ProfileSettings onSignOut={() => {}} />);
+
+    const file = new File(['png-bytes'], 'me.png', { type: 'image/png' });
+    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/연결/);
+    expect(alert.textContent).not.toMatch(/PNG/);
+  });
+
+  it('SVG 를 파일 창에서 고를 수 있다', async () => {
+    // 화면이 서버보다 좁으면 SVG 는 파일 창에서 회색으로 죽고, **고를 수 없는 파일은 오류
+    // 메시지도 못 낸다** — 사람에게는 버튼을 눌렀는데 아무 일도 없는 것으로 보인다.
+    const c = fakeController();
+    useAppStore.getState().set({ me: acc('u1', 'me') });
+    render(<ProfileSettings onSignOut={() => {}} />);
+
+    expect(screen.getByTestId('avatar-file').getAttribute('accept')).toContain('image/svg+xml');
+
+    const file = new File(['<svg/>'], 'me.svg', { type: 'image/svg+xml' });
+    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
+    await waitFor(() => expect(c.setAvatar).toHaveBeenCalledWith(file, expect.any(Function)));
   });
 
   it('읽기 전용 안내가 사진은 바꿀 수 있다고 말한다', () => {
