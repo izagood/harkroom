@@ -15,7 +15,35 @@ import { SessionStore } from './sessions.js';
 import type { TurnRegistry } from './turnRegistry.js';
 import type { MentionQueue } from './mentionQueue.js';
 import { withAccountFailover, type ClaudeAccount } from './claudeAccounts.js';
-import { controlledNotice } from './prompt.js';
+import { controlledNotice, FAILURE_NOTICE, quotaNotice, sessionConflictNotice } from './prompt.js';
+import { exhausted, isQuotaExhausted, isSessionIdConflict, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
+
+/**
+ * `tried` 번 실패한 entry 가 다음 시도까지 쉬는 시간(ms).
+ *
+ * 여기 걸린 트레이드오프: 짧으면 일시적 실패(서버 재시작, 순간적 네트워크 단절)에서 빨리
+ * 회복하지만 MAX_ATTEMPTS(3) 를 몇 초 만에 태워 버린다 — `policy.ts::isQuotaExhausted` 의
+ * 주석이 지적한 그 문제다("3회가 5초 안에 끝나므로 한도가 풀릴 리 없고, 태운 끝에 남는
+ * 안내는 사람이 할 일을 잘못 가리킨다"). 길면 회복이 그만큼 늦다.
+ *
+ * `policy.ts::nextBackoffMs` 가 폴 루프에서 쓰는 사다리(2배씩, 상한 있음)를 재사용할 수
+ * 있다 — 두 곳이 각자 상수를 들면 하나를 고칠 때 다른 하나가 남는다.
+ */
+function backoffFor(tried: number): number {
+  // 30초 → 60초. 재시도 창 총 90초는 정상 턴(실측 5~8분)의 20% 라 사용자 눈에는 "조금
+  // 오래 걸리네" 안에 묻힌다. 반대로 짧게 잡으면 3초 만에 "운영자 확인이 필요합니다" 가
+  // 뜨고 그 멘션은 markRead 로 **영구히 사라진다** — 이 경로의 실패는 PTY 고갈·서버 재시작
+  // 같은 일시적 자원 실패라, 조건이 달라질 시간을 주는 것이 곧 답을 얻는 것이다.
+  //
+  // 비대칭이 값을 정한다: 길어서 생기는 피해는 "좀 더 기다린다"(회복 가능)이고, 짧아서
+  // 생기는 피해는 "요청이 사라진다"(회복 불가)다.
+  //
+  // 사다리는 `policy.ts::nextBackoffMs`(2배, 상한 있음)를 시작값만 바꿔 재사용한다 —
+  // 모양이 한 곳에 있어야 나중에 한쪽만 고치는 사고가 없다.
+  let ms = 30_000;
+  for (let i = 1; i < tried; i += 1) ms = nextBackoffMs(ms);
+  return ms;
+}
 
 /** 배치 단위로 한 번만 받는 것들. 턴마다 바뀌지 않는다. */
 export interface BatchContext {
@@ -65,6 +93,8 @@ export interface MentionSchedulerDeps {
   };
   /** 종료 요청이 나를 향한 것인지 가르는 기준(stop.ts). */
   startedAtMs: number;
+  /** 테스트가 백오프 경계를 결정론적으로 재현하기 위한 시계 주입. 생략하면 Date.now. */
+  now?: () => number;
 }
 
 export interface MentionScheduler {
@@ -74,6 +104,15 @@ export interface MentionScheduler {
 }
 
 export function createMentionScheduler(deps: MentionSchedulerDeps): MentionScheduler {
+  const now = deps.now ?? Date.now;
+  /**
+   * 항목별 시도 횟수와 **다음 시도 가능 시각**.
+   *
+   * 백오프가 전역이 아니라 entry 별인 이유: 현행 main 루프는 실패 시 `sleep(backoffMs)` 로
+   * 루프 전체를 재웠다. 병렬에서는 그것이 틀리다 — 스레드 A 의 실패가 스레드 B~F 의 새
+   * 멘션까지 멈춘다. 러너 전역 백오프는 폴 루프의 transport 실패에만 남는다(main.ts).
+   */
+  const attempts = new Map<number, { tried: number; notBefore: number }>();
   /** 지금 도는 턴의 entry id. markRead 가 완료 후라 같은 entry 가 다음 폴에 또 온다. */
   const inFlightEntries = new Set<number>();
   /**
@@ -89,7 +128,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
   const running = new Set<Promise<void>>();
 
   async function runOne(
-    entryId: number, mention: InboxBatch['messages'][number], anchor: string, threadKey: string, ctx: BatchContext,
+    entryId: number, mention: InboxBatch['messages'][number], anchor: string, threadKey: string,
+    ctx: BatchContext, tried: number,
   ): Promise<void> {
     const target: MentionTarget = {
       channelId: mention.channelId, threadRootId: anchor, mentionId: mention.id,
@@ -98,9 +138,62 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       const turn = await withAccountFailover(
         deps.accountLane,
         (account) => deps.runMentionTurn(deps.buildTurnDeps({ ctx, mention, account }), target),
+        (from, to) => console.error(
+          `  ${mention.id} 계정 전환: ${from?.name ?? '(기본)'} → ${to?.name ?? '(기본)'}`,
+        ),
       );
       await deps.murmur.markRead([entryId]);
+      attempts.delete(entryId);
       if (turn.stopRequestedAt) deps.hooks.stopRequested(turn.stopRequestedAt);
+    } catch (err) {
+      // **여기 도달했다는 것은 계정 축이 이미 소진됐다는 뜻이다** — withAccountFailover 가
+      // 위를 감싸고 있으므로, 아직 안 써 본 계정이 있으면 그 오류는 여기 오지 않는다.
+      //
+      // 물러나기 **전에** 사람이 보는 자리에 말한다(2026-09-07) — 아래 판정은 process.exit 을
+      // 부르므로 순서가 계약이다.
+      await deps.hooks.noticeHarnessLogin(err, mention.channelId, anchor, mention.id);
+      deps.hooks.exitIfUnrecoverable(err);
+
+      // 사용량 한도는 **재시도 회계에 넣지 않는다.** 3회가 5초 안에 끝나므로 한도가 풀릴 리
+      // 없고, 태운 끝에 남는 "운영자 확인이 필요합니다"는 사람이 할 일을 잘못 가리킨다 —
+      // 여기서 할 일은 기다리는 것뿐이다.
+      const quota = isQuotaExhausted(err);
+      if (quota) {
+        console.error(`  ${mention.id} 사용량 한도 — 재시도하지 않는다 (풀림: ${quota.resetsAt ?? '알 수 없음'}) tail: ${err instanceof Error ? err.message : String(err)}`);
+        await deps.murmur.post(mention.channelId, quotaNotice(quota.resetsAt), anchor).catch((e: unknown) => {
+          console.error(`  ${mention.id} 한도 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
+        });
+        await deps.murmur.markRead([entryId]);
+        attempts.delete(entryId);
+        return;
+      }
+
+      // 세션 id 충돌도 재시도로 낫지 않는다(2026-09-07 실측: 176·185·278ms 만에 같은 자리).
+      // **자격증명처럼 죽이지 않는다** — 그 스레드 하나의 세션 상태 문제이고 다른 스레드는
+      // 멀쩡하다. 죽으면 다른 스레드의 대기 멘션까지 함께 잃는다.
+      if (isSessionIdConflict(err)) {
+        console.error(`  ${mention.id} 하네스 세션 충돌 — 재시도하지 않는다 (러너의 세션 상태와 하네스 디스크가 어긋났다): ${err instanceof Error ? err.message : String(err)}`);
+        await deps.murmur.post(mention.channelId, sessionConflictNotice(), anchor).catch((e: unknown) => {
+          console.error(`  ${mention.id} 세션 충돌 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
+        });
+        await deps.murmur.markRead([entryId]);
+        attempts.delete(entryId);
+        return;
+      }
+
+      console.error(`  ${mention.id} 답변 실패 (${tried}/${MAX_ATTEMPTS}):`, err instanceof Error ? err.message : err);
+      if (exhausted(tried)) {
+        // 한도까지 실패하면 읽음 처리해 흘려보낸다 — 안 그러면 이 항목이 큐를 막는다.
+        console.error(`  ${mention.id} 포기하고 읽음 처리한다`);
+        await deps.murmur.post(mention.channelId, FAILURE_NOTICE, anchor).catch((e: unknown) => {
+          console.error(`  ${mention.id} 실패 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
+        });
+        await deps.murmur.markRead([entryId]);
+        attempts.delete(entryId);
+        return;
+      }
+      // 아직 시도가 남았다 — 다음 시도 시각을 찍는다. 이 entry 만 쉬고 나머지는 흐른다.
+      attempts.set(entryId, { tried, notBefore: now() + backoffFor(tried) });
     } finally {
       // **이 두 줄이 어떤 await 보다도 앞이어야 한다.** 아래 resumeHandoff 가 던지면 그 뒤가
       // 실행되지 않아 스레드 키가 장부에 영구히 남고, 그 스레드는 영원히 blocked 가 된다 —
@@ -119,6 +212,10 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       for (const entry of batch.entries) {
         const mention = batch.messages.find((m) => m.id === entry.messageId);
         if (!mention) { orphans.push(entry.id); out.skipped += 1; continue; }
+
+        // 관문 0: 실패 백오프. `attempts` 를 **읽기만** 한다 — 증가는 모든 관문 뒤다.
+        const record = attempts.get(entry.id);
+        if (record && record.notBefore > now()) { out.blocked += 1; continue; }
 
         if (inFlightEntries.has(entry.id)) { out.blocked += 1; continue; }
 
@@ -161,7 +258,12 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         inFlightThreads.add(threadKey);
         out.started += 1;
 
-        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx)
+        // **관문을 전부 통과한 지금이 유일한 증가 지점이다.** blocked·deferred·skipped 는 이
+        // 줄에 닿지 않는다 — 닿으면 붐비는 스레드의 멘션이 답도 못 듣고 MAX_ATTEMPTS 로 버려진다.
+        const tried = (attempts.get(entry.id)?.tried ?? 0) + 1;
+        attempts.set(entry.id, { tried, notBefore: 0 });
+
+        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried)
           .catch((err: unknown) => {
             console.error(`  ${entry.messageId} 턴 실패:`, err instanceof Error ? err.message : err);
           })
