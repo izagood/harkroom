@@ -366,6 +366,11 @@ const sidebarProps = {
   onOpenDirectory: () => {},
   onOpenChannelDirectory: () => {},
   onOpenInbox: () => {},
+  // `#629` 가 더한 둘. 이 묶음이 재는 것은 **문구가 어느 언어로 뜨는가** 이지 이 문들이
+  // 어디로 가는가가 아니다 — 후자는 `sidebar.test.tsx` 가 이미 진다. 여기서 목적지까지
+  // 재면 같은 것을 두 곳에서 재게 되고, 문이 하나 늘 때마다 언어 회귀선이 함께 깨진다.
+  onOpenAgentConfig: () => {},
+  onOpenProfile: () => {},
   collapsed: false,
   onToggleCollapse: () => {},
 };
