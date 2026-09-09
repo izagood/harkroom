@@ -2235,7 +2235,7 @@ dependencies = [
 
 [[package]]
 name = "murmur-desktop"
-version = "0.1.147"
+version = "0.1.148"
 dependencies = [
  "keyring",
  "libc",
