@@ -71,8 +71,42 @@ describe('회수한 자리가 되돌아가지 않는다', () => {
     expect(replyLine.slice(0, 600)).not.toContain('text-accent');
   });
 
-  it('리액션 칩은 강조색을 쓰지 않는다', () => {
-    expect(read('components/Reactions.tsx')).not.toContain('accent');
+  /**
+   * **리액션 칩은 채운 면과 글자에 강조를 쓰지 않는다 — 선은 예외다**(2026-09-09).
+   *
+   * 앞판은 이 파일에 `accent` 라는 글자가 **아예 없는지**를 쟀다. 그 단정을 좁힌 이유:
+   * 내가 단 칩과 남이 단 칩이 실사용에서 안 갈렸다. 구별이 면 한 단계
+   * (`bg-surface-sunken` vs `bg-surface`)와 굵기뿐이어서, 칩이 본문 아래 작게 붙어
+   * 있으면 내가 누른 것인지 알아보려고 **눌러 보게 된다** — 그리고 누르면 취소된다.
+   * 요청자(jaebin)가 그 자리에 테두리 강조를 달라고 지목했다.
+   *
+   * 예산이 지키려던 것은 **그대로 지킨다.** `#488 B2` 가 회수한 것은 강조로 *채운 면*과
+   * *강조색 글자* 아홉 군데였고 그 둘은 여기서 계속 막는다. 선은 다른 축이다 —
+   * `index.css` 가 `--app-accent-brand` 를 *"글자를 얹지 않는 자리에만 쓴다 —
+   * 선(`border-accent-brand`), 상태 점"* 으로 정의해 둔 자리가 정확히 이곳이고, 선은
+   * 칩이 몇 개 붙든 한 겹이므로 *"칩이 셋만 붙어도 줄이 시끄러워진다"* 는 그 걱정에
+   * 닿지 않는다.
+   *
+   * **왜 글자로 재나**: 이 구획의 머리말이 적은 그대로다 — 렌더로는 자리마다 화면을
+   * 세워야 하고 그러면 새로 생긴 자리를 놓친다. 아래 두 단정은 회수한 자리가 조용히
+   * 되돌아가는 것만 붙잡는다.
+   */
+  it('리액션 칩은 강조로 채운 면·강조색 글자를 쓰지 않는다', () => {
+    const src = read('components/Reactions.tsx');
+    expect(src).not.toContain('text-accent');
+    expect(src).not.toContain('bg-accent');
+    // `accent-hover` 도 채운 면의 어휘다 — 선에는 hover 값이 없다.
+    expect(src).not.toContain('accent-hover');
+  });
+
+  /**
+   * 선에 쓰는 것이 **브랜드 토큰**임을 못 박는다. `border-accent`(= `--app-accent`,
+   * 채운 면용 어두운 주황)로 바꿔 놓으면 위 단정은 통과하는데 정의가 어긋난다 —
+   * 그 값은 흰 글자를 얹기 위해 한 단계 어둡게 만든 것이고 선에 쓸 색이 아니다.
+   */
+  it('내가 단 칩의 선은 브랜드 토큰을 쓴다 — 채운 면용 강조가 아니다', () => {
+    const src = read('components/Reactions.tsx');
+    expect(src).toContain('border-accent-brand');
   });
 
   it('멘션 칩은 강조색을 쓰지 않는다 — 링크는 예외다', () => {

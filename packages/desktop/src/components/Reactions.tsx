@@ -2,6 +2,8 @@ import { useState } from 'react';
 import type { MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
+import { useT } from '../i18n/useT';
+import { reactorNames } from '../lib/reactionNames';
 
 /**
  * 피커에 올려 둘 이모지. 전체 이모지 검색은 별개 작업이고, 실제로 쓰이는 것은 소수다 —
@@ -125,12 +127,26 @@ export function InlineReactionButtons({ message }: { message: MessageRow }) {
 export function Reactions({ message }: { message: MessageRow }) {
   const accounts = useActiveStore((s) => s.accounts);
   const myId = useActiveStore((s) => s.me?.id ?? null);
+  const t = useT();
 
   const toggle = (emoji: string, on: boolean) => {
     void getController().toggleReaction(message.channelId, message.id, emoji, on).catch(() => {});
   };
 
-  const nameOf = (id: string) => accounts[id]?.handle ?? '…';
+  /**
+   * **모르는 계정에 `null` 을 돌려준다.** 앞판은 `'…'` 를 돌려줬는데, 그러면 목록에
+   * 이름처럼 생긴 자리가 서서 사람이 그것을 이름으로 읽는다 — 그 자리에 낱말
+   * (`reactions.unknown`)을 넣을 판단은 `reactorNames` 에 있다.
+   *
+   * 핸들이 아니라 `displayName` 을 앞에 두는 이유: 이 줄은 **사람이 읽는 이름**을 묻는
+   * 자리다(`@` 로 부르는 자리가 아니다). 이름줄·디렉터리가 이미 그 이름을 그리므로
+   * 툴팁만 핸들을 말하면 같은 사람을 두 이름으로 부르게 된다. 에이전트는 둘이 같다.
+   */
+  const nameOf = (id: string) => {
+    const a = accounts[id];
+    if (!a) return null;
+    return a.displayName || a.handle;
+  };
 
   if (!message.reactions.length) return null;
 
@@ -138,20 +154,49 @@ export function Reactions({ message }: { message: MessageRow }) {
     <div className="mt-1 flex flex-wrap items-center gap-1" data-testid="reactions">
       {message.reactions.map((r) => {
         const mine = myId !== null && r.accountIds.includes(myId);
+        // 호버(`title`)와 스크린리더(`aria-label`)가 **같은 목록**을 말한다. 갈라 두면
+        // 한쪽만 고쳐지고, 그러면 눈으로 본 것과 읽힌 것이 다르다.
+        const who = reactorNames(r.accountIds, nameOf, myId, t);
         return (
           <button
             key={r.emoji}
+            data-testid={`reaction-${r.emoji}`}
+            data-mine={mine ? 'true' : 'false'}
+            /*
+              **호버로 누가 달았는지 보여 준다**(2026-09-09).
+
+              칩에 이모지와 수만 있던 동안 화면에는 그 수가 누구인지 알 방법이 아예
+              없었다 — `👀`·`💬` 는 "누가 이 말을 읽었나"가 신호의 뜻 전부인데
+              (`STATUS_SIGNAL_EMOJI`) 화면은 몇 명인지만 말했다.
+
+              문구를 문장으로 짜지 않고 **이름 목록만** 두는 이유: 이모지는 칩에 이미
+              그려져 있으므로 문장은 그것을 한 번 더 말하는 것이고, `title` 은 OS 가
+              그리는 평문이라 길어지면 우리가 접을 수 없다. 호버가 묻는 것은 "누구"다.
+            */
+            title={who}
             // 이모지 문자만으로는 스크린리더가 무엇인지 읽을 수 없다 — 누가 눌렀는지 함께 준다.
-            aria-label={`${r.emoji} — ${r.accountIds.map(nameOf).join(', ')}`}
+            aria-label={`${r.emoji} — ${who}`}
             aria-pressed={mine}
             /*
-              **내가 단 것은 면과 굵기로 구별한다 — 강조색이 아니다**(#488 B2).
-              문서: 리액션은 "현재 상태"이지 "급한 것"이 아니다. 테두리는 양쪽이 같다 —
-              선까지 갈라 두면 칩이 셋만 붙어도 줄이 시끄러워지고, 눌린 상태는
-              `aria-pressed` 가 이미 정확히 말한다.
+              **내가 단 것은 선으로도 구별한다**(2026-09-09, 요청자 jaebin).
+
+              앞판은 면과 굵기만 갈랐다(#488 B2: *"테두리는 양쪽이 같다 — 선까지 갈라
+              두면 칩이 셋만 붙어도 줄이 시끄러워진다"*). 실사용에서 그 구별이 안 읽혔다:
+              `bg-surface-sunken` 과 `bg-surface` 는 면 한 단계 차이라, 칩이 본문 아래
+              작게 붙어 있으면 내가 누른 것인지 알아보려고 **눌러 보게 된다** — 그리고
+              누르면 취소된다.
+
+              **선에만 `border-accent-brand` 를 쓰고 면·글자에는 강조를 안 쓴다.** 그
+              토큰이 `index.css` 에서 *"글자를 얹지 않는 자리에만 쓴다 —
+              선(`border-accent-brand`), 상태 점"* 으로 정의된 자리다. 강조 예산(#488 B2)이
+              걱정한 것은 채운 면과 글자이고 `accentBudget.test.tsx` 가 그 둘을 계속
+              막는다. 선은 칩이 몇 개 붙든 한 겹이므로 "줄이 시끄러워진다"는 그 걱정에
+              닿지 않는다.
             */
-            className={`flex items-center gap-1 rounded-full border border-border px-1.5 text-meta ${
-              mine ? 'bg-surface-sunken font-medium text-fg' : 'bg-surface text-fg-muted'
+            className={`flex items-center gap-1 rounded-full border px-1.5 text-meta ${
+              mine
+                ? 'border-accent-brand bg-surface-sunken font-medium text-fg'
+                : 'border-border bg-surface text-fg-muted'
             }`}
             onClick={() => toggle(r.emoji, !mine)}
           >
