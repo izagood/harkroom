@@ -35,6 +35,9 @@ beforeEach(() => {
   // 창 자체는 undoSend.test.tsx 가 단독으로 지킨다.
   undoSendStorage.saveWindowMs(0);
   useAppStore.getState().reset();
+  // 고정은 이제 기기 로컬에 남는다(#706) — 앞 시험이 적어 둔 것이 다음 시험의 사실이 되면
+  // 어느 것이 무엇을 재는지 알 수 없다.
+  localStorage.clear();
   useAppStore.getState().set({
     me: acc('u1', 'me'),
     accounts: {
@@ -248,5 +251,90 @@ describe('adding a mention without sending', () => {
     openPicker();
 
     expect(screen.queryAllByRole('option')).toHaveLength(0);
+  });
+});
+
+
+/**
+ * 화면을 떠났다 돌아오는 것 — **이 파일이 처음부터 재야 했던 것**이다(#706).
+ *
+ * 고정이 컴포저의 지역 state 였을 때 위의 시험들은 모두 초록이었다. 하나의 컴포저 인스턴스
+ * 안에서만 재고 있었기 때문이다(`rerender` 는 언마운트가 아니다). 실제 앱에서 스레드
+ * 패널은 조건부 렌더라(`Workspace.tsx` 의 `{threadRootId && <ThreadPanel/>}`) 다른 채널을
+ * 한 번 누르면 통째로 언마운트되고, 그때 고정이 사라졌다 — 초안은 스토어에 남아 돌아오므로
+ * 사람은 글은 그대로인데 칩만 없는 입력창을 보고, 그 상태로 Enter 를 눌러 아무도 깨우지
+ * 못했다.
+ */
+describe('sticky mentions survive leaving the view', () => {
+  const STORE_KEY = 'murmur.stickyMentions';
+
+  // 스레드 패널이 빠지는 것을 흉내내는 유일한 방법은 **언마운트**다.
+  it('keeps the chips when the composer unmounts and comes back', () => {
+    const onSend = vi.fn();
+    const first = render(<Composer onSend={onSend} scopeKey="thread:t1" />);
+    sendText('@fizz 확인해봐');
+    expect(chips()).toEqual(['fizz']);
+
+    first.unmount();
+    render(<Composer onSend={onSend} scopeKey="thread:t1" />);
+
+    expect(chips()).toEqual(['fizz']);
+    sendText('돌아와서 한 줄');
+    expect(onSend).toHaveBeenLastCalledWith('@fizz 돌아와서 한 줄', []);
+  });
+
+  // 다른 자리의 고정을 끌고 오지 않는다 — 언마운트 뒤 다른 스레드로 돌아오는 경우.
+  it('does not carry a kept handle into another scope', () => {
+    const first = render(<Composer onSend={vi.fn()} scopeKey="thread:t1" />);
+    sendText('@fizz 확인해봐');
+    first.unmount();
+
+    render(<Composer onSend={vi.fn()} scopeKey="thread:t2" />);
+
+    expect(chips()).toEqual([]);
+  });
+
+  it('writes the kept handles to device storage', () => {
+    render(<Composer onSend={vi.fn()} scopeKey="thread:t1" />);
+
+    sendText('@fizz @honey 둘 다');
+
+    expect(JSON.parse(localStorage.getItem(STORE_KEY)!)).toEqual({ 'thread:t1': ['fizz', 'honey'] });
+  });
+
+  // 칩을 떼면 보관소에서도 없어져야 한다 — 남으면 다음 기동에 되살아난다.
+  it('drops a removed handle from storage too', () => {
+    render(<Composer onSend={vi.fn()} scopeKey="thread:t1" />);
+    sendText('@fizz 확인해봐');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove @fizz' }));
+
+    expect(localStorage.getItem(STORE_KEY)).toBeNull();
+  });
+
+  // 보관소 읽기는 **앱 기동 시점**이다(`controller.start` 가 부른다) — 컴포저가 보관소를
+  // 직접 뒤지지 않는다. `drafts.test.tsx` 의 재시작 시험과 같은 규약이다.
+  it('restores the chips after a restart', () => {
+    localStorage.setItem(STORE_KEY, JSON.stringify({ 'thread:t1': ['fizz'] }));
+    useAppStore.getState().hydrateStickyMentions();
+
+    const onSend = vi.fn();
+    render(<Composer onSend={onSend} scopeKey="thread:t1" />);
+
+    expect(chips()).toEqual(['fizz']);
+    sendText('재시작 후 한 줄');
+    expect(onSend).toHaveBeenLastCalledWith('@fizz 재시작 후 한 줄', []);
+  });
+
+  // 초안과 같은 수명이다 — 로그아웃이 초안을 지우는 자리에서 고정도 지운다.
+  it('is wiped on logout, in memory and in storage', () => {
+    localStorage.setItem(STORE_KEY, JSON.stringify({ 'thread:t1': ['fizz'], c2: ['honey'] }));
+    useAppStore.getState().hydrateStickyMentions();
+    expect(Object.keys(useAppStore.getState().stickyMentions)).toHaveLength(2);
+
+    useAppStore.getState().clearStickyMentions();
+
+    expect(Object.keys(useAppStore.getState().stickyMentions)).toHaveLength(0);
+    expect(localStorage.getItem(STORE_KEY)).toBeNull();
   });
 });

@@ -42,6 +42,7 @@ export interface Prefs {
 
 const KEY = 'murmur.prefs';
 const DRAFTS_KEY = 'murmur.drafts';
+const STICKY_MENTIONS_KEY = 'murmur.stickyMentions';
 const SIDEBAR_WIDTH_KEY = 'murmur.sidebarWidth';
 const SIDEBAR_COLLAPSED_KEY = 'murmur.sidebarCollapsed';
 const UNDO_SEND_KEY = 'murmur.undoSendMs';
@@ -328,5 +329,40 @@ export const draftsStorage = {
   },
   clear(): void {
     try { localStorage.removeItem(DRAFTS_KEY); } catch { /* noop */ }
+  },
+};
+
+/**
+ * 스코프별 **멘션 고정**을 기기 로컬에 보관한다(#706).
+ *
+ * 초안과 **같은 매체·같은 수명**인 것이 요점이다. 고정은 "다음 줄도 이 상대를 부른다"는
+ * 쓰다 만 입력의 일부다 — 초안만 살아 돌아오고 고정이 사라지면, 사람은 방금까지 부르던
+ * 에이전트가 붙어 있다고 믿고 Enter 를 누르고 아무도 깨지 않는다.
+ *
+ * 로그아웃에서 초안과 함께 지운다(`appStore.clearStickyMentions`). 문장 자체는 아니지만
+ * *누구와 이야기하던 자리인가*는 남는 사실이고, 계정이 사라진 뒤 그것만 디스크에 남을
+ * 이유가 없다.
+ */
+export const stickyMentionsStorage = {
+  load(): Record<string, string[]> {
+    try {
+      const raw = localStorage.getItem(STICKY_MENTIONS_KEY);
+      if (!raw) return {};
+      return JSON.parse(raw) as Record<string, string[]>;
+    } catch {
+      return {};
+    }
+  },
+  save(sticky: Record<string, string[]>): void {
+    try {
+      if (Object.keys(sticky).length === 0) {
+        localStorage.removeItem(STICKY_MENTIONS_KEY);
+      } else {
+        localStorage.setItem(STICKY_MENTIONS_KEY, JSON.stringify(sticky));
+      }
+    } catch { /* 저장 불가 환경 허용 */ }
+  },
+  clear(): void {
+    try { localStorage.removeItem(STICKY_MENTIONS_KEY); } catch { /* noop */ }
   },
 };
