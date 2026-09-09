@@ -14,6 +14,7 @@ import { Identity, StatusMark } from './Identity';
 import { TerminalChip } from './TerminalChip';
 import { WakeRow } from './WakeRow';
 import { NotifiedGapRow } from './NotifiedGapRow';
+import { SavedIcon } from './RailIcons';
 import { Attachments } from './Attachments';
 import { Menu } from './Menu';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -528,6 +529,33 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
         최대폭과는 다른 문제다.
       */}
       <div data-testid="message-body-column" className="min-w-0 max-w-[1280px] flex-1">
+        {/*
+          **담아 둔 표식**(요청 2026-09-09). `⋯` 메뉴를 열어야만 알 수 있던 사실을 목록에
+          그대로 세운다 — 담아 두는 까닭이 "나중에 이 자리로 돌아온다"인데, 정작 채널을
+          훑을 때 어느 것을 담았는지 보이지 않으면 담긴 목록(레일 `Saved`)을 따로 열어
+          맞춰 보는 수밖에 없었다.
+
+          **이름줄 위**다. 이름줄 안(배지들 옆)에 두면 작성자·시각과 나란히 서서 "이 말에
+          붙은 사실"로 읽히는데, 담김은 말이 아니라 **나만의** 표시다(`savedIds` 는 내
+          것이다). 위에 한 줄을 따로 세우면 그 다름이 자리로 말해진다 — 채널 메아리
+          배지(`channel-echo-mark`)가 이름줄에 있는 것과 반대되는 이유가 이것이다.
+
+          강조색을 쓰지 않는다(`accentBudget.test.tsx`): 이것은 나를 막는 것이 아니라 내가
+          스스로 붙여 둔 표시다. 눈에 띄는 일은 책갈피 그림이 하고, 색은 곁정보단에 맡긴다.
+
+          해제하면 이 줄은 사라진다 — `savedIds` 는 `unsaveMessage` 가 요약을 다시 받아
+          갱신하므로(`controller.unsaveMessage`) 별도 상태가 없다. 담김을 '완료'로 옮긴
+          것은 여전히 담긴 것이라 표식이 남는다(`savedIds` 는 open+done 전부다).
+        */}
+        {isSaved && (
+          <div
+            data-testid="saved-mark"
+            className="mb-0.5 flex items-center gap-1 text-meta font-medium text-fg-muted"
+          >
+            <SavedIcon size={12} />
+            {t('message.savedMark')}
+          </div>
+        )}
         <div className="flex items-baseline gap-2">
           {/* `data-testid` 를 두는 이유는 위 `author-gutter` 와 같다: 이 자리가 **작성자**의
               것이라는 사실을 회귀선이 클래스 문자열로 더듬지 않게 한다. 아바타(`Identity`)도
