@@ -4,7 +4,7 @@ import { WaitChainSection } from './WaitChainSection';
 import type { InboxEntry } from '@murmur/shared';
 import { inboxRow, matchesFilter, type InboxFilter } from '../lib/inboxRow';
 import { bodyWithHandles } from '../lib/mention';
-import { INBOX_PANE_WIDTH, MIN_INBOX_PANE_WIDTH } from '../lib/prefs';
+import { INBOX_PANE_WIDTH, inboxStorage, MIN_INBOX_PANE_WIDTH } from '../lib/prefs';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
@@ -96,8 +96,11 @@ interface DraftItem {
  * 이미 본 수백 줄이 새 줄과 **같은 모양으로** 섞여 나왔다. 지금은 칩 하나('안 읽은 것')로
  * 좁힐 수 있고, 좁히지 않아도 읽은 줄은 물러나 보인다(`entryRow`).
  *
- * 필터 상태는 영속하지 않는다. 닫았다 열면 처음으로 돌아간다 — 좁혀 둔 것을 기억해 두면
- * 다음에 열었을 때 **걸러져 사라진 항목이 없는 항목으로 보인다.**
+ * **고른 칩은 기기에 남는다**(`inboxStorage`). 오래 "닫았다 열면 처음으로" 였고 그 이유가
+ * 여기 적혀 있었다 — *"좁혀 둔 것을 기억해 두면 다음에 열었을 때 걸러져 사라진 항목이 없는
+ * 항목으로 보인다."* 그 걱정은 칩마다 **개수가 붙은 뒤로** 근거를 잃었다(좁혀진 화면에서도
+ * 다른 칩의 수가 보인다). 남은 것은 손해뿐이었다: '안 읽은 것'으로 좁혀 훑던 사람이
+ * 인박스를 접었다 펴면 수백 줄이 다시 쏟아진다(2026-09-09 보고).
  */
 export function Inbox({ open, onClose }: Props) {
   // `inboxRow` 는 `lib/` 판정이라 훅을 못 쓴다 — 번역기를 여기서 만들어 넘긴다.
@@ -133,16 +136,40 @@ export function Inbox({ open, onClose }: Props) {
    * **칩 하나가 정렬 축을 그대로 쓴다**(#488 C2·B3). 네이티브 `select` 둘과 체크박스가
    * 사라진 자리다 — 고르는 축과 보이는 순서가 어긋나지 않는다.
    */
-  const [filter, setFilter] = useState<InboxFilter>('all');
+  const [filter, setFilter] = useState<InboxFilter>(() => inboxStorage.loadFilter());
   const [channelFilter, setChannelFilter] = useState('all');
+  /** 칩을 고르면 기기에도 적는다. 화면 상태와 저장을 한 함수로 묶는다 — 둘로 두면 갈린다. */
+  const chooseFilter = useCallback((next: InboxFilter): void => {
+    setFilter(next);
+    inboxStorage.saveFilter(next);
+  }, []);
+  /**
+   * 이 세션에서 **방금 읽음이 된** 항목. '안 읽은 것' 칩에서 줄을 붙잡아 두는 데만 쓴다.
+   *
+   * 줄을 누르면 서버는 그 채널의 안 읽은 인박스 항목을 **전부** 읽음으로 바꾼다
+   * (`controller.openChannel`). 그것을 화면에 그대로 반영하면 '안 읽은 것'으로 좁혀 보던
+   * 목록이 한 번의 클릭에 통째로 비고, 방금 무엇을 눌렀는지까지 사라진다. 그래서 읽음
+   * **표시**는 즉시 걷되(줄이 물러난다) 줄 자체는 다시 열 때까지 남긴다 — 이 파일이 이미
+   * 세워 둔 규칙과 같다(`entryRow`: *"방금 읽은 것을 다시 찾는 것도 이 목록의 일이다"*).
+   *
+   * 칩의 숫자는 붙잡지 않는다(진짜 안 읽은 수를 센다). 표시와 수가 함께 거짓말하면 무엇이
+   * 사실인지 화면 어디에도 남지 않는다.
+   */
+  const [justRead, setJustRead] = useState<ReadonlySet<number>>(() => new Set());
 
-  const reload = useCallback((): (() => void) => {
+  /**
+   * `quiet` 는 **읽음 상태를 맞추러 도는 재조회**다(`openEntry`). 사람이 조회를 기다리고
+   * 있지 않으므로 화면을 "불러오는 중"으로 되돌리지 않고, 실패도 화면에 세우지 않는다 —
+   * 줄을 눌러 스레드를 읽는 길에 목록이 오류 상자로 바뀌면, 고칠 것도 없는 실패가 방금
+   * 누른 자리를 덮는다. 낙관적 표시는 그대로 서고, 다음에 열 때 제대로 다시 읽는다.
+   */
+  const reload = useCallback((opts: { quiet?: boolean } = {}): (() => void) => {
     let alive = true;
-    setLoad({ kind: 'loading' });
+    if (!opts.quiet) setLoad({ kind: 'loading' });
     getController().api.inbox().then(
       (rows) => { if (alive) { setEntries(rows); setLoad({ kind: 'ready' }); } },
       (err: unknown) => {
-        if (!alive) return;
+        if (!alive || opts.quiet) return;
         // 실패했을 때 앞선 결과를 남겨 두면 낡은 목록이 지금 사실인 척한다. 비우고,
         // 비었다는 말 대신 오류를 보여 준다.
         setEntries([]);
@@ -154,8 +181,12 @@ export function Inbox({ open, onClose }: Props) {
 
   useEffect(() => {
     if (!open) return;
-    setFilter('all');
+    // **칩은 되돌리지 않는다**(위 주석). 채널 좁힘만 되돌린다 — 그 목록은 다시 열 때마다
+    // 채널이 바뀌어 있을 수 있다.
     setChannelFilter('all');
+    // 붙잡아 둔 줄은 여는 순간 놓는다. 이 목록의 뜻이 "지금 안 읽은 것"으로 돌아가야
+    // 하고, 방금 읽은 줄을 다음 열림까지 데려가면 그 칩이 무엇인지 말하지 못한다.
+    setJustRead(new Set());
     return reload();
   }, [open, reload]);
 
@@ -198,7 +229,9 @@ export function Inbox({ open, onClose }: Props) {
   const shownEntries = useMemo(() => entries
     .map((e) => ({ e, row: inboxRow(e, myId, t) }))
     .filter(({ e, row }) => {
-      if (!matchesFilter(row, filter, e.readAt === null)) return false;
+      // `justRead` 를 얹는 이유는 위 상태 주석에 있다 — 방금 읽은 줄이 눈앞에서
+      // 사라지지 않게 붙잡는다. 칩의 숫자는 이 보정을 쓰지 않는다(진짜 안 읽은 수).
+      if (!matchesFilter(row, filter, e.readAt === null || justRead.has(e.id))) return false;
       if (channelFilter !== 'all' && e.channelId !== channelFilter) return false;
       return true;
     })
@@ -207,7 +240,7 @@ export function Inbox({ open, onClose }: Props) {
     .map(({ e }) => e),
   // `t` 가 의존성에 있어야 한다 — 언어를 바꾸면 말표가 바뀌고, 그것이 정렬의 재료인
   // `rank` 와 같은 함수에서 나온다. 빼면 언어를 바꿔도 이 목록만 옛 말표로 남는다.
-  [entries, filter, channelFilter, myId, t]);
+  [entries, filter, channelFilter, justRead, myId, t]);
 
   const shownDrafts = useMemo(() => draftItems.filter((d) => {
     // **칩으로 좁히면 초안은 빠진다.** 초안은 남이 나를 부른 것이 아니라 내가 쓰다 만
@@ -278,6 +311,21 @@ export function Inbox({ open, onClose }: Props) {
 
   if (!open) return null;
 
+  /**
+   * 한 채널의 안 읽은 줄을 화면에서 읽음으로 만든다.
+   *
+   * **채널 단위인 이유**는 서버가 그 단위로 바꾸기 때문이다(`controller.openChannel` 이
+   * 그 채널의 안 읽은 항목 전체를 `markRead` 로 넘긴다). 누른 줄만 바꾸면 같은 채널의
+   * 형제 줄들이 재조회가 돌아올 때까지 안 읽음이라고 거짓말한다.
+   */
+  const markChannelReadLocally = (channelId: string): void => {
+    const hit = entries.filter((r) => r.channelId === channelId && r.readAt === null).map((r) => r.id);
+    if (hit.length === 0) return;
+    const at = new Date().toISOString();
+    setEntries((rows) => rows.map((r) => (hit.includes(r.id) ? { ...r, readAt: at } : r)));
+    setJustRead((prev) => new Set([...prev, ...hit]));
+  };
+
   const openEntry = (e: InboxEntry): void => {
     // #178·#228 이 이미 만든 이동 경로다. 채널을 열고, 답글이면 스레드까지 열고, 강조를
     // 건다. 실패도 그 안에서 사람에게 보인다.
@@ -286,7 +334,18 @@ export function Inbox({ open, onClose }: Props) {
     // 문서가 지적한 결함의 절반이었다 — *"막는 말을 확인하면서 그 스레드를 여는 것이 기본
     // 동작"* 인데 여는 순간 확인하던 목록이 사라졌다. 자리가 된 지금은 남는 것이 맞고,
     // 남기 때문에 다음 줄로 바로 넘어갈 수 있다(막는 말이 하나뿐인 경우는 드물다).
-    void getController().openMessage(e.messageId);
+    //
+    // **읽음은 여기서 화면에 반영한다.** 이동하는 길에 `openChannel` 이 그 채널의 안 읽은
+    // 인박스 항목을 읽음으로 바꾸는데(`api.markRead`), 이 화면은 자기 목록을 따로 들고
+    // 있어 그 사실을 모른다 — 그래서 누른 줄이 계속 '안 읽음'이라고 말하고, 인박스를
+    // 닫았다 열면 그때서야 사라졌다(2026-09-09 보고).
+    markChannelReadLocally(e.channelId);
+    void getController().openMessage(e.messageId).then(() => {
+      // 낙관적 표시를 서버 사실로 맞춘다. **못 연 메시지**(지워짐·권한 없음·연결 실패)면
+      // 읽음 처리도 없었으므로 이 재조회가 방금 걷은 표시를 되돌린다 — 낙관적 표시가
+      // 거짓으로 남지 않는 유일한 길이다(`openMessage` 는 실패를 통지로 삼키고 resolve 한다).
+      reload({ quiet: true });
+    });
   };
 
   const openDraft = (d: DraftItem): void => {
@@ -485,7 +544,7 @@ export function Inbox({ open, onClose }: Props) {
               data-testid={`inbox-filter-${value}`}
               data-selected={filter === value}
               aria-pressed={filter === value}
-              onClick={() => setFilter(value)}
+              onClick={() => chooseFilter(value)}
               // 칩은 **아랫단 11px** — 아래 구획 제목들이 이미 그 단이고, 칩과 제목은
               // 목록을 어떻게 자를지 말하는 같은 층이다. 목록 안의 글자가 본문단이다.
               className={`rounded-full border px-2.5 py-0.5 text-meta ${filter === value
