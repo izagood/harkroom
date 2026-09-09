@@ -862,6 +862,17 @@ export const ko = {
   'grid.card.relaunchFailed': '{handle} 다시 띄우기',
   'grid.card.stop': '{handle} 멈추기',
 
+  // 상태 칩 — 판단은 `en.ts` 의 표에 있다.
+  'grid.chip.ok': '도는 중',
+  'grid.chip.stopped': '멈춤',
+  'grid.chip.failed': '실패',
+  'grid.chip.unknown': '모름',
+  'grid.chip.retiring': '물러나는 중',
+  'grid.chip.stopping': '멈추는 중',
+  'grid.chip.stopShort': '멈추기',
+  'grid.chip.startShort': '실행하기',
+  'grid.chip.label': '{state} · {action}',
+
   // ---------------------------------------------------------------------------
   // presence — 세 자리(사이드바·디렉터리·격자)가 같은 말을 쓴다. 표는 남기고 값만
   // 키로 바꿨다 — 근거는 `en.ts` 의 이 영역 머리말에.

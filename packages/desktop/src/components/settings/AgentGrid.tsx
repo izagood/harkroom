@@ -5,6 +5,7 @@ import type { RunnerState } from '../../lib/runnerLauncher';
 // B1 의 세 얼굴 규칙은 `lib/faceState.ts` 하나가 낸다 — DM 목록도 같은 판정을 쓴다
 // (`docs/desktop-rail.html` 2단계). 여기 사본을 두면 두 화면이 같은 러너를 다르게 그린다.
 // `isStopping` 은 **격자만** 부른다 — 사이드바가 그 값을 받을 수 없는 이유가 그 함수 주석에 있다.
+import type { FaceState } from '../../lib/faceState';
 import { faceState, faceTakesRelaunch, isFaceGreyed, isStopping } from '../../lib/faceState';
 // 뒤처짐 판정도 **이미 있는 것을 그대로 쓴다**(`lib/runnerVersions.ts`). 그 규칙
 // (*"모르는 것을 뒤처졌다고 하지 않는다"*)을 칩에서 다시 적으면 일괄 재기동 띠와 카드가
@@ -13,6 +14,7 @@ import { staleRunners } from '../../lib/runnerVersions';
 // 경과 계산도 한 벌이다. `AgentsSettings.lastTurnLabel` 이 같은 함수 위에 접두만 붙인다 —
 // 이 파일이 그쪽에서 가져올 수 없는 이유(순환)가 `lib/lastTurn.ts` 주석에 있다.
 import { lastTurnAgo } from '../../lib/lastTurn';
+import type { MessageKey } from '../../i18n';
 import { useT, useLocale } from '../../i18n/useT';
 
 /**
@@ -311,6 +313,145 @@ const PLACE: Record<AgentGridPlace, {
  */
 const GLYPH_FOCUS = 'outline-none focus-visible:opacity-100 focus-visible:outline-solid'
   + ' focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2';
+
+/**
+ * 상태 칩의 포커스 링. `GLYPH_FOCUS` 와 **갈라 둔다** — 그쪽은 `focus-visible:opacity-100`
+ * 을 함께 들고 있는데, 그것이 필요했던 이유가 *"평소 `opacity-50` 으로 숨어 있다"* 였다.
+ * 칩은 숨지 않으므로 그 칸이 필요 없고, 링도 안쪽이 아니라 바깥에 그린다(덮개가 아니라
+ * 제 자리를 차지한 상자라 밖으로 밀어도 옆 카드에 안 닿는다).
+ */
+const CHIP_FOCUS = 'outline-none focus-visible:outline-solid focus-visible:outline-2'
+  + ' focus-visible:outline-accent focus-visible:outline-offset-2';
+
+/** 얼굴 다섯에 붙는 칩 글자. `stopping` 은 얼굴이 아니라 판정이라 여기 없다 — 아래 참고. */
+const CHIP_STATE: Record<FaceState, MessageKey> = {
+  ok: 'grid.chip.ok',
+  stopped: 'grid.chip.stopped',
+  failed: 'grid.chip.failed',
+  unknown: 'grid.chip.unknown',
+  retiring: 'grid.chip.retiring',
+};
+
+/**
+ * 카드의 **상태 칩** — 설정 자리에서 이름 아래 한 줄. 상태를 글자로 말하고, 그 상태에서
+ * 할 수 있는 일이 있으면 **그 칩이 곧 버튼**이다.
+ *
+ * ## 왜 손잡이가 얼굴에서 여기로 내려왔나 (2026-09-09)
+ *
+ * 여기 있던 것은 얼굴을 덮는 `▶`·`↻`·`■` 글리프였다. 그 블록은 *"글리프는 사진 안에
+ * 있다"* 로 자리를 설명했지만 **그린 것과 눌리는 것이 어긋나 있었다**: 보이는 것은 24px
+ * 글리프인데 `PLACE.settings.glyph` 가 `h-[88px] w-[88px]` 라 히트 영역은 얼굴 전체였고,
+ * `top-0` 이 감싸개의 **패딩 상자**를 기준으로 잡혀 그 88px 이 얼굴보다 12px 위에서
+ * 시작했다. 즉 카드에서 제일 크고 제일 누르고 싶은 과녁(프로필 사진)이 되돌릴 수 없는
+ * 동작이었고, 상세를 여는 `onPick` 은 이름 두 줄과 여백에만 남아 있었다.
+ *
+ * 고칠 길은 여럿이었다(글리프를 줄이기 · 카드 아래 버튼 줄 · `⋯` 메뉴 · 사진 아래 띠 ·
+ * 카드에서 빼고 일괄 툴바로). 이 자리를 고른 이유는 **겹침을 없애면서 없던 것을 하나
+ * 되살리기** 때문이다: 지금 카드는 도는지 멈췄는지를 **얼굴의 회색조로만** 말한다
+ * (`isFaceGreyed`). 색에만 실린 정보라 처음 온 사람도, 색을 못 가르는 사람도 못 읽는다.
+ * 칩을 놓으면 그 정보가 글자가 되고, 그 칩을 그대로 버튼으로 쓰면 과녁 문제까지 같이
+ * 풀린다 — 상태와 그 상태에서 할 수 있는 일이 **한 물건**이 된다.
+ *
+ * ## 정상은 조용하다
+ *
+ * `runnerFailureDisplay.test.tsx` 가 지키는 규칙이 있다: *"40개 중 38개가 이 모습이면
+ * 화면이 조용하다 — 정상에는 표시를 붙이지 않는다."* 칩은 모든 카드에 서지만 **`ok`
+ * 에서는 면도 선도 없이 옅은 글자**다. 면과 테두리는 사람이 봐야 하는 얼굴에만 준다.
+ *
+ * ## 버튼이 아닌 칩이 있다
+ *
+ * `unknown` 에는 손잡이를 달지 않는다(`#443`: *"모를 때 화면이 할 일은 행동을 권하는
+ * 것이 아니라 모른다고 말하는 것"* — 이미 도는 러너를 하나 더 띄우게 된다). `stopping`
+ * 과 `retiring` 도 마찬가지다(*"지금 할 수 있는 일이 기다리는 것뿐이다"*). 그럴 때 칩은
+ * `span` 이다 — `button` 으로 두고 `disabled` 만 거는 것과 다르다: 누를 수 없는 것에
+ * 손가락 커서와 포커스 순서를 주지 않는다.
+ *
+ * ## 글자는 바뀌지만 접근 이름은 둘을 함께 싣는다
+ *
+ * 보이는 글자가 쉼(상태) → 호버(동작)로 갈린다. `aria-label` 에 동작만 실으면 칩이
+ * 되살린 그 상태를 스크린리더가 도로 잃고, 상태만 실으면 눌러서 무슨 일이 나는지를
+ * 잃는다. 그래서 `grid.chip.label` 이 둘을 잇는다.
+ *
+ * `group/chip` 이 **이름 있는 그룹**인 것이 요점이다. 맨 `group-hover:` 는 조상 중
+ * 아무 `.group` 에나 걸리는데 감싸개 `div` 가 이미 `group` 이라, 이름을 안 주면 카드
+ * 어디에 마우스를 올려도 칩 글자가 바뀐다 — 내가 이 칩 위에 있다는 뜻이 사라진다.
+ */
+function StateChip({ handle, face, stopping, action, onAct }: {
+  handle: string;
+  face: FaceState;
+  /** `isStopping` 의 답. 얼굴은 `ok` 인데 종료 요청이 걸린 다섯 번째 얼굴이다. */
+  stopping: boolean;
+  /** 지금 할 수 있는 일. `null` 이면 칩은 버튼이 아니다. */
+  action: 'stop' | 'relaunch' | null;
+  onAct?(): void;
+}) {
+  const t = useT();
+  const state = stopping ? t('grid.chip.stopping') : t(CHIP_STATE[face]);
+  const dot = stopping || face === 'retiring'
+    ? 'bg-warning'
+    : face === 'ok'
+      ? 'bg-success'
+      : face === 'failed'
+        ? 'bg-state-stuck'
+        : 'bg-fg-subtle';
+  const shell = 'inline-flex h-[22px] max-w-full items-center gap-1.5 rounded-full px-2.5 text-meta';
+  /* 면과 선은 **봐야 하는 얼굴에만** 준다(위 「정상은 조용하다」). */
+  const tone = face === 'failed'
+    ? 'border border-danger-border text-state-stuck'
+    : face === 'ok' && !stopping
+      ? 'text-fg-subtle'
+      : 'border border-border bg-surface-sunken text-fg-muted';
+
+  if (action === null) {
+    return (
+      <span data-testid={`agent-state-${handle}`} className={`${shell} ${tone}`}>
+        <span aria-hidden="true" className={`block h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
+        <span className="truncate leading-none">{state}</span>
+      </span>
+    );
+  }
+
+  const stop = action === 'stop';
+  /* 접근 이름과 툴팁은 **긴 것**을 쓴다(누구를 멈추는지가 거기 있다). 칩 안의 글자는
+     138px 상자에 들어가야 하므로 짧은 것이다 — 이미 이름이 바로 위에 있다. */
+  const full = stop
+    ? t('grid.card.stop', { handle })
+    : face === 'failed'
+      ? t('grid.card.relaunchFailed', { handle })
+      : t('grid.card.relaunch', { handle });
+  const short = stop ? t('grid.chip.stopShort') : t('grid.chip.startShort');
+
+  return (
+    <button
+      type="button"
+      data-testid={`agent-${stop ? 'stop' : 'relaunch'}-${handle}`}
+      aria-label={t('grid.chip.label', { state, action: full })}
+      title={full}
+      className={`group/chip ${shell} ${tone} ${CHIP_FOCUS} transition ${
+        /* 되돌릴 수 없는 쪽은 **색으로도** 경고한다 — 재기동은 강조색, 중단은 위험색. */
+        stop
+          ? 'hover:border-danger hover:bg-danger hover:text-fg-on-strong'
+          : 'hover:border-accent hover:bg-accent hover:text-fg-on-strong'
+      }`}
+      onClick={onAct}
+    >
+      <span
+        aria-hidden="true"
+        className={`block h-1.5 w-1.5 shrink-0 rounded-full group-hover/chip:hidden ${dot}`}
+      />
+      <span aria-hidden="true" className="truncate leading-none group-hover/chip:hidden">{state}</span>
+      <span aria-hidden="true" className="hidden items-center gap-1.5 group-hover/chip:inline-flex">
+        {/* 크기를 안 적는다 — 칩의 `text-meta` 를 그대로 물려받는다. 임의값을 쓰면
+            `typeScale.test.ts` 가 잡고, 그 시험이 맞다: 22px 칩 안에서 11px 글리프는
+            옆 글자와 같은 단이라 오히려 한 덩어리로 읽힌다. */}
+        <span className="leading-none">
+          {stop ? '\u25a0' : face === 'failed' ? '\u21bb' : '\u25b6'}
+        </span>
+        <span className="truncate leading-none">{short}</span>
+      </span>
+    </button>
+  );
+}
 
 /**
  * 카드 정보 한 줄.
@@ -957,6 +1098,44 @@ export function AgentGrid<T extends AgentCardSubject>({
               </button>
 
               {/*
+                ## 상태 칩 — **설정에서만** · 손잡이가 여기 산다
+
+                왜 얼굴 위의 글리프가 아니라 여기인지는 `StateChip` 주석에 있다. 자리가
+                `settings` 로 갈리는 근거는 아래 정보 묶음과 같다: 사이드바의 내용 폭은
+                164px 부터라 64px 트랙에 칩이 들어갈 자리가 없다. 그 자리의 손잡이는
+                오늘처럼 얼굴 위의 `▶` 로 남는다(아래 그 블록의 주석).
+
+                카드 `button` **밖**인 것은 버전 칩과 같은 이유다 — `button` 안의
+                `button` 은 HTML 이 아니다. 그래서 `e.stopPropagation()` 도 필요 없다:
+                형제라 클릭이 카드로 올라가지 않는다.
+              */}
+              {place === 'settings' && (
+                <StateChip
+                  handle={a.handle}
+                  face={face}
+                  stopping={stopping}
+                  /*
+                    셋 중 하나다. `canStop` 이 먼저인 것은 두 조건이 배타적이기 때문이다
+                    (`canStop` 은 `face === 'ok'`, `faceTakesRelaunch` 는 그 여집합) —
+                    순서가 뜻을 바꾸지 않는다는 것을 적어 둔다.
+
+                    `stopping` 을 재기동 쪽에서 한 번 더 빼는 이유: 그 얼굴은 `ok` 라
+                    `faceTakesRelaunch` 에 안 들지만, 판정이 바뀌어 든다면 종료를 요청해
+                    둔 러너에 ▶ 를 권하게 된다. 두 값이 함께 와야 뜻이 생기는 얼굴이라
+                    (그 함수 주석) 여기서도 함께 본다.
+                  */
+                  action={canStop
+                    ? 'stop'
+                    : onRelaunch && (canRelaunch?.(a) ?? true) && faceTakesRelaunch(face) && !stopping
+                      ? 'relaunch'
+                      : null}
+                  onAct={canStop
+                    ? () => onStop?.(a)
+                    : onRelaunch ? () => onRelaunch(a) : undefined}
+                />
+              )}
+
+              {/*
                 ## 정보 세 줄 — **설정에서만** (`AgentGridPlace` 주석)
 
                 이 블록이 이 컴포넌트의 **첫 `place` 조건부 렌더**다. 축을 늘리는 대신 자리
@@ -1069,7 +1248,11 @@ export function AgentGrid<T extends AgentCardSubject>({
                   된다 — `#430` 의 중복이 바로 그 모양이었다. 모를 때 화면이 할 일은
                   행동을 권하는 것이 아니라 **모른다고 말하는 것**이다. */}
               {/* `canRelaunch` 를 안 준 호출자에게는 오늘 동작 그대로다(그 prop 주석). */}
-              {onRelaunch && (canRelaunch?.(a) ?? true) && faceTakesRelaunch(face) && (
+              {/* **설정에서는 이 글리프가 없다** — 손잡이가 상태 칩으로 내려갔다
+          (`StateChip` 주석). 사이드바에만 남는 이유도 거기 있다: 64px 트랙에는
+          칩이 들어갈 자리가 없고, 그 자리의 동작은 재기동뿐이라 되돌릴 수 있다. */}
+              {place === 'sidebar' && onRelaunch && (canRelaunch?.(a) ?? true)
+                && faceTakesRelaunch(face) && (
                 /*
                   **글리프는 사진 안에 있다**(문서: "실행하기 버튼도 사라진다 — 사진 안으로
                   들어간다"). 그래서 뱃지가 아니라 얼굴을 덮는 원이고, 평소에는 **옅게** 얹혀
@@ -1096,34 +1279,18 @@ export function AgentGrid<T extends AgentCardSubject>({
               )}
 
               {/*
-                ## `■` — 평소에는 **없는 것과 같다** (목업 2쪽 하단 두 번째 칸)
+                ## `■` 는 여기 없다 — 손잡이가 **상태 칩**으로 내려갔다 (2026-09-09)
 
-                문서가 이 비대칭에 값을 매겼다: *"멈추기는 훑는 동작이 아니다. 지금 켤 수
-                있는 것이 몇 개인지는 스캔 한 번에 와야 하지만(그래서 `▶` 는 늘 보인다),
-                멈출 것은 이미 고른 다음에 찾는다."* 그래서 `▶`·`↻` 가 쓰는 `opacity-50`
-                (평소 옅게 보임)이 아니라 **`opacity-0`**(평소 안 보임)이다.
+                여기 있던 것은 얼굴을 덮는 88px 투명 버튼이었다. 그것이 왜 결함이었는지와
+                왜 하필 칩으로 갔는지는 `StateChip` 주석 한 곳에 적혀 있다.
 
-                **대가는 마우스가 없으면 안 보이는 것**이고, 그 대가를 키보드에서 치르지
-                않는다 — `GLYPH_FOCUS` 가 `focus-visible:opacity-100` 을 이미 갖고 있다.
-                그 상수가 만들어진 이유가 정확히 이것이었다(그 주석: *"평소 `opacity-50` 으로
-                숨어 있다 … 키보드로 격자를 훑는 사람은 카드와 이 버튼 중 어디에 서 있는지
-                알 수 없다"*). 여기서는 숨는 정도가 더 깊으니 그 필요도 더 크다.
-
-                `▶`·`↻` 와 배타적이다: 조건이 `face === 'ok'`(`canStop`)이고 그쪽은
-                `face !== 'ok'` 라 한 카드에 둘이 함께 서는 경우가 없다.
+                그때 이 자리가 들고 있던 판단 하나는 **살아서 칩으로 옮겨 갔다**: 문서의
+                *"멈추기는 훑는 동작이 아니다 … 멈출 것은 이미 고른 다음에 찾는다"*. 칩은
+                쉴 때 `ok` 에서 면도 선도 없는 옅은 글자라, 스물여섯 장이 깔려도 눈에
+                먼저 들어오는 것은 여전히 얼굴이다. 바뀐 것은 **숨는 방식**이다 —
+                `opacity-0` 으로 아예 없애는 대신, 자리를 차지하되 조용히 있는다.
+                그래야 마우스가 없는 사람도 거기 무언가 있다는 것을 안다.
               */}
-              {canStop && onStop && (
-                <button
-                  data-testid={`agent-stop-${a.handle}`}
-                  aria-label={t('grid.card.stop', { handle: a.handle })}
-                  className={`absolute left-1/2 top-0 flex ${s.glyph} -translate-x-1/2 items-center
-                              justify-center rounded-full leading-none text-fg opacity-0 transition
-                              group-hover:opacity-100 ${GLYPH_FOCUS}`}
-                  onClick={(e) => { e.stopPropagation(); onStop(a); }}
-                >
-                  <span aria-hidden="true">{'\u25a0'}</span>
-                </button>
-              )}
             </div>
           );
         })}

@@ -374,12 +374,48 @@ describe('AgentGrid — 목업의 모양', () => {
     expect(screen.getByTestId('agent-card-alpha').querySelector('.ring-accent')).toBeTruthy();
   });
 
-  it('실행 글리프는 평소 옅고 호버에서 또렷해진다', () => {
-    grid({ agents: [agent('alpha')], online: [], onRelaunch: vi.fn() });
+  /**
+   * **이 글리프는 사이드바에만 남았다** (2026-09-09). 설정에서는 손잡이가 상태 칩으로
+   * 내려갔다 — 얼굴을 덮던 88px 히트 영역이 결함이었기 때문이고, 그 판단은
+   * `AgentGrid.StateChip` 주석에 있다. 사이드바가 예외인 이유도 거기 있다: 64px 트랙에
+   * 칩이 들어갈 자리가 없고, 그 자리의 동작은 재기동뿐이라 되돌릴 수 있다.
+   *
+   * 옅게 뜨는 규율 자체는 그대로다 — 26개가 깔린 화면에서 26개의 진한 글리프는 소음이다.
+   */
+  it('실행 글리프는 사이드바에서 평소 옅고 호버에서 또렷해진다', () => {
+    grid({ agents: [agent('alpha')], online: [], onRelaunch: vi.fn(), place: 'sidebar' });
     const glyph = screen.getByTestId('agent-relaunch-alpha');
-    // 26개가 깔린 화면에서 26개의 진한 글리프는 소음이다.
     expect(glyph.className).toContain('opacity-50');
     expect(glyph.className).toContain('group-hover:opacity-100');
+  });
+
+  /**
+   * **결함 자체의 회귀선** — 이 파일에서 가장 중요한 한 줄이다.
+   *
+   * 설정의 카드에는 **얼굴을 덮는 버튼이 없다.** 있던 것은 `PLACE.settings.glyph` 가
+   * `h-[88px] w-[88px]` 이라 얼굴(`face`, 같은 88px)을 통째로 먹었고, `top-0` 이 감싸개의
+   * 패딩 상자를 기준으로 잡혀 그 88px 이 얼굴보다 12px 위에서 시작했다. 그려지는 것은
+   * 24px 글리프인데 눌리는 것은 사진 전체였다 — 카드에서 제일 큰 과녁이 되돌릴 수 없는
+   * 동작이었고, 상세를 여는 `onPick` 은 이름 두 줄과 여백에만 남아 있었다.
+   *
+   * 되돌려 RED: 손잡이를 다시 `absolute … ${s.glyph}` 로 얼굴에 얹으면 빨개진다.
+   * 크기만 줄여 얹어도(뱃지) 빨개진다 — 이 시험이 재는 것은 크기가 아니라 **자리**다.
+   */
+  it('설정의 카드에는 얼굴을 덮는 버튼이 없다', () => {
+    grid({
+      agents: [agent('alpha'), agent('beta')],
+      online: ['id-alpha'],
+      onStop: vi.fn(),
+      onRelaunch: vi.fn(),
+    });
+    for (const handle of ['alpha', 'beta']) {
+      const box = screen.getByTestId(`agent-box-${handle}`);
+      for (const b of box.querySelectorAll('button')) {
+        // `absolute` 로 얼굴 위에 뜨는 버튼이 하나도 없다. 버전 칩은 정보 묶음 안의
+        // 제 자리를 차지한 상자라 이 그물에 걸리지 않는다.
+        expect(b.className).not.toContain('absolute');
+      }
+    }
   });
 
   it('검색창이 몇 개를 뒤지는지 말한다', () => {
@@ -462,15 +498,36 @@ describe('AgentGrid — 카드가 올리는 셋 (설정)', () => {
   });
 
   /**
-   * **상태 글자는 여전히 없다.** 정보 세 줄이 늘었어도 그 규칙은 그대로다 — 셋 중 어느
-   * 것도 *"도는 중"* 이 아니고, 글자를 받는 것은 예외 둘(실패 사유 · 종료 요청 중)뿐이다.
+   * ## 여기 있던 *"상태 글자는 없다 — 얼굴이 말한다"* 는 **뒤집혔다** (2026-09-09)
+   *
+   * 그 판단이 틀렸던 것이 아니라, 그것이 기대던 전제가 틀렸다: **얼굴은 상태를 말하지
+   * 못한다.** `isFaceGreyed` 가 하는 일은 사진의 채도를 빼는 것뿐이고, 그 회색이
+   * `멈춤`인지 `모름`인지 `물러나는 중`인지는 구별되지 않는다(`isFaceGreyed` 가 셋을
+   * 같은 회색으로 묶는다 — 그 함수 주석이 그것을 의도라고 적어 뒀다). 색에만 실린
+   * 정보라 색을 못 가르는 사람에게는 아예 닿지 않는다.
+   *
+   * 그 사실은 이 저장소가 이미 두 번 인정했다: `#443` 이 `unknown` 을 회색으로 두면서
+   * *"두 상태를 가르는 것은 색이 아니라 **글자**"* 라고 적었고, `retiring` 이 2026-09-08
+   * 에 *"회색만으로는 `stopped` 와 구분되지 않는다"* 로 글자 한 줄을 받았다. 칩은 그
+   * 예외 둘을 규칙으로 되돌린 것이다.
+   *
+   * 원래 규칙이 지키려던 것 — **조용한 화면** — 은 다른 방법으로 지킨다: 칩은 `ok` 에서
+   * 면도 선도 없는 옅은 글자다(`StateChip` 의 「정상은 조용하다」). 40개 중 38개가
+   * 그 모습이면 눈에 먼저 들어오는 것은 여전히 얼굴이다.
    */
-  it('도는 중이라고 적지 않는다 — 얼굴이 말한다', () => {
+  it('도는 중이라고 적는다 — 회색조에만 실려 있던 사실이다', () => {
     grid({ agents: [agent('alpha')], online: ['id-alpha'] });
-    const text = screen.getByTestId('agent-grid').textContent!;
-    expect(text).not.toContain('도는 중');
-    expect(text).not.toContain('실행 중');
-    expect(text).not.toContain('온라인');
+    expect(screen.getByTestId('agent-grid').textContent).toContain('도는 중');
+  });
+
+  /** 다섯 얼굴이 **각자 다른 글자**를 받는다 — 회색 하나로 뭉쳐 있던 것이 갈린다. */
+  it('멈춤·모름이 같은 회색이어도 글자는 다르다', () => {
+    grid({ agents: [agent('alpha')], online: [], connected: true });
+    expect(screen.getByTestId('agent-state-alpha').textContent).toContain('멈춤');
+    cleanup();
+    // 릴레이가 끊기면 서버는 모른다 — `#443` 이 회색으로 두되 글자로 가르라고 한 그 자리다.
+    grid({ agents: [agent('alpha')], online: [], connected: false });
+    expect(screen.getByTestId('agent-state-alpha').textContent).toContain('모름');
   });
 
   /**
@@ -559,7 +616,7 @@ describe('AgentGrid — 카드가 올리는 셋 (설정)', () => {
     expect(screen.getByTestId('agent-card-alpha').className).toContain('w-full');
   });
 
-  it('카드 아래에 버튼 줄이 서지 않는다 — 손잡이는 얼굴과 버전 칩뿐이다', () => {
+  it('카드 아래에 버튼 줄이 서지 않는다 — 손잡이는 상태 칩과 버전 칩뿐이다', () => {
     grid({
       agents: [agent('alpha', { runnerVersion: 'v0.1.3' })],
       appVersion: 'v0.1.3',
@@ -568,7 +625,9 @@ describe('AgentGrid — 카드가 올리는 셋 (설정)', () => {
       onStop: vi.fn(),
     });
     const buttons = screen.getByTestId('agent-grid').querySelectorAll('button');
-    // `+` 카드 · 카드 자체 · `■` 셋이다. 그 밖의 버튼이 있으면 줄이 생긴 것이다.
+    // `+` 카드 · 카드 자체 · 상태 칩 셋이다. 그 밖의 버튼이 있으면 줄이 생긴 것이다.
+    // **순서도 잰다**: 칩이 카드 `button` 바로 뒤라 키보드로 훑을 때 얼굴 다음이 그
+    // 얼굴의 상태이고, 그 다음이 정보 묶음이다. 칩을 정보 아래로 내리면 이 배열이 깨진다.
     expect([...buttons].map((b) => b.getAttribute('data-testid'))).toEqual([
       'agent-create', 'agent-card-alpha', 'agent-stop-alpha',
     ]);
@@ -762,13 +821,55 @@ describe('AgentGrid — `■` 는 평소 없는 것과 같다', () => {
    * 그래서 `▶`·`↻` 의 `opacity-50`(평소 옅게 보임)이 아니라 `opacity-0`(평소 안 보임)이다.
    * 되돌려 RED: `opacity-0` 을 `opacity-50` 으로 바꾸면 이 단언이 빨개진다.
    */
-  it('평소 opacity-0 이고 hover 에서 뜬다 — ▶ 와 다르다', () => {
+  /**
+   * ## `opacity-0` 은 없어졌다 — **숨는 방식이 바뀌었다** (2026-09-09)
+   *
+   * 문서가 매긴 값 *"멈출 것은 이미 고른 다음에 찾는다"* 는 그대로다. 바뀐 것은 그것을
+   * 어떻게 지키느냐다: 없애는 대신 **자리를 차지하되 조용히** 있는다. `ok` 의 칩은 면도
+   * 선도 없는 옅은 글자라 훑는 눈을 잡지 않으면서, 마우스를 움직이지 않는 사람에게도
+   * 거기 무언가 있다는 것을 알린다.
+   *
+   * `opacity-0` 의 대가가 컸다: 마우스가 있어도 **그 자리에 버튼이 있다는 것을 알아야만**
+   * 보였고, 그래서 사람들은 얼굴을 눌렀다 — 그 88px 이 곧 이 버튼이었다는 것이 결함의
+   * 본체다(`StateChip` 주석).
+   *
+   * 되돌려 RED: 칩에 `opacity-0 group-hover:opacity-100` 을 붙이면 빨개진다.
+   */
+  it('칩은 숨지 않는다 — 쉴 때도 자리에 있다', () => {
     grid({ agents: [agent('alpha')], online: ['id-alpha'], onStop: vi.fn() });
     const stop = screen.getByTestId('agent-stop-alpha');
-    expect(stop.className).toContain('opacity-0');
-    expect(stop.className).toContain('group-hover:opacity-100');
-    // `▶` 는 평소 옅게 **보인다** — 이 둘이 같은 값이면 문서의 비대칭이 사라진다.
-    expect(stop.className).not.toContain('opacity-50');
+    expect(stop.className).not.toContain('opacity-0');
+    expect(stop.className).not.toContain('group-hover:opacity-100');
+    // `ok` 는 면도 선도 안 받는다 — 「정상은 조용하다」.
+    expect(stop.className).toContain('text-fg-subtle');
+    expect(stop.className).not.toContain('bg-surface-sunken');
+  });
+
+  /**
+   * **이름 있는 그룹이라야 뜻이 생긴다.** 맨 `group-hover:` 는 조상 중 아무 `.group` 에나
+   * 걸리는데 감싸개 `div` 가 이미 `group` 이라, 이름을 안 주면 카드 어디에 마우스를
+   * 올려도 칩 글자가 동작으로 바뀐다 — "내가 이 칩 위에 있다"는 뜻이 사라진다.
+   *
+   * 되돌려 RED: `group/chip` 을 `group` 으로 바꾸면 빨개진다.
+   */
+  it('칩의 호버는 카드가 아니라 칩 자기 것이다', () => {
+    grid({ agents: [agent('alpha')], online: ['id-alpha'], onStop: vi.fn() });
+    const stop = screen.getByTestId('agent-stop-alpha');
+    expect(stop.className).toContain('group/chip');
+    expect(stop.innerHTML).toContain('group-hover/chip:');
+  });
+
+  /**
+   * 보이는 글자는 쉼(상태) → 호버(동작)로 갈리지만 스크린리더에는 호버가 없다. 동작만
+   * 실으면 칩이 되살린 상태를 도로 잃고, 상태만 실으면 눌러서 무슨 일이 나는지를 잃는다.
+   */
+  it('접근 이름이 상태와 동작을 함께 싣는다', () => {
+    grid({ agents: [agent('alpha')], online: ['id-alpha'], onStop: vi.fn() });
+    const label = screen.getByTestId('agent-stop-alpha').getAttribute('aria-label')!;
+    expect(label).toContain('도는 중');
+    expect(label).toContain('멈추기');
+    // 툴팁은 마우스 몫이다 — `aria-label` 만 있으면 마우스 사용자는 아무것도 못 본다.
+    expect(screen.getByTestId('agent-stop-alpha').getAttribute('title')).toContain('멈추기');
   });
 
   /**
@@ -779,11 +880,32 @@ describe('AgentGrid — `■` 는 평소 없는 것과 같다', () => {
    * 되돌려 RED: `■` 에서 `GLYPH_FOCUS` 를 떼면 키보드로 격자를 훑는 사람에게 이 버튼이
    * 영원히 안 보인다.
    */
-  it('키보드에서는 focus-visible 로 뜬다 — GLYPH_FOCUS 를 쓴다', () => {
+  /**
+   * 링은 그대로 필요하다 — 다만 `GLYPH_FOCUS` 가 아니라 `CHIP_FOCUS` 다. 그쪽이 지고
+   * 있던 `focus-visible:opacity-100` 은 *"평소 `opacity-50` 으로 숨어 있다"* 를 위한
+   * 칸이었고, 숨지 않는 칩에는 그 칸이 없다.
+   */
+  it('키보드에서 링이 선다 — CHIP_FOCUS 를 쓴다', () => {
     grid({ agents: [agent('alpha')], online: ['id-alpha'], onStop: vi.fn() });
     const stop = screen.getByTestId('agent-stop-alpha');
-    expect(stop.className).toContain('focus-visible:opacity-100');
     expect(stop.className).toContain('focus-visible:outline-accent');
+    // 숨지 않으므로 되살릴 것도 없다.
+    expect(stop.className).not.toContain('focus-visible:opacity-100');
+  });
+
+  /**
+   * **버튼이 아닌 칩이 있다.** `unknown` 에는 손잡이를 달지 않는다(`#443`: 모르는 것에
+   * ▶ 를 권하면 이미 도는 러너를 하나 더 띄운다). 그럴 때 칩은 `span` 이다 —
+   * `button` 에 `disabled` 만 거는 것과 다르다: 누를 수 없는 것에 손가락 커서와 포커스
+   * 순서를 주지 않는다.
+   */
+  it('모를 때는 칩이 버튼이 아니다', () => {
+    grid({ agents: [agent('alpha')], online: [], connected: false, onStop: vi.fn(), onRelaunch: vi.fn() });
+    expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('unknown');
+    const chip = screen.getByTestId('agent-state-alpha');
+    expect(chip.tagName).toBe('SPAN');
+    expect(screen.queryByTestId('agent-stop-alpha')).toBeNull();
+    expect(screen.queryByTestId('agent-relaunch-alpha')).toBeNull();
   });
 
   it('카드와 다른 동작이다 — 누르면 멈추고 상세는 안 열린다', () => {
