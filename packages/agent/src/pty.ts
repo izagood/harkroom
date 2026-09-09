@@ -266,6 +266,11 @@ export interface PtyWriter {
  * 고아 회수(viewer 0 → 유예 → SIGTERM→SIGKILL)와 러너 SIGTERM 회수가 `kill` 을 쓴다.
  * 전부 **exit 후에는 no-op** — 이미 끝난 PTY 를 조작하는 것은 사람이 마지막 화면에서
  * 한 번 더 움직였거나 회수 타이머가 자연 종료와 경합한 정상 상황이지 오류가 아니다.
+ *
+ * **`kill('SIGTERM')` 은 승격을 포함한다**: 유예(`killGraceMs`, 기본 5초) 안에 안 죽으면
+ * `runPtyTurn` 이 SIGKILL 로 올린다(아래 `terminate`). 그러니 호출자는 자기 승격 타이머를
+ * 세울 필요가 없다 — `interactiveTurn` 의 것은 이 승격이 없던 시절의 것이고, 같은 유예로
+ * 겹쳐 무해하다(그 턴의 회귀선이 그 타이머를 직접 재고 있어 여기서 걷어내지 않았다).
  */
 export interface PtyControls extends PtyWriter {
   kill(signal?: 'SIGTERM' | 'SIGKILL'): void;
@@ -484,6 +489,34 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
     let killTimer: ReturnType<typeof setTimeout> | null = null;
     let timedOut = false;
 
+    /**
+     * 이 PTY 를 끝내는 **유일한 길**. SIGTERM 은 부탁이므로 유예 뒤 SIGKILL 로 승격한다.
+     *
+     * **왜 승격이 여기 있나(2026-09-09 회귀).** 승격은 아래 시간 한도 경로 안에만 있었고,
+     * 밖으로 내준 `PtyControls.kill` 은 시그널 한 발이 전부였다. 그런데 claude TUI 는
+     * SIGTERM 을 받고도 죽지 않는다 — 실측: pty 에서 SIGTERM 뒤 10초를 살아 있고 SIGKILL
+     * 에만 죽었다. 게다가 멘션 턴은 TUI 에서 `timeoutMs: 0`(무기한)이라 그 시간 한도 경로가
+     * **아예 걸리지 않는다.** 그래서 이 손잡이로 죽이려던 세 길 — 사람의 [중단](#686) ·
+     * 고아 회수 · 무발화 회수 — 이 전부 무력했고, 그 턴 생애에 SIGKILL 이 한 줄도 없었다.
+     *
+     * 호출자마다 자기 타이머를 세우게 하지 않고 여기 두는 이유: 손잡이를 쥔 쪽이 이미
+     * 셋이고 더 늘어난다 — 한 곳이라도 빠뜨리면 **그 길만** 조용히 안 듣는다. 그리고
+     * 그 빠뜨림은 화면에 아무 흔적도 남기지 않는다(끝나야 실패 카드가 뜬다).
+     *
+     * 승격 타이머는 **한 번만** 세운다: SIGTERM 이 두 번 오면(사람이 두 번 눌렀거나 회수와
+     * 시간 한도가 겹쳤다) 다시 세워 유예가 늘어나는 것을 막는다.
+     */
+    const terminate = (signal: 'SIGTERM' | 'SIGKILL'): void => {
+      if (settled) return;
+      try { proc.kill(signal); } catch { /* 이미 끝났으면 회수할 것도 없다 */ }
+      if (signal !== 'SIGTERM' || killTimer) return;
+      // 하네스가 모델 요청 중일 수 있다 — SIGKILL 을 먼저 쏘면 정리할 기회를 뺏는다.
+      // SIGTERM 으로 먼저 부탁하고, grace 안에 안 죽으면 그때 확실히 끝낸다.
+      killTimer = setTimeout(() => {
+        try { proc.kill('SIGKILL'); } catch { /* 이미 죽었으면 회수할 것도 없다 */ }
+      }, opts.killGraceMs ?? SIGKILL_GRACE_MS);
+    };
+
     const exitListener = proc.onExit(({ exitCode }) => {
       // node-pty 가 exit 이벤트를 중복 발화하는 것을 실측으로 확인한 적은 없지만, 여기서
       // 두 번 처리하면 resolve 를 두 번 부르게 된다(두 번째는 무시되긴 해도 타이머
@@ -520,10 +553,9 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         try { proc.resize(cols, rows); } catch { /* 끝난 PTY 의 크기는 의미가 없다 */ }
       },
       kill(signal) {
-        // 고아 회수(#337)의 손잡이다. exit 후 no-op — 회수 타이머와 자연 종료가 경합해도
-        // 이미 끝난 프로세스에 시그널을 또 쏘지 않는다.
-        if (settled) return;
-        try { proc.kill(signal ?? 'SIGTERM'); } catch { /* 이미 끝났으면 회수할 것도 없다 */ }
+        // 고아 회수(#337)·사람의 중단(#686)의 손잡이다. exit 후 no-op — 회수 타이머와 자연
+        // 종료가 경합해도 이미 끝난 프로세스에 시그널을 또 쏘지 않는다(`terminate`).
+        terminate(signal ?? 'SIGTERM');
       },
     });
 
@@ -610,12 +642,9 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
     // 맞는다(옵션 주석). 그 턴의 끝은 exit 또는 고아 회수(interactiveTurn.ts)다.
     const timeoutTimer = opts.timeoutMs === 0 ? null : setTimeout(() => {
       timedOut = true;
-      // 하네스가 모델 요청 중일 수 있다 — SIGKILL 을 먼저 쏘면 정리할 기회를 뺏는다.
-      // SIGTERM 으로 먼저 부탁하고, grace 안에 안 죽으면 그때 확실히 끝낸다.
-      proc.kill('SIGTERM');
-      killTimer = setTimeout(() => {
-        proc.kill('SIGKILL');
-      }, opts.killGraceMs ?? SIGKILL_GRACE_MS);
+      // 승격까지 `terminate` 가 갖는다 — 끝내는 길이 둘이면 한쪽만 고쳐지고, 실제로 그렇게
+      // 갈라져 있었다(`terminate` 주석의 회귀).
+      terminate('SIGTERM');
     }, opts.timeoutMs);
   });
 }
