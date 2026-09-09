@@ -970,6 +970,16 @@ export interface AskOption {
  *
  * **답은 원본을 고치지 않는다.** 고른 결과는 `answeredWith`/`By`/`At` 로 덧붙고, 본문과
  * `editedAt` 은 그대로다 — 사람이 글을 고친 것이 아니기 때문이다.
+ *
+ * ## 답하지 않는 것도 하나의 끝이다 (`closedAt`)
+ *
+ * 물음이 닫히는 길이 **고르기 하나뿐이었다**(jaebin 보고, 2026-09-09): 그 작업을 그만두기로
+ * 한 사람에게는 남은 수단이 그 메시지를 **지우는 것**뿐이었고, 지우면 무엇을 물었는지까지
+ * 사라진다. 턴을 중단해도(#686) `meta.ask` 는 그대로여서 대기 줄이 물어본 턴보다 오래 살았다.
+ *
+ * **`answeredWith` 와 다른 필드인 이유**: 고른 것과 안 고른 것은 다른 사실이고, 화면·집계·
+ * 러너가 그 둘을 다르게 대접해야 한다. 하나로 뭉치면(예: `answeredWith: null` + 어떤 표시)
+ * "무엇으로 정해졌나"에 답할 수 없는 값이 그 자리에 앉는다.
  */
 export interface AskMeta {
   kind: 'ask';
@@ -983,7 +993,27 @@ export interface AskMeta {
     /** 고른 계정. 사람일 수도 에이전트일 수도 있다. */
     answeredBy?: string;
     answeredAt?: string;
+    /** **답하지 않기로 한** 시각. 있으면 이 물음은 열려 있지 않다(고른 것은 없다). */
+    closedAt?: string;
+    /** 그렇게 정한 계정. */
+    closedBy?: string;
+    /**
+     * 왜 닫혔는가. 지금은 하나뿐이지만 값으로 두는 이유는 **다음 사유가 이미 보이기**
+     * 때문이다(물어본 턴이 중단됐다 · 물어본 쪽이 스스로 철회했다). 갈래가 늘 때 화면이
+     * 문장을 고를 자리가 이 필드다.
+     */
+    closedReason?: 'declined';
   };
+}
+
+/**
+ * 이 물음이 **아직 누군가를 막고 있는가.** 답도 없고 닫히지도 않았을 때만 참이다.
+ *
+ * 서버 SQL·화면·러너가 같은 판정을 써야 해서 여기 둔다 — SQL 은 이 함수를 부를 수 없어
+ * 같은 문장을 다시 적으므로(`THREAD_STATE_FACTS`), **필드가 늘면 두 자리를 함께 고친다.**
+ */
+export function isAskOpen(ask: AskMeta['ask']): boolean {
+  return ask.answeredWith == null && ask.closedAt == null;
 }
 
 /** 선택지 개수의 경계. 하나면 선택이 아니고, 여섯이면 읽히지 않는다. */
@@ -1304,7 +1334,12 @@ export interface InboxEntry {
    * 이유는 040 이 `'wake'` 를 가른 이유와 같다 — 러너가 프롬프트를 다르게 조립한다.
    * 깨움에는 새 사람 발화가 없지만, **선택에는 있다**(사람이 고른 옵션).
    */
-  reason: 'mention' | 'thread_reply' | 'dm' | 'wake' | 'ask_answered';
+  /**
+   * `'ask_closed'` 는 **내가 낸 선택지를 사람이 답하지 않기로 했다**(2026-09-09).
+   * `'ask_answered'` 와 가른다: 고른 것이 없으므로 러너가 "고른 것: …" 을 지어낼 수 없고,
+   * 그 턴이 할 일도 다르다 — 고른 길로 가는 것이 아니라 **접는 것**이다.
+   */
+  reason: 'mention' | 'thread_reply' | 'dm' | 'wake' | 'ask_answered' | 'ask_closed';
   readAt: string | null;
   channelId: string;
   /**

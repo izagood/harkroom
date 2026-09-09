@@ -147,15 +147,21 @@ export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root
 const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
   SELECT
     -- 사람 아무나에게 간 미답 물음의 수. 누구인지 물을 수 없으므로 수로만 낸다.
+    -- **closedAt 도 닫는다**(2026-09-09). 답하지 않기로 한 물음은 열려 있지 않다 — 이
+    -- 조건이 없으면 사람이 그만두기로 한 뒤에도 대기 줄과 '내 차례' 배지가 남는다. 같은
+    -- 판정이 shared::isAskOpen 에 있다(SQL 은 그 함수를 부를 수 없어 다시 적는다) —
+    -- **필드가 늘면 두 자리를 함께 고친다.**
     COUNT(*) FILTER (
       WHERE t.meta->>'kind' = 'ask'
         AND t.meta->'ask'->>'answeredWith' IS NULL
+        AND t.meta->'ask'->>'closedAt' IS NULL
         AND t.meta->'ask'->'to'->>'kind' = 'human'
     )::int as open_ask_human_count,
     -- 특정 계정에게 간 미답 물음의 수신자들. 화면이 "이것이 내 차례인가"를 여기서 가른다.
     COALESCE(ARRAY_AGG(DISTINCT t.meta->'ask'->'to'->>'accountId') FILTER (
       WHERE t.meta->>'kind' = 'ask'
         AND t.meta->'ask'->>'answeredWith' IS NULL
+        AND t.meta->'ask'->>'closedAt' IS NULL
         AND t.meta->'ask'->'to'->>'kind' = 'account'
         AND t.meta->'ask'->'to'->>'accountId' IS NOT NULL
     ), '{}'::text[]) as open_ask_account_ids,
@@ -203,6 +209,7 @@ const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
     ) FILTER (
       WHERE t.meta->>'kind' = 'ask'
         AND t.meta->'ask'->>'answeredWith' IS NULL
+        AND t.meta->'ask'->>'closedAt' IS NULL
         AND t.author_id IS NOT NULL
         -- 사람 아무나(human)와 특정 계정(account) 둘 다 마디가 된다. 그 밖의
         -- to.kind 는 화면이 이을 수 없으므로 넣지 않는다.
@@ -1024,6 +1031,97 @@ export async function recordAskAnswer(
       emitEvent({ type: 'inbox.updated', accountId: authorId });
     } catch (err) {
       console.error('[recordAskAnswer] 깨움 실패(답은 기록됐다):', err);
+    }
+  }
+  return updated.rows[0];
+}
+
+/**
+ * **답하지 않기로 한다**(2026-09-09). 고른 것은 없고, 이 물음은 닫힌다.
+ *
+ * ## 왜 필요한가
+ *
+ * 물음이 닫히는 길이 고르기 하나뿐이었다. 그 작업을 그만두기로 한 사람에게 남은 수단은
+ * **그 메시지를 지우는 것**뿐이었고(집계가 `deleted_at is null` 로 걸러서 줄이 사라진다),
+ * 지우면 무엇을 물었는지까지 사라진다. 턴을 중단해도(`/agent-sessions/:id/cancel`) 이
+ * `meta.ask` 는 그대로여서 대기 줄이 **물어본 턴보다 오래 살았다.**
+ *
+ * ## 지우기가 아니라 닫기다
+ *
+ * 카드는 남는다 — 무엇을 물었고 사람이 답하지 않기로 했다는 것은 **기록**이다. 그래서
+ * `answeredWith` 를 쓰지 않고 `closedAt` 을 따로 둔다(`shared::AskMeta` 참고).
+ *
+ * ## 누가 닫을 수 있는가
+ *
+ * 답할 수 있는 사람(`recordAskAnswer` 와 **같은 규칙**), **물어본 쪽**, 그리고 admin 이다.
+ * 물어본 쪽을 넣는 이유: 스스로 답을 찾았으면 자기 물음을 거두는 것이 맞고, 그 길이
+ * 없으면 에이전트는 자기가 세운 대기 줄을 지울 수 없다.
+ *
+ * ## 이미 답이 있으면 거절한다
+ *
+ * `already_answered` 다 — 정해진 것을 "답하지 않았다"로 덮으면 그 결정이 사라진다.
+ * 두 번 닫는 것은 **멱등**이다(경합에서 진 쪽도 원하던 결과를 얻는다): 이미 닫혀 있으면
+ * 그 행을 그대로 돌려준다.
+ */
+export async function closeAsk(
+  pool: Pool,
+  args: { messageId: string; actorId: string; actorIsAdmin: boolean },
+): Promise<MessageRow | MutationRefusal | 'already_answered'> {
+  const found = await pool.query(
+    `select meta, author_id as "authorId" from message where id = $1 and deleted_at is null`,
+    [args.messageId],
+  );
+  if (!found.rowCount) return 'not_found';
+  const ask = readAskMeta(found.rows[0].meta as Record<string, unknown>);
+  if (!ask) return 'not_found';
+  if (ask.answeredWith != null) return 'already_answered';
+
+  const asker: string | null = found.rows[0].authorId;
+  const mayAnswer = ask.to.kind === 'human' || ask.to.accountId === args.actorId;
+  if (!mayAnswer && asker !== args.actorId && !args.actorIsAdmin) return 'forbidden';
+
+  const updated = await pool.query(
+    `update message
+        set meta = jsonb_set(
+              jsonb_set(
+                jsonb_set(meta::jsonb, '{ask,closedAt}', to_jsonb(now())),
+                '{ask,closedBy}', to_jsonb($2::text)),
+              '{ask,closedReason}', to_jsonb('declined'::text))
+      where id = $1
+        and deleted_at is null
+        and meta->'ask'->>'answeredWith' is null
+        and meta->'ask'->>'closedAt' is null
+      returning ${COLS}`,
+    [args.messageId, args.actorId],
+  );
+  // 갱신된 행이 없으면 누군가 먼저 닫았거나 먼저 답했다. 답이 이겼는지 여기서 다시 읽어
+  // 가른다 — 닫힘이 먼저였으면 사람이 원한 결과가 이미 나 있으므로 그 행을 그대로 준다.
+  if (!updated.rowCount) {
+    const after = await getMessageById(pool, args.messageId);
+    if (!after) return 'not_found';
+    const askAfter = readAskMeta(after.meta);
+    return askAfter?.answeredWith != null ? 'already_answered' : after;
+  }
+
+  /**
+   * **물어본 쪽을 깨운다.** `recordAskAnswer` 와 같은 이유이고 같은 자리다: `message.ask`
+   * 는 발화라서 그 턴은 물음을 올린 뒤 회수되므로, 깨우지 않으면 "답하지 않겠다"는 결정을
+   * 물어본 에이전트가 영영 모른다 — 그러면 그 턴은 접히지 않고 사람은 같은 물음을 다시
+   * 받는다. 사유를 `ask_answered` 와 가르는 이유는 러너가 할 일이 다르기 때문이다(고른
+   * 길로 가는 것이 아니라 접는 것이다 — 마이그레이션 045).
+   *
+   * 자기 물음을 자기가 거둔 경우는 깨우지 않는다. 실패해도 던지지 않는다 — 닫힘은 이미
+   * 기록됐고, 그것이 이 함수가 약속한 것이다.
+   */
+  if (asker && asker !== args.actorId) {
+    try {
+      await pool.query(
+        `insert into inbox (account_id, message_id, reason) values ($1, $2, 'ask_closed')`,
+        [asker, args.messageId],
+      );
+      emitEvent({ type: 'inbox.updated', accountId: asker });
+    } catch (err) {
+      console.error('[closeAsk] 깨움 실패(닫힘은 기록됐다):', err);
     }
   }
   return updated.rows[0];

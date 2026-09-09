@@ -2913,6 +2913,15 @@ export const en = {
   'speech.ask.personPicks': 'A person picks',
   'speech.ask.decided': 'Decided',
   /**
+   * **답하지 않는 길**(2026-09-09). 머리글·행위·행위자 셋이 한 축에 선다.
+   *
+   * `Decline` 을 쓰지 않은 이유: 선택지 하나를 거절하는 것처럼 읽힌다. 사람이 하는 일은
+   * **이 물음을 답 없이 끝내는 것**이고, 그래서 목적어가 물음이다.
+   */
+  'speech.ask.decline': 'Don\u2019t answer this',
+  'speech.ask.declined': 'Closed without an answer',
+  'speech.ask.declinedBy': '{name} chose not to answer',
+  /**
    * 답한 사람. 이름을 모르면 `common.someone` 이 들어온다 — **그 자리가 이름 자리**라
    * 보통명사가 와도 문장이 서야 하고, 그것이 `common` 에 그 낱말이 있는 이유다.
    */
