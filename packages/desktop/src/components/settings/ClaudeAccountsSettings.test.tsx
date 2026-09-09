@@ -98,6 +98,88 @@ describe('목록', () => {
   });
 });
 
+/**
+ * 표가 된 뒤의 회귀선(#702). 여기서 지키는 것은 **읽을 수 있다는 사실**이다 — 앞판은
+ * 이 숫자들을 라벨용 회색 11px(면과 3.08:1, AA 미달)로 그렸고, 그것이 이 개편의 이유다.
+ */
+describe('사용량이 읽히는가', () => {
+  const NOW = Date.UTC(2026, 8, 9, 12, 0, 0);
+  const HOUR = 3_600_000;
+
+  function usageSnapshot(over: Partial<Record<string, unknown>> = {}) {
+    return {
+      measuredAtMs: NOW,
+      windowMs: 5 * HOUR,
+      accounts: [
+        {
+          pool: 'work', account: 'aria', windowStartMs: NOW - 5 * HOUR,
+          tokens: { input: 5_300_000, output: 1_100_000, cacheRead: 209_100_000, cacheCreation: 0 },
+          responses: 1283, lastUsedAtMs: NOW - HOUR, limitHit: null, unreadableFiles: 0,
+        },
+        {
+          pool: 'work', account: 'cedar', windowStartMs: NOW - 5 * HOUR,
+          tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
+          responses: 0, lastUsedAtMs: NOW - 2 * HOUR,
+          limitHit: { atMs: NOW - HOUR, resetsAtMs: NOW + 2 * HOUR, rateLimitType: 'five_hour' },
+          unreadableFiles: 0,
+        },
+      ],
+      ...over,
+    };
+  }
+
+  it('숫자를 라벨용 회색에 두지 않는다 — 그 색은 면과 3.08:1 로 AA 미달이다', async () => {
+    stubTauri(POOLS_SNAPSHOT, { claude_accounts_usage: usageSnapshot() });
+    render(<ClaudeAccountsSettings />);
+    const cell = await waitFor(() => {
+      const found = screen.getAllByTestId('claude-account-usage').find((el) => el.textContent === '1283');
+      if (!found) throw new Error('아직');
+      return found;
+    });
+    // 색을 값으로 고정하지 않고 **금지된 토큰**만 못박는다 — 팔레트가 바뀌어도 이 규율은 산다.
+    expect(cell.className).not.toContain('text-fg-subtle');
+    expect(cell.className).toContain('text-fg');
+    // 열끼리 자리가 맞아야 눈으로 비교된다.
+    expect(cell.className).toContain('tabular-nums');
+  });
+
+  it('열 이름은 풀마다 한 번만 선다 — 계정 줄마다 반복하지 않는다', async () => {
+    stubTauri(POOLS_SNAPSHOT, { claude_accounts_usage: usageSnapshot() });
+    render(<ClaudeAccountsSettings />);
+    await screen.findByText('aria');
+    // work(2계정) · personal(1계정) 두 풀이니 머리줄은 둘이다. 계정 수(3)가 아니다.
+    expect(screen.getAllByText('Cache')).toHaveLength(2);
+  });
+
+  it('한도 상태를 문장이 아니라 경고 알약으로 그린다', async () => {
+    // 앞판은 이것을 이메일 아래 같은 회색 문장으로 뒀다 — 이 화면에서 가장 결정적인
+    // 사실이 나머지 잡정보와 똑같이 생겼다. 색만 올리면 부족하고 **모양**이 달라야 한다.
+    stubTauri(POOLS_SNAPSHOT, { claude_accounts_usage: usageSnapshot() });
+    render(<ClaudeAccountsSettings />);
+    const pill = await screen.findByText(/Limited — back/);
+    const box = pill.closest('[data-testid="claude-account-state"]');
+    expect(box?.className).toContain('text-warning');
+    expect(box?.className).toContain('bg-warning-surface');
+  });
+
+  it('안 돈 계정에 `0` 을 그리지 않는다 — 잰 적 없음과 구별되어야 한다', async () => {
+    stubTauri(POOLS_SNAPSHOT, { claude_accounts_usage: usageSnapshot() });
+    render(<ClaudeAccountsSettings />);
+    await screen.findByText('cedar');
+    const row = screen.getByTestId('claude-account-work-cedar');
+    expect(row.textContent).toContain('—');
+    expect(row.textContent).not.toMatch(/\b0\b/);
+  });
+
+  it('사용량이 아직 안 왔으면 `—` 가 아니라 `…` 다 — 재는 중과 안 돎은 다른 사실이다', async () => {
+    // 사용량 호출을 영원히 매달아 둔다.
+    stubTauri(POOLS_SNAPSHOT, { claude_accounts_usage: new Promise(() => {}) });
+    render(<ClaudeAccountsSettings />);
+    await screen.findByText('aria');
+    expect(screen.getByTestId('claude-account-work-aria').textContent).toContain('…');
+  });
+});
+
 describe('평평한 계정 이전 안내', () => {
   it('strays 가 있으면 이전을 안내한다', async () => {
     stubTauri({ ...POOLS_SNAPSHOT, strays: ['leftover'] });
@@ -121,7 +203,9 @@ describe('삭제', () => {
     stubTauri();
     render(<ClaudeAccountsSettings />);
     await screen.findByText('aria');
-    fireEvent.click(screen.getByRole('button', { name: /remove account aria/i }));
+    // 파괴적 조작은 `⋯` 뒤에 있다 — 색이 아니라 확인 단계가 안전을 지므로 줄에서 내렸다.
+    fireEvent.click(screen.getByRole('button', { name: /actions for account aria/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /remove account aria/i }));
     // 한 번 눌러서는 안 지워진다.
     expect(calls.some((c) => c.cmd === 'claude_account_remove')).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: /confirm/i }));
@@ -132,7 +216,8 @@ describe('삭제', () => {
     stubTauri();
     render(<ClaudeAccountsSettings />);
     await screen.findByText('work');
-    fireEvent.click(screen.getByRole('button', { name: /remove pool work/i }));
+    fireEvent.click(screen.getByRole('button', { name: /actions for pool work/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /remove pool work/i }));
     expect(calls.some((c) => c.cmd === 'claude_pool_remove')).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: /confirm/i }));
     await waitFor(() => expect(calls.some((c) => c.cmd === 'claude_pool_remove')).toBe(true));

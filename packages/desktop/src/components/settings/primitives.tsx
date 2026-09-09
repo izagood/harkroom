@@ -1,11 +1,22 @@
 import type { ReactNode } from 'react';
 
 /** 섹션 한 장의 껍데기 — 제목·설명·본문. 섹션마다 다시 만들면 여백이 어긋난다. */
-export function SettingsPage({ title, description, children }: {
-  title: string; description?: string; children: ReactNode;
+export function SettingsPage({ title, description, width = 'default', children }: {
+  title: string; description?: string; width?: 'default' | 'wide'; children: ReactNode;
 }) {
   return (
-    <div className="max-w-3xl px-10 py-10">
+    /*
+      **폭은 화면이 고른다.** 기본은 `max-w-3xl`(768px) 이고 대부분 그대로다 — 설정 화면
+      12개 중 11개는 한 줄에 한 필드를 쌓는 스택이라, 더 넓히면 라벨과 값이 멀어져 읽기만
+      나빠진다(줄 길이는 좁을수록 낫다는 그 이유).
+
+      `wide` 를 옵트인으로 낸 것은 **표인 화면**이 하나 있기 때문이다(`ClaudeAccounts`).
+      계정 하나가 숫자 다섯 열을 갖는 화면에서 768px 은 그 숫자들을 세로로 쌓게 만들고,
+      그러면 계정끼리 비교하는 일 — 그 화면이 존재하는 이유 — 이 불가능해진다.
+      기본값을 바꾸지 않고 갈래를 하나 더 두는 쪽을 고른 이유가 이것이다: 넓혀야 할
+      근거가 있는 화면만 넓힌다.
+    */
+    <div className={`${width === 'wide' ? 'max-w-6xl' : 'max-w-3xl'} px-10 py-10`}>
       {/*
         **화면 제목단 17px 은 이 자리다.** 24px(`text-2xl`)이었고 4단 밖이었다.
 
@@ -203,12 +214,19 @@ export function Segmented({ value, onChange, options, label }: {
  * 버튼 한 벌. **`danger` 를 따로 두는 것이 요점**이다 — 되돌릴 수 없는 조작이 보통 버튼과
  * 같게 생기면 사람이 그것을 구별할 수단이 색밖에 없고, 색은 테마에 따라 흐려진다.
  */
-export function Button({ children, onClick, variant = 'secondary', disabled, type = 'button' }: {
+export function Button({ children, onClick, variant = 'secondary', disabled, type = 'button', ariaLabel }: {
   children: ReactNode;
   onClick?(): void;
   variant?: 'primary' | 'secondary' | 'danger';
   disabled?: boolean;
   type?: 'button' | 'submit';
+  /**
+   * 보이는 글자와 **접근성 이름을 가를 때만** 쓴다. 같은 글자의 버튼이 여러 개 서는
+   * 화면에서 필요하다 — 풀마다 `Add account` 가 하나씩 서면 보는 사람은 어느 풀의
+   * 것인지 자리로 알지만, 스크린리더는 같은 이름 넷을 읽는다. 보이는 글자에 풀 이름을
+   * 넣어 해결하던 것을(`Add account to work`) 이름으로 옮긴 자리다.
+   */
+  ariaLabel?: string;
 }) {
   const tone = {
     primary: 'bg-accent text-fg-on-strong hover:bg-accent-hover',
@@ -220,6 +238,7 @@ export function Button({ children, onClick, variant = 'secondary', disabled, typ
       type={type}
       disabled={disabled}
       onClick={onClick}
+      aria-label={ariaLabel}
       className={`rounded px-3 py-1.5 text-body font-medium disabled:opacity-50 ${tone}`}
     >
       {children}

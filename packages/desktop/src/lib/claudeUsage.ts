@@ -40,48 +40,84 @@ export function clockLabel(atMs: number, locale: string, timeZone?: string): str
 }
 
 /**
- * 창 안에서 쓴 양. **응답이 0 일 때 `0 tokens` 라고 적지 않는다** — 그것은 "안 돌았다"는
- * 뜻인데, 0 을 늘어놓으면 사람이 "재기를 실패했나"를 의심한다(`AgentTurns` 에서 `0` 과
- * `모름` 을 가른 것과 같은 판단이다).
+ * 창 안에서 쓴 양을 **열마다 하나씩** 나눈 것. `null` 은 **`0` 이 아니라 "이 창에 안
+ * 돌았다"** 다 — 화면은 그 자리에 `0` 대신 `—` 를 그린다(`AgentTurns` 에서 `0` 과
+ * `모름` 을 가른 것과 같은 규율).
+ *
+ * 왜 한 줄짜리 문장이 아니라 열인가: 계정 넷이 각자 자기 문장을 가지면 `1283` 과
+ * `1649` 가 화면에서 130px 떨어진 서로 다른 x 좌표에 서고, 그러면 **어느 계정이 많이
+ * 돌았나** 를 눈으로 알 수 없다. 이 화면이 존재하는 이유가 그 비교다.
+ *
+ * 캐시 읽기가 자기 열로 남는 이유는 이 파일 머리말에 있다 — 입력에 더하면 화면의
+ * 숫자가 사실상 캐시 읽기 하나가 된다.
  */
-export function usageSummary(u: ClaudeAccountUsage): string {
-  if (u.responses === 0) return 'Not used in this window';
-  const parts = [
-    `${u.responses} response${u.responses === 1 ? '' : 's'}`,
-    `in ${compactTokens(u.tokens.input + u.tokens.cacheCreation)}`,
-    `out ${compactTokens(u.tokens.output)}`,
-    `cache ${compactTokens(u.tokens.cacheRead)}`,
-  ];
-  // **적게 세어졌다는 사실을 숨기지 않는다.** 못 읽은 파일이 있으면 위 숫자는 하한이다.
-  if (u.unreadableFiles > 0) parts.push(`+${u.unreadableFiles} file${u.unreadableFiles === 1 ? '' : 's'} unreadable`);
-  return parts.join(' · ');
+export function usageCells(u: ClaudeAccountUsage): {
+  responses: string;
+  input: string;
+  output: string;
+  cacheRead: string;
+  /** 못 읽은 파일이 있다는 사실. `null` = 없다. 있으면 위 숫자는 **하한**이다. */
+  underCounted: string | null;
+} | null {
+  if (u.responses === 0) return null;
+  return {
+    responses: String(u.responses),
+    input: compactTokens(u.tokens.input + u.tokens.cacheCreation),
+    output: compactTokens(u.tokens.output),
+    cacheRead: compactTokens(u.tokens.cacheRead),
+    underCounted:
+      u.unreadableFiles > 0
+        ? `+${u.unreadableFiles} file${u.unreadableFiles === 1 ? '' : 's'} unreadable`
+        : null,
+  };
 }
 
 /**
- * 한도 상태 한 줄. `null` = 말할 것이 없다(이 창에 한도 사건이 없었다).
+ * 계정 하나의 상태. **문장이 아니라 갈래로 낸다** — 화면이 이것을 알약(pill)으로 그리기
+ * 때문이다.
  *
- * **`resetsAt` 이 미래인가로 갈린다.** 미래면 지금 못 쓰는 상태이고 몇 시에 돌아오는지
- * 말할 수 있다. 과거면 이미 풀린 것이라 경고가 아니다 — 그런데도 이 창에서 걸렸다는
- * 사실은 남겨 둔다: 같은 창에서 또 걸릴 계정이라는 뜻이다.
+ * 앞판은 이 자리에 `Hit the limit earlier in this window` 라는 **문장**을 라벨용 회색
+ * (`--app-fg-subtle`, 배경과 3.08:1 로 AA 미달)으로 이메일 바로 아래에 뒀다. 그러면
+ * 이 화면에서 가장 결정적인 사실 — 러너가 또 태울 계정이 어느 것인가 — 이 나머지 잡정보와
+ * 똑같이 생긴다. 색만 올리는 것으로는 부족하다: **모양**이 달라야 훑어서 걸린다.
+ *
+ * 갈래를 다섯으로 가른 축은 두 개다.
+ * 1. `resetsAt` 이 미래인가 — 미래면 **지금** 못 쓰는 것이고 몇 시에 돌아오는지 말할 수
+ *    있다(`limited`). 과거면 이미 풀린 것이라 경고가 아니다.
+ * 2. 그래도 **이 창에서 걸렸는가** — 걸렸으면 같은 창에서 또 걸릴 계정이다
+ *    (`limited-earlier`). 이 창의 일이 아니면 한도 사건은 말할 것이 없다.
+ *
+ * 한도 사건이 없으면 남는 것은 돌았나 · 쓴 적은 있나 뿐이다. `never` 와 `idle` 을 가르는
+ * 이유: 둘 다 이 창에 `—` 이지만, 하나는 **쓴 적이 없는 계정**이고 하나는 **지금 쉬는
+ * 계정**이다 — 계정을 지울지 판단하는 사람에게 그 둘은 다른 사실이다.
  */
-export function limitLine(
+export type AccountState =
+  | { kind: 'limited'; tone: 'warning'; label: string }
+  | { kind: 'limited-earlier'; tone: 'muted'; label: string }
+  | { kind: 'active'; tone: 'success'; label: string }
+  | { kind: 'idle'; tone: 'subtle'; label: string }
+  | { kind: 'never'; tone: 'subtle'; label: string };
+
+export function accountState(
   u: ClaudeAccountUsage,
   nowMs: number,
   locale: string,
   timeZone?: string,
-): { tone: 'warning' | 'muted'; text: string } | null {
+): AccountState {
   const hit = u.limitHit;
-  if (!hit) return null;
-  if (hit.resetsAtMs !== null && hit.resetsAtMs > nowMs) {
-    return { tone: 'warning', text: `Rate limited — resets ${clockLabel(hit.resetsAtMs, locale, timeZone)}` };
+  if (hit && hit.resetsAtMs !== null && hit.resetsAtMs > nowMs) {
+    return {
+      kind: 'limited',
+      tone: 'warning',
+      label: `Limited — back ${clockLabel(hit.resetsAtMs, locale, timeZone)}`,
+    };
   }
-  if (hit.atMs < u.windowStartMs) return null; // 이 창의 일이 아니다.
-  return { tone: 'muted', text: `Hit the limit earlier in this window` };
-}
-
-/** 마지막으로 이 계정으로 돈 시각. `null` 은 **`0`이 아니라 "쓴 적 없다"** 다. */
-export function lastUsedLabel(u: ClaudeAccountUsage, locale: string, timeZone?: string): string {
-  return u.lastUsedAtMs === null ? 'Never used' : `Last active ${clockLabel(u.lastUsedAtMs, locale, timeZone)}`;
+  if (hit && hit.atMs >= u.windowStartMs) {
+    return { kind: 'limited-earlier', tone: 'muted', label: 'Limited earlier' };
+  }
+  if (u.responses > 0) return { kind: 'active', tone: 'success', label: 'Active' };
+  if (u.lastUsedAtMs === null) return { kind: 'never', tone: 'subtle', label: 'Never used' };
+  return { kind: 'idle', tone: 'subtle', label: 'Idle this window' };
 }
 
 /** 계정 → 사용량. 목록과 사용량이 따로 오므로 화면이 짝을 맞출 표가 필요하다. */
