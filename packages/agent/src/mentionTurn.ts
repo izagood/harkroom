@@ -780,7 +780,12 @@ export async function runMentionTurn(
     if (end.exited || !end.controls) return;
     end.reclaimed = true;
     // SIGTERM 이 1차다 — 하네스가 모델 요청·파일 쓰기 중일 수 있어 정리할 기회를 준다.
-    // 유예 뒤 SIGKILL 승격은 `runPtyTurn` 이 이미 갖고 있다. 세션은 디스크라 잃는 것이 없다.
+    // 유예 뒤 SIGKILL 승격은 `PtyControls.kill` 이 갖는다(pty.ts::terminate). 세션은
+    // 디스크라 잃는 것이 없다.
+    //
+    // **PTY 가 아직 없으면 여기서 할 수 있는 일이 없다** — 그 창에 들어온 중단은 아래
+    // `runTurn` 앞의 가드가 받는다(스폰을 아예 안 한다). 이 자리에서 `canceledBy` 만
+    // 적힌 채 아무 일도 안 일어나던 것이 사람이 멈춘 턴이 끝까지 돌던 두 번째 경로였다.
     end.controls.kill('SIGTERM');
   };
 
@@ -819,7 +824,7 @@ export async function runMentionTurn(
     onViewerCount,
     /*
       **사람이 [중단] 을 눌렀다**(3단계). 죽이는 것은 릴레이가 아니라 여기다 —
-      `reclaim()` 이 이미 그 일을 하고 있고(SIGTERM, 유예 뒤 SIGKILL 승격은 `runPtyTurn`),
+      `reclaim()` 이 이미 그 일을 하고 있고(SIGTERM, 유예 뒤 SIGKILL 승격은 pty.ts::terminate),
       그 뒤의 흔적 처리(실패 카드·💬 제거·재시도 회계)도 이 턴의 `finally` 가 갖는다.
       릴레이가 직접 kill 하면 종료 경로가 둘로 갈라져 한쪽은 아무 흔적도 남기지 않는다.
 
@@ -948,9 +953,27 @@ export async function runMentionTurn(
   // 정지 시계의 첫 기준점. 기록이 아직 없는 구간도 이 시각부터 흐른다.
   end.lastLifeMs = turnStartedAtMs;
 
+  /**
+   * **스폰 전에 들어온 중단을 받는다**(2026-09-09 회귀). 릴레이 세션은 위에서 이미 열렸다 —
+   * 즉 화면의 「지금 도는 턴」에는 **[중단] 이 달린 줄로 이미 서 있는데** PTY 는 아직 없다.
+   * 그 창(정의 읽기·워크스페이스 준비·계정 관문)에 사람이 누르면 `reclaim()` 은
+   * `end.controls` 가 없어 조용히 돌아갔고, `canceledBy` 만 적힌 채 턴은 그대로 떠서
+   * 끝까지 돌았다 — 답까지 올린 뒤 실패 카드가 "누가 중단했다"고 적히는, 기록과 사실이
+   * 어긋나는 최악의 모양이었다.
+   *
+   * 띄웠다가 죽이지 않고 **아예 안 띄운다**: 이 창의 하네스는 아직 존재하지 않아 정리할
+   * 것이 없고, 띄우면 프롬프트가 주입돼 모델 호출 한 번이 그냥 버려진다.
+   *
+   * `reclaimed` 는 적지 않는다 — 그 값은 "러너가 죽였다"이고 여기서는 죽인 것이 없다.
+   * 종료 코드는 SIGTERM 의 관례값(143)이라 아래 실패 경로가 그대로 잡지만, 사람이 읽는
+   * 문장은 `canceledBy` 가 정한다(실패 카드의 첫 분기).
+   */
+  const canceledBeforeSpawn = (): TurnResult | null =>
+    (end.canceledBy ? { exitCode: 143, timedOut: false, tail: '' } : null);
+
   let result: TurnResult;
   try {
-    result = await deps.runTurn(plan, {
+    result = canceledBeforeSpawn() ?? await deps.runTurn(plan, {
       cwd: rec.workspaceDir,
       // **0 = 무기한**(pty.ts 옵션 주석). TUI 턴의 시간 한도는 러너가 무발화로 잰다 —
       // PTY 쪽 시계는 프로세스 수명을 재는데, TUI 에서는 그 둘이 다른 사실이다.
@@ -1016,6 +1039,13 @@ export async function runMentionTurn(
         session?.bindInput(controls);
         // 회수 손잡이. 릴레이가 없어도 잡아야 한다 — 관찰이 없다고 턴이 안 끝나면 안 된다.
         end.controls = controls;
+        // 위 가드와 이 콜백 사이에도 창이 있다(실행 파일 해석·forkpty). 그 창에 들어온
+        // 중단은 손잡이를 잡은 **바로 이 순간** 써야 한다 — 안 쓰면 그 턴은 아무도 다시
+        // 죽여 주지 않는다(중단은 한 번 오고, 다시 오지 않는다).
+        if (end.canceledBy) {
+          reclaim();
+          return;
+        }
         // **무발화 시계(2026-09-08).** `turnTimeoutMs` 는 이제 프로세스 수명이 아니라
         // "답 없이 흐른 시간"을 잰다 — TUI 는 답하고도 안 죽으므로 프로세스 수명으로 재면
         // 정상 턴까지 시간 한도에 걸린다.

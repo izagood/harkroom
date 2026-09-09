@@ -254,6 +254,68 @@ describe('runPtyTurn', () => {
       await rm(dir, { recursive: true, force: true });
     }
   }, 20_000);
+
+  /**
+   * **회귀선(2026-09-09): 밖에서 부른 `kill('SIGTERM')` 도 SIGKILL 로 승격한다.**
+   *
+   * 위 테스트는 **시간 한도** 경로가 승격하는 것을 잡는다. 승격이 그 경로 안에만 있는 동안,
+   * 밖으로 내준 `PtyControls.kill` 은 시그널 한 발이 전부였다 — 사람의 [중단](#686) ·
+   * 고아 회수 · 무발화 회수가 전부 그 손잡이를 쓰는데, claude TUI 는 SIGTERM 을 무시한다
+   * (실측: SIGTERM 뒤 10초 생존, SIGKILL 에만 죽음). 그래서 [중단] 을 눌러도 턴이 계속
+   * 돌았다.
+   *
+   * **`timeoutMs: 0` 이 이 테스트의 핵심이다.** 멘션 턴은 TUI 에서 무기한으로 돈다 —
+   * 즉 시간 한도 타이머가 아예 없다. 0 으로 두면 승격이 그 경로에만 있는 구현에서는 이
+   * 프로세스를 죽일 길이 **하나도 없어** 이 테스트가 타임아웃으로 빨개진다. 여기에
+   * `timeoutMs` 를 넣으면 그 사실이 가려지고, 고친 적 없는 코드도 초록이 된다.
+   */
+  it("무기한 턴에서 밖에서 부른 kill('SIGTERM'): 무시하는 하네스가 SIGKILL 로 승격돼 거둬진다", async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pty-cancel-'));
+    const pidFile = join(dir, 'pid');
+    const termFile = join(dir, 'term-seen');
+    try {
+      const p = plan('hang-ignore-sigterm');
+      p.env.FAKE_PID_FILE = pidFile;
+      p.env.FAKE_SIGTERM_FILE = termFile;
+      // 하네스가 시그널 핸들러를 걸기 **전에** 쏘면 기본 처분으로 그냥 죽어 승격 분기를
+      // 안 태운다. 그래서 준비(pid 파일)를 **동기로** 기다린다 — 위 테스트와 같은 이유로
+      // `await` 로 바꾸면 이 대기가 무력해진다(그 주석 참고).
+      let ready = false;
+      const idle = new Int32Array(new SharedArrayBuffer(4));
+      const r = await runPtyTurn(p, {
+        cwd: process.cwd(), timeoutMs: 0, killGraceMs: 200,
+        onSpawn: (controls) => {
+          const until = Date.now() + 15_000;
+          while (!existsSync(pidFile)) {
+            if (Date.now() > until) return;
+            Atomics.wait(idle, 0, 0, 10);
+          }
+          ready = true;
+          // 사람이 [중단] 을 누른 자리. 러너가 실제로 쓰는 것과 **같은** 손잡이다.
+          controls.kill('SIGTERM');
+        },
+      });
+      expect(ready).toBe(true);
+      // 시간 한도가 아니라 **밖에서 부른 kill** 로 끝났다는 증거다.
+      expect(r.timedOut).toBe(false);
+      // 하네스가 SIGTERM 을 받고도 살아남았다 — 이 단언이 없으면 SIGTERM 에 그냥 죽은
+      // 경우도 초록이 되어 승격 분기를 한 번도 안 태운다.
+      expect(existsSync(termFile)).toBe(true);
+
+      const pid = Number(await readFile(pidFile, 'utf8'));
+      expect(Number.isInteger(pid)).toBe(true);
+      const reaped = async (): Promise<boolean> => {
+        try { process.kill(pid, 0); return false; } catch { return true; }
+      };
+      const until = Date.now() + 5_000;
+      while (!(await reaped())) {
+        if (Date.now() > until) throw new Error(`pid ${pid} 가 5초 안에 거둬지지 않았다`);
+        await new Promise((r2) => setTimeout(r2, 20));
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
 });
 
 describe('RingBuffer', () => {

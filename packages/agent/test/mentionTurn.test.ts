@@ -2637,7 +2637,7 @@ describe('중단 — 사람이 도는 턴을 멈춘다 (3단계)', () => {
     };
   }
 
-  it('[중단] 은 그 턴의 PTY 에 SIGTERM 을 보낸다 — 유예 뒤 SIGKILL 승격은 runPtyTurn 이 갖는다', async () => {
+  it('[중단] 은 그 턴의 PTY 에 SIGTERM 을 보낸다 — 유예 뒤 SIGKILL 승격은 PtyControls.kill 이 갖는다', async () => {
     const fake = new FakeMurmur(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const h = cancelHarness();
@@ -2658,6 +2658,58 @@ describe('중단 — 사람이 도는 턴을 멈춘다 (3단계)', () => {
     await expect(
       runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
     ).rejects.toThrow(/@jaebin 가 이 턴을 중단했다/);
+  });
+
+  /**
+   * **회귀선(2026-09-09): PTY 가 뜨기 전에 누른 [중단] 도 듣는다.**
+   *
+   * 릴레이 세션은 PTY 보다 **먼저** 열린다 — 즉 화면의 「지금 도는 턴」에는 [중단] 이 달린
+   * 줄로 이미 서 있는데 PTY 는 아직 없다. 그 창(정의 읽기·워크스페이스 준비·계정 관문)에
+   * 누르면 `reclaim()` 은 손잡이가 없어 조용히 돌아갔고, `canceledBy` 만 적힌 채 턴은
+   * 그대로 떠서 끝까지 돌았다 — **답까지 올린 뒤** 실패 카드가 "누가 중단했다"고 적히는,
+   * 기록과 사실이 어긋나는 모양이었다.
+   *
+   * 세션이 열리는 그 순간에 누르는 것으로 그 창을 만든다.
+   */
+  it('스폰 전에 온 중단은 하네스를 아예 띄우지 않는다 — 목록엔 이미 [중단] 이 달린 줄로 서 있다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const relay = {
+      openSession(input: { onCancel?: (byHandle: string) => void }) {
+        // PTY 가 없는 바로 그 창에서 누른다.
+        input.onCancel?.('jaebin');
+        return { sessionId: 'cancel-2', push: () => {}, bindInput: () => {}, needsAttention: () => {}, close: () => {} };
+      },
+    };
+    const { deps, runTurn } = await makeDeps(fake, { relay });
+    let spawned = false;
+    runTurn.script = async () => { spawned = true; return { exitCode: 0, timedOut: false, tail: '' }; };
+    await expect(
+      runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
+    ).rejects.toThrow(/@jaebin 가 이 턴을 중단했다/);
+    // 띄웠다가 죽이는 것이 아니라 **안 띄운다** — 이 창의 하네스는 정리할 것이 없고,
+    // 띄우면 프롬프트가 주입돼 모델 호출 한 번이 그냥 버려진다.
+    expect(spawned).toBe(false);
+  });
+
+  it('스폰 도중에 온 중단은 손잡이를 잡은 그 순간 쓴다 — 중단은 다시 오지 않는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = cancelHarness();
+    const { deps, runTurn } = await makeDeps(fake, { relay: h.relay });
+    let killed: string | null = null;
+    runTurn.script = async (_plan: TurnPlan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      // 위 가드와 `onSpawn` 사이의 창(실행 파일 해석·forkpty)에서 눌렀다.
+      h.cancelBy('jaebin');
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      return { exitCode: 143, timedOut: false, tail: '' };
+    };
+    await expect(
+      runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
+    ).rejects.toThrow(/@jaebin 가 이 턴을 중단했다/);
+    expect(killed).toBe('SIGTERM');
   });
 
   it('중단이 없으면 문구는 그대로 하네스를 가리킨다 — 두 실패를 뭉치지 않는다', async () => {
