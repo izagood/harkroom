@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { DEFAULT_PREFS, prefsStorage } from '../src/lib/prefs';
+import { DEFAULT_INBOX_FILTER, DEFAULT_PREFS, inboxStorage, prefsStorage } from '../src/lib/prefs';
 
 beforeEach(() => {
   localStorage.clear();
@@ -35,5 +35,33 @@ describe('prefsStorage', () => {
   it('tolerates a storage that refuses writes', () => {
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });
     expect(() => prefsStorage.save(DEFAULT_PREFS)).not.toThrow();
+  });
+});
+
+/**
+ * 인박스에서 고른 칩(2026-09-09 보고: *"Unread 로 해놨는데 다시 켜면 돌아간다"*).
+ *
+ * 저장본을 **검사해서** 읽는 것을 함께 잰다 — 칩을 빼거나 이름을 바꾸는 날 옛 값이 그대로
+ * 상태가 되면, 아무 칩도 눌린 것으로 보이지 않아 무엇으로 좁혀져 있는지 화면이 말하지
+ * 못한다. 그 자리가 조용히 깨지는 것이라 테스트로 못 박아 둔다.
+ */
+describe('inboxStorage', () => {
+  it('아무것도 저장돼 있지 않으면 기본 칩이다', () => {
+    expect(inboxStorage.loadFilter()).toBe(DEFAULT_INBOX_FILTER);
+  });
+
+  it('고른 칩을 그대로 돌려준다', () => {
+    inboxStorage.saveFilter('unread');
+    expect(inboxStorage.loadFilter()).toBe('unread');
+  });
+
+  it('모르는 값이 저장돼 있으면 기본 칩으로 떨어진다', () => {
+    localStorage.setItem('murmur.inboxFilter', 'mentions-only');
+    expect(inboxStorage.loadFilter()).toBe(DEFAULT_INBOX_FILTER);
+  });
+
+  it('쓰기를 거부하는 저장소에서도 죽지 않는다', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });
+    expect(() => inboxStorage.saveFilter('blocking')).not.toThrow();
   });
 });

@@ -86,7 +86,18 @@ export function inboxRow(entry: InboxEntry, myAccountId: string | null, t: Trans
  * 네이티브 `select` 둘과 체크박스가 사라진 자리다(B3). 칩이 정렬과 같은 축을 쓰므로
  * 고르는 것과 보이는 순서가 어긋나지 않는다.
  */
-export type InboxFilter = 'blocking' | 'unread' | 'reading' | 'all';
+export const INBOX_FILTERS = ['blocking', 'unread', 'reading', 'all'] as const;
+export type InboxFilter = (typeof INBOX_FILTERS)[number];
+
+/**
+ * 저장본에서 읽은 값이 **오늘도 있는 칩인가.** 고른 칩을 기기에 남기기 시작한 뒤로
+ * (`prefs.inboxStorage`) 이 판정이 필요해졌다 — 칩을 하나 빼거나 이름을 바꾸는 날,
+ * 옛 값이 그대로 상태로 들어가면 아무 칩도 선택돼 보이지 않는 화면이 된다(무엇으로
+ * 좁혀져 있는지 화면이 말하지 못한다). 모르는 값은 기본값으로 떨어뜨린다.
+ */
+export function isInboxFilter(value: unknown): value is InboxFilter {
+  return typeof value === 'string' && (INBOX_FILTERS as readonly string[]).includes(value);
+}
 
 /**
  * `unread` 만 **줄의 종류가 아니라 내 읽음 상태**를 본다. 나머지 셋은 rank 축이다.

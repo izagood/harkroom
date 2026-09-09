@@ -48,6 +48,9 @@ const fakeController = (
 // 세운 방식과 같다). 영어가 원본이라 기본값이 영어이므로, 한국어를 재려면 한국어라고
 // 말해야 한다. 두 언어로 다 뜨는지는 `i18n.test.tsx` 가 잰다.
 beforeEach(() => {
+  // **고른 칩이 기기에 남으므로**(`inboxStorage`) 테스트끼리 그것을 물려주면 안 된다 —
+  // 앞 테스트가 누른 칩으로 다음 테스트가 시작하면 목록이 왜 비었는지 알 수 없다.
+  localStorage.clear();
   usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   useAppStore.getState().set({ channels: [chan('c1', 'general'), chan('c2', 'random')] });
@@ -495,5 +498,114 @@ describe('Inbox 줄이 무엇을 말하는가 (#488 C2)', () => {
     fireEvent.click(screen.getByTestId('inbox-filter-blocking'));
     expect(screen.getByTestId('inbox-filter-blocking').textContent).toContain('2');
     expect(screen.getByTestId('inbox-filter-reading').textContent).toContain('1');
+  });
+
+  /**
+   * ## 누른 줄이 읽음으로 보인다 (2026-09-09 보고)
+   *
+   * 사람이 겪은 것: *"클릭해서 읽었는데도 Unread 상태야. 닫았다가 다시 켜면 그때
+   * 없어져."* 읽음 처리는 처음부터 되고 있었다 — 이동하는 길에 `controller.openChannel`
+   * 이 그 채널의 안 읽은 항목을 `markRead` 로 넘긴다. 몰랐던 것은 **이 화면**이다:
+   * 자기 목록을 따로 들고 있어(주석: 스토어의 `unread` 는 안 읽은 것만 담는다) 다시 열어
+   * 재조회할 때까지 옛 사실을 그리고 있었다.
+   *
+   * **채널 단위로 잰다.** 서버가 그 단위로 바꾸므로, 누른 줄만 걷으면 같은 채널의 형제
+   * 줄이 재조회가 돌아올 때까지 안 읽음이라고 거짓말한다.
+   */
+  it('줄을 누르면 그 채널의 줄이 곧바로 읽음이 된다', async () => {
+    let served = [entry(1, 'mention', 'c1'), entry(2, 'mention', 'c1'), entry(3, 'mention', 'c2')];
+    const c = fakeController(async () => served);
+    // 서버가 실제로 하는 일: 그 채널의 안 읽은 인박스 항목 **전부**가 읽음이 된다.
+    c.openMessage.mockImplementation(async () => {
+      served = served.map((r) => (r.channelId === 'c1' ? { ...r, readAt: '2026-09-09T00:00:00.000Z' } : r));
+    });
+    open();
+    await waitFor(() => expect(screen.getByTestId('inbox-entry-1')).toBeTruthy());
+    expect(screen.getByTestId('inbox-unread-1')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('inbox-entry-1'));
+
+    // 재조회를 기다리지 않는다 — 사람이 겪은 것은 **누른 직후**의 화면이다.
+    expect(screen.getByTestId('inbox-entry-1').getAttribute('data-unread')).toBe('false');
+    expect(screen.queryByTestId('inbox-unread-1')).toBeNull();
+    expect(screen.getByTestId('inbox-entry-2').getAttribute('data-unread')).toBe('false');
+    // 다른 채널은 그대로다. 읽음 처리가 채널 단위라는 것과, 그 경계를 넘지 않는다는 것은
+    // 같은 문장이 아니다 — 넘으면 안 읽은 것을 읽은 것으로 지운다.
+    expect(screen.getByTestId('inbox-entry-3').getAttribute('data-unread')).toBe('true');
+
+    // 뒤따르는 조용한 재조회가 그 사실을 서버 값으로 확정한다(화면은 그대로).
+    await waitFor(() => expect(c.api.inbox).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId('inbox-entry-1').getAttribute('data-unread')).toBe('false');
+  });
+
+  /**
+   * 낙관적 표시의 **안전장치**. `openMessage` 는 못 연 메시지(지워짐·권한 없음)를 통지로
+   * 삼키고 그대로 resolve 하므로, 실패를 콜백에서 알 수 없다 — 그때는 읽음 처리도 없었다.
+   * 뒤따르는 재조회가 그 표시를 되돌리지 않으면 화면이 서버와 갈린 채로 남는다.
+   */
+  it('열지 못한 메시지면 읽음 표시가 되돌아온다', async () => {
+    const c = fakeController(async () => [entry(1, 'mention', 'c1')]);
+    open();
+    await waitFor(() => expect(screen.getByTestId('inbox-entry-1')).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId('inbox-entry-1'));
+    expect(screen.getByTestId('inbox-entry-1').getAttribute('data-unread')).toBe('false');
+
+    await waitFor(() => expect(c.api.inbox).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId('inbox-unread-1')).toBeTruthy();
+  });
+
+  /**
+   * **방금 읽은 줄은 눈앞에서 사라지지 않는다.** 서버가 채널 단위로 읽음 처리하므로
+   * '안 읽은 것'으로 좁혀 보던 목록은 한 번의 클릭에 통째로 빌 수 있다 — 방금 무엇을
+   * 눌렀는지까지 화면에서 사라진다. 표시만 걷고 줄은 남긴다(`justRead`).
+   *
+   * 칩의 숫자는 붙잡지 않는다: 진짜 안 읽은 수를 센다. 표시와 수가 함께 거짓말하면
+   * 무엇이 사실인지 화면 어디에도 남지 않는다.
+   */
+  it("'안 읽은 것' 으로 좁혀 봐도 방금 누른 줄은 목록에 남는다", async () => {
+    let served = [entry(1, 'mention', 'c1'), entry(2, 'mention', 'c1')];
+    const c = fakeController(async () => served);
+    c.openMessage.mockImplementation(async () => {
+      served = served.map((r) => ({ ...r, readAt: '2026-09-09T00:00:00.000Z' }));
+    });
+    const view = render(<Inbox open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('inbox-entry-1')).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId('inbox-filter-unread'));
+    fireEvent.click(screen.getByTestId('inbox-entry-1'));
+
+    expect(screen.getByTestId('inbox-entry-1')).toBeTruthy();
+    expect(screen.getByTestId('inbox-entry-1').getAttribute('data-unread')).toBe('false');
+    expect(screen.getByTestId('inbox-filter-unread').textContent).toContain('0');
+
+    // 붙잡는 것은 이 열림 동안만이다. 다시 열면 목록의 뜻이 "지금 안 읽은 것"으로 돌아간다.
+    view.rerender(<Inbox open={false} onClose={vi.fn()} />);
+    view.rerender(<Inbox open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.queryByTestId('inbox-entry-1')).toBeNull());
+  });
+
+  /**
+   * ## 고른 칩이 남는다 (2026-09-09 보고)
+   *
+   * 사람이 겪은 것: *"Inbox 에서 Unread 로 해놨는데 다시 켜면 돌아가."* 여는 `useEffect`
+   * 가 칩을 기본값으로 되돌리고 있었다. 그 근거("좁혀 두면 걸러진 항목이 없는 항목으로
+   * 보인다")는 칩마다 개수가 붙은 뒤로 근거를 잃었고, 남은 것은 고른 것을 앱이 매번
+   * 되돌리는 동작뿐이었다.
+   */
+  it('고른 칩은 닫았다 열어도, 앱을 다시 켜도 남는다', async () => {
+    fakeController(async () => [entry(1, 'mention', 'c1')]);
+    const view = render(<Inbox open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('inbox-entry-1')).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId('inbox-filter-unread'));
+    view.rerender(<Inbox open={false} onClose={vi.fn()} />);
+    view.rerender(<Inbox open onClose={vi.fn()} />);
+    expect(screen.getByTestId('inbox-filter-unread').getAttribute('aria-pressed')).toBe('true');
+
+    // 마운트를 새로 해도 남는다 — 앱을 다시 켠 것과 같은 상황이다(기기에 적힌다).
+    cleanup();
+    render(<Inbox open onClose={vi.fn()} />);
+    expect(screen.getByTestId('inbox-filter-unread').getAttribute('aria-pressed')).toBe('true');
   });
 });
