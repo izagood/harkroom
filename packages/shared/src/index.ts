@@ -359,6 +359,81 @@ export function mentionedIds(body: string): string[] {
 }
 
 /**
+ * **머리 멘션 런**이 끝나는 위치 — 본문 맨 앞에서 멘션과 공백만으로 이어지는 구간의 끝.
+ *
+ * `@handle` 과 `<@id>` 를 **둘 다** 받는다. 정규화 전 본문(사람이 친 초안)과 정규화된 본문
+ * (저장된 행), 그리고 `renderMentions` 를 지난 화면용 본문이 모두 이 함수를 지나야 하고,
+ * 형식마다 함수를 두면 같은 규칙이 세 벌이 된다.
+ *
+ * 사이에 낀 공백은 줄바꿈도 포함한다 — `@a\n@b 어쩌고` 처럼 이름을 줄로 나눠 부르는 것도
+ * 부르는 것이다. 대신 멘션이 아닌 글자가 하나라도 끼면 거기서 런이 끝난다.
+ *
+ * 코드·인용은 여기서 따로 걷어내지 않는다. 코드 블록은 백틱으로 시작하므로 첫 토큰에서
+ * 이미 런이 끝나고, 인용 줄은 `>` 로 시작하므로 마찬가지다 — 예외 처리가 아니라 문법에서
+ * 따라오는 결과다.
+ */
+export function headMentionRunEnd(body: string): number {
+  const re = new RegExp(`\\s*(?:${MENTION_TOKEN_PATTERN}|@(?:${HANDLE_PATTERN}))`, 'y');
+  let end = 0;
+  while (re.exec(body) !== null) end = re.lastIndex;
+  return end;
+}
+
+/**
+ * 본문의 멘션을 **부름**(call)과 **지칭**(reference)으로 가른다. 정규화된 본문(`<@id>`)을
+ * 받아 계정 id 로 돌려준다.
+ *
+ * ## 규칙 하나
+ *
+ * > **작성자가 에이전트이고 대상도 에이전트일 때, 머리 런 안의 멘션만 부름이다.**
+ *
+ * 나머지 조합은 지금까지와 똑같다:
+ * - **사람이 쓴 멘션은 자리와 무관하게 전부 부름이다.** 사람이 이름을 부르는 것은 언제나
+ *   부르는 것이고, 사람에게 새 문법을 가르치는 값이 이 문제의 값보다 크다.
+ * - **에이전트 → 사람도 전부 부름이다.** 사람을 부르는 것은 막을 이유가 없다 —
+ *   `MENTION_CHAIN_LIMIT` 이 사람에게 가는 알림만은 막지 않는 것과 같은 판단이다.
+ *
+ * ## 왜 이 규칙인가 (2026-09-09 실측)
+ *
+ * 에이전트는 보고를 쓰면서 서로를 **지칭한다**: "구현은 `@forge` 것이고", "`@murmur` 가 적은
+ * 그대로다". 지칭할 문법이 없어서 그 한 글자가 상대의 턴을 띄웠고, 답이 다시 상대를 지칭해
+ * 5분에 4턴이 오갔다. dev DB 의 에이전트→에이전트 멘션 inbox 122건 중 **47건(39%)** 이
+ * 머리 런 밖의 지칭이었고, 무작위 표본 10건은 전부 부를 뜻이 없는 말이었다.
+ *
+ * 새 문법을 만들지 않는 이유는 `@channel` 주석과 같다 — 문법이 늘면 서버와 화면이 서로 다른
+ * 것을 멘션이라 부르게 된다. 대신 **자리**로 뜻을 가른다: 부르려면 맨 앞에 쓴다.
+ *
+ * ## 한 번이라도 부르면 부름이다
+ *
+ * 같은 이름이 머리와 본문에 함께 나오면 **부름**이다. 반대로 정하면 이름을 다시 언급했다는
+ * 이유로 부름이 취소되고, 그 취소는 쓴 사람 눈에 보이지 않는다.
+ *
+ * @param opts.isAgent 그 계정이 에이전트인가. **모르면 `false`** — 사람으로 보고 막지 않는다.
+ */
+export function splitMentionCalls(
+  body: string,
+  opts: { authorIsAgent: boolean; isAgent: (accountId: string) => boolean },
+): { call: string[]; ref: string[] } {
+  const headEnd = headMentionRunEnd(body);
+  const call = new Set<string>();
+  const ref = new Set<string>();
+  // 코드·인용 제거는 `mentionRegions` 하나가 한다(#298·#592). `mentionScanText` 를 쓰지 않는
+  // 이유: 그 함수는 조각을 이어 붙여 **원문 위치를 잃는다**. 자리로 뜻을 가르는 판정이므로
+  // 위치가 있어야 하고, 그래서 조각의 `start` 를 그대로 쓴다.
+  for (const region of mentionRegions(body)) {
+    for (const m of region.text.matchAll(new RegExp(MENTION_TOKEN_PATTERN, 'g'))) {
+      const id = m[1];
+      if (!id) continue;
+      const at = region.start + (m.index ?? 0);
+      if (!opts.authorIsAgent || !opts.isAgent(id) || at < headEnd) call.add(id);
+      else ref.add(id);
+    }
+  }
+  for (const id of call) ref.delete(id);
+  return { call: [...call], ref: [...ref] };
+}
+
+/**
  * 본문의 `@handle`(**존재하는 계정만**)을 `<@id>` 로 정규화한다(#271). 저장 전에 한 번 돈다.
  *
  * **코드 구간과 인용 줄은 건드리지 않는다**(#298, #592). 판정은 `mentionRegions` 하나가 하고

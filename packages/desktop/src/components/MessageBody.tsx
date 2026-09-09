@@ -72,11 +72,19 @@ interface MentionOpeners {
 export function MessageBody({
   body,
   messageId,
+  refIds,
   onOpenDirectory,
   onOpenSettings,
 }: {
   body: string;
   messageId: string;
+  /**
+   * 본문이 이름으로 **지칭만 한** 계정 id 들(`meta.mentionRefs`). 서버가 알림을 만들면서
+   * 함께 적어 준 값이고, 화면은 그것을 **다시 판정하지 않는다** — `mentionChainCapped` 와
+   * 같은 규율이다(`MessageItem` 의 같은 자리 주석). 본문 글자로 다시 가르면 서버가 실제로
+   * 부른 곳과 화면이 부른 것처럼 그리는 곳이 갈라진다.
+   */
+  refIds?: readonly string[];
 } & MentionOpeners) {
   const t = useT();
   const accounts = useActiveStore((s) => s.accounts);
@@ -113,6 +121,18 @@ export function MessageBody({
   // 저장한 키와 여기서 조회하는 키가 갈라져 카드가 영원히 404 다(초판이 그랬다: 여기는
   // 후행 문장부호를 떼지 않아 `…/b.` 로 조회했다).
   const urls = useMemo(() => extractPreviewUrls(body), [body]);
+  /**
+   * 지칭된 handle 들. id 로 받아 **여기서** handle 로 바꾼다 — 서버가 handle 이 아니라 id 를
+   * 싣는 이유가 이것이다(그 사이 이름이 바뀌어도 본문의 칩과 같은 값으로 맞춰진다).
+   */
+  const refHandles = useMemo(() => {
+    const out = new Set<string>();
+    for (const id of refIds ?? []) {
+      const handle = accountsMap.get(id);
+      if (handle) out.add(handle.toLowerCase());
+    }
+    return out;
+  }, [refIds, accountsMap]);
   // handle → 계정. 멘션마다 `Object.values(...).find` 를 돌면 본문 하나에 계정 수 × 멘션 수다.
   const byHandle = useMemo(
     () => new Map(Object.values(accounts).map((a) => [a.handle.toLowerCase(), a])),
@@ -143,8 +163,11 @@ export function MessageBody({
   const renderPart = (p: BodyPart, key: string) => {
     if (p.kind === 'text') return <span key={key}>{p.text}</span>;
     if (p.kind === 'link') return anchor(p.text, p.text, p.target, key);
-    const isSelf = p.handle === myHandle;
     const isGroup = (p as { isGroup?: boolean }).isGroup === true;
+    // 지칭은 **자기 멘션보다 먼저 본다.** 나를 지칭했을 뿐인 이름에 주의색을 칠하면 내
+    // 차례가 아닌데 내 차례처럼 보인다 — 이 변경이 없애려는 바로 그 거짓말이다.
+    const isRef = !isGroup && refHandles.has(p.handle);
+    const isSelf = !isRef && p.handle === myHandle;
     const account = byHandle.get(p.handle);
 
     // 어디로 가는가(#279). `null` 이면 누를 것이 없다.
@@ -175,15 +198,23 @@ export function MessageBody({
     const className = `rounded px-0.5 font-medium ${
       isGroup
         ? 'bg-teal-50 text-teal-700'
-        : isSelf
-          ? 'bg-warning-surface-strong text-warning'
-          : 'bg-surface-sunken text-fg'
+        : isRef
+          // **지칭에는 배경이 없다.** 옅은 배경이 곧 "부른 이름"이라는 표시이므로, 부르지
+          // 않은 이름에 그것을 칠하면 화면이 없던 호출을 있다고 말한다(design.md §4).
+          // 이름인 것은 여전히 보여야 하니 굵기는 남기고, 눌러서 프로필로 가는 것도 그대로다.
+          ? 'text-fg'
+          : isSelf
+            ? 'bg-warning-surface-strong text-warning'
+            : 'bg-surface-sunken text-fg'
     }`;
     // 표시는 한 곳에서 나온다 — 누를 수 있는 것과 없는 것을 따로 그리면 색·배지가 갈라진다.
     const shared = {
       'data-testid': `mention-${p.handle}`,
       'data-self': String(isSelf),
       'data-group': String(isGroup),
+      // 부른 것인가. 회귀선은 색이 아니라 이 값을 본다 — 색은 디자인이 바꾸는 것이고
+      // "불렀는가"는 바뀌면 안 되는 사실이다.
+      'data-call': String(!isRef),
       className,
     };
 
