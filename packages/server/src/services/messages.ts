@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionScanText, normalizeMentions, readAskMeta, type InboxEntry, type MessageRow } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_CHAIN_LIMIT, mentionedHandles, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { channelVisibleSql } from './channels.js';
 import { emitEvent } from '../events.js';
@@ -432,10 +432,15 @@ async function fanOutMention(
  *
  * ## 판정을 새로 만들지 않는다
  *
- * "이 메시지가 나를 불렀나"는 알림이 쓰는 그 판정(`mentionedIds(mentionScanText(body))`)으로
- * 답한다. SQL 의 `like '%<@id>%'` 로 대신하면 **인용 줄과 코드 블록 안의 토큰까지 세어**
- * 부르지 않은 것을 부른 것으로 취급한다 — 그러면 남의 말을 인용한 스레드가 이유 없이
- * 상한에 걸린다.
+ * "이 메시지가 나를 불렀나"는 알림이 쓰는 그 판정(`splitMentionCalls(...).call`)으로 답한다.
+ * SQL 의 `like '%<@id>%'` 로 대신하면 **인용 줄과 코드 블록 안의 토큰까지 세어** 부르지 않은
+ * 것을 부른 것으로 취급한다 — 그러면 남의 말을 인용한 스레드가 이유 없이 상한에 걸린다.
+ *
+ * **지칭은 고리가 아니다.** 동료가 나를 이름으로 언급했을 뿐인 발화(머리 런 밖의 `@나`)는
+ * 나를 부르지 않았으므로 내 앞 고리가 아니다. 그래서 이 스캔도 알림과 같은 함수를 쓰고,
+ * 그러려면 **그 행의 작성자가 에이전트인지**를 알아야 한다(사람이 쓴 것은 자리와 무관하게
+ * 전부 부름이다) — 그래서 쿼리가 `account` 를 함께 읽는다. 여기서 갈라지면 지칭만 오간
+ * 스레드가 깊이를 쌓아 이유 없이 상한에 걸린다.
  *
  * 최근 `DEPTH_SCAN_LIMIT` 개만 훑는다. 연쇄는 직전 발화에서 이어지므로 더 거슬러 갈 이유가
  * 없고, 스레드가 수백 줄이어도 비용이 일정해야 한다.
@@ -448,17 +453,23 @@ async function mentionDepthFor(
 ): Promise<number> {
   if (!input.authorIsAgent) return 0;
   const rows = (await client.query(
-    `select body, mention_depth as depth from message
-      where channel_id = $1
-        and ($2::uuid is null or thread_root_id = $2 or id = $2)
-        and deleted_at is null
-      order by seq desc
+    `select m.body, m.mention_depth as depth, (a.kind = 'agent') as author_is_agent
+       from message m join account a on a.id = m.author_id
+      where m.channel_id = $1
+        and ($2::uuid is null or m.thread_root_id = $2 or m.id = $2)
+        and m.deleted_at is null
+      order by m.seq desc
       limit ${DEPTH_SCAN_LIMIT}`,
     [input.channelId, input.threadRootId],
-  )).rows as { body: string; depth: number }[];
+  )).rows as { body: string; depth: number; author_is_agent: boolean }[];
   for (const row of rows) {
     // 나를 부른 **가장 최근** 메시지 하나가 내 앞 고리다 — 그것을 찾으면 멈춘다.
-    if (mentionedIds(mentionScanText(row.body)).includes(input.authorId)) return row.depth + 1;
+    // 대상은 나 하나뿐이므로 `isAgent` 도 나만 물으면 된다(위에서 이미 에이전트로 걸렀다).
+    const { call } = splitMentionCalls(row.body, {
+      authorIsAgent: row.author_is_agent,
+      isAgent: (id) => id === input.authorId,
+    });
+    if (call.includes(input.authorId)) return row.depth + 1;
   }
   // 나를 부른 것이 없는 발화(스스로 올린 보고·깨움 뒤의 이어 말하기)는 연쇄가 아니다.
   return 0;
@@ -581,16 +592,43 @@ export async function postMessage(
       정규화 주석의 규율과 같다.
     */
     const chainCapped = authorIsAgent && mentionDepth >= MENTION_CHAIN_LIMIT;
+
+    /*
+      **부름과 지칭을 가른다**(2026-09-09). 규칙과 근거는 `splitMentionCalls` 에 있다:
+      에이전트가 동료 에이전트를 **본문 한가운데서** 이름으로 언급한 것은 부르는 것이
+      아니다. 알림을 만드는 자리가 여기 하나뿐이므로 판정도 여기서 한 번만 한다.
+
+      깊이 상한(`cappedIds`)도 이 결과 위에서 센다 — 애초에 부르지 않은 이름을 "막았다"고
+      적으면 화면이 없던 호출을 있었다고 말하게 된다.
+    */
+    const agentIds = new Set(mentionedAccounts.filter((a) => a.kind === 'agent').map((a) => a.id));
+    const { call: calledIds, ref: refIds } = splitMentionCalls(normalizedBody, {
+      authorIsAgent,
+      isAgent: (id) => agentIds.has(id),
+    });
+
     const cappedIds = new Set<string>();
     if (chainCapped) {
-      for (const accountId of mentionedIds(mentionScanText(normalizedBody))) {
+      for (const accountId of calledIds) {
         if (accountId === input.authorId) continue;
         // **에이전트만 막는다.** 사람을 부르는 것은 "이 스레드에 사람이 필요하다"는 뜻이라
         // 상한이 걸린 그때 오히려 더 필요하다.
-        if (mentionedAccounts.find((a) => a.id === accountId)?.kind === 'agent') cappedIds.add(accountId);
+        if (agentIds.has(accountId)) cappedIds.add(accountId);
       }
     }
     const cappedHandles = mentionedAccounts.filter((a) => cappedIds.has(a.id)).map((a) => a.handle);
+
+    /*
+      지칭한 이름은 **그 메시지에 남긴다** — `mentionChainCapped` 와 같은 자리·같은 이유다.
+      화면은 멘션을 옅은 배경 칩으로 그리므로, 부르지 않은 이름이 부른 것과 똑같이 보이면
+      그 자체가 거짓말이다(design.md §4). 화면이 본문을 다시 파싱하지 않고 서버가 실제로 한
+      일을 그대로 읽게 한다.
+
+      **handle 이 아니라 id 를 싣는다.** `mentionChainCapped` 는 그 자리에서 글자로 읽히는
+      값이라 handle 이지만, 이것은 본문의 칩과 **맞춰 볼 열쇠**다 — 그 사이 handle 이 바뀌면
+      본문은 새 이름으로 그려지는데 meta 는 옛 이름이라 표시가 조용히 어긋난다.
+    */
+    const refIdsForMeta = refIds.filter((id) => id !== input.authorId);
     const inserted = await client.query(
       `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel, mention_depth)
        values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
@@ -598,9 +636,13 @@ export async function postMessage(
        input.kind ?? 'user',
        // 막힌 호출은 **그 메시지에 남는다** — 조용히 사라지면 사람은 "왜 아무도 안 왔나"를
        // 묻고, 그 답이 화면에 없다(design.md §4).
-       JSON.stringify(cappedHandles.length
-         ? { ...(input.meta ?? {}), mentionChainCapped: cappedHandles, mentionChainLimit: MENTION_CHAIN_LIMIT }
-         : (input.meta ?? {})),
+       JSON.stringify({
+         ...(input.meta ?? {}),
+         ...(cappedHandles.length
+           ? { mentionChainCapped: cappedHandles, mentionChainLimit: MENTION_CHAIN_LIMIT }
+           : {}),
+         ...(refIdsForMeta.length ? { mentionRefs: refIdsForMeta } : {}),
+       }),
        alsoInChannel, mentionDepth],
     );
     const messageId = inserted.rows[0].id as string;
@@ -636,6 +678,9 @@ export async function postMessage(
      * 수 있다. 정규화는 코드를 비껴가지만 그렇게 손으로 적힌 토큰까지 막지는 못한다 —
      * 코드 안은 알림을 만들지 않는다는 #298 의 결정을 여기서도 같은 함수로 지킨다.
      *
+     * 그 두 가지를 `splitMentionCalls` 하나가 한다(위에서 이미 돌았다). 그 함수가 코드·인용을
+     * 걷어내고, 남은 것을 **부름과 지칭**으로 가른다 — 여기 도는 것은 부름뿐이다.
+     *
      * 작성자 자신은 걸러 낸다.
      */
     /*
@@ -647,9 +692,10 @@ export async function postMessage(
       막힌 호출은 조용히 사라지지 않고 `meta.mentionChainCapped` 로 그 메시지에 남는다 —
       화면이 그 사실을 그려야 사람이 "왜 아무도 안 왔나"를 묻지 않는다(design.md §4).
     */
-    for (const accountId of mentionedIds(mentionScanText(normalizedBody))) {
+    for (const accountId of calledIds) {
       // 상한에 걸린 에이전트는 **inbox 항목을 받지 않는다** — 그것이 곧 턴이 뜨지 않는다는
       // 뜻이다(러너는 inbox 를 폴한다). 판정은 위에서 이미 끝났고 여기서 다시 하지 않는다.
+      // 지칭(`refIds`)도 같은 이유로 여기 오지 않는다 — 이름은 본문에 남고 턴은 뜨지 않는다.
       if (accountId !== input.authorId && !cappedIds.has(accountId)) {
         await insertInbox(client, accountId, message.id, 'mention', notified);
       }

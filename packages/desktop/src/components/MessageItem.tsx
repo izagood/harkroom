@@ -154,6 +154,18 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   const chainLimit = typeof message.meta.mentionChainLimit === 'number'
     ? message.meta.mentionChainLimit
     : null;
+  /**
+   * **부르지 않고 이름만 부른 계정**(`meta.mentionRefs`, 2026-09-09). 에이전트가 동료를
+   * 본문 한가운데서 지칭한 자리다 — 서버는 알림을 만들지 않고, 화면은 그 이름을 칩이 아닌
+   * 평범한 이름으로 그린다(`MessageBody`).
+   *
+   * `chainCapped` 와 같은 규율로 **서버가 적은 것을 그대로 읽는다.** 본문을 다시 파싱해
+   * 화면이 스스로 가르면, 규칙을 한쪽만 고치는 날 화면이 부른 것처럼 그린 이름에 알림이
+   * 가지 않는다 — 이 파일 위쪽 `skillSlug` 주석이 경계하는 그 갈라짐이다.
+   */
+  const mentionRefs = Array.isArray(message.meta.mentionRefs)
+    ? (message.meta.mentionRefs as unknown[]).filter((id): id is string => typeof id === 'string')
+    : [];
   const time = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const lastReplyTime = message.lastReplyAt
     ? new Date(message.lastReplyAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -667,7 +679,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 )}
               </button>
             )}
-            {shownBody.trim() && <MessageBody body={shownBody} messageId={message.id} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
+            {shownBody.trim() && <MessageBody body={shownBody} messageId={message.id} refIds={mentionRefs} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
             {/* 선택지는 본문 **바로 아래**에 붙는다 — 답할 자리가 말 옆에 있어야 한다(규칙 05).
                 형식을 못 알아보면 `AskCard` 가 스스로 아무것도 그리지 않는다. */}
             <AskCard message={message} />
