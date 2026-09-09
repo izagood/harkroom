@@ -117,8 +117,11 @@ describe('openMessage', () => {
 });
 
 describe('Copy link', () => {
-  const openMenu = (): void => {
-    fireEvent.click(screen.getByLabelText('More actions'));
+  // 2026-09-09: 링크 복사가 ⋯ 메뉴에서 **툴바**로 올라갔다. 자리를 글자로 집지 않는다 —
+  // 그 자리의 이름은 이제 사전을 지나므로(`message.copyLink`) 글자로 집으면 번역이 바뀌는
+  // 날 이 줄이 조용히 아무것도 지키지 않는다.
+  const copyLink = (): void => {
+    fireEvent.click(screen.getByTestId('toolbar-copy-link'));
   };
 
   it('puts the shared link form on the clipboard', async () => {
@@ -127,8 +130,7 @@ describe('Copy link', () => {
     setClipboard(writeText);
     render(<MessageItem message={msg('m9', 'c1', 5, 'hello', 'u2')} />);
 
-    openMenu();
-    fireEvent.click(screen.getByText('Copy link'));
+    copyLink();
 
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(messagePermalink('m9')));
   });
@@ -139,8 +141,7 @@ describe('Copy link', () => {
     setClipboard(async () => { throw new Error('denied'); });
     render(<><MessageItem message={msg('m9', 'c1', 5, 'hello', 'u2')} /><Notice /></>);
 
-    openMenu();
-    fireEvent.click(screen.getByText('Copy link'));
+    copyLink();
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toMatch(/could not copy/i);
@@ -152,8 +153,7 @@ describe('Copy link', () => {
     fakeController();
     render(<><MessageItem message={msg('m9', 'c1', 5, 'hello', 'u2')} /><Notice /></>);
 
-    openMenu();
-    fireEvent.click(screen.getByText('Copy link'));
+    copyLink();
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toMatch(/could not copy/i);

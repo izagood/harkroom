@@ -85,13 +85,13 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
     mount([entry(1, 'mention', 'c1')], { threadRootId: 'm1' });
 
     // 먼저 스레드가 서 있다.
-    expect(screen.getByText('Thread')).toBeTruthy();
+    expect(screen.getByTestId('thread-pane')).toBeTruthy();
 
     openInbox();
     await waitFor(() => expect(screen.getByTestId('inbox-entry-1')).toBeTruthy());
 
     // **둘 다** 있다. 하나가 다른 하나를 밀어내지 않는다.
-    expect(screen.getByText('Thread')).toBeTruthy();
+    expect(screen.getByTestId('thread-pane')).toBeTruthy();
     expect(screen.getByTestId('inbox-pane')).toBeTruthy();
   });
 
@@ -116,7 +116,7 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
 
     // 그 이동이 실제로 스레드를 열었을 때에도 둘이 함께 선다.
     useAppStore.getState().set({ threadRootId: 'm1' });
-    await waitFor(() => expect(screen.getByText('Thread')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('thread-pane')).toBeTruthy());
     expect(screen.getByTestId('inbox-pane')).toBeTruthy();
   });
 
@@ -286,7 +286,7 @@ describe('인박스 자리 — 좁은 창 (#488 C2)', () => {
     expect(screen.getByRole('button', { name: '사이드바 펼치기' })).toBeTruthy();
     // 접은 것은 사이드바뿐이다 — 인박스와 스레드는 그 자리에 있다.
     expect(screen.getByTestId('inbox-pane')).toBeTruthy();
-    expect(screen.getByText('Thread')).toBeTruthy();
+    expect(screen.getByTestId('thread-pane')).toBeTruthy();
   });
 
   /**

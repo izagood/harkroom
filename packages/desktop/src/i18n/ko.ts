@@ -49,6 +49,9 @@ export const ko = {
 
   'thread.alsoPostToChannel': '채널에도 올리기',
   'thread.resizeHandle': '스레드 너비 조절',
+  'thread.title': '스레드',
+  'thread.empty': '아직 답글이 없습니다. 첫 답글로 스레드를 시작하세요.',
+  'reactions.pickTitle': '리액션 고르기',
 
   // ---------------------------------------------------------------------------
   // avatar · avatarEdit — **어투를 `~다` 로 맞췄다.** 이 둘만 `~습니다`·`~주세요` 였고,
@@ -1075,6 +1078,9 @@ export const ko = {
   'message.threadOrigin': '스레드에 댓글 남김',
   'message.recentReplies': '최근 댓글 보기',
   'message.replyInThread': '스레드에 답글 달기',
+  'message.copyLink': '링크 복사',
+  'message.save': '나중에 보기로 담기',
+  'message.unsave': '담은 것 빼기',
   // 연쇄 깊이 상한에 막힌 호출(4단계) — 근거는 `en.ts` 의 같은 자리에 있다.
   'message.chainCapped': '{handles} 를 부르지 않았다 — 멘션 연쇄가 깊이 상한({limit})에 닿았다. 이어 가려면 사람이 한 줄 쓰면 된다.',
   'message.openSkillApproval': '스킬 승인 화면 열기',

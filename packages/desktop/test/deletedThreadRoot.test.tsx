@@ -47,7 +47,7 @@ describe('지워진 스레드 머리의 자리표시자', () => {
     render(<MessageItem message={tombstone('m1', 2)} />);
     expect(screen.queryByTestId('author-name')).toBeNull();
     expect(screen.queryByTestId('author-gutter')).toBeNull();
-    expect(screen.queryByRole('group', { name: 'message toolbar' })).toBeNull();
+    expect(screen.queryByRole('toolbar', { name: 'message toolbar' })).toBeNull();
   });
 
   it('답글 수 버튼이 스레드를 연다 — 이 행이 남는 이유가 그 문이다', () => {

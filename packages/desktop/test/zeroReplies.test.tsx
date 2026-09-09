@@ -88,7 +88,7 @@ describe('#489 답글 0개 루트: 0 은 그리지 않고, 스레드로 가는 �
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 0 })} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     const threadBtn = within(toolbar).getByRole('button', { name: '스레드에 답글 달기' });
 
     fireEvent.click(threadBtn);
@@ -106,7 +106,7 @@ describe('#489 답글 0개 루트: 0 은 그리지 않고, 스레드로 가는 �
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 0 })} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     expect(toolbar.className).toMatch(/\bopacity-0\b/);
     expect(toolbar.className).toMatch(/group-hover:opacity-100/);
     expect(toolbar.className).not.toMatch(/\binvisible\b/);
@@ -127,11 +127,17 @@ describe('#489 답글 0개 루트: 0 은 그리지 않고, 스레드로 가는 �
    * `null` 기준이라 `0` 에서 깨져 있었다 — `0` 은 **양쪽 어디에도** 맞지 않아 요약만
    * 그려지고 진입점은 사라졌다.
    *
-   * 그래서 두 조건을 "답글이 있다(`> 0`)" / "답글이 없다(`null` 또는 `0`)" 로 갈라
-   * 세 값 전부에서 **정확히 하나만** 그려지는지 센다. 하나라도 둘이 되면 `#143` 이고,
-   * 하나라도 영이 되면 진입 불가다.
+   * **2026-09-09 에 이 셈이 뒤집혔다.** 진입점을 하나로 유지하는 규율이 실제로 지킨 것은
+   * *한 개*였고, 지키지 못한 것은 **같은 자리**였다 — 값에 따라 진입점이 툴바와 본문 열을
+   * 오갔으므로 사람은 손이 갈 자리를 배울 수 없었다("채팅만 있는 경우 스레드에 답글을 못
+   * 달아"). 그래서 역할을 자리로 갈랐다: 툴바의 스레드 칸은 **행동**이라 늘 있고, 본문 열의
+   * 요약 줄은 **상태**라 답글이 있을 때만 선다.
+   *
+   * `#143`(툴바가 답글 pill 을 덮는다)이 되살아나지 않는 근거는 그대로다: 둘은 **다른
+   * 컨테이너**에 있고(`replyControlPosition.test.tsx` 가 그것을 잰다), 툴바는 행 위쪽
+   * 경계에 걸쳐 본문 열을 침범하지 않는다.
    */
-  it('null·0·2 모든 값에서 스레드 진입점이 정확히 하나만 그려진다', () => {
+  it('null·0·2 모든 값에서 툴바의 스레드 칸이 있고, 요약 줄은 답글이 있을 때만 선다', () => {
     fakeController();
 
     for (const replyCount of [null, 0, 2] as const) {
@@ -139,20 +145,19 @@ describe('#489 답글 0개 루트: 0 은 그리지 않고, 스레드로 가는 �
         <MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount })} />,
       );
 
-      const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+      const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
       const inToolbar = within(toolbar).queryByRole('button', { name: '스레드에 답글 달기' });
       // 이 파일은 한국어로 고정돼 있다(위 `beforeEach`) — 요약 줄의 이름은 `답글 N개` 다.
       const summary = screen.queryByRole('button', { name: /답글 \d+개/ });
 
-      const entries = [inToolbar, summary].filter((e) => e !== null);
-      expect(entries, `replyCount=${String(replyCount)} 에서 진입점 수`).toHaveLength(1);
+      // **행동은 늘 같은 자리에 있다** — 값 셋 전부에서 툴바의 스레드 칸이 하나 있다.
+      expect(inToolbar, `replyCount=${String(replyCount)} 에서 툴바의 스레드 칸`).not.toBeNull();
+      expect(within(toolbar).queryAllByRole('button', { name: '스레드에 답글 달기' })).toHaveLength(1);
 
-      // 답글이 있을 때만 요약이고, 없을 때는 툴바다.
-      if (replyCount !== null && replyCount > 0) {
-        expect(summary).not.toBeNull();
-      } else {
-        expect(inToolbar).not.toBeNull();
-      }
+      // **상태는 있을 때만 말한다** — 요약 줄은 답글이 하나라도 있을 때만 선다(`0` 은 글자로
+      // 쓰지 않는다: 이 파일 첫 테스트가 그것을 잰다).
+      if (replyCount !== null && replyCount > 0) expect(summary).not.toBeNull();
+      else expect(summary).toBeNull();
 
       unmount();
     }
