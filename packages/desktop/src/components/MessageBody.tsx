@@ -1,4 +1,4 @@
-import { Fragment, useMemo, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useT } from '../i18n/useT';
 import { useActiveStore } from '../state/communities';
 import { NO_TEAMS } from '../state/appStore';
@@ -8,6 +8,7 @@ import { extractPreviewUrls, renderMentions } from '@murmur/shared';
 import { splitCode } from '../lib/code';
 import { parseBlocks, type Align, type Block, type Emphasis, type Inline } from '../lib/markdown';
 import { getExternalOpener } from '../lib/openExternal';
+import { copyText } from '../lib/clipboard';
 import { accountOpen } from '../lib/accountOpen';
 import { getController } from '../state/controller';
 import { LinkPreview } from './LinkPreview';
@@ -33,6 +34,91 @@ import type { SectionId } from './settings/sections';
  * 넘어 늘 "Show more" 가 달렸고, 읽으려면 매번 눌러야 했다 — 스크롤 한 번으로 끝날 일에
  * 클릭을 더한 셈이라 걷어냈다. 본문은 언제나 통째로 보인다.
  */
+
+/**
+ * 코드 블록 하나. **복사 버튼이 붙는 자리다**(#724).
+ *
+ * 여기까지 오는 것은 여러 줄 명령이다. 버튼이 없으면 남은 길은 드래그로 긁는 것뿐이고,
+ * 세 줄짜리 `kubectl` 을 마우스로 정확히 집는 일은 매번 실패한다 — 위아래 줄을 물거나
+ * 마지막 개행을 빠뜨린다. 그래서 이 버튼은 **꾸밈이 아니라 유일하게 정확한 복사 수단**이다.
+ *
+ * ## 버튼은 늘 보인다
+ *
+ * `MessageItem` 의 툴바처럼 hover 로 숨기지 않는다. 툴바는 "이 메시지에 무언가 할 수
+ * 있다"는 것을 이미 아는 사람이 찾아가는 것이지만, 이 버튼은 **있는 줄 몰라서 드래그하고
+ * 있던 사람**을 위한 것이다. 숨기면 고친 것이 없다.
+ *
+ * ## 헤더는 언어가 없어도 그린다
+ *
+ * 전에는 `lang` 이 있을 때만 헤더가 있었다. 버튼이 그 줄에 살아야 하므로 이제 늘 그린다 —
+ * 버튼을 `<pre>` 위에 겹쳐 띄우는 길도 있었지만, 그 자리는 **가로 스크롤하는 내용 위**라서
+ * 긴 명령의 첫 줄을 가린다. 언어가 없으면 왼쪽이 비고 버튼만 오른쪽에 선다.
+ *
+ * ## 복사한 것은 화면이 아니라 원문이다
+ *
+ * `block.code` 는 파서가 펜스에서 떼어 온 그대로다(`lib/markdown`). 렌더된 노드에서
+ * 글자를 긁으면 줄바꿈·여백이 브라우저 판정에 따라 달라지므로, 붙여넣은 명령이 실행되지
+ * 않는 일이 생긴다.
+ */
+function CodeBlock({ code, lang }: { code: string; lang: string | null }) {
+  const t = useT();
+  const preRef = useRef<HTMLPreElement>(null);
+  const [copied, setCopied] = useState(false);
+  // 되돌리는 타이머는 반드시 걷어 낸다. 메시지 목록은 스크롤하며 계속 마운트/언마운트
+  // 되므로, 남겨 두면 사라진 컴포넌트에 `setState` 하는 경고가 목록을 스크롤할 때마다 뜬다.
+  useEffect(() => {
+    if (!copied) return;
+    const id = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(id);
+  }, [copied]);
+
+  const copy = async () => {
+    const outcome = await copyText(code, preRef.current);
+    if (outcome === 'copied') {
+      setCopied(true);
+      return;
+    }
+    // 실패는 눈에 보이게 남긴다(`lib/clipboard` 머리말). 코드는 이미 화면에 그려져 있고
+    // `copyText` 가 선택까지 해 두었으므로, 실패 문구가 할 말은 **다음에 할 일**이다.
+    useActiveStore.getState().set({
+      notice: outcome === 'selected' ? t('message.code.copyFailedSelected') : t('message.code.copyFailedManual'),
+    });
+  };
+
+  return (
+    // 코드는 접히지 않는다 — 줄바꿈된 명령줄은 그대로 복사해도 실행되지 않는다.
+    // 대신 가로로 스크롤한다.
+    <div className="my-2 overflow-hidden rounded border border-border last:mb-0">
+      <div className="flex items-center gap-2 border-b border-border bg-surface-sunken px-2 py-0.5">
+        {/* 언어는 **표시만** 한다. 문법 강조기를 들이면 의존성과 공격 표면이 같이 커진다. */}
+        {lang && (
+          <span data-testid="code-lang" className="font-mono text-[0.75em] text-fg-subtle">
+            {lang}
+          </span>
+        )}
+        <button
+          type="button"
+          data-testid="code-copy"
+          onClick={() => void copy()}
+          // `aria-label` 을 따로 두는 이유: 글자는 눌린 뒤 `복사됨` 으로 바뀌는데, 그것만
+          // 읽히면 스크린리더 사용자에게는 버튼 이름이 상태에 따라 달라지는 셈이 된다.
+          aria-label={t('message.code.copy')}
+          className="ml-auto rounded px-1 py-0.5 text-[0.75em] text-fg-subtle hover:bg-surface-raised hover:text-fg"
+        >
+          {copied ? t('message.code.copied') : t('message.code.copy')}
+        </button>
+      </div>
+      <pre
+        ref={preRef}
+        data-testid="code-block"
+        data-lang={lang ?? ''}
+        className="overflow-x-auto bg-surface px-2 py-1 font-mono text-[0.9em] text-fg"
+      >
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+}
 
 /**
  * 링크를 누르면 어디로 가는가. `murmur://` 는 OS 를 거치지 않고 앱 안에서 이동한다 —
@@ -403,28 +489,7 @@ export function MessageBody({
         );
       }
       case 'code':
-        return (
-          // 코드는 접히지 않는다 — 줄바꿈된 명령줄은 그대로 복사해도 실행되지 않는다.
-          // 대신 가로로 스크롤한다.
-          <div key={key} className="my-2 overflow-hidden rounded border border-border last:mb-0">
-            {block.lang && (
-              // 언어는 **표시만** 한다. 문법 강조기를 들이면 의존성과 공격 표면이 같이 커진다.
-              <div
-                data-testid="code-lang"
-                className="border-b border-border bg-surface-sunken px-2 py-0.5 font-mono text-[0.75em] text-fg-subtle"
-              >
-                {block.lang}
-              </div>
-            )}
-            <pre
-              data-testid="code-block"
-              data-lang={block.lang ?? ''}
-              className="overflow-x-auto bg-surface px-2 py-1 font-mono text-[0.9em] text-fg"
-            >
-              <code>{block.code}</code>
-            </pre>
-          </div>
-        );
+        return <CodeBlock key={key} code={block.code} lang={block.lang} />;
       default:
         return (
           <p key={key} data-testid="md-paragraph" className="mb-2 last:mb-0">
