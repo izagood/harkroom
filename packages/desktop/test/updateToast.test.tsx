@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { UpdateToast } from '../src/components/UpdateToast';
 import { UPDATE_CHECK_INTERVAL_MS } from '../src/lib/useUpdateCheck';
+import { MIN_SIDEBAR_WIDTH } from '../src/lib/prefs';
 import { setAppUpdater, type AppUpdater } from '../src/lib/appUpdater';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
@@ -216,5 +217,27 @@ describe('Workspace 에 실제로 붙어 있다', () => {
     expect(cls.some((c) => c.startsWith('right-'))).toBe(false);
     expect(cls).toContain('absolute');
     expect(cls.some((c) => c.startsWith('left-'))).toBe(true);
+  });
+
+  /*
+   * **폭을 숫자로 적지 않는다.** 앞 회귀선은 팝업을 왼쪽으로 보내 `전송` 을 비켜 줬는데,
+   * 폭이 `w-72`(288px)로 못 박혀 있어서 반쪽만 지켜졌다: 사이드바는 `MIN_SIDEBAR_WIDTH`
+   * 까지 좁혀지므로 좁힌 창에서는 팝업이 사이드바를 넘어 **본문 위로 다시 올라앉았다.**
+   *
+   * jsdom 은 레이아웃을 계산하지 않으니 여기서도 픽셀로 물을 수 없다 — 대신 위와 같은
+   * 태도로 **원인**을 막는다: 고정 폭 유틸리티가 돌아오면 잡는다. 내용 폭으로 두면
+   * 사이드바가 얼마로 좁혀지든 이 팝업이 그것보다 넓어질 이유가 없다.
+   */
+  it('고정 폭을 쓰지 않는다 — 사이드바보다 넓어지면 다시 본문을 덮는다', async () => {
+    withSurface();
+    setAppUpdater(stub({ check: vi.fn(async () => ({ version: '9.9.9' })) }));
+    render(<UpdateToast />);
+
+    const toast = (await screen.findByRole('status')) as HTMLElement;
+    const cls = toast.className.split(/\s+/);
+    // `w-72`·`w-[288px]` 같은 것. `max-w-*` 는 상한이라 폭을 못 박지 않으므로 예외다.
+    expect(cls.filter((c) => /^w-/.test(c))).toEqual([]);
+    // 앞판이 288px 이었던 것이 우연이 아니게, 사이드바의 하한을 함께 적어 둔다.
+    expect(MIN_SIDEBAR_WIDTH).toBeLessThan(288);
   });
 });
