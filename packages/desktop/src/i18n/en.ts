@@ -2088,6 +2088,36 @@ export const en = {
   'grid.card.relaunchFailed': 'Start {handle} again',
   'grid.card.stop': 'Stop {handle}',
 
+  // ── 상태 칩 (`AgentGrid.StateChip`) ────────────────────────────────────────
+  //
+  // 카드가 도는지 멈췄는지를 **글자로** 말하는 자리다. 이 키들이 생기기 전에는 그 사실이
+  // 얼굴의 회색조에만 실려 있었다 — 색에만 실린 정보는 처음 온 사람도, 색을 못 가르는
+  // 사람도 못 읽는다. 짧아야 하는 이유는 138px 상자에 들어가야 하기 때문이고, 누구의
+  // 상태인지는 **바로 위 이름**이 이미 말한다.
+  //
+  // | 한국어 | 영어 | 판단 |
+  // |---|---|---|
+  // | 도는 중 | `Running` | 러너가 살아 있다. `RunnerStatus` 가 같은 사실에 이미 쓰는 말이다 |
+  // | 멈춤 | `Stopped` | 꺼졌다. `멈추는 중`(`Stopping`)과 **한 글자로 갈린다** — 진행형이 아니다 |
+  // | 실패 | `Failed` | 스스로 죽었다. 사유는 카드의 `agent-runner-failed-*` 줄이 따로 말한다 |
+  // | 모름 | `Unknown` | 릴레이가 끊겨 서버가 모른다. **`멈춤`으로 쓰지 않는다**(`#443`) |
+  // | 물러나는 중 | `Stepping down` | `grid.card.retiring` 의 긴 문장을 칩 길이로 줄인 것 |
+  // | 멈추는 중 | `Stopping` | 종료를 요청했고 러너가 아직 못 봤다 |
+  'grid.chip.ok': 'Running',
+  'grid.chip.stopped': 'Stopped',
+  'grid.chip.failed': 'Failed',
+  'grid.chip.unknown': 'Unknown',
+  'grid.chip.retiring': 'Stepping down',
+  'grid.chip.stopping': 'Stopping',
+  // 칩 **안**의 동작 글자. `grid.card.stop` 과 갈린 이유는 길이다 — 그쪽은 `{handle}` 을
+  // 지고 있어 접근 이름과 툴팁으로 가고, 이쪽은 상자에 들어가야 한다.
+  'grid.chip.stopShort': 'Stop',
+  'grid.chip.startShort': 'Start',
+  // 칩 버튼의 **접근 이름**. 보이는 글자는 쉼(상태) → 호버(동작)로 갈리지만 스크린리더는
+  // 호버가 없으므로 둘을 함께 싣는다. 동작만 실으면 칩이 되살린 상태를 도로 잃고, 상태만
+  // 실으면 눌러서 무슨 일이 나는지를 잃는다.
+  'grid.chip.label': '{state} · {action}',
+
   // ---------------------------------------------------------------------------
   // presence — **판정 이름이다**(`lib/presenceView.ts::presenceView`). 화면 이름이 아니다.
   //

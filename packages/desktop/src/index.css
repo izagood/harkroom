@@ -319,3 +319,33 @@ body {
   outline: 2px solid var(--app-accent);
   outline-offset: -2px;
 }
+
+/*
+  # 눌리는 것에는 손가락 커서 (2026-09-09)
+
+  **Tailwind v4 가 preflight 에서 `button { cursor: pointer }` 를 뺐다** — v3 에는 있었다.
+  그래서 이 앱의 버튼은 거의 전부 화살표 커서였다. 실측: `cursor-pointer` 를 직접 붙인
+  자리가 desktop 전체에 여덟 곳뿐이었고, 나머지 수백 개 버튼은 마우스를 올려도 "여기가
+  눌린다"는 신호를 하나도 내지 않았다.
+
+  ## 왜 유틸리티가 아니라 여기인가
+
+  깨진 것이 **전역**이기 때문이다. 버튼마다 `cursor-pointer` 를 붙이는 것은 같은 결정을
+  수백 번 되풀이하는 것이고, 다음에 버튼을 만드는 사람은 그 규칙이 있는 줄 모른다.
+  preflight 가 하던 일이니 preflight 를 되살리는 자리에 둔다.
+
+  ## `:disabled` 를 가른 이유
+
+  못 누르는 것에 손가락을 주면 눌러 보고 아무 일도 안 나는 것을 겪는다. `not-allowed` 는
+  그 사실을 커서만으로 미리 말한다. `[aria-disabled]` 도 함께 보는 것은 이 저장소가 실제
+  `disabled` 대신 그 속성을 쓰는 자리가 있기 때문이다 — `disabled` 는 포커스를 뺏어서
+  키보드로 훑는 사람에게 버튼이 **사라진다**.
+*/
+button:not(:disabled):not([aria-disabled='true']),
+[role='button']:not([aria-disabled='true']) {
+  cursor: pointer;
+}
+button:disabled,
+[aria-disabled='true'] {
+  cursor: not-allowed;
+}
