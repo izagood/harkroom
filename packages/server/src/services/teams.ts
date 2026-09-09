@@ -20,6 +20,7 @@ type Queryable = Pick<Pool, 'query'>;
  * 준다. 그대로 두면 화면에 `"3"` 이 실려 와서 타입은 통과하고 산술만 조용히 틀린다.
  */
 const COLS = `t.id, t.name, t.created_by as "createdBy", t.created_at as "createdAt",
+  t.lead_account_id as "leadAccountId",
   (select count(*) from agent_team_member m where m.team_id = t.id)::int as "memberCount"`;
 
 export async function listTeams(db: Queryable): Promise<AgentTeamRow[]> {
@@ -125,6 +126,39 @@ export async function listTeamMembers(db: Queryable, teamId: string): Promise<Ag
   return res.rows;
 }
 
+/**
+ * 팀장을 지정한다(`null` 이면 해제).
+ *
+ * **팀원인지 여기서도 확인한다.** 마이그레이션 046 의 복합 FK 가 이미 그것을 강제하지만,
+ * 그 제약은 위반을 **오류**로 만들 뿐이고 오류는 "왜"를 말하지 못한다 — 라우트는 팀이
+ * 없는 것(404)과 팀원이 아닌 것(400)을 갈라 답해야 하고, 그 사실을 pg 오류 코드에서
+ * 되꺼내는 것은 계약이 아니다. 제약은 우회 경로의 backstop 이고, 이 조건절은 답이다.
+ *
+ * 반환이 세 갈래인 이유와 0 행을 다시 읽어 사유를 가르는 방식은 `updateTeamName` 과
+ * 같다 — 그 함수의 주석이 근거다.
+ *
+ * 비활성 팀원도 팀장이 될 수 있다. 036 이 정한 것("비활성화는 팀원을 지우지 않는다 …
+ * 팀 구성은 운영자의 의도 기록이다")을 그대로 따른다 — 지정도 의도의 기록이고, 잠깐 꺼
+ * 뒀다고 팀장 자리가 사라지면 다시 켤 때 다시 지정해야 한다. 그 팀장이 실제로 깨지
+ * 못한다는 사실은 화면이 말한다(`AgentTeamMemberRow.disabled`).
+ */
+export async function setTeamLead(
+  db: Queryable, teamId: string, accountId: string | null,
+): Promise<{ ok: true; team: AgentTeamRow } | { ok: false; reason: 'not_found' | 'not_a_member' }> {
+  const res = await db.query(
+    `update agent_team as t set lead_account_id = $2
+      where t.id = $1
+        and ($2::uuid is null
+             or exists (select 1 from agent_team_member m
+                         where m.team_id = t.id and m.agent_account_id = $2))
+      returning ${COLS}`,
+    [teamId, accountId],
+  );
+  if (res.rowCount) return { ok: true, team: res.rows[0] };
+  const exists = await getTeam(db, teamId);
+  return { ok: false, reason: exists ? 'not_a_member' : 'not_found' };
+}
+
 /** 이미 팀원이면 아무 일도 하지 않는다 — 두 번 눌렀다고 실패로 보이면 안 된다. */
 export async function addAgentToTeam(db: Queryable, teamId: string, agentAccountId: string): Promise<void> {
   await db.query(
@@ -133,6 +167,11 @@ export async function addAgentToTeam(db: Queryable, teamId: string, agentAccount
   );
 }
 
+/**
+ * 팀에서 뺀다. **뺀 사람이 팀장이면 팀장 자리도 함께 비워진다** — 그 일을 여기서 하지
+ * 않는 이유는 046 의 복합 FK 주석에 있다: `on delete set null (lead_account_id)` 이
+ * 데이터 층에서 정리하므로, 빼는 경로가 하나가 아니어도 팀원 아닌 팀장이 남지 않는다.
+ */
 export async function removeAgentFromTeam(db: Queryable, teamId: string, agentAccountId: string): Promise<boolean> {
   const res = await db.query(
     `delete from agent_team_member where team_id = $1 and agent_account_id = $2`,

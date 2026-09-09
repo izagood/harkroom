@@ -38,6 +38,7 @@ const member = (accountId: string, handle: string, disabled = false): AgentTeamM
 const team = (name: string, members?: AgentTeamMemberRow[], memberCount?: number): TeamCardSubject => ({
   id: `t-${name}`, name, createdBy: 'u1', createdAt: '2026-09-08T00:00:00.000Z',
   memberCount: memberCount ?? members?.length ?? 0,
+  leadAccountId: null,
   members,
 });
 

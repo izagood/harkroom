@@ -452,8 +452,8 @@ describe('Controller', () => {
    * 뒷부분이 그 대가를 잡는다: 두 응답이 겹치면 **늦게 온 옛 응답이 새 것을 덮으면 안 된다.**
    */
   it('force 갱신은 진행 중인 조회에 합류하지 않고, 늦게 온 옛 응답이 새 것을 덮지 않는다', async () => {
-    const staleTeam = { id: 't1', name: 'ops', createdBy: 'u1', createdAt: '2024-01-01T00:00:00.000Z', memberCount: 0 };
-    const freshTeam = { id: 't2', name: 'release', createdBy: 'u1', createdAt: '2024-01-02T00:00:00.000Z', memberCount: 0 };
+    const staleTeam = { id: 't1', name: 'ops', createdBy: 'u1', createdAt: '2024-01-01T00:00:00.000Z', memberCount: 0, leadAccountId: null };
+    const freshTeam = { id: 't2', name: 'release', createdBy: 'u1', createdAt: '2024-01-02T00:00:00.000Z', memberCount: 0, leadAccountId: null };
     let openGate!: () => void;
     const gate = new Promise<void>((resolve) => { openGate = resolve; });
     let call = 0;

@@ -2133,6 +2133,10 @@ export class Controller {
     return this.api.deleteTeam(id);
   }
 
+  setTeamLead(id: string, accountId: string | null): Promise<AgentTeamRow> {
+    return this.api.setTeamLead(id, accountId);
+  }
+
   async getTeam(id: string): Promise<{ team: AgentTeamRow; members: AgentTeamMemberRow[] }> {
     return this.api.team(id);
   }

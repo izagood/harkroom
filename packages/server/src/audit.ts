@@ -47,7 +47,7 @@ export type AuditAction =
   | 'channel.doc.updated'
   // #172: 에이전트 팀의 생애주기. detail 에는 handle 만 남긴다.
   | 'team.created' | 'team.updated' | 'team.deleted'
-  | 'team.member.added' | 'team.member.removed'
+  | 'team.member.added' | 'team.member.removed' | 'team.lead.set'
   // #172: 채널에 팀을 통째로 넣은 사건. 팀 이름과 결과 개수만 남긴다 — 넣은 handle 을
   // 전부 적으면 팀이 클수록 detail 이 부풀고, 누가 멤버가 됐는지는
   // 'channel.member.added' 가 아니라 멤버 목록이 답한다.

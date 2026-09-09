@@ -480,6 +480,16 @@ export const ko = {
   'agents.teams.gridSearchPlaceholder': '이름으로 찾기',
   'agents.teams.heading': '팀',
   'agents.teams.invalidName': '이름은 영문·숫자·-·_ 2~32자여야 한다',
+  'agents.teams.lead': '팀장',
+  'agents.teams.leadClear': '해제',
+  'agents.teams.leadClearAction': '팀장 해제: {handle}',
+  'agents.teams.leadFailed': '팀장을 바꾸지 못했다',
+  /** `en.ts` 의 그 주석이 근거다 — 지금 무엇을 바꾸는지(=아직 아무것도) 적는다. */
+  'agents.teams.leadNote':
+    '팀장은 팀을 대표해 말하는 팀원 하나다. @팀 을 부르면 여전히 팀원 전원이 깬다 — '
+    + '팀장은 여기 기록될 뿐 아직 호출에 쓰이지 않는다.',
+  'agents.teams.leadSet': '팀장으로',
+  'agents.teams.leadSetAction': '팀장으로 지정: {handle}',
   'agents.teams.listFailed': '팀 목록을 받지 못했다',
   'agents.teams.memberAddFailed': '팀원을 추가하지 못했다',
   'agents.teams.memberCandidateEmpty':
