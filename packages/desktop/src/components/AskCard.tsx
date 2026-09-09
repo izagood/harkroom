@@ -31,18 +31,28 @@ export function AskCard({ message }: { message: MessageRow }) {
   if (!ask) return null;
 
   const answered = ask.answeredWith != null;
+  /**
+   * **답하지 않기로 했다**(2026-09-09). 고른 것이 없는 끝이다 — 답과 갈라 두는 이유는
+   * 화면이 말할 것이 다르기 때문이다: 하나는 "이것으로 정해졌다", 다른 하나는 "이 물음은
+   * 답 없이 닫혔다". 카드는 **지워지지 않는다** — 무엇을 물었는지는 기록이다.
+   */
+  const closed = ask.closedAt != null;
   const forMe = isForMe(ask.to, myId);
   /**
    * 누를 수 있는가. **답이 이미 있으면 아무도 못 누른다** — 기록은 남되 다시 고를 수는
    * 없다. 나에게 온 것이 아니면 읽히되 누를 수 없다(옵션에 `disabled` 가 붙는다).
+   * 닫힌 물음도 같다 — 그만두기로 한 것을 되돌리는 것은 새 물음이다.
    */
-  const canChoose = !answered && forMe;
+  const canChoose = !answered && !closed && forMe;
 
   const chosen = answered ? ask.options.find((o) => o.id === ask.answeredWith) : undefined;
   // 이름을 모르면 **이름 자리에 보통명사가 온다** — 그 낱말이 `common.someone` 에 있는
   // 이유이고, 조사는 번역기가 그것을 보고 고른다(`{name:이가}`).
   const answeredByName = ask.answeredBy
     ? (accounts[ask.answeredBy]?.handle ?? t('common.someone'))
+    : null;
+  const closedByName = ask.closedBy
+    ? (accounts[ask.closedBy]?.handle ?? t('common.someone'))
     : null;
 
   /* 폭 상한을 여기서 다시 두지 않는다 — 부모(`MessageItem` 의 본문 열)가 이미 상한을 쥐고
@@ -53,6 +63,7 @@ export function AskCard({ message }: { message: MessageRow }) {
       data-testid="ask-card"
       data-for-me={forMe}
       data-answered={answered}
+      data-closed={closed}
       className={`mt-1.5 rounded-lg border ${
         // 강조는 **답을 기다리는 내 차례**에만 간다. 답이 끝난 카드는 기록이므로 강조를
         // 거둔다 — 안 그러면 끝난 스레드가 계속 나를 부른다.
@@ -63,10 +74,13 @@ export function AskCard({ message }: { message: MessageRow }) {
         <span
           className={`text-meta font-semibold ${canChoose ? 'text-state-turn' : 'text-fg-agent'}`}
         >
-          {headline(ask.to, myId, accounts, answered, t)}
+          {headline(ask.to, myId, accounts, answered, closed, t)}
         </span>
         {answered && answeredByName && (
           <span className="text-meta text-fg-subtle">{t('speech.ask.answeredBy', { name: answeredByName })}</span>
+        )}
+        {!answered && closed && closedByName && (
+          <span className="text-meta text-fg-subtle">{t('speech.ask.declinedBy', { name: closedByName })}</span>
         )}
       </div>
       {ask.prompt && <p className="px-3 pt-1 text-body text-fg-muted">{ask.prompt}</p>}
@@ -77,6 +91,9 @@ export function AskCard({ message }: { message: MessageRow }) {
           // 답이 끝나면 고른 것만 남긴다 — 안 고른 선택지를 계속 보여 주면 무엇으로
           // 정해졌는지가 흐려진다. 기록은 남되 목록은 접힌다.
           if (answered && !isChosen) return null;
+          // 닫힌 물음은 **선택지를 접는다** — 고른 것이 없으므로 남길 것이 없고, 남겨 두면
+          // 아직 고를 수 있는 것처럼 보인다(누를 수는 없으니 더 나쁘다: 눌러 보고 안다).
+          if (closed) return null;
           return (
             <button
               key={o.id}
@@ -97,6 +114,27 @@ export function AskCard({ message }: { message: MessageRow }) {
           );
         })}
       </div>
+      {/*
+        **답하지 않는 길**(2026-09-09). 이것이 없으면 그 작업을 그만두기로 한 사람에게 남는
+        수단이 **물음을 지우는 것**뿐이었고, 지우면 무엇을 물었는지까지 사라졌다. 턴을
+        중단해도 이 물음은 그대로여서 대기 줄이 물어본 턴보다 오래 살았다.
+
+        **선택지와 같은 무게로 그리지 않는다** — 이것은 여섯째 선택지가 아니라 이 물음을
+        끝내는 다른 종류의 행동이다. 그래서 카드 바닥에 한 줄로, 밑줄만 두고 앉는다.
+      */}
+      {canChoose && (
+        <div className="px-2 pb-2">
+          <button
+            type="button"
+            data-testid="ask-decline"
+            className="rounded px-1 py-0.5 text-meta text-fg-subtle underline decoration-dotted
+                       underline-offset-2 hover:bg-surface-hover hover:text-fg-muted"
+            onClick={() => { void getController().closeAsk(message.id, message.channelId); }}
+          >
+            {t('speech.ask.decline')}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -116,9 +154,12 @@ function headline(
   myId: string | null,
   accounts: Record<string, { handle: string } | undefined>,
   answered: boolean,
+  closed: boolean,
   t: Translate,
 ): string {
   if (answered) return t('speech.ask.decided');
+  // 답 없이 닫힌 물음. `decided` 를 쓸 수 없다 — 정해진 것이 없다.
+  if (closed) return t('speech.ask.declined');
   if (isForMe(to, myId)) return t('speech.ask.pickOne');
   if (to.kind === 'account') {
     return t('speech.ask.agentPicks', {

@@ -124,6 +124,16 @@ export interface MentionScheduler {
  * "선택에 답이 왔다" 한 줄. 못 읽으면 **짧게라도 말한다** — 빈 문자열을 돌려주면 델타가
  * 비어 하네스가 돌지 않고, 그러면 사람이 누른 버튼이 아무 일도 안 한 것이 된다.
  */
+/**
+ * **답하지 않기로 했다**(2026-09-09). `askAnsweredNote` 와 가른 이유는 할 일이 다르기
+ * 때문이다: 고른 길로 가는 것이 아니라 **접는 것**이다. 고른 것이 없으므로 옵션을 풀어
+ * 싣지 않는다 — 대신 사람이 무엇을 물음에 답하지 않았는지가 본문에 있다.
+ */
+function askClosedNote(): string {
+  return '내가 낸 선택지에 사람이 답하지 않기로 했다 — 그 선택을 기다리지 말고,'
+    + ' 지금 아는 것으로 접거나 다른 길을 골라라(같은 물음을 다시 내지 마라)';
+}
+
 function askAnsweredNote(mention: { body: string; meta?: unknown }): string {
   const ask = (mention.meta as { ask?: {
     options?: { id: string; label: string }[]; answeredWith?: string;
@@ -187,6 +197,12 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
        * 골랐는지 그 자체로는 말하지 않는다.
        */
       ...(reason === 'ask_answered' ? { wake: { reason: askAnsweredNote(mention) } } : {}),
+      /**
+       * **답하지 않기로 했다**(마이그레이션 045). 같은 자리를 쓰는 이유는 같은 문제이기
+       * 때문이다 — 사람은 버튼만 눌렀지 새 메시지를 쓰지 않았으므로 델타가 비고, 비면
+       * 러너가 하네스를 돌리지 않아 그 결정이 흔적 없이 사라진다.
+       */
+      ...(reason === 'ask_closed' ? { wake: { reason: askClosedNote() } } : {}),
     };
     try {
       const turn = await withAccountFailover(

@@ -1131,6 +1131,9 @@ export const ko = {
   'speech.ask.agentPicks': '{name:이가} 고른다',
   'speech.ask.personPicks': '사람이 고른다',
   'speech.ask.decided': '정해졌다',
+  'speech.ask.decline': '답하지 않기',
+  'speech.ask.declined': '답 없이 닫혔다',
+  'speech.ask.declinedBy': '{name:이가} 답하지 않기로 했다',
   'speech.ask.answeredBy': '{name:이가} 골랐다',
   'speech.ask.unknownAgent': '다른 에이전트',
 

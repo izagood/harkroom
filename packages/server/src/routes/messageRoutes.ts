@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { MAX_MESSAGE_BODY_CHARS, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@murmur/shared';
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
-import { deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET } from '../services/messages.js';
+import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -281,6 +281,40 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     }
     // 경합에서 진 것은 오류가 아니라 정상 경로다 — 409 로 구별해 화면이 "이미 정해졌다"를
     // 말할 수 있게 한다.
+    if (result === 'already_answered') {
+      return reply.code(409).send({ error: { code: 'already_answered', message: 'this choice is already answered' } });
+    }
+    emitEvent({ type: 'message.updated', message: result, audience: await audienceFor(pool, id) });
+    return result;
+  });
+
+  /**
+   * **답하지 않기로 한다**(2026-09-09). `ask-answer` 와 같은 모양의 문 하나다 — 다른 문을
+   * 만들지 않는 이유는 사람이 카드에서 하는 일이 둘 중 하나이고, 둘 다 그 물음을 닫는
+   * 것이기 때문이다.
+   *
+   * 답과 마찬가지로 **답글 메시지를 만들지 않는다.** "답하지 않기로 했다" 한 줄이 스레드에
+   * 쌓이면 규칙 02(로그가 아니라 사람의 말)를 어긴다 — 카드가 그 사실을 말한다.
+   */
+  app.post('/channels/:id/messages/:messageId/ask-close', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id, messageId } = z.object({
+      id: z.string().uuid(), messageId: z.string().uuid(),
+    }).parse(req.params);
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+
+    const result = await closeAsk(pool, {
+      messageId, actorId: req.account!.id, actorIsAdmin: req.account!.isAdmin,
+    });
+    if (result === 'not_found') {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such choice request' } });
+    }
+    if (result === 'forbidden') {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'this choice is addressed to someone else' } });
+    }
+    // **정해진 것을 안 정해진 것으로 덮지 않는다.** 답이 먼저 도착한 경합이므로 오류가
+    // 아니라 정상 경로다 — 화면이 "이미 정해졌다"를 말할 수 있게 409 로 구별한다.
     if (result === 'already_answered') {
       return reply.code(409).send({ error: { code: 'already_answered', message: 'this choice is already answered' } });
     }

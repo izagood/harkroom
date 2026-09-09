@@ -241,6 +241,10 @@ export class ApiClient {
   answerAsk(channelId: string, messageId: string, optionId: string): Promise<MessageRow> {
     return this.req('POST', `/channels/${channelId}/messages/${messageId}/ask-answer`, { optionId });
   }
+  /** 답하지 않기로 한다 — 고른 것 없이 그 물음을 닫는다(2026-09-09). */
+  closeAsk(channelId: string, messageId: string): Promise<MessageRow> {
+    return this.req('POST', `/channels/${channelId}/messages/${messageId}/ask-close`, {});
+  }
   async inboxUnread(): Promise<InboxEntry[]> {
     return (await this.req<{ entries: InboxEntry[] }>('GET', '/inbox?unread=1')).entries;
   }

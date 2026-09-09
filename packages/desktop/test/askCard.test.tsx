@@ -33,12 +33,14 @@ const askMessage = (meta: Record<string, unknown>): MessageRow =>
   msg('m-ask', 'c1', 1, '008 이 이미 배포됐는지 내가 모른다', FORGE, { meta });
 
 let answerAsk: ReturnType<typeof vi.fn>;
+let closeAsk: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   answerAsk = vi.fn().mockResolvedValue(undefined);
-  setController({ answerAsk } as unknown as Controller);
+  closeAsk = vi.fn().mockResolvedValue(undefined);
+  setController({ answerAsk, closeAsk } as unknown as Controller);
   useAppStore.getState().set({
     me: acc(ME, 'jaebin'),
     accounts: {
@@ -141,5 +143,47 @@ describe('AskCard — 못 알아본 형식은 상자를 그리지 않는다', ()
       // 본문은 그대로 읽힌다 — 사라지지 않는다.
       expect(screen.getByText(/008 이 이미 배포됐는지/)).toBeTruthy();
     }
+  });
+});
+
+
+/**
+ * **답하지 않는 길**(2026-09-09). 이것이 없으면 그 작업을 그만두기로 한 사람에게 남는
+ * 수단이 물음을 **지우는 것**뿐이었고, 지우면 무엇을 물었는지까지 사라졌다.
+ *
+ * 이 묶음이 지키는 것은 셋이다: 그 길이 **내 차례일 때만** 열린다 · 누르면 닫기가 간다 ·
+ * 닫힌 카드는 **정해진 것처럼 보이지 않는다**(고른 것이 없으므로 선택지를 접는다).
+ */
+describe('AskCard — 답하지 않기', () => {
+  it('나에게 온 물음에는 답하지 않는 길이 있다', () => {
+    render(<MessageItem message={askMessage(askMeta())} />);
+    const decline = screen.getByTestId('ask-decline');
+    fireEvent.click(decline);
+    expect(closeAsk).toHaveBeenCalledWith('m-ask', 'c1');
+    // 답이 간 것은 아니다 — 이 둘은 다른 끝이다.
+    expect(answerAsk).not.toHaveBeenCalled();
+  });
+
+  it('남에게 간 물음에는 그 길이 없다 — 남의 차례를 내가 끝내지 않는다', () => {
+    render(<MessageItem message={askMessage(askMeta({ to: { kind: 'account', accountId: FORGE } }))} />);
+    expect(screen.queryByTestId('ask-decline')).toBeNull();
+  });
+
+  it('닫힌 물음은 선택지를 접고, 정해졌다고 말하지 않는다', () => {
+    render(<MessageItem message={askMessage(askMeta({ closedAt: new Date().toISOString(), closedBy: ME, closedReason: 'declined' }))} />);
+    const card = screen.getByTestId('ask-card');
+    expect(card.dataset.closed).toBe('true');
+    // 고른 것이 없으므로 남길 선택지가 없다 — 남겨 두면 아직 고를 수 있는 것처럼 보인다.
+    expect(screen.queryByTestId('ask-option-new')).toBeNull();
+    expect(screen.getByText('답 없이 닫혔다')).toBeTruthy();
+    expect(screen.queryByText('정해졌다')).toBeNull();
+    // 다시 닫을 길도 없다 — 그만두기로 한 것을 되돌리는 것은 새 물음이다.
+    expect(screen.queryByTestId('ask-decline')).toBeNull();
+  });
+
+  it('이미 답이 있으면 닫는 길이 없다', () => {
+    render(<MessageItem message={askMessage(askMeta({ answeredWith: 'new', answeredBy: ME }))} />);
+    expect(screen.queryByTestId('ask-decline')).toBeNull();
+    expect(screen.getByText('정해졌다')).toBeTruthy();
   });
 });

@@ -797,11 +797,11 @@ export class Controller {
      */
     const label: Record<InboxEntry['reason'], string> = {
       mention: 'mentioned you in', thread_reply: 'replied in a thread in', dm: 'messaged you in',
-      wake: 'is waiting in', ask_answered: 'got an answer in',
+      wake: 'is waiting in', ask_answered: 'got an answer in', ask_closed: 'got no answer in',
     };
     const wanted: Record<InboxEntry['reason'], boolean> = {
       mention: prefs.mention, thread_reply: prefs.threadReply, dm: prefs.dm,
-      wake: false, ask_answered: false,
+      wake: false, ask_answered: false, ask_closed: false,
     };
 
     for (const e of unread) {
@@ -1205,6 +1205,26 @@ export class Controller {
       this.store.getState().upsertMessages(target, [m]);
     } catch {
       // 진 경합·권한 없음 — 서버가 참이고, 화면은 이벤트로 따라온다.
+    }
+  }
+
+  /**
+   * **답하지 않기로 한다**(2026-09-09). `answerAsk` 와 같은 모양으로 두는 이유는 카드에서
+   * 사람이 하는 일이 둘 중 하나이고 둘 다 그 물음을 닫는 것이기 때문이다.
+   *
+   * 낙관적 갱신을 하지 않는 것도 같다 — 화면은 이 응답과 `message.updated` 로만 바뀐다.
+   */
+  async closeAsk(messageId: string, channelId?: string): Promise<void> {
+    const state = this.store.getState();
+    const target = channelId
+      ?? Object.values(state.messages).flat().find((m) => m.id === messageId)?.channelId
+      ?? state.activeChannelId;
+    if (!target) return;
+    try {
+      const m = await this.api.closeAsk(target, messageId);
+      this.store.getState().upsertMessages(target, [m]);
+    } catch {
+      // 진 경합(이미 답이 있다)·권한 없음 — 서버가 참이고, 화면은 이벤트로 따라온다.
     }
   }
 
