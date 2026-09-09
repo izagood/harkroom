@@ -105,8 +105,15 @@ export function WaitChainSection() {
               key={`${r.channelId}:${r.rootId}`}
               data-testid={`wait-chain-${r.rootId}`}
               data-end={r.chain.end}
-              // 누르면 **그 스레드로 간다** — 이 줄을 읽고 사람이 하려는 일이 그것 하나다.
-              onClick={() => void getController().openThread(r.rootId)}
+              /*
+                누르면 **그 스레드로 간다** — 이 줄을 읽고 사람이 하려는 일이 그것 하나다.
+
+                **채널을 함께 준다.** 이 구획은 `messages` 를 **채널 전체에 걸쳐** 훑어
+                만들므로(위 `rows`), 줄이 가리키는 뿌리는 대개 **지금 보는 채널이 아니다**.
+                채널을 주지 않으면 `openThread` 가 활성 채널에 그 뿌리를 물어 0줄을 받고,
+                패널이 빈 채로 열린 뒤 `끝남` 배지까지 달렸다(jaebin 보고, 2026-09-09).
+              */
+              onClick={() => void getController().openThread(r.rootId, { channelId: r.channelId })}
               // 줄이 **두 단으로** 서 있다: 사슬 한 줄은 본문단(앱 기본값 13px)이고 아래
               // 채널·사유 줄은 이미 아랫단 11px 이다. 둘을 같은 단으로 두면 어느 쪽이
               // 판단 근거인지 눈이 못 가른다 — 사람이 읽는 것은 사슬이다.

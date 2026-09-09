@@ -46,6 +46,13 @@ export interface ThreadStateInput {
  * 4. **`running`** — 마지막 말이 진행이고 그 에이전트가 살아 있다
  * 5. **`done`** — 그 외
  *
+ * ## 빈 목록은 `done` 이 **아니다**
+ *
+ * `null` 을 준다 — '모른다'다. 예전에는 `done` 이었고, 그 값이 실제로 거짓말을 했다
+ * (jaebin 보고, 2026-09-09): 스레드 패널이 **못 불러온** 스레드를 열어 두었을 때 배지가
+ * `끝남` 이라고 적혀 있었다. 아무 말도 못 본 것과 할 말이 없는 것은 사람이 다음에 할 일이
+ * 다르다(`design.md` §4) — 화면은 이때 배지를 **그리지 않는다**.
+ *
  * `my-turn` 이 `stuck` 을 이기는 이유: 둘 다 사람을 부르지만 **`my-turn` 은 답하면 풀리고**
  * `stuck` 은 손을 대야 한다. 답 한 번으로 풀리는 것을 먼저 보여 주는 것이 개입 비용이 낮다.
  *
@@ -56,9 +63,10 @@ export interface ThreadStateInput {
  * `stuck` 으로 떨어진다. **모르는 경우(`live === null`)는 둘 다 아니다** — 모른다는 이유로
  * 붉게 칠하는 것도 같은 종류의 거짓말이므로, 마지막으로 알던 사실인 `running` 을 유지한다.
  */
-export function threadState(input: ThreadStateInput): ThreadState {
+export function threadState(input: ThreadStateInput): ThreadState | null {
   const { messages, myAccountId, isAgent, live } = input;
-  if (messages.length === 0) return 'done';
+  // 재료가 없으면 판정하지 않는다 — 위 「빈 목록은 `done` 이 아니다」 참고.
+  if (messages.length === 0) return null;
 
   let myTurn = false;
   let othersTurn = false;

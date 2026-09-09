@@ -162,7 +162,8 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
       />
       <header className="flex items-center border-b border-border px-4 py-2">
         <span className="font-bold">Thread</span>
-        <ThreadStateBadge state={state} className="ml-2" />
+        {/* `null` 은 '아직 아무 말도 못 봤다' — 그때는 배지를 그리지 않는다(`threadState`). */}
+        {state && <ThreadStateBadge state={state} className="ml-2" />}
         {/* 참여자 줄과 터미널 선택자는 **헤더**다 — 세션이 (에이전트, 스레드)당 하나이므로
             문이 달릴 자리가 여기다(규칙 06). */}
         <div className="ml-auto flex items-center gap-2">

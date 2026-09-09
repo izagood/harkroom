@@ -16,6 +16,20 @@ import { sortSweepItems, sweepLabel, type SweepItem } from './sweep';
 import { usePrefsStore } from './prefsStore';
 import { detectLocale, isLocale, translator, type Translate } from '../i18n';
 
+/**
+ * `openThread` 의 선택 인자들. **자리 인자였다가 묶었다** — `channelId` 를 더하면 넷이 되고,
+ * 넷째 자리에 채널이 오는 호출은 읽는 사람이 무엇을 주는지 셀 수 없다. 이름으로 주면
+ * `{ channelId }` 하나만 주는 흔한 경우가 짧아진다.
+ */
+export interface OpenThreadOpts {
+  /** 그 뿌리가 사는 채널. 활성 채널과 다르면 **먼저 옮긴다**. 없으면 활성 채널이다. */
+  channelId?: string;
+  /** 그 답글 자리에 세운다(#624 요구 3). 강조를 수단으로 쓴다. */
+  focusMessageId?: string;
+  /** 그 답글이 보이는 창을 달라는 것(⌘F 의 스레드 스코프). */
+  aroundSeq?: number;
+}
+
 export class Controller {
 
   /**
@@ -920,15 +934,64 @@ export class Controller {
    * `aroundSeq` 는 **그 답글이 보이는 창**을 달라는 것이다(검색 결과로 점프할 때). 없으면
    * 지금까지대로 스레드의 최신 페이지를 뜬다 — 답글이 그보다 많은 스레드에서 옛 답글로
    * 점프하면 대상이 창에 없어 강조가 아무 일도 하지 않는다.
+   *
+   * ## `channelId` 는 **인자다** — 활성 채널에서 읽지 않는다
+   *
+   * `send()` 를 #223 에서 고친 것과 같은 이유이고, 같은 결함이 여기서 실제로 났다
+   * (jaebin 보고, 2026-09-09): 인박스의 `WAITING ON` 줄은 **다른 채널의** 뿌리를 가리키는데
+   * 이 함수가 활성 채널을 스토어에서 읽었다. 그래서 `#api-farm` 을 보는 중에 `#murmur` 의
+   * 대기 줄을 누르면 `?thread=<#murmur 의 뿌리>` 를 **`#api-farm` 에** 물었고, 서버는
+   * 200 에 0줄을 주고(그 채널에 없는 뿌리다) 패널은 **영원히 빈 채로** 열려 있었다.
+   *
+   * 주면 그 채널로 **먼저 옮긴다**. 안 주면 지금까지대로 활성 채널이다 — 같은 채널 안에서
+   * 부르는 자리(`MessageItem`)는 그것이 맞고, 거기에 채널을 적게 하면 같은 값을 두 번 쓴다.
+   *
+   * ## 0줄이면 패널을 닫는다
+   *
+   * 위 사고에서 화면이 말한 것은 "빈 스레드"가 아니라 **"끝난 스레드"** 였다
+   * (`threadState` 가 빈 목록을 `done` 으로 읽었다). 못 불러온 것을 끝난 것으로 그리는
+   * 것이 `design.md` §4 가 금지한 그 거짓말이므로, **뿌리가 응답에 없으면 열지 않는다** —
+   * 조회 실패도 `openMessage` 와 같게 사람에게 보인다.
    */
-  async openThread(rootId: string, focusMessageId?: string, aroundSeq?: number): Promise<void> {
-    const channelId = this.store.getState().activeChannelId;
+  async openThread(rootId: string, opts: OpenThreadOpts = {}): Promise<void> {
+    const channelId = opts.channelId ?? this.store.getState().activeChannelId;
     if (!channelId) return;
+    // 다른 채널의 스레드면 채널을 먼저 옮긴다 — 스레드 패널은 **활성 채널의** 목록에서
+    // 그 뿌리를 찾으므로(`ThreadPanel`), 채널을 두고 뿌리만 세우면 찾을 것이 없다.
+    if (this.store.getState().activeChannelId !== channelId) await this.openChannel(channelId);
     this.store.getState().pushHistory({ channelId, threadRootId: rootId });
     this.store.getState().set({ threadRootId: rootId });
-    const page = await this.api.messages(channelId, { thread: rootId, around: aroundSeq });
+    let page;
+    try {
+      page = await this.api.messages(channelId, { thread: rootId, around: opts.aroundSeq });
+    } catch {
+      // 열다 만 패널을 남기지 않는다. 남기면 그 자리가 "답이 하나도 없는 끝난 스레드"로
+      // 읽힌다 — 연결이 끊긴 것과 정반대의 사실이다.
+      this.store.getState().set({
+        threadRootId: null,
+        notice: 'Could not open that thread. Check your connection and try again.',
+      });
+      return;
+    }
     this.store.getState().upsertMessages(channelId, page.messages);
-    if (focusMessageId) this.store.getState().set({ highlightedMessageId: focusMessageId });
+    /**
+     * **한 줄도 없으면 스레드가 아니다.** 여기 걸리는 것은 그 채널에 아예 없는 뿌리(위
+     * 사고)와 흔적까지 사라진 스레드다. 둘 다 사람이 할 일은 같다: 이 패널을 닫고 왜
+     * 아무것도 없는지 말해 주는 것.
+     *
+     * **"뿌리가 응답에 있는가"로 재지 않는다.** 지워진 머리는 답글이 남아 있는 한
+     * 자리표시자로 실려 오지만(`LIST_VISIBLE`), 남은 답글이 진행뿐이면 머리 없이 답글만
+     * 온다 — 그 스레드는 **볼 것이 있다.** 그것까지 닫으면 이 관문이 고치려던 것과 같은
+     * 종류의 거짓말(있는 것을 없다고 하기)을 반대 방향으로 하게 된다.
+     */
+    if (page.messages.length === 0) {
+      this.store.getState().set({
+        threadRootId: null,
+        notice: 'That thread is gone — it was deleted, or it does not live in this conversation.',
+      });
+      return;
+    }
+    if (opts.focusMessageId) this.store.getState().set({ highlightedMessageId: opts.focusMessageId });
   }
 
   /**
@@ -1015,7 +1078,11 @@ export class Controller {
     // 답글은 스레드 패널까지 연다 — 스레드 밖에서 보면 무엇에 대한 답인지 잃는다.
     // 대상의 seq 를 함께 준다: 스레드도 최신 페이지만 뜨므로, 주지 않으면 옛 답글은
     // 채널 쪽 창을 받아 놓고도 스레드 패널에는 없다(강조가 걸릴 DOM 이 그쪽이다).
-    if (target.threadRootId) await this.openThread(target.threadRootId, undefined, target.seq);
+    if (target.threadRootId) {
+      // 채널을 **명시한다**: 여기서 활성 채널을 다시 읽으면 이 왕복 도중에 사람이 채널을
+      // 옮긴 경우 엉뚱한 채널에 그 뿌리를 세운다(위 `openThread` 주석의 사고와 같은 모양).
+      await this.openThread(target.threadRootId, { channelId: target.channelId, aroundSeq: target.seq });
+    }
     // 강조는 openChannel 이 지운 **뒤에** 건다. 순서가 뒤바뀌면 방금 건 강조를 스스로 지운다.
     this.store.getState().set({ highlightedMessageId: target.id, notice: null });
   }

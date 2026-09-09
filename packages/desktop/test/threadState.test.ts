@@ -39,12 +39,17 @@ const report = (id: string, authorId = FORGE): MessageRow => msg(id, 'c1', 1, '�
   meta: { kind: 'report', report: { checks: ['테스트 통과'] } } as unknown as Record<string, unknown>,
 });
 
-const state = (messages: MessageRow[], live: Liveness = new Set([FORGE, CODEX])): ThreadState =>
+const state = (messages: MessageRow[], live: Liveness = new Set([FORGE, CODEX])): ThreadState | null =>
   threadState({ messages, myAccountId: ME, isAgent, live });
 
 describe('threadState — 5단 판정표', () => {
-  it('빈 스레드는 끝남이다', () => {
-    expect(state([])).toBe('done');
+  /**
+   * **빈 목록은 `끝남` 이 아니라 '모른다'다**(2026-09-09). 예전에는 `done` 이었고 그것이
+   * 실제로 거짓말을 했다: 스레드 패널이 못 불러온 스레드를 열어 두었을 때 배지가 `끝남`
+   * 이라고 적혀 있었다 — 화면은 이제 `null` 을 보면 배지를 그리지 않는다.
+   */
+  it('빈 스레드는 판정하지 않는다 — 못 본 것과 끝난 것은 다르다', () => {
+    expect(state([])).toBeNull();
   });
 
   it('나에게 온 미답 선택 → 내 차례', () => {
