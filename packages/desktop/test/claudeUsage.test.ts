@@ -8,12 +8,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  accountState,
   clockLabel,
   compactTokens,
-  lastUsedLabel,
-  limitLine,
   usageByAccount,
-  usageSummary,
+  usageCells,
 } from '../src/lib/claudeUsage';
 import type { ClaudeAccountUsage } from '../src/lib/claudeAccounts';
 
@@ -48,82 +47,80 @@ describe('compactTokens', () => {
   });
 });
 
-describe('usageSummary', () => {
+describe('usageCells', () => {
   it('캐시 읽기를 입력에 더하지 않는다 — 더하면 화면이 캐시 읽기 하나가 된다', () => {
-    const s = usageSummary(usage());
-    // 입력은 input+cacheCreation(=13.3k)이고 캐시 읽기 45.0M 은 자기 자리에 따로 선다.
-    expect(s).toContain('in 13.3k');
-    expect(s).toContain('cache 45.0M');
-    expect(s).not.toContain('in 45.0M');
+    const c = usageCells(usage());
+    // 입력은 input+cacheCreation(=13.3k)이고 캐시 읽기 45.0M 은 자기 열에 따로 선다.
+    expect(c?.input).toBe('13.3k');
+    expect(c?.cacheRead).toBe('45.0M');
   });
 
   it('퍼센트를 내지 않는다 — 분모가 어디에도 없다', () => {
-    expect(usageSummary(usage())).not.toContain('%');
+    const c = usageCells(usage());
+    expect(Object.values(c ?? {}).join(' ')).not.toContain('%');
   });
 
-  it('응답이 0 이면 양이 아니라 "안 돌았다"고 말한다', () => {
-    const s = usageSummary(usage({ responses: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 } }));
-    expect(s).toBe('Not used in this window');
-    expect(s).not.toContain('0 tokens');
+  it('응답이 0 이면 `null` 이다 — 화면이 `0` 대신 `—` 를 그릴 수 있게', () => {
+    // `0` 을 그리면 "재 봤는데 안 돌았다"와 "아직 못 쟀다"가 같은 모양이 된다.
+    expect(usageCells(usage({ responses: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 } })))
+      .toBeNull();
   });
 
   it('못 읽은 파일이 있으면 숫자가 하한이라는 사실을 숨기지 않는다', () => {
-    expect(usageSummary(usage({ unreadableFiles: 3 }))).toContain('+3 files unreadable');
-    expect(usageSummary(usage({ unreadableFiles: 1 }))).toContain('+1 file unreadable');
-    expect(usageSummary(usage())).not.toContain('unreadable');
+    expect(usageCells(usage({ unreadableFiles: 3 }))?.underCounted).toBe('+3 files unreadable');
+    expect(usageCells(usage({ unreadableFiles: 1 }))?.underCounted).toBe('+1 file unreadable');
+    expect(usageCells(usage())?.underCounted).toBeNull();
   });
 });
 
-describe('limitLine', () => {
-  it('한도 사건이 없으면 아무 말도 하지 않는다', () => {
-    expect(limitLine(usage(), NOW, 'en')).toBeNull();
+describe('accountState', () => {
+  it('한도 사건이 없고 돌았으면 active 다', () => {
+    const st = accountState(usage(), NOW, 'en');
+    expect(st.kind).toBe('active');
+    expect(st.tone).toBe('success');
   });
 
   it('resetsAt 이 미래면 경고이고 복귀 시각을 말한다', () => {
-    const line = limitLine(
+    const st = accountState(
       usage({ limitHit: { atMs: NOW - HOUR, resetsAtMs: NOW + 2 * HOUR, rateLimitType: 'five_hour' } }),
       NOW,
       'en',
       'UTC',
     );
-    expect(line?.tone).toBe('warning');
-    expect(line?.text).toBe('Rate limited — resets 14:00');
+    expect(st.kind).toBe('limited');
+    expect(st.tone).toBe('warning');
+    expect(st.label).toBe('Limited — back 14:00');
   });
 
   it('이미 풀린 한도는 경고가 아니다 — 그래도 이 창에서 걸린 사실은 남긴다', () => {
-    const line = limitLine(
+    // 같은 창에서 또 걸릴 계정이라는 뜻이라 지울 수 없다. 다만 무게는 경고가 아니다.
+    const st = accountState(
       usage({ limitHit: { atMs: NOW - 2 * HOUR, resetsAtMs: NOW - HOUR, rateLimitType: 'five_hour' } }),
       NOW,
       'en',
     );
-    expect(line?.tone).toBe('muted');
-    expect(line?.text).toContain('earlier in this window');
+    expect(st.kind).toBe('limited-earlier');
+    expect(st.tone).toBe('muted');
   });
 
   it('창보다 앞선 사건은 이 창의 일이 아니다 — 옛 소진을 지금 일로 그리지 않는다', () => {
-    expect(
-      limitLine(
-        usage({ limitHit: { atMs: NOW - 9 * HOUR, resetsAtMs: NOW - 8 * HOUR, rateLimitType: 'five_hour' } }),
-        NOW,
-        'en',
-      ),
-    ).toBeNull();
+    const st = accountState(
+      usage({ limitHit: { atMs: NOW - 9 * HOUR, resetsAtMs: NOW - 8 * HOUR, rateLimitType: 'five_hour' } }),
+      NOW,
+      'en',
+    );
+    expect(st.kind).toBe('active');
   });
 
   it('resetsAt 이 없어도 걸렸다는 사실은 말한다 — 다만 시각을 지어내지 않는다', () => {
-    const line = limitLine(usage({ limitHit: { atMs: NOW - HOUR, resetsAtMs: null, rateLimitType: null } }), NOW, 'en');
-    expect(line?.tone).toBe('muted');
-    expect(line?.text).not.toContain('resets');
-  });
-});
-
-describe('lastUsedLabel', () => {
-  it('쓴 적 없음은 0 이 아니라 "Never used" 다', () => {
-    expect(lastUsedLabel(usage({ lastUsedAtMs: null }), 'en')).toBe('Never used');
+    const st = accountState(usage({ limitHit: { atMs: NOW - HOUR, resetsAtMs: null, rateLimitType: null } }), NOW, 'en');
+    expect(st.kind).toBe('limited-earlier');
+    expect(st.label).not.toMatch(/\d\d:\d\d/);
   });
 
-  it('시각으로 말한다 — 사람이 시계를 보고 대조한다', () => {
-    expect(lastUsedLabel(usage({ lastUsedAtMs: NOW - HOUR }), 'en', 'UTC')).toBe('Last active 11:00');
+  it('쓴 적 없음과 이 창에 안 돎을 가른다 — 계정을 지울지 판단하는 사람에게 다른 사실이다', () => {
+    expect(accountState(usage({ responses: 0, lastUsedAtMs: null }), NOW, 'en').kind).toBe('never');
+    expect(accountState(usage({ responses: 0, lastUsedAtMs: NOW - 9 * HOUR }), NOW, 'en').kind).toBe('idle');
   });
 });
 

@@ -19,6 +19,24 @@
  *    다시 로그인되고, 사용자는 "두 번 등록했는데 하나뿐"을 보게 된다. 브라우저를 자동으로
  *    열지 않고 **링크를 보여 주는** 이유의 절반이 이것이다.
  *
+ * ## 왜 표인가 (#702)
+ *
+ * 이 화면은 설정 화면 중 **유일하게 표**다 — 계정 하나가 숫자를 다섯 개 갖는다. 앞판은
+ * 그것을 계정마다 네 줄짜리 문장으로 쌓고 `SettingsPage` 기본 폭(768px)에 담았다.
+ * 그래서 세 가지가 동시에 망가졌다:
+ *
+ * 1. `1283` 과 `1649` 가 서로 다른 x 좌표에 130px 떨어져 서서, **어느 계정이 많이
+ *    돌았나** 를 눈으로 알 수 없었다. 그 비교가 이 화면이 있는 이유다.
+ * 2. 사용량과 한도 상태가 라벨용 회색(`--app-fg-subtle`)의 11px 이었다 — 카드 면과
+ *    **3.08:1** 로 WCAG AA(4.5:1) 미달이고, 팔레트에는 그 자리에 쓰라고 정의된
+ *    `--app-fg-muted`(5.81:1)가 이미 있었다.
+ * 3. 줄마다 가장 넓고 시끄러운 것이 `Remove account <이름>` 이었다. 그 빨강도 같은 면에서
+ *    3.08:1 이라, 눈을 끄는 것은 색상뿐이고 읽기 쉬운 것도 아니었다.
+ *
+ * 고친 방향: 열을 맞추고(`ACCOUNT_GRID`), 숫자를 본문단으로 올리고, 상태를 문장에서
+ * 알약으로 바꾸고, 파괴적 조작을 `⋯` 뒤로 내렸다. **재는 값은 하나도 늘리지 않았다** —
+ * 데몬이 이미 주던 것을 읽을 수 있게 놓은 것뿐이다.
+ *
  * UI 문자열은 **영어**다 — 저장소 관례이고 한 번 어겨 되돌린 적이 있다. 주석은 한국어다.
  */
 import { useCallback, useEffect, useState } from 'react';
@@ -44,9 +62,36 @@ import {
   type ClaudeLoginEvent,
   type ClaudeUsageSnapshot,
 } from '../../lib/claudeAccounts';
-import { lastUsedLabel, limitLine, usageByAccount, usageSummary } from '../../lib/claudeUsage';
+import { accountState, clockLabel, usageByAccount, usageCells } from '../../lib/claudeUsage';
 import { getExternalOpener } from '../../lib/openExternal';
+import { Menu } from '../Menu';
 import { Button, Field, SettingsGroup, SettingsPage, TextInput } from './primitives';
+
+/**
+ * 계정 표의 열. **한 곳에 적어 머리줄과 본문 줄이 같은 값을 쓴다** — 두 벌로 두면
+ * 언젠가 한쪽만 고쳐지고, 그때 머리줄의 `Cache` 가 다른 열 위에 선다.
+ *
+ * 이 화면이 표인 이유: 계정 하나가 숫자를 다섯 개 갖는다. 앞판은 그것을 계정마다
+ * 네 줄짜리 문장으로 쌓아서, `1283` 과 `1649` 가 서로 다른 x 좌표에 130px 떨어져
+ * 섰다 — 그러면 어느 계정이 많이 돌았는지 **눈으로 알 수 없다**.
+ */
+const ACCOUNT_GRID =
+  'grid grid-cols-[7rem_minmax(9rem,1fr)_6.5rem_3.5rem_3rem_3rem_3.75rem_3.5rem_8.5rem_1.75rem] gap-x-3';
+
+/**
+ * 상태 알약의 색. **`warning` 만 면을 채운다** — 지금 못 쓰는 계정 하나가 화면에서
+ * 튀어야 하고, 다섯 갈래가 다 채워진 면이면 아무것도 튀지 않는다.
+ *
+ * `muted` 는 테두리만이다: "이 창에서 이미 걸렸다"는 경고가 아니라 **기억해 둘 사실**
+ * 이라(이미 풀렸다) 경고와 같은 무게를 주면 거짓말이 된다. 그래도 테두리를 주는 이유는
+ * 모양이 있어야 훑을 때 걸리기 때문이다 — 앞판이 이것을 회색 문장으로 둬서 묻혔다.
+ */
+const STATE_PILL = {
+  warning: 'border border-warning-border bg-warning-surface text-warning',
+  muted: 'border border-border text-fg-muted',
+  success: 'text-success',
+  subtle: 'text-fg-subtle',
+} as const;
 
 /** 되돌릴 수 없는 일 하나를 기다리는 상태. `null` 은 대기 중인 것이 없다. */
 type Pending =
@@ -85,6 +130,8 @@ export function ClaudeAccountsSettings() {
   const [login, setLogin] = useState<LoginState | null>(null);
   const [newPool, setNewPool] = useState<string | null>(null);
   const [moveNote, setMoveNote] = useState<string | null>(null);
+  // 퍼센트가 없는 이유 — 접어 둔다(위 안내 줄의 주석 참조).
+  const [whyOpen, setWhyOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!available) return;
@@ -198,6 +245,7 @@ export function ClaudeAccountsSettings() {
     <SettingsPage
       title="Claude accounts"
       description="Group accounts into pools. A runner uses one pool and moves to the next account when it hits a usage limit."
+      width="wide"
     >
       {error && (
         <SettingsGroup>
@@ -206,32 +254,53 @@ export function ClaudeAccountsSettings() {
       )}
 
       {/*
-        사용량 안내와 다시 재기. **여기 한 곳에 둔다** — 계정 줄마다 버튼을 두면 사람이
-        계정 열 개를 열 번 눌러야 하고, 한 번의 측정이 어차피 전부를 센다.
+        안내 두 줄과 다시 재기 버튼을 **한 줄로 합쳤다.** 앞판은 이 둘이 각자
+        `SettingsGroup` 카드였고, 그래서 화면의 첫 150px 을 **한 번 읽으면 끝인 산문**이
+        먹었다 — 그 아래가 이 화면에 매번 오는 이유(계정과 사용량)인데도.
 
-        "no fixed limit to compare against" 를 적는 이유: 이 숫자에 퍼센트가 없는 것이
-        누락으로 보이면 사람은 우리가 못 만든 줄 안다. 분모가 어디에도 없다는 것이 사실이다.
+        말해야 할 것을 줄이지는 않았다. 이 파일 머리말이 못 뺀다고 못박은 세 가지 중
+        둘이 여기 있다(러너 재시작 · 사용량의 출처). 무게만 낮췄다.
+
+        "퍼센트가 없다"는 설명은 접었다. 그것은 **한 번 납득하면 다시 읽지 않는** 종류의
+        사실이라 늘 펼쳐 둘 값이 아니고, 그렇다고 지우면 퍼센트의 부재가 우리 누락처럼
+        보인다 — 그래서 지우지 않고 물음 뒤에 둔다.
       */}
-      <SettingsGroup>
-        <div className="flex items-center justify-between px-4 py-3">
-          <div className="text-meta text-fg-subtle">
-            {usageError
-              ? `Could not read usage: ${usageError}`
-              : usage
-                ? 'Usage counted from each account’s own transcripts over its last 5-hour window. Claude reports no fixed limit to compare against, so these are amounts, not percentages.'
-                : 'Reading usage from transcripts…'}
-          </div>
+      <div className="mb-6 flex flex-wrap items-center gap-x-2 gap-y-1 text-meta text-fg-muted">
+        <span>
+          {usageError
+            ? `Could not read usage: ${usageError}`
+            : usage
+              ? 'Counted from each account’s own transcripts over its last 5-hour window.'
+              : 'Reading usage from transcripts…'}
+        </span>
+        <span className="text-fg-subtle">·</span>
+        <span>
+          A runner reads its pool once at startup — restart it from Settings › Agents after
+          changing accounts here.
+        </span>
+        <span className="text-fg-subtle">·</span>
+        <button
+          type="button"
+          onClick={() => setWhyOpen((v) => !v)}
+          aria-expanded={whyOpen}
+          className="underline underline-offset-2 hover:text-fg"
+        >
+          Why no percentages?
+        </button>
+        <span className="ml-auto">
           <Button onClick={() => void refreshUsage()}>Refresh usage</Button>
-        </div>
-      </SettingsGroup>
+        </span>
+      </div>
 
-      {/* 러너 반영 안내 — 이 화면의 변경이 언제 효과를 내는지 말한다. */}
-      <SettingsGroup>
-        <div className="px-4 py-3 text-meta text-fg-subtle">
-          A runner reads its pool once at startup. After changing accounts here, restart the
-          runner from Settings › Agents for the change to take effect.
+      {whyOpen && (
+        <div className="mb-6 rounded-xl border border-border bg-surface-raised px-4 py-3 text-meta text-fg-muted">
+          Claude reports no fixed limit to compare against — it is in neither{' '}
+          <span className="font-mono">claude auth status</span> nor the transcripts, and Claude only
+          says “over” at the moment it is over. So these are amounts, not percentages. The bar
+          compares accounts <span className="text-fg">within one pool</span>: full width is the
+          busiest account in that pool, never a quota we invented.
         </div>
-      </SettingsGroup>
+      )}
 
       {/* 평평한 계정 이전 안내 — 풀 모드에서 목록에서 사라진 계정들이다. */}
       {snap && snap.strays.length > 0 && (
@@ -264,83 +333,242 @@ export function ClaudeAccountsSettings() {
         </SettingsGroup>
       )}
 
-      {snap?.pools.map((pool) => (
+      {snap?.pools.map((pool) => {
+        const rows = pool.accounts.map((a) => ({ a, u: usageMap.get(`${pool.name}/${a.name}`) }));
+        /**
+         * 막대의 100%. **풀 안에서만 잰다** — 분모를 모르니 절대 눈금은 지어낸 값이 되고
+         * (`lib/claudeUsage.ts` 머리말), 풀들을 통틀어 재면 계정 하나짜리 풀이 언제나
+         * 100% 로 보인다. "이 풀에서 누가 제일 많이 돌았나" 는 답할 수 있는 질문이다.
+         */
+        const busiest = Math.max(0, ...rows.map((r) => r.u?.responses ?? 0));
+        const totalResponses = rows.reduce((n, r) => n + (r.u?.responses ?? 0), 0);
+        const limited = rows.filter(
+          (r) => r.u && accountState(r.u, nowMs, locale).kind.startsWith('limited'),
+        ).length;
+        // 못 읽은 파일이 있으면 위 합계는 **하한**이다. 그 사실을 계정 줄이 아니라 풀
+        // 머리에 적는다 — 합계를 읽는 사람이 알아야 하는 것이고, 줄마다 적으면 표가 시끄럽다.
+        const underCounted = rows.some((r) => r.u && r.u.unreadableFiles > 0);
+        /*
+          아직 안 온 것 · 못 읽은 것 · 이 창에 안 돈 것을 **다른 글리프로** 가른다.
+          하나로 두면 화면이 확인한 적 없는 것을 단언한다 — `AgentTurns` 에서 `0` 과
+          `모름` 을 가른 것과 같은 규율이다.
+        */
+        const cellFallback = usageError ? '?' : usage ? '—' : '…';
+
         // 카드 제목을 쓰지 않는다 — 풀 이름을 카드 제목과 본문에 두 번 그리면 화면이
         // 같은 말을 반복하고, 이름으로 요소를 찾는 쪽(테스트·스크린리더)이 둘 중 어느
         // 것인지 알 수 없다.
+        return (
         <SettingsGroup key={pool.name || '(default)'}>
-          <div className="flex items-center justify-between px-4 py-3">
-            <div>
-              <div className="font-medium text-fg">{pool.name || 'Ungrouped'}</div>
-              <div className="text-meta text-fg-subtle">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="font-medium text-fg">{pool.name || 'Ungrouped'}</span>
+              {snap.defaultPool === pool.name && (
+                <span className="rounded border border-border px-1.5 text-meta uppercase tracking-wide text-fg-muted">
+                  Default pool
+                </span>
+              )}
+              <span className="text-meta text-fg-subtle">
                 {snap.defaultPool === pool.name
-                  ? 'Default pool — used by agents with no pool of their own'
+                  ? 'used by agents with no pool of their own'
                   : `${pool.accounts.length} account${pool.accounts.length === 1 ? '' : 's'}`}
-              </div>
+                {/*
+                  **순서에 뜻이 있다는 사실을 처음으로 적는다.** 설정의 `order` 가 러너의
+                  대체 순서이고(`writeConfig` 가 화면 순서를 그대로 쓴다), 그래서 이 표는
+                  숫자로 정렬하지 않는다 — 정렬하면 보기는 좋아지지만 화면이 들고 있던
+                  정보 하나가 조용히 사라진다.
+                */}
+                {pool.accounts.length > 1 && ' · a runner tries them top to bottom'}
+              </span>
             </div>
-            <div className="flex gap-2">
+            <div className="flex items-center gap-3">
+              {usage && pool.accounts.length > 0 && (
+                <span
+                  className="text-meta tabular-nums text-fg-muted"
+                  data-testid={`claude-pool-summary-${pool.name}`}
+                >
+                  <span className="text-fg">{totalResponses}</span>
+                  {' responses this window'}
+                  {limited > 0 && (
+                    <>
+                      {' · '}
+                      <span className="text-warning">{`${limited} limited`}</span>
+                    </>
+                  )}
+                  {underCounted && ' · some files unreadable, so counts are a floor'}
+                </span>
+              )}
               {pool.name && snap.defaultPool !== pool.name && (
                 <Button onClick={() => void writeConfig({ defaultPool: pool.name })}>
                   Make default
                 </Button>
               )}
               {pool.name && (
-                <Button onClick={() => setLogin({
-                  pool: pool.name, account: '', loginId: null, url: null, error: null, done: false,
-                })}>
-                  {`Add account to ${pool.name}`}
+                <Button
+                  ariaLabel={`Add account to ${pool.name}`}
+                  onClick={() => setLogin({
+                    pool: pool.name, account: '', loginId: null, url: null, error: null, done: false,
+                  })}
+                >
+                  Add account
                 </Button>
               )}
+              {/*
+                풀을 지우는 일은 `⋯` 뒤로 내렸다. **안전은 색이 아니라 확인 단계가 진다**
+                (아래 `Pending`) — 앞판은 풀마다 · 계정마다 빨간 버튼을 세워서, 거의 누르지
+                않는 일이 화면에서 가장 시끄러운 것이 됐다. 게다가 그 빨강(`#dc2626`)은
+                카드 면 위에서 사용량 글자와 대비가 같다(3.08:1): 눈을 끄는 것은 색상뿐이고
+                읽기 쉬운 것도 아니다.
+              */}
               {pool.name && (
-                <Button variant="danger" onClick={() => setPending({ kind: 'pool', pool: pool.name })}>
-                  {`Remove pool ${pool.name}`}
-                </Button>
+                <span className="relative flex">
+                  <Menu
+                    placement="bottom"
+                    items={[{
+                      label: `Remove pool ${pool.name}`,
+                      onSelect: () => setPending({ kind: 'pool', pool: pool.name }),
+                    }]}
+                    renderTrigger={(triggerProps) => (
+                      <button
+                        {...triggerProps}
+                        type="button"
+                        aria-label={`Actions for pool ${pool.name}`}
+                        className="rounded px-2 py-1 text-fg-subtle hover:bg-surface-hover hover:text-fg"
+                      >
+                        ⋯
+                      </button>
+                    )}
+                  />
+                </span>
               )}
             </div>
           </div>
 
-          {pool.accounts.map((a) => {
-            const u = usageMap.get(`${pool.name}/${a.name}`);
-            const limit = u ? limitLine(u, nowMs, locale) : null;
+          {/* 열 이름은 풀마다 한 번 선다. 앞판은 이 이름들을 계정 줄마다 값과 붙여
+              반복했다(`in 5.3M · out 1.1M`) — 계정 넷이면 같은 라벨이 넷이다. */}
+          {pool.accounts.length > 0 && (
+            <div className={`${ACCOUNT_GRID} px-4 py-2 text-meta uppercase tracking-wide text-fg-subtle`}>
+              <span>Account</span>
+              <span>Signed in as</span>
+              <span>Share of pool</span>
+              <span className="text-right">Resp</span>
+              <span className="text-right">In</span>
+              <span className="text-right">Out</span>
+              <span className="text-right">Cache</span>
+              <span className="text-right">Active</span>
+              <span>State</span>
+              <span />
+            </div>
+          )}
+
+          {rows.map(({ a, u }) => {
+            const cells = u ? usageCells(u) : null;
+            const state = u ? accountState(u, nowMs, locale) : null;
             return (
               <div
                 key={a.name}
-                className="flex items-center justify-between px-4 py-3"
+                className={`${ACCOUNT_GRID} items-center px-4 py-2.5`}
                 data-testid={`claude-account-${pool.name}-${a.name}`}
               >
-                <div>
-                  <div className="font-mono text-fg">{a.name}</div>
-                  <div className={`text-meta ${a.status.loggedIn ? 'text-fg-subtle' : 'text-warning'}`}>
-                    {statusLine(a.status)}
-                  </div>
-                  {/*
-                    **아직 안 온 것과 0 을 가른다.** 사용량이 오기 전에 `0 responses` 를
-                    그리면 화면이 확인한 적 없는 것을 단언한다 — `AgentTurns` 에서 `0` 과
-                    `모름` 을 가른 것과 같은 규율이다.
-                  */}
-                  <div className="text-meta text-fg-subtle" data-testid="claude-account-usage">
-                    {u ? `${usageSummary(u)} · ${lastUsedLabel(u, locale)}` : usageError ? 'Usage unavailable' : 'Reading usage…'}
-                  </div>
-                  {limit && (
-                    <div
-                      className={`text-meta ${limit.tone === 'warning' ? 'text-warning' : 'text-fg-subtle'}`}
-                      data-testid="claude-account-limit"
-                    >
-                      {limit.text}
-                    </div>
-                  )}
-                </div>
-                <Button
-                  variant="danger"
-                  onClick={() => setPending({ kind: 'account', pool: pool.name, account: a.name })}
+                <span className="truncate font-mono text-fg">{a.name}</span>
+                {/*
+                  정체는 이 화면이 반드시 말해야 하는 것 중 하나다(파일 머리말). 열로
+                  옮기면서 색을 `fg-subtle`(3.08:1) 에서 `fg-muted`(5.81:1) 로 올렸다 —
+                  후자가 팔레트에서 "시각·타임스탬프·설명" 용으로 정의된 값이다.
+                  좁아질 수 있는 열이라 잘리는 대신 `title` 로 전문을 남긴다.
+                */}
+                <span
+                  className={`truncate text-meta ${a.status.loggedIn ? 'text-fg-muted' : 'text-warning'}`}
+                  title={statusLine(a.status)}
                 >
-                  {`Remove account ${a.name}`}
-                </Button>
+                  {statusLine(a.status)}
+                </span>
+
+                {/*
+                  막대는 숫자 옆의 **중복**이다 — 그러니 스크린리더에서는 빼고 눈으로만
+                  일하게 둔다. 남기는 이유: 이 표에서 초점을 맞추지 않고 읽히는 유일한
+                  것이다. 안 돈 계정은 막대 대신 기준선만 그어 자리를 지킨다(빈 칸으로
+                  두면 그 줄만 높이가 달라 보인다).
+                */}
+                <span className="flex items-center" aria-hidden="true">
+                  {cells && u ? (
+                    <span className="h-1.5 w-full overflow-hidden rounded-full bg-border">
+                      <span
+                        /*
+                          제일 많이 돈 계정만 진하게. **강조색(주황)은 쓰지 않는다** —
+                          이 저장소는 강조를 "나를 막는 것과 화면당 주 동작 하나"로 좁혀
+                          회수해 뒀다(#488 B2, `test/accentBudget.test.tsx`). 많이 돌았다는
+                          것은 나를 막는 일이 아니므로 잉크 농도로 말한다.
+                        */
+                        className={`block h-full rounded-full ${u.responses === busiest ? 'bg-fg' : 'bg-fg-subtle'}`}
+                        style={{ width: `${Math.max(3, (u.responses / busiest) * 100)}%` }}
+                      />
+                    </span>
+                  ) : (
+                    <span className="h-px w-full bg-border" />
+                  )}
+                </span>
+
+                {/* 응답 수는 이 표의 머릿수다 — 본문단 `text-fg`(13.5:1). 나머지 토큰
+                    열은 한 단 낮춰 `fg-muted` 로. 셋이 다 같은 무게면 위계가 없다. */}
+                <span className="text-right tabular-nums text-fg" data-testid="claude-account-usage">
+                  {cells ? cells.responses : cellFallback}
+                </span>
+                <span className="text-right tabular-nums text-fg-muted">
+                  {cells ? cells.input : cellFallback}
+                </span>
+                <span className="text-right tabular-nums text-fg-muted">
+                  {cells ? cells.output : cellFallback}
+                </span>
+                <span className="text-right tabular-nums text-fg-muted">
+                  {cells ? cells.cacheRead : cellFallback}
+                </span>
+                {/* 마지막으로 돈 시각. 사람이 시계와 대조하는 값이라 상대 시간이 아니다. */}
+                <span className="text-right tabular-nums text-fg-muted">
+                  {u ? (u.lastUsedAtMs === null ? '—' : clockLabel(u.lastUsedAtMs, locale)) : cellFallback}
+                </span>
+
+                <span className="min-w-0">
+                  {state ? (
+                    <span
+                      data-testid="claude-account-state"
+                      className={`inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-0.5 text-meta ${STATE_PILL[state.tone]}`}
+                    >
+                      {(state.tone === 'warning' || state.tone === 'success') && (
+                        <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-current" />
+                      )}
+                      <span className="truncate">{state.label}</span>
+                    </span>
+                  ) : (
+                    <span className="text-meta text-fg-subtle">{cellFallback}</span>
+                  )}
+                </span>
+
+                <span className="relative flex justify-end">
+                  <Menu
+                    placement="bottom"
+                    items={[{
+                      label: `Remove account ${a.name}`,
+                      onSelect: () => setPending({ kind: 'account', pool: pool.name, account: a.name }),
+                    }]}
+                    renderTrigger={(triggerProps) => (
+                      <button
+                        {...triggerProps}
+                        type="button"
+                        aria-label={`Actions for account ${a.name}`}
+                        className="rounded px-1.5 py-1 text-fg-subtle hover:bg-surface-hover hover:text-fg"
+                      >
+                        ⋯
+                      </button>
+                    )}
+                  />
+                </span>
               </div>
             );
           })}
         </SettingsGroup>
-      ))}
+        );
+      })}
 
       {/* 새 풀 — 설정에 이름이 나타나면 데몬이 디렉터리를 만든다. 그것이 생성 경로다. */}
       <SettingsGroup title="New pool">
