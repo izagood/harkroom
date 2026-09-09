@@ -3,7 +3,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { looksReadyForPrompt } from '../src/pty.js';
+import { looksLikeGate, looksReadyForPrompt } from '../src/pty.js';
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const read = (name: string) => readFileSync(join(fixtures, name), 'utf8');
@@ -72,5 +72,56 @@ describe('첫 실행 관문 화면은 준비가 아니다', () => {
     expect(bypass).toContain('BypassPermissionsmode');
     expect(신뢰).not.toContain('BypassPermissionsmode');
     expect(신뢰).toContain('trust');
+  });
+});
+
+/**
+ * **턴 도중의 관문**(2026-09-09 실측). 첫 실행 관문과 갈라 두는 이유는 잡는 자리가 다르기
+ * 때문이다: 위의 셋은 프롬프트를 넣기 **전에** 만나고, 이것은 대화가 시작된 **뒤에** 뜬다.
+ *
+ * 화면은 스크린샷에서 옮겨 적은 것이다(원본 바이트가 아니라 사람이 읽은 글자다) — 이
+ * 판정이 보는 것은 ANSI 를 걷어낸 글자이므로 그 수준에서 실물과 같다.
+ */
+describe('턴 도중의 확인 관문', () => {
+  const 관문화면 = [
+    'Auto mode classifier requires confirmation for this command.',
+    '3 consecutive actions were blocked. Please review the transcript before continuing.',
+    '',
+    'Do you want to proceed?',
+    '\u276f 1. Yes',
+    '  2. Yes, and don\'t ask again for: ls *',
+    '  3. No',
+    '',
+    'Esc to cancel \u00b7 Tab to amend',
+  ].join('\n');
+
+  it('확인 화면을 관문으로 본다', () => {
+    expect(looksLikeGate(관문화면)).toBe(true);
+  });
+
+  it('그 화면은 준비가 아니다 — 두 판정이 동시에 참이면 프롬프트가 관문에 타이핑된다', () => {
+    expect(looksReadyForPrompt(관문화면)).toBe(false);
+  });
+
+  it('입력 프롬프트에 도달한 실물 화면은 관문이 아니다', () => {
+    expect(looksLikeGate(read('claude-tui-ready-real.txt'))).toBe(false);
+  });
+
+  /**
+   * **순서로 판정하는 이유**(`looksLikeGate` 주석). tail 은 화면 스냅샷이 아니라 최근 바이트
+   * 흐름이라 관문 글자와 입력창 표시가 둘 다 남아 있을 수 있다. 존재만 보면 사람이 관문을
+   * 지난 뒤에도 참으로 남아 같은 턴에서 두 번 부르고, 반대로 입력창만 보면 그 위에 관문이
+   * 그려졌는데도 준비된 것으로 읽는다.
+   */
+  it('입력창 표시 뒤에 관문이 그려지면 관문이다', () => {
+    expect(looksLikeGate(`\u276f\u00a0\n${관문화면}`)).toBe(true);
+  });
+
+  it('관문 뒤에 입력창이 다시 그려지면 관문이 아니다 — 사람이 지났다', () => {
+    expect(looksLikeGate(`${관문화면}\n\u276f\u00a0`)).toBe(false);
+  });
+
+  it('아무 물음도 없는 출력은 관문이 아니다', () => {
+    expect(looksLikeGate('빌드 중입니다\n41 files changed\n')).toBe(false);
   });
 });

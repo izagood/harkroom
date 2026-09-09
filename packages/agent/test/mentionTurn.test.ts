@@ -74,6 +74,7 @@ function defOf(overrides: Partial<AgentView> = {}): AgentView {
 class FakeMurmur implements MentionTurnMurmur {
   messages: MessageRow[] = [];
   posts: { channelId: string; body: string; threadRootId: string | null }[] = [];
+  fails: { channelId: string; body: string; threadRootId: string | null; retryable: boolean }[] = [];
   private seq = 0;
   def: AgentView;
   /** #80 테스트를 위해 readThread 호출 기록 */
@@ -124,6 +125,23 @@ class FakeMurmur implements MentionTurnMurmur {
   post(channelId: string, body: string, threadRootId: string | null): Promise<number> {
     this.posts.push({ channelId, body, threadRootId });
     const m = this.seedFrom(ME.id, body, threadRootId);
+    return Promise.resolve(m.seq);
+  }
+
+  /**
+   * 실패 발화. `posts` 에도 넣는다 — "이 스레드에서 무슨 말이 나갔나"를 보는 회귀선이
+   * 그 배열을 읽고, 실패도 그 스레드에 나간 말이다. 종류까지 보는 회귀선은 `fails` 를 읽는다.
+   */
+  fail(
+    channelId: string,
+    body: string,
+    threadRootId: string | null,
+    opts: { retryable: boolean; what?: string; reason?: string },
+  ): Promise<number> {
+    this.posts.push({ channelId, body, threadRootId });
+    this.fails.push({ channelId, body, threadRootId, retryable: opts.retryable });
+    const m = this.seedFrom(ME.id, body, threadRootId);
+    m.meta = { kind: 'failure', failure: { retryable: opts.retryable } };
     return Promise.resolve(m.seq);
   }
 

@@ -12,11 +12,11 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { join } from 'node:path';
 import type { AgentHarness, AgentView, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
 import { acceptsPtyInput } from './pty.js';
-import type { PtyControls, PtyWriter, TurnResult } from './pty.js';
+import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
 import { claudeSessionMaterialized } from './claudeSessions.js';
 import { readLastApiError } from './harnessErrors.js';
@@ -31,6 +31,16 @@ import type { TurnRegistry } from './turnRegistry.js';
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
 export interface MentionTurnMurmur {
   definition(): Promise<AgentView>;
+  /**
+   * 관문에 걸린 사실을 스레드에 남긴다(`gateNotice`). **평문이 아니라 실패여야 한다** —
+   * 이유는 `murmur.ts::fail` 주석에 있다.
+   */
+  fail(
+    channelId: string,
+    body: string,
+    threadRootId: string | null,
+    opts: { retryable: boolean; what?: string; reason?: string },
+  ): Promise<number>;
   readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
   /**
    * 채널 **전체**(스레드 답 포함)에서 seq 커서 이후를 읽는다 — `offAnchorEvidence` 가 쓴다.
@@ -767,12 +777,21 @@ export async function runMentionTurn(
      * 여기서 접으면 관문 앞에 세워 둔 턴이 사람이 오기 전에 사라진다.
      */
     awaitingHuman: boolean;
+    /**
+     * 관문 통지를 이 턴에 **이미 스레드에 남겼나**(2026-09-09).
+     *
+     * `awaitingHuman` 으로 대신할 수 없다: 그 값은 "정지 시계를 재지 마라"는 뜻이고 한 턴에
+     * 관문이 여러 번 뜨는 동안 계속 참으로 남는다. 통지는 그 사이 **한 번만** 나가야 한다 —
+     * 명령마다 묻는 하네스에서는 카드가 줄줄이 쌓이고, 그 소음이 정작 무엇이 막혔는지를
+     * 가린다(`retryNotice` 가 entry 당 1회인 것과 같은 판례).
+     */
+    gateNoticed: boolean;
     /** 하네스 기록이 마지막으로 자란 것을 본 시각(ms). 정지 판정의 기준점이다. */
     lastLifeMs: number;
     cancelReclaim: (() => void) | null; cancelProbe: (() => void) | null; cancelSilence: (() => void) | null;
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
-    apiError: null, canceledBy: null, stalled: false, awaitingHuman: false, lastLifeMs: 0,
+    apiError: null, canceledBy: null, stalled: false, awaitingHuman: false, gateNoticed: false, lastLifeMs: 0,
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
   };
 
@@ -1008,15 +1027,58 @@ export async function runMentionTurn(
              * 자리에서 프롬프트가 주입된다. 끝은 exit 이거나 무발화 시계다 — 그 시계는
              * 사람이 붙어 있으면(`end.viewers > 0`) 지나가므로, 사람이 오면 살아남는다.
              */
-            onAttention: (screen: string) => {
+            onAttention: (screen: string, kind: AttentionKind) => {
               // 이 턴은 이제 **사람을 기다린다** — 기록이 안 자라는 것이 정상이다.
               // 정지 시계를 계속 재면 사람이 오기 전에 접힌다(위 `awaitingHuman` 주석).
               end.awaitingHuman = true;
               const label = deps.accountLabel ?? '(기본)';
-              if (deps.attentionLedger && !deps.attentionLedger.claim(label, sessionIdForProbe ?? key)) return;
+
+              /**
+               * **스레드에 남기는 것은 원장보다 앞이다**(2026-09-09).
+               *
+               * 지금까지 이 부름의 표면은 `agent.attention` **WS 이벤트 하나**였다. 그것은
+               * 그때 거기 있던 사람에게만 닿는다 — 앱이 닫혀 있었거나 다른 스레드의 터미널을
+               * 보고 있었으면(`controller.ts` 의 `if (지금) break`) 부름은 **흔적 없이
+               * 사라진다.** 그 자리가 이번 사건에서 사람이 "앱이 알려주지 않아 알 수가
+               * 없었다"고 말한 자리다.
+               *
+               * 원장 뒤에 두면 안 되는 이유가 여기서 갈린다: 원장은 **화면을 빼앗는 것**을
+               * 묶는 장부다(같은 계정 승인 하나에 창 7개를 띄우지 않는다). 그런데 막힌
+               * 스레드는 그 7개가 다 막힌 것이 사실이므로, 기록은 스레드마다 남아야 한다.
+               * 묶는 것과 남기는 것은 다른 일이다.
+               */
+              if (!end.gateNoticed) {
+                end.gateNoticed = true;
+                // 이 콜백은 `void` 다(pty.ts) — 던지면 PTY 쪽으로 새어 나가므로 삼킨다.
+                // 말하지 못한 것으로 턴을 죽이지 않는다: 사람은 여전히 터미널로 닿을 수 있다.
+                void deps.murmur.fail(channelId, gateNotice(label), anchor, {
+                  retryable: false,
+                  what: '하네스가 사람의 확인을 기다린다',
+                  reason: '그 터미널에서 화면의 물음에 답하면 이 턴이 그 자리에서 이어진다',
+                }).catch((e: unknown) => {
+                  console.error(`[mentionTurn] ${key}: 관문 통지 발화 실패(턴은 그대로 기다린다):`,
+                    e instanceof Error ? e.message : e);
+                });
+              }
+
+              /**
+               * **원장은 `'startup'` 만 묶는다**(2026-09-09).
+               *
+               * 그 관문의 승인은 계정 설정에 기록되므로 한 번 지나면 그 계정의 모든 스레드가
+               * 함께 풀린다 — 스레드마다 부르면 사람이 같은 승인을 반복한다.
+               *
+               * `'gate'` 는 그렇지 않다: `--permission-mode auto` 의 확인은 **명령 하나에
+               * 대한 물음**이라, 지나도 다음 명령은 다시 묻고 다른 스레드는 전혀 풀리지
+               * 않는다. 그것을 계정으로 묶으면 먼저 걸린 스레드가 장부를 쥐고, 나머지 턴은
+               * 화면도 통지도 없이 서 있다가 정지 시계에 접힌다 — 이 커밋이 고치려는 실패를
+               * 원장으로 다시 만드는 셈이다.
+               */
+              if (kind === 'startup'
+                && deps.attentionLedger
+                && !deps.attentionLedger.claim(label, sessionIdForProbe ?? key)) return;
               session?.needsAttention(screen, label);
               console.error(
-                `[mentionTurn] ${key}: 사람 손이 필요하다(계정=${label}) — 앱이 이 세션의 터미널을 연다`,
+                `[mentionTurn] ${key}: 사람 손이 필요하다(${kind}, 계정=${label}) — 앱이 이 세션의 터미널을 연다`,
               );
             },
           }),
@@ -1241,7 +1303,18 @@ export async function runMentionTurn(
             : end.silenced
               ? `harness 무발화 ${deps.turnTimeoutMs}ms — 답 없이 시간 한도를 넘겼다`
               : `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
-    ) as Error & { harnessApiError?: string };
+    ) as Error & { harnessApiError?: string; harnessStalledMs?: number };
+    /**
+     * **정지를 문구가 아니라 표시로 넘긴다**(2026-09-09). 스케줄러가 이 실패를 재시도 회계에
+     * 넣지 않기 위해 알아봐야 하는데(`policy.ts::isHarnessStall`), 위 문장으로 판정하면 그
+     * 문장을 다듬는 순간 조용히 안 맞는다 — 그러면 30분을 태우는 옛 동작으로 되돌아가고,
+     * 되돌아간 것을 아무도 모른다. 자격증명·한도 판정이 문구를 보는 것은 그 문구가 **하네스의
+     * 것**이어서 어쩔 수 없는 것이고, 이 사실은 우리가 아는 것이므로 우리가 실어 보낸다.
+     *
+     * 한도값을 함께 싣는 이유: 스레드에 남길 문장이 그 값을 쓴다(`stallNotice`). 스케줄러가
+     * 같은 값을 따로 들고 있으면 두 곳이 갈라져 화면이 실제로 잰 것과 다른 분수를 말한다.
+     */
+    if (end.stalled) failure.harnessStalledMs = deps.harnessStallMs ?? 10 * 60_000;
     // **턴 도중 관측이 우선이다.** 종료 뒤 읽기(`apiError`)는 sinceMs 가 없어 앞 턴의
     // 에러를 집을 수 있다 — 지금 턴의 사실을 이미 손에 쥐었으면 그것을 쓴다.
     if (end.apiError) failure.harnessApiError = end.apiError;

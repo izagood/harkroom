@@ -246,3 +246,24 @@ if (mode === 'ready-then-silent') {
   process.stdin.on('data', () => { /* 받지만 아무 일도 하지 않는다 */ });
   setInterval(() => {}, 1_000);
 }
+
+// 2026-09-09 프로덕션의 모양: 대화가 **시작된 뒤에** 하네스가 확인을 묻고 선다
+// (`--permission-mode auto` 의 classifier). 'ready-then-silent' 와 갈라야 하는 이유는
+// 화면이다 — 저쪽은 아무것도 안 그리고, 이쪽은 **물음을 그린 채로** 선다. 러너가 그 둘을
+// 가르지 못하던 것이 이 커밋이 고치는 결함이다.
+if (mode === 'ready-then-gate') {
+  // 입력창(NBSP)을 먼저 그린다 — 주입은 준비 신호를 본 뒤에만 일어난다.
+  setTimeout(() => process.stdout.write('READY\n\u276f\u00a0'), 100);
+  process.stdin.on('data', (d) => {
+    if (!String(d).includes('[201~')) return;
+    // 주입을 받고 일을 시작한 척하다가 확인 화면을 그리고 선다. 실물과 같은 순서다:
+    // 입력창 표시가 **먼저**, 관문이 **나중**이다 — `looksLikeGate` 가 있다/없다가 아니라
+    // 순서로 판정하는 이유가 이 픽스처에 그대로 들어 있다.
+    setTimeout(() => process.stdout.write(
+      '\nAuto mode classifier requires confirmation for this command.\n'
+      + '3 consecutive actions were blocked. Please review the transcript before continuing.\n'
+      + '\nDo you want to proceed?\n\u276f 1. Yes\n  2. Yes, and do not ask again\n  3. No\n',
+    ), 50);
+  });
+  setInterval(() => {}, 1_000);
+}

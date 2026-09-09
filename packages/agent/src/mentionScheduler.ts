@@ -17,8 +17,9 @@ import type { MentionQueue } from './mentionQueue.js';
 import { withAccountFailover, type ClaudeAccount } from './claudeAccounts.js';
 import {
   controlledNotice, FAILURE_NOTICE, quotaNotice, retryNotice, retryReason, sessionConflictNotice,
+  stallNotice,
 } from './prompt.js';
-import { exhausted, isQuotaExhausted, isSessionIdConflict, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
+import { exhausted, isHarnessStall, isQuotaExhausted, isSessionIdConflict, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 
 /**
  * `tried` 번 실패한 entry 가 다음 시도까지 쉬는 시간(ms).
@@ -71,6 +72,17 @@ export interface AdmitOutcome {
 export interface SchedulerMurmur {
   markRead(ids: number[]): Promise<number>;
   post(channelId: string, body: string, threadRootId: string | null): Promise<number>;
+  /**
+   * 실패로 남긴다(`message.fail`). 평문(`post`)과 갈라 쓰는 자리가 있다 — 사람이 손을 대야
+   * 풀리는 것은 스레드 상태에 `막힘`으로 남아야 하고, 그것을 정하는 것은 본문이 아니라
+   * `meta.kind` 다(`murmur.ts::fail` 주석).
+   */
+  fail(
+    channelId: string,
+    body: string,
+    threadRootId: string | null,
+    opts: { retryable: boolean; what?: string; reason?: string },
+  ): Promise<number>;
 }
 
 export interface MentionSchedulerDeps {
@@ -209,7 +221,14 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       const quota = isQuotaExhausted(err);
       if (quota) {
         console.error(`  ${mention.id} 사용량 한도 — 재시도하지 않는다 (풀림: ${quota.resetsAt ?? '알 수 없음'}) tail: ${err instanceof Error ? err.message : String(err)}`);
-        await deps.murmur.post(mention.channelId, quotaNotice(quota.resetsAt), anchor).catch((e: unknown) => {
+        // **평문이 아니라 실패로 남긴다**(2026-09-09) — 아래 세 통지가 모두 같은 이유로
+        // 바뀌었다: 러너가 답을 못 낸 사실을 평문으로 올리면 스레드 머리는 `끝남` 이 된다
+        // (`murmur.ts::fail` 주석의 실측). 한도는 풀린 뒤 다시 부르면 되므로 retryable 이다.
+        await deps.murmur.fail(mention.channelId, quotaNotice(quota.resetsAt), anchor, {
+          retryable: true,
+          what: '사용량 한도로 답하지 못했다',
+          reason: quota.resetsAt === null ? '한도가 풀리는 시각을 읽지 못했다' : `${quota.resetsAt} 에 풀린다`,
+        }).catch((e: unknown) => {
           console.error(`  ${mention.id} 한도 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
         });
         await deps.murmur.markRead([entryId]);
@@ -222,8 +241,40 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       // 멀쩡하다. 죽으면 다른 스레드의 대기 멘션까지 함께 잃는다.
       if (isSessionIdConflict(err)) {
         console.error(`  ${mention.id} 하네스 세션 충돌 — 재시도하지 않는다 (러너의 세션 상태와 하네스 디스크가 어긋났다): ${err instanceof Error ? err.message : String(err)}`);
-        await deps.murmur.post(mention.channelId, sessionConflictNotice(), anchor).catch((e: unknown) => {
+        await deps.murmur.fail(mention.channelId, sessionConflictNotice(), anchor, {
+          retryable: false,
+          what: '하네스 세션 상태가 어긋나 답하지 못했다',
+          reason: '운영자가 러너 로그를 확인해야 한다 — 다시 불러도 같은 자리에서 실패한다',
+        }).catch((e: unknown) => {
           console.error(`  ${mention.id} 세션 충돌 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
+        });
+        await deps.murmur.markRead([entryId]);
+        attempts.delete(entryId);
+        return;
+      }
+
+      /**
+       * **정지도 재시도로 낫지 않는다**(2026-09-09 실측). 위 두 분기와 같은 갈래다 — 러너는
+       * 살고, 재시도는 안 하고, 스레드에 사실을 남긴다.
+       *
+       * 왜 여기 서는가: 정지의 대표 원인은 고장이 아니라 사람을 기다리는 확인 화면이고, 같은
+       * 프롬프트를 다시 넣으면 모델이 같은 명령을 다시 시도해 **같은 자리에 다시 선다.**
+       * 그 값이 10분 × 3회 = 30분이었고, 그 30분 동안 사람이 본 것은 "다시 시도합니다" 였다.
+       *
+       * **`markRead` 를 여기서 한다.** 안 하면 이 항목이 큐에 남아 다음 폴에서 다시 뜨고,
+       * 재시도를 안 하겠다고 한 것이 무의미해진다(한도·충돌 분기와 같은 처리).
+       */
+      const stall = isHarnessStall(err);
+      if (stall) {
+        console.error(`  ${mention.id} 하네스 정지 — 재시도하지 않는다 (사람이 그 터미널을 봐야 한다): ${err instanceof Error ? err.message : String(err)}`);
+        // **평문이 아니라 실패로 남긴다**(`murmur.ts::fail`). 이 스레드는 사람이 손을 대야
+        // 풀리므로 화면에 `막힘` 으로 서 있어야 한다 — 평문으로 올리면 배지는 `끝남` 이다.
+        await deps.murmur.fail(mention.channelId, stallNotice(stall.stallMs), anchor, {
+          retryable: false,
+          what: '하네스가 서 있어 답하지 못했다',
+          reason: '그 터미널을 열어 화면을 확인해야 한다 — 확인을 기다리는 물음이 서 있을 수 있다',
+        }).catch((e: unknown) => {
+          console.error(`  ${mention.id} 정지 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
         });
         await deps.murmur.markRead([entryId]);
         attempts.delete(entryId);
@@ -234,7 +285,11 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       if (exhausted(tried)) {
         // 한도까지 실패하면 읽음 처리해 흘려보낸다 — 안 그러면 이 항목이 큐를 막는다.
         console.error(`  ${mention.id} 포기하고 읽음 처리한다`);
-        await deps.murmur.post(mention.channelId, FAILURE_NOTICE, anchor).catch((e: unknown) => {
+        await deps.murmur.fail(mention.channelId, FAILURE_NOTICE, anchor, {
+          retryable: false,
+          what: `${MAX_ATTEMPTS}회 시도 끝에 답하지 못했다`,
+          reason: retryReason(err instanceof Error ? err.message : String(err)) ?? undefined,
+        }).catch((e: unknown) => {
           console.error(`  ${mention.id} 실패 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
         });
         await deps.murmur.markRead([entryId]);
@@ -252,10 +307,31 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       // 같은 실패가 아니다(위 대기 통지와 같은 판례).
       const already = attempts.get(entryId)?.noticed === true;
       if (!already) {
-        await deps.murmur.post(
+        /**
+         * **평문이 아니라 실패로 낸다**(2026-09-09 실측). 이 통지는 `post` 로 나가고 있었고,
+         * 그것이 스레드 머리를 거짓으로 만들었다:
+         *
+         * 서버의 `unresolved_failure_count` 와 화면의 `threadState()` 는 실패가 **풀렸는지**를
+         * "그 뒤에 그 계정이 다시 말했는가"로 판정한다(마지막 답을 평범한 글로 내는 러너가
+         * 있어서다). 그 규칙 아래에서 평문 재시도 통지는 **자기 앞의 실패를 지운다** — 그래서
+         * 실측 화면이 스레드 머리 `끝남` · 터미널 머리 `Running` 으로 갈렸다.
+         *
+         * `failure` 로 내면 그 규칙이 그대로 옳아진다: 앞의 실패는 풀리고, **이 통지 자신이
+         * 안 풀린 실패로 선다** — 지금 사실이 정확히 그것이다. 재시도가 답을 내면 그 답이
+         * 이것을 푼다(같은 계정의 말이므로).
+         *
+         * `retryable: true` 인 이유: 러너가 실제로 다시 부를 것이고, 그것이 화면이 그리는
+         * '다시 부르기' 경로와 어긋나지 않는다.
+         */
+        await deps.murmur.fail(
           mention.channelId,
           retryNotice(tried, MAX_ATTEMPTS, retryReason(err instanceof Error ? err.message : String(err))),
           anchor,
+          {
+            retryable: true,
+            what: '멘션에 답하지 못하고 턴이 끝났다',
+            reason: retryReason(err instanceof Error ? err.message : String(err)) ?? undefined,
+          },
         ).catch((e: unknown) => {
           console.error(`  ${mention.id} 재시도 통지 발화 실패(재시도는 계속된다):`,
             e instanceof Error ? e.message : e);

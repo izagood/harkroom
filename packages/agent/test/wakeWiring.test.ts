@@ -28,7 +28,7 @@ describe('깨움 배선', () => {
   it("스케줄러가 reason === 'wake' 를 보고 턴에 사유를 싣는다", async () => {
     const targets: MentionTarget[] = [];
     const scheduler = createMentionScheduler({
-      murmur: { markRead: async (ids) => ids.length, post: async () => 1 },
+      murmur: { markRead: async (ids) => ids.length, post: async () => 1, fail: async () => 1 },
       registry: new TurnRegistry(),
       queue: new MentionQueue(),
       accountLane: [null],

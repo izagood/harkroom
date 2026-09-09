@@ -264,6 +264,35 @@ export class MurmurAgentClient {
     return res.message.seq;
   }
 
+  /**
+   * 스스로 못 끝냈음을 알린다(`message.fail`). 수신자는 언제나 사람이다.
+   *
+   * **`post` 로 대신할 수 없다.** 평문은 스레드 상태에 아무것도 남기지 않는다 — 서버의
+   * `unresolved_failure_count` 와 화면의 `threadState()` 는 둘 다 `meta.kind='failure'` 를
+   * 보고 `막힘`을 칠하므로, 러너가 평문으로 말하면 사람이 보는 배지는 `끝남` 이다(실측:
+   * 재시도 통지를 평문으로 올리던 자리에서 스레드 머리가 `끝남`, 터미널 머리가 `Running`
+   * 으로 갈렸다).
+   *
+   * `retryable` 을 옵셔널로 두지 않는 이유는 서버 도구와 같다 — 기본값을 여기서 정하면
+   * 다시 불러도 소용없는 실패에 단추가 생기거나 고칠 수 있는 실패의 경로가 사라진다.
+   */
+  async fail(
+    channelId: string,
+    body: string,
+    threadRootId: string | null,
+    opts: { retryable: boolean; what?: string; reason?: string },
+  ): Promise<number> {
+    const res = await this.call<{ message: { seq: number } }>('message.fail', {
+      channelId,
+      body,
+      retryable: opts.retryable,
+      ...(threadRootId ? { threadRootId } : {}),
+      ...(opts.what ? { what: opts.what } : {}),
+      ...(opts.reason ? { reason: opts.reason } : {}),
+    });
+    return res.message.seq;
+  }
+
   /** inbox entry id 로 읽음 처리. 서버가 요청 계정으로 스코프를 걸어 남의 inbox 는 소비되지 않는다. */
   async markRead(ids: number[]): Promise<number> {
     if (!ids.length) return 0;

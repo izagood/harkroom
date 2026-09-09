@@ -44,11 +44,19 @@ function deferred<T>() {
 function harness(opts: { runTurn: () => Promise<MentionTurnResult>; now?: () => number }) {
   const markedRead: number[] = [];
   const posted: { channelId: string; body: string; anchor: string | null }[] = [];
+  const failed: { body: string; retryable: boolean }[] = [];
   const registry = new TurnRegistry();
   const scheduler = createMentionScheduler({
     murmur: {
       markRead: async (ids) => { markedRead.push(...ids); return ids.length; },
       post: async (channelId, body, anchor) => { posted.push({ channelId, body, anchor }); return 1; },
+      // 실패 발화도 `posted` 에 담는다 — 회귀선이 보는 것은 "그 스레드에 무슨 말이
+      // 나갔나" 이고, 실패도 그 스레드에 나간 말이다. 종류는 `failed` 가 따로 담는다.
+      fail: async (channelId, body, anchor, o) => {
+        posted.push({ channelId, body, anchor });
+        failed.push({ body, retryable: o.retryable });
+        return 1;
+      },
     },
     registry,
     queue: new MentionQueue(),
@@ -149,7 +157,7 @@ describe('mentionScheduler 승인 관문', () => {
   it('resumeHandoff 가 던져도 인플라이트 장부를 비운다', async () => {
     const registry = new TurnRegistry();
     const scheduler = createMentionScheduler({
-      murmur: { markRead: async (ids) => ids.length, post: async () => 1 },
+      murmur: { markRead: async (ids) => ids.length, post: async () => 1, fail: async () => 1 },
       registry,
       queue: new MentionQueue(),
       accountLane: [null],
@@ -204,6 +212,7 @@ describe('mentionScheduler 승인 관문', () => {
       murmur: {
         markRead: async (ids) => ids.length,
         post: async () => { throw new Error('발화 실패'); },
+        fail: async () => 1,
       },
       registry,
       queue: new MentionQueue(),
@@ -230,7 +239,7 @@ describe('mentionScheduler 승인 관문', () => {
     let calls = 0;
     let now = 1_000;
     const scheduler = createMentionScheduler({
-      murmur: { markRead: async (ids) => ids.length, post: async () => 1 },
+      murmur: { markRead: async (ids) => ids.length, post: async () => 1, fail: async () => 1 },
       registry: new TurnRegistry(),
       queue: new MentionQueue(),
       accountLane: [null],
@@ -265,7 +274,7 @@ describe('mentionScheduler 승인 관문', () => {
     const started: string[] = [];
     const now = 1_000;
     const scheduler = createMentionScheduler({
-      murmur: { markRead: async (ids) => ids.length, post: async () => 1 },
+      murmur: { markRead: async (ids) => ids.length, post: async () => 1, fail: async () => 1 },
       registry: new TurnRegistry(),
       queue: new MentionQueue(),
       accountLane: [null],
@@ -297,6 +306,71 @@ describe('mentionScheduler 승인 관문', () => {
     expect(started).toEqual(['bad', 'good']);
   });
 
+  /**
+   * **정지는 재시도 회계에 들어가지 않는다**(2026-09-09 실측). 한도·세션 충돌과 같은 갈래다.
+   *
+   * 왜: 정지의 대표 원인은 고장이 아니라 사람을 기다리는 확인 화면이고, 같은 프롬프트를 다시
+   * 넣으면 모델이 같은 명령을 다시 시도해 **같은 자리에 다시 선다.** 실측에서 그 값이 정지
+   * 한도 10분 × 3회 = 30분이었고, 그 30분 동안 스레드에 남은 말은 "다시 시도합니다" 였다.
+   */
+  it('하네스 정지는 재시도하지 않고 한 번에 실패로 남긴다', async () => {
+    const markedRead: number[] = [];
+    const 발화: { body: string; retryable: boolean }[] = [];
+    let 시도 = 0;
+    const scheduler = createMentionScheduler({
+      murmur: {
+        markRead: async (ids) => { markedRead.push(...ids); return ids.length; },
+        post: async () => 1,
+        fail: async (_c, body, _a, o) => { 발화.push({ body, retryable: o.retryable }); return 1; },
+      },
+      registry: new TurnRegistry(),
+      queue: new MentionQueue(),
+      accountLane: [null],
+      runMentionTurn: async () => {
+        시도 += 1;
+        // `mentionTurn.ts` 가 실어 보내는 표시 그대로다 — 문구로 판정하지 않는다.
+        const err = new Error('harness 정지 600000ms — 기록이 자라지 않았다(답 없음)') as Error & { harnessStalledMs?: number };
+        err.harnessStalledMs = 600_000;
+        throw err;
+      },
+      buildTurnDeps: () => ({}) as never,
+      hooks: {
+        stopRequested: () => {},
+        exitIfUnrecoverable: () => {},
+        noticeHarnessLogin: async () => {},
+      },
+      startedAtMs: 0,
+    });
+
+    await scheduler.admit(batchOf([{ entryId: 9, messageId: 'm-stall' }]), ctx);
+    await scheduler.drain();
+
+    expect(시도).toBe(1);
+    /**
+     * **읽음 처리가 곧 "다시 안 부른다" 다.** 재시도 경로는 `markRead` 를 하지 않고 백오프
+     * 시각만 찍어 다음 폴에서 그 항목을 다시 받는다 — 그래서 이 단언이 두 동작을 가른다.
+     * (분기 순서까지 함께 지키는 회귀선은 아래 `재시도 회계 앞에서 빠진다` 다.)
+     */
+    expect(markedRead).toEqual([9]);
+    // **평문이 아니라 실패로 남는다**: 사람이 손을 대야 풀리므로 화면에 `막힘` 으로 서야 한다.
+    expect(발화).toHaveLength(1);
+    expect(발화[0]!.retryable).toBe(false);
+    // 볼 곳을 말한다 — "운영자 확인이 필요합니다" 가 실패했던 자리다.
+    expect(발화[0]!.body).toContain('터미널');
+    expect(발화[0]!.body).toContain('10분');
+  });
+
+  it('정지 분기는 재시도 회계 앞에서 빠진다 — 순서가 계약이다', async () => {
+    // `credentialNoticeWiring` 의 한도 회귀선과 같은 판례다: 분기가 `답변 실패 (n/MAX)`
+    // 줄 **앞**에서 `return` 해야 3회를 태우지 않는다. 뒤로 밀리면 통지 문구는 그대로인데
+    // 30분을 태우는 옛 동작으로 조용히 되돌아간다.
+    const src = readFileSync(path.resolve(__dirname, '../src/mentionScheduler.ts'), 'utf8');
+    const stall = src.indexOf('isHarnessStall(err)');
+    const failed = src.indexOf('답변 실패 (', stall);
+    expect(stall).toBeGreaterThan(0);
+    expect(src.slice(stall, failed)).toContain('return;');
+  });
+
   it('MAX_ATTEMPTS 를 소진하면 통지하고 읽음 처리해 큐를 비운다', async () => {
     let now = 1_000;
     const markedRead: number[] = [];
@@ -305,6 +379,10 @@ describe('mentionScheduler 승인 관문', () => {
       murmur: {
         markRead: async (ids) => { markedRead.push(...ids); return ids.length; },
         post: async (_c, body) => { posted.push(body); return 1; },
+        // 재시도 통지와 최종 실패 통지는 이제 `fail` 로 나간다(스레드 머리가 `끝남` 으로
+        // 뒤집히던 것을 고쳤다) — 이 회귀선이 보는 것은 "무슨 말이 나갔나" 이므로 같은
+        // 배열에 담는다.
+        fail: async (_c, body) => { posted.push(body); return 1; },
       },
       registry: new TurnRegistry(),
       queue: new MentionQueue(),

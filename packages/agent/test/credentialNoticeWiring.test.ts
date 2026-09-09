@@ -38,7 +38,10 @@ describe('자격증명·한도 통지 배선', () => {
     const main = await readSrc('main.ts');
     expect(main).toMatch(/harnessLoginNotice\([\s\S]{0,120}?\),\s*anchor,?\s*\)/);
     const src = await readSrc('mentionScheduler.ts');
-    expect(src).toMatch(/quotaNotice\(quota\.resetsAt\),\s*anchor\)/);
+    // 한도 통지는 2026-09-09 에 `post` → `fail` 로 바뀌었다(평문은 스레드 머리를 `끝남` 으로
+    // 만든다 — `murmur.ts::fail` 주석). **이 검사가 지키는 것은 그대로다**: 통지가 앵커로
+    // 간다는 것. 그래서 뒤에 옵션 객체가 붙는 것만 허용하고 `anchor` 는 계속 요구한다.
+    expect(src).toMatch(/quotaNotice\(quota\.resetsAt\),\s*anchor\s*[,)]/);
   });
 
   it('사용량 한도는 재시도 회계에 들어가지 않는다', async () => {

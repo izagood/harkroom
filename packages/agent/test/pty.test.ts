@@ -787,6 +787,55 @@ describe('주입 확인 창 — 준비 신호만으로는 부족하다', () => {
     await turn.catch(() => {});
   }, 20_000);
 
+  /**
+   * **턴 도중의 관문**(2026-09-09 실측). 이 창이 없던 동안, 대화가 시작된 뒤에 뜬 확인 화면은
+   * 아무 신호도 남기지 않았다 — 유일하게 반응하는 정지 시계가 그것을 고장으로 오진해 턴을
+   * 죽이고, 같은 관문에 다시 걸릴 뿐인 재시도가 3회를 태웠다(실측 30분).
+   */
+  it('대화가 시작된 뒤 뜬 관문도 부른다 — kind 는 gate 다', async () => {
+    const 부름: { screen: string; kind: string }[] = [];
+    const turn = runPtyTurn(plan('ready-then-gate'), {
+      cwd: process.cwd(), timeoutMs: 5_000,
+      injectPrompt: {
+        text: '안녕',
+        // 두 번 연속 봐야 부르므로 실제 대기는 이 값의 두 배다.
+        gateProbeMs: 100,
+        onAttention: (s, kind) => 부름.push({ screen: s, kind }),
+      },
+    });
+    await vi.waitFor(() => expect(부름).toHaveLength(1), { timeout: 4_000 });
+    // **startup 이 아니라 gate 다.** 이 구별이 계정 원장을 건너뛰게 하는 근거이고
+    // (`mentionTurn.ts` 의 원장 분기), 뒤집히면 한 스레드가 그 계정의 나머지 부름을 삼킨다.
+    expect(부름[0]!.kind).toBe('gate');
+    expect(부름[0]!.screen).toContain('Do you want to proceed?');
+    await turn.catch(() => {});
+  }, 20_000);
+
+  it('한 관문에 한 번만 부른다 — 주기마다 부르면 통지가 쌓인다', async () => {
+    const 부름: string[] = [];
+    const turn = runPtyTurn(plan('ready-then-gate'), {
+      cwd: process.cwd(), timeoutMs: 3_000,
+      injectPrompt: { text: '안녕', gateProbeMs: 60, onAttention: (s) => 부름.push(s) },
+    });
+    await vi.waitFor(() => expect(부름).toHaveLength(1), { timeout: 2_000 });
+    // 관문은 화면에 그대로 서 있다 — 주기가 여러 번 지나도 부름은 하나여야 한다.
+    await new Promise((r) => setTimeout(r, 400));
+    expect(부름).toHaveLength(1);
+    await turn.catch(() => {});
+  }, 20_000);
+
+  it('묻지 않고 조용한 턴은 관문이 아니다', async () => {
+    // 'ready-then-silent' 는 서 있지만 **묻고 있지 않다.** 그 둘을 가르는 것이 이 창의
+    // 요점이므로, 여기서 부르면 판정이 다시 "안 자란다"(부정 신호)로 되돌아간 것이다.
+    const 부름: string[] = [];
+    const turn = runPtyTurn(plan('ready-then-silent'), {
+      cwd: process.cwd(), timeoutMs: 1_500,
+      injectPrompt: { text: '안녕', gateProbeMs: 60, onAttention: (s) => 부름.push(s) },
+    });
+    await turn.catch(() => {});
+    expect(부름).toHaveLength(0);
+  }, 20_000);
+
   it('confirmDelivery 가 없으면 확인 창도 없다 — 기존 호출자는 그대로다', async () => {
     const 화면: string[] = [];
     const r = await runPtyTurn(plan('ready-then-echo'), {

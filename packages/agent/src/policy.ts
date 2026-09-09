@@ -176,6 +176,37 @@ export function isSessionIdConflict(err: unknown): boolean {
 }
 
 /**
+ * **하네스가 서 있어서 접힌 턴인가**(2026-09-09). 재시도 회계에 넣지 않기 위한 판정이다.
+ *
+ * ## 왜 재시도하지 않는가
+ *
+ * 정지의 대표 원인은 고장이 아니라 **사람을 기다리는 화면**이다(`--permission-mode auto` 의
+ * 확인 관문). 프롬프트를 다시 넣으면 모델이 같은 명령을 다시 시도해 **같은 자리에 다시
+ * 선다** — 실측에서 그 값이 정지 한도 10분 × `MAX_ATTEMPTS` 3회 = 30분이었고, 끝에 남은
+ * 것은 사람이 할 일을 잘못 가리키는 `FAILURE_NOTICE` 한 줄이었다. 사용량 한도와 세션
+ * 충돌을 회계에서 뺀 것과 **같은 갈래**다: 러너는 살고, 재시도는 안 하고, 스레드에 사실을
+ * 남긴다.
+ *
+ * `pty.ts::looksLikeGate` 가 관문을 알아보면 애초에 정지로 판정되지 않는다(그 턴은
+ * `awaitingHuman` 이라 시계를 재지 않는다). 그래서 여기 오는 것은 **알아보지 못한** 관문
+ * 이거나 진짜로 멈춘 하네스이고, 어느 쪽이든 다음 수는 사람이 화면을 보는 것이다.
+ *
+ * ## 왜 문구를 안 보는가
+ *
+ * `mentionTurn.ts` 가 실패에 `harnessStalled` 를 실어 보낸다. 문구로 재면 그 문장을 다듬는
+ * 순간 조용히 안 맞고, 그러면 30분을 태우는 옛 동작으로 되돌아가며 **되돌아간 것을 아무도
+ * 모른다.** 위의 두 판정이 문구를 보는 것은 그 문구가 하네스의 것이어서 어쩔 수 없는
+ * 것이고, 이 사실은 우리가 아는 것이므로 우리가 표시로 넘긴다.
+ */
+export function isHarnessStall(err: unknown): { stallMs: number } | null {
+  if (!(err instanceof Error)) return null;
+  const ms = (err as Error & { harnessStalledMs?: number }).harnessStalledMs;
+  // 값까지 함께 돌려준다 — 스레드에 남길 문장이 "몇 분 동안" 을 말해야 하고, 그 값을
+  // 스케줄러가 따로 들고 있으면 실제로 잰 것과 화면이 갈라진다.
+  return typeof ms === 'number' && ms > 0 ? { stallMs: ms } : null;
+}
+
+/**
  * 운영자가 개입해야 하는 실패인가(자격증명). 재시도로 낫지 않으므로 러너는 즉시 크게 실패해야
  * 한다 — 무한 재시도로 감추면 로그만 쌓이고 "왜 답이 없지"의 원인이 묻힌다.
  *
