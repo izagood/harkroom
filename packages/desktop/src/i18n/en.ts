@@ -2709,6 +2709,19 @@ export const en = {
   'profile.runner.staleBundle': 'a bundle older than the app',
 
   'message.channelEcho': 'Also sent to the channel',
+  /** 코드 블록의 복사 버튼(#724). 짧게 둔다 — 헤더 줄에 언어 이름과 나란히 선다. */
+  'message.code.copy': 'Copy',
+  /** 누른 뒤 1.5초. 버튼 자리에서 바뀌므로 "무엇이" 복사됐는지 말할 필요가 없다. */
+  'message.code.copied': 'Copied',
+  /** 클립보드도 선택도 못 했을 때. 남은 길이 손으로 옮겨 적는 것뿐이라 그것을 말한다. */
+  'message.code.copyFailedManual':
+    'The clipboard is not available and the code could not be selected — copy it by hand',
+  /**
+   * 클립보드가 없거나 거부됐을 때. **조용히 실패하지 않는다** — 화면의 그 코드를 선택해
+   * 두었으므로 **다음에 할 일**을 말한다. 오류만 적고 끝내면 사람은 다시 드래그로 돌아간다.
+   */
+  'message.code.copyFailedSelected':
+    'The clipboard is not available — the code is selected, so press ⌘C to copy it',
   /**
    * 담아 둔 표식(요청 2026-09-09). `⋯` 메뉴의 `Save for later` 와 **같은 낱말을 쓴다** —
    * 누른 항목과 화면에 남은 표식이 다른 말이면 사람은 그 둘을 잇지 못한다. 시제만

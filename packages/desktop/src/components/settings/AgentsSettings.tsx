@@ -37,12 +37,13 @@ import { Identity } from '../Identity';
 import { Button } from './primitives';
 import { AvatarStatus, useAvatarEdit } from './avatarEdit';
 import { useAgentPool } from './useAgentPool';
+import { copyText } from '../../lib/clipboard';
 
 /** #177: 클립보드가 없거나 거부되면 **조용히 실패하지 않는다** — 화면에 있는 그 명령
  *  텍스트를 선택 상태로 만들어 사람이 ⌘C 할 수 있게 하고, 오류를 눈에 보이게 남긴다.
- *  화면 밖 textarea + `document.execCommand('copy')` 는 쓰지 않는다: 사람이 볼 수도
- *  선택할 수도 없는 노드를 곧바로 지우고, execCommand 는 복사에 실패해도 던지지 않고
- *  `false` 만 돌려주므로 "복사됨"을 거짓으로 띄우게 된다.
+ *  그 처리는 `lib/clipboard` 의 `copyText` 가 하고(코드 블록의 복사 버튼도 같은 것을
+ *  쓴다), 여기서는 **결과를 이 화면의 문구로 바꾸는 일만** 한다 — 문구가 부르는 쪽에
+ *  있는 이유는 `lib/clipboard` 머리말에 적어 두었다.
  *  `target` 은 복사 대상 명령이 그려진 노드다(선택해 줄 대상). */
 const copyToClipboard = async (
   text: string,
@@ -53,26 +54,13 @@ const copyToClipboard = async (
   // 없고, 모듈 전역 번역기를 부르면 언어가 전역 상태에 묶여 시험이 서로의 언어를 밟는다.
   t: Translate,
 ): Promise<boolean> => {
-  // 비보안 컨텍스트에서는 브라우저가 `navigator.clipboard` 를 아예 노출하지 않는다 —
-  // 그래서 `isSecureContext` 를 따로 보지 않고 존재 여부만 본다(MessageItem 과 같은 판정).
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      // 권한 거부 등 → 아래 선택 경로로 내려간다. 성공했다고 하지 않는다.
-    }
-  }
-  const selection = window.getSelection?.();
-  if (target && selection) {
-    const range = document.createRange();
-    range.selectNodeContents(target);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    onError(t('agents.runner.copyFailedSelected'));
-  } else {
-    onError(t('agents.runner.copyFailedManual'));
-  }
+  const outcome = await copyText(text, target);
+  if (outcome === 'copied') return true;
+  onError(
+    outcome === 'selected'
+      ? t('agents.runner.copyFailedSelected')
+      : t('agents.runner.copyFailedManual'),
+  );
   return false;
 };
 

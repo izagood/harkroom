@@ -1083,6 +1083,10 @@ export const ko = {
   // ---------------------------------------------------------------------------
 
   'message.channelEcho': '채널에도 전송됨',
+  'message.code.copy': '복사',
+  'message.code.copied': '복사됨',
+  'message.code.copyFailedManual': '클립보드를 쓸 수 없고 코드를 선택하지도 못했다 — 손으로 복사해라',
+  'message.code.copyFailedSelected': '클립보드를 쓸 수 없다 — 코드를 선택해 뒀으니 ⌘C 로 복사해라',
   'message.savedMark': '나중을 위해 저장됨',
   'message.deleted': '채팅이 삭제되었습니다',
   'message.threadOrigin': '스레드에 댓글 남김',
