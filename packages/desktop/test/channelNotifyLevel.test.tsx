@@ -114,6 +114,37 @@ describe('채널 알림 수준 — 알림', () => {
     });
   });
 
+  /**
+   * 2026-09-09 — `all` 이어도 **진행 한 줄·대기 줄은 알리지 않는다**.
+   *
+   * `all` 은 "오가는 말을 다 받겠다"이지 "에이전트가 일하는 동안 남기는 상태 표시까지
+   * 받겠다"가 아니다. 화면도 그 둘을 말풍선이 아니라 `ProgressRow`·`WakeRow` 로 그리고
+   * 답글 수에도 세지 않는다(`countsAsReply`). 서버가 같은 기준으로 inbox 항목을 막지만
+   * 이 경로는 inbox 를 거치지 않고 소켓 이벤트에서 바로 알린다 — 그래서 판정이 두 곳에 있고,
+   * 이 줄이 데스크탑 쪽 몫이다.
+   */
+  it("'all' 이어도 진행·대기 줄은 알리지 않는다", async () => {
+    setFocus(false);
+    const n = fakeNotifier();
+    const { callbacks } = await started(n, [], [pref('c1', 'all')]);
+
+    callbacks.current!.onEvent({
+      type: 'message.created', audience: 'all',
+      message: msg('m7', 'c1', 7, '이제 조사한다', 'u2', { kind: 'progress', threadRootId: 'm1' }),
+    });
+    callbacks.current!.onEvent({
+      type: 'message.created', audience: 'all',
+      message: msg('m8', 'c1', 8, 'CI 결과 확인 — 5분 뒤', 'u2', { kind: 'wake', threadRootId: 'm1' }),
+    });
+    await drained();
+    expect(n.sent).toHaveLength(0);
+
+    // 같은 채널의 평범한 말은 그대로 알린다 — 막은 것은 종류이지 채널이 아니다.
+    callbacks.current!.onEvent({ type: 'message.created', message: msg('m9', 'c1', 9, '다 됐다', 'u2'), audience: 'all' });
+    await drained();
+    expect(n.sent.map((x) => x.body)).toEqual(['다 됐다']);
+  });
+
   // 요구 2. 'mentions' 는 나를 부른 것만 통과시킨다 — 이 둘이 같은 결과가 되면 수준이 셋이 아니다.
   it("'mentions' 는 멘션은 알리고 일반 메시지는 알리지 않는다", async () => {
     setFocus(false);

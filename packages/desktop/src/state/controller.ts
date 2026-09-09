@@ -713,6 +713,16 @@ export class Controller {
     const store = this.store.getState();
     // 내가 쓴 것은 알리지 않는다. 보고 있는 창에도 띄우지 않는다 — 배지가 그 일을 한다.
     if (message.authorId === store.me?.id || document.hasFocus()) return;
+    /**
+     * 진행 한 줄·대기 줄은 알리지 않는다(2026-09-09). 채널을 `all` 로 둔 것은 **오가는
+     * 말**을 다 받겠다는 뜻이지, 에이전트가 일하는 동안 남기는 상태 표시까지 받겠다는
+     * 뜻이 아니다 — 화면도 그것을 말풍선이 아니라 `ProgressRow`·`WakeRow` 로 그린다.
+     *
+     * 서버가 같은 종류로 `thread_reply`·`dm` inbox 를 만들지 않게 됐지만(`postMessage`),
+     * 이 경로는 inbox 를 거치지 않고 **소켓 이벤트에서 바로** 알린다. 그래서 판정이
+     * 여기에도 필요하다 — 기준은 `countsAsReply` 한 문장으로 같다.
+     */
+    if (!countsAsReply(message.kind)) return;
     if (notifyLevelOf(store.channelPrefs[message.channelId]) !== 'all') return;
     // 이 채널을 `all` 로 둔 것이 옵트인이지만, 기기 전체 스위치는 여전히 위에 있다.
     const prefs = usePrefsStore.getState().notifications;

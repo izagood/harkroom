@@ -4,12 +4,13 @@ import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
-import { listMessages } from '../src/services/messages.js';
+import { listMessages, postMessage } from '../src/services/messages.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
 let pool: Pool;
 let adminToken: string;
+let adminId: string;
 let botPat: string;
 let channelId: string;
 
@@ -20,6 +21,7 @@ beforeAll(async () => {
   app = await buildServer({ pool: db.pool });
   const admin = await bootstrapAdmin(app);
   adminToken = admin.token;
+  adminId = admin.accountId;
   ({ pat: botPat } = await createAgent(app, adminToken, 'helper'));
   const ch = await app.inject({
     method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
@@ -110,6 +112,37 @@ describe('messages', () => {
     });
     const reasons = inbox.json().entries.map((e: { reason: string }) => e.reason);
     expect(reasons).toContain('thread_reply');
+  });
+
+  /**
+   * 진행 한 줄은 **답이 아니다**(2026-09-09). 답글 수도 그것을 세지 않고 화면도 말풍선으로
+   * 그리지 않는데, inbox 만 그 구분 없이 항목을 만들고 있었다 — 항목 하나가 곧 사람의
+   * OS 알림 하나이고, 상대가 에이전트면 턴 하나다.
+   *
+   * `kind` 를 실을 수 있는 입구는 MCP(`message.progress`) 하나라 서비스를 직접 부른다.
+   * 확인은 **증가분**으로 한다 — 이 파일의 inbox 는 앞선 테스트들이 남긴 것이 쌓여 있다.
+   */
+  it('does not notify the thread root author for a progress line', async () => {
+    const unreadCount = async () => {
+      const inbox = await app.inject({
+        method: 'GET', url: '/inbox?unread=1', headers: { authorization: `Bearer ${botPat}` },
+      });
+      return inbox.json().entries.length as number;
+    };
+
+    const root = await post(botPat, 'progress root');
+    const rootId = root.json().id as string;
+    const before = await unreadCount();
+
+    const progress = await postMessage(pool, {
+      channelId, authorId: adminId, body: '이제 조사한다', threadRootId: rootId, kind: 'progress',
+    });
+    expect('message' in progress ? progress.message?.kind : null).toBe('progress');
+    expect(await unreadCount()).toBe(before);
+
+    // 같은 스레드의 평범한 답글은 그대로 닿는다 — 막은 것은 종류이지 스레드가 아니다.
+    await post(adminToken, '다 됐다', { threadRootId: rootId });
+    expect(await unreadCount()).toBe(before + 1);
   });
 
   it('since=0 (initial load) returns the latest N messages, not the oldest', async () => {

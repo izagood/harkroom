@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionScanText, normalizeMentions, readAskMeta, type InboxEntry, type MessageRow } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionScanText, normalizeMentions, readAskMeta, type InboxEntry, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { channelVisibleSql } from './channels.js';
 import { emitEvent } from '../events.js';
@@ -733,7 +733,32 @@ export async function postMessage(
       );
     }
 
-    if (input.threadRootId) {
+    /**
+     * 이 말이 **답글로 세어지는가**. `thread_reply`·`dm` 두 자리가 함께 본다.
+     * 부름(`mention`)은 이 판정 위에 있다 — 아래 주석의 마지막 문단이 그 이유다.
+     */
+    const isReply = countsAsReply(input.kind ?? 'user');
+
+    /**
+     * 스레드 머리 주인에게 가는 `thread_reply` — **답글로 세어지는 것만** 넣는다(2026-09-09).
+     *
+     * `progress`(진행 한 줄)·`wake`(대기 줄)는 스레드에 달리지만 **답이 아니다**:
+     * 화면은 그것을 말풍선이 아니라 `ProgressRow`·`WakeRow` 로 그리고, 답글 수에도
+     * 세지 않는다(`countsAsReply`·위의 `THREAD_STATS`). 그런데 inbox 는 그 구분 없이
+     * 항목을 만들고 있었고, 그 항목 하나가 곧 **OS 알림 하나**다 — 에이전트가 일을
+     * 시작하며 남기는 "이제 조사한다" 한 줄마다 사람의 데스크탑이 울렸다.
+     *
+     * inbox 항목은 알림만이 아니다: 미읽음 배지가 되고, 숨긴 채널을 되살리며
+     * (`insertInbox` 주석), 받는 쪽이 에이전트면 **턴을 하나 띄운다**
+     * (`agent/src/mentionScheduler.ts`). 진행 한 줄이 남의 턴을 깨우는 것은 어느
+     * 쪽으로도 옳지 않다. 그래서 알림을 그리는 쪽(데스크탑)이 아니라 **항목을 만드는
+     * 이 자리**에서 막는다 — 화면·러너·배지가 저마다 같은 예외를 베끼면 한쪽만
+     * 고쳐지는 날이 온다.
+     *
+     * 부름(`mention`)은 그대로 둔다. `progress` 안에 `@handle` 을 적었다면 그것은
+     * 지목이고, 지목은 종류와 무관하게 닿아야 한다.
+     */
+    if (input.threadRootId && isReply) {
       const root = await client.query(`select author_id from message where id = $1`, [input.threadRootId]);
       const rootAuthor = root.rows[0]?.author_id;
       if (rootAuthor && rootAuthor !== input.authorId && !notified.has(rootAuthor)) {
@@ -741,8 +766,10 @@ export async function postMessage(
       }
     }
 
+    // DM 도 같은 기준이다(위 문단). 둘만 있는 방이라 진행 한 줄이 그대로 상대의
+    // 알림이 되고, 상대가 에이전트면 턴까지 뜬다 — 스레드보다 오히려 더 곧장 닿는다.
     const channel = await client.query(`select kind from channel where id = $1`, [input.channelId]);
-    if (channel.rows[0]?.kind === 'dm') {
+    if (channel.rows[0]?.kind === 'dm' && isReply) {
       const members = await client.query(
         `select account_id from channel_member where channel_id = $1 and account_id <> $2`,
         [input.channelId, input.authorId],
