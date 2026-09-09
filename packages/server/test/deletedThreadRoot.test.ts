@@ -4,6 +4,8 @@ import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin } from './helpers/fixtures.js';
+import { postMessage } from '../src/services/messages.js';
+import { onEvent } from '../src/events.js';
 
 /**
  * 스레드를 시작한 말을 지웠을 때(2026-09-09 신고). 지금까지는 그 한 행만 사라졌고,
@@ -18,6 +20,7 @@ let app: FastifyInstance;
 let stop: () => Promise<void>;
 let pool: Pool;
 let token: string;
+let accountId: string;
 let channelId: string;
 
 beforeAll(async () => {
@@ -25,7 +28,7 @@ beforeAll(async () => {
   stop = db.stop;
   pool = db.pool;
   app = await buildServer({ pool: db.pool });
-  ({ token } = await bootstrapAdmin(app));
+  ({ token, accountId } = await bootstrapAdmin(app));
   const ch = await app.inject({
     method: 'POST', url: '/channels', headers: { authorization: `Bearer ${token}` },
     payload: { name: 'deleted-root' },
@@ -40,6 +43,13 @@ const post = (body: string, extra: object = {}) =>
     method: 'POST', url: `/channels/${channelId}/messages`,
     headers: { authorization: `Bearer ${token}` }, payload: { body, ...extra },
   });
+
+/**
+ * 진행·대기는 REST 로 못 올린다(그 경로에 `kind` 가 없다) — 러너가 MCP 로 올리는 것들이다.
+ * 여기서 재는 것은 **자리표시자가 서는지**이므로 서비스로 바로 넣는다.
+ */
+const postKind = (body: string, kind: 'progress' | 'wake', threadRootId: string) =>
+  postMessage(pool, { channelId, authorId: accountId, body, threadRootId, kind, attachmentIds: [] });
 
 const del = (messageId: string) =>
   app.inject({
@@ -125,6 +135,109 @@ describe('지워진 스레드 머리', () => {
     expect(kept.meta).toEqual({});
     expect(kept.reactions).toEqual([]);
     expect(kept.attachments).toEqual([]);
+  });
+
+  /**
+   * 자리표시자가 **답글로 세지 않는 것 위에는 서지 않는다**(2026-09-09 후속 신고).
+   *
+   * 위의 규칙("답글이 남아 있으면 남는다")에서 '답글'이 살아 있는 자식 아무거나였다.
+   * 그래서 접힌 진행 줄만 남은 머리가 `채팅이 삭제되었습니다` 로 계속 서 있었고, 눌러
+   * 들어가면 말풍선이 하나도 없었다 — 신고자의 말: *"답글이 아니라 접혀진 작업 내역이야
+   * … 이럴때는 채팅 자체가 삭제되는게 맞아."*
+   *
+   * 자리표시자의 존재 이유가 **살아 있는 답글로 들어갈 문**이었으므로, 들어갈 답글이
+   * 없으면 문도 없다.
+   */
+  it('진행만 남은 머리는 자리표시자를 남기지 않는다 — 그냥 사라진다', async () => {
+    const root = (await post('root whose only children are progress rows')).json().id as string;
+    await postKind('보는 중', 'progress', root);
+    await postKind('5분 뒤 다시', 'wake', root);
+
+    // 204 다: 자리가 남지 않았으므로 부른 쪽이 덮을 행이 없다.
+    expect((await del(root)).statusCode).toBe(204);
+    expect((await list()).some((m) => m.id === root)).toBe(false);
+  });
+
+  it('진행이 섞여 있어도 답글이 하나라도 살아 있으면 남는다', async () => {
+    const root = (await post('root with progress and a real reply')).json().id as string;
+    await postKind('보는 중', 'progress', root);
+    await post('a real reply', { threadRootId: root });
+
+    expect((await del(root)).statusCode).toBe(200);
+    const kept = (await list()).find((m) => m.id === root);
+    expect(kept).toBeDefined();
+    // 답글 수는 진행을 세지 않는다(#687) — 자리를 세운 것은 그 하나뿐이다.
+    expect(kept!.replyCount).toBe(1);
+  });
+
+  it('마지막 답글을 지우면 진행이 남아 있어도 머리가 함께 사라진다', async () => {
+    const root = (await post('root')).json().id as string;
+    await postKind('보는 중', 'progress', root);
+    const reply = (await post('only real reply', { threadRootId: root })).json().id as string;
+
+    await del(root);
+    expect((await list()).some((m) => m.id === root)).toBe(true);
+
+    // 진행 두 줄이 남아 있지만 답글은 없다 — 문을 세울 이유가 사라진다.
+    await del(reply);
+    expect((await list()).some((m) => m.id === root)).toBe(false);
+  });
+
+  /**
+   * 사라진 머리는 **결과가 다시 달리면 돌아온다.** 도는 턴은 지워진 스레드에도 계속
+   * 발화할 수 있으므로(진행만 남긴 그 턴이다) 이 경로가 실제로 생긴다 — 돌아오지 않으면
+   * 답은 도착했는데 채널에 머리가 없어 그 답이 어디에도 그려지지 않는다.
+   */
+  it('사라진 머리에 결과가 달리면 자리표시자가 돌아온다', async () => {
+    const root = (await post('root that comes back')).json().id as string;
+    await postKind('보는 중', 'progress', root);
+    await del(root);
+    expect((await list()).some((m) => m.id === root)).toBe(false);
+
+    await post('the turn finally answered', { threadRootId: root });
+    const back = (await list()).find((m) => m.id === root);
+    expect(back).toBeDefined();
+    expect(back!.deletedAt).not.toBeNull();
+    expect(back!.body).toBe('');
+    expect(back!.replyCount).toBe(1);
+    // 스레드를 열면 그 사이의 작업 내역도 함께 보인다 — 진행 행을 지우지는 않았다.
+    expect((await list(root)).map((m) => m.body)).toEqual(['', '보는 중', 'the turn finally answered']);
+  });
+
+  it('사라진 머리에 진행만 더 달려도 돌아오지 않는다', async () => {
+    const root = (await post('root that stays gone')).json().id as string;
+    await postKind('보는 중', 'progress', root);
+    await del(root);
+
+    await postKind('아직 보는 중', 'progress', root);
+    expect((await list()).some((m) => m.id === root)).toBe(false);
+  });
+
+  /**
+   * 돌아오는 것을 **이벤트로도** 알린다 — 다시 받아올 때까지 기다리면 그동안 답이 채널에
+   * 없다. 두 가지가 규칙이다:
+   *
+   * ① `message.created` 가 아니라 `message.updated` 다. 이 머리는 이미 있던 행이 다시
+   *    보이게 된 것이라, `created` 로 내면 몇 시간 전에 지운 말이 방금 온 말로 보인다.
+   * ② **답 뒤에** 나간다. 먼저 내면 화면에 머리가 생기고, 뒤이어 오는 `message.created`
+   *    가 답글 수를 하나 더 올린다(서버가 준 행에는 이 답이 이미 세어져 있다).
+   */
+  it('돌아온 머리는 답 뒤에 message.updated 로 나간다', async () => {
+    const root = (await post('root announced back')).json().id as string;
+    await postKind('보는 중', 'progress', root);
+    await del(root);
+
+    const seen: string[] = [];
+    const off = onEvent((e) => {
+      if (e.type === 'message.created' && e.message.threadRootId === root) seen.push('created:reply');
+      if (e.type === 'message.updated' && e.message.id === root) seen.push(`updated:root:${e.message.replyCount}`);
+    });
+    try {
+      await post('the answer', { threadRootId: root });
+    } finally {
+      off();
+    }
+    expect(seen).toEqual(['created:reply', 'updated:root:1']);
   });
 
   it('링크·검색에서는 여전히 없는 메시지다 — 자리표시자는 목록에만 있다', async () => {

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { MAX_MESSAGE_BODY_CHARS, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@murmur/shared';
-import { emitEvent } from '../events.js';
+import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
@@ -48,7 +48,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     const { message, notified, replayed } = posted;
     if (!replayed) {
       const audience = await audienceFor(pool, id);
-      emitEvent({ type: 'message.created', message, audience });
+      emitPosted(posted, audience);
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
       const urls = extractUrls(body.body);
       for (const url of urls) {

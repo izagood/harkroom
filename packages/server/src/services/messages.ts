@@ -34,7 +34,20 @@ export const lockChannelForSeq = (client: PoolClient, channelId: string): Promis
  * 실패를 확인하지 않고 `message` 를 만질 수 있다.
  */
 export type PostMessageResult =
-  | { message: MessageRow; notified: string[]; replayed: boolean; failure?: undefined }
+  | {
+    message: MessageRow; notified: string[]; replayed: boolean; failure?: undefined;
+    /**
+     * 이 게시로 **목록에 되돌아온 스레드 머리**(2026-09-09 후속). 지워진 머리는 답글로
+     * 세는 자식이 하나도 없으면 목록에서 빠지는데(`LIST_VISIBLE`), 그 스레드에 결과가
+     * 달리면 다시 조건을 만족한다. 그 사실을 화면에 알리지 않으면 답은 도착했는데
+     * 채널에 머리가 없어 **그 답이 어디에도 그려지지 않는다.**
+     *
+     * 낼 이벤트는 `message.created` 가 아니라 `message.updated` 이고, 이 답의
+     * `message.created` **뒤에** 나가야 한다 — 이유는 둘 다 `emitPosted` 에 적었다.
+     * 평소에는 `null` 이다(머리가 지워져 있지 않았거나, 이 말이 답글로 세지 않는 종류).
+     */
+    rootBack: MessageRow | null;
+  }
   | { failure: AttachFailure; message?: undefined };
 
 export interface PostMessageInput {
@@ -297,9 +310,26 @@ const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.threa
  *
  * 답글 자신은 이 예외를 못 받는다(`m.thread_root_id is null` 이 머리만 고른다):
  * 답글에는 매달릴 자식이 없으므로 자리표시자로 남길 이유가 없다.
+ *
+ * **자리를 남기는 기준은 `countsAsReply` 다**(2026-09-09 후속). 여기서 살아 있는 자식을
+ * 아무거나 세었더니, 접힌 진행 줄만 남은 머리가 `채팅이 삭제되었습니다` 자리표시자로
+ * 계속 서 있었다 — 눌러 들어가면 말풍선이 하나도 없고 `작업 중 · 13시간째` 상태 한 줄뿐이다
+ * (사용자 신고: *"답글이 아니라 접혀진 작업 내역이야 … 이럴때는 채팅 자체가 삭제되는게 맞아"*).
+ *
+ * 그 자리표시자가 존재하는 이유는 **살아 있는 답글로 들어갈 문**을 남기는 것 하나였다.
+ * 진행·대기는 답글이 아니므로(`shared::countsAsReply`) 들어갈 이유가 없고, 문만 남는다.
+ * 그러면 지운 사람이 볼 것은 "내가 지웠는데 안 지워진 것"뿐이다.
+ *
+ * 남은 진행 행을 지우지는 않는다. 그 스레드에 **결과가 다시 달리면** 머리가 돌아오고,
+ * 그때 작업 내역이 함께 보이는 것이 맞다 — 돌아오게 만드는 자리는 `postMessage` 다.
+ *
+ * `THREAD_STATS` 와 같은 목록을 두 번 적는 셈이다(SQL 은 그 함수를 부를 수 없다).
+ * **종류가 늘면 세 자리를 함께 고친다.**
  */
 const LIST_VISIBLE = `(m.deleted_at is null or (m.thread_root_id is null and exists (
-  select 1 from message r where r.thread_root_id = m.id and r.deleted_at is null
+  select 1 from message r
+   where r.thread_root_id = m.id and r.deleted_at is null
+     and r.kind not in ('progress', 'wake')
 )))`;
 
 /**
@@ -491,7 +521,8 @@ export async function postMessage(
       if (dup.rowCount) {
         const existing = await client.query(`select ${COLS} from message where id = $1`, [dup.rows[0].message_id]);
         await client.query('commit');
-        return { message: existing.rows[0], notified: [], replayed: true };
+        // 재생은 새로 생긴 것이 없다 — 되돌아온 머리도 없다(그때 이미 처리됐다).
+        return { message: existing.rows[0], notified: [], replayed: true, rootBack: null };
       }
     }
 
@@ -758,12 +789,29 @@ export async function postMessage(
      * 부름(`mention`)은 그대로 둔다. `progress` 안에 `@handle` 을 적었다면 그것은
      * 지목이고, 지목은 종류와 무관하게 닿아야 한다.
      */
+    /**
+     * 이 답이 **지워진 머리를 목록에 되돌리는가**(2026-09-09 후속). `LIST_VISIBLE` 이
+     * 자리표시자를 세우는 기준이 `countsAsReply` 로 좁아진 뒤로, 접힌 진행만 남은
+     * 머리는 목록에서 빠져 있다. 그 스레드에 결과가 달리면 조건이 다시 참이 되므로
+     * **화면에도 그 사실을 알려야 한다** — 안 알리면 답은 도착했는데 채널에 머리가 없어
+     * 그 답이 어디에도 그려지지 않는다(다시 받아올 때까지 조용히 사라진다).
+     *
+     * 판정을 여기서 다시 쓰지 않는다: 머리가 **지워져 있었다**는 사실만 기억해 두고,
+     * 목록에 남았는지는 커밋 뒤 `readListRow` 가 `LIST_VISIBLE` 에 그대로 물어본다
+     * (`deleteMessage` 의 `rootGone` 과 같은 방식이고, 같은 이유로 그렇게 한다).
+     *
+     * 지워져 있지 않았으면 아무 일도 하지 않는다 — 평범한 답글마다 왕복이 늘면 안 된다.
+     */
+    let deletedRoot: string | null = null;
     if (input.threadRootId && isReply) {
-      const root = await client.query(`select author_id from message where id = $1`, [input.threadRootId]);
+      const root = await client.query(
+        `select author_id, deleted_at from message where id = $1`, [input.threadRootId],
+      );
       const rootAuthor = root.rows[0]?.author_id;
       if (rootAuthor && rootAuthor !== input.authorId && !notified.has(rootAuthor)) {
         await insertInbox(client, rootAuthor, message.id, 'thread_reply', notified);
       }
+      if (root.rows[0]?.deleted_at) deletedRoot = input.threadRootId;
     }
 
     // DM 도 같은 기준이다(위 문단). 둘만 있는 방이라 진행 한 줄이 그대로 상대의
@@ -780,7 +828,21 @@ export async function postMessage(
     }
 
     await client.query('commit');
-    return { message, notified: [...notified], replayed: false };
+
+    /**
+     * 되돌아온 머리를 **돌려준다** — 여기서 직접 내지 않는다. 부른 쪽이 `message.created`
+     * 를 낸 **뒤에** 나가야 하기 때문이다(`emitPosted` 가 그 순서를 지킨다).
+     *
+     * 순서가 뒤집히면 답글 수가 하나 더 세어진다: 머리가 먼저 들어오면 화면에 그 행이
+     * 있게 되고, 뒤이어 오는 `message.created` 가 `bumpThreadCounts` 로 **또** 하나를
+     * 더한다(서버가 준 행에는 이 답이 이미 세어져 있다). 뒤에 오면 그 반대가 된다 —
+     * 머리가 없으니 bump 가 조용히 no-op 하고(`if (!parent) return`), 그다음 서버 행이
+     * 정확한 수로 자리를 세운다.
+     *
+     * 커밋 밖에서 읽는 것이 맞다: 트랜잭션 안에서 만들면 롤백된 게시의 행이 나갈 수 있다.
+     */
+    const rootBack = deletedRoot ? await readListRow(pool, input.channelId, deletedRoot) : null;
+    return { message, notified: [...notified], replayed: false, rootBack };
   } catch (err) {
     await client.query('rollback');
     throw err;

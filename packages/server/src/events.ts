@@ -53,6 +53,39 @@ export function emitEvent(e: WorkspaceEvent): void {
   bus.emit('event', e);
 }
 
+/**
+ * 게시 하나가 내는 이벤트를 **한 자리에서** 낸다: 만들어진 말과, 그 말 때문에 목록에
+ * 되돌아온 스레드 머리(`postMessage` 의 `rootBack`).
+ *
+ * 왜 함수로 묶었는가 — `postMessage` 를 부르는 자리가 여덟이고, 둘째 이벤트를 각자
+ * 내게 두면 언젠가 한 자리가 빠진다. 그 자리에서는 **에이전트의 답이 채널에 안 보인다**:
+ * 지워진 머리가 목록에 없는 채로 답만 도착하고, 머리가 없으니 그릴 자리가 없다.
+ *
+ * **순서가 규칙의 일부다.** 머리는 `message.created` **뒤에** 나간다. 먼저 내면 화면에
+ * 그 행이 생기고, 뒤이어 오는 `message.created` 가 `bumpThreadCounts` 로 답글 수를 하나
+ * 더 올린다 — 서버가 준 머리 행에는 이 답이 **이미 세어져 있다**. 뒤에 내면 bump 가
+ * 머리를 못 찾아 조용히 no-op 하고(`appStore.bumpThreadCounts` 의 `if (!parent) return`),
+ * 그다음 서버 행이 정확한 수로 자리를 세운다.
+ *
+ * **`message.updated` 인 것도 규칙의 일부다.** 이 머리는 이미 있던 행이 다시 보이게 된
+ * 것이지 새로 생긴 말이 아니다. `created` 로 내면 안 읽음이 오르고 알림이 뜬다 — 몇
+ * 시간 전에 지운 말이 방금 온 말처럼 보인다(`deleteMessage` 가 자리표시자에 `deleted`
+ * 대신 `updated` 를 쓰는 것과 같은 판단이다).
+ *
+ * 실패한 게시(`failure`)는 여기 오기 전에 부른 쪽이 응답으로 끝낸다 — 그래도 만들어진
+ * 말이 없으면 아무것도 내지 않는다. 이벤트를 내지 않는 것이 없는 메시지를 내는 것보다 낫다.
+ */
+export function emitPosted(
+  posted: { message?: MessageRow; rootBack?: MessageRow | null },
+  audience: 'all' | string[],
+): void {
+  if (!posted.message) return;
+  emitEvent({ type: 'message.created', message: posted.message, audience });
+  if (posted.rootBack) {
+    emitEvent({ type: 'message.updated', message: posted.rootBack, audience });
+  }
+}
+
 export function onEvent(fn: (e: WorkspaceEvent) => void): () => void {
   bus.on('event', fn);
   return () => bus.off('event', fn);

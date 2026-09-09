@@ -21,7 +21,7 @@ import {
 // 정규식을 여기 리터럴로 두지 않고 shared 의 상수를 쓴다.
 import { CHANNEL_NAME_PATTERN, MAX_MESSAGE_BODY_CHARS, NOTIFY_LEVELS, SYSTEM_ACCOUNT_PLACEHOLDER } from '@murmur/shared';
 import { recordAudit } from '../audit.js';
-import { emitEvent } from '../events.js';
+import { emitEvent, emitPosted } from '../events.js';
 import { postMessage } from '../services/messages.js';
 
 /**
@@ -284,9 +284,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     });
     // 메시지 이벤트의 수신자는 메시지 층의 `audienceFor` 다 — 위 목록 이벤트의
     // `channelListAudience` 를 여기 쓰면 private 채널의 본문이 비멤버 admin 에게 흘러간다.
-    if (added.message) {
-      emitEvent({ type: 'message.created', message: added.message, audience: await audienceFor(pool, id) });
-    }
+    if (added.message) emitPosted(added, await audienceFor(pool, id));
     return { members: await listChannelMembers(pool, id) };
   });
 
@@ -392,9 +390,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
           ...memberSystemMessage(isSelf ? 'left' : 'removed', accountId),
         });
         // 초대 쪽과 같이 메시지 층의 `audienceFor` 를 쓴다.
-        if (posted.message) {
-          emitEvent({ type: 'message.created', message: posted.message, audience: await audienceFor(pool, id) });
-        }
+        if (posted.message) emitPosted(posted, await audienceFor(pool, id));
       }
     }
     return { members: await listChannelMembers(pool, id) };
