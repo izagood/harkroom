@@ -71,6 +71,22 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
 }) {
   const t = useT();
   const [members, setMembers] = useState<AgentTeamMemberRow[] | null>(null);
+  /**
+   * 팀장. **`team.leadAccountId` 를 읽지 않고 `GET /teams/:id` 의 응답에서 받는다.**
+   *
+   * 두 가지 이유가 같은 방향을 가리킨다.
+   *
+   * ① 호출부의 `team` 은 갱신되지 않는 스냅샷이다 — `AgentsSettings` 의 `onChanged` 가
+   *    목록만 다시 읽고 `selectedTeam` 은 그대로 둔다(그 주석: *"상세의 제목은 다시 열
+   *    때 맞춰진다"*). 그 값을 그리면 팀장을 지정해도 화면은 옛 팀장을 그린다.
+   * ② 팀장은 **명단의 한 자리**다(046 의 FK 가 그것을 강제한다). 명단은 이 왕복에서만
+   *    오므로, 팀장을 다른 출처에서 읽으면 둘이 어긋나는 순간이 생긴다 — 명단에 없는
+   *    계정에 배지가 서거나, 팀장인 줄에 배지가 없다.
+   *
+   * 그래서 왕복을 시작할 때 `null` 로 되돌린다. 그 사이가 화면에 보이지 않는 이유는
+   * 배지가 **팀원 줄 안에** 있기 때문이다 — 줄 자체가 `members` 를 기다린다.
+   */
+  const [lead, setLead] = useState<string | null>(null);
   const [editName, setEditName] = useState(team.name);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -95,10 +111,17 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
     let live = true;
     setMembers(null);
     setEditName(team.name);
+    // 다른 팀을 골라 이 컴포넌트가 재사용될 때 앞 팀의 팀장이 남아 있으면 안 된다 —
+    // `members` 를 `null` 로 되돌리는 것과 같은 이유다.
+    setLead(null);
     setConfirmDelete(false);
     setError(null);
     void getController().getTeam(team.id)
-      .then(({ members: m }) => { if (live) setMembers(m); })
+      .then(({ team: row, members: m }) => {
+        if (!live) return;
+        setMembers(m);
+        setLead(row.leadAccountId);
+      })
       // 명단을 못 받은 것과 명단이 빈 것은 다른 사실이다 — `null` 로 남겨 두면 아래가
       // "불러오는 중"으로 그리고, 사유는 이 줄이 말한다(`HandleGroupsSettings` 와 같은 짝).
       .catch(() => { if (live) setError(t('agents.teams.detailFailed')); });
@@ -131,6 +154,25 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
       onChanged({ deleted: true });
     } catch (e) {
       setError(e instanceof Error ? e.message : t('agents.teams.deleteFailed'));
+    } finally { setBusy(false); }
+  };
+
+  /**
+   * 팀장을 세우거나 내린다. **응답의 행에서 팀장을 읽는다** — 누른 값을 그대로 믿고
+   * 그리면 서버가 거절한 경우(팀원이 아니다 · 팀이 사라졌다)에도 화면만 바뀐다.
+   *
+   * `onChanged` 를 함께 부르는 이유는 격자다. 카드가 팀장을 그리므로 목록의 행도 새것이
+   * 되어야 한다(팀원 추가가 `memberCount` 때문에 그렇게 하는 것과 같은 자리).
+   */
+  const changeLead = async (accountId: string | null) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const row = await getController().setTeamLead(team.id, accountId);
+      setLead(row.leadAccountId);
+      onChanged({ deleted: false });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('agents.teams.leadFailed'));
     } finally { setBusy(false); }
   };
 
@@ -239,6 +281,16 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
         <div className="rounded border border-border p-3">
           <div className="text-meta font-medium text-fg-muted">{t('agents.teams.membersHeading')}</div>
           {/*
+            **팀장의 뜻을 여기서 한 번 말한다.** 배지만 두면 그것이 무엇을 바꾸는지 아무도
+            모르고, 지금은 실제로 **아무것도 바꾸지 않는다** — 팀 멘션은 여전히 명단
+            전체를 깨운다(`services/messages.ts`). 그 사실을 적지 않으면 팀장을 세운 사람은
+            창구가 하나로 좁혀졌다고 믿고 팀을 부른다. 라우팅이 이 값을 읽는 날 이 문장이
+            바뀌는 자리다.
+          */}
+          <p data-testid="team-lead-note" className="mt-1 text-meta text-fg-subtle">
+            {t('agents.teams.leadNote')}
+          </p>
+          {/*
             ## 팀원이 **얼굴**이다 (문서 4단계)
 
             앞 화면의 진단: *"팀원이 글자다 — `@handle` 텍스트 줄. 옆 화면은 얼굴 그리드인데
@@ -280,6 +332,47 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
                   @{m.handle}
                   {m.disabled && <span className="ml-1 text-warning">{t('agents.teams.memberDisabled')}</span>}
                 </span>
+                {/*
+                  팀장은 **명단 안에서** 표시한다 — 위에 따로 "팀장: @forge" 줄을 두지
+                  않는 이유: 팀장은 팀원 중 하나이고(046 의 FK 가 그것을 강제한다), 별도
+                  줄로 뽑으면 같은 계정이 화면에 두 번 서서 어느 쪽이 정본인지 흐려진다.
+                  세우고 내리는 조작도 그 사람의 줄에 있는 것이 자연스럽다.
+
+                  배지는 admin 이 아니어도 보인다 — 팀장이 누구인가는 팀을 부르는 사람이
+                  알아야 하는 사실이고(그 이름 하나가 창구다), 바꾸는 것만 admin 이다
+                  (`memberReadOnly` 와 같은 갈림).
+                */}
+                {lead === m.accountId && (
+                  <span
+                    data-testid={`team-lead-badge-${m.handle}`}
+                    className="shrink-0 rounded bg-accent-surface px-1.5 py-0.5 text-meta font-medium text-accent"
+                  >
+                    {t('agents.teams.lead')}
+                  </span>
+                )}
+                {isAdmin && (
+                  lead === m.accountId ? (
+                    <button
+                      data-testid={`team-lead-clear-${m.handle}`}
+                      aria-label={t('agents.teams.leadClearAction', { handle: m.handle })}
+                      className="shrink-0 text-meta text-fg-muted hover:underline"
+                      disabled={busy}
+                      onClick={() => void changeLead(null)}
+                    >
+                      {t('agents.teams.leadClear')}
+                    </button>
+                  ) : (
+                    <button
+                      data-testid={`team-lead-set-${m.handle}`}
+                      aria-label={t('agents.teams.leadSetAction', { handle: m.handle })}
+                      className="shrink-0 text-meta text-fg-muted hover:underline"
+                      disabled={busy}
+                      onClick={() => void changeLead(m.accountId)}
+                    >
+                      {t('agents.teams.leadSet')}
+                    </button>
+                  )
+                )}
                 {isAdmin && (
                   <button
                     aria-label={t('agents.teams.memberRemoveAction', { handle: m.handle })}

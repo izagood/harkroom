@@ -35,8 +35,10 @@ import { acc, accountsResult, chan, fakeApi, fakeWsFactory } from './helpers/fak
 // 정했다 — 그 수가 조용한 실패 판정의 유일한 출처다). 인자로 받아 기본값을 두면 이 파일의
 // 모든 호출부가 그것을 적어야 하므로, 여기서는 0 으로 고정한다. **다만 카드가 그 수를
 // 그리므로**(`팀 · N명`) 그것을 재는 시험만 인자로 받는다.
-const team = (id: string, name: string, memberCount = 0): AgentTeamRow =>
-  ({ id, name, createdBy: 'u1', createdAt: '2024-01-01T00:00:00.000Z', memberCount });
+const team = (
+  id: string, name: string, memberCount = 0, leadAccountId: string | null = null,
+): AgentTeamRow =>
+  ({ id, name, createdBy: 'u1', createdAt: '2024-01-01T00:00:00.000Z', memberCount, leadAccountId });
 
 const member = (accountId: string, handle: string, disabled = false): AgentTeamMemberRow =>
   ({ accountId, handle, disabled });
@@ -443,6 +445,72 @@ describe('팀 설정 화면 (#172)', () => {
     render(<HandleGroupsSettings />);
     expect(screen.getByText(/에이전트를 묶으려면 설정 › Agents/)).toBeTruthy();
   });
+  /**
+   * 팀장 지정(046).
+   *
+   * **왜 배지가 명단 안인가**: 팀장은 팀원 중 하나이고 그 규칙을 데이터 층이 지킨다
+   * (복합 FK). 위에 "팀장: @bot" 줄을 따로 두면 같은 계정이 화면에 두 번 서서 어느
+   * 쪽이 정본인지 흐려진다 — 그래서 이 시험은 **그 사람의 줄에서** 배지를 찾는다.
+   *
+   * 되돌려 RED: `TeamDetail` 이 `team.leadAccountId` 를 그대로 그리게 하면(로컬 상태를
+   * 없애면) 6번이 빨개진다. 호출부의 `selectedTeam` 은 갱신되지 않는 스냅샷이라
+   * (`AgentsSettings` 의 `onChanged` 주석) 누른 뒤에도 옛 팀장이 남는다.
+   */
+  it('5. 팀장 배지가 그 팀원의 줄에 선다', async () => {
+    mountTeams({
+      team: vi.fn(async () => ({
+        team: team('t1', 'ops', 2, 'a2'),
+        members: [member('a1', 'bot'), member('a2', 'helper')],
+      })),
+    });
+    await openTeam();
+
+    await waitFor(() => expect(screen.getByTestId('team-member-helper')).toBeTruthy());
+    expect(within(screen.getByTestId('team-member-helper')).getByText('팀장')).toBeTruthy();
+    // 팀장이 아닌 줄에는 배지가 없다 — 있으면 창구가 둘로 읽힌다.
+    expect(within(screen.getByTestId('team-member-bot')).queryByText('팀장')).toBeNull();
+    // 팀장인 줄에는 세우는 버튼이 아니라 내리는 버튼이 있다.
+    expect(screen.queryByTestId('team-lead-set-helper')).toBeNull();
+    expect(screen.getByTestId('team-lead-clear-helper')).toBeTruthy();
+  });
+
+  it('6. 팀장으로 지정하면 라우트를 부르고 배지가 그 줄로 옮긴다', async () => {
+    const setTeamLead = vi.fn(async () => team('t1', 'ops', 2, 'a1'));
+    mountTeams({
+      setTeamLead,
+      team: vi.fn(async () => ({
+        team: team('t1', 'ops', 2),
+        members: [member('a1', 'bot'), member('a2', 'helper')],
+      })),
+    });
+    await openTeam();
+
+    await waitFor(() => expect(screen.getByTestId('team-lead-set-bot')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('team-lead-set-bot'));
+
+    await waitFor(() => expect(setTeamLead).toHaveBeenCalledWith('t1', 'a1'));
+    // **응답의 행에서 읽는다** — 누른 값을 그대로 믿으면 서버가 거절해도 화면만 바뀐다.
+    await waitFor(() => expect(within(screen.getByTestId('team-member-bot')).getByText('팀장')).toBeTruthy());
+  });
+
+  it('7. 해제는 null 을 싣는다 — 같은 한 값의 두 상태다', async () => {
+    const setTeamLead = vi.fn(async () => team('t1', 'ops', 2));
+    mountTeams({
+      setTeamLead,
+      team: vi.fn(async () => ({
+        team: team('t1', 'ops', 2, 'a1'),
+        members: [member('a1', 'bot')],
+      })),
+    });
+    await openTeam();
+
+    await waitFor(() => expect(screen.getByTestId('team-lead-clear-bot')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('team-lead-clear-bot'));
+
+    await waitFor(() => expect(setTeamLead).toHaveBeenCalledWith('t1', null));
+    await waitFor(() => expect(screen.getByTestId('team-lead-set-bot')).toBeTruthy());
+  });
+
 });
 
 describe('팀 설정 화면 — 비-admin (#172)', () => {
@@ -462,6 +530,23 @@ describe('팀 설정 화면 — 비-admin (#172)', () => {
     expect(screen.queryByLabelText('팀원 추가')).toBeNull();
     // 그래도 **목록은 본다**(비-admin 이 목록을 보는 경로가 스토어인 이유).
     expect(screen.getByTestId('team-member-bot')).toBeTruthy();
+  });
+
+  /**
+   * 팀장은 **읽기와 쓰기가 갈린다.** 누가 팀장인가는 팀을 부르는 사람이 알아야 하는
+   * 사실이므로(그 이름 하나가 창구다) 배지는 비-admin 에게도 보이고, 세우고 내리는 것만
+   * admin 이다 — 팀원 명단이 같은 갈림을 이미 쓴다(`memberReadOnly`).
+   */
+  it('9. 비-admin 은 팀장을 볼 수 있지만 바꿀 수 없다', async () => {
+    mountTeams({
+      team: vi.fn(async () => ({ team: team('t1', 'ops', 1, 'a1'), members: [member('a1', 'bot')] })),
+    });
+    await openTeam();
+
+    await waitFor(() => expect(screen.getByTestId('team-member-bot')).toBeTruthy());
+    expect(within(screen.getByTestId('team-member-bot')).getByText('팀장')).toBeTruthy();
+    expect(screen.queryByTestId('team-lead-set-bot')).toBeNull();
+    expect(screen.queryByTestId('team-lead-clear-bot')).toBeNull();
   });
 });
 

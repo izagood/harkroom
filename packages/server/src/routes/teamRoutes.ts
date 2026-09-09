@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { HANDLE_PATTERN } from '@murmur/shared';
 import {
   listTeams, getTeam, getTeamByName, createTeam, updateTeamName, deleteTeam,
-  listTeamMembers, addAgentToTeam, removeAgentFromTeam, addTeamToChannel,
+  listTeamMembers, addAgentToTeam, removeAgentFromTeam, addTeamToChannel, setTeamLead,
 } from '../services/teams.js';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
@@ -107,6 +107,56 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such team' } });
     }
     return { team, members: await listTeamMembers(pool, id) };
+  });
+
+  /**
+   * 팀장을 지정한다(`accountId: null` 이면 해제).
+   *
+   * **`PATCH /teams/:id` 에 얹지 않는다.** 그 라우트는 `{ name }` 을 필수로 받아 이름
+   * 하나만 다루고, 거기에 팀장을 더하면 두 필드가 모두 옵셔널이 되어 "무엇을 바꾸려는
+   * 요청인가"가 본문 모양에 따라 갈린다 — 빈 본문이 성공하고, 이름 검증이 팀장만 바꾸는
+   * 요청에도 걸린다. 팀원 라우트가 이미 `/:id/members/:accountId` 로 갈려 있는 것과 같은
+   * 갈림이다.
+   *
+   * **해제를 별도 `DELETE` 로 두지 않는다** — 지정과 해제는 같은 한 값(`lead_account_id`)의
+   * 두 상태이고, 두 라우트로 가르면 화면이 "지금 값이 무엇인가"에 따라 메서드를 골라야 한다.
+   * `null` 을 실을 수 있는 `PUT` 하나가 그 판단을 없앤다.
+   *
+   * `requireAdmin` 인 이유: 팀 구성을 정하는 것은 admin 이고(팀원 추가·제거와 같은 게이트),
+   * 팀장은 그 구성의 일부다.
+   */
+  app.put('/teams/:id/lead', { preHandler: app.requireAdmin }, async (req, reply) => {
+    const { id } = teamParam.parse(req.params);
+    // `.nullable()` 이지 `.optional()` 이 아니다 — 빠뜨린 본문을 '해제'로 읽으면 오타 하나가
+    // 팀장을 조용히 지운다. 해제하려는 쪽은 `null` 을 **적어야** 한다.
+    const { accountId } = z.object({ accountId: z.string().uuid().nullable() }).parse(req.body);
+
+    const result = await setTeamLead(pool, id, accountId);
+    if (!result.ok) {
+      if (result.reason === 'not_found') {
+        return reply.code(404).send({ error: { code: 'not_found', message: 'no such team' } });
+      }
+      // 팀에 들지 않은 계정을 팀장으로 앉힐 수 없다. 사유를 갈라 말하는 것이 요점이다 —
+      // 화면은 "먼저 팀에 넣어라"를 말할 수 있어야 하고, 그것은 404 로는 표현되지 않는다.
+      return reply.code(400).send({
+        error: { code: 'not_a_member', message: 'the lead must be a member of this team' },
+      });
+    }
+
+    // 감사에는 **handle** 을 남긴다 — id 만 남기면 나중에 그 계정이 사라졌을 때(또는
+    // 이름이 바뀌었을 때) 누구를 팀장으로 세웠는지 읽을 수 없다(`team.member.added` 와
+    // 같은 판단). 해제는 `null` 이다.
+    const lead = accountId
+      ? await pool.query(`select handle from account where id = $1`, [accountId])
+      : null;
+    await recordAudit(pool, {
+      action: 'team.lead.set', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { handle: lead?.rows[0]?.handle ?? null },
+    }, req);
+    // 팀장이 바뀌면 팀 행이 바뀐다 — 격자·상세가 그 값을 그리므로 알리지 않으면 다른
+    // 창에는 옛 팀장이 남는다(`team.updated` 와 같은 이유).
+    emitEvent({ type: 'agent_team.changed', teamId: id, audience: 'all' });
+    return result.team;
   });
 
   app.put('/teams/:id/members/:accountId', { preHandler: app.requireAdmin }, async (req, reply) => {

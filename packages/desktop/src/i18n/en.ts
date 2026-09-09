@@ -1108,6 +1108,20 @@ export const en = {
   /** 팀 이름도 handle 문법이다 — 서버가 같은 상수로 검사한다(`HANDLE_PATTERN`). */
   'agents.teams.invalidName':
     'Names take letters, digits, hyphens and underscores — 2 to 32 characters',
+  /**
+   * 팀장의 뜻 — **지금 무엇을 바꾸는가**를 정직하게 적는다. 지정만 열렸고 멘션 라우팅은
+   * 아직 명단 전체를 깨우므로(`services/messages.ts`), "창구가 하나로 좁혀졌다"고 읽히면
+   * 사람은 팀을 부르고 나서야 그것이 아님을 안다.
+   */
+  'agents.teams.lead': 'Lead',
+  'agents.teams.leadClear': 'Unset',
+  'agents.teams.leadClearAction': 'Unset the lead: {handle}',
+  'agents.teams.leadFailed': 'The lead was not changed',
+  'agents.teams.leadNote':
+    'A lead is the one member who speaks for the team. Calling @team still wakes every member — '
+    + 'the lead is recorded here, not yet used for routing.',
+  'agents.teams.leadSet': 'Make lead',
+  'agents.teams.leadSetAction': 'Make the lead: {handle}',
   'agents.teams.listFailed': 'The team list did not arrive',
   'agents.teams.memberAddFailed': 'The agent was not added to the team',
   /**

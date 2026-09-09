@@ -759,6 +759,17 @@ export class ApiClient {
     return this.req('DELETE', `/teams/${id}`);
   }
 
+  /**
+   * 팀장을 지정한다. `null` 이면 해제 — 두 조작이 한 라우트인 이유는 서버 쪽 주석에 있다
+   * (같은 한 값의 두 상태다).
+   *
+   * 갱신된 팀 행을 그대로 돌려준다. 호출부가 목록을 다시 읽지 않고도 새 팀장을 그릴 수
+   * 있어야 한다 — `updateTeam` 과 같은 모양이다.
+   */
+  setTeamLead(id: string, accountId: string | null): Promise<AgentTeamRow> {
+    return this.req('PUT', `/teams/${id}/lead`, { accountId });
+  }
+
   async team(id: string): Promise<{ team: AgentTeamRow; members: AgentTeamMemberRow[] }> {
     return this.req('GET', `/teams/${id}`);
   }

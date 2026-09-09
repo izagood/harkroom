@@ -297,4 +297,126 @@ describe('#172 에이전트 팀', () => {
       expect(members).toHaveLength(0);
     });
   });
+  /**
+   * 팀장 지정(046). 여기서 지키는 것은 **"팀장은 팀원이다"** 하나다 — 그 사실이 깨지면
+   * 멘션 라우팅을 켜는 날 팀 멘션이 명단에 없는 에이전트를 깨우고, 부른 사람은 그것을
+   * 팀 화면에서 확인할 수 없다.
+   *
+   * 그래서 4번이 이 묶음의 중심이다: 규칙을 라우트가 아니라 **데이터 층**이 지키는지
+   * (`on delete set null (lead_account_id)`) 를 잰다. 라우트 검사만 있으면 팀원 제거라는
+   * 다른 문을 통해 그 규칙이 깨진다.
+   */
+  describe('팀장 지정', () => {
+    const makeTeam = async (name: string): Promise<string> => {
+      const create = await app.inject({
+        method: 'POST', url: '/teams', headers: auth(adminToken), payload: { name },
+      });
+      return create.json().id as string;
+    };
+    const addMember = (teamId: string, accountId: string) => app.inject({
+      method: 'PUT', url: `/teams/${teamId}/members/${accountId}`, headers: auth(adminToken),
+    });
+    const setLead = (teamId: string, accountId: string | null) => app.inject({
+      method: 'PUT', url: `/teams/${teamId}/lead`, headers: auth(adminToken), payload: { accountId },
+    });
+
+    it('1. 갓 만든 팀은 팀장이 없다 — 지정은 선택이다', async () => {
+      const teamId = await makeTeam('leadfresh');
+      const res = await app.inject({ method: 'GET', url: `/teams/${teamId}`, headers: auth(adminToken) });
+      expect(res.json().team.leadAccountId).toBeNull();
+    });
+
+    it('2. 팀원을 팀장으로 세운다', async () => {
+      const teamId = await makeTeam('leadset');
+      await addMember(teamId, agent1Id);
+      const res = await setLead(teamId, agent1Id);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().leadAccountId).toBe(agent1Id);
+      // 목록에도 실린다 — 카드 격자가 그 값을 그린다.
+      const list = await app.inject({ method: 'GET', url: '/teams', headers: auth(adminToken) });
+      const row = (list.json().teams as { id: string; leadAccountId: string | null }[])
+        .find((r) => r.id === teamId);
+      expect(row?.leadAccountId).toBe(agent1Id);
+    });
+
+    it('3. 팀원이 아닌 계정은 400 not_a_member', async () => {
+      const teamId = await makeTeam('leadstranger');
+      await addMember(teamId, agent1Id);
+      const res = await setLead(teamId, agent2Id);
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('not_a_member');
+      // 거절된 요청이 팀장을 건드리지 않았다.
+      const after = await app.inject({ method: 'GET', url: `/teams/${teamId}`, headers: auth(adminToken) });
+      expect(after.json().team.leadAccountId).toBeNull();
+    });
+
+    it('4. 팀장을 팀에서 빼면 팀장 자리가 함께 비워진다', async () => {
+      const teamId = await makeTeam('leadremoved');
+      await addMember(teamId, agent1Id);
+      await setLead(teamId, agent1Id);
+
+      const removed = await app.inject({
+        method: 'DELETE', url: `/teams/${teamId}/members/${agent1Id}`, headers: auth(adminToken),
+      });
+      expect(removed.statusCode).toBe(200);
+
+      const after = await app.inject({ method: 'GET', url: `/teams/${teamId}`, headers: auth(adminToken) });
+      expect(after.json().team.leadAccountId).toBeNull();
+    });
+
+    it('5. null 을 실으면 팀장이 해제된다', async () => {
+      const teamId = await makeTeam('leadclear');
+      await addMember(teamId, agent1Id);
+      await setLead(teamId, agent1Id);
+      const res = await setLead(teamId, null);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().leadAccountId).toBeNull();
+    });
+
+    it('6. 비활성 팀원도 팀장이 될 수 있다 — 지정은 운영자의 의도 기록이다', async () => {
+      const teamId = await makeTeam('leaddisabled');
+      await addMember(teamId, disabledAgentId);
+      const res = await setLead(teamId, disabledAgentId);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().leadAccountId).toBe(disabledAgentId);
+    });
+
+    it('7. 없는 팀은 404', async () => {
+      const res = await setLead('00000000-0000-0000-0000-000000000000', agent1Id);
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe('not_found');
+    });
+
+    it('8. admin 이 아니면 403', async () => {
+      const teamId = await makeTeam('leadgate');
+      await addMember(teamId, agent1Id);
+      const res = await app.inject({
+        method: 'PUT', url: `/teams/${teamId}/lead`, headers: auth(userToken),
+        payload: { accountId: agent1Id },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('9. accountId 를 빠뜨린 본문은 거절된다 — 오타가 팀장을 지우지 않는다', async () => {
+      const teamId = await makeTeam('leadmissing');
+      await addMember(teamId, agent1Id);
+      await setLead(teamId, agent1Id);
+      const res = await app.inject({
+        method: 'PUT', url: `/teams/${teamId}/lead`, headers: auth(adminToken), payload: {},
+      });
+      expect(res.statusCode).toBeGreaterThanOrEqual(400);
+      const after = await app.inject({ method: 'GET', url: `/teams/${teamId}`, headers: auth(adminToken) });
+      expect(after.json().team.leadAccountId).toBe(agent1Id);
+    });
+
+    it('10. 팀장이 있는 팀도 지울 수 있다 — cascade 가 새 제약에 걸리지 않는다', async () => {
+      const teamId = await makeTeam('leaddelete');
+      await addMember(teamId, agent1Id);
+      await setLead(teamId, agent1Id);
+      const res = await app.inject({
+        method: 'DELETE', url: `/teams/${teamId}`, headers: auth(adminToken),
+      });
+      expect(res.statusCode).toBe(204);
+    });
+  });
 });
