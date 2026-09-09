@@ -28,6 +28,13 @@ import { useT } from '../i18n/useT';
 const BODY_COUNT_FROM = Math.floor(MAX_MESSAGE_BODY_CHARS * 0.9);
 
 /**
+ * 고정이 없는 자리가 읽는 빈 목록. **모듈 상수인 것이 요점이다** — 읽는 자리에서 `?? []`
+ * 를 적으면 렌더마다 새 배열이 나고, 그것을 의존에 둔 `useMemo` 가 매 렌더 다시 돈다
+ * (`appStore.ts::NO_TEAMS` 와 같은 근거).
+ */
+const NO_STICKY: string[] = [];
+
+/**
  * 이만큼 긴 글을 붙여넣으면 **파일로 넘길 길을 제안한다.**
  *
  * 상한(`MAX_MESSAGE_BODY_CHARS`)이 아니라 그보다 훨씬 앞인 이유: 상한은 서버가 받아 주는
@@ -245,7 +252,21 @@ export function Composer({
   const myHandle = useActiveStore((s) => s.me?.handle?.toLowerCase() ?? null);
   const [query, setQuery] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
-  const [stickyByScope, setStickyByScope] = useState<Record<string, string[]>>({});
+  /**
+   * 고정 멘션은 **초안과 같은 자리에 산다**(#706, `appStore.ts::stickyMentions`). 지역
+   * state 였을 때는 스레드 패널이 언마운트되는 것만으로 사라졌다 — 다른 채널을 한 번 누르면
+   * `threadRootId` 가 `null` 이 되고 패널이 통째로 빠진다(`Workspace.tsx`). 초안은 스토어에
+   * 남아 돌아오므로 사람은 글은 그대로인데 칩만 없는 입력창을 보고, 그 상태로 Enter 를 누르면
+   * 아무도 깨지 않는다.
+   *
+   * 저장된 것(raw)과 그리는 것(`sticky`)을 갈라 둔다: 걸러내기는 화면과 접두에만 걸고,
+   * **쓰기는 raw 를 기준으로** 한다(`choose`·`drop`·전송). 걸러진 목록으로 되쓰면 계정
+   * 목록이 아직 안 온 순간에 보낸 한 줄이 고정을 전부 지운다.
+   */
+  const stickyRaw = useActiveStore((s) => s.stickyMentions[scopeKey]) ?? NO_STICKY;
+  const setSticky = (handles: string[]): void => {
+    useActiveStore.getState().setStickyMentions(scopeKey, handles);
+  };
   /**
    * **이번 메시지에서만** 뺀 자동 멘션(#173). 칩의 × 는 설정을 지우지 않는다 — 설정은 admin 의
    * 것이고, 사람이 매번 필요한 것은 "이 한 줄은 에이전트를 부르지 않고 쓰기"다. 보내면 비운다:
@@ -456,8 +477,8 @@ export function Composer({
   // 자동 멘션인 handle 은 고정에서 뺀다 — 같은 상대에 칩이 둘 서면 × 하나로 어느 쪽이
   // 빠지는지 알 수 없다. 자동 칩이 그 자리를 대신한다.
   const sticky = useMemo(
-    () => (stickyByScope[scopeKey] ?? []).filter((h) => known.has(h) && !autoHandles.includes(h)),
-    [stickyByScope, scopeKey, known, autoHandles],
+    () => stickyRaw.filter((h) => known.has(h) && !autoHandles.includes(h)),
+    [stickyRaw, known, autoHandles],
   );
 
   /**
@@ -680,14 +701,15 @@ export function Composer({
   /** 목록에서 하나 고른다. @ 버튼으로 연 목록은 초안을 건드리지 않고 곧바로 고정한다. */
   const choose = (handle: string) => {
     if (!picking) return pick(handle);
-    setStickyByScope((prev) => ({ ...prev, [scopeKey]: [...sticky, handle.toLowerCase()] }));
+    const picked = handle.toLowerCase();
+    if (!stickyRaw.includes(picked)) setSticky([...stickyRaw, picked]);
     setPicking(false);
     setActive(0);
     ref.current?.focus();
   };
 
   const drop = (handle: string) => {
-    setStickyByScope((prev) => ({ ...prev, [scopeKey]: sticky.filter((h) => h !== handle) }));
+    setSticky(stickyRaw.filter((h) => h !== handle));
     ref.current?.focus();
   };
 
@@ -905,7 +927,7 @@ export function Composer({
     try { getController().notifyTyping(false); } catch { /* 위와 같은 이유 */ }
     // 이번에 부른 상대는 다음 줄부터 고정이다. 한 번 부른 뒤 매번 @ 를 다시 치게 하면
     // 사용자는 잊어버리고, 잊으면 에이전트는 깨어나지 않는다.
-    setStickyByScope((prev) => ({ ...prev, [scopeKey]: keepMentioned(sticky, typed, known) }));
+    setSticky(keepMentioned(stickyRaw, typed, known));
     // 이번만 뺀 자동 멘션은 이 메시지로 끝이다 — 다음 줄에는 다시 붙는다(#173).
     if (skippedAuto.length) setSkippedAutoByScope((prev) => ({ ...prev, [scopeKey]: [] }));
 

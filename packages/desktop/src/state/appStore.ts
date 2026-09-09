@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { draftsStorage } from '../lib/prefs';
+import { draftsStorage, stickyMentionsStorage } from '../lib/prefs';
 import type { AccountStatus, AccountView, AgentTeamRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus } from '@murmur/shared';
 import type { ObservedRunner, RunnerState } from '../lib/runnerLauncher';
 import type { NotifiedSummary } from '../lib/notified';
@@ -139,6 +139,20 @@ export interface AppState {
    * 설정과 달리 사용자가 쓴 문장 전체이므로 로그아웃 시 반드시 삭제한다.
    */
   drafts: Record<string, string>;
+  /**
+   * 스코프별 **멘션 고정**(#706). 키는 초안과 같은 scopeKey 다 — 같은 입력창의 두 반쪽이므로
+   * 수명도 같아야 한다.
+   *
+   * 컴포저의 지역 state 가 아닌 이유가 이 필드의 존재 이유다: 스레드 패널은 조건부 렌더라
+   * (`Workspace.tsx` 의 `{threadRootId && <ThreadPanel/>}`) 다른 채널을 한 번 누르면
+   * 언마운트된다. 지역 state 에 두면 그때 고정이 사라지는데 초안은 여기 남아 돌아오므로,
+   * 사람은 칩 없는 입력창에 대고 "아직 그 에이전트를 부르는 중"이라고 믿는다.
+   *
+   * 값은 소문자 handle 목록이고 **부른 순서를 지킨다**(`lib/mention.ts::withStickyMentions`).
+   * 걸러내기(사라진 계정·자동 멘션과 겹치는 것)는 읽는 자리에서 한다 — 저장된 것은 사람이
+   * 고정한 사실 그대로다.
+   */
+  stickyMentions: Record<string, string[]>;
   /** 뒤로/앞으로 탐색용 이력 스택. 채널·스레드만 담고 스크롤 위치는 담지 않는다.
    * 뒤로/앞으로 이동 시에는 push 하지 않는다 — 그렇게 하면 뒤로 갈 때마다 스택이 자라
    * 영원히 빠져나오지 못한다. openChannel/openThread 에서만 새 항목을 밀어 넣는다.
@@ -267,6 +281,12 @@ export interface AppState {
   setDraft(scopeKey: string, draft: string): void;
   /** 기동 시 보관소에서 초안을 읽어 온다. */
   hydrateDrafts(): void;
+  /** 그 자리의 멘션 고정을 갈아 끼운다. 빈 배열이면 키를 지운다. */
+  setStickyMentions(scopeKey: string, handles: string[]): void;
+  /** 로그아웃 시 보관된 고정까지 비운다(`clearDrafts` 와 같은 이유). */
+  clearStickyMentions(): void;
+  /** 기동 시 보관소에서 고정을 읽어 온다. */
+  hydrateStickyMentions(): void;
   /** 새 채널·스레드를 열 때 이력에 추가한다. 뒤로/앞로 이동에서는 부른다. */
   pushHistory(entry: HistoryEntry): void;
   /** 이력에서 뒤로 간다. 이미 첫 항목이면 아무 일도 하지 않는다. */
@@ -289,7 +309,7 @@ const initial = {
   me: null, accounts: {}, groups: [], teams: null, channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], terminalTarget: null, leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
-  channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {},
+  channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {}, stickyMentions: {},
   history: [], historyIndex: -1, notice: null, notifiedGaps: {}, projectionBannerDismissed: null,
   highlightedMessageId: null,
   runnerStates: {}, daemonRunners: {}, appVersion: null, savedIds: [], savedCount: 0,
@@ -422,6 +442,20 @@ export function createAppStore() {
       draftsStorage.save(next);
     },
     hydrateDrafts: () => set({ drafts: draftsStorage.load() }),
+    /**
+     * 초안과 **같은 규약**이다(위 `setDraft` 주석): 스토어가 단일 원천이고 영속도 여기서
+     * 한다. 빈 배열에서 키를 지우는 것도 같은 이유다 — 남겨 두면 보관소가 다시는 지워지지
+     * 않는 빈 항목으로 자란다.
+     */
+    setStickyMentions: (scopeKey, handles) => {
+      const next = { ...get().stickyMentions };
+      if (handles.length) next[scopeKey] = handles;
+      else delete next[scopeKey];
+      set({ stickyMentions: next });
+      stickyMentionsStorage.save(next);
+    },
+    clearStickyMentions: () => { set({ stickyMentions: {} }); stickyMentionsStorage.clear(); },
+    hydrateStickyMentions: () => set({ stickyMentions: stickyMentionsStorage.load() }),
     pushHistory: (entry) => {
       const { history, historyIndex } = get();
       const newHistory = history.slice(0, historyIndex + 1);
