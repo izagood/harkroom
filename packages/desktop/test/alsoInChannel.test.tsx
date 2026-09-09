@@ -156,7 +156,7 @@ describe('#231 스레드 답을 채널에도 함께 올린다', () => {
     const c = fakeController();
     render(<ChannelPane />);
     fireEvent.click(screen.getByRole('button', { name: RECENT_REPLIES }));
-    expect(c.openThread).toHaveBeenCalledWith('m1', 'm2');
+    expect(c.openThread).toHaveBeenCalledWith('m1', { focusMessageId: 'm2' });
   });
 
   it('스레드 답 작성기에서 채널에도 올리기를 켜면 그대로 전달된다', () => {
@@ -329,7 +329,7 @@ describe('#624 스레드를 특정 답글 자리에서 연다', () => {
 
   it('겨냥한 답글에 강조가 걸린다 — 화면이 그 자리로 스크롤하는 수단이다', async () => {
     const c = mount();
-    await c.openThread('m1', 'm2');
+    await c.openThread('m1', { focusMessageId: 'm2' });
     expect(useAppStore.getState().threadRootId).toBe('m1');
     expect(useAppStore.getState().highlightedMessageId).toBe('m2');
   });

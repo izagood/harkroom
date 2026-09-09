@@ -102,11 +102,32 @@ describe('사슬이 있을 때', () => {
     expect(screen.getByTestId(`wait-chain-${id}`).textContent).toContain('#general');
   });
 
-  it('누르면 그 스레드가 열린다', () => {
+  /**
+   * **채널까지 넘긴다**(jaebin 보고, 2026-09-09). 이 구획은 `messages` 를 채널 전체에
+   * 걸쳐 훑어 만들므로 줄이 가리키는 뿌리는 대개 **지금 보는 채널이 아니다.** 채널을
+   * 주지 않으면 `openThread` 가 활성 채널에 그 뿌리를 물어 0줄을 받고, 패널이 빈 채로
+   * 열린 뒤 `끝남` 배지까지 달렸다 — 회귀선이 `toHaveBeenCalledWith(id)` 였기 때문에
+   * 그 상태가 초록으로 남아 있었다.
+   */
+  it('누르면 그 스레드가 **그 채널에서** 열린다', () => {
     const id = seed([link(FORGE, ME)]);
     render(<WaitChainSection />);
     fireEvent.click(screen.getByTestId(`wait-chain-${id}`));
-    expect(controller.openThread).toHaveBeenCalledWith(id);
+    expect(controller.openThread).toHaveBeenCalledWith(id, { channelId: 'c1' });
+  });
+
+  /** 다른 채널을 보는 중이어도 줄이 든 채널을 넘긴다 — 활성 채널은 답이 아니다. */
+  it('다른 채널을 보는 중에도 줄이 든 채널을 넘긴다', () => {
+    seed([link(FORGE, ME)]);
+    // 줄은 c2 에 있고, 사람은 c1 을 보고 있다 — 보고된 상황 그대로다.
+    useActiveStore.getState().set({
+      channels: [chan('c1', 'general'), chan('c2', 'forge')],
+      messages: { c2: [msg('root-2', 'c2', 1, '루트', FORGE, { openAskLinks: [link(FORGE, ME)] })] },
+      activeChannelId: 'c1',
+    });
+    render(<WaitChainSection />);
+    fireEvent.click(screen.getByTestId('wait-chain-root-2'));
+    expect(controller.openThread).toHaveBeenCalledWith('root-2', { channelId: 'c2' });
   });
 
   it('내가 답하면 몇 개가 풀리는지 말한다', () => {

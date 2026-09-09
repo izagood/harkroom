@@ -862,7 +862,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                 className="mt-0.5 self-start -mx-1 rounded px-1 py-0.5 text-meta font-medium
                            text-fg-muted underline decoration-dotted underline-offset-2
                            hover:bg-surface-hover"
-                onClick={() => void getController().openThread(message.threadRootId!, message.id)}
+                onClick={() => void getController().openThread(message.threadRootId!, { focusMessageId: message.id })}
               >
                 {t('message.recentReplies')}
               </button>
