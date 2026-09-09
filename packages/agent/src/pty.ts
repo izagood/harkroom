@@ -384,6 +384,23 @@ export interface RunPtyTurnOptions {
     /** 준비 상한. 넘기면 `PromptNotDeliveredError`. 생략하면 60초. */
     readyTimeoutMs?: number;
     /**
+     * 준비 신호를 본 뒤 **화면이 이만큼 잠잠해지면** 넣는다(2026-09-09). 생략하면 300ms.
+     *
+     * 준비 판정은 최근 바이트에 표시가 **있는가**만 본다. 되살린 턴(`claude -r`)은 앞
+     * 대화를 화면에 되그리므로 그 재생 중에도 표시가 스칠 수 있고, 그때 넣은 붙여넣기는
+     * 아직 그려지지 않은 입력창 밖으로 사라진다. 표시를 본 뒤 흐름이 멈추기를 기다리면
+     * "지금 그려진 것이 입력창"이라는 사실에 훨씬 가까워진다.
+     */
+    readyQuietMs?: number;
+    /**
+     * 정적 대기의 상한(2026-09-09). 생략하면 2초.
+     *
+     * 스피너처럼 **쉬지 않고 그리는** 화면에서 정적이 영영 오지 않을 수 있다. 그때는
+     * 지금까지의 동작(표시를 보면 곧바로 넣는다)으로 되돌아간다 — 기다리다 아예 못 넣는
+     * 것이 제일 나쁘다.
+     */
+    readyQuietMaxMs?: number;
+    /**
      * 준비 상한을 넘겼을 때 **죽이는 대신 부른다**(2026-09-08).
      *
      * 여기까지 온 화면은 사람 손이 필요한 것이다 — 첫 실행 승인 관문이 대표적이고, 그
@@ -417,9 +434,13 @@ export interface RunPtyTurnOptions {
      * 아무도 몰랐다 — 준비 상한도 조립도 판정도 정상이었으므로 **원인은 미확정이다.**
      * 이 창은 원인이 무엇이든 그 상태를 잡는다.
      *
-     * `probe` 는 "대화가 실제로 시작됐다"를 판정한다. 러너는 세션 기록 파일의 존재를
-     * 쓴다 — 화면 문자열로 재면 하네스 버전에 묶이지만, 파일 생성은 사실 자체다.
+     * `probe` 는 "대화가 실제로 시작됐다"를 판정한다. 러너는 세션 기록 파일이 **턴 시작
+     * 이후에 자랐는가**를 쓴다 — 화면 문자열로 재면 하네스 버전에 묶이지만, 파일이 자란
+     * 것은 사실 자체다(존재로 재면 되살린 턴에서 무조건 통과한다, 2026-09-09).
      * **던지면 "증거 없음"으로 읽는다**: 사람을 부르는 쪽이 조용히 태우는 것보다 낫다.
+     *
+     * 증거가 없으면 **개행 하나를 더 보낸 뒤** 한 창(`resendGraceMs`) 더 기다리고, 그래도
+     * 없으면 부른다 — "붙여넣기는 들어갔고 전송만 삼켜졌다"가 그 한 바이트로 낫는다.
      *
      * `onAttention` 이 없으면 부를 곳이 없으므로 이 창도 돌지 않는다.
      * 생략하면 확인 창 자체가 없다(기존 호출자 그대로).
@@ -428,6 +449,14 @@ export interface RunPtyTurnOptions {
       probe: () => boolean | Promise<boolean>;
       /** 주입부터 증거까지 허용할 시간. 생략하면 15초. */
       withinMs?: number;
+      /**
+       * 재전송 뒤 증거를 다시 기다릴 시간(2026-09-09). 생략하면 `withinMs` 의 1/3.
+       *
+       * 첫 창보다 짧게 두는 이유: 여기까지 왔다는 것은 이미 한 창을 기다렸다는 뜻이고,
+       * 재전송이 먹히면 하네스는 곧바로 기록을 쓴다 — 안 먹히는 경우에 사람을 부르는
+       * 것을 그만큼 늦추지 않는다.
+       */
+      resendGraceMs?: number;
     };
   };
   /** PTY 초기 크기. 생략하면 비대화형 기본 120x40(스펙 §5)이다. */
@@ -653,12 +682,18 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
     // ── 프롬프트 주입(2026-09-08). **준비 신호를 본 뒤에만** 쓴다.
     if (opts.injectPrompt) {
       const { text, readyPattern = DEFAULT_READY_PATTERN, readyTimeoutMs = 60_000,
-              onAttention } = opts.injectPrompt;
+              readyQuietMs = 300, readyQuietMaxMs = 2_000, onAttention } = opts.injectPrompt;
       let injected = false;
       const startedAt = Date.now();
       let readyProbe: NodePty.IDisposable | null = null;
+      /** 준비 표시를 **처음** 본 시각. 정적 대기의 상한을 여기서 잰다. */
+      let readySeenAt: number | null = null;
+      let quietTimer: ReturnType<typeof setTimeout> | null = null;
       const readyTimer = setTimeout(() => {
-        if (injected || settled) return;
+        // **준비를 이미 본 뒤라면 이 상한은 남의 일이다**: 정적 대기가 돌고 있고, 그것은
+        // 반드시 주입으로 끝난다(정적이 오거나 상한에 닿는다). 여기서 부르거나 죽이면
+        // 준비를 본 화면을 관문으로 오진한다.
+        if (injected || settled || readySeenAt !== null) return;
         const screen = decodeTailText(tail.snapshot());
         if (onAttention) {
           // **여기서 아무것도 정착시키지 않는다.** `readyProbe` 를 그대로 살려 두므로,
@@ -677,11 +712,16 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         reject(new PromptNotDeliveredError(Date.now() - startedAt, screen));
       }, readyTimeoutMs);
       readyTimer.unref?.();
-      readyProbe = proc.onData(() => {
+      /**
+       * 실제 주입. 준비 표시를 본 **뒤** 화면이 잠잠해지면(또는 정적 상한에 닿으면) 온다.
+       * 두 경로가 한 곳으로 모여야 한다 — 갈라 두면 한쪽만 `injected` 를 세우거나 타이머를
+       * 정리하지 않는 모양이 생긴다.
+       */
+      const inject = (): void => {
         if (injected || settled) return;
-        if (!readyPattern.test(stripAnsi(decodeTailText(tail.snapshot())))) return;
         injected = true;
         clearTimeout(readyTimer);
+        if (quietTimer) clearTimeout(quietTimer);
         readyProbe?.dispose();
         // 감싼 본문과 전송을 나눠 쓴다: 붙여 쓰면 일부 TUI 가 끝 표식과 개행을 한 덩어리로
         // 읽어 전송을 건너뛴다.
@@ -732,17 +772,55 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         // 사람을 부를 뿐이고, `readyProbe` 는 이미 소임을 다해 dispose 됐다.
         const confirm = opts.injectPrompt?.confirmDelivery;
         if (confirm && onAttention) {
+          /** 증거가 있는가. 던지면 **없음**으로 읽는다 — 부르는 쪽이 조용히 태우는 것보다 낫다. */
+          const 증거 = async (): Promise<boolean> => {
+            try { return await confirm.probe(); } catch { return false; }
+          };
+          const withinMs = confirm.withinMs ?? 15_000;
+          const graceMs = confirm.resendGraceMs ?? Math.max(50, Math.round(withinMs / 3));
           const confirmTimer = setTimeout(() => {
             if (settled) return;
             void (async () => {
-              let ok = false;
-              try { ok = await confirm.probe(); } catch { ok = false; }
-              if (!ok && !settled) onAttention(decodeTailText(tail.snapshot()), 'startup');
+              if (await 증거() || settled) return;
+              /*
+                **사람을 부르기 전에 개행 하나를 더 쏜다**(2026-09-09).
+
+                여기까지 온 상태는 두 갈래다 — 붙여넣기가 입력창에 들어갔는데 전송만
+                삼켜졌거나, 붙여넣기 자체가 아무 데도 안 갔거나. 앞쪽이면 개행 하나로
+                턴이 그대로 살아나고, 뒤쪽이면 빈 입력창에 개행이 들어가 아무 일도
+                일어나지 않는다(그다음 이 창이 사람을 부른다).
+
+                **본문은 다시 보내지 않는다.** 첫 붙여넣기가 실은 들어갔던 경우에 같은
+                프롬프트가 두 번 서고, 그러면 하네스가 같은 일을 두 번 한다 — 사람을
+                한 창 늦게 부르는 것보다 그쪽이 비싸다.
+              */
+              try { proc.write('\r'); } catch { /* 그 사이에 죽었으면 exit 리스너가 정한다 */ }
+              const graceTimer = setTimeout(() => {
+                if (settled) return;
+                void (async () => {
+                  if (await 증거() || settled) return;
+                  onAttention(decodeTailText(tail.snapshot()), 'startup');
+                })();
+              }, graceMs);
+              graceTimer.unref?.();
             })();
-          }, confirm.withinMs ?? 15_000);
+          }, withinMs);
           // 이 타이머만으로 러너를 살려 두지 않는다 — 턴의 수명은 PTY 가 정한다.
           confirmTimer.unref?.();
         }
+      };
+
+      readyProbe = proc.onData(() => {
+        if (injected || settled) return;
+        if (!readyPattern.test(stripAnsi(decodeTailText(tail.snapshot())))) return;
+        if (readySeenAt === null) readySeenAt = Date.now();
+        // 쉬지 않고 그리는 화면에서 정적이 영영 안 올 수 있다 — 상한에 닿으면 지금까지의
+        // 동작(표시를 보면 곧바로 넣는다)으로 되돌아간다.
+        if (Date.now() - readySeenAt >= readyQuietMaxMs) { inject(); return; }
+        // 바이트가 또 왔다 = 아직 그리는 중이다. 시계를 다시 세운다.
+        if (quietTimer) clearTimeout(quietTimer);
+        quietTimer = setTimeout(inject, readyQuietMs);
+        quietTimer.unref?.();
       });
     }
 

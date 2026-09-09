@@ -99,43 +99,6 @@ export async function readLastApiError(
   return last === null ? null : { text: last };
 }
 
-/**
- * 이 세션의 **대화 기록 파일이 있는가** — 즉 대화가 실제로 시작됐는가(2026-09-08).
- *
- * `readLastApiError` 와 같은 경로를 본다. 내용을 읽지 않는 이유: 여기서 필요한 것은
- * "무엇을 말했나"가 아니라 "말이 시작됐나" 하나뿐이고, 그 판정은 빠르고 틀릴 수 없어야
- * 한다 — 주입 직후 짧은 창 안에서 불린다(`pty.ts::injectPrompt.confirmDelivery`).
- *
- * **던지지 않는다.** 호출자는 거짓을 "증거 없음"으로 읽고 사람을 부른다. 조용히 태우는
- * 것보다 한 번 더 부르는 쪽이 낫다.
- */
-export async function sessionTranscriptExists(
-  harness: AgentHarness,
-  sessionId: string | null,
-  opts: {
-    projectsDir?: string;
-    configDir?: string | null;
-    /**
-     * 이 시각(ms) **이후**의 에러만 읽는다(2026-09-09). 없으면 지금까지처럼 마지막을 읽는다.
-     *
-     * **턴이 도는 동안** 이 파일을 볼 때 필요하다: 세션 파일은 그 스레드의 전체 이력이라
-     * 앞 턴의 한도 에러가 그대로 남아 있고, 그것을 지금 턴의 것으로 읽으면 멀쩡한 계정을
-     * 버리고 축을 헛돈다. 시각을 모르는 레코드(타임스탬프 없음)는 **세지 않는다** —
-     * 없는 것을 있다고 읽지 않는다.
-     */
-    sinceMs?: number;
-  } = {},
-): Promise<boolean> {
-  // codex 의 rollout 은 형식도 위치도 다르다(P5). 판정할 수 없으면 **참**을 돌려준다 —
-  // 여기서 거짓을 돌려주면 codex 턴이 매번 사람을 부른다.
-  if (harness !== 'claude-code') return true;
-  if (!sessionId) return true;
-  try {
-    return (await claudeSessionFilePath(sessionId, opts)) !== null;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * 이 세션의 기록 파일이 **마지막으로 자란 시각**(ms). 파일이 없으면 `null`.
@@ -171,4 +134,38 @@ export async function sessionTranscriptMtimeMs(
   } catch {
     return null;
   }
+}
+
+/**
+ * 이 세션의 기록 파일이 `sinceMs` **이후에 자랐는가**(2026-09-09).
+ *
+ * `sessionTranscriptExists` 를 대신한다. 그쪽이 재던 것은 "기록 파일이 있는가" 이고,
+ * 그것은 **첫 턴에서만** "이 턴의 대화가 시작됐다"와 같은 뜻이다 — 되살린 턴
+ * (`claude -r`)에서는 그 파일이 앞 턴에 이미 생겨 있어 무조건 참이 된다.
+ *
+ * 그 비대칭이 프로덕션에서 값을 치렀다(2026-09-09 실측, forge `5e08f534`). 답을 올린
+ * 턴이 회수된 뒤 같은 세션을 되살린 턴 둘이 연달아 프롬프트를 못 받았는데 — 기록에
+ * 그 31분 동안 user 줄도 assistant 줄도 한 줄이 없다 — 주입 확인 창(15초)은 파일이
+ * 있다는 이유로 통과했고, 사람은 아무 신호도 못 받았다. 결국 정지 시계(10분)가
+ * 폴백으로 잡았고, 그 전에 계정 하나가 그만큼 묶였다.
+ *
+ * 그래서 판정을 **존재에서 성장으로** 옮긴다. `sinceMs` 를 턴 시작 시각으로 주면 두
+ * 경우가 한 규칙으로 합쳐진다: 첫 턴은 파일이 없으니 거짓, 되살린 턴은 파일이 낡았으니
+ * 거짓 — 둘 다 "이 턴의 대화는 아직 시작되지 않았다"다.
+ *
+ * **판정할 수 없으면 참이다.** codex 와 세션 미상은 `sessionTranscriptExists` 의 규칙을
+ * 그대로 잇는다 — 여기서 거짓을 돌려주면 그 턴들이 매번 사람을 부른다.
+ */
+export async function sessionTranscriptGrewSince(
+  harness: AgentHarness,
+  sessionId: string | null,
+  sinceMs: number,
+  opts: { projectsDir?: string; configDir?: string | null } = {},
+): Promise<boolean> {
+  // 판정 불가 두 자리는 참이다(위 주석). `sessionTranscriptMtimeMs` 는 이 둘과
+  // "파일이 없다"를 다 `null` 로 뭉치므로, 여기서 먼저 가른다.
+  if (harness !== 'claude-code') return true;
+  if (!sessionId) return true;
+  const mtime = await sessionTranscriptMtimeMs(harness, sessionId, opts);
+  return mtime !== null && mtime > sinceMs;
 }

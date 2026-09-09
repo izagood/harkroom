@@ -21,7 +21,7 @@ import { findCodexSessionId } from './codexSessions.js';
 import { claudeSessionMaterialized } from './claudeSessions.js';
 import { readLastApiError } from './harnessErrors.js';
 import type { AttentionLedger } from './attentionLedger.js';
-import { sessionTranscriptExists, sessionTranscriptMtimeMs } from './harnessErrors.js';
+import { sessionTranscriptGrewSince, sessionTranscriptMtimeMs } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
 import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
@@ -788,10 +788,19 @@ export async function runMentionTurn(
     gateNoticed: boolean;
     /** 하네스 기록이 마지막으로 자란 것을 본 시각(ms). 정지 판정의 기준점이다. */
     lastLifeMs: number;
+    /**
+     * 정지로 접을 때 **실제로 잰** 유휴시간(ms). 0 은 "정지가 아니다"다.
+     *
+     * 한도(`harnessStallMs`)와 갈라 두는 이유: 스레드에 남는 문장이 한도를 찍으면 사람은
+     * "정말 그만큼이었나"를 알 수 없다. 2026-09-09 진단이 통지 시각에서 한도를 빼서
+     * 턴 시작 시점을 되짚어야 했던 자리가 그것이다 — 잰 값을 그대로 쓰면 그 산수가 없다.
+     */
+    stalledIdleMs: number;
     cancelReclaim: (() => void) | null; cancelProbe: (() => void) | null; cancelSilence: (() => void) | null;
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
-    apiError: null, canceledBy: null, stalled: false, awaitingHuman: false, gateNoticed: false, lastLifeMs: 0,
+    apiError: null, canceledBy: null, stalled: false, awaitingHuman: false, gateNoticed: false,
+    lastLifeMs: 0, stalledIdleMs: 0,
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
   };
 
@@ -915,6 +924,7 @@ export async function runMentionTurn(
     const idleMs = (deps.now?.() ?? Date.now()) - end.lastLifeMs;
     if (idleMs < limit) return false;
     end.stalled = true;
+    end.stalledIdleMs = idleMs;
     console.error(`[mentionTurn] ${key}: 하네스가 멈췄다 — 기록이 ${idleMs}ms 째 자라지 않는다`);
     reclaim();
     return true;
@@ -1009,11 +1019,20 @@ export async function runMentionTurn(
           // 계정 전환을 태운다 — 그것이 이 턴이 아직 쓸 수 있는 더 싼 수단이다.
           ...(deps.callsForHuman === false ? {} : {
             /**
-             * 주입이 **먹혔는지**도 잰다(2026-09-08). 증거는 세션 기록 파일의 존재다 —
-             * 화면 문자열로 재면 하네스 버전에 묶이지만, 파일 생성은 사실 자체다.
+             * 주입이 **먹혔는지**도 잰다(2026-09-08). 증거는 세션 기록 파일이고, 화면
+             * 문자열로 재지 않는 이유는 그것이 하네스 버전에 묶이기 때문이다.
+             *
+             * **재는 것은 존재가 아니라 성장이다**(2026-09-09). 파일의 존재로 재면 이 창은
+             * **첫 턴에서만** 산다 — 되살린 턴(`claude -r`)의 기록 파일은 앞 턴에 이미
+             * 생겨 있어 무조건 통과한다. 그 구멍으로 프로덕션에서 턴 둘이 연달아 프롬프트를
+             * 못 받고 각각 10분씩 정지 시계에 접혔다(`sessionTranscriptGrewSince` 머리).
+             *
+             * 기준점은 **턴 시작 시각**이다. 주입 시각이 아닌 이유: 주입은 이 콜백 바깥
+             * (`pty.ts`)에서 일어나 그 시각을 여기서 모르고, 턴 시작 이후에 자란 기록은
+             * 어차피 이 턴의 것이다 — 앞 턴은 이미 끝나 있다.
              */
             confirmDelivery: {
-              probe: () => sessionTranscriptExists(def.harness, sessionIdForProbe, {
+              probe: () => sessionTranscriptGrewSince(def.harness, sessionIdForProbe, turnStartedAtMs, {
                 configDir: deps.claudeConfigDir,
               }),
             },
@@ -1299,22 +1318,47 @@ export async function runMentionTurn(
           // 정지를 무발화보다 **먼저** 본다: 접는 수단이 같은 SIGTERM 이라 무발화 시계가
           // 뒤따라 설 수 있는데, 사람이 알아야 할 사실은 "서 있었다" 쪽이다.
           : end.stalled
-            ? `harness 정지 ${deps.harnessStallMs ?? 10 * 60_000}ms — 기록이 자라지 않았다(답 없음)`
+            // **한도가 아니라 잰 값을 쓴다**(2026-09-09). 한도만 남기면 사람이 "정말 그만큼
+            // 서 있었나"를 알 수 없어, 통지 시각에서 한도를 빼 턴 시작을 되짚는 산수를 해야
+            // 한다. 한도를 함께 남기는 것은 그 값이 손잡이(`AGENT_HARNESS_STALL_MS`)여서다.
+            ? `harness 정지 ${end.stalledIdleMs}ms(한도 ${deps.harnessStallMs ?? 10 * 60_000}ms) — 기록이 자라지 않았다(답 없음)`
             : end.silenced
               ? `harness 무발화 ${deps.turnTimeoutMs}ms — 답 없이 시간 한도를 넘겼다`
               : `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
     ) as Error & { harnessApiError?: string; harnessStalledMs?: number };
+    /*
+      **정지의 마지막 화면은 러너 로그에 남긴다**(2026-09-09).
+
+      2026-09-09 진단이 여기서 막혔다: 되살린 턴 둘이 프롬프트를 못 받고 각각 10분에
+      접혔는데, "왜 안 먹혔나"의 재료인 그때 화면이 아무 데도 없었다 — 정지 실패는 tail 을
+      담지 않고(아래 이유) 러너 로그에도 안 찍혔다. 그래서 원인이 가설 둘로 남았다.
+
+      **실패 문구에는 여전히 담지 않는다.** 그 문장은 `policy.ts::isCredentialFailure` 의
+      tail 폴백이 읽는 자리이고, TUI 에서는 주입한 프롬프트가 에코돼 tail 에 섞인다 —
+      담으면 사람이 본문 한 줄로 러너를 78 로 물러나게 할 수 있다(설계 §3-4). 통지로도
+      내지 않는다: 스레드에 영구히 남는 자리에 프롬프트 에코를 흘리지 않는다.
+
+      로그는 그 둘 중 어느 것도 아니다. PAT 는 `harnessTailNotice` 가 가린다 — 이 함수를
+      쓰는 이유가 자르기보다 그 가리기다.
+    */
+    if (end.stalled) {
+      const 화면 = harnessTailNotice(result.tail, deps.pat);
+      console.error(
+        `[mentionTurn] ${key}: 정지 당시 마지막 화면 —\n${화면 ?? '(출력이 없었다)'}`,
+      );
+    }
     /**
-     * **정지를 문구가 아니라 표시로 넘긴다**(2026-09-09). 스케줄러가 이 실패를 재시도 회계에
-     * 넣지 않기 위해 알아봐야 하는데(`policy.ts::isHarnessStall`), 위 문장으로 판정하면 그
-     * 문장을 다듬는 순간 조용히 안 맞는다 — 그러면 30분을 태우는 옛 동작으로 되돌아가고,
-     * 되돌아간 것을 아무도 모른다. 자격증명·한도 판정이 문구를 보는 것은 그 문구가 **하네스의
-     * 것**이어서 어쩔 수 없는 것이고, 이 사실은 우리가 아는 것이므로 우리가 실어 보낸다.
+     * **정지를 문구가 아니라 표시로 넘긴다**(#711). 스케줄러가 이 실패를 재시도 회계에 넣지
+     * 않기 위해 알아봐야 하는데(`policy.ts::isHarnessStall`), 위 문장으로 판정하면 그 문장을
+     * 다듬는 순간 조용히 안 맞는다 — 30분을 태우는 옛 동작으로 되돌아가고, 되돌아간 것을
+     * 아무도 모른다.
      *
-     * 한도값을 함께 싣는 이유: 스레드에 남길 문장이 그 값을 쓴다(`stallNotice`). 스케줄러가
-     * 같은 값을 따로 들고 있으면 두 곳이 갈라져 화면이 실제로 잰 것과 다른 분수를 말한다.
+     * **싣는 값은 한도가 아니라 잰 값이다**(2026-09-09). 이 값으로 스레드 문장이 서므로
+     * (`stallNotice`), 한도를 실으면 화면이 "실제로 잰 것"과 갈라진다 — `isHarnessStall` 의
+     * 주석이 경계하는 그 어긋남이다. 잰 값이 없을 때만(있을 수 없지만, 0 이면 스케줄러가
+     * 정지로 못 읽어 재시도가 되살아난다) 한도를 바닥값으로 쓴다.
      */
-    if (end.stalled) failure.harnessStalledMs = deps.harnessStallMs ?? 10 * 60_000;
+    if (end.stalled) failure.harnessStalledMs = end.stalledIdleMs || (deps.harnessStallMs ?? 10 * 60_000);
     // **턴 도중 관측이 우선이다.** 종료 뒤 읽기(`apiError`)는 sinceMs 가 없어 앞 턴의
     // 에러를 집을 수 있다 — 지금 턴의 사실을 이미 손에 쥐었으면 그것을 쓴다.
     if (end.apiError) failure.harnessApiError = end.apiError;
