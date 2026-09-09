@@ -10,7 +10,7 @@ import {
   type ReportMeta,
 } from '@murmur/shared';
 import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
-import { emitEvent, onEvent } from '../events.js';
+import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
 import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
@@ -195,7 +195,7 @@ function buildMcpServer(
     const { message, notified, replayed } = posted;
     if (!replayed) {
       const audience = await audienceFor(pool, channelId);
-      emitEvent({ type: 'message.created', message, audience });
+      emitPosted(posted, audience);
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
     /**
@@ -236,7 +236,7 @@ function buildMcpServer(
     const { message, notified, replayed } = posted;
     if (!replayed) {
       const audience = await audienceFor(pool, channelId);
-      emitEvent({ type: 'message.created', message, audience });
+      emitPosted(posted, audience);
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
     return jsonResult({ message, notified });
@@ -305,7 +305,7 @@ function buildMcpServer(
     const { message, notified, replayed } = posted;
     if (!replayed) {
       const channelAudience = await audienceFor(pool, channelId);
-      emitEvent({ type: 'message.created', message, audience: channelAudience });
+      emitPosted(posted, channelAudience);
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
     return jsonResult({ message, notified });
@@ -351,7 +351,7 @@ function buildMcpServer(
     const { message, notified, replayed } = posted;
     if (!replayed) {
       const channelAudience = await audienceFor(pool, channelId);
-      emitEvent({ type: 'message.created', message, audience: channelAudience });
+      emitPosted(posted, channelAudience);
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
     return jsonResult({ message, notified });
@@ -405,7 +405,7 @@ function buildMcpServer(
     const { message, notified, replayed } = posted;
     if (!replayed) {
       const channelAudience = await audienceFor(pool, channelId);
-      emitEvent({ type: 'message.created', message, audience: channelAudience });
+      emitPosted(posted, channelAudience);
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
     return jsonResult({ message, notified });
