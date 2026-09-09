@@ -40,6 +40,44 @@ export function clockLabel(atMs: number, locale: string, timeZone?: string): str
 }
 
 /**
+ * 그 시각이 **어느 날인가**. 비교용 열쇠일 뿐 화면에 나가지 않으므로 로케일을 고정한다 —
+ * 다만 `timeZone` 은 받는다: 자정을 어디서 긋느냐가 이 판정의 전부다.
+ */
+function dayKey(atMs: number, timeZone?: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    year: 'numeric', month: '2-digit', day: '2-digit', ...(timeZone ? { timeZone } : {}),
+  }).formatToParts(new Date(atMs));
+  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+/**
+ * 시각인데, **오늘이 아니면 어느 날인지도 말한다.**
+ *
+ * `clockLabel` 하나로 마지막 사용 시각을 그렸더니 **어제 17:12 에 마지막으로 돈 계정이
+ * 17:00 화면에서 `17:12`** 로 섰다 — 12분 뒤 시각이 "마지막으로 돈 때"로 보이는 것이다.
+ * 사람이 그것을 대조할 시계에는 날짜가 없다.
+ *
+ * 그래서 오늘이면 `17:12`, 아니면 `9/8 17:12`. 날짜를 **늘 붙이지 않는 이유**는 이 열의
+ * 대부분이 오늘이기 때문이다 — 늘 붙이면 매일 보는 값이 길어지고, 정작 다른 날이라는
+ * 사실은 눈에 안 띈다. 날짜 표기가 `month: 'numeric'` 인 것도 같은 이유다(`Sep 8` 은
+ * 로케일에 따라 두 배로 길어진다).
+ */
+export function clockWithDayLabel(
+  atMs: number,
+  nowMs: number,
+  locale: string,
+  timeZone?: string,
+): string {
+  const clock = clockLabel(atMs, locale, timeZone);
+  if (dayKey(atMs, timeZone) === dayKey(nowMs, timeZone)) return clock;
+  const day = new Intl.DateTimeFormat(locale, {
+    month: 'numeric', day: 'numeric', ...(timeZone ? { timeZone } : {}),
+  }).format(new Date(atMs));
+  return `${day} ${clock}`;
+}
+
+/**
  * 창 안에서 쓴 양을 **열마다 하나씩** 나눈 것. `null` 은 **`0` 이 아니라 "이 창에 안
  * 돌았다"** 다 — 화면은 그 자리에 `0` 대신 `—` 를 그린다(`AgentTurns` 에서 `0` 과
  * `모름` 을 가른 것과 같은 규율).
