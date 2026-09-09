@@ -49,7 +49,7 @@ describe('message toolbar', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '내 메시지', 'u1')} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     fireEvent.mouseEnter(toolbar);
 
     expect(within(toolbar).getByRole('button', { name: /Add reaction|＋/ })).toBeTruthy();
@@ -62,7 +62,7 @@ describe('message toolbar', () => {
     useAppStore.getState().set({ messages: { c1: withReplies(0) } });
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2')} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     fireEvent.mouseEnter(toolbar);
 
     expect(within(toolbar).getByRole('button', { name: '스레드에 답글 달기' })).toBeTruthy();
@@ -72,7 +72,7 @@ describe('message toolbar', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '내 메시지', 'u1')} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     fireEvent.mouseEnter(toolbar);
 
     expect(within(toolbar).getByRole('button', { name: 'More actions' })).toBeTruthy();
@@ -84,7 +84,7 @@ describe('overflow menu permissions', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '내 메시지', 'u1')} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     fireEvent.mouseEnter(toolbar);
     fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }));
 
@@ -100,7 +100,7 @@ describe('overflow menu permissions', () => {
     });
     render(<MessageItem message={msg('m1', 'c1', 1, '남의 메시지', 'u2')} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     fireEvent.mouseEnter(toolbar);
     fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }));
 
@@ -112,13 +112,16 @@ describe('overflow menu permissions', () => {
   // "할 수 있는 게 있다"는 거짓 신호다(design.md §4).
   // #178: 그 가드는 코드에 그대로 남아 있지만 실제로 걸리지는 않는다 — "Copy link" 는
   // 어떤 메시지에도 있어 메뉴가 비지 않는다. 그래서 여기서 세는 것은 **항목의 내용**이다.
-  it('남의 메시지에는 고치기·지우기가 없다 (링크 복사만 남는다)', () => {
+  it('남의 메시지에는 고치기·지우기가 없다 (본문 복사만 남는다)', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '남의 메시지', 'u2')} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }));
-    expect(screen.getByRole('menuitem', { name: 'Copy link' })).toBeTruthy();
+    // 링크 복사는 2026-09-09 에 **툴바**로 올라갔다 — 메뉴에 남은 것은 본문 복사다.
+    expect(screen.queryByRole('menuitem', { name: 'Copy link' })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'Copy text' })).toBeTruthy();
+    expect(within(toolbar).getByTestId('toolbar-copy-link')).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull();
     // 리액션은 남의 메시지에도 달 수 있다.
@@ -140,7 +143,7 @@ describe('overflow menu actions', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '원문', 'u1')} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     fireEvent.mouseEnter(toolbar);
     fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }));
@@ -160,7 +163,7 @@ describe('overflow menu actions', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '지울 메시지', 'u1')} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     fireEvent.mouseEnter(toolbar);
     fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
@@ -179,7 +182,7 @@ describe('overflow menu actions', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '지울 메시지', 'u1')} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     fireEvent.mouseEnter(toolbar);
     fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
@@ -193,7 +196,7 @@ describe('overflow menu actions', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '지울 메시지', 'u1')} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     fireEvent.mouseEnter(toolbar);
     fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
@@ -211,7 +214,7 @@ describe('overflow menu actions', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '지울 메시지', 'u1')} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     fireEvent.mouseEnter(toolbar);
     fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
@@ -229,7 +232,7 @@ describe('overflow menu actions', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '지울 메시지', 'u1')} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     fireEvent.mouseEnter(toolbar);
     fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
@@ -254,7 +257,7 @@ describe('reply count visibility', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: null })} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     fireEvent.mouseEnter(toolbar);
 
     expect(within(toolbar).getByRole('button', { name: '스레드에 답글 달기' })).toBeTruthy();
@@ -272,14 +275,21 @@ describe('reply count visibility', () => {
 
   // #396 회귀선: 답글이 있는 메시지의 pill 은 손대지 않는다 — 툴바로 올라가지 않고
   // 본문 아래에 그대로 상시 노출된다(#161 2단계).
-  it('keeps the below-body pill for messages with replies (unchanged, not moved to toolbar)', () => {
-    const c = fakeController();
+  /**
+   * 2026-09-09: 요약 줄은 **그대로 본문 열**에 있고(그 자리를 옮기면 `#143` 이 되살아난다),
+   * 툴바의 스레드 칸은 이제 **답글이 있어도 함께 선다.** 두 자리는 다른 질문에 답한다 —
+   * 툴바는 "답한다"(행동), 요약 줄은 "답글 3개가 달렸다"(상태). 앞 판은 값에 따라 둘 중
+   * 하나만 세워서, 사람이 손 갈 자리를 배울 수 없었다(`zeroReplies.test.tsx` 가 그 셈을
+   * 뒤집은 자리다).
+   */
+  it('답글이 있는 메시지: 요약 줄은 본문 열에, 스레드 칸은 툴바에 — 둘 다 있다', () => {
+    fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 3 })} />);
 
     const pillBtn = screen.getByRole('button', { name: /답글 3개/ });
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     expect(toolbar.contains(pillBtn)).toBe(false);
-    expect(within(toolbar).queryByRole('button', { name: '스레드에 답글 달기' })).toBeNull();
+    expect(within(toolbar).getByTestId('toolbar-thread')).toBeTruthy();
   });
 
   // #396: inThread 에서는 스레드 안에서 또 스레드를 열 수 없으므로 pill 도, 툴바 아이콘도
@@ -291,7 +301,7 @@ describe('reply count visibility', () => {
     expect(screen.queryByRole('button', { name: 'Reply in thread' })).toBeNull();
     expect(screen.queryByRole('button', { name: '스레드에 답글 달기' })).toBeNull();
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     expect(within(toolbar).queryByRole('button', { name: '스레드에 답글 달기' })).toBeNull();
   });
 });
@@ -304,13 +314,13 @@ describe('edit mode hides toolbar', () => {
     });
     render(<MessageItem message={msg('m1', 'c1', 1, '원문', 'u1')} />);
 
-    const toolbarBefore = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbarBefore = screen.getByRole('toolbar', { name: 'message toolbar' });
     expect(toolbarBefore).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }));
 
-    const toolbarAfter = screen.queryByRole('group', { name: 'message toolbar' });
+    const toolbarAfter = screen.queryByRole('toolbar', { name: 'message toolbar' });
     expect(toolbarAfter).toBeNull();
   });
 });
@@ -320,7 +330,7 @@ describe('toolbar accessibility', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '테스트', 'u1')} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     expect(toolbar.className).toMatch(/opacity-0/);
     expect(toolbar.className).not.toMatch(/hidden|visibility/);
   });
@@ -337,7 +347,7 @@ describe('#143/#254 답글 컨트롤과 툴바가 다른 컨테이너에 있다'
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     const replyBtn = screen.getByRole('button', { name: '답글 2개' });
 
     // 답글 버튼과 툴바가 다른 부모를 갖는다 (다른 컨테이너)
@@ -361,7 +371,7 @@ describe('#143/#254 답글 컨트롤과 툴바가 다른 컨테이너에 있다'
     expect(screen.queryByRole('button', { name: 'Reply in thread' })).toBeNull();
 
     // 툴바는 여전히 오른쪽 열에 있다
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     const rightColumn = document.querySelector('.relative.flex.shrink-0.items-start.gap-1');
     expect(rightColumn?.contains(toolbar)).toBe(true);
   });
@@ -372,38 +382,40 @@ describe('#145 인라인 이모지 버튼', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '테스트', 'u1')} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     fireEvent.mouseEnter(toolbar);
 
-    expect(within(toolbar).getByRole('button', { name: 'React with 👍' })).toBeTruthy();
-    expect(within(toolbar).getByRole('button', { name: 'React with 🎉' })).toBeTruthy();
+    // 셋이 무엇인지는 `Reactions.INLINE` 한 곳이 정한다(2026-09-09 에 요청받은 순서).
     expect(within(toolbar).getByRole('button', { name: 'React with ✅' })).toBeTruthy();
+    expect(within(toolbar).getByRole('button', { name: 'React with 👀' })).toBeTruthy();
+    expect(within(toolbar).getByRole('button', { name: 'React with 👍' })).toBeTruthy();
   });
 
-  it('👀 와 💬 는 인라인에 없다 — 피커에만 있다', () => {
+  it('💬 는 인라인에 없다 — 창에만 있다', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '테스트', 'u1')} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     fireEvent.mouseEnter(toolbar);
 
-    // 피커를 열기 전에 인라인 버튼들을 확인 - 👀💬 가 없어야 한다
-    const inlineButtons = within(toolbar).getAllByRole('button');
-    const inlineEmojis = inlineButtons.map((b) => b.getAttribute('aria-label'));
-    expect(inlineEmojis.some((l) => l === 'React with 👀' || l === 'React with 💬')).toBe(false);
+    // 👀 는 2026-09-09 에 요청으로 인라인에 올라갔다(사람이 "보고 있다"를 말하는 가장
+    // 자연스러운 그림이다). **💬 는 올리지 않는다** — 상태 신호이면서 바로 옆 스레드
+    // 칸과 뜻이 겹친다. 그것이 #144 규칙의 남은 절반이다.
+    const inlineEmojis = within(toolbar).getAllByRole('button').map((b) => b.getAttribute('aria-label'));
+    expect(inlineEmojis).toContain('React with 👀');
+    expect(inlineEmojis.some((l) => l === 'React with 💬')).toBe(false);
 
-    // 이제 피커를 열고 👀💬 가 있는지 확인
+    // 창에는 둘 다 있다.
     fireEvent.click(within(toolbar).getByRole('button', { name: /Add reaction/ }));
-
-    expect(within(toolbar).getByRole('button', { name: /👀/ })).toBeTruthy();
-    expect(within(toolbar).getByRole('button', { name: /💬/ })).toBeTruthy();
+    expect(within(toolbar).getByRole('button', { name: '👀' })).toBeTruthy();
+    expect(within(toolbar).getByRole('button', { name: '💬' })).toBeTruthy();
   });
 
   it('＋ 피커는 그대로 있고, 그 안에는 👀💬 가 남아 있다', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '테스트', 'u1')} />);
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     fireEvent.mouseEnter(toolbar);
 
     // ＋ 버튼이 있다
@@ -414,5 +426,119 @@ describe('#145 인라인 이모지 버튼', () => {
     const pickerButtons = within(toolbar).getAllByRole('button');
     expect(pickerButtons.some((b) => b.textContent === '👀')).toBe(true);
     expect(pickerButtons.some((b) => b.textContent === '💬')).toBe(true);
+  });
+});
+
+/**
+ * **여덟 칸의 순서**(요청 2026-09-09 — 순서를 글로 지정받았다).
+ *
+ * 자리를 요청받았으므로 **자리를 잰다.** 이름이나 개수만 재면 순서가 바뀌어도 초록이고,
+ * 순서가 곧 이 요청의 내용이었다: 리액션 셋 → 이모지 고르기 → (구분선) → 스레드 →
+ * 링크 복사 → 담기 → (구분선) → 더 보기.
+ *
+ * DOM 순서로 재는 이유: `data-slot` 은 툴바가 화살표 이동에 쓰는 목록과 **같은 것**이라
+ * (`MessageToolbar` 의 `onArrow`), 여기서 순서를 지키면 키보드 순서도 함께 지켜진다.
+ */
+describe('툴바 여덟 칸 (2026-09-09)', () => {
+  const slots = (): (string | null)[] => {
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
+    return Array.from(toolbar.querySelectorAll<HTMLElement>('[data-slot]'))
+      .map((el) => el.getAttribute('data-testid') ?? el.getAttribute('aria-label'));
+  };
+
+  it('채널에서는 여덟 칸이 요청받은 순서로 선다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'hello', 'u2')} />);
+
+    expect(slots()).toEqual([
+      'toolbar-react-✅', 'toolbar-react-👀', 'toolbar-react-👍', 'toolbar-react-pick',
+      'toolbar-thread', 'toolbar-copy-link', 'toolbar-save', 'More actions',
+    ]);
+  });
+
+  it('스레드 안에서는 스레드 칸만 빠지고 나머지 일곱의 순서는 그대로다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'hello', 'u2')} inThread />);
+
+    expect(slots()).toEqual([
+      'toolbar-react-✅', 'toolbar-react-👀', 'toolbar-react-👍', 'toolbar-react-pick',
+      'toolbar-copy-link', 'toolbar-save', 'More actions',
+    ]);
+  });
+
+  /**
+   * 앞 판은 `＋` 를 누르면 피커가 **자기 자리에서** 이모지 줄로 바뀌어, 툴바의 다른 칸들이
+   * 커서 아래에서 좌우로 밀려났다. 창이 위로 뜨는 것의 요점이 이것이라 **자리 여덟이
+   * 흔들리지 않는지**를 잰다 — 창이 열렸다는 사실만 재면 그 결함이 돌아와도 초록이다.
+   */
+  it('창을 열어도 여덟 칸의 순서가 흔들리지 않는다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'hello', 'u2')} />);
+    const before = slots();
+
+    fireEvent.click(screen.getByTestId('toolbar-react-pick'));
+
+    expect(screen.getByTestId('reaction-picker-panel')).toBeTruthy();
+    expect(slots()).toEqual(before);
+  });
+
+  /**
+   * 창이 열려 있는 동안 툴바는 **붙잡혀 있어야** 한다. 툴바는 호버로만 보이고 창은 그
+   * 자식이라, 창을 향해 마우스를 옮기다 행을 벗어나면 창째 사라진다 — jsdom 은 호버를
+   * 재현하지 않으므로 무엇을 잰다는 것을 분명히 해 둔다: **불투명도를 잠그는 표식**이다.
+   */
+  it('창이 열려 있으면 툴바가 고정 노출된다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'hello', 'u2')} />);
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
+
+    expect(toolbar.getAttribute('data-open')).toBe('false');
+    expect(toolbar.className).toMatch(/data-\[open=true\]:opacity-100/);
+
+    fireEvent.click(screen.getByTestId('toolbar-react-pick'));
+    expect(toolbar.getAttribute('data-open')).toBe('true');
+  });
+
+  /**
+   * **키보드로 툴바가 보인다.** 앞 판은 `focus-visible:opacity-100` 을 컨테이너에 걸어
+   * 두었는데 그 컨테이너는 포커스를 받을 수 없어서 규칙이 한 번도 켜지지 않았다 — 버튼은
+   * 접근성 트리에 있고 눌리는데 **보이지 않는** 상태였다. 고친 것은 `group-focus-within` 이고,
+   * 그 변형은 행(`group`)에 달린 자손 포커스를 받는다.
+   */
+  it('툴바는 행의 자손 포커스로도 드러난다 (group-focus-within)', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'hello', 'u2')} />);
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
+
+    expect(toolbar.className).toMatch(/\bopacity-0\b/);
+    expect(toolbar.className).toMatch(/group-focus-within:opacity-100/);
+    // 포커스를 지우는 방식(`invisible`·`hidden`)으로 숨기지 않는다 — 접근성 트리에서
+    // 요소가 사라지면 키보드 경로가 없어진다.
+    expect(toolbar.className).not.toMatch(/\binvisible\b/);
+    expect(toolbar.className).not.toMatch(/\bhidden\b/);
+  });
+
+  it('좌우 화살표로 칸을 옮긴다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'hello', 'u2')} />);
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
+
+    const first = screen.getByTestId('toolbar-react-✅');
+    first.focus();
+    fireEvent.keyDown(toolbar, { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(screen.getByTestId('toolbar-react-👀'));
+
+    fireEvent.keyDown(toolbar, { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(first);
+  });
+
+  it('담긴 메시지는 같은 칸이 눌린 상태로 그려진다', () => {
+    fakeController();
+    useAppStore.getState().set({ savedIds: ['m1'] });
+    render(<MessageItem message={msg('m1', 'c1', 1, 'hello', 'u2')} />);
+
+    const save = screen.getByTestId('toolbar-save');
+    expect(save.getAttribute('aria-pressed')).toBe('true');
+    expect(save.getAttribute('aria-label')).toBe('담은 것 빼기');
   });
 });

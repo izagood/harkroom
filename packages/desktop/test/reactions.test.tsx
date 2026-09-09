@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-li
 import type { MessageRow, ReactionRow } from '@murmur/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
-import { pickInline } from '../src/components/Reactions';
+import { INLINE } from '../src/components/Reactions';
 import { MessageItem } from '../src/components/MessageItem';
 import { acc, msg } from './helpers/fakeApi';
 
@@ -30,7 +30,9 @@ describe('showing reactions', () => {
     fakeController();
     render(<MessageItem message={withReactions([{ emoji: '👀', accountIds: ['u2', 'u3'] }])} />);
 
-    const chip = screen.getByRole('button', { name: /👀/ });
+    // 2026-09-09: 👀 가 인라인 칸이 되면서 `/👀/` 이 둘을 잡는다(칩 + 툴바 칸).
+    // 칩은 `data-testid` 로 집는다 — 이 파일 아래 묶음이 이미 그 방식이다.
+    const chip = screen.getByTestId('reaction-👀');
     expect(chip.textContent).toContain('2');
   });
 
@@ -40,7 +42,9 @@ describe('showing reactions', () => {
     fakeController();
     render(<MessageItem message={withReactions([])} />);
 
-    expect(screen.queryAllByRole('button', { name: /👀|💬/ })).toHaveLength(0);
+    // 칩이 없다는 뜻이다 — 툴바의 인라인 칸(`React with 👀`)은 리액션과 무관하게 늘 있다.
+    expect(screen.queryByTestId('reactions')).toBeNull();
+    expect(screen.queryByTestId('reaction-👀')).toBeNull();
     expect(screen.getByRole('button', { name: 'Add reaction' })).toBeTruthy();
   });
 
@@ -52,7 +56,7 @@ describe('showing reactions', () => {
       { emoji: '💬', accountIds: ['u2'] },
     ])} />);
 
-    expect(screen.getByRole('button', { name: /👀/ }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('reaction-👀').getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('button', { name: /💬/ }).getAttribute('aria-pressed')).toBe('false');
   });
 
@@ -61,7 +65,7 @@ describe('showing reactions', () => {
     fakeController();
     render(<MessageItem message={withReactions([{ emoji: '👀', accountIds: ['u2', 'u3'] }])} />);
 
-    expect(screen.getByRole('button', { name: /👀/ }).getAttribute('aria-label'))
+    expect(screen.getByTestId('reaction-👀').getAttribute('aria-label'))
       .toMatch(/someone|third/);
   });
 
@@ -72,7 +76,9 @@ describe('showing reactions', () => {
       { emoji: '👀', accountIds: ['u3'] },
     ])} />);
 
-    const chips = screen.getAllByRole('button', { name: /👀|💬/ });
+    // 순서를 재는 자리다 — 칩 줄 안의 **DOM 순서**를 그대로 읽는다(개별 testid 로 집으면
+    // 순서가 아니라 존재만 재게 된다).
+    const chips = within(screen.getByTestId('reactions')).getAllByRole('button');
     expect(chips[0]!.textContent).toContain('💬');
   });
 });
@@ -92,7 +98,7 @@ describe('pressing a reaction', () => {
     const c = fakeController();
     render(<MessageItem message={withReactions([{ emoji: '👀', accountIds: ['u1'] }])} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /👀/ }));
+    fireEvent.click(screen.getByTestId('reaction-👀'));
 
     await waitFor(() => expect(c.toggleReaction).toHaveBeenCalledWith('c1', 'm1', '👀', false));
   });
@@ -101,7 +107,7 @@ describe('pressing a reaction', () => {
     const c = fakeController();
     render(<MessageItem message={withReactions([{ emoji: '👀', accountIds: ['u2'] }])} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /👀/ }));
+    fireEvent.click(screen.getByTestId('reaction-👀'));
 
     await waitFor(() => expect(c.toggleReaction).toHaveBeenCalledWith('c1', 'm1', '👀', true));
   });
@@ -148,7 +154,7 @@ describe('#145 인라인 이모지 버튼 토글과 눌린 상태', () => {
       />
     );
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     const button = within(toolbar).getByRole('button', { name: 'React with 👍' });
     expect(button.getAttribute('aria-pressed')).toBe('true');
   });
@@ -161,7 +167,7 @@ describe('#145 인라인 이모지 버튼 토글과 눌린 상태', () => {
       />
     );
 
-    const toolbar = screen.getByRole('group', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
     const button = within(toolbar).getByRole('button', { name: 'React with 👍' });
     expect(button.getAttribute('aria-pressed')).toBe('false');
   });
@@ -187,8 +193,11 @@ describe('#145 인라인 이모지 버튼 토글과 눌린 상태', () => {
 describe('#145 인라인 선정 규칙과 접근성 이름', () => {
   // 인덱스로 자르면 QUICK 순서가 바뀌는 순간 상태 신호가 인라인으로 샌다.
   it('순서가 바뀌어도 상태 신호 이모지는 인라인에 오지 않는다', () => {
-    expect(pickInline(['👀', '👍', '💬', '🎉', '✅', '🔥'])).toEqual(['👍', '🎉', '✅']);
-    expect(pickInline(['👍', '🎉', '✅', '👀', '💬'])).toEqual(['👍', '🎉', '✅']);
+    // 2026-09-09: 규칙(상태 신호를 빼고 앞에서 셋)을 값 하나로 바꿨다 — 요청받은 셋이
+    // 👀 를 포함해 규칙과 정면으로 부딪쳤고, 규칙을 반쯤 뚫어 두면 다음 사람이 💬 도 뚫는다.
+    // 남은 절반의 판단이 이 줄이다: **💬 는 인라인에 오지 않는다.**
+    expect(INLINE).toEqual(['✅', '👀', '👍']);
+    expect(INLINE).not.toContain('💬');
   });
 
   // 피커를 열면 두 표면의 이모지 버튼이 함께 존재한다. 이름이 같으면 스크린리더도

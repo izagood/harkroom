@@ -117,11 +117,11 @@ describe('ChannelPane', () => {
     fireEvent.click(triggers[0]!);
     expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeTruthy();
-    // 남의 메시지에는 링크 복사만 있다. 바깥 mousedown 으로 첫 메뉴를 닫는다 — click 만으로는
-    // 안 닫힌다(Menu 는 document 의 mousedown 을 본다).
+    // 남의 메시지에는 본문 복사만 있다(링크 복사는 2026-09-09 에 툴바로 올라갔다). 바깥
+    // mousedown 으로 첫 메뉴를 닫는다 — click 만으로는 안 닫힌다(Menu 는 mousedown 을 본다).
     fireEvent.mouseDown(document.body);
     fireEvent.click(screen.getAllByRole('button', { name: 'More actions' })[1]!);
-    expect(screen.getByRole('menuitem', { name: 'Copy link' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Copy text' })).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull();
   });
@@ -275,8 +275,9 @@ describe('ChannelPane', () => {
   // "스레드에 답글 달기" 아이콘으로 스레드를 연다.
   it('opens a thread from a message that has no replies yet', () => {
     const c = fakeController();
-    // #161 2단계: 서버의 replyCount 를 쓴다. m1 은 답글이 있어 replyCount: 1,
-    // m3 은 답글이 없어 replyCount: null 이라 툴바의 스레드 아이콘이 보인다.
+    // #161 2단계: 서버의 replyCount 를 쓴다. 2026-09-09 부터 툴바의 스레드 칸은 답글
+    // 유무와 **무관하게** 서므로 m1·m3 둘 다 갖는다 — 여기서 누르는 것은 목록의 셋째 행
+    // (m3, 답글 없는 말)이고, 그것이 이 테스트의 이름이다.
     useAppStore.getState().set({
       messages: {
         c1: [
@@ -287,7 +288,8 @@ describe('ChannelPane', () => {
       },
     });
     render(<ChannelPane />);
-    fireEvent.click(screen.getByRole('button', { name: '스레드에 답글 달기' }));
+    const threadBtns = screen.getAllByRole('button', { name: '스레드에 답글 달기' });
+    fireEvent.click(threadBtns[threadBtns.length - 1]!);
     expect(c.openThread).toHaveBeenCalledWith('m3');
   });
 

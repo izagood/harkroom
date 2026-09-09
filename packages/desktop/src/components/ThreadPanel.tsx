@@ -161,7 +161,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
         onWidth={setThreadWidth}
       />
       <header className="flex items-center border-b border-border px-4 py-2">
-        <span className="font-bold">Thread</span>
+        <span className="font-bold">{t('thread.title')}</span>
         {/* `null` 은 '아직 아무 말도 못 봤다' — 그때는 배지를 그리지 않는다(`threadState`). */}
         {state && <ThreadStateBadge state={state} className="ml-2" />}
         {/* 참여자 줄과 터미널 선택자는 **헤더**다 — 세션이 (에이전트, 스레드)당 하나이므로
@@ -211,6 +211,11 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
                 />
               )
         ))}
+        {/* 답글이 하나도 없는 스레드 — 머리 하나만 서 있으면 "열렸다"가 아니라 "빈 화면"으로
+            읽힌다. 머리는 목록에 포함되므로 길이 1 이 곧 '답글 없음'이다. */}
+        {thread.length <= 1 && (
+          <p data-testid="thread-empty" className="px-4 py-2 text-meta text-fg-subtle">{t('thread.empty')}</p>
+        )}
         <div ref={bottomRef} />
       </div>
       <TypingLine />

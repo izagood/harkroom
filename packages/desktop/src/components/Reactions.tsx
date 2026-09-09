@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import type { MessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -21,65 +20,95 @@ const QUICK = ['👀', '💬', '👍', '🎉', '✅', '🔥', '🤔', '😄'];
 export const STATUS_SIGNAL_EMOJI = ['👀', '💬'];
 
 /**
- * 인라인에 낼 3개를 **규칙으로** 고른다. 인덱스로 자르면(`QUICK.slice(2, 5)`) QUICK 의
- * 순서가 바뀌는 순간 상태 신호 이모지가 조용히 인라인으로 새어 들어온다 — 바로 위
- * 주석이 금지한 것이 그것이다. 규칙을 코드로 적으면 순서가 바뀌어도 성립한다.
+ * 인라인 세 칸 — **요청받은 순서 그대로의 고정 목록**(2026-09-09).
+ *
+ * 앞 판은 규칙으로 골랐다: `QUICK` 에서 상태 신호(👀 💬)를 뺀 뒤 앞에서 셋(`pickInline`).
+ * 그 규칙의 목적은 **상태 신호가 인라인으로 새어 들어오지 않게** 하는 것이었다(#144·#145 —
+ * 사람이 에이전트의 신호를 흉내 내면 신호의 뜻이 무너진다).
+ *
+ * 요청받은 셋은 `✅ 👀 👍` 이고, 👀 가 그 규칙을 정면으로 어긴다. 규칙을 **반쯤** 고쳐
+ * 두면(예: 👀 만 예외로 뚫기) 다음 사람이 그 예외를 보고 💬 도 뚫는다. 그래서 규칙을 지우고
+ * **값 하나로** 만들었다 — 여기 적힌 셋이 인라인이고, 되돌리는 것도 이 배열 한 줄이다.
+ *
+ * **💬 는 여전히 올리지 않는다.** 그것이 남은 절반의 판단이다: 💬 는 상태 신호이면서
+ * 바로 옆 스레드 버튼과 뜻이 겹친다(둘 다 "말을 잇는다"). 창에는 그대로 있다.
  */
-export function pickInline(quick: string[]): string[] {
-  return quick.filter((e) => !STATUS_SIGNAL_EMOJI.includes(e)).slice(0, 3);
-}
-
-const INLINE = pickInline(QUICK);
+export const INLINE = ['✅', '👀', '👍'];
 
 /**
- * 리액션을 **추가하는** 표면. `MessageItem` 의 호버 툴바가 이것을 쓴다(#121).
+ * 리액션 고르는 창 — **툴바 위쪽에 뜨는 팝오버**(요청 2026-09-09: "바 위쪽에 이모지 고를 수
+ * 있는 약간 여유 있는 창").
  *
- * 칩(`Reactions`)과 나눠 둔 이유: 추가 버튼이 툴바로 올라가면서 두 곳에 같은 것이 생기면
- * 접근성 이름(`Add reaction`)이 중복돼 스크린리더와 테스트가 어느 것인지 가리지 못한다
- * (초판이 그렇게 복사돼 리액션 테스트 4개가 깨졌다). QUICK 목록과 토글 규칙은 여기 하나다.
+ * ## 앞 판이 무엇을 했는가
+ *
+ * `＋` 를 누르면 이 컴포넌트가 **자기 자리에서** 8개 이모지 줄로 바뀌었다(`if (picking)
+ * return …`). 두 가지가 동시에 깨졌다:
+ *
+ * 1. 툴바 안의 다른 칸들이 **커서 아래에서 좌우로 밀려났다** — 무엇을 누르려던 자리였는지가
+ *    사라진다. 리액션을 고르려다 메뉴를 열게 되는 자리다.
+ * 2. 툴바는 호버로만 보이므로, 그 줄을 보려고 마우스를 조금 움직이면 **줄째 사라졌다.**
+ *
+ * 창을 위로 띄우면 툴바의 자리 여덟은 그대로 있고(순서가 흔들리지 않는다), 창은 툴바의
+ * 자식이라 붙잡아 둘 수 있다(`MessageToolbar` 의 `data-open`).
+ *
+ * ## 왜 32px 칸인가
+ *
+ * 앞 판은 11px 이모지가 알약에 붙어 있어 **고르는 동작이 조준**이었다. 여기서는 칸이
+ * 32px, 사이가 4px 이다. 글자 크기는 `text-title`(17px)이다 — 20px 이 더 낫겠지만 4단
+ * 회귀선이 임의 글자 크기를 잡는다(`test/typeScale.test.ts`), 그리고 그 회귀선이 지키는
+ * 것("단이 단으로 남는다")이 이모지 3px 보다 크다.
  */
-export function ReactionPicker({ message }: { message: MessageRow }) {
+export function ReactionPickerPanel({ message, onClose }: { message: MessageRow; onClose: () => void }) {
   const myId = useActiveStore((s) => s.me?.id ?? null);
-  const [picking, setPicking] = useState(false);
+  const t = useT();
 
   const toggle = (emoji: string, on: boolean) => {
-    setPicking(false);
+    // 고르면 바로 닫는다 — 한 말에 셋을 연달아 다는 일은 드물고, 열린 채로 두면 창이
+    // 다음 메시지를 읽는 것을 가린다.
+    onClose();
     // 실패는 조용히 넘긴다 — 서버가 받아들인 뒤에만 화면이 바뀌므로 화면은 언제나 서버와 같다.
     void getController().toggleReaction(message.channelId, message.id, emoji, on).catch(() => {});
   };
 
-  if (picking) {
-    return (
-      <div className="flex items-center gap-0.5 rounded-full border border-border bg-surface-raised px-1 shadow-sm">
-        {QUICK.map((e) => (
-          <button
-            key={e}
-            aria-label={e}
-            className="rounded px-1 hover:bg-surface-sunken"
-            onClick={() => toggle(e, !message.reactions.find((r) => r.emoji === e)?.accountIds.includes(myId ?? ''))}
-          >
-            {e}
-          </button>
-        ))}
+  return (
+    <div
+      data-testid="reaction-picker-panel"
+      /* 오른쪽 끝을 툴바에 맞춘다(`right-0`) — 툴바가 행의 오른쪽에 붙어 있으므로 왼쪽에
+         맞추면 창이 화면 밖으로 나간다. `bottom-full` 은 "내 아래끝 = 부모의 위끝"이다. */
+      className="absolute bottom-full right-0 mb-1.5 w-58 rounded-[10px] border border-border
+                 bg-surface-raised p-2.5 shadow-lg"
+    >
+      <div className="mb-2 flex items-center justify-between px-0.5 text-meta text-fg-subtle">
+        <span>{t('reactions.pickTitle')}</span>
         <button
           aria-label="Close reaction picker"
-          className="rounded px-1 text-meta text-fg-muted hover:bg-surface-sunken"
-          onClick={() => setPicking(false)}
+          className="rounded px-1 hover:bg-surface-hover hover:text-fg"
+          onClick={onClose}
         >
-          ×
+          Esc
         </button>
       </div>
-    );
-  }
-
-  return (
-    <button
-      aria-label="Add reaction"
-      className="rounded-full border border-border px-1.5 text-meta text-fg-subtle hover:bg-surface-sunken"
-      onClick={() => setPicking(true)}
-    >
-      ＋
-    </button>
+      <div className="grid grid-cols-6 gap-1">
+        {QUICK.map((e) => {
+          const mine = myId !== null && !!message.reactions.find((r) => r.emoji === e)?.accountIds.includes(myId);
+          return (
+            <button
+              key={e}
+              /* 이름은 이모지 그대로다 — 인라인 버튼은 `React with 👍` 라 둘이 겹치지 않는다
+                 (이 파일 아래 주석이 그 사고를 기록한다: 같은 이름이 둘이면 스크린리더와
+                 테스트가 어느 것인지 가리지 못한다). */
+              aria-label={e}
+              aria-pressed={mine}
+              className={`flex h-8 w-8 items-center justify-center rounded-lg text-title
+                ${mine ? 'bg-surface-sunken ring-1 ring-border' : 'hover:bg-surface-hover'}`}
+              onClick={() => toggle(e, !mine)}
+            >
+              {e}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -88,7 +117,18 @@ export function ReactionPicker({ message }: { message: MessageRow }) {
  * 👀💬는 에이전트 상태 신호로 쓰이므로, 사람이 누를 수 있는 인라인 버튼에 포함하지 않는다.
  * 토글 가능하고, 내가 누른 리액션은 눌린 상태로 표시한다.
  */
-export function InlineReactionButtons({ message }: { message: MessageRow }) {
+export function InlineReactionButtons({ message, className, classNameOn }: {
+  message: MessageRow;
+  /**
+   * 칸의 모양은 **툴바가 정한다.** 앞 판은 이 파일이 자기 클래스를 들고 있었고, 그래서 한
+   * 툴바 안에서 두 규칙이 돌았다(이모지는 `surface-sunken` 에 반응하고 아이콘 칸은 자기
+   * 배경색에 반응해 **아무 변화가 없었다**). 여덟 칸이 같은 상자를 쓰는 것이 요점이라
+   * 그 값을 한 곳에서 받는다.
+   */
+  className?: string;
+  /** 내가 이미 누른 칸의 모양(가라앉은 면). */
+  classNameOn?: string;
+}) {
   const myId = useActiveStore((s) => s.me?.id ?? null);
 
   const toggle = (emoji: string, on: boolean) => {
@@ -110,9 +150,9 @@ export function InlineReactionButtons({ message }: { message: MessageRow }) {
             // 바뀌지 않아야 포커스가 그 버튼에 머문 채로도 읽히는 이름이 흔들리지 않는다.
             aria-label={`React with ${emoji}`}
             aria-pressed={mine}
-            className={`rounded px-1 text-meta ${
-              mine ? 'bg-surface-sunken font-medium text-fg' : 'text-fg-subtle hover:bg-surface-sunken'
-            }`}
+            data-slot
+            data-testid={`toolbar-react-${emoji}`}
+            className={mine ? classNameOn : className}
             onClick={() => toggle(emoji, !mine)}
           >
             {emoji}

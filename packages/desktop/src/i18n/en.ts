@@ -309,6 +309,12 @@ export const en = {
 
   'thread.alsoPostToChannel': 'Also post to the channel',
   'thread.resizeHandle': 'Resize the thread panel',
+  'thread.title': 'Thread',
+  // 답글이 하나도 없는 스레드를 열었을 때. 이 줄이 없으면 패널에 머리말 하나만 서서
+  // **눌린 것이 맞는지** 화면이 말하지 않는다(툴바의 스레드 칸이 상시 노출이 된 뒤로
+  // 이 상태가 흔해졌다 — 전에는 답글이 있는 스레드만 열 수 있었다).
+  'thread.empty': 'No replies yet. Start the thread with the first reply.',
+  'reactions.pickTitle': 'Pick a reaction',
 
   // ---------------------------------------------------------------------------
   // gallery — **화면 이름이다.** `settings/GallerySettings.tsx` 가 그리는 말이고,
@@ -2711,6 +2717,11 @@ export const en = {
   'message.threadOrigin': 'Replied in a thread',
   'message.recentReplies': 'View recent replies',
   'message.replyInThread': 'Reply in a thread',
+  // 툴바로 올라온 둘(2026-09-09). 메뉴에서 같은 문구를 쓰던 항목을 그대로 옮겼다 —
+  // 사람이 아는 낱말이 바뀌면 옮긴 것이 아니라 새것이 생긴 것으로 읽힌다.
+  'message.copyLink': 'Copy link',
+  'message.save': 'Save for later',
+  'message.unsave': 'Unsave',
   // 연쇄 깊이 상한에 막힌 호출(4단계). 사람이 알아야 하는 사실이고, 할 일은 아니다.
   'message.chainCapped': 'Did not call {handles} — the mention chain hit its depth limit ({limit}). Write a line yourself to continue.',
   'message.openSkillApproval': 'Open the skill approval screen',

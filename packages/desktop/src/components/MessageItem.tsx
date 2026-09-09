@@ -9,14 +9,15 @@ import { waitChainFromLinks, chainEnds } from '../lib/waitChain';
 import { FailureCard } from './FailureCard';
 import { ReportCard } from './ReportCard';
 import { MessageBody } from './MessageBody';
-import { ReactionPicker, Reactions, InlineReactionButtons } from './Reactions';
+import { Reactions } from './Reactions';
+import { MessageToolbar } from './MessageToolbar';
 import { Identity, StatusMark } from './Identity';
 import { TerminalChip } from './TerminalChip';
 import { WakeRow } from './WakeRow';
 import { NotifiedGapRow } from './NotifiedGapRow';
 import { SavedIcon } from './RailIcons';
 import { Attachments } from './Attachments';
-import { Menu } from './Menu';
+
 import { ConfirmDialog } from './ConfirmDialog';
 import { bodyAsHandles, displayBody } from '../lib/mention';
 import { accountOpen } from '../lib/accountOpen';
@@ -346,7 +347,6 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
     if (next.trim() && next !== message.body) void getController().editMessage(message.id, next);
   };
 
-  const hoverOnly = 'opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100';
 
   /**
    * 확인창에 보여 줄 대상 미리보기. 수정창(#271)과 같은 두 손질을 거친다 —
@@ -355,7 +355,6 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    * 읽지 못한 채 확인을 누르게 된다.
    */
   const deletePreview = bodyAsHandles(displayBody(message, accounts), accounts).trim();
-  const iconBtn = 'rounded p-1 text-fg-subtle hover:bg-surface-raised';
 
   /**
    * 클립보드에 담는다(#178). **실패를 조용히 삼키지 않는다** — 삼키면 사람은
@@ -414,8 +413,9 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   if (message.kind === 'wake') return <WakeRow message={message} />;
 
   const menuItems = [
-    // 어떤 메시지든 가리킬 수 있다 — 남의 것도, system 메시지도 링크의 대상이다.
-    { label: 'Copy link', onSelect: () => { void copyLink(); } },
+    // 링크 복사와 담기는 **툴바로 올라갔다**(2026-09-09) — 같은 일에 문을 둘 두면
+    // 언젠가 한쪽만 고쳐진다. 두 곳이 같은 함수를 부르게 묶어 두는 길도 있었지만, 메뉴가
+    // 열 항목이라 "덜 쓰는 것들"이라는 뜻을 잃은 것이 실제 문제였다. 남은 일곱이 그 뜻이다.
     // 복사는 **권한 게이트가 없다**(#179) — 읽을 수 있으면 이미 본문을 눈으로 옮길 수 있다.
     // Edit·Delete 와 성격이 다르니 그 둘의 조건을 따라가지 않는다.
     { label: 'Copy text', onSelect: () => { void copyBody(); } },
@@ -459,13 +459,6 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
      * 확인 단계를 두지 않는다: 되돌리는 길(`Remove from channel`)이 바로 옆에 있다.
      */
     ...(canPostToChannel ? [{ label: 'Post to channel', onSelect: () => { void getController().postToChannel(message.id); } }] : []),
-    // #219: 나중에 볼 것으로 담기. 담겨 있으면 문구가 해제로 바뀐다 — 같은 자리에 두 항목을
-    // 나란히 두면 어느 것이 지금 상태인지 화면이 말하지 않는다.
-    // 문구는 이 메뉴의 나머지(Pin·Edit·Delete…)와 같은 영문이다: 여기만 한국어로 두면
-    // 한 메뉴 안에서 언어가 갈린다(#219 spec 은 UI 가 한국어라고 보고 "나중에 보기"를 적었다).
-    ...(isSaved
-      ? [{ label: 'Unsave', onSelect: () => { void getController().unsaveMessage(message.id); } }]
-      : [{ label: 'Save for later', onSelect: () => { void getController().saveMessage(message.id); } }]),
   ];
 
   /**
@@ -888,54 +881,17 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
         )}
       </div>
 
+      {/* 우상단 호버 툴바(#121). 여덟 칸의 순서·모양·창은 `MessageToolbar` 가 쥔다 —
+          이 파일은 무엇을 넘길지만 정한다. 수정 중(`draft`)에는 그리지 않는다: 그 상태의
+          이 자리는 저장·취소가 쓰고, 툴바가 함께 서면 같은 행에 두 벌의 결정이 놓인다. */}
       <div className="relative flex shrink-0 items-start gap-1">
-        {/* #121: 우상단 호버 툴바. #254 이후 답글 컨트롤이 본문 열로 이동해서 둘이 같은
-            자리를 다투지 않으므로, 툴바는 행 기준 `right-2 top-1` 로 앵커한다.
-            숨기는 방식은 반드시 opacity 다 — visibility:hidden 은 접근성 트리에서
-            요소를 지워 키보드 경로를 없앤다(Reactions.tsx 주석이 그 비용을 기록한다). */}
         {draft === null && (
-          <div role="group" aria-label="message toolbar" className={`absolute right-2 top-1 flex items-center gap-0.5 rounded border border-border bg-surface-raised px-1 py-0.5 shadow-sm ${hoverOnly}`}>
-            <InlineReactionButtons message={message} />
-            <ReactionPicker message={message} />
-            {/* #396: 답글이 아직 **없는** 메시지의 스레드 진입점.
-                답글이 달리면 본문 열의 답글 요약(위쪽, #161)이 상시 노출로 이 역할을 대신하므로
-                그때는 여기 그리지 않는다 — 같은 진입을 두 곳에 두지 않는다. inThread 에서는
-                스레드 안에서 또 스레드를 열 수 없으므로 아예 그리지 않는다(바깥 조건이 막는다).
-                아이콘은 💬 를 쓰지 않는다 — 그건 에이전트 상태 신호 이모지라(#144,
-                STATUS_SIGNAL_EMOJI) 사람이 누르는 버튼에 쓰면 신호의 뜻이 무너진다.
-                조건이 `replyCount === null` 이었으나 **`0` 을 빠뜨렸다** — 서버는 답글 없는
-                루트에 `0` 을 주므로 정작 이 아이콘이 가장 필요한 메시지에서 사라졌다.
-                `!hasReplies` 로 `null` 과 `0` 을 함께 받는다(정의 주석 참고). */}
-            {!inThread && !hasActivity && (
-              <button
-                className={iconBtn}
-                title={t('message.replyInThread')}
-                aria-label={t('message.replyInThread')}
-                onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
-              >
-                ↩
-              </button>
-            )}
-            {
-              // 항목이 하나도 없으면 트리거를 만들지 않는다 — 열어도 비어 있는 메뉴는
-              // "할 수 있는 게 있다"는 거짓 신호다(design.md §4).
-              //
-              // #178 이후 이 조건은 **실제로는 거짓이 되지 않는다**: "Copy link" 는 어떤
-              // 메시지에도 있으므로 목록이 비지 않는다. 그래도 남겨 둔다 — 항목이 다시
-              // 전부 조건부가 되는 순간(예: 링크를 admin 에게만 여는 결정) 이 가드가
-              // 없으면 빈 메뉴가 조용히 생긴다. 지금 지키는 것이 없다는 사실을 적어 두는
-              // 이유는, 이 줄을 읽고 "여기서 걸러진다"고 믿는 사람이 없게 하기 위해서다.
-              menuItems.length > 0 && (
-                <Menu
-                  renderTrigger={(props) => (
-                    <button {...props} className={iconBtn} aria-label="More actions">⋯</button>
-                  )}
-                  items={menuItems}
-                  placement="bottom"
-                />
-              )
-            }
-          </div>
+          <MessageToolbar
+            message={message}
+            inThread={inThread}
+            menuItems={menuItems}
+            onCopyLink={() => { void copyLink(); }}
+          />
         )}
       </div>
 

@@ -77,7 +77,6 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
-const openMenu = () => { fireEvent.click(screen.getByLabelText('More actions')); };
 
 describe('담아 둔 메시지 — 패널 (#219)', () => {
   it('열면 "할 것" 탭의 목록을 서버에서 받아 그린다', async () => {
@@ -142,24 +141,26 @@ describe('담아 둔 메시지 — 패널 (#219)', () => {
   });
 });
 
-describe('담아 둔 메시지 — 메뉴와 사이드바 (#219)', () => {
-  it('6. ⋯ 메뉴에서 담기를 누르면 요청이 나간다', () => {
+describe('담아 둔 메시지 — 툴바와 사이드바 (#219)', () => {
+  it('6. 툴바의 담기를 누르면 요청이 나간다', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m9', 'c1', 5, 'later', 'u2')} />);
 
-    openMenu();
-    fireEvent.click(screen.getByText('Save for later'));
+    fireEvent.click(screen.getByTestId('toolbar-save'));
     expect(c.saveMessage).toHaveBeenCalledWith('m9');
   });
 
-  it('6b. 이미 담긴 메시지면 문구가 해제로 바뀐다', () => {
+  it('6b. 이미 담긴 메시지면 같은 칸이 해제가 된다', () => {
     const c = fakeController();
     useAppStore.getState().set({ savedIds: ['m9'] });
     render(<MessageItem message={msg('m9', 'c1', 5, 'later', 'u2')} />);
 
-    openMenu();
-    expect(screen.queryByText('Save for later')).toBeNull();
-    fireEvent.click(screen.getByText('Unsave'));
+    // 칸은 하나다 — 상태는 이름과 `aria-pressed` 가 말한다(두 칸을 나란히 두면 어느 것이
+    // 지금 상태인지 화면이 말하지 않는다).
+    const btn = screen.getByTestId('toolbar-save');
+    expect(btn.getAttribute('aria-label')).toBe('담은 것 빼기');
+    expect(btn.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(btn);
     expect(c.unsaveMessage).toHaveBeenCalledWith('m9');
   });
 
@@ -170,8 +171,7 @@ describe('담아 둔 메시지 — 메뉴와 사이드바 (#219)', () => {
     useAppStore.getState().set({ savedIds: ['m9'], savedCount: 0 });
     render(<MessageItem message={msg('m9', 'c1', 5, 'later', 'u2')} />);
 
-    openMenu();
-    expect(screen.getByText('Unsave')).toBeTruthy();
+    expect(screen.getByTestId('toolbar-save').getAttribute('aria-label')).toBe('담은 것 빼기');
   });
 
   /**
@@ -285,15 +285,14 @@ describe('담아 둔 메시지 — Workspace 배선 (#219)', () => {
     });
   });
 
-  it('⋯ 메뉴에서 담으면 사이드바 배지가 갱신되고 패널이 그 행을 그린다', async () => {
+  it('툴바에서 담으면 사이드바 배지가 갱신되고 패널이 그 행을 그린다', async () => {
     const { api } = realController();
     render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
     // 담기 전에는 개수를 말하지 않는다.
     expect(screen.getByTestId('rail-saved').getAttribute('aria-label')).not.toContain('담아 둔');
 
-    openMenu();
-    fireEvent.click(screen.getByText('Save for later'));
+    fireEvent.click(screen.getByTestId('toolbar-save'));
 
     // 요청이 나가고, **그 결과가 사이드바까지 온다** — 배선이 끊기면 여기서 실패한다.
     await waitFor(() => expect(api.saveMessage).toHaveBeenCalledWith('m9'));
@@ -307,18 +306,15 @@ describe('담아 둔 메시지 — Workspace 배선 (#219)', () => {
     await waitFor(() => expect(within(panel).getByTestId('saved-entry-m9')).toBeTruthy());
   });
 
-  it('담은 뒤 같은 메뉴를 다시 열면 해제로 바뀐다 — 재마운트 없이도', async () => {
+  it('담은 뒤 같은 칸이 해제로 바뀐다 — 재마운트 없이도', async () => {
     realController();
     render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
-    openMenu();
-    fireEvent.click(screen.getByText('Save for later'));
+    fireEvent.click(screen.getByTestId('toolbar-save'));
     await waitFor(() => expect(
       screen.getByTestId('rail-saved').getAttribute('aria-label'),
     ).toContain('담아 둔 메시지 1개'));
 
-    openMenu();
-    expect(screen.queryByText('Save for later')).toBeNull();
-    expect(screen.getByText('Unsave')).toBeTruthy();
+    expect(screen.getByTestId('toolbar-save').getAttribute('aria-label')).toBe('담은 것 빼기');
   });
 });
