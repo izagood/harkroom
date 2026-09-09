@@ -184,6 +184,79 @@ export function looksReadyForPrompt(rawOutput: string, pattern: RegExp = DEFAULT
   return pattern.test(stripAnsi(rawOutput));
 }
 
+/**
+ * **하네스가 턴 도중에 사람에게 묻는 화면**(2026-09-09 실측).
+ *
+ * `--permission-mode auto` 는 위험으로 판정한 명령을 차단하고 사람에게 확인을 받는다. 그
+ * 화면이 이 모양이다:
+ *
+ * ```
+ * Auto mode classifier requires confirmation for this command.
+ * Do you want to proceed?
+ * ❯ 1. Yes
+ *   3. No
+ * ```
+ *
+ * **준비 판정과 같은 규율을 쓴다**(`looksReadyForPrompt` 주석의 판례): 모달을 부정 목록으로
+ * 하나씩 막는 길은 끝나지 않으므로 **묻는 화면에만 있는 것**을 본다 — 확인 문장과 번호
+ * 선택지다. 둘 다 채팅 입력창에는 없다.
+ *
+ * **판본에 기대는 값이다.** 표시가 바뀌면 관문을 못 보고, 그 턴은 정지 시계에 걸려 접힌다 —
+ * 그 실패가 이 상수를 고쳐야 한다는 신호다(`DEFAULT_READY_PATTERN` 과 같은 계약).
+ */
+const DEFAULT_GATE_PATTERN = /Do you want to (?:proceed|continue)\?|requires confirmation|^\s*❯\s*\d+\.\s/m;
+
+/** 패턴이 **마지막으로** 맞은 위치. 없으면 -1. */
+function lastMatchIndex(text: string, pattern: RegExp): number {
+  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+  const re = new RegExp(pattern.source, flags);
+  let last = -1;
+  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+    last = m.index;
+    // 길이 0 매치가 lastIndex 를 못 밀어 무한 루프가 되는 것을 막는다.
+    if (m[0].length === 0) re.lastIndex += 1;
+  }
+  return last;
+}
+
+/**
+ * 이 출력의 **마지막 화면이 관문인가**.
+ *
+ * ## 왜 있다/없다가 아니라 순서인가
+ *
+ * `tail` 은 화면 스냅샷이 아니라 최근 바이트 흐름이다(`TAIL_CAP_BYTES`) — 관문 글자와
+ * 입력창 표시가 **둘 다** 그 안에 남아 있을 수 있다. 존재만 보면 사람이 관문을 지난 뒤에도
+ * 판정이 참으로 남아 같은 턴에서 두 번 부르고, 반대로 입력창 표시만 보면 관문이 그 위에
+ * 그려졌는데도 준비된 것으로 읽는다. **마지막에 그려진 쪽이 지금 화면이므로 더 뒤에 있는
+ * 쪽을 믿는다.**
+ *
+ * 수용 테스트가 실물 화면에 대고 같은 판정을 쓰기 위해 export 한다 — 테스트가 패턴을 베껴
+ * 쓰면 프로덕션이 바뀔 때 그 사본만 초록으로 남는다(`looksReadyForPrompt` 와 같은 이유).
+ */
+export function looksLikeGate(
+  rawOutput: string,
+  gate: RegExp = DEFAULT_GATE_PATTERN,
+  ready: RegExp = DEFAULT_READY_PATTERN,
+): boolean {
+  const screen = stripAnsi(rawOutput);
+  const gateAt = lastMatchIndex(screen, gate);
+  if (gateAt < 0) return false;
+  return gateAt > lastMatchIndex(screen, ready);
+}
+
+/**
+ * 사람을 부른 **자리**. 두 자리의 **범위가 다르기 때문에** 갈라야 한다(`attentionLedger.ts`).
+ *
+ * - `'startup'` — 프롬프트를 넣기 전에 만난 관문(온보딩·폴더 신뢰·텔레메트리 수락). 그
+ *   승인은 **계정 설정에 기록되므로** 한 번 지나면 그 계정의 모든 스레드가 함께 풀린다.
+ *   그래서 계정 원장으로 묶어 한 번만 부른다 — 안 묶으면 7개 스레드가 창 7개를 띄운다
+ *   (2026-09-08 실측).
+ * - `'gate'` — 대화가 시작된 뒤 하네스가 묻는 확인(`--permission-mode auto` 의 classifier).
+ *   **명령 하나에 대한 물음이라 계정으로 묶으면 안 된다**: 묶으면 먼저 걸린 스레드가
+ *   원장을 쥐고, 다른 스레드의 턴은 아무 신호 없이 서 있다가 정지 시계에 접힌다.
+ */
+export type AttentionKind = 'startup' | 'gate';
+
 // SIGTERM → SIGKILL 유예 시간. 하네스가 모델 요청을 붙잡고 있는 도중일 수 있다 — 바로
 // SIGKILL 을 쏘면 정리(임시 파일, in-flight 요청 등)할 기회 자체를 빼앗는다.
 const SIGKILL_GRACE_MS = 5_000;
@@ -329,7 +402,13 @@ export interface RunPtyTurnOptions {
      * **이 콜백이 불려도 프라미스는 정착하지 않는다.** 이 턴의 끝은 exit 이거나 고아
      * 회수다 — 인터랙티브 턴과 같은 규칙이다(#337).
      */
-    onAttention?: (screen: string) => void;
+    onAttention?: (screen: string, kind: AttentionKind) => void;
+    /**
+     * 턴 도중 관문을 확인하는 주기(기본 3초). **두 번 연속** 관문으로 보여야 부른다 —
+     * 판정 하나로 재면 스크롤을 지나가는 글자에 걸린다(모델이 관문 문장을 그대로 인용해
+     * 출력할 수 있다). `onAttention` 이 없으면 이 창도 돌지 않는다.
+     */
+    gateProbeMs?: number;
     /**
      * 주입이 **먹혔는지** 재는 확인 창(2026-09-08, 스펙 §2-5).
      *
@@ -487,6 +566,10 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
     // 리스너가 유일하게 dispose 를 보장하는 경로이므로, 등록을 늦출 이유가 없다.
     let settled = false;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
+    // 턴 도중 관문을 지켜보는 창(2026-09-09). 주입이 성공한 뒤에만 선다 — 아래 설치 자리의
+    // 주석이 왜인지 말한다. unref 되어 있어 프로세스를 붙잡지는 않지만, 정착 경로에서
+    // 함께 걷어 낸다: 끝난 PTY 의 화면으로 사람을 부를 이유가 없다.
+    let gateProbe: ReturnType<typeof setInterval> | null = null;
     let timedOut = false;
 
     /**
@@ -525,6 +608,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       settled = true;
       if (timeoutTimer) clearTimeout(timeoutTimer);
       if (killTimer) clearTimeout(killTimer);
+      if (gateProbe) clearInterval(gateProbe);
       dataListener.dispose();
       exitListener.dispose();
       resolve({ exitCode, timedOut, tail: decodeTailText(tail.snapshot()) });
@@ -579,13 +663,14 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         if (onAttention) {
           // **여기서 아무것도 정착시키지 않는다.** `readyProbe` 를 그대로 살려 두므로,
           // 사람이 관문을 지나면 아래 주입이 일어나고 턴이 이어진다.
-          onAttention(screen);
+          onAttention(screen, 'startup');
           return;
         }
         // 준비를 못 봤고 부를 사람도 없다 — 이 턴은 프롬프트 없이 도는 것이 아니라 실패다.
         readyProbe?.dispose();
         settled = true;
         if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (gateProbe) clearInterval(gateProbe);
         dataListener.dispose();
         exitListener.dispose();
         try { proc.kill('SIGKILL'); } catch { /* 이미 죽었으면 회수할 것도 없다 */ }
@@ -605,6 +690,44 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
           proc.write('\r');
         } catch { /* 그 사이에 죽었으면 exit 리스너가 결과를 정한다 */ }
 
+        // ── 턴 **도중**의 관문을 계속 지켜본다(2026-09-09 실측).
+        //
+        // **왜 주입 뒤에만 서는가.** 그 앞의 관문은 위 두 창(`readyTimer`·`confirmDelivery`)이
+        // 이미 맡고 있고, 그 자리의 관문은 계정 단위라 원장으로 묶어야 한다(`AttentionKind`).
+        // 여기서 함께 잡으면 startup 관문이 `'gate'` 로 새어 나가 사람을 스레드마다 부른다.
+        //
+        // **왜 이 창이 필요한가.** 이 자리는 지금까지 비어 있었고, 그래서 대화가 시작된 뒤에
+        // 뜬 관문은 아무 신호도 남기지 않았다 — 화면 바이트는 릴레이로 흐르는데 아무도 그것을
+        // "물음이다"라고 읽지 않았다. 유일하게 반응하는 시계가 `mentionTurn` 의 정지 판정이라
+        // 사람을 기다리는 턴이 **고장으로 오진돼** SIGTERM 을 맞고, 같은 관문에 다시 걸릴 뿐인
+        // 재시도가 3회를 태웠다(실측: 30분).
+        //
+        // **끝을 정하지 않는다.** 위 두 창과 같은 규율이다 — PTY 는 그대로 살아 있고, 사람이
+        // 관문을 지나면 하네스가 그 자리에서 일을 이어 간다. 이 창이 하는 일은 부르는 것뿐이다.
+        if (onAttention) {
+          const gateMs = opts.injectPrompt?.gateProbeMs ?? 3_000;
+          // 지난 주기에도 관문으로 보였나 / 이 관문으로 이미 불렀나. 둘을 갈라야 한 관문에
+          // 한 번만 부르면서도 **다음 관문은 다시** 부를 수 있다 — 한 턴에 관문이 여럿 뜨고
+          // (명령마다 묻는다), 두 번째를 안 부르면 그 턴은 다시 조용히 선다.
+          let seenOnce = false;
+          let called = false;
+          gateProbe = setInterval(() => {
+            if (settled) return;
+            if (!looksLikeGate(decodeTailText(tail.snapshot()))) {
+              // 관문이 화면에서 내려갔다 — 사람이 지났거나 오인이었다. 어느 쪽이든 다음
+              // 관문은 처음부터 다시 센다.
+              seenOnce = false;
+              called = false;
+              return;
+            }
+            if (!seenOnce) { seenOnce = true; return; }
+            if (called) return;
+            called = true;
+            onAttention(decodeTailText(tail.snapshot()), 'gate');
+          }, gateMs);
+          gateProbe.unref?.();
+        }
+
         // 주입이 **먹혔는지** 확인한다(스펙 §2-5). 여기서도 아무것도 정착시키지 않는다 —
         // 사람을 부를 뿐이고, `readyProbe` 는 이미 소임을 다해 dispose 됐다.
         const confirm = opts.injectPrompt?.confirmDelivery;
@@ -614,7 +737,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
             void (async () => {
               let ok = false;
               try { ok = await confirm.probe(); } catch { ok = false; }
-              if (!ok && !settled) onAttention(decodeTailText(tail.snapshot()));
+              if (!ok && !settled) onAttention(decodeTailText(tail.snapshot()), 'startup');
             })();
           }, confirm.withinMs ?? 15_000);
           // 이 타이머만으로 러너를 살려 두지 않는다 — 턴의 수명은 PTY 가 정한다.
