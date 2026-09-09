@@ -28,12 +28,12 @@ import type { ReactElement } from 'react';
  * `aria-hidden` 이다 — 이름은 칸의 `aria-label` 이 진다(`Rail.tsx` 의 `RailButton`).
  * 그림이 이름을 또 내면 스크린리더가 칸 하나를 두 번 읽는다.
  */
-function Icon({ children }: { children: ReactElement | ReactElement[] }): ReactElement {
+function Icon({ children, size = 20 }: { children: ReactElement | ReactElement[]; size?: number }): ReactElement {
   return (
     <svg
       aria-hidden="true"
-      width="20"
-      height="20"
+      width={size}
+      height={size}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -82,10 +82,17 @@ export function AgentsIcon(): ReactElement {
   );
 }
 
-/** 담아 둔 것 — 책갈피. 스스로 미뤄 둔 것이라는 뜻이 이 그림에 이미 있다. */
-export function SavedIcon(): ReactElement {
+/**
+ * 담아 둔 것 — 책갈피. 스스로 미뤄 둔 것이라는 뜻이 이 그림에 이미 있다.
+ *
+ * `size` 를 받는 이유는 이 그림이 레일 밖에서도 쓰이기 때문이다(#219 후속): 메시지 위의
+ * 담김 표식은 11px 곁정보 줄에 서므로 20px 그대로 두면 글자 두 배 크기의 책갈피가 줄을
+ * 밀어낸다. **같은 그림이어야 한다는 것이 요점**이라 새 path 를 그리지 않고 지름만 연다 —
+ * 레일의 `Saved` 칸과 메시지의 표식이 다른 그림이면 사람은 둘을 같은 것으로 읽지 못한다.
+ */
+export function SavedIcon({ size }: { size?: number } = {}): ReactElement {
   return (
-    <Icon>
+    <Icon size={size}>
       <path d="M7 4.5h10a1 1 0 0 1 1 1V20l-6-3.5L6 20V5.5a1 1 0 0 1 1-1Z" />
     </Icon>
   );

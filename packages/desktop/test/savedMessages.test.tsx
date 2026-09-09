@@ -175,6 +175,48 @@ describe('담아 둔 메시지 — 메뉴와 사이드바 (#219)', () => {
   });
 
   /**
+   * **담아 둔 표식**(요청 2026-09-09). 6b·6c 가 재는 것은 `⋯` 메뉴의 문구라, 메뉴를 열지
+   * 않고도 담긴 것을 알 수 있는지는 아무 줄도 지키지 않았다 — 그것이 이 요청이었다.
+   *
+   * 글자가 아니라 `data-testid` 로 집는다(desktop 관례): 문구는 사전을 지나므로 글자로
+   * 집으면 번역 한 줄에 회귀선이 조용히 아무것도 안 지키게 된다. 다만 **무엇이라고 적히는지**
+   * 도 한 번은 재야 하므로 첫 줄에서만 문구를 확인한다(이 파일은 언어를 ko 로 못 박았다).
+   */
+  it('6d. 담긴 메시지에는 이름줄 위에 표식이 선다', () => {
+    fakeController();
+    useAppStore.getState().set({ savedIds: ['m9'] });
+    render(<MessageItem message={msg('m9', 'c1', 5, 'later', 'u2')} />);
+
+    const mark = screen.getByTestId('saved-mark');
+    expect(mark.textContent).toContain('나중을 위해 저장됨');
+    // 이름줄 **위**여야 한다 — 이름줄 안에 들어가면 작성자에게 붙은 사실로 읽힌다.
+    const column = screen.getByTestId('message-body-column');
+    expect(column.firstElementChild).toBe(mark);
+  });
+
+  it('6e. 담기지 않은 메시지에는 표식이 없다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m9', 'c1', 5, 'later', 'u2')} />);
+
+    expect(screen.queryByTestId('saved-mark')).toBeNull();
+  });
+
+  /**
+   * 요청의 나머지 절반이다 — *"해제하고 나면 마크는 없어지도록"*. 표식이 `savedIds` 만
+   * 보므로(별도 상태가 없으므로) 해제가 요약을 다시 받아 오는 것만으로 사라져야 한다.
+   */
+  it('6f. 해제하면 표식이 사라진다', () => {
+    fakeController();
+    useAppStore.getState().set({ savedIds: ['m9'] });
+    const view = render(<MessageItem message={msg('m9', 'c1', 5, 'later', 'u2')} />);
+    expect(screen.getByTestId('saved-mark')).toBeTruthy();
+
+    useAppStore.getState().set({ savedIds: [] });
+    view.rerender(<MessageItem message={msg('m9', 'c1', 5, 'later', 'u2')} />);
+    expect(screen.queryByTestId('saved-mark')).toBeNull();
+  });
+
+  /**
    * **개수가 사이드바 배지에서 레일 칸의 이름으로 옮겼다**(레일 문서 1단계).
    *
    * 문서: *"북마크는 레일에만 둔다"* 그리고 *"배지는 나를 막는 것만 센다 — 안 읽음까지
