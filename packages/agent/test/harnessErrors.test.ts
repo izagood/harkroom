@@ -8,7 +8,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readLastApiError } from '../src/harnessErrors.js';
+import { readLastApiError, sessionTranscriptGrewSince } from '../src/harnessErrors.js';
 
 /** `isApiErrorMessage` 레코드 한 줄. 실물 세션 파일의 모양을 그대로 쓴다. */
 const rec = (timestamp: string, text: string): string => JSON.stringify({
@@ -149,5 +149,48 @@ describe('readLastApiError — sinceMs', () => {
     }));
 
     expect(await readLastApiError('claude-code', 'S', { configDir: dir, sinceMs: 1 })).toBeNull();
+  });
+});
+
+// ── 기록이 **자랐는가**(2026-09-09)
+//
+// 왜 존재로는 안 되는가: `sessionTranscriptExists` 는 첫 턴에서만 "이 턴의 대화가
+// 시작됐다"와 같은 뜻이다. 되살린 턴(`claude -r`)의 기록 파일은 앞 턴에 이미 생겨 있어
+// 무조건 참이 되고, 그 구멍으로 프로덕션에서 턴 둘이 연달아 프롬프트를 못 받은 채 각각
+// 10분씩 정지 시계에 접혔다(forge `5e08f534`, 31분 동안 기록 0줄).
+describe('sessionTranscriptGrewSince', () => {
+  const 자란시각 = async (projects: string): Promise<number> => {
+    const { stat } = await import('node:fs/promises');
+    return (await stat(join(projects, '-private-tmp-whatever-cwd', `${SID}.jsonl`))).mtimeMs;
+  };
+
+  it('턴 시작 뒤에 자랐으면 참 — 대화가 실제로 시작됐다', async () => {
+    const projects = await seed([{ type: 'user' }]);
+    const mtime = await 자란시각(projects);
+    expect(await sessionTranscriptGrewSince('claude-code', SID, mtime - 1_000, { projectsDir: projects }))
+      .toBe(true);
+  });
+
+  it('턴 시작 전이 마지막이면 거짓 — 되살린 턴이 프롬프트를 못 받은 그 상태다', async () => {
+    const projects = await seed([{ type: 'user' }]);
+    const mtime = await 자란시각(projects);
+    // 파일은 **있다**. 존재로 재던 옛 판정은 여기서 참을 돌려주고 사람을 부르지 않았다.
+    expect(await sessionTranscriptGrewSince('claude-code', SID, mtime + 1_000, { projectsDir: projects }))
+      .toBe(false);
+  });
+
+  it('파일이 아예 없으면 거짓 — 첫 턴의 판정은 그대로 산다', async () => {
+    const { mkdtemp } = await import('node:fs/promises');
+    const projects = await mkdtemp(join(tmpdir(), 'harness-grew-'));
+    expect(await sessionTranscriptGrewSince('claude-code', SID, 0, { projectsDir: projects }))
+      .toBe(false);
+  });
+
+  it('codex 는 참 — 판정할 수 없는 하네스로 사람을 부르지 않는다', async () => {
+    expect(await sessionTranscriptGrewSince('codex', SID, Date.now(), {})).toBe(true);
+  });
+
+  it('sessionId 가 null 이면 참 — 볼 파일이 없는 턴을 고장으로 읽지 않는다', async () => {
+    expect(await sessionTranscriptGrewSince('claude-code', null, Date.now(), {})).toBe(true);
   });
 });

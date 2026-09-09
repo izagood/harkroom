@@ -63,7 +63,10 @@ describe('mentionTurn 의 배선', () => {
 
   it('주입 확인 창을 건다 — 준비 신호만으로는 부족하다', () => {
     expect(source).toContain('confirmDelivery:');
-    expect(source).toContain('sessionTranscriptExists(');
+    // **성장으로 잰다.** 존재(`sessionTranscriptExists`)로 재면 되살린 턴에서 이 창이
+    // 무조건 통과해, 이 배선이 있어도 사람은 아무 신호도 못 받는다(2026-09-09).
+    expect(source).toContain('sessionTranscriptGrewSince(');
+    expect(source).not.toContain('sessionTranscriptExists(');
   });
 
   it('원장을 거쳐 부른다 — 같은 계정으로 창을 여러 개 띄우지 않는다', () => {

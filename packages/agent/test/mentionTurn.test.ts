@@ -3079,6 +3079,37 @@ describe('하네스 정지 감지 (2026-09-09)', () => {
     expect(err?.message).not.toContain('무발화');
   }, 20_000);
 
+  it('문구에 **실측** 유휴시간이 실린다 — 한도만 남기면 사람이 되짚어야 한다', async () => {
+    // 2026-09-09 진단이 여기서 산수를 했다: 통지에 한도(600000ms)만 있어서 "정말 10분
+    // 서 있었나"를 통지 시각 − 한도로 되짚어 턴 시작 시점을 추정해야 했다. 잰 값을 그대로
+    // 남기면 그 산수가 없다. 한도도 함께 남긴다 — 그 값은 손잡이(AGENT_HARNESS_STALL_MS)다.
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5,
+      harnessStallMs: 10,
+      turnTimeoutMs: 10 * 60_000,
+      readTranscriptMtime: async () => null,
+    });
+    runTurn.script = async (_plan: TurnPlan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      for (let i = 0; i < 400 && killed === null; i += 1) await new Promise((r) => setTimeout(r, 10));
+      return { exitCode: killed ? 143 : 0, timedOut: false, tail: '' };
+    };
+
+    const err = await runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+    }).then(() => null, (e: unknown) => e as Error);
+
+    const m = /harness 정지 (\d+)ms\(한도 10ms\)/.exec(err?.message ?? '');
+    expect(m).not.toBeNull();
+    // 잰 값이다: 한도 이상이고, 한도 그 자체를 그대로 베낀 값이 아니다.
+    expect(Number(m![1])).toBeGreaterThanOrEqual(10);
+  }, 20_000);
+
   it('기록이 자라는 동안에는 접지 않는다 — 조용한 것과 멈춘 것은 다르다', async () => {
     // 이것이 이 시계의 존재 이유다. 오래 걸리는 턴(빌드·CI 대기)은 답도 없고 화면도
     // 조용하지만 기록은 계속 자란다. 그 턴까지 접으면 무발화 한도를 줄인 것과 다를 게 없다.
