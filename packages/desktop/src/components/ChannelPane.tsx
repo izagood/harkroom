@@ -50,6 +50,22 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 서므로, 첫 메시지가 도착할 때까지는 "따라 내려간다"가 맞다.
    */
   const atBottomRef = useRef(true);
+  /**
+   * 바닥에 **붙어 있기로 했는가.** 위의 `atBottomRef`("지금 바닥이 보이는가")와 갈리는
+   * 순간이 실제로 있다: 늦게 붙은 그림이 대화를 아래로 늘리면 **바닥은 안 보이는데 사람은
+   * 아무것도 하지 않았다.** 그때 관찰자 보정(아래)이 `atBottomRef` 만 보면 "사람이 위를
+   * 보는 중"이라고 오해해 보정을 건너뛴다 — 그것이 #693 이 남긴 구멍이었다.
+   *
+   * 그래서 이 값은 **사람이 위로 올렸을 때만** 거짓이 된다(`onListScroll`). 보정은 이 값을
+   * 보고, 줄 수로 도는 효과는 그대로 `atBottomRef` 를 본다(읽던 자리를 빼앗지 않는 규율은
+   * "지금 바닥이 보이는가"로 판단하는 것이 맞다 — `jumpToBottom.test.tsx`).
+   */
+  const stickyRef = useRef(true);
+  /**
+   * 직전 스크롤 위치. **사람이 올린 것과 브라우저가 옮긴 것을 가르는 데만** 쓴다 —
+   * 근거는 `onListScroll` 의 주석.
+   */
+  const lastScrollTopRef = useRef(0);
   /** "아래로 내려가기" 버튼을 세울지. 목록이 늘었지만 사람이 위를 보고 있을 때만 참이다. */
   const [jumpVisible, setJumpVisible] = useState(false);
   // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
@@ -185,8 +201,14 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    */
   const scrollToBottom = () => {
     atBottomRef.current = true;
+    stickyRef.current = true;
     setJumpVisible(false);
     bottomRef.current?.scrollIntoView?.({ block: 'nearest' });
+    // 방금 **우리가** 옮긴 자리를 직전 위치로 적어 둔다. 이 두 줄이 없으면 다음 스크롤을
+    // 재는 기준이 0 으로 남아, 사람이 위로 올린 것을 "내용이 자랐다"로 오해한다 —
+    // 그러면 읽던 자리를 빼앗는다.
+    const el = listRef.current;
+    if (el) lastScrollTopRef.current = el.scrollTop;
   };
 
   /**
@@ -238,10 +260,19 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 된다(`ResizeObserver` 로 높이를 재려면 목록을 감싸는 상자를 하나 더 넣어야 한다).
    * `root` 를 스크롤 상자로 주는 것이 핵심이다 — 기준은 창이 아니라 이 상자다.
    *
-   * **`atBottomRef` 가 참일 때만 움직인다.** 사람이 위를 보고 있으면 표식은 당연히 안 보이고,
+   * **`stickyRef` 가 참일 때만 움직인다.** 사람이 위를 보고 있으면 표식은 당연히 안 보이고,
    * 그때 따라 내려가면 `jumpToBottom.test.tsx` 가 지키는 규율(읽던 자리를 빼앗지 않는다)을
-   * 정면으로 깬다. 스크롤 이벤트가 관찰자 콜백보다 먼저 도착하므로, 사람이 손으로 올린
-   * 순간에는 이 값이 이미 거짓이다.
+   * 정면으로 깬다. 판정을 `atBottomRef` 가 아니라 `stickyRef` 로 하는 이유는 그 ref 의
+   * 주석에 있다 — 내용이 자라서 바닥이 멀어진 것은 사람이 한 일이 아니다.
+   *
+   * **딸림값이 `[activeChannelId]` 인 것이 이 보정을 살리는 자리다**(jaebin 보고
+   * 2026-09-09: "채널간 이동할 때는 기존처럼 애매한 위치에서 열린다"). `[]` 로 두면
+   * 관찰자가 영원히 안 붙는다: 앱을 켜면 `activeChannelId` 가 null 이고
+   * (`appStore.ts`, 기동은 채널을 열지 않는다) 그 첫 커밋에서 이 컴포넌트는 아래 이른
+   * 반환(`Pick a channel to start`)을 타므로 스크롤 상자도 바닥 표식도 아직 없다 →
+   * `listRef.current === null` 로 여기서 `return` 하고, 딸림값이 비었으니 **다시 돌지
+   * 않는다.** 상자가 생기는 시점이 정확히 채널이 활성이 되는 때이므로 그것을 딸림값으로
+   * 삼는다(채널을 옮길 때 같은 요소에 다시 매다는 것은 값이 싸고 해가 없다).
    */
   useEffect(() => {
     const root = listRef.current;
@@ -251,15 +282,16 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     if (!root || !marker || typeof IntersectionObserver === 'undefined') return;
     const io = new IntersectionObserver(
       (entries) => {
-        if (!atBottomRef.current) return;
+        if (!stickyRef.current) return;
         if (entries.some((e) => e.isIntersecting)) return;
-        marker.scrollIntoView?.({ block: 'nearest' });
+        scrollToBottom();
       },
       { root },
     );
     io.observe(marker);
     return () => io.disconnect();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeChannelId]);
 
   /**
    * 스크롤 위치를 ref 에 담는 이유: 이 값은 **그리는 데 쓰이지 않는다.** 상태로 두면
@@ -269,10 +301,26 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   const onListScroll = () => {
     const el = listRef.current;
     if (!el) return;
+    const prevTop = lastScrollTopRef.current;
+    lastScrollTopRef.current = el.scrollTop;
     const near = isNearBottom(el);
     atBottomRef.current = near;
-    // 사람이 손으로 바닥까지 내려왔으면 버튼은 할 일이 없다.
-    if (near) setJumpVisible(false);
+    // 사람이 손으로 바닥까지 내려왔으면 버튼은 할 일이 없다. 다시 붙는다.
+    if (near) {
+      stickyRef.current = true;
+      setJumpVisible(false);
+      return;
+    }
+    /**
+     * 바닥에서 떨어져 있다 — 그런데 **누가 떨어뜨렸는지**가 갈린다.
+     *
+     * 사람이 위로 올렸으면 `scrollTop` 이 **줄어든다.** 반면 내용이 자라서 멀어진 경우에는
+     * 줄지 않는다: 아래로 자라면 그대로이고(그때는 스크롤 이벤트조차 안 뜬다), 화면 위쪽
+     * 메시지에 그림이 붙으면 브라우저의 스크롤 앵커링이 보이던 자리를 붙잡느라 오히려
+     * 밀어 준다. 후자를 "사람이 올렸다"로 읽으면 고정이 풀려 관찰자 보정이 죽는다 —
+     * 그러면 그림·링크가 많은 채널에서 다시 가운데쯤에 서게 된다.
+     */
+    if (el.scrollTop < prevTop) stickyRef.current = false;
   };
 
   // 채널을 옮기면 파일 패널을 닫는다. 열린 채로 두면 방금 떠난 채널의 목록이 잠깐 남아

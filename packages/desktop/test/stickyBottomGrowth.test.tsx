@@ -21,7 +21,7 @@
  * 상자인지도 함께 잰다(창을 기준으로 하면 이 보정은 조용히 아무 일도 하지 않는다).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
@@ -80,12 +80,29 @@ const spyScroll = () => {
   return fn;
 };
 
-/** 스크롤 상자를 "위를 보고 있다"로 세운다(바닥까지 1500px 남았다). */
-const lookUp = (el: HTMLElement) => {
+/** 상자의 크기를 세운다(내용 2000px, 창 500px — 바닥은 `scrollTop` 1500 이다). */
+const sizeBox = (el: HTMLElement) => {
   Object.defineProperty(el, 'scrollHeight', { configurable: true, value: 2000 });
   Object.defineProperty(el, 'clientHeight', { configurable: true, value: 500 });
-  Object.defineProperty(el, 'scrollTop', { configurable: true, writable: true, value: 0 });
+  Object.defineProperty(el, 'scrollTop', { configurable: true, writable: true, value: 1500 });
+};
+
+/** 지금 자리를 상자에 알린다(브라우저의 scroll 이벤트 한 번). */
+const scrollTo = (el: HTMLElement, top: number) => {
+  (el as unknown as { scrollTop: number }).scrollTop = top;
   fireEvent.scroll(el);
+};
+
+/**
+ * **사람이 위로 올린다.** 바닥(1500)에서 맨 위(0)로 간다 — 사람이 올리면 `scrollTop` 이
+ * 줄어드는 것이 이 동작의 정의이고, 제품 코드가 "사람이 한 일"을 그것으로 가른다.
+ * (예전 판은 `scrollTop` 을 0 으로 **세우고** 이벤트를 한 번 쐈다. 그러면 바닥에서 위로
+ * 움직인 흔적이 없어, 늦게 자란 내용과 구별할 수 없는 상태를 재현한 셈이 된다.)
+ */
+const lookUp = (el: HTMLElement) => {
+  sizeBox(el);
+  scrollTo(el, 1500);
+  scrollTo(el, 0);
 };
 
 /** 그림·미리보기가 늦게 붙어 바닥 표식이 상자 밖으로 밀려났다. */
@@ -129,5 +146,54 @@ describe('늦게 자라는 내용', () => {
     const scrollIntoView = spyScroll();
     for (const w of watches) w.callback([{ isIntersecting: true }]);
     expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **앱의 실제 순서로 마운트한다.** 이 회귀선이 없으면 위의 것들이 전부 초록인데 앱에서는
+   * 보정이 한 번도 안 붙는다(jaebin 보고 2026-09-09: "채널간 이동할 때는 기존처럼 애매한
+   * 위치에서 열린다"). 앱을 켜면 `activeChannelId` 가 null 이고 — 기동은 채널을 열지 않는다 —
+   * 그 첫 커밋에서 `ChannelPane` 은 `Pick a channel to start` 를 그리므로 스크롤 상자가
+   * 아직 없다. 관찰자를 매다는 효과의 딸림값이 `[]` 이면 그 한 번으로 끝난다.
+   */
+  it('채널 없는 화면에서 시작해 채널을 열어도 보정이 붙는다', () => {
+    useAppStore.getState().set({ activeChannelId: null });
+    render(<ChannelPane />);
+    expect(screen.queryByTestId('channel-scroll')).toBeNull();
+    expect(watches.length).toBe(0);
+
+    act(() => { useAppStore.getState().set({ activeChannelId: 'c1' }); });
+
+    expect(watches.length).toBe(1);
+    expect(watches[0]!.root).toBe(screen.getByTestId('channel-scroll'));
+    expect(watches[0]!.targets).toContain(screen.getByTestId('channel-bottom'));
+
+    const scrollIntoView = spyScroll();
+    grewBelow();
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+  });
+
+  /**
+   * **브라우저가 옮긴 스크롤로 고정이 풀리지 않는다.** 화면 위쪽 메시지에 그림이 붙으면
+   * 스크롤 앵커링이 보이던 자리를 붙잡느라 `scrollTop` 을 스스로 **늘리고**, 그러면 진짜
+   * scroll 이벤트가 뜬다 — 그것을 "사람이 위를 보는 중"으로 읽으면 정작 그때 필요한 보정이
+   * 조용히 건너뛰어진다. 사람이 한 일의 표식은 `scrollTop` 이 **줄어드는** 것이다.
+   */
+  it('내용이 자라 바닥이 멀어진 것은 사람이 올린 것으로 치지 않는다', () => {
+    render(<ChannelPane />);
+    const list = screen.getByTestId('channel-scroll');
+    sizeBox(list);
+    // 바닥에 붙어 있다(내용 2000, 창 500, 자리 1500 → 남은 거리 0).
+    scrollTo(list, 1500);
+
+    // 화면 안 메시지에 그림이 붙어 대화가 1000px 자랐다. 앵커링이 보이던 자리를 붙잡느라
+    // `scrollTop` 을 100px **밀어 준다** — 남은 거리는 900px 이 되지만 사람은 아무것도
+    // 하지 않았다. 이 상태를 "위를 보는 중"으로 읽으면 아래 보정이 조용히 죽는다.
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, value: 3000 });
+    scrollTo(list, 1600);
+
+    const scrollIntoView = spyScroll();
+    grewBelow();
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
   });
 });
