@@ -233,6 +233,40 @@ To verify a test is meaningful:
 
 A test that passes both before and after your change does not prove anything about the behavior you're fixing.
 
+## When your change needs a newer server
+
+The desktop app and the murmur server ship as **separate artifacts**. The app auto-updates;
+the server is redeployed by hand. So a released app is routinely talking to a server that is
+several releases behind — and that is normally fine.
+
+It stops being fine the moment your change **calls something the old server does not have**:
+a new route, a new field the app requires, a new WS event it depends on. Then the feature is
+dead on every server that has not been redeployed, and nothing on screen says why.
+
+**In that PR, raise the floor:**
+
+```ts
+// packages/shared/src/compat.ts
+export const MIN_SERVER_VERSION = '0.1.167';
+```
+
+Set it to the release that first contains the server side of your change, and **add a row to
+the table in that file's doc comment** saying what breaks below it. The table is the whole
+point: without it nobody can tell later whether the number can move, and the value decays
+into a magic constant.
+
+The app compares it against what `GET /healthz` reports and draws a **danger** banner and row
+(*"redeploy the server"*) when the server is below the floor. A server that is merely behind —
+but above the floor — gets a quiet note instead, no alarm.
+
+Two rules keep the value meaningful, both enforced by `packages/shared/test/compat.test.ts`:
+
+- **Never raise it to a version that does not exist yet.** Requiring an unreleased server
+  makes every server on earth "too old", and no redeploy can clear the warning.
+- **Never raise it "just to stay current".** If the app does not actually break below the old
+  floor, leave it. A floor that tracks the release number is true almost always, and a warning
+  that is on almost always is one nobody reads.
+
 ## Getting Help
 
 - Open an issue for bug reports or feature requests

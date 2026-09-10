@@ -1,5 +1,5 @@
 import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView,
-  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@murmur/shared';
+  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@murmur/shared';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
 export class ApiError extends Error {
@@ -191,6 +191,24 @@ export class ApiClient {
   /** avcs 투영 상태(#267). */
   async projectionStatus(): Promise<ProjectionStatus> {
     return this.req<ProjectionStatus>('GET', '/projection/status');
+  }
+  /**
+   * 서버가 말하는 자기 버전(#693). `/healthz` 는 인증이 없지만 **여기서도 같은 `req` 를
+   * 쓴다** — 헤더 하나가 무시될 뿐이고, 대신 기저 URL·오류 변환·타임아웃 규칙이 다른
+   * 호출과 갈리지 않는다.
+   *
+   * 이 필드들을 안 싣는 옛 서버에서는 `version`·`commit` 이 `undefined` 로 온다.
+   * **여기서 `null` 로 눕힌다** — 화면과 스토어가 "모른다"를 한 가지 모양으로만 보게 한다.
+   */
+  async serverVersion(): Promise<ServerVersion> {
+    const health = await this.req<Partial<ServerHealth>>('GET', '/healthz');
+    return {
+      version: health.version ?? null,
+      commit: health.commit ?? null,
+      // 기동 시각만은 지어낼 수 없다. 못 받았으면 빈 문자열로 두고 화면이 감춘다 —
+      // `Date.now()` 로 채우면 "방금 뜬 서버"라는 **거짓**이 된다.
+      startedAt: health.startedAt ?? '',
+    };
   }
   /** `hasMore` 는 '이 페이지보다 오래된 것이 남았는가'다 — 상단 추가 로드 표시에 쓴다. */
   messages(

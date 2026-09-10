@@ -4,7 +4,8 @@ import fastifyMultipart from '@fastify/multipart';
 import type { Pool } from 'pg';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, projectionState, type ProjectionRuntime, type ProjectionStatus } from '@murmur/shared';
+import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, projectionState, type ProjectionRuntime, type ProjectionStatus, type ServerHealth } from '@murmur/shared';
+import { serverVersion } from './version.js';
 import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
@@ -233,9 +234,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     exposedHeaders: [NOTIFIED_HEADER, NOTIFIED_COUNT_HEADER],
   });
 
-  app.get('/healthz', async () => ({
+  // 인증 **앞**에 둔다(그리고 그대로 둔다) — 배포가 낡았는지는 로그인 전에도 물을 수
+  // 있어야 한다. 여기 실리는 것은 릴리스 번호·커밋·기동 시각뿐이고 셋 다 공개 저장소에
+  // 이미 있는 사실이다(#693).
+  app.get('/healthz', async (): Promise<ServerHealth> => ({
     ok: true,
     avcs: deps.getAvcsStatus?.() ?? { connected: false },
+    // 버전을 **별도 엔드포인트로 빼지 않는다.** 운영이 재배포를 확인할 때 이미 치는 것이
+    // `/healthz` 이고(docs/operations.md), 표면을 둘로 두면 한쪽만 보고 낡은 판단을 한다.
+    ...serverVersion(),
   }));
 
   app.get('/readyz', async (_req, reply) => {

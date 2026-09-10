@@ -14,6 +14,7 @@ import { ChannelPane } from './ChannelPane';
 import { AgentTower } from './AgentTower';
 import { Notice } from './Notice';
 import { ProjectionBanner } from './ProjectionBanner';
+import { ServerCompatBanner } from './ServerCompatBanner';
 import { UpdateToast } from './UpdateToast';
 import { ThreadPanel } from './ThreadPanel';
 import { TerminalPanel } from './TerminalPanel';
@@ -313,6 +314,10 @@ export function Workspace({ onLogout, onOpenSettings }: {
           보였고 고치는 문(설정 열기)도 그 좁은 칸에 들어가지 못했다.
         */}
         <ProjectionBanner onOpenSettings={onOpenSettings} />
+        {/* 호환 하한보다 낮은 서버도 **고장**이라 같은 자리에서 말한다(#693 후속).
+            투영 띠와 나란히 두는 이유: 둘 다 "지금 무언가 돌지 않는다"는 말이고, 자리를
+            갈라 두면 사람이 화면의 두 곳을 봐야 한다. */}
+        <ServerCompatBanner onOpenSettings={onOpenSettings} />
         <div className="flex flex-1 overflow-hidden">
           {/*
             인박스는 **모달이 아니라 자리**다(정본 문서 `docs/desktop-remaining-gaps.html`

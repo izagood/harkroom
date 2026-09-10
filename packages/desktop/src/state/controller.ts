@@ -334,7 +334,15 @@ export class Controller {
     // 장기 토큰은 ApiClient 가 헤더로만 쓴다 — WS URL 에는 단기 티켓만 실린다.
     this.ws = this.makeWs(this.api.baseUrl, () => this.api.wsTicket(), {
       onEvent: (e) => this.handleEvent(e),
-      onOpen: () => { this.store.getState().set({ connected: true }); this.swallow(this.reconcile()); },
+      onOpen: () => {
+        this.store.getState().set({ connected: true });
+        this.swallow(this.reconcile());
+        // 서버 버전은 **소켓이 열릴 때마다** 다시 묻는다(#693). 주기 갱신이 아닌 이유:
+        // 이 값은 서버 프로세스가 다시 뜰 때만 바뀌고, 그때 소켓은 **반드시 끊겼다가
+        // 다시 붙는다.** 그래서 재접속이 곧 "버전이 바뀌었을 수 있는 유일한 순간"이다 —
+        // 60초 타이머를 얹으면 아무것도 더 못 잡으면서 요청만 늘어난다.
+        this.swallow(this.refreshServerVersion());
+      },
       onDown: (reason) => this.handleDown(reason),
     });
 
@@ -367,6 +375,23 @@ export class Controller {
     this.ws?.close();
     this.ws = null;
     if (this.projectionRefreshInterval) { clearInterval(this.projectionRefreshInterval); this.projectionRefreshInterval = null; }
+  }
+
+  /**
+   * 서버가 말하는 자기 버전을 스토어에 넣는다(#693).
+   *
+   * **실패를 삼킨다** — 투영 상태(`refreshProjectionStatus`)와 반대다. 그쪽은 조회 실패가
+   * 곧 화면이 답해야 할 질문이지만, 여기서는 못 읽었다는 사실이 이미 다른 값으로 보인다:
+   * `/healthz` 가 안 되는 서버면 소켓도 없어 그 줄은 `Disconnected` 로 그려진다. 오류를
+   * 따로 실어 올리면 같은 사실을 두 곳에서 말하게 된다.
+   *
+   * **못 읽었을 때 이전 값을 지우지 않는다.** 붙어 있는 서버의 버전은 여전히 그 값이고,
+   * 한 번 실패했다고 화면에서 지우면 "모르는 서버"로 되돌아간다.
+   */
+  private async refreshServerVersion(): Promise<void> {
+    const serverVersion = await this.api.serverVersion();
+    if (this.stopped) return;
+    this.store.getState().set({ serverVersion });
   }
 
   /**

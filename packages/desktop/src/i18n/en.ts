@@ -3492,6 +3492,51 @@ export const en = {
   'collab.state.accepted': 'Accepted',
   'collab.state.rejected': 'Rejected',
   'collab.state.unknown': 'State unknown',
+  // ---------------------------------------------------------------------------
+  // 커뮤니티가 붙어 있는 **서버의 버전**(#693). murmur 는 하루에도 여러 번 릴리스되고
+  // 배포된 서버는 조용히 낡는다 — 이 줄이 없으면 사람이 `docker inspect` 를 쳐야
+  // "재배포해야 하나"에 답할 수 있다.
+  //
+  // | 한국어 | 영어 | 왜 |
+  // |---|---|---|
+  // | 서버 v0.1.174 | `Server v0.1.174` | **`Server` 를 붙인다** — 같은 화면 아래쪽에 앱 버전(`v0.1.174`)이 이미 떠 있어서, 숫자만 두면 둘이 구분되지 않는다 |
+  // | 서버 버전 확인 중 | `Checking server version` | 아직 안 받은 것이지 없는 것이 아니다 |
+  // | 서버가 버전을 말하지 않는다 | `This server does not report its version` | **그 자체가 답이다** — 버전을 싣는 판보다 낡았다는 뜻 |
+  // | {version} 기동 | `Started {ago}` | 버전이 안 바뀌는 재배포에서는 이것만 달라진다 |
+  // | 이 앱이 요구하는 버전보다 낮다 | `older than this app requires` | **고장이다.** '뒤처졌다'와 같은 말로 적으면 둘이 뭉개진다 — 앞은 지금 재배포해야 하는 것이고 뒤는 안 해도 되는 것이다 |
+  'community.version.value': 'Server v{version}',
+  'community.version.unknown': 'Checking server version',
+  'community.version.legacy': 'This server does not report its version',
+  /** 버전을 안 싣는 서버에 대고 하는 말. **할 일을 적는다** — 사실만 적으면 사람이 다시 묻는다. */
+  'community.version.legacyDetail': 'It predates version reporting — redeploy it to see which build is running.',
+  /**
+   * **이 앱이 요구하는 하한보다 낮다** — 경고가 아니라 고장이다. `{version}` 이 문구 안에
+   * 다시 드는 이유: 이 줄은 `community.version.value` 를 대신하므로(같은 자리를 쓴다)
+   * 숫자가 여기 없으면 화면에서 서버 버전이 통째로 사라진다.
+   */
+  'community.version.incompatible': 'Server v{version} — older than this app requires',
+  /** **할 일을 적는다.** `{minVersion}` 은 `MIN_SERVER_VERSION`. */
+  'community.version.incompatibleDetail': 'This app needs server v{minVersion} or newer. Redeploy the server — some features do not work until you do.',
+  /**
+   * `{appVersion}` 은 이 앱의 릴리스 번호, `{minVersion}` 은 요구 하한이다.
+   *
+   * **"재배포해라"라고 하지 않는다** — 이 줄이 서는 것은 하한을 넘긴 서버뿐이라 사람이
+   * 지금 할 일이 없다. 그 자리에 무엇을 확인했는지를 적어야, 위의 고장 문구가 떴을 때
+   * 그것이 다른 사정이라는 것이 눈에 든다.
+   */
+  'community.version.behindDetail': 'Behind this app (v{appVersion}), but above the v{minVersion} this app needs.',
+  'community.version.aheadDetail': 'Ahead of this app (v{appVersion}).',
+  /** `{ago}` 에 `3 hours ago` 같은 말이 든다. */
+  'community.version.started': 'Started {ago}',
+  /** 빌드에 심긴 커밋. 짧은 sha 라 `git log` 로 그대로 따질 수 있다. */
+  'community.version.commit': 'Build {commit}',
+  // 서버가 **호환 하한보다 낮을 때** 화면 위쪽에 서는 띠(#693 후속). 설정 안의 줄과
+  // 문구가 다른 이유: 띠는 사람이 찾아오지 않은 자리에 먼저 나서는 말이라 **무엇이
+  // 안 도는지**부터 적어야 하고, 줄은 이미 버전을 보고 있는 사람에게 하는 말이다.
+  'community.compat.bannerText': 'This server (v{version}) is too old for this app',
+  'community.compat.bannerDetail': 'Redeploy it to v{minVersion} or newer — some features do not work until you do.',
+  'community.compat.bannerOpen': 'Open settings',
+  'community.compat.bannerDismiss': 'Dismiss',
   'rail.community.label': 'Switch community',
   'rail.community.connected': 'connected',
   'rail.community.disconnected': 'disconnected',

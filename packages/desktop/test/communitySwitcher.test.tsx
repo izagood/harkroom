@@ -467,4 +467,71 @@ describe('커뮤니티 표시 이름 (#165 결정 2)', () => {
   });
 });
 
+/**
+ * 커뮤니티 줄이 **붙어 있는 서버의 버전**을 말한다(#693).
+ *
+ * 사람의 진단: *"서버가 잘 연결된 것은 보이는데 서버가 무슨 버전인지를 알 수 없어 …
+ * 재배포를 해야 되는지 아닌지 알 수가 없어."*
+ *
+ * 문구의 표는 `serverVersionLine.test.tsx` 가 잰다. **여기서 재는 것은 배선이다**:
+ * 그 값이 화면까지 오는가, 그리고 **커뮤니티마다 자기 값을 쓰는가.** 뒤쪽이 이 파일에
+ * 있어야 하는 이유는 `connected` 와 같다(#166) — 활성 커뮤니티의 값을 모든 줄에 쓰는
+ * 사고는 커뮤니티가 둘일 때만 드러나고, 판정 함수의 회귀선으로는 절대 잡히지 않는다.
+ */
+describe('커뮤니티 목록의 서버 버전 (#693)', () => {
+  it('줄마다 자기 서버의 버전을 그린다 — 활성 커뮤니티 것을 복사하지 않는다', async () => {
+    const a = await community('https://a.example', 'acct-a', true);
+    const b = await community('https://b.example', 'acct-b', false);
+    seed(a, 'me-a', true);
+    seed(b, 'me-b', true);
+    // **버전을 손으로 적지 않는다.** 릴리즈가 매일 번호를 올리므로, 여기 `0.1.174` 를
+    // 박아 두면 다음 릴리즈에 A 가 저절로 '뒤처진' 줄이 되어 이 회귀선이 이유 없이 빨개진다.
+    // 이 테스트가 재는 것은 숫자가 아니라 **줄마다 자기 값을 쓰는가**다.
+    a.store.getState().set({
+      serverVersion: { version: __APP_VERSION__, commit: null, startedAt: new Date().toISOString() },
+    });
+    // B 는 **호환 하한보다 낮다.** A 가 멀쩡해도 이 줄은 고장이라고 말해야 한다.
+    b.store.getState().set({
+      serverVersion: { version: '0.0.1', commit: 'bd06243', startedAt: new Date().toISOString() },
+    });
+    storeSessions([
+      { accountId: 'acct-a', baseUrl: 'https://a.example', handle: 'me-a' },
+      { accountId: 'acct-b', baseUrl: 'https://b.example', handle: 'me-b' },
+    ]);
+
+    render(<CommunitySettings onCommunitiesEmpty={vi.fn()} />);
+    expect(within(screen.getByTestId(`community-version-${a.id}`)).getByText(`서버 v${__APP_VERSION__}`)).toBeTruthy();
+    const rowB = screen.getByTestId(`community-row-${b.id}`);
+    expect(within(rowB).getByTestId('server-version-incompatible')).toBeTruthy();
+    // 커밋도 그 줄에 선다 — `git log` 로 따질 수 있는 유일한 값이다.
+    expect(within(rowB).getByText('빌드 bd06243')).toBeTruthy();
+    // 그리고 **A 는 고장이 아니다** — 한 줄의 사정이 옆 줄로 새지 않는다.
+    expect(within(screen.getByTestId(`community-row-${a.id}`)).queryByTestId('server-version-incompatible')).toBeNull();
+  });
+
+  /**
+   * 아직 안 받은 것과 **버전을 안 싣는 옛 서버**는 다른 말이어야 한다 — 뒤쪽은 그 자체로
+   * "재배포하라"는 답이기 때문이다(`docs/design.md` §4).
+   */
+  it('버전을 안 싣는 서버와 아직 못 받은 서버를 갈라 말한다', async () => {
+    const a = await community('https://a.example', 'acct-a', true);
+    const b = await community('https://b.example', 'acct-b', false);
+    seed(a, 'me-a', true);
+    seed(b, 'me-b', true);
+    b.store.getState().set({
+      serverVersion: { version: null, commit: null, startedAt: new Date().toISOString() },
+    });
+    storeSessions([
+      { accountId: 'acct-a', baseUrl: 'https://a.example', handle: 'me-a' },
+      { accountId: 'acct-b', baseUrl: 'https://b.example', handle: 'me-b' },
+    ]);
+
+    render(<CommunitySettings onCommunitiesEmpty={vi.fn()} />);
+    // A: 아직 안 물어봤다.
+    expect(within(screen.getByTestId(`community-row-${a.id}`)).getByTestId('server-version-unknown')).toBeTruthy();
+    // B: 물어봤고, 서버가 말하지 못했다.
+    expect(within(screen.getByTestId(`community-row-${b.id}`)).getByTestId('server-version-legacy')).toBeTruthy();
+  });
+});
+
 afterEach(() => { setController(null); });
