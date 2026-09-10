@@ -16,6 +16,22 @@ import { usePrefsStore } from './prefsStore';
 import { detectLocale, isLocale, translator, type Translate } from '../i18n';
 
 /**
+ * 채널을 **처음** 열 때 받아 오는 히스토리 창(행 수).
+ *
+ * 왜 서버 기본값(200)으로는 모자라나(jaebin 보고 2026-09-10: "이전 메시지들 다 어디갔어"):
+ * 이 창은 **화면에 그려지지 않는 행까지 센다.** 스레드 답글·`progress`·`wake` 가 모두 한
+ * 행이므로, 에이전트가 도는 채널에서는 하루가 창을 통째로 먹는다 — 실측(#murmur, 09-10)
+ * 으로 최신 200 행이 전부 그날치였고 그중 채널 최상위로 그려지는 것은 25개뿐이었다.
+ * 사람 눈에는 사흘치 대화가 사라진 것으로 보인다.
+ *
+ * 그래서 첫 창을 서버 상한(500)까지 넓힌다. **이것만으로는 답이 아니다** — 하루가 500 행이
+ * 되면 같은 일이 다시 벌어진다. 진짜 해법은 목록 맨 위에 닿으면 다음 페이지를 스스로
+ * 받아 오는 것이고(`ChannelPane` 의 `maybeLoadOlder`), 이 값은 "첫 화면에서 며칠은 보인다"를
+ * 맡는다. 증분 조회(`since > 0`)에는 붙이지 않는다 — 그쪽은 새로 생긴 것만 받는 길이다.
+ */
+export const INITIAL_HISTORY_LIMIT = 500;
+
+/**
  * `openThread` 의 선택 인자들. **자리 인자였다가 묶었다** — `channelId` 를 더하면 넷이 되고,
  * 넷째 자리에 채널이 오는 호출은 읽는 사람이 무엇을 주는지 셀 수 없다. 이름으로 주면
  * `{ channelId }` 하나만 주는 흔한 경우가 짧아진다.
@@ -930,12 +946,20 @@ export class Controller {
     // 자동 멘션(#173)도 같은 이유로 크리티컬 패스 밖이다. 못 받으면 칩이 없는 것뿐이고,
     // 그때 글을 보내면 접두가 안 붙는다 — 채널이 안 열리는 것보다 낫다.
     this.swallow(this.loadChannelAutoMentions(channelId));
-    const page = await this.api.messages(channelId, { since });
+    const page = await this.api.messages(channelId, { since, limit: since === 0 ? INITIAL_HISTORY_LIMIT : undefined });
     this.loadedChannels.add(channelId);
     this.store.getState().upsertMessages(channelId, page.messages);
-    this.store.getState().set({
-      hasMore: { ...this.store.getState().hasMore, [channelId]: page.hasMore },
-    });
+    // **증분 응답으로 `hasMore` 를 덮지 않는다.** 서버는 그 값을 `messages.length > 0 &&
+    // hasOlderMessages(첫 행)` 로 계산하므로, 새 메시지가 없는 증분 페이지는 0 행이 되어
+    // `hasMore: false` 로 돌아온다 — "과거가 없다"는 뜻이 아니라 "새 것이 없다"는 뜻인데
+    // 그것을 스토어에 쓰면 목록 맨 위의 `Load older messages` 가 사라진다. 그러면 조용할 때
+    // 채널을 한 번 더 누른 사람은 과거로 돌아갈 길을 잃는다(검색 말고는 없다).
+    // 첫 로드(`since === 0`)의 응답만 이 사실을 정직하게 말할 수 있다.
+    if (since === 0) {
+      this.store.getState().set({
+        hasMore: { ...this.store.getState().hasMore, [channelId]: page.hasMore },
+      });
+    }
     const ids = this.store.getState().unread
       .filter((e) => e.channelId === channelId && !e.readAt)
       .map((e) => e.id);
@@ -2042,12 +2066,15 @@ export class Controller {
     // 채널이 아예 안 열리면 안 된다 — 채널 선호(`start`)와 같은 이유다.
     this.swallow(this.loadPins(channelId));
     this.swallow(this.loadChannelAutoMentions(channelId));
-    const page = await this.api.messages(channelId, { since });
+    const page = await this.api.messages(channelId, { since, limit: since === 0 ? INITIAL_HISTORY_LIMIT : undefined });
     this.loadedChannels.add(channelId);
     store.upsertMessages(channelId, page.messages);
-    store.set({
-      hasMore: { ...store.hasMore, [channelId]: page.hasMore },
-    });
+    // 증분 응답은 `hasMore` 를 말할 자격이 없다 — 근거는 `openChannel` 의 같은 자리.
+    if (since === 0) {
+      store.set({
+        hasMore: { ...store.hasMore, [channelId]: page.hasMore },
+      });
+    }
     const ids = store.unread
       .filter((e) => e.channelId === channelId && !e.readAt)
       .map((e) => e.id);

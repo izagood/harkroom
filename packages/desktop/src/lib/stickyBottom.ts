@@ -44,3 +44,22 @@ export function distanceFromBottom(m: ScrollMetrics): number {
 export function isNearBottom(m: ScrollMetrics, threshold: number = NEAR_BOTTOM_PX): boolean {
   return distanceFromBottom(m) <= threshold;
 }
+
+/**
+ * 위쪽 끝에 닿을 만큼 올라왔는가 — **과거를 스스로 받아 올 신호**다(2026-09-10).
+ *
+ * 판정이 이 파일에 있는 이유는 거울상이라서다: 쓰는 값(`ScrollMetrics`)이 같고, 부호 하나로
+ * 뒤집히는 계산이며, 컴포넌트 안에 두면 jsdom 이 레이아웃을 재지 않아 회귀선을 걸 자리가
+ * 없다 — `isNearBottom` 이 여기 있는 이유 그대로다.
+ *
+ * 여유를 두는 이유: 맨 위(`scrollTop === 0`)에 정확히 닿기를 기다리면, 관성 스크롤이 0 을
+ * 스치지 않고 멈춘 사람은 아무 일도 일어나지 않는 화면을 보게 된다. 한 화면의 몇 분의 일쯤
+ * 남았을 때 미리 받아 오는 것이 "위로 올리면 계속 이어진다"는 감각을 만든다.
+ *
+ * jsdom(전부 0)은 참이다 — 그래야 회귀선이 "맨 위에 있다"를 기본값으로 쓸 수 있다.
+ */
+export const NEAR_TOP_PX = 240;
+
+export function isNearTop(m: ScrollMetrics, threshold: number = NEAR_TOP_PX): boolean {
+  return m.scrollTop <= threshold;
+}

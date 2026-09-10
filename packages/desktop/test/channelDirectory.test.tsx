@@ -366,7 +366,9 @@ describe('채널 디렉터리 — Workspace 배선 (#180)', () => {
 
     // 배선이 끊겨 있으면 여기서 실패한다 — 요청이 나가고, 스토어의 활성 채널이 바뀌고,
     // 모달이 사라지는 세 가지를 모두 본다.
-    await waitFor(() => expect(api.messages).toHaveBeenCalledWith('c2', { since: 0 }));
+    // 이 축이 재는 것은 **배선**이다(어떤 창을 받는지는 `channelHistoryWindow.test.tsx` 가
+    // 잰다) — 그래서 첫 인자만 보고, 창 크기는 그 파일에 맡긴다.
+    await waitFor(() => expect(api.messages).toHaveBeenCalledWith('c2', expect.objectContaining({ since: 0 })));
     await waitFor(() => expect(useAppStore.getState().activeChannelId).toBe('c2'));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '채널 디렉터리' })).toBeNull());
   });

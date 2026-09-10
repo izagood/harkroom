@@ -13,7 +13,7 @@ import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { RunnerStatusLine } from './RunnerStatus';
 import { dayLabel, localDayKey } from '../lib/day';
-import { isNearBottom } from '../lib/stickyBottom';
+import { isNearBottom, isNearTop } from '../lib/stickyBottom';
 import { useLocale, useT } from '../i18n/useT';
 import { displayBody } from '../lib/mention';
 import { mentionedHandles, mentionedIds } from '@murmur/shared';
@@ -66,6 +66,18 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 근거는 `onListScroll` 의 주석.
    */
   const lastScrollTopRef = useRef(0);
+  /**
+   * 과거 한 페이지를 **받는 중인가.** 스크롤 이벤트는 손짓 한 번에 수십 번 오므로, 이 문이
+   * 없으면 맨 위에 닿는 순간 같은 페이지를 여러 번 요청한다.
+   */
+  const loadingOlderRef = useRef(false);
+  /**
+   * 과거를 붙이기 **직전**의 스크롤 자리. 위쪽에 내용이 끼어들면 `scrollTop` 은 그대로인데
+   * 보고 있던 줄은 그만큼 아래로 밀려난다 — 즉 화면이 갑자기 옛 대화의 맨 위로 튄다.
+   * Chromium 은 `overflow-anchor` 로 이것을 알아서 붙잡아 주지만 **WebKit 은 그 기능이
+   * 없다**(macOS 앱은 WKWebView 다). 그래서 자란 높이만큼 우리가 되돌린다.
+   */
+  const olderAnchorRef = useRef<{ height: number; top: number } | null>(null);
   /** "아래로 내려가기" 버튼을 세울지. 목록이 늘었지만 사람이 위를 보고 있을 때만 참이다. */
   const [jumpVisible, setJumpVisible] = useState(false);
   // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
@@ -241,7 +253,11 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 한 번 나온 뒤에 도므로, 이전 채널의 `scrollTop` 이 남은 어중간한 자리가 한 프레임
    * 보였다가 튄다 — 채널을 자주 옮기는 사람에게는 그 깜빡임이 곧 "가운데로 들어왔다"다.
    */
-  useLayoutEffect(() => { scrollToBottom(); }, [activeChannelId]);
+  useLayoutEffect(() => {
+    // 대기 중인 앵커는 **떠난 채널의 자리**다 — 들고 가면 새 채널에서 엉뚱한 곳을 잡는다.
+    olderAnchorRef.current = null;
+    scrollToBottom();
+  }, [activeChannelId]);
 
   /**
    * **늦게 자라는 내용까지 따라간다**(jaebin 보고 2026-09-09: "채널에 들어오면 항상 어중간한
@@ -294,6 +310,47 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   }, [activeChannelId]);
 
   /**
+   * **위로 올리면 과거가 이어진다**(jaebin 보고 2026-09-10: "이전 메시지들 다 어디갔어").
+   *
+   * 그전까지 최신 창 밖으로 나간 대화에 닿는 길은 목록 맨 위의 버튼 하나뿐이었다. 버튼은
+   * 남겨 둔다(스크롤이 아예 없는 짧은 채널에서는 스크롤 이벤트가 영원히 안 오므로 그때는
+   * 버튼만이 길이다). 다만 사람이 이미 "위로 올린다"는 손짓으로 같은 뜻을 말했으면 그
+   * 손짓을 신호로 받는다 — 버튼을 찾아 누르게 하는 것은 한 단계 더 요구하는 것이다.
+   *
+   * `hasMore` 가 거짓이면 요청하지 않는다(컨트롤러도 같은 문을 한 번 더 잠근다).
+   */
+  const maybeLoadOlder = (el: HTMLElement) => {
+    if (!activeChannelId || !hasMore[activeChannelId] || loadingOlderRef.current) return;
+    if (!isNearTop(el)) return;
+    loadingOlderRef.current = true;
+    olderAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop };
+    void getController().loadOlder().finally(() => { loadingOlderRef.current = false; });
+  };
+
+  /** 목록의 첫 줄. 위쪽에 뭔가 끼어들었는지를 이 id 하나로 안다. */
+  const firstRootId = roots[0]?.id ?? null;
+
+  /**
+   * 과거가 붙은 **바로 그 렌더에서** 보던 자리를 되돌린다.
+   *
+   * 딸림값이 목록의 첫 줄 id 인 것이 요점이다 — 위쪽에 뭔가 끼어들었을 때만 정확히 한 번
+   * 돈다(`roots.length` 로 두면 바닥에 새 줄이 생길 때도 돌아 엉뚱한 자리를 잡는다).
+   * `useLayoutEffect` 여야 한다: 그리기 **전에** 되돌려야 튀는 한 프레임이 안 보인다.
+   */
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    const anchor = olderAnchorRef.current;
+    olderAnchorRef.current = null;
+    if (!el || !anchor) return;
+    const grown = el.scrollHeight - anchor.height;
+    // 자라지 않았으면(그려지는 줄이 없는 페이지였다) 건드릴 것이 없다.
+    if (grown <= 0) return;
+    el.scrollTop = anchor.top + grown;
+    // 방금 **우리가** 옮긴 자리다 — 적어 두지 않으면 다음 스크롤을 "사람이 올렸다"로 읽는다.
+    lastScrollTopRef.current = el.scrollTop;
+  }, [firstRootId]);
+
+  /**
    * 스크롤 위치를 ref 에 담는 이유: 이 값은 **그리는 데 쓰이지 않는다.** 상태로 두면
    * 스크롤 한 번에 채널 화면이 프레임마다 다시 그려진다(목록이 수백 줄인 자리다).
    * 화면에 나오는 것은 버튼의 유무뿐이고, 그것만 상태로 둔다.
@@ -301,6 +358,9 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   const onListScroll = () => {
     const el = listRef.current;
     if (!el) return;
+    // **바닥 판정보다 먼저 본다.** 스크롤이 없는 짧은 상자에서는 위와 아래가 같은 자리라,
+    // 바닥 분기의 이른 반환 뒤에 두면 그 채널에서는 영원히 돌지 않는다.
+    maybeLoadOlder(el);
     const prevTop = lastScrollTopRef.current;
     lastScrollTopRef.current = el.scrollTop;
     const near = isNearBottom(el);
