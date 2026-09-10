@@ -29,7 +29,7 @@
  * 단계의 범위가 아니다.
  */
 import { useEffect, useState } from 'react';
-import type { AgentSessionView, MessageRow } from '@murmur/shared';
+import type { AgentSessionView, AgentWakeView, MessageRow } from '@murmur/shared';
 import { getController } from '../state/controller';
 import { bodyWithHandles } from './mention';
 
@@ -86,6 +86,57 @@ export function useAgentTurns(enabled: boolean): AgentTurnsSnapshot {
       clearInterval(timer);
       timer = null;
       shared = { kind: 'checking' };
+    };
+  }, [enabled]);
+  return enabled ? snapshot : { kind: 'checking' };
+}
+
+/**
+ * **아직 오지 않은 깨움**(Agents 관제 4단계 — 대기). 위 폴러의 쌍둥이다.
+ *
+ * 왜 세션 목록과 **한 요청으로 묶지 않는가**: 두 사실의 신뢰도가 다르다. 세션은 러너
+ * 메모리에서 오므로 릴레이가 끊기면 알 수 없지만, 깨움은 테이블에서 와 **언제나 알 수
+ * 있다.** 한 스냅샷으로 묶으면 한쪽이 실패한 순간 다른 쪽까지 `unknown` 이 되어, 정작
+ * 사람이 그때 알고 싶은 것("도는 턴은 모르지만 기다리는 것은 둘 있다")을 잃는다.
+ *
+ * 제네릭으로 합치지 않은 이유는 스냅샷이 **자기 짐의 이름을 갖기** 때문이다(`turns`·
+ * `wakes`). 공통 `value` 로 바꾸면 부르는 곳마다 그 이름이 사라져, 25줄을 아끼고 화면
+ * 코드 전부를 읽기 어렵게 만든다.
+ */
+export type AgentWakesSnapshot =
+  | { kind: 'checking' }
+  | { kind: 'known'; wakes: AgentWakeView[] }
+  | { kind: 'unknown'; reason: string };
+
+const wakeListeners = new Set<(snapshot: AgentWakesSnapshot) => void>();
+let sharedWakes: AgentWakesSnapshot = { kind: 'checking' };
+let wakeTimer: ReturnType<typeof setInterval> | null = null;
+
+async function askWakes(): Promise<void> {
+  try {
+    sharedWakes = { kind: 'known', wakes: await getController().api.agentWakes() };
+  } catch (err) {
+    sharedWakes = { kind: 'unknown', reason: err instanceof Error ? err.message : String(err) };
+  }
+  for (const listener of wakeListeners) listener(sharedWakes);
+}
+
+export function useAgentWakes(enabled: boolean): AgentWakesSnapshot {
+  const [snapshot, setSnapshot] = useState<AgentWakesSnapshot>(sharedWakes);
+  useEffect(() => {
+    if (!enabled) return;
+    wakeListeners.add(setSnapshot);
+    setSnapshot(sharedWakes);
+    if (!wakeTimer) {
+      void askWakes();
+      wakeTimer = setInterval(() => { void askWakes(); }, AGENT_TURNS_POLL_MS);
+    }
+    return () => {
+      wakeListeners.delete(setSnapshot);
+      if (wakeListeners.size || !wakeTimer) return;
+      clearInterval(wakeTimer);
+      wakeTimer = null;
+      sharedWakes = { kind: 'checking' };
     };
   }, [enabled]);
   return enabled ? snapshot : { kind: 'checking' };

@@ -652,6 +652,14 @@ export const en = {
   // --- Agents 칸의 관제 구획(`AgentTurns`) ------------------------------------
   // 이 묶음이 말하는 것은 **지금 도는 턴**이다. `runnerState.*`(러너 프로세스의 생사)와
   // 뭉치지 않는 이유가 화면의 판단 그대로다: 턴은 "이 일"이고 러너는 "이 사람"이다.
+  // 대기(깨움 예약) 구획. 도는 턴과 **다른 층의 사실**이라 구획도 따로 선다
+  // (`AgentWaits` 주석) — 하나가 모를 때 다른 하나는 알 수 있다.
+  'agentWaits.count': '{n} scheduled',
+  'agentWaits.reasonMissing': 'the wake note was deleted',
+  'agentWaits.scope': 'Wake-ups scheduled by agents you can see.',
+  'agentWaits.title': 'Waiting',
+  'agentWaits.unknown': "Can't tell what's scheduled",
+  'agentWaits.whenUnknown': 'time unknown',
   'agentTurns.accountDefault': 'default login',
   'agentTurns.accountTitle': 'Running on this claude account (pool: {pool})',
   'agentTurns.accountTitleRoot': 'Running on this claude account (root pool)',
@@ -1769,6 +1777,9 @@ export const en = {
    * 둬야 하는 이유 그대로다. 한국어는 `{duration}째` 로 어미를 붙인다.
    */
   'time.running': 'running {duration}',
+  'time.wait': 'in {duration}',
+  // 시각이 지난 예약. sweep 이 15초마다 도므로 `in 0m` 은 쓸모없는 말이다.
+  'time.waitDue': 'any moment now',
   /** 끝난 것의 길이. 과거형이 그 사실을 말한다. */
   'time.took': 'took {duration}',
 

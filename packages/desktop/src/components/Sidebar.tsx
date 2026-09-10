@@ -23,7 +23,8 @@ import { SidebarFind } from './SidebarFind';
 import { runnerReason, runnerStatusLabel } from './RunnerStatus';
 import { AgentGrid } from './settings/AgentGrid';
 import { AgentTurns } from './AgentTurns';
-import { useAgentTurns, useThreadRoots, threadTitle } from '../lib/agentTurns';
+import { AgentWaits } from './AgentWaits';
+import { useAgentTurns, useAgentWakes, useThreadRoots, threadTitle } from '../lib/agentTurns';
 // 띄울 권한 판정은 `lib/` 하나가 낸다 — 설정 › 에이전트가 같은 판정을 쓴다.
 import { canRelaunchAgent } from '../lib/relaunchGate';
 // 설정 문의 판정도 한 벌이다(`lib/agentConfigGate.ts`) — 프로필·본문 멘션이 같은 함수를
@@ -633,6 +634,8 @@ export function Sidebar({
     훅은 조건부로 부를 수 없으므로(리액트 규칙) 조건은 인자로 넘긴다.
   */
   const agentTurns = useAgentTurns(panel === 'agents');
+  /* 예약은 테이블에서 오므로 릴레이와 무관하게 답이 온다(`AgentWaits` 주석). */
+  const agentWakes = useAgentWakes(panel === 'agents');
   /* 묶음 머리에 세울 스레드 이름. 모듈 캐시라 관제탑과 **같은 답**을 쓰고, 목록이 5초마다
      새로 와도 루트를 다시 묻지 않는다(`lib/agentTurns.ts::useThreadRoots`). */
   const agentTurnRoots = useThreadRoots(
@@ -1942,6 +1945,19 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
               양쪽에 두면 같은 일을 하는 길이 한 화면에 두 벌 서고, 사람은 매번 어느 쪽을
               누를지 고른다. 칸은 요약이고, 멈추는 것은 본문의 일이다.
             */
+          />
+        )}
+        {panel === 'agents' && (
+          /* 도는 턴 아래에 **기다리는 것**을 세운다 — 이 칸이 답하는 물음이 "지금 무슨
+             일이 벌어지나"인데, 기다림은 그 절반이었는데도 화면에 없었다. */
+          <AgentWaits
+            snapshot={agentWakes}
+            handleOf={(id) => accounts[id]?.handle ?? id}
+            channelLabel={(id) => {
+              const ch = channels.find((c) => c.id === id);
+              return ch ? `${ch.visibility === 'private' ? '🔒' : '#'}${ch.name}` : id;
+            }}
+            onOpenThread={(rootId) => { void getController().openMessage(rootId); }}
           />
         )}
         {panel === 'agents' && (
