@@ -194,6 +194,28 @@ describe('담아 둔 메시지 — 툴바와 사이드바 (#219)', () => {
     expect(column.firstElementChild).toBe(mark);
   });
 
+  /**
+   * **표식은 형태를 지닌다**(요청 2026-09-10 — *"통일성은 있지만 너무 눈에 띄지 않는다"*).
+   *
+   * 앞 판은 배경 없는 곁정보단 회색 글자라 같은 줄의 시각·꼬리표와 무게가 같았다. 고친 것은
+   * 색이 아니라 형태(선·면)이므로, 이 줄이 지키는 것도 그 둘이다 — 클래스 문자열을 통째로
+   * 재면 여백 하나만 바뀌어도 빨개지니 **선·면·글자색 세 가지**만 본다.
+   *
+   * 강조색은 여전히 금지다(`accentBudget.test.tsx` 가 소스를 직접 읽어 그것을 지킨다).
+   * 여기서 `text-fg-muted` 가 아님을 재는 이유는, 곁정보단 회색으로 되돌아가면 칩의 선·면이
+   * 남아 있어도 처음 문제(*안 보인다*)가 그대로 돌아오기 때문이다.
+   */
+  it('6d-2. 표식은 선과 면을 지닌 칩이다 — 배경 없는 회색 글자가 아니다', () => {
+    fakeController();
+    useAppStore.getState().set({ savedIds: ['m9'] });
+    render(<MessageItem message={msg('m9', 'c1', 5, 'later', 'u2')} />);
+
+    const mark = screen.getByTestId('saved-mark');
+    expect(mark.className).toMatch(/border/);
+    expect(mark.className).toMatch(/bg-/);
+    expect(mark.className).not.toContain('text-fg-muted');
+  });
+
   it('6e. 담기지 않은 메시지에는 표식이 없다', () => {
     fakeController();
     render(<MessageItem message={msg('m9', 'c1', 5, 'later', 'u2')} />);

@@ -554,6 +554,23 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
           강조색을 쓰지 않는다(`accentBudget.test.tsx`): 이것은 나를 막는 것이 아니라 내가
           스스로 붙여 둔 표시다. 눈에 띄는 일은 책갈피 그림이 하고, 색은 곁정보단에 맡긴다.
 
+          **글자 줄이 아니라 칩이다**(요청 2026-09-10 — *"기존 디자인과 통일성은 있지만 너무
+          눈에 띄지 않는다"*). 앞 판은 배경 없는 12px 회색 글자였는데, 그 무게가 같은 줄의
+          시각·꼬리표와 정확히 같아서 훑는 눈에는 이름줄 위 여백으로 지나갔다 — 게다가 이
+          줄의 세로 위치는 앞 메시지의 본문 길이를 따라 매번 달라지므로, 눈이 따라갈 열이
+          없다. 그래서 **선과 면을 준다**: 색을 하나도 더 쓰지 않고 형태만으로 "물건"이 되게
+          하는 것이 강조 예산을 지키면서 무게를 올리는 유일한 길이다(색을 올리면 곁정보단이
+          본문단보다 진해지고, 강조색은 위 문단이 금한다).
+
+          책갈피는 **채운다** — 툴바의 담김 상태와 같은 어휘다(`MessageToolbar` 의
+          `[&_path]:fill-current`). 담김을 두 자리가 그리는데 한쪽은 빈 그림, 한쪽은 채운
+          그림이면 같은 사실이 서로 다른 것으로 읽힌다. 그림을 복제하지 않고 CSS 로 채우는
+          이유도 그 파일과 같다(`SavedIcon` 의 `fill="none"` 속성을 CSS 가 이긴다).
+
+          `w-fit` 이라 칩은 글자만큼만 넓다. `inline-flex` 가 아니라 `flex` 인 것은 줄상자를
+          만들지 않기 위해서다 — 인라인이면 글꼴의 아랫여백이 `mb-0.5` 위에 얹혀 이름줄과의
+          간격이 이 자리에서만 커진다.
+
           해제하면 이 줄은 사라진다 — `savedIds` 는 `unsaveMessage` 가 요약을 다시 받아
           갱신하므로(`controller.unsaveMessage`) 별도 상태가 없다. 담김을 '완료'로 옮긴
           것은 여전히 담긴 것이라 표식이 남는다(`savedIds` 는 open+done 전부다).
@@ -561,9 +578,12 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
         {isSaved && (
           <div
             data-testid="saved-mark"
-            className="mb-0.5 flex items-center gap-1 text-meta font-medium text-fg-muted"
+            className="mb-0.5 flex w-fit items-center gap-1 rounded border border-border
+                       bg-surface-raised px-1.5 py-0.5 text-meta font-medium text-fg"
           >
-            <SavedIcon size={12} />
+            <span className="[&_path]:fill-current">
+              <SavedIcon size={12} />
+            </span>
             {t('message.savedMark')}
           </div>
         )}
