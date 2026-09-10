@@ -2860,6 +2860,19 @@ export const en = {
   /** 어느 쪽인지 못 가린다. **지어내지 않는다** — 닿지 않았다는 사실만 말한다. */
   'message.notified.reasonMixed': '— the call did not reach the rest.',
 
+  // | 부른 자리 아래의 한 줄 | `lib/callGap.ts` | 넷이 전부 **"그래서 어떻게 되는가"로**
+  // 끝난다 — 상태만 말하면 사람이 다음에 하는 일은 여전히 다시 부르기다. `restarting` 은
+  // `runnerState.restarting` 과 **다른 문장이어야 한다**: 그쪽은 러너 한 줄의 라벨이고
+  // 이쪽은 "내 부름이 어떻게 되는가"에 답한다.
+  'message.callGap.restarting':
+    '@{handle} is restarting — it will pick this call up when it is back',
+  'message.callGap.stopped':
+    '@{handle} is not running — it will pick this call up once started',
+  'message.callGap.attention':
+    '@{handle} needs a hand — see Settings › Agents',
+  'message.callGap.offline':
+    '@{handle} is offline — the call is waiting in its inbox',
+
   /**
    * 답글 요약 버튼의 접근 가능한 이름. **상태를 라벨에도 싣는다**(그 자리 주석) —
    * `aria-label` 이 자식 글자를 덮으므로, 배지가 화면에 보여도 여기 없으면 스크린리더에는

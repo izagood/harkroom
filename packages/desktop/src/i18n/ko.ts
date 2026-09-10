@@ -1145,6 +1145,10 @@ export const ko = {
   'message.notified.reasonGroup': '— 남은 사람은 이 채널을 볼 수 없다. 채널 멤버로 넣어야 부름이 닿는다.',
   'message.notified.reasonTeam': '— 남은 팀원은 비활성이거나 이 채널을 볼 수 없다. 팀 설정과 채널 멤버를 보라.',
   'message.notified.reasonMixed': '— 남은 상대에게 부름이 닿지 않았다.',
+  'message.callGap.restarting': '@{handle} 재기동 중 — 돌아오면 이 부름부터 집는다',
+  'message.callGap.stopped': '@{handle} 꺼져 있다 — 켜면 이 부름부터 집는다',
+  'message.callGap.attention': '@{handle} 러너에 손이 필요하다 — 설정 › 에이전트에서 본다',
+  'message.callGap.offline': '@{handle} 지금 오프라인 — 부름은 인박스에 남아 있다',
 
   // 접근 라벨의 네 틀. 영어와 **같은 순서**(상태 → 수 → 마지막)로 둔다 — 화면이 그
   // 순서로 그리므로 눈으로 읽는 것과 귀로 듣는 것이 어긋나면 안 된다.

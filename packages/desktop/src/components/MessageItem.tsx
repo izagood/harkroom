@@ -15,6 +15,7 @@ import { Identity, StatusMark } from './Identity';
 import { TerminalChip } from './TerminalChip';
 import { WakeRow } from './WakeRow';
 import { NotifiedGapRow } from './NotifiedGapRow';
+import { CallGapRow } from './CallGapRow';
 import { SavedIcon } from './RailIcons';
 import { Attachments } from './Attachments';
 
@@ -713,6 +714,13 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               `WakeRow` 와 같다: 종류로 갈리는 판정은 그것을 아는 한 곳에 둔다.
             */}
             <NotifiedGapRow messageId={message.id} />
+            {/*
+              **불렀는데 착수가 없다** — 부름의 결과(위) 바로 다음이다. 두 줄은 같은 것을
+              재지 않는다: 위는 **부름이 닿았는가**이고 이것은 **그래서 움직였는가**다.
+              러너가 재기동 중이어도 알림은 정상으로 닿으므로 위 줄은 아무 말도 하지 않고,
+              그 침묵이 이 줄이 메우는 자리다(`lib/callGap.ts`).
+            */}
+            <CallGapRow message={message} />
             <Reactions message={message} />
             {/* #254: 답글이 **있을 때**의 상시 답글 요약(#424 로 상자를 벗긴 텍스트 링크)은
                 **본문 열**에 둔다 — 리액션 칩 바로 뒤, 왼쪽 정렬. 우상단 열에는 툴바만 남으므로 `right-full`("내 우측 = 답글 컨트롤의
