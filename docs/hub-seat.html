@@ -1,0 +1,960 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="murmur 가 avcshub 자리에 선다 — 제안 · 승인 · 배달, 그리고 네 서비스 도그푸딩 루프">
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+<title>murmur가 허브가 된다</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<style>
+  :root {
+    --ground: #e8ebf0;
+    --panel: #ffffff;
+    --panel-2: #f2f4f8;
+    --ink: #141922;
+    --ink-soft: #58616f;
+    --ink-faint: #808a99;
+    --rule: #ccd2dc;
+    --rule-soft: #dfe4eb;
+    --gold: #97680f;
+    --gold-soft: #f3e6c8;
+    --indigo: #2c3a55;
+    --ok: #276a4f;
+    --stop: #a2362b;
+    --sans: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+    --disp: "IBM Plex Sans Condensed", "Noto Sans KR", "Apple SD Gothic Neo", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #101319;
+      --panel: #171b23;
+      --panel-2: #1d222b;
+      --ink: #e5e9f0;
+      --ink-soft: #a2acbb;
+      --ink-faint: #7b8593;
+      --rule: #2c333f;
+      --rule-soft: #232a34;
+      --gold: #e9b455;
+      --gold-soft: #37301f;
+      --indigo: #9fb2d6;
+      --ok: #62b98f;
+      --stop: #e07f72;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #101319;
+    --panel: #171b23;
+    --panel-2: #1d222b;
+    --ink: #e5e9f0;
+    --ink-soft: #a2acbb;
+    --ink-faint: #7b8593;
+    --rule: #2c333f;
+    --rule-soft: #232a34;
+    --gold: #e9b455;
+    --gold-soft: #37301f;
+    --indigo: #9fb2d6;
+    --ok: #62b98f;
+    --stop: #e07f72;
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+    padding-inline: clamp(16px, 4vw, 40px);
+    padding-block: clamp(28px, 6vw, 64px);
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 56px; }
+  .col { max-width: 68ch; display: flex; flex-direction: column; gap: 16px; }
+
+  h1, h2, h3 { text-wrap: balance; margin: 0; font-weight: 700; line-height: 1.25; }
+  h1 { font-size: clamp(30px, 5.5vw, 46px); letter-spacing: -0.02em; }
+  h2 { font-size: clamp(21px, 3vw, 27px); letter-spacing: -0.01em; }
+  h3 { font-size: 17px; letter-spacing: -0.005em; }
+  p { margin: 0; }
+  h2 em, h3 em, figcaption em, .cap em { font-style: normal; color: var(--gold); }
+  a { color: inherit; text-underline-offset: 3px; text-decoration-color: var(--gold); }
+  a:focus-visible, summary:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; border-radius: 2px; }
+
+  .eyebrow {
+    font-family: var(--disp); font-weight: 700; font-size: 12px;
+    letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold);
+  }
+  .lede { font-size: clamp(17px, 2.2vw, 19px); color: var(--ink-soft); line-height: 1.7; }
+  code, .mono { font-family: var(--mono); font-size: 0.88em; }
+  code { background: var(--panel-2); padding: 1px 5px; border-radius: 3px; color: var(--indigo); }
+  strong { font-weight: 700; }
+
+  /* ---- masthead ---- */
+  .masthead { border-top: 3px solid var(--ink); padding-top: 20px; display: flex; flex-direction: column; gap: 18px; }
+  .masthead .meta {
+    font-family: var(--mono); font-size: 12px; color: var(--ink-faint);
+    display: flex; flex-wrap: wrap; gap: 6px 18px;
+  }
+
+  /* ---- section ---- */
+  section { display: flex; flex-direction: column; gap: 22px; }
+  .sec-head { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--rule); padding-top: 14px; }
+
+  /* ---- figures ---- */
+  figure { margin: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; }
+  .fig-body { overflow-x: auto; padding: 20px clamp(14px, 3vw, 26px); }
+  figure svg { display: block; width: 100%; min-width: 640px; height: auto; color: var(--ink-soft); }
+  figure svg text { font-family: var(--sans); fill: currentColor; }
+  figure svg .t-strong { fill: var(--ink); font-weight: 700; }
+  figure svg .t-lbl { font-family: var(--mono); fill: var(--ink-faint); }
+  figure svg .box { fill: var(--panel-2); stroke: var(--rule); stroke-width: 1.5; }
+  figure svg .box-key { fill: var(--gold-soft); stroke: var(--gold); stroke-width: 1.5; }
+  figure svg .frame { fill: none; stroke: var(--gold); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  figure svg .ln { stroke: var(--ink-faint); stroke-width: 1.5; fill: none; }
+  figure svg .ln-gold { stroke: var(--gold); stroke-width: 1.8; fill: none; }
+  figure svg .ln-dash { stroke: var(--ink-faint); stroke-width: 1.5; fill: none; stroke-dasharray: 4 4; }
+  figure svg .head { fill: var(--ink-faint); }
+  figure svg .head-gold { fill: var(--gold); }
+  figcaption {
+    border-top: 1px solid var(--rule-soft); padding: 12px clamp(14px, 3vw, 26px);
+    font-size: 13.5px; color: var(--ink-soft); line-height: 1.6;
+  }
+
+  /* ---- layer cards ---- */
+  .layers { display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
+  .layer { background: var(--panel); padding: 20px; display: flex; flex-direction: column; gap: 8px; }
+  .layer .n { font-family: var(--mono); font-size: 12px; color: var(--gold); font-weight: 600; }
+  .layer p { font-size: 14.5px; color: var(--ink-soft); line-height: 1.65; }
+
+  /* ---- tables ---- */
+  .tbl-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 4px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 14.5px; }
+  th, td { text-align: left; padding: 11px 16px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; line-height: 1.6; }
+  thead th {
+    font-family: var(--disp); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--ink-faint); background: var(--panel-2); border-bottom: 1px solid var(--rule);
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.code { font-family: var(--mono); font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .verdict-go { color: var(--ok); font-weight: 700; }
+  .verdict-stop { color: var(--stop); font-weight: 700; }
+
+  /* ---- story ---- */
+  .story { background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; display: flex; flex-direction: column; }
+  .story-head { padding: 18px clamp(16px, 3vw, 24px); display: flex; flex-direction: column; gap: 4px; border-bottom: 1px solid var(--rule); }
+  .story-head .who { font-family: var(--mono); font-size: 12px; color: var(--gold); letter-spacing: 0.04em; }
+  .story-body { padding: 20px clamp(16px, 3vw, 24px); display: grid; grid-template-columns: minmax(280px, 1.05fr) minmax(260px, 1fr); gap: 28px; align-items: start; }
+  @media (max-width: 720px) { .story-body { grid-template-columns: 1fr; gap: 22px; } }
+  ol.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; counter-reset: s; }
+  ol.steps li {
+    counter-increment: s; position: relative; padding-left: 34px; font-size: 14.5px; line-height: 1.65; color: var(--ink-soft);
+  }
+  ol.steps li::before {
+    content: counter(s); position: absolute; left: 0; top: 1px;
+    width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--rule);
+    background: var(--panel-2); color: var(--ink); font-family: var(--mono); font-size: 11px; font-weight: 600;
+    display: grid; place-items: center;
+  }
+  ol.steps li.key::before { border-color: var(--gold); background: var(--gold-soft); color: var(--gold); }
+  ol.steps li b { color: var(--ink); font-weight: 700; }
+
+  /* ---- UI mockup ---- */
+  .ui {
+    background: var(--panel-2); border: 1px solid var(--rule); border-radius: 5px;
+    font-size: 13px; overflow: hidden; box-shadow: 0 1px 0 var(--rule-soft);
+  }
+  .ui-bar {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    border-bottom: 1px solid var(--rule); background: var(--panel);
+    font-family: var(--disp); letter-spacing: 0.06em; text-transform: uppercase; font-size: 11px; color: var(--ink-faint);
+  }
+  .ui-tabs { display: flex; gap: 6px; margin-left: auto; text-transform: none; letter-spacing: 0; font-family: var(--mono); }
+  .ui-tab { padding: 1px 7px; border-radius: 999px; border: 1px solid var(--rule); color: var(--ink-faint); font-size: 10.5px; }
+  .ui-tab.on { border-color: var(--gold); color: var(--gold); background: var(--gold-soft); }
+  .ui-repo { padding: 9px 12px 4px; font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+  .ui-row { padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--rule-soft); }
+  .ui-row:last-child { border-bottom: 0; }
+  .ui-title { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; color: var(--ink); font-weight: 500; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--gold); flex: none; transform: translateY(-1px); }
+  .dot.quiet { background: var(--ink-faint); }
+  .dot.done { background: var(--ok); }
+  .ui-when { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-left: auto; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+  .chip {
+    font-family: var(--mono); font-size: 10.5px; padding: 1px 7px; border-radius: 3px;
+    border: 1px solid var(--rule); color: var(--ink-soft); background: var(--panel);
+  }
+  .chip.warn { border-color: var(--gold); color: var(--gold); background: var(--gold-soft); }
+  .chip.ok { border-color: var(--ok); color: var(--ok); }
+  .chip.stop { border-color: var(--stop); color: var(--stop); }
+  .ui-note { padding: 8px 12px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); border-top: 1px dashed var(--rule); }
+  .cap { font-size: 12.5px; color: var(--ink-faint); margin-top: 8px; line-height: 1.55; }
+
+  /* ---- order timeline ---- */
+  .order { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--rule); border-radius: 4px; background: var(--panel); overflow: hidden; }
+  .step { display: grid; grid-template-columns: 64px 1fr; gap: 18px; padding: 16px 20px; border-bottom: 1px solid var(--rule-soft); }
+  .step:last-child { border-bottom: 0; }
+  .step .idx { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); padding-top: 2px; }
+  .step .idx b { display: block; font-size: 22px; color: var(--ink); font-weight: 600; line-height: 1.1; }
+  .step.done .idx b { color: var(--ok); }
+  .step .what { display: flex; flex-direction: column; gap: 4px; font-size: 14.5px; color: var(--ink-soft); line-height: 1.65; }
+  .step .what b { color: var(--ink); font-size: 15.5px; }
+
+  /* ---- open questions ---- */
+  .qs { display: flex; flex-direction: column; gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
+  .q { background: var(--panel); padding: 18px 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; }
+  @media (max-width: 640px) { .q { grid-template-columns: 1fr; } .story-head, .story-body { padding-inline: 16px; } }
+  .q h3 { grid-column: 1 / -1; }
+  .q .opt { font-size: 14px; color: var(--ink-soft); line-height: 1.6; }
+  .q .opt em { font-style: normal; font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold); display: block; }
+
+  ul.plain { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 7px; color: var(--ink-soft); font-size: 14.5px; line-height: 1.65; }
+  ul.plain li::marker { color: var(--ink-faint); }
+
+  footer { border-top: 1px solid var(--rule); padding-top: 16px; font-size: 13px; color: var(--ink-faint); line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">murmur 설계안 · 2026-09-10</div>
+    <h1>murmur가 허브가 된다</h1>
+    <p class="lede">
+      지금은 저장소에 <strong>avcshub 링크만</strong> 걸 수 있다. 링크를 걸지 않은 경우 murmur가
+      그 자리에 서서 — 제안을 받고, 화면에서 승인하고, 승인된 것을 GitHub로 내보낸다.
+      작업이 끝나면 GitHub를 열어 확인하는 대신, murmur 안에 제안이 올라온다.
+    </p>
+    <div class="meta">
+      <span>대상: murmur · avcs · avcs-server</span>
+      <span>상태: 설계 제안 (코드 변경 없음)</span>
+      <span>선행: 협업 탭 읽기 자리</span>
+    </div>
+  </header>
+
+  <!-- ================= 1. 무엇이 바뀌나 ================= -->
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">1 — 자리</div>
+      <h2>murmur는 avcshub를 <em>보는</em> 것이 아니라 <em>대신한다</em></h2>
+    </div>
+    <div class="col">
+      <p>
+        지금 murmur는 avcs-server를 <strong>읽기만</strong> 한다(<code>fetchSince</code>), 그 결과로 남기는 것은
+        <code>lease</code> 하나다. 제안을 보고 결정하는 일은 avcshub 웹에서, 코드가 실제로 나가는 일은
+        GitHub에서 일어난다. 사람은 화면을 세 개 연다.
+      </p>
+      <p>
+        바꾸려는 것은 한 줄이다: <strong>avcs-server를 murmur 안에 두고, 승인과 배달을 murmur가 맡는다.</strong>
+        외부 저장소를 쓰는 팀을 위해 지금의 링크 방식(<code>linked</code>)은 그대로 남는다.
+      </p>
+    </div>
+
+    <figure class="fig">
+      <div class="fig-body">
+        <svg viewBox="0 0 1040 410" role="img" aria-label="지금은 murmur가 avcs-server를 읽기만 하고 avcshub 링크를 열어 주지만, 앞으로는 murmur가 avcs-server를 내장하고 승인과 배달까지 맡아 GitHub로 PR을 내보낸다">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L10,5 L0,9 z" class="head"></path>
+            </marker>
+            <marker id="arg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L10,5 L0,9 z" class="head-gold"></path>
+            </marker>
+          </defs>
+
+          <text x="20" y="30" class="t-lbl" font-size="12" letter-spacing="1.6">지금</text>
+
+          <rect x="20" y="70" width="160" height="44" rx="3" class="box"></rect>
+          <text x="100" y="97" text-anchor="middle" font-size="13" class="t-strong">에이전트 · avcs</text>
+
+          <rect x="250" y="70" width="160" height="44" rx="3" class="box"></rect>
+          <text x="330" y="97" text-anchor="middle" font-size="13" class="t-strong">avcs-server</text>
+
+          <rect x="480" y="70" width="160" height="44" rx="3" class="box-key"></rect>
+          <text x="560" y="97" text-anchor="middle" font-size="13" class="t-strong">avcshub</text>
+
+          <rect x="840" y="70" width="180" height="44" rx="3" class="box"></rect>
+          <text x="930" y="97" text-anchor="middle" font-size="13" class="t-strong">GitHub</text>
+
+          <line x1="180" y1="92" x2="244" y2="92" class="ln" marker-end="url(#ar)"></line>
+          <text x="212" y="82" text-anchor="middle" font-size="10.5" class="t-lbl">push</text>
+
+          <line x1="410" y1="92" x2="474" y2="92" class="ln" marker-end="url(#ar)"></line>
+          <text x="442" y="82" text-anchor="middle" font-size="10.5" class="t-lbl">sync</text>
+
+          <line x1="640" y1="92" x2="834" y2="92" class="ln" marker-end="url(#ar)"></line>
+          <text x="737" y="82" text-anchor="middle" font-size="10.5" class="t-lbl">승인 → PR</text>
+
+          <rect x="480" y="170" width="160" height="44" rx="3" class="box"></rect>
+          <text x="560" y="197" text-anchor="middle" font-size="13" class="t-strong">murmur</text>
+
+          <polyline points="330,114 330,192 474,192" class="ln-dash" marker-end="url(#ar)"></polyline>
+          <text x="340" y="184" font-size="10.5" class="t-lbl">읽기만 · lease</text>
+
+          <line x1="560" y1="170" x2="560" y2="120" class="ln-dash" marker-end="url(#ar)"></line>
+          <text x="572" y="148" font-size="10.5" class="t-lbl">링크 열기</text>
+
+          <line x1="20" y1="240" x2="1020" y2="240" stroke="currentColor" stroke-width="1" opacity="0.35"></line>
+
+          <text x="20" y="272" class="t-lbl" font-size="12" letter-spacing="1.6">앞으로</text>
+
+          <rect x="20" y="310" width="160" height="44" rx="3" class="box"></rect>
+          <text x="100" y="337" text-anchor="middle" font-size="13" class="t-strong">에이전트 · avcs</text>
+
+          <rect x="250" y="280" width="470" height="110" rx="5" class="frame"></rect>
+          <text x="250" y="272" font-size="11" letter-spacing="1.4" fill="currentColor" class="t-lbl">MURMUR</text>
+
+          <rect x="264" y="310" width="130" height="44" rx="3" class="box"></rect>
+          <text x="329" y="331" text-anchor="middle" font-size="11.5" class="t-strong">avcs-server</text>
+          <text x="329" y="345" text-anchor="middle" font-size="10.5" class="t-lbl">내장</text>
+
+          <rect x="419" y="310" width="130" height="44" rx="3" class="box-key"></rect>
+          <text x="484" y="331" text-anchor="middle" font-size="11.5" class="t-strong">협업 탭</text>
+          <text x="484" y="345" text-anchor="middle" font-size="10.5" class="t-lbl">승인</text>
+
+          <rect x="574" y="310" width="130" height="44" rx="3" class="box"></rect>
+          <text x="639" y="337" text-anchor="middle" font-size="11.5" class="t-strong">배달 큐</text>
+
+          <line x1="394" y1="332" x2="413" y2="332" class="ln" marker-end="url(#ar)"></line>
+          <text x="406" y="302" text-anchor="middle" font-size="10" class="t-lbl">제안</text>
+          <line x1="549" y1="332" x2="568" y2="332" class="ln-gold" marker-end="url(#arg)"></line>
+          <text x="561" y="302" text-anchor="middle" font-size="10" class="t-lbl">승인</text>
+
+          <line x1="180" y1="332" x2="244" y2="332" class="ln" marker-end="url(#ar)"></line>
+          <text x="212" y="322" text-anchor="middle" font-size="10.5" class="t-lbl">push</text>
+
+          <rect x="840" y="280" width="180" height="44" rx="3" class="box"></rect>
+          <text x="930" y="307" text-anchor="middle" font-size="13" class="t-strong">GitHub — PR</text>
+
+          <rect x="840" y="344" width="180" height="44" rx="3" class="box"></rect>
+          <text x="930" y="366" text-anchor="middle" font-size="12" class="t-strong">avcshub ·</text>
+          <text x="930" y="380" text-anchor="middle" font-size="12" class="t-strong">다른 avcs-server</text>
+
+          <path d="M710,326 C 770,318 790,308 834,304" class="ln-gold" marker-end="url(#arg)"></path>
+          <text x="772" y="300" text-anchor="middle" font-size="10" class="t-lbl">PR 열기</text>
+
+          <path d="M710,342 C 770,352 790,360 834,364" class="ln-gold" marker-end="url(#arg)"></path>
+          <text x="772" y="384" text-anchor="middle" font-size="10" class="t-lbl">objects + /integrate</text>
+        </svg>
+      </div>
+      <figcaption>
+        바뀌는 것은 화살표 두 개다. <strong>avcshub로 나가던 sync</strong>가 murmur 안으로 들어오고,
+        <strong>사람이 웹으로 열던 링크</strong>가 협업 탭의 승인 버튼이 된다. 에이전트가 <code>push</code>하는
+        방식은 그대로이고(같은 프로토콜), 밖으로 나가는 길은 하나가 아니라 저장소마다 붙이는 <em>배달 대상</em>이 된다.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ================= 2. 세 층 ================= -->
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">2 — 구조</div>
+      <h2>빠진 것은 한 덩어리가 아니라 세 층이다</h2>
+    </div>
+    <div class="col">
+      <p>
+        “murmur가 avcshub를 대체한다”를 기능 하나로 잡으면 첫 릴리스가 나오지 않는다.
+        쓰기 · 판정 · 배달은 서로 다른 시점에 켤 수 있고, 각각 따로 쓸모가 있다.
+      </p>
+    </div>
+    <div class="layers">
+      <div class="layer">
+        <div class="n">층 1 · 쓰기</div>
+        <h3>저장소를 가리키지 않고 갖는다</h3>
+        <p>
+          전역 URL 한 칸(<code>projection_config</code>)을 <strong>repo 레코드</strong>로 올린다.
+          <code>linked</code>는 지금 그대로 외부 서버를 읽고, <code>hosted</code>는
+          <code>@izagood/avcs-server</code>를 murmur 안에서 띄운다 — 이미 의존성에 들어 있다.
+          에이전트의 <code>origin</code>이 murmur가 된다.
+        </p>
+      </div>
+      <div class="layer">
+        <div class="n">층 2 · 판정</div>
+        <h3>승인은 서명이다</h3>
+        <p>
+          승인 버튼을 누르면 데스크탑이 리뷰어 키로 정규 문자열
+          <code>decision:verdict:view:intent:head</code>에 서명한다. 다른 제안이나 다른 head로
+          재생할 수 없다. 그 다음은 프로토콜 그대로 <code>POST /integrate</code>.
+        </p>
+      </div>
+      <div class="layer">
+        <div class="n">층 3 · 배달</div>
+        <h3>밖으로 나가는 것은 부작용이다</h3>
+        <p>
+          랜딩된 체크포인트를 저장소에 붙은 <strong>배달 대상</strong>이 밖으로 내보낸다.
+          GitHub PR · 브랜치 푸시 · 다른 avcs 원격. 배달이 실패해도 승인은 그대로 남고
+          재시도 큐에만 남는다.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 3. 승인 한 번 ================= -->
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">3 — 메커니즘</div>
+      <h2>승인 버튼 한 번에 일어나는 일</h2>
+    </div>
+
+    <figure class="fig">
+      <div class="fig-body">
+        <svg viewBox="0 0 1000 300" role="img" aria-label="승인 클릭은 리뷰어 키 서명을 거쳐 integrate 큐로 가고, advanced 판정만 배달 큐로 넘어가 GitHub PR이 된다. 나머지 판정 넷은 화면으로 돌아오고, 배달 실패는 승인을 되돌리지 않고 재시도된다">
+          <defs>
+            <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L10,5 L0,9 z" class="head"></path>
+            </marker>
+            <marker id="arg2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L10,5 L0,9 z" class="head-gold"></path>
+            </marker>
+          </defs>
+
+          <rect x="16" y="60" width="150" height="46" rx="3" class="box-key"></rect>
+          <text x="91" y="88" text-anchor="middle" font-size="13" class="t-strong">승인 클릭</text>
+
+          <rect x="216" y="60" width="150" height="46" rx="3" class="box"></rect>
+          <text x="291" y="82" text-anchor="middle" font-size="12" class="t-strong">데스크탑 서명</text>
+          <text x="291" y="97" text-anchor="middle" font-size="10.5" class="t-lbl">리뷰어 키</text>
+
+          <rect x="416" y="60" width="150" height="46" rx="3" class="box"></rect>
+          <text x="491" y="82" text-anchor="middle" font-size="12" class="t-strong">integrate 큐</text>
+          <text x="491" y="97" text-anchor="middle" font-size="10.5" class="t-lbl">ticketId = 멱등키</text>
+
+          <rect x="616" y="60" width="150" height="46" rx="3" class="box"></rect>
+          <text x="691" y="82" text-anchor="middle" font-size="12" class="t-strong">배달 큐</text>
+          <text x="691" y="97" text-anchor="middle" font-size="10.5" class="t-lbl">repo·체크포인트·대상</text>
+
+          <rect x="816" y="60" width="168" height="46" rx="3" class="box"></rect>
+          <text x="900" y="88" text-anchor="middle" font-size="13" class="t-strong">GitHub PR</text>
+
+          <line x1="166" y1="83" x2="210" y2="83" class="ln-gold" marker-end="url(#arg2)"></line>
+          <line x1="366" y1="83" x2="410" y2="83" class="ln-gold" marker-end="url(#arg2)"></line>
+          <text x="388" y="73" text-anchor="middle" font-size="10" class="t-lbl">체크포인트</text>
+          <line x1="566" y1="83" x2="610" y2="83" class="ln-gold" marker-end="url(#arg2)"></line>
+          <text x="588" y="73" text-anchor="middle" font-size="10" class="t-lbl">advanced</text>
+          <line x1="766" y1="83" x2="810" y2="83" class="ln-gold" marker-end="url(#arg2)"></line>
+
+          <polyline points="491,106 491,168 291,168" class="ln" marker-end="url(#ar2)"></polyline>
+          <text x="502" y="140" font-size="11" class="t-lbl">판정 4종 → 화면으로 되돌아온다</text>
+          <rect x="216" y="146" width="150" height="44" rx="3" class="box"></rect>
+          <text x="291" y="173" text-anchor="middle" font-size="12" class="t-strong">제안 화면</text>
+
+          <path d="M666,106 C 646,146 736,146 716,106" class="ln" marker-end="url(#ar2)"></path>
+          <text x="691" y="158" text-anchor="middle" font-size="10.5" class="t-lbl">실패 → 재시도</text>
+
+          <line x1="416" y1="228" x2="984" y2="228" stroke="currentColor" stroke-width="1" opacity="0.3" stroke-dasharray="3 4"></line>
+          <text x="416" y="250" font-size="11" class="t-lbl">여기서부터는 승인이 이미 기록되어 있다 — 배달이 실패해도 되돌리지 않는다</text>
+        </svg>
+      </div>
+      <figcaption>
+        <code>advanced</code> 판정 하나만 오른쪽으로 간다. 나머지 넷은 사람이 다시 봐야 하는 것이므로
+        제안 화면으로 돌아온다. 점선 오른쪽이 <strong>되돌리지 않는 구간</strong>이다 — PR 만들기가
+        실패했다고 승인을 취소하면, 같은 사람이 같은 것을 두 번 승인하게 된다.
+      </figcaption>
+    </figure>
+
+    <div class="col">
+      <h3>판정 다섯 종은 avcs 프로토콜이 이미 정해 놨다</h3>
+      <p>새로 만들 상태 축이 아니다. <code>POST /integrate</code>가 상태 코드로 판정을 나른다.</p>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr><th>판정</th><th>코드</th><th>뜻</th><th>murmur 화면</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="code verdict-go">advanced</td><td class="code">200</td>
+            <td>랜딩했다. head가 전진한다</td><td>배달 큐로 넘긴다 · 줄에 배달 칩</td>
+          </tr>
+          <tr>
+            <td class="code">queued</td><td class="code">202</td>
+            <td>다른 티켓이 진행 중 — 같은 티켓으로 재시도</td><td>“대기 중” · murmur가 알아서 재시도</td>
+          </tr>
+          <tr>
+            <td class="code verdict-stop">conflict</td><td class="code">409</td>
+            <td>충돌. 수리 패킷을 함께 준다</td><td><strong>결정 필요</strong> — 목록 맨 위 · 인박스 배지</td>
+          </tr>
+          <tr>
+            <td class="code">needs_evidence</td><td class="code">428</td>
+            <td>요구된 검사의 증거가 없다</td><td>“검증 대기” · 트리 해시를 그대로 보여 준다</td>
+          </tr>
+          <tr>
+            <td class="code verdict-stop">rejected</td><td class="code">422</td>
+            <td>정책이 거부했다</td><td>거부 사유를 제안 줄에</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col">
+      <p>
+        <strong>승인 권한의 정본은 murmur의 role이 아니라 avcs의 view 정책이다.</strong>
+        murmur는 그것을 읽어 버튼을 흐리게 할 뿐이다 — 권한을 두 곳에 두면 반드시 갈라진다.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================= 4. 배달 ================= -->
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">4 — 배달</div>
+      <h2>배달 대상은 저장소에 붙는다</h2>
+    </div>
+    <div class="col">
+      <p>
+        어댑터 셋이 같은 계약을 지킨다: <em>랜딩된 체크포인트 하나를 받아 바깥에 산출물 하나를 만든다.</em>
+        멱등키는 <code>(repo, checkpoint, target)</code> — 몇 번을 재시도해도 PR은 하나다.
+      </p>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>대상</th><th>하는 일</th><th>안전장치</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="code">github-pr</td>
+            <td>체크포인트 트리를 materialize → git plumbing으로 커밋 생성 → 브랜치 push → PR 열기</td>
+            <td>푸시 전 <code>ls-remote</code>로 기준 tip 확인 · 평범한 refspec(<code>--force</code> 없음)</td>
+          </tr>
+          <tr>
+            <td class="code">git-push</td>
+            <td>같은 경로에서 PR 없이 브랜치로 직행</td>
+            <td>fast-forward만 · 비-FF는 git이 거절하게 둔다</td>
+          </tr>
+          <tr>
+            <td class="code">avcs-remote</td>
+            <td>avcshub나 다른 avcs-server로 objects push + <code>/integrate</code></td>
+            <td>프로토콜 그대로 · 판정 5종을 다시 받는다</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col">
+      <p>
+        첫 어댑터는 처음부터 쓰지 않아도 된다. avcshub의
+        <code>packages/api/src/integration/gitPort.ts</code>에 이 경로가 이미 구현되어 있고,
+        <code>--force</code>류 인자를 금지하는 테스트까지 붙어 있다. 옮겨 오는 편이 다시 짜는 것보다 낫다.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================= 5. 유저 스토리 ================= -->
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">5 — 쓰는 모습</div>
+      <h2>실제로 만들어지면 이렇게 쓴다</h2>
+    </div>
+
+    <!-- story 1 -->
+    <article class="story">
+      <div class="story-head">
+        <div class="who">스토리 1 · jaebin — 내부 저장소(hosted)</div>
+        <h3>“고쳐 줘” 한 마디에서 PR까지, 화면 하나에서</h3>
+      </div>
+      <div class="story-body">
+        <ol class="steps">
+          <li>채널에서 에이전트를 부른다. <b>“008 마이그레이션을 되돌려 줘”</b></li>
+          <li>에이전트가 intent를 열고 작업한다. push 주소는 GitHub가 아니라 <b>murmur</b>다.</li>
+          <li>작업이 끝나면 협업 탭에 <b>제안 한 줄</b>이 선다 — 누가 · 무슨 제안 · 무엇을 건드리나 · 언제.</li>
+          <li>제안을 열면 <code>intent → operations → evidence</code> 트리와 검증 결과가 보인다.</li>
+          <li class="key">jaebin이 <b>승인</b>을 누른다. 데스크탑이 리뷰어 키로 서명한다.</li>
+          <li><code>advanced 200</code> — head가 전진하고 배달 큐가 받는다.</li>
+          <li>줄에 칩이 붙는다: <b>PR #124 열림</b>. 링크를 누르면 GitHub로 간다.</li>
+        </ol>
+        <div>
+          <div class="ui">
+            <div class="ui-bar">
+              협업
+              <div class="ui-tabs">
+                <span class="ui-tab on">열림 3</span><span class="ui-tab">승인됨 1</span><span class="ui-tab">전부</span>
+              </div>
+            </div>
+            <div class="ui-repo">izagood/murmur</div>
+            <div class="ui-row">
+              <div class="ui-title"><span class="dot"></span>008 마이그레이션을 되돌린다<span class="ui-when">alpha · 3분 전</span></div>
+              <div class="chips">
+                <span class="chip warn">동작 바뀜</span><span class="chip">op 3</span><span class="chip">검증 통과</span>
+              </div>
+            </div>
+            <div class="ui-row">
+              <div class="ui-title"><span class="dot done"></span>답글 수를 진행과 가른다<span class="ui-when">jaebin · 방금</span></div>
+              <div class="chips">
+                <span class="chip ok">승인됨</span><span class="chip ok">PR #124 열림</span>
+              </div>
+            </div>
+            <div class="ui-note">승인 → 서명 → integrate 200 → 배달 큐 → PR (3.4초)</div>
+          </div>
+          <p class="cap">승인 직후의 협업 탭. 승인된 줄은 사라지지 않고 <strong>배달 상태를 달고</strong> 남는다 — 나간 것이 어디까지 갔는지가 같은 자리에서 보여야 한다.</p>
+        </div>
+      </div>
+    </article>
+
+    <!-- story 2 -->
+    <article class="story">
+      <div class="story-head">
+        <div class="who">스토리 2 · 두 에이전트가 같은 파일을 고쳤다</div>
+        <h3>충돌은 알림이 아니라 <em>결정 필요</em>라는 자리다</h3>
+      </div>
+      <div class="story-body">
+        <ol class="steps">
+          <li>alpha와 codex가 각각 <code>messages.ts</code>를 건드린 제안을 올린다.</li>
+          <li>alpha의 제안이 먼저 승인되어 <code>advanced</code>로 랜딩한다.</li>
+          <li>codex의 제안을 승인하면 <code>conflict 409</code> — 수리 패킷이 함께 온다.</li>
+          <li class="key">그 줄이 목록 <b>맨 위</b>로 올라오고 인박스 배지가 켜진다. 정렬은 막는 순서다.</li>
+          <li>제안을 열면 충돌한 키마다 <b>고를 수 있는 op 두 개</b>와 과거 선례가 나란히 선다.</li>
+          <li>jaebin이 고르고 이유를 적는다 → decision 객체가 남는다.</li>
+          <li>같은 티켓으로 재제출된다. 이번엔 <code>advanced</code>, PR 하나가 나간다.</li>
+        </ol>
+        <div>
+          <div class="ui">
+            <div class="ui-bar">
+              협업
+              <div class="ui-tabs"><span class="ui-tab on">열림 4</span><span class="ui-tab">승인됨 1</span><span class="ui-tab">전부</span></div>
+            </div>
+            <div class="ui-repo">izagood/murmur</div>
+            <div class="ui-row">
+              <div class="ui-title"><span class="dot"></span>인덱스를 다시 깐다<span class="ui-when">codex · 1시간 전</span></div>
+              <div class="chips">
+                <span class="chip stop">결정 필요</span><span class="chip">messages.ts · alpha와 겹침</span>
+              </div>
+            </div>
+            <div class="ui-row">
+              <div class="ui-title"><span class="dot quiet"></span>첨부 미리보기 화이트리스트<span class="ui-when">beta · 20분 전</span></div>
+              <div class="chips"><span class="chip">op 2</span><span class="chip warn">검증 대기</span></div>
+            </div>
+            <div class="ui-note">정렬: 결정 필요 → 검증 실패 → 열림 → 승인·머지·거부</div>
+          </div>
+          <p class="cap">막는 것이 위로 온다. 방금 올라온 제안이 어제부터 기다리는 충돌을 밀어내지 않는다 — 인박스와 같은 규칙이다.</p>
+        </div>
+      </div>
+    </article>
+
+    <!-- story 3 -->
+    <article class="story">
+      <div class="story-head">
+        <div class="who">스토리 3 · 외부 저장소(linked) · 배달 실패</div>
+        <h3>링크를 건 저장소는 지금 그대로, 실패는 승인을 되돌리지 않는다</h3>
+      </div>
+      <div class="story-body">
+        <ol class="steps">
+          <li>회사 avcshub에 이미 있는 저장소는 <code>linked</code>로 둔다. 화면은 <b>똑같다</b>.</li>
+          <li>승인하면 murmur가 판정하지 않고 <b>원격 <code>/integrate</code>에 릴레이</b>한다.</li>
+          <li>판정도 배달도 원격이 한다. murmur는 그 결과를 같은 줄에 그린다.</li>
+          <li class="key">hosted 저장소에서 GitHub 토큰이 만료돼 배달이 실패한다.</li>
+          <li>승인은 <b>그대로 남는다</b>. 줄에는 <span class="mono">배달 실패 · 재시도 3회</span> 칩이 붙는다.</li>
+          <li>실패 통지가 스레드로 온다(이미 있는 <code>message.fail</code> 경로).</li>
+          <li>토큰을 고치고 <b>다시 배달</b>을 누른다. 멱등키가 같으니 PR은 하나만 생긴다.</li>
+        </ol>
+        <div>
+          <div class="ui">
+            <div class="ui-bar">
+              협업
+              <div class="ui-tabs"><span class="ui-tab">열림 2</span><span class="ui-tab on">승인됨 3</span><span class="ui-tab">전부</span></div>
+            </div>
+            <div class="ui-repo">izagood/murmur <span class="chip">hosted</span></div>
+            <div class="ui-row">
+              <div class="ui-title"><span class="dot done"></span>답글 수를 진행과 가른다<span class="ui-when">승인 12분 전</span></div>
+              <div class="chips">
+                <span class="chip ok">승인됨</span><span class="chip stop">배달 실패 · 재시도 3회</span><span class="chip">다시 배달</span>
+              </div>
+            </div>
+            <div class="ui-repo" style="padding-top:10px">rebellions/synapse <span class="chip">linked</span></div>
+            <div class="ui-row">
+              <div class="ui-title"><span class="dot quiet"></span>런처 타임아웃을 늘린다<span class="ui-when">gamma · 2시간 전</span></div>
+              <div class="chips"><span class="chip">원격 판정 대기</span><span class="chip">avcshub</span></div>
+            </div>
+            <div class="ui-note">hosted와 linked가 한 목록에 — 다른 것은 판정을 누가 하느냐뿐이다</div>
+          </div>
+          <p class="cap">두 모드가 한 화면에 선다. 이 성질이 마이그레이션 계획을 대신한다 — 저장소를 하나씩 옮겨도 팀이 보는 자리는 바뀌지 않는다.</p>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <!-- ================= 6. 도그푸딩 ================= -->
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">6 — 도그푸딩</div>
+      <h2>네 서비스가 다 내 것이라면, murmur는 그 넷의 계측기다</h2>
+    </div>
+    <div class="col">
+      <p>
+        <code>avcs</code> · <code>avcs-server</code> · <code>avcshub</code> · <code>murmur</code>를
+        한 사람이 만든다면, murmur를 쓰는 모든 순간이 나머지 셋의 테스트다.
+        그런데 <strong>지금 그 테스트 결과가 아무 데도 안 남는다.</strong> 증거는 저장소 안에 이미 있다.
+      </p>
+    </div>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>서비스</th><th>실제 버전</th><th>murmur가 물고 있는 것</th><th>결과</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="code">avcs</td><td class="code">0.49.4</td>
+            <td class="code">^0.45.0 → 0.45.0 설치됨</td><td>4개 마이너 뒤</td>
+          </tr>
+          <tr>
+            <td class="code">avcs-server</td><td class="code">0.7.0</td>
+            <td class="code">^0.3.0 → 0.3.0 설치됨</td>
+            <td class="verdict-stop">협업 탭 1단계가 요구하는 <code>GET /reduced</code>가 없는 버전</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col">
+      <p class="cap" style="font-size:13.5px">
+        <code>packages/server/package.json</code>에서 확인한 값이다. 설계 1단계가 “avcs-server 0.7.0 선행”이라고
+        적혀 있는데 정작 murmur에 깔린 것은 0.3.0 — <strong>도그푸딩이 돌고 있지 않다는 증거가 이미 코드에 있다.</strong>
+      </p>
+    </div>
+
+    <div class="col">
+      <h3>병목은 발견이 아니라 기록이다</h3>
+      <p>
+        오류는 매일 발견된다. 에이전트 턴마다 나온다 — avcs 훅이 느려서 <code>core.hooksPath=/dev/null</code>로
+        우회하고, 기본 heap으로 OOM이 나서 <code>--max-old-space-size=12288</code>을 붙이고,
+        <code>avcs commit</code>이 트리 전체 드리프트를 잡는다. 셋 다 avcs의 결함 후보인데
+        <strong>어느 저장소에도 없다.</strong> 에이전트 메모리와 스레드 스크롤에만 있다.
+        그러니 만들 것은 “버그를 더 잘 찾는 법”이 아니라 <em>발견을 한 동작으로 저장소에 넣는 길</em>이다.
+      </p>
+    </div>
+
+    <figure class="fig">
+      <div class="fig-body">
+        <svg viewBox="0 0 1000 250" role="img" aria-label="murmur를 쓰다가 실패하면 실패 카드가 증거와 버전 네 쌍을 담고, 한 번의 동작으로 대상 저장소에 결함 intent가 열리고, 고침 제안이 승인·배달·릴리스를 거쳐 그 결함을 연 스레드로 되돌아온다">
+          <defs>
+            <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L10,5 L0,9 z" class="head"></path>
+            </marker>
+            <marker id="arg3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L10,5 L0,9 z" class="head-gold"></path>
+            </marker>
+          </defs>
+
+          <rect x="16" y="46" width="172" height="52" rx="3" class="box"></rect>
+          <text x="102" y="70" text-anchor="middle" font-size="12.5" class="t-strong">murmur를 쓴다</text>
+          <text x="102" y="86" text-anchor="middle" font-size="10.5" class="t-lbl">턴이 돈다</text>
+
+          <rect x="218" y="46" width="172" height="52" rx="3" class="box"></rect>
+          <text x="304" y="70" text-anchor="middle" font-size="12.5" class="t-strong">실패 카드</text>
+          <text x="304" y="86" text-anchor="middle" font-size="10.5" class="t-lbl">명령 · 에러 · 버전 4쌍</text>
+
+          <rect x="420" y="46" width="172" height="52" rx="3" class="box-key"></rect>
+          <text x="506" y="70" text-anchor="middle" font-size="12.5" class="t-strong">결함 intent</text>
+          <text x="506" y="86" text-anchor="middle" font-size="10.5" class="t-lbl">대상 저장소에 · evidence 첨부</text>
+
+          <rect x="622" y="46" width="172" height="52" rx="3" class="box"></rect>
+          <text x="708" y="70" text-anchor="middle" font-size="12.5" class="t-strong">고침 제안 → 승인</text>
+          <text x="708" y="86" text-anchor="middle" font-size="10.5" class="t-lbl">같은 intent 아래로</text>
+
+          <rect x="824" y="46" width="160" height="52" rx="3" class="box"></rect>
+          <text x="904" y="70" text-anchor="middle" font-size="12.5" class="t-strong">배달 · 릴리스</text>
+          <text x="904" y="86" text-anchor="middle" font-size="10.5" class="t-lbl">PR · 머지 · 버전</text>
+
+          <line x1="188" y1="72" x2="212" y2="72" class="ln" marker-end="url(#ar3)"></line>
+          <line x1="390" y1="72" x2="414" y2="72" class="ln-gold" marker-end="url(#arg3)"></line>
+          <text x="402" y="36" text-anchor="middle" font-size="10" class="t-lbl">한 동작</text>
+          <line x1="592" y1="72" x2="616" y2="72" class="ln" marker-end="url(#ar3)"></line>
+          <line x1="794" y1="72" x2="818" y2="72" class="ln" marker-end="url(#ar3)"></line>
+
+          <path d="M904,98 C 904,170 700,180 500,180 C 300,180 102,170 102,104" class="ln-gold" marker-end="url(#arg3)"></path>
+          <text x="500" y="200" text-anchor="middle" font-size="11" class="t-lbl">“v0.1.128에 들어갔다” — 결함을 연 그 스레드가 깨어난다</text>
+          <text x="500" y="222" text-anchor="middle" font-size="10.5" class="t-lbl">이 되돌아오는 화살표가 지금 없는 한 칸이다</text>
+        </svg>
+      </div>
+      <figcaption>
+        루프가 닫히는 지점은 배달이 아니라 <strong>알림</strong>이다. 고친 것이 내 손에 도착했다는 사실이
+        결함을 연 자리로 돌아오지 않으면, 사람이 그것을 기억하고 있어야 한다 — 그리고 기억하지 않는다.
+      </figcaption>
+    </figure>
+
+    <div class="layers">
+      <div class="layer">
+        <div class="n">장치 1</div>
+        <h3>결함은 대상 저장소의 intent다</h3>
+        <p>
+          이슈 트래커를 새로 만들지 않는다. MCP <code>defect.file(repo, …)</code> 하나가
+          대상 저장소에 intent를 연다. 고치는 operation이 <strong>같은 intent 아래로</strong> 붙고,
+          승인·배달은 이미 설계한 길을 그대로 탄다. 별도 축을 만들면 결함과 제안이 영영 안 만난다.
+        </p>
+      </div>
+      <div class="layer">
+        <div class="n">장치 2</div>
+        <h3>증거를 사람이 다시 쓰지 않는다</h3>
+        <p>
+          턴에는 재료가 이미 다 있다 — 실행한 명령, 종료 코드, 스택, 도구 인자.
+          실패 카드(<code>message.fail</code>)에 <b>[avcs에 결함 열기]</b>를 달고,
+          누르면 그 재료가 <code>evidence</code> 객체로 따라간다. 재현 절차를 손으로 쓰게 하면 아무도 안 연다.
+        </p>
+      </div>
+      <div class="layer">
+        <div class="n">장치 3</div>
+        <h3>버전 네 쌍이 결함에 박힌다</h3>
+        <p>
+          넷이 동시에 움직이므로 “어느 조합에서 났나”가 결함의 절반이다.
+          <code>GET /version</code>(능력 협상, 프로토콜에 이미 있다)과 릴리스 버전을 자동으로 붙인다.
+          재현 안 되는 결함의 절반이 여기서 사라진다.
+        </p>
+      </div>
+      <div class="layer">
+        <div class="n">장치 4</div>
+        <h3>어느 저장소인지는 러너가 고른다</h3>
+        <p>
+          MCP 도구 호출 실패 → <code>avcs</code>, <code>/sync</code>·<code>/integrate</code>의 4xx·5xx →
+          <code>avcs-server</code>, 대시보드 → <code>avcshub</code>, 화면·턴 → <code>murmur</code>.
+          기본값을 러너가 제안하고 사람은 틀렸을 때만 바꾼다.
+        </p>
+      </div>
+      <div class="layer">
+        <div class="n">장치 5</div>
+        <h3>적합성 스위트를 murmur CI가 돈다</h3>
+        <p>
+          hosted 모드가 avcs-server를 내장하는 순간, murmur CI에서 avcs의
+          <code>npm run conformance</code>를 그 내장 서버에 물릴 수 있다.
+          avcs-server는 <em>“스위트 통과가 곧 지원의 정의”</em>라고 선언해 뒀으니 판정 기준이 이미 있다 —
+          murmur가 avcs-server의 회귀 탐지기가 된다.
+        </p>
+      </div>
+      <div class="layer">
+        <div class="n">장치 6</div>
+        <h3>버전을 고정하지 말고 따라간다</h3>
+        <p>
+          개발 인스턴스는 avcs·avcs-server의 main을 물고, 배포 인스턴스는 고정 버전을 문다.
+          위 표처럼 4개 마이너가 벌어지면 도그푸딩은 <strong>몇 달 전 소프트웨어를 쓰는 일</strong>이 되고,
+          그때 찾는 버그는 이미 고쳐진 버그다.
+        </p>
+      </div>
+    </div>
+
+    <div class="col">
+      <h3>지표는 하나만 본다</h3>
+      <p>
+        대시보드를 만들지 않는다. <strong>발견된 시각 → 그 고침이 내 손에 도착한 시각</strong>,
+        이 리드타임 하나다. 줄면 루프가 도는 것이고, 늘면 어느 칸이 막혔는지 위 그림에서 짚으면 된다.
+      </p>
+      <h3>자기를 고치는 저장소의 두 가지 조심</h3>
+      <ul class="plain">
+        <li><b>murmur의 배달은 자동 머지 금지.</b> main 머지가 곧 릴리스라(6~12분) 지금 쓰고 있는 앱이 바뀐다.
+          되돌릴 수 없는 것은 권한이 있어도 사람 판단으로 남긴다.</li>
+        <li><b>murmur 저장소는 두 곳에 둔다.</b> hosted로 자기 소스를 담으면, murmur가 죽었을 때 그 소스에 못 간다.
+          배달 대상이 N개라는 설계가 여기서 값을 한다 — hosted + GitHub 미러를 항상 함께 건다.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ================= 7. 순서 ================= -->
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">7 — 순서</div>
+      <h2>무엇부터 만드나</h2>
+    </div>
+    <div class="order">
+      <div class="step">
+        <div class="idx"><b>00</b>먼저</div>
+        <div class="what">
+          <b>의존성부터 따라잡는다</b>
+          <span><code>@izagood/avcs</code> 0.45 → 0.49, <code>@izagood/avcs-server</code> 0.3 → 0.7.
+          아래 0단계가 요구하는 <code>GET /reduced</code>가 0.7.0에 있다 —
+          <strong>이걸 안 하면 0단계가 시작되지 않는다.</strong> 올리는 과정에서 나오는 깨짐이 곧 첫 도그푸딩 수확이다.</span>
+        </div>
+      </div>
+      <div class="step done">
+        <div class="idx"><b>0</b>선행</div>
+        <div class="what">
+          <b>협업 탭 읽기 자리</b>
+          <span><code>docs/desktop-collab.html</code>이 정한 1~2단계 — 제안 트리 조립 + <code>GET /reduced</code>.
+          승인 버튼을 붙일 자리가 없으면 아무것도 시작되지 않는다. <em>(문서는 있고 구현은 아직 없다)</em></span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="idx"><b>1</b>쓰기</div>
+        <div class="what">
+          <b>repo 레코드 + hosted 모드</b>
+          <span>전역 URL 한 칸을 repo 테이블로. <code>@izagood/avcs-server</code>를 서버 안에서 띄우고
+          데이터 루트를 murmur가 관리한다. <code>linked</code>는 손대지 않는다.</span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="idx"><b>2</b>판정</div>
+        <div class="what">
+          <b>승인 = 서명된 decision → integrate</b>
+          <span>hosted는 큐를 직접 돌고, linked는 원격에 릴레이한다. 판정 5종을 화면에 그린다.
+          여기까지면 “승인이 murmur 안에서” 끝난다.</span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="idx"><b>3</b>배달</div>
+        <div class="what">
+          <b>어댑터 <code>github-pr</code> 하나 + 큐·재시도·멱등</b>
+          <span>여기서 한 바퀴가 돈다: murmur에서 작업 → 제안 → 승인 → GitHub PR.</span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="idx"><b>4</b>나머지</div>
+        <div class="what">
+          <b>다른 어댑터 · 릴리스 연동</b>
+          <span><code>git-push</code>, <code>avcs-remote</code>, 그리고 <code>release</code>까지.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 7. 정해야 할 것 ================= -->
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">8 — 사람이 정해야 한다</div>
+      <h2>설계로 못 정하는 셋</h2>
+    </div>
+    <div class="qs">
+      <div class="q">
+        <h3>개인키는 어디에 두나</h3>
+        <div class="opt"><em>권장</em> 데스크탑이 사람 키로 서명한다. 승인이 그 사람에게 귀속되고, “push는 서명으로만 간다”는 규칙이 그대로 지켜진다.</div>
+        <div class="opt"><em>대안</em> 서버 서비스 키로 대리 서명. 설정이 쉬운 대신 “누가 승인했나”가 murmur DB의 주장으로만 남는다.</div>
+      </div>
+      <div class="q">
+        <h3>hosted의 무게를 감당하나</h3>
+        <div class="opt"><em>바뀌는 것</em> murmur 서버 디스크가 코드 정본을 담는다. 백업 · gc · 용량이 murmur 책임이 된다.</div>
+        <div class="opt"><em>좁히는 선택</em> hosted를 내부 팀 저장소로만 열고, 바깥 저장소는 계속 linked로 둔다.</div>
+      </div>
+      <div class="q">
+        <h3>GitHub에 누구로 나가나</h3>
+        <div class="opt"><em>GitHub App</em> 설치형. PR 작성자가 앱이 되고 권한이 저장소 단위로 명확하다.</div>
+        <div class="opt"><em>PAT</em> 지금 방식과 같다. 작성자가 토큰 주인이 되어 “누가 냈나”가 흐려진다.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 근거 ================= -->
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">근거</div>
+      <h2>이 설계가 딛고 있는 것</h2>
+    </div>
+    <div class="col">
+      <ul class="plain">
+        <li><b>murmur</b> — <code>packages/server/src/avcs/{client,projection,supervisor}.ts</code>(읽기 전용, <code>lease</code>만 투영), <code>projection_config</code>(041·042), 설정의 <code>ProjectionUrl.tsx</code>. <code>packages/server</code>는 이미 <code>@izagood/avcs</code>·<code>@izagood/avcs-server</code>를 의존성으로 갖고 있다(현재는 테스트에서만 사용).</li>
+        <li><b>협업 탭</b> — <code>docs/desktop-collab.html</code>. 레일 다섯째 칸 · 줄이 말하는 넷 · 막는 순 정렬 · “잠금은 그리지 않는다”. 그 문서가 <em>“murmur에서 제안을 만들고 결정하는 것은 범위 밖”</em>이라고 적어 둔 칸이 이 설계다.</li>
+        <li><b>avcs 프로토콜</b> — <code>docs/26-hub-protocol.md §6</code>: <code>POST /finalize</code>(head CAS), <code>POST /integrate</code>(판정 5종, <code>ticketId</code> 멱등), <code>GET /events</code>. <code>integration</code> 객체는 <strong>허브만</strong> 쓸 수 있다 — 그것이 “허브 자리”의 정의다.</li>
+        <li><b>avcshub</b> — <code>packages/api/src/integration/gitPort.ts</code>·<code>gitProjection.ts</code>(승인→git 푸시, <code>--force</code> 금지 테스트 포함), <code>packages/shared/src/proposal.ts</code>(<code>decisionMessage</code>, 제안 트리 조립).</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    설계 제안 · 저장소는 건드리지 않았다. 다음 걸음은 이 내용을 <code>docs/</code> 문서로 남기고 1단계 스켈레톤을 PR로 내는 것 —
+    그건 저장소 변경이라 avcs로 진행한다.
+  </footer>
+
+</div>
+</body>
+</html>
