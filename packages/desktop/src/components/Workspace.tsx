@@ -18,7 +18,6 @@ import { UpdateToast } from './UpdateToast';
 import { ThreadPanel } from './ThreadPanel';
 import { TerminalPanel } from './TerminalPanel';
 import { SearchPalette, type SearchScope } from './SearchPalette';
-import { Sweep } from './Sweep';
 import { Directory } from './Directory';
 import { Profile } from './Profile';
 import { ChannelDirectory } from './ChannelDirectory';
@@ -39,7 +38,6 @@ export function Workspace({ onLogout, onOpenSettings }: {
   const historyIndex = useActiveStore((s) => s.historyIndex);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchInitialScope, setSearchInitialScope] = useState<SearchScope>('all');
-  const [sweepOpen, setSweepOpen] = useState(false);
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [channelDirectoryOpen, setChannelDirectoryOpen] = useState(false);
   const [directoryAccountId, setDirectoryAccountId] = useState<string | null>(null);
@@ -305,17 +303,6 @@ export function Workspace({ onLogout, onOpenSettings }: {
           >
             →
           </button>
-          {/* 훑기는 사이드바가 아니라 헤더에 둔다 — 사이드바를 접은 사람도 미읽음을
-              정리할 수 있어야 하고, 그것이 바로 이 기능을 쓰는 상황이다. */}
-          <button
-            onClick={() => setSweepOpen(true)}
-            // 같은 헤더 줄의 앞/뒤 버튼은 크기를 안 적어 본문단을 물려받는다 — 이 버튼만
-            // 아랫단으로 내리면 한 줄 안에 두 단이 서고, 그 줄이 들쭉날쭉해진다.
-            className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover"
-            title={t('workspace.sweepTitle')}
-          >
-            {t('workspace.sweep')}
-          </button>
         </div>
         {/* 알림은 헤더 바로 아래, 대화 위에 둔다 — 채널 안에 그리면 채널을 못 연 실패를
             보여 줄 자리 자체가 없다. */}
@@ -386,7 +373,6 @@ export function Workspace({ onLogout, onOpenSettings }: {
         </div>
       </div>
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} initialScope={searchInitialScope} />
-      <Sweep open={sweepOpen} onClose={() => setSweepOpen(false)} />
       <Directory open={directoryOpen} onClose={() => { setDirectoryOpen(false); setDirectoryAccountId(null); }} accountId={directoryAccountId} />
       {profileAccountId && (
         <Profile

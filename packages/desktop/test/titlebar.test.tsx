@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Workspace } from '../src/components/Workspace';
@@ -40,7 +40,6 @@ const fakeController = () => {
     toggleChannelStar: vi.fn(),
     goBack: vi.fn().mockResolvedValue(true),
     goForward: vi.fn().mockResolvedValue(true),
-    loadUnreadSweep: vi.fn().mockResolvedValue([]),
     // #222: 컴포저가 예약 목록을 읽는다 — 목에 이 표면이 없으면 화면이 뜨지 않는다.
     api: scheduledApiStub(),
   };
@@ -232,16 +231,6 @@ describe('#270 헤더 버튼은 여전히 눌린다', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '앞으로' }));
     expect(c.goForward).toHaveBeenCalledTimes(1);
-  });
-
-  it('미읽음 훑기가 열린다', async () => {
-    pretendMac();
-    renderWorkspace({ sidebarCollapsed: false });
-
-    fireEvent.click(screen.getByRole('button', { name: '미읽음 훑기' }));
-    expect(screen.getByRole('dialog', { name: '미읽음 훑기' })).toBeTruthy();
-    // 훑기는 열리자마자 목록을 비동기로 받는다 — 흘려보내지 않으면 언마운트 뒤 상태 갱신이 샌다.
-    await act(async () => { await Promise.resolve(); });
   });
 
   it('접힌 사이드바를 헤더의 펼치기 버튼으로 되돌린다', () => {

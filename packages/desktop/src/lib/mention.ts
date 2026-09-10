@@ -185,7 +185,7 @@ export function bodyAsHandles(body: string, accounts: Record<string, { id: strin
  *
  * **본문을 사람에게 보여 주는 자리는 전부 이 함수를 지난다** — 메시지 행(`MessageItem`),
  * 담아 둔 목록(`SavedMessages`), 고정 미리보기(`ChannelPane`), 인박스 줄(`Inbox`),
- * 찾기 결과(`SearchPalette`), 훑기(`Sweep`), 기다림·진행 줄(`WakeRow`·`ProgressRow`),
+ * 찾기 결과(`SearchPalette`), 기다림·진행 줄(`WakeRow`·`ProgressRow`),
  * OS 알림 둘(`controller` 의 `announceNewMessage`·`announceNewMentions`). 한 곳이라도 원본
  * `body` 를 그대로 쓰면 그 자리에만 `{account}` 라는 글자가 남고(초판이 메시지 행만 고쳐
  * 그랬다) `<@id>` 라는 uuid 가 남는다(`bodyWithHandles` 주석).
