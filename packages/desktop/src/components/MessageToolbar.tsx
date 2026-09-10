@@ -118,11 +118,22 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
   const reveal = 'opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100'
     + ' data-[open=true]:opacity-100 has-[[aria-expanded=true]]:opacity-100';
 
-  /** 여덟 칸이 **같은 상자**를 쓴다. 과녁은 24px — 앞 판은 11px 글자에 `p-1` 이라 19–20px 이었다. */
-  const slot = 'flex h-6 w-6 items-center justify-center rounded-md text-fg-muted'
+  /**
+   * 여덟 칸이 **같은 상자**를 쓴다. 과녁은 28px 이다.
+   *
+   * 24px 에 칸 사이 1px(`gap-px`)이던 앞 판은 신고를 받았다(2026-09-10: "너무 따닥따닥
+   * 붙어있어"). 문제는 과녁 크기 자체가 아니라 **이웃과의 거리**였다 — 16px 그림이
+   * 24px 상자에 들어가면 그림 사이가 9px 이라, 겨눈 칸을 조금만 지나쳐도 옆 칸이 눌린다.
+   * 리액션은 되돌릴 수 있지만 '담기'는 목록을 흔들고 '⋯' 는 메뉴를 연다.
+   *
+   * 그래서 상자를 28px 로 키우고 사이를 4px 로 벌렸다(그림 사이 16px). 두 값을 함께 올린
+   * 이유: 사이만 벌리면 툴바만 길어지고 과녁은 그대로라 겨누기가 쉬워지지 않는다.
+   * 창(`ReactionPickerPanel`)이 이미 32px 칸에 4px 사이를 쓰므로, 사이 값은 그쪽과 같다.
+   */
+  const slot = 'flex h-7 w-7 items-center justify-center rounded-md text-fg-muted'
     + ' hover:bg-surface-hover hover:text-fg';
   /** 눌린 칸(담김·리액션)은 **가라앉은 면**으로 말한다. 강조색은 '내 차례'가 쓴다(규칙 04). */
-  const slotOn = 'flex h-6 w-6 items-center justify-center rounded-md bg-surface-sunken text-fg';
+  const slotOn = 'flex h-7 w-7 items-center justify-center rounded-md bg-surface-sunken text-fg';
 
   return (
     <div
@@ -134,8 +145,8 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
       onKeyDown={onArrow}
       /* 행의 **위쪽 경계에 걸친다**(`-top-3`). 앞 판은 `top-1` 이라 한 줄 긴 말의 오른쪽
          끝을 덮었다 — 여덟 칸이면 폭이 200px 을 넘으므로 그만큼 더 덮는다. */
-      className={`absolute -top-3 right-2 flex items-center gap-px rounded-lg border border-border
-                  bg-surface-raised p-0.5 shadow-sm ${reveal}`}
+      className={`absolute -top-3 right-2 flex items-center gap-1 rounded-lg border border-border
+                  bg-surface-raised p-1 shadow-sm ${reveal}`}
     >
       {/* 창은 툴바의 **자식**이다 — 툴바가 사라지면 창도 사라져야 하고(고아 팝오버를 만들지
           않는다), 바깥 클릭 판정도 `rootRef` 하나로 끝난다. */}
@@ -163,7 +174,7 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
         <EmojiPlusIcon />
       </button>
 
-      <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-border" />
+      <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />
 
       {!inThread && (
         <button
@@ -209,7 +220,7 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
         </span>
       </button>
 
-      <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-border" />
+      <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />
 
       {
         // 항목이 하나도 없으면 트리거를 만들지 않는다 — 열어도 비어 있는 메뉴는

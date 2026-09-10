@@ -541,4 +541,27 @@ describe('툴바 여덟 칸 (2026-09-09)', () => {
     expect(save.getAttribute('aria-pressed')).toBe('true');
     expect(save.getAttribute('aria-label')).toBe('담은 것 빼기');
   });
+
+  /**
+   * **칸이 서로 붙어 있지 않다**(신고 2026-09-10: "너무 따닥따닥 붙어있어").
+   *
+   * jsdom 은 레이아웃을 재지 않으므로 픽셀을 잴 수는 없다. 그래서 재는 것은 **값**이다 —
+   * 되돌아가면 안 되는 두 가지: 칸 사이가 1px(`gap-px`)로 돌아가는 것과, 과녁이 24px
+   * (`h-6 w-6`)로 줄어드는 것. 이 둘이 함께 있었을 때 그림 사이가 9px 이라 겨눈 칸을
+   * 지나치면 옆 칸이 눌렸고, 옆 칸은 '담기'와 '⋯' 였다.
+   */
+  it('툴바 칸은 4px 씩 벌어지고 과녁은 28px 이다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m1', 'c1', 1, 'hello', 'u2')} />);
+    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
+
+    expect(toolbar.className).toMatch(/\bgap-1\b/);
+    expect(toolbar.className).not.toMatch(/\bgap-px\b/);
+
+    for (const id of ['toolbar-react-✅', 'toolbar-react-pick', 'toolbar-copy-link', 'toolbar-save']) {
+      const cls = screen.getByTestId(id).className;
+      expect(cls).toMatch(/\bh-7\b/);
+      expect(cls).toMatch(/\bw-7\b/);
+    }
+  });
 });
