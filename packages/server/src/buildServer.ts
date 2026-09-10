@@ -31,6 +31,7 @@ import { createRateLimiter, type RateLimitRule } from './rateLimit.js';
 import { createMetrics } from './metrics.js';
 import { createScheduledMessageSweeper } from './services/scheduledMessages.js';
 import { createAgentWakeSweeper } from './services/agentWakes.js';
+import { createStaleRequestSweeper } from './services/staleRequests.js';
 
 /**
  * 인증 표면 기본 리밋.
@@ -103,6 +104,13 @@ export interface ServerDeps {
   typingTtlMs?: number;
   /** 에이전트 online 상태의 수명(ms). 기본 30초. */
   agentPresenceTtlMs?: number;
+  /**
+   * 요청이 이만큼 미읽음으로 남고 러너가 오프라인이면 스레드에 실패를 남긴다(049).
+   * 시험이 줄여 쓴다 — 기본값은 `STALE_AFTER_MS`.
+   */
+  staleRequestAfterMs?: number;
+  /** 기동 유예(049). 시험이 0 으로 주어 유예를 건너뛴다 — 기본값은 `STALE_STARTUP_GRACE_MS`. */
+  staleRequestGraceMs?: number;
   /** 로그 레벨. 미지정이면 LOG_LEVEL, 그것도 없으면 info. */
   logLevel?: string;
   /** 로그 싱크 교체(테스트 전용 seam). 프로덕션은 stdout 이다. */
@@ -350,6 +358,22 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 대기가 영원히 깨어나지 않는다: 스레드에는 "기다린다"는 줄만 남고 후속은 오지 않는다.
   const wakeSweeper = createAgentWakeSweeper(deps.pool);
   wakeSweeper.startSweep(app);
+
+  /**
+   * 아무도 집지 않은 요청을 스레드에 말하는 스위퍼(049).
+   *
+   * **`agentPresence` 를 그대로 넘긴다** — 여기서 새로 만들면 러너가 mark 하는 레지스트리와
+   * 다른 인스턴스가 되어 "아무도 온라인이 아니다" 로 판정하고, 그러면 정상적으로 일하는
+   * 에이전트의 스레드마다 거짓 통지가 남는다. presence 를 한 번 만들어 여러 곳에 넘기는
+   * 위 주석과 같은 이유다.
+   */
+  const staleSweeper = createStaleRequestSweeper(deps.pool, {
+    presence: agentPresence,
+    now: deps.now,
+    staleAfterMs: deps.staleRequestAfterMs,
+    startupGraceMs: deps.staleRequestGraceMs,
+  });
+  staleSweeper.startSweep(app);
 
   await registerWs(app, deps.pool, {
     onSocketCount: (read) => { socketCount = read; },
