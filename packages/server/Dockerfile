@@ -18,6 +18,21 @@ COPY packages/server/package.json packages/server/
 RUN pnpm install --frozen-lockfile --filter @murmur/server...
 COPY packages/shared packages/shared
 COPY packages/server packages/server
+# 릴리스 버전의 **정본**이다(`packages/server/src/version.ts` 에 근거). 서버가 `/healthz` 에
+# 자기 버전을 실으려면 이 한 파일이 이미지 안에 있어야 한다 — 몇 백 바이트짜리 JSON 이고
+# `packages/desktop` 의 나머지는 들어오지 않는다.
+COPY packages/desktop/src-tauri/tauri.conf.json packages/desktop/src-tauri/
 WORKDIR /app/packages/server
+
+# **맨 끝에 둔다.** `ARG` 는 그 아래 모든 레이어의 캐시를 무효화하므로, 위쪽(`pnpm install`)에
+# 두면 커밋이 바뀔 때마다 의존을 통째로 다시 받는다 — 재배포가 1분에서 5분이 된다.
+#
+# `.git` 은 빌드 컨텍스트에서 빠져 있어(`.dockerignore`) 이미지가 스스로 sha 를 알 수 없다.
+# 그래서 빌드하는 쪽이 심어 준다:
+#   MURMUR_COMMIT=$(git rev-parse --short HEAD) docker compose -p narwhal build server
+# 안 심으면 `null` 로 말한다 — 빌드는 그대로 된다(docs/operations.md).
+ARG MURMUR_COMMIT=""
+ENV MURMUR_COMMIT=$MURMUR_COMMIT
+
 EXPOSE 3400
 CMD ["pnpm", "start"]

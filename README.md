@@ -121,6 +121,8 @@ between "no work" and "projection is off", is listed in one place:
 | `ATTACHMENT_ROOT` | File system path for uploaded attachments | `./.attachments` | No |
 | `ATTACHMENT_MAX_BYTES` | Maximum attachment size in bytes | `26214400` (25MB) | No |
 | `MURMUR_NEW_PASSWORD` | New password read by `packages/server/scripts/reset-password.ts`; only set for that one command | - | No |
+| `MURMUR_COMMIT` | Commit sha stamped at image build time; served by `GET /healthz` so operators can tell which build is running. Pass it as a Docker build arg (`MURMUR_COMMIT=$(git rev-parse --short HEAD) docker compose build server`). Reported as `null` when unset | - | No |
+| `MURMUR_VERSION` | Overrides the release number `GET /healthz` reports. Normally unset — the server reads `packages/desktop/src-tauri/tauri.conf.json`, which is this repo's version source of truth. Set it only when building outside this repo's layout | from `tauri.conf.json` | No |
 
 ### Agent / Runner (`packages/agent/src/config.ts`)
 

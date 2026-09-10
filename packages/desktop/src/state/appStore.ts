@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage, stickyMentionsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, AgentTeamRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus } from '@murmur/shared';
+import type { AccountStatus, AccountView, AgentTeamRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus, ServerVersion } from '@murmur/shared';
 import type { ObservedRunner, RunnerState } from '../lib/runnerLauncher';
 import type { NotifiedSummary } from '../lib/notified';
 
@@ -94,6 +94,18 @@ export interface AppState {
   terminalTarget: { agentAccountId: string; channelId: string; threadRootId: string } | null;
   leases: LeaseRow[];
   connected: boolean;
+  /**
+   * 지금 붙어 있는 서버가 말한 자기 버전(#693). `/healthz` 에서 온다.
+   *
+   * **`null` 은 "아직/못 물어봤다"** 다 — "버전이 없는 서버"가 아니다. 이 값을 안 싣는 옛
+   * 서버는 `version`·`commit` 이 `null` 인 `ServerVersion` 으로 들어오므로(응답에 필드가
+   * 없으면 `undefined` 지만 `??` 로 눕힌다), 화면에서 "모른다"와 "낡았다"가 갈린다.
+   *
+   * 커뮤니티마다 **자기 스토어에** 산다 — 활성 커뮤니티의 버전을 목록 전체에 쓰면
+   * 셋 중 하나만 낡은 상황이 화면에서 사라진다(`CommunityRow` 가 `connected` 를 자기
+   * 스토어에서 읽는 것과 같은 이유, #166).
+   */
+  serverVersion: ServerVersion | null;
   /**
    * avcs 투영 상태(#267). 60초마다 갱신한다. `null` 은 **"아직 모른다"** 다 —
    * "투영이 없다"가 아니다. 화면이 둘을 갈라 말해야 하므로 별도의 값으로 둔다.
@@ -207,6 +219,16 @@ export interface AppState {
    * 화면 상태이므로 영속하지 않는다 — 앱을 다시 켜면 고장은 다시 말해야 한다.
    */
   projectionBannerDismissed: string | null;
+  /**
+   * 호환 하한보다 낮은 서버를 말하는 띠를 **어느 버전에 대해** 닫았는가(#693 후속).
+   * 닫지 않았으면 null 이고, 값은 그때 서버가 말한 버전 문자열이다.
+   *
+   * 불리언이 아닌 이유는 위와 같다: 재배포했는데 **여전히** 하한보다 낮으면(예: 두 판
+   * 올렸지만 아직 모자라면) 그것은 다른 사실이라 띠가 다시 서야 한다. 재배포가 먹혔는지를
+   * 사람이 다시 확인할 수 있어야 하고, 한 번 닫은 것으로 그 뒤를 전부 덮으면 닫기가
+   * **알림 끄기**가 된다.
+   */
+  serverCompatBannerDismissed: string | null;
   /**
    * 링크로 방금 이동한 메시지(#178). **메시지 데이터가 아니라 화면 상태다** — 여기 두지
    * 않고 `MessageRow` 에 넣으면 서버에서 온 사실과 지금 화면의 사정이 한 값에 섞인다.
@@ -323,9 +345,10 @@ export const NO_TEAMS: AgentTeamRow[] = [];
 const initial = {
   me: null, accounts: {}, groups: [], teams: null, channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], inboxRevision: 0, reads: {}, dividerSeq: {},
-  online: [], terminalTarget: null, leases: [], connected: false, projectionStatus: null, projectionStatusError: null,
+  online: [], terminalTarget: null, leases: [], connected: false, serverVersion: null,
+  projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {}, stickyMentions: {},
-  history: [], historyIndex: -1, notice: null, notifiedGaps: {}, projectionBannerDismissed: null,
+  history: [], historyIndex: -1, notice: null, notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
   highlightedMessageId: null,
   runnerStates: {}, daemonRunners: {}, appVersion: null, savedIds: [], savedCount: 0,
   linkPreviewReadyAt: {}, skillsRevision: 0,
