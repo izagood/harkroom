@@ -232,8 +232,15 @@ export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
     for (const viewer of viewers.get(sessionId) ?? []) sendTo(viewer, { type: 'status', state });
   };
 
-  const sendToRunner = (runner: Runner, frame: RelayServerFrame): void => {
-    try { runner.socket.send(JSON.stringify(frame)); } catch { /* 끊긴 러너는 close 가 정리한다 */ }
+  /**
+   * 러너에게 프레임 하나. **보냈는지를 돌려준다** — 실패를 알아야 하는 프레임이 하나 있다
+   * (`viewer.count`, 아래 `notifyViewerCount`). 나머지는 놓쳐도 다음 것이 곧 오거나
+   * (output·input·resize) 사람이 다시 누른다(cancel) — 뷰어 수만 **한 번 놓치면 영구히
+   * 어긋난다.**
+   */
+  const sendToRunner = (runner: Runner, frame: RelayServerFrame): boolean => {
+    try { runner.socket.send(JSON.stringify(frame)); return true; }
+    catch { return false; /* 끊긴 러너는 close 가 정리한다 */ }
   };
 
   /**
@@ -301,12 +308,44 @@ export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
     }
   };
 
-  /** 뷰어 수 변동을 러너에게 알린다(#337). 구 러너는 이 프레임을 조용히 버린다 — 무해하다. */
+  /**
+   * 뷰어 수 변동을 러너에게 알린다(#337). 구 러너는 이 프레임을 조용히 버린다 — 무해하다.
+   *
+   * **못 보냈으면 미결로 적는다.** 이 프레임은 러너에게 사건이 아니라 **상태**다: 러너의
+   * 고아 회수 타이머는 `count === 0` 을 받았을 때만 서고, `count > 0` 이 한 번 취소하면
+   * 그 턴에는 다른 시계가 없다(인터랙티브 턴은 `timeoutMs: 0`). 그래서 닫힘 프레임 하나가
+   * 유실되면 그 PTY 는 **영구히** "사람이 조종 중"으로 남아 그 스레드의 멘션이 전부
+   * 유예된다 — 실측된 결함이 정확히 이것이었다. 미결은 다음 `announce` 가 흘린다.
+   */
+  const pendingViewerCounts = new Set<string>();
+
   const notifyViewerCount = (sessionId: string): void => {
     const agentAccountId = ownerOf.get(sessionId);
     const runner = agentAccountId ? runners.get(agentAccountId) : undefined;
-    if (!runner) return;
-    sendToRunner(runner, { type: 'viewer.count', sessionId, count: viewers.get(sessionId)?.length ?? 0 });
+    const count = viewers.get(sessionId)?.length ?? 0;
+    if (runner && sendToRunner(runner, { type: 'viewer.count', sessionId, count })) {
+      pendingViewerCounts.delete(sessionId);
+      return;
+    }
+    pendingViewerCounts.add(sessionId);
+  };
+
+  /**
+   * 이 러너가 방금 announce 한 세션들의 **현재** 뷰어 수를 다시 보낸다(재접속 화해).
+   *
+   * 재접속을 *희망*이 아니라 **동기화 지점**으로 만드는 한 겹이다. 러너는 재접속마다
+   * 자기 세션 목록을 다시 선언하는데(`announce`), 그때까지 서버가 뷰어 수를 다시 말해
+   * 주지 않으면 러너의 판단은 끊기기 **전에** 받은 마지막 프레임에 영구히 묶인다.
+   *
+   * 미결(위)이 아닌 세션까지 **전부** 보낸다: 어느 것이 유실됐는지는 서버가 알 수 없다
+   * (`ws.send` 는 소켓 버퍼에 넣는 것까지만 성공한다 — 그 뒤에 끊긴 것은 예외가 아니다).
+   */
+  const resyncViewerCounts = (runner: Runner): void => {
+    for (const sessionId of runner.sessions.keys()) {
+      const count = viewers.get(sessionId)?.length ?? 0;
+      if (sendToRunner(runner, { type: 'viewer.count', sessionId, count })) pendingViewerCounts.delete(sessionId);
+      else pendingViewerCounts.add(sessionId);
+    }
   };
 
   const dropSession = (agentAccountId: string, sessionId: string): void => {
@@ -315,6 +354,8 @@ export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
     // '끝났다'만 알리고 소켓은 그대로 둔다(닫는 것은 사람의 몫이다).
     broadcastStatus(sessionId, 'ended');
     ownerOf.delete(sessionId);
+    // 끝난 세션의 미결은 흘릴 곳이 없다 — 남겨 두면 집합이 자라기만 한다.
+    pendingViewerCounts.delete(sessionId);
   };
 
   return {
@@ -366,13 +407,23 @@ export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
           // 능력도 announce 가 진실의 원천이다 — 선언이 없으면(구 러너) 빈 집합으로
           // **교체**한다. 남겨 두면 다운그레이드된 러너가 옛 능력을 계속 주장한다.
           runner.caps = new Set(Array.isArray(frame.caps) ? frame.caps : []);
+          // **목록을 받았으니 뷰어 수를 되돌려준다.** announce 는 러너가 자기 세션을
+          // 선언하는 자리이고, 그 응답으로 "그 세션들을 지금 누가 보고 있는가"를 서버가
+          // 말해야 양쪽이 같은 사실을 든다. 이 줄이 없으면 재접속 러너는 끊기기 전에
+          // 받은 마지막 프레임을 영구히 믿는다(`resyncViewerCounts` 주석).
+          resyncViewerCounts(runner);
           return;
         }
-        case 'session.started':
+        case 'session.started': {
           if (!frame.session?.sessionId) return;
           registerSession(agentAccountId, frame.session);
           broadcastStatus(frame.session.sessionId, 'running');
+          // 세션이 서는 순간에도 알린다 — 러너가 PTY 를 띄우는 사이 사람이 이미 붙어
+          // 있을 수 있고(티켓은 열기 응답 뒤에 나가지만 재접속·재열기 경로가 있다),
+          // 그때 `count > 0` 을 못 받으면 보고 있는 화면 앞에서 유예가 흐른다.
+          notifyViewerCount(frame.session.sessionId);
           return;
+        }
         case 'session.ended':
           if (typeof frame.sessionId !== 'string') return;
           dropSession(agentAccountId, frame.sessionId);

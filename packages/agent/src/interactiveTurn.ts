@@ -90,6 +90,14 @@ export interface InteractiveRelay {
     claudeAccount?: string | null;
     claudePool?: string | null;
     onViewerCount?: (count: number) => void;
+    /**
+     * 사람이 이 **조종을 끝냈다**(#686 의 `session.cancel` 을 인터랙티브 턴에도 잇는다).
+     *
+     * 이 자리가 비어 있던 것이 막힌 조종을 풀 길이 하나도 없던 이유다: 프레임과 라우트는
+     * 이미 있었지만 러너가 `live.onCancel?.()` 에서 조용히 버렸고(relay.ts), 그래서 남은
+     * 수단은 러너 종료뿐이었다 — 그것은 그 에이전트의 **다른 스레드 턴까지** 죽인다.
+     */
+    onCancel?: (byHandle: string) => void;
   }): {
     sessionId: string;
     push(chunk: Buffer): void;
@@ -274,14 +282,32 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       return { sessionId: raced.sessionId, created: false };
     }
 
-    const state: { controls: PtyControls | null; exited: boolean; cancelOrphan: (() => void) | null; cancelKill: (() => void) | null } = {
+    const state: {
+      controls: PtyControls | null; exited: boolean;
+      cancelOrphan: (() => void) | null; cancelKill: (() => void) | null;
+      /** 사람이 조종을 끝냈다면 그 handle. 회수가 유예 없이 즉시 가는 갈래다. */
+      canceledBy: string | null;
+      /**
+       * 서버가 마지막으로 말해 준 뷰어 수. `null` 은 **아직 한 번도 못 들었다**는 뜻이다.
+       *
+       * `onSpawn` 이 이 값을 다시 재생하려고 든다: 예전에는 거기서 무조건 `onViewerCount(0)`
+       * 을 불렀는데, 티켓 발급~attach 사이에 사람이 먼저 붙어 `count > 0` 이 이미 와 있으면
+       * **보고 있는 화면 앞에서 60초 뒤 PTY 가 죽었다.**
+       */
+      lastViewerCount: number | null;
+    } = {
       controls: null, exited: false, cancelOrphan: null, cancelKill: null,
+      canceledBy: null, lastViewerCount: null,
     };
 
     // 고아 회수(스펙 §5-2 결정 5). viewer 0 이 유예를 시작하고, 0 이 아닌 count 가 취소한다.
     // 패널 닫힘·소켓 단절·앱 강제종료가 서버 관점에서 전부 "viewer 소멸" 하나로 수렴한다.
     const onViewerCount = (count: number): void => {
       if (state.exited) return;
+      // **중단된 조종은 다시 붙잡히지 않는다.** 여기서 `count > 0` 에 취소를 허용하면,
+      // 중단 직후 그 세션 화면을 아직 띄워 둔 창의 프레임 하나가 회수를 되돌린다.
+      if (state.canceledBy) return;
+      state.lastViewerCount = count;
       if (count > 0) {
         state.cancelOrphan?.();
         state.cancelOrphan = null;
@@ -289,6 +315,24 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       }
       if (state.cancelOrphan) return; // 이미 유예 중 — 타이머를 다시 세우면 유예가 늘어난다.
       state.cancelOrphan = schedule(() => { state.cancelOrphan = null; reclaim(state); }, orphanMs);
+    };
+
+    /**
+     * 사람이 조종을 끝냈다(#686 을 인터랙티브 턴에 잇는다). **유예가 없다** — 고아 회수의
+     * 60초는 "사람이 정말 떠났는지 모른다"에 대한 값이고, 여기서는 사람이 명시적으로
+     * 끝내라고 말했다.
+     *
+     * `canceledBy` 를 **먼저** 적는다(mentionTurn 과 같은 판례): kill 이 먼저면 그 사이의
+     * viewer 프레임이 회수를 취소할 수 있다. PTY 가 아직 없으면 `onSpawn` 이 받는다 —
+     * 그 자리에 가드가 없으면 방금 띄운 PTY 가 중단을 모르고 그대로 산다.
+     */
+    const onCancel = (byHandle: string): void => {
+      if (state.exited || state.canceledBy) return;
+      state.canceledBy = byHandle;
+      state.cancelOrphan?.();
+      state.cancelOrphan = null;
+      console.log(`[interactiveTurn] ${key}: @${byHandle} 가 조종을 끝냈다 — PTY 를 회수한다`);
+      reclaim(state);
     };
 
     const session = deps.relay.openSession({
@@ -305,6 +349,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       claudeAccount: def.harness === 'claude-code' ? (deps.claudeAccount ?? null) : undefined,
       claudePool: def.harness === 'claude-code' ? (deps.claudePool ?? null) : undefined,
       onViewerCount,
+      onCancel,
     });
 
     deps.registry.register(key, { kind: 'interactive', sessionId: session.sessionId, openedByHandle: req.openedByHandle });
@@ -343,9 +388,14 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       onSpawn: (controls) => {
         session.bindInput(controls);
         state.controls = controls;
-        // 사람이 아직 attach 전이다(count 0) — 지금부터 유예가 흐른다. 티켓을 받고도 안
-        // 붙으면(창을 닫음, 네트워크) 이 타이머가 PTY 를 회수한다.
-        onViewerCount(0);
+        // **뜨기 전에 온 중단을 여기서 받는다.** `reclaim` 은 PTY 손잡이가 있어야 일하므로,
+        // 이 가드가 없으면 방금 띄운 PTY 가 중단을 모르고 그대로 산다(#707 의 판례).
+        if (state.canceledBy) { reclaim(state); resolveSpawned(); return; }
+        // 아직 아무 소식이 없으면 attach 전이다 — 지금부터 유예가 흐른다. 티켓을 받고도
+        // 안 붙으면(창을 닫음, 네트워크) 이 타이머가 PTY 를 회수한다. **이미 들은 값이
+        // 있으면 그것을 다시 재생한다**(`state.lastViewerCount` 주석) — 무조건 0 으로
+        // 재면 보고 있는 사람 앞에서 유예가 흐른다.
+        onViewerCount(state.lastViewerCount ?? 0);
         resolveSpawned();
       },
     });
