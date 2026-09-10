@@ -91,7 +91,7 @@ export function AttachmentThumb({ attachment }: { attachment: AttachmentRow }) {
 }
 
 /**
- * 확대 보기(#첨부 확대). 본문의 그림은 `max-h-64` 로 줄여 그리므로 스크린샷 속 글자는
+ * 확대 보기(#첨부 확대). 본문의 그림은 `max-h-56` · `max-w-[28rem]` 로 줄여 그리므로 스크린샷 속 글자는
  * 대개 읽히지 않는다 — 크게 볼 자리가 없으면 사람은 그림을 디스크에 저장해 시스템 뷰어로
  * 열고, 그때 채팅을 떠난다.
  *
@@ -179,10 +179,21 @@ function Attachment({ attachment }: { attachment: AttachmentRow }) {
           aria-label={t('message.attachment.zoom', { filename: attachment.filename })}
           className="block cursor-zoom-in rounded border border-border"
         >
+          {/*
+            **세로만이 아니라 가로도 묶는다.** 높이만 묶어 두면(`max-h-64` + `max-w-full`)
+            가로로 긴 스크린샷은 본문 폭을 그대로 채운다 — 한 줄짜리 글에 참고로 붙인 그림이
+            화면의 절반을 먹고, 위아래 대화가 스크롤 밖으로 밀린다.
+            본문의 그림은 **무엇이 붙었는지 알아보는 자리**이고, 읽는 자리는 확대 보기다
+            (눌러서 크게 볼 길이 이미 있으므로 목록에서는 작아도 된다).
+            `min(…,100%)` 로 적는 이유는 좁은 칸이다 — 스레드 패널에서는 `28rem` 보다 칸이
+            먼저다. `max-w-full` 을 따로 얹으면 같은 `max-width` 를 두 클래스가 다투고,
+            어느 쪽이 이길지는 생성된 CSS 순서에 달린다.
+          */}
           <img
             src={url}
             alt={attachment.filename}
-            className="max-h-64 max-w-full rounded"
+            data-testid="attachment-preview"
+            className="max-h-56 max-w-[min(28rem,100%)] rounded"
           />
         </button>
         {zoomed && <Lightbox attachment={attachment} url={url} onClose={() => setZoomed(false)} />}

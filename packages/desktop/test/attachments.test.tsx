@@ -591,7 +591,7 @@ describe('보내기 전 첨부 칩의 미리보기', () => {
 /**
  * 그림을 눌러 크게 보기(라이트박스).
  *
- * 본문의 미리보기는 `max-h-64` 로 줄여 그린다 — 스크린샷을 보낸 사람이 보라고 보낸 것은
+ * 본문의 미리보기는 `max-h-56` · `max-w-[28rem]` 로 줄여 그린다 — 스크린샷을 보낸 사람이 보라고 보낸 것은
  * 대개 그 안의 글자인데, 줄인 그림에서는 읽히지 않는다. 크게 볼 자리가 없으면 사람은
  * 그림을 디스크에 저장해 시스템 뷰어로 열고, 그 왕복에서 채팅을 떠난다.
  */
@@ -628,6 +628,21 @@ describe('첨부 이미지를 눌러 크게 보기', () => {
     const opener = await renderImage();
 
     expect(opener.tagName).toBe('BUTTON');
+  });
+
+  /**
+   * **가로도 묶여 있어야 한다.** 높이만 묶으면 가로로 긴 스크린샷(대부분의 스크린샷이
+   * 그렇다)은 본문 폭을 끝까지 채우고, 한 줄짜리 글에 붙인 참고 그림이 화면의 절반을
+   * 먹는다. 크게 볼 길은 이미 확대 보기가 맡고 있으므로 본문의 그림은 작아도 된다.
+   */
+  it('본문 미리보기는 세로·가로 둘 다 묶여 있다', async () => {
+    fakeController();
+    await renderImage();
+
+    const preview = screen.getByTestId('attachment-preview');
+    expect(preview.className).toContain('max-h-56');
+    // 가로가 열려 있으면(`max-w-full` 뿐이면) 본문 폭을 그대로 먹는다.
+    expect(preview.className).toContain('max-w-[min(28rem,100%)]');
   });
 
   /**
