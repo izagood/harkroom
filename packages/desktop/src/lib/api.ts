@@ -1,5 +1,5 @@
 import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView,
-  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@murmur/shared';
+  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@murmur/shared';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
 export class ApiError extends Error {
@@ -176,6 +176,15 @@ export class ApiClient {
   async dms(): Promise<DmView[]> {
     return (await this.req<{ dms: DmView[] }>('GET', '/dms')).dms;
   }
+  /**
+   * 협업 탭이 읽는 것(`docs/hub-seat.md` 0단계). **봉투를 벗기지 않는다** — `baseUrl` 이
+   * `null` 인 것("보고 있는 avcs 서버가 없다")과 저장소 목록이 빈 것("제안이 없다")은
+   * 화면에서 다른 말이라, `repos` 만 꺼내면 그 구분이 사라진다.
+   */
+  async collabProposals(): Promise<CollabProposalsView> {
+    return this.req<CollabProposalsView>('GET', '/collab/proposals');
+  }
+
   async leases(): Promise<LeaseRow[]> {
     return (await this.req<{ leases: LeaseRow[] }>('GET', '/leases')).leases;
   }
