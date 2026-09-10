@@ -24,7 +24,7 @@ import { undoSendStorage } from '../src/lib/prefs';
  */
 
 const row = (agentAccountId: string, handle: string): ChannelAutoMentionRow =>
-  ({ channelId: 'c1', agentAccountId, handle, createdBy: 'ad', createdAt: new Date().toISOString() });
+  ({ channelId: 'c1', agentAccountId, handle, mode: 'always', createdBy: 'ad', createdAt: new Date().toISOString() });
 
 const typeInto = (value: string) => {
   const box = screen.getByRole('textbox');

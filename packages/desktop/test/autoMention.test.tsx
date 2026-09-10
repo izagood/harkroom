@@ -21,8 +21,10 @@ import { undoSendStorage } from '../src/lib/prefs';
  *
  * 서버 쪽(라우트·MCP 본문 무변경·inbox·감사)은 `packages/server/test/channelAutoMention.test.ts`.
  */
-const row = (agentAccountId: string, handle: string): ChannelAutoMentionRow =>
-  ({ channelId: 'c1', agentAccountId, handle, createdBy: 'ad', createdAt: new Date().toISOString() });
+const row = (
+  agentAccountId: string, handle: string, mode: ChannelAutoMentionRow['mode'] = 'always',
+): ChannelAutoMentionRow =>
+  ({ channelId: 'c1', agentAccountId, handle, mode, createdBy: 'ad', createdAt: new Date().toISOString() });
 
 const typeInto = (value: string) => {
   const box = screen.getByRole('textbox');
@@ -60,6 +62,62 @@ beforeEach(() => {
   });
 });
 afterEach(() => { cleanup(); usePrefsStore.getState().setLocale('system'); });
+
+/**
+ * `available` 모드(마이그레이션 048) — **부를 수 있게만** 데리고 있는 에이전트.
+ *
+ * 이 절이 지키는 것 셋:
+ * 1. 접두가 붙지 않는다. 붙으면 `always` 와 같은 것이 되고 모드를 나눈 뜻이 사라진다.
+ * 2. 그래도 **화면에 선다** — 채널에 처음 들어온 사람이 여기서 누구를 부를 수 있는지
+ *    handle 을 몰라도 알게 하는 것이 이 모드의 전부다.
+ * 3. 누르면 고정 칩이 되어 그 글에서 불린다. 누르기 전에는 아무 일도 없다.
+ */
+const channelAgentButtons = () =>
+  screen.queryAllByTestId('channel-agent').map((el) => el.getAttribute('data-handle'));
+
+describe('부를 수 있는 채널 에이전트 (모드 048)', () => {
+  beforeEach(() => {
+    useAppStore.getState().set({ channelAutoMentions: { c1: [row('a1', 'fizz', 'available')] } });
+  });
+
+  it('접두를 붙이지 않는다 — 칩도 서지 않는다', () => {
+    const onSend = vi.fn();
+    render(<Composer onSend={onSend} scopeKey="c1" autoMentionChannelId="c1" />);
+
+    expect(autoChips()).toEqual([]);
+    sendText('혼잣말');
+
+    expect(onSend).toHaveBeenCalledWith('혼잣말', []);
+  });
+
+  it('부를 수 있는 상대로 서고, 누르면 그 글에서 불린다', () => {
+    const onSend = vi.fn();
+    render(<Composer onSend={onSend} scopeKey="c1" autoMentionChannelId="c1" />);
+
+    expect(channelAgentButtons()).toEqual(['fizz']);
+    fireEvent.click(screen.getByTestId('channel-agent'));
+
+    // 누른 뒤에는 사람이 부른 것과 같다 — 고정 칩이 그 사실을 말한다.
+    expect(stickyChips()).toEqual(['fizz']);
+    // 이미 부른 상대를 다시 부르는 버튼은 남기지 않는다.
+    expect(channelAgentButtons()).toEqual([]);
+
+    sendText('이거 봐 줘');
+    expect(onSend).toHaveBeenCalledWith('@fizz 이거 봐 줘', []);
+  });
+
+  it('비활성 에이전트는 부를 수 있는 상대로 서지 않는다', () => {
+    useAppStore.getState().set({
+      accounts: {
+        ...useAppStore.getState().accounts,
+        a1: acc('a1', 'fizz', 'agent', false, { disabled: true }),
+      },
+    });
+    render(<Composer onSend={vi.fn()} scopeKey="c1" autoMentionChannelId="c1" />);
+
+    expect(channelAgentButtons()).toEqual([]);
+  });
+});
 
 describe('자동 멘션 작성창 (#173)', () => {
   // 회귀 3
@@ -227,7 +285,7 @@ describe('자동 멘션 컨트롤러 (#173)', () => {
   beforeEach(() => { useAppStore.getState().reset(); });
 
   const row2 = (agentAccountId: string, handle: string): ChannelAutoMentionRow =>
-    ({ channelId: 'c1', agentAccountId, handle, createdBy: 'ad', createdAt: new Date().toISOString() });
+    ({ channelId: 'c1', agentAccountId, handle, mode: 'always', createdBy: 'ad', createdAt: new Date().toISOString() });
 
   it('채널을 열면 자동 멘션 목록을 받아 스토어에 넣는다', async () => {
     const api = fakeApi({ channelAutoMentions: vi.fn(async () => [row2('a1', 'fizz')]) });
@@ -272,7 +330,7 @@ describe('자동 멘션 컨트롤러 (#173)', () => {
     const c = new Controller(api, makeWs);
     await c.start();
 
-    await c.setChannelAutoMention('c1', 'a1');
+    await c.setChannelAutoMention('c1', 'a1', 'always');
     expect(useAppStore.getState().channelAutoMentions.c1?.map((r) => r.handle)).toEqual(['fizz']);
 
     await c.unsetChannelAutoMention('c1', 'a1');

@@ -46,7 +46,7 @@ async function registerHuman(handle: string): Promise<{ id: string; token: strin
   return { id: created.json().id as string, token: login.json().token as string };
 }
 
-async function listAuto(token: string): Promise<Array<{ agentAccountId: string; handle: string }>> {
+async function listAuto(token: string): Promise<Array<{ agentAccountId: string; handle: string; mode: string }>> {
   const res = await app.inject({ method: 'GET', url: `/channels/${channelId}/auto-mentions`, headers: auth(token) });
   expect(res.statusCode).toBe(200);
   return res.json().autoMentions;
@@ -102,7 +102,8 @@ describe('설정 라우트 (#173)', () => {
       method: 'PUT', url: `/channels/${channelId}/auto-mentions/${fizz.accountId}`, headers: auth(adminToken),
     });
     expect(first.statusCode).toBe(200);
-    expect(first.json()).toMatchObject({ channelId, agentAccountId: fizz.accountId, handle: 'fizz' });
+    // 본문 없는 PUT 은 `always` 다 — 이 라우트를 쓰던 호출부의 뜻이 그것이었다(048).
+    expect(first.json()).toMatchObject({ channelId, agentAccountId: fizz.accountId, handle: 'fizz', mode: 'always' });
 
     const second = await app.inject({
       method: 'PUT', url: `/channels/${channelId}/auto-mentions/${honey.accountId}`, headers: auth(adminToken),
@@ -188,6 +189,78 @@ describe('설정 라우트 (#173)', () => {
     expect(JSON.stringify(asOutsider.json())).not.toContain('fizz');
   });
 
+  /**
+   * 모드(048) — 같은 행의 **세기**를 바꾼다. 지웠다 다시 거는 길을 두지 않는 이유는
+   * `services/channelAutoMentions.ts` 의 `do update` 주석에 있다: 그 사이에 접두가 사라진
+   * 순간이 생기고, 감사에도 실제로 일어난 일이 남지 않는다.
+   */
+  it('걸린 에이전트의 모드를 바꾼다 — 행은 하나 그대로다', async () => {
+    const before = (await listAuto(adminToken)).length;
+    const res = await app.inject({
+      method: 'PUT', url: `/channels/${channelId}/auto-mentions/${fizz.accountId}`,
+      headers: auth(adminToken), payload: { mode: 'available' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ agentAccountId: fizz.accountId, mode: 'available' });
+    expect((await listAuto(adminToken)).length).toBe(before);
+    expect((await listAuto(humanToken)).find((r) => r.handle === 'fizz')).toMatchObject({ mode: 'available' });
+
+    // 되돌리는 것도 같은 한 길이다.
+    await app.inject({
+      method: 'PUT', url: `/channels/${channelId}/auto-mentions/${fizz.accountId}`,
+      headers: auth(adminToken), payload: { mode: 'always' },
+    });
+    expect((await listAuto(adminToken)).find((r) => r.handle === 'fizz')).toMatchObject({ mode: 'always' });
+  });
+
+  it('모르는 모드는 400 — 조용히 always 로 떨어뜨리지 않는다', async () => {
+    const res = await app.inject({
+      method: 'PUT', url: `/channels/${channelId}/auto-mentions/${fizz.accountId}`,
+      headers: auth(adminToken), payload: { mode: 'sometimes' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  /**
+   * **볼 수 없는 채널의 에이전트는 부를 수 없다.** private·DM 에서 멤버가 아닌 에이전트를
+   * 부르면 인박스 항목은 들어가는데 그 러너의 스레드 읽기는 403 이라 부름이 조용히 죽는다.
+   * 그래서 지정이 곧 편입이다.
+   *
+   * 되돌려 RED: 라우트의 `addChannelMember` 를 지우면 이 축만 빨간다.
+   */
+  it('private 채널에 걸면 그 에이전트가 멤버가 된다 — 부름이 닿는다', async () => {
+    const priv = await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken),
+      payload: { name: 'automention-join', visibility: 'private' },
+    });
+    const privId = priv.json().id as string;
+
+    const memberRows = await pool.query(
+      `select 1 from channel_member where channel_id = $1 and account_id = $2`, [privId, fizz.accountId],
+    );
+    expect(memberRows.rowCount).toBe(0);
+
+    const set = await app.inject({
+      method: 'PUT', url: `/channels/${privId}/auto-mentions/${fizz.accountId}`,
+      headers: auth(adminToken), payload: { mode: 'available' },
+    });
+    expect(set.statusCode).toBe(200);
+
+    // 이제 그 에이전트가 채널을 읽는다 — 이것이 "부를 수 있는 상태"의 전부다.
+    const asAgent = await app.inject({
+      method: 'GET', url: `/channels/${privId}/messages`, headers: auth(fizz.pat),
+    });
+    expect(asAgent.statusCode).toBe(200);
+  });
+
+  /** public standard 채널에는 멤버십이 없다(#156) — 넣을 것이 없고, 넣으면 가시성이 갈라진다. */
+  it('public 채널에 걸어도 멤버 행은 생기지 않는다', async () => {
+    const rows = await pool.query(
+      `select 1 from channel_member where channel_id = $1 and account_id = $2`, [channelId, fizz.accountId],
+    );
+    expect(rows.rowCount).toBe(0);
+  });
+
   it('DELETE 는 행을 지우고, 없던 것은 404 다', async () => {
     const del = await app.inject({
       method: 'DELETE', url: `/channels/${channelId}/auto-mentions/${honey.accountId}`, headers: auth(adminToken),
@@ -263,17 +336,26 @@ describe('본문과 알림 (#173)', () => {
     const actions = rows.rows.map((r) => r.action);
     expect(actions).toContain('channel.auto_mention.set');
     expect(actions).toContain('channel.auto_mention.unset');
+    /**
+     * detail 에 실리는 것은 **handle 과 모드**뿐이다(048 이 모드를 더했다). 둘 다 설정이지
+     * 대화가 아니다 — 감사가 붙잡을 자리는 "admin 이 이 채널에 누구를 어떻게 걸었나" 이고,
+     * 그 채널에서 오간 글은 여기 오지 않는다.
+     */
     for (const row of rows.rows) {
       expect(row.target).toBe(channelId);
-      expect(Object.keys(row.detail)).toEqual(['handle']);
+      expect(Object.keys(row.detail).sort()).toEqual(
+        row.action === 'channel.auto_mention.set' ? ['handle', 'mode'] : ['handle'],
+      );
       expect(JSON.stringify(row.detail)).not.toContain(secret);
     }
     // 채널을 가리지 않고 한 번 더 본다: 어느 채널의 행이든 detail 은 handle 하나뿐이어야 한다.
-    const all = await pool.query<{ detail: Record<string, unknown> }>(
-      `select detail from audit_log
+    const all = await pool.query<{ action: string; detail: Record<string, unknown> }>(
+      `select action, detail from audit_log
         where action in ('channel.auto_mention.set', 'channel.auto_mention.unset')`,
     );
-    for (const row of all.rows) expect(Object.keys(row.detail)).toEqual(['handle']);
+    for (const row of all.rows) {
+      expect(Object.keys(row.detail).sort().join(',')).toMatch(/^handle(,mode)?$/);
+    }
     expect(rows.rows[rows.rows.length - 1]!.detail.handle).toBe('honey');
   });
 });

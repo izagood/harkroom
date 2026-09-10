@@ -667,15 +667,19 @@ export const ko = {
   'sidebar.members.adminBadgeTitle': '워크스페이스 admin — 채널 역할이 아니다',
   'sidebar.members.agentDisabled': '비활성',
   'sidebar.members.autoMentionBadge': '자동',
-  'sidebar.members.autoMentionCheckbox': '@{handle} 자동 멘션',
+  'sidebar.members.autoMentionMode': '이 채널이 @{handle} 를 데리는 방식',
+  'sidebar.members.autoMentionOff': '없음',
+  'sidebar.members.autoMentionAvailable': '부를 수 있게',
+  'sidebar.members.autoMentionAlways': '매 줄에',
+  'sidebar.members.autoMentionAvailableBadge': '부를 수 있음',
   'sidebar.members.autoMentionEmptyAdmin': '켤 수 있는 에이전트가 없다',
-  'sidebar.members.autoMentionEmptyReader': '자동으로 부르는 에이전트가 없다',
+  'sidebar.members.autoMentionEmptyReader': '이 채널이 데리는 에이전트가 없다',
   'sidebar.members.autoMentionFailed': '자동 멘션을 바꾸지 못했다',
-  'sidebar.members.autoMentionHeading': '자동 멘션',
+  'sidebar.members.autoMentionHeading': '채널 에이전트',
   'sidebar.members.autoMentionListFailed': '자동 멘션 목록을 받지 못했다',
   'sidebar.members.autoMentionNote':
-    '켠 에이전트는 이 채널에서 사람이 쓰는 글 앞에 자동으로 불린다. '
-    + '작성창의 칩 × 로 한 메시지에서만 뺄 수 있다.',
+    '부를 수 있게: 이 채널의 작성창과 멘션 후보 맨 위에 서고, 눌렀을 때만 불린다. '
+    + '매 줄에: 사람이 쓰는 글 앞에 자동으로 붙는다 — 작성창의 칩 × 로 한 메시지에서만 뺄 수 있다.',
   'sidebar.members.autoMentionNoteReadOnly': ' 바꾸는 것은 admin 만 할 수 있다.',
   'sidebar.members.close': '닫기',
   'sidebar.members.empty': '멤버가 없다',
@@ -791,6 +795,9 @@ export const ko = {
   'composer.mention.autoTitle': '이 채널이 자동으로 멘션한다',
   // 원래 화면 그대로 `(채널 전체)` 다. 영어가 `(everyone here)` 로 **사람들**을 세는 쪽으로
   // 옮긴 이유는 `en.ts` 표에 있고, 한국어는 원래 문구가 이미 그 뜻으로 읽힌다.
+  'composer.mention.channelAgents': '이 채널:',
+  'composer.mention.channelAgentsLabel': '이 채널의 에이전트',
+  'composer.mention.channelAgentTitle': '누르면 이번 글에서 부른다',
   'composer.mention.channelAll': '(채널 전체)',
   // **`명` 을 뺐다.** 그 단위는 사람만 세는 말인데 집합에는 에이전트도 든다 — 영어가
   // 숫자만 남긴 것과 같은 판단이고, 원래 문구의 부정확을 여기서 함께 고친다.

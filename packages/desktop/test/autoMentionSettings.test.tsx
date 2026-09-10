@@ -13,8 +13,10 @@ import { acc, chan } from './helpers/fakeApi';
  * admin 은 에이전트마다 토글을, 나머지는 켜진 것만 읽기 전용으로 본다. 서버가 403 을 줄
  * 조작을 화면이 내주면 "할 수 있다"는 거짓 신호다(docs/design.md §4).
  */
-const row = (channelId: string, agentAccountId: string, handle: string): ChannelAutoMentionRow =>
-  ({ channelId, agentAccountId, handle, createdBy: 'ad', createdAt: new Date().toISOString() });
+const row = (
+  channelId: string, agentAccountId: string, handle: string, mode: ChannelAutoMentionRow['mode'] = 'always',
+): ChannelAutoMentionRow =>
+  ({ channelId, agentAccountId, handle, mode, createdBy: 'ad', createdAt: new Date().toISOString() });
 
 const fakeController = (rows: ChannelAutoMentionRow[]) => {
   const current = { rows };
@@ -32,8 +34,11 @@ const fakeController = (rows: ChannelAutoMentionRow[]) => {
       store.set({ channelAutoMentions: { ...store.channelAutoMentions, [channelId]: current.rows } });
       return current.rows;
     }),
-    setChannelAutoMention: vi.fn(async (channelId: string, agentId: string) => {
-      current.rows = [...current.rows, row(channelId, agentId, agentId)];
+    setChannelAutoMention: vi.fn(async (channelId: string, agentId: string, mode: ChannelAutoMentionRow['mode']) => {
+      current.rows = [
+        ...current.rows.filter((r) => r.agentAccountId !== agentId),
+        row(channelId, agentId, agentId, mode),
+      ];
       await c.loadChannelAutoMentions(channelId);
     }),
     unsetChannelAutoMention: vi.fn(async (channelId: string, agentId: string) => {
@@ -80,8 +85,11 @@ const openSection = async (): Promise<HTMLElement> => {
 beforeEach(() => { vi.clearAllMocks(); usePrefsStore.getState().setLocale('ko'); });
 afterEach(() => { cleanup(); usePrefsStore.getState().setLocale('system'); });
 
-describe('자동 멘션 설정 (#173)', () => {
-  it('admin 은 에이전트마다 토글을 보고, 켜면 컨트롤러를 부른다', async () => {
+const modeSelect = (section: HTMLElement, handle: string): HTMLSelectElement =>
+  within(section).getByRole('combobox', { name: `이 채널이 @${handle} 를 데리는 방식` }) as HTMLSelectElement;
+
+describe('자동 멘션 설정 (#173, 모드 048)', () => {
+  it('admin 은 에이전트마다 세 값을 고르고, 고른 값이 컨트롤러로 간다', async () => {
     seed({ admin: true });
     const c = fakeController([row('c1', 'a1', 'fizz')]);
     sidebar();
@@ -89,26 +97,31 @@ describe('자동 멘션 설정 (#173)', () => {
     const section = await openSection();
     await waitFor(() => expect(within(section).queryByText('불러오는 중…')).toBeNull());
 
-    const fizz = within(section).getByRole('checkbox', { name: '@fizz 자동 멘션' }) as HTMLInputElement;
-    const honey = within(section).getByRole('checkbox', { name: '@honey 자동 멘션' }) as HTMLInputElement;
-    expect(fizz.checked).toBe(true);
-    expect(honey.checked).toBe(false);
+    expect(modeSelect(section, 'fizz').value).toBe('always');
+    // 걸리지 않은 에이전트는 '없음' 이다 — 없는 행과 꺼진 행은 같은 것이다.
+    expect(modeSelect(section, 'honey').value).toBe('off');
     // 비활성 에이전트는 켤 수 없다 — 서버가 400 을 주는 조작은 내주지 않는다.
-    expect(within(section).queryByRole('checkbox', { name: '@sleepy 자동 멘션' })).toBeNull();
+    expect(within(section).queryByRole('combobox', { name: '이 채널이 @sleepy 를 데리는 방식' })).toBeNull();
     // 사람은 목록에 없다 — 에이전트만 자동 멘션할 수 있다.
     expect(within(section).queryByText('@other')).toBeNull();
-    // '자동' 배지는 켜진 줄에만 붙는다 — 꺼진 줄에 붙으면 화면이 체크박스와 반대되는 말을 한다.
-    expect(within(fizz.closest('li')!.parentElement!).queryAllByText('자동')).toHaveLength(1);
-    expect(within(honey.closest('li')!).queryByText('자동')).toBeNull();
+    // 배지는 고른 값과 **같은 말**을 한다. 두 값이 한 배지를 쓰면 화면은 둘을 구분하지 못한다.
+    expect(within(modeSelect(section, 'fizz').closest('li')!).queryAllByText('자동')).toHaveLength(1);
+    expect(within(modeSelect(section, 'honey').closest('li')!).queryByText('자동')).toBeNull();
 
-    fireEvent.click(honey);
-    expect(c.setChannelAutoMention).toHaveBeenCalledWith('c1', 'a2');
-    await waitFor(() => expect(
-      (within(section).getByRole('checkbox', { name: '@honey 자동 멘션' }) as HTMLInputElement).checked,
-    ).toBe(true));
+    // 켜는 것이 곧 '매 줄에' 가 아니다 — 부를 수 있게만 두는 값이 따로 있다.
+    fireEvent.change(modeSelect(section, 'honey'), { target: { value: 'available' } });
+    expect(c.setChannelAutoMention).toHaveBeenCalledWith('c1', 'a2', 'available');
+    await waitFor(() => expect(modeSelect(section, 'honey').value).toBe('available'));
+    expect(within(modeSelect(section, 'honey').closest('li')!).queryAllByText('부를 수 있음')).toHaveLength(1);
+    // '부를 수 있게' 인 줄에 '자동' 이 붙으면 매 줄에 붙는다는 거짓말이 된다.
+    expect(within(modeSelect(section, 'honey').closest('li')!).queryByText('자동')).toBeNull();
 
-    fireEvent.click(within(section).getByRole('checkbox', { name: '@fizz 자동 멘션' }));
-    expect(c.unsetChannelAutoMention).toHaveBeenCalledWith('c1', 'a1');
+    // 세기를 바꾸는 것도 같은 한 컨트롤이다 — 지웠다 다시 거는 길을 만들지 않는다.
+    fireEvent.change(modeSelect(section, 'fizz'), { target: { value: 'available' } });
+    expect(c.setChannelAutoMention).toHaveBeenCalledWith('c1', 'a1', 'available');
+
+    fireEvent.change(modeSelect(section, 'honey'), { target: { value: 'off' } });
+    expect(c.unsetChannelAutoMention).toHaveBeenCalledWith('c1', 'a2');
   });
 
   it('admin 이 아니면 읽기 전용이다 — 켜진 것만 보이고 토글이 없다', async () => {
@@ -119,7 +132,7 @@ describe('자동 멘션 설정 (#173)', () => {
     const section = await openSection();
     await waitFor(() => expect(within(section).getByText('@fizz')).toBeTruthy());
 
-    expect(within(section).queryAllByRole('checkbox')).toEqual([]);
+    expect(within(section).queryAllByRole('combobox')).toEqual([]);
     expect(within(section).queryByText('@honey')).toBeNull();
     expect(within(section).getByText(/admin 만 할 수 있다/)).toBeTruthy();
   });
@@ -132,7 +145,7 @@ describe('자동 멘션 설정 (#173)', () => {
 
     const section = await openSection();
     await waitFor(() => expect(within(section).queryByText('불러오는 중…')).toBeNull());
-    fireEvent.click(within(section).getByRole('checkbox', { name: '@fizz 자동 멘션' }));
+    fireEvent.change(modeSelect(section, 'fizz'), { target: { value: 'always' } });
 
     expect((await within(section).findByRole('alert')).textContent).toContain('disabled');
   });
