@@ -209,9 +209,34 @@ export function retryReason(message: string): string | null {
  * **에이전트 계정으로** 스레드에 올린다 — NO_REPLY_NOTICE 와 같은 판례다: 시스템 계정을
  * 새로 만들지 않고, 그 스레드에서 말하던 바로 그 목소리가 자기 사정을 말한다.
  * entry 당 1회만 올린다(중복 판정은 mentionQueue 가 갖는다).
+ *
+ * **문구가 약속을 하지 않는다.** 전에는 "터미널이 닫히면 처리합니다" 라고 적었는데, 닫는
+ * 것과 조종이 끝나는 것은 다른 사실이다 — 뷰어 수 프레임이 유실되면 닫아도 끝나지 않고,
+ * 그러면 이 문장은 사람이 이미 한 일을 다시 하라고 시킨다(실측된 결함). 조건이 아니라
+ * **끝나는 방법**을 적는다.
  */
 export function controlledNotice(handle: string, pending: number): string {
-  return `(지금 ${handle} 이(가) 직접 조종 중입니다 — 이 멘션은 대기 ${pending}건째로, 터미널이 닫히면 처리합니다)`;
+  return `(지금 ${handle} 이(가) 직접 조종 중입니다 — 이 멘션은 대기 ${pending}건째입니다. `
+    + '조종이 끝나면 처리합니다: 터미널에서 하네스를 종료하거나, Agents 탭에서 「조종 끝내기」)';
+}
+
+/**
+ * 조종이 상한을 넘겼다 — **실패로** 남긴다(`message.fail`).
+ *
+ * 평문이 아닌 이유: 유예에는 상한이 없고 대기 통지는 entry 당 1회라, 조종이 풀리지 않으면
+ * 그 스레드는 **아무 신호도 없이** 영구 정지한다. 실측된 사건에서 남은 흔적은 대기 수가
+ * 1→2→3 으로 늘어난 것뿐이었고, 스레드 머리는 그동안 `끝남` 이었다. 사람이 손을 대야
+ * 풀리는 것은 스레드 상태에 `막힘`으로 서야 한다(`murmur.ts::fail` 주석).
+ *
+ * 유예 자체는 **유지한다** — 멘션은 inbox 에 살아 있고(그것이 큐다), PTY 가 그 하네스
+ * 세션을 쥐고 있는 동안 턴을 억지로 띄우면 한 세션을 두 프로세스가 밟는다(스펙 §1 금지).
+ * 여기서 하는 일은 무엇이 막혔는지와 푸는 방법을 사람에게 보이는 것뿐이다.
+ */
+export function controlHeldNotice(handle: string, pending: number, heldMs: number): string {
+  const minutes = Math.max(1, Math.round(heldMs / 60_000));
+  return `${handle} 의 조종이 ${minutes}분째 이어져 이 스레드의 멘션 ${pending}건이 대기 중입니다. `
+    + '조종이 끝나야 처리됩니다 — 터미널에서 하네스를 종료하거나, Agents 탭에서 「조종 끝내기」를 누르세요. '
+    + '(대기 중인 멘션은 사라지지 않습니다.)';
 }
 
 /** 진행 설명이 담긴 progress 메시지의 kind 값. */

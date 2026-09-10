@@ -16,8 +16,8 @@ import type { TurnRegistry } from './turnRegistry.js';
 import type { MentionQueue } from './mentionQueue.js';
 import { withAccountFailover, type ClaudeAccount } from './claudeAccounts.js';
 import {
-  controlledNotice, FAILURE_NOTICE, quotaNotice, retryNotice, retryReason, sessionConflictNotice,
-  stallNotice,
+  controlHeldNotice, controlledNotice, FAILURE_NOTICE, quotaNotice, retryNotice, retryReason,
+  sessionConflictNotice, stallNotice,
 } from './prompt.js';
 import { exhausted, isHarnessStall, isQuotaExhausted, isSessionIdConflict, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 
@@ -47,6 +47,23 @@ function backoffFor(tried: number): number {
   for (let i = 1; i < tried; i += 1) ms = nextBackoffMs(ms);
   return ms;
 }
+
+/**
+ * 조종이 이만큼 이어지면 스레드에 `막힘`으로 한 번 세운다.
+ *
+ * 값의 근거: 사람이 터미널에서 하는 일 한 토막(명령 몇 줄 + 결과 읽기)은 실측 1~3분이고,
+ * 그보다 넉넉히 잡아야 정상 작업 중에 경고가 뜨지 않는다. 반대로 너무 길게 잡으면 —
+ * 실측된 사건은 **17분 넘게** 조용했다 — 그 사이 사람은 자기 요청이 어디로 갔는지 모른다.
+ * 10분은 "한 토막보다 확실히 길고, 사람이 포기하기 전"이다.
+ */
+const DEFER_WARN_MS = 10 * 60_000;
+
+/**
+ * 또는 이만큼 쌓이면. 시간과 **함께** 재는 이유: 조종이 짧아도 대기가 셋이면 그 스레드에서
+ * 사람 셋(혹은 한 사람이 세 번)이 답을 못 받고 있다는 뜻이고, 그것은 시간과 무관한 사실이다.
+ * 실측 사건에서 3건째가 마지막으로 관측된 값이라 그 자리를 경계로 둔다.
+ */
+const DEFER_WARN_PENDING = 3;
 
 /** 배치 단위로 한 번만 받는 것들. 턴마다 바뀌지 않는다. */
 export interface BatchContext {
@@ -392,18 +409,43 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         const controlling = deps.registry.controlOf(threadKey);
         if (controlling) {
           out.deferred += 1;
-          const { shouldNotify, pending } = deps.queue.defer(threadKey, entry.id, mention.seq);
+          const handle = controlling.openedByHandle ?? '소유자';
+          const { shouldNotify, pending, heldMs, warned } =
+            deps.queue.defer(threadKey, entry.id, mention.seq, now());
           if (shouldNotify) {
             // 통지는 entry 당 1회 — 재폴링마다 올리면 조종이 길수록 스레드가 도배된다.
             try {
-              await deps.murmur.post(
-                mention.channelId,
-                controlledNotice(controlling.openedByHandle ?? '소유자', pending),
-                anchor,
-              );
+              await deps.murmur.post(mention.channelId, controlledNotice(handle, pending), anchor);
             } catch (err) {
               // 통지는 관측이고 큐는 inbox 다 — 실패해도 유예는 유지된다.
               console.error(`  ${entry.messageId} 대기 통지 발화 실패(유예는 유지된다):`,
+                err instanceof Error ? err.message : err);
+            }
+          }
+          // **유예를 무한으로 두지 않는다.** 유예는 요청을 잃지 않지만(inbox 가 큐다) 그
+          // 대가로 **조용하다** — 대기 통지가 entry 당 1회라, 조종이 풀리지 않으면 그
+          // 스레드는 아무 신호 없이 영구 정지한다. 상한에서 한 번 `막힘`으로 세워 사람을
+          // 부른다. 유예 자체는 유지한다(`controlHeldNotice` 주석 — PTY 가 세션을 쥐고
+          // 있는 동안 턴을 억지로 띄우면 한 세션을 두 프로세스가 밟는다).
+          if (!warned && (pending >= DEFER_WARN_PENDING || heldMs >= DEFER_WARN_MS)) {
+            // **먼저 적는다.** 발화가 던지면 다음 폴에서 다시 시도하게 두고 싶지만, 그러면
+            // 발화가 계속 실패하는 동안 폴마다 한 번씩 시도해 실패 카드가 쌓인다 — 경고는
+            // 관측이고 관측의 실패는 유예를 바꾸지 않는다.
+            deps.queue.markWarned(threadKey);
+            try {
+              await deps.murmur.fail(
+                mention.channelId,
+                controlHeldNotice(handle, pending, heldMs),
+                anchor,
+                {
+                  // 재시도로 낫는 실패가 아니다 — 사람이 조종을 끝내야 풀린다.
+                  retryable: false,
+                  what: '사람이 조종 중이라 멘션을 처리하지 못하고 있다',
+                  reason: `${handle} 의 조종이 ${Math.max(1, Math.round(heldMs / 60_000))}분째 이어진다`,
+                },
+              );
+            } catch (err) {
+              console.error(`  ${entry.messageId} 조종 상한 경고 발화 실패(유예는 유지된다):`,
                 err instanceof Error ? err.message : err);
             }
           }

@@ -209,6 +209,45 @@ describe('중단 — 줄 · 스레드 · 전부', () => {
     expect(onCancel.mock.calls[0]![0].map((t: AgentSessionView) => t.sessionId)).toEqual(['s1']);
   });
 
+  /**
+   * **묶음에서 빠지는 것과 아예 못 끊는 것은 다르다.** 조종 중인 턴에 아무 문도 없던
+   * 근거는 "그 화면 앞에 사람이 앉아 있으니 자기 창에서 끝내면 된다"였는데, 그 전제가
+   * 틀렸다: 패널을 닫아도 조종이 남는 경로가 있고(뷰어 수 프레임 유실) 그때는 창도
+   * 없고 끊을 손도 없어 그 스레드의 멘션이 영구히 유예된다. 남은 수단이 러너 종료뿐이면
+   * 다른 스레드의 정상 턴까지 죽는다.
+   */
+  it('조종 중인 턴에는 [조종 끝내기] 가 따로 서고, 확인을 받고서야 보낸다', () => {
+    const onCancel = vi.fn();
+    renderTurns({ kind: 'known', turns: [
+      turn({ sessionId: 's-human', mode: 'interactive' }),
+    ] }, vi.fn(), onCancel);
+
+    // 이름이 [중단] 과 갈려 있다 — 같은 무게로 두면 목록을 훑다 남의 작업을 끊는다.
+    expect(screen.queryByTestId('agent-turn-cancel-s-human')).toBeNull();
+    fireEvent.click(screen.getByTestId('agent-turn-end-control-s-human'));
+    // **줄 단위인데도 확인을 받는다**(다른 줄들과 다른 예외). 그 창을 지금 누가 쓰고
+    // 있는지 목록만 봐서는 알 수 없다.
+    expect(onCancel).not.toHaveBeenCalled();
+    fireEvent.click(dialogButtons().confirm);
+    expect(onCancel.mock.calls[0]![0].map((t: AgentSessionView) => t.sessionId)).toEqual(['s-human']);
+  });
+
+  it('조종 끝내기 확인을 취소하면 조종이 그대로 남는다', () => {
+    const onCancel = vi.fn();
+    renderTurns({ kind: 'known', turns: [
+      turn({ sessionId: 's-human', mode: 'interactive' }),
+    ] }, vi.fn(), onCancel);
+    fireEvent.click(screen.getByTestId('agent-turn-end-control-s-human'));
+    fireEvent.click(dialogButtons().cancel);
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it('`mode` 를 모르는 턴은 [중단] 이다 — 모른다고 조종으로 읽지 않는다', () => {
+    renderTurns({ kind: 'known', turns: [turn({ sessionId: 's1' })] }, vi.fn(), vi.fn());
+    expect(screen.getByTestId('agent-turn-cancel-s1')).toBeTruthy();
+    expect(screen.queryByTestId('agent-turn-end-control-s1')).toBeNull();
+  });
+
   it('[전부 중단] 은 확인을 받고서야 보낸다 — 목록 밖의 스레드까지 멈춘다', () => {
     const onCancel = vi.fn();
     renderTurns({ kind: 'known', turns: twoThreads() }, vi.fn(), onCancel);

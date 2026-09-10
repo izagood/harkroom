@@ -651,6 +651,12 @@ export const en = {
   'agentTurns.cancelConfirm': 'Stop them',
   'agentTurns.cancelDetail': 'Only the turns stop — the runners stay up and take the next mention. Each stopped turn leaves a failure note in its thread. Turns someone is driving by hand are left alone.',
   'agentTurns.cancelKeep': 'Leave them running',
+  // 조종 끝내기 — `agentTurns.cancel` 과 **다른 낱말**이어야 한다: 하나는 에이전트의
+  // 일을 멈추고, 하나는 사람이 쓰고 있을 수도 있는 터미널을 끊는다.
+  'agentTurns.endControl': 'End control',
+  'agentTurns.endControlTitle': "End the hands-on session on @{handle}?",
+  'agentTurns.endControlDetail': 'The terminal closes and the harness is stopped. Anything typed there is already saved in the session, so reopening the terminal resumes it. The runner stays up, and the mentions this thread has been holding are answered next.',
+  'agentTurns.endControlConfirm': 'End control',
   'agentTurns.cancelThread': 'Stop thread',
   'agentTurns.cancelThreadTitle': 'Stop every turn running in this thread',
   'agentTurns.checking': 'Checking\u2026',

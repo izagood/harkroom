@@ -71,13 +71,20 @@ interface Harness {
   relayLog: {
     closed: number;
     viewerCount: ((n: number) => void) | undefined;
+    /** 사람이 조종을 끝냈다는 신호(#686 을 인터랙티브 턴에 이은 자리). */
+    cancel: ((byHandle: string) => void) | undefined;
     /** 세션마다 러너가 신고한 "입력을 받을 수 있는가"(#369). 인터랙티브 턴은 true 여야 한다. */
     acceptsInput: boolean[];
   };
   murmur: { definition: () => Promise<AgentView>; readThread: ReturnType<typeof vi.fn> };
 }
 
-async function makeHarness(overrides: Partial<InteractiveTurnDeps> = {}, def: AgentView = defOf()): Promise<Harness> {
+async function makeHarness(
+  overrides: Partial<InteractiveTurnDeps> = {},
+  def: AgentView = defOf(),
+  /** 세션을 여는 순간 서버가 말해 주는 뷰어 수. `null` 이면 아무 소식 없음(기본). */
+  viewersAtOpen: number | null = null,
+): Promise<Harness> {
   const stateDir = await mkdtemp(join(tmpdir(), 'interactive-state-'));
   const store = new SessionStore(join(await mkdtemp(join(tmpdir(), 'interactive-turn-')), 'sessions.json'));
   await store.load();
@@ -99,12 +106,16 @@ async function makeHarness(overrides: Partial<InteractiveTurnDeps> = {}, def: Ag
     return new Promise<TurnResult>((resolve) => { resolveTurn = resolve; });
   };
 
-  const relayLog: Harness['relayLog'] = { closed: 0, viewerCount: undefined, acceptsInput: [] };
+  const relayLog: Harness['relayLog'] = { closed: 0, viewerCount: undefined, cancel: undefined, acceptsInput: [] };
   let sessionSeq = 0;
   const relay: InteractiveRelay = {
     openSession(input) {
       relayLog.viewerCount = input.onViewerCount;
+      relayLog.cancel = input.onCancel;
       relayLog.acceptsInput.push(input.acceptsInput);
+      // 세션을 여는 순간 서버가 이미 뷰어 수를 말해 주는 경우가 있다(재접속 화해,
+      // 먼저 붙은 창). 그 갈래를 재려면 spawn **전에** 도착해야 한다.
+      if (viewersAtOpen !== null) input.onViewerCount?.(viewersAtOpen);
       sessionSeq += 1;
       return {
         sessionId: `relay-${sessionSeq}`,
@@ -292,6 +303,71 @@ describe('#337 고아 회수 — viewer 0 → 유예 → SIGTERM → SIGKILL (§
     manager.shutdown();
     expect(h.controls.kill).toHaveBeenCalledWith('SIGTERM');
   });
+
+  /**
+   * **spawn 이 이미 들은 뷰어 수를 지우지 않는다.** 예전에는 `onSpawn` 에서 무조건
+   * `onViewerCount(0)` 을 불렀다. 티켓 발급~attach 사이에 사람이 먼저 붙어 `count > 0`
+   * 이 이미 도착해 있으면(재접속 화해도 이 갈래로 온다) 그 사실이 덮여, **보고 있는
+   * 화면 앞에서 60초 뒤 PTY 가 죽는다.**
+   */
+  it('세션을 열 때 이미 뷰어가 있다고 들었으면 spawn 이 유예를 세우지 않는다', async () => {
+    const h = await makeHarness({}, defOf(), 1);
+    const manager = createInteractiveManager(h.deps);
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+
+    expect(h.sched.armed()).toEqual([]);
+    // 그 사람이 떠나면 그때부터 흐른다 — 유예가 사라진 것이 아니라 자리를 찾은 것이다.
+    h.relayLog.viewerCount!(0);
+    expect(h.sched.armed().map((p) => p.ms)).toEqual([60_000]);
+  });
+});
+
+describe('조종 끝내기 — session.cancel 이 인터랙티브 턴에 닿는다', () => {
+  /**
+   * 이 배선이 없던 것이 막힌 조종을 풀 길이 하나도 없던 이유다: 프레임(#686)과 라우트는
+   * 이미 있었지만 `interactiveTurn` 이 `onCancel` 을 싣지 않아 러너가 조용히 버렸고,
+   * 남은 수단은 러너 종료뿐이었다 — 그것은 그 에이전트의 다른 스레드 턴까지 죽인다.
+   */
+  it('onCancel 이 배선되고, 부르면 유예 없이 곧바로 SIGTERM→SIGKILL 로 간다', async () => {
+    const h = await makeHarness();
+    const manager = createInteractiveManager(h.deps);
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    expect(h.relayLog.cancel).toBeTypeOf('function');
+
+    h.relayLog.cancel!('jaebin');
+    // **유예가 없다.** 고아 회수의 60초는 "사람이 정말 떠났는지 모른다"에 대한 값이고,
+    // 여기서는 사람이 끝내라고 말했다.
+    expect(h.controls.kill).toHaveBeenCalledWith('SIGTERM');
+    const killTimer = h.sched.pending.at(-1)!;
+    expect(killTimer.ms).toBe(5_000);
+    h.sched.fire(h.sched.pending.length - 1);
+    expect(h.controls.kill).toHaveBeenCalledWith('SIGKILL');
+  });
+
+  it('중단 뒤에 온 viewer 프레임이 회수를 되돌리지 않는다', async () => {
+    const h = await makeHarness();
+    const manager = createInteractiveManager(h.deps);
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+
+    h.relayLog.cancel!('jaebin');
+    // 중단 직후에도 그 세션 화면을 띄워 둔 창이 있으면 `count > 0` 이 온다. 그것이
+    // 승격 타이머를 취소하면 SIGTERM 을 씹는 하네스가 그대로 살아남는다.
+    h.relayLog.viewerCount!(1);
+    expect(h.sched.armed().map((p) => p.ms)).toEqual([5_000]);
+    h.sched.fire(h.sched.pending.length - 1);
+    expect(h.controls.kill).toHaveBeenCalledWith('SIGKILL');
+  });
+
+  it('두 번 눌러도 한 번만 회수한다 — SIGTERM 두 발에 유예가 늘어나지 않는다', async () => {
+    const h = await makeHarness();
+    const manager = createInteractiveManager(h.deps);
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+
+    h.relayLog.cancel!('jaebin');
+    h.relayLog.cancel!('jaebin');
+    expect(h.controls.kill.mock.calls.filter((c) => c[0] === 'SIGTERM')).toHaveLength(1);
+    expect(h.sched.armed()).toHaveLength(1);
+  });
 });
 
 describe('#337 턴의 끝 — 레지스트리 해제·클램프·turnsRun (§5-2 결정 7)', () => {
@@ -324,8 +400,8 @@ describe('#337 턴의 끝 — 레지스트리 해제·클램프·turnsRun (§5-2
     const manager = createInteractiveManager(h.deps);
     await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
     // 조종 중에 멘션 둘이 유예됐다(seq 5, 6). min 은 5 — 커서는 4 까지만 간다.
-    h.queue.defer(KEY, 10, 5);
-    h.queue.defer(KEY, 11, 6);
+    h.queue.defer(KEY, 10, 5, 0);
+    h.queue.defer(KEY, 11, 6, 0);
 
     h.endTurn();
     await waitReleased(h.registry);
@@ -342,7 +418,7 @@ describe('#337 턴의 끝 — 레지스트리 해제·클램프·turnsRun (§5-2
     await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
     // 유예 멘션의 seq(5)가 이미 먹인 구간(lastFedSeq 9)보다 뒤에 있다 — min−1(4)로
     // 되돌리면 그 구간을 다시 먹는다.
-    h.queue.defer(KEY, 10, 5);
+    h.queue.defer(KEY, 10, 5, 0);
 
     h.endTurn();
     await waitReleased(h.registry);

@@ -69,6 +69,13 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, onC
    * 장식이 된다. 전부는 다르다: 목록 밖의 스레드까지 멈추므로 남의 정상 작업이 함께 죽는다.
    */
   const [confirmAll, setConfirmAll] = useState<AgentSessionView[] | null>(null);
+  /**
+   * `조종 끝내기` 확인 겹창. **줄 단위인데도 확인을 두는 유일한 자리**이고, 위 규칙의
+   * 예외인 근거가 다르다: 멘션 턴을 끊는 것은 에이전트의 일을 멈추는 것이지만, 조종을
+   * 끊는 것은 **사람이 지금 쓰고 있을 수도 있는 터미널**을 끊는 것이다. 그 사람이 나일
+   * 수도 남일 수도 있고, 목록만 봐서는 그 창이 살아 있는지 알 수 없다.
+   */
+  const [confirmControl, setConfirmControl] = useState<AgentSessionView | null>(null);
 
   const frame = (children: React.ReactNode) => (
     <section data-testid="agent-turns" className="px-2 pb-2">
@@ -105,6 +112,12 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, onC
    * 그 화면 앞에는 사람이 앉아 있고, 목록에서 누른 한 번으로 남의 터미널을 죽이는 것은
    * 이 기능이 막으려는 사고(의도 없이 여럿을 건드리는 것)와 같은 모양이다. 그 턴은 자기
    * 창에서 끝내면 된다(Ctrl-C 가 그 세션에는 실제로 통한다 — `acceptsInput` 이 참이다).
+   *
+   * **묶음에서 빼는 것과 아예 못 끊는 것은 다르다.** 위 문장의 "자기 창에서 끝내면 된다"는
+   * 그 창이 아직 있을 때만 참이었다: 뷰어 수 프레임이 유실되면 패널을 닫아도 조종이 남고,
+   * 그러면 창도 없고 끊을 손도 없어 그 스레드의 멘션이 영구히 유예된다(실측). 그래서 줄
+   * 단위에는 **다른 이름의 문**을 따로 낸다(`조종 끝내기` + 확인) — 묶음에서 빠지는 것은
+   * 그대로다: 여럿을 한 번에 끊는 실수를 막는 것이 그쪽의 목적이다.
    *
    * `mode` 가 없는 턴(구 러너)은 **뺀 것이 아니라 모르는 것**이라 포함한다: 멘션 턴이
    * 대다수이고, 모른다는 이유로 중단에서 제외하면 폭주를 멈추는 손이 조용히 반쪽이 된다.
@@ -150,6 +163,17 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, onC
           danger
           onConfirm={() => { onCancelTurns?.(confirmAll); setConfirmAll(null); }}
           onCancel={() => setConfirmAll(null)}
+        />
+      )}
+      {confirmControl && (
+        <ConfirmDialog
+          title={t('agentTurns.endControlTitle', { handle: handleOf(confirmControl.agentAccountId) })}
+          detail={t('agentTurns.endControlDetail')}
+          confirmLabel={t('agentTurns.endControlConfirm')}
+          cancelLabel={t('agentTurns.cancelKeep')}
+          danger
+          onConfirm={() => { onCancelTurns?.([confirmControl]); setConfirmControl(null); }}
+          onCancel={() => setConfirmControl(null)}
         />
       )}
       <ul className="flex flex-col gap-1">
@@ -249,18 +273,30 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, onC
                         {Number.isFinite(startedAt) ? runningLabel(Math.max(0, now - startedAt), locale, t) : turn.harness}
                       </span>
                       {/*
-                        **사람이 조종 중인 턴에는 이 버튼이 없다** — 부재이지 비활성이 아니다.
-                        그 화면 앞에는 사람이 앉아 있고, 그 세션은 입력을 받으므로(`acceptsInput`)
-                        자기 창에서 끝내는 길이 이미 있다. 비활성으로 두면 사람은 왜 못 누르는지
-                        물을 대상을 찾게 된다(`TerminalChip` 이 같은 판단을 적어 뒀다).
+                        **조종 중인 턴은 다른 이름의 문으로 끝낸다.** 예전에는 이 자리에
+                        버튼이 아예 없었고 근거는 "그 화면 앞에 사람이 앉아 있으니 자기 창에서
+                        끝내면 된다"였다 — 그 전제가 틀렸다: 패널을 닫아도 조종이 남는 경로가
+                        있고(뷰어 수 프레임 유실, 실측) 그때는 창도 없고 끊을 손도 없어 그
+                        스레드의 멘션이 영구히 유예된다. 남은 수단이 러너 종료뿐이었는데 그것은
+                        그 에이전트의 다른 스레드 턴까지 죽인다.
+
+                        이름과 확인을 가른다: `중단` 은 에이전트의 일을 멈추는 것이고
+                        `조종 끝내기` 는 **사람이 쓰고 있을 수도 있는 터미널**을 끊는 것이다.
+                        같은 이름·같은 무게로 두면 목록을 훑다 남의 작업을 끊는다.
                       */}
-                      {onCancelTurns && turn.mode !== 'interactive' && (
+                      {onCancelTurns && (turn.mode === 'interactive' ? (
+                        <button type="button" data-testid={`agent-turn-end-control-${turn.sessionId}`}
+                          onClick={() => setConfirmControl(turn)}
+                          className="shrink-0 rounded px-1 text-danger hover:bg-danger-surface">
+                          {t('agentTurns.endControl')}
+                        </button>
+                      ) : (
                         <button type="button" data-testid={`agent-turn-cancel-${turn.sessionId}`}
                           onClick={() => onCancelTurns([turn])}
                           className="shrink-0 rounded px-1 text-danger hover:bg-danger-surface">
                           {t('agentTurns.cancel')}
                         </button>
-                      )}
+                      ))}
                     </li>
                   );
                 })}

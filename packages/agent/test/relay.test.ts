@@ -437,3 +437,43 @@ describe('#337 interactive.open 왕복', () => {
     expect(errors[0]!.requestId).toBe('req-1');
   });
 });
+
+describe('관찰이 끊기면 뷰어 수를 모름(0)으로 되돌린다', () => {
+  /**
+   * 실측된 결함의 러너 쪽 절반이다. `viewer.count` 는 러너에게 **상태**인데 전송은
+   * 사건이다: 고아 회수 타이머는 `0` 을 받았을 때만 서고 `>0` 이 한 번 취소하면
+   * 인터랙티브 턴에는 다른 시계가 없다(`timeoutMs: 0`). 그래서 소켓이 끊긴 뒤 사람이
+   * 패널을 닫으면 그 사실이 유실되고, PTY 는 죽지 않은 채 그 스레드의 멘션을 전부
+   * 유예시킨다 — 사람은 "닫았는데도 계속 조종 중"인 화면을 본다.
+   */
+  it('소켓이 끊기면 살아 있는 세션마다 onViewerCount(0) 이 온다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({
+      murmurUrl: 'http://x', pat: 'p', dial: d.dial, schedule: () => {},
+    });
+    client.start();
+    d.open();
+    const counts: number[] = [];
+    const session = client.openSession({ ...SESSION, onViewerCount: (n) => counts.push(n) });
+    // 사람이 붙었다 — 유예가 취소된 상태.
+    d.deliver({ type: 'viewer.count', sessionId: session.sessionId, count: 1 });
+    counts.length = 0;
+
+    d.drop();
+
+    // 끊긴 릴레이로는 바이트도 입력도 흐르지 않는다 — 그 PTY 는 이미 아무에게도 닿지
+    // 않으므로, 모르는 동안 붙잡지 않는 쪽으로 기운다. 실제로 보고 있는 사람이 있으면
+    // 재접속 뒤 서버의 화해(`resyncViewerCounts`)가 유예 안에 참값을 되돌려준다.
+    expect(counts).toEqual([0]);
+  });
+
+  it('세션이 없으면 아무 일도 없다 — 끊김 처리가 던지지 않는다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({
+      murmurUrl: 'http://x', pat: 'p', dial: d.dial, schedule: () => {},
+    });
+    client.start();
+    d.open();
+    expect(() => d.drop()).not.toThrow();
+  });
+});

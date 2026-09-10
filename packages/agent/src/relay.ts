@@ -358,6 +358,27 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
           outageReported = true;
           console.error(`릴레이에 붙지 못한다 — 재시도한다(터미널 관찰·개입이 그동안 안 된다): ${reason ?? '이유 불명'}`);
         }
+        /**
+         * **관찰이 끊긴 동안은 조종을 붙잡지 않는다.**
+         *
+         * `viewer.count` 는 러너에게 사건이 아니라 상태다 — 고아 회수 타이머는 `0` 을
+         * 받았을 때만 서고 `>0` 이 한 번 취소하면 인터랙티브 턴에는 다른 시계가 없다
+         * (`timeoutMs: 0`). 그래서 소켓이 끊긴 뒤에 사람이 패널을 닫으면 그 사실이 영구히
+         * 유실되고, 그 PTY 는 죽지 않은 채 그 스레드의 멘션을 전부 유예시킨다(실측된 결함).
+         *
+         * 여기서 `0` 을 넣는 것은 "아무도 안 본다"는 단언이 아니라 **모른다**는 말이다.
+         * 모르는 동안 붙잡지 않는 쪽으로 기울이는 이유: 끊긴 릴레이로는 바이트도 입력도
+         * 흐르지 않아 그 PTY 는 이미 아무에게도 닿지 않고, 세션은 디스크라(스펙 §1) 다시
+         * 열면 이어진다. 실제로 보고 있는 사람이 있으면 재접속 직후 서버가 `announce` 에
+         * 대한 화해로 참값을 되돌려주고(server `resyncViewerCounts`), 그것이 유예 안에
+         * 도착해 타이머를 취소한다 — 유예(60초)가 재접속 백오프보다 길게 잡혀 있는 것이
+         * 이 화해가 성립하는 근거다.
+         *
+         * 멘션 턴에는 무해하다: 그쪽 회수는 **이미 발화한** 턴에서만 흐른다(`end.spoke`).
+         */
+        for (const live of sessions.values()) {
+          try { live.onViewerCount?.(0); } catch { /* 관찰은 답을 죽이지 않는다 */ }
+        }
         if (stopped) return;
         schedule(connect, backoffMs);
         backoffMs = nextBackoffMs(backoffMs);

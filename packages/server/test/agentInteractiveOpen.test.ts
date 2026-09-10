@@ -269,4 +269,43 @@ describe('#337-3 viewer.count 가 러너에 흐른다 — 인터랙티브 고아
 
     await runner.close();
   });
+
+  /**
+   * **재접속이 화해 지점이다.** 위 검사는 프레임 두 개가 흐르는 것만 재는데, 그 전송은
+   * 사건이고 러너에게 그 값은 상태다 — 하나라도 유실되면 러너의 판단은 끊기기 **전에**
+   * 받은 마지막 프레임에 영구히 묶인다. 실측된 결함이 그것이었다: 패널을 닫았는데
+   * 인터랙티브 PTY 가 53분을 살아 그 스레드의 멘션을 전부 유예시켰다.
+   *
+   * `announce` 는 러너가 재접속마다 보내는 프레임이므로, 그 응답으로 뷰어 수를 되돌려
+   * 주면 유실이 **다음 재접속에 자동으로 복구된다.**
+   */
+  it('announce 하면 그 세션들의 현재 뷰어 수를 되돌려준다 — 유실이 재접속에서 복구된다', async () => {
+    const runner = await connectRunner(agentPat, ['input', 'interactive']);
+    runner.send({ type: 'session.started', session: session('sess-resync', 'interactive') });
+
+    const attachRes = await app.inject({
+      method: 'POST', url: '/agent-sessions/sess-resync/attach', headers: auth(ownerToken),
+    });
+    expect(attachRes.statusCode).toBe(200);
+    const viewer = new WebSocket(`ws://${baseUrl}/agent-attach?ticket=${attachRes.json().ticket as string}`);
+    await new Promise<void>((resolve, reject) => { viewer.on('open', () => resolve()); viewer.on('error', reject); });
+
+    const counts = () => runner.received
+      .filter((f) => f.type === 'viewer.count' && f.sessionId === 'sess-resync')
+      .map((f) => (f as { count: number }).count);
+    await waitFor(() => counts().includes(1));
+
+    // 러너가 자기 세션 목록을 다시 선언한다(재접속과 같은 프레임). 이때 뷰어 수를
+    // 되돌려주지 않으면 러너는 "그 사이에 무슨 일이 있었나"를 물을 길이 없다.
+    runner.received.length = 0;
+    runner.send({ type: 'announce', sessions: [session('sess-resync', 'interactive')], caps: ['input', 'interactive'] });
+    await waitFor(() => counts().length > 0);
+    // **1 이어야 한다** — 뷰어는 아직 붙어 있다. 여기서 0 이 오면 보고 있는 사람 앞에서
+    // 유예가 흐른다(화해는 양방향이다: 놓친 0 을 알려 주는 것과 같은 값으로 살아 있는
+    // 1 을 알려 주는 것).
+    expect(counts().at(-1)).toBe(1);
+
+    viewer.close();
+    await runner.close();
+  });
 });

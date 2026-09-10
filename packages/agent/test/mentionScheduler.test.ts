@@ -71,7 +71,7 @@ function harness(opts: { runTurn: () => Promise<MentionTurnResult>; now?: () => 
     startedAtMs: 0,
     ...(opts.now ? { now: opts.now } : {}),
   });
-  return { scheduler, registry, markedRead, posted };
+  return { scheduler, registry, markedRead, posted, failed };
 }
 
 describe('mentionScheduler 승인 관문', () => {
@@ -203,6 +203,58 @@ describe('mentionScheduler 승인 관문', () => {
     // 재폴링마다 올리면 조종이 길수록 스레드가 도배된다.
     expect(posted).toHaveLength(1);
     expect(posted[0]!.body).toContain('jaebin');
+  });
+
+  /**
+   * **유예를 무한으로 두지 않는다.** 유예는 요청을 잃지 않지만(inbox 가 큐다) 그 대가로
+   * 조용하다 — 대기 통지가 entry 당 1회라, 조종이 풀리지 않으면 그 스레드는 아무 신호
+   * 없이 영구 정지한다. 실측된 사건에서 남은 흔적은 대기 수가 1→2→3 으로 늘어난 것뿐이고
+   * 스레드 머리는 그동안 `끝남` 이었다.
+   */
+  it('조종이 상한을 넘기면 스레드에 막힘으로 한 번 세운다 — 유예는 유지한다', async () => {
+    let clock = 1_000;
+    let calls = 0;
+    const { scheduler, registry, posted, failed, markedRead } = harness({
+      runTurn: async () => { calls += 1; return { stopRequestedAt: null }; },
+      now: () => clock,
+    });
+    registry.register(`${CH}/root-1`, { kind: 'interactive', sessionId: 's1', openedByHandle: 'jaebin' });
+
+    const batch = () => batchOf([{ entryId: 1, messageId: 'm1', threadRootId: 'root-1' }]);
+    await scheduler.admit(batch(), ctx);
+    // 아직 상한 전이다 — 대기 통지 하나뿐이고 실패는 없다.
+    expect(failed).toEqual([]);
+
+    clock += 10 * 60_000;
+    await scheduler.admit(batch(), ctx);
+    expect(failed).toHaveLength(1);
+    expect(failed[0]!.body).toContain('jaebin');
+    // 재시도로 낫는 실패가 아니다 — 사람이 조종을 끝내야 풀린다.
+    expect(failed[0]!.retryable).toBe(false);
+
+    // **에피소드당 1회.** 폴마다 세우면 그 경고가 곧 도배가 된다.
+    clock += 10 * 60_000;
+    await scheduler.admit(batch(), ctx);
+    expect(failed).toHaveLength(1);
+
+    // 유예는 그대로다: 턴은 안 돌고, markRead 도 안 한다(멘션이 사라지면 안 된다).
+    expect(calls).toBe(0);
+    expect(markedRead).toEqual([]);
+    expect(posted).toHaveLength(2); // 대기 통지 1 + 막힘 1
+  });
+
+  it('대기가 셋이 되면 시간과 무관하게 막힘으로 세운다 — 답을 못 받는 사람이 셋이다', async () => {
+    const { scheduler, registry, failed } = harness({
+      runTurn: async () => ({ stopRequestedAt: null }),
+      now: () => 1_000,
+    });
+    registry.register(`${CH}/root-1`, { kind: 'interactive', sessionId: 's1', openedByHandle: 'jaebin' });
+
+    await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1', threadRootId: 'root-1' }]), ctx);
+    await scheduler.admit(batchOf([{ entryId: 2, messageId: 'm1', threadRootId: 'root-1' }]), ctx);
+    expect(failed).toEqual([]);
+    await scheduler.admit(batchOf([{ entryId: 3, messageId: 'm1', threadRootId: 'root-1' }]), ctx);
+    expect(failed).toHaveLength(1);
   });
 
   it('유예 통지가 실패해도 유예는 유지된다', async () => {
