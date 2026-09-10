@@ -6,30 +6,51 @@
 // 돈다 — 실측으로 확인했다: 그 경로를 통째로 지워도 데스크탑 1094건이 전부 초록이었다.
 // 그러면 "소유자의 폭이 PTY 폭이 된다"의 출발점이 조용히 사라져도 아무도 모른다.
 //
-// 그래서 이 파일은 가짜 sink 를 쓰지 않고 **진짜 `xtermSink`** 를 돌린다. xterm 모듈과
-// 기하(jsdom 은 레이아웃이 없어 전부 0 이다)만 흉내내고, 계산과 배선은 진짜를 쓴다.
+// 그래서 이 파일은 가짜 sink 를 쓰지 않고 **진짜 `defaultSink`** 를 돌린다. 에뮬레이터
+// 모듈(ghostty-web·xterm)과 기하(jsdom 은 레이아웃이 없어 전부 0 이다)만 흉내내고, 계산과
+// 배선은 진짜를 쓴다. **wasm 은 jsdom 에서 세우지 않는다** — 그래서 `ghostty-web` 도 가짜다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-/** xterm 자체는 이 파일의 관심이 아니다 — 크기를 받는 쪽으로만 세운다. */
+/** 에뮬레이터 자체는 이 파일의 관심이 아니다 — 크기를 받는 쪽으로만 세운다. */
 const resizes: [number, number][] = [];
 let disposed = false;
-/** 마지막으로 만들어진 가짜 xterm(#369). `setReadOnly` 가 닿는 자리를 여기서 읽는다. */
+/** 마지막으로 만들어진 가짜 터미널(#369). `setReadOnly` 가 닿는 자리를 여기서 읽는다. */
 let lastTerm: { options: { disableStdin?: boolean } } | null = null;
-vi.mock('@xterm/xterm/css/xterm.css', () => ({ default: '' }));
-vi.mock('@xterm/xterm', () => ({
-  Terminal: class {
-    // #369: `options` 를 진짜 xterm 처럼 **생성자 인자에서 그대로 들고 있는다.** 이것이
-    // 없으면 `setReadOnly` 가 건드리는 자리 자체가 이 파일에 존재하지 않아, 그 구현을
-    // 통째로 지워도 초록이 된다(실측했다).
+/** 어느 에뮬레이터가 떴는가. 폴백 회귀선이 이것을 읽는다. */
+const built: ('ghostty' | 'xterm')[] = [];
+/** ghostty-web 의 `init()` 이 깨지는 세상을 만든다 — wasm 을 못 세운 경우가 그것이다. */
+let ghosttyInitFails = false;
+
+/**
+ * `options` 를 **생성자 인자에서 그대로 들고 있는다**(#369). 이것이 없으면 `setReadOnly` 가
+ * 건드리는 자리 자체가 이 파일에 존재하지 않아, 그 구현을 통째로 지워도 초록이 된다
+ * (실측했다). 두 에뮬레이터가 이 표면에서 같은 모양이라 가짜도 같은 것을 쓴다.
+ */
+function fakeTerminal(kind: 'ghostty' | 'xterm') {
+  return class {
     options: { disableStdin?: boolean };
-    constructor(opts: { disableStdin?: boolean }) { this.options = { ...opts }; lastTerm = this; }
+    constructor(opts: { disableStdin?: boolean }) {
+      this.options = { ...opts };
+      lastTerm = this;
+      built.push(kind);
+    }
     open(): void { /* jsdom 에는 캔버스가 없다 */ }
     write(): void { /* 이 파일은 바이트를 안 본다 */ }
     onData(): void { /* 같음 */ }
     resize(cols: number, rows: number): void { resizes.push([cols, rows]); }
     dispose(): void { disposed = true; }
+  };
+}
+
+vi.mock('ghostty-web', () => ({
+  // 진짜와 같은 계약이다: `init()` 을 기다린 **뒤에** Terminal 을 만든다.
+  init: async (): Promise<void> => {
+    if (ghosttyInitFails) throw new Error('wasm 을 세우지 못했다');
   },
+  Terminal: fakeTerminal('ghostty'),
 }));
+vi.mock('@xterm/xterm/css/xterm.css', () => ({ default: '' }));
+vi.mock('@xterm/xterm', () => ({ Terminal: fakeTerminal('xterm') }));
 
 import { getTerminalSinkFactory } from '../src/lib/terminalSink';
 
@@ -75,6 +96,8 @@ let rectSpy: ReturnType<typeof vi.spyOn> | null = null;
 beforeEach(() => {
   resizes.length = 0;
   disposed = false;
+  built.length = 0;
+  ghosttyInitFails = false;
   lastTerm = null;
   fireResize = null;
   observing = false;
@@ -103,7 +126,7 @@ describe('#335 sink 는 컨테이너를 실제로 재서 그 크기를 알린다
 
     // 640/8 = 80 칸, 480/16 = 30 줄.
     expect(reported).toEqual([[80, 30]]);
-    // **xterm 을 먼저 맞추고 그다음에 알린다**(terminalSink.ts::applyFit 주석) — 화면이
+    // **터미널을 먼저 맞추고 그다음에 알린다**(terminalSink.ts::applyFit 주석) — 화면이
     // 옛 폭인 채로 새 폭의 바이트를 받으면 그 프레임 하나가 접혀 보인다.
     expect(resizes).toEqual([[80, 30]]);
     sink.dispose();
@@ -174,7 +197,7 @@ describe('#335 sink 는 컨테이너를 실제로 재서 그 크기를 알린다
 });
 
 /**
- * #369 — **진짜 `xtermSink` 의** 읽기 전용 토글. 위 파일 머리 주석과 같은 이유로 여기 산다:
+ * #369 — **진짜 `defaultSink` 의** 읽기 전용 토글. 위 파일 머리 주석과 같은 이유로 여기 산다:
  * `agentTerminal.test.tsx` 의 가짜 sink 는 `setReadOnly` 가 **불렸는지**까지만 재고, 그 호출이
  * xterm 에 실제로 닿는지는 한 줄도 안 돈다 — 그 구현을 통째로 지워도 데스크탑 전 건이 초록이었다.
  *
@@ -182,7 +205,7 @@ describe('#335 sink 는 컨테이너를 실제로 재서 그 크기를 알린다
  * 깜빡여 화면이 여전히 "칠 수 있다"고 말한다.
  */
 describe('#369 sink 는 뜬 뒤에도 stdin 을 껐다 켤 수 있다', () => {
-  it('setReadOnly 가 xterm 의 disableStdin 을 실제로 바꾼다 — 차례는 attach 뒤에 오간다', async () => {
+  it('setReadOnly 가 에뮬레이터의 disableStdin 을 실제로 바꾼다 — 차례는 attach 뒤에 오간다', async () => {
     const el = host(640, 480);
     // 칠 수 있는 창으로 띄운다(onInput 이 있으면 생성자에서 stdin 이 켜진다).
     const sink = getTerminalSinkFactory()(el, { onInput: () => {} });
@@ -199,11 +222,60 @@ describe('#369 sink 는 뜬 뒤에도 stdin 을 껐다 켤 수 있다', () => {
     sink.dispose();
   });
 
-  it('xterm 이 아직 안 떴으면 아무 일도 안 일어난다 — 그때는 생성자의 disableStdin 이 맞는 값이다', () => {
+  it('터미널이 아직 안 떴으면 아무 일도 안 일어난다 — 그때는 생성자의 disableStdin 이 맞는 값이다', () => {
     const el = host(640, 480);
     // `await settle()` 을 하지 않는다 — 동적 import 가 아직 안 풀린 시점이 이 케이스다.
     const sink = getTerminalSinkFactory()(el, { onInput: () => {} });
     expect(() => sink.setReadOnly!(true)).not.toThrow();
+    sink.dispose();
+  });
+});
+
+/**
+ * 에뮬레이터를 **어느 것으로 띄우는가**의 회귀선. 기본은 ghostty-web(libghostty WASM)이고,
+ * 그것이 못 뜨면 xterm.js 로 이어 붙인다(terminalSink.ts 머리 주석).
+ *
+ * 폴백을 테스트로 고정하는 이유: 실패 경로가 `catch` 하나라 조용하다. 이 줄이 없으면
+ * 폴백을 지워도 초록이고, 그러면 wasm 이 안 서는 환경에서 사람은 **빈 패널**을 본다 —
+ * 터미널이 안 뜬 것과 세션이 없는 것이 화면에서 구분되지 않는다.
+ */
+describe('sink 는 ghostty-web 으로 띄우고, 못 띄우면 xterm 으로 이어 붙인다', () => {
+  it('기본은 ghostty-web 이다 — 배선(fit·resize)도 그 위에서 돈다', async () => {
+    const el = host(640, 480);
+    const reported: [number, number][] = [];
+    const sink = getTerminalSinkFactory()(el, { onResize: (c, r) => reported.push([c, r]) });
+    await settle();
+
+    expect(built).toEqual(['ghostty']);
+    expect(reported).toEqual([[80, 30]]);
+    expect(resizes).toEqual([[80, 30]]);
+    sink.dispose();
+  });
+
+  it('init 이 깨지면 xterm 으로 띄운다 — 느린 터미널이 없는 터미널보다 낫다', async () => {
+    ghosttyInitFails = true;
+    const el = host(640, 480);
+    const reported: [number, number][] = [];
+    const sink = getTerminalSinkFactory()(el, { onResize: (c, r) => reported.push([c, r]) });
+    // **폴백은 `settle()` 로 안 풀린다.** 실패한 *뒤에* 동적 import 를 두 번 더 타므로
+    // 마이크로태스크 20 번으로는 모자란다(실측). 그래서 여기서만 실제로 기다린다 —
+    // ghostty 는 `init()` 에서 죽었으므로 Terminal 까지 가지 못하고, 뜬 것은 xterm 뿐이다.
+    await vi.waitFor(() => expect(built).toEqual(['xterm']));
+    // 그리고 그 화면도 **온전한 터미널이다**: 폭을 재서 PTY 에 알리는 배선까지 살아 있다.
+    expect(reported).toEqual([[80, 30]]);
+    expect(resizes).toEqual([[80, 30]]);
+    sink.dispose();
+  });
+
+  it('폴백으로 넘어갈 때 host 를 비운다 — 반쯤 붙은 화면 위에 두 번 그리지 않는다', async () => {
+    ghosttyInitFails = true;
+    const el = host(640, 480);
+    // ghostty 가 canvas 를 붙였다가 죽은 자리를 흉내낸다.
+    el.appendChild(document.createElement('canvas'));
+    const sink = getTerminalSinkFactory()(el, {});
+    await vi.waitFor(() => expect(built).toEqual(['xterm']));
+
+    expect(el.querySelector('canvas')).toBeNull();
     sink.dispose();
   });
 });
