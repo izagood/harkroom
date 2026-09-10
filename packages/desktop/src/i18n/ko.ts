@@ -621,7 +621,7 @@ export const ko = {
   'runner.restart.killFailed': '재기동하지 못했다 — daemon 에 종료를 전하지 못했다: {reason}',
   'runner.restart.respawnUnreachable': '러너는 물러났지만 daemon 에 닿지 못해 다시 띄우지 못했다: {reason}',
   'runner.restart.stillRunning':
-    '러너가 아직 물러나지 않았다 — 진행 중인 턴이 길다. 종료 요청은 이미 갔으므로 다음 기동에서 새 번들로 뜬다.',
+    '러너가 아직 물러나지 않았다 — 진행 중인 턴이 길다. 종료 요청은 이미 갔으므로 그 턴이 끝나면 곧 뜬다.',
   'runner.restart.waitingForRetirement': '앞 세대 러너가 진행 중인 턴을 끝내고 물러나는 중이다 — 끝나면 새로 띄운다',
 
   'runner.stranger.attached':

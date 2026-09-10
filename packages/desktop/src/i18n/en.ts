@@ -1465,10 +1465,14 @@ export const en = {
   /**
    * 상한에 걸렸다. **`Timeout` 이 아니다** — 상한에 걸린 것은 우리 기다림이고
    * 러너는 정상이다. 그리고 **다음에 무엇이 일어나는지**까지 말한다.
+   *
+   * 2026-09-10: 뒷문장이 "다음 앱 기동에 뜬다"였다. 그것이 사실이었고 그래서 고쳤다 —
+   * 앱이 다시 뜰 때까지 그 에이전트에는 러너가 없어, 예약된 깨움이 21분 열리지 않았다.
+   * 지금은 기다림을 다시 걸므로(`queueRespawnRetry`) 문구도 그 사실을 말한다.
    */
   'runner.restart.stillRunning':
     'The runner has not stepped down yet — the turn in flight is long. The stop request has already '
-    + 'gone, so it comes up on the new bundle at the next start.',
+    + 'gone, so it comes up as soon as that turn ends.',
   /**
    * 앞 세대가 물러나기를 기다린다. 2026-09-08 사고가 만든 문장이라 **지금 무엇이
    * 일어나는지와 다음에 무엇이 일어나는지**를 둘 다 말한다.

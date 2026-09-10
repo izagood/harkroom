@@ -958,19 +958,42 @@ export class RunnerLauncher {
     this.runners.delete(agent.id);
     this.runTokens.delete(agent.id);
 
-    const exited = await this.awaitRunnerExit(agent.id, () => this.restarting.has(agent.id));
+    await this.pursueRespawn(agent, input);
+  }
+
+  /**
+   * 종료를 확인하고 다시 띄운다 — **상한에 걸려도 포기하지 않는다.**
+   *
+   * ## 포기가 왜 못 쓰는 답인가 (2026-09-10 실측)
+   *
+   * 앞 판본은 상한(15분)에 걸리면 사유만 적고 예약을 접었다. 그 상한은 "실측된 가장 긴
+   * 턴(326초)의 두 배"로 잡은 값인데, 지금 턴은 36분까지 간다(러너 턴 예산이 그렇다).
+   * 그리고 접으면 **이 앱 세션 동안 이 에이전트에는 러너가 하나도 없다** — 자동 기동은
+   * 세션당 한 번뿐이기 때문이다(`controller.ts::startRunners` 의 `runnerAutoStartDone`).
+   *
+   * 러너가 없으면 아무도 inbox 를 폴하지 않는다. 멘션은 사람이 다시 부르면 되지만
+   * **깨움(`agent_wake`)은 부를 사람이 없다** — 서버는 시각이 되어 inbox 항목을 만들고
+   * 거기서 끝이다. 실측: 17:26 에 뜬 깨움이 21분 뒤 앱이 새 번들로 다시 뜰 때까지
+   * 열리지 않았고, 사람이 "시간이 지났는데 안 열린다"로 먼저 알았다.
+   *
+   * 그래서 상한은 **포기의 근거가 아니라 사람에게 한 번 말할 근거**다: 문구를 적고
+   * 같은 기다림을 다시 건다. 모양은 `waitForRetirement` 와 같다(고정 간격 · 상한 없음 ·
+   * `dispose` 가 거둔다) — 두 경로가 기다리는 것이 같은 사실이므로 정책도 같아야 한다.
+   */
+  private async pursueRespawn(agent: LaunchableAgent, input: StartAllInput): Promise<void> {
+    const outcome = await this.awaitRunnerExit(agent.id, () => this.restarting.has(agent.id));
     if (this.disposed) return;
+    if (outcome === 'timeout') {
+      // **예약을 지우지 않는다**(`restarting` 에 그대로 둔다) — 지우면 아래 재시도가
+      // 자기 예약을 잃고, 화면의 [취소] 도 누를 대상이 없어진다.
+      this.queueRespawnRetry(agent, input);
+      return;
+    }
     if (!this.restarting.delete(agent.id)) {
       // 사람이 예약을 취소했다. 종료는 이미 일어났거나 일어날 것이고, 우리는 띄우지 않는다.
       return;
     }
-    if (!exited) {
-      this.setState(agent.id, {
-        status: 'restarting', exitCode: null,
-        message: this.t('runner.restart.stillRunning'),
-      });
-      return;
-    }
+    if (outcome !== 'exited') return;
 
     let observation: DaemonObservation;
     try {
@@ -986,6 +1009,34 @@ export class RunnerLauncher {
   }
 
   /**
+   * 종료 확인이 상한에 걸렸다 — 사람에게 사실을 적고 **같은 기다림을 다시 건다.**
+   *
+   * 간격을 `RETIRE_WAIT_MS` 로 두는 이유는 `waitForRetirement` 와 같다: 기다리는 대상이
+   * 진행 중인 턴 하나이고, 지수 백오프를 걸면 턴이 끝나 자리가 빈 뒤에도 한참 안 뜬다.
+   *
+   * 타이머를 `retireWaits` 에 넣는다 — `dispose` 가 거두는 그 장부다. 앱이 닫힌 뒤에
+   * 러너가 하나 뜨는 일을 두 경로가 같은 방법으로 막는다.
+   */
+  private queueRespawnRetry(agent: LaunchableAgent, input: StartAllInput): void {
+    if (this.disposed) return;
+    this.setState(agent.id, {
+      status: 'restarting', exitCode: null,
+      message: this.t('runner.restart.stillRunning'),
+    });
+    const timer = setTimeout(() => {
+      this.retireWaits.delete(agent.id);
+      if (this.disposed) return;
+      // 사람이 그 사이 취소했으면 다시 묻지 않는다.
+      if (!this.restarting.has(agent.id)) return;
+      void this.pursueRespawn(agent, input).catch((err: unknown) => {
+        this.restarting.delete(agent.id);
+        this.setState(agent.id, { status: 'failed', exitCode: null, message: errText(err) });
+      });
+    }, RETIRE_WAIT_MS);
+    this.retireWaits.set(agent.id, timer);
+  }
+
+  /**
    * 재기동 예약을 취소한다 — **뜨는 것만** 취소된다.
    *
    * 이미 보낸 SIGTERM 은 되돌릴 수 없다(시그널에는 취소가 없다). 그래서 이 메서드가
@@ -994,6 +1045,14 @@ export class RunnerLauncher {
    */
   cancelRestart(agentId: string): void {
     this.restarting.delete(agentId);
+    // 기다림을 다시 걸어 둔 타이머도 함께 거둔다 — 남기면 취소한 뒤에 러너가 뜬다.
+    // (타이머 콜백도 `restarting` 을 한 번 더 보지만, 여기서 거두는 쪽이 정직하다:
+    // 화면의 '기다리는 중' 이 취소 즉시 끝나야 한다.)
+    const timer = this.retireWaits.get(agentId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.retireWaits.delete(agentId);
+    }
   }
 
   /** 재기동을 예약해 둔 에이전트인가. 화면이 버튼을 이중으로 누르지 않게 본다. */
@@ -1003,20 +1062,26 @@ export class RunnerLauncher {
 
   /**
    * 장부에서 이 러너가 사라지거나 `alive: false` 가 될 때까지 기다린다.
-   * 상한에 걸리면 `false` — 거짓으로 "죽었다"고 하지 않는다.
+   *
+   * **답이 셋인 이유**: 앞 판본은 `boolean` 이라 "상한에 걸렸다"와 "사람이 그만두라고
+   * 했다"가 같은 `false` 였다. 두 사실에 할 일이 다르다 — 상한은 다시 기다릴 근거이고
+   * (`queueRespawnRetry`), 취소는 아무것도 하지 않을 근거다. 하나로 두면 호출자가
+   * 취소를 상한으로 읽어 취소한 러너를 다시 띄운다.
    *
    * `stillWanted` 는 **이 기다림이 아직 누군가의 것인가**다. 재기동은 사람이 예약을
    * 취소했는지(`restarting`), 회전은 회전이 아직 도는지(`reissuing`)를 본다. 두 호출자가
    * 같은 집합을 보게 두면 한쪽의 취소가 다른 쪽의 기다림을 조용히 끊는다.
    */
-  private async awaitRunnerExit(agentId: string, stillWanted: () => boolean): Promise<boolean> {
+  private async awaitRunnerExit(
+    agentId: string, stillWanted: () => boolean,
+  ): Promise<'exited' | 'timeout' | 'abandoned'> {
     const intervalMs = this.restartWait.intervalMs ?? 2_000;
     const timeoutMs = this.restartWait.timeoutMs ?? 15 * 60_000;
     const wait = this.restartWait.wait ?? ((ms: number) => new Promise<void>((r) => { setTimeout(r, ms); }));
     const deadline = this.now() + timeoutMs;
 
     for (;;) {
-      if (this.disposed || !stillWanted()) return false;
+      if (this.disposed || !stillWanted()) return 'abandoned';
       let alive: boolean;
       try {
         const observation = await this.observeAndPublish();
@@ -1026,8 +1091,8 @@ export class RunnerLauncher {
         // 여기서 죽었다고 단정하면 살아 있는 러너 옆에 두 번째를 띄운다.
         alive = true;
       }
-      if (!alive) return true;
-      if (this.now() >= deadline) return false;
+      if (!alive) return 'exited';
+      if (this.now() >= deadline) return 'timeout';
       await wait(intervalMs);
     }
   }
@@ -1237,7 +1302,8 @@ export class RunnerLauncher {
       status: 'restarting', exitCode: null,
       message: this.t('runner.reissue.waiting'),
     });
-    const gone = toldDaemon && await this.awaitRunnerExit(agentId, () => this.reissuing.has(agentId));
+    const gone = toldDaemon
+      && await this.awaitRunnerExit(agentId, () => this.reissuing.has(agentId)) === 'exited';
 
     // 옛 것을 폐기한다. 여기서 실패하면 폐기되지 않은 PAT 가 남으므로 **삼키지 않는다** —
     // 자식은 새 PAT 로 다시 띄우되(새 PAT 는 이미 유효하다) 사람에게 남은 일을 말한다.
