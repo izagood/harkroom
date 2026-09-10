@@ -16,6 +16,48 @@ export interface AvcsLogEntry {
   intentOid: string | null;
   summary: string;
   lease?: { path: string; expiresAt: string; released: boolean };
+  /**
+   * operation 의 선언된 파급(`Operation.effects`). 협업 탭의 줄이 말하는 넷 중
+   * **"무엇을 건드리나"** 가 이것이다(`desktop-collab.html`) — 제목만으로는 "읽고 넘길 제안"과
+   * "지금 봐야 하는 제안"이 구분되지 않는다. 원본은 `reads`·`changesBehavior`·`breaksPublicApi`
+   * 셋인데 `reads` 는 화면에 그리지 않으므로(경로 목록은 줄이 아니라 상세의 재료다) 싣지 않는다.
+   */
+  effects?: { changesBehavior: boolean; breaksPublicApi: boolean };
+}
+
+/**
+ * `GET /reduced?view=` 가 주는 파생 상태(avcs `docs/26` §6-4). **직접 reduce 하지 않는 이유**가
+ * 이 타입의 존재 이유다 — 같은 값을 murmur 가 두 번째로 계산하면 두 구현이 갈라지고, 화면이
+ * avcs 와 다른 판정을 말하게 된다.
+ *
+ * `cursor`·`materializer` 를 함께 싣는 것은 화면이 **"어느 시점의, 어느 환원기의 판정인가"** 를
+ * 말할 수 있게 하기 위해서다. 이 응답은 권위가 아니라 복제본이 계산했을 값이고, 그 사실을
+ * 숨기면 얇은 클라이언트가 자기가 본 것을 사실로 주장하게 된다.
+ */
+export interface AvcsReduced {
+  view: string;
+  cursor: number;
+  materializer: string;
+  treeHash: string;
+  /** op oid → `proposed`·`validating`·`accepted`·`rejected`·`superseded`·`needs_decision`·`quarantined` */
+  statuses: Record<string, string>;
+  headOps: string[];
+  conflicts: AvcsConflict[];
+  fileConflicts: unknown[];
+  /** op oid → 왜 막혔는지. 사람이 읽을 문장이다. */
+  blockedReasons: Record<string, string>;
+  untrustedEvidence: number;
+  etag: string | null;
+}
+
+/** 환원기가 내는 충돌 하나(avcs `reducer.ts` 의 `Conflict`). 화면이 쓰는 것만 좁혀 둔다. */
+export interface AvcsConflict {
+  id: string;
+  /** 다투는 대상. 예: `file:src/a.ts` */
+  key: string;
+  kind: string;
+  reason: string;
+  options: { opOid: string; actor: string; purpose: string; blocked?: boolean }[];
 }
 
 export interface AvcsServerClient {
@@ -86,7 +128,17 @@ function toEntries(
         intentOid: oid,
         summary: str(obj.title),
       }];
-    case 'operation':
+    case 'operation': {
+      // effects 는 선택 필드다(선언하지 않은 op 이 흔하다). 없을 때 `{false,false}` 로 채우면
+      // "파급 없음을 선언했다" 와 "선언하지 않았다" 가 같아진다 — 줄에서 칩이 사라지는 것과
+      // 칩을 그릴 근거가 없는 것은 다르므로 필드째 비운다.
+      const eff = obj.effects;
+      const declared = typeof eff === 'object' && eff !== null
+        ? {
+            changesBehavior: (eff as { changesBehavior?: unknown }).changesBehavior === true,
+            breaksPublicApi: (eff as { breaksPublicApi?: unknown }).breaksPublicApi === true,
+          }
+        : undefined;
       return [{
         logIndex,
         oid,
@@ -94,7 +146,9 @@ function toEntries(
         actorKeyId: actorId(obj.actor),
         intentOid: str(obj.intentOid) || null,
         summary: str(obj.declaredPurpose),
+        ...(declared ? { effects: declared } : {}),
       }];
+    }
     case 'decision': {
       const ref = referencedOp(obj);
       return [{
@@ -246,5 +300,44 @@ export function httpAvcsClient(baseUrl: string): AvcsServerClient {
       }
       return { entries, next };
     },
+  };
+}
+
+/**
+ * 파생 상태를 한 번 읽는다. **없으면 `null` 이고, 그것은 오류가 아니다** — 환원 평면은
+ * 프로토콜에서 선택이라(`docs/26` §0) 서빙하지 않는 서버는 404 로 답하고 `/version` 이
+ * `reduced: false` 라고 말한다. 미러나 부분 서버를 상대로도 협업 탭이 뜨긴 해야 하고,
+ * 그때 화면이 말할 것은 "상태를 모른다" 이지 "터졌다" 가 아니다.
+ *
+ * ETag 를 함께 돌려주는 것은 다음 호출에 `If-None-Match` 로 넣기 위해서다 — 서버가 304 로
+ * 끊어 주면 환원을 다시 돌리지 않는다.
+ */
+export async function fetchReduced(
+  baseUrl: string, repo: string, view = 'main', etag?: string | null,
+): Promise<AvcsReduced | null | 'not-modified'> {
+  const base = baseUrl.replace(/\/$/, '');
+  const res = await fetch(
+    `${base}/${repoPath(repo)}/reduced?view=${encodeURIComponent(view)}`,
+    {
+      headers: etag ? { 'if-none-match': etag } : {},
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+  if (res.status === 304) return 'not-modified';
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`avcs reduced failed: ${res.status}`);
+  const body = (await res.json()) as Partial<AvcsReduced>;
+  return {
+    view: str(body.view) || view,
+    cursor: typeof body.cursor === 'number' ? body.cursor : 0,
+    materializer: str(body.materializer),
+    treeHash: str(body.treeHash),
+    statuses: (body.statuses ?? {}) as Record<string, string>,
+    headOps: strList(body.headOps),
+    conflicts: Array.isArray(body.conflicts) ? (body.conflicts as AvcsConflict[]) : [],
+    fileConflicts: Array.isArray(body.fileConflicts) ? body.fileConflicts : [],
+    blockedReasons: (body.blockedReasons ?? {}) as Record<string, string>,
+    untrustedEvidence: typeof body.untrustedEvidence === 'number' ? body.untrustedEvidence : 0,
+    etag: res.headers.get('etag'),
   };
 }
