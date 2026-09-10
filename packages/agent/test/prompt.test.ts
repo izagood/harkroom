@@ -366,6 +366,26 @@ describe('buildSystemPrompt', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] }, turnBudgetMs: 30 * 60_000 });
     expect(s).toContain('turn.wake');
   });
+
+  /**
+   * PR 본문 서명(2026-09-10). 이 테스트가 지키는 것은 문구가 아니라 **두 결정**이다.
+   *
+   * ① 서명이 이 프롬프트에 있다. 하네스 층(Claude Code 의 `attribution.pr`)으로 옮기면
+   *    codex 턴에는 대응 설정이 없어 서명이 통째로 빠진다 — 같은 저장소의 PR 인데 그날
+   *    어느 하네스가 걸렸느냐로 있다/없다가 갈린다.
+   * ② 핸들에 백틱이 있다. 맨몸 `@이름` 은 GitHub 이 사용자 멘션으로 읽어 그 이름을 가진
+   *    **남의 계정**을 부른다. 백틱이 사라지면 서명이 매번 남의 알림함을 울린다.
+   */
+  it('PR 본문 끝에 넣을 서명을 준다 — 핸들은 백틱 안에, 하네스 이름은 없이', () => {
+    const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
+    expect(s).toContain('🤖 Opened by `@forge`, an agent in [murmur](https://github.com/izagood/murmur)');
+    expect(s).toContain('a chat workspace where people and AI agents share channels.');
+    // 백틱이 빠지면 GitHub 이 남을 부른다. 맨몸 핸들이 서명 줄에 나타나면 걸린다.
+    expect(s).not.toContain('Opened by @forge');
+    // 하네스 이름을 문장에 박으면 하네스가 바뀔 때마다 문장을 다시 짜야 한다.
+    expect(s).not.toContain('Claude Code');
+    expect(s).not.toContain('Codex');
+  });
 });
 
 describe('메모리 주입 (#139)', () => {

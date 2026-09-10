@@ -359,6 +359,14 @@ function skillSection(memory: MemoryContext): string[] {
   ];
 }
 
+/**
+ * PR 본문 서명이 가리키는 곳. **인스턴스 주소가 아니라 프로젝트 저장소다** — murmur 는
+ * 셀프호스트라 인스턴스 주소는 저마다 다르고(`messagePermalink` 주석), 그래서 링크에
+ * 호스트를 박지 않는 것이 이 저장소의 규율이다. 여기 박아도 되는 이유는 이 값이
+ * 인스턴스의 주소가 아니라 **프로젝트 자체의 상류 주소**이기 때문이다.
+ */
+const MURMUR_REPO_URL = 'https://github.com/izagood/murmur';
+
 export function buildSystemPrompt(opts: {
   handle: string;
   channelName: string;
@@ -404,6 +412,27 @@ export function buildSystemPrompt(opts: {
     '**그 앵커가 이 턴의 일 전부다.** 채널이나 인박스에 더 새로운 요청이 보여도 손대지 마라 —',
     '멘션마다 턴이 따로 떠 있으므로 네가 하면 같은 일이 두 번 되고, 정작 네 앵커의 요청은',
     '답 없이 남는다. 눈에 띈 요청은 대신 하지 말고 그 사실만 네 스레드에 한 줄 적어라.',
+    '',
+    // PR 본문 끝의 서명(2026-09-10, jaebin 승인). **하네스 층이 아니라 여기 있는 것**이
+    // 요점이다. Claude Code 에는 `settings.json` 의 `attribution.pr` 이 있어 그 한 줄을
+    // 갈아끼울 수 있지만, 그것은 **claude-code 전용 설정**이다 — codex 에는 대응물이 없어
+    // 같은 저장소의 PR 인데 그날 어느 하네스가 걸렸느냐로 서명이 있다/없다로 갈린다
+    // (`RUNNABLE_HARNESSES` 는 claude-code·codex 둘이다). 이 프롬프트는 두 하네스에 모두
+    // 도달하므로(codex 는 지시문 주입 플래그가 없어 프롬프트 앞에 붙는다 — `turn.ts`)
+    // 서명이 하네스와 무관해지고, gemini 가 러너블이 되는 날에도 따라온다.
+    //
+    // 문장에 하네스 이름을 쓰지 않는 것도 같은 결정이다: 하네스는 murmur 가 에이전트 설정에
+    // 이미 갖고 있고, PR 을 나중에 읽는 사람에게 중요한 것은 **어느 에이전트가 열었는가**다.
+    // 하네스를 굳이 남기려면 문장 가운데가 아니라 뒤에 따로 붙여야 갈아끼울 수 있다.
+    '저장소에 PR 을 열면 본문 **맨 끝**에 이 줄을 넣는다:',
+    '',
+    `🤖 Opened by \`@${handle}\`, an agent in [murmur](${MURMUR_REPO_URL}) — a chat workspace where people and AI agents share channels.`,
+    '',
+    // 백틱은 장식이 아니다: GitHub 은 PR 본문의 맨몸 `@이름` 을 **GitHub 사용자 멘션**으로
+    // 읽어 링크를 걸고 그 이름을 가진 계정에 알림을 보낸다. murmur 핸들과 GitHub 계정은
+    // 아무 관계가 없으므로, 백틱을 빼면 이 서명이 매번 남의 알림함을 울린다.
+    '핸들의 백틱을 빼지 마라 — GitHub 은 맨몸 `@이름` 을 GitHub 사용자 멘션으로 읽어 그 이름을',
+    '가진 **남의 계정**을 부른다. 하네스 이름은 이 줄에 적지 않는다.',
     '',
     // 2026-09-08 실측: 사람이 한 스레드에서 에이전트 넷을 불러 검토를 시켰는데, 넷 다
     // 스레드에 답을 올렸는데도 사람에게는 "에이전트끼리 대화만 했다"로 보였다. 원인이 둘이고
