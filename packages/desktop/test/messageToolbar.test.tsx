@@ -42,6 +42,8 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   usePrefsStore.getState().setLocale('system');
+  // 클립보드를 갈아 끼운 테스트가 있다 — 다음 테스트가 그 자리를 물려받지 않게 되돌린다.
+  Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true, writable: true });
 });
 
 describe('message toolbar', () => {
@@ -126,6 +128,36 @@ describe('overflow menu permissions', () => {
     expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull();
     // 리액션은 남의 메시지에도 달 수 있다.
     expect(within(toolbar).getByRole('button', { name: 'Add reaction' })).toBeTruthy();
+  });
+
+  /**
+   * 복사 **성공**에는 아무것도 띄우지 않는다. `Notice` 는 실패를 세우는 자리다 —
+   * 경고색이고 저절로 사라지지 않아 사람이 ×를 눌러야 한다. 'Link copied.' 를 거기에
+   * 태웠더니 잘 된 일이 창 제일 위를 노랗게 덮고, 그것을 사람이 손으로 치워야 했다.
+   * 실패는 그대로 남는다 — 링크는 화면 어디에도 안 보이므로 조용히 삼키면 사람은
+   * 붙여넣기를 해 보고 나서야 안 됐다는 것을 안다.
+   */
+  it('링크 복사가 되면 알림을 띄우지 않는다', async () => {
+    fakeController();
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true, writable: true });
+    render(<MessageItem message={msg('m1', 'c1', 1, 'hello', 'u2')} />);
+
+    fireEvent.click(screen.getByTestId('toolbar-copy-link'));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    expect(useAppStore.getState().notice).toBeNull();
+  });
+
+  it('링크 복사가 실패하면 링크를 실어 알린다', async () => {
+    fakeController();
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true, writable: true });
+    render(<MessageItem message={msg('m1', 'c1', 1, 'hello', 'u2')} />);
+
+    fireEvent.click(screen.getByTestId('toolbar-copy-link'));
+
+    await waitFor(() => expect(useAppStore.getState().notice).toMatch(/Could not copy the link/));
+    expect(useAppStore.getState().notice).toContain('m1');
   });
 
   it('shows no Edit/Delete for system message', () => {

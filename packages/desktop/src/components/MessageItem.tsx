@@ -360,13 +360,17 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    * 클립보드에 담는다(#178). **실패를 조용히 삼키지 않는다** — 삼키면 사람은
    * 붙여넣기를 시도하고 나서야 안 됐다는 것을 알고, 그때는 어느 메시지였는지도 잊는다.
    * 실패 문구를 부르는 쪽이 정하는 이유는 손으로 복사할 길이 대상마다 다르기 때문이다(#179).
+   *
+   * **성공에는 아무것도 띄우지 않는다.** 원래는 'Link copied.' 를 같은 `Notice` 에 실었는데
+   * 그 자리는 실패를 세우는 자리다 — 다른 발신자가 세우는 것도 전부 실패이고, 색도 경고색이며,
+   * 저절로 사라지지 않아 사람이 ×를 눌러야 한다. 성공을 거기에 태우면 창 제일 위가 노랗게
+   * 덮이고, 잘 된 일을 사람이 손으로 치워야 한다. 복사가 됐다는 것은 붙여넣으면 바로 안다.
    */
-  const copyToClipboard = async (text: string, ok: string, fail: string) => {
+  const copyToClipboard = async (text: string, fail: string) => {
     try {
       // clipboard 자체가 없는 환경(비보안 컨텍스트)도 실패다 — 같은 자리에서 잡는다.
       if (!navigator.clipboard) throw new Error('no clipboard');
       await navigator.clipboard.writeText(text);
-      useActiveStore.getState().set({ notice: ok });
     } catch {
       useActiveStore.getState().set({ notice: fail });
     }
@@ -376,7 +380,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   // 손으로 복사할 길이 남는다.
   const copyLink = () => {
     const link = messagePermalink(message.id);
-    return copyToClipboard(link, 'Link copied.', `Could not copy the link. Copy it by hand: ${link}`);
+    return copyToClipboard(link, `Could not copy the link. Copy it by hand: ${link}`);
   };
 
   /**
@@ -393,7 +397,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    * 긴 메시지를 알림에 통째로 밀어 넣으면 알림이 화면을 덮는다.
    */
   const copyBody = () =>
-    copyToClipboard(bodyAsHandles(message.body, accounts), 'Message copied.', 'Could not copy the message. Select it in the message and copy by hand.');
+    copyToClipboard(bodyAsHandles(message.body, accounts), 'Could not copy the message. Select it in the message and copy by hand.');
 
   /**
    * 대기 줄(마이그레이션 040)은 말풍선이 아니다 — 발화가 아니므로 리액션·툴바·스레드
