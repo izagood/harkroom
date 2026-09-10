@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_CHAIN_LIMIT, mentionedHandles, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type MessageRow } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_CHAIN_LIMIT, mentionedHandles, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { channelVisibleSql } from './channels.js';
 import { emitEvent } from '../events.js';
@@ -351,10 +351,17 @@ const REVEAL_REASONS: ReadonlySet<InboxEntry['reason']> = new Set(['mention', 't
 
 async function insertInbox(
   client: PoolClient, accountId: string, messageId: string, reason: InboxEntry['reason'], notified: Set<string>,
+  /**
+   * 팀 부름이면 그 팀(047). `reason === 'team_mention'` 과 짝이다 — 다른 사유에는 넘기지
+   * 않는다. 인자를 하나 더 두는 것이 이 함수의 관문 성격(위 주석: 부름을 만드는 자리는
+   * 여기 하나다)을 지키는 유일한 방법이다: 팀 부름만 따로 insert 하면 숨김 되돌리기가
+   * 그 경로에서 빠진다.
+   */
+  teamId?: string,
 ): Promise<void> {
   await client.query(
-    `insert into inbox (account_id, message_id, reason) values ($1, $2, $3)`,
-    [accountId, messageId, reason],
+    `insert into inbox (account_id, message_id, reason, team_id) values ($1, $2, $3, $4)`,
+    [accountId, messageId, reason, teamId ?? null],
   );
   /**
    * 숨김 되돌리기(#376 결정 B) — **부름은 숨김을 뚫는다.** 이 자리인 이유: inbox 항목을
@@ -413,6 +420,12 @@ async function fanOutMention(
   input: { channelId: string; authorId: string; messageId: string },
   candidateIds: string[] | null,
   notified: Set<string>,
+  /**
+   * 팀장 하나를 부르는 경우의 사유와 팀(047). 기본값이 `'mention'` 인 이유: 이 함수의
+   * 호출부 셋(`@channel`·집합·팀 폴백)은 전부 평범한 부름이고, 그것을 각 호출부가
+   * 적어야 하게 만들면 한 곳이 틀렸을 때 사유가 조용히 갈린다.
+   */
+  call: { reason: InboxEntry['reason']; teamId?: string } = { reason: 'mention' },
 ): Promise<void> {
   if (candidateIds !== null && candidateIds.length === 0) return;
   const audience = await client.query<{ id: string }>(
@@ -423,7 +436,9 @@ async function fanOutMention(
     [input.channelId, input.authorId, candidateIds],
   );
   for (const row of audience.rows) {
-    if (!notified.has(row.id)) await insertInbox(client, row.id, input.messageId, 'mention', notified);
+    if (!notified.has(row.id)) {
+      await insertInbox(client, row.id, input.messageId, call.reason, notified, call.teamId);
+    }
   }
 }
 
@@ -810,10 +825,41 @@ export async function postMessage(
       if (!team) continue;
 
       const teamMembers = await listTeamMembers(client, team.id);
+      const awake = teamMembers.filter((m) => !m.disabled);
+
+      /**
+       * **팀장이 있으면 팀장 하나만 깨운다**(047 · 046 의 `lead_account_id` 를 읽는 자리).
+       *
+       * 이 두 줄이 팀 멘션의 뜻을 바꾼다: 지금까지 `@팀` 은 명단을 펼치는 것이었고, 그래서
+       * 턴이 팀원 수만큼 떠 같은 요청을 각자 처음부터 풀었다. 팀장이 정해져 있으면 그
+       * 부름은 **창구 하나**로 간다 — 나눌 일은 팀장이 `@팀원` 으로 나눈다.
+       *
+       * ## 폴백이 있는 이유 (jaebin 승인)
+       *
+       * 팀장이 **없거나 비활성**이면 지금까지의 동작(전원)을 그대로 쓴다. 팀장만 부르고
+       * 마는 쪽이 더 단순하지만, 그러면 팀 멘션이 **아무도 깨우지 않는 침묵**이 된다 —
+       * 팀장 지정은 선택이므로(046) 지정하지 않은 팀이 정상 상태이고, 비활성 계정은 턴을
+       * 시작하지 못한다(위 문단: inbox 항목은 러너가 턴을 시작하는 신호다). 부름이 조용히
+       * 사라지는 것이 여럿 깨는 것보다 나쁘다.
+       *
+       * 비활성 판정을 `awake` 로 한 번에 하는 이유: 팀장도 팀원이므로(046 의 복합 FK)
+       * 같은 필터를 통과해야 한다. 팀장이 비활성인데 그를 골라 넣으면 위 문단이 막으려는
+       * 바로 그것 — 아무도 읽지 않는 항목 — 이 된다.
+       *
+       * `notified` 중복 제거는 `fanOutMention` 이 그대로 한다. 그래서 팀장이 이 발화에서
+       * 이미 이름으로 불렸다면(`@ops @lead`) 팀 부름은 그를 건너뛴다 — 그때 그 턴은
+       * 평범한 멘션으로 도므로 명단을 못 받는다. 한 발화에서 팀과 팀장을 함께 부르는
+       * 것은 팀을 부른 것과 같은 뜻이므로 손해가 없다(둘 다 팀장의 턴 하나다).
+       */
+      const lead = team.leadAccountId !== null && awake.some((m) => m.accountId === team.leadAccountId)
+        ? team.leadAccountId
+        : null;
+
       await fanOutMention(
         client, { ...input, messageId: message.id },
-        teamMembers.filter((m) => !m.disabled).map((m) => m.accountId),
+        lead === null ? awake.map((m) => m.accountId) : [lead],
         notified,
+        lead === null ? { reason: 'mention' } : { reason: 'team_mention', teamId: team.id },
       );
     }
 
@@ -1415,7 +1461,10 @@ export async function listInbox(
             -- 줄이 네 가지를 말할 재료(#488 C2): 누가 · 무슨 말 · 무엇을 · 언제·어디.
             -- 이미 message 를 join 하고 있었으므로 컬럼만 더한다 — 새 왕복이 없다.
             m.author_id as "authorId", m.body, m.meta,
-            m.created_at as "createdAt", m.thread_root_id as "threadRootId"
+            m.created_at as "createdAt", m.thread_root_id as "threadRootId",
+            -- 팀 부름의 팀(047). 명단은 아래에서 한 번에 채운다 — 여기서 join 하면
+            -- 팀원 수만큼 행이 불어나 항목이 여러 번 나온다.
+            i.team_id as "teamId"
      from inbox i join message m on m.id = i.message_id
      -- 지워진 말은 인박스에도 남지 않는다. 본문을 싣기 시작했으므로 이 조건이 없으면
      -- 지운 글이 인박스 줄에 그대로 보인다(전에는 id 만 실어 보이지 않았다).
@@ -1424,7 +1473,57 @@ export async function listInbox(
      order by i.id`,
     [accountId],
   );
-  return res.rows;
+
+  /**
+   * 팀 부름에 **명단을 붙인다**(047). 팀장은 이것으로 누구에게 무엇을 넘길지 판단한다 —
+   * 명단이 없으면 근거가 없어 결국 혼자 다 한다(`InboxTeamCall` 주석).
+   *
+   * **행마다 조회하지 않는다.** 팀 부름은 드물지만 한 폴이 여러 개를 가져올 수 있고,
+   * 그때 팀마다 왕복하면 폴 지연이 팀 수에 비례한다. 팀 id 를 모아 한 번에 읽는다.
+   *
+   * `specialty` 는 지시문 **첫 줄**이다. 자르는 근거는 `InboxTeamCall` 주석에 있다.
+   * 빈 문자열은 `null` 로 접는다 — 지시문이 빈 에이전트가 있고, 그대로 흘리면 프롬프트가
+   * "전문 영역: " 을 그린다.
+   *
+   * 팀이 그 사이 지워졌으면(047 의 `on delete set null`) 이 조회가 아무 행도 주지 않고
+   * 항목은 `team` 없이 나간다 — 러너는 팀 블록 없이 평범한 부름처럼 처리한다.
+   */
+  const rows = res.rows as (InboxEntry & { teamId?: string | null })[];
+  const teamIds = [...new Set(rows.map((r) => r.teamId).filter((id): id is string => typeof id === 'string'))];
+  if (teamIds.length) {
+    const teams = await pool.query(
+      `select t.id, t.name, tm.agent_account_id as "accountId", a.handle,
+              nullif(split_part(coalesce(ac.instructions, ''), E'\n', 1), '') as specialty,
+              a.disabled_at is not null as disabled
+         from agent_team t
+         join agent_team_member tm on tm.team_id = t.id
+         join account a on a.id = tm.agent_account_id
+         left join agent_config ac on ac.account_id = a.id
+        where t.id = any($1)
+        order by a.handle`,
+      [teamIds],
+    );
+    const byTeam = new Map<string, InboxTeamCall>();
+    for (const row of teams.rows) {
+      let call = byTeam.get(row.id);
+      if (!call) {
+        call = { id: row.id, name: row.name, members: [] };
+        byTeam.set(row.id, call);
+      }
+      call.members.push({
+        accountId: row.accountId, handle: row.handle,
+        specialty: row.specialty ?? null, disabled: row.disabled,
+      });
+    }
+    for (const row of rows) {
+      const call = typeof row.teamId === 'string' ? byTeam.get(row.teamId) : undefined;
+      if (call) row.team = call;
+    }
+  }
+  // `teamId` 는 계약이 아니다(`InboxEntry` 에 없다) — 명단으로 옮긴 뒤 지운다. 남겨 두면
+  // 화면·러너가 그 값을 읽기 시작하고, 그러면 명단과 id 라는 두 출처가 생긴다.
+  for (const row of rows) delete row.teamId;
+  return rows;
 }
 
 /** 읽음 처리된 항목 수를 돌려준다. account_id 스코프이므로 남의 entry id 는 아무 것도 지우지 않는다. */

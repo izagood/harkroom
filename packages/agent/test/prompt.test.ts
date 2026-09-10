@@ -219,6 +219,78 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
   });
 });
 
+/**
+ * 팀 블록(047) — **팀장으로 불린 턴**의 프롬프트.
+ *
+ * 이 블록이 없으면 서버가 창구를 하나로 좁혀도 달라지는 것은 "혼자 다 한다" 뿐이다:
+ * 팀장은 팀원이 누구인지 모른다(inbox 사유가 `mention` 하나였던 동안 그랬다). 그래서
+ * 여기서 재는 것은 두 가지다 — **누가 있는가**(명단)와 **네가 무엇인가**(창구).
+ */
+describe('buildTurnPrompt — 팀 호출(047)', () => {
+  const handles = { u1: 'jaebin', a1: 'forge', a2: 'scout', a3: 'codex' };
+  const team = {
+    id: 't1', name: 'release',
+    members: [
+      { accountId: 'a1', handle: 'forge', specialty: null, disabled: false },
+      { accountId: 'a2', handle: 'scout', specialty: '검색·조사 담당', disabled: false },
+      { accountId: 'a3', handle: 'codex', specialty: null, disabled: true },
+    ],
+  };
+  const call = () => buildTurnPrompt({
+    messages: [msg(10, 'u1', '@release 배포 준비해라')],
+    lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
+    murmurUrl: 'http://localhost:3400', team,
+  });
+
+  it('팀 이름과 명단을 싣고, 팀장이라는 것을 말한다', () => {
+    const { prompt } = call();
+    expect(prompt).toContain('@release');
+    expect(prompt).toContain('팀장');
+    expect(prompt).toContain('@scout');
+    // 전문 영역이 있으면 함께 — 팀장이 "누구에게 넘길까"에 답할 근거다.
+    expect(prompt).toContain('검색·조사 담당');
+  });
+
+  it('자기 줄에 `(너)` 가 붙는다 — 자기에게 넘기려 드는 것을 막는다', () => {
+    // 명단에서 자기를 **빼지 않는다**: 팀장도 팀원이므로(046 의 복합 FK) 빠지면 팀 크기를
+    // 잘못 판단한다. 그래서 지우는 대신 표시한다.
+    expect(call().prompt).toContain('@forge (너)');
+  });
+
+  it('비활성 팀원은 남기고 "깨지 않는다"를 함께 적는다', () => {
+    const { prompt } = call();
+    expect(prompt).toContain('@codex');
+    // 036 의 "명단을 지우지 않는다" 와 같은 판단 — 지우면 팀장은 그 이름을 아예 모르고,
+    // 사람이 "왜 codex 를 안 썼나" 라고 물을 때 답할 근거가 없다.
+    expect(prompt).toContain('넘겨도 깨지 않는다');
+  });
+
+  it('사람의 발화가 함께 실린다 — 팀 블록은 델타를 대신하지 않는다', () => {
+    const { prompt } = call();
+    // `wake` 와 다른 점이다: 팀 부름에는 사람의 새 발화가 **있다**. 그것이 사라지면
+    // 팀장은 명단만 받고 무슨 일을 하라는 것인지 모른다.
+    expect(prompt).toContain('jaebin: @release 배포 준비해라');
+    // 그리고 블록이 그 발화 **앞**에 선다 — 사람의 말을 팀의 일로 읽어야 한다.
+    expect(prompt.indexOf('팀 호출')).toBeLessThan(prompt.indexOf('jaebin:'));
+  });
+
+  it('기다리지 말라고 말한다 — 위임 왕복이 아직 없다', () => {
+    // 팀원이 스레드에 답해도 팀장은 깨지 않는다(`thread_reply` 는 스레드 루트 작성자에게만
+    // 간다). 이 말이 없으면 팀장은 "취합하겠다"는 실행 불가능한 계획을 세운다.
+    expect(call().prompt).toContain('기다리지는 마라');
+  });
+
+  it('팀이 없으면 블록이 아예 없다 — 평범한 부름은 그대로다', () => {
+    const { prompt } = buildTurnPrompt({
+      messages: [msg(10, 'u1', '@forge 이거 봐줘')],
+      lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
+      murmurUrl: 'http://localhost:3400',
+    });
+    expect(prompt).not.toContain('팀 호출');
+    expect(prompt).toContain('jaebin: @forge 이거 봐줘');
+  });
+});
+
 describe('buildSystemPrompt', () => {
   it('지시문과 guide 를 싣고 8000자 규칙을 명시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '친절하게', guide: 'G규칙', memory: { core: null, slugs: [] } });

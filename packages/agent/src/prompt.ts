@@ -6,7 +6,7 @@
 // 세션이 이미 아는 것까지 다시 넘길 필요가 없다 — 그 경계가 `lastFedSeq` 다. 그리고 예전엔
 // 러너가 모델 응답을 파싱해 대신 올렸지만, 이제 에이전트가 murmur MCP `message.post` 로
 // 스스로 올린다 — 그래서 시스템 프롬프트가 "어디에 쓸지"까지 알려줘야 한다.
-import { messagePermalink, type MessageRow } from '@murmur/shared';
+import { messagePermalink, type MessageRow, type InboxTeamCall } from '@murmur/shared';
 
 /** 서버의 메시지 본문 상한(`POST /channels/:id/messages` 의 zod `max(8000)`). 넘기면 발화가 실패한다. */
 export const BODY_LIMIT = 8000;
@@ -495,6 +495,67 @@ export function buildSystemPrompt(opts: {
   ].join('\n');
 }
 
+/**
+ * 팀장으로 불린 턴의 **팀 블록**(047).
+ *
+ * ## 무엇을 적는가, 그리고 왜
+ *
+ * 이 블록이 없던 동안 팀 부름은 팀원 수만큼 턴을 띄웠고, 각 턴은 자기가 팀으로 불렸다는
+ * 사실조차 몰랐다(inbox 사유가 `mention` 하나였다). 그래서 넷이 같은 요청을 각자 처음부터
+ * 풀고 넷이 각자 사람에게 답했다 — 서버가 창구를 하나로 좁혀도(047) 그 하나가 **명단을
+ * 모르면** 달라지는 것은 "혼자 다 한다" 뿐이다. 그래서 두 가지를 함께 적는다:
+ * **누가 있는가**(명단)와 **네가 무엇인가**(창구).
+ *
+ * `@` 를 붙여 적는 이유: 넘길 때 쓰는 문자열이 그대로 보여야 한다. 대신 **맨 앞에 두어야
+ * 턴이 뜬다**는 것을 함께 말한다 — 그 규칙은 워크스페이스 가이드에도 있지만, 여기서 명단을
+ * 주면서 말하지 않으면 팀장은 문장 가운데에 이름을 적고 아무도 오지 않는 것을 본다.
+ *
+ * 비활성 팀원을 **지우지 않고 표시한다**. 036 이 정한 것과 같은 판단이다(*"명단을 지우지
+ * 않는다"*): 지우면 팀장은 그 이름을 아예 모르고, 사람이 "왜 codex 를 안 썼나" 라고 물을 때
+ * 답할 근거가 없다. 넘겨도 깨지 않는다는 사실을 함께 적어 **고르지 않게** 만드는 것이 맞다.
+ *
+ * 자기 자신은 명단에서 **빼지 않는다** — 팀장도 팀원이고(046 의 복합 FK), 목록에서 자기가
+ * 빠지면 "이 팀은 나 말고 셋" 처럼 읽혀 팀 크기를 잘못 판단한다. 대신 그 줄에 `(너)` 를
+ * 붙인다: 자기에게 넘기려 드는 것을 막는 가장 짧은 표시다.
+ *
+ * ## 기다리지 않는다는 것을 말한다
+ *
+ * 지금은 위임 왕복이 없다 — 팀원이 스레드에 답해도 팀장은 깨지 않는다(`thread_reply` 는
+ * 스레드 루트 작성자에게만 간다). 그 사실을 적지 않으면 팀장은 "팀원 답을 기다렸다가
+ * 취합하겠다" 는 계획을 세우고, 그 계획은 실행되지 않는다(프로세스가 끝나면 턴이 죽는다 —
+ * `buildSystemPrompt` 의 그 문단이 같은 공백을 메운다). 그래서 넘긴 턴은 **넘겼다는 것을
+ * 사람에게 말하고 끝내는 것**이 지금의 올바른 종료다.
+ */
+function teamSection(team: InboxTeamCall, meId: string, handles: Record<string, string>): string[] {
+  const myHandle = handles[meId];
+  const roster = team.members.map((m) => {
+    const marks = [
+      m.accountId === meId ? '너' : null,
+      m.disabled ? '비활성 — 넘겨도 깨지 않는다' : null,
+    ].filter((x): x is string => x !== null);
+    const suffix = marks.length ? ` (${marks.join(' · ')})` : '';
+    return `- @${m.handle}${suffix}${m.specialty ? ` — ${m.specialty}` : ''}`;
+  });
+  return [
+    `(팀 호출 — 너는 팀 @${team.name} 의 팀장으로 불렸다${myHandle ? `, @${myHandle}` : ''})`,
+    '',
+    '이 부름은 **너 하나만** 깨웠다. 팀원들은 이 요청을 모른다 — 사람과 이야기하는 창구가',
+    '너라는 뜻이고, 최종 답은 네가 쓴다.',
+    '',
+    `팀 @${team.name} 의 팀원:`,
+    ...roster,
+    '',
+    '네 전문 영역이면 넘기지 말고 **직접 해라** — 넘기는 값은 턴 하나이고 그것이 늘 싼 것은',
+    '아니다. 넘길 것이 있으면 그 팀원을 `@handle` 로 부르는데, **본문 맨 앞**에 두어야 그',
+    '턴이 뜬다(가운데에 적으면 아무도 오지 않는다).',
+    '',
+    '**넘긴 답을 기다리지는 마라.** 팀원이 스레드에 답해도 너는 깨지 않는다 — 넘겼다면',
+    '무엇을 누구에게 넘겼는지 사람에게 말하고 이 턴을 끝낸다. 결과를 이어받아야 하면',
+    '`turn.wake` 로 다시 볼 시각을 예약해라.',
+    '',
+  ];
+}
+
 /** 한 줄로 렌더링한다. handles 에 없는 작성자는 알 수 없는 사용자로 표시한다(reply.ts 의 기존 정책 계승) —
  * avcs 투영이 만드는 system 메시지 등, 호출 시점에 handles 맵이 못 따라온 작성자가 있을 수 있다. */
 function renderLine(m: MessageRow, handles: Record<string, string>): string {
@@ -582,8 +643,17 @@ export function buildTurnPrompt(opts: {
    * 않고 끝내, 걸어 둔 기다림이 조용히 사라진다.
    */
   wake?: { reason: string };
+  /**
+   * 이 턴이 **팀장으로서 불린 턴**이면 그 팀과 명단(마이그레이션 047).
+   *
+   * `wake` 와 나란히 두지만 뜻이 다르다: `wake` 는 사람의 새 발화가 **없을 때** 델타를
+   * 대신하는 줄이고, 이것은 사람의 발화가 있는 위에 **덧붙는 맥락**이다. 그래서 아래
+   * 조립에서 `toShow` 가 비었는지를 판정할 때 이 값은 세지 않는다 — 팀 부름인데 보여줄
+   * 새 말이 없다면 그것은 이미 답한 말이고, 명단만으로 턴을 한 번 더 돌릴 이유가 없다.
+   */
+  team?: InboxTeamCall;
 }): { prompt: string; fedSeq: number } {
-  const { messages, lastFedSeq, meId, handles, channelId, threadRootId, murmurUrl, wake } = opts;
+  const { messages, lastFedSeq, meId, handles, channelId, threadRootId, murmurUrl, wake, team } = opts;
   const isFirstTurn = lastFedSeq === 0;
 
   const newMessages = messages.filter((m) => m.seq > lastFedSeq);
@@ -611,10 +681,14 @@ export function buildTurnPrompt(opts: {
   // "forge: CI 결과 확인" 으로 보이면 에이전트가 자기 옛 말을 새 요청으로 읽는다.
   // 아래 델타에 사람의 새 발화가 함께 있을 수 있으므로 이 줄은 그것을 대체하지 않고 앞에 선다.
   const wakeLines = wake === undefined ? [] : [`(예약된 후속 턴 — 사유: ${wake.reason})`, ''];
+  const teamLines = team === undefined ? [] : teamSection(team, meId, handles);
   // 안내는 첨부 줄 **뒤**에 선다 — 먼저 무엇이 왔는지 보고 그다음 어떻게 여는지 읽는 순서다.
   // `toShow` 로 판정한다: 보여주지 않은 메시지의 첨부는 프롬프트에 id 가 없어 열 수도 없다.
   const howTo = toShow.some((m) => m.attachments.length) ? attachmentHowTo(murmurUrl) : [];
-  const prompt = [head, '', ...wakeLines, ...lines, ...howTo].join('\n');
+  // 팀 블록은 **델타 앞**이다 — 사람의 말을 읽기 전에 "너는 이 팀의 창구다"를 알아야
+  // 그 말을 팀의 일로 읽는다. `wakeLines` 뒤에 두는 이유: 그 줄은 이 턴이 왜 떴는지이고,
+  // 팀 블록은 이 턴이 무엇인지다(둘이 함께 오는 경우는 예약이 걸린 팀 턴이다).
+  const prompt = [head, '', ...wakeLines, ...teamLines, ...lines, ...howTo].join('\n');
 
   return { prompt, fedSeq };
 }

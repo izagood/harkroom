@@ -490,8 +490,8 @@ export const ko = {
   'agents.teams.leadFailed': '팀장을 바꾸지 못했다',
   /** `en.ts` 의 그 주석이 근거다 — 지금 무엇을 바꾸는지(=아직 아무것도) 적는다. */
   'agents.teams.leadNote':
-    '팀장은 팀을 대표해 말하는 팀원 하나다. @팀 을 부르면 여전히 팀원 전원이 깬다 — '
-    + '팀장은 여기 기록될 뿐 아직 호출에 쓰이지 않는다.',
+    '팀장은 팀을 대표해 말하는 팀원 하나다 — @팀 을 부르면 팀장만 깨고, 나눌 일은 팀장이 '
+    + '나눈다. 팀장이 없거나 비활성이면 전과 같이 팀원 전원이 깬다.',
   'agents.teams.leadSet': '팀장으로',
   'agents.teams.leadSetAction': '팀장으로 지정: {handle}',
   'agents.teams.listFailed': '팀 목록을 받지 못했다',
@@ -1202,6 +1202,7 @@ export const ko = {
   'inbox.label.failure': '막혔다',
   'inbox.label.report': '끝냈다',
   'inbox.label.mention': '불렀다',
+  'inbox.label.teamMention': '팀을 불렀다',
   'inbox.label.reply': '답글',
 
   // ---------------------------------------------------------------------------

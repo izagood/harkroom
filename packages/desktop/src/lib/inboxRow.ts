@@ -77,6 +77,17 @@ export function inboxRow(entry: InboxEntry, myAccountId: string | null, t: Trans
   // `DM` 은 안 옮긴다 — **이 제품의 고유어**다(`waitChain.dm` 이 같은 판단을 이미 했다).
   if (entry.reason === 'dm') return { kind: 'dm', label: 'DM', rank: 1, options: null };
   if (entry.reason === 'mention') return { kind: 'mention', label: t('inbox.label.mention'), rank: 1, options: null };
+  /**
+   * 팀 부름(047) — **부름과 같은 등급이지만 글자가 다르다.** `mention` 으로 뭉치면 팀장이
+   * 자기 인박스에서 "이건 팀으로 온 일" 과 "나를 직접 부른 일" 을 구별할 수 없다. 그 둘은
+   * 다음에 할 일이 다르다(나눌지 직접 할지).
+   *
+   * `rank` 는 부름과 같은 1 이다 — 팀 부름도 사람이 나를 지목한 것이고, 순위를 낮추면
+   * 팀으로 온 요청이 답글 뒤로 밀린다.
+   */
+  if (entry.reason === 'team_mention') {
+    return { kind: 'mention', label: t('inbox.label.teamMention'), rank: 1, options: null };
+  }
   return { kind: 'reply', label: t('inbox.label.reply'), rank: 2, options: null };
 }
 

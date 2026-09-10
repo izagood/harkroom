@@ -304,3 +304,137 @@ describe('세 네임스페이스의 겹침과 해석 순서', () => {
     expect(await inboxFor(a2Pat, messageId)).toEqual([]);
   });
 });
+
+/**
+ * 팀장으로 좁혀지는 부름(047).
+ *
+ * 위 묶음은 **팀장이 없는 팀**을 재고, 그것이 지금도 옛 동작(전원)이라는 회귀선이다.
+ * 여기서 재는 것은 그 위에 얹힌 새 규칙 하나다: **팀장이 있으면 그 하나만 깬다.**
+ *
+ * 팀을 따로 만든다(`leadteam`) — 위 파일 끝의 시험이 `release` 라는 **집합**을 만들고,
+ * 집합이 팀을 이기므로(`services/messages.ts` 의 해석 순서) 그 이름을 다시 쓰면 이 묶음이
+ * 시험 순서에 따라 초록·빨강을 오간다.
+ */
+describe('047 팀장이 있으면 팀장 하나만 깬다', () => {
+  /** 팀을 만들고 팀원을 넣는다. 팀장은 각 시험이 정한다 — 그것이 이 묶음의 축이다. */
+  async function makeTeam(name: string, members: string[]): Promise<string> {
+    const res = await app.inject({
+      method: 'POST', url: '/teams', headers: auth(adminToken), payload: { name },
+    });
+    expect(res.statusCode).toBe(201);
+    const id = res.json().id as string;
+    for (const accountId of members) {
+      const add = await app.inject({
+        method: 'PUT', url: `/teams/${id}/members/${accountId}`, headers: auth(adminToken),
+      });
+      expect(add.statusCode).toBe(200);
+    }
+    return id;
+  }
+
+  const setLead = async (id: string, accountId: string | null): Promise<void> => {
+    const res = await app.inject({
+      method: 'PUT', url: `/teams/${id}/lead`, headers: auth(adminToken), payload: { accountId },
+    });
+    expect(res.statusCode).toBe(200);
+  };
+
+  /** 항목 하나를 통째로 본다 — 사유만 보는 위 헬퍼로는 명단이 실렸는지 알 수 없다. */
+  async function entryFor(pat: string, messageId: string): Promise<{
+    reason: string;
+    team?: { id: string; name: string; members: { handle: string; specialty: string | null; disabled: boolean }[] };
+  } | undefined> {
+    const res = await app.inject({ method: 'GET', url: '/inbox', headers: auth(pat) });
+    expect(res.statusCode).toBe(200);
+    return (res.json().entries as Array<{ reason: string; messageId: string }>)
+      .find((e) => e.messageId === messageId) as never;
+  }
+
+  it('1. 팀장 하나만 깨고 사유가 team_mention 이다', async () => {
+    const id = await makeTeam('leadteam', [a1Id, a2Id]);
+    await setLead(id, a1Id);
+
+    const messageId = await post(adminToken, publicId, '@leadteam 배포 준비해라');
+
+    expect(await inboxFor(a1Pat, messageId)).toEqual([{ reason: 'team_mention' }]);
+    // **이 줄이 이 변경의 전부다.** 팀원은 이 요청을 모른다 — 창구가 하나다.
+    expect(await inboxFor(a2Pat, messageId)).toEqual([]);
+  });
+
+  it('2. 그 항목에 명단이 실린다 — 팀장이 누구에게 넘길지 판단할 근거다', async () => {
+    // 지시문 첫 줄이 `specialty` 로 온다. 둘째 줄은 오지 않는다 — 상한이 없는 값을
+    // 프롬프트에 통째로 싣지 않는다(`InboxTeamCall` 주석).
+    const patched = await app.inject({
+      method: 'PATCH', url: `/accounts/agents/${a2Id}`, headers: auth(adminToken),
+      payload: { instructions: '서버·DB 담당\n두 번째 줄은 오지 않는다' },
+    });
+    expect(patched.statusCode).toBe(200);
+
+    const id = await makeTeam('leadteam2', [a1Id, a2Id, offId]);
+    await setLead(id, a1Id);
+
+    const messageId = await post(adminToken, publicId, '@leadteam2 명단을 실어라');
+    const entry = await entryFor(a1Pat, messageId);
+
+    expect(entry?.reason).toBe('team_mention');
+    expect(entry?.team?.name).toBe('leadteam2');
+    const members = entry?.team?.members ?? [];
+    expect(members.map((m) => m.handle)).toEqual(['tmagent1', 'tmagent2', 'tmoff']);
+    expect(members.find((m) => m.handle === 'tmagent2')?.specialty).toBe('서버·DB 담당');
+    // 지시문이 빈 에이전트는 `null` 이다 — 빈 문자열로 뭉개면 프롬프트가 "전문 영역: " 을 그린다.
+    expect(members.find((m) => m.handle === 'tmagent1')?.specialty).toBeNull();
+    // **비활성 팀원도 명단에 있다**(036 의 "명단을 지우지 않는다"). 지우면 팀장은 그 이름을
+    // 아예 모르고, 사람이 "왜 안 썼나" 라고 물을 때 답할 근거가 없다.
+    expect(members.find((m) => m.handle === 'tmoff')?.disabled).toBe(true);
+  });
+
+  it('3. 팀장이 비활성이면 전원이 깬다 — 부름이 침묵으로 사라지지 않는다', async () => {
+    const id = await makeTeam('leadoff', [a1Id, a2Id, offId]);
+    await setLead(id, offId);
+
+    const messageId = await post(adminToken, publicId, '@leadoff 팀장이 꺼져 있다');
+
+    // 폴백이다. 비활성 계정은 턴을 시작하지 못하므로(inbox 항목은 러너의 시작 신호다)
+    // 팀장만 부르면 그 팀은 죽는다.
+    expect(await inboxFor(a1Pat, messageId)).toEqual([{ reason: 'mention' }]);
+    expect(await inboxFor(a2Pat, messageId)).toEqual([{ reason: 'mention' }]);
+    const off = await pool.query(
+      `select 1 from inbox where account_id = $1 and message_id = $2`, [offId, messageId],
+    );
+    expect(off.rowCount).toBe(0);
+  });
+
+  it('4. 팀장을 팀에서 빼면 다시 전원이 깬다', async () => {
+    const id = await makeTeam('leadgone', [a1Id, a2Id]);
+    await setLead(id, a1Id);
+
+    // 046 의 복합 FK 가 팀장 자리를 함께 비운다 — 그 데이터 층의 정리가 **부름의 뜻까지**
+    // 되돌리는지가 이 시험이 재는 것이다(그 둘이 갈라지면 팀장 없는 팀이 팀장 부름을 한다).
+    const removed = await app.inject({
+      method: 'DELETE', url: `/teams/${id}/members/${a1Id}`, headers: auth(adminToken),
+    });
+    expect(removed.statusCode).toBe(200);
+
+    const messageId = await post(adminToken, publicId, '@leadgone 팀장이 빠졌다');
+    expect(await inboxFor(a2Pat, messageId)).toEqual([{ reason: 'mention' }]);
+    // 빠진 팀장은 이제 팀원이 아니므로 부름이 닿지 않는다.
+    expect(await inboxFor(a1Pat, messageId)).toEqual([]);
+  });
+
+  it('5. 팀이 지워져도 부름은 남는다 — 명단만 빈다', async () => {
+    const id = await makeTeam('leadvanish', [a1Id, a2Id]);
+    await setLead(id, a1Id);
+    const messageId = await post(adminToken, publicId, '@leadvanish 곧 팀이 사라진다');
+
+    const deleted = await app.inject({
+      method: 'DELETE', url: `/teams/${id}`, headers: auth(adminToken),
+    });
+    expect(deleted.statusCode).toBe(204);
+
+    const entry = await entryFor(a1Pat, messageId);
+    // 047 의 `on delete set null`: 사람이 한 요청은 답을 받아야 한다. cascade 로 지우면
+    // 그 요청이 조용히 사라지고, 사람은 자기 말에 답이 없는 이유를 알 수 없다.
+    expect(entry?.reason).toBe('team_mention');
+    expect(entry?.team).toBeUndefined();
+  });
+});

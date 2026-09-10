@@ -798,10 +798,21 @@ export class Controller {
     const label: Record<InboxEntry['reason'], string> = {
       mention: 'mentioned you in', thread_reply: 'replied in a thread in', dm: 'messaged you in',
       wake: 'is waiting in', ask_answered: 'got an answer in', ask_closed: 'got no answer in',
+      /**
+       * `team_mention` 은 **에이전트에게만 가는 사유**다(047) — 팀에는 에이전트만 들고
+       * (`not_an_agent`) 팀장은 그 팀원 중 하나이므로, 사람의 inbox 에는 이 사유가 오지
+       * 않는다. 그래도 표를 채우는 이유는 위 문단이 말한 그대로다: 총체가 아니면 새 사유가
+       * `undefined` 로 새어 "undefined #ch" 를 내보낸다.
+       *
+       * 알리지 않는(`wanted: false`) 이유는 `wake`·`ask_answered` 와 같다 — 사람에게 온
+       * 말이 아니다. 사람이 팀을 부른 그 발화 자체는 팀장의 일이고, 부른 사람에게는 이미
+       * 자기가 쓴 말이다.
+       */
+      team_mention: 'called your team in',
     };
     const wanted: Record<InboxEntry['reason'], boolean> = {
       mention: prefs.mention, thread_reply: prefs.threadReply, dm: prefs.dm,
-      wake: false, ask_answered: false, ask_closed: false,
+      wake: false, ask_answered: false, ask_closed: false, team_mention: false,
     };
 
     for (const e of unread) {
