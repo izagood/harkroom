@@ -81,7 +81,7 @@ describe('컴포저 하단 바 (#146)', () => {
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '@b' } });
     expect(screen.getAllByRole('option').length).toBeGreaterThan(0);
 
-    const container = screen.getByRole('textbox').closest('.relative')!;
+    const container = screen.getByTestId('composer');
     const attach = screen.getByLabelText('Attach a file');
     fireEvent.blur(container, { relatedTarget: attach });
 

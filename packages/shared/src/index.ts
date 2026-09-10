@@ -215,10 +215,24 @@ export type CodeSegment =
    * 저장 시 멘션으로 바뀌어 알림까지 간다(#298 이 막은 바로 그 일이다).
    */
   | { kind: 'plain'; text: string; start: number }
-  /** 백틱 하나로 감싼 것. */
-  | { kind: 'inlineCode'; code: string }
-  /** 백틱 세 개로 감싼 것. `lang` 은 **표시용일 뿐** — 문법 강조는 하지 않는다. */
-  | { kind: 'codeBlock'; code: string; lang: string | null };
+  /**
+   * 백틱 하나로 감싼 것.
+   *
+   * `start`·`end` 는 **백틱까지 포함한** 원문 구간이다(`body.slice(start, end)` 가
+   * `` `code` `` 를 그대로 돌려준다). 평문의 `start` 와 같은 이유로 여기 있다 — 원문
+   * 위치를 이 함수만 알고 있으면, 그것을 필요로 하는 자리가 "무엇이 코드인가"를 자기
+   * 정규식으로 한 벌 더 갖게 된다. 컴포저의 코드 표시(입력 중 강조)가 그 자리다:
+   * 화면이 칠하는 구간과 메시지로 그려지는 구간이 갈라지면, 입력창은 코드라고 칠하고
+   * 보낸 뒤엔 코드가 아닌 글이 나온다.
+   */
+  | { kind: 'inlineCode'; code: string; start: number; end: number }
+  /**
+   * 백틱 세 개로 감싼 것. `lang` 은 **표시용일 뿐** — 문법 강조는 하지 않는다.
+   *
+   * `start`·`end` 는 여는 펜스 줄의 시작부터 닫는 펜스 줄의 끝까지다(끝의 개행은
+   * 넣지 않는다 — 그 개행은 블록 다음 줄의 것이다).
+   */
+  | { kind: 'codeBlock'; code: string; lang: string | null; start: number; end: number };
 
 /**
  * 펜스 줄. 줄 전체가 펜스여야 한다 — `see ```x``` here` 처럼 문장 안에 섞인 것은 펜스가
@@ -242,7 +256,7 @@ function splitInline(text: string, out: CodeSegment[], offset: number): void {
     if (m.index > cursor) {
       out.push({ kind: 'plain', text: text.slice(cursor, m.index), start: offset + cursor });
     }
-    out.push({ kind: 'inlineCode', code: m[1]! });
+    out.push({ kind: 'inlineCode', code: m[1]!, start: offset + m.index, end: offset + m.index + m[0].length });
     cursor = m.index + m[0].length;
   }
   if (cursor < text.length) out.push({ kind: 'plain', text: text.slice(cursor), start: offset + cursor });
@@ -292,6 +306,8 @@ export function splitCode(body: string): CodeSegment[] {
       kind: 'codeBlock',
       code: lines.slice(i + 1, close).join('\n'),
       lang: lang.length ? lang : null,
+      start: lineStart[i]!,
+      end: lineStart[close]! + lines[close]!.length,
     });
     i = close + 1;
     plainFrom = i;
