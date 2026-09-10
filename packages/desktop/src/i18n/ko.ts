@@ -814,6 +814,9 @@ export const ko = {
   'composer.paste.asFile': '파일로 첨부',
   'composer.paste.moving': '첨부하는 중…',
   'composer.link.pasted': '메시지 링크를 붙여넣었다',
+  'composer.link.pastedOver': '“{label}” 위에 주소를 붙여넣었다',
+  'composer.link.make': '링크로 만들기',
+  'composer.link.oneLine': '링크 이름은 한 줄이어야 한다 — 한 줄 안에서 고른 뒤 다시 눌러라.',
   'composer.link.open': '그 메시지로 이동',
 
   'composer.schedule.cancel': '취소',

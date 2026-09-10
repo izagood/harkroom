@@ -19,6 +19,9 @@ import { callsInText, quoteText, MANY_CALLS } from '../lib/pasteCalls';
 // 메시지를 그리는 것과 **같은 함수**(`splitCode`)가 정한다 — 그 파일의 주석이 근거다.
 import { ComposerCode, COMPOSER_BOX } from './ComposerCode';
 import { toggleCode } from '../lib/codeMarks';
+// 하이퍼링크를 **쓰는** 쪽(⌘K · 고른 글 위에 주소 붙여넣기). 그리는 쪽은 #216 부터 있었다 —
+// 무엇이 링크 문법인지는 렌더러가 쓰는 함수(`linkAt`)가 정한다. 그 파일의 주석이 근거다.
+import { toggleLink, linkFromPaste, applyPastedLink, type PastedLink } from '../lib/linkMarks';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useT } from '../i18n/useT';
 
@@ -327,6 +330,19 @@ export function Composer({
    * 붙여넣을 때마다 화면이 끌려가서, 링크를 채팅에 남기는 방법이 아예 없었다.
    */
   const [pastedLink, setPastedLink] = useState<string | null>(null);
+  /**
+   * 고른 글 **위에** 주소를 붙여넣은 것(하이퍼링크 요청, 2026-09-10). 덮어쓴 글을 이름으로
+   * 삼아 `[이름](주소)` 로 바꿀 것을 제안한다.
+   *
+   * **덮어쓴 글을 여기서 들고 있어야 하는 이유**: 붙여넣기의 기본 동작이 이미 그 글을
+   * 지웠으므로, 붙여넣은 뒤에는 이름이 될 것이 화면 어디에도 없다. 붙여넣기 직전에
+   * 선택 범위에서 읽어 두는 것이 유일한 기회다.
+   *
+   * 여기서도 `preventDefault` 를 하지 않는다 — 이 파일이 링크·멘션에 대해 세운 규칙
+   * (*"붙여넣기는 붙여넣기로 끝난다"*)이 그대로 적용된다. 주소를 그냥 남기려던 사람의
+   * 글을 붙여넣기가 조용히 링크로 고쳐 쓰면, 그 사람은 되돌릴 방법을 화면에서 찾지 못한다.
+   */
+  const [pastedHref, setPastedHref] = useState<PastedLink | null>(null);
   /**
    * 방금 붙여넣은 글이 **부르는 이름들**과 그 원문(2단계). 링크 제안 줄과 같은 모양의
    * 제안 줄을 세우고, 인용으로 바꾸는 버튼이 여기 담긴 원문을 초안에서 찾아 갈아 끼운다.
@@ -995,6 +1011,21 @@ export function Composer({
     */
     const calls = callsInText(text, known);
     if (calls.length) setPastedCalls({ text, handles: calls });
+    /*
+      **고른 글 위에 주소를 붙여넣었으면 링크로 만들 것을 제안한다.** 선택 범위는 지금
+      읽어야 한다 — 기본 동작이 곧 그 글을 주소로 갈아 끼우므로, 이 줄 뒤에는 이름이 될
+      글자가 남아 있지 않다.
+
+      `linkFromPaste` 가 `null` 이면 줄을 세우지 않는다: 고른 것이 없거나(평범한 붙여넣기다)
+      여러 줄이거나(링크 이름은 한 줄이다) 붙여넣은 것이 열리는 주소가 아닌 경우다.
+    */
+    const el = e.currentTarget;
+    const offer = linkFromPaste(
+      el.value.slice(el.selectionStart, el.selectionEnd),
+      text,
+      el.selectionStart,
+    );
+    if (offer) setPastedHref(offer);
     /**
      * 긴 글은 **파일로 넘길 길을 제안한다**(막지 않는다 — 글자는 그대로 들어간다).
      * 판정을 붙여넣은 조각으로 하는 이유: 초안 전체 길이로 재면 여러 번 나눠 붙여넣거나
@@ -1044,6 +1075,31 @@ export function Composer({
     줄의 버튼은 찾을 수 없는 글을 인용하려 든다.
   */
   const callOffer = pastedCalls && draft.includes(pastedCalls.text) ? pastedCalls : null;
+  /**
+   * 링크로 만들 것을 제안할까. **적용해 봐서 판정한다** — `applyPastedLink` 가 `null` 이면
+   * 붙여넣은 주소가 초안에 더는 없다는 뜻이고, 그때 이 줄의 버튼은 없는 글을 가리킨다
+   * (`linkOffer`·`callOffer` 와 같은 규약이다: 제안은 초안에서 파생한다).
+   */
+  const hrefOffer = pastedHref && applyPastedLink(draft, pastedHref) ? pastedHref : null;
+  /**
+   * 붙여넣은 주소를 `[이름](주소)` 로 갈아 끼운다. 커서는 링크 **뒤**로 둔다 — 이름과
+   * 주소가 둘 다 채워져 있어 더 채울 빈 자리가 없고, 사람은 대개 이어서 문장을 쓴다.
+   */
+  const makePastedLink = (offer: PastedLink): void => {
+    const next = applyPastedLink(draft, offer);
+    setPastedHref(null);
+    if (!next) return;
+    setDraftLocal(next.text);
+    recompute(next.text, next.end);
+    // 커서 복원은 렌더 뒤다(⌘E · `quotePastedCalls` 와 같은 이유): 초안을 바꾼 렌더가
+    // 끝나기 전에 선택 범위를 주면 옛 글자 수 기준으로 잡혀 자리가 어긋난다.
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(next.start, next.end);
+    });
+  };
   /**
    * 붙여넣은 조각을 인용으로 갈아 끼운다. **부르는 것을 멈추는 정본 수단**이다 —
    * 서버가 인용 줄의 `@handle` 을 부르지 않기 때문이고(#592), 그래서 이 버튼은 문구가
@@ -1149,6 +1205,38 @@ export function Composer({
       e.preventDefault();
       const el = e.currentTarget;
       const next = toggleCode(el.value, el.selectionStart, el.selectionEnd);
+      setDraftLocal(next.text);
+      recompute(next.text, next.end);
+      requestAnimationFrame(() => {
+        const box = ref.current;
+        if (!box) return;
+        box.focus();
+        box.setSelectionRange(next.start, next.end);
+      });
+      return;
+    }
+    /*
+      ⌘K / Ctrl+K — 고른 글을 링크로 감싸거나, 이미 링크면 벗긴다(하이퍼링크 요청,
+      2026-09-10). ⌘E 와 같은 이유로 열쇠를 둔다: `[글자](주소)` 를 손으로 치는 것은
+      기호 넷과 커서 이동 세 번이고, 그 사이에 멘션 자동완성이 열리거나 커서가 밀리면
+      짝이 어긋나 링크가 아닌 대괄호만 남는다.
+
+      **⌘K 는 브라우저·OS 의 열쇠가 아니다**(⌘L 은 주소창, ⌘K 는 웹앱들이 쓰는 자리다).
+      데스크탑 앱의 입력칸이라 우리가 가져도 잃는 것이 없고, 링크에 ⌘K 를 쓰는 것은
+      사람들이 이미 다른 앱에서 익힌 자리다.
+
+      여러 줄을 고른 경우 `toggleLink` 는 `null` 이다 — 링크 이름은 개행을 넘지 못한다.
+      그때 **조용히 넘기지 않고 사유를 말한다**: 눌렀는데 아무 일도 없으면 사람은 열쇠가
+      없는 줄로 알거나 앱이 멈춘 줄로 안다. 초안은 손대지 않는다.
+    */
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key === 'k') {
+      e.preventDefault();
+      const el = e.currentTarget;
+      const next = toggleLink(el.value, el.selectionStart, el.selectionEnd);
+      if (!next) {
+        useActiveStore.getState().set({ notice: t('composer.link.oneLine') });
+        return;
+      }
       setDraftLocal(next.text);
       recompute(next.text, next.end);
       requestAnimationFrame(() => {
@@ -1501,6 +1589,44 @@ export function Composer({
             className="rounded px-1 text-fg-muted hover:bg-surface-hover"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => setPastedCalls(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+      {hrefOffer && (
+        /* 붙여넣은 주소를 이름 붙은 링크로 바꿀 것을 말하는 줄. 링크·호출 제안 줄과
+           **같은 자리·같은 모양**이다 — 셋 다 "컴포저가 지금 무엇을 들고 있는가"를 말하고,
+           사람은 한 자리를 익혀 셋을 읽는다.
+
+           이 줄이 ⌘K 를 가르치는 자리이기도 하다. 열쇠는 눈에 보이지 않지만, 고른 글 위에
+           주소를 붙여넣는 것은 사람이 이미 하는 행동이라 여기서 한 번은 마주친다. */
+        <div
+          role="status"
+          data-testid="pasted-href"
+          className="mb-1 flex items-center gap-2 rounded bg-surface-sunken px-2 py-1 text-meta text-fg-muted"
+        >
+          <span className="min-w-0 flex-1 truncate">
+            {t('composer.link.pastedOver', { label: hrefOffer.label })}
+          </span>
+          <button
+            type="button"
+            data-testid="pasted-href-link"
+            className="rounded px-1.5 py-0.5 font-medium text-accent hover:bg-surface-hover"
+            // 커서를 지킨다 — 누른 뒤에도 초안을 이어서 쓰는 사람이 있다(다른 제안 줄과 같다).
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => makePastedLink(hrefOffer)}
+          >
+            {t('composer.link.make')}
+          </button>
+          <button
+            type="button"
+            data-testid="pasted-href-dismiss"
+            aria-label={t('composer.paste.keep')}
+            title={t('composer.paste.keep')}
+            className="rounded px-1 text-fg-muted hover:bg-surface-hover"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setPastedHref(null)}
           >
             ×
           </button>

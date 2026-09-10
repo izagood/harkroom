@@ -93,6 +93,33 @@ export type Block =
  */
 const MD_LINK = /^\[([^\]\n]+)\]\(([^)\s]+)\)/;
 
+/** `[글자](주소)` 한 개. `text.slice(at, at + length)` 가 그 문법 전체다. */
+export interface LinkSyntax {
+  label: string;
+  href: string;
+  length: number;
+}
+
+/**
+ * `at` 위치에서 **링크 문법이 시작하는가**. 없으면 `null`.
+ *
+ * 정규식을 밖으로 내보내지 않고 이 함수를 내보내는 이유: 컴포저도 초안에서 같은 문법을
+ * 찾아야 하고(`lib/linkMarks`), 거기서 자기 정규식을 두면 규칙이 두 벌이 된다 — #728 이
+ * 코드 판정을 `splitCode` 하나로 묶은 것과 같은 이유다. 갈라지면 입력창이 링크라고 본 것이
+ * 보낸 뒤엔 평문이거나(또는 그 반대) 하고, 그건 강조가 아니라 거짓말이다.
+ *
+ * **여기서 `classifyLink` 를 보지 않는다.** 이 함수가 답하는 것은 "사람이 링크 문법을
+ * 썼는가" 하나이고, "눌러서 열어도 되는가"는 다른 축이다(`lib/link.ts` 의 허용 목록).
+ * 주소가 아직 덜 적힌 `[이름](htt` 도 문법으로는 링크이므로 컴포저는 그것을 링크로 다뤄야
+ * 한다 — 그러지 않으면 고쳐 쓰는 중인 링크를 ⌘K 로 벗길 수 없다.
+ */
+export function linkAt(text: string, at: number): LinkSyntax | null {
+  if (text[at] !== '[') return null;
+  const m = MD_LINK.exec(text.slice(at));
+  if (!m) return null;
+  return { label: m[1]!, href: m[2]!, length: m[0].length };
+}
+
 interface Opener {
   mark: string;
   key: keyof Emphasis;
@@ -160,14 +187,14 @@ function scanInline(text: string, active: Emphasis, out: Inline[]): void {
 
   while (i < text.length) {
     if (text[i] === '[') {
-      const m = MD_LINK.exec(text.slice(i));
+      const m = linkAt(text, i);
       // 열 수 없는 주소면 **링크를 만들지 않는다.** 막는 것이 아니라 누를 것이 생기지
       // 않는다 — `classifyLink` 허용 목록이 그대로 신뢰 경계다(`lib/link.ts`).
-      const target = m ? classifyLink(m[2]!) : null;
+      const target = m ? classifyLink(m.href) : null;
       if (m && target) {
         flush();
-        out.push({ kind: 'link', text: m[1]!, href: m[2]!, target, ...active });
-        i += m[0].length;
+        out.push({ kind: 'link', text: m.label, href: m.href, target, ...active });
+        i += m.length;
         continue;
       }
     }
