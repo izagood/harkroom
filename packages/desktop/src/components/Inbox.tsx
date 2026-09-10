@@ -129,6 +129,8 @@ export function Inbox({ open, onClose }: Props) {
     } finally { setAnswering(null); }
   };
   const messages = useActiveStore((s) => s.messages);
+  /** 서버의 인박스가 바뀐 횟수. 이 화면이 열려 있는 동안 "다시 읽어라"로 쓴다(아래 effect). */
+  const inboxRevision = useActiveStore((s) => s.inboxRevision);
 
   const [entries, setEntries] = useState<InboxEntry[]>([]);
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
@@ -158,18 +160,29 @@ export function Inbox({ open, onClose }: Props) {
   const [justRead, setJustRead] = useState<ReadonlySet<number>>(() => new Set());
 
   /**
+   * 나간 순서를 재는 번호. 열려 있는 동안 서버가 알려 올 때마다 다시 조회하게 된 뒤로
+   * (아래 `inboxRevision` effect) **두 조회가 겹쳐 도착할 수 있다** — 먼저 나간 응답이
+   * 나중에 도착하면 낡은 목록이 새 목록을 덮는다. 취소 플래그(`alive`)만으로는 못 막는다:
+   * 그것은 "이 화면이 아직 사나"만 알고 "이 응답이 아직 최신인가"는 모른다.
+   */
+  const reloadSeq = useRef(0);
+
+  /**
    * `quiet` 는 **읽음 상태를 맞추러 도는 재조회**다(`openEntry`). 사람이 조회를 기다리고
    * 있지 않으므로 화면을 "불러오는 중"으로 되돌리지 않고, 실패도 화면에 세우지 않는다 —
    * 줄을 눌러 스레드를 읽는 길에 목록이 오류 상자로 바뀌면, 고칠 것도 없는 실패가 방금
    * 누른 자리를 덮는다. 낙관적 표시는 그대로 서고, 다음에 열 때 제대로 다시 읽는다.
+   *
+   * 열려 있는 동안의 **라이브 재조회**도 같은 이유로 `quiet` 다(아래 `inboxRevision` effect).
    */
   const reload = useCallback((opts: { quiet?: boolean } = {}): (() => void) => {
     let alive = true;
+    const seq = ++reloadSeq.current;
     if (!opts.quiet) setLoad({ kind: 'loading' });
     getController().api.inbox().then(
-      (rows) => { if (alive) { setEntries(rows); setLoad({ kind: 'ready' }); } },
+      (rows) => { if (alive && seq === reloadSeq.current) { setEntries(rows); setLoad({ kind: 'ready' }); } },
       (err: unknown) => {
-        if (!alive || opts.quiet) return;
+        if (!alive || opts.quiet || seq !== reloadSeq.current) return;
         // 실패했을 때 앞선 결과를 남겨 두면 낡은 목록이 지금 사실인 척한다. 비우고,
         // 비었다는 말 대신 오류를 보여 준다.
         setEntries([]);
@@ -189,6 +202,39 @@ export function Inbox({ open, onClose }: Props) {
     setJustRead(new Set());
     return reload();
   }, [open, reload]);
+
+  /**
+   * **열려 있는 동안 새로 온 것을 그린다**(2026-09-10 신고: *"메시지가 왔는데 Inbox 를
+   * 닫았다 열어야 반영돼"*).
+   *
+   * 위 effect 는 `open` 이 바뀔 때만 돈다 — 그것이 신고의 원인 그대로다. 실시간 신호는
+   * 이미 있었다: 서버가 `inbox.updated` 를 보내고 컨트롤러가 그때마다 `refreshUnread` 를
+   * 돌린다(레일 배지·독 배지가 그것으로 즉시 움직인다). 이 화면만 그 신호를 듣지 않아
+   * 배지는 늘었는데 목록은 그대로인 상태가 됐다 — 화면 두 곳이 **같은 사실을 다르게**
+   * 말하는 것이라 사람은 어느 쪽도 믿을 수 없다.
+   *
+   * 스토어의 `unread` 배열을 의존에 두지 않는 이유: 이 화면은 읽은 줄까지 필요해 자기
+   * 목록을 따로 조회하고(위 주석), 그 배열의 **정체성이 바뀌는 것**을 신호로 쓰면 신호와
+   * 신호원의 관계가 우연에 기댄다(`refreshUnread` 가 나중에 같은 값이면 안 쓰게 되면 이
+   * 화면이 조용히 멈춘다). 세는 수 하나가 "다시 읽어라"를 명시한다.
+   *
+   * `quiet` 인 이유: 사람이 이 조회를 기다리고 있지 않다. 목록이 "불러오는 중"으로
+   * 되돌아가면 읽던 자리가 사라지고, 실패가 상자로 서면 고칠 것도 없는 실패가 화면을 덮는다.
+   * `justRead` 도 비우지 않는다 — 방금 읽어 물러난 줄이 새 멘션 하나에 목록에서 튀어나가면
+   * 그 붙잡음이 뜻을 잃는다.
+   *
+   * **닫혀 있을 때도 번호는 따라간다**(아래 `seenRevision.current = ...`). 그래야 다시 열
+   * 때 위 effect 의 온전한 조회 하나로 끝난다 — 안 그러면 열자마자 같은 조회가 둘 나간다.
+   */
+  const seenRevision = useRef(inboxRevision);
+  useEffect(() => {
+    if (!open || seenRevision.current === inboxRevision) {
+      seenRevision.current = inboxRevision;
+      return;
+    }
+    seenRevision.current = inboxRevision;
+    return reload({ quiet: true });
+  }, [open, inboxRevision, reload]);
 
   /** 채널 하나의 사람이 읽을 이름. DM 은 이름이 없으므로 상대 handle 로 짓는다. */
   const channelLabel = useCallback((id: string): string => {
