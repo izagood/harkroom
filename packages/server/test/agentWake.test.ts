@@ -181,6 +181,111 @@ describe('turn.wake — 에이전트가 자기를 나중에 깨운다', () => {
     expect(wakes.rows[0].n).toBe(0);
   });
 
+  /**
+   * 실측(2026-09-10 09:01): 스레드에 `06:01 PM 에 다시 봅니다` 가 서 있는 동안 사람이
+   * "CI 실패했어 수정해" 를 썼고, 그 발화는 예약에 아무 일도 하지 않았다. 사람이 본 것은
+   * 아무 일도 일어나지 않는 대기 줄이다 — *"내가 이야기 하면 바로 일어나서 작업해야하는데
+   * 그냥 계속 기다리고 있어"*.
+   */
+  describe('사람이 말하면 기다림은 그 자리에서 끝난다', () => {
+    async function wakeRow(messageId: string): Promise<{ fired: boolean; canceled: boolean }> {
+      const res = await pool.query(
+        `select fired_at, canceled_at from agent_wake where message_id = $1`, [messageId],
+      );
+      return { fired: res.rows[0].fired_at !== null, canceled: res.rows[0].canceled_at !== null };
+    }
+
+    async function schedule(threadRootId: string, reason: string): Promise<string> {
+      const client = await mcpClient(botPat);
+      const res = text(await client.callTool({
+        name: 'turn.wake', arguments: { channelId, threadRootId, notBeforeSec: 3600, reason },
+      }));
+      await client.close();
+      return res.wake.messageId as string;
+    }
+
+    it('부르지 않고 말해도 깨어난다 — 그 스레드에서 기다리던 에이전트만', async () => {
+      const threadRootId = await newThread();
+      const wakeMessageId = await schedule(threadRootId, '한 시간 뒤 CI');
+
+      // 사람의 답글. `@wakebot` 을 **적지 않았다** — 그래도 기다림은 끝난다.
+      await app.inject({
+        method: 'POST', url: `/channels/${channelId}/messages`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { body: '아니 그거 지금 실패했어', threadRootId },
+      });
+
+      expect(await wakeRow(wakeMessageId)).toEqual({ fired: true, canceled: false });
+      const entries = await pool.query(
+        `select id from inbox where account_id = $1 and message_id = $2 and reason = 'wake'`,
+        [botAccountId, wakeMessageId],
+      );
+      expect(entries.rowCount).toBe(1);
+
+      // 당겨서 깨운 예약을 sweep 이 또 깨우지 않는다 — 항목은 여전히 하나다.
+      await createAgentWakeSweeper(pool).sweep();
+      const after = await pool.query(
+        `select id from inbox where account_id = $1 and message_id = $2`,
+        [botAccountId, wakeMessageId],
+      );
+      expect(after.rowCount).toBe(1);
+    });
+
+    it('부름이 함께 오면 예약은 접힌다 — 같은 스레드에 턴이 두 번 열리지 않는다', async () => {
+      const threadRootId = await newThread();
+      const wakeMessageId = await schedule(threadRootId, '한 시간 뒤 CI');
+
+      await app.inject({
+        method: 'POST', url: `/channels/${channelId}/messages`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { body: '@wakebot 지금 실패했어 수정해', threadRootId },
+      });
+
+      // 접었다 — 부름이 이미 그 턴을 띄우므로, 깨움까지 넣으면 끝난 일에 두 번째 턴이 뒤늦게 열린다.
+      expect(await wakeRow(wakeMessageId)).toEqual({ fired: false, canceled: true });
+      const wakeEntries = await pool.query(
+        `select id from inbox where account_id = $1 and message_id = $2`,
+        [botAccountId, wakeMessageId],
+      );
+      expect(wakeEntries.rowCount).toBe(0);
+      // 접힌 예약은 sweep 도 건너뛴다.
+      await createAgentWakeSweeper(pool).sweep();
+      const stillNone = await pool.query(
+        `select id from inbox where account_id = $1 and message_id = $2`,
+        [botAccountId, wakeMessageId],
+      );
+      expect(stillNone.rowCount).toBe(0);
+    });
+
+    it('에이전트의 발화는 남의 예약을 깨우지 않는다 — 서로 깨우는 고리를 만들지 않는다', async () => {
+      const { pat: peerPat } = await createAgent(app, adminToken, `peer${Date.now()}`);
+      const threadRootId = await newThread();
+      const wakeMessageId = await schedule(threadRootId, '한 시간 뒤 CI');
+
+      await app.inject({
+        method: 'POST', url: `/channels/${channelId}/messages`,
+        headers: { authorization: `Bearer ${peerPat}` },
+        payload: { body: '내가 보던 것은 이쪽이다', threadRootId },
+      });
+
+      expect(await wakeRow(wakeMessageId)).toEqual({ fired: false, canceled: false });
+    });
+
+    it('다른 스레드의 발화는 이 예약을 건드리지 않는다', async () => {
+      const threadRootId = await newThread();
+      const wakeMessageId = await schedule(threadRootId, '한 시간 뒤 CI');
+      const otherThread = await newThread();
+
+      await app.inject({
+        method: 'POST', url: `/channels/${channelId}/messages`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { body: '여긴 다른 얘기다', threadRootId: otherThread },
+      });
+
+      expect(await wakeRow(wakeMessageId)).toEqual({ fired: false, canceled: false });
+    });
+  });
+
   it('사람의 새 발화 없이 연속으로 걸 수 있는 깨움에는 상한이 있다', async () => {
     const threadRootId = await newThread();
     const client = await mcpClient(botPat);

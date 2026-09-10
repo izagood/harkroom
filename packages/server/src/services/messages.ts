@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_CHAIN_LIMIT, mentionedHandles, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
+import { preemptWakesForThread } from './agentWakes.js';
 import { channelVisibleSql } from './channels.js';
 import { emitEvent } from '../events.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
@@ -926,7 +927,24 @@ export async function postMessage(
       }
     }
 
+    /**
+     * **사람이 말하면 그 스레드의 기다림은 끝난다**(2026-09-10). 판정과 두 갈래는
+     * `agentWakes.ts::preemptWakesForThread` 가 갖는다 — 여기서 하는 일은 그것을 **같은
+     * 커밋 안에서** 부르는 것뿐이다(발화는 남았는데 예약은 그대로인 창을 만들지 않는다).
+     *
+     * 앵커 없는 채널 최상위 발화에는 하지 않는다: 깨움은 반드시 스레드에 걸린다(040).
+     */
+    const wokeByPost = input.threadRootId
+      ? await preemptWakesForThread(client, {
+        threadRootId: input.threadRootId, authorId: input.authorId, notified,
+      })
+      : [];
+
     await client.query('commit');
+
+    // 이벤트는 **커밋 뒤**다 — 러너는 이것을 보고 즉시 폴하므로, 앞에서 치면 아직 안 보이는
+    // inbox 를 읽고 빈손으로 돌아간다(sweep 이 같은 순서를 지키는 이유와 같다).
+    for (const accountId of wokeByPost) emitEvent({ type: 'inbox.updated', accountId });
 
     /**
      * 되돌아온 머리를 **돌려준다** — 여기서 직접 내지 않는다. 부른 쪽이 `message.created`
