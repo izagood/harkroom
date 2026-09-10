@@ -31,7 +31,6 @@ const fakeController = () => {
     startDm: vi.fn(), logout: vi.fn(), createChannel: vi.fn(), updateChannel: vi.fn(),
     setChannelNotifyLevel: vi.fn(), toggleChannelStar: vi.fn(),
     goBack: vi.fn().mockResolvedValue(true), goForward: vi.fn().mockResolvedValue(true),
-    loadUnreadSweep: vi.fn().mockResolvedValue([]),
     setStatus: vi.fn().mockResolvedValue(undefined),
     api: scheduledApiStub(),
   };

@@ -36,16 +36,6 @@ export const ko = {
   'appearance.zoomHint': 'Cmd +/- 키를 눌러 확대/축소 수준을 바꾸거나, Cmd 0 으로 되돌릴 수 있다.',
   'appearance.zoomOption': '{percent}% 로 보기',
 
-  'sweep.close': '닫기',
-  'sweep.done': '다 봤다',
-  'sweep.failed': '읽음 처리에 실패했다',
-  'sweep.justNext': '그냥 다음',
-  'sweep.loading': '불러오는 중…',
-  'sweep.readAndNext': '읽음 처리하고 다음',
-  'sweep.retry': '다시 시도',
-  'sweep.title': '미읽음 훑기',
-  'sweep.unknownError': '알 수 없는 오류',
-
   'accountOpen.agentConfig': '{handle} 에이전트 설정 열기',
   'accountOpen.profile': '{handle} 프로필 열기',
 
@@ -1439,8 +1429,6 @@ export const ko = {
   'workspace.forward': '앞으로',
   'workspace.forwardTitle': '앞으로 (Cmd+])',
   'workspace.showSidebar': '사이드바 펼치기',
-  'workspace.sweep': '미읽음 훑기',
-  'workspace.sweepTitle': '미읽음을 하나씩 훑는다',
 
   // ---------------------------------------------------------------------------
   // identity — **`{n}명` 이 `{count}` 로 바뀐 자리다**(`en.ts` 표). 집합에도 팀에도

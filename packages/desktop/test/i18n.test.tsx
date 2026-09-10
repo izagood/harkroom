@@ -35,7 +35,6 @@ import { AppearanceSettings } from '../src/components/settings/AppearanceSetting
 import { avatarErrorMessage } from '../src/lib/avatar';
 import { ApiError } from '../src/lib/api';
 import { accountOpen } from '../src/lib/accountOpen';
-import { SweepShell } from '../src/components/Sweep';
 import { en } from '../src/i18n/en';
 import { ko } from '../src/i18n/ko';
 import { interpolate } from '../src/i18n/format';
@@ -3206,31 +3205,7 @@ describe('사진 오류 — 원인별로 다른 말을 한다', () => {
 // (`runnerLauncher` 가 세운 경계).
 // ---------------------------------------------------------------------------
 
-describe('잔여 — 훑기·계정 열기·멘션', () => {
-  /**
-   * **두 버튼이 다른 일을 한다.** `readAndNext` 는 읽음으로 표시하고 넘어가고,
-   * `justNext` 는 표시하지 않고 넘어간다 — 한 낱말로 뭉치면 훑기의 요점이 사라진다.
-   */
-  it('훑기의 두 버튼이 화면에서 다른 말을 하고 언어를 따라온다', () => {
-    const items = [{
-      channelId: 'c1', label: '#general', newestSeq: 1, oldestAt: '2026-09-01T00:00:00.000Z',
-      messages: [msg('m1', 'c1', 1, 'hi', FORGE)],
-    }];
-    const shell = () => (
-      <SweepShell items={items} loading={false} error={null}
-        onRetry={() => {}} onClose={() => {}} onMarkRead={async () => {}} />
-    );
-    render(shell());
-    expect(screen.getByText(en['sweep.readAndNext'])).toBeTruthy();
-    expect(screen.getByText(en['sweep.justNext'])).toBeTruthy();
-
-    cleanup();
-    speak('ko');
-    render(shell());
-    expect(screen.getByText(ko['sweep.readAndNext'])).toBeTruthy();
-    expect(screen.getByText(ko['sweep.justNext'])).toBeTruthy();
-  });
-
+describe('잔여 — 계정 열기·멘션', () => {
   /**
    * **가는 곳이 다르면 이름도 달라야 한다.** 스크린리더는 설정과 프로필의 차이를
    * 이름으로만 알 수 있다 — `lib/accountOpen.ts` 머리말이 그 둘을 한 함수로 모은 이유가

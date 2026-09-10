@@ -276,24 +276,6 @@ export const en = {
   'avatarEdit.progress.uploadingPct': 'Uploading the photo… {pct}%',
   'avatarEdit.result.changed': 'The photo was changed',
   'avatarEdit.result.removed': 'The photo was removed',
-  // sweep — 화면 이름. `components/Sweep.tsx` 의 미읽음 훑기.
-  //
-  // 두 버튼이 **다른 일**을 한다: `readAndNext` 는 읽음으로 표시하고 넘어가고,
-  // `justNext` 는 표시하지 않고 넘어간다. 한 낱말로 뭉치면 훑기의 요점이 사라진다 —
-  // 이 화면은 *"읽었다고 칠 것"* 과 *"나중에 볼 것"* 을 가르려고 있다.
-  // ---------------------------------------------------------------------------
-
-  'sweep.close': 'Close',
-  'sweep.done': 'All caught up',
-  'sweep.failed': 'It was not marked as read',
-  'sweep.justNext': 'Skip',
-  'sweep.loading': 'Loading…',
-  'sweep.readAndNext': 'Mark read and go on',
-  'sweep.retry': 'Try again',
-  'sweep.title': 'Sweep unread',
-  /** 서버가 사유를 안 줬을 때. **`{reason}` 자리를 비우지 않는다** — 빈 괄호가 남는다. */
-  'sweep.unknownError': 'Unknown error',
-
   // ---------------------------------------------------------------------------
   // accountOpen — **판정 이름이다.** `lib/accountOpen.ts` 가 내는 접근 이름이고,
   // 이름을 누를 수 있는 자리마다 쓰인다(본문 멘션 · 참여자 줄 · 아바타).
@@ -3531,8 +3513,6 @@ export const en = {
   // | 한국어 | 영어 | 왜 |
   // |---|---|---|
   // | 뒤로 / 앞으로 | `Back` / `Forward` | |
-  // | 미읽음 훑기 | `Sweep unread` | 버튼 글자다. `Sweep` 이 이 기능의 이름이고(`Sweep.tsx`), 무엇을 훑는지가 붙어야 한다 |
-  // | 미읽음을 하나씩 훑는다 | `Go through the unread one at a time` | `title` 이다 — 버튼 이름이 못 하는 말(**하나씩**)을 여기가 한다 |
   // | 사이드바 펼치기 | `Show the sidebar` | 접혀 있을 때만 서는 버튼이라 `Toggle` 이 아니다 |
   //
   // **`앞로 (Cmd+])` 의 오타를 고쳤다** — 옮기면서 발견했다(`앞으로` 여야 한다).
@@ -3548,9 +3528,6 @@ export const en = {
   'workspace.forward': 'Forward',
   'workspace.forwardTitle': 'Forward (Cmd+])',
   'workspace.showSidebar': 'Show the sidebar',
-  'workspace.sweep': 'Sweep unread',
-  /** 버튼 이름이 못 하는 말(**하나씩**)을 `title` 이 한다. */
-  'workspace.sweepTitle': 'Go through the unread one at a time',
 
   // ---------------------------------------------------------------------------
   // identity — **판정 이름이다.** `components/Identity.tsx` 의 배지 셋이 내는 말이고,
