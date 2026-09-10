@@ -5,6 +5,7 @@ import { useColorMode } from './lib/useColorMode';
 import { useZoom } from './lib/useZoom';
 import { useNotificationOpen } from './lib/useNotificationOpen';
 import { useDockBadge } from './lib/useDockBadge';
+import { useFileDropGuard } from './lib/useFileDropGuard';
 import { getActiveEntry } from './state/communities';
 import { getController, openNotificationTarget, startCommunitySession, type Controller } from './state/controller';
 import { ConnectScreen } from './screens/ConnectScreen';
@@ -52,6 +53,12 @@ export default function App() {
    * 부팅·접속·설정 화면에서도 늘고 줄어들고, `ready` 안쪽에 두면 그동안 배지가 굳는다.
    */
   useDockBadge();
+  /**
+   * 컴포저 밖에 떨어진 파일이 앱을 갈아치우지 못하게 막는다. `useDockBadge` 와 같은 이유로
+   * **여기**다 — 손이 빗나가는 것은 접속·설정 화면에서도 마찬가지이고, `ready` 안쪽에 두면
+   * 그동안 창이 무방비다.
+   */
+  useFileDropGuard();
   const [phase, setPhase] = useState<'boot' | 'connect' | 'ready'>('boot');
   // 설정은 세션 상태(phase)가 아니라 뷰다 — 그래서 별도 상태로 둔다.
   const [connectError, setConnectError] = useState<string | null>(null);
