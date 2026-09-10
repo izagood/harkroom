@@ -146,11 +146,12 @@ describe('스레드 패널 너비 조절', () => {
    */
   it('넓은 창에서는 상수가 아니라 대화 몫이 상한을 정한다', () => {
     render(<ThreadPanel />);
-    // 줄 2000px, 스레드 640px → 대화 1360px. 대화에 최소 폭만 남기면 1800px 까지 간다.
-    stubRow('스레드 너비 조절', { left: 0, width: 2000 }, { left: 1360, width: 640 });
+    // 줄 2000px, 스레드가 기본 폭 → 남는 것이 대화 몫이다. 대화에 최소 폭만 남기면 그만큼 간다.
+    stubRow('스레드 너비 조절', { left: 0, width: 2000 },
+      { left: 2000 - DEFAULT_THREAD_WIDTH, width: DEFAULT_THREAD_WIDTH });
 
     drag('스레드 너비 조절', 1360, -3000);
-    expect(paneOf('스레드 너비 조절').style.width).toBe(`${640 + 1360 - MIN_CHANNEL_WIDTH}px`);
+    expect(paneOf('스레드 너비 조절').style.width).toBe(`${2000 - MIN_CHANNEL_WIDTH}px`);
   });
 
   /*
@@ -174,8 +175,8 @@ describe('스레드 패널 너비 조절', () => {
 
   it('대화가 이미 좁아진 상태에서 끌어도 갑자기 줄지 않는다', () => {
     render(<ThreadPanel />);
-    // 줄 1000px, 스레드 640px 인데 왼쪽에 남은 자리는 150px 뿐이다(약속한 200 미만).
-    stubRow('스레드 너비 조절', { left: 0, width: 1000 }, { left: 150, width: 640 });
+    // 줄 1000px, 스레드는 기본 폭인데 왼쪽에 남은 자리는 150px 뿐이다(`MIN_CHANNEL_WIDTH` 미만).
+    stubRow('스레드 너비 조절', { left: 0, width: 1000 }, { left: 150, width: DEFAULT_THREAD_WIDTH });
 
     drag('스레드 너비 조절', 150, -500);
     expect(paneOf('스레드 너비 조절').style.width).toBe(`${DEFAULT_THREAD_WIDTH}px`);
@@ -243,19 +244,31 @@ describe('터미널 패널 너비 조절', () => {
     vi.spyOn(paneEl, 'getBoundingClientRect').mockReturnValue({ left, width, right: left + width } as DOMRect);
   };
 
+  /*
+   * **무대 숫자는 최소 폭들과 같은 척도여야 한다.** 이 두 시험이 재는 것은 *"이웃 몫을
+   * 남기는 규칙"* 이지 *"터미널 자신의 최소 폭"* 이 아니다. 무대를 옛 척도(1200/600/400)로
+   * 두면 앱 척도가 올라간 판에서 이웃 규칙이 계산한 값이 `MIN_TERMINAL_WIDTH` 아래로
+   * 내려가고, 그러면 터미널 최소 폭이 결과를 정해 버려 시험이 자기 이름과 다른 것을 잰다
+   * (실측: 이웃 규칙 378 < 최소 400). 그래서 무대도 함께 1.111 배 했다.
+   */
+  const ROW = 1333;
+  const PANE_LEFT = 667;
+  const PANE_WIDTH = 444;
+
   it('스레드가 열려 있으면 대화와 스레드 몫을 함께 남긴다', async () => {
     await mount({ threadOpen: true });
-    stubTerminalRow(1200, 600, 400);
-    drag('터미널 너비 조절', 600, -3000);
+    stubTerminalRow(ROW, PANE_LEFT, PANE_WIDTH);
+    drag('터미널 너비 조절', PANE_LEFT, -3000);
     expect(paneOf('터미널 너비 조절').style.width)
-      .toBe(`${400 + 600 - (MIN_CHANNEL_WIDTH + MIN_THREAD_WIDTH)}px`);
+      .toBe(`${PANE_WIDTH + PANE_LEFT - (MIN_CHANNEL_WIDTH + MIN_THREAD_WIDTH)}px`);
   });
 
   it('스레드가 닫혀 있으면 대화 몫만 남긴다', async () => {
     await mount();
-    stubTerminalRow(1200, 600, 400);
-    drag('터미널 너비 조절', 600, -3000);
-    expect(paneOf('터미널 너비 조절').style.width).toBe(`${400 + 600 - MIN_CHANNEL_WIDTH}px`);
+    stubTerminalRow(ROW, PANE_LEFT, PANE_WIDTH);
+    drag('터미널 너비 조절', PANE_LEFT, -3000);
+    expect(paneOf('터미널 너비 조절').style.width)
+      .toBe(`${PANE_WIDTH + PANE_LEFT - MIN_CHANNEL_WIDTH}px`);
   });
 
   /*

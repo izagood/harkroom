@@ -7,10 +7,13 @@ import { join, resolve } from 'node:path';
  * 위생 항목("타이포 4단 · 회색 3단 · 강조 1색").
  *
  * ```
- * text-meta   11px  로우·상태·시간
- * text-body   13px  본문
- * text-name   15px  이름줄
- * text-title  17px  화면 제목
+ * text-meta   12px  로우·상태·시간
+ * text-body   14px  본문
+ * text-name   17px  이름줄
+ * text-title  19px  화면 제목
+ *
+ * (2026-09-10 에 `11/13/15/17` 을 1.111 배 해 옮긴 판이다 — 그 배율을 웹뷰가 아니라 앱의
+ * 척도가 갖게 한 것이 요점이고, 여백은 `--spacing` 이 같은 비율로 받는다. #751 참고.)
  * ```
  *
  * 지키는 것은 보기 좋음이 아니라 **단이 단으로 남는 것**이다. 10px 이 하나 남으면 그 자리는
@@ -72,7 +75,7 @@ const SRC = `${resolve(process.cwd(), 'src')}/`;
  * 4단 — **토큰 이름과 그 값**. 이 표가 `src/index.css` 의 `@theme` 과 일치하는지는 아래
  * 별도 단언이 소스를 읽어 잰다. 여기 적어 두는 것만으로는 두 곳이 갈라질 수 있다.
  */
-const SCALE = { title: 17, name: 15, body: 13, meta: 11 } as const;
+const SCALE = { title: 19, name: 17, body: 14, meta: 12 } as const;
 
 /** 값만 필요한 자리. */
 const SCALE_PX: number[] = Object.values(SCALE);
@@ -380,7 +383,7 @@ function themeTypeTokens(): Record<string, string> {
   return found;
 }
 
-describe('타이포 4단 (title 17 / name 15 / body 13 / meta 11)', () => {
+describe('타이포 4단 (title 19 / name 17 / body 14 / meta 12)', () => {
   const files = sourceFiles(SRC);
 
   it('스캔 대상이 실제로 있다 — 목록이 비면 아래 단언이 아무것도 지키지 않는다', () => {
@@ -497,9 +500,26 @@ describe('타이포 4단 (title 17 / name 15 / body 13 / meta 11)', () => {
    * 빈 객체끼리 비교하다가 이름 단언에서만 걸리는데, 그 실패 메시지는 "토큰을 다섯 개
    * 만들었다"로 읽혀 원인을 가리키지 못한다.
    */
+  /**
+   * 4단의 **나머지 절반**. 글자만 키우면 여백·아이콘이 제자리라 밀도가 무너지고, 그러면
+   * "앱을 한 단 키운다"가 "글자만 큰 화면"이 된다. Tailwind v4 는 `p-*`·`gap-*`·`w-4`·
+   * `h-11` 이 전부 `--spacing` 의 배수이므로 그 한 줄이 밀도 전체를 정한다.
+   *
+   * 기본값(0.25rem)으로 되돌아가면 이 판의 절반이 조용히 사라지므로 여기서 못박는다.
+   */
+  it('여백의 원점(--spacing)이 4단과 같은 비율로 올라가 있다', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf-8');
+    const m = /^\s*--spacing:\s*([0-9.]+)rem;/m.exec(css);
+    expect(m, '`@theme` 에 `--spacing` 이 없다 — 기본값 0.25rem 으로 돌아가면 밀도가 옛 판이다').not.toBeNull();
+    const rem = Number(m![1]);
+    // 0.25 × 1.111 ≈ 0.278. 4단(11→12 …)과 같은 비율이어야 글자와 그 사이가 함께 커진다.
+    expect(rem).toBeGreaterThan(0.25);
+    expect(rem).toBeCloseTo(0.278, 3);
+  });
+
   it('토큰을 소스에서 실제로 읽어 온다', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf-8');
-    expect(css).toContain('--text-body: 13px');
+    expect(css).toContain('--text-body: 14px');
     expect(Object.keys(themeTypeTokens()).length).toBe(4);
   });
 

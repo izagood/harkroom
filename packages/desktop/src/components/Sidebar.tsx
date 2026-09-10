@@ -1484,7 +1484,7 @@ export function Sidebar({
   };
 
   // 접히면 **내용을 아예 그리지 않는다.** 폭만 0 으로 두면 안쪽 컨테이너의
-  // `min-w-[180px]` 가 그대로 남아 0 폭 상자 밖으로 넘쳐 본문을 덮고(플렉스 아이템은
+  // `min-w-[200px]` 가 그대로 남아 0 폭 상자 밖으로 넘쳐 본문을 덮고(플렉스 아이템은
   // 기본으로 클리핑하지 않는다), DOM 에 남은 버튼들이 탭 순서에도 그대로 걸려
   // **화면에서 사라진 것을 키보드로 밟게 된다.**
   //
@@ -1519,7 +1519,7 @@ export function Sidebar({
           onKeyDown={handleKeyDown}
         />
       )}
-      <div className="flex min-w-[180px] flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-[200px] flex-1 flex-col overflow-hidden">
         {/* 브랜드 바(#270). **신호등 여백은 더 이상 여기가 아니다** — 레일이 항상 왼쪽에
             서므로 창의 좌상단은 레일이다. 창을 끄는 손잡이는 그대로 남는다: 이 바는 여전히
             타이틀바 높이의 빈 띠라 사람이 창을 옮길 때 잡는 자리다.

@@ -538,7 +538,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
         `min-w-0` 은 그대로 둔다: 긴 코드·URL 이 flex 열을 밀어내는 것을 막는 것이 그 일이고,
         최대폭과는 다른 문제다.
       */}
-      <div data-testid="message-body-column" className="min-w-0 max-w-[1280px] flex-1">
+      <div data-testid="message-body-column" className="min-w-0 max-w-[1422px] flex-1">
         {/*
           **담아 둔 표식**(요청 2026-09-09). `⋯` 메뉴를 열어야만 알 수 있던 사실을 목록에
           그대로 세운다 — 담아 두는 까닭이 "나중에 이 자리로 돌아온다"인데, 정작 채널을
@@ -944,7 +944,7 @@ function DeletedMessageRow({ message, inThread }: { message: MessageRow; inThrea
       {/* 아바타 거터의 폭을 비워 둔다 — 얼굴은 그리지 않지만 본문 열이 위아래 메시지와
           같은 자리에서 시작해야 목록이 한 칸 밀려 보이지 않는다. */}
       <div className="h-8 w-8 shrink-0" aria-hidden="true" />
-      <div className="min-w-0 max-w-[1280px] flex-1">
+      <div className="min-w-0 max-w-[1422px] flex-1">
         <div className="text-body italic text-fg-subtle">{t('message.deleted')}</div>
         {/* 스레드 안에서는 그리지 않는다 — 이미 그 스레드 안이라 갈 곳이 없다
             (`message.channelEcho` 배지와 같은 판단). */}
