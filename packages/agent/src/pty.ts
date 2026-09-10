@@ -281,21 +281,145 @@ const TAIL_CAP_BYTES = 2 * 1024;
  * 달라서, 버퍼 자체에 규칙을 넣지 않고 소비자 쪽에 남겨 뒀다.
  */
 export class RingBuffer {
-  private buf: Buffer = Buffer.alloc(0);
+  /** 용량만큼 **한 번** 잡고 그 안에서만 돈다. */
+  private readonly buf: Buffer;
+  /** 가장 오래된 바이트의 위치. */
+  private start = 0;
+  /** 채워진 바이트 수(0 ≤ len ≤ cap). */
+  private len = 0;
+  private readonly cap: number;
 
-  constructor(private readonly capBytes: number) {}
+  constructor(capBytes: number) {
+    this.cap = Math.max(1, capBytes);
+    this.buf = Buffer.alloc(this.cap);
+  }
 
+  /**
+   * **청크 길이만큼만 복사한다**(O(chunk)). 예전 구현은 `Buffer.concat([this.buf, data])`
+   * 였다 — 청크 하나마다 버퍼 전체를 새로 할당하고 복사했으므로, 256KB ring 에 초당 수백
+   * 청크가 오는 TUI 재그리기에서 청크당 최대 256KB memcpy 를 물었다. 담는 내용은 그때와
+   * 같고(바이트·순서·절단 방향), 비용만 사라진다.
+   */
   push(data: Buffer): void {
-    this.buf = Buffer.concat([this.buf, data]);
-    if (this.buf.length > this.capBytes) {
-      this.buf = this.buf.subarray(this.buf.length - this.capBytes);
+    if (data.length === 0) return;
+    // 한 청크가 용량보다 크면 **끝의 cap 바이트만** 남는다 — 감아 쓸 것도 없다.
+    if (data.length >= this.cap) {
+      data.copy(this.buf, 0, data.length - this.cap);
+      this.start = 0;
+      this.len = this.cap;
+      return;
+    }
+    const end = (this.start + this.len) % this.cap;
+    // 끝을 넘으면 두 조각으로 나눠 쓴다(뒤쪽 남은 자리 → 앞으로 감기).
+    const first = Math.min(data.length, this.cap - end);
+    data.copy(this.buf, end, 0, first);
+    if (first < data.length) data.copy(this.buf, 0, first);
+    if (this.len + data.length > this.cap) {
+      // 넘친 만큼 오래된 쪽을 밀어낸다 — 새로 쓴 바이트의 끝이 곧 새 시작점이다.
+      this.start = (end + data.length) % this.cap;
+      this.len = this.cap;
+    } else {
+      this.len += data.length;
     }
   }
 
   snapshot(): Buffer {
     // 호출자가 반환값을 변형해도 내부 버퍼가 오염되지 않도록 복사본을 준다.
-    return Buffer.from(this.buf);
+    // 감긴 것을 **오래된 것부터** 펴서 준다 — 저장 순서가 아니라 도착 순서가 계약이다.
+    const out = Buffer.alloc(this.len);
+    const end = this.start + this.len;
+    if (end <= this.cap) {
+      this.buf.copy(out, 0, this.start, end);
+    } else {
+      const first = this.cap - this.start;
+      this.buf.copy(out, 0, this.start, this.cap);
+      this.buf.copy(out, first, 0, end - this.cap);
+    }
+    return out;
   }
+}
+
+/**
+ * 출력 프레임 합치기. PTY 청크 하나가 곧 WS 프레임 하나였고, 프레임마다
+ * `JSON.stringify` + base64 가 붙는다(러너에서 한 번, 서버가 뷰어마다 한 번 더).
+ * TUI 재그리기는 그 청크를 초당 수십~수백 개 만든다 — 그리는 화면은 하나인데.
+ *
+ * **선행 청크는 즉시 내보낸다**(leading edge). 사람이 친 글자의 에코가 이 경로로 돌아오므로,
+ * 고정 지연을 걸면 타이핑이 그만큼 늦게 그려진다 — 조용할 때의 첫 청크는 기다리지 않는다.
+ * 그 뒤 창(window) 안에 들어오는 것들만 모아 창 끝에 한 번 내보내고, 창이 비면 다시
+ * "조용한 상태"로 돌아간다. 결과: 한 글자 에코는 지연 0, 화면 폭포는 창당 프레임 1개.
+ */
+export interface OutputCoalescer {
+  push(chunk: Buffer): void;
+  /** 끝났다 — 타이머를 끄고 **남은 것을 반드시 내보낸다**(턴의 마지막 화면이 여기 있다). */
+  stop(): void;
+}
+
+/**
+ * 창 길이. 화면 한 프레임(~16.7ms)보다 짧게 잡아, 합치기가 눈에 보이는 지연이 되지 않게
+ * 한다. 폭포에서는 이 값이 곧 프레임 상한(초당 ~83개)이다.
+ */
+const OUTPUT_COALESCE_MS = 12;
+
+export function createOutputCoalescer(opts: {
+  windowMs: number;
+  emit: (chunk: Buffer) => void;
+  /** 테스트가 시간을 손으로 돌리기 위한 이음새(`relay.ts` 의 `schedule` 과 같은 이유). */
+  setTimer?: (fn: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
+}): OutputCoalescer {
+  const setTimer = opts.setTimer ?? ((fn, ms): unknown => {
+    const t = setTimeout(fn, ms);
+    // 합치기 타이머가 프로세스를 살려 두지 않게 한다 — 이건 대기가 아니라 버퍼다.
+    t.unref?.();
+    return t;
+  });
+  const clearTimer = opts.clearTimer
+    ?? ((handle: unknown): void => { clearTimeout(handle as ReturnType<typeof setTimeout>); });
+
+  let pending: Buffer[] = [];
+  let pendingBytes = 0;
+  /** null 이면 **조용한 상태** — 다음 청크는 기다리지 않고 나간다. */
+  let timer: unknown = null;
+
+  const flushPending = (): void => {
+    if (pendingBytes === 0) return;
+    // 여기의 concat 은 **한 창 분량**이라 ring 의 옛 concat 과 성질이 다르다.
+    const merged = pending.length === 1 ? pending[0]! : Buffer.concat(pending, pendingBytes);
+    pending = [];
+    pendingBytes = 0;
+    opts.emit(merged);
+  };
+
+  const onWindowEnd = (): void => {
+    if (pendingBytes > 0) {
+      flushPending();
+      // 계속 쏟아지는 중이다 — 다음 창을 연다(창당 프레임 1개).
+      timer = setTimer(onWindowEnd, opts.windowMs);
+      return;
+    }
+    timer = null;
+  };
+
+  return {
+    push(chunk) {
+      if (chunk.length === 0) return;
+      if (timer === null) {
+        opts.emit(chunk);
+        timer = setTimer(onWindowEnd, opts.windowMs);
+        return;
+      }
+      pending.push(chunk);
+      pendingBytes += chunk.length;
+    },
+    stop() {
+      if (timer !== null) {
+        clearTimer(timer);
+        timer = null;
+      }
+      flushPending();
+    },
+  };
 }
 
 /**
@@ -462,6 +586,13 @@ export interface RunPtyTurnOptions {
   /** PTY 초기 크기. 생략하면 비대화형 기본 120x40(스펙 §5)이다. */
   cols?: number;
   rows?: number;
+  /**
+   * 출력 프레임 합치기 창(ms). 기본 `OUTPUT_COALESCE_MS`. 0 을 주면 창을 열지 않는
+   * 것이 아니라 **즉시 만료되는 창**이 되므로, 합치기를 끄려면 그냥 기본값을 쓰지 말고
+   * 이 값을 아주 작게 두라 — 테스트는 `createOutputCoalescer` 를 직접 쓴다.
+   */
+  coalesceMs?: number;
+
   /** Phase 2 가 onData 로 확장해 라이브 중계에 쓴다. 없어도 tail 계약에는 영향 없다. */
   ring?: RingBuffer;
   /**
@@ -640,6 +771,9 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       if (gateProbe) clearInterval(gateProbe);
       dataListener.dispose();
       exitListener.dispose();
+      // **턴의 마지막 화면이 창 안에 남아 있을 수 있다.** 여기서 안 내보내면 사람이 보는
+      // 마지막 프레임이 통째로 사라진다(정확히 그 프레임에 결과가 적혀 있다).
+      relay.stop();
       resolve({ exitCode, timedOut, tail: decodeTailText(tail.snapshot()) });
     });
 
@@ -672,11 +806,23 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       },
     });
 
+    /**
+     * ring·`onData` 로 가는 길만 합친다. **tail 은 청크마다 그대로 채운다** — 자격증명
+     * 실패 판정(`policy.ts::isCredentialFailure`)과 관문 화면이 그것을 읽고, 그 판정은
+     * 프레임 수와 무관하게 항상 최신이어야 한다.
+     */
+    const relay = createOutputCoalescer({
+      windowMs: opts.coalesceMs ?? OUTPUT_COALESCE_MS,
+      emit: (buf) => {
+        opts.ring?.push(buf);
+        opts.onData?.(buf);
+      },
+    });
+
     const dataListener = proc.onData((chunk) => {
       const buf = Buffer.from(chunk, 'utf8');
       tail.push(buf);
-      opts.ring?.push(buf);
-      opts.onData?.(buf);
+      relay.push(buf);
     });
 
     // ── 프롬프트 주입(2026-09-08). **준비 신호를 본 뒤에만** 쓴다.
@@ -708,6 +854,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         if (gateProbe) clearInterval(gateProbe);
         dataListener.dispose();
         exitListener.dispose();
+        relay.stop();
         try { proc.kill('SIGKILL'); } catch { /* 이미 죽었으면 회수할 것도 없다 */ }
         reject(new PromptNotDeliveredError(Date.now() - startedAt, screen));
       }, readyTimeoutMs);
