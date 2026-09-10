@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
@@ -82,32 +82,55 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
    * **스레드를 열면 마지막 답글이 보여야 한다**(jaebin 보고, 2026-09-09): 스레드는 계속
    * 길어지는데 패널은 늘 맨 위에서 시작해, 열 때마다 손으로 끝까지 내려야 했다.
    *
-   * 판정은 채널과 **같은 것을 쓴다**(`lib/stickyBottom`) — 두 자리가 다른 규칙을 쓰면 같은
-   * 대화가 화면마다 다르게 움직인다. 다만 "아래로 내려가기" 버튼은 여기 두지 않았다:
-   * 채널에 그 버튼이 생긴 이유는 목록이 수백 줄이라 위를 읽는 중 새 줄이 오면 되돌아갈
-   * 길이 필요했던 것이고, 스레드는 답글 몇 줄짜리 상자다. 필요해지면 그때 붙인다.
+   * 판정도 **기계도** 채널과 같은 것을 쓴다(`lib/stickyBottom` + 아래 관찰자 보정). #691 이
+   * 여기에 넣은 것은 효과 둘(열 때·줄 수가 늘 때)뿐이었고, 바로 다음 날 #693 이 채널에서
+   * 같은 증상을 고치며 더한 셋(그리기 전 이동 · 관찰자 보정 · `stickyRef`)이 이 파일에는
+   * 오지 않았다. 그래서 스레드에서만 증상이 남았다(jaebin 보고, 2026-09-10).
+   *
+   * 다만 "아래로 내려가기" 버튼은 여전히 여기 두지 않는다: 채널에 그 버튼이 생긴 이유는
+   * 목록이 수백 줄이라 위를 읽는 중 새 줄이 오면 되돌아갈 길이 필요했던 것이고, 스레드는
+   * 답글 몇 줄짜리 상자다. 필요해지면 그때 붙인다(#691 의 결정을 그대로 잇는다).
    */
   const bottomRef = useRef<HTMLDivElement>(null);
   /** 스크롤 상자 자체. 바닥에서 얼마나 떨어졌는지는 이 요소만 안다. */
   const listRef = useRef<HTMLDivElement>(null);
   /** 지금 바닥을 보고 있는가. 스레드를 열면 바닥에 서므로 기본값은 참이다. */
   const atBottomRef = useRef(true);
+  /**
+   * 바닥에 **붙어 있기로 했는가.** `atBottomRef`("지금 바닥이 보이는가")와 갈리는 순간이
+   * 있다: 늦게 붙은 그림이 답글을 아래로 늘리면 **바닥은 안 보이는데 사람은 아무것도 하지
+   * 않았다.** 아래 보정이 `atBottomRef` 만 보면 그것을 "위를 읽는 중"으로 오해한다.
+   * 이 값은 **사람이 위로 올렸을 때만** 거짓이 된다(`onListScroll`). 채널과 같은 규약이다.
+   */
+  const stickyRef = useRef(true);
+  /** 직전 스크롤 위치. 사람이 올린 것과 브라우저가 옮긴 것을 가르는 데만 쓴다. */
+  const lastScrollTopRef = useRef(0);
 
   /** `block: 'nearest'` 는 필수다 — 근거는 `ChannelPane` 의 같은 함수 위에 적혀 있다. */
   const scrollToBottom = () => {
     atBottomRef.current = true;
+    stickyRef.current = true;
     bottomRef.current?.scrollIntoView?.({ block: 'nearest' });
+    // 방금 **우리가** 옮긴 자리를 직전 위치로 적어 둔다. 이것이 없으면 다음 스크롤을 재는
+    // 기준이 0 으로 남아, 사람이 위로 올린 것을 "내용이 자랐다"로 오해한다.
+    const el = listRef.current;
+    if (el) lastScrollTopRef.current = el.scrollTop;
   };
 
   /**
-   * 스레드를 열거나 다른 스레드로 옮기면 **바닥에서 시작한다.** `atBottomRef` 를 되돌리는
-   * 것이 핵심이다 — 스크롤 상자는 스레드가 바뀌어도 같은 DOM 이라 `scrollTop` 이 0 으로
-   * 돌아가지 않고, 앞 스레드에서 위를 보던 값이 그대로 남는다.
+   * 스레드를 열거나 다른 스레드로 옮기면 **바닥에서 시작한다.** `atBottomRef`·`stickyRef` 를
+   * 되돌리는 것이 핵심이다 — 스크롤 상자는 스레드가 바뀌어도 같은 DOM 이라 `scrollTop` 이
+   * 0 으로 돌아가지 않고, 앞 스레드에서 위를 보던 값이 그대로 남는다.
    *
-   * 열 때 답글은 아직 없을 수 있다(`controller.openThread` 가 받아 온다). 그때는 이 효과가
-   * 짧은 목록의 바닥(=맨 위)으로 가고, 답글이 도착해 길이가 늘면 아래 효과가 다시 내려간다.
+   * `useLayoutEffect` 인 이유는 채널과 같다(#693): 그리기 **전에** 내려간다. `useEffect` 는
+   * 화면이 한 번 나온 뒤에 도므로 앞 스레드의 `scrollTop` 이 남은 어중간한 자리가 한 프레임
+   * 번쩍인다.
+   *
+   * 열 때 답글은 아직 없을 수 있다(`controller.openThread` 가 뿌리를 세운 **뒤에** 받아
+   * 온다). 그때는 이 효과가 짧은 목록의 바닥(=맨 위)으로 가고, 답글이 도착해 길이가 늘면
+   * 아래 효과가, 길이는 그대로인데 높이만 자라면 그 아래 관찰자가 다시 내려간다.
    */
-  useEffect(() => { scrollToBottom(); }, [threadRootId]);
+  useLayoutEffect(() => { scrollToBottom(); }, [threadRootId]);
 
   /**
    * 답글이 늘었을 때. 채널과 같은 규율이다 — **바닥에 붙어 있을 때만** 따라 내려가고,
@@ -120,13 +143,65 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
   }, [thread.length]);
 
   /**
+   * **늦게 자라는 내용까지 따라간다**(#693 이 채널에 넣은 보정을 스레드에도 놓는다).
+   *
+   * 위의 두 효과는 목록이 **몇 줄인지** 바뀔 때만 돈다. 그런데 줄 수는 그대로인 채 높이가
+   * 자라는 길이 여럿 있고, 스레드는 채널보다 그 길이 잦다 — 첨부 그림은 URL 을 받아온
+   * **뒤에** `<img>` 가 생기고(`Attachments.tsx` 의 `useAttachmentUrl`), 링크 미리보기 카드도
+   * fetch 가 끝난 뒤에 붙고(`MessageBody` → `LinkPreview`), 접힌 진행·주고받기가 펴지고,
+   * 글꼴이 늦게 오면 모든 줄이 함께 자란다. 바닥으로 내려간 다음 그런 것들이 몇백 px 자라면
+   * **스크롤 이벤트는 일어나지 않는다**(내용이 자란 것이지 사람이 움직인 것이 아니다) —
+   * 화면은 그 자리에 남고, 자란 만큼이 그대로 "내려가야 하는 거리"가 된다.
+   *
+   * 그래서 **바닥 표식이 상자 밖으로 나가는 순간**을 신호로 삼는다. `root` 를 스크롤 상자로
+   * 주는 것이 핵심이다 — 기준은 창이 아니라 이 상자다.
+   *
+   * 딸림값이 `[threadRootId]` 인 것도 채널과 같은 이유다: 뿌리가 없으면 이 컴포넌트는 아래
+   * 이른 반환(`if (!threadRootId) return null`)을 타므로 스크롤 상자도 바닥 표식도 없다.
+   * `[]` 로 두면 관찰자가 **영원히 안 붙는다.**
+   */
+  useEffect(() => {
+    const root = listRef.current;
+    const marker = bottomRef.current;
+    // jsdom 에는 `IntersectionObserver` 가 없다. 없으면 이 보정만 빠지고 줄 수로 도는 위의
+    // 효과는 그대로 돈다 — `scrollIntoView?.()` 의 옵셔널과 같은 태도다.
+    if (!root || !marker || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!stickyRef.current) return;
+        if (entries.some((e) => e.isIntersecting)) return;
+        scrollToBottom();
+      },
+      { root },
+    );
+    io.observe(marker);
+    return () => io.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadRootId]);
+
+  /**
    * 바닥 여부를 ref 에 담는 이유도 채널과 같다: 이 값은 그리는 데 쓰이지 않으므로 상태로
    * 두면 스크롤 한 번에 패널이 프레임마다 다시 그려진다.
    */
   const onListScroll = () => {
     const el = listRef.current;
     if (!el) return;
-    atBottomRef.current = isNearBottom(el);
+    const prevTop = lastScrollTopRef.current;
+    lastScrollTopRef.current = el.scrollTop;
+    const near = isNearBottom(el);
+    atBottomRef.current = near;
+    // 사람이 손으로 바닥까지 내려왔으면 다시 붙는다.
+    if (near) {
+      stickyRef.current = true;
+      return;
+    }
+    /**
+     * 바닥에서 떨어져 있다 — **누가 떨어뜨렸는지**가 갈린다. 사람이 위로 올렸으면
+     * `scrollTop` 이 **줄어든다.** 내용이 자라서 멀어진 경우에는 줄지 않는다(아래로 자라면
+     * 그대로이고, 위쪽에 그림이 붙으면 브라우저의 스크롤 앵커링이 오히려 밀어 준다).
+     * 후자를 "사람이 올렸다"로 읽으면 고정이 풀려 위의 관찰자 보정이 죽는다.
+     */
+    if (el.scrollTop < prevTop) stickyRef.current = false;
   };
 
   if (!threadRootId) return null;
@@ -216,7 +291,9 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
         {thread.length <= 1 && (
           <p data-testid="thread-empty" className="px-4 py-2 text-meta text-fg-subtle">{t('thread.empty')}</p>
         )}
-        <div ref={bottomRef} />
+        {/* 바닥 표식. 관찰자 보정이 지켜보는 대상이라 회귀선이 집을 손잡이가 필요하다
+            (채널의 `channel-bottom` 과 같다). */}
+        <div ref={bottomRef} data-testid="thread-bottom" />
       </div>
       <TypingLine />
       <div className="border-t border-border p-3">
