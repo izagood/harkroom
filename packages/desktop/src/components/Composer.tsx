@@ -22,6 +22,8 @@ import { toggleCode } from '../lib/codeMarks';
 // 하이퍼링크를 **쓰는** 쪽(⌘K · 고른 글 위에 주소 붙여넣기). 그리는 쪽은 #216 부터 있었다 —
 // 무엇이 링크 문법인지는 렌더러가 쓰는 함수(`linkAt`)가 정한다. 그 파일의 주석이 근거다.
 import { toggleLink, linkFromPaste, applyPastedLink, type PastedLink } from '../lib/linkMarks';
+// 파일 드래그의 판정은 창 전체 안전망(`useFileDropGuard`)과 **같은 함수**를 쓴다.
+import { isFileDrag } from '../lib/fileDrag';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useT } from '../i18n/useT';
 
@@ -821,21 +823,14 @@ export function Composer({
     if (fileRef.current) fileRef.current.value = '';
   };
 
-  /**
-   * 파일을 든 드래그인가. 글자나 멘션 칩을 끌 때까지 놓을 자리를 그리면, 컴포저 안에서
-   * 글자를 옮기는 평범한 동작마다 오버레이가 뜬다.
-   */
-  const draggingFiles = (dt: DataTransfer | null): boolean =>
-    Array.from(dt?.types ?? []).includes('Files');
-
   const onDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
-    if (!draggingFiles(e.dataTransfer)) return;
+    if (!isFileDrag(e.dataTransfer)) return;
     dragDepth.current += 1;
     setDragging(true);
   };
 
   const onDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    if (!draggingFiles(e.dataTransfer)) return;
+    if (!isFileDrag(e.dataTransfer)) return;
     // 막지 않으면 웹뷰가 기본 동작으로 **그 파일을 열어** 앱 화면을 통째로 갈아치운다.
     // 그 순간 쓰던 초안도 함께 사라진다.
     e.preventDefault();
@@ -843,13 +838,13 @@ export function Composer({
   };
 
   const onDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    if (!draggingFiles(e.dataTransfer)) return;
+    if (!isFileDrag(e.dataTransfer)) return;
     dragDepth.current = Math.max(0, dragDepth.current - 1);
     if (dragDepth.current === 0) setDragging(false);
   };
 
   const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    if (!draggingFiles(e.dataTransfer)) return;
+    if (!isFileDrag(e.dataTransfer)) return;
     e.preventDefault();
     // 깊이를 0 으로 되돌린다 — drop 뒤에는 leave 가 오지 않으므로 빼기만으로는 남는다.
     dragDepth.current = 0;

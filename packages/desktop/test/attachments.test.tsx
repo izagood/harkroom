@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import * as path from 'node:path';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { AttachmentRow, MessageRow } from '@murmur/shared';
@@ -13,6 +13,7 @@ import { ApiError } from '../src/lib/api';
 import { nameClipboardFile } from '../src/components/Composer';
 import { acc, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
+import { useFileDropGuard } from '../src/lib/useFileDropGuard';
 
 const withAttachments = (attachments: AttachmentRow[]): MessageRow =>
   ({ ...msg('m1', 'c1', 1, '파일 보냅니다', 'u2'), attachments });
@@ -396,15 +397,64 @@ describe('dropping files on the composer', () => {
   /**
    * 이 설정이 없으면 **패키징한 앱에서만** drop 이 조용히 죽는다. 브라우저 dev 에서는
    * 계속 초록이라 아무도 모른다 — 그 거리를 테스트로 메운다.
+   *
+   * **플랫폼 설정까지 함께 본다.** Tauri 는 `tauri.<플랫폼>.conf.json` 을 JSON Merge
+   * Patch(RFC 7386)로 얹는데, 그 규칙에서 **배열은 병합되지 않고 통째로 갈린다.** 즉
+   * `app.windows` 를 다시 적은 플랫폼 파일은 기본 파일의 창 설정을 **전부** 덮는다 —
+   * 거기 적지 않은 `dragDropEnabled` 는 기본값 `true` 로 되돌아간다.
+   *
+   * 실제로 그렇게 됐다(2026-09-10): `tauri.macos.conf.json` 이 제목표시줄 때문에 창을
+   * 다시 적으면서 `dragDropEnabled: false` 를 데려가지 않았고, **macOS 에서만** Finder
+   * 드래그앤드롭이 죽었다(wry 가 네이티브 핸들러로 drop 을 삼키고 웹뷰에 넘기지 않는다).
+   * 기본 파일만 읽던 그때의 회귀선은 초록이었다.
    */
-  it('tauri.conf.json 이 웹뷰의 드래그앤드롭을 가로채지 않는다', () => {
-    const conf = JSON.parse(
-      readFileSync(path.resolve(__dirname, '../src-tauri/tauri.conf.json'), 'utf8'),
-    );
+  it('플랫폼 설정을 얹은 뒤에도 웹뷰의 드래그앤드롭을 가로채지 않는다', () => {
+    const dir = path.resolve(__dirname, '../src-tauri');
+    const read = (file: string) => JSON.parse(readFileSync(path.join(dir, file), 'utf8'));
+    const base = read('tauri.conf.json');
+    const platforms = readdirSync(dir).filter((f) => /^tauri\.[a-z]+\.conf\.json$/.test(f));
 
-    for (const w of conf.app.windows) {
-      expect(w.dragDropEnabled, 'true(기본값)면 웹뷰의 drop 이벤트가 앱에 오지 않는다').toBe(false);
+    // 기본 파일이 곧 리눅스다(얹는 것이 없다) — 그 자리도 함께 잰다.
+    for (const [name, conf] of [['tauri.conf.json', base] as const,
+      ...platforms.map((f) => [f, read(f)] as const)]) {
+      // Merge Patch 의 배열 규칙: 적었으면 그것이 전부, 안 적었으면 기본이 그대로 산다.
+      const windows = conf.app?.windows ?? base.app.windows;
+      for (const w of windows) {
+        expect(w.dragDropEnabled, `${name}: true(기본값)면 웹뷰의 drop 이벤트가 앱에 오지 않는다`)
+          .toBe(false);
+      }
     }
+  });
+});
+
+/**
+ * 컴포저 **밖**에 떨어진 파일.
+ *
+ * 웹뷰의 기본 동작은 그 파일을 여는 것이다 — SPA 인 이 앱에서는 화면과 초안이 통째로
+ * 사라진다. 손은 자주 조금 빗나가므로(메시지 목록·사이드바) 창 전체에 안전망을 깐다.
+ */
+describe('컴포저 밖에 떨어진 파일', () => {
+  const Guarded = () => { useFileDropGuard(); return <div data-testid="page">page</div>; };
+
+  it('앱을 갈아치우지 못하게 기본 동작을 막는다', () => {
+    render(<Guarded />);
+
+    const dropped = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(dropped, 'dataTransfer', { value: { files: [], types: ['Files'] } });
+    screen.getByTestId('page').dispatchEvent(dropped);
+
+    expect(dropped.defaultPrevented, '막지 않으면 웹뷰가 그 파일을 열어 앱이 사라진다').toBe(true);
+  });
+
+  // 글자 드래그까지 막으면 컴포저 안에서 글을 끌어 옮기는 평범한 동작이 죽는다.
+  it('글자를 끄는 것은 막지 않는다', () => {
+    render(<Guarded />);
+
+    const dropped = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(dropped, 'dataTransfer', { value: { files: [], types: ['text/plain'] } });
+    screen.getByTestId('page').dispatchEvent(dropped);
+
+    expect(dropped.defaultPrevented).toBe(false);
   });
 });
 
