@@ -24,7 +24,7 @@ export function WindowDragStrip() {
     <div
       data-testid="window-drag-strip"
       data-tauri-drag-region
-      // `shrink-0`: 아래 형제가 `h-screen`·`flex-1` 이면 이 띠가 눌려 높이 0 이 된다 —
+      // `shrink-0`: 아래 형제가 `h-full`·`flex-1` 이면 이 띠가 눌려 높이 0 이 된다 —
       // 그러면 요소는 있는데 잡히지 않는, 고치기 전과 같은 상태가 된다.
       className={`shrink-0 ${MAC_TITLEBAR_H}`}
     />

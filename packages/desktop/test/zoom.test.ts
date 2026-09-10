@@ -12,16 +12,22 @@ import {
 } from '../src/lib/zoom';
 
 describe('배율 눈금', () => {
-  it('오늘의 화면은 90% 칸이고 거기서 웹뷰 배율이 1.0 이다', () => {
-    // 이 앱의 본문단은 13px 로 통상보다 작다. 눈금의 원점을 통상 크기에 맞춰 옮겼으므로
-    // **지금 크기가 좋았던 사람은 90% 를 고르면 한 픽셀도 달라지지 않아야 한다.**
-    expect(BASELINE_ZOOM).toBe(90);
-    expect(zoomFactor(90)).toBe(1);
+  it('눈금 100% 는 웹뷰 배율 **정확히 1.0** 이다', () => {
+    // 이 한 줄이 이 파일의 정본이다. 한때 원점이 90 이어서 기본값 100% 가 배율 1.111 을
+    // 걸었고, 그 배율에서 앱 레이아웃이 보이는 높이보다 ~11% 길어져 **입력창이 화면 밖으로
+    // 나갔다**(2026-09-10 실측). 화면을 키우는 일은 배율이 아니라 앱의 척도가 한다.
+    expect(BASELINE_ZOOM).toBe(100);
+    expect(zoomFactor(100)).toBe(1);
   });
 
-  it('기본값은 오늘보다 한 칸 크다 — 켜자마자 커지는 것이 이 기능의 목적이다', () => {
+  it('기본 상태에서는 배율을 쓰지 않는다 — 부작용을 전원이 안고 가지 않는다', () => {
     expect(DEFAULT_ZOOM).toBe(100);
-    expect(zoomFactor(DEFAULT_ZOOM)).toBeGreaterThan(1);
+    expect(zoomFactor(DEFAULT_ZOOM)).toBe(1);
+  });
+
+  it('사람이 고른 칸만 1 이 아니다 — 눈금은 그대로 아홉 칸이다', () => {
+    expect(zoomFactor(90)).toBeCloseTo(0.9, 5);
+    expect(zoomFactor(150)).toBeCloseTo(1.5, 5);
   });
 
   it('표 밖의 값은 가장 가까운 칸으로 붙는다 — 기본값으로 되돌리지 않는다', () => {
