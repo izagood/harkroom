@@ -556,16 +556,22 @@ describe('사이드바 삭제 확인 — 규모를 말하는 문장의 복수형
 });
 
 /**
- * **긴 안내문이 뜻을 잃지 않았다.** 자동 멘션 안내는 두 사실을 진다 — 무엇이 일어나는가,
- * 그리고 한 번만 빼려면 어디를 누르는가. 영어로 옮기면서 뒤엣것을 잘라내면 사람은 칩을
- * 영영 발견하지 못하므로, **두 언어 모두 두 사실을 다 갖는지**를 잰다(낱말이 아니라 뜻).
+ * **긴 안내문이 뜻을 잃지 않았다.** 채널 에이전트 안내는 이제 세 사실을 진다(048) —
+ * 두 값이 각각 무엇을 하는가, 그리고 매 줄에 붙는 쪽을 한 번만 빼려면 어디를 누르는가.
+ * 어느 하나를 옮기면서 잘라내면 사람은 값 하나를 고르고도 무엇이 달라지는지 모르므로,
+ * **두 언어 모두 세 사실을 다 갖는지**를 잰다(낱말이 아니라 뜻).
  */
 describe('사이드바 안내문 — 옮기면서 사실을 잃지 않는다', () => {
-  it('자동 멘션 안내가 두 언어 모두 「무엇이 일어나나」와 「어떻게 빼나」를 다 말한다', () => {
+  it('채널 에이전트 안내가 두 언어 모두 두 값과 「어떻게 빼나」를 다 말한다', () => {
     const note = { en: en['sidebar.members.autoMentionNote'], ko: ko['sidebar.members.autoMentionNote'] };
-    expect(note.en).toContain('called at the front');
-    expect(note.en).toContain('composer');
-    expect(note.ko).toContain('앞에 자동으로 불린다');
+    // 부를 수 있게 — 눌러야 불린다.
+    expect(note.en).toContain('clicks it');
+    // 매 줄에 — 자동으로 앞에 붙는다.
+    expect(note.en).toContain('added to the front');
+    // 빼는 자리는 작성창의 칩이다.
+    expect(note.en).toContain('chip');
+    expect(note.ko).toContain('눌렀을 때만');
+    expect(note.ko).toContain('앞에 자동으로 붙는다');
     expect(note.ko).toContain('작성창');
   });
 

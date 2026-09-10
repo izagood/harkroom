@@ -1310,10 +1310,25 @@ export interface ChannelMemberRow {
  * 필요하고, 그것을 위해 디렉터리를 다시 뒤지게 하면 디렉터리가 아직 안 온 순간 칩이 비었다가
  * 나타난다. 접두는 이 handle 로 만든다.
  */
+/**
+ * 채널이 에이전트를 부르는 방식(#173, 마이그레이션 048).
+ *
+ * - `always`: 사람이 쓰는 **매 줄에** 컴포저가 `@handle` 을 접두한다.
+ * - `available`: 접두는 없다. 그 채널에서 **부를 수 있는 상대로 화면에 선다** —
+ *   컴포저의 채널 에이전트 줄과 멘션 후보 맨 위.
+ *
+ * 이 값은 **부름의 세기**이지 권한이 아니다. `available` 이 아닌 에이전트도 handle 을
+ * 치면 불린다(멘션 후보는 전역이다) — 이 값이 정하는 것은 "이 채널이 누구를 데리고
+ * 있다고 화면이 말하는가" 하나다.
+ */
+export const CHANNEL_AUTO_MENTION_MODES = ['always', 'available'] as const;
+export type ChannelAutoMentionMode = (typeof CHANNEL_AUTO_MENTION_MODES)[number];
+
 export interface ChannelAutoMentionRow {
   channelId: string;
   agentAccountId: string;
   handle: string;
+  mode: ChannelAutoMentionMode;
   createdBy: string;
   createdAt: string;
 }

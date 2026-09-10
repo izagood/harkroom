@@ -100,6 +100,25 @@ function rank(a: AccountView, b: AccountView): number {
 }
 
 /**
+ * **이 채널이 데리고 있는 에이전트를 맨 위에 세운다**(마이그레이션 048 의 `available`).
+ *
+ * 목록을 자르지 않고 순서만 바꾸는 이유: 다른 에이전트를 못 부르게 하는 것이 아니다
+ * (멘션은 전역이고 그래야 한다). 이 채널에 처음 들어온 사람이 **여기서 누구를 부르면
+ * 되는지**를 목록의 첫 줄에서 읽게 하는 것이 전부다.
+ *
+ * `channelHandles` 가 비면 비교가 늘 무승부라 `rank` 그대로다 — 자동 멘션이 없는 채널의
+ * 목록은 글자 하나도 달라지지 않는다.
+ */
+function rankWithChannelFirst(channelHandles: readonly string[]) {
+  return (a: AccountView, b: AccountView): number => {
+    const inA = channelHandles.includes(a.handle.toLowerCase());
+    const inB = channelHandles.includes(b.handle.toLowerCase());
+    if (inA !== inB) return inA ? -1 : 1;
+    return rank(a, b);
+  };
+}
+
+/**
  * 서버가 준 사유를 사람이 읽을 문구로. `ApiError` 는 사유를 `message` 에 들고 온다
  * (`code` 는 프로그램용이다) — 다른 예외는 기본 문구로 떨어뜨린다.
  */
@@ -427,6 +446,30 @@ export function Composer({
     return () => { alive = false; };
   }, [channelId]);
 
+  /**
+   * 자동 멘션 handle(#173). 디렉터리에서 그 계정을 다시 확인한다 — 설정된 뒤 비활성화된
+   * 에이전트는 붙이지 않는다(깨어나지 못하는 상대를 매 줄에 붙이면 죽은 handle 만 남는다).
+   * 고정 멘션이 "계정이 사라지면 빠진다"는 것과 같은 규칙이다.
+   */
+  const liveAutoRows = useMemo(
+    () => (autoRows ?? [])
+      .filter((r) => { const a = accounts[r.agentAccountId]; return !!a && !a.disabled && a.id !== myId; }),
+    [autoRows, accounts, myId],
+  );
+  /** 매 줄에 접두가 붙는 에이전트(`always`). 지금까지의 자동 멘션이 이것이다. */
+  const autoHandles = useMemo(
+    () => liveAutoRows.filter((r) => r.mode === 'always').map((r) => r.handle.toLowerCase()),
+    [liveAutoRows],
+  );
+  /**
+   * 접두는 붙지 않지만 **이 채널이 데리고 있는** 에이전트(`available`). 눌러서 부른다 —
+   * 누르면 고정 칩이 되고(`choose` 와 같은 자리), 그때부터는 사람이 부른 것과 구분되지
+   * 않는다. 그것이 맞다: 부른 것은 사람이다.
+   */
+  const availableHandles = useMemo(
+    () => liveAutoRows.filter((r) => r.mode === 'available').map((r) => r.handle.toLowerCase()),
+    [liveAutoRows],
+  );
   const matches = useMemo((): Candidate[] => {
     if (!query) return [];
     const q = query.query.toLowerCase();
@@ -455,7 +498,7 @@ export function Composer({
       // 비활성 계정은 부를 수 없다 — 디렉터리에는 남아 있다(과거 메시지의 작성자 이름을
       // 풀어야 하므로). 후보에서 빼는 것이 이쪽 책임이다(shared 의 AccountView.disabled 주석).
       .filter((a) => a.id !== myId && !a.disabled && a.handle.toLowerCase().startsWith(q))
-      .sort(rank)
+      .sort(rankWithChannelFirst(availableHandles))
       .slice(0, MAX_SUGGESTIONS - reserved);
     // 계정이 먼저, 집합·팀이 뒤다 — 사람·에이전트를 부르는 것이 흔한 쪽이고, 여럿을
     // 부르는 이름은 목록 아래에 모여 있어야 "이 아래는 여러 명"이라고 한눈에 읽힌다.
@@ -464,7 +507,7 @@ export function Composer({
       ...asGroupCandidates(groupMatches),
       ...asTeamCandidates(teamMatches),
     ];
-  }, [accounts, groups, teams, myId, query]);
+  }, [accounts, groups, teams, myId, query, availableHandles]);
 
   // 고정 칩이 살아남는 조건 — 없는 이름을 붙이면 멘션이 아니라 그냥 글자다. 팀도
   // 부를 수 있으므로 여기 든다(#172).
@@ -477,17 +520,6 @@ export function Composer({
     [accounts, groups, teams, myId],
   );
 
-  /**
-   * 자동 멘션 handle(#173). 디렉터리에서 그 계정을 다시 확인한다 — 설정된 뒤 비활성화된
-   * 에이전트는 붙이지 않는다(깨어나지 못하는 상대를 매 줄에 붙이면 죽은 handle 만 남는다).
-   * 고정 멘션이 "계정이 사라지면 빠진다"는 것과 같은 규칙이다.
-   */
-  const autoHandles = useMemo(
-    () => (autoRows ?? [])
-      .filter((r) => { const a = accounts[r.agentAccountId]; return !!a && !a.disabled && a.id !== myId; })
-      .map((r) => r.handle.toLowerCase()),
-    [autoRows, accounts, myId],
-  );
   const skippedAuto = skippedAutoByScope[scopeKey] ?? [];
   /** 이번 메시지에 실제로 붙을 자동 멘션 — 설정에서 이번만 뺀 것을 제하고 남은 것. */
   const autoActive = useMemo(
@@ -509,6 +541,15 @@ export function Composer({
    * 글자만 세면 화면은 여유가 있다고 보고 서버는 상한을 넘겼다고 거절한다. **같은 함수로
    * 만든 같은 문자열**을 재는 것이 그 어긋남을 없애는 유일한 방법이다.
    */
+  /**
+   * 지금 눌러서 부를 수 있는 채널 에이전트. 이미 고정된 것은 뺀다 — 눌러도 달라지는 것이
+   * 없는 버튼은 눌러 보고서야 그것을 알게 된다.
+   */
+  const callableChannelAgents = useMemo(
+    () => availableHandles.filter((h) => !sticky.includes(h)),
+    [availableHandles, sticky],
+  );
+
   const outgoing = useMemo(
     () => withStickyMentions(draft, [...autoActive, ...sticky]),
     [draft, autoActive, sticky],
@@ -582,14 +623,14 @@ export function Composer({
       .filter((a) => a.id !== myId
         && !sticky.includes(a.handle.toLowerCase())
         && !autoHandles.includes(a.handle.toLowerCase()))
-      .sort(rank)
+      .sort(rankWithChannelFirst(availableHandles))
       .slice(0, MAX_SUGGESTIONS - groupsList.length - teamsList.length);
     return [
       ...asAccountCandidates(accountsList),
       ...asGroupCandidates(groupsList),
       ...asTeamCandidates(teamsList),
     ];
-  }, [accounts, groups, teams, myId, sticky, autoHandles]);
+  }, [accounts, groups, teams, myId, sticky, autoHandles, availableHandles]);
 
   // 두 목록은 한자리에 뜨고 키보드도 하나다 — 동시에 열리면 Enter 가 어디로 갈지 모른다.
   const options = picking ? pickable : matches;
@@ -732,6 +773,18 @@ export function Composer({
 
   const drop = (handle: string) => {
     setSticky(stickyRaw.filter((h) => h !== handle));
+    ref.current?.focus();
+  };
+
+  /**
+   * 채널이 데리고 있는 에이전트를 **이번 발화에** 부른다(마이그레이션 048 `available`).
+   *
+   * `choose` 가 `@` 버튼 목록에서 하는 것과 **같은 일**이다 — 고정 칩이 된다. 별도의
+   * 상태를 만들지 않는 이유: 누른 뒤의 뜻은 "사람이 이 상대를 불렀다"이고, 그것은 이미
+   * 고정 칩이 말하는 사실이다. 상태를 하나 더 두면 × 가 무엇을 지우는지가 칩마다 달라진다.
+   */
+  const callChannelAgent = (handle: string) => {
+    if (!stickyRaw.includes(handle)) setSticky([...stickyRaw, handle]);
     ref.current?.focus();
   };
 
@@ -1411,6 +1464,38 @@ export function Composer({
                      하면 프로필(#475)을 연다. */
                   null
                 )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {/*
+        이 채널이 데리고 있는 에이전트(마이그레이션 048 `available`). 칩과 **다른 줄**이다:
+        칩은 "이번 글이 갈 곳"이고 이 줄은 "여기서 부를 수 있는 상대"다. 누르면 칩이 되어
+        위로 옮겨 간다 — 그 이동이 눌렀다는 사실을 말한다.
+
+        점선 테두리로 그린다. 칠해 두면 이미 부른 것처럼 읽힌다.
+      */}
+      {callableChannelAgents.length > 0 && (
+        <ul
+          data-testid="channel-agents"
+          aria-label={t('composer.mention.channelAgentsLabel')}
+          className="mb-1 flex flex-wrap items-center gap-1 text-meta text-fg-muted"
+        >
+          <li>{t('composer.mention.channelAgents')}</li>
+          {callableChannelAgents.map((h) => (
+            <li key={`channel:${h}`}>
+              <button
+                type="button"
+                data-testid="channel-agent"
+                data-handle={h}
+                title={t('composer.mention.channelAgentTitle')}
+                className="rounded border border-dashed border-border px-1.5 py-0.5 font-medium text-fg-muted hover:border-accent hover:text-accent"
+                // 목록·칩의 버튼과 같은 이유로 blur 를 막는다 — 누른 뒤에도 커서는 글 안에 있어야 한다.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => callChannelAgent(h)}
+              >
+                @{h}
               </button>
             </li>
           ))}

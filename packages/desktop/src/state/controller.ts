@@ -1,4 +1,4 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@murmur/shared';
 import { countsAsReply, notifyLevelOf } from '@murmur/shared';
 import { ApiClient, ApiError } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
@@ -1732,9 +1732,14 @@ export class Controller {
     return rows;
   }
 
-  /** 건다. 실패를 삼키지 않는다 — 호출부(설정 화면)가 사유를 사람에게 보여 준다. */
-  async setChannelAutoMention(channelId: string, agentAccountId: string): Promise<void> {
-    await this.api.setChannelAutoMention(channelId, agentAccountId);
+  /**
+   * 건다(또는 이미 걸린 것의 모드를 바꾼다). 실패를 삼키지 않는다 — 호출부(설정 화면)가
+   * 사유를 사람에게 보여 준다.
+   */
+  async setChannelAutoMention(
+    channelId: string, agentAccountId: string, mode: ChannelAutoMentionMode,
+  ): Promise<void> {
+    await this.api.setChannelAutoMention(channelId, agentAccountId, mode);
     await this.loadChannelAutoMentions(channelId);
   }
 

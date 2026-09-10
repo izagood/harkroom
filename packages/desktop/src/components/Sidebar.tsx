@@ -33,7 +33,8 @@ import { faceState, isFaceGreyed, type FaceState } from '../lib/faceState';
 import { anyPresenceView, PRESENCE_LABEL, type PresenceView } from '../lib/presenceView';
 import type { SectionId } from './settings/sections';
 import type {
-  AccountView, AddTeamToChannelResult, AgentTeamRow, ChannelPrefRow, ChannelRow, NotifyLevel,
+  AccountView, AddTeamToChannelResult, AgentTeamRow, ChannelAutoMentionMode, ChannelPrefRow,
+  ChannelRow, NotifyLevel,
 } from '@murmur/shared';
 import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, PROJECTION_UNCONFIGURED_NOTICE, notifyLevelOf, sortChannelsBySection } from '@murmur/shared';
 import { Logo } from './Logo';
@@ -459,11 +460,20 @@ export function Sidebar({
    * 실패는 그 절 안에 보여 준다: 서버가 400(에이전트 아님·비활성)이나 403 을 줄 수 있고,
    * 그 사유가 조용히 사라지면 사용자는 체크박스가 고장 났다고 여긴다.
    */
-  const toggleAutoMention = async (channelId: string, agentAccountId: string, on: boolean): Promise<void> => {
+  /**
+   * 채널이 이 에이전트를 어떻게 데리고 있나 — 세 값 하나로 정한다(마이그레이션 048).
+   *
+   * `off` 는 행을 지우는 것이고 나머지 둘은 행의 `mode` 다. 체크박스 두 개로 나누지 않은
+   * 이유: 두 상자는 넷을 표현하고(둘 다 켠 상태·둘 다 끈 상태) 그중 둘은 뜻이 없다.
+   * 세 값 중 하나라는 것이 사실이므로 컨트롤도 하나다.
+   */
+  const changeAutoMention = async (
+    channelId: string, agentAccountId: string, value: 'off' | ChannelAutoMentionMode,
+  ): Promise<void> => {
     setAutoMentionError(null);
     try {
-      if (on) await getController().setChannelAutoMention(channelId, agentAccountId);
-      else await getController().unsetChannelAutoMention(channelId, agentAccountId);
+      if (value === 'off') await getController().unsetChannelAutoMention(channelId, agentAccountId);
+      else await getController().setChannelAutoMention(channelId, agentAccountId, value);
     } catch (err) {
       setAutoMentionError(err instanceof Error ? err.message : t('sidebar.members.autoMentionFailed'));
     }
@@ -1092,6 +1102,8 @@ export function Sidebar({
           {(() => {
             const autoRows = channelAutoMentions[ch.id];
             const onIds = new Set((autoRows ?? []).map((r) => r.agentAccountId));
+            // 에이전트 id → 지금 걸린 모드. 없는 키가 곧 '없음' 이다.
+            const modeOf = new Map((autoRows ?? []).map((r) => [r.agentAccountId, r.mode] as const));
             // admin 은 켤 수 있는 에이전트 전부(비활성은 이미 켜져 있을 때만 — 끄는 길은 있어야
             // 한다)를, 나머지는 켜진 것만 본다. 서버가 비활성 에이전트의 추가를 400 으로
             // 막으므로, 그 토글을 내주면 눌러서 실패하는 항목이 된다.
@@ -1127,23 +1139,31 @@ export function Sidebar({
                       {agents.map((a) => (
                         <li key={a.id} className="flex items-center gap-1 text-meta text-fg-muted">
                           {me?.isAdmin ? (
-                            <label className="flex items-center gap-1">
-                              <input
-                                type="checkbox"
-                                aria-label={t('sidebar.members.autoMentionCheckbox', { handle: a.handle })}
-                                checked={onIds.has(a.id)}
-                                onChange={(e) => void toggleAutoMention(ch.id, a.id, e.target.checked)}
-                              />
+                            <>
                               <span>@{a.handle}</span>
-                            </label>
+                              <select
+                                aria-label={t('sidebar.members.autoMentionMode', { handle: a.handle })}
+                                className="rounded border border-border bg-field px-1 py-0.5 text-meta text-fg"
+                                value={modeOf.get(a.id) ?? 'off'}
+                                onChange={(e) => void changeAutoMention(ch.id, a.id, e.target.value as 'off' | ChannelAutoMentionMode)}
+                              >
+                                <option value="off">{t('sidebar.members.autoMentionOff')}</option>
+                                <option value="available">{t('sidebar.members.autoMentionAvailable')}</option>
+                                <option value="always">{t('sidebar.members.autoMentionAlways')}</option>
+                              </select>
+                            </>
                           ) : (
                             <span>@{a.handle}</span>
                           )}
                           {/* 배지는 **켜진 행에만** 붙는다. admin 목록에는 꺼진 에이전트도 서므로
-                              무조건 붙이면 체크가 비어 있는 줄에 '자동' 이라고 적힌다 — 화면이
-                              체크박스와 반대되는 말을 한다. */}
-                          {onIds.has(a.id) && (
+                              무조건 붙이면 고른 값이 '없음' 인 줄에 '자동' 이라고 적힌다 — 화면이
+                              선택과 반대되는 말을 한다. 두 값은 서로 다른 말을 해야 한다: 하나는
+                              매 줄에 붙고 하나는 눌러야 부른다. */}
+                          {modeOf.get(a.id) === 'always' && (
                             <span className="rounded bg-accent-surface px-1 text-meta text-accent">{t('sidebar.members.autoMentionBadge')}</span>
+                          )}
+                          {modeOf.get(a.id) === 'available' && (
+                            <span className="rounded bg-surface-sunken px-1 text-meta text-fg-muted">{t('sidebar.members.autoMentionAvailableBadge')}</span>
                           )}
                           {a.disabled && <span className="rounded bg-surface-hover px-1 text-meta text-fg-muted">{t('sidebar.members.agentDisabled')}</span>}
                         </li>

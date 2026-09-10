@@ -19,7 +19,10 @@ import {
 } from '../services/scheduledMessages.js';
 // 이름 규칙은 데스크탑의 채널 생성 입력(Sidebar.tsx)과 **같은 것**이어야 한다 — 그래서
 // 정규식을 여기 리터럴로 두지 않고 shared 의 상수를 쓴다.
-import { CHANNEL_NAME_PATTERN, MAX_MESSAGE_BODY_CHARS, NOTIFY_LEVELS, SYSTEM_ACCOUNT_PLACEHOLDER } from '@murmur/shared';
+import {
+  CHANNEL_AUTO_MENTION_MODES, CHANNEL_NAME_PATTERN, MAX_MESSAGE_BODY_CHARS, NOTIFY_LEVELS,
+  SYSTEM_ACCOUNT_PLACEHOLDER,
+} from '@murmur/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent, emitPosted } from '../events.js';
 import { postMessage } from '../services/messages.js';
@@ -580,6 +583,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
   });
 
   const autoMentionParam = z.object({ id: z.string().uuid(), agentId: z.string().uuid() });
+  const autoMentionBody = z.object({ mode: z.enum(CHANNEL_AUTO_MENTION_MODES).default('always') });
 
   /**
    * 건다. **admin 전용** — 에이전트를 어디에 자동 투입할지는 `#253` 이 admin 에 남긴
@@ -592,13 +596,23 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
    */
   app.put('/channels/:id/auto-mentions/:agentId', { preHandler: app.requireAdmin }, async (req, reply) => {
     const { id, agentId } = autoMentionParam.parse(req.params);
+    /**
+     * 모드(마이그레이션 048)는 **본문이 없으면 `always`** 다. 이 라우트를 이미 쓰고 있던
+     * 호출부는 본문을 보내지 않고, 그때의 뜻이 매 줄 접두였다 — 기본값을 바꾸면 옛 호출이
+     * 조용히 다른 일을 한다.
+     */
+    const body = autoMentionBody.parse(req.body ?? {});
     // 존재하지 않는 채널은 FK 위반으로 500 이 된다 — 잘못된 입력을 서버 오류로 답하면
     // 호출부가 재시도할 대상인지 구분하지 못한다(멤버 초대와 같은 이유).
-    const exists = await pool.query(`select 1 from channel where id = $1`, [id]);
+    const exists = await pool.query<{ kind: string; visibility: string }>(
+      `select kind, visibility from channel where id = $1`, [id],
+    );
     if (!exists.rowCount) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
     }
-    const result = await setChannelAutoMention(pool, { channelId: id, agentAccountId: agentId, createdBy: req.account!.id });
+    const result = await setChannelAutoMention(
+      pool, { channelId: id, agentAccountId: agentId, createdBy: req.account!.id, mode: body.mode },
+    );
     if (!result.ok) {
       if (result.reason === 'not_found') {
         return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
@@ -608,10 +622,28 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
       }
       return reply.code(400).send({ error: { code: 'agent_disabled', message: 'a disabled agent cannot be auto-mentioned' } });
     }
+    /**
+     * **볼 수 없는 채널의 에이전트는 부를 수 없다.** 지정과 동시에 멤버로 넣는 이유:
+     * private·DM 에서 멤버가 아닌 에이전트를 부르면 인박스 항목은 들어가는데 그 러너가
+     * 스레드를 읽는 `GET /channels/:id/messages` 는 `assertChannelVisible` 로 403 이다 —
+     * 부름이 조용히 죽고, 부른 사람은 이유를 모른다. "이 채널의 에이전트"라고 화면이
+     * 말하면서 그 부름이 닿지 않는 상태를 남기지 않는다.
+     *
+     * 조건은 `channelVisibleSql` 의 첫 절과 **같은 것**이다: public standard 채널에는
+     * 멤버십이 없으므로(#156) 넣을 것도 없다.
+     *
+     * 푸는 쪽(DELETE)에서 멤버십을 되돌리지 않는다 — 들어온 멤버를 내보내는 것은 별개의
+     * 결정이고(사람이 초대한 것과 구분되지 않는다), 조용히 내보내면 그 에이전트가 읽던
+     * 채널이 말없이 사라진다.
+     */
+    const ch = exists.rows[0]!;
+    if (!(ch.kind === 'standard' && ch.visibility === 'public')) {
+      await addChannelMember(pool, id, agentId);
+    }
     // 본문은 남기지 않는다 — handle 만. 이 채널에서 오간 글은 감사가 붙잡을 자리가 아니다.
     await recordAudit(pool, {
       action: 'channel.auto_mention.set', actorId: req.account!.id, actorHandle: req.account!.handle,
-      target: id, detail: { handle: result.row.handle },
+      target: id, detail: { handle: result.row.handle, mode: result.row.mode },
     }, req);
     return result.row;
   });

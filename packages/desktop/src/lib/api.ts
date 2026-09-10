@@ -1,4 +1,4 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@murmur/shared';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
 export class ApiError extends Error {
@@ -617,9 +617,17 @@ export class ApiClient {
     return (await this.req<{ autoMentions: ChannelAutoMentionRow[] }>('GET', `/channels/${channelId}/auto-mentions`)).autoMentions;
   }
 
-  /** 건다. admin 이 아니면 서버가 403, 에이전트가 아니거나 비활성이면 400 을 준다. */
-  setChannelAutoMention(channelId: string, agentAccountId: string): Promise<ChannelAutoMentionRow> {
-    return this.req('PUT', `/channels/${channelId}/auto-mentions/${agentAccountId}`);
+  /**
+   * 건다. admin 이 아니면 서버가 403, 에이전트가 아니거나 비활성이면 400 을 준다.
+   *
+   * `mode` 는 **부름의 세기**다(마이그레이션 048): `always` 는 매 줄 접두, `available` 은
+   * 접두 없이 화면에만 선다. 이미 걸린 에이전트에 다시 부르면 모드만 바뀐다 — 지웠다 다시
+   * 거는 길을 화면이 따로 만들지 않게 하려고 서버가 `do update` 로 둔 것이다.
+   */
+  setChannelAutoMention(
+    channelId: string, agentAccountId: string, mode: ChannelAutoMentionMode,
+  ): Promise<ChannelAutoMentionRow> {
+    return this.req('PUT', `/channels/${channelId}/auto-mentions/${agentAccountId}`, { mode });
   }
 
   unsetChannelAutoMention(channelId: string, agentAccountId: string): Promise<void> {

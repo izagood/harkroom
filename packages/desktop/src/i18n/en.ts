@@ -1590,12 +1590,22 @@ export const en = {
    * 쓰면 체크가 비어 있는 줄에 `Off` 가 또 붙어 무엇이 꺼진 것인지 알 수 없다.
    */
   'sidebar.members.agentDisabled': 'Disabled',
+  /** `always` 인 줄에만. `available` 은 아래 `autoMentionAvailableBadge` 로 **다른 말**을 한다. */
   'sidebar.members.autoMentionBadge': 'Auto',
-  'sidebar.members.autoMentionCheckbox': 'Auto-mention @{handle}',
+  /**
+   * 세 값 중 하나를 고르는 자리(마이그레이션 048). 값 자체는 아래 셋이고, 이 문구는
+   * 그 컨트롤이 **누구에 대한 것인지**를 말한다 — 목록의 모든 줄에 같은 컨트롤이 서므로
+   * handle 이 없으면 화면 낭독으로는 어느 줄인지 알 수 없다.
+   */
+  'sidebar.members.autoMentionMode': 'How this channel keeps @{handle}',
+  'sidebar.members.autoMentionOff': 'Not here',
+  'sidebar.members.autoMentionAvailable': 'Callable',
+  'sidebar.members.autoMentionAlways': 'Every message',
+  'sidebar.members.autoMentionAvailableBadge': 'Callable',
   'sidebar.members.autoMentionEmptyAdmin': 'No agent can be turned on here',
-  'sidebar.members.autoMentionEmptyReader': 'No agent is called automatically',
+  'sidebar.members.autoMentionEmptyReader': 'This channel keeps no agent',
   'sidebar.members.autoMentionFailed': 'The auto-mention was not changed',
-  'sidebar.members.autoMentionHeading': 'Auto-mention',
+  'sidebar.members.autoMentionHeading': 'Channel agents',
   'sidebar.members.autoMentionListFailed': 'The auto-mention list did not arrive',
   /**
    * 자동 멘션 안내. 긴 문장이지만 **두 사실을 다 지고 있다** — 무엇이 일어나는가,
@@ -1603,8 +1613,8 @@ export const en = {
    * 발견하지 못한다.
    */
   'sidebar.members.autoMentionNote':
-    'Agents turned on here are called at the front of every message a person writes in this channel. '
-    + 'Use the × on the chip in the composer to leave one out of a single message.',
+    'Callable: the agent stands in the composer of this channel and in the mention list, and is called when someone clicks it. '
+    + 'Every message: it is added to the front of every message a person writes here — use the × on the chip to leave it out of a single message.',
   'sidebar.members.autoMentionNoteReadOnly': ' Only an admin can change this.',
   'sidebar.members.close': 'Close',
   'sidebar.members.empty': 'No members',
@@ -1907,6 +1917,13 @@ export const en = {
    */
   'composer.mention.autoTitle': 'This channel mentions it automatically',
   /** 채널 전체를 부르는 이름 옆. **그릇이 아니라 사람들을 센다**(위 표). */
+  /**
+   * 컴포저의 채널 에이전트 줄(마이그레이션 048 `available`). **콜론은 화면이 붙이지 않는다** —
+   * 이 줄은 `부를 상대`(reaching)와 달리 누르는 자리이고, 문구가 곧 그 묶음의 이름이다.
+   */
+  'composer.mention.channelAgents': 'In this channel:',
+  'composer.mention.channelAgentsLabel': 'Agents of this channel',
+  'composer.mention.channelAgentTitle': 'Click to call it in this message',
   'composer.mention.channelAll': '(everyone here)',
   /**
    * 집합·팀의 구성원 수. **단위를 안 적는다** — 그 집합에는 사람도 에이전트도 들고,
