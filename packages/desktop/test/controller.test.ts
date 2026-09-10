@@ -295,10 +295,36 @@ describe('Controller', () => {
     await Promise.resolve();
     expect(useAppStore.getState().unread).toEqual(entries2);
 
+    const revAfterFresh = useAppStore.getState().inboxRevision;
+
     resolveStale!([{ id: 1, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c1' , authorId: 'u1', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null}]);
     await Promise.resolve();
     await Promise.resolve();
     expect(useAppStore.getState().unread).toEqual(entries2); // stale 응답이 최신 값을 덮지 않는다
+    // 덮지 않았으므로 **"바뀌었다"고 알리지도 않는다.** 여기서 올리면 열려 있는 인박스가
+    // 아무것도 달라지지 않은 채로 조회를 한 번 더 낸다.
+    expect(useAppStore.getState().inboxRevision).toBe(revAfterFresh);
+  });
+
+  /**
+   * `inboxRevision` 은 **열려 있는 인박스에 "다시 읽어라"를 전하는 신호**다(2026-09-10 신고:
+   * *"메시지가 왔는데 Inbox를 닫았다 열어야 반영돼"*). 패널은 읽은 줄까지 필요해 자기 목록을
+   * 따로 조회하므로 스토어의 `unread` 를 그대로 쓸 수 없다 — 그래서 값이 아니라 신호를 준다.
+   *
+   * 재연결(`reconcile` → `refreshUnread`)도 같은 신호를 낸다: 끊긴 동안 놓친 항목이
+   * 소켓이 붙는 것만으로 화면에 닿는다.
+   */
+  it('inbox.updated 는 inboxRevision 을 올린다 — 열려 있는 인박스가 다시 읽는 신호', async () => {
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(fakeApi(), makeWs);
+    await c.start();
+    const before = useAppStore.getState().inboxRevision;
+
+    callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(useAppStore.getState().inboxRevision).toBe(before + 1);
   });
 
   it('send posts to active channel with idempotency key', async () => {

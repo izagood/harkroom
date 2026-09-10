@@ -869,10 +869,21 @@ export class Controller {
   }
 
   // 단조 버전 가드 — 나중에 발행됐지만 먼저 도착한 응답만 반영되도록, stale 응답은 버린다.
+  /**
+   * 반영과 **함께 `inboxRevision` 을 올린다**(2026-09-10). 이 함수가 도는 자리가 곧 "서버의
+   * 인박스가 달라진 것을 방금 확인했다"는 자리다 — `inbox.updated` 이벤트와, 소켓이 다시
+   * 붙은 뒤의 `reconcile` 둘뿐이다. 그래서 신호를 이벤트 처리기가 아니라 여기에 둔다:
+   * 끊긴 동안 놓친 항목도 재연결 한 번으로 열려 있는 인박스에 닿는다.
+   *
+   * stale 응답에서는 올리지 않는다 — 낡은 목록을 버리면서 "바뀌었다"고 알리면, 받는 쪽은
+   * 아무것도 달라지지 않은 채로 조회를 한 번 더 낸다.
+   */
   private async refreshUnread(): Promise<void> {
     const seq = ++this.unreadFetchSeq;
     const entries = await this.api.inboxUnread();
-    if (seq === this.unreadFetchSeq) this.store.getState().set({ unread: entries });
+    if (seq !== this.unreadFetchSeq) return;
+    const store = this.store.getState();
+    store.set({ unread: entries, inboxRevision: store.inboxRevision + 1 });
   }
 
   async openChannel(channelId: string): Promise<void> {
