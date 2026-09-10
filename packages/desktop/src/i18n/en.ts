@@ -1936,6 +1936,12 @@ export const en = {
   'composer.paste.asFile': 'Attach as a file',
   'composer.paste.moving': 'Attaching…',
   'composer.link.pasted': 'Pasted a message link',
+  // 하이퍼링크를 쓰는 쪽(2026-09-10). `{label}` 은 사람이 고른 글이라 **번역하지 않는다**.
+  'composer.link.pastedOver': 'Pasted a link over “{label}”',
+  'composer.link.make': 'Link it',
+  // ⌘K 를 여러 줄에 누른 경우. 막힌 사유와 **할 수 있는 것**을 함께 말한다 — 사유만
+  // 말하면 사람은 열쇠가 고장난 줄로 안다.
+  'composer.link.oneLine': 'A link label has to be one line — select text within a single line.',
   'composer.link.open': 'Go to that message',
 
   'composer.schedule.cancel': 'Cancel',
