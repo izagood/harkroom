@@ -1,4 +1,4 @@
-import { parseMessagePermalink, trimTrailingPunctuation, urlCandidateRegex } from '@murmur/shared';
+import { LINK_SCHEMES, parseMessagePermalink, trimTrailingPunctuation, urlCandidateRegex } from '@murmur/shared';
 import type { MessagePart } from './mention';
 
 /**
@@ -15,8 +15,12 @@ export type LinkTarget =
  * **OS 로 열어도 되는 스킴의 전부.** 허용 목록인 것이 핵심이다 — 금지 목록은 새 스킴이
  * 생길 때마다 뚫리고, 뚫린 줄도 모른다. 사용자와 에이전트가 쓴 글자가 클릭 가능한 동작이
  * 되는 순간부터 이 집합이 신뢰 경계다.
+ *
+ * 목록 자체는 `@murmur/shared` 에 있다 — 멘션 스캐너도 같은 경계를 봐야 하기 때문이다
+ * (`linkSpans`: 링크로 **그려지는** 구간 안의 `@handle` 은 부름이 아니다). 사본을 두면
+ * 화면이 주소로 칠한 글자를 서버가 멘션으로 읽는 상태가 생긴다.
  */
-const OPENABLE_SCHEMES = new Set(['http:', 'https:']);
+const OPENABLE_SCHEMES = new Set(LINK_SCHEMES);
 
 // URL 후보 패턴과 후행 문장부호 정리는 **`@murmur/shared` 에 하나만 둔다**(#215).
 // 서버도 같은 것으로 미리보기 대상을 집어야 캐시 키가 갈라지지 않는다 — 사본을 셋 두었더니

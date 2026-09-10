@@ -111,6 +111,24 @@ describe('에이전트가 동료를 지칭한 것은 부르는 것이 아니다'
     expect(await metaOf(again)).not.toHaveProperty('mentionChainCapped');
   });
 
+  /*
+    **주소 안의 이름**(2026-09-10, jaebin 신고). 위 규칙은 에이전트 작성자만 좁히므로 사람이
+    붙여넣은 링크에는 걸리지 않는다 — 그 갈래를 `shared/linkSpans` 가 막고, 이 회귀선이
+    서버를 통과해 그 사실을 센다.
+  */
+  it('**사람이 붙여넣은 주소 안의 이름은 부르지 않는다** — 링크가 턴을 띄우면 안 된다', async () => {
+    const said = await post(adminToken, '이거 봐 https://x.com/@ada/status/1');
+    expect(await inboxFor(agents.ada!.pat, said)).toEqual([]);
+    // 지칭조차 아니다 — 애초에 이름으로 읽지 않았다.
+    expect(await metaOf(said)).not.toHaveProperty('mentionRefs');
+  });
+
+  it('주소 **밖**의 이름은 그대로 부른다 — 같은 줄에 링크가 있어도 다르지 않다', async () => {
+    const said = await post(adminToken, 'https://x.com/@bob 이거 @ada 가 봐 줘');
+    expect(await inboxFor(agents.ada!.pat, said)).toEqual(['mention']);
+    expect(await inboxFor(agents.bob!.pat, said)).toEqual([]);
+  });
+
   it('자기 자신을 지칭한 것은 meta 에 남기지 않는다 — 작성자는 애초에 대상이 아니다', async () => {
     const said = await post(agents.ada!.pat, '@admin 그건 @ada 가 이미 했다');
     expect(await metaOf(said)).not.toHaveProperty('mentionRefs');
