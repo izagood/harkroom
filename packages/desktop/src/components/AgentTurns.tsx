@@ -39,11 +39,21 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { runningLabel } from '../lib/time';
 import { useLocale, useT } from '../i18n/useT';
 
-export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, onCancelTurns, now = Date.now() }: {
+export function AgentTurns({
+  snapshot, handleOf, channelLabel, threadTitleOf, onOpenThread, onCancelTurns, onOpenTerminal,
+  variant = 'panel', now = Date.now(),
+}: {
   snapshot: AgentTurnsSnapshot;
   /** 계정 id → `@handle`. 스토어 모양을 이 컴포넌트가 알지 않게 함수로 받는다. */
   handleOf: (accountId: string) => string;
   channelLabel: (channelId: string) => string;
+  /**
+   * 스레드 루트 id → **스레드 이름**(루트의 첫 줄). 없으면 채널 이름만 선다 — 아직 못
+   * 받았거나 볼 권한이 없는 것이고, 그때 이름을 지어내지 않는다(`lib/agentTurns.ts`
+   * `threadTitle` 주석). 받아 오는 것은 부르는 쪽의 일이다: 이 컴포넌트는 스토어도
+   * api 도 모른다(그래서 회귀선이 props 만으로 화면을 세울 수 있다).
+   */
+  threadTitleOf?: (threadRootId: string) => string | null;
   /**
    * 스레드로 이동. 부르는 쪽이 `controller.openMessage` 를 태우므로 **채널 전환·스레드
    * 패널·실패 통지**가 퍼머링크와 같은 경로로 처리된다 — 여기서 다시 조립하지 않는다.
@@ -58,6 +68,25 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, onC
    * (design.md §4) — 배선을 빠뜨린 화면에서 조용히 죽은 버튼이 서는 대신 버튼이 부재한다.
    */
   onCancelTurns?: (turns: AgentSessionView[]) => void;
+  /**
+   * 이 턴의 **터미널을 연다**(관제탑에서만 선다). 스레드를 말하지 않은 턴에는 이 문이
+   * 없다 — `terminalTarget` 이 가리키는 것이 스레드이기 때문이다(`TerminalChip` 과 같은
+   * 길로 연다: 새 경로를 만들면 같은 문에 손잡이가 둘이 된다).
+   */
+  onOpenTerminal?: (turn: AgentSessionView) => void;
+  /**
+   * **좁은 칸(`panel`)이냐 본문(`tower`)이냐.**
+   *
+   * 컨셉이 관제탑을 본문에 둔 이유는 폭이다: 스레드 이름 · 하네스 · 경과 · 터미널까지
+   * 한 줄에 세우려면 300px 로는 안 된다. 그래서 같은 목록을 두 폭으로 그린다 — 목록을
+   * 두 컴포넌트로 갈라 쓰면 *"묶음은 스레드"*·*"조종 중인 턴은 다른 문"* 같은 판단이
+   * 두 곳에 복사되고, 한쪽만 고쳐지는 것이 이 개편이 고치려는 어긋남 그 자체다.
+   *
+   * 칸(`panel`)에서는 **중단 버튼을 넘기지 않는다**(`onCancelTurns` 부재) — 관제탑이
+   * 칸과 **항상 함께** 보이므로(둘 다 Agents 칸에서 선다) 같은 버튼이 한 화면에 두 벌
+   * 서게 되고, 사람은 매번 어느 쪽을 누를지 고른다.
+   */
+  variant?: 'panel' | 'tower';
   /** 회귀선이 시각을 고정할 수 있어야 한다(`lib/time.ts::agoLabel` 이 `now` 를 받는 이유와 같다). */
   now?: number;
 }) {
@@ -77,11 +106,21 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, onC
    */
   const [confirmControl, setConfirmControl] = useState<AgentSessionView | null>(null);
 
-  const frame = (children: React.ReactNode) => (
-    <section data-testid="agent-turns" className="px-2 pb-2">
-      <h3 className="px-2 pt-3 pb-1 text-meta font-medium tracking-wide text-fg-subtle uppercase">
-        {t('agentTurns.title')}
-      </h3>
+  const tower = variant === 'tower';
+  const frame = (children: React.ReactNode, sub?: React.ReactNode) => (
+    <section data-testid="agent-turns" className={tower ? 'px-4 pb-6' : 'px-2 pb-2'}>
+      {tower ? (
+        /* 본문에서는 제목이 **머리글**이다 — 칸의 구획 이름(uppercase meta)으로 두면
+           본문 한가운데에 사이드바 조각이 놓인 것처럼 보인다. */
+        <header className="border-b border-border pb-2 pt-4">
+          <h2 className="text-title font-semibold text-fg">{t('agentTurns.title')}</h2>
+          {sub}
+        </header>
+      ) : (
+        <h3 className="px-2 pt-3 pb-1 text-meta font-medium tracking-wide text-fg-subtle uppercase">
+          {t('agentTurns.title')}
+        </h3>
+      )}
       {children}
     </section>
   );
@@ -137,9 +176,24 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, onC
     );
   }
 
+  /**
+   * 본문 머리글의 한 줄 요약. **가장 오래된 턴**을 함께 적는 이유: 폭주는 오래 도는 쪽에서
+   * 시작되고, 목록을 다 읽기 전에 "지금 급한가"를 판단하게 하는 숫자가 그것이다.
+   */
+  const oldestStart = Math.min(...snapshot.turns.map((turn) => Date.parse(turn.startedAt) || now));
+  const sub = tower ? (
+    <p data-testid="agent-turns-subline" className="mt-1 text-meta text-fg-subtle">
+      {t('agentTurns.subline', {
+        n: snapshot.turns.length,
+        threads: groups.length,
+        oldest: runningLabel(Math.max(0, now - oldestStart), locale, t),
+      })}
+    </p>
+  ) : undefined;
+
   return frame(
     <>
-      <div className="flex items-center gap-2 px-2 pb-1">
+      <div className={`flex items-center gap-2 pb-1 ${tower ? 'pt-2' : 'px-2'}`}>
         <p data-testid="agent-turns-count" className="text-meta text-state-running">
           {t('agentTurns.count', { n: snapshot.turns.length })}
         </p>
@@ -179,6 +233,16 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, onC
       <ul className="flex flex-col gap-1">
         {groups.map((group) => {
           const root = group.threadRootId;
+          /*
+            **묶음의 이름은 스레드다.** 채널 이름만 세우면 한 채널에서 두 스레드가 돌 때
+            묶음 둘이 똑같은 이름으로 서고, `이 스레드 턴 전부 중단` 을 무엇에 누르는지
+            알 수 없다 — 그 버튼에 확인 겹창을 두지 않은 근거가 *"무엇을 멈추는지 보면서
+            누른다"* 였으므로, 이름이 없으면 그 근거가 사라진다.
+
+            못 받았으면 채널 이름으로 **되돌아간다**(지어내지 않는다).
+          */
+          const title = root ? threadTitleOf?.(root) ?? null : null;
+          const label = title ?? channelLabel(group.channelId);
           return (
             <li key={`${group.channelId}/${root ?? '_root'}`}
               data-testid={`agent-turns-group-${group.channelId}-${root ?? 'root'}`}
@@ -197,14 +261,17 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, onC
                   <button type="button" data-testid={`agent-turns-open-${root}`}
                     onClick={() => onOpenThread(root)}
                     className="flex min-w-0 flex-1 items-center gap-2 text-left">
-                    <span className="truncate text-meta font-medium text-fg">{channelLabel(group.channelId)}</span>
+                    <span className="truncate text-meta font-medium text-fg">{label}</span>
+                    {title && (
+                      <span className="shrink-0 text-meta text-fg-subtle">{channelLabel(group.channelId)}</span>
+                    )}
                     <span className="ml-auto shrink-0 text-meta text-state-running">
                       {t('agentTurns.count', { n: group.turns.length })}
                     </span>
                   </button>
                 ) : (
                   <div className="flex min-w-0 flex-1 items-center gap-2" title={t('agentTurns.noThread')}>
-                    <span className="truncate text-meta font-medium text-fg-muted">{channelLabel(group.channelId)}</span>
+                    <span className="truncate text-meta font-medium text-fg-muted">{label}</span>
                     <span className="ml-auto shrink-0 text-meta text-state-running">
                       {t('agentTurns.count', { n: group.turns.length })}
                     </span>
@@ -230,7 +297,9 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, onC
                   const startedAt = Date.parse(turn.startedAt);
                   return (
                     <li key={turn.sessionId} data-testid={`agent-turn-${turn.sessionId}`}
-                      className="flex items-baseline gap-1.5 px-2 pb-1 pl-4 text-meta">
+                      className={`flex items-baseline text-meta ${tower
+                        ? 'gap-3 border-t border-border px-3 py-1.5'
+                        : 'gap-1.5 px-2 pb-1 pl-4'}`}>
                       <span className="truncate font-medium text-fg-agent">@{handleOf(turn.agentAccountId)}</span>
                       {/*
                         `mode` 는 옵셔널이다 — 없으면 **알 수 없다는 뜻이지 멘션 턴이라는
@@ -269,9 +338,33 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, onC
                           {turn.claudeAccount ?? t('agentTurns.accountDefault')}
                         </span>
                       )}
+                      {/*
+                        하네스는 **본문에서만 자기 칸을 갖는다.** 칸(300px)에서는 경과
+                        시간이 그 자리를 쓰고 있어서, 하네스는 시각을 못 읽을 때만 대신
+                        선다(아래) — 좁은 곳에서 둘을 다 세우면 에이전트 이름이 잘린다.
+                      */}
+                      {tower && (
+                        <span data-testid={`agent-turn-harness-${turn.sessionId}`}
+                          className="shrink-0 text-fg-subtle">{turn.harness}</span>
+                      )}
                       <span className="ml-auto shrink-0 text-fg-subtle">
-                        {Number.isFinite(startedAt) ? runningLabel(Math.max(0, now - startedAt), locale, t) : turn.harness}
+                        {Number.isFinite(startedAt)
+                          ? runningLabel(Math.max(0, now - startedAt), locale, t)
+                          : tower ? t('agentTurns.startUnknown') : turn.harness}
                       </span>
+                      {/*
+                        **터미널은 스레드를 가리킨다**(`terminalTarget`). 그래서 러너가
+                        스레드를 말하지 않은 턴에는 이 문이 **없다** — 눌러도 열 자리가
+                        없는 버튼을 그리지 않는다(design.md §4).
+                      */}
+                      {tower && onOpenTerminal && turn.threadRootId && (
+                        <button type="button" data-testid={`agent-turn-terminal-${turn.sessionId}`}
+                          onClick={() => onOpenTerminal(turn)}
+                          title={t('agentTurns.terminalTitle')}
+                          className="shrink-0 rounded px-1 text-fg-muted hover:bg-surface-hover">
+                          {t('agentTurns.terminal')}
+                        </button>
+                      )}
                       {/*
                         **조종 중인 턴은 다른 이름의 문으로 끝낸다.** 예전에는 이 자리에
                         버튼이 아예 없었고 근거는 "그 화면 앞에 사람이 앉아 있으니 자기 창에서
@@ -305,7 +398,8 @@ export function AgentTurns({ snapshot, handleOf, channelLabel, onOpenThread, onC
           );
         })}
       </ul>
-      <p className="px-2 pt-1 text-meta text-fg-subtle">{t('agentTurns.scope')}</p>
+      <p className={`pt-1 text-meta text-fg-subtle ${tower ? '' : 'px-2'}`}>{t('agentTurns.scope')}</p>
     </>,
+    sub,
   );
 }

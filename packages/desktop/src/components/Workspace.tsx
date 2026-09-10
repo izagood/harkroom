@@ -11,6 +11,7 @@ import { Rail, type RailPanel } from './Rail';
 import { Sidebar } from './Sidebar';
 import { SidebarToggleIcon } from './SidebarToggleIcon';
 import { ChannelPane } from './ChannelPane';
+import { AgentTower } from './AgentTower';
 import { Notice } from './Notice';
 import { ProjectionBanner } from './ProjectionBanner';
 import { UpdateToast } from './UpdateToast';
@@ -348,11 +349,33 @@ export function Workspace({ onLogout, onOpenSettings }: {
               멘션이 눌러도 아무 일이 없는 버튼이었다 — 단위 테스트는 props 를 손으로
               넘겨 그 사실을 볼 수 없었다. `test/mentionClick.test.tsx` 가 이 화면을
               통째로 띄워 지킨다. */}
-          <ChannelPane
-            onOpenSearch={handleOpenSearch}
-            onOpenDirectory={handleOpenDirectory}
-            onOpenSettings={onOpenSettings}
-          />
+          {/*
+            **Agents 칸은 본문까지 바꾼다.** 다른 칸(홈·DM)은 사이드바만 갈아 끼우고 본문은
+            보던 채널을 그대로 두는데, 이 칸은 다르다: 답하는 물음이 *"지금 우리 팀이 무슨
+            일을 하고 있고 무엇을 멈출 수 있나"* 여서 상세와 위험한 동작이 본문 폭을
+            필요로 한다(개편 컨셉의 셋째 열, `AgentTower` 주석). 300px 에 접어 넣었던 것이
+            사람이 지적한 어긋남이다.
+
+            `ThreadPanel`·`TerminalPanel` 은 **형제로 그대로** 남는다 — 관제탑에서 문을
+            열면 그 오른쪽에 서므로, 목록에서 방금 누른 줄이 밀려나지 않는다.
+          */}
+          {railPanel === 'agents' ? (
+            <AgentTower
+              onOpenThread={(rootId) => {
+                // 칸을 **되돌린 뒤** 연다. 관제탑이 본문을 쥔 채로 스레드를 열면 스레드
+                // 패널만 서고 정작 그 대화가 있는 채널은 관제탑에 가린다. 이동은
+                // `openMessage` 하나에 맡긴다(채널 전환·스레드 패널·실패 통지가 그 길이다).
+                setRailPanel('home');
+                void getController().openMessage(rootId);
+              }}
+            />
+          ) : (
+            <ChannelPane
+              onOpenSearch={handleOpenSearch}
+              onOpenDirectory={handleOpenDirectory}
+              onOpenSettings={onOpenSettings}
+            />
+          )}
           {threadRootId && (
             <ThreadPanel onOpenDirectory={handleOpenDirectory} onOpenSettings={onOpenSettings} />
           )}
