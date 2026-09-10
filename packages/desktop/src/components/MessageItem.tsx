@@ -21,8 +21,9 @@ import { Attachments } from './Attachments';
 import { ConfirmDialog } from './ConfirmDialog';
 import { bodyAsHandles, displayBody } from '../lib/mention';
 import { accountOpen } from '../lib/accountOpen';
+import { stampLabel } from '../lib/day';
 import type { SectionId } from './settings/sections';
-import { useT } from '../i18n/useT';
+import { useT, useLocale } from '../i18n/useT';
 
 /**
  * 얼굴 슬롯의 칸 수. **폭이 고정되는 것이 이 숫자의 일**이다 — 참여자가 늘어도 요약 줄이
@@ -44,6 +45,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }) {
   const t = useT();
+  const locale = useLocale();
   const author = useActiveStore((s) => s.accounts[message.authorId]);
   const isMine = useActiveStore((s) => s.me?.id === message.authorId);
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
@@ -167,10 +169,9 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   const mentionRefs = Array.isArray(message.meta.mentionRefs)
     ? (message.meta.mentionRefs as unknown[]).filter((id): id is string => typeof id === 'string')
     : [];
-  const time = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const lastReplyTime = message.lastReplyAt
-    ? new Date(message.lastReplyAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : null;
+  // 오늘 것은 시각만, 다른 날 것은 날짜까지 — `lib/day.ts` 의 `stampLabel` 한 곳이 정한다.
+  const time = stampLabel(message.createdAt, locale);
+  const lastReplyTime = message.lastReplyAt ? stampLabel(message.lastReplyAt, locale) : null;
   /**
    * **답글이 달렸는가** — 답글 요약과 툴바 진입점이 **같은 하나의 판정**을 나눠 쓴다.
    *

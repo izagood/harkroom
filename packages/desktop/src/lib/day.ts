@@ -68,3 +68,40 @@ export function dayLabel(iso: string, locale: Locale, now: Date = new Date()): s
   }
   return d.toLocaleDateString(locale);
 }
+
+/** 시각 부분. `stampLabel` 의 두 갈래가 **같은 시각 표기**를 쓰도록 한 곳에 둔다. */
+const TIME_PARTS = { hour: '2-digit', minute: '2-digit' } as const;
+
+/**
+ * 말 한 마디에 붙는 **시각 도장**. 오늘의 것은 시각만, 다른 날의 것은 연·월·일까지 함께
+ * 낸다(`오후 11:26` / `2026. 9. 9. 오후 11:26`).
+ *
+ * ## 왜 시각만으로는 부족한가
+ *
+ * 원래 이 자리는 어디서나 `toLocaleTimeString(…, {hour, minute})` 이었다. 그 표기는
+ * **오늘 안에서만 참이다** — 하루가 지나면 `오후 11:26` 은 어제 밤인지 그제 밤인지
+ * 말하지 않고, 읽는 사람은 그것을 알 방법이 없다(2026-09-10 보고). 날짜 구분선(`dayLabel`)
+ * 이 채널 목록에는 있지만 그것은 **목록 안에서 위로 거슬러 올라가야** 읽히는 정보이고,
+ * 저장한 메시지·접힌 교환·답글 요약처럼 구분선이 없는 자리에서는 아예 답이 없다.
+ *
+ * ## 왜 `어제` 가 없나 — 구분선과 일부러 다르다
+ *
+ * `dayLabel` 은 가까운 날을 `오늘`·`어제` 로 낸다. 여기서는 **내지 않는다.** 구분선은
+ * 아래 묶음이 언제인지를 한 번 말하는 제목이라 상대어가 빨리 읽히지만, 도장은 말 한 마디
+ * 옆에 붙어 *"이게 정확히 언제 것인가"* 에 답하는 자리다 — 그 물음에 `어제 오후 11:26` 은
+ * 다시 달력을 세게 만든다. 오늘이 아니면 **날짜를 그냥 적는 것**이 짧은 길이다.
+ *
+ * ## 날짜 어휘는 구분선과 같다
+ *
+ * 날짜 부분은 `dayLabel` 의 절대 날짜(`toLocaleDateString(locale)`)와 **같은 옵션**이다
+ * (연·월·일 숫자). 두 자리가 다른 모양으로 날짜를 적으면 한 화면에 날짜 어휘가 둘이 된다.
+ * 로캘을 앱 언어로 받는 이유도 `dayLabel` 과 같다 — 위 주석 참고.
+ */
+export function stampLabel(iso: string, locale: Locale, now: Date = new Date()): string {
+  const d = new Date(iso);
+  const sameDay = keyOf(d) === keyOf(now);
+  return new Intl.DateTimeFormat(
+    locale,
+    sameDay ? TIME_PARTS : { year: 'numeric', month: 'numeric', day: 'numeric', ...TIME_PARTS },
+  ).format(d);
+}

@@ -4,7 +4,8 @@ import { useActiveStore } from '../state/communities';
 import { exchangeParticipants, exchangeConclusion } from '../lib/agentExchange';
 import { MessageItem } from './MessageItem';
 import type { SectionId } from './settings/sections';
-import { useT } from '../i18n/useT';
+import { useT, useLocale } from '../i18n/useT';
+import { stampLabel } from '../lib/day';
 
 /**
  * 에이전트 둘 사이의 주고받기를 **접힌 한 줄**로 그린다(규칙 04 · 계획 Task 5).
@@ -37,12 +38,13 @@ export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThr
   inThread?: boolean;
 }) {
   const t = useT();
+  const locale = useLocale();
   const [open, setOpen] = useState(false);
   const accounts = useActiveStore((s) => s.accounts);
 
   const names = exchangeParticipants(messages).map((id) => accounts[id]?.handle ?? '…');
   const last = messages[messages.length - 1]!;
-  const lastTime = new Date(last.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const lastTime = stampLabel(last.createdAt, locale);
   const conclusion = exchangeConclusion(messages);
 
   if (open) {
@@ -134,7 +136,7 @@ export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThr
         <span className="ml-auto shrink-0 text-fg-subtle">
           · {t('speech.exchange.count', { count: messages.length })}
         </span>
-        {/* 시각은 `toLocaleTimeString` 이 그 언어로 낸다 — 사전은 앞의 낱말만 진다. */}
+        {/* 시각은 `stampLabel` 이 그 언어로 낸다 — 사전은 앞의 낱말만 진다. */}
         <span className="shrink-0 text-fg-subtle">· {t('speech.exchange.last', { time: lastTime })}</span>
       </button>
     </div>

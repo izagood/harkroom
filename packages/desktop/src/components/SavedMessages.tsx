@@ -4,7 +4,8 @@ import type { SavedMessageRow } from '@murmur/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { displayBody } from '../lib/mention';
-import { useT } from '../i18n/useT';
+import { useT, useLocale } from '../i18n/useT';
+import { stampLabel } from '../lib/day';
 
 interface Props {
   open: boolean;
@@ -20,6 +21,7 @@ type Tab = 'open' | 'done';
 
 export function SavedMessages({ open, onClose }: Props) {
   const t = useT();
+  const locale = useLocale();
   const channels = useActiveStore((s) => s.channels);
   const dms = useActiveStore((s) => s.dms);
   const accounts = useActiveStore((s) => s.accounts);
@@ -90,7 +92,7 @@ export function SavedMessages({ open, onClose }: Props) {
    * 유효하지 않은 문서가 되고, 클릭이 어느 쪽으로 가는지 브라우저마다 갈린다.
    */
   const entryRow = (e: SavedMessageRow) => {
-    const time = new Date(e.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const time = stampLabel(e.createdAt, locale);
     // 시스템 메시지는 본문에 이름이 없고 자리표시자만 있다 — `displayBody` 를 지나지 않으면
     // 이 목록에만 그 글자가 남는다(#329).
     const body = e.message ? displayBody(e.message, accounts) : '';
@@ -126,7 +128,7 @@ export function SavedMessages({ open, onClose }: Props) {
               {preview}
             </span>
             <span className="text-meta text-fg-subtle">
-              {new Date(e.message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              {stampLabel(e.message.createdAt, locale)}
             </span>
           </button>
         )}
