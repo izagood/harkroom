@@ -15,6 +15,10 @@ import { undoSendStorage } from '../lib/prefs';
 // 붙여넣기가 누구를 부르는지 · 인용으로 바꾸는 방법. 판정은 서버가 쓰는 것과 같은
 // 함수 하나(`mentionedHandles`)에 얹혀 있다 — 그 파일의 주석이 근거다.
 import { callsInText, quoteText, MANY_CALLS } from '../lib/pasteCalls';
+// 입력 중인 코드에 면을 깔고(겹판), ⌘E 로 감싸거나 벗긴다. 무엇이 코드인지는 보낸 뒤
+// 메시지를 그리는 것과 **같은 함수**(`splitCode`)가 정한다 — 그 파일의 주석이 근거다.
+import { ComposerCode, COMPOSER_BOX } from './ComposerCode';
+import { toggleCode } from '../lib/codeMarks';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useT } from '../i18n/useT';
 
@@ -275,6 +279,8 @@ export function Composer({
   const [skippedAutoByScope, setSkippedAutoByScope] = useState<Record<string, string[]>>({});
   const [picking, setPicking] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+  // 코드 겹판. 입력칸이 굴러간 만큼 이 판도 옮겨야 하므로(`onScroll`) 부모가 들고 있다.
+  const codeLayerRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   // 업로드는 파일을 고른 순간 끝난다. 전송 시점에 올리면 Enter 를 누르고 기다려야 하고,
   // 실패했을 때 본문까지 붙잡힌다.
@@ -1125,6 +1131,34 @@ export function Composer({
         return;
       }
     }
+    /*
+      ⌘E / Ctrl+E — 고른 글을 코드로 감싸거나, 이미 코드면 벗긴다.
+
+      **왜 열쇠 하나를 더 두는가**: 백틱을 손으로 치면 커서를 두 번 옮겨야 하고, 그 사이에
+      자동완성이 열리거나 커서가 밀리면 짝이 어긋나 백틱 하나만 남는다 — 그때
+      `splitCode` 는 코드가 아니라고 판정하므로(닫히지 않은 것은 코드가 아니다) 보낸 뒤에
+      백틱이 그대로 보인다. 한 번에 감싸면 그 실패가 성립하지 않는다.
+
+      `e.key === 'e'` 는 **자동완성 목록보다 뒤에 본다** — 목록이 열려 있을 때의 열쇠는
+      위에서 이미 처리되고, 여기 오는 것은 글을 쓰는 중의 ⌘E 다.
+
+      커서 복원은 `requestAnimationFrame` 뒤다(`quotePastedCalls` 와 같은 이유): 초안을
+      바꾼 렌더가 끝나기 전에 선택 범위를 주면 옛 글자 수 기준으로 잡혀 자리가 어긋난다.
+    */
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key === 'e') {
+      e.preventDefault();
+      const el = e.currentTarget;
+      const next = toggleCode(el.value, el.selectionStart, el.selectionEnd);
+      setDraftLocal(next.text);
+      recompute(next.text, next.end);
+      requestAnimationFrame(() => {
+        const box = ref.current;
+        if (!box) return;
+        box.focus();
+        box.setSelectionRange(next.start, next.end);
+      });
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       send();
@@ -1209,6 +1243,13 @@ export function Composer({
   return (
     <div
       ref={containerRef}
+      /*
+        **포커스·클릭의 경계**다(#142) — 이 안에서 일어난 blur·mousedown 은 자동완성을 닫지
+        않는다. 그 경계를 테스트가 집을 이름을 붙여 둔다: 예전에는 `.closest('.relative')`
+        로 찾았고, 입력칸이 코드 겹판을 얹으려고 자기 `relative` 상자를 갖게 된 뒤로 그
+        선택자는 **더 이상 하나를 가리키지 않는다**(안쪽 상자가 먼저 걸린다).
+      */
+      data-testid="composer"
       className="relative"
       onBlur={onContainerBlur}
       onDragEnter={onDragEnter}
@@ -1629,40 +1670,61 @@ export function Composer({
         </div>
       )}
 
-      <textarea
-        ref={ref}
-        /*
-         * 글자와 테두리 사이의 숨 쉴 공간. `py-2`(8px) + 줄높이 `normal` 이었고, 그
-         * 조합은 **두 군데서** 글자를 테두리에 붙였다: 세로 여백 자체가 8px 로 얕고,
-         * 줄높이가 좁아 half-leading 이 거의 0 이라 첫 줄 윗변·마지막 줄 밑변이 테두리를
-         * 스쳤다. 한글은 라틴보다 글자틀을 꽉 채워 이 압박이 더 크게 보인다.
-         *
-         * 그래서 둘을 같이 올린다 — 여백만 키우면 여러 줄을 쓸 때 **줄 사이**가 여전히
-         * 붙어 답답하고, 줄높이만 키우면 첫/마지막 줄과 테두리 간격이 그대로다.
-         * `rows` 는 줄 수를 세므로(높이를 못 박지 않는다) 칸이 줄높이만큼 함께 자란다.
-         */
-        className="w-full resize-none rounded border border-border bg-field px-3 py-2.5 leading-relaxed"
-        rows={rows}
-        autoFocus={autoFocus}
-        placeholder={placeholder}
-        value={draft}
-        aria-expanded={open}
-        aria-controls={open ? listId : undefined}
-        aria-activedescendant={open ? `${listId}-${active}` : undefined}
-        onChange={(e) => {
-          setDraftLocal(e.target.value);
-          recompute(e.target.value, e.target.selectionStart);
-          signalTyping(e.target.value);
-        }}
-        // 커서만 움직여도 후보가 달라진다. 목록이 열린 동안의 화살표는 위에서 막으므로
-        // 여기서 커서가 튀는 일은 없다.
-        onSelect={(e) => {
-          const t = e.currentTarget;
-          recompute(t.value, t.selectionStart);
-        }}
-        onKeyDown={onKeyDown}
-        onPaste={onPaste}
-      />
+      {/*
+        입력칸과 코드 겹판은 **같은 상자를 겹쳐 쓴다.** 면(`bg-field`)이 입력칸이 아니라
+        이 감싸는 칸에 있는 것이 요점이다 — 입력칸은 겹판보다 나중에 그려져 위에 오므로,
+        입력칸이 불투명한 면을 들고 있으면 그 아래 코드 면이 통째로 가려진다. 그래서 면은
+        아래에, 글자와 테두리는 위에 둔다.
+      */}
+      <div className="relative rounded bg-field">
+        <ComposerCode text={draft} boxRef={ref} layerRef={codeLayerRef} />
+        <textarea
+          ref={ref}
+          /*
+           * 글자와 테두리 사이의 숨 쉴 공간. `py-2`(8px) + 줄높이 `normal` 이었고, 그
+           * 조합은 **두 군데서** 글자를 테두리에 붙였다: 세로 여백 자체가 8px 로 얕고,
+           * 줄높이가 좁아 half-leading 이 거의 0 이라 첫 줄 윗변·마지막 줄 밑변이 테두리를
+           * 스쳤다. 한글은 라틴보다 글자틀을 꽉 채워 이 압박이 더 크게 보인다.
+           *
+           * 그래서 둘을 같이 올린다 — 여백만 키우면 여러 줄을 쓸 때 **줄 사이**가 여전히
+           * 붙어 답답하고, 줄높이만 키우면 첫/마지막 줄과 테두리 간격이 그대로다.
+           * `rows` 는 줄 수를 세므로(높이를 못 박지 않는다) 칸이 줄높이만큼 함께 자란다.
+           *
+           * 상자 값(`COMPOSER_BOX`: 모서리·테두리 굵기·여백·줄높이)은 **겹판과 나눠 쓴다** —
+           * 이 값이 갈리면 칠이 글자에서 밀린다(`ComposerCode` 의 주석이 근거다).
+           * `block` 을 못박는 이유: textarea 는 기본이 inline-block 이라 아래에 베이스라인
+           * 틈이 남고, 감싸는 칸에 면이 생긴 뒤로는 그 틈이 테두리 밖의 띠로 보인다.
+           * `bg-transparent` 도 같은 판단의 짝이다(면은 감싸는 칸이 든다).
+           */
+          className={`block w-full resize-none border-border bg-transparent ${COMPOSER_BOX}`}
+          rows={rows}
+          autoFocus={autoFocus}
+          placeholder={placeholder}
+          value={draft}
+          aria-expanded={open}
+          aria-controls={open ? listId : undefined}
+          aria-activedescendant={open ? `${listId}-${active}` : undefined}
+          onChange={(e) => {
+            setDraftLocal(e.target.value);
+            recompute(e.target.value, e.target.selectionStart);
+            signalTyping(e.target.value);
+          }}
+          // 커서만 움직여도 후보가 달라진다. 목록이 열린 동안의 화살표는 위에서 막으므로
+          // 여기서 커서가 튀는 일은 없다.
+          onSelect={(e) => {
+            const t = e.currentTarget;
+            recompute(t.value, t.selectionStart);
+          }}
+          // 겹판은 스크롤되지 않는 상자다(`overflow-hidden`) — 입력칸이 굴러간 만큼을
+          // 그대로 옮겨 준다. 이것을 빼면 두 줄을 넘긴 초안에서 칠만 위에 남는다.
+          onScroll={(e) => {
+            const layer = codeLayerRef.current;
+            if (layer) layer.scrollTop = e.currentTarget.scrollTop;
+          }}
+          onKeyDown={onKeyDown}
+          onPaste={onPaste}
+        />
+      </div>
       <div className="mt-1 flex items-center justify-between">
         <div className="flex items-center gap-1">
           <button

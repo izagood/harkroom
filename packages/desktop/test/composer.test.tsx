@@ -404,7 +404,7 @@ describe('focus blur dismiss', () => {
 
     expect(screen.queryAllByRole('option')).toHaveLength(2);
 
-    const container = screen.getByText('@fi').closest('.relative')!;
+    const container = screen.getByTestId('composer');
     const outsideElement = document.createElement('button');
     outsideElement.textContent = 'outside';
     document.body.appendChild(outsideElement);
@@ -424,7 +424,7 @@ describe('focus blur dismiss', () => {
 
     expect(screen.queryAllByRole('option')).toHaveLength(2);
 
-    const container = screen.getByText('@fi').closest('.relative')!;
+    const container = screen.getByTestId('composer');
     fireEvent.blur(container, { relatedTarget: null });
 
     expect(screen.queryAllByRole('option')).toHaveLength(0);
@@ -437,7 +437,7 @@ describe('focus blur dismiss', () => {
 
     expect(screen.queryAllByRole('option')).toHaveLength(2);
 
-    const container = screen.getByText('@fi').closest('.relative')!;
+    const container = screen.getByTestId('composer');
     const optionButton = screen.getByRole('option', { name: /fizz/ });
     fireEvent.blur(container, { relatedTarget: optionButton });
 
@@ -478,7 +478,7 @@ describe('바깥 클릭 dismiss', () => {
     render(<Composer onSend={vi.fn()} />);
     typeInto('@fi');
 
-    const container = screen.getByText('@fi').closest('.relative')!;
+    const container = screen.getByTestId('composer');
     fireEvent.mouseDown(container);
 
     expect(screen.queryAllByRole('option')).toHaveLength(2);
