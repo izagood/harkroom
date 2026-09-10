@@ -15,6 +15,27 @@ const resizes: [number, number][] = [];
 let disposed = false;
 /** 마지막으로 만들어진 가짜 xterm(#369). `setReadOnly` 가 닿는 자리를 여기서 읽는다. */
 let lastTerm: { options: { disableStdin?: boolean } } | null = null;
+/** `loadAddon` 으로 들어온 애드온들 — WebGL 렌더러 회귀선이 이것을 읽는다. */
+const loadedAddons: FakeWebglAddon[] = [];
+/** WebGL2 가 없는 세상. 진짜 애드온도 그때 **생성자에서** 던진다. */
+let webglUnavailable = false;
+
+/** 컨텍스트 상실 핸들러와 dispose 를 드러내는 가짜 애드온. */
+class FakeWebglAddon {
+  disposed = false;
+  private handler: (() => void) | null = null;
+  constructor() {
+    if (webglUnavailable) throw new Error('WebGL2 를 못 얻었다');
+  }
+  /** xterm 이 애드온을 얹을 때 부르는 자리 — 진짜 애드온과 같은 표면으로 둔다. */
+  activate(): void { /* 이 파일은 렌더링을 안 본다 */ }
+  onContextLoss(handler: () => void): void { this.handler = handler; }
+  dispose(): void { this.disposed = true; }
+  /** 테스트가 GPU 컨텍스트 상실을 흉내내는 손잡이. */
+  loseContext(): void { this.handler?.(); }
+}
+
+vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: FakeWebglAddon }));
 vi.mock('@xterm/xterm/css/xterm.css', () => ({ default: '' }));
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
@@ -27,6 +48,8 @@ vi.mock('@xterm/xterm', () => ({
     write(): void { /* 이 파일은 바이트를 안 본다 */ }
     onData(): void { /* 같음 */ }
     resize(cols: number, rows: number): void { resizes.push([cols, rows]); }
+    // 진짜 xterm 과 같은 자리 — 애드온은 `open()` 뒤에 얹힌다.
+    loadAddon(addon: FakeWebglAddon): void { loadedAddons.push(addon); }
     dispose(): void { disposed = true; }
   },
 }));
@@ -75,6 +98,8 @@ let rectSpy: ReturnType<typeof vi.spyOn> | null = null;
 beforeEach(() => {
   resizes.length = 0;
   disposed = false;
+  loadedAddons.length = 0;
+  webglUnavailable = false;
   lastTerm = null;
   fireResize = null;
   observing = false;
@@ -204,6 +229,49 @@ describe('#369 sink 는 뜬 뒤에도 stdin 을 껐다 켤 수 있다', () => {
     // `await settle()` 을 하지 않는다 — 동적 import 가 아직 안 풀린 시점이 이 케이스다.
     const sink = getTerminalSinkFactory()(el, { onInput: () => {} });
     expect(() => sink.setReadOnly!(true)).not.toThrow();
+    sink.dispose();
+  });
+});
+
+/**
+ * 렌더러 회귀선. xterm 의 기본값은 **DOM 렌더러**이고 그것이 셋 중 가장 느리다 —
+ * 애드온을 얹는 한 줄이 조용히 사라지면 화면은 여전히 뜨므로 아무도 모른다.
+ *
+ * 그리고 실패 쪽이 더 중요하다: 이 애드온은 WebGL2 가 없으면 **생성자에서 던진다.**
+ * 그 예외가 밖으로 나가면 렌더러 하나 때문에 터미널이 아예 안 뜬다.
+ */
+describe('sink 는 렌더러를 WebGL 로 올린다', () => {
+  it('애드온을 얹는다 — 기본 DOM 렌더러로 두지 않는다', async () => {
+    const el = host(640, 480);
+    const sink = getTerminalSinkFactory()(el, {});
+    await vi.waitFor(() => expect(loadedAddons).toHaveLength(1));
+    sink.dispose();
+  });
+
+  it('컨텍스트를 잃으면 애드온을 버린다 — 그러면 xterm 이 DOM 으로 되돌아가 계속 그린다', async () => {
+    const el = host(640, 480);
+    const sink = getTerminalSinkFactory()(el, {});
+    await vi.waitFor(() => expect(loadedAddons).toHaveLength(1));
+
+    const addon = loadedAddons[0]!;
+    expect(addon.disposed).toBe(false);
+    // GPU 리셋·드라이버 사정으로 컨텍스트가 날아갔다. 붙잡고 있으면 화면이 그 자리에서 언다.
+    addon.loseContext();
+    expect(addon.disposed).toBe(true);
+    sink.dispose();
+  });
+
+  it('WebGL2 가 없어도 터미널은 그대로 산다 — 렌더러는 화면의 속도지 내용이 아니다', async () => {
+    webglUnavailable = true;
+    const el = host(640, 480);
+    const reported: [number, number][] = [];
+    const sink = getTerminalSinkFactory()(el, { onResize: (c, r) => reported.push([c, r]) });
+    await settle();
+
+    // 애드온은 못 얹혔지만 배선(fit → PTY 폭 통지)은 살아 있다.
+    expect(loadedAddons).toHaveLength(0);
+    expect(reported).toEqual([[80, 30]]);
+    expect(resizes).toEqual([[80, 30]]);
     sink.dispose();
   });
 });
