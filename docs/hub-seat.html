@@ -912,24 +912,24 @@
   <!-- ================= 7. 정해야 할 것 ================= -->
   <section>
     <div class="sec-head">
-      <div class="eyebrow">8 — 사람이 정해야 한다</div>
-      <h2>설계로 못 정하는 셋</h2>
+      <div class="eyebrow">8 — 정해졌다 (2026-09-10)</div>
+      <h2>셋 다 사람이 골랐다</h2>
     </div>
     <div class="qs">
       <div class="q">
-        <h3>개인키는 어디에 두나</h3>
-        <div class="opt"><em>권장</em> 데스크탑이 사람 키로 서명한다. 승인이 그 사람에게 귀속되고, “push는 서명으로만 간다”는 규칙이 그대로 지켜진다.</div>
-        <div class="opt"><em>대안</em> 서버 서비스 키로 대리 서명. 설정이 쉬운 대신 “누가 승인했나”가 murmur DB의 주장으로만 남는다.</div>
+        <h3>서명은 서버 키로 한다</h3>
+        <div class="opt"><em>왜</em> 사람 키는 개인키를 쥔 클라이언트에서만 승인이 된다 — 데스크탑은 되지만 모바일·웹 앱에서는 영영 안 된다. 확장을 막는 쪽을 버렸다.</div>
+        <div class="opt"><em>값</em> 잃는 것은 암호학적 귀속 하나다. <code>decision.decidedBy</code> 에 사람을 적고, 감사 기록에 누가 눌렀는지 남기고, 버튼은 로그인 뒤에만 선다 — 신뢰의 뿌리가 개인키에서 murmur 인증으로 옮겨간다.</div>
       </div>
       <div class="q">
-        <h3>hosted의 무게를 감당하나</h3>
-        <div class="opt"><em>바뀌는 것</em> murmur 서버 디스크가 코드 정본을 담는다. 백업 · gc · 용량이 murmur 책임이 된다.</div>
-        <div class="opt"><em>좁히는 선택</em> hosted를 내부 팀 저장소로만 열고, 바깥 저장소는 계속 linked로 둔다.</div>
+        <h3>hosted + 미러 상시</h3>
+        <div class="opt"><em>왜</em> murmur 는 파일 보관소가 아니다. 디스크가 사라져도 파일은 미러에 남고, 잃는 것이 제안 그래프로 한정된다.</div>
+        <div class="opt"><em>범위</em> 미러는 원격지면 무엇이든 되고 여럿이어도 된다(GitHub · avcshub · 다른 avcs-server). 다만 <strong>한 방향</strong>이다 — 되돌아오는 길을 열면 라인 충돌이 그 경계에서 되살아난다.</div>
       </div>
       <div class="q">
-        <h3>GitHub에 누구로 나가나</h3>
-        <div class="opt"><em>GitHub App</em> 설치형. PR 작성자가 앱이 되고 권한이 저장소 단위로 명확하다.</div>
-        <div class="opt"><em>PAT</em> 지금 방식과 같다. 작성자가 토큰 주인이 되어 “누가 냈나”가 흐려진다.</div>
+        <h3>GitHub App</h3>
+        <div class="opt"><em>왜</em> PR 작성자가 <code>murmur[bot]</code> 이라 "봇이 냈다" 가 분명하고, 권한이 저장소 단위이며 사람의 재직과 수명이 분리된다.</div>
+        <div class="opt"><em>값</em> 앱 등록 · private key 보관 · installation 토큰 교환(반나절). 인증은 "토큰 하나 얻기" 함수라 늦어지면 그 함수만 임시로 PAT 를 물릴 수 있다.</div>
       </div>
     </div>
   </section>
