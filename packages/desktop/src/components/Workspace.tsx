@@ -202,7 +202,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
    * 구분해야 한다. 대신 4단에 **역할 이름**을 새로 줬다. 회귀선은 `test/typeScale.test.ts` 다.
    */
   return (
-    <div className="flex h-screen text-body">
+    <div className="flex h-full text-body">
       {/* 전환기 레일은 **사이드바 밖**에 둔다(#165). 사이드바 안에 넣으면 사이드바를 접는
           순간(폭 0) 전환기까지 함께 사라져, 커뮤니티를 바꾸려면 먼저 사이드바를 펴야 한다.
           커뮤니티가 하나면 이 컴포넌트는 아무것도 그리지 않으므로 오늘 화면과 같다. */}

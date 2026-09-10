@@ -76,9 +76,9 @@ export function ConnectScreen(props: ConnectScreenProps) {
 
   const field = 'w-full rounded border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
   // `add` 는 겹창 안에서 그려진다 — 화면 전체를 차지하는 껍데기는 겹창이 이미 갖고 있고,
-  // 여기서 `h-screen` 을 또 두면 모달 안에 빈 화면 하나가 더 생긴다.
+  // 여기서 창 높이(`h-full`)를 또 두면 모달 안에 빈 화면 하나가 더 생긴다.
   //
-  // #342: `initial` 쪽도 `h-screen` 이 아니라 `h-full` 이다. 이제 `App` 이 창 손잡이 띠와
+  // #342: `initial` 쪽도 창 높이를 스스로 잡지 않고 `h-full` 이다. 이제 `App` 이 창 손잡이 띠와
   // 함께 감싸므로, 여기서 화면 **전체** 높이를 다시 잡으면 띠 높이만큼 넘쳐 세로 스크롤이
   // 생긴다. 남은 높이를 채우는 것으로 충분하다.
   const shell = adding
