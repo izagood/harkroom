@@ -19,6 +19,12 @@ let lastTerm: { options: { disableStdin?: boolean } } | null = null;
 const loadedAddons: FakeWebglAddon[] = [];
 /** WebGL2 가 없는 세상. 진짜 애드온도 그때 **생성자에서** 던진다. */
 let webglUnavailable = false;
+/** 무엇을 어떤 순서로 버렸는가. dispose 순서 회귀선이 이것을 읽는다. */
+const disposeOrder: string[] = [];
+/** 애드온 정리가 던지는 세상(0.19.0 이 xterm 5.5 에서 그랬다 — `undefined._isDisposed`). */
+let addonDisposeThrows = false;
+/** 터미널 정리가 던지는 세상. */
+let termDisposeThrows = false;
 
 /** 컨텍스트 상실 핸들러와 dispose 를 드러내는 가짜 애드온. */
 class FakeWebglAddon {
@@ -30,7 +36,11 @@ class FakeWebglAddon {
   /** xterm 이 애드온을 얹을 때 부르는 자리 — 진짜 애드온과 같은 표면으로 둔다. */
   activate(): void { /* 이 파일은 렌더링을 안 본다 */ }
   onContextLoss(handler: () => void): void { this.handler = handler; }
-  dispose(): void { this.disposed = true; }
+  dispose(): void {
+    disposeOrder.push('addon');
+    this.disposed = true;
+    if (addonDisposeThrows) throw new TypeError("Cannot read properties of undefined (reading '_isDisposed')");
+  }
   /** 테스트가 GPU 컨텍스트 상실을 흉내내는 손잡이. */
   loseContext(): void { this.handler?.(); }
 }
@@ -50,7 +60,11 @@ vi.mock('@xterm/xterm', () => ({
     resize(cols: number, rows: number): void { resizes.push([cols, rows]); }
     // 진짜 xterm 과 같은 자리 — 애드온은 `open()` 뒤에 얹힌다.
     loadAddon(addon: FakeWebglAddon): void { loadedAddons.push(addon); }
-    dispose(): void { disposed = true; }
+    dispose(): void {
+      disposeOrder.push('term');
+      disposed = true;
+      if (termDisposeThrows) throw new Error('터미널 해체 실패');
+    }
   },
 }));
 
@@ -100,6 +114,9 @@ beforeEach(() => {
   disposed = false;
   loadedAddons.length = 0;
   webglUnavailable = false;
+  disposeOrder.length = 0;
+  addonDisposeThrows = false;
+  termDisposeThrows = false;
   lastTerm = null;
   fireResize = null;
   observing = false;
@@ -273,5 +290,77 @@ describe('sink 는 렌더러를 WebGL 로 올린다', () => {
     expect(reported).toEqual([[80, 30]]);
     expect(resizes).toEqual([[80, 30]]);
     sink.dispose();
+  });
+});
+
+/**
+ * 패널 [Close] 가 **앱 화면 전체를 끄던** 사고의 회귀선(2026-09-10).
+ *
+ * 원인은 두 겹이었다. (1) `@xterm/addon-webgl` 0.19.0 의 정리 훅이 xterm 6 계열의
+ * `_core._store` 를 읽는데 우리가 쓰는 5.5.0 에는 그 필드가 없어 `undefined._isDisposed` 로
+ * 던졌다(버전 핀으로 고쳤다). (2) 그 예외가 `sink.dispose()` → 패널의 effect cleanup 을
+ * 타고 나가 React 가 트리 전체를 걷어냈다.
+ *
+ * (1)은 의존을 갈면 또 올 수 있다. (2)는 다시는 오지 않아야 한다 — **터미널 하나를 못 닫은
+ * 것이 앱을 닫는 일이 되어서는 안 된다.** 그래서 순서와 삼킴을 여기서 고정한다.
+ */
+describe('dispose 는 애드온을 먼저 버리고, 어떤 예외도 밖으로 내보내지 않는다', () => {
+  it('애드온을 터미널보다 먼저 버린다 — 훅이 이미 해체된 것 위에서 돌지 않게', async () => {
+    const el = host(640, 480);
+    const sink = getTerminalSinkFactory()(el, {});
+    await vi.waitFor(() => expect(loadedAddons).toHaveLength(1));
+
+    sink.dispose();
+    expect(disposeOrder).toEqual(['addon', 'term']);
+  });
+
+  it('애드온 정리가 던져도 삼키고, 터미널은 그대로 버린다 — 그 예외가 앱을 껐다', async () => {
+    const el = host(640, 480);
+    const sink = getTerminalSinkFactory()(el, {});
+    await vi.waitFor(() => expect(loadedAddons).toHaveLength(1));
+    addonDisposeThrows = true;
+
+    expect(() => sink.dispose()).not.toThrow();
+    // 애드온 때문에 터미널 해체를 건너뛰면 죽은 화면이 살아 남는다.
+    expect(disposeOrder).toEqual(['addon', 'term']);
+    expect(disposed).toBe(true);
+  });
+
+  it('터미널 정리가 던져도 삼킨다 — 같은 규율의 나머지 절반', async () => {
+    const el = host(640, 480);
+    const sink = getTerminalSinkFactory()(el, {});
+    await vi.waitFor(() => expect(loadedAddons).toHaveLength(1));
+    termDisposeThrows = true;
+
+    expect(() => sink.dispose()).not.toThrow();
+    expect(disposeOrder).toEqual(['addon', 'term']);
+  });
+
+  it('컨텍스트 상실 콜백이 던져도 새지 않는다 — xterm 의 이벤트 루프 안에서 불린다', async () => {
+    const el = host(640, 480);
+    const sink = getTerminalSinkFactory()(el, {});
+    await vi.waitFor(() => expect(loadedAddons).toHaveLength(1));
+    addonDisposeThrows = true;
+
+    expect(() => loadedAddons[0]!.loseContext()).not.toThrow();
+    sink.dispose();
+  });
+});
+
+/**
+ * 애드온을 **받는 동안 패널이 닫히는** 경로. `dispose` 는 이미 지나갔으므로 그 뒤에 얹히면
+ * 아무도 그것을 버리지 않는다 — 죽은 터미널에 붙은 렌더러가 남는다.
+ */
+describe('로딩 중에 닫히면 렌더러를 남기지 않는다', () => {
+  it('dispose 가 먼저 지나가면 애드온은 얹히지 않거나 곧바로 버려진다', async () => {
+    const el = host(640, 480);
+    const sink = getTerminalSinkFactory()(el, {});
+    // `await` 을 하지 않는다 — 동적 import 가 아직 안 풀린 시점에 닫는다.
+    sink.dispose();
+    await settle();
+    await vi.waitFor(() => {
+      // 얹히지 않았거나(0개), 얹혔더라도 버려져 있어야 한다.
+      expect(loadedAddons.every((a) => a.disposed)).toBe(true);
+    });
   });
 });
