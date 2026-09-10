@@ -945,6 +945,9 @@ describe('7. 새 번들로 재기동', () => {
     // 아직 죽지 않았다 — 진행 중인 턴을 마치는 중이다. 여기서 띄우면 러너가 둘이 된다.
     expect(spawner.spawns).toHaveLength(1);
     expect(launcher.getStates().find((s) => s.agentId === 'a1')?.status).toBe('restarting');
+    // 상한에 걸린 기다림은 다시 걸려 있다(아래 축이 그것을 잰다) — 실시간 타이머를
+    // 남기지 않게 여기서 거둔다.
+    launcher.dispose();
   });
 
   it('종료가 확인되면 새로 띄운다', async () => {
@@ -981,6 +984,61 @@ describe('7. 새 번들로 재기동', () => {
 
     expect(daemon.kills).toEqual(['a1']);
     expect(spawner.spawns).toHaveLength(1);
+  });
+
+  /**
+   * **2026-09-10 실측이 만든 축.** 앞 판본은 종료 확인 상한(15분)에 걸리면 사유만 적고
+   * 예약을 접었다. 접으면 이 앱 세션 동안 그 에이전트에는 러너가 없다(자동 기동은 세션당
+   * 한 번이다) — 아무도 inbox 를 폴하지 않으므로 **예약된 깨움이 열리지 않는다.**
+   * 그날 17:26 깨움이 앱이 새 번들로 다시 뜬 17:47 까지 열리지 않았고, 사람이 먼저 알았다.
+   *
+   * 그래서 상한은 포기의 근거가 아니라 한 번 말할 근거다: 예약은 유지되고, 러너가 늦게
+   * 물러나면 그때 뜬다.
+   */
+  it('종료 확인 상한에 걸려도 예약을 접지 않는다 — 늦게 물러나면 그때 띄운다', async () => {
+    vi.useFakeTimers();
+    try {
+      const { launcher, spawner, daemon } = make();
+      await startAll(launcher, [agent('a1')]);
+      daemon.runners = [liveRunner('a1')];
+
+      // `timeoutMs: 0` 이라 한 번 보고 곧 상한이다 — 러너는 아직 턴을 마치는 중이다.
+      await launcher.restart(agent('a1'), startInput(['a1']));
+      expect(spawner.spawns).toHaveLength(1);
+      // 예약이 살아 있는 것이 이 축의 전부다. 접혔으면 아래에서 아무 일도 안 일어난다.
+      expect(launcher.isRestarting('a1')).toBe(true);
+      expect(launcher.getStates().find((s) => s.agentId === 'a1')?.status).toBe('restarting');
+
+      // 진행 중인 턴이 끝나 러너가 물러났다.
+      daemon.died('a1');
+      await vi.advanceTimersByTimeAsync(20_000);
+
+      expect(spawner.spawns).toHaveLength(2);
+      expect(launcher.getStates().find((s) => s.agentId === 'a1')?.status).toBe('running');
+      expect(launcher.isRestarting('a1')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('상한 뒤 취소하면 다시 걸어 둔 기다림도 함께 접힌다', async () => {
+    vi.useFakeTimers();
+    try {
+      const { launcher, spawner, daemon } = make();
+      await startAll(launcher, [agent('a1')]);
+      daemon.runners = [liveRunner('a1')];
+      await launcher.restart(agent('a1'), startInput(['a1']));
+
+      launcher.cancelRestart('a1');
+      daemon.died('a1');
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      // 취소는 **뜨는 것**을 막는다. 죽이는 것은 이미 일어났다.
+      expect(spawner.spawns).toHaveLength(1);
+      expect(launcher.isRestarting('a1')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('예약을 취소하면 뜨는 것만 막는다 — 이미 보낸 SIGTERM 은 되돌리지 않는다', async () => {
