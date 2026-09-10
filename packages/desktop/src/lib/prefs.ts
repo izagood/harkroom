@@ -10,6 +10,8 @@
 
 import { isInboxFilter, type InboxFilter } from './inboxRow';
 
+import { DEFAULT_ZOOM, normalizeZoom } from './zoom';
+
 export interface NotificationPrefs {
   enabled: boolean;
   mention: boolean;
@@ -40,6 +42,12 @@ export interface Prefs {
   runnerAutoStart: boolean;
   /** 화면 언어. 기본은 `'system'` — 브라우저가 말하는 것을 따른다. */
   locale: LocalePref;
+  /**
+   * 화면 배율(퍼센트 눈금). **기기 로컬이다** — 패널 폭과 같은 종류의 값이라 계정을 따라
+   * 다니면 화면 크기가 다른 기기에서 남의 배율을 물려받는다(`design.md`: 값은 전부 기기
+   * 로컬이다). 눈금과 그 뜻은 `lib/zoom.ts` 가 정한다.
+   */
+  zoom: number;
 }
 
 const KEY = 'murmur.prefs';
@@ -166,6 +174,7 @@ export const DEFAULT_PREFS: Prefs = {
   colorMode: 'system',
   runnerAutoStart: true,
   locale: 'system',
+  zoom: DEFAULT_ZOOM,
 };
 
 export const prefsStorage = {
@@ -183,6 +192,10 @@ export const prefsStorage = {
         colorMode: parsed.colorMode ?? DEFAULT_PREFS.colorMode,
         runnerAutoStart: parsed.runnerAutoStart ?? DEFAULT_PREFS.runnerAutoStart,
         locale: parsed.locale ?? DEFAULT_PREFS.locale,
+        // 배율만 `??` 로 끝내지 않는다 — 이 값은 웹뷰에 그대로 나가는 숫자라, 손으로
+        // 고친 저장본이나 표 밖의 옛 값이 들어오면 화면이 읽을 수 없는 크기로 선다.
+        // 그때 되돌릴 손잡이는 그 화면 안에 있으므로 빠져나올 길이 없다.
+        zoom: normalizeZoom(parsed.zoom ?? DEFAULT_PREFS.zoom),
       };
     } catch {
       return DEFAULT_PREFS;
