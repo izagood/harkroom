@@ -197,3 +197,101 @@ describe('turn.wake — 에이전트가 자기를 나중에 깨운다', () => {
     expect(refused).toMatchObject({ code: 'wake_limit' });
   });
 });
+
+/**
+ * **`GET /agent-wakes`** — 관제 화면이 *"죽었나 기다리나"* 를 한 자리에서 말하게 하는 문.
+ *
+ * 이 문이 없던 동안 화면은 `도는 턴 0개` 만 말할 수 있었고, 그 0 에는 두 뜻이 섞여 있었다:
+ * 아무 일도 없는 것과 **기다리는 중인 것**. 예약은 스레드마다 흩어진 wake 메시지로만
+ * 보였으므로 스레드를 다 열어 보지 않으면 알 수 없었다.
+ */
+describe('GET /agent-wakes — 아직 오지 않은 깨움', () => {
+  const auth = (token: string) => ({ authorization: `Bearer ${token}` });
+
+  const listWakes = async (token: string) => {
+    const res = await app.inject({ method: 'GET', url: '/agent-wakes', headers: auth(token) });
+    expect(res.statusCode).toBe(200);
+    return res.json().wakes as {
+      id: string; agentAccountId: string; channelId: string; threadRootId: string;
+      messageId: string; wakeAt: string; reason: string | null;
+    }[];
+  };
+
+  const schedule = async (threadRootId: string, reason: string, notBeforeSec = 300) => {
+    const client = await mcpClient(botPat);
+    const res = text(await client.callTool({
+      name: 'turn.wake', arguments: { channelId, threadRootId, notBeforeSec, reason },
+    }));
+    await client.close();
+    expect(res.error).toBeUndefined();
+    return res.wake as { id: string; messageId: string; wakeAt: string };
+  };
+
+  it('예약한 것이 앵커·사유·시각과 함께 목록에 뜬다', async () => {
+    const threadRootId = await newThread();
+    const wake = await schedule(threadRootId, '깨움 목록 시험');
+
+    const mine = (await listWakes(adminToken)).find((w) => w.id === wake.id);
+    expect(mine).toBeTruthy();
+    expect(mine!.agentAccountId).toBe(botAccountId);
+    // 앵커는 **wake 메시지에서 되찾는다**(040 의 규칙) — 시계 테이블에 또 저장하지 않는다.
+    expect(mine!.threadRootId).toBe(threadRootId);
+    expect(mine!.reason).toBe('깨움 목록 시험');
+    expect(mine!.channelId).toBe(channelId);
+    expect(new Date(mine!.wakeAt).toISOString()).toBe(mine!.wakeAt);
+  });
+
+  it('이미 깨운 것은 주지 않는다 — 이 문이 답하는 물음은 "앞으로 올 것"이다', async () => {
+    const threadRootId = await newThread();
+    const wake = await schedule(threadRootId, '곧 깬다');
+    await pullWakeIntoPast(wake.messageId);
+    await createAgentWakeSweeper(pool).sweep();
+
+    expect((await listWakes(adminToken)).map((w) => w.id)).not.toContain(wake.id);
+  });
+
+  it('취소된 것도 주지 않는다', async () => {
+    const threadRootId = await newThread();
+    const wake = await schedule(threadRootId, '취소될 것');
+    await pool.query(`update agent_wake set canceled_at = now() where id = $1`, [wake.id]);
+
+    expect((await listWakes(adminToken)).map((w) => w.id)).not.toContain(wake.id);
+  });
+
+  /**
+   * 시계는 메시지가 지워져도 살아 있어 **깨움은 그대로 온다.** 그래서 줄을 감추지 않고
+   * 사유만 비운다 — 감추면 화면이 "기다리는 것이 없다"고 거짓말한다.
+   */
+  it('wake 메시지가 지워지면 줄은 남고 사유만 비워진다', async () => {
+    const threadRootId = await newThread();
+    const wake = await schedule(threadRootId, '지워질 사유');
+    await pool.query(`update message set deleted_at = now() where id = $1`, [wake.messageId]);
+
+    const row = (await listWakes(adminToken)).find((w) => w.id === wake.id);
+    expect(row).toBeTruthy();
+    expect(row!.reason).toBeNull();
+  });
+
+  /**
+   * 권한은 `/agent-sessions` 와 **같은 판정**이고, 소유하지 않은 사람에게 403 이 아니라
+   * **빈 목록**인 이유도 같다: 이 라우트는 특정 에이전트를 묻지 않으므로 거절할 대상이 없다.
+   */
+  it('소유하지 않은 사람에게는 빈 목록이다 — 거절이 아니다', async () => {
+    const threadRootId = await newThread();
+    await schedule(threadRootId, '남의 에이전트 예약');
+
+    const inv = await app.inject({ method: 'POST', url: '/invites', headers: auth(adminToken) });
+    await app.inject({
+      method: 'POST', url: '/auth/register',
+      payload: {
+        handle: 'stranger', loginId: 'stranger', displayName: 'stranger',
+        password: 'pw123456', inviteToken: inv.json().token as string,
+      },
+    });
+    const login = await app.inject({
+      method: 'POST', url: '/auth/login', payload: { loginId: 'stranger', password: 'pw123456' },
+    });
+
+    expect(await listWakes(login.json().token as string)).toEqual([]);
+  });
+});

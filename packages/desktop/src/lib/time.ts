@@ -328,6 +328,19 @@ export function runningLabel(ms: number, locale: string, t: Translate): string {
   return t('time.running', { duration: durationLabel(ms, locale, 'coarse') });
 }
 
+/**
+ * **아직 오지 않은 것**까지 남은 시간(`4분 뒤` · `in 4m`). 깨움 예약이 쓰는 자리다.
+ *
+ * `runningLabel` 과 같은 `coarse` 다 — 예약 목록은 곁눈으로 읽고, 초까지 적으면 매 초
+ * 글자가 바뀌어 옆의 사유를 읽기 어렵다. 시각이 지났으면(`ms <= 0`) 숫자를 쓰지 않는다:
+ * sweep 이 15초마다 돌므로 `0분 뒤` 는 **틀린 말이 아니라 쓸모없는 말**이고, 사람이 알고
+ * 싶은 것은 "이제 곧 온다"다.
+ */
+export function waitLabel(ms: number, locale: string, t: Translate): string {
+  if (ms <= 0) return t('time.waitDue');
+  return t('time.wait', { duration: durationLabel(ms, locale, 'coarse') });
+}
+
 /** `runningLabel` 의 짝 — **끝난** 진행의 길이(`3분` · `took 3m`). 위 주석이 근거다. */
 export function tookLabel(ms: number, locale: string, t: Translate): string {
   return t('time.took', { duration: durationLabel(ms, locale, 'coarse') });

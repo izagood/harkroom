@@ -27,7 +27,7 @@
 // 쓰면 행 타임스탬프가 곧 키 입력의 리듬이라 그 자체가 부채널이다.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
-import type { AgentSessionView } from '@murmur/shared';
+import type { AgentSessionView, AgentWakeView } from '@murmur/shared';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { createAttachTicketStore } from '../ws/tickets.js';
@@ -176,6 +176,67 @@ export async function registerAgentRelayRoutes(
     const account = req.account!;
     const scope = account.isAdmin ? 'all' as const : await ownedAgentIds(pool, account.id);
     return { sessions: hub.listSessions(scope) satisfies AgentSessionView[] };
+  });
+
+  /**
+   * **아직 오지 않은 깨움**(Agents 관제 4단계 — 대기).
+   *
+   * 이 문이 없어서 관제 화면은 *"도는 턴 0개"* 만 말할 수 있었다. 그런데 0개에는 두 뜻이
+   * 있다 — 아무 일도 없는 것과 **기다리는 중인 것**이고, 사람이 물어보는 것은 대개
+   * 뒤쪽이다("죽었나 기다리나"). 예약은 지금까지 스레드마다 흩어진 wake 메시지로만
+   * 보였으므로, 스레드를 다 열어 보지 않으면 알 수 없었다.
+   *
+   * ## 세션 목록과 **다른 층**이다
+   *
+   * 세션은 러너 메모리(허브)에 있어 릴레이가 끊기면 서버도 모른다. 깨움은 테이블에 있어
+   * **언제나 알 수 있다** — 그래서 이 문은 릴레이 상태와 무관하게 답한다. 화면이 그 둘을
+   * 같은 자리에 두면서도 "모른다"를 한쪽에만 그리는 근거가 이것이다.
+   *
+   * ## 무엇을 안 주는가
+   *
+   * 이미 깨운 것(`fired_at`)과 취소된 것(`canceled_at`)은 뺀다 — 이 문이 답하는 물음은
+   * *"앞으로 올 것"* 이고, 지난 것은 스레드의 wake 메시지가 이미 기록으로 갖고 있다.
+   *
+   * 앵커와 사유는 **wake 메시지에서 되찾는다**(040 의 규칙: 시계 테이블에 앵커를 또
+   * 저장하면 두 번째 진실 원천이 된다). 메시지가 지워졌으면 사유만 `null` 로 비우고
+   * 줄은 남긴다 — 시계는 살아 있어 깨움이 그대로 오는데 줄을 감추면 화면이
+   * "기다리는 것이 없다"고 거짓말한다.
+   *
+   * 권한은 `/agent-sessions` 와 **같은 판정**이다: admin 은 전체, 그 외는 자기가 소유한
+   * 에이전트 것만. 소유하지 않은 사람에게 403 이 아니라 **빈 목록**인 이유도 같다 —
+   * 이 라우트는 특정 에이전트를 묻지 않으므로 거절할 대상이 없다.
+   */
+  app.get('/agent-wakes', { preHandler: app.requireAccount }, async (req) => {
+    const account = req.account!;
+    const scope = account.isAdmin ? null : await ownedAgentIds(pool, account.id);
+    // 소유한 에이전트가 없으면 질의하지 않는다 — `any('{}')` 는 어차피 0행이다.
+    if (scope && !scope.length) return { wakes: [] satisfies AgentWakeView[] };
+    const res = await pool.query<{
+      id: string; account_id: string; channel_id: string; thread_root_id: string;
+      message_id: string; wake_at: Date; reason: string | null;
+    }>(
+      `select w.id, w.account_id, w.channel_id, w.message_id, w.wake_at,
+              coalesce(m.thread_root_id, m.id) as thread_root_id,
+              case when m.deleted_at is null then m.body else null end as reason
+         from agent_wake w
+         join message m on m.id = w.message_id
+        where w.fired_at is null and w.canceled_at is null
+          ${scope ? 'and w.account_id = any($1::uuid[])' : ''}
+        order by w.wake_at
+        limit 200`,
+      scope ? [scope] : [],
+    );
+    return {
+      wakes: res.rows.map((row) => ({
+        id: row.id,
+        agentAccountId: row.account_id,
+        channelId: row.channel_id,
+        threadRootId: row.thread_root_id,
+        messageId: row.message_id,
+        wakeAt: new Date(row.wake_at).toISOString(),
+        reason: row.reason,
+      })) satisfies AgentWakeView[],
+    };
   });
 
   /**

@@ -1,4 +1,5 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView,
+  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@murmur/shared';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
 export class ApiError extends Error {
@@ -359,6 +360,16 @@ export class ApiClient {
   async agentSessions(): Promise<AgentSessionView[]> {
     const res = await this.req<{ sessions: AgentSessionView[] }>('GET', '/agent-sessions');
     return res.sessions;
+  }
+
+  /**
+   * **아직 오지 않은 깨움 예약**(Agents 관제 4단계 — 대기). 세션 목록과 달리 이것은
+   * 테이블에서 오므로 **릴레이가 끊겨도 답이 온다** — 화면이 "도는 턴은 모른다"와
+   * "기다리는 것은 이만큼"을 한 자리에서 함께 말할 수 있는 근거다.
+   */
+  async agentWakes(): Promise<AgentWakeView[]> {
+    const res = await this.req<{ wakes: AgentWakeView[] }>('GET', '/agent-wakes');
+    return res.wakes;
   }
 
   /**

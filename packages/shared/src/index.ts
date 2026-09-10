@@ -2019,6 +2019,37 @@ export interface AgentSessionView {
   claudePool?: string | null;
 }
 
+/**
+ * **아직 오지 않은 깨움 하나**(Agents 관제 4단계 — 대기).
+ *
+ * 도는 턴과 **다른 층의 사실**이다. 턴은 러너 메모리에 있고 릴레이가 끊기면 서버도
+ * 모르지만(`AgentSessionView`), 깨움은 `agent_wake` 테이블에 있어 **언제나 알 수 있다.**
+ * 그래서 화면은 이 둘을 같은 자리에 나란히 두고도 신뢰도가 다르다고 적을 수 있다 —
+ * 사람이 *"죽었나 기다리나"* 를 한 자리에서 판단하려면 그 둘이 함께 보여야 한다
+ * (지금은 예약이 스레드마다 흩어져 있어서, 관제 화면에서는 아무 일도 없는 것처럼 보인다).
+ *
+ * 앵커(`threadRootId`)와 사유(`reason`)를 **wake 메시지에서 되찾는다** — 040 의 주석이
+ * 정한 규칙이다: 시계 테이블에 앵커를 또 저장하면 두 번째 진실 원천이 된다.
+ */
+export interface AgentWakeView {
+  /** `agent_wake.id`. 나중에 취소 문이 생기면 이 값이 대상이 된다. */
+  id: string;
+  /** 자기를 깨우기로 예약한 에이전트. */
+  agentAccountId: string;
+  channelId: string;
+  /** 깨움이 돌아갈 자리. wake 메시지의 앵커다. */
+  threadRootId: string;
+  /** 이미 스레드에 서 있는 wake 메시지. 화면의 이동은 이 값이 아니라 앵커로 한다. */
+  messageId: string;
+  wakeAt: string;
+  /**
+   * 사람이 읽는 사유(wake 메시지 본문). **지워진 메시지면 `null`** 이다 — 그때도 시계는
+   * 살아 있어 깨움은 그대로 오므로, 줄을 감추는 대신 사유만 비운다(감추면 화면이
+   * "기다리는 것이 없다"고 거짓말한다).
+   */
+  reason: string | null;
+}
+
 /** 뷰어(데스크탑)가 보는 세션 상태. `runner-offline` 은 '끝났다'와 다르다. */
 export type AgentSessionState = 'running' | 'ended' | 'runner-offline';
 

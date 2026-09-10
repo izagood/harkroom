@@ -240,6 +240,12 @@ export const ko = {
   // ---------------------------------------------------------------------------
 
   // --- Agents 칸의 관제 구획(`AgentTurns`) — 근거는 `en.ts` 의 같은 묶음에 있다 --------
+  'agentWaits.count': '예약 {n}개',
+  'agentWaits.reasonMissing': '깨움 줄이 지워졌다',
+  'agentWaits.scope': '내가 볼 수 있는 에이전트가 걸어 둔 깨움이다.',
+  'agentWaits.title': '대기',
+  'agentWaits.unknown': '예약을 알 수 없다',
+  'agentWaits.whenUnknown': '시각 모름',
   'agentTurns.accountDefault': '기본 로그인',
   'agentTurns.accountTitle': '이 턴이 지금 쓰는 claude 계정 (풀: {pool})',
   'agentTurns.accountTitleRoot': '이 턴이 지금 쓰는 claude 계정 (뿌리 풀)',
@@ -769,6 +775,8 @@ export const ko = {
   // 어미로 상[aspect]을 말한다 — 영어는 `running {duration}` 으로 말을 앞에 세운다.
   // **같은 뜻을 언어마다 다른 문법으로 낸다**, 그것이 이 둘이 사전에 있는 이유다.
   'time.running': '{duration}째',
+  'time.wait': '{duration} 뒤',
+  'time.waitDue': '곧',
   'time.took': '{duration}',
 
   // 조사 표기(`:이가`)가 붙는다 — 위 머리말 참고. 영어 원본에는 이런 표기가 없다.

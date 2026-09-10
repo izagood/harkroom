@@ -23,7 +23,8 @@
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { AgentTurns } from './AgentTurns';
-import { useAgentTurns, useThreadRoots, threadTitle } from '../lib/agentTurns';
+import { AgentWaits } from './AgentWaits';
+import { useAgentTurns, useAgentWakes, useThreadRoots, threadTitle } from '../lib/agentTurns';
 
 export function AgentTower({ onOpenThread }: {
   /**
@@ -34,10 +35,21 @@ export function AgentTower({ onOpenThread }: {
   onOpenThread: (threadRootId: string) => void;
 }) {
   const snapshot = useAgentTurns(true);
+  /*
+    **도는 턴과 따로 묻는다.** 두 사실의 신뢰도가 다르기 때문이다: 세션은 릴레이가 끊기면
+    알 수 없고, 깨움은 테이블에 있어 언제나 알 수 있다. 한 요청으로 묶으면 릴레이가 끊긴
+    순간 예약까지 `모른다` 가 되어, 정작 그때 사람이 알고 싶은 것을 잃는다.
+  */
+  const wakes = useAgentWakes(true);
   const accounts = useActiveStore((s) => s.accounts);
   const channels = useActiveStore((s) => s.channels);
   const set = useActiveStore((s) => s.set);
   // 묶음 머리에 세울 스레드 이름. 목록이 5초마다 새로 와도 루트는 캐시에서 온다.
+  // 두 구획이 같은 이름을 써야 한다 — 채널 이름을 두 번 조립하면 한쪽만 고쳐진다.
+  const channelLabelOf = (id: string): string => {
+    const channel = channels.find((c) => c.id === id);
+    return channel ? `${channel.visibility === 'private' ? '🔒' : '#'}${channel.name}` : id;
+  };
   const roots = useThreadRoots(
     snapshot.kind === 'known' ? snapshot.turns.map((turn) => turn.threadRootId) : [],
   );
@@ -50,10 +62,7 @@ export function AgentTower({ onOpenThread }: {
         variant="tower"
         snapshot={snapshot}
         handleOf={(id) => accounts[id]?.handle ?? id}
-        channelLabel={(id) => {
-          const channel = channels.find((c) => c.id === id);
-          return channel ? `${channel.visibility === 'private' ? '🔒' : '#'}${channel.name}` : id;
-        }}
+        channelLabel={channelLabelOf}
         threadTitleOf={(rootId) => {
           const row = roots.get(rootId);
           return row ? threadTitle(row, accounts) : null;
@@ -76,6 +85,18 @@ export function AgentTower({ onOpenThread }: {
             },
           });
         }}
+      />
+      {/*
+        **대기는 도는 턴 아래, 같은 화면에** 선다(컨셉 핀 4). 사람이 *"죽었나 기다리나"* 를
+        한 자리에서 판단하려면 두 구획이 함께 보여야 한다 — 지금까지 예약은 스레드마다
+        흩어져 있어서, 관제 화면에서는 아무 일도 없는 것처럼 보였다.
+      */}
+      <AgentWaits
+        variant="tower"
+        snapshot={wakes}
+        handleOf={(id) => accounts[id]?.handle ?? id}
+        channelLabel={channelLabelOf}
+        onOpenThread={onOpenThread}
       />
     </main>
   );
