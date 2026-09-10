@@ -16,6 +16,15 @@
 //
 // 애드온을 **못 켜도 터미널은 뜬다**(WebGL2 가 없는 환경·컨텍스트 상실). 그때는 xterm 이
 // 기본 DOM 렌더러로 그대로 그리므로, 실패는 삼키고 화면은 살린다 — `enableWebglRenderer`.
+//
+// **애드온 버전은 xterm 과 짝이다 — `@xterm/addon-webgl` 은 `0.18.x` 로 묶어 둔다.**
+// 이 애드온은 xterm 의 **private 내부**(`_core._renderService`·`_core._createRenderer`)에
+// 손을 넣는다. 0.19.0 은 그 위에 `_core._store._isDisposed` 가드를 더 넣었는데, 그 `_store` 는
+// xterm **6 계열**의 lifecycle 이고 우리가 쓰는 5.5.0 에는 없다(`common/Lifecycle.ts` 는
+// `_disposables`·`_isDisposed` 뿐이다) → 애드온 dispose 가 `undefined._isDisposed` 로 던진다.
+// 실측 사고: 터미널 패널의 [Close] 를 누르면 그 예외가 React effect cleanup 밖으로 나가
+// **앱 화면 전체가 꺼졌다**(웹뷰 크래시가 아니다 — 크래시 리포트가 없었다). `^0.19` 처럼
+// 마이너를 열어 두면 이 짝이 조용히 깨진다.
 
 export interface TerminalSink {
   /** PTY raw 바이트. 디코드는 xterm 의 상태 기계가 한다. */
@@ -115,13 +124,21 @@ interface WebglTarget {
  * WebGL 컨텍스트가 날아가는 일은 실제로 일어나고, 그때 애드온을 붙잡고 있으면 화면이 그
  * 자리에서 얼어 버린다. 버리면 xterm 이 DOM 렌더러로 되돌아가 계속 그린다.
  */
-async function enableWebglRenderer(t: WebglTarget): Promise<void> {
+type LoadedAddon = { dispose(): void };
+
+async function enableWebglRenderer(t: WebglTarget): Promise<LoadedAddon | null> {
   try {
     const { WebglAddon } = await import('@xterm/addon-webgl');
     const addon = new WebglAddon();
-    addon.onContextLoss(() => addon.dispose());
+    // 컨텍스트 상실 때의 정리도 던질 수 있다 — 이 콜백은 xterm 의 이벤트 루프 안에서 불리므로
+    // 여기서 새는 예외는 우리가 손댈 수 없는 자리에서 터진다.
+    addon.onContextLoss(() => { try { addon.dispose(); } catch { /* 아래 dispose 규율과 같다 */ } });
     t.loadAddon(addon);
-  } catch { /* WebGL2 가 없거나 애드온을 못 받았다 — DOM 렌더러로 그대로 둔다 */ }
+    return addon;
+  } catch {
+    /* WebGL2 가 없거나 애드온을 못 받았다 — DOM 렌더러로 그대로 둔다 */
+    return null;
+  }
 }
 
 /**
@@ -143,6 +160,10 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
     options: { disableStdin?: boolean };
     dispose(): void;
   } | null = null;
+  /**
+   * 얹힌 WebGL 애드온. **dispose 순서 때문에** 들고 있는다(아래 `dispose` 주석).
+   */
+  let webgl: LoadedAddon | null = null;
   let disposed = false;
   let observer: ResizeObserver | null = null;
   /** 마지막으로 보낸 크기. 같은 값을 다시 보내지 않는다 — 드래그 한 번이 수십 프레임이다. */
@@ -200,7 +221,16 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
     // **바이트를 먼저 흘리고 그다음에 렌더러를 올린다.** 어느 렌더러가 그리는지는 화면의
     // 속도이고, 큐에 쌓인 ring 재생은 화면의 내용이다 — 내용을 렌더러 로딩 뒤로 미루면
     // 붙는 순간이 그만큼 늦어진다. 애드온은 뜬 뒤에 얹어도 xterm 이 다시 그린다.
-    await enableWebglRenderer(t);
+    // 로딩 중에 패널이 닫혔으면 렌더러를 올리지 않는다 — 이미 버린 터미널에 애드온을
+    // 얹으면 아무도 그것을 버리지 않는다(그리고 얹는 것 자체가 해체된 내부를 만진다).
+    if (disposed) return;
+    webgl = await enableWebglRenderer(t);
+    // 애드온을 받는 동안 닫혔을 수도 있다 — 그때는 여기서 바로 버린다. `dispose` 는 이미
+    // 지나갔으므로 이 자리가 마지막 기회다.
+    if (disposed) {
+      try { webgl?.dispose(); } catch { /* dispose 규율과 같다 */ }
+      webgl = null;
+    }
   })().catch(() => { /* 터미널을 못 띄운 것으로 패널을 죽이지 않는다 */ });
 
   return {
@@ -226,7 +256,17 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
       // 크기를 계속 보낸다.
       observer?.disconnect();
       observer = null;
-      term?.dispose();
+      // **애드온을 터미널보다 먼저 버린다.** 애드온의 정리 훅은 xterm 의 private 내부를
+      // 만져 렌더러를 DOM 으로 되돌리는데(그것이 컨텍스트 상실 때의 정상 경로다), 터미널이
+      // 먼저 죽은 뒤에 그 훅이 돌면 이미 해체된 것 위에서 돈다.
+      //
+      // **그리고 어느 쪽 예외도 밖으로 내보내지 않는다.** 이 `dispose` 는 패널의 effect
+      // cleanup 에서 불린다 — 여기서 새는 예외는 React 가 트리를 걷어내는 것으로 갚아지고,
+      // 사람에게는 **앱 화면 전체가 꺼진 것**으로 보인다(실측 사고, 모듈 머리 주석). 터미널
+      // 하나를 못 닫은 것이 앱을 닫는 일이 되어서는 안 된다.
+      try { webgl?.dispose(); } catch { /* 렌더러 해체 실패가 화면을 끄지 않는다 */ }
+      webgl = null;
+      try { term?.dispose(); } catch { /* 같은 규율 — 여기서 새면 패널이 아니라 앱이 죽는다 */ }
       term = null;
     },
   };
