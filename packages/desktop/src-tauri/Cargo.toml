@@ -1,6 +1,6 @@
 [package]
 name = "murmur-desktop"
-version = "0.1.161"
+version = "0.1.162"
 edition = "2021"
 
 [build-dependencies]
