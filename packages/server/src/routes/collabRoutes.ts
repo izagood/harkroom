@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import type { CollabProposalsView } from '@murmur/shared';
 import type { Pool } from 'pg';
 import { httpAvcsClient } from '../avcs/client.js';
 import { ProposalReader } from '../avcs/proposalReader.js';
@@ -27,7 +28,7 @@ export async function registerCollabRoutes(
   projection?: { currentUrl(): string | null },
   reader: ProposalReader = new ProposalReader(httpAvcsClient),
 ): Promise<void> {
-  app.get('/collab/proposals', { preHandler: app.requireAccount }, async () => {
+  app.get('/collab/proposals', { preHandler: app.requireAccount }, async (): Promise<CollabProposalsView> => {
     const baseUrl = projection?.currentUrl() ?? null;
     // 보고 있는 서버가 없으면 제안도 없다 — `/leases` 와 같은 논리다. 빈 목록과 "설정되지
     // 않았다" 를 화면이 구분할 수 있게 `baseUrl` 을 함께 준다.

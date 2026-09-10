@@ -3470,6 +3470,33 @@ export const en = {
   // - **`{label}`(커뮤니티 이름) · 이니셜** — 데이터다
   // ---------------------------------------------------------------------------
 
+  // ── 협업 탭 (docs/desktop-collab.html · docs/hub-seat.md) ──
+  // 이 칸은 avcshub 웹의 제안 목록을 대신한다. 문구가 지켜야 하는 것 둘:
+  //  ① **모름을 0 으로 말하지 않는다** — 못 읽은 것과 없는 것이 다른 문장이어야 한다.
+  //  ② 판정이 **언제·무엇으로** 계산됐는지 화면이 말한다(권위가 아니라 복제본의 계산이다).
+  'collab.title': 'Collaboration',
+  'collab.checking': 'Loading proposals…',
+  'collab.unknown': "Couldn't read proposals",
+  'collab.noServer': 'No avcs server is configured — set one in Settings › Projection.',
+  'collab.empty': 'Nothing here',
+  'collab.filter.label': 'Filter proposals',
+  'collab.filter.open': 'Open {count}',
+  'collab.filter.accepted': 'Accepted {count}',
+  'collab.filter.all': 'All',
+  'collab.openChannel': 'Open channel',
+  'collab.repoUnreachable': "Couldn't read this repo",
+  'collab.reducedAt': 'as of #{cursor} · {materializer}',
+  'collab.ownerUnknown': 'unknown',
+  'collab.ops': '{count} op(s)',
+  'collab.effects.behavior': 'changes behavior',
+  'collab.effects.api': 'breaks public API',
+  'collab.conflict': 'conflict — {key}',
+  'collab.state.needs_decision': 'Needs a decision',
+  'collab.state.check_failed': 'Checks failed',
+  'collab.state.open': 'Open',
+  'collab.state.accepted': 'Accepted',
+  'collab.state.rejected': 'Rejected',
+  'collab.state.unknown': 'State unknown',
   'rail.community.label': 'Switch community',
   'rail.community.connected': 'connected',
   'rail.community.disconnected': 'disconnected',

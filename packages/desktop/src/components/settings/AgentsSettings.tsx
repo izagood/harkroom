@@ -1105,6 +1105,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               // 권한이 없는 것은 오류가 아니므로 같은 역할을 주지 않는다(붉은 글이 뜬다).
               <div
                 role={defaults === 'error' ? 'alert' : undefined}
+                /* 시험이 **이 상자가 사라지는 것**을 기다린다(`AgentsSettings.test.tsx`
+                   의 `openCreate`). 기본값이 오기 전에는 폼 자체가 없으므로, 폼의 필드를
+                   바로 찾아 나서면 `findBy*` 의 기본 1초 창이 CI 부하에서 넘친다 —
+                   실제로 그렇게 한 번 빨개졌다. 글자가 아니라 이 이름으로 집으므로
+                   로케일 기본값이 바뀌어도 안 깨진다. */
+                data-testid="agent-defaults-box"
                 // 크기를 안 적어 본문단 13px 을 물려받는다 — 이 상자가 뜨는 동안 오른쪽
                 // 칸의 **내용 전부**다(초안을 못 만들었으니 폼이 없다). 아래 묶음 상자들의
                 // 단(11px)을 여기 주면 화면 하나가 통째로 가장 작은 글자가 된다.

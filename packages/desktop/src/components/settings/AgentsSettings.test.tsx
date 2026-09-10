@@ -452,6 +452,14 @@ describe('AgentsSettings — 만들 때 계정 풀을 고른다', () => {
   async function openCreate(): Promise<void> {
     render(<AgentsSettings />);
     (await screen.findByTestId('agent-create')).click();
+    /*
+      **기본값이 온 뒤에야 폼이 있다.** 그 전까지 오른쪽 칸은 「기본값을 불러오는 중…」
+      상자 하나가 전부다(`AgentsSettings.tsx`). 그래서 곧바로 필드를 찾아 나서면
+      `findBy*` 의 기본 1초 창 안에 `agentDefaults` 프로미스가 안 풀린 CI 에서 빨개진다 —
+      실측(2026-09-10, PR #748): 로컬 4회·전체 2767개 초록인데 CI 에서 한 번 죽었고
+      코드를 고치지 않은 재실행은 초록이었다. 창을 늘리는 대신 **기다릴 것을 기다린다.**
+    */
+    await waitFor(() => expect(screen.queryByTestId('agent-defaults-box')).toBeNull());
   }
 
   it('만들기 화면에도 풀 선택이 있다 — 만든 뒤 상세로 다시 들어가게 만들지 않는다', async () => {

@@ -2672,3 +2672,55 @@ export function installHint(binary: string | undefined | null): string | null {
       return null;
   }
 }
+
+/**
+ * 협업 탭이 읽는 것(`GET /collab/proposals`, `docs/hub-seat.md` 0단계).
+ *
+ * **정본은 서버의 `avcs/proposals.ts` 다** — 이 선언은 그 값이 wire 를 건너온 모양이고,
+ * 라우트가 자기 응답을 이 타입으로 못박아(`collabRoutes.ts`) 둘이 갈라지면 빌드가 깨진다.
+ */
+export type CollabProposalState =
+  | 'needs_decision' | 'check_failed' | 'open' | 'accepted' | 'rejected' | 'unknown';
+
+export interface CollabEvidence { oid: string; summary: string; actorKeyId: string | null }
+
+export interface CollabOp {
+  oid: string;
+  purpose: string;
+  actorKeyId: string | null;
+  status: string | null;
+  blockedReason: string | null;
+  effects?: { changesBehavior: boolean; breaksPublicApi: boolean };
+  evidence: CollabEvidence[];
+}
+
+export interface CollabProposal {
+  intentOid: string;
+  title: string;
+  ownerKeyId: string | null;
+  lastLogIndex: number;
+  ops: CollabOp[];
+  decisions: { oid: string; reason: string; decidedByKeyId: string | null }[];
+  state: CollabProposalState;
+  conflicts: { id: string; key: string; reason: string }[];
+  effects: { changesBehavior: boolean; breaksPublicApi: boolean } | null;
+}
+
+export interface CollabRepoView {
+  repo: string;
+  /** 이 저장소에 바인딩된 채널들. 화면이 "여기서 이어 말하기" 를 걸 자리다. */
+  channelIds: string[];
+  /** avcs 를 못 읽었으면 `'unreachable'`. 그 저장소만 접히고 나머지는 그대로 선다. */
+  error: string | null;
+  proposals: CollabProposal[];
+  /** 어느 시점·어느 환원기의 판정인가. 환원 평면이 없으면 `null`. */
+  reducedAt: { cursor: number; materializer: string; treeHash: string } | null;
+}
+
+export interface CollabProposalsView {
+  /** 투영이 보고 있는 avcs 서버. `null` 이면 **설정되지 않은 것**이지 제안이 없는 것이 아니다. */
+  baseUrl: string | null;
+  repos: CollabRepoView[];
+  /** avcs actor 키 → murmur 계정 id. 모르는 키는 **없다**(그것이 외부 작업자다). */
+  actors?: Record<string, string>;
+}

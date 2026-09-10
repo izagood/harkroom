@@ -106,8 +106,10 @@ afterEach(() => { cleanup(); });
 describe('레일 네 칸', () => {
   it('칸이 넷이고 순서가 홈 · DM · 에이전트 · 북마크다', () => {
     /*
-      문서: *"칸은 넷 — 홈 · DM · 에이전트 · 북마크."* 순서가 계약인 이유는 **숫자 단축키가
-      그 순서를 그대로 따르기** 때문이다 — 순서가 바뀌면 `⌘2` 가 다른 곳을 연다.
+      문서: *"칸은 넷 — 홈 · DM · 에이전트 · 북마크"* 에 **협업이 다섯째로 붙었다**
+      (`desktop-collab.html` 「협업 탭 — 레일의 다섯째 칸」). 순서가 계약인 이유는 **숫자
+      단축키가 그 순서를 그대로 따르기** 때문이다 — 순서가 바뀌면 `⌘2` 가 다른 곳을 연다.
+      새 칸을 **끝에** 붙인 이유도 그것이다: 앞을 밀면 손이 기억한 단축키가 전부 어긋난다.
     */
     fakeController();
     mountRail();
@@ -115,7 +117,7 @@ describe('레일 네 칸', () => {
     const scroller = screen.getByTestId('rail-home').parentElement!;
     const order = within(scroller).getAllByRole('button')
       .map((b) => b.getAttribute('data-testid'));
-    expect(order).toEqual(['rail-home', 'rail-dm', 'rail-agents', 'rail-saved']);
+    expect(order).toEqual(['rail-home', 'rail-dm', 'rail-agents', 'rail-saved', 'rail-collab']);
   });
 
   it('첫 칸이 `채널` 이 아니라 `홈` 이다', () => {
@@ -238,7 +240,7 @@ describe('홈 칸이 배지를 대신 받는다', () => {
 });
 
 describe('숫자 단축키가 레일 순서를 그대로 따른다', () => {
-  it('⌘1~⌘3 이 세 패널을, ⌘4 가 북마크를 연다', () => {
+  it('⌘1~⌘3 이 세 패널을, ⌘4 가 북마크를, ⌘5 가 협업을 연다', () => {
     fakeController();
     const onPanelChange = vi.fn();
     const onOpenSaved = vi.fn();
@@ -248,18 +250,19 @@ describe('숫자 단축키가 레일 순서를 그대로 따른다', () => {
     fireEvent.keyDown(document, { key: '2', metaKey: true });
     fireEvent.keyDown(document, { key: '3', metaKey: true });
     fireEvent.keyDown(document, { key: '4', metaKey: true });
+    fireEvent.keyDown(document, { key: '5', metaKey: true });
 
-    expect(onPanelChange.mock.calls.map((c) => c[0])).toEqual(['home', 'dm', 'agents']);
+    expect(onPanelChange.mock.calls.map((c) => c[0])).toEqual(['home', 'dm', 'agents', 'collab']);
     expect(onOpenSaved).toHaveBeenCalledTimes(1);
   });
 
   it('없는 칸의 숫자는 아무 일도 하지 않는다', () => {
-    // `⌘5` 로 다섯 번째 칸을 여는 척하지 않는다 — 칸은 넷이다.
+    // `⌘6` 으로 여섯 번째 칸을 여는 척하지 않는다 — 칸은 다섯이다(협업이 끝에 붙었다).
     fakeController();
     const onPanelChange = vi.fn();
     mountRail({ onPanelChange });
 
-    fireEvent.keyDown(document, { key: '5', metaKey: true });
+    fireEvent.keyDown(document, { key: '6', metaKey: true });
     fireEvent.keyDown(document, { key: '0', metaKey: true });
     expect(onPanelChange).not.toHaveBeenCalled();
   });

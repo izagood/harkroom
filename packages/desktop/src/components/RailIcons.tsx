@@ -90,6 +90,23 @@ export function AgentsIcon(): ReactElement {
  * 밀어낸다. **같은 그림이어야 한다는 것이 요점**이라 새 path 를 그리지 않고 지름만 연다 —
  * 레일의 `Saved` 칸과 메시지의 표식이 다른 그림이면 사람은 둘을 같은 것으로 읽지 못한다.
  */
+/**
+ * 협업(제안) 칸. 갈래 하나가 본선에서 나와 다시 붙는 모양 — 제안이 **머물다 합쳐지는 것**
+ * 이라는 사실을 그림 하나로 말한다. 자물쇠·문서 같은 그림을 쓰지 않는 이유: 이 칸이 보는
+ * 것은 파일도 잠금도 아니고 **합칠지 말지를 기다리는 갈래**다.
+ */
+export function CollabIcon(): ReactElement {
+  return (
+    <Icon>
+      <circle cx="7" cy="5.5" r="2" />
+      <circle cx="7" cy="18.5" r="2" />
+      <circle cx="17" cy="12" r="2" />
+      <path d="M7 7.5v9" />
+      <path d="M9 5.5h3.5A2.5 2.5 0 0 1 15 8v2" />
+    </Icon>
+  );
+}
+
 export function SavedIcon({ size }: { size?: number } = {}): ReactElement {
   return (
     <Icon size={size}>

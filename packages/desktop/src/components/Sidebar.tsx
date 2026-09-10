@@ -23,8 +23,10 @@ import { SidebarFind } from './SidebarFind';
 import { runnerReason, runnerStatusLabel } from './RunnerStatus';
 import { AgentGrid } from './settings/AgentGrid';
 import { AgentTurns } from './AgentTurns';
+import { Collab } from './Collab';
 import { AgentWaits } from './AgentWaits';
 import { useAgentTurns, useAgentWakes, useThreadRoots, threadTitle } from '../lib/agentTurns';
+import { useCollabProposals, type CollabFilter } from '../lib/collabProposals';
 // 띄울 권한 판정은 `lib/` 하나가 낸다 — 설정 › 에이전트가 같은 판정을 쓴다.
 import { canRelaunchAgent } from '../lib/relaunchGate';
 // 설정 문의 판정도 한 벌이다(`lib/agentConfigGate.ts`) — 프로필·본문 멘션이 같은 함수를
@@ -634,6 +636,9 @@ export function Sidebar({
     훅은 조건부로 부를 수 없으므로(리액트 규칙) 조건은 인자로 넘긴다.
   */
   const agentTurns = useAgentTurns(panel === 'agents');
+  /* 협업 칸도 같은 규칙이다 — 보고 있을 때만 묻는다(저장소마다 avcs 를 한 번씩 두드린다). */
+  const collab = useCollabProposals(panel === 'collab');
+  const [collabFilter, setCollabFilter] = useState<CollabFilter>('open');
   /* 예약은 테이블에서 오므로 릴레이와 무관하게 답이 온다(`AgentWaits` 주석). */
   const agentWakes = useAgentWakes(panel === 'agents');
   /* 묶음 머리에 세울 스레드 이름. 모듈 캐시라 관제탑과 **같은 답**을 쓰고, 목록이 5초마다
@@ -1917,6 +1922,23 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
           한 번에 한 패널만 그려지므로 화면에서 부딪히는 일도 없지만, 이름이 갈려 있어야
           시험이 두 칸을 구별할 수 있다.
         */}
+        {/*
+          협업 칸(`docs/desktop-collab.html` 다섯째 칸). 내용은 `Collab.tsx` 에 있다 — 이
+          파일은 이미 충분히 길고, 새 칸을 여기서 펼치면 다음 칸도 여기로 온다.
+        */}
+        {panel === 'collab' && (
+          <Collab
+            snapshot={collab}
+            filter={collabFilter}
+            onFilterChange={setCollabFilter}
+            /*
+              avcs actor 키 → murmur 계정 → handle. 계정을 모르면 **키를 그대로** 보인다
+              (서버가 모르는 키를 `actors` 에 넣지 않는다 — 그것이 외부 작업자다).
+            */
+            handleOf={(accountId) => accounts[accountId]?.handle ?? accountId}
+            onOpenChannel={(channelId) => { void getController().openChannel(channelId); }}
+          />
+        )}
         {panel === 'agents' && (
           <AgentTurns
             snapshot={agentTurns}

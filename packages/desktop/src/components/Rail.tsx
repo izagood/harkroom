@@ -7,7 +7,7 @@ import { Identity, StatusMark } from './Identity';
 import { Menu } from './Menu';
 import { StatusPicker } from './StatusPicker';
 import { TOP_BAR_BG, TOP_BAR_H } from '../lib/platform';
-import { AgentsIcon, DmIcon, HomeIcon, SavedIcon } from './RailIcons';
+import { AgentsIcon, CollabIcon, DmIcon, HomeIcon, SavedIcon } from './RailIcons';
 import type { SectionId } from './settings/sections';
 import { useT } from '../i18n/useT';
 import type { Translate } from '../i18n';
@@ -17,7 +17,7 @@ import type { Translate } from '../i18n';
  * 열고 곧 원래 칸으로 돌아온다. 칸을 만들면 "북마크 패널"이라는 없는 화면을 타입이
  * 약속하게 된다.
  */
-export type RailPanel = 'home' | 'dm' | 'agents';
+export type RailPanel = 'home' | 'dm' | 'agents' | 'collab';
 
 /**
  * 레일 폭. **62px 에서 70px 로 넓혔다**(사용자 요청 1·3, 2026-09-08 — "제일 오른쪽 버튼이
@@ -76,6 +76,16 @@ const RAIL_CELLS: RailCell[] = [
   { panel: 'dm', label: 'DM', ariaLabel: 'Direct messages', Icon: DmIcon, testId: 'rail-dm' },
   { panel: 'agents', label: 'Agents', ariaLabel: 'Agents', Icon: AgentsIcon, testId: 'rail-agents' },
   { panel: null, label: 'Saved', ariaLabel: 'Saved messages', Icon: SavedIcon, testId: 'rail-saved' },
+  /*
+    다섯째 칸(`docs/desktop-collab.html` 「협업 탭 — 레일의 다섯째 칸」). 이 칸이 avcshub 웹의
+    `/[org]/[repo]/proposals` 를 대신한다.
+
+    **끝에 붙인다.** 앞 넷의 자리를 밀면 숫자 단축키가 바뀌어, 손이 기억한 `⌘3` 이 다른 칸을
+    연다 — 새 칸 하나를 위해 쓰던 셋을 흔드는 값이 더 크다.
+
+    라벨은 영어 그대로다(위 넷과 같은 이유: 폭 54px 에 맞춰 재어 고른 값이다).
+  */
+  { panel: 'collab', label: 'Collab', ariaLabel: 'Collaboration', Icon: CollabIcon, testId: 'rail-collab' },
 ];
 
 /**
