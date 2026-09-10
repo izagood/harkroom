@@ -573,6 +573,56 @@ export function fillSystemAccount(body: string, handle: string | null): string {
 export const QUOTE_LINE = /^ {0,3}>[ \t]?(.*)$/;
 
 /**
+ * **OS 로 열어도 되는 스킴의 전부**(#216). 허용 목록인 것이 핵심이다 — 금지 목록은 새 스킴이
+ * 생길 때마다 뚫리고, 뚫린 줄도 모른다.
+ *
+ * 여기 있는 이유: 이 목록이 링크를 **그리는 쪽**(`desktop/lib/link.ts` 의 `classifyLink`)과
+ * 멘션을 **찾는 쪽**(`linkSpans`) 양쪽의 경계다. 사본을 두면 화면이 주소로 칠한 글자를
+ * 판정은 멘션으로 읽는 상태가 생기고, 그것이 곧 아래 `linkSpans` 가 막는 사고다.
+ */
+export const LINK_SCHEMES = ['http:', 'https:'];
+
+/**
+ * 이 글자가 본문에서 **링크로 그려지는가**. `classifyLink` 가 target 을 만들 조건과 같다.
+ */
+export function isDrawnLink(token: string): boolean {
+  if (parseMessagePermalink(token)) return true;
+  try {
+    return LINK_SCHEMES.includes(new URL(token.trim()).protocol);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 링크로 그려지는 구간(2026-09-10). **멘션을 찾지 않는다.**
+ *
+ * **왜 링크 안은 부름이 아닌가.** `https://x.com/@forge/status/1` 을 붙여넣은 사람은 forge 를
+ * 부른 것이 아니다. 그런데 판정이 링크를 모르면 한 번에 두 가지가 일어난다 — forge 의 턴이
+ * 뜨고(사람이 시키지 않은 일), `normalizeMentions` 가 주소 한가운데를 `<@id>` 로 바꿔
+ * **주소 자체를 깨뜨린다**. 뒤엣것이 먼저 눈에 보이지 않는 것이 이 결함의 성질이다: 화면은
+ * `renderMentions` 로 다시 handle 을 그려 넣으므로 주소가 멀쩡해 보인다.
+ *
+ * **경계를 렌더러와 맞춘다.** 데스크탑은 URL 후보(`urlCandidateRegex`)에서 후행 문장부호를
+ * 떼고(`trimTrailingPunctuation`) 열 수 있는 스킴일 때만 링크로 칠한다. 걷어내는 구간이
+ * 그것과 같아야 한다 — 넓게 잡으면(`URL_CANDIDATE_SOURCE` 는 `://` 를 요구하지 않는다)
+ * `cc:@forge` 같은 평문이 주소로 오인되어 **사람의 부름이 삼켜지고**, 좁게 잡으면 지금처럼
+ * 주소 안의 이름이 턴을 띄운다. 그래서 스킴 허용 목록이 판정의 중심에 있다.
+ *
+ * 마크다운 링크는 **주소만** 걷어낸다: `[@forge](https://x.io)` 의 이름표는 화면에도 글자로
+ * 남으므로 부름으로 둔다. 걷어내는 것은 사람이 주소로 보는 것뿐이다.
+ */
+function linkSpans(body: string): [number, number][] {
+  const spans: [number, number][] = [];
+  for (const m of body.matchAll(urlCandidateRegex())) {
+    const token = trimTrailingPunctuation(m[0]);
+    if (!token || !isDrawnLink(token)) continue;
+    spans.push([m.index, m.index + token.length]);
+  }
+  return spans;
+}
+
+/**
  * 멘션을 찾을 구간과 그 **원문 위치**. 코드(#298)와 인용 줄(#592)을 뺀 나머지다.
  *
  * 인용 범위를 원문의 **줄 단위로 먼저 잡고** 코드 구간과 교차시킨다. 코드 조각별로 인용을
@@ -580,11 +630,24 @@ export const QUOTE_LINE = /^ {0,3}>[ \t]?(.*)$/;
  * 조각만 인용으로 보이고 뒤가 샌다 — 이 결함의 절반이 그 모양이다.
  */
 function mentionRegions(body: string): { text: string; start: number }[] {
-  const quoted: [number, number][] = [];
+  const cut: [number, number][] = [];
   let at = 0;
   for (const line of body.split('\n')) {
-    if (QUOTE_LINE.test(line)) quoted.push([at, at + line.length]);
+    if (QUOTE_LINE.test(line)) cut.push([at, at + line.length]);
     at += line.length + 1;
+  }
+  /*
+    링크는 **줄이 아니라 토큰**이라 인용 줄과 겹칠 수 있다(`> 참고 https://x.com/@forge`).
+    아래 루프는 구간이 오름차순·비겹침임을 전제하므로, 두 종류를 합친 뒤 정렬·병합한다 —
+    겹친 채로 넘기면 커서가 뒤로 갈 수 없어 한쪽이 조용히 새는 자리가 된다.
+  */
+  cut.push(...linkSpans(body));
+  cut.sort((a, b) => a[0] - b[0]);
+  const skip: [number, number][] = [];
+  for (const [s, e] of cut) {
+    const last = skip[skip.length - 1];
+    if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+    else skip.push([s, e]);
   }
 
   const out: { text: string; start: number }[] = [];
@@ -592,7 +655,7 @@ function mentionRegions(body: string): { text: string; start: number }[] {
     if (seg.kind !== 'plain') continue;
     const end = seg.start + seg.text.length;
     let cursor = seg.start;
-    for (const [qs, qe] of quoted) {
+    for (const [qs, qe] of skip) {
       if (qe <= cursor || qs >= end) continue;
       if (qs > cursor) out.push({ text: body.slice(cursor, qs), start: cursor });
       cursor = Math.max(cursor, Math.min(end, qe));
