@@ -1,6 +1,7 @@
 import { usePrefsStore } from '../../state/prefsStore';
 import { SettingsGroup, SettingsPage } from './primitives';
 import type { ColorMode } from '../../lib/prefs';
+import { DEFAULT_ZOOM, ZOOM_STEPS } from '../../lib/zoom';
 import { LOCALES, LOCALE_NAMES } from '../../i18n';
 import { useT } from '../../i18n/useT';
 
@@ -22,6 +23,8 @@ export function AppearanceSettings() {
   const setColorMode = usePrefsStore((s) => s.setColorMode);
   const locale = usePrefsStore((s) => s.locale);
   const setLocale = usePrefsStore((s) => s.setLocale);
+  const zoom = usePrefsStore((s) => s.zoom);
+  const setZoom = usePrefsStore((s) => s.setZoom);
 
   const pill = (on: boolean) => `flex-1 rounded-lg py-2 font-medium transition ${
     on ? 'bg-accent text-fg-on-strong' : 'bg-surface-raised text-fg hover:bg-surface'
@@ -85,6 +88,40 @@ export function AppearanceSettings() {
             </button>
           ))}
         </div>
+      </SettingsGroup>
+
+      {/*
+        **확대/축소.** 글자만 키우는 손잡이를 두지 않는 이유는 `lib/zoom.ts` 의 첫 주석에
+        있다 — 이 앱의 여백·패널 폭은 px 라 글자만 커지면 밀도가 무너진다. 여기서 고르는
+        것은 화면 전체의 배율이다.
+
+        칸을 가로 한 줄이 아니라 3×3 으로 세운다: 아홉이 한 줄에 서면 칸마다 65px 이라
+        `125%` 가 이미 빠듯하고, 배율을 올린 사람의 화면에서는 그 줄이 제일 먼저 넘친다 —
+        배율을 되돌리러 온 자리가 배율 때문에 깨져 있으면 빠져나올 길이 없다.
+      */}
+      <SettingsGroup title={t('appearance.zoom')}>
+        <div role="radiogroup" aria-label={t('appearance.zoom')} className="grid grid-cols-3 gap-1 p-1">
+          {ZOOM_STEPS.map((step) => (
+            <button
+              key={step}
+              role="radio"
+              aria-checked={zoom === step}
+              aria-label={t('appearance.zoomOption', { percent: String(step) })}
+              className={pill(zoom === step)}
+              onClick={() => setZoom(step)}
+            >
+              {step}%
+              {/*
+                기본값이 어느 칸인지 화면에 적는다. 배율은 눈으로 되돌리기 어려운 설정이라
+                (지금이 110% 인지 125% 인지는 화면만 봐서 모른다) "원래 자리" 가 보여야 한다.
+              */}
+              {step === DEFAULT_ZOOM && (
+                <span className="ml-1 font-normal opacity-70">{t('appearance.zoomDefault')}</span>
+              )}
+            </button>
+          ))}
+        </div>
+        <p className="px-4 py-3 text-meta text-fg-muted">{t('appearance.zoomHint')}</p>
       </SettingsGroup>
     </SettingsPage>
   );

@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactElement } from 'react';
 import { createNotifier } from './lib/notify';
 import { sessionStore, type StoredCommunity } from './lib/session';
 import { useColorMode } from './lib/useColorMode';
+import { useZoom } from './lib/useZoom';
 import { useNotificationOpen } from './lib/useNotificationOpen';
 import { useDockBadge } from './lib/useDockBadge';
 import { getActiveEntry } from './state/communities';
@@ -37,6 +38,7 @@ async function startSession(
 
 export default function App() {
   useColorMode();
+  useZoom();
   /**
    * OS 알림을 누르면 그 대화로 간다(#542). `phase` 분기보다 **위**에 있는 것이 요점이다 —
    * 알림은 부팅 중에도 오고, 리스너를 `ready` 안쪽에 두면 그때 누른 것이 사라진다.

@@ -31,6 +31,10 @@ export const ko = {
   'appearance.languageSystem': '시스템',
   'appearance.mode': '{mode} 모드',
   'appearance.title': '모양',
+  'appearance.zoom': '확대/축소',
+  'appearance.zoomDefault': '기본값',
+  'appearance.zoomHint': 'Cmd +/- 키를 눌러 확대/축소 수준을 바꾸거나, Cmd 0 으로 되돌릴 수 있다.',
+  'appearance.zoomOption': '{percent}% 로 보기',
 
   'sweep.close': '닫기',
   'sweep.done': '다 봤다',

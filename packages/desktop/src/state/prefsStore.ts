@@ -10,6 +10,8 @@ export interface PrefsState extends Prefs {
    * `useT` 가 새 번역기를 내고 React 가 그것을 쓰는 화면만 다시 그린다.
    */
   setLocale(locale: LocalePref): void;
+  /** 화면 배율을 바꾼다. 웹뷰에 거는 것은 `useZoom` 이고, 여기는 값만 옮긴다. */
+  setZoom(zoom: number): void;
 }
 
 // 커뮤니티 스토어(`createAppStore`)와 반드시 별개다 — appStore.reset() 은 로그아웃 때 도메인
@@ -46,5 +48,6 @@ export const usePrefsStore = create<PrefsState>((set, get) => {
     setColorMode: (mode) => update({ colorMode: mode }),
     setRunnerAutoStart: (enabled) => update({ runnerAutoStart: enabled }),
     setLocale: (locale) => update({ locale }),
+    setZoom: (zoom) => update({ zoom }),
   };
 });

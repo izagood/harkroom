@@ -210,6 +210,16 @@ export const en = {
   'appearance.languageSystem': 'System',
   'appearance.mode': '{mode} appearance',
   'appearance.title': 'Appearance',
+  /**
+   * 확대/축소. **`Zoom` 한 낱말이다** — `Text size` 로 적으면 글자만 커진다는 약속이 되고,
+   * 실제로는 여백·아이콘·패널 폭이 함께 커진다(`lib/zoom.ts`).
+   */
+  'appearance.zoom': 'Zoom',
+  /** 기본값 칸에 붙는 꼬리. 앞의 숫자와 한 줄에 서므로 낱말 하나로 짧게 둔다. */
+  'appearance.zoomDefault': 'Default',
+  'appearance.zoomHint': 'You can also press Cmd +/- to change the zoom level, or Cmd 0 to reset it.',
+  /** `{percent}` 은 눈금 숫자다. 라벨의 `70%` 만으로는 스크린리더가 무엇의 70% 인지 말하지 못한다. */
+  'appearance.zoomOption': 'Zoom to {percent}%',
 
   // ---------------------------------------------------------------------------
   // avatar — **판정 이름이다.** `lib/avatar.ts::avatarErrorMessage` 가 내는 말이고,

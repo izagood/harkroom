@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { sidebarStorage } from '../lib/prefs';
+import { usePrefsStore } from '../state/prefsStore';
+import { DEFAULT_ZOOM, stepZoom } from '../lib/zoom';
 // `isMacOS`·`MAC_TRAFFIC_LIGHT_PL` 이 여기 있었다 — 좌상단은 이제 늘 레일이다(아래 주석).
 import { TOP_BAR_BG, TOP_BAR_H } from '../lib/platform';
 import { CommunityRail } from './CommunityRail';
@@ -109,6 +111,34 @@ export function Workspace({ onLogout, onOpenSettings }: {
         setSearchInitialScope(threadRootId ? 'thread' : 'channel');
         setSearchOpen(true);
         return;
+      }
+
+      /**
+       * 확대/축소도 **입력 중에 먹는다** — ⌘F 와 같은 이유다. 글을 쓰다가 작아서 안 보이는
+       * 것이 이 기능이 생긴 이유인데, 하필 그 자리(작성창)에서만 안 들으면 키가 없는 것과
+       * 같다. 조합키라 타이핑과 부딪치지 않는다.
+       *
+       * **Tauri 의 `zoomHotkeysEnabled` 를 쓰지 않고 여기서 잡는다.** 그 폴리필은 20% 씩
+       * 제멋대로 오가면서 프런트엔드에 값을 알려주지 않아, 설정 화면의 라디오는 100% 인데
+       * 화면은 140% 인 상태를 만든다. 여기서 `prefs.zoom` 을 고치면 손잡이가 하나다 —
+       * 설정 화면과 단축키가 같은 값을 읽고 쓴다(`lib/zoom.ts`).
+       *
+       * `=`·`+` 를 함께 받는 이유: macOS 에서 ⌘+ 는 Shift 를 함께 눌러야 `+` 가 되고,
+       * 그냥 누르면 `=` 가 온다. 사람은 둘 다 "키우기"로 누른다.
+       */
+      if (e.metaKey || e.ctrlKey) {
+        const zoomKey = e.key === '=' || e.key === '+' ? 1 : e.key === '-' || e.key === '_' ? -1 : 0;
+        if (zoomKey !== 0) {
+          e.preventDefault();
+          const { zoom, setZoom } = usePrefsStore.getState();
+          setZoom(stepZoom(zoom, zoomKey === 1 ? 1 : -1));
+          return;
+        }
+        if (e.key === '0') {
+          e.preventDefault();
+          usePrefsStore.getState().setZoom(DEFAULT_ZOOM);
+          return;
+        }
       }
 
       // 입력 요소에 포커스가 있으면 단축키를 가로채지 않는다.
