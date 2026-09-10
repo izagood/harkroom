@@ -9,6 +9,7 @@
 - 레일: [`desktop-rail.html`](desktop-rail.html) ([PDF](desktop-rail.pdf)) — 사이드바 옆에 좁은 레일을 내고 DM · 에이전트를 옮긴다
 - 설정 › 에이전트 카드와 팀: [`desktop-agent-cards.html`](desktop-agent-cards.html) ([PDF](desktop-agent-cards.pdf)) — 세로 카드 · 러너 버전 · 팀을 같은 카드로
 - 협업 탭: [`desktop-collab.html`](desktop-collab.html) — murmur 가 avcs hub 자리에 선다(제안 트리 · 상태 · 결정). 상태는 avcs-server 의 `GET /reduced` 가 준다(0.7.0)
+- 허브 자리(제안 · 승인 · 배달): [`hub-seat.md`](hub-seat.md) — 위 문서가 "범위 밖"으로 남긴 칸. `repo` 레코드(`linked`/`hosted`) · 서명된 decision → `POST /integrate` · 배달 대상 N개, 그리고 네 서비스 도그푸딩 루프
 
 ## 0. 이 문서가 말하는 시점 — 목표 설계와 현재 구현
 
