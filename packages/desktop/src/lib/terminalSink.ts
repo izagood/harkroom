@@ -8,6 +8,14 @@
 //
 // 기본 구현은 xterm 을 **동적으로** import 한다 — 그래서 가짜를 꽂은 테스트에서는 xterm
 // 모듈이 아예 로드되지 않는다.
+//
+// **렌더러는 WebGL 로 올린다.** xterm 의 기본값은 DOM 렌더러이고, 그것이 xterm 이 가진 셋
+// (DOM·canvas·WebGL) 중 가장 느리다. 이 패널이 그리는 것은 코딩 에이전트 TUI — 한 턴에
+// 화면 전체를 수십 번 다시 그리는 쪽이라, 셀을 DOM 노드로 만드는 렌더러가 그대로 체감된다.
+// `@xterm/addon-webgl` 은 셀을 GPU 텍스처 아틀라스로 그린다.
+//
+// 애드온을 **못 켜도 터미널은 뜬다**(WebGL2 가 없는 환경·컨텍스트 상실). 그때는 xterm 이
+// 기본 DOM 렌더러로 그대로 그리므로, 실패는 삼키고 화면은 살린다 — `enableWebglRenderer`.
 
 export interface TerminalSink {
   /** PTY raw 바이트. 디코드는 xterm 의 상태 기계가 한다. */
@@ -84,6 +92,39 @@ function fitDimensions(el: HTMLElement): { cols: number; rows: number } | null {
 export type TerminalSinkFactory = (el: HTMLElement, opts?: TerminalSinkOptions) => TerminalSink;
 
 /**
+ * `enableWebglRenderer` 가 터미널에게 요구하는 것 전부.
+ *
+ * 애드온 인자에 `activate` 까지 적어 두는 이유: 그것이 xterm 이 애드온에게 요구하는 표면
+ * (`ITerminalAddon`)이고, 빼면 진짜 `Terminal` 이 이 타입에 안 맞는다(메서드 인자는
+ * 양방향으로 비교되므로 한쪽이 다른 쪽의 부분집합이어야 한다).
+ */
+interface WebglTarget {
+  loadAddon(addon: {
+    activate(terminal: never): void;
+    onContextLoss(handler: () => void): unknown;
+    dispose(): void;
+  }): void;
+}
+
+/**
+ * 렌더러를 GPU 로 올린다(모듈 머리 주석). **실패를 삼킨다** — 못 켜면 xterm 이 기본 DOM
+ * 렌더러로 그대로 그리고, 사람은 느린 화면을 볼 뿐 아무것도 잃지 않는다. 여기서 던지면
+ * 그 반대가 된다: 렌더러 하나 때문에 터미널이 아예 안 뜬다.
+ *
+ * **컨텍스트 상실 때 애드온을 버리는 것이 이 함수의 절반이다.** GPU 리셋·드라이버 사정으로
+ * WebGL 컨텍스트가 날아가는 일은 실제로 일어나고, 그때 애드온을 붙잡고 있으면 화면이 그
+ * 자리에서 얼어 버린다. 버리면 xterm 이 DOM 렌더러로 되돌아가 계속 그린다.
+ */
+async function enableWebglRenderer(t: WebglTarget): Promise<void> {
+  try {
+    const { WebglAddon } = await import('@xterm/addon-webgl');
+    const addon = new WebglAddon();
+    addon.onContextLoss(() => addon.dispose());
+    t.loadAddon(addon);
+  } catch { /* WebGL2 가 없거나 애드온을 못 받았다 — DOM 렌더러로 그대로 둔다 */ }
+}
+
+/**
  * xterm 을 붙이는 실제 구현. `import()` 가 끝나기 전에 도착한 바이트는 **큐에 담고
  * 도착 순서 그대로** 쓴다.
  *
@@ -156,6 +197,10 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
       observer = new ResizeObserver(() => applyFit());
       observer.observe(el);
     }
+    // **바이트를 먼저 흘리고 그다음에 렌더러를 올린다.** 어느 렌더러가 그리는지는 화면의
+    // 속도이고, 큐에 쌓인 ring 재생은 화면의 내용이다 — 내용을 렌더러 로딩 뒤로 미루면
+    // 붙는 순간이 그만큼 늦어진다. 애드온은 뜬 뒤에 얹어도 xterm 이 다시 그린다.
+    await enableWebglRenderer(t);
   })().catch(() => { /* 터미널을 못 띄운 것으로 패널을 죽이지 않는다 */ });
 
   return {
