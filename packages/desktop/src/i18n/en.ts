@@ -675,6 +675,14 @@ export const en = {
   'agentTurns.noThread': 'The runner did not say which thread this turn belongs to',
   'agentTurns.none': 'No turns running',
   'agentTurns.scope': 'Turns the runners reported, for agents you can see.',
+  // 시작 시각을 못 읽은 턴. 좁은 칸에서는 이 자리에 하네스가 서지만(그쪽은 하네스 칸이
+  // 없다), 본문에는 하네스 칸이 따로 있어 여기서 "모른다"를 말할 수 있다.
+  'agentTurns.startUnknown': 'start time unknown',
+  // 본문 머리글의 한 줄. 가장 오래된 턴을 함께 적는다 — 목록을 다 읽기 전에 "지금 급한가"를
+  // 판단하게 하는 숫자가 그것이다.
+  'agentTurns.subline': '{n} running \u00b7 {threads} threads \u00b7 oldest {oldest}',
+  'agentTurns.terminal': 'Terminal',
+  'agentTurns.terminalTitle': "Open this turn's terminal",
   'agentTurns.title': 'Running turns',
   'agentTurns.unknown': "Can't tell what's running",
   'agentTurns.unknownHint': 'This is not zero — a runner may still be working.',

@@ -23,7 +23,7 @@ import { SidebarFind } from './SidebarFind';
 import { runnerReason, runnerStatusLabel } from './RunnerStatus';
 import { AgentGrid } from './settings/AgentGrid';
 import { AgentTurns } from './AgentTurns';
-import { useAgentTurns } from '../lib/agentTurns';
+import { useAgentTurns, useThreadRoots, threadTitle } from '../lib/agentTurns';
 // 띄울 권한 판정은 `lib/` 하나가 낸다 — 설정 › 에이전트가 같은 판정을 쓴다.
 import { canRelaunchAgent } from '../lib/relaunchGate';
 // 설정 문의 판정도 한 벌이다(`lib/agentConfigGate.ts`) — 프로필·본문 멘션이 같은 함수를
@@ -633,6 +633,11 @@ export function Sidebar({
     훅은 조건부로 부를 수 없으므로(리액트 규칙) 조건은 인자로 넘긴다.
   */
   const agentTurns = useAgentTurns(panel === 'agents');
+  /* 묶음 머리에 세울 스레드 이름. 모듈 캐시라 관제탑과 **같은 답**을 쓰고, 목록이 5초마다
+     새로 와도 루트를 다시 묻지 않는다(`lib/agentTurns.ts::useThreadRoots`). */
+  const agentTurnRoots = useThreadRoots(
+    agentTurns.kind === 'known' ? agentTurns.turns.map((turn) => turn.threadRootId) : [],
+  );
 
   // "새 섹션…" 을 고른 채널과 입력 중인 이름(#157). `prompt()` 대신 인라인 입력이다.
   const [sectionEditFor, setSectionEditFor] = useState<string | null>(null);
@@ -1921,19 +1926,22 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
               const ch = channels.find((c) => c.id === id);
               return ch ? `${ch.visibility === 'private' ? '🔒' : '#'}${ch.name}` : id;
             }}
+            threadTitleOf={(rootId) => {
+              const row = agentTurnRoots.get(rootId);
+              return row ? threadTitle(row, accounts) : null;
+            }}
             /*
               이동은 `openMessage` 에 맡긴다 — 스레드 루트도 메시지이므로 그 경로가
               채널 전환 · 스레드 패널 · 실패 통지를 이미 다 한다(퍼머링크와 같은 길).
             */
             onOpenThread={(rootId) => { void getController().openMessage(rootId); }}
             /*
-              중단(3단계). 줄·스레드·전부가 **한 경로**로 간다 — 묶음 판정은 화면의 일이고
-              (`AgentTurns` 의 `onCancelTurns` 주석), 실패 통지를 하나로 묶는 것은
-              컨트롤러의 일이다(같은 원인을 네 번 읽히지 않게).
+              **중단은 이 칸이 갖지 않는다.** `onCancelTurns` 를 넘기지 않으면 목록은
+              버튼을 그리지 않고(그 컴포넌트의 규약), 그것이 여기서 바라는 것이다:
+              관제탑이 이 칸과 **항상 함께** 보이므로(둘 다 Agents 칸에서 선다) 버튼을
+              양쪽에 두면 같은 일을 하는 길이 한 화면에 두 벌 서고, 사람은 매번 어느 쪽을
+              누를지 고른다. 칸은 요약이고, 멈추는 것은 본문의 일이다.
             */
-            onCancelTurns={(turns) => {
-              void getController().cancelAgentTurns(turns.map((turn) => turn.sessionId));
-            }}
           />
         )}
         {panel === 'agents' && (

@@ -29,8 +29,9 @@
  * 단계의 범위가 아니다.
  */
 import { useEffect, useState } from 'react';
-import type { AgentSessionView } from '@murmur/shared';
+import type { AgentSessionView, MessageRow } from '@murmur/shared';
 import { getController } from '../state/controller';
+import { bodyWithHandles } from './mention';
 
 export type AgentTurnsSnapshot =
   /** 첫 답이 아직 안 왔다. 빈 목록과 **다르다.** */
@@ -42,27 +43,50 @@ export type AgentTurnsSnapshot =
 /** 물어보는 주기. 턴은 26초짜리도 흔해서 이보다 길면 목록이 계속 헛것을 보인다. */
 export const AGENT_TURNS_POLL_MS = 5_000;
 
+/**
+ * 구독자들이 **한 폴러를 나눠 쓴다.** 이 훅을 부르는 곳이 둘이 된 순간(패널의 요약과
+ * 본문 관제탑) 각자 5초 타이머를 갖는 구조는 같은 요청을 두 번 내고, 두 화면이 서로 다른
+ * 순간의 목록을 보인다 — 한 화면에서 `2개`, 옆에서 `3개` 가 서면 사람은 어느 쪽을 믿을지
+ * 고르게 된다. 폴러를 모듈에 두면 두 자리가 **같은 답**을 그린다.
+ *
+ * 마지막 구독자가 떠날 때 답을 **버린다**(`checking` 으로 되돌린다). 남겨 두면 칸을 다시
+ * 열었을 때 몇 분 전 숫자가 먼저 서고, 그 숫자는 "지금 도는 턴"이라는 이 칸의 물음에
+ * 거짓으로 답한다 — 이 파일이 `0` 과 `모름`을 가르는 이유와 같은 규율이다.
+ */
+const listeners = new Set<(snapshot: AgentTurnsSnapshot) => void>();
+let shared: AgentTurnsSnapshot = { kind: 'checking' };
+let timer: ReturnType<typeof setInterval> | null = null;
+
+async function askOnce(): Promise<void> {
+  try {
+    // 컨트롤러에서 그때그때 꺼낸다 — 훅 바깥에 잡아 두면 로그아웃·커뮤니티 전환으로
+    // 클라이언트가 갈릴 때 옛 토큰으로 계속 묻는다.
+    shared = { kind: 'known', turns: await getController().api.agentSessions() };
+  } catch (err) {
+    // **여기서 사유를 지어내지 않는다.** 화면이 원인을 만들면 사람은 러너 로그를 볼
+    // 이유를 잃는다(`RunnerStatus` 가 종료 코드를 그대로 보이는 것과 같은 규칙).
+    shared = { kind: 'unknown', reason: err instanceof Error ? err.message : String(err) };
+  }
+  for (const listener of listeners) listener(shared);
+}
+
 export function useAgentTurns(enabled: boolean): AgentTurnsSnapshot {
-  const [snapshot, setSnapshot] = useState<AgentTurnsSnapshot>({ kind: 'checking' });
+  const [snapshot, setSnapshot] = useState<AgentTurnsSnapshot>(shared);
   useEffect(() => {
     if (!enabled) return;
-    let disposed = false;
-    const ask = async (): Promise<void> => {
-      try {
-        // 컨트롤러에서 그때그때 꺼낸다 — 훅 바깥에 잡아 두면 로그아웃·커뮤니티 전환으로
-        // 클라이언트가 갈릴 때 옛 토큰으로 계속 묻는다.
-        const turns = await getController().api.agentSessions();
-        if (!disposed) setSnapshot({ kind: 'known', turns });
-      } catch (err) {
-        if (disposed) return;
-        // **여기서 사유를 지어내지 않는다.** 화면이 원인을 만들면 사람은 러너 로그를 볼
-        // 이유를 잃는다(`RunnerStatus` 가 종료 코드를 그대로 보이는 것과 같은 규칙).
-        setSnapshot({ kind: 'unknown', reason: err instanceof Error ? err.message : String(err) });
-      }
+    listeners.add(setSnapshot);
+    setSnapshot(shared);
+    if (!timer) {
+      void askOnce();
+      timer = setInterval(() => { void askOnce(); }, AGENT_TURNS_POLL_MS);
+    }
+    return () => {
+      listeners.delete(setSnapshot);
+      if (listeners.size || !timer) return;
+      clearInterval(timer);
+      timer = null;
+      shared = { kind: 'checking' };
     };
-    void ask();
-    const timer = setInterval(() => { void ask(); }, AGENT_TURNS_POLL_MS);
-    return () => { disposed = true; clearInterval(timer); };
   }, [enabled]);
   return enabled ? snapshot : { kind: 'checking' };
 }
@@ -94,4 +118,72 @@ export function groupTurnsByThread(turns: readonly AgentSessionView[]): AgentTur
     group.turns.sort((a, b) => (Date.parse(a.startedAt) || 0) - (Date.parse(b.startedAt) || 0));
   }
   return [...groups.values()].sort((a, b) => startedAt(a) - startedAt(b));
+}
+
+/**
+ * 묶음 머리에 **스레드 이름**을 세우기 위해 루트 메시지를 받아 둔다.
+ *
+ * 처음 판에서 묶음 머리는 채널 이름(`#murmur`)뿐이었다. 그런데 이 목록이 스레드로 묶는
+ * 이유는 *"중단의 단위가 스레드"* 라는 것이었고, 그렇게 말해 놓고 화면은 채널만 말했다 —
+ * 한 채널에서 두 스레드가 돌면 두 묶음이 **똑같은 이름**으로 서서, 무엇을 멈추는지 보고
+ * 누르라는 규칙(확인 겹창을 스레드 단위에 두지 않은 근거)이 성립하지 않았다.
+ *
+ * 캐시는 **모듈 단위**다: 목록은 5초마다 새로 오지만 스레드 루트의 첫 줄은 바뀌지 않는다
+ * (수정되면 다음에 칸을 다시 열 때 따라온다). 못 받은 id 도 기억한다 — 권한이 없거나
+ * 지워진 메시지를 5초마다 다시 묻지 않기 위해서다.
+ */
+const roots = new Map<string, MessageRow | null>();
+
+export function useThreadRoots(rootIds: readonly (string | null)[]): Map<string, MessageRow> {
+  // 의존성은 **id 목록의 값**이어야 한다 — 배열 자체는 렌더마다 새로 만들어지므로
+  // 그것을 의존성에 두면 5초마다 같은 루트를 다시 묻는다.
+  const key = [...new Set(rootIds.filter((id): id is string => !!id))].sort().join(',');
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const ids = key ? key.split(',') : [];
+    const missing = ids.filter((id) => !roots.has(id));
+    if (!missing.length) return;
+    let disposed = false;
+    void (async () => {
+      const api = getController().api;
+      await Promise.all(missing.map(async (id) => {
+        try { roots.set(id, await api.message(id)); } catch { roots.set(id, null); }
+      }));
+      if (!disposed) bump((n) => n + 1);
+    })();
+    return () => { disposed = true; };
+  }, [key]);
+
+  const known = new Map<string, MessageRow>();
+  for (const id of key ? key.split(',') : []) {
+    const row = roots.get(id);
+    if (row) known.set(id, row);
+  }
+  return known;
+}
+
+/**
+ * 스레드 루트의 **첫 줄**을 이름으로 쓴다.
+ *
+ * `AgentSessionView` 에는 *"이 턴이 무슨 일을 하는가"* 가 없다(러너가 싣지 않는다). 그래서
+ * 화면은 자기가 아는 것만 말한다 — **스레드의 첫 줄**이다. 그것을 턴의 일이라고 적지
+ * 않는 이유가 여기 있다: 그 스레드에서 도는 턴이 첫 줄과 다른 일을 하고 있을 수 있고,
+ * 화면이 확인한 적 없는 것을 단언하면 사람은 목록을 더 이상 믿지 않는다.
+ *
+ * `<@id>` 는 반드시 `bodyWithHandles` 를 지난다 — 안 지나면 제목 자리에 uuid 가 뜬다(#271).
+ */
+export function threadTitle(row: MessageRow, accounts: Record<string, { handle: string }>): string | null {
+  const lines = bodyWithHandles(row.body, accounts).split('\n');
+  for (const line of lines) {
+    // 인용 줄(`>`)·머리표(`#`)·목록표(`-`)를 걷어낸 첫 줄. 붙여넣은 인용으로 시작하는
+    // 스레드가 흔하고, 그때 `> @murmur …` 를 제목으로 세우면 죄다 같은 모양이 된다.
+    const bare = line.replace(/^[>#\-*\s]+/, '').trim();
+    // **부른 이름은 제목이 아니다.** 스레드 첫 줄은 거의 언제나 `@handle` 로 시작하고,
+    // 그 이름은 같은 줄의 턴 쪽에 이미 서 있다 — 남겨 두면 묶음 이름 열이 전부 `@…` 로
+    // 시작해 정작 일이 무엇인지가 오른쪽으로 밀린다. handle 글자만 걷어낸다:
+    // 모르는 계정은 `@알 수 없음`(공백이 있다)이 되므로 `@\S+` 로 자르면 말이 잘린다.
+    const text = bare.replace(/^(?:@[A-Za-z0-9_-]+[\s,]*)+/, '').trim() || bare;
+    if (text) return text.length > 120 ? `${text.slice(0, 119)}\u2026` : text;
+  }
+  return null;
 }
