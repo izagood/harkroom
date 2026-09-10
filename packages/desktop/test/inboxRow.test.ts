@@ -92,6 +92,24 @@ describe('줄이 갈린다 — reason 만으로는 못 하던 것', () => {
     expect(r.label).toBe('불렀다');
   });
 
+  /**
+   * 팀 부름(047)은 **부름과 다른 글자, 같은 등급**이다.
+   *
+   * 글자를 가르는 이유: 팀장이 자기 인박스에서 *"팀으로 온 일"* 과 *"나를 직접 부른 일"* 을
+   * 구별해야 한다 — 그 둘은 다음에 할 일이 다르다(나눌지 직접 할지). 이 파일의 진단
+   * (*"네 줄이 글자 하나까지 똑같다"*)이 겨눈 것이 정확히 이런 뭉침이다.
+   *
+   * 등급이 같은 이유: 팀 부름도 사람이 나를 지목한 것이다. `rank` 를 낮추면 팀으로 온
+   * 요청이 남의 스레드 답글 뒤로 밀린다.
+   */
+  it('팀 부름은 부름과 다른 글자를 받되 순위는 같다', () => {
+    const team = inboxRow(entry({ reason: 'team_mention' }), ME, ko);
+    const mention = inboxRow(entry({ reason: 'mention' }), ME, ko);
+    expect(team.label).toBe('팀을 불렀다');
+    expect(team.label).not.toBe(mention.label);
+    expect(team.rank).toBe(mention.rank);
+  });
+
   it('네 종류가 서로 다른 글자를 받는다 — 이것이 이 작업의 전부다', () => {
     const labels = [
       inboxRow(entry({ meta: ask({ kind: 'account', accountId: ME }) }), ME, ko).label,

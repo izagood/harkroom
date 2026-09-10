@@ -1339,7 +1339,20 @@ export interface InboxEntry {
    * `'ask_answered'` 와 가른다: 고른 것이 없으므로 러너가 "고른 것: …" 을 지어낼 수 없고,
    * 그 턴이 할 일도 다르다 — 고른 길로 가는 것이 아니라 **접는 것**이다.
    */
-  reason: 'mention' | 'thread_reply' | 'dm' | 'wake' | 'ask_answered' | 'ask_closed';
+  /**
+   * `'team_mention'` 은 **팀장으로서 불렸다**(마이그레이션 047). 팀 이름을 부른 발화가
+   * 팀원 전원이 아니라 팀장 하나를 깨운 것이고, 그때 `team` 에 명단이 함께 온다.
+   *
+   * `'mention'` 과 가른 이유는 040·043·045 가 사유를 가른 이유와 같다 — 러너가
+   * 프롬프트를 다르게 조립해야 한다(팀장에게는 명단이 필요하다). 다른 점은 여기엔
+   * 사람의 새 발화가 **있다**는 것이다: `wake` 계열처럼 델타를 대신하는 줄이 아니라
+   * 델타에 덧붙는 맥락이다.
+   *
+   * **팀장이 없거나 비활성인 팀은 이 사유를 쓰지 않는다** — 그때는 지금까지처럼 명단
+   * 전체가 `'mention'` 으로 깬다(`services/messages.ts` 의 폴백). 즉 이 사유가 있다는
+   * 것은 곧 "창구가 하나로 좁혀진 부름"이라는 뜻이다.
+   */
+  reason: 'mention' | 'thread_reply' | 'dm' | 'wake' | 'ask_answered' | 'ask_closed' | 'team_mention';
   readAt: string | null;
   channelId: string;
   /**
@@ -1363,6 +1376,41 @@ export interface InboxEntry {
   createdAt: string;
   /** 어디 — 스레드 안이면 그 뿌리. 채널 바로 밑이면 null 이다. */
   threadRootId: string | null;
+  /**
+   * 팀 부름의 **명단**. `reason === 'team_mention'` 일 때만 있고, 그때도 팀이 그 사이
+   * 지워졌으면 없다(047 의 `on delete set null` — 부름은 남고 명단만 빈다).
+   *
+   * **왜 러너가 따로 조회하지 않고 여기 실리는가.** 서버는 이미 이 해석을 했다(어느
+   * 팀이 불렸고 누가 그 팀원인가). 읽는 쪽이 같은 판정을 다시 하면 두 판정이 갈라질 수
+   * 있고, 갈라지는 날 팀장이 받는 명단이 서버가 부른 팀과 다른 팀의 것이 된다.
+   */
+  team?: InboxTeamCall;
+}
+
+/**
+ * 팀장에게 실려 가는 팀 한 조각(047).
+ *
+ * `specialty` 는 각 팀원의 지시문 **첫 줄**이다. 지시문 전체를 싣지 않는 이유는 두
+ * 가지다: 길이가 상한이 없어 프롬프트를 삼킬 수 있고, 팀장이 여기서 답해야 하는 물음은
+ * *"누구에게 넘길까"* 하나이므로 한 줄이면 충분하다. 없으면 `null` 이다 — 지시문이 비어
+ * 있는 에이전트가 있고, 빈 문자열로 뭉개면 화면·프롬프트가 "전문 영역: " 을 그린다.
+ *
+ * **이 값이 이 경로로만 나간다는 것이 중요하다.** 지시문은 admin·소유자만 보는 값이고
+ * (`GET /accounts/agents`), 여기서는 **같은 팀의 팀장**에게 그 팀원의 첫 줄만 간다.
+ * 팀 조회 라우트(`GET /teams/:id`, `requireAccount`)에 얹으면 로그인한 모두에게
+ * 열리므로 그렇게 하지 않았다.
+ */
+export interface InboxTeamCall {
+  id: string;
+  name: string;
+  members: {
+    accountId: string;
+    handle: string;
+    /** 지시문 첫 줄. 없으면 `null`. */
+    specialty: string | null;
+    /** 비활성이면 넘겨도 깨지 않는다 — 팀장이 그것을 알고 골라야 한다. */
+    disabled: boolean;
+  }[];
 }
 
 export interface DmView {

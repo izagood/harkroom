@@ -192,6 +192,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
   async function runOne(
     entryId: number, mention: InboxBatch['messages'][number], anchor: string, threadKey: string,
     ctx: BatchContext, tried: number, reason: InboxBatch['entries'][number]['reason'],
+    /** 팀 부름이면 서버가 실어 준 명단(047). 사유와 짝이라 함께 넘긴다. */
+    team?: InboxBatch['entries'][number]['team'],
   ): Promise<void> {
     const target: MentionTarget = {
       channelId: mention.channelId, threadRootId: anchor, mentionId: mention.id,
@@ -220,6 +222,16 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
        * 러너가 하네스를 돌리지 않아 그 결정이 흔적 없이 사라진다.
        */
       ...(reason === 'ask_closed' ? { wake: { reason: askClosedNote() } } : {}),
+      /**
+       * **팀장으로 불렸다**(047). `wake` 계열과 달리 델타를 대신하지 않는다 — 팀 부름에는
+       * 사람의 새 발화가 있고(팀을 부른 그 말), 이것은 그 위에 덧붙는 맥락이다.
+       *
+       * 사유를 함께 보는 이유: 팀이 그 사이 지워지면 서버가 명단 없이 사유만 준다
+       * (047 의 `on delete set null`). 그때는 팀 블록 없이 평범한 부름처럼 돈다 —
+       * 명단이 빈 팀 블록을 그리면 팀장에게 "팀원 없음"을 알리는 셈이고, 그것은 사실이
+       * 아니라 조회 결과의 부재다.
+       */
+      ...(reason === 'team_mention' && team ? { team } : {}),
     };
     try {
       const turn = await withAccountFailover(
@@ -467,7 +479,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         // entry 당 1회라는 약속이 깨진다.
         attempts.set(entry.id, { tried, notBefore: 0, noticed: prior?.noticed });
 
-        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason)
+        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason, entry.team)
           .catch((err: unknown) => {
             console.error(`  ${entry.messageId} 턴 실패:`, err instanceof Error ? err.message : err);
           })

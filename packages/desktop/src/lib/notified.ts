@@ -144,7 +144,21 @@ export function calledGroups(
   for (const t of teams) {
     const key = t.name.toLowerCase();
     if (!byHandle.has(key)) {
-      byHandle.set(key, { handle: t.name, memberCount: t.memberCount, kind: 'team' });
+      /**
+       * **팀장이 있는 팀은 하나만 깬다**(047). 기대치를 `memberCount` 로 두면 다섯 명 팀에서
+       * 화면이 *"넷이 안 깼다"* 고 단정한다 — 있지도 않은 조용한 실패다. 그 거짓 경고는
+       * 아무 경고도 없는 것보다 나쁘다(`modelsDisagree` 가 같은 판단을 적어 뒀다):
+       * 그때부터 사람은 이 줄을 안 믿는다.
+       *
+       * 서버가 폴백하는 경우(팀장이 비활성)까지 여기서 흉내내지 않는다. 그러면 화면이
+       * `disabled` 를 알아야 하고(팀 행에는 없다) 서버의 판정을 두 번 하는 셈이 된다.
+       * 그 어긋남은 **안전한 방향**이다: 기대치 1 인데 다섯이 깨면 `woke > called` 라
+       * 아래 `notifiedSummary` 가 `null` 을 준다 — 화면이 조용하다. 반대 방향(기대치를
+       * 높게 잡아 거짓 경고)이 이 판정에서 유일하게 나쁜 쪽이다.
+       */
+      byHandle.set(key, {
+        handle: t.name, memberCount: t.leadAccountId === null ? t.memberCount : 1, kind: 'team',
+      });
     }
   }
 

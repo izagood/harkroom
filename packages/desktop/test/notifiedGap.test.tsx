@@ -149,6 +149,37 @@ describe('몇 명을 불렀는가 — 팀도 센다', () => {
     expect(expectedWakes(called('@release @infra 둘 다'))).toBe(6);
   });
 
+  /**
+   * **팀장이 있는 팀은 하나만 깬다**(047) — 기대치도 1 이어야 한다.
+   *
+   * 이것을 안 고치면 이 모듈이 **거짓 경고를 단정한다**: 다섯 명 팀에서 팀장 하나가
+   * 깨는 것이 정상인데 화면이 *"넷이 안 깼다"* 고 말한다. 그 거짓 경고는 아무 경고도 없는
+   * 것보다 나쁘다 — 그때부터 사람은 이 줄을 믿지 않고, 진짜 조용한 실패도 함께 묻힌다.
+   */
+  it('팀장이 있는 팀은 기대치가 1 이다 — 하나만 깨는 것이 정상이다', () => {
+    const led = [tm('t3', 'lednow', 5, 'a-lead')];
+    const recipients = bodyRecipients('@lednow 배포해라', ['forge'], ['lednow'], null);
+    expect(calledGroups(recipients, [], led)).toEqual([
+      { handle: 'lednow', memberCount: 1, includesMe: false, kind: 'team' },
+    ]);
+    expect(expectedWakes(calledGroups(recipients, [], led))).toBe(1);
+  });
+
+  /**
+   * 서버는 팀장이 **비활성**이면 전원으로 폴백한다. 그 판정을 화면이 흉내내지 않는다 —
+   * 팀 행에 `disabled` 가 없으므로 알 수 없고, 안다 해도 같은 판정을 두 곳에서 하는 것이다.
+   *
+   * 그 어긋남이 **안전한 방향**이라는 것이 이 시험이 고정하는 사실이다: 기대치 1 인데
+   * 다섯이 깨면 `woke > called` 라 요약은 `null` — 화면이 조용하다. 반대 방향(기대치를
+   * 높게 잡아 거짓 경고)이 이 판정에서 유일하게 나쁜 쪽이다.
+   */
+  it('기대치보다 많이 깨면 조용하다 — 폴백을 화면이 흉내내지 않는 대가', () => {
+    const led = [tm('t3', 'lednow', 5, 'a-lead')];
+    const recipients = bodyRecipients('@lednow 배포해라', ['forge'], ['lednow'], null);
+    const called5 = calledGroups(recipients, [], led);
+    expect(notifiedSummary({ count: 5, ids: [], truncated: false }, called5)).toBeNull();
+  });
+
   it('집합과 팀을 섞어 부르면 함께 센다', () => {
     expect(expectedWakes(called('@oncall @release 섞었다'))).toBe(6);
   });

@@ -1124,8 +1124,8 @@ export const en = {
   'agents.teams.leadClearAction': 'Unset the lead: {handle}',
   'agents.teams.leadFailed': 'The lead was not changed',
   'agents.teams.leadNote':
-    'A lead is the one member who speaks for the team. Calling @team still wakes every member — '
-    + 'the lead is recorded here, not yet used for routing.',
+    'A lead is the one member who speaks for the team: calling @team wakes the lead alone, and it '
+    + 'hands out the work. With no lead — or a disabled one — every member wakes, as before.',
   'agents.teams.leadSet': 'Make lead',
   'agents.teams.leadSetAction': 'Make the lead: {handle}',
   'agents.teams.listFailed': 'The team list did not arrive',
@@ -3086,6 +3086,7 @@ export const en = {
   'inbox.label.failure': 'Stuck',
   'inbox.label.report': 'Finished',
   'inbox.label.mention': 'Called you',
+  'inbox.label.teamMention': 'Called your team',
   'inbox.label.reply': 'Reply',
   // | 다른 사람이 먼저 고쳤다. 아래 현재 내용을 확인하고 다시 저장하면 내 편집으로 덮어쓴다. | `Someone else saved first. Read what is there now, below — saving again writes your version over it.` | **세 사실을 다 진다**: 무엇이 일어났나 · 어디를 보나 · 다시 누르면 무엇이 되나. 그 셋이 이 기능의 전부다(그 파일 주석 2번: 내 편집을 조용히 버리지 않는 대신 사람이 정한다). `Conflict` 한 낱말로 줄이면 사람은 자기 글이 사라졌는지부터 모른다 |
   // | 서버의 현재 내용 | `What is on the server now` | `Current version` 은 판(version) 이야기라 어느 쪽이 내 것인지 안 갈린다. 이 칸에 있는 것은 **남의 글**이고 `now` 가 내 편집칸과의 시차를 진다 |

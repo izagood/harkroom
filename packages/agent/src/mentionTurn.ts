@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { AgentHarness, AgentView, MessageRow } from '@murmur/shared';
+import type { AgentHarness, AgentView, InboxTeamCall, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
 import { SessionStore } from './sessions.js';
@@ -366,6 +366,16 @@ export interface MentionTarget {
    * 달라진다 — 깨움에는 부른 사람이 없어서 델타가 비고, 비면 하네스가 돌지 않는다.
    */
   wake?: { reason: string };
+  /**
+   * 이 턴이 **팀장으로서 불린 턴**이면 그 팀과 명단(마이그레이션 047). 서버가 inbox 항목에
+   * 실어 주고(`InboxEntry.team`) 스케줄러가 그대로 옮긴다 — 러너가 팀을 다시 조회하지
+   * 않는 이유는 그 필드의 주석에 있다(같은 판정을 두 번 하면 갈라진다).
+   *
+   * 옵셔널인 이유: 팀 부름이 아닌 턴에는 팀이 없다. 그리고 값이 있으면 프롬프트가 달라진다 —
+   * 명단과 "너는 이 팀의 창구다"가 붙는다. 팀장이 없거나 비활성인 팀은 애초에 이 사유로
+   * 오지 않으므로(서버 폴백), 이 값이 있다는 것은 곧 창구가 하나라는 뜻이다.
+   */
+  team?: InboxTeamCall;
 }
 
 /**
@@ -626,6 +636,7 @@ export async function runMentionTurn(
     // 첨부 안내에 실을 실값(#첨부 열기). 러너는 자기가 붙은 URL 을 이미 안다.
     murmurUrl: deps.murmurUrl,
     ...(target.wake ? { wake: target.wake } : {}),
+    ...(target.team ? { team: target.team } : {}),
   });
 
   if (!prompt) {
