@@ -123,6 +123,76 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
   };
 }
 
+/**
+ * 사람이 그 스레드에서 말하면 **기다림은 그 자리에서 끝난다**(2026-09-10).
+ *
+ * 왜 필요한가: 예약은 "이 시각까지 볼 것이 없다"는 에이전트의 추측이고, 사람의 새 발화는
+ * 그 추측을 **무효로 만드는 사실**이다. 실측(2026-09-10 09:01) — 스레드에 `06:01 PM 에
+ * 다시 봅니다` 가 서 있는 동안 사람이 "CI 실패했어 수정해" 를 썼다. 서버는 그 발화로
+ * 아무것도 하지 않았고, 사람이 본 것은 아무 일도 일어나지 않는 대기 줄이었다.
+ * 사용자의 말이 그것이다: *"내가 이야기 하면 바로 일어나서 작업해야하는데 그냥 계속
+ * 기다리고 있어"*.
+ *
+ * **두 갈래인 이유.** 사람의 발화가 이미 그 에이전트를 불렀으면(`notified`) 깨움을 또
+ * 넣을 자리가 없다 — 넣으면 inbox 항목이 둘이 되고, 스케줄러는 한 스레드에 턴을 하나만
+ * 띄우므로(mentionScheduler) 남은 하나가 **끝난 일에 대한 두 번째 턴**으로 뒤늦게 열린다.
+ * 그래서 부름이 있으면 예약을 **접고**(`canceled_at`), 없으면 **지금 깨운다**(`fired_at`).
+ * 부름 없이 말한 경우가 이 함수의 값어치다: 사람은 `@handle` 을 다시 적지 않아도 되고,
+ * 그 스레드에서 기다리던 에이전트만 깨어난다.
+ *
+ * **사람의 발화만 이 일을 한다.** 에이전트의 발화까지 예약을 깨우게 하면 서로가 서로를
+ * 깨우는 고리가 생긴다(멘션 폭주와 같은 결이다) — 게다가 동료가 한 줄 적었다는 것은
+ * 기다리던 조건이 바뀌었다는 뜻이 아니다.
+ *
+ * 트랜잭션은 **호출자의 것**을 받는다: 발화와 예약 만기가 한 커밋 안에 들어가야 "말은
+ * 남았는데 예약은 그대로"가 남지 않는다. 대신 `inbox.updated` 이벤트는 커밋 뒤에 쳐야
+ * 하므로(sweep 이 같은 순서를 지킨다) 깨운 계정을 **돌려주고 발화는 호출자가 한다**.
+ */
+export async function preemptWakesForThread(
+  client: PoolClient,
+  args: { threadRootId: string; authorId: string; notified: Set<string> },
+): Promise<string[]> {
+  // 판정은 계정 종류 하나다. 라우트가 아니라 여기서 보는 이유: 이 파일이 깨움 정책의
+  // 자리이고, 표면이 늘 때(REST·MCP·투영) 각자 판정하면 갈라진다(모듈 주석).
+  const author = await client.query<{ kind: string }>(
+    `select kind from account where id = $1`, [args.authorId],
+  );
+  if (author.rows[0]?.kind !== 'human') return [];
+
+  // 앵커는 시계 테이블에 없다 — 040 의 규칙(앵커를 두 번 저장하지 않는다) 그대로
+  // 깨움 메시지에서 되찾는다. `for update` 는 sweep 과의 경합용이다: 그쪽이 먼저
+  // 잡았으면 잠금을 기다린 뒤 술어가 다시 평가돼 이 행은 빠진다(이미 fired 다).
+  const due = await client.query<{ id: string; account_id: string }>(
+    `select w.id, w.account_id from agent_wake w
+       join message m on m.id = w.message_id
+      where coalesce(m.thread_root_id, m.id) = $1
+        and w.account_id <> $2
+        and w.fired_at is null
+        and w.canceled_at is null
+      order by w.wake_at
+      for update of w`,
+    [args.threadRootId, args.authorId],
+  );
+
+  const woke: string[] = [];
+  for (const row of due.rows) {
+    if (args.notified.has(row.account_id)) {
+      await client.query(`update agent_wake set canceled_at = now() where id = $1`, [row.id]);
+      continue;
+    }
+    // sweep 과 **같은 생 insert** 다(`insertInbox` 가 아니다) — 자기가 자기를 부르는
+    // 항목이라 남의 화면(숨김 되돌리기)을 건드릴 일이 없다. 그 이유는 sweep 주석에 있다.
+    await client.query(
+      `insert into inbox (account_id, message_id, reason)
+       select w.account_id, w.message_id, 'wake' from agent_wake w where w.id = $1`,
+      [row.id],
+    );
+    await client.query(`update agent_wake set fired_at = now() where id = $1`, [row.id]);
+    woke.push(row.account_id);
+  }
+  return woke;
+}
+
 export interface SweepHost {
   addHook(hook: 'onClose', fn: () => void | Promise<void>): void;
 }
