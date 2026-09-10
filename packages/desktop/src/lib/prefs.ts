@@ -60,7 +60,7 @@ const THREAD_WIDTH_KEY = 'murmur.threadWidth';
 const TERMINAL_WIDTH_KEY = 'murmur.terminalWidth';
 const INBOX_FILTER_KEY = 'murmur.inboxFilter';
 
-export const MIN_SIDEBAR_WIDTH = 180;
+export const MIN_SIDEBAR_WIDTH = 200;
 export const MAX_SIDEBAR_WIDTH = 480;
 
 /*
@@ -73,8 +73,8 @@ export const MAX_SIDEBAR_WIDTH = 480;
  * 만들던 폭, 터미널은 `w-[38rem]`(608px). 기능이 들어오면서 레이아웃이 조용히 달라지면
  * 사람은 폭 조절이 아니라 "화면이 망가졌다"를 먼저 본다.
  */
-export const DEFAULT_THREAD_WIDTH = 640;
-export const MIN_THREAD_WIDTH = 360;
+export const DEFAULT_THREAD_WIDTH = 711;
+export const MIN_THREAD_WIDTH = 400;
 /**
  * 스레드의 상한은 **거의 걸리지 않도록** 크게 둔다. 실질 상한은 이 상수가 아니라 대화에
  * 남길 최소 폭이어야 한다(`MIN_CHANNEL_WIDTH`) — 스레드는 일이 사는 곳이라 화면에서 가장
@@ -86,8 +86,8 @@ export const MIN_THREAD_WIDTH = 360;
  * 나가지는 않게 붙잡아 두는 마지막 난간이다.
  */
 export const MAX_THREAD_WIDTH = 2000;
-export const DEFAULT_TERMINAL_WIDTH = 608;
-export const MIN_TERMINAL_WIDTH = 360;
+export const DEFAULT_TERMINAL_WIDTH = 676;
+export const MIN_TERMINAL_WIDTH = 400;
 export const MAX_TERMINAL_WIDTH = 1000;
 
 /**
@@ -106,7 +106,7 @@ export const MAX_TERMINAL_WIDTH = 1000;
  * 읽지 않고 각 호출부가 자기 몫을 계산해 넘긴다 — 하나로 뭉치면 터미널을 끌 때 스레드의
  * `min-width` 와 부딪쳐 줄이 넘치고, 부모가 `overflow-hidden` 이라 그것이 조용히 잘린다.
  */
-export const MIN_CHANNEL_WIDTH = 200;
+export const MIN_CHANNEL_WIDTH = 222;
 
 /**
  * 오른쪽 패널(스레드·터미널)이 **실제로 커질 수 있는 상한**을 CSS 로 적는다.
@@ -151,8 +151,8 @@ export function paneMaxWidth(minWidth: number, reserveLeft: number): string {
  * 좁은 창에서 폭 0 이 되면 닫기 버튼까지 사라져 빠져나올 길이 없어진다(`MIN_CHANNEL_WIDTH`
  * 의 주석과 같은 규칙: 이 값이 지키는 것은 편안함이 아니라 되돌릴 수 있음이다).
  */
-export const INBOX_PANE_WIDTH = 360;
-export const MIN_INBOX_PANE_WIDTH = 320;
+export const INBOX_PANE_WIDTH = 400;
+export const MIN_INBOX_PANE_WIDTH = 356;
 
 /**
  * 보냄 취소 창의 기본 길이(#223, 기본값은 #274 에서 0 으로). **0 이라 기본 동작은 즉시

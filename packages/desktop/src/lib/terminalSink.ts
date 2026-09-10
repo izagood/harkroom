@@ -66,8 +66,13 @@ export interface TerminalSinkOptions {
   onResize?: (cols: number, rows: number) => void;
 }
 
-/** xterm 에 넘기는 폰트. 셀 크기를 재는 쪽과 **같은 값**이어야 계산이 맞는다. */
-const FONT_SIZE = 12;
+/**
+ * xterm 에 넘기는 폰트. 셀 크기를 재는 쪽과 **같은 값**이어야 계산이 맞는다.
+ *
+ * 앱의 척도가 한 단 올라간 판에서 12 로 두면(2026-09-10) 앱은 커지고 **터미널 글자만**
+ * 작게 남는다. 정수로 올리는 이유: 글리프가 device px 격자에 맞아야 흐리지 않다.
+ */
+const FONT_SIZE = 13;
 const FONT_FAMILY = 'courier-new, courier, monospace';
 
 /**
