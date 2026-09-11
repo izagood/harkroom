@@ -864,6 +864,12 @@ export const en = {
   /** 계정 풀 표면이 없는 하네스. **`not supported` 가 아니다** — 그 하네스는 계정 하나로 돈다. */
   'agents.run.poolNotForHarness': 'This agent runs on {harness}, which has no account pools — it uses the single account that harness is logged into.',
   'agents.run.harnessPlanned': '{harness} (planned)',
+  // 실행 경로(2026-09-12) — admin 전용. 하네스 이설을 **한 에이전트씩** 재 보기 위한 손잡이다.
+  'agents.run.executionPath': 'Execution path',
+  'agents.run.executionPathNote': 'Which runner code path this agent\u2019s turns take. Applies from the next turn — no runner restart.',
+  'agents.run.executionPathDefault': 'Use the runner default',
+  'agents.run.executionPathLegacy': 'legacy (per-harness branches)',
+  'agents.run.executionPathAdapters': 'adapters (harness fact table)',
   'agents.run.note': 'What it runs on.',
   'agents.run.title': 'Run',
 

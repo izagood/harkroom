@@ -103,6 +103,27 @@ export function harnessHasAccountPool(harness: AgentHarness): boolean {
   return harness === 'claude-code';
 }
 
+/**
+ * 이 에이전트의 턴을 **어느 코드 경로로** 돌리는가(2026-09-12).
+ *
+ * 하네스별 사실을 이름 비교로 흩어 두던 것을 어댑터 표로 옮기는 이설 중이고, 그 규율은
+ * "옛 경로를 **두고** 새 경로를 스위치 뒤에 만든다" 이다 — 이 경로가 깨지면 에이전트가
+ * 안 돌고, 그러면 제품 전체가 선다.
+ *
+ * **왜 에이전트마다인가.** 스위치가 러너 프로세스의 환경변수였을 때는 한 에이전트만
+ * 시험하려 해도 데몬 전체를 그 값으로 다시 띄워야 했다. 그러면 "나머지는 옛 경로로 두고
+ * 하나만 새 경로로 재 본다" 가 불가능하다 — 이설의 안전이 바로 그 비교에 걸려 있는데.
+ *
+ * **왜 서버에 두는가.** 계정 풀은 기기 로컬이다(디렉터리와 그 안의 자격증명은 그 기기에만
+ * 있어서, 서버에 두면 없는 것을 가리키는 설정이 다른 기기로 전파된다). 실행 경로는 다르다 —
+ * **코드의 성질**이라 어느 기기에서든 같은 뜻이고, 그 필드를 모르는 옛 러너는 그냥 무시하고
+ * 기본으로 돈다. 그리고 서버에 있어야 러너가 **턴마다** 읽어 재시작 없이 반영된다.
+ *
+ * `null` 은 '러너 기본값을 따른다'이다. 이설이 끝나 경로가 하나가 되면 이 필드도 지운다.
+ */
+export const AGENT_EXECUTION_PATHS = ['legacy', 'adapters'] as const;
+export type AgentExecutionPath = (typeof AGENT_EXECUTION_PATHS)[number];
+
 /** 멘션 턴(화면 앞에 사람이 없다)의 권한. 사람 인터랙티브 턴은 하네스가 직접 묻는다. */
 export const MENTION_PERMISSIONS = ['auto', 'readonly'] as const;
 export type MentionPermission = (typeof MENTION_PERMISSIONS)[number];
@@ -115,6 +136,11 @@ export interface AgentConfig {
   effort: string | null;
   workingDir: string | null;
   mentionPermission: MentionPermission;
+  /**
+   * 이 에이전트의 턴을 돌릴 코드 경로. `null` 은 **러너 기본값을 따른다**
+   * (`AGENT_EXECUTION_PATHS` 주석). 러너는 턴마다 이 값을 읽으므로 재시작이 필요 없다.
+   */
+  executionPath: AgentExecutionPath | null;
   /**
    * 러너 소유자. **null 이면 attach 표면이 아무에게도 안 뜬다.**
    *

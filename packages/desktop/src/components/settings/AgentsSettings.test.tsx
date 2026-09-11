@@ -575,3 +575,68 @@ describe('AgentsSettings — 만들 때 계정 풀을 고른다', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('murp_new'));
   });
 });
+
+/**
+ * **실행 경로 칸**(2026-09-12) — 하네스 이설의 손잡이.
+ *
+ * 이설의 안전은 "한 에이전트만 새 경로로 돌려 보고 나머지는 그대로 둔다"에 걸려 있다.
+ * 그 비교를 하려면 이 칸이 실제로 **그 값을 보내야** 하고, admin 이 아닌 사람에게는
+ * **키 자체를 보내지 않아야** 한다 — 서버는 키의 존재만으로 403 을 주므로(`ADMIN_ONLY_FIELDS`),
+ * 무심코 싣기만 해도 소유자의 저장이 전부 실패한다. 실제로 났던 결함이라 여기서 고정한다.
+ */
+describe('AgentsSettings — 실행 경로(하네스 이설)', () => {
+  beforeEach(() => {
+    resetCommunityRegistry();
+    useActiveStore.setState({ me: ME, accounts: { [ME_ID]: ME } });
+  });
+  afterEach(() => {
+    cleanup();
+    setController(null);
+  });
+
+  const mountDetail = async (agent: AgentView) => {
+    const updateAgent = vi.fn(async (_id: string, patch: object) => ({ ...agent, ...patch }));
+    setController({
+      listAgents: vi.fn(async () => [agent]),
+      updateAgent,
+      listPats: vi.fn(async () => []),
+      agentMemory: vi.fn(async () => []),
+      agentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),
+    } as unknown as Controller);
+    render(<AgentsSettings />);
+    (await screen.findByRole('button', { name: /alpha/ })).click();
+    await waitFor(() => expect(screen.getByRole('button', { name: '저장' })).toBeTruthy());
+    return { updateAgent };
+  };
+
+  it('admin 은 고른 값을 저장한다 — 서버 값이 화면에 실린다', async () => {
+    const { updateAgent } = await mountDetail(makeAgent({ executionPath: 'legacy' }));
+
+    const select = screen.getByLabelText('실행 경로') as HTMLSelectElement;
+    // 서버 값이 그대로 보인다 — 화면이 자기 기본값을 지어내면 사람은 무엇이 저장돼 있는지 모른다.
+    expect(select.value).toBe('legacy');
+
+    select.value = 'adapters';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    screen.getByRole('button', { name: '저장' }).click();
+
+    await waitFor(() => expect(updateAgent).toHaveBeenCalled());
+    expect(updateAgent.mock.calls[0]![1]).toMatchObject({ executionPath: 'adapters' });
+  });
+
+  it('고르지 않음(null)은 빈 값으로 그린다 — "러너 기본값"과 "legacy" 는 다르다', async () => {
+    await mountDetail(makeAgent({ executionPath: null }));
+    expect((screen.getByLabelText('실행 경로') as HTMLSelectElement).value).toBe('');
+  });
+
+  it('admin 이 아니면 칸도 없고 **키도 안 보낸다** — 키만 있어도 저장 전체가 403 이다', async () => {
+    const owner: AccountView = { ...ME, id: 'owner-1', handle: 'owner', isAdmin: false };
+    useActiveStore.setState({ me: owner, accounts: { [owner.id]: owner } });
+    const { updateAgent } = await mountDetail(makeAgent({ ownerAccountId: owner.id, executionPath: 'adapters' }));
+
+    expect(screen.queryByLabelText('실행 경로')).toBeNull();
+    screen.getByRole('button', { name: '저장' }).click();
+    await waitFor(() => expect(updateAgent).toHaveBeenCalled());
+    expect(updateAgent.mock.calls[0]![1]).not.toHaveProperty('executionPath');
+  });
+});

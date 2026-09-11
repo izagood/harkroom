@@ -16,6 +16,7 @@ import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, gateNotice, type Memory
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
 import { discoversSessionIdAfterTurn, hasAccountPool, readsSessionTranscript, usesTuiForMention } from './adapters/index.js';
+import { runWithExecutionPath } from './executionPath.js';
 import { acceptsPtyInput } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
@@ -565,7 +566,7 @@ export interface MentionTurnResult {
 export async function runMentionTurn(
   deps: MentionTurnDeps, target: MentionTarget,
 ): Promise<MentionTurnResult> {
-  const { channelId, threadRootId: anchor, mentionId } = target;
+  const { channelId, mentionId } = target;
 
   // 👀 신호: 멘션을 집은 **즉시**. 함수 진입 직후에 있어야 하는 이유가 있다 — 아래의
   // 워크스페이스 해석은 avcs workspace project 를 돌릴 수 있어 초 단위로 걸린다.
@@ -581,6 +582,27 @@ export async function runMentionTurn(
 
   // 정의는 매 턴 새로 읽는다 — UI 로 지시문을 바꾸면 다음 턴부터 바로 반영된다(spec §3).
   const def = await deps.murmur.definition();
+
+  /**
+   * **이 턴의 실행 경로를 여기서 깐다**(2026-09-12).
+   *
+   * 이설의 전제는 "옛 경로를 남겨 두고 새 경로가 검증되면 넘어간다"이고, 그 검증은
+   * **한 에이전트만 새 경로로 돌려 보는 것**이다. 스위치가 환경변수뿐이면 그러려고
+   * 데몬 전체를 재시작해야 하므로 비교 자체가 성립하지 않는다. 그래서 값은 정의에
+   * 실려 오고, 정의는 매 턴 새로 읽으므로 앱에서 바꾸면 **다음 턴부터** 바뀐다.
+   *
+   * 전역이 아니라 `AsyncLocalStorage` 인 이유: 러너는 멘션 턴을 병렬로 돌린다. 전역에
+   * 담으면 나중에 시작한 턴이 앞 턴의 값을 덮어 두 턴이 서로의 경로로 돈다 — 그리고
+   * 그 사고는 조용하다(양쪽 다 그럴듯하게 돈다). 여기서 감싸면 이 턴이 띄운 모든
+   * 비동기 작업만 이 값을 본다.
+   */
+  return runWithExecutionPath(def.executionPath, () => runMentionTurnBody(deps, target, def));
+}
+
+async function runMentionTurnBody(
+  deps: MentionTurnDeps, target: MentionTarget, def: AgentView,
+): Promise<MentionTurnResult> {
+  const { channelId, threadRootId: anchor, mentionId } = target;
   const key = SessionStore.threadKey(channelId, anchor);
 
   let rec = deps.store.get(key);

@@ -41,7 +41,7 @@ const agentWithSecrets = (id: string, handle: string): AgentView => ({
   // 전용 회귀선이 따로 본다.
   ownerAccountId: null,
   runnerVersion: 'deadbeef',
-  claudeLane: null,
+  claudeLane: null, executionPath: null,
   // #176 이 AgentView 에 더한 필수 필드. #226 브랜치가 그 앞에서 갈라져 fixture 에 없었다.
   lastTurnAt: null,
   stopRequestedAt: null,

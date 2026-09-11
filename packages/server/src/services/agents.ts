@@ -8,6 +8,10 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   coalesce(c.harness, 'claude-code') as harness,
   c.model, c.effort, c.working_dir as "workingDir",
   coalesce(c.mention_permission, 'auto') as "mentionPermission",
+  -- null 이 기본이다 — '러너 기본값을 따른다'. coalesce 로 값을 지어내면 이설이 끝나
+  -- 기본이 바뀌는 날 이 컬럼이 옛 값을 고집한다(shared 의 AGENT_EXECUTION_PATHS 주석).
+  -- (이 문자열은 템플릿 리터럴 안이다 — 주석에 백틱을 쓰면 거기서 끊긴다.)
+  c.execution_path as "executionPath",
   c.owner_account_id as "ownerAccountId",
   a.disabled_at is not null as disabled,
   -- 에이전트는 상태를 고를 수 없다(서버가 거절한다). 기본값 그대로지만 AccountView 의
@@ -68,8 +72,8 @@ async function upsertConfig(
   // 지정된 필드만 갱신한다. 키 부재는 '손대지 않음', null 은 'harness 기본값으로 되돌리기'다 —
   // 구분하지 못하면 지시문만 고치려다 모델 지정이 조용히 사라진다.
   await client.query(
-    `insert into agent_config (account_id, instructions, harness, model, effort, working_dir, mention_permission, owner_account_id)
-     values ($1, coalesce($3, ''), coalesce($5, 'claude-code'), $6, $8, $10, coalesce($13, 'auto'), $15)
+    `insert into agent_config (account_id, instructions, harness, model, effort, working_dir, mention_permission, owner_account_id, execution_path)
+     values ($1, coalesce($3, ''), coalesce($5, 'claude-code'), $6, $8, $10, coalesce($13, 'auto'), $15, $16)
      on conflict (account_id) do update set
        instructions       = case when $2::bool  then excluded.instructions       else agent_config.instructions       end,
        harness            = case when $4::bool  then excluded.harness            else agent_config.harness            end,
@@ -78,6 +82,7 @@ async function upsertConfig(
        working_dir        = case when $11::bool then excluded.working_dir        else agent_config.working_dir        end,
        mention_permission = case when $12::bool then excluded.mention_permission else agent_config.mention_permission end,
        owner_account_id   = case when $14::bool then excluded.owner_account_id   else agent_config.owner_account_id   end,
+       execution_path     = case when $17::bool then excluded.execution_path     else agent_config.execution_path     end,
        updated_at = now()`,
     [
       accountId,
@@ -91,6 +96,9 @@ async function upsertConfig(
       patch.workingDir !== undefined,
       patch.mentionPermission !== undefined, patch.mentionPermission ?? null,
       patch.ownerAccountId !== undefined, patch.ownerAccountId ?? null,
+      // $16 값 / $17 '보냈는가'. 값이 먼저인 것은 insert 절이 값만 쓰고 update 절이
+      // 플래그를 쓰기 때문이다 — 위 model·effort 와 같은 모양이다.
+      patch.executionPath ?? null, patch.executionPath !== undefined,
     ],
   );
 }

@@ -16,6 +16,8 @@
 // "스위치를 만드는 것" 두 변경을 겹치게 되고, 문제가 났을 때 어느 쪽 탓인지 가릴 수 없다.
 import type { AgentHarness } from '@harkroom/shared';
 
+import { currentExecutionPath } from '../executionPath.js';
+
 import { CLAUDE_CODE_ADAPTER } from './claudeCode.js';
 import { CODEX_ADAPTER } from './codex.js';
 import { OPENCODE_ADAPTER } from './opencode.js';
@@ -160,6 +162,19 @@ export function adapterFor(harness: AgentHarness): HarnessAdapter {
  * 실수로 켜지면 claude 경로가 통째로 바뀐다.
  */
 export function harnessAdaptersEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  /**
+   * **에이전트가 고른 것이 먼저다(2026-09-12).**
+   *
+   * 스위치가 환경변수뿐이었을 때는 한 에이전트만 새 경로로 돌려 보려 해도 데몬 전체를 그
+   * 값으로 다시 띄워야 했다 — 그러면 "나머지는 옛 경로로 두고 하나만 재 본다" 가 안 되고,
+   * 이설의 안전이 바로 그 비교에 걸려 있다. 그래서 에이전트 설정(`executionPath`)이 이
+   * 판정의 첫 입력이고, 러너가 **턴마다** 읽으므로 재시작이 필요 없다.
+   *
+   * 고르지 않았으면(`null`) 이 러너의 기본값 — 환경변수가 답한다. 턴 밖에서 부르는 자리
+   * (`certify` 같은 스크립트)도 그 길로 떨어진다.
+   */
+  const chosen = currentExecutionPath();
+  if (chosen !== null) return chosen === 'adapters';
   const raw = env.MURMUR_HARNESS_ADAPTERS;
   return raw === '1' || raw === 'true';
 }
