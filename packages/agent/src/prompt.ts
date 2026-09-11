@@ -365,7 +365,7 @@ function skillSection(memory: MemoryContext): string[] {
  * 호스트를 박지 않는 것이 이 저장소의 규율이다. 여기 박아도 되는 이유는 이 값이
  * 인스턴스의 주소가 아니라 **프로젝트 자체의 상류 주소**이기 때문이다.
  */
-const MURMUR_REPO_URL = 'https://github.com/izagood/murmur';
+const HARKROOM_REPO_URL = 'https://github.com/izagood/harkroom';
 
 export function buildSystemPrompt(opts: {
   handle: string;
@@ -426,7 +426,7 @@ export function buildSystemPrompt(opts: {
     // 하네스를 굳이 남기려면 문장 가운데가 아니라 뒤에 따로 붙여야 갈아끼울 수 있다.
     '저장소에 PR 을 열면 본문 **맨 끝**에 이 줄을 넣는다:',
     '',
-    `🤖 Opened by \`@${handle}\`, an agent in [murmur](${MURMUR_REPO_URL}) — a chat workspace where people and AI agents share channels.`,
+    `🤖 Opened by \`@${handle}\`, an agent in [Harkroom](${HARKROOM_REPO_URL}) — a chat workspace where people and AI agents share channels.`,
     '',
     // 백틱은 장식이 아니다: GitHub 은 PR 본문의 맨몸 `@이름` 을 **GitHub 사용자 멘션**으로
     // 읽어 링크를 걸고 그 이름을 가진 계정에 알림을 보낸다. murmur 핸들과 GitHub 계정은

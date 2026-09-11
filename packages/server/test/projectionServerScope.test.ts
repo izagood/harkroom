@@ -2,7 +2,7 @@
  * Task 8 회귀선 — 투영 상태(커서·리스)가 (repo, avcs 서버)로 키가 잡혀 있는가.
  *
  * `last_log_index` 는 **그 avcs 서버의** 로그 안 위치다. 같은 repo 이름이 여러 avcs 서버
- * 아래 있을 수 있으므로(로컬에도 izagood/murmur, VM 에도 izagood/murmur), 키에서
+ * 아래 있을 수 있으므로(로컬에도 izagood/harkroom, VM 에도 izagood/harkroom), 키에서
  * `avcs_base_url` 을 빼면 서버를 바꿔 탄 새 워커가 옛 서버의 커서를 그대로 물려받아
  * "5000 이후엔 없다"를 영원히 듣는다 — 커서는 얼어붙는데 `lastPolledAt` 은 계속
  * 갱신되어 상태는 `ok` 로 남고, 옛 서버의 낡은 리스가 현재 활성 작업으로 보인다.
