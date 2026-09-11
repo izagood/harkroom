@@ -17,7 +17,7 @@
 //
 // `buildSidecar()` 의 파라미터가 그 목록이다:
 // - **엔트리포인트** — 러너는 `packages/agent/src/main.ts`, daemon 은 `daemon/src/main.ts`
-// - **산출물 이름** — `murmur-runner` / `murmur-daemon` (`externalBin` 항목 이름과 같아야 한다)
+// - **산출물 이름** — `harkroom-runner` / `harkroom-daemon` (`externalBin` 항목 이름과 같아야 한다)
 // - **곁들일 네이티브 의존** — **러너만 `node-pty`** 를 곁들인다
 // - **구워 넣을 값**(`define`) — **러너만** 자기 버전을 안고 나간다(`runnerDefines()`)
 //

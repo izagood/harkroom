@@ -1639,7 +1639,7 @@ export function Sidebar({
               `text-fg` 면 라이트·다크 양쪽에서 이 줄이 화면에서 가장 진한 글자로 남는다 —
               모드별 값은 `index.css` 한 곳이 정한다.
             */}
-            <span className="text-name leading-none tracking-tight text-fg">harkroom</span>
+            <span className="text-name leading-none tracking-tight text-fg">Harkroom</span>
           </span>
           {/* `#443`: 이 점은 실측에서 **유일하게 맞았던** 표시다(끊긴 순간 빨강). 고치는 것은
               색이 아니라 **말**이다 — `disconnected` 한 단어는 그 뒤에 따라오는 사실

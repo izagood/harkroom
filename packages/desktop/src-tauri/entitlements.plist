@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  앱 **본체**(`Contents/MacOS/murmur-desktop`)의 entitlements.
+  앱 **본체**(`Contents/MacOS/harkroom-desktop`)의 entitlements.
 
   hardened runtime 은 기본적으로 여러 동작을 막는다. 공증은 hardened runtime 을 요구하므로
   (`notarize-app.mjs` — 없으면 거절), 막힌 것 중 실제로 필요한 것만 여기서 다시 연다.
@@ -51,10 +51,10 @@
 
   ## 왜 사이드카에는 entitlements 를 붙이지 않는가
 
-  사이드카(`murmur-runner`·`murmur-daemon`)는 **Mach-O 가 아니라 셔뱅 스크립트**다.
+  사이드카(`harkroom-runner`·`harkroom-daemon`)는 **Mach-O 가 아니라 셔뱅 스크립트**다.
   실측:
 
-    $ file -b murmur.app/Contents/MacOS/murmur-runner
+    $ file -b Harkroom.app/Contents/MacOS/harkroom-runner
     a /usr/bin/env node script text executable, ASCII text
 
   `codesign` 은 스크립트를 nested code 로 서명하지 않으므로 붙일 자리 자체가 없고,

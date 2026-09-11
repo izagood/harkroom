@@ -37,7 +37,7 @@
 #
 #   APPLE_CERTIFICATE           `Developer ID Application` 인증서의 `.p12` 를 base64 로.
 #                               키체인 접근.app 에서 인증서+개인키를 함께 내보낸 뒤:
-#                                 base64 -i murmur-developer-id.p12 | pbcopy
+#                                 base64 -i harkroom-developer-id.p12 | pbcopy
 #   APPLE_CERTIFICATE_PASSWORD  위 `.p12` 를 내보낼 때 정한 암호
 #   APPLE_SIGNING_IDENTITY      서명 주체 문자열. 정확히 이 형식이어야 한다:
 #                                 Developer ID Application: <이름> (<TeamID>)
@@ -89,7 +89,7 @@ on:
   # 마쳤다 — 시크릿 여섯 개(+업데이터 두 개)를 등록하고, `workflow_dispatch` 로 첫 릴리즈(`v0.1.0`)를
   # 실제로 내어 눈으로 확인했다:
   #
-  #   .dmg          murmur_0.1.0_aarch64.dmg (6,037,758 B)
+  #   .dmg          Harkroom_0.1.0_aarch64.dmg (6,037,758 B)
   #   Gatekeeper    accepted / source=Notarized Developer ID  (격리 속성 붙인 채)
   #   안의 .app     stapler validate 통과 — dmg 재생성이 공증된 앱을 담았다
   #   번들          사이드카 3종 · 심볼릭 링크 0개 · pty.node arm64
@@ -258,7 +258,7 @@ jobs:
             # **draft 로 만든다.** 산출물이 다 올라오고 검증까지 끝난 뒤에야 `finalize` 가
             # 공개한다 — 반쯤 올라간 릴리즈를 사람이 받아 가는 일을 없앤다.
             gh release create "$tag" \
-              --title "murmur $tag" \
+              --title "Harkroom $tag" \
               --notes "준비 중이다 — 산출물 검증이 끝나면 이 본문이 바뀐다." \
               --draft \
               --verify-tag
@@ -316,7 +316,7 @@ jobs:
 
       # ## 사이드카가 `tauri build` 보다 **반드시 앞이다** (`#441`)
       #
-      # `tauri.conf.json` 의 `externalBin` 이 `binaries/murmur-runner`·`binaries/murmur-daemon`
+      # `tauri.conf.json` 의 `externalBin` 이 `binaries/harkroom-runner`·`binaries/harkroom-daemon`
       # 둘 다 요구한다. 없으면 번들 단계가 `resource path … doesn't exist` 로 죽는다.
       # `#441` 이 "사람이 기억해야 한다"고 지적한 자리이고, 실제로 사람이 손으로 돌려 왔다.
       # `ci.yml` 이 PR 경로에서 이 순서를 못박았고, **릴리즈 경로에서도 같아야 한다** —
@@ -428,7 +428,7 @@ jobs:
       - name: 앱을 서명한다
         env:
           MURMUR_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          MURMUR_APP_PATH: ${{ github.workspace }}/packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/murmur.app
+          MURMUR_APP_PATH: ${{ github.workspace }}/packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app
         run: pnpm --filter @murmur/desktop sign
 
       # ## 공증 — `.p8` 을 **파일로** 푼다
@@ -446,7 +446,7 @@ jobs:
           # `umask` 로 만들어지자마자 남이 못 읽게 한다.
           (umask 077; echo "$APPLE_NOTARY_KEY" | base64 --decode > "$key")
           MURMUR_NOTARY_KEY="$key" \
-            MURMUR_APP_PATH="${{ github.workspace }}/packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/murmur.app" \
+            MURMUR_APP_PATH="${{ github.workspace }}/packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app" \
             pnpm --filter @murmur/desktop notarize
 
       - name: 공증 키를 지운다
@@ -469,11 +469,11 @@ jobs:
           set -euo pipefail
           tag="${{ needs.prepare.outputs.tag }}"
           version="${tag#v}"
-          app="packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/murmur.app"
+          app="packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app"
           # `aarch64-apple-darwin` → `aarch64`. `.dmg` 이름에 들어갈 아키텍처 토큰이고,
           # 아래 `finalize` 의 검증 목록이 같은 이름을 기대한다.
           arch="$(echo "${{ matrix.triple }}" | cut -d- -f1)"
-          out="$RUNNER_TEMP/murmur_${version}_${arch}.dmg"
+          out="$RUNNER_TEMP/Harkroom_${version}_${arch}.dmg"
 
           test -d "$app" || { echo "::error::.app 이 없다: $app"; exit 1; }
 
@@ -484,10 +484,10 @@ jobs:
           staging="$RUNNER_TEMP/dmg-staging"
           rm -rf "$staging"; mkdir -p "$staging"
           # `ditto` 로 옮긴다 — `cp` 는 확장 속성(서명이 거기 붙는다)을 떨어뜨릴 수 있다.
-          ditto "$app" "$staging/murmur.app"
+          ditto "$app" "$staging/Harkroom.app"
           ln -s /Applications "$staging/Applications"
 
-          hdiutil create -volname "murmur" -srcfolder "$staging" -ov -format UDZO "$out"
+          hdiutil create -volname "Harkroom" -srcfolder "$staging" -ov -format UDZO "$out"
           echo "DMG=$out" >> "$GITHUB_ENV"
 
       # `.dmg` 자체도 서명·공증한다. 안에 든 앱이 공증됐어도 `.dmg` 는 별개의 배포 컨테이너이고,
@@ -541,9 +541,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          app="packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/murmur.app"
+          app="packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app"
           arch="$(echo "${{ matrix.triple }}" | cut -d- -f1)"
-          out="$RUNNER_TEMP/murmur_${arch}.app.tar.gz"
+          out="$RUNNER_TEMP/Harkroom_${arch}.app.tar.gz"
 
           # **여기서도 티켓을 먼저 본다.** `.dmg` 단계와 같은 이유다 — 공증이 조용히
           # 건너뛰어진 경우에도 아카이브는 만들어지기 때문이다.
@@ -560,7 +560,7 @@ jobs:
           #   `let collected_path: PathBuf = entry.path()?.iter().skip(1).collect();`
           #   (`tauri-plugin-updater-2.11.0/src/updater.rs`)
           # 그리고 그 결과를 통째로 기존 `.app` 자리에 옮긴다. 그러므로 아카이브는
-          # `murmur.app/Contents/...` 처럼 **감싸는 이름이 정확히 하나** 있어야 하고,
+          # `Harkroom.app/Contents/...` 처럼 **감싸는 이름이 정확히 하나** 있어야 하고,
           # 그 이름 자체는 무엇이든 상관없다(어차피 버려진다). 감싸지 않고 `Contents/` 를
           # 최상위에 두면 `Contents` 가 벗겨져 앱이 빈 껍데기가 된다.
           #
@@ -623,7 +623,7 @@ jobs:
           #
           # `signature` 는 `.sig` 파일의 **내용**이다(경로가 아니다). 앱은 이 값과
           # `tauri.conf.json` 의 공개키로 tarball 을 검증한 뒤에만 설치한다.
-          tarball="murmur_aarch64.app.tar.gz"
+          tarball="Harkroom_aarch64.app.tar.gz"
           sig_asset_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
             --jq ".assets[] | select(.name == \"$tarball.sig\") | .id")
           if [ -z "$sig_asset_id" ]; then
@@ -657,7 +657,7 @@ jobs:
           # 그러면 이미 깔린 앱이 `latest.json` 을 못 찾아 "확인 실패"만 반복한다.
           # 사람은 앱이 고장 났다고 생각하지 릴리즈에 파일이 빠졌다고 생각하지 않는다.
           expected=(
-            "murmur_${version}_aarch64.dmg"
+            "Harkroom_${version}_aarch64.dmg"
             "$tarball"
             "$tarball.sig"
             "latest.json"
@@ -677,7 +677,7 @@ jobs:
 
           notes="$RUNNER_TEMP/notes.md"
           cat > "$notes" <<'EOF'
-          murmur 데스크톱 설치 파일이다.
+          Harkroom 데스크톱 설치 파일이다.
 
           - macOS (Apple Silicon · M1 이상): `_aarch64.dmg` 를 받아라.
 

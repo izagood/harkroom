@@ -1,5 +1,5 @@
 [package]
-name = "murmur-desktop"
+name = "harkroom-desktop"
 version = "0.1.194"
 edition = "2021"
 
@@ -51,5 +51,5 @@ mac-notification-sys = "0.6.15"
 libc = "0.2"
 
 [[bin]]
-name = "murmur-desktop"
+name = "harkroom-desktop"
 path = "src/main.rs"

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // 앱과 함께 배포되는 Node 사이드카를 **전부** 만든다.
 //
-// - `murmur-runner` — 러너(#431 1단계 B, `#425`·`#429` 를 닫았다). `node-pty` 를 곁들인다.
-// - `murmur-daemon` — daemon(#431 2단계 a). **네이티브 의존이 없다.**
+// - `harkroom-runner` — 러너(#431 1단계 B, `#425`·`#429` 를 닫았다). `node-pty` 를 곁들인다.
+// - `harkroom-daemon` — daemon(#431 2단계 a). **네이티브 의존이 없다.**
 //
 // ## 왜 스크립트를 둘로 나누지 않고 하나로 묶었는가
 //
@@ -31,7 +31,7 @@ async function main() {
   const daemonRoot = join(repoRoot, 'packages', 'daemon');
 
   const runner = await buildSidecar({
-    name: 'murmur-runner',
+    name: 'harkroom-runner',
     entry: join(agentRoot, 'src', 'main.ts'),
     resolveFrom: agentRoot,
     // PTY 를 여는 것은 러너의 일이다 — 그래서 `node-pty` 는 **러너만** 곁들인다.
@@ -41,7 +41,7 @@ async function main() {
   });
 
   const daemon = await buildSidecar({
-    name: 'murmur-daemon',
+    name: 'harkroom-daemon',
     entry: join(daemonRoot, 'src', 'main.ts'),
     resolveFrom: daemonRoot,
     // **daemon 은 `node-pty` 를 곁들이지 않는다.** daemon 이 하는 일은 러너 프로세스를

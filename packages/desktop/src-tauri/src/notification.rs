@@ -112,7 +112,7 @@ mod macos {
     use super::{NotificationTarget, OPEN_EVENT};
 
     /// 목적지를 알림에 실어 나르는 `userInfo` 키. 우리 델리게이트만 읽는다.
-    const TARGET_KEY: &str = "murmurTarget";
+    const TARGET_KEY: &str = "harkroomTarget";
 
     /// 알림을 어느 앱의 것으로 띄울지. 플러그인의 `desktop.rs` 와 **같은 선택**이다 —
     /// 번들 밖에서 뜬 개발 빌드는 자기 번들 id 로 알림을 띄울 수 없다.
@@ -140,7 +140,7 @@ mod macos {
         // 델리게이트 콜백은 `NSUserNotificationCenter` 가 **메인 스레드로** 보낸다.
         // 타입에 그것을 적어 두면 다른 스레드에서 만드는 코드가 컴파일되지 않는다.
         #[thread_kind = MainThreadOnly]
-        #[name = "MurmurNotificationDelegate"]
+        #[name = "HarkroomNotificationDelegate"]
         #[ivars = Ivars]
         struct Delegate;
 

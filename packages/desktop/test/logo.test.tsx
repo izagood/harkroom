@@ -20,9 +20,9 @@ const murmurNameCount = () =>
   // 브랜드 글자를 지우고 로고만 남긴 뒤 이 결함이 드러났다 — 세는 방식이 "로고 + 그 옆
   // 글자" 시절에만 맞았던 것이다. 지키려는 사실은 그대로다: 앱 이름을 내는 자리가 하나다.
   new Set([
-    ...screen.queryAllByRole('img', { name: 'harkroom' }),
-    ...screen.queryAllByRole('heading', { name: 'harkroom' }),
-    ...screen.queryAllByText('harkroom').filter((el) => el.tagName.toLowerCase() !== 'title'),
+    ...screen.queryAllByRole('img', { name: 'Harkroom' }),
+    ...screen.queryAllByRole('heading', { name: 'Harkroom' }),
+    ...screen.queryAllByText('Harkroom').filter((el) => el.tagName.toLowerCase() !== 'title'),
   ]).size;
 
 beforeEach(() => {
@@ -61,7 +61,7 @@ describe('murmur 로고 (#191)', () => {
   it('사이드바 브랜드 줄에 로고와 murmur 글자가 함께 있다', () => {
     sidebar();
     expect(screen.getByTestId('murmur-logo')).toBeTruthy();
-    expect(screen.getByText('harkroom')).toBeTruthy();
+    expect(screen.getByText('Harkroom')).toBeTruthy();
   });
 
   /**
@@ -139,7 +139,7 @@ describe('murmur 로고 (#191)', () => {
    */
   it('브랜드 글자가 색 토큰을 들고 4단 안의 크기다', () => {
     sidebar();
-    const cls = screen.getByText('harkroom').className;
+    const cls = screen.getByText('Harkroom').className;
     expect(cls).toContain('text-fg');
     // 4단이 `@theme` 토큰이 된 뒤로는 임의값이 아니라 역할 이름이다(`index.css`).
     // 재는 것은 그대로다 — **이 글자가 4단 안에 있는가**.

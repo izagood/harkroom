@@ -2,8 +2,8 @@
 //
 // 이 로더가 생긴 이유는 배포 번들에서 두 자리가 갈리기 때문이다:
 //
-//   externalBin        → murmur.app/Contents/MacOS/murmur-runner
-//   bundle.resources   → murmur.app/Contents/Resources/node_modules/node-pty
+//   externalBin        → Harkroom.app/Contents/MacOS/harkroom-runner
+//   bundle.resources   → Harkroom.app/Contents/Resources/node_modules/node-pty
 //
 // 예전에는 Rust 가 번들 안에 심볼릭 링크를 만들어 이었는데, **`stapler` 가 그 링크를
 // 거절한다**(`invalid destination for symbolic link in bundle`) — 공증이 `Accepted` 여도

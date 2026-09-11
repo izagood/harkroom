@@ -6,12 +6,12 @@
 // macOS 키체인 ACL 은 앱을 **서명 identifier** 로 식별한다. 그런데 Rust 링커가 붙이는
 // ad-hoc 서명(`linker-signed`)은 그 값을 **빌드 산출물 해시에서 만든다**:
 //
-//   번들 ID (Info.plist)        : app.murmur.desktop
-//   서명 identifier (키체인이 봄) : murmur_desktop-8e22d6330b5570a5   ← 랜덤으로 보인다
+//   번들 ID (Info.plist)        : app.harkroom.desktop
+//   서명 identifier (키체인이 봄) : harkroom_desktop-8e22d6330b5570a5   ← 랜덤으로 보인다
 //
 // 실측(2026-09-06):
-//   디버그 빌드 (여러 워크트리)  : murmur_desktop-2cf138358ac0eb80
-//   릴리즈 .app                 : murmur_desktop-8e22d6330b5570a5
+//   디버그 빌드 (여러 워크트리)  : harkroom_desktop-2cf138358ac0eb80
+//   릴리즈 .app                 : harkroom_desktop-8e22d6330b5570a5
 //
 // **빌드 프로필이 바뀌면 키체인은 다른 앱으로 본다.** 그래서 승인 대화상자가 다시 뜨고,
 // 그 대화상자는 `#450` 이전에 앱을 통째로 멎게 했다(지금은 안 멎지만 여전히 사람을 막는다).
@@ -56,16 +56,16 @@
 // 늘거나 파일 이름이 바뀌는 순간 조용히 새는데, 그 사실은 공증 거절로 몇 분 뒤에야 온다.
 //
 // `file -b <경로>` 가 `Mach-O` 를 말하는지로 판정한다 — **파일 내용을 본다.** 실측으로
-// 확인한 결과(이 번들, 2026-09-06): 이 방식이 `pty.node`·`spawn-helper`·`murmur-desktop`
-// 셋을 찾고, 사이드카 둘(`murmur-runner`·`murmur-daemon`)은 **셔뱅 스크립트라 Mach-O 가
+// 확인한 결과(이 번들, 2026-09-06): 이 방식이 `pty.node`·`spawn-helper`·`harkroom-desktop`
+// 셋을 찾고, 사이드카 둘(`harkroom-runner`·`harkroom-daemon`)은 **셔뱅 스크립트라 Mach-O 가
 // 아니어서 제외된다.**
 //
 // ## 그렇다고 사이드카를 안 서명해도 되는 것은 아니다 — 실측으로 배운 것
 //
 // 처음에 "Mach-O 가 아니니 서명 대상이 아니다"로 끝냈다가 마지막 `.app` 서명에서 막혔다:
 //
-//   murmur.app: code object is not signed at all
-//   In subcomponent: …/Contents/MacOS/murmur-runner
+//   Harkroom.app: code object is not signed at all
+//   In subcomponent: …/Contents/MacOS/harkroom-runner
 //
 // **`codesign` 은 `Contents/MacOS/` 안의 것을 형식이 아니라 자리로 판정한다** — 그 자리에
 // 있으면 nested code 이고, 자기 서명이 있어야 번들 서명이 그것을 봉인할 수 있다. 그래서
@@ -126,9 +126,9 @@ const here = dirname(fileURLToPath(import.meta.url));
  */
 const APP =
   process.env.MURMUR_APP_PATH ||
-  join(here, '..', 'src-tauri', 'target', 'release', 'bundle', 'macos', 'murmur.app');
+  join(here, '..', 'src-tauri', 'target', 'release', 'bundle', 'macos', 'Harkroom.app');
 /** `tauri.conf.json` 의 `identifier` 와 **같아야 한다** — 그것이 번들 ID 다. */
-const IDENTIFIER = 'app.murmur.desktop';
+const IDENTIFIER = 'app.harkroom.desktop';
 /**
  * 앱 **본체**의 entitlements. 무엇이 들었고 왜 그것뿐인지는 그 파일의 주석에 있다.
  *
@@ -189,9 +189,9 @@ function bundleMainExecutable(root) {
  * `codesign` 이 그 경로를 **번들 전체로 해석해** 안쪽을 다시 훑고, 거기서 셔뱅 사이드카를
  * 만나 그대로 실패한다(실측):
  *
- *   $ codesign --force --sign - murmur.app/Contents/MacOS/murmur-desktop
- *   murmur-desktop: code object is not signed at all
- *   In subcomponent: …/Contents/MacOS/murmur-runner
+ *   $ codesign --force --sign - Harkroom.app/Contents/MacOS/harkroom-desktop
+ *   harkroom-desktop: code object is not signed at all
+ *   In subcomponent: …/Contents/MacOS/harkroom-runner
  *
  * 즉 그 자리는 "안쪽 Mach-O 하나"가 아니라 **번들 자신**이다. 그래서 마지막의 `.app`
  * 서명이 그것을 맡는다 — 이 함수가 돌려주는 것은 **번들 서명이 봉인할 nested code** 뿐이다.
@@ -329,12 +329,12 @@ function main() {
 
   // ── 2) `Contents/MacOS/` 의 사이드카 — **Mach-O 가 아니어도 서명해야 한다** ───
   //
-  // 이것을 실측으로 배웠다. 사이드카(`murmur-runner`·`murmur-daemon`)는 셔뱅 스크립트라
+  // 이것을 실측으로 배웠다. 사이드카(`harkroom-runner`·`harkroom-daemon`)는 셔뱅 스크립트라
   // Mach-O 가 **아니고**, 그래서 위 1) 의 내용 기반 탐지가 올바르게 제외한다. 그런데
   // 그것만으로 끝내면 마지막 `.app` 서명이 그대로 실패한다:
   //
-  //   murmur.app: code object is not signed at all
-  //   In subcomponent: …/Contents/MacOS/murmur-runner
+  //   Harkroom.app: code object is not signed at all
+  //   In subcomponent: …/Contents/MacOS/harkroom-runner
   //
   // **`codesign` 은 `Contents/MacOS/` 안의 것을 전부 nested code 로 본다** — 파일 형식이
   // 아니라 **자리**로 판정한다. 그 자리에 있으면 자기 서명을 갖고 있어야 번들 서명이
@@ -391,7 +391,7 @@ function main() {
   console.log(`재서명 완료 — Identifier=${IDENTIFIER} (키체인 ACL 이 유지된다)`);
   if (!adhoc) {
     // **서명만으로는 Gatekeeper 를 통과하지 못한다.** 실측(2026-09-06):
-    //   spctl -a -vvv -t exec murmur.app
+    //   spctl -a -vvv -t exec Harkroom.app
     //   → rejected / source=Unnotarized Developer ID
     // 공증은 Apple 에 올려 검사받는 별도 절차이고 자격증명(App Store Connect API 키 등)이
     // 더 필요하다. **여기서 조용히 넘어가면 "서명했으니 배포된다"고 오해한다.**

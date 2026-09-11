@@ -3,7 +3,7 @@
 // 실행(저장소 안): MURMUR_URL=... MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
 // 배포판에서는 이 소스가 아니라 **단일 번들**이 돈다 — `#431` 1단계가 러너를 Tauri
 // 사이드카(`externalBin`)로 만들어 앱과 함께 배포하고, `.app` 안
-// `Contents/MacOS/murmur-runner` 로 놓인다. 즉 위 pnpm 명령은 죽지 않았지만 **개발 환경
+// `Contents/MacOS/harkroom-runner` 로 놓인다. 즉 위 pnpm 명령은 죽지 않았지만 **개발 환경
 // 전용**이다: 앱을 설치해 쓰는 사람에게는 실행할 소스도 pnpm 워크스페이스도 없다.
 // 사람에게 보여 줄 명령의 정본은 `packages/desktop/src/lib/runnerCommand.ts` 다.
 // (claude-code harness 는 claude CLI 의 로그인을 그대로 쓴다 — API 키가 필요 없다.)

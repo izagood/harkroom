@@ -28,7 +28,7 @@
 //      일이다. 이미 값을 갖고 있고 이미 정본으로 쓰이는 자리가 있다.
 //
 //   4. **`tauri.conf.json` 이 실제로 산출물 이름을 정한다.** `.dmg` 파일 이름
-//      (`murmur_0.1.0_aarch64.dmg`)과 `Info.plist` 의 `CFBundleShortVersionString` 이
+//      (`Harkroom_0.1.0_aarch64.dmg`)과 `Info.plist` 의 `CFBundleShortVersionString` 이
 //      거기서 나온다. 다른 곳을 정본으로 삼으면 "정본"과 "실제로 배포되는 숫자"가 갈릴 수
 //      있고, 그 어긋남은 릴리즈 자산 이름을 봐야만 드러난다.
 //
@@ -36,7 +36,7 @@
 //
 //   packages/desktop/src-tauri/tauri.conf.json   ← **정본.** 읽을 때 이것을 읽는다
 //   packages/desktop/src-tauri/Cargo.toml        ← 크레이트 버전
-//   packages/desktop/src-tauri/Cargo.lock        ← `murmur-desktop` 항목
+//   packages/desktop/src-tauri/Cargo.lock        ← `harkroom-desktop` 항목
 //
 // `Cargo.lock` 까지 맞추는 이유는 빌드가 어차피 그것을 갱신하기 때문이다 — 안 맞춰 두면
 // 릴리즈 빌드마다 lock 이 더럽혀져 diff 노이즈가 생긴다(synapse 가 같은 이유로 그렇게 한다).
@@ -60,7 +60,7 @@ export const CARGO_TOML = join(tauriDir, 'Cargo.toml');
 export const CARGO_LOCK = join(tauriDir, 'Cargo.lock');
 
 /** `Cargo.lock` 안에서 버전을 맞출 크레이트. `Cargo.toml` 의 `[package] name` 과 같다. */
-const CRATE = 'murmur-desktop';
+const CRATE = 'harkroom-desktop';
 
 /** `X.Y.Z`. Tauri 가 요구하는 형식이고(semver), `.dmg` 이름에 그대로 들어간다. */
 const SEMVER = /^\d+\.\d+\.\d+$/;
@@ -86,7 +86,7 @@ export function readAll(root = tauriDir) {
   const cargo = cargoToml.match(/^version = "([^"]+)"/m)?.[1];
 
   const lockText = readFileSync(join(root, 'Cargo.lock'), 'utf8');
-  // `name = "murmur-desktop"` **다음 줄**의 version. lock 은 크레이트마다 같은 모양의
+  // `name = "harkroom-desktop"` **다음 줄**의 version. lock 은 크레이트마다 같은 모양의
   // 블록이 반복되므로 이름으로 자리를 잡지 않으면 남의 버전을 집는다.
   const lock = lockText.match(new RegExp(`^name = "${CRATE}"\\nversion = "([^"]+)"`, 'm'))?.[1];
 

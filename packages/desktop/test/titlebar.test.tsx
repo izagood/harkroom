@@ -103,7 +103,7 @@ describe('#270 창 설정', () => {
     expect(w.titleBarStyle).toBe('Overlay');
     expect(w.hiddenTitle).toBe(true);
     // 창 전환기·화면 공유·접근성이 읽는 값이라 지우지 않는다. `hiddenTitle` 로 가릴 뿐이다.
-    expect(w.title).toBe('murmur');
+    expect(w.title).toBe('Harkroom');
   });
 
   /**
@@ -123,7 +123,7 @@ describe('#270 창 설정', () => {
     const w = windowConf(baseConfRaw);
     // Windows·Linux 는 장식을 끄면 창 컨트롤이 통째로 사라진다 — 기본 파일은 손대지 않는다.
     expect(w.decorations).toBeUndefined();
-    expect(w.title).toBe('murmur');
+    expect(w.title).toBe('Harkroom');
   });
 });
 
@@ -439,7 +439,7 @@ describe('브랜드 줄은 로고와 글자를 함께 둔다', () => {
   it('앱 이름을 글자로 적는다', () => {
     renderWorkspace({ sidebarCollapsed: false });
     const brand = screen.getByTestId('sidebar-brand');
-    expect(brand.textContent).toContain('harkroom');
+    expect(brand.textContent).toContain('Harkroom');
   });
 
   /**

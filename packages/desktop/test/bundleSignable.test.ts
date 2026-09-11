@@ -26,7 +26,7 @@ import { isMachO, machOFilesDeepestFirst } from '../scripts/sign-app.mjs';
 const DESKTOP_DIR = path.resolve(__dirname, '..');
 const APP = path.join(
   DESKTOP_DIR,
-  'src-tauri', 'target', 'release', 'bundle', 'macos', 'murmur.app',
+  'src-tauri', 'target', 'release', 'bundle', 'macos', 'Harkroom.app',
 );
 const SIGN_SCRIPT = path.join(DESKTOP_DIR, 'scripts', 'sign-app.mjs');
 const NOTARIZE_SCRIPT = path.join(DESKTOP_DIR, 'scripts', 'notarize-app.mjs');
@@ -144,13 +144,13 @@ describe.skipIf(!macOS)('Mach-O 를 내용으로 찾는다 (`--deep` 이 놓친 
    * 대조군 — **Mach-O 가 아닌 것은 안 잡아야 한다.** 이것이 없으면 위 테스트는
    * "전부 다 Mach-O 라고 답하는" 구현으로도 통과한다.
    *
-   * 사이드카(`murmur-runner`·`murmur-daemon`)가 정확히 이 경우다: 셔뱅 스크립트라
+   * 사이드카(`harkroom-runner`·`harkroom-daemon`)가 정확히 이 경우다: 셔뱅 스크립트라
    * Mach-O 가 아니고, 서명 대상이 아닌 것이 맞다.
    */
   it('셔뱅 스크립트는 Mach-O 가 아니다 (사이드카가 이 경우다)', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'murmur-macho-'));
     try {
-      const script = path.join(dir, 'murmur-runner');
+      const script = path.join(dir, 'harkroom-runner');
       writeFileSync(script, '#!/usr/bin/env node\nconsole.log("hi");\n');
       chmodSync(script, 0o755);
 
@@ -328,7 +328,7 @@ describe('entitlements — 본체에만, 필요한 것만', () => {
     for (const script of [SIGN_SCRIPT, NOTARIZE_SCRIPT]) {
       const source = readFileSync(script, 'utf8');
       expect(source, `${script}: 기본 경로가 사라졌다`)
-        .toMatch(/'target',\s*'release',\s*'bundle',\s*'macos',\s*'murmur\.app'/);
+        .toMatch(/'target',\s*'release',\s*'bundle',\s*'macos',\s*'Harkroom\.app'/);
     }
   });
 

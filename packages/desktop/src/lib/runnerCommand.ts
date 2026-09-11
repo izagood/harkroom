@@ -11,7 +11,7 @@
  *
  * **그 명령은 이제 대부분의 사람에게 실패한다.** `#431` 1단계가 러너를 단일 번들로 만들어
  * Tauri 사이드카(`externalBin`)로 앱과 함께 배포하도록 바꿨고(`tauri.conf.json` 의
- * `externalBin: ["binaries/murmur-runner", …]`), `#494` 의 릴리즈 워크플로가 그 번들을
+ * `externalBin: ["binaries/harkroom-runner", …]`), `#494` 의 릴리즈 워크플로가 그 번들을
  * `.dmg` 로 내보내기 시작했다. 즉 **앱을 설치해 쓰는 사람은 murmur 저장소를 클론하지
  * 않는다** — `pnpm --filter @murmur/agent start` 는 그 사람의 머신에서 실행할 소스도,
  * `pnpm` 워크스페이스도 없다.
@@ -64,14 +64,14 @@
 import type { Translate } from '../i18n';
 
 /** 러너 사이드카의 실행 파일 이름. Rust 의 `RUNNER_SIDECAR_NAME` 과 같은 값이다. */
-export const RUNNER_SIDECAR_NAME = 'murmur-runner';
+export const RUNNER_SIDECAR_NAME = 'harkroom-runner';
 
 /**
  * `.app` 안 러너 사이드카의 경로. 설치 위치는 사람마다 다르므로 `/Applications` 는 예시다.
- * `productName` 이 `murmur` 이라 번들 이름이 `murmur.app` 이 된다.
+ * `productName` 이 `murmur` 이라 번들 이름이 `Harkroom.app` 이 된다.
  */
 export const RUNNER_SIDECAR_PATH =
-  `/Applications/murmur.app/Contents/MacOS/${RUNNER_SIDECAR_NAME}`;
+  `/Applications/Harkroom.app/Contents/MacOS/${RUNNER_SIDECAR_NAME}`;
 
 /** 저장소를 클론해 개발할 때 쓰는 명령. 배포판에는 이 소스가 없다. */
 export const RUNNER_DEV_COMMAND = 'pnpm --filter @murmur/agent start';

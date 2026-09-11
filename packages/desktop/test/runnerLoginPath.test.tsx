@@ -313,7 +313,7 @@ describe('6. 사유가 보이는 자리에 있다', () => {
 describe('7. daemon 이 node 를 못 찾은 사유가 화면에 온다 (#513)', () => {
   /** Rust `node_missing_reason` 이 만드는 문구 그대로. */
   const NODE_MISSING =
-    'daemon 이 뜨자마자 끝났다 — 사이드카(`/A/murmur-daemon`)는 있는데 그것을 실행할 `node` 를 ' +
+    'daemon 이 뜨자마자 끝났다 — 사이드카(`/A/harkroom-daemon`)는 있는데 그것을 실행할 `node` 를 ' +
     '찾지 못했다. murmur 는 Node.js 를 동봉하지 않는다. ' +
     'Node.js 를 설치하라(LTS 판이면 된다): https://nodejs.org/en/download ' +
     '(daemon 로그: env: node: No such file or directory / 이때 쓴 PATH: /usr/bin:/bin)';

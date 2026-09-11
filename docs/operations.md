@@ -417,9 +417,9 @@ curl -fsS http://localhost:3400/healthz | python3 -c 'import json,sys; print(jso
 확인 순서:
 1. `GET /metrics`에서 그 핸들의 값을 본다. 커지고 있으면 러너 쪽이다.
    **값이 아예 없으면** 그 계정에 정의가 없는 것이다(위 문단) — 러너 문제가 아니다.
-2. 러너가 감독 하에 있는지 본다: `launchctl list | grep dev.murmur.agent`.
+2. 러너가 감독 하에 있는지 본다: `launchctl list | grep dev.harkroom.agent`.
    PID 자리가 `-`면 죽어 있고 재시작을 못 하는 상태다.
-3. 로그를 본다: `/tmp/murmur-runner/<handle>.log`(stdout), `.err.log`(stderr).
+3. 로그를 본다: `/tmp/harkroom-runner/<handle>.log`(stdout), `.err.log`(stderr).
 4. 러너가 뜨면 쌓인 것을 처리한다. 설계가 at-least-once이므로 **늦게라도 답한다** —
    inbox 항목은 읽음 처리 전까지 남는다.
 
@@ -460,7 +460,7 @@ where a.kind = 'agent';
 | 사람이 정하던 설정 | harkroom repository path · pnpm path | **없어졌다** — 물음 자체가 사라졌다 |
 
 사이드카는 앱 실행 파일과 **같은 디렉터리**에 놓인다(macOS `.app` 이면
-`Contents/MacOS/murmur-runner`). 그래서 앱도 daemon 도 러너를 `PATH` 에서 찾지 않고 자기
+`Contents/MacOS/harkroom-runner`). 그래서 앱도 daemon 도 러너를 `PATH` 에서 찾지 않고 자기
 옆에서 찾는다 — 저장소 경로를 지어내던 옛 문제가 통째로 사라진 이유다.
 
 daemon 을 앞에 세운 것은 `#430` 의 실측 때문이다: 앱이 러너의 부모이면 앱이 죽을 때 러너도
@@ -488,7 +488,7 @@ daemon 을 앞에 세운 것은 `#430` 의 실측 때문이다: 앱이 러너의
 
 ```sh
 # 앱을 설치해 쓰는 경우 (설치 위치가 다르면 경로를 바꾼다)
-MURMUR_URL=<서버 주소> MURMUR_PAT=<발급한 토큰> /Applications/murmur.app/Contents/MacOS/murmur-runner
+MURMUR_URL=<서버 주소> MURMUR_PAT=<발급한 토큰> /Applications/Harkroom.app/Contents/MacOS/harkroom-runner
 
 # harkroom 저장소를 클론한 개발 환경
 MURMUR_URL=<서버 주소> MURMUR_PAT=<발급한 토큰> pnpm --filter @murmur/agent start
@@ -601,11 +601,11 @@ Rust 로 옮겨갔기 때문이다. `#250` 이 좁히기 시작한 경계가 여
 
 ## 8-1. 러너를 감독 하에 두기 (macOS)
 
-`~/Library/LaunchAgents/dev.murmur.agent.<handle>.plist`를 만들고
+`~/Library/LaunchAgents/dev.harkroom.agent.<handle>.plist`를 만들고
 `launchctl load <경로>`. 세 가지가 함정이다:
 
 - **감독할 대상은 러너 실행 파일 그 자체다.** 지금은 사이드카 번들
-  (`.../murmur.app/Contents/MacOS/murmur-runner`)을 `ProgramArguments` 에 그대로 적으면
+  (`.../Harkroom.app/Contents/MacOS/harkroom-runner`)을 `ProgramArguments` 에 그대로 적으면
   된다 — 러너가 앱과 함께 배포되면서(`#431` 1단계) 감쌀 것이 없어졌다. 저장소를 클론한
   개발 환경이라면 `pnpm`이 아니라 `tsx`를 직접 부른다: **중간 프로세스를 감독하면 러너가
   죽어도 그 프로세스가 남아 launchd가 재시작하지 않는 경우가 생긴다.** 함정은 `pnpm`이

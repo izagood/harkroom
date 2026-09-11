@@ -12,14 +12,14 @@ describe('parseDaemonArgs — 앱이 넘기는 인자 (#431 2단계-a)', () => {
       '--token', '/tmp/murmur/daemon/daemon-v1.token',
       '--pid-record', '/tmp/murmur/daemon/daemon-v1.pid',
       '--launch-nonce', '0d918a6a-53b5-47d2-9aff-6a00b495ab89',
-      '--entry-path', '/Applications/murmur.app/Contents/MacOS/murmur-daemon',
+      '--entry-path', '/Applications/Harkroom.app/Contents/MacOS/harkroom-daemon',
       '--app-version', '0.1.0',
     ]);
     expect(args.socket).toBe('/tmp/murmur/daemon/daemon-v1.sock');
     expect(args.token).toBe('/tmp/murmur/daemon/daemon-v1.token');
     expect(args.pidRecord).toBe('/tmp/murmur/daemon/daemon-v1.pid');
     expect(args.launchNonce).toBe('0d918a6a-53b5-47d2-9aff-6a00b495ab89');
-    expect(args.entryPath).toBe('/Applications/murmur.app/Contents/MacOS/murmur-daemon');
+    expect(args.entryPath).toBe('/Applications/Harkroom.app/Contents/MacOS/harkroom-daemon');
     expect(args.appVersion).toBe('0.1.0');
     expect(args.unknown).toEqual([]);
   });

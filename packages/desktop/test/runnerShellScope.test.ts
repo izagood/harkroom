@@ -90,9 +90,9 @@ describe('러너 spawn 은 이제 shell 플러그인을 거치지 않는다(#431
     expect(capabilities.permissions).not.toContain('shell:allow-kill');
   });
 
-  it('스코프 항목에 `murmur-runner`·`pnpm` 이름이 남아 있지 않다', () => {
+  it('스코프 항목에 `harkroom-runner`·`pnpm` 이름이 남아 있지 않다', () => {
     for (const entry of allScopeEntries) {
-      expect(entry.name).not.toBe('murmur-runner');
+      expect(entry.name).not.toBe('harkroom-runner');
       expect(entry.cmd).not.toBe('pnpm');
     }
   });
@@ -266,7 +266,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
     // 1. 프로그램은 `sidecar_path(DAEMON_SIDECAR_NAME)` 이 고정한다 — 상수다.
     expect(spawnDaemon).toContain('crate::sidecar_path(DAEMON_SIDECAR_NAME)?');
     // 2. 그 이름은 리터럴이다.
-    expect(daemonRs).toContain('pub const DAEMON_SIDECAR_NAME: &str = "murmur-daemon"');
+    expect(daemonRs).toContain('pub const DAEMON_SIDECAR_NAME: &str = "harkroom-daemon"');
     // 3. **`spawn_daemon` 의 파라미터에 웹뷰가 닿는 값이 없다** — `AppHandle` 과
     //    Rust 가 만든 `EndpointPaths` 뿐이다. 문자열 경로를 받는 자리가 생기면 여기서 멈춘다.
     const sig = daemonRs.match(/fn spawn_daemon\(([\s\S]*?)\)\s*->/);
@@ -320,8 +320,8 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
   });
 
   it('사이드카 이름이 고정 리터럴이다', () => {
-    expect(mainRs).toContain('const RUNNER_SIDECAR_NAME: &str = "murmur-runner"');
-    expect(daemonRs).toContain('pub const DAEMON_SIDECAR_NAME: &str = "murmur-daemon"');
+    expect(mainRs).toContain('const RUNNER_SIDECAR_NAME: &str = "harkroom-runner"');
+    expect(daemonRs).toContain('pub const DAEMON_SIDECAR_NAME: &str = "harkroom-daemon"');
   });
 
   /**

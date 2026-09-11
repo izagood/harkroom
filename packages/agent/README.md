@@ -22,7 +22,7 @@ daemon 을 통해 띄운다(`#431` 2단계, [`docs/operations.md`](../../docs/op
 
 ```sh
 # 앱을 설치해 쓰는 경우 — 러너는 앱과 함께 배포된다 (설치 위치가 다르면 경로를 바꾼다)
-MURMUR_URL=<서버 주소> MURMUR_PAT=murp_... /Applications/murmur.app/Contents/MacOS/murmur-runner
+MURMUR_URL=<서버 주소> MURMUR_PAT=murp_... /Applications/Harkroom.app/Contents/MacOS/harkroom-runner
 
 # 이 저장소를 클론한 개발 환경
 MURMUR_URL=<서버 주소> MURMUR_PAT=murp_... pnpm --filter @murmur/agent start

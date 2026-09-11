@@ -37,9 +37,9 @@ function makeFixture(version: string): string {
     // `icon` 을 한 줄로 둔다 — 실물이 그렇고, 재직렬화하면 이것이 펼쳐진다.
     `{
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "murmur",
+  "productName": "Harkroom",
   "version": "${version}",
-  "identifier": "app.murmur.desktop",
+  "identifier": "app.harkroom.desktop",
   "bundle": {
     "icon": ["icons/32x32.png", "icons/icon.icns"]
   }
@@ -51,7 +51,7 @@ function makeFixture(version: string): string {
     path.join(dir, 'Cargo.toml'),
     // `[dependencies]` 에 `version = "2"` 를 둔다 — 전역 치환이면 이것도 바뀐다.
     `[package]
-name = "murmur-desktop"
+name = "harkroom-desktop"
 version = "${version}"
 edition = "2021"
 
@@ -71,7 +71,7 @@ name = "aho-corasick"
 version = "1.1.3"
 
 [[package]]
-name = "murmur-desktop"
+name = "harkroom-desktop"
 version = "${version}"
 dependencies = [
  "tauri",
@@ -144,7 +144,7 @@ describe('버전 동기화 — 세 자리가 함께 움직인다', () => {
       const lock = readFileSync(path.join(dir, 'Cargo.lock'), 'utf8');
       expect(lock).toContain('name = "aho-corasick"\nversion = "1.1.3"');
       expect(lock).toContain('name = "zerocopy"\nversion = "0.7.35"');
-      expect(lock).toContain('name = "murmur-desktop"\nversion = "0.2.0"');
+      expect(lock).toContain('name = "harkroom-desktop"\nversion = "0.2.0"');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -5,7 +5,7 @@
 //
 // 실측(2026-09-06). `Developer ID Application` 으로 정상 서명한 `.app` 이다:
 //
-//   $ spctl -a -vvv -t exec murmur.app
+//   $ spctl -a -vvv -t exec Harkroom.app
 //   rejected
 //   source=Unnotarized Developer ID
 //   origin=Developer ID Application: AHJIN LEE (MG6RHDZGR3)
@@ -21,11 +21,11 @@
 // `notarytool` 이 키체인에 저장한 프로필을 쓴다. **한 번만 만들면 된다:**
 //
 //   # App Store Connect API 키 (권장 — 만료·2FA 영향이 없다)
-//   xcrun notarytool store-credentials murmur \
+//   xcrun notarytool store-credentials harkroom \
 //     --key <AuthKey_XXXX.p8 경로> --key-id <Key ID> --issuer <Issuer UUID>
 //
 //   # 또는 앱 암호
-//   xcrun notarytool store-credentials murmur \
+//   xcrun notarytool store-credentials harkroom \
 //     --apple-id <Apple ID> --team-id MG6RHDZGR3 --password <앱 암호>
 //
 // **자격증명을 이 저장소에 두지 않는다.** 키체인에만 있고, 스크립트는 프로필 이름만 안다.
@@ -63,7 +63,7 @@ const here = dirname(fileURLToPath(import.meta.url));
  */
 const APP =
   process.env.MURMUR_APP_PATH ||
-  join(here, '..', 'src-tauri', 'target', 'release', 'bundle', 'macos', 'murmur.app');
+  join(here, '..', 'src-tauri', 'target', 'release', 'bundle', 'macos', 'Harkroom.app');
 /**
  * 공증 자격증명을 고른다. **로컬은 키체인, CI 는 환경변수.**
  *
@@ -101,7 +101,7 @@ function notaryArgs() {
     return { args: ['--key', key, '--key-id', keyId, '--issuer', issuer], how: 'API 키(환경변수)' };
   }
 
-  const profile = process.env.MURMUR_NOTARY_PROFILE ?? 'murmur';
+  const profile = process.env.MURMUR_NOTARY_PROFILE ?? 'harkroom';
   return { args: ['--keychain-profile', profile], how: `키체인 프로필 ${profile}` };
 }
 
@@ -131,8 +131,8 @@ if (!info.includes('flags=0x10000(runtime)')) {
 // 압축한 뒤에 그것을 안다. CI 에서 시크릿 하나가 빠졌을 때 특히 그렇다.
 const { args: cred, how } = notaryArgs();
 
-const work = mkdtempSync(join(tmpdir(), 'murmur-notarize-'));
-const zip = join(work, 'murmur.zip');
+const work = mkdtempSync(join(tmpdir(), 'harkroom-notarize-'));
+const zip = join(work, 'harkroom.zip');
 try {
   console.log('압축 중(ditto — 링크·권한 보존)…');
   execFileSync('ditto', ['-c', '-k', '--keepParent', APP, zip], { stdio: 'inherit' });

@@ -2234,7 +2234,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "murmur-desktop"
+name = "harkroom-desktop"
 version = "0.1.194"
 dependencies = [
  "keyring",
