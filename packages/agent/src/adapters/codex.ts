@@ -52,7 +52,7 @@ export const CODEX_ADAPTER: HarnessAdapter = {
    * 을 주고, codex 턴에는 정지·API 에러 탐침이 돌지 않는다. 억지로 읽으면 "읽었다"는 거짓
    * 신호가 생겨 아직 정상 동작하는 tail 폴백을 가린다.
    */
-  transcript: { dirUnderConfig: 'sessions', layout: 'by-date', fileName: 'rollout-<ts>-<id>.jsonl', parsed: false },
+  transcript: { kind: 'files', dirUnderConfig: 'sessions', layout: 'by-date', fileName: 'rollout-<ts>-<id>.jsonl', parsed: false },
 
   /**
    * 축은 있다 — `CODEX_HOME` 은 config·auth·sessions 를 한꺼번에 바꾸므로 claude 의
@@ -64,7 +64,7 @@ export const CODEX_ADAPTER: HarnessAdapter = {
    * 그리면 사람은 배정했다고 믿고 러너는 그 값을 버린다(현재 `AgentsSettings.tsx` 가
    * 하네스를 보지 않아 정확히 그렇다).
    */
-  account: { configDirEnv: 'CODEX_HOME', pooled: false },
+  account: { configDirEnv: ['CODEX_HOME'], pooled: false },
 
   // `--effort` 플래그가 없다. `-c model_reasoning_effort="…"` 로 넘긴다 — 키는 실측했지만
   // 받는 값 집합은 `xhigh` 하나만 봤다(`turn.ts` 의 "절반만 확인됐다").

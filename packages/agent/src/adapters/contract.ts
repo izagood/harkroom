@@ -55,8 +55,20 @@ export interface TrustLedger {
   file: string;
 }
 
-/** 세션 기록(transcript/rollout)에서 무엇을 읽을 수 있는가. `null` 은 **모른다**이지 "없다"가 아니다. */
-export interface TranscriptSource {
+/**
+ * 세션 기록에서 무엇을 읽을 수 있는가. `null` 은 **모른다**이지 "없다"가 아니다.
+ *
+ * **갈래를 둔 이유는 opencode 를 재 봤기 때문이다(2026-09-11).** claude·codex 는 둘 다
+ * 디스크의 JSONL 이라 "파일 경로 + 형식" 하나로 표현됐다. opencode 는 세션을 **SQLite**
+ * (`<data>/opencode.db`)에 담고, 대신 CLI 로 물어볼 표면을 준다(`session list`,
+ * `export <id>`, `stats`). 파일 모양만 있는 타입에 그것을 끼워 넣으면 없는 경로를
+ * 지어내야 했다 — 세 번째 하네스를 계정 축보다 먼저 붙이기로 한 이유가 이것이다.
+ */
+export type TranscriptSource = TranscriptFiles | TranscriptCli;
+
+/** 디스크의 기록 파일을 직접 읽는다(claude·codex). */
+export interface TranscriptFiles {
+  kind: 'files';
   /** 기록 뿌리가 계정 config 디렉터리 아래 어디인가(예: `projects`). */
   dirUnderConfig: string;
   /**
@@ -76,10 +88,45 @@ export interface TranscriptSource {
   parsed: boolean;
 }
 
-/** 계정 축. 계정 하나 = 이 환경변수가 가리키는 디렉터리 하나다. `null` 은 계정 축이 없다는 뜻. */
+/**
+ * 기록을 **CLI 에 물어본다**(opencode). 파일 자리를 알 필요가 없고, 하네스가 스키마를
+ * 바꿔도 우리 파서가 깨지지 않는다 — JSONL 을 직접 읽는 것보다 계약으로서 더 낫다.
+ *
+ * 대신 값이 비싸다: 프로세스를 하나 띄운다. 그래서 **턴이 도는 동안 주기적으로 재는 용도
+ * (정지 탐침)에는 그대로 쓰면 안 된다** — 주기·상한을 정하는 것은 이것을 읽는 쪽의 일이다.
+ */
+export interface TranscriptCli {
+  kind: 'cli';
+  /** 세션 목록. */
+  list: readonly string[];
+  /** 한 세션의 전체 기록을 JSON 으로. `<id>` 가 세션 id 자리다. */
+  export: readonly string[];
+  /** 토큰·비용 통계. `null` 이면 그 표면이 없다. */
+  stats: readonly string[] | null;
+  /** 위 명령들의 출력을 **읽는 코드가 있는가**. `TranscriptFiles.parsed` 와 같은 뜻이다. */
+  parsed: boolean;
+}
+
+/**
+ * 계정 축. 계정 하나 = 이 환경변수들이 가리키는 자리 하나다. `null` 은 계정 축이 없다는 뜻.
+ *
+ * **`configDirEnv` 가 배열인 이유도 opencode 다(2026-09-11 실측).** claude 는
+ * `CLAUDE_CONFIG_DIR` 하나, codex 는 `CODEX_HOME` 하나로 config·auth·세션이 함께 움직인다.
+ * opencode 는 XDG 를 따르므로 **셋을 함께 줘야** 움직인다:
+ *
+ * ```
+ * XDG_CONFIG_HOME=<c> XDG_DATA_HOME=<d> XDG_STATE_HOME=<s> opencode debug paths
+ *   → config/data/log/state 가 모두 그 아래로 이동 (실측)
+ * OPENCODE_CONFIG_DIR=<t> opencode debug paths → 아무것도 안 움직인다 (실측)
+ * ```
+ *
+ * 하나를 빼먹으면 자격증명은 갈리는데 세션은 공유되는 **반쪽 격리**가 된다. 그 상태는
+ * 조용하다 — 계정을 바꿨다고 믿는 러너가 남의 세션을 이어받는다. 그래서 축을 "환경변수
+ * 하나"로 적지 않고 **함께 세팅해야 하는 목록**으로 적는다.
+ */
 export interface AccountAxis {
-  /** 자격증명·세션·설정을 한꺼번에 바꾸는 환경변수. */
-  configDirEnv: 'CLAUDE_CONFIG_DIR' | 'CODEX_HOME';
+  /** 자격증명·세션·설정을 한꺼번에 바꾸는 환경변수들. **전부 함께** 세팅해야 뜻이 있다. */
+  configDirEnv: readonly string[];
   /**
    * 계정 풀을 **관리하는 표면이 있는가**(목록·로그인·사용량·페일오버). claude 만 참이다 —
    * codex 는 `ensureCodexHome` 이 `~/.codex/auth.json` 을 링크해 **계정 하나**로 돈다.
