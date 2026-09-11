@@ -6,7 +6,7 @@
 // 이 파일이 그 방향(왼쪽으로 끌면 넓어진다)을 지킨다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
-import type { AgentSessionView } from '@murmur/shared';
+import type { AgentSessionView } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { usePrefsStore } from '../src/state/prefsStore';

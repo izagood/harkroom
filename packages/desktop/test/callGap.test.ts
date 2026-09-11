@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { AccountView, MessageRow } from '@murmur/shared';
+import type { AccountView, MessageRow } from '@harkroom/shared';
 import { callGap } from '../src/lib/callGap';
 import type { RunnerState } from '../src/lib/runnerLauncher';
 

@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
-import type { AgentHarness } from '@murmur/shared';
+import type { AgentHarness } from '@harkroom/shared';
 import { buildTurnCommand, writeMcpConfigOnce, writeSystemPromptFile, type TurnPlan } from '../src/turn.js';
 import { looksReadyForPrompt } from '../src/pty.js';
 

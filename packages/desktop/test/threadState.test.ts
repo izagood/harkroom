@@ -3,7 +3,7 @@
 // 이 파일이 지키는 유일한 치명적 실패 모드: **죽었는데 "도는 중"이면 사람은 영원히 기다린다.**
 // 그리고 그 반대편의 거짓말 — 소켓이 끊겼다고 도는 스레드를 전부 붉게 칠하는 것 — 도 함께 막는다.
 import { describe, it, expect } from 'vitest';
-import type { AskMeta, FailureMeta, MessageRow } from '@murmur/shared';
+import type { AskMeta, FailureMeta, MessageRow } from '@harkroom/shared';
 import { threadState, threadStateFromFacts, isBlocking, threadStateLabel, type Liveness, type ThreadState } from '../src/lib/threadState';
 import { LOCALES, translator } from '../src/i18n';
 import { msg } from './helpers/fakeApi';

@@ -1,4 +1,4 @@
-import { readAskMeta, readFailureMeta, readReportMeta, type MessageRow } from '@murmur/shared';
+import { readAskMeta, readFailureMeta, readReportMeta, type MessageRow } from '@harkroom/shared';
 import type { MessageKey, Translate } from '../i18n';
 
 /**

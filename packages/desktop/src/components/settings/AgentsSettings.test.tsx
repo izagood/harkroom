@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
-import type { AccountView, AgentView } from '@murmur/shared';
+import type { AccountView, AgentView } from '@harkroom/shared';
 import { AgentsSettings } from './AgentsSettings';
 import { setController, type Controller } from '../../state/controller';
 import { resetCommunityRegistry, useActiveStore } from '../../state/communities';

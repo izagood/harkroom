@@ -31,7 +31,7 @@
  * 않고 실행 대상·인자가 Rust 안에 고정되는 invoke)을 그대로 재사용한다. Rust 쪽이 자식을
  * `setsid`(Unix)로 자기 세션/프로세스 그룹으로 분리한다.
  *
- * 또한 러너는 더 이상 `pnpm --filter @murmur/agent start` 로 소스를 실행하지 않는다 —
+ * 또한 러너는 더 이상 `pnpm --filter @harkroom/agent start` 로 소스를 실행하지 않는다 —
  * 단일 번들로 만들어 Tauri sidecar(`externalBin`)로 앱과 함께 배포한다. 그래서
  * `runnerRepoPath`(murmur 소스가 어디 있나) 자체가 사라졌다 — 그 역할은 이미 에이전트별
  * `workingDir`(DB)이 한다. `cwd` 도 이 실행기 표면에서 사라졌다: sidecar 는 자기 위치를
@@ -62,7 +62,7 @@
 // **`@tauri-apps/plugin-shell` 을 더 이상 안 부른다**(`#513`). 마지막 남은 사용처가
 // 로그인 `PATH` 조회(`#305`)였고, 그것이 Rust 로 옮겨가며(`login_path.rs`) 이 파일에서
 // 웹뷰가 프로그램을 실행하는 자리가 하나도 안 남았다.
-import { DAEMON_RETIRING_TOKEN, EX_CONFIG, harnessBinaryName, installHint, runnerExitReason } from '@murmur/shared';
+import { DAEMON_RETIRING_TOKEN, EX_CONFIG, harnessBinaryName, installHint, runnerExitReason } from '@harkroom/shared';
 // 문구는 사전이 진다(`#619`). **이 파일은 타입만 가져온다** — `translator` 를 여기서
 // 부르면 판정이 언어를 스스로 고르게 되고, 그것이 `(c) 전역 번역기`(그 인터페이스 주석이
 // 버린 후보)의 모양이다.
@@ -1181,7 +1181,7 @@ export class RunnerLauncher {
    *
    * ## 무엇으로 가르는가 — 로그의 그 줄
    *
-   * 러너는 두 사유를 로그의 마지막 줄로 가른다(`@murmur/shared` 의
+   * 러너는 두 사유를 로그의 마지막 줄로 가른다(`@harkroom/shared` 의
    * `CREDENTIAL_REJECTED_LINE`·`EXECUTABLE_NOT_FOUND_LINE`). 그 줄이 여기 닿지 못한
    * 이유는 러너의 stderr 가 `/dev/null` 로 버려졌기 때문이고(`#434`), 그것을 파일로
    * 돌려(`daemon/src/runnerLog.ts`) daemon 이 exit 통지에 꼬리를 실으면서 닿게 됐다.

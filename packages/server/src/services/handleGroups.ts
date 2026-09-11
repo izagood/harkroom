@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import type { HandleGroupRow, HandleGroupMemberRow } from '@murmur/shared';
+import type { HandleGroupRow, HandleGroupMemberRow } from '@harkroom/shared';
 
 /**
  * 집합 행의 컬럼 목록. **`g` 별칭을 전제한다** — `memberCount` 가 상관 부질의라 테이블을

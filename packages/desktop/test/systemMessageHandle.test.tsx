@@ -5,7 +5,7 @@
 // meta 에 대상이 실린다, 멘션 알림이 없다, 감사 detail 이 새지 않는다).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import { SYSTEM_ACCOUNT_PLACEHOLDER, type ChannelPrefRow, type SavedMessageRow } from '@murmur/shared';
+import { SYSTEM_ACCOUNT_PLACEHOLDER, type ChannelPrefRow, type SavedMessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController } from '../src/state/controller';
 import { usePrefsStore } from '../src/state/prefsStore';

@@ -44,7 +44,7 @@ import {
   newIncarnationId,
   type IncarnationId,
   type RunnerInfo,
-} from '@murmur/shared/daemonProtocol';
+} from '@harkroom/shared/daemonProtocol';
 
 import { psIdentityProbe } from './adopt.js';
 

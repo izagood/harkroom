@@ -1,4 +1,4 @@
-import { type CodeSegment, QUOTE_LINE } from '@murmur/shared';
+import { type CodeSegment, QUOTE_LINE } from '@harkroom/shared';
 import { classifyLink, type LinkTarget } from './link';
 
 /**

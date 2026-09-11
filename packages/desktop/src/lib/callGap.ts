@@ -1,4 +1,4 @@
-import type { AccountView, MessageRow } from '@murmur/shared';
+import type { AccountView, MessageRow } from '@harkroom/shared';
 import { bodyRecipients } from './mention';
 import type { RunnerState } from './runnerLauncher';
 import type { Liveness } from './threadState';

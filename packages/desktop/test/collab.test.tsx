@@ -12,7 +12,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
-import type { CollabProposal, CollabProposalsView, CollabRepoView } from '@murmur/shared';
+import type { CollabProposal, CollabProposalsView, CollabRepoView } from '@harkroom/shared';
 import { Collab } from '../src/components/Collab';
 import { countFor, matchesFilter } from '../src/lib/collabProposals';
 

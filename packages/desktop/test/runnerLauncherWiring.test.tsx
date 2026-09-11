@@ -14,7 +14,7 @@ import {
   CREDENTIAL_REJECTED_LINE,
   EXECUTABLE_NOT_FOUND_LINE,
   type AgentView,
-} from '@murmur/shared';
+} from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController } from '../src/state/controller';
 import { usePrefsStore } from '../src/state/prefsStore';

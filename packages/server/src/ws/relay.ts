@@ -26,7 +26,7 @@ import type {
   RelayRunnerFrame,
   RelayServerFrame,
   WriterDeniedReason,
-} from '@murmur/shared';
+} from '@harkroom/shared';
 
 /**
  * 소켓의 최소 표면. `@fastify/websocket` 의 소켓도 테스트의 가짜도 이 모양이면 된다 —

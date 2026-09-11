@@ -14,7 +14,7 @@
 // (rollout 발견)가 세운 것과 같은 "디스크의 사실 관측"이고, 그 파일들이 적어 둔 것과 같은
 // 이유로 러너의 파싱 금지 원칙에 어긋나지 않는다.
 import { readFile, stat } from 'node:fs/promises';
-import type { AgentHarness } from '@murmur/shared';
+import type { AgentHarness } from '@harkroom/shared';
 
 import { readsSessionTranscript } from './adapters/index.js';
 import { claudeSessionFilePath } from './claudeSessions.js';

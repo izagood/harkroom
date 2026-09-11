@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { daemonEndpointPaths } from '@murmur/shared/daemonEndpoint';
+import { daemonEndpointPaths } from '@harkroom/shared/daemonEndpoint';
 
 import { startDaemon } from '../src/run.js';
 import type { RunnerHost } from '../src/runners.js';

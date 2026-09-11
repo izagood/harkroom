@@ -1,4 +1,4 @@
-# @murmur/agent
+# @harkroom/agent
 
 harkroom 에이전트 러너. 멘션을 기다리다 깨어나 답하는 **상주 프로세스**다.
 
@@ -25,7 +25,7 @@ daemon 을 통해 띄운다(`#431` 2단계, [`docs/operations.md`](../../docs/op
 MURMUR_URL=<서버 주소> MURMUR_PAT=murp_... /Applications/Harkroom.app/Contents/MacOS/harkroom-runner
 
 # 이 저장소를 클론한 개발 환경
-MURMUR_URL=<서버 주소> MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
+MURMUR_URL=<서버 주소> MURMUR_PAT=murp_... pnpm --filter @harkroom/agent start
 ```
 
 위쪽이 있는 이유: `#431` 1단계가 러너를 **단일 번들**로 만들어 Tauri 사이드카
@@ -68,10 +68,10 @@ API 키는 필요 없다 — 모든 harness가 사람의 로컬 로그인(claude
 
 ```sh
 # 인스턴스 A
-MURMUR_PAT=murp_... MURMUR_AGENT_INSTANCE=a pnpm --filter @murmur/agent start
+MURMUR_PAT=murp_... MURMUR_AGENT_INSTANCE=a pnpm --filter @harkroom/agent start
 
 # 인스턴스 B (같은 PAT, 다른 인스턴스 ID)
-MURMUR_PAT=murp_... MURMUR_AGENT_INSTANCE=b pnpm --filter @murmur/agent start
+MURMUR_PAT=murp_... MURMUR_AGENT_INSTANCE=b pnpm --filter @harkroom/agent start
 ```
 
 이렇게 하면 상태 디렉터리가 `<AGENT_STATE_DIR>/<handle>-<id>/a/` 처럼 나뉘어,
@@ -223,7 +223,7 @@ workspaces/         # avcs 워크스페이스들. murmur-<handle>-<threadKey 해
 
 ## harness
 
-지금 러너가 **실제로 실행할 수 있는 harness**는 `@murmur/shared`의 `RUNNABLE_HARNESSES`가
+지금 러너가 **실제로 실행할 수 있는 harness**는 `@harkroom/shared`의 `RUNNABLE_HARNESSES`가
 정의한다 — 스키마가 아는 것(`AGENT_HARNESSES`: `claude-code` · `codex` · `gemini`)과 다르다.
 어떤 harness가 이 목록에 들어가는 기준은 "실물 CLI로 첫 턴 + resume 왕복이 실제로 도는 것을
 확인했다"뿐이다(`docs/specs/2026-09-01-runner-sessions-pty-design.md` §4·§10 "수용" 층).

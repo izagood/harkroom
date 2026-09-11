@@ -31,7 +31,7 @@ import type {
   ClaudeAccountLimitHit,
   ClaudeAccountUsage,
   ClaudeUsageSnapshot,
-} from '@murmur/shared/daemonProtocol';
+} from '@harkroom/shared/daemonProtocol';
 
 /** 창 길이. claude 의 `rateLimitType: 'five_hour'` 와 같은 5시간이다(실측). */
 export const USAGE_WINDOW_MS = 5 * 60 * 60 * 1000;

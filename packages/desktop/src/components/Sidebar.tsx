@@ -41,8 +41,8 @@ import type { SectionId } from './settings/sections';
 import type {
   AccountView, AddTeamToChannelResult, AgentTeamRow, ChannelAutoMentionMode, ChannelPrefRow,
   ChannelRow, NotifyLevel,
-} from '@murmur/shared';
-import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, PROJECTION_UNCONFIGURED_NOTICE, notifyLevelOf, sortChannelsBySection } from '@murmur/shared';
+} from '@harkroom/shared';
+import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, PROJECTION_UNCONFIGURED_NOTICE, notifyLevelOf, sortChannelsBySection } from '@harkroom/shared';
 import { Logo } from './Logo';
 import { SidebarToggleIcon } from './SidebarToggleIcon';
 // 화면은 `useT`, `lib/` 성격의 판정(`memberErrorText`)은 `Translate` 를 인자로 받는다 —

@@ -9,7 +9,7 @@
  * 관용구를 그대로 베낀다.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import type { ProjectionConfigView } from '@murmur/shared';
+import type { ProjectionConfigView } from '@harkroom/shared';
 import { ApiClient } from '../src/lib/api';
 
 afterEach(() => vi.unstubAllGlobals());

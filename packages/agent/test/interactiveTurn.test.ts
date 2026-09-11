@@ -4,7 +4,7 @@ import { mkdir, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentView, MessageRow } from '@murmur/shared';
+import type { AgentView, MessageRow } from '@harkroom/shared';
 import { createInteractiveManager, type InteractiveRelay, type InteractiveTurnDeps, type RunInteractiveTurn } from '../src/interactiveTurn.js';
 import { MentionQueue } from '../src/mentionQueue.js';
 import { SessionStore } from '../src/sessions.js';

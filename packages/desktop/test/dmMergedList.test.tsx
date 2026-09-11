@@ -25,7 +25,7 @@ import { PRESENCE_LABEL } from '../src/lib/presenceView';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { translator } from '../src/i18n';
 import type { RunnerState } from '../src/lib/runnerLauncher';
-import type { DmView } from '@murmur/shared';
+import type { DmView } from '@harkroom/shared';
 
 const fakeController = () => {
   const c = {

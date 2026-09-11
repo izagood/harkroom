@@ -1,5 +1,5 @@
-import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@murmur/shared';
-import type { AgentTeamRow, HandleGroupRow } from '@murmur/shared';
+import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
+import type { AgentTeamRow, HandleGroupRow } from '@harkroom/shared';
 import type { BodyRecipient } from './mention';
 
 /**

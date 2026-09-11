@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import type { MessageRow } from '@murmur/shared';
+import type { MessageRow } from '@harkroom/shared';
 import { postMessage } from './messages.js';
 import { emitEvent } from '../events.js';
 

@@ -7,7 +7,7 @@ import { bootstrapAdmin } from './helpers/fixtures.js';
 import { onEvent } from '../src/events.js';
 // 자리표시자 문자열을 여기 베껴 쓰지 않는다(#329) — 베끼면 서버가 그것을 바꿔도 이 파일은
 // 옛 문자열을 그대로 초록으로 통과시키고, 화면은 치환되지 않은 본문을 그린다.
-import { SYSTEM_ACCOUNT_PLACEHOLDER } from '@murmur/shared';
+import { SYSTEM_ACCOUNT_PLACEHOLDER } from '@harkroom/shared';
 
 let app: FastifyInstance;
 let pool: Pool;

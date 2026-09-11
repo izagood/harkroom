@@ -1,4 +1,4 @@
-import { readAskMeta, readDelegationMeta, type MessageRow, type OpenAskLink } from '@murmur/shared';
+import { readAskMeta, readDelegationMeta, type MessageRow, type OpenAskLink } from '@harkroom/shared';
 import type { Liveness } from './threadState';
 import type { Translate } from '../i18n';
 

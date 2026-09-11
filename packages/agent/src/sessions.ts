@@ -6,7 +6,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { AGENT_HARNESSES, type AgentHarness } from '@murmur/shared';
+import { AGENT_HARNESSES, type AgentHarness } from '@harkroom/shared';
 
 export interface SessionRecord {
   workspaceDir: string;

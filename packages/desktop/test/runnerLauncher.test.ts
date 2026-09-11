@@ -8,7 +8,7 @@
  * 전부 통과했다). 여기서는 키체인과 자식 프로세스만 목이고 판정은 전부 실물이다.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { CREDENTIAL_REJECTED_LINE } from '@murmur/shared';
+import { CREDENTIAL_REJECTED_LINE } from '@harkroom/shared';
 import {
   RunnerLauncher, patLabelPrefix, STRANGER_ATTACHED,
   type LaunchableAgent, type RunnerProcess, type RunnerSecretStore, type RunnerSpawner,
@@ -714,7 +714,7 @@ describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
  * 단정했기 때문이다. 그 단정이 하네스가 없는 사람에게 재발급을 시켰고(`#473`), 이제
  * 앱은 **로그의 이 줄**을 보고 가른다. 그래서 이 픽스처가 생겼다.
  *
- * 문자열을 손으로 적지 않고 `@murmur/shared` 의 상수를 쓴다 — 사본을 들면 상수가
+ * 문자열을 손으로 적지 않고 `@harkroom/shared` 의 상수를 쓴다 — 사본을 들면 상수가
  * 바뀔 때 이 파일만 초록으로 남고, 그때 앱은 다시 사유를 못 가린다.
  */
 const 자격증명거부꼬리 = [CREDENTIAL_REJECTED_LINE];

@@ -12,7 +12,7 @@
 // 그래서 이름은 **대기 사슬의 양 끝일 때만** 쓴다 — 최대 둘, 참여자 수와 무관하다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import type { OpenAskLink } from '@murmur/shared';
+import type { OpenAskLink } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';

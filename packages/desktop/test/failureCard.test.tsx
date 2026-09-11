@@ -4,7 +4,7 @@
 // (`lib/agentExchange.ts::addressesHuman`). Task 6(`stuck`)·Task 7(교착)이 이것을 전제로 한다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import type { FailureMeta, MessageRow } from '@murmur/shared';
+import type { FailureMeta, MessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';

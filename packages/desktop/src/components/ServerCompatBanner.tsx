@@ -1,4 +1,4 @@
-import { MIN_SERVER_VERSION, serverCompat } from '@murmur/shared';
+import { MIN_SERVER_VERSION, serverCompat } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import type { SectionId } from './settings/sections';
 import { useT } from '../i18n/useT';

@@ -14,8 +14,8 @@ import {
   type ClaimOutcome,
   type DaemonEndpointPaths,
   type DaemonPidRecord,
-} from '@murmur/shared/daemonEndpoint';
-import type { AdoptRunnerResult, DaemonIdentity } from '@murmur/shared/daemonProtocol';
+} from '@harkroom/shared/daemonEndpoint';
+import type { AdoptRunnerResult, DaemonIdentity } from '@harkroom/shared/daemonProtocol';
 
 import type { DaemonArgs } from './args.js';
 import { describeVerdict, planAdoption, psIdentityProbe, type ProcessIdentityProbe } from './adopt.js';

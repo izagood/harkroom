@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFileSync, readdirSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AGENT_HARNESSES, RUNNABLE_HARNESSES, MENTION_PERMISSIONS, type AgentHarness } from '@murmur/shared';
+import { AGENT_HARNESSES, RUNNABLE_HARNESSES, MENTION_PERMISSIONS, type AgentHarness } from '@harkroom/shared';
 
 import { ADAPTERS, adapterFor, harnessAdaptersEnabled, type HarnessAdapter } from '../src/adapters/index.js';
 import { buildTurnCommand, type BuildTurnCommandOptions } from '../src/turn.js';

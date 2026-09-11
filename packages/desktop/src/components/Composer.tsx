@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
-import { MAX_MESSAGE_BODY_CHARS, messagePermalink, parseMessagePermalink, type ScheduledMessageView } from '@murmur/shared';
-import type { AccountView, AgentTeamRow, AttachmentRow, HandleGroupRow } from '@murmur/shared';
+import { MAX_MESSAGE_BODY_CHARS, messagePermalink, parseMessagePermalink, type ScheduledMessageView } from '@harkroom/shared';
+import type { AccountView, AgentTeamRow, AttachmentRow, HandleGroupRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { NO_TEAMS } from '../state/appStore';
 import { getController } from '../state/controller';

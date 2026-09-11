@@ -1,4 +1,4 @@
-import type { MessageRow } from '@murmur/shared';
+import type { MessageRow } from '@harkroom/shared';
 
 /**
  * 목록의 한 자리. 보통 메시지 하나이거나, **접힌 진행 묶음**이다.

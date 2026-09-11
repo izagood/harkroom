@@ -27,7 +27,7 @@
 // 쓰면 행 타임스탬프가 곧 키 입력의 리듬이라 그 자체가 부채널이다.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
-import type { AgentSessionView, AgentWakeView } from '@murmur/shared';
+import type { AgentSessionView, AgentWakeView } from '@harkroom/shared';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { cancelDelegationsFor } from '../services/delegations.js';

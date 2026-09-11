@@ -62,7 +62,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { IncarnationId } from '@murmur/shared/daemonProtocol';
+import type { IncarnationId } from '@harkroom/shared/daemonProtocol';
 
 /**
  * 장부 파일 이름 — **버전이 박혀 있다.**

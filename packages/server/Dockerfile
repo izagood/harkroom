@@ -15,7 +15,7 @@ COPY packages/server/package.json packages/server/
 #
 # `--filter` 로 서버와 그 의존만 설치한다 — 워크스페이스 전체를 복사하지 않으므로
 # 다른 패키지(desktop·agent·daemon)의 의존까지 받을 이유가 없다.
-RUN pnpm install --frozen-lockfile --filter @murmur/server...
+RUN pnpm install --frozen-lockfile --filter @harkroom/server...
 COPY packages/shared packages/shared
 COPY packages/server packages/server
 # 릴리스 버전의 **정본**이다(`packages/server/src/version.ts` 에 근거). 서버가 `/healthz` 에

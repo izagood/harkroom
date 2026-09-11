@@ -1,6 +1,6 @@
 // claude 계정 **풀**의 타입과 순수 해석. `pools.json` 이 이 모듈의 대상이다.
 //
-// **서브패스로 낸다**(`@murmur/shared/claudePools`). 이 패키지의 별 모듈은 전부 그 모양이고
+// **서브패스로 낸다**(`@harkroom/shared/claudePools`). 이 패키지의 별 모듈은 전부 그 모양이고
 // (`./daemonEndpoint`, `./daemonProtocol`), `index.ts` 는 재수출이 하나도 없는 평평한 파일이다.
 // 그 둘이 서브패스인 이유로 적힌 것은 Node 의존이지만 — 이 파일에는 Node 의존이 **없다** —
 // 파일 조직의 관례는 그것과 별개다. 웹뷰가 직접 import 해도 안전하다.
@@ -22,7 +22,7 @@
  * 풀·계정 이름 문법. `agent/src/claudeAccounts.ts::CLAUDE_ACCOUNT_PATTERN` 과 **같은 값**이고
  * 같은 이유다 — 이 이름이 경로 세그먼트가 되므로 `..` 나 `/` 가 들어올 여지를 문법에서 끊는다.
  *
- * 두 곳에 같은 값이 있는 것이 마음에 걸리지만, 러너의 것은 `@murmur/shared` 를 물지 않는
+ * 두 곳에 같은 값이 있는 것이 마음에 걸리지만, 러너의 것은 `@harkroom/shared` 를 물지 않는
  * 자리에서도 쓰인다. 하나로 합치려면 그 의존을 먼저 재야 한다.
  */
 export const CLAUDE_POOL_NAME_PATTERN = /^[a-z0-9-]{1,32}$/;

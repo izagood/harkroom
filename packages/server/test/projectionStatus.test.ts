@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
-import type { ProjectionRuntime } from '@murmur/shared';
+import type { ProjectionRuntime } from '@harkroom/shared';
 import { startTestDb } from './helpers/testDb.js';
 import { createFakeAvcs } from './helpers/fakeAvcs.js';
 import { buildServer } from '../src/buildServer.js';

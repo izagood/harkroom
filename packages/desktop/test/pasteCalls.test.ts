@@ -6,7 +6,7 @@
  * 적어 놓고 실제로는 부르는 것이 이 기능에서 가장 나쁜 실패다.
  */
 import { describe, it, expect } from 'vitest';
-import { QUOTE_LINE, mentionedHandles } from '@murmur/shared';
+import { QUOTE_LINE, mentionedHandles } from '@harkroom/shared';
 import { callsInText, quoteText, MANY_CALLS } from '../src/lib/pasteCalls';
 
 const known = new Set(['murmur', 'patch', 'docs', 'team-desk']);

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { messagePermalink, readAskMeta, readModelMeta, type MessageRow } from '@murmur/shared';
+import { messagePermalink, readAskMeta, readModelMeta, type MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { AskCard } from './AskCard';

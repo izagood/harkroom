@@ -19,7 +19,7 @@
  * 자릿수가 한둘 크다(실측: 창 하나에서 입력 수만, 캐시 읽기 수천만). 하나로 더하면
  * 화면의 숫자가 사실상 캐시 읽기 하나가 되고, 계정들의 차이가 그 안에 묻힌다.
  */
-import type { ClaudeAccountUsage } from '@murmur/shared/daemonProtocol';
+import type { ClaudeAccountUsage } from '@harkroom/shared/daemonProtocol';
 
 /**
  * 토큰 수를 짧게. **자리를 하나만 남긴다** — 이 숫자는 비교용이고, `1,234,567` 을 그대로

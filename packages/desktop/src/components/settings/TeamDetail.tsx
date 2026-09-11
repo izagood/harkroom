@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { AgentTeamMemberRow, AgentTeamRow, AgentView } from '@murmur/shared';
-import { HANDLE_PATTERN } from '@murmur/shared';
+import type { AgentTeamMemberRow, AgentTeamRow, AgentView } from '@harkroom/shared';
+import { HANDLE_PATTERN } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { Identity } from '../Identity';

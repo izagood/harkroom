@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { AgentView } from '@murmur/shared';
+import type { AgentView } from '@harkroom/shared';
 import { Identity } from '../Identity';
 import type { RunnerState } from '../../lib/runnerLauncher';
 import { faceState, isFaceGreyed } from '../../lib/faceState';

@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { countsAsReply, TEAM_ROUND_LIMIT, type InboxDelegationOutcome, type MessageRow } from '@murmur/shared';
+import { countsAsReply, TEAM_ROUND_LIMIT, type InboxDelegationOutcome, type MessageRow } from '@harkroom/shared';
 
 /**
  * 위임 왕복(마이그레이션 050) — **팀장이 넘긴 일이 끝나면 팀장이 다시 깬다.**

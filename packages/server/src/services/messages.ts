@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_CHAIN_LIMIT, mentionedHandles, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type MessageRow } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_CHAIN_LIMIT, mentionedHandles, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type MessageRow } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { preemptWakesForThread } from './agentWakes.js';
 import { closeDelegationsForReply, outcomesFor } from './delegations.js';

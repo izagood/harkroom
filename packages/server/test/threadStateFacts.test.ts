@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
-import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, type AskMeta, type FailureMeta } from '@murmur/shared';
+import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, type AskMeta, type FailureMeta } from '@harkroom/shared';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';

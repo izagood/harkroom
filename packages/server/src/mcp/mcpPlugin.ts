@@ -8,7 +8,7 @@ import {
   MODEL_ID_MAX, REPORT_MAX_ITEMS, REPORT_MAX_NEXT, TEAM_ROUND_LIMIT,
   type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
   type ModelMeta, type ReportMeta,
-} from '@murmur/shared';
+} from '@harkroom/shared';
 import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';

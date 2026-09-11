@@ -10,14 +10,14 @@
  *
  * ## 판정을 새로 만들지 않는다
  *
- * 부르는지 여부는 `mentionedHandles`(@murmur/shared) 하나가 답한다 — 서버가 알림을 만들 때
+ * 부르는지 여부는 `mentionedHandles`(@harkroom/shared) 하나가 답한다 — 서버가 알림을 만들 때
  * 쓰는 그 함수다. 여기서 자체 정규식을 두면 규칙이 두 벌이 되고, 갈라지는 순간 화면은
  * "부르지 않는다"고 적은 글이 실제로는 넷을 부른다.
  *
  * 인용으로 바꿀 때 붙이는 표시도 같은 이유로 `QUOTE_LINE` 을 기준으로 만든다: 렌더러와
  * 멘션 파서가 인용이라고 부르는 것이 같아야 한다(그 상수의 주석이 근거다).
  */
-import { QUOTE_LINE, mentionedHandles } from '@murmur/shared';
+import { QUOTE_LINE, mentionedHandles } from '@harkroom/shared';
 
 /**
  * 이 글이 실제로 부르는 handle 들(소문자). **아는 이름만 남긴다** — 존재하지 않는

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AgentSessionState, WriterDeniedReason } from '@murmur/shared';
+import type { AgentSessionState, WriterDeniedReason } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { connectAgentAttach, type AttachHandle } from '../lib/agentTerminal';

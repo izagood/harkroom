@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import type { AttachmentRow } from '@murmur/shared';
-import { MAX_MESSAGE_BODY_CHARS } from '@murmur/shared';
+import type { AttachmentRow } from '@harkroom/shared';
+import { MAX_MESSAGE_BODY_CHARS } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { Controller, setController } from '../src/state/controller';

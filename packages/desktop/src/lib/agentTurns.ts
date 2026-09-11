@@ -29,7 +29,7 @@
  * 단계의 범위가 아니다.
  */
 import { useEffect, useState } from 'react';
-import type { AgentSessionView, AgentWakeView, MessageRow } from '@murmur/shared';
+import type { AgentSessionView, AgentWakeView, MessageRow } from '@harkroom/shared';
 import { getController } from '../state/controller';
 import { bodyWithHandles } from './mention';
 

@@ -1,7 +1,7 @@
-import { CHANNEL_MENTION_HANDLE, denormalizeMentions, fillSystemAccount, MENTION_PATTERN, MENTION_TOKEN_PATTERN, mentionedHandles, mentionScanText, type MessageRow, renderMentions, splitCode } from '@murmur/shared';
+import { CHANNEL_MENTION_HANDLE, denormalizeMentions, fillSystemAccount, MENTION_PATTERN, MENTION_TOKEN_PATTERN, mentionedHandles, mentionScanText, type MessageRow, renderMentions, splitCode } from '@harkroom/shared';
 import type { Translate } from '../i18n';
 
-// 멘션 문법은 @murmur/shared 에 있다 — 서버의 알림 발송과 같은 규칙을 봐야 한다. 갈라지면
+// 멘션 문법은 @harkroom/shared 에 있다 — 서버의 알림 발송과 같은 규칙을 봐야 한다. 갈라지면
 // 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(me@x.com), 강조된
 // 것이 알림을 보내지 않는다(@Fizz).
 const MENTION_IN_TEXT = new RegExp(MENTION_PATTERN, 'g');

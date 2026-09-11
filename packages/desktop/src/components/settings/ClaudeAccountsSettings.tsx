@@ -41,7 +41,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 
-import { CLAUDE_POOL_NAME_PATTERN } from '@murmur/shared/claudePools';
+import { CLAUDE_POOL_NAME_PATTERN } from '@harkroom/shared/claudePools';
 
 import { useLocale } from '../../i18n/useT';
 

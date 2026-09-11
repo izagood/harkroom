@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { AccountView, MessageRow } from '@murmur/shared';
+import type { AccountView, MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { Identity } from './Identity';
 import type { Liveness } from './../lib/threadState';

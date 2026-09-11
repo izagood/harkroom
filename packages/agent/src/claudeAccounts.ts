@@ -29,7 +29,7 @@ import {
   orderAccounts,
   parseClaudePoolsConfig,
   type ClaudePoolsConfig,
-} from '@murmur/shared/claudePools';
+} from '@harkroom/shared/claudePools';
 
 import { isCredentialFailure, isExecutableNotFound, isQuotaExhausted } from './policy.js';
 import { PromptNotDeliveredError } from './pty.js';

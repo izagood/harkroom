@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER } from '@murmur/shared';
+import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { Controller, setController, type Controller as ControllerType } from '../src/state/controller';

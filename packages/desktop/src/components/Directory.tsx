@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Overlay } from './Overlay';
-import type { AccountView } from '@murmur/shared';
+import type { AccountView } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { StatusMark } from './Identity';

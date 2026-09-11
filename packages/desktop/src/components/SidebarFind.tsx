@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { AccountView, ChannelRow } from '@murmur/shared';
+import type { AccountView, ChannelRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { Identity } from './Identity';

@@ -22,7 +22,7 @@ import {
 import {
   CHANNEL_AUTO_MENTION_MODES, CHANNEL_NAME_PATTERN, MAX_MESSAGE_BODY_CHARS, NOTIFY_LEVELS,
   SYSTEM_ACCOUNT_PLACEHOLDER,
-} from '@murmur/shared';
+} from '@harkroom/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent, emitPosted } from '../events.js';
 import { postMessage } from '../services/messages.js';

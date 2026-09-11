@@ -3,7 +3,7 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageBody } from './MessageBody';
 import { ApiError } from '../lib/api';
-import type { ChannelDoc } from '@murmur/shared';
+import type { ChannelDoc } from '@harkroom/shared';
 import type { SectionId } from './settings/sections';
 import { useT } from '../i18n/useT';
 

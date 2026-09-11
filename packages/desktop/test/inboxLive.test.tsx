@@ -11,7 +11,7 @@
 // **신호가 이 화면에 닿는가**, 그리고 닿는 값이 조회를 헛돌리지 않는가 — 둘뿐이다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, waitFor, act } from '@testing-library/react';
-import type { InboxEntry } from '@murmur/shared';
+import type { InboxEntry } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';

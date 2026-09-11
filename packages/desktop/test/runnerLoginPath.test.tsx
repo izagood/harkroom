@@ -8,7 +8,7 @@
  * 자식 `env.PATH` 로 넘기고, 못 얻으면 `SYSTEM_PATH_FALLBACK` 으로 물러난다.
  *
  * (`#431` 1단계 이전에는 여기에 "설정의 `pnpm` 절대 경로" 라는 세 번째 자리가 있었다 —
- * 러너를 `pnpm --filter @murmur/agent start` 로 띄우던 시절엔 `pnpm` 자체를 `PATH` 에서
+ * 러너를 `pnpm --filter @harkroom/agent start` 로 띄우던 시절엔 `pnpm` 자체를 `PATH` 에서
  * 찾아야 했기 때문이다. 사이드카 spawn 은 그 프로그램을 Rust 가 직접 찾으므로
  * (`main.rs::sidecar_path()`) 그 자리와 `validateRunnerCommand`·`runnerCommandDir`·
  * `RUNNER_COMMAND_MISSING` 이 통째로 사라졌다.)

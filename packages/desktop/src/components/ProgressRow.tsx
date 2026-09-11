@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { MessageRow } from '@murmur/shared';
+import type { MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { displayBody } from '../lib/mention';
 import { elapsedMs } from '../lib/progressGroup';

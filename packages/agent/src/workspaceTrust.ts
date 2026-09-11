@@ -19,7 +19,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { adapterFor, harnessAdaptersEnabled } from './adapters/index.js';
-import type { AgentHarness } from '@murmur/shared';
+import type { AgentHarness } from '@harkroom/shared';
 
 /**
  * claude 의 신뢰 장부. `CLAUDE_CONFIG_DIR` 를 따라간다 — 계정별 config 디렉터리로 띄우면

@@ -1,4 +1,4 @@
-import type { AccountView, MessageRow } from '@murmur/shared';
+import type { AccountView, MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { useT } from '../i18n/useT';
 

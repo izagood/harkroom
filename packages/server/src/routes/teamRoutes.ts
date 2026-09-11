@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { HANDLE_PATTERN } from '@murmur/shared';
+import { HANDLE_PATTERN } from '@harkroom/shared';
 import {
   listTeams, getTeam, getTeamByName, createTeam, updateTeamName, deleteTeam,
   listTeamMembers, addAgentToTeam, removeAgentFromTeam, addTeamToChannel, setTeamLead,

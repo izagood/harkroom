@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { AGENT_HARNESSES, type AgentConfig, type AgentHarness, type AgentView } from '@murmur/shared';
+import { AGENT_HARNESSES, type AgentConfig, type AgentHarness, type AgentView } from '@harkroom/shared';
 import { getAgentDefaults } from './agentDefaults.js';
 import { getHandleGroupByHandle } from './handleGroups.js';
 

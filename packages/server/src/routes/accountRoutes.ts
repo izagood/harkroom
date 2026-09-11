@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { newToken } from '../auth/tokens.js';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
-import { ACCOUNT_STATUSES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@murmur/shared';
+import { ACCOUNT_STATUSES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
 import {
   ackAgentStop, createAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
   revokeAllPats, undoAgentStopRequest, updateAgent,

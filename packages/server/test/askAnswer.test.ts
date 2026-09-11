@@ -10,7 +10,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 import { postMessage } from '../src/services/messages.js';
-import type { AskMeta } from '@murmur/shared';
+import type { AskMeta } from '@harkroom/shared';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;

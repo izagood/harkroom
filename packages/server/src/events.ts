@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { AccountStatus, ChannelRow, MessageRow } from '@murmur/shared';
+import type { AccountStatus, ChannelRow, MessageRow } from '@harkroom/shared';
 import type { WorkspaceSkill } from './services/skills.js';
 
 export type WorkspaceEvent =

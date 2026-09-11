@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
-import type { AccountView } from '@murmur/shared';
+import type { AccountView } from '@harkroom/shared';
 import { hashToken } from './tokens.js';
 
 declare module 'fastify' {

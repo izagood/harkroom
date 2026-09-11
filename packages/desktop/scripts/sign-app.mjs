@@ -276,7 +276,7 @@ function main() {
   if (!existsSync(APP)) {
     throw new Error(
       `서명할 .app 이 없다: ${APP}\n` +
-        '먼저 `pnpm --filter @murmur/desktop tauri build --bundles app` 을 돌려라.',
+        '먼저 `pnpm --filter @harkroom/desktop tauri build --bundles app` 을 돌려라.',
     );
   }
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
-import type { AgentConfig, AgentDefaults, AgentView, PatView } from '@murmur/shared';
+import type { AgentConfig, AgentDefaults, AgentView, PatView } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
@@ -205,7 +205,7 @@ describe('낡은 문구 회귀선 (#431 1단계 사이드카 배포 · #482 adop
     await openAgent('test-agent');
   };
 
-  it('① `pnpm --filter @murmur/agent start` 를 단독 명령으로 내밀지 않는다', async () => {
+  it('① `pnpm --filter @harkroom/agent start` 를 단독 명령으로 내밀지 않는다', async () => {
     await openBoth();
     const body = document.body.textContent ?? '';
     // 개발용 갈래로는 남아 있어도 된다 — 저장소 안에서는 지금도 도는 명령이다.

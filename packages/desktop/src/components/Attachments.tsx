@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AttachmentRow } from '@murmur/shared';
+import type { AttachmentRow } from '@harkroom/shared';
 import { getController } from '../state/controller';
 import { Overlay } from './Overlay';
 import { useT } from '../i18n/useT';

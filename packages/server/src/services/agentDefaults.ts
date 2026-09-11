@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import type { AgentDefaults } from '@murmur/shared';
+import type { AgentDefaults } from '@harkroom/shared';
 
 /**
  * 새 에이전트의 기본값(#171). 단일 행 테이블(`agent_defaults`, 마이그레이션 017)을 읽고 쓴다.

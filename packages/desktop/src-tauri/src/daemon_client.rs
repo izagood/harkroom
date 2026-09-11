@@ -59,7 +59,7 @@ use serde_json::{json, Value};
 /// — 러너 쪽 `RUNNER_SIDECAR_NAME` 과 같은 계약이다.
 pub const DAEMON_SIDECAR_NAME: &str = "harkroom-daemon";
 
-/// 소켓·pid·토큰 파일명에 박히는 프로토콜 버전. **`@murmur/shared` 의
+/// 소켓·pid·토큰 파일명에 박히는 프로토콜 버전. **`@harkroom/shared` 의
 /// `DAEMON_PROTOCOL_VERSION` 과 같은 값이어야 한다** — 다르면 앱은 `daemon-v1.sock` 을
 /// 보는데 daemon 은 `daemon-v2.sock` 에 열어 서로를 영영 못 만난다.
 ///
@@ -562,7 +562,7 @@ fn dev_keychain_service_name(base: &str, source: &str) -> String {
 
 /// `<appDataDir>/daemon/daemon-v<N>.{sock,pid,token}` 세 경로.
 ///
-/// **조립 규칙이 `@murmur/shared/daemonEndpoint::daemonEndpointPaths` 와 같아야 한다** —
+/// **조립 규칙이 `@harkroom/shared/daemonEndpoint::daemonEndpointPaths` 와 같아야 한다** —
 /// 앱이 만든 경로를 daemon 에 인자로 넘기고, daemon 은 그 경로에서 `appDataDir` 를
 /// 되짚어(`run.ts::appDataDirFromSocket`) 같은 규칙으로 다시 조립한다. 두 규칙이 갈리면
 /// daemon 이 앱이 보지 않는 자리에 소켓을 놓는다.
@@ -615,7 +615,7 @@ pub fn endpoint_paths(app_data_dir: &Path) -> EndpointPaths {
 }
 
 // ---------------------------------------------------------------------------
-// NDJSON 프로토콜 — `@murmur/shared/daemonProtocol` 의 Rust 쪽 절반
+// NDJSON 프로토콜 — `@harkroom/shared/daemonProtocol` 의 Rust 쪽 절반
 // ---------------------------------------------------------------------------
 
 /// 러너 하나의 세대 구분자. **문자열이다** — `#419` 가 앱 안에서 `Symbol` 로 막은 것과
@@ -1711,7 +1711,7 @@ fn looks_like_missing_node(line: &str) -> bool {
 
 /// **`node` 가 없다**는 사유의 문구. `spawn_failure_reason` 과 같은 말을 한다.
 ///
-/// 설치 안내는 `@murmur/shared::installHint('node')` 가 이미 갖고 있는 그 문장이다
+/// 설치 안내는 `@harkroom/shared::installHint('node')` 가 이미 갖고 있는 그 문장이다
 /// (`#476`). 새로 만들지 않았다 — 다만 Rust 에서 그 TS 함수를 부를 수 없어 문자열이
 /// 두 벌 존재하고, `test/missingToolchainNotice.test.tsx` 가 이 파일을 읽어 둘이
 /// 같은 주소를 말하는지 대조한다.
@@ -2142,7 +2142,7 @@ mod tests {
         check_socket_path_length(&ok).expect("82바이트가 막혔다");
     }
 
-    /// 조립 규칙이 `@murmur/shared/daemonEndpoint::daemonEndpointPaths` 와 같아야 한다.
+    /// 조립 규칙이 `@harkroom/shared/daemonEndpoint::daemonEndpointPaths` 와 같아야 한다.
     #[test]
     fn 엔드포인트_경로_조립이_shared_와_같은_규칙이다() {
         let paths = endpoint_paths(Path::new("/tmp/appdata"));
@@ -2781,7 +2781,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     #[test]
     fn 낡은_버전의_daemon_은_갈린다() {
         let Some(program) = daemon_sidecar() else {
-            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @murmur/desktop build:sidecar` 먼저");
+            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @harkroom/desktop build:sidecar` 먼저");
             return;
         };
         let dir = temp_app_data_dir("stale-version");
@@ -2840,7 +2840,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     #[test]
     fn 이미_있는_daemon_에는_붙고_새로_띄우지_않는다() {
         let Some(program) = daemon_sidecar() else {
-            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @murmur/desktop build:sidecar` 먼저");
+            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @harkroom/desktop build:sidecar` 먼저");
             return;
         };
         let dir = temp_app_data_dir("attach");
@@ -2915,7 +2915,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     #[test]
     fn daemon_이_없으면_띄우고_그_daemon_에_붙는다() {
         let Some(program) = daemon_sidecar() else {
-            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @murmur/desktop build:sidecar` 먼저");
+            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @harkroom/desktop build:sidecar` 먼저");
             return;
         };
         let dir = temp_app_data_dir("spawn");
@@ -2971,7 +2971,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     #[test]
     fn exit_이벤트가_목록조회를_먼저_해도_앱에_온다() {
         let Some(program) = daemon_sidecar() else {
-            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @murmur/desktop build:sidecar` 먼저");
+            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @harkroom/desktop build:sidecar` 먼저");
             return;
         };
         let dir = temp_app_data_dir("exit-event");
@@ -3081,7 +3081,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     #[test]
     fn 다른_entry_path_의_daemon_에는_붙지_않는다() {
         let Some(program) = daemon_sidecar() else {
-            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @murmur/desktop build:sidecar` 먼저");
+            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @harkroom/desktop build:sidecar` 먼저");
             return;
         };
         let dir = temp_app_data_dir("entry-mismatch");
@@ -3151,7 +3151,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     #[test]
     fn 같은_entry_path_의_daemon_에는_붙는다() {
         let Some(program) = daemon_sidecar() else {
-            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @murmur/desktop build:sidecar` 먼저");
+            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @harkroom/desktop build:sidecar` 먼저");
             return;
         };
         let dir = temp_app_data_dir("entry-match");
@@ -3572,7 +3572,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     #[test]
     fn 빈약한_path_로는_사이드카가_뜨지_않고_충분한_path_로는_뜬다() {
         let Some(program) = daemon_sidecar() else {
-            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @murmur/desktop build:sidecar` 먼저");
+            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @harkroom/desktop build:sidecar` 먼저");
             return;
         };
 
@@ -3642,7 +3642,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     #[test]
     fn daemon_의_pgid_는_자기_자신이다() {
         let Some(program) = daemon_sidecar() else {
-            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @murmur/desktop build:sidecar` 먼저");
+            eprintln!("건너뜀: daemon 사이드카가 없다 — `pnpm --filter @harkroom/desktop build:sidecar` 먼저");
             return;
         };
         let dir = temp_app_data_dir("pgid");

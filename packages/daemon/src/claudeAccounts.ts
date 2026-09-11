@@ -36,8 +36,8 @@ import {
   CLAUDE_POOL_NAME_PATTERN,
   parseClaudePoolsConfig,
   type ClaudePoolsConfig,
-} from '@murmur/shared/claudePools';
-import type { ClaudeUsageSnapshot } from '@murmur/shared/daemonProtocol';
+} from '@harkroom/shared/claudePools';
+import type { ClaudeUsageSnapshot } from '@harkroom/shared/daemonProtocol';
 
 import { measureClaudeUsage, type UsageTarget } from './claudeUsage.js';
 

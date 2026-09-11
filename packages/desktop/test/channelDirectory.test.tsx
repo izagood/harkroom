@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
-import type { ChannelRow } from '@murmur/shared';
+import type { ChannelRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController, type Controller as ControllerType } from '../src/state/controller';
 import { ChannelDirectory } from '../src/components/ChannelDirectory';

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { AccountView, AgentTeamMemberRow, AgentTeamRow } from '@murmur/shared';
+import type { AccountView, AgentTeamMemberRow, AgentTeamRow } from '@harkroom/shared';
 import { Identity } from '../Identity';
 import type { RunnerState } from '../../lib/runnerLauncher';
 // 얼굴 판정은 **에이전트 격자와 같은 한 벌**이다(`lib/faceState.ts`). 팀 카드의 얼굴이

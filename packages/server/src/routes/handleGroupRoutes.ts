@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { HANDLE_PATTERN } from '@murmur/shared';
+import { HANDLE_PATTERN } from '@harkroom/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import {

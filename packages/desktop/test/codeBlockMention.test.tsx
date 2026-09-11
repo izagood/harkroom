@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import { mentionedHandles } from '@murmur/shared';
+import { mentionedHandles } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { MessageItem } from '../src/components/MessageItem';
 import { bodyRecipients } from '../src/lib/mention';

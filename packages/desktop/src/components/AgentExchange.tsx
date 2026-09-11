@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { MessageRow } from '@murmur/shared';
+import type { MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { exchangeParticipants, exchangeConclusion } from '../lib/agentExchange';
 import { MessageItem } from './MessageItem';

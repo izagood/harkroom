@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import type { ProjectionRuntime } from '@murmur/shared';
+import type { ProjectionRuntime } from '@harkroom/shared';
 import { emitEvent } from '../events.js';
 import { listBoundRepos } from '../services/channels.js';
 import type { AvcsServerClient } from './client.js';

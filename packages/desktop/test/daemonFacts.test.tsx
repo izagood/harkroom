@@ -28,7 +28,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import type { AgentConfig, AgentDefaults, AgentView, PatView } from '@murmur/shared';
+import type { AgentConfig, AgentDefaults, AgentView, PatView } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';

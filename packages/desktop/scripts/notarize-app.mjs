@@ -120,7 +120,7 @@ const info = `${probe.stdout ?? ''}${probe.stderr ?? ''}`;
 if (!info.includes('TeamIdentifier=') || info.includes('TeamIdentifier=not set')) {
   throw new Error(
     'ad-hoc 서명이거나 서명이 없다 — 공증은 `Developer ID` 서명을 요구한다.\n' +
-      '`pnpm --filter @murmur/desktop sign` 을 먼저 돌려라(인증서가 설치돼 있어야 한다).',
+      '`pnpm --filter @harkroom/desktop sign` 을 먼저 돌려라(인증서가 설치돼 있어야 한다).',
   );
 }
 if (!info.includes('flags=0x10000(runtime)')) {

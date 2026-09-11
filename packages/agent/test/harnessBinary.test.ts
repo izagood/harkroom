@@ -4,9 +4,9 @@
  * ## 왜 이 파일이 있어야 하나 — 표가 두 곳에 있다
  *
  * 진실의 원천은 `turn.ts` 의 `PRESETS` 다. 러너가 `PATH` 에서 찾는 실행 파일이 거기서
- * 나온다. 그런데 화면 문구를 만드는 것은 앱이고, **앱은 `@murmur/agent` 를 못 들인다**
+ * 나온다. 그런데 화면 문구를 만드는 것은 앱이고, **앱은 `@harkroom/agent` 를 못 들인다**
  * (데스크탑의 devDependency 이고 `node-pty` 같은 네이티브 의존을 끌고 온다). 그래서
- * 이름만 `@murmur/shared` 에 따로 뒀다.
+ * 이름만 `@harkroom/shared` 에 따로 뒀다.
  *
  * 사본이 둘이면 갈린다. 갈리는 날 앱은 없는 실행 파일 이름을 사람에게 말하고 —
  * *"`claude` 를 설치하라"* 인데 러너는 다른 것을 찾고 있는 상태 — 사람은 설치하고도
@@ -20,7 +20,7 @@
  * 도는 대상이 같다는 점에서도 낫다.
  */
 import { describe, expect, it } from 'vitest';
-import { harnessBinaryName, RUNNABLE_HARNESSES } from '@murmur/shared';
+import { harnessBinaryName, RUNNABLE_HARNESSES } from '@harkroom/shared';
 
 import { buildTurnCommand } from '../src/turn.js';
 
@@ -51,7 +51,7 @@ function 계획(harness: (typeof RUNNABLE_HARNESSES)[number]): string {
 
 describe('harnessBinaryName 이 PRESETS 의 실행 파일과 같다 (#473)', () => {
   /**
-   * **되돌려 RED**: `@murmur/shared` 의 `harnessBinaryName` 에서 `'claude-code'` 의 답을
+   * **되돌려 RED**: `@harkroom/shared` 의 `harnessBinaryName` 에서 `'claude-code'` 의 답을
    * `'claude-code'` 로 바꾸면(그럴듯한 실수다 — 하네스 이름과 실행 파일 이름이 다르다는
    * 것이 이 표의 존재 이유다) 이 단언이 빨개진다.
    */

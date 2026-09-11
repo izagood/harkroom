@@ -1,4 +1,4 @@
-import type { AccountView, AskMeta, FailureMeta, MessageRow, ReportMeta } from '@murmur/shared';
+import type { AccountView, AskMeta, FailureMeta, MessageRow, ReportMeta } from '@harkroom/shared';
 import { useActiveStore } from '../../state/communities';
 import { AskCard } from '../AskCard';
 import { FailureCard } from '../FailureCard';

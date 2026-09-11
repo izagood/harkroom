@@ -678,7 +678,7 @@ mod tests {
         // cargo 전에 반드시 돌리므로 정상 경로에서는 항상 존재한다).
         if !program.is_file() {
             eprintln!(
-                "건너뜀: 사이드카가 `{}` 에 없다 — 먼저 `pnpm --filter @murmur/desktop build:sidecar` \
+                "건너뜀: 사이드카가 `{}` 에 없다 — 먼저 `pnpm --filter @harkroom/desktop build:sidecar` \
                  와 `cargo build` 를 돌려라",
                 program.display()
             );

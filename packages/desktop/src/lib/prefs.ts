@@ -2,7 +2,7 @@
 // 이 파일 밖으로 드러내지 않아서, 나중에 Tauri store 로 갈아끼울 때 여기만 고치면 된다.
 //
 // `runnerRepoPath`·`runnerCommand`(#250·#305·#425)는 `#431` 1단계에서 없앴다. 러너가
-// 소스 체크아웃을 `pnpm --filter @murmur/agent start` 로 실행하던 시절엔 "그 소스가 어디
+// 소스 체크아웃을 `pnpm --filter @harkroom/agent start` 로 실행하던 시절엔 "그 소스가 어디
 // 있나"(`runnerRepoPath`)와 "`pnpm` 이 어디 있나"(`runnerCommand`)를 앱이 알아야 했다.
 // 러너가 Tauri sidecar 로 배포되면서 그 물음 자체가 사라졌다 — sidecar 는 자기 위치를
 // 스스로 알고 `pnpm` 을 거치지 않는다. 에이전트가 **일할 저장소**는 이 값들과 다른

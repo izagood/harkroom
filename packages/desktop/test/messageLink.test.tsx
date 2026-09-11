@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { messagePermalink } from '@murmur/shared';
+import { messagePermalink } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController, type Controller as ControllerType } from '../src/state/controller';
 import { ApiError } from '../src/lib/api';

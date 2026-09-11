@@ -3,7 +3,7 @@
 //   8. 패널을 닫으면 구독이 끊긴다(WS 메시지가 더 오지 않는다).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, act } from '@testing-library/react';
-import type { AgentSessionView } from '@murmur/shared';
+import type { AgentSessionView } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { usePrefsStore } from '../src/state/prefsStore';

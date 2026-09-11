@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Overlay } from './Overlay';
-import type { SavedMessageRow } from '@murmur/shared';
+import type { SavedMessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { displayBody } from '../lib/mention';

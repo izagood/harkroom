@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ProjectionConfigView, ProjectionUrlSource } from '@murmur/shared';
+import type { ProjectionConfigView, ProjectionUrlSource } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { Button, Field, TextInput } from './primitives';

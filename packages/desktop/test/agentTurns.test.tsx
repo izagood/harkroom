@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
-import type { AgentSessionView } from '@murmur/shared';
+import type { AgentSessionView } from '@harkroom/shared';
 import { AgentTurns } from '../src/components/AgentTurns';
 import { groupTurnsByThread } from '../src/lib/agentTurns';
 

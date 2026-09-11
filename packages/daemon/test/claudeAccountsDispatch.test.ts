@@ -12,7 +12,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import { REQUEST_TYPES, EVENT_NAMES, type DaemonRequest } from '@murmur/shared/daemonProtocol';
+import { REQUEST_TYPES, EVENT_NAMES, type DaemonRequest } from '@harkroom/shared/daemonProtocol';
 
 import { DaemonServer, type DaemonServerDeps } from '../src/server.js';
 import type { ClaudeAccountsPort } from '../src/claudeAccounts.js';

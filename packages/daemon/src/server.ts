@@ -1,7 +1,7 @@
 /**
  * daemon 의 소켓 서버 — `hello` 로 문을 지키고, 네 요청을 러너 표에 잇는다(`#431` 2-b).
  *
- * 프레이밍·인증·메시지 판별은 **전부 `@murmur/shared/daemonProtocol` 것을 쓴다.** 여기서
+ * 프레이밍·인증·메시지 판별은 **전부 `@harkroom/shared/daemonProtocol` 것을 쓴다.** 여기서
  * 다시 짜지 않는 이유는 앱 클라이언트(2-b 3/3)도 같은 모듈을 쓸 것이기 때문이다 — 두
  * 곳에 같은 규칙이 있으면 한쪽만 고쳐지는 날이 온다.
  *
@@ -43,11 +43,11 @@ import {
   type SpawnRunnerParams,
   type SpawnRunnerResult,
   type DaemonEventName,
-} from '@murmur/shared/daemonProtocol';
+} from '@harkroom/shared/daemonProtocol';
 
 import type { RunnerRegistry } from './runners.js';
 import type { ClaudeAccountsPort } from './claudeAccounts.js';
-import type { ClaudePoolsConfig } from '@murmur/shared/claudePools';
+import type { ClaudePoolsConfig } from '@harkroom/shared/claudePools';
 
 export interface DaemonServerDeps {
   /**

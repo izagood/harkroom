@@ -6,14 +6,14 @@
  * 설정 → 에이전트 화면은 오랫동안 이렇게 안내했다:
  *
  * ```
- * MURMUR_PAT=<발급한 토큰> pnpm --filter @murmur/agent start
+ * MURMUR_PAT=<발급한 토큰> pnpm --filter @harkroom/agent start
  * ```
  *
  * **그 명령은 이제 대부분의 사람에게 실패한다.** `#431` 1단계가 러너를 단일 번들로 만들어
  * Tauri 사이드카(`externalBin`)로 앱과 함께 배포하도록 바꿨고(`tauri.conf.json` 의
  * `externalBin: ["binaries/harkroom-runner", …]`), `#494` 의 릴리즈 워크플로가 그 번들을
  * `.dmg` 로 내보내기 시작했다. 즉 **앱을 설치해 쓰는 사람은 murmur 저장소를 클론하지
- * 않는다** — `pnpm --filter @murmur/agent start` 는 그 사람의 머신에서 실행할 소스도,
+ * 않는다** — `pnpm --filter @harkroom/agent start` 는 그 사람의 머신에서 실행할 소스도,
  * `pnpm` 워크스페이스도 없다.
  *
  * 그런데 그 문구는 **클립보드에 복사되는 값**이었다(`#125` 가 "잘리지 않는 완성된 명령"을
@@ -32,7 +32,7 @@
  * | 상황 | 명령 |
  * |---|---|
  * | 앱을 설치해 쓴다(배포판) | `.app` 안 사이드카 절대 경로 |
- * | murmur 저장소를 클론해 개발한다 | `pnpm --filter @murmur/agent start` |
+ * | murmur 저장소를 클론해 개발한다 | `pnpm --filter @harkroom/agent start` |
  *
  * 아래쪽(pnpm)은 **죽은 명령이 아니다** — `packages/agent/package.json` 의 `start` 스크립트가
  * 그대로 있고 저장소 안에서는 지금도 돈다. 낡은 것은 "그것이 **유일한** 길이다"라는 전제였다.
@@ -74,7 +74,7 @@ export const RUNNER_SIDECAR_PATH =
   `/Applications/Harkroom.app/Contents/MacOS/${RUNNER_SIDECAR_NAME}`;
 
 /** 저장소를 클론해 개발할 때 쓰는 명령. 배포판에는 이 소스가 없다. */
-export const RUNNER_DEV_COMMAND = 'pnpm --filter @murmur/agent start';
+export const RUNNER_DEV_COMMAND = 'pnpm --filter @harkroom/agent start';
 
 /**
  * 서버 주소 자리표시. 사람이 자기 머신에서 서버에 닿는 주소로 바꿔 쓴다.

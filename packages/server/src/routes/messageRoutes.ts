@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { MAX_MESSAGE_BODY_CHARS, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@murmur/shared';
+import { MAX_MESSAGE_BODY_CHARS, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET } from '../services/messages.js';

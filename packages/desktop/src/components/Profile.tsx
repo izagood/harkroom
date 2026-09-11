@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AgentView } from '@murmur/shared';
+import type { AgentView } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { canSeeAgentConfig } from '../lib/agentConfigGate';

@@ -10,12 +10,12 @@ importers:
 
   packages/agent:
     dependencies:
+      '@harkroom/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.0
         version: 1.30.0(zod@3.25.76)
-      '@murmur/shared':
-        specifier: workspace:*
-        version: link:../shared
       node-pty:
         specifier: 1.2.0-beta.15
         version: 1.2.0-beta.15
@@ -41,7 +41,7 @@ importers:
 
   packages/daemon:
     dependencies:
-      '@murmur/shared':
+      '@harkroom/shared':
         specifier: workspace:*
         version: link:../shared
     devDependencies:
@@ -60,7 +60,7 @@ importers:
 
   packages/desktop:
     dependencies:
-      '@murmur/shared':
+      '@harkroom/shared':
         specifier: workspace:*
         version: link:../shared
       '@tauri-apps/plugin-notification':
@@ -91,7 +91,7 @@ importers:
         specifier: ^5.0.0
         version: 5.0.15(@types/react@19.2.18)(react@19.2.8)
     devDependencies:
-      '@murmur/agent':
+      '@harkroom/agent':
         specifier: workspace:*
         version: link:../agent
       '@tailwindcss/vite':
@@ -142,12 +142,12 @@ importers:
       '@fastify/websocket':
         specifier: ^11.0.0
         version: 11.3.0
+      '@harkroom/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.0
         version: 1.30.0(zod@3.25.76)
-      '@murmur/shared':
-        specifier: workspace:*
-        version: link:../shared
       argon2:
         specifier: ^0.41.0
         version: 0.41.1

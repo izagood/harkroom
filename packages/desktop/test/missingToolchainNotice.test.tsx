@@ -24,7 +24,7 @@
  * 이 이슈가 더하는 것은 **"어떻게"** 한 겹뿐이다.
  *
  * 문자열을 손으로 적어 대조하지 않는 규율도 `runnerHarnessMissing.test.tsx` 와 같다 —
- * 구분자도 실행 파일 이름도 설치 안내도 전부 `@murmur/shared` 에서 가져온다.
+ * 구분자도 실행 파일 이름도 설치 안내도 전부 `@harkroom/shared` 에서 가져온다.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
@@ -34,7 +34,7 @@ import {
   EXECUTABLE_NOT_FOUND_LINE,
   harnessBinaryName,
   installHint,
-} from '@murmur/shared';
+} from '@harkroom/shared';
 import {
   RunnerLauncher,
   type LaunchableAgent,

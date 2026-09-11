@@ -5,7 +5,7 @@
 // ("이 화면 위계 혼란의 대부분이 여기서 나온다").
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import type { AgentDefaults } from '@murmur/shared';
+import type { AgentDefaults } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
