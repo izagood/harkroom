@@ -4,6 +4,7 @@ import { createPool } from './db/pool.js';
 import { buildServer } from './buildServer.js';
 import { warnIfProjectionDisabled } from './avcs/projection.js';
 import { ProjectionSupervisor } from './avcs/supervisor.js';
+import { AvcsHost } from './avcs/host.js';
 import { getProjectionConfig } from './services/projectionConfig.js';
 import { resolveProjectionUrl } from '@harkroom/shared';
 import { Lifecycle } from './lifecycle.js';
@@ -32,6 +33,10 @@ await supervisor.reconfigure(boot.url);
 // 켜 뒀으면 투영은 돌고 있고, 그때 경고를 내면 화면과 로그가 서로 다른 말을 한다.
 warnIfProjectionDisabled(boot.url);
 
+// 여기서 **띄우지 않는다** — 첫 hosted 저장소를 읽을 때 뜬다(`AvcsHost.ensure`). hosted 가
+// 없는 워크스페이스가 대다수이고, 그런 곳에서 포트와 데이터 루트를 잡을 이유가 없다.
+const avcsHost = new AvcsHost({ dataDir: config.hostedAvcsDataDir });
+
 const lifecycle = new Lifecycle();
 const app = await buildServer({
   pool,
@@ -46,6 +51,7 @@ const app = await buildServer({
     reconfigure: (url) => supervisor.reconfigure(url),
     currentUrl: () => supervisor.currentUrl(),
   },
+  avcsHost,
   corsOrigins: config.corsOrigins,
   logLevel: config.logLevel,
   trustProxy: config.trustProxy,
@@ -63,6 +69,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     // 다음 poll로 넘어가게 하는 지점이다. 이후 남은 응답은 grace 안에서 흘려보낸다.
     await lifecycle.beginDrain();
     await supervisor.stop();
+    await avcsHost.stop();
     await app.close();
     await pool.end();
     process.exit(0);

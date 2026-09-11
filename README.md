@@ -164,6 +164,7 @@ dead AVCS server never restarts the pod).
 | `DATABASE_URL` | PostgreSQL connection string | - | Yes |
 | `PORT` | Server HTTP port | `3400` | No |
 | `AVCS_BASE_URL` | AVCS server URL for event projection | - | No |
+| `AVCS_HOSTED_DATA` | Data root for repos murmur hosts itself (`repo.mode = 'hosted'`). **Back this up** — it holds the operation graph | `./data/avcs` | No |
 | `CORS_ORIGINS` | Allowed CORS origins (comma-separated) | All origins | No |
 | `LOG_LEVEL` | Server log level (`debug`, `info`, `warn`, `error`) | `info` | No |
 | `TRUST_PROXY` | Trust `X-Forwarded-For` header (`1` or `true`) | `false` | No |

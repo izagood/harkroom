@@ -79,6 +79,12 @@ export async function updateRepo(
  *
  * 두 곳에서 이 규칙을 다시 쓰면 화면과 워커가 서로 다른 서버를 본다.
  */
-export function resolveRepoBaseUrl(repo: RepoRow | null, fallback: string | null): string | null {
+export function resolveRepoBaseUrl(
+  repo: RepoRow | null, fallback: string | null, hostedUrl: string | null = null,
+): string | null {
+  // `hosted` 는 주소가 **murmur 자신**이다. 호스트가 아직 안 떴으면 `null` 이고, 그때
+  // **전역으로 떨어지지 않는다** — 떨어지면 hosted 로 바꾼 저장소가 조용히 바깥 서버를 계속
+  // 읽고, 화면은 그 사실을 말할 방법이 없다. 읽을 곳이 없으면 없다고 말하는 편이 낫다.
+  if (repo?.mode === 'hosted') return hostedUrl;
   return repo?.baseUrl ?? fallback;
 }
