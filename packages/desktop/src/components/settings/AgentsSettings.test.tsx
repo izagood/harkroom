@@ -43,7 +43,7 @@ function makeAgent(overrides: Partial<AgentView> = {}): AgentView {
     ownerAccountId: null,
     disabled: false,
     instructions: '',
-    harness: 'claude',
+    harness: 'claude-code',
     model: null,
     effort: null,
     workingDir: null,
@@ -103,7 +103,7 @@ describe('AgentsSettings — 종료 요청 수령 반영(#428)', () => {
     const requestAgentStop = vi.fn(async () => requested);
     const listPats = vi.fn(async () => []);
     const agentMemory = vi.fn(async () => []);
-    const agentDefaults = vi.fn(async () => ({ harness: 'claude', model: null, effort: null }));
+    const agentDefaults = vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null }));
 
     setController({
       listAgents,
@@ -180,7 +180,7 @@ describe('AgentsSettings — 러너 실행·중지 토글(#427, #493)', () => {
       undoAgentStopRequest,
       listPats: vi.fn(async () => []),
       agentMemory: vi.fn(async () => []),
-      agentDefaults: vi.fn(async () => ({ harness: 'claude', model: null, effort: null })),
+      agentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),
       ...extra,
     } as unknown as Controller);
 
@@ -287,6 +287,8 @@ describe('AgentsSettings — 러너 실행·중지 토글(#427, #493)', () => {
  */
 describe('AgentsSettings — 에이전트별 계정 풀', () => {
   const AGENT = makeAgent();
+  /** 풀이 없는 하네스. 같은 목록에 함께 둬야 `agentPool` 상태가 동일한 조건에서 비교된다. */
+  const CODEX_AGENT = makeAgent({ id: '22222222-2222-4222-8222-222222222222', handle: 'bravo', displayName: 'bravo', harness: 'codex' });
   let invoked: { cmd: string; args?: Record<string, unknown> }[] = [];
 
   beforeEach(() => {
@@ -311,10 +313,10 @@ describe('AgentsSettings — 에이전트별 계정 풀', () => {
       }),
     });
     setController({
-      listAgents: vi.fn(async () => [AGENT]),
+      listAgents: vi.fn(async () => [AGENT, CODEX_AGENT]),
       listPats: vi.fn(async () => []),
       agentMemory: vi.fn(async () => ({ profile: null, entries: [] })),
-      agentDefaults: vi.fn(async () => ({ harness: 'claude', model: null, effort: null })),
+      agentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),
     } as unknown as Controller);
   });
 
@@ -324,6 +326,29 @@ describe('AgentsSettings — 에이전트별 계정 풀', () => {
     render(<AgentsSettings />);
     (await screen.findByRole('button', { name: /alpha/ })).click();
   }
+
+  /**
+   * **화면이 거짓말하던 자리**(2026-09-11). 앞 판본은 하네스를 보지 않고 풀 선택을 그렸다 —
+   * codex 에이전트에도 claude 풀이 떴고, 사람이 고른 값을 러너는 그대로 버렸다
+   * (`mentionTurn` 이 claude 턴에만 계정을 싣는다).
+   *
+   * **조건을 형제 테스트와 똑같이 둔다.** 같은 `beforeEach` 의 컨트롤러·같은 풀 스냅샷을
+   * 쓰고 **클릭하는 에이전트만** 다르다 — 그래서 "선택이 없다"가 풀 조회 실패 때문일
+   * 가능성이 구조적으로 배제된다(위 테스트들이 alpha 에서 선택이 보이는 것을 이미 지킨다).
+   *
+   * 앞 판본은 테스트 안에서 `setController` 로 컨트롤러를 갈아 끼웠는데, 그러면
+   * `agentPool.available` 이 거짓이 되어 **선택도 이유 줄도 둘 다 사라졌다** — 그 상태로는
+   * 아무것도 증명하지 못한다. 그 함정 때문에 이 테스트가 한 번 빠졌다.
+   */
+  it('풀이 없는 하네스에는 선택을 그리지 않는다 — 조건은 형제 테스트와 같다', async () => {
+    render(<AgentsSettings />);
+    (await screen.findByRole('button', { name: /bravo/ })).click();
+    // 하네스가 실제로 codex 인 상세를 보고 있다는 것을 먼저 못 박는다 — 안 하면 "선택이
+    // 없다"가 엉뚱한 화면을 본 결과일 수 있다.
+    await waitFor(() => expect((screen.getByLabelText('Agent harness') as HTMLSelectElement).value).toBe('codex'));
+    expect(screen.queryByLabelText(/account pool/i)).toBeNull();
+  });
+
 
   it('실행 묶음에 풀 선택이 있고 기본은 기본 풀 사용이다', async () => {
     await openDetail();
@@ -405,6 +430,16 @@ describe('AgentsSettings — 에이전트별 계정 풀', () => {
     await screen.findByLabelText(/agent harness/i);
     expect(screen.queryByLabelText(/account pool/i)).toBeNull();
   });
+
+  /**
+   * **화면이 거짓말하던 자리**(2026-09-11). 앞 판본은 하네스를 보지 않고 풀 선택을 그렸다 —
+   * codex 에이전트에도 claude 풀이 떴고, 사람이 고른 값을 러너는 그대로 버렸다
+   * (`mentionTurn` 이 claude 턴에만 계정을 싣는다). 배정했다고 믿는 사람과 아무 일도 안
+   * 하는 러너 사이에 아무 신호가 없었다.
+   *
+   * 감추기만 하면 사람이 원인을 지어내므로 **이유를 한 줄 그린다** — 조회 실패를 감추지
+   * 않는 위 테스트와 같은 규율이다.
+   */
 });
 
 /**
@@ -442,7 +477,7 @@ describe('AgentsSettings — 만들 때 계정 풀을 고른다', () => {
       listAgents: vi.fn(async () => []),
       listPats: vi.fn(async () => []),
       agentMemory: vi.fn(async () => ({ profile: null, entries: [] })),
-      agentDefaults: vi.fn(async () => ({ harness: 'claude', model: null, effort: null })),
+      agentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),
       createAgent,
     } as unknown as Controller);
   });
@@ -505,7 +540,7 @@ describe('AgentsSettings — 만들 때 계정 풀을 고른다', () => {
       listAgents: vi.fn(async () => []),
       listPats: vi.fn(async () => []),
       agentMemory: vi.fn(async () => ({ profile: null, entries: [] })),
-      agentDefaults: vi.fn(async () => ({ harness: 'claude', model: null, effort: null })),
+      agentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),
       createAgent,
     } as unknown as Controller);
 

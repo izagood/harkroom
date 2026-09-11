@@ -371,6 +371,7 @@ export const ko = {
   'agents.run.defaultsLoading': '기본값을 불러오는 중…',
   'agents.run.defaultsNotAdmin': '에이전트를 만들 수 있는 것은 admin 뿐이다',
   'agents.run.harnessDefault': 'harness 기본값',
+  'agents.run.poolNotForHarness': '이 에이전트는 {harness} 로 도는데 그 하네스에는 계정 풀이 없다 — 하네스가 로그인한 계정 하나를 쓴다.',
   'agents.run.harnessPlanned': '{harness} (지원 예정)',
   'agents.run.note': '무엇으로 도는가.',
   'agents.run.title': '실행',
