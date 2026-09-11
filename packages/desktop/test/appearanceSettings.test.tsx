@@ -91,7 +91,7 @@ describe('요구 2 — light/dark 를 고르면 data-theme 이 그 값이 되고
     fireEvent.click(screen.getByRole('radio', { name: 'Dark appearance' }));
 
     expect(theme()).toBe('dark');
-    expect(JSON.parse(localStorage.getItem('murmur.prefs')!).colorMode).toBe('dark');
+    expect(JSON.parse(localStorage.getItem('harkroom.prefs')!).colorMode).toBe('dark');
   });
 
   it('light 를 고르면 light 가 된다 — 위 단언이 항상 dark 를 쓰는 구현을 통과시키지 않는다', () => {
@@ -100,7 +100,7 @@ describe('요구 2 — light/dark 를 고르면 data-theme 이 그 값이 되고
     fireEvent.click(screen.getByRole('radio', { name: 'Light appearance' }));
 
     expect(theme()).toBe('light');
-    expect(JSON.parse(localStorage.getItem('murmur.prefs')!).colorMode).toBe('light');
+    expect(JSON.parse(localStorage.getItem('harkroom.prefs')!).colorMode).toBe('light');
   });
 
   /** 고정한 뒤에는 OS 가 바뀌어도 따라가지 않는다 — 그것이 '고른다'의 뜻이다. */

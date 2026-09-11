@@ -32,7 +32,7 @@ describe('세션 보관 — 키체인이 있을 때', () => {
     await sessionStore.save(sessions);
 
     expect(JSON.stringify(vault ? [...vault.values()] : [])).toContain('murs_secret');
-    expect(localStorage.getItem('murmur.sessions')).toBeNull();
+    expect(localStorage.getItem('harkroom.sessions')).toBeNull();
     expect(localStorage.getItem('murmur.session')).toBeNull();
     expect(JSON.stringify(localStorage)).not.toContain('murs_secret');
   });
@@ -91,7 +91,7 @@ describe('세션 보관 — 키체인이 없을 때(브라우저 개발)', () =>
     await sessionStore.save(sessions);
 
     expect(await sessionStore.load()).toEqual(sessions);
-    expect(localStorage.getItem('murmur.sessions')).toBeTruthy();
+    expect(localStorage.getItem('harkroom.sessions')).toBeTruthy();
   });
 
   it('returns null with nothing stored', async () => {

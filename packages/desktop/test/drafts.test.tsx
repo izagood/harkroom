@@ -151,7 +151,7 @@ describe('초안 보관', () => {
     // 인메모리와 보관소 **둘 다** 비어야 한다. 보관소만 지우면 스토어에 문장이 남고,
     // 스토어만 지우면 다음 기동에 되살아난다.
     expect(Object.keys(useAppStore.getState().drafts)).toHaveLength(0);
-    expect(localStorage.getItem('murmur.drafts')).toBeNull();
+    expect(localStorage.getItem('harkroom.drafts')).toBeNull();
   });
 
   it('채널을 바꾸면 멘션 자동완성 목록이 닫힌다', async () => {

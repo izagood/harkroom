@@ -16,6 +16,7 @@
  * - 키: 커뮤니티 구분은 계정 id다. URL(baseUrl)이 아니다 — 같은 서버가 localhost와 LAN IP 등 여러 URL 로 닿을 수 있어 URL 로 키를 두면 같은 커뮤니티가 목록에 두 번 나타난다.
  * - accountId는 서버 DB의 UUID라 어느 URL로 접근해도 동일하고, 다른 서버와는 다르다.
  */
+import { deleteRenamedSecret, getRenamedLocal, getRenamedSecret, removeRenamedLocal } from './renamedKey';
 import { useActiveStore } from '../state/communities';
 
 export interface StoredCommunity {
@@ -40,7 +41,7 @@ export interface StoredSessions {
   communities: StoredCommunity[];
 }
 
-const KEY = 'murmur.sessions';
+const KEY = 'harkroom.sessions';
 const LEGACY_KEY = 'murmur.session';
 
 /**
@@ -74,7 +75,7 @@ const normalize = (parsed: StoredSessions): StoredSessions => ({
 
 const readPlain = (): StoredSessions | null => {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = getRenamedLocal(KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as StoredSessions;
     return parsed.communities && Array.isArray(parsed.communities) ? normalize(parsed) : null;
@@ -86,7 +87,7 @@ const writePlain = (s: StoredSessions): void => {
 };
 
 const clearPlain = (): void => {
-  try { localStorage.removeItem(KEY); } catch { /* noop */ }
+  try { removeRenamedLocal(KEY); } catch { /* noop */ }
 };
 
 const parse = (raw: unknown): StoredSessions | null => {
@@ -150,7 +151,7 @@ export const sessionStore = {
       // **두드리기 직전에 알린다.** 이 한 줄이 화면이 "키체인을 기다린다"고 말할 수 있는
       // 유일한 근거다 — 폴백 경로는 여기 오지 않으므로 그쪽에서는 그 문구가 안 선다.
       onKeychainWait?.();
-      const fromKeychain = parse(await invoke('secret_get', { key: KEY }));
+      const fromKeychain = parse(await getRenamedSecret(invoke, KEY));
       if (fromKeychain) return fromKeychain;
       const legacy = readLegacyPlain();
       if (!legacy) return null;
@@ -228,7 +229,7 @@ export const sessionStore = {
     const invoke = tauriInvoke();
     if (!invoke) { clearPlain(); localStorage.removeItem(LEGACY_KEY); return; }
     try {
-      await invoke('secret_delete', { key: KEY });
+      await deleteRenamedSecret(invoke, KEY);
       localStorage.removeItem(LEGACY_KEY);
     } catch { /* 지울 수 없으면 다음 기동에 다시 시도된다 */ }
   },
