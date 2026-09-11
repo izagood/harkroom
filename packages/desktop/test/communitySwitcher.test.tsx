@@ -217,7 +217,7 @@ describe('커뮤니티 전환기 레일 (#165)', () => {
     expect(useActiveStore.getState().me?.handle).toBe('me-b');
     // 보관본의 활성도 함께 옮긴다 — 안 그러면 다음 기동마다 예전 커뮤니티로 돌아간다.
     await waitFor(() => {
-      const stored = JSON.parse(localStorage.getItem('murmur.sessions')!) as { active: string };
+      const stored = JSON.parse(localStorage.getItem('harkroom.sessions')!) as { active: string };
       expect(stored.active).toBe('acct-b');
     });
     expect(a.id).not.toBe(b.id);
@@ -315,7 +315,7 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
     expect(useCommunityRegistry.getState().activeId).toBe(a.id);
     // 보관본에도 들어간다(다음 기동에 되살아난다).
     await waitFor(() => {
-      const stored = JSON.parse(localStorage.getItem('murmur.sessions')!) as { communities: unknown[] };
+      const stored = JSON.parse(localStorage.getItem('harkroom.sessions')!) as { communities: unknown[] };
       expect(stored.communities).toHaveLength(2);
     });
   });
@@ -393,7 +393,7 @@ describe('커뮤니티 제거 (#165 결정 4)', () => {
     expect(cb.logout).not.toHaveBeenCalled();
     expect(cb.stop).toHaveBeenCalled();
     // 키체인 항목도 빠진다.
-    const stored = JSON.parse(localStorage.getItem('murmur.sessions')!) as { communities: { accountId: string }[] };
+    const stored = JSON.parse(localStorage.getItem('harkroom.sessions')!) as { communities: { accountId: string }[] };
     expect(stored.communities.map((c) => c.accountId)).toEqual(['acct-a']);
   });
 
@@ -452,7 +452,7 @@ describe('커뮤니티 표시 이름 (#165 결정 2)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
-      const stored = JSON.parse(localStorage.getItem('murmur.sessions')!) as {
+      const stored = JSON.parse(localStorage.getItem('harkroom.sessions')!) as {
         communities: { accountId: string; label: string | null }[];
       };
       expect(stored.communities.find((c) => c.accountId === 'acct-b')!.label).toBe('Work');

@@ -8,6 +8,7 @@
 // 스스로 알고 `pnpm` 을 거치지 않는다. 에이전트가 **일할 저장소**는 이 값들과 다른
 // 것이었고(`workingDir`, DB, 에이전트별) 그대로 남는다.
 
+import { getRenamedLocal, removeRenamedLocal } from './renamedKey';
 import { isInboxFilter, type InboxFilter } from './inboxRow';
 
 import { DEFAULT_ZOOM, normalizeZoom } from './zoom';
@@ -50,15 +51,15 @@ export interface Prefs {
   zoom: number;
 }
 
-const KEY = 'murmur.prefs';
-const DRAFTS_KEY = 'murmur.drafts';
-const STICKY_MENTIONS_KEY = 'murmur.stickyMentions';
-const SIDEBAR_WIDTH_KEY = 'murmur.sidebarWidth';
-const SIDEBAR_COLLAPSED_KEY = 'murmur.sidebarCollapsed';
-const UNDO_SEND_KEY = 'murmur.undoSendMs';
-const THREAD_WIDTH_KEY = 'murmur.threadWidth';
-const TERMINAL_WIDTH_KEY = 'murmur.terminalWidth';
-const INBOX_FILTER_KEY = 'murmur.inboxFilter';
+const KEY = 'harkroom.prefs';
+const DRAFTS_KEY = 'harkroom.drafts';
+const STICKY_MENTIONS_KEY = 'harkroom.stickyMentions';
+const SIDEBAR_WIDTH_KEY = 'harkroom.sidebarWidth';
+const SIDEBAR_COLLAPSED_KEY = 'harkroom.sidebarCollapsed';
+const UNDO_SEND_KEY = 'harkroom.undoSendMs';
+const THREAD_WIDTH_KEY = 'harkroom.threadWidth';
+const TERMINAL_WIDTH_KEY = 'harkroom.terminalWidth';
+const INBOX_FILTER_KEY = 'harkroom.inboxFilter';
 
 export const MIN_SIDEBAR_WIDTH = 200;
 export const MAX_SIDEBAR_WIDTH = 480;
@@ -155,7 +156,7 @@ export const DEFAULT_PREFS: Prefs = {
 export const prefsStorage = {
   load(): Prefs {
     try {
-      const raw = localStorage.getItem(KEY);
+      const raw = getRenamedLocal(KEY);
       if (!raw) return DEFAULT_PREFS;
       const parsed = JSON.parse(raw) as Partial<Prefs>;
       // 저장본을 그대로 쓰지 않고 기본값과 병합한다 — 없는 키를 undefined 로 두면
@@ -184,7 +185,7 @@ export const prefsStorage = {
 export const sidebarStorage = {
   loadWidth(): number {
     try {
-      const raw = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+      const raw = getRenamedLocal(SIDEBAR_WIDTH_KEY);
       if (!raw) return DEFAULT_PREFS.sidebarWidth;
       const parsed = parseInt(raw, 10);
       if (isNaN(parsed)) return DEFAULT_PREFS.sidebarWidth;
@@ -201,7 +202,7 @@ export const sidebarStorage = {
   },
   loadCollapsed(): boolean {
     try {
-      const raw = localStorage.getItem(SIDEBAR_COLLAPSED_KEY);
+      const raw = getRenamedLocal(SIDEBAR_COLLAPSED_KEY);
       if (!raw) return DEFAULT_PREFS.sidebarCollapsed;
       return raw === 'true';
     } catch {
@@ -232,7 +233,7 @@ export const DEFAULT_INBOX_FILTER: InboxFilter = 'all';
 export const inboxStorage = {
   loadFilter(): InboxFilter {
     try {
-      const raw = localStorage.getItem(INBOX_FILTER_KEY);
+      const raw = getRenamedLocal(INBOX_FILTER_KEY);
       return isInboxFilter(raw) ? raw : DEFAULT_INBOX_FILTER;
     } catch {
       return DEFAULT_INBOX_FILTER;
@@ -252,7 +253,7 @@ export const inboxStorage = {
  */
 const loadWidth = (key: string, fallback: number, min: number, max: number): number => {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = getRenamedLocal(key);
     if (raw === null) return fallback;
     const parsed = parseInt(raw, 10);
     if (isNaN(parsed)) return fallback;
@@ -297,7 +298,7 @@ export const paneStorage = {
 export const undoSendStorage = {
   loadWindowMs(): number {
     try {
-      const raw = localStorage.getItem(UNDO_SEND_KEY);
+      const raw = getRenamedLocal(UNDO_SEND_KEY);
       if (raw === null) return DEFAULT_UNDO_SEND_MS;
       const parsed = parseInt(raw, 10);
       // 깨진 값은 기본값으로 되돌린다 — NaN 을 그대로 setTimeout 에 넘기면 즉시 실행되어
@@ -332,7 +333,7 @@ export const undoSendStorage = {
 export const draftsStorage = {
   load(): Record<string, string> {
     try {
-      const raw = localStorage.getItem(DRAFTS_KEY);
+      const raw = getRenamedLocal(DRAFTS_KEY);
       if (!raw) return {};
       return JSON.parse(raw) as Record<string, string>;
     } catch {
@@ -342,14 +343,14 @@ export const draftsStorage = {
   save(drafts: Record<string, string>): void {
     try {
       if (Object.keys(drafts).length === 0) {
-        localStorage.removeItem(DRAFTS_KEY);
+        removeRenamedLocal(DRAFTS_KEY);
       } else {
         localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
       }
     } catch { /* 저장 불가 환경 허용 */ }
   },
   clear(): void {
-    try { localStorage.removeItem(DRAFTS_KEY); } catch { /* noop */ }
+    try { removeRenamedLocal(DRAFTS_KEY); } catch { /* noop */ }
   },
 };
 
@@ -367,7 +368,7 @@ export const draftsStorage = {
 export const stickyMentionsStorage = {
   load(): Record<string, string[]> {
     try {
-      const raw = localStorage.getItem(STICKY_MENTIONS_KEY);
+      const raw = getRenamedLocal(STICKY_MENTIONS_KEY);
       if (!raw) return {};
       return JSON.parse(raw) as Record<string, string[]>;
     } catch {
@@ -377,13 +378,13 @@ export const stickyMentionsStorage = {
   save(sticky: Record<string, string[]>): void {
     try {
       if (Object.keys(sticky).length === 0) {
-        localStorage.removeItem(STICKY_MENTIONS_KEY);
+        removeRenamedLocal(STICKY_MENTIONS_KEY);
       } else {
         localStorage.setItem(STICKY_MENTIONS_KEY, JSON.stringify(sticky));
       }
     } catch { /* 저장 불가 환경 허용 */ }
   },
   clear(): void {
-    try { localStorage.removeItem(STICKY_MENTIONS_KEY); } catch { /* noop */ }
+    try { removeRenamedLocal(STICKY_MENTIONS_KEY); } catch { /* noop */ }
   },
 };

@@ -266,7 +266,7 @@ describe('adding a mention without sending', () => {
  * 못했다.
  */
 describe('sticky mentions survive leaving the view', () => {
-  const STORE_KEY = 'murmur.stickyMentions';
+  const STORE_KEY = 'harkroom.stickyMentions';
 
   // 스레드 패널이 빠지는 것을 흉내내는 유일한 방법은 **언마운트**다.
   it('keeps the chips when the composer unmounts and comes back', () => {

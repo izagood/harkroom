@@ -86,7 +86,7 @@ describe('키체인 쓰기 실패 (#212)', () => {
 
     await sessionStore.save(sessions);
 
-    expect(localStorage.getItem('murmur.sessions')).toBeNull();
+    expect(localStorage.getItem('harkroom.sessions')).toBeNull();
     expect(JSON.stringify(localStorage)).not.toContain('murs_secret');
   });
 
