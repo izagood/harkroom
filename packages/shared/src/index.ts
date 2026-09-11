@@ -56,7 +56,7 @@ export interface AccountView {
 }
 
 /** murmur 가 스키마·설정 차원에서 아는 harness 이름 전체. 실제 실행 가능 여부는 `RUNNABLE_HARNESSES` 를 본다. */
-export const AGENT_HARNESSES = ['claude-code', 'codex', 'gemini'] as const;
+export const AGENT_HARNESSES = ['claude-code', 'codex', 'gemini', 'opencode'] as const;
 export type AgentHarness = (typeof AGENT_HARNESSES)[number];
 
 /**

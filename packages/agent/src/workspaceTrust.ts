@@ -17,6 +17,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+
+import { adapterFor, harnessAdaptersEnabled } from './adapters/index.js';
 import type { AgentHarness } from '@murmur/shared';
 
 /**
@@ -36,8 +38,7 @@ function claudeConfigFile(configDir: string | null): string {
  * 이미 사람에게 사실을 말한다(`pty.ts::PromptNotDeliveredError`). 여기서 예외를 올리면
  * 원인이 하나 더 앞으로 밀릴 뿐 나아지지 않는다.
  */
-async function trustForClaude(workspaceDir: string, configDir: string | null): Promise<void> {
-  const path = claudeConfigFile(configDir);
+async function trustForClaude(workspaceDir: string, path: string): Promise<void> {
   let doc: { projects?: Record<string, Record<string, unknown>> } = {};
   try {
     doc = JSON.parse(await readFile(path, 'utf8')) as typeof doc;
@@ -63,8 +64,8 @@ async function trustForClaude(workspaceDir: string, configDir: string | null): P
  * 격리 홈의 것이라 우리가 적은 것 외에는 하네스가 적은 UI 상태뿐이고, 같은 절이 두 번
  * 있으면 codex 가 나중 것을 읽는다. 파서를 넣으면 그 의존이 러너 전체로 번진다.
  */
-async function trustForCodex(workspaceDir: string, codexHome: string): Promise<void> {
-  const path = join(codexHome, 'config.toml');
+async function trustForCodex(workspaceDir: string, path: string): Promise<void> {
+  const codexHome = dirname(path);
   let text = '';
   try {
     text = await readFile(path, 'utf8');
@@ -147,6 +148,32 @@ export async function ensureDangerousModeAccepted(opts: {
 }
 
 /**
+ * **새 경로** — 장부의 자리와 형식을 어댑터 표에서 읽는다.
+ *
+ * 옛 분기와 무엇이 다른가: 하네스 이름을 보지 않는다. 그래서 네 번째 하네스가 와도 이
+ * 함수는 안 고친다 — 표에 `trust` 를 채우면 된다. `null` 이면 **그 관문이 없다**는 뜻이라
+ * 아무것도 쓰지 않는다(opencode 가 그 자리다: 실측에서 신뢰를 묻지 않았다).
+ *
+ * 쓰는 일 자체는 옛 경로와 **같은 함수**가 한다 — 여기서 다시 구현하면 두 벌이 되고, 그
+ * 순간 패리티 테스트가 "같은 코드가 같은 답을 낸다"는 공허한 것을 재게 된다.
+ */
+async function trustViaAdapter(opts: {
+  harness: AgentHarness;
+  workspaceDir: string;
+  claudeConfigDir: string | null;
+  codexHome: string;
+}): Promise<void> {
+  const ledger = adapterFor(opts.harness).trust;
+  if (ledger === null) return;
+  const root = ledger.root === 'account-config-dir'
+    ? (opts.claudeConfigDir ?? join(homedir(), '.claude'))
+    : opts.codexHome;
+  const path = join(root, ledger.file);
+  if (ledger.kind === 'claude-json') await trustForClaude(opts.workspaceDir, path);
+  else await trustForCodex(opts.workspaceDir, path);
+}
+
+/**
  * 이 턴이 쓸 워크스페이스를 하네스가 신뢰하게 한다. **PTY 를 띄우기 전에 부른다** —
  * 뜬 뒤에 적으면 그 턴은 이미 대화상자를 만난 뒤다.
  */
@@ -157,8 +184,18 @@ export async function ensureWorkspaceTrusted(opts: {
   codexHome: string;
 }): Promise<void> {
   try {
-    if (opts.harness === 'claude-code') await trustForClaude(opts.workspaceDir, opts.claudeConfigDir);
-    else if (opts.harness === 'codex') await trustForCodex(opts.workspaceDir, opts.codexHome);
+    // ── 이설 중이다. 두 경로가 함께 산다(2026-09-11) ────────────────────────────
+    //
+    // 이 경로가 깨지면 에이전트가 안 돌고, 그러면 murmur 자체를 못 쓴다. 그래서 옛 분기를
+    // **그대로 두고** 새 경로를 스위치 뒤에 둔다. 기본값은 꺼짐이므로 켜지 않은 러너는
+    // 지금까지와 한 글자도 다르지 않게 돈다.
+    //
+    // 두 경로가 같은 답을 내는지는 `test/workspaceTrustParity.test.ts` 가 **양쪽을 실제로
+    // 돌려 파일 바이트를 비교**해서 지킨다. 옛 분기는 스위치가 기본 켜짐이 되고 한 판
+    // 돌려 본 뒤에 지운다.
+    if (harnessAdaptersEnabled()) await trustViaAdapter(opts);
+    else if (opts.harness === 'claude-code') await trustForClaude(opts.workspaceDir, claudeConfigFile(opts.claudeConfigDir));
+    else if (opts.harness === 'codex') await trustForCodex(opts.workspaceDir, join(opts.codexHome, 'config.toml'));
   } catch (err) {
     // 위 주석의 이유로 삼킨다 — 다만 조용히는 아니다.
     console.error(

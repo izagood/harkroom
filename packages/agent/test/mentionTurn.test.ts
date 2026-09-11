@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentView, MessageRow } from '@murmur/shared';
+import type { AgentHarness, AgentView, MessageRow } from '@murmur/shared';
 import { mentionAnchor, runMentionTurn, syncSkills, type MentionTurnDeps, type MentionTurnMurmur, type RunTurn } from '../src/mentionTurn.js';
 import { BODY_LIMIT, NO_REPLY_NOTICE } from '../src/prompt.js';
 import { MurmurAgentClient } from '../src/murmur.js';
@@ -2167,7 +2167,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
       relay: {
         openSession(input: {
           agentAccountId: string; channelId: string; threadRootId: string | null;
-          harness: 'claude-code' | 'codex' | 'gemini';
+          harness: AgentHarness;
           claudeAccount?: string | null; claudePool?: string | null;
         }) {
           opened.push(input);
