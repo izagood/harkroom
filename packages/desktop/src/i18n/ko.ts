@@ -642,6 +642,9 @@ export const ko = {
   'sidebar.channel.privateOption': '비공개 (멤버만 볼 수 있다)',
   'sidebar.channel.unread': '{name} 에 안 읽은 것 {count}개',
 
+  'sidebar.inbox.blocking': '인박스에 내 답을 기다리는 것 {count}개',
+  'sidebar.inbox.unread': '인박스에 안 읽은 것 {count}개',
+
   'sidebar.delete.cancel': '취소',
   'sidebar.delete.confirm': '정말 삭제',
   'sidebar.delete.countFailed': '메시지 수를 읽지 못했다',

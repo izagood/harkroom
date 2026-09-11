@@ -33,6 +33,9 @@ import { canRelaunchAgent } from '../lib/relaunchGate';
 // 쓴다. 세 곳이 같은 문을 여는데 술어가 세 벌이면 한쪽만 고친 날 문이 어긋난다.
 import { canSeeAgentConfig } from '../lib/agentConfigGate';
 import { faceState, isFaceGreyed, type FaceState } from '../lib/faceState';
+// 인박스 줄의 배지가 **레일 홈 칸·독과 같은 함수로** 센다(`InboxRowBadge`). 여기서 다시
+// 적으면 같은 사실을 말하는 세 자리가 갈린다 — 그 규칙이 `state/unread.ts` 에 나온 이유다.
+import { blockingUnreadCount } from '../state/unread';
 import { anyPresenceView, PRESENCE_LABEL, type PresenceView } from '../lib/presenceView';
 import type { SectionId } from './settings/sections';
 import type {
@@ -109,6 +112,65 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
       {count}
     </span>
   );
+}
+
+/**
+ * 인박스 줄의 미읽음 표시(2026-09-11 신고: *"새로운 알림이 왔을 때 Inbox 에도 알림이 있어야
+ * 알지"*).
+ *
+ * ## 왜 레일 배지만으로는 부족했나
+ *
+ * 이 자리에는 오래 **배지가 없었다**. 그 자리의 주석이 근거를 적어 뒀다 — *"레일의 홈 칸이
+ * 대신 받아 어느 칸에 있든 계속 보인다. 여기에도 숫자를 달면 같은 사실이 두 곳에 유지된다."*
+ * 앞 문장은 지금도 참이고 뒷 문장이 틀렸다.
+ *
+ * 레일 배지는 **칸을 가리킨다**(홈). 홈을 이미 보고 있는 사람에게 그 배지는 "여기 있다"만
+ * 말하고 **무엇을 눌러야 하는지는 말하지 않는다** — 홈 패널에는 인박스·디렉터리·즐겨찾기·
+ * 채널이 함께 서 있고, 그중 채널만 자기 배지를 갖고 있었다. 그래서 채널 줄에 숫자가 붙은
+ * 화면에서 인박스 줄은 조용했고, 신고자가 본 것이 그것이다(#murmur 1 옆의 무표정한 Inbox).
+ *
+ * "같은 사실이 두 곳"은 **갈릴 때만** 문제다. 그래서 세는 함수를 새로 적지 않고 레일·독이
+ * 쓰는 `blockingUnreadCount` 를 그대로 쓴다 — 셋이 한 함수를 부르면 숫자가 갈릴 자리가 없다.
+ *
+ * ## 두 신호를 그대로 물려받는다
+ *
+ * 채널 줄이 이미 나눠 놓은 둘을 여기서도 쓴다(`UnreadBadge`·`ChannelUnreadDot` 의 주석):
+ * **나를 막는 것은 빨간 숫자**(안 읽은 멘션·DM), **새 대화가 있다는 것은 회색 점**이다.
+ * 답글까지 빨갛게 세면 배지가 늘 켜져 있어 아무 말도 하지 않게 된다 — 인박스는 '전부' 로
+ * 열면 수백 줄이라 그 위험이 이 앱에서 가장 큰 자리다.
+ *
+ * 둘을 **함께 그리지 않는다**: 빨간 숫자가 있으면 회색 점은 같은 목록을 두 번 가리키는
+ * 군더더기다(채널 줄은 채널마다 축이 달라 함께 서지만, 여기는 한 목록이다).
+ *
+ * 점이 기대는 것은 `reads` 가 아니라 **인박스 목록 자체**(`unread`)다. 인박스 줄이 말해야
+ * 하는 것은 "이 목록에 새 것이 있나"이고, `reads` 는 읽지도 않은 채널의 대화량까지 센다 —
+ * 그것으로 점을 켜면 인박스를 열었을 때 아무 새 줄도 없는 일이 생긴다.
+ */
+function InboxRowBadge() {
+  const blocking = useActiveStore((s) => blockingUnreadCount(s.unread));
+  const unreadCount = useActiveStore((s) => s.unread.filter((e) => !e.readAt).length);
+  const t = useT();
+  if (blocking > 0) {
+    return (
+      <span
+        data-testid="inbox-blocking-badge"
+        aria-label={t('sidebar.inbox.blocking', { count: blocking })}
+        className="ml-auto shrink-0 rounded-full bg-danger px-1.5 text-meta font-bold text-fg-on-strong"
+      >
+        {blocking}
+      </span>
+    );
+  }
+  if (unreadCount > 0) {
+    return (
+      <span
+        data-testid="inbox-unread-dot"
+        aria-label={t('sidebar.inbox.unread', { count: unreadCount })}
+        className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-fg-subtle"
+      />
+    );
+  }
+  return null;
 }
 
 /**
@@ -1627,8 +1689,10 @@ export function Sidebar({
           했다(이 파일 위쪽 `collapsed` 주석): DOM 에 남은 버튼은 탭 순서에 그대로 걸려
           **화면에서 사라진 것을 키보드로 밟게 된다.**
 
-          Inbox 가 홈 **맨 위 한 줄**이다(문서). 배지는 여기 없다 — 레일의 홈 칸이 대신 받아
-          어느 칸에 있든 계속 보인다. 여기에도 숫자를 달면 같은 사실이 두 곳에 유지된다.
+          Inbox 가 홈 **맨 위 한 줄**이다(문서). 배지는 레일의 홈 칸이 받고(어느 칸에 있든
+          계속 보인다) **이 줄도 함께 받는다** — 홈을 이미 보고 있는 사람에게 레일 배지는
+          "여기 있다"만 말하고 무엇을 누를지 말하지 않기 때문이다(`InboxRowBadge` 의 주석에
+          신고와 함께 적었다). 두 자리가 갈리지 않는 것은 **같은 함수로 세기** 때문이다.
         */}
         {panel === 'home' && (
         <>
@@ -1640,6 +1704,7 @@ export function Sidebar({
               뷰는 닫혀 있으면 아무것도 그리지 않는다. */}
           <button className={`${row(false)} text-fg-muted`} onClick={onOpenInbox}>
             Inbox
+            <InboxRowBadge />
           </button>
           <button className={`${row(false)} text-fg-muted`} onClick={onOpenDirectory}>
             Directory

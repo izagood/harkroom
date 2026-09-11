@@ -1527,6 +1527,17 @@ export const en = {
   'sidebar.channel.privateOption': 'Private (members only)',
   'sidebar.channel.unread': '{count} unread in {name}',
 
+  /**
+   * 인박스 줄의 두 표시는 **화면에 글자가 없다**(숫자 하나와 점 하나). 그래서 이 두 키가
+   * 유일한 이름이다 — 스크린리더와 시험이 읽는다(`InboxRowBadge`).
+   *
+   * 빨간 숫자와 회색 점을 **다른 말로** 적는다. 같은 말("안 읽은 것 N개")로 적으면 둘이
+   * 무엇이 다른지 이름만 듣는 사람에게 사라진다: 하나는 내 답을 기다리는 것이고 하나는
+   * 새 대화가 있다는 것이다.
+   */
+  'sidebar.inbox.blocking': '{count} waiting on you in the inbox',
+  'sidebar.inbox.unread': '{count} unread in the inbox',
+
   'sidebar.delete.cancel': 'Cancel',
   'sidebar.delete.confirm': 'Delete for good',
   'sidebar.delete.countFailed': 'The message count could not be read',
