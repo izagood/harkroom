@@ -7,7 +7,8 @@
     "start": "tsx src/main.ts",
     "dev": "tsx watch src/main.ts",
     "test": "vitest run",
-    "typecheck": "tsc -p ."
+    "typecheck": "tsc -p .",
+    "certify": "tsx scripts/certify.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

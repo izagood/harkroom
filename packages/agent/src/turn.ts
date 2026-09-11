@@ -326,6 +326,10 @@ const PRESETS: Record<AgentHarness, HarnessPreset | 'unsupported'> = {
   // (실측, task-1). `AGENT_HARNESSES`(스키마)에는 남기되 `RUNNABLE_HARNESSES`(실행 가능
   // 목록, Task 2)에서 이미 빠져 있다 — 여기 도달했다면 상위 호출부가 그 목록을 확인하지
   // 않은 결함이라는 뜻이다.
+  // opencode 는 어댑터(`adapters/opencode.ts`)가 먼저 생겼지만 argv 조립은 아직 없다 —
+  // 실물 왕복(`certify`)을 보기 전에는 여기를 열지 않는다. 어댑터가 있다는 것과 러너가
+  // 돌린다는 것은 다른 문제이고, 그 경계가 `RUNNABLE_HARNESSES` 다.
+  opencode: 'unsupported',
   gemini: 'unsupported',
 };
 

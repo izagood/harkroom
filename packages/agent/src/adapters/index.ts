@@ -18,6 +18,7 @@ import type { AgentHarness } from '@murmur/shared';
 
 import { CLAUDE_CODE_ADAPTER } from './claudeCode.js';
 import { CODEX_ADAPTER } from './codex.js';
+import { OPENCODE_ADAPTER } from './opencode.js';
 import type { HarnessAdapter } from './contract.js';
 
 export type { HarnessAdapter, ExecutionModel, TrustLedger, TranscriptSource, AccountAxis } from './contract.js';
@@ -30,6 +31,8 @@ export { GATE_PATTERN } from './gate.js';
 export const ADAPTERS: Record<AgentHarness, HarnessAdapter | 'unsupported'> = {
   'claude-code': CLAUDE_CODE_ADAPTER,
   codex: CODEX_ADAPTER,
+  // 표에는 있고 `RUNNABLE_HARNESSES` 에는 없다 — 그 둘은 다른 질문이다(어댑터 머리 주석).
+  opencode: OPENCODE_ADAPTER,
   // `-r` 이 UUID 를 받지 못해 `--session-id` 와 짝을 이루지 못한다(실측, task-1).
   gemini: 'unsupported',
 };

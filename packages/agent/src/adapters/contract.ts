@@ -163,10 +163,26 @@ export interface HarnessAdapter {
      */
     readonly gateMeasured: boolean;
   };
-  /** 신뢰 장부. */
-  readonly trust: TrustLedger;
-  /** MCP 를 등록하는 수단. `'config-file'` 은 파일 경로 하나, `'cli-overrides'` 는 `-c` 키들. */
-  readonly mcpRegistration: 'config-file' | 'cli-overrides';
+  /**
+   * 신뢰 장부. **`null` 은 "그 관문이 없다"** 이다 — 지어낼 파일이 없다는 뜻이고,
+   * `ensureWorkspaceTrusted` 가 그 하네스에 대해 아무것도 하지 않아야 한다는 지시다.
+   *
+   * 셋째 하네스가 이 자리를 열었다(2026-09-11): opencode 는 `git init` 한 빈 디렉터리에서
+   * 신뢰를 묻지 않고 바로 입력창까지 갔다. 필수 필드로 두면 없는 장부를 적어야 했다.
+   */
+  readonly trust: TrustLedger | null;
+  /**
+   * MCP 를 등록하는 수단.
+   *
+   * - `'config-file'` — 턴마다 파일 경로 하나를 넘긴다(claude 의 `--mcp-config`).
+   * - `'cli-overrides'` — 턴마다 `-c` 키들로 넘긴다(codex).
+   * - `'account-config'` — **턴별 수단이 없고 계정 설정에 미리 적어 둬야 한다**(opencode 의
+   *   `mcp add` 가 `~/.config/opencode/opencode.json` 에 쓴다). 앞의 둘과 성질이 다르다:
+   *   등록이 턴의 수명이 아니라 계정의 수명을 갖고, 그래서 **운영자의 다른 MCP 와 한 파일에서
+   *   섞인다** — claude 의 `--strict-mcp-config`·codex 의 `--ignore-user-config` 에 해당하는
+   *   격리 수단을 따로 찾아야 한다는 뜻이다(spec §7 의 요구는 하네스가 늘어도 그대로다).
+   */
+  readonly mcpRegistration: 'config-file' | 'cli-overrides' | 'account-config';
   /**
    * 지시문 전달 수단. `'flag-file'` 은 전용 플래그로 파일을 준다(claude 의
    * `--append-system-prompt-file`), `'prompt-prefix'` 는 그런 플래그가 없어 프롬프트 앞에

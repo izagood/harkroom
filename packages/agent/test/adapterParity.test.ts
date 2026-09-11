@@ -15,7 +15,7 @@
 import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AGENT_HARNESSES, RUNNABLE_HARNESSES, MENTION_PERMISSIONS, type AgentHarness } from '@murmur/shared';
 
@@ -78,14 +78,19 @@ describe('표의 범위가 turn.ts::PRESETS 와 같다', () => {
     for (const harness of AGENT_HARNESSES) expect(ADAPTERS[harness]).toBeDefined();
   });
 
-  it('구현 없는 하네스는 양쪽이 함께 거절한다', () => {
-    // `PRESETS.gemini === 'unsupported'` 와 짝을 이룬다. 한쪽만 열리면 러너가 없는 구현을
-    // 가리키고, 그 실패는 turn 조립 한참 뒤에 드러난다.
+  it('RUNNABLE 이 아니면 argv 조립이 닫혀 있다', () => {
+    // **불변식은 argv 쪽이다.** 표(어댑터)가 있다는 것과 러너가 돌린다는 것은 다른 질문이라
+    // (opencode 가 그 자리다) "어댑터가 없다"로 재면 안 된다. 재야 하는 것은 "러너가
+    // 못 돌리는 하네스로 명령을 조립할 수 없다"이고, 그것이 `PRESETS` 의 `'unsupported'` 다.
     for (const harness of AGENT_HARNESSES) {
       if (RUNNABLE.includes(harness)) continue;
-      expect(() => adapterFor(harness)).toThrow(/어댑터가 없다/);
       expect(() => plan(harness)).toThrow();
     }
+  });
+
+  it('어댑터가 아예 없는 하네스는 adapterFor 가 던진다', () => {
+    // gemini 는 표에도 없다 — 구현이 없다는 뜻이고, 조용히 기본값을 지어내면 안 된다.
+    expect(() => adapterFor('gemini')).toThrow(/어댑터가 없다/);
   });
 });
 
@@ -252,6 +257,8 @@ describe('T0 — 신뢰 장부', () => {
 
       await ensureWorkspaceTrusted({ harness, workspaceDir, claudeConfigDir: configDir, codexHome });
 
+      // `null` 은 "그 관문이 없다"다 — 적힐 파일이 없는 것이 정답이므로 건너뛴다.
+      if (adapter.trust === null) continue;
       const root = adapter.trust.root === 'account-config-dir' ? configDir : codexHome;
       const written = await readFile(join(root, adapter.trust.file), 'utf8');
       // 장부의 갈래까지 확인한다 — 파일 이름만 맞고 내용이 다른 형식이면 하네스가 못 읽는다.
@@ -355,5 +362,71 @@ describe('잠금 — 호출부가 표를 읽게 되면 지운다', () => {
     // `interactiveTurn.ts::CODEX_HANDOFF_REJECTION` 이 codex 에만 있다.
     expect(adapterFor('codex').interactiveHandoff).toBe(false);
     expect(adapterFor('claude-code').interactiveHandoff).toBe(true);
+  });
+});
+
+describe('표에 있는 것과 러너가 돌리는 것은 다른 질문이다', () => {
+  it('RUNNABLE 은 전부 어댑터가 있고 권한 갈래가 완전하다', () => {
+    // `RUNNABLE_HARNESSES` 에 들어가는 기준은 "실물 왕복을 봤는가"인데, 그 왕복에는
+    // murmur 가 쓰는 권한 갈래가 **둘 다** 도는 것이 포함된다. 하나만 되는 하네스를
+    // 돌리면 `mentionPermission: 'readonly'` 로 만든 에이전트가 조용히 auto 로 돈다.
+    for (const [, adapter] of PAIRS) {
+      expect([...adapter.supportedMentionPermissions].sort()).toEqual([...MENTION_PERMISSIONS].sort());
+    }
+  });
+
+  it('어댑터가 있어도 RUNNABLE 이 아닐 수 있다 — opencode 가 지금 그 자리다', () => {
+    const adapter = adapterFor('opencode');
+    expect(RUNNABLE.includes('opencode')).toBe(false);
+    // 아직 못 잰 것이 표에 그대로 남아 있어야 한다. 지어내면 그 값이 러너의 판단이 된다.
+    expect(adapter.supportedMentionPermissions).toEqual(['auto']);
+    expect(adapter.transcript?.parsed).toBe(false);
+    // 그리고 argv 조립은 닫혀 있어야 한다 — 표가 있다고 러너가 돌리면 안 된다.
+    expect(() => plan('opencode')).toThrow();
+  });
+
+  it('장부가 없는 하네스는 아무 파일도 만들지 않는다', async () => {
+    // `trust: null` 의 뜻이 "적을 곳을 모른다"가 아니라 "그 관문이 없다"라는 것을 고정한다.
+    expect(adapterFor('opencode').trust).toBeNull();
+  });
+});
+
+describe('P2 가 옮겨야 할 목록 — 하네스 이름 비교의 예산', () => {
+  /**
+   * **새 하네스는 타입으로 안 걸린다**(2026-09-11에 확인). `AGENT_HARNESSES` 에
+   * `'opencode'` 를 더했을 때 다섯 패키지 중 깨진 것은 **표 두 개와 손으로 베낀 테스트
+   * 유니온 하나**뿐이었다. `harness === 'claude-code'` 같은 비교는 유니온이 늘어도 그대로
+   * 컴파일되고, 새 하네스는 조용히 **모든 `else` 가지로 떨어진다** — exec 모드로, 기록
+   * 해석 없이, 계정 풀 없이, 신뢰 장부를 안 적은 채로.
+   *
+   * 그래서 컴파일러 대신 이 예산이 지킨다. 아래가 P2 가 어댑터 뒤로 옮겨야 할 목록이고,
+   * 옮길 때마다 숫자가 줄어든다. **늘리려면 이 테이블을 고쳐야 하고, 그 diff 가 리뷰에
+   * 보인다** — 그것이 이 테스트의 전부다. 0 이 되면 eslint 규칙으로 바꾸고 지운다.
+   */
+  const BUDGET: Record<string, number> = {
+    'mentionTurn.ts': 5,
+    'interactiveTurn.ts': 4,
+    'workspaceTrust.ts': 3,
+    'turn.ts': 3,
+    'harnessErrors.ts': 3,
+    'sessions.ts': 1,
+    'claudeSessions.ts': 1,
+  };
+
+  function countIn(dir: string, acc: Record<string, number>): Record<string, number> {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      // `adapters/` 는 이름을 알아도 되는 유일한 자리다 — 표가 사는 곳이다.
+      if (entry.isDirectory()) { if (entry.name !== 'adapters') countIn(full, acc); continue; }
+      if (!entry.name.endsWith('.ts')) continue;
+      const hits = readFileSync(full, 'utf8').match(/harness\s*(===|!==)/g);
+      if (hits) acc[entry.name] = (acc[entry.name] ?? 0) + hits.length;
+    }
+    return acc;
+  }
+
+  it('예산을 넘지 않는다 — 넘었다면 새 이름 비교가 심겼다', () => {
+    const found = countIn(new URL('../src', import.meta.url).pathname, {});
+    expect(found).toEqual(BUDGET);
   });
 });
