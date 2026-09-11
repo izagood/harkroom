@@ -161,7 +161,7 @@ use depends on whether that machine has the harkroom repository:
 
 ```sh
 # Installed app — the runner ships inside the bundle (adjust the path if installed elsewhere)
-MURMUR_URL=<server url> MURMUR_PAT=murp_... /Applications/murmur.app/Contents/MacOS/murmur-runner
+MURMUR_URL=<server url> MURMUR_PAT=murp_... /Applications/Harkroom.app/Contents/MacOS/harkroom-runner
 
 # Development checkout of this repository
 MURMUR_URL=<server url> MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
@@ -217,12 +217,12 @@ Requirements appear only when you run **agents**, and they depend on what you tu
 
 #### `node` — required for any agent
 
-The app ships two sidecars (`murmur-runner`, `murmur-daemon`) that run the agent turns.
+The app ships two sidecars (`harkroom-runner`, `harkroom-daemon`) that run the agent turns.
 They are bundled JavaScript with a `#!/usr/bin/env node` shebang, not native binaries, so
 the system `node` on your `PATH` is what actually executes them:
 
 ```
-$ file -b murmur.app/Contents/MacOS/murmur-runner
+$ file -b Harkroom.app/Contents/MacOS/harkroom-runner
 a /usr/bin/env node script text executable, ASCII text
 ```
 

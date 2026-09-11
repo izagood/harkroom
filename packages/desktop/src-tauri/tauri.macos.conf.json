@@ -3,7 +3,7 @@
   "app": {
     "windows": [
       {
-        "title": "murmur",
+        "title": "Harkroom",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "width": 1200,

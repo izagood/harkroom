@@ -46,7 +46,7 @@ describe('daemon 종료 — 러너를 데려가지 않는다 (#431)', () => {
    * 넣으면 목록에 시그널이 끼고 빨개진다.
    */
   it('shutdown 이 러너에 아무 시그널도 보내지 않는다', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'murmur-daemon-shutdown-'));
+    const dir = await mkdtemp(join(tmpdir(), 'harkroom-daemon-shutdown-'));
     임시들.push(dir);
     const 보낸시그널: (NodeJS.Signals | 0)[] = [];
     const host: RunnerHost = {
@@ -77,7 +77,7 @@ describe('daemon 종료 — 러너를 데려가지 않는다 (#431)', () => {
 
   /** 종료는 엔드포인트를 **정리한다** — 잔해를 남기면 다음 daemon 이 3중 증거를 다 밟아야 한다. */
   it('shutdown 이 소켓·pid·토큰을 걷어낸다', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'murmur-daemon-release-'));
+    const dir = await mkdtemp(join(tmpdir(), 'harkroom-daemon-release-'));
     임시들.push(dir);
     const paths = daemonEndpointPaths(dir);
     const outcome = await startDaemon({
@@ -106,7 +106,7 @@ describe('daemon 종료 — 러너를 데려가지 않는다 (#431)', () => {
    * 정리를 넣으면 러너가 함께 죽는다.
    */
   it('daemon 프로세스를 죽여도 러너가 살아남고 재부모화된다', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'murmur-daemon-outlive-'));
+    const dir = await mkdtemp(join(tmpdir(), 'harkroom-daemon-outlive-'));
     임시들.push(dir);
     const paths = daemonEndpointPaths(dir);
 

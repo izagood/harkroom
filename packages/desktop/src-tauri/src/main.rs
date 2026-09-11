@@ -16,7 +16,7 @@ use std::collections::HashMap;
 
 /// 키체인 서비스 이름은 **`daemon_client` 가 정한다** — 상수가 여기 없는 것이 요점이다.
 ///
-/// `#515`: 이름이 번들 ID 하나(`app.murmur.desktop`)뿐이라 개발 빌드와 설치된 `.app` 이
+/// `#515`: 이름이 번들 ID 하나(`app.harkroom.desktop`)뿐이라 개발 빌드와 설치된 `.app` 이
 /// 같은 항목을 봤다. 릴리즈 `v0.1.0` 을 처음 설치한 사람이 로그인 화면 없이 개발 서버의
 /// 계정으로 들어갔다(실측 2026-09-06).
 ///
@@ -173,7 +173,7 @@ async fn secret_delete(key: String) -> Result<(), String> {
 /// 때문이다 — 그 테스트가 `#433` 이 재려던 것("빌드 위치가 아니라 실행 위치에서 해석되는가")
 /// 을 계속 잰다.
 #[cfg(test)]
-const RUNNER_SIDECAR_NAME: &str = "murmur-runner";
+const RUNNER_SIDECAR_NAME: &str = "harkroom-runner";
 
 /// 이 실행 파일(앱)과 같은 디렉터리에서 사이드카를 찾는다. Tauri 의 `externalBin` 번들링이
 /// `<name>-<target-triple>` 을 `<name>` 으로 이름을 바꿔 앱 실행 파일과 **같은 디렉터리**에
@@ -215,7 +215,7 @@ fn sidecar_path(name: &str) -> Result<std::path::PathBuf, String> {
 // 걷어내야 한다"** 고 예고했고, 지금이 그 시점이다. 예고대로 두 가지가 실제로 터졌다(실측):
 //
 //   codesign --verify → a sealed resource is missing or invalid
-//                       file added: …/murmur.app/Contents/MacOS/node_modules
+//                       file added: …/Harkroom.app/Contents/MacOS/node_modules
 //   xcrun stapler staple → rejected (invalid destination for symbolic link in bundle)
 //
 // 두 번째가 결정적이다. **공증 자체는 통과했다**(`notarytool submit` → `status: Accepted`).
@@ -585,7 +585,7 @@ fn main() {
             claude_account_move,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running murmur");
+        .expect("error while running Harkroom");
 }
 
 #[cfg(all(test, unix))]
@@ -660,7 +660,7 @@ mod tests {
     /// 그대로 쓸 수 없다 — 대신 `CARGO_MANIFEST_DIR`(이 크레이트 루트) 기준으로 `target/`
     /// 다음에 프로파일 이름을 붙인다. `cargo test`/`cargo build` 는 기본적으로 `debug`
     /// 프로파일을 쓰고, 이 회귀선이 재려는 자리도 정확히 그 프로파일의 `target/debug/`다
-    /// (실물 확인 절차의 `target/debug/murmur-runner` 와 같은 자리).
+    /// (실물 확인 절차의 `target/debug/harkroom-runner` 와 같은 자리).
     fn target_debug_dir() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")

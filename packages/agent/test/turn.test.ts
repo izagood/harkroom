@@ -182,7 +182,7 @@ describe('buildTurnCommand — codex', () => {
     const resumed = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
     for (const plan of [first, resumed]) {
       expect(plan.args.join(' ')).toContain('mcp_servers.murmur.default_tools_approval_mode="approve"');
-      expect(plan.args.join(' ')).not.toContain('mcp_servers.murmur.approval_mode=');
+      expect(plan.args.join(' ')).not.toContain('mcp_servers.Harkroom.approval_mode=');
       expect(plan.args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
     }
   });

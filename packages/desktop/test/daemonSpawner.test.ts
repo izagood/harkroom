@@ -261,7 +261,7 @@ describe('daemon 기동 실패는 조용히 넘어가지 않는다 (#431 · #368
    */
   it('daemon 을 못 띄우면 그 사유 그대로 던진다 — 삼키지도, 다른 경로로 물러나지도 않는다', async () => {
     tauri.spawnError = new Error(
-      'daemon 사이드카를 찾지 못했다: `/Applications/murmur.app/Contents/MacOS/murmur-daemon`',
+      'daemon 사이드카를 찾지 못했다: `/Applications/Harkroom.app/Contents/MacOS/harkroom-daemon`',
     );
     await expect(daemonSpawner.spawn({
       agentId: 'a', env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin' }, onExit: () => {},

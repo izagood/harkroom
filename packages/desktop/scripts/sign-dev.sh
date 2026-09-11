@@ -19,7 +19,7 @@
 #
 # 이름 있는 인증서로 서명하면 requirement 에서 해시가 사라진다:
 #
-#     designated => identifier "app.murmur.desktop.dev" and anchor ...
+#     designated => identifier "app.harkroom.desktop.dev" and anchor ...
 #
 # 두 빌드가 글자 그대로 같아진다 — 그래서 승인이 한 번으로 끝난다.
 #
@@ -33,7 +33,7 @@ set -eu
 # 이름은 `sign-app.mjs` 와 **같은 환경변수**로 덮을 수 있다 — 서명 신원을 고르는 자리가
 # 개발과 릴리즈에서 갈라지면, 한쪽만 고쳐 놓고 다른 쪽이 왜 안 되는지 찾게 된다.
 IDENTITY="${MURMUR_SIGN_IDENTITY:-murmur-dev}"
-BIN="${1:-src-tauri/target/debug/murmur-desktop}"
+BIN="${1:-src-tauri/target/debug/harkroom-desktop}"
 
 [ -f "$BIN" ] || exit 0
 
@@ -45,7 +45,7 @@ if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "\"$IDENTITY
 fi
 
 # `--identifier` 를 **고정**한다. 이것이 requirement 에 들어가는 이름이고, 비워 두면
-# cargo 가 만든 해시 섞인 기본 식별자(`murmur_desktop-2cf138358ac0eb80`)가 쓰여
+# cargo 가 만든 해시 섞인 기본 식별자(`harkroom_desktop-2cf138358ac0eb80`)가 쓰여
 # 다시 불안정해진다.
-codesign -f -s "$IDENTITY" --identifier app.murmur.desktop.dev "$BIN" 2>/dev/null || exit 0
+codesign -f -s "$IDENTITY" --identifier app.harkroom.desktop.dev "$BIN" 2>/dev/null || exit 0
 echo "[sign-dev] $IDENTITY 로 서명했다: $BIN"

@@ -796,7 +796,7 @@ export class Controller {
       ? `#${channel.name}`
       : dm
         ? dm.memberIds.filter((id) => id !== store.me?.id).map((id) => store.accounts[id]?.handle ?? '…').join(', ')
-        : 'harkroom';
+        : 'Harkroom';
     const author = store.accounts[message.authorId]?.handle;
 
     this.notifiedMessages.add(message.id);
@@ -889,7 +889,7 @@ export class Controller {
         ? `#${channel.name}`
         : dm
           ? dm.memberIds.filter((id) => id !== me?.id).map((id) => accounts[id]?.handle ?? '…').join(', ')
-          : 'harkroom';
+          : 'Harkroom';
       // 본문이 스토어에 없으면(창 밖으로 밀려난 채널 등) 이유만으로도 알림은 성립한다.
       const generic = `New ${e.reason.replace('_', ' ')}`;
 

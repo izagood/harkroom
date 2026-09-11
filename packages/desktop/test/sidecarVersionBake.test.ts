@@ -62,9 +62,9 @@ describe('러너 사이드카에 버전을 굽는다', () => {
 
   it('러너 빌드에만 `define` 을 준다 — daemon 은 자기 버전을 보고하지 않는다', () => {
     const script = read('packages/desktop/scripts/build-sidecars.mjs');
-    // 러너 블록에만 있어야 한다. `murmur-daemon` 이후 구간에 나타나면 daemon 번들에도
+    // 러너 블록에만 있어야 한다. `harkroom-daemon` 이후 구간에 나타나면 daemon 번들에도
     // 굽는 것이고, 그것은 아무도 읽지 않는 값이다.
-    const daemonAt = script.indexOf("name: 'murmur-daemon'");
+    const daemonAt = script.indexOf("name: 'harkroom-daemon'");
     const defineAt = script.indexOf('runnerDefines(');
     expect(defineAt).toBeGreaterThan(-1);
     expect(defineAt).toBeLessThan(daemonAt);

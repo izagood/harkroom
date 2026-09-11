@@ -97,7 +97,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
           {/* **화면 제목단 17px.** 18px(`text-lg`)이었고 4단 중 아무것도 아니었다. 이 자리는
               화면 하나가 무엇을 하는 중인지 말하는 유일한 줄이라 맨 윗단이 맞다 —
               `SettingsPage` 의 제목과 같은 단이다(그 파일에 근거를 적어 뒀다). */}
-          <h1 className="text-title font-bold">{adding ? 'Sign in to another community' : 'harkroom'}</h1>
+          <h1 className="text-title font-bold">{adding ? 'Sign in to another community' : 'Harkroom'}</h1>
         </div>
         {/* 로그인 **전**에도 업데이트할 수 있어야 한다(실측 2026-09-07): 서버에 못 붙는
             버전이면 업데이트가 필요한데, 업데이트가 로그인 뒤에만 있으면 빠져나갈 길이 없다.

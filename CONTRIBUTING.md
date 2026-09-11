@@ -169,7 +169,7 @@ On Apple silicon the linker ad-hoc signs the binary automatically, and **an ad-h
 signature's designated requirement is the content hash itself**:
 
 ```
-$ codesign -d --requirements - src-tauri/target/debug/murmur-desktop
+$ codesign -d --requirements - src-tauri/target/debug/harkroom-desktop
 designated => cdhash H"af98102fc08f1de24bfa18d2ddaf994d0a953b65"
 ```
 
@@ -180,7 +180,7 @@ macOS treats it as a different app. Pinning an ad-hoc signature is impossible â€
 Signing with a named certificate removes the hash from the requirement:
 
 ```
-designated => identifier "app.murmur.desktop.dev" and anchor apple generic
+designated => identifier "app.harkroom.desktop.dev" and anchor apple generic
               and certificate leaf[subject.OU] = <TEAMID>
 ```
 

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "murmur",
+  "productName": "Harkroom",
   "version": "0.1.194",
-  "identifier": "app.murmur.desktop",
+  "identifier": "app.harkroom.desktop",
   "build": {
     "devUrl": "http://localhost:5173",
     "frontendDist": "../dist",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "murmur",
+        "title": "Harkroom",
         "width": 1200,
         "height": 800,
         "dragDropEnabled": false
@@ -33,7 +33,7 @@
     "targets": ["app", "dmg"],
     "createUpdaterArtifacts": true,
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
-    "externalBin": ["binaries/murmur-runner", "binaries/murmur-daemon"],
+    "externalBin": ["binaries/harkroom-runner", "binaries/harkroom-daemon"],
     "resources": {
       "binaries/node_modules/node-pty": "node_modules/node-pty"
     }

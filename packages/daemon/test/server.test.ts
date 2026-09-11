@@ -37,7 +37,7 @@ afterEach(async () => {
 });
 
 async function 임시앱디렉터리(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'murmur-daemon-test-'));
+  const dir = await mkdtemp(join(tmpdir(), 'harkroom-daemon-test-'));
   임시들.push(dir);
   return dir;
 }
@@ -60,7 +60,7 @@ async function daemon띄우기(appDataDir: string, host: RunnerHost = 가짜호�
     args: {
       socket: paths.socketPath,
       launchNonce: 'test-nonce',
-      entryPath: join(appDataDir, 'murmur-daemon'),
+      entryPath: join(appDataDir, 'harkroom-daemon'),
       appVersion: '0.0.0-test',
       unknown: [],
     },
@@ -232,7 +232,7 @@ describe('개발 구획 — 뿌리가 다르면 서로 안 보인다 (#431 2-e)'
    * ## 왜 `os.tmpdir()` 가 아니라 `/tmp` 인가 — 104바이트
    *
    * macOS 의 `os.tmpdir()` 는 74바이트짜리
-   * `/var/folders/…/T/murmur-daemon-test-XXXXXX` 를 준다. 거기에 구획 13바이트
+   * `/var/folders/…/T/harkroom-daemon-test-XXXXXX` 를 준다. 거기에 구획 13바이트
    * (`dev-XXXXXXXX/`)를 얹으면 소켓이 104바이트를 넘어 `listen EINVAL` 로 죽는다 —
    * **구현 중 실제로 밟았다**(107바이트). 앱 쪽에는 `check_socket_path_length` 가 있어
    * 그 실패가 사유로 나오지만(`daemon_client.rs`), daemon 쪽은 커널 에러를 그대로 받는다.
@@ -521,7 +521,7 @@ describe('요청 넷 (#431 2단계-b 범위)', () => {
     const outcome = await startDaemon({
       args: {
         socket: paths.socketPath,
-        entryPath: join(dir, 'murmur-daemon'),
+        entryPath: join(dir, 'harkroom-daemon'),
         appVersion: '0.0.0-test',
         unknown: [],
       },

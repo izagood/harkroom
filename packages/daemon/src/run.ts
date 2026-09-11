@@ -137,7 +137,7 @@ export type StartOutcome =
  */
 export function defaultRunnerCommand(entryPath: string): string {
   const dir = dirname(resolve(entryPath));
-  const name = process.platform === 'win32' ? 'murmur-runner.exe' : 'murmur-runner';
+  const name = process.platform === 'win32' ? 'harkroom-runner.exe' : 'harkroom-runner';
   return resolve(dir, name);
 }
 
@@ -160,7 +160,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   const { args } = options;
   const log = options.log ?? ((line: string) => console.log(line));
   if (!args.socket) throw new Error('--socket 이 없다 — daemon 은 어디에 소켓을 열지 모른다');
-  const entryPath = args.entryPath ?? resolve(process.argv[1] ?? 'murmur-daemon');
+  const entryPath = args.entryPath ?? resolve(process.argv[1] ?? 'harkroom-daemon');
   const appDataDir = appDataDirFromSocket(args.socket);
 
   // exit 통지는 레지스트리 → 서버로 흐르는데 서버는 레지스트리를 필요로 한다. 그 순환을

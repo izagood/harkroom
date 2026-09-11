@@ -83,7 +83,7 @@ async function daemon띄우기(
     args: {
       socket: paths.socketPath,
       launchNonce: 'test-nonce',
-      entryPath: join(appDataDir, 'murmur-daemon'),
+      entryPath: join(appDataDir, 'harkroom-daemon'),
       appVersion: '0.0.0-test',
       unknown: [],
     },
@@ -192,7 +192,7 @@ describe('고아 재발견 — daemon 이 죽고 새로 떠도 그 러너를 안
 
     const 첫daemon = await daemon띄우기(dir, { args: {
       socket: daemonEndpointPaths(dir).socketPath, launchNonce: 'test-nonce',
-      entryPath: join(dir, 'murmur-daemon'), appVersion: '0.1.26', unknown: [],
+      entryPath: join(dir, 'harkroom-daemon'), appVersion: '0.1.26', unknown: [],
     } });
     if (첫daemon.kind !== 'running') throw new Error('daemon 이 안 떴다');
     const 러너 = await 첫daemon.daemon.registry.spawnRunner('a1', { PATH: process.env.PATH ?? '' });
@@ -204,7 +204,7 @@ describe('고아 재발견 — daemon 이 죽고 새로 떠도 그 러너를 안
     // ── 새 세대 daemon ───────────────────────────────────────────────────────
     const 새daemon = await daemon띄우기(dir, { args: {
       socket: daemonEndpointPaths(dir).socketPath, launchNonce: 'test-nonce-2',
-      entryPath: join(dir, 'murmur-daemon'), appVersion: '0.1.27', unknown: [],
+      entryPath: join(dir, 'harkroom-daemon'), appVersion: '0.1.27', unknown: [],
     } });
     if (새daemon.kind !== 'running') throw new Error('새 daemon 이 안 떴다');
 
@@ -418,7 +418,7 @@ describe('안전 경계 — 남의 러너를 채택하지 않는다 (#431 2-c)',
   /**
    * **회귀선 5.** 이 설계의 안전 경계다.
    *
-   * 실측(2026-09-06)이 이 회귀선의 근거다: 이 기계에 `murmur-runner` 고아가 6개 이상
+   * 실측(2026-09-06)이 이 회귀선의 근거다: 이 기계에 `harkroom-runner` 고아가 6개 이상
    * 떠 있고 **전부 `ppid=1` 이며 실행 경로가 완전히 같다.** 프로세스 목록을 훑는 구현은
    * 그것들을 자기 러너로 착각할 수 있고, 착각한 러너는 `killRunner` 의 대상이 된다.
    *

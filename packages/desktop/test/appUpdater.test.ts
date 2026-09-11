@@ -256,8 +256,8 @@ describe('PR 검증 빌드(ci.yml)는 서명 키를 요구하지 않는다', () 
     expect(ci).toContain('build:sidecar');
     expect(ci.indexOf('build:sidecar')).toBeLessThan(ci.indexOf('tauri build'));
     // #441: 번들 안에 사이드카 둘이 들어갔는지 본다
-    expect(ci).toContain('Contents/MacOS/murmur-runner');
-    expect(ci).toContain('Contents/MacOS/murmur-daemon');
+    expect(ci).toContain('Contents/MacOS/harkroom-runner');
+    expect(ci).toContain('Contents/MacOS/harkroom-daemon');
     // #470: node-pty 는 Resources 에 있고, 번들에 링크를 만들지 않는다
     expect(ci).toContain('Contents/Resources/node_modules/node-pty');
   });

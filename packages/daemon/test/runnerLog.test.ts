@@ -35,7 +35,7 @@ afterEach(() => {
 });
 
 function 임시앱데이터(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'murmur-runnerlog-'));
+  const dir = mkdtempSync(join(tmpdir(), 'harkroom-runnerlog-'));
   정리할디렉터리.push(dir);
   return dir;
 }

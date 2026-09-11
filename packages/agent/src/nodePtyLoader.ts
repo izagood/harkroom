@@ -7,8 +7,8 @@
 // Node 의 ESM 해석기가 **그 파일이 있는 디렉터리에서 위로 `node_modules` 를 걸어 올라가며**
 // 찾는다. 그런데 Tauri 는 두 산출물을 다른 자리에 둔다:
 //
-//   externalBin        → murmur.app/Contents/MacOS/murmur-runner
-//   bundle.resources   → murmur.app/Contents/Resources/node_modules/node-pty
+//   externalBin        → Harkroom.app/Contents/MacOS/harkroom-runner
+//   bundle.resources   → Harkroom.app/Contents/Resources/node_modules/node-pty
 //
 // `Contents/MacOS` 위로는 `node_modules` 가 없으므로 정적 import 는 그대로 실패한다.
 // 개발 빌드(`target/debug/`)에서만 두 자리가 우연히 같아 통했다(`tauri-utils` 의

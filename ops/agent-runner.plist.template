@@ -8,18 +8,18 @@
         -e 's|@REPO@|/절대/경로/murmur|g' \
         -e 's|@PAT@|murp_...|g' \
         -e 's|@URL@|http://localhost:3400|g' \
-        ops/agent-runner.plist.template > ~/Library/LaunchAgents/dev.murmur.agent.fizz.plist
-    chmod 600 ~/Library/LaunchAgents/dev.murmur.agent.fizz.plist   # PAT 가 평문으로 담긴다
-    launchctl load ~/Library/LaunchAgents/dev.murmur.agent.fizz.plist
+        ops/agent-runner.plist.template > ~/Library/LaunchAgents/dev.harkroom.agent.fizz.plist
+    chmod 600 ~/Library/LaunchAgents/dev.harkroom.agent.fizz.plist   # PAT 가 평문으로 담긴다
+    launchctl load ~/Library/LaunchAgents/dev.harkroom.agent.fizz.plist
 
   붙인 뒤 반드시 죽여서 확인한다 — 감독이 붙었다는 것과 동작한다는 것은 다른 사실이다:
-    kill -9 $(launchctl list | awk '$3=="dev.murmur.agent.fizz"{print $1}')
-    launchctl list | grep dev.murmur.agent    # PID 가 바뀌어야 한다
+    kill -9 $(launchctl list | awk '$3=="dev.harkroom.agent.fizz"{print $1}')
+    launchctl list | grep dev.harkroom.agent    # PID 가 바뀌어야 한다
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>dev.murmur.agent.@HANDLE@</string>
+  <key>Label</key><string>dev.harkroom.agent.@HANDLE@</string>
 
   <!-- pnpm 을 거치지 않는다. pnpm 을 감독하면 러너가 죽어도 pnpm 이 남아
        launchd 가 재시작하지 않는 경우가 생긴다. -->
@@ -46,7 +46,7 @@
   <!-- 즉시 재시작을 반복하면 CPU 를 태운다. -->
   <key>ThrottleInterval</key><integer>10</integer>
 
-  <key>StandardOutPath</key><string>/tmp/murmur-runner/@HANDLE@.log</string>
-  <key>StandardErrorPath</key><string>/tmp/murmur-runner/@HANDLE@.err.log</string>
+  <key>StandardOutPath</key><string>/tmp/harkroom-runner/@HANDLE@.log</string>
+  <key>StandardErrorPath</key><string>/tmp/harkroom-runner/@HANDLE@.err.log</string>
 </dict>
 </plist>

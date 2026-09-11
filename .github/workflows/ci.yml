@@ -90,7 +90,7 @@ jobs:
     # 번들을 실제로 말아야만** 드러나는 고장이 이미 여러 번 나왔다:
     #
     # - `tauri-plugin-notification` 의 크레이트/JS 버전 불일치(#440) — `cargo check` 는 통과했다.
-    # - `build:sidecar` 를 잊으면 `resource path 'binaries/murmur-runner-…' doesn't exist`(#441).
+    # - `build:sidecar` 를 잊으면 `resource path 'binaries/harkroom-runner-…' doesn't exist`(#441).
     # - macOS 에서만 통과하는 테스트(반대 방향도 마찬가지다).
     #
     # 그래서 이 잡의 질문은 하나다: **"macOS 에서 앱이 실제로 빌드되고, 그 안에 들어갈 것이
@@ -135,7 +135,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # **사이드카가 `tauri build` 보다 반드시 앞이다.** `tauri.conf.json` 의 `externalBin` 이
-      # `binaries/murmur-runner`·`binaries/murmur-daemon` 둘 다 요구하고, 없으면 번들 단계가
+      # `binaries/harkroom-runner`·`binaries/harkroom-daemon` 둘 다 요구하고, 없으면 번들 단계가
       # `resource path … doesn't exist` 로 죽는다(#441). 사람이 기억해야 하는 순서를 여기에
       # 못박는 것이 이 잡이 #441 을 닫는 방식이다.
       - run: pnpm --filter @murmur/desktop build:sidecar
@@ -175,9 +175,9 @@ jobs:
       # #441 류의 고장은 "빌드는 됐는데 앱 안에 사이드카가 없다"는 모양으로 나타난다.
       # 그래서 번들을 열어 **실제로 들어가야 할 넷**을 확인한다:
       #
-      #   Contents/MacOS/murmur-desktop           ← 본체
-      #   Contents/MacOS/murmur-runner            ← externalBin (하네스를 돌린다)
-      #   Contents/MacOS/murmur-daemon            ← externalBin (러너를 spawn 한다)
+      #   Contents/MacOS/harkroom-desktop           ← 본체
+      #   Contents/MacOS/harkroom-runner            ← externalBin (하네스를 돌린다)
+      #   Contents/MacOS/harkroom-daemon            ← externalBin (러너를 spawn 한다)
       #   Contents/Resources/node_modules/node-pty ← bundle.resources (러너가 PTY 를 연다)
       #
       # 마지막 항목이 `Resources/` 인 것은 Tauri 가 `bundle.resources` 를 거기 두기 때문이다.
@@ -189,14 +189,14 @@ jobs:
       - name: 번들 산출물을 검증한다
         run: |
           set -euo pipefail
-          app="packages/desktop/src-tauri/target/release/bundle/macos/murmur.app"
+          app="packages/desktop/src-tauri/target/release/bundle/macos/Harkroom.app"
           test -d "$app" || { echo "::error::.app 이 없다: $app"; exit 1; }
 
           missing=0
           for f in \
-            "$app/Contents/MacOS/murmur-desktop" \
-            "$app/Contents/MacOS/murmur-runner" \
-            "$app/Contents/MacOS/murmur-daemon"
+            "$app/Contents/MacOS/harkroom-desktop" \
+            "$app/Contents/MacOS/harkroom-runner" \
+            "$app/Contents/MacOS/harkroom-daemon"
           do
             if [ -x "$f" ]; then
               echo "ok  $f"

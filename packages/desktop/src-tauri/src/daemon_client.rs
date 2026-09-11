@@ -57,7 +57,7 @@ use serde_json::{json, Value};
 
 /// daemon 사이드카의 이름. **`tauri.conf.json` 의 `bundle.externalBin` 항목과 같아야 한다**
 /// — 러너 쪽 `RUNNER_SIDECAR_NAME` 과 같은 계약이다.
-pub const DAEMON_SIDECAR_NAME: &str = "murmur-daemon";
+pub const DAEMON_SIDECAR_NAME: &str = "harkroom-daemon";
 
 /// 소켓·pid·토큰 파일명에 박히는 프로토콜 버전. **`@murmur/shared` 의
 /// `DAEMON_PROTOCOL_VERSION` 과 같은 값이어야 한다** — 다르면 앱은 `daemon-v1.sock` 을
@@ -80,7 +80,7 @@ pub const DAEMON_PROTOCOL_VERSION: u32 = 1;
 /// ## 여유가 얼마나 되나 — 실측 (2026-09-06)
 ///
 /// ```text
-/// /Users/alice2/Library/Application Support/app.murmur.desktop/daemon/daemon-v1.sock
+/// /Users/alice2/Library/Application Support/app.harkroom.desktop/daemon/daemon-v1.sock
 /// = 82바이트 (여유 22)
 /// ```
 ///
@@ -94,7 +94,7 @@ pub const DAEMON_PROTOCOL_VERSION: u32 = 1;
 /// |---|---|
 /// | 긴 사용자 이름 | 1자당 1바이트 |
 /// | 프로토콜 버전 자릿수(`daemon-v10`) | 1바이트 — 허용 이름이 27자로 준다 |
-/// | 앱 식별자(`app.murmur.desktop`, 18자)가 길어지면 | 그만큼 |
+/// | 앱 식별자(`app.harkroom.desktop`, 18자)가 길어지면 | 그만큼 |
 /// | `<appDataDir>/daemon/` 밑에 단계를 더 넣으면 | 그만큼 |
 ///
 /// **그래서 "운영 경로는 안전하다"고 단정하지 않는다.** 아래 `check_socket_path_length`
@@ -147,8 +147,8 @@ const DEV_DATA_DIR_ENV: &str = "MURMUR_DEV_DATA_DIR";
 /// ## 왜 8인가 — 104바이트 예산에서 역산했다 (실측 2026-09-06)
 ///
 /// ```text
-/// 릴리즈: …/app.murmur.desktop/daemon/daemon-v1.sock              = 82바이트 (여유 22)
-/// 개발  : …/app.murmur.desktop/dev-XXXXXXXX/daemon/daemon-v1.sock = 95바이트 (여유 9)
+/// 릴리즈: …/app.harkroom.desktop/daemon/daemon-v1.sock              = 82바이트 (여유 22)
+/// 개발  : …/app.harkroom.desktop/dev-XXXXXXXX/daemon/daemon-v1.sock = 95바이트 (여유 9)
 /// ```
 ///
 /// `dev-` 4자 + 해시 8자 + `/` 1자 = **13바이트**를 그 22에서 갉는다. 남는 9바이트가
@@ -207,7 +207,7 @@ const DEV_DIR_PREFIX: &str = "dev-";
 ///
 /// 구획이 안 갈리는 경로가 실제로 남아 있다:
 ///
-/// - **설치본 두 판본을 나란히 띄우면 뿌리를 공유한다** — `/Applications/murmur.app` 을
+/// - **설치본 두 판본을 나란히 띄우면 뿌리를 공유한다** — `/Applications/Harkroom.app` 을
 ///   두 벌 둘 수는 없으니 실제로는 드물지만, 남는다. (앞 판본은 여기에 *"릴리즈
 ///   빌드끼리는 여전히 공유한다 — 의도다"* 라고 적혀 있었고, 그 문장이 이 저장소가 실제로
 ///   부딪힌 결함을 미리 적어 둔 자리였다: 로컬 `tauri build` 번들과 설치본이 소켓 하나를
@@ -254,8 +254,8 @@ pub fn dev_partition_name(source: &str) -> String {
 /// `#486`(뿌리)과 `#515`(키체인)가 가른 축은 **빌드 프로파일**이다. 그런데 실제로 부딪히는
 /// 축은 **역할**이다 — 프로덕션 설치본이냐, 로컬에서 테스트로 띄운 것이냐.
 ///
-/// **실측(2026-09-07)**: `/Applications/murmur.app`(앱 0.1.6)과 워크트리에서 `tauri build`
-/// 한 `…/hamlet/…/target/release/bundle/macos/murmur.app`(앱 0.1.7)이 소켓 하나를 공유했다.
+/// **실측(2026-09-07)**: `/Applications/Harkroom.app`(앱 0.1.6)과 워크트리에서 `tauri build`
+/// 한 `…/hamlet/…/target/release/bundle/macos/Harkroom.app`(앱 0.1.7)이 소켓 하나를 공유했다.
 /// 둘 다 릴리즈 프로파일이라 옛 축에서 **같은 쪽**에 떨어졌다. 그 뒤 `entryPath` 관문이
 /// 붙기를 막고(제 일을 했다) 우리 daemon 은 `EXIT_OCCUPIED`(10)로 물러나 — **붙지도
 /// 띄우지도 못하는 교착**이 됐다(`ensure_at`·`same_entry_path` 주석).
@@ -452,13 +452,13 @@ fn dev_app_data_root(
 /// (`릴리즈_빌드의_키체인_이름은_안_바뀐다`). 이 값을 고치려는 다음 사람에게:
 /// 그 회귀선이 빨개지는 것이 신호다 — 우회하지 말고 왜 배포된 사용자를 끊어도 되는지
 /// 먼저 답을 만들어라.
-const KEYCHAIN_SERVICE_RELEASE: &str = "app.murmur.desktop";
+const KEYCHAIN_SERVICE_RELEASE: &str = "app.harkroom.desktop";
 
 /// 키체인 서비스 이름을 정한다 — `app_data_root` 와 **같은 자리에서 같은 구획으로** 갈린다.
 ///
 /// ```text
-/// 설치본   app.murmur.desktop
-/// 그 밖    app.murmur.desktop.dev-<해시8>
+/// 설치본   app.harkroom.desktop
+/// 그 밖    app.harkroom.desktop.dev-<해시8>
 /// ```
 ///
 /// "설치본"의 정의는 `BuildSite::is_installed` 하나에 있다 — 뿌리와 **같은 판정**을 쓴다.
@@ -505,7 +505,7 @@ const KEYCHAIN_SERVICE_RELEASE: &str = "app.murmur.desktop";
 ///
 /// ## 이미 쌓인 개발 항목 — **지우는 코드를 만들지 않았다**
 ///
-/// 이 변경 뒤 `app.murmur.desktop` 아래 남는 `murmur.runner.pat.*`·`murmur.runner.device`
+/// 이 변경 뒤 `app.harkroom.desktop` 아래 남는 `murmur.runner.pat.*`·`murmur.runner.device`
 /// 개발 항목들은 아무도 안 읽는 고아가 된다. 그것을 코드로 지우지 않는다:
 ///
 /// - **같은 이름 아래에 배포된 사용자의 진짜 세션이 있다.** 개발 부스러기와 실제
@@ -515,8 +515,8 @@ const KEYCHAIN_SERVICE_RELEASE: &str = "app.murmur.desktop";
 ///   자기가 만든 적 없는 것에 승인을 하게 되는데, 그것이 `#515` 가 문제 삼은 동작이다
 /// - 고아는 **자리만 차지한다.** 앱이 그 이름을 다시 안 보므로 새는 경로가 없다
 ///
-/// 사람이 지우고 싶으면 **키체인 접근 앱에서 `app.murmur.desktop` 을 검색해 개발 중
-/// 만든 항목을 골라 지운다.** `security find-generic-password -s app.murmur.desktop`
+/// 사람이 지우고 싶으면 **키체인 접근 앱에서 `app.harkroom.desktop` 을 검색해 개발 중
+/// 만든 항목을 골라 지운다.** `security find-generic-password -s app.harkroom.desktop`
 /// 으로 목록을 볼 수 있다. 어느 것이 개발 부스러기인지는 그것을 만든 사람만 안다.
 pub fn keychain_service_name() -> String {
     let exe = std::env::current_exe().ok();
@@ -910,15 +910,15 @@ pub fn read_pid_record(path: &Path) -> Option<PidRecord> {
 /// ## 왜 이 검사가 필요해졌나 — 소켓이 워크트리를 가로지른다
 ///
 /// `resolve_endpoint_paths` 는 `app.path().app_data_dir()` 에서 경로를 계산하고, 그 값은
-/// **번들 식별자**로 정해진다(`app.murmur.desktop`). **워크트리 성분이 없다.** 그래서
+/// **번들 식별자**로 정해진다(`app.harkroom.desktop`). **워크트리 성분이 없다.** 그래서
 /// 같은 기계의 모든 체크아웃·모든 빌드가 소켓 **하나**를 공유한다:
 ///
 /// ```text
-/// ~/Library/Application Support/app.murmur.desktop/daemon/daemon-v1.sock
+/// ~/Library/Application Support/app.harkroom.desktop/daemon/daemon-v1.sock
 /// ```
 ///
 /// **실측(2026-09-06)**: 릴리즈 앱이 다른 워크트리의 **debug** daemon(pid 35721,
-/// `entryPath = …/permit/…/target/debug/murmur-daemon`)에 그대로 붙었다. 토큰도 같은
+/// `entryPath = …/permit/…/target/debug/harkroom-daemon`)에 그대로 붙었다. 토큰도 같은
 /// 파일을 공유하니 인증은 자동으로 통과한다.
 ///
 /// ## 무엇이 위험한가 — `#250` 과 **층이 다르다**
@@ -928,7 +928,7 @@ pub fn read_pid_record(path: &Path) -> Option<PidRecord> {
 /// ```ts
 /// // packages/daemon/src/run.ts
 /// export function defaultRunnerCommand(entryPath: string): string {
-///   return resolve(dirname(resolve(entryPath)), 'murmur-runner');
+///   return resolve(dirname(resolve(entryPath)), 'harkroom-runner');
 /// }
 /// ```
 ///
@@ -1645,7 +1645,7 @@ fn exit_reason(
 ///
 /// ## 무엇을 말하나 — **종료할 앱**이다
 ///
-/// `entryPath` 는 daemon **실행 파일**이지만(`…/murmur.app/Contents/MacOS/murmur-daemon`),
+/// `entryPath` 는 daemon **실행 파일**이지만(`…/Harkroom.app/Contents/MacOS/harkroom-daemon`),
 /// 사람이 종료할 수 있는 것은 `.app` 이다. 그래서 `app_bundle_of` 로 번들까지 줄여 말한다.
 ///
 /// **모르는 것은 지어내지 않는다**(`#368`). 레코드를 못 읽었거나 `entryPath` 가 비어
@@ -1674,11 +1674,11 @@ fn occupied_reason(occupant: Option<&PidRecord>) -> String {
 /// `.app` 번들 안의 실행 파일 경로를 **번들 경로**로 줄인다.
 ///
 /// ```text
-/// /Applications/murmur.app/Contents/MacOS/murmur-daemon  →  /Applications/murmur.app
+/// /Applications/Harkroom.app/Contents/MacOS/harkroom-daemon  →  /Applications/Harkroom.app
 /// ```
 ///
 /// **모양이 안 맞으면 원문을 그대로 돌려준다.** `tauri dev` 로 띄운 빌드의 사이드카는
-/// 번들 안에 없다(`target/debug/murmur-daemon`) — 그때 억지로 자르면 없는 경로를
+/// 번들 안에 없다(`target/debug/harkroom-daemon`) — 그때 억지로 자르면 없는 경로를
 /// 사람에게 말하게 된다.
 fn app_bundle_of(entry: &str) -> &str {
     const INSIDE_BUNDLE: &str = "/Contents/MacOS/";
@@ -2132,7 +2132,7 @@ mod tests {
     #[test]
     fn 상한_안의_경로는_통과한다() {
         let ok = PathBuf::from(
-            "/Users/alice2/Library/Application Support/app.murmur.desktop/daemon/daemon-v1.sock",
+            "/Users/alice2/Library/Application Support/app.harkroom.desktop/daemon/daemon-v1.sock",
         );
         assert_eq!(
             ok.as_os_str().as_encoded_bytes().len(),
@@ -2176,14 +2176,14 @@ mod tests {
 
     /// 실측 기준의 앱 데이터 디렉터리. 문자열을 그대로 쓰는 이유는 이 파일의 다른
     /// 길이 회귀선(`상한_안의_경로는_통과한다`)과 같은 기준을 쓰기 위해서다.
-    const REAL_APP_DATA_DIR: &str = "/Users/alice2/Library/Application Support/app.murmur.desktop";
+    const REAL_APP_DATA_DIR: &str = "/Users/alice2/Library/Application Support/app.harkroom.desktop";
 
     /// 실측(2026-09-07)이 밟은 **두 자리** 그대로다. 이 두 문자열이 이 이슈다:
     /// 앞은 `/Applications` 의 설치본(앱 0.1.6), 뒤는 워크트리에서 `tauri build` 한
     /// 로컬 번들(앱 0.1.7). 둘이 소켓 하나를 공유해 `EXIT_OCCUPIED`(10) 교착이 났다.
-    const INSTALLED_EXE: &str = "/Applications/murmur.app/Contents/MacOS/murmur-desktop";
+    const INSTALLED_EXE: &str = "/Applications/Harkroom.app/Contents/MacOS/harkroom-desktop";
     const LOCAL_BUNDLE_EXE: &str = "/Users/alice2/wt/hamlet/packages/desktop/src-tauri/\
-target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
+target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     const REAL_HOME: &str = "/Users/alice2";
 
     /// `exe` 자리에 놓인 빌드. **프로덕션과 같은 `BuildSite` 를 만든다** — 회귀선이
@@ -2310,8 +2310,8 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
 
     /// **회귀선 ⑥ — 로컬 릴리즈 번들은 설치본과 뿌리가 갈린다.**
     ///
-    /// **이 이슈 자체다.** 실측(2026-09-07): `/Applications/murmur.app`(앱 0.1.6)이 소켓을
-    /// 쥔 상태에서 워크트리의 `target/release/bundle/…/murmur.app`(앱 0.1.7)을 띄웠다.
+    /// **이 이슈 자체다.** 실측(2026-09-07): `/Applications/Harkroom.app`(앱 0.1.6)이 소켓을
+    /// 쥔 상태에서 워크트리의 `target/release/bundle/…/Harkroom.app`(앱 0.1.7)을 띄웠다.
     /// 둘 다 릴리즈 프로파일이라 옛 축(`cfg!(debug_assertions)`)에서 같은 쪽에 떨어졌고,
     /// 소켓 경로가 같아서 `entryPath` 관문이 붙기를 막은 뒤 우리 daemon 은
     /// `EXIT_OCCUPIED`(10)로 물러났다 — 붙지도 띄우지도 못하는 교착.
@@ -2353,7 +2353,7 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
 
         // ① 사용자별 설치 자리(`~/Applications`)도 설치다.
         const HOME_INSTALLED_EXE: &str =
-            "/Users/alice2/Applications/murmur.app/Contents/MacOS/murmur-desktop";
+            "/Users/alice2/Applications/Harkroom.app/Contents/MacOS/harkroom-desktop";
         assert_eq!(
             resolve_app_data_root(base, 자리(HOME_INSTALLED_EXE, true), src, None),
             base,
@@ -2471,7 +2471,7 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
 
     /// **회귀선 ① — 개발 빌드의 키체인 이름이 릴리즈와 다르다.**
     ///
-    /// 이 변경 전에는 둘이 같은 `app.murmur.desktop` 이었고, 실측(2026-09-06)에서
+    /// 이 변경 전에는 둘이 같은 `app.harkroom.desktop` 이었고, 실측(2026-09-06)에서
     /// 처음 설치한 릴리즈 `.app` 이 개발 중 쌓인 세션·PAT 를 그대로 읽었다.
     ///
     /// **두 "빌드"를 같은 프로덕션 함수로 흉내 낸다** — `dev_partition_name` 조각을
@@ -2501,7 +2501,7 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
             "다른 워크트리의 개발 빌드가 같은 키체인 이름을 얻었다"
         );
 
-        // 릴리즈 이름으로 **시작한다**: 사람이 키체인 접근에서 `app.murmur.desktop` 을
+        // 릴리즈 이름으로 **시작한다**: 사람이 키체인 접근에서 `app.harkroom.desktop` 을
         // 검색하면 개발 부스러기도 함께 보인다(고아를 사람이 지울 수 있는 근거다 —
         // `keychain_service_name` 주석의 "이미 쌓인 개발 항목").
         assert!(
@@ -2515,7 +2515,7 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
         );
     }
 
-    /// **회귀선 ② — 대조군: 릴리즈 빌드의 이름은 `app.murmur.desktop` 그대로다.**
+    /// **회귀선 ② — 대조군: 릴리즈 빌드의 이름은 `app.harkroom.desktop` 그대로다.**
     ///
     /// **이것이 없으면 ①은 "둘 다 바뀌었다"로도 통과한다.** 그리고 릴리즈 이름이 바뀌면
     /// 이미 배포된 `v0.1.0`·`v0.1.1` 사용자의 세션 토큰과 러너 PAT 를 앱이 못 읽는다 —
@@ -2528,7 +2528,7 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
     fn 릴리즈_빌드의_키체인_이름은_안_바뀐다() {
         // 상수 자체를 못박는다 — 이 문자열이 배포된 사용자의 키체인에 들어 있는 `svce` 다.
         assert_eq!(
-            KEYCHAIN_SERVICE_RELEASE, "app.murmur.desktop",
+            KEYCHAIN_SERVICE_RELEASE, "app.harkroom.desktop",
             "릴리즈 키체인 서비스 이름이 바뀌었다 — 배포된 v0.1.0·v0.1.1 사용자의 \
              세션과 러너 PAT 를 앱이 못 읽게 된다"
         );
@@ -3193,19 +3193,19 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
     /// 그때 "같다고 단정"하면 이 관문이 옛 daemon 앞에서 통째로 열린다.
     #[test]
     fn entry_path_비교는_모르는_것을_다른_것으로_다룬다() {
-        let mine = Path::new("/tmp/mmr-a/murmur-daemon");
+        let mine = Path::new("/tmp/mmr-a/harkroom-daemon");
         assert!(!same_entry_path("", mine), "빈 entryPath 를 같다고 했다");
         assert!(
-            !same_entry_path("/tmp/mmr-b/murmur-daemon", mine),
+            !same_entry_path("/tmp/mmr-b/harkroom-daemon", mine),
             "다른 경로를 같다고 했다"
         );
         assert!(
-            same_entry_path("/tmp/mmr-a/murmur-daemon", mine),
+            same_entry_path("/tmp/mmr-a/harkroom-daemon", mine),
             "같은 경로를 다르다고 했다"
         );
         // `.` 성분이 낀 표기도 같은 파일이다 — 정규화가 그것을 흡수한다.
         assert!(
-            same_entry_path("/tmp/mmr-a/./murmur-daemon", mine),
+            same_entry_path("/tmp/mmr-a/./harkroom-daemon", mine),
             "정규화 전 표기가 다르다고 갈렸다"
         );
     }
@@ -3222,7 +3222,7 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
     #[test]
     fn node_가_없으면_어디서_받는지까지_말한다() {
         let e = std::io::Error::new(std::io::ErrorKind::NotFound, "os error 2");
-        let msg = spawn_failure_reason(Path::new("/A/murmur-daemon"), &e);
+        let msg = spawn_failure_reason(Path::new("/A/harkroom-daemon"), &e);
         assert!(msg.contains("node"), "무엇이 없는지 말해야 한다: {msg}");
         assert!(
             msg.contains("https://nodejs.org/en/download"),
@@ -3240,7 +3240,7 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
     #[test]
     fn enoent_가_아닌_실패에는_node_이야기를_붙이지_않는다() {
         let e = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
-        let msg = spawn_failure_reason(Path::new("/A/murmur-daemon"), &e);
+        let msg = spawn_failure_reason(Path::new("/A/harkroom-daemon"), &e);
         assert!(!msg.contains("nodejs.org"), "지어내지 않는다: {msg}");
         assert!(msg.contains("denied"), "원문은 그대로 올린다: {msg}");
     }
@@ -3264,7 +3264,7 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
     fn daemon_커맨드가_path_를_env_로_넘긴다() {
         let dir = std::env::temp_dir().join(format!("mmr-env-{}", std::process::id()));
         let paths = endpoint_paths(&dir);
-        let cmd = daemon_command(Path::new("/A/murmur-daemon"), &paths, "n", "0.0.0");
+        let cmd = daemon_command(Path::new("/A/harkroom-daemon"), &paths, "n", "0.0.0");
 
         let path = cmd
             .get_envs()
@@ -3324,7 +3324,7 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
     #[test]
     fn daemon_이_node_를_못_찾으면_그_사실이_사유로_나온다() {
         let watch = DaemonExitWatch::exited(
-            "/A/murmur-daemon",
+            "/A/harkroom-daemon",
             Some(127),
             Some("env: node: No such file or directory"),
         );
@@ -3371,7 +3371,7 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
     fn 다른_사유로_죽으면_node_이야기를_안_한다() {
         // 코드가 127 이 아니다.
         let occupied = DaemonExitWatch::exited(
-            "/A/murmur-daemon",
+            "/A/harkroom-daemon",
             Some(10),
             Some("소켓을 다른 daemon 이 쥐고 있다"),
         );
@@ -3386,7 +3386,7 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
         // **127 이어도 로그가 다른 이야기면 단정하지 않는다.** 코드만 보고 판정하면
         // daemon 이 127 로 끝나는 다른 경우까지 전부 Node 탓이 된다.
         let other127 = DaemonExitWatch::exited(
-            "/A/murmur-daemon",
+            "/A/harkroom-daemon",
             Some(127),
             Some("설정 파일을 읽지 못했다"),
         );
@@ -3397,7 +3397,7 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
         );
 
         // 로그가 아예 없어도 마찬가지다.
-        let silent = DaemonExitWatch::exited("/A/murmur-daemon", Some(127), None);
+        let silent = DaemonExitWatch::exited("/A/harkroom-daemon", Some(127), None);
         let msg = silent.death_reason().unwrap();
         assert!(
             !msg.contains("nodejs.org"),
@@ -3415,10 +3415,10 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
         let pid_path = dir.join("daemon-v1.pid");
         // **실측한 레코드 원문 그대로다.** 구조체를 만들어 직렬화하지 않는 이유는
         // 필드 이름까지 daemon 이 쓴 그대로인지 함께 재기 위해서다.
-        std::fs::write(&pid_path, r#"{"pid":17109,"startedAtMs":1788754303745,"entryPath":"/Applications/murmur.app/Contents/MacOS/murmur-daemon","appVersion":"0.1.6","launchNonce":"ccf30441-045b-4497-b203-5835ededda34"}"#).unwrap();
+        std::fs::write(&pid_path, r#"{"pid":17109,"startedAtMs":1788754303745,"entryPath":"/Applications/Harkroom.app/Contents/MacOS/harkroom-daemon","appVersion":"0.1.6","launchNonce":"ccf30441-045b-4497-b203-5835ededda34"}"#).unwrap();
 
         let watch = DaemonExitWatch::exited_at(
-            "/A/murmur-daemon",
+            "/A/harkroom-daemon",
             pid_path,
             Some(EXIT_OCCUPIED),
             Some("이미 서비스 중인 daemon 이 있다: /tmp/x/daemon-v1.sock — 물러난다"),
@@ -3427,7 +3427,7 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
 
         // ① 종료할 대상을 **번들 경로**로 말한다 — 사람이 종료할 수 있는 것이 그것이다.
         assert!(
-            msg.contains("`/Applications/murmur.app`"),
+            msg.contains("`/Applications/Harkroom.app`"),
             "점유한 앱을 번들 경로로 말하지 않는다: {msg}"
         );
         assert!(
@@ -3459,7 +3459,7 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
     fn 점유_상대를_모르면_지어내지_않는다() {
         // pid 레코드가 없다 — 그 daemon 이 물러나며 지웠거나, 애초에 못 읽는다.
         let 없음 = DaemonExitWatch::exited(
-            "/A/murmur-daemon",
+            "/A/harkroom-daemon",
             Some(EXIT_OCCUPIED),
             Some("이미 서비스 중인 daemon 이 있다"),
         );
@@ -3476,7 +3476,7 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
         let pid_path = dir.join("daemon-v1.pid");
         std::fs::write(&pid_path, r#"{"pid":17109}"#).unwrap();
         let 옛것 =
-            DaemonExitWatch::exited_at("/A/murmur-daemon", pid_path, Some(EXIT_OCCUPIED), None);
+            DaemonExitWatch::exited_at("/A/harkroom-daemon", pid_path, Some(EXIT_OCCUPIED), None);
         let msg = 옛것.death_reason().unwrap();
         assert!(
             msg.contains("모른다"),
@@ -3494,17 +3494,17 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
     fn 점유가_아니면_점유_문구를_안_붙인다() {
         let dir = temp_app_data_dir("occupied-other");
         let pid_path = dir.join("daemon-v1.pid");
-        std::fs::write(&pid_path, r#"{"pid":17109,"startedAtMs":1788754303745,"entryPath":"/Applications/murmur.app/Contents/MacOS/murmur-daemon","appVersion":"0.1.6","launchNonce":"ccf30441-045b-4497-b203-5835ededda34"}"#).unwrap();
+        std::fs::write(&pid_path, r#"{"pid":17109,"startedAtMs":1788754303745,"entryPath":"/Applications/Harkroom.app/Contents/MacOS/harkroom-daemon","appVersion":"0.1.6","launchNonce":"ccf30441-045b-4497-b203-5835ededda34"}"#).unwrap();
 
         let watch = DaemonExitWatch::exited_at(
-            "/A/murmur-daemon",
+            "/A/harkroom-daemon",
             pid_path,
             Some(78),
             Some("자격증명을 거부했다"),
         );
         let msg = watch.death_reason().unwrap();
         assert!(
-            !msg.contains("murmur.app"),
+            !msg.contains("Harkroom.app"),
             "점유가 아닌데 점유한 앱을 말했다: {msg}"
         );
         assert!(
@@ -3522,17 +3522,17 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
     #[test]
     fn 번들_밖의_실행_파일은_경로를_그대로_말한다() {
         assert_eq!(
-            app_bundle_of("/Applications/murmur.app/Contents/MacOS/murmur-daemon"),
-            "/Applications/murmur.app"
+            app_bundle_of("/Applications/Harkroom.app/Contents/MacOS/harkroom-daemon"),
+            "/Applications/Harkroom.app"
         );
 
         // `tauri dev` 빌드의 사이드카는 번들 안에 없다 — 억지로 자르면 **없는 경로**를
         // 사람에게 말하게 된다.
-        let dev = "/Users/x/wt/a/packages/desktop/src-tauri/target/debug/murmur-daemon";
+        let dev = "/Users/x/wt/a/packages/desktop/src-tauri/target/debug/harkroom-daemon";
         assert_eq!(app_bundle_of(dev), dev);
 
         // `.app` 이 아닌 디렉터리가 `/Contents/MacOS/` 를 품고 있어도 안 자른다.
-        let 이상 = "/tmp/notabundle/Contents/MacOS/murmur-daemon";
+        let 이상 = "/tmp/notabundle/Contents/MacOS/harkroom-daemon";
         assert_eq!(app_bundle_of(이상), 이상);
     }
 
@@ -3562,7 +3562,7 @@ target/release/bundle/macos/murmur.app/Contents/MacOS/murmur-desktop";
     /// 실측(2026-09-07, 이 테스트를 만들며):
     ///
     /// ```text
-    /// $ env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin ./murmur-daemon-aarch64-apple-darwin --version
+    /// $ env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin ./harkroom-daemon-aarch64-apple-darwin --version
     /// env: node: No such file or directory
     /// exit=127
     /// ```
