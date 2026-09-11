@@ -76,6 +76,33 @@ export type AgentHarness = (typeof AGENT_HARNESSES)[number];
  */
 export const RUNNABLE_HARNESSES = ['claude-code', 'codex'] as const satisfies readonly AgentHarness[];
 
+/**
+ * **이 하네스에 계정 풀 표면이 있는가.**
+ *
+ * 계정은 murmur 의 개념이 아니라 **하네스의 디렉터리 하나**다(claude 는 `CLAUDE_CONFIG_DIR`,
+ * codex 는 `CODEX_HOME`). 그 위에 목록·로그인·사용량·페일오버를 얹은 **풀 관리 표면**은
+ * 지금 claude 것만 있다 — 데몬 RPC 이름이 그 사실을 그대로 말한다(`claudeAccountsList`,
+ * `claudeAccountLoginStart`, `claudeAccountsUsage` …).
+ *
+ * ## 왜 `shared` 에 있는가
+ *
+ * 이 사실을 **두 곳이 알아야 한다**: 러너(턴에 계정 이름을 실을지)와 데스크탑(설정 화면에
+ * 풀 선택을 그릴지). 각자 `harness === 'claude-code'` 를 적으면 같은 사실이 두 벌이 되고,
+ * 하네스가 늘 때 한쪽만 고치는 사고가 난다 — 이 저장소가 반복 결함으로 지목한 모양이다.
+ *
+ * 러너 쪽 어댑터 표(`packages/agent/src/adapters/`)의 `account.pooled` 가 같은 사실이고,
+ * 둘이 어긋나지 않는지는 `packages/agent/test/adapterParity.test.ts` 가 지킨다.
+ *
+ * ## 이 값이 거짓인데 화면이 풀을 그리면
+ *
+ * 사람은 배정했고 화면은 배정됐다고 말하는데 **러너는 그 값을 버린다.** 2026-09-11 에
+ * 실제로 그랬다: codex 에이전트 만들기 화면에 claude 풀 선택이 떴다(`AgentsSettings.tsx`
+ * 가 하네스를 보지 않았다). 없는 것을 있다고 표시하지 않는다(design.md §4).
+ */
+export function harnessHasAccountPool(harness: AgentHarness): boolean {
+  return harness === 'claude-code';
+}
+
 /** 멘션 턴(화면 앞에 사람이 없다)의 권한. 사람 인터랙티브 턴은 하네스가 직접 묻는다. */
 export const MENTION_PERMISSIONS = ['auto', 'readonly'] as const;
 export type MentionPermission = (typeof MENTION_PERMISSIONS)[number];

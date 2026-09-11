@@ -861,6 +861,8 @@ export const en = {
   'agents.run.defaultsNotAdmin': 'Only an admin can create an agent',
   'agents.run.harnessDefault': 'harness default',
   /** 아직 못 돌리는 harness. **`not supported` 가 아니다** — 없는 것은 murmur 의 구현이다. */
+  /** 계정 풀 표면이 없는 하네스. **`not supported` 가 아니다** — 그 하네스는 계정 하나로 돈다. */
+  'agents.run.poolNotForHarness': 'This agent runs on {harness}, which has no account pools — it uses the single account that harness is logged into.',
   'agents.run.harnessPlanned': '{harness} (planned)',
   'agents.run.note': 'What it runs on.',
   'agents.run.title': 'Run',

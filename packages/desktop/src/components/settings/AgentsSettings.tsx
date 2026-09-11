@@ -2,8 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
   AGENT_HARNESSES, HANDLE_PATTERN, RUNNABLE_HARNESSES,
   type AgentConfig, type AgentDefaults, type AgentTeamMemberRow, type AgentTeamRow,
-  type AgentView, type MentionPermission, type PatView,
-} from '@murmur/shared';
+  type AgentView, type MentionPermission, type PatView, harnessHasAccountPool } from '@murmur/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { staleRunners } from '../../lib/runnerVersions';
@@ -1249,7 +1248,20 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 **읽는 중·읽기 실패는 "없음"이 아니다.** 그때도 칸은 그리고 잠그기만 한다 —
                 감추면 아래 `agentPool.error` 를 그릴 자리도 같이 사라져, 데몬이 대답을 못 한
                 것뿐인데 사람은 "이 앱에 그런 기능이 없다"고 읽는다. */}
-            {agentPool.available && (
+            {/* **하네스를 함께 본다(2026-09-11).** 앞 판본은 `agentPool.available` 만 보고
+                그렸다 — 그래서 codex 에이전트 만들기 화면에도 claude 풀 선택이 떴고, 사람이
+                고른 값을 러너는 그대로 버렸다(`mentionTurn` 이 claude 턴에만 싣는다).
+                사람은 배정했고 화면은 배정됐다고 말하는데 아무 일도 안 일어나는 자리였다.
+
+                **감추지 않고 이유를 적는다.** 빈 자리는 사람이 원인을 지어내게 만든다 —
+                `useAgentPool` 이 조회 실패를 감추지 않는 것과 같은 규율이다. 그래서 풀이
+                없는 하네스에는 선택 대신 한 줄을 그린다. */}
+            {agentPool.available && !harnessHasAccountPool(draft.harness) && (
+              <span className="block text-meta text-fg-subtle">
+                {t('agents.run.poolNotForHarness', { harness: draft.harness })}
+              </span>
+            )}
+            {agentPool.available && harnessHasAccountPool(draft.harness) && (
               <label className={label}>
                 Account pool
                 <select
