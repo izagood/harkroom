@@ -291,6 +291,79 @@ describe('buildTurnPrompt — 팀 호출(047)', () => {
   });
 });
 
+/**
+ * 결말 블록(050) — **넘긴 일의 결말로 깨어난 팀장**의 프롬프트.
+ *
+ * 이 블록이 재는 것은 둘이다: **결말이 글자로 오는가**(스레드를 다시 읽어 짐작하면 무응답을
+ * "아직 도는 중"으로 읽는다)와 **기한만으로 깨어난 턴이 비지 않는가**(팀원이 아무 말도
+ * 하지 않았으면 델타가 비고, 비면 러너가 하네스를 돌리지 않는다 — 040 이 `wake` 를 만든
+ * 자리와 같은 함정이다).
+ */
+describe('buildTurnPrompt — 넘긴 일의 결말(050)', () => {
+  const handles = { u1: 'jaebin', a1: 'forge', a2: 'scout' };
+  const call = (delegation: Parameters<typeof buildTurnPrompt>[0]['delegation'], messages = [] as never[]) =>
+    buildTurnPrompt({
+      messages, lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
+      murmurUrl: 'http://localhost:3400', delegation,
+    });
+
+  it('결말을 팀원마다 글자로 적는다', () => {
+    const { prompt } = call({
+      timedOut: false, roundsLeft: 2,
+      items: [{ handle: 'scout', outcome: 'done' }, { handle: 'codex', outcome: 'failed' }],
+    });
+    expect(prompt).toContain('@scout — 끝남');
+    expect(prompt).toContain('@codex — 실패');
+  });
+
+  it('기한만으로 깨어난 턴도 프롬프트가 비지 않는다 — 새 메시지가 없다', () => {
+    // 아무도 답하지 않아 델타가 비어 있다. 이 블록이 그것을 대신하지 않으면 러너가
+    // 하네스를 돌리지 않고 커서만 전진시켜, 팀장이 다시 깨어난 것이 흔적 없이 사라진다.
+    const { prompt } = call({
+      timedOut: true, roundsLeft: 1, items: [{ handle: 'scout', outcome: 'timeout' }],
+    });
+    expect(prompt).not.toBe('');
+    expect(prompt).toContain('기한이 지났다');
+    expect(prompt).toContain('무응답');
+  });
+
+  it('끝나지 않은 것이 있으면 세 갈래와 남은 횟수를 준다', () => {
+    const { prompt } = call({
+      timedOut: false, roundsLeft: 2, items: [{ handle: 'scout', outcome: 'failed' }],
+    });
+    expect(prompt).toContain('직접 한다');
+    expect(prompt).toContain('message.fail');
+    expect(prompt).toContain('남은 횟수는 2번');
+  });
+
+  it('남은 횟수가 0 이면 다시 넘길 수 없다고 못 박는다', () => {
+    // 숫자만으로는 모델이 그 결론에 이르지 않는다 — 실행 가능한 지시로 적어야 한다.
+    const { prompt } = call({
+      timedOut: true, roundsLeft: 0, items: [{ handle: 'scout', outcome: 'timeout' }],
+    });
+    expect(prompt).toContain('다시 넘길 수 없다');
+  });
+
+  it('전부 끝났으면 취합해서 최종 답 하나를 쓰라고 말한다', () => {
+    const { prompt } = call({
+      timedOut: false, roundsLeft: 3,
+      items: [{ handle: 'scout', outcome: 'done' }, { handle: 'codex', outcome: 'done' }],
+    });
+    expect(prompt).toContain('최종 답 하나');
+    // 끝난 것만 있으면 세 갈래를 내밀지 않는다 — 고를 것이 없다.
+    expect(prompt).not.toContain('셋 중 하나를 골라라');
+  });
+
+  it('팀원의 보고가 함께 실린다 — 결말 블록은 델타를 지우지 않는다', () => {
+    const { prompt } = call(
+      { timedOut: false, roundsLeft: 2, items: [{ handle: 'scout', outcome: 'done' }] },
+      [msg(10, 'a2', '서버 쪽 끝났다')] as never,
+    );
+    expect(prompt).toContain('scout: 서버 쪽 끝났다');
+    expect(prompt.indexOf('결말')).toBeLessThan(prompt.indexOf('scout: 서버'));
+  });
+});
+
 describe('buildSystemPrompt', () => {
   it('지시문과 guide 를 싣고 8000자 규칙을 명시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '친절하게', guide: 'G규칙', memory: { core: null, slugs: [] } });

@@ -6,7 +6,7 @@
 // 세션이 이미 아는 것까지 다시 넘길 필요가 없다 — 그 경계가 `lastFedSeq` 다. 그리고 예전엔
 // 러너가 모델 응답을 파싱해 대신 올렸지만, 이제 에이전트가 murmur MCP `message.post` 로
 // 스스로 올린다 — 그래서 시스템 프롬프트가 "어디에 쓸지"까지 알려줘야 한다.
-import { messagePermalink, type MessageRow, type InboxTeamCall } from '@murmur/shared';
+import { messagePermalink, type MessageRow, type InboxTeamCall, type InboxDelegationOutcome } from '@murmur/shared';
 
 /** 서버의 메시지 본문 상한(`POST /channels/:id/messages` 의 zod `max(8000)`). 넘기면 발화가 실패한다. */
 export const BODY_LIMIT = 8000;
@@ -585,6 +585,57 @@ function teamSection(team: InboxTeamCall, meId: string, handles: Record<string, 
   ];
 }
 
+/**
+ * 넘긴 일의 **결말 블록**(050).
+ *
+ * ## 왜 결말을 글자로 적는가
+ *
+ * 팀장은 이 턴에서 세 갈래 중 하나를 골라야 한다 — 취합해서 답한다 / 다시 넘긴다 / 사람에게
+ * 막혔다고 말한다. 그 선택은 **각 팀원이 어떻게 끝났는지**에 달렸고, 스레드를 다시 읽어
+ * 짐작하게 만들면 무응답(아무 말도 없는 상태)을 "아직 도는 중"으로 읽는다. 아무 말도 없는
+ * 것과 기한이 지난 것은 스레드에서 구별되지 않으므로, 그 사실은 프롬프트가 말해야 한다.
+ *
+ * ## 남은 라운드를 함께 적는다
+ *
+ * 다시 넘기는 것은 라운드를 먹는다(무한 왕복을 막는 유일한 장치다 — 멘션 상한은 이 경로를
+ * 막지 못한다). 팀장이 그것을 **모르고** 넘기면 상한에 걸린 거절을 받고 그때 다시 판단해야
+ * 하는데, 그 시점엔 이미 턴 하나를 태웠다. 그래서 고르기 **전에** 알려 준다.
+ *
+ * 0 이면 "다시 넘길 수 없다"를 명시한다 — 남은 수가 0 이라는 사실만으로는 모델이 그 결론에
+ * 이르지 않는다(실행 가능한 지시가 아니라 숫자일 뿐이다).
+ */
+function delegationSection(outcome: InboxDelegationOutcome): string[] {
+  const label: Record<InboxDelegationOutcome['items'][number]['outcome'], string> = {
+    done: '끝남',
+    failed: '실패 — 그 일은 아직 남아 있다',
+    timeout: '무응답 — 기한이 지났다(살아 있는지 알 수 없다)',
+  };
+  const unresolved = outcome.items.some((i) => i.outcome !== 'done');
+  return [
+    outcome.timedOut
+      ? '(넘긴 일의 기한이 지났다 — 결말은 아래와 같다)'
+      : '(넘긴 일이 모두 끝났다 — 결말은 아래와 같다)',
+    '',
+    ...outcome.items.map((i) => `- @${i.handle} — ${label[i.outcome]}`),
+    '',
+    ...(unresolved
+      ? [
+        '끝나지 않은 것이 있다. **셋 중 하나를 골라라**:',
+        '① 네가 직접 한다 ② 다른 팀원에게 다시 넘긴다 ③ `message.fail(retryable: true)` 로',
+        '사람에게 넘긴다(무엇이 막혔는지 적어서).',
+        outcome.roundsLeft > 0
+          ? `다시 넘길 수 있는 남은 횟수는 ${outcome.roundsLeft}번이다.`
+          : '**다시 넘길 수 없다** — 남은 횟수가 없다. ① 또는 ③ 이다.',
+        '',
+      ]
+      : [
+        '이제 **네가 취합해서 최종 답 하나**를 사람에게 쓴다 — 팀원들의 보고를 그대로 나열하지',
+        '말고, 요청자가 물은 것에 답한다.',
+        '',
+      ]),
+  ];
+}
+
 /** 한 줄로 렌더링한다. handles 에 없는 작성자는 알 수 없는 사용자로 표시한다(reply.ts 의 기존 정책 계승) —
  * avcs 투영이 만드는 system 메시지 등, 호출 시점에 handles 맵이 못 따라온 작성자가 있을 수 있다. */
 function renderLine(m: MessageRow, handles: Record<string, string>): string {
@@ -681,8 +732,19 @@ export function buildTurnPrompt(opts: {
    * 새 말이 없다면 그것은 이미 답한 말이고, 명단만으로 턴을 한 번 더 돌릴 이유가 없다.
    */
   team?: InboxTeamCall;
+  /**
+   * 이 턴이 **넘긴 일의 결말로 깨어난 턴**이면 그 결말(마이그레이션 050).
+   *
+   * `wake` 와 같은 성격이다 — **델타를 대신할 수 있어야 한다.** 기한이 지나 깨어난 경우엔
+   * 팀원이 아무 말도 하지 않았으므로 새 메시지가 없고, 그러면 아래 빈-프롬프트 가드에 걸려
+   * 하네스가 돌지 않는다. 그 자리에서 기다림이 흔적 없이 사라지는 것이 040 이 `wake` 를
+   * 만든 이유이고, 여기서도 같다.
+   */
+  delegation?: InboxDelegationOutcome;
 }): { prompt: string; fedSeq: number } {
-  const { messages, lastFedSeq, meId, handles, channelId, threadRootId, murmurUrl, wake, team } = opts;
+  const {
+    messages, lastFedSeq, meId, handles, channelId, threadRootId, murmurUrl, wake, team, delegation,
+  } = opts;
   const isFirstTurn = lastFedSeq === 0;
 
   const newMessages = messages.filter((m) => m.seq > lastFedSeq);
@@ -692,7 +754,7 @@ export function buildTurnPrompt(opts: {
   const fedSeq = newMessages.reduce((max, m) => Math.max(max, m.seq), lastFedSeq);
 
   const toShow = newMessages.filter((m) => isFirstTurn || m.authorId !== meId);
-  if (!toShow.length && wake === undefined) {
+  if (!toShow.length && wake === undefined && delegation === undefined) {
     // 새 메시지가 있었지만 전부 자기 발화라 걸러진 경우도 여기로 온다. 그래도 prompt 를
     // 비우고 fedSeq 는 이미 위에서 전진시킨 값을 그대로 쓴다 — 걸러냈다고 다음 턴에 같은
     // 메시지를 또 "새 것"으로 들이밀면 세션이 매번 자기 말을 다시 보고, 반대로 fedSeq 를
@@ -711,13 +773,14 @@ export function buildTurnPrompt(opts: {
   // 아래 델타에 사람의 새 발화가 함께 있을 수 있으므로 이 줄은 그것을 대체하지 않고 앞에 선다.
   const wakeLines = wake === undefined ? [] : [`(예약된 후속 턴 — 사유: ${wake.reason})`, ''];
   const teamLines = team === undefined ? [] : teamSection(team, meId, handles);
+  const delegationLines = delegation === undefined ? [] : delegationSection(delegation);
   // 안내는 첨부 줄 **뒤**에 선다 — 먼저 무엇이 왔는지 보고 그다음 어떻게 여는지 읽는 순서다.
   // `toShow` 로 판정한다: 보여주지 않은 메시지의 첨부는 프롬프트에 id 가 없어 열 수도 없다.
   const howTo = toShow.some((m) => m.attachments.length) ? attachmentHowTo(murmurUrl) : [];
   // 팀 블록은 **델타 앞**이다 — 사람의 말을 읽기 전에 "너는 이 팀의 창구다"를 알아야
   // 그 말을 팀의 일로 읽는다. `wakeLines` 뒤에 두는 이유: 그 줄은 이 턴이 왜 떴는지이고,
   // 팀 블록은 이 턴이 무엇인지다(둘이 함께 오는 경우는 예약이 걸린 팀 턴이다).
-  const prompt = [head, '', ...wakeLines, ...teamLines, ...lines, ...howTo].join('\n');
+  const prompt = [head, '', ...wakeLines, ...teamLines, ...delegationLines, ...lines, ...howTo].join('\n');
 
   return { prompt, fedSeq };
 }

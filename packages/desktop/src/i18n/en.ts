@@ -3136,6 +3136,8 @@ export const en = {
   'inbox.label.askOther': 'Being picked',
   'inbox.label.failure': 'Stuck',
   'inbox.label.report': 'Finished',
+  'inbox.label.delegated': 'Handed you work',
+  'inbox.label.delegationDone': 'Results are in',
   'inbox.label.mention': 'Called you',
   'inbox.label.teamMention': 'Called your team',
   'inbox.label.reply': 'Reply',

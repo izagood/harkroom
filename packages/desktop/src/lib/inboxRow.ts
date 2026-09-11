@@ -88,6 +88,19 @@ export function inboxRow(entry: InboxEntry, myAccountId: string | null, t: Trans
   if (entry.reason === 'team_mention') {
     return { kind: 'mention', label: t('inbox.label.teamMention'), rank: 1, options: null };
   }
+  /**
+   * 위임 사유 둘(050). **글자를 가르는 이유는 팀 부름과 같다** — 넘겨받은 일과 결말이 온 것은
+   * 다음에 할 일이 다르다(하나는 하는 것이고 하나는 취합하는 것이다).
+   *
+   * `rank` 도 1 이다: 넘겨받은 일은 나를 막는 일이고, 결말은 내가 이어서 해야 하는 일이다.
+   * 순위를 낮추면 팀의 일이 남의 스레드 답글 뒤로 밀린다.
+   */
+  if (entry.reason === 'team_delegated') {
+    return { kind: 'mention', label: t('inbox.label.delegated'), rank: 1, options: null };
+  }
+  if (entry.reason === 'delegation_done') {
+    return { kind: 'mention', label: t('inbox.label.delegationDone'), rank: 1, options: null };
+  }
   return { kind: 'reply', label: t('inbox.label.reply'), rank: 2, options: null };
 }
 

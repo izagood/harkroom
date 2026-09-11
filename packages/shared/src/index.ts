@@ -1450,7 +1450,17 @@ export interface InboxEntry {
    * 전체가 `'mention'` 으로 깬다(`services/messages.ts` 의 폴백). 즉 이 사유가 있다는
    * 것은 곧 "창구가 하나로 좁혀진 부름"이라는 뜻이다.
    */
-  reason: 'mention' | 'thread_reply' | 'dm' | 'wake' | 'ask_answered' | 'ask_closed' | 'team_mention';
+  /**
+   * `'team_delegated'` 는 **팀장이 넘긴 일**이다(마이그레이션 050). `'mention'` 과 가르는
+   * 이유는 그 팀원의 턴이 *"최종 답은 팀장이 쓴다"* 를 알아야 하기 때문이다 — 그 문구가
+   * 화면의 접힘까지 만든다(`agentExchange.addressesHuman`).
+   *
+   * `'delegation_done'` 은 **넘긴 일의 결말이 나왔다**(050). 미결이 0 이 되었거나 기한이
+   * 지났다. 그때 `delegation` 에 결말 목록이 함께 온다 — 러너는 그것을 프롬프트에 싣고,
+   * 팀장은 취합하거나 다시 넘기거나 사람에게 막혔다고 말한다.
+   */
+  reason: 'mention' | 'thread_reply' | 'dm' | 'wake' | 'ask_answered' | 'ask_closed'
+    | 'team_mention' | 'team_delegated' | 'delegation_done';
   readAt: string | null;
   channelId: string;
   /**
@@ -1483,7 +1493,76 @@ export interface InboxEntry {
    * 있고, 갈라지는 날 팀장이 받는 명단이 서버가 부른 팀과 다른 팀의 것이 된다.
    */
   team?: InboxTeamCall;
+  /**
+   * 넘긴 일의 **결말**. `reason === 'delegation_done'` 일 때만 있다.
+   *
+   * 서버가 실어 주는 이유는 `team` 과 같다 — 서버는 이미 그 판정을 했고(누가 끝냈고 누가
+   * 무응답인가), 읽는 쪽이 다시 하면 두 판정이 갈라진다.
+   */
+  delegation?: InboxDelegationOutcome;
 }
+
+/**
+ * 위임 한 건의 결말(050). 팀장이 깨어나 **다음에 무엇을 할지** 정하는 재료다.
+ *
+ * 결말을 셋으로 가르는 이유: 팀장이 할 일이 갈린다. `done` 은 취합하면 되고, `failed` 는
+ * 그 일을 누가 대신할지 정해야 하고, `timeout` 은 그 팀원이 살아 있는지조차 모른다.
+ * 하나로 뭉치면 "다시 넘길지 사람에게 넘길지"를 판단할 근거가 사라진다.
+ *
+ * `roundsLeft` 를 함께 싣는다 — 다시 넘기는 것은 라운드를 먹으므로(무한 왕복을 막는
+ * 유일한 장치다) 팀장이 **그것을 알고** 골라야 한다. 0 이면 남은 수가 없다는 뜻이고,
+ * 그때 올바른 종료는 사람에게 `message.fail(retryable: true)` 로 넘기는 것이다.
+ */
+export interface InboxDelegationOutcome {
+  /** 기한이 지나 닫힌 것이 하나라도 있는가 — 프롬프트의 첫 줄이 갈린다. */
+  timedOut: boolean;
+  /** 다시 넘길 수 있는 남은 라운드. */
+  roundsLeft: number;
+  items: {
+    handle: string;
+    /** `null` 은 없다 — 결말이 난 뒤에만 이 목록이 만들어진다. */
+    outcome: 'done' | 'failed' | 'timeout';
+  }[];
+}
+
+/**
+ * 위임을 선언한 메시지의 meta(050).
+ *
+ * 본문은 팀장이 쓴 말 그대로다 — 서버가 조립하지 않는다. 여기 담는 것은 **누구에게
+ * 넘겼는가**와 **언제까지 기다리는가** 둘이고, 그 둘이 화면이 이 말을 "위임"으로 그리는
+ * 근거다(`AskMeta` 가 선택 카드의 근거인 것과 같다).
+ *
+ * `unreachable` 을 함께 남기는 이유: 넘기려 했으나 러너가 없어 **의무를 만들지 않은**
+ * 팀원이다(층 0). 그 사실이 메시지에 남지 않으면 사람은 팀장이 왜 그 팀원을 건너뛰었는지
+ * 알 수 없고, 팀장 자신도 다음 턴에서 그 판단을 되짚을 수 없다.
+ */
+export interface DelegationMeta {
+  kind: 'delegation';
+  delegation: {
+    /** 의무가 만들어진 팀원의 handle 들. */
+    to: string[];
+    /** 러너가 없어 넘기지 못한 팀원의 handle 들. 없으면 빈 배열이다. */
+    unreachable: string[];
+    deadlineAt: string;
+  };
+}
+
+/**
+ * 팀장이 **사람의 마지막 발화 이후** 만들 수 있는 위임의 수.
+ *
+ * 상한이 따로 필요한 이유가 실측으로 확인됐다: `MENTION_CHAIN_LIMIT` 은 이 왕복을 막지
+ * 못한다. `mentionDepthFor` 는 *나를 부른 메시지가 없으면 0* 을 주는데, 돌아오는 길은
+ * 멘션이 아니라 깨움이고 팀원의 보고는 팀장을 부르지 않는다 — 깨어난 팀장의 다음 발화는
+ * 깊이 0 에서 다시 시작한다. 즉 팀장↔팀원이 무한히 돌 수 있고 멘션 상한은 한 번도 걸리지
+ * 않는다.
+ *
+ * 저장하지 않고 센다. 기준선이 **사람의 마지막 발화**인 것은 043 이 깊이에 대해 정한 규칙
+ * 그대로다 — 사람이 한마디 하면 리셋되므로 상한이 스레드를 영구히 잠그지 않는다.
+ *
+ * 3 인 이유: 계획→위임→취합이 한 라운드이고, 셋이면 "나눠 준 것이 어긋나 다시 나누는"
+ * 것까지 한 번 허용한다. 넷째부터는 사람이 봐야 하는 상태다.
+ */
+export const TEAM_ROUND_LIMIT = 3;
 
 /**
  * 팀장에게 실려 가는 팀 한 조각(047).

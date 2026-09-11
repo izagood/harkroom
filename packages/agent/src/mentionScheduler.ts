@@ -194,6 +194,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
     ctx: BatchContext, tried: number, reason: InboxBatch['entries'][number]['reason'],
     /** 팀 부름이면 서버가 실어 준 명단(047). 사유와 짝이라 함께 넘긴다. */
     team?: InboxBatch['entries'][number]['team'],
+    /** 넘긴 일의 결말(050). 같은 이유로 사유와 함께 넘긴다. */
+    delegation?: InboxBatch['entries'][number]['delegation'],
   ): Promise<void> {
     const target: MentionTarget = {
       channelId: mention.channelId, threadRootId: anchor, mentionId: mention.id,
@@ -232,6 +234,15 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
        * 아니라 조회 결과의 부재다.
        */
       ...(reason === 'team_mention' && team ? { team } : {}),
+      /**
+       * **넘긴 일의 결말이 나왔다**(050). `wake` 계열과 같은 자리를 쓰는 이유는 같은 문제이기
+       * 때문이다: 기한이 지나 깨어난 경우엔 팀원이 아무 말도 하지 않았으므로 델타가 비고,
+       * 비면 러너가 하네스를 돌리지 않는다 — 그러면 팀장이 다시 깨어난 것이 흔적 없이 사라진다.
+       *
+       * 사유를 함께 보는 이유는 팀 명단과 같다: 결말이 없는 항목(옛 서버·경합)에 빈 블록을
+       * 그리면 팀장에게 "결말 없음"을 알리는 셈이고, 그것은 사실이 아니라 조회 결과의 부재다.
+       */
+      ...(reason === 'delegation_done' && delegation ? { delegation } : {}),
     };
     try {
       const turn = await withAccountFailover(
@@ -479,7 +490,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         // entry 당 1회라는 약속이 깨진다.
         attempts.set(entry.id, { tried, notBefore: 0, noticed: prior?.noticed });
 
-        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason, entry.team)
+        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason, entry.team, entry.delegation)
           .catch((err: unknown) => {
             console.error(`  ${entry.messageId} 턴 실패:`, err instanceof Error ? err.message : err);
           })

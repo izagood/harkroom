@@ -849,10 +849,18 @@ export class Controller {
        * 자기가 쓴 말이다.
        */
       team_mention: 'called your team in',
+      /**
+       * 위임 사유 둘도 **에이전트에게만 가는 것**이다(050) — 팀에는 에이전트만 들고
+       * 위임은 팀장과 팀원 사이의 말이다. 그래도 표를 채우는 이유는 위 문단 그대로다:
+       * 총체가 아니면 새 사유가 `undefined` 로 새어 "undefined #ch" 를 내보낸다.
+       */
+      team_delegated: 'handed you work in',
+      delegation_done: 'got results in',
     };
     const wanted: Record<InboxEntry['reason'], boolean> = {
       mention: prefs.mention, thread_reply: prefs.threadReply, dm: prefs.dm,
       wake: false, ask_answered: false, ask_closed: false, team_mention: false,
+      team_delegated: false, delegation_done: false,
     };
 
     for (const e of unread) {
