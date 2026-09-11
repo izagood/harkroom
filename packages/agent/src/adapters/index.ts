@@ -62,6 +62,47 @@ export function readsSessionTranscript(harness: AgentHarness): boolean {
 }
 
 /**
+ * **이 하네스의 멘션 턴을 TUI 로 띄우는가.**
+ *
+ * 이 한 줄에서 턴의 네 가지가 갈린다(`mentionTurn.ts`): 프롬프트가 주입이냐 stdin 파일이냐,
+ * 사람이 그 턴에 칠 수 있느냐, 시간 한도를 무발화로 재느냐 프로세스 수명으로 재느냐,
+ * 정지·에러 탐침을 도느냐. 그래서 이름 비교로 남겨 두면 안 되는 자리다.
+ *
+ * ## 이설 중이다 — 지금은 옛 답과 **같다**
+ *
+ * 스위치가 꺼져 있으면 옛 비교를 그대로 한다. 켜면 표를 읽는데, `CODEX_ADAPTER` 의
+ * `executionModel.mention` 이 아직 `'exec'` 이므로 **두 답이 일치한다.** 그것이 이 조각의
+ * 요구다 — 새 경로는 먼저 "같아야" 하고, codex 를 TUI 로 바꾸는 것은 그다음 결정이다.
+ * 바꾸는 날 고칠 곳은 어댑터 표 한 줄이고, 그때 이 함수는 안 고친다.
+ */
+export function usesTuiForMention(harness: AgentHarness): boolean {
+  if (!harnessAdaptersEnabled()) return harness === 'claude-code';
+  return adapterFor(harness).executionModel.mention === 'tui';
+}
+
+/**
+ * **이 하네스에 계정 풀 표면이 있는가** — 화면에 계정·풀 이름을 실을지의 판단.
+ *
+ * 없는 하네스에 이름을 실으면 화면이 **그 턴과 아무 상관 없는 계정**을 가리킨다. 생략은
+ * "모른다"이고, 모르는 것으로 남기는 편이 틀린 것을 단언하는 것보다 낫다(릴레이 주석).
+ */
+export function hasAccountPool(harness: AgentHarness): boolean {
+  if (!harnessAdaptersEnabled()) return harness === 'claude-code';
+  return adapterFor(harness).account?.pooled === true;
+}
+
+/**
+ * **첫 턴을 세션 id 없이 시작하는가** — 참이면 턴이 끝난 뒤 러너가 id 를 **발견**해야 한다.
+ *
+ * `turn.ts::HarnessPreset.allowsNullSessionOnFirstTurn` 과 같은 사실이고, 표가 이미 그 값을
+ * 갖고 있다. 옛 비교(`harness === 'codex'`)는 "codex 만 그렇다"를 하드코딩한 것이었다.
+ */
+export function discoversSessionIdAfterTurn(harness: AgentHarness): boolean {
+  if (!harnessAdaptersEnabled()) return harness === 'codex';
+  return adapterFor(harness).allowsNullSessionOnFirstTurn;
+}
+
+/**
  * 이 하네스의 어댑터. 구현이 없으면 **던진다** — 호출자가 `RUNNABLE_HARNESSES` 를 확인하지
  * 않은 결함이라는 뜻이고, 조용히 기본값을 지어내면 그 결함이 엉뚱한 자리에서 드러난다
  * (`turn.ts::buildTurnCommand` 가 같은 규율을 쓴다).

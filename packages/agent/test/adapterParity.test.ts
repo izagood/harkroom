@@ -416,8 +416,9 @@ describe('P2 가 옮겨야 할 목록 — 하네스 이름 비교의 예산', ()
   const NAME_COMPARISON = new RegExp(`harness\\s*(===|!==)\\s*'(${AGENT_HARNESSES.join('|')})'`, 'g');
 
   const BUDGET: Record<string, number> = {
-    'mentionTurn.ts': 4,
-    'interactiveTurn.ts': 3,
+    // `mentionTurn.ts` 4 · `interactiveTurn.ts` 3 이 여기 있었다(이설 3/N). 일곱 자리가
+    // 실은 세 질문이었고(`usesTuiForMention`·`hasAccountPool`·
+    // `discoversSessionIdAfterTurn`), 옛 비교는 그 세 함수 안에 스위치와 함께 산다.
     // 이설했지만 **옛 분기가 살아 있어** 숫자가 그대로다(스위치가 꺼지면 그 분기가 답한다).
     // 이 숫자는 옛 분기를 지울 때 줄어든다 — 그 순서가 이 작업의 안전장치다.
     'workspaceTrust.ts': 3,
